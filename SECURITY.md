@@ -100,10 +100,10 @@ off in Settings, and is disabled entirely by `TAVOTTO_NO_TELEMETRY=1`
 
 ## A note on unsigned Windows installers
 
-Windows installers are built by GitHub Actions from this repository. Code signing
-is provided by [SignPath.io](https://signpath.io) with a certificate from the
-SignPath Foundation, and installers are described as signed only once they have
-actually been through that process — see the
+Windows installers are built by GitHub Actions from this repository and signed
+with the maintainer's Certum code signing certificate once signing is enabled for
+a release. Installers are described as signed only once they have actually been
+through that process — see the
 [code signing policy](docs/code-signing-policy.md). A release whose installer has
 not been signed will still show a SmartScreen warning; that is expected, and is not
 a vulnerability. If you want to verify what you downloaded, every release is built

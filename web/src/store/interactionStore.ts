@@ -12,6 +12,10 @@ export type DragKind =
   | 'gradient' | 'corner'
   /** 拖一键排版的行列分隔线（ADR 0199） */
   | 'gutter'
+  /** 拖路径文字的起点柄（ADR 0190） */
+  | 'pathTextStart'
+  /** 拖路径文字的间隙柄（离线，ADR 0190） */
+  | 'pathTextGap'
 
 export type DraftPreview = Rect & {
   tool: string

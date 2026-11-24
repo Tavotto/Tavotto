@@ -11,6 +11,7 @@ import {
   backendErrorMsg,
   isDefiniteRunFailure,
   type AiDataCommitResult,
+  type AiDataFigureStyle,
   type AiDataFileEntry,
   type AiDataOverview,
   type AiDataUnderstanding,
@@ -22,6 +23,8 @@ import { currentProjectId } from '@/lib/session'
 import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { SUGGEST_KEYS, diffSuggestion, suggestionFrom, type Suggestion, type SuggestionDiff } from '@/lib/dataUnderstanding'
+import { fontRangeOf, sameDraftBinding } from '@/lib/dataFigureSpec'
+import type { DocumentProfile } from '@/types/document'
 import { msg, type UiMessage } from '@/i18n'
 
 /**
@@ -113,8 +116,15 @@ export interface DataFigureHost {
   notify: (message: UiMessage) => void
   /** 「已在新画布里打开 · 撤销」那条说明不再有意义（用户回去换画法了）：清掉 */
   dismissAddedNote: () => void
+  /** 此刻激活画布的规范绑定（`doc.profile` 的深拷贝；没绑定 = null）。草稿第一次出候选时取一次，之后草稿自己持有。没注册 = null */
+  canvasBinding?: () => DocumentProfile | null
+  /** 绑定 → 随请求发给后端的那份已解析规范（`resolveDocumentSpec(binding, 清单).profile`）。没注册 = 不带规范 */
+  resolveSpec?: (binding: DocumentProfile) => Record<string, unknown> | null
+  /** 图画好、要进编辑器那一刻：让新图落的那张画布带上同一份绑定（见 `lib/dataFigureInherit`）；返回收手函数。没注册 = 什么都不做 */
+  armInherit?: (binding: DocumentProfile, still: () => boolean) => () => void
 }
-let host: DataFigureHost = { openDrawer: () => {}, openScript: async (_script, _still) => {}, projectWritable: () => undefined, activeCanvasId: () => null, notify: () => {}, dismissAddedNote: () => {} }
+const defaultHost: DataFigureHost = { openDrawer: () => {}, openScript: async (_script, _still) => {}, projectWritable: () => undefined, activeCanvasId: () => null, notify: () => {}, dismissAddedNote: () => {} }
+let host: DataFigureHost = defaultHost
 export const configureDataFigureHost = (h: DataFigureHost): void => {
   host = h
 }
@@ -169,6 +179,12 @@ interface DataFigureStore {
   /** 「读懂数据」自动套用写进 `answers` 的那些键（含 `x_measure`）和值：不算用户动过下拉；用户自己改了那一项就从这里去掉 */
   autoPicks: Record<string, unknown>
 
+  /** 后端说「读懂数据」此刻有没有可用的连接（`/api/ai/data-files` 的 `understanding_available`，随清单取）；null = 还没取到 / 旧后端没有这个字段（前端退回 `hasUsableAi`） */
+  understandingAvailable: boolean | null
+  /** 观察到过「读懂数据不可用」且连上之后还没因此重跑过：宿主（`useConnectAiWatch`，生命周期覆盖抽屉与草稿）重新挂上时据此补跑；记在 store 里而不是组件 ref */
+  sawUnavailable: boolean
+  /** 宿主汇报此刻「读懂数据」是否不可用：不可用 → 记下；从不可用变为可用 → 对当前数据重跑一次（`rerunForConnection` 自己拦「动过下拉 / 出图中」） */
+  noteUnavailable: (unavailable: boolean) => void
   /** 首页左卡进项目之后：开「数据」抽屉；只有一个可读文件就直接开它的临时标签 */
   enter: () => void
   loadFiles: () => Promise<void>
@@ -192,8 +208,20 @@ interface DataFigureStore {
   /** 一张缩略图取到了 / 取不到（422）：就绪状态 + 全部都画不出来时走「没画出来」 */
   thumbSettled: (session: string, id: string, ok: boolean) => void
   draw: (id: string) => Promise<void>
+  /** 用户刚连上 AI：对当前这份数据重新出一次候选，让「读懂数据」跑起来。用户已动过横轴 / 纵轴 / 分组下拉、正在出图、候选还没出完时什么都不做 */
+  rerunForConnection: () => void
   /** 点胶囊：套用模型的建议（等同用户自己改了映射后重新出候选） */
   applySuggestion: () => void
+  /** 草稿自己的规范绑定（`DocumentProfile` 形状；null = 默认规范）：第一次出候选时取自激活画布，之后只由右栏「期刊」一行改，不写任何画布 */
+  specBinding: DocumentProfile | null
+  /** `specBinding` 已经取过了（取一次，换项目 / 重新进入才重取） */
+  bindingCaptured: boolean
+  /** 这批候选实际按的栏宽与字号（响应的 `figure_style`；没带规范 / 规范不合法 / 还没出 = null） */
+  figureStyle: AiDataFigureStyle | null
+  /** 请求带的规范不合法、后端退回了默认规范（界面不为此多说话，留给诊断与测试） */
+  specFallback: boolean
+  /** 换草稿的绑定：不算用户动了下拉，按当前这份数据重新出候选；出图中不接受 */
+  setSpecBinding: (binding: DocumentProfile | null) => void
   /** 此刻读表 / 出候选那个请求的请求号（进度条轮询、取消都认它）；没有在读 = null */
   readRid: string | null
   /** 大文件读表 / 出候选到一半不想等了：调后端取消端点（真的停），原请求随后回 409 `propose_cancelled`，按它收尾到 `cancelled`（可重读）；
@@ -211,6 +239,8 @@ interface DataFigureStore {
 }
 
 let epoch = 0
+/** 项目代际（`clear()` 加一）：右栏「期刊」选择器等下载回来时，它变了就丢掉这次结果 */
+export const dataFigureEpoch = (): number => epoch
 let filesSeq = 0
 /** 清单在途时又来了磁盘变化：只记一个标记，在途那次结束后恰好补一次尾随重读（保证最后一个事件之后的磁盘状态一定被读到） */
 let filesDirty = false
@@ -270,7 +300,14 @@ const initial = {
   understanding: false,
   suggestion: null as Suggestion | null,
   autoPicks: {} as Record<string, unknown>,
+  understandingAvailable: null as boolean | null,
+  sawUnavailable: false,
   readRid: null as string | null,
+  // 草稿自己的规范绑定只在 `initial`：换文件 / 关标签（`idleDraft`）不清它，项目代际（`clear()`）与重新进入（`enter()`）才清
+  specBinding: null as DocumentProfile | null,
+  bindingCaptured: false,
+  figureStyle: null as AiDataFigureStyle | null,
+  specFallback: false,
 }
 /** 换一份数据 / 回到起点时清掉的那些（文件清单、概览、表头行、画好的那张不在内） */
 const idleDraft = {
@@ -291,6 +328,8 @@ const idleDraft = {
   suggestion: null as Suggestion | null,
   autoPicks: {} as Record<string, unknown>,
   readRid: null as string | null,
+  figureStyle: null as AiDataFigureStyle | null,
+  specFallback: false,
 }
 
 /** 两个 answers 取值是否相同（列名或列名数组，数组按顺序比） */
@@ -305,12 +344,17 @@ const UNDERSTANDING_POLL_MS = 1000
 const UNDERSTANDING_POLL_MAX_MS = 75_000
 let understandingSeq = 0
 let understandingTimer: ReturnType<typeof setTimeout> | null = null
+/** 这一轮（同一份数据）已经起过「读懂数据」跟踪：换规范重新出候选时不再为它再起一轮（模型读的是数据，不是规范）；任何 `stopUnderstanding` 都清掉 */
+let understandingTracked = false
 /** 停掉在跑的轮询（换文件 / 重新读表 / 关标签 / 换项目 / 出图进编辑器）：旧结果回来对不上序号就丢，绝不套到别的文件上 */
 const stopUnderstanding = (): void => {
   understandingSeq += 1
+  understandingTracked = false
   if (understandingTimer) clearTimeout(understandingTimer)
   understandingTimer = null
 }
+/** 草稿图画好、新画布还没出现之前的「带绑定过去」收手函数（`lib/dataFigureInherit`）：下一次画图 / 换项目时收掉 */
+let inheritOff: (() => void) | null = null
 
 export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   /** 发起时的快照；`still()` 为假 = 换过项目 / 被更新的同类请求取代，回来的结果作废 */
@@ -368,6 +412,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   /** 起轮询（响应里 `understanding` 是 `pending`）或直接用内嵌的结果（`ready`）；`failed` / `off` / 超时全部静默 */
   function trackUnderstanding(u: AiDataUnderstanding, pj: string | null): void {
     stopUnderstanding()
+    understandingTracked = true
     set({ understanding: false, suggestion: null })
     const mine = understandingSeq
     const ep = epoch
@@ -414,9 +459,23 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
    * 出候选（懒模式）：文字先到——名字 / 说明 / 推荐 / 列角色 / 表头行 / 非数字格一次回来，缩略图由 `<img>` 各自取（后端当场画）。
    * 不再有选择题：后端自己用默认答案，说清用了什么；用户在右栏改了就把改动放进 `answers` 重来。
    */
-  async function propose(still: () => boolean, pj: string | null, signal?: AbortSignal): Promise<void> {
+  /** 草稿的规范绑定第一次取自此刻激活的画布（取一次；之后草稿自己持有，换画布 / 换期刊都不再跟） */
+  function ensureBinding(): void {
+    if (get().bindingCaptured) return
+    set({ specBinding: host.canvasBinding?.() ?? null, bindingCaptured: true })
+  }
+
+  /**
+   * `fromSpec`：因为换了规范重新出候选——「读懂数据」读的是数据不是规范，这一轮已经起过跟踪（在跑 / 已出结论）就不再为这份响应再起一轮、
+   * 也不清掉已有的建议；这一轮还没起过（第一次响应被这次取代了）才照常起。
+   */
+  async function propose(still: () => boolean, pj: string | null, signal?: AbortSignal, fromSpec = false): Promise<void> {
     const sel = get().selected
     if (!sel) return
+    ensureBinding()
+    const binding = get().specBinding
+    const spec = binding ? (host.resolveSpec?.(binding) ?? null) : null
+    const fontRange = fontRangeOf(binding)
     const group = get().group
     set({ phase: 'loading', error: null, candidates: [], session: null, thumbs: {} })
     const answers = get().answers
@@ -434,6 +493,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
           ...(group ? {} : { client_request_id: rid }), // 合画永远是小表：不跟踪
           ...(Object.keys(answers).length ? { answers } : {}),
           ...(hasHeaders ? { header_rows: get().headerRows } : {}),
+          ...(spec ? { spec } : {}),
+          ...(fontRange ? { font_range: fontRange } : {}),
         },
         pj,
         signal,
@@ -467,6 +528,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       sources: group ? sourcesFromResponse(res) : null,
       // 用户给过 `cells` 规则之后，后端不再把这些列列进 `mixed_cells`（已经不是「替用户做的默认决定」）：右栏那一行要留着，不然切过去就切不回来
       mixed: mixedCols.length > 0 ? { columns: mixedCols, mode: mixedCols[0]!.mode } : answers.cells !== undefined ? get().mixed : null,
+      figureStyle: res.figure_style ?? null,
+      specFallback: res.spec_fallback === true,
     }
     if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
       set({
@@ -477,10 +540,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         thumbs: Object.fromEntries(res.items.map((i) => [i.id, 'pending' as ThumbState])),
         nothingReasons: [],
       })
-      if (res.understanding) trackUnderstanding(res.understanding, pj)
+      if (res.understanding && !(fromSpec && understandingTracked)) trackUnderstanding(res.understanding, pj)
     } else if (res.kind === 'nothing') {
       set({ ...common, phase: 'nothing', nothingReasons: [...(res.reasons ?? [])], candidates: [], session: null })
-      if (res.understanding) trackUnderstanding(res.understanding, pj)
+      if (res.understanding && !(fromSpec && understandingTracked)) trackUnderstanding(res.understanding, pj)
     } else {
       // 形状不对按失败处理（不当成拿到了空的）
       set({ phase: 'failed', error: null })
@@ -536,6 +599,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function run(opts: { keepChoices?: boolean } = {}): Promise<void> {
     const sel = get().selected
     if (!sel) return
+    ensureBinding() // 读表 / 判断阶段（全是文字、要点表头行）也要让右栏「期刊」一行显示的是真绑定，不等到出候选
     const seq = { current: () => runSeq }
     runSeq += 1
     proposeSeq += 1
@@ -596,6 +660,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     stopUnderstanding()
     set({ understanding: false, suggestion: null, draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file && !get().group ? { file, from: host.activeCanvasId(), canvasId: null } : null })
     if (ep !== epoch) return
+    // 新图落的那张画布要带上同一份绑定（编辑器据此检查；不进撤销栈，见 `lib/dataFigureInherit`）
+    inheritOff?.()
+    const binding = get().specBinding
+    inheritOff = binding && host.armInherit ? host.armInherit(structuredClone(binding), () => ep === epoch) : null
     // `still`：换过项目 / 清过状态就不许再打开（A 项目的相对路径不能拿到 B 项目里去跑）
     await host.openScript(script, () => ep === epoch).catch(() => undefined)
     if (ep !== epoch) return
@@ -701,7 +769,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   }
 
   /** 右栏改了东西：改 `answers`（可同时改别的字段），放弃上一份候选，带着重新出；右栏的下拉保持挂着（`roles` / `mixed` 不清） */
-  function reask(fn: (a: Record<string, unknown>) => Record<string, unknown>, extra: Partial<typeof initial> = {}): void {
+  function reask(fn: (a: Record<string, unknown>) => Record<string, unknown>, extra: Partial<typeof initial> = {}, fromSpec = false): void {
     discardSession()
     commitRid = null
     const seq = { current: () => runSeq }
@@ -710,7 +778,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     set({ answers: fn(get().answers), ...extra })
     const ctl = new AbortController()
     readCtl = ctl
-    void propose(still, pj, ctl.signal)
+    void propose(still, pj, ctl.signal, fromSpec)
   }
 
   return {
@@ -741,7 +809,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         const r = await aiDataFilesAll(pj)
         if (ep !== epoch || mine !== filesSeq) return
         if (!r || !Array.isArray(r.files)) throw new Error('bad shape')
-        set({ files: { status: 'ready', entries: r.files, truncated: r.truncated === true } })
+        set({
+          files: { status: 'ready', entries: r.files, truncated: r.truncated === true },
+          understandingAvailable: typeof r.understanding_available === 'boolean' ? r.understanding_available : null,
+        })
       } catch (e) {
         if (ep !== epoch || mine !== filesSeq) return
         set({ files: { status: 'error', entries: keep, error: reasonOf(e) } })
@@ -898,6 +969,24 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       await run({ keepChoices: true })
     },
 
+    noteUnavailable: (unavailable) => {
+      if (unavailable) {
+        if (!get().sawUnavailable) set({ sawUnavailable: true })
+        return
+      }
+      if (!get().sawUnavailable) return
+      set({ sawUnavailable: false })
+      get().rerunForConnection()
+    },
+
+    rerunForConnection: () => {
+      const { selected, phase, drawingId, answers, autoPicks } = get()
+      if (!selected || drawingId || (phase !== 'ready' && phase !== 'nothing')) return
+      // 「用户动过下拉」与 `onUnderstood` 同一口径：自动套用写进 `answers` 的键（`autoPicks`）不算
+      if (SUGGEST_KEYS.some((k) => k in answers && !(k in autoPicks && sameValue(answers[k], autoPicks[k])))) return
+      reask((a) => a)
+    },
+
     applySuggestion: () => {
       const sug = get().suggestion
       if (!sug || get().drawingId) return
@@ -907,6 +996,19 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         return
       }
       applyDiff(d)
+    },
+
+    setSpecBinding: (binding) => {
+      // 出图中：提交用的是已经出好的那一批（同一份规范），这时换了会让「画出来的」与「选的」对不上——不接受（界面也是禁用的）
+      if (get().drawingId) return
+      const was = get().specBinding
+      if (get().bindingCaptured && sameDraftBinding(was, binding)) return
+      // 新的一份：旧期刊的栏宽 / 字号不能挂在新名字下面，先清；不碰 `answers` / `autoPicks`——这不是用户动了下拉
+      set({ specBinding: binding ? structuredClone(binding) : null, bindingCaptured: true, figureStyle: null, specFallback: false })
+      if (!get().selected) return
+      const ph = get().phase
+      // 有候选（或正在出 / 刚失败 / 没画出来）才有东西可重出；读表中的那一轮出候选时自己会读到新的绑定，其余阶段只存着
+      if (ph === 'ready' || ph === 'loading' || ph === 'nothing' || ph === 'failed') reask((a) => a, {}, true)
     },
 
     cancelRead: async () => {
@@ -956,6 +1058,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     clear: () => {
       epoch += 1
       stopUnderstanding()
+      inheritOff?.()
+      inheritOff = null
       groupFresh.clear()
       filesDirty = false
       commitRid = null

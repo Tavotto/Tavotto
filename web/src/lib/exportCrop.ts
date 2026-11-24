@@ -2,6 +2,7 @@ import { pathStrokeAlign } from './pathGeom'
 import type { CanvasObject, DashStyle, FigureDocument, LineCap } from '@/types/document'
 import { isStrokeOnlyShape, objectRotation, readPath, shapeStrokeOn } from '@/types/document'
 import { headSizeFactor, miterLimitOf, outlineOf, shapeInset, strokeCap } from './shapeGeometry'
+import { lineWidthOf } from './exportPayload'
 import { ptToMm } from './units'
 
 /**
@@ -81,8 +82,18 @@ function miterOverflow(o: Extract<CanvasObject, { type: 'shape' }>): number {
   return Math.max(0, over)
 }
 
-function strokeOutset(o: CanvasObject): number {
+function strokeOutset(o: CanvasObject, objects: readonly CanvasObject[]): number {
   switch (o.type) {
+    case 'pathText':
+      // 路径文字（ADR 0190）：字沿路径离线（基线离中心线 `baselineOffsetPt`，可正可负，翻面换侧）后立着，
+      // 字本身最多越出一个字号（升部 + 降部）；路径两端的字再越出半个字宽，也在这 1.2 倍里头。
+      // 离线：手动值取绝对值；自动值 = 线宽 / 2 + 0.2 em + 降部深度（`pathtext.auto_offset_pt`，降部按一个字号封顶，保守）
+      {
+        const size = Math.max(o.sizePt, 1)
+        const manual = typeof o.baselineOffsetPt === 'number' && Number.isFinite(o.baselineOffsetPt) ? o.baselineOffsetPt : null
+        const offset = manual !== null ? Math.abs(manual) : lineWidthOf(o, objects) / 2 + 1.2 * size
+        return ptToMm(size * 1.2 + offset)
+      }
     case 'text':
       return o.borderColor ? ptToMm(Math.max(o.borderPt ?? 0.75, 0.05) / 2) : 0
     case 'shape':
@@ -140,8 +151,8 @@ function strokeOutset(o: CanvasObject): number {
 }
 
 /** 一个对象在页面上实际画到的轴对齐包围盒（含描边 / 箭头头部外扩；带任意角度旋转时取旋转后的外接框） */
-function objectBounds(o: CanvasObject): CropRect {
-  const m = strokeOutset(o)
+function objectBounds(o: CanvasObject, objects: readonly CanvasObject[]): CropRect {
+  const m = strokeOutset(o, objects)
   const w0 = o.w + 2 * m
   const h0 = o.h + 2 * m
   const cx = o.x + o.w / 2
@@ -164,7 +175,7 @@ export function visibleContentBounds(objects: readonly CanvasObject[]): CropRect
   let y1 = -Infinity
   for (const o of objects) {
     if (o.hidden) continue
-    const b = objectBounds(o)
+    const b = objectBounds(o, objects)
     x0 = Math.min(x0, b.x)
     y0 = Math.min(y0, b.y)
     x1 = Math.max(x1, b.x + b.w)

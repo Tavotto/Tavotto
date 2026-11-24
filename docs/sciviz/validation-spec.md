@@ -15,6 +15,7 @@
 | `palette-semantic` | visual | G-022 |
 | `palette-line-markers` | visual | G-024 |
 | `log-axis-nonpositive` | encoding | G-001（V-001） |
+| `bar-baseline-truncated` | encoding | G-002（V-002） |
 
 ### V-001 对数轴上有画不出来的数据
 
@@ -42,7 +43,7 @@
 
 ### V-002 线性轴上柱的基线被截掉
 
-- **预检 id**：（待定）· **basis**：encoding（**这是 Tavotto 的工程归类**：FDV 把截断柱标为「misleading」，没有贴 wrong）· **状态**：设计中。
+- **预检 id**：`bar-baseline-truncated` · **basis**：encoding（**这是 Tavotto 的工程归类**：FDV 把截断柱标为「misleading」，没有贴 wrong）· **状态**：已实现（维护者 2026-11-21 定 warn、`fix: none`、归 `lines`，1.0 豁免与 V-001 同一行）。看护：`tests/test_preflight_bar_baseline.py`。
 - **依据**：
   - FDV 第 17 章，「Bars on a linear scale should always start at 0.」（p.209）[原文]。
   - 注意：GoG p.92 反而说条形的定义本身不要求底在零，所以不能拿它当支持证据。
@@ -55,7 +56,13 @@
   - 共同基线不在可见范围内时报。
   - 没有共同基线（浮动柱、甘特图）时不判。
   - 差值柱（有正有负、0 可见）不报。
-- **严重度**：warn · **修复**：none · **误报风险**：中。
+- **实现口径**：worker 只读事实 `bar_baseline` 只记基线（只看可见柱、直角坐标轴、竖柱 y / 横柱 x，堆叠上层与浮动柱不收）；
+  范围与尺度由规则从同一 axes 元素的 `[xy]lim` / `[xy]scale` 读，尺度正是 `linear` 才判；可见范围按 min / max 取闭区间。
+  直方图（`hist` 也是 `BarContainer`）按同一规则判。全文见 `docs/rules/backend/profiles-and-preflight.md`。
+- **严重度**：warn · **修复**：none（MCP 手修提示只说两种改法：从 0 起，或改成点图）· **误报风险**：中。
+  已知会报、尚未裁决的写法：inset 放大图、断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器一根柱，天然有共同基线）。
+  仓库里含柱的真脚本实测都不报：figurebench `grouped_bars` 与 examples / compat / acceptance 共 10 份量到了柱；
+  `ca_projections` 只有极坐标柱，不发事实；另 5 份跑不起来（要命令行参数、没有 `main` 入口、缺 pandas），未执行。
 - **测试**：
   - 正常：0 可见。
   - 错误：柱高 5、8，ylim 设为 4–9。
@@ -147,6 +154,29 @@
   - 错误：组名横轴上画了折线。
   - 边界：月份缩写、日期刻度。
 
+### V-009 成品里的实际字号低于规范下限
+
+- **预检 id**：无（不是预检规则，是导出后对成品的观测）· **basis**：visual · **状态**：观测已实现（`rendercore/inspector.py` 的 `observed.text_size` 与 `text_size_verdict()`；看护 `tests/test_rendercore_text_size.py`）。**不进 `checks`、不改导出裁决、界面不显示**；要不要接成一项检查见 ADR 0203（Proposed）。
+- **依据**：
+  - FDV 第 24 章，文字大小要在最终尺寸下看（p.291）[原文]。
+  - 上下标被排成更小的字：matplotlib 3.11.2 实测，7 pt 的 `$R^2$` 在 PDF 里有一段 4.9 pt 的文字 [推导]。
+  - XG 的 `audit_pdf_text.py` 用同一个思路量 PDF 的 `Tf` [二手]；它写死的 5 pt 不引用。
+- **适用**：导出的 PDF。预检的 `font-too-small` 按 manifest 的 `fontsize × scale` 判，看不到一段文字内部更小的字；本条量的是成品。
+- **检测所需信息**：成品 PDF 的内容流（有，检查器本来就在遍历）；下限（只来自出版规范，中性底没有下限时不判）。
+- **检测逻辑**：
+  - 每段看得见的文字的有效字号 = `Tf` 字号 × 文字矩阵与累计 CTM（含 Form 的 `/Matrix`）在字高方向的缩放。
+  - 找到一段低于下限即 failed。
+  - 量到的都够大，但有量不了的段，记 unknown。量不了的段有三种：不画只进文本层的文字；em 不明的 Type 3；矩阵退化。
+  - 没有任何可量的文字段：not_applicable。预算耗尽或没有读取器：unknown。
+- **严重度**：待定（接成检查时由规范决定是否必需；默认只说明、不拦导出）· **修复**：none。
+- **误报风险**：低。量的是字节里的数，不做估计。已知漏报：画成轮廓又不带文本层的字，在内容流里与普通路径分不开，量不到也数不到。
+- **测试**：
+  - 正常：纯文字、`Tm` 里带字号的写法、缩放后的面板。
+  - 边界：旋转文字、`q`/`Q` 恢复字号、`BT` 重置矩阵、下限取等号、容差由调用方给。
+  - 错误：有一段小字，同时有量不了的段，仍是 failed。
+  - 判不了：不画的文字、非标准 Type 3、退化矩阵、预算耗尽、没有读取器、没有下限。
+  - 真 matplotlib：带上下标的图量出 4.9 pt（fonttype 3 与 42）；不带上下标的同一张图量出 7 pt，不报。
+
 ## 不做成规则的条目
 
 依据与理由见 `sciviz_guidance.json` 中 `basis: taste` 的条目（G-042 至 G-051），以及 G-041（双 y 轴）。
@@ -154,3 +184,8 @@
 - 「图上必须标 n」：三本书都没有这条。
 - 任何 pt 字号阈值：只来自期刊。
 - 凭 y 落在 [0, 1] 就猜「做过归一化」：伪规则。
+
+XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
+- 面板重复、缺对照、「一张图一个结论」：见 G-058（`basis: taste`）。
+- 按源码里有没有 `dropna`、`sample`、随机数来猜数据被丢或被伪造（XG 的 `validate_figure.py`）：判的是脚本文字，不是数据，改个写法就绕过，也会冤枉正常脚本。
+- 行内三四张图必须等宽：版面选择，不是对错。

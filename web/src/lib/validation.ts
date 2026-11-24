@@ -174,6 +174,8 @@ const RULES: Record<
   'line-width-below-min': { category: 'lines', context: 'document', fix: 'none' },
   // V-001 对数轴上有 ≤ 0 的值画不出来：绝不自动修（改 symlog / 线性轴、删点都是科学决策，归用户）
   'log-axis-nonpositive': { category: 'lines', context: 'document', fix: 'none' },
+  // V-002 线性轴上柱的基线被截掉：绝不自动修（从 0 起还是改成点图是作者的决定）
+  'bar-baseline-truncated': { category: 'lines', context: 'document', fix: 'none' },
   'axis-label-format': { category: 'text', context: 'document', fix: 'none' },
   'discouraged-colormap': { category: 'color', context: 'document', fix: 'none' },
   'palette-semantic': { category: 'color', context: 'document', fix: 'none' },

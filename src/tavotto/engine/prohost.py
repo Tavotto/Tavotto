@@ -8,7 +8,10 @@
 * 开发 / 验收：`TAVOTTO_PRO_DIR=<本地目录>`，**只在设了 `TAVOTTO_LICENSE_ENDPOINT` 时认**（正式安装里设了也无效）。
   目录里有 `tavotto_pro/__main__.py` 就用当前解释器 `-m tavotto_pro` 跑；有 `tavotto-pro`（Windows `tavotto-pro.exe`）
   可执行文件就直接跑。
-* 已安装：`config.data_dir()/pro/current.json` 指向的版本目录（下载、验签、安装、回退由后续 PR 实现，ADR 0198 §五–§七）。
+* 已安装：`config.data_dir()/pro/current.json` 指向的版本目录里的 `tavotto-pro/`（下载、验签、安装在 `proinstall`，ADR 0198 §五–§六）。
+  **从已安装来源拉起时有切换与回退**（§七）：握手失败（crashed / timeout / unsupported / internal / 起不来）、`features` 与该版本
+  `release.json` 不一致、或 macOS 上 `codesign --verify --strict` 不过 → `proinstall.mark_bad` 记坏、`current.json` 切回 previous、再试一次；
+  previous 也没有就当作没有组件（`missing`）。开发目录来源不走这些。
 
 失败一律折成 `ProUnavailable`，调用方把它当作「这个高级功能暂时不可用」，不把组件的原话给用户看。
 """
@@ -25,14 +28,14 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config, license as engine_license, runtime
+from . import config, license as engine_license, proinstall, runtime
 
 LOG = logging.getLogger("tavotto.prohost")
 
 ENV_PRO_DIR = "TAVOTTO_PRO_DIR"
 PROTOCOL_VERSION = 1
 #: 宿主认得的 pro 协议版本（ADR 0198 §三）。
-SUPPORTED_PRO_API = frozenset({1})
+SUPPORTED_PRO_API = proinstall.SUPPORTED_PRO_API
 #: 协议失败码闭集（ADR 0198 §三）。
 FAILURES = frozenset({"bad_request", "unsupported", "license", "timeout", "internal"})
 
@@ -66,15 +69,9 @@ def _dev_dir() -> Path | None:
 
 
 def _installed_dir() -> Path | None:
-    try:
-        rec = json.loads(config.data_path(DIR_NAME, "current.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    name = rec.get("current") if isinstance(rec, dict) else None
-    if not isinstance(name, str) or not name or "/" in name or "\\" in name or name.startswith("."):
-        return None
-    p = config.data_path(DIR_NAME, name)
-    return p if p.is_dir() else None
+    """`current.json` 指向的版本目录里的 `tavotto-pro/`（要拉起的那一层）；没有 / 目录不在 = None。"""
+    name = proinstall.current_name()
+    return proinstall.version_root(name) if name else None
 
 
 def _command(root: Path) -> tuple[list[str], dict] | None:
@@ -101,6 +98,8 @@ class _Sidecar:
         if cmd is None:
             raise ProUnavailable("missing", "no entry point")
         argv, env = cmd
+        # 已安装版本：先上「正在使用」租约再拉进程（别的宿主进程清理旧版本时据此跳过）；开发目录来源得 None
+        self._lease = proinstall.acquire_in_use(root)
         try:
             self.proc = subprocess.Popen(  # noqa: S603 — argv 来自本机组件目录，不经 shell
                 argv,
@@ -113,6 +112,7 @@ class _Sidecar:
                 creationflags=runtime.CREATE_NO_WINDOW,
             )
         except OSError as exc:
+            self._release_lease()
             raise ProUnavailable("missing", str(exc)) from None
         self.root = root
         self.last_used = time.monotonic()
@@ -130,6 +130,7 @@ class _Sidecar:
         except BaseException:
             if self.proc.poll() is None:
                 self.close()
+            self._release_lease()
             raise
         feats = hello.get("features")
         self.features = (
@@ -210,7 +211,17 @@ class _Sidecar:
             raise ProUnavailable("internal", "result not an object")
         return result
 
+    def _release_lease(self) -> None:
+        proinstall.release_in_use(self._lease)
+        self._lease = None
+
     def close(self) -> None:
+        try:
+            self._close_proc()
+        finally:
+            self._release_lease()
+
+    def _close_proc(self) -> None:
         try:
             if self.proc.stdin:
                 self.proc.stdin.close()
@@ -227,8 +238,94 @@ class _Sidecar:
                 LOG.warning("pro sidecar %s did not exit after kill", self.proc.pid)
 
 
+#: 已安装来源的版本握手失败码：判为坏包 → 记 bad、切回上一个版本（ADR 0198 §七）。`license` / `bad_request` 不在其中——那是授权或请求的问题，不是包的问题。
+BAD_PACKAGE_CODES = frozenset({"crashed", "timeout", "unsupported", "internal", "missing"})
+CODESIGN_TIMEOUT_S = 30.0
+
+
+def _is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _codesign_ok(root: Path) -> bool:
+    """macOS 上拉起已安装的组件前验一次签名（`codesign --verify --strict <exe>`，ADR 0198 §六）；不过 / 超时 / 起不来 = False。
+    非 macOS、或目录里没有可执行文件（开发用的 python 模块形态）= True（那种形态不会出现在发布包里）。"""
+    if not _is_macos():
+        return True
+    exe = root / "tavotto-pro"
+    if not exe.is_file():
+        return True
+    try:
+        done = subprocess.run(  # noqa: S603 — 固定的系统工具，不经 shell
+            ["/usr/bin/codesign", "--verify", "--strict", str(exe)],
+            capture_output=True,
+            timeout=CODESIGN_TIMEOUT_S,
+            check=False,
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
+
+
+def _release_features(root: Path) -> frozenset[str] | None:
+    """该版本 `release.json`（安装时已与签过名的清单对账）里的功能键；读不出 = None。"""
+    try:
+        rec = json.loads((root.parent / proinstall.RELEASE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    feats = rec.get("features") if isinstance(rec, dict) else None
+    if not isinstance(feats, list) or not all(isinstance(f, str) for f in feats):
+        return None
+    return frozenset(feats)
+
+
+def _start_installed(root: Path) -> _Sidecar:
+    """拉起已安装的版本并做健康检查：签名（macOS）、握手（`_Sidecar` 里：10 秒内回来、`pro_api` 在支持集合里）、`features` 与 release 一致。"""
+    if not _codesign_ok(root):
+        raise ProUnavailable("internal", "codesign")
+    sidecar = _Sidecar(root)
+    if sidecar.features != _release_features(root):
+        sidecar.close()
+        raise ProUnavailable("internal", "features mismatch")
+    return sidecar
+
+
+def _start() -> _Sidecar:
+    """拉起一个组件。开发目录来源直接拉；已安装来源握手 / 健康检查失败就记 bad、切回 previous 再试（最多沿 previous 链退几步），
+    退无可退 = `missing`（当作没有组件）。"""
+    dev = _dev_dir()
+    if dev is not None:
+        return _Sidecar(dev)
+    for _ in range(3):
+        name = proinstall.current_name()
+        root = proinstall.version_root(name) if name else None
+        if name is None or root is None:
+            break
+        try:
+            return _start_installed(root)
+        except ProUnavailable as exc:
+            if exc.code not in BAD_PACKAGE_CODES:
+                raise
+            LOG.warning("pro: 版本 %s 健康检查没过（%s），回退", name, exc.code)
+            proinstall.mark_bad(name)
+            proinstall.rollback(name)
+    raise ProUnavailable("missing")
+
+
 _LOCK = threading.Lock()
 _current: _Sidecar | None = None
+
+
+def _running_root():
+    """此刻在跑的 sidecar 的根目录（给 proinstall 判「运行中的版本目录不删」）；没在跑 = None。"""
+    cur = _current
+    if cur is None or not cur.alive():
+        return None
+    return cur.root
+
+
+proinstall.register_running_root(_running_root)
 _crashes = 0
 
 
@@ -244,11 +341,8 @@ def call(cmd: str, payload: dict, *, feature: str, timeout: float = REQUEST_TIME
             _current.close()
             _current = None
         if _current is None:
-            root = locate()
-            if root is None:
-                raise ProUnavailable("missing")
             try:
-                _current = _Sidecar(root)
+                _current = _start()
             except ProUnavailable as exc:
                 if exc.code in ("crashed", "timeout", "internal"):
                     _crashes += 1

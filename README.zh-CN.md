@@ -226,7 +226,7 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 
 渲染、排版和导出都在本机进行，Tavotto 不会上传你的图、脚本、项目或数据。它自己只发两类请求：每天一次检查 GitHub Releases 有没有新版本（按时区和语言，也可能先问项目的国内镜像 `dl.tavotto.cn`；在**设置 → 检查更新**里可以关），以及默认**关闭**、由你同意才开启的匿名使用统计，其中绝不会出现图、脚本、路径或文字内容。诊断包只保存在本地、已脱敏，确认后才会发送。详见 [docs/privacy.md](docs/privacy.md) 与[事件契约](docs/analytics/telemetry-events.md)。Tavotto 把文件放在哪：[docs/guide/files-and-data.zh-CN.md](docs/guide/files-and-data.zh-CN.md)。
 
-Free code signing provided by SignPath.io, certificate by SignPath Foundation。完整内容见[签名政策](docs/code-signing-policy.md)。安全问题请走[私密报告](https://github.com/Tavotto/Tavotto/security/advisories/new)，不要开公开 issue。
+Windows 安装包启用签名后用维护者的 Certum 代码签名证书签名（每一版的发布说明会写明这一版签没签）。完整内容见[签名政策](docs/code-signing-policy.md)。安全问题请走[私密报告](https://github.com/Tavotto/Tavotto/security/advisories/new)，不要开公开 issue。
 
 ## 参与开发
 

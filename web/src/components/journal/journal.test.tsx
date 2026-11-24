@@ -552,6 +552,7 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
     await click(q('[data-journal-picker]'))
     await click(q('[data-journal-option="fx-beta"]')) // 要下载，挂起
     expect(releases).toHaveLength(1)
+    await click(q('[data-journal-picker]')) // 点选即关浮层：再开一次改选别的
     await click(q('[data-journal-option="fx-alpha"]')) // 已在本地：取 v2（取不到 = null）后绑定
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
     expect(useDocumentStore.getState().doc.profile?.journalRef?.id).toBe('fx-alpha')
@@ -566,6 +567,7 @@ describe('远程目录里还没下载的刊：选中时的胶囊提示', () => {
     await mount(<JournalPicker />)
     await click(q('[data-journal-picker]'))
     await click(q('[data-journal-option="fx-beta"]'))
+    await click(q('[data-journal-picker]')) // 点选即关浮层：再开一次点「不按期刊」
     await click(q('[data-journal-none]'))
     await act(async () => releases[0]({ state: 'ready', bundle: bundleOf('fx-beta') }))
     expect(useDocumentStore.getState().doc.profile?.journalRef).toBeUndefined()

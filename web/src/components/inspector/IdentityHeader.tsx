@@ -10,6 +10,7 @@ import {
   Lock,
   LockOpen,
   MoveUpRight,
+  PathText,
   Replace,
   Spline,
   Square,
@@ -43,6 +44,7 @@ const TYPE_ICON = {
   arrow: MoveUpRight,
   shape: Square,
   path: Spline,
+  pathText: PathText,
 } as const
 
 /**

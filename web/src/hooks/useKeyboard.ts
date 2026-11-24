@@ -1,5 +1,6 @@
 import { exitGroupLevel, GROUP_COMMANDS } from '@/store/groupActions'
 import { TRANSFORM_COMMANDS } from '@/store/transformActions'
+import { canOutlineText, outlineSelectedText } from '@/store/textOutlineActions'
 import { useEffect } from 'react'
 import { formatMessage, msg } from '@/i18n'
 import { usePalette } from '@/components/CommandPalette'
@@ -43,6 +44,7 @@ import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { setQuickLayoutUndoRunner } from '@/store/quickLayoutActions'
+import { canNudgeGap, nudgePathTextGap } from '@/store/pathTextActions'
 
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -262,6 +264,14 @@ export function useKeyboard() {
         }
         return
       }
+      // ⇧⌘O 文字转轮廓（ADR 0189）：选着文字时才消费
+      if (mod && e.shiftKey && !e.altKey && e.code === 'KeyO') {
+        if (canOutlineText()) {
+          e.preventDefault()
+          void outlineSelectedText()
+        }
+        return
+      }
       // ⌥⌘D 再次变换（ADR 0185 M4 第二批）：排在 ⌘D 前面——Windows 上 Ctrl+Alt+D 的 key 仍是 d
       if (mod && e.altKey && !e.shiftKey && e.code === 'KeyD') {
         if (e.getModifierState?.('AltGraph')) return
@@ -412,7 +422,7 @@ export function useKeyboard() {
         }
         if (ids.length === 1) {
           const obj = doc.doc.objects.find((o) => o.id === ids[0])
-          if (obj?.type === 'text') {
+          if (obj?.type === 'text' || obj?.type === 'pathText') {
             e.preventDefault()
             ui.setEditingText(obj.id)
           } else if (obj?.type === 'panel') {
@@ -427,6 +437,15 @@ export function useKeyboard() {
         }
         return
       }
+      // 路径文字的离线（ADR 0190）：选区全是路径文字时 ⌥⇧↑ / ⌥⇧↓ 调字与线的间隙；别的选区照旧是 ⇧ 大步微调
+      if (e.altKey && e.shiftKey && !mod && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !arrowOwnedByWidget(e)) {
+        if (canNudgeGap()) {
+          e.preventDefault()
+          nudgePathTextGap(e.key === 'ArrowUp' ? 1 : -1)
+          return
+        }
+      }
+
       if (e.key.startsWith('Arrow')) {
         // 方向键微调（ADR 0093）：图内编辑态推图内选中的元素，否则推画布选区；
         // 快速编辑里画布对象不动（`canvas/nudge.ts`）。归了微调就不让它冒出去滚界面

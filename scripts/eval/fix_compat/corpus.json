@@ -121,5 +121,47 @@
    "plots/helpers.py": "def tidy(ax):\n    ax.set_xlabel('x')\n    ax.set_ylabel('y')\n",
    "plots/fig.py": "import matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nfrom .helpers import tidy\n\nfig, ax = plt.subplots(figsize=(4, 3))\nax.plot([1, 2, 3], [3, 1, 2])\ntidy(ax)\n"
   }
+ },
+ "env-var-required-2": {
+  "family": "environment-variable",
+  "title": "「乙」题：另一个脚本同样从 os.environ['LAB_DATA_DIR'] 取数据目录，数据在项目的 measurements/ 里；M 组先修 env-var-required 再修它",
+  "script": "plot_growth.py",
+  "warmup": "env-var-required",
+  "files": {
+   "plot_growth.py": "import csv\nimport os\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\nbase = os.environ[\"LAB_DATA_DIR\"]\nrows = list(csv.DictReader(open(os.path.join(base, \"growth.csv\"))))\nfig, ax = plt.subplots(figsize=(4, 3))\nax.semilogy([float(r[\"t\"]) for r in rows], [float(r[\"od\"]) for r in rows], \"o-\")\nax.set_xlabel(\"time (h)\")\n",
+   "measurements/growth.csv": "t,od\n0,0.05\n2,0.11\n4,0.24\n6,0.52\n8,0.98\n"
+  },
+  "hint": {
+   "code": "script_error",
+   "trace": "KeyError: 'LAB_DATA_DIR'\n    base = os.environ[\"LAB_DATA_DIR\"]",
+   "tool": "write_launcher"
+  }
+ },
+ "argparse-required-2": {
+  "family": "script-args",
+  "title": "「乙」题：另一个脚本用 argparse 声明必填的 --input（不叫 --data），数据文件也不同；M 组先修 argparse-required 再修它",
+  "script": "plot_spectrum.py",
+  "warmup": "argparse-required",
+  "files": {
+   "plot_spectrum.py": "import argparse\nimport csv\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\np = argparse.ArgumentParser(description=\"plot an absorption spectrum\")\np.add_argument(\"--input\", required=True, help=\"csv with wavelength,absorbance\")\np.add_argument(\"--xmin\", type=float, default=400.0)\nargs = p.parse_args()\nrows = list(csv.DictReader(open(args.input)))\nfig, ax = plt.subplots(figsize=(4, 3))\nax.plot([float(r[\"wavelength\"]) for r in rows], [float(r[\"absorbance\"]) for r in rows])\nax.set_xlim(left=args.xmin)\n",
+   "spectrum_run2.csv": "wavelength,absorbance\n400,0.12\n450,0.35\n500,0.81\n550,0.44\n600,0.10\n"
+  },
+  "hint": {
+   "code": "script_needs_arguments",
+   "tool": "set_run_arguments"
+  }
+ },
+ "stdin-prompt-2": {
+  "family": "interactive-input",
+  "title": "「乙」题：另一个脚本 input() 询问直方图分箱数，没有标准输入就 EOFError；M 组先修 stdin-prompt 再修它",
+  "script": "hist.py",
+  "warmup": "stdin-prompt",
+  "files": {
+   "hist.py": "import random\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\nrandom.seed(0)\nvalues = [random.gauss(0, 1) for _ in range(500)]\nbins = int(input(\"number of bins: \"))\nfig, ax = plt.subplots(figsize=(4, 3))\nax.hist(values, bins=bins)\n"
+  },
+  "hint": {
+   "code": "script_needs_input",
+   "tool": "write_launcher"
+  }
  }
 }

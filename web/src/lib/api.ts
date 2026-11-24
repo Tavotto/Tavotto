@@ -2161,6 +2161,25 @@ export type ExportClipPath = ExportBox & {
 }
 
 type ExportObjectBody =
+  | (ExportBox & {
+      /** 路径文字（ADR 0190）：一行字沿自带的路径排开，后端 `rendercore/pathtext` 落字 */
+      type: 'pathText'
+      text: string
+      size_pt: number
+      bold: boolean
+      italic: boolean
+      color: string
+      font_family?: 'serif' | 'sans-serif' | 'monospace'
+      subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
+      start_offset?: number
+      text_align?: 'center' | 'end'
+      flip?: true
+      /** 离线（pt）；缺席 = 自动 */
+      baseline_offset_pt?: number
+      /** 一起成组的那条线的描边宽度（pt）；0 不发 */
+      line_width_pt?: number
+      rotation_deg?: number
+    })
   | (ExportBox & ArtifactRequestFields & {
       type: 'panel'
       figure_snapshot?: FigureSnapshot
@@ -2643,6 +2662,42 @@ export const fetchSourceFontBytes = async (sha256: string, face: number): Promis
   return res.arrayBuffer()
 }
 
+/** 外部 SVG 导入（ADR 0189）：后端 `rendercore/svgimport` 的结果。`unsupported` 非空 = 有做不准的东西，整个当图片放 */
+export interface SvgImportResult {
+  ok: boolean
+  error?: string
+  objects?: unknown[]
+  size_mm?: [number, number]
+  unsupported?: Record<string, number>
+}
+export const importSvg = (svg: string) =>
+  jsonFetch<SvgImportResult>('/api/svg/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ svg }),
+  })
+
+/** 复制为 SVG（ADR 0189）：导出 SVG 的同一个写入器写出来的一段 SVG 文本 */
+export const copyAsSvg = (objects: ExportObject[], w_mm: number, h_mm: number) =>
+  jsonFetch<{ ok: boolean; svg?: string; error?: string }>('/api/svg/copy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects, w_mm, h_mm }),
+  })
+
+/** 文字转轮廓（ADR 0189）：每个文字对象一份结果，路径对象是页面 mm、不带 id */
+export interface TextOutlineResult {
+  ok: boolean
+  /** 路径文字另带 `auto_offset_pt`：自动离线算出来是多少（ADR 0190） */
+  results: ({ paths: unknown[]; auto_offset_pt?: number; overflow?: boolean } | { error: string })[]
+}
+export const outlineText = (objects: ExportObject[]) =>
+  jsonFetch<TextOutlineResult>('/api/text/outline', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ objects }),
+  })
+
 export const typesetMath = (items: { src: string; family: string }[]) =>
   jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
     method: 'POST',
@@ -3121,6 +3176,13 @@ export interface ScaleDomainFact {
   errorbar_low_nonpositive?: number
 }
 
+/** `ManifestElement.bar_baseline` 的一维（`engine/manifest.BAR_BASELINE_STATUSES` 是 `status` 的闭集）。 */
+export interface BarBaselineFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  /** 有共同基线的柱容器：底相同的合并、柱数相加，按首次出现排序；数值不舍入 */
+  baselines?: { value: number; bars: number }[]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -3216,6 +3278,13 @@ export interface ManifestElement {
    * `engine/manifest.scale_domain`；消费者只有 `lib/preflight.ts` 的 `checkLogAxisNonpositive`。
    */
   scale_domain?: Partial<Record<'x' | 'y', ScaleDomainFact>>
+  /**
+   * 柱的共同基线的只读事实（V-002 `bar-baseline-truncated`）：只在 axes 元素、且这根直角坐标轴上有可见的柱时
+   * 出现；竖柱记 `y`、横柱记 `x`。浮动柱 / 堆叠的上层没有共同基线，不进 `baselines`。只有基线——范围与尺度
+   * 由预检从本元素的 `xlim` / `ylim` / `xscale` / `yscale` 读。产生者只有 `engine/manifest.bar_baseline`；
+   * 消费者只有 `lib/preflight.ts` 的 `checkBarBaselineTruncated`。
+   */
+  bar_baseline?: Partial<Record<'x' | 'y', BarBaselineFact>>
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
@@ -5326,7 +5395,7 @@ export interface AiDataFileEntry {
 }
 
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
 
 export interface AiDataOverview {
   path: string
@@ -5432,6 +5501,16 @@ export interface AiDataRoles {
   options: { x?: string[]; y?: string[]; group?: string[] }
 }
 
+/** 后端按规范实际用的图幅与字号（`figure_style`） */
+export interface AiDataFigureStyle {
+  width_single_mm: number
+  width_double_mm: number
+  font_pt: number
+  /** 后端接受的字号范围（可能缺：期刊没规定那一端） */
+  font_min_pt?: number
+  font_max_pt?: number
+}
+
 /** 懒模式响应里的公共部分（`candidates` 与 `nothing` 都有） */
 export interface AiDataLazyInfo {
   render?: 'lazy'
@@ -5447,6 +5526,10 @@ export interface AiDataLazyInfo {
   defaults?: { question_code: string; answer?: Record<string, unknown> }[]
   /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */
   mixed_cells?: { column: string; non_numeric: number; rows: number; mode: 'skip' | 'extract' }[]
+  /** 请求带了出版规范且有效时才有：这批图实际用的栏宽（mm）与正文字号（pt），界面如实显示、不另算 */
+  figure_style?: AiDataFigureStyle
+  /** 请求带的规范不合法、后端退回了默认规范（此时没有 `figure_style`） */
+  spec_fallback?: boolean
   /** 连了自带 Key 的模型时才有（后端「读懂数据」后台任务，ADR 0178 第 1 步）：`pending` 就轮询 `aiDataUnderstanding`；`ready` 时建议内嵌；没有这个键 = 与从前一样 */
   understanding?: AiDataUnderstanding
 }
@@ -5502,6 +5585,10 @@ export interface AiDataProposeBody {
   client_request_id?: string
   /** `lazy` = 文字先到、缩略图取图时才画、不返回选择题（列角色用 `answers.y / x / group`，`none` = 不要） */
   render?: 'lazy'
+  /** 已按画布绑定解析好的出版规范全文（`resolveDocumentSpec(...).profile`，期刊覆盖已并入）：候选与落盘的图按它的栏宽与字号画；不给 = 默认规范，响应与从前逐字相同。规范不合法后端退回默认并回 `spec_fallback: true` */
+  spec?: Record<string, unknown>
+  /** 期刊自己规定的字号上下限（pt，只放规定了的那一端；都没规定 / 没有期刊绑定就不带这个键） */
+  font_range?: { min_pt?: number; max_pt?: number }
 }
 
 export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>

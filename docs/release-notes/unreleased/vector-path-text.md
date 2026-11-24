@@ -1,0 +1,3 @@
+## Text on a path, key objects and repeat arrays
+
+With the text tool, click a path or shape to type along it. Drag the start handle, align the text to the middle or end, or flip it to the other side. By default the text keeps clear of the line; set the gap yourself in the inspector, by dragging on the canvas or with ⌥⇧↑/↓. Text that does not fit shows a small red "+" at the end of the path when selected. ⌘-double-click edits the path the text follows. Click an already selected object again to make it the key object for aligning and distributing by spacing, and repeat objects in a grid or around a circle.
