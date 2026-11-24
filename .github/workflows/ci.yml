@@ -39,7 +39,7 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard` 轴，目前 backend-fast 是 `[1..12]`（`--shard=K/12`）、backend-platforms 是 `[1..8]`（`--shard=K/8`），
+# `shard` 轴，目前 backend-fast 是 `[1..12]`（`--shard=K/12`）、backend-platforms 按系统分（Windows 16、macOS 8，`--shard=K/${{ matrix.of }}`），
 # 每档全量 pytest 拆成并行 job（按文件分、不拆文件、
 # 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
 # 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
@@ -1294,12 +1294,42 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci')))
       && needs.docs-scope.outputs.docs_only != 'true'
     needs: [docs-scope]
+    # 显示名保持 `backend-platforms (<os>, <片号>)`（include 形状默认会把 of 也排进去）：pr-watch 历史库、
+    # ci_baseline 的显示名映射都按这个形状认。
+    name: backend-platforms (${{ matrix.os }}, ${{ matrix.shard }})
     strategy:
       fail-fast: false
-      # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
+      # 2026-11-24 起片数按系统分（交付提速方案 B3），所以写成 include（每格自带 of = 该系统的片数）：
+      # Windows 16 片——合并组里 8 片每片 47–55 分钟，是合并组最长腿；按 11-24 权重表留一法模拟最慢片 pytest
+      # p50 51 → 28 分钟。macOS 保持 8 片（每片 37–44 分钟）：每个合并组已占 11 个 macOS job、4 组并行 44 个，
+      # Enterprise 的 macOS 并发上限是 50，再加就会排队。python 固定 3.13，写在 setup-python 上。
+      # 合同（tests/test_merge_queue_workflows.py）按系统核：片号恰好 1..of、of 等于该系统定的片数、命令用 matrix.of。
       matrix:
-        os: [macos-latest, windows-latest]
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        include:
+          - { os: macos-latest,   shard: 1, of: 8 }
+          - { os: macos-latest,   shard: 2, of: 8 }
+          - { os: macos-latest,   shard: 3, of: 8 }
+          - { os: macos-latest,   shard: 4, of: 8 }
+          - { os: macos-latest,   shard: 5, of: 8 }
+          - { os: macos-latest,   shard: 6, of: 8 }
+          - { os: macos-latest,   shard: 7, of: 8 }
+          - { os: macos-latest,   shard: 8, of: 8 }
+          - { os: windows-latest, shard: 1, of: 16 }
+          - { os: windows-latest, shard: 2, of: 16 }
+          - { os: windows-latest, shard: 3, of: 16 }
+          - { os: windows-latest, shard: 4, of: 16 }
+          - { os: windows-latest, shard: 5, of: 16 }
+          - { os: windows-latest, shard: 6, of: 16 }
+          - { os: windows-latest, shard: 7, of: 16 }
+          - { os: windows-latest, shard: 8, of: 16 }
+          - { os: windows-latest, shard: 9, of: 16 }
+          - { os: windows-latest, shard: 10, of: 16 }
+          - { os: windows-latest, shard: 11, of: 16 }
+          - { os: windows-latest, shard: 12, of: 16 }
+          - { os: windows-latest, shard: 13, of: 16 }
+          - { os: windows-latest, shard: 14, of: 16 }
+          - { os: windows-latest, shard: 15, of: 16 }
+          - { os: windows-latest, shard: 16, of: 16 }
     # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
     permissions:
       contents: read
@@ -1352,7 +1382,7 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard=K/8` 的 8 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # `--shard=K/N` 的 N 取本格的 matrix.of（Windows 16、macOS 8），合同测试按系统对拍片号恰好 1..N；
       # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
       # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
       # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
@@ -1363,7 +1393,7 @@ jobs:
         env:
           TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/8
+          python -m pytest --shard=${{ matrix.shard }}/${{ matrix.of }}
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs -vv
