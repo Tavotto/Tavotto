@@ -403,6 +403,8 @@ def test_every_input_comment_ends_up_in_a_group_or_in_unhandled():
     proposal = cp.validate_proposal(_p(ch("ax0.line0", "linewidth", 3)), BASE)
     after = _after(BASE, ax0_line0__linewidth=3.0)
     groups, unhandled = cp.effective_changes(BASE, after, proposal)
+    cand, proposal = cp.candidate_patches([], proposal, BASE)
+    groups = cp.attach_patches(groups, cand)
     plan = cp.build_plan(
         plan_id="a" * 24,
         target="Fig.pdf",
@@ -422,6 +424,8 @@ def test_every_input_comment_ends_up_in_a_group_or_in_unhandled():
         "version",
         "source",
         "base",
+        "base_patches",
+        "candidate_patches",
         "groups",
         "unhandled",
         "preview",
@@ -572,3 +576,100 @@ def test_one_running_task_per_figure_and_rid_dedupes(monkeypatch):
 
 def test_error_codes_are_complete_and_messages_cover_them():
     assert set(cp.MESSAGES) == set(cp.ERROR_CODES)
+
+
+# --------------------------------------------------------------------------- 应用用的 patch
+def _two_group_plan():
+    base = [
+        {"gid": "ax0.title", "prop": "fontsize", "value": 8},
+        {"gid": "z", "prop": "a", "value": 1},
+    ]
+    prop = cp.validate_proposal(
+        {
+            "groups": [
+                {
+                    "comment_id": "c1",
+                    "changes": [
+                        ch("ax0.line0", "linewidth", 3),
+                        ch("ax0.line0", "color", "#ff0000"),
+                    ],
+                },
+                {"comment_id": "c2", "changes": [ch("ax0.title", "fontsize", 12)]},
+            ],
+            "unhandled": [],
+        },
+        BASE,
+    )
+    cand, prop = cp.candidate_patches(base, prop, BASE)
+    after = _after(
+        BASE, ax0_line0__linewidth=3.0, ax0_line0__color="#ff0000", ax0_title__fontsize=12.0
+    )
+    groups, unhandled = cp.effective_changes(BASE, after, prop)
+    groups = cp.attach_patches(groups, cand)
+    plan = cp.build_plan(
+        plan_id="a" * 24,
+        target="Fig.pdf",
+        base_fingerprint="sha256:x",
+        comments=cp.open_comments(COMMENTS),
+        groups=groups,
+        unhandled=unhandled,
+        base_patches=base,
+    )
+    return base, cand, plan
+
+
+def test_each_change_carries_the_canonical_patch_with_identity():
+    _base, cand, plan = _two_group_plan()
+    canon = {(e["gid"], e["prop"]): e for e in cp.patchspec.canonicalize(cand)}
+    patches = [c["patch"] for g in plan["groups"] for c in g["changes"]]
+    assert len(patches) == 3
+    for g in plan["groups"]:
+        for c in g["changes"]:
+            assert c["patch"] == canon[(c["target_gid"], c["prop"])]
+    line = next(
+        c["patch"] for g in plan["groups"] for c in g["changes"] if c["prop"] == "linewidth"
+    )
+    assert line == {"gid": "ax0.line0", "prop": "linewidth", "value": 3, "identity": "id-line0"}
+
+
+def test_plan_carries_canonical_base_and_candidate_lists():
+    base, cand, plan = _two_group_plan()
+    assert plan["base_patches"] == cp.patchspec.canonicalize(base)
+    assert plan["candidate_patches"] == cp.patchspec.canonicalize(
+        cand
+    )  # 全部组都生效时与候选全量一致
+    keys = [g["key"] for g in plan["groups"]]
+    assert cp.apply_groups(plan["base_patches"], plan["groups"], keys) == plan["candidate_patches"]
+
+
+def test_unchecking_a_group_recomputes_as_base_plus_the_remaining_groups():
+    base, _cand, plan = _two_group_plan()
+    g1, g2 = plan["groups"]
+    only2 = cp.apply_groups(plan["base_patches"], plan["groups"], {g2["key"]})
+    assert only2 == cp.patchspec.canonicalize(base + [c["patch"] for c in g2["changes"]])
+    assert {(e["gid"], e["prop"]) for e in only2} == {("z", "a"), ("ax0.title", "fontsize")}
+    assert (
+        next(e for e in only2 if e["prop"] == "fontsize")["value"] == 12
+    )  # 取消 g1 不影响 g2 覆盖 B0 的字号
+    assert cp.apply_groups(plan["base_patches"], plan["groups"], set()) == plan["base_patches"]
+    assert (
+        cp.apply_groups(plan["base_patches"], plan["groups"], {g1["key"]})
+        != plan["candidate_patches"]
+    )
+
+
+def test_a_no_effect_change_is_not_in_the_candidate_the_frontend_applies():
+    base = []
+    prop = cp.validate_proposal(_p(ch("ax0.line0", "linewidth", 3)), BASE)
+    cand, prop = cp.candidate_patches(base, prop, BASE)
+    groups, unhandled = cp.effective_changes(BASE, BASE, prop)  # 渲染没变
+    plan = cp.build_plan(
+        plan_id="a" * 24,
+        target="F",
+        base_fingerprint="x",
+        comments=cp.open_comments(COMMENTS),
+        groups=cp.attach_patches(groups, cand),
+        unhandled=unhandled,
+        base_patches=base,
+    )
+    assert plan["candidate_patches"] == [] and plan["groups"] == []

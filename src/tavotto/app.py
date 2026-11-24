@@ -11537,6 +11537,7 @@ def _change_plan_compute(task, rel_id: str, base: list, comments: list[dict]):
             if warned(cand_resp) - base_warned:
                 raise ec.PlanFailure("change_plan_render_failed", "warning")
             groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
+            groups = ec.attach_patches(groups, cand)
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         _require_route_unchanged(rel_id)
@@ -11556,6 +11557,7 @@ def _change_plan_compute(task, rel_id: str, base: list, comments: list[dict]):
         comments=comments,
         groups=groups,
         unhandled=unhandled,
+        base_patches=base,
     )
     plan["replay_required"] = task.replay_required
     return plan, before_png, after_png

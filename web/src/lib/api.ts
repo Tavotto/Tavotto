@@ -4125,11 +4125,22 @@ export interface ChangePlanBox {
   box: [number, number, number, number]
 }
 
+/** 一条 override 条目（规范化之后的形状） */
+export interface ChangePlanPatch {
+  gid: string
+  prop: string
+  value: unknown
+  identity?: string
+}
+
 export interface ChangePlanChange {
   target_gid: string
   prop: string
+  /** manifest 的展示值（格式可能与 override 的值不同，只用来显示） */
   before: unknown
   after: unknown
+  /** 应用时写进文档的那条 override（进入候选列表、规范化之后） */
+  patch: ChangePlanPatch
 }
 
 export interface ChangePlanGroup {
@@ -4147,6 +4158,10 @@ export interface ChangePlan {
   version: number
   source: ChangePlanSource
   base: { target: string; fingerprint: string }
+  /** 请求时的 B0 全量 override（规范化后） */
+  base_patches: ChangePlanPatch[]
+  /** B0 ⊕ 全部组的 `patch`（规范化后）：「全部应用」直接写它；逐组取消勾选时前端用 `base_patches` ⊕ 勾选组的 `patch` 重算（与后端 `changeplan.apply_groups` 同源） */
+  candidate_patches: ChangePlanPatch[]
   groups: ChangePlanGroup[]
   unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
   /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */

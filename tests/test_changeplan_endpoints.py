@@ -159,9 +159,12 @@ def test_success_gives_a_plan_computed_from_the_rendered_manifests(env):
     assert plan["base"]["target"] == "Kin.pdf" and plan["base"]["fingerprint"].startswith("sha256:")
     (group,) = plan["groups"]
     assert group["comment_id"] == "c1" and group["label"] == "线太细了" and group["atomic"] is False
+    patch = {"gid": "ax0.line0", "prop": "linewidth", "value": 3, "identity": "id-line0"}
     assert group["changes"] == [
-        {"target_gid": "ax0.line0", "prop": "linewidth", "before": 1.5, "after": 3}
+        {"target_gid": "ax0.line0", "prop": "linewidth", "before": 1.5, "after": 3, "patch": patch}
     ]
+    assert plan["base_patches"] == B0
+    assert plan["candidate_patches"] == cp.patchspec.canonicalize(B0 + [patch])
     assert (
         group["boxes"]["before"]
         == group["boxes"]["after"]

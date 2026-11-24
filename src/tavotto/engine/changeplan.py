@@ -596,6 +596,31 @@ def effective_changes(
     return groups, unhandled
 
 
+# --------------------------------------------------------------------------- 应用用的 override 条目
+def attach_patches(groups: list[dict], candidate: list) -> list[dict]:
+    """给每条 change 补 `patch`：进入候选列表、**规范化之后**的那条 override 条目 `{gid, prop, value, identity?}`。
+
+    卡上的 `before` / `after` 是 manifest 的**展示值**，格式可能与 override 的值不同；应用时写进文档的只能是 `patch`。"""
+    canon = {(e["gid"], e["prop"]): e for e in patchspec.canonicalize(candidate)}
+    for g in groups:
+        for ch in g["changes"]:
+            ch["patch"] = dict(canon[(ch["target_gid"], ch["prop"])])
+    return groups
+
+
+def apply_groups(base: list, groups: list[dict], keys: object) -> list[dict]:
+    """B0 ⊕ 勾选的那些组的 `patch`（规范化后的全量列表）。**前端「逐组取消勾选」重算用同一个定义**。
+
+    同源对：`web/src/lib/` 里前端实现（后续 PR 加）与本函数逐条对拍；`keys` 是被勾选的组 `key` 集合。
+    不勾选任何组 = 规范化后的 B0；勾选全部 = 方案的 `candidate_patches`（`build_plan` 就是这样算的）。"""
+    chosen = set(keys) if isinstance(keys, (set, frozenset, list, tuple)) else set()
+    out = list(base)
+    for g in groups:
+        if g["key"] in chosen:
+            out.extend(ch["patch"] for ch in g["changes"])
+    return patchspec.canonicalize(out)
+
+
 # --------------------------------------------------------------------------- 方案
 def new_plan_id() -> str:
     return secrets.token_hex(12)
@@ -621,10 +646,14 @@ def build_plan(
     comments: list[dict],
     groups: list[dict],
     unhandled: list[dict],
+    base_patches: list | None = None,
     version: int = 1,
     source: str = "review",
 ) -> dict:
-    """ADR 0206 §一的方案形状（`preview` 给两张图的文件名，由端点换成 URL）。"""
+    """ADR 0206 §一的方案形状（`preview` 给两张图的文件名，由端点换成 URL）。
+
+    应用用的 override：每条 `change.patch`（规范化后的条目，见 `attach_patches`）；顶层 `base_patches` = 请求时的 B0 规范化全量，
+    `candidate_patches` = B0 ⊕ 全部（生效的）组。前端「全部应用」直接写 `candidate_patches`；逐组取消勾选时按 `apply_groups(base_patches, groups, 勾选的 key)` 重算。"""
     text_of = {c["id"]: c for c in comments}
     out_groups = []
     for i, g in enumerate(groups, 1):
@@ -640,12 +669,15 @@ def build_plan(
             }
         )
     ids = [c["id"] for c in comments]
+    base_canon = patchspec.canonicalize(base_patches or [])
     return {
         "schema": SCHEMA,
         "id": plan_id,
         "version": version,
         "source": source,
         "base": {"target": target, "fingerprint": base_fingerprint},
+        "base_patches": base_canon,
+        "candidate_patches": apply_groups(base_canon, out_groups, {g["key"] for g in out_groups}),
         "groups": out_groups,
         "unhandled": _settle_unhandled(ids, groups, unhandled),
         "preview": {"before": "before.png", "after": "after.png"},
