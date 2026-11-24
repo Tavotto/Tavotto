@@ -26,6 +26,17 @@ from tavotto.engine import agentobjects  # noqa: E402
 
 OUT = ROOT / "tests" / "golden" / "agent_object_vectors.json"
 
+
+def _force_utf8() -> None:
+    """把自己的 stdout/stderr 钉成 UTF-8（输出是中文；Windows 上被捕获时会退回系统区域编码）。
+    同 `scripts/gen_preflight_vectors.py` 的 `_force_utf8()`。"""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
 BOX = {"x": 10.0, "y": 12.0, "w": 30.0, "h": 8.0}
 SQUARE = [{"closed": True, "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}, {"p": [0, 1]}]}]
 CURVE = [
@@ -306,6 +317,7 @@ def build() -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8()
     ap = argparse.ArgumentParser()
     ap.add_argument("--write", action="store_true")
     args = ap.parse_args(argv)
