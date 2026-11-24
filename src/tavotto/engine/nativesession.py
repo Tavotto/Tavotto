@@ -1297,6 +1297,8 @@ class NativeSession:
                 payload, expected_execution_id, expected_snapshot_epoch
             )
             self._require_consistent(stem)
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, patches)
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
@@ -1324,9 +1326,13 @@ class NativeSession:
                 payload, expected_execution_id, expected_snapshot_epoch
             )
             self._require_consistent(stem)
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, patches)
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
+            if self.ggplot_target is not None:
+                self.ggplot_target.annotate_manifest(resp["manifest"])
             self._note_temporary(stem, resp)
             return resp
 

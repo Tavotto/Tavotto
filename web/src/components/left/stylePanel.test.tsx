@@ -22,6 +22,7 @@ import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
 import { useAssetStore } from '@/store/assetStore'
 import { registerOverrideStamper, useDocumentStore } from '@/store/documentStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProfileStore } from '@/store/profileStore'
 import { panelRender, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -242,7 +243,19 @@ it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggp
   })
   const fields = [face('weight', 'bold'), face('style', 'italic')]
   await seed(panel, { ...manifest(), elements: [el(mplGid, 'axis_label', fields)] })
-  const rPanel: PanelObject = { ...panel, id: 'r', fileId: 'runtime:r', fileKind: 'runtime', script: 'fuel.R' }
+  const rPanel: PanelObject = {
+    ...panel, id: 'r', fileId: 'runtime:r', fileKind: 'runtime', script: 'fuel.R',
+    source: {
+      script: 'fuel.R', entry: '__main__', stem: 'plot', captureSource: 'ggplot2',
+      sizeMm: [80, 60], fingerprint: 'source',
+    },
+  }
+  const priorSessions = useNativeSessionStore.getState().sessions
+  const session = {
+    state: 'barrier', editable: true, descriptors: [{ asset_id: rPanel.fileId }],
+  } as typeof priorSessions[string]
+  useNativeSessionStore.setState({ sessions: { r: session } })
+  onTestFinished(() => useNativeSessionStore.setState({ sessions: priorSessions }))
   const rManifest = {
     ...manifest(),
     elements: [
@@ -280,6 +293,18 @@ it('画布样式的轴标题粗体和斜体分别写进 Matplotlib 与原生 ggp
   expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'style', value: 'italic' })
   expect(rCurrent().overrides).toContainEqual({ gid: rGid, prop: 'style', value: 'italic', identity: rIdentity })
   expect(s().past.length - before).toBe(2)
+  const savedR = rCurrent()
+  seedExactRender(current(), { ...manifest(), elements: [el(mplGid, 'axis_label', fields)] } as never)
+  seedExactRender(savedR, rManifest as never)
+  await act(async () => {
+    useNativeSessionStore.setState({ sessions: { r: { ...session, state: 'ended', editable: false } } })
+  })
+  await click(toggle('weight'))
+  expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'weight', value: 'normal' })
+  expect(rCurrent()).toEqual(savedR)
+  expect(s().past.length - before).toBe(3)
+  await act(async () => { s().undo() })
+  expect(current().overrides).toContainEqual({ gid: mplGid, prop: 'weight', value: 'bold' })
   await act(async () => { s().undo() })
   expect(current().overrides).toHaveLength(1)
   expect(rCurrent().overrides).toHaveLength(1)

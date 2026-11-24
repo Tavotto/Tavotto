@@ -24,6 +24,7 @@ import { clearOverride, enterElementEdit, setOverride, setOverrides, startLayout
 import { useAssetStore } from './assetStore'
 import { registerOverrideStamper, useDocumentStore } from './documentStore'
 import { useInteractionStore } from './interactionStore'
+import { useMountedPngStore } from './mountedPngStore'
 import { useProfileStore } from './profileStore'
 import { panelRender, renderKeyOf, useRenderStore } from './renderStore'
 import {
@@ -1471,6 +1472,28 @@ describe('Codex #547 最后一轮评审（964ce71f）', () => {
     rerender('b')
     expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
     expect(ov('b', 'axes_0.title', 'fontsize')).toBe(14)
+  })
+
+  it('等屏幕上的位图挂载后补上等待中的样式修改', async () => {
+    fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 } }, pt_basis: 'page' } })])
+    await seed([panel('a', 'FigA'), panel('b', 'FigB')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    const key = renderKeyOf(panelById('b'))
+    const render = useRenderStore.getState().byKey[key]
+    const mounted = useMountedPngStore.getState()
+    const frame = { key, rev: render.rev, source: render.manifest!, url: 'blob:b', manifest: render.manifest! }
+    mounted.show('b', frame.key, frame.rev, frame.source, frame.url)
+    try {
+      await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+      expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12)
+      expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(10)
+      mounted.loaded('b', frame)
+      expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
+    } finally {
+      mounted.clear('b')
+    }
   })
 
   it('Codex #2083 P1 没渲染回来的图上用户手改过这一项：改样式记下的欠账补的时候也不覆盖手改（§十四）', async () => {

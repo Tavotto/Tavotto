@@ -363,10 +363,37 @@ export_ggplot_pdf <- function(state, edits, path) {
   invisible(NULL)
 }
 
-ggplot_manifest <- function(state, stem, edits = list()) {
+preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
+  if (!is.numeric(width) || length(width) != 1L || !is.finite(width) || width < 1) {
+    stop("The native R preview needs a positive pixel width.")
+  }
+  height <- max(1, round(width * state$frame_pt[[2L]] / state$frame_pt[[1L]]))
+  if (!is.finite(height) || width * height > 20000000) {
+    stop("The native R preview exceeds the pixel budget.")
+  }
+  table <- ggplot_table_for(state, edits)
+  before <- grDevices::dev.cur()
+  grDevices::png(path, width = width, height = height, units = "px", type = "cairo", bg = "transparent",
+                 res = width * 72 / state$frame_pt[[1L]])
+  device <- grDevices::dev.cur()
+  if (identical(device, before)) stop("The selected R could not open its PNG device.")
+  on.exit(grDevices::dev.off(which = device))
+  grid::grid.newpage()
+  grid::grid.draw(table)
+  if (with_manifest) {
+    # Measure the actual raster canvas, including any pixel rounding.
+    return(measure_ggplot_targets(state$text_targets, grDevices::dev.size("in") * 72))
+  }
+  invisible(NULL)
+}
+
+ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   face_gids <- names(Filter(function(edit) any(names(edit) %in% names(ggplot_face_options)), edits))
-  measured <- list()
-  if (length(face_gids)) {
+  if (!is.null(measured)) {
+    if (length(measured) != length(state$text_targets)) {
+      stop("The native R text could not be measured in the PNG.")
+    }
+  } else if (length(face_gids)) {
     table <- ggplot_table_for(state, edits)
     measured <- with_svg_frame(state$frame_pt, function() {
       grid::grid.newpage()

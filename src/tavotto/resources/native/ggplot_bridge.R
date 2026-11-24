@@ -111,6 +111,28 @@ main <- function() {
           list(ok = TRUE, svg = adapter$render_ggplot(captured$state, edits),
                manifest = adapter$ggplot_manifest(captured$state, stem, edits))
         },
+        preview_png = {
+          edits <- text_edits_from(request)
+          payload <- request$payload
+          paired <- isTRUE(payload$with_manifest)
+          if (paired) {
+            path <- tempfile(pattern = "preview-", tmpdir = args[[11L]], fileext = ".png")
+          } else {
+            tag <- payload$tag
+            if (!is.character(tag) || length(tag) != 1L || is.na(tag) ||
+                !grepl("^[A-Za-z0-9_-]+$", tag)) stop("Invalid native R preview tag.")
+            path <- file.path(args[[11L]], paste0(stem, "__", tag, ".png"))
+          }
+          tryCatch({
+            measured <- adapter$preview_ggplot_png(captured$state, edits, path, payload$width, paired)
+            if (paired) {
+              list(ok = TRUE, png = jsonlite::base64_enc(readBin(path, "raw", file.info(path)$size)),
+                   manifest = adapter$ggplot_manifest(captured$state, stem, edits, measured))
+            } else {
+              list(ok = TRUE, path = path)
+            }
+          }, finally = if (paired) unlink(path))
+        },
         export = {
           edits <- text_edits_from(request)
           payload <- request$payload

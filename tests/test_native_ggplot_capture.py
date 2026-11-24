@@ -1,5 +1,6 @@
 """Real R acceptance for an edit of an already built ggplot2 scene."""
 
+import base64
 import io
 import json
 import os
@@ -10,6 +11,7 @@ from pathlib import Path
 
 import pymupdf
 import pytest
+from PIL import Image
 
 from tavotto.engine import (
     desktopproc,
@@ -543,6 +545,31 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         assert top["label"] == bottom["label"] == "Engine displacement"
         assert top["identity"] != bottom["identity"]
         assert bottom["editable"][0]["value"] == "#6B6B6B"
+        face_patches = [
+            {"gid": X_BOTTOM, "prop": prop, "value": value, "identity": bottom["identity"]}
+            for prop, value in (("weight", "bold"), ("style", "italic"))
+        ]
+        plain_png = session.preview_png_snapshot(stem, [], 400)
+        edited_png = session.preview_png_snapshot(stem, face_patches, 400)
+        with (
+            Image.open(io.BytesIO(base64.b64decode(plain_png["png"]))) as plain,
+            Image.open(io.BytesIO(base64.b64decode(edited_png["png"]))) as edited,
+        ):
+            assert plain.size == edited.size == (400, 267)
+            assert plain.tobytes() != edited.tobytes()
+        assert session.preview_png(stem, face_patches, 400, "font-preview").read_bytes() == (
+            base64.b64decode(edited_png["png"])
+        )
+        axis = next(
+            element for element in edited_png["manifest"]["elements"] if element["gid"] == X_BOTTOM
+        )
+        assert axis["identity"] == bottom["identity"]
+        assert {item["prop"]: item["value"] for item in axis["editable"]} == {
+            "color": "#6B6B6B",
+            "weight": "bold",
+            "style": "italic",
+        }
+        assert session.svg_path(stem).read_text(encoding="utf-8") == baseline["svg"]
         tick_group = elements[TICKS_BOTTOM]
         assert tick_group["label"] == "下轴刻度文字"
         assert tick_group["role"] == "ticks" and not tick_group["draggable"]

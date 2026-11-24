@@ -80,25 +80,7 @@ class GgplotTarget:
             or not isinstance(raw, str)
         ):
             raise pool.WorkerError("The R capture returned no matching SVG and manifest.")
-        for element in manifest["elements"]:
-            legend_title = element.pop("legend_title", None)
-            tick_labels = element.pop("tick_labels", None)
-            if legend_title is not None or tick_labels is not None:
-                # Use the owning guide or the observed labels as part of the target identity.
-                context = [element["gid"]]
-                if legend_title is not None:
-                    context.append(legend_title)
-                context.append(tick_labels if tick_labels is not None else element["label"])
-                element["identity"] = (
-                    _CONTEXTUAL_TEXT_IDENTITY_PREFIX
-                    + hashlib.sha256(json.dumps(context).encode("utf-8")).hexdigest()[:16]
-                )
-                continue
-            label = element["label"].encode("utf-8")
-            # Keep plot-title identities already stored in saved overrides.
-            if element["gid"] != "plot.title":
-                label = element["gid"].encode("utf-8") + b"\0" + label
-            element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
+        self.annotate_manifest(manifest)
         try:
             with tempfile.TemporaryDirectory(dir=session.out_dir) as temporary:
                 svg = Path(temporary) / "figure.svg"
@@ -123,6 +105,28 @@ class GgplotTarget:
             )
             response["descriptors"] = [desc.to_payload()]
         return response
+
+    @staticmethod
+    def annotate_manifest(manifest: dict) -> None:
+        for element in manifest["elements"]:
+            legend_title = element.pop("legend_title", None)
+            tick_labels = element.pop("tick_labels", None)
+            if legend_title is not None or tick_labels is not None:
+                # Use the owning guide or the observed labels as part of the target identity.
+                context = [element["gid"]]
+                if legend_title is not None:
+                    context.append(legend_title)
+                context.append(tick_labels if tick_labels is not None else element["label"])
+                element["identity"] = (
+                    _CONTEXTUAL_TEXT_IDENTITY_PREFIX
+                    + hashlib.sha256(json.dumps(context).encode("utf-8")).hexdigest()[:16]
+                )
+                continue
+            label = element["label"].encode("utf-8")
+            # Keep plot-title identities already stored in saved overrides.
+            if element["gid"] != "plot.title":
+                label = element["gid"].encode("utf-8") + b"\0" + label
+            element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
 
     @staticmethod
     def validate_edit_targets(session, patches: list) -> None:

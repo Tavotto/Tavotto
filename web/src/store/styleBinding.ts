@@ -76,9 +76,12 @@ import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
+import { useMountedPngStore } from './mountedPngStore'
+import { nativePanelState, useNativeSessionStore } from './nativeSessionStore'
 import { useProfileStore } from './profileStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
+import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { useUiStore } from './uiStore'
 import { documentGeneration, styleLedgerKey, styleWork } from './styleWork'
@@ -105,7 +108,16 @@ const docNow = () => useDocumentStore.getState().doc
  * override 写到已经不存在的 gid 上、还把这张图记成「看过了」（Codex #547 P1）。拿不到就当
  * 「还没有 manifest」，走欠账那条路。
  */
-const manifestOf = (p: PanelObject): Manifest | null => exactPanelManifest(useRenderStore.getState(), p)
+function manifestOf(p: PanelObject): Manifest | null {
+  const renders = useRenderStore.getState()
+  if (p.fileKind === 'runtime') {
+    const profile = p.source?.captureSource === 'ggplot2' ? 'native' : useRuntimeAssetStore.getState().byId[p.fileId]?.profile
+    const sessions = useNativeSessionStore.getState().sessions
+    // 已结束或暂不可编辑的 native 图仍可以显示原来的预览，不能用它写新编辑。
+    if (nativePanelState(sessions, p.fileId, profile, !!renders.inconsistent[p.fileId])) return null
+  }
+  return exactPanelManifest(renders, p)
+}
 
 const recordOf = (id: string): ProfileRecord | undefined =>
   useProfileStore.getState().styles.find((r) => r.id === id)
@@ -1182,7 +1194,7 @@ function syncNow() {
 }
 
 /**
- * 同步器：订阅文档、样式库、渲染态、交互四处，把上面的「跟随」接到对的时刻上。
+ * 同步器：文档、样式库、实际挂载的预览和交互变化时，补跑被挡下的「跟随」。
  * 返回退订函数（App 挂一次；测试各自起停）。
  */
 export function startStyleBindingSync(): () => void {
@@ -1215,6 +1227,10 @@ export function startStyleBindingSync(): () => void {
       syncNow()
     }
   })
+  const unPng = useMountedPngStore.subscribe((s, prev) => {
+    // PNG 请求完成与像素实际挂载分开，后者才让这次测量可用于样式写入。
+    if (s.byPanel !== prev.byPanel) syncNow()
+  })
   const unInteraction = useInteractionStore.subscribe((s, prev) => {
     if (prev.kind !== 'none' && s.kind === 'none') {
       syncNow()
@@ -1227,6 +1243,7 @@ export function startStyleBindingSync(): () => void {
     unDoc()
     unProfiles()
     unRender()
+    unPng()
     unInteraction()
   }
 }
