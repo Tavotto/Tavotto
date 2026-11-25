@@ -308,7 +308,7 @@ test('画布在真 iframe 里挂起来，并把规范 / 尺寸 / 投稿前检查
   const frame = await boot(page)
   await expect(frame.getByText('lab-publication-v1 v1.0.0')).toBeVisible()
   await expect(frame.getByText('80.0 × 60.0 mm')).toBeVisible()
-  await expect(frame.getByRole('button', { name: /0 项要改 · 1 项需留意/ })).toBeVisible()
+  await expect(frame.getByRole('button', { name: /^1 项需留意$/ })).toBeVisible()
   // 引擎给的 SVG 真的进了画布（而不是一个连不上的 <img>）
   await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible()
   // 画布**不自己发起 open**：没有那次工具结果它就该等着，而不是编一张图出来

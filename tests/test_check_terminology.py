@@ -64,7 +64,9 @@ EXPECTED = {
         "errors:problems.severity.warn": "需留意",
         "errors:problems.severity.suggestion": "建议",
         "errors:problems.severity.notVerifiable": "无法核验",
-        "dialogs:mcp.pillCounts": "{{errors}} 项要改 · {{warnings}} 项需留意 · {{notVerifiable}} 项无法核验",
+        "dialogs:mcp.pillError_other": "{{count}} 项要改",
+        "dialogs:mcp.pillWarn_other": "{{count}} 项需留意",
+        "dialogs:mcp.pillNotVerifiable_other": "{{count}} 项无法核验",
         "dialogs:mcp.issuesTitle": "投稿前检查",
     },
     "en-US": {
@@ -76,7 +78,9 @@ EXPECTED = {
         "errors:problems.severity.warn": "To review",
         "errors:problems.severity.suggestion": "Suggestion",
         "errors:problems.severity.notVerifiable": "Not verifiable",
-        "dialogs:mcp.pillCounts": "{{errors}} to fix · {{warnings}} to review · {{notVerifiable}} not verifiable",
+        "dialogs:mcp.pillError_other": "{{count}} to fix",
+        "dialogs:mcp.pillWarn_other": "{{count}} to review",
+        "dialogs:mcp.pillNotVerifiable_other": "{{count}} not verifiable",
         "dialogs:mcp.issuesTitle": "Pre-submission check",
     },
 }
