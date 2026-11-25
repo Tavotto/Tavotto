@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from . import agentobjects, doclock, layoutannotate as la, vectorcheck, vectorscene
@@ -133,14 +134,23 @@ def _spec_for(o: dict, field: str) -> dict | None:
 
 
 def _point_of(o: dict, attach: str) -> tuple[float, float]:
+    """对象上的一个点**画出来**在哪：框里的位置再绕框中心顺时针转 `rotationDeg`（与导出 `plan._object_transform`
+    同一个方向）——转过的箭头按没转的框算尖端，挪完看得见的尖端会落在别处（Codex #2220）。"""
     x, y, w, h = _box(o)
     if o.get("type") == "arrow" and attach in ("from", "to"):
         p = o.get("start" if attach == "from" else "end") or {"rx": 0.0, "ry": 0.0}
-        return (x + float(p["rx"]) * w, y + float(p["ry"]) * h)
-    if attach not in vectorscene.POINTS:
+        px, py = x + float(p["rx"]) * w, y + float(p["ry"]) * h
+    elif attach in vectorscene.POINTS:
+        fx, fy = vectorscene.POINTS[attach]
+        px, py = x + fx * w, y + fy * h
+    else:
         raise EditError("bad_op", field="attach")
-    px, py = vectorscene.POINTS[attach]
-    return (x + px * w, y + py * h)
+    deg = float(o.get("rotationDeg") or 0.0)
+    if not deg:
+        return (px, py)
+    cx, cy = x + w / 2, y + h / 2
+    c, sn = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return (cx + (px - cx) * c - (py - cy) * sn, cy + (px - cx) * sn + (py - cy) * c)
 
 
 def _label(o: dict) -> str:

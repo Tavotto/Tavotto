@@ -277,3 +277,139 @@ def test_an_incomplete_object_is_reported_not_crashed(project):
     ops = [{"op": "set", "id": "t_bare0001", "set": {"sizePt": 9}}]
     plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
     assert plan["ok"] and plan["unverified"][0]["detail"]["reason"] == "incomplete_object"
+
+
+def test_moving_a_rotated_arrow_puts_its_visible_tip_on_target(project):
+    """转过 90° 的 20 mm 水平箭头：尖端对到 (50, 30)，**画出来**的尖端就在那里（Codex #2220 的例子）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    for o in doc["canvases"][0]["objects"]:
+        if o["id"] == "a_user0001":
+            o.update(
+                x=30,
+                y=5,
+                w=20,
+                h=0.0001,
+                start={"rx": 0, "ry": 0},
+                end={"rx": 1, "ry": 0},
+                rotationDeg=90,
+            )
+    atomicio.write_json(_path(project), doc, indent=1)
+    ops = [
+        {
+            "op": "move",
+            "id": "a_user0001",
+            "attach": "to",
+            "to": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [40, 10]},
+        }
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    ve.commit(
+        project,
+        "组图",
+        ops,
+        measure,
+        base_revision=plan["base_revision"],
+        echo_digest_seen=plan["echo_digest"],
+    )
+    a = _objs(project)["a_user0001"]
+    # 尖端在框里是右端中点；绕框中心顺时针转 90° → 画出来在框中心正下方 w/2 处
+    cx, cy = a["x"] + a["w"] / 2, a["y"] + a["h"] / 2
+    assert (cx, cy + a["w"] / 2) == pytest.approx((50, 30), abs=1e-3)
+
+
+def test_rotation_counts_for_the_page_check(project):
+    """有填充的椭圆 (95, 1, 20, 10) 转 90°：画出来的顶在 −4 mm，出页（Codex #2220 的例子）；不转则在页内。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    for o in doc["canvases"][0]["objects"]:
+        if o["id"] == "t_user0001":
+            o["y"] = 60  # 文字挪开：这条只看出页
+    for o in doc["canvases"][0]["objects"]:
+        if o["id"] == "s_user0001":
+            o.update(x=95, y=1, w=20, h=10, fill="#88ccee")
+    atomicio.write_json(_path(project), doc, indent=1)
+    ok = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": "s_user0001", "set": {"strokePt": 1}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert ok["ok"], ok["failed"]
+    bad = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": "s_user0001", "set": {"rotationDeg": 90}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert [f["check"] for f in bad["failed"]] == ["page"]
+
+
+def test_curved_paths_are_checked_along_the_curve_not_just_their_anchors(project):
+    """两个锚点都在页内、手柄把弧线拉出页面上沿：判出页（只看锚点会放过，Codex #2220）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    for o in doc["canvases"][0]["objects"]:
+        if o["id"] == "t_user0001":
+            o["y"] = 60  # 文字挪开：这条只看出页
+    doc["canvases"][0]["objects"].append(
+        {
+            "id": "p_curve001",
+            "type": "path",
+            "x": 95,
+            "y": 10,
+            "w": 20,
+            "h": 5,
+            "strokePt": 0.5,
+            "color": "#000000",
+            "fill": None,
+            "subpaths": [
+                {
+                    "closed": False,
+                    "nodes": [{"p": [0, 0], "out": [0.3, -4]}, {"p": [1, 0], "in": [0.7, -4]}],
+                }
+            ],
+        }
+    )
+    atomicio.write_json(_path(project), doc, indent=1)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": "p_curve001", "set": {"strokePt": 0.75}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert [f["check"] for f in plan["failed"]] == ["page"]
+
+
+def test_a_filled_path_covering_text_is_a_clash(project):
+    """有填充的闭合路径整块盖住没动的那段字：压字（只看轮廓线会放过）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    doc["canvases"][0]["objects"].append(
+        {
+            "id": "p_blob0001",
+            "type": "path",
+            "x": 90,
+            "y": 2,
+            "w": 25,
+            "h": 10,
+            "strokePt": 0.5,
+            "color": "#000000",
+            "fill": "#ffffff",
+            "subpaths": [
+                {
+                    "closed": True,
+                    "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}, {"p": [0, 1]}],
+                }
+            ],
+        }
+    )
+    atomicio.write_json(_path(project), doc, indent=1)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": "p_blob0001", "set": {"strokePt": 0.75}}],
+        measure,
+        base_revision=_base(project),
+    )
+    clash = [f for f in plan["failed"] if f["check"] == "text"]
+    assert clash and "canvas:t_user0001" in clash[0]["detail"]["with"]
