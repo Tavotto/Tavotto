@@ -90,11 +90,14 @@ export function DiffView({
   diff,
   script,
   onRevert,
+  fill = false,
 }: {
   diff: string
   script?: string
   /** 给了就在文件头放「回滚」（会话里的那张卡）；对话框与历史里不给 */
   onRevert?: () => void | Promise<unknown>
+  /** 占满父容器的可用高度、在里面滚动（弹窗里的页签用）；缺省是会话里的紧凑卡（正文最高 `max-h-52`） */
+  fill?: boolean
 }) {
   useTranslation('ai')
   const [open, setOpen] = useState(true)
@@ -107,7 +110,7 @@ export function DiffView({
 
   return (
     <>
-      <div data-ai-diff className="overflow-hidden rounded-lg border border-border bg-surface">
+      <div data-ai-diff className={cn('overflow-hidden rounded-lg border border-border bg-surface', fill && 'flex max-h-full min-h-0 flex-col')}>
         <div className="group flex h-10 items-center gap-2 pl-3 pr-2">
           <button
             type="button"
@@ -182,7 +185,7 @@ export function DiffView({
           <Check size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ok" />
         </div>
         {open && (
-          <div className="max-h-52 overflow-auto border-t border-border">
+          <div data-ai-diff-body className={cn('overflow-auto border-t border-border', fill ? 'min-h-0 flex-1' : 'max-h-52')}>
             <DiffRows rows={rows} digits={digits} />
           </div>
         )}

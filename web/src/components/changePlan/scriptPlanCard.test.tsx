@@ -183,3 +183,28 @@ it('脚本被改过的冲突卡：一句话说清没自动还原，主按钮「�
   expect(restore).toHaveBeenCalledWith('a')
   expect(q('[data-change-plan-failed-action="restore"]')!.textContent).toBe('恢复到开始前的版本')
 })
+
+it('脚本改动页签：diff 区占满页签可用高度、在里面滚动，不是会话卡那种固定的小高度（长 diff 不再只露 7 行）', async () => {
+  const body = Array.from({ length: 80 }, (_, i) => `-old line ${i}\n+new line ${i}`).join('\n')
+  const long = `--- fig.py (修改前)\n+++ fig.py (修改后)\n@@ -1,80 +1,80 @@\n${body}\n`
+  const plan = { ...PLAN, groups: [{ ...PLAN.groups[0], script: { ...PLAN.groups[0].script!, diff: long, added: 80, removed: 80 } }] }
+  await put(entry('a', { plan }), 'a')
+  await render(<ChangePlanDialog />)
+  const tab = [...document.body.querySelectorAll<HTMLElement>('[role="radio"], [role="tab"], button')].find((b) => b.textContent === '脚本改动')!
+  await act(async () => tab.click())
+  const host = q('[data-change-plan-script-diff]')!
+  // 容器是可伸展的纵向 flex 列（占满页签高度），diff 正文 flex-1 + 自身滚动；不再带 max-h-52
+  expect(host.className).toContain('flex-1')
+  expect(host.className).toContain('flex-col')
+  const bodyEl = q('[data-change-plan-script-diff] [data-ai-diff-body]')!
+  expect(bodyEl.className).toContain('overflow-auto')
+  expect(bodyEl.className).toContain('flex-1')
+  expect(bodyEl.className).not.toContain('max-h-52')
+  expect(bodyEl.querySelectorAll('[data-diff-row]').length).toBeGreaterThan(100)
+})
+
+it('会话里的 diff 卡不变：正文仍是最高 max-h-52 的紧凑卡', async () => {
+  const { DiffView } = await import('../ai/DiffView')
+  await render(<DiffView diff={'--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n'} script="fig.py" />)
+  expect(q('[data-ai-diff-body]')!.className).toContain('max-h-52')
+})

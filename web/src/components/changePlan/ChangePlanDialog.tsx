@@ -221,7 +221,7 @@ export function ChangePlanDialog() {
       }}
     >
       <div className="flex min-h-0 flex-1" data-change-plan-dialog data-change-plan-dialog-view={annotating ? 'annotate' : 'compare'} data-change-plan-version={current}>
-        <div className="flex min-w-0 flex-1 flex-col bg-canvas">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
           <div className="flex h-11 shrink-0 items-end justify-center px-5">
             {script && (
               <Segmented<'figure' | 'script'>
@@ -252,8 +252,8 @@ export function ChangePlanDialog() {
             )}
           </div>
           {script && stage === 'script' && info ? (
-            <div className="min-h-0 flex-1 overflow-auto px-5 pb-5" data-change-plan-script-diff>
-              <DiffView diff={info.diff} script={info.rel} />
+            <div className="flex min-h-0 flex-1 flex-col px-5 pb-5" data-change-plan-script-diff>
+              <DiffView diff={info.diff} script={info.rel} fill />
             </div>
           ) : (
           <CompareStage
