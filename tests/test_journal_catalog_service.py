@@ -793,7 +793,9 @@ def test_index_count_does_not_wait_for_the_write_lock(svc, monkeypatch):
     finally:
         holder.execute("ROLLBACK")
         holder.close()
-    assert timeouts == [store_mod.INDEX_COUNT_BUSY_S] and store_mod.INDEX_COUNT_BUSY_S <= 0.1
+    # 只认计数用的那个连接：同一请求里别的路径（懒初始化、限流读）也可能开普通连接（timeout=10），
+    # 顺序不固定；要求「整个请求只开一个连接」会在合并组里偶发红（2026-11-25 #2214 被带出）。
+    assert store_mod.INDEX_COUNT_BUSY_S in timeouts and store_mod.INDEX_COUNT_BUSY_S <= 0.1
     assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]  # 被跳过的那一次没有记
     call(s, "GET", "/index.signed.json")
     assert _index_hits(s) == [(T0 // DAY, "v1", 2, 0)]  # 锁放开后照常记
