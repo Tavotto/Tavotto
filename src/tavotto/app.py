@@ -12239,7 +12239,10 @@ def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, ta
         )
     if task.cancelled:
         raise ec.PlanFailure("change_plan_script_agent_failed", "cancelled")
+    # 换行风格归一到原脚本的（Windows 上文本模式写回会把整份换成 CRLF / LF）：diff、渲染、应用写入的都是归一后的字节
     new_bytes = outcome["new_bytes"]
+    if new_bytes:
+        new_bytes = ec.match_newlines(outcome["base_bytes"], new_bytes)
     if outcome["status"] != "done" or outcome["outcome"] not in ("completed", "partial"):
         precheck = outcome.get("error") == "precommit_not_verified"
         raise ec.PlanFailure(

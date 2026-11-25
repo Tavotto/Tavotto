@@ -33,7 +33,7 @@ def bridge(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_bridge, "_spawn_env", lambda cmd0, extra: dict(os.environ))
     figs = tmp_path / "figs"
     figs.mkdir()
-    (figs / "fig1.py").write_text(SCRIPT, encoding="utf-8")
+    (figs / "fig1.py").write_bytes(SCRIPT.encode())
     (figs / "data.csv").write_text("x,y\n1,2\n", encoding="utf-8")
     state = {"figs": figs, "cwd": [], "code": ""}
     # 开关关着（默认）：plan_only 也要走候选
@@ -49,8 +49,9 @@ def bridge(monkeypatch, tmp_path):
     ai_tasks.unregister(ai_figure_edit.TASK_TYPE)
 
 
-EDIT = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('\"old\"', '\"new\"'), encoding='utf-8')"
-OVERREACH_TARGET = "(proj / 'fig1.py').write_text('# AI wrote me\\n', encoding='utf-8')"
+# 二进制读写：假 CLI 不经平台换行转换（真 CLI 的文本模式写回见 tests/test_windows_regressions.py 的换行用例）
+EDIT = "p = d / 'fig1.py'; p.write_bytes(p.read_bytes().replace(b'\"old\"', b'\"new\"'))"
+OVERREACH_TARGET = "(proj / 'fig1.py').write_bytes(b'# AI wrote me\\n')"
 OVERREACH_OTHERS = "; ".join(
     f"(proj / 'x{i}.txt').write_text('x', encoding='utf-8')" for i in range(7)
 )
@@ -131,14 +132,14 @@ def test_restore_does_not_overwrite_when_the_user_edited_meanwhile(bridge, monke
     cand = ai_figure_edit.create_candidate("guard1", script, bridge["figs"], "fig1.py")
     snap = tmp_path / "snap.py"
     snap.write_bytes(cand.base_bytes)
-    script.write_text("# AI overreach\n", encoding="utf-8")
+    script.write_bytes(b"# AI overreach\n")
     real = ai_bridge.script_guard
 
     class Edit:
         """看过「被 AI 改了」之后、拿到锁之前，用户又保存了一次。"""
 
         def __init__(self, path):
-            script.write_text("# the user saved again\n", encoding="utf-8")
+            script.write_bytes(b"# the user saved again\n")
             self.inner = real(path)
 
         def __enter__(self):
@@ -170,7 +171,7 @@ def _script_post(client, **over):
 @pytest.fixture
 def sc(plan_env, monkeypatch):  # noqa: F811
     m, client, figs, worker, model, retired = plan_env
-    (figs / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    (figs / "fig.py").write_bytes(SCRIPT.encode())
     state = {"outcome": None, "render": PNG, "runs": []}
 
     def fake_run(agent, script, prompt, root, **kw):
@@ -340,7 +341,7 @@ def test_apply_backs_up_twice_replaces_atomically_and_undo_restores(sc):
 def test_apply_refuses_when_the_script_changed_since_the_plan(sc):
     m, client, figs, state = sc
     plan_id = _make(client)["plan"]["id"]
-    (figs / "fig.py").write_text(SCRIPT + "# edited by the user\n", encoding="utf-8")
+    (figs / "fig.py").write_bytes((SCRIPT + "# edited by the user\n").encode())
     resp = client.post(f"/api/change-plans/{plan_id}/apply-script")
     assert resp.status_code == 409 and resp.get_json()["code"] == "change_plan_figure_changed"
     assert (figs / "fig.py").read_text() == SCRIPT + "# edited by the user\n"
@@ -350,7 +351,7 @@ def test_undo_does_not_overwrite_a_later_edit(sc):
     m, client, figs, state = sc
     plan_id = _make(client)["plan"]["id"]
     client.post(f"/api/change-plans/{plan_id}/apply-script")
-    (figs / "fig.py").write_text(NEW + "# later\n", encoding="utf-8")
+    (figs / "fig.py").write_bytes((NEW + "# later\n").encode())
     resp = client.post(f"/api/change-plans/{plan_id}/undo-script")
     assert resp.status_code == 409 and resp.get_json()["code"] == "change_plan_script_undo_conflict"
     assert (figs / "fig.py").read_text() == NEW + "# later\n"
@@ -386,3 +387,30 @@ def test_a_figure_plan_is_not_a_script_plan(sc):
     )
     assert out.status_code == 400
     _ = time
+
+
+@pytest.mark.parametrize("base_eol, agent_eol", [(b"\n", b"\r\n"), (b"\r\n", b"\n")])
+def test_agent_rewriting_newlines_neither_inflates_the_diff_nor_changes_the_scripts_style(
+    sc, base_eol, agent_eol
+):
+    """Windows 上 Agent 文本模式写回会把整份换行换掉：方案里的候选归一回原风格，diff 只算真改的那行，应用写入的就是归一后的字节。"""
+    m, client, figs, state = sc
+    base = SCRIPT.encode().replace(b"\n", base_eol)
+    (figs / "fig.py").write_bytes(base)
+    state["outcome"] = {
+        "status": "done",
+        "error": None,
+        "outcome": "completed",
+        "unmet": [],
+        "new_bytes": NEW.encode().replace(b"\n", agent_eol),
+        "base_bytes": base,
+        "base_sha256": "",
+        "overreach": {},
+    }
+    plan = _make(client)["plan"]
+    info = plan["groups"][0]["script"]
+    assert (info["added"], info["removed"]) == (1, 1)
+    expected = NEW.encode().replace(b"\n", base_eol)
+    assert cp.script_new_bytes(m.current_ctx().id, plan["id"]) == expected
+    assert client.post(f"/api/change-plans/{plan['id']}/apply-script").status_code == 200
+    assert (figs / "fig.py").read_bytes() == expected

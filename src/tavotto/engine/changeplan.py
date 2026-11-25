@@ -911,6 +911,19 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def match_newlines(base: bytes, new: bytes) -> bytes:
+    """候选脚本的换行风格归一到原脚本的（Windows 上 Agent / CLI 常以文本模式写回，把整份 LF 写成 CRLF 或反过来：
+    diff 变成整份、应用后用户脚本的换行风格被悄悄改掉）。原文**纯 CRLF** → 候选里的 LF 一律补成 CRLF；原文**纯 LF**（有换行、没有 CRLF）→ 候选里的 CRLF 一律去成 LF；
+    原文混用 / 没有换行 → 不动（不替用户决定）。只处理 `\\r\\n` 与孤立的 `\\n`，孤立的 `\\r` 原样。"""
+    crlf = base.count(b"\r\n")
+    lone_lf = base.count(b"\n") - crlf
+    if crlf and not lone_lf:
+        return new.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    if lone_lf and not crlf:
+        return new.replace(b"\r\n", b"\n")
+    return new
+
+
 def script_diff(rel: str, old: bytes, new: bytes) -> tuple[str, int, int]:
     """统一差异（给前端的 DiffView 看）→ `(diff, 增行数, 删行数)`。差异过长只截文本、不截计数。"""
     import difflib
