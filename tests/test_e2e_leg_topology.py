@@ -77,6 +77,9 @@ PLATFORM_SKIPS = {
     # chromium + chromium-en 两个 project）执行；Windows 腿跳过。不让假 CLI 跨平台，是因为那要在 exe 形态下
     # 伪造一份 `codex.cmd` → node 脚本的 shim 解析链，造出来的就不是产品真实走的那条路了
     "ai-draft.spec.ts": 1,
+    # 修改方案卡端到端（ADR 0206）：同 ai-draft 用 PATH 里的假 `codex`（POSIX shell 脚本）、后端走源码形态的
+    # 测试入口 tests/support/e2e_change_plan_app.py（windows-exe-smoke 的产物里没有）→ 只在 posix-e2e 腿执行
+    "change-plan.spec.ts": 1,
     # 运行中会话恢复（PR4b）：同上，假 `codex` 是 POSIX shell 脚本（等放行文件才退出）→ posix-e2e 腿执行，Windows 腿跳过
     "ai-restore.spec.ts": 1,
     # 执行记录 Waterfall（ADR 0151 PR3）：同上，假 `codex` 是 POSIX shell 脚本（放行后以非零码退出）→ posix-e2e 腿执行
