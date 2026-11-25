@@ -636,3 +636,57 @@ def test_preview_includes_existing_canvas_annotations(project, tmp_path):
     green = (img[:, :, 1] > 200) & (img[:, :, 0] < 80) & (img[:, :, 2] < 80)
     magenta = (img[:, :, 0] > 200) & (img[:, :, 2] > 200) & (img[:, :, 1] < 80)
     assert green.sum() > 50 and magenta.sum() == 0
+
+
+def test_preview_does_not_paint_clipped_content_unclipped(project):
+    """剪切组里的成员导出时只露出蒙版里的部分；局部图没有那套裁剪链，就不画它们（不把裁掉的内容叠上来），如实列出（Codex #2213）。"""
+    lay = la.open_layout(project, "组图")
+    canvas = lay.doc["canvases"][0]
+    canvas["objects"] += [
+        {
+            "id": "s_member01",
+            "type": "shape",
+            "shape": "rect",
+            "x": 20,
+            "y": 22,
+            "w": 40,
+            "h": 16,
+            "color": "#ff00ff",
+            "fill": "#ff00ff",
+            "strokePt": 0.5,
+            "groupId": "g_clip0001",
+        },
+        {
+            "id": "s_mask0001",
+            "type": "shape",
+            "shape": "rect",
+            "x": 30,
+            "y": 25,
+            "w": 5,
+            "h": 5,
+            "color": "#000000",
+            "fill": "#000000",
+            "strokePt": 0.5,
+            "groupId": "g_clip0001",
+            "clipMask": True,
+            "hidden": True,
+        },
+    ]
+    new = {
+        "id": "t_new00001",
+        "type": "text",
+        "x": 18,
+        "y": 20,
+        "w": 46,
+        "h": 20,
+        "text": " ",
+        "sizePt": 8,
+        "bold": False,
+        "color": "#000000",
+        "align": "left",
+    }
+    out = la.preview(canvas, [new], {}, margin_mm=1)
+    img = _pixels(out["png"])
+    magenta = (img[:, :, 0] > 200) & (img[:, :, 2] > 200) & (img[:, :, 1] < 80)
+    assert magenta.sum() == 0
+    assert {"s_member01", "s_mask0001"} <= set(out["missing_panels"])

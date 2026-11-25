@@ -651,8 +651,23 @@ def preview(
     # 按画布上原来的层级顺序：子图（量到的）与画布上已有的可见矢量对象都画进去，新对象叠在最上面——
     # 局部图就是写入后那一块的样子（漏掉已有的标注，Agent 比对的就是另一张图，Codex #2213）
     layers, missing = [], []
-    for o in canvas.get("objects") or []:
-        if not isinstance(o, dict) or o.get("hidden"):
+    # 剪切组（ADR 0191）：组里有蒙版（`clipMask`）的，成员导出时只露出蒙版里的部分——这里没有那套裁剪链
+    # （前端 `exportPayload.toExportObjects` 的 `groupMasks` / `clipChainOf`），整个画出来会把裁掉的内容叠到新标注上，
+    # 所以蒙版与组里的成员都不画，如实列进 `missing_panels`（Codex #2213）
+    objs = [o for o in canvas.get("objects") or [] if isinstance(o, dict)]
+
+    def chain(o: dict) -> list[str]:
+        gp = o.get("groupPath")
+        return [
+            g for g in (gp if isinstance(gp, list) else [o.get("groupId")]) if isinstance(g, str)
+        ]
+
+    clipped_groups = {g for o in objs if o.get("clipMask") for g in chain(o)[-1:]}
+    for o in objs:
+        if o.get("clipMask") or set(chain(o)) & clipped_groups:
+            missing.append(o.get("id"))
+            continue
+        if o.get("hidden"):
             continue
         if o.get("type") == "panel":
             if str(o.get("id")) in panel_pdfs:
