@@ -3582,7 +3582,7 @@ function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
         >
           {/* 形状也分等级（`lib/validationText` 的 SEVERITY_ICON：要改 = 八角、需留意 = 三角），不只靠颜色 */}
           <IconSlot>
-            <OctagonAlert size={ICON_SIZE.xs} aria-hidden />
+            <OctagonAlert size={ICON_SIZE.sm} aria-hidden />
           </IconSlot>
           {parts.join("；")}
         </p>
@@ -3595,7 +3595,7 @@ function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
           className="flex items-start gap-1 text-sm text-warn-content"
         >
           <IconSlot>
-            <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+            <TriangleAlert size={ICON_SIZE.sm} aria-hidden />
           </IconSlot>
           {ex(`inspection.advisory.${a.code}`, {
             fonts: (a.fonts ?? []).join("、"),
