@@ -414,7 +414,11 @@
     "saving": "Saving…",
     "savesIntoLabel": "Save into",
     "rename": "Rename",
-    "computationalFormat": "Computational chart"
+    "computationalFormat": "Computational chart",
+    "conflictAgent_one": "The copy in the project only adds {{count}} annotation from the agent.",
+    "conflictAgent_other": "The copy in the project only adds {{count}} annotations from the agent.",
+    "mergeAgent": "Merge and save",
+    "overwriteAgent": "Overwrite"
   },
   "mcp": {
     "exportBoth": "Export PDF+PNG",

@@ -1490,15 +1490,18 @@ export default interface Resources {
     "layout": {
       "computationalFormat": "计算图表",
       "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
+      "conflictAgent_other": "项目里那份只比你多了 Agent 加的 {{count}} 个标注。",
       "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
       "empty": "项目里还没有排版",
       "load": "打开",
+      "mergeAgent": "合并并保存",
       "nameLabel": "排版名",
       "namePlaceholder": "排版名",
       "nameTaken": "已有同名排版。继续会覆盖它。",
       "openSkipped": "打开途中切换了排版或项目，没有打开 {{name}}。",
       "openTitle": "打开排版",
       "overwrite": "仍然覆盖",
+      "overwriteAgent": "直接覆盖",
       "projectSwitched": "保存途中切换了排版或项目：原来那份的同名排版已在别处改过，这次没有写入。回到那份排版再保存一次。",
       "recoverCapped": "已显示 {{n}} 份，还有更多。",
       "recoverChanged": "这份排版在你查看之后被别处改过，没有打开。列表已刷新。",
@@ -6948,6 +6951,12 @@ export default interface Resources {
     "title": "快捷键"
   },
   "workspace": {
+    "agentMerge": {
+      "action": "并进来",
+      "available_other": "Agent 往这份排版里加了 {{count}} 个标注",
+      "commit_other": "并入 Agent 加的 {{count}} 个标注",
+      "done_other": "已并入 {{count}} 个标注，保存后写进项目"
+    },
     "annotationEntry": {
       "arrow": "箭头",
       "label": "标注 · {{name}}",

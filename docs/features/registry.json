@@ -1758,6 +1758,22 @@
           "title": "铅笔 › N 铅笔拖一条正弦形的笔迹：松手得到一个光滑 path（三次贝塞尔、段数远少于采样点）；一次撤销撤回"
         }
       ]
+    },
+    {
+      "id": "layout.agent-merge",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "插件里的 Agent 往项目排版里加了标注后，桌面挂胶囊「Agent 往这份排版里加了 N 个标注 · 并进来」；⌘S 撞上冲突时识别出只多了 Agent 加的，主按钮「合并并保存」",
+        "en-US": "After the agent adds annotations to a project layout through the plugin, the desktop shows a capsule offering to merge them in; if ⌘S hits a conflict that only consists of the agent's additions, the main button is \"Merge and save\""
+      },
+      "entry": "状态栏胶囊「并进来」；⌘S 冲突对话框「合并并保存」",
+      "e2e": [
+        {
+          "spec": "agent-merge.spec.ts",
+          "title": "Agent 往项目排版里加了标注：胶囊提醒；⌘S 撞冲突时「并进来」并保存，两边都在"
+        }
+      ]
     }
   ]
 }

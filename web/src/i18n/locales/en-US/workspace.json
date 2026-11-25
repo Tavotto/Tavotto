@@ -2107,5 +2107,14 @@
       "reference_cycle": "it has circular references",
       "timeout": "it is too complex to read in time"
     }
+  },
+  "agentMerge": {
+    "commit_one": "Merge {{count}} annotation added by the agent",
+    "commit_other": "Merge {{count}} annotations added by the agent",
+    "available_one": "The agent added {{count}} annotation to this layout",
+    "available_other": "The agent added {{count}} annotations to this layout",
+    "action": "Merge in",
+    "done_one": "Merged {{count}} annotation — save to write it to the project",
+    "done_other": "Merged {{count}} annotations — save to write them to the project"
   }
 }

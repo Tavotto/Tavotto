@@ -403,7 +403,10 @@
     "saving": "正在保存…",
     "savesIntoLabel": "保存到",
     "rename": "改名",
-    "computationalFormat": "计算图表"
+    "computationalFormat": "计算图表",
+    "conflictAgent_other": "项目里那份只比你多了 Agent 加的 {{count}} 个标注。",
+    "mergeAgent": "合并并保存",
+    "overwriteAgent": "直接覆盖"
   },
   "mcp": {
     "exportBoth": "导出 PDF+PNG",
