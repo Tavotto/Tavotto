@@ -39,6 +39,7 @@ const resp = (s: string, codes: string[], extra: Record<string, unknown> = {}): 
     ...extra,
   }) as AiDataProposeResponse
 const P = (code: string | null, source: 'user' | 'data' = 'data', options = ['compare_groups', 'trend']) => ({ purpose: { code, source, options } })
+const settleAll = () => st().candidates.forEach((c) => st().thumbSettled(st().session!, c.id, true))
 const bodyOf = (n: number) => propose.mock.calls[n]![0]
 const run = async () => {
   st().select(ref('a.csv'))
@@ -114,16 +115,66 @@ describe('setConfirm("purpose")', () => {
   })
 })
 
+describe('预览：只有换目的才回到新的第一名', () => {
+  const settle = () => st().candidates.forEach((c) => st().thumbSettled(st().session!, c.id, true))
+  const previewTitle = () => st().candidates.find((c) => `${c.title_code}` && st().previewKey !== null && st().previewKey!.includes(`"${c.title_code}"`))?.title_code ?? st().candidates[0]!.title_code
+
+  it('先预览非第一名 → 改目的：预览回到重排后的第一名', async () => {
+    propose.mockResolvedValueOnce(resp('S1', ['points_mean', 'box_points', 'bar_error'], P('compare_groups', 'data', ['compare_groups', 'distribution']))).mockResolvedValueOnce(resp('S2', ['box_points', 'points_mean', 'bar_error'], P('distribution', 'user', ['compare_groups', 'distribution'])))
+    await run()
+    settle()
+    st().selectPreview('S1-2') // 预览最后一张（柱 + 误差线）
+    expect(previewTitle()).toBe('bar_error')
+    st().setConfirm('purpose', 'distribution')
+    expect(st().previewKey).toBeNull() // 立刻放回，不等响应
+    await flush()
+    settle()
+    expect(st().candidates[0]!.title_code).toBe('box_points')
+    expect(previewTitle()).toBe('box_points') // 主图是新的第一名
+  })
+
+  it('对照：改误差线类型时预览不动（跟着同一张候选走）', async () => {
+    propose.mockResolvedValueOnce(resp('S1', ['points_mean', 'box_points', 'bar_error'], P('compare_groups'))).mockResolvedValueOnce(resp('S2', ['points_mean', 'box_points', 'bar_error'], P('compare_groups')))
+    await run()
+    settle()
+    st().selectPreview('S1-2')
+    st().setConfirm('error', 'sem')
+    await flush()
+    settle()
+    expect(previewTitle()).toBe('bar_error')
+  })
+
+  it('留存还原不重置：切走时预览的那一张，切回来还是它', async () => {
+    propose.mockImplementation(async (b) => resp(`S-${(b as { table: string }).table}`, ['points_mean', 'box_points', 'bar_error'], P('compare_groups')))
+    await st().loadFiles()
+    st().select(ref('a.csv'))
+    await flush()
+    await flush()
+    settle()
+    st().selectPreview('S-a.csv-2')
+    st().select(ref('b.csv'))
+    await flush()
+    await flush()
+    settle()
+    st().select(ref('a.csv'))
+    expect(previewTitle()).toBe('bar_error')
+  })
+})
+
 describe('与 AI 自动填的答案分开', () => {
   it('换 AI 重跑清自动答案时「目的」保留；套用 AI 建议只写 x/y/group，目的不动', async () => {
     propose.mockImplementation(async () => resp(`S${propose.mock.calls.length}`, ['points_mean', 'line_band'], P('compare_groups')))
     await run()
     useDataFigureStore.setState({ answers: { y: 'z', purpose: 'trend' }, autoPicks: { y: 'z' } })
+    settleAll()
+    st().selectPreview(st().candidates[1]!.id)
+    const prevKey = st().previewKey
     const n = propose.mock.calls.length
     st().rerunForConnection()
     await flush()
     expect(propose.mock.calls.length).toBe(n + 1)
     expect(bodyOf(n).answers).toEqual({ purpose: 'trend' }) // 自动填的 y 拿掉了，用户点的目的还在
+    expect(st().previewKey).toBe(prevKey) // 换 AI 重跑不动预览
     expect(st().autoPicks).toEqual({})
   })
 

@@ -1337,7 +1337,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       if (key === 'design' && value === 'unsure' && was === undefined) return
       if (was === value && key !== 'error') return
       // 与换规范同一条路：重出候选、不动 `autoPicks`、这一轮「读懂数据」已起过就不再起（模型读的是数据，不是这两个答案）
-      reask((a) => ({ ...a, [key]: value }), {}, true)
+      // 只有换「目的」才把预览放回新的第一名（用户就是想看「按这个目的该先看哪张」）；换误差类型等别的确认项，预览仍跟着同一张候选走
+      reask((a) => ({ ...a, [key]: value }), key === 'purpose' ? { previewKey: null } : {}, true)
     },
 
     setSpecBinding: (binding) => {
