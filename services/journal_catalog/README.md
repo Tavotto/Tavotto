@@ -28,7 +28,7 @@ DATA/snapshots/<sha256>.webp                高亮短图，内容寻址
 
 | 路由 | 令牌 | 计数 | 成功响应 |
 |---|---|---|---|
-| `GET /index.signed.json` | 不需要 | 不计 | 原样字节，`application/json`，`Cache-Control: public, max-age=300` |
+| `GET /index.signed.json` | 不需要 | 不计 | 原样字节，`application/json`，`Cache-Control: public, max-age=300`，强 `ETag`（内容 sha256）；`If-None-Match` 命中回 `304`（无体）。只有索引做条件请求，刊包 / 令牌 / 快照不做（计数与令牌校验必须到源站） |
 | `POST /device` | 不需要 | 计 IP 签发数 | 200 `{"token": "..."}` |
 | `GET /journals/<journal_id>?rev=<int>` | `X-Tavotto-Device` | 首次读取计 | 刊包原样字节，`Cache-Control: private, no-store` |
 | `GET /snapshots/<sha256>.webp` | `X-Tavotto-Device` | 不计 | `image/webp`，`public, max-age=31536000, immutable` |

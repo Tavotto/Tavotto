@@ -327,7 +327,9 @@ def test_a_gap_is_kept_and_rows_without_a_group_or_x_are_not_plotted(tmp_path):
         "2",
         "4",
     ]  # 空分组行不画；x 空 / NaN 的行不画；空 y 保留（折线在此断开）
-    assert info["x_invalid"] == 2 and info["examples"] == [6, 7]
+    # 没画的行都有数：横轴不是值的 2 行、分组那一格是空的 1 行（G-055），行号一起进样例
+    assert (info["x_invalid"], info["key_empty"], info["y_invalid"]) == (2, 1, 0)
+    assert info["examples"] == [5, 6, 7]
 
 
 def test_too_many_series_is_refused_not_silently_drawn(tmp_path):
@@ -544,7 +546,10 @@ def test_the_scatter_reduction_keeps_the_four_extremes_and_an_even_thinning(tmp_
 def test_scatter_series_are_thinned_separately_and_invalid_points_are_not_counted(tmp_path):
     text = _scatter_text(3000, groups=["a", "b", "c"]) + "nan,1,a\n2,,b\n,3,c\n4,5,\n"
     _h, kept, info = _reduce(text, _rel_spec(points=40, keys=["g"]), tmp_path)
-    assert info["series"] == 3 and info["x_invalid"] == 2 and len(info["examples"]) == 2
+    assert info["series"] == 3
+    # 追加的四行各是一种：横轴 NaN、纵轴空、横轴空、分组空——都不画、都有数（G-055）
+    assert (info["x_invalid"], info["y_invalid"], info["key_empty"]) == (2, 1, 1)
+    assert len(info["examples"]) == 4
     per = {g: [r for r in kept if r[2] == g] for g in "abc"}
     assert all(0 < len(v) <= 44 for v in per.values())
     assert not any(r[2] == "" for r in kept)  # 没有分组的行不画

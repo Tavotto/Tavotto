@@ -1,5 +1,5 @@
 /**
- * 图标集的公开面：150 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
+ * 图标集的公开面：151 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
  * 表在 `docs/ux/ICONOGRAPHY.md` 第四节）。几何在 `defs.ts`，组件工厂在 `createIcon.tsx`。
  * 写法 `<X size={ICON_SIZE.md} />`，选中态 `<X filled />`。
  */
@@ -160,6 +160,7 @@ export const WavesHorizontal = createIcon('WavesHorizontal', ICON_DEFS.WavesHori
 export const Ruler = createIcon('Ruler', ICON_DEFS.Ruler)
 export const LayoutList = createIcon('LayoutList', ICON_DEFS.LayoutList)
 export const ListChecks = createIcon('ListChecks', ICON_DEFS.ListChecks)
+export const CopyCheck = createIcon('CopyCheck', ICON_DEFS.CopyCheck)
 export const Blend = createIcon('Blend', ICON_DEFS.Blend)
 export const Diamond = createIcon('Diamond', ICON_DEFS.Diamond)
 export const Hexagon = createIcon('Hexagon', ICON_DEFS.Hexagon)
@@ -181,4 +182,5 @@ export const OffsetPath = createIcon('OffsetPath', ICON_DEFS.OffsetPath)
 export const OutlineStroke = createIcon('OutlineStroke', ICON_DEFS.OutlineStroke)
 export const Braces = createIcon('Braces', ICON_DEFS.Braces)
 export const Spline = createIcon('Spline', ICON_DEFS.Spline)
+export const Pencil2 = createIcon('Pencil2', ICON_DEFS.Pencil2)
 export const PathText = createIcon('PathText', ICON_DEFS.PathText)

@@ -95,3 +95,13 @@ export function sourcesFromResponse(res: AiDataProposeResponse): GroupSource[] |
 export function unitsRowFromResponse(res: AiDataProposeResponse): boolean {
   return res.kind === 'ask' ? false : res.units_row === true
 }
+
+/**
+ * 主图此刻预览的那一张：`previewKey`（画法身份）对得上、且图已到的那张；对不上（还没选过 / 重新出候选后这个画法没了 / 图没到）= 第一张。
+ * 取不到图的（`failed`）不在候选里。没有候选 = null。
+ */
+export function previewOf(candidates: Candidate[], thumbs: Record<string, ThumbState>, previewKey: string | null): Candidate | null {
+  const visible = candidates.filter((c) => thumbs[c.id] !== 'failed')
+  const hit = previewKey ? visible.find((c) => candidateIdentity(c) === previewKey && thumbs[c.id] === 'ready') : undefined
+  return hit ?? visible[0] ?? null
+}

@@ -242,9 +242,7 @@ def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
         return data
 
     def url(value: str) -> str:
-        return _REPAIR_URL.sub(
-            lambda m: f"url({m.group(1)}#{renamed.get(m.group(2), m.group(2))}{m.group(1)})", value
-        )
+        return _repair_urls(value, renamed)
 
     def selectors(css: str) -> str | None:
         def token(m: re.Match) -> str:
@@ -284,8 +282,60 @@ def repair_worker_ids(data: bytes, *, budget: SVGBudget | None = None) -> bytes:
     return ET.tostring(root, encoding="utf-8")
 
 
-#: `url(#…)` with an arbitrary (possibly non-ASCII / spaced) fragment, for the worker id repair only
-_REPAIR_URL = re.compile(r"url\(\s*(['\"]?)#([^'\")]+?)\1\s*\)", re.I)
+#: where a `url(` may start; the rest of the reference is scanned by hand in `_repair_urls`
+_REPAIR_URL_START = re.compile(r"url\(", re.I)
+_REPAIR_URL_STOP = re.compile(r"['\")]")
+_REPAIR_URL_SPACE = re.compile(r"\s*")
+
+
+def _repair_urls(value: str, renamed: dict[str, str]) -> str:
+    r"""Rewrite `url(#id)` / `url('#id')` / `url("#id")` fragments through `renamed`, in linear time.
+
+    Same matches and output as `re.sub(r"url\(\s*(['\"]?)#([^'\")]+?)\1\s*\)", …, re.I)`
+    (pinned by a differential test), without its quadratic rescans: every failed start rescans
+    to the next quote / `)`, so `url(#a` repeated N times without a `)` cost O(N²) (#2119).
+    The fragment never contains a quote or `)`, so it always ends at the next such stop char;
+    that position is looked up once and reused by every later start that reaches it. (A quoted
+    start's stop is always its own closing quote or the next start's opening quote, so the
+    whitespace after it is scanned once per stop too.)
+    """
+    out: list[str] = []
+    last = 0
+    pos = 0
+    stop = -1  # first quote / `)` at or after the current fragment start; len(value) = none
+    n = len(value)
+    while (m := _REPAIR_URL_START.search(value, pos)) is not None:
+        start = m.start()
+        i = _REPAIR_URL_SPACE.match(value, m.end()).end()
+        quote = value[i] if i < n and value[i] in "'\"" else ""
+        i += len(quote)
+        end = -1
+        if i < n and value[i] == "#":
+            frag = i + 1
+            if stop < frag:
+                found = _REPAIR_URL_STOP.search(value, frag)
+                stop = found.start() if found else n
+            if stop > frag and stop < n:
+                if quote:
+                    if value[stop] == quote:
+                        j = _REPAIR_URL_SPACE.match(value, stop + 1).end()
+                        if j < n and value[j] == ")":
+                            name, end = value[frag:stop], j + 1
+                elif value[stop] == ")":
+                    # lazy `+?` then `\s*\)`: the name drops its trailing whitespace, keeps ≥ 1 char
+                    name = value[frag:stop].rstrip()
+                    name = name or value[frag]
+                    end = stop + 1
+        if end < 0:
+            pos = start + 1
+            continue
+        out.append(value[last:start])
+        out.append(f"url({quote}#{renamed.get(name, name)}{quote})")
+        last = pos = end
+    out.append(value[last:])
+    return "".join(out)
+
+
 #: an ID token inside a selector: ends at a combinator, class / pseudo / attribute, list or rule
 _REPAIR_SELECTOR_ID = re.compile(r"#([^\s,>+~.#:\[\]*{}()]+)")
 

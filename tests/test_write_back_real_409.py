@@ -173,6 +173,35 @@ def test_verify_geometry_drift_in_the_hot_session_is_409_replay_divergence(proje
     _assert_untouched(m, figs, before)
 
 
+def test_replay_divergence_logs_which_elements_diverged(project, caplog):
+    """几何分歧要进日志：409 让用户「报告给开发者」，诊断包里却查不到是哪个元素分岔（反馈包 WY3Y）。"""
+    m, client, figs = project
+    _render(client, [])
+    worker = pool.get("fig1.py", str(figs), "main")
+    resp = worker.request(
+        {
+            "cmd": "override",
+            "stem": "Fig1",
+            "patches": [{"gid": "axes_0", "prop": "position", "value": [0.30, 0.30, 0.40, 0.40]}],
+        }
+    )
+    assert resp.get("ok") and not resp.get("warnings"), resp
+
+    with caplog.at_level("WARNING", logger="tavotto"):
+        r = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert r.status_code == 409 and r.get_json()["code"] == "replay_divergence"
+    lines = [
+        rec
+        for rec in caplog.records
+        if rec.name.startswith("tavotto") and rec.msg.startswith("写回几何门发现分歧")
+    ]
+    assert lines, [rec.getMessage() for rec in caplog.records]
+    assert len(lines) <= m.REPLAY_DIFF_LOG_LIMIT
+    text = "\n".join(rec.getMessage() for rec in lines)
+    # 挪位（根因）排在刻度文字增减（连带）前面，前几行就看得到
+    assert " axes_0 bbox " in lines[0].getMessage(), text
+
+
 @pytest.mark.parametrize("locked_index", [0, 1], ids=["first-target", "second-target"])
 def test_commit_lock_is_409_file_locked_and_the_other_target_is_rolled_back(
     project, monkeypatch, locked_index

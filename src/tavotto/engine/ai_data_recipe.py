@@ -957,13 +957,15 @@ def _stack_problems(recipe: FigureRecipe, s: adf.DataSummary) -> list[Problem]:
 
 # --------------------------------------------------------------------------- 取值（需要带行数据的 DataSummary）
 class _Values:
-    def __init__(self, s: adf.DataSummary):
+    def __init__(self, s: adf.DataSummary, rows: list | None = None):
         self.s = s
+        #: 参与判定的行：缺省是整张表；`drawn_rows` 给出的是「这份配方真会画的行」
+        self.rows = s.rows if rows is None else rows
         self.idx = {c: i for i, c in enumerate(s.columns)}
         self._cache: dict[str, list] = {}
 
     def cells(self, col: str) -> list[str]:
-        return [r[self.idx[col]].strip() for r in self.s.rows]
+        return [r[self.idx[col]].strip() for r in self.rows]
 
     def nums(self, col: str) -> list[float | None]:
         """数值（日期折成天数）；缺失与非数 = None。"""
@@ -981,7 +983,22 @@ class _Values:
 
     def keys(self, cols: list[str | None]) -> list[tuple]:
         cs = [self.cells(c) for c in cols if c]
-        return list(zip(*cs)) if cs else [()] * len(self.s.rows)
+        return list(zip(*cs)) if cs else [()] * len(self.rows)
+
+
+def drawn_rows(r: FigureRecipe, s: adf.DataSummary) -> list:
+    """这份配方真会画的行：类别（比较类的横轴）/ 分组 / 分面 / 个体（趋势）那一格是空的行，脚本不画（归不到任何一组里，
+    `ai_data_propose.unplotted_rows` 会如实计数）。取值规则只看这些行——否则一格空的分组会被当成「只有一个点的一组」，
+    把整张趋势图 / 箱线图判成画不了。没有这样的行时原样返回 `s.rows`。"""
+    idx = {c: i for i, c in enumerate(s.columns)}
+    cols = [r.x if r.family == "comparison" else None, r.group, r.facet]
+    if r.family == "trend":
+        cols.append(r.unit)
+    at = [idx[c] for c in cols if c and c in idx]
+    if not at:
+        return s.rows
+    kept = [row for row in s.rows if all(row[i].strip() for i in at)]
+    return s.rows if len(kept) == len(s.rows) else kept
 
 
 def _cat(s: adf.DataSummary, col: str | None) -> str | None:
@@ -1436,7 +1453,11 @@ def validate_recipe(
             p.code.startswith("cell_") for p in P
         ):
             values = with_cells_applied(values, recipe)
-        P.extend(_value_problems(recipe, spec, s, _Values(values), unit_confirmed))
+        P.extend(
+            _value_problems(
+                recipe, spec, s, _Values(values, drawn_rows(recipe, values)), unit_confirmed
+            )
+        )
     return P
 
 
@@ -1989,12 +2010,24 @@ def _resolve_roles(
     return res
 
 
+def error_columns(s: adf.DataSummary) -> dict[str, str]:
+    """名字在说「我是误差量」的数值列 → 哪一种（`adf.error_kind`）。规则不把它们当测量值 / 横轴去画（sciviz G-053：误差量不是观测）。"""
+    out: dict[str, str] = {}
+    for c in s.columns:
+        if numeric_like(s.per_column[c]):
+            kind = adf.error_kind(c, [o for o in s.columns if o != c])
+            if kind is not None:
+                out[c] = kind
+    return out
+
+
 def _resolve_roles_raw(
     entry: adf.TableEntry, hint: str | None, picks: dict
 ) -> _Roles | NeedsChoice | str:
     """列角色的挑选规则（**一处文字定义，下面是实现**；保守：能由结构或用户点名唯一确定就确定，有歧义就问，绝不猜）。
 
-    记号：`ids` = `id_like` 列（**永不**当 y / x / 分组，只可能经用户确认成 `unit`）；`nums` = 数值列（`numeric_like`：全是数，或夹着不超过 20% 文字格的，去掉 ids；夹着的文字格那行不画并报告）；
+    记号：`ids` = `id_like` 列（**永不**当 y / x / 分组，只可能经用户确认成 `unit`）；`nums` = 数值列（`numeric_like`：全是数，或夹着不超过 20% 文字格的，去掉 ids，
+    再去掉名字在说「我是误差量」的列（`error_columns`：`sd` / `sem` / `mass_se` 一类——误差量不是测量值；用户自己点了它（`picks` 或 `hint` 里点名）、或去掉后一个数值列都不剩时不去）；夹着的文字格那行不画并报告）；
     `dates` = 日期列；`cats` = `groups` 里的列（去掉 ids，列顺序）。`hint` 里按词点名的列（`ai_data_figure._mentioned`，
     不做语义猜测）和选择题的回答 `picks`（键 `y` / `group` / `x`，值是列名或 `unsure`）都算「指定」。
 
@@ -2015,6 +2048,20 @@ def _resolve_roles_raw(
     cols = s.columns
     ids = set(s.id_like)
     nums = [c for c in cols if numeric_like(s.per_column[c]) and c not in ids]
+    # 误差列（名字是 `sd` / `sem` / `mass_se` 一类）不是测量值：不进纵轴 / 横轴的候选——除非用户自己点了它（`picks`），
+    # 或者去掉之后一个数值列都不剩（那就当普通数值列，别让表画不了）
+    py = picks.get("y")
+    asked = {
+        v for v in [*(py if isinstance(py, list) else [py]), picks.get("x")] if isinstance(v, str)
+    }
+    # 用户在话里按词点名的列（`hint`）同样算「自己点了」：`plot stderr` 要画的就是 stderr 那一列
+    asked |= set(adf._mentioned(hint, cols)) if hint else set()
+    nums_all = list(nums)  # 下拉里仍然列得出误差列：用户自己点它是允许的
+    errs = {c for c in error_columns(s) if c not in asked}
+    if errs and any(c not in errs for c in nums):
+        nums = [c for c in nums if c not in errs]
+    else:
+        errs = set()
     dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
     cats = [c for c in cols if c in s.groups and c not in ids]
     cats_all = list(cats)
@@ -2107,9 +2154,9 @@ def _resolve_roles_raw(
                 return NeedsChoice("pick_x", _col_options("x", xs, s), _unsure("x"))
     # 下拉里的分组：文字分组列，再加上客观上能当整数编码分组的列（不含此刻的测量值）。没有模型时默认选择不变，只是多一个可选项
     options = {
-        "y": list(nums),
+        "y": nums_all,
         "group": [c for c in cols if c in cats_all or (c in s.numcat and c not in ys)],
-        "x": list(xs),
+        "x": [c for c in cols if c in xs or (c in errs and c not in ys)],
     }
     return _Roles(
         tuple(ys),
@@ -2201,7 +2248,19 @@ def default_candidates(
             eff = Confirmed()
         else:
             return NeedsChoice("pick_unit", _col_options("unit", ids, s), _unsure("unit"))
-    can_trend = roles.x_ord is not None
+    # G-018：折线只用于有序横轴。读懂数据判过「规则选作横轴的这一列是测量值」（`picks.x_measure` = 那一列的列名）时，这一列与纵轴是两个独立测量，
+    # 趋势类不出、关系类（散点）排第一。事实绑在列名上：用户换了横轴（`roles.x_ord` 不是它）就不生效；没带这个键 = 与从前逐字相同。
+    # 没有关系图可换（x 不是数值 / 关系图资格不过）或纵轴是多列（散点画不全这几列）就不拿掉趋势类——宁可保留从前的结果，也不出零备选、不丢列
+    x_independent = (
+        roles.x_ord is not None
+        and roles.x_numeric
+        and isinstance(picks.get("x_measure"), str)
+        and picks["x_measure"] == roles.x_ord
+        and not roles.stack
+        # 多列纵轴只有趋势类画得全（每列一条线）：拿掉趋势类会把选好的列悄悄丢成一列，所以这时不生效、保持从前的结果
+        and len(roles.ys) == 1
+    )
+    can_trend = roles.x_ord is not None and not x_independent
     repeats = s.repeats and not (promoted and set(s.id_like) <= set(promoted))
     if eff.design is None and repeats and can_trend and picks.get("design") != "unsure":
         return NeedsChoice(
@@ -2251,7 +2310,11 @@ def default_candidates(
         for e in eligible(view_entry, eff, values=view_values, numcat=roles.numcat)
         if e.status in ("ok", "partial") and e.renderable
     }
+    x_independent = x_independent and "relationship" in ok_families
     groups: list[list[tuple[str, FigureRecipe]]] = []
+    dropped: list[Dropped] = []
+    if x_independent and "trend" in ok_families:
+        dropped.append(Dropped(0, (Problem("roles_invalid", "x", "x_is_measure"),)))
 
     def grp(*alts: tuple[str, FigureRecipe]) -> None:
         groups.append(list(alts))
@@ -2261,7 +2324,7 @@ def default_candidates(
     gx = {"group": cats[0], **({"facet": cats[1]} if len(cats) == 2 else {})} if cats else {}
     if roles.x_ord is not None:
         x = roles.x_ord
-        if "trend" in ok_families:
+        if "trend" in ok_families and not x_independent:
             alts = []
             if unit:
                 alts.append(
@@ -2339,6 +2402,22 @@ def default_candidates(
                     ),
                 ),
             )
+            if x_independent:
+                # 趋势类拿掉之后关系图是主图：不带拟合线的散点单独再给一张（同一组里它只是拟合线不合格时的退路），备选才不少于两个
+                grp(
+                    (
+                        "scatter",
+                        _recipe(
+                            entry,
+                            "scatter",
+                            "relationship",
+                            [("points", "none", "main")],
+                            [y],
+                            x=x,
+                            **({"group": cats[0]} if cats else {}),
+                        ),
+                    )
+                )
     if cats and "comparison" in ok_families:
         xc = cats[0]
         g2 = cats[1] if len(cats) == 2 else None
@@ -2419,7 +2498,6 @@ def default_candidates(
             roles=role_info,
         )
     picked: list[tuple[str, FigureRecipe]] = []
-    dropped: list[Dropped] = []
     y_filtered = False
     for gi, alts in enumerate(groups):
         for code, rec in alts:
@@ -2455,6 +2533,8 @@ def default_candidates(
                 problems = [Problem("roles_invalid", "y", "multi_y_not_drawn")]
                 y_filtered = True
             if not problems:
+                if x_independent and any(c == code for c, _ in picked):
+                    break  # 退路与前一组落到同一个画法：不重复出（不记 dropped）
                 picked.append((code, rec))
                 break
             dropped.append(Dropped(gi, tuple(problems)))

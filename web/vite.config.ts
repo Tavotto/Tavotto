@@ -19,6 +19,10 @@ export default defineConfig({
       '@journals': fileURLToPath(
         new URL('../src/tavotto/profiles/journals.json', import.meta.url),
       ),
+      // Agent 新增对象的字段表（ADR 0208 §五）：唯一出处在 Python 包里，后端 engine/agentobjects.py 读同一份
+      '@agentObjects': fileURLToPath(
+        new URL('../src/tavotto/profiles/agent_objects.json', import.meta.url),
+      ),
       // 画布文字的字形覆盖表（生成物，唯一产生者
       // `scripts/gen_canvas_coverage.py`）。浏览器里没有字体引擎，「这个字
       // 导出后是不是方框」只能靠它回答——同 `@profiles`，整份 import 进
