@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { KeyRound, Sparkles } from '@/components/ui/icons'
+import { KeyHorizontal, UserRound } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import type { AiAgentCaps, AiAgentId, AiConnection, AiVendor, AiVendorMethod } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -100,7 +100,8 @@ const PICK_CLASS = 'focus-visible:focus-ring rounded-md outline-none transition-
 
 /** 一张方式卡的内容（图标 + 方式名 + 一句说明 + 右侧槽），壳由调用方决定是可点的 button 还是容器 */
 function MethodCardBody({ method, caption, right }: { method: AiVendorMethod; caption: string; right: ReactNode }) {
-  const Icon = method.kind === 'key' ? KeyRound : Sparkles
+  // 填 Key = 钥匙；订阅 / 账号 / ChatGPT 登录 = 人像（同一家族：开放线条、共用圆形母题）
+  const Icon = method.kind === 'key' ? KeyHorizontal : UserRound
   return (
     <>
       {/* 无框 16px，放在与厂商 logo 同宽（24px）的一列里居中：上下几行的图标、名字各自对齐 */}
