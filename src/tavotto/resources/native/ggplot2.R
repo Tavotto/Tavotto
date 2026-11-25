@@ -73,7 +73,8 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL, group_lab
                  style = if (font %in% c(3L, 4L)) "italic" else "normal")
   }
   edit_path <- if (is.null(title_child)) text$name else grid::gPath(table$name, text$name)
-  list(slots = slots, parent_path = paste(c(path, table$name), collapse = "::"),
+  list(slots = slots, title_child = title_child,
+       parent_path = paste(c(path, table$name), collapse = "::"),
        child = text$name, edit_path = edit_path,
        label = if (is.null(group_label)) label else group_label,
        tick_labels = if (!is.null(group_label)) as.list(as.character(label)) else NULL,
@@ -142,6 +143,214 @@ ggplot_colourbar_titles <- function(built) {
     identical(class(guide)[[1L]], "GuideColourbar")
   }, logical(1L))
   titles[colourbars & nzchar(titles) & !duplicated(titles) & !duplicated(titles, fromLast = TRUE)]
+}
+
+# Formatting uses the trained guide values, never the rounded screen labels
+# as input. Only expose it when the rendered labels prove a one-to-one match
+# with plain numerical values. Custom labels, dates and transformed values
+# that differ from the guide's values keep their script formatting.
+ggplot_numeric_key <- function(params, target, values = params$key$.value) {
+  key <- params$key
+  if (!is.data.frame(key) || !is.numeric(values) || !is.character(key$.label) ||
+      any(!is.finite(values)) || anyNA(key$.label) ||
+      !identical(as.list(key$.label), target$tick_labels)) return(NULL)
+  labels <- sub("^\u2212", "-", key$.label)
+  number <- "^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$"
+  if (!all(grepl(number, labels))) return(NULL)
+  numeric_labels <- as.numeric(labels)
+  device_rounding <- 32 * .Machine$double.eps * max(abs(values))
+  if (length(numeric_labels) == length(values) && all(is.finite(numeric_labels)) &&
+      all(abs(numeric_labels - values) <=
+          device_rounding + 1e-12 * pmax(abs(numeric_labels), abs(values)))) {
+    return(numeric_labels)
+  }
+  NULL
+}
+
+ggplot_colourbar_key_values <- function(params) {
+  # GuideColourbar stores tick positions in bar coordinates after training.
+  # Recover scale values from the same endpoints. The caller also checks the
+  # result against every actually drawn label before exposing the editor.
+  range <- params$decor$value
+  if (!is.numeric(range) || length(range) < 2L || !all(is.finite(range)) ||
+      !is.numeric(params$key$.value) || length(params$display) != 1L ||
+      !params$display %in% c("gradient", "raster", "rectangles")) {
+    return(NULL)
+  }
+  inset <- 0
+  if (params$display != "gradient") {
+    if (!is_positive_ggplot_number(params$nbin) || params$nbin <= 1) return(NULL)
+    inset <- 0.5 / params$nbin
+  }
+  endpoints <- range[c(1L, length(range))]
+  endpoints[[1L]] + (params$key$.value - inset) / (1 - 2 * inset) * diff(endpoints)
+}
+
+ggplot_axis_spacing <- function(built, panel, params, values) {
+  axis <- params$aesthetic
+  if (!identical(class(built$layout$coord)[[1L]], "CoordCartesian") ||
+      length(axis) != 1L || !axis %in% c("x", "y") || length(values) < 2L ||
+      isTRUE(params$minor.ticks) || !identical(as.numeric(params$n.dodge), 1)) return(NULL)
+  view <- panel[[axis]]
+  scale <- view$scale
+  if (!identical(class(view)[[1L]], "ViewScale") || isTRUE(view$scale_is_discrete) ||
+      !identical(class(scale)[[1L]], "ScaleContinuousPosition") ||
+      !identical(scale$get_transformation()$name, "identity") ||
+      !inherits(scale$secondary.axis, "waiver") || !inherits(scale$labels, "waiver") ||
+      (!is.null(scale$minor_breaks) && !inherits(scale$minor_breaks, "waiver"))) return(NULL)
+  cross <- if (axis == "x") "y" else "x"
+  if (!setequal(names(params$key), c(axis, cross, ".label", ".value")) ||
+      length(unique(params$key[[cross]])) != 1L ||
+      !isTRUE(all.equal(params$key[[axis]], view$rescale(params$key$.value), tolerance = 1e-12))) {
+    return(NULL)
+  }
+  range <- sort(view$continuous_range)
+  step <- stats::median(diff(sort(values)))
+  if (length(range) != 2L || !all(is.finite(range)) || !is_positive_ggplot_number(diff(range)) ||
+      !is_positive_ggplot_number(step)) return(NULL)
+  list(axis = axis, range = range, step = step)
+}
+
+ggplot_tick_targets <- function(built, targets, colourbar_titles) {
+  result <- list()
+  for (gid in names(targets)) {
+    target <- targets[[gid]]
+    if (is.null(target$tick_labels)) next
+    if (target$role == "ticks" && length(built$layout$panel_params) == 1L) {
+      position <- strsplit(gid, ".", fixed = TRUE)[[1L]][[3L]]
+      panel <- built$layout$panel_params[[1L]]
+      guides <- panel$guides
+      matches <- which(vapply(guides$params, function(p) identical(p$position, position), logical(1L)))
+      if (length(matches) == 1L && identical(class(guides$guides[[matches]])[[1L]], "GuideAxis")) {
+        params <- guides$params[[matches]]
+        values <- ggplot_numeric_key(params, target)
+        if (!is.null(values)) {
+          result[[gid]] <- list(kind = "axis", index = matches, values = values,
+                                spacing = ggplot_axis_spacing(built, panel, params, values))
+        }
+      }
+    } else if (target$role == "legend_text" && target$legend_title %in% colourbar_titles) {
+      index <- match(target$legend_title, unname(colourbar_titles))
+      key <- names(colourbar_titles)[[index]]
+      params <- built$plot$guides$params[[key]]
+      values <- ggplot_numeric_key(params, target, ggplot_colourbar_key_values(params))
+      if (!is.null(values)) {
+        result[[gid]] <- list(kind = "colourbar", index = key, values = values)
+      }
+    }
+  }
+  result
+}
+
+ggplot_number_formats <- c("auto", "%.0f", "%.1f", "%.2f", "%.3f", "%g", "sci")
+ggplot_tick_props <- c("format", "major_mode", "major_step")
+
+ggplot_format_guide <- function(params, format, values) {
+  if (!is.character(format) || length(format) != 1L || !format %in% ggplot_number_formats) {
+    stop("Invalid native R tick number format.")
+  }
+  if (format != "auto") {
+    params$key$.label <- if (format == "sci") {
+      sprintf("%.2e", values)
+    } else {
+      sprintf(format, values)
+    }
+  }
+  params
+}
+
+ggplot_watch_layer <- function(layer, index, captured) {
+  force(layer)
+  force(index)
+  ggplot2::ggproto(NULL, layer, draw_geom = function(data, layout) {
+    grobs <- layer$draw_geom(data, layout)
+    captured$grobs[[index]] <- grobs
+    grobs
+  })
+}
+
+ggplot_frozen_layer <- function(layer, grobs) {
+  force(grobs)
+  ggplot2::ggproto(NULL, layer, draw_geom = function(data, layout) grobs)
+}
+
+ggplot_clone <- function(parent, ...) {
+  force(parent)
+  ggplot2::ggproto(NULL, parent, ...)
+}
+
+ggplot_uniform_breaks <- function(range, step) {
+  # Use the same zero-based origin as a standard multiple locator. Limit the
+  # generated break count before allocating anything on the rendering path.
+  bounds <- range / step
+  rounding <- 4 * .Machine$double.eps * abs(bounds)
+  first <- ceiling(bounds[[1L]] - rounding[[1L]])
+  last <- floor(bounds[[2L]] + rounding[[2L]])
+  count <- last - first + 1
+  if (!is.finite(count) || count < 1 || count > 100 ||
+      any(abs(c(first, last)) >= 2^52)) {
+    stop("The native R major tick interval must produce between 1 and 100 visible ticks.")
+  }
+  seq.int(first, last) * step
+}
+
+ggplot_edit_axis_guide <- function(panel, params, target, edit) {
+  values <- target$values
+  format <- if (is.null(edit$format)) "auto" else edit$format
+  if (any(c("major_mode", "major_step") %in% names(edit))) {
+    spacing <- target$spacing
+    if (is.null(spacing)) stop("The requested native R tick spacing is unavailable.")
+    mode <- if (is.null(edit$major_mode)) "step" else edit$major_mode
+    step <- if (is.null(edit$major_step)) spacing$step else edit$major_step
+    if (!is.character(mode) || length(mode) != 1L || !mode %in% c("auto", "step") ||
+        !is_positive_ggplot_number(step)) stop("Invalid native R tick spacing.")
+    if (mode == "step") {
+      values <- ggplot_uniform_breaks(spacing$range, step)
+      view <- panel[[spacing$axis]]
+      minor <- if (length(values) >= 2L) {
+        view$scale$get_breaks_minor(b = values, limits = spacing$range)
+      }
+      panel[[spacing$axis]] <- ggplot_clone(view, breaks = values, minor_breaks = minor)
+      key <- params$key[rep(1L, length(values)), , drop = FALSE]
+      key[[spacing$axis]] <- view$rescale(values)
+      key$.value <- values
+      key$.label <- view$scale$get_labels(values)
+      params$key <- key
+    }
+  }
+  list(panel = panel, params = ggplot_format_guide(params, format, values))
+}
+
+ggplot_tick_table <- function(state, edits) {
+  built <- state$built
+  plot <- built$plot
+  layout <- ggplot_clone(built$layout)
+  panels <- layout$panel_params
+  guide_params <- plot$guides$params
+  if (length(panels) == 1L) axis_params <- panels[[1L]]$guides$params
+  for (gid in names(edits)) {
+    target <- state$tick_targets[[gid]]
+    if (is.null(target)) stop("The requested native R tick edit is unavailable.")
+    index <- target$index
+    edit <- edits[[gid]]
+    if (target$kind == "axis") {
+      edited <- ggplot_edit_axis_guide(panels[[1L]], axis_params[[index]], target, edit)
+      panels[[1L]] <- edited$panel
+      axis_params[[index]] <- edited$params
+    } else {
+      if (!identical(names(edit), "format")) stop("The requested native R colourbar edit is unavailable.")
+      guide_params[[index]] <- ggplot_format_guide(guide_params[[index]], edit$format, target$values)
+    }
+  }
+  if (length(panels) == 1L) {
+    panels[[1L]]$guides <- ggplot_clone(panels[[1L]]$guides, params = axis_params)
+    layout$panel_params <- panels
+  }
+  plot$guides <- ggplot_clone(plot$guides, params = guide_params)
+  plot$layers <- Map(ggplot_frozen_layer, plot$layers, state$layer_grobs)
+  built$layout <- layout
+  built$plot <- plot
+  ggplot2::ggplot_gtable(built)
 }
 
 ggplot_colourbar_ticks <- function(table, slots, guide, prefix, title) {
@@ -318,14 +527,144 @@ measure_ggplot_targets <- function(targets, frame_pt) {
   targets
 }
 
+ggplot_line_types <- c("-" = "solid", "--" = "dashed", ":" = "dotted", "-." = "dotdash")
+ggplot_lwd_pt <- 72 / 96
+
+ggplot_line_targets <- function(built, table, layer_grobs) {
+  slots <- which(table$layout$name == "panel")
+  if (length(slots) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
+    return(list())
+  }
+  slot <- slots[[1L]]
+  panel <- table$grobs[[slot]]
+  guides <- built$plot$guides$aesthetics
+  targets <- list()
+  for (index in seq_along(layer_grobs)) {
+    layer <- built$plot$layers[[index]]
+    kind <- class(layer$geom)[[1L]]
+    if (!kind %in% c("GeomLine", "GeomPath")) next
+    mapping <- setdiff(names(layer$computed_mapping), names(layer$aes_params))
+    if (length(intersect(mapping, c("size", "linewidth", "linetype")))) next
+    # Changing the stroke must not leave a key displaying the old mapping.
+    if (!identical(layer$show.legend, FALSE) &&
+        (!identical(layer$show.legend, NA) ||
+         length(intersect(guides, mapping)))) next
+    if (length(layer_grobs[[index]]) != 1L) next
+    line <- layer_grobs[[index]][[1L]]
+    if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
+        length(line$x) < 2L || length(line$x) > 4096L ||
+        length(line$id.lengths) > 1L || length(unique(line$id)) > 1L ||
+        any(!is.finite(as.numeric(line$x))) || any(!is.finite(as.numeric(line$y)))) next
+    draw_slot <- which(panel$childrenOrder == line$name)
+    if (length(draw_slot) != 1L || !is_positive_ggplot_number(line$gp$lwd)) next
+    rgba <- tryCatch(grDevices::col2rgb(line$gp$col, alpha = TRUE), error = function(error) NULL)
+    if (is.null(rgba) || ncol(rgba) != 1L || rgba[4L] == 0L) next
+    lty <- line$gp$lty
+    if (is.numeric(lty) && length(lty) == 1L && lty %in% 1:4) {
+      lty <- unname(ggplot_line_types[[lty]])
+    }
+    style <- names(ggplot_line_types)[match(lty, ggplot_line_types, nomatch = 0L)]
+    if (length(style) != 1L) next
+    gid <- paste0("layer.", index, ".line")
+    context <- rlang::hash(list(kind, built$data[[index]], line$gp))
+    targets[[gid]] <- list(
+      slot = slot, child = line$name, index = index, context = context,
+      clip = identical(built$layout$coord$clip, "on"),
+      width = line$gp$lwd * ggplot_lwd_pt, style = style,
+      color = if (!"colour" %in% mapping) grDevices::rgb(rgba[1L], rgba[2L], rgba[3L], maxColorValue = 255),
+      alpha = rgba[4L]
+    )
+  }
+  contexts <- vapply(targets, function(target) target$context, character(1L))
+  targets[!(duplicated(contexts) | duplicated(contexts, fromLast = TRUE))]
+}
+
+measure_ggplot_lines <- function(table, targets, frame_pt) {
+  if (!length(targets)) return(targets)
+  drawn <- tryCatch({
+    grid::grid.force()
+    grid::grid.ls(viewports = TRUE, print = FALSE)
+  }, error = function(error) NULL)
+  if (is.null(drawn)) return(list())
+  result <- list()
+  frame <- frame_pt / 72
+  for (gid in names(targets)) {
+    target <- targets[[gid]]
+    path <- c(table$name, ggplot_cell_name(table$layout[target$slot, ]),
+              table$grobs[[target$slot]]$name)
+    row <- which(drawn$name == target$child & drawn$gPath == paste(path, collapse = "::"))
+    if (length(row) != 1L) next
+    viewport <- strsplit(drawn$vpPath[[row]], "::", fixed = TRUE)[[1L]]
+    if (length(viewport) < 2L || viewport[[1L]] != "ROOT") next
+    geometry <- tryCatch({
+      grid::downViewport(do.call(grid::vpPath, as.list(viewport[-1L])), strict = TRUE)
+      line <- grid::grid.get(do.call(grid::gPath, as.list(c(path, target$child))), strict = TRUE)
+      positions <- grid::deviceLoc(line$x, line$y, valueOnly = TRUE)
+      x <- positions$x / frame[[1L]]
+      y <- 1 - positions$y / frame[[2L]]
+      width <- line$gp$lwd * ggplot_lwd_pt
+      if (!all(is.finite(c(x, y, width)))) stop("Invalid native R curve geometry.")
+      geometry <- list(kind = "polyline", paths = list(list(
+        points = Map(function(x, y) list(x, y), x, y), closed = FALSE
+      )), fill = FALSE, stroke = TRUE, stroke_pt = width)
+      if (target$clip) {
+        low <- grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"), valueOnly = TRUE)
+        high <- grid::deviceLoc(grid::unit(1, "npc"), grid::unit(1, "npc"), valueOnly = TRUE)
+        geometry$clip <- as.list(ggplot_bbox(low, high, frame_pt))
+      }
+      pad <- width / (2 * frame_pt)
+      bbox <- c(min(x) - pad[[1L]], min(y) - pad[[2L]],
+                diff(range(x)) + 2 * pad[[1L]], diff(range(y)) + 2 * pad[[2L]])
+      list(bbox = as.list(bbox), geometry = geometry)
+    }, error = function(error) NULL, finally = grid::upViewport(0))
+    result[[gid]] <- geometry
+  }
+  result
+}
+
+ggplot_edit_line <- function(table, target, patch) {
+  panel <- table$grobs[[target$slot]]
+  line <- panel$children[[target$child]]
+  for (prop in names(patch)) {
+    value <- patch[[prop]]
+    if (prop == "linewidth" && is_positive_ggplot_number(value) && value >= 0.1 && value <= 20) {
+      line$gp$lwd <- value / ggplot_lwd_pt
+    } else if (prop == "linestyle" && is.character(value) && length(value) == 1L &&
+               value %in% names(ggplot_line_types)) {
+      line$gp$lty <- unname(ggplot_line_types[[value]])
+    } else if (prop == "color" && !is.null(target$color) && is.character(value) &&
+               length(value) == 1L && grepl("^#[0-9A-Fa-f]{6}$", value)) {
+      line$gp$col <- if (target$alpha == 255L) value else paste0(value, sprintf("%02X", target$alpha))
+    } else {
+      stop("Invalid native R curve style.")
+    }
+  }
+  panel$children[[target$child]] <- line
+  table$grobs[[target$slot]] <- panel
+  table
+}
+
 capture_ggplot <- function(plot, frame_pt) {
   if (!inherits(plot, "ggplot")) stop("The selected object is not a ggplot.")
   measured <- with_svg_frame(frame_pt, function(capture) {
     built <- ggplot2::ggplot_build(plot)
-    table <- ggplot2::ggplot_gtable(built)
+    layout_input <- built
+    captured_layers <- new.env(parent = emptyenv())
+    layers <- built$plot$layers
+    captured_layers$grobs <- vector("list", length(layers))
+    layout_input$plot$layers <- Map(function(layer, i) ggplot_watch_layer(layer, i, captured_layers),
+                                    layers, seq_along(layers))
+    table <- ggplot2::ggplot_gtable(layout_input)
     grid::grid.newpage()
     grid::grid.draw(table)
-    text_targets <- ggplot_text_targets(table, frame_pt, ggplot_colourbar_titles(built))
+    colourbar_titles <- ggplot_colourbar_titles(built)
+    text_targets <- ggplot_text_targets(table, frame_pt, colourbar_titles)
+    tick_targets <- if (all(lengths(captured_layers$grobs) > 0L)) {
+      ggplot_tick_targets(built, text_targets, colourbar_titles)
+    }
+    line_targets <- ggplot_line_targets(built, table, captured_layers$grobs)
+    line_geometry <- measure_ggplot_lines(table, line_targets, frame_pt)
+    line_targets <- line_targets[names(line_geometry)]
     legend_targets <- ggplot_legend_boxes(table)
     legend_boxes <- measure_ggplot_legends(legend_targets, frame_pt)
     legend_targets <- legend_targets[!vapply(legend_boxes, is.null, logical(1L))]
@@ -333,6 +672,11 @@ capture_ggplot <- function(plot, frame_pt) {
     list(
       table = table,
       text_targets = text_targets,
+      tick_targets = tick_targets,
+      built = if (length(tick_targets)) built,
+      layer_grobs = if (length(tick_targets)) captured_layers$grobs,
+      line_targets = line_targets,
+      line_geometry = line_geometry,
       legend_targets = legend_targets,
       layers = built$data,
       panel_ranges = lapply(built$layout$panel_params, function(panel) {
@@ -451,8 +795,43 @@ registerS3method("makeContext", "tavottoLegendPosition", makeContext.tavottoLege
 
 ggplot_table_for <- function(state, edits) {
   table <- state$table
+  text_targets <- state$text_targets
+  legend_targets <- state$legend_targets
+  tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
+  if (length(tick_edits)) {
+    table <- ggplot_tick_table(state, tick_edits)
+    if (!identical(table$layout$name, state$table$layout$name)) {
+      stop("The native R guide layout changed while formatting.")
+    }
+    # Redrawing the guide layout gives new grid paths even for retained
+    # content. Match each original cell before moving or styling it.
+    for (gid in names(text_targets)) {
+      target <- text_targets[[gid]]
+      group <- if (!is.null(target$tick_labels)) target$label
+      current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group)
+      if (is.null(current) || !identical(target$label, current$label) ||
+          (is.null(tick_edits[[gid]]) && !identical(target$tick_labels, current$tick_labels))) {
+        stop("The native R text layout changed while formatting.")
+      }
+      target[names(current)] <- current
+      text_targets[[gid]] <- target
+    }
+    for (gid in names(legend_targets)) {
+      slot <- legend_targets[[gid]]$slot
+      viewport <- table$grobs[[slot]]$vp
+      if (!inherits(viewport, "viewport")) stop("The native R legend layout changed while formatting.")
+      legend_targets[[gid]]$viewport <- c(
+        table$name, ggplot_cell_name(table$layout[slot, ]), viewport$name
+      )
+    }
+  }
   for (gid in names(edits)) {
-    legend <- state$legend_targets[[gid]]
+    line <- state$line_targets[[gid]]
+    if (!is.null(line)) {
+      table <- ggplot_edit_line(table, line, edits[[gid]])
+      next
+    }
+    legend <- legend_targets[[gid]]
     if (!is.null(legend)) {
       box <- table$grobs[[legend$slot]]
       box$tavotto_position <- ggplot_legend_position(edits[[gid]])
@@ -460,16 +839,18 @@ ggplot_table_for <- function(state, edits) {
       table$grobs[[legend$slot]] <- box
       next
     }
-    target <- state$text_targets[[gid]]
+    target <- text_targets[[gid]]
     if (is.null(target)) stop("The requested native R text is unavailable.")
-    paint <- ggplot_text_paint(target, edits[[gid]])$paint
+    patch <- edits[[gid]][setdiff(names(edits[[gid]]), ggplot_tick_props)]
+    if (!length(patch)) next
+    paint <- ggplot_text_paint(target, patch)$paint
+    if (!is.null(patch$fontsize)) original <- table$grobs[[target$slots[[1L]]]]$children[[1L]]
     table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
-    if (!is.null(edits[[gid]]$fontsize)) {
-      original <- state$table$grobs[[target$slots[[1L]]]]$children[[1L]]
+    if (!is.null(patch$fontsize)) {
       table <- resize_ggplot_title_cell(table, target, original)
     }
   }
-  table
+  list(table = table, text = text_targets, legends = legend_targets)
 }
 
 ggplot_record_legend <- function(capture, marked, gid) {
@@ -483,9 +864,10 @@ ggplot_record_legend <- function(capture, marked, gid) {
 }
 
 render_ggplot <- function(state, edits = list()) {
-  table <- ggplot_table_for(state, edits)
   marked <- new.env(parent = emptyenv())
   svg <- with_svg_frame(state$frame_pt, function(capture) {
+    grid::grid.newpage()
+    table <- ggplot_table_for(state, edits)$table
     for (gid in names(state$legend_targets)) {
       slot <- state$legend_targets[[gid]]$slot
       record <- grid::recordGrob(record_legend(capture, marked, gid), list(
@@ -493,7 +875,6 @@ render_ggplot <- function(state, edits = list()) {
       ))
       table$grobs[[slot]] <- grid::grobTree(grid::groupGrob(table$grobs[[slot]]), record)
     }
-    grid::grid.newpage()
     grid::grid.draw(table)
   })$svg
   for (gid in names(state$legend_targets)) {
@@ -526,10 +907,10 @@ open_ggplot_pdf <- function(frame_pt, path) {
 }
 
 export_ggplot_pdf <- function(state, edits, path) {
-  table <- ggplot_table_for(state, edits)
   device <- open_ggplot_pdf(state$frame_pt, path)
   on.exit(grDevices::dev.off(which = device))
   grid::grid.newpage()
+  table <- ggplot_table_for(state, edits)$table
   grid::grid.draw(table)
   invisible(NULL)
 }
@@ -542,7 +923,6 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
   if (!is.finite(height) || width * height > 20000000) {
     stop("The native R preview exceeds the pixel budget.")
   }
-  table <- ggplot_table_for(state, edits)
   before <- grDevices::dev.cur()
   grDevices::png(path, width = width, height = height, units = "px", type = "cairo", bg = "transparent",
                  res = width * 72 / state$frame_pt[[1L]])
@@ -550,12 +930,14 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
   if (identical(device, before)) stop("The selected R could not open its PNG device.")
   on.exit(grDevices::dev.off(which = device))
   grid::grid.newpage()
-  grid::grid.draw(table)
+  scene <- ggplot_table_for(state, edits)
+  grid::grid.draw(scene$table)
   if (with_manifest) {
     # Measure the actual raster canvas, including any pixel rounding.
     frame_pt <- grDevices::dev.size("in") * 72
-    return(list(text = measure_ggplot_targets(state$text_targets, frame_pt),
-                legends = measure_ggplot_legends(state$legend_targets, frame_pt)))
+    return(list(text = measure_ggplot_targets(scene$text, frame_pt),
+                legends = measure_ggplot_legends(scene$legends, frame_pt),
+                lines = measure_ggplot_lines(scene$table, state$line_targets, frame_pt)))
   }
   invisible(NULL)
 }
@@ -564,8 +946,10 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # A resized title can move the entire plot. Re-measure even targets whose
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)
-  reflow <- any(vapply(edits, function(edit) !is.null(edit$fontsize), logical(1L))) ||
+  reflow <- any(vapply(edits, function(edit) any(c("fontsize", ggplot_tick_props) %in% names(edit)),
+                      logical(1L))) ||
     any(names(edits) %in% legend_gids)
+  line_edits <- any(names(edits) %in% names(state$line_targets))
   if (reflow) {
     geometry_gids <- names(state$text_targets)
   } else {
@@ -575,13 +959,16 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     if (length(measured$text) != length(state$text_targets)) {
       stop("The native R text could not be measured in the PNG.")
     }
-  } else if (reflow || length(geometry_gids)) {
-    table <- ggplot_table_for(state, edits)
+  } else if (reflow || length(geometry_gids) || line_edits) {
     measured <- with_svg_frame(state$frame_pt, function(capture) {
       grid::grid.newpage()
-      grid::grid.draw(table)
-      list(text = measure_ggplot_targets(state$text_targets[geometry_gids], state$frame_pt),
-           legends = if (reflow) measure_ggplot_legends(state$legend_targets, state$frame_pt))
+      scene <- ggplot_table_for(state, edits)
+      grid::grid.draw(scene$table)
+      list(text = measure_ggplot_targets(scene$text[geometry_gids], state$frame_pt),
+           legends = if (reflow) measure_ggplot_legends(scene$legends, state$frame_pt),
+           lines = if (reflow || line_edits) {
+             measure_ggplot_lines(scene$table, state$line_targets, state$frame_pt)
+           })
     })$value
     if (length(measured$text) != length(geometry_gids)) {
       stop("The edited native R text could not be measured.")
@@ -589,12 +976,31 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   }
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
-    patch <- edits[[gid]]
+    edit <- edits[[gid]]
+    patch <- edit[setdiff(names(edit), ggplot_tick_props)]
     color <- if (is.null(patch$color)) target$color else patch$color
     painted <- ggplot_text_paint(target, patch)
     face <- painted$face
     bbox <- if (is.null(measured$text[[gid]])) target$bbox else measured$text[[gid]]$bbox
     editable <- list(list(prop = "color", type = "color", value = color))
+    tick <- state$tick_targets[[gid]]
+    if (!is.null(tick)) {
+      field <- list(prop = "format", type = "enum", value = if (is.null(edit$format)) "auto" else edit$format,
+                    options = as.list(ggplot_number_formats), strict_options = TRUE)
+      if (!is.null(edit$format)) field$value_original <- "auto"
+      editable[[length(editable) + 1L]] <- field
+      if (!is.null(tick$spacing)) {
+        mode <- if (!is.null(edit$major_mode)) edit$major_mode else if (is.null(edit$major_step)) "auto" else "step"
+        step <- if (is.null(edit$major_step)) tick$spacing$step else edit$major_step
+        mode_field <- list(prop = "major_mode", type = "enum", value = mode,
+                           options = list("auto", "step"), strict_options = TRUE)
+        step_field <- list(prop = "major_step", type = "number", value = step,
+                           min = 0, step = tick$spacing$step / 10)
+        if (!is.null(edit$major_mode)) mode_field$value_original <- "auto"
+        if (!is.null(edit$major_step)) step_field$value_original <- tick$spacing$step
+        editable <- c(editable, list(mode_field, step_field))
+      }
+    }
     for (prop in names(face)) {
       field <- list(prop = prop, type = "enum", value = face[[prop]],
                     options = as.list(ggplot_face_options[[prop]]), strict_options = TRUE)
@@ -629,5 +1035,29 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
          draggable = TRUE, drag_prop = "loc_frac", anchor = as.list(c(bbox[[1L]], bbox[[2L]] + bbox[[4L]])),
          editable = list(), legend_context = target$context)
   })
-  list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72), elements = c(legends, elements))
+  lines <- lapply(names(state$line_targets), function(gid) {
+    target <- state$line_targets[[gid]]
+    patch <- edits[[gid]]
+    geometry <- if (is.null(measured$lines)) state$line_geometry[[gid]] else measured$lines[[gid]]
+    if (is.null(geometry)) stop("The native R curve could not be measured.")
+    width <- list(prop = "linewidth", type = "number", value = geometry$geometry$stroke_pt,
+                  min = 0.1, max = 20, step = 0.1, unit = "pt")
+    if (!is.null(patch$linewidth)) width$value_original <- target$width
+    style <- list(prop = "linestyle", type = "enum",
+                  value = if (is.null(patch$linestyle)) target$style else patch$linestyle,
+                  options = as.list(names(ggplot_line_types)), strict_options = TRUE)
+    if (!is.null(patch$linestyle)) style$value_original <- target$style
+    editable <- list(width, style)
+    if (!is.null(target$color)) {
+      color <- list(prop = "color", type = "color",
+                    value = if (is.null(patch$color)) target$color else patch$color)
+      if (!is.null(patch$color)) color$value_original <- target$color
+      editable <- c(editable, list(color))
+    }
+    c(list(gid = gid, role = "line", label = paste("\u66f2\u7ebf", target$index),
+           draggable = FALSE, editable = editable, line_context = target$context),
+      geometry)
+  })
+  list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
+       elements = c(legends, elements, lines))
 }

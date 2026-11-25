@@ -16,6 +16,7 @@ from . import execspec, executionfact, figcapture, projectenv, runcodes
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
 _CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
 _LEGEND_IDENTITY_PREFIX = "r3:"
+_LINE_IDENTITY_PREFIX = "r4:"
 
 
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
@@ -154,6 +155,10 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            line_context = element.pop("line_context", None)
+            if line_context is not None:
+                element["identity"] = _LINE_IDENTITY_PREFIX + line_context
+                continue
             legend_context = element.pop("legend_context", None)
             if legend_context is not None:
                 context = [element["gid"], legend_context]
@@ -196,6 +201,10 @@ class GgplotTarget:
             if expected is not None and expected.startswith(_LEGEND_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R legend changed. Select it again.")
+                continue
+            if expected is not None and expected.startswith(_LINE_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R curve changed. Select it again.")
                 continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX

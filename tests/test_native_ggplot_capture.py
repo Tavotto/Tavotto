@@ -480,11 +480,101 @@ if (capabilities("cairo")) {
 }
 """
 
+PRECISION_PROBE = r"""
+adapter <- new.env(parent = baseenv())
+sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
 
-def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):
+values <- data.frame(x = c(0, 2, 4, 6), y = c(1, 4, 3, 5), colour = c(-12, -4, 4, 12))
+summary_calls <- 0L
+tracked_mean <- function(v) {
+  summary_calls <<- summary_calls + 1L
+  mean(v)
+}
+plot <- ggplot2::ggplot(values, ggplot2::aes(x, y)) +
+  ggplot2::geom_line(colour = "#123456", alpha = .6) +
+  ggplot2::geom_point(ggplot2::aes(colour = colour)) +
+  ggplot2::stat_summary(fun = tracked_mean, geom = "point", shape = 4) +
+  ggplot2::scale_colour_gradient(name = "Direction", breaks = c(-12, 0, 12)) +
+  ggplot2::scale_x_continuous(breaks = c(0, 2, 4, 6))
+frame <- c(432, 288)
+ticks <- "axis.x.bottom.ticks"
+bar <- "legend.right.1.colourbar.ticks"
+curve <- "layer.1.line"
+captured <- adapter$capture_ggplot(plot, frame)
+state <- captured$state
+stopifnot(identical(state$tick_targets[[bar]]$values, c(-12, 0, 12)),
+          identical(names(state$line_targets), curve))
+pre_calls <- summary_calls
+
+edits <- list()
+edits[[ticks]] <- list(format = "%.2f", major_mode = "step", major_step = 1.5)
+edits[[bar]] <- list(format = "%.1f")
+edits[[curve]] <- list(linewidth = 2.4, linestyle = "--", color = "#538E25")
+svg <- adapter$render_ggplot(state, edits)
+stopifnot(length(svg) == 1L, grepl(">1.50</text>", svg, fixed = TRUE),
+          !grepl(">2.00</text>", svg, fixed = TRUE),
+          grepl(">0.0</text>", svg, fixed = TRUE),
+          grepl(">12.0</text>", svg, fixed = TRUE))
+
+# Inspect the actually assembled native grid, curve and palette. Changing
+# captions can resize the layout, so compare within their native viewports.
+probe <- function(table) {
+  panel <- table$grobs[[which(table$layout$name == "panel")]]
+  grill <- panel$children[[grep("^grill", names(panel$children))]]
+  major <- grill$children[[grep("^panel.grid.major.x", names(grill$children))]]
+  line <- panel$children[[state$line_targets[[curve]]$child]]
+  points <- panel$children[[grep("^geom_point.points", names(panel$children))[[1L]]]]
+  box <- table$grobs[[which(table$layout$name == "guide-box-right")]]
+  guide <- box$grobs[[which(box$layout$name == "guides")]]
+  bar <- guide$grobs[[which(guide$layout$name == "bar")]]
+  label <- guide$grobs[[grep("^label", guide$layout$name)]]$children[[1L]]
+  list(grid_x = unique(as.numeric(major$x)), line = line, points = points,
+       raster = bar$raster, label_y = as.numeric(label$y))
+}
+before <- probe(state$table)
+after <- adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  probe(adapter$ggplot_table_for(state, edits)$table)
+})$value
+view <- state$built$layout$panel_params[[1L]]$x
+stopifnot(isTRUE(all.equal(after$grid_x, view$rescale(seq(0, 6, by = 1.5)))),
+          length(before$grid_x) == 4L,
+          identical(after$line$x, before$line$x), identical(after$line$y, before$line$y),
+          identical(after$points, before$points),
+          identical(after$raster, before$raster),
+          identical(after$label_y, before$label_y),
+          after$line$gp$col == "#538E2599", after$line$gp$lty == "dashed",
+          after$line$gp$lwd * 72 / 96 == 2.4)
+stopifnot(identical(adapter$render_ggplot(state), captured$svg),
+          identical(adapter$render_ggplot(state, edits), svg),
+          identical(adapter$render_ggplot(state, list(
+            "axis.x.bottom.ticks" = list(major_mode = "auto", major_step = 1.5))), captured$svg),
+          summary_calls == pre_calls)
+
+for (invalid in list(list(major_step = 0), list(major_step = 1e-300),
+                     list(major_mode = "fixed"), list(format = "%n"))) {
+  bad <- stats::setNames(list(invalid), ticks)
+  stopifnot(inherits(try(adapter$render_ggplot(state, bad), silent = TRUE), "try-error"))
+}
+stopifnot(inherits(try(adapter$render_ggplot(state, stats::setNames(
+  list(list(linewidth = -1)), curve)), silent = TRUE), "try-error"))
+custom <- adapter$capture_ggplot(plot +
+  ggplot2::scale_x_continuous(breaks = c(0, 2, 4, 6), labels = c("Zero", "Two", "Four", "Six")),
+  frame)
+stopifnot(is.null(custom$state$tick_targets[[ticks]]),
+          !is.null(custom$state$text_targets[[ticks]]))
+secondary <- adapter$capture_ggplot(plot +
+  ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis()), frame)
+stopifnot(is.null(secondary$state$tick_targets[[ticks]]$spacing))
+"""
+
+
+def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
-    driver.write_text(PROBE, encoding="utf-8")
+    driver.write_text(program, encoding="utf-8")
     result = subprocess.run(
         [rscript, "--vanilla", str(driver), str(ADAPTER)],
         cwd=tmp_path,
@@ -497,6 +587,14 @@ def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):
         pytest.skip("Rscript does not have ggplot2 and svglite")
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / "Rplots.pdf").exists()
+
+
+def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):
+    _assert_r_probe(tmp_path, PROBE)
+
+
+def test_ggplot_tick_and_curve_edits_preserve_native_values_and_colours(tmp_path):
+    _assert_r_probe(tmp_path, PRECISION_PROBE)
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):

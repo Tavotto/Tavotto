@@ -33,10 +33,14 @@ def main():
 """
 R_SCRIPT = r"""
 cat("built\n", file = "r-builds.txt", append = TRUE)
-plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
-  ggplot2::geom_point(alpha = .5) +
+trend <- data.frame(displ = c(1.8, 3.3, 5.2), hwy = c(34, 31, 23))
+plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
+  ggplot2::geom_point(ggplot2::aes(shape = drv, colour = cty), alpha = .5) +
+  ggplot2::geom_line(data = trend, colour = "#1156A3", show.legend = FALSE) +
+  ggplot2::scale_colour_gradient(name = "City mileage", breaks = c(10, 17, 27),
+    guide = ggplot2::guide_colourbar(position = "left", display = "rectangles")) +
   ggplot2::labs(x = "Displacement (L)", y = "Highway mileage", title = "Fuel economy",
-                 colour = "Drive type") +
+                 shape = "Drive type") +
   ggplot2::theme_minimal() +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"))
 """
@@ -48,6 +52,12 @@ AXIS_PAGE_SIZE = 12.4
 R_AXIS_PAGE_SIZE = 13.8
 R_PANEL_SCALE = 0.8
 R_LEGEND_POSITION = [0.42, 0.64]
+R_CURVE_COLOR = "#923579"
+R_CURVE_WIDTH = 2.4
+R_TICK_FORMATS = {
+    "axis.x.bottom.ticks": "%.2f",
+    "legend.left.1.colourbar.ticks": "%.1f",
+}
 
 
 def _run_ggplot(app, script, rscript):
@@ -202,6 +212,16 @@ def _pdf_pixels(path):
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
         legend_left = 88 * 72 / 25.4 + R_LEGEND_POSITION[0] * 216 * R_PANEL_SCALE
         assert legend_left < by_text["Drive type"][0]["bbox"][0] < legend_left + 10
+        assert page.search_for("2.00") and page.search_for("17.0")
+        assert not page.search_for("3.00")
+        curve_color = tuple(component / 255 for component in bytes.fromhex(R_CURVE_COLOR[1:]))
+        (curve,) = [
+            path
+            for path in page.get_drawings()
+            if path["color"] is not None and path["color"] == pytest.approx(curve_color, abs=0.002)
+        ]
+        assert curve["width"] == pytest.approx(R_CURVE_WIDTH * R_PANEL_SCALE, abs=0.02)
+        assert curve["dashes"] != "[] 0"
         bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
         for title, size in {
             "Time (min)": AXIS_PAGE_SIZE,
@@ -223,6 +243,15 @@ def _format_pixels(files):
     assert svg_tree.find(f".//{ns}image") is None
     (title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == "Fuel economy"]
     assert R_EDIT.lower() in title.attrib["style"].lower()
+    assert {"2.00", "17.0"} <= {node.text for node in svg_tree.iter(f"{ns}text")}
+    assert not any(node.text == "3.00" for node in svg_tree.iter(f"{ns}text"))
+    (curve,) = [
+        node
+        for node in svg_tree.iter(f"{ns}polyline")
+        if f"stroke: {R_CURVE_COLOR.lower()}" in node.attrib.get("style", "").lower()
+    ]
+    assert "stroke-width: 2.40" in curve.attrib["style"]
+    assert "stroke-dasharray" in curve.attrib["style"]
     for label, page_size in (
         ("Displacement (L)", R_AXIS_PAGE_SIZE),
         ("Highway mileage", AXIS_PAGE_SIZE),
@@ -445,8 +474,9 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         sized_svg = _render(app, r_asset, r_single)["svg"]
         assert sized_svg != bulk_svg
         assert _render(app, r_asset, r_bulk)["svg"] == bulk_svg
-        (legend,) = [el for el in r_baseline["manifest"]["elements"] if el["role"] == "legend"]
-        r_patches = [
+        r_elements = {el["gid"]: el for el in r_baseline["manifest"]["elements"]}
+        legend = r_elements["legend.right"]
+        moved_patches = [
             *r_single,
             {
                 "gid": legend["gid"],
@@ -455,10 +485,45 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                 "identity": legend["identity"],
             },
         ]
-        moved = _render(app, r_asset, r_patches)
+        moved = _render(app, r_asset, moved_patches)
         assert moved["svg"] != sized_svg
         assert _render(app, r_asset, r_single)["svg"] == sized_svg
-        assert _render(app, r_asset, r_patches)["svg"] == moved["svg"]
+        assert _render(app, r_asset, moved_patches)["svg"] == moved["svg"]
+        curve = r_elements["layer.2.line"]
+        assert curve["role"] == "line" and curve["geometry"]["kind"] == "polyline"
+        r_patches = [
+            *moved_patches,
+            *[
+                {
+                    "gid": gid,
+                    "prop": "format",
+                    "value": value,
+                    "identity": r_elements[gid]["identity"],
+                }
+                for gid, value in R_TICK_FORMATS.items()
+            ],
+            *[
+                {
+                    "gid": "axis.x.bottom.ticks",
+                    "prop": prop,
+                    "value": value,
+                    "identity": r_elements["axis.x.bottom.ticks"]["identity"],
+                }
+                for prop, value in {"major_mode": "step", "major_step": 2}.items()
+            ],
+            *[
+                {"gid": curve["gid"], "prop": prop, "value": value, "identity": curve["identity"]}
+                for prop, value in {
+                    "linewidth": R_CURVE_WIDTH,
+                    "linestyle": "--",
+                    "color": R_CURVE_COLOR,
+                }.items()
+            ],
+        ]
+        precision = _render(app, r_asset, r_patches)
+        assert precision["svg"] != moved["svg"]
+        assert _render(app, r_asset, moved_patches)["svg"] == moved["svg"]
+        assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
         document = {
             "schema": 3,
             "project": {"id": "mixed", "name": "Mixed native"},
