@@ -135,18 +135,27 @@ class Resolved:
 
 
 def _tavotto_secret_paths() -> list[Path]:
-    """Tavotto 自己存密钥的地方：`config.json`（AI 服务商的 api_key 明文在里面）。"""
+    """Tavotto 自己存密钥的地方：`config.json`（AI 服务商的 api_key 明文在里面）与 `data_dir()/siwc/`（ChatGPT 登录的
+    访问 / 刷新 / ID 令牌，ADR 0209——整个目录都拦，按前缀匹配，账号文件名 `oaiapp_*.json` 不靠文件名规则）。"""
+    out: list[Path] = []
     try:
         from .. import config
 
-        return [config.config_path()]
+        out.append(config.config_path())
     except Exception:  # noqa: BLE001 - 取不到就退回只拦通用的
-        return []
+        pass
+    try:
+        from .. import siwc_store
+
+        out.append(siwc_store.root())
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def deny_spec() -> dict:
     """硬拦表的机器可读投影（D3：CLI 自带「读文件」工具的权限规则从这里生成，不手抄第二份）。
-    `home_relative` = `DENY_HOME_RELATIVE`；`names` = `DENY_NAME_PATTERNS`；`absolute` = Tavotto 自己存密钥的文件。
+    `home_relative` = `DENY_HOME_RELATIVE`；`names` = `DENY_NAME_PATTERNS`；`absolute` = Tavotto 自己存密钥的文件或目录（目录按前缀拦）。
     每次调用现读模块属性，所以改表的一侧，生成物跟着变。"""
     return {
         "home_relative": list(DENY_HOME_RELATIVE),

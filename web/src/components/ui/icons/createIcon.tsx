@@ -79,7 +79,7 @@ function strokePath(p: IconPathSpec, i: number, r?: Role) {
 }
 function solidPath(p: IconPathSpec, i: number, r?: Role) {
   const o = spec(p)
-  if (o.w === 0) return <path key={`f${i}`} d={o.d} fill="currentColor" stroke="none" {...motionAttrs(r)} />
+  if (o.w === 0) return <path key={`f${i}`} d={o.d} fill="currentColor" fillOpacity={o.tint} stroke="none" {...motionAttrs(r)} />
   const ghost = o.ghost ? { fillOpacity: 0, strokeOpacity: 0 } : {}
   return <path key={`f${i}`} d={o.d} fill="currentColor" stroke="currentColor" strokeWidth={o.w} {...ghost} {...motionAttrs(r)} />
 }

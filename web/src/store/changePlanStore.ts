@@ -5,8 +5,10 @@ import {
   createChangePlan,
   discardChangePlan,
   getChangePlan,
+  reviseChangePlan,
   type ChangePlan,
   type ChangePlanPatch,
+  type ReviewAnchor,
   type ReviewComment,
 } from '@/lib/api'
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
@@ -47,6 +49,23 @@ export interface PlanRequest {
   numbers?: Record<string, number>
 }
 
+/** 高级版：在某一版「修改后」的图上写的一条批注（只存本机，不上传审阅服务）；`label` 是元素名 / 「框选」/ 「整体」的显示名 */
+export interface PlanNote {
+  id: string
+  anchor: ReviewAnchor
+  label: string
+  text: string
+}
+
+/** 一张卡的一版：每一版是后端自己的一份方案（各有 id 与两张图），逐组勾选是各版自己的 */
+export interface PlanVersionRec {
+  planId: string
+  plan: ChangePlan
+  beforeSrc: string
+  afterSrc: string
+  unchecked: Record<string, boolean>
+}
+
 export interface PlanEntry {
   /** 本地键 = `client_request_id`（同一请求去重，也是卡片的 React key） */
   key: string
@@ -67,8 +86,20 @@ export interface PlanEntry {
   beforeSrc?: string
   afterSrc?: string
   failure?: PlanFailure
-  /** 每个改动组是否被取消勾选（没有的键按勾选算） */
+  /** 每个改动组是否被取消勾选（没有的键按勾选算）；多版时是此刻正在看的那一版的 */
   unchecked: Record<string, boolean>
+  /** 这张卡出过的各版（旧 → 新）；`planId` / `plan` / `beforeSrc` / `afterSrc` / `unchecked` 是正在看的那一版的镜像。没有 = 只有一版 */
+  versions?: PlanVersionRec[]
+  /** 批注重改（高级版）：正在写的批注（重改成功后清空） */
+  notes?: PlanNote[]
+  /** 写过的批注原话（批注 id → 文字）：后面的版本里没处理的批注按它显示 */
+  noteTexts?: Record<string, string>
+  /** 这次重改提交的批注快照（id → 文字）：回包只清掉仍与它一致的批注 */
+  sentNotes?: Record<string, string>
+  /** 按批注重改进行中：新一版的方案 id（请求还没回时是空串） */
+  revising?: string
+  /** 上一次按批注重改没成：稳定码（弹窗里一句灰字，下一次动作清掉） */
+  reviseError?: PlanFailure
   request: PlanRequest
   /** 请求那一刻的意见快照（审阅意见卡的编号小圆、改动清单的称呼 / 编号）；只给 `share_id` 时可能为空 */
   comments: ReviewComment[]
@@ -92,6 +123,29 @@ export interface PlanEntry {
 }
 
 export type ApplyResult = 'applied' | 'stale' | 'nothing' | 'failed'
+export type ReviseResult = 'started' | 'not_licensed' | 'nothing' | 'busy' | 'failed'
+
+/** 一条批注的字数上限（与引擎 `changeplan.MAX_COMMENT_CHARS` 一致） */
+export const MAX_NOTE_CHARS = 500
+/** 一次重改最多带几条批注（与引擎 `changeplan.MAX_COMMENTS` 一致） */
+export const MAX_NOTES = 30
+
+export const notesOf = (e: Pick<PlanEntry, 'notes'>): PlanNote[] => e.notes ?? []
+
+/** 各版（旧 → 新）；没存过的老条目 = 只有正在看的这一版 */
+export function versionsOf(e: PlanEntry): PlanVersionRec[] {
+  if (e.versions?.length) return e.versions
+  return e.plan && e.planId && e.beforeSrc && e.afterSrc ? [{ planId: e.planId, plan: e.plan, beforeSrc: e.beforeSrc, afterSrc: e.afterSrc, unchecked: e.unchecked }] : []
+}
+
+/** 正在看的是第几版（1 起；按出现顺序数，不看后端的 `version` 字段——从旧版再续改会得到同一个后端版本号） */
+export function versionNumber(e: PlanEntry): number {
+  const i = versionsOf(e).findIndex((v) => v.planId === e.planId)
+  return i < 0 ? (e.plan?.version ?? 1) : i + 1
+}
+
+/** 这张卡上所有版本（含在途的那一版）的后端方案 id：放弃时一并收掉 */
+const allPlanIds = (e: PlanEntry): string[] => [...new Set([...versionsOf(e).map((v) => v.planId), ...(e.planId ? [e.planId] : []), ...(e.revising ? [e.revising] : [])])]
 
 interface ChangePlanState {
   entries: Record<string, PlanEntry>
@@ -111,6 +165,12 @@ interface ChangePlanState {
   apply: (key: string, opts?: { previewSrc?: string }) => ApplyResult
   undo: (key: string) => boolean
   discard: (key: string) => void
+  /** 高级版：按批注重改，同一张卡出下一版（出好后自动切到新版） */
+  revise: (key: string) => Promise<ReviseResult>
+  /** 弹窗里切到某一版（各版的勾选各记各的） */
+  setViewVersion: (key: string, planId: string) => void
+  saveNote: (key: string, note: PlanNote) => void
+  removeNote: (key: string, id: string) => void
   /** 收起一张失败 / 空方案的卡 */
   dismiss: (key: string) => void
   clear: () => void
@@ -168,14 +228,19 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     if (p) requestRender(p, true)
   }
 
-  const poll = async (key: string, planId: string, guard: ProjectEpochGuard) => {
+  const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' = 'create') => {
     const t0 = Date.now()
     let errors = 0
-    const alive = () => guard.still() && get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating'
+    const revising = mode === 'revise'
+    const alive = () =>
+      guard.still() && (revising ? get().entries[key]?.revising === planId : get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating')
+    // 续改没成：旧版原样留着，弹窗里一句灰字
+    const failRevise = (code: string, params?: Record<string, unknown>) => patch(key, { revising: undefined, reviseError: { code, params } })
+    const failed = (code: string, params?: Record<string, unknown>) => (revising ? failRevise(code, params) : fail(key, code, params))
     while (alive()) {
       await sleep(POLL_MS)
       if (!alive()) return
-      if (Date.now() - t0 > POLL_MAX_MS) return fail(key, POLL_TIMEOUT)
+      if (Date.now() - t0 > POLL_MAX_MS) return failed(POLL_TIMEOUT)
       let view
       try {
         view = await getChangePlan(planId)
@@ -184,22 +249,36 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         if (!alive()) return
         const code = err instanceof EngineError ? err.code : ''
         // 方案没了（过期 / 被放弃）是终态；其余（断线、代理页）容忍几次再说失败
-        if (code === 'change_plan_unknown') return fail(key, code)
-        if (++errors >= POLL_ERRORS_MAX) return fail(key, 'change_plan_failed')
+        if (code === 'change_plan_unknown') return failed(code)
+        if (++errors >= POLL_ERRORS_MAX) return failed('change_plan_failed')
         continue
       }
       if (!alive()) return
       const e = get().entries[key]
       if (view.state === 'running') continue
       if (view.state === 'failed') {
-        fail(key, view.code, view.params)
+        failed(view.code, view.params)
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
       }
       // ready：没有一条能落成修改的（change_plan_empty）也带方案（里面只有 unhandled），卡片按失败的一句话 + 未处理列表画
       const plan = view.plan
       const src = (p: string) => apiUrlFor(p, e.pj)
+      if (revising) {
+        if (view.code === 'change_plan_empty') failRevise('change_plan_empty')
+        else {
+          // 新一版入列并切过去；各版的勾选各记各的，批注随这次重改清空
+          // 重改期间新写 / 改过的批注是用户的新工作：只清掉仍与提交时一致的那些
+          const e0 = get().entries[key] ?? e
+          const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked } : v))
+          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
+        }
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        return
+      }
       patch(key, {
+        versions: [{ planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }],
         plan,
         beforeSrc: src(plan.preview.before),
         afterSrc: src(plan.preview.after),
@@ -292,9 +371,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     regenerate: async (key) => {
       const e = get().entries[key]
       if (!e) return null
-      const planId = e.planId
+      const ids = allPlanIds(e)
       drop(key)
-      if (planId) void discardChangePlan(planId).catch(() => undefined)
+      for (const id of ids) void discardChangePlan(id).catch(() => undefined)
       return start(e.panelId, e.request)
     },
 
@@ -367,14 +446,69 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (!e) return
       patch(key, { status: 'discarded' })
       set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
-      // 后端那份可以收了；卡上的图仍是已经取到的地址，过期也只是图不显示，卡片文字不变
-      if (e.planId) void discardChangePlan(e.planId).catch(() => undefined)
+      // 后端那几份（各版）可以收了；卡上的图仍是已经取到的地址，过期也只是图不显示，卡片文字不变
+      for (const id of allPlanIds(e)) void discardChangePlan(id).catch(() => undefined)
     },
+
+    revise: async (key) => {
+      const e = get().entries[key]
+      const notes = e ? notesOf(e) : []
+      if (!e || !e.planId || e.status !== 'ready') return 'failed'
+      if (e.revising !== undefined) return 'busy'
+      if (!notes.length) return 'nothing'
+      const guard = captureProjectEpoch()
+      patch(key, { revising: '', reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
+      try {
+        const task = await reviseChangePlan(e.planId, {
+          notes: notes.map((n) => ({ id: n.id, anchor: n.anchor, text: n.text })),
+          client_request_id: newRequestId(),
+        })
+        if (!guard.still() || !get().entries[key]) return 'failed'
+        if ('ok' in task) {
+          patch(key, { revising: undefined, reviseError: { code: 'not_licensed' } })
+          return 'not_licensed'
+        }
+        patch(key, { revising: task.plan_id })
+        void poll(key, task.plan_id, guard, 'revise')
+        return 'started'
+      } catch (err) {
+        if (!guard.still() || !get().entries[key]) return 'failed'
+        const code = err instanceof EngineError && err.code ? err.code : 'change_plan_failed'
+        patch(key, { revising: undefined, reviseError: { code, params: err instanceof EngineError ? err.params : undefined } })
+        return 'failed'
+      }
+    },
+
+    setViewVersion: (key, planId) =>
+      set((s) => {
+        const e = s.entries[key]
+        if (!e || e.revising !== undefined || e.planId === planId) return {}
+        const recs = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked } : v))
+        const to = recs.find((v) => v.planId === planId)
+        if (!to) return {}
+        return { entries: { ...s.entries, [key]: { ...e, versions: recs, planId, plan: to.plan, beforeSrc: to.beforeSrc, afterSrc: to.afterSrc, unchecked: to.unchecked, reviseError: undefined } } }
+      }),
+
+    saveNote: (key, note) =>
+      set((s) => {
+        const e = s.entries[key]
+        if (!e) return {}
+        const cur = notesOf(e)
+        if (!cur.some((n) => n.id === note.id) && cur.length >= MAX_NOTES) return {}
+        const notes = cur.some((n) => n.id === note.id) ? cur.map((n) => (n.id === note.id ? note : n)) : [...cur, note]
+        return { entries: { ...s.entries, [key]: { ...e, notes } } }
+      }),
+
+    removeNote: (key, id) =>
+      set((s) => {
+        const e = s.entries[key]
+        return e ? { entries: { ...s.entries, [key]: { ...e, notes: notesOf(e).filter((n) => n.id !== id) } } } : {}
+      }),
 
     dismiss: (key) => {
       const e = get().entries[key]
       drop(key)
-      if (e?.planId) void discardChangePlan(e.planId).catch(() => undefined)
+      if (e) for (const id of allPlanIds(e)) void discardChangePlan(id).catch(() => undefined)
     },
 
     patchEntry: (key, p) => patch(key, p),
