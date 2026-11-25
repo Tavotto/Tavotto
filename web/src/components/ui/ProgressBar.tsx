@@ -6,7 +6,7 @@ import { useEffectiveTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 
 /**
- * 点阵进度条（ADR 0168）：包管理作业、准备卡、更新下载、修复下载、导出进度共用这一份。
+ * 点阵进度条（ADR 0168）：包管理作业、准备卡的不定态、更新下载、导出进度共用这一份（修复 / 换 Python 的进度 2026-11-25 起是 `TaskChecklist`）。
  * 未完成画稀点、已完成画密点——**点一样大、同一个颜色，只用疏密表现填充**；几何全在 `lib/dotProgress.ts`。
  *
  * - 点径：桌面壳报了屏幕物理 ppi 就按它选（`lib/screenPpi.dotForPpi`，目标约 0.2 mm）；否则取最接近缩放倍数的整数。

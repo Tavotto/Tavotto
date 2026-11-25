@@ -4659,7 +4659,6 @@ export default interface Resources {
       "repairCreatingEnv": "正在准备 Python 环境…",
       "repairDetails": "详情",
       "repairDone": "已安装 {{module}}，正在重新运行。",
-      "repairDownloadAria": "下载进度",
       "repairDownloadBytes": "{{done}} / {{total}} MB",
       "repairDownloadUnpacking": "正在解压 Python…",
       "repairEnvNotApplied": "切换没有生效：这个项目此刻用的还不是那个 Python，脚本没有重跑。",
@@ -4811,7 +4810,6 @@ export default interface Resources {
       "repairStage_packages": "安装所需的包",
       "repairStage_python": "准备 Python",
       "repairStage_rerun": "重新运行",
-      "repairStep": "（{{n}}/{{total}}）",
       "repairSystemHint": "{{python}} · Python {{version}}，不安装任何东西",
       "repairSystemRejectedNoMatplotlib": "{{python}} 装了 {{module}}，但 matplotlib 用不了，未采用。",
       "repairSystemRejectedUnsupported": "{{python}}（Python {{version}}）装了 {{module}}，但 {{product}} 不支持这个 Python 版本，未采用。",
@@ -8208,7 +8206,6 @@ export default interface Resources {
       },
       "progress": "进行中",
       "pythonChange": {
-        "downloadBytes": "已下载 {{done}} / {{total}} MB",
         "stage": {
           "creating": "正在创建新的运行环境…",
           "downloading": "正在下载 Python…",
