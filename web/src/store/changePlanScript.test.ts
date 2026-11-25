@@ -282,3 +282,40 @@ describe('生成期间脚本被改过（冲突）：不自动还原，用户点�
     expect(cps().entries[key]).toMatchObject({ status: 'failed', notice: 'restore_failed', scriptBusy: false })
   })
 })
+
+describe('图内方案这条路不适用：先试脚本方案，脚本方案也不适用才落回直接改脚本', () => {
+  const ask = () => cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation })
+
+  it('同步被拒（比如连接不支持结构化调用）→ 接着请求脚本方案（mode=script），出脚本方案卡', async () => {
+    createChangePlan.mockImplementation(async (b: { mode?: string }) => {
+      if (b.mode === 'script') return { plan_id: 'p1', state: 'running' }
+      throw new EngineError('x', '', 'change_plan_unsupported_connection', '')
+    })
+    getChangePlan.mockResolvedValue(ready(scriptPlan()))
+    const key = (await ask()) as string
+    expect(createChangePlan.mock.calls.map((c) => c[0].mode)).toEqual([undefined, 'script'])
+    await tick()
+    expect(cps().entries[key]).toMatchObject({ status: 'ready', from: 'assistant' })
+    expect(cps().entries[key].plan?.kind).toBe('script')
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('两条路都不适用 → fallthrough（调用方发现有的直接改脚本），不留卡', async () => {
+    createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_unsupported_connection', ''))
+    expect(await ask()).toBe('fallthrough')
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+    expect(cps().order).toEqual([])
+  })
+
+  it('线程里才判出的不适用码（轮询到 failed）→ 接着走 runScript：先脚本方案', async () => {
+    getChangePlan.mockResolvedValueOnce({ plan_id: 'p1', state: 'failed', code: 'change_plan_unsupported_connection' })
+    const first = (await ask()) as string
+    getChangePlan.mockResolvedValue(ready(scriptPlan()))
+    await tick()
+    await tick()
+    const key = cps().order.find((k) => k !== first) as string
+    expect(createChangePlan.mock.calls[1][0]).toMatchObject({ mode: 'script' })
+    expect(cps().entries[key].plan?.kind).toBe('script')
+    expect(start).not.toHaveBeenCalled()
+  })
+})

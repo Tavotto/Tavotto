@@ -902,6 +902,7 @@ def carried_groups(plan: dict, proposal: dict) -> list[dict]:
             out.append({"comment_id": g["comment_id"], "changes": changes})
     return out
 
+
 # --------------------------------------------------------------------------- 脚本修改（PR 6）
 SCRIPT_GROUP_KEY = "script"
 SCRIPT_FILE = "candidate.py"

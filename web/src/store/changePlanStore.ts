@@ -515,7 +515,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (busy || pending.has(panelId)) return null
       pending.add(panelId)
       try {
-        return await start(panelId, req, fallback, false, onSettle)
+        const out = await start(panelId, req, fallback, false, onSettle)
+        if (out !== 'fallthrough') return out
+        // 图内方案这条路不适用：先试脚本方案（Agent 在副本里改、看过再应用）；它也不适用才落回现有的直接改脚本（调用方发）
+        return await start(panelId, { instruction: req.instruction, ...(req.target ? { target: req.target } : {}), mode: 'script' }, fallback, false, onSettle)
       } finally {
         pending.delete(panelId)
       }
