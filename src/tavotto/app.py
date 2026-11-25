@@ -167,6 +167,7 @@ from .engine import (
     projectcopy as engine_projectcopy,
     projectenv as engine_projectenv,
     projecthistory as engine_projecthistory,
+    projectmigrate as engine_projectmigrate,
     projscan as engine_projscan,
     quicklayout as engine_quicklayout,
     rasterhint as engine_rasterhint,
@@ -6950,6 +6951,8 @@ def _open_project(path: Path, make_default: bool) -> dict:
             reg.load_data(cfg, source="<memory>")
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)
+    # 上次挪走项目时本机设置没迁完（ADR 0211 第一期 5 的待办标记）：再迁一次。不抛、幂等，没有标记就什么都不做
+    engine_projectmigrate.retry_pending(path)
     # 刷新基线：现在的素材长什么样、注册表是哪一份。没有它，打开项目后的
     # 第一次刷新只能报「什么都没变」——而用户按刷新正是因为他刚在外面加了
     # 一张图（`engine/project_refresh.seed_state`）。
@@ -21542,10 +21545,20 @@ def api_layout_session_project_history_claim():
             )
             if mode != "slot" or slot_rev != revision:
                 return refused
+            recorded = state["owners"].get(doc_id)
             if owner != "this":
                 engine_layoutsession.record_owner(doc_id, key, slot_rev)
     except OSError:
         return _session_unavailable()
+    if owner == "moved" and isinstance(recorded, str):
+        # 确认是挪走（旧路径确定不在）：按路径作键的本机设置随认领迁到新路径（ADR 0211 第一期 5）。
+        # 锁外做、不抛：迁移失败只记日志并留待办，下次打开项目重试，认领本身照样成功
+        moved = engine_projectmigrate.claim_moved(recorded, ctx.path)
+        if moved["input_remap"]:
+            # 改指表变了：与用户指认同一套收尾——收掉按旧表起的会话 / 试运行，广播新代次（ADR 0106 §五）
+            root = str(ctx.path)
+            _stop_remap_dependent_work(root)
+            _publish_remap_changed(root, "added", engine_inputremap.state(root)["generation"])
     return jsonify({"ok": True, "revision": revision, "owner": "this"})
 
 

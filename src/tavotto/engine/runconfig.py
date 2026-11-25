@@ -406,6 +406,26 @@ def _write(project_root: str | Path, data: dict, *, preserve: bool = False) -> N
     atomicio.write_json(path, out)
 
 
+def migrate_store(old_root: str | Path, new_root: str | Path) -> bool:
+    """项目整夹挪走（ADR 0211 第一期 5）：旧项目身份下的运行配置登记搬到新身份下。回「这次写了没有」。
+
+    * 搬：配置（argv 原样、引用 id 不变——文档与产物里记着的引用照旧解析得到）、各脚本的默认配置、捕获史；
+    * **不搬启动记录**（`launches`）：那是「这台机器上哪个解释器 / 启动器跑成过」的复用证据，属于解释器信任，
+      ADR 0021 §7.1 要求项目挪走后重新确认；
+    * 新身份下已有登记就不动（幂等，也不盖掉用户在新路径上新存的配置）；旧登记原样留着；
+    * 读不出旧登记（损坏 / 更新版本）抛对应错误，调用方记日志、下次重试——不写半份。"""
+    with _store_guard(old_root):
+        if _locate(old_root) is None:
+            return False
+        data = _read(old_root)
+    with _store_guard(new_root):
+        if _locate(new_root) is not None:
+            return False
+        moved = {k: v for k, v in data.items() if k != "launches"}
+        _write(new_root, moved)
+        return True
+
+
 def _load(project_root: str | Path) -> dict[str, dict]:
     return _read(project_root)["configs"]
 
