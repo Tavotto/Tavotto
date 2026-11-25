@@ -8391,6 +8391,8 @@ export default interface Resources {
       "preparing": "正在准备图表…"
     },
     "restore": {
+      "altFigures_other": "{{count}} 张图",
+      "altMeta": "{{time}} · {{figures}}",
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
       "autoNew": "上次的排版“{{name}}”打不开，已开了一份新排版。",
       "autoNewUnnamed": "上次的排版打不开，已开了一份新排版。",

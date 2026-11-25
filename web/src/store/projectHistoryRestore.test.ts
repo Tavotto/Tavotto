@@ -40,7 +40,7 @@ const NODE = {
 
 const row = (over: Record<string, unknown> = {}) => ({
   doc_id: 'd_move', name: '排版一', vid: 'v1-1', ts: 50, canvasId: 'c1', schema: 2,
-  canvases: 1, objects: 1, mode: 'slot', owner: 'moved', revision: null, node_newer: false, ...over,
+  canvases: 1, objects: 1, figures: 1, mode: 'slot', owner: 'moved', revision: null, node_newer: false, ...over,
 })
 
 async function boot(pj = 'p_new') {
@@ -239,6 +239,8 @@ describe('多份候选不猜', () => {
     const issue = ds(app).restoreIssue
     expect(issue?.kind).toBe('choose')
     expect(issue?.alternatives.map((a) => a.id)).toEqual(['d_a', 'd_b'])
+    // 恢复卡区分同名候选用的那行小字：节点时刻 + 面板数（后端给的）
+    expect(issue?.alternatives.map((a) => [a.at, a.figures])).toEqual([[50, 1], [50, 1]])
     expect(be.writes()).toEqual([])
     const out = await app.restore.openAlternative('d_b')
     expect(out).toMatchObject({ kind: 'restored', id: 'd_b' })

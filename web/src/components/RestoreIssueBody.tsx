@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { Ellipsis } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { continueNew, openAlternative, retryRestore, type RestoreIssue } from '@/store/documentRestore'
+import { continueNew, openAlternative, retryRestore, type AltCandidate, type RestoreIssue } from '@/store/documentRestore'
+import { formatStamp } from '@/i18n/format'
 import { saveNow, useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { Menu, MenuItem } from './ui/Menu'
@@ -60,8 +61,20 @@ export function RestoreIssueBody({
     a.localCopy
       ? t('restore.openLocal', { name: a.name || t('docBanner.lastDocUnnamed') })
       : t('restore.openAlt', { name: a.name || t('docBanner.lastDocUnnamed') })
-  const openAlt = (id: string, a: { name: string; localCopy?: true }) => (
-    <MenuItem key={`${id}${a.localCopy ? ':local' : ''}`} data-restore-action="open-alt" onSelect={done(() => openAlternative(id))}>
+  // 第二行的辨认信息：最后修改时间 · 几张图（同名候选靠它分开）。拿不到的那一半不写，两半都没有就没有这一行
+  const altMeta = (a: AltCandidate): string | undefined => {
+    const time = typeof a.at === 'number' && Number.isFinite(a.at) && a.at > 0 ? formatStamp(a.at) : ''
+    const figures = typeof a.figures === 'number' ? t('restore.altFigures', { count: a.figures }) : ''
+    if (time && figures) return t('restore.altMeta', { time, figures })
+    return time || figures || undefined
+  }
+  const openAlt = (id: string, a: AltCandidate) => (
+    <MenuItem
+      key={`${id}${a.localCopy ? ':local' : ''}`}
+      data-restore-action="open-alt"
+      meta={altMeta(a)}
+      onSelect={done(() => openAlternative(id))}
+    >
       {altLabel(a)}
     </MenuItem>
   )

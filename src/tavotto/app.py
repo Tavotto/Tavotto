@@ -21076,6 +21076,7 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
         "status": status,
         "canvases": None,
         "objects": None,
+        "figures": None,
         "owner": owner,
         "evidence": evidence,
         "runtime": [],
@@ -21094,6 +21095,8 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
             objects = _doc_objects(doc)
             item["canvases"] = len(canvases) if isinstance(canvases, list) else 1
             item["objects"] = len(objects)
+            # 「几张图」（面板数，不截断；`panels` 只列前 5 个名字）：恢复卡区分同名候选用
+            item["figures"] = engine_projecthistory.figure_count(objects)
             for o in objects:
                 fid = o.get("fileId")
                 if o.get("type") != "panel" or not isinstance(fid, str):
@@ -21107,7 +21110,7 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
             sketch = _version_sketch({"doc": doc, "canvasId": doc.get("activeCanvasId")}, 40, 0)
         except (TypeError, AttributeError, ValueError, RecursionError):
             item["status"] = "invalid"
-            item["canvases"] = item["objects"] = None
+            item["canvases"] = item["objects"] = item["figures"] = None
             item["runtime"], item["panels"] = [], []
         else:
             if sketch is not None:
@@ -21293,6 +21296,7 @@ def _history_item(doc_id: str, versions_dir: Path, key) -> dict | None:
         "schema": node["schema"],
         "canvases": node["canvases"],
         "objects": node["objects"],
+        "figures": node["figures"],
         "mode": mode,
         "owner": owner,
         "revision": slot_rev if mode == "slot" else None,

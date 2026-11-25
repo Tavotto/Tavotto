@@ -207,6 +207,7 @@ export function MenuItem({
   reason,
   tip,
   hint,
+  meta,
   icon: Icon,
   ...rest
 }: {
@@ -233,6 +234,11 @@ export function MenuItem({
    * 同一种字号，但它不意味着不可用。两者都给时先 reason 后 hint。
    */
   hint?: string
+  /**
+   * 第二行的辨认信息，但不是路径（时间、数量这类）：与 `hint` 同一位置、字号、字色，用正文字体——
+   * 等宽字只留给路径。恢复卡上区分同名候选的「11-25 13:47 · 2 张图」用它。
+   */
+  meta?: string
   icon?: ComponentType<{ size?: number; className?: string }>
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
@@ -252,6 +258,7 @@ export function MenuItem({
         <span className="truncate">{children}</span>
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
         {hint && <span className="truncate font-mono text-xs leading-4 text-ink-3">{hint}</span>}
+        {meta && <span className="truncate text-xs leading-4 text-ink-3 tabular-nums">{meta}</span>}
       </span>
       {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
     </DM.Item>

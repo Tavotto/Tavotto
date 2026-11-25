@@ -1922,6 +1922,9 @@
     "safeArea": "Safe area"
   },
   "restore": {
+    "altFigures_one": "{{count}} figure",
+    "altFigures_other": "{{count}} figures",
+    "altMeta": "{{time}} · {{figures}}",
     "autoAdopted": "Opened the layout “{{name}}” found on this computer",
     "autoNew": "Couldn’t open your last layout “{{name}}”, so a new one was started.",
     "autoNewUnnamed": "Couldn’t open your last layout, so a new one was started.",

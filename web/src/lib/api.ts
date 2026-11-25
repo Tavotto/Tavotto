@@ -1525,6 +1525,8 @@ export interface RecoveryCandidateItem {
   status: 'ok' | 'invalid' | 'too_new' | 'too_large' | 'chart_source_mismatch'
   canvases: number
   objects: number
+  /** 面板（「几张图」）个数；旧后端不发 = null */
+  figures: number | null
   owner: 'this' | 'unknown'
   evidence: 'owners' | 'versions' | 'assets' | null
   sketch?: { page: ThumbPage; objects: ThumbObject[] }
@@ -1566,6 +1568,7 @@ function parseCandidate(v: unknown): RecoveryCandidateItem | null {
     status,
     canvases: num(r.canvases),
     objects: num(r.objects),
+    figures: typeof r.figures === 'number' && Number.isFinite(r.figures) ? r.figures : null,
     owner: r.owner === 'this' ? 'this' : 'unknown',
     evidence:
       r.evidence === 'owners' || r.evidence === 'versions' || r.evidence === 'assets' ? r.evidence : null,
@@ -1629,6 +1632,8 @@ export interface ProjectHistoryItem {
   schema: number | null
   canvases: number
   objects: number
+  /** 最近非空节点里的面板（「几张图」）个数 */
+  figures: number
   mode: (typeof HISTORY_MODES)[number]
   owner: (typeof HISTORY_OWNERS)[number]
   /** `mode=slot` 时槽位正文的 revision（认领与探测都对着它） */
@@ -1660,6 +1665,7 @@ function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
     schema: typeof r.schema === 'number' ? r.schema : null,
     canvases: num(r.canvases),
     objects: num(r.objects),
+    figures: num(r.figures),
     mode,
     owner,
     revision: typeof r.revision === 'string' ? r.revision : null,
