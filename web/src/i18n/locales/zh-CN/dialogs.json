@@ -748,7 +748,7 @@
     "backHome": "Tavotto 官网",
     "bootDownloadDesktop": "下载桌面版 {{product}}",
     "bootListSeparator": "、",
-    "bootUnsupportedBrowser": "{{product}} 在线试用需要较新的浏览器（缺少：{{missing}}）。桌面版 {{product}} 不受此限制。",
+    "bootUnsupportedBrowser": "这个浏览器打不开 {{product}} 在线试用（缺少 {{missing}}）。换最新版 Chrome、Edge、Firefox 或 Safari 再打开，或者用桌面版。",
     "cancelLoading": "取消",
     "cdnNote": "浏览器会从 jsDelivr 下载 Python 运行时（Pyodide v{{version}}）。",
     "changed": "意外改动",
