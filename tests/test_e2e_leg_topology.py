@@ -91,6 +91,8 @@ PLATFORM_SKIPS = {
     # CLI 比模型清单旧（#1715）：同一类假 `codex`（POSIX shell 脚本，报旧版本号、执行时吐 404 的 turn.failed）→ posix-e2e 腿执行
     # （chromium + chromium-en），Windows 腿跳过
     "ai-cli-update.spec.ts": 1,
+    # SIWC 默认开的那条路（ADR 0209 §六）：同一类假 `codex`（POSIX shell 脚本，答已登录）当「老用户本机的 Codex」→ posix-e2e 腿的 chromium 执行，Windows 腿跳过
+    "siwc-default.spec.ts": 1,
 }
 
 
