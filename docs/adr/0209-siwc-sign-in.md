@@ -65,6 +65,14 @@ Tavotto 是 AGPL 开源、本机运行；维护者 2026-11-25 判定按开源路
 维护者本人账号跑一轮真服务核对之后，单独一个 PR 只把默认改成开（`=0` 关掉）。真服务核对清单：0201 列的未验证项（错误码含用量超限、`response.incomplete` / `error` 载荷、
 刷新令牌轮换、https 下流到一半取消、`reasoning` 回放），加上首次注册走非 1455 端口能否成功、`earliest_refresh_at` 的单位与含义（若是相对秒，每小时可能有一段任务起不来）。
 
+### 七（前）、11-23 三条规矩在这里怎么变
+
+| 11-23 定的（0201） | 0209 之后 |
+| --- | --- |
+| 放在 `TAVOTTO_EXPERIMENTAL_SIWC` 开关后面 | **不变**直到真服务核对完；之后单独 PR 改为默认开，`=0` 仍可整体关掉 |
+| 只做 Mock 验证 | 仓库里的用例**仍全是 Mock**（本机假服务器）。真服务联调**要做**：维护者本人账号、一次性、上线前一轮（清单见 §六），每次联调前当面征得维护者同意；结论写回本 ADR，不写进用例 |
+| SIWC 记录不进 `first_key_connection` / 探测 / 用户可声明的 `PROTOCOLS` | **不变**：凭据不进 `ai.providers[]`，虚拟记录只经 `resolve(builtin, "siwc:chatgpt")` 出现；`siwc-responses` 仍不在 `ai_providers.PROTOCOLS`（看护 `tests/test_siwc_connection.py`） |
+
 ### 七、不随 SIWC 一起替换的能力
 
 AI 修复、结构化调用、数据出图（数据角色）、保存时探测**不用** SIWC（0201 §五：不让「挑第一个能用的连接」静默花订阅额度）。只登录了 ChatGPT、没装 Codex、也没填 Key 的用户，
