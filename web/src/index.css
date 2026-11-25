@@ -1060,7 +1060,7 @@
       opacity var(--duration-base) var(--ease-standard);
   }
   & .edge-progress-run {
-    stroke: color-mix(in srgb, var(--color-ink) 55%, transparent);
+    stroke: color-mix(in srgb, var(--color-ink) 38%, transparent);
     stroke-width: 1.25px;
     stroke-dasharray: 1 1;
     stroke-dashoffset: var(--edge-off);
@@ -1486,7 +1486,7 @@
     --color-syntax-type: #6fc7ad;
     --color-syntax-builtin: #e3a457;
     --color-thumb: #3c3a35;
-    --color-thumb-frame: color-mix(in srgb, var(--color-ink) 55%, transparent);
+    --color-thumb-frame: color-mix(in srgb, var(--color-ink) 38%, transparent);
     --color-shadow: #000000;
     --color-shadow-edge: #ffffff;
     --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -1525,7 +1525,7 @@
   --color-syntax-type: #6fc7ad;
   --color-syntax-builtin: #e3a457;
   --color-thumb: #3c3a35;
-  --color-thumb-frame: color-mix(in srgb, var(--color-ink) 55%, transparent);
+  --color-thumb-frame: color-mix(in srgb, var(--color-ink) 38%, transparent);
   --color-shadow: #000000;
   --color-shadow-edge: #ffffff;
   --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);

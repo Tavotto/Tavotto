@@ -51,7 +51,7 @@ describe('index.css：--color-thumb-frame 浅色透明、暗色（两段逐字�
   const css = readFileSync(`${process.cwd()}/src/index.css`, 'utf8')
   it('一处透明、两处暗色表里同值', () => {
     expect(css.match(/--color-thumb-frame: transparent;/g)).toHaveLength(1)
-    const dark = css.match(/--color-thumb-frame: color-mix\(in srgb, var\(--color-ink\) 55%, transparent\);/g)
+    const dark = css.match(/--color-thumb-frame: color-mix\(in srgb, var\(--color-ink\) 38%, transparent\);/g)
     expect(dark).toHaveLength(2)
   })
 })
