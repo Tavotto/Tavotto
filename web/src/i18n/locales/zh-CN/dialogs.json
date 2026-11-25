@@ -2117,7 +2117,8 @@
       "err": {
         "unauthorized": "Key 无效或已过期。",
         "network": "连不上服务商。",
-        "timeout": "连接超时。"
+        "timeout": "连接超时。",
+        "planUsageDisabled": "未允许使用订阅额度"
       },
       "checkConnection": "检查连接",
       "checking": "检查中",
@@ -2171,6 +2172,17 @@
         "reinstall": "重新安装",
         "enable": "打开",
         "installingPct": "正在安装… {{pct}}%"
+      },
+      "siwc": {
+        "continue": "Continue with ChatGPT",
+        "cancel": "取消",
+        "browserHint": "在浏览器里完成登录。",
+        "openAgain": "重新打开",
+        "failed": "登录没有完成，再试一次。",
+        "expired": "登录超时了，再试一次。",
+        "planDisabled": "登录时没有允许使用订阅额度，再试一次。",
+        "disconnectBody": "会退出这个 ChatGPT 账号，并撤销 {{product}} 的授权。",
+        "revokeUnconfirmed": "已退出，但没能确认撤销授权，可以到 ChatGPT 设置里断开 {{product}}。"
       }
     },
     "hosts": {

@@ -10,11 +10,12 @@ import { OAuthLoginDialog } from '../OAuthLoginDialog'
 import { useAgentStepAction } from './useAgentStepAction'
 import { InstallActionButton } from './InstallActionButton'
 import { agentStep } from './agentStep'
-import { ConnectionManage } from './ConnectionManage'
+import { ConnectionManage, SiwcManage } from './ConnectionManage'
 import { cx } from './copy'
 import { useLoginAfterInstall } from './useAgentInstall'
 import { connectionErrorText, connectionForMethod, loginAgentOf, methodHint, methodName, vendorName } from './vendors'
 import { refreshAndFind, useLoginFlow } from './useLoginFlow'
+import { useSiwcLogin } from './useSiwcLogin'
 import { VendorKeyForm } from './VendorKeyForm'
 
 /** 订阅登录方式背后的命令行 AI 还没装 / 打不开 / 被关了：这张卡不置灰，点开是「一句话 + 安装并登录」（应用内装，不要终端） */
@@ -230,6 +231,51 @@ function LoginMethodRow({ vendor, method: m, connections, onConnected, picked: o
 }
 
 /**
+ * 「Continue with ChatGPT」方式的卡（Sign in with ChatGPT，ADR 0209）：不依赖任何命令行 AI。
+ * 没连 / 需要重新登录 / 没允许用订阅额度：「Continue with ChatGPT」按钮就在卡片右侧；已连：卡片第二行是账号邮箱，点开管理（默认型号、断开）。
+ */
+function SiwcMethodRow({ vendor, method: m, connections, onConnected, picked: on, onPick }: RowProps) {
+  const conn = connectionForMethod(connections, vendor, m)
+  const ready = conn?.state === 'ready'
+  const flow = useSiwcLogin(vendor, m, onConnected)
+  const dataAttrs = {
+    'data-connect-method': m.id,
+    'data-connect-method-kind': m.kind,
+    'data-connect-method-state': ready ? 'ready' : (conn?.state ?? 'none'),
+  }
+  if (!ready) {
+    // 没连 / 要重新登录 / 没允许订阅额度：按钮直接在卡片右侧（少点一下，agy 审稿 2026-11-25）；异常原因写在第二行
+    const caption = conn ? (conn.state === 'needs_auth' ? cx('needsAuth') : connectionErrorText(conn)) : methodCaption(vendor, m, undefined)
+    return (
+      <div className="flex flex-col gap-2">
+        <div {...dataAttrs} className={cn(CARD_CLASS, 'border-border bg-surface', !m.available && 'opacity-40')}>
+          <MethodCardBody method={m} caption={caption} right={m.available ? flow.button : null} />
+        </div>
+        {flow.hint}
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        {...dataAttrs}
+        aria-pressed={on}
+        onClick={() => onPick(on ? null : m.id)}
+        className={cn(
+          CARD_CLASS,
+          'focus-visible:focus-ring outline-none transition-colors',
+          on ? 'border-ink-3 bg-surface-hover' : 'border-border bg-surface hover:bg-surface-hover',
+        )}
+      >
+        <MethodCardBody method={m} caption={conn?.account_email || methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
+      </button>
+      {on && conn && <SiwcManage connection={conn} />}
+    </div>
+  )
+}
+
+/**
  * 二级卡片：一家厂商有多种连接方式（API Key / 订阅登录 …）时，每种方式一张可点的选项卡
  * （图标 + 方式名 + 一句短说明）；不可用的置灰并给一句原因。
  * **状态落在每种方式上**：每张卡自己显示「已连接」或异常；点没连的卡，它下面展开该方式的表单 / 登录；
@@ -250,7 +296,9 @@ export function MethodList({
   return (
     <div data-connect-methods={vendor.id} className="flex flex-col gap-2">
       {methods.map((m) =>
-        m.kind === 'login' ? (
+        m.kind === 'siwc' ? (
+          <SiwcMethodRow key={m.id} vendor={vendor} method={m} connections={connections} onConnected={onConnected} picked={picked === m.id} onPick={setPicked} />
+        ) : m.kind === 'login' ? (
           <LoginMethodRow key={m.id} vendor={vendor} method={m} connections={connections} onConnected={onConnected} picked={picked === m.id} onPick={setPicked} />
         ) : (
           <MethodRow key={m.id} vendor={vendor} method={m} connections={connections} onConnected={onConnected} picked={picked === m.id} onPick={setPicked} />

@@ -2999,6 +2999,7 @@ export default interface Resources {
         "disconnectTitle": "断开 {{name}}？",
         "err": {
           "network": "连不上服务商。",
+          "planUsageDisabled": "未允许使用订阅额度",
           "timeout": "连接超时。",
           "unauthorized": "Key 无效或已过期。"
         },
@@ -3041,6 +3042,17 @@ export default interface Resources {
         "saveKey": "保存",
         "savedRefreshFailed": "已保存，但没能刷新状态。",
         "signIn": "登录",
+        "siwc": {
+          "browserHint": "在浏览器里完成登录。",
+          "cancel": "取消",
+          "continue": "Continue with ChatGPT",
+          "disconnectBody": "会退出这个 ChatGPT 账号，并撤销 {{product}} 的授权。",
+          "expired": "登录超时了，再试一次。",
+          "failed": "登录没有完成，再试一次。",
+          "openAgain": "重新打开",
+          "planDisabled": "登录时没有允许使用订阅额度，再试一次。",
+          "revokeUnconfirmed": "已退出，但没能确认撤销授权，可以到 ChatGPT 设置里断开 {{product}}。"
+        },
         "starter": {
           "key": "没有订阅：填一个 API Key",
           "other": "其他方式",
@@ -4001,6 +4013,8 @@ export default interface Resources {
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
       "ai_revert_not_applicable": "这次是「生成可编辑版本」，原脚本从未被改动，没有可撤销的内容。",
       "ai_script_busy": "{{script}} 上已有一个 AI 任务在运行。等它结束，或先中止它，再发新的。",
+      "ai_siwc_plan_disabled": "这个 ChatGPT 账号没有允许使用订阅额度。重新登录时允许即可，或改用 API Key。",
+      "ai_siwc_token_unavailable": "暂时连不上 ChatGPT 登录服务，稍后再试。",
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
       "ai_supersede_conflict": "上一次的修改其实已经开始了，没有改写成新指令。请先看它的结果。",
       "annotations_need_pdf": "该素材没有矢量 PDF，标注暂时无法写回原图。",
@@ -4403,6 +4417,9 @@ export default interface Resources {
       "session_auth_required": "没有活动会话。请重新启动 Tavotto，从它打开的链接进入。",
       "session_dead": "画到一半被系统中断了，多半是内存不够。再操作一次会重新开始。",
       "settings_dir_unusable": "{{key}} 不可用：{{reason}}",
+      "siwc_disabled": "ChatGPT 登录未开启。",
+      "siwc_login_failed": "ChatGPT 登录没有完成，请重试。",
+      "siwc_port_unavailable": "本机登录回调用不了（端口被占用）。关掉其他正在登录的程序后再试。",
       "source_changed": "写回被阻止：原始文件在此期间被修改过，请刷新素材后再试",
       "source_missing": "该图的源文件暂时不可用：{{figure}}。",
       "specfix_native_unsupported": "用 {{product}} Run 打开的图暂不支持自动修复，图没有改动。",

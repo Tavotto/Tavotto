@@ -86,3 +86,60 @@ export function ConnectionManage({
     </div>
   )
 }
+
+/**
+ * 已连接的 ChatGPT（Sign in with ChatGPT）的管理区：默认型号、断开（= 退出登录并撤销授权）。没有「换 Key」。
+ * 断开时远端撤销没确认，如实说一句（本机令牌照样清掉）。
+ */
+export function SiwcManage({ connection }: { connection: AiConnection }) {
+  useTranslation('dialogs')
+  const model = useAiStore((s) => s.models[connection.id]) ?? connection.default_model ?? ''
+  const [error, setError] = useState<string | null>(null)
+
+  const disconnect = async () => {
+    const ok = await askConfirm({
+      title: msg('settings.connectAi.disconnectTitle', { name: connection.label }, 'dialogs'),
+      body: msg('settings.connectAi.siwc.disconnectBody', undefined, 'dialogs'),
+      confirmLabel: msg('settings.connectAi.disconnect', undefined, 'dialogs'),
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      const r = await disconnectAi(connection.id)
+      await useAiStore.getState().loadCaps(true)
+      if (r.revoked === false) setError(cx('siwc.revokeUnconfirmed'))
+    } catch (e) {
+      setError(backendErrorText(e))
+    }
+  }
+
+  return (
+    <div data-connect-manage={connection.id} className="flex flex-col gap-2">
+      {connection.models.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 text-xs text-ink-2">{cx('defaultModel')}</span>
+          <Select
+            className="min-w-0 flex-1"
+            ariaLabel={cx('defaultModel')}
+            value={model}
+            onChange={(m) => useAiStore.getState().setModel(connection.id, m)}
+            options={connection.models.map((m) => ({
+              value: m,
+              label: connection.model_details?.find((d) => d.id === m)?.display_name || m,
+            }))}
+          />
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <Button variant="danger-tinted" size="sm" data-connect-disconnect onClick={() => void disconnect()}>
+          {cx('disconnect')}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
