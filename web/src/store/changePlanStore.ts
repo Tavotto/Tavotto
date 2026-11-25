@@ -21,7 +21,6 @@ import { releaseOwned } from '@/lib/styleOwned'
 import type { PanelObject, PanelOverride } from '@/types/document'
 import { currentRunSelection, newRequestId, useAiStore, type AiScope } from './aiStore'
 import { scriptHandoffPrompt } from '@/lib/assistantScriptContext'
-import { engineLabel } from '@/components/inspector/roles/registry'
 import { exactPanelManifest, useRenderStore } from './renderStore'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
@@ -270,6 +269,15 @@ export function panelOf(e: Pick<PlanEntry, 'panelId' | 'documentId' | 'loadSeq' 
 }
 
 const pending = new Set<string>()
+
+/**
+ * 元素显示名的出口（`engineLabel`：mathtext 读作 min⁻¹、按界面语言重组）在 `components/` 里，store 不能反向 import 界面层；
+ * 由 `changePlan/reviewSync` 在模块加载时交进来。没交（单测）= 原样。
+ */
+let labeler: (raw: string) => string = (raw) => raw
+export function setChangePlanLabeler(fn: (raw: string) => string): void {
+  labeler = fn
+}
 
 /** 一键排版方案的两张预览图是 blob 地址（本机内存里的 PNG）：条目没了就放掉 */
 function revokeLayoutImages(e: PlanEntry | undefined): void {
@@ -523,7 +531,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const appliedNow = hasChanges && statusNow() === 'applied'
       // 图内已经改（或待用户应用）的部分，确定性地写进指令：Agent 不在脚本里重做它们（`lib/assistantScriptContext`）
       const manifest = exactPanelManifest(useRenderStore.getState(), panel)
-      const labels = new Map((manifest?.elements ?? []).map((x) => [x.gid, x.label ? engineLabel(x.label).trim() : '']))
+      const labels = new Map((manifest?.elements ?? []).map((x) => [x.gid, x.label ? labeler(x.label).trim() : '']))
       const prompt = scriptHandoffPrompt(fb.prompt, e.plan, {
         applied: appliedNow,
         unchecked: e.unchecked,
