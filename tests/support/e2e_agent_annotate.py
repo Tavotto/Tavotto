@@ -51,4 +51,6 @@ def main(project: str, name: str, batch: int = 1) -> None:
 
 
 if __name__ == "__main__":
+    # 被 spawn 时 stdout 是管道，Windows 上会退回系统区域编码：钉 UTF-8（`tests/test_*` 的探针门禁）
+    sys.stdout.reconfigure(encoding="utf-8")
     main(sys.argv[1], sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 1)
