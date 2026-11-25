@@ -69,19 +69,22 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { arrowHeads, emptyProject, isKnownObject, legacyHead, objectLabel, objectRotation, type ArrowHeadType, type PathTextObject, type ProjectDocument } from '@/types/document'
+import { arrowHeads, emptyProject, isKnownObject, legacyHead, migrateToProject, objectLabel, objectRotation, type ArrowHeadType, type PathTextObject, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { vectorPrimaryFor } from '@/lib/figureGroup'
 import { useEnvStore } from './envStore'
 import {
+  activeProjectFile,
   adoptSlotBaseline,
   dropRecentEntry,
+  markProjectFileDirty,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
   useDocumentStore,
+  writesBlocked,
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
@@ -462,8 +465,45 @@ export function restorePanelOverrides(panelId: string, label: UiMessage, patches
   )
 }
 
-/** 布局版本恢复：当前画布的内容整份换成那一版（面板 overrides 的身份原样）。 */
-export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) {
+/**
+ * 布局版本恢复。按节点正文的 schema 分派（服务端从版本链里存的就是整份载荷）：
+ *
+ * - **schema 2**：单画布检查点，当前画布的内容整份换成那一版（面板 overrides 的身份
+ *   原样）。这条路径逐字保留，⌘Z 一步退回。
+ * - **schema 3 / 4**：整份项目节点（原地升级的备份原语产出）。经 `migrateToProject`
+ *   拿到 `ProjectDocument` 后 `switchDocument` 换进**同一个 documentId**——项目节点
+ *   的正文是多张画布，不能把 `version.objects` 当成当前画布的对象去 commit。
+ *   返回 false = 正文读不出来 / 换文档被取消，调用方不得说「已恢复」。
+ *
+ * 返回值可能是 Promise：schema 2 的 commit 同步完成，schema 3 / 4 要等 `switchDocument`。
+ */
+export function restoreLayoutVersion(
+  label: UiMessage,
+  version: FigureDocument | ProjectDocument,
+): boolean | Promise<boolean> {
+  if (writesBlocked()) return false
+  if (version.schema !== 2) {
+    const pd = migrateToProject(version)
+    if (!pd) return false
+    // 恢复的是同一份排版：documentId 不变，时间线 / 最近文档 / 项目归属都跟着这份走
+    const docId = useDocumentStore.getState().documentId
+    const project = captureProjectEpoch()
+    return useDocumentStore.getState().switchDocument(pd, docId, undefined, {
+      editCurrent: true,
+      beforeInstall: async () => project.still(),
+    }).then(async (ok) => {
+      // 换进来的正文与项目文件里那份不同了：绑定还在的话要标脏，否则 ⌘S 会以为
+      // 「已经存过」——恢复后的内容只在自动保存槽位里，项目文件还是旧的。
+      // 走 `markProjectFileDirty()`：它同时推进编辑代次，正在飞的项目文件保存
+      // 回来时 `projectFileSnapshot()` 才看得见这次变化，不会把 dirty 洗回 false。
+      // 等回来的这一下也可能已经换了排版：那就不碰新排版的绑定。
+      if (ok && project.still() && useDocumentStore.getState().documentId === docId && !writesBlocked()) {
+        if (activeProjectFile()) markProjectFileDirty()
+        return (await saveNowWithResult(true)).wrote
+      }
+      return false
+    })
+  }
   commit(
     label,
     (d) => {
@@ -479,6 +519,7 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
     },
     { overrides: 'restored' },
   )
+  return true
 }
 
 export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
@@ -784,6 +825,11 @@ export async function newBlankDocument(): Promise<void> {
   status(note('blankCreated'), 'done')
 }
 
+export function reportLayoutOpenSkipped(name = ''): false {
+  useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+  return false
+}
+
 /**
  * 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份。
  *
@@ -797,10 +843,7 @@ export async function openLayoutDocument(
   // 入口那一刻的上下文（调用方 `doLoad` 刚核过）：下面每个 await（探测占用、读槽位、丢失确认）之后、
   // 安装之前都要再核，项目或排版变了就不装（Codex #1734 P1：旧项目的排版不能装进新选的工作区）
   const ctx = captureSaveContext()
-  const skipped = (): false => {
-    useUiStore.getState().setStatus(msg('layout.openSkipped', { name: projectFile?.name ?? '' }, 'dialogs'), 'error')
-    return false
-  }
+  const skipped = () => reportLayoutOpenSkipped(projectFile?.name)
   // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
   let reuse: string | null = null
   if (projectFile) {

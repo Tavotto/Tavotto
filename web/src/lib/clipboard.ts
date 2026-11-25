@@ -15,7 +15,8 @@ import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
-import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, LayoutGroup, PanelObject } from '@/types/document'
+import { sameRules } from '@/lib/specBinding'
 import { isRuntimePanel, objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
 import { DUPLICATE_OFFSET_MM } from '@/lib/units'
@@ -321,6 +322,8 @@ export interface MissingAsset {
   name: string
   /** 引用它的剪贴板面板数量 */
   count: number
+  /** 这次检视确需重链接的面板；同 fileId 的自包含图表不在其中。 */
+  panelIds?: string[]
   /** 用户选择：重新链接到哪个现有素材；undefined = 跳过 */
   relinkTo?: string
 }
@@ -365,18 +368,23 @@ function panelSourceKnown(p: PanelObject): boolean {
 }
 
 /** 项目包导入后：把当前文档里缺失素材的面板交给重链接对话框处理 */
-export function requestRelinkMissing(): number {
+export function requestRelinkMissing(verifiedChartSources: readonly ChartSourceRef[] = []): number {
   const { doc } = useDocumentStore.getState()
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
     if (o.type !== 'panel' || panelSourceKnown(o)) continue
+    if (o.chartSource && verifiedChartSources.some(ref => sameRules(ref, o.chartSource))) continue
     const cur = missingMap.get(o.fileId)
-    if (cur) cur.count += 1
+    if (cur) {
+      cur.count += 1
+      cur.panelIds!.push(o.id)
+    }
     else {
       missingMap.set(o.fileId, {
         fileId: o.fileId,
         name: o.name ?? o.fileId.split('/').pop() ?? o.fileId,
         count: 1,
+        panelIds: [o.id],
       })
     }
   }
@@ -415,12 +423,13 @@ export function materializeRelink(resolved: MissingAsset[], { keepEdits = false 
     useUiStore.getState().setStatus(note('relinkNone'), 'info')
     return
   }
-  const byFileId = new Map(relink.map((m) => [m.fileId, assets[m.relinkTo!]]))
+  const byFileId = new Map(relink.map((m) => [m.fileId, { asset: assets[m.relinkTo!], panelIds: m.panelIds }]))
   useDocumentStore.getState().commit(hist('relinkAssets', { count: relink.length }), (d) => {
     for (const o of d.objects) {
       if (o.type !== 'panel') continue
-      const info = byFileId.get(o.fileId)
-      if (!info) continue
+      const choice = byFileId.get(o.fileId)
+      if (!choice || (choice.panelIds && !choice.panelIds.includes(o.id))) continue
+      const info = choice.asset
       clearAdoption(o)
       o.fileId = info.id
       o.fileKind = info.kind

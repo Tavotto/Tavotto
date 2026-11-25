@@ -242,30 +242,20 @@ describe('写前确认：本会话没确认过磁盘状况的文档先探一次'
     expect(h.fetches).toEqual(['A'])
   })
 
-  it('探不到（后端不可达）→ 不猜不记，这次照常写；写也没成的话下次仍要探', async () => {
+  it('基线探不到就不写，保持未知；下次读到磁盘正文时进入冲突', async () => {
     const h = harness()
     h.setFetchThrows(true)
-    h.setPutMode('io')
     h.writer.schedule('A', doc(1), null)
     await tick()
-    expect(h.puts).toHaveLength(1)
-    expect(h.puts[0].revision).toBeUndefined()
+    expect(h.puts).toEqual([])
+    expect(h.events).toEqual(['saving:A', 'failed:A:io'])
     expect(h.writer.knowsRevision('A')).toBe(false)
+    h.setFetchThrows(false)
+    h.setOnDisk({ revision: 'unread-body' })
     h.writer.schedule('A', doc(2), null)
     await tick()
-    expect(h.fetches).toEqual(['A', 'A'])
-  })
-
-  it('探不到但写成了 → 后端回的 revision 就是基线，之后不再探', async () => {
-    const h = harness()
-    h.setFetchThrows(true)
-    h.writer.schedule('A', doc(1), null)
-    await tick()
-    expect(h.writer.knowsRevision('A')).toBe(true)
-    h.writer.schedule('A', doc(2), null)
-    await tick()
-    expect(h.fetches).toEqual(['A'])
-    expect(h.puts[1].revision).toBe('r1')
+    expect(h.puts).toEqual([])
+    expect(h.events.at(-1)).toBe('failed:A:external')
   })
 
   it('三档不压扁：读过但拿不到 hash 是 null（不带、不再探），不是缺席', async () => {

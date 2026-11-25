@@ -1018,6 +1018,7 @@
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
     "packageTooNew": "This project package is from a newer {{product}} and this build can’t open it.",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
+    "packageIncomplete": "{{count}} chart sources are missing or damaged in the package. Restore them and try again.",
     "packaged_one": "Created project package {{name}} ({{count}} asset)",
     "packaged_other": "Created project package {{name}} ({{count}} assets)",
     "pasteNothing": "Nothing to paste. Objects with missing assets were skipped.",
@@ -1934,6 +1935,7 @@
     "openAlt": "Open “{{name}}”",
     "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
+      "chartSource": "Chart source missing or damaged",
       "choose": "Layouts found on this computer",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
@@ -1944,6 +1946,7 @@
     },
     "retry": "Try again",
     "title": {
+      "chartSource": "The chart source for “{{name}}” is missing or damaged.",
       "choose": "Found a few layouts on this computer — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",

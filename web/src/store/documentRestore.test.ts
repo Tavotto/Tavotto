@@ -1500,3 +1500,17 @@ describe('Codex P2：owner_unknown 与 failed 一样点亮「恢复信息没更�
     expect(ds(app).restoreMetaIssue).toBeNull()
   })
 })
+
+it('启动恢复保留附件缺失的原因，不折成笼统 invalid', async () => {
+  seedSavedLast()
+  const app = await boot()
+  vi.stubGlobal('fetch', async (url: unknown, init?: RequestInit) => {
+    if (String(url).includes('/api/autosave/d_saved') && init?.method !== 'PUT') {
+      return new Response(JSON.stringify({ code: 'chart_source_mismatch' }), { status: 422 })
+    }
+    return fetchImpl(url as RequestInfo, init)
+  })
+  expect(await app.doc.restoreSession()).toBe(false)
+  expect(ds(app).restoreIssue?.kind).toBe('chart_source_mismatch')
+  expect(autosavePuts()).toEqual([])
+})

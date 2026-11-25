@@ -972,6 +972,7 @@
     "packageOpenFailed": "无法打开项目包。{{error}}",
     "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
+    "packageIncomplete": "项目包有 {{count}} 份图表来源缺失或损坏，请补齐后重试。",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
@@ -1854,6 +1855,7 @@
     "openAlt": "打开“{{name}}”",
     "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
     "pill": {
+      "chartSource": "图表来源缺失或损坏",
       "choose": "找到了几份本机排版",
       "indexDegraded": "恢复记录读不了",
       "invalid": "上次的排版读不出来",
@@ -1864,6 +1866,7 @@
     },
     "retry": "重试",
     "title": {
+      "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
       "choose": "本机找到了几份排版，选一份打开。",
       "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
       "invalid": "上次的排版“{{name}}”读不出来。",
