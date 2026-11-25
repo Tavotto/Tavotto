@@ -65,6 +65,8 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { usePdfFontFacts } from '@/store/pdfFontFacts'
+import { REDRAW_FRAME_OVERRIDE } from '@/lib/scriptedBitmaps'
 import { emptyProject, type ArrowObject, type CanvasObject, type PanelObject } from '@/types/document'
 import { arrowGeometry, dashArray } from '@/lib/shapeGeometry'
 import { buildPreset } from '@/lib/presets'
@@ -119,6 +121,8 @@ let jobStatus: 'done' | 'partial' | 'conflict' | 'running' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
 let jobWarnings: string[] = []
+/** `/api/panel-font-facts` 的回答（null = 读不出）：导出结果「用脚本重画并重新导出」先问 PDF 原件的字体事实 */
+let fontFacts: Record<string, unknown> | null = null
 /** 后端 validate 的 `route`（#1209）：按请求体现造；null = 旧后端 / 算不出（响应里没有 route） */
 /** 逐个作业依次给的状态（一批作业里每张一个）；用完退回 `jobStatus` */
 /** 每次 `buildBatchInput` 调用时的微任务纪元（见「冻结是一个同步块」） */
@@ -178,6 +182,13 @@ function stubFetch() {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
+    }
+    if (url.includes('/api/panel-font-facts')) {
+      const id = new URL(url, 'http://x').searchParams.get('id')
+      return new Response(JSON.stringify({ id, readable: false, type3: false, missing_glyphs: false, ...fontFacts }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
     if (url.includes('/api/runtime/status') && runtimeStatusFail) {
       if (runtimeStatusFail < 0) throw new TypeError('network down')
@@ -386,6 +397,8 @@ beforeEach(() => {
   routeDelayMs = 0
   jobOutputs = null
   jobWarnings = []
+  fontFacts = null
+  usePdfFontFacts.getState().clear()
   resetExportState()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   useSelectionStore.getState().clear()
@@ -1708,6 +1721,75 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(lines[1].className).toContain('text-warn')
     // 留意不是失败：没有红色的核验未通过
     expect(document.body.querySelector('[data-inspection="failed"]')).toBeNull()
+  })
+
+  describe('「用脚本重画并重新导出」（T-005 补充：Type 3 留意下面）', () => {
+    const type3Output = () =>
+      output({
+        ...manifest({ integrity: 'verified', size: 'verified' }),
+        advisories: [{ code: 'type3_fonts', fonts: ['DejaVuSans'], count: 1 }],
+      })
+    const redrawButton = () => document.body.querySelector<HTMLButtonElement>('[data-export-redraw-fonts]')
+    const P1 = () => useDocumentStore.getState().doc.objects[0] as PanelObject
+    /** 画布上那张 PDF 原件有脚本、没动过（磁盘原件用了 Type 3，后端只读文件得出） */
+    const withScript = async () => {
+      await setup(9)
+      useDocumentStore.getState().commit(literal('脚本'), (d) => {
+        ;(d.objects[0] as PanelObject).script = 'fig1.py'
+      })
+      useDocumentStore.setState({ past: [], future: [] })
+    }
+
+    beforeEach(() => {
+      jobWarnings = []
+      jobOutputs = [type3Output()]
+    })
+
+    it('原件用了 Type 3：留意下面给按钮；点了落一次可撤销的重画，再导一次；导完按钮就没了', async () => {
+      fontFacts = { readable: true, type3: true }
+      await withScript()
+      await click(button('开始导出')!)
+      await openResultDetail()
+      await until(() => redrawButton() !== null)
+      const btn = redrawButton()
+      expect(btn?.textContent).toBe('用脚本重画并重新导出')
+      // 紧跟在 Type 3 那一句下面
+      expect(btn?.parentElement?.previousElementSibling?.getAttribute('data-inspection-advisory')).toBe('type3_fonts')
+      expect(exportBodies).toHaveLength(1)
+      await click(btn!)
+      await until(() => exportBodies.length === 2)
+      expect(exportBodies).toHaveLength(2)
+      expect(P1().overrides).toEqual([REDRAW_FRAME_OVERRIDE])
+      expect(useDocumentStore.getState().past).toHaveLength(1)
+      await openResultDetail()
+      expect(redrawButton(), '换成重画之后这张图不再是原件').toBeNull()
+      act(() => useDocumentStore.getState().undo())
+      expect(P1().overrides).toEqual([])
+    })
+
+    it.each<[string, () => void]>([
+      ['原件没有 Type 3（Type 3 出自别处）', () => { fontFacts = { readable: true, type3: false } }],
+      ['原件读不出', () => { fontFacts = null }],
+    ])('%s：不给按钮，导出默认行为不变', async (_name, arrange) => {
+      arrange()
+      await withScript()
+      await click(button('开始导出')!)
+      await openResultDetail()
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+      expect(document.body.querySelector('[data-inspection-advisory="type3_fonts"]')).not.toBeNull()
+      expect(redrawButton()).toBeNull()
+      expect(P1().overrides).toEqual([])
+    })
+
+    it('图没有脚本：不问字体事实，也不给按钮', async () => {
+      fontFacts = { readable: true, type3: true }
+      await setup(9)
+      await click(button('开始导出')!)
+      await openResultDetail()
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+      expect(redrawButton()).toBeNull()
+      expect(usePdfFontFacts.getState().byKey).toEqual({})
+    })
   })
 
   it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {

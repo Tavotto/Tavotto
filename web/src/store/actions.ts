@@ -2539,15 +2539,7 @@ export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
   if (panel?.type !== 'panel') return false
   // PDF 原件（原件用了 Type 3 / 有缺字）：本来就是矢量的脚本产物，重画只换掉字体——一条不改任何东西的
   // `figure.frame = "savefig"`，面板就由引擎按脚本存盘的图幅重画；不走位图那套采用与对照
-  if (pdfRedrawCandidate(panel)) {
-    if (!redrawOffered(panel, pdfFontFactsOf(panel.fileId))) return false
-    commit(msg('artifact.showRedraw', undefined, 'errors'), (d) => {
-      const o = d.objects.find((x) => x.id === panel.id)
-      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
-    })
-    status(msg('artifact.redrawn', undefined, 'errors'), 'done')
-    return true
-  }
+  if (pdfRedrawCandidate(panel)) return redrawPdfOriginalsWithScript([panelId]).length > 0
   if (!redrawOffered(panel)) return false
   const issue = artifactValidationIssue(panel)
   if (issue) {
@@ -2564,6 +2556,30 @@ export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
     return false
   }
   return admitPngEntry(panel, 'keep', true)
+}
+
+/**
+ * PDF 原件（用了 Type 3 / 有缺字）改由脚本重画：画布角标与导出结果里「用脚本重画并重新导出」是同一步（T-005 补充）。
+ *
+ * 只换 `pdfRedrawCandidate` 且字体事实说有问题（`redrawOffered`）的那几张；每张落一条不改任何东西的
+ * `figure.frame = "savefig"`，全部在**一次**可撤销的提交里——撤销一下就都回到原件。不跑脚本、不改导出默认行为：
+ * 用户点了才换。回换了的面板 id（一张都没换就不提交、不出提示）。
+ */
+export function redrawPdfOriginalsWithScript(panelIds: readonly string[]): string[] {
+  finishActiveGesture()
+  const ids = panelIds.filter((id) => {
+    const p = findObject(id)
+    return p?.type === 'panel' && pdfRedrawCandidate(p) && redrawOffered(p, pdfFontFactsOf(p.fileId))
+  })
+  if (ids.length === 0) return []
+  commit(msg('artifact.showRedraw', undefined, 'errors'), (d) => {
+    for (const id of ids) {
+      const o = d.objects.find((x) => x.id === id)
+      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
+    }
+  })
+  status(msg('artifact.redrawn', undefined, 'errors'), 'done')
+  return ids
 }
 
 export function enterElementEdit(

@@ -352,6 +352,7 @@
     "missingSourceNote": "有一张图找不到了：{{name}}。",
     "changeLocationExport": "换个位置导出",
     "lowerDpiExport": "改用 {{dpi}} dpi 导出",
+    "redrawFontsExport": "用脚本重画并重新导出",
     "toast": {
       "conflict": "导出停在这里，等你决定同名文件怎么处理。",
       "failed": "导出失败，没有写出文件。",
