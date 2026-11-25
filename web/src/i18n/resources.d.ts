@@ -8409,7 +8409,7 @@ export default interface Resources {
       "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
       "pill": {
         "chartSource": "图表来源缺失或损坏",
-        "choose": "找到了几份本机排版",
+        "choose": "找到了几份排版",
         "indexDegraded": "恢复记录读不了",
         "invalid": "上次的排版读不出来",
         "missing": "上次的排版找不到了",

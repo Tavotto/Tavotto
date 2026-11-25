@@ -75,6 +75,10 @@ describe('恢复卡「选一份」：一行一份，名字在左、时间在右'
     expect(right.className).toMatch(/text-ink-3/)
     expect(right.className).toMatch(/tabular-nums/)
     expect(right.className).not.toMatch(/font-mono/)
+    // 时间不是快捷键：字距回正常（不带快捷键格的 tracking-wide），与名字按基线对齐
+    expect(right.className).toMatch(/tracking-normal/)
+    expect(right.className).not.toMatch(/tracking-wide/)
+    expect(right.className).toMatch(/self-baseline/)
     await act(async () => items[1].click())
     expect(openAlternative).toHaveBeenCalledWith('d_b')
   })

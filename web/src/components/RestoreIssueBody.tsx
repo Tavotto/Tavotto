@@ -67,12 +67,14 @@ export function RestoreIssueBody({
     </MenuItem>
   )
   // 「选一份」名单：按钮上已经写了「选一份打开」，每行只写排版名；右侧灰字是最后修改时间（同名候选靠它分开，
-  // 写法与时间线节点默认名相同）。右侧复用菜单项现成的右侧槽位（快捷键那一格：靠右、灰字、数字等宽），拿不到时间就留空
+  // 写法与时间线节点默认名相同）。右侧复用菜单项现成的右侧槽位（快捷键那一格：靠右、灰字、数字等宽；字距改回正常、按基线对齐），拿不到时间就留空
   const chooseItem = (a: AltCandidate) => (
     <MenuItem
       key={`${a.id}${a.localCopy ? ':local' : ''}`}
       data-restore-action="open-alt"
       shortcut={typeof a.at === 'number' && Number.isFinite(a.at) && a.at > 0 ? formatStamp(a.at) : undefined}
+      // 时间不是快捷键：正常字距；与名字按基线对齐（居中时数字比中文名字看着低一点）
+      shortcutClassName="tracking-normal self-baseline"
       onSelect={done(() => openAlternative(a.id))}
     >
       {a.localCopy ? altLabel(a) : a.name || t('docBanner.lastDocUnnamed')}

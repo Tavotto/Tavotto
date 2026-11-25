@@ -1940,7 +1940,7 @@
     "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
       "chartSource": "Chart source missing or damaged",
-      "choose": "Layouts found on this computer",
+      "choose": "Layouts found",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
       "missing": "Last layout not found",
