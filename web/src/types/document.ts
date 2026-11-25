@@ -47,6 +47,29 @@ export interface ObjectBase {
    * x/y/w/h 始终是未旋转的包围盒。
    */
   rotationDeg?: number
+  /**
+   * Agent 加的标注锚在哪里（ADR 0208 §六）：后端 `engine/layoutannotate.py` 写入，Agent 不能直接写（字段表里是保留字段）。
+   * 前端现在只原样保留它（载入 / 保存 / 撤销都不动）；第 4 期据它判「这个标注可能已经没对准」并「重新对准」。
+   */
+  anchor?: AgentAnchor
+}
+
+/** 一条锚点：`role` 是元素的哪一端（from / to / at / left / right…），其余正好一个锚点种类（与场景描述同一套）。 */
+export interface AgentAnchorRole {
+  role: string
+  data?: { panel: string; axes?: string; x: number | string; y: number | string }
+  element?: { panel: string; gid: string; point?: string }
+  panel?: { id: string; point?: string }
+  item?: { name: string; point?: string }
+  offset_mm?: [number, number]
+  /** 脚本 `label=` 的摘要：脚本重跑、gid 重新编号后据它认回同一个元素 */
+  identity?: string
+}
+
+export interface AgentAnchor {
+  v: 1
+  by: 'agent'
+  anchors: AgentAnchorRole[]
 }
 
 /**
