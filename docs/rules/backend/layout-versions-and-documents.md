@@ -141,6 +141,9 @@ order: 200
   合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
   tavottofile**，否则导出成图会混进素材面板。autosave / styles 等
   跨项目或内部机制仍留在数据目录。
+- 项目文件绑定按项目和工作副本 id 定位。会话接口 `/api/layout-session/project-file/<doc_id>` 的 GET 与
+  POST `/reserve` 在同一槽位锁内读取磁盘修订。POST `/confirm` 在命名文件锁内复核实际文件修订，
+  提交时再核对仍有效的票据。DELETE `/intent/<sequence>` 只取消相应的待确认意图。看护：`tests/test_layout_project_file_http.py`。
 - **单一存储：schema 4 与 schema 3 同一套目录 / 列表 / 版本历史（#1920 合同，ADR 0182 §3）**：
   正文 `schema` 号是唯一区分——命名保存、自动保存槽位、版本时间线、项目包与「打开」列表
   都不按格式分叉，没有 `documents/v4` 命名空间、没有第二套文档端点或会话域。schema 4 只表示
