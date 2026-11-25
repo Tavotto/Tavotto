@@ -94,8 +94,13 @@ for (const mode of ['unsupported_sync', 'unsupported_thread'] as const) {
     await page.locator('[data-ai-input]').fill('把线条加粗一点')
     await page.locator('[data-ai-send="send"]').click()
     // 改脚本会话出现（现有的会话标志）；用户的话没丢
-    await expect(page.locator('[data-ai-session]').first()).toBeVisible({ timeout: 60_000 })
-    await expect(page.locator('[data-ai-user]').first()).toContainText('把线条加粗一点')
+    // 一次发送只该有一个改脚本会话、一条用户话：用计数断言，落回若重复执行会被抓到（不用 first() 掩盖）
+    const session = page.locator('[data-ai-session]')
+    await expect(session).toHaveCount(1, { timeout: 60_000 })
+    await expect(session).toBeVisible()
+    const said = page.locator('[data-ai-user]')
+    await expect(said).toHaveCount(1)
+    await expect(said).toContainText('把线条加粗一点')
     await expect(page.locator('[data-change-plan-card="failed"]')).toHaveCount(0)
     await expect(page.locator('[data-change-plan-card="ready"]')).toHaveCount(0)
   })
