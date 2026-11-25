@@ -40,6 +40,30 @@ export function isElementHidden(el: ManifestElement): boolean {
 }
 
 /**
+ * 图内元素能不能进多选：框选与「选中全部同类」同一份判据。整张图是兜底命中、混进多选没有意义；
+ * 已隐藏的看不见、锁定的点不中，都不收。
+ */
+export function isMultiSelectable(el: ManifestElement, lockedGids?: readonly string[]): boolean {
+  return el.gid !== 'figure' && !isElementHidden(el) && !lockedGids?.includes(el.gid)
+}
+
+/**
+ * 「选中全部同类」的选区：同一张图里与 `el` 角色相同、能进多选的元素，`el` 排**最后**——
+ * 末位是主选（属性页标题 `IdentityHeader`、`ElementInspector` 都读 `at(-1)`），右键的那个仍是主角。
+ * 只有它自己时返回 `[el.gid]`。
+ */
+export function sameKindGids(
+  elements: readonly ManifestElement[],
+  el: ManifestElement,
+  lockedGids?: readonly string[],
+): string[] {
+  const peers = elements
+    .filter((e) => e.gid !== el.gid && e.role === el.role && isMultiSelectable(e, lockedGids))
+    .map((e) => e.gid)
+  return [...peers, el.gid]
+}
+
+/**
  * 面板未被裁剪时占据的完整显示矩形（mm，**内容坐标系**）——manifest 的分数
  * 坐标就摊在它上面。面板旋转时内容与包围盒长宽互换，且内容以包围盒中心为
  * 中心，所以这里统一按中心推算；调用方画框时整组再绕同一个中心转回去。

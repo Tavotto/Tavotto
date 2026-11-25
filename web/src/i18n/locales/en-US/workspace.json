@@ -657,6 +657,8 @@
     "paste": "Paste",
     "copyAsAnnotation": "Copy as annotation",
     "pasteAsAnnotation": "Paste as annotation",
+    "selectSameKind_one": "Select all of this kind ({{count}})",
+    "selectSameKind_other": "Select all of this kind ({{count}})",
     "pathfinder": "Pathfinder",
     "addPathText": "Add text on path"
   },

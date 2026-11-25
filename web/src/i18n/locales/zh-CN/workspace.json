@@ -632,6 +632,7 @@
     "paste": "粘贴",
     "copyAsAnnotation": "复制为标注",
     "pasteAsAnnotation": "粘贴为标注",
+    "selectSameKind_other": "选中全部同类（{{count}} 个）",
     "pathfinder": "路径查找器",
     "addPathText": "在路径上加文字"
   },
