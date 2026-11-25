@@ -768,24 +768,32 @@ def test_index_hits_purged_after_a_year_and_admin_prints_stats(svc, tmp_path):
     assert rc == 0 and "v1" in text and "0%" in text
 
 
-def test_index_count_does_not_wait_for_the_write_lock(svc):
-    """别的连接持有写锁时，索引响应仍然很快：计数用极短的 busy timeout，拿不到锁就丢掉这一次（不重试、不排队）。"""
-    import time
+def test_index_count_does_not_wait_for_the_write_lock(svc, monkeypatch):
+    """别的连接持有写锁时：响应照常是 200，计数被丢掉（不重试、不排队），锁放开后照常计。
+    判据是确定性的，不量墙钟：计数连接的 busy timeout 恰好是 `INDEX_COUNT_BUSY_S`（极短），
+    被测的毛病是「等满 10 秒」，所以只要它不是 10 秒、且持锁时没把这一次记进去，就说明没有等锁。"""
+    from services.journal_catalog import store as store_mod
 
     s, _ = svc
     call(s, "GET", "/index.signed.json")  # 先建好表 / 行
     assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]
-    holder = sqlite3.connect(s.store.db_path, isolation_level=None)
+    timeouts = []
+    real = sqlite3.connect
+
+    def spy(*args, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store_mod.sqlite3, "connect", spy)
+    holder = real(s.store.db_path, isolation_level=None)
     try:
         holder.execute("BEGIN IMMEDIATE")
-        t = time.monotonic()
         st, _, b = call(s, "GET", "/index.signed.json")
-        elapsed = time.monotonic() - t
         assert (st, b) == (200, b'{"alg":"ed25519"}')
-        assert elapsed < 0.5, elapsed
     finally:
         holder.execute("ROLLBACK")
         holder.close()
+    assert timeouts == [store_mod.INDEX_COUNT_BUSY_S] and store_mod.INDEX_COUNT_BUSY_S <= 0.1
     assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]  # 被跳过的那一次没有记
     call(s, "GET", "/index.signed.json")
     assert _index_hits(s) == [(T0 // DAY, "v1", 2, 0)]  # 锁放开后照常记
