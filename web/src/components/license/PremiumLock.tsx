@@ -1,6 +1,7 @@
 import { useEffect, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
+import { PRO_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { useUiStore } from '@/store/uiStore'
@@ -31,13 +32,13 @@ export function PremiumLock({
   }, [status, load])
   if (!licenseVisible(status) || licenseHas(status, feature)) return children
   return (
-    <Tip label={translate('settings.license.lock.tip', { ns: 'dialogs' })} side={side} tone="light">
+    <Tip label={translate('settings.license.lock.tip', { ns: 'dialogs', pro: PRO_NAME })} side={side} tone="light">
       <span
         data-premium-lock={feature}
         role="button"
         tabIndex={0}
         aria-disabled="true"
-        aria-label={translate('settings.license.lock.aria', { ns: 'dialogs' })}
+        aria-label={translate('settings.license.lock.aria', { ns: 'dialogs', pro: PRO_NAME })}
         onClick={() => useUiStore.getState().setSettingsOpen(true, 'about')}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {

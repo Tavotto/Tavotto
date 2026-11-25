@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { ApiError, aiDataFigureDiscard, aiDataFigurePropose, aiDataFilesAll, aiDataOverview, aiDataProgress, aiDataProgressCancel, type AiDataOverview, type AiDataProgress } from '@/lib/api'
 import { LARGE_FILE_BYTES } from '@/lib/dataFigure'
+import { candidateIdentity } from '@/lib/dataFigureAdapter'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -127,7 +128,7 @@ describe('大文件：读取中的一句话与「取消」', () => {
     await click(q('[data-studio-retry]'))
     await flush()
     expect(overview).toHaveBeenCalledTimes(2)
-    expect(qa('[data-candidate]')).toHaveLength(1)
+    expect(qa('[data-candidate-stage]')).toHaveLength(1)
   })
 
   it('取消之后在抽屉里再点同一个文件，也会重新读', async () => {
@@ -140,7 +141,7 @@ describe('大文件：读取中的一句话与「取消」', () => {
     await open(0)
     await flush()
     expect(overview).toHaveBeenCalledTimes(2)
-    expect(qa('[data-candidate]')).toHaveLength(1)
+    expect(qa('[data-candidate-stage]')).toHaveLength(1)
   })
 
   it('大文件出候选这一步（propose）也一样：上方一句话 + 取消；取消后候选不再上屏', async () => {
@@ -158,7 +159,7 @@ describe('大文件：读取中的一句话与「取消」', () => {
     expect(qa('[data-candidate-skeleton]')).toHaveLength(0)
     await act(async () => late(cands([item('i1', 'line_band')])))
     await flush()
-    expect(qa('[data-candidate]')).toHaveLength(0)
+    expect(qa('[data-candidate-stage]')).toHaveLength(0)
     expect(useDataFigureStore.getState().phase).toBe('cancelled')
   })
 
@@ -248,7 +249,7 @@ describe('大文件：读取中的一句话与「取消」', () => {
     expect(useDataFigureStore.getState().phase).toBe('reading')
     await act(async () => done(ov()))
     await flush()
-    expect(qa('[data-candidate]')).toHaveLength(1)
+    expect(qa('[data-candidate-stage]')).toHaveLength(1)
     expect(q('[data-studio-cancelled]')).toBeNull()
   })
 
@@ -263,11 +264,11 @@ describe('大文件：读取中的一句话与「取消」', () => {
     await click(q('[data-large-read-cancel]'))
     await act(async () => done(ov()))
     await flush()
-    expect(qa('[data-candidate]')).toHaveLength(1)
+    expect(qa('[data-candidate-stage]')).toHaveLength(1)
     await act(async () => failCancel(new Error('offline')))
     await flush()
     expect(useDataFigureStore.getState().phase).toBe('ready')
-    expect(qa('[data-candidate]')).toHaveLength(1)
+    expect(qa('[data-candidate-stage]')).toHaveLength(1)
     expect(q('[data-studio-cancelled]')).toBeNull()
   })
 
@@ -335,25 +336,39 @@ describe('候选上的「N 行里取 K 个点」', () => {
     files.mockResolvedValue({ files: [{ path: 'big.csv', size: LARGE_FILE_BYTES * 20, table: { status: 'ok', code: null, delimiter: 'comma', header_row: 1, columns: 2, rows: 6_120_000 } }], truncated: false })
     overview.mockResolvedValue(ov())
   })
-  const show = async (items: ReturnType<typeof item>[]) => {
-    const { CandidateGrid } = await import('./CandidateGrid')
-    await mount(<CandidateGrid items={items.map((i) => ({ ...i, thumb: `/t/${i.id}` }))} thumbs={{}} drawingId={null} onPick={() => {}} onThumb={() => {}} />)
+  /** 主图预览第 k 张（候选都当图已到）：返回主图那一块 */
+  const showAt = async (items: ReturnType<typeof item>[], k: number) => {
+    const { CandidateStage } = await import('./CandidateStage')
+    const list = items.map((i) => ({ ...i, thumb: `/t/${i.id}` }))
+    const thumbs = Object.fromEntries(list.map((i) => [i.id, 'ready' as const]))
+    await mount(<CandidateStage items={list} thumbs={thumbs} drawingId={null} previewKey={candidateIdentity(list[k]!)} onPreview={() => {}} onCreate={() => {}} onThumb={() => {}} />)
+    return q('[data-candidate-stage]')!
   }
 
-  it('大表的候选：名字那一行右端一小段灰字（数字用「万」），悬停有整句；没有 reduced / 没少画的不显示', async () => {
-    await show([
+  it('大表的候选：主图标题行右端一小段灰字（数字用「万」），悬停有整句；没有 reduced / 没少画的不显示', async () => {
+    const list = [
       item('i1', 'line_band', { rows: 6_120_000, kept: 42_113 }),
       item('i2', 'scatter_fit', { rows: 6_120_000, kept: 8_400 }),
       item('i3', 'points_mean'),
       item('i4', 'box_points', { rows: 90_000, kept: 90_000 }),
-    ])
-    const tiles = qa('[data-candidate]')
-    expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.textContent).toBe('612万行里取4.2万个点')
-    expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.getAttribute('title')).toBe('整张表612万行，这张图画的是其中有代表性的4.2万个点，最大最小值都留着。')
-    expect(tiles[1]!.querySelector('[data-candidate-reduced]')!.textContent).toBe('612万行里取8400个点')
-    expect(tiles[2]!.querySelector('[data-candidate-reduced]')).toBeNull()
-    expect(tiles[3]!.querySelector('[data-candidate-reduced]')).toBeNull()
+    ]
+    const at = async (k: number) => {
+      if (k > 0) {
+        act(() => root.unmount())
+        host.remove()
+      }
+      return showAt(list, k)
+    }
+    let stage = await at(0)
+    expect(stage.querySelector('[data-candidate-reduced]')!.textContent).toBe('612万行里取4.2万个点')
+    expect(stage.querySelector('[data-candidate-reduced]')!.getAttribute('title')).toBe('整张表612万行，这张图画的是其中有代表性的4.2万个点，最大最小值都留着。')
     // 名字那一行里（不另起一行）
-    expect(tiles[0]!.querySelector('[data-candidate-reduced]')!.parentElement!.className).toContain('flex')
+    expect(stage.querySelector('[data-candidate-reduced]')!.parentElement!.className).toContain('flex')
+    stage = await at(1)
+    expect(stage.querySelector('[data-candidate-reduced]')!.textContent).toBe('612万行里取8400个点')
+    stage = await at(2)
+    expect(stage.querySelector('[data-candidate-reduced]')).toBeNull()
+    stage = await at(3)
+    expect(stage.querySelector('[data-candidate-reduced]')).toBeNull()
   })
 })

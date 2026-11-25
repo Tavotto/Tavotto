@@ -90,6 +90,7 @@ from overrides import (
     _ARROWSTYLES,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     BBOX_DEFAULTS,
+    COPY_LABEL_SUFFIX,
     HATCHES,
     LINE_POINTS_MAX,
     FigState,
@@ -104,6 +105,7 @@ from overrides import (
     _linecoll_linestyle_name,
     _linestyle_name,
     _stroke_state,
+    _unit_scalar,
     alias_covers,
     alias_pure,
     annotation_arrow_display,
@@ -142,6 +144,7 @@ from overrides import (
     register_font_name_aliases,
     remember_axis_directions,
     scale_options,
+    set_element_registrar,
     set_original_reader,
     state_reverse_index,
     sync_font_caches,
@@ -300,7 +303,7 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
         _register(state, gid, ln, "line", nice or f"曲线 {nth('line')}", draggable=True)
 
     for i, t in enumerate(owner.texts):
-        if id(t) not in known:
+        if id(t) not in known and not getattr(t, "_mm_copy", None):
             register_text(f"{prefix}.texts_{i}", t)
     for i, leg in enumerate(getattr(owner, "legends", []) or []):
         if id(leg) not in known:
@@ -317,7 +320,8 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
     # `fig.add_artist(...)` 不按类型改道（Axes 会把 Patch / Line2D 分进 patches / lines，Figure
     # 不会），所以这里什么都可能有：按族分派到与子图里同一套角色
     for j, art in enumerate(getattr(owner, "artists", []) or []):
-        if id(art) in known:
+        # 图内副本（ADR 0207）带着自己的 gid 由 `overrides._ensure_copy` 登记，不再以序号名登记一次
+        if id(art) in known or getattr(art, "_mm_copy", None):
             continue
         gid = f"{prefix}.artists_{j}"
         if isinstance(art, (AnchoredOffsetbox, AnnotationBbox)):
@@ -452,7 +456,9 @@ def _legend_proxy_names_safe(fig) -> dict[int, str]:
 def _relabel(registered: str, text: str) -> str:
     """把登记名里引号中的那段换成当前文字（前缀是角色名，原样保留）。"""
     head = registered.split("“", 1)[0]
-    return f"{head}“{_snippet(text)}”"
+    # 图内副本（ADR 0207）的登记名以「 的副本」收尾：换字时尾巴保留，元素树里才分得清源与副本
+    tail = COPY_LABEL_SUFFIX if registered.endswith(COPY_LABEL_SUFFIX) else ""
+    return f"{head}“{_snippet(text)}”{tail}"
 
 
 def _svg_group(art) -> None:
@@ -983,6 +989,9 @@ def instrument(state: FigState) -> None:
                     draggable=True,
                 )
         for j, t in enumerate(ax.texts):
+            # 图内副本（ADR 0207）：自己的 gid 在 `overrides._ensure_copy` 登记。序号照数（不因跳过而挪位）
+            if getattr(t, "_mm_copy", None):
+                continue
             if t.get_text():
                 _register(
                     state,
@@ -5138,6 +5147,91 @@ def data_fingerprint(artist, budget: list[int]) -> dict | None:
 #: `scale_domain` 每一维的 `status` 闭集（V-001 `log-axis-nonpositive` 读它；不是 `ok` 一律不判）
 SCALE_DOMAIN_STATUSES = ("ok", "over_budget", "unavailable")
 
+#: V-011「图例一侧的取法」只读事实 `legend_cover` 的 `status` 闭集（与 `scale_domain` 同形）。
+LEGEND_COVER_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _legend_handle_cells(leg) -> list | None:
+    """图例每一格示意（handle）的 `DrawingArea`；读不出结构回 None（= 量不了）。
+
+    matplotlib 的排法（`Legend._init_legend_box`）：`_legend_handle_box` 是列的 HPacker，每列是条目的
+    VPacker，每个条目是 `[handlebox, textbox]`（`markerfirst=False` 时反过来）的 HPacker，handlebox 是
+    `DrawingArea`。私有属性，换版本读不出时如实说量不了，不猜。"""
+    from matplotlib.offsetbox import DrawingArea  # noqa: PLC0415
+
+    box = getattr(leg, "_legend_handle_box", None)
+    if box is None:
+        return None
+    cells = []
+    for col in box.get_children():
+        for row in col.get_children():
+            cells.extend(c for c in row.get_children() if isinstance(c, DrawingArea))
+    return cells
+
+
+def legend_cover(leg, renderer, W: float, H: float, dpi: float, budget: list[int]) -> dict:
+    """图例**真正挡住数据的东西**的只读事实（V-011「图例一侧的取法」；不进 `editable`、不进文档）。
+
+    `{"status": "ok", "opaque": bool, "face_alpha": a, "px_mm": p, "handles": [[x, y, w, h], …]}`：
+
+    * `opaque`：框画出来（`frameon`、框可见）且背景此刻的有效不透明度 `face_alpha > 0`。`face_alpha` 取
+      `frame.get_facecolor()` 的 alpha——matplotlib 的 `framealpha`（`Patch.set_alpha`）是**替换**颜色里的
+      alpha 而不是相乘，这就是画出来的那个数；`facecolor="none"` 时为 0。
+    * `handles`：每一格示意（色块 / 线段 / marker）的框，figure 分数、y 向下：`DrawingArea` 的格子并上格里每个
+      artist 的实际范围（大 marker 会伸出格子）。条目文字的框不在这里——它们本来就是 `legend_text` 元素的 `bbox`。
+    * `px_mm`：一个显示像素是多少 mm（`25.4 / dpi`），判据按它把条目框各外扩 1 px。
+
+    单个图例的条目数上限与 `pathgeom.MAX_MARKERS` 相同，整图累计记在调用方给的那份配额上（与 geometry 的
+    `pathgeom.TOTAL_BUDGET` 同一个上限、**另一份计数器**，同 V-001 的做法）；超了 `over_budget`，读不出
+    结构 `unavailable`——这两种都没有 `opaque` / `handles`，判据退回整块图例框（与没有这条事实时相同）。"""
+    try:
+        frame = leg.get_frame()
+        face_alpha = float(frame.get_facecolor()[3]) if frame.get_visible() else 0.0
+        opaque = bool(leg.get_frame_on()) and bool(frame.get_visible()) and face_alpha > 0
+        cells = _legend_handle_cells(leg)
+    except Exception:  # noqa: BLE001 —— 只读事实，量不了就如实说
+        return {"status": "unavailable"}
+    if cells is None:
+        return {"status": "unavailable"}
+    if len(cells) > pathgeom.MAX_MARKERS or len(cells) > budget[0]:
+        return {"status": "over_budget"}
+    budget[0] -= len(cells)
+    handles = []
+    for cell in cells:
+        try:
+            boxes = [cell.get_window_extent(renderer)]
+            for a in cell.get_children():
+                if a.get_visible():
+                    boxes.append(a.get_window_extent(renderer))
+        except Exception:  # noqa: BLE001
+            return {"status": "unavailable"}
+        good = [
+            b
+            for b in boxes
+            if all(math.isfinite(v) for v in (b.x0, b.y0, b.x1, b.y1)) and b.width >= 0
+        ]
+        if not good:
+            continue
+        x0 = min(b.x0 for b in good)
+        x1 = max(b.x1 for b in good)
+        y0 = min(b.y0 for b in good)
+        y1 = max(b.y1 for b in good)
+        handles.append(
+            [
+                round(x0 / W, 5),
+                round(1.0 - y1 / H, 5),
+                round((x1 - x0) / W, 5),
+                round((y1 - y0) / H, 5),
+            ]
+        )
+    return {
+        "status": "ok",
+        "opaque": opaque,
+        "face_alpha": round(face_alpha, 3),
+        "px_mm": round(25.4 / float(dpi), 5),
+        "handles": handles,
+    }
+
 
 def _scale_domain_sources(ax) -> list[tuple[str, object, object]]:
     """这根轴上**参与 V-001 计数**的可见元素：`(kind, 经过的变换, 数组)`。
@@ -6146,11 +6240,92 @@ def capture_preview_manifest(state: FigState, stem: str, *, vector_metrics: bool
                 state, stem, lambda _r: None, fig, renderer, min_hit, vector_metrics
             )
 
+    def measured_points(requests: list) -> list[dict]:
+        """数据点 → 这次预览里的位置（ADR 0208 §二）：与 `measured()` 同一个渲染器、同一个图幅坐标。"""
+        if not drawn:
+            raise RuntimeError("preview did not report its completed draw")
+        renderer, dpi = drawn[0]
+        with fig._cm_set(dpi=dpi), pathgeom.in_frame(fig, renderer):  # noqa: SLF001
+            return measure_data_points(state, requests)
+
+    measured.data_points = measured_points  # type: ignore[attr-defined]
     cid = fig.canvas.mpl_connect("draw_event", observe)
     try:
         yield measured
     finally:
         fig.canvas.mpl_disconnect(cid)
+
+
+def _in_scale_domain(scale: str, v: float) -> bool:
+    if not math.isfinite(v):
+        return False
+    if scale == "log":
+        return v > 0
+    if scale == "logit":
+        return 0 < v < 1
+    return True
+
+
+def _axis_value(axis, v) -> float | None:
+    """一个坐标值 → 这根轴的数值（换不了回 None）。**不许改动坐标轴**：分类轴的换算器碰到没画过的组名会把它
+    永久加进轴的单位映射（多出一个刻度、导出还原不回来，Codex #2197），所以字符串只在已有的映射里查。
+    数值照 `convert_units`（日期等），结果经 `_unit_scalar`（分类换算可能回单元素数组，NumPy 2.4 直接 float() 会报错）。"""
+    if isinstance(v, str):
+        mapping = getattr(getattr(axis, "units", None), "_mapping", None)
+        if not isinstance(mapping, dict) or v not in mapping:
+            return None
+        return float(mapping[v])
+    try:
+        return _unit_scalar(axis.convert_units(v))
+    except Exception:  # noqa: BLE001 — 单位换不过去就是换不了，不猜
+        return None
+
+
+def measure_data_points(state: FigState, requests: list) -> list[dict]:
+    """数据坐标 → 图幅分数（top-origin，与 manifest 的 `bbox` 同一套：显示像素 / `fig.bbox`）。
+
+    **以 matplotlib 为准**：用那根坐标轴自己的 `transData`，不按 `xlim / xscale` 在外面重算——
+    对数、symlog、日期、分类、翻转轴都由它自己负责。调用方必须已在测量上下文里（`in_frame`、
+    出图那次的 dpi；布局在那次 draw 里已经跑完）。逐点给结果：
+    `{"status": "ok", "xy": [x, y], "in_view": bool}` 或 `{"status": "unresolvable", "reason": …}`，
+    reason ∈ `not_axes`（gid 不是一根可换算的二维坐标轴，含 3D）/ `units`（值换不成这根轴的单位）/
+    `out_of_domain`（对数轴上 ≤ 0、logit 轴上不在 (0, 1) 里）/ `not_finite`（换出来不是有限数）。视野外的点照算，带 `in_view: false`。"""
+    fig = state.fig
+    w, h = float(fig.bbox.width), float(fig.bbox.height)
+    out: list[dict] = []
+    for req in requests:
+        ax = state.index.get(req["axes"])
+        if ax is None or not hasattr(ax, "transData") or getattr(ax, "name", "") == "3d":
+            out.append({"status": "unresolvable", "reason": "not_axes"})
+            continue
+        xv = _axis_value(ax.xaxis, req["x"])
+        yv = _axis_value(ax.yaxis, req["y"])
+        if xv is None or yv is None:
+            out.append({"status": "unresolvable", "reason": "units"})
+            continue
+        # 对数 / logit 轴的变换会把定义域外的值截成一个有限的远点（`nonpositive="clip"`），
+        # 换出来是有限数却毫无意义：按刻度类型先判定义域
+        if not (_in_scale_domain(ax.get_xscale(), xv) and _in_scale_domain(ax.get_yscale(), yv)):
+            out.append({"status": "unresolvable", "reason": "out_of_domain"})
+            continue
+        try:
+            dx, dy = (float(v) for v in ax.transData.transform((xv, yv)))
+        except Exception:  # noqa: BLE001
+            out.append({"status": "unresolvable", "reason": "not_finite"})
+            continue
+        if not (math.isfinite(dx) and math.isfinite(dy) and w > 0 and h > 0):
+            out.append({"status": "unresolvable", "reason": "not_finite"})
+            continue
+        x0, x1 = sorted(float(v) for v in ax.get_xlim())
+        y0, y1 = sorted(float(v) for v in ax.get_ylim())
+        out.append(
+            {
+                "status": "ok",
+                "xy": [dx / w, 1.0 - dy / h],
+                "in_view": x0 <= xv <= x1 and y0 <= yv <= y1,
+            }
+        )
+    return out
 
 
 def build_manifest(state: FigState, stem: str, *, timings: dict | None = None) -> dict:
@@ -6344,6 +6519,8 @@ def _measure_manifest(
     scale_domain_budget = [FINGERPRINT_BUDGET]
     #: V-002 的计数配额：同一个上限、第三份计数器（见 `bar_baseline`）
     bar_baseline_budget = [FINGERPRINT_BUDGET]
+    #: V-011 图例一侧的取法：条目数配额（与 geometry 同一个上限、另一份计数器，见 `legend_cover`）
+    legend_cover_budget = [pathgeom.TOTAL_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -6390,6 +6567,9 @@ def _measure_manifest(
             if info is not None:
                 entry["legend_entry"] = info
         if el["role"] == "legend":
+            entry["legend_cover"] = legend_cover(
+                artist, renderer, W, H, fig.dpi, legend_cover_budget
+            )
             # 脚本的锚框这个模型摆不出来时**说得出为什么**（4 元组锚框 /
             # 非父容器变换，判据见 `overrides.legend_anchor_state`）。字段
             # 已经在 `_legend_fields` 里让出来了，这里补上那句理由——少一个
@@ -7020,3 +7200,5 @@ def _measure_manifest(
 
 # `overrides.apply` 采「脚本原样」时按这里的字段读法记下 `value_original`（见 `_field_values`）
 set_original_reader(_field_values)
+# 图内副本（ADR 0207）在 `overrides._ensure_copy` 里建出来，登记走同一个 `_register`
+set_element_registrar(_register)

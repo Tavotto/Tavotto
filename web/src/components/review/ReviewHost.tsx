@@ -4,6 +4,7 @@ import { resolveReviewTarget } from '@/lib/reviewTarget'
 import { useReviewStore } from '@/store/reviewStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { TooltipProvider } from '../ui/Tooltip'
+import { useReviewResolveSync } from '../changePlan/reviewSync'
 import { ReviewDialog } from './ReviewDialog'
 
 /**
@@ -11,6 +12,8 @@ import { ReviewDialog } from './ReviewDialog'
  * 就重新问一次引擎「这个 target 有没有分享记录」（决定右栏「审阅」页签出不出现）。功能关着时什么都不渲染。
  */
 export function ReviewHost() {
+  // 方案应用 / 撤销 → 审阅意见标已处理 / 还原（右栏开着哪个页签都要同步）
+  useReviewResolveSync()
   const enabled = useReviewStore((s) => s.enabled)
   const mode = useWorkspaceStore((s) => s.mode)
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)

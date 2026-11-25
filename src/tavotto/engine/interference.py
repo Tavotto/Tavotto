@@ -16,8 +16,9 @@
   **另一个**顶层子图的绘图区。自己的插图、被自己包住的子图不算（插图本来就
   在父图里）。
 * `legend-over-data`——图例框与**同一子图里**数据的真实几何相交。拿得到
-  `geometry`（曲线的折线、散点每颗 marker）时是**确定**的（`detail.certain`），
-  只有包围盒（误差棒容器、图像、Collection）时只标**风险**，不当阻断。
+  `geometry`（曲线的折线、散点每颗 marker、误差棒每一根误差线段与帽）时是**确定**的
+  （`detail.certain`）；图像的包围盒就是它画出来的矩形，也是确定的。只有包围盒（给不出
+  geometry 的：超预算 / 超 `MAX_MARKERS`、柱形系列里单根柱的元素）时只标**风险**，不当阻断。
 
 曲线相交、注释（`text` 角色）压在数据上、箭头连到目标、父子包含——一律不报：
 那些是画图的常态，不是缺陷。看不见的（`visible: false`）一个都不参与。
@@ -26,6 +27,8 @@
 """
 
 from __future__ import annotations
+
+import math
 
 from . import profiles as profiles_mod
 
@@ -53,11 +56,17 @@ DATA_ROLES = (
     "stem_series",
 )
 
-#: 有 `geometry` 也仍按包围盒（只标风险）判的数据角色。误差棒 / 茎叶系列的 geometry
-#: 是 ADR 0086 为**选中轮廓**加的；拿它把「图例压住数据」从风险升成确定，会让保形归一化
-#: 在它们身上从「完成」变成「约束冲突」（`test_mcp_normalize` 的 Two：缩到 120 mm 后图例
-#: 左上角压着橙色误差棒的折线）——那是归一化契约的改变，要单独裁决，不搭选中轮廓的车。
-BBOX_BASIS_ROLES = ("errorbar", "stem_series")
+#: 有 `geometry` 也仍按包围盒（只标风险）判的数据角色——**现在一个都没有**。
+#: 误差棒 / 茎叶系列曾经在这里：它们的容器包围盒罩住整个数据范围，`loc="best"` 的图例落在
+#: 空白处也被说成「可能压住数据」。它们的 geometry（ADR 0086，`pathgeom.series_group_geometry`）
+#: 就是**真画出来的**那些成员的并：数据点 / 连线、每一根误差线段、帽（茎叶：markerline、茎），
+#: 与 Line2D 同一套口径、同一份预算（给不出时整组退回 bbox = 仍只标风险）。维护者 2026-11-23
+#: 裁决改按真实几何判，保形归一化在它们身上随之按「确定」挡事务。
+BBOX_BASIS_ROLES: tuple[str, ...] = ()
+
+#: 包围盒（折进 `clip_bbox` 之后）**就是**画出来的那块的数据角色：图像（`imshow` 的
+#: `AxesImage` 铺满自己的 extent）。图例框与它相交就是确定地压住了数据，不必再要 geometry。
+RECT_BASIS_ROLES = ("image",)
 
 CHECK_TEXT_OVERLAP = "text-overlap"
 CHECK_TEXT_OVER_AXES = "text-over-axes"
@@ -109,6 +118,21 @@ def _contains(outer, inner) -> bool:
 
 def is_visible(el: dict) -> bool:
     return _field(el, "visible") is not False
+
+
+def hidden_legends(elements: list) -> set[str]:
+    """被整体藏起来的图例的 gid。
+
+    图例条目（`legend_text`，含标题）的 `visible` 是**条目自己**的可见性，图例整体
+    `set_visible(False)` 时它们仍报 True——「这段字画没画出来」要回到图例本体上问。
+    与 `preflight._hidden_legends` / `preflight.ts` 的 `hiddenLegends` 同一口径（这里不能 import
+    preflight：preflight 反过来 import 本模块）。
+    """
+    return {
+        str(el.get("gid", ""))
+        for el in elements
+        if isinstance(el, dict) and el.get("role") == "legend" and _field(el, "visible") is False
+    }
 
 
 def visible_rect(el: dict) -> tuple[float, float, float, float] | None:
@@ -163,6 +187,103 @@ class _Issue:
         self.worse = worse
 
 
+def _rotated_box(el: dict, W: float, H: float) -> tuple | None:
+    """斜排文字（`text_block.rotation` 不是 90° 的整数倍）真正占的有向矩形（mm，y 向下）：
+    `(cx, cy, ux, uy, hw, hh)`——中心、阅读方向的单位向量、沿阅读方向的半宽、半高。
+
+    布局框（`bbox`）只是它的轴对齐外接框：45° 斜排的长刻度标签外接框互相咬得很深，墨迹却没碰。
+    `text_block` 是 manifest 已有的事实（中心与 `w` 按图宽、`h` 按图高的分数，`rotation` 逆时针为正；
+    在真 manifest 上由它重建的外接框与 `bbox` 逐位相同）。有 `clip_bbox` 的、`text_block` 读不懂的、
+    不是斜排的一律回 None——照布局框判。
+    """
+    if el.get("clip_bbox") is not None:
+        return None
+    tb = el.get("text_block")
+    if not isinstance(tb, dict):
+        return None
+    rot = _num(tb.get("rotation"))
+    center = tb.get("center")
+    if rot is None or abs(rot) % 90.0 == 0:
+        return None
+    if not isinstance(center, (list, tuple)) or len(center) != 2:
+        return None
+    cx, cy, w, h = _num(center[0]), _num(center[1]), _num(tb.get("w")), _num(tb.get("h"))
+    if cx is None or cy is None or w is None or h is None or w < 0 or h < 0:
+        return None
+    th = math.radians(rot)
+    # 逆时针为正、y 向下：阅读方向是 (cos θ, −sin θ)（与真渲染的墨迹核过）
+    return (cx * W, cy * H, math.cos(th), -math.sin(th), w * W / 2, h * H / 2)
+
+
+def _axis_box(r, W: float, H: float) -> tuple:
+    """轴对齐的框（figure 分数 `(x0, y0, x1, y1)`）→ `_rotated_box` 同形的有向矩形（mm）。"""
+    return (
+        (r[0] + r[2]) / 2 * W,
+        (r[1] + r[3]) / 2 * H,
+        1.0,
+        0.0,
+        (r[2] - r[0]) * W / 2,
+        (r[3] - r[1]) * H / 2,
+    )
+
+
+def _boxes_overlap(a: tuple, b: tuple) -> bool:
+    """两个有向矩形在四条边法线上的投影都重叠 ≥ `MIN_OVERLAP_MM`——轴对齐时就是 dx / dy 那两条，
+    阈值不变。只给斜排文字的「重叠」作否决用；结果只是布尔，detail / 文案仍取布局框那组数。"""
+    for box in (a, b):
+        ux, uy = box[2], box[3]
+        for nx, ny in ((ux, uy), (-uy, ux)):
+            spans = []
+            for cx, cy, bx, by, hw, hh in (a, b):
+                p = cx * nx + cy * ny
+                r = hw * abs(bx * nx + by * ny) + hh * abs(-by * nx + bx * ny)
+                spans.append((p - r, p + r))
+            if min(spans[0][1], spans[1][1]) - max(spans[0][0], spans[1][0]) < MIN_OVERLAP_MM:
+                return False
+    return True
+
+
+def legend_cover_rects(leg: dict, elements: list, W: float, H: float) -> tuple[list, list, str]:
+    """图例一侧**真正挡住数据的东西**（V-011「图例一侧的取法（与数据出图摆放共用）」）：`(hard, soft, basis)`。
+
+    * 框画出来且背景不透明（manifest 只读事实 `legend_cover.opaque`，`manifest.legend_cover`）：整块图例框，
+      `basis = "frame"`——图例默认 zorder 5，框确实盖在数据上面。
+    * 无框或背景完全透明：只取每一格示意（`legend_cover.handles`）与每条画出来的条目文字（本图例的
+      `legend_text` 元素）的框，各外扩 1 个显示像素（`legend_cover.px_mm`），`basis = "entries"`。示意是
+      **hard**（色块 / 线段就是墨迹）；条目文字是 **soft**——只擦到文字框、字形本身未必压住，只能说「可能」。
+    * 量不了（老 manifest 没有这条事实、`status` 不是 `ok`、读不懂）：整块图例框，`basis = "frame"`。
+
+    返回的矩形都是 figure 分数 `(x0, y0, x1, y1)`。与 `web/src/lib/interference.ts` 的 `legendCoverRects` 同源。"""
+    whole = visible_rect(leg)
+    frame = ([whole] if whole is not None else [], [], "frame")
+    cover = leg.get("legend_cover")
+    if (
+        not isinstance(cover, dict)
+        or cover.get("status") != "ok"
+        or cover.get("opaque") is not False
+    ):
+        return frame
+    px = _num(cover.get("px_mm"))
+    handles = cover.get("handles")
+    if px is None or px < 0 or not isinstance(handles, list):
+        return frame
+    dx, dy = px / W, px / H
+
+    def grow(r):
+        return (r[0] - dx, r[1] - dy, r[2] + dx, r[3] + dy)
+
+    hard = [grow(r) for r in (_rect(h) for h in handles) if r is not None]
+    prefix = str(leg.get("gid", "")) + "."
+    soft = []
+    for t in elements:
+        if t.get("role") != "legend_text" or not str(t.get("gid", "")).startswith(prefix):
+            continue
+        r = visible_rect(t)
+        if r is not None:
+            soft.append(grow(r))
+    return hard, soft, "entries"
+
+
 def _segments_hit_rect(paths: list, rect) -> bool:
     """折线的任一线段是否穿过矩形（figure 分数）。Liang–Barsky 裁剪。"""
     x0, y0, x1, y1 = rect
@@ -210,8 +331,15 @@ def _segment_in_rect(ax, ay, bx, by, x0, y0, x1, y1) -> bool:
     return t0 <= t1
 
 
-def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figure") -> list[dict]:
-    """跑一遍干涉检测，返回预检形状的问题清单（顺序稳定：按 gid 排序）。"""
+def detect(
+    manifest: dict, profile: dict | None = None, *, panel_id: str = "figure", keep=None
+) -> list[dict]:
+    """跑一遍干涉检测，返回预检形状的问题清单（顺序稳定：按 gid 排序）。
+
+    `keep(check_id, a, b, overlap_mm2) -> bool`（可选；a / b 是这一对的两个 gid）：文字重叠 / 压到别的子图的每一对在**造条目之前**
+    先问一次，回 False 就不造这一条（判据、顺序都不变，只是少交几条）。预检折叠（`preflight._check_panel_interference`）
+    用它跳过对聚合结果是空操作的那些对——几十段文字压成一团时每面板几百对。图例压数据不经过它。
+    """
     size = manifest.get("size_mm") or [0.0, 0.0]
     W = _num(size[0] if len(size) > 0 else None) or 0.0
     H = _num(size[1] if len(size) > 1 else None) or 0.0
@@ -222,30 +350,46 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
     found: list[_Issue] = []
 
     # ---- 文字互相重叠 ----
+    hidden = hidden_legends(elements)
     texts = []
     for el in elements:
         gid = el.get("gid", "")
         if el.get("role") not in TEXT_ROLES:
             continue
+        if el.get("role") == "legend_text" and gid.rpartition(".")[0] in hidden:
+            continue  # 图例整体藏起来了，条目自己还报 visible=True，但一笔都没画
         r = visible_rect(el)
         if r is None:
             continue
-        texts.append((gid, el.get("role"), r))
+        texts.append((gid, el.get("role"), r, _rotated_box(el, W, H)))
     texts.sort(key=lambda t: t[0])
+    turned = [t[3] for t in texts]
+    texts = [t[:3] for t in texts]
+    # 两两比较是文字数的平方（密集组图几百段刻度文字）：按左边界扫描只取横向相交的候选对
+    # （顺序同两重循环），图例家族只为真相交的那几对判、每段文字所属的图例预先算好。都不改结论。
+    fams = [legend_of(t[0]) for t in texts]
+    partners = _overlapping_partners([t[2] for t in texts])
     for i in range(len(texts)):
         ga, ra, a = texts[i]
-        for j in range(i + 1, len(texts)):
+        for j in partners[i]:
             gb, rb, b = texts[j]
-            if _same_legend_family(ga, gb):
-                continue
             hit = _intersect(a, b)
             if hit is None:
+                continue
+            if _same_legend_family_of(ga, fams[i], gb, fams[j]):
                 continue
             dx_mm = (hit[2] - hit[0]) * W
             dy_mm = (hit[3] - hit[1]) * H
             if dx_mm < MIN_OVERLAP_MM or dy_mm < MIN_OVERLAP_MM:
                 continue
+            # 斜排文字：布局框只是外接框，按真正的有向矩形复核一次，只能否决、不能新增
+            if (turned[i] or turned[j]) and not _boxes_overlap(
+                turned[i] or _axis_box(a, W, H), turned[j] or _axis_box(b, W, H)
+            ):
+                continue
             area = round(dx_mm * dy_mm, 3)
+            if keep is not None and not keep(CHECK_TEXT_OVERLAP, ga, gb, area):
+                continue
             found.append(
                 _Issue(
                     CHECK_TEXT_OVERLAP,
@@ -297,6 +441,8 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             if dx_mm < MIN_OVERLAP_MM or dy_mm < MIN_OVERLAP_MM:
                 continue
             area = round(dx_mm * dy_mm, 3)
+            if keep is not None and not keep(CHECK_TEXT_OVER_AXES, gid, ax_gid, area):
+                continue
             found.append(
                 _Issue(
                     CHECK_TEXT_OVER_AXES,
@@ -319,6 +465,13 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
             )
 
     # ---- 图例压住同一子图里的数据 ----
+    # 先按所属子图把数据分好组、把条目文字挑出来（各一遍，原顺序不变）：图例 × 全部元素是
+    # 图例数 × 元素数，密集组图上几十个图例各扫一遍几百个元素
+    data_by_owner: dict[str, list] = {}
+    for d in elements:
+        if d.get("role") in DATA_ROLES:
+            data_by_owner.setdefault(owner_axes(d.get("gid", "")), []).append(d)
+    legend_texts = [t for t in elements if t.get("role") == "legend_text"]
     for el in elements:
         if el.get("role") != "legend":
             continue
@@ -329,21 +482,33 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
         owner = owner_axes(leg_gid)
         if not owner:
             continue  # figure 级图例：它压谁是排版决定，这里不猜
+        owner_rect = all_axes_rect.get(owner)
+        if owner_rect is not None and _intersect(leg_rect, owner_rect) is None:
+            continue  # 放在坐标区外的图例：数据画在坐标区里，压不到
+        hard, soft, legend_basis = legend_cover_rects(el, legend_texts, W, H)
+        covers = hard + soft
         certain_hits: list[str] = []
         risk_hits: list[str] = []
-        for d in elements:
+        for d in data_by_owner.get(owner, ()):
             dg = d.get("gid", "")
-            if d.get("role") not in DATA_ROLES or owner_axes(dg) != owner:
-                continue
             dr = visible_rect(d)
-            if dr is None or _intersect(dr, leg_rect) is None:
+            if dr is None or not any(_intersect(dr, c) is not None for c in covers):
+                continue
+            if d.get("role") in RECT_BASIS_ROLES:
+                # 画出来的就是这个矩形：压到框 / 示意即确定；只擦到条目文字的框（字形未必压住）是可能
+                if any(_intersect(dr, c) is not None for c in hard):
+                    certain_hits.append(dg)
+                else:
+                    risk_hits.append(dg)
                 continue
             geom = d.get("geometry")
             if d.get("role") in BBOX_BASIS_ROLES:
                 geom = None
             if isinstance(geom, dict) and isinstance(geom.get("paths"), list):
-                if _segments_hit_rect(geom["paths"], leg_rect):
+                if any(_segments_hit_rect(geom["paths"], c) for c in hard):
                     certain_hits.append(dg)
+                elif any(_segments_hit_rect(geom["paths"], c) for c in soft):
+                    risk_hits.append(dg)
             else:
                 risk_hits.append(dg)
         if not certain_hits and not risk_hits:
@@ -368,6 +533,7 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
                     "basis": "geometry" if certain else "bbox",
                     "targets": hits,
                     "risk_only": risk_hits if certain else [],
+                    "legend_basis": legend_basis,
                     "legend_rect_mm": [
                         round(leg_rect[0] * W, 3),
                         round(leg_rect[1] * H, 3),
@@ -398,9 +564,35 @@ def detect(manifest: dict, profile: dict | None = None, *, panel_id: str = "figu
     return out
 
 
+def _overlapping_partners(rects: list) -> list[list[int]]:
+    """每个下标 i 的伙伴表：横向区间与它**严格**重叠的 j（j > i，升序）。外层按 i、内层按 j 走，就是两重循环
+    `for i: for j > i` 的顺序，只是不再逐对比较：按左边界排序后扫描，只看左边界落在当前区间里的那些
+    （`x0_q < x1_p`，与 `_intersect` 的严格判据同向）。候选仍要过 `_intersect` 的完整判定。
+    与 `web/src/lib/interference.ts` 的 `overlappingPairs` 同源。"""
+    n = len(rects)
+    order = sorted(range(n), key=lambda k: (rects[k][0], k))
+    adj: list[list[int]] = [[] for _ in range(n)]
+    for a, p in enumerate(order):
+        x1 = rects[p][2]
+        for q in order[a + 1 :]:
+            if rects[q][0] >= x1:
+                break
+            if p < q:
+                adj[p].append(q)
+            else:
+                adj[q].append(p)
+    for lst in adj:
+        lst.sort()
+    return adj
+
+
 def _same_legend_family(ga: str, gb: str) -> bool:
     """同一个图例里的两个条目、或条目与它自己的框——matplotlib 排的，不算重叠。"""
-    la, lb = legend_of(ga), legend_of(gb)
+    return _same_legend_family_of(ga, legend_of(ga), gb, legend_of(gb))
+
+
+def _same_legend_family_of(ga: str, la: str, gb: str, lb: str) -> bool:
+    """`_same_legend_family`，两段文字所属的图例（`legend_of`）由调用方先算好。"""
     if la and lb and la == lb:
         return True
     return (la and la == gb) or (lb and lb == ga)

@@ -305,3 +305,9 @@ Agent 宿主（Codex / Claude Code 插件、MCP 等）与 app 走**同一套接�
 7. 范围边界：MCP / Agent 侧的预检（`journals.py`）这一轮仍只读 v1；两侧同源对（`journals.py` ↔ `journals.ts`）不变，v2 叠加只在前端发生，后端提供折叠结果（`POST /api/journal-facts/preflight`，看护 `tests/test_journalfacts_fold.py` + `tests/golden/journal_v2_fold_vectors.json`）。
 
 上线仍需要经复核的数据、签名构建和客户端验签、旧版及既有项目快照兼容、真实服务链 staging 验证。此前 §3b / §11 对 v1 的裁决继续有效。
+
+**修订（2026-11-24，ADR 0208 §四 第 7 条，用户拍板「都管」）：线宽下限也判画布上的箭头 / 形状 / 路径。** §14 那条（2026-11-17）写的「标注箭头不判」只说图里的
+`arrow_patch`（图内的标注箭头照旧不判）；画布上的箭头 / 形状 / 路径（包括用户自己画的）现在也进同一条 `line-width-below-min`：读预检规格里 `objects[].stroke_pt`
+（页面绝对 pt，不乘缩放；没有描边的对象不带这个字段、不判；等于下限不报），严重级别与期刊抬级照旧，文案另一句（`canvasLineWidthBelowMin`）；检查标题由「数据线太细」改为「线条太细」。
+两侧同源：`engine/preflight.py` `CANVAS_STROKE_TYPES` / `_check_canvas_strokes` ↔ `web/src/lib/preflight.ts` `CANVAS_STROKE_TYPES` / `checkCanvasStrokes`，golden `canvas-line-width-*`。
+已绑定期刊、画布上有细线条的旧排版会多出这类提示。

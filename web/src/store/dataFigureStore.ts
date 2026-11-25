@@ -89,6 +89,9 @@ export interface MixedInfo {
 /** 右栏三个下拉的角色 */
 export type RoleKey = 'x' | 'y' | 'group'
 
+/** 「需要你确认」两项对应的 `answers` 键：只有用户点击才写；模型的建议（`SUGGEST_KEYS`）不含它们 */
+export type ConfirmKey = 'error' | 'design'
+
 /** 刚画出来的那张图：画布上的「换个画法」胶囊认它（只在这一次会话里，不持久化） */
 export interface FreshFigure {
   file: TableRef
@@ -212,6 +215,16 @@ interface DataFigureStore {
   rerunForConnection: () => void
   /** 点胶囊：套用模型的建议（等同用户自己改了映射后重新出候选） */
   applySuggestion: () => void
+  /** 主图此刻预览的那一张（候选的身份串 `candidateIdentity`，不是 id：换了规范 / 答案重新出候选后 id 全换、画法还在就还是它）；null = 第一张。只是预览，不创建 */
+  previewKey: string | null
+  /** 响应说用户点选过误差类型（`answers.error` 被后端认了）；没有 = 误差线画的是哪一种还没确认 */
+  errorConfirmed: boolean
+  /** 「是不是同一对象重复测量」这个问题出现过（`defaults` 里有 `pick_design`）：确认之后后端不再问，但那一行要留着（可再改），所以只增不减，直到换文件 */
+  designAsked: boolean
+  /** 只换预览，不发请求、不创建 */
+  selectPreview: (id: string) => void
+  /** 「需要你确认」里用户点了某一项：只由右栏那几行调用（建议 / autoPicks 永远不写这两个键）。带着新答案重新出候选，不算动了列角色下拉，不重起「读懂数据」 */
+  setConfirm: (key: ConfirmKey, value: string) => void
   /** 草稿自己的规范绑定（`DocumentProfile` 形状；null = 默认规范）：第一次出候选时取自激活画布，之后只由右栏「期刊」一行改，不写任何画布 */
   specBinding: DocumentProfile | null
   /** `specBinding` 已经取过了（取一次，换项目 / 重新进入才重取） */
@@ -303,6 +316,9 @@ const initial = {
   understandingAvailable: null as boolean | null,
   sawUnavailable: false,
   readRid: null as string | null,
+  previewKey: null as string | null,
+  errorConfirmed: false,
+  designAsked: false,
   // 草稿自己的规范绑定只在 `initial`：换文件 / 关标签（`idleDraft`）不清它，项目代际（`clear()`）与重新进入（`enter()`）才清
   specBinding: null as DocumentProfile | null,
   bindingCaptured: false,
@@ -328,6 +344,9 @@ const idleDraft = {
   suggestion: null as Suggestion | null,
   autoPicks: {} as Record<string, unknown>,
   readRid: null as string | null,
+  previewKey: null as string | null,
+  errorConfirmed: false,
+  designAsked: false,
   figureStyle: null as AiDataFigureStyle | null,
   specFallback: false,
 }
@@ -530,6 +549,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       mixed: mixedCols.length > 0 ? { columns: mixedCols, mode: mixedCols[0]!.mode } : answers.cells !== undefined ? get().mixed : null,
       figureStyle: res.figure_style ?? null,
       specFallback: res.spec_fallback === true,
+      errorConfirmed: res.error_confirmed === true,
+      designAsked: get().designAsked || (res.defaults ?? []).some((d) => d.question_code === 'pick_design'),
     }
     if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
       set({
@@ -996,6 +1017,21 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         return
       }
       applyDiff(d)
+    },
+
+    selectPreview: (id) => {
+      const c = get().candidates.find((x) => x.id === id)
+      if (c && get().thumbs[id] === 'ready') set({ previewKey: candidateIdentity(c) })
+    },
+
+    setConfirm: (key, value) => {
+      if (get().drawingId) return
+      const was = get().answers[key]
+      // 「不确定」是没人答过时的默认：从没答过又选「不确定」= 什么都没变
+      if (key === 'design' && value === 'unsure' && was === undefined) return
+      if (was === value && key !== 'error') return
+      // 与换规范同一条路：重出候选、不动 `autoPicks`、这一轮「读懂数据」已起过就不再起（模型读的是数据，不是这两个答案）
+      reask((a) => ({ ...a, [key]: value }), {}, true)
     },
 
     setSpecBinding: (binding) => {
