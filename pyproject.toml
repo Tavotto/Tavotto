@@ -73,6 +73,12 @@ dependencies = [
     # 含 macOS x86_64 / universal2 与 win32）：用户 2026-11-25 同意。`Cryptodome` 命名空间不与用户环境里的旧 PyCrypto 撞名；
     # 不用 `rsa`（2025-04 起归档、不再维护），不用 pyca cryptography（理由同上一条）。只在验签函数里延后 import。
     "pycryptodomex>=3.24,<4",
+    # Agent 改画布矢量对象的几何内核（ADR 0212 第 3 期：布尔 / 偏移 / 轮廓化描边 / 简化；engine/vecops.py；
+    # wasmtime = Bytecode Alliance 的 WebAssembly 运行时，Apache-2.0 WITH LLVM-exception，原生轮子各平台约 8–9 MB）：
+    # 跑的是前端同一份 web/src/lib/vecops/vecops.wasm（零导入，Python 里编译约 0.12 s），后端不另写一份几何。
+    # 维护者 2026-11-25 拍板加这个依赖。只在 engine/vecops.py 里延后 import，Flask 父进程启动不加载；
+    # import 不了 / 模块不可用 = 内核不可用（`kernel_unavailable`），其余补丁操作照常。
+    "wasmtime>=51,<52",
 ]
 
 [project.optional-dependencies]
