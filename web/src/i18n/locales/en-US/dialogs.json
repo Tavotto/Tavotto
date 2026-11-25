@@ -430,6 +430,7 @@
     "pillTitle": "Run the pre-submission check again",
     "renderFailed": "Render failed",
     "rendering": "Re-rendering",
+    "splashBatch": "{{n}} figures were opened together; the canvas holds one at a time. To edit one, ask the agent to open it on its own, e.g. \"open {{stem}} on its own\".",
     "splashConnecting": "Connecting to Codex…",
     "splashFetchFailed": "Could not fetch the session state. Reopen the figure; if it persists, report it with the diagnostics below.",
     "splashFetching": "Fetching the session state from Tavotto…",
@@ -2266,7 +2267,7 @@
       "cancel": "Cancel"
     },
     "license": {
-      "label": "Premium",
+      "label": "{{pro}}",
       "none": "Not activated",
       "until": "Valid until {{date}}",
       "codeLabel": "Activation code",
@@ -2283,7 +2284,8 @@
         "refresh": "Check now",
         "renew": "Renew",
         "retry": "Try again",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "renewed": "I have renewed"
       },
       "failure": {
         "invalid_code": "That code isn't right. Check it and try again",
@@ -2297,8 +2299,8 @@
         "client_error": "That didn't go through. Please try again later"
       },
       "lock": {
-        "tip": "Premium feature. Click to learn more",
-        "aria": "Premium feature, learn about Premium"
+        "tip": "{{pro}} feature. Click to learn more",
+        "aria": "{{pro}} feature, learn about {{pro}}"
       },
       "releaseTitle": "After unbinding, you can activate it on another computer",
       "plate": {
@@ -2310,7 +2312,8 @@
         "rename": "Change name",
         "turnTitle": "Drag to turn it over",
         "issued": "ISSUED ON"
-      }
+      },
+      "open": "{{pro}} & activation"
     }
   },
   "style": {
@@ -2974,6 +2977,53 @@
     "shareNote": "Anyone with the link can view and comment · expires {{date}}",
     "privacyFoot": "Only the picture is uploaded; scripts and data stay on this computer",
     "dailyNew": "1 new link per day",
-    "notePlaceholder": "Note for reviewers (optional)…"
+    "notePlaceholder": "Note for reviewers (optional)…",
+    "changePlan": {
+      "pill": "Hand to Agent",
+      "pillTip": "Have the Agent revise the figure from these comments. Your figure stays as is until you apply",
+      "pillUpdate": "Update same link",
+      "pillUpdateTip": "The review link doesn't have the new version yet. Update it; the link stays the same",
+      "pillUpdated": "Link updated",
+      "resolveFailed": "Couldn't mark the comments as resolved",
+      "resolveRetry": "Retry",
+      "draftLabel": "Draft reply",
+      "draftHint": "Sent to the reviewer only when you press Send"
+    }
+  },
+  "pro": {
+    "title": "{{pro}}",
+    "tier": {
+      "label": "Plan",
+      "year": "Annual pass",
+      "season": "Submission-season pass",
+      "sprint": "Sprint-month pass",
+      "team": "Lab pass"
+    },
+    "days": {
+      "label": "Days left",
+      "value": "{{count}}"
+    },
+    "devices": {
+      "label": "Computers",
+      "value": "{{used}} of {{limit}} used"
+    },
+    "usage": {
+      "title": "Usage",
+      "expired": "Comes back after you renew",
+      "unknown": "Usage is unavailable for now",
+      "nearEnd": "Almost used up. It will switch to your own connection when it runs out",
+      "agentBar": "{{name}} used this period",
+      "used": "{{pct}}% used"
+    },
+    "review": {
+      "label": "External review",
+      "left_one": "{{count}} new link left today",
+      "left_other": "{{count}} new links left today"
+    },
+    "pass": "Pass",
+    "learn": {
+      "line": "{{pro}} includes built-in AI and more external review links",
+      "link": "Learn about {{pro}}"
+    }
   }
 }

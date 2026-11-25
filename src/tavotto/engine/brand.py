@@ -12,6 +12,11 @@
 
 PRODUCT_NAME = "Tavotto"
 
+#: 付费版的名字（维护者 2026-11-24：中英文界面都叫 Pro）。引擎侧凡是用户可见的「Pro」字样都从这里取，别处不得手写。
+#: ↔ `web/src/lib/brand.ts` 同名常量（严格同源对）；infra `serverless/license/src/brand.ts` 另有一份（邮件 / 付款页文案用）。
+#: 看护：`tests/test_license.py::test_pro_name_is_one_constant_on_both_sides`
+PRO_NAME = "Pro"
+
 PACKAGE_KIND = "tavotto-package"
 PROOF_KIND = "tavotto-proof"
 PACKAGE_EXT = ".tavotto"

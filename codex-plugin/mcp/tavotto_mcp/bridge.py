@@ -3485,7 +3485,7 @@ def run_preflight(
     spec = engine_preflight.spec_from_manifest(
         session.manifest, panel_id=session.stem, kind="pdf", scale=1.0
     )
-    issues = engine_preflight.run(spec, profile)
+    issues = _without_interference(engine_preflight.run(spec, profile))
     issues += export_raster_issues(profile, export_formats, export_dpi)
     # 真实渲染几何上的干涉（文字重叠 / 压到别的子图 / 图例压数据）：与规范求值器
     # 分开是因为它量的是「画出来撞没撞上」，不是「该长什么样」；形状同一份，
@@ -4117,11 +4117,22 @@ def _proof_bytes(
 
 
 # --------------------- 保留式规范化事务（ADR 0051） ---------------------------
+def _without_interference(issues: list[dict]) -> list[dict]:
+    """去掉预检折进来的干涉聚合项（引擎 V-011 起 `preflight.run` 自带它们）。
+
+    桥要的是**逐对**的干涉（`engine_interference.detect`，事务按 `(规则, gid)` 配对、报告逐对说毫米数），
+    另行调用；聚合项留着会把同一次碰撞报两遍。按 id 过滤而不是传 `with_interference=False`：插件要能配
+    更早的引擎，那时的 `run()` 没有这个参数、本来也不报这三条。
+    """
+    skip = set(engine_interference.CHECK_IDS)
+    return [i for i in issues if i.get("id") not in skip]
+
+
 def _profile_issues(session: Session, profile: dict) -> list[dict]:
     spec = engine_preflight.spec_from_manifest(
         session.manifest, panel_id=session.stem, kind="pdf", scale=1.0
     )
-    return engine_preflight.run(spec, profile)
+    return _without_interference(engine_preflight.run(spec, profile))
 
 
 def _original_artifact_facts(session: Session) -> dict:

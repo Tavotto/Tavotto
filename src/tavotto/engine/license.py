@@ -55,7 +55,9 @@ PRODUCTION_ENDPOINT = "https://license.tavotto.cn"
 PRODUCTION_LIVE = False
 
 #: 功能键闭集（ADR 0193 §一）；加键要同步改 ADR §一。
-FEATURES: frozenset[str] = frozenset({"hosted-ai", "review-plus", "quick-layout"})
+FEATURES: frozenset[str] = frozenset(
+    {"hosted-ai", "review-plus", "quick-layout", "change-plan-rerun"}
+)
 #: 令牌公钥表 `kid -> 32 字节公钥`。换密钥 = 发版加新 kid，旧 kid 保留到它签出的令牌全部过期（ADR 0193 §七）。
 #: live-2026-11：2026-11-23 生成，私钥只在正式函数 license-api 的环境变量里。
 PUBLIC_KEYS: dict[str, bytes] = {
@@ -87,7 +89,7 @@ HTTP_STATUS: dict[str, int] = {
     "client_error": 400,
 }
 #: 设备签名的 op 闭集（服务端核对与端点一致）
-OPS = frozenset({"activate", "refresh", "release", "renew", "pro_manifest"})
+OPS = frozenset({"activate", "refresh", "release", "renew", "pro_manifest", "me", "ai_usage"})
 LOG_RESULTS = frozenset(FAILURES) | {"ok"}
 
 API_TIMEOUT_S = 15
@@ -828,6 +830,113 @@ def start_background_refresh() -> None:
     threading.Thread(target=loop, name="tavotto-license-refresh", daemon=True).start()
 
 
+# ---------------------------------------------------------------------------
+# Pro 页：账户详情与内置 AI 用量（只读；失败一律静默降级，不报错）
+# ---------------------------------------------------------------------------
+#: 两个读接口各缓存这么久（同一份授权）：打开 Pro 页才取，不轮询
+READ_TTL_S = 60
+_READ_CACHE: dict[str, tuple[str, float, dict]] = {}
+
+
+def _tier_key(lookup_key: object) -> str:
+    """Stripe Price 的 lookup_key → 界面认的档名：year / season / sprint / other（创始年度也归 year，创始身份看令牌）。"""
+    k = lookup_key if isinstance(lookup_key, str) else ""
+    if k.startswith(("founding_year_", "year_")):
+        return "year"
+    if k.startswith("season_90_"):
+        return "season"
+    if k.startswith("sprint_30_"):
+        return "sprint"
+    return "other"
+
+
+def _read_token() -> tuple[dict | None, str]:
+    env, state = _load()
+    payload = _open_token(env) if env is not None else None
+    return payload, state
+
+
+def account() -> dict:
+    """`GET /api/license/account`：包一层 infra `POST /v1/me`（设备签名 `op = "me"`）。
+    成功 `{ok: true, tier: {key, term_days}, devices: {used, limit}, paid_at, exp}`；没有令牌 / 已作废 / 网络或服务端出错 /
+    形状不对一律 `{ok: false}`（HTTP 200，不报错）。没有令牌时零网络；服务端回 `revoked` 时照 `refresh` 的做法把本机令牌标为失效。"""
+    target = _target()
+    with _OP_LOCK:
+        payload, state = _read_token()
+        if payload is None or state not in ("ok", "expired"):
+            return {"ok": False}
+        hit = _READ_CACHE.get("account")
+        if hit and hit[0] == payload["lid"] and _now() - hit[1] < READ_TTL_S:
+            return hit[2]
+        try:
+            got = _call(target, "/v1/me", _signed("me", {"license_id": payload["lid"]}))
+        except _Failure as fail:
+            _log("me", fail.code if fail.code in FAILURES else "client_error")
+            return {"ok": False}
+        if got.get("state") == "revoked":
+            _mark("revoked")
+            _log("me", "revoked")
+            return {"ok": False}
+        dev = got.get("devices")
+        ok = (
+            got.get("state") in ("active", "expired")
+            and isinstance(got.get("tier"), str)
+            and _is_int(got.get("term_days"))
+            and got["term_days"] > 0
+            and _is_int(got.get("paid_at"))
+            and _is_int(got.get("exp"))
+            and isinstance(dev, dict)
+            and _is_int(dev.get("used"))
+            and _is_int(dev.get("limit"))
+            and dev["used"] >= 0
+            and dev["limit"] >= 0
+        )
+        if not ok:
+            _log("me", "server")
+            return {"ok": False}
+        out = {
+            "ok": True,
+            "tier": {"key": _tier_key(got["tier"]), "term_days": got["term_days"]},
+            "devices": {"used": dev["used"], "limit": dev["limit"]},
+            "paid_at": got["paid_at"],
+            "exp": got["exp"],
+        }
+        _READ_CACHE["account"] = (payload["lid"], _now(), out)
+        _log("me", "ok")
+        return out
+
+
+def ai_usage() -> dict:
+    """`GET /api/license/usage`：包一层 infra `POST /v1/ai/usage`（设备签名 `op = "ai_usage"`）。
+    成功 `{agent_used: 0..1}`（= round(1 − remaining, 2)）；额度算不准（`remaining: null`）、没有 `hosted-ai`、没有令牌、
+    403 / 网络 / 服务端出错 / 形状不对一律 `{agent_used: null}`（HTTP 200，不报错）。只给比例，不给 token 与金额。"""
+    target = _target()
+    none = {"agent_used": None}
+    with _OP_LOCK:
+        payload, state = _read_token()
+        if payload is None or state != "ok" or "hosted-ai" not in payload["features"]:
+            return none
+        hit = _READ_CACHE.get("usage")
+        if hit and hit[0] == payload["lid"] and _now() - hit[1] < READ_TTL_S:
+            return hit[2]
+        try:
+            got = _call(target, "/v1/ai/usage", _signed("ai_usage", {"license_id": payload["lid"]}))
+        except _Failure as fail:
+            _log("ai_usage", fail.code if fail.code in FAILURES else "client_error")
+            return none
+        rem = got.get("remaining")
+        if rem is None:
+            _log("ai_usage", "ok")
+            return none
+        if isinstance(rem, bool) or not isinstance(rem, (int, float)) or rem != rem:
+            _log("ai_usage", "server")
+            return none
+        out = {"agent_used": round(1 - min(1.0, max(0.0, float(rem))), 2)}
+        _READ_CACHE["usage"] = (payload["lid"], _now(), out)
+        _log("ai_usage", "ok")
+        return out
+
+
 def release() -> dict:
     """本机解绑：腾出名额，本地令牌删除（设备密钥保留）。没有令牌 = 什么都不做、零网络。"""
     target = _target()
@@ -887,6 +996,7 @@ def checkout(lookup_key: object, locale: object = "zh", renew: bool = False) -> 
 
 
 def reset_for_tests() -> None:
+    _READ_CACHE.clear()
     _LAST["attempt"] = 0.0
     _started.clear()
     _wake.clear()

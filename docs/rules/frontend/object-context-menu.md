@@ -45,6 +45,9 @@ order: 130
   兄弟图」时摆（不做 disabled）；点它只调 `openSyncOverrides`，窗口是画布舞台上常驻的 `SyncOverridesHost`。
   目标图不在画布上时「同步并写回」走标准 `WriteBackDialog`（`detached`），不许在这里再长出第二条写回路径。
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
+* **图内元素弹层的「选中全部同类（N 个）」**（ADR 0037 2026-11-23 修订节）：分隔线下第一项（`data-quick-item="select-same-kind"`），
+  同一张图里同 `role`、能进多选的元素一次选中，右键的那个排最后（主选），并切到「属性」页签。判据只在 `lib/elementGeom.sameKindGids` /
+  `isMultiSelectable`（与框选同一份）；只有它自己或这一类已全选时不出现，不做置灰。看护 `canvas/objectContextMenu.test.tsx`、`e2e/select-same-kind.spec.ts`。
 * **图内元素弹层的「复制为标注 ⌘C」「粘贴为标注 ⌘V」**（ADR 0163）：加在元素弹层（`QuickEdit.ElementQuick`，`MenuButton` 形状的项，
   `data-quick-item="copy-as-annotation" / "paste-as-annotation"`）里，其余项不变。复制只对文字元素可点（`isCopyableText`，曲线 / 色块 / 刻度组置灰）；
   粘贴与对象菜单同一判据 `canPasteFromMenu`（读不了的引擎上不摆，用 ⌘V），已授予读权限且剪贴板里没有本工具的对象时置灰（`peekClipboardHasObjects`，
