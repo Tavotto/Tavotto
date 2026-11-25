@@ -19,6 +19,9 @@ export function useUnderstandingUnavailable(): boolean | null {
 /**
  * 连接变化的观察：挂在生命周期覆盖抽屉与临时标签的宿主上（`DataDraft` 在 App 里常驻，不依赖右栏 / 抽屉是否开着）。
  *  - 连接集合变了（`caps` 里可用连接的 id 变化）→ 重取清单（后端的「读懂数据可不可用」随清单回来，不另起轮询）；
+ *  - **清单比连接状态先回来**（应用刚启动 / 后端刚重启）：后端判「读懂数据可不可用」只看已有的能力缓存（不为这个去探测），缓存要等第一次取连接状态
+ *    才有，所以那一刻答的是「不可用」；而连接集合此后并没有变，上一条不会触发。于是：每拿到一份新的连接状态，只要后端还说不可用、这里却看到
+ *    有可用的连接，就重取一次清单（一份连接状态最多一次；后端坚持不可用——比如只有不支持的订阅——也只在连接状态刷新时再问）；
  *  - 观察结果交给 store（`noteUnavailable`）：「曾经不可用」记在 store 里，宿主重新挂上时发现已变可用也会补跑一次。
  * 数据功能没进入过（清单 `idle`，开关关着）什么都不做。
  */
@@ -28,6 +31,13 @@ export function useConnectAiWatch(): void {
   const unavailable = useUnderstandingUnavailable()
   const readyKey = caps ? readyConnections(caps).map((c) => c.id).join('|') : null
   const lastKey = useRef<string | null>(null)
+  const backendSaysNo = useDataFigureStore((s) => s.understandingAvailable === false)
+  const askedFor = useRef<unknown>(null)
+  useEffect(() => {
+    if (!caps || filesIdle || !backendSaysNo || !readyKey || askedFor.current === caps) return
+    askedFor.current = caps
+    void useDataFigureStore.getState().loadFiles()
+  }, [caps, filesIdle, backendSaysNo, readyKey])
   useEffect(() => {
     if (readyKey === null || filesIdle) return
     if (lastKey.current !== null && lastKey.current !== readyKey) void useDataFigureStore.getState().loadFiles()

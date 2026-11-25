@@ -35,13 +35,11 @@ import tempfile
 import threading
 import time
 import traceback
-import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
-import zlib
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -105,6 +103,7 @@ from .engine import (
     diagnostics_frontend as engine_diagnostics_frontend,
     diagsend as engine_diagsend,
     discover as engine_discover,
+    doclock as engine_doclock,
     documentformat as engine_documentformat,
     documents as engine_documents,
     enginesession as engine_enginesession,
@@ -888,6 +887,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         engine_pool.IMPORT_FOLDER_ABI_CODE,
         engine_pool.IMAGE_FORMAT_MISMATCH_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
+        engine_pool.SCRIPT_SOURCE_MISSING_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
         # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）
@@ -20013,50 +20013,18 @@ def _autosave_path(doc_id: str) -> Path:
 #: 用**固定条数的锁带**而不是「doc_id → 锁」的表：锁表要自己治理生命周期
 #: （什么时候能删掉一把锁没有可靠信号，而它会随打开过的文档数一直长），
 #: 锁带的内存是常数。不同文档偶尔共用一把锁只是多串行一点点，正确性不受影响。
-_DOCUMENT_LOCKS = [threading.Lock() for _ in range(64)]
-_DOCUMENT_LOCKS_HELD = threading.local()
+# 锁带与判据的唯一出处在 `engine/doclock.py`（ADR 0208 第 2 期：插件的排版写入口与这里共用同一把跨进程锁）
+_DOCUMENT_LOCKS = engine_doclock.LOCKS
+_DOCUMENT_LOCKS_HELD = engine_doclock.HELD
 
 
 #: 等槽位文档锁的上限（秒；要大于持锁方最长的合理停顿——有用例会让持锁方停 10 s）。超时抛 `SessionStateUnavailable` → 503 `session_unavailable`，正文一个字节没写
 DOCUMENT_LOCK_TIMEOUT_S = 30.0
 
 
-class _DocumentLock:
-    """一个条带的「线程锁 + 跨进程文件锁」。**不可重入**：持锁期间不要再取任何文档锁。"""
-
-    def __init__(self, stripe: int) -> None:
-        self._stripe = stripe
-        self._fd: int | None = None
-
-    def locked(self) -> bool:
-        """这个条带此刻有人持着（本进程内；测试与自检用）。"""
-        return _DOCUMENT_LOCKS[self._stripe].locked()
-
-    def __enter__(self) -> "_DocumentLock":
-        deadline = time.monotonic() + DOCUMENT_LOCK_TIMEOUT_S
-        thread_lock = _DOCUMENT_LOCKS[self._stripe]
-        if not thread_lock.acquire(timeout=DOCUMENT_LOCK_TIMEOUT_S):
-            raise engine_layoutsession.SessionStateUnavailable(
-                "槽位被本进程的另一个请求占着，等待超时"
-            )
-        try:
-            self._fd = engine_layoutsession.acquire_file_lock(
-                engine_layoutsession.doclock_path(self._stripe), deadline
-            )
-        except BaseException:
-            thread_lock.release()
-            raise
-        _DOCUMENT_LOCKS_HELD.depth = getattr(_DOCUMENT_LOCKS_HELD, "depth", 0) + 1
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        fd, self._fd = self._fd, None
-        _DOCUMENT_LOCKS_HELD.depth = getattr(_DOCUMENT_LOCKS_HELD, "depth", 1) - 1
-        try:
-            if fd is not None:
-                engine_layoutsession.release_file_lock(fd)
-        finally:
-            _DOCUMENT_LOCKS[self._stripe].release()
+def _DocumentLock(stripe: int) -> engine_doclock.DocumentLock:  # noqa: N802 — 保留旧名：调用方与用例都按它取锁
+    """一个条带的「线程锁 + 跨进程文件锁」（实现在 `engine/doclock.py`）；等锁上限读本模块的 `DOCUMENT_LOCK_TIMEOUT_S`。"""
+    return engine_doclock.DocumentLock(stripe, DOCUMENT_LOCK_TIMEOUT_S)
 
 
 def _holds_document_lock() -> bool:
@@ -20079,16 +20047,10 @@ def _all_document_locks():
         yield
 
 
-def _lock_stripe(path: Path) -> int:
-    """条带下标只取决于**文件名**（Unicode NFC + casefold），不取决于路径怎么拼：两个进程经符号链接别名 / 大小写不同的写法
-    走到同一个槽位时必须选到同一把锁。不同目录里的同名文件共用一个条带，只是多串行一点。"""
-    # NFC + casefold + NFC：组合 / 分解写法（macOS 上同一个文件）与大小写写法都落到同一个条带
-    name = unicodedata.normalize("NFC", Path(path).name)
-    name = unicodedata.normalize("NFC", name.casefold())
-    return zlib.crc32(name.encode("utf-8")) % len(_DOCUMENT_LOCKS)
+_lock_stripe = engine_doclock.lock_stripe
 
 
-def _document_lock(path: Path) -> _DocumentLock:
+def _document_lock(path: Path) -> engine_doclock.DocumentLock:
     """按**落盘路径**取锁，不按 doc_id / 画布名：`_autosave_path` 与
     `layout_path` 都会把非法字符归一成 `_`，于是两个不同的名字可能指向同一个
     文件——按名字分锁的话，那两个请求以为自己各写各的。
@@ -20214,27 +20176,9 @@ def _external_change(current: str | None, path: Path):
     ), 409
 
 
-#: `base_revision` 的哨兵：调用方**读过**，磁盘上当时没有这份文件。
-#: 没有它，判据就只钉住了一条边——两个标签页同时新建同一份文档时双方都没有
-#: hash 可带，后写的那个把先写的那份整份盖掉，而这正是这条判据要挡的事。
-REVISION_ABSENT = "absent"
-
-
-def _revision_conflict(base_revision: str, current: str | None) -> bool:
-    """带着这个基线来写，会不会盖掉别人的内容？
-
-    两侧**故意不对称**：
-
-    - 基线是 `absent`（我以为没有文件）而磁盘上有 → 冲突。那份内容不是我的，
-      整份 PUT 就是把它删掉。
-    - 基线是某个 hash 而磁盘上没有文件（被外部删了）→ **放行**。这条判据挡的
-      是「覆盖别人的内容」，不是「重建一个被删掉的文件」；此时磁盘上没有任何
-      内容会因为这次写入而消失，而内存里那份是用户真实的工作。
-    - 基线是某个 hash 而磁盘上是另一个 hash → 冲突。
-    """
-    if base_revision == REVISION_ABSENT:
-        return current is not None
-    return current is not None and current != base_revision
+#: `base_revision` 的哨兵与判据：唯一出处 `engine/doclock.py`（两侧故意不对称，说明在那里）
+REVISION_ABSENT = engine_doclock.REVISION_ABSENT
+_revision_conflict = engine_doclock.revision_conflict
 
 
 @app.put("/api/autosave/<doc_id>")

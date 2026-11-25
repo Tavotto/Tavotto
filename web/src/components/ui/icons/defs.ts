@@ -28,6 +28,8 @@ export interface IconPath {
   solid?: boolean
   /** 静止时不画（描边 / 填充透明），只在微动效里显形的辅助形（ADR 0156） */
   ghost?: boolean
+  /** 只给纯填充（`w: 0`）：填充不透明度 0–1。目前只有 Pro 切面星的两片淡切面用（2026-11-25） */
+  tint?: number
 }
 export type IconPathSpec = string | IconPath
 export interface IconVariant {
@@ -87,6 +89,14 @@ const SHIELD = 'M12 3l7.5 2.8v6.2c0 4.4-3 7.7-7.5 9.5C7.5 19.7 4.5 16.4 4.5 12V5
 const TRI = 'M9.9 5.5a2.4 2.4 0 0 1 4.2 0l7.4 12.7a2.4 2.4 0 0 1-2.1 3.6H4.6a2.4 2.4 0 0 1-2.1-3.6z'
 // 大火花（四角凹边星）
 const SPARK = 'M11 4C11.55 9.2 12.8 11.7 20 12.5 12.8 13.3 11.55 15.8 11 21 10.45 15.8 9.2 13.3 2 12.5 9.2 11.7 10.45 9.2 11 4z'
+// Pro 切面星（2026-11-25 维护者选定，agy 审过两轮）：直边四芒星，尖 R=9.75、腰 ±2.25；对角两片切面淡压一层，
+// 打开态 = 全实心挖一颗中心小菱形（呼应创始铭牌的蚀刻）。母题取自 Pro 页的铭牌：切面、钛、蚀刻
+const FACET_STAR = poly([[12, 2.25], [14.25, 9.75], [21.75, 12], [14.25, 14.25], [12, 21.75], [9.75, 14.25], [2.25, 12], [9.75, 9.75]], 0.6)
+const FACET_STAR_FACETS: IconPath[] = [
+  { d: 'M21.75 12L14.25 14.25L12 12z', w: 0, tint: 0.45 },
+  { d: 'M2.25 12L9.75 9.75L12 12z', w: 0, tint: 0.45 },
+]
+const FACET_STAR_CORE: IconPath = { d: 'M12 9.75L14.25 12L12 14.25L9.75 12z', w: 0 }
 const SPARK_SM = 'M19 2.5c.2 1.7.7 2.3 2.5 2.5-1.8.2-2.3.8-2.5 2.5-.2-1.7-.7-2.3-2.5-2.5 1.8-.2 2.3-.8 2.5-2.5z'
 // 坐标轴 L
 const AXES = 'M4 4v14.5A1.5 1.5 0 0 0 5.5 20H20'
@@ -169,6 +179,8 @@ const RAW_DEFS = {
 
   // ───────── 右栏 / 助手 ─────────
   Sparkles: { s: [SPARK], f: [SPARK_SM], sel: { f: [SPARK, SPARK_SM] } },
+  // Pro 入口（左轨底部，开 Pro 页）。不与改图助手的 Sparkles 共形（2026-11-25 前两处同用一颗星，看不出是 Pro）
+  FacetStar: { s: [FACET_STAR], f: FACET_STAR_FACETS, sel: { f: [FACET_STAR], k: [FACET_STAR_CORE] } },
   Heart: { s: [HEART], sel: { f: [HEART] } },
   Pin: { s: [PIN_BODY, 'M12 14v6.5'], sel: { f: [PIN_BODY], s: ['M12 14v6.5'] } },
   MousePointerClick: { f: [CURSOR], s: ['M6 10.75H4.5', 'M10.5 6.25V4.75', 'M7 7.25L5.9 6.15'] },
