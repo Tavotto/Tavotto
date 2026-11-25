@@ -905,7 +905,7 @@ def carried_groups(plan: dict, proposal: dict) -> list[dict]:
 
 # --------------------------------------------------------------------------- 脚本修改（PR 6）
 SCRIPT_GROUP_KEY = "script"
-SCRIPT_FILE = "candidate.py"
+CANDIDATE_FILE = "candidate.py"
 SCRIPT_MAX_BYTES = 1024 * 1024
 SCRIPT_DIFF_MAX_CHARS = 120_000
 
@@ -952,7 +952,7 @@ def build_script_plan(
     new_bytes: bytes,
     base_patches: list | None = None,
 ) -> dict:
-    """脚本修改方案：一个 `atomic` 的脚本组，没有图内改动。候选字节另存（`SCRIPT_FILE`），应用只认它。"""
+    """脚本修改方案：一个 `atomic` 的脚本组，没有图内改动。候选字节另存（`CANDIDATE_FILE`），应用只认它。"""
     diff, added, removed = script_diff(script_rel, base_bytes, new_bytes)
     c = comments[0] if comments else None
     base_canon = patchspec.canonicalize(base_patches or [])
@@ -998,7 +998,7 @@ def build_script_plan(
 def script_new_bytes(project: str, plan_id: str) -> bytes | None:
     """方案目录里的候选字节；没有 / 过大 / 是链接 → None。"""
     try:
-        p = plan_dir(project, plan_id) / SCRIPT_FILE
+        p = plan_dir(project, plan_id) / CANDIDATE_FILE
         if p.is_symlink() or not p.is_file() or p.stat().st_size > SCRIPT_MAX_BYTES:
             return None
         return p.read_bytes()
@@ -1290,7 +1290,7 @@ def save(
         (tmp / "before.png").write_bytes(before_png)
         (tmp / "after.png").write_bytes(after_png)
         if script_bytes is not None:
-            (tmp / SCRIPT_FILE).write_bytes(script_bytes)
+            (tmp / CANDIDATE_FILE).write_bytes(script_bytes)  # 方案目录里的候选副本，不是用户脚本
         (tmp / "plan.json").write_text(
             json.dumps(plan, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
         )
