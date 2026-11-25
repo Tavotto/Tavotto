@@ -5446,8 +5446,31 @@ export interface AiDataFileEntry {
   sheets?: AiDataSheet[] | null
 }
 
+/** 「读懂数据」用哪个 AI（`/api/ai/data-understanding` 与 `/api/ai/data-files` 共用的对象）：`on` 会用 / `off` 用户关了 / `none` 没有任何可用的 AI / `unavailable` 用户指定的那个此刻用不了（后端不会换别家） */
+export interface AiDataUnderstandingChoice {
+  state: 'on' | 'off' | 'none' | 'unavailable'
+  mode: 'auto' | 'off' | 'connection'
+  /** 此刻实际会用的连接 id */
+  connection: string | null
+  /** 用户指定的连接 id（只在 `mode === 'connection'` 时有；`unavailable` 时它可能已不在 `options` 里） */
+  chosen?: string
+  options: { id: string; label: string; logo: string; vendor: string; kind: 'key' | 'subscription'; model: string }[]
+}
+
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean; understanding?: AiDataUnderstandingChoice }>('/api/ai/data-files?formats=all', undefined, pj)
+
+/** 轻量、只读：只回「读懂数据」的选择与可选的 AI，可反复调（不联网、不探测） */
+export const aiDataChoiceGet = (pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>('/api/ai/data-understanding', undefined, pj)
+
+/** 设置：`auto` / `off` / 指定某个连接；id 不在此刻的可选清单里回 400 `understanding_connection_unavailable` */
+export const aiDataChoiceSet = (body: { mode: 'auto' | 'off' } | { mode: 'connection'; connection: string }, pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>(
+    '/api/ai/data-understanding',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
 export interface AiDataOverview {
   path: string

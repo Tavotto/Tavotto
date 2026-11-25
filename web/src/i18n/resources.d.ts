@@ -189,6 +189,15 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "aiChoice": {
+        "auto": "自动",
+        "chosen": "你选的模型",
+        "more": "连接其他 AI…",
+        "off": "不用 AI 分析",
+        "tip": "分析用的 AI：{{name}}",
+        "tipPlain": "分析用的 AI",
+        "unavailable": "该模型无法连接，请换一个尝试"
+      },
       "basis": {
         "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
         "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
