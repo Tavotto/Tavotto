@@ -382,6 +382,13 @@ it('批注的元素名走元素树同一个显示名：mathtext 读作 min⁻¹�
   expect(cut).toContain('min⁻¹')
   expect(cut).not.toContain('$')
   expect(noteLabelOf('图例')).toBe('图例')
+  // 引擎截断后仍保留收尾引号（manifest.py）：在省略号前补齐，引号原位，结果里不露 `$` / 花括号
+  const quoted = noteLabelOf('曲线 “k = 0.05 min$^{-1…”')
+  expect(quoted).toContain('min⁻¹')
+  expect(quoted).not.toMatch(/[$}]/)
+  expect(quoted.endsWith('”')).toBe(true)
+  // 没被截断的名字一个字不动：字面的 `$` 照旧显示
+  expect(noteLabelOf('标题 “price $5”')).toContain('$5')
   expect(noteLabelOf('')).toBe('这一处')
   expect(noteLabelOf(undefined)).toBe('这一处')
 })
