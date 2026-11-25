@@ -70,6 +70,7 @@ export default interface Resources {
         "noteCancel": "取消",
         "noteDelete": "删除",
         "noteEdit": "点一下可以改",
+        "noteHere": "这一处",
         "noteOverall": "整体批注",
         "noteOverallLabel": "整体",
         "notePlaceholder": "想怎么改？",
