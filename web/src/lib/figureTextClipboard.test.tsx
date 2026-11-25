@@ -358,6 +358,19 @@ describe('⌘V：同一张图的图内编辑里建图内副本', () => {
     expect(texts().length).toBe(before + 1)
   })
 
+  it('两项负载、一项源已不在：整批落成标注、无副本被建（全有或全无，不悄悄只粘幸存的）', () => {
+    const data = copied('axes_0.title', 'axes_0.ylabel')
+    seedExact(panel(), { ...manifest(), elements: manifest().elements.filter((e) => e.gid !== 'axes_0.ylabel') })
+    const before = texts().length
+    const histBefore = useDocumentStore.getState().past.length
+    expect(handlePasteEvent(pasteEvent(data))).toBe(true)
+    expect(copyOfs()).toHaveLength(0)
+    expect(panelNow().overrides).toEqual([])
+    // 两项都落成标注（负载里的标注快照两份俱在），一条历史
+    expect(texts().length).toBe(before + 2)
+    expect(useDocumentStore.getState().past.length).toBe(histBefore + 1)
+  })
+
   it('渲染还没回来时再粘一次：说「还不能复制」、不叠写（等权威清单）；回来后再粘得到第二只、gid 不同', () => {
     const data = copied('axes_0.title')
     handlePasteEvent(pasteEvent(data))

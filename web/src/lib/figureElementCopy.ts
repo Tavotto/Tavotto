@@ -15,12 +15,15 @@
  *
  * `at` = 源画出来的锚点（manifest 的 `anchor`：figure 分数、y 向下，文字的 `get_transform().transform(get_position())`）
  * 向页面上的右下错开 `DUPLICATE_OFFSET_MM`（过 `pageToContentVec`，面板旋转 / 翻转时仍是页面右下），
- * 再用源的墨迹框把错开量收回图内；最后换成宿主的分数（子图：axes 分数，用 manifest 的 `position`；整图：figure 分数，y 向上）。
+ * 再用源的墨迹框把错开量收回图内；最后换成宿主的分数：
+ * 子图：axes 分数，用 manifest **画出来的** `position`（含 `aspect='equal'` 缩小后的实际框，不用 position override 的请求框）；
+ * 整图：figsize 的 figure 分数（y 向上）。脚本带 `bbox_inches` 且图幅生效时，manifest 的锚点是图幅分数，要经
+   `manifest.frame`（`figsize_mm` / `savefig_mm`）换回 figsize 分数，引擎才按 `transFigure` 落在同一处。
  * 几何只认权威（exact）manifest，调用方负责传对的那一份（ADR 0017）。
  */
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { effectiveOverride } from '@/lib/effectiveOverride'
-import { panelFullRect, positionOf } from '@/lib/elementGeom'
+import { panelFullRect } from '@/lib/elementGeom'
 import { pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import { DUPLICATE_OFFSET_MM } from '@/lib/units'
 import type { PanelObject, PanelOverride } from '@/types/document'
@@ -192,12 +195,42 @@ export function copyPlacementOf(panel: PanelObject, manifest: Manifest, el: Mani
   const [dx, dy] = retractIntoFigure(el.bbox, d)
   const x = el.anchor[0] + dx // figure 分数，y 向下
   const y = el.anchor[1] + dy
-  if (host === 'fig') return finite({ host, src, styleFrom, at: [x, 1 - y], text })
+  if (host === 'fig') {
+    const g = frameFracToFigsize(manifest, x, y)
+    return g ? finite({ host, src, styleFrom, at: [g[0], 1 - g[1]], text }) : null
+  }
   const hostEl = manifest.elements.find((e) => e.gid === host)
-  const pos = hostEl ? positionOf(panel, hostEl) : null
+  const pos = hostEl ? renderedPositionOf(hostEl) : null
   if (!pos || !(pos[2] > 0) || !(pos[3] > 0)) return null
   // position 是 figure 分数、y 向上（[x0, y0, w, h]）
   return finite({ host, src, styleFrom, at: [(x - pos[0]) / pos[2], (1 - y - pos[1]) / pos[3]], text })
+}
+
+/**
+ * 宿主子图**画出来的**框（manifest 的 `position`：对外图幅的分数、y 向上，引擎读 `ax.get_position()`，已含 `apply_aspect`）。
+ * 不读 position override 的请求框：`aspect='equal'` 时实际框缩在请求框里，而引擎按 `host.transAxes`（实际框）重放 `at`
+ * （Codex #2163）。manifest 与锚点同一次渲染，所以两者是同一把尺。
+ */
+function renderedPositionOf(hostEl: ManifestElement): [number, number, number, number] | null {
+  const v = hostEl.editable.find((x) => x.prop === 'position')?.value
+  return Array.isArray(v) && v.length >= 4 && v.slice(0, 4).every((n) => typeof n === 'number')
+    ? (v.slice(0, 4) as [number, number, number, number])
+    : null
+}
+
+/**
+ * 对外图幅分数（y 向下，manifest 的锚点 / 外框所在的尺）→ figsize 分数（y 向下）。
+ * 脚本按 `bbox_inches` 存盘时 manifest 量在 savefig 图幅里（`manifest.frame`，生效时），而引擎把整图副本的 `at` 按
+ * `fig.transFigure`（figsize）解读：差一个图幅的偏移与缩放（Codex #2163）。图幅按 figsize 写：脚本里别的东西改了
+ * 图幅范围，副本仍挂在图上原来的位置——与副本跟 figsize 走的引擎口径一致。图幅不生效 / 没有图幅 = 同一把尺，原样。
+ */
+function frameFracToFigsize(manifest: Manifest, fx: number, fy: number): [number, number] | null {
+  const f = manifest.frame
+  if (!f || f.source !== 'savefig' || !f.active) return [fx, fy]
+  const [gw, gh] = f.figsize_mm
+  const [left, top, w, h] = f.savefig_mm
+  if (!(gw > 0) || !(gh > 0)) return null
+  return [(left + fx * w) / gw, (top + fy * h) / gh]
 }
 
 function finite(p: CopyPlacement): CopyPlacement | null {

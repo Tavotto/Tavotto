@@ -591,7 +591,7 @@ function consumePayload(payload: ClipPayload, opts: PasteOptions = {}): boolean 
 /**
  * 负载带 `elements` 且此刻正在**同一份文档、同一张图**的图内编辑 → 按它建图内副本，返回 true（消费了）。
  * 权威 manifest 不在（正在重渲染）：不拿旧清单算落点，出「还不能复制」的胶囊并消费这次粘贴（落成标注会无端退出图内编辑）。
- * 权威清单在而其中一段都不能复制了（脚本改过、源没了）：返回 false，退回落成标注（0163 行为）。
+ * 权威清单在而其中**任何一段**不能复制了（脚本改过、源没了）：返回 false，整批退回落成标注（0163 行为），不只粘幸存的。
  */
 function pasteIntoFigure(payload: ClipPayload): boolean {
   const el = payload.elements
@@ -605,11 +605,14 @@ function pasteIntoFigure(payload: ClipPayload): boolean {
     return true
   }
   // 粘贴这一刻按当前清单重新过判据：不信剪贴板里的那份
-  const gids = el.items.map((i) => i.gid).filter((g) => {
+  // 全有或全无（与 `buildElementClipPayload` 同口径）：任一项此刻不可建副本（源删了、脚本改了）就整批落成标注，
+  // 不悄悄只粘幸存的几个（Codex #2163）
+  const ok = (g: string) => {
     const e = exact.elements.find((x) => x.gid === g)
     return !!e && isDuplicableElement(panel, exact, e)
-  })
-  if (!gids.length) return false
+  }
+  const gids = el.items.map((i) => i.gid)
+  if (!gids.length || !gids.every(ok)) return false
   duplicateFigureElements(el.panelId, gids)
   return true
 }

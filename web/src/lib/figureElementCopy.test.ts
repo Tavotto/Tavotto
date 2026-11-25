@@ -215,6 +215,44 @@ describe('落点', () => {
     expect(got.at[0]).toBeCloseTo((0.6 + 0.04 - 0.1) / 0.8, 9)
   })
 
+  it('子图有 position override 且 aspect 缩小了实际框：只认 manifest 画出来的框，不认 override 的请求框', () => {
+    const rendered = [0.3, 0.1, 0.4, 0.8] // 实际画出来（equal aspect 缩在请求框 [0.1,0.1,0.8,0.8] 里）
+    const p = panel({ overrides: [{ gid: 'axes_0', prop: 'position', value: [0.1, 0.1, 0.8, 0.8] }] })
+    const title = text('axes_0.title', { anchor: [0.5, 0.11], bbox: [0.45, 0.05, 0.1, 0.06] })
+    const m = manifest(axes('axes_0', { editable: [{ prop: 'position', type: 'rect', value: rendered }] }), title)
+    const got = copyPlacementOf(p, m, title)!
+    expect(got.at[0]).toBeCloseTo((0.5 + 4 / 100 - 0.3) / 0.4, 9)
+    expect(got.at[1]).toBeCloseTo((1 - (0.11 + 4 / 75) - 0.1) / 0.8, 9)
+  })
+
+  describe('脚本按 bbox_inches 存盘（manifest.frame 生效）：整图副本的 at 换回 figsize 分数', () => {
+    // figsize 200 x 100 mm；图幅 [左 -10, 上 5, 宽 160, 高 80]（图幅可以伸出 figsize）；面板 = 图幅尺寸 160 x 80
+    const frame = { source: 'savefig', active: true, figsize_mm: [200, 100], savefig_mm: [-10, 5, 160, 80] } as const
+    const p = panel({ w: 160, h: 80, nativeW: 160, nativeH: 80 })
+    const ft = text('fig.texts_0', { anchor: [0.5, 0.25], bbox: [0.4, 0.2, 0.2, 0.1] })
+    it('整图文字：锚点 + 4 mm 先在图幅里错开，再换成 figsize 分数（y 向上）', () => {
+      const m = { ...manifest(ft), frame } as unknown as Manifest
+      const got = copyPlacementOf(p, m, ft)!
+      const fx = 0.5 + 4 / 160
+      const fy = 0.25 + 4 / 80
+      expect(got.at[0]).toBeCloseTo((-10 + fx * 160) / 200, 9)
+      expect(got.at[1]).toBeCloseTo(1 - (5 + fy * 80) / 100, 9)
+    })
+    it('图幅没生效（active=false）：manifest 就是 figsize 的分数，原样只翻 y', () => {
+      const m = { ...manifest(ft), frame: { ...frame, active: false } } as unknown as Manifest
+      const got = copyPlacementOf(panel(), m, ft)!
+      expect(got.at[0]).toBeCloseTo(0.5 + 4 / 100, 9)
+      expect(got.at[1]).toBeCloseTo(1 - (0.25 + 4 / 75), 9)
+    })
+    it('子图宿主：position 与锚点同在图幅里，axes 分数不需要换算', () => {
+      const t = text('axes_0.title', { anchor: [0.5, 0.11], bbox: [0.45, 0.05, 0.1, 0.06] })
+      const m = { ...manifest(axes(), t), frame } as unknown as Manifest
+      const got = copyPlacementOf(p, m, t)!
+      expect(got.at[0]).toBeCloseTo((0.5 + 4 / 160 - 0.1) / 0.8, 9)
+      expect(got.at[1]).toBeCloseTo((1 - (0.11 + 4 / 80) - 0.1) / 0.8, 9)
+    })
+  })
+
   it('算不出来（没有文字、宿主没有 position、面板尺寸为 0）→ null', () => {
     expect(copyPlacementOf(panel(), manifest(axes('axes_0', { editable: [] }), title), title)).toBeNull()
     expect(copyPlacementOf(panel({ w: 0, h: 0, nativeW: 0, nativeH: 0 } as Partial<PanelObject>), m, title)).toBeNull()
