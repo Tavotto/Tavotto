@@ -194,6 +194,11 @@ describe('发送路由', () => {
   it('整条指令都要改脚本：方案出来后自动续走现有改脚本路径（同一句话），对话里只留一行灰字', async () => {
     vi.mocked(getChangePlan).mockResolvedValue(NEEDS_SCRIPT)
     vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    // 脚本方案（PR 6）这条路不适用时落回现有的直接改脚本（脚本方案本身见 scriptPlanCard / changePlanScript 的测试）
+    vi.mocked(createChangePlan).mockImplementation(async (b) => {
+      if (b.mode === 'script') throw new EngineError('x', '', 'change_plan_script_unsupported', '')
+      return { plan_id: 'pl1', state: 'running' }
+    })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     try {
       await mount()

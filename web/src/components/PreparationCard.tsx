@@ -1236,6 +1236,38 @@ function AllowUnsandboxedRetryButton({ script, onRetry }: { script: string; onRe
 }
 
 /** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
+/**
+ * 生成可编辑版本的任务清单（2026-11-25 用户拍板）：「读懂原脚本 → 写 Python 版本 → 运行校验」，走到哪一步、第几轮全听后端的
+ * `task.stage`（界面不判断）；还没有 = 读懂原脚本。「和原图对照」是生成好之后用户自己做的事，不进清单（由 ready 那张卡承担）。
+ */
+const CONVERT_STEPS = ['read', 'write', 'verify'] as const
+//: 文案键写成字面量：死键门禁按「源码里出现过这个串」判活
+const CONVERT_STEP_LABEL: Record<(typeof CONVERT_STEPS)[number], string> = {
+  read: 'convert.steps.read',
+  write: 'convert.steps.write',
+  verify: 'convert.steps.verify',
+}
+
+function ConvertSteps({ stage }: { stage: NonNullable<ConvertEntryStage> | null | undefined }) {
+  useTranslation('workspace')
+  const cur = Math.max(0, stage ? CONVERT_STEPS.indexOf(stage.step) : 0)
+  const round = stage?.round ?? 1
+  return (
+    <TaskChecklist
+      title={pt('convert.taskTitle')}
+      data-convert-steps
+      steps={CONVERT_STEPS.map((id, i) => ({
+        id,
+        label: pt(CONVERT_STEP_LABEL[id]),
+        state: i < cur ? 'done' : i === cur ? 'active' : 'pending',
+        meta: i === cur && round > 1 ? pt('convert.round', { n: round }) : undefined,
+      }))}
+    />
+  )
+}
+
+type ConvertEntryStage = NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>['stage']
+
 function convertFlow(
   c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
   p: Extract<PrepPrimary, { kind: 'convert' }>,
@@ -1263,7 +1295,7 @@ function convertFlow(
           : minutes >= 1
             ? pt('convert.runningElapsed', { minutes })
             : pt('convert.running'),
-        slot: <Progress />,
+        slot: <ConvertSteps stage={c.stage} />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
             {pt('btn.stop')}
@@ -1289,7 +1321,8 @@ function convertFlow(
           : c.card?.packages.length
             ? pt('convert.deps.resuming', { names: listJoin(c.card.packages) })
             : pt('convert.deps.continuing'),
-        slot: <Progress />,
+        // 装好依赖、接着校验：前两步已经做完
+        slot: <ConvertSteps stage={{ step: 'verify', round: c.stage?.round ?? 1 }} />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
             {pt('btn.stop')}

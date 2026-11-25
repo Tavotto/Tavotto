@@ -24,6 +24,10 @@
 * `ai_convert._adopt_locked`（`adopt` 的锁内部分）：逐个候选名持**目标兄弟脚本**的锁 `create_script`
   （`<名>.py` / `<名>_2.py` …，已存在换下一个号，永不覆盖）。
 * `snapshots.restore_script`（AI 修复工具箱，ADR 0149 §七）：AI 修复的动作事后核对发现原脚本被改了，持这份脚本的锁、`write_script` 把**执行前读到的原字节**写回；从不写新内容。
+* `scriptbackup.backup_only`（修改方案，ADR 0206 二期）：只做两处备份、不替换原件（生成期间脚本被改过时，把「此刻」与「起跑快照」都存下，由用户决定）。
+* `app.api_change_plans_apply_script`（同上）：锁内核脚本仍是生成方案时那一版 → `scriptbackup.replace` 写入候选字节。
+* `app.api_change_plans_undo_script`（同上）：锁内核脚本仍是应用之后那一版 → `scriptbackup.replace` 按备份还原。
+* `app.api_change_plans_restore_script`（同上）：用户点「恢复到开始前的版本」→ 锁内核此刻摘要 → `scriptbackup.replace` 写回起跑快照。
 
 `script_guards`（复数）一次持有**多份**脚本的锁，只给 AI 修复工具箱 `run_command` 第②档（沙盒外执行）用：不论调用方怎么列，按规范化真实路径排序、
 逐把**非阻塞**抢，抢不齐就全放掉退避重来，超时抛 `TimeoutError`——绝不阻塞等待一把锁，所以不会与「持 A 等 B」的入口互等死锁。它不写任何字节；恢复仍经 `write_script`。

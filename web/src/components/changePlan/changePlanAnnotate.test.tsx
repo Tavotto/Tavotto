@@ -392,3 +392,41 @@ it('批注的元素名走元素树同一个显示名：mathtext 读作 min⁻¹�
   expect(noteLabelOf('')).toBe('这一处')
   expect(noteLabelOf(undefined)).toBe('这一处')
 })
+
+// ---- 脚本方案卡（ADR 0206 PR 6）：同样不能批注重改 ----
+const scriptPlan = (): ChangePlan => ({
+  ...plan('S', 1),
+  kind: 'script',
+  source: 'assistant',
+  groups: [
+    {
+      key: 'script',
+      kind: 'script',
+      label: '改标题',
+      comment_id: 'a1',
+      atomic: true,
+      changes: [],
+      boxes: { after: [] },
+      script: { rel: 'fig.py', base_sha256: 'aa', new_sha256: 'bb', diff: '--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n', added: 1, removed: 1 },
+    },
+  ],
+})
+const scriptEntry = (over: Partial<PlanEntry> = {}) => entry({ from: 'assistant', instruction: '改标题', plan: scriptPlan(), ...over })
+
+it('canRevise：脚本方案不能重改（图内方案仍可）', async () => {
+  const { canRevise } = await import('./changePlanModel')
+  expect(canRevise(scriptEntry())).toBe(false)
+  expect(canRevise(entry({ from: 'assistant' }))).toBe(true)
+})
+
+it('脚本方案卡（高级版用户）：没有「对比 / 批注」切换、没有「写批注」、没有悬停写批注，也没有首次提示；有「脚本改动」页签', () => {
+  status(PRO)
+  put(scriptEntry())
+  render()
+  expect(q('[data-change-plan-dialog]')).not.toBeNull()
+  expect(q('[data-change-plan-write-note]')).toBeNull()
+  expect(q('[data-change-plan-first-hint]')).toBeNull()
+  expect(q('[data-change-plan-pick]')).toBeNull()
+  expect(qa('[role="radiogroup"]').some((g) => g.textContent?.includes('批注'))).toBe(false)
+  expect(q('[data-change-plan-script-meta]')).not.toBeNull()
+})

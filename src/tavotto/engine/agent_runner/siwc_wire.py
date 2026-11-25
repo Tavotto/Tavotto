@@ -6,8 +6,8 @@
 
 * 每个请求 `stream: true` + `store: false`；只有 `response.completed` 才算成功，流中断是错误。
 * 请求体**白名单**构造（`_ALLOWED_FIELDS`），官方禁用清单 `FORBIDDEN_FIELDS` 一个都不发——包括循环总会传进来的
-  `max_output_tokens`；不发 `reasoning` / `include`（文档未提及），回放剥掉 `reasoning` 条目（没有 `encrypted_content`
-  的条目在 `store: false` 下会被拒）。没有 `role: "system"` 条目（系统提示只走 `instructions`）。
+  `max_output_tokens`。选了思考强度才发 `reasoning.effort` + `include: ["reasoning.encrypted_content"]`（`SIWC_EFFORTS`，2026-11-25 真服务核对），
+  回放只保留带 `encrypted_content` 的 `reasoning` 条目（没有的在 `store: false` 下会被拒）。没有 `role: "system"` 条目（系统提示只走 `instructions`）。
 * 函数工具须「放进 namespace 或 `additional_tools` 输入条目」：这里包进一个 `namespace`（形状取自通用 function-calling 指南，
   **SIWC 路由上未经真服务验证**；工具打包只在 `_pack_tools` 一处）。
 * 错误码闭集（`failure_for_code`）：用量超限 → `quota` 不重试；暂时不可用 → 可重试；不具备资格 → `refused`（**不是 `auth`**，
@@ -24,8 +24,13 @@ SSE 处理：传输层（`wires.post_json(reader=…)`）边读边用 `compact_s
 授权范围含 `chatgpt.tokens.use.direct`）、`GET /v1/models`（`models[]` + `slug`）、本协议经 https 真实传输的单轮 / namespace 工具调用 /
 回填工具结果的多轮都 200 且以 `response.completed` 收尾；`completed` **带完整 `output`**；namespace 工具被接受，函数调用回来时
 `name` 是裸名、另有 `namespace: "tavotto"` 字段（`_bare_name` 只是兜底）；带 `namespace` 字段原样回放的 `function_call` 被接受；撤销刷新令牌 200。
-**仍未真服务验证**（不得写成已验证）：`response.failed` / 用量超限等错误码、`response.incomplete` 与 `error` 事件的载荷、刷新令牌轮换、
-流到一半取消（https）、`reasoning` 回放。
+**第二次真服务核对（2026-11-25，维护者本人账号、维护者当面同意；走产品自己的 `siwc_login` 登录实现，临时数据目录，跑完撤销并删除）**：
+1455 被占时首次注册换端口成功；ID 令牌对真实 JWKS 的 RS256 验签通过；`/v1/models` 每个型号带 `supported_reasoning_levels`
+（low / medium / high / xhigh / max）与 `default_reasoning_level`（响应远超 256 KB——曾因此被当成空清单，已修）；
+`reasoning.effort` = low / medium / high / xhigh 实发 200，`minimal` 被拒 `unsupported_value`；xhigh 时回来的 reasoning 条目带 `encrypted_content`；
+带思考的工具调用 + 回填结果的多轮 200；刷新令牌**会轮换**，签发后几分钟（远早于 `earliest_refresh_at`）刷新照样 200；https 流到一半取消 1.5 s 内干净结束；撤销 200。
+**仍未真服务验证**（不得写成已验证）：`response.failed` / 用量超限等错误码、`response.incomplete` 与 `error` 事件的载荷、
+**带 `encrypted_content` 的 reasoning 条目回放**（那一轮服务端没回 reasoning 条目，回放是空验）、`max` 档实发。
 """
 
 from __future__ import annotations
@@ -69,7 +74,19 @@ FORBIDDEN_FIELDS = (
     "user",
     "previous_response_id",
 )
-_ALLOWED_FIELDS = ("model", "instructions", "input", "tools", "store", "stream")
+_ALLOWED_FIELDS = (
+    "model",
+    "instructions",
+    "input",
+    "tools",
+    "store",
+    "stream",
+    "reasoning",
+    "include",
+)
+#: SIWC 上能发的思考强度（2026-11-25 真服务核对：`/v1/models` 每个型号的 `supported_reasoning_levels` 给 low / medium / high / xhigh / max，
+#: low–xhigh 实发都 200；`minimal` 被拒 `unsupported_value`；`max` 型号清单列了、未实发）。实际给用户的档位 = 这个集合 ∩ 该型号清单里列的
+SIWC_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 #: 一次流最多读入多少字节（含被丢掉的增量帧）；超了按 `response_too_large` 失败
 MAX_STREAM_BYTES = 64 * 1024 * 1024
@@ -324,7 +341,7 @@ class SiwcResponsesWire(OpenAIResponsesWire):
         max_output_tokens,
         thinking="none",
     ) -> Request:
-        # effort / thinking / max_output_tokens 一律不发（官方禁用或未提及）；条目形状照旧
+        # max_output_tokens / thinking 不发（官方禁用 / 不适用）；effort 只认 SIWC_EFFORTS（发 reasoning + include 加密思考，见下）
         base = (
             super()
             .build(
@@ -339,10 +356,15 @@ class SiwcResponsesWire(OpenAIResponsesWire):
             )
             .body
         )
+        # 回放：`store: false` 下 reasoning 条目只有带 `encrypted_content` 才能放回去（没有的会被拒）——带的留、不带的剥
         items = [
             it
             for it in base["input"]
-            if not (isinstance(it, dict) and it.get("type") == "reasoning")
+            if not (
+                isinstance(it, dict)
+                and it.get("type") == "reasoning"
+                and not (effort in SIWC_EFFORTS and it.get("encrypted_content"))
+            )
         ]
         body: dict[str, Any] = {
             "model": model,
@@ -351,6 +373,9 @@ class SiwcResponsesWire(OpenAIResponsesWire):
             "store": False,
             "stream": True,
         }
+        if effort in SIWC_EFFORTS:
+            body["reasoning"] = {"effort": effort}
+            body["include"] = ["reasoning.encrypted_content"]
         if base.get("tools"):
             body["tools"] = _pack_tools(base["tools"])
         if not set(body) <= set(
@@ -384,12 +409,13 @@ class SiwcResponsesWire(OpenAIResponsesWire):
 
 
 def runner_args_ok(*, base_url: str, auth: str, fallback: list, effort, thinking: str) -> bool:
-    """runner 起跑前对 `--wire siwc-responses` 的硬约束：开关开着、只发 Bearer、令牌只去官方地址、不换协议、不带思考设置。"""
+    """runner 起跑前对 `--wire siwc-responses` 的硬约束：开关开着、只发 Bearer、令牌只去官方地址、不换协议、
+    思考强度只许 `SIWC_EFFORTS`、不带 anthropic 式 thinking。"""
     return (
         enabled()
         and auth == "bearer"
         and base_url.rstrip("/") == BASE_URL
         and not fallback
-        and effort is None
+        and effort in (None, *SIWC_EFFORTS)
         and thinking == "none"
     )

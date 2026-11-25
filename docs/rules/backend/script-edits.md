@@ -13,8 +13,11 @@ order: 290
 -->
 
 - **原则不变：Tavotto 为了兼容、在用户没要求时绝不动脚本。** 改脚本只有一种来由：用户在界面里
-  **亲手发起、看过后端生成的逐行 diff、勾选确认**。今天唯一的入口是「找不到脚本要读的数据」里
-  `via ∈ {probe, glob, native}` 条目选完数据位置之后的确认页（ADR 0110）；0094 的写回脚本落地后走
+  **亲手发起、看过后端生成的逐行 diff、勾选确认**。今天有**两个**入口：①「找不到脚本要读的数据」里
+  `via ∈ {probe, glob, native}` 条目选完数据位置之后的确认页（ADR 0110）；②**修改方案卡的脚本修改**（ADR 0206 PR 6）——用户在方案弹窗里看过后端
+  生成的 unified diff 与前后图、点「应用」才写：`POST /api/change-plans/<id>/apply-script`（会话 cookie 把关，MCP / Agent 调不了），锁内核「脚本仍是生成方案时那一版」
+  （否则 409 `change_plan_figure_changed`，一个字节不动）再 `replace(kind="change_plan", expect_before=…)`；撤销 = 卡片上的「撤销」
+  `undo-script`（`kind="change_plan_undo"`，锁内核脚本仍是应用之后那一版，否则 409 `change_plan_script_undo_conflict`），**⌘Z 不撤脚本**；0094 的写回脚本落地后走
   同一个底座。没有任何自动路径：样式跟随、规范修图、AI 刷新、MCP / Codex 插件、`tavotto run`、启动迁移
   一律不得调用提交 / 复原端点。
 - **导出修改后的 .py（ADR 0171）不是改脚本**：产物是导出目录里的新文件，不走这里的备份 / 确认，也绝不写原脚本；规则在 `export-pipeline.md`。

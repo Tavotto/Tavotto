@@ -111,19 +111,29 @@ def test_rejects_malformed_doc_ids(data_dir):
     assert layoutsession.record_owner("../evil", "/a") is False
 
 
-def test_concurrent_writers_lose_nothing(data_dir):
+def test_concurrent_writers_lose_nothing(data_dir, monkeypatch):
+    """主语：40 路并发读改写**不丢更新**（锁把它们串起来）。不是「40 个写在 5 秒内排完」——
+    每次写落两次盘（主文件 + bak），慢 Windows runner 上排到后面的会等锁超时、抛
+    SessionStateUnavailable（失败即关门，生产设计如此）；那是另一个判据，这里把锁超时放宽，
+    并把线程里的异常带回来，免得「等锁超时」被读成「丢了更新」（11-25 run 45645486146）。"""
+    monkeypatch.setattr(layoutsession, "LOCK_TIMEOUT_S", 120.0)
     ids = [f"d_{i}" for i in range(40)]
     barrier = threading.Barrier(len(ids))
+    errors: list[BaseException] = []
 
     def work(doc_id):
         barrier.wait()
-        layoutsession.record_owner(doc_id, f"/p/{doc_id}")
+        try:
+            layoutsession.record_owner(doc_id, f"/p/{doc_id}")
+        except BaseException as exc:  # noqa: BLE001 — 线程里的异常带回主线程断言
+            errors.append(exc)
 
     threads = [threading.Thread(target=work, args=(d,)) for d in ids]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+    assert errors == []
     assert layoutsession.owners() == {d: f"/p/{d}" for d in ids}
 
 
