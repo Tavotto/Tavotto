@@ -286,7 +286,7 @@ export function useCanvasScriptDrop() {
   /** 项目包：走顶栏「导入项目包」同一条流程；同批的别的文件这次不处理，说一声 */
   const takePackage = async (file: File, others: number) => {
     try {
-      await openPackageFile(file)
+      if (!(await openPackageFile(file))) return
     } catch (e) {
       if (isPackageTooNew(e)) {
         say('packageTooNew', { name: file.name, product: PRODUCT_NAME }, 'error', tooNewAction())

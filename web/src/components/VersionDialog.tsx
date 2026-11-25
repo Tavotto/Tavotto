@@ -34,13 +34,14 @@ import {
   versionSummaryText,
 } from '@/lib/versionSummary'
 import { groupTimeline, versionKind, type TimelineGroup } from '@/lib/timelineGroups'
-import { saveNamedNode, takeCheckpoint } from '@/lib/timelineCheckpoint'
+import { saveNamedNode, takeCheckpoint, takeProjectCheckpoint } from '@/lib/timelineCheckpoint'
+import { isProjectVersion, projectVersionFromMeta, versionCanvasDoc, type VersionDocument } from '@/lib/versionDoc'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import type { UiMessage } from '@/i18n/message'
 import { formatDate, formatTime } from '@/i18n/format'
 import { closeTimeline, restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { useDocumentStore, writesBlocked } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
@@ -77,6 +78,7 @@ import { Segmented } from './ui/Segmented'
 import { Popover } from './ui/Popover'
 import { Tip } from './ui/Tooltip'
 import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
+import { feedbackAction } from '@/lib/canvasFileIntake'
 
 /**
  * 排版时间线（ADR 0101）—— 右侧抽屉形态，画布保持可见；点一个节点打开**模态**
@@ -324,7 +326,7 @@ export function TimelinePanel() {
   }, [ctx, docId])
 
   const openPreview = useCallback(
-    (meta: LayoutVersionMeta, doc?: FigureDocument) => {
+    (meta: LayoutVersionMeta, doc?: VersionDocument) => {
       const tl = useTimelineStore.getState()
       // 不重设卡片：从卡片点「放大查看」时调用方刚把它关掉，这里再 set 会让它在关模态后重现
       setPreviewError(null) // 新的一次预览：上一次取正文的失败作废
@@ -392,20 +394,23 @@ export function TimelinePanel() {
       if (cur?.docId === docId && cur.meta.id === meta.id) useTimelineStore.getState().setPreview(null)
     }
     // 先问、问完再上锁开预览（beta 0.19.3b3 反馈：锁用的模态预览先开、确认框叠在上面，两层弹窗卡住）。
-    // 确认框本身是模态的，问的那段画布改不了；已有一次在飞就不问
+    // 确认框本身是模态的，问的那段画布改不了；已有一次在飞就不问。
+    // 节点正文是整份项目时问的必须是「换整份项目」，不是「盖当前画布」——措辞与后果都不同。
     if (useTimelineStore.getState().restoring === ctx) return
-    const ok = await confirmRestoreTarget(meta)
+    // 判据只有一条：schema 2 = 单画布，3 / 4 = 整份项目。可读节点的元数据由后端
+    // 按正文补齐，所以这里与 `restoreNode` 的正文判据一致；只有正文本身读不出来
+    // 时才不知道——那种节点在取正文那一步就会明确失败，入口仍按旧行为先问画布，
+    // 不打开模态预览、不提前取正文。
+    const projectNode = projectVersionFromMeta(meta) ?? false
+    const ok = projectNode ? await confirmProjectRestore() : await confirmRestoreTarget(meta)
     if (!afterAwait(ctx)(() => ok)) return
     try {
       const done = await restoreUnderLock(
         ctx,
         docId,
         meta,
-        async () => {
-          const v = await fetchVersionDoc(docId, meta.id)
-          return v.doc as FigureDocument
-        },
-        { confirmed: true },
+        async () => (await fetchVersionDoc(docId, meta.id)).doc,
+        { confirmed: true, projectConfirmed: projectNode },
       )
       if (done === null) return
       if (!done) closeOurs()
@@ -768,7 +773,7 @@ function TimelineRow({
   cardOpen: boolean
   onCardOpenChange: (on: boolean) => void
   /** 卡片角上的「放大查看」：带着卡片已取回的正文打开模态预览（缩放 / 差异列表） */
-  onEnlarge: (doc: FigureDocument) => void
+  onEnlarge: (doc: VersionDocument) => void
   /** 卡片上的「恢复到这里」（同一个 `restoreNode`） */
   onRestore: () => Promise<void>
   onRename: (on: boolean) => void
@@ -1016,11 +1021,11 @@ function CompareCard({
   summary: string
   locked: boolean
   onRestore: () => Promise<void>
-  onEnlarge: (doc: FigureDocument) => void
+  onEnlarge: (doc: VersionDocument) => void
   onCancel: () => void
 }) {
   const currentDoc = useCurrentDocFor(meta)
-  const [doc, setDoc] = useState<FigureDocument | null>(null)
+  const [doc, setDoc] = useState<VersionDocument | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [approximate, setApproximate] = useState(false)
   const [restoring, setRestoring] = useState(false)
@@ -1031,18 +1036,21 @@ function CompareCard({
   useEffect(() => {
     let live = true
     fetchVersionDoc(docId, meta.id)
-      .then((v) => live && setDoc(v.doc as FigureDocument))
+      .then((v) => live && setDoc(v.doc))
       .catch((e) => live && setFailed(backendErrorText(e)))
     return () => {
       live = false
     }
   }, [docId, meta.id])
+  // 卡片也只看节点记录的那一张画布；项目正文取不出记录画布就明确失败（不拿第一张顶）
+  const momentDoc = useMemo(() => (doc ? versionCanvasDoc(doc, meta) : null), [doc, meta])
+  const unresolved = !!doc && !momentDoc
   // 浮层 p-2 + 灰底 p-2 + 两格间距
   const half = (CARD_W - 16 - 16 - 12) / 2
   // 两格都对准内容。页面一样大时用**同一个框**（两边内容的并集），位置变了要看得出来；
   // 页面尺寸变过就各裁各的，各按自己的比例（Codex #1349）
-  const momentPage = doc?.page ?? meta.sketch?.page ?? meta.page ?? currentDoc.page
-  const momentObjects = doc?.objects ?? meta.sketch?.objects
+  const momentPage = momentDoc?.page ?? meta.sketch?.page ?? meta.page ?? currentDoc.page
+  const momentObjects = momentDoc?.objects ?? meta.sketch?.objects
   const momentBox = momentObjects ? contentBox(momentPage, momentObjects) : null
   const currentBox = contentBox(currentDoc.page, currentDoc.objects)
   const samePage = momentPage.w === currentDoc.page.w && momentPage.h === currentDoc.page.h
@@ -1099,13 +1107,13 @@ function CompareCard({
   return (
     <div className="flex flex-col gap-2" data-timeline-card={meta.id}>
       <div className="relative flex min-h-24 items-start justify-between gap-3 rounded-md bg-canvas p-2">
-        {failed ? (
+        {failed || unresolved ? (
           <p className="p-2 text-sm text-danger" data-timeline-card-error>
-            {failed}
+            {failed ?? vd('previewCanvasMissing')}
           </p>
         ) : doc || hasThumb ? (
           <>
-            {frame(doc, vd('sideMoment'), 'moment')}
+            {frame(momentDoc, vd('sideMoment'), 'moment')}
             {frame(currentDoc, vd('sideCurrent'), 'current')}
           </>
         ) : (
@@ -1118,9 +1126,9 @@ function CompareCard({
           label={vd('enlarge')}
           data-timeline-card-enlarge
           className="absolute right-1 top-1"
-          disabled={!doc}
+          disabled={!doc || unresolved}
           onClick={() => {
-            if (doc) onEnlarge(doc)
+            if (doc && momentDoc) onEnlarge(doc)
           }}
         >
           <Eye size={ICON_SIZE.sm} className="text-ink-2" />
@@ -1140,7 +1148,7 @@ function CompareCard({
           variant="primary"
           size="sm"
           loading={restoring}
-          disabled={locked || !!failed}
+          disabled={locked || !!failed || unresolved}
           data-timeline-card-restore
           onClick={async () => {
             setRestoring(true)
@@ -1244,34 +1252,73 @@ async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
 }
 
 /**
+ * 整份项目节点（schema 3 / 4）的恢复确认。与 `confirmRestoreTarget` 分开：
+ * 项目节点换的是**所有画布**，不是「切到某张画布再写入」，措辞必须说清后果。
+ */
+function confirmProjectRestore(): Promise<boolean> {
+  return askTimelineConfirm({
+    title: msg('versions.restoreProjectTitle', undefined, 'dialogs'),
+    body: msg('versions.restoreProjectBody', undefined, 'dialogs'),
+    confirmLabel: msg('actions.continue', undefined, 'common'),
+  })
+}
+
+/**
  * 恢复到一个节点（ADR 0101）。抽屉里的按钮与预览横幅上的按钮**共用这一份**。
  *
  * 1. 先收掉还开着的连续编辑（否则这次 commit 会被并进上一条历史，一次撤销同时
  *    吐出「刚才那笔编辑」和「整份恢复」；issue #131）；
- * 2. 落点由**节点自己的画布身份**决定（R-03），要切画布先切；
+ * 2. **schema 2**：落点由节点自己的画布身份决定（R-03），要切画布先切；
+ *    **schema 3 / 4**：节点正文是整份项目，不切画布，`switchDocument` 换进同一个排版；
  * 3. **先把当前状态存成「恢复前」关键时刻节点**——存不下来就不恢复：那个节点是
- *    恢复这件事本身能被撤销的保证（ADR 0101），没有它的恢复就是一次覆盖；
- * 4. 一次 `commit`（`restoreLayoutVersion`）写入：⌘Z 一步退回恢复之前。
+ *    恢复这件事本身能被撤销的保证（ADR 0101），没有它的恢复就是一次覆盖。
+ *    项目节点备份的也必须是**整份项目**（`takeProjectCheckpoint`），否则别的画布
+ *    会落在恢复后的样子、回不去；
+ * 4. schema 2 一次 `commit`（`restoreLayoutVersion`）写入，⌘Z 一步退回；schema 3 / 4
+ *    换整份项目，撤销栈随之清空，退回靠「恢复前」节点。
  *
  * 返回 true = 写进去了。
  */
 export async function restoreNode(
   meta: LayoutVersionMeta,
-  versionDoc: FigureDocument,
-  /** 调用方已经问过了（行 / 卡片入口在上锁开预览**之前**问，见 `restoreFromRow`） */
-  opts?: { confirmed?: boolean },
+  versionDoc: VersionDocument,
+  /**
+   * 调用方已经问过了（行 / 卡片入口在上锁开预览**之前**问，见 `restoreFromRow`）。
+   * `projectConfirmed` = 问的是「整份项目」那一句，而不是「盖当前画布」。
+   */
+  opts?: { confirmed?: boolean; projectConfirmed?: boolean },
 ): Promise<boolean> {
+  if (writesBlocked()) return false
+  const projectNode = isProjectVersion(versionDoc)
   finishActiveGesture()
   // 确认框与「恢复前」节点之间都可能换了项目 / 排版：那时再写，A 的节点会被写进 B
   const after = afterAwait()
-  const confirmed = opts?.confirmed || (await confirmRestoreTarget(meta))
-  if (!after(() => confirmed)) return false
-  // 原画布还在 → 切过去再写（「恢复前」拍的因此是**即将被覆盖的那张**）；
-  // 已删除 / 没有身份 → 用户刚点头同意写进当前画布
-  const target = resolveRestoreTarget(meta, useDocumentStore.getState())
-  if (target.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
-  // 写进的是被覆盖的这张画布：它上面的图换了（不是切去别的画布），「恢复前」就属于被换掉的那张图
-  const figuresBefore = target.kind === 'other' ? null : figuresOf(useDocumentStore.getState().doc)
+  // 项目节点记录的画布取不出来：预览画不出这一版，恢复也不猜（一张都不写）。
+  // schema 2 没有「取哪张画布」这一步，行为不变。
+  if (projectNode && !versionCanvasDoc(versionDoc, meta)) {
+    // 节点正文与它记录的画布对不上属于数据坏了，重试恢复只会再失败一次：真做不了 →「发送问题反馈」
+    after(() =>
+      useUiStore
+        .getState()
+        .setStatus(msg('versions.previewCanvasMissing', undefined, 'dialogs'), 'error', {
+          action: feedbackAction(),
+        }),
+    )
+    return false
+  }
+  const confirmed = projectNode
+    ? opts?.projectConfirmed || (await confirmProjectRestore())
+    : opts?.confirmed || (await confirmRestoreTarget(meta))
+  if (!after(() => confirmed) || writesBlocked()) return false
+  // schema 2：原画布还在 → 切过去再写（「恢复前」拍的因此是**即将被覆盖的那张**）；
+  // 已删除 / 没有身份 → 用户刚点头同意写进当前画布。
+  // schema 3 / 4：目标由正文自己的 activeCanvasId 决定，不按节点记的 canvasId 猜。
+  const target = projectNode ? null : resolveRestoreTarget(meta, useDocumentStore.getState())
+  if (target?.kind === 'other') useDocumentStore.getState().switchCanvas(target.canvasId)
+  // 写进的是被覆盖的这张画布：它上面的图换了（不是切去别的画布），「恢复前」就属于被换掉的那张图。
+  // 整份项目节点不按单张画布算：恢复前后的激活画布都可能不是同一张。
+  const figuresBefore =
+    projectNode || target?.kind === 'other' ? null : figuresOf(useDocumentStore.getState().doc)
   const hashBefore = documentDigest(useDocumentStore.getState().doc)
   recordDiagnosticEvent({
     type: 'layout_version.restore.request',
@@ -1281,13 +1328,23 @@ export async function restoreNode(
     future_count: useDocumentStore.getState().future.length,
   })
   try {
-    await takeCheckpoint({
-      auto: true,
-      moment: 'before_restore',
-      name: vd('beforeRestore', { time: formatTime(Date.now()) }),
-      programName: true,
-      allowEmpty: true,
-    })
+    if (projectNode) {
+      await takeProjectCheckpoint({
+        auto: true,
+        moment: 'before_restore',
+        name: vd('beforeRestore', { time: formatTime(Date.now()) }),
+        programName: true,
+        allowEmpty: true,
+      })
+    } else {
+      await takeCheckpoint({
+        auto: true,
+        moment: 'before_restore',
+        name: vd('beforeRestore', { time: formatTime(Date.now()) }),
+        programName: true,
+        allowEmpty: true,
+      })
+    }
   } catch (e) {
     after(() =>
       useUiStore
@@ -1297,10 +1354,29 @@ export async function restoreNode(
     return false
   }
   // 「恢复前」节点已经存下了（服务端事实，留着）；上下文换了就不写
-  if (!after(() => true)) return false
+  if (!after(() => true) || writesBlocked()) return false
   const label = versionDisplayName(meta) || formatTime(meta.ts)
   // 面板 overrides 的身份原样恢复，不按此刻的 manifest 重抄（ADR 0083）
-  restoreLayoutVersion(msg('versions.restoreHistory', { name: label }, 'dialogs'), versionDoc)
+  const restored = await restoreLayoutVersion(
+    msg('versions.restoreHistory', { name: label }, 'dialogs'),
+    versionDoc,
+  )
+  if (!restored) {
+    const saveState = useDocumentStore.getState().saveState
+    // 已安装但落盘失败：writer 已给出保存/冲突出口，不把它改说成节点正文损坏。
+    if (saveState === 'save_error' || saveState === 'conflict') return false
+    // schema 3 / 4 读不出来 / 换文档被取消：一个字节都没写，不能说「已恢复」
+    // 项目正文读不出来同样不是重试能好的：真做不了 →「发送问题反馈」
+    after(() =>
+      useUiStore
+        .getState()
+        .setStatus(msg('versions.restoreProjectInvalid', undefined, 'dialogs'), 'error', {
+          action: feedbackAction(),
+        }),
+    )
+    return false
+  }
+  if (!after(() => true) || writesBlocked()) return false
   recordDiagnosticEvent({
     type: 'layout_version.restore.complete',
     version: versionHash(meta.id),
@@ -1311,12 +1387,17 @@ export async function restoreNode(
     future_count: useDocumentStore.getState().future.length,
   })
   useTimelineStore.getState().setPreview(null)
-  if (figuresBefore && !sameFigures(figuresBefore, figuresOf(useDocumentStore.getState().doc))) {
+  if (!projectNode && figuresBefore && !sameFigures(figuresBefore, figuresOf(useDocumentStore.getState().doc))) {
     useTimelineStore.setState((st) => ({ revealAll: st.revealAll + 1 }))
   }
   useUiStore
     .getState()
-    .setStatus(msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'), 'done')
+    .setStatus(
+      projectNode
+        ? msg('versions.restoredProject', { name: label }, 'dialogs')
+        : msg('versions.restored', { name: label, undo: modKey('Z') }, 'dialogs'),
+      'done',
+    )
   return true
 }
 
@@ -1381,13 +1462,13 @@ async function restoreUnderLock(
   ctx: string,
   docId: string,
   meta: LayoutVersionMeta,
-  doc: FigureDocument | (() => Promise<FigureDocument>),
-  opts?: { confirmed?: boolean },
+  doc: VersionDocument | (() => Promise<VersionDocument>),
+  opts?: { confirmed?: boolean; projectConfirmed?: boolean },
 ): Promise<boolean | null> {
   const token = useTimelineStore.getState().beginRestore(ctx)
   if (token === null) return null
   try {
-    let body: FigureDocument
+    let body: VersionDocument
     if (typeof doc === 'function') {
       const mark = editMark()
       const open = useTimelineStore.getState().preview
@@ -1484,7 +1565,7 @@ export function TimelinePreviewDialog() {
   // 锁在 timelineStore 里，抽屉内联条的恢复也挂这同一把（`restoreUnderLock`）
   const restoring = useTimelineStore((s) => s.restoring) === ctx
   const close = () => useTimelineStore.getState().setPreview(null)
-  const restore = async (meta: LayoutVersionMeta, doc: FigureDocument) => {
+  const restore = async (meta: LayoutVersionMeta, doc: VersionDocument) => {
     await restoreUnderLock(ctx, docId, meta, doc)
   }
   return (
@@ -1528,10 +1609,10 @@ function PreviewBody({
   onRestore,
 }: {
   meta: LayoutVersionMeta
-  doc: FigureDocument | null
+  doc: VersionDocument | null
   /** 恢复在飞：状态在外层对话框上（它要据此锁住关闭），这里只管按钮 */
   restoring: boolean
-  onRestore: (meta: LayoutVersionMeta, doc: FigureDocument) => Promise<void>
+  onRestore: (meta: LayoutVersionMeta, doc: VersionDocument) => Promise<void>
 }) {
   const currentDoc = useCurrentDocFor(meta)
   const [view, setView] = useState<PreviewView>('moment')
@@ -1551,7 +1632,11 @@ function PreviewBody({
     return () => ro.disconnect()
   }, [])
 
-  const page = doc?.page ?? currentDoc.page
+  // 预览只画**节点记录的那一张画布**：schema 2 原样，schema 3 / 4 从整份项目正文里取。
+  // 取不出（记录画布不在正文里）就明确失败——不拿 activeCanvasId / 第一张顶上。
+  const momentDoc = useMemo(() => (doc ? versionCanvasDoc(doc, meta) : null), [doc, meta])
+  const unresolved = !!doc && !momentDoc
+  const page = momentDoc?.page ?? currentDoc.page
   const panes = view === 'side' ? 2 : 1
   const PAD = 32
   // 适配：整张页面放进舞台（并排时每一格各占一半）；数字档是相对适配的倍数
@@ -1569,17 +1654,18 @@ function PreviewBody({
   }
 
   const restore = () => {
-    if (doc) void onRestore(meta, doc)
+    // 恢复的是整份正文（项目节点要换所有画布）；预览画不出来的那一版一个字节都不写
+    if (doc && momentDoc) void onRestore(meta, doc)
   }
 
   const frame = (d: FigureDocument, caption: string | null, opts?: { outlineOver?: FigureDocument }) => (
     <figure
       className="flex shrink-0 flex-col items-center gap-1.5"
       style={{ width }}
-      data-timeline-frame={d === doc ? 'moment' : 'current'}
+      data-timeline-frame={d === momentDoc ? 'moment' : 'current'}
     >
       <Card appearance="raised" padding="none" className="w-full overflow-hidden rounded-xs">
-        <LayoutSnapshot doc={d} renderOverrides displayWidth={width} onApproximate={d === doc ? setApproximate : undefined} />
+        <LayoutSnapshot doc={d} renderOverrides displayWidth={width} onApproximate={d === momentDoc ? setApproximate : undefined} />
         {opts?.outlineOver && (
           <div className="absolute inset-0 opacity-55" data-timeline-overlay-current>
             <LayoutSnapshot doc={opts.outlineOver} outline />
@@ -1628,19 +1714,23 @@ function PreviewBody({
             </Button>
           </div>
           <div ref={stageRef} className="min-h-0 flex-1 overflow-auto bg-canvas">
-            {!doc ? (
+            {unresolved ? (
+              <p className="p-6 text-center text-sm text-danger" data-timeline-preview-error>
+                {vd('previewCanvasMissing')}
+              </p>
+            ) : !doc ? (
               <p className="text-shimmer p-6 text-center text-ink-3">{vd('loadingSnapshot')}</p>
             ) : (
               <div className="flex min-h-full min-w-max items-center justify-center gap-8 p-8">
                 {view === 'side' ? (
                   <>
-                    {frame(doc, vd('sideMoment'))}
+                    {frame(momentDoc!, vd('sideMoment'))}
                     {frame(currentDoc, vd('sideCurrent'))}
                   </>
                 ) : view === 'overlay' ? (
-                  frame(doc, vd('overlayHint'), { outlineOver: currentDoc })
+                  frame(momentDoc!, vd('overlayHint'), { outlineOver: currentDoc })
                 ) : (
-                  frame(doc, null)
+                  frame(momentDoc!, null)
                 )}
               </div>
             )}
@@ -1651,7 +1741,7 @@ function PreviewBody({
         </div>
         <aside className="w-64 shrink-0 overflow-y-auto border-l border-border px-3 py-2">
           <h3 className="type-section pb-1.5">{vd('diffTitle')}</h3>
-          {doc ? <NodeDiff versionDoc={doc} currentDoc={currentDoc} /> : null}
+          {momentDoc ? <NodeDiff versionDoc={momentDoc} currentDoc={currentDoc} /> : null}
         </aside>
       </div>
       <div data-dialog-footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 pb-4 pt-3">
@@ -1659,7 +1749,7 @@ function PreviewBody({
           variant="primary"
           size="lg"
           loading={restoring}
-          disabled={!doc}
+          disabled={!momentDoc}
           onClick={restore}
           data-timeline-preview-restore
         >
@@ -1715,6 +1805,12 @@ export function LayoutSnapshot({
   onPending?: (pending: boolean) => void
 }) {
   const assets = useAssetStore((s) => s.byId)
+  const approximatePanels = useRef(new Set<string>())
+  const reportApproximate = useCallback((id: string, approximate: boolean) => {
+    if (approximate) approximatePanels.current.add(id)
+    else approximatePanels.current.delete(id)
+    onApproximate?.(approximatePanels.current.size > 0)
+  }, [onApproximate])
   const loadingPanels = useRef(new Set<string>())
   const onLoading = useCallback(
     (id: string, loading: boolean) => {
@@ -1767,7 +1863,7 @@ export function LayoutSnapshot({
                 style={style}
                 mtime={assets[o.fileId]?.mtime}
                 renderOverrides={renderOverrides}
-                onApproximate={onApproximate}
+                onApproximate={reportApproximate}
                 onLoading={onPending ? onLoading : undefined}
                 bucket={
                   displayWidth ? snapshotBucket(o.w, pw, displayWidth, window.devicePixelRatio || 1) : 200
@@ -1822,13 +1918,13 @@ function SnapshotPanel({
   style: React.CSSProperties
   mtime?: number
   renderOverrides: boolean
-  onApproximate?: (approximate: boolean) => void
+  onApproximate?: (id: string, approximate: boolean) => void
   /** 这张面板按 overrides 的图还在出（出好之前画的是磁盘素材，不是这一版的样子） */
   onLoading?: (id: string, loading: boolean) => void
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
-  const wantsVariant = renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel))
+  const wantsVariant = renderOverrides && (!!panel.chart || panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
@@ -1836,13 +1932,15 @@ function SnapshotPanel({
     wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
+    panel.chart ? { chart: panel.chart, chart_source: panel.chartSource, render_profile: panel.chartFrame?.renderProfile ?? 'native-manifest/1' } : undefined,
   )
   useEffect(() => {
-    if (renderOverrides) onApproximate?.(variant.approximate)
-  }, [variant.approximate, renderOverrides, onApproximate])
+    if (renderOverrides) onApproximate?.(panel.id, variant.approximate || (!!panel.chart && !variant.url))
+    return () => onApproximate?.(panel.id, false)
+  }, [panel.id, panel.chart, variant.url, variant.approximate, renderOverrides, onApproximate])
   // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
   // 零编辑的来源驱动面板 hook 有意不出图（磁盘原像素即是），不算「还在出」
-  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel)) && !variant.url && !variant.approximate
+  const pending = wantsVariant && (!!panel.chart || variantNeedsRender(panel.overrides, adoptionGuardOf(panel))) && !variant.url && !variant.approximate
   useEffect(() => {
     if (!onLoading) return
     onLoading(panel.id, pending)

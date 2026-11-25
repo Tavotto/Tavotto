@@ -28,12 +28,13 @@ export const CANDIDATE_CAP = 200
 /** 连续读到没有新行的页最多再翻几页 */
 const MAX_EMPTY_HOPS = 5
 
-export type RowIssue = 'invalid' | 'too_new' | 'too_large'
+export type RowIssue = 'invalid' | 'too_new' | 'too_large' | 'chart_source_mismatch'
 
 /** 这一行为什么不能恢复；可以恢复是 `null`。同时看后端给的 status 与 schema（前端构建可能比后端旧） */
 export function rowIssue(item: RecoveryCandidateItem): RowIssue | null {
   if (item.status === 'too_new' || (item.schema !== null && item.schema > SCHEMA_CURRENT)) return 'too_new'
   if (item.status === 'too_large') return 'too_large'
+  if (item.status === 'chart_source_mismatch') return 'chart_source_mismatch'
   if (item.status === 'invalid') return 'invalid'
   return null
 }
@@ -181,7 +182,7 @@ export type RecoverCopyResult =
   | { kind: 'opened'; id: string; existed: boolean }
   /** 预览之后源正文变了：没有恢复，调用方刷新列表让用户重新确认 */
   | { kind: 'stale' }
-  | { kind: 'issue'; reason: 'missing' | 'invalid' | 'too_new' | 'unavailable' | 'foreign' | 'cancelled' }
+  | { kind: 'issue'; reason: 'missing' | 'invalid' | 'chart_source_mismatch' | 'too_new' | 'unavailable' | 'foreign' | 'cancelled' }
 
 export interface RecoverCopyDeps {
   /** 当前项目（目标槽位与源槽位都在它的数据目录里读） */
@@ -228,12 +229,12 @@ async function doRecover(
   }
   // 目标读不出（不是「没有」）时不往下走：不知道它在不在，装下去可能再生出第二份
   if (there.kind === 'unavailable') return { kind: 'issue', reason: 'unavailable' }
-  if (there.kind === 'invalid') return { kind: 'issue', reason: 'invalid' }
+  if (there.kind === 'invalid') return { kind: 'issue', reason: there.code === 'chart_source_mismatch' ? 'chart_source_mismatch' : 'invalid' }
 
   const src = await probeAutosave(item.doc_id, deps.pj)
   if (src.kind === 'missing') return { kind: 'issue', reason: 'missing' }
   if (src.kind === 'unavailable') return { kind: 'issue', reason: 'unavailable' }
-  if (src.kind === 'invalid') return { kind: 'issue', reason: 'invalid' }
+  if (src.kind === 'invalid') return { kind: 'issue', reason: src.code === 'chart_source_mismatch' ? 'chart_source_mismatch' : 'invalid' }
   const raw = src.doc as { schema?: unknown; updatedAt?: unknown } | null
   if (raw && typeof raw.schema === 'number' && raw.schema > SCHEMA_CURRENT) {
     return { kind: 'issue', reason: 'too_new' }

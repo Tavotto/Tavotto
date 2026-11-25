@@ -641,3 +641,27 @@ def test_model_list_keeps_each_models_reasoning_levels(fake):
         "default_effort": "medium",
     }
     assert y == {"id": "gpt-y"}
+
+
+# --------------------------------------------------------------------------- AI 工具读不到凭据（Codex #2210 P1）
+def test_ai_read_tools_cannot_read_siwc_credentials(fake, tmp_path):
+    """主语：AI 修复的读文件范围（`ReadScope.check`）、试跑守卫用的同一张硬拦表（`deny_spec`）、CLI 读文件权限规则。
+    登录后落盘的账号文件、host.json、整个 siwc 目录都必须被拒；文件名是 oaiapp_*.json，不能靠文件名规则兜。"""
+    from tavotto.engine import ai_agents
+    from tavotto.engine.fixtools import readscope
+
+    _sign_in(fake)
+    acc_file = siwc_store.root() / "accounts" / f"{CID}.json"
+    assert acc_file.is_file()
+    # 主目录 = 数据目录的上一级：凭据在可读根之内，只能靠硬拦表挡住
+    scope = readscope.ReadScope(home=tmp_path, project_root=tmp_path)
+    for p in (acc_file, siwc_store.root() / "host.json", siwc_store.root()):
+        r = scope.check(str(p))
+        assert not r.ok and r.reason == readscope.REASON_DENIED, (p, r)
+    assert scope.check(str(tmp_path)).ok  # 对照：别的地方照常可读（判据不是恒拒）
+
+    spec = readscope.deny_spec()
+    assert str(siwc_store.root()) in spec["absolute"]
+    rules = ai_agents.get_agent("claude").fix_permissions(spec, "tavotto-fix")["deny"]
+    root = "//" + str(siwc_store.root()).replace("\\", "/").lstrip("/")
+    assert f"Read({root})" in rules and f"Read({root}/**)" in rules

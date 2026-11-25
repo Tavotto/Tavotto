@@ -1,6 +1,7 @@
 import { rejectArtifactRenders, renderKey } from '@/store/renderStore'
 import { artifactRequestFields, artifactKeySuffix, artifactValidationIssue, ArtifactValidationError, subjectOf, hasRealEdits, type AdoptionGuard } from '@/lib/artifactValidation'
 import type { PanelOverride } from '@/types/document'
+import { chartRequestIdentity } from '@/lib/chartSource'
 /**
  * 「按 overrides 出一张缩略图」的可复用 hook（issue #131）。
  *
@@ -19,7 +20,7 @@ import type { PanelOverride } from '@/types/document'
  *     就是几十次 matplotlib 往返。
  */
 import { useEffect, useState } from 'react'
-import { EngineError, enginePreviewPng, enginePreviewPngSnapshot } from '@/lib/api'
+import { EngineError, enginePreviewPng, enginePreviewPngSnapshot, type EnginePngOptions } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { currentProjectId } from '@/lib/session'
 
@@ -91,8 +92,9 @@ export function useVariantPng(
   /** 素材版本（mtime）：磁盘上那份被改过时旧缩略图必须作废 */
   rev = 0,
   artifactValidation?: AdoptionGuard | null,
+  chartSource?: Pick<EnginePngOptions, 'chart' | 'chart_source' | 'render_profile'>,
 ): VariantPng {
-  const key = keyOf(fileId, overrides, bucket, rev) + artifactKeySuffix(artifactValidation)
+  const key = keyOf(fileId, overrides, bucket, rev) + artifactKeySuffix(artifactValidation) + (chartRequestIdentity(chartSource?.chart, chartSource?.chart_source, chartSource?.render_profile) ?? '')
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
     key,
     url: artifactValidation !== undefined ? null : cache.get(key) ?? null,
@@ -110,7 +112,7 @@ export function useVariantPng(
     if (issue) { setState({ key,url:null,loading:false,approximate:true}); return }
     // 没有 override 的面板与磁盘图一模一样，白跑一次引擎没有意义
     // 来源驱动面板零编辑（只有结构性 FRAME）显示磁盘原像素，同样不出引擎图（ADR 0139 §五.1）
-    if (!variantNeedsRender(overrides, artifactValidation)) {
+    if (!chartSource?.chart && !variantNeedsRender(overrides, artifactValidation)) {
       setState({ key, url: null, loading: false, approximate: false })
       return
     }
@@ -122,9 +124,12 @@ export function useVariantPng(
     const ctrl = new AbortController()
     let live = true
     const epoch = cacheEpoch
-    setState((s) => ({ key, url: artifactValidation ? null : s.url, loading: true, approximate: false }))
+    setState({ key, url: null, loading: true, approximate: false })
     const transport = engineTransport()
-    const pending = artifactValidation
+    const pending = chartSource?.chart
+      ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, chartSource).then(s => s.url)
+      : artifactValidation
       ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
         : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject)).then(s=>s.url)
       : transport
@@ -154,6 +159,6 @@ export function useVariantPng(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled])
 
-  return artifactValidation !== undefined && state.key !== key
+  return state.key !== key
     ? {url:null,loading:enabled,approximate:true} : state
 }

@@ -291,6 +291,32 @@ describe('不带加速键的几条', () => {
       expect(useUiStore.getState().status).not.toBeNull()
     })
 
+    it('创建副本：⌘D 与菜单同一个出口——选着可复制的图内元素时原地写 copy_of，整张图不被复制（ADR 0207）', () => {
+      const title = {
+        gid: 'axes_0.title', role: 'title', label: 'Title', bbox: [0.4, 0.05, 0.2, 0.06], anchor: [0.5, 0.1],
+        editable: [{ prop: 'text', value: 'T' }], draggable: true, drag_prop: 'pos_frac',
+        text_block: { center: [0.5, 0.1], w: 0.2, h: 0.06, asc: 0.045, text: 'T', math: false, size: 10, color: '#000', weight: 'normal', style: 'normal', rotation: 0, ha: 'center' },
+      } as unknown as ManifestElement
+      const host = { gid: 'axes_0', role: 'axes', label: 'axes_0', bbox: [0.1, 0.1, 0.8, 0.8], editable: [{ prop: 'position', value: [0.1, 0.1, 0.8, 0.8] }], draggable: false } as unknown as ManifestElement
+      const run = (how: 'key' | 'menu') => {
+        enterElementEdit({ exact: false })
+        const p = live()
+        useRenderStore.getState().patch(renderKeyOf(p), {
+          fileId: p.fileId, rev: 1, manifest: { stem: 'p1', size_mm: [80, 60], elements: [host, title] }, svg: '<svg/>',
+          status: 'ready', stale: false, lastPatches: JSON.stringify(p.overrides), wantPatches: JSON.stringify(p.overrides),
+        })
+        useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['axes_0.title'] })
+        if (how === 'menu') act(() => runMenuAction('menu-duplicate'))
+        else act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'd', metaKey: true })) })
+        return { objects: doc().doc.objects.length, copies: live().overrides.filter((o) => o.prop === 'copy_of').length, history: doc().past.length }
+      }
+      const byKey = run('key')
+      seed()
+      const byMenu = run('menu')
+      expect(byMenu).toEqual(byKey)
+      expect(byMenu).toEqual({ objects: 2, copies: 1, history: 1 })
+    })
+
     it('只选了一个图内元素：说出口，也不退回去挪面板', () => {
       enterElementEdit()
       useUiStore.setState({ selectedGids: ['t2'] })

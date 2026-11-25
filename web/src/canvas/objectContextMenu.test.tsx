@@ -1279,6 +1279,52 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
     expect(past().at(-1)!.label.key).toBe('element.resetElement')
   })
 
+  it('图内副本（ADR 0207）：「恢复」只清 copy_of 以外的、计数不数 copy_of；「隐藏」换成「删除副本」（摘掉全部修改）', async () => {
+    const cg = 'axes_0.copy_abcd1234'
+    await seed([
+      panel('p1', {
+        overrides: [
+          { gid: cg, prop: 'copy_of', value: { src: 'axes_0.title', text: 'Hi', at: [0.5, 0.5] } },
+          { gid: cg, prop: 'fontsize', value: 12 },
+        ],
+      }),
+    ])
+    const { seedExactRender } = await import('@/test/renderFixtures')
+    const copyManifest = {
+      stem: 'Fig1',
+      size_mm: [40, 30],
+      elements: [
+        {
+          gid: cg,
+          role: 'title',
+          label: '标题 的副本',
+          bbox: [0.1, 0.1, 0.5, 0.2],
+          editable: [
+            { prop: 'text', type: 'text', value: 'Hi' },
+            { prop: 'visible', type: 'bool', value: true },
+          ],
+        },
+      ],
+    } as never
+    seedExactRender(byId<PanelObject>('p1'), copyManifest)
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: cg }, 50, 50)
+    })
+    const reset = document.querySelector<HTMLElement>('[data-quick-item="reset-element"]')!
+    expect(reset.textContent).toContain('1')
+    expect(reset.textContent).not.toContain('2')
+    expect(document.querySelector('[data-quick-item="delete-copy"]')?.textContent).toContain('删除副本')
+    expect(document.body.textContent).not.toContain('隐藏此元素')
+    await click(reset)
+    expect(byId<PanelObject>('p1').overrides.map((o) => [o.gid, o.prop])).toEqual([[cg, 'copy_of']])
+    seedExactRender(byId<PanelObject>('p1'), copyManifest) // 渲染回来
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: cg }, 50, 50)
+    })
+    await click(document.querySelector<HTMLElement>('[data-quick-item="delete-copy"]'))
+    expect(byId<PanelObject>('p1').overrides).toEqual([])
+  })
+
   it('Select 的 portal 不算点在外面；点别处才关；Esc 关', async () => {
     await openElement()
     const portal = document.createElement('div')

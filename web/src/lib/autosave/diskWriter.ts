@@ -159,6 +159,8 @@ export function conflictIssue(id: string, err: unknown): SaveIssue {
 export interface DiskWriter {
   /** 把这一份排进队列（或立刻开始写） */
   schedule: (id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext) => void
+  /** 排队和成功写入的代次；旧的在途写入不能替后排快照作证。 */
+  writeVersion: (id: string) => { scheduled: number; written: number }
   /** 队列排空（含在途那一次）后 resolve。已经空了就立刻 resolve。 */
   whenIdle: () => Promise<void>
   /** 下一次真正开始的写盘算作手动保存（遥测的 trigger） */
@@ -181,7 +183,10 @@ export interface DiskWriter {
 export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
   let diskBusy = false
   /** 按 documentId 排队：同一个 id 天然合并成最新一份，不同 id 依次串行 PUT。 */
-  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: FigureSnapshotSaveContext }>()
+  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: FigureSnapshotSaveContext; version: number }>()
+  let nextVersion = 0
+  const scheduledVersions = new Map<string, number>()
+  const writtenVersions = new Map<string, number>()
 
   /**
    * 乐观并发基线：本标签页最后一次**成功落盘**时那份文档的 updatedAt。
@@ -256,14 +261,8 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
    */
   async function ensureDiskKnown(id: string, pj: string | null): Promise<SaveIssue | null> {
     if (diskRevision.has(id)) return null
-    let probe: Awaited<ReturnType<DiskApi['fetch']>>
-    try {
-      probe = await ports.api.fetch(id, pj)
-    } catch {
-      // 还是问不到：不猜，也不记。这次照常尝试写（后端多半同样不可达，
-      // 那就走 save_error），下一次写之前还会再确认一遍。
-      return null
-    }
+    // 读失败保持未知并走保存失败；不能用无基线 PUT 代替未读到的正文。
+    const probe = await ports.api.fetch(id, pj)
     rememberRevision(id, probe)
     if (!probe) return null
     // 磁盘上有一份我从没读过的：这就是冲突，不是「首次写」
@@ -275,8 +274,14 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
   }
 
   function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext): void {
+    const version = ++nextVersion
+    scheduledVersions.set(id, version)
+    enqueue(id, pd, pj, snapshotContext, version)
+  }
+
+  function enqueue(id: string, pd: ProjectDocument, pj: string | null, snapshotContext: FigureSnapshotSaveContext | undefined, version: number): void {
     if (diskBusy) {
-      diskQueue.set(id, { pd, pj, snapshotContext })
+      diskQueue.set(id, { pd, pj, snapshotContext, version })
       return
     }
     diskBusy = true
@@ -291,6 +296,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         return ports.api.put(id, pd, diskBaseline.get(id), diskRevision.get(id) ?? undefined, pj)
       })
       .then((res) => {
+        writtenVersions.set(id, version)
         diskBaseline.set(id, pd.updatedAt)
         if (res.revision) diskRevision.set(id, res.revision)
         ports.dropLocalCopy(id, pd)
@@ -323,7 +329,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           // 内容已经在本机副本里，等用户裁决完再写。只跳过它——排在后面的别的
           // 文档照写，否则它们没人处理、等待方也一直醒不来（#411）。
           if (ports.writeBlocked() && ports.isCurrent(qid)) continue
-          schedule(qid, queued.pd, queued.pj, queued.snapshotContext)
+          enqueue(qid, queued.pd, queued.pj, queued.snapshotContext, queued.version)
           return
         }
         settleIdle()
@@ -332,6 +338,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
 
   return {
     schedule,
+    writeVersion: (id) => ({ scheduled: scheduledVersions.get(id) ?? 0, written: writtenVersions.get(id) ?? 0 }),
     whenIdle,
     markManual: () => {
       manualSavePending = true

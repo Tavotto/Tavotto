@@ -31,6 +31,7 @@ const BASE: Coverage<ObjectBase> = {
   clipOff: 'withhold',
   layoutPinned: 'withhold',
   rotationDeg: 'accept',
+  anchor: 'reserved',
 }
 
 const TEXT: Coverage<Omit<TextObject, keyof ObjectBase>> = {
