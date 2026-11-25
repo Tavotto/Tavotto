@@ -780,6 +780,19 @@
       "current": "Currently {{name}}",
       "chosen": "The model you chose"
     },
+    "purpose": {
+      "label": "Purpose",
+      "compare_groups": "Compare groups",
+      "trend": "See a trend",
+      "relationship": "See a relationship",
+      "distribution": "See the distribution"
+    },
+    "whyNot": {
+      "summary_hides_spread": "It shows only the mean and error, not each point.",
+      "line_needs_order": "The two quantities have no order, so a line suggests neighbouring points change together.",
+      "order_prefers_line": "The x axis has an order, so a line shows the trend better.",
+      "answers_other_purpose": "You chose “{{purpose}}”; this one answers a different question."
+    },
     "redraw": {
       "from": "Drawn from {{file}}",
       "again": "Try another style",

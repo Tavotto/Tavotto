@@ -412,6 +412,13 @@ export default interface Resources {
         "reveal": "在文件夹中显示",
         "unwritable": "这个文件夹写不进，图放不下。"
       },
+      "purpose": {
+        "compare_groups": "比较各组",
+        "distribution": "看分布",
+        "label": "目的",
+        "relationship": "看关系",
+        "trend": "看趋势"
+      },
       "reason": {
         "all_candidates_rejected": "备选都没通过检查。",
         "candidate_fingerprint_mismatch": "画出来的数据和文件对不上，这个备选已去掉。",
@@ -468,6 +475,12 @@ export default interface Resources {
       "variant": {
         "by_file": "只按文件分组",
         "split": "按文件 +「{{column}}」分组"
+      },
+      "whyNot": {
+        "answers_other_purpose": "你选的是「{{purpose}}」，这张回答的是另一个问题。",
+        "line_needs_order": "两个量没有先后顺序，连线会让人以为相邻点是连着变的。",
+        "order_prefers_line": "横轴有顺序，连线更能看出走势。",
+        "summary_hides_spread": "只画均值和误差，看不到每个点。"
       },
       "working": {
         "cancel": "取消",
