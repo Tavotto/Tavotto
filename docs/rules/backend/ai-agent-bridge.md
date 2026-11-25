@@ -614,7 +614,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 （`ai.active_provider` 只作旧字段兼容，连接的解析不看它）。依赖方向 `ai_agents ← ai_providers ← ai_connections ← ai_bridge`。
 
 - **`capabilities` 新字段**（旧字段一个不动，`agents[]` 仍只有 codex / claude）：`vendors[]`（厂商目录）、`connections[]`（已连接 / 需重新登录）、`locale_region`。
-  - `vendors` **按厂商合并接入方式**，每家一条，怎么接入放进 `methods[]`（订阅 / 账号登录在前，API Key 在后）：`{id, kind: key|login|oauth, label_key, catalog_id?, agent?, connection_id?, key_url?, key_hint_key?, needs_base_url?, available}`。
+  - `vendors` **按厂商合并接入方式**，每家一条，怎么接入放进 `methods[]`（订阅 / 账号登录在前，API Key 在后）：`{id, kind: key|login|oauth|siwc, label_key, catalog_id?, agent?, connection_id?, key_url?, key_hint_key?, needs_base_url?, available}`（`siwc` 只在 SIWC 开关开时出现，见下文「SIWC 登录、凭据与连接」）。
     login 方式 id `<厂商>:login`（`agent` = 对应 CLI，`connection_id` = `sub:codex` / `sub:claude`，`available` = CLI 已装）；oauth 方式 `<provider>:oauth`（`ai_oauth` 的 client_id 配了才出现，`connection_id` = `minimax-oauth`）；
     key 方式 `<catalog_id>:key`（`catalog_id` 就是 `POST /connections` 的 `vendor`）。旧字段保留：`connect` = `methods[0].kind`，`key_url` / `key_hint_key` / `needs_base_url` 取自第一个 Key 方式，`available` = 任一方式可用。
     合并来自目录：同 `brand` 的 Claude 行与 Codex 行成一个 Key 方式；行上的 `vendor` 把几个方式并进一家（OpenAI = `openai:login` + `openai-api:key`（`https://api.openai.com/v1`，Responses）；

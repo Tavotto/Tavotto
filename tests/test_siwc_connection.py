@@ -228,3 +228,53 @@ def test_disconnect_signs_out(env):
     assert calls == [1]
     assert ai_connections.login_target("siwc:chatgpt") == ("siwc", "siwc:chatgpt")
     assert ai_connections.login_target("openai:siwc") == ("siwc", "siwc:chatgpt")
+
+
+# --------------------------------------------------------------------------- 经 ai_bridge 的命令与会话后处理
+def test_bridge_command_for_siwc_is_accepted_by_the_runner_parser(env):
+    """主语：`ai_bridge._cmd` 拼出的完整子进程命令，交给 runner 自己的 argparse + 硬约束。"""
+    from tavotto.engine.agent_runner import runner_cli
+
+    env.setenv(siwc_wire.ENV_FLAG, "1")
+    _sign_in()
+    rec = ai_providers.resolve(ai_agents.BUILTIN_ID, "siwc:chatgpt")
+    cmd, extra = ai_bridge._cmd(
+        "builtin", "p", "/tmp/cand", model="gpt-a", endpoint=rec, target="fig1.py", effort="high"
+    )
+    assert TOKEN not in " ".join(cmd)
+    assert extra[ai_agents.BUILTIN_KEY_ENV] == TOKEN and extra[siwc_wire.ENV_FLAG] == "1"
+    argv = cmd[cmd.index("agent-run") + 1 :]
+    args = runner_cli._parser().parse_args(argv)
+    assert siwc_wire.runner_args_ok(
+        base_url=args.base_url,
+        auth=args.auth,
+        fallback=args.fallback or [],
+        effort=args.effort,
+        thinking=args.thinking,
+    )
+
+
+def test_runner_auth_failure_forces_refresh_next_time(env):
+    env.setenv(siwc_wire.ENV_FLAG, "1")
+    _sign_in()
+    calls = []
+
+    def refresh(ts):
+        calls.append(1)
+        return siwc_auth.TokenSet("acc-new", "ref-new", siwc_auth._now_ms() + 3_600_000, ts.scopes)
+
+    siwc_auth.set_provider_for_tests(
+        siwc_auth.MemoryProvider(siwc_store.active().tokens(), refresh=refresh)
+    )
+    rec = ai_providers.siwc_record()
+    ai_bridge._siwc_after_runner_error(rec, "agent_network")  # 别的失败不动令牌
+    assert siwc_login.provider().access_token() == TOKEN and calls == []
+    ai_bridge._siwc_after_runner_error(rec, "agent_auth")
+    assert siwc_login.provider().access_token() == "acc-new" and calls == [1]
+
+
+def test_store_provider_is_one_instance_per_process(env):
+    env.setenv(siwc_wire.ENV_FLAG, "1")
+    siwc_login.reset_for_tests()
+    assert siwc_login.provider() is siwc_login.provider()
+    siwc_login.reset_for_tests()

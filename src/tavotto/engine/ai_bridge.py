@@ -1793,6 +1793,14 @@ def _siwc_preflight(rec: dict | None) -> AgentError | None:
     return None
 
 
+def _siwc_after_runner_error(endpoint: dict | None, runner_error: str) -> None:
+    """SIWC 会话里 runner 报 `agent_auth`（服务端拒了这个访问令牌）：下次先刷新。不清凭据——刷新报终态错误才要求重新登录（ADR 0201 §三）。"""
+    if ai_providers.is_siwc(endpoint) and runner_error == "agent_auth":
+        from . import siwc_login
+
+        siwc_login.provider().mark_rejected("http_401")
+
+
 def run(
     agent: str,
     script: str,
@@ -2390,11 +2398,7 @@ def run(
             if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")
-                if ai_providers.is_siwc(endpoint) and st["runner_error"] == "auth":
-                    # 服务端拒了这个访问令牌：下次先刷新（不清凭据；刷新报终态错误才要求重新登录，ADR 0201 §三）
-                    from . import siwc_login
-
-                    siwc_login.provider().mark_rejected("http_401")
+                _siwc_after_runner_error(endpoint, st["runner_error"])
         finally:
             complete.set()
             timer.cancel()

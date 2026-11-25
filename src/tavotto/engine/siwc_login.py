@@ -85,6 +85,7 @@ REASONS = frozenset(
         "account_mismatch",  # 再次登录换成了另一个账号
         "network",
         "store_failed",
+        "needs_login",  # 刷新型号时：没登录 / 已失效
     }
 )
 
@@ -302,13 +303,23 @@ def refresh_tokens(acc: siwc_store.Account, current: siwc_auth.TokenSet) -> siwc
     return ts
 
 
+_PROVIDER: siwc_store.StoreProvider | None = None
+_PROVIDER_LOCK = threading.Lock()
+
+
 def provider() -> siwc_auth.TokenProvider:
-    """真正的令牌提供方：测试换上的 > 开关关 = 恒未登录 > 落盘账号 + 联网刷新。"""
+    """真正的令牌提供方：测试换上的 > 开关关 = 恒未登录 > 落盘账号 + 联网刷新。
+
+    **进程内只有一个** `StoreProvider`：`mark_rejected` 记下的「下次先刷新」与进程内刷新锁都在实例上，每次新建就丢了。"""
+    global _PROVIDER
     if siwc_auth._OVERRIDE is not None:
         return siwc_auth._OVERRIDE
     if not siwc_wire.enabled():
         return siwc_auth.DisabledProvider()
-    return siwc_store.StoreProvider(refresh_tokens)
+    with _PROVIDER_LOCK:
+        if _PROVIDER is None:
+            _PROVIDER = siwc_store.StoreProvider(refresh_tokens)
+        return _PROVIDER
 
 
 # --------------------------------------------------------------------------- 型号清单
@@ -337,11 +348,14 @@ def fetch_models(access: str) -> list[dict] | None:
 
 def refresh_models() -> dict:
     """连接管理里「刷新型号」：用当前账号的令牌重取一次清单并缓存。→ `public_status()`。"""
-    p = provider()
+    if not siwc_wire.enabled():
+        raise LoginError("disabled")
     try:
-        access = p.access_token(min_valid_s=60)
-    except (siwc_auth.NeedsLogin, siwc_auth.TokenUnavailable) as exc:
-        raise LoginError(getattr(exc, "reason", "network")) from None
+        access = provider().access_token(min_valid_s=60)
+    except siwc_auth.NeedsLogin:
+        raise LoginError("needs_login") from None
+    except siwc_auth.TokenUnavailable:
+        raise LoginError("network") from None
     models = fetch_models(access)
     if models is None:
         raise LoginError("network")
@@ -614,15 +628,15 @@ def _complete(flow: _Flow, q: dict) -> None:
         id_token=id_token,
         models=tuple(models) if models is not None else (old.models if old else ()),
     ).with_tokens(ts)
-    with _LOCK:
-        if flow.cancel.is_set() or flow.state != EXCHANGING:
-            return  # 用户在换令牌途中点了取消：不落盘
-        try:
-            with siwc_store.refresh_lock():
-                siwc_store.save(acc)
-                siwc_store.set_active(client_id)
-        except (OSError, ValueError):
-            raise LoginError("store_failed") from None
+    # 先拿刷新锁（可能要等另一个进程刷新完）、再拿流程锁：反过来会让等锁期间的状态轮询一起卡住
+    try:
+        with siwc_store.refresh_lock(), _LOCK:
+            if flow.cancel.is_set() or flow.state != EXCHANGING:
+                return  # 用户在换令牌途中点了取消：不落盘
+            siwc_store.save(acc)
+            siwc_store.set_active(client_id)
+    except (OSError, ValueError):
+        raise LoginError("store_failed") from None
     _finish(flow, SIGNED_IN if plan else PLAN_DISABLED)
 
 
@@ -672,6 +686,9 @@ def logout() -> dict:
 
 
 def reset_for_tests() -> None:
+    global _PROVIDER
+    with _PROVIDER_LOCK:
+        _PROVIDER = None
     with _LOCK:
         for f in list(_FLOWS.values()):
             _finish(f, CANCELLED)
