@@ -629,6 +629,8 @@ def run_script(tmp_path, rows, recipe):
         cwd=str(folder),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=180,
     )
     assert done.returncode == 0, done.stderr[-2000:]
@@ -904,3 +906,23 @@ def test_the_label_column_used_as_the_category_axis_is_reported_as_the_group_rol
     assert res.roles["options"]["x"] == []  # 误差列不是横轴的备选：右栏不显示「横轴」那一行
     trend = candidates(tmp_path, DOSE, picks={"y": "unsure"})
     assert trend.roles["group"] is None and trend.roles["x"] == "dose_uM"
+
+
+def test_an_error_column_does_not_bring_back_a_line_across_independent_measurements(tmp_path):
+    """横轴被判成独立测量值（`x_measure`，G-018）时不连线——表里有现成误差列也一样：`line_err` 不出现，只剩散点类（Codex 评审 #2229）。"""
+    rows = [["grain_size_um", "yield_MPa", "sd"]] + [
+        [g, y, e]
+        for g, y, e in (
+            (12.0, 310.0, 8.0),
+            (18.5, 284.0, 6.5),
+            (25.1, 262.0, 7.2),
+            (33.4, 241.0, 5.9),
+            (41.0, 229.0, 6.1),
+        )
+    ]
+    plain = candidates(tmp_path, rows, picks={"y": "yield_MPa"})
+    assert codes(plain)[0] == "line_err"  # 对照：没有这个判断时是连线 + 误差线
+    res = candidates(tmp_path, rows, picks={"y": "yield_MPa", "x_measure": "grain_size_um"})
+    assert "line_err" not in codes(res)
+    assert not any(c.startswith("line_") for c in codes(res))
+    assert codes(res)[0] in ("scatter", "scatter_fit")

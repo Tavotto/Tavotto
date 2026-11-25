@@ -2603,7 +2603,8 @@ def default_candidates(
                 c for c in role_info["options"].get("x", []) if c != summ["err"]
             ]
         if summ["shape"] == "trend":
-            if "trend" in ok_families:
+            # 横轴是独立测量值（`x_measure`，G-018）时不连线：现成误差列不能把被拿掉的折线带回来，只留下面的散点类
+            if "trend" in ok_families and not x_independent:
                 grp(
                     (
                         "line_err",
