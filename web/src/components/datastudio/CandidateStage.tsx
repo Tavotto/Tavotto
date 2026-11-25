@@ -11,7 +11,7 @@ import { FigureThumb } from './FigureThumb'
 
 const KNOWN_CANDIDATES = [
   'points_mean', 'box_points', 'violin_points', 'ecdf_groups', 'bar_error', 'line_points', 'line_band',
-  'line_units', 'scatter_fit', 'scatter', 'hist', 'ecdf', 'density', 'box_points_single',
+  'line_units', 'points_err', 'line_err', 'scatter_fit', 'scatter', 'hist', 'ecdf', 'density', 'box_points_single',
 ]
 
 /** 出图超过这么久还没回来：换一句话，让人知道没卡住 */
@@ -104,8 +104,9 @@ export function CandidateStage({
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   // 带误差线 / 误差带的画法：说明里写的是这张图**实际**画的那一种（用户在「需要你确认」里改过就跟着变），没有这一项的按默认的标准差说
-  const why = (c: string, error?: string | null) =>
-    known(c) ? t(`dataFigureV2.candidate.${c}.why`, { error: t(`dataFigureV2.errorName.${error === 'sem' || error === 'ci95' ? error : 'sd'}`) }) : t('dataFigureV2.candidate.other.why')
+  // 取自表里现成误差列的两种画法（`points_err` / `line_err`）说明里写列名（用户数据，只当文本），不写误差种类（`unknown` 时没法写）
+  const why = (c: string, error?: string | null, column?: string) =>
+    known(c) ? t(`dataFigureV2.candidate.${c}.why`, { error: t(`dataFigureV2.errorName.${error === 'sem' || error === 'ci95' ? error : 'sd'}`), column: column ?? '' }) : t('dataFigureV2.candidate.other.why')
   const variantText = (v: NonNullable<Candidate['variant']>) => (v.kind === 'split' ? t('dataFigureV2.variant.split', { column: v.column }) : t('dataFigureV2.variant.by_file'))
   // 大表的候选带 `reduced`（整表行数 / 画出的点数）：安静的一小段灰字 + 悬停说明；没少画（小表 / kept ≥ rows）就没有
   const reducedOf = (it: Candidate) => {
@@ -139,6 +140,11 @@ export function CandidateStage({
   const ready = thumbs[sel.id] === 'ready'
   const red = reducedOf(sel)
   const basis = basisOf(sel)
+  // 算出来的误差线缺了哪几处：只放在整句的 title 里（最多 8 个，多了加「等」），灰字本身仍是一行
+  // 只有一处时句子里已经点了名，不再用 title 重复一遍
+  const missingTip = basis && basis.missingFor.length > 1
+    ? basis.missingFor.slice(0, 8).join(t('dataFigureV2.basis.listJoin')) + (basis.missingFor.length > 8 ? t('dataFigureV2.basis.etc') : '')
+    : undefined
 
   return (
     <div data-candidate-stage className="mx-auto flex max-w-[860px] flex-col gap-3">
@@ -164,13 +170,13 @@ export function CandidateStage({
       </div>
       <StageImage key={sel.thumb} src={sel.thumb} sweeping={mine} onSettled={(ok) => onThumb(sel.id, ok)} />
       <div>
-        <p data-candidate-why className="text-sm text-ink-2">{why(sel.why_code, sel.error)}</p>
+        <p data-candidate-why className="text-sm text-ink-2">{why(sel.why_code, sel.error, sel.error_column)}</p>
         {basis && (
-          <p data-candidate-basis className="mt-1 text-xs text-ink-3">
+          <p data-candidate-basis className="mt-1 text-xs text-ink-3" title={missingTip}>
             {t('dataFigureV2.basis.line', {
               text: [
                 basis.main.map((b) => t(`dataFigureV2.basis.${b.key}`, b.values)).join(t('dataFigureV2.basis.then')),
-                ...(basis.skipped ? [t(`dataFigureV2.basis.${basis.skipped.key}`, basis.skipped.values)] : []),
+                ...[basis.errColumn, basis.skipped, basis.errMissing].filter((x) => x != null).map((b) => t(`dataFigureV2.basis.${b.key}`, b.values)),
               ].join(t('dataFigureV2.basis.join')),
             })}
           </p>

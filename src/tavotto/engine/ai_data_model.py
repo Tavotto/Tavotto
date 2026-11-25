@@ -206,6 +206,10 @@ def parse_recipes(
         except r.RecipeError as exc:
             dropped.append(DroppedRecipe(i, (exc.code,)))
             continue
+        if rec.err is not None or rec.err_kind is not None:
+            # 现成误差列只由规则按列名配出来（`default_candidates`）：模型写不出这两个键——它说的「这是 SD」没有任何依据，绝不替它当真
+            dropped.append(DroppedRecipe(i, ("recipe_unknown_key",)))
+            continue
         if not r.renderable(rec.family):
             dropped.append(DroppedRecipe(i, (NOT_RENDERABLE,)))
             continue

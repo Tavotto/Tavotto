@@ -1943,7 +1943,7 @@
       "choose": "Layouts found on this computer",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
-      "missing": "Last layout not found",
+      "missing": "Last layout is no longer in its original file and may have been moved",
       "prepareFailed": "Example layout didn’t open",
       "tooNew": "Last layout is from a newer version",
       "unavailable": "Can’t reach your last layout right now"
@@ -1954,7 +1954,7 @@
       "choose": "Found a few layouts on this computer — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",
-      "missing": "The last layout “{{name}}” wasn’t found.",
+      "missing": "The last layout “{{name}}” is no longer in its original file and may have been moved.",
       "prepareFailed": "The example layout didn’t open.",
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
       "unavailable": "Can’t reach your last layout right now."

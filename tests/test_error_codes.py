@@ -316,6 +316,8 @@ USER_VISIBLE_CODES = {
     "tex_compile_failed": {"line"},
     "tex_failed": {"error"},
     "script_not_found": {"script"},
+    # 脚本文件在 worker 跑之前就不在了（被移动 / 删除）：文件名来自 `pool.recovery_params`
+    "script_source_missing": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
     "runtime_asset_unknown": {"id"},
