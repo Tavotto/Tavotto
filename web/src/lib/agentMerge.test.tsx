@@ -172,3 +172,41 @@ describe('回到前台自动并进来', () => {
     stop()
   })
 })
+
+describe('Codex #2217：回答只对发请求时那一份成立、不进手势事务、没进文档就不推基线', () => {
+  it('请求途中换成了项目副本（画布 id、排版名、基线都一样）：回答属于原来那份，作废，不并', async () => {
+    let resolve!: (v: unknown) => void
+    mockAdd.mockReturnValue(new Promise((r) => (resolve = r)) as never)
+    const canvasId = useDocumentStore.getState().activeCanvasId
+    const copy = useDocumentStore.getState().buildProject()
+    const pending = mergeableAgentAdditions()
+    await useDocumentStore.getState().switchDocument(structuredClone(copy), 'd_copy')
+    setProjectFile({ projectId: 'p1', name: '组图', file: 'tavottofile/组图.json', revision: 'rev-base', dirty: false })
+    expect(useDocumentStore.getState().activeCanvasId).toBe(canvasId)
+    resolve(additions(canvasId))
+    expect(await pending).toBeNull()
+  })
+
+  it('手势进行中：不并、基线不动（取消手势不会连标注一起撤掉）', async () => {
+    mockAdd.mockResolvedValue(additions())
+    const m = (await mergeableAgentAdditions())!
+    useDocumentStore.getState().beginTxn(literal('拖动'))
+    expect(mergeAgentAdditions(m)).toBe(false)
+    useDocumentStore.getState().endTxn({ discard: true })
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(1)
+    expect(activeProjectFile()).toMatchObject({ revision: 'rev-base' })
+  })
+
+  it('写入被挡住（只读窗口）：commit 什么都没做 → 不推基线、不报成功', async () => {
+    mockAdd.mockResolvedValue(additions())
+    const m = (await mergeableAgentAdditions())!
+    const real = useDocumentStore.getState().commit
+    useDocumentStore.setState({ commit: () => {} })
+    try {
+      expect(mergeAgentAdditions(m)).toBe(false)
+    } finally {
+      useDocumentStore.setState({ commit: real })
+    }
+    expect(activeProjectFile()).toMatchObject({ revision: 'rev-base' })
+  })
+})

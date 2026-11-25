@@ -17,36 +17,74 @@ export interface MergeableAdditions {
   revision: string
   count: number
   objects: CanvasObject[]
+  /** 发请求那一刻的上下文：回答只对这一份文档、这一个绑定、这一个基线成立（Codex #2217） */
+  ctx: MergeContext
+}
+
+interface MergeContext {
+  documentId: string
+  projectId: string
+  loadSeq: number
+  canvasId: string
+  base: string
+}
+
+function currentContext(): MergeContext | null {
+  const s = useDocumentStore.getState()
+  const b = activeProjectFile()
+  if (!b || !b.revision) return null
+  return { documentId: s.documentId, projectId: b.projectId, loadSeq: s.loadSeq, canvasId: s.activeCanvasId, base: b.revision }
+}
+
+/** 此刻还是不是发请求时那一份：文档、载入代次、项目、画布、基线有一样变了，回答就不作数 */
+function stillSame(ctx: MergeContext): boolean {
+  const now = currentContext()
+  return (
+    !!now &&
+    now.documentId === ctx.documentId &&
+    now.loadSeq === ctx.loadSeq &&
+    now.projectId === ctx.projectId &&
+    now.canvasId === ctx.canvasId &&
+    now.base === ctx.base
+  )
 }
 
 /** 当前绑定的项目排版有没有可并的 Agent 标注；没有绑定 / 不只是 Agent 加的 / 不在当前画布 → null */
 export async function mergeableAgentAdditions(): Promise<MergeableAdditions | null> {
   const binding = activeProjectFile()
-  if (!binding || !binding.revision) return null
-  const got = await fetchAgentAdditions(binding.name, binding.revision)
-  return toMergeable(binding.name, got)
+  const ctx = currentContext()
+  if (!binding || !ctx) return null
+  const got = await fetchAgentAdditions(binding.name, ctx.base)
+  // 请求途中切了项目 / 换了文档 / 换了画布 / 基线变了：这份回答属于别人，不并（项目副本的画布 id 与排版名可能相同）
+  if (!stillSame(ctx)) return null
+  return toMergeable(binding.name, got, ctx)
 }
 
-export function toMergeable(name: string, got: AgentAdditions): MergeableAdditions | null {
+export function toMergeable(name: string, got: AgentAdditions, ctx: MergeContext): MergeableAdditions | null {
   if (!got.available || !got.revision || !got.canvases?.length) return null
   const s = useDocumentStore.getState()
-  if (got.canvases.length !== 1 || got.canvases[0].id !== s.activeCanvasId) return null
+  if (got.canvases.length !== 1 || got.canvases[0].id !== ctx.canvasId) return null
   const objects = got.canvases[0].objects
   const taken = new Set(s.doc.objects.map((o) => o.id))
   if (!objects.length || objects.some((o) => taken.has(o.id))) return null
-  return { name, revision: got.revision, count: objects.length, objects }
+  return { name, revision: got.revision, count: objects.length, objects, ctx }
 }
 
 /** 并进来：一次 commit（标签「并入 Agent 加的标注」），再把绑定的基线推到磁盘那一份。 */
 export function mergeAgentAdditions(m: MergeableAdditions): boolean {
   const binding = activeProjectFile()
-  if (!binding || binding.name !== m.name) return false
+  if (!binding || binding.name !== m.name || !stillSame(m.ctx)) return false
   const s = useDocumentStore.getState()
+  // 手势进行中（拖动等）：commit 会并进那次手势的事务，取消手势就把标注一起撤掉——等手势结束，下一次再并
+  if (s.txn) return false
   const taken = new Set(s.doc.objects.map((o) => o.id))
   if (m.objects.some((o) => taken.has(o.id))) return false
   s.commit(msg('agentMerge.commit', { count: m.count }, 'workspace'), (d) => {
     d.objects.push(...structuredClone(m.objects))
   })
+  // **真的进了文档**才推进基线：只读 / 被接管的窗口里 commit 什么都不做，推了基线下一次保存就会把标注静默抹掉
+  const now = new Set(useDocumentStore.getState().doc.objects.map((o) => o.id))
+  if (!m.objects.every((o) => now.has(o.id))) return false
   const after = activeProjectFile()
   if (after) setProjectFile({ ...after, revision: m.revision, dirty: true })
   return true
