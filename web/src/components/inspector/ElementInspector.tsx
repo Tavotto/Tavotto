@@ -756,13 +756,13 @@ export function ErrorBlock({
         ) : (
           code && (WORKDIR_CODES as readonly string[]).includes(code) && <WorkdirSuggestion />
         )}
-        {/* 脚本挪走了（ADR 0211 第一期 6）：接回它 */}
-        {relink}
         {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
         <MissingInputButton offer={missingInput ?? null} />
         {/* 沙盒里落空、脚本目录里找得到（#1254）：不论错误码都给「在脚本目录里运行」的入口 */}
         {code !== WORKDIR_CONFIRMATION_CODE && <WorkdirChooseButton confirmation={workdirHint ?? null} />}
         <p className="text-xs">{el('keptPrevious')}</p>
+        {/* 脚本挪走了（ADR 0211 第一期 6）：接回它。放在「仍显示上一版图像」下面——弹出的名单不盖住那一行 */}
+        {relink}
       </Notice>
     </Section>
   )

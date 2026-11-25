@@ -1,4 +1,5 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
@@ -7,7 +8,7 @@ import { expect, freePort, test, waitForDocumentReady } from './fixtures'
 /**
  * ADR 0211 第一期 6：只挪了脚本（`fig1_kinetics.py` → `scripts/`），图的错误卡上一步接回——真后端、真 worker、真浏览器。
  *
- * * 有内容指纹（首次打开起草时记下）且项目里恰好一份字节相同：错误卡主按钮位是「接到 scripts/fig1_kinetics.py」，
+ * * 有内容指纹（首次打开起草时记下）且项目里恰好一份字节相同：错误卡里一颗「接回 scripts/」，
  *   点了跑一遍、登记换到新位置、图回来，之前的图内修改（落盘文档里的 overrides）还在；
  * * 老登记没有指纹：给「选一个脚本接上」名单，选了同样接回。
  *
@@ -73,7 +74,7 @@ test.describe('只挪了脚本：错误卡上一步接回', () => {
   test.setTimeout(420_000)
 
   for (const withFingerprint of [true, false]) {
-    test(withFingerprint ? '有指纹且字节对上：「接到 scripts/fig1_kinetics.py」一键接回，图内修改还在' : '老登记没有指纹：从名单里选一个接上', async ({ app, page }) => {
+    test(withFingerprint ? '有指纹且字节对上：「接回 scripts/」一键接回，图内修改还在' : '老登记没有指纹：从名单里选一个接上', async ({ app, page }) => {
       const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-relink-'))
       try {
         const proj = path.join(root, 'proj')
@@ -98,7 +99,8 @@ test.describe('只挪了脚本：错误卡上一步接回', () => {
         const probed = page.waitForResponse(isProbe, { timeout: 180_000 })
         if (withFingerprint) {
           const one = page.locator('[data-script-relink="scripts/fig1_kinetics.py"]')
-          await expect(one).toHaveText('接到 scripts/fig1_kinetics.py', { timeout: 30_000 })
+          await expect(one).toHaveText('接回 scripts/', { timeout: 30_000 })
+          await expect(one).toHaveAttribute('title', 'scripts/fig1_kinetics.py')
           await one.click()
         } else {
           await expect(page.locator('[data-script-relink]')).toHaveCount(0)
@@ -120,4 +122,81 @@ test.describe('只挪了脚本：错误卡上一步接回', () => {
       }
     })
   }
+
+  test('要参数才能跑的脚本：接回时带上旧脚本的默认参数，一键接回成功', async ({ app, page }) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-relink-argv-'))
+    try {
+      const proj = path.join(root, 'proj')
+      mkdirSync(proj, { recursive: true })
+      writeFileSync(
+        path.join(proj, 'argplot.py'),
+        [
+          'import sys',
+          'import matplotlib',
+          'matplotlib.use("Agg")',
+          'import matplotlib.pyplot as plt',
+          '',
+          '',
+          'def main():',
+          '    n = int(sys.argv[1])',
+          '    fig, ax = plt.subplots()',
+          '    ax.plot([0, 1], [0, n])',
+          '    fig.savefig("argplot.pdf")',
+          '',
+          '',
+          'if __name__ == "__main__":',
+          '    main()',
+          '',
+        ].join('\n'),
+        'utf-8',
+      )
+      // 磁盘上先有这张图（用户自己跑出来的），首次打开起草时登记并记下指纹
+      const py = process.env.TAVOTTO_PYTHON ?? path.join(import.meta.dirname, '..', '..', '.venv', 'bin', 'python')
+      expect(spawnSync(py, ['argplot.py', '3'], { cwd: proj }).status).toBe(0)
+      const env = { TAVOTTO_DATA_DIR: path.join(root, 'data'), TAVOTTO_CONFIG_DIR: path.join(root, 'config') }
+      mkdirSync(env.TAVOTTO_DATA_DIR, { recursive: true })
+      const port = await freePort()
+
+      const a1 = await app({ figures: proj, env, port })
+      await page.goto(a1.baseURL)
+      await waitForDocumentReady(page)
+      // 用参数跑一次：成了就把这份参数记成这个脚本的默认（没有参数跑不起来）
+      const ran = await page.evaluate(async () => {
+        const r = await fetch('/api/registry/probe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ script: 'argplot.py', argv: ['3'] }),
+        })
+        return { ok: r.ok, body: (await r.json()) as { registered?: boolean } }
+      })
+      expect(ran.ok, JSON.stringify(ran.body)).toBe(true)
+      const saved = page.waitForResponse(
+        (r) => r.request().method() === 'PUT' && new URL(r.url()).pathname.startsWith('/api/autosave/') && r.ok(),
+        { timeout: 120_000 },
+      )
+      await page.locator('[data-card="argplot.pdf"]').dblclick({ timeout: 60_000 })
+      await expect(page.locator('[data-object-id]')).toHaveCount(1, { timeout: 60_000 })
+      await saved
+      expect(readRegistry(proj).scripts['argplot.py']?.sha256).toMatch(/^[0-9a-f]{64}$/)
+      await a1.stop()
+
+      mkdirSync(path.join(proj, 'scripts'))
+      renameSync(path.join(proj, 'argplot.py'), path.join(proj, 'scripts', 'argplot.py'))
+      const a2 = await app({ figures: proj, env, port })
+      await reopenAndHitMissingScript(page, a2.baseURL)
+      const probed = page.waitForResponse(isProbe, { timeout: 180_000 })
+      const one = page.locator('[data-script-relink="scripts/argplot.py"]')
+      await expect(one).toHaveText('接回 scripts/', { timeout: 30_000 })
+      await one.click()
+      const res = await probed
+      // 验证试跑带的是旧脚本的默认参数（后端复制到新脚本键下的那份配置）
+      expect(JSON.parse(res.request().postData() ?? '{}').run_config).toMatch(/^rc_/)
+      expect(res.ok(), await res.text()).toBe(true)
+      await expect(page.locator('[data-render-error]')).toHaveCount(0, { timeout: 120_000 })
+      expect(readRegistry(proj).scripts['scripts/argplot.py']?.stems).toContain('argplot')
+      await a2.stop()
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    }
+  })
 })

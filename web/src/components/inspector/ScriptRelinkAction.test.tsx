@@ -7,7 +7,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/store/scriptRelink', () => ({ relinkScript: vi.fn(async () => 'linked') }))
+vi.mock('@/store/scriptRelink', async (orig) => ({
+  ...(await orig<typeof import('@/store/scriptRelink')>()),
+  relinkScript: vi.fn(async () => 'linked'),
+}))
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
   fetchRelinkCandidates: vi.fn(),
@@ -57,13 +60,14 @@ afterEach(async () => {
 })
 
 describe('ScriptRelinkAction', () => {
-  it('恰好一份字节相同：一颗「接到 scripts/plot.py」，点了就接', async () => {
+  it('恰好一份字节相同：一颗「接回 scripts/」（悬停是完整路径），点了就接', async () => {
     await render(found({ matches: ['scripts/plot.py'] }))
     const btn = host.querySelector<HTMLButtonElement>('[data-script-relink]')!
-    expect(btn.textContent).toBe('接到 scripts/plot.py')
+    expect(btn.textContent).toBe('接回 scripts/')
+    expect(btn.className).not.toMatch(/truncate/)
     expect(btn.title).toBe('scripts/plot.py')
     await act(async () => btn.click())
-    expect(relinkScript).toHaveBeenCalledWith(panel, 'scripts/plot.py')
+    expect(relinkScript).toHaveBeenCalledWith(panel, 'plot.py', 'scripts/plot.py')
   })
 
   it('老登记没有指纹：不给一键，给名单（候选 + 其他脚本手动指认），不按文件名猜', async () => {
@@ -90,5 +94,17 @@ describe('ScriptRelinkAction', () => {
     expect(host.innerHTML).toBe('')
     await render(found({ missing: false }))
     expect(host.innerHTML).toBe('')
+  })
+
+  it('改了名：「接回 new_name.py」；挪回了项目根：「接回 项目根目录」', async () => {
+    await render(found({ matches: ['new_name.py'] }))
+    expect(host.querySelector('[data-script-relink]')!.textContent).toBe('接回 new_name.py')
+    await act(async () => root.render(<ScriptRelinkAction panel={panel} script="scripts/plot.py" />))
+    vi.mocked(fetchRelinkCandidates).mockResolvedValue(found({ script: 'scripts/plot.py', matches: ['plot.py'] }))
+    await act(async () => root.render(<ScriptRelinkAction panel={panel} script="scripts/plot.py" key="b" />))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(host.querySelector('[data-script-relink]')!.textContent).toBe('接回 项目根目录')
   })
 })

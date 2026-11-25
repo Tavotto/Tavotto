@@ -406,6 +406,25 @@ def _write(project_root: str | Path, data: dict, *, preserve: bool = False) -> N
     atomicio.write_json(path, out)
 
 
+def forget_configs(project_root: str | Path, script: str, config_ids) -> None:
+    """删掉这个脚本名下的这几条配置（只认 `script` 对得上的），指着它们的默认配置一并清掉。给「接回脚本没成、
+    撤销这次带过来的参数」用（`scriptrelink`，ADR 0211 第一期 6）；别的配置、别的脚本一条不动。"""
+    ids = set(config_ids)
+    root = _norm_project(project_root)
+    with _store_guard(project_root):
+        data = _read(project_root)
+        configs = data["configs"]
+        gone = {cid for cid in ids if (configs.get(cid) or {}).get("script") == script}
+        if not gone:
+            return
+        for cid in gone:
+            configs.pop(cid, None)
+            _SECRETS.pop((root, cid), None)
+        if data["defaults"].get(script) in gone:
+            data["defaults"].pop(script, None)
+        _write(project_root, data)
+
+
 def migrate_store(old_root: str | Path, new_root: str | Path) -> bool:
     """项目整夹挪走（ADR 0211 第一期 5）：旧项目身份下的运行配置登记搬到新身份下。回「这次写了没有」。
 

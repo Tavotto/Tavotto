@@ -239,7 +239,14 @@ order: 130
 - `GET /api/registry/relink-candidates?script=`（只读）：脚本确实登记着且文件不在 → `matches`（与指纹字节相同的项目脚本，
   不按文件名 / mtime 猜）+ `scripts`（项目全部 .py，手选用）。接回**不另起写入口**：前端 `store/scriptRelink.relinkScript`
   对选中的那份跑现有试运行登记（`/api/registry/probe`，失败零改动；门照旧弹框），跑成了且这张图的就绪度归属换到它才重画；
-  只给磁盘图（`runtime:` 图的身份里带脚本路径）。旧条目被认领走 stem 后留 `stems: []` 的空壳（与试运行登记一贯行为相同）。
+  只给磁盘图（`runtime:` 图的身份里带脚本路径）。旧条目被认领走 stem 后留 `stems: []` 的空壳（与试运行登记一贯行为相同，维护者 11-26 定：不清理）。
+- **参数随接回带走**（维护者 2026-11-26 拍板，`engine/scriptrelink.py`）：`POST /api/registry/relink/prepare {from, to}` 把旧脚本键下的
+  运行配置（每条映射成新脚本的新引用、默认随之映射）、答案（含本机上下文侧表）、输入转录复制到新脚本键下并在本机项目设置记待办
+  `script_relink_pending`，回映射后的默认配置；试跑用它。`POST …/relink/finish {from, to, ok}`：`ok` 且注册表里新脚本确实认领了图 → 留下；
+  否则原样删掉这次加的（新键下不留残留）。门（还差一个决定）不收尾；停在两步之间的待办由下一次 `prepare` / `relink-candidates` 按注册表事实
+  收尾（`settle_stale`）。新键下本来就有状态 → 什么都不带。运行许可 / 解释器信任 / 启动记录不带。旧键一个字节不动。
+- 按钮文案（`store/scriptRelink.relinkTarget`，不截断）：同名换文件夹「接回 scripts/」、在项目根「接回 项目根目录」、改了名「接回 new.py」，
+  文件夹路径超过 24 字符只写最后一级；悬停是完整项目相对路径。
   看护 `tests/test_script_relink.py`、`store/scriptRelink.test.ts`、`components/inspector/ScriptRelinkAction.test.tsx`、`e2e/script-relink.spec.ts`。
 
 ## 磁盘文件 → 图：注册表的 `artifacts`（#1251，2026-10-22）

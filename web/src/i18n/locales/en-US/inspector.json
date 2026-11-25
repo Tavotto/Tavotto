@@ -1472,6 +1472,7 @@
     "choose": "Pick the script",
     "linked": "Now using {{script}}",
     "otherScripts": "Other scripts",
-    "to": "Use {{script}}"
+    "to": "Reconnect to {{target}}",
+    "toRoot": "Reconnect to the project root"
   }
 }

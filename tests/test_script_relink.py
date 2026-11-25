@@ -167,3 +167,175 @@ def test_open_alone_does_not_write_the_registry(client, tmp_path):
     before = (root / registry.REGISTRY_NAME).read_bytes()
     _open(client, root)
     assert (root / registry.REGISTRY_NAME).read_bytes() == before
+
+
+# ---------------------------------------------------------------- 参数随接回带走（维护者 2026-11-26 拍板）
+
+
+def _seed_state(root: Path, script: str = "plot.py") -> str:
+    """旧脚本键下：一份默认运行配置（argv）、一条带上下文的答案、一份输入转录。回配置引用。"""
+    from tavotto.engine import inputtranscript, runconfig, scriptanswers
+
+    rc = runconfig.put(root, script, ["--n", "3"])
+    runconfig.set_default(root, script, rc.id)
+    scriptanswers.remember(root, script, 0, "n?", "3", context="ctx", run_config=rc.id)
+    inputtranscript.bind(
+        root, script, rc.id, [{"index": 0, "kind": "input", "prompt": "n?", "answer": "3"}]
+    )
+    return rc.id
+
+
+def _state_under(root: Path, script: str) -> dict:
+    from tavotto.engine import inputtranscript, runconfig, scriptanswers
+
+    with inputtranscript._LOCK:
+        bindings, gens = inputtranscript._load(root)
+    sep = inputtranscript._SEP
+    return {
+        "configs": [(c.script, c.argv) for c in runconfig.configs_of(root, script)],
+        "answers": scriptanswers.entries(root, script),
+        "transcripts": sorted(
+            k for k in [*bindings, *gens] if k == script or k.startswith(script + sep)
+        ),
+    }
+
+
+def test_relink_carries_argv_answers_and_transcripts_on_success(client, tmp_path):
+    from tavotto.engine import runconfig, scriptrelink
+
+    root = _project(tmp_path, fingerprint=True)
+    old_rc = _seed_state(root)
+    old_before = _state_under(root, "plot.py")
+    (root / "scripts").mkdir()
+    (root / "plot.py").rename(root / "scripts" / "plot.py")
+    pj = _open(client, root)
+    r = client.post(
+        "/api/registry/relink/prepare",
+        json={"from": "plot.py", "to": "scripts/plot.py"},
+        headers={"X-Tavotto-Project": pj["id"]},
+    )
+    assert r.status_code == 200, r.get_json()
+    new_rc = r.get_json()["run_config"]
+    assert new_rc and new_rc != old_rc
+    # 验证试跑用的就是带过来的那份 argv
+    assert runconfig.get(root, new_rc, script="scripts/plot.py").argv == ("--n", "3")
+    after = _state_under(root, "scripts/plot.py")
+    assert after["answers"] and after["answers"][0]["answer"] == "3"
+    assert after["transcripts"]
+    # 试跑成功、新脚本认领了图（模拟试运行登记），收尾：状态留下；旧键一个字节不动
+    discover.register(root, "scripts/plot.py", ["plot_a"])
+    r = client.post(
+        "/api/registry/relink/finish",
+        json={"from": "plot.py", "to": "scripts/plot.py", "ok": True},
+        headers={"X-Tavotto-Project": pj["id"]},
+    )
+    assert r.get_json()["result"] == "committed"
+    assert _state_under(root, "scripts/plot.py") == after
+    assert _state_under(root, "plot.py") == old_before
+    from tavotto.engine import config
+
+    assert scriptrelink.PENDING_KEY not in config.project_settings(str(root))
+
+
+def test_relink_failure_leaves_nothing_under_the_new_key(client, tmp_path):
+    root = _project(tmp_path, fingerprint=True)
+    _seed_state(root)
+    old_before = _state_under(root, "plot.py")
+    (root / "scripts").mkdir()
+    (root / "plot.py").rename(root / "scripts" / "plot.py")
+    pj = _open(client, root)
+    h = {"X-Tavotto-Project": pj["id"]}
+    client.post(
+        "/api/registry/relink/prepare", json={"from": "plot.py", "to": "scripts/plot.py"}, headers=h
+    )
+    r = client.post(
+        "/api/registry/relink/finish",
+        json={"from": "plot.py", "to": "scripts/plot.py", "ok": False},
+        headers=h,
+    )
+    assert r.get_json()["result"] == "aborted"
+    assert _state_under(root, "scripts/plot.py") == {
+        "configs": [],
+        "answers": [],
+        "transcripts": [],
+    }
+    assert _state_under(root, "plot.py") == old_before
+
+
+def test_relink_claimed_ok_without_ownership_is_still_undone(client, tmp_path):
+    """前端说接上了，但注册表里新脚本并没有认领任何图：按事实撤销。"""
+    root = _project(tmp_path, fingerprint=True)
+    _seed_state(root)
+    (root / "scripts").mkdir()
+    (root / "plot.py").rename(root / "scripts" / "plot.py")
+    pj = _open(client, root)
+    h = {"X-Tavotto-Project": pj["id"]}
+    client.post(
+        "/api/registry/relink/prepare", json={"from": "plot.py", "to": "scripts/plot.py"}, headers=h
+    )
+    r = client.post(
+        "/api/registry/relink/finish",
+        json={"from": "plot.py", "to": "scripts/plot.py", "ok": True},
+        headers=h,
+    )
+    assert r.get_json()["result"] == "aborted"
+    assert _state_under(root, "scripts/plot.py")["configs"] == []
+
+
+def test_stale_pending_is_settled_from_the_registry(client, tmp_path):
+    """关了页面停在两步之间：下一次列候选时按注册表此刻的事实收尾（没认领 = 撤销）。"""
+    root = _project(tmp_path, fingerprint=True)
+    _seed_state(root)
+    (root / "scripts").mkdir()
+    (root / "plot.py").rename(root / "scripts" / "plot.py")
+    pj = _open(client, root)
+    h = {"X-Tavotto-Project": pj["id"]}
+    client.post(
+        "/api/registry/relink/prepare", json={"from": "plot.py", "to": "scripts/plot.py"}, headers=h
+    )
+    assert _state_under(root, "scripts/plot.py")["configs"]
+    _candidates(client, pj, "plot.py")
+    assert _state_under(root, "scripts/plot.py")["configs"] == []
+
+
+def test_relink_does_not_touch_a_new_key_that_already_has_state(client, tmp_path):
+    """用户已经在新位置配过参数：什么都不带（他新给的更新），撤销也不会误删他的。"""
+    from tavotto.engine import runconfig
+
+    root = _project(tmp_path, fingerprint=True)
+    _seed_state(root)
+    (root / "scripts").mkdir()
+    (root / "plot.py").rename(root / "scripts" / "plot.py")
+    mine = runconfig.put(root, "scripts/plot.py", ["--n", "9"])
+    pj = _open(client, root)
+    h = {"X-Tavotto-Project": pj["id"]}
+    r = client.post(
+        "/api/registry/relink/prepare", json={"from": "plot.py", "to": "scripts/plot.py"}, headers=h
+    )
+    assert r.get_json() == {"run_config": None, "carried": False}
+    client.post(
+        "/api/registry/relink/finish",
+        json={"from": "plot.py", "to": "scripts/plot.py", "ok": False},
+        headers=h,
+    )
+    assert [c.id for c in runconfig.configs_of(root, "scripts/plot.py")] == [mine.id]
+
+
+def test_relink_never_carries_run_permissions(client, tmp_path):
+    from tavotto.engine import config
+
+    root = _project(tmp_path, fingerprint=True)
+    _seed_state(root)
+    config.set_project_settings(
+        str(root), {"native_run_permissions": {"plot.py": {"interpreter": "/usr/bin/python3"}}}
+    )
+    before = json.dumps(config.project_settings(str(root)).get("native_run_permissions"))
+    (root / "scripts").mkdir()
+    (root / "plot.py").rename(root / "scripts" / "plot.py")
+    pj = _open(client, root)
+    client.post(
+        "/api/registry/relink/prepare",
+        json={"from": "plot.py", "to": "scripts/plot.py"},
+        headers={"X-Tavotto-Project": pj["id"]},
+    )
+    assert json.dumps(config.project_settings(str(root)).get("native_run_permissions")) == before

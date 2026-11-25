@@ -187,6 +187,7 @@ from .engine import (
     scriptbackup as engine_scriptbackup,
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
+    scriptrelink as engine_scriptrelink,
     session_client as engine_session_client,
     shadowscript as engine_shadowscript,
     siwc_login as engine_siwc_login,
@@ -9920,6 +9921,8 @@ def api_registry_relink_candidates():
 
     只读：不写注册表、不跑脚本。接回本身走现有的试运行登记——跑成了才改登记（`/api/registry/probe`）。"""
     ctx = current_ctx()
+    # 上一次接回停在两步之间（关了页面）：按注册表此刻的事实收尾，不留带过去又没用上的参数
+    engine_scriptrelink.settle_stale(ctx.path)
     script = str(request.args.get("script") or "").replace("\\", "/").strip()
     empty = {"script": script, "missing": False, "fingerprint": False, "matches": [], "scripts": []}
     if not script or script not in ctx.registry.all_scripts():
@@ -9952,6 +9955,51 @@ def api_registry_relink_candidates():
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _relink_pair(ctx) -> tuple[str, str] | tuple[None, object]:
+    """`{from, to}` → (注册表里那个已经不在的脚本, 项目里要接上的那份)；不成立回 (None, 拒绝响应)。"""
+    body = request.get_json(silent=True) or {}
+    old = str(body.get("from") or "").replace("\\", "/").strip()
+    if not old or old not in ctx.registry.all_scripts() or (Path(ctx.path) / old).exists():
+        return None, (jsonify({"error": "不是一个挪走了的登记脚本", "code": "bad_request"}), 400)
+    new, rejected = _resolve_project_script(ctx, str(body.get("to") or "").strip())
+    if rejected is not None:
+        return None, rejected
+    return old, new
+
+
+@app.post("/api/registry/relink/prepare")
+def api_registry_relink_prepare():
+    """接回挪走的脚本之前（ADR 0211 第一期 6）：把旧脚本键下的运行配置 / 答案 / 输入转录复制到新脚本键下（待办），
+    验证试跑用它们。回 `{run_config: 新的默认配置引用 | null, carried}`；只有接回成功（`finish`）才算数。
+    运行许可 / 解释器信任不带。带不过去（读不出 / 新键下已有状态）就回 `run_config: null`，照常无参数试跑。"""
+    ctx = current_ctx()
+    old, new = _relink_pair(ctx)
+    if old is None:
+        return new
+    try:
+        out = engine_scriptrelink.prepare(ctx.path, old, new)
+    except (OSError, ValueError, engine_runconfig.RunConfigError):
+        LOG.warning("接回脚本：带参数失败，照常无参数试跑", exc_info=True)
+        out = {"run_config": None, "carried": False}
+    return jsonify(out)
+
+
+@app.post("/api/registry/relink/finish")
+def api_registry_relink_finish():
+    """接回的终局（ADR 0211 第一期 6）：`ok` 且新脚本确实认领了图 → 带过来的状态留下；否则原样撤销，新键下不留残留。"""
+    ctx = current_ctx()
+    old, new = _relink_pair(ctx)
+    if old is None:
+        return new
+    body = request.get_json(silent=True) or {}
+    try:
+        result = engine_scriptrelink.finish(ctx.path, old, new, ok=body.get("ok") is True)
+    except (OSError, ValueError, engine_runconfig.RunConfigError):
+        LOG.warning("接回脚本：收尾失败（下次接回时再收）", exc_info=True)
+        return _session_unavailable()
+    return jsonify({"ok": True, "result": result})
 
 
 @app.put("/api/registry")

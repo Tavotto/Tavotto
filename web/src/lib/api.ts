@@ -1751,6 +1751,36 @@ export async function fetchRelinkCandidates(script: string, pj?: string | null):
   }
 }
 
+/**
+ * 接回挪走的脚本之前：后端把旧脚本键下的运行配置 / 答案 / 输入转录复制到新脚本键下（待办），验证试跑用它们
+ * （ADR 0211 第一期 6）。回新的默认配置引用（没有 = 无参数试跑）；问不到回 null，照常无参数试跑。
+ */
+export async function relinkPrepare(from: string, to: string, pj?: string | null): Promise<{ runConfig: string | null } | null> {
+  try {
+    const body = await jsonFetch<{ run_config?: unknown }>(
+      '/api/registry/relink/prepare',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to }) },
+      pj,
+    )
+    return { runConfig: typeof body?.run_config === 'string' ? body.run_config : null }
+  } catch {
+    return null
+  }
+}
+
+/** 接回的终局：`ok` 且新脚本确实认领了图 → 带过来的状态留下；否则后端原样撤销。失败不打扰（下次接回时后端再收尾）。 */
+export async function relinkFinish(from: string, to: string, ok: boolean, pj?: string | null): Promise<void> {
+  try {
+    await jsonFetch(
+      '/api/registry/relink/finish',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to, ok }) },
+      pj,
+    )
+  } catch {
+    /* 待办留着：后端在下一次接回 / 列候选时按注册表的事实收尾 */
+  }
+}
+
 /** 导出默认值（按用户一份，数据目录）。`undefined` = 后端没有这组端点 / 不可达。 */
 export async function fetchExportDefaultsRemote(): Promise<{ defaults: unknown } | undefined> {
   try {

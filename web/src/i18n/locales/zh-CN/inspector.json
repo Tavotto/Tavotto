@@ -1439,6 +1439,7 @@
     "choose": "选一个脚本接上",
     "linked": "已接到 {{script}}",
     "otherScripts": "其他脚本",
-    "to": "接到 {{script}}"
+    "to": "接回 {{target}}",
+    "toRoot": "接回 项目根目录"
   }
 }
