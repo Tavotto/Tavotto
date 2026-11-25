@@ -12,18 +12,18 @@ import { requestRelinkMissing } from '@/lib/clipboard'
 import { openLayoutDocument, reportLayoutOpenSkipped } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
 
-export async function openPackageFile(file: File): Promise<void> {
+export async function openPackageFile(file: File): Promise<boolean> {
   const ui = useUiStore.getState()
   const project = captureProjectEpoch()
   const res = await openPackage(file)
   if (!project.still()) {
     reportLayoutOpenSkipped(file.name)
-    return
+    return false
   }
   if (res.missing_chart_sources?.length) {
     throw new Error(t('status.packageIncomplete', { ns: 'workspace', count: res.missing_chart_sources.length }))
   }
-  if (!(await openLayoutDocument(res.doc)) || !project.still()) return
+  if (!(await openLayoutDocument(res.doc)) || !project.still()) return false
   const missing = requestRelinkMissing(res.verified_chart_sources)
   const drift = res.drifted.length
   if (!missing && !drift) {
@@ -31,6 +31,7 @@ export async function openPackageFile(file: File): Promise<void> {
   } else if (drift) {
     ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
   }
+  return true
 }
 
 /** 包来自更新的 Tavotto（排版 schema 比本版本新）：调用方给「检查更新」，不说成坏包（#1921） */

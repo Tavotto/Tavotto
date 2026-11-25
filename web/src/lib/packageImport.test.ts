@@ -3,9 +3,10 @@ import { openPackageFile } from './packageImport'
 import { openPackage } from './api'
 import { setCurrentProjectId } from './session'
 import { useDocumentStore } from '@/store/documentStore'
-import { useClipboardStore } from './clipboard'
+import { materializeRelink, useClipboardStore } from './clipboard'
+import { useAssetStore } from '@/store/assetStore'
 import { useUiStore } from '@/store/uiStore'
-import { emptyProject, type PanelObject } from '@/types/document'
+import { emptyProject, type PanelObject, type ProjectDocument } from '@/types/document'
 import type { PackageOpenResult } from './api'
 
 vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(), openPackage: vi.fn() }))
@@ -51,8 +52,20 @@ it.each([false, true])('上传期间项目换代（回到 A=%s）不把 A 的包
   setCurrentProjectId('B')
   if (back) setCurrentProjectId('A')
   finish(response())
-  await opening
+  expect(await opening).toBe(false)
   expect(useDocumentStore.getState().documentId).toBe('before-package')
   expect(useClipboardStore.getState().pending).toBeNull()
   expect(useUiStore.getState().status?.key).toBe('layout.openSkipped')
+})
+
+it('普通面板与自包含图表共用 fileId，重链接只改普通面板', async () => {
+  const res = response()
+  ;(res.doc as ProjectDocument).canvases[0].objects.push({ ...structuredClone(panel), id: 'ordinary', chartSource: undefined })
+  vi.mocked(openPackage).mockResolvedValue(res)
+  await openPackageFile(new File([], 'chart.tavotto'))
+  const pending = useClipboardStore.getState().pending!
+  useAssetStore.setState({ byId: { 'replacement.svg': { id: 'replacement.svg', kind: 'svg', name: 'replacement', native_w_mm: 10, native_h_mm: 10 } } as never })
+  materializeRelink(pending.missing.map(m => ({ ...m, relinkTo: 'replacement.svg' })))
+  expect(useDocumentStore.getState().doc.objects[0]).toMatchObject(panel)
+  expect(useDocumentStore.getState().doc.objects[1]).toMatchObject({ id: 'ordinary', fileId: 'replacement.svg' })
 })

@@ -38,6 +38,7 @@ vi.mock('@/lib/timelineThumb', () => ({
 
 import {
   ApiError,
+  putAutosave,
   createVersion,
   deleteVersion,
   duplicateVersion,
@@ -352,6 +353,26 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
 })
 
 describe('项目文档节点（schema 3 / 4）：预览取一张画布，恢复换整份项目', () => {
+  it.each([false, true])('旧 PUT 成功、还原 PUT 失败（空=%s），时间线不宣布还原成功', async empty => {
+    await saveNowWithResult()
+    let release!: () => void
+    const put = vi.mocked(putAutosave)
+    put.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ ok: true, saved_at: 1, revision: null }) }))
+    put.mockRejectedValue(new Error('restore write failed'))
+    const version = empty ? emptyProject() : projectSnapshot()
+    if (empty) { version.canvases[0].id = CANVAS_ID; version.activeCanvasId = CANVAS_ID }
+    useUiStore.getState().setStatus(null)
+    const restoring = restoreNode(meta({ schema: 3 }), version, { projectConfirmed: true })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    await vi.waitFor(() => expect(useDocumentStore.getState().projectMeta.name).toBe(version.project.name))
+    release()
+    expect(await restoring).toBe(false)
+    expect(useDocumentStore.getState().saveState).toBe('save_error')
+    expect(useUiStore.getState().status?.key).not.toBe('versions.restoredProject')
+    put.mockResolvedValue({ ok: true, saved_at: 1, revision: null })
+    await saveNowWithResult(true)
+  })
+
   it.each([3, 4] as const)('schema %s 只读窗口不能打恢复前节点或清掉编辑锁', async schema => {
     await saveNowWithResult()
     const before = useDocumentStore.getState().doc

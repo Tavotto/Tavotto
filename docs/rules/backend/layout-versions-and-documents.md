@@ -157,9 +157,12 @@ order: 200
   不写正文），不冒充前端备份接线——不要把它读成那条行为已有看护。
   版本节点正文按 schema 分派：
   2 是单画布检查点，3 / 4 是整份项目；恢复整份项目节点换的是同一 documentId 的全部画布。
-  无项目时已有冻结附件经 `documentassets.load_source` 核验后可直接保存，不起项目 worker。
-  槽位恢复与读取核验所属存储中的实际附件字节；包导入先校验正文，再逐面板核完整引用，
-  仅 blob 写入按摘要去重。损坏 ZIP 附件进入缺失清单，`verified_chart_sources` 只列已核实引用。
+  无项目时已有冻结附件经 `documentassets.load_source` 核验，并以完整场景节点索引经
+  `chartmodel.verify_scene` 核绑定后可直接保存，不起项目 worker。
+  命名排版按实际读到的目录选附件根；槽位恢复与读取按同一次读取的正文 revision 核 owner 新鲜度，
+  旧 owner 待核对时用本次请求的项目上下文，不让旧项目中的同摘要附件掩盖缺失。附件缺损在
+  恢复列表与启动恢复中保留 `chart_source_mismatch` 原因。包导入先校验正文，再逐面板核完整引用，
+  仅 blob 写入按摘要去重。损坏 ZIP 附件（含 CRC、DEFLATE、LZMA）进入缺失清单，`verified_chart_sources` 只列已核实引用。
   看护：`tests/test_chart_document_upgrade.py`、`tests/test_package.py`。
 - **目录派生唯一权威 `engine/documentformat.py`，守卫收紧到每一级**：`named_dir` / `autosave_dir` /
   `versions_dir` 是命名文档、自动保存槽位与版本时间线路径的唯一出处；调用方传
@@ -351,7 +354,7 @@ order: 200
     `status:"too_large"`；目录条目超过 20000 时只看了目录原序的前一部分，响应带 **`truncated: true`**（游标另带第一页的目录指纹，后面的页重算，对不上——翻页期间有槽位被保存 / 新建 / 删除，
     按 mtime 的顺序变了、某行可能被漏——也标 `truncated: true` 并照常返回这一页，之后每一页都保持）（`next_cursor` 为 null 也不等于列完了，
     调用方不得据此自动采用唯一候选或判定为空）；一页里被 scope 过滤掉的不返回，所以一页可能不满、`next_cursor` 仍非空——调用方循环翻页。
-    每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large, canvases, objects, owner:
+    每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large|chart_source_mismatch, canvases, objects, owner:
     this|unknown, evidence, runtime:[{script,figure}], panels:[…], sketch?}`（非 ok 的 `canvases`/`objects` 是 `null`，不冒充 0；
     `runtime`/`panels` 最多 5 个、绝对路径只留最后一段；`sketch` 复用时间线的 `_version_sketch`，不带 overrides / 脚本）。
     `scope=project` 只回 `this`（owners 可信记录 / 时间线 / 素材全在项目里），`scope=unknown` 只回 `unknown`（含待核对的归属）；

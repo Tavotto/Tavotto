@@ -36,7 +36,8 @@ order: 200
   集合准入（来源附件随包封存、检视时按摘要安装到项目 `chart_sources/`）。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
   整份还原在备份前和安装前均过写入闸，不能解除只读窗口的编辑锁；空画布也显式落同一槽位，
-  等 writer 确认后才报成功。放大预览携带节点自己的 chart、附件与 profile，并纳入缓存身份。
+  等 writer 确认本次排队代次（含合并后的更新快照）才报成功，先前在途 PUT 的成功不作证。
+  新建未编辑的空白才免写；空正文还原失败后的重试和删除最后一个对象仍走同一保存链。放大预览携带节点自己的 chart、附件与 profile，并纳入缓存身份。
   项目包上传到打开之间核项目代际；缺图表附件明确报不完整，只有后端已核实的完整引用免于普通重链接。
   看护：`components/layoutSnapshotChart.test.tsx`、`store/restoreLayoutVersion.test.ts`、`lib/packageImport.test.ts`。
   标签页 openTabs 按 documentId 存本机。
@@ -129,7 +130,8 @@ order: 200
   写前确认、409 不推基线、冲突挡住排队那份——2026-09-18 起住在
   `lib/autosave/diskWriter.ts`（`createDiskWriter(ports)`，不认识 store、不碰 window /
   localStorage / 遥测），`documentStore` 只装配端口；用例 `lib/autosave/diskWriter.test.ts`
-  用假端口 + 手动 gate 直接量时序。
+  用假端口 + 手动 gate 直接量时序。首次写前探测失败时不发 PUT、不记基线，
+  保留本机兜底副本供重试；只有读到明确缺席后才用 absent，不能把 422 附件错误当成无基线写入。
 - **⌘S 保存到项目（ADR 0096，2026-09-26）**：排版可以**绑定**项目里的一个文件
   （`lib/projectFile.ts`，按 documentId 存 `tavotto.projectFile.<id>`，不进文档）——从「项目里的
   排版」打开的、存进项目的（「存进项目」与开着项目时的另存为）都绑定。`runManualSave` 三条路：

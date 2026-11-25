@@ -804,7 +804,7 @@ def test_candidates_list_schema3_and_schema4_slots_side_by_side(client, tmp_path
     assert by_id["d_four"]["status"] == "ok" and by_id["d_four"]["schema"] == 4
     documentassets.source_path(root, ref).unlink()
     missing = candidates()
-    assert missing["d_four"]["status"] == "invalid"
+    assert missing["d_four"]["status"] == "chart_source_mismatch"
     assert missing["d_three"]["status"] == "ok"
 
 

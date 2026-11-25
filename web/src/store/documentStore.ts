@@ -1585,13 +1585,6 @@ function setDocNotice(notice: DocNotice | null): void {
 const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === id
 
 /**
- * 每份文档本会话**成功落盘**的次数（不看是不是当前文档）。手动保存据此回答「这次写成了
- * 没有」——看最终的实时 `saveState` 回答不了：写的途中又改过的话它照实是 dirty（与 #674
- * 的圆点同源），而 ⌘S 那一刻的内容其实已经在盘上了（Codex #679）。
- */
-const diskWrites = new Map<string, number>()
-
-/**
  * 写盘成功后：期间又编辑过就还是 dirty，没编辑过才是"存好了"。
  *
  * 两半，**判据不同**：
@@ -1605,7 +1598,6 @@ function afterWriteOk(
   meta?: { pj?: string | null; metadata?: PersistedMetadata; figureSnapshots?: Record<string, FigureSnapshot>; snapshotContext?: FigureSnapshotSaveContext },
 ): void {
   if (meta?.snapshotContext) mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
-  diskWrites.set(id, (diskWrites.get(id) ?? 0) + 1)
   const pj = meta?.pj ?? null
   for (const fn of [...persistedListeners]) {
     try {
@@ -1689,7 +1681,8 @@ function flushAutosaveNow(allowEmpty: boolean): FlushResult {
   // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
   if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return 'skipped'
   const pd = state.buildProject()
-  if (!allowEmpty && !hasContent(pd)) {
+  // 只有尚未产生持久内容的新空白才免写；删除最后一个对象和失败的空正文重试仍须落盘。
+  if (!allowEmpty && !hasContent(pd) && !state.dirty && state.saveState === 'clean' && state.lastPersisted === null) {
     useDocumentStore.setState({ dirty: false, lastPersisted: null })
     return 'empty'
   }
@@ -1751,7 +1744,7 @@ export async function saveNow(): Promise<SaveState> {
 
 /**
  * 手动保存的两个答案：`state` 是写完之后**此刻**的保存状态（照实算：途中又改过就是
- * dirty）；`wrote` 是**按下那一刻的内容**写没写成——冲刷之后这份文档有没有一次成功落盘
+ * dirty）；`wrote` 是**按下那一刻的内容**写没写成——这次排队的代次是否成功落盘
  * （排队合并成更新的一份也算：盘上的内容只会比按下时更新），或者根本没有要写的（空文档）。
  * 「排版写成了」（时间线的「保存」点）跟 `wrote` 走，不跟 `state` 走（Codex #679）。
  */
@@ -1763,10 +1756,11 @@ export async function saveNowWithResult(allowEmpty = false): Promise<{ state: Sa
   // 手动保存是用户的动作：显式打开的别的项目的排版，存一下就归到这个项目（与真改一笔同一档）
   claimDocumentOnEdit()
   const id = useDocumentStore.getState().documentId
-  const before = diskWrites.get(id) ?? 0
+  const before = disk.writeVersion(id).scheduled
   cancelPendingAutosave()
   disk.markManual()
   const result = flushAutosave(allowEmpty)
+  const target = disk.writeVersion(id).scheduled
   if (result === 'empty') {
     disk.clearManual()
     setSaveState('clean')
@@ -1775,7 +1769,7 @@ export async function saveNowWithResult(allowEmpty = false): Promise<{ state: Sa
   await disk.whenIdle()
   return {
     state: useDocumentStore.getState().saveState,
-    wrote: (diskWrites.get(id) ?? 0) > before,
+    wrote: target > before && disk.writeVersion(id).written >= target,
   }
 }
 

@@ -388,6 +388,7 @@
     "recoverFailUnavailable": "Can’t read this layout right now. Try again in a moment.",
     "recoverFailForeign": "This copy doesn’t belong to the current project, so it wasn’t opened.",
     "recoverIssueInvalid": "Can’t be read",
+    "recoverIssueChartSource": "Chart source missing or damaged",
     "recoverIssueTooLarge": "Too large, not read",
     "recoverIssueTooNew": "Made with a newer Tavotto; this version can’t read it",
     "recoverKeepLooking": "Nothing in this batch yet. You can keep looking.",

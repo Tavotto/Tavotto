@@ -53,6 +53,7 @@ type Group =
 const asGroup = (r: CandidateLoad): Group => (r.kind === 'ok' ? { state: 'ok', list: r.list } : { state: r.kind })
 
 const ISSUE_KEY: Record<RowIssue, string> = {
+  chart_source_mismatch: 'dialogs:layout.recoverIssueChartSource',
   invalid: 'dialogs:layout.recoverIssueInvalid',
   too_new: 'dialogs:layout.recoverIssueTooNew',
   too_large: 'dialogs:layout.recoverIssueTooLarge',
@@ -249,6 +250,8 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
         return t('dialogs:layout.recoverFailMissing')
       case 'invalid':
         return t('dialogs:layout.recoverFailInvalid', { name })
+      case 'chart_source_mismatch':
+        return t('dialogs:layout.recoverIssueChartSource')
       case 'too_new':
         return t('dialogs:layout.recoverIssueTooNew')
       case 'unavailable':

@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from tavotto import app as m
@@ -158,6 +160,8 @@ def test_deleted_attachment_is_not_a_recoverable_slot(client, tmp_path):
     response = client.get("/api/autosave/d_up")
     assert response.status_code == 422
     assert response.get_json()["code"] == "chart_source_mismatch"
+    rows = client.get("/api/layout-session/candidates?scope=project").get_json()["items"]
+    assert next(r for r in rows if r["doc_id"] == "d_up")["status"] == "chart_source_mismatch"
     assert not m._slot_recoverable(tmp_path / documents.AUTOSAVE_DIRNAME / "d_up.json")[0]
     result = client.put("/api/layout-session/last", json={"doc_id": "d_up", "name": "test"})
     assert result.status_code == 200, result.get_json()
@@ -177,3 +181,80 @@ def test_slot_attachment_is_checked_in_its_owner_store_after_switch(client, tmp_
     documentassets.source_path(tmp_path, ref).unlink()
     # 另一个项目中同摘要的附件不能掩盖所属存储缺失。
     assert client.get("/api/autosave/d_up").status_code == 422
+
+
+def test_local_named_attachment_is_read_locally_with_a_project_open(client, tmp_path):
+    _install_source(tmp_path)
+    assert client.post("/api/layouts/local_chart", json=_schema4_document()).status_code == 200
+    project = tmp_path / "project"
+    project.mkdir()
+    m.open_project(str(project))
+    response = client.get("/api/layouts/local_chart")
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["schema"] == 4
+
+
+def test_stale_owner_revision_does_not_select_old_project_attachments(
+    client, tmp_path, monkeypatch
+):
+    def render(file_id, chart, **kwargs):
+        ref = chart_reference()
+        return SimpleNamespace(
+            input_svg=SOURCE,
+            scene={"scene_digest": SCENE_DIGEST},
+            path=documentassets.source_path(m.project_layout_dir(), ref),
+            source_sha256=ref["bytesSha256"],
+        )
+
+    monkeypatch.setattr(m, "_render_chart_snapshot", render)
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+    m.open_project(str(project_a))
+    _install_source(m.project_layout_dir())
+    assert client.put("/api/autosave/d_stale_owner", json=_schema4_document()).status_code == 200
+    m.open_project(str(project_b))
+    ref = _install_source(m.project_layout_dir())
+    newer = _schema4_document()
+    newer["updatedAt"] += 1
+    with monkeypatch.context() as failed:
+        failed.setattr(
+            m.engine_layoutsession,
+            "commit_slot",
+            lambda *a, **kw: (_ for _ in ()).throw(OSError("metadata failed")),
+        )
+        saved = client.put("/api/autosave/d_stale_owner", json=newer)
+    assert saved.status_code == 200, saved.get_json()
+    assert saved.get_json()["metadata"] == "failed"
+    assert client.get("/api/autosave/d_stale_owner").status_code == 200
+    candidates = client.get("/api/layout-session/candidates?scope=unknown").get_json()["items"]
+    assert next(c for c in candidates if c["doc_id"] == "d_stale_owner")["status"] == "ok"
+    documentassets.source_path(m.project_layout_dir(), ref).unlink()
+    # A 中仍然完整的相同附件不能代替 B 槽位需要的附件。
+    assert client.get("/api/autosave/d_stale_owner").status_code == 422
+
+
+@pytest.mark.parametrize("endpoint", ["named", "autosave", "checkpoint"])
+def test_local_only_save_checks_actual_bound_nodes(client, tmp_path, endpoint):
+    _install_source(tmp_path)
+    doc = _schema4_document()
+    doc["canvases"][0]["objects"][-1]["chart"]["binding"]["entries"][0]["node"] = "absent-node"
+    if endpoint == "named":
+        path = tmp_path / "bound.json"
+        assert client.post("/api/layouts/bound", json=_schema3_document()).status_code == 200
+        before = path.read_bytes()
+        response = client.post("/api/layouts/bound", json=doc)
+    elif endpoint == "autosave":
+        assert client.put("/api/autosave/d_bound", json=_schema3_document()).status_code == 200
+        path = tmp_path / documents.AUTOSAVE_DIRNAME / "d_bound.json"
+        before = path.read_bytes()
+        response = client.put("/api/autosave/d_bound", json=doc)
+    else:
+        response = client.post("/api/versions/d_bound", json={"doc": doc, "name": "bad binding"})
+    assert response.status_code == 422, response.get_json()
+    assert response.get_json()["code"] == "chart_node_missing"
+    if endpoint != "checkpoint":
+        assert path.read_bytes() == before
+    else:
+        assert client.get("/api/versions/d_bound").get_json()["versions"] == []

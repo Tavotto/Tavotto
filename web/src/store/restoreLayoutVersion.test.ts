@@ -11,7 +11,7 @@ import { emptyProject } from '@/types/document'
 import type { FigureDocument, PanelObject, ProjectDocument, TextObject } from '@/types/document'
 import { projectFileSnapshot, setProjectFile, useDocumentStore, saveNowWithResult, setWindowHold } from './documentStore'
 import { fetchAutosave } from '@/lib/api'
-import { restoreLayoutVersion } from './actions'
+import { openRecentDocument, restoreLayoutVersion } from './actions'
 
 const text = (id: string, value: string): TextObject => ({
   id, type: 'text', text: value, sizePt: 9, bold: false,
@@ -170,4 +170,24 @@ describe('restoreLayoutVersion：schema 分派', () => {
     expect(s().doc.objects.map((o) => o.id)).toEqual(['now_a'])
     expect(s().canvases.find((c) => c.id === 'c_b')?.objects.map((o) => o.id)).toEqual(['now_b'])
   })
+})
+
+it('最近打开浏览器副本时，磁盘附件损坏的 422 不得变成无 revision PUT', async () => {
+  await saveNowWithResult()
+  const local = twoCanvasProject()
+  localStorage.setItem('tavotto.autosave.d_unread_attachment', JSON.stringify(local))
+  const puts: RequestInit[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: unknown, opts?: RequestInit) => {
+    if (String(url).includes('/api/autosave/d_unread_attachment')) {
+      if (opts?.method === 'PUT') puts.push(opts)
+      return new Response(JSON.stringify({ code: 'chart_source_mismatch' }), { status: 422 })
+    }
+    return new Response('{}', { status: 200 })
+  }))
+  await openRecentDocument('d_unread_attachment')
+  await saveNowWithResult()
+  expect(s().documentId).toBe('d_unread_attachment')
+  expect(s().saveState).toBe('save_error')
+  expect(puts).toEqual([])
+  expect(localStorage.getItem('tavotto.autosave.d_unread_attachment')).not.toBeNull()
 })

@@ -1521,8 +1521,8 @@ export interface RecoveryCandidateItem {
   /** 正文的内容 hash；确认恢复时用它核对「预览之后有没有被改过」 */
   revision: string | null
   schema: number | null
-  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读 */
-  status: 'ok' | 'invalid' | 'too_new' | 'too_large'
+  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读；`chart_source_mismatch` 图表附件缺损 */
+  status: 'ok' | 'invalid' | 'too_new' | 'too_large' | 'chart_source_mismatch'
   canvases: number
   objects: number
   owner: 'this' | 'unknown'
@@ -1542,7 +1542,7 @@ export interface RecoveryCandidatePage {
   index: SessionIndexStatus
 }
 
-const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large'] as const
+const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large', 'chart_source_mismatch'] as const
 
 function parseCandidate(v: unknown): RecoveryCandidateItem | null {
   const r = v as Record<string, unknown> | null

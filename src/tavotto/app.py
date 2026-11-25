@@ -22,6 +22,7 @@ import hashlib
 import io
 import json
 import logging
+import lzma
 import math
 import os
 import queue
@@ -4028,7 +4029,7 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
     """
     if not _has_chart_state(document):
         return _freeze_document_svg_sources(document)
-    from .engine import chartprofile, documentassets
+    from .engine import chartmodel, chartprofile, documentassets
 
     snapshots = []
     try:
@@ -4037,11 +4038,20 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
                 continue
             if _request_ctx() is None and "chartSource" in obj:
                 # 本机保存已有附件不需要起项目 worker；来源身份仍逐项核验。
-                documentassets.load_source(
+                source = documentassets.load_source(
                     project_layout_dir(),
                     obj["chartSource"],
                     source_id=obj["fileId"],
                     scene_digest=obj["chart"]["model"]["scene_digest"],
+                )
+                from . import svgscene
+                from .rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+
+                root = parse_svg(strip_matplotlib_doctype(source.source_svg))
+                chartmodel.verify_scene(
+                    obj["chart"]["binding"],
+                    obj["chart"]["model"]["scene_digest"],
+                    set(svgscene.build_node_index(root)),
                 )
                 obj.pop("figureSnapshot", None)
                 continue
@@ -4071,6 +4081,8 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
             _assert_chart_source(snapshot.path, snapshot.source_sha256)
         return warnings
     except documentassets.DocumentAssetError as exc:
+        raise engine_documents.DocumentError(exc.code, exc.detail, status=422) from exc
+    except chartmodel.ChartModelError as exc:
         raise engine_documents.DocumentError(exc.code, exc.detail, status=422) from exc
     except engine_exportreq.ExportRequestError as exc:
         status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
@@ -6450,7 +6462,15 @@ def api_package_open():
                 # 有界读取：包是上传上来的，不能先解压进内存再问大小。
                 with z.open(f"chart_sources/{digest}.svg") as stream:
                     data = stream.read(documentassets.MAX_SOURCE_BYTES + 1)
-            except (KeyError, zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError):
+            except (
+                KeyError,
+                zipfile.BadZipFile,
+                zlib.error,
+                lzma.LZMAError,
+                EOFError,
+                OSError,
+                RuntimeError,
+            ):
                 data = None
             if data is not None and len(data) > documentassets.MAX_SOURCE_BYTES:
                 data = None
@@ -19247,16 +19267,16 @@ def _verify_document_chart_sources(document: dict, storage_root: Path) -> None:
         raise engine_documents.DocumentError(exc.code, exc.detail, status=422) from exc
 
 
-def _autosave_source_store(path: Path) -> Path:
+def _autosave_source_store(path: Path, revision: str) -> Path:
     state, _status = engine_layoutsession.read_readonly()
     owners = state["owners"]
-    if path.stem not in owners:
+    if path.stem not in owners or engine_layoutsession.owner_is_stale(state, path.stem, revision):
         return project_layout_dir()
     owner = owners[path.stem]
     return LAYOUT_DIR if owner is None else engine_config.project_store_dir(Path(owner))
 
 
-def serve_document(path: Path, *, source_storage: Path | None = None):
+def serve_document(path: Path, *, autosave: bool = False, source_storage: Path | None = None):
     """把一份文档原样交出去，并附上**它这一份**的内容修订号。
 
     自动保存与命名画布文件走同一份实现，因为三条纪律对两者一字不差：
@@ -19277,6 +19297,8 @@ def serve_document(path: Path, *, source_storage: Path | None = None):
     """
     data = path.read_bytes()
     document = engine_documents.loads_document(data)
+    if autosave:
+        source_storage = _autosave_source_store(path, engine_atomicio.revision_of(data))
     # schema 4 的正文在读侧也过一遍来源身份判据；schema 2 / 3 的读路径不变
     # （旧文档只查骨架，读侧不加逐字段门）。
     if (
@@ -19300,8 +19322,9 @@ def api_layout_get(name):
     for d in _layout_read_dirs():
         p = layout_path(name, d)
         if p.exists():
-            resp = serve_document(p)
             ctx = _request_ctx()
+            source_storage = LAYOUT_DIR if d == LAYOUT_DIR else project_layout_dir(ctx)
+            resp = serve_document(p, source_storage=source_storage)
             if ctx is not None:
                 # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
                 # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
@@ -19607,7 +19630,7 @@ def api_autosave_get(doc_id):
     # `absent` 为基线，把一份确实存在、只是此刻读不出来的文件整份盖掉。
     # 交出去的三条纪律（读一次就发这一份 / 不把文件句柄交出去 / 读侧的非有限数
     # 闸）见 `serve_document`——命名画布文件那条路一字不差，所以只有一份实现。
-    return serve_document(p, source_storage=_autosave_source_store(p))
+    return serve_document(p, autosave=True)
 
 
 def _autosave_newer_than(p: Path, base) -> int | None:
@@ -20110,7 +20133,7 @@ def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
     try:
         document = _validate_storage_document(engine_documents.loads_document(raw))
         if _has_chart_state(document):
-            _verify_document_chart_sources(document, _autosave_source_store(path))
+            _verify_document_chart_sources(document, _autosave_source_store(path, revision))
     except (ValueError, RecursionError):
         return False, revision
     return True, revision
@@ -20524,9 +20547,15 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
             try:
                 doc = _validate_storage_document(loaded)
                 if _has_chart_state(doc):
-                    _verify_document_chart_sources(doc, _autosave_source_store(path))
+                    _verify_document_chart_sources(doc, _autosave_source_store(path, revision))
             except engine_documents.DocumentError as exc:
-                status = "too_new" if exc.code == "schema_too_new" else "invalid"
+                status = (
+                    "too_new"
+                    if exc.code == "schema_too_new"
+                    else "chart_source_mismatch"
+                    if exc.code == "chart_source_mismatch"
+                    else "invalid"
+                )
             except (ValueError, RecursionError):
                 status = "invalid"
     verdict, _verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)

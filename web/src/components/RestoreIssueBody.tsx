@@ -43,6 +43,8 @@ export function RestoreIssueBody({
         return t('restore.title.missing', { name })
       case 'invalid':
         return t('restore.title.invalid', { name })
+      case 'chart_source_mismatch':
+        return t('restore.title.chartSource', { name })
       case 'too_new':
         return t('restore.title.tooNew', { name })
       case 'choose':

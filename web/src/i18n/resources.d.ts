@@ -1312,6 +1312,7 @@ export default interface Resources {
       "recoverFailInvalid": "「{{name}}」读不了，没有恢复。",
       "recoverFailMissing": "这份排版已经不在了。",
       "recoverFailUnavailable": "暂时读不到这份排版，请稍后重试。",
+      "recoverIssueChartSource": "图表来源缺失或损坏",
       "recoverIssueInvalid": "读不了",
       "recoverIssueTooLarge": "文件太大，没有读取",
       "recoverIssueTooNew": "来自更新版本的 Tavotto，这个版本读不了",
@@ -8159,6 +8160,7 @@ export default interface Resources {
       "openAlt": "打开“{{name}}”",
       "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
       "pill": {
+        "chartSource": "图表来源缺失或损坏",
         "choose": "找到了几份本机排版",
         "indexDegraded": "恢复记录读不了",
         "invalid": "上次的排版读不出来",
@@ -8169,6 +8171,7 @@ export default interface Resources {
       },
       "retry": "重试",
       "title": {
+        "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
         "choose": "本机找到了几份排版，选一份打开。",
         "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
         "invalid": "上次的排版“{{name}}”读不出来。",

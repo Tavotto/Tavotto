@@ -4,6 +4,7 @@ import copy
 import hashlib
 import io
 import json
+import lzma
 import zipfile
 from types import SimpleNamespace
 
@@ -501,3 +502,32 @@ def test_package_with_a_bogus_schema_stays_unsupported(env, schema):
     )
     assert resp.status_code == 400
     assert resp.get_json()["code"] == "package_schema_unsupported"
+
+
+def test_package_open_reports_damaged_lzma_chart_member(env):
+    from test_chart_document_assets import reference
+
+    client, figs, _ = env
+    ref = reference()
+    member = f"chart_sources/{ref['bytesSha256']}.svg"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("layout.json", json.dumps(_chart_project_document(ref)))
+        archive.writestr("package_manifest.json", json.dumps({"assets": []}))
+        archive.writestr(member, SOURCE, compress_type=zipfile.ZIP_LZMA)
+        info = archive.getinfo(member)
+    raw = bytearray(buf.getvalue())
+    # ZIP LZMA 的四字节属性头之后是 lc/lp/pb；255 让解码器明确抛 LZMAError。
+    raw[info.header_offset + 30 + len(member.encode("utf-8")) + 4] = 255
+    with zipfile.ZipFile(io.BytesIO(raw)) as damaged:
+        assert json.loads(damaged.read("layout.json"))["schema"] == 4
+        assert json.loads(damaged.read("package_manifest.json")) == {"assets": []}
+        with pytest.raises(lzma.LZMAError):
+            damaged.read(member)
+    response = client.post(
+        "/api/package/open", data={"package": (io.BytesIO(raw), "broken.tavotto")}
+    )
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["missing_chart_sources"] == [ref["bytesSha256"]]
+    assert response.get_json()["verified_chart_sources"] == []
+    assert not documentassets.source_path(figs / "tavottofile", ref).exists()

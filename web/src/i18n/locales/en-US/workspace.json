@@ -1929,6 +1929,7 @@
     "openAlt": "Open “{{name}}”",
     "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
+      "chartSource": "Chart source missing or damaged",
       "choose": "Layouts found on this computer",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
@@ -1939,6 +1940,7 @@
     },
     "retry": "Try again",
     "title": {
+      "chartSource": "The chart source for “{{name}}” is missing or damaged.",
       "choose": "Found a few layouts on this computer — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",
