@@ -467,10 +467,11 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   const hist = await discoverHistory(token, new Set(items.map((i) => i.doc_id)))
   if (hist === null) return { kind: 'superseded' }
   if (hist === 'unavailable' && items.length === 0) return needsUser(token, 'session_unavailable', null)
-  const histCandidates = hist === 'unavailable' ? [] : hist
+  const histCandidates = hist === 'unavailable' ? [] : hist.items
   const total = items.length + histCandidates.length
   const asCandidates: AltCandidate[] = [...items.map(asCandidate), ...histCandidates].slice(0, 5)
-  if (!scan.complete) {
+  // 项目内候选没列全（太多 / 读不到）同样是「数不清」：不自动采用
+  if (!scan.complete || hist === 'unavailable' || !hist.complete) {
     // 数不清（翻到上限游标还在，或中途读不到）：不自动采用、也不说没有。已经看到的给用户选；一份都没有就给重试
     //（最接近的现有类别 `index_degraded`：「恢复记录读不全」，出口 = 重试 / 继续新建）
     return total > 0
@@ -597,7 +598,10 @@ function asHistoryCandidate(h: ProjectHistoryItem, pj: string | null): AltCandid
 }
 
 /** 列项目内时间线候选（有界重试同 session 读取）。令牌过期回 null；404（旧后端）= 没有 */
-async function discoverHistory(token: RestoreToken, skip: Set<string>): Promise<AltCandidate[] | 'unavailable' | null> {
+async function discoverHistory(
+  token: RestoreToken,
+  skip: Set<string>,
+): Promise<{ items: AltCandidate[]; complete: boolean } | 'unavailable' | null> {
   let res = await fetchProjectHistory(token.pj)
   for (let attempt = 0; res === 'unavailable' && attempt < retryDelays.length; attempt++) {
     if (!isRestoreTokenCurrent(token)) return null
@@ -606,9 +610,12 @@ async function discoverHistory(token: RestoreToken, skip: Set<string>): Promise<
     res = await fetchProjectHistory(token.pj)
   }
   if (!isRestoreTokenCurrent(token)) return null
-  if (res === 'unsupported') return []
+  if (res === 'unsupported') return { items: [], complete: true }
   if (res === 'unavailable') return 'unavailable'
-  return res.items.filter((h) => !skip.has(h.doc_id)).map((h) => asHistoryCandidate(h, token.pj))
+  return {
+    items: res.items.filter((h) => !skip.has(h.doc_id)).map((h) => asHistoryCandidate(h, token.pj)),
+    complete: !res.truncated,
+  }
 }
 
 /**
@@ -619,15 +626,21 @@ async function discoverHistory(token: RestoreToken, skip: Set<string>): Promise<
  *    作为一笔 commit 写进去（配方与时间线恢复同一份 `canvasVersionRecipe`）——⌘Z 一步退回；整份项目节点直接装成工作副本并当场落盘。随后照常自动保存、记成 last。
  * 认领被拒（此刻不再满足挪走的条件）退成复制，不越过后端去抢归属。
  */
-async function installFromHistory(token: RestoreToken, cand: AltCandidate, reason: Reason): Promise<RestoreOutcome> {
-  const h = cand.history
-  if (!h) return needsUser(token, 'missing', { id: cand.id, name: cand.name })
-  let mode = h.mode
-  if (mode === 'slot' && h.owner !== 'this') {
-    const claimed = h.revision ? await claimProjectHistory(cand.id, h.revision, token.pj) : false
-    if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
-    if (!claimed) mode = 'copy'
+async function installFromHistory(token: RestoreToken, picked: AltCandidate, reason: Reason): Promise<RestoreOutcome> {
+  if (!picked.history) return needsUser(token, 'missing', { id: picked.id, name: picked.name })
+  let cand = picked
+  let h: ProjectHistoryItem = picked.history
+  if (h.mode === 'slot' && h.owner !== 'this') {
+    const claimed = await claimSlot(token, cand, h)
+    if (claimed === null) return { kind: 'superseded' }
+    // 问不到 ≠ 被拒：不拿节点另开一份（那会把含节点之后修改的槽位丢在旧归属下、再把新的一份记成 last），给重试
+    if (claimed === 'unavailable') return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
+    if (claimed === 'missing') return needsUser(token, 'missing', { id: cand.id, name: cand.name })
+    // 认领成功（可能对着重列之后的新 revision）或后端重列后明说是复制 / 只剩节点：照它说的装
+    h = claimed
+    cand = { ...cand, history: h, ...(h.mode === 'slot' && h.revision ? { expectedRevision: h.revision } : {}) }
   }
+  const mode = h.mode
   if (mode === 'slot') {
     const probe = await probeWithRetry(token, cand.id)
     if (!probe) return { kind: 'superseded' }
@@ -689,12 +702,45 @@ function commitNode(version: FigureDocument, name?: string): void {
     .commit(historyLabel({ name }), (d) => applyCanvasVersion(d, version), { overrides: 'restored' })
 }
 
+/**
+ * 认领槽位（`mode=slot` 且归属不是本项目）。回认领成功时的那一行（`owner:'this'`），或后端重列之后它说该怎么装的那一行；
+ * `'unavailable'` = 问不到（含重列问不到）；`'missing'` = 重列里这份不见了；令牌过期回 null。
+ * 409 只说明此刻不满足条件或槽位刚被存过（revision 变了）：重列一次，仍是 `slot` 就对着新 revision 再认领一次，
+ * 后端这次明说 `copy` / `node` 才照办——不在前端自己把「被拒」折成复制。
+ */
+async function claimSlot(
+  token: RestoreToken,
+  cand: AltCandidate,
+  h: ProjectHistoryItem,
+): Promise<ProjectHistoryItem | 'unavailable' | 'missing' | null> {
+  let row = h
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = row.revision ? await claimProjectHistory(cand.id, row.revision, token.pj) : 'refused'
+    if (!isRestoreTokenCurrent(token)) return null
+    if (res === 'ok') return { ...row, owner: 'this' }
+    if (res === 'unavailable') return 'unavailable'
+    const listed = await fetchProjectHistory(token.pj)
+    if (!isRestoreTokenCurrent(token)) return null
+    if (listed === 'unavailable' || listed === 'unsupported') return 'unavailable'
+    const again = listed.items.find((i) => i.doc_id === cand.id)
+    if (!again) return 'missing'
+    const next = { ...again, mode: historyMode(again, token.pj) }
+    if (next.mode !== 'slot') return next
+    if (next.owner === 'this') return next
+    row = next
+  }
+  return 'unavailable'
+}
+
 function historyLabel(node: { name?: string; ts?: number }) {
   return msg('versions.restoreHistory', { name: node.name || '' }, 'dialogs')
 }
 
 /** 节点比槽位新（历史在别处接着写过）：槽位装好之后，把节点那张画布作为一笔可撤销的编辑写回去 */
 async function applyNodeOnTop(token: RestoreToken, id: string, h: ProjectHistoryItem): Promise<void> {
+  // 取正文要 await：回来时已经换了文档 / 开了新一轮恢复 / 用户动过手，就不往上叠（不替用户盖掉刚做的修改）
+  const before = useDocumentStore.getState()
+  const mark = { past: before.past.length, future: before.future.length, doc: before.doc }
   let node: Awaited<ReturnType<typeof fetchVersionDoc>>
   try {
     node = await fetchVersionDoc(id, h.vid, token.pj)
@@ -702,7 +748,9 @@ async function applyNodeOnTop(token: RestoreToken, id: string, h: ProjectHistory
     return
   }
   const st = useDocumentStore.getState()
-  if (st.documentId !== id || getRestoreGate().state !== 'ready' || node.doc.schema !== 2) return
+  const gate = getRestoreGate()
+  if (st.documentId !== id || gate.state !== 'ready' || gate.gen !== token.gen || node.doc.schema !== 2) return
+  if (st.past.length !== mark.past || st.future.length !== mark.future || st.doc !== mark.doc) return
   if (h.canvasId && st.activeCanvasId !== h.canvasId) {
     if (!st.canvases.some((c) => c.id === h.canvasId)) return
     st.switchCanvas(h.canvasId)

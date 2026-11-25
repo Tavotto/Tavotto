@@ -19,8 +19,10 @@ from pathlib import Path
 
 from . import documents, layoutsession, versionstore
 
-#: 一个项目最多看这么多份时间线目录（防御：目录被塞进海量条目）
+#: 一个项目最多回这么多份**有内容的**时间线（先筛掉空的再截：挪过的项目恰恰堆着成批只有空节点的 `.vx`）
 MAX_STORES = 200
+#: 目录里最多认这么多条目（防御：目录被塞进海量条目）；超过就如实报「没列全」
+MAX_SCAN_ENTRIES = 5000
 #: 每份时间线从新往旧最多读这么多个信封找非空节点（空节点只有几百字节，几十个足够）
 MAX_NODE_READS = 40
 #: 一份时间线为找非空节点最多读这么多字节
@@ -45,16 +47,19 @@ def doc_objects(doc: object) -> list[dict]:
     return [o for o in objects if isinstance(o, dict)] if isinstance(objects, list) else []
 
 
-def store_names(versions_dir: Path) -> list[str]:
-    """`versions_dir` 里形如 `<docId>.vx` 的**真目录**（不跟随符号链接）的 docId，按名字排序。
+def store_names(versions_dir: Path) -> tuple[list[str], bool]:
+    """`versions_dir` 里形如 `<docId>.vx` 的**真目录**（不跟随符号链接）的 docId（按名字排序），以及
+    `truncated`：目录条目超过 `MAX_SCAN_ENTRIES`、没看全。
 
     只认目录列表给出的名字，不接受调用方给的路径。目录不在 = 没有；其余 `OSError` 往上抛
-    （列不出 ≠ 没有）。"""
+    （列不出 ≠ 没有）。**不在这里截个数**：有没有内容要读过才知道，截在筛选之前会把真的那份截掉。"""
     out: list[str] = []
+    truncated = False
     try:
         with os.scandir(versions_dir) as it:
             for n, entry in enumerate(it):
-                if n >= MAX_STORES * 10:
+                if n >= MAX_SCAN_ENTRIES:
+                    truncated = True
                     break
                 name = entry.name
                 if not name.endswith(versionstore.STORE_SUFFIX):
@@ -69,9 +74,9 @@ def store_names(versions_dir: Path) -> list[str]:
                     continue
                 out.append(doc_id)
     except (FileNotFoundError, NotADirectoryError):
-        return []
+        return [], False
     out.sort()
-    return out[:MAX_STORES]
+    return out, truncated
 
 
 def latest_content_node(versions_dir: Path, doc_id: str) -> dict | None:

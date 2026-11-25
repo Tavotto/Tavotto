@@ -309,3 +309,45 @@ def test_response_never_carries_paths(client, tmp_path):
     b = _open(client, tmp_path / "projB")
     raw = json.dumps(client.get("/api/layout-session/project-history", headers=_h(b)).get_json())
     assert str(tmp_path) not in raw
+
+
+def test_moved_without_slot_is_a_copy(client, tmp_path):
+    """挪走了但本机槽位已不在、owners 还记着旧路径：沿用 docId 会被 `PUT last` 按旧归属拒（`owner_conflict`），
+    所以另开一份（复制），不碰旧记录。"""
+    a = _open(client, tmp_path / "projA")
+    _edit_in(client, a, "d_gone")
+    (m.AUTOSAVE_DIR / "d_gone.json").unlink()
+    (tmp_path / "projA").rename(tmp_path / "projB")
+    b = _open(client, tmp_path / "projB")
+    item = _history(client, b)[0]
+    assert item["mode"] == "copy" and item["owner"] == "moved"
+
+
+def test_empty_stores_do_not_crowd_out_the_real_one(client, tmp_path, monkeypatch):
+    """挪过的项目堆着成批只有空节点的 `.vx`：先筛掉没内容的再截个数，真的那份不会被截掉。"""
+    from tavotto.engine import projecthistory, versionstore
+
+    monkeypatch.setattr(projecthistory, "MAX_STORES", 1)
+    a = _open(client, tmp_path / "projA")
+    vdir = tmp_path / "projA" / "tavottofile" / "versions"
+    vdir.mkdir(parents=True)
+    for i in range(5):  # 名字都排在 d_zz_real 前面
+        versionstore.append(
+            vdir,
+            f"d_a{i}",
+            {
+                "id": "v1-1",
+                "name": "x",
+                "ts": 1,
+                "auto": True,
+                "named": False,
+                "description": "",
+                "moment": "open",
+                "doc": _canvas_doc(),
+            },
+            now=1,
+        )
+    _edit_in(client, a, "d_zz_real")
+    r = client.get("/api/layout-session/project-history", headers=_h(a)).get_json()
+    assert [i["doc_id"] for i in r["items"]] == ["d_zz_real"]
+    assert r["truncated"] is False

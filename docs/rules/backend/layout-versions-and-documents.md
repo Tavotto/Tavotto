@@ -367,8 +367,8 @@ order: 200
     条目与读信封个数 / 字节有上界、索引只读不写），每项 `{doc_id, name, vid, ts, canvasId, schema, canvases, objects, mode, owner,
     revision, node_newer}`，不回路径。只有空节点的 `.vx`（旧版每次加载留下的空 `open`）不进候选。`mode` 在槽位文档锁里判：
     owners 记着别的项目且那条路径**确定不存在**（`FileNotFoundError` / `NotADirectoryError`；其余 `OSError` 当它还在）= 挪走
-    （`owner:"moved"`）；路径还在 = 复制（`copy`，新 docId，旧项目零改动）；待核对 / 会话状态 degraded / 槽位坏 → `copy`；
-    其余有可恢复槽位 → `slot`，没有槽位 → `node`。`node_newer`：槽位那张画布与节点内容不同、且节点 `ts` 晚于槽位正文的 `updatedAt`
+    （`owner:"moved"`）；路径还在 = 复制（`copy`，新 docId，旧项目零改动）；待核对 / 会话状态 degraded / 槽位坏 / 挪走但槽位已不在 → `copy`；
+    其余有可恢复槽位 → `slot`，没有槽位 → `node`。先筛掉没有内容的 `.vx` 再截个数（≤ 200），没列全回 `truncated:true`。`node_newer`：槽位那张画布与节点内容不同、且节点 `ts` 晚于槽位正文的 `updatedAt`
     （只算单画布节点）。`POST …/project-history/claim {doc_id, revision}` 在同一把槽位锁里重判，仍是 `slot` 且 revision
     对得上才 `record_owner`（owners + owner_revisions），否则 409 `claim_refused`、零改动。`owner_conflict` 判据不变：认领之前
     `PUT last` 仍按旧归属 409。空白排版（`_doc_objects` 为空）的 `open` 关键时刻 `POST /api/versions` 回 `skipped`、不建目录。

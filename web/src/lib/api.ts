@@ -1666,13 +1666,13 @@ function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
 /** 列项目内时间线候选。`'unsupported'` = 旧后端没有这个端点；`'unavailable'` = 此刻问不到。 */
 export async function fetchProjectHistory(
   pj: string | null,
-): Promise<{ items: ProjectHistoryItem[]; index: SessionIndexStatus } | 'unsupported' | 'unavailable'> {
+): Promise<{ items: ProjectHistoryItem[]; index: SessionIndexStatus; truncated: boolean } | 'unsupported' | 'unavailable'> {
   try {
     const body = await jsonFetch<Record<string, unknown>>('/api/layout-session/project-history', undefined, pj)
     const items = Array.isArray(body?.items)
       ? body.items.map(parseHistoryItem).filter((x): x is ProjectHistoryItem => x !== null)
       : []
-    return { items, index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok' }
+    return { items, index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok', truncated: body?.truncated === true }
   } catch (e) {
     return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
   }
@@ -1680,18 +1680,23 @@ export async function fetchProjectHistory(
 
 /**
  * 把挪走的项目留下的槽位归属改到当前项目（后端在槽位文档锁里重判；复制场景永远拒）。
- * 回 true = 后端此刻记的就是本项目、且对着的是 `revision` 那一版正文。
+ * `ok` = 后端此刻记的就是本项目、且对着的是 `revision` 那一版正文；`refused` = 后端明确拒（409，此刻不满足挪走的
+ * 条件或槽位刚被存过——调用方重列一次再定）；`unavailable` = 问不到（网络 / 503 / 旧后端），**不是**拒绝。
  */
-export async function claimProjectHistory(docId: string, revision: string, pj: string | null): Promise<boolean> {
+export async function claimProjectHistory(
+  docId: string,
+  revision: string,
+  pj: string | null,
+): Promise<'ok' | 'refused' | 'unavailable'> {
   try {
     const body = await jsonFetch<{ ok?: boolean }>(
       '/api/layout-session/project-history/claim',
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc_id: docId, revision }) },
       pj,
     )
-    return body?.ok === true
-  } catch {
-    return false
+    return body?.ok === true ? 'ok' : 'unavailable'
+  } catch (e) {
+    return e instanceof ApiError && e.status === 409 && e.body?.code === 'claim_refused' ? 'refused' : 'unavailable'
   }
 }
 

@@ -110,15 +110,49 @@ describe('整夹挪走（旧路径不在）：用本机槽位那份，归属改�
     await vi.waitFor(() => expect(be.session('p_new').last?.doc_id).toBe('d_move'))
   })
 
-  it('认领被拒（此刻不再满足挪走的条件）：不抢归属，退成复制——新 docId，旧槽位不动', async () => {
+  it('认领被拒：重列一次，后端这次明说是复制才复制——新 docId，旧槽位与归属不动', async () => {
     const slot = seedMoved({ keepIndex: false })
-    be.state.history.set('p_new', [row({ revision: slot.revision })])
+    let listed = 0
+    be.state.history.set('p_new', () =>
+      // 第一次列：挪走（slot）；认领被拒之后重列：旧路径又出现了（复制）
+      listed++ === 0 ? [row({ revision: slot.revision })] : [row({ mode: 'copy', owner: 'other' })],
+    )
     const app = await boot()
     expect(await app.doc.restoreSession()).toBe(true)
+    expect(be.state.calls.filter((c) => c === 'POST claim d_move')).toHaveLength(1)
     expect(ds(app).documentId).not.toBe('d_move')
     expect(objectIds(app)).toEqual(['t_node'])
     expect(be.state.owners.get('d_move')).toBe('p_old')
     expect(be.state.slots.get('d_move')?.revision).toBe(slot.revision)
+  })
+
+  it('认领问不到（503 / 网络）：不另开一份、不写任何东西，给重试', async () => {
+    const slot = seedMoved({ keepIndex: false })
+    be.state.history.set('p_new', [row({ revision: slot.revision })])
+    be.state.claimable.add('d_move')
+    be.state.claimStatus = 503
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'unavailable', ref: { id: 'd_move' } })
+    expect(be.writes()).toEqual([])
+    expect(be.state.owners.get('d_move')).toBe('p_old')
+    // 好了之后重试：照常认领并用槽位那份
+    be.state.claimStatus = undefined
+    const out = await app.restore.retryRestore()
+    expect(out).toMatchObject({ kind: 'restored', id: 'd_move' })
+    expect(objectIds(app)).toEqual(['t_node', 't_after'])
+  })
+
+  it('认领被拒、重列后仍是挪走（槽位刚被存过，revision 变了）：对着新 revision 再认领一次', async () => {
+    const slot = seedMoved({ keepIndex: false })
+    be.state.claimable.add('d_move')
+    let listed = 0
+    be.state.history.set('p_new', () => [row({ revision: listed++ === 0 ? 'stale' : slot.revision })])
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(be.state.calls.filter((c) => c === 'POST claim d_move')).toHaveLength(2)
+    expect(ds(app).documentId).toBe('d_move')
+    expect(be.state.owners.get('d_move')).toBe('p_new')
   })
 
   it('节点比槽位新（历史在别处接着写过）：装槽位，再把节点作为一笔可撤销的编辑写上去', async () => {
@@ -148,6 +182,8 @@ describe('只有项目里的节点（换电脑 / 换数据目录）', () => {
     app.doc.flushAutosave()
     await vi.waitFor(() => expect(be.state.slots.has('d_node')).toBe(true))
     expect(be.state.owners.get('d_node')).toBe('p_new')
+    // 记成当前项目「上次开着的」：下次打开走 last，不再靠项目历史（也不会每次加载都另开一份）
+    await vi.waitFor(() => expect(be.session('p_new').last?.doc_id).toBe('d_node'))
     expect(ds(app).past).toHaveLength(1)
     ds(app).undo()
     expect(objectIds(app)).toEqual([])
@@ -182,6 +218,7 @@ describe('复制（旧路径还在）', () => {
     app.doc.flushAutosave()
     await vi.waitFor(() => expect(be.state.slots.has(id)).toBe(true))
     expect(be.state.owners.get(id)).toBe('p_new')
+    await vi.waitFor(() => expect(be.session('p_new').last?.doc_id).toBe(id))
     expect(be.state.calls.some((c) => c.startsWith('POST claim'))).toBe(false)
     expect(be.state.slots.get('d_copy')?.revision).toBe(slot.revision)
     expect(be.state.owners.get('d_copy')).toBe('p_old')

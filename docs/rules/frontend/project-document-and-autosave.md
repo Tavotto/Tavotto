@@ -214,7 +214,8 @@ order: 200
   再把节点作为一笔可撤销的编辑写上去；`node`（同 docId）/ `copy`（新 docId）→ 先装一份空白工作副本（画布 id 沿用节点的），门放开后
   一笔 commit（配方唯一出处 `store/canvasVersionRecipe.applyCanvasVersion`，与 `actions.restoreLayoutVersion` 共用；⌘Z 一步退回；
   整份项目节点直接装成工作副本并当场落盘），随后照常自动保存、记成 last。documentRestore 不 import actions（会多一个 import 环）。**前端再加一道**：后端 `owner:'none'` 而本机索引
-  确知属于别的项目 → 按复制（那个项目可能就在旁边）；认领被拒同样退成复制。不按文件名 / mtime 猜（ADR 0027 §5）。
+  确知属于别的项目 → 按复制（那个项目可能就在旁边）。认领问不到（503 / 网络）→ `needs_user{unavailable}`，**不**另开一份；
+  409 `claim_refused` → 重列一次，后端仍说 `slot` 就对着新 revision 再认领一次，明说 `copy` / `node` 才照办。项目内候选没列全（`truncated`）不自动采用。不按文件名 / mtime 猜（ADR 0027 §5）。
   已知局限：普通节点只拍当前画布，多画布排版从节点只能找回那一张；复制出的新 docId 时间线从空开始（旧节点仍在 `D.vx` 里）。
 - **找回本机排版（2026-10-11，ADR 0120 §六 / ADR 0108 §四）**：「打开排版」对话框的 `components/LayoutRecover.tsx`（逻辑在 `lib/recoveryCandidates.ts`）
   两组：本项目的（原 id 打开）、折叠的归属待确认（默认**恢复副本**：固定目标 id、确认时重比 revision、经 `actions.openDocumentAs` + 正常保存链建立归属，

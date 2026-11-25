@@ -149,7 +149,23 @@ test('整夹挪走 / 复制之后从项目自己的时间线找回排版，加�
     await addSecondFigure(tabC, 'Fig2_yield.pdf')
     await expect(tabC.locator('[data-object-id]')).toHaveCount(3)
     await copySaved
+    // 复制品重开 3 次（同一个 context）+ 换空存储再开一次：一直是同一份（按 last 恢复），不会每次另开一个新 docId、
+    // 也不会在复制品里多出 .vx
+    const copyVx = vxDirs(projC)
+    expect(copyVx).toContain(`${copyId}.vx`)
+    for (let i = 0; i < 3; i++) {
+      await openAndWait(tabC, a3.baseURL)
+      await expect(tabC.locator('[data-object-id]')).toHaveCount(3, { timeout: 30_000 })
+      expect(await currentDoc(tabC)).toBe(copyId)
+    }
     await blank.close()
+    const blank2 = await browser.newContext()
+    const tabC2 = await blank2.newPage()
+    await openAndWait(tabC2, a3.baseURL)
+    await expect(tabC2.locator('[data-object-id]')).toHaveCount(3, { timeout: 30_000 })
+    expect(await currentDoc(tabC2)).toBe(copyId)
+    await blank2.close()
+    expect(vxDirs(projC)).toEqual(copyVx)
     await a3.stop()
 
     // 回到原项目：还是它自己的两张图（不是复制品里的），docId 不变

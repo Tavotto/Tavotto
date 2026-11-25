@@ -80,8 +80,10 @@ export function createFakeBackend() {
      * 项目自己的时间线候选（ADR 0211，`/api/layout-session/project-history`）：按 pj 摆好的行。
      * `claimable` 里的 docId 认领成功（owners 改成请求的 pj）；其余回 409。
      */
-    history: new Map<string, Record<string, unknown>[]>(),
+    history: new Map<string, Record<string, unknown>[] | (() => Record<string, unknown>[])>(),
     claimable: new Set<string>(),
+    /** 非 undefined = 认领端点回这个状态码（503 = 问不到） */
+    claimStatus: undefined as number | undefined,
     /** `${doc_id}/${vid}` → 节点正文（`GET /api/versions/<id>/<vid>`） */
     nodes: new Map<string, unknown>(),
   }
@@ -234,15 +236,16 @@ export function createFakeBackend() {
       return json({ items, next_cursor: next, truncated: b.truncated, index: 'ok' })
     }
     if (u.pathname === '/api/layout-session/project-history' && method === 'GET') {
-      const rows = b.history.get(pj)
+      const entry = b.history.get(pj)
       // 没摆过 = 旧后端（404）。不记调用：既有用例的调用序列断言不因这个新端点变
-      if (!rows) return json({ error: 'nf' }, 404)
+      if (!entry) return json({ error: 'nf' }, 404)
       b.calls.push('GET history')
-      return json({ items: rows, index: 'ok' })
+      return json({ items: typeof entry === 'function' ? entry() : entry, index: 'ok' })
     }
     if (u.pathname === '/api/layout-session/project-history/claim' && method === 'POST') {
       const body = JSON.parse(String(init?.body)) as { doc_id: string; revision: string }
       b.calls.push(`POST claim ${body.doc_id}`)
+      if (b.claimStatus !== undefined) return json({ error: 'boom' }, b.claimStatus)
       if (!b.claimable.has(body.doc_id) || b.slots.get(body.doc_id)?.revision !== body.revision) {
         return json({ error: 'refused', code: 'claim_refused' }, 409)
       }
@@ -309,6 +312,7 @@ export function createFakeBackend() {
       b.truncated = false
       b.history.clear()
       b.claimable.clear()
+      b.claimStatus = undefined
       b.nodes.clear()
     },
   }

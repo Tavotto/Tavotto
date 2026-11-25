@@ -21240,6 +21240,10 @@ def _history_verdict(doc_id: str, key, state: dict, status: str, slot_doc, slot_
         return "slot", owner
     if slot_exists:
         return "copy", owner  # 槽位在但读不出：不拿节点覆盖它，另开一份
+    if owner == "moved":
+        # owners 还记着旧路径而槽位已不在：沿用 docId 的话第一次 `PUT last` 会按旧归属 409（`owner_conflict`），
+        # 认领又只认有槽位的那一档——另开一份，最省事也不碰旧记录
+        return "copy", owner
     return "node", owner
 
 
@@ -21297,7 +21301,7 @@ def _history_item(doc_id: str, versions_dir: Path, key) -> dict | None:
 def api_layout_session_project_history():
     """只读：当前项目 `tavottofile/versions/*.vx` 里有内容的排版（ADR 0211 第一期）。
 
-    回 `{items, index}`；没开项目回空列表。每项见 `_history_item`。不写任何东西、不回路径。
+    回 `{items, index, truncated}`；没开项目回空列表。`truncated` = 没列全（目录条目太多 / 有内容的超过上限）。每项见 `_history_item`。不写任何东西、不回路径。
     一份时间线读不出只赔它自己。"""
     ctx = _request_ctx()
     store = project_store_dir(ctx)
@@ -21308,7 +21312,7 @@ def api_layout_session_project_history():
     key = engine_layoutsession.project_key(ctx.path)
     versions = engine_documentformat.versions_dir(store, VERSIONS_DIR)
     try:
-        names = engine_projecthistory.store_names(versions)
+        names, truncated = engine_projecthistory.store_names(versions)
     except OSError:
         return jsonify(
             {"error": "项目里的排版历史此刻读不出来", "code": "candidates_unavailable"}
@@ -21316,6 +21320,9 @@ def api_layout_session_project_history():
     _state, index = engine_layoutsession.read_readonly()
     items: list[dict] = []
     for doc_id in names:
+        if len(items) >= engine_projecthistory.MAX_STORES:
+            truncated = True  # 有内容的太多：不保证列全，前端据此不自动采用
+            break
         try:
             item = _history_item(doc_id, versions, key)
         except engine_layoutsession.SessionStateUnavailable:
@@ -21323,7 +21330,7 @@ def api_layout_session_project_history():
         if item is not None:
             items.append(item)
     items.sort(key=lambda i: (-int(i["ts"] or 0), i["doc_id"]))
-    resp = jsonify({"items": items, "index": index})
+    resp = jsonify({"items": items, "index": index, "truncated": truncated})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -21347,7 +21354,11 @@ def api_layout_session_project_history_claim():
     key = engine_layoutsession.project_key(ctx.path)
     versions = engine_documentformat.versions_dir(store, VERSIONS_DIR)
     refused = jsonify({"error": "这份排版此刻不能认领到当前项目", "code": "claim_refused"}), 409
-    if doc_id not in engine_projecthistory.store_names(versions):
+    try:
+        names, _truncated = engine_projecthistory.store_names(versions)
+    except OSError:
+        return _session_unavailable()
+    if doc_id not in names:
         return refused
     if engine_projecthistory.latest_content_node(versions, doc_id) is None:
         return refused
