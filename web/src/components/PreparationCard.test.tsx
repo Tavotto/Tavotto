@@ -4688,6 +4688,20 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
     expect(panel().querySelector('[role="progressbar"]')).toBeNull()
   })
 
+  it('「校验」两边都有：建环境之前是校验 Python，建过环境之后是装包后的校验（按这张卡走到过的最远一步分）', async () => {
+    const active = () => panel().querySelector('[data-prep-python-change] [aria-current="step"]')?.getAttribute('data-task-step')
+    await mount()
+    await openWith(change({ base: 'private', stage: 'verifying' }))
+    expect(active()).toBe('python')
+    await openWith(change({ base: 'private', stage: 'creating' }))
+    expect(active()).toBe('env')
+    await openWith(change({ base: 'private', stage: 'verifying' }))
+    expect(active()).toBe('packages')
+    // 用机器上已有的 Python：没有「准备 Python」，校验只可能是装包之后
+    await openWith(change({ base: 'system', stage: 'verifying' }))
+    expect(active()).toBe('packages')
+  })
+
   it('已就位 / 本地缓存的私有 Python（下载字节为 0）不说"下载约…"', async () => {
     await mount()
     await openWith(change({ base: 'private', stage: 'launching' }))

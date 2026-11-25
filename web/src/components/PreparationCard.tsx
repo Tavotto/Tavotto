@@ -2011,7 +2011,8 @@ function pyChangeStepIndex(stage: string, steps: PyChangeStep[], reached: number
 
 function PythonChangeLine({ report }: { report: PreparationReport | null }) {
   useTranslation(['workspace', 'errors'])
-  const reached = useRef(0)
+  // 走到过的最远一步只对**这一次**换版本有效：换了目标 / 基础（下一次换版本、或同一张卡上另一件事）就从头算
+  const reached = useRef<{ key: string; at: number }>({ key: '', at: 0 })
   const pc = report?.python_change
   if (!pc || pc.state !== 'running') return null
   const MB = 1048576
@@ -2019,8 +2020,11 @@ function PythonChangeLine({ report }: { report: PreparationReport | null }) {
   // 字节数只进胶囊，标题行说这一刻在干什么（不说两遍）
   const text = pt(`pythonChange.stage.${PYTHON_CHANGE_STAGES.has(pc.stage) ? pc.stage : 'preparing'}`)
   const steps: PyChangeStep[] = pc.base === 'private' ? ['python', 'env', 'packages'] : ['env', 'packages']
-  const cur = Math.max(reached.current, pyChangeStepIndex(pc.stage, steps, reached.current))
-  reached.current = cur
+  const key = `${pc.from}>${pc.to}:${pc.base}`
+  if (reached.current.key !== key) reached.current = { key, at: 0 }
+  const was = reached.current.at
+  const cur = Math.min(steps.length - 1, Math.max(was, pyChangeStepIndex(pc.stage, steps, was)))
+  reached.current = { key, at: cur }
   const meta = downloading
     ? translate('engine.repairDownloadBytes', { ns: 'errors', done: Math.round(pc.done / MB), total: Math.round(pc.total / MB) })
     : undefined
