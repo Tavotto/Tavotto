@@ -351,6 +351,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const e = get().entries[key]
       if (view.state === 'running') continue
       if (view.state === 'failed') {
+        // 助手来源：这条路不适用（线程里才解析出连接不支持结构化调用 / 没连上……）与同步被拒同一处理——不留失败卡，
+        // 接着走现有的改脚本路径，用户的指令照旧交给 Agent（出的是改脚本那一轮自己的结果 / 错误卡）
+        if (!revising && e?.from === 'assistant' && ASSISTANT_FALLTHROUGH_CODES.has(view.code)) {
+          if ((view as { replay_required?: boolean }).replay_required) replay(e)
+          void get().runScript(key)
+          return
+        }
         failed(view.code, view.params)
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return

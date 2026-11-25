@@ -141,6 +141,26 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
     expect(start).not.toHaveBeenCalled() // 续走由调用方（发送路径）做，store 不替它发
   })
 
+  it.each(['change_plan_unsupported_connection', 'change_plan_no_connection', 'change_plan_native_unsupported'])(
+    '线程里才判出不适用（轮询得到 failed / %s）：同样接着走改脚本路径，不留失败卡',
+    async (code) => {
+      getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code })
+      const key = (await ask()) as string
+      await tick()
+      expect(start).toHaveBeenCalledOnce()
+      expect(start.mock.calls[0][0].prompt).toBe(FALLBACK.prompt)
+      expect(cps().entries[key].status).toBe('handoff')
+    },
+  )
+
+  it('线程里的真失败（模型超时）仍是失败卡，不自动改脚本', async () => {
+    getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code: 'change_plan_model_timeout' })
+    const key = (await ask()) as string
+    await tick()
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_model_timeout' } })
+  })
+
   it('其余失败（比如同图忙）是一张带「改脚本做」的失败卡，指令不丢', async () => {
     createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_busy', ''))
     const key = (await ask()) as string
