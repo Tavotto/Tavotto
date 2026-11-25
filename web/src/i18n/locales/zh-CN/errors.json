@@ -532,7 +532,17 @@
     "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
     "input_declaration_conflict": "输入声明已在另一处更新，请重新读取后再保存。",
     "input_declaration_invalid": "输入声明或已选择的资源不可用，请检查文件、运行配置和数据位置。",
-    "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。"
+    "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。",
+    "change_plan_script_no_change": "Agent 没有改动脚本，你的脚本没有变化。",
+    "change_plan_script_check_failed": "改后的脚本没能通过检查，你的脚本没有被改动。可以再试一次。",
+    "change_plan_script_data_changed": "这次改动会让图里的数据变化，所以没有给出方案，你的脚本没有被改动。",
+    "change_plan_script_no_preview": "改后的脚本没法在副本里预览，所以没有给出方案，你的脚本没有被改动。",
+    "change_plan_script_overreach": "Agent 越界改了项目里的文件，没有给出方案。",
+    "change_plan_script_agent_failed": "Agent 没有跑完，你的脚本没有被改动。可以再试一次。",
+    "change_plan_script_unsupported": "当前连接暂时不能用来改脚本。",
+    "change_plan_script_apply_failed": "写入脚本失败，脚本没有被修改。",
+    "change_plan_script_undo_conflict": "脚本在应用之后又被改过，没有撤销。",
+    "change_plan_script_not_applied": "这份脚本修改还没有应用。"
   },
   "engine": {
     "apply": "应用",

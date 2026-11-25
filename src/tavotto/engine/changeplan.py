@@ -72,6 +72,17 @@ ERROR_CODES = (
     "change_plan_figure_changed",
     "change_plan_empty",
     "change_plan_failed",
+    # 脚本修改（PR 6）
+    "change_plan_script_no_change",
+    "change_plan_script_check_failed",
+    "change_plan_script_data_changed",
+    "change_plan_script_no_preview",
+    "change_plan_script_overreach",
+    "change_plan_script_agent_failed",
+    "change_plan_script_unsupported",
+    "change_plan_script_apply_failed",
+    "change_plan_script_undo_conflict",
+    "change_plan_script_not_applied",
 )
 
 #: 没处理的意见的一句话原因（闭集短码；界面文案归前端）。
@@ -126,16 +137,28 @@ MESSAGES = {
     "change_plan_figure_changed": "生成期间图被改过，请重新生成",
     "change_plan_empty": "没有一条意见能落成图内修改",
     "change_plan_failed": "生成修改方案失败，图没有改动",
+    "change_plan_script_no_change": "Agent 没有改动脚本",
+    "change_plan_script_check_failed": "改后的脚本没能通过检查，没有动你的脚本",
+    "change_plan_script_data_changed": "改动影响了数据，不能应用",
+    "change_plan_script_no_preview": "改后的脚本没法在副本里预览，没有动你的脚本",
+    "change_plan_script_overreach": "Agent 越界改了项目里的文件",
+    "change_plan_script_agent_failed": "Agent 没有跑完，没有动你的脚本",
+    "change_plan_script_unsupported": "这张图暂不支持出脚本修改方案",
+    "change_plan_script_apply_failed": "写入脚本失败，脚本没有被修改",
+    "change_plan_script_undo_conflict": "脚本在应用之后又被改过，没有撤销",
+    "change_plan_script_not_applied": "这份脚本修改还没有应用",
 }
 
 
 class PlanFailure(Exception):
     """方案任务的一种终态失败（`code` ∈ `ERROR_CODES`）；任何一种都不改图。"""
 
-    def __init__(self, code: str, detail: str = "") -> None:
+    def __init__(self, code: str, detail: str = "", params: dict | None = None) -> None:
         super().__init__(code)
         self.code = code
         self.detail = detail
+        #: 文案占位符 / 卡上的补充信息（如越界改了哪些文件）；只放短字符串与数字
+        self.params = params or {}
 
 
 # --------------------------------------------------------------------------- 上限
@@ -877,6 +900,118 @@ def carried_groups(plan: dict, proposal: dict) -> list[dict]:
             out.append({"comment_id": g["comment_id"], "changes": changes})
     return out
 
+# --------------------------------------------------------------------------- 脚本修改（PR 6）
+SCRIPT_GROUP_KEY = "script"
+SCRIPT_FILE = "candidate.py"
+SCRIPT_MAX_BYTES = 1024 * 1024
+SCRIPT_DIFF_MAX_CHARS = 120_000
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def script_diff(rel: str, old: bytes, new: bytes) -> tuple[str, int, int]:
+    """统一差异（给前端的 DiffView 看）→ `(diff, 增行数, 删行数)`。差异过长只截文本、不截计数。"""
+    import difflib
+
+    a = old.decode("utf-8", errors="replace").splitlines(keepends=True)
+    b = new.decode("utf-8", errors="replace").splitlines(keepends=True)
+    lines = list(
+        difflib.unified_diff(a, b, fromfile=f"{rel} (修改前)", tofile=f"{rel} (修改后)", n=3)
+    )
+    added = sum(1 for x in lines if x.startswith("+") and not x.startswith("+++"))
+    removed = sum(1 for x in lines if x.startswith("-") and not x.startswith("---"))
+    return "".join(lines)[:SCRIPT_DIFF_MAX_CHARS], added, removed
+
+
+def build_script_plan(
+    *,
+    plan_id: str,
+    target: str,
+    base_fingerprint: str,
+    comments: list[dict],
+    script_rel: str,
+    base_bytes: bytes,
+    new_bytes: bytes,
+    base_patches: list | None = None,
+) -> dict:
+    """脚本修改方案：一个 `atomic` 的脚本组，没有图内改动。候选字节另存（`SCRIPT_FILE`），应用只认它。"""
+    diff, added, removed = script_diff(script_rel, base_bytes, new_bytes)
+    c = comments[0] if comments else None
+    base_canon = patchspec.canonicalize(base_patches or [])
+    return {
+        "schema": SCHEMA,
+        "id": plan_id,
+        "version": 1,
+        "kind": "script",
+        "source": "assistant",
+        "base": {
+            "target": target,
+            "fingerprint": base_fingerprint,
+            "script_sha256": sha256_bytes(base_bytes),
+        },
+        "base_patches": base_canon,
+        "candidate_patches": base_canon,
+        "groups": [
+            {
+                "key": SCRIPT_GROUP_KEY,
+                "kind": "script",
+                "label": _clip(c["text"], 40) if c else "",
+                "comment_id": c["id"] if c else ASSISTANT_COMMENT_ID,
+                "atomic": True,
+                "changes": [],
+                "boxes": [],
+                "script": {
+                    "rel": script_rel,
+                    "base_sha256": sha256_bytes(base_bytes),
+                    "new_sha256": sha256_bytes(new_bytes),
+                    "diff": diff,
+                    "added": added,
+                    "removed": removed,
+                },
+            }
+        ],
+        "unhandled": [],
+        "preview": {"before": "before.png", "after": "after.png"},
+        # 应用 / 撤销的状态（后端记，重启后仍认）：`applied_backup` = 应用时那份备份的 id
+        "applied": None,
+    }
+
+
+def script_new_bytes(project: str, plan_id: str) -> bytes | None:
+    """方案目录里的候选字节；没有 / 过大 / 是链接 → None。"""
+    try:
+        p = plan_dir(project, plan_id) / SCRIPT_FILE
+        if p.is_symlink() or not p.is_file() or p.stat().st_size > SCRIPT_MAX_BYTES:
+            return None
+        return p.read_bytes()
+    except (OSError, ValueError):
+        return None
+
+
+def mark_applied(project: str, plan_id: str, applied: dict | None) -> bool:
+    """在 `plan.json` 里记 / 清「已应用」（原子替换）；方案不在了返回 False。"""
+    with _LOCK:
+        plan = load(project, plan_id)
+        if plan is None:
+            return False
+        plan["applied"] = applied
+        path = plan_dir(project, plan_id) / "plan.json"
+        tmp = path.with_name(f".plan-{secrets.token_hex(4)}.json")
+        try:
+            tmp.write_text(
+                json.dumps(plan, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+            )
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False
+        return True
+
 
 # --------------------------------------------------------------------------- 问模型
 def _default_call(**kw):
@@ -1025,6 +1160,7 @@ class Task:
     cancelled: bool = False
     #: 任务对热 worker 做过 override、结束时已作废它：前端下一次交互要按自己的全量列表重放（与 specfix 同名同义）
     replay_required: bool = False
+    params: dict = field(default_factory=dict)
 
 
 _TASKS: dict[str, Task] = {}
@@ -1051,10 +1187,11 @@ def begin(project: str, figure: str, rid: str | None) -> tuple[Task, bool]:
         return task, True
 
 
-def finish(task: Task, *, code: str = "", detail: str = "") -> None:
+def finish(task: Task, *, code: str = "", detail: str = "", params: dict | None = None) -> None:
     with _LOCK:
         task.state = "failed" if code else "ready"
         task.code, task.detail = code, detail
+        task.params = params or {}
         if _BY_FIGURE.get((task.project, task.figure)) == task.id:
             _BY_FIGURE.pop((task.project, task.figure), None)
 
@@ -1118,7 +1255,13 @@ def _rmtree(path: Path) -> bool:
         return False
 
 
-def save(project: str, plan: dict, before_png: bytes, after_png: bytes) -> None:
+def save(
+    project: str,
+    plan: dict,
+    before_png: bytes,
+    after_png: bytes,
+    script_bytes: bytes | None = None,
+) -> None:
     """方案落盘：先写进同级临时目录再整体改名（读的人要么看到完整的一份，要么看不到）。"""
     if len(before_png) > MAX_PNG_BYTES or len(after_png) > MAX_PNG_BYTES:
         raise PlanFailure("change_plan_too_large")
@@ -1130,6 +1273,8 @@ def save(project: str, plan: dict, before_png: bytes, after_png: bytes) -> None:
     try:
         (tmp / "before.png").write_bytes(before_png)
         (tmp / "after.png").write_bytes(after_png)
+        if script_bytes is not None:
+            (tmp / SCRIPT_FILE).write_bytes(script_bytes)
         (tmp / "plan.json").write_text(
             json.dumps(plan, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
         )
@@ -1140,13 +1285,23 @@ def save(project: str, plan: dict, before_png: bytes, after_png: bytes) -> None:
     sweep(project)
 
 
-def publish(task: "Task", project: str, plan: dict, before_png: bytes, after_png: bytes) -> bool:
+def publish(
+    task: "Task",
+    project: str,
+    plan: dict,
+    before_png: bytes,
+    after_png: bytes,
+    script_bytes: bytes | None = None,
+) -> bool:
     """取消检查与落盘发布在**同一把锁**里（`discard` 也持它）：要么这里先发布、随后 discard 把它删掉，要么 discard 先标取消、这里什么都不写。
     → 是否真的发布了。"""
     with _LOCK:
         if task.cancelled:
             return False
-        save(project, plan, before_png, after_png)
+        if script_bytes is None:
+            save(project, plan, before_png, after_png)
+        else:
+            save(project, plan, before_png, after_png, script_bytes)
         return True
 
 

@@ -40,6 +40,7 @@ from . import (
     ai_history,
     ai_oauth,
     ai_providers,
+    atomicio,
     cli_failure,
     config,
     convertwrite,
@@ -1816,8 +1817,15 @@ def run(
     task_hooks: dict | None = None,
     convert: dict | None = None,
     attachments: list[str] | None = None,
+    plan_only: bool = False,
 ) -> str:
-    """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
+    """启动一次 AI 修改任务，返回 session id。
+
+    `plan_only`（ADR 0206 PR 6，修改方案卡的脚本修改）：对**所有**连接强制走候选工作区（cwd = 候选目录），过了提交前检查也**不写**
+    用户脚本——候选字节留在 `cand.extras["plan_bytes"]`，由方案端点取走（`plan_outcome`）；收尾时核「越界」：目标脚本被原地改了就按
+    起跑快照还原，别的文件被改只报告不动（`_plan_guard`）。
+
+    事件经 on_event(name, data) 回调。
 
     **先过 `require_usable`**：未知 / 未安装 / 被用户关掉的 Agent 在这里就被
     拒绝。只靠前端隐藏是不够的——这个端点可以被直接调。
@@ -1872,7 +1880,7 @@ def run(
     project_key = str(Path(figures_dir).resolve())
     # 内置执行器**一律**走候选工作区 + 提交前检查 + 事务写回（与 TAF 实验开关无关）：它不是用户装的 CLI，
     # 没有理由拿到真实项目路径；候选建不起来就整条拒绝（见下），绝不退回原地修改
-    taf = _taf_enabled() or agent == ai_agents.BUILTIN_ID
+    taf = _taf_enabled() or agent == ai_agents.BUILTIN_ID or plan_only
     # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
     # 就是改后的脚本），要么在这之后看到 running 的会话而让路
     with script_guard(script_path), _REQUEST_LOCK:
@@ -2266,7 +2274,11 @@ def run(
         if task_run is not None:
             #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
             sess["task"] = {"task_type": envelope.task_type, "outcome": None}
-            sess["taf"] = {"cand": cand, "run": task_run}
+            sess["taf"] = {
+                "cand": cand,
+                "run": task_run,
+                **({"plan_only": True} if plan_only else {}),
+            }
             task_run.trace = trace
         SESSIONS[sid] = sess
     # `record_start` 提交之后、上一行之前，别的进程可能已经写了取消意图（tick 看到会话不在内存里就不消费它）：入内存后立刻补一次，
@@ -2492,6 +2504,8 @@ def run(
                 _consume()
             else:
                 task = _drive_task(sess, task_run, cand, _consume, on_changed, script, _respawn)
+            if task is not None and sess["taf"].get("plan_only"):
+                sess["taf"]["overreach"] = _plan_guard(cand, snap)
             # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
             # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
             dependency_edit = (
@@ -2679,6 +2693,14 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, re
             refresh=lambda: {"status": REFRESH_SKIPPED},  # 没写用户文件，没有可刷新的
             respawn=respawn,
             transcript=lambda: sess["transcript"],  # Agent 停下说明（needs_input 标记）从这里读
+        )
+    elif sess["taf"].get("plan_only"):
+        executor = ai_figure_edit.PlanOnlyExecutor(
+            sess["agent"],
+            cand,
+            wait=wait,
+            refresh=lambda: {"status": REFRESH_SKIPPED},
+            respawn=respawn,
         )
     else:
         executor = ai_figure_edit.BridgeExecutor(
@@ -3631,3 +3653,79 @@ def interrupt_all() -> int:
             ai_history.update_status(sess["id"], "interrupted")
             n += 1
     return n
+
+
+# ---------------------------------------------------------------- 修改方案的脚本修改（ADR 0206 PR 6）
+PLAN_OVERREACH_FILES_MAX = 5
+
+
+def _plan_guard(cand, snap: Path) -> dict:
+    """方案任务收尾的越界核对（R-03 兜底：外部 CLI 不一定遵守 cwd，只能事后检出）。
+
+    * 目标脚本被原地改了 → 按起跑快照还原（整段持 `script_guard`、原子写）；**还原前再读一次**：与刚才看到的不一样 = 这期间还有人改过，
+      **不覆盖**，如实报告（`target_conflict`）；
+    * 项目里别的文件被改 → 只列文件名，不动（`files`，已按名字排序）。
+    回 `{"touched": bool, "target_restored": bool, "target_conflict": bool, "files": [...], "total": int}`；没越界 `touched` 为假。"""
+    from . import ai_figure_edit
+
+    out = {
+        "touched": False,
+        "target_restored": False,
+        "target_conflict": False,
+        "files": [],
+        "total": 0,
+    }
+    try:
+        seen = cand.script_path.read_bytes()
+    except OSError:
+        seen = None
+    changed = ai_figure_edit.fingerprint_changes(
+        cand.project_before,
+        ai_figure_edit.project_fingerprint(
+            cand.project_root, exclude=ai_figure_edit._own_files(cand.script_rel)
+        ),
+    )
+    others = sorted(changed or [])
+    out["files"], out["total"] = others[:PLAN_OVERREACH_FILES_MAX], len(others)
+    if seen != cand.base_bytes:
+        out["touched"] = True
+        with script_guard(cand.script_path):
+            try:
+                now = cand.script_path.read_bytes()
+            except OSError:
+                now = None
+            if now != seen:
+                out["target_conflict"] = True  # 看过之后又被别人改了：不覆盖
+            else:
+                try:
+                    original = snap.read_bytes()
+                    scriptlock.write_script(cand.script_path, original, mode=cand.base_mode)
+                    out["target_restored"] = True
+                except (OSError, atomicio.AtomicWriteError) as exc:
+                    LOG.warning("方案任务越界还原失败（%s）: %s", cand.script_rel, exc)
+                    out["target_conflict"] = True
+    if others:
+        out["touched"] = True
+    return out
+
+
+def plan_outcome(sid: str, project: str) -> dict | None:
+    """方案任务的结局（会话终态之后才有；没有 / 别的项目的 → None）：`{status, error, outcome, unmet, new_bytes, base_bytes, overreach}`。"""
+    sess = SESSIONS.get(sid)
+    if sess is None or sess.get("project") != str(Path(project).resolve()) or not sess.get("final"):
+        return None
+    taf = sess.get("taf") or {}
+    cand = taf.get("cand")
+    if cand is None or not taf.get("plan_only"):
+        return None
+    task = sess.get("task") or {}
+    return {
+        "status": sess["status"],
+        "error": sess.get("error"),
+        "outcome": task.get("outcome"),
+        "unmet": task.get("unmet") or [],
+        "new_bytes": cand.extras.get("plan_bytes"),
+        "base_bytes": cand.base_bytes,
+        "base_sha256": cand.base_sha256,
+        "overreach": taf.get("overreach") or {},
+    }
