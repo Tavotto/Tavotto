@@ -182,6 +182,77 @@ def test_open_confirm_verifies_actual_file_and_ABA_ticket_cannot_rebind(env):
     assert changed.get_json()["code"] == "external_change"
 
 
+@pytest.mark.parametrize("location", ["canvases", "data", "tavottofile"])
+def test_open_confirm_uses_read_source_then_first_save_uses_project_target(env, location):
+    client, root, headers = env
+    directory = m.LAYOUT_DIR if location == "data" else root / location
+    directory.mkdir(parents=True, exist_ok=True)
+    source = directory / "A.json"
+    original = atomicio.dumps_json(_document())
+    source.write_bytes(original)
+    target = root / "tavottofile/A.json"
+
+    opened = client.get("/api/layouts/A", headers=headers)
+    assert opened.status_code == 200, opened.get_json()
+    assert opened.data == original
+    assert opened.headers["X-Tavotto-Layout-File"] == "tavottofile/A.json"
+    revision = opened.headers["X-Tavotto-Revision"]
+    autosave = _saved(_put(env, opened.get_json(), _axis(), None, None))
+    ticket = _reserve(env)
+    confirmed = _confirm(env, "A", ticket, revision)
+    assert confirmed.status_code == 200, confirmed.get_json()
+    assert confirmed.get_json()["state"] == "bound"
+    binding = _binding(env)
+    assert binding["file"] == "tavottofile/A.json"
+    assert binding["revision"] == revision == atomicio.revision_of(original)
+    assert binding["dirty"] is False
+    assert source.read_bytes() == original
+    assert target.exists() is (location == "tavottofile")
+
+    # 首写只写规范位置；旧来源保留，之后读取 / 确认应优先采用新文件。
+    edited = _document("edited", updated=2)
+    _saved(_put(env, edited, _axis(sequence=2), _axis(), autosave["revision"]))
+    save_ticket = _reserve(env, expected=binding["sequence"])
+    saved = _saved(_named(env, edited, base=revision, ticket=save_ticket))
+    assert saved["project_file"]["state"] == "bound"
+    assert saved["file"] == "tavottofile/A.json"
+    assert saved["revision"] == atomicio.content_revision(target) != revision
+    if source != target:
+        assert source.read_bytes() == original
+    reopened = client.get("/api/layouts/A", headers=headers)
+    assert reopened.status_code == 200, reopened.get_json()
+    assert reopened.get_json() == edited
+    assert reopened.headers["X-Tavotto-Revision"] == saved["revision"]
+    reopen_ticket = _reserve(env, expected=save_ticket["sequence"])
+    reconfirmed = _confirm(env, "A", reopen_ticket, reopened.headers["X-Tavotto-Revision"])
+    assert reconfirmed.status_code == 200, reconfirmed.get_json()
+    assert reconfirmed.get_json()["state"] == "bound"
+    assert _binding(env)["revision"] == saved["revision"]
+    assert _binding(env)["dirty"] is False
+
+
+@pytest.mark.parametrize("location", ["canvases", "data", "tavottofile"])
+def test_open_confirm_rejects_external_change_to_the_read_source(env, location):
+    client, root, headers = env
+    directory = m.LAYOUT_DIR if location == "data" else root / location
+    directory.mkdir(parents=True, exist_ok=True)
+    source = directory / "A.json"
+    source.write_bytes(atomicio.dumps_json(_document()))
+    opened = client.get("/api/layouts/A", headers=headers)
+    assert opened.status_code == 200, opened.get_json()
+    _saved(_put(env, opened.get_json(), _axis(), None, None))
+    ticket = _reserve(env)
+    external = atomicio.dumps_json(_document("external", updated=100))
+    source.write_bytes(external)
+
+    changed = _confirm(env, "A", ticket, opened.headers["X-Tavotto-Revision"])
+    assert changed.status_code == 409, changed.get_json()
+    assert changed.get_json()["code"] == "external_change"
+    assert changed.get_json()["revision"] == atomicio.revision_of(external)
+    assert _binding(env) is None
+    assert source.read_bytes() == external
+
+
 def test_external_autosave_drift_is_unknown_and_old_axis_cannot_write_before_body(env):
     _, revision, named = _bound(env)
     saved = _read(env)

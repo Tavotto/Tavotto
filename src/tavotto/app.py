@@ -19720,6 +19720,15 @@ def layout_path(name: str, base: Path | None = None) -> Path:
     return (base if base is not None else LAYOUT_DIR) / f"{name}.json"
 
 
+def _layout_read_path(name: str) -> Path | None:
+    """命名排版的实际读取来源；保存目标仍由 `_project_layout_target` 决定。"""
+    for directory in _layout_read_dirs():
+        path = layout_path(name, directory)
+        if path.exists():
+            return path
+    return None
+
+
 @app.get("/api/layouts")
 def api_layouts():
     # 主位置 = 项目 tavottofile/；旧位置只读兼容，重名以主位置为准。
@@ -19819,20 +19828,19 @@ def serve_document(path: Path, *, autosave: bool = False, source_storage: Path |
 
 @app.get("/api/layouts/<name>")
 def api_layout_get(name):
-    for d in _layout_read_dirs():
-        p = layout_path(name, d)
-        if p.exists():
-            ctx = _request_ctx()
-            source_storage = LAYOUT_DIR if d == LAYOUT_DIR else project_layout_dir(ctx)
-            resp = serve_document(p, source_storage=source_storage)
-            if ctx is not None:
-                # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
-                # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
-                # `project_layout_dir()` 一份，前端不自己拼。百分号编码：header 只能是 latin-1。
-                target = layout_path(name, _named_layout_dir(ctx)).relative_to(ctx.path)
-                resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
-            return resp
-    abort(404)
+    path = _layout_read_path(name)
+    if path is None:
+        abort(404)
+    ctx = _request_ctx()
+    source_storage = LAYOUT_DIR if path.parent == LAYOUT_DIR else project_layout_dir(ctx)
+    resp = serve_document(path, source_storage=source_storage)
+    if ctx is not None:
+        # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
+        # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
+        # `project_layout_dir()` 一份，前端不自己拼。百分号编码：header 只能是 latin-1。
+        target = layout_path(name, _named_layout_dir(ctx)).relative_to(ctx.path)
+        resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
+    return resp
 
 
 @app.post("/api/layouts/<name>")
@@ -20744,7 +20752,8 @@ def api_layout_project_file_confirm(doc_id):
             {"axis": None, "base_axis": None, "base_revision": body["revision"]}, None
         )
         # 不同时取AS和named两个非重入条带锁。票据由reserve持AS锁捕获，
-        # 此处只锁实际named正文；commit在会话锁内再次核完整票据/CAS。
+        # 各来源与规范目标同名，共用一条文档锁带；锁内按 GET 的顺序重新解析来源。
+        # commit 在会话锁内再次核完整票据/CAS，票据中的保存目标保持规范位置。
         with _document_lock(target):
             pending = engine_layoutsession.pending_project_file(
                 key,
@@ -20756,11 +20765,12 @@ def api_layout_project_file_confirm(doc_id):
             if pending["state"] != "pending":
                 return jsonify(pending)
             try:
-                current = engine_atomicio.existing_revision(target)
+                source = _layout_read_path(body["name"])
+                current = engine_atomicio.existing_revision(source) if source is not None else None
             except OSError:
                 return _revision_unreadable()
             if current != body["revision"]:
-                return _external_change(current, target)
+                return _external_change(current, source if source is not None else target)
             result = engine_layoutsession.commit_project_file(
                 key, doc_id, pending["ticket"], revision=current
             )
