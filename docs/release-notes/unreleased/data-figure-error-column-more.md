@@ -1,0 +1,3 @@
+## Data to figure: more shapes for a table's own error column
+
+In the experimental, off-by-default data-to-figure page, an already-summarised table (one row per group or position, with its own SD / SEM / CI column) can now also be drawn as bars with the table's error bars, as a second option after the points. A table with several measured columns that each have their own error column (for example `a_mean, a_sd, b_mean, b_sd`) draws every series with its own error bars, and several such files can be merged into one figure. Bars are only offered when they can start at zero without cutting off an error bar.

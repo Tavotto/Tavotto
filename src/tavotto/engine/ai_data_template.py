@@ -407,14 +407,16 @@ def category_labels(d, p, with_n):
 def trend_data(header, rows, x, ys, group, facet, unit, x_is_date, err=None):
     """每个（分面, 分组, y 列, 个体）一条序列 `(xs, vals)`，按 x 稳定排序（同 x 保持行序）。x 不是值（日期格式不对 / 非数）、
     分组 / 分面 / 个体为空的行不画；y 不是数 → NaN（折线在这里断开，不插值不填 0）。
-    `err`（误差列名，配方的 `err`，只配单个 y）：另给 `d["errs"]`——每个（分面, 分组, y 列）一条 `(xs, ys, 误差)`，只含 x 与 y 都有值的行，按 x 稳定排序；
+    `err`（误差列名，配方的 `err`：单个 y 是一个列名，多个 y 是与 `ys` 等长的列名数组，每个 y 配各自的）：另给 `d["errs"]`——每个（分面, 分组, y 列）一条 `(xs, ys, 误差)`，只含 x 与 y 都有值的行，按 x 稳定排序；
     误差格是空 / NaN / 文字 / 负数 = NaN（这个点没有误差线）。不给 `err` 时返回的字典里没有 `errs`。"""
     xi = header.index(x)
     yis = [header.index(y) for y in ys]
     gi = header.index(group) if group else None
     fi = header.index(facet) if facet else None
     ui = header.index(unit) if unit else None
-    ei = header.index(err) if err else None
+    eis = None
+    if err:
+        eis = [header.index(e) for e in ([err] if isinstance(err, str) else err)]
     panels, groups, series, epoints = [], [], {}, {}
     for r in rows:
         if x_is_date:
@@ -435,11 +437,11 @@ def trend_data(header, rows, x, ys, group, facet, unit, x_is_date, err=None):
             continue
         panels.append(p)
         groups.append(g)
-        for y, yi in zip(ys, yis):
+        for k, (y, yi) in enumerate(zip(ys, yis)):
             kind, v = parse_cell(r[yi])
             series.setdefault((p, g, y, u), []).append((xv, v if kind == "numeric" else math.nan))
-            if ei is not None and kind == "numeric":
-                ek, ev = parse_cell(r[ei])
+            if eis is not None and kind == "numeric":
+                ek, ev = parse_cell(r[eis[k]])
                 epoints.setdefault((p, g, y), []).append(
                     (xv, v, ev if ek == "numeric" and ev >= 0 else math.nan)
                 )
@@ -452,7 +454,7 @@ def trend_data(header, rows, x, ys, group, facet, unit, x_is_date, err=None):
         "groups": distinct(groups) or [""],
         "series": out,
     }
-    if ei is not None:
+    if eis is not None:
         errs = {}
         for key, pts in epoints.items():
             pts = sorted(pts, key=lambda t: t[0])
@@ -1458,12 +1460,13 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
         ):
             raise TemplateError("template_option_unsupported", "stack")
         cols = recipe_mod.stack_view(entry.summary, recipe.stack).per_column
-    named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit, recipe.err]
+    named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit, *recipe.err_cols]
     if any(c is not None and c not in cols for c in named):
         raise TemplateError("template_recipe_mismatch", "column")
     if recipe.err is not None and (
         recipe.family not in ("comparison", "trend")
-        or len(recipe.y) != 1
+        or len(recipe.err_cols) != len(recipe.y)
+        or (len(recipe.y) > 1 and recipe.family != "trend")
         or recipe.unit is not None
         or recipe.stack
         or entry.summary.large is not None
@@ -2038,7 +2041,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"UNIT = {recipe.unit!r}",
-        *([f"ERR = {recipe.err!r}"] if recipe.err is not None else []),
+        *([f"ERR = {recipe.to_dict()['err']!r}"] if recipe.err is not None else []),
         f"X_IS_DATE = {x_is_date!r}",
         f"XLABEL = {adf.axis_label(recipe.x)!r}",
         f"YLABEL = {ylabel!r}",
