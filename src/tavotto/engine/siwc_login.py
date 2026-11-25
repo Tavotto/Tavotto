@@ -56,6 +56,8 @@ PREFERRED_PORT = 1455
 
 HTTP_TIMEOUT_S = 30.0
 OK_BODY_LIMIT = 256 * 1024
+#: 型号清单单独放宽：真服务的 `/v1/models` 每个型号带一整套元数据，256 KB 装不下（2026-11-25 真服务核对：超限被当成空清单）
+MODELS_BODY_LIMIT = 4 * 1024 * 1024
 ERROR_BODY_LIMIT = 8 * 1024
 FLOW_TIMEOUT_S = 600.0
 CLOCK_SKEW_S = 300
@@ -126,12 +128,12 @@ class _Reply:
     body: dict = field(default_factory=dict)
 
 
-def _send(req: urllib.request.Request) -> _Reply:
+def _send(req: urllib.request.Request, ok_limit: int = OK_BODY_LIMIT) -> _Reply:
     req.add_header("User-Agent", _user_agent())
     req.add_header("Accept", "application/json")
     try:
         with _opener().open(req, timeout=HTTP_TIMEOUT_S) as resp:
-            status, raw, limit = resp.status, resp.read(OK_BODY_LIMIT + 1), OK_BODY_LIMIT
+            status, raw, limit = resp.status, resp.read(ok_limit + 1), ok_limit
     except urllib.error.HTTPError as err:
         status, limit = err.code, ERROR_BODY_LIMIT
         try:
@@ -142,7 +144,10 @@ def _send(req: urllib.request.Request) -> _Reply:
         LOG.info("SIWC 请求传输失败（%s）", type(tlstrust.root_cause(exc)).__name__)
         return _Reply(0)
     if len(raw) > limit:
-        return _Reply(status)
+        LOG.info("SIWC 响应超过上限（%d 字节）", limit)
+        return _Reply(
+            0 if 200 <= status < 300 else status
+        )  # 2xx 超限 = 没拿到，不能当成「空的成功」
     try:
         parsed = json.loads(raw.decode("utf-8")) if raw else {}
     except ValueError:
@@ -158,11 +163,11 @@ def _post_form(url: str, fields: dict) -> _Reply:
     return _send(req)
 
 
-def _get_json(url: str, bearer: str | None = None) -> _Reply:
+def _get_json(url: str, bearer: str | None = None, ok_limit: int = OK_BODY_LIMIT) -> _Reply:
     req = urllib.request.Request(url, method="GET")
     if bearer:
         req.add_header("Authorization", f"Bearer {bearer}")
-    return _send(req)
+    return _send(req, ok_limit)
 
 
 def _oauth_error(body: dict) -> str:
@@ -325,7 +330,7 @@ def provider() -> siwc_auth.TokenProvider:
 # --------------------------------------------------------------------------- 型号清单
 def fetch_models(access: str) -> list[dict] | None:
     """`GET /v1/models` → `[{"id": slug, "display_name"?}]`（只要 `visibility == "list"`，服务端顺序）；拿不到 → None。"""
-    reply = _get_json(MODELS_URL, access)
+    reply = _get_json(MODELS_URL, access, MODELS_BODY_LIMIT)
     if reply.status != 200:
         return None
     out: list[dict] = []
