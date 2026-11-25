@@ -13,7 +13,7 @@ import type { ExportRoute } from '@/lib/exportRoute'
 import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
-import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
@@ -1005,6 +1005,34 @@ export async function fetchLayout(name: string, pj?: string | null): Promise<Fet
     doc: await res.json(),
     revision: res.headers.get('X-Tavotto-Revision'),
     file: file ? decodeURIComponent(file) : null,
+  }
+}
+
+/**
+ * 「把 Agent 加的并进来」（ADR 0208 §五）：拿这份排版绑定的基线问后端，磁盘上多出来的是不是**只有** Agent 追加的对象。
+ * 后端判据在 `engine/layoutannotate.agent_additions`（全部来自插件写入时留的撤销副本）。读失败一律当「没有」——
+ * 照旧走覆盖 / 另存，不因为这一问把保存流程卡住。
+ */
+export interface AgentAdditions {
+  available: boolean
+  revision?: string
+  count?: number
+  canvases?: { id: string; objects: CanvasObject[] }[]
+}
+
+export async function fetchAgentAdditions(name: string, baseRevision: string): Promise<AgentAdditions> {
+  try {
+    const res = await fetch(
+      apiUrl(
+        `/api/layouts/${encodeURIComponent(name)}/agent-additions?base_revision=${encodeURIComponent(baseRevision)}`,
+      ),
+      withProject(),
+    )
+    if (!res.ok) return { available: false }
+    const body = (await res.json()) as AgentAdditions
+    return body && body.available === true ? body : { available: false }
+  } catch {
+    return { available: false }
   }
 }
 

@@ -1766,6 +1766,22 @@
           "title": "铅笔 › N 铅笔拖一条正弦形的笔迹：松手得到一个光滑 path（三次贝塞尔、段数远少于采样点）；一次撤销撤回"
         }
       ]
+    },
+    {
+      "id": "layout.agent-merge",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "插件里的 Agent 往项目排版里加了标注后，桌面回到前台时直接并进画布（可撤销）；⌘S 撞上的冲突只是 Agent 加的标注时直接并进来再保存，不弹对话框",
+        "en-US": "After the agent adds annotations to a project layout through the plugin, the desktop merges them into the open canvas when the window regains focus (undoable); if ⌘S hits a conflict that only consists of the agent's additions, it merges and saves without a dialog"
+      },
+      "entry": "回到前台自动并入；⌘S 不弹对话框",
+      "e2e": [
+        {
+          "spec": "agent-merge.spec.ts",
+          "title": "Agent 往项目排版里加了标注：回到前台自动并进画布；⌘S 时直接并进来再保存，不弹对话框"
+        }
+      ]
     }
   ]
 }

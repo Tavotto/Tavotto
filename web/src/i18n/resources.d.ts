@@ -6960,6 +6960,10 @@ export default interface Resources {
     "title": "快捷键"
   },
   "workspace": {
+    "agentMerge": {
+      "commit_other": "并入 Agent 加的 {{count}} 个标注",
+      "done_other": "已并入 {{count}} 个标注，保存后写进项目"
+    },
     "annotationEntry": {
       "arrow": "箭头",
       "label": "标注 · {{name}}",
