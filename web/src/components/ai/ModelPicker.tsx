@@ -383,7 +383,7 @@ export function ConnectionModelList({
                           }}
                         />
                       </IconSlot>
-                      <span className={cn('min-w-0 flex-1 truncate', on ? 'text-ink' : 'text-ink-2')}>
+                      <span className={cn('min-w-0 flex-1 truncate', on ? 'font-medium text-ink' : 'text-ink-2')}>
                         {modelDetail(connectionInfo(c), m)?.display_name || m}
                         {m === c.default_model && <span className="ml-1.5 text-xs text-ink-3">{ai('panel.effortDefault')}</span>}
                       </span>
