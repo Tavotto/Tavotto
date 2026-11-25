@@ -5495,6 +5495,11 @@ export interface AiTaskSummary {
   phase?: 'correcting' | null
   /** 转换进行中的活动（后端闭集）：`writing_long` = 事件流静默已久、模型在生成较长的文件；事件一来后端就不再给。其它任务没有 */
   activity?: 'writing_long' | null
+  /**
+   * 转换进行中走到哪一步（后端 `ai_bridge._convert_stage`，闭集；用户 2026-11-25）：校验阶段 = verify，否则新脚本已有内容 = write、
+   * 还没有 = read；`round` = 1 + 已自动修正的次数。只有进行中的转换会话有；老后端没有
+   */
+  stage?: { step: 'read' | 'write' | 'verify'; round: number } | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
   /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */

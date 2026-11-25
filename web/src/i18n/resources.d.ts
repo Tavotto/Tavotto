@@ -7967,9 +7967,16 @@ export default interface Resources {
           "placeholder": "项目内相对路径，每行一个",
           "retry": "带参考文件重试"
         },
+        "round": "第 {{n}} 轮",
         "running": "正在生成可编辑版本…",
         "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
+        "steps": {
+          "read": "读懂原脚本",
+          "verify": "运行校验",
+          "write": "写 Python 版本"
+        },
         "stoppedLate": "转换已经完成，停止来得太晚。对照一下，要用就采用",
+        "taskTitle": "生成可编辑版本",
         "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用",
         "writingLong": "正在生成较长的文件…",
         "writingLongElapsed": "正在生成较长的文件…（已用 {{minutes}} 分钟）"

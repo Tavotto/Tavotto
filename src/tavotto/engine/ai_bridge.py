@@ -3376,6 +3376,42 @@ def _live_activity(live: dict) -> str | None:
     return None
 
 
+#: 生成可编辑版本的任务清单（用户 2026-11-25 拍板）：三步，闭集
+CONVERT_STEPS: tuple[str, ...] = ("read", "write", "verify")
+_VERIFY_PHASES = frozenset({"verifying", "ready_to_commit", "committing"})
+
+
+def _convert_stage(live: dict) -> dict | None:
+    """进行中的转换会话走到哪一步 `{step: read|write|verify, round}`（界面的任务清单「读懂原脚本 → 写 Python 版本 → 运行校验」）。
+
+    判据只用结构化事实，不读模型输出：编排器进了提交前 / 后的校验阶段（`TaskRun.phase`）= 运行校验；否则候选里的新脚本
+    已经有内容 = 写 Python 版本，还没有 = 读懂原脚本。内置执行器写到一半自己要的 `check` **不算**运行校验（用户裁决：它还在写，
+    清单不来回跳）。第几轮 = 1 + 已记账的自动修正次数：校验没过、系统让 AI 修正时回到「写」、轮次 +1，已打的勾不收回。
+    不是进行中的转换会话 = None。"""
+    if live.get("kind") != "convert" or live.get("status") != "running":
+        return None
+    taf = live.get("taf") or {}
+    run, cand = taf.get("run"), taf.get("cand")
+    if run is None:
+        return None
+    try:
+        rnd = 1 + int(run.used.get("corrections", 0))
+        if run.phase in _VERIFY_PHASES:
+            step = "verify"
+        else:
+            target = getattr(cand, "target", None)
+            written = (
+                target is not None
+                and not target.is_symlink()
+                and target.is_file()
+                and target.stat().st_size > 0
+            )
+            step = "write" if written else "read"
+    except Exception:  # noqa: BLE001 —— 判不出就不给，界面回到第一步
+        return None
+    return {"step": step, "round": rnd}
+
+
 def get(sid: str) -> dict | None:
     sess = SESSIONS.get(sid)
     if sess is not None:
@@ -3387,6 +3423,9 @@ def get(sid: str) -> dict | None:
         activity = _live_activity(live)
         if activity is not None and isinstance(live.get("task"), dict):
             live["task"] = {**live["task"], "activity": activity}
+        stage = _convert_stage(live)
+        if stage is not None and isinstance(live.get("task"), dict):
+            live["task"] = {**live["task"], "stage": stage}
         return _session_dto(live)
     side = _load_sidecar(sid)
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）

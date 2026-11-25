@@ -22,6 +22,7 @@ import {
   replanConvertDependencies,
   resolveConvertDependencies,
   startConvert,
+  type AiTaskSummary,
   type ConvertDependencyCard,
   type ConvertSourceLanguage,
   type ConvertStatus,
@@ -79,6 +80,8 @@ export interface ConvertEntry {
   realigning?: boolean
   /** 运行中后端给的活动提示（`writing_long`）：只换进度行的文字；没有 / 恢复 = null */
   activity?: 'writing_long' | null
+  /** 运行中后端给的任务清单进度（`task.stage`）：走到哪一步 + 第几轮；还没有 / 老后端 = null（界面按「读懂原脚本」） */
+  stage?: AiTaskSummary['stage']
 }
 
 interface ConvertState {
@@ -508,6 +511,10 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           // 只换进度行的文字：事件流静默已久且模型在写长文件时后端给 `writing_long`，事件一来就回到 null
           const activity = sess.task?.activity === 'writing_long' ? 'writing_long' : null
           if ((cur.activity ?? null) !== activity) set1(script, { activity })
+          const st = sess.task?.stage ?? null
+          if ((cur.stage?.step ?? null) !== (st?.step ?? null) || (cur.stage?.round ?? null) !== (st?.round ?? null)) {
+            set1(script, { stage: st })
+          }
           continue
         }
         const wasStopping = !!get().entries[script]?.stopping
