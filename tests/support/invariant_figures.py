@@ -5,9 +5,47 @@
 
 from __future__ import annotations
 
+import os
+
 SCRIPT_NAME = "fig_invariants.py"
 ENTRY = "main"
 STEMS = ("InvMix", "InvCont", "InvCbar", "InvCbarH", "InvPar", "Inv3D", "Inv3DP", "Inv3DS")
+
+#: CI 的 invariants 一步按图分三组、同机三个进程并行跑（2026-11-25，#2205 撞了 30 分钟上限：这一步串行
+#: 17–25 分钟，96% 在 test_invariants_engine.py，按 STEMS 参数化的五个函数占大头；按文件分片拆不开它）。
+#: 组是**图**，不是用例：同一张图的全部用例在同一个进程里，用同一组 module 级 worker，顺序与隔离不变。
+#: 全集 = STEMS ∪ {"InvScale"} ∪ REMOVAL_CASES 用到的图；三组的并集 == 全集、两两不交
+#: （tests/test_invariant_groups.py 静态钉）。权重按 11-25 本机逐图实测（分钟）摊平。
+#: 不按图参数化的用例带 `invariant_rest` 标记，只在 c 组跑。
+INVARIANT_GROUPS: dict[str, tuple[str, ...]] = {
+    "a": ("InvMix", "Inv3DS", "InvShared2", "InvShared3"),  # 3.9 + 0.4 + 0.2 + 0.2
+    "b": ("InvCont", "InvCbarH", "InvCbar", "InvCbar2"),  # 2.4 + 1.3 + 1.0 + 0.3
+    "c": (
+        "Inv3DP",
+        "InvPar",
+        "Inv3D",
+        "InvShared",
+        "InvScale",
+    ),  # 1.2 + 1.1 + 0.9 + 0.5 + 0.3 + 其余
+}
+GROUP_ENV = "TAVOTTO_INVARIANT_GROUP"
+
+
+def selected_group() -> tuple[str, ...] | None:
+    """`TAVOTTO_INVARIANT_GROUP` 选中的那组图；不设 = None = 全部（本机、其它 workflow 都不设）。
+    设了一个不认识的组名当场抛——静默跑空集比红更糟。"""
+    g = os.environ.get(GROUP_ENV, "")
+    if not g:
+        return None
+    if g not in INVARIANT_GROUPS:
+        raise ValueError(f"{GROUP_ENV}={g!r} 不是已知的组 {sorted(INVARIANT_GROUPS)}")
+    return INVARIANT_GROUPS[g]
+
+
+def in_group(stem: str) -> bool:
+    sel = selected_group()
+    return sel is None or stem in sel
+
 
 #: 一个脚本出三张图，一次 build 全捕获（build 是这套用例里唯一慢的一步）。
 #: 每张图都刻意做得**元素互相重叠**——`zorder` 想被验出效果就得有东西挡；
