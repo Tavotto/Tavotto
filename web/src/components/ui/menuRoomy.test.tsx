@@ -23,6 +23,7 @@ const render = async () => {
           <MenuRadioItem value="a" data-x="plain">plain</MenuRadioItem>
           <MenuRadioItem value="b" roomy data-x="roomy">roomy</MenuRadioItem>
           <MenuRadioItem value="c" description="d" data-x="desc">desc</MenuRadioItem>
+          <MenuRadioItem value="d" roomy description="两行" data-x="roomy2">roomy2</MenuRadioItem>
         </MenuRadioGroup>
       </Menu>,
     ),
@@ -34,17 +35,22 @@ const render = async () => {
 }
 
 describe('MenuRadioItem roomy', () => {
-  it('缺省紧凑（pl-6）；roomy 与带说明同一版式（pl-8 items-start），勾也在同一档位置', async () => {
+  it('缺省紧凑（pl-6）；roomy 与带说明同一档边距（pl-8），勾也在同一档位置', async () => {
     const done = await render()
     const row = (x: string) => document.querySelector<HTMLElement>(`[data-x="${x}"]`)!
     expect(row('plain').className).toContain('pl-6')
     expect(row('plain').className).not.toContain('pl-8')
     for (const x of ['roomy', 'desc']) {
       expect(row(x).className).toContain('pl-8')
-      expect(row(x).className).toContain('items-start')
     }
     expect(row('roomy').querySelector('[class*="left-2"]')).not.toBeNull() // 选中的 roomy 行：勾与带说明的一档
     expect(row('roomy').querySelector('[class*="left-1.5"]')).toBeNull()
+    // 图标与勾相对整行垂直居中；只带说明（不传 roomy）的仍是顶对齐，现有菜单不变
+    expect(row('roomy').className).toContain('items-center')
+    expect(row('roomy').className).not.toContain('items-start')
+    expect(row('roomy').querySelector('[class*="top-1/2"]')!.className).toContain('-translate-y-1/2')
+    expect(row('desc').className).toContain('items-start')
+    expect(row('desc').className).not.toContain('items-center')
     await done()
   })
 })

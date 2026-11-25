@@ -194,8 +194,9 @@ describe('列表', () => {
     expect(rows[1]!.textContent).toContain('gpt-x') // 带小字的行
     for (const r of rows) {
       expect(r.className, r.getAttribute('data-data-ai-option') ?? '').toContain('pl-8')
-      expect(r.className).toContain('items-start')
-      if (r.getAttribute('aria-checked') === 'true') expect(r.querySelector('[class*="left-2"]')).not.toBeNull() // 勾（只有选中的那行才有）在同一档位置
+      expect(r.className).toContain('items-center') // 图标与勾相对整行垂直居中（两行的行居中在两行文字中线上）
+      expect(r.className).not.toContain('items-start')
+      if (r.getAttribute('aria-checked') === 'true') expect(r.querySelector('[class*="top-1/2"]')).not.toBeNull() // 勾（只有选中的那行才有）在同一档位置
       expect(r.className).not.toContain('pl-6')
     }
   })
