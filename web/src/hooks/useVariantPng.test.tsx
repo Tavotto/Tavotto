@@ -101,10 +101,23 @@ describe('缓存键：项目 + 素材版本 + 变体，少一个都会串图', (
 
   it('换项目之后同名同 overrides 不得命中旧项目的图', async () => {
     const a = await fetchOnce('fig1.pdf', OV)
-    setCurrentProjectId('projB')
+    await act(async () => setCurrentProjectId('projB'))
     const b = await fetchOnce('fig1.pdf', OV)
     expect(b).not.toBe(a)
     expect(previewPng).toHaveBeenCalledTimes(2)
+  })
+
+  it('项目 A 的请求晚于切换到 B 返回，挂载中的预览只接受 B 的图', async () => {
+    let finishA!: (image: Blob) => void
+    previewPng.mockImplementationOnce(() => new Promise<Blob>(resolve => { finishA = resolve }))
+    await fetchOnce('fig1.pdf', OV)
+    await act(async () => { setCurrentProjectId('projB') })
+    const b = last.url
+    await act(async () => { finishA(new Blob(['A'])) })
+    expect(previewPng).toHaveBeenCalledTimes(2)
+    expect(b).not.toBeNull()
+    expect(last.url).toBe(b)
+    expect(revoked).not.toContain(b)
   })
 
   it('磁盘素材被改过（rev 变了）也不得命中旧缩略图', async () => {
