@@ -16,7 +16,7 @@ import { useAssetStore } from '@/store/assetStore'
 export const PICK_LIMIT = 4
 /** 一张卡的宽（px）：要完整放下「PDF · 7.3 × 5.8 cm」 */
 export const CARD_W = 136
-const GAP = 10
+const GAP = 14
 /** 提示面板的内边距（px） */
 const PAD = 16
 
@@ -25,7 +25,7 @@ const pk = (key: string, values?: Record<string, unknown>) =>
 
 /** 一张卡的高（px，3:2 缩略图 ≈ 91 + 名字 + 元数据 + 内边距，与左栏素材卡同一套外观）与提示面板其余部分（内边距 + 标题 + 说明 + 间距）的高 */
 const CARD_H = 144
-const CHROME_H = 112
+const CHROME_H = 120
 
 /** 纸面放得下几行（至少一行） */
 export function pickRows(paperH: number): number {
@@ -60,7 +60,7 @@ export function EmptyPickCards({ panels: files, paperW, paperH }: { panels: Pane
   const cols = pickColumns(paperW, Math.min(panels.length, PICK_LIMIT))
   const shown = panels.slice(0, Math.min(PICK_LIMIT, cols * pickRows(paperH)))
   return (
-    <div data-empty-pick className="grid justify-items-center gap-2.5" style={{ padding: PAD }}>
+    <div data-empty-pick className="grid justify-items-center gap-3.5" style={{ padding: PAD }}>
       <h4 className="type-title">{pk('pickTitle')}</h4>
       <div className="flex flex-wrap justify-center" style={{ width: cols * CARD_W + (cols - 1) * GAP, gap: GAP }}>
         {shown.map((p, i) => (
