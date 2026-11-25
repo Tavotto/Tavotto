@@ -103,7 +103,7 @@ describe('图标：出不出、长什么样', () => {
     await mount(choice({ state: 'off', mode: 'off', connection: null }))
     expect(icon()!.getAttribute('data-data-ai-choice')).toBe('off')
     expect(icon()!.getAttribute('aria-label')).toBe('不用 AI 分析')
-    expect(icon()!.querySelectorAll('svg')).toHaveLength(2) // 星 + 斜线
+    expect(icon()!.querySelectorAll('svg')).toHaveLength(1) // 一个图标：星 + 贯穿的斜线
     expect(q('[data-data-connect]')).toBeNull()
   })
 
@@ -146,7 +146,7 @@ describe('按钮是扁平的 ghost 图标钮；气泡是同一句、可达名也
   it('关闭态的斜线满幅贯穿图标（对角 3,3 → 21,21），不是一小截', async () => {
     await mount(choice({ state: 'off', mode: 'off', connection: null }))
     const paths = [...icon()!.querySelectorAll('svg path')].map((p) => p.getAttribute('d'))
-    expect(paths).toContain('M3 3L21 21')
+    expect(paths.some((d) => d?.includes('M3 3L21 21'))).toBe(true)
   })
 
   it('气泡真的接上了：聚焦按钮就出气泡，文案 = 可达名 =「分析用的 AI：A」', async () => {
@@ -183,6 +183,21 @@ describe('列表', () => {
     // 没有手拼的 radio / 600 字重
     expect(q('[data-data-ai-menu]')!.querySelector('[role=radio]')).toBeNull()
     expect(q('[data-data-ai-menu]')!.innerHTML).not.toContain('font-semibold')
+  })
+
+  it('每一行（带小字的与不带的）走同一版式：图标列、文字列各自严格对齐', async () => {
+    await mount(choice({ mode: 'off', state: 'off', connection: null }))  // 关着：「自动」没有「当前」小字
+    await openMenu()
+    const rows = qa('[data-data-ai-menu] [role=menuitemradio]')
+    expect(rows).toHaveLength(4)
+    expect(rows[0]!.textContent).toBe('自动') // 没有小字的行
+    expect(rows[1]!.textContent).toContain('gpt-x') // 带小字的行
+    for (const r of rows) {
+      expect(r.className, r.getAttribute('data-data-ai-option') ?? '').toContain('pl-8')
+      expect(r.className).toContain('items-start')
+      if (r.getAttribute('aria-checked') === 'true') expect(r.querySelector('[class*="left-2"]')).not.toBeNull() // 勾（只有选中的那行才有）在同一档位置
+      expect(r.className).not.toContain('pl-6')
+    }
   })
 
   it('指定了某个连接：它是选中的；off 时「不用 AI 分析」是选中的', async () => {

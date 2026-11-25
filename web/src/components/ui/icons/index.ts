@@ -44,6 +44,7 @@ export const ChevronDown = createIcon('ChevronDown', ICON_DEFS.ChevronDown, SMAL
 export const ChevronUp = createIcon('ChevronUp', ICON_DEFS.ChevronUp)
 export const ChevronRight = createIcon('ChevronRight', ICON_DEFS.ChevronRight, SMALL_DEFS.ChevronRight)
 export const Sparkles = createIcon('Sparkles', ICON_DEFS.Sparkles)
+export const SparklesOff = createIcon('SparklesOff', ICON_DEFS.SparklesOff)
 export const Heart = createIcon('Heart', ICON_DEFS.Heart)
 export const Pin = createIcon('Pin', ICON_DEFS.Pin)
 export const MousePointerClick = createIcon('MousePointerClick', ICON_DEFS.MousePointerClick)

@@ -371,10 +371,16 @@ export function MenuRadioItem({
   reason,
   description,
   tag,
+  roomy,
   ...rest
 }: {
   value: string
   children: ReactNode
+  /**
+   * 用「带说明」那一档的版式（行内边距、勾的位置与颜色）却没有说明：同一组里有的行带第二行小字、有的不带时，让文字与图标列严格对齐
+   * （缺省 = 不改：没有说明的行仍是紧凑版式）
+   */
+  roomy?: boolean
   /**
    * 每项一句说明（第二行 11.5px ink-3）。给了它，这一项就是「带说明的单选」：勾用品牌蓝、
    * 行内边距放大一档（7/8），名称旁可挂一枚灰色小标 `tag`（「默认」）。
@@ -393,9 +399,9 @@ export function MenuRadioItem({
       {...rest}
       value={value}
       disabled={disabled}
-      className={cn(ITEM_CLASS, 'relative pl-6 text-ink', description && 'items-start py-[7px] pl-8 pr-2')}
+      className={cn(ITEM_CLASS, 'relative pl-6 text-ink', (description || roomy) && 'items-start py-[7px] pl-8 pr-2')}
     >
-      <DM.ItemIndicator className={cn('absolute flex items-center', description ? 'left-2 top-[9px] text-accent' : 'left-1.5')}>
+      <DM.ItemIndicator className={cn('absolute flex items-center', description || roomy ? 'left-2 top-[9px] text-accent' : 'left-1.5')}>
         <Check size={ICON_SIZE.sm} />
       </DM.ItemIndicator>
       {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}

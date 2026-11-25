@@ -4,7 +4,7 @@ import { logoFor } from '@/components/ai/ModelPicker'
 import { BrandLogo, hasBrandLogo } from '@/components/settings/BrandLogo'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { IconButton } from '@/components/ui/Button'
-import { Plus, Sparkles, Unplug } from '@/components/ui/icons'
+import { Plus, Sparkles, SparklesOff, Unplug } from '@/components/ui/icons'
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator } from '@/components/ui/Menu'
 import { backendErrorMsg, ApiError, type AiDataUnderstandingChoice } from '@/lib/api'
 import { msg } from '@/i18n'
@@ -13,22 +13,6 @@ import { useAiStore } from '@/store/aiStore'
 import { requestConnectAi } from '@/store/connectAiStore'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useUiStore } from '@/store/uiStore'
-
-/**
- * 「不用 AI 分析」的图标：✦ 上一道贯穿整个图标的对角斜线（满幅 3,3 → 21,21，线宽 2；斜线底下垫一道纸色粗线把星光切开，免得糊在一起）。
- * 按钮的关闭态与列表里「不用 AI 分析」那一行是同一个。
- */
-function OffIcon({ size = ICON_SIZE.md, className }: { size?: number; className?: string }) {
-  return (
-    <span className={cn('relative inline-flex', className)} style={{ width: size, height: size }}>
-      <Sparkles size={size} aria-hidden />
-      <svg aria-hidden viewBox="0 0 24 24" width={size} height={size} fill="none" strokeLinecap="round" className="absolute inset-0">
-        <path d="M3 3L21 21" strokeWidth="4.5" className="stroke-surface" />
-        <path d="M3 3L21 21" strokeWidth="2" stroke="currentColor" />
-      </svg>
-    </span>
-  )
-}
 
 /** 列表里的取值：`auto` / `off` / `conn:<连接 id>` */
 const valueOf = (c: AiDataUnderstandingChoice): string => (c.mode === 'connection' && c.chosen ? `conn:${c.chosen}` : c.mode)
@@ -67,7 +51,7 @@ export function DataAiChoice({ choice }: { choice: AiDataUnderstandingChoice }) 
 
   const icon =
     kind === 'off' ? (
-      <OffIcon />
+      <SparklesOff size={ICON_SIZE.md} aria-hidden />
     ) : kind === 'unavailable' ? (
       <Unplug size={ICON_SIZE.md} aria-hidden />
     ) : cur && hasBrandLogo(cur.logo) ? (
@@ -122,6 +106,7 @@ export function DataAiChoice({ choice }: { choice: AiDataUnderstandingChoice }) 
       <div data-data-ai-menu>
         <MenuRadioGroup value={shown} onValueChange={(v) => void choose(v)}>
           <MenuRadioItem
+            roomy
             value="auto"
             icon={Sparkles}
             // 自动且在用：第二行小字说明现在实际用的是谁（与 AI 行的型号小字同一个样式）
@@ -131,18 +116,18 @@ export function DataAiChoice({ choice }: { choice: AiDataUnderstandingChoice }) 
             {t('dataFigureV2.aiChoice.auto')}
           </MenuRadioItem>
           {missing && chosen && (
-            <MenuRadioItem value={`${CONN}${chosen}`} icon={missing.logo ? logoFor(missing.logo) : Unplug} reason={t('dataFigureV2.aiChoice.unavailable')} data-data-ai-option={`${CONN}${chosen}`}>
+            <MenuRadioItem roomy value={`${CONN}${chosen}`} icon={missing.logo ? logoFor(missing.logo) : Unplug} reason={t('dataFigureV2.aiChoice.unavailable')} data-data-ai-option={`${CONN}${chosen}`}>
               {missing.label}
             </MenuRadioItem>
           )}
           {choice.options
             .filter((o) => !(missing && o.id === chosen))
             .map((o) => (
-              <MenuRadioItem key={o.id} value={`${CONN}${o.id}`} icon={logoFor(o.logo)} description={o.model || undefined} data-data-ai-option={`${CONN}${o.id}`}>
+              <MenuRadioItem roomy key={o.id} value={`${CONN}${o.id}`} icon={logoFor(o.logo)} description={o.model || undefined} data-data-ai-option={`${CONN}${o.id}`}>
                 {o.label}
               </MenuRadioItem>
             ))}
-          <MenuRadioItem value="off" icon={OffIcon} data-data-ai-option="off">
+          <MenuRadioItem roomy value="off" icon={SparklesOff} data-data-ai-option="off">
             {t('dataFigureV2.aiChoice.off')}
           </MenuRadioItem>
         </MenuRadioGroup>
