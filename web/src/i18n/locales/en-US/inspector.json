@@ -425,7 +425,8 @@
       "left": "left axis",
       "right": "right axis",
       "top": "top axis"
-    }
+    },
+    "copyOf": "{{name}} (copy)"
   },
   "enum": {
     "arrowstyle": {
@@ -618,6 +619,7 @@
   },
   "hiddenState": "Hidden",
   "hide": "Hide",
+  "deleteCopy": "Delete copy",
   "hideElement": "Hide element",
   "hideElementTip": "Hide element",
   "history": {
@@ -1076,6 +1078,8 @@
     "nothingToSync": "Nothing to sync.",
     "othersGroup_one": "Other figure from this script ({{count}})",
     "othersGroup_other": "Other figures from this script ({{count}})",
+    "skippedCopies_one": "Skipped {{count}} copy — copies don’t sync between figures",
+    "skippedCopies_other": "Skipped {{count}} copies — copies don’t sync between figures",
     "skippedPrefix": "Skipped:",
     "skippedSuffix": "items — layout geometry (axes box / figure size) can’t move between figures",
     "sourceFallback": "the source figure",

@@ -155,12 +155,7 @@
 
 ### L-123 await 之后先判上下文还在，请求身份用不复用的代次 → docs/rules/frontend/asset-library.md
 
-### L-136 前端本地验证带 pnpm lint 与 i18n:check，碰 locale 后重生成类型
-- 类: 别这样
-- 触发: web/src/i18n/, web/package.json, web/scripts/i18n-check.mjs
-- Seen: 2026-11-03, 2026-11-04
-- 为什么: vitest、tsc、build 全绿也查不出 rules-of-hooks 和过期的 resources.d.ts；git 自动合并 locale json 不报冲突，生成文件没跟上，frontend 腿红在 CI。叠栈 PR 下层合入前没有 CI，会一直藏到那时。任务书的验证一节同样写上。
-- 证据: #1674, #1692, #1695, #1702
+### L-136 前端本地验证带 pnpm lint 与 i18n:check，碰 locale 后重生成类型 → docs/rules/frontend/i18n.md
 
 ### L-143 失败走兜底时只说没成功，不猜原因，码传丢按未知显示 → docs/rules/frontend/i18n.md
 

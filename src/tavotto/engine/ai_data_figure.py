@@ -1611,6 +1611,36 @@ def _name_tokens(name: str) -> list[str]:
     return [t for t in re.split(r"[^a-z0-9]+", _CAMEL.sub(" ", name).lower()) if t]
 
 
+def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
+    """`error_kind` 的判法本体，另外带回「它修饰的是哪几列」：`(种类 | None, 搭档列)`。搭档列 = `others` 里让名字里的误差词成立的那些列
+    （去掉误差词后剩下的词与某一列去掉 `mean` / `avg` / `average` 之后的词相同；去掉后什么都不剩时是名字里带 `mean` / `avg` / `average` 的列），
+    可能为空（整个名字就是 `sd` / 中文词、而表里没有 `mean` 列）或多个（歧义）。**判「是不是误差列」的口径只有这一处**——误差列配对
+    （`ai_data_recipe.paired_error`）读同一个结果，不另写一份名字规则。"""
+    kind: str | None = None
+    for word, k in _ERROR_CJK:
+        if word in name:
+            kind = k
+            break
+    tokens = _name_tokens(name)
+    alone = len(tokens) == 1 and tokens[0] in _ERROR_ALONE
+    if kind is None and alone:
+        kind = _ERROR_WORDS[tokens[0]]
+    partners: list[str] = []
+    word_kind: str | None = None
+    for t in tokens:
+        if t in _ERROR_WORDS:
+            rest = [x for x in tokens if x != t]
+            for other in others:
+                ot = _name_tokens(other)
+                core = [x for x in ot if x not in _MEAN_WORDS]
+                if ((rest and core == rest) or (not rest and _MEAN_WORDS & set(ot))) and (
+                    other not in partners
+                ):
+                    partners.append(other)
+                    word_kind = word_kind or _ERROR_WORDS[t]
+    return (kind or word_kind), partners
+
+
 def error_kind(name: str, others: list[str]) -> str | None:
     """这一列的名字是不是在说「我是误差量」（`sd` / `sem` / `ci` / `unknown`；不是 = None）。只看列名的**词**（驼峰与非字母数字处切开，
     不做子串匹配：`residue`、`used`、`semester` 不算），宁可认不出、不可认错（认错 = 把一列真的测量值悄悄踢出候选）：
@@ -1623,21 +1653,7 @@ def error_kind(name: str, others: list[str]) -> str | None:
       没有这样的搭档，不算。
 
     这只是名字上的线索：它让规则**不把这一列当测量值去画**，不替用户断定误差线的含义（名字只说 `err` 的记 `unknown`，绝不当成 SD）。"""
-    for word, kind in _ERROR_CJK:
-        if word in name:
-            return kind
-    tokens = _name_tokens(name)
-    if len(tokens) == 1 and tokens[0] in _ERROR_ALONE:
-        return _ERROR_WORDS[tokens[0]]
-    for t in tokens:
-        if t in _ERROR_WORDS:
-            rest = [x for x in tokens if x != t]
-            for other in others:
-                ot = _name_tokens(other)
-                core = [x for x in ot if x not in _MEAN_WORDS]
-                if (rest and core == rest) or (not rest and _MEAN_WORDS & set(ot)):
-                    return _ERROR_WORDS[t]
-    return None
+    return error_match(name, others)[0]
 
 
 def _structure(

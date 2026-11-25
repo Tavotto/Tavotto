@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import {
@@ -30,7 +30,7 @@ import {
 import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { figureMembers, inViewScope, isFigureCard, sourceScriptOf, visibleFigureCards } from '@/lib/figureGroup'
 import { formatCm } from '@/lib/units'
-import { formatOf, nameTail } from '@/lib/assetCardText'
+import { formatOf } from '@/lib/assetCardText'
 import { cn } from '@/lib/utils'
 import { addFigureToLayout, openFastEdit } from '@/store/workspace'
 import { startForeignConvert } from '@/lib/foreignEntry'
@@ -66,7 +66,7 @@ import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
-import { MiddleEllipsis } from '../ui/MiddleEllipsis'
+import { CardMeta, CardPreview } from './assetCardParts'
 import { DrawerHeaderActions } from './DrawerHeader'
 import { ScriptLibrary } from './ScriptLibrary'
 
@@ -1264,80 +1264,6 @@ const CARD_ITEM = 'group relative rounded-lg outline-none focus-visible:focus-ri
  * 底是纸（图本身的白，两套主题同值）；还没有图可画（运行时图没跑过）时里面是界面的说明字，不是图——
  * 底换成界面的 surface-2（与行内缩略格「没图 = surface-2」同一手法），字不落在暗色里也不变的白纸上。
  */
-function CardPreview({ children, empty = false }: { children: ReactNode; empty?: boolean }) {
-  return (
-    <div
-      className={cn(
-        'relative flex aspect-[3/2] items-center justify-center overflow-hidden border-b border-border/55',
-        empty ? 'bg-surface-2' : 'bg-paper',
-      )}
-    >
-      {children}
-    </div>
-  )
-}
-
-/** 元数据行里的一段：纯文字，或带 title（悬停看完整解释）的文字 */
-type MetaPart = string | { text: string; title?: string } | null | undefined
-
-/**
- * 卡片文字区：第一行名字（+ 一个 16px 的标记位），第二行元数据用「·」串起来、
- * 使用次数靠右。两行都是单行截断，长文件名 / 长状态不会把卡片撑高。
- * 名字是正文档（12），元数据 11：主文字与 meta 之间要有 2px 的台阶，不能只靠颜色分层
- * （宪法第六节；左栏审计 L02）。
- */
-function CardMeta({
-  name,
-  selected,
-  marker,
-  parts,
-  used,
-  extra,
-}: {
-  name: string
-  selected: boolean
-  marker?: ReactNode
-  parts: MetaPart[]
-  used: number
-  extra?: ReactNode
-}) {
-  const shown = parts.filter((p): p is Exclude<MetaPart, null | undefined> => p != null)
-  return (
-    <div className="flex flex-col gap-0.5 px-1.5 py-1.5">
-      <p className="flex items-center gap-1 text-sm">
-        <span className={cn('min-w-0 flex-1', selected ? 'font-medium text-ink' : 'text-ink')} title={name}>
-          {/* 截断时保留扩展名和结尾几位（Fig2_corr…ation.pdf）：用户靠结尾的编号与扩展名区分文件 */}
-          <MiddleEllipsis text={name} tail={nameTail(name)} />
-        </span>
-        {marker}
-      </p>
-      <p className={cn('flex items-center gap-1 type-meta tabular-nums', selected && 'text-ink-2')}>
-        {shown.map((part, i) => (
-          <Fragment key={i}>
-            {i > 0 && (
-              <span aria-hidden className="shrink-0">
-                ·
-              </span>
-            )}
-            <span
-              className={cn('truncate', i === 0 ? 'shrink-0' : 'min-w-0')}
-              title={typeof part === 'string' ? undefined : part.title}
-            >
-              {typeof part === 'string' ? part : part.text}
-            </span>
-          </Fragment>
-        ))}
-        {used > 0 && (
-          <span className="ml-auto shrink-0 pl-1" title={ab('cardUsed', { count: used })}>
-            ×{used}
-          </span>
-        )}
-      </p>
-      {extra}
-    </div>
-  )
-}
-
 /** 卡片可达名旁的键位说明（aria-keyshortcuts 的语法：空格分隔的组合键） */
 const CARD_KEYSHORTCUTS = 'Enter Shift+Enter Space'
 

@@ -149,8 +149,8 @@ function DataDrawerBody({ floatInset }: { floatInset: boolean }) {
           if (st.draftActive && !st.drawingId && !sameTable(st.selected, ref)) st.select(ref)
         }}
         onConfirm={() => {
-          // Enter：焦点交给候选网格（方向键移动、Enter 选）；还没有候选就不处理
-          const first = document.querySelector<HTMLElement>('[data-data-draft] [data-candidate]')
+          // Enter：焦点交给主图旁的「创建可编辑图」（再按 Enter 才创建；←→ 在切换排里换预览）；还没有候选就不处理
+          const first = document.querySelector<HTMLElement>('[data-data-draft] [data-candidate-create]')
           if (!first || first.hasAttribute('disabled')) return false
           first.focus()
           return true

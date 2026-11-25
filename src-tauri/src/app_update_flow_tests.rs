@@ -1800,7 +1800,14 @@ async fn trial_stay(frequent_polls: bool) {
     use std::future::{poll_fn, Future};
 
     let pkg = big_pkg();
-    let l = trial_limits(Duration::from_secs(5));
+    // 停滞看门狗不是这条的主语：夹具要扣住尾字节直到试探判完（主体约 wait/2 到、尾字节最早
+    // wait + 2·tick 才放），默认 500 ms 的 stall 只剩约 100 ms 余量，macOS runner 一抖就先判停滞、
+    // 换去镜像（11-24 main 推送红两次、#2154 合并组被踢，日志都是「下载停滞超过 500ms」）。
+    // 放大 stall 不改 tick（生产与夹具都取 min(stall, probe, wait) / 4，由 probe 决定），也不改试探判定。
+    let l = Limits {
+        stall: Duration::from_secs(10),
+        ..trial_limits(Duration::from_secs(5))
+    };
     let first_seen = Arc::new(tokio::sync::Notify::new());
     let finish = Arc::new(tokio::sync::Notify::new());
     let route = Route::TrialStay {
@@ -1833,7 +1840,7 @@ async fn trial_stay(frequent_polls: bool) {
     };
     let (make, ep) = (rig.make(), rig.endpoints());
     let mut downloading = Box::pin(install_pending(&make, &ep, &state, &l, &p, &emit, install));
-    // 与生产看门狗同一个 tick；不改 wait / eta / stall，只控制服务器何时发尾字节。
+    // 与生产看门狗同一个 tick；不改 wait / eta（stall 见上），只控制服务器何时发尾字节。
     let tick = (l.stall.min(l.slow.probe).min(l.trial.wait) / 4)
         .clamp(Duration::from_millis(10), Duration::from_secs(1));
     let mut quiet_pending = None::<(usize, Instant)>;

@@ -1,7 +1,9 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath, URL } from 'node:url'
+import { noCopyleftPalettes } from './scripts/palette-copyleft-path.mjs'
 
 export default defineConfig({
+  plugins: [noCopyleftPalettes()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -11,6 +13,16 @@ export default defineConfig({
       ),
       '@journals': fileURLToPath(
         new URL('../src/tavotto/profiles/journals.json', import.meta.url),
+      ),
+      // Agent 新增对象的字段表（ADR 0208 §五）：唯一出处在 Python 包里，后端 engine/agentobjects.py 读同一份
+      '@agentObjects': fileURLToPath(
+        new URL('../src/tavotto/profiles/agent_objects.json', import.meta.url),
+      ),
+      '@palettes': fileURLToPath(
+        new URL('../src/tavotto/profiles/palettes.json', import.meta.url),
+      ),
+      '@palettesCopyleft': fileURLToPath(
+        new URL('../src/tavotto/profiles/palettes_copyleft.json', import.meta.url),
       ),
       // 与 vite.config.ts 同源：字形覆盖表的判据必须是同一份生成物
       '@glyphcoverage': fileURLToPath(

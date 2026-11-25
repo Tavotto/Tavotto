@@ -154,6 +154,10 @@ METHODS: dict[str, tuple[str, str, str]] = {
     "ecdf": ("coded", "distribution", "经验累积分布"),
     "density": ("coded", "distribution", "核密度"),
     "box_points_single": ("coded", "distribution", "单组箱线 + 原始点"),
+    # 用表里现成的误差列画误差线（不再从原始值汇总；G-053）。写这套用例时它还是 `missing` 的 `errorbar_from_columns`，
+    # 实现后按族落成这两个码——标准答案的含义没变，只是有了名字
+    "points_err": ("coded", "comparison", "每个类别一个点 + 表里现成的误差线"),
+    "line_err": ("coded", "trend", "点 + 连线 + 表里现成的误差线"),
     # legal_uncoded：模板画得出来、规则从不给
     "bar_points": ("legal_uncoded", "comparison", "均值柱 + 原始点"),
     "median_points": ("legal_uncoded", "comparison", "抖动点 + 中位数 / IQR"),
@@ -175,11 +179,6 @@ METHODS: dict[str, tuple[str, str, str]] = {
     "trajectories": ("no_template", "trajectories", "逐个体轨迹 + 汇总线"),
     # missing：规则与模板都没有
     "scatter_identity": ("missing", "relationship", "等比例坐标轴 + y = x 参考线的散点（G-026）"),
-    "errorbar_from_columns": (
-        "missing",
-        "comparison",
-        "用表里现成的误差列画误差线（不再从原始值汇总）",
-    ),
     "logx_with_zero_control": (
         "missing",
         "trend",
@@ -213,6 +212,8 @@ def classify(rec: dict | r.FigureRecipe) -> str | None:
     marks = {ly["mark"] for ly in layers}
     main = [ly["mark"] for ly in layers if ly["role"] == "main"]
     log_x = scale in ("log_x", "log_xy")
+    if d.get("err"):
+        return {"comparison": "points_err", "trend": "line_err"}.get(fam)
     if fam == "comparison":
         if "bar" in main:
             return "bar_points" if marks & {"jitter", "points"} else "bar_error"
@@ -331,8 +332,14 @@ def rules_run(case: dict, root: Path, *, raw: bool = False, ideal_roles: bool = 
         answers=ideal_answers(case, root) if ideal_roles else answers_of(case),
     )
     items = resp.get("items") or []
-    methods = [classify(it["values"]) for it in items]
-    rec = next((classify(it["values"]) for it in items if it.get("recommended")), None)
+
+    def of(it: dict) -> str | None:
+        # 响应里的 `values` 是界面回填用的那几项，不带误差列；误差列在 `error_column`
+        col = it.get("error_column")
+        return classify({**it["values"], **({"err": col} if col else {})})
+
+    methods = [of(it) for it in items]
+    rec = next((of(it) for it in items if it.get("recommended")), None)
     return {
         "kind": resp["kind"],
         "methods": methods,
@@ -517,10 +524,16 @@ def legal_universe(case: dict, root: Path) -> tuple[set[str], dict | None]:
         vname, cname = r.stack_names(stack)
         role.update(x=None, y=[vname], group=cname, facet=None, unit=None)
     out: set[str] = set()
+    # 现成误差列的两种画法不按列角色实例化：哪一列是谁的误差由规则按列名配（`paired_error`），这里直接取规则给出的那份配方
+    by_err = {classify(c.recipe): c.recipe for c in cands.items if c.recipe.err}
     for method, (status, _fam, _t) in METHODS.items():
         if status not in ("coded", "legal_uncoded"):
             continue
-        rec = _shape(entry, method, role)
+        rec = (
+            by_err.get(method)
+            if method in ("points_err", "line_err")
+            else _shape(entry, method, role)
+        )
         if rec is None:
             continue
         if stack:

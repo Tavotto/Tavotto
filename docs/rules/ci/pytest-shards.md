@@ -49,6 +49,17 @@ order: 50
   同一文件两边能差一个数量级（`tests/test_conda_launch_context.py`：Ubuntu 1587 秒、Windows 124 秒、旧表 3.69 秒），
   旧表下 backend-fast 最慢片（第 6 片）实测 54–69 分钟、其余片 30–45 分钟。一张表同时喂 6 片（Ubuntu）和 8 片（Windows / macOS），
   取最大值保证任何一边都不会把某个重文件低估成近似 0。以后重算也要两个 lane 一起量，别再只按一个 OS。
+  **2026-11-24 按同一口径重算**（10 个合并组，旧表 687 个文件、当时 973 个，286 个走默认权重）：留一法模拟最慢片
+  pytest 时间 backend-fast 6 片 p50 53→49、最坏 68→55 分钟；Windows 8 片 p50 58→51 分钟。同时 `weights_from_junit`
+  认收集阶段条目（整模块 importorskip，junit 里 `classname=""`、模块在 `name`），否则 3.10 的 junit 喂不进来。
+  **2026-11-24 起 `backend-fast` 是 12 片**（`--shard=K/12`）：普通 PR 不跑 backend-platforms，PR 的 CI 墙钟就是这条腿；
+  6 片实测 41–58 分钟 / 片（准备约 10 分钟）。同一权重表留一法模拟最慢片 pytest 时间 p50 49→27、最坏 55→28 分钟。
+  合并组里仍被 backend-platforms 的 Windows 腿盖住，按系统拆片数另开 PR。
+  **2026-11-24 起 `backend-platforms` 片数按系统分**：Windows 16、macOS 8，matrix 改成 `include`（每格 `{ os, shard, of }`，
+  命令 `--shard=${{ matrix.shard }}/${{ matrix.of }}`，显示名用 `name:` 保持 `backend-platforms (<os>, <片号>)`）。Windows 8 片每片
+  47–55 分钟、是合并组最长腿，留一法模拟 16 片最慢片 pytest p50 51→28 分钟；macOS 不加：每个合并组已占 11 个 macOS job、
+  4 组并行 44 个，Enterprise macOS 并发上限 50。合同按系统核：片号恰好 1..of、of 等于定好的数（`_EXPECTED_SHARD_COUNTS`）。
+  上面「macOS 与 Windows 共用一个片数」那条从此失效。
   改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`

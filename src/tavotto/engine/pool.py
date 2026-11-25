@@ -1100,6 +1100,7 @@ def recovery_params(exc: "WorkerError") -> dict:
     * `script_needs_arguments`：`argv_count`（用户给了精确 token 才有）+ `parse_kind`（worker 有 argparse 的
       实际证据才有）。数值一律是字符串——那是已发布的线格式。
     * TeX 工具链（`texdiag.ERROR_CODES`）：`command` / `file` / `line`，有才带。
+    * `script_source_missing`：`script`（脚本文件名，不是路径）。
     * 其余码：空（不为凑形状捏造字段）。
     """
     extra = getattr(exc, "extra", None) or {}
@@ -1142,6 +1143,12 @@ def recovery_params(exc: "WorkerError") -> dict:
     if exc.code == figcapture.EXPORT_RASTER_TOO_LARGE_CODE:
         # 宽 / 高 / 上限都是整数事实，没有路径与内容；缺字段（旧 worker 之类）就不捏造
         return {k: int(extra[k]) for k in ("width", "height", "max_pixels") if k in extra}
+    if exc.code == SCRIPT_SOURCE_MISSING_CODE:
+        # 只有脚本的文件名（不是路径）：worker 给的 `self.script.name`，旧 worker 没带就退回报错会话登记的脚本名；
+        # 都没有就不捏造
+        raw = str(extra.get("script") or getattr(exc, "script_name", "") or "")
+        name = raw.replace("\\", "/").rsplit("/", 1)[-1]
+        return {"script": name} if name else {}
     if exc.code == ARGUMENTS_ERROR_CODE:
         params = {}
         if extra.get("argv_count"):
@@ -3998,6 +4005,7 @@ class EngineWorker:
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
+        data_points: list | None = None,
     ) -> dict:
         if expected_execution_id is not None:
             _require_existing_execution(self, expected_execution_id)
@@ -4027,6 +4035,8 @@ class EngineWorker:
                 **({"snapshot_only": True} if snapshot_only else {}),
                 **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
                 **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
+                # ADR 0208 §二：数据点 → 这次导出绘制里的位置；不传就一个字节不多
+                **({"data_points": data_points} if data_points is not None else {}),
             },
             EXPORT_TIMEOUT,
         )
@@ -4912,6 +4922,7 @@ class WorkerdWorker:
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
+        data_points: list | None = None,
     ) -> dict:
         if expected_execution_id is not None:
             _require_existing_execution(self, expected_execution_id)
@@ -4942,6 +4953,8 @@ class WorkerdWorker:
                 **({"snapshot_only": True} if snapshot_only else {}),
                 **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
                 **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
+                # ADR 0208 §二：数据点 → 这次导出绘制里的位置；不传就一个字节不多
+                **({"data_points": data_points} if data_points is not None else {}),
             },
         )
         return _fold_build_timings(resp, build)

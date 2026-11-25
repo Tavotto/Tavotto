@@ -83,6 +83,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.pathignore",
     "tavotto.engine.assetimport",
     "tavotto.engine.notebookscript",
+    # 修改方案（ADR 0206）：码由 `changeplan.ERROR_CODES` 报，app 的 `_change_plan_error` 漏斗转成 JSON
+    "tavotto.engine.changeplan",
 )
 
 
@@ -312,6 +314,8 @@ USER_VISIBLE_CODES = {
     "tex_compile_failed": {"line"},
     "tex_failed": {"error"},
     "script_not_found": {"script"},
+    # 脚本文件在 worker 跑之前就不在了（被移动 / 删除）：文件名来自 `pool.recovery_params`
+    "script_source_missing": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
     "runtime_asset_unknown": {"id"},
@@ -329,6 +333,24 @@ USER_VISIBLE_CODES = {
     "invalid_profile": set(),
     "invalid_only": set(),
     "specfix_native_unsupported": {"product"},
+    # --- ADR 0206 修改方案：码闭集在 `changeplan.ERROR_CODES`，文案按 code 取 ---
+    "invalid_change_plan": set(),
+    "change_plan_no_comments": set(),
+    "change_plan_native_unsupported": {"product"},
+    "change_plan_not_editable": set(),
+    "change_plan_busy": set(),
+    "change_plan_unknown": set(),
+    "change_plan_no_connection": set(),
+    "change_plan_unsupported_connection": set(),
+    "change_plan_model_auth": set(),
+    "change_plan_model_quota": set(),
+    "change_plan_model_timeout": set(),
+    "change_plan_model_failed": set(),
+    "change_plan_too_large": set(),
+    "change_plan_render_failed": set(),
+    "change_plan_figure_changed": set(),
+    "change_plan_empty": set(),
+    "change_plan_failed": set(),
     "invalid_patches": set(),
     "invalid_purpose": {"value"},
     "invalid_width": {"value"},
@@ -397,6 +419,11 @@ USER_VISIBLE_CODES = {
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),
+    "ai_siwc_plan_disabled": set(),
+    "ai_siwc_token_unavailable": set(),
+    "siwc_disabled": set(),
+    "siwc_port_unavailable": set(),
+    "siwc_login_failed": {"reason"},
     "connection_not_found": set(),
     "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
@@ -881,6 +908,7 @@ DATA_ONLY_PARAMS = {
     "eps_annotations_unsupported": {"operation"},
     # `id` 是文件 id，前端据它定位那张图；文案只按 `name`（图名）说话（T-009）
     "export_render_failed": {"id"},
+    "siwc_login_failed": {"reason"},  # 闭集原因码（siwc_login.REASONS），前端按它挑具体文案
 }
 
 

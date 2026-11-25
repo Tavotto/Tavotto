@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react'
+import { Fragment, useRef, type KeyboardEvent, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { useSlidingIndicator } from './slidingIndicator'
 import { Tip } from './Tooltip'
@@ -19,6 +19,11 @@ export interface SegmentedItem<T extends string> {
    */
   disabled?: boolean
   title?: string
+  /**
+   * 给这一格套一层外壳（付费功能的锁 `PremiumLock`：没解锁时整格置灰、悬停一句话、点击不选中）。
+   * 收到的是这一格的按钮，返回包好的元素；不给就是原样。
+   */
+  wrap?: (btn: ReactElement) => ReactElement
 }
 
 interface SegmentedProps<T extends string> {
@@ -28,6 +33,8 @@ interface SegmentedProps<T extends string> {
   className?: string
   /** 整组的可达名（「方向」「作用范围」…）——无名的 radiogroup 说不清在选什么 */
   ariaLabel?: string
+  /** 紧凑变体：矮一点（24）、托盘更淡、字 11——给「视图里的子切换」用，与主切换拉开层级 */
+  compact?: boolean
   /** 落在 radiogroup 根上的稳定锚点（onboarding coachmark / e2e） */
   'data-onboarding-anchor'?: string
   'data-testid'?: string
@@ -60,6 +67,7 @@ export function Segmented<T extends string>({
   items,
   className,
   ariaLabel,
+  compact = false,
   ...rest
 }: SegmentedProps<T>) {
   const rootRef = useRef<HTMLDivElement>(null)
@@ -107,7 +115,8 @@ export function Segmented<T extends string>({
       className={cn(
         // 精密仪器外槽（md 8 = 滑块 sm 6 + 内边距 2，与 OptionGrid 同心圆角法则一致）
         // min-w-fit：整组至少与各档文字一样宽——放进按内容收缩的格子里（设置行的控件格）也不把字挤出去
-        'relative flex h-7 w-full min-w-fit items-stretch rounded-md bg-surface-hover p-0.5',
+        'relative flex w-full min-w-fit items-stretch rounded-md p-0.5',
+        compact ? 'h-6 bg-surface-hover/60' : 'h-7 bg-surface-hover',
         className,
       )}
       {...rest}
@@ -144,7 +153,8 @@ export function Segmented<T extends string>({
               // relative：压在滑动的选中底之上；每格不再自己画 bg-selected
               // flex-auto（起点 = 自己的字宽，再分多出的空间），不用 flex-1（起点 0、硬等分）：等分时最长的一档
               // 被压到与最短的一样窄，「跟随系统」加粗后溢出格子（2026-10-13 用户截图）。图标档同宽，照旧等分
-              'relative flex min-w-7 flex-auto items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
+              'relative flex min-w-7 flex-auto items-center justify-center gap-1 whitespace-nowrap px-2 outline-none',
+              compact ? 'text-xs' : 'text-sm',
               // 每格同形（与滑块同为 sm 档圆角）：此前首尾限定落在滑块上失效，只剩键盘焦点环末格圆角、其余方角
               'rounded-sm',
               'transition-colors duration-fast focus-visible:z-sticky focus-visible:focus-ring',
@@ -161,13 +171,8 @@ export function Segmented<T extends string>({
             {item.label}
           </button>
         )
-        return item.tip ? (
-          <Tip key={item.value} label={item.tip}>
-            {btn}
-          </Tip>
-        ) : (
-          btn
-        )
+        const tipped = item.tip ? <Tip label={item.tip}>{btn}</Tip> : btn
+        return <Fragment key={item.value}>{item.wrap ? item.wrap(tipped) : tipped}</Fragment>
       })}
     </div>
   )

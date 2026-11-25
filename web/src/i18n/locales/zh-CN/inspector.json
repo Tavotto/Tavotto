@@ -408,7 +408,8 @@
       "left": "左轴",
       "right": "右轴",
       "top": "上轴"
-    }
+    },
+    "copyOf": "{{name}} 的副本"
   },
   "enum": {
     "arrowstyle": {
@@ -601,6 +602,7 @@
   },
   "hiddenState": "已隐藏",
   "hide": "隐藏",
+  "deleteCopy": "删除副本",
   "hideElement": "隐藏元素",
   "hideElementTip": "隐藏元素",
   "history": {
@@ -1053,6 +1055,7 @@
     "notOnCanvas": "目标图不在画布上，只能写回原文件（合并基线并自动备份）。想先看效果，先拖进画布。",
     "nothingToSync": "没有可同步的项。",
     "othersGroup_other": "同脚本的其它图（{{count}}）",
+    "skippedCopies_other": "跳过 {{count}} 个图内副本：不跨图同步",
     "skippedPrefix": "跳过",
     "skippedSuffix": "项：版面几何（子图占比 / 图幅）无法跨图搬运",
     "sourceFallback": "源图",

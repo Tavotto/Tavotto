@@ -63,6 +63,17 @@ order: 60
 - **export 的两个可选「保留文字」字段（ADR 0144，加字段协议）**：`svg_fonttype`（`"none"`，仅 `format=svg`）与 `svg_text_path`
   （要带 `svg_path`、不与 `snapshot_only` 同用；应答多 `svg_text` / `svg_text_error`）。只给成品用，path 基准字节与 #1185 等价证人不动；
   旧 worker 静默忽略，父进程只对签名里有这两个参数的 worker 带上，回退为 path 版。看护 `tests/test_worker_svg_pair.py`、`tests/test_export_svg.py`。
+- **export 的 `data_points`（ADR 0208 §二，加字段协议，2026-11-24）**：`[{axes: gid, x, y}]`（数或串，至多
+  `wireproto.MAX_DATA_POINTS` = 256 个；不与 `snapshot_only`、`svg_path` / `svg_text_path` 同用——配对 SVG 的单次绘制与测量钩子叠用没验证过），回包多 `data_points` 与 `draw_manifest`（**这次导出绘制**
+  量出的 manifest，锚点的元素框也取它）。逐点 `{status: "ok", xy: [x, y], in_view}`（图幅分数、top-origin）或
+  `{status: "unresolvable", reason: not_axes | units | out_of_domain | not_finite}`。换算**只用那根轴自己的 `transData`**
+  （`manifest.measure_data_points`，与 `capture_preview_manifest` 同一个渲染器与 `in_frame`），不在外面按 `xlim / xscale`
+  重算；对数 / logit 轴先判定义域。**挂在导出上、不挂在预览上**：tight / constrained 布局下 PNG 预览与 PDF 成品的坐标轴差
+  0.08–0.33 mm（2026-11-24 实测），对齐的真值是成品。状态中立与 export 相同；旧 worker 不认识这个字段、回包没有这个键，
+  调用方据此判「换算不了」。Python 池、workerd、native 三处 `export(..., data_points=)` 只在传了时带上（不传逐字节不变），
+  workerd 原样透传、不改 Rust。看护 `tests/test_export_data_points.py`（`draw_manifest` 对角 + 导出 PDF 栅格化后的红点像素，
+  三种布局 × 有无图幅）、`tests/test_export_data_points_planes.py`（两条控制面真往返 + native 帧）、`tests/test_export_data_points_truth.py`
+  （真池子：换算点 = 导出 PDF 里实画的点；这次导出 = 脚本自己存的磁盘原件——没改动的子图合成时用它；重复导出稳定；带改动时同样成立）。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
   必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，

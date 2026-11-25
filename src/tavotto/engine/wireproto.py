@@ -26,6 +26,7 @@ bridge 加一个字段」之后分叉，而分叉的表现是 supervisor 的账�
 from __future__ import annotations
 
 import collections
+import math
 import sys
 import traceback
 from pathlib import Path
@@ -416,6 +417,16 @@ class V1Handler:
         with_manifest = payload.get("with_manifest", False)
         if not isinstance(with_manifest, bool):
             raise ProtocolError("bad_request", "payload.with_manifest 必须是布尔值")
+        # 可选（ADR 0208 §二，加字段不升版）：export 顺带把数据点换算成这次导出绘制里的位置。
+        # 旧 worker 不认识这个字段、回包里就没有 `data_points`——调用方据此判「换算不了」，不在外面重算。
+        data_points = payload.get("data_points") if cmd == "export" else None
+        if data_points is not None:
+            data_points = _data_point_requests(data_points, snapshot_only)
+            if payload.get("svg_path") is not None or payload.get("svg_text_path") is not None:
+                # 配对 SVG 的单次绘制（teedraw）与测量钩子叠在一起没验证过：不放行，不猜
+                raise ProtocolError(
+                    "bad_request", "payload.data_points 不与 svg_path / svg_text_path 同用"
+                )
 
         try:
             if cmd == "render":
@@ -442,6 +453,7 @@ class V1Handler:
                     **({"snapshot_only": True} if snapshot_only else {}),
                     **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
                     **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
+                    **({"data_points": data_points} if data_points is not None else {}),
                 )
         except ProtocolError:
             raise
@@ -491,6 +503,42 @@ class V1Handler:
             else "没见过这个 request_id（可能已被淘汰出最近记录，或从未到达）"
         )
         return {"note": note, "cancelled": False, "seen": seen}
+
+
+#: `export.data_points` 一次最多几个点（ADR 0208 §二；Agent 一次标注用不了这么多）。
+MAX_DATA_POINTS = 256
+
+
+def _data_point_requests(raw: object, snapshot_only: bool) -> list[dict]:
+    """`payload.data_points` 的形状校验：`[{"axes": gid, "x": 数或串, "y": 数或串}]`，至多
+    `MAX_DATA_POINTS` 个，不与 `snapshot_only` 同用。不合格一律 bad_request，不截断。"""
+    if snapshot_only:
+        raise ProtocolError("bad_request", "payload.data_points 不与 snapshot_only 同用")
+    if not isinstance(raw, list) or len(raw) > MAX_DATA_POINTS:
+        raise ProtocolError(
+            "bad_request", f"payload.data_points 必须是至多 {MAX_DATA_POINTS} 项的数组"
+        )
+    out = []
+    for item in raw:
+        ok = (
+            isinstance(item, dict)
+            and set(item) == {"axes", "x", "y"}
+            and isinstance(item["axes"], str)
+            and item["axes"]
+            and all(_coordinate_ok(item[k]) for k in ("x", "y"))
+        )
+        if not ok:
+            raise ProtocolError("bad_request", "payload.data_points 的每一项要是 {axes, x, y}")
+        out.append({"axes": item["axes"], "x": item["x"], "y": item["y"]})
+    return out
+
+
+def _coordinate_ok(v: object) -> bool:
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, (int, float)):
+        return math.isfinite(v)
+    return isinstance(v, str) and 0 < len(v) <= 200
 
 
 def respond(handler: V1Handler, req: object, legacy=None) -> dict:

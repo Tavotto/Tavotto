@@ -1572,6 +1572,21 @@ export function resolveEffort(
   return list[0]
 }
 
+/**
+ * 输入框此刻选的那条连接 + 型号 + 推理强度（与 `dispatch` 同一口径）：修改方案的结构化调用要用同一条（ADR 0206）。
+ * 没有连接视图（老后端 / 还没探测到）= 空，后端按旧的挑法。
+ */
+export function currentRunSelection(): { connection?: string; model?: string; effort?: string } {
+  const st = useAiStore.getState()
+  const caps = st.caps
+  const conn = hasConnectionView(caps) ? effectiveConnection(st.connection, caps) : null
+  if (!conn) return {}
+  const info = connectionInfo(conn)
+  const model = st.models[conn.id] ?? info?.default_model ?? null
+  const effort = effortsForModel(info, model).length ? resolveEffort(info, model, st.efforts[conn.id]) || null : null
+  return { connection: conn.id, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+}
+
 /** 一次发送（新发或同 id 重发）：只回 `accepted` / `unconfirmed`，后端明确拒绝时抛 */
 async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }

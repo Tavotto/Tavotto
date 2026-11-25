@@ -1,5 +1,5 @@
 import type { ChartSourceRef, PanelObject } from '@/types/document'
-import type { DocumentFormat, PersistedProjectDocument } from './documentFormat'
+import type { PersistedProjectDocument } from './documentFormat'
 import { sameRules } from './specBinding'
 
 export interface ChartSourceReceipt {
@@ -11,7 +11,6 @@ export interface ChartSourceReceipt {
 }
 
 export interface ChartSourceSaveScope {
-  format: DocumentFormat
   pj: string | null
   documentId: string
   loadSeq: number
@@ -83,11 +82,11 @@ export function planSavedChartSources(
   rawReceipts: unknown,
 ): ChartSourceMergePlan {
   if (rawReceipts === undefined) return { status: 'absent', updates: [] }
-  if (currentScope.format !== context.format || currentScope.pj !== context.pj
+  if (currentScope.pj !== context.pj
     || currentScope.documentId !== context.documentId || currentScope.loadSeq !== context.loadSeq) {
     return { status: 'stale', updates: [] }
   }
-  if (context.format !== 'v4' || context.document.schema !== 4 || currentDocument.schema !== 4) return { status: 'invalid', updates: [] }
+  if (context.document.schema !== 4 || currentDocument.schema !== 4) return { status: 'invalid', updates: [] }
   const receipts = parseReceipts(rawReceipts)
   if (!receipts) return { status: 'invalid', updates: [] }
   const updates: ChartSourceUpdate[] = []

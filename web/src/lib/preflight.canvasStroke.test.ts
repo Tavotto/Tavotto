@@ -1,0 +1,55 @@
+import { describe, expect, it } from 'vitest'
+import type { CanvasObject } from '@/types/document'
+import { CANVAS_STROKE_TYPES, canvasStrokePt } from './preflight'
+
+/** ADR 0208 §四 第 7 条：画布上的箭头 / 形状 / 路径「都管」——这里只看「画得出的描边有多宽」这一步 */
+const base = { id: 'o1', x: 0, y: 0, w: 10, h: 10 }
+const obj = (o: Record<string, unknown>) => ({ ...base, ...o }) as unknown as CanvasObject
+
+describe('canvasStrokePt', () => {
+  it('箭头总有描边', () => {
+    expect(canvasStrokePt(obj({ type: 'arrow', strokePt: 0.3, color: '#000' }))).toBe(0.3)
+  })
+
+  it('形状关了边框就没有描边；只有描边的形状（直线）关不掉', () => {
+    expect(canvasStrokePt(obj({ type: 'shape', shape: 'rect', strokePt: 0.3, stroke: false }))).toBeUndefined()
+    expect(canvasStrokePt(obj({ type: 'shape', shape: 'rect', strokePt: 0.3 }))).toBe(0.3)
+    expect(canvasStrokePt(obj({ type: 'shape', shape: 'line', strokePt: 0.3, stroke: false }))).toBe(0.3)
+  })
+
+  it('路径按 readPath 的 strokeOn', () => {
+    const p = { type: 'path', subpaths: [], strokePt: 0.2, color: '#000', fill: null }
+    expect(canvasStrokePt(obj(p))).toBe(0.2)
+    expect(canvasStrokePt(obj({ ...p, stroke: false }))).toBeUndefined()
+  })
+
+  it('描边全透明、线宽不是正数都当没有描边', () => {
+    expect(canvasStrokePt(obj({ type: 'arrow', strokePt: 0.3, strokeOpacity: 0 }))).toBeUndefined()
+    expect(canvasStrokePt(obj({ type: 'arrow', strokePt: 0 }))).toBeUndefined()
+    expect(canvasStrokePt(obj({ type: 'arrow', strokePt: Number.NaN }))).toBeUndefined()
+  })
+
+  it('SVG 导入的纯填充形状没有描边（svgimport 写 stroke: false），不会被误报成「线条太细」', () => {
+    // 形状取自 rendercore.svgimport.import_svg 对 <rect fill="#f00"/> 的真实产出
+    const imported = { type: 'path', subpaths: [], strokePt: 1, stroke: false, fill: '#ff0000', color: '#000000' }
+    expect(canvasStrokePt(obj(imported))).toBeUndefined()
+  })
+
+  it('描边渐变的色标全透明：画出来是透明的，不算有描边（Codex #2195）', () => {
+    const stops = (a: number, b: number) => [
+      { offset: 0, color: '#000000', opacity: a },
+      { offset: 1, color: '#ffffff', opacity: b },
+    ]
+    const shape = { type: 'shape', shape: 'rect', strokePt: 0.3 }
+    const lin = (a: number, b: number) => ({ kind: 'linear', stops: stops(a, b), from: [0, 0.5], to: [1, 0.5] })
+    expect(canvasStrokePt(obj({ ...shape, strokeGradient: lin(0, 0) }))).toBeUndefined()
+    expect(canvasStrokePt(obj({ ...shape, strokeGradient: lin(0, 0.5) }))).toBe(0.3)
+    const path = { type: 'path', subpaths: [], strokePt: 0.2, color: '#000', fill: null }
+    expect(canvasStrokePt(obj({ ...path, strokeGradient: lin(0, 0) }))).toBeUndefined()
+  })
+
+  it('文字与面板不判', () => {
+    expect(canvasStrokePt(obj({ type: 'text', text: 'a', sizePt: 8 }))).toBeUndefined()
+    expect(CANVAS_STROKE_TYPES).toEqual(['arrow', 'shape', 'path'])
+  })
+})

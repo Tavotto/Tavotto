@@ -24,7 +24,7 @@ import re
 from decimal import ROUND_HALF_UP, Decimal
 
 from .. import glyphplan
-from . import profiles as profiles_mod
+from . import interference as interference_mod, profiles as profiles_mod
 
 SPEC_DOC = """
 figure spec（两侧同源的规范化输入）：
@@ -50,7 +50,8 @@ figure spec（两侧同源的规范化输入）：
                "source_font_missing": {"family": str, "reason": str},  # 原图字体此刻用不了（缺席 = 能用 / 没有）
                "source_font_in_use": bool,  # 文字由原图字体（本机用户脸）排：批准字体的覆盖表不适用，字形缺失以导出的 glyph_missing 为准
                "rect_mm": [x,y,w,h], "hidden": bool}],
-  "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
+  "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool,
+               "stroke_pt": float}]   # 只有画得出描边的箭头 / 形状 / 路径才带（缺席 = 没有描边，ADR 0208）
 }
 """
 
@@ -1232,6 +1233,36 @@ def _canvas_coverage() -> glyphplan.Coverage:
     return _COVERAGE
 
 
+#: 画布上判线宽下限的对象类型（ADR 0208 §四 第 7 条：所有画布上的箭头 / 形状 / 路径都管，
+#: 包括用户自己画的）。严格同源对：`preflight.ts` 的 `CANVAS_STROKE_TYPES`。
+CANVAS_STROKE_TYPES = ("arrow", "shape", "path")
+
+
+def _check_canvas_strokes(spec: dict, profile: dict, sink: _Sink) -> None:
+    """画布对象的描边 < 期刊线宽下限（`min_line_width_pt`）→ `line-width-below-min`。
+
+    与数据线同一条检查（期刊的最小线宽不分是谁画的），严重级别与期刊抬级照旧；文案另一句。
+    画布对象的 `stroke_pt` 已是页面上的绝对 pt（拖图时标注的线宽已按比例写回），不再乘缩放。
+    `stroke_pt` 缺席 = 这个对象没有画得出的描边（关了描边 / 描边全透明），不判；等于下限不报。"""
+    min_lw = _num(profile.get("min_line_width_pt")) or 0.0
+    if min_lw <= 0:
+        return
+    for o in spec.get("objects") or []:
+        if o.get("hidden") or o.get("type") not in CANVAS_STROKE_TYPES:
+            continue
+        lw = _num(o.get("stroke_pt"))
+        if lw is None or lw <= 0 or lw >= min_lw - 1e-9:
+            continue
+        sink.add(
+            "line-width-below-min",
+            f"画布上的线条线宽 {lw:.2f}pt，规范要求至少 {min_lw:g}pt",
+            message=("canvasLineWidthBelowMin", {"effective": f"{lw:.2f}", "min": f"{min_lw:g}"}),
+            object_ids=[o.get("id", "")],
+            detail={"effective_pt": _r2(lw)},
+            worse=min_lw - lw,
+        )
+
+
 def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
     strict = _num_or(
         profile.get("min_effective_font_size_pt"), profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
@@ -1493,6 +1524,104 @@ def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
         )
 
 
+#: 干涉检测（V-011）折进预检时，「确定」压住数据的图例永远排在「只是风险」前面：排名 = 命中数 + 这个数。
+#: 聚合项只留最糟那次的文案与 detail，不加这一档的话 3 个风险目标会压过 1 个确定目标，聚合项就说成「可能」。
+#: 与 `web/src/lib/interference.ts` 的 `CERTAIN_RANK` 同值（golden `interference-*` 看护）。
+INTERFERENCE_CERTAIN_RANK = 1_000_000
+
+
+def _check_panel_interference(panel: dict, profile: dict, sink: _Sink) -> None:
+    """V-011：真实渲染几何上的干涉（文字互相重叠 / 文字压到别的子图 / 图例压住数据）接进常规预检。
+
+    判据只有 `engine/interference.detect` 一份（MCP 与保留式规范化逐对用的也是它），这里只把它
+    逐对的结果折进 `_Sink`：
+
+    * `text-overlap`：两段文字都是主语（gids 两个）；排名 = 重叠面积。
+    * `text-over-axes`：主语是那段伸出去的文字，被压的子图写进 `detail.against`；排名 = 面积。
+    * `legend-over-data`：主语是图例，被压的数据在 `detail.targets`；「确定 / 风险」原样保留
+      （`detail.certain`、两种文案），排名让确定的恒大于风险。
+
+    文案不带 gid（问题行的主语已经是那个元素，界面不出现内部标识）；毫米数沿用 `detect` 自己
+    格式化好的那两个参数。与 `preflight.ts` 的 `checkPanelInterference` 逐条同源。
+    """
+    manifest = panel.get("manifest")
+    if not isinstance(manifest, dict):
+        return
+    pid = panel.get("id", "")
+    # 只把**会改变结果**的那几对交给 `_Sink`：带来新主语、让某个主语或这一面板更糟的。其余各对在 `_Sink`
+    # 里本来就是空操作（主语已在、排名不更大），跳过它们结论逐字不变——几十段文字压成一团时（每面板几百对）
+    # 每对一次 `add` 是这条检查的大头。与 `preflight.ts` 的 `checkPanelInterference` 同一规则。
+    seen: dict[tuple[str, str], float] = {}
+    top: dict[str, float] = {}
+
+    def changes(cid: str, subjects: list[str], worse: float) -> bool:
+        hit = False
+        for g in subjects:
+            prev = seen.get((cid, g))
+            if prev is None or worse > prev:
+                seen[(cid, g)] = worse
+                hit = True
+        if cid not in top or worse > top[cid]:
+            top[cid] = worse
+            hit = True
+        return hit
+
+    def keep(cid: str, a: str, b: str, area: float) -> bool:
+        # 文字重叠两段文字都是主语；压到别的子图只有那段文字（b 是被压的子图）
+        subjects = [a, b] if cid == interference_mod.CHECK_TEXT_OVERLAP else [a]
+        return changes(cid, subjects, area)
+
+    for it in interference_mod.detect(manifest, profile, panel_id=pid, keep=keep):
+        cid = it["id"]
+        gids = list(it.get("gids") or [])
+        detail = dict(it.get("detail") or {})
+        params = (it.get("message") or {}).get("params") or {}
+        if cid == interference_mod.CHECK_LEGEND_OVER_DATA:
+            rank = len(detail.get("targets") or []) + (
+                INTERFERENCE_CERTAIN_RANK if detail.get("certain") else 0
+            )
+            if not changes(cid, gids[:1], rank):
+                continue
+        else:
+            rank = _num_or(detail.get("overlap_mm2"), 0.0)
+        if cid == interference_mod.CHECK_TEXT_OVERLAP:
+            sink.add(
+                "text-overlap",
+                it["text"],
+                message=("interferenceTextOverlap", {"w": params.get("w"), "h": params.get("h")}),
+                object_ids=[pid],
+                gids=gids,
+                detail=detail,
+                worse=rank,
+            )
+        elif cid == interference_mod.CHECK_TEXT_OVER_AXES:
+            detail["against"] = gids[1] if len(gids) > 1 else ""
+            sink.add(
+                "text-over-axes",
+                it["text"],
+                message=("interferenceTextOverAxes", {"w": params.get("w"), "h": params.get("h")}),
+                object_ids=[pid],
+                gids=gids[:1],
+                detail=detail,
+                worse=rank,
+            )
+        elif cid == interference_mod.CHECK_LEGEND_OVER_DATA:
+            certain = bool(detail.get("certain"))
+            count = len(detail.get("targets") or [])
+            sink.add(
+                "legend-over-data",
+                it["text"],
+                message=(
+                    "interferenceLegendOverData" if certain else "interferenceLegendOverDataRisk",
+                    {"count": count},
+                ),
+                object_ids=[pid],
+                gids=gids[:1],
+                detail=detail,
+                worse=rank,
+            )
+
+
 def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     sink.add(
         "panel-text-not-verifiable",
@@ -1502,8 +1631,15 @@ def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     )
 
 
-def run(spec: dict, profile: dict) -> list[dict]:
-    """跑一遍预检，返回问题清单（顺序即报告顺序）。"""
+def run(spec: dict, profile: dict, *, with_interference: bool = False) -> list[dict]:
+    """跑一遍预检，返回问题清单（顺序即报告顺序）。
+
+    `with_interference=True`：把干涉检测（V-011）折进聚合清单——与画布 / 导出对话框的 TS 求值器
+    （`preflight.ts` 的 `runSpec`，那一侧恒开）同一份输出，golden 对拍按 True 生成。**默认关**：Python 这边的
+    生产调用方（保留式规范化 / 按规范修图的事务、改图验收、MCP 桥）都已经逐对调 `interference.detect`，
+    它们按 `(规则, gid)` 配对前后两份清单，聚合项混进来会把同一次碰撞报两遍、还会被当成新增的确定性干涉挡掉
+    事务；而**已经发出去的插件**的桥调的是不带参数的 `run()`（插件只设引擎下限），默认开着它们改不到。
+    """
     sink = _Sink(profile)
     _check_page(spec, profile, sink)
     for panel in spec.get("panels") or []:
@@ -1518,7 +1654,10 @@ def run(spec: dict, profile: dict) -> list[dict]:
             _check_panel_fonts(panel, profile, sink)
             _check_panel_axes(panel, profile, sink)
             _check_panel_clipping(panel, sink)
+            if with_interference:
+                _check_panel_interference(panel, profile, sink)
     _check_texts(spec, profile, sink)
+    _check_canvas_strokes(spec, profile, sink)
     _check_geometry(spec, sink)
     return sink.result()
 

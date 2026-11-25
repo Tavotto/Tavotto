@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「画布对象的右键菜单（2026-09-02，ADR 0037）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`canvas/objectContextMenu.test.tsx`、`store/quickEditActions.test.ts`、`components/inspector/syncOverrides.test.tsx`、`components/inspector/writeBackRecords.test.tsx`、`e2e/sync-overrides.spec.ts`、`e2e/quick-menu.spec.ts`、`tests/test_engine_invalidate.py`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`canvas/objectContextMenu.test.tsx`、`lib/figureTextClipboard.test.tsx`（元素弹层四项）、`store/quickEditActions.test.ts`、`components/inspector/syncOverrides.test.tsx`、`components/inspector/writeBackRecords.test.tsx`、`e2e/sync-overrides.spec.ts`、`e2e/quick-menu.spec.ts`、`tests/test_engine_invalidate.py`
 
 <!-- agents-route
 sheet: web/AGENTS.md
@@ -45,10 +45,20 @@ order: 130
   兄弟图」时摆（不做 disabled）；点它只调 `openSyncOverrides`，窗口是画布舞台上常驻的 `SyncOverridesHost`。
   目标图不在画布上时「同步并写回」走标准 `WriteBackDialog`（`detached`），不许在这里再长出第二条写回路径。
 * 不可用的项用 `MenuItem.reason` 常驻原因，不用 tooltip（禁用项收不到指针）。
-* **图内元素弹层的「复制为标注 ⌘C」「粘贴为标注 ⌘V」**（ADR 0163）：加在元素弹层（`QuickEdit.ElementQuick`，`MenuButton` 形状的项，
-  `data-quick-item="copy-as-annotation" / "paste-as-annotation"`）里，其余项不变。复制只对文字元素可点（`isCopyableText`，曲线 / 色块 / 刻度组置灰）；
-  粘贴与对象菜单同一判据 `canPasteFromMenu`（读不了的引擎上不摆，用 ⌘V），已授予读权限且剪贴板里没有本工具的对象时置灰（`peekClipboardHasObjects`，
-  不为置灰去弹权限窗）。看护 `lib/figureTextClipboard.test.tsx`。
+* **图内元素弹层的「选中全部同类（N 个）」**（ADR 0037 2026-11-23 修订节）：分隔线下第一项（`data-quick-item="select-same-kind"`），
+  同一张图里同 `role`、能进多选的元素一次选中，右键的那个排最后（主选），并切到「属性」页签。判据只在 `lib/elementGeom.sameKindGids` /
+  `isMultiSelectable`（与框选同一份）；只有它自己或这一类已全选时不出现，不做置灰。看护 `canvas/objectContextMenu.test.tsx`、`e2e/select-same-kind.spec.ts`。
+* **图内元素弹层的「复制 ⌘C」「粘贴 ⌘V」「创建副本 ⌘D」「粘贴为标注」**（ADR 0163 + 0207，取代 0163 的「复制为标注」「粘贴为标注 ⌘V」）：加在元素弹层
+  （`QuickEdit.ElementQuick`，`MenuButton` 形状的项，`data-quick-item="copy" / "paste" / "duplicate" / "paste-as-annotation"`；元素弹层与对象右键菜单不会同时开着，
+  所以沿用对象菜单同名的 `copy` / `paste` / `duplicate` 锚点）里，其余项不变。键位一律 `keyOf`，「粘贴为标注」没有快捷键。
+  「复制」写的负载同 ⌘C（标注 + 图内副本两种落法），只对文字元素可点（`isCopyableText`，曲线 / 色块 / 刻度组置灰）；
+  「创建副本」只对第一期能当副本的文字可点（`isDuplicableElement`，且要权威 manifest；不满足时**置灰**，与「复制」同组、位置不跳）；
+  「粘贴」同图图内编辑里 = 建图内副本、别处 = 落成标注（分派在 `consumePayload`），「粘贴为标注」强制落成标注（`pasteObjects({ asAnnotation })`）。
+  两项粘贴与对象菜单同一判据 `canPasteFromMenu`（读不了的引擎上不摆，用 ⌘V），已授予读权限且剪贴板里没有本工具的对象时置灰（`peekClipboardHasObjects`，
+  不为置灰去弹权限窗）。**副本上的弹层**：「隐藏此元素」换成「删除副本」（`data-quick-item="delete-copy"`，摘掉 `copy_of` 与全部修改，一次提交），
+  「恢复此元素修改」只清 `copy_of` 以外的、计数不数 `copy_of`（属性页身份头的恢复菜单与「⋯」同口径）。看护 `lib/figureTextClipboard.test.tsx`、`canvas/objectContextMenu.test.tsx`。
+* **同步窗口的跳过计数**：后端给每条被跳过的副本相关修改带 `skip_reason: "copy_not_synced"`（ADR 0207），`SyncOverridesDialog` 据此**按副本个数**单独成一行
+  （「跳过 N 个图内副本：不跨图同步」，`data-sync-skipped-copies`），不混进「版面几何无法跨图搬运」那句（那句只数没有原因码的）。看护 `components/inspector/syncOverrides.test.tsx`。
 * **剪贴板组**（2026-10-07 设计审计 §10.1）：公共尾巴的第一组是「复制 / 粘贴 / 创建副本」（`data-quick-item="copy" / "paste" /
   "duplicate"`）。复制 / 粘贴调属性页按钮那一对 `copySelectedObjects` / `pasteObjects`（菜单点击是用户手势）；
   菜单没有原生 paste 事件可接，粘贴只能走异步 `readText`——WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有，

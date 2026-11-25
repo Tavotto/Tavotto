@@ -1,13 +1,15 @@
-import { Fragment, useSyncExternalStore } from 'react'
+import { Fragment, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChartLine, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
+import { ChartLine, FacetStar, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { PRO_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { RAIL_ICON_ONLY, RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { useHasDataFiles } from '@/components/datastudio/useHasDataFiles'
 import { useTafFlagStore } from '@/store/tafFlagStore'
+import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
 import { Tip } from '../ui/Tooltip'
 
 /**
@@ -78,6 +80,11 @@ export function LeftRail() {
   const showData = taf && (tab === 'data' || hasData)
   // 「数据」是正式的轨道项（`LeftTab` 'data'，走 `railClick`），挨在「素材」后面；开关关着 / 没有数据文件时不在 `items` 里
   const items = showData ? [...ITEMS.slice(0, 2), { id: 'data' as LeftTab, icon: ChartLine }, ...ITEMS.slice(2)] : ITEMS
+  // 高级版入口：授权能力开着才有；没问过时顺手问一次（本机读取，不联网）
+  const proVisible = useLicenseStore((s) => licenseVisible(s.status))
+  useEffect(() => {
+    if (useLicenseStore.getState().status === null) void useLicenseStore.getState().load()
+  }, [])
   const blocking = useValidationStore((s) => s.issues.reduce((n, i) => n + (i.severity === 'error' ? 1 : 0), 0))
 
   return (
@@ -147,12 +154,30 @@ export function LeftRail() {
       {/* 设置开的是对话框不是抽屉，所以不进 ITEMS，也不参与「再点一次收起」那套语义。
           `data-rail` 照给：e2e 与焦点救援按它找，不退回按 `aria-label` 的中文文案。
           分区之间只靠留白（`mt-auto` 把它推到底），不画分隔线（左栏审计 L17） */}
+      {/* 高级版：授权入口开着（`PRODUCTION_LIVE` / 测试端点）才出现；开的是对话框，与设置同一类，不进 ITEMS */}
+      {proVisible && (
+        <Tip label={t('rail.pro', { pro: PRO_NAME })} side="right">
+          <button
+            data-rail="pro"
+            onClick={() => useUiStore.getState().setProOpen(true)}
+            aria-label={t('rail.pro', { pro: PRO_NAME })}
+            className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
+          >
+            <FacetStar size={ICON_SIZE.md} />
+            {!iconOnly && (
+              <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+                {t('rail.short.pro', { pro: PRO_NAME })}
+              </span>
+            )}
+          </button>
+        </Tip>
+      )}
       <Tip label={t('rail.settings')} side="right">
         <button
           data-rail="settings"
           onClick={() => useUiStore.getState().setSettingsOpen(true)}
           aria-label={t('rail.settings')}
-          className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
+          className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, !proVisible && 'mt-auto')}
         >
           <Settings size={ICON_SIZE.md} />
           {!iconOnly && (
