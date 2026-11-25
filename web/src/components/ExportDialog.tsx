@@ -48,6 +48,7 @@ import {
   FileExclamationPoint,
   ImageOff,
   Info,
+  OctagonAlert,
   RefreshCw,
   TriangleAlert,
   X,
@@ -3566,8 +3567,9 @@ function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
           data-inspection="failed"
           className="flex items-start gap-1 text-sm text-danger-content"
         >
+          {/* 形状也分等级（`lib/validationText` 的 SEVERITY_ICON：要改 = 八角、需留意 = 三角），不只靠颜色 */}
           <IconSlot>
-            <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+            <OctagonAlert size={ICON_SIZE.xs} aria-hidden />
           </IconSlot>
           {ex("inspection.failedItems", {
             items: state.failed.map((k) => ex(`inspection.check.${k}`, { defaultValue: k })).join("、"),

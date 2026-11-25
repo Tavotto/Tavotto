@@ -1649,7 +1649,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     await click(button('开始导出')!)
     const result = document.body.querySelector('[data-export-result]')
     expect(result, '有留意的结果必须留在对话框里').not.toBeNull()
-    expect(result?.textContent).toContain('1 个文件有要留意的地方，见详情')
+    expect(result?.textContent).toContain('1 个文件有需留意的地方，见详情')
     await openResultDetail()
     const lines = [...document.body.querySelectorAll<HTMLElement>('[data-inspection-advisory]')]
     // 不认识的码不画（老前端 + 新服务端）

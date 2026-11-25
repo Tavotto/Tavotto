@@ -171,7 +171,7 @@
     "contentEach": "每张图单独导出",
     "exportedCount_other": "已导出 {{count}} 个文件",
     "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
-    "resultAdvisories_other": "{{count}} 个文件有要留意的地方，见详情",
+    "resultAdvisories_other": "{{count}} 个文件有需留意的地方，见详情",
     "resultScriptSkipped_other": "{{count}} 处修改未写入 .py",
     "resultWarnings_other": "有 {{count}} 条提示，见详情",
     "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
@@ -311,8 +311,8 @@
     "inspection": {
       "failedItems": "核验未通过：{{items}}",
       "advisory": {
-        "type3_fonts": "留意：用了 Type 3 字体（{{fonts}}），IEEE、Elsevier 等期刊会退回。有脚本的图用脚本重画就不再有 Type 3。",
-        "scripted_raster": "留意：{{panels}} 是整张位图嵌进来的。它有脚本，可以重画成矢量。"
+        "type3_fonts": "需留意：用了 Type 3 字体（{{fonts}}），IEEE、Elsevier 等期刊会退回。有脚本的图用脚本重画就不再有 Type 3。",
+        "scripted_raster": "需留意：{{panels}} 是整张位图嵌进来的。它有脚本，可以重画成矢量。"
       },
       "check": {
         "integrity": "完整性",

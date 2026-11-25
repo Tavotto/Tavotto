@@ -174,8 +174,8 @@
     "exportedCount_other": "Exported {{count}} files",
     "resultInspectionFailed_one": "{{count}} file failed its check; see details",
     "resultInspectionFailed_other": "{{count}} files failed their checks; see details",
-    "resultAdvisories_one": "{{count}} file has something to watch for; see details",
-    "resultAdvisories_other": "{{count}} files have something to watch for; see details",
+    "resultAdvisories_one": "{{count}} file has something to review; see details",
+    "resultAdvisories_other": "{{count}} files have something to review; see details",
     "resultScriptSkipped_one": "{{count}} edit not in the .py",
     "resultScriptSkipped_other": "{{count}} edits not in the .py",
     "resultWarnings_one": "{{count}} note; see details",
@@ -323,8 +323,8 @@
     "inspection": {
       "failedItems": "Check failed: {{items}}",
       "advisory": {
-        "type3_fonts": "Watch for: uses Type 3 fonts ({{fonts}}), which journals such as IEEE and Elsevier send back. Redrawing a scripted figure from its script removes them.",
-        "scripted_raster": "Watch for: {{panels}} is embedded as a whole bitmap. It has a script, so it can be redrawn as vectors."
+        "type3_fonts": "To review: uses Type 3 fonts ({{fonts}}), which journals such as IEEE and Elsevier send back. Redrawing a scripted figure from its script removes them.",
+        "scripted_raster": "To review: {{panels}} is embedded as a whole bitmap. It has a script, so it can be redrawn as vectors."
       },
       "check": {
         "integrity": "integrity",
