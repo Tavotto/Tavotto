@@ -12013,10 +12013,10 @@ def api_change_plans_create():
     if script_mode and (source != "assistant" or "connection" not in selection):
         # 脚本修改只接助手来源（审阅意见是外来文本，不直接驱动改脚本）；要明确的连接（决定 Agent 走哪条路由）
         return _change_plan_error("invalid_change_plan")
-    if not script_mode:
-        failure = engine_changeplan.connection_failure(selection)
-        if failure is not None:
-            return _change_plan_error(failure)
+    # 连接预检图内方案与脚本方案同一个：连接用不了（没连上 / 不支持）两条都走不通，回同一组稳定码，前端据此直接落回旧路径
+    failure = engine_changeplan.connection_failure(selection)
+    if failure is not None:
+        return _change_plan_error(failure)
     ctx = current_ctx()
     try:
         task, created = engine_changeplan.begin(ctx.id, rel_id, rid)

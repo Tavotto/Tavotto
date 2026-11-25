@@ -186,6 +186,43 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
   })
 })
 
+describe('连接用不了：脚本方案同样走不通，直接落回旧路径', () => {
+  it.each(['change_plan_no_connection', 'change_plan_unsupported_connection'])('同步被拒（%s）：只发一次方案请求，不再发脚本方案', async (code) => {
+    createChangePlan.mockRejectedValue(new EngineError('x', '', code, ''))
+    expect(await ask()).toBe('fallthrough')
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(createChangePlan.mock.calls[0][0].mode).toBeUndefined()
+    expect(cps().order).toEqual([])
+  })
+
+  it('其它不适用码（太长）：才再试一次脚本方案', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_too_large', '')).mockResolvedValue({ plan_id: 'p2', state: 'running' })
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    const key = await ask()
+    expect(typeof key).toBe('string')
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+    expect(createChangePlan.mock.calls[1][0]).toMatchObject({ mode: 'script' })
+  })
+
+  it('线程里才判出连接不支持（轮询 failed）：直接改脚本，不发脚本方案请求', async () => {
+    getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code: 'change_plan_unsupported_connection' })
+    const key = (await ask()) as string
+    await tick()
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(start).toHaveBeenCalledOnce()
+    expect(cps().entries[key].status).toBe('handoff')
+  })
+
+  it('脚本方案自己在线程里被拒：直接改脚本，不循环再发脚本方案', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_too_large', '')).mockResolvedValue({ plan_id: 'p2', state: 'running' })
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'failed', code: 'change_plan_native_unsupported' })
+    await ask()
+    await tick()
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+    expect(start).toHaveBeenCalledOnce()
+  })
+})
+
 describe('整条指令都要改脚本', () => {
   it('自动续走现有改脚本路径：用发送那一刻的快照，卡只剩一行灰字', async () => {
     getChangePlan.mockResolvedValue(ready(onlyScript, { code: 'change_plan_empty' }))

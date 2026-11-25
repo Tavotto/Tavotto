@@ -107,6 +107,15 @@ export interface ScriptFallback {
 }
 
 /** 助手来源的方案请求在这些后端码下**不算失败**：这条路不适用（没连上能用的模型 / native / 没脚本），照旧走改脚本路径 */
+/**
+ * 连接本身用不了的不适用码：脚本方案同样要模型（同一条连接），也走不通——图内方案被这些码拒了就**直接**落回旧的直接改脚本，
+ * 不再发一次注定失败的脚本方案请求、也不留卡。其余不适用码（太长……）才值得再试脚本方案。
+ */
+export const CONNECTION_UNUSABLE_CODES: ReadonlySet<string> = new Set(['change_plan_no_connection', 'change_plan_unsupported_connection'])
+
+/** 最近一次 `start` 落回旧路径的后端码（`requestFromAssistant` 据此判要不要再试脚本方案） */
+let lastFallthrough = ''
+
 export const ASSISTANT_FALLTHROUGH_CODES: ReadonlySet<string> = new Set([
   'change_plan_no_connection',
   'change_plan_unsupported_connection',
@@ -239,7 +248,7 @@ interface ChangePlanState {
     onSettle?: () => void,
   ) => Promise<string | null | 'fallthrough'>
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
-  runScript: (key: string) => Promise<boolean>
+  runScript: (key: string, opts?: { legacyOnly?: boolean }) => Promise<boolean>
   /** 失败后「重试」/ 图改过后「重新生成」：用同一份请求再来一份，旧卡换成新卡 */
   regenerate: (key: string) => Promise<string | null>
   /** 一键排版出的整版方案（`quickLayoutActions` 调）：条目已带方案与两张预览图的 blob 地址，直接是待确认 */
@@ -374,7 +383,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         // 接着走现有的改脚本路径，用户的指令照旧交给 Agent（出的是改脚本那一轮自己的结果 / 错误卡）
         if (!revising && e?.from === 'assistant' && ASSISTANT_FALLTHROUGH_CODES.has(view.code)) {
           if ((view as { replay_required?: boolean }).replay_required) replay(e)
-          void get().runScript(key)
+          // 脚本方案自己被拒（别再试脚本方案，免得循环）/ 连接用不了（脚本方案同样走不通）：直接落回旧路径
+          void get().runScript(key, { legacyOnly: e.request.mode === 'script' || CONNECTION_UNUSABLE_CODES.has(view.code) })
           return
         }
         failed(view.code, view.params)
@@ -452,6 +462,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     } catch {
       if (assistant && !keepOnFallthrough) {
         drop(key)
+        lastFallthrough = 'change_plan_not_editable'
         return 'fallthrough'
       }
       fail(key, 'change_plan_not_editable')
@@ -477,6 +488,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // 助手来源：这条路不适用就悄悄撤掉这张卡，让调用方走旧路径（用户的指令一个字不丢）
       if (assistant && !keepOnFallthrough && ASSISTANT_FALLTHROUGH_CODES.has(code)) {
         drop(key)
+        lastFallthrough = code
         return 'fallthrough'
       }
       fail(key, code, err instanceof EngineError ? err.params : undefined)
@@ -517,6 +529,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       try {
         const out = await start(panelId, req, fallback, false, onSettle)
         if (out !== 'fallthrough') return out
+        // 连接本身用不了：脚本方案同样要模型，走不通——直接落回旧路径，不发注定失败的脚本方案请求
+        if (CONNECTION_UNUSABLE_CODES.has(lastFallthrough)) return 'fallthrough'
         // 图内方案这条路不适用：先试脚本方案（Agent 在副本里改、看过再应用）；它也不适用才落回现有的直接改脚本（调用方发）
         return await start(panelId, { instruction: req.instruction, ...(req.target ? { target: req.target } : {}), mode: 'script' }, fallback, false, onSettle)
       } finally {
@@ -524,7 +538,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
     },
 
-    runScript: async (key) => {
+    runScript: async (key, opts) => {
       const e = get().entries[key]
       const fb = e?.fallback
       if (!e || !fb || e.from !== 'assistant') return false
@@ -567,7 +581,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         labelOf: (gid) => labels.get(gid) || undefined,
       })
       // 脚本修改也先出方案卡（ADR 0206 PR 6）：Agent 在副本里改、渲染出对比，看过再应用；这条路不适用（没连上模型 / native…）就落回现有的直接改脚本
-      const out = await start(e.panelId, { instruction: prompt.length <= MAX_ASSISTANT_INSTRUCTION ? prompt : fb.prompt, display: fb.prompt, ...(e.request.target ? { target: e.request.target } : {}), mode: 'script' }, fb)
+      const out = opts?.legacyOnly ? 'fallthrough' : await start(e.panelId, { instruction: prompt.length <= MAX_ASSISTANT_INSTRUCTION ? prompt : fb.prompt, display: fb.prompt, ...(e.request.target ? { target: e.request.target } : {}), mode: 'script' }, fb)
       if (out !== 'fallthrough') {
         if (out) patch(out, { followsKey: key })
         patch(key, e.plan && e.plan.groups.length > 0 ? { scriptStarted: true } : { status: 'handoff', scriptStarted: true, failure: undefined })

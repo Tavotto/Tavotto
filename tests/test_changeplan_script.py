@@ -514,3 +514,20 @@ def test_candidate_validation_uses_the_figures_real_entry_not_a_hardcoded_main(
     out = _make(client)
     assert out["state"] == "ready"
     assert state["hook_entries"] == [entry] and state["render_entry"] == entry
+
+
+def test_script_mode_uses_the_same_connection_precheck_as_the_figure_plan(sc, monkeypatch):
+    """连接用不了（没连上 / 不支持）图内方案与脚本方案同一组稳定码、同一个预检：脚本方案不再发一次注定失败的请求，前端据此直接落回旧路径。"""
+    _m, client, _figs, state = sc
+    for reason, code in (
+        ("no_connection", "change_plan_no_connection"),
+        ("unsupported_connection", "change_plan_unsupported_connection"),
+    ):
+        seen = []
+        monkeypatch.setattr(
+            cp, "_PRECHECK", lambda cid=None, r=reason: seen.append(cid) or (False, r)
+        )
+        resp = _script_post(client)
+        assert resp.status_code == 409 and resp.get_json()["code"] == code
+        assert seen == ["conn1"]
+    assert state["runs"] == []  # Agent 一次都没起
