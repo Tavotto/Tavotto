@@ -1,5 +1,5 @@
 {
-  "$comment": "GPL-3.0-or-later 的期刊风格色板（ADR 0207 §三）：与 AGPL 的开源版兼容，但闭源高级版组件不许读这份文件。",
+  "$comment": "GPL-3.0-or-later 的期刊风格色板（ADR 0210 §三）：与 AGPL 的开源版兼容，但闭源高级版组件不许读这份文件。",
   "version": 1,
   "copyleft": true,
   "sources": {

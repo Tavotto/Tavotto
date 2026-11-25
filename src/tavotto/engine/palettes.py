@@ -1,4 +1,4 @@
-"""推荐配色目录（ADR 0207）：加载、校验、按许可分档。**色值的唯一权威是两份 JSON**：
+"""推荐配色目录（ADR 0210）：加载、校验、按许可分档。**色值的唯一权威是两份 JSON**：
 
     src/tavotto/profiles/palettes.json            许可宽松（MIT / BSD / Apache / 事实性资料）
     src/tavotto/profiles/palettes_copyleft.json   GPL 的期刊风格色板（ggsci）
@@ -36,7 +36,7 @@ PERMISSIVE_LICENSES = frozenset(
 #: copyleft 那份里允许出现的许可
 COPYLEFT_LICENSES = frozenset({"GPL-3.0-or-later", "GPL-3.0-only"})
 
-#: 第一期只有分类色板；数值色图走现有的 cmap 白名单，目录色图注册是第二期（ADR 0207 §六）
+#: 第一期只有分类色板；数值色图走现有的 cmap 白名单，目录色图注册是第二期（ADR 0210 §六）
 KINDS = frozenset({"categorical"})
 
 #: 一套方案至少几个颜色才算一套（再少就不是「配色」了）

@@ -1,4 +1,4 @@
-"""重新生成推荐配色目录（ADR 0207）：`src/tavotto/profiles/palettes.json` 与 `palettes_copyleft.json`。
+"""重新生成推荐配色目录（ADR 0210）：`src/tavotto/profiles/palettes.json` 与 `palettes_copyleft.json`。
 
 目录里存的是**色值本身**，运行时不依赖下面任何一个包（免得热态、导出、Agent 三处读到不同版本）。
 这份脚本只在维护者升级来源版本时手动跑一次，CI 不跑它（这些包不在开发依赖里）：
@@ -14,7 +14,7 @@
 - ColorBrewer：取 matplotlib 内置的那份（ColorBrewer 本身 Apache-2.0，须带致谢句）。
 - Crameri 科学色图：cmcrameri 1.10 带的数据（MIT，Copyright Fabio Crameri）；分类 S 系列。
 - ggsci 期刊风格（NPG、AAAS、NEJM、Lancet、JAMA、JCO）：GPL-3.0-or-later，**单独**写进
-  `palettes_copyleft.json`，闭源高级版组件不许读那份（ADR 0207 §三）。色值经 pypalettes 的数据表转录
+  `palettes_copyleft.json`，闭源高级版组件不许读那份（ADR 0210 §三）。色值经 pypalettes 的数据表转录
   （那张表的来源列写的是「The R package: {ggsci}」），与 ggsci 原包逐值一致。
 
 Crameri 的 S 系列每套 100 色、按区分度排好序，但里面混着很浅的颜色（对白底对比度不到 2:1），
@@ -231,7 +231,7 @@ COPYLEFT_SOURCES = {
 
 def build() -> tuple[dict, dict]:
     permissive = {
-        "$comment": "推荐配色目录（ADR 0207）。只收许可证宽松的方案；GPL 的期刊风格色板在 palettes_copyleft.json。"
+        "$comment": "推荐配色目录（ADR 0210）。只收许可证宽松的方案；GPL 的期刊风格色板在 palettes_copyleft.json。"
         "重新生成：scripts/dev/gen_palettes.py。前端经 @palettes 别名整份 import，引擎经 engine/palettes.py 读，两边是同一个文件。",
         "version": 1,
         "neutral": NEUTRAL,
@@ -239,7 +239,7 @@ def build() -> tuple[dict, dict]:
         "palettes": okabe_ito() + tol() + colorbrewer() + crameri(),
     }
     copyleft = {
-        "$comment": "GPL-3.0-or-later 的期刊风格色板（ADR 0207 §三）：与 AGPL 的开源版兼容，但闭源高级版组件不许读这份文件。",
+        "$comment": "GPL-3.0-or-later 的期刊风格色板（ADR 0210 §三）：与 AGPL 的开源版兼容，但闭源高级版组件不许读这份文件。",
         "version": 1,
         "copyleft": True,
         "sources": COPYLEFT_SOURCES,

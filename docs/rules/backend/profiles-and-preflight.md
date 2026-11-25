@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`tests/test_preflight_interference.py`、`tests/golden/interference_vectors.json`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；推荐配色目录（ADR 0207）：`tests/test_palettes.py`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`tests/test_preflight_interference.py`、`tests/golden/interference_vectors.json`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；推荐配色目录（ADR 0210）：`tests/test_palettes.py`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -180,7 +180,7 @@ order: 260
 - 没登记的检查项兜底 warn
 - 磁盘更高版本只读不写
 
-## 推荐配色目录（ADR 0207）
+## 推荐配色目录（ADR 0210）
 
 - 色值的唯一权威是 `profiles/palettes.json`（宽松许可）与 `profiles/palettes_copyleft.json`（GPL 的期刊风格色板）两份文件；
   前端经 `@palettes` / `@palettesCopyleft` 别名整份 import，引擎经 `engine/palettes.py` 读。任一侧不另抄色值。

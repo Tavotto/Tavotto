@@ -123,7 +123,7 @@ Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option.
 ```
 
-## 推荐配色目录（ADR 0207）
+## 推荐配色目录（ADR 0210）
 
 `src/tavotto/profiles/palettes.json`（许可宽松）与 `src/tavotto/profiles/palettes_copyleft.json`（GPL）里的色值，
 由 `scripts/dev/gen_palettes.py` 从下列来源转录。前端经别名整份 import，引擎经 `engine/palettes.py` 读同一份文件。
@@ -214,5 +214,5 @@ SOFTWARE.
 
 NPG、AAAS、NEJM、Lancet、JAMA、JCO 六套风格色板出自 R 包 ggsci（Nan Xiao），<https://nanx.me/ggsci/>，
 许可为 GPL-3.0-or-later，与 Tavotto 的 AGPL-3.0-only 兼容。这一份**单独成文件**：闭源的高级版组件（ADR 0198）
-不得读取或分发它；构建时设 `TAVOTTO_NO_COPYLEFT_PALETTES=1` 即整份换成空表（ADR 0207 §三）。
+不得读取或分发它；构建时设 `TAVOTTO_NO_COPYLEFT_PALETTES=1` 即整份换成空表（ADR 0210 §三）。
 GPL 全文：<https://www.gnu.org/licenses/gpl-3.0.txt>。

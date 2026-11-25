@@ -1,4 +1,4 @@
-"""推荐配色目录（ADR 0207）的结构、许可分档与排除开关的看护。
+"""推荐配色目录（ADR 0210）的结构、许可分档与排除开关的看护。
 
 主语：`src/tavotto/profiles/palettes.json` / `palettes_copyleft.json` 这两份**文件本身**（前端整份 import 的也是它们），
 以及 `engine/palettes.catalog()` 在「收 / 不收 GPL 色板」两档下给出的方案集合。

@@ -1,5 +1,5 @@
 {
-  "$comment": "推荐配色目录（ADR 0207）。只收许可证宽松的方案；GPL 的期刊风格色板在 palettes_copyleft.json。重新生成：scripts/dev/gen_palettes.py。前端经 @palettes 别名整份 import，引擎经 engine/palettes.py 读，两边是同一个文件。",
+  "$comment": "推荐配色目录（ADR 0210）。只收许可证宽松的方案；GPL 的期刊风格色板在 palettes_copyleft.json。重新生成：scripts/dev/gen_palettes.py。前端经 @palettes 别名整份 import，引擎经 engine/palettes.py 读，两边是同一个文件。",
   "version": 1,
   "neutral": "#A6A6A6",
   "sources": {
