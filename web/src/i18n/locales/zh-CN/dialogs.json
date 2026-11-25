@@ -2945,7 +2945,18 @@
     "shareNote": "拿到链接可查看和留言 · {{date}}失效",
     "privacyFoot": "只上传画面，脚本和数据不出本机",
     "dailyNew": "每天可新建 1 个",
-    "notePlaceholder": "给审阅者的话（选填）…"
+    "notePlaceholder": "给审阅者的话（选填）…",
+    "changePlan": {
+      "pill": "交给 Agent 修改",
+      "pillTip": "让 Agent 按这些意见改一版，改好之前不会动你的图",
+      "pillUpdate": "更新到同一链接",
+      "pillUpdateTip": "新版还没发到审阅链接，点一下更新，链接不变",
+      "pillUpdated": "链接已更新",
+      "resolveFailed": "没能把意见标成已处理",
+      "resolveRetry": "重试",
+      "draftLabel": "回复草稿",
+      "draftHint": "点发送才会回复给审阅者"
+    }
   },
   "pro": {
     "title": "{{pro}}",

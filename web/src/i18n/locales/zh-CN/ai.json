@@ -833,6 +833,43 @@
       "not_applied": "没能生效，这次没动",
       "no_effect": "改了也看不出变化，这次没动",
       "not_addressed": "这条没有处理到"
+    },
+    "draft": {
+      "thisOne": "这一处",
+      "fallback": "已按意见调整",
+      "join": "；",
+      "more": "（另有 {{count}} 处）",
+      "fontsize": "已把{{el}}的字号从 {{from}} pt 改到 {{to}} pt",
+      "fontsizeTo": "已把{{el}}的字号改到 {{to}} pt",
+      "linewidth": "已把{{el}}的线宽从 {{from}} 改到 {{to}}",
+      "linewidthTo": "已把{{el}}的线宽改到 {{to}}",
+      "color": "已改了{{el}}的颜色",
+      "show": "已显示{{el}}",
+      "hide": "已隐藏{{el}}",
+      "frameOn": "已给{{el}}加上边框",
+      "frameOff": "已去掉{{el}}的边框",
+      "move": "已把{{el}}挪到{{where}}",
+      "moveOther": "已调整{{el}}的位置",
+      "text": "已把{{el}}的文字改成「{{to}}」",
+      "bold": "已把{{el}}加粗",
+      "unbold": "已取消{{el}}的加粗",
+      "alpha": "已调整{{el}}的透明度",
+      "markersize": "已把{{el}}的标记改到 {{to}}",
+      "ncol": "已把{{el}}排成 {{to}} 列",
+      "loc": {
+        "best": "合适的位置",
+        "upper_right": "右上角",
+        "upper_left": "左上角",
+        "lower_left": "左下角",
+        "lower_right": "右下角",
+        "right": "右侧",
+        "center_left": "左侧中间",
+        "center_right": "右侧中间",
+        "lower_center": "下方中间",
+        "upper_center": "上方中间",
+        "center": "正中"
+      },
+      "many": "这 {{count}} 处"
     }
   }
 }
