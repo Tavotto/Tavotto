@@ -922,7 +922,7 @@ def _available_connection() -> dict | None:
 
 def understanding_state() -> dict:
     """界面要的那一个对象（`/api/ai/data-files` 与 `/api/ai/data-understanding` 共用）：
-    `{state: "on" | "off" | "none" | "unavailable", mode: "auto" | "off" | "connection", connection: 此刻实际会用的连接 id | null, options: [...]}`。
+    `{state: "on" | "off" | "none" | "unavailable", mode: "auto" | "off" | "connection", connection: 此刻实际会用的连接 id | null, chosen?: 用户指定的连接 id, options: [...]}`。
     `off` = 用户关了；`unavailable` = 用户指定的那个此刻用不了；`none` = auto 且没有任何可用连接；`on` = 会用。只读配置与能力缓存：不联网、不刷新令牌。"""
     mode, _cid = choice_mod.read_choice()
     conn = _available_connection()
@@ -936,6 +936,8 @@ def understanding_state() -> dict:
         "state": state,
         "mode": mode,
         "connection": choice_mod.conn_id(conn),
+        # 用户指定的那个连接 id（只在 mode=connection 时有）：`unavailable` 时它不在 `connection`（没在用）、也可能不在 `options` 里，界面要靠它指认「你选的是哪一个」
+        **({"chosen": _cid} if mode == "connection" else {}),
         "options": choice_mod.options(),
     }
 

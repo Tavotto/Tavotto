@@ -220,6 +220,11 @@ def test_a_chosen_connection_that_is_gone_never_falls_back_to_another(two_keys, 
     assert R._available_connection() is None
     st = R.understanding_state()
     assert st["state"] == "unavailable" and st["mode"] == "connection" and st["connection"] is None
+    assert st["chosen"] == "sub:claude"  # 界面靠它指认「你选的是哪一个」
+    C.write_choice("auto")
+    assert "chosen" not in R.understanding_state()
+    C.write_choice("off")
+    assert "chosen" not in R.understanding_state()
 
 
 def test_state_object(two_keys, with_sub):
