@@ -127,6 +127,9 @@
   /* 浮起的那一块（分段 / 选项格的选中 thumb、开关的钮、滑杆的钮，配 shadow-thumb）：浅色里就是白 surface；
      暗色里比面板亮一档——暗底上「浮起」靠更亮，不靠投影 */
   --color-thumb: var(--color-surface);
+  /* 选项格里放的是**白底缩略图**时，选中那一格的 1px 描边（`OptionGrid framed`）：浅色里不要（浮起的白块已经够明显），暗色里是随主题的浅墨——
+     暗灰 thumb 托着白图卡，与暗灰槽的反差弱，靠这一圈把「选的是谁」用形状再说一遍。只此一种用法；`Segmented` 与别的 OptionGrid 不用它 */
+  --color-thumb-frame: transparent;
   /* 文字选区（::selection）：accent 28% 的浅底，**选中的字一律换成 ink**（下面 @layer base 的 ::selection）——
      保留原色的话 ink-3 的说明 / 元数据落在选区上只剩 3.65:1（浅色白面板）/ 3.70:1（暗色面板），任何不透明度都救不回所有底色
      （Codex P2）。ink 落在合成后的选区上：浅色最低 10.55（field-hover）、暗色最低 6.63（thumb）。画布上改字的那块（canvas/TextView）
@@ -1483,6 +1486,7 @@
     --color-syntax-type: #6fc7ad;
     --color-syntax-builtin: #e3a457;
     --color-thumb: #3c3a35;
+    --color-thumb-frame: color-mix(in srgb, var(--color-ink) 55%, transparent);
     --color-shadow: #000000;
     --color-shadow-edge: #ffffff;
     --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -1521,6 +1525,7 @@
   --color-syntax-type: #6fc7ad;
   --color-syntax-builtin: #e3a457;
   --color-thumb: #3c3a35;
+  --color-thumb-frame: color-mix(in srgb, var(--color-ink) 55%, transparent);
   --color-shadow: #000000;
   --color-shadow-edge: #ffffff;
   --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -1550,6 +1555,8 @@
 }
 
 /* 字面数据不做中西文自动留白：输入框 / 代码 / 等宽（脚本名、路径、matplotlib 取值代号）。
+   `[data-literal]` 是给**用户自己的字符串**的统一钩子（文件名、工作表名、列名、用户输入的原文）：放在散文类（`type-heading` 等）里的这类字符串，
+   给它自己那一小段文字加这个属性，显示的就是原样（「剂量响应_带sd.csv」不会变成「剂量响应_带 sd.csv」）。
    写在所有 @layer 之外——无层声明压过 utilities 层的 `text-autospace: normal`，祖先上再开也不会传进来。 */
 input,
 textarea,
@@ -1558,6 +1565,7 @@ pre,
 code,
 kbd,
 samp,
-.font-mono {
+.font-mono,
+[data-literal] {
   text-autospace: no-autospace;
 }
