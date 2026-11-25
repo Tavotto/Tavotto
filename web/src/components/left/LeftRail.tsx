@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChartLine, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings, Sparkles } from '@/components/ui/icons'
+import { ChartLine, FacetStar, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { PRO_NAME } from '@/lib/brand'
@@ -163,7 +163,7 @@ export function LeftRail() {
             aria-label={t('rail.pro', { pro: PRO_NAME })}
             className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
           >
-            <Sparkles size={ICON_SIZE.md} />
+            <FacetStar size={ICON_SIZE.md} />
             {!iconOnly && (
               <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
                 {t('rail.short.pro', { pro: PRO_NAME })}
