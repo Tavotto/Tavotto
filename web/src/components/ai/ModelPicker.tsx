@@ -1,9 +1,10 @@
-import type { ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AgentIcon } from '@/components/settings/AgentIcon'
 import { VendorIcon } from '@/components/settings/VendorIcon'
-import { ChevronDown, Download, Plus } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { Check, ChevronDown, ChevronRight, Download, Plus } from '@/components/ui/icons'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuSub } from '@/components/ui/Menu'
 import { BrandLogo } from '@/components/settings/BrandLogo'
 import { t as translate } from '@/i18n'
@@ -276,5 +277,129 @@ export function ConnectionModelPicker({
         {ai('panel.connectMore')}
       </MenuItem>
     </Menu>
+  )
+}
+
+/** 订阅类连接（ChatGPT 登录 / CLI 官方登录）：名字后面灰字标「订阅」，与同一家的 API Key 连接分得开 */
+const isSubscription = (c: AiConnection) => c.id === 'siwc:chatgpt' || c.id.startsWith('sub:')
+
+const ROW = 'focus-visible:focus-ring flex w-full min-w-0 items-center gap-3 rounded-md px-1.5 py-1.5 text-left text-sm outline-none hover:bg-surface-hover'
+
+/** 型号列表末行（同 `CliUpdateItem` 的判据，换成列表行的样子） */
+function CliUpdateRow({ conn }: { conn: AiConnection }) {
+  const agent = connectionAgent(conn)
+  const running = useCliUpdateRunning(agent)
+  const failed = useCliUpdateError(agent)
+  const name = useAiStore((s) => s.caps?.agents.find((a) => a.id === agent)?.display_name) ?? agent
+  const u = conn.cli_update
+  if (!u || !agent) return null
+  const inApp = updatableInApp(u)
+  const reason = running ? undefined : failed ? failed : inApp ? ai('cliUpdate.menuHint') : manualHow(u)
+  return (
+    <button
+      type="button"
+      data-ai-cli-update={u.action}
+      disabled={running || !inApp}
+      onClick={() => startCliUpdate(agent)}
+      className={cn(ROW, 'pl-9 disabled:cursor-default disabled:hover:bg-transparent')}
+    >
+      <Download size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ink-2" />
+      <span className="flex min-w-0 flex-col">
+        <span className={cn('truncate', !inApp || running ? 'text-ink-3' : 'text-ink')}>
+          {ai(running ? 'cliUpdate.running' : inApp ? 'cliUpdate.action' : 'cliUpdate.menuManual', { agent: name })}
+        </span>
+        {reason && <span className="type-caption">{reason}</span>}
+      </span>
+    </button>
+  )
+}
+
+/**
+ * 「连接 AI」视图下「AI 与模型」的**一个列表**（2026-11-25 用户：与设置里的连接列表同一种样子，不再「下拉里套菜单」）：
+ * 每个已连接的 AI 一行（logo 在 24px 一列居中、名字同一列，订阅类后面灰字「订阅」）；点一行就在它下面展开型号（当前用的那个默认展开），
+ * 选中的型号右侧打勾，默认型号后面灰字「默认」；没有型号清单的连接点一下即切换。末行「＋ 连接更多 AI…」。
+ * **只是呈现**：选中写 aiStore 的 `connection` 与 `models[连接 id]`，与 `ConnectionModelPicker` 同一套。
+ */
+export function ConnectionModelList({
+  connections,
+  active,
+  model,
+}: {
+  connections: AiConnection[]
+  active: string
+  model: string
+}) {
+  useTranslation('ai')
+  const [open, setOpen] = useState<string | null>(active || null)
+  return (
+    <div data-ai-model-menu="connections" className="-mx-1.5 flex max-h-80 flex-col overflow-y-auto">
+      {connections.map((c) => {
+        const isActive = c.id === active
+        const models = connectionModels(c, isActive ? model : null)
+        const expandable = models.length > 0
+        const expanded = expandable && open === c.id
+        return (
+          <div key={c.id} className="flex flex-col">
+            <button
+              type="button"
+              data-ai-connection={c.id}
+              aria-expanded={expandable ? expanded : undefined}
+              aria-current={isActive && !expandable ? 'true' : undefined}
+              onClick={() => (expandable ? setOpen(expanded ? null : c.id) : useAiStore.getState().setConnection(c.id))}
+              className={ROW}
+            >
+              <IconSlot className="w-6">
+                <BrandLogo logo={c.logo} size={16} />
+              </IconSlot>
+              <span className="min-w-0 flex-1 truncate text-ink">
+                {c.label}
+                {isSubscription(c) && <span className="ml-1.5 text-xs text-ink-3">{ai('panel.kindSubscription')}</span>}
+              </span>
+              {expandable ? (
+                <ChevronRight size={ICON_SIZE.xs} aria-hidden className={cn('shrink-0 text-ink-3 transition-transform', expanded && 'rotate-90')} />
+              ) : (
+                isActive && <Check size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-accent" />
+              )}
+            </button>
+            {expanded && (
+              // 型号行比 AI 行矮一档、小一号，组后留一点空：一眼看出是上一行的下一级（agy 审稿）
+              <div role="radiogroup" data-ai-model-menu={c.id} className="flex flex-col pb-1">
+                {models.map((m) => {
+                  const on = isActive && m === model
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      data-ai-model-item={m}
+                      onClick={() => {
+                        useAiStore.getState().setConnection(c.id)
+                        useAiStore.getState().setModel(c.id, m)
+                      }}
+                      className={cn(ROW, 'py-1 pl-[2.625rem] text-[13px]')}
+                    >
+                      <span className={cn('min-w-0 flex-1 truncate', on ? 'text-ink' : 'text-ink-2')}>
+                        {modelDetail(connectionInfo(c), m)?.display_name || m}
+                        {m === c.default_model && <span className="ml-1.5 text-xs text-ink-3">{ai('panel.effortDefault')}</span>}
+                      </span>
+                      {on && <Check size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-accent" />}
+                    </button>
+                  )
+                })}
+                <CliUpdateRow conn={c} />
+              </div>
+            )}
+          </div>
+        )
+      })}
+      <div aria-hidden className="mx-1.5 my-1 border-t border-border" />
+      <button type="button" data-ai-connect-more onClick={() => requestConnectAi()} className={ROW}>
+        <IconSlot className="w-6 text-ink-2">
+          <Plus size={ICON_SIZE.sm} aria-hidden />
+        </IconSlot>
+        <span className="min-w-0 flex-1 truncate text-ink-2">{ai('panel.connectMore')}</span>
+      </button>
+    </div>
   )
 }

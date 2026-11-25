@@ -231,7 +231,8 @@
     "attachNoVision": "This model can't see images, ",
     "attachNoVisionOnly": "This model can't see images",
     "attachSwitch": "switch to {{model}}",
-    "attachAria": "Attach files"
+    "attachAria": "Attach files",
+    "kindSubscription": "Plan"
   },
   "process": {
     "thought": "Thought for {{duration}}",

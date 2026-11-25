@@ -62,12 +62,6 @@ const openMenu = async () => {
   })
   await tick()
 }
-const key = async (el: Element, k: string) => {
-  await act(async () => {
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
-  })
-  await tick()
-}
 const connItems = () => [...document.body.querySelectorAll<HTMLElement>('[data-ai-connection]')]
 
 beforeEach(async () => {
@@ -82,63 +76,65 @@ afterEach(async () => {
   await act(async () => root?.unmount())
 })
 
-describe('模型选择器：一级连接、二级型号', () => {
-  it('触发器写「连接名 · 型号显示名」并带彩色 logo；一级是各个已连接的 AI（彩色 logo + 厂商名）', async () => {
+describe('「AI 与模型」：已连接的 AI 一个列表，点一行在它下面展开型号（2026-11-25 改版，不再下拉里套菜单）', () => {
+  const modelItems = () => [...host.querySelectorAll<HTMLElement>('[data-ai-model-item]')]
+  const row = (id: string) => connItems().find((i) => i.dataset.aiConnection === id)!
+
+  it('每个已连接的 AI 一行（彩色 logo + 名字，订阅类后面灰字「订阅」）；当前用的那个默认展开，选中的型号打勾', async () => {
     useAiStore.setState({ caps: connectCapsOf([DS, CG]), connection: 'p_ds' })
     await mount(scope())
-    expect(trigger()!.textContent).toContain('DeepSeek · DeepSeek Chat')
-    expect(trigger()!.querySelector('[data-brand-logo="deepseek"]')).toBeTruthy()
-    await openMenu()
+    expect(trigger()).toBeNull() // 没有下拉触发器了
     expect(connItems().map((i) => i.dataset.aiConnection)).toEqual(['p_ds', 'sub:codex'])
-    expect(connItems().map((i) => i.textContent)).toEqual(['DeepSeek', 'ChatGPT'])
+    expect(row('p_ds').textContent).toBe('DeepSeek')
+    expect(row('sub:codex').textContent).toBe(`ChatGPT${ai('panel.kindSubscription')}`)
     expect(connItems().every((i) => i.querySelector('[data-brand-logo]'))).toBe(true)
+    expect(row('p_ds').getAttribute('aria-expanded')).toBe('true')
+    expect(modelItems().map((i) => i.dataset.aiModelItem)).toEqual(['ds-chat', 'ds-reason'])
+    expect(modelItems()[0].textContent).toBe(`DeepSeek Chat${ai('panel.effortDefault')}`) // 默认只是灰字，不是底色小标
   })
 
-  it('点开一个连接看到它的型号；选中写 connection 与 models[连接 id]，切回另一个连接时各自的记忆还在', async () => {
+  it('点开另一个连接看到它的型号；选中写 connection 与 models[连接 id]，并持久化', async () => {
     useAiStore.setState({ caps: connectCapsOf([DS, CG]), connection: 'sub:codex' })
     await mount(scope())
-    await openMenu()
-    const ds = connItems().find((i) => i.dataset.aiConnection === 'p_ds')!
-    ds.focus()
-    await key(ds, 'ArrowRight')
-    const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((o) => o.dataset.aiModelItem === 'ds-reason')!
-    expect(item).toBeTruthy()
+    await act(async () => row('p_ds').click())
+    const item = modelItems().find((o) => o.dataset.aiModelItem === 'ds-reason')!
+    expect(item.getAttribute('role')).toBe('radio')
     await act(async () => item.click())
     await tick()
     expect(useAiStore.getState().connection).toBe('p_ds')
     expect(useAiStore.getState().models['p_ds']).toBe('ds-reason')
-    // 持久化：刷新后还是上次的选择
+    expect(item.getAttribute('aria-checked')).toBe('true')
     expect(localStorage.getItem('tavotto.ai.connection')).toBe('p_ds')
     expect(JSON.parse(localStorage.getItem('tavotto.ai.prefs')!).models.p_ds).toBe('ds-reason')
   })
 
-  it('底部「连接更多 AI…」打开连接小弹窗（不是设置页）', async () => {
+  it('末行「连接更多 AI…」打开连接小弹窗（不是设置页）', async () => {
     useAiStore.setState({ caps: connectCapsOf([DS, CG]), connection: 'p_ds' })
     await mount(scope())
-    await openMenu()
-    const more = document.body.querySelector<HTMLElement>('[data-ai-connect-more]')!
+    const more = host.querySelector<HTMLElement>('[data-ai-connect-more]')!
     expect(more.textContent).toContain(ai('panel.connectMore'))
     await act(async () => more.click())
     expect(useConnectAiStore.getState().open).toBe(true)
     expect(useUiStore.getState().settingsOpen).toBe(false)
   })
 
-  it('只有一个连接且只有一个型号（或没有型号清单）：选择器仍在，里面仍有「连接更多 AI…」', async () => {
+  it('只有一个连接（有或没有型号清单）：列表仍在，仍有「连接更多 AI…」；没有型号清单的一行点了就是切换、不展开', async () => {
     for (const only of [CG, { ...CG, models: [], default_model: null }]) {
       useAiStore.setState({ caps: connectCapsOf([only]), connection: 'sub:codex' })
       await mount(scope())
-      expect(trigger()).toBeTruthy()
-      await openMenu()
-      expect(document.body.querySelector('[data-ai-connect-more]')).toBeTruthy()
+      expect(row('sub:codex')).toBeTruthy()
+      expect(host.querySelector('[data-ai-connect-more]')).toBeTruthy()
+      if (only.models.length === 0) expect(row('sub:codex').getAttribute('aria-expanded')).toBeNull()
       await act(async () => root.unmount())
       document.body.innerHTML = ''
     }
   })
 
-  it('记着的连接不再 ready：显示第一个 ready 的，不静默改用户的首选值', async () => {
+  it('记着的连接不再 ready：列表里只有 ready 的、展开的是第一个 ready 的，不静默改用户的首选值', async () => {
     useAiStore.setState({ caps: connectCapsOf([DS, { ...CG, state: 'needs_auth' }]), connection: 'sub:codex' })
     await mount(scope())
-    expect(trigger()!.textContent).toContain('DeepSeek')
+    expect(connItems().map((i) => i.dataset.aiConnection)).toEqual(['p_ds'])
+    expect(row('p_ds').getAttribute('aria-expanded')).toBe('true')
     expect(useAiStore.getState().connection).toBe('sub:codex')
   })
 

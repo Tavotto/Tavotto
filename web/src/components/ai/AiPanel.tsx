@@ -62,7 +62,7 @@ import { Tip } from '../ui/Tooltip'
 import { TaskHistory, TaskHistoryPopover } from './TaskHistory'
 import { BrandLogo } from '@/components/settings/BrandLogo'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { ConnectionModelPicker, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
+import { ConnectionModelList, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { currentProjectId } from '@/lib/session'
 import { holdAssistantTabForNextSelection } from '@/hooks/useSelectionRouting'
@@ -1390,14 +1390,16 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
               只有一项可选时不摆一个选不动的选择器（旧执行器视图；连接视图的选择器底部有「连接更多 AI…」，要常驻）：**但那一项写的是什么仍要看得见**，
               退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块不出现——执行器是谁，
               工具行的胶囊上已经写着了 */}
-          {optionCount > 1 || view ? (
+          {view ? (
+            // 连接视图：「AI 与模型」是一个列表（与设置里的连接列表同一种样子），不再「下拉里套二级菜单」
+            <div data-ai-agent-model="select" className="flex min-w-0 flex-col gap-1">
+              <span className="text-xs text-ink-2">{ai('panel.aiModel')}</span>
+              <ConnectionModelList connections={conns} active={active ?? ''} model={model} />
+            </div>
+          ) : optionCount > 1 ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
-              {view ? (
-                <ConnectionModelPicker connections={conns} active={active ?? ''} model={model} />
-              ) : (
-                <ModelPicker usable={usable} active={active ?? ''} model={model} />
-              )}
+              <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
+              <ModelPicker usable={usable} active={active ?? ''} model={model} />
             </div>
           ) : (
             cur &&

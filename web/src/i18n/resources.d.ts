@@ -551,6 +551,7 @@ export default interface Resources {
       "emptyTitle": "想怎么改这张图？",
       "finishing": "正在结束上一次修改…",
       "inputAria": "描述要怎么改这张图",
+      "kindSubscription": "订阅",
       "ledgerFailed": "未能确认本机任务状态，这条指令尚未发出。请稍后重试。",
       "ledgerUnreadable": "正在确认上一条指令的状态，请稍候片刻再发。",
       "noAi": "还没有连接 AI。",
