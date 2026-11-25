@@ -148,8 +148,18 @@ export function DataPanel() {
           ) : null}
         </p>
         <h2 className="type-heading min-w-0 break-words py-1" title={group ? undefined : selected.path}>
-          {group ? t('dataFigureV2.batch.groupTitle', { count: group.length }) : baseName(selected.path)}
-          {!group && selected.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}
+          {group ? (
+            t('dataFigureV2.batch.groupTitle', { count: group.length })
+          ) : (
+            // 文件名 / 工作表名是用户自己的字符串：原样显示，不套标题类的中西文自动留白（`[data-literal]`，见 index.css）
+            <span data-literal>{baseName(selected.path)}</span>
+          )}
+          {!group && selected.sheet ? (
+            <span className="font-normal text-ink-3">
+              {' · '}
+              <span data-literal>{selected.sheet}</span>
+            </span>
+          ) : null}
         </h2>
         {rows != null && cols != null && (
           <p data-data-panel-meta className="mb-3 text-sm text-ink-2 tabular-nums">
