@@ -43,7 +43,7 @@ export function TaskChecklist({
       {...rest}
       data-task-checklist
       data-task-all={all || undefined}
-      className={cn('flex flex-col rounded-lg bg-surface-hover px-3.5 pb-2 pt-2.5', className)}
+      className={cn('flex flex-col rounded-lg bg-surface-hover px-3.5', open ? 'pb-2 pt-2.5' : 'py-2', className)}
     >
       <button
         type="button"
@@ -51,7 +51,7 @@ export function TaskChecklist({
         aria-expanded={open}
         aria-controls={listId}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-6 w-full items-center gap-2 rounded-sm text-left outline-none focus-visible:focus-ring"
+        className="group flex h-6 w-full items-center gap-2 rounded-sm text-left outline-none focus-visible:focus-ring"
       >
         <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
           {all ? (
@@ -69,7 +69,7 @@ export function TaskChecklist({
         <ChevronDown
           size={ICON_SIZE.xs}
           aria-hidden
-          className={cn('-ml-1 text-ink-3 transition-transform', !open && '-rotate-90')}
+          className={cn('-ml-1 text-ink-3 transition-transform group-hover:text-ink-2 motion-reduce:transition-none', !open && '-rotate-90')}
         />
       </button>
       <ol id={listId} hidden={!open} className="flex flex-col pt-2" data-task-steps>
@@ -85,7 +85,7 @@ export function TaskChecklist({
             <span
               className={cn(
                 'relative flex min-w-0 items-center gap-2',
-                'after:pointer-events-none after:absolute after:-inset-x-0.5 after:top-1/2 after:h-px after:origin-left after:bg-ink-3',
+                'after:pointer-events-none after:absolute after:inset-x-0 after:top-1/2 after:h-px after:origin-left after:bg-ink-3',
                 'after:transition-transform after:duration-slow motion-reduce:after:transition-none',
                 s.state === 'done' ? 'after:scale-x-100' : 'after:scale-x-0',
               )}
@@ -99,14 +99,13 @@ export function TaskChecklist({
                   <CircleDashed size={ICON_SIZE.sm} className="text-ink-faint" />
                 )}
               </span>
-              <span className={cn('min-w-0 truncate text-sm', s.state === 'active' ? 'text-ink' : 'text-ink-3')}>
+              <span className={cn('min-w-0 truncate text-sm', s.state === 'active' ? 'font-medium text-ink' : 'text-ink-3')}>
                 {s.label}
               </span>
             </span>
-            <span className="flex-1" />
             {s.state === 'active' && s.meta != null && (
               <span
-                className="shrink-0 whitespace-nowrap rounded-full bg-selected px-2 text-xs font-medium tabular-nums leading-5 text-ink-2"
+                className="ml-auto shrink-0 whitespace-nowrap rounded-full bg-surface px-2 py-0.5 text-xs tabular-nums leading-4 text-ink-3"
                 data-task-meta
               >
                 {s.meta}
