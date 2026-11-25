@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layoutannotate.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -203,6 +203,11 @@ order: 200
   `_document_lock(path)`（按落盘路径，自动保存 / 另存为 / 槽位清理共用，
   **不可重入**）。GET 交出 `X-Tavotto-Revision` 且不用 `send_file`
   （句柄会在 Windows 上挡住下一次 `os.replace`）。
+- **锁带与判据的唯一出处是 `engine/doclock.py`**（2026-11-25，ADR 0208 第 2 期）：`DocumentLock` / `lock_stripe` /
+  `REVISION_ABSENT` / `revision_conflict` 从 `app.py` 搬进引擎，`app.py` 的 `_DocumentLock` / `_lock_stripe` /
+  `_revision_conflict` / `REVISION_ABSENT` 只是别名（等锁上限仍读 `app.DOCUMENT_LOCK_TIMEOUT_S`）。插件的排版写入口
+  （`engine/layoutannotate.py`）与桌面保存是两个进程写同一个 `tavottofile/<名>.json`，**必须用同一把锁、同一个判据**，
+  不许在插件侧另写一份。Agent 写入只追加对象、写前留撤销副本（`state/agent-undo/`），撤销只在文件还是那次写下的那一份时恢复。
 - **⌘S 写回项目里绑定的排版文件（ADR 0096，2026-09-26）**：同一个端点
   `POST /api/layouts/<name>?target=project`，**不加端点**。这一档必须开着项目
   （`current_ctx()`，否则 409 `no_project`——不许静默退回数据目录）；冲突判据、锁、

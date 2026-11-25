@@ -1,4 +1,5 @@
 import type { Manifest } from './api'
+import { paletteById } from '@/lib/palette/catalog'
 
 /**
  * 取色面板里的两组推荐色（ADR 0185 M3 第三批）：
@@ -11,17 +12,8 @@ import type { Manifest } from './api'
  *   按出现次数排，去掉灰阶（黑白灰多半是坐标轴与文字，已在「排版里的颜色」里）。
  */
 
-/** Okabe-Ito 八色（黑色放最后：它在科研图里多半是轴与文字，排在前面没用） */
-export const OKABE_ITO: readonly string[] = [
-  '#e69f00',
-  '#56b4e9',
-  '#009e73',
-  '#f0e442',
-  '#0072b2',
-  '#d55e00',
-  '#cc79a7',
-  '#000000',
-]
+/** Okabe-Ito 八色（黑色放最后：它在科研图里多半是轴与文字，排在前面没用）。色值只在推荐配色目录里（ADR 0210） */
+export const OKABE_ITO: readonly string[] = (paletteById('okabe-ito')?.colors ?? []).map((c) => c.toLowerCase())
 
 export interface RecommendedSwatches {
   /** 颜色从哪来：目前只有 `general`（期刊目录里没有配色规定） */

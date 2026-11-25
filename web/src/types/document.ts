@@ -47,6 +47,29 @@ export interface ObjectBase {
    * x/y/w/h 始终是未旋转的包围盒。
    */
   rotationDeg?: number
+  /**
+   * Agent 加的标注锚在哪里（ADR 0208 §六）：后端 `engine/layoutannotate.py` 写入，Agent 不能直接写（字段表里是保留字段）。
+   * 前端现在只原样保留它（载入 / 保存 / 撤销都不动）；第 4 期据它判「这个标注可能已经没对准」并「重新对准」。
+   */
+  anchor?: AgentAnchor
+}
+
+/** 一条锚点：`role` 是元素的哪一端（from / to / at / left / right…），其余正好一个锚点种类（与场景描述同一套）。 */
+export interface AgentAnchorRole {
+  role: string
+  data?: { panel: string; axes?: string; x: number | string; y: number | string }
+  element?: { panel: string; gid: string; point?: string }
+  panel?: { id: string; point?: string }
+  item?: { name: string; point?: string }
+  offset_mm?: [number, number]
+  /** 脚本 `label=` 的摘要：脚本重跑、gid 重新编号后据它认回同一个元素 */
+  identity?: string
+}
+
+export interface AgentAnchor {
+  v: 1
+  by: 'agent'
+  anchors: AgentAnchorRole[]
 }
 
 /**
@@ -848,6 +871,35 @@ export interface StyleOwnedOverride {
   base?: unknown
 }
 
+/* ---------------------- 推荐配色的色键表（ADR 0210 §四） ---------------------- */
+
+/** 一组占的槽：数字 = 方案里第几个颜色；`neutral` = 方案的中性灰（对照组，用户确认后才设） */
+export type ColorSlot = number | 'neutral'
+
+export interface ColorKey {
+  /** 表内稳定 id（`k1`、`k2`…），只增不复用 */
+  key: string
+  slot: ColorSlot
+  /** 归入这一组的显式 label 身份（`l1:` + 16 位十六进制）；并入别的组时把对方的抄进来 */
+  identities: string[]
+}
+
+/** 配色写下的一条 override：此刻 override 的值仍是 `value` 才算配色的，否则就是用户手改过的 */
+export interface ColorKeyOwned {
+  panel: string
+  gid: string
+  prop: string
+  value: string
+}
+
+export interface ColorKeyTable {
+  version: 1
+  /** 当前方案的目录 id */
+  scheme: string
+  keys: ColorKey[]
+  owned: ColorKeyOwned[]
+}
+
 export interface FigureDocument {
   schema: 2
   name: string
@@ -866,6 +918,8 @@ export interface FigureDocument {
   framePadTight?: FramePadSide[]
   /** 一键排版的网格记忆（见 `QuickLayoutMemo`）；缺省 = 没排过或已清掉 */
   quickLayout?: QuickLayoutMemo
+  /** 推荐配色的色键表（ADR 0210）；缺省 = 这张画布没用过推荐配色，旧文档逐字不变 */
+  colorKeys?: ColorKeyTable
 }
 
 /**
@@ -904,6 +958,8 @@ export interface CanvasData {
   framePad?: FramePad
   framePadTight?: FramePadSide[]
   quickLayout?: QuickLayoutMemo
+  /** 每张画布各自的推荐配色色键表（ADR 0210）；缺省 = 没用过 */
+  colorKeys?: ColorKeyTable
 }
 
 /**
@@ -940,6 +996,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.framePad ? { framePad: c.framePad } : {}),
     ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
     ...(c.quickLayout ? { quickLayout: c.quickLayout } : {}),
+    ...(c.colorKeys ? { colorKeys: c.colorKeys } : {}),
   }
 }
 
@@ -956,6 +1013,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.framePad ? { framePad: doc.framePad } : {}),
     ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
     ...(doc.quickLayout ? { quickLayout: doc.quickLayout } : {}),
+    ...(doc.colorKeys ? { colorKeys: doc.colorKeys } : {}),
   }
 }
 
