@@ -53,6 +53,9 @@ main <- function() {
       stop("The selected R needs ggplot2 and svglite.")
     }
     sys.source(args[[7L]], envir = adapter)
+    native <- dirname(args[[7L]])
+    sys.source(file.path(native, "ggplot_colour_scale.R"), envir = adapter)
+    palettes <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
     probe <- file.path(args[[11L]], "cairo-device-check.pdf")
     device <- adapter$open_ggplot_pdf(frame_pt, probe)
     grDevices::dev.off(which = device)
@@ -64,7 +67,7 @@ main <- function() {
     eval(program, envir = user)
     if (!exists(object, envir = user, inherits = FALSE)) stop("The named ggplot object is absent.")
     plot <- get(object, envir = user, inherits = FALSE)
-    adapter$capture_ggplot(plot, frame_pt)
+    adapter$capture_ggplot(plot, frame_pt, palettes)
   }, error = function(error) {
     send(list(bridge_event = "exit", code = 1L, figures = 0L,
               script_error = list(message = substr(conditionMessage(error), 1L, 2000L))))

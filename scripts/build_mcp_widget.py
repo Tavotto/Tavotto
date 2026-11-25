@@ -54,7 +54,7 @@ STAMP = "<!-- tavotto-mcp-widget "
 #:   * 锁文件：依赖升级会改产物字节；
 #:   * tsconfig 三份：`tsc -b` 与 vite 都读；
 #:   * 本脚本自己：内联规则变了产物也变；
-#:   * 规范 JSON 与字形覆盖表：经路径别名整份进 bundle。
+#:   * 规范、字形与调色板 JSON：由前端导入。
 EXTRA_INPUTS = (
     "web/mcp.html",
     "web/vite.mcp.config.ts",
@@ -67,6 +67,7 @@ EXTRA_INPUTS = (
     "scripts/build_mcp_widget.py",
     "src/tavotto/profiles/publication.json",
     "src/tavotto/pdfbackend/canvas_coverage.json",
+    "src/tavotto/resources/color_palettes.json",
 )
 
 

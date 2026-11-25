@@ -972,6 +972,29 @@ def _engine_source_datas(*, include_chart=False):
     return datas
 
 
+def _stage_engine_sources(internal, *, include_chart=False):
+    """Copy the engine sources and the palette data from the spec into an isolated tree."""
+    spec = REPO / "packaging" / "tavotto.spec"
+    tree = ast.parse(spec.read_text(encoding="utf-8"))
+    (assignment,) = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "datas" for target in node.targets)
+    ]
+    namespace = {"PKG": REPO / "src" / "tavotto"}
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]), str(spec), "exec"), namespace)
+    (resource_tree,) = [
+        source for source, destination in namespace["datas"] if destination == "tavotto/resources"
+    ]
+    datas = _engine_source_datas(include_chart=include_chart)
+    datas.append((Path(resource_tree) / "color_palettes.json", "tavotto/resources"))
+    for source, destination in datas:
+        target = internal / destination / Path(source).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
 def test_spec_ships_every_module_the_worker_imports():
     """worker 平铺 import 的**整条传递闭包**都必须作为真 .py 进包。
 
@@ -1057,10 +1080,7 @@ def test_packaged_fixed_chart_renders_from_spec_sources(
     from test_chart_native import setup_chart
 
     internal = tmp_path / "_internal"
-    for source, destination in _engine_source_datas(include_chart=True):
-        target = internal / destination / Path(source).name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+    _stage_engine_sources(internal, include_chart=True)
     engine = internal / "tavotto" / "engine"
     if omit_chart_wire:
         (engine / "chartwire.py").unlink()
@@ -1158,10 +1178,7 @@ def test_packaged_engine_sources_execute_without_checkout_fallback(
     or the target-platform native libraries (those remain the exe smoke jobs).
     """
     internal = tmp_path / "dist" / "_internal"
-    for source, destination in _engine_source_datas():
-        target = internal / destination / Path(source).name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+    _stage_engine_sources(internal)
     engine = internal / "tavotto" / "engine"
     if omit:
         assert (engine / omit).is_file(), "mutation must remove a genuinely shipped module"

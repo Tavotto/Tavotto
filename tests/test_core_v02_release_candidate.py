@@ -58,6 +58,12 @@ R_TICK_FORMATS = {
     "axis.x.bottom.ticks": "%.2f",
     "legend.left.1.colourbar.ticks": "%.1f",
 }
+R_COLOR_SCALE = {
+    "vmin": 10,
+    "vmax": 30,
+    "cmap": "plasma",
+}
+R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 
 
 def _run_ggplot(app, script, rscript):
@@ -212,8 +218,15 @@ def _pdf_pixels(path):
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
         legend_left = 88 * 72 / 25.4 + R_LEGEND_POSITION[0] * 216 * R_PANEL_SCALE
         assert legend_left < by_text["Drive type"][0]["bbox"][0] < legend_left + 10
-        assert page.search_for("2.00") and page.search_for("17.0")
+        assert page.search_for("2.00") and page.search_for("15.0")
         assert not page.search_for("3.00")
+        low = tuple(component / 255 for component in bytes.fromhex("0D0887"))
+        high = tuple(component / 255 for component in bytes.fromhex("F0F921"))
+        drawn = page.get_drawings()
+        for endpoint in (low, high):
+            matches = [path for path in drawn if path["fill"] == pytest.approx(endpoint, abs=0.003)]
+            assert any(path["rect"].width > 8 for path in matches), matches  # Guide strip
+            assert any(path["rect"].width < 7 for path in matches), matches  # Data markers
         curve_color = tuple(component / 255 for component in bytes.fromhex(R_CURVE_COLOR[1:]))
         (curve,) = [
             path
@@ -243,7 +256,7 @@ def _format_pixels(files):
     assert svg_tree.find(f".//{ns}image") is None
     (title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == "Fuel economy"]
     assert R_EDIT.lower() in title.attrib["style"].lower()
-    assert {"2.00", "17.0"} <= {node.text for node in svg_tree.iter(f"{ns}text")}
+    assert {"2.00", "15.0"} <= {node.text for node in svg_tree.iter(f"{ns}text")}
     assert not any(node.text == "3.00" for node in svg_tree.iter(f"{ns}text"))
     (curve,) = [
         node
@@ -490,6 +503,8 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert _render(app, r_asset, r_single)["svg"] == sized_svg
         assert _render(app, r_asset, moved_patches)["svg"] == moved["svg"]
         curve = r_elements["layer.2.line"]
+        scale = r_elements[R_COLOR_SCALE_GID]
+        assert scale["role"] == "colorbar"
         assert curve["role"] == "line" and curve["geometry"]["kind"] == "polyline"
         r_patches = [
             *moved_patches,
@@ -519,11 +534,21 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                     "color": R_CURVE_COLOR,
                 }.items()
             ],
+            *[
+                {"gid": scale["gid"], "prop": prop, "value": value, "identity": scale["identity"]}
+                for prop, value in R_COLOR_SCALE.items()
+            ],
         ]
         precision = _render(app, r_asset, r_patches)
         assert precision["svg"] != moved["svg"]
         assert _render(app, r_asset, moved_patches)["svg"] == moved["svg"]
         assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
+        edited_scale = next(
+            el for el in precision["manifest"]["elements"] if el["gid"] == R_COLOR_SCALE_GID
+        )
+        assert {
+            field["prop"]: field["value"] for field in edited_scale["editable"]
+        } == R_COLOR_SCALE
         document = {
             "schema": 3,
             "project": {"id": "mixed", "name": "Mixed native"},

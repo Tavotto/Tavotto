@@ -17,6 +17,7 @@ _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
 _CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
 _LEGEND_IDENTITY_PREFIX = "r3:"
 _LINE_IDENTITY_PREFIX = "r4:"
+_COLOR_SCALE_IDENTITY_PREFIX = "r5:"
 
 
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
@@ -155,6 +156,10 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            color_scale = element.pop("color_scale", None)
+            if color_scale is not None:
+                GgplotTarget.annotate_color_scale(element, color_scale)
+                continue
             line_context = element.pop("line_context", None)
             if line_context is not None:
                 element["identity"] = _LINE_IDENTITY_PREFIX + line_context
@@ -187,6 +192,46 @@ class GgplotTarget:
             element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
 
     @staticmethod
+    def annotate_color_scale(element: dict, scale: dict) -> None:
+        from .colorscale import CMAPS, color_scale_fields
+
+        original = {
+            "name": "custom",
+            "custom": True,
+            "discrete": False,
+            "stops": scale["stops"],
+        }
+        choice = scale["cmap"]
+        cmap = {
+            "prop": "cmap",
+            "type": "enum",
+            "value": choice or original["name"],
+            "options": CMAPS,
+            "group": "颜色映射",
+            "strict_options": True,
+        }
+        if choice is None:
+            cmap["cmap_current"] = {**original, "stops": scale["current_stops"]}
+        else:
+            cmap["cmap_current"] = {
+                "name": choice,
+                "custom": False,
+                "discrete": False,
+                "stops": scale["current_stops"],
+            }
+            cmap["cmap_original"] = original
+            cmap["value_original"] = original["name"]
+        fields = color_scale_fields(*scale["limits"], cmap, precision=None)
+        if scale["range_editable"]:
+            for field, value in zip(fields[1:], scale["original_limits"], strict=True):
+                if field["value"] != value:
+                    field["value_original"] = value
+        else:
+            fields = [cmap]
+        element["editable"] = fields
+        element["identity"] = _COLOR_SCALE_IDENTITY_PREFIX + scale["context"]
+
+    @staticmethod
     def validate_edit_targets(session, patches: list) -> None:
         from . import pool
 
@@ -205,6 +250,10 @@ class GgplotTarget:
             if expected is not None and expected.startswith(_LINE_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R curve changed. Select it again.")
+                continue
+            if expected is not None and expected.startswith(_COLOR_SCALE_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R colour scale changed. Select it again.")
                 continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX

@@ -570,6 +570,90 @@ secondary <- adapter$capture_ggplot(plot +
 stopifnot(is.null(secondary$state$tick_targets[[ticks]]$spacing))
 """
 
+COLOR_SCALE_PROBE = r"""
+adapter <- new.env(parent = baseenv())
+adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
+sys.source(adapter_file, envir = adapter)
+sys.source(file.path(dirname(adapter_file), "ggplot_colour_scale.R"), envir = adapter)
+if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+palettes <- jsonlite::fromJSON(
+  file.path(dirname(dirname(adapter_file)), "color_palettes.json"), simplifyVector = FALSE)
+
+data <- data.frame(x = 1:4, y = c(2, 4, 1, 3), z = c(0, 2, 4, 6), tile = c(8, 2, 5, 4))
+computations <- 0L
+tracked <- function(x) {
+  computations <<- computations + 1L
+  mean(x)
+}
+plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::geom_tile(ggplot2::aes(fill = tile), width = .12, height = .12) +
+  ggplot2::geom_point(ggplot2::aes(colour = z)) +
+  ggplot2::geom_point(ggplot2::aes(y = y + .1, colour = z), shape = 15) +
+  ggplot2::stat_summary(fun = tracked, geom = "point", shape = 4) +
+  ggplot2::scale_colour_gradient(name = "Exposure", guide = ggplot2::guide_colourbar(position = "right")) +
+  ggplot2::scale_fill_gradient(name = "Independent", guide = ggplot2::guide_colourbar(position = "left"))
+captured <- adapter$capture_ggplot(plot, c(432, 288), palettes)
+state <- captured$state
+gid <- "legend.right.1.colourbar"
+other <- "legend.left.1.colourbar"
+target <- state$colour_scales[[gid]]
+stopifnot(identical(target$limits, c(0, 6)), identical(names(target$members), c("2", "3")),
+          identical(names(state$colour_scales[[other]]$members), "1"))
+calls <- computations
+scale_edit <- list(vmin = 1, vmax = 5, cmap = "viridis")
+edits <- stats::setNames(list(scale_edit, list(format = "%.1f")), c(gid, paste0(gid, ".ticks")))
+result <- adapter$ggplot_remap_colour_scales(state, edits[gid], state$built$plot$guides$params)
+upper <- "#FDE725"
+lower <- "#440154"
+expected <- tolower(c(lower, "#3B528B", "#5EC962", upper))
+for (idx in c(2L, 3L)) {
+  stopifnot(identical(result$data[[idx]]$colour, expected),
+            identical(result$data[[idx]][c("x", "y")], state$layers[[idx]][c("x", "y")]))
+}
+stopifnot(identical(result$data[[1L]], state$layers[[1L]]),
+          identical(result$data[[4L]], state$layers[[4L]]))
+decor <- result$guides[[target$index]]$decor
+stopifnot(identical(decor$value[c(1L, nrow(decor))], c(1, 5)),
+          identical(toupper(decor$colour[c(1L, nrow(decor))]), c(lower, upper)))
+svg <- adapter$render_ggplot(state, edits)
+stopifnot(grepl(paste0("fill: ", lower), svg, fixed = TRUE),
+          grepl(paste0("fill: ", upper), svg, fixed = TRUE),
+          grepl(">1.0</text>", svg, fixed = TRUE), grepl(">5.0</text>", svg, fixed = TRUE))
+replay <- adapter$ggplot_manifest(state, "test", edits)$elements
+element <- Filter(function(el) el$gid == gid, replay)[[1L]]
+stopifnot(identical(element$color_scale$limits, as.list(c(1, 5))),
+          identical(element$color_scale$cmap, "viridis"),
+          identical(adapter$render_ggplot(state), captured$svg),
+          identical(adapter$render_ggplot(state, edits), svg),
+          computations == calls)
+
+for (bad in list(list(vmin = 6, vmax = 6), list(vmin = 10), list(vmax = Inf),
+                 list(cmap = "invented"))) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, stats::setNames(list(bad), gid)),
+                        silent = TRUE), "try-error"))
+}
+stopifnot(identical(adapter$render_ggplot(state), captured$svg))
+unstable <- plot + ggplot2::geom_point(ggplot2::aes(colour = z, alpha = ggplot2::after_scale(alpha)))
+stopifnot(is.null(adapter$capture_ggplot(unstable, c(432, 288), palettes)$state$colour_scales[[gid]]))
+
+paired_plot <- ggplot2::ggplot(data, ggplot2::aes(x, y, colour = z, fill = z)) +
+  ggplot2::geom_point(shape = 21) +
+  ggplot2::scale_colour_gradient(aesthetics = c("colour", "fill")) +
+  ggplot2::guides(colour = ggplot2::guide_colourbar(title = "Edge", position = "right"),
+                 fill = ggplot2::guide_colourbar(title = "Interior", position = "left"))
+paired <- adapter$capture_ggplot(paired_plot, c(432, 288), palettes)$state
+stopifnot(length(paired$colour_scales) == 1L, length(paired$colour_scales[[1L]]$guides) == 2L)
+paired_edits <- stats::setNames(list(scale_edit), names(paired$colour_scales))
+paired_result <- adapter$ggplot_remap_colour_scales(paired, paired_edits, paired$built$plot$guides$params)
+stopifnot(identical(paired_result$data[[1L]]$colour, expected),
+          identical(paired_result$data[[1L]]$fill, expected),
+          all(vapply(paired_result$guides, function(guide) {
+            identical(toupper(guide$decor$colour[c(1L, nrow(guide$decor))]), c(lower, upper))
+          }, logical(1L))))
+stopifnot(length(adapter$render_ggplot(paired, paired_edits)) == 1L)
+"""
+
 
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
@@ -595,6 +679,10 @@ def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):
 
 def test_ggplot_tick_and_curve_edits_preserve_native_values_and_colours(tmp_path):
     _assert_r_probe(tmp_path, PRECISION_PROBE)
+
+
+def test_ggplot_colour_scale_replays_all_mapped_layers_with_the_same_guide(tmp_path):
+    _assert_r_probe(tmp_path, COLOR_SCALE_PROBE)
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):

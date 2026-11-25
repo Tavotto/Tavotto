@@ -321,12 +321,14 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit) {
   list(panel = panel, params = ggplot_format_guide(params, format, values))
 }
 
-ggplot_tick_table <- function(state, edits) {
+ggplot_guide_table <- function(state, edits, colour_edits) {
   built <- state$built
   plot <- built$plot
   layout <- ggplot_clone(built$layout)
   panels <- layout$panel_params
   guide_params <- plot$guides$params
+  remapped <- if (length(colour_edits)) ggplot_remap_colour_scales(state, colour_edits, guide_params)
+  if (!is.null(remapped)) guide_params <- remapped$guides
   if (length(panels) == 1L) axis_params <- panels[[1L]]$guides$params
   for (gid in names(edits)) {
     target <- state$tick_targets[[gid]]
@@ -339,7 +341,14 @@ ggplot_tick_table <- function(state, edits) {
       axis_params[[index]] <- edited$params
     } else {
       if (!identical(names(edit), "format")) stop("The requested native R colourbar edit is unavailable.")
-      guide_params[[index]] <- ggplot_format_guide(guide_params[[index]], edit$format, target$values)
+      values <- remapped$ticks[[gid]]
+      if (is.null(values)) {
+        if (gid %in% remapped$guide_ticks && edit$format != "auto") {
+          stop("The native R range could not retain the requested tick number format.")
+        }
+        values <- target$values
+      }
+      guide_params[[index]] <- ggplot_format_guide(guide_params[[index]], edit$format, values)
     }
   }
   if (length(panels) == 1L) {
@@ -347,10 +356,14 @@ ggplot_tick_table <- function(state, edits) {
     layout$panel_params <- panels
   }
   plot$guides <- ggplot_clone(plot$guides, params = guide_params)
-  plot$layers <- Map(ggplot_frozen_layer, plot$layers, state$layer_grobs)
+  plot$layers <- Map(function(layer, grobs, index) {
+    if (index %in% remapped$changed) layer else ggplot_frozen_layer(layer, grobs)
+  }, plot$layers, state$layer_grobs, seq_along(plot$layers))
+  if (!is.null(remapped)) built$data <- remapped$data
   built$layout <- layout
   built$plot <- plot
-  ggplot2::ggplot_gtable(built)
+  list(table = ggplot2::ggplot_gtable(built), stops = remapped$stops,
+       guide_ticks = remapped$guide_ticks)
 }
 
 ggplot_colourbar_ticks <- function(table, slots, guide, prefix, title) {
@@ -644,9 +657,11 @@ ggplot_edit_line <- function(table, target, patch) {
   table
 }
 
-capture_ggplot <- function(plot, frame_pt) {
+capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   if (!inherits(plot, "ggplot")) stop("The selected object is not a ggplot.")
   measured <- with_svg_frame(frame_pt, function(capture) {
+    colour_capture <- new.env(parent = emptyenv())
+    if (!is.null(palettes)) plot <- ggplot_observe_colour_maps(plot, colour_capture)
     built <- ggplot2::ggplot_build(plot)
     layout_input <- built
     captured_layers <- new.env(parent = emptyenv())
@@ -662,6 +677,15 @@ capture_ggplot <- function(plot, frame_pt) {
     tick_targets <- if (all(lengths(captured_layers$grobs) > 0L)) {
       ggplot_tick_targets(built, text_targets, colourbar_titles)
     }
+    colour_scales <- list()
+    if (!is.null(palettes) && all(lengths(captured_layers$grobs) > 0L)) {
+      colour_scales <- ggplot_colour_scale_targets(
+        built, table, text_targets, colourbar_titles, colour_capture$maps
+      )
+      bounds <- measure_ggplot_colour_scales(table, colour_scales, frame_pt)
+      colour_scales <- colour_scales[names(bounds)]
+      for (gid in names(colour_scales)) colour_scales[[gid]]$bbox <- bounds[[gid]]
+    }
     line_targets <- ggplot_line_targets(built, table, captured_layers$grobs)
     line_geometry <- measure_ggplot_lines(table, line_targets, frame_pt)
     line_targets <- line_targets[names(line_geometry)]
@@ -673,8 +697,10 @@ capture_ggplot <- function(plot, frame_pt) {
       table = table,
       text_targets = text_targets,
       tick_targets = tick_targets,
-      built = if (length(tick_targets)) built,
-      layer_grobs = if (length(tick_targets)) captured_layers$grobs,
+      colour_scales = colour_scales,
+      palettes = palettes,
+      built = if (length(tick_targets) || length(colour_scales)) built,
+      layer_grobs = if (length(tick_targets) || length(colour_scales)) captured_layers$grobs,
       line_targets = line_targets,
       line_geometry = line_geometry,
       legend_targets = legend_targets,
@@ -797,9 +823,13 @@ ggplot_table_for <- function(state, edits) {
   table <- state$table
   text_targets <- state$text_targets
   legend_targets <- state$legend_targets
+  stops <- NULL
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
-  if (length(tick_edits)) {
-    table <- ggplot_tick_table(state, tick_edits)
+  colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
+  if (length(tick_edits) || length(colour_edits)) {
+    guides <- ggplot_guide_table(state, tick_edits, colour_edits)
+    table <- guides$table
+    stops <- guides$stops
     if (!identical(table$layout$name, state$table$layout$name)) {
       stop("The native R guide layout changed while formatting.")
     }
@@ -809,8 +839,9 @@ ggplot_table_for <- function(state, edits) {
       target <- text_targets[[gid]]
       group <- if (!is.null(target$tick_labels)) target$label
       current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group)
+      changes_ticks <- !is.null(tick_edits[[gid]]) || gid %in% guides$guide_ticks
       if (is.null(current) || !identical(target$label, current$label) ||
-          (is.null(tick_edits[[gid]]) && !identical(target$tick_labels, current$tick_labels))) {
+          (!changes_ticks && !identical(target$tick_labels, current$tick_labels))) {
         stop("The native R text layout changed while formatting.")
       }
       target[names(current)] <- current
@@ -826,6 +857,7 @@ ggplot_table_for <- function(state, edits) {
     }
   }
   for (gid in names(edits)) {
+    if (!is.null(colour_edits[[gid]])) next
     line <- state$line_targets[[gid]]
     if (!is.null(line)) {
       table <- ggplot_edit_line(table, line, edits[[gid]])
@@ -850,7 +882,7 @@ ggplot_table_for <- function(state, edits) {
       table <- resize_ggplot_title_cell(table, target, original)
     }
   }
-  list(table = table, text = text_targets, legends = legend_targets)
+  list(table = table, text = text_targets, legends = legend_targets, stops = stops)
 }
 
 ggplot_record_legend <- function(capture, marked, gid) {
@@ -937,6 +969,10 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
     frame_pt <- grDevices::dev.size("in") * 72
     return(list(text = measure_ggplot_targets(scene$text, frame_pt),
                 legends = measure_ggplot_legends(scene$legends, frame_pt),
+                colour_scales = if (length(state$colour_scales)) {
+                  measure_ggplot_colour_scales(scene$table, state$colour_scales, frame_pt)
+                },
+                scale_stops = scene$stops,
                 lines = measure_ggplot_lines(scene$table, state$line_targets, frame_pt)))
   }
   invisible(NULL)
@@ -948,7 +984,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   legend_gids <- names(state$legend_targets)
   reflow <- any(vapply(edits, function(edit) any(c("fontsize", ggplot_tick_props) %in% names(edit)),
                       logical(1L))) ||
-    any(names(edits) %in% legend_gids)
+    any(names(edits) %in% c(legend_gids, names(state$colour_scales)))
   line_edits <- any(names(edits) %in% names(state$line_targets))
   if (reflow) {
     geometry_gids <- names(state$text_targets)
@@ -966,6 +1002,10 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       grid::grid.draw(scene$table)
       list(text = measure_ggplot_targets(scene$text[geometry_gids], state$frame_pt),
            legends = if (reflow) measure_ggplot_legends(scene$legends, state$frame_pt),
+           colour_scales = if (reflow && length(state$colour_scales)) {
+             measure_ggplot_colour_scales(scene$table, state$colour_scales, state$frame_pt)
+           },
+           scale_stops = scene$stops,
            lines = if (reflow || line_edits) {
              measure_ggplot_lines(scene$table, state$line_targets, state$frame_pt)
            })
@@ -1058,6 +1098,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
            draggable = FALSE, editable = editable, line_context = target$context),
       geometry)
   })
+  colour_scales <- if (length(state$colour_scales)) {
+    ggplot_colour_scale_elements(state, edits, measured$colour_scales, measured$scale_stops)
+  }
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
-       elements = c(legends, elements, lines))
+       elements = c(legends, elements, lines, colour_scales))
 }

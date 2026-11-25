@@ -71,6 +71,7 @@ from colorbarmodel import (
     scale_gids,
     scale_siblings,
 )
+from colorscale import CMAPS, color_scale_fields
 from legendmodel import (
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
@@ -178,23 +179,6 @@ from tickmodel import (
     tick_side_visible,
     ticklabel_memo,
 )
-
-CMAPS = [
-    "viridis",
-    "plasma",
-    "inferno",
-    "magma",
-    "cividis",
-    "Greys",
-    "gray",
-    "hot",
-    "afmhot",
-    "coolwarm",
-    "RdBu_r",
-    "seismic",
-    "jet",
-    "turbo",
-]
 
 _SKIP_LABELS = ("_child", "_nolegend_")
 
@@ -3106,25 +3090,9 @@ def _colormap_fields(m, state: FigState, gid: str, artist=None) -> list[dict]:
     `m` 自己），别名反查用它。
     """
     vmin, vmax = m.get_clim()
-    span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0
-    step = max(span / 100.0, 1e-6)
-    return [
-        _cmap_field(m, state, m if artist is None else artist, gid),
-        {
-            "prop": "vmin",
-            "type": "number",
-            "value": None if vmin is None else round(float(vmin), 4),
-            "step": round(step, 4),
-            "group": "颜色映射",
-        },
-        {
-            "prop": "vmax",
-            "type": "number",
-            "value": None if vmax is None else round(float(vmax), 4),
-            "step": round(step, 4),
-            "group": "颜色映射",
-        },
-    ]
+    return color_scale_fields(
+        vmin, vmax, _cmap_field(m, state, m if artist is None else artist, gid)
+    )
 
 
 def _linecoll_fields(coll) -> list[dict]:

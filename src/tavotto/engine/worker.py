@@ -390,6 +390,7 @@ _ENGINE_MODULES = (
     "spinemodel",
     "tickmodel",
     "colorbarmodel",
+    "colorscale",
     "legendmodel",
     "overrides",
     "manifest",

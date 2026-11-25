@@ -106,6 +106,7 @@ ENGINE_SIBLINGS = (
     "spinemodel",
     "tickmodel",
     "colorbarmodel",
+    "colorscale",
     "legendmodel",
     "overrides",
     "manifest",

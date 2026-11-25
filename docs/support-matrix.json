@@ -74,6 +74,7 @@
         "plain-text plot title, subtitle, caption and axis title font size",
         "single-group plain-text axis tick labels RGB color per side on a single-panel plot",
         "number format for axis and continuous colorbar labels that match the trained numeric values",
+        "shared palette and range of a supported linear continuous colorbar and its mapped point, tile, rectangle or raster layers",
         "fixed major tick interval aligned with the major grid on a supported single-panel linear axis",
         "stroke width, line style and unmapped RGB color of a supported single-group geom_line or geom_path",
         "native guide box position by canvas drag",
