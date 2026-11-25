@@ -246,20 +246,20 @@ def _say_anchor(anchor: dict, panels: dict) -> dict:
         pid, gid = spec.get("panel"), spec.get("gid")
         el = _element(panels, pid, gid) or {}
         label, role = el.get("label"), el.get("role")
-        who = (
-            f"『{label}』"
-            if isinstance(label, str) and label
-            else f"没有名字的{role or '元素'}（{gid}）"
-        )
+        # 「有名字」只认脚本显式起的 `label=`（manifest 的 `identity`，ADR 0083）；`label` 是界面上的显示名
+        # （「误差棒 1」「曲线 “Sample B”」），没起名字的元素也有，不能当作用户能拿来比对的名字
+        named = isinstance(el.get("identity"), str)
+        shown = label if isinstance(label, str) and label else (role or "元素")
+        who = f"{shown}" if named else f"{shown}（没有名字，{gid}）"
         return {
             "kind": "element",
             "panel": pid,
             "gid": gid,
             "role": role,
             "label": label,
-            "named": isinstance(label, str) and bool(label),
+            "named": named,
             "point": spec.get("point", "center"),
-            "text": f"{pid} 里{who}的 {spec.get('point', 'center')}",
+            "text": f"{pid} 里 {who} 的 {spec.get('point', 'center')}",
         }
     if kind == "panel":
         return {

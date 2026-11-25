@@ -28,6 +28,7 @@ MANIFEST = {
         {
             "gid": "axes_0.bar_0",
             "role": "patch",
+            "label": "柱子 1",  # 界面显示名（脚本没起 label=，所以没有 identity）
             "bbox": [0.7, 0.6, 0.1, 0.3],
             "geometry": {
                 "paths": [
@@ -141,14 +142,14 @@ def test_echo_says_what_the_anchor_actually_landed_on(project):
     arrow = next(e for e in out["echo"] if e["item"] == "peak")
     to = next(a for a in arrow["anchors"] if a["role"] == "to")
     assert to["label"] == "Treatment" and to["named"] is True
-    assert "『Treatment』" in arrow["text"]
+    assert "Treatment" in arrow["text"] and "没有名字" not in arrow["text"]
     assert arrow["intent"] == "describable"
     # 锚到没有名字的元素：复述只说得出 gid，意图标 unnamed
     items = _items()
     items[0]["to"]["anchor"]["element"]["gid"] = "axes_0.bar_0"
     out = la.propose(project, "组图", items, measure, base_revision=s["base_revision"])
     arrow = next(e for e in out["echo"] if e["item"] == "peak")
-    assert arrow["intent"] == "unnamed" and "axes_0.bar_0" in arrow["text"]
+    assert arrow["intent"] == "unnamed" and "没有名字" in arrow["text"] and "axes_0.bar_0" in arrow["text"]
 
 
 def test_commit_appends_objects_with_anchor_and_undo_restores(project):
