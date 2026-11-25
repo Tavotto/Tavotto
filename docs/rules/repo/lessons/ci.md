@@ -212,10 +212,10 @@
 
 ### L-149 验字段未泄漏先解析结构，别在整个 JSON 里搜短数字或随机片段
 - 类: 别这样
-- 触发: tests/native/test_native_handoff.py, tests/native/test_native_api.py, tests/test_telemetry_invariants.py
-- Seen: 2026-11-06
-- 为什么: 端口未泄漏的判据在整个序列化 JSON 里搜五位数字，随机 native_id 偶然含相同片段，误红把无关导出 PR 踢出队列。断言公开字段集合与敏感字段缺席；若必须比内容，构造可区分的夹具，别让随机合法值决定结论。
-- 证据: #1790
+- 触发: tests/native/test_native_handoff.py, tests/native/test_native_api.py, tests/test_telemetry_invariants.py, tests/test_license.py
+- Seen: 2026-11-06, 2026-11-24
+- 为什么: 端口未泄漏的判据在整个序列化 JSON 里搜五位数字，随机 native_id 偶然含相同片段，误红把无关导出 PR 踢出队列。断言公开字段集合与敏感字段缺席；若必须比内容，构造可区分的夹具，别让随机合法值决定结论。11-24 许可证用例断言创始编号 37 不在状态 JSON 里，签名时间戳恰含 37，三个无关 PR 被踢（#2164、#2165、#2182），#2177 改按字段比值。
+- 证据: #1790, #2164, #2177
 
 ### L-159 平台故障残局：gate 卡住整轮 rerun，PR 无检查空提交，超时踢出按原 head 重排
 - 类: 照这样
@@ -223,3 +223,10 @@
 - Seen: 2026-11-12, 2026-11-21
 - 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。11-21 队列第 3 位的 CLA 判定报 budget_deferred（服务按合并前缀控预算）整组红，同理不改代码，等前序合入后按原 head 重排（#2064）。
 - 证据: #1857, #1864, #1866, #2064
+
+### L-179 golden 里由三角、开方算出的浮点先截位再写，新生成器在 Windows 腿跑一次
+- 类: 别这样
+- 触发: scripts/gen_*, tests/golden/
+- Seen: 2026-11-24
+- 为什么: 干涉检测的 golden 在本机生成，斜排文字外接框的三角函数末位在 Windows 与 Linux 上不同，PR 阶段不跑 Windows 后端，合并组 Windows 分片两次红，同组排在后面的三个 PR 一起被取消；修法是外接框取 9 位小数。生成器输出 libm 结果时按容差位数截位，或开 PR 就打 full-ci。
+- 证据: #2140

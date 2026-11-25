@@ -3,10 +3,10 @@ import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { engineLabel, groupName } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
-import { Clipboard, ClipboardPaste, ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from '@/components/ui/icons'
+import { Clipboard, ClipboardPaste, CopyCheck, ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
-import { geomTarget, positionOf } from '@/lib/elementGeom'
+import { geomTarget, positionOf, sameKindGids } from '@/lib/elementGeom'
 import type { EditableField, ManifestElement } from '@/lib/api'
 import { LEGEND_ANCHOR_PROP, legendAnchorRange, toLegendAnchor } from '@/lib/legendModel'
 import { pagePtLens, PT_DECIMALS } from '@/lib/stylePresets'
@@ -21,6 +21,7 @@ import {
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from '@/components/inspector/roles/registry'
@@ -289,6 +290,7 @@ function ElementQuick({
     s.doc.objects.find((o) => o.id === target.panelId && o.type === 'panel'),
   ) as PanelObject | undefined
   const manifest = usePanelDisplayManifest(panel)
+  const selectedGids = useUiStore((s) => s.selectedGids)
   const el = manifest?.elements.find((e) => e.gid === target.gid)
   // 从元素树选中的真实组（ADR 0102，`Manifest.groups`）不在元素表里：右键它的组框手柄时目标是组 gid
   // （Codex #833）。组没有自己的样式字段，弹层只说它是谁、给「全部属性」——不把一个不存在的元素当目标关掉
@@ -352,6 +354,23 @@ function ElementQuick({
     close()
   }
 
+  // 「选中全部同类」（来信 TVM-CKRH）：同一张图里同角色的元素一次选中，属性页随即给出批量表单。
+  // 只有它自己、或这一类已经全选着时不摆（同「同步修改」的先例：没有作用的项不出现，不做置灰）
+  const sameKind = sameKindGids(manifest.elements, el, panel.lockedGids)
+  const canSelectSameKind = sameKind.length >= 2 && !sameKind.every((g) => selectedGids.includes(g))
+  const selectSameKind = () => {
+    const ui = useUiStore.getState()
+    // 混排进来的画布标注（⇧ 点的文字 / 箭头 / 形状）一并放下：选区里有标注时属性页只给混排对齐、不出批量表单，
+    // 这一项要的正是那张批量表单（Codex #2150）
+    const sel = useSelectionStore.getState()
+    const objects = useDocumentStore.getState().doc.objects
+    const keep = sel.ids.filter((id) => objects.find((o) => o.id === id)?.type === 'panel')
+    if (keep.length !== sel.ids.length) sel.set(keep)
+    ui.setSelectedGids(sameKind)
+    ui.setRightTab('properties')
+    close()
+  }
+
   return (
     <>
       <Head>{field('text') ? engineCategory(el.label) : engineLabel(el.label)}</Head>
@@ -390,6 +409,11 @@ function ElementQuick({
       )}
 
       <Divider />
+      {canSelectSameKind && (
+        <MenuButton icon={CopyCheck} onClick={selectSameKind} data-quick-item="select-same-kind">
+          {qe('selectSameKind', { count: sameKind.length })}
+        </MenuButton>
+      )}
       {/* 复制为标注（ADR 0163）：图里的文字 → 页面上同一处的文字标注。曲线 / 色块 / 刻度组置灰（⌘C 时是顶栏胶囊说「还不能复制」）；
           粘贴靠异步读剪贴板，读不了的引擎上不摆（同对象右键菜单，`canPasteFromMenu`），用 ⌘V；已知剪贴板里没有对象时置灰 */}
       <MenuButton

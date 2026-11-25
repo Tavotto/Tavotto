@@ -20,6 +20,7 @@ import { NativeSessionCards } from '@/components/NativeSessionCards'
 import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { ProDialog } from '@/components/pro/ProDialog'
 import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { ConnectAiHost } from '@/components/ConnectAiHost'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
@@ -369,6 +370,7 @@ function Workspace() {
         <ExportDialog />
         <ChartBindDialog />
         <SettingsDialog />
+        <ProDialog />
         <LayoutDialog />
         <ProjectPackageInstallDialog />
         <StyleDialog />

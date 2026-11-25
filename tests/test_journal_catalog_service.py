@@ -67,8 +67,13 @@ def svc(tmp_path, data):
 P = core.PREFIX
 
 
-def call(s, method, path, query="", token=None, ip="1.2.3.4", client=None, xff=None):
-    h = {"x-tavotto-device": token, "x-tavotto-client": client, "x-forwarded-for": xff}
+def call(s, method, path, query="", token=None, ip="1.2.3.4", client=None, xff=None, inm=None):
+    h = {
+        "x-tavotto-device": token,
+        "x-tavotto-client": client,
+        "x-forwarded-for": xff,
+        "if-none-match": inm,
+    }
     return s.handle(method, P + path, query, h, ip)
 
 
@@ -102,6 +107,37 @@ def test_index_no_token_and_headers(svc):
     assert dict(h)["Cache-Control"] == "public, max-age=300"
     assert dict(h)["Content-Type"] == "application/json"
     assert db_rows(s, "select count(*) from reads") == [(0,)]
+
+
+def test_index_etag_and_conditional_304(svc):
+    """签名索引带内容 sha256 的强 ETag；If-None-Match 命中回 304（无体、仍带 ETag 与缓存头），不命中 / 缺失回 200。"""
+    import hashlib
+
+    s, _ = svc
+    st, h, b = call(s, "GET", "/index.signed.json")
+    etag = dict(h)["ETag"]
+    assert etag == '"' + hashlib.sha256(b).hexdigest() + '"'
+    for inm in (etag, "W/" + etag, f'"zzz", {etag}', "*", etag[:-1] + '-gzip"'):
+        st, h, b2 = call(s, "GET", "/index.signed.json", inm=inm)
+        assert (st, b2) == (304, b"")
+        assert dict(h)["ETag"] == etag and dict(h)["Cache-Control"] == "public, max-age=300"
+    for inm in ('"other"', "", None, "garbage"):
+        st, _, b2 = call(s, "GET", "/index.signed.json", inm=inm)
+        assert (st, b2) == (200, b)
+    # 内容变了 ETag 跟着变
+    (s.config.data_dir / "index.signed.json").write_bytes(b'{"alg":"ed25519","x":1}')
+    st, h, _ = call(s, "GET", "/index.signed.json", inm=etag)
+    assert st == 200 and dict(h)["ETag"] != etag
+    assert db_rows(s, "select count(*) from reads") == [(0,)]
+
+
+def test_conditional_requests_do_not_apply_to_bundles_or_snapshots(svc):
+    """刊包的首次读取计数与令牌校验必须每次到源站：If-None-Match 对它们无效，不出 304、不出 ETag。"""
+    s, _ = svc
+    tok = new_token(s)
+    st, h, _ = call(s, "GET", "/journals/j1", "rev=5", tok, inm="*")
+    assert st == 200 and "ETag" not in dict(h)
+    assert db_rows(s, "select count(*) from reads") == [(1,)]
 
 
 def test_device_token_stored_hashed(svc):
@@ -608,6 +644,19 @@ def test_only_the_signed_index_is_edge_cached():
         and dict(h)["Retry-After"] == "60"
         and dict(h)["Cache-Control"] == "private, no-store"
     )
+
+
+def test_proxy_passes_index_etag_and_304_but_nothing_else():
+    px = _load_proxy()
+    up = _Up(304, {"ETag": '"abc"', "Content-Type": "application/json"}, b"")
+    st, h, b = px.proxy(_env("p=index.signed.json", HTTP_IF_NONE_MATCH='"abc"'), CFG, up)
+    assert up.calls[0][2]["If-None-Match"] == '"abc"'
+    assert (st, b) == (304, b"") and dict(h)["ETag"] == '"abc"'
+    assert dict(h)["Cache-Control"] == "public, max-age=300, s-maxage=300"
+    # 刊包 / 快照：不转发条件头、不回 ETag（计数与令牌校验必须到源站）
+    up = _Up(200, {"ETag": '"x"'}, b"B")
+    _, h, _ = px.proxy(_env("p=journals%2Fj1&rev=5", HTTP_IF_NONE_MATCH="*"), CFG, up)
+    assert "If-None-Match" not in up.calls[0][2] and "ETag" not in dict(h)
 
 
 @pytest.mark.parametrize(

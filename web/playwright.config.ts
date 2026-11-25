@@ -106,6 +106,8 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], locale: 'en-US' },
       // inspector-overflow：英文标签更长，撑破的多半是它——两种语言各量一遍
       testMatch: [
+        // 画布线条太细（ADR 0208）：标题 / 文案中英两套（「线条太细」/「Line too thin」），定位走 data-*，两种语言各走一遍
+        'canvas-line-width-locate.spec.ts',
         // 助手草稿与提交可靠性（ADR 0132）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
         'ai-draft.spec.ts',
         // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*

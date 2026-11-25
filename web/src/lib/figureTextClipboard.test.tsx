@@ -218,6 +218,27 @@ describe('⌘V：粘贴为标注', () => {
     expect(texts().length).toBe(before + 2)
   })
 
+  it('事件派给属性页那个没有焦点的文字框（残留选区）时照样按页面粘贴，不写进框里', () => {
+    const data = copied('axes_0.title')
+    // 属性页的富文本框：没有焦点、残留选区。jsdom 不实现 isContentEditable，手动补上（真浏览器里它就是 true）
+    const editor = document.createElement('div')
+    editor.setAttribute('contenteditable', 'true')
+    Object.defineProperty(editor, 'isContentEditable', { value: true })
+    editor.textContent = 'Reaction kinetics'
+    document.body.append(editor)
+    const before = texts().length
+    const e = { ...pasteEvent(data), target: editor } as unknown as ClipboardEvent
+    expect(handlePasteEvent(e)).toBe(true)
+    expect(e.preventDefault).toHaveBeenCalled()
+    expect(texts().length).toBe(before + 1)
+    expect(editor.textContent).toBe('Reaction kinetics')
+    // 有焦点就是真在框里打字：让位给浏览器
+    editor.tabIndex = 0
+    editor.focus()
+    expect(handlePasteEvent({ ...pasteEvent(data), target: editor } as unknown as ClipboardEvent)).toBe(false)
+    editor.remove()
+  })
+
   it('标注留在原来的工作区：粘出来的只有文字、没有第二张图（单图编辑保持单图编辑）', () => {
     handlePasteEvent(pasteEvent(copied('axes_0.title')))
     expect(doc().objects.filter((o) => o.type === 'panel')).toHaveLength(1)

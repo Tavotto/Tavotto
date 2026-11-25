@@ -1308,6 +1308,74 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
   })
 })
 
+describe('图内元素弹层的「选中全部同类」（来信 TVM-CKRH）', () => {
+  const title = (gid: string, visible = true) => ({
+    gid,
+    role: 'title',
+    label: '标题',
+    group: 'axes',
+    bbox: [0.1, 0.1, 0.3, 0.1],
+    editable: [
+      { prop: 'text', type: 'text', value: gid },
+      { prop: 'visible', type: 'bool', value: visible },
+    ],
+  })
+  const seedTitles = async (elements: unknown[], lockedGids: string[] = []) => {
+    await seed([panel('p1', { lockedGids })])
+    const { seedExactRender } = await import('@/test/renderFixtures')
+    seedExactRender(byId<PanelObject>('p1'), { stem: 'Fig1', size_mm: [40, 30], elements } as never)
+    await mount()
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_1.title' }, 50, 50)
+    })
+  }
+  const item = () => document.querySelector<HTMLElement>('[data-quick-item="select-same-kind"]')
+
+  it('同角色、可见、未锁定的一起选中，右键的那个排最后（主选），并打开属性页', async () => {
+    await seedTitles(
+      [
+        title('axes_0.title'),
+        title('axes_1.title'),
+        title('axes_2.title'),
+        title('axes_3.title', false),
+        title('axes_4.title'),
+        { ...title('axes_0.xlabel'), role: 'axis_label' },
+      ],
+      ['axes_4.title'],
+    )
+    expect(item()?.textContent).toContain('3')
+    useUiStore.getState().setRightTab('assistant')
+    await click(item())
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title', 'axes_2.title', 'axes_1.title'])
+    expect(useUiStore.getState().rightTab).toBe('properties')
+  })
+
+  it('混排进来的画布标注一并放下，属性页才出批量表单（Codex #2150）', async () => {
+    await seedTitles([title('axes_0.title'), title('axes_1.title')])
+    const note = { id: 'n1', type: 'text', x: 0, y: 0, w: 10, h: 5, text: 'x' }
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [...s.doc.objects, note as never] } }))
+      useSelectionStore.getState().set(['p1', 'n1'])
+    })
+    await click(item())
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title', 'axes_1.title'])
+  })
+
+  it('这一类已经全选着时不摆这一项', async () => {
+    useUiStore.getState().setSelectedGids(['axes_0.title', 'axes_1.title'])
+    await seedTitles([title('axes_0.title'), title('axes_1.title')])
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(item()).toBeNull()
+  })
+
+  it('没有同类时不摆这一项', async () => {
+    await seedTitles([title('axes_1.title'), { ...title('axes_0.xlabel'), role: 'axis_label' }])
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(item()).toBeNull()
+  })
+})
+
 /* -------------------------------------------------------------------------- */
 /*  同步修改（2026-10-01，设计稿 C5 / C11：原在属性栏「源文件与高级」）            */
 /* -------------------------------------------------------------------------- */

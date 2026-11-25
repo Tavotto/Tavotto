@@ -1277,6 +1277,7 @@ class NativeSession:
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
+        data_points: list | None = None,
     ) -> dict:
         with self._figure_lock:
             payload = {
@@ -1291,6 +1292,8 @@ class NativeSession:
                 **({"snapshot_only": True} if snapshot_only else {}),
                 **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
                 **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
+                # ADR 0208 §二：数据点 → 这次导出绘制里的位置；不传就一个字节不多
+                **({"data_points": data_points} if data_points is not None else {}),
             }
             existing = self._guard_existing_request(
                 payload, expected_execution_id, expected_snapshot_epoch

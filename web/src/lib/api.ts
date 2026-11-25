@@ -3146,6 +3146,15 @@ export interface BarBaselineFact {
   baselines?: { value: number; bars: number }[]
 }
 
+/** `ManifestElement.legend_cover`（`engine/manifest.LEGEND_COVER_STATUSES` 是 `status` 的闭集）。 */
+export interface LegendCoverFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  opaque?: boolean
+  face_alpha?: number
+  px_mm?: number
+  handles?: [number, number, number, number][]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -3248,6 +3257,13 @@ export interface ManifestElement {
    * 消费者只有 `lib/preflight.ts` 的 `checkBarBaselineTruncated`。
    */
   bar_baseline?: Partial<Record<'x' | 'y', BarBaselineFact>>
+  /**
+   * 图例**真正挡住数据的东西**的只读事实（V-011「图例一侧的取法」）：只在 legend 元素上。`opaque` = 框画出来且背景
+   * 有效不透明度 `face_alpha > 0`；`handles` = 每格示意的框（figure 分数、y 向下）；`px_mm` = 一个显示像素的 mm。
+   * `status` 不是 `ok`（超预算 / 读不出）时没有其余字段，判据退回整块图例框。产生者只有 `engine/manifest.legend_cover`；
+   * 消费者只有 `lib/interference.ts` 的 `legendCoverRects`。
+   */
+  legend_cover?: LegendCoverFact
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
@@ -9835,3 +9851,23 @@ export const refreshLicense = () => jsonFetch<LicenseStatus>('/api/license/refre
 export const releaseLicense = () => jsonFetch<LicenseStatus>('/api/license/release', licenseBody())
 export const licenseCheckout = (lookupKey: string, locale: string, renew = false) =>
   jsonFetch<{ ok: true; url: string }>('/api/license/checkout', licenseBody({ lookup_key: lookupKey, locale, renew }))
+
+/**
+ * 账户详情（`GET /api/license/account`，引擎包一层 infra `POST /v1/me`，设备签名 `op = "me"`；失败一律静默降级成 `{ok:false}`）：
+ * `tier.key` 是档名（year / season / sprint / other；创始年度也归 year，创始身份看 `status.founding`），`term_days` 是那一笔的时长，
+ * `devices` 是这份授权的设备名额，`paid_at` / `exp` 是秒。拿不到 = 这几行不显示。
+ */
+export type LicenseAccount =
+  | { ok: true; tier: { key: string; term_days: number }; devices: { used: number; limit: number }; paid_at: number; exp: number }
+  | { ok: false }
+export const fetchLicenseAccount = () => jsonFetch<LicenseAccount>('/api/license/account')
+
+/**
+ * 内置 AI 用量（`GET /api/license/usage`，引擎包一层 infra `POST /v1/ai/usage`，设备签名 `op = "ai_usage"`）：
+ * `agent_used` = 1 − remaining，0–1 两位小数；`null` = 额度暂时算不准（界面写「用量暂不可用」）。失败 / 403 一律静默降级成 `null`，不报错。
+ * 外部审阅今天还剩几次走现有 `GET /api/review/quota` 的 `new_left`，不在这里。
+ */
+export interface LicenseUsage {
+  agent_used: number | null
+}
+export const fetchLicenseUsage = () => jsonFetch<LicenseUsage>('/api/license/usage')
