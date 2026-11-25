@@ -120,3 +120,28 @@ def test_the_abi_version_matches_the_frontend_loader():
 def test_the_abi_version_matches_the_rust_crate():
     rs = (ROOT / "vecops" / "src" / "lib.rs").read_text(encoding="utf-8")
     assert f"pub const ABI_VERSION: u32 = {vecops.VECOPS_ABI};" in rs
+
+
+def test_spec_ships_the_wasmtime_license_with_its_native_library():
+    """安装包里带着 wasmtime 的原生库，就得带着它的许可证原文（Apache-2.0 WITH LLVM-exception）：
+    `copy_metadata("wasmtime")` 把 dist-info（含 `licenses/LICENSE`）收进 datas；第三方声明里也列着它。"""
+    tree = _spec_tree()
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "copy_metadata"
+        and n.args
+        and isinstance(n.args[0], ast.Constant)
+        and n.args[0].value == "wasmtime"
+    ]
+    assert any(
+        isinstance(n, ast.AugAssign)
+        and isinstance(n.target, ast.Name)
+        and n.target.id == "datas"
+        and any(c in ast.walk(n.value) for c in calls)
+        for n in ast.walk(tree)
+    ), "spec 没有把 copy_metadata('wasmtime') 收进 datas：安装包里缺它的许可证原文"
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert "wasmtime" in notices and "LLVM-exception" in notices

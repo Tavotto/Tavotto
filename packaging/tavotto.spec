@@ -246,7 +246,7 @@ print(f"[tavotto.spec] PDFium: {[os.path.basename(b[0]) for b in _pdfium_libs]}�
 # 上缺 ISRG Root X1 时私有 Python 下载以 `private_python_tls` 失败，而源码模式一切正常（2026-09-28 实测的
 # 就是这个形状）。整包子模块点名收进（`_windows` / `_macos` / `_openssl` 按平台条件 import）；打包环境里
 # 没装它就在这里失败，不留到用户机器上。
-from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata  # noqa: E402
 
 TRUSTSTORE_MODULES = collect_submodules("truststore")
 if "truststore" not in TRUSTSTORE_MODULES:
@@ -303,6 +303,8 @@ if "wasmtime" not in WASMTIME_MODULES or not _wasmtime_libs:
         "打包环境里没有 wasmtime 或没找到它的原生库（pip install -r requirements.txt）——冻结产物的矢量几何内核会不可用"
     )
 binaries += _wasmtime_libs
+# 许可证原文（Apache-2.0 WITH LLVM-exception）随原生库一起进安装包：dist-info 里的 `licenses/LICENSE`
+datas += copy_metadata("wasmtime")
 print(f"[tavotto.spec] wasmtime: {len(WASMTIME_MODULES)} 个子模块，原生库 {[os.path.basename(b[0]) for b in _wasmtime_libs]}")
 
 # 「接入 AI 编辑器」（用户 2026-10-27）：`tavotto-cli mcp` 在进程内跑插件那一份 MCP 服务端（engine/mcpserve.py），
