@@ -371,10 +371,16 @@ export function MenuRadioItem({
   reason,
   description,
   tag,
+  roomy,
   ...rest
 }: {
   value: string
   children: ReactNode
+  /**
+   * 用「带说明」那一档的边距（文字起点、勾的左位置与颜色），但图标与勾相对整行**垂直居中**：同一组里有的行带第二行小字、有的不带时，
+   * 文字与图标列严格对齐、重心一致（缺省 = 不改：没有说明的行仍是紧凑版式；`description` 单独用仍是顶对齐，ModelPicker 等现有菜单不变）
+   */
+  roomy?: boolean
   /**
    * 每项一句说明（第二行 11.5px ink-3）。给了它，这一项就是「带说明的单选」：勾用品牌蓝、
    * 行内边距放大一档（7/8），名称旁可挂一枚灰色小标 `tag`（「默认」）。
@@ -393,9 +399,15 @@ export function MenuRadioItem({
       {...rest}
       value={value}
       disabled={disabled}
-      className={cn(ITEM_CLASS, 'relative pl-6 text-ink', description && 'items-start py-[7px] pl-8 pr-2')}
+      className={cn(
+        ITEM_CLASS,
+        'relative pl-6 text-ink',
+        description && 'items-start py-[7px] pl-8 pr-2',
+        // roomy：同一档边距，但图标与勾相对**整行**垂直居中（两行的行居中在两行文字的中线上，单行的行照旧）；带说明的菜单（不传 roomy）仍是顶对齐
+        roomy && 'items-center py-[7px] pl-8 pr-2',
+      )}
     >
-      <DM.ItemIndicator className={cn('absolute flex items-center', description ? 'left-2 top-[9px] text-accent' : 'left-1.5')}>
+      <DM.ItemIndicator className={cn('absolute flex items-center', description ? 'left-2 top-[9px] text-accent' : 'left-1.5', roomy && 'left-2 top-1/2 -translate-y-1/2 text-accent')}>
         <Check size={ICON_SIZE.sm} />
       </DM.ItemIndicator>
       {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}

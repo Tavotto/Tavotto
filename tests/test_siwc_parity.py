@@ -259,3 +259,23 @@ def test_cached_token_does_not_wait_for_a_refresh_in_progress(env):
         release.set()
         th.join()
     assert prov.access_token(min_valid_s=5, allow_refresh=False) == TOKEN
+
+
+# --------------------------------------------------------------------------- 「读懂数据选用哪个 AI」（#2230）里的 ChatGPT 登录
+def test_data_understanding_choice_offers_and_uses_chatgpt_login(env):
+    """选项里有 ChatGPT 登录（算订阅）；选中它时真要开跑能用（不因为不是存下的记录就当成「用不了」）；关掉时一个字节都不发。"""
+    from tavotto.engine import ai_data_aichoice
+
+    env.setattr(ai_data_aichoice, "_cli_conns", lambda: [])
+    opts = {o["id"]: o for o in ai_data_aichoice.options()}
+    assert opts["siwc:chatgpt"]["kind"] == "subscription"
+    conn = ai_data_aichoice.connection_by_id("siwc:chatgpt")
+    assert conn is not None and conn["provider_id"] == "siwc:chatgpt"
+    assert ai_data_aichoice.refresh_key(conn) is conn  # 令牌留给 call_structured 按时限现取
+    env.setattr(ai_data_aichoice, "read_choice", lambda: ("off", None))
+    assert ai_data_aichoice.resolve(lambda: ai_connections.first_key_connection()) is None
+    env.setattr(ai_data_aichoice, "read_choice", lambda: ("auto", None))
+    assert (
+        ai_data_aichoice.resolve(lambda: ai_connections.first_key_connection())["provider_id"]
+        == "siwc:chatgpt"
+    )

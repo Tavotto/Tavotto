@@ -673,6 +673,26 @@ figure changes when you press *Apply*.
 * **Turning it off.** Not connecting an AI is enough; there is no other network
   request for this feature.
 
+## Change plans in the assistant
+
+When you send an instruction in the assistant for a single figure, the app first asks
+the AI connection **you** selected for a *change plan* (a card you can compare and
+apply) instead of editing the script right away. Only instructions the plan can
+express (colours, sizes, positions, text, visibility of what is already in the figure)
+become a plan; anything that needs the script is handed to the Agent as before, after
+the plan step has said so.
+
+* **What is sent for the plan.** To the AI connection you chose: the text of your
+  instruction, which element you had selected (if any), and the same table of the
+  figure's elements as above (labels, editable properties with their current values,
+  positions). Scripts, data, project files, paths and computer details are not sent
+  in this step. Instructions with attached reference images skip the plan step.
+* **One-click layout.** The comparison pictures are drawn on your computer by the
+  export engine; nothing about them is sent anywhere.
+* **Turning it off.** Settings → Assistant → Advanced → *Show a change plan before
+  editing*. Off means the assistant and one-click layout behave as before (edit the
+  script / apply directly).
+
 ## Paid edition components
 
 These requests exist only on a computer where a paid-edition license has been

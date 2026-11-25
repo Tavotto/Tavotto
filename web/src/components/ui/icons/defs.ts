@@ -181,6 +181,8 @@ const RAW_DEFS = {
   Sparkles: { s: [SPARK], f: [SPARK_SM], sel: { f: [SPARK, SPARK_SM] } },
   // Pro 入口（左轨底部，开 Pro 页）。不与改图助手的 Sparkles 共形（2026-11-25 前两处同用一颗星，看不出是 Pro）
   FacetStar: { s: [FACET_STAR], f: FACET_STAR_FACETS, sel: { f: [FACET_STAR], k: [FACET_STAR_CORE] } },
+  /** 关掉的 ✦：星上一道贯穿整个图标的对角线（3,3 → 21,21），「不用 AI 分析」 */
+  SparklesOff: { s: [SPARK, 'M3 3L21 21'] },
   Heart: { s: [HEART], sel: { f: [HEART] } },
   Pin: { s: [PIN_BODY, 'M12 14v6.5'], sel: { f: [PIN_BODY], s: ['M12 14v6.5'] } },
   MousePointerClick: { f: [CURSOR], s: ['M6 10.75H4.5', 'M10.5 6.25V4.75', 'M7 7.25L5.9 6.15'] },

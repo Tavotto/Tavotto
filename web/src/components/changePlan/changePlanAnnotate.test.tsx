@@ -321,3 +321,56 @@ it('部分勾选时悬停「写批注」不出现（命中的是完整「修改�
   expect(view()).toBe('annotate')
   expect(q('[data-change-plan-pick="annotate"]')).not.toBeNull()
 })
+
+// ---- 一键排版 / 脚本卡不能重改（canRevise）与排版卡清单头 ----
+const layoutPlan = (): ChangePlan => ({
+  ...plan('L', 1),
+  source: 'quick_layout',
+  base: { target: '', fingerprint: '' },
+  base_patches: [],
+  candidate_patches: [],
+  groups: [{ key: 'layout', label: '排版', atomic: true, changes: [], boxes: { before: [{ gid: 'p1', box: [0, 0, 0.5, 0.5] }], after: [{ gid: 'p1', box: [0.1, 0.1, 0.5, 0.5] }] } }],
+})
+const layoutEntry = (over: Partial<PlanEntry> = {}) =>
+  entry({
+    from: 'quick_layout',
+    kind: 'layout',
+    panelId: '',
+    fileId: '',
+    source: { fileId: '', script: null },
+    planId: undefined,
+    plan: layoutPlan(),
+    layout: { apply: () => 'applied', regenerate: () => undefined, count: 3 },
+    ...over,
+  })
+
+it('canRevise：只有审阅 / 助手来源的图内方案才能重改', async () => {
+  const { canRevise } = await import('./changePlanModel')
+  expect(canRevise(entry())).toBe(true)
+  expect(canRevise(entry({ from: 'review' }))).toBe(true)
+  expect(canRevise(entry({ from: 'assistant' }))).toBe(true)
+  expect(canRevise(layoutEntry())).toBe(false)
+  expect(canRevise(entry({ from: 'quick_layout' }))).toBe(false)
+  expect(canRevise(entry({ plan: layoutPlan() }))).toBe(false)
+})
+
+it('一键排版的卡（高级版用户）：没有「对比 / 批注」切换、没有「写批注」、没有悬停写批注，也没有首次提示；清单头是「排版 · N 张图」，不出现「0 处」', () => {
+  status(PRO)
+  put(layoutEntry())
+  render()
+  expect(q('[data-change-plan-dialog]')).not.toBeNull()
+  expect(q('[data-change-plan-write-note]')).toBeNull()
+  expect(q('[data-change-plan-first-hint]')).toBeNull()
+  expect(qa('[role="radiogroup"]').some((g) => g.textContent?.includes('批注'))).toBe(false)
+  expect(q('[data-change-plan-list]')!.textContent).toContain('排版 · 3 张图')
+  expect(q('[data-change-plan-list]')!.textContent).toContain('3 张图')
+  expect(q('[data-change-plan-list]')!.textContent).not.toMatch(/改动 · |0 处/)
+})
+
+it('对照：同样是高级版，审阅来源的卡仍有「对比 / 批注」切换与「写批注」', () => {
+  status(PRO)
+  put(entry())
+  render()
+  expect(q('[data-change-plan-write-note]')).not.toBeNull()
+  expect(qa('[role="radiogroup"]').some((g) => g.textContent?.includes('批注'))).toBe(true)
+})

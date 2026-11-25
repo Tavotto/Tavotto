@@ -17,7 +17,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { Check, Copy, Settings } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
+import { RepairProgressLine } from './RepairProgressLine'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
@@ -910,8 +910,8 @@ export const RETRYABLE_REPAIR_CODES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * 安装进度。进行中只有**一行**（`RepairProgressLine`：「正在下载 Python… 12 / 25 MB」），pip 日志与换用镜像
- * 的说明折叠在「安装详情」里。
+ * 安装进度。进行中是一块任务清单（`RepairProgressLine`：这一刻那句话 + 列全的几步，下载那步带「12 / 25 MB」），
+ * pip 日志与换用镜像的说明折叠在「安装详情」里。
  *
  * 取消之后**不假装完整回滚**：改的是用户自己的环境时如实说「可能已发生
  * 部分修改」——那正是「改用户环境必须明确确认」的另一面。
@@ -978,15 +978,10 @@ function RepairProgress({
           </>
         )}
       </div>
-      {(progress.log || progress.pypi_mirror || !cancelled) && (
-        // 默认折叠：完整的阶段列表、换用镜像的说明、pip 日志（主区域只有那一行进度）
+      {(progress.log || progress.pypi_mirror || failed) && (
+        // 默认折叠：换用镜像的说明、失败详情、pip 日志（步骤已经在上面的任务清单里列全）
         <Details className="text-xs text-ink-3" data-repair-progress-details>
           <Summary className="text-ink-2">{en('repairDetails')}</Summary>
-          {!failed && !cancelled && (
-            <div className="mt-1">
-              <RepairStageList progress={progress} />
-            </div>
-          )}
           {failed && (
             <div className="mt-1">
               <FailureDetail code={progress.code} text={progress.error} />

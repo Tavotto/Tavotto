@@ -24,6 +24,7 @@ import { useCapsWatch } from './connectAi/useCapsWatch'
 import { Details, Summary } from '../ui/Details'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
 import { HostsPanel } from './HostsPanel'
+import { ChangePlanRow } from './ChangePlanRow'
 import { ConvertSandboxRow } from './ConvertSandboxRow'
 import { FixMemoryRow } from './FixMemoryRow'
 import { isDesktop } from '@/lib/desktop'
@@ -198,6 +199,7 @@ export function CodingAgentsSection() {
     <>
       {/* Windows 才有的一个开关（后端不给该键就不渲染）；放在「高级」里，不进一级页面 */}
       <ConvertSandboxRow />
+      <ChangePlanRow />
       <FormSection title={ag('useInProduct')} action={rescanAction} data-settings-anchor="ai.agents">
         <FieldGroup data-agent-section="in-app">
           {error && (

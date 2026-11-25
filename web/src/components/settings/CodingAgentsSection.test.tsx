@@ -67,7 +67,8 @@ const byName = (name: string | RegExp) =>
     return typeof name === 'string' ? label.includes(name) : name.test(label)
   })
 const switches = () =>
-  [...document.querySelectorAll('[role="switch"]')] as HTMLButtonElement[]
+  // 「改图前先给我看修改方案」那一行也有个开关，不是 Agent 的启用开关
+  ([...document.querySelectorAll('[role="switch"]')] as HTMLButtonElement[]).filter((el) => !el.closest('[data-change-plan-switch]'))
 
 beforeEach(() => {
   fetchMock.mockReset()

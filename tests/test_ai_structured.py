@@ -468,3 +468,31 @@ def test_needs_login_on_refresh_is_no_connection(monkeypatch):
 
     monkeypatch.setattr(ai_oauth, "ensure_fresh", broken)
     assert S.resolve_connection(60.0) == (None, "no_connection", "needs_login")
+
+
+# --------------------------------------------------------------------------- 指定连接（修改方案用输入框选的那条）
+def test_resolve_connection_with_a_conn_id_never_falls_through_to_another(monkeypatch):
+    from tavotto.engine import ai_connections, ai_providers
+
+    monkeypatch.setattr(ai_connections, "builtin_forced", lambda: None)
+    monkeypatch.setattr(
+        ai_connections,
+        "first_key_connection",
+        lambda refresh=False: {"model": "other", "provider_id": None},
+    )
+    monkeypatch.setattr(ai_providers, "get", lambda cid: None)
+    assert S.resolve_connection(10, conn_id="gone") == (
+        None,
+        "no_connection",
+        "connection_not_found",
+    )
+    monkeypatch.setattr(ai_providers, "get", lambda cid: {"id": cid})
+    monkeypatch.setattr(ai_providers, "builtin_conn", lambda rec, model=None: None)
+    assert S.resolve_connection(10, conn_id="p")[1] == "unsupported_connection"
+    monkeypatch.setattr(
+        ai_providers,
+        "builtin_conn",
+        lambda rec, model=None: {"model": model or "d", "provider_id": None},
+    )
+    conn, reason, _ = S.resolve_connection(10, conn_id="p", model="m-9")
+    assert reason == "" and conn["model"] == "m-9"
