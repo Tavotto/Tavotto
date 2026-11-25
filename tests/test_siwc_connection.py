@@ -296,3 +296,18 @@ def test_effort_not_declared_by_the_model_is_not_sent(env):
     for model, effort in (("gpt-b", "high"), ("gpt-a", "xhigh"), ("gpt-a", "minimal")):
         args, _ = ai_providers.spawn_overrides(ai_agents.BUILTIN_ID, rec, model, effort)
         assert "--effort" not in args, (model, effort)
+
+
+def test_codex_fallback_choice_brings_codex_login_back(env, tmp_path):
+    """失败选择题里选了「改用 Codex 登录」（维护者 2026-11-25）：之后 Codex 登录方式与 sub:codex 连接重新出现；没选过的人不受影响。"""
+    from tavotto.engine import config
+
+    env.setenv(siwc_wire.ENV_FLAG, "1")
+    env.setattr(config, "ai_settings", lambda: dict(_settings))
+    env.setattr(config, "set_ai_settings", lambda patch: _settings.update(patch) or dict(_settings))
+    _settings: dict = {}
+    hidden = [m["id"] for m in _openai(ai_connections.vendors(_agents(True)))["methods"]]
+    assert "openai:login" not in hidden
+    ai_connections.set_codex_fallback()
+    shown = [m["id"] for m in _openai(ai_connections.vendors(_agents(True)))["methods"]]
+    assert shown[:2] == ["openai:siwc", "openai:login"]  # ChatGPT 登录仍在最前

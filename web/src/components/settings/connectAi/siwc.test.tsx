@@ -13,7 +13,7 @@ import { t } from '@/i18n'
 import type { AiConnection, AiVendor } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
-import { capsOf, connection } from '../testCaps'
+import { agentCaps, capsOf, connection } from '../testCaps'
 import { MethodList } from './MethodList'
 import { chatgptVendorOf } from './StarterChoices'
 import { connectionForMethod } from './vendors'
@@ -139,7 +139,7 @@ describe('Continue with ChatGPT', () => {
     expect(connected.map((c) => c.id)).toEqual(['siwc:chatgpt'])
   })
 
-  it('登录时没允许订阅额度：说一句，不算连上', async () => {
+  it('登录时没允许订阅额度：一句话；重试就是那个按钮本身；本机没装 Codex 就没有「改用 Codex 登录」，不算连上', async () => {
     vi.useFakeTimers()
     flowStates = ['plan_disabled']
     await render()
@@ -147,8 +147,44 @@ describe('Continue with ChatGPT', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000)
     })
-    expect(q('[role="alert"]')?.textContent).toBe(cx('siwc.planDisabled'))
+    expect(q('[role="alert"] span')?.textContent).toBe(cx('siwc.planDisabled'))
+    expect(q('[data-connect-action="siwc-retry"]')).toBeNull() // 不另摆同义的「再试一次」
+    expect(q('[data-connect-action="siwc"]')?.textContent).toBe(cx('siwc.continue'))
+    expect(q('[data-connect-action="siwc-use-codex"]')).toBeNull()
     expect(connected).toEqual([])
+  })
+
+  it('失败时本机装了 Codex：选择题里有「改用 Codex 登录」，点了先记下选择、再走 Codex 官方登录', async () => {
+    vi.useFakeTimers()
+    flowStates = ['failed']
+    useAiStore.setState({ caps: capsOf([agentCaps({ installed: true })], { vendors: [OPENAI], connections: [] }) })
+    await render()
+    await click(q('[data-connect-action="siwc"]'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(q('[role="alert"] span')?.textContent).toBe(cx('siwc.failed'))
+    await click(q('[data-connect-action="siwc-use-codex"]'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    const posts = calls.filter((c) => c.method === 'POST').map((c) => c.url)
+    expect(posts).toContain('/api/ai/siwc/codex-fallback')
+    expect(posts).toContain('/api/ai/agents/codex/login')
+    expect(posts.indexOf('/api/ai/siwc/codex-fallback')).toBeLessThan(posts.indexOf('/api/ai/agents/codex/login'))
+  })
+
+  it('失败后再点「Continue with ChatGPT」：重新发起 ChatGPT 登录', async () => {
+    vi.useFakeTimers()
+    flowStates = ['expired']
+    await render()
+    await click(q('[data-connect-action="siwc"]'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    expect(q('[role="alert"] span')?.textContent).toBe(cx('siwc.expired'))
+    await click(q('[data-connect-action="siwc"]'))
+    expect(calls.filter((c) => c.url === '/api/ai/siwc/login').length).toBe(2)
   })
 
   it('取消：发 cancel，回到按钮，不报错', async () => {

@@ -3094,13 +3094,14 @@ export default interface Resources {
           "cancel": "取消",
           "continue": "Continue with ChatGPT",
           "disconnectBody": "会退出这个 ChatGPT 账号，并撤销 {{product}} 的授权。",
-          "expired": "登录超时了，再试一次。",
-          "failed": "登录没有完成，再试一次。",
+          "expired": "登录超时了。",
+          "failed": "登录没有完成。",
           "openAgain": "重新打开",
-          "planDisabled": "登录时没有允许使用订阅额度，再试一次。",
+          "planDisabled": "登录时没有允许使用订阅额度。",
           "revokeUnconfirmed": "已退出，但没能确认撤销授权，可以到 ChatGPT 设置里断开 {{product}}。",
           "signOut": "退出登录",
-          "signOutTitle": "退出 ChatGPT 账号？"
+          "signOutTitle": "退出 ChatGPT 账号？",
+          "useCodex": "改用 Codex 登录"
         },
         "starter": {
           "key": "没有订阅：填一个 API Key",

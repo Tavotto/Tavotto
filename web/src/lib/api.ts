@@ -4796,6 +4796,9 @@ export const startSiwcLogin = (newAccount = false) =>
 
 export const fetchSiwcFlow = (flowId: string) => jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}`)
 
+/** 失败选择题里选了「改用 Codex 登录」：后端记下来，之后列出 Codex 登录与 sub:codex 连接（登录本身仍走 `startAiLogin('codex')`） */
+export const siwcCodexFallback = () => jsonFetch<{ ok: boolean }>('/api/ai/siwc/codex-fallback', { method: 'POST' })
+
 export const cancelSiwcFlow = (flowId: string) =>
   jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}/cancel`, { method: 'POST' })
 

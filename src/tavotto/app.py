@@ -18054,6 +18054,15 @@ def api_ai_siwc_cancel(flow_id):
     return jsonify(flow)
 
 
+@app.post("/api/ai/siwc/codex-fallback")
+def api_ai_siwc_codex_fallback():
+    """ChatGPT 登录失败的选择题里点了「改用 Codex 登录」：记下来，之后列出 Codex 登录与 `sub:codex` 连接（登录本身仍走
+    `POST /api/ai/agents/codex/login`）。只写一个布尔设置，不碰任何凭据。"""
+    engine_ai_connections.set_codex_fallback()
+    engine_ai.invalidate_capabilities()
+    return jsonify({"ok": True})
+
+
 @app.post("/api/ai/siwc/models/refresh")
 def api_ai_siwc_models_refresh():
     """用当前账号重取一次型号清单（联网）。"""

@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { backendErrorText, cancelSiwcFlow, fetchSiwcFlow, startSiwcLogin, type AiConnection, type AiSiwcFlow, type AiVendor, type AiVendorMethod } from '@/lib/api'
+import {
+  backendErrorText,
+  cancelSiwcFlow,
+  fetchSiwcFlow,
+  siwcCodexFallback,
+  startSiwcLogin,
+  type AiConnection,
+  type AiSiwcFlow,
+  type AiVendor,
+  type AiVendorMethod,
+} from '@/lib/api'
+import { useAiStore } from '@/store/aiStore'
 import { Button } from '../../ui/Button'
 import { cx } from './copy'
-import { refreshAndFind } from './useLoginFlow'
+import { refreshAndFind, useLoginFlow } from './useLoginFlow'
 
 /** 轮询间隔：浏览器里点完「允许」到这边看到结果，最多慢这么久 */
 const POLL_MS = 1000
@@ -35,6 +46,11 @@ export function useSiwcLogin(
   onConnected: (c: AiConnection) => void,
 ): { button: ReactNode; hint: ReactNode; begin: () => void } {
   const [phase, setPhase] = useState<Phase>('idle')
+  // 失败选择题的第二个选项（维护者 2026-11-25「失败时给选择题」）：本机装了 Codex 才出现，点了走原来的 Codex 官方登录
+  const codexInstalled = useAiStore((st) => !!st.caps?.agents.find((a) => a.id === 'codex')?.installed)
+  const codexMethod: AiVendorMethod = { id: 'openai:login', kind: 'login', agent: 'codex', connection_id: 'sub:codex', available: codexInstalled }
+  const codex = useLoginFlow(vendor, codexMethod, onConnected)
+  const [usingCodex, setUsingCodex] = useState(false)
   const [flow, setFlow] = useState<AiSiwcFlow | null>(null)
   const [error, setError] = useState<string | null>(null)
   const timer = useRef<number | null>(null)
@@ -98,6 +114,18 @@ export function useSiwcLogin(
     }
   }
 
+  const switchToCodex = async () => {
+    try {
+      await siwcCodexFallback()
+    } catch {
+      // 记不下来也照样让他登 Codex：最坏只是登完后列表里暂时看不到那一行
+    }
+    if (!alive.current) return
+    setError(null)
+    setUsingCodex(true)
+    codex.begin()
+  }
+
   const cancel = () => {
     stopPolling()
     if (flow) void cancelSiwcFlow(flow.flow_id).catch(() => undefined)
@@ -116,19 +144,40 @@ export function useSiwcLogin(
     </Button>
   )
 
-  const hint =
-    phase === 'waiting' && flow ? (
+  // 失败（登录没完成 / 超时 / 没允许订阅额度 / 起不来）：一句话 + 选择题——重试就是右侧那个「Continue with ChatGPT」（不再摆一个
+  // 同义的「再试一次」），另一个选项「改用 Codex 登录」只在本机装了 Codex 时出现；同列表里下面还有 API Key，不让新手卡住
+  const choice = error ? (
+    // 「改用 Codex 登录」与「重新打开」同一种文字链接（下划线），紧跟在那句后面、贴着这一行（agy 审稿：看得出能点、归属清楚）
+    <div role="alert" data-connect-login-hint="failed" className="-mt-1 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-xs">
+      <span className="text-danger">{error}</span>
+      {codexInstalled && (
+        <button
+          type="button"
+          data-connect-action="siwc-use-codex"
+          onClick={() => void switchToCodex()}
+          className="focus-visible:focus-ring rounded-sm text-ink-2 underline underline-offset-2 outline-none hover:text-ink"
+        >
+          {cx('siwc.useCodex')}
+        </button>
+      )}
+    </div>
+  ) : null
+
+  const hint = usingCodex ? (
+    <div className="flex flex-col gap-1">
+      <div>{codex.button}</div>
+      {codex.hint}
+    </div>
+  ) : phase === 'waiting' && flow ? (
       <p data-connect-login-hint className="type-caption">
         {cx('siwc.browserHint')}{' '}
         <a href={flow.authorize_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">
           {cx('siwc.openAgain')}
         </a>
       </p>
-    ) : error ? (
-      <p role="alert" data-connect-login-hint="failed" className="text-xs text-danger">
-        {error}
-      </p>
-    ) : null
+    ) : (
+      choice
+    )
 
   return { button, hint, begin: () => void begin() }
 }

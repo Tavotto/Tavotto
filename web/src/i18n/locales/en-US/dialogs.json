@@ -2205,13 +2205,14 @@
         "cancel": "Cancel",
         "browserHint": "Finish signing in in your browser.",
         "openAgain": "Open again",
-        "failed": "Sign-in didn’t finish. Try again.",
-        "expired": "Sign-in timed out. Try again.",
-        "planDisabled": "Plan usage wasn’t allowed during sign-in. Try again.",
+        "failed": "Sign-in didn’t finish.",
+        "expired": "Sign-in timed out.",
+        "planDisabled": "Plan usage wasn’t allowed during sign-in.",
         "disconnectBody": "This signs out of this ChatGPT account and revokes {{product}}’s access.",
         "revokeUnconfirmed": "Signed out, but revoking access couldn’t be confirmed. You can disconnect {{product}} in ChatGPT settings.",
         "signOut": "Sign out",
-        "signOutTitle": "Sign out of ChatGPT?"
+        "signOutTitle": "Sign out of ChatGPT?",
+        "useCodex": "Use Codex sign-in instead"
       }
     },
     "hosts": {

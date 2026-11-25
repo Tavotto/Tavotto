@@ -210,8 +210,8 @@ def vendors(agents_info: dict[str, dict]) -> list[dict]:
             {"id": vid, "label": label, "label_key": None, "logo": logo, "region": "global"},
         )
         installed = bool((agents_info.get(agent_id) or {}).get("installed"))
-        if siwc_on and vid == SIWC_VENDOR:
-            continue  # 有了 SIWC：ChatGPT 订阅一律走「Continue with ChatGPT」，老用户也直接切换（用户 2026-11-25 裁决）
+        if vid == SIWC_VENDOR and _hide_codex_login():
+            continue  # 有了 SIWC：ChatGPT 订阅一律走「Continue with ChatGPT」，老用户也直接切换（用户 2026-11-25 裁决）；失败时选过 Codex 的除外
         lead.setdefault(vid, []).append(
             {
                 "id": f"{vid}:login",
@@ -269,6 +269,24 @@ def vendors(agents_info: dict[str, dict]) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- 路由
+#: 用户在 ChatGPT 登录失败的选择题里点了「改用 Codex 登录」（维护者 2026-11-25「失败时给选择题」）：之后这台机器一直列出 Codex 登录
+#: 与 `sub:codex` 连接——否则 SIWC 开着时它们被藏起来（老用户直接切换），登完了也看不到
+CODEX_FALLBACK_KEY = "siwc_codex_fallback"
+
+
+def codex_fallback() -> bool:
+    return config.ai_settings().get(CODEX_FALLBACK_KEY) is True
+
+
+def set_codex_fallback() -> None:
+    config.set_ai_settings({CODEX_FALLBACK_KEY: True})
+
+
+def _hide_codex_login() -> bool:
+    """SIWC 开着、且用户没在失败选择题里选过 Codex：OpenAI 一家不列 Codex 登录、不出 `sub:codex` 行。"""
+    return siwc_wire.enabled() and not codex_fallback()
+
+
 def builtin_forced() -> bool | None:
     """`TAVOTTO_AI_BUILTIN=1` → True（强制内置），`=0` → False（强制不用），其余 None。"""
     val = (os.environ.get(ENV_BUILTIN) or "").strip()
@@ -360,7 +378,7 @@ def _details(models: list[str]) -> list[dict]:
 def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
     out = []
     for cid, (agent_id, vid, label, logo) in SUBSCRIPTIONS.items():
-        if vid == SIWC_VENDOR and siwc_wire.enabled():
+        if vid == SIWC_VENDOR and _hide_codex_login():
             continue  # 同上：Codex 登录那一行不再列（`resolve_connection("sub:codex")` 仍认，已发出的旧请求不至于 404）
         info = agents_info.get(agent_id)
         if not info or not info.get("installed") or not info.get("enabled"):
