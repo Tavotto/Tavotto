@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { LayoutVersionMeta } from '@/lib/api'
-import type { FigureDocument } from '@/types/document'
+import type { VersionDocument } from '@/lib/versionDoc'
 
 /**
  * 排版时间线的界面状态（ADR 0101）：列表的换代计数、「正在预览哪个节点」、
@@ -18,8 +18,11 @@ import type { FigureDocument } from '@/types/document'
 export interface TimelinePreview {
   docId: string
   meta: LayoutVersionMeta
-  /** 快照正文；还在取的时候是 null */
-  doc: FigureDocument | null
+  /**
+   * 快照正文；还在取的时候是 null。schema 2 是一张画布，schema 3 / 4 是整份项目
+   * （恢复要换整份项目；预览时经 `versionCanvasDoc` 取节点记录的那一张）。
+   */
+  doc: VersionDocument | null
 }
 
 interface TimelineState {

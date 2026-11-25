@@ -2,10 +2,10 @@ import { forwardRef, type ButtonHTMLAttributes } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { msg, t as translate } from '@/i18n'
+import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { overrideCounts } from '@/lib/overrideCounts'
-import { clearOverrides, resetOverrides } from '@/store/actions'
+import { resetOverrides, restoreElementEdits } from '@/store/actions'
 import type { PanelObject } from '@/types/document'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
@@ -45,15 +45,7 @@ export function RestoreMenu({
     <Menu width={196} align="end" trigger={<ModifiedBadge count={count} />}>
       {gid && counts.element > 0 && (
         <MenuItem
-          onSelect={() =>
-            clearOverrides(
-              panel.id,
-              msg('element.resetElement', undefined, 'inspector'),
-              panel.overrides
-                .filter((o) => o.gid === gid)
-                .map((o) => ({ gid: o.gid, prop: o.prop })),
-            )
-          }
+          onSelect={() => restoreElementEdits(panel.id, gid)}
         >
           {el('resetElementCount', { count: counts.element })}
         </MenuItem>

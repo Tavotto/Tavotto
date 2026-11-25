@@ -271,7 +271,12 @@ export function engineLabel(label: string): string {
   return displayLabel(engineLabelRaw(label))
 }
 
+/** 图内副本的登记名（ADR 0207，引擎 `COPY_LABEL_SUFFIX`）：`<源的名字> 的副本` */
+const COPY_LABEL = /^([\s\S]+) 的副本$/
+
 function engineLabelRaw(label: string): string {
+  const copy = COPY_LABEL.exec(label)
+  if (copy) return t('engineLabel.copyOf', { ns: 'inspector', name: engineLabelRaw(copy[1]) })
   for (const { re, key } of ENGINE_LABEL_PATTERNS) {
     const m = re.exec(label)
     if (!m) continue

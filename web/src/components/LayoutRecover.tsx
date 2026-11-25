@@ -53,6 +53,7 @@ type Group =
 const asGroup = (r: CandidateLoad): Group => (r.kind === 'ok' ? { state: 'ok', list: r.list } : { state: r.kind })
 
 const ISSUE_KEY: Record<RowIssue, string> = {
+  chart_source_mismatch: 'dialogs:layout.recoverIssueChartSource',
   invalid: 'dialogs:layout.recoverIssueInvalid',
   too_new: 'dialogs:layout.recoverIssueTooNew',
   too_large: 'dialogs:layout.recoverIssueTooLarge',
@@ -249,6 +250,8 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
         return t('dialogs:layout.recoverFailMissing')
       case 'invalid':
         return t('dialogs:layout.recoverFailInvalid', { name })
+      case 'chart_source_mismatch':
+        return t('dialogs:layout.recoverIssueChartSource')
       case 'too_new':
         return t('dialogs:layout.recoverIssueTooNew')
       case 'unavailable':
@@ -356,6 +359,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
                   item={it}
                   currentId={currentId}
                   busy={busy}
+                  media={listPj.current.project === currentProjectId()}
                   onActivate={() => void openOwn(it)}
                   action={t('dialogs:layout.load')}
                 />
@@ -407,6 +411,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
                         currentId={currentId}
                         busy={busy}
                         selected={isSel}
+                        media={false}
                         onActivate={() => setSelected(isSel ? null : it.doc_id)}
                       />
                       {isSel && issue === null && (
@@ -453,6 +458,7 @@ function Row({
   currentId,
   busy,
   selected = false,
+  media = true,
   onActivate,
   action,
 }: {
@@ -460,6 +466,8 @@ function Row({
   currentId: string
   busy: boolean
   selected?: boolean
+  /** 允许从草图里的面板取磁盘 / 引擎图；归属待确认的行关掉（见 CanvasThumb 的 `media`） */
+  media?: boolean
   onActivate: () => void
   /** 行尾 hover 才浮出的动作词（「打开」）；折叠组里的行没有，选中后在下面确认 */
   action?: string
@@ -481,7 +489,7 @@ function Row({
       )}
     >
       {item.sketch ? (
-        <CanvasThumb page={item.sketch.page} objects={item.sketch.objects} />
+        <CanvasThumb page={item.sketch.page} objects={item.sketch.objects} media={media} />
       ) : (
         <span aria-hidden className="grid h-10 w-14 shrink-0 place-items-center">
           <FolderOpen size={ICON_SIZE.sm} className="text-ink-3" />

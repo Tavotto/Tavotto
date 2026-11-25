@@ -351,6 +351,61 @@ const idleDraft = {
   specFallback: false,
 }
 
+/**
+ * ## 按表记住（切走再切回来直接还原）
+ *
+ * 同一时刻只有一份草稿；切到别的表时，把这份**已完整**的草稿（候选出齐、缩略图都定了、没在出图）连同后端候选会话一起留在 `kept` 里，
+ * 切回同一张表（同一组表、同一表头行、同一份期刊绑定）就原样放回来：不读表、不出候选、缩略图不重画。留的东西以「切回来看到的和切走前一模一样」为准。
+ * 在读 / 在出候选 / 缩略图还在画的半成品**不存**（和从前一样直接丢，切回来重跑）。
+ *
+ * 什么时候不能用旧的（`pruneKept` / `takeKept`）：
+ *  1. 清单里该文件的 `size` 变了（清单重读后比；还原那一刻也比）；**同大小但内容变了的文件比不出来**——这个缺口已知、先接受：
+ *     还原出来的是旧图，直到提交时后端回 `propose_data_changed`（`isStaleProposeCode`）才静默重出；
+ *  2. 会话没了：还原后缩略图取不到（`restoredSession` 标记）→ 静默带着现有答案重出；提交回 stale 码走原来的静默重出。浏览器图片缓存可能直接给出旧缩略图，那种情况只能靠提交时的 stale 码兜底；
+ *  3. 超过会话 TTL（`KEEP_TTL_MS`，从出候选响应到达算，比后端「最后一次读」起算保守）；
+ *  4. 换项目（`clear()` / 发起时的项目对不上）全丢；
+ *  5. 条数上限 `KEEP_MAX`。
+ * 丢的条目一律放弃它的后端会话（best-effort）。关临时标签（`closeDraft`）= 这份草稿不要了，照旧丢并放弃会话；别的表的条目留着。
+ */
+/** 后端 `ai_data_propose.SESSION_TTL_S`（30 分钟） */
+export const KEEP_TTL_MS = 30 * 60 * 1000
+/** 后端 `ai_data_propose.MAX_SESSIONS`（6）：所有候选会话共用；当前草稿占一个，所以留着的最多 6 − 1 */
+export const KEEP_MAX = 6 - 1
+let keepClock: () => number = () => Date.now()
+/** 测试用：换时钟（TTL 不用真等） */
+export const setKeepClock = (f: () => number): void => {
+  keepClock = f
+}
+
+const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
+type KeepSnap = Pick<typeof initial, (typeof KEEP_FIELDS)[number]>
+interface Kept {
+  key: string
+  refs: TableRef[]
+  group: TableRef[] | null
+  snap: KeepSnap
+  binding: DocumentProfile | null
+  sizes: Record<string, number | undefined>
+  /** 出候选响应到达的时刻（会话大约是那时起算的） */
+  liveAt: number
+  pj: string | null
+  /** 切走时「读懂数据」还在跑的任务 id：还原后接着轮询 */
+  job: string | null
+}
+let kept: Kept[] = []
+/** 当前会话出候选**那一刻**（请求发出时）涉及文件的大小，跟着候选走：留存时用它，不用切走时才读的清单（那时清单可能已经是新的，候选却是按旧内容出的）。有一个读不到 = 没法验证，这份不留 */
+let sessionSizes: Record<string, number | undefined> = {}
+/** 这份草稿是还原出来的、会话没确认过还活着：它的缩略图取不到就静默重出（只一次） */
+let restoredSession: string | null = null
+/** 当前会话的出候选时刻（还原的沿用原来的，再切走时存回去） */
+let sessionLiveAt = 0
+/** 「读懂数据」此刻在轮询的任务 id（只有 pending 时才有） */
+let understandingJob: string | null = null
+
+/** 键：这张表（合画 = 有序的一组）+ 各自当前的表头行；期刊绑定在命中判断里比（取得晚，不进字符串） */
+const keepKeyOf = (refs: TableRef[], group: boolean, headerRows: Record<string, number>): string =>
+  `${group ? 'g' : 't'}:${refs.map((r) => `${tableKey(r)}#${headerRows[r.path] ?? ''}`).join('|')}`
+
 /** 两个 answers 取值是否相同（列名或列名数组，数组按顺序比） */
 const sameValue = (a: unknown, b: unknown): boolean =>
   Array.isArray(a) || Array.isArray(b) ? Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]) : a === b
@@ -369,6 +424,7 @@ let understandingTracked = false
 const stopUnderstanding = (): void => {
   understandingSeq += 1
   understandingTracked = false
+  understandingJob = null
   if (understandingTimer) clearTimeout(understandingTimer)
   understandingTimer = null
 }
@@ -387,6 +443,85 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   const discardSession = () => {
     const sid = get().session
     if (sid) void aiDataFigureDiscard(sid, currentProjectId()).catch(() => undefined)
+  }
+
+  /* ---- 按表记住（说明见模块级 `kept`） ---- */
+  const discardKept = (e: Kept) => void aiDataFigureDiscard(e.snap.session!, e.pj).catch(() => undefined)
+  const dropKept = (e: Kept) => {
+    kept = kept.filter((x) => x !== e)
+    discardKept(e)
+  }
+  const dropAllKept = () => {
+    for (const e of kept) discardKept(e)
+    kept = []
+    restoredSession = null
+  }
+  /** 清单里这个文件此刻的大小；清单还没读过 / 没有这个文件 = undefined（比不出来就当没变） */
+  const sizeOf = (path: string): number | undefined => {
+    const f = get().files
+    return f.status === 'idle' ? undefined : f.entries?.find((e) => e.path === path)?.size
+  }
+  const pruneKept = () => {
+    const now = keepClock()
+    const pj = currentProjectId()
+    for (const e of [...kept]) {
+      const changed = Object.entries(e.sizes).some(([path, was]) => {
+        const cur = sizeOf(path)
+        return was !== undefined && cur !== undefined && was !== cur
+      })
+      if (now - e.liveAt > KEEP_TTL_MS || e.pj !== pj || changed) dropKept(e)
+    }
+  }
+  /** 把此刻这份已完整的草稿留下（会话不放弃）；半成品 / 出过错 / 正在出图的不存，返回 false（调用方照旧放弃会话） */
+  const stashCurrent = (): boolean => {
+    const s = get()
+    // 出候选时就没读到大小：之后清单怎么变都没法判，这份不留（退回从前：丢并放弃会话）
+    if (Object.values(sessionSizes).some((n) => n === undefined) || Object.keys(sessionSizes).length === 0) return false
+    // 出候选之后清单刷新、发现这份草稿用的文件变了：候选是按旧内容出的，不能留
+    if (Object.entries(sessionSizes).some(([path, was]) => sizeOf(path) !== undefined && sizeOf(path) !== was)) return false
+    if (!s.selected || s.phase !== 'ready' || !s.session || s.drawingId || s.problem || s.candidates.length === 0) return false
+    if (!s.candidates.every((c) => s.thumbs[c.id] === 'ready' || s.thumbs[c.id] === 'failed')) return false
+    const refs = s.group ?? [s.selected]
+    const key = keepKeyOf(refs, !!s.group, s.headerRows)
+    const old = kept.find((e) => e.key === key && sameDraftBinding(e.binding, s.specBinding))
+    if (old) dropKept(old)
+    pruneKept()
+    kept.push({
+      key,
+      refs: [...refs],
+      group: s.group ? [...s.group] : null,
+      snap: Object.fromEntries(KEEP_FIELDS.map((k) => [k, s[k]])) as KeepSnap,
+      binding: s.specBinding ? structuredClone(s.specBinding) : null,
+      sizes: { ...sessionSizes },
+      liveAt: sessionLiveAt,
+      pj: currentProjectId(),
+      job: understandingJob,
+    })
+    while (kept.length > KEEP_MAX) dropKept(kept[0]!)
+    return true
+  }
+  /** 取出（并移出）这张表 / 这组表的留存；键、期刊绑定都对得上、没过期、文件没变才算 */
+  const takeKept = (refs: TableRef[], group: boolean): Kept | null => {
+    ensureBinding()
+    pruneKept()
+    const key = keepKeyOf(refs, group, get().headerRows)
+    const hit = kept.find((e) => e.key === key && sameDraftBinding(e.binding, get().specBinding))
+    if (!hit) return null
+    kept = kept.filter((e) => e !== hit)
+    return hit
+  }
+  /** 放回去：不读表、不出候选；旧的在飞响应靠序号作废 */
+  const restoreKept = (e: Kept) => {
+    runSeq += 1
+    proposeSeq += 1
+    stopUnderstanding()
+    commitRid = null
+    set({ selected: e.refs[0]!, group: e.group, draftOpen: true, draftActive: true, fresh: null, ...e.snap, drawingId: null, problem: null, error: null, understanding: false, readRid: null })
+    restoredSession = e.snap.session
+    sessionLiveAt = e.liveAt
+    sessionSizes = { ...e.sizes }
+    if (e.group) for (const r of e.group) if (get().overviews[overviewKeyOf(r, get().headerRows)]) groupFresh.add(overviewKeyOf(r, get().headerRows))
+    if (e.job) trackUnderstanding({ id: e.job, state: 'pending' }, currentProjectId())
   }
 
   const headerFixed = (): boolean => {
@@ -432,6 +567,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   function trackUnderstanding(u: AiDataUnderstanding, pj: string | null): void {
     stopUnderstanding()
     understandingTracked = true
+    understandingJob = u.state === 'pending' ? u.id : null
     set({ understanding: false, suggestion: null })
     const mine = understandingSeq
     const ep = epoch
@@ -439,6 +575,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     /** 终态返回 true；`pending` 返回 false */
     const settle = (v: AiDataUnderstanding): boolean => {
       if (v.state === 'pending') return false
+      understandingJob = null
       set({ understanding: false })
       if (v.state === 'ready') {
         const sug = suggestionFrom(v, get().selected?.path ?? null, !get().group)
@@ -465,6 +602,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         if (!alive()) return
         if (v && settle(v)) return
         if (Date.now() - t0 >= UNDERSTANDING_POLL_MAX_MS) {
+          understandingJob = null
           set({ understanding: false })
           return
         }
@@ -492,6 +630,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const sel = get().selected
     if (!sel) return
     ensureBinding()
+    // 这次出候选读的是什么样的文件：发请求这一刻的大小（响应到达时清单可能已经变了），成功落地时跟着候选记下
+    const sizesAtAsk = Object.fromEntries((get().group ?? [sel]).map((r) => [r.path, sizeOf(r.path)]))
     const binding = get().specBinding
     const spec = binding ? (host.resolveSpec?.(binding) ?? null) : null
     const fontRange = fontRangeOf(binding)
@@ -553,6 +693,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       designAsked: get().designAsked || (res.defaults ?? []).some((d) => d.question_code === 'pick_design'),
     }
     if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
+      restoredSession = null
+      sessionLiveAt = keepClock()
+      sessionSizes = sizesAtAsk
       set({
         ...common,
         phase: 'ready',
@@ -620,6 +763,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   async function run(opts: { keepChoices?: boolean } = {}): Promise<void> {
     const sel = get().selected
     if (!sel) return
+    restoredSession = null
     ensureBinding() // 读表 / 判断阶段（全是文字、要点表头行）也要让右栏「期刊」一行显示的是真绑定，不等到出候选
     const seq = { current: () => runSeq }
     runSeq += 1
@@ -679,6 +823,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const ep = epoch
     const file = get().selected
     stopUnderstanding()
+    // 变成正式的图了：这份草稿不再存（它自己的留存条目若有也删掉）
+    restoredSession = null
+    if (file) {
+      const key = keepKeyOf(get().group ?? [file], !!get().group, get().headerRows)
+      for (const e of kept.filter((x) => x.key === key)) dropKept(e)
+    }
     set({ understanding: false, suggestion: null, draftOpen: false, draftActive: false, drawingId: null, problem: null, phase: 'idle', session: null, candidates: [], fresh: file && !get().group ? { file, from: host.activeCanvasId(), canvasId: null } : null })
     if (ep !== epoch) return
     // 新图落的那张画布要带上同一份绑定（编辑器据此检查；不进撤销栈，见 `lib/dataFigureInherit`）
@@ -806,6 +956,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     ...initial,
 
     enter: () => {
+      dropAllKept()
       filesDirty = false
       set({ ...initial })
       host.openDrawer()
@@ -834,6 +985,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
           files: { status: 'ready', entries: r.files, truncated: r.truncated === true },
           understandingAvailable: typeof r.understanding_available === 'boolean' ? r.understanding_available : null,
         })
+        pruneKept() // 文件的大小变了：对应的留存作废
       } catch (e) {
         if (ep !== epoch || mine !== filesSeq) return
         set({ files: { status: 'error', entries: keep, error: reasonOf(e) } })
@@ -870,7 +1022,17 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         set({ draftActive: true })
         return
       }
-      discardSession()
+      // 切走：已完整的草稿留下（会话不放弃）；切回留过的就原样放回，不读表不出候选
+      ensureBinding()
+      // 先取目标再存当前：存当前可能挤掉最旧的一条，不能挤掉要还原的那条
+      const hit = takeKept([ref], false)
+      const stashed = stashCurrent()
+      // 存不了的当前草稿（半成品 / 没法验证大小等）：无论目标命不命中，会话都要放弃，不能既不留也不放弃
+      if (!stashed) discardSession()
+      if (hit) {
+        restoreKept(hit)
+        return
+      }
       commitRid = null
       set({ selected: ref, group: null, sources: null, draftOpen: true, draftActive: true, fresh: null })
       void run()
@@ -891,7 +1053,15 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         set({ draftOpen: true, draftActive: true })
         return
       }
-      discardSession()
+      ensureBinding()
+      const hit = takeKept(refs, true)
+      // 重新合同一组 = 本来就要重出，不把当前这份当成「切走」存起来
+      const stashed = keepKeyOf(refs, true, get().headerRows) === keepKeyOf(get().group ?? [], true, get().headerRows) ? false : stashCurrent()
+      if (!stashed) discardSession()
+      if (hit) {
+        restoreKept(hit)
+        return
+      }
       commitRid = null
       set({ selected: refs[0]!, group: refs, sources: null, draftOpen: true, draftActive: true, fresh: null })
       void run()
@@ -904,6 +1074,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         return
       }
       discardSession()
+      restoredSession = null
       proposeSeq += 1
       runSeq += 1
       stopUnderstanding()
@@ -957,6 +1128,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     },
 
     thumbSettled: (session, id, ok) => {
+      // 还原出来的草稿：原来到了的缩略图现在取不到（会话已没 / 文件变了）= 旧会话不能用，静默带着现有答案重新出候选（只一次）
+      if (!ok && session === restoredSession && get().session === session && get().thumbs[id] === 'ready') {
+        restoredSession = null
+        if (!get().drawingId) reask((a) => a, {}, true)
+        return
+      }
       if (get().session !== session || get().thumbs[id] !== 'pending') return
       const thumbs = { ...get().thumbs, [id]: ok ? ('ready' as ThumbState) : ('failed' as ThumbState) }
       // 一张都没画出来：走「这次没画出来」那一屏
@@ -987,6 +1164,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         }
       }
       set({ problem: null })
+      discardSession() // `run` 会把会话 id 清掉：旧会话不放弃就成了没人认领的
       await run({ keepChoices: true })
     },
 
@@ -1093,6 +1271,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     clear: () => {
       epoch += 1
+      dropAllKept()
       stopUnderstanding()
       inheritOff?.()
       inheritOff = null

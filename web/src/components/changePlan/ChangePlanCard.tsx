@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { canUndoApplied, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { canUndoApplied, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
@@ -36,7 +36,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
 
   if (status === 'failed') return <FailedCard entry={entry} />
 
-  const generating = status === 'generating' || !plan
+  // 按批注重改进行中：卡片也回到「生成中」（旧版仍在弹窗里），出好后自动换成新版
+  const generating = status === 'generating' || !plan || (status === 'ready' && entry.revising !== undefined)
   // 已放弃：后端那份已经收了，卡面画这张图此刻的样子（不再挂方案的图）
   const showAfter = !generating && !!entry.afterSrc && status !== 'discarded'
   // 已应用且只应用了部分组：挂实际应用的那一张（弹窗里按勾选出的图；没有就挂这张图此刻的样子），不挂全量候选图
@@ -82,12 +83,12 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
       <div className="flex flex-col gap-2 px-1.5 pb-1 pt-2.5">
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-base font-medium text-ink">{cp('card.title')}</span>
-          {!generating && plan && <span className="type-meta">{cp('card.version', { n: plan.version })}</span>}
+          {!generating && plan && <span className="type-meta">{cp('card.version', { n: versionNumber(entry) })}</span>}
         </div>
         {generating ? (
           <p className="flex items-center gap-2 text-sm text-ink-2" data-change-plan-generating>
             <ThinkingOrb form="solving" />
-            <span>{entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')}</span>
+            <span>{entry.revising !== undefined ? cp('card.revising') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')}</span>
           </p>
         ) : (
           <p className={cn('flex items-center gap-1.5 text-sm', status === 'discarded' ? 'text-ink-3' : 'text-ink-2')}>
