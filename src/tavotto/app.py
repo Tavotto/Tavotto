@@ -68,6 +68,7 @@ from .engine import (
     ai_catalog as engine_ai_catalog,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
+    ai_data_aichoice as engine_ai_data_aichoice,
     ai_data_figure as engine_ai_data_figure,
     ai_data_overview as engine_ai_data_overview,
     ai_data_progress as engine_ai_data_progress,
@@ -18573,13 +18574,64 @@ def api_ai_data_files():
                 row["sheets"] = None
         files.append(row)
     # `understanding_available`：「读懂数据」此刻有没有可用连接（只读事实、不联网；前端据此决定要不要出「连接 AI」胶囊，连接状态变化后随清单重取）
+    understanding = engine_ai_data_roles.understanding_state()
     resp = jsonify(
         {
             "files": files,
             "truncated": truncated,
-            "understanding_available": engine_ai_data_roles.available(),
+            # 语义 = 此刻会用 AI（用户关了 / 指定的用不了 / 没有连接都是 False）；完整状态与可选清单在 `understanding`
+            "understanding_available": understanding["state"] == "on",
+            "understanding": understanding,
         }
     )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+_UNDERSTANDING_KEYS = frozenset({"mode", "connection"})
+
+
+@app.get("/api/ai/data-understanding")
+def api_ai_data_understanding_get():
+    """「读懂数据」用哪个 AI（**实验开关后面**、会话认证、只读）：回 `{understanding: {state, mode, connection, options}}`，见
+    `ai_data_roles.understanding_state`。只读本地配置与能力缓存——不联网、不刷新令牌、不探测，前端可以随连接状态变化反复调。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    resp = jsonify({"understanding": engine_ai_data_roles.understanding_state()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/data-understanding")
+def api_ai_data_understanding_set():
+    """设置「读懂数据」用哪个 AI（**实验开关后面**、会话认证）。body 只认 `{mode: "auto" | "off" | "connection", connection?: <连接 id>}`：
+    多余的键 / 类型不对 / `auto`、`off` 带了 `connection` = 400 `propose_input_invalid`；`connection` 的 id 不在**此刻**的可选清单里 = 400
+    `understanding_connection_unavailable`（什么都不写）。应用级设置（不是按项目）。回 `{understanding}`，不回显任何密钥 / 地址。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    body = request.get_json(force=True, silent=True)
+    mode = body.get("mode") if isinstance(body, dict) else None
+    cid = body.get("connection") if isinstance(body, dict) else None
+    if (
+        not isinstance(body, dict)
+        or set(body) - _UNDERSTANDING_KEYS
+        or mode not in engine_ai_data_aichoice.MODES
+        or (mode == "connection") != isinstance(cid, str)
+        or (mode == "connection" and not 0 < len(cid) <= 200)
+    ):
+        return jsonify({"error": "请求不合格", "code": "propose_input_invalid"}), 400
+    state = engine_ai_data_roles.apply_choice(mode, cid)
+    if state is None:
+        return (
+            jsonify(
+                {
+                    "error": "这个 AI 现在用不了",
+                    "code": "understanding_connection_unavailable",
+                }
+            ),
+            400,
+        )
+    resp = jsonify({"understanding": state})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

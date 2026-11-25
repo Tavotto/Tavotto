@@ -502,3 +502,21 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 **文案**（全部由用户看过本地真页面后定，2026-11-24：「可以，继续推进」）：主按钮「创建可编辑图」；小标题「需要你确认」；标签「误差线」「重复测量」；选项见上。
 
 **还没做**：图创建之后在问题面板里切换误差线类型（11-21 批的那一处，涉及改已有脚本）；已汇总的表画成均值 + 现成误差列的误差线；某组 n < 2 时的说明；「重复测量」选「是」而表里不止一个编号列时让用户选哪一列。
+
+## 修订（2026-11-25，用户决定）：「读懂数据」用哪个 AI，可以选、可以关（`ai_data_aichoice`、`GET|POST /api/ai/data-understanding`）
+
+**起因**：用户原话——「这里应该需要有一个小图标，点击后可以打开列表，让用户可以选择进行分析的ai。也可以选择关闭。」（指「从数据到图」左栏数据抽屉；「分析」= 第 1 步「读懂数据」。）此前它自动用第一个可用连接，用户既不能选、也不能关。
+
+**决定**：
+
+1. **三种选择，存在后端**（应用级，不是按项目）：`ai.taf.understanding`——缺省 = `auto`（行为逐字不变）；`{"mode": "off"}`；`{"mode": "connection", "connection": "<连接 id>"}`。连接 id 沿用现有的：Key / 账号登录 = provider 记录 id，订阅登录 = `sub:codex` / `sub:claude`。**畸形 / 不认识的 mode 一律当 `off`**（宁可不发数据，也不把坏配置当成 `auto`）。
+2. **判据只有一处**：`ai_data_roles._available_connection()` 经 `ai_data_aichoice.resolve`。`off` → 没有连接；指定连接 → **只找那一个**，此刻用不了（被删 / 未登录 / 不在能力缓存里 / 被判不可用）= 没有连接，**绝不悄悄换成别家**（那等于把用户的数据发给他没选的服务）。
+3. **指定连接必须显式传下去**：以前 Key 连接只靠 `call_structured` 自己再挑一次「第一个 Key 连接」（并联网刷新令牌），只对订阅登录（CLI）连接才把挑中的传下去。指定连接时这样会把数据发给 A 而不是用户选的 B，所以现在 `start(...)` 在 `mode=connection` 时把解析出的连接显式传给 `judge`，并只刷新**被选中的这一条**（`ai_data_aichoice.refresh_key`，后台线程里；刷不动 = `no_connection`）。`auto` 下传给 `call_structured` 的参数与从前完全一致（`tests/test_ai_data_understanding_choice.py` 钉住）。
+4. **出站入口清单**（数据出图里会去找连接 / 调模型的地方，全仓 grep）：只有两处——`ai_data_roles`（`start` → `_run` → `judge` → `ai_structured.call_structured`）与 `ai_data_model.propose_recipes`（产品里目前没有调用方）。两处都服从上面的判据：`off` 时一个请求都不发、也不读磁盘里旧连接的判断（`start` 在查缓存之前就返回）。其余 `ai_data_*` 模块没有任何模型 / 网络调用。
+5. **可选清单**（`options`）：此刻真能用于「读懂数据」的连接——Key 连接（与 `first_key_connection` 同一套跳过规则）与订阅登录里 `supports_structured()` 且解析得出型号的；每项 `{id, label, logo, vendor, kind: "key" | "subscription", model}`，label / logo / vendor 沿用连接视图的字段，**不含密钥 / 地址 / 令牌**。只看本地配置与能力缓存：不联网、不刷新令牌、不探测。
+6. **接口**：`GET /api/ai/data-understanding`（轻量，随连接状态变化可反复取）与 `POST /api/ai/data-understanding`（body 只认 `{mode, connection?}`，多余键 / 类型不对 400 `propose_input_invalid`；`connection` 的 id 不在此刻的清单里 400 `understanding_connection_unavailable`，什么都不写），都在 `ai.taf.enabled` 后面、走会话鉴权 guard。`/api/ai/data-files` 多带 `understanding: {state: "on" | "off" | "none" | "unavailable", mode, connection, options}`；`understanding_available` 保留，语义 = `state == "on"`。`propose` 在 `off` / `unavailable` / `none` 时响应里没有 `understanding` 键（原有的 None 路径）。
+7. **换连接后的缓存与在途任务**：缓存键、单飞登记键、60 s 负缓存键都含连接身份（Key = provider id + 实际型号与强度；CLI = agent + 型号），换连接不会命中上一个连接的缓存 / 任务 / 负缓存。写入接口另会清掉「身份与新选择对不上」的任务登记（不分项目——选择是应用级的；同一连接的任务不动），用旧连接判断出的建议不再被轮询到（回 `off`）。**已经发出去的那一次请求收不回**（后台线程在途；它的结果只会落进缓存，不会再被用）。
+8. 不加任何遥测；用户的脚本与数据不被改动。
+
+**没做**：界面（小图标与列表，前端另做）；订阅登录的能力缓存为空时指定的订阅连接是 `unavailable`（前端在连接状态到达后重取）。
+

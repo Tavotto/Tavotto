@@ -20,7 +20,13 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from . import ai_data_figure as adf, ai_data_recipe as r, ai_prompt_pack, ai_structured
+from . import (
+    ai_data_aichoice as choice_mod,
+    ai_data_figure as adf,
+    ai_data_recipe as r,
+    ai_prompt_pack,
+    ai_structured,
+)
 
 #: 摘要里最多发几张表（同选表选择题的上限）；每列文字样本不超过 `adf.TEXT_SAMPLES` 条、每条不超过 `MAX_SAMPLE_CHARS` 字
 MAX_PROMPT_TABLES = r.MAX_TABLE_OPTIONS
@@ -232,6 +238,23 @@ def propose_recipes(
     `conn` / `post` 只给测试与手动基准用（默认：当前连接 + 真传输）。"""
     try:
         req = build_request(profile, hint=hint, max_input_chars=limits.max_input_chars)
+        if conn is None:
+            # 用户在界面选了「读懂数据」用哪个 AI（ADR 0178 修订 2026-11-25）：关了 / 指定的此刻用不了 = 不发请求；指定了就只用它（显式传下去，不让下面再挑）
+            mode, picked = choice_mod.pinned()
+            if mode == "off" or (mode == "connection" and picked is None):
+                return ModelRecipes(
+                    ai_structured.StructuredResult(
+                        False, reason="no_connection", detail="choice_" + mode
+                    )
+                )
+            if picked is not None:
+                conn = choice_mod.refresh_key(picked)
+                if conn is None:
+                    return ModelRecipes(
+                        ai_structured.StructuredResult(
+                            False, reason="no_connection", detail="needs_login"
+                        )
+                    )
         call = ai_structured.call_structured(
             system=req.system,
             user=req.user,

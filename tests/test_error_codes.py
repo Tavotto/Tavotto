@@ -233,6 +233,8 @@ def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(sourc
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
+    # ADR 0178 修订 2026-11-25：「读懂数据」选用哪个 AI，指定的连接此刻不在可选清单里
+    "understanding_connection_unavailable": set(),
     "result_too_large": set(),
     "journal_catalog_disabled": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---

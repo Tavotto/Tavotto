@@ -346,13 +346,16 @@ def cli_identity(conn: dict) -> str:
     return f"cli:{conn.get('agent', '')}|{conn.get('model', '')}"
 
 
-def find_cli_connection(*, cached_only: bool) -> tuple[dict | None, str, str]:
+def find_cli_connection(
+    *, cached_only: bool, only: str | None = None
+) -> tuple[dict | None, str, str]:
     """订阅登录连接里第一个「可用且适配器支持无工具单轮」的 → `({"kind": "cli", "agent", "model", "conn_id"} | None, 原因码, detail)`。
 
     * 没有可用的订阅登录 = `no_connection`；有，但适配器都没覆写 `build_structured_command` / 解析不出型号 = `unsupported_connection`。
     * 型号 = 连接里已解析出的 `default_model`，没有就取它型号清单的第一项（适配器自己的目录顺序）；都没有 = 不支持（不写死型号名）。
-    * `cached_only`：只看已有的能力缓存，绝不探测（同步路径用）；缓存还没有 = `no_connection`。"""
-    from . import ai_agents, ai_bridge, ai_connections
+    * `cached_only`：只看已有的能力缓存，绝不探测（同步路径用）；缓存还没有 = `no_connection`。
+    * `only`：只看这一条连接 id（用户在「读懂数据」里指定了它）；它此刻不可用 = `no_connection`，**绝不退到别的连接**。"""
+    from . import ai_bridge, ai_connections
 
     try:
         caps = ai_bridge.capabilities_if_cached() if cached_only else ai_bridge.capabilities()
@@ -360,23 +363,11 @@ def find_cli_connection(*, cached_only: bool) -> tuple[dict | None, str, str]:
         caps = None
     if not caps:
         return None, "no_connection", "none"
-    saw_unsupported = False
-    for c in caps.get("connections") or []:
-        sub = ai_connections.SUBSCRIPTIONS.get(c.get("id"))
-        if sub is None or c.get("state") != "ready":
-            continue
-        agent = ai_agents.get_agent(sub[0])
-        if agent is None or not agent.supports_structured():
-            saw_unsupported = True
-            continue
-        model = str(c.get("default_model") or "").strip() or next(
-            (str(m) for m in (c.get("models") or []) if m), ""
-        )
-        if not model:
-            saw_unsupported = True
-            continue
-        return {"kind": "cli", "agent": agent.id, "model": model, "conn_id": c["id"]}, "", ""
-    if saw_unsupported:
+    ready, saw_unsupported = ai_connections.structured_cli_connections(caps)
+    for cap, conn in ready:
+        if only is None or cap.get("id") == only:
+            return conn, "", ""
+    if only is None and saw_unsupported:
         return None, "unsupported_connection", "cli_only"
     return None, "no_connection", "none"
 

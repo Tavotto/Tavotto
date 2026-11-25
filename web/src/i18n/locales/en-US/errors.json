@@ -487,6 +487,7 @@
     "bar_before_raw_points": "When raw points can be shown, a bars-and-error-bars figure isn’t ranked first.",
     "duplicate_candidate": "This option is the same as an earlier one.",
     "too_many_candidates": "At most 4 options are offered; the extras are left out.",
+    "understanding_connection_unavailable": "This model can’t be reached. Please try another one.",
     "trend_too_few_x": "Fewer than 3 distinct x values, so no trend can be drawn.",
     "paired_incomplete": "Paired data needs two conditions with one value per subject in each.",
     "matrix_too_large": "The matrix is too large (at most 60 rows and 40 columns).",

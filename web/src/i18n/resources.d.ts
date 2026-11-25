@@ -4444,6 +4444,7 @@ export default interface Resources {
       "tutorial_reset_incomplete": "教程已换成干净的副本，但上次的教程排版暂时清不掉（本机另一个 Tavotto 正在用会话记录），请稍后再点一次重置。",
       "tutorial_resources_invalid": "安装里的教程资源不完整。请重新安装 Tavotto：{{reason}}",
       "tutorial_resources_missing": "安装里没有教程资源。请重新安装 Tavotto：{{reason}}",
+      "understanding_connection_unavailable": "这个 AI 现在用不了，换一个试试。",
       "unit_required": "这种图需要你先确认哪一列是个体编号。",
       "unit_unconfirmed": "个体编号列要你确认过才能用，列名像编号还不算。",
       "unsafe_project_name": "「{{name}}」不是合法的目录名：项目名只能是单个目录名，不含路径分隔符或 ..",
