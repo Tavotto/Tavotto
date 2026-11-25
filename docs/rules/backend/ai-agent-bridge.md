@@ -685,7 +685,12 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **连接**：`siwc:chatgpt`（`ai_providers.SIWC_CONNECTION_ID`）只在开关开且有当前账号时出现；只走 `builtin`，`TAVOTTO_AI_BUILTIN=0` → `ai_agent_not_usable`；`efforts` 恒空；型号读登录时缓存的 `/v1/models`（连接视图不联网）。
   `ai_providers.resolve(builtin, "siwc:chatgpt")` 给**虚拟记录**（无令牌字段）；`builtin_conn` / `spawn_overrides` 对它走专用分支 `siwc_overrides`（`--wire siwc-responses --base-url https://api.openai.com/v1 --auth bearer --model …`，无 effort / fallback；令牌与开关只进环境变量），
   看护用例把父进程 argv 喂给 `siwc_wire.runner_args_ok`。`ai_bridge.run` 在锁外 `_siwc_preflight`（`ai_endpoint_needs_login` / `ai_siwc_plan_disabled` / `ai_siwc_token_unavailable`，去重之后才抛）；runner 报 `auth` → `mark_rejected("http_401")`（不清凭据）。
-  开关开时 OpenAI 一家只有 `openai:siwc`（kind `siwc`）+ API Key，`openai:login`（Codex）与 `sub:codex` 连接行一律不列（老用户也直接切换，用户 2026-11-25；`resolve_connection("sub:codex")` 仍认）。`first_key_connection` / 探测 / `add_connection` / `check_connection` 都碰不到它。看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`（本机假服务器，绝不连真实服务器）。
+  开关开时 OpenAI 一家只有 `openai:siwc`（kind `siwc`）+ API Key，`openai:login`（Codex）与 `sub:codex` 连接行一律不列（老用户也直接切换，用户 2026-11-25；`resolve_connection("sub:codex")` 仍认）。探测 / `add_connection` / `check_connection` 碰不到它。
+- **与 API 体验相同**（用户 2026-11-25「SIWC 与 API 的体验完全相同」，ADR 0209 §七）：`first_key_connection` 在所有 Key / 账号登录记录**之后**给 SIWC（`refresh=False` 不取令牌、`api_key` 为空；`refresh=True` 现取），
+  所以 AI 修复、结构化调用、数据出图、改图方案都能用它。令牌在 `fixsession.build_model`（拿不到 → `RunnerFailure("auth","needs_login")`）/ `ai_structured.call_structured`（→ `no_connection/needs_login`）现取；
+  `_wire_for` 认 `siwc-responses`；包 `post` 的中间层必须把 `reader` 往下传（SSE 读取器，漏了 = `transport/internal`）。小型号策略只给 `auth: key`，不碰它；`ai_pricing.vendor_of` 对它恒 None（订阅额度不按 API 价目估钱）。
+  **思考强度**同 Key 连接：每个型号的档位 = `/v1/models` 的 `supported_reasoning_levels` ∩ `siwc_wire.SIWC_EFFORTS`（登录时缓存进账号记录，`minimal` 真服务拒），默认档 = `default_reasoning_level`；改图经 `siwc_overrides` 发 `--effort`、结构化调用经 `_effort_kwargs`，型号没声明的档一律不发；wire 发 `reasoning.effort` + `include: [reasoning.encrypted_content]`，回放只留带 `encrypted_content` 的 reasoning 条目。`earliest_refresh_at` 只记不拦（真服务提前刷新照样 200）。
+  看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`、`tests/test_siwc_parity.py`（本机假服务器，绝不连真实服务器）。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 

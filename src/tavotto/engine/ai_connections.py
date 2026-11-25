@@ -410,8 +410,8 @@ def _siwc_connections() -> list[dict]:
     details = [
         {
             "id": m["id"],
-            "efforts": [],
-            "default_effort": None,
+            "efforts": list(m.get("efforts") or []),
+            "default_effort": m.get("default_effort"),
             **({"display_name": m["display_name"]} if m.get("display_name") else {}),
         }
         for m in st.get("models") or []
@@ -437,8 +437,10 @@ def _siwc_connections() -> list[dict]:
         "model_details": details,
         **({"no_vision": nv} if (nv := ai_attachments.text_only_models(models)) else {}),
         "default_model": models[0] if models else None,
-        "efforts": [],
-        "default_effort": None,
+        "efforts": details[0]["efforts"]
+        if details
+        else [],  # 默认型号的档位（每个型号的在 model_details）
+        "default_effort": details[0]["default_effort"] if details else None,
         "route": ROUTE_BUILTIN,
         "method": SIWC_METHOD,
         "account_email": st.get("email") or "",
@@ -591,7 +593,7 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
 
 
 def key_connections(*, refresh: bool = False):
-    """内置循环能直接用的连接（Key 或账号登录）逐个给出 → `builtin_conn` 形状（带 `provider_id`），顺序与 `first_key_connection` 一致：旧版「选中」的接口排在前。
+    """内置循环能直接用的连接（Key 或账号登录，最后是 SIWC）逐个给出 → `builtin_conn` 形状（带 `provider_id`），顺序与 `first_key_connection` 一致：旧版「选中」的接口排在前。
     `refresh` 的语义见 `first_key_connection`；`False` 绝不联网。"""
     recs = ai_providers.list_providers()
     active = {v for v in (config.ai_settings().get("active_provider") or {}).values() if v}
@@ -616,6 +618,13 @@ def key_connections(*, refresh: bool = False):
             # 真要开跑：地址少写了 `/v1` 的先改正（`ai_providers.ensure_api_root`，每个地址只联网一次）
             rec = ai_providers.ensure_api_root(rec) or rec
         conn = ai_providers.builtin_conn(rec)
+        if conn is not None:
+            yield conn
+    # Sign in with ChatGPT：与 Key 连接体验相同（用户 2026-11-25「SIWC 与 API 的体验完全相同」「要能够被其他功能调到」）——排在已存的 Key / 账号登录之后
+    # （老用户的结论不变）；只登录了 ChatGPT 的用户就用它。`refresh=False` 只问「有没有」、不取令牌（`api_key` 为空）；`refresh=True` 拿不到令牌就不给
+    siwc = ai_providers.builtin_conn(ai_providers.siwc_record())
+    if siwc is not None:
+        conn = ai_providers.siwc_conn_with_token(siwc) if refresh else siwc
         if conn is not None:
             yield conn
 

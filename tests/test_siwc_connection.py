@@ -4,7 +4,7 @@
 * 连接视图（`vendors()` / `connections()` 的返回值）：开关关时与原来一致；开时 OpenAI 首选「Continue with ChatGPT」，Codex 登录只给已装的；
 * 路由：`siwc:chatgpt` 只解析到内置执行器；
 * 起跑注入（父进程交给 runner 的 argv / env）：runner 自己的硬约束 `siwc_wire.runner_args_ok` 接受它；
-* 「挑第一个能用的连接」的调用点看不见 SIWC。
+* 用户不能把一条 Key 记录存成 / 探测成 SIWC（「挑第一个能用的连接」现在会挑到它，见 `test_siwc_parity.py`）。
 """
 
 from __future__ import annotations
@@ -47,7 +47,13 @@ def env(monkeypatch, tmp_path):
     siwc_auth.set_provider_for_tests(None)
 
 
-def _sign_in(scopes=(siwc_auth.REQUIRED_SCOPE,), models=({"id": "gpt-a"}, {"id": "gpt-b"})):
+def _sign_in(
+    scopes=(siwc_auth.REQUIRED_SCOPE,),
+    models=(
+        {"id": "gpt-a", "efforts": ["low", "medium", "high"], "default_effort": "low"},
+        {"id": "gpt-b"},
+    ),
+):
     acc = siwc_store.Account(
         client_id=CID, subject="sub1", email="a@example.com", models=tuple(models)
     ).with_tokens(
@@ -98,13 +104,15 @@ def test_continue_with_chatgpt_replaces_codex_login_for_everyone(env):
     assert any(m["id"] == "anthropic:login" for m in claude["methods"])
 
 
-def test_signed_in_row_is_builtin_without_efforts(env):
+def test_signed_in_row_is_builtin_with_per_model_efforts(env):
     env.setenv(siwc_wire.ENV_FLAG, "1")
     _sign_in()
     (row,) = [c for c in ai_connections.connections(_agents(True)) if c["id"] == "siwc:chatgpt"]
     assert row["state"] == "ready" and row["route"] == "builtin" and row["method"] == "openai:siwc"
     assert row["models"] == ["gpt-a", "gpt-b"] and row["default_model"] == "gpt-a"
-    assert row["efforts"] == [] and all(d["efforts"] == [] for d in row["model_details"])
+    # 与 Key 连接同形：默认型号的档位在行上，每个型号的在 model_details（来自 /v1/models 的 supported_reasoning_levels）
+    assert (row["efforts"], row["default_effort"]) == (["low", "medium", "high"], "low")
+    assert [d["efforts"] for d in row["model_details"]] == [["low", "medium", "high"], []]
     assert TOKEN not in repr(row)
     agent, rec = ai_connections.resolve_connection("siwc:chatgpt", _agents(True))
     assert agent == ai_agents.BUILTIN_ID and rec["id"] == "siwc:chatgpt"
@@ -139,14 +147,18 @@ def test_spawn_injection_satisfies_runner_constraints(env):
     env.setenv(siwc_wire.ENV_FLAG, "1")
     _sign_in()
     rec = ai_providers.resolve(ai_agents.BUILTIN_ID, "siwc:chatgpt")
-    args, extra = ai_providers.spawn_overrides(ai_agents.BUILTIN_ID, rec, "gpt-b", "high")
+    args, extra = ai_providers.spawn_overrides(ai_agents.BUILTIN_ID, rec, "gpt-a", "high")
     assert extra == {ai_agents.BUILTIN_KEY_ENV: TOKEN, siwc_wire.ENV_FLAG: "1"}
     assert TOKEN not in " ".join(args)
 
     def opt(name, default=None):
         return args[args.index(name) + 1] if name in args else default
 
-    assert opt("--wire") == siwc_wire.WIRE_NAME and opt("--model") == "gpt-b"
+    assert (
+        opt("--wire") == siwc_wire.WIRE_NAME
+        and opt("--model") == "gpt-a"
+        and opt("--effort") == "high"
+    )
     assert siwc_wire.runner_args_ok(
         base_url=opt("--base-url"),
         auth=opt("--auth", "key"),
@@ -196,14 +208,7 @@ def test_preflight_ok_with_fresh_token(env):
     assert ai_bridge._siwc_preflight(ai_providers.siwc_record()) is None
 
 
-# --------------------------------------------------------------------------- 别的调用点看不见它
-def test_pick_first_usable_connection_never_sees_siwc(env):
-    env.setenv(siwc_wire.ENV_FLAG, "1")
-    _sign_in()
-    assert ai_connections.first_key_connection() is None
-    assert ai_connections.first_key_connection(refresh=True) is None
-
-
+# --------------------------------------------------------------------------- 存储与探测碰不到它
 def test_cannot_save_or_probe_a_record_as_siwc(env):
     env.setenv(siwc_wire.ENV_FLAG, "1")
     _sign_in()
@@ -281,3 +286,12 @@ def test_store_provider_is_one_instance_per_process(env):
     siwc_login.reset_for_tests()
     assert siwc_login.provider() is siwc_login.provider()
     siwc_login.reset_for_tests()
+
+
+def test_effort_not_declared_by_the_model_is_not_sent(env):
+    env.setenv(siwc_wire.ENV_FLAG, "1")
+    _sign_in()
+    rec = ai_providers.resolve(ai_agents.BUILTIN_ID, "siwc:chatgpt")
+    for model, effort in (("gpt-b", "high"), ("gpt-a", "xhigh"), ("gpt-a", "minimal")):
+        args, _ = ai_providers.spawn_overrides(ai_agents.BUILTIN_ID, rec, model, effort)
+        assert "--effort" not in args, (model, effort)
