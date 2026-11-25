@@ -11,7 +11,7 @@ import { OAuthLoginDialog } from '../OAuthLoginDialog'
 import { useAgentStepAction } from './useAgentStepAction'
 import { InstallActionButton } from './InstallActionButton'
 import { agentStep } from './agentStep'
-import { ConnectionManage, SiwcManage, SiwcSignOut } from './ConnectionManage'
+import { ConnectionManage, SiwcSignOut } from './ConnectionManage'
 import { cx } from './copy'
 import { useLoginAfterInstall } from './useAgentInstall'
 import { connectionErrorText, connectionForMethod, loginAgentOf, methodHint, methodName, vendorName } from './vendors'
@@ -243,7 +243,7 @@ function LoginMethodRow({ vendor, method: m, connections, onConnected, picked: o
  * 「Continue with ChatGPT」方式的卡（Sign in with ChatGPT，ADR 0209）：不依赖任何命令行 AI。
  * 没连 / 需要重新登录 / 没允许用订阅额度：「Continue with ChatGPT」按钮就在卡片右侧；已连：卡片第二行是账号邮箱，点开管理（默认型号、断开）。
  */
-function SiwcMethodRow({ vendor, method: m, connections, onConnected, picked: on, onPick }: RowProps) {
+function SiwcMethodRow({ vendor, method: m, connections, onConnected }: RowProps) {
   const conn = connectionForMethod(connections, vendor, m)
   const ready = conn?.state === 'ready'
   const flow = useSiwcLogin(vendor, m, onConnected)
@@ -267,20 +267,13 @@ function SiwcMethodRow({ vendor, method: m, connections, onConnected, picked: on
       </div>
     )
   }
-  // 已连：第二行是账号邮箱；右侧「已连接」+「退出登录」（撤销授权）；点名字展开默认型号
+  // 已连：第二行是账号邮箱；右侧「已连接」+「退出登录」（撤销授权）。不展开——型号在 Agent 聊天框里选（用户 2026-11-25）
   return (
-    <div className="flex flex-col">
-      <div className="flex items-center gap-3">
-        <button type="button" {...dataAttrs} aria-pressed={on} onClick={() => onPick(on ? null : m.id)} className={cn(CARD_CLASS, PICK_CLASS)}>
-          <MethodCardBody method={m} caption={conn?.account_email || methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
-        </button>
-        <SiwcSignOut connection={conn!} />
+    <div className="flex items-center gap-3">
+      <div {...dataAttrs} className={CARD_CLASS}>
+        <MethodCardBody method={m} caption={conn?.account_email || methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
       </div>
-      {on && conn && (
-        <div className="pb-2.5 pl-9">
-          <SiwcManage connection={conn} />
-        </div>
-      )}
+      <SiwcSignOut connection={conn!} />
     </div>
   )
 }

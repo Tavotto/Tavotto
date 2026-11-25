@@ -160,14 +160,14 @@ describe('Continue with ChatGPT', () => {
     expect(q('[role="alert"]')).toBeNull()
   })
 
-  it('已连：第二行是账号邮箱，这一行右侧直接有「退出登录」；点名字展开默认型号（没有换 Key）', async () => {
+  it('已连：第二行是账号邮箱，这一行右侧直接有「退出登录」；不展开、没有默认型号（型号在聊天框里选）', async () => {
     await render([SIWC_READY])
     const card = q('[data-connect-method="openai:siwc"]')
     expect(card?.dataset.connectMethodState).toBe('ready')
     expect(card?.textContent).toContain('me@example.com')
-    expect(q('[data-connect-disconnect]')?.textContent).toBe(cx('siwc.signOut')) // 不用先展开
+    expect(q('[data-connect-disconnect]')?.textContent).toBe(cx('siwc.signOut'))
     await click(card)
-    expect(q('[data-connect-manage="siwc:chatgpt"]')).not.toBeNull()
+    expect(q('[data-connect-manage]')).toBeNull()
     expect(q('[data-connect-change-key]')).toBeNull()
   })
 

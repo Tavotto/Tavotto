@@ -121,25 +121,3 @@ export function SiwcSignOut({ connection }: { connection: AiConnection }) {
     </span>
   )
 }
-
-/** 已连接的 ChatGPT（Sign in with ChatGPT）展开后：默认型号（退出登录在这一行右侧，不在这里） */
-export function SiwcManage({ connection }: { connection: AiConnection }) {
-  useTranslation('dialogs')
-  const model = useAiStore((s) => s.models[connection.id]) ?? connection.default_model ?? ''
-  if (connection.models.length === 0) return null
-  return (
-    <div data-connect-manage={connection.id} className="flex items-center gap-2">
-      <span className="shrink-0 text-xs text-ink-2">{cx('defaultModel')}</span>
-      <Select
-        className="min-w-0 flex-1"
-        ariaLabel={cx('defaultModel')}
-        value={model}
-        onChange={(m) => useAiStore.getState().setModel(connection.id, m)}
-        options={connection.models.map((m) => ({
-          value: m,
-          label: connection.model_details?.find((d) => d.id === m)?.display_name || m,
-        }))}
-      />
-    </div>
-  )
-}
