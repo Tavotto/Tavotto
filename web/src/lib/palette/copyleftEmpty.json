@@ -1,0 +1,7 @@
+{
+  "$comment": "TAVOTTO_NO_COPYLEFT_PALETTES=1 构建时 @palettesCopyleft 指向这份空表（ADR 0210 §三）：产物里没有任何 GPL 色值。",
+  "version": 1,
+  "copyleft": true,
+  "sources": {},
+  "palettes": []
+}

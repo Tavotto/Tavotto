@@ -125,3 +125,11 @@ plan = {
 - 审阅意见是外来文本：只进用户内容的数据块（`<` 转义），系统提示声明里面的指令一概不执行；称呼不发给模型；每条输入意见必须落在某个组或 `unhandled`（模型没提的记 `not_addressed`）。
 - 长任务形状：`POST /api/change-plans` 立刻回 202 + 方案 id，后台线程渲染 B0 → 问模型 → 候选渲染 → 落盘（`data_dir()/cache/change_plans/<项目id>/<方案id>/`，TTL + 条数上限），前端轮询 `GET /api/change-plans/<id>`（与 `ai_data_roles` 的 job 同一形状）；同一张图同一时刻一个任务，同一 `client_request_id` 回同一任务。
 - 隐私：审阅意见文字发给用户所选的模型，`docs/privacy.md` 随第一个带前端入口的 PR 同步（PR 1 的端点已能发出，但没有前端入口、默认不可达）。
+
+## 修订（2026-11-24，PR 5 实现取舍）
+
+- **版本存储**：每一版是**自己的一份方案**（新 `plan_id`、自己的 `plan.json` / `before.png` / `after.png`），带 `version`（上一版 + 1）与 `parent`（上一版 id），与 PR 1 的落盘结构一致（按项目隔离、TTL 与条数上限）；`POST /api/change-plans/<id>/revise` 回 202 + 新方案 id，轮询同 `GET /api/change-plans/<id>`。前端把各版收在同一条卡片条目里（`versions`），按出现顺序数「第 N 版」（后端 `version` 不用于显示：从旧版再续改会得到相同的后端版本号），各版的逐组勾选各记各的；放弃 / 收起一并收掉各版。续改最多到第 8 版（`MAX_VERSIONS`）。
+- **起点与口径**：起点 = 上一版的 `candidate_patches`，base 仍是原 B0（`base_patches` 与基线指纹沿用，应用与基线核对不变；脚本在两版之间变了回 `change_plan_figure_changed`）。模型看**上一版之后**的元素表 + 上一版改动摘要（`<previous_changes>`）；批注与审阅意见同一套信任边界（只进 `<comments>` 数据块）。卡上的改动**相对 B0** 现算：上一版没被批注改掉的组原样带进来（`origin: "review"`），批注出的组标 `origin: "note"`（`comment_id` = 批注 id、`label` = 批注文字）；批注改到上一版同一 (gid, prop) 的，上一版那一条让位。批注把某处改回 B0 的值算 `no_effect`（相对 B0 没有改动）。
+- **批注只在本机**：批注文字与锚点只随这次请求发给用户所选的模型（`docs/privacy.md` 同步），不上传审阅服务。
+- **授权**：`license.FEATURES` 加 `change-plan-rerun`（ADR 0193 §一同步），判断只在 `engine/changeplan.licensed()`；未授权回 `{ok: false, code: "not_licensed"}`、不渲染不问模型。前端入口跟 `licenseVisible`：授权入口没出现时批注的三处入口整个不画（与一键排版一致）。
+- **点选**：批注模式的元素点选取这一版完整「修改后」的元素表（状态中立出图取 manifest），命中走画布同一份 `pickElementStack`；批注总是写在这一版完整的「修改后」上（重改从它出发），不跟逐组勾选走。

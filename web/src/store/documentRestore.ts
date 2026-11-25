@@ -80,6 +80,7 @@ export const supersede = supersedeRestore
 /* ------------------------------ 类型 ------------------------------ */
 
 export type RestoreIssueKind =
+  | 'chart_source_mismatch'
   | 'unavailable'
   | 'missing'
   | 'invalid'
@@ -286,7 +287,9 @@ function needsUser(
 }
 
 const issueKindOf = (probe: ProbeResult): RestoreIssueKind =>
-  probe.kind === 'found' ? 'invalid' : probe.kind === 'too_new' ? 'too_new' : probe.kind
+  probe.disk.kind === 'invalid' && probe.disk.code === 'chart_source_mismatch'
+    ? 'chart_source_mismatch'
+    : probe.kind === 'found' ? 'invalid' : probe.kind === 'too_new' ? 'too_new' : probe.kind
 
 /** 已只读验证过可打开的候选（最多 5 份；探测零副作用） */
 async function verifiedAlternatives(
@@ -996,7 +999,7 @@ export function whenDocumentSettledForEntry(
 /* ------------------------------ 恢复没成时用户动了手 ------------------------------ */
 
 /** 首选那份明确打不开（不是暂时读不到）：没有别的排版可接时，新排版是唯一的去处 */
-const DEAD_END_KINDS = new Set<RestoreIssueKind>(['missing', 'invalid', 'too_new', 'prepare_failed'])
+const DEAD_END_KINDS = new Set<RestoreIssueKind>(['missing', 'invalid', 'chart_source_mismatch', 'too_new', 'prepare_failed'])
 /** 暂时读不到：再试一次很可能就好了 */
 const TRANSIENT_KINDS = new Set<RestoreIssueKind>(['unavailable', 'session_unavailable', 'index_degraded'])
 

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject, type TextObject } from '@/types/document'
 import { setCurrentProjectId } from '@/lib/session'
 import { forgetLayoutRevisions } from '@/lib/layoutRevision'
-import { runManualSave } from './actions'
+import { restoreLayoutVersion, runManualSave } from './actions'
 import { saveNow, setProjectFile, startAutosave, useDocumentStore } from './documentStore'
 import { reportAutosaveFailure } from './saveFailureActions'
 import { useUiStore } from './uiStore'
@@ -80,6 +80,9 @@ beforeEach(async () => {
   setCurrentProjectId(null)
   useUiStore.setState({ layoutOpen: false, layoutIntent: 'saveToProject', status: null, statusAction: null })
   await s().switchDocument(emptyProject(), 'd_fail')
+  await saveNow() // 排空上一条用例在同一 id 下的离开冲刷
+  autosave.clear()
+  putAttempts.length = 0
   stopAutosave = startAutosave()
   window.addEventListener('tavotto:autosave-error', onAutosaveError)
 })
@@ -90,6 +93,21 @@ afterEach(() => {
 })
 
 describe('自动保存写盘失败 →「重试保存」', () => {
+  it('空画布还原写失败后，重试按钮把空正文写回同一槽位', async () => {
+    edit('old')
+    await saveNow()
+    const old = autosave.get('d_fail')
+    autosavePut = 500
+    expect(await restoreLayoutVersion(literal('恢复空画布'), emptyProject())).toBe(false)
+    expect(autosave.get('d_fail')).toBe(old)
+    expect(actionLabel()).toBe('重试保存')
+    autosavePut = 200
+    ui().statusAction!.run()
+    await new Promise(r => setTimeout(r, 50))
+    expect(ids(autosave.get('d_fail'))).toEqual([])
+    expect(s().saveState).toBe('saved')
+  })
+
   it('提示带按钮；点下去真的重新写盘，存成后提示收掉', async () => {
     autosavePut = 500
     edit('t1')

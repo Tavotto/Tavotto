@@ -218,8 +218,11 @@ def check(
     *,
     page: dict | None = None,
     profile: dict | None = None,
+    existing_texts: list[dict] | None = None,
 ) -> dict:
-    """`solved` 是 `vectorscene.solve` 的结果，`objects` 是同一批对象**校验过**的样子（`agentobjects` 换过 id，
+    """`existing_texts`：画布上**已有**的文字对象（文档对象，`x/y/w/h` 毫米），新元素不许压它们（Codex #2204）。
+
+    `solved` 是 `vectorscene.solve` 的结果，`objects` 是同一批对象**校验过**的样子（`agentobjects` 换过 id，
     顺序不变）。`items` 是原描述（取 `over_data` 与锚点种类）。"""
     from . import agentobjects
 
@@ -365,6 +368,8 @@ def check(
     for name, e in by_name.items():
         if e["type"] == "text":
             texts.append((name, _box(e)))
+    for o in existing_texts or []:
+        texts.append((f"canvas:{o.get('id')}", _doc_box(o)))
     for name, ft in feet.items():
         kind, foot, half = ft["kind"], ft["full"], ft["half"]
         clash = []
@@ -502,6 +507,19 @@ def _outline_samples(e: dict) -> list[tuple[float, float]]:
     for a, b in zip(corners, corners[1:] + corners[:1]):
         out += _samples(a, b, 0.0, 0.0)
     return out
+
+
+def _doc_box(o: dict) -> tuple[float, float, float, float]:
+    """文档对象（`x/y/w/h` 毫米、`rotationDeg` 绕中心顺时针）→ 画布上的外接框。"""
+    x, y, w, h = (float(o.get(k, 0.0)) for k in ("x", "y", "w", "h"))
+    deg = float(o.get("rotationDeg") or 0.0)
+    if not deg:
+        return (x, y, x + w, y + h)
+    t = math.radians(deg)
+    hw = (abs(w * math.cos(t)) + abs(h * math.sin(t))) / 2
+    hh = (abs(w * math.sin(t)) + abs(h * math.cos(t))) / 2
+    cx, cy = x + w / 2, y + h / 2
+    return (cx - hw, cy - hh, cx + hw, cy + hh)
 
 
 def _dist_to_rect(x: float, y: float, r) -> float:

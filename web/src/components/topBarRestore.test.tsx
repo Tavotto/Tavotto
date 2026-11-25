@@ -94,7 +94,7 @@ describe('restore 芯片', () => {
     expect(retryRestore).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['unavailable', 'session_unavailable', 'missing', 'invalid', 'too_new', 'choose', 'prepare_failed'] as const)(
+  it.each(['unavailable', 'session_unavailable', 'missing', 'invalid', 'chart_source_mismatch', 'too_new', 'choose', 'prepare_failed'] as const)(
     '说明里没有实现名（%s）',
     async (kind) => {
       await setIssue(
