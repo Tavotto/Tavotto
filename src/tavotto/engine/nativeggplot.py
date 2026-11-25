@@ -6,6 +6,8 @@ import hashlib
 import json
 import math
 import tempfile
+import xml.etree.ElementTree as ET
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +15,51 @@ from . import execspec, executionfact, figcapture, projectenv, runcodes
 
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
 _CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
+_LEGEND_IDENTITY_PREFIX = "r3:"
+
+
+def _write_ggplot_svg(path: Path, raw: str) -> bytes:
+    from ..rendercore import svgcheck
+    from . import artifactinspect
+
+    path.write_bytes(raw.encode("utf-8"))
+    artifactinspect.normalize_worker_svg(path)
+    data = path.read_bytes()
+    if "<use id='legend." not in raw:
+        return data
+
+    # svglite supplies a device-local definition for each marked guide box.
+    # Move its exclusive contents to the draw site so repeated panels can
+    # preview their own boxes in the same browser document.
+    root = svgcheck.parse_svg(data)
+    ns = f"{{{svgcheck.SVG_NS}}}"
+    defs = {
+        group.get("id"): (parent, group)
+        for parent in root.iter(ns + "defs")
+        for group in parent
+        if group.tag == ns + "g"
+    }
+    uses = list(root.iter(ns + "use"))
+    references = Counter(node.get("href") for node in uses)
+    for use in uses:
+        gid = use.get("id", "")
+        if not gid.startswith("legend."):
+            continue
+        href = use.get("href", "")
+        if references[href] != 1 or not href.startswith("#") or href[1:] not in defs:
+            raise ValueError("The native SVG legend has no exclusive drawing group.")
+        definition, group = defs[href[1:]]
+        definition.remove(group)
+        del group.attrib["id"]
+        use.tag = ns + "g"
+        del use.attrib["href"]
+        use.append(group)
+    ET.register_namespace("", svgcheck.SVG_NS)
+    ET.register_namespace("xlink", svgcheck.XLINK_NS)
+    data = ET.tostring(root, encoding="utf-8")
+    svgcheck.parse_svg(data)
+    path.write_bytes(data)
+    return data
 
 
 @dataclass(frozen=True)
@@ -70,7 +117,7 @@ class GgplotTarget:
         ]
 
     def publish_preview(self, session, response: dict, *, build: bool) -> dict:
-        from . import artifactinspect, pool
+        from . import pool
 
         stem = self.stem(session.spec.target)
         manifest, raw = response.get("manifest"), response.get("svg")
@@ -85,9 +132,7 @@ class GgplotTarget:
             with tempfile.TemporaryDirectory(dir=session.out_dir) as temporary:
                 svg = Path(temporary) / "figure.svg"
                 manifest_part = Path(temporary) / "figure.json"
-                svg.write_bytes(raw.encode("utf-8"))
-                artifactinspect.normalize_worker_svg(svg)
-                data = svg.read_bytes()
+                data = _write_ggplot_svg(svg, raw)
                 manifest_part.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
                 figcapture.publish_preview(session.out_dir, stem, svg, manifest_part, len(data))
         except (OSError, ValueError) as exc:
@@ -109,6 +154,14 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            legend_context = element.pop("legend_context", None)
+            if legend_context is not None:
+                context = [element["gid"], legend_context]
+                element["identity"] = (
+                    _LEGEND_IDENTITY_PREFIX
+                    + hashlib.sha256(json.dumps(context).encode("utf-8")).hexdigest()[:16]
+                )
+                continue
             legend_title = element.pop("legend_title", None)
             tick_labels = element.pop("tick_labels", None)
             if legend_title is not None or tick_labels is not None:
@@ -140,6 +193,10 @@ class GgplotTarget:
             identity = patch.get("identity")
             gid = patch.get("gid")
             expected = identities.get(gid) if isinstance(gid, str) else None
+            if expected is not None and expected.startswith(_LEGEND_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R legend changed. Select it again.")
+                continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX
             )
@@ -150,15 +207,11 @@ class GgplotTarget:
 
     @staticmethod
     def acknowledge_export(response: dict, svg_path: str | None) -> dict:
-        from . import artifactinspect
-
         raw = response.pop("svg_companion", None)
         if svg_path is not None and isinstance(raw, str):
             svg = Path(svg_path)
             try:
-                svg.write_bytes(raw.encode("utf-8"))
-                artifactinspect.normalize_worker_svg(svg)
-                data = svg.read_bytes()
+                data = _write_ggplot_svg(svg, raw)
             except (OSError, ValueError) as exc:
                 svg.unlink(missing_ok=True)
                 response["svg_error"] = {"message": str(exc)}

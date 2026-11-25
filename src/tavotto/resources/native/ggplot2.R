@@ -12,7 +12,7 @@ with_svg_frame <- function(frame_pt, draw) {
   on.exit({
     if (device %in% grDevices::dev.list()) grDevices::dev.off(which = device)
   })
-  value <- draw()
+  value <- draw(capture)
   grDevices::dev.off(which = device)
   list(value = value, svg = as.character(capture()))
 }
@@ -27,6 +27,10 @@ ggplot_text_slots <- c(
   "axis.y.right.title" = "ylab-r"
 )
 
+ggplot_cell_name <- function(cell) {
+  paste0(cell$name, ".", paste(c(cell$t, cell$r, cell$b, cell$l), collapse = "-"))
+}
+
 ggplot_text_target <- function(table, slots, role, title_child = NULL, group_label = NULL) {
   path <- character()
   for (slot in slots) {
@@ -35,9 +39,8 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL, group_lab
       table <- table$children[[slot]]
       next
     }
-    box <- table$layout[slot, ]
     # gtable names its drawn cells in top-right-bottom-left order.
-    cell <- paste0(box$name, ".", paste(c(box$t, box$r, box$b, box$l), collapse = "-"))
+    cell <- ggplot_cell_name(table$layout[slot, ])
     path <- c(path, table$name, cell)
     table <- table$grobs[[slot]]
   }
@@ -185,6 +188,54 @@ ggplot_legend_targets <- function(table, colourbar_titles) {
   c(titles, unlist(unname(guide_labels[names(titles)]), recursive = FALSE))
 }
 
+# A ggplot guide box can contain several guides and a shared background. Move
+# the box as drawn, preserving its layout space, contents and order.
+ggplot_legend_boxes <- function(table) {
+  if (!"over" %in% grDevices::dev.capabilities()$compositing) return(list())
+  targets <- list()
+  for (side in c("right", "left", "top", "bottom", "inside")) {
+    slot <- which(table$layout$name == paste0("guide-box-", side))
+    if (length(slot) != 1L) next
+    cell <- table$layout[slot, ]
+    box <- table$grobs[[slot]]
+    if (!inherits(box, "gtable") || !inherits(box$vp, "viewport") ||
+        box$vp$angle != 0 || cell$clip != "off") next
+    guides <- box$grobs[box$layout$name == "guides"]
+    if (!length(guides) || !all(vapply(guides, inherits, logical(1L), "gtable"))) next
+    context <- lapply(guides, function(guide) {
+      cells <- guide$layout$name
+      labels <- guide$grobs[cells == "title" | startsWith(cells, "label-")]
+      list(cells = as.list(cells), labels = lapply(labels, function(grob) {
+        lapply(grob$children, function(child) as.list(as.character(child$label)))
+      }))
+    })
+    targets[[paste0("legend.", side)]] <- list(
+      slot = slot, viewport = c(table$name, ggplot_cell_name(cell), box$vp$name),
+      context = context
+    )
+  }
+  targets
+}
+
+measure_ggplot_legends <- function(targets, frame_pt) {
+  if (!length(targets)) return(targets)
+  forced <- tryCatch({
+    grid::grid.force()
+    TRUE
+  }, error = function(error) FALSE)
+  if (!forced) return(lapply(targets, function(target) NULL))
+  lapply(targets, function(target) {
+    tryCatch({
+      on.exit(grid::upViewport(0))
+      grid::downViewport(do.call(grid::vpPath, as.list(target$viewport)), strict = TRUE)
+      lower <- grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"), valueOnly = TRUE)
+      upper <- grid::deviceLoc(grid::unit(1, "npc"), grid::unit(1, "npc"), valueOnly = TRUE)
+      bbox <- ggplot_bbox(lower, upper, frame_pt)
+      if (all(is.finite(bbox)) && all(bbox[3:4] > 0)) bbox else NULL
+    }, error = function(error) NULL)
+  })
+}
+
 ggplot_facet_labels <- function(table) {
   targets <- list()
   keys <- character()
@@ -219,6 +270,10 @@ measure_ggplot_text <- function(drawn, target, frame_pt) {
   text <- grid::grid.get(grid::gPath(target$parent_path, target$child), strict = TRUE)
   lower <- grid::deviceLoc(grid::grobX(text, 180), grid::grobY(text, 270), valueOnly = TRUE)
   upper <- grid::deviceLoc(grid::grobX(text, 0), grid::grobY(text, 90), valueOnly = TRUE)
+  ggplot_bbox(lower, upper, frame_pt)
+}
+
+ggplot_bbox <- function(lower, upper, frame_pt) {
   frame_in <- frame_pt / 72
   c(lower$x / frame_in[[1L]], 1 - upper$y / frame_in[[2L]],
     (upper$x - lower$x) / frame_in[[1L]], (upper$y - lower$y) / frame_in[[2L]])
@@ -265,14 +320,20 @@ measure_ggplot_targets <- function(targets, frame_pt) {
 
 capture_ggplot <- function(plot, frame_pt) {
   if (!inherits(plot, "ggplot")) stop("The selected object is not a ggplot.")
-  measured <- with_svg_frame(frame_pt, function() {
+  measured <- with_svg_frame(frame_pt, function(capture) {
     built <- ggplot2::ggplot_build(plot)
     table <- ggplot2::ggplot_gtable(built)
     grid::grid.newpage()
     grid::grid.draw(table)
+    text_targets <- ggplot_text_targets(table, frame_pt, ggplot_colourbar_titles(built))
+    legend_targets <- ggplot_legend_boxes(table)
+    legend_boxes <- measure_ggplot_legends(legend_targets, frame_pt)
+    legend_targets <- legend_targets[!vapply(legend_boxes, is.null, logical(1L))]
+    for (gid in names(legend_targets)) legend_targets[[gid]]$bbox <- legend_boxes[[gid]]
     list(
       table = table,
-      text_targets = ggplot_text_targets(table, frame_pt, ggplot_colourbar_titles(built)),
+      text_targets = text_targets,
+      legend_targets = legend_targets,
       layers = built$data,
       panel_ranges = lapply(built$layout$panel_params, function(panel) {
         list(x = panel$x.range, y = panel$y.range)
@@ -282,7 +343,12 @@ capture_ggplot <- function(plot, frame_pt) {
   # Measure on the same device type and frame as the final draw. Use a fresh
   # device for the artifact so viewport inspection does not add SVG nodes.
   state <- c(list(frame_pt = frame_pt), measured$value)
-  list(state = state, svg = render_ggplot(state))
+  svg <- tryCatch(render_ggplot(state), tavotto_legend_svg = function(error) NULL)
+  if (is.null(svg)) {
+    state$legend_targets <- list()
+    svg <- render_ggplot(state)
+  }
+  list(state = state, svg = svg)
 }
 
 edit_ggplot_text <- function(table, slots, path, paint) {
@@ -353,9 +419,47 @@ resize_ggplot_title_cell <- function(table, target, original) {
   table
 }
 
+ggplot_legend_position <- function(edit) {
+  if (!identical(names(edit), "loc_frac")) stop("The requested native R legend edit is unavailable.")
+  value <- edit$loc_frac
+  if (is.list(value) && is.null(names(value)) &&
+      all(vapply(value, function(x) is.numeric(x) && length(x) == 1L, logical(1L)))) {
+    value <- unlist(value, use.names = FALSE)
+  }
+  if (!is.numeric(value) || length(value) != 2L || any(!is.finite(value))) {
+    stop("The native R legend position must contain two finite numbers.")
+  }
+  value
+}
+
+makeContext.tavottoLegendPosition <- function(x) {
+  # Grid calls makeContext while still in the original gtable cell. Resolve
+  # the absolute figure anchor against that cell on the actual output device.
+  p <- x$tavotto_position
+  frame <- grDevices::dev.size("in")
+  origin <- grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"), valueOnly = TRUE)
+  xy <- c(p[[1L]], 1 - p[[2L]]) * frame - c(origin$x, origin$y)
+  if (any(!is.finite(xy))) stop("The native R legend position is outside the device range.")
+  just <- x$vp$valid.just
+  x$vp$x <- grid::unit(xy[[1L]], "in") + just[[1L]] * x$vp$width
+  x$vp$y <- grid::unit(xy[[2L]], "in") + just[[2L]] * x$vp$height
+  NextMethod()
+}
+
+registerS3method("makeContext", "tavottoLegendPosition", makeContext.tavottoLegendPosition,
+                 envir = asNamespace("grid"))
+
 ggplot_table_for <- function(state, edits) {
   table <- state$table
   for (gid in names(edits)) {
+    legend <- state$legend_targets[[gid]]
+    if (!is.null(legend)) {
+      box <- table$grobs[[legend$slot]]
+      box$tavotto_position <- ggplot_legend_position(edits[[gid]])
+      class(box) <- c("tavottoLegendPosition", class(box))
+      table$grobs[[legend$slot]] <- box
+      next
+    }
     target <- state$text_targets[[gid]]
     if (is.null(target)) stop("The requested native R text is unavailable.")
     paint <- ggplot_text_paint(target, edits[[gid]])$paint
@@ -368,12 +472,40 @@ ggplot_table_for <- function(state, edits) {
   table
 }
 
+ggplot_record_legend <- function(capture, marked, gid) {
+  svg <- as.character(capture())
+  suffix <- substring(svg, max(1L, nchar(svg) - 768L))
+  # The over-composite just emitted the device's own <use>, followed only
+  # by the closing groups of the current drawing context.
+  pattern <- "(<use href='#group-[0-9]+'[^<]*/>)[[:space:]]*(</g>[[:space:]]*)+</svg>[[:space:]]*$"
+  match <- regmatches(suffix, regexec(pattern, suffix, perl = TRUE))[[1L]]
+  if (length(match)) marked[[gid]] <- match[[2L]]
+}
+
 render_ggplot <- function(state, edits = list()) {
   table <- ggplot_table_for(state, edits)
-  with_svg_frame(state$frame_pt, function() {
+  marked <- new.env(parent = emptyenv())
+  svg <- with_svg_frame(state$frame_pt, function(capture) {
+    for (gid in names(state$legend_targets)) {
+      slot <- state$legend_targets[[gid]]$slot
+      record <- grid::recordGrob(record_legend(capture, marked, gid), list(
+        record_legend = ggplot_record_legend, capture = capture, marked = marked, gid = gid
+      ))
+      table$grobs[[slot]] <- grid::grobTree(grid::groupGrob(table$grobs[[slot]]), record)
+    }
     grid::grid.newpage()
     grid::grid.draw(table)
   })$svg
+  for (gid in names(state$legend_targets)) {
+    use <- marked[[gid]]
+    if (is.null(use) || lengths(regmatches(svg, gregexpr(use, svg, fixed = TRUE))) != 1L) {
+      stop(errorCondition("The native SVG legend group could not be identified.",
+                          class = "tavotto_legend_svg"))
+    }
+    tagged <- sub("<use ", paste0("<use id='", gid, "' "), use, fixed = TRUE)
+    svg <- sub(use, tagged, svg, fixed = TRUE)
+  }
+  svg
 }
 
 open_ggplot_pdf <- function(frame_pt, path) {
@@ -421,7 +553,9 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
   grid::grid.draw(table)
   if (with_manifest) {
     # Measure the actual raster canvas, including any pixel rounding.
-    return(measure_ggplot_targets(state$text_targets, grDevices::dev.size("in") * 72))
+    frame_pt <- grDevices::dev.size("in") * 72
+    return(list(text = measure_ggplot_targets(state$text_targets, frame_pt),
+                legends = measure_ggplot_legends(state$legend_targets, frame_pt)))
   }
   invisible(NULL)
 }
@@ -429,23 +563,27 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
 ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # A resized title can move the entire plot. Re-measure even targets whose
   # own paint was left alone so the hit regions follow the rendered layout.
-  if (any(vapply(edits, function(edit) !is.null(edit$fontsize), logical(1L)))) {
+  legend_gids <- names(state$legend_targets)
+  reflow <- any(vapply(edits, function(edit) !is.null(edit$fontsize), logical(1L))) ||
+    any(names(edits) %in% legend_gids)
+  if (reflow) {
     geometry_gids <- names(state$text_targets)
   } else {
     geometry_gids <- names(Filter(function(edit) any(names(edit) %in% names(ggplot_face_options)), edits))
   }
   if (!is.null(measured)) {
-    if (length(measured) != length(state$text_targets)) {
+    if (length(measured$text) != length(state$text_targets)) {
       stop("The native R text could not be measured in the PNG.")
     }
-  } else if (length(geometry_gids)) {
+  } else if (reflow || length(geometry_gids)) {
     table <- ggplot_table_for(state, edits)
-    measured <- with_svg_frame(state$frame_pt, function() {
+    measured <- with_svg_frame(state$frame_pt, function(capture) {
       grid::grid.newpage()
       grid::grid.draw(table)
-      measure_ggplot_targets(state$text_targets[geometry_gids], state$frame_pt)
+      list(text = measure_ggplot_targets(state$text_targets[geometry_gids], state$frame_pt),
+           legends = if (reflow) measure_ggplot_legends(state$legend_targets, state$frame_pt))
     })$value
-    if (length(measured) != length(geometry_gids)) {
+    if (length(measured$text) != length(geometry_gids)) {
       stop("The edited native R text could not be measured.")
     }
   }
@@ -455,7 +593,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     color <- if (is.null(patch$color)) target$color else patch$color
     painted <- ggplot_text_paint(target, patch)
     face <- painted$face
-    bbox <- if (is.null(measured[[gid]])) target$bbox else measured[[gid]]$bbox
+    bbox <- if (is.null(measured$text[[gid]])) target$bbox else measured$text[[gid]]$bbox
     editable <- list(list(prop = "color", type = "color", value = color))
     for (prop in names(face)) {
       field <- list(prop = prop, type = "enum", value = face[[prop]],
@@ -477,7 +615,19 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     )
     if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
     if (!is.null(target$tick_labels)) element$tick_labels <- target$tick_labels
+    if (target$role == "legend_text") {
+      host <- sub("^(legend\\.[^.]+)\\..*$", "\\1", gid)
+      if (host %in% legend_gids) element$drag_host <- host
+    }
     element
   })
-  list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72), elements = elements)
+  legends <- lapply(legend_gids, function(gid) {
+    target <- state$legend_targets[[gid]]
+    bbox <- if (is.null(measured$legends)) target$bbox else measured$legends[[gid]]
+    if (is.null(bbox)) stop("The edited native R legend could not be measured.")
+    list(gid = gid, role = "legend", label = "\u56fe\u4f8b", bbox = as.list(bbox),
+         draggable = TRUE, drag_prop = "loc_frac", anchor = as.list(c(bbox[[1L]], bbox[[2L]] + bbox[[4L]])),
+         editable = list(), legend_context = target$context)
+  })
+  list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72), elements = c(legends, elements))
 }

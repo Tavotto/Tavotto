@@ -10,6 +10,7 @@ import { outlineOf, PATH_HIT_SHAPES, shapeInset } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, linePointsOf, panelFullRect, resolveGroup } from '@/lib/elementGeom'
 import { patchBoundsOf } from '@/lib/patchResize'
+import { legendScaleBases } from '@/lib/legendScale'
 import { ALL_DIRS, boundsOf, dirsFor, ROTATE_KNOB_GAP, visualBounds, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
@@ -966,7 +967,8 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
     !groupBox &&
     selectedGids.length === 1 &&
     primary?.target.role === 'legend' &&
-    primary.target.drag_prop === 'loc_frac'
+    primary.target.drag_prop === 'loc_frac' &&
+    legendScaleBases(panel, primary.target).length > 0
       ? primary.box
       : null
   // 单选图内独立箭头 → 两个端点手柄（画布原生箭头的同款交互）

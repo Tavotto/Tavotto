@@ -33,9 +33,10 @@ def main():
 """
 R_SCRIPT = r"""
 cat("built\n", file = "r-builds.txt", append = TRUE)
-plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
-  ggplot2::geom_point(colour = "#317A75", alpha = .5) +
-  ggplot2::labs(x = "Displacement (L)", y = "Highway mileage", title = "Fuel economy") +
+plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
+  ggplot2::geom_point(alpha = .5) +
+  ggplot2::labs(x = "Displacement (L)", y = "Highway mileage", title = "Fuel economy",
+                 colour = "Drive type") +
   ggplot2::theme_minimal() +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"))
 """
@@ -46,6 +47,7 @@ AXIS_FACES = {"weight": "bold", "style": "italic"}
 AXIS_PAGE_SIZE = 12.4
 R_AXIS_PAGE_SIZE = 13.8
 R_PANEL_SCALE = 0.8
+R_LEGEND_POSITION = [0.42, 0.64]
 
 
 def _run_ggplot(app, script, rscript):
@@ -198,6 +200,8 @@ def _pdf_pixels(path):
         assert max(span["bbox"][2] for span in mpl) < page.rect.width / 2
         assert min(span["bbox"][0] for span in ggplot) > page.rect.width / 2
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
+        legend_left = 88 * 72 / 25.4 + R_LEGEND_POSITION[0] * 216 * R_PANEL_SCALE
+        assert legend_left < by_text["Drive type"][0]["bbox"][0] < legend_left + 10
         bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
         for title, size in {
             "Time (min)": AXIS_PAGE_SIZE,
@@ -438,8 +442,23 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
             for patch in r_bulk
         ]
         bulk_svg = _render(app, r_asset, r_bulk)["svg"]
-        assert _render(app, r_asset, r_single)["svg"] != bulk_svg
+        sized_svg = _render(app, r_asset, r_single)["svg"]
+        assert sized_svg != bulk_svg
         assert _render(app, r_asset, r_bulk)["svg"] == bulk_svg
+        (legend,) = [el for el in r_baseline["manifest"]["elements"] if el["role"] == "legend"]
+        r_patches = [
+            *r_single,
+            {
+                "gid": legend["gid"],
+                "prop": "loc_frac",
+                "value": R_LEGEND_POSITION,
+                "identity": legend["identity"],
+            },
+        ]
+        moved = _render(app, r_asset, r_patches)
+        assert moved["svg"] != sized_svg
+        assert _render(app, r_asset, r_single)["svg"] == sized_svg
+        assert _render(app, r_asset, r_patches)["svg"] == moved["svg"]
         document = {
             "schema": 3,
             "project": {"id": "mixed", "name": "Mixed native"},
@@ -453,7 +472,7 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                     "guides": [],
                     "objects": [
                         _panel("mpl", mpl_asset, 5, mpl_patches),
-                        _panel("r", r_asset, 88, r_single, scale=R_PANEL_SCALE),
+                        _panel("r", r_asset, 88, r_patches, scale=R_PANEL_SCALE),
                     ],
                 }
             ],

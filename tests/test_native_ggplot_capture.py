@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pymupdf
 import pytest
@@ -43,6 +44,7 @@ X_BOTTOM = "axis.x.bottom.title"
 Y_LEFT = "axis.y.left.title"
 LEGEND = "legend.right.1.title"
 LEGEND_ENTRY = "legend.right.1.entry.3.2"
+LEGEND_BOX = "legend.right"
 FACET = "facet.t.2.2.label"
 
 
@@ -406,6 +408,25 @@ wrapped_edited <- render_colors(wrapped$state, setNames(list("#6F2A9B"), bottom_
 wrapped_line <- grep(bottom_label, strsplit(wrapped_edited, "\n")[[1L]], fixed = TRUE, value = TRUE)
 stopifnot(length(wrapped_line) == 1L, grepl("#6F2A9B", wrapped_line, fixed = TRUE))
 
+for (side in c("left", "top", "inside")) {
+  positioned <- drive_plot + ggplot2::theme(legend.position = side, legend.position.inside = c(.7, .8))
+  captured <- adapter$capture_ggplot(positioned, c(432, 288))
+  gid <- paste0("legend.", side)
+  target <- captured$state$legend_targets[[gid]]
+  stopifnot(!is.null(target), grepl(paste0("id='", gid, "'"), captured$svg, fixed = TRUE))
+  edits <- setNames(list(list(loc_frac = c(.37, .68))), gid)
+  manifest <- adapter$ggplot_manifest(captured$state, "guide-test", edits)
+  moved <- Filter(function(element) element$gid == gid, manifest$elements)[[1L]]
+  stopifnot(isTRUE(all.equal(unlist(moved$anchor), c(.37, .68))),
+            identical(captured$svg, adapter$render_ggplot(captured$state)))
+}
+# A single outside box owns both guides that ggplot2 placed on that side.
+group_edits <- list("legend.right" = list(loc_frac = c(.32, .71)))
+two_guides <- adapter$ggplot_manifest(separate$state, "guide-test", group_edits)$elements
+shared_titles <- Filter(function(element) identical(element$label, "Shared entry"), two_guides)
+stopifnot(length(shared_titles) == 2L,
+          all(vapply(shared_titles, function(element) element$drag_host == "legend.right", logical(1L))))
+
 data <- data.frame(x = 1:4, y = 4:1, row = rep(c("Sample", "Shared"), each = 2),
                    column = rep(c("Control", "Shared"), 2))
 points <- ggplot2::ggplot(data, ggplot2::aes(x, y)) + ggplot2::geom_point() +
@@ -632,6 +653,18 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         bar_preview = session.override(stem, [bar_patch], inline_svg=True)["svg"]
         assert bar_preview.count("#C32146") == 3
         assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
+        legend = elements["legend.bottom"]
+        move = {"gid": legend["gid"], "prop": "loc_frac", "identity": legend["identity"]}
+        for invalid in ([], [0.4], [0.4, "0.6"], {"x": 0.4, "y": 0.6}):
+            with pytest.raises(pool.WorkerError, match="two finite numbers"):
+                session.override(stem, [{**move, "value": invalid}], inline_svg=True)
+        moved_png = session.preview_png_snapshot(stem, [{**move, "value": [0.32, 0.8]}], 400)
+        moved_legend = next(
+            el for el in moved_png["manifest"]["elements"] if el["gid"] == legend["gid"]
+        )
+        assert moved_legend["anchor"] == pytest.approx([0.32, 0.8], abs=1e-7)
+        assert moved_legend["identity"] == legend["identity"]
+        assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
         for prop, value in (("text", "Unchanged"), ("weight", "semibold")):
             with pytest.raises(pool.WorkerError, match="text style is unavailable"):
                 session.override(
@@ -796,6 +829,9 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         svg = edit["svg"]
         for element in edit["manifest"]["elements"]:
             gid = element["gid"]
+            if gid == LEGEND_BOX:
+                assert element["editable"] == []
+                continue
             assert element["editable"][0]["value"] == expected.get(
                 gid, elements[gid]["editable"][0]["value"]
             )
@@ -834,6 +870,50 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         cache = client.post("/api/runtime/preview", json={"id": source, "patches": patches})
         assert cache.headers["X-Tavotto-Preview-Exact"] == "1"
         assert cache.get_data(as_text=True) == svg
+
+        legend = elements[LEGEND_BOX]
+        assert (legend["role"], legend["draggable"], legend["drag_prop"]) == (
+            "legend",
+            True,
+            "loc_frac",
+        )
+        move = {
+            "gid": LEGEND_BOX,
+            "prop": "loc_frac",
+            "value": [0.24, 0.6],
+            "identity": legend["identity"],
+        }
+        prior_svg = svg
+        moved = render([*patches, move])
+        by_id = {element["gid"]: element for element in moved["manifest"]["elements"]}
+        assert by_id[LEGEND_BOX]["anchor"] == pytest.approx(move["value"], abs=1e-7)
+        assert by_id[LEGEND_BOX]["bbox"][2:] == pytest.approx(legend["bbox"][2:])
+        assert by_id[LEGEND_ENTRY]["drag_host"] == LEGEND_BOX
+        assert by_id[FACET]["bbox"] == elements[FACET]["bbox"]
+        dx, dy = [end - start for end, start in zip(move["value"], legend["anchor"], strict=True)]
+        for gid in (LEGEND, LEGEND_ENTRY):
+            x, y, w, h = elements[gid]["bbox"]
+            assert by_id[gid]["bbox"] == pytest.approx([x + dx, y + dy, w, h], abs=1e-7)
+
+        svg = moved["svg"]
+        ns = "{http://www.w3.org/2000/svg}"
+        old_group = ElementTree.fromstring(prior_svg).find(f".//{ns}g[@id='{LEGEND_BOX}']")
+        group = ElementTree.fromstring(svg).find(f".//{ns}g[@id='{LEGEND_BOX}']")
+        assert old_group is not None and group is not None
+        old_labels = {text.text: text for text in old_group.iter(ns + "text")}
+        assert set(old_labels) >= {"Drive type", "Front wheel drive", "Rear wheel drive"}
+        assert {text.text for text in group.iter(ns + "text")} == set(old_labels)
+        for text in group.iter(ns + "text"):
+            previous = old_labels[text.text]
+            assert float(text.attrib["x"]) - float(previous.attrib["x"]) == pytest.approx(
+                dx * 432, abs=0.02
+            )
+            assert float(text.attrib["y"]) - float(previous.attrib["y"]) == pytest.approx(
+                dy * 288, abs=0.02
+            )
+        assert render(patches)["svg"] == prior_svg
+        patches.append(move)
+        assert render(patches)["svg"] == svg
 
         panels = [
             {
@@ -952,6 +1032,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         assert regrouped[LEGEND_ENTRY]["identity"] != entry_patch["identity"]
         with pytest.raises(pool.WorkerError, match="text target changed"):
             session.override(descriptor["stem"], [entry_patch], inline_svg=True)
+        with pytest.raises(pool.WorkerError, match="legend changed"):
+            session.override(descriptor["stem"], [move], inline_svg=True)
         assert session.cancel_owned().confirmed
         session = None
         service.reset_projects()

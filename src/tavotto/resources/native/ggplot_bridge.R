@@ -72,7 +72,7 @@ main <- function() {
   })
   send(list(bridge_event = "barrier", reason = "script_end", stems = list(stem)))
 
-  text_edits_from <- function(request) {
+  edits_from <- function(request) {
     if (!identical(request$stem, stem)) stop("Unknown ggplot object.")
     patches <- request$payload$patches
     if (!is.list(patches)) stop("Expected a full list of plot patches.")
@@ -84,8 +84,9 @@ main <- function() {
           is.na(patch$gid) || !nzchar(patch$gid) ||
           !is.character(patch$prop) || length(patch$prop) != 1L ||
           is.na(patch$prop) || !nzchar(patch$prop) ||
-          (!is.character(patch$value) && !is.numeric(patch$value))) {
-        stop("Invalid native R text edit.")
+          (!is.character(patch$value) && !is.numeric(patch$value) &&
+           !(patch$prop == "loc_frac" && is.list(patch$value)))) {
+        stop("Invalid native R edit.")
       }
       edits[[patch$gid]][[patch$prop]] <- patch$value
     }
@@ -108,12 +109,12 @@ main <- function() {
                      manifest = adapter$ggplot_manifest(captured$state, stem),
                      ggplot2 = as.character(utils::packageVersion("ggplot2"))),
         render = {
-          edits <- text_edits_from(request)
+          edits <- edits_from(request)
           list(ok = TRUE, svg = adapter$render_ggplot(captured$state, edits),
                manifest = adapter$ggplot_manifest(captured$state, stem, edits))
         },
         preview_png = {
-          edits <- text_edits_from(request)
+          edits <- edits_from(request)
           payload <- request$payload
           paired <- isTRUE(payload$with_manifest)
           if (paired) {
@@ -135,7 +136,7 @@ main <- function() {
           }, finally = if (paired) unlink(path))
         },
         export = {
-          edits <- text_edits_from(request)
+          edits <- edits_from(request)
           payload <- request$payload
           if (!identical(payload$format, "pdf") || !is.character(payload$path)) {
             stop("The ggplot adapter exports a PDF with an optional SVG companion.")
