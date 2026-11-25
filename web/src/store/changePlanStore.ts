@@ -179,6 +179,8 @@ export interface PlanEntry {
   appliedSrc?: string
   /** 只应用了一部分组：卡片挂的不能是全量候选图 */
   appliedPartial?: boolean
+  /** 脚本方案卡接在哪张卡之后（「改脚本做剩下的」）：同一条指令只画一次用户气泡，这张卡挂在那一轮下面 */
+  followsKey?: string
   /** 脚本修改方案：应用 / 撤销在途（防连点） */
   scriptBusy?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
@@ -561,6 +563,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // 脚本修改也先出方案卡（ADR 0206 PR 6）：Agent 在副本里改、渲染出对比，看过再应用；这条路不适用（没连上模型 / native…）就落回现有的直接改脚本
       const out = await start(e.panelId, { instruction: prompt.length <= MAX_ASSISTANT_INSTRUCTION ? prompt : fb.prompt, display: fb.prompt, ...(e.request.target ? { target: e.request.target } : {}), mode: 'script' }, fb)
       if (out !== 'fallthrough') {
+        if (out) patch(out, { followsKey: key })
         patch(key, e.plan && e.plan.groups.length > 0 ? { scriptStarted: true } : { status: 'handoff', scriptStarted: true, failure: undefined })
         return out !== null
       }

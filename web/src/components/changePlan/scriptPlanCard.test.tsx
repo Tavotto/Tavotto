@@ -158,3 +158,15 @@ it('越界的失败卡：一句话 + 文件名（其余「等 N 个」）+「重
   expect(q('[data-change-plan-overreach-files]')!.textContent).toContain('等 8 个')
   expect(q('[data-change-plan-failed-action="retry"]')).toBeTruthy()
 })
+
+it('部分能改之后的脚本方案卡：同一条指令只画一次用户气泡；前一张收成一行灰字时由脚本卡画', async () => {
+  const first = entry('a', { plan: { ...PLAN, kind: undefined, groups: [{ ...PLAN.groups[0], kind: undefined, script: undefined }] } })
+  const second = entry('b', { followsKey: 'a' })
+  act(() => useChangePlanStore.setState({ entries: { a: first, b: second }, order: ['a', 'b'], dialogKey: null }))
+  await render(<ChangePlanTranscript panelId="p1" />)
+  expect(document.body.querySelectorAll('[data-change-plan-user]')).toHaveLength(1)
+  expect(document.body.querySelectorAll('[data-change-plan-card]')).toHaveLength(2)
+  act(() => useChangePlanStore.setState({ entries: { a: { ...first, status: 'handoff' }, b: second }, order: ['a', 'b'] }))
+  expect(document.body.querySelectorAll('[data-change-plan-user]')).toHaveLength(1)
+  expect(q('[data-change-plan-handoff]')).toBeTruthy()
+})

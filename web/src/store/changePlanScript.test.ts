@@ -150,6 +150,11 @@ describe('出脚本方案卡', () => {
   })
 })
 
+it('「改脚本做剩下的」：脚本方案卡记着它接在哪张卡之后（只画一次用户气泡）', async () => {
+  const { first, key } = await toScriptCard()
+  expect(cps().entries[key].followsKey).toBe(first)
+})
+
 describe('应用与撤销（后端写脚本，不进文档历史）', () => {
   it('应用成功：卡片已应用、方案里记着备份；文档历史一步没动（⌘Z 不撤脚本）', async () => {
     const { key } = await toScriptCard()

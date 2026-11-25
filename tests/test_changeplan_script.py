@@ -82,6 +82,25 @@ def test_plan_only_edits_a_copy_and_never_writes_the_user_script(bridge):
     assert ai_bridge.SESSIONS[sid]["refresh"]["status"] == "skipped"
 
 
+def test_plan_only_session_is_audited_but_not_listed_in_history_or_changes(bridge):
+    project = str(bridge["figs"].resolve())
+    sid, _out = _plan_run(bridge, EDIT)
+    row = ai_history.get(sid)
+    assert row is not None and row["plan_only"] == 1, "历史库照记（审计），带标"
+    assert ai_history.list_sessions(project)["total"] == 0, "助手任务历史里不多一条"
+    assert ai_history.list_sessions(project, status="done")["sessions"] == []
+    assert ai_history.changes_since(project, 0)["rows"] == []
+    assert ai_bridge.changes(project, 0)["sessions"] == []
+    # 对照：同一项目里的普通改图会话照常出现
+    state = dict(bridge)
+    state["code"] = EDIT
+    normal = ai_bridge.run("codex", "fig1.py", "把标题改成 new", project)
+    pump = next((t for t in threading.enumerate() if t.name == f"ai-{normal}"), None)
+    if pump is not None:
+        pump.join(30)
+    assert [r["id"] for r in ai_history.list_sessions(project)["sessions"]] == [normal]
+
+
 def test_plan_only_without_a_change_has_no_bytes(bridge):
     _sid, out = _plan_run(bridge, "pass")
     assert out["new_bytes"] is None

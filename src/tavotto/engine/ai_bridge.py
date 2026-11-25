@@ -2172,6 +2172,8 @@ def run(
                     "snapshot_path": str(snap),
                     "client_request_id": client_request_id,
                     "attachment_count": attachment_count,
+                    # 修改方案的脚本修改（PR 6）：历史库照记（审计），带标；历史列表与对账接口不列它
+                    **({"plan_only": True} if plan_only else {}),
                     **(
                         {
                             "task_type": envelope.task_type,
