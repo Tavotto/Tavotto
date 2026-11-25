@@ -2318,7 +2318,7 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     const imgs = [...document.body.querySelectorAll(`[data-canvas-thumb] [data-thumb-panel="${RT}"]`)]
     expect(imgs.length).toBeGreaterThan(0)
     for (const n of imgs) expect(n.getAttribute('href')).toBe('blob:state-rt')
-    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.anything())
+    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.any(AbortSignal), null)
   })
 })
 
