@@ -88,7 +88,14 @@ export function ConnectionManage({
 }
 
 /** 「退出登录」：退出这个 ChatGPT 账号并撤销授权（先确认）；远端撤销没确认时如实说一句（本机令牌照样清掉） */
-export function SiwcSignOut({ connection }: { connection: AiConnection }) {
+export function SiwcSignOut({
+  connection,
+  onRevokeUnconfirmed,
+}: {
+  connection: AiConnection
+  /** 远端撤销没确认：退出后这一行会换成未连接的样子、本组件随即卸载，提示由还活着的上层显示 */
+  onRevokeUnconfirmed?: () => void
+}) {
   useTranslation('dialogs')
   const [error, setError] = useState<string | null>(null)
   const signOut = async () => {
@@ -101,8 +108,8 @@ export function SiwcSignOut({ connection }: { connection: AiConnection }) {
     if (!ok) return
     try {
       const r = await disconnectAi(connection.id)
+      if (r.revoked === false) onRevokeUnconfirmed?.()
       await useAiStore.getState().loadCaps(true)
-      if (r.revoked === false) setError(cx('siwc.revokeUnconfirmed'))
     } catch (e) {
       setError(backendErrorText(e))
     }

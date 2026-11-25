@@ -59,12 +59,16 @@ let calls: Call[]
 let flowStates: string[]
 let connected: AiConnection[]
 let opened: string[]
+let loginGate: Promise<void> | null
+let deleteBody: Record<string, unknown>
 
 beforeEach(() => {
   calls = []
   flowStates = ['waiting', 'signed_in']
   connected = []
   opened = []
+  loginGate = null
+  deleteBody = { ok: true, revoked: true }
   vi.spyOn(window, 'open').mockImplementation(((u: string) => {
     opened.push(u)
     return null
@@ -73,7 +77,10 @@ beforeEach(() => {
     const u = String(url)
     const method = (init?.method ?? 'GET').toUpperCase()
     calls.push({ url: u, method })
-    if (u === '/api/ai/siwc/login') return json({ ok: true, flow_id: 'f1', flow: { flow_id: 'f1', state: 'waiting', authorize_url: AUTH_URL } })
+    if (u === '/api/ai/siwc/login') {
+      if (loginGate) await loginGate
+      return json({ ok: true, flow_id: 'f1', flow: { flow_id: 'f1', state: 'waiting', authorize_url: AUTH_URL } })
+    }
     if (u.startsWith('/api/ai/siwc/flows/f1/cancel')) return json({ flow_id: 'f1', state: 'cancelled', authorize_url: AUTH_URL })
     if (u.startsWith('/api/ai/siwc/flows/f1')) {
       const state = flowStates.length > 1 ? flowStates.shift()! : flowStates[0]
@@ -83,7 +90,7 @@ beforeEach(() => {
       const done = flowStates[0] === 'signed_in'
       return json(capsOf([], { vendors: [OPENAI], connections: done ? [SIWC_READY] : [] }))
     }
-    if (method === 'DELETE') return json({ ok: true, revoked: true })
+    if (method === 'DELETE') return json(deleteBody)
     return json({})
   }) as typeof fetch
   useAiStore.setState({ caps: capsOf([], { vendors: [OPENAI], connections: [] }) })
@@ -196,6 +203,45 @@ describe('Continue with ChatGPT', () => {
     expect(q('[role="alert"]')).toBeNull()
   })
 
+  it('启动请求还没回来就点取消：响应回来后不开浏览器、不轮询，并撤掉后端刚起的那个流程', async () => {
+    vi.useFakeTimers()
+    let release!: () => void
+    loginGate = new Promise<void>((r) => (release = r))
+    await render()
+    await click(q('[data-connect-action="siwc"]'))
+    await click(q('[data-connect-action="siwc-cancel"]')) // starting 阶段 flow 还是空
+    await act(async () => {
+      release()
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+    expect(opened).toEqual([])
+    expect(calls.some((c) => c.url === '/api/ai/siwc/flows/f1' && c.method === 'GET')).toBe(false)
+    expect(calls.some((c) => c.url === '/api/ai/siwc/flows/f1/cancel')).toBe(true)
+    expect(q('[data-connect-action="siwc"]')).not.toBeNull()
+    expect(q('[data-connect-login-hint]')).toBeNull()
+  })
+
+  it('失败后改用 Codex、再点「Continue with ChatGPT」：回到 SIWC 自己的等待提示，不再显示 Codex 的', async () => {
+    vi.useFakeTimers()
+    flowStates = ['failed']
+    useAiStore.setState({ caps: capsOf([agentCaps({ installed: true })], { vendors: [OPENAI], connections: [] }) })
+    await render()
+    await click(q('[data-connect-action="siwc"]'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    await click(q('[data-connect-action="siwc-use-codex"]'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    flowStates = ['waiting']
+    await click(q('[data-connect-action="siwc"]'))
+    const hints = host.querySelectorAll('[data-connect-login-hint]')
+    expect(hints).toHaveLength(1)
+    expect(hints[0].textContent).toContain(cx('siwc.browserHint'))
+    expect(host.querySelector('[data-connect-action="siwc-cancel"]')).not.toBeNull()
+  })
+
   it('已连：第二行是账号邮箱，这一行右侧直接有「退出登录」；不展开、没有默认型号（型号在聊天框里选）', async () => {
     await render([SIWC_READY])
     const card = q('[data-connect-method="openai:siwc"]')
@@ -205,6 +251,40 @@ describe('Continue with ChatGPT', () => {
     await click(card)
     expect(q('[data-connect-manage]')).toBeNull()
     expect(q('[data-connect-change-key]')).toBeNull()
+  })
+
+  it('退出时远端撤销没确认（revoked:false）：卡片切回未连接后，那句灰字提示仍看得到', async () => {
+    deleteBody = { ok: true, revoked: false }
+    useAiStore.setState({ caps: capsOf([], { vendors: [OPENAI], connections: [SIWC_READY] }) })
+    // 退出后 loadCaps 读到的是「没有连接」
+    const base = globalThis.fetch
+    let gone = false
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if ((init?.method ?? 'GET').toUpperCase() === 'DELETE') gone = true
+      if (gone && String(url).startsWith('/api/ai/capabilities')) return json(capsOf([], { vendors: [OPENAI], connections: [] }))
+      return base(url as RequestInfo, init)
+    }) as typeof fetch
+    const Live = () => <MethodList vendor={OPENAI} connections={useAiStore((s) => s.caps?.connections) ?? []} onConnected={() => undefined} />
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () =>
+      root.render(
+        <TooltipProvider>
+          <Live />
+        </TooltipProvider>,
+      ),
+    )
+    expect(q('[data-connect-method="openai:siwc"]')?.dataset.connectMethodState).toBe('ready')
+    await click(q('[data-connect-disconnect]'))
+    await act(async () => {
+      useUiStore.getState().confirm?.resolve(true) // 全局确认框：直接替用户点「确定」
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(q('[data-connect-method="openai:siwc"]')?.dataset.connectMethodState).toBe('none')
+    expect(q('[data-connect-revoke-unconfirmed]')?.textContent).toBe(cx('siwc.revokeUnconfirmed'))
   })
 
   it('没允许订阅额度的连接：第二行说原因，按钮仍在卡片上可以重新登录', async () => {

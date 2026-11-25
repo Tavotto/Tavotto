@@ -98,14 +98,23 @@ describe('「AI 与模型」：已连接的 AI 一个列表，点一行在它下
     await mount(scope())
     await act(async () => row('p_ds').click())
     const item = modelItems().find((o) => o.dataset.aiModelItem === 'ds-reason')!
-    expect(item.getAttribute('role')).toBe('radio')
+    const radioOf = (el: HTMLElement) => el.querySelector<HTMLInputElement>('input[data-ai-model-radio]')!
     await act(async () => item.click())
     await tick()
     expect(useAiStore.getState().connection).toBe('p_ds')
     expect(useAiStore.getState().models['p_ds']).toBe('ds-reason')
-    expect(item.getAttribute('aria-checked')).toBe('true')
+    expect(radioOf(item).checked).toBe(true)
     expect(localStorage.getItem('tavotto.ai.connection')).toBe('p_ds')
     expect(JSON.parse(localStorage.getItem('tavotto.ai.prefs')!).models.p_ds).toBe('ds-reason')
+  })
+
+  it('同一连接的型号是同一 name 的原生 radio，只有选中的那一个 checked', async () => {
+    useAiStore.setState({ caps: connectCapsOf([DS, CG]), connection: 'p_ds', models: { p_ds: 'ds-reason' } })
+    await mount(scope())
+    const radios = modelItems().map((i) => i.querySelector<HTMLInputElement>('input[type="radio"]')!)
+    expect(radios).toHaveLength(2)
+    expect(new Set(radios.map((r) => r.name))).toEqual(new Set(['model-p_ds']))
+    expect(radios.map((r) => r.checked)).toEqual([false, true])
   })
 
   it('末行「连接更多 AI…」打开连接小弹窗（不是设置页）', async () => {

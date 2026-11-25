@@ -94,7 +94,7 @@ test('「AI 与模型」列表：每个连接带图标，点一行展开型号�
   if (dir) await page.screenshot({ path: `${dir}/${test.info().project.name}-model-list.png` })
 
   await page.locator('[data-ai-model-item="gpt-6-luna"]').click()
-  await expect(page.locator('[data-ai-model-item="gpt-6-luna"]')).toHaveAttribute('aria-checked', 'true')
+  await expect(page.locator('[data-ai-model-item="gpt-6-luna"] input')).toBeChecked()
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-ai-pill="model"]')).toContainText('GPT-6-Luna')
   await page.locator('[data-ai-pill="effort"]').click()

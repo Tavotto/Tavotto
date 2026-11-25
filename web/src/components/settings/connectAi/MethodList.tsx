@@ -247,6 +247,8 @@ function SiwcMethodRow({ vendor, method: m, connections, onConnected }: RowProps
   const conn = connectionForMethod(connections, vendor, m)
   const ready = conn?.state === 'ready'
   const flow = useSiwcLogin(vendor, m, onConnected)
+  // 退出时远端撤销没确认：卡片随即变成未连接的样子，所以这句灰字记在这一层、在未连接分支里继续显示
+  const [revokeUnconfirmed, setRevokeUnconfirmed] = useState(false)
   const dataAttrs = {
     'data-connect-method': m.id,
     'data-connect-method-kind': m.kind,
@@ -263,7 +265,15 @@ function SiwcMethodRow({ vendor, method: m, connections, onConnected }: RowProps
           </div>
           {m.available && <span className="shrink-0">{flow.button}</span>}
         </div>
-        {flow.hint && <div className="pb-2.5 pl-9">{flow.hint}</div>}
+        {flow.hint ? (
+          <div className="pb-2.5 pl-9">{flow.hint}</div>
+        ) : (
+          revokeUnconfirmed && (
+            <p data-connect-revoke-unconfirmed className="type-caption pb-2.5 pl-9">
+              {cx('siwc.revokeUnconfirmed')}
+            </p>
+          )
+        )}
       </div>
     )
   }
@@ -273,7 +283,7 @@ function SiwcMethodRow({ vendor, method: m, connections, onConnected }: RowProps
       <div {...dataAttrs} className={CARD_CLASS}>
         <MethodCardBody method={m} caption={conn?.account_email || methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
       </div>
-      <SiwcSignOut connection={conn!} />
+      <SiwcSignOut connection={conn!} onRevokeUnconfirmed={() => setRevokeUnconfirmed(true)} />
     </div>
   )
 }

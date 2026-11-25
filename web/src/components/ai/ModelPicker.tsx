@@ -4,6 +4,7 @@ import { AgentIcon } from '@/components/settings/AgentIcon'
 import { VendorIcon } from '@/components/settings/VendorIcon'
 import { Check, ChevronDown, ChevronRight, Download, Plus } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
+import { Radio } from '@/components/ui/Radio'
 import { cn } from '@/lib/utils'
 import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuSub } from '@/components/ui/Menu'
 import { BrandLogo } from '@/components/settings/BrandLogo'
@@ -363,28 +364,30 @@ export function ConnectionModelList({
             </button>
             {expanded && (
               // 型号行比 AI 行矮一档、小一号，组后留一点空：一眼看出是上一行的下一级（agy 审稿）
-              <div role="radiogroup" data-ai-model-menu={c.id} className="flex flex-col pb-1">
+              <div data-ai-model-menu={c.id} className="flex flex-col pb-1">
                 {models.map((m) => {
                   const on = isActive && m === model
                   return (
-                    <button
-                      key={m}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      data-ai-model-item={m}
-                      onClick={() => {
-                        useAiStore.getState().setConnection(c.id)
-                        useAiStore.getState().setModel(c.id, m)
-                      }}
-                      className={cn(ROW, 'py-1 pl-[2.625rem] text-[13px]')}
-                    >
+                    // 公共单选 `ui/Radio`：同一连接的型号同一个 name，方向键在组内走、整组只占一个 Tab 停靠点；
+                    // data-ai-model-item 在 label 上（整行可点、文字在里面），input 带 data-ai-model-radio
+                    <label key={m} data-ai-model-item={m} className={cn(ROW, 'cursor-pointer py-1 text-[13px]')}>
+                      <IconSlot className="w-6">
+                        <Radio
+                          name={`model-${c.id}`}
+                          value={m}
+                          checked={on}
+                          data-ai-model-radio=""
+                          onChange={() => {
+                            useAiStore.getState().setConnection(c.id)
+                            useAiStore.getState().setModel(c.id, m)
+                          }}
+                        />
+                      </IconSlot>
                       <span className={cn('min-w-0 flex-1 truncate', on ? 'text-ink' : 'text-ink-2')}>
                         {modelDetail(connectionInfo(c), m)?.display_name || m}
                         {m === c.default_model && <span className="ml-1.5 text-xs text-ink-3">{ai('panel.effortDefault')}</span>}
                       </span>
-                      {on && <Check size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-accent" />}
-                    </button>
+                    </label>
                   )
                 })}
                 <CliUpdateRow conn={c} />

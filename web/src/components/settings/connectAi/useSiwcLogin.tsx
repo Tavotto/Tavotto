@@ -55,6 +55,8 @@ export function useSiwcLogin(
   const [error, setError] = useState<string | null>(null)
   const timer = useRef<number | null>(null)
   const alive = useRef(true)
+  // 尝试代次：cancel() 与新的 begin() 都让旧的一次作废，慢回来的启动响应据此丢弃
+  const gen = useRef(0)
 
   const stopPolling = () => {
     if (timer.current !== null) window.clearTimeout(timer.current)
@@ -97,18 +99,25 @@ export function useSiwcLogin(
   }
 
   const begin = async () => {
+    const mine = ++gen.current
     stopPolling()
     setError(null)
+    setUsingCodex(false) // 上一轮失败后改用过 Codex：再点 ChatGPT 就回到 SIWC 自己的提示
     setPhase('starting')
     try {
       const r = await startSiwcLogin()
       if (!alive.current) return
+      if (mine !== gen.current) {
+        // 启动期间已取消或又开了新一轮：不开浏览器、不改状态，把后端刚起的那个流程撤掉
+        if (r.flow_id) void cancelSiwcFlow(r.flow_id).catch(() => undefined)
+        return
+      }
       setFlow(r.flow)
       setPhase('waiting')
       window.open(r.flow.authorize_url, '_blank', 'noreferrer')
       poll(r.flow_id)
     } catch (e) {
-      if (!alive.current) return
+      if (!alive.current || mine !== gen.current) return
       setPhase('idle')
       setError(backendErrorText(e))
     }
@@ -127,6 +136,7 @@ export function useSiwcLogin(
   }
 
   const cancel = () => {
+    gen.current++
     stopPolling()
     if (flow) void cancelSiwcFlow(flow.flow_id).catch(() => undefined)
     setPhase('idle')
