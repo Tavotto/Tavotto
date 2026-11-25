@@ -1,0 +1,3 @@
+## Data to figure: draw an existing error column as error bars
+
+In the experimental, off-by-default data-to-figure page, a table that is already summarised (one row per position, for example `dose, mean_response, sd` or `group, mean, sd, n`) is now drawn as the mean with error bars taken from its error column, instead of treating each mean as a raw observation. A column named `sd` / `sem` is taken at its word; a column named only `err` is marked as "unknown" and is never assumed to be a standard deviation. Tables with replicates are unchanged, and the figure backend also records which positions of a computed error bar have no bar because they hold a single value.

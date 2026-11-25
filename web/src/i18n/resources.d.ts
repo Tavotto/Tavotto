@@ -190,12 +190,20 @@ export default interface Resources {
     },
     "dataFigureV2": {
       "basis": {
+        "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
+        "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
+        "errColumn": "误差线取自「{{column}}」列",
+        "errMissing": "{{count}} 处只有 1 个数值，算不出误差线",
+        "errMissingOne": "「{{label}}」只有 1 个数值，算不出误差线",
+        "etc": "等",
         "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
         "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
         "join": "；",
         "line": "依据：{{text}}。",
+        "listJoin": "、",
         "plain": "按 {{drawn}} 个数值绘制",
         "points": "按 {{drawn}} 个点绘制，每行一个点",
+        "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
         "skippedAll": "另有 {{count}} 行未计入",
         "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
         "skippedMissing": "另有 {{count}} 行因缺值未计入",
@@ -253,6 +261,10 @@ export default interface Resources {
           "title": "均值线 + 误差带",
           "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
         },
+        "line_err": {
+          "title": "点 + 折线 + 误差线",
+          "why": "表里已经是每个位置的均值，按顺序连起来。"
+        },
         "line_points": {
           "title": "点 + 折线",
           "why": "按顺序连起来，看量怎么随横轴变化。"
@@ -264,6 +276,10 @@ export default interface Resources {
         "other": {
           "title": "这种画法",
           "why": "用这份数据画出来的一种样子。"
+        },
+        "points_err": {
+          "title": "点 + 误差线",
+          "why": "表里已经是各组的均值，直接画出来。"
         },
         "points_mean": {
           "title": "原始点 + 均值",
@@ -4195,6 +4211,8 @@ export default interface Resources {
       "eps_needs_script": "{{figure}} 没有可重新运行的脚本，无法生成 EPS。其余格式已照常导出。",
       "eps_not_for_canvas": "无法按画布导出 EPS。要 EPS，请按「原图尺寸」导出单张有脚本的图；其余格式已照常导出。",
       "eps_source_unverified": "{{figure}} 的 EPS 无法确认与这份 SVG 文件是同一张图（脚本可能已改动，或还没运行过），所以没有导出。要 EPS，请先运行这张图的脚本再导出；SVG 已按原文件导出。",
+      "error_cells_not_unique": "每个位置只能有一行，才能用表里现成的误差列画误差线。",
+      "error_values_negative": "误差列里有负数，误差不能是负的。",
       "execution_cancelled": "试运行已中断。",
       "execution_timeout": "脚本执行超时（入口 {{entry}}）",
       "explicit_python_unusable": "你指定的渲染环境用不了；Tavotto 不会自动换成别的环境。请在设置里重新指定，或清除它回到自动选择。",
@@ -4462,6 +4480,7 @@ export default interface Resources {
       "source_missing": "该图的源文件暂时不可用：{{figure}}。",
       "specfix_native_unsupported": "用 {{product}} Run 打开的图暂不支持自动修复，图没有改动。",
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
+      "summarised_not_raw": "这张表已经是汇总过的数据，不再对它重新算均值、误差或分布。",
       "summary_misplaced": "原始数据的画法不能再套汇总方式。",
       "summary_missing": "误差线和误差带要写明是 SD、SEM、95% 置信区间还是 IQR。",
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
@@ -8432,7 +8451,7 @@ export default interface Resources {
         "choose": "找到了几份本机排版",
         "indexDegraded": "恢复记录读不了",
         "invalid": "上次的排版读不出来",
-        "missing": "上次的排版找不到了",
+        "missing": "上次的排版不在原文件内，可能已被移出",
         "prepareFailed": "示例排版没能打开",
         "tooNew": "上次的排版来自更新版本",
         "unavailable": "暂时接不上上次的排版"
@@ -8443,7 +8462,7 @@ export default interface Resources {
         "choose": "本机找到了几份排版，选一份打开。",
         "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
         "invalid": "上次的排版“{{name}}”读不出来。",
-        "missing": "上次的排版“{{name}}”找不到了。",
+        "missing": "上次的排版“{{name}}”不在原文件内，可能已被移出。",
         "prepareFailed": "示例排版没能打开。",
         "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
         "unavailable": "暂时接不上上次的排版。"

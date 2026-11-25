@@ -568,6 +568,14 @@
         "title": "Mean line + band",
         "why": "The mean at each x position with a band showing {{error}}, for the overall trend and its spread."
       },
+      "points_err": {
+        "title": "Points + error bars",
+        "why": "The table already holds each group's mean, so it is drawn as is."
+      },
+      "line_err": {
+        "title": "Points + line + error bars",
+        "why": "The table already holds the mean at each position, so the points are joined in order."
+      },
       "line_units": {
         "title": "One line per subject",
         "why": "Repeated measures of the same subject are joined, so you see how each one changes."
@@ -723,6 +731,14 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
+      "rowsErr": "drawn from the {{drawn}} rows in the table, one point per row",
+      "errColumn": "error bars from the “{{column}}” column",
+      "errMissing": "{{count}} places have only one value, so no error bar can be computed",
+      "errMissingOne": "“{{label}}” has only one value, so no error bar can be computed",
+      "bandMissing": "{{count}} places have only one value, so no error band can be computed",
+      "bandMissingOne": "“{{label}}” has only one value, so no error band can be computed",
+      "listJoin": ", ",
+      "etc": ", etc.",
       "line": "Basis: {{text}}.",
       "then": ", ",
       "join": "; ",
