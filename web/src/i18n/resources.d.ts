@@ -70,6 +70,7 @@ export default interface Resources {
         "noteCancel": "取消",
         "noteDelete": "删除",
         "noteEdit": "点一下可以改",
+        "noteHere": "这一处",
         "noteOverall": "整体批注",
         "noteOverallLabel": "整体",
         "notePlaceholder": "想怎么改？",
@@ -206,6 +207,16 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "aiChoice": {
+        "auto": "自动",
+        "chosen": "你选的模型",
+        "current": "当前：{{name}}",
+        "more": "连接其他 AI…",
+        "off": "不用 AI 分析",
+        "tip": "分析用的 AI：{{name}}",
+        "tipPlain": "分析用的 AI",
+        "unavailable": "该模型无法连接，请换一个尝试"
+      },
       "basis": {
         "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
         "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
@@ -402,6 +413,13 @@ export default interface Resources {
         "reveal": "在文件夹中显示",
         "unwritable": "这个文件夹写不进，图放不下。"
       },
+      "purpose": {
+        "compare_groups": "比较各组",
+        "distribution": "看分布",
+        "label": "目的",
+        "relationship": "看关系",
+        "trend": "看趋势"
+      },
       "reason": {
         "all_candidates_rejected": "备选都没通过检查。",
         "candidate_fingerprint_mismatch": "画出来的数据和文件对不上，这个备选已去掉。",
@@ -458,6 +476,12 @@ export default interface Resources {
       "variant": {
         "by_file": "只按文件分组",
         "split": "按文件 +「{{column}}」分组"
+      },
+      "whyNot": {
+        "answers_other_purpose": "你选的是「{{purpose}}」，这张回答的是另一个问题。",
+        "line_needs_order": "连线通常代表连续变化的量。",
+        "order_prefers_line": "横轴有顺序，连线更能看出走势。",
+        "summary_hides_spread": "柱和误差线通常只代表均值与离散程度，不显示每个观测值。"
       },
       "working": {
         "cancel": "取消",
@@ -4520,6 +4544,7 @@ export default interface Resources {
       "tutorial_reset_incomplete": "教程已换成干净的副本，但上次的教程排版暂时清不掉（本机另一个 Tavotto 正在用会话记录），请稍后再点一次重置。",
       "tutorial_resources_invalid": "安装里的教程资源不完整。请重新安装 Tavotto：{{reason}}",
       "tutorial_resources_missing": "安装里没有教程资源。请重新安装 Tavotto：{{reason}}",
+      "understanding_connection_unavailable": "该模型无法连接，请换一个尝试",
       "unit_required": "这种图需要你先确认哪一列是个体编号。",
       "unit_unconfirmed": "个体编号列要你确认过才能用，列名像编号还不算。",
       "unsafe_project_name": "「{{name}}」不是合法的目录名：项目名只能是单个目录名，不含路径分隔符或 ..",
@@ -6948,6 +6973,10 @@ export default interface Resources {
     "title": "快捷键"
   },
   "workspace": {
+    "agentMerge": {
+      "commit_other": "并入 Agent 加的 {{count}} 个标注",
+      "done_other": "已并入 {{count}} 个标注，保存后写进项目"
+    },
     "annotationEntry": {
       "arrow": "箭头",
       "label": "标注 · {{name}}",
@@ -7724,6 +7753,7 @@ export default interface Resources {
         "readTitle": "AI 查看过",
         "reasonLabel": "AI 的理由：{{reason}}",
         "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
+        "round": "第 {{n}} 轮",
         "running": "AI 正在查找原因…",
         "sendNo": "不发送",
         "sendNote": "AI 写的说明",
@@ -7741,7 +7771,14 @@ export default interface Resources {
           "cli_waiting_approval": "Codex 或 Claude Code 在等待批准，Tavotto 无法代为确认。停止后可以重试。",
           "stalled": "AI 暂时没有响应，稍后会自动停止。"
         },
+        "steps": {
+          "diagnose": "找原因",
+          "finish": "收尾",
+          "fix": "动手修",
+          "verify": "运行验证"
+        },
         "stop": "停止",
+        "taskTitle": "AI 修复",
         "useIt": "用它",
         "willInstall": "将要安装：{{packages}}"
       },
@@ -8448,7 +8485,7 @@ export default interface Resources {
       "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
       "pill": {
         "chartSource": "图表来源缺失或损坏",
-        "choose": "找到了几份本机排版",
+        "choose": "从上次离开的地方继续",
         "indexDegraded": "恢复记录读不了",
         "invalid": "上次的排版读不出来",
         "missing": "上次的排版不在原文件内，可能已被移出",
@@ -8459,7 +8496,7 @@ export default interface Resources {
       "retry": "重试",
       "title": {
         "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
-        "choose": "本机找到了几份排版，选一份打开。",
+        "choose": "找到了几份排版，选一份打开。",
         "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
         "invalid": "上次的排版“{{name}}”读不出来。",
         "missing": "上次的排版“{{name}}”不在原文件内，可能已被移出。",

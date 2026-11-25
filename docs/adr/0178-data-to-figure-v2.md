@@ -539,6 +539,65 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 - 界面（`CandidateStage` / `DataPanel` / `lib/dataBasis.ts`）：两种画法的名字「点 + 误差线」「点 + 折线 + 误差线」；说明句不重复列名，列名只在依据句里（「依据：按表里的 N 行绘制，每行一个点；误差线取自「列」列」）；算出来的误差线缺位置时依据句末接「N 处只有 1 个数值，算不出误差线 / 误差带」，只有一处时直接点名，多处的位置在该行的 `title` 里；「误差线」一行——列名自己说明了种类的不进「需要你确认」，`unknown` 的进并显示「还不确定」。文案由用户 2026-11-25 过目同意（「这些文案都可以」）。
 - 推荐考卷（`tests/support/data_figure_recommend.py`、`recommend_cases.json`）：写考卷时这种画法还没实现，记作 `missing` 的占位码 `errorbar_from_columns`；实现后按族落成 `points_err`（比较）与 `line_err`（趋势）两个 `coded` 码，三条用例（RC-P06A / RC-P12A / RC-H05）的 `acceptable_top` 相应从占位码换成这两个码——标准答案的含义（用表里现成的误差列画误差线）没变。规则第一名落在标准答案里：25 / 41 → 28 / 41。
 
+## 修订（2026-11-25，用户决定）：「读懂数据」用哪个 AI，可以选、可以关（`ai_data_aichoice`、`GET|POST /api/ai/data-understanding`）
+
+**起因**：用户原话——「这里应该需要有一个小图标，点击后可以打开列表，让用户可以选择进行分析的ai。也可以选择关闭。」（指「从数据到图」左栏数据抽屉；「分析」= 第 1 步「读懂数据」。）此前它自动用第一个可用连接，用户既不能选、也不能关。
+
+**决定**：
+
+1. **三种选择，存在后端**（应用级，不是按项目）：`ai.taf.understanding`——缺省 = `auto`（行为逐字不变）；`{"mode": "off"}`；`{"mode": "connection", "connection": "<连接 id>"}`。连接 id 沿用现有的：Key / 账号登录 = provider 记录 id，订阅登录 = `sub:codex` / `sub:claude`。**畸形 / 不认识的 mode 一律当 `off`**（宁可不发数据，也不把坏配置当成 `auto`）。
+2. **判据只有一处**：`ai_data_roles._available_connection()` 经 `ai_data_aichoice.resolve`。`off` → 没有连接；指定连接 → **只找那一个**，此刻用不了（被删 / 未登录 / 不在能力缓存里 / 被判不可用）= 没有连接，**绝不悄悄换成别家**（那等于把用户的数据发给他没选的服务）。
+3. **指定连接必须显式传下去**：以前 Key 连接只靠 `call_structured` 自己再挑一次「第一个 Key 连接」（并联网刷新令牌），只对订阅登录（CLI）连接才把挑中的传下去。指定连接时这样会把数据发给 A 而不是用户选的 B，所以现在 `start(...)` 在 `mode=connection` 时把解析出的连接显式传给 `judge`，并只刷新**被选中的这一条**（`ai_data_aichoice.refresh_key`，后台线程里；刷不动 = `no_connection`）。`auto` 下传给 `call_structured` 的参数与从前完全一致（`tests/test_ai_data_understanding_choice.py` 钉住）。
+4. **出站入口清单**（数据出图里会去找连接 / 调模型的地方，全仓 grep）：只有两处——`ai_data_roles`（`start` → `_run` → `judge` → `ai_structured.call_structured`）与 `ai_data_model.propose_recipes`（产品里目前没有调用方）。两处都服从上面的判据：`off` 时一个请求都不发、也不读磁盘里旧连接的判断（`start` 在查缓存之前就返回）。其余 `ai_data_*` 模块没有任何模型 / 网络调用。
+5. **可选清单**（`options`）：此刻真能用于「读懂数据」的连接——Key 连接（与 `first_key_connection` 同一套跳过规则）与订阅登录里 `supports_structured()` 且解析得出型号的；每项 `{id, label, logo, vendor, kind: "key" | "subscription", model}`，label / logo / vendor 沿用连接视图的字段，**不含密钥 / 地址 / 令牌**。只看本地配置与能力缓存：不联网、不刷新令牌、不探测。
+6. **接口**：`GET /api/ai/data-understanding`（轻量，随连接状态变化可反复取）与 `POST /api/ai/data-understanding`（body 只认 `{mode, connection?}`，多余键 / 类型不对 400 `propose_input_invalid`；`connection` 的 id 不在此刻的清单里 400 `understanding_connection_unavailable`，什么都不写），都在 `ai.taf.enabled` 后面、走会话鉴权 guard。`/api/ai/data-files` 多带 `understanding: {state: "on" | "off" | "none" | "unavailable", mode, connection, options}`；`understanding_available` 保留，语义 = `state == "on"`。`propose` 在 `off` / `unavailable` / `none` 时响应里没有 `understanding` 键（原有的 None 路径）。
+7. **换连接后的缓存与在途任务**：缓存键、单飞登记键、60 s 负缓存键都含连接身份（Key = provider id + 实际型号与强度；CLI = agent + 型号），换连接不会命中上一个连接的缓存 / 任务 / 负缓存。写入接口另会清掉「身份与新选择对不上」的任务登记（不分项目——选择是应用级的；同一连接的任务不动），用旧连接判断出的建议不再被轮询到（回 `off`）。**已经发出去的那一次请求收不回**（后台线程在途；它的结果只会落进缓存，不会再被用）。
+8. 不加任何遥测；用户的脚本与数据不被改动。
+
+**没做**：界面（小图标与列表，前端另做）；订阅登录的能力缓存为空时指定的订阅连接是 `unavailable`（前端在连接状态到达后重取）。
+
+**界面**（`components/datastudio/DataAiChoice.tsx`、`DataDrawer.tsx`、`useConnectAi.ts`、`store/dataFigureStore.ts`；用户 2026-11-25 看过本地真页面后回「可以，就这样继续」）
+
+- **位置与形状**：数据抽屉左下角一枚扁平的图标按钮（ghost，悬停 / 展开才有浅灰底；浮着、不占布局高度，清单底部留出内边距）。`none`（没有任何可用的 AI）不出图标，仍是原来居中的「连接 AI 以供智能分析」胶囊；其余三种状态靠**形状**区分：在用 = 当前连接的厂商图标（没有则星光）、关了 = 星光加一道贯穿的斜线（图标集新增 `SparklesOff`）、指定的用不了 = 拔掉的插头。悬停提示与无障碍名是同一句：「分析用的 AI：{{name}}」/「不用 AI 分析」/「该模型无法连接，请换一个尝试」。
+- **列表**（`ui/Menu` 的 `MenuRadioGroup`）：「自动」（在用时下面一行小字「当前：{{name}}」）、每个可用的 AI 一行（名字 + 型号小字）、「不用 AI 分析」、分隔线、「连接其他 AI…」（现有的连接弹窗）。指定的连接此刻不在清单里时补一行指认它（`understanding.chosen`），下面小字「该模型无法连接，请换一个尝试」。点选即关、图标立刻换，失败回退并用现有的胶囊说后端那一句。只选连接，不选型号；**不加任何解释数据发去哪里的句子**。
+- 为了让带小字与不带小字的行对齐、图标与勾相对整行垂直居中，`MenuRadioItem` 多一个可选的 `roomy`（不传 = 逐字不变；只带 `description` 的现有菜单仍是顶对齐，有用例锁住）。
+- **切换之后**：关 / 用不了 → 开，或换了一个 AI：对当前草稿走原有的「连上后重跑一次读懂数据」（用户动过下拉 / 正在出图时照旧不重跑）。变成关：停掉在途的轮询，**已经按 AI 建议填好的列角色保持原样、不回退**。留存的草稿（上一节）把 `mode + chosen` 放进命中判断，AI 选择不同 = 不命中、重新出。
+- **重新询问**（#2208 的那条路）：有这个状态对象时，只在 `none` / `unavailable` 且前端看到有可用连接时才重取，改用轻量的 `GET /api/ai/data-understanding`；`off` 时绝不为此重取。连接集合变了时任何状态都用这个轻量接口刷新一次清单选项（只读，不是模型调用）。
+- **界面显示的选择与实际行为保持一致**（Codex 评审 #2230）：①显式换 AI 重跑前，先把上一个 AI 自动填的那几个答案（`autoPicks` 记着、值仍是自动填的）从 `answers` 里拿掉——否则后端当成「用户定了」而不去问新 AI；用户自己动过的保留。②出候选请求带「实际在用的 AI」的代际，回来时代际变了，其中的读懂数据结果一律不应用（关了绝不会再套 AI 的结果）；换 AI 时候选正在加载，就等它落定后补跑一次。③读状态与写选择各自计序，读刷新排在未完成的写之后，一次 GET 吞不掉写的结果和它该触发的重跑。已知未处理：AI 建议改过的表头行不在 `autoPicks` 里，换 AI 时不会被清掉。
+- 用户定的两条行为：指定的 AI 用不了时**不自动换别家**（按不分析处理）；关闭后已由 AI 选好的横轴 / 纵轴 / 分组**保持原样**。
+
+## 修订（2026-11-25）：按看图目的重排，并说明为什么不是另几张（`ai_data_purpose`、`ai_data_propose`；路线第③步）
+
+**起因**：维护者定的第③步是「按科学任务推荐并说明为什么不推荐另外几种」，口吻像老师 / 科研助理给建议，而不是直接画完。决策框架 §2 规定任务**不由推荐器自己定**：只有用户点选的算「用户确认过的目的」，从数据结构推出的永远只是假设。本期不让模型猜目的、不加自由文本入口。
+
+**命名**：框架 §2 / 推荐考卷里的「任务」（`task`）在这里叫 **`purpose`（看图目的）**，只为避开 `ai_data_task`（提交 / 生成脚本的流程）。取值是同一套词，界面本期只开四个：`compare_groups` / `trend` / `relationship` / `distribution`；考卷里别的任务（`dose_response` / `paired_change` / `agreement` / `part_whole` / `ranking` / `pattern_in_matrix`）没有模板或不在本期范围，不进闭集。
+
+**事实**（规则判，不调模型、不联网、不读数据；仍在 `ai.taf.enabled` 后面）：
+
+1. **请求**：`answers.purpose`。进 `_ANSWER_KEYS`（闭集外的值丢弃、当没给）；**不进** `_user_took_over`（点选目的不算接管列角色，与 `error` 同理）；进幂等键（`_answers_digest` 带整个 `ans`）。
+2. **纯排列**：`ai_data_purpose.resolve` 在 `default_candidates`、合画成对、换误差类型**之后**只调换已有 `Candidate` 的顺序（稳定分区：该目的对应的画法排前，其余与每类内部保持规则原顺序）；不新增、不复活被规则拿掉的备选（`x_independent` 拿掉的折线、`summarised_not_raw`、`x_is_measure`、被 `MAX_CANDIDATES` 截掉的都不会因目的回来）。`Candidate` 对象原样搬动，所以合画里按 `id(recipe)` 记的 `variants` 标记不丢，成对的两张仍相邻。排前的码：看比较 = `points_mean` / `box_points` / `violin_points` / `points_err`（框架 §4）；看趋势 = `line_*`（G-018）；看关系 = `scatter_fit` / `scatter`（G-018）；看分布 = 规则**留着**的 `box_points` / `violin_points`（没留着——每组点太少被规则拿掉——就不重排）。没有依据的并列项（如 `line_band` 与 `line_points`、`hist` 与 `ecdf`）保持规则原顺序；`bar_error` 从不被提前。
+3. **没有 `answers.purpose` 时**：假设的目的 = 规则现在第一名所属的族，重排是恒等；候选的集合与顺序、`recommended`、响应里除新增键以外的一切逐项不变（对拍：41 条推荐考卷 × 带 / 不带标准 `picks`、14 条跑分用例，剥掉 `purpose` / `why_not` / 随机 id 后与改动前逐项相同）。
+4. **响应**：顶层新增 `purpose: {code, source: "user" | "data", options: [...]}`——`code` 是实际生效的目的（用户点的、且这批备选里有它的族；否则回到假设的，`source` 为 `data`），`options` 只列「这批备选里至少有一张能回答」的目的（固定顺序），不足两个时为空（界面不出这一行）。非推荐的备选可带 `why_not: {code, guidance: [G-…], tier}`，只在有适用理由时出现，推荐的那张没有。
+5. **原因码闭集 `WHY_NOT`（4 个）**：`summary_hides_spread`（G-012，`bar_error` 相对看比较 / 看分布）、`line_needs_order`（G-018，`line_*` 相对看关系）、`order_prefers_line`（G-018，`scatter*` 相对看趋势）、`answers_other_purpose`（无 G，`tier: "purpose"`，这张回答的是另一个问题）。前三个有 G 依据，**不论目的是用户点的还是假设的都给**；`answers_other_purpose` **只在 `source: "user"` 时给**（没确认过的目的不能当理由，框架 §6）。理由三档 `data_fact` / `perceptual` / `purpose` 分开，不出「最优」「置信度」。测试核每个码引用的 G 在 `sciviz_guidance` 里存在且 basis 不是 `taste`；品味条目（G-042–G-051，如 G-050）不能当把某种画法排后的理由。
+6. **推荐考卷回放臂**：`tests/support/data_figure_recommend.py` 的 `purpose_arm`——把用例标准答案里的 `task`（只取四个之内的，41 条里 30 条）当 `answers.purpose`，**等于「用户点了对的目的」**。规则第一名落在 `acceptable_top` 的条数 28 → 31（RC-P02B、RC-P04B、RC-N03 修好，无回退）。`acceptable_top` / `forbidden` 一个字不改，`expressible` 本期不重量。
+
+**已知限制**：
+
+- **先截到 4 张再重排**：规则先取至多 `MAX_CANDIDATES` 张，目的只在这几张里排；被截掉的族不出现在 `options` 里，点它（手填请求）也不会让它回来（`test_a_family_squeezed_out_by_the_four_card_cap_is_not_offered`）。
+- **分布的「箱线在场」是点数够不够的代理**：每组点数的门槛（`MIN_N_BOX`）是工程选择（G-013 没给 n）；没有箱线 / 小提琴时「看分布」不改顺序，也没有「点数太少」的理由码（被规则拿掉的备选用户预览不到，理由没处显示）。
+- **两条考卷用例没有目的时第一名就是 `forbidden`**：RC-P03B（`agreement`）、RC-H01（`paired_change`）——它们的任务不在这四个里、目标画法（`scatter_identity` / `paired_lines`）没有模板，本期救不了；RC-P04B 没有目的时同样违规，点对「看关系」后修好。测试把这三条列为有名字的例外，只要求带目的后不比从前差，其余用例不许新增 `forbidden_recommended`。
+- 换目的是一次新的 `propose`（新会话，懒模式下缩略图重画），不是本地切换。
+- 目的行的界面文案与交互（前端）不在这一期。
+
+**不变的**：不加遥测、不联网；用户脚本与数据不动；`default_candidates` 的签名与行为不变（目的在它之后才用）。
+
+**界面**（`DataPanel.tsx`、`CandidateStage.tsx`、`store/dataFigureStore.ts`；用户 2026-11-25 在示意页上逐项点选、2026-11-26 改了两句原因的说法）
+
+- 右栏多一行「目的」（用户定的行名），放在列角色之后、「误差线」/「需要你确认」之前；选项来自响应的 `purpose.options`（「比较各组 / 看趋势 / 看关系 / 看分布」），当前值是 `purpose.code`。**没选时就是普通一行，不标它是推测的**（用户选的方案 C）：`source` 是 `data` 还是 `user` 在这一行上不做区分，也不进「需要你确认」。`options` 为空或 `code` 为 null 时这一行不出现。
+- 选了目的 = 带 `answers.purpose` 重新出候选；**改「目的」的这一次把预览放回重排后的第一名**（用户换目的就是想看按这个目的该先看哪张）。改误差线类型等其它项不重置预览；留存草稿还原、换 AI 重跑、套用 AI 建议也不重置。`purpose` 不进 `autoPicks`，换 AI 重跑时保留。
+- 主图下面「依据」之后多一行同样样式的小灰字，只在当前预览的那张带 `why_not` 时出现，**独立一行、不带开头**（用户定）。四句：`summary_hides_spread`「柱和误差线通常只代表均值与离散程度，不显示每个观测值。」；`line_needs_order`「连线通常代表连续变化的量。」（用户给的原话——原草稿「两个量没有先后顺序……」在横轴明明有序、而用户选了「看关系」时不是事实，所以改成陈述画法通常代表什么、不对数据下断言）；`order_prefers_line`「横轴有顺序，连线更能看出走势。」；`answers_other_purpose`「你选的是「{{purpose}}」，这张回答的是另一个问题。」。有这一行时主图的最大高度多让出约 20px。
+- 已知：`bar_error` 现有说明句末尾的「个别点会藏在柱里」与 `summary_hides_spread` 那句意思重叠，现有说明是已上线文案、没有动，是否合并待用户定。
+
 ## 修订（2026-11-25）：现成误差列的后续——柱、多个 y、合画（`ai_data_recipe._summarised_shape`、`FigureRecipe.err`）
 
 接上一条「已汇总的表——把现成的误差列画成误差线」里「没做」的几项（依据同样是 sciviz G-053 / G-065 / G-002 / G-050）：

@@ -1704,6 +1704,14 @@
       }
     },
     "aiFix": {
+      "taskTitle": "AI 修复",
+      "round": "第 {{n}} 轮",
+      "steps": {
+        "diagnose": "找原因",
+        "fix": "动手修",
+        "verify": "运行验证",
+        "finish": "收尾"
+      },
       "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
       "running": "AI 正在查找原因…",
       "cancel": "取消",
@@ -1860,7 +1868,7 @@
     "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
     "pill": {
       "chartSource": "图表来源缺失或损坏",
-      "choose": "找到了几份本机排版",
+      "choose": "从上次离开的地方继续",
       "indexDegraded": "恢复记录读不了",
       "invalid": "上次的排版读不出来",
       "missing": "上次的排版不在原文件内，可能已被移出",
@@ -1871,7 +1879,7 @@
     "retry": "重试",
     "title": {
       "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
-      "choose": "本机找到了几份排版，选一份打开。",
+      "choose": "找到了几份排版，选一份打开。",
       "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
       "invalid": "上次的排版“{{name}}”读不出来。",
       "missing": "上次的排版“{{name}}”不在原文件内，可能已被移出。",
@@ -2027,5 +2035,9 @@
       "reference_cycle": "有循环引用",
       "timeout": "太复杂、读不完"
     }
+  },
+  "agentMerge": {
+    "commit_other": "并入 Agent 加的 {{count}} 个标注",
+    "done_other": "已并入 {{count}} 个标注，保存后写进项目"
   }
 }

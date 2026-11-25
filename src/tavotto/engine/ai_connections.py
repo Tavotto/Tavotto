@@ -590,11 +590,9 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
     return (ai_agents.BUILTIN_ID if route == ROUTE_BUILTIN else route.split(":", 1)[1]), rec
 
 
-def first_key_connection(*, refresh: bool = False) -> dict | None:
-    """AI 修复用：第一个内置循环能直接用的连接（Key 或账号登录）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
-
-    `refresh=True`（真要开跑时）：账号登录的记录先 `ai_oauth.ensure_fresh`（联网，可能很慢），刷不动的跳过；
-    `False`（只问「有没有」，capabilities 用）绝不联网。已知被服务商拒绝（`last_error: unauthorized`）的记录一律跳过。"""
+def key_connections(*, refresh: bool = False):
+    """内置循环能直接用的连接（Key 或账号登录）逐个给出 → `builtin_conn` 形状（带 `provider_id`），顺序与 `first_key_connection` 一致：旧版「选中」的接口排在前。
+    `refresh` 的语义见 `first_key_connection`；`False` 绝不联网。"""
     recs = ai_providers.list_providers()
     active = {v for v in (config.ai_settings().get("active_provider") or {}).values() if v}
     for rec in sorted(recs, key=lambda r: r.get("id") not in active):
@@ -619,8 +617,38 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
             rec = ai_providers.ensure_api_root(rec) or rec
         conn = ai_providers.builtin_conn(rec)
         if conn is not None:
-            return conn
-    return None
+            yield conn
+
+
+def first_key_connection(*, refresh: bool = False) -> dict | None:
+    """AI 修复用：第一个内置循环能直接用的连接（Key 或账号登录）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
+
+    `refresh=True`（真要开跑时）：账号登录的记录先 `ai_oauth.ensure_fresh`（联网，可能很慢），刷不动的跳过；
+    `False`（只问「有没有」，capabilities 用）绝不联网。已知被服务商拒绝（`last_error: unauthorized`）的记录一律跳过。"""
+    return next(key_connections(refresh=refresh), None)
+
+
+def structured_cli_connections(caps: dict | None) -> tuple[list[tuple[dict, dict]], bool]:
+    """订阅登录连接里「可用且适配器支持无工具单轮」的（按能力缓存 `caps` 里的顺序）→ `([(能力里的连接, {"kind": "cli", "agent", "model", "conn_id"})], 有没有因不支持被跳过的)`。
+    型号 = 连接里已解析出的 `default_model`，没有就取它型号清单的第一项（适配器自己的目录顺序）；都没有 = 不支持（不写死型号名）。`caps` 为空 = 没有。不联网。"""
+    out: list[tuple[dict, dict]] = []
+    saw_unsupported = False
+    for c in (caps or {}).get("connections") or []:
+        sub = SUBSCRIPTIONS.get(c.get("id"))
+        if sub is None or c.get("state") != "ready":
+            continue
+        agent = ai_agents.get_agent(sub[0])
+        if agent is None or not agent.supports_structured():
+            saw_unsupported = True
+            continue
+        model = str(c.get("default_model") or "").strip() or next(
+            (str(m) for m in (c.get("models") or []) if m), ""
+        )
+        if not model:
+            saw_unsupported = True
+            continue
+        out.append((c, {"kind": "cli", "agent": agent.id, "model": model, "conn_id": c["id"]}))
+    return out, saw_unsupported
 
 
 def builtin_usable() -> bool:
@@ -962,6 +990,8 @@ __all__ = [
     "connections",
     "delete_connection",
     "first_key_connection",
+    "key_connections",
+    "structured_cli_connections",
     "locale_region",
     "login_target",
     "resolve_connection",

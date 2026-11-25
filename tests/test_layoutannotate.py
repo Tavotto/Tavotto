@@ -482,3 +482,294 @@ def test_undo_store_is_keyed_by_the_real_project_path(project, tmp_path_factory)
     )
     assert la._undo_dir(alias, "组图") == la._undo_dir(project, "组图")
     la.undo(project, "组图", out["undo_token"])
+
+
+def test_preview_is_a_real_composition_cropped_to_the_new_elements(project):
+    """局部图走真合成：子图源是量它时导出的 PDF，新对象叠在上面，裁到这批对象周围。"""
+    import io
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from PIL import Image
+
+    pdf = project / "figures" / "fig1.pdf"
+    pdf.parent.mkdir()
+    fig = plt.figure(figsize=(80 / 25.4, 40 / 25.4))
+    fig.patch.set_facecolor("#0000ff")  # 整张子图涂蓝：局部图里有蓝 = 子图源真的合成进来了
+    fig.savefig(pdf)
+    plt.close(fig)
+    s = la.read_scene(project, "组图", measure)
+    items = [
+        {
+            "kind": "arrow",
+            "name": "red",
+            "color": "#ff0000",
+            "strokePt": 2,
+            "from": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [20, 10]},
+            "to": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [40, 10]},
+        }
+    ]
+    plan = la.propose(project, "组图", items, measure, base_revision=s["base_revision"])
+    assert plan["ok"], plan
+    lay = la.open_layout(project, "组图")
+    out = la.preview(lay.doc["canvases"][0], plan["objects"], {"figures/fig1.pdf": str(pdf)})
+    assert out is not None and out["missing_panels"] == []
+    x0, y0, x1, y1 = out["region_mm"]
+    assert x0 <= 30 and x1 >= 50 and y0 <= 30 and y1 >= 30  # 箭头在画布 (30, 30)–(50, 30)
+    img = np.asarray(Image.open(io.BytesIO(out["png"])).convert("RGB")).astype(int)
+    red = (img[:, :, 0] > 200) & (img[:, :, 1] < 80) & (img[:, :, 2] < 80)
+    blue = (img[:, :, 2] > 200) & (img[:, :, 0] < 80) & (img[:, :, 1] < 80)
+    assert red.sum() > 50, "新加的箭头画进了局部图"
+    assert blue.sum() > 10, "子图本身也在（不是只画了新对象）"
+    # 没量到的子图不画、如实列出
+    out = la.preview(lay.doc["canvases"][0], plan["objects"], {})
+    assert out is not None and out["missing_panels"] == ["figures/fig1.pdf"]
+
+
+def _solid_pdf(path, color):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(80 / 25.4, 40 / 25.4))
+    fig.patch.set_facecolor(color)
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _pixels(png):
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    return np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(int)
+
+
+def test_preview_paints_each_panel_instance_with_its_own_measured_pdf(project, tmp_path):
+    """同一张图放了两次（不同改动）：局部图里两个实例各画各自量出来的那份（按子图对象 id，Codex #2213）。"""
+    blue, red = tmp_path / "blue.pdf", tmp_path / "red.pdf"
+    _solid_pdf(blue, "#0000ff")
+    _solid_pdf(red, "#ff0000")
+    lay = la.open_layout(project, "组图")
+    canvas = lay.doc["canvases"][0]
+    first = canvas["objects"][0]
+    second = {**first, "id": "o_second01", "y": 62.0, "h": 15.0}  # 同一个 fileId，放在下面
+    canvas["objects"].append(second)
+    canvas["page"]["h"] = 80
+    mark = {
+        "id": "t_mark0001",
+        "type": "text",
+        "x": 5,
+        "y": 1,
+        "w": 110,
+        "h": 78,
+        "text": " ",
+        "sizePt": 8,
+        "bold": False,
+        "color": "#000000",
+        "align": "left",
+    }
+    out = la.preview(
+        canvas, [mark], {first["id"]: str(blue), "o_second01": str(red)}, margin_mm=0, width_px=400
+    )
+    img = _pixels(out["png"])
+    k = img.shape[0] / 78
+    top, bottom = img[int((40 - 1) * k), :, :], img[int((70 - 1) * k), :, :]
+    assert ((top[:, 2] > 200) & (top[:, 0] < 80)).sum() > 20, "上面那个实例是蓝的"
+    assert ((bottom[:, 0] > 200) & (bottom[:, 2] < 80)).sum() > 20, "下面那个实例是红的"
+
+
+def test_preview_includes_existing_canvas_annotations(project, tmp_path):
+    """局部图把画布上已有的可见矢量对象也画进去（写入后就是这个样子，Codex #2213）；隐藏的不画。"""
+    lay = la.open_layout(project, "组图")
+    canvas = lay.doc["canvases"][0]
+    canvas["objects"].append(
+        {
+            "id": "s_green001",
+            "type": "shape",
+            "shape": "rect",
+            "x": 30,
+            "y": 25,
+            "w": 10,
+            "h": 10,
+            "color": "#00aa00",
+            "fill": "#00ff00",
+            "strokePt": 0.5,
+        }
+    )
+    canvas["objects"].append(
+        {
+            "id": "s_hidden01",
+            "type": "shape",
+            "shape": "rect",
+            "x": 45,
+            "y": 25,
+            "w": 10,
+            "h": 10,
+            "color": "#ff00ff",
+            "fill": "#ff00ff",
+            "strokePt": 0.5,
+            "hidden": True,
+        }
+    )
+    new = {
+        "id": "t_new00001",
+        "type": "text",
+        "x": 28,
+        "y": 22,
+        "w": 30,
+        "h": 16,
+        "text": " ",
+        "sizePt": 8,
+        "bold": False,
+        "color": "#000000",
+        "align": "left",
+    }
+    out = la.preview(canvas, [new], {}, margin_mm=1)
+    img = _pixels(out["png"])
+    green = (img[:, :, 1] > 200) & (img[:, :, 0] < 80) & (img[:, :, 2] < 80)
+    magenta = (img[:, :, 0] > 200) & (img[:, :, 2] > 200) & (img[:, :, 1] < 80)
+    assert green.sum() > 50 and magenta.sum() == 0
+
+
+def test_preview_does_not_paint_clipped_content_unclipped(project):
+    """剪切组里的成员导出时只露出蒙版里的部分；局部图没有那套裁剪链，就不画它们（不把裁掉的内容叠上来），如实列出（Codex #2213）。"""
+    lay = la.open_layout(project, "组图")
+    canvas = lay.doc["canvases"][0]
+    canvas["objects"] += [
+        {
+            "id": "s_member01",
+            "type": "shape",
+            "shape": "rect",
+            "x": 20,
+            "y": 22,
+            "w": 40,
+            "h": 16,
+            "color": "#ff00ff",
+            "fill": "#ff00ff",
+            "strokePt": 0.5,
+            "groupId": "g_clip0001",
+        },
+        {
+            "id": "s_mask0001",
+            "type": "shape",
+            "shape": "rect",
+            "x": 30,
+            "y": 25,
+            "w": 5,
+            "h": 5,
+            "color": "#000000",
+            "fill": "#000000",
+            "strokePt": 0.5,
+            "groupId": "g_clip0001",
+            "clipMask": True,
+            "hidden": True,
+        },
+    ]
+    new = {
+        "id": "t_new00001",
+        "type": "text",
+        "x": 18,
+        "y": 20,
+        "w": 46,
+        "h": 20,
+        "text": " ",
+        "sizePt": 8,
+        "bold": False,
+        "color": "#000000",
+        "align": "left",
+    }
+    out = la.preview(canvas, [new], {}, margin_mm=1)
+    img = _pixels(out["png"])
+    magenta = (img[:, :, 0] > 200) & (img[:, :, 2] > 200) & (img[:, :, 1] < 80)
+    assert magenta.sum() == 0
+    assert {"s_member01", "s_mask0001"} <= set(out["missing_panels"])
+
+
+def _write(project, items, base):
+    plan = la.propose(project, "组图", items, measure, base_revision=base)
+    out = la.commit(
+        project, "组图", items, measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert out["written"], out
+    return out
+
+
+def test_additions_since_my_base_are_exactly_the_agents_objects(project):
+    """桌面拿着写入前的基线：磁盘上多出来的只有 Agent 追加的对象 → 列出来供「并进来」；连写两次也认。"""
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    first = _write(project, _items(), base)
+    second_items = [
+        {**_items()[0], "name": "p2", "from": {**_items()[0]["from"], "offset_mm": [10, 30]}}
+    ]
+    second = _write(project, second_items, first["revision"])
+    got = la.agent_additions(project, "组图", base)
+    assert got is not None and got["revision"] == second["revision"]
+    ids = [o["id"] for c in got["canvases"] for o in c["objects"]]
+    assert ids == first["added"] + second["added"] and got["count"] == 3
+    assert all(o["anchor"]["by"] == "agent" for c in got["canvases"] for o in c["objects"])
+    # 已经跟上了：没有要并的
+    assert la.agent_additions(project, "组图", second["revision"]) is None
+
+
+def test_no_merge_offer_when_someone_else_also_changed_the_file(project):
+    """Agent 写完之后别处又改过（桌面另一个窗口 / 外部工具）：链断了，不给「并进来」，照旧走覆盖 / 另存。"""
+    path = project / "tavottofile" / "组图.json"
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    _write(project, _items(), base)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["canvases"][0]["name"] = "别处改过"
+    atomicio.write_json(path, doc, indent=1)
+    assert la.agent_additions(project, "组图", base) is None
+
+
+def test_no_merge_offer_when_the_base_is_not_on_the_agents_chain(project):
+    """我的基线不是任何一次 Agent 写入的起点（比如别处先改过、Agent 再写）：不给「并进来」。"""
+    path = project / "tavottofile" / "组图.json"
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["canvases"][0]["name"] = "别处先改过"
+    atomicio.write_json(path, doc, indent=1)
+    mid = la.read_scene(project, "组图", measure)["base_revision"]
+    _write(project, _items(), mid)
+    assert la.agent_additions(project, "组图", base) is None
+    assert la.agent_additions(project, "组图", mid) is not None
+
+
+def test_no_merge_offer_when_the_undo_copy_was_tampered(project):
+    """留存的写前字节与基线修订号对不上（被改 / 坏了）：不信它。"""
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    out = _write(project, _items(), base)
+    body = next(la._undo_dir(project, "组图").glob(f"{out['undo_token']}.json"))
+    body.write_bytes(body.read_bytes() + b" ")
+    assert la.agent_additions(project, "组图", base) is None
+
+
+@pytest.mark.parametrize("edit", ["rename_canvas", "append_plain_object", "edit_existing"])
+def test_merge_offer_checks_the_content_not_just_the_chain(project, edit):
+    """链对得上（留存元信息被改成指向此刻的修订号）也要核正文：多出来的必须全是带 `anchor.by == agent` 的追加对象，
+    其余逐字段不变。"""
+    path = project / "tavottofile" / "组图.json"
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    out = _write(project, _items(), base)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if edit == "rename_canvas":
+        doc["canvases"][0]["name"] = "改过"
+    elif edit == "append_plain_object":
+        doc["canvases"][0]["objects"].append(
+            {"id": "t_manual01", "type": "text", "x": 1, "y": 1, "w": 5, "h": 3}
+        )
+    else:
+        doc["canvases"][0]["objects"][0]["x"] = 11.0
+    atomicio.write_json(path, doc, indent=1)
+    meta = la._undo_dir(project, "组图") / f"{out['undo_token']}.meta"
+    m = json.loads(meta.read_text(encoding="utf-8"))
+    m["after"] = atomicio.content_revision(path)
+    meta.write_text(json.dumps(m), encoding="utf-8")
+    assert la.agent_additions(project, "组图", base) is None

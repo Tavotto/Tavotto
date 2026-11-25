@@ -75,6 +75,16 @@ export function formatTime(ts: number | Date): string {
   return new Intl.DateTimeFormat(currentLocale(), { timeStyle: 'short' }).format(ts)
 }
 
+/**
+ * 「月-日 时:分」（本地时区，24 小时制，补零）：与时间线节点的默认名同一种写法（后端 `%m-%d %H:%M`），
+ * 恢复卡上区分同名候选的那行小字用它。
+ */
+export function formatStamp(ts: number | Date): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 /** 只要日期。 */
 export function formatDate(ts: number | Date): string {
   return new Intl.DateTimeFormat(currentLocale(), { dateStyle: 'medium' }).format(ts)

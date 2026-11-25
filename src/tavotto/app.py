@@ -67,6 +67,7 @@ from .engine import (
     ai_catalog as engine_ai_catalog,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
+    ai_data_aichoice as engine_ai_data_aichoice,
     ai_data_figure as engine_ai_data_figure,
     ai_data_overview as engine_ai_data_overview,
     ai_data_progress as engine_ai_data_progress,
@@ -138,6 +139,7 @@ from .engine import (
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
+    layoutannotate as engine_layoutannotate,
     layoutsession as engine_layoutsession,
     license as engine_license,
     locate as engine_locate,
@@ -165,6 +167,7 @@ from .engine import (
     project_watch as engine_watch,
     projectcopy as engine_projectcopy,
     projectenv as engine_projectenv,
+    projecthistory as engine_projecthistory,
     projscan as engine_projscan,
     quicklayout as engine_quicklayout,
     rasterhint as engine_rasterhint,
@@ -6111,19 +6114,10 @@ def api_exports(name):
 
 # ------------------------- 可复现项目包 -------------------------------------
 def _doc_objects(doc: dict) -> list[dict]:
-    """布局文档里的全部对象：schema 2 单画布 / schema 3、4 跨全部画布。"""
-    if doc.get("schema") in (
-        engine_documents.SCHEMA_PROJECT,
-        engine_documents.SCHEMA_CHART_PROJECT,
-    ):
-        return [
-            o
-            for c in doc.get("canvases", [])
-            if isinstance(c, dict)
-            for o in c.get("objects", [])
-            if isinstance(o, dict)
-        ]
-    return [o for o in doc.get("objects", []) if isinstance(o, dict)]
+    """布局文档里的全部对象：schema 2 单画布 / schema 3、4 跨全部画布。
+
+    唯一出处在 `engine/projecthistory.doc_objects`（项目内时间线的「非空节点」判据用同一把尺子）。"""
+    return engine_projecthistory.doc_objects(doc)
 
 
 _sha1_of = engine_baked.sha1_of
@@ -19152,13 +19146,64 @@ def api_ai_data_files():
                 row["sheets"] = None
         files.append(row)
     # `understanding_available`：「读懂数据」此刻有没有可用连接（只读事实、不联网；前端据此决定要不要出「连接 AI」胶囊，连接状态变化后随清单重取）
+    understanding = engine_ai_data_roles.understanding_state()
     resp = jsonify(
         {
             "files": files,
             "truncated": truncated,
-            "understanding_available": engine_ai_data_roles.available(),
+            # 语义 = 此刻会用 AI（用户关了 / 指定的用不了 / 没有连接都是 False）；完整状态与可选清单在 `understanding`
+            "understanding_available": understanding["state"] == "on",
+            "understanding": understanding,
         }
     )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+_UNDERSTANDING_KEYS = frozenset({"mode", "connection"})
+
+
+@app.get("/api/ai/data-understanding")
+def api_ai_data_understanding_get():
+    """「读懂数据」用哪个 AI（**实验开关后面**、会话认证、只读）：回 `{understanding: {state, mode, connection, options}}`，见
+    `ai_data_roles.understanding_state`。只读本地配置与能力缓存——不联网、不刷新令牌、不探测，前端可以随连接状态变化反复调。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    resp = jsonify({"understanding": engine_ai_data_roles.understanding_state()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/data-understanding")
+def api_ai_data_understanding_set():
+    """设置「读懂数据」用哪个 AI（**实验开关后面**、会话认证）。body 只认 `{mode: "auto" | "off" | "connection", connection?: <连接 id>}`：
+    多余的键 / 类型不对 / `auto`、`off` 带了 `connection` = 400 `propose_input_invalid`；`connection` 的 id 不在**此刻**的可选清单里 = 400
+    `understanding_connection_unavailable`（什么都不写）。应用级设置（不是按项目）。回 `{understanding}`，不回显任何密钥 / 地址。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    body = request.get_json(force=True, silent=True)
+    mode = body.get("mode") if isinstance(body, dict) else None
+    cid = body.get("connection") if isinstance(body, dict) else None
+    if (
+        not isinstance(body, dict)
+        or set(body) - _UNDERSTANDING_KEYS
+        or mode not in engine_ai_data_aichoice.MODES
+        or (mode == "connection") != isinstance(cid, str)
+        or (mode == "connection" and not 0 < len(cid) <= 200)
+    ):
+        return jsonify({"error": "请求不合格", "code": "propose_input_invalid"}), 400
+    state = engine_ai_data_roles.apply_choice(mode, cid)
+    if state is None:
+        return (
+            jsonify(
+                {
+                    "error": "该模型无法连接，请换一个尝试",
+                    "code": "understanding_connection_unavailable",
+                }
+            ),
+            400,
+        )
+    resp = jsonify({"understanding": state})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -19985,6 +20030,26 @@ def api_layout_get(name):
                 resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
             return resp
     abort(404)
+
+
+@app.get("/api/layouts/<name>/agent-additions")
+def api_layout_agent_additions(name):
+    """「把 Agent 加的并进来」（ADR 0208 §五）：桌面拿着基线 `base_revision`、磁盘上已是别的修订号时，
+    多出来的是不是**只有** Agent 追加的对象（判据在 `engine/layoutannotate.agent_additions`，全部来自撤销留存）。
+
+    只读、只认当前项目 `tavottofile/` 里的那份；不是就回 `{"available": false}`，桌面照旧走覆盖 / 另存。"""
+    ctx = _request_ctx()
+    base = request.args.get("base_revision") or ""
+    if ctx is None or not base:
+        return jsonify({"available": False})
+    stem = layout_path(name, project_layout_dir(ctx)).stem
+    try:
+        got = engine_layoutannotate.agent_additions(ctx.path, stem, base)
+    except engine_layoutannotate.LayoutError:
+        got = None
+    if got is None:
+        return jsonify({"available": False})
+    return jsonify({"available": True, **got})
 
 
 @app.post("/api/layouts/<name>")
@@ -21288,6 +21353,223 @@ def api_layout_session_candidates():
     return resp
 
 
+# ---- 项目自己的时间线作为恢复证据（ADR 0211 第一期 1–4） ----
+# 项目文件夹挪走 / 复制 / 换电脑 / 换 origin 之后，按绝对路径作键的会话状态与前端索引都认不出它，
+# 随文件夹走的只有 `<项目>/tavottofile/versions/<docId>.vx/`。这里把其中有内容的列出来，并说清这一份
+# 该怎么用（`mode`）。判据只在后端：前端看不到项目路径，判不了旧路径还在不在。
+#
+#   mode = "slot"  本机槽位就是这份排版（归属是本项目 / 没有记录 / 记着的旧项目路径已不在 = 挪走了）
+#                  → 用槽位那份（它含节点之间的修改）；挪走 / 没有记录时先 `claim` 把归属改到本项目
+#   mode = "node"  没有本机槽位，归属不冲突 → 用最近一个非空节点恢复成同一个 docId 的工作副本
+#   mode = "copy"  旧项目路径还在（= 复制）/ 归属待核对 / 会话状态读不全 / 槽位坏了
+#                  → 用节点恢复成一份**新 docId** 的排版，不动旧项目的槽位与归属
+#
+# 只读端点不写任何东西；`claim` 在槽位文档锁里重判一遍再写（不信客户端自报）。都在 ADR 0008 认证之下。
+
+
+def _history_source_store(slot: Path, revision: str, state: dict, ctx) -> Path:
+    """判槽位能不能恢复时，图表附件到哪个存储根里去核。
+
+    平常与 `_autosave_source_store` 相同（按槽位归属记的项目）。**挪走**的那一档例外：归属里记的旧项目路径
+    确定已不在，而附件（`tavottofile/` 里）已经跟着文件夹到了当前项目——还去旧路径找，会把一份有效的自动保存
+    判成读不出、退成从更旧的节点另开一份，节点之后的修改（含后来新加的整张图表）就丢了（Codex #2235 P1）。
+    旧路径还在（复制）/ 没有归属记录时不改口径。"""
+    recorded = state["owners"].get(slot.stem)
+    if (
+        ctx is not None
+        and slot.stem in state["owners"]
+        and engine_projecthistory.owner_path_gone(recorded)
+    ):
+        return project_layout_dir(ctx)
+    return _autosave_source_store(slot, revision)
+
+
+def _history_slot(doc_id: str, state: dict, ctx) -> tuple[dict | None, str | None, bool]:
+    """槽位 `doc_id` 此刻的 `(可恢复的正文, revision, 槽位文件在不在)`。只读一遍字节，调用方持槽位文档锁。
+
+    「可恢复」与 `_slot_recoverable` 同一判据（`loads_document` + `validate_document` + 图表来源）；
+    图表附件的存储根见 `_history_source_store`（挪走时按当前项目核）。`state` 是调用方在同一把锁里读的会话状态。"""
+    slot = _file_named(_autosave_directory(), doc_id)
+    if slot is None:
+        return None, None, False
+    try:
+        raw = slot.read_bytes()
+    except OSError:
+        return None, None, True
+    revision = engine_atomicio.revision_of(raw)
+    try:
+        loaded = engine_documents.loads_document(raw)
+        document = _validate_storage_document(loaded)
+        if _has_chart_state(document):
+            _verify_document_chart_sources(
+                document, _history_source_store(slot, revision, state, ctx)
+            )
+    except (ValueError, RecursionError):
+        return None, revision, True
+    return (loaded if isinstance(loaded, dict) else None), revision, True
+
+
+def _history_verdict(doc_id: str, key, state: dict, status: str, slot_doc, slot_rev, slot_exists):
+    """`(mode, owner)`：这份项目内时间线该怎么用。见上面的表；owner ∈ this|none|moved|other|unknown。"""
+    if status == engine_layoutsession.STATUS_DEGRADED:
+        return "copy", "unknown"  # 归属表读不全：空的 owners 不是「没人认领」，不认领、不复用 docId
+    verdict, _verified = engine_layoutsession.owner_status_in(state, doc_id, key, slot_rev)
+    if verdict == "unverified":
+        return "copy", "unknown"
+    if verdict == "other":
+        recorded = state["owners"].get(doc_id)
+        if not engine_projecthistory.owner_path_gone(recorded):
+            return "copy", "other"  # 旧路径还在 = 复制：旧项目的排版与归属一个字节不动
+        owner = "moved"
+    elif verdict == "this":
+        owner = "this"
+    else:
+        owner = "none"
+    if slot_doc is not None:
+        return "slot", owner
+    if slot_exists:
+        return "copy", owner  # 槽位在但读不出：不拿节点覆盖它，另开一份
+    if owner == "moved":
+        # owners 还记着旧路径而槽位已不在：沿用 docId 的话第一次 `PUT last` 会按旧归属 409（`owner_conflict`），
+        # 认领又只认有槽位的那一档——另开一份，最省事也不碰旧记录
+        return "copy", owner
+    return "node", owner
+
+
+def _history_item(doc_id: str, versions_dir: Path, key, ctx) -> dict | None:
+    """一份项目内时间线的候选摘要；没有非空节点回 `None`。在槽位文档锁里读归属与槽位（与 `/owner` 同一条规则）。"""
+    node = engine_projecthistory.latest_content_node(versions_dir, doc_id)
+    if node is None:
+        return None  # 空时间线 / 只有空节点（旧版每次加载留下的空 `open`）：不进候选
+    with _document_lock(_autosave_path(doc_id)):
+        state, status = engine_layoutsession.read_readonly()
+        slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
+        mode, owner = _history_verdict(doc_id, key, state, status, slot_doc, slot_rev, slot_exists)
+    # 回出去的取值只能出自闭集（前端与假后端逐字镜像它）
+    assert mode in engine_projecthistory.HISTORY_MODES
+    assert owner in engine_projecthistory.HISTORY_OWNERS
+    name = ""
+    node_newer = False
+    if slot_doc is not None:
+        proj = slot_doc.get("project")
+        if isinstance(proj, dict) and isinstance(proj.get("name"), str):
+            name = proj["name"]
+        if mode == "slot" and not engine_projecthistory.same_canvas_content(slot_doc, node):
+            # 「比节点新」只比两边自己记下的时刻：槽位正文的 updatedAt（写它的那台机器的钟）与节点的 ts
+            # （写它的后端的钟）。同一台机器上是同一个钟；内容相同时直接算槽位不旧（节点就是从它拍的）
+            upd = slot_doc.get("updatedAt")
+            node_newer = (
+                node["schema"] == 2
+                and isinstance(upd, (int, float))
+                and not isinstance(upd, bool)
+                and node["ts"] > upd
+            )
+    if not name:
+        doc = node["doc"]
+        proj = doc.get("project") if isinstance(doc, dict) else None
+        if isinstance(proj, dict) and isinstance(proj.get("name"), str):
+            name = proj["name"]
+        elif node["canvasName"]:
+            name = node["canvasName"]
+        elif isinstance(doc, dict) and isinstance(doc.get("name"), str):
+            name = doc["name"]
+    return {
+        "doc_id": doc_id,
+        "name": name[: engine_layoutsession.MAX_NAME_CHARS],
+        "vid": node["vid"],
+        "ts": node["ts"],
+        "canvasId": node["canvasId"],
+        "schema": node["schema"],
+        "canvases": node["canvases"],
+        "objects": node["objects"],
+        "mode": mode,
+        "owner": owner,
+        "revision": slot_rev if mode == "slot" else None,
+        "node_newer": node_newer,
+    }
+
+
+@app.get("/api/layout-session/project-history")
+def api_layout_session_project_history():
+    """只读：当前项目 `tavottofile/versions/*.vx` 里有内容的排版（ADR 0211 第一期）。
+
+    回 `{items, index, truncated}`；没开项目回空列表。`truncated` = 没列全（目录条目太多 / 有内容的超过上限）。每项见 `_history_item`。不写任何东西、不回路径。
+    一份时间线读不出只赔它自己。"""
+    ctx = _request_ctx()
+    store = project_store_dir(ctx)
+    if ctx is None or store is None:
+        resp = jsonify({"items": [], "index": "ok"})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    key = engine_layoutsession.project_key(ctx.path)
+    versions = engine_documentformat.versions_dir(store, VERSIONS_DIR)
+    try:
+        names, truncated = engine_projecthistory.store_names(versions)
+    except OSError:
+        return jsonify(
+            {"error": "项目里的排版历史此刻读不出来", "code": "candidates_unavailable"}
+        ), 503
+    _state, index = engine_layoutsession.read_readonly()
+    items: list[dict] = []
+    for doc_id in names:
+        if len(items) >= engine_projecthistory.MAX_STORES:
+            truncated = True  # 有内容的太多：不保证列全，前端据此不自动采用
+            break
+        try:
+            item = _history_item(doc_id, versions, key, ctx)
+        except engine_layoutsession.SessionStateUnavailable:
+            return jsonify({"error": "本机排版此刻读不出来", "code": "candidates_unavailable"}), 503
+        if item is not None:
+            items.append(item)
+    items.sort(key=lambda i: (-int(i["ts"] or 0), i["doc_id"]))
+    resp = jsonify({"items": items, "index": index, "truncated": truncated})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/layout-session/project-history/claim")
+def api_layout_session_project_history_claim():
+    """把槽位 `doc_id` 的归属改到当前项目（挪走的项目 / 没有归属记录的旧槽位）。
+
+    在槽位文档锁里**重判一遍**：仍是 `mode == "slot"`、owner 是 moved / none（this 回 ok 不写）、
+    槽位 revision 等于请求带来的那个（客户端看到的就是这一份）才写 owners + owner_revisions。
+    否则 409 `claim_refused`，一个字节不动。旧项目路径还在（复制）永远拒。"""
+    body = request.get_json(silent=True)
+    doc_id = body.get("doc_id") if isinstance(body, dict) else None
+    revision = body.get("revision") if isinstance(body, dict) else None
+    if not engine_layoutsession.valid_doc_id(doc_id) or not isinstance(revision, str):
+        return jsonify({"error": "doc_id / revision 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    store = project_store_dir(ctx)
+    if ctx is None or store is None:
+        return jsonify({"error": "没有打开项目", "code": "claim_refused"}), 409
+    key = engine_layoutsession.project_key(ctx.path)
+    versions = engine_documentformat.versions_dir(store, VERSIONS_DIR)
+    refused = jsonify({"error": "这份排版此刻不能认领到当前项目", "code": "claim_refused"}), 409
+    try:
+        names, _truncated = engine_projecthistory.store_names(versions)
+    except OSError:
+        return _session_unavailable()
+    if doc_id not in names:
+        return refused
+    if engine_projecthistory.latest_content_node(versions, doc_id) is None:
+        return refused
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            state, status = engine_layoutsession.read_readonly()
+            slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
+            mode, owner = _history_verdict(
+                doc_id, key, state, status, slot_doc, slot_rev, slot_exists
+            )
+            if mode != "slot" or slot_rev != revision:
+                return refused
+            if owner != "this":
+                engine_layoutsession.record_owner(doc_id, key, slot_rev)
+    except OSError:
+        return _session_unavailable()
+    return jsonify({"ok": True, "revision": revision, "owner": "this"})
+
+
 @app.get("/api/preferences/export-defaults")
 def api_export_defaults_get():
     """导出默认值（按用户一份，数据目录）。没存过是 `{"defaults": null}`，不是 404。"""
@@ -22257,6 +22539,10 @@ def api_versions_get(doc_id, vid):
     return jsonify(v)
 
 
+#: 空白排版（`_doc_objects` 为空）上不写的关键时刻（ADR 0211 第一期 4）；与前端 `useVersionCheckpoints` 的同一判据
+_MOMENTS_SKIPPED_WHEN_BLANK = frozenset({"open", "close"})
+
+
 @app.post("/api/versions/<doc_id>")
 def api_versions_create(doc_id):
     body = request.get_json(force=True)
@@ -22277,6 +22563,10 @@ def api_versions_create(doc_id):
                 "params": {"moment": str(moment)[:40]},
             }
         ), 400
+    if moment in _MOMENTS_SKIPPED_WHEN_BLANK and not _doc_objects(doc):
+        # 空白排版的「打开」「离开」不是值得留下的事（ADR 0211 第一期 4）：以前每次加载新路径、离开项目都在用户项目里
+        # 留一个只有空节点的 `.vx` 目录。不建目录、不写任何东西；前端那一侧同样不发（纵深）。「恢复前」等别的时刻照旧
+        return jsonify({"skipped": True, **_document_save_extras(doc)})
     ver = {
         "id": "",  # 在版本锁内取（`_fresh_version_id`）：要对着锁内读到的现有节点核重名
         "name": given or time.strftime("%m-%d %H:%M"),

@@ -505,6 +505,23 @@ def commit(
         return {"written": False, "plan": plan}
     if plan["echo_digest"] != echo_digest_seen:
         raise LayoutError("echo_mismatch")
+
+    def append(target: dict) -> None:
+        target.setdefault("objects", []).extend(plan["objects"])
+
+    after, token = write_canvas(project, name, lay, canvas.get("id"), append)
+    return {
+        "written": True,
+        "revision": after,
+        "added": [o["id"] for o in plan["objects"]],
+        "undo_token": token,
+        "plan": plan,
+    }
+
+
+def write_canvas(project: str | Path, name: str, lay: Layout, canvas_id, mutate) -> tuple[str, str]:
+    """在文档锁里改一张画布并落盘：再核修订号 → 读正文 → `mutate(画布)` → 校验 → **先**存撤销副本 → 原子替换排版。
+    回 `(新修订号, undo_token)`。追加（`commit`）与补丁（`vectoredit.commit`）共用这一段，锁 / 撤销 / 冲突判据只有一份。"""
     with doclock.document_lock(lay.path):
         try:
             before = lay.path.read_bytes()
@@ -513,8 +530,7 @@ def commit(
         if atomicio.revision_of(before) != lay.revision:
             raise LayoutError("layout_changed", revision=atomicio.revision_of(before))
         doc = documents.loads_document(before)
-        target = _canvas(doc, canvas.get("id"))
-        target.setdefault("objects", []).extend(plan["objects"])
+        mutate(_canvas(doc, canvas_id))
         documents.validate_document(doc)
         data = atomicio.dumps_json(doc, indent=1)
         after = atomicio.revision_of(data)
@@ -524,13 +540,7 @@ def commit(
         except OSError as exc:
             raise LayoutError("undo_unavailable") from exc
         atomicio.write_bytes(lay.path, data)
-    return {
-        "written": True,
-        "revision": after,
-        "added": [o["id"] for o in plan["objects"]],
-        "undo_token": token,
-        "plan": plan,
-    }
+    return after, token
 
 
 def _save_undo(
@@ -573,3 +583,239 @@ def undo(project: str | Path, name: str, token: str) -> dict:
     for p in (meta_p, body_p):
         p.unlink(missing_ok=True)
     return {"revision": restored, "restored_to": meta.get("before")}
+
+
+# ------------------------------------------------------------------ 局部图
+
+
+def _panel_payload(o: dict) -> dict:
+    """子图对象 → 合成用的载荷（与前端 `exportPayload` 的 panel 分支同一组几何字段：框、裁剪、旋转、翻转、不透明度）。"""
+    out = {
+        "type": "panel",
+        # 按子图对象 id：同一张图的两个实例各自解析到自己量出来的那份 PDF
+        "id": o.get("id") or o.get("fileId"),
+        "x_mm": float(o["x"]),
+        "y_mm": float(o["y"]),
+        "w_mm": float(o["w"]),
+        "h_mm": float(o["h"]),
+    }
+    if isinstance(o.get("crop"), dict):
+        out["crop"] = o["crop"]
+    if o.get("rotation"):
+        out["rotation"] = o["rotation"]
+    if o.get("opacity") is not None:
+        out["opacity"] = o["opacity"]
+    if o.get("flipH"):
+        out["flip_h"] = True
+    if o.get("flipV"):
+        out["flip_v"] = True
+    return out
+
+
+def preview(
+    canvas: dict,
+    objects: list[dict],
+    panel_pdfs: dict[str, str],
+    *,
+    margin_mm: float = 4.0,
+    width_px: int = 1000,
+) -> dict | None:
+    """这批新对象合成到画布上之后，框住它们的那一块（PNG 字节 + 区域毫米）。
+
+    **真合成**（`rendercore.plan.compile_page` + `pdfwriter`，与成品同一条路）：子图源用这次量它们时导出的那份 PDF
+    （`panel_pdfs`：子图对象 id → 路径），没量到的子图不画（局部图里留白，`missing` 列出来）。给 Agent 看图自查用，
+    不是交付物；画不出来回 None（不让方案因此失败）。"""
+    import tempfile
+
+    from PIL import Image
+
+    from ..rendercore import facade, pdfwriter, plan as rc_plan, sources as rc_sources
+
+    if not objects:
+        return None
+    page = _page(canvas)
+    xs0 = [o["x"] for o in objects]
+    ys0 = [o["y"] for o in objects]
+    xs1 = [o["x"] + o["w"] for o in objects]
+    ys1 = [o["y"] + o["h"] for o in objects]
+    region = [
+        max(0.0, min(xs0) - margin_mm),
+        max(0.0, min(ys0) - margin_mm),
+        min(page["w"], max(xs1) + margin_mm),
+        min(page["h"], max(ys1) + margin_mm),
+    ]
+    if region[2] - region[0] <= 0 or region[3] - region[1] <= 0:
+        return None
+
+    class _Measured:
+        def resolve(self, obj: dict):
+            path = panel_pdfs.get(str(obj.get("id", "")))
+            if path is None:
+                raise rc_sources.SourceError(
+                    "source_missing", "not measured", {"figure": str(obj.get("id"))}
+                )
+            return rc_sources.FrozenSource(
+                artifact=rc_sources.static_artifact(Path(path), str(obj.get("id"))), path=Path(path)
+            )
+
+    # 按画布上原来的层级顺序：子图（量到的）与画布上已有的可见矢量对象都画进去，新对象叠在最上面——
+    # 局部图就是写入后那一块的样子（漏掉已有的标注，Agent 比对的就是另一张图，Codex #2213）
+    layers, missing = [], []
+    # 剪切组（ADR 0191）：组里有蒙版（`clipMask`）的，成员导出时只露出蒙版里的部分——这里没有那套裁剪链
+    # （前端 `exportPayload.toExportObjects` 的 `groupMasks` / `clipChainOf`），整个画出来会把裁掉的内容叠到新标注上，
+    # 所以蒙版与组里的成员都不画，如实列进 `missing_panels`（Codex #2213）
+    objs = [o for o in canvas.get("objects") or [] if isinstance(o, dict)]
+
+    def chain(o: dict) -> list[str]:
+        gp = o.get("groupPath")
+        return [
+            g for g in (gp if isinstance(gp, list) else [o.get("groupId")]) if isinstance(g, str)
+        ]
+
+    clipped_groups = {g for o in objs if o.get("clipMask") for g in chain(o)[-1:]}
+    for o in objs:
+        if o.get("clipMask") or set(chain(o)) & clipped_groups:
+            missing.append(o.get("id"))
+            continue
+        if o.get("hidden"):
+            continue
+        if o.get("type") == "panel":
+            if str(o.get("id")) in panel_pdfs:
+                layers.append(_panel_payload(o))
+            else:
+                missing.append(o.get("id"))
+        elif o.get("type") in ("text", "arrow", "shape", "path"):
+            try:
+                layers += agentobjects.to_export_objects([o])
+            except (KeyError, TypeError, ValueError):
+                missing.append(o.get("id"))  # 缺必填键的对象（外部工具写的）：画不出来，如实列出
+    try:
+        provider = facade.provider()
+        compiled = rc_plan.compile_page(
+            page["w"],
+            page["h"],
+            layers + agentobjects.to_export_objects(objects),
+            sources=_Measured(),
+            faces=provider,
+        )
+        with tempfile.TemporaryDirectory(prefix="tavotto-annotate-") as tmp:
+            pdf = Path(tmp) / "page.pdf"
+            pdfwriter.write_pdf(
+                compiled.page,
+                pdf,
+                provider,
+                {k: rc_sources.read_frozen(fs) for k, fs in compiled.sources.items()},
+            )
+            px_per_mm = width_px / (region[2] - region[0])
+            full_w = int(min(6000, max(200, page["w"] * px_per_mm)))
+            png = Path(tmp) / "page.png"
+            facade.render_preview_png(pdf, full_w, png)
+            img = Image.open(png)
+            img.load()
+        k = img.width / page["w"]
+        crop = img.crop(
+            (
+                int(region[0] * k),
+                int(region[1] * k),
+                int(region[2] * k + 0.999),
+                int(region[3] * k + 0.999),
+            )
+        )
+        import io
+
+        buf = io.BytesIO()
+        crop.save(buf, format="PNG")
+    except Exception:  # noqa: BLE001 — 局部图是自查辅助，画不出来不影响方案
+        return None
+    return {"png": buf.getvalue(), "region_mm": region, "missing_panels": missing}
+
+
+# ------------------------------------------------------------------ 并进桌面（ADR 0208 §五「把 Agent 加的并进来」）
+
+
+def agent_additions(project: str | Path, name: str, base_revision: str) -> dict | None:
+    """桌面拿着基线 `base_revision`、磁盘上已是别的修订号时：多出来的**是不是只有** Agent 追加的对象？
+
+    是 → `{"revision": 磁盘修订号, "canvases": [{"id", "objects"}], "count"}`，桌面一次 commit 并进内存、把基线推到
+    `revision`，之后照常保存；否 → None（照旧走覆盖 / 另存）。判据全部来自撤销留存，不猜：
+
+    * 从 `base_revision` 起，每一步都必须是一次 Agent 写入（留存里 `before` = 上一步的 `after`），一直走到磁盘此刻的修订号；
+      中间有任何一步不是 Agent 写的（桌面别的窗口、外部工具）、或留存已被清掉，链就断了 → None；
+    * 基线那一份的正文（第一步留存的写前字节，修订号核过）与磁盘此刻的正文相比：除了各画布**末尾追加**的、带
+      `anchor.by == "agent"` 的对象，其余逐字段相同 → 才算「只多了 Agent 加的」。
+    """
+    path = layout_target(project, name)
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    current = atomicio.revision_of(data)
+    if current == base_revision:
+        return None
+    d = _undo_dir(Path(project), name)
+    by_before: dict[str, tuple[str, str | None]] = {}
+    try:
+        metas = list(d.glob("*.meta"))
+    except OSError:
+        return None
+    for m in metas:
+        try:
+            meta = json.loads(m.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict) and isinstance(meta.get("before"), str):
+            by_before[meta["before"]] = (m.stem, meta.get("after"))
+    rev, first = base_revision, None
+    for _ in range(UNDO_KEEP + 1):
+        step = by_before.get(rev)
+        if step is None:
+            return None
+        first = first or step[0]
+        rev = step[1]
+        if rev == current:
+            break
+    else:
+        return None
+    if rev != current or first is None:
+        return None
+    try:
+        base_bytes = (d / f"{first}.json").read_bytes()
+    except OSError:
+        return None
+    if atomicio.revision_of(base_bytes) != base_revision:
+        return None
+    try:
+        base, now = documents.loads_document(base_bytes), documents.loads_document(data)
+    except (ValueError, documents.DocumentError):
+        return None
+    if not isinstance(base, dict) or not isinstance(now, dict):
+        return None
+    if {k: v for k, v in base.items() if k != "canvases"} != {
+        k: v for k, v in now.items() if k != "canvases"
+    }:
+        return None
+    bc, nc = base.get("canvases") or [], now.get("canvases") or []
+    if len(bc) != len(nc):
+        return None
+    out, count = [], 0
+    for b, n in zip(bc, nc):
+        if not isinstance(b, dict) or not isinstance(n, dict) or b.get("id") != n.get("id"):
+            return None
+        if {k: v for k, v in b.items() if k != "objects"} != {
+            k: v for k, v in n.items() if k != "objects"
+        }:
+            return None
+        bo, no = b.get("objects") or [], n.get("objects") or []
+        if no[: len(bo)] != bo:
+            return None
+        extra = no[len(bo) :]
+        if not all(
+            isinstance(o, dict) and (o.get("anchor") or {}).get("by") == "agent" for o in extra
+        ):
+            return None
+        if extra:
+            out.append({"id": n.get("id"), "objects": extra})
+            count += len(extra)
+    if not count:
+        return None
+    return {"revision": current, "canvases": out, "count": count}

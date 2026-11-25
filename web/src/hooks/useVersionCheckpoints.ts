@@ -14,6 +14,9 @@ import { useTimelineStore } from '@/store/timelineStore'
  * 从 5 分钟调密，实测数字在 ADR 里），服务器端还会去重（与最近一版相同则跳过）
  * 并滚动清理（命名节点永不清理）。
  */
+/** 空白排版上不打的关键时刻（ADR 0211 第一期 4）；后端 `app._MOMENTS_SKIPPED_WHEN_BLANK` 同一判据 */
+const BLANK_SKIPPED_MOMENTS: ReadonlySet<string> = new Set(['open', 'close'])
+
 export const DEBOUNCE_MS = 15_000
 export const MIN_GAP_MS = 2 * 60_000
 
@@ -112,15 +115,17 @@ export function startVersionCheckpoints(): () => void {
 
   // 关键时刻：导出 / 写回 / 保存 / 打开 / 关闭 / 恢复前。**不去重**（服务器端也不），
   // 打完点重新计间隔——刚打过关键时刻，紧接着再拍一个自动节点只是重复
-  // 关键时刻**空画布也打**（Codex #679）：「清空之后保存」「打开 / 离开一个空项目」都是发生过的
+  // 关键时刻**空画布也打**（Codex #679）：「清空之后保存」「离开一个空项目」都是发生过的
   // 事，与命名节点、恢复前一样不因为画布空着就静默缺席；只有普通自动节点在空画布上不拍。
+  // **例外是「打开」「离开」**（ADR 0211 第一期 4）：空白排版的打开 / 离开不是值得留的事，打了就在用户项目里留一个
+  // 只有空节点的 `.vx` 目录（挪走的项目每加载 / 离开一次多一个）。后端对空白的这两个时刻同样不写（纵深）。
   // 「空」按节点实际拍的那份判——带快照时是快照里那份（`takeCheckpoint` 里同一个 `id.doc`）
   setMomentSink(async (moment, snapshot) => {
     // 占位文档不打点（离开旧文档的「关闭」点发生在设门之前，那时门还开着、点照打）
     if (isDocumentPlaceholder()) return null
     // 点打在哪份排版的时间线上，就重新计哪份的间隔（发起那一刻取，await 回来可能已经换了）
     const ctx = snapshot?.ctx ?? currentTimelineCtx()
-    const res = await takeCheckpoint({ auto: true, moment, allowEmpty: true }, snapshot)
+    const res = await takeCheckpoint({ auto: true, moment, allowEmpty: !BLANK_SKIPPED_MOMENTS.has(moment) }, snapshot)
     if (res?.version) lastSaved.set(ctx, Date.now())
     return res
   })
