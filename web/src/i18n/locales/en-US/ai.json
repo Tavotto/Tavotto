@@ -567,6 +567,14 @@
         "title": "Mean line + band",
         "why": "The mean at each x position with a band showing {{error}}, for the overall trend and its spread."
       },
+      "points_err": {
+        "title": "Points + error bars",
+        "why": "The table already holds each group's mean, so it is drawn as is."
+      },
+      "line_err": {
+        "title": "Points + line + error bars",
+        "why": "The table already holds the mean at each position, so the points are joined in order."
+      },
       "line_units": {
         "title": "One line per subject",
         "why": "Repeated measures of the same subject are joined, so you see how each one changes."
@@ -722,6 +730,14 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
+      "rowsErr": "drawn from the {{drawn}} rows in the table, one point per row",
+      "errColumn": "error bars from the “{{column}}” column",
+      "errMissing": "{{count}} places have only one value, so no error bar can be computed",
+      "errMissingOne": "“{{label}}” has only one value, so no error bar can be computed",
+      "bandMissing": "{{count}} places have only one value, so no error band can be computed",
+      "bandMissingOne": "“{{label}}” has only one value, so no error band can be computed",
+      "listJoin": ", ",
+      "etc": ", etc.",
       "line": "Basis: {{text}}.",
       "then": ", ",
       "join": "; ",
@@ -753,6 +769,16 @@
         "independent": "No, each row is a different sample",
         "repeated": "Yes, the same sample measured again"
       }
+    },
+    "aiChoice": {
+      "tipPlain": "AI used for analysis",
+      "tip": "AI used for analysis: {{name}}",
+      "auto": "Automatic",
+      "off": "Don't analyze with AI",
+      "more": "Connect another AI…",
+      "unavailable": "This model can't be reached; try another one",
+      "current": "Currently {{name}}",
+      "chosen": "The model you chose"
     },
     "redraw": {
       "from": "Drawn from {{file}}",
@@ -807,7 +833,22 @@
       "empty": "None of these comments can be changed directly; the figure is unchanged",
       "connect": "Connect AI",
       "retry": "Try again",
-      "dismiss": "Dismiss"
+      "dismiss": "Dismiss",
+      "summaryNotes": "{{n}} notes led to {{places}} more changes",
+      "revising": "Redoing with your notes…",
+      "generatingAssistant": "Working on your request…",
+      "summaryAssistant": "Changed {{places}} places",
+      "summaryAssistantScript": "Changed {{places}} places; the rest needs the script, so it wasn't touched",
+      "summaryAssistantOther": "Changed {{places}} places; the rest couldn't be changed directly",
+      "appliedAssistant": "Applied · changed {{places}} places",
+      "emptyAssistant": "This can't be done directly in the figure, so nothing changed",
+      "handoff": "This one needs the script, so it's going to the Agent.",
+      "runScript": "Edit the script for the rest",
+      "runScriptAll": "Edit the script instead",
+      "scriptFailed": "Couldn't hand this to the Agent; the figure is unchanged",
+      "summaryLayout": "{{count}} figures re-laid out",
+      "appliedLayout": "Applied · {{count}} figures re-laid out",
+      "runScriptTip": "Applies these in-figure changes first"
     },
     "dialog": {
       "title": "Change plan",
@@ -828,7 +869,36 @@
       "previewStale": "The preview didn't update; what gets applied follows your checkmarks",
       "checkTip": "Uncheck to skip this change",
       "discard": "Discard",
-      "apply": "Apply"
+      "apply": "Apply",
+      "versionLabel": "Plan version",
+      "versionN": "Version {{n}}",
+      "modeLabel": "View",
+      "modeCompare": "Compare",
+      "modeAnnotate": "Notes",
+      "writeNote": "Add note",
+      "firstHint": "Something not right? Add a note here",
+      "lockTip": "Click elements on the new figure to leave notes, then redo it",
+      "lockLearn": "Learn about Premium ›",
+      "annotateHint": "Click an element on the figure to leave a note",
+      "notes": "Notes · {{count}}",
+      "notePlaceholder": "What should change?",
+      "noteSave": "Save",
+      "noteCancel": "Cancel",
+      "noteDelete": "Delete",
+      "noteEdit": "Click to edit",
+      "noteRemove": "Delete note",
+      "noteRegion": "Selected area",
+      "noteOverall": "Note on the whole figure",
+      "noteOverallLabel": "Whole figure",
+      "rerun": "Redo with notes",
+      "annotateRerun": "Redo with notes · {{count}}",
+      "rerunning": "Redoing…",
+      "rerunNeedNote": "Click an element in the After figure and write a note first",
+      "reviseNotLicensed": "Premium is not unlocked, so nothing was redone",
+      "groupMetaNote": "From your note · {{count}}",
+      "layoutHeading": "Layout · {{count}} figures",
+      "layoutGroupMeta": "{{count}} figures",
+      "noteHere": "This spot"
     },
     "unhandled": {
       "needs_script": "Needs a script change; left alone this time",
@@ -842,7 +912,8 @@
       "conflict": "Conflicts with another change; left alone this time",
       "not_applied": "Didn't take effect; left alone this time",
       "no_effect": "No visible difference; left alone this time",
-      "not_addressed": "This one wasn't handled"
+      "not_addressed": "This one wasn't handled",
+      "unclearAssistant": "The request wasn't specific enough, so nothing changed"
     },
     "draft": {
       "thisOne": "this item",
@@ -880,6 +951,7 @@
         "center": "center"
       },
       "many": "these {{count}} items"
-    }
+    },
+    "layoutGroup": "Layout"
   }
 }

@@ -36,6 +36,36 @@ REGISTRY: dict[str, FixTool] = {
 }
 
 
+#: 修复进度的四步（界面的任务清单「找原因 → 动手修 → 运行验证 → 收尾」，用户 2026-11-25 拍板）：按工具所在的组归一步，
+#: 不靠模型自己列计划。「问与报」里只有 `propose_fix`（说方案就是在动手修）与 `finish` 推进；`ask_user` / `pick_file` /
+#: `prepare_diagnostics` 不推进（不在表里）。新加工具进了哪一组就自动归哪一步；`test_fix_stage_of_tool_covers_registry` 守着全覆盖。
+FIX_STAGES: tuple[str, ...] = ("diagnose", "fix", "verify", "finish")
+STAGE_OF_TOOL: dict[str, str] = {
+    **{t.name: "diagnose" for t in OBSERVE_TOOLS},
+    **{t.name: "fix" for t in (*CHANGE_TOOLS, *LINK_TOOLS, *IMPORT_PATH_TOOLS, *COMMAND_TOOLS)},
+    **{t.name: "verify" for t in TRIAL_TOOLS},
+    "propose_fix": "fix",
+    "finish": "finish",
+}
+#: 不推进步骤的工具（只问用户 / 只整理说明）：与上表合起来正好是整张注册表
+STAGE_NEUTRAL_TOOLS = frozenset({"ask_user", "pick_file", "prepare_diagnostics"})
+
+
+def next_stage(cur: str | None, rnd: int, tool: str) -> tuple[str | None, int]:
+    """工具开始时步骤怎么走（纯函数）：往后的步骤直接到；验证之后又动手修 = 下一轮（不把勾收回）；
+    往前的其余情况（修着修着又看一眼文件、验证完又读日志）停在原步。认不出 / 中性的工具不动。"""
+    st = STAGE_OF_TOOL.get(tool)
+    if st is None:
+        return cur, rnd
+    if cur is None:
+        return st, rnd
+    if FIX_STAGES.index(st) > FIX_STAGES.index(cur):
+        return st, rnd
+    if st == "fix" and cur == "verify":
+        return "fix", rnd + 1
+    return cur, rnd
+
+
 # 提示只点名本会话调得到的工具（ADR 0197 第 1 层）：注册表由这里交给 runreport，不让它反过来 import 本包（免得成环）
 _runreport.TOOL_TIERS.update({name: t.tier for name, t in REGISTRY.items()})
 # 「这台电脑上这样修好过」（ADR 0197 第 3 层·在线）：同样由包交给 runreport，runreport 不 import engine 的存储

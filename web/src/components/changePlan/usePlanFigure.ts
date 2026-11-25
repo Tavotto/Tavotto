@@ -6,7 +6,7 @@ import { adoptionGuardOf } from '@/lib/artifactValidation'
 import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
 import { applyGroups, toOverrides, type PlanSource } from '@/lib/changePlanApply'
-import { enginePreviewPngSnapshot } from '@/lib/api'
+import { enginePreviewPngSnapshot, type Manifest } from '@/lib/api'
 import { useChangePlanStore, sourceOf, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -58,7 +58,18 @@ export function useImageAspect(src: string | null | undefined, fallback = 4 / 3)
 
 /** 这张图有没有方案卡要画（助手转录据此不显示空态） */
 export function useHasChangePlans(panelId: string | undefined): boolean {
-  return useChangePlanStore((s) => !!panelId && s.order.some((k) => s.entries[k]?.panelId === panelId))
+  const documentId = useDocumentStore((s) => s.documentId)
+  const loadSeq = useDocumentStore((s) => s.loadSeq)
+  const canvasId = useDocumentStore((s) => s.activeCanvasId)
+  return useChangePlanStore((s) =>
+    s.order.some((k) => {
+      const e = s.entries[k]
+      if (!e) return false
+      // 一键排版的整版方案不挂在某张图上：当前文档 / 画布上有就算（没选图也要看得到）
+      if (e.kind === 'layout') return e.documentId === documentId && e.loadSeq === loadSeq && e.canvasId === canvasId
+      return !!panelId && e.panelId === panelId
+    }),
+  )
 }
 
 /** 这张图此刻的图源身份（订阅素材修订：脚本 / 素材在磁盘上变了，方案卡跟着转「图已改过」） */
@@ -115,4 +126,37 @@ export function useSelectionPreview(entry: PlanEntry | undefined, active: boolea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, sig, plan, fileId, pj])
   return state
+}
+
+const manifestCache = new Map<string, Manifest>()
+
+/**
+ * 这一版「修改后」的元素表（批注点选的来源）：用全量候选（`candidate_patches`）经状态中立的出图取回 manifest，按方案 id 缓存；
+ * `enabled` 才取（高级版里第一次把鼠标移到图上 / 进入批注模式时），取不到 = null（悬停点选就不出，批注仍可框选 / 整体）。
+ */
+export function usePlanManifest(entry: PlanEntry | undefined, enabled: boolean): Manifest | null {
+  const plan = entry?.plan
+  const id = plan?.id
+  const [got, setGot] = useState<{ id: string; manifest: Manifest } | null>(null)
+  const fileId = entry?.fileId
+  const pj = entry?.pj ?? null
+  useEffect(() => {
+    if (!enabled || !plan || !id || !fileId) return
+    const hit = manifestCache.get(id)
+    if (hit) {
+      setGot({ id, manifest: hit })
+      return
+    }
+    const ctrl = new AbortController()
+    enginePreviewPngSnapshot(fileId, toOverrides(plan.candidate_patches), 1600, ctrl.signal, {}, pj)
+      .then((r) => {
+        if (ctrl.signal.aborted) return
+        if (manifestCache.size >= 16) manifestCache.delete(manifestCache.keys().next().value as string)
+        manifestCache.set(id, r.manifest)
+        setGot({ id, manifest: r.manifest })
+      })
+      .catch(() => undefined)
+    return () => ctrl.abort()
+  }, [enabled, id, fileId, pj]) // eslint-disable-line react-hooks/exhaustive-deps
+  return got && got.id === id ? got.manifest : null
 }

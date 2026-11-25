@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { canUndoApplied, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { canUndoApplied, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
@@ -26,6 +26,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const plan = entry.plan
   // 历史栈顶：「撤销」只在它还是应用那一次 commit 时给（订阅它，之后改了别的这里跟着收起）
   useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1)) // 一键排版卡：⌘Z / ⌘⇧Z 之后状态跟着变
   // 方案出来之后卡面用方案自己的两张图；只有还没有（生成中）/ 已放弃时才为缩略图出图
   const thumb = usePanelThumbSrc(panel, !entry.beforeSrc || entry.status === 'discarded' || (entry.status === 'applied' && !!entry.appliedPartial && !entry.appliedSrc))
   const beforeSrc = entry.beforeSrc ?? thumb
@@ -35,8 +36,17 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const btn = 'rounded-full'
 
   if (status === 'failed') return <FailedCard entry={entry} />
+  // 助手来源，整条指令都要改脚本：这里只留一行灰字，接着由改脚本那一轮自己说话
+  if (status === 'handoff') {
+    return (
+      <p className="px-1 text-sm text-ink-3" data-change-plan-handoff>
+        {cp('card.handoff')}
+      </p>
+    )
+  }
 
-  const generating = status === 'generating' || !plan
+  // 按批注重改进行中：卡片也回到「生成中」（旧版仍在弹窗里），出好后自动换成新版
+  const generating = status === 'generating' || !plan || (status === 'ready' && entry.revising !== undefined)
   // 已放弃：后端那份已经收了，卡面画这张图此刻的样子（不再挂方案的图）
   const showAfter = !generating && !!entry.afterSrc && status !== 'discarded'
   // 已应用且只应用了部分组：挂实际应用的那一张（弹窗里按勾选出的图；没有就挂这张图此刻的样子），不挂全量候选图
@@ -82,18 +92,22 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
       <div className="flex flex-col gap-2 px-1.5 pb-1 pt-2.5">
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-base font-medium text-ink">{cp('card.title')}</span>
-          {!generating && plan && <span className="type-meta">{cp('card.version', { n: plan.version })}</span>}
+          {!generating && plan && <span className="type-meta">{cp('card.version', { n: versionNumber(entry) })}</span>}
         </div>
         {generating ? (
           <p className="flex items-center gap-2 text-sm text-ink-2" data-change-plan-generating>
             <ThinkingOrb form="solving" />
-            <span>{entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')}</span>
+            <span>{entry.revising !== undefined ? cp('card.revising') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')}</span>
           </p>
         ) : (
           <p className={cn('flex items-center gap-1.5 text-sm', status === 'discarded' ? 'text-ink-3' : 'text-ink-2')}>
             {status === 'applied' && <Check size={ICON_SIZE.sm} className="shrink-0 text-ok" />}
             {status === 'applied'
-              ? cp('card.applied', { count: handled })
+              ? entry.kind === 'layout'
+                ? cp('card.appliedLayout', { count: entry.layout?.count ?? 0 })
+                : entry.from === 'assistant'
+                  ? cp('card.appliedAssistant', { places: planTally(entry).places })
+                  : cp('card.applied', { count: handled })
               : status === 'discarded'
                 ? cp('card.discarded')
                 : status === 'stale'
@@ -119,6 +133,11 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 {cp('card.undo')}
               </Button>
             )}
+            {entry.from === 'assistant' && !entry.scriptStarted && (status === 'ready' || status === 'applied') && (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') && (
+              <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
+                {cp('card.runScript')}
+              </Button>
+            )}
             {status === 'stale' && (
               <Button variant={primary} size="md" className={btn} onClick={() => void store().regenerate(entry.key)} data-change-plan-regenerate>
                 <RefreshCw size={ICON_SIZE.sm} />
@@ -141,18 +160,22 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
   const action = failureAction(code)
   const store = useChangePlanStore.getState
   const un = code === 'change_plan_empty' ? unhandledViews(entry) : []
-  const label = { connect: cp('card.connect'), retry: cp('card.retry'), regenerate: cp('card.regenerate'), dismiss: cp('card.dismiss') }[action]
+  const assistant = entry.from === 'assistant'
+  const label = { connect: cp('card.connect'), retry: cp('card.retry'), regenerate: cp('card.regenerate'), dismiss: cp('card.dismiss'), script: cp('card.retry') }[action]
   const run = () => {
     // 连上 AI 之后接着生成（同一份请求），不用再回来点一次
     if (action === 'connect') requestConnectAi({ onConnected: () => void store().regenerate(entry.key) })
     else if (action === 'dismiss') store().dismiss(entry.key)
+    else if (action === 'script') void store().runScript(entry.key)
     else void store().regenerate(entry.key)
   }
+  // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
+  const scriptWay = assistant && action !== 'script'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">
         <span className="text-base font-medium text-ink">{cp('card.title')}</span>
-        <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params)}</p>
+        <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params, assistant)}</p>
         {un.length > 0 && (
           <ul className="flex flex-col gap-1">
             {un.map((u) => (
@@ -167,6 +190,11 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           <Button variant="ghost" className="-ml-3" onClick={run} data-change-plan-failed-action={action}>
             {label}
           </Button>
+          {scriptWay && (
+            <Button variant="ghost" onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
+              {cp('card.runScriptAll')}
+            </Button>
+          )}
           {action !== 'dismiss' && (
             <Button variant="ghost" onClick={() => store().dismiss(entry.key)} data-change-plan-dismiss>
               {cp('card.dismiss')}

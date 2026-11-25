@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   extractNotebook: vi.fn(),
   importNotebook: vi.fn(),
   openPackageFile: vi.fn(),
+  openPackage: vi.fn(),
   isDesktop: vi.fn(() => false),
   pickScriptFile: vi.fn(async () => null as string | null),
   nativeAvailable: false,
@@ -33,6 +34,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/api', async (orig) => ({
   ...(await orig<typeof import('@/lib/api')>()),
   importAsset: mocks.importAsset,
+  openPackage: mocks.openPackage,
   extractNotebook: mocks.extractNotebook,
   importNotebook: mocks.importNotebook,
 }))
@@ -193,12 +195,32 @@ describe('整次放下', () => {
   })
 
   it('项目包：走导入项目包的同一条流程；同批别的文件说一声没处理', async () => {
-    mocks.openPackageFile.mockResolvedValue(undefined)
+    mocks.openPackageFile.mockResolvedValue(true)
     await drop([named('paper.tavotto'), png('a.png')])
     expect(mocks.openPackageFile).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: 'paper.tavotto' }))
     expect(mocks.importAsset).not.toHaveBeenCalled()
     expect(text()).toContain('paper.tavotto')
     expect(text()).toContain('1')
+  })
+
+  it('同批多文件上传期间换项目，真实包导入结果不被「已打开」覆盖', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/packageImport')>('@/lib/packageImport')
+    mocks.openPackageFile.mockImplementationOnce(actual.openPackageFile)
+    let finish!: (value: { doc: ReturnType<typeof emptyProject>; manifest: {}; missing: string[]; drifted: string[] }) => void
+    mocks.openPackage.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    setCurrentProjectId('A')
+    const before = useDocumentStore.getState().documentId
+    await drop([named('paper.tavotto'), png('other.png')])
+    expect(mocks.openPackage).toHaveBeenCalledTimes(1)
+    setCurrentProjectId('B')
+    await act(async () => {
+      finish({ doc: emptyProject(), manifest: {}, missing: [], drifted: [] })
+      for (let i = 0; i < 12; i++) await Promise.resolve()
+    })
+    expect(useDocumentStore.getState().documentId).toBe(before)
+    expect(useUiStore.getState().status?.key).toBe('layout.openSkipped')
+    expect(useUiStore.getState().statusTone).toBe('error')
+    setCurrentProjectId(null)
   })
 
   it('项目包来自更新的版本：说清楚，桌面版主按钮是「检查更新」', async () => {

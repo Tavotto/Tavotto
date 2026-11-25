@@ -24,6 +24,10 @@ interface PopoverProps {
   ariaLabel?: string
   /** 内容自己出血到边（无内边距、裁圆角、一条发丝边）：出处卡这类整卡浮层用 */
   flush?: boolean
+  /** 带一个指向触发器的小尖角（锚在图上某个元素的批注框用） */
+  arrow?: boolean
+  /** 碰撞 / 翻转以这个元素的边为界（不给就是视口）：批注框不许跨出图卡的边 */
+  boundary?: HTMLElement | null
 }
 
 const stopAtPopover = (e: Event) => e.stopPropagation()
@@ -49,6 +53,8 @@ export function Popover({
   keepFocus,
   ariaLabel,
   flush,
+  arrow,
+  boundary,
 }: PopoverProps) {
   return (
     <RP.Root open={open} onOpenChange={onOpenChange}>
@@ -59,7 +65,9 @@ export function Popover({
           ref={keepScrollInPopover}
           align={align}
           side={side}
-          sideOffset={6}
+          sideOffset={arrow ? 8 : 6}
+          collisionBoundary={boundary ?? undefined}
+          collisionPadding={boundary ? 8 : undefined}
           style={{
             width:
               width === 'trigger'
@@ -84,11 +92,13 @@ export function Popover({
           className={cn(
             'z-popover rounded-lg bg-surface shadow-pop',
             flush ? 'overflow-hidden border border-border' : 'p-2',
+            arrow && 'inset-ring inset-ring-border',
             'origin-[var(--radix-popover-content-transform-origin)]',
             'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
           )}
         >
           {children}
+          {arrow && <RP.Arrow className="fill-surface stroke-border" width={12} height={6} />}
         </RP.Content>
       </RP.Portal>
     </RP.Root>

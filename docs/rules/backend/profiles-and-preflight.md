@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`tests/test_preflight_interference.py`、`tests/golden/interference_vectors.json`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`tests/test_preflight_interference.py`、`tests/golden/interference_vectors.json`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；推荐配色目录（ADR 0210）：`tests/test_palettes.py`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 260
-改到: `profiles/publication.json`、`profiles/journals.json`、`engine/profiles.py`、`engine/journals.py`、`engine/journalremote.py`、`preflight.py`、`profilestore.py`
-主题: 出版规范 profile 与预检、内置期刊库 → `profiles-and-preflight.md`
+改到: `profiles/publication.json`、`profiles/journals.json`、`profiles/palettes*.json`、`engine/profiles.py`、`engine/journals.py`、`engine/journalremote.py`、`engine/palettes.py`、`preflight.py`、`profilestore.py`
+主题: 出版规范 profile 与预检、内置期刊库、推荐配色目录 → `profiles-and-preflight.md`
 必守要点: 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐；期刊 = 对 journal-base-v1 的覆盖 + 逐条出处，未规定不补
 -->
 
@@ -179,3 +179,12 @@ order: 260
 - `clip_bbox` 只给 `element-outside-figure` 用
 - 没登记的检查项兜底 warn
 - 磁盘更高版本只读不写
+
+## 推荐配色目录（ADR 0210）
+
+- 色值的唯一权威是 `profiles/palettes.json`（宽松许可）与 `profiles/palettes_copyleft.json`（GPL 的期刊风格色板）两份文件；
+  前端经 `@palettes` / `@palettesCopyleft` 别名整份 import，引擎经 `engine/palettes.py` 读。任一侧不另抄色值。
+- **GPL 的边界是文件**：宽松那份里出现 GPL 来源即红（`tests/test_palettes.py`）；闭源组件只许读宽松那份，
+  引擎侧显式 `catalog(include_copyleft=False)`；`TAVOTTO_NO_COPYLEFT_PALETTES=1` 时引擎与前端构建都不收 copyleft 那份。
+- 新增来源先在 `THIRD_PARTY_NOTICES.md` 加一节（网址、许可、要求的致谢 / 引用），再改 `scripts/dev/gen_palettes.py` 重新生成；
+  手改 JSON 不行——下次重新生成就丢。

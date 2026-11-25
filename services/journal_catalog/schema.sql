@@ -80,3 +80,14 @@ CREATE TABLE IF NOT EXISTS ip_denials (
     PRIMARY KEY (ip_key, day, code)
 );
 CREATE INDEX IF NOT EXISTS idx_ip_denials_ts ON ip_denials (ts);
+
+-- 签名索引的按日计数（只有聚合数字：日期 × 协议版本 × 回 200 / 回 304 的次数）。
+-- 不记 IP、令牌、刊 id、User-Agent，也没有逐请求的时间戳；不能回连任何设备或读取记录。
+-- 用途：看条件请求（ETag / 304）实际省了多少下载。保留 1 年（purge 删除）。
+CREATE TABLE IF NOT EXISTS index_hits (
+    day INTEGER NOT NULL,          -- Unix 天数（UTC）
+    version TEXT NOT NULL,         -- 'v1' | 'v2'
+    n200 INTEGER NOT NULL DEFAULT 0,
+    n304 INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, version)
+);

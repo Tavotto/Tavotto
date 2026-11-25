@@ -646,6 +646,11 @@ figure changes when you press *Apply*.
   their current values, and its position on the picture. **Reviewers' display
   names are not sent.** Scripts, data, project files, file paths and computer
   details are not sent either.
+* **Notes on the revised figure (Premium).** *Redo with notes* sends the notes you
+  wrote on the "After" picture (their text and the element or area each one
+  points at), the table of elements as they look after the previous version, and
+  a short list of what the previous version changed, to the same AI connection.
+  The notes themselves are never uploaded to the review service.
 * **What stays on your computer.** The plan, the before/after pictures and your
   edits to it. When you apply a plan, the app automatically marks the matching
   comments as resolved and syncs that to the review service (undoing the plan
@@ -656,6 +661,26 @@ figure changes when you press *Apply*.
   when you press it.
 * **Turning it off.** Not connecting an AI is enough; there is no other network
   request for this feature.
+
+## Change plans in the assistant
+
+When you send an instruction in the assistant for a single figure, the app first asks
+the AI connection **you** selected for a *change plan* (a card you can compare and
+apply) instead of editing the script right away. Only instructions the plan can
+express (colours, sizes, positions, text, visibility of what is already in the figure)
+become a plan; anything that needs the script is handed to the Agent as before, after
+the plan step has said so.
+
+* **What is sent for the plan.** To the AI connection you chose: the text of your
+  instruction, which element you had selected (if any), and the same table of the
+  figure's elements as above (labels, editable properties with their current values,
+  positions). Scripts, data, project files, paths and computer details are not sent
+  in this step. Instructions with attached reference images skip the plan step.
+* **One-click layout.** The comparison pictures are drawn on your computer by the
+  export engine; nothing about them is sent anywhere.
+* **Turning it off.** Settings → Assistant → Advanced → *Show a change plan before
+  editing*. Off means the assistant and one-click layout behave as before (edit the
+  script / apply directly).
 
 ## Paid edition components
 

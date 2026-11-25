@@ -125,3 +125,18 @@ plan = {
 - 审阅意见是外来文本：只进用户内容的数据块（`<` 转义），系统提示声明里面的指令一概不执行；称呼不发给模型；每条输入意见必须落在某个组或 `unhandled`（模型没提的记 `not_addressed`）。
 - 长任务形状：`POST /api/change-plans` 立刻回 202 + 方案 id，后台线程渲染 B0 → 问模型 → 候选渲染 → 落盘（`data_dir()/cache/change_plans/<项目id>/<方案id>/`，TTL + 条数上限），前端轮询 `GET /api/change-plans/<id>`（与 `ai_data_roles` 的 job 同一形状）；同一张图同一时刻一个任务，同一 `client_request_id` 回同一任务。
 - 隐私：审阅意见文字发给用户所选的模型，`docs/privacy.md` 随第一个带前端入口的 PR 同步（PR 1 的端点已能发出，但没有前端入口、默认不可达）。
+
+## 修订（2026-11-24，PR 5 实现取舍）
+
+- **版本存储**：每一版是**自己的一份方案**（新 `plan_id`、自己的 `plan.json` / `before.png` / `after.png`），带 `version`（上一版 + 1）与 `parent`（上一版 id），与 PR 1 的落盘结构一致（按项目隔离、TTL 与条数上限）；`POST /api/change-plans/<id>/revise` 回 202 + 新方案 id，轮询同 `GET /api/change-plans/<id>`。前端把各版收在同一条卡片条目里（`versions`），按出现顺序数「第 N 版」（后端 `version` 不用于显示：从旧版再续改会得到相同的后端版本号），各版的逐组勾选各记各的；放弃 / 收起一并收掉各版。续改最多到第 8 版（`MAX_VERSIONS`）。
+- **起点与口径**：起点 = 上一版的 `candidate_patches`，base 仍是原 B0（`base_patches` 与基线指纹沿用，应用与基线核对不变；脚本在两版之间变了回 `change_plan_figure_changed`）。模型看**上一版之后**的元素表 + 上一版改动摘要（`<previous_changes>`）；批注与审阅意见同一套信任边界（只进 `<comments>` 数据块）。卡上的改动**相对 B0** 现算：上一版没被批注改掉的组原样带进来（`origin: "review"`），批注出的组标 `origin: "note"`（`comment_id` = 批注 id、`label` = 批注文字）；批注改到上一版同一 (gid, prop) 的，上一版那一条让位。批注把某处改回 B0 的值算 `no_effect`（相对 B0 没有改动）。
+- **批注只在本机**：批注文字与锚点只随这次请求发给用户所选的模型（`docs/privacy.md` 同步），不上传审阅服务。
+- **授权**：`license.FEATURES` 加 `change-plan-rerun`（ADR 0193 §一同步），判断只在 `engine/changeplan.licensed()`；未授权回 `{ok: false, code: "not_licensed"}`、不渲染不问模型。前端入口跟 `licenseVisible`：授权入口没出现时批注的三处入口整个不画（与一键排版一致）。
+- **点选**：批注模式的元素点选取这一版完整「修改后」的元素表（状态中立出图取 manifest），命中走画布同一份 `pickElementStack`；批注总是写在这一版完整的「修改后」上（重改从它出发），不跟逐组勾选走。
+
+## 修订（2026-11-24，PR 4）：改图助手与一键排版出卡的落地口径
+
+- **助手来源**：`POST /api/change-plans` 新增 `source: "assistant"` + `instruction`（用户原话，≤ 2000 字）+ 可选 `target`（选中元素 gid）。后端把指令当成唯一一条「意见」（id `a1`）走同一条流水线，系统提示单独一份：指令是用户本人的意图（照办），元素表里的文字仍是内容不是指令；单组改动上限放到 60，超出的留一条 `over_limit` 不再悄悄丢。**一条指令可以既在 `groups` 又在 `unhandled(needs_script)`**——这就是「部分能改、部分要改脚本」。
+- **前端路由**（判据只在 `lib/assistantPlanRoute.ts`）：开关开（`ai.change_plan.enabled`，**默认开**，只认显式 `false` 才关；设置 → 改图助手 → 高级里一行开关「改图前先给我看修改方案」，`PUT /api/ai/change-plan`，经 `/api/ai/capabilities` 的 `change_plan_enabled` 给前端；一键排版出卡同看这一个开关）+ 输入框发的或历史气泡重发（失败后的「重试」带钉住的目标，不改走）+ 没附参考图 + 指令 ≤ 2000 字 + 单图非位图有脚本、不是 artifact 来源驱动的图 + 非内嵌画布 + 这张图上没有在途方案。后端同步判「不适用」（没连上能用的模型 / native / 没脚本 / 太长）时前端**悄悄落回**现有改脚本路径，同一句话、同一份草稿快照，不留卡。
+- **全部要改脚本**：方案出来后自动续走现有改脚本路径（`aiStore.start`，用发送那一刻钉住的快照），对话里只留一行灰字；**部分要改脚本**：出卡，卡下次级动作「改脚本做剩下的」，点了才走。方案失败（超时 / 额度 / 渲染…）的卡另给「改脚本做」，指令不会掉在地上。
+- **一键排版**：求解回来后不直接 commit，做成一张 `source: quick_layout` 的卡（一个 `atomic` 组「排版」，无逐条改动，画面框 = 每张图排版前后的位置）。前后两张整版预览由前端把「现在」与「应用之后」两份画布交给 `POST /api/change-plans/layout-preview`（导出管线出图，与外部审阅出排版图同一处 `_export_png_bytes`，不写导出目录、不登记）；「应用之后」那份文档用与真提交**同一个**改写函数（`applyPlanToDoc`）在拷贝上算。「应用」= 现有 `commitPlan` 的那一次 commit（检查点此刻才取）。卡在助手页签里、不挂在某张图上（没选图也看得到），弹窗自动弹出并切到助手页签；拖分隔线调比例不出卡；预览出不来 = 直接落地 + 一句灰字。

@@ -315,8 +315,11 @@ class Service:
             # 只有索引做这件事；刊包 / 令牌 / 快照的计数与令牌校验必须每次到源站，不进条件请求。
             etag = index_etag(response[2])
             headers_out = [*response[1], ("ETag", etag)]
+            version = "v2" if facts_v2 else "v1"
             if etag_matches(h.get("if-none-match"), etag):
+                self.store.count_index(now, version, 304)
                 return 304, headers_out, b""
+            self.store.count_index(now, version, 200)
             return 200, headers_out, response[2]
         if route == "/device":
             if method != "POST":

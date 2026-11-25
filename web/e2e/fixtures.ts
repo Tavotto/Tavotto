@@ -49,6 +49,12 @@ export interface AppOptions {
   /** 指定端口（测端口冲突时用） */
   port?: number
   /**
+   * 改图助手「先出修改方案卡」（ADR 0206，`ai.change_plan.enabled`，产品默认开）。**e2e 默认关**：既有的助手用例（草稿 / 账本 / 会话错误卡 /
+   * 重启恢复 / 执行追踪 / CLI 更新）验的是「发送 → 改脚本的会话」这条路，假 CLI 对结构化调用的答复也不是一份方案，开着它那些用例走的是另一条路。
+   * 要测方案路径的用例显式传 `changePlan: true`。
+   */
+  changePlan?: boolean
+  /**
    * 用 `tests/support/e2e_offline_app.py` 起（`python -m tavotto` 的同一个入口，只多套了「受管环境能在离线机器上建出来」
    * 的补丁，见该文件）。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
    */
@@ -97,7 +103,11 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
     mkdirSync(configDir, { recursive: true })
     const configFile = path.join(configDir, 'config.json')
     if (!existsSync(configFile)) {
-      writeFileSync(configFile, JSON.stringify({ updates: { auto_check: false } }), 'utf8')
+      writeFileSync(
+        configFile,
+        JSON.stringify({ updates: { auto_check: false }, ai: { change_plan: { enabled: opts.changePlan === true } } }),
+        'utf8',
+      )
     }
   }
 

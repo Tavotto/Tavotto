@@ -31,6 +31,8 @@
     {"path": "tests/test_compat_triage*", "why": "Guardian 分诊的看护"},
     {"path": "tests/test_compat_minimize*", "why": "Guardian 最小化的看护"},
     {"path": "tests/test_compat_drag.py", "why": "CompatBench 拖动阶段判据的看护"},
+    {"path": "tests/test_invariant_groups.py", "why": "invariants 一步按图分组并行的看护：三组并集 == 全集、每个按图参数化都按组过滤、ci.yml 逐组收退出码"},
+    {"path": "tests/support/invariant_figures.py", "why": "INVARIANT_GROUPS / TAVOTTO_INVARIANT_GROUP 决定 invariants 一步里每个进程跑哪些图"},
     {"path": "docs/ci/compat-guardian.md", "why": "Guardian 比对口径与评审边界"}
   ]
 }

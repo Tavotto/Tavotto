@@ -16,7 +16,7 @@ import { listJoin } from '@/i18n/format'
 import { t as translate } from '@/i18n'
 import { originViewOfOffer } from '@/lib/importOrigin'
 import { DistFailureList, OriginEntryList } from './OriginDetails'
-import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
+import { RepairProgressLine } from './RepairProgressLine'
 import {
   downloadFact,
   jointProgressText,
@@ -461,12 +461,12 @@ export function DependencyPrepareDialog() {
               progress={progress}
               text={jointProgressText(progress, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))}
             />
-            {/* 与修复卡同一套：默认只有那一行，完整的阶段列表、换用 PyPI 镜像的说明（进度记录顶层的 `pypi_mirror`，
-                #743 的联合准备两条路与单包修复同一个字段；没有这个键时一个字都不说）、日志都折叠在「详情」里 */}
+            {/* 与修复卡同一套：步骤在任务清单里列全；换用 PyPI 镜像的说明（进度记录顶层的 `pypi_mirror`，
+                #743 的联合准备两条路与单包修复同一个字段；没有这个键时一个字都不说）、日志折叠在「详情」里 */}
+            {(progress.pypi_mirror || progress.log) && (
             <Details className="text-sm text-ink-3" data-repair-progress-details>
               <Summary className="text-ink-2 hover:text-ink">{en('engine.repairDetails')}</Summary>
               <div className="mt-1.5 flex flex-col gap-1.5">
-                <RepairStageList progress={progress} />
                 {progress.pypi_mirror && (
                   <p data-repair-pypi-mirror>{en('engine.repairPypiMirror', { mirror: progress.pypi_mirror })}</p>
                 )}
@@ -477,6 +477,7 @@ export function DependencyPrepareDialog() {
                 )}
               </div>
             </Details>
+            )}
           </div>
         )}
         {!running && (

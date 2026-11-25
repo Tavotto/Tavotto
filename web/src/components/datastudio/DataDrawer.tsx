@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useAiStore } from '@/store/aiStore'
 import { useUnderstandingUnavailable } from './useConnectAi'
+import { DataAiChoice } from './DataAiChoice'
 import { requestConnectAi } from '@/store/connectAiStore'
 import { useCapsWatch } from '@/components/settings/connectAi/useCapsWatch'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -170,6 +171,9 @@ export function DataDrawer() {
   const { t } = useTranslation('ai')
   const caps = useAiStore((s) => s.caps)
   const unconnected = useUnderstandingUnavailable() === true
+  // 后端说有可用的 AI 或用户做过选择（`on` / `off` / `unavailable`）：左下角出「分析用的 AI」小图标；`none` 是胶囊
+  const choice = useDataFigureStore((s) => s.understandingChoice)
+  const showChoice = choice !== null && choice.state !== 'none'
   useEffect(() => {
     if (caps === null) void useAiStore.getState().loadCaps().catch(() => undefined)
   }, [caps])
@@ -177,7 +181,12 @@ export function DataDrawer() {
   useCapsWatch(unconnected, { poll: false })
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <DataDrawerBody floatInset={unconnected} />
+      <DataDrawerBody floatInset={unconnected || showChoice} />
+      {showChoice && (
+        <div className="pointer-events-none absolute bottom-4 left-3">
+          <DataAiChoice choice={choice} />
+        </div>
+      )}
       {unconnected && (
         <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-3">
           <button

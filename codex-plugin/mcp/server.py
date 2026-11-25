@@ -1384,6 +1384,10 @@ NORMAL_TOOLS = (
     "tavotto_review_feedback",
     "tavotto_reply_review",
     "tavotto_resolve_review",
+    "tavotto_layout_scene",
+    "tavotto_layout_annotate_plan",
+    "tavotto_layout_annotate_apply",
+    "tavotto_layout_annotate_undo",
 )
 
 

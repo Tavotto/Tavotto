@@ -130,6 +130,18 @@ def test_shipped_resources_pass_static_validation():
     assert tutorial.validate_tutorial_resources() == []
 
 
+def test_tutorial_document_stays_schema3_and_schema4_documents_are_accepted(tmp_path):
+    """随仓库发布的教程文档仍是 schema 3；校验按项目排版口径接受 3 / 4，
+    不绑定 `SCHEMA_CURRENT`（现在是 4），否则教程会被自己的升号判红。"""
+    res = _broken_copy(tmp_path)
+    doc_path = res / "tavottofile" / "Tutorial.json"
+    doc = json.loads(doc_path.read_text(encoding="utf-8"))
+    assert doc["schema"] == 3
+    doc_path.write_text(json.dumps({**doc, "schema": 4}), encoding="utf-8")
+    problems = tutorial.validate_tutorial_resources(res)
+    assert not any("schema" in p for p in problems), problems
+
+
 def test_validation_rejects_a_pdf_with_no_page_size(monkeypatch):
     """PDF 打得开但首页尺寸为零（空 MediaBox）——「可读」不等于「有尺寸」。"""
     from tavotto import pdfbackend

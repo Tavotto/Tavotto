@@ -141,6 +141,87 @@ def _path_points(e: dict) -> list[tuple[float, float]]:
     ]
 
 
+def _path_polylines(e: dict) -> list[list[tuple[float, float]]]:
+    """导出载荷里路径的**真实走向**（画布毫米）：每段按三次贝塞尔取样（有 `in` / `out` 手柄的才弯；没有就是直线），
+    闭合子路径带上收尾那一段。核对占位用它——只取锚点会漏掉弧线鼓出去的部分（Codex #2220）。"""
+    x0, y0, w, h = e["x_mm"], e["y_mm"], e["w_mm"], e["h_mm"]
+
+    def mm(q):
+        return (x0 + q[0] * w, y0 + q[1] * h)
+
+    out = []
+    for sp in e["subpaths"]:
+        nodes = sp["nodes"]
+        if not nodes:
+            continue
+        pairs = list(zip(nodes, nodes[1:])) + ([(nodes[-1], nodes[0])] if sp.get("closed") else [])
+        line = [mm(nodes[0]["p"])]
+        for a, b in pairs:
+            p0, p3 = mm(a["p"]), mm(b["p"])
+            if not a.get("out") and not b.get("in"):
+                line.append(p3)
+                continue
+            p1, p2 = mm(a.get("out") or a["p"]), mm(b.get("in") or b["p"])
+            for k in range(1, 17):
+                t = k / 16
+                u = 1 - t
+                line.append(
+                    (
+                        u**3 * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t**3 * p3[0],
+                        u**3 * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t**3 * p3[1],
+                    )
+                )
+        out.append(line)
+    return out
+
+
+def _inside(polys: list[list[tuple[float, float]]], x: float, y: float) -> bool:
+    """奇偶规则：点在不在这组闭合折线围出来的区域里。"""
+    inside = False
+    for poly in polys:
+        for (ax, ay), (bx, by) in zip(poly, poly[1:] + poly[:1]):
+            if (ay > y) != (by > y) and x < ax + (bx - ax) * (y - ay) / (by - ay):
+                inside = not inside
+    return inside
+
+
+def _fill_samples(polys, bounds) -> list[tuple[float, float]]:
+    """闭合且有填充的区域内部的格点（最多约 4000 个，步长随面积放大）：填充的路径压字 / 出页按整块算。"""
+    x0, y0, x1, y1 = bounds
+    area = max((x1 - x0) * (y1 - y0), 1e-9)
+    step = max(0.5, math.sqrt(area / 4000))
+    out = []
+    y = y0 + step / 2
+    while y < y1:
+        x = x0 + step / 2
+        while x < x1:
+            if _inside(polys, x, y):
+                out.append((x, y))
+            x += step
+        y += step
+    return out
+
+
+def _rect_samples(box) -> list[tuple[float, float]]:
+    """一个框的边与内部格点（旋转过的框换成点再转，判出页 / 压字）。"""
+    x0, y0, x1, y1 = box
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    out: list[tuple[float, float]] = []
+    for a, b in zip(corners, corners[1:] + corners[:1]):
+        out += _samples(a, b, 0.0, 0.0)
+    return out + _fill_samples([corners], box)
+
+
+def _rotate_points(pts, e: dict) -> list[tuple[float, float]]:
+    """绕对象框中心顺时针转 `rotation_deg`（画布 y 朝下，与导出 `plan._object_transform` 同一个方向）。"""
+    deg = float(e.get("rotation_deg") or 0.0)
+    if not deg:
+        return list(pts)
+    cx, cy = e["x_mm"] + e["w_mm"] / 2, e["y_mm"] + e["h_mm"] / 2
+    c, sn = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return [(cx + (x - cx) * c - (y - cy) * sn, cy + (x - cx) * sn + (y - cy) * c) for x, y in pts]
+
+
 def _actual(e: dict, role: str, attach: str, node: int | None = None) -> tuple[float, float]:
     if role == "node":
         return _path_points(e)[node]  # type: ignore[index]
@@ -218,8 +299,11 @@ def check(
     *,
     page: dict | None = None,
     profile: dict | None = None,
+    existing_texts: list[dict] | None = None,
 ) -> dict:
-    """`solved` 是 `vectorscene.solve` 的结果，`objects` 是同一批对象**校验过**的样子（`agentobjects` 换过 id，
+    """`existing_texts`：画布上**已有**的文字对象（文档对象，`x/y/w/h` 毫米），新元素不许压它们（Codex #2204）。
+
+    `solved` 是 `vectorscene.solve` 的结果，`objects` 是同一批对象**校验过**的样子（`agentobjects` 换过 id，
     顺序不变）。`items` 是原描述（取 `over_data` 与锚点种类）。"""
     from . import agentobjects
 
@@ -256,7 +340,7 @@ def check(
     def footprint(name: str, e: dict) -> dict:
         half = max(float(e.get("stroke_pt", 0.0)) * _MM / 2, 0.05)
         if e["type"] == "shape" and not e.get("fill"):
-            pts = _outline_samples(e)  # 只有描边：占的是那一圈线，不是整个框
+            pts = _rotate_points(_outline_samples(e), e)  # 只有描边：占的是那一圈线，不是整个框
             return {"kind": "points", "full": pts, "data": pts, "half": half}
         it = spec.get(name, {})
 
@@ -270,15 +354,25 @@ def check(
 
         if e["type"] == "path":
             pts = _path_points(e)
+            polys = _path_polylines(e)
             full: list[tuple[float, float]] = []
-            data: list[tuple[float, float]] = []
-            last = len(pts) - 2
-            for i, (p0, p1) in enumerate(zip(pts, pts[1:])):
-                full += _samples(p0, p1, 0.0, 0.0)
-                data += _samples(
-                    p0, p1, soft("from") if i == 0 else 0.0, soft("to") if i == last else 0.0
-                )
+            for line in polys:
+                for p0, p1 in zip(line, line[1:]):
+                    full += _samples(p0, p1, 0.0, 0.0)
             ends = {"from": pts[0], "to": pts[-1]} if pts else {}
+            # 锚定端让出尖端余量：按到端点的距离让（弧线上的取样点也照样让），不再只看第一 / 最后一段
+            data = [
+                q
+                for q in full
+                if not any(
+                    soft(k) and math.hypot(q[0] - ends[k][0], q[1] - ends[k][1]) <= soft(k)
+                    for k in ends
+                )
+            ]
+            if e.get("fill") and all(sp.get("closed") for sp in e["subpaths"]) and full:
+                inner = _fill_samples(polys, _bounds(full))
+                full += inner
+                data += inner
             heads = _path_heads(e)
         elif e["type"] == "arrow":
             g = _arrow_geom_mm(e)
@@ -287,7 +381,16 @@ def check(
             ends = {"from": g["a"], "to": g["b"]}
             heads = g["heads"]
         else:
-            return {"kind": "rect", "full": _box(e), "data": _box(e), "half": 0.0}
+            if not e.get("rotation_deg"):
+                return {"kind": "rect", "full": _box(e), "data": _box(e), "half": 0.0}
+            if e["type"] == "shape" and e.get("shape") == "ellipse":
+                # 有填充的椭圆按椭圆本身（轮廓 + 内部格点）转：转外接框会把圆的四角算进来，误判出页（Codex #2220）
+                ring = _outline_samples(e)
+                pts = ring + _fill_samples([ring], _box(e))
+            else:
+                pts = _rect_samples(_box(e))
+            pts = _rotate_points(pts, e)
+            return {"kind": "points", "full": pts, "data": pts, "half": 0.05}
         for hp, which in heads:
             full += hp
             tip, allow = ends.get(which), soft(which)
@@ -296,7 +399,12 @@ def check(
                 for q in hp
                 if not (allow and tip and math.hypot(q[0] - tip[0], q[1] - tip[1]) <= allow)
             ]
-        return {"kind": "points", "full": full or list(ends.values()), "data": data, "half": half}
+        return {
+            "kind": "points",
+            "full": _rotate_points(full or list(ends.values()), e),
+            "data": _rotate_points(data, e),
+            "half": half,
+        }
 
     feet = {n: footprint(n, e) for n, e in by_name.items()}
 
@@ -365,6 +473,8 @@ def check(
     for name, e in by_name.items():
         if e["type"] == "text":
             texts.append((name, _box(e)))
+    for o in existing_texts or []:
+        texts.append((f"canvas:{o.get('id')}", _doc_box(o)))
     for name, ft in feet.items():
         kind, foot, half = ft["kind"], ft["full"], ft["half"]
         clash = []
@@ -502,6 +612,19 @@ def _outline_samples(e: dict) -> list[tuple[float, float]]:
     for a, b in zip(corners, corners[1:] + corners[:1]):
         out += _samples(a, b, 0.0, 0.0)
     return out
+
+
+def _doc_box(o: dict) -> tuple[float, float, float, float]:
+    """文档对象（`x/y/w/h` 毫米、`rotationDeg` 绕中心顺时针）→ 画布上的外接框。"""
+    x, y, w, h = (float(o.get(k, 0.0)) for k in ("x", "y", "w", "h"))
+    deg = float(o.get("rotationDeg") or 0.0)
+    if not deg:
+        return (x, y, x + w, y + h)
+    t = math.radians(deg)
+    hw = (abs(w * math.cos(t)) + abs(h * math.sin(t))) / 2
+    hh = (abs(w * math.sin(t)) + abs(h * math.cos(t))) / 2
+    cx, cy = x + w / 2, y + h / 2
+    return (cx - hw, cy - hh, cx + hw, cy + hh)
 
 
 def _dist_to_rect(x: float, y: float, r) -> float:
