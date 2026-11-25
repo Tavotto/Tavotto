@@ -204,6 +204,7 @@ export function CandidateStage({
             ariaLabel={t('dataFigureV2.draft.switchLabel')}
             columns={items.length}
             previewHasLabel
+            framed
             cellClassName="h-auto flex-col items-stretch justify-start gap-1 p-1.5 text-left text-sm"
             onChange={onPreview}
             options={items.map((it) => ({

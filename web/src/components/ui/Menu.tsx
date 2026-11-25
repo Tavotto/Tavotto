@@ -200,6 +200,7 @@ export function PointMenu({
 export function MenuItem({
   children,
   shortcut,
+  shortcutClassName,
   onSelect,
   onFocus,
   disabled,
@@ -212,6 +213,11 @@ export function MenuItem({
 }: {
   children: ReactNode
   shortcut?: string
+  /**
+   * 右侧那一格放的不是快捷键时（恢复卡名单右侧的时间）的样式覆盖，经 `cn` 合并、后者胜；
+   * 不给 = 快捷键的默认样式原样。
+   */
+  shortcutClassName?: string
   /** 项被选中（Radix 默认选中即关菜单；要留着菜单就在这里 `e.preventDefault()`） */
   onSelect?: (e: Event) => void
   /** 项获得焦点——指针悬停与方向键高亮都会走到这里（侧边预览用它知道「现在指着哪一项」） */
@@ -253,7 +259,7 @@ export function MenuItem({
         {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
         {hint && <span className="truncate font-mono text-xs leading-4 text-ink-3">{hint}</span>}
       </span>
-      {shortcut && <ShortcutText>{shortcut}</ShortcutText>}
+      {shortcut && <ShortcutText className={shortcutClassName}>{shortcut}</ShortcutText>}
     </DM.Item>
   )
 }
