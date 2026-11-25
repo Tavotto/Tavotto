@@ -532,7 +532,18 @@
     "script_source_missing": "The script file itself is missing ({{script}}): it may have been moved or deleted. Put the script back in the project and run it again; Tavotto will not substitute another file with the same name.",
     "input_declaration_conflict": "Input declarations changed elsewhere. Reload them before saving.",
     "input_declaration_invalid": "The input declaration or selected resources are unavailable. Check the files, run configuration, and data locations.",
-    "input_declaration_unavailable": "Input declarations cannot be read or saved right now. Please try again later."
+    "input_declaration_unavailable": "Input declarations cannot be read or saved right now. Please try again later.",
+    "change_plan_script_no_change": "The agent didn’t change the script, so nothing is different.",
+    "change_plan_script_check_failed": "The edited script didn’t pass the checks. Your script wasn’t changed. You can try again.",
+    "change_plan_script_data_changed": "This change would alter the data in the figure, so no plan was made. Your script wasn’t changed.",
+    "change_plan_script_no_preview": "The edited script can’t be previewed in a copy, so no plan was made. Your script wasn’t changed.",
+    "change_plan_script_overreach": "The agent changed files in your project and no plan was made.",
+    "change_plan_script_agent_failed": "The agent didn’t finish. Your script wasn’t changed. You can try again.",
+    "change_plan_script_unsupported": "This connection can’t be used to edit scripts right now.",
+    "change_plan_script_apply_failed": "Writing the script failed. The script wasn’t changed.",
+    "change_plan_script_undo_conflict": "The script was changed again after applying, so nothing was undone.",
+    "change_plan_script_not_applied": "This script change hasn’t been applied yet.",
+    "change_plan_script_restore_conflict": "The script changed again, so it wasn’t restored."
   },
   "engine": {
     "apply": "Apply",

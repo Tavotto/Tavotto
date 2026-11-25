@@ -352,6 +352,12 @@ order: 240
   与 `discover.walk_files` 结果逐字比对，打开的是遍历结果里的那一项。响应一律有上界、控制字符换空格（表里的文字不可信）。读不了但能靠指定表头行补救的文本表（`data_ragged` 等）概览照带 `raw_lines` 与猜的行号（`raw_lines` 非空 = 前端可让用户点一行，二进制 / 散文为空），别在概览里提前丢掉 `read_text_table` 给的预览；XLSX 每个工作表的行列数在 `/api/ai/data-files?formats=all` 的 `sheets` 里
   （有预算，超出 `null` = 没读）。`/api/registry` 的 `all_scripts[]` 对 v2 生成的脚本加 `generated_from: {data, sheet}`：解析只有 `ai_data_template.parse_source_comment` 一处（严格：tokenize 真注释、第一条、固定键集合；
   只外传路径与工作表名，不给配方与哈希），开关关着整个不读、响应逐字不变。不写文件、不发遥测。看护 `tests/test_ai_data_overview.py`。
+- **修改方案的脚本修改（ADR 0206 PR 6，`ai_bridge.run(plan_only=True)`）**：对**所有**连接（内置 / Codex / Claude Code）强制走候选工作区、cwd = 候选目录，与 `ai.taf.enabled` 无关；
+  执行器换成 `ai_figure_edit.PlanOnlyExecutor`：过了提交前检查（含有界修正）后**不写用户脚本**，候选字节留在 `cand.extras["plan_bytes"]`，`commit` 只置 `committed`、刷新记 `skipped`，提交后检查整个跳过。
+  收尾 `_plan_guard`（R-03 兜底，外部 CLI 不遵守 cwd 只能事后检出）：目标脚本在运行期间变了 → **一律当冲突、不自动还原**（分不清用户保存与 Agent 直接改）：把此刻字节与起跑快照交给方案端点各备份两处（`scriptbackup.backup_only`），用户点了「恢复到开始前的版本」才经 `POST /api/change-plans/restore-script`（只认 `change_plan_snapshot` 备份、核此刻摘要，之后又变了 409 `change_plan_script_restore_conflict`）还原；
+  别的文件被改只列名（≤ 5 个，其余只报个数）、**不动**；任何越界都不出方案（`change_plan_script_overreach`，params `files / total / target_changed / backup / script / current_sha256`）。
+  方案端点 `POST /api/change-plans {mode:"script", source:"assistant", connection}`：渲染 B0 → 起 Agent（`plan_outcome` 取结局）→ 候选字节先把换行风格归一到原脚本的（`changeplan.match_newlines`），再用**影子脚本**按用户同一路由跑一遍并在那个 worker 上套 B0 出「改后」图（`_convert_runner(snapshot=…)`，同宽度同 run config）→ 数据指纹对基线（变了 = `change_plan_script_data_changed`）→ 候选字节 + diff + 前后图落方案目录、候选目录当场删。
+  写入根绊线（量不了预览）首版直接失败 `change_plan_script_no_preview`。应用 / 撤销见 `script-edits.md`。看护 `tests/test_changeplan_script.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过

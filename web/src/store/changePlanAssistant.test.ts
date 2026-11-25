@@ -87,7 +87,11 @@ const ask = () => cps().requestFromAssistant('p1', { instruction: FALLBACK.promp
 
 beforeEach(async () => {
   vi.useFakeTimers()
-  createChangePlan.mockReset().mockResolvedValue({ plan_id: 'p1', state: 'running' })
+  // 脚本修改方案（PR 6）这条路在这里不适用：落回现有的直接改脚本（脚本方案本身见 changePlanScript.test.ts）
+  createChangePlan.mockReset().mockImplementation(async (body: { mode?: string }) => {
+    if (body.mode === 'script') throw new EngineError('x', '', 'change_plan_script_unsupported', '')
+    return { plan_id: 'p1', state: 'running' }
+  })
   getChangePlan.mockReset()
   discardChangePlan.mockClear()
   requestRender.mockReset()
@@ -166,6 +170,7 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
     const key = (await ask()) as string
     expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_busy' } })
     expect(cps().entries[key].instruction).toBe(FALLBACK.prompt)
+    createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_script_unsupported', '')) // 脚本方案这条路不适用 → 落回直接改脚本
     expect(await cps().runScript(key)).toBe(true)
     expect(start).toHaveBeenCalledOnce()
   })
@@ -178,6 +183,43 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
     await cps().regenerate(key)
     const e = Object.values(cps().entries)[0]
     expect(e).toMatchObject({ status: 'failed', failure: { code: 'change_plan_no_connection' } })
+  })
+})
+
+describe('连接用不了：脚本方案同样走不通，直接落回旧路径', () => {
+  it.each(['change_plan_no_connection', 'change_plan_unsupported_connection'])('同步被拒（%s）：只发一次方案请求，不再发脚本方案', async (code) => {
+    createChangePlan.mockRejectedValue(new EngineError('x', '', code, ''))
+    expect(await ask()).toBe('fallthrough')
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(createChangePlan.mock.calls[0][0].mode).toBeUndefined()
+    expect(cps().order).toEqual([])
+  })
+
+  it('其它不适用码（太长）：才再试一次脚本方案', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_too_large', '')).mockResolvedValue({ plan_id: 'p2', state: 'running' })
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    const key = await ask()
+    expect(typeof key).toBe('string')
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+    expect(createChangePlan.mock.calls[1][0]).toMatchObject({ mode: 'script' })
+  })
+
+  it('线程里才判出连接不支持（轮询 failed）：直接改脚本，不发脚本方案请求', async () => {
+    getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code: 'change_plan_unsupported_connection' })
+    const key = (await ask()) as string
+    await tick()
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(start).toHaveBeenCalledOnce()
+    expect(cps().entries[key].status).toBe('handoff')
+  })
+
+  it('脚本方案自己在线程里被拒：直接改脚本，不循环再发脚本方案', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_too_large', '')).mockResolvedValue({ plan_id: 'p2', state: 'running' })
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'failed', code: 'change_plan_native_unsupported' })
+    await ask()
+    await tick()
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+    expect(start).toHaveBeenCalledOnce()
   })
 })
 

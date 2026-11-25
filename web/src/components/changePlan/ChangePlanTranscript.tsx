@@ -37,9 +37,14 @@ export function useLatestReadyKey(mine: PlanEntry[], panelId: string): string | 
 
 /** 一次方案的一轮：审阅来源 = 审阅意见卡 + 方案卡；助手来源 = 用户的指令气泡 + 方案卡（交给改脚本之后只剩那一行灰字，气泡由改脚本那一轮画） */
 export function ChangePlanTurn({ entry, latest }: { entry: PlanEntry; latest: boolean }) {
+  // 「改脚本做剩下的」的脚本方案卡：同一条指令只画一次用户气泡——前一张卡还显示着它就不再画（前一张已收成一行灰字则由这张画）
+  const prevShowsBubble = useChangePlanStore((s) => {
+    const prev = entry.followsKey ? s.entries[entry.followsKey] : undefined
+    return !!prev && prev.status !== 'handoff'
+  })
   return (
     <div className="flex flex-col gap-(--item-gap)" data-change-plan-turn={entry.key}>
-      {entry.from === 'assistant' ? entry.status !== 'handoff' && <AssistantNoteBubble entry={entry} /> : <ReviewNoteCard entry={entry} />}
+      {entry.from === 'assistant' ? entry.status !== 'handoff' && !prevShowsBubble && <AssistantNoteBubble entry={entry} /> : <ReviewNoteCard entry={entry} />}
       <ChangePlanCard entry={entry} latest={latest} />
     </div>
   )
