@@ -13,6 +13,7 @@ const getChangePlan = vi.fn()
 const discardChangePlan = vi.fn(async () => ({ discarded: true }))
 const applyChangePlanScript = vi.fn()
 const undoChangePlanScript = vi.fn()
+const restoreChangePlanScript = vi.fn()
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -21,6 +22,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   discardChangePlan: (...a: unknown[]) => discardChangePlan(...(a as [])),
   applyChangePlanScript: (...a: unknown[]) => applyChangePlanScript(...a),
   undoChangePlanScript: (...a: unknown[]) => undoChangePlanScript(...a),
+  restoreChangePlanScript: (...a: unknown[]) => restoreChangePlanScript(...a),
 }))
 vi.mock('@/store/renderScheduler', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/renderScheduler')>()),
@@ -99,6 +101,7 @@ beforeEach(async () => {
   getChangePlan.mockReset()
   applyChangePlanScript.mockReset().mockResolvedValue({ backup: 'fig/1', after_sha256: 'bb' })
   undoChangePlanScript.mockReset().mockResolvedValue(undefined)
+  restoreChangePlanScript.mockReset().mockResolvedValue(undefined)
   start.mockReset().mockResolvedValue('accepted')
   useAiStore.setState({ start: start as never })
   setCurrentProjectId('pj_a')
@@ -231,8 +234,8 @@ describe('失败终态：一句话 + 下一步', () => {
   })
 
   it('越界：脚本被还原 / 没替你还原 / 只动了别的文件，各说清楚；文件名最多列 5 个，其余「等 N 个」', () => {
-    expect(failureText('change_plan_script_overreach', { restored: true, files: [], total: 0 })).toContain('已把你的脚本还原')
-    expect(failureText('change_plan_script_overreach', { conflict: true })).toContain('没有替你还原')
+    expect(failureText('change_plan_script_overreach', { target_changed: true })).toContain('没有自动还原')
+    expect(failureText('change_plan_script_overreach', { target_changed: true })).toContain('可能是你保存的')
     expect(failureText('change_plan_script_overreach', { files: ['a.txt'], total: 1 })).toContain('你的脚本没有被改动')
     expect(overreachFiles({ files: ['a.txt', 'b.txt'], total: 2 })).toBe('a.txt 和 b.txt')
     expect(overreachFiles({ files: ['a', 'b', 'c', 'd', 'e'], total: 7 })).toContain('等 7 个')
@@ -241,10 +244,41 @@ describe('失败终态：一句话 + 下一步', () => {
 
   it('失败后「再试一次」用同一份请求再来一份脚本方案', async () => {
     const { key } = await toScriptCard()
-    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'failed', code: 'change_plan_script_overreach', params: { files: ['x.txt'], total: 1, restored: true } })
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'failed', code: 'change_plan_script_overreach', params: { files: ['x.txt'], total: 1, target_changed: false } })
     cps().patchEntry(key, { status: 'failed', failure: { code: 'change_plan_script_overreach' } })
     createChangePlan.mockClear()
     await cps().regenerate(key)
     expect(createChangePlan.mock.calls[0][0]).toMatchObject({ mode: 'script' })
+  })
+})
+
+describe('生成期间脚本被改过（冲突）：不自动还原，用户点了才恢复', () => {
+  const params = { target_changed: true, backup: 'fig/1', script: 'fig.py', current_sha256: 'cc', files: [], total: 0 }
+  const conflictCard = async () => {
+    getChangePlan.mockResolvedValue({ plan_id: 'p9', state: 'failed', code: 'change_plan_script_overreach', params })
+    const key = (await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation })) as string
+    await tick()
+    return key
+  }
+
+  it('主动作是「恢复到开始前的版本」，另给「保留现在的版本」；没有备份信息时才退回重试', async () => {
+    expect(failureAction('change_plan_script_overreach', params)).toBe('restore')
+    expect(failureAction('change_plan_script_overreach', { target_changed: true })).toBe('retry')
+    expect(failureAction('change_plan_script_overreach', { target_changed: false, files: ['a'] })).toBe('retry')
+  })
+
+  it('点「恢复」才调后端，带冲突时看到的摘要；成功后收起这张卡', async () => {
+    const key = await conflictCard()
+    expect(restoreChangePlanScript).not.toHaveBeenCalled()
+    expect(await cps().restoreScript(key)).toBe(true)
+    expect(restoreChangePlanScript).toHaveBeenCalledWith({ backup: 'fig/1', script: 'fig.py', expect_sha256: 'cc' })
+    expect(cps().entries[key]).toBeUndefined()
+  })
+
+  it('恢复被拒（脚本之后又变了）：一句灰字，卡片仍在，脚本没动', async () => {
+    const key = await conflictCard()
+    restoreChangePlanScript.mockRejectedValue(new EngineError('x', '', 'change_plan_script_restore_conflict', ''))
+    expect(await cps().restoreScript(key)).toBe(false)
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', notice: 'restore_failed', scriptBusy: false })
   })
 })

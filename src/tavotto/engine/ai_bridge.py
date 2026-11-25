@@ -40,7 +40,6 @@ from . import (
     ai_history,
     ai_oauth,
     ai_providers,
-    atomicio,
     cli_failure,
     config,
     convertwrite,
@@ -3662,21 +3661,16 @@ PLAN_OVERREACH_FILES_MAX = 5
 
 
 def _plan_guard(cand, snap: Path) -> dict:
-    """方案任务收尾的越界核对（R-03 兜底：外部 CLI 不一定遵守 cwd，只能事后检出）。
+    """方案任务收尾的越界核对（R-03 兜底，外部 CLI 不遵守 cwd 只能事后检出）。
 
-    * 目标脚本被原地改了 → 按起跑快照还原（整段持 `script_guard`、原子写）；**还原前再读一次**：与刚才看到的不一样 = 这期间还有人改过，
-      **不覆盖**，如实报告（`target_conflict`）；
-    * 项目里别的文件被改 → 只列文件名，不动（`files`，已按名字排序）。
-    回 `{"touched": bool, "target_restored": bool, "target_conflict": bool, "files": [...], "total": int}`；没越界 `touched` 为假。"""
+    * 目标脚本在运行期间变了：**分不清是用户在编辑器里保存、还是 Agent 直接改的**，所以一律当冲突——**不自动还原**（还原会冲掉用户的合法保存，
+      且违反「覆盖前先备份」）。只把「此刻的字节」`current_bytes` 与「起跑快照」`snapshot_bytes` 交给方案端点，由它两处备份后告诉用户，
+      用户点了「恢复到开始前的版本」才经 `scriptbackup.replace(expect_before=此刻摘要)` 还原；
+    * 项目里别的文件被改 → 只列名（≤ 5 个，其余只报个数）、**不动**（`files`，已按名字排序）。
+    回 `{"touched": bool, "target_changed": bool, "files": [...], "total": int, "current_bytes", "snapshot_bytes"}`；没越界 `touched` 为假。"""
     from . import ai_figure_edit
 
-    out = {
-        "touched": False,
-        "target_restored": False,
-        "target_conflict": False,
-        "files": [],
-        "total": 0,
-    }
+    out: dict = {"touched": False, "target_changed": False, "files": [], "total": 0}
     try:
         seen = cand.script_path.read_bytes()
     except OSError:
@@ -3690,22 +3684,12 @@ def _plan_guard(cand, snap: Path) -> dict:
     others = sorted(changed or [])
     out["files"], out["total"] = others[:PLAN_OVERREACH_FILES_MAX], len(others)
     if seen != cand.base_bytes:
-        out["touched"] = True
-        with script_guard(cand.script_path):
-            try:
-                now = cand.script_path.read_bytes()
-            except OSError:
-                now = None
-            if now != seen:
-                out["target_conflict"] = True  # 看过之后又被别人改了：不覆盖
-            else:
-                try:
-                    original = snap.read_bytes()
-                    scriptlock.write_script(cand.script_path, original, mode=cand.base_mode)
-                    out["target_restored"] = True
-                except (OSError, atomicio.AtomicWriteError) as exc:
-                    LOG.warning("方案任务越界还原失败（%s）: %s", cand.script_rel, exc)
-                    out["target_conflict"] = True
+        out["touched"] = out["target_changed"] = True
+        out["current_bytes"] = seen
+        try:
+            out["snapshot_bytes"] = snap.read_bytes()
+        except OSError:
+            out["snapshot_bytes"] = cand.base_bytes
     if others:
         out["touched"] = True
     return out

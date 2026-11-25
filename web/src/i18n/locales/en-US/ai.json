@@ -853,10 +853,12 @@
       "appliedScript": "Applied · script updated",
       "applyFailedScript": "Couldn’t apply. The script wasn’t changed",
       "undoFailedScript": "The script changed again after applying, so nothing was undone",
-      "overreachRestored": "The agent changed files in your project. Your script was restored.",
-      "overreachConflict": "The agent changed files in your project, and your script was edited again meanwhile, so it wasn’t restored. Please take a look.",
       "overreachOthers": "The agent changed files in your project. Your script wasn’t changed.",
-      "overreachMore": "{{files}} and {{count}} in all"
+      "overreachMore": "{{files}} and {{count}} in all",
+      "overreachChanged": "Your script changed while this was running (you may have saved it, or the agent edited it directly). It wasn’t restored automatically. Both versions are backed up.",
+      "restoreScript": "Restore the version from before",
+      "keepCurrent": "Keep the current version",
+      "restoreFailed": "The script changed again, so it wasn’t restored"
     },
     "dialog": {
       "title": "Change plan",

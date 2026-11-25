@@ -12192,7 +12192,17 @@ def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, ta
     except engine_pool.WorkerError:
         raise ec.PlanFailure("change_plan_render_failed", "before") from None
     task.phase = "agent"
-    hooks = _ai_task_hooks(ctx, script, "main")
+    # 图的真实入口：与改脚本路线（`/api/ai/run`）同一套解析（`render()` 入口 / 没有 `main()` 的 `__main__` 脚本不能写死 main）
+    entry = "main"
+    try:
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = _resolve_runtime_asset(rel_id)
+        else:
+            info = _disk_panel(safe_resolve(rel_id))[1]
+        entry = str((info or {}).get("entry") or "main")
+    except (NotFound, OSError):
+        pass
+    hooks = _ai_task_hooks(ctx, script, entry)
     context = {"stem": stem, "gid": target, "scope": "element" if target else "figure"}
     try:
         sid = engine_ai.run(
@@ -12227,16 +12237,31 @@ def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, ta
         time.sleep(0.4)
     over = outcome["overreach"] or {}
     if over.get("touched"):
-        raise ec.PlanFailure(
-            "change_plan_script_overreach",
-            "overreach",
-            {
-                "files": list(over.get("files") or [])[:5],
-                "total": int(over.get("total") or 0),
-                "restored": bool(over.get("target_restored")),
-                "conflict": bool(over.get("target_conflict")),
-            },
-        )
+        params: dict = {
+            "files": list(over.get("files") or [])[:5],
+            "total": int(over.get("total") or 0),
+            "target_changed": bool(over.get("target_changed")),
+        }
+        if over.get("target_changed"):
+            # 目标脚本在运行期间变了（分不清是用户保存还是 Agent 直接改）：**不自动还原**；此刻的字节与起跑快照各备份两处，
+            # 用户点了「恢复到开始前的版本」才按快照还原（`restore-script`，核此刻摘要）
+            try:
+                store = _script_store(ctx)
+                current = over.get("current_bytes")
+                snap_rec = engine_scriptbackup.backup_only(
+                    store, script, over["snapshot_bytes"], kind="change_plan_snapshot"
+                )
+                if isinstance(current, bytes):
+                    engine_scriptbackup.backup_only(
+                        store, script, current, kind="change_plan_conflict"
+                    )
+                    params["current_sha256"] = engine_scriptbackup.sha256(current)
+                params["backup"] = snap_rec["id"]
+                params["script"] = script
+            except engine_scriptbackup.ScriptEditError as exc:
+                LOG.warning("脚本方案冲突备份失败: %s", exc.code)
+                params["backup_failed"] = True
+        raise ec.PlanFailure("change_plan_script_overreach", "overreach", params)
     if task.cancelled:
         raise ec.PlanFailure("change_plan_script_agent_failed", "cancelled")
     # 换行风格归一到原脚本的（Windows 上文本模式写回会把整份换成 CRLF / LF）：diff、渲染、应用写入的都是归一后的字节
@@ -12255,7 +12280,7 @@ def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, ta
         raise ec.PlanFailure("change_plan_too_large")
     task.phase = "render_after"
     after_png = _change_plan_script_render(
-        ctx, task, script, script_path, root, stem, base, new_bytes, hooks
+        ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry
     )
     try:
         if (engine_preparation._script_revision(str(root), script) or "") != rev0:
@@ -12275,7 +12300,9 @@ def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, ta
     return plan, before_png, after_png, new_bytes
 
 
-def _change_plan_script_render(ctx, task, script, script_path, root, stem, base, new_bytes, hooks):
+def _change_plan_script_render(
+    ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry="main"
+):
     """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图；数据指纹不变才放行。→ 改后 PNG。"""
     ec = engine_changeplan
     cand = None
@@ -12286,7 +12313,7 @@ def _change_plan_script_render(ctx, task, script, script_path, root, stem, base,
             ctx,
             script,
             with_manifests=True,
-            entry="main",
+            entry=entry,
             snapshot=(base, _CHANGE_PLAN_WIDTH, stem),
         )
         res = engine_ai_convert.run_validation(cand, runner)
@@ -12407,6 +12434,53 @@ def api_change_plans_undo_script(plan_id: str):
         LOG.warning("脚本修改方案撤销失败: %s", exc.code)
         return _change_plan_error("change_plan_script_apply_failed")
     engine_changeplan.mark_applied(ctx.id, plan_id, None)
+    _after_script_edit(ctx, script)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/change-plans/restore-script")
+def api_change_plans_restore_script():
+    """脚本方案生成期间脚本被改过（冲突）之后，卡片上的「恢复到开始前的版本」：`{backup, script, expect_sha256}`。
+    只认 `change_plan_snapshot` 那种备份、且备份里记的脚本就是请求的脚本；锁内核「脚本此刻还是冲突时看到的那一版」（`expect_sha256`），
+    之后又变了就拒（409 `change_plan_script_restore_conflict`）；还原前先把此刻的版本再备份一份（`replace` 自带）。"""
+    ctx = current_ctx()
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return _change_plan_error("invalid_change_plan")
+    script, expect = body.get("script"), body.get("expect_sha256")
+    if not isinstance(script, str) or not script or not isinstance(expect, str):
+        return _change_plan_error("invalid_change_plan")
+    try:
+        store = _script_store(ctx)
+        meta, original = engine_scriptbackup.load(store, body.get("backup"))
+        if meta.get("kind") != "change_plan_snapshot" or meta.get("script") != script.replace(
+            "\\", "/"
+        ):
+            return _change_plan_error("change_plan_unknown")
+        path = engine_scriptbackup.resolve(ctx.path, script)
+        with engine_scriptlock.script_guard(path):
+            _require_script_idle(path, script)
+            engine_scriptbackup.replace(
+                store,
+                script,
+                original,
+                kind="change_plan_restore",
+                expect_before=expect,
+                meta={"restores": meta.get("id")},
+            )
+    except engine_scriptbackup.ScriptEditError as exc:
+        if exc.code in (
+            engine_scriptbackup.ERROR_SCRIPT_CHANGED,
+            engine_scriptbackup.ERROR_SCRIPT_BUSY,
+        ):
+            return _change_plan_error("change_plan_script_restore_conflict")
+        if exc.code == engine_scriptbackup.ERROR_BACKUP_UNKNOWN:
+            return _change_plan_error("change_plan_unknown")
+        return _change_plan_error("change_plan_script_apply_failed")
     _after_script_edit(ctx, script)
     return jsonify({"ok": True})
 

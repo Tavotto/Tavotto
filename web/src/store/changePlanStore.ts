@@ -7,6 +7,7 @@ import {
   discardChangePlan,
   getChangePlan,
   reviseChangePlan,
+  restoreChangePlanScript,
   undoChangePlanScript,
   type ChangePlan,
   type ChangePlanPatch,
@@ -184,7 +185,7 @@ export interface PlanEntry {
   /** 脚本修改方案：应用 / 撤销在途（防连点） */
   scriptBusy?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
-  notice?: 'apply_failed' | 'undo_failed'
+  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed'
   /** 应用后由这张卡标成「已处理」的意见 id（撤销时只还原这几条） */
   resolvedIds?: string[]
   /** 标已处理 / 还原没成：审阅页签上一句灰字 + 重试（不自动再试，免得失败时反复打后端） */
@@ -253,6 +254,8 @@ interface ChangePlanState {
   applyScript: (key: string) => Promise<ApplyResult>
   /** 脚本修改方案的撤销（按备份还原；⌘Z 不撤脚本） */
   undoScript: (key: string) => Promise<boolean>
+  /** 冲突卡（生成期间脚本被改过）上的「恢复到开始前的版本」：用户点了才按起跑快照还原，脚本之后又变了就拒绝 */
+  restoreScript: (key: string) => Promise<boolean>
   discard: (key: string) => void
   /** 高级版：按批注重改，同一张卡出下一版（出好后自动切到新版） */
   revise: (key: string) => Promise<ReviseResult>
@@ -720,6 +723,24 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       } catch {
         if (!guard.still() || !get().entries[key]) return false
         patch(key, { scriptBusy: false, notice: 'undo_failed' })
+        return false
+      }
+    },
+
+    restoreScript: async (key) => {
+      const e = get().entries[key]
+      const p = e?.failure?.params
+      if (!e || e.scriptBusy || typeof p?.backup !== 'string' || typeof p?.script !== 'string' || typeof p?.current_sha256 !== 'string') return false
+      const guard = captureProjectEpoch()
+      patch(key, { scriptBusy: true, notice: undefined })
+      try {
+        await restoreChangePlanScript({ backup: p.backup, script: p.script, expect_sha256: p.current_sha256 })
+        if (!guard.still() || !get().entries[key]) return false
+        get().dismiss(key)
+        return true
+      } catch {
+        if (!guard.still() || !get().entries[key]) return false
+        patch(key, { scriptBusy: false, notice: 'restore_failed' })
         return false
       }
     },

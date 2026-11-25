@@ -83,6 +83,7 @@ ERROR_CODES = (
     "change_plan_script_apply_failed",
     "change_plan_script_undo_conflict",
     "change_plan_script_not_applied",
+    "change_plan_script_restore_conflict",
 )
 
 #: 没处理的意见的一句话原因（闭集短码；界面文案归前端）。
@@ -147,6 +148,7 @@ MESSAGES = {
     "change_plan_script_apply_failed": "写入脚本失败，脚本没有被修改",
     "change_plan_script_undo_conflict": "脚本在应用之后又被改过，没有撤销",
     "change_plan_script_not_applied": "这份脚本修改还没有应用",
+    "change_plan_script_restore_conflict": "脚本又被改过了，没有恢复",
 }
 
 

@@ -542,7 +542,8 @@
     "change_plan_script_unsupported": "This connection can’t be used to edit scripts right now.",
     "change_plan_script_apply_failed": "Writing the script failed. The script wasn’t changed.",
     "change_plan_script_undo_conflict": "The script was changed again after applying, so nothing was undone.",
-    "change_plan_script_not_applied": "This script change hasn’t been applied yet."
+    "change_plan_script_not_applied": "This script change hasn’t been applied yet.",
+    "change_plan_script_restore_conflict": "The script changed again, so it wasn’t restored."
   },
   "engine": {
     "apply": "Apply",

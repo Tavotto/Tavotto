@@ -4315,6 +4315,15 @@ export async function undoChangePlanScript(planId: string): Promise<void> {
   await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/undo-script`, { method: 'POST' })
 }
 
+/** 脚本方案生成期间脚本被改过（冲突）之后，「恢复到开始前的版本」：按起跑快照那份备份还原；脚本此刻不再是冲突时看到的那一版就抛 `change_plan_script_restore_conflict`。 */
+export async function restoreChangePlanScript(body: { backup: string; script: string; expect_sha256: string }): Promise<void> {
+  await changePlanFetch('/api/change-plans/restore-script', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 /** 放弃一份方案（幂等）。 */
 export async function discardChangePlan(planId: string): Promise<{ discarded: boolean }> {
   const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/discard`, {

@@ -161,25 +161,31 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
  */
 function FailedCard({ entry }: { entry: PlanEntry }) {
   const code = entry.failure?.code ?? 'change_plan_failed'
-  const action = failureAction(code)
+  const action = failureAction(code, entry.failure?.params)
   const store = useChangePlanStore.getState
   const un = code === 'change_plan_empty' ? unhandledViews(entry) : []
   const assistant = entry.from === 'assistant'
-  const label = { connect: cp('card.connect'), retry: cp('card.retry'), regenerate: cp('card.regenerate'), dismiss: cp('card.dismiss'), script: cp('card.retry') }[action]
+  const label = { connect: cp('card.connect'), retry: cp('card.retry'), regenerate: cp('card.regenerate'), dismiss: cp('card.dismiss'), script: cp('card.retry'), restore: cp('card.restoreScript') }[action]
   const run = () => {
     // 连上 AI 之后接着生成（同一份请求），不用再回来点一次
     if (action === 'connect') requestConnectAi({ onConnected: () => void store().regenerate(entry.key) })
     else if (action === 'dismiss') store().dismiss(entry.key)
+    else if (action === 'restore') void store().restoreScript(entry.key)
     else if (action === 'script') void store().runScript(entry.key)
     else void store().regenerate(entry.key)
   }
   // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
-  const scriptWay = assistant && action !== 'script'
+  const scriptWay = assistant && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">
         <span className="text-base font-medium text-ink">{cp('card.title')}</span>
         <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params, assistant)}</p>
+        {entry.notice === 'restore_failed' && (
+          <p className="text-xs text-ink-3" data-change-plan-notice="restore_failed">
+            {cp('card.restoreFailed')}
+          </p>
+        )}
         {code === 'change_plan_script_overreach' && overreachFiles(entry.failure?.params) && (
           <p className="type-meta break-all" data-change-plan-overreach-files>
             {overreachFiles(entry.failure?.params)}
@@ -196,7 +202,7 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           </ul>
         )}
         <div className="flex items-center gap-1 pt-0.5">
-          <Button variant="ghost" className="-ml-3" onClick={run} data-change-plan-failed-action={action}>
+          <Button variant="ghost" className="-ml-3" onClick={run} disabled={entry.scriptBusy} data-change-plan-failed-action={action}>
             {label}
           </Button>
           {scriptWay && (
@@ -206,7 +212,7 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           )}
           {action !== 'dismiss' && (
             <Button variant="ghost" onClick={() => store().dismiss(entry.key)} data-change-plan-dismiss>
-              {cp('card.dismiss')}
+              {action === 'restore' ? cp('card.keepCurrent') : cp('card.dismiss')}
             </Button>
           )}
         </div>

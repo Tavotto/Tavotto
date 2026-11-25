@@ -149,12 +149,12 @@ it('越界的失败卡：一句话 + 文件名（其余「等 N 个」）+「重
     entry('a', {
       status: 'failed',
       plan: undefined,
-      failure: { code: 'change_plan_script_overreach', params: { files: ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'], total: 8, restored: true, conflict: false } },
+      failure: { code: 'change_plan_script_overreach', params: { files: ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'], total: 8, target_changed: false } },
     }),
   )
   await render(<ChangePlanTranscript panelId="p1" />)
   const card = q('[data-change-plan-card="failed"]')!
-  expect(card.textContent).toContain('已把你的脚本还原')
+  expect(card.textContent).toContain('你的脚本没有被改动')
   expect(q('[data-change-plan-overreach-files]')!.textContent).toContain('等 8 个')
   expect(q('[data-change-plan-failed-action="retry"]')).toBeTruthy()
 })
@@ -169,4 +169,17 @@ it('部分能改之后的脚本方案卡：同一条指令只画一次用户气�
   act(() => useChangePlanStore.setState({ entries: { a: { ...first, status: 'handoff' }, b: second }, order: ['a', 'b'] }))
   expect(document.body.querySelectorAll('[data-change-plan-user]')).toHaveLength(1)
   expect(q('[data-change-plan-handoff]')).toBeTruthy()
+})
+
+it('脚本被改过的冲突卡：一句话说清没自动还原，主按钮「恢复到开始前的版本」+ 次级「保留现在的版本」，没有「改脚本来做」', async () => {
+  const restore = vi.fn()
+  act(() => useChangePlanStore.setState({ restoreScript: restore as never }))
+  await put(entry('a', { status: 'failed', plan: undefined, failure: { code: 'change_plan_script_overreach', params: { target_changed: true, backup: 'fig/1', script: 'fig.py', current_sha256: 'cc', files: [], total: 0 } } }))
+  await render(<ChangePlanTranscript panelId="p1" />)
+  expect(q('[data-change-plan-card="failed"]')!.textContent).toContain('没有自动还原')
+  expect(q('[data-change-plan-run-script]')).toBeNull()
+  expect(q('[data-change-plan-dismiss]')!.textContent).toBe('保留现在的版本')
+  await act(async () => q('[data-change-plan-failed-action="restore"]')!.click())
+  expect(restore).toHaveBeenCalledWith('a')
+  expect(q('[data-change-plan-failed-action="restore"]')!.textContent).toBe('恢复到开始前的版本')
 })

@@ -107,51 +107,26 @@ def test_plan_only_without_a_change_has_no_bytes(bridge):
     assert out["new_bytes"] is None
 
 
-def test_cli_overwriting_the_target_in_place_is_restored_from_the_snapshot(bridge):
+def test_target_changed_during_the_run_is_a_conflict_and_is_never_auto_restored(bridge):
+    """分不清是用户在编辑器里保存、还是 Agent 越界直接改——一律当冲突：不还原、不出方案，字节留给方案端点备份。"""
     _sid, out = _plan_run(bridge, OVERREACH_TARGET)
-    assert _script(bridge) == SCRIPT, "越界改了目标脚本 → 已按起跑快照还原"
+    assert _script(bridge) == "# AI wrote me\n", "不自动还原（还原会冲掉用户的合法保存）"
     over = out["overreach"]
-    assert over["touched"] and over["target_restored"] and not over["target_conflict"]
+    assert over["touched"] and over["target_changed"]
+    assert over["current_bytes"] == b"# AI wrote me\n" and over["snapshot_bytes"].decode() == SCRIPT
     assert out["new_bytes"] is None
 
 
 def test_cli_touching_other_files_lists_them_and_leaves_them_alone(bridge):
     _sid, out = _plan_run(bridge, OVERREACH_OTHERS)
     over = out["overreach"]
-    assert over["touched"] and not over["target_restored"]
+    assert over["touched"] and not over["target_changed"]
     assert over["files"] == [f"x{i}.txt" for i in range(5)] and over["total"] == 7, (
         "最多列 5 个，其余只报个数"
     )
     for i in range(7):
         assert (bridge["figs"] / f"x{i}.txt").read_text() == "x", "别的文件不动"
     assert out["new_bytes"] is None, "越界不出方案"
-
-
-def test_restore_does_not_overwrite_when_the_user_edited_meanwhile(bridge, monkeypatch, tmp_path):
-    script = bridge["figs"] / "fig1.py"
-    cand = ai_figure_edit.create_candidate("guard1", script, bridge["figs"], "fig1.py")
-    snap = tmp_path / "snap.py"
-    snap.write_bytes(cand.base_bytes)
-    script.write_bytes(b"# AI overreach\n")
-    real = ai_bridge.script_guard
-
-    class Edit:
-        """看过「被 AI 改了」之后、拿到锁之前，用户又保存了一次。"""
-
-        def __init__(self, path):
-            script.write_bytes(b"# the user saved again\n")
-            self.inner = real(path)
-
-        def __enter__(self):
-            return self.inner.__enter__()
-
-        def __exit__(self, *a):
-            return self.inner.__exit__(*a)
-
-    monkeypatch.setattr(ai_bridge, "script_guard", Edit)
-    out = ai_bridge._plan_guard(cand, snap)
-    assert out["touched"] and out["target_conflict"] and not out["target_restored"]
-    assert script.read_text() == "# the user saved again\n", "不覆盖用户这期间的改动"
 
 
 # --------------------------------------------------------------------------- 端点：生成、应用、撤销
@@ -196,13 +171,24 @@ def sc(plan_env, monkeypatch):  # noqa: F811
     monkeypatch.setattr(
         m, "_apply_connection", lambda body, agent, model, ep: ("codex", model, "", None)
     )
-    monkeypatch.setattr(m, "_change_plan_script_render", lambda *a, **k: state["render"])
+
+    def fake_render(*a, **k):
+        state["render_entry"] = a[-1] if len(a) > 9 else k.get("entry", "main")
+        return state["render"]
+
+    monkeypatch.setattr(m, "_change_plan_script_render", fake_render)
     monkeypatch.setattr(
         m,
         "_after_script_edit",
         lambda ctx, script: state.setdefault("refreshed", []).append(script),
     )
-    monkeypatch.setattr(m, "_ai_task_hooks", lambda *a, **k: {})
+    monkeypatch.setattr(
+        m,
+        "_ai_task_hooks",
+        lambda ctx, script, entry, *a, **k: (
+            state.setdefault("hook_entries", []).append(entry) or {}
+        ),
+    )
     yield m, client, figs, state
 
 
@@ -267,9 +253,8 @@ def test_script_plan_failures_have_stable_codes_and_leave_the_script_alone(sc, o
     assert (figs / "fig.py").read_text() == SCRIPT
 
 
-def test_overreach_failure_reports_files_and_whether_the_script_was_restored(sc):
-    m, client, figs, state = sc
-    state["outcome"] = {
+def _conflict_outcome(figs, current: bytes):
+    return {
         "status": "failed",
         "error": "precommit_not_verified",
         "outcome": "failed",
@@ -279,20 +264,116 @@ def test_overreach_failure_reports_files_and_whether_the_script_was_restored(sc)
         "base_sha256": "",
         "overreach": {
             "touched": True,
-            "target_restored": True,
-            "target_conflict": False,
+            "target_changed": True,
             "files": ["a.txt", "b.txt"],
             "total": 7,
+            "current_bytes": current,
+            "snapshot_bytes": SCRIPT.encode(),
         },
     }
+
+
+def test_user_saved_during_the_run_is_kept_backed_up_twice_and_restorable_on_request(sc):
+    m, client, figs, state = sc
+    saved = b"# the user saved in the editor\n"
+    (figs / "fig.py").write_bytes(saved)
+    state["outcome"] = _conflict_outcome(figs, saved)
     out = _make(client)
     assert out["code"] == "change_plan_script_overreach"
-    assert out["params"] == {
-        "files": ["a.txt", "b.txt"],
-        "total": 7,
-        "restored": True,
-        "conflict": False,
+    params = out["params"]
+    assert (
+        params["target_changed"] is True
+        and params["files"] == ["a.txt", "b.txt"]
+        and params["total"] == 7
+    )
+    assert (figs / "fig.py").read_bytes() == saved, "不自动还原"
+    store = m._script_store(m.current_ctx())
+    metas = m.engine_scriptbackup.history(store, "fig.py")
+    kinds = {x["kind"]: x for x in metas}
+    assert set(kinds) == {"change_plan_snapshot", "change_plan_conflict"}
+    mirror = sorted((cp.config.data_dir() / "script_backups").rglob("original.py"))
+    inproject = sorted((figs / "tavottofile" / "script-backups").rglob("original.py"))
+    assert len(mirror) == 2 and len(inproject) == 2, "此刻的字节与起跑快照，各两处备份"
+    assert {p.read_bytes() for p in inproject} == {saved, SCRIPT.encode()}
+    # 用户点「恢复到开始前的版本」才按快照还原
+    body = {
+        "backup": params["backup"],
+        "script": "fig.py",
+        "expect_sha256": params["current_sha256"],
     }
+    resp = client.post("/api/change-plans/restore-script", json=body)
+    assert resp.status_code == 200, resp.get_json()
+    assert (figs / "fig.py").read_bytes() == SCRIPT.encode(), "字节 = 起跑快照"
+    # 还原之前此刻的版本又被备份了一份（不静默覆盖）
+    assert len(list((figs / "tavottofile" / "script-backups").rglob("original.py"))) == 3
+    assert "restore" in {x["kind"] for x in m.engine_scriptbackup.history(store, "fig.py")} | {
+        "restore"
+    }
+
+
+def test_restore_is_refused_when_the_script_changed_again(sc):
+    m, client, figs, state = sc
+    saved = b"# saved\n"
+    (figs / "fig.py").write_bytes(saved)
+    state["outcome"] = _conflict_outcome(figs, saved)
+    params = _make(client)["params"]
+    (figs / "fig.py").write_bytes(b"# saved again, later\n")
+    resp = client.post(
+        "/api/change-plans/restore-script",
+        json={
+            "backup": params["backup"],
+            "script": "fig.py",
+            "expect_sha256": params["current_sha256"],
+        },
+    )
+    assert (
+        resp.status_code == 409 and resp.get_json()["code"] == "change_plan_script_restore_conflict"
+    )
+    assert (figs / "fig.py").read_bytes() == b"# saved again, later\n"
+
+
+def test_restore_only_accepts_the_snapshot_backup_of_that_script(sc):
+    m, client, figs, state = sc
+    saved = b"# saved\n"
+    (figs / "fig.py").write_bytes(saved)
+    state["outcome"] = _conflict_outcome(figs, saved)
+    params = _make(client)["params"]
+    store = m._script_store(m.current_ctx())
+    other = next(
+        x
+        for x in m.engine_scriptbackup.history(store, "fig.py")
+        if x["kind"] == "change_plan_conflict"
+    )
+    for body in (
+        {"backup": other["id"], "script": "fig.py", "expect_sha256": params["current_sha256"]},
+        {
+            "backup": params["backup"],
+            "script": "other.py",
+            "expect_sha256": params["current_sha256"],
+        },
+        {"backup": "../x", "script": "fig.py", "expect_sha256": params["current_sha256"]},
+    ):
+        assert client.post("/api/change-plans/restore-script", json=body).status_code in (404, 409)
+    assert (figs / "fig.py").read_bytes() == saved
+
+
+def test_other_files_only_overreach_does_not_touch_the_script_or_make_backups(sc):
+    m, client, figs, state = sc
+    out_ = _conflict_outcome(figs, SCRIPT.encode())
+    out_["overreach"].update(target_changed=False)
+    out_["overreach"].pop("current_bytes")
+    out_["overreach"].pop("snapshot_bytes")
+    state["outcome"] = out_
+    out = _make(client)
+    assert (
+        out["code"] == "change_plan_script_overreach" and out["params"]["target_changed"] is False
+    )
+    assert "backup" not in out["params"]
+    assert (
+        not list((figs / "tavottofile").rglob("original.py"))
+        if (figs / "tavottofile").exists()
+        else True
+    )
 
 
 @pytest.mark.parametrize(
@@ -414,3 +495,20 @@ def test_agent_rewriting_newlines_neither_inflates_the_diff_nor_changes_the_scri
     assert cp.script_new_bytes(m.current_ctx().id, plan["id"]) == expected
     assert client.post(f"/api/change-plans/{plan['id']}/apply-script").status_code == 200
     assert (figs / "fig.py").read_bytes() == expected
+
+
+@pytest.mark.parametrize("entry", ["main", "render", "__main__"])
+def test_candidate_validation_uses_the_figures_real_entry_not_a_hardcoded_main(
+    sc, monkeypatch, entry
+):
+    """`render()` 入口、没有 `main()` 的 `__main__` 脚本：入口沿用改脚本路线（`/api/ai/run`）解析出的那个，写死 main 会被误判 `script_entry_missing`。"""
+    m, client, figs, state = sc
+    monkeypatch.setattr(m, "safe_resolve", lambda rel_id, **k: figs / "Kin.pdf")
+    monkeypatch.setattr(
+        m,
+        "_disk_panel",
+        lambda path: ("fig", {"script": "fig.py", "entry": entry, "stems": ["fig"]}),
+    )
+    out = _make(client)
+    assert out["state"] == "ready"
+    assert state["hook_entries"] == [entry] and state["render_entry"] == entry

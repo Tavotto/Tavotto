@@ -154,9 +154,11 @@ export const scriptInfo = (e: Pick<PlanEntry, 'plan'>) => e.plan?.groups.find((g
 export const isScriptPlan = (e: Pick<PlanEntry, 'plan'>): boolean => e.plan?.kind === 'script'
 
 /** 失败之后用户能走的下一步（每个稳定码一个，绝不留死胡同） */
-export type FailureAction = 'connect' | 'retry' | 'regenerate' | 'dismiss' | 'script'
+export type FailureAction = 'connect' | 'retry' | 'regenerate' | 'dismiss' | 'script' | 'restore'
 
-export function failureAction(code: string): FailureAction {
+export function failureAction(code: string, params?: Record<string, unknown>): FailureAction {
+  // 生成期间脚本被改过（冲突，已备份、没自动还原）：主动作是用户点了才按起跑快照恢复
+  if (code === 'change_plan_script_overreach' && params?.target_changed === true && typeof params.backup === 'string' && typeof params.current_sha256 === 'string') return 'restore'
   switch (code) {
     case 'change_plan_no_connection':
     case 'change_plan_unsupported_connection':
@@ -195,7 +197,7 @@ export function failureText(code: string, params?: Record<string, unknown>, assi
   if (code === 'change_plan_script_failed') return cp('card.scriptFailed')
   // 外部 CLI 越界（R-03）：一句话说清脚本怎么样了（还原了 / 没替你还原 / 没动），文件名由卡片另列
   if (code === 'change_plan_script_overreach') {
-    return cp(params?.restored === true ? 'card.overreachRestored' : params?.conflict === true ? 'card.overreachConflict' : 'card.overreachOthers')
+    return cp(params?.target_changed === true ? 'card.overreachChanged' : 'card.overreachOthers')
   }
   const known = (c: string) => formatMessage(backendCodeMsg(c, params, ''))
   // 本地的超时码与不认识的码都落到「生成失败，图没有改动」这一句，不留空白

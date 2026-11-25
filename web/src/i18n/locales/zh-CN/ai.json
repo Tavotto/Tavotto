@@ -843,10 +843,12 @@
       "appliedScript": "已应用 · 脚本已修改",
       "applyFailedScript": "没能应用，脚本没有改动",
       "undoFailedScript": "脚本在应用之后又改过，没有替你撤销",
-      "overreachRestored": "Agent 越界改了项目里的文件，已把你的脚本还原。",
-      "overreachConflict": "Agent 越界改了项目里的文件，你的脚本在这期间又被改过，没有替你还原，请自己看一下。",
       "overreachOthers": "Agent 越界改了项目里的文件，你的脚本没有被改动。",
-      "overreachMore": "{{files}} 等 {{count}} 个"
+      "overreachMore": "{{files}} 等 {{count}} 个",
+      "overreachChanged": "生成期间你的脚本被改过（可能是你保存的，也可能是 Agent 直接改的），没有自动还原。改前后的版本都已备份。",
+      "restoreScript": "恢复到开始前的版本",
+      "keepCurrent": "保留现在的版本",
+      "restoreFailed": "脚本又被改过了，没有恢复"
     },
     "dialog": {
       "title": "修改方案",

@@ -363,6 +363,7 @@ USER_VISIBLE_CODES = {
     "change_plan_script_apply_failed": set(),
     "change_plan_script_undo_conflict": set(),
     "change_plan_script_not_applied": set(),
+    "change_plan_script_restore_conflict": set(),
     "invalid_patches": set(),
     "invalid_purpose": {"value"},
     "invalid_width": {"value"},
