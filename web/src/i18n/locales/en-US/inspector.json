@@ -1467,5 +1467,11 @@
     "offsetAutoBare": "Auto",
     "offsetReset": "Auto",
     "editPathTip": "Edit the text. To reshape its path, {{mod}}-double-click the text on the canvas"
+  },
+  "relink": {
+    "choose": "Pick the script",
+    "linked": "Now using {{script}}",
+    "otherScripts": "Other scripts",
+    "to": "Use {{script}}"
   }
 }

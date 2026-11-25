@@ -111,6 +111,8 @@ import { GroupHead } from './GroupHead'
 import { GroupToggle } from './GroupToggle'
 import { INSPECTOR_CONTROL_X, INSPECTOR_HALF, INSPECTOR_LABEL_W } from './layout'
 import { OriginalFileActions } from './OriginalFileActions'
+import { ScriptRelinkAction } from './ScriptRelinkAction'
+import { useAssetStore } from '@/store/assetStore'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { Notice } from '../ui/Notice'
@@ -424,6 +426,13 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             missingInput={render.missingInput}
             workdirHint={render.workdirHint}
             onRetry={() => requestRender(panel, true)}
+            relink={
+              // 脚本挪走了（ADR 0211 第一期 6）：卡里给「接到 …」/「选一个脚本接上」。只给磁盘上的图——
+              // 运行时图的身份里带着脚本路径，换脚本等于换一张图
+              render.code === SCRIPT_SOURCE_MISSING_CODE && !panel.fileId.startsWith('runtime:') && relinkScriptOf(panel) ? (
+                <ScriptRelinkAction panel={panel} script={relinkScriptOf(panel)!} />
+              ) : undefined
+            }
           />
         )
       )}
@@ -689,6 +698,15 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
   </>
 }
 
+/** 渲染报「脚本文件不在」（worker 的 `script_source_missing`）：错误卡主按钮位换成接回脚本的出口 */
+const SCRIPT_SOURCE_MISSING_CODE = 'script_source_missing'
+
+/** 注册表里那个已经不在的脚本键：就绪度事实（`source_missing` 带着它）优先，退回面板上记的脚本 */
+function relinkScriptOf(panel: PanelObject): string | null {
+  const cap = useAssetStore.getState().byId[panel.fileId]?.capability
+  return (cap?.status === 'source_missing' ? cap.script : null) || panel.script || null
+}
+
 export function ErrorBlock({
   error,
   traceback,
@@ -698,6 +716,7 @@ export function ErrorBlock({
   missingInput,
   workdirHint,
   onRetry,
+  relink,
 }: {
   error: UiMessage
   traceback: string
@@ -707,6 +726,8 @@ export function ErrorBlock({
   missingInput?: MissingInputOffer | null
   workdirHint?: WorkdirConfirmation | null
   onRetry?: () => void
+  /** 脚本挪走时接回它的出口（「接到 …」），与指认数据 / 选运行目录同一处：消息下面一行，不挤主按钮位的宽 */
+  relink?: ReactNode
 }) {
   return (
     <Section>
@@ -735,6 +756,8 @@ export function ErrorBlock({
         ) : (
           code && (WORKDIR_CODES as readonly string[]).includes(code) && <WorkdirSuggestion />
         )}
+        {/* 脚本挪走了（ADR 0211 第一期 6）：接回它 */}
+        {relink}
         {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
         <MissingInputButton offer={missingInput ?? null} />
         {/* 沙盒里落空、脚本目录里找得到（#1254）：不论错误码都给「在脚本目录里运行」的入口 */}

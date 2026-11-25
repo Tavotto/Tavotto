@@ -9902,6 +9902,58 @@ def api_runtime_remove():
     return jsonify({"removed": True, "id": rel_id})
 
 
+#: 「接回挪走的脚本」候选清单最多列多少个项目脚本（手选用）；内容比对也只看这么多个
+RELINK_MAX_SCRIPTS = 2000
+
+
+@app.get("/api/registry/relink-candidates")
+def api_registry_relink_candidates():
+    """注册表指着的脚本不在了（ADR 0211 第一期 6）：项目里哪一份可以接回去。
+
+    `?script=<注册表里那个脚本键>`。回 `{script, missing, fingerprint, matches, scripts}`：
+
+    * `missing`：这个脚本确实登记着、文件确实不在。不是这种情况其余字段都空（界面不给接回的出口）；
+    * `fingerprint`：登记里有没有内容指纹（`sha256`）。老登记没有；
+    * `matches`：项目里**字节完全相同**的脚本（与指纹逐字比，不按文件名或修改时间猜，ADR 0027 §5）。恰好一个时
+      界面给「接到 …」一键接回，多个 / 没有就交给用户选；
+    * `scripts`：项目里全部 .py（手选「其他脚本」用，项目相对路径）。
+
+    只读：不写注册表、不跑脚本。接回本身走现有的试运行登记——跑成了才改登记（`/api/registry/probe`）。"""
+    ctx = current_ctx()
+    script = str(request.args.get("script") or "").replace("\\", "/").strip()
+    empty = {"script": script, "missing": False, "fingerprint": False, "matches": [], "scripts": []}
+    if not script or script not in ctx.registry.all_scripts():
+        return jsonify(empty)
+    root = Path(ctx.path)
+    if engine_registry.script_fingerprint(root, script) is not None or (root / script).exists():
+        return jsonify(empty)
+    fingerprint = ctx.registry.fingerprint_of(script)
+    try:
+        paths = engine_discover.iter_all_scripts(root)[:RELINK_MAX_SCRIPTS]
+    except OSError:
+        paths = []
+    scripts = sorted(
+        {engine_discover.rel_key(p, root) for p in paths} - {script},
+        key=lambda rel: (rel.count("/"), rel),
+    )
+    matches = (
+        [rel for rel in scripts if engine_registry.script_fingerprint(root, rel) == fingerprint]
+        if fingerprint
+        else []
+    )
+    resp = jsonify(
+        {
+            "script": script,
+            "missing": True,
+            "fingerprint": bool(fingerprint),
+            "matches": matches,
+            "scripts": scripts,
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.put("/api/registry")
 def api_registry_write():
     """手工裁决：直接写一条脚本的 stem 归属（冲突仲裁、改 entry/cost）。"""

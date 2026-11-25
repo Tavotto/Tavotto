@@ -1434,5 +1434,11 @@
     "offsetAutoBare": "自动",
     "offsetReset": "自动",
     "editPathTip": "改字；要改字排的那条路径，在画布上 {{mod}} 双击这段字"
+  },
+  "relink": {
+    "choose": "选一个脚本接上",
+    "linked": "已接到 {{script}}",
+    "otherScripts": "其他脚本",
+    "to": "接到 {{script}}"
   }
 }

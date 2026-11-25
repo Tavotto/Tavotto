@@ -226,6 +226,22 @@ order: 130
 只做整图预览、摆放和原图 SVG 导出，不宣称静态 SVG 已有跨格式渲染闭包；不支持的导出
 明确报错。看护：`tests/test_svg_assets.py`，含去掉静态白名单后的反证。
 
+## 脚本内容指纹 `sha256` 与「接到 …」（ADR 0211 第一期 6，2026-11-26）
+
+- 注册表条目可选 `sha256`：登记那一刻脚本文件的内容指纹（`registry.script_fingerprint`，小写十六进制，>16 MB / 读不出不记）。
+  写入时机只有本来就写注册表的那几下：首次打开起草（`build_draft`）、统一刷新**并入新脚本**（`merge` 带草稿里的指纹，
+  已有条目原样、不为刷新指纹单独写盘）、试运行 / 手工登记（`_register_locked`：取此刻字节；脚本此刻读不到就沿用旧指纹）。
+  只读打开不写。用户改了脚本、之后没再登记过，指纹就是旧的——对不上退回让用户选。
+- 读：`Registry.fingerprint_of()`；非法值当没有；**不进 `entries()`**（`project_refresh` 拿它比相等判 worker 过期）。
+  不进本机缓存 / 诊断包 / 遥测（诊断包里 `config.json` 的 `projects` 只留条数；注册表原文不进包）。
+  v0.21.3 的 `load_data` 只取已知键（读到 `sha256` 忽略、不报 `registry_invalid`）；它的 `_register_locked` 整条重写被登记的那个
+  脚本（那一条的 `sha256` 丢掉，下次本版登记补上），`merge` 只改 stems、保留其余键。
+- `GET /api/registry/relink-candidates?script=`（只读）：脚本确实登记着且文件不在 → `matches`（与指纹字节相同的项目脚本，
+  不按文件名 / mtime 猜）+ `scripts`（项目全部 .py，手选用）。接回**不另起写入口**：前端 `store/scriptRelink.relinkScript`
+  对选中的那份跑现有试运行登记（`/api/registry/probe`，失败零改动；门照旧弹框），跑成了且这张图的就绪度归属换到它才重画；
+  只给磁盘图（`runtime:` 图的身份里带脚本路径）。旧条目被认领走 stem 后留 `stems: []` 的空壳（与试运行登记一贯行为相同）。
+  看护 `tests/test_script_relink.py`、`store/scriptRelink.test.ts`、`components/inspector/ScriptRelinkAction.test.tsx`、`e2e/script-relink.spec.ts`。
+
 ## 磁盘文件 → 图：注册表的 `artifacts`（#1251，2026-10-22）
 
 同一脚本里两张**不同**的图写同 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙，乙以 `panel-2` 补认领，#1250）时，

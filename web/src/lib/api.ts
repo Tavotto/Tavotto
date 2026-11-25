@@ -1704,6 +1704,35 @@ export async function claimProjectHistory(
   }
 }
 
+/**
+ * 注册表指着的脚本不在了（ADR 0211 第一期 6）：项目里哪一份可以接回去。`matches` = 与登记时内容指纹字节完全相同的
+ * 脚本（恰好一个 → 一键接回）；`scripts` = 项目里全部 .py（手选用）。`missing=false`（脚本其实在 / 没登记）时其余为空。
+ */
+export interface RelinkCandidates {
+  script: string
+  missing: boolean
+  fingerprint: boolean
+  matches: string[]
+  scripts: string[]
+}
+
+export async function fetchRelinkCandidates(script: string, pj?: string | null): Promise<RelinkCandidates | null> {
+  try {
+    const q = new URLSearchParams({ script })
+    const body = await jsonFetch<Record<string, unknown>>(`/api/registry/relink-candidates?${q.toString()}`, undefined, pj)
+    const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    return {
+      script: typeof body?.script === 'string' ? body.script : script,
+      missing: body?.missing === true,
+      fingerprint: body?.fingerprint === true,
+      matches: strings(body?.matches),
+      scripts: strings(body?.scripts),
+    }
+  } catch {
+    return null // 旧后端 / 此刻问不到：界面退回原来的「重试渲染」
+  }
+}
+
 /** 导出默认值（按用户一份，数据目录）。`undefined` = 后端没有这组端点 / 不可达。 */
 export async function fetchExportDefaultsRemote(): Promise<{ defaults: unknown } | undefined> {
   try {

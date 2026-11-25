@@ -6310,6 +6310,12 @@ export default interface Resources {
         "linewidth": "描边线宽"
       }
     },
+    "relink": {
+      "choose": "选一个脚本接上",
+      "linked": "已接到 {{script}}",
+      "otherScripts": "其他脚本",
+      "to": "接到 {{script}}"
+    },
     "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
     "richText": {
       "bold": "粗体（选中的字）",
