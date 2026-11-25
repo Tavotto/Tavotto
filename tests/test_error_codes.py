@@ -843,6 +843,9 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 项目内时间线认领（ADR 0211 第一期）`POST /api/layout-session/project-history/claim`：前端只据此重列一次候选
+    # 再按后端说的 mode 装（复制 / 再认领），不展示文案
+    "claim_refused",
     # 一键排版方案（ADR 0199）`POST /api/pro/quick-layout/plan`：前端不读这几个码的文案——not_licensed 转成授权灰态，
     # 其余三个一律说「排不了，再试一次」（quickLayoutFailed），文档不改
     "invalid_panels",

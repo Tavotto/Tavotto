@@ -1948,7 +1948,7 @@
     "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
       "chartSource": "Chart source missing or damaged",
-      "choose": "Layouts found on this computer",
+      "choose": "Pick up where you left off",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
       "missing": "Last layout is no longer in its original file and may have been moved",
@@ -1959,7 +1959,7 @@
     "retry": "Try again",
     "title": {
       "chartSource": "The chart source for “{{name}}” is missing or damaged.",
-      "choose": "Found a few layouts on this computer — pick one to open.",
+      "choose": "Found a few layouts — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",
       "missing": "The last layout “{{name}}” is no longer in its original file and may have been moved.",
