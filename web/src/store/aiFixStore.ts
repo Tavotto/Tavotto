@@ -77,6 +77,7 @@ export interface AiFixEntry {
   /** 进度与卡住（后端公开状态原样带过来；界面按它说一句话） */
   activity?: AiFixState['activity']
   stalled?: AiFixState['stalled']
+  stage?: AiFixState['stage']
 }
 
 /** 一张准备卡（entry key）交接给「生成可编辑版本」的脚本与库 */
@@ -253,6 +254,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
           card: st.card ?? undefined,
           activity: st.activity ?? undefined,
           stalled: st.stalled ?? undefined,
+          stage: st.stage ?? undefined,
           sendBase: st.card && e.card?.id === st.card.id ? e.sendBase : undefined,
         }))
       } catch (e) {

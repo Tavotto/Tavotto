@@ -7724,6 +7724,7 @@ export default interface Resources {
         "readTitle": "AI 查看过",
         "reasonLabel": "AI 的理由：{{reason}}",
         "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
+        "round": "第 {{n}} 轮",
         "running": "AI 正在查找原因…",
         "sendNo": "不发送",
         "sendNote": "AI 写的说明",
@@ -7741,7 +7742,14 @@ export default interface Resources {
           "cli_waiting_approval": "Codex 或 Claude Code 在等待批准，Tavotto 无法代为确认。停止后可以重试。",
           "stalled": "AI 暂时没有响应，稍后会自动停止。"
         },
+        "steps": {
+          "diagnose": "找原因",
+          "finish": "收尾",
+          "fix": "动手修",
+          "verify": "运行验证"
+        },
         "stop": "停止",
+        "taskTitle": "AI 修复",
         "useIt": "用它",
         "willInstall": "将要安装：{{packages}}"
       },
