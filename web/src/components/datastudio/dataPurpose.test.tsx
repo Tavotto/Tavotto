@@ -138,8 +138,8 @@ describe('主图下面「为什么不是这张」', () => {
   const img = () => q<HTMLImageElement>('[data-candidate-image] img')!
 
   it.each([
-    ['summary_hides_spread', '只画均值和误差，看不到每个点。'],
-    ['line_needs_order', '两个量没有先后顺序，连线会让人以为相邻点是连着变的。'],
+    ['summary_hides_spread', '柱和误差线通常只代表均值与离散程度，不显示每个观测值。'],
+    ['line_needs_order', '连线通常代表连续变化的量。'],
     ['order_prefers_line', '横轴有顺序，连线更能看出走势。'],
     ['answers_other_purpose', '你选的是「比较各组」，这张回答的是另一个问题。'],
   ])('%s：独立一行、不带开头，在「依据」之后', async (code, text) => {
@@ -169,6 +169,6 @@ describe('主图下面「为什么不是这张」', () => {
   it('bar_error 现有的说明句（个别点会藏在柱里）一字不改，与这句并存', async () => {
     await show({ title_code: 'bar_error', why_code: 'bar_error', error: 'sd', why_not: { code: 'summary_hides_spread', guidance: [], tier: 'data' } })
     expect(q('[data-candidate-why]')!.textContent).toContain('个别点会藏在柱里')
-    expect(q('[data-candidate-whynot]')!.textContent).toBe('只画均值和误差，看不到每个点。')
+    expect(q('[data-candidate-whynot]')!.textContent).toBe('柱和误差线通常只代表均值与离散程度，不显示每个观测值。')
   })
 })

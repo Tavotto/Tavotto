@@ -788,8 +788,8 @@
       "distribution": "See the distribution"
     },
     "whyNot": {
-      "summary_hides_spread": "It shows only the mean and error, not each point.",
-      "line_needs_order": "The two quantities have no order, so a line suggests neighbouring points change together.",
+      "summary_hides_spread": "Bars and error bars usually stand for the mean and spread only; individual observations are not shown.",
+      "line_needs_order": "A connecting line usually stands for a quantity that changes continuously.",
       "order_prefers_line": "The x axis has an order, so a line shows the trend better.",
       "answers_other_purpose": "You chose “{{purpose}}”; this one answers a different question."
     },
