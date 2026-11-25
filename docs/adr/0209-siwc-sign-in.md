@@ -3,7 +3,7 @@
 日期：2026-11-25 · 状态：**Accepted（分 PR 落地；切换默认值的那一个 PR 等真服务核对后另开）**
 **1.0 收敛纪律：扩大 [0201](0201-siwc-readiness.md) 的豁免，维护者 2026-11-25 裁决（「先把这些缺的都补充好。我们目前就只是一个开源项目」），登记在 `docs/1.0-release-readiness.md` §1.8。**
 修订：[0201](0201-siwc-readiness.md) §五「仍然不做」里的「真实 OAuth 与凭据落盘」「用真实账号测试」「改登录入口」三条**撤销**；其余（不碰 `chatgpt.com/backend-api`、不引入 DevKit 代码、
-不读不迁移 Codex CLI 令牌、AI 修复 / 结构化调用 / 保存时探测不用 SIWC）照旧。相关：[0008 会话认证](0008-session-auth.md)、[0146 设备码账号登录](0146-ai-device-oauth-sign-in.md)、[0147 内置执行器](0147-builtin-agent-runner.md)。
+不读不迁移 Codex CLI 令牌、AI 修复 / 结构化调用 / 保存时探测不用 SIWC）照旧。相关：[0008 会话认证](0008-unified-local-session-auth.md)、[0146 设备码账号登录](0146-ai-device-oauth-sign-in.md)、[0147 内置执行器](0147-builtin-agent-runner.md)。
 
 ## 问题
 
