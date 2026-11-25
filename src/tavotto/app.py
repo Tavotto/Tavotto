@@ -6698,8 +6698,6 @@ def api_package():
             "url": f"/exports/{name}",
             "assets": len(assets),
             "missing": missing_now,
-            "chart_sources": 0,
-            "missing_chart_sources": [],
         }
     )
 

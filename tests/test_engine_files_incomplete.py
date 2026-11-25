@@ -37,13 +37,9 @@ CODE = "engine_files_incomplete"
 
 def _incomplete_engine_startup(tmp_path: Path, missing: str = "figcapture") -> str:
     """复制整个 engine 目录、删掉一个引擎模块，真起 worker，回它的 stderr（= worker.log 的内容）。"""
-    copy = tmp_path / "engine_copy"
-    copy.mkdir()
-    for src in ENGINE_DIR.glob("*.py"):
-        shutil.copy2(src, copy / src.name)
-    (copy / f"{missing}.py").unlink()
+    worker = _engine_copy_without(tmp_path, missing)
     proc = subprocess.run(
-        [WORKER_PY, str(copy / "worker.py")],
+        [WORKER_PY, str(worker)],
         input="",
         capture_output=True,
         text=True,
@@ -156,6 +152,9 @@ def _engine_copy_without(tmp_path: Path, missing: str) -> Path:
     copy.mkdir()
     for src in ENGINE_DIR.glob("*.py"):
         shutil.copy2(src, copy / src.name)
+    resources = tmp_path / "resources"
+    resources.mkdir()
+    shutil.copy2(ENGINE_DIR.parent / "resources" / "color_palettes.json", resources)
     (copy / f"{missing}.py").unlink()
     return copy / "worker.py"
 
