@@ -76,6 +76,14 @@ export function createFakeBackend() {
     stripRevisionHeader: false,
     /** 候选扫描碰到后端上限（回包 truncated:true） */
     truncated: false,
+    /**
+     * 项目自己的时间线候选（ADR 0211，`/api/layout-session/project-history`）：按 pj 摆好的行。
+     * `claimable` 里的 docId 认领成功（owners 改成请求的 pj）；其余回 409。
+     */
+    history: new Map<string, Record<string, unknown>[]>(),
+    claimable: new Set<string>(),
+    /** `${doc_id}/${vid}` → 节点正文（`GET /api/versions/<id>/<vid>`） */
+    nodes: new Map<string, unknown>(),
   }
 
   const session = (pj: string): Session => {
@@ -225,6 +233,29 @@ export function createFakeBackend() {
       const next = cursor + limit < all.length ? String(cursor + limit) : null
       return json({ items, next_cursor: next, truncated: b.truncated, index: 'ok' })
     }
+    if (u.pathname === '/api/layout-session/project-history' && method === 'GET') {
+      const rows = b.history.get(pj)
+      // 没摆过 = 旧后端（404）。不记调用：既有用例的调用序列断言不因这个新端点变
+      if (!rows) return json({ error: 'nf' }, 404)
+      b.calls.push('GET history')
+      return json({ items: rows, index: 'ok' })
+    }
+    if (u.pathname === '/api/layout-session/project-history/claim' && method === 'POST') {
+      const body = JSON.parse(String(init?.body)) as { doc_id: string; revision: string }
+      b.calls.push(`POST claim ${body.doc_id}`)
+      if (!b.claimable.has(body.doc_id) || b.slots.get(body.doc_id)?.revision !== body.revision) {
+        return json({ error: 'refused', code: 'claim_refused' }, 409)
+      }
+      b.owners.set(body.doc_id, pj)
+      return json({ ok: true, revision: body.revision, owner: 'this' })
+    }
+    const ver = u.pathname.match(/^\/api\/versions\/([^/]+)\/([^/]+)$/)
+    if (ver && method === 'GET') {
+      const key = `${decodeURIComponent(ver[1])}/${decodeURIComponent(ver[2])}`
+      b.calls.push(`GET version ${key}`)
+      const doc = b.nodes.get(key)
+      return doc ? json({ id: ver[2], name: 'node', ts: 1, doc }) : json({ error: 'nf' }, 404)
+    }
     return json({ error: 'nf' }, 404)
   }) as typeof fetch
 
@@ -276,6 +307,9 @@ export function createFakeBackend() {
       b.pageSize = 50
       b.stripRevisionHeader = false
       b.truncated = false
+      b.history.clear()
+      b.claimable.clear()
+      b.nodes.clear()
     },
   }
 }

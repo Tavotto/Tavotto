@@ -362,6 +362,17 @@ order: 200
     `/owner` 与这里都不为 runtime 面板作证，也不凭脚本同名 / fingerprint / mtime 自动归项目。一个坏文件只让自己
     `invalid`；不写任何东西、不回路径、不运行脚本。**恢复副本不加端点**：前端读源正文（带 revision）→ 用户确认时再读一次比对 →
     固定目标 id 走正常 `switchDocument` + 自动保存，源槽位与源归属不动。
+  - **项目自己的时间线作为恢复证据（ADR 0211 第一期，2026-11-25）**：`GET /api/layout-session/project-history`
+    列当前项目 `tavottofile/versions/*.vx` 里有内容的排版（`engine/projecthistory.py`：目录名过 `valid_doc_id`、不跟符号链接、
+    条目与读信封个数 / 字节有上界、索引只读不写），每项 `{doc_id, name, vid, ts, canvasId, schema, canvases, objects, mode, owner,
+    revision, node_newer}`，不回路径。只有空节点的 `.vx`（旧版每次加载留下的空 `open`）不进候选。`mode` 在槽位文档锁里判：
+    owners 记着别的项目且那条路径**确定不存在**（`FileNotFoundError` / `NotADirectoryError`；其余 `OSError` 当它还在）= 挪走
+    （`owner:"moved"`）；路径还在 = 复制（`copy`，新 docId，旧项目零改动）；待核对 / 会话状态 degraded / 槽位坏 → `copy`；
+    其余有可恢复槽位 → `slot`，没有槽位 → `node`。`node_newer`：槽位那张画布与节点内容不同、且节点 `ts` 晚于槽位正文的 `updatedAt`
+    （只算单画布节点）。`POST …/project-history/claim {doc_id, revision}` 在同一把槽位锁里重判，仍是 `slot` 且 revision
+    对得上才 `record_owner`（owners + owner_revisions），否则 409 `claim_refused`、零改动。`owner_conflict` 判据不变：认领之前
+    `PUT last` 仍按旧归属 409。空白排版（`_doc_objects` 为空）的 `open` 关键时刻 `POST /api/versions` 回 `skipped`、不建目录。
+    看护 `tests/test_project_history_restore.py`。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。

@@ -1611,6 +1611,90 @@ export async function fetchRecoveryCandidates(
   }
 }
 
+/**
+ * 项目自己的时间线里有内容的排版（ADR 0211 第一期）：`<项目>/tavottofile/versions/*.vx`。
+ * 挪走 / 复制 / 换电脑 / 换 origin 之后，本机按路径记的会话状态与 `tavotto.docIndex` 都认不出它，
+ * 这里是唯一跟着文件夹走的证据。`mode` 由后端判（它看得到旧项目路径在不在，前端看不到）：
+ *  - `slot`：本机槽位就是这份（`owner` 为 `moved` / `none` 时先 `claimProjectHistory` 把归属改到本项目）；
+ *  - `node`：没有本机槽位，用最近一个非空节点恢复成同一个 docId；
+ *  - `copy`：复制 / 归属待核对 / 槽位坏了——用节点恢复成一份**新 docId**，旧项目一个字节不动。
+ */
+export interface ProjectHistoryItem {
+  doc_id: string
+  name: string
+  /** 最近一个有对象的节点 */
+  vid: string
+  ts: number
+  canvasId: string | null
+  schema: number | null
+  canvases: number
+  objects: number
+  mode: 'slot' | 'node' | 'copy'
+  owner: 'this' | 'none' | 'moved' | 'other' | 'unknown'
+  /** `mode=slot` 时槽位正文的 revision（认领与探测都对着它） */
+  revision: string | null
+  /** `mode=slot` 且节点比槽位新、内容不同（只算单画布节点） */
+  node_newer: boolean
+}
+
+const HISTORY_MODES = ['slot', 'node', 'copy'] as const
+const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as const
+
+function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
+  const r = raw as Record<string, unknown> | null
+  if (!r || typeof r !== 'object' || typeof r.doc_id !== 'string' || typeof r.vid !== 'string') return null
+  const mode = HISTORY_MODES.find((m) => m === r.mode)
+  const owner = HISTORY_OWNERS.find((o) => o === r.owner)
+  if (!mode || !owner) return null
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    doc_id: r.doc_id,
+    name: typeof r.name === 'string' ? r.name : '',
+    vid: r.vid,
+    ts: num(r.ts),
+    canvasId: typeof r.canvasId === 'string' ? r.canvasId : null,
+    schema: typeof r.schema === 'number' ? r.schema : null,
+    canvases: num(r.canvases),
+    objects: num(r.objects),
+    mode,
+    owner,
+    revision: typeof r.revision === 'string' ? r.revision : null,
+    node_newer: r.node_newer === true,
+  }
+}
+
+/** 列项目内时间线候选。`'unsupported'` = 旧后端没有这个端点；`'unavailable'` = 此刻问不到。 */
+export async function fetchProjectHistory(
+  pj: string | null,
+): Promise<{ items: ProjectHistoryItem[]; index: SessionIndexStatus } | 'unsupported' | 'unavailable'> {
+  try {
+    const body = await jsonFetch<Record<string, unknown>>('/api/layout-session/project-history', undefined, pj)
+    const items = Array.isArray(body?.items)
+      ? body.items.map(parseHistoryItem).filter((x): x is ProjectHistoryItem => x !== null)
+      : []
+    return { items, index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok' }
+  } catch (e) {
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
+  }
+}
+
+/**
+ * 把挪走的项目留下的槽位归属改到当前项目（后端在槽位文档锁里重判；复制场景永远拒）。
+ * 回 true = 后端此刻记的就是本项目、且对着的是 `revision` 那一版正文。
+ */
+export async function claimProjectHistory(docId: string, revision: string, pj: string | null): Promise<boolean> {
+  try {
+    const body = await jsonFetch<{ ok?: boolean }>(
+      '/api/layout-session/project-history/claim',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc_id: docId, revision }) },
+      pj,
+    )
+    return body?.ok === true
+  } catch {
+    return false
+  }
+}
+
 /** 导出默认值（按用户一份，数据目录）。`undefined` = 后端没有这组端点 / 不可达。 */
 export async function fetchExportDefaultsRemote(): Promise<{ defaults: unknown } | undefined> {
   try {
