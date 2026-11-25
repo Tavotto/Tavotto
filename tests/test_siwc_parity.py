@@ -147,3 +147,115 @@ def test_subscription_usage_is_not_priced_as_api(env):
     conn = ai_connections.first_key_connection()
     assert ai_pricing.vendor_of(conn) is None
     assert ai_pricing.vendor_of(ai_providers.siwc_record()) is None
+
+
+# --------------------------------------------------------------------------- Codex #2212 的两条
+def _expiring_provider(calls):
+    """令牌还剩 2 分钟（够一次很短的调用，不够一次任务）；刷新函数记下自己被调了几次。"""
+
+    def refresh(ts):
+        calls.append(1)
+        return siwc_auth.TokenSet("acc-new", "ref-new", siwc_auth._now_ms() + 3_600_000, ts.scopes)
+
+    return siwc_auth.MemoryProvider(
+        siwc_auth.TokenSet(
+            TOKEN, "ref", siwc_auth._now_ms() + 120_000, frozenset({siwc_auth.REQUIRED_SCOPE})
+        ),
+        refresh=refresh,
+    )
+
+
+def test_rejected_token_is_marked_so_the_next_call_refreshes(env):
+    """服务端 401 拒了还没过期的令牌：AI 修复 / 结构化调用（都经 build_model）下次先刷新，不再拿同一个令牌（不清凭据）。"""
+    calls = []
+    prov = siwc_auth.MemoryProvider(
+        siwc_auth.TokenSet(
+            TOKEN, "ref", siwc_auth._now_ms() + 3_600_000, frozenset({siwc_auth.REQUIRED_SCOPE})
+        ),
+        refresh=lambda ts: (
+            calls.append(1)
+            or siwc_auth.TokenSet("acc-new", "ref-new", siwc_auth._now_ms() + 3_600_000, ts.scopes)
+        ),
+    )
+    siwc_auth.set_provider_for_tests(prov)
+    conn = ai_connections.first_key_connection(refresh=False)
+
+    def post(url, headers, body, *, timeout, reader=None):
+        return 401, {}, b'{"error": {"code": "subscription_sharing_invalid_user"}}'
+
+    model, _ = fixsession.build_model(conn, post=post, max_attempts=1)
+    import threading
+    import time as _t
+
+    from tavotto.engine.agent_runner import wires
+
+    with pytest.raises(RunnerFailure) as ei:
+        model.complete(
+            system="s",
+            tools=[],
+            history=[wires.Msg(role="user", text="hi")],
+            max_output_tokens=16,
+            cancel=threading.Event(),
+            deadline=_t.monotonic() + 30,
+        )
+    assert ei.value.reason == "auth"
+    assert prov.access_token() == "acc-new" and calls == [1]
+
+
+def test_structured_call_never_refreshes_beyond_its_budget(env):
+    """剩余时限不够一次刷新（REFRESH_NEEDS_S）：不联网刷新、不等锁；现有令牌够这次用就照常发。"""
+    from dataclasses import replace
+
+    calls = []
+    siwc_auth.set_provider_for_tests(_expiring_provider(calls))
+    sent = []
+
+    def post(url, headers, body, *, timeout, reader=None):
+        sent.append(headers.get("Authorization"))
+        data = _sse_completed('{"ok": true}')
+        return 200, {}, (reader(io.BytesIO(data)) if reader else data)
+
+    short = replace(ai_structured.DEFAULT_LIMITS, timeout_s=10.0)
+    res = ai_structured.call_structured(
+        system="s", user="u", validate=lambda o: o, post=post, limits=short
+    )
+    assert res.ok and calls == [] and sent == [f"Bearer {TOKEN}"]
+
+
+def test_structured_call_with_a_stale_token_and_no_budget_fails_fast(env):
+    calls = []
+    prov = _expiring_provider(calls)
+    siwc_auth.set_provider_for_tests(prov)
+    from dataclasses import replace
+
+    tiny = replace(ai_structured.DEFAULT_LIMITS, timeout_s=10.0)
+    prov.mark_rejected("http_401")  # 令牌被拒过：必须刷新，但预算不够
+    res = ai_structured.call_structured(
+        system="s", user="u", validate=lambda o: o, post=lambda *a, **k: (500, {}, b""), limits=tiny
+    )
+    assert (res.ok, res.reason, res.detail) == (False, "no_connection", "token_unavailable")
+    assert calls == []
+
+
+def test_cached_token_does_not_wait_for_a_refresh_in_progress(env):
+    import threading
+
+    prov = _expiring_provider([])
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold():
+        with prov._lock:
+            held.set()
+            release.wait(5)
+
+    th = threading.Thread(target=hold)
+    th.start()
+    held.wait(5)
+    try:
+        with pytest.raises(siwc_auth.TokenUnavailable):
+            prov.access_token(min_valid_s=5, allow_refresh=False)
+    finally:
+        release.set()
+        th.join()
+    assert prov.access_token(min_valid_s=5, allow_refresh=False) == TOKEN

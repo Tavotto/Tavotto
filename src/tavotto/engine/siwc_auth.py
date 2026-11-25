@@ -117,9 +117,10 @@ class TokenStatus:
 
 
 class TokenProvider(Protocol):
-    def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
+    def access_token(self, *, min_valid_s: int = MIN_VALID_S, allow_refresh: bool = True) -> str:
         """剩余寿命 ≥ `min_valid_s` 的访问令牌；不够就（串行地）刷新。
-        没登录 / 终态失效 → `NeedsLogin`；没有订阅范围 → `PlanUsageDisabled`；暂时失败 → `TokenUnavailable`。"""
+        没登录 / 终态失效 → `NeedsLogin`；没有订阅范围 → `PlanUsageDisabled`；暂时失败 → `TokenUnavailable`。
+        `allow_refresh=False`（调用方剩余时限不够一次刷新）：不联网、不等锁——够新就给，不够 / 别人正在刷新 → `TokenUnavailable`。"""
         ...
 
     def mark_rejected(self, reason: str) -> None:
@@ -132,7 +133,7 @@ class TokenProvider(Protocol):
 class DisabledProvider:
     """本阶段唯一的生产实现：恒未登录，永不返回令牌。"""
 
-    def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
+    def access_token(self, *, min_valid_s: int = MIN_VALID_S, allow_refresh: bool = True) -> str:
         raise NeedsLogin("not_signed_in")
 
     def mark_rejected(self, reason: str) -> None:
@@ -178,7 +179,9 @@ class RefreshingProvider:
         return contextlib.nullcontext()
 
     # -- 契约 --------------------------------------------------------------
-    def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
+    def access_token(self, *, min_valid_s: int = MIN_VALID_S, allow_refresh: bool = True) -> str:
+        if not allow_refresh:
+            return self._cached_token(min_valid_s)
         with self._lock, self._critical():
             ts = self._load()
             if ts is None or not ts.access:
@@ -217,6 +220,22 @@ class RefreshingProvider:
             if new.expires_at_ms - self._clock() < need_ms:
                 raise TokenUnavailable("short_lived")
             return new.access
+
+    def _cached_token(self, min_valid_s: int) -> str:
+        """不刷新的取法：不等锁（别人正在刷新 = 暂时拿不到）、不联网；够新就给。"""
+        if not self._lock.acquire(blocking=False):
+            raise TokenUnavailable("refresh_in_progress")
+        try:
+            ts = self._load()
+            if ts is None or not ts.access:
+                raise NeedsLogin("not_signed_in")
+            if REQUIRED_SCOPE not in ts.scopes:
+                raise PlanUsageDisabled()
+            if self._rejected or ts.expires_at_ms - self._clock() < min_valid_s * 1000:
+                raise TokenUnavailable("refresh_deferred")
+            return ts.access
+        finally:
+            self._lock.release()
 
     def mark_rejected(self, reason: str) -> None:
         _check_reason(reason)
