@@ -149,7 +149,11 @@ def test_echo_says_what_the_anchor_actually_landed_on(project):
     items[0]["to"]["anchor"]["element"]["gid"] = "axes_0.bar_0"
     out = la.propose(project, "组图", items, measure, base_revision=s["base_revision"])
     arrow = next(e for e in out["echo"] if e["item"] == "peak")
-    assert arrow["intent"] == "unnamed" and "没有名字" in arrow["text"] and "axes_0.bar_0" in arrow["text"]
+    assert (
+        arrow["intent"] == "unnamed"
+        and "没有名字" in arrow["text"]
+        and "axes_0.bar_0" in arrow["text"]
+    )
 
 
 def test_commit_appends_objects_with_anchor_and_undo_restores(project):
