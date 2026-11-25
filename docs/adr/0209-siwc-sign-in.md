@@ -54,7 +54,7 @@ Tavotto 是 AGPL 开源、本机运行；维护者 2026-11-25 判定按开源路
 
 ### 五、界面
 
-- 「连接 AI」里 OpenAI 一家的首选方式 = 「Continue with ChatGPT」（官方推荐文案，产品名不翻译；中文界面同一串）。Codex CLI 登录方式：**已装 Codex 的用户**仍列在后面（老用户的 `sub:codex` 连接照常可用、不迁移、不改已存配置）；没装的不再列。
+- 「连接 AI」里 OpenAI 一家的订阅方式只有「Continue with ChatGPT」（官方推荐文案，产品名不翻译；中文界面同一串）。**老用户也直接切换**（维护者 2026-11-25：「老用户直接切换成新的登录办法」）：Codex CLI 登录方式与 `sub:codex` 连接不再列出，老用户点一次「Continue with ChatGPT」即可（Codex 的令牌我们不读、不迁移）；`resolve_connection("sub:codex")` 仍认，已发出的旧请求不 404。
 - 失败兜底（新手不卡住）：额度用完 → 主按钮「Manage usage」开 `https://chatgpt.com/settings/usage`；不具备资格 → 选择题（填 API Key / 用 Codex 登录），**不循环 OAuth、不自动换计费**；
   `invalid_user` / 终态刷新错误 → 「重新登录」。文案与截图先过 agy、再给维护者看。
 - 官方 UX 指南里的「首次使用说明」「Using ChatGPT plan 指示」与本仓库「不加说明文字 / 卡片一句话」的界面规矩冲突：随截图交维护者定，不默认加。
@@ -75,11 +75,12 @@ Tavotto 是 AGPL 开源、本机运行；维护者 2026-11-25 判定按开源路
 
 ### 七、不随 SIWC 一起替换的能力
 
-AI 修复、结构化调用、数据出图（数据角色）、保存时探测**不用** SIWC（0201 §五：不让「挑第一个能用的连接」静默花订阅额度）。只登录了 ChatGPT、没装 Codex、也没填 Key 的用户，
-这几项不可用——是否把它们也接上 SIWC（须显式选择），另行裁决。
+0201 §五 把 AI 修复、结构化调用、数据出图（数据角色）、保存时探测排除在 SIWC 之外（不让「挑第一个能用的连接」静默花订阅额度）。
+维护者 2026-11-25 指出 SIWC 本质上就是用户自己的 API 连接（「理想中 SIWC 不是就等同于使用 API 吗」）：**计划另开 PR 接上**前三项——用户连了 ChatGPT 就算显式选择，
+请求改走 `siwc-responses`（这几处现在直接用旧 Responses 协议，会发官方禁用的 `max_output_tokens`）；保存时探测仍不用（SIWC 不需要探测）。接上之前，只登录了 ChatGPT 的用户这几项不可用。
 
 ## 后果
 
-- 新增运行时依赖一个（RS256 验签：推荐 pycryptodomex，维护者确认后加入；只在验签函数里延后 import，import 不了 = 验签失败 = 登录失败，不降级成不验）。
+- 新增运行时依赖一个：pycryptodomex（RS256 验签，维护者 2026-11-25 同意；只在验签函数里延后 import，import 不了 = 验签失败 = 登录失败，不降级成不验）。
 - 我们自己保存订阅令牌：凭据文件的权限、原子写、跨进程锁都是新的维护面；看护全部用本机假授权服务器，不连真实服务器。
-- Codex CLI 仍是「用 Codex 当执行器」的唯一入口；不装 Codex 的 ChatGPT 用户此后走内置执行器。
+- ChatGPT 订阅用户此后都走内置执行器；「用 Codex 当执行器」只剩「Codex + 第三方 Key 注入」这一条（ChatGPT 订阅不再经 Codex）。
