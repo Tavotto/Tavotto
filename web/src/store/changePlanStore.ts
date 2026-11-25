@@ -113,8 +113,15 @@ export interface ScriptFallback {
  */
 export const CONNECTION_UNUSABLE_CODES: ReadonlySet<string> = new Set(['change_plan_no_connection', 'change_plan_unsupported_connection'])
 
-/** 最近一次 `start` 落回旧路径的后端码（`requestFromAssistant` 据此判要不要再试脚本方案） */
-let lastFallthrough = ''
+/**
+ * 方案路径不适用、要落回改脚本：带着**这一次调用自己的**后端码作为返回值（不走共享变量——两个面板几乎同时发起时不会串值，
+ * 也不会读到上一次留下的旧码）。
+ */
+export interface Fallthrough {
+  kind: 'fallthrough'
+  code: string
+}
+export const isFallthrough = (x: unknown): x is Fallthrough => typeof x === 'object' && x !== null && (x as Fallthrough).kind === 'fallthrough'
 
 export const ASSISTANT_FALLTHROUGH_CODES: ReadonlySet<string> = new Set([
   'change_plan_no_connection',
@@ -238,7 +245,7 @@ interface ChangePlanState {
   /** 为某张图发起一次方案；同一张图同一批意见的在途 / 待确认方案直接聚焦（返回它的键） */
   requestFromReview: (panelId: string, req: PlanRequest) => Promise<string | null>
   /**
-   * 改图助手里的一条指令先出方案（ADR 0206 PR 4）。→ 方案键；`'fallthrough'` = 这条路不适用（没连上能用的模型 / native / 没脚本…，
+   * 改图助手里的一条指令先出方案（ADR 0206 PR 4）。→ 方案键；`{ kind: 'fallthrough', code }` = 这条路不适用（带这次调用自己的后端码）（没连上能用的模型 / native / 没脚本…，
    * 同步就被拒），调用方照旧走改脚本路径（本函数没留下任何卡）；null = 没发（同一张图已有一份在途 / 图不在了）。
    */
   requestFromAssistant: (
@@ -246,7 +253,7 @@ interface ChangePlanState {
     req: { instruction: string; target?: string },
     fallback: ScriptFallback,
     onSettle?: () => void,
-  ) => Promise<string | null | 'fallthrough'>
+  ) => Promise<string | null | Fallthrough>
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
   runScript: (key: string, opts?: { legacyOnly?: boolean }) => Promise<boolean>
   /** 失败后「重试」/ 图改过后「重新生成」：用同一份请求再来一份，旧卡换成新卡 */
@@ -428,7 +435,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     }
   }
 
-  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false, onSettle?: () => void): Promise<string | null | 'fallthrough'> => {
+  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false, onSettle?: () => void): Promise<string | null | Fallthrough> => {
     const ds = useDocumentStore.getState()
     const panel = ds.doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
     if (!panel) return null
@@ -462,8 +469,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     } catch {
       if (assistant && !keepOnFallthrough) {
         drop(key)
-        lastFallthrough = 'change_plan_not_editable'
-        return 'fallthrough'
+        return { kind: 'fallthrough', code: 'change_plan_not_editable' }
       }
       fail(key, 'change_plan_not_editable')
       return key
@@ -488,8 +494,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // 助手来源：这条路不适用就悄悄撤掉这张卡，让调用方走旧路径（用户的指令一个字不丢）
       if (assistant && !keepOnFallthrough && ASSISTANT_FALLTHROUGH_CODES.has(code)) {
         drop(key)
-        lastFallthrough = code
-        return 'fallthrough'
+        return { kind: 'fallthrough', code }
       }
       fail(key, code, err instanceof EngineError ? err.params : undefined)
     }
@@ -515,7 +520,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (pending.has(gate)) return null
       pending.add(gate)
       try {
-        return await start(panelId, req)
+        const out = await start(panelId, req)
+        return isFallthrough(out) ? null : out // 审阅来源没有「落回改脚本」
       } finally {
         pending.delete(gate)
       }
@@ -528,9 +534,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       pending.add(panelId)
       try {
         const out = await start(panelId, req, fallback, false, onSettle)
-        if (out !== 'fallthrough') return out
+        if (!isFallthrough(out)) return out
         // 连接本身用不了：脚本方案同样要模型，走不通——直接落回旧路径，不发注定失败的脚本方案请求
-        if (CONNECTION_UNUSABLE_CODES.has(lastFallthrough)) return 'fallthrough'
+        if (CONNECTION_UNUSABLE_CODES.has(out.code)) return out
         // 图内方案这条路不适用：先试脚本方案（Agent 在副本里改、看过再应用）；它也不适用才落回现有的直接改脚本（调用方发）
         return await start(panelId, { instruction: req.instruction, ...(req.target ? { target: req.target } : {}), mode: 'script' }, fallback, false, onSettle)
       } finally {
@@ -581,8 +587,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         labelOf: (gid) => labels.get(gid) || undefined,
       })
       // 脚本修改也先出方案卡（ADR 0206 PR 6）：Agent 在副本里改、渲染出对比，看过再应用；这条路不适用（没连上模型 / native…）就落回现有的直接改脚本
-      const out = opts?.legacyOnly ? 'fallthrough' : await start(e.panelId, { instruction: prompt.length <= MAX_ASSISTANT_INSTRUCTION ? prompt : fb.prompt, display: fb.prompt, ...(e.request.target ? { target: e.request.target } : {}), mode: 'script' }, fb)
-      if (out !== 'fallthrough') {
+      const out: string | null | Fallthrough = opts?.legacyOnly ? { kind: 'fallthrough', code: 'legacy_only' } : await start(e.panelId, { instruction: prompt.length <= MAX_ASSISTANT_INSTRUCTION ? prompt : fb.prompt, display: fb.prompt, ...(e.request.target ? { target: e.request.target } : {}), mode: 'script' }, fb)
+      if (!isFallthrough(out)) {
         if (out) patch(out, { followsKey: key })
         patch(key, e.plan && e.plan.groups.length > 0 ? { scriptStarted: true } : { status: 'handoff', scriptStarted: true, failure: undefined })
         return out !== null
@@ -625,7 +631,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       for (const id of ids) void discardChangePlan(id).catch(() => undefined)
       // 助手来源：「重新生成」不再悄悄绕去旧路径——这条路不适用时留一张带「改脚本做」的失败卡
       const out = await start(e.panelId, e.request, e.fallback, e.from === 'assistant')
-      return out === 'fallthrough' ? null : out
+      return isFallthrough(out) ? null : out
     },
 
     openDialog: (key) => set({ dialogKey: key }),
