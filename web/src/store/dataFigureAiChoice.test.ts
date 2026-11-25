@@ -98,6 +98,7 @@ describe('状态', () => {
     let slow!: (v: { understanding: AiDataUnderstandingChoice }) => void
     choiceGet.mockReturnValueOnce(new Promise((r) => (slow = r))).mockResolvedValueOnce({ understanding: choice({ connection: 'b' }) })
     const first = st().refreshUnderstandingChoice()
+    await flush() // 第一次的请求先发出去
     await st().refreshUnderstandingChoice()
     slow({ understanding: choice({ connection: 'old' }) })
     await first
@@ -231,5 +232,161 @@ describe('留存的草稿：AI 选择不同不命中', () => {
     await flush()
     await flush()
     expect(propose.mock.calls.length).toBe(n1 + 1)
+  })
+})
+
+describe('Codex #2230：换 AI 时自动填的答案、在途请求、读写顺序', () => {
+  const swapTo = (c: Partial<AiDataUnderstandingChoice>) => choice({ mode: 'connection', chosen: 'b', connection: 'b', ...c })
+  const bodyOf = (n: number) => propose.mock.calls[n]![0]
+
+  it('P2-1：换 AI 重跑时，上一个 AI 自动填的答案先拿掉再发（新 AI 才会被问到）；用户自己定的保留且这次不重跑', async () => {
+    await open()
+    useDataFigureStore.setState({ answers: { y: 'z', x_measure: 'x' }, autoPicks: { y: 'z', x_measure: 'x' } })
+    choiceSet.mockResolvedValue({ understanding: swapTo({}) })
+    const before = propose.mock.calls.length
+    await st().setUnderstandingChoice({ mode: 'connection', connection: 'b' })
+    await flush()
+    expect(propose.mock.calls.length).toBe(before + 1)
+    const sent = bodyOf(before)
+    expect('answers' in sent).toBe(false) // 自动填的 y / x_measure 都没带，后端不会再当成用户定的
+    expect(st().autoPicks).toEqual({})
+    expect(st().answers).toEqual({})
+  })
+
+  it('P2-1：自动填的和用户自己动过的并存：照旧不重跑（保护用户的选择），答案原样', async () => {
+    await open()
+    useDataFigureStore.setState({ answers: { y: 'z', x: 'mine' }, autoPicks: { y: 'z' } })
+    choiceSet.mockResolvedValue({ understanding: swapTo({}) })
+    const before = propose.mock.calls.length
+    await st().setUnderstandingChoice({ mode: 'connection', connection: 'b' })
+    await flush()
+    expect(propose.mock.calls.length).toBe(before)
+    expect(st().answers).toEqual({ y: 'z', x: 'mine' })
+  })
+
+  it('P2-1：关 → 开（宿主 noteUnavailable）同样先拿掉自动填的；变成「关」时仍原样不回退', async () => {
+    await open()
+    useDataFigureStore.setState({ answers: { y: 'z' }, autoPicks: { y: 'z' } })
+    choiceSet.mockResolvedValue({ understanding: choice({ state: 'off', mode: 'off', connection: null }) })
+    await st().setUnderstandingChoice({ mode: 'off' })
+    expect(st().answers).toEqual({ y: 'z' }) // 关了：不回退
+    st().noteUnavailable(true)
+    choiceSet.mockResolvedValue({ understanding: choice() })
+    await st().setUnderstandingChoice({ mode: 'auto' })
+    const before = propose.mock.calls.length
+    st().noteUnavailable(false)
+    await flush()
+    expect(propose.mock.calls.length).toBe(before + 1)
+    expect('answers' in bodyOf(before)).toBe(false)
+  })
+
+  it('P2-2：候选请求在途时关了：回来的读懂数据结果不应用（关了绝不自动套 AI 的结果）', async () => {
+    await st().loadFiles()
+    let release!: (v: AiDataProposeResponse) => void
+    propose.mockReturnValueOnce(new Promise((r) => (release = r)))
+    st().select(ref('a.csv'))
+    await flush()
+    expect(st().phase).toBe('loading')
+    choiceSet.mockResolvedValue({ understanding: choice({ state: 'off', mode: 'off', connection: null }) })
+    await st().setUnderstandingChoice({ mode: 'off' })
+    const before = propose.mock.calls.length
+    release({ ...cands('S-late'), understanding: { id: 'U', state: 'ready', answers: { y: 'z' } } } as AiDataProposeResponse)
+    await flush()
+    await flush()
+    expect(st().answers).toEqual({}) // 没套 y: z
+    expect(st().autoPicks).toEqual({})
+    expect(propose.mock.calls.length).toBe(before) // 关了也不补跑
+  })
+
+  it('P2-2：候选请求在途时换了 AI：旧 AI 的结果不应用，落定后补跑一次让新 AI 被问到', async () => {
+    await st().loadFiles()
+    let release!: (v: AiDataProposeResponse) => void
+    propose.mockReturnValueOnce(new Promise((r) => (release = r)))
+    st().select(ref('a.csv'))
+    await flush()
+    choiceSet.mockResolvedValue({ understanding: swapTo({}) })
+    await st().setUnderstandingChoice({ mode: 'connection', connection: 'b' })
+    expect(propose.mock.calls.length).toBe(1) // 还在途：这时不发
+    release({ ...cands('S-late'), understanding: { id: 'U', state: 'ready', answers: { y: 'z' } } } as AiDataProposeResponse)
+    await flush()
+    await flush()
+    expect(propose.mock.calls.length).toBe(2) // 落定后补跑
+    expect(st().answers).toEqual({}) // 旧 AI 的 y: z 没套上
+    expect('answers' in bodyOf(1)).toBe(false)
+  })
+
+  it('P2-3：读刷新排在未完成的写之后：写成功的结果和它该触发的重跑不被读吞掉；读不会比写先发', async () => {
+    await open()
+    const order: string[] = []
+    let finishWrite!: (v: { understanding: AiDataUnderstandingChoice }) => void
+    choiceSet.mockImplementation(() => {
+      order.push('set')
+      return new Promise((r) => (finishWrite = r))
+    })
+    choiceGet.mockImplementation(async () => {
+      order.push('get')
+      return { understanding: swapTo({}) } // 写完之后读到的是新的
+    })
+    const before = propose.mock.calls.length
+    const w = st().setUnderstandingChoice({ mode: 'connection', connection: 'b' })
+    const r = st().refreshUnderstandingChoice() // 写还没完成就又读了一次
+    await flush()
+    expect(order).toEqual(['set']) // 读在等写
+    finishWrite({ understanding: swapTo({}) })
+    await w
+    await r
+    await flush()
+    expect(order).toEqual(['set', 'get'])
+    expect(st().understandingChoice?.connection).toBe('b')
+    expect(propose.mock.calls.length).toBe(before + 1) // 换 AI 的重跑没被吞
+  })
+
+  it('P2-3：读发出之后才开始的写：那次读回来（哪怕读到旧的）不盖掉写的结果', async () => {
+    await open()
+    let late!: (v: { understanding: AiDataUnderstandingChoice }) => void
+    choiceGet.mockReturnValueOnce(new Promise((r) => (late = r)))
+    const r = st().refreshUnderstandingChoice()
+    await flush()
+    choiceSet.mockResolvedValue({ understanding: swapTo({}) })
+    await st().setUnderstandingChoice({ mode: 'connection', connection: 'b' })
+    late({ understanding: choice() }) // 旧的 A
+    await r
+    expect(st().understandingChoice?.connection).toBe('b')
+  })
+
+  it('自查：清单在途、写在其间完成：清单里那份旧对象不盖掉；清单发出时已有写在途也不盖', async () => {
+    let late!: (v: Awaited<ReturnType<typeof aiDataFilesAll>>) => void
+    files.mockReturnValueOnce(new Promise((r) => (late = r)))
+    const p = st().loadFiles()
+    choiceSet.mockResolvedValue({ understanding: choice({ state: 'off', mode: 'off', connection: null }) })
+    await st().setUnderstandingChoice({ mode: 'off' })
+    late({ files: [], truncated: false, understanding: choice() })
+    await p
+    expect(st().understandingChoice?.state).toBe('off')
+  })
+
+  it('自查：留存的草稿命中判断带上实际在用的 AI：auto 但在用的连接变了也不命中', async () => {
+    files.mockResolvedValue({
+      files: ['a.csv', 'b.csv'].map((p) => ({ path: p, size: 1, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 3 } })),
+      truncated: false,
+      understanding: choice(),
+    })
+    await st().loadFiles()
+    const go = async (p: string) => {
+      st().select(ref(p))
+      await flush()
+      await flush()
+      st().candidates.forEach((c) => st().thumbSettled(st().session!, c.id, true))
+    }
+    await go('a.csv')
+    await go('b.csv')
+    choiceGet.mockResolvedValue({ understanding: choice({ connection: 'b' }) }) // auto，但实际在用的换成了 b
+    await st().refreshUnderstandingChoice()
+    await flush()
+    const n = propose.mock.calls.length
+    st().select(ref('a.csv'))
+    await flush()
+    await flush()
+    expect(propose.mock.calls.length).toBeGreaterThan(n)
   })
 })
