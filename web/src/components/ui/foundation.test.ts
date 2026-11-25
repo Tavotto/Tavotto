@@ -321,7 +321,6 @@ const RULES: Rule[] = [
       '/src/components/inspector/ElementInspector.tsx': { count: 2, why: '文档数据：取色框没有值时的 #000000' },
       '/src/components/inspector/LegendCard.tsx': { count: 1, why: '文档数据：图例句柄颜色缺省 #000000' },
       '/src/components/inspector/controls/ColorbarPickers.tsx': { count: 2, why: '文档数据：色条样张的兜底色标' },
-      '/src/components/inspector/controls/colormapStops.ts': { count: 126, why: '文档数据：matplotlib colormap 的色标（样张画的就是图会用的颜色）' },
       '/src/components/inspector/controls/SpineFrameCard.tsx': { count: 2, why: '文档数据：边框 / 刻度颜色缺省 #000000' },
       '/src/components/inspector/controls/TypographyControls.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
       '/src/components/settings/StyleSamplePreview.tsx': { count: 9, why: '文档数据：样式样张是一张小图（印刷色，跟纸一起不随主题变）' },
