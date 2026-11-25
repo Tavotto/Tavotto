@@ -417,6 +417,9 @@ class FixSession:
     done: threading.Event = field(default_factory=threading.Event)
     #: 进度与卡住（D3）：`activity` 是最近一次工具活动；`stalled` 非空 = 现在卡住了，界面要说原因
     activity: dict | None = None
+    #: 走到四步里的哪一步（`fixtools.FIX_STAGES`）与第几轮（验证没过又回去修 +1）；还没调过推进步骤的工具 = None
+    stage: str | None = None
+    stage_round: int = 1
     stalled: dict | None = None
     stall_since: float | None = None
     stall_code: str = ""  # 自动取消时记下的原因码；收尾时据此判 failed
@@ -648,6 +651,8 @@ class FixSessions:
             "seq": s.seq,
             #: 最近一次工具活动 `{tool, phase: start|end|denied, detail, at_ms}`（界面按 tool 映射成一句话）；还没有 = None
             "activity": dict(s.activity) if s.activity else None,
+            #: 任务清单的进度 `{step: diagnose|fix|verify|finish, round}`（按工具组归步，`fixtools.next_stage`）；还没开始 = None
+            "stage": {"step": s.stage, "round": s.stage_round} if s.stage else None,
             #: 现在卡住了：`{reason: cli_waiting_approval|cli_tool_not_delivered|stalled, detail}`；没卡住 = None
             "stalled": dict(s.stalled) if s.stalled else None,
         }
@@ -861,6 +866,7 @@ class FixSessions:
             }
             s.last_progress = now
             if phase == "start":
+                s.stage, s.stage_round = fixtools.next_stage(s.stage, s.stage_round, tool)
                 if s.inflight == 0:
                     s.tool_started = now
                 s.inflight += 1

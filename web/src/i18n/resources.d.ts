@@ -3,6 +3,8 @@ export default interface Resources {
   "ai": {
     "changePlan": {
       "card": {
+        "appliedAssistant": "已应用 · 改了 {{places}} 处",
+        "appliedLayout": "已应用 · {{count}} 张图重新排了版",
         "applied_other": "已应用 · {{count}} 条意见已处理",
         "applyFailed": "没能应用，图没有改动",
         "applyNow": "直接应用",
@@ -11,15 +13,26 @@ export default interface Resources {
         "discarded": "已放弃这一版",
         "dismiss": "收起",
         "empty": "这些意见没法直接改图，图没有改动",
+        "emptyAssistant": "这条没法直接改图，图没有改动",
         "generatingAny": "正在按意见修改…",
+        "generatingAssistant": "正在按你的话修改…",
         "generating_other": "正在按 {{count}} 条意见修改…",
+        "handoff": "这条要改脚本，交给 Agent 改。",
         "holdBefore": "按住看修改前",
         "regenerate": "重新生成",
         "retry": "重试",
         "revising": "正在按批注重改…",
+        "runScript": "改脚本做剩下的",
+        "runScriptAll": "改脚本来做",
+        "runScriptTip": "会先应用这些图内修改",
+        "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
         "stale": "原图改过了，这版对不上",
         "summary": "按 {{done}} 条意见改了 {{places}} 处，{{script}} 条要改脚本",
         "summaryAll": "按 {{done}} 条意见改了 {{places}} 处",
+        "summaryAssistant": "改了 {{places}} 处",
+        "summaryAssistantOther": "改了 {{places}} 处，剩下的没法直接改",
+        "summaryAssistantScript": "改了 {{places}} 处，剩下的要改脚本，这次没动",
+        "summaryLayout": "{{count}} 张图重新排了版",
         "summaryNotes": "按 {{n}} 条批注又改了 {{places}} 处",
         "summaryOther": "按 {{done}} 条意见改了 {{places}} 处，{{rest}} 条没法直接改",
         "thumbAlt": "修改后的图",
@@ -47,6 +60,8 @@ export default interface Resources {
         "groupN": "第 {{n}} 条意见",
         "hold": "按住",
         "holdBefore": "看修改前",
+        "layoutGroupMeta": "{{count}} 张图",
+        "layoutHeading": "排版 · {{count}} 张图",
         "lockLearn": "了解高级版 ›",
         "lockTip": "在改好的图上点元素写批注，再改一版",
         "modeAnnotate": "批注",
@@ -113,6 +128,7 @@ export default interface Resources {
         "thisOne": "这一处",
         "unbold": "已取消{{el}}的加粗"
       },
+      "layoutGroup": "排版",
       "reviewNote": {
         "open": "看意见 ›",
         "title_other": "审阅意见 · {{count}} 条"
@@ -129,6 +145,7 @@ export default interface Resources {
         "out_of_scope": "不在图内修改的范围，这次没动",
         "over_limit": "改动太多，这条没动",
         "unclear": "意见不够具体，这次没动",
+        "unclearAssistant": "指令不够具体，这次没动",
         "unknown_element": "找不到对应的元素，这次没动"
       }
     },
@@ -189,6 +206,16 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "aiChoice": {
+        "auto": "自动",
+        "chosen": "你选的模型",
+        "current": "当前：{{name}}",
+        "more": "连接其他 AI…",
+        "off": "不用 AI 分析",
+        "tip": "分析用的 AI：{{name}}",
+        "tipPlain": "分析用的 AI",
+        "unavailable": "该模型无法连接，请换一个尝试"
+      },
       "basis": {
         "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
         "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
@@ -2709,6 +2736,7 @@ export default interface Resources {
           "failed": "检测失败。显示上次结果。"
         },
         "backAria": "返回改图助手列表",
+        "changePlan": "改图前先给我看修改方案",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {
@@ -4518,6 +4546,7 @@ export default interface Resources {
       "tutorial_reset_incomplete": "教程已换成干净的副本，但上次的教程排版暂时清不掉（本机另一个 Tavotto 正在用会话记录），请稍后再点一次重置。",
       "tutorial_resources_invalid": "安装里的教程资源不完整。请重新安装 Tavotto：{{reason}}",
       "tutorial_resources_missing": "安装里没有教程资源。请重新安装 Tavotto：{{reason}}",
+      "understanding_connection_unavailable": "该模型无法连接，请换一个尝试",
       "unit_required": "这种图需要你先确认哪一列是个体编号。",
       "unit_unconfirmed": "个体编号列要你确认过才能用，列名像编号还不算。",
       "unsafe_project_name": "「{{name}}」不是合法的目录名：项目名只能是单个目录名，不含路径分隔符或 ..",
@@ -4699,7 +4728,6 @@ export default interface Resources {
       "repairCreatingEnv": "正在准备 Python 环境…",
       "repairDetails": "详情",
       "repairDone": "已安装 {{module}}，正在重新运行。",
-      "repairDownloadAria": "下载进度",
       "repairDownloadBytes": "{{done}} / {{total}} MB",
       "repairDownloadUnpacking": "正在解压 Python…",
       "repairEnvNotApplied": "切换没有生效：这个项目此刻用的还不是那个 Python，脚本没有重跑。",
@@ -4851,7 +4879,6 @@ export default interface Resources {
       "repairStage_packages": "安装所需的包",
       "repairStage_python": "准备 Python",
       "repairStage_rerun": "重新运行",
-      "repairStep": "（{{n}}/{{total}}）",
       "repairSystemHint": "{{python}} · Python {{version}}，不安装任何东西",
       "repairSystemRejectedNoMatplotlib": "{{python}} 装了 {{module}}，但 matplotlib 用不了，未采用。",
       "repairSystemRejectedUnsupported": "{{python}}（Python {{version}}）装了 {{module}}，但 {{product}} 不支持这个 Python 版本，未采用。",
@@ -7724,6 +7751,7 @@ export default interface Resources {
         "readTitle": "AI 查看过",
         "reasonLabel": "AI 的理由：{{reason}}",
         "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
+        "round": "第 {{n}} 轮",
         "running": "AI 正在查找原因…",
         "sendNo": "不发送",
         "sendNote": "AI 写的说明",
@@ -7741,7 +7769,14 @@ export default interface Resources {
           "cli_waiting_approval": "Codex 或 Claude Code 在等待批准，Tavotto 无法代为确认。停止后可以重试。",
           "stalled": "AI 暂时没有响应，稍后会自动停止。"
         },
+        "steps": {
+          "diagnose": "找原因",
+          "finish": "收尾",
+          "fix": "动手修",
+          "verify": "运行验证"
+        },
         "stop": "停止",
+        "taskTitle": "AI 修复",
         "useIt": "用它",
         "willInstall": "将要安装：{{packages}}"
       },
@@ -8248,7 +8283,6 @@ export default interface Resources {
       },
       "progress": "进行中",
       "pythonChange": {
-        "downloadBytes": "已下载 {{done}} / {{total}} MB",
         "stage": {
           "creating": "正在创建新的运行环境…",
           "downloading": "正在下载 Python…",
@@ -8701,6 +8735,7 @@ export default interface Resources {
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
       "quickLayoutDone": "已排好",
       "quickLayoutFailed": "这次没排好，再试一次",
+      "quickLayoutNoPreview": "没能生成对比预览，已直接排好",
       "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
       "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
       "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",

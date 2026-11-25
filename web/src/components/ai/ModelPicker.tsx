@@ -148,7 +148,7 @@ export function ModelPicker({
 
 /** 连接的图标：彩色 logo 坐在浅色圆角底上；菜单项与触发器各用一个稳定的组件类型（避免每次渲染重建） */
 const logoTypes = new Map<string, () => ReactElement>()
-const logoFor = (logo: string) => {
+export const logoFor = (logo: string) => {
   let c = logoTypes.get(logo)
   if (!c) {
     c = () => <BrandLogo logo={logo} size={16} />

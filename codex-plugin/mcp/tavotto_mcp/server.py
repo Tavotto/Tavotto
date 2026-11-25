@@ -664,7 +664,136 @@ def _tools() -> list[dict]:
         tools.append(_share_review_tool())
     if bridge.review_feedback_available():
         tools.extend(_review_feedback_tools())
+    if bridge.layout_annotate_available():
+        tools.extend(_layout_annotate_tools())
     return tools
+
+
+_LAYOUT_TARGET = {
+    "type": "object",
+    "properties": {
+        "project_path": {
+            "type": "string",
+            "description": "项目目录（排版在它的 tavottofile/ 里）。",
+        },
+        "layout": {"type": "string", "description": "排版名（tavottofile/<名>.json 的 <名>）。"},
+        "canvas_id": {"type": "string", "description": "多页排版里的哪一页；不给 = 当前页。"},
+    },
+}
+
+_LAYOUT_ITEMS = {
+    "type": "array",
+    "description": (
+        "要加的元素（场景描述，不是坐标）。每项 {kind, name, …}：kind ∈ arrow / text / shape / bracket / connector / box；"
+        "位置一律写锚点 {anchor: {data|element|panel|item: …}, offset_mm?}——"
+        "data = {panel, axes, x, y}（数据坐标，引擎从这次导出实测）、element = {panel, gid, point}（场景里的元素）、"
+        "panel = {id, point}（子图框的方位点 nw/n/ne/w/center/e/sw/s/se）、item = {name, point}（本批里另一个元素）。"
+        "显著性星号 / n.s. / p 值 / n 必须写 provenance: user（用户说的）或 data（数据里算出来的），否则整批要用户确认。"
+        "全文见 tavotto_guide section=layout-annotate。"
+    ),
+    "items": {"type": "object"},
+}
+
+
+def _layout_props(*extra: tuple[str, dict]) -> dict:
+    props = dict(_LAYOUT_TARGET["properties"])
+    props.update(dict(extra))
+    return props
+
+
+def _layout_annotate_tools() -> list[dict]:
+    """往项目排版上加矢量标注（ADR 0208 第 2 期）：读场景 → 出方案（复述 + 局部图）→ 写入 → 撤销。"""
+    rev = (
+        "base_revision",
+        {"type": "string", "description": "tavotto_layout_scene 回的 base_revision。"},
+    )
+    fp = (
+        "fingerprint",
+        {"type": "string", "description": "tavotto_layout_scene 回的 scene.fingerprint。"},
+    )
+    items = ("items", _LAYOUT_ITEMS)
+    return [
+        {
+            "name": "tavotto_layout_scene",
+            "title": "读排版场景",
+            "description": (
+                "只读：读项目里一份排版，回每张子图、坐标轴、带名字的元素（脚本 label= 的名字与角色）、空白区、"
+                "字体字号线宽，全部是画布毫米，外加 base_revision 与 fingerprint。每张子图带它在排版里的改动现跑一次导出来量；"
+                "量不了的子图（unmeasured：冻结快照、没有脚本的素材、打不开）只给外框。"
+                "用户说的「那条线 / 那根柱子」对应不到唯一一个元素时，**把候选（名字 + 子图）列给用户选，别自己挑**。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": _layout_props(),
+                "required": ["project_path", "layout"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_layout_annotate_plan",
+            "title": "出标注方案（不写入）",
+            "description": (
+                "不写盘：按描述求解出这批元素、逐项核对（对齐、不遮数据、不压字、不出页、期刊字号线宽、字体），"
+                "并回**复述**（echo：每个锚点实际落到了哪个元素 / 数据点上）与一张局部图。"
+                "**先拿复述逐条对照用户的原话**：对不上就改描述再出方案；intent=unnamed 的项说明锚到的元素没有名字，要如实告诉用户。"
+                "failed 非空不能写入；unverified 是量不了的项，写入时照实告诉用户。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": _layout_props(items, rev, fp),
+                "required": ["project_path", "layout", "items", "base_revision"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_layout_annotate_apply",
+            "title": "写入标注",
+            "description": (
+                "把方案写进排版文件（只追加新元素，不改已有的）。items 必须与出方案时**一字不差**，并带回方案的 echo_digest；"
+                "服务端会重新求解、重新核对，描述变了或排版在这期间被改过就拒绝。"
+                "写完**把复述原话告诉用户**（加了什么、各锚在哪），并给出 undo_token 能一步撤销。"
+                "桌面正开着这份排版时，桌面下次保存会提示别处有改动。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": _layout_props(
+                    items,
+                    rev,
+                    fp,
+                    (
+                        "echo_digest",
+                        {
+                            "type": "string",
+                            "description": "tavotto_layout_annotate_plan 回的 echo_digest。",
+                        },
+                    ),
+                ),
+                "required": ["project_path", "layout", "items", "base_revision", "echo_digest"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_layout_annotate_undo",
+            "title": "撤销上一次写入的标注",
+            "description": (
+                "把排版恢复到那次写入之前。只在排版文件还是那次写下的那一份时才恢复；之后被桌面或别人改过就拒绝（不替用户覆盖）。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": _layout_props(
+                    (
+                        "undo_token",
+                        {
+                            "type": "string",
+                            "description": "tavotto_layout_annotate_apply 回的 undo_token。",
+                        },
+                    )
+                ),
+                "required": ["project_path", "layout", "undo_token"],
+                "additionalProperties": False,
+            },
+        },
+    ]
 
 
 #: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 HANDLERS，关着时调用回 `journal_catalog_disabled`）
@@ -1849,6 +1978,101 @@ def _call_resolve_review(args: dict) -> dict:
     return {"content": _text(f"意见 {out['comment_id']} {word}。"), "structuredContent": out}
 
 
+def _layout_args(args: dict) -> tuple[str, str, str | None]:
+    return (
+        str(args.get("project_path") or ""),
+        str(args.get("layout") or ""),
+        args.get("canvas_id") if isinstance(args.get("canvas_id"), str) else None,
+    )
+
+
+def _call_layout_scene(args: dict) -> dict:
+    bridge.require_layout_annotate()
+    project, layout, canvas_id = _layout_args(args)
+    out = bridge.layout_scene(project, layout, canvas_id=canvas_id)
+    n = len(out.get("panels_by_ref") or {})
+    miss = out.get("unmeasured") or {}
+    lines = [f"排版「{layout}」：{n} 张子图。"]
+    if miss:
+        lines.append("量不了（只有外框）：" + "、".join(f"{k}（{v}）" for k, v in miss.items()))
+    return {"content": _text(*lines), "structuredContent": out}
+
+
+def _layout_items(args: dict) -> list:
+    items = args.get("items")
+    if not isinstance(items, list):
+        raise bridge.BridgeError("items 必须是数组", code="bad_item")
+    return items
+
+
+def _call_layout_plan(args: dict) -> dict:
+    bridge.require_layout_annotate()
+    project, layout, canvas_id = _layout_args(args)
+    out = bridge.layout_propose(
+        project,
+        layout,
+        _layout_items(args),
+        base_revision=str(args.get("base_revision") or ""),
+        fingerprint=args.get("fingerprint") if isinstance(args.get("fingerprint"), str) else None,
+        canvas_id=canvas_id,
+    )
+    pv = out.pop("preview", None)
+    lines = [e["text"] for e in out.get("echo") or []]
+    if out.get("errors") and not out.get("echo"):
+        lines.insert(0, "方案没出来：" + "、".join(str(e.get("code")) for e in out["errors"]))
+    elif out.get("failed"):
+        lines.insert(
+            0,
+            "核对没过，不能写入："
+            + "、".join(f"{f['check']}·{f.get('item')}" for f in out["failed"]),
+        )
+    else:
+        lines.insert(0, "方案（先对照用户的原话核一遍再写入）：")
+    content = _text(*lines)
+    if pv is not None:
+        content.append({"type": "image", "data": pv["png_base64"], "mimeType": "image/png"})
+        out["preview"] = {k: v for k, v in pv.items() if k != "png_base64"}
+    return {"content": content, "structuredContent": out}
+
+
+def _call_layout_apply(args: dict) -> dict:
+    bridge.require_layout_annotate()
+    project, layout, canvas_id = _layout_args(args)
+    out = bridge.layout_commit(
+        project,
+        layout,
+        _layout_items(args),
+        base_revision=str(args.get("base_revision") or ""),
+        echo_digest=str(args.get("echo_digest") or ""),
+        fingerprint=args.get("fingerprint") if isinstance(args.get("fingerprint"), str) else None,
+        canvas_id=canvas_id,
+    )
+    plan = out.get("plan") or {}
+    if not out.get("written"):
+        return {
+            "content": _text("没有写入：核对没过，先重新出方案。"),
+            "structuredContent": out,
+        }
+    lines = [
+        f"已加进「{layout}」：{len(out.get('added') or [])} 个元素（可用 undo_token 一步撤销）。"
+    ]
+    lines += [e["text"] for e in plan.get("echo") or []]
+    if plan.get("unverified"):
+        lines.append(
+            "这几项量不了、没核："
+            + "、".join(f"{f['check']}·{f.get('item')}" for f in plan["unverified"])
+        )
+    plan.pop("objects", None)  # 已写进文件；回执不重复带一份
+    return {"content": _text(*lines), "structuredContent": out}
+
+
+def _call_layout_undo(args: dict) -> dict:
+    bridge.require_layout_annotate()
+    project, layout, _canvas = _layout_args(args)
+    out = bridge.layout_undo(project, layout, str(args.get("undo_token") or ""))
+    return {"content": _text(f"已撤销：「{layout}」恢复到那次写入之前。"), "structuredContent": out}
+
+
 def _call_fix_to_journal(args: dict) -> dict:
     raw_dpi = args.get("dpi")
     out = bridge.fix_to_journal(
@@ -2645,6 +2869,12 @@ HANDLERS = {
     "tavotto_review_feedback": _call_review_feedback,
     "tavotto_reply_review": _call_reply_review,
     "tavotto_resolve_review": _call_resolve_review,
+    # 排版标注（ADR 0208 第 2 期）：引擎没有 `layoutannotate` 时不出现、调用回 `layout_annotate_unavailable`；
+    # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
+    "tavotto_layout_scene": _call_layout_scene,
+    "tavotto_layout_annotate_plan": _call_layout_plan,
+    "tavotto_layout_annotate_apply": _call_layout_apply,
+    "tavotto_layout_annotate_undo": _call_layout_undo,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）

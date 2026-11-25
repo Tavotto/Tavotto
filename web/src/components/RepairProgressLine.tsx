@@ -1,15 +1,12 @@
 import { useTranslation } from 'react-i18next'
-import { Check, Circle } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
-import { Spinner } from '@/components/ui/Spinner'
-import { ProgressBar } from '@/components/ui/ProgressBar'
+import { TaskChecklist, type TaskStep, type TaskStepState } from '@/components/ui/TaskChecklist'
 import type { DependencyProgress } from '@/lib/api'
-import { cn } from '@/lib/utils'
 
 /**
- * 修复进度的**一行**（2026-09-29 用户：「一定要让用户一句话就能读懂」）：「正在安装 openpyxl…（3/4）」，下载那一段是
- * 「正在下载 Python… 12 / 25 MB」。脚本行 / 画布右栏的修复卡与跑前的依赖授权框共用这一份；阶段句子由调用方按 state
- * 给（两处的文案表不同），这里补第几步 / 字节数与一根细进度条。完整的阶段列表（`RepairStageList`）只进折叠的「详情」。
+ * 修复进度（2026-11-25 用户拍板，照「AI Coding Agent 不该只给一个总进度条」的视频做）：一块任务清单——标题行是这一刻在做的
+ * 那句话（「正在安装 openpyxl…」），下面一开始就列全这次要走的几步（准备 Python → 创建运行环境 → 安装所需的包 → 重新运行），
+ * 做完的勾掉、进行中的转圈、下载那一步带「12 / 25 MB」胶囊。替掉了原来的「一句话（3/4）+ 进度条」与折在详情里的阶段列表。
+ * 脚本行 / 画布右栏的修复卡与跑前的依赖授权框共用这一份；阶段句子由调用方按 state 给（两处的文案表不同）。
  *
  * 字节数读进度里的 `result.download`（U05）：`result` 在后端是「沿用上一条」的，所以只在 state 仍是
  * `downloading_python` 时读它——到了创建环境那一步，那段字节数还挂在进度上，但说的已经是过去的事。
@@ -68,59 +65,32 @@ export function RepairProgressLine({ progress, text }: { progress: DependencyPro
   const origin = progress.result?.private_python?.origin
   const downloading =
     !!download && download.stage === 'downloading' && download.total_bytes > 0 && (!origin || origin === 'download')
-  const pct = downloading ? Math.min(100, Math.round((download.done_bytes / download.total_bytes) * 100)) : null
-  const step = stepOf(progress)
-  const line = !download
-    ? `${text}${step ? t('engine.repairStep', step) : ''}`
-    : downloading
-      ? `${text} ${t('engine.repairDownloadBytes', {
-          done: Math.round(download.done_bytes / MB),
-          total: Math.round(download.total_bytes / MB),
-        })}`
+  const title =
+    !download || downloading
+      ? text
       : // 下载之后的几步各说各的（#743 `privatepython.STAGE_*` 闭集）；认不出的子阶段安静降级成通用的一句
         t(SUBSTAGE_TEXT[download.stage] ?? 'engine.repairPythonPreparing')
-  return (
-    <div className="flex flex-col gap-1.5">
-      <p className="type-section tabular-nums" data-repair-state={progress.state} data-repair-line>
-        {line}
-      </p>
-      {download && (
-        // 与更新下载同一份进度条：蓝色不做大块背景
-        <ProgressBar pct={pct} label={t('engine.repairDownloadAria')} data-repair-download />
-      )}
-    </div>
-  )
-}
-
-/** 完整的阶段列表（准备 Python → 创建运行环境 → 安装所需的包 → 重新运行）：只放进折叠的「详情」 */
-export function RepairStageList({ progress }: { progress: DependencyProgress }) {
-  const { t } = useTranslation('errors')
   const step = stepOf(progress)
-  if (!step) return null
+  const stages = stagesOf(progress)
+  // 胶囊只放真数字（下载的字节数）；其余几步只有转圈
+  const meta = downloading
+    ? t('engine.repairDownloadBytes', {
+        done: Math.round(download.done_bytes / MB),
+        total: Math.round(download.total_bytes / MB),
+      })
+    : undefined
+  const steps: TaskStep[] = stages.map((stage, i) => {
+    // `done` 那一刻后端已装好、正在重跑：前几步全勾，「重新运行」在转
+    const state: TaskStepState = !step ? 'pending' : i + 1 < step.n ? 'done' : i + 1 === step.n ? 'active' : 'pending'
+    return { id: stage, label: t(STAGE_LABEL[stage]), state, meta: stage === 'python' ? meta : undefined }
+  })
   return (
-    <ol className="flex flex-col gap-0.5" data-repair-stages>
-      {stagesOf(progress).map((stage, i) => {
-        const state = i + 1 < step.n ? 'done' : i + 1 === step.n ? 'active' : 'pending'
-        return (
-          <li
-            key={stage}
-            data-repair-stage={stage}
-            data-stage-state={state}
-            className={cn('flex items-center gap-1.5', state === 'active' ? 'text-ink' : 'text-ink-3')}
-          >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
-              {state === 'done' ? (
-                <Check size={ICON_SIZE.xs} />
-              ) : state === 'active' ? (
-                <Spinner size={ICON_SIZE.xs} />
-              ) : (
-                <Circle size={ICON_SIZE.xs} />
-              )}
-            </span>
-            {t(STAGE_LABEL[stage])}
-          </li>
-        )
-      })}
-    </ol>
+    <TaskChecklist
+      title={title}
+      steps={steps}
+      data-repair-line
+      data-repair-state={progress.state}
+      data-repair-download={downloading ? Math.min(100, Math.round((download.done_bytes / download.total_bytes) * 100)) : undefined}
+    />
   )
 }

@@ -250,29 +250,31 @@ test(
     expect(planBodies).toEqual([body, body])
     await expect(page.getByText('准备环境并继续')).toHaveCount(0)
 
-    // ③ 下载私有 Python：进度只有一行，MB 来自进度里的字节数
+    // ③ 下载私有 Python：任务清单（2026-11-25），标题说在下载，MB 来自进度里的字节数、在下载那步的胶囊里
     events.push(
       progress('downloading_python', {
         result: { download: { stage: 'downloading', done_bytes: 10 * MB, total_bytes: 25 * MB } },
       }),
     )
     const line = page.locator('[data-script-dependency-repair] [data-repair-line]')
-    await expect(line).toHaveText('正在下载 Python… 10 / 25 MB', { timeout: 15_000 })
-    await expect(page.locator('[data-script-dependency-repair] [data-repair-download]')).toHaveAttribute(
-      'aria-valuenow',
-      '40',
-    )
+    const title = line.locator('[data-task-title]')
+    await expect(title).toHaveText('正在下载 Python…', { timeout: 15_000 })
+    await expect(line.locator('[data-task-step="python"] [data-task-meta]')).toHaveText('10 / 25 MB')
+    await expect(line).toHaveAttribute('data-repair-download', '40')
+    await expect(line.locator('[data-task-step]')).toHaveCount(4)
     await expectReachable(page, line, '进度')
-    const progressCard = page.locator('[data-script-dependency-repair] .shadow-card')
-    // 进行中画出来的只有一行进度、「取消」与折叠的「详情」（四个阶段与日志在里面）
-    expect(await renderedBlocks(progressCard)).toEqual(['p:正在下载 Python… 10 / 25 MB', 'button:取消', 'summary:详情'])
+    // 进行中没有进度条
+    await expect(page.locator('[data-script-dependency-repair] [role="progressbar"]')).toHaveCount(0)
 
-    // ④ 创建环境 → 安装：那一行跟着换；下载条随下载那一段结束消失
+    // ④ 创建环境 → 安装：标题跟着换、步骤往下勾；字节数随下载那一段结束消失；行数始终是 4
     events.push(progress('creating_env'))
-    await expect(line).toHaveText('正在准备 Python 环境…（2/4）', { timeout: 15_000 })
-    await expect(page.locator('[data-script-dependency-repair] [data-repair-download]')).toHaveCount(0)
+    await expect(title).toHaveText('正在准备 Python 环境…', { timeout: 15_000 })
+    await expect(line.locator('[data-task-step="python"]')).toHaveAttribute('data-step-state', 'done')
+    await expect(line).not.toHaveAttribute('data-repair-download', /.*/)
     events.push(progress('installing'))
-    await expect(line).toHaveText('正在安装 openpyxl…（3/4）', { timeout: 15_000 })
+    await expect(title).toHaveText('正在安装 openpyxl…', { timeout: 15_000 })
+    await expect(line.locator('[data-task-step="packages"]')).toHaveAttribute('data-step-state', 'active')
+    await expect(line.locator('[data-task-step]')).toHaveCount(4)
 
     // ⑤ 装好：那一行自动重跑（真后端、真 worker），图出来，修复卡收起
     events.push(progress('done', { result: { version: '3.1.5' } }))
@@ -432,13 +434,14 @@ test(
     expect(prepareBodies[0]).toEqual({ plan_id: JOINT_PLAN_ID, impact_digest: IMPACT_DIGEST })
     await expect(dialog).toBeVisible()
 
-    // ③ 进度一行，跟着换
+    // ③ 任务清单，标题跟着换、步骤往下勾
     events.push(jointProgress('creating_env'))
     const line = dialog.locator('[data-repair-line]')
-    await expect(line).toHaveText('正在创建 Python 环境…（2/4）', { timeout: 15_000 })
+    await expect(line.locator('[data-task-title]')).toHaveText('正在创建 Python 环境…', { timeout: 15_000 })
+    await expect(line.locator('[aria-current="step"]')).toHaveAttribute('data-task-step', 'env')
     await expectReachable(page, line, '进度')
     events.push(jointProgress('installing'))
-    await expect(line).toHaveText('正在安装 pandas 和 openpyxl…（3/4）', { timeout: 15_000 })
+    await expect(line.locator('[data-task-title]')).toHaveText('正在安装 pandas 和 openpyxl…', { timeout: 15_000 })
     await expect(row.locator('[data-repair-line]')).toHaveCount(0)
 
     // ④ 装好：这一行自动重跑（真后端、真 worker），图出来，卡片收起

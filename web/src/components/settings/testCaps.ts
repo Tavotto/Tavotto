@@ -75,6 +75,9 @@ export const capsOf = (
   endpoints: [],
   presets: [],
   checked_at_ms: 1_756_000_000_000,
+  // 「先出修改方案卡」（ADR 0206 PR 4）默认开；这个造型器服务的是助手面板 / 设置页那些**走改脚本路径**的既有用例，
+  // 所以默认按「用户关了它」造（`ai.change_plan.enabled = false`）。要测方案路径的用例显式给 `{ change_plan_enabled: true }`
+  change_plan_enabled: false,
   ...over,
 })
 

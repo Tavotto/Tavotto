@@ -4057,11 +4057,16 @@ export interface CreateChangePlanBody {
   id: string
   /** 这张图此刻的全量 override 列表（B0） */
   patches: unknown[]
-  source: 'review'
+  /** `review` 带意见；`assistant` 带用户在改图助手里的原话（`instruction`）与可选的选中元素（`target`） */
+  source: 'review' | 'assistant'
   /** 审阅意见（只取未处理的）；与 `share_id` 二选一 */
   comments?: ReviewComment[]
   /** 本机分享记录 id：后端取最新版本的未处理意见；与 `comments` 二选一 */
   share_id?: string
+  /** `source: 'assistant'`：用户的指令原文 */
+  instruction?: string
+  /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
+  target?: string
   client_request_id?: string
 }
 
@@ -4094,6 +4099,26 @@ export async function createChangePlan(body: CreateChangePlanBody): Promise<Chan
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanTask
+}
+
+/**
+ * 一键排版方案卡的整版预览（状态中立，走导出管线，不登记不提交）：一份画布描述 → 一张 PNG。
+ * 失败抛带稳定 code 的 `EngineError`（`change_plan_render_failed` 等）；调用方一律兜底，不卡住。
+ */
+export async function fetchLayoutPreviewPng(
+  canvas: { page_w_mm: number; page_h_mm: number; objects: unknown[] },
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await fetch(
+    apiUrl('/api/change-plans/layout-preview'),
+    withProject({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ canvas }), signal }),
+  )
+  if (!res.ok) {
+    const out = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    noteProjectGone(res.status, out)
+    throw new EngineError((out.error as string) || t('render.failed', { ns: 'errors', status: res.status }), '', (out.code as string) || '', '')
+  }
+  return res.blob()
 }
 
 /** 批注重改的一条批注（高级版 `change-plan-rerun`）：锚点与审阅意见同形，元素锚带画面框 */
@@ -4614,6 +4639,8 @@ export interface AiCapabilities {
   checked_at_ms: number
   /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
   taf_enabled?: boolean
+  /** 「改图助手 / 一键排版先出修改方案卡」的开关（`ai.change_plan.enabled`，默认开）；老后端没有 = 当开着（但方案路径本身要新后端，老后端会回 invalid_change_plan 落到旧路径） */
+  change_plan_enabled?: boolean
   /**
    * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（ADR 0148 / 0149）。老后端没有；`false` = 没有内置执行器能用的 API 连接
    * （只连了命令行 AI 时也是 false）：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
@@ -4911,6 +4938,11 @@ export interface AiFixState {
   activity?: { tool: string; phase: 'start' | 'end' | 'denied'; detail: string; at_ms: number } | null
   /** 现在卡住了：`reason` 闭集；没卡住 = null */
   stalled?: { reason: 'cli_waiting_approval' | 'cli_tool_not_delivered' | 'stalled'; detail: string } | null
+  /**
+   * 任务清单的进度（`fixtools.next_stage`，按工具组归步；2026-11-25）：四步里走到哪一步 + 第几轮（验证没过又回去修 +1）。
+   * 还没调过推进步骤的工具 = null；老后端没有这个键
+   */
+  stage?: { step: 'diagnose' | 'fix' | 'verify' | 'finish'; round: number } | null
 }
 
 /** 三个读写都可显式指定项目（`pj`）：切项目之后要取消 / 重读的是发起时那个项目的修复，不是当前项目的 */
@@ -5031,6 +5063,14 @@ export const setAiEndpointActive = (agent: AiAgentId, id: string) =>
 /** Windows 设置里的开关「转换时允许 AI 不受沙盒限制」；非 Windows 后端会 400 */
 export const setConvertUnsandboxedWindows = (enabled: boolean) =>
   jsonFetch<{ convert_unsandboxed_windows: boolean }>('/api/ai/convert-unsandboxed', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
+/** 设置里的开关「改图前先给我看修改方案」（`ai.change_plan.enabled`，默认开） */
+export const setChangePlanEnabled = (enabled: boolean) =>
+  jsonFetch<{ change_plan_enabled: boolean }>('/api/ai/change-plan', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -5473,8 +5513,31 @@ export interface AiDataFileEntry {
   sheets?: AiDataSheet[] | null
 }
 
+/** 「读懂数据」用哪个 AI（`/api/ai/data-understanding` 与 `/api/ai/data-files` 共用的对象）：`on` 会用 / `off` 用户关了 / `none` 没有任何可用的 AI / `unavailable` 用户指定的那个此刻用不了（后端不会换别家） */
+export interface AiDataUnderstandingChoice {
+  state: 'on' | 'off' | 'none' | 'unavailable'
+  mode: 'auto' | 'off' | 'connection'
+  /** 此刻实际会用的连接 id */
+  connection: string | null
+  /** 用户指定的连接 id（只在 `mode === 'connection'` 时有；`unavailable` 时它可能已不在 `options` 里） */
+  chosen?: string
+  options: { id: string; label: string; logo: string; vendor: string; kind: 'key' | 'subscription'; model: string }[]
+}
+
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean; understanding?: AiDataUnderstandingChoice }>('/api/ai/data-files?formats=all', undefined, pj)
+
+/** 轻量、只读：只回「读懂数据」的选择与可选的 AI，可反复调（不联网、不探测） */
+export const aiDataChoiceGet = (pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>('/api/ai/data-understanding', undefined, pj)
+
+/** 设置：`auto` / `off` / 指定某个连接；id 不在此刻的可选清单里回 400 `understanding_connection_unavailable` */
+export const aiDataChoiceSet = (body: { mode: 'auto' | 'off' } | { mode: 'connection'; connection: string }, pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>(
+    '/api/ai/data-understanding',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
 export interface AiDataOverview {
   path: string

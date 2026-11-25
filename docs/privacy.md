@@ -197,7 +197,18 @@ has connected in the "Connect an AI" dialog. Tavotto never relays these
 requests through its own servers; the request goes from the user's machine to the
 AI the user chose, in one of two ways:
 
-* **Subscription sign-in (ChatGPT or Claude).** Tavotto passes the request to the
+* **Continue with ChatGPT (Sign in with ChatGPT).** The user signs in once in their
+  browser with OpenAI; Tavotto keeps the resulting tokens in its own data folder
+  (`siwc/`, readable by your user only where the platform supports it — never in
+  logs, usage statistics or diagnostics bundles, and never readable by the AI
+  assistant's own file tools) and sends requests directly to OpenAI's API
+  (`api.openai.com`) under the user's ChatGPT plan, without storing them on OpenAI's
+  side (`store: false`). Signing out revokes Tavotto's access with OpenAI. This
+  connection is used wherever an API-key connection would be (editing figures, AI
+  repair, reading data tables for data-to-figure), so when it is the only AI you have
+  connected, those features send their requests to ChatGPT; if you also have API-key
+  connections, they are tried first. Usage counts against your ChatGPT plan.
+* **Subscription sign-in through a command-line tool (Codex or Claude).** Tavotto passes the request to the
   Codex or Claude command-line tool installed on the user's machine, which talks to
   its own service under its own account and privacy terms.
 * **API key or account sign-in (DeepSeek, Kimi, Zhipu GLM, MiniMax, Alibaba Bailian,
@@ -661,6 +672,26 @@ figure changes when you press *Apply*.
   when you press it.
 * **Turning it off.** Not connecting an AI is enough; there is no other network
   request for this feature.
+
+## Change plans in the assistant
+
+When you send an instruction in the assistant for a single figure, the app first asks
+the AI connection **you** selected for a *change plan* (a card you can compare and
+apply) instead of editing the script right away. Only instructions the plan can
+express (colours, sizes, positions, text, visibility of what is already in the figure)
+become a plan; anything that needs the script is handed to the Agent as before, after
+the plan step has said so.
+
+* **What is sent for the plan.** To the AI connection you chose: the text of your
+  instruction, which element you had selected (if any), and the same table of the
+  figure's elements as above (labels, editable properties with their current values,
+  positions). Scripts, data, project files, paths and computer details are not sent
+  in this step. Instructions with attached reference images skip the plan step.
+* **One-click layout.** The comparison pictures are drawn on your computer by the
+  export engine; nothing about them is sent anywhere.
+* **Turning it off.** Settings → Assistant → Advanced → *Show a change plan before
+  editing*. Off means the assistant and one-click layout behave as before (edit the
+  script / apply directly).
 
 ## Paid edition components
 

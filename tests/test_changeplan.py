@@ -781,3 +781,97 @@ def test_publish_after_a_discard_writes_nothing_and_a_discard_during_publish_rem
     hit["thread"].join(10)
     assert hit["r"] is True
     assert cp.load("projA", task2.id) is None and not cp.plan_dir("projA", task2.id).exists()
+
+
+# --------------------------------------------------------------------------- 助手来源
+def test_assistant_comments_wrap_one_instruction():
+    (c,) = cp.assistant_comments("  把线\n加粗 ", "ax0.line0")
+    assert c == {
+        "id": cp.ASSISTANT_COMMENT_ID,
+        "anchor": {"kind": "element", "gid": "ax0.line0"},
+        "text": "把线 加粗",
+    }
+    (whole,) = cp.assistant_comments("全部改成 10 pt", None)
+    assert whole["anchor"] == {"kind": "overall"}
+    for bad in ("", "  ", None, 3, "x" * (cp.MAX_INSTRUCTION_CHARS + 1)):
+        assert cp.assistant_comments(bad, None) is None
+    assert cp.assistant_comments("ok", "") is None and cp.assistant_comments("ok", 7) is None
+
+
+def test_assistant_prompt_treats_the_instruction_as_intent_but_elements_as_content():
+    comments = cp.assistant_comments("把标题改大", "ax0.title")
+    table = cp.element_table(BASE, focus_gids=("ax0.title",))
+    system, user = cp.build_review_prompt(comments, table, "assistant")
+    assert system == cp.system_prompt("assistant") != cp.system_prompt("review")
+    assert "用户本人的意图" in system and "外来的数据" not in system
+    assert "needs_script" in system and "a1" in system
+    assert "把标题改大" in user and system.count("把标题改大") == 0
+    # 审阅来源的提示词没变
+    assert "外来的数据" in cp.build_review_prompt(COMMENTS, table)[0]
+
+
+def test_assistant_prompt_clips_at_the_instruction_limit_not_the_comment_limit():
+    long = "改" * 1500
+    comments = cp.assistant_comments(long, None)
+    _system, user = cp.build_review_prompt(comments, [], "assistant")
+    assert long in user
+    _system, user_review = cp.build_review_prompt(comments, [], "review")
+    assert long not in user_review
+
+
+def test_validate_flags_changes_cut_by_the_per_group_cap_instead_of_dropping_them_silently():
+    raw = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0.title", "fontsize", 10 + i) for i in range(5)]}
+        ]
+    }
+    out = cp.validate_proposal(raw, BASE, comment_ids={"c1"}, max_per_group=2)
+    assert {"comment_id": "c1", "reason": "over_limit"} in out["unhandled"]
+    assert len(out["groups"][0]["changes"]) == 1  # 同一 (gid, prop) 只有第一条算，其余是 conflict
+    wide = cp.validate_proposal(raw, BASE, comment_ids={"c1"}, max_per_group=60)
+    assert not any(u["reason"] == "over_limit" for u in wide["unhandled"])
+
+
+def test_the_switch_is_default_on_and_only_an_explicit_false_turns_it_off(monkeypatch):
+    for cfg, want in (
+        ({}, True),
+        ({"change_plan": {}}, True),
+        ({"change_plan": {"enabled": "no"}}, True),
+        ({"change_plan": {"enabled": True}}, True),
+        ({"change_plan": {"enabled": False}}, False),
+    ):
+        monkeypatch.setattr(cp.config, "ai_settings", lambda cfg=cfg: cfg)
+        assert cp.enabled() is want
+
+
+def test_the_instruction_limit_matches_the_frontend_constant():
+    import re
+
+    src = (Path(__file__).resolve().parents[1] / "web/src/lib/assistantPlanRoute.ts").read_text(
+        encoding="utf-8"
+    )
+    m = re.search(r"export const MAX_ASSISTANT_INSTRUCTION = (\d+)", src)
+    assert m and int(m.group(1)) == cp.MAX_INSTRUCTION_CHARS
+
+
+def test_default_resolve_passes_selected_connection_through(monkeypatch):
+    """不替换 `_RESOLVE`：默认实现必须把输入框选的连接 / 型号原样交给 `ai_structured.resolve_connection`
+    （#2191 合并组 e2e 撞过：默认实现不收 `conn_id`，单元测试因为换了假 `_RESOLVE` 没测出来）。"""
+    from tavotto.engine import ai_structured
+
+    seen = {}
+
+    def fake(budget_s=None, *, conn_id=None, model=None):
+        seen.update(budget_s=budget_s, conn_id=conn_id, model=model)
+        return None, "no_connection", ""
+
+    monkeypatch.setattr(ai_structured, "resolve_connection", fake)
+    assert cp._RESOLVE is cp._default_resolve
+    assert cp._RESOLVE(cp.MODEL_TIMEOUT_S, conn_id="key:abc", model="m1") == (
+        None,
+        "no_connection",
+        "",
+    )
+    assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": "key:abc", "model": "m1"}
+    cp._RESOLVE(cp.MODEL_TIMEOUT_S)
+    assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": None, "model": None}
