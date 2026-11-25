@@ -2,6 +2,7 @@ import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
 import { POLL_TIMEOUT, type PlanEntry } from '@/store/changePlanStore'
+import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
 export { effectiveStatus } from '@/lib/changePlanApply'
 
@@ -18,6 +19,8 @@ export interface GroupView {
   summary: string
   reviewers: string[]
   commentNumbers: number[]
+  /** 续改出的版本里，这一组是按用户批注改的（清单里置顶、单独标注） */
+  fromNote: boolean
   /** 改动处的框，一处一个；`before` 是同一处在修改前的位置（按元素 gid 配对，没有 = 改前没有这一处） */
   boxes: { after: PlanBox; before?: PlanBox }[]
 }
@@ -43,8 +46,9 @@ export function groupViews(e: PlanEntry): GroupView[] {
   if (!plan) return []
   const numberOf = (id?: string) => commentNumber(e, id)
   return plan.groups.map((g: ChangePlanGroup, i) => {
-    const c = g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
-    const n = numberOf(g.comment_id)
+    const fromNote = g.origin === 'note'
+    const c = !fromNote && g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
+    const n = fromNote ? 0 : numberOf(g.comment_id)
     const before = new Map<string, ChangePlanBox>((g.boxes.before ?? []).map((b) => [b.gid, b]))
     const after = g.boxes.after.length ? g.boxes.after : []
     return {
@@ -52,6 +56,7 @@ export function groupViews(e: PlanEntry): GroupView[] {
       summary: clip(c?.text ?? g.label) || cp('dialog.groupN', { n: i + 1 }),
       reviewers: c ? [c.author] : [],
       commentNumbers: n ? [n] : [],
+      fromNote,
       boxes: after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
     }
   })
@@ -63,7 +68,7 @@ export function unhandledViews(e: PlanEntry): UnhandledView[] {
     const c = u.comment_id ? e.comments.find((x) => x.id === u.comment_id) : undefined
     return {
       id: u.comment_id ?? `u${i}`,
-      text: clip(c?.text ?? '') || cp('dialog.groupN', { n: i + 1 }),
+      text: clip(c?.text ?? (u.comment_id ? e.noteTexts?.[u.comment_id] : '') ?? '') || cp('dialog.groupN', { n: i + 1 }),
       reviewer: c?.author ?? '',
       reason: unhandledReason(u.reason),
     }
@@ -74,9 +79,13 @@ export const unhandledReason = (r: ChangePlanUnhandledReason): string => cp(`unh
 
 /** 一版方案里勾选的改动：处理了几条意见、改了几处；没改的几条里有几条是要改脚本的 */
 export function planTally(e: PlanEntry) {
-  const views = groupViews(e).filter((g) => !e.unchecked[g.key])
+  const all = groupViews(e).filter((g) => !e.unchecked[g.key])
+  const views = all.filter((g) => !g.fromNote)
+  const notes = all.filter((g) => g.fromNote)
   const un = e.plan?.unhandled ?? []
   return {
+    notes: notes.length,
+    notePlaces: notes.reduce((a, g) => a + g.boxes.length, 0) || notes.length,
     done: new Set(views.flatMap((g) => g.commentNumbers)).size || views.length,
     places: views.reduce((a, g) => a + g.boxes.length, 0) || views.length,
     script: un.filter((u) => u.reason === 'needs_script').length,
@@ -87,6 +96,8 @@ export function planTally(e: PlanEntry) {
 /** 卡片上那一句：按几条意见改了几处（还有几条没改） */
 export function summaryLine(e: PlanEntry): string {
   const t = planTally(e)
+  // 续改出的版本：先说这版按批注又改了几处，再说按意见改的
+  if (t.notes > 0) return cp('card.summaryNotes', { n: t.notes, places: t.notePlaces })
   if (t.other > 0) return cp('card.summaryOther', { done: t.done, places: t.places, rest: t.script + t.other })
   return t.script > 0 ? cp('card.summary', { done: t.done, places: t.places, script: t.script }) : cp('card.summaryAll', { done: t.done, places: t.places })
 }
@@ -127,3 +138,32 @@ export function failureText(code: string, params?: Record<string, unknown>): str
 }
 
 export const whoOf = (names: string[]) => listJoin([...new Set(names)])
+
+/** 付费功能键：在改好的图上写批注与「按批注重改」是同一项权益（引擎 `license.FEATURES`，ADR 0193 §一） */
+export const CHANGE_PLAN_FEATURE = 'change-plan-rerun'
+
+/**
+ * 批注入口怎么画：授权入口没出现（`visible` 为假：上线开关关着 / 老后端）= 批注的三处入口整个不画（与一键排版同一规矩）；
+ * 出现了但没解锁 = 切换项与「写批注」带锁（`PremiumLock`）；`pro` = 解锁了。真正的权益判断在后端。
+ */
+export function useChangePlanAccess(): { visible: boolean; pro: boolean } {
+  const status = useLicenseStore((s) => s.status)
+  return { visible: licenseVisible(status), pro: licenseHas(status, CHANGE_PLAN_FEATURE) }
+}
+
+/** 「写批注」一次性提示：本机记一笔，看过就不再出（存储不可用就每次都出一次，无伤大雅） */
+const HINT_KEY = 'tavotto.changePlan.noteHintSeen'
+export const noteHintSeen = (): boolean => {
+  try {
+    return localStorage.getItem(HINT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+export const markNoteHintSeen = (): void => {
+  try {
+    localStorage.setItem(HINT_KEY, '1')
+  } catch {
+    /* 存不下不影响本次 */
+  }
+}
