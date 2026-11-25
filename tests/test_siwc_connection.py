@@ -40,7 +40,7 @@ def _agents(codex_installed: bool) -> dict:
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv(siwc_wire.ENV_FLAG, raising=False)
+    monkeypatch.setenv(siwc_wire.ENV_FLAG, "0")  # 基线：显式关（默认是开）；要开的用例自己设 1
     monkeypatch.delenv(ai_connections.ENV_BUILTIN, raising=False)
     monkeypatch.setattr(ai_providers, "list_providers", lambda: [])
     yield monkeypatch
@@ -75,6 +75,7 @@ def _openai(vendors):
 
 # --------------------------------------------------------------------------- 开关关
 def test_flag_off_views_unchanged(env):
+    """`TAVOTTO_EXPERIMENTAL_SIWC=0`：与没有 SIWC 时完全一样。"""
     _sign_in()
     for installed in (False, True):
         v = _openai(ai_connections.vendors(_agents(installed)))

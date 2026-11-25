@@ -77,7 +77,7 @@ def test_saved_key_connection_still_comes_first(env):
 
 
 def test_flag_off_or_signed_out_means_no_siwc(env):
-    env.delenv(siwc_wire.ENV_FLAG)
+    env.setenv(siwc_wire.ENV_FLAG, "0")
     assert ai_connections.first_key_connection() is None
     env.setenv(siwc_wire.ENV_FLAG, "1")
     siwc_store.save(siwc_store.active().signed_out())

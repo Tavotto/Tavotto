@@ -42,7 +42,8 @@ function fakeOldCodex(version: string, catalogVersion: string): Record<string, s
     `#!/bin/sh\ncase "$1" in\n  --version) echo "codex-cli ${version}" ;;\n  login) echo "Logged in using ChatGPT" ;;\n  *) echo '${line}'; exit 1 ;;\nesac\n`,
   )
   chmodSync(bin, 0o755)
-  return { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, CODEX_HOME: home }
+  // 本 spec 守的是 Codex CLI 那条订阅登录（sub:codex）：SIWC 默认开之后它只在 `TAVOTTO_EXPERIMENTAL_SIWC=0` 时还在（ADR 0209 §六）
+  return { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, CODEX_HOME: home, TAVOTTO_EXPERIMENTAL_SIWC: '0' }
 }
 
 async function openAssistant(page: Page, baseURL: string) {

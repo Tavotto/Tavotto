@@ -12,7 +12,7 @@
   （判据与边界见 `fallback.py`）。`BASE_URL` 的写法同各协议的 `--base-url`（anthropic 用不带 `/v1` 的根，openai 系用带
   `/v1` 的），且必须与 `--base-url` 同源（同 scheme / 主机 / 端口：密钥与提示词不许因此流向别的主机）。
   `done` 事件多四个闭集回报字段，见 `loop.DONE_REPORT_FIELDS`。
-* `--wire siwc-responses`（ADR 0201，默认关）：只在 `TAVOTTO_EXPERIMENTAL_SIWC=1`、`--auth bearer`、`--base-url` 恰为
+* `--wire siwc-responses`（ADR 0201 / 0209，默认开）：只在开关没被 `TAVOTTO_EXPERIMENTAL_SIWC=0` 关掉、`--auth bearer`、`--base-url` 恰为
   `https://api.openai.com/v1`、没有 `--fallback` / `--effort` / `--thinking` 时起跑；否则 `bad_args`、零请求。
 * SIGTERM / SIGINT / Windows 的 Ctrl-Break：尽快收尾，发 `done` 的 `cancelled`。
 """
