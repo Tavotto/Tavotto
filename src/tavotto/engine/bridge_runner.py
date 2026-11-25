@@ -114,6 +114,7 @@ _PHASE2 = (
     "axestraversal",
     "spinemodel",
     "tickmodel",
+    "colorscale",
     "colorbarmodel",
     "legendmodel",
     "overrides",

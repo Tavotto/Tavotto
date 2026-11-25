@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-PALETTE_CATALOG_PATH = Path(__file__).resolve().parents[1] / "resources" / "color_palettes.json"
+_ENGINE_DIR = Path(__file__).resolve().parent
+# The browser unpacks a flat engine and its resources in one directory.
+_RESOURCE_ROOT = _ENGINE_DIR if sys.platform == "emscripten" else _ENGINE_DIR.parent
+PALETTE_CATALOG_PATH = _RESOURCE_ROOT / "resources" / "color_palettes.json"
 with PALETTE_CATALOG_PATH.open(encoding="utf-8") as source:
     CMAPS = list(json.load(source)["palettes"])
 
