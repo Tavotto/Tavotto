@@ -741,7 +741,7 @@ def test_index_count_failure_never_breaks_the_response(svc, monkeypatch):
     def boom(*_a, **_k):
         raise sqlite3.OperationalError("disk I/O error")
 
-    monkeypatch.setattr(s.store, "_connect", boom)
+    monkeypatch.setattr("services.journal_catalog.store.sqlite3.connect", boom)
     st, _, b = call(s, "GET", "/index.signed.json")
     assert (st, b) == (200, b'{"alg":"ed25519"}')
 
@@ -766,3 +766,26 @@ def test_index_hits_purged_after_a_year_and_admin_prints_stats(svc, tmp_path):
     )
     text = out.getvalue()
     assert rc == 0 and "v1" in text and "0%" in text
+
+
+def test_index_count_does_not_wait_for_the_write_lock(svc):
+    """别的连接持有写锁时，索引响应仍然很快：计数用极短的 busy timeout，拿不到锁就丢掉这一次（不重试、不排队）。"""
+    import time
+
+    s, _ = svc
+    call(s, "GET", "/index.signed.json")  # 先建好表 / 行
+    assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]
+    holder = sqlite3.connect(s.store.db_path, isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        t = time.monotonic()
+        st, _, b = call(s, "GET", "/index.signed.json")
+        elapsed = time.monotonic() - t
+        assert (st, b) == (200, b'{"alg":"ed25519"}')
+        assert elapsed < 0.5, elapsed
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]  # 被跳过的那一次没有记
+    call(s, "GET", "/index.signed.json")
+    assert _index_hits(s) == [(T0 // DAY, "v1", 2, 0)]  # 锁放开后照常记
