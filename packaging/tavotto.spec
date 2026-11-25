@@ -278,6 +278,19 @@ if not {"nacl.signing", "nacl.bindings", "nacl.exceptions"} <= set(NACL_MODULES)
     )
 print(f"[tavotto.spec] nacl 子模块: {len(NACL_MODULES)} 个")
 
+# Sign in with ChatGPT 的 ID 令牌 RS256 验签（engine/siwc_login.py，ADR 0209，pycryptodomex）：同样在函数里**延后** import，
+# 静态分析看不到。`Cryptodome` 的算法实现是包内的 `_raw_*` 原生库（按路径用 ctypes / cffi 加载），`collect_all` 把子模块、原生库、数据文件一起收进；
+# 漏了的表现是冻结产物里「Continue with ChatGPT」一律登录失败（verify_unavailable），源码模式一切正常。
+_cd_datas, _cd_binaries, _cd_hidden = collect_all("Cryptodome")
+datas += _cd_datas
+binaries += _cd_binaries
+CRYPTODOME_MODULES = sorted(set(_cd_hidden) | set(collect_submodules("Cryptodome")))
+if not {"Cryptodome.Signature.pkcs1_15", "Cryptodome.PublicKey.RSA", "Cryptodome.Hash.SHA256"} <= set(CRYPTODOME_MODULES):
+    raise SystemExit(
+        "打包环境里没有 pycryptodomex（pip install -r requirements.txt）——冻结产物的 ChatGPT 登录会一律验签失败"
+    )
+print(f"[tavotto.spec] Cryptodome 子模块: {len(CRYPTODOME_MODULES)} 个")
+
 # 「接入 AI 编辑器」（用户 2026-10-27）：`tavotto-cli mcp` 在进程内跑插件那一份 MCP 服务端（engine/mcpserve.py），
 # 宿主配置写这条命令，只装桌面版的用户不必再装 Python。服务端包在 `codex-plugin/mcp/tavotto_mcp/`（不在 src/ 下，
 # wheel 也不带它）；mcpserve 只在运行时按名字 import 它，静态分析看不见这条边——整包子模块点名收进 PYZ，
@@ -331,6 +344,8 @@ a = Analysis(
         *TRUSTSTORE_MODULES,
         # 远程期刊目录索引验签（见上；journalremote 延后 import）
         *NACL_MODULES,
+        # ChatGPT 登录的 ID 令牌验签（见上；siwc_login 延后 import）
+        *CRYPTODOME_MODULES,
         # v2 期刊事实客户端经 MCP 可选 import 动态加载，冻结分析看不到。
         "tavotto.engine.journalfacts_remote", "tavotto.engine.journalfacts_contract",
         # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）

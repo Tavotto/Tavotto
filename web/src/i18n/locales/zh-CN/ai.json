@@ -825,7 +825,20 @@
       "retry": "重试",
       "dismiss": "收起",
       "summaryNotes": "按 {{n}} 条批注又改了 {{places}} 处",
-      "revising": "正在按批注重改…"
+      "revising": "正在按批注重改…",
+      "generatingAssistant": "正在按你的话修改…",
+      "summaryAssistant": "改了 {{places}} 处",
+      "summaryAssistantScript": "改了 {{places}} 处，剩下的要改脚本，这次没动",
+      "summaryAssistantOther": "改了 {{places}} 处，剩下的没法直接改",
+      "appliedAssistant": "已应用 · 改了 {{places}} 处",
+      "emptyAssistant": "这条没法直接改图，图没有改动",
+      "handoff": "这条要改脚本，交给 Agent 改。",
+      "runScript": "改脚本做剩下的",
+      "runScriptAll": "改脚本来做",
+      "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
+      "summaryLayout": "{{count}} 张图重新排了版",
+      "appliedLayout": "已应用 · {{count}} 张图重新排了版",
+      "runScriptTip": "会先应用这些图内修改"
     },
     "dialog": {
       "title": "修改方案",
@@ -872,7 +885,9 @@
       "rerunning": "正在重改…",
       "rerunNeedNote": "先在「修改后」的图上点一处，写一条批注",
       "reviseNotLicensed": "高级版没有解锁，没能重改",
-      "groupMetaNote": "按批注改过 · {{count}} 处"
+      "groupMetaNote": "按批注改过 · {{count}} 处",
+      "layoutHeading": "排版 · {{count}} 张图",
+      "layoutGroupMeta": "{{count}} 张图"
     },
     "unhandled": {
       "needs_script": "要改脚本，这次没动",
@@ -886,7 +901,8 @@
       "conflict": "与别的改动冲突，这次没动",
       "not_applied": "没能生效，这次没动",
       "no_effect": "改了也看不出变化，这次没动",
-      "not_addressed": "这条没有处理到"
+      "not_addressed": "这条没有处理到",
+      "unclearAssistant": "指令不够具体，这次没动"
     },
     "draft": {
       "thisOne": "这一处",
@@ -924,6 +940,7 @@
         "center": "正中"
       },
       "many": "这 {{count}} 处"
-    }
+    },
+    "layoutGroup": "排版"
   }
 }

@@ -1059,7 +1059,8 @@
     "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
     "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
     "svgCopyFailed": "没能复制为 SVG",
-    "arrayTooMany": "一次最多阵列 {{max}} 份"
+    "arrayTooMany": "一次最多阵列 {{max}} 份",
+    "quickLayoutNoPreview": "没能生成对比预览，已直接排好"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -1691,7 +1692,6 @@
       "root_needs_msvc": "{{root}} 在 Windows 上要装 Visual Studio 的 C++ 工具才能运行，这台电脑还没装，所以没用它。"
     },
     "pythonChange": {
-      "downloadBytes": "已下载 {{done}} / {{total}} MB",
       "stage": {
         "downloading": "正在下载 Python…",
         "verifying": "正在检查…",

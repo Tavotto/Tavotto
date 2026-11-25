@@ -12,9 +12,11 @@ import { draftReply } from '@/lib/changePlanReplyDraft'
 import { effectiveStatus } from '@/lib/changePlanApply'
 import { engineLabel } from '../inspector/roles/registry'
 import type { PlanSource } from '@/lib/changePlanApply'
-import { panelOf, sourceOf, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { panelOf, setChangePlanLabeler, sourceOf, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useReviewStore } from '@/store/reviewStore'
+
+setChangePlanLabeler(engineLabel)
 
 /** 这份方案里「有生效改动、被勾选」的组对应的意见 id（去重） */
 export function resolvableIds(e: Pick<PlanEntry, 'plan' | 'unchecked'>): string[] {
