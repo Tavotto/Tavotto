@@ -183,6 +183,8 @@
 * **进账本，报告看得见**：`attempt_history` 多一种条目 `kind: "python_changed"`（from / to / base / download_bytes / outcome，不占回退预算）；
   报告顶层 `python_change` 带阶段与进度；换版本期间 phase 是 `preparing_environment`（`outcome.reason = python_change`），
   卡片一句话「正在换成 Python 3.12（下载约 N MB）…」+ 进度 + 停止，完成后照常出图，详情里留「换成了 Python 3.12」。
+  （2026-11-25 修订：「进度」那一块换成任务清单 `ui/TaskChecklist`——标题行是这一刻那句话，下面列全「准备 Python（只在自备时）→
+  创建运行环境 → 安装所需的包」，下载那步胶囊里是字节数，不再画进度条；卡片主句、停止与完成后的行为不变。）
   界面不出现「执行器」这个词。
 
 调用点：`prepsession._done_callback` 里 `_plan_python_change`（只此一处；fixrouter 的 `remedy.kind == 'change_python'` 之后从同一处接入）。
