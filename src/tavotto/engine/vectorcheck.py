@@ -383,7 +383,13 @@ def check(
         else:
             if not e.get("rotation_deg"):
                 return {"kind": "rect", "full": _box(e), "data": _box(e), "half": 0.0}
-            pts = _rotate_points(_rect_samples(_box(e)), e)
+            if e["type"] == "shape" and e.get("shape") == "ellipse":
+                # 有填充的椭圆按椭圆本身（轮廓 + 内部格点）转：转外接框会把圆的四角算进来，误判出页（Codex #2220）
+                ring = _outline_samples(e)
+                pts = ring + _fill_samples([ring], _box(e))
+            else:
+                pts = _rect_samples(_box(e))
+            pts = _rotate_points(pts, e)
             return {"kind": "points", "full": pts, "data": pts, "half": 0.05}
         for hp, which in heads:
             full += hp

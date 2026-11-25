@@ -413,3 +413,22 @@ def test_a_filled_path_covering_text_is_a_clash(project):
     )
     clash = [f for f in plan["failed"] if f["check"] == "text"]
     assert clash and "canvas:t_user0001" in clash[0]["detail"]["with"]
+
+
+def test_rotating_a_filled_circle_does_not_count_its_bounding_box_corners(project):
+    """有填充的圆 (95, 2, 20, 20) 转 45°：画出来没变、仍在页内——不许因为外接框的角伸出页面就判出页（Codex #2220）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    for o in doc["canvases"][0]["objects"]:
+        if o["id"] == "s_user0001":
+            o.update(x=95, y=2, w=20, h=20, fill="#88ccee")
+        if o["id"] == "t_user0001":
+            o["y"] = 60
+    atomicio.write_json(_path(project), doc, indent=1)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": "s_user0001", "set": {"rotationDeg": 45}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert plan["ok"], plan["failed"]
