@@ -887,7 +887,8 @@
       "reviseNotLicensed": "Premium is not unlocked, so nothing was redone",
       "groupMetaNote": "From your note · {{count}}",
       "layoutHeading": "Layout · {{count}} figures",
-      "layoutGroupMeta": "{{count}} figures"
+      "layoutGroupMeta": "{{count}} figures",
+      "noteHere": "This spot"
     },
     "unhandled": {
       "needs_script": "Needs a script change; left alone this time",

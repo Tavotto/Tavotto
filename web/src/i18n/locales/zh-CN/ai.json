@@ -877,7 +877,8 @@
       "reviseNotLicensed": "高级版没有解锁，没能重改",
       "groupMetaNote": "按批注改过 · {{count}} 处",
       "layoutHeading": "排版 · {{count}} 张图",
-      "layoutGroupMeta": "{{count}} 张图"
+      "layoutGroupMeta": "{{count}} 张图",
+      "noteHere": "这一处"
     },
     "unhandled": {
       "needs_script": "要改脚本，这次没动",

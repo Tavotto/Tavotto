@@ -374,3 +374,14 @@ it('对照：同样是高级版，审阅来源的卡仍有「对比 / 批注」�
   expect(q('[data-change-plan-write-note]')).not.toBeNull()
   expect(qa('[role="radiogroup"]').some((g) => g.textContent?.includes('批注'))).toBe(true)
 })
+
+it('批注的元素名走元素树同一个显示名：mathtext 读作 min⁻¹（含引擎截断、`$` 不成对的），普通名照旧，没有名字退回「这一处」', async () => {
+  const { noteLabelOf } = await import('./noteTarget')
+  expect(noteLabelOf('曲线 "k = 0.05 min$^{-1}$"')).toBe('曲线 "k = 0.05 min⁻¹"')
+  const cut = noteLabelOf('曲线 "k = 0.05 min$^{-1…')
+  expect(cut).toContain('min⁻¹')
+  expect(cut).not.toContain('$')
+  expect(noteLabelOf('图例')).toBe('图例')
+  expect(noteLabelOf('')).toBe('这一处')
+  expect(noteLabelOf(undefined)).toBe('这一处')
+})
