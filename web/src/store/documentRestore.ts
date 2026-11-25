@@ -282,7 +282,10 @@ async function installChecked(
 /** 磁盘读失败（不可用 / 坏）但手边有本机副本：把它作为**用户明确选择**才打开的备选（它可能比磁盘旧） */
 function localCopyAlt(c: RestoreCandidate, probe: ProbeResult): AltCandidate[] {
   if ((probe.kind !== 'unavailable' && probe.kind !== 'invalid') || !probe.local) return []
-  return [{ ...c, localCopy: true }]
+  // 本机副本就是这个 docId 的槽位正文：不带项目内时间线的分派信息，选了它走「打开本机副本」，
+  // 不再回到 `installFromHistory`（那会再读一次读不出的槽位、又回到同一张恢复卡，Codex #2235 P2）
+  const { history: _history, ...plain } = c as AltCandidate
+  return [{ ...plain, localCopy: true }]
 }
 
 function needsUser(
@@ -926,7 +929,8 @@ export async function openAlternative(id: string): Promise<RestoreOutcome> {
   const token = beginRestore(issue.pj)
   armRestoreToken(token)
   // 项目自己的时间线里的那份（ADR 0211）：不是槽位，按后端给的 mode 走自己的安装路径
-  if (picked.history) return fitIfRestored(await installFromHistory(token, picked, 'explicit'))
+  // 「打开本机副本」是用户的显式选择，先于项目内时间线的分派处理（Codex #2235 P2）
+  if (picked.history && !picked.localCopy) return fitIfRestored(await installFromHistory(token, picked, 'explicit'))
   const probe = await probeWithRetry(token, id)
   if (!probe) return { kind: 'superseded' }
   if (probe.kind === 'found') return fitIfRestored(await installChecked(token, probe, null, picked, 'explicit'))

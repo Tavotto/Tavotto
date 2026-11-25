@@ -391,3 +391,62 @@ def test_empty_stores_do_not_crowd_out_the_real_one(client, tmp_path, monkeypatc
     r = client.get("/api/layout-session/project-history", headers=_h(a)).get_json()
     assert [i["doc_id"] for i in r["items"]] == ["d_zz_real"]
     assert r["truncated"] is False
+
+
+def test_moved_project_with_chart_attachments_is_still_slot(client, tmp_path):
+    """Codex #2235 P1：项目里有 schema-4 图表时，挪走之后附件跟着文件夹到了新项目的 `tavottofile/`，
+    判「槽位能不能恢复」要在当前项目的存储根下核附件——还去旧路径找，有效的自动保存会被判成读不出、
+    退成从更旧的节点另开一份（节点之后新加的整张图表跟着丢）。认领端点的锁内重判走同一个函数。"""
+    from tavotto.engine import documentassets
+    from test_chart_document_assets import (
+        SCENE_DIGEST,
+        SOURCE,
+        SOURCE_ID,
+        chart as chart_state,
+        reference as chart_reference,
+    )
+
+    a = _open(client, tmp_path / "projA")
+    root = m.project_layout_dir(m.PROJECTS[a["id"]])
+    documentassets.freeze_source(root, SOURCE_ID, SOURCE, scene_digest=SCENE_DIGEST)
+    chart_panel = {
+        "id": "o_chart",
+        "type": "panel",
+        "fileId": SOURCE_ID,
+        "fileKind": "svg",
+        "chart": chart_state(),
+        "chartSource": chart_reference(),
+    }
+    doc = _project_doc([TEXT, chart_panel], updated=5)
+    doc["schema"] = 4
+    # 直接摆槽位（自动保存 PUT 还要核图表引擎版本，与这里要量的无关），归属记在 projA、对着这一版正文
+    from tavotto.engine import atomicio
+
+    slot = m.AUTOSAVE_DIR / "d_chart.json"
+    slot.parent.mkdir(parents=True, exist_ok=True)
+    atomicio.write_json(slot, doc)
+    rev = atomicio.content_revision(slot)
+    layoutsession.record_owner("d_chart", layoutsession.project_key(tmp_path / "projA"), rev)
+    # 节点比槽位旧：只有文字（图表是节点之后才加的）
+    v = client.post(
+        "/api/versions/d_chart",
+        json={"doc": _canvas_doc([TEXT]), "auto": True, "canvasId": "c1"},
+        headers=_h(a),
+    )
+    assert v.get_json().get("version"), v.get_json()
+    (tmp_path / "projA").rename(tmp_path / "projB")  # 整夹挪走：附件跟着到了 projB/tavottofile/
+    b = _open(client, tmp_path / "projB")
+    item = _history(client, b)[0]
+    assert item["mode"] == "slot" and item["owner"] == "moved", item
+    assert item["revision"] == rev
+    r = client.post(
+        "/api/layout-session/project-history/claim",
+        json={"doc_id": "d_chart", "revision": rev},
+        headers=_h(b),
+    )
+    assert r.status_code == 200, r.get_json()
+    # 认领之后按新归属读：图表还在、附件核得过
+    got = client.get("/api/autosave/d_chart", headers=_h(b))
+    assert got.status_code == 200, got.get_json()
+    ids = [o["id"] for o in got.get_json()["canvases"][0]["objects"]]
+    assert ids == ["t1", "o_chart"]

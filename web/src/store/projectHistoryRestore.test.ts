@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFakeBackend } from '@/test/fakeSessionBackend'
 import { emptyProject, type ProjectDocument, type TextObject } from '@/types/document'
+import { fullCanvasNode, OPTIONAL_FIELDS } from '@/test/fullCanvasNode'
 
 const be = createFakeBackend()
 
@@ -168,6 +169,28 @@ describe('整夹挪走（旧路径不在）：用本机槽位那份，归属改�
   })
 })
 
+describe('槽位读不出、本机有副本（Codex #2235 P2）', () => {
+  it('项目内候选判成 slot、自动保存 GET 一直失败：恢复卡给「打开本机副本」，选它就打开本机那份，不再回到同一张卡', async () => {
+    const slot = be.putSlot('d_move', slotDoc(), 'p_new')
+    be.state.history.set('p_new', [row({ owner: 'this', revision: slot.revision })])
+    be.state.failGetDoc.set('d_move', 500)
+    const local = slotDoc()
+    local.canvases[0].objects.push(text('t_local', '本机副本里的'))
+    localStorage.setItem('tavotto.autosave.d_move', JSON.stringify(local))
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    const issue = ds(app).restoreIssue!
+    const alt = issue.alternatives.find((a) => a.localCopy)
+    expect(alt?.id).toBe('d_move')
+    // 本机副本不带项目内时间线的分派信息
+    expect(alt?.history).toBeUndefined()
+    const out = await app.restore.openAlternative('d_move')
+    expect(out).toMatchObject({ kind: 'restored', id: 'd_move' })
+    expect(objectIds(app)).toEqual(['t_node', 't_after', 't_local'])
+    expect(ds(app).restoreIssue).toBeNull()
+  })
+})
+
 describe('只有项目里的节点（换电脑 / 换数据目录）', () => {
   it('从最近一个非空节点恢复成同一个 docId 的工作副本，⌘Z 一步退回，随后落盘', async () => {
     be.state.nodes.set('d_node/v1-1', NODE)
@@ -187,6 +210,22 @@ describe('只有项目里的节点（换电脑 / 换数据目录）', () => {
     expect(ds(app).past).toHaveLength(1)
     ds(app).undo()
     expect(objectIds(app)).toEqual([])
+  })
+
+  it('节点存下的完整画布状态逐字恢复（留白 / 紧凑边 / 规范 / 样式 / 色键 / 一键排版 / 布局组），落盘的也是完整的（Codex #2235 P1）', async () => {
+    const node = fullCanvasNode([text('t_node', '节点里的字')])
+    be.state.nodes.set('d_full/v1-1', node)
+    be.state.history.set('p_new', [row({ doc_id: 'd_full', mode: 'node', owner: 'none' })])
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    for (const key of OPTIONAL_FIELDS) expect(ds(app).doc[key], key).toEqual(node[key])
+    expect(ds(app).doc.page).toEqual(node.page)
+    expect(ds(app).doc.name).toBe(node.name)
+    app.doc.flushAutosave()
+    await vi.waitFor(() => expect(be.state.slots.has('d_full')).toBe(true))
+    const saved = JSON.parse(be.state.slots.get('d_full')!.body) as ProjectDocument
+    const canvas = saved.canvases.find((c) => c.id === 'c1')!
+    for (const key of OPTIONAL_FIELDS) expect(canvas[key], `落盘的 ${key}`).toEqual(node[key])
   })
 
   it('后端没有归属记录、本机索引却说是别的项目（可能就在旁边，是复制）：不沿用 docId', async () => {

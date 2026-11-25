@@ -21142,10 +21142,28 @@ def api_layout_session_candidates():
 # 只读端点不写任何东西；`claim` 在槽位文档锁里重判一遍再写（不信客户端自报）。都在 ADR 0008 认证之下。
 
 
-def _history_slot(doc_id: str) -> tuple[dict | None, str | None, bool]:
+def _history_source_store(slot: Path, revision: str, state: dict, ctx) -> Path:
+    """判槽位能不能恢复时，图表附件到哪个存储根里去核。
+
+    平常与 `_autosave_source_store` 相同（按槽位归属记的项目）。**挪走**的那一档例外：归属里记的旧项目路径
+    确定已不在，而附件（`tavottofile/` 里）已经跟着文件夹到了当前项目——还去旧路径找，会把一份有效的自动保存
+    判成读不出、退成从更旧的节点另开一份，节点之后的修改（含后来新加的整张图表）就丢了（Codex #2235 P1）。
+    旧路径还在（复制）/ 没有归属记录时不改口径。"""
+    recorded = state["owners"].get(slot.stem)
+    if (
+        ctx is not None
+        and slot.stem in state["owners"]
+        and engine_projecthistory.owner_path_gone(recorded)
+    ):
+        return project_layout_dir(ctx)
+    return _autosave_source_store(slot, revision)
+
+
+def _history_slot(doc_id: str, state: dict, ctx) -> tuple[dict | None, str | None, bool]:
     """槽位 `doc_id` 此刻的 `(可恢复的正文, revision, 槽位文件在不在)`。只读一遍字节，调用方持槽位文档锁。
 
-    「可恢复」与 `_slot_recoverable` 同一判据（`loads_document` + `validate_document` + 图表来源）。"""
+    「可恢复」与 `_slot_recoverable` 同一判据（`loads_document` + `validate_document` + 图表来源）；
+    图表附件的存储根见 `_history_source_store`（挪走时按当前项目核）。`state` 是调用方在同一把锁里读的会话状态。"""
     slot = _file_named(_autosave_directory(), doc_id)
     if slot is None:
         return None, None, False
@@ -21158,7 +21176,9 @@ def _history_slot(doc_id: str) -> tuple[dict | None, str | None, bool]:
         loaded = engine_documents.loads_document(raw)
         document = _validate_storage_document(loaded)
         if _has_chart_state(document):
-            _verify_document_chart_sources(document, _autosave_source_store(slot, revision))
+            _verify_document_chart_sources(
+                document, _history_source_store(slot, revision, state, ctx)
+            )
     except (ValueError, RecursionError):
         return None, revision, True
     return (loaded if isinstance(loaded, dict) else None), revision, True
@@ -21191,14 +21211,14 @@ def _history_verdict(doc_id: str, key, state: dict, status: str, slot_doc, slot_
     return "node", owner
 
 
-def _history_item(doc_id: str, versions_dir: Path, key) -> dict | None:
+def _history_item(doc_id: str, versions_dir: Path, key, ctx) -> dict | None:
     """一份项目内时间线的候选摘要；没有非空节点回 `None`。在槽位文档锁里读归属与槽位（与 `/owner` 同一条规则）。"""
     node = engine_projecthistory.latest_content_node(versions_dir, doc_id)
     if node is None:
         return None  # 空时间线 / 只有空节点（旧版每次加载留下的空 `open`）：不进候选
     with _document_lock(_autosave_path(doc_id)):
         state, status = engine_layoutsession.read_readonly()
-        slot_doc, slot_rev, slot_exists = _history_slot(doc_id)
+        slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
         mode, owner = _history_verdict(doc_id, key, state, status, slot_doc, slot_rev, slot_exists)
     # 回出去的取值只能出自闭集（前端与假后端逐字镜像它）
     assert mode in engine_projecthistory.HISTORY_MODES
@@ -21271,7 +21291,7 @@ def api_layout_session_project_history():
             truncated = True  # 有内容的太多：不保证列全，前端据此不自动采用
             break
         try:
-            item = _history_item(doc_id, versions, key)
+            item = _history_item(doc_id, versions, key, ctx)
         except engine_layoutsession.SessionStateUnavailable:
             return jsonify({"error": "本机排版此刻读不出来", "code": "candidates_unavailable"}), 503
         if item is not None:
@@ -21312,7 +21332,7 @@ def api_layout_session_project_history_claim():
     try:
         with _document_lock(_autosave_path(doc_id)):
             state, status = engine_layoutsession.read_readonly()
-            slot_doc, slot_rev, slot_exists = _history_slot(doc_id)
+            slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
             mode, owner = _history_verdict(
                 doc_id, key, state, status, slot_doc, slot_rev, slot_exists
             )
