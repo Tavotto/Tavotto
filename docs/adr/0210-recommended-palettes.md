@@ -24,6 +24,7 @@
   可选 `neutral`（方案作者自带的中性灰）；文件顶层 `neutral` 是没有自带灰时的对照色（`#A6A6A6`）。
 - 前端经 `@palettes` / `@palettesCopyleft` 别名整份 import；引擎经 `engine/palettes.py` 读（加载、校验、按许可分档）。
   `web/src/lib/swatches.ts` 的 Okabe–Ito 改成读目录（第二个 PR），不再是第二份色值。
+  前端的纯逻辑在 `web/src/lib/palette/`：`catalog`（目录）、`cvd`（色差与色觉模拟）、`colorKeys`（色键表）、`rank`（排序）、`plan`（落成 override）。
 - 生成：`scripts/dev/gen_palettes.py`（只在升级来源版本时手动跑；运行时不依赖 cmcrameri / tol-colors）。
 
 ### 二、来源与许可
@@ -43,7 +44,9 @@
 开源版是 AGPL-3.0-only，收 GPL-3.0-or-later 的色值兼容；闭源高级版组件（ADR 0198 的 sidecar）不许带。边界是**文件**，不是字段：
 
 - 闭源组件只许读 `palettes.json`；引擎侧调用方显式 `catalog(include_copyleft=False)`。
-- 构建 / 运行时开关 `TAVOTTO_NO_COPYLEFT_PALETTES=1`：引擎不收 copyleft 那份；前端构建时 `@palettesCopyleft` 换成空表，产物里没有那些色值。
+- 构建 / 运行时开关 `TAVOTTO_NO_COPYLEFT_PALETTES=1`：引擎不收 copyleft 那份；前端构建时加载 `@palettesCopyleft` 那份文件的那一刻换成空表
+  （`web/src/lib/palette/copyleftEmpty.json`；四份 vite / vitest 配置都挂 `web/scripts/palette-copyleft-path.mjs` 的
+  `noCopyleftPalettes` 插件，别名目标本身保持字面量，静态 import 判据读得出），产物里没有那些色值。
 - 看护：`tests/test_palettes.py`（宽松那份出现 GPL 来源即红；关掉开关后目录里没有任何 copyleft 条目）。
 
 ### 四、色键表（画布级，存在文档里）
