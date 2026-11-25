@@ -409,7 +409,7 @@ let kept: Kept[] = []
  * 「读懂数据」用哪个 AI 的代际与读写顺序：
  *  - `choiceGen`：**实际在用的 AI**（`state` + 连接）变了就加一；出候选的请求带着发起时的代际，回来时代际变了，响应里的 `understanding` 一律不应用
  *    （关了绝不能还自动套 AI 的结果；换了 AI 也不能套旧 AI 的）；
- *  - 写（用户的选择）与读（轻量 GET / 清单里带的）各自计序：`writeSeq` 只认最新一次写；`choiceStamp` 在每次写开始和结束各加一，读发出时记下、
+ *  - 写（用户的选择）与读（轻量 GET / 清单里带的，共用 `readSeq`：谁发得晚谁算数）各自计序：`writeSeq` 只认最新一次写；`choiceStamp` 在每次写开始和结束各加一，读发出时记下、
  *    回来时对不上（中途有写开始 / 结束）或还有写在途就丢；读排在未完成的写之后（`writeChain`），一次读吞不掉写的结果和它该触发的副作用；
  *  - `pendingChoiceRerun`：换 AI 时当前正有候选请求在途，等它落定后补跑一次。
  */
@@ -1040,6 +1040,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       const pj = currentProjectId()
       const askedStamp = choiceStamp
       const writeBusy = writesInFlight > 0
+      const askedRead = ++readSeq // 清单里带的对象与轻量 GET 共用读代际：谁发得晚谁算数，发得早的回来得晚就丢
       const prev = get().files
       const keep = prev.status === 'ready' || prev.status === 'error' || prev.status === 'loading' ? prev.entries : null
       set({ files: { status: 'loading', entries: keep } })
@@ -1047,8 +1048,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         const r = await aiDataFilesAll(pj)
         if (ep !== epoch || mine !== filesSeq) return
         if (!r || !Array.isArray(r.files)) throw new Error('bad shape')
-        // 「读懂数据」用哪个 AI：清单里带着的对象；发出时有写在途、或这期间有写开始 / 结束（`choiceStamp` 变了）、或现在还有写在途，这份就可能是旧的，不拿它盖掉
-        const fresh = !writeBusy && askedStamp === choiceStamp && writesInFlight === 0
+        // 「读懂数据」用哪个 AI：清单里带着的对象；发出时有写在途、或这期间有写开始 / 结束（`choiceStamp` 变了）、或现在还有写在途、或这期间又发出了更晚的读（轻量 GET / 另一次清单，`readSeq` 变了），这份就可能是旧的，不拿它盖掉
+        const fresh = !writeBusy && askedStamp === choiceStamp && writesInFlight === 0 && askedRead === readSeq
         const choice = r.understanding && typeof r.understanding === 'object' ? r.understanding : undefined
         set({ files: { status: 'ready', entries: r.files, truncated: r.truncated === true } })
         if (fresh) {

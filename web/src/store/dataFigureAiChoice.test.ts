@@ -390,3 +390,64 @@ describe('Codex #2230：换 AI 时自动填的答案、在途请求、读写顺�
     expect(propose.mock.calls.length).toBeGreaterThan(n)
   })
 })
+
+describe('Codex #2230 复核：清单里带的对象与轻量 GET 共用读代际', () => {
+  const B = (): AiDataUnderstandingChoice => choice({ connection: 'b' })
+  const filesWith = (c: AiDataUnderstandingChoice) => ({ files: [{ path: 'a.csv', size: 1, table: { status: 'ok' as const, code: null, delimiter: 'comma' as const, header_row: 1, columns: 2, rows: 3 } }], truncated: false, understanding: c })
+
+  it('清单在途 → 更晚的轻量 GET 先回 B → 旧清单后回 A：仍是 B，不被盖回去、不再换代 / 重跑', async () => {
+    await open() // 草稿开着，当前 A
+    let lateFiles!: (v: Awaited<ReturnType<typeof aiDataFilesAll>>) => void
+    files.mockReturnValueOnce(new Promise((r) => (lateFiles = r)))
+    const f = st().loadFiles()
+    choiceGet.mockResolvedValue({ understanding: B() })
+    await st().refreshUnderstandingChoice() // 比清单发得晚
+    expect(st().understandingChoice?.connection).toBe('b')
+    await flush()
+    const after = propose.mock.calls.length // GET 看到 A→B 的那次重跑已发
+    lateFiles(filesWith(choice({ connection: 'a' })))
+    await f
+    await flush()
+    expect(st().understandingChoice?.connection).toBe('b')
+    expect(propose.mock.calls.length).toBe(after) // 旧清单没触发第二次换代 / 重跑
+    expect(st().files.status).toBe('ready') // 清单本身（文件列表）照常收下
+  })
+
+  it('反过来：轻量 GET 在途 → 更晚的清单先回 B → GET 后回 A：仍是 B', async () => {
+    await open()
+    let lateGet!: (v: { understanding: AiDataUnderstandingChoice }) => void
+    choiceGet.mockReturnValueOnce(new Promise((r) => (lateGet = r)))
+    const g = st().refreshUnderstandingChoice()
+    await flush() // GET 已发出
+    files.mockResolvedValueOnce(filesWith(B()))
+    await st().loadFiles() // 更晚发的清单先回
+    expect(st().understandingChoice?.connection).toBe('b')
+    lateGet({ understanding: choice({ connection: 'a' }) })
+    await g
+    expect(st().understandingChoice?.connection).toBe('b')
+  })
+
+  it('两次清单：先发的后回，整份丢（清单与里面的对象都不盖掉后发的）', async () => {
+    let first!: (v: Awaited<ReturnType<typeof aiDataFilesAll>>) => void
+    files.mockReturnValueOnce(new Promise((r) => (first = r)))
+    const a = st().loadFiles()
+    files.mockResolvedValueOnce(filesWith(B()))
+    await st().loadFiles()
+    first(filesWith(choice({ connection: 'a' })))
+    await a
+    expect(st().understandingChoice?.connection).toBe('b')
+  })
+
+  it('写在途时发出的清单：回来时不盖掉写的结果', async () => {
+    await st().loadFiles()
+    let finish!: (v: { understanding: AiDataUnderstandingChoice }) => void
+    choiceSet.mockReturnValue(new Promise((r) => (finish = r)))
+    const w = st().setUnderstandingChoice({ mode: 'connection', connection: 'b' })
+    files.mockResolvedValueOnce(filesWith(choice({ connection: 'a' }))) // 写还没完成就发的清单：读到的是旧的
+    await st().loadFiles()
+    expect(st().understandingChoice?.connection).toBe('a') // 此刻写还没落定，清单里这份也没被采用（沿用原来的）
+    finish({ understanding: B() })
+    await w
+    expect(st().understandingChoice?.connection).toBe('b')
+  })
+})
