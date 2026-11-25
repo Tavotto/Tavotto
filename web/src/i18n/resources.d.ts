@@ -70,6 +70,7 @@ export default interface Resources {
         "noteCancel": "取消",
         "noteDelete": "删除",
         "noteEdit": "点一下可以改",
+        "noteHere": "这一处",
         "noteOverall": "整体批注",
         "noteOverallLabel": "整体",
         "notePlaceholder": "想怎么改？",
@@ -6975,6 +6976,10 @@ export default interface Resources {
     "title": "快捷键"
   },
   "workspace": {
+    "agentMerge": {
+      "commit_other": "并入 Agent 加的 {{count}} 个标注",
+      "done_other": "已并入 {{count}} 个标注，保存后写进项目"
+    },
     "annotationEntry": {
       "arrow": "箭头",
       "label": "标注 · {{name}}",
@@ -7978,9 +7983,16 @@ export default interface Resources {
           "placeholder": "项目内相对路径，每行一个",
           "retry": "带参考文件重试"
         },
+        "round": "第 {{n}} 轮",
         "running": "正在生成可编辑版本…",
         "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
+        "steps": {
+          "read": "读懂原脚本",
+          "verify": "运行校验",
+          "write": "写 Python 版本"
+        },
         "stoppedLate": "转换已经完成，停止来得太晚。对照一下，要用就采用",
+        "taskTitle": "生成可编辑版本",
         "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用",
         "writingLong": "正在生成较长的文件…",
         "writingLongElapsed": "正在生成较长的文件…（已用 {{minutes}} 分钟）"
@@ -8483,7 +8495,7 @@ export default interface Resources {
       "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
       "pill": {
         "chartSource": "图表来源缺失或损坏",
-        "choose": "找到了几份本机排版",
+        "choose": "从上次离开的地方继续",
         "indexDegraded": "恢复记录读不了",
         "invalid": "上次的排版读不出来",
         "missing": "上次的排版不在原文件内，可能已被移出",
@@ -8494,7 +8506,7 @@ export default interface Resources {
       "retry": "重试",
       "title": {
         "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
-        "choose": "本机找到了几份排版，选一份打开。",
+        "choose": "找到了几份排版，选一份打开。",
         "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
         "invalid": "上次的排版“{{name}}”读不出来。",
         "missing": "上次的排版“{{name}}”不在原文件内，可能已被移出。",

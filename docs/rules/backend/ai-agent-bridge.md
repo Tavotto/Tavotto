@@ -496,6 +496,13 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `turn.completed` / `turn.failed` / `error`、最后 item 是 reasoning / agent_message / file_change / 已完成的 command_execution（或刚 `turn.started`），
   且静默 ≥ `LONG_WRITE_IDLE_MS`。只用结构化字段；事件一来静默清零，下一次轮询自然恢复。前端 `convertStore` 轮询时把它写进条目 `activity`，
   进度行只换文字（`convert.writingLong`），不加横条 / 弹窗。
+- **转换的任务清单（2026-11-25，用户拍板）**：`ai_bridge.get()` 对 running 的转换会话另给 `task.stage = {step: read|write|verify, round}`
+  （`_convert_stage`，闭集码 + 整数）：编排器在提交前 / 后的校验阶段（`TaskRun.phase` ∈ verifying / ready_to_commit / committing）= verify；
+  否则候选里的新脚本有内容 = write，没有 = read；`round` = 1 + 已记账的自动修正次数（修正时回到 write、轮次 +1）。内置执行器写到一半自己要的
+  `check` **不改** `TaskRun.phase`，所以仍算 write（用户裁决：它还在写，清单不来回跳）。`TaskRun.phase` 只观察、不参与判定。前端
+  `convertStore` 轮询时写进条目 `stage`，准备卡显示「读懂原脚本 → 写 Python 版本 → 运行校验」（`ui/TaskChecklist`）；「和原图对照」是 ready
+  之后用户自己做的事，不进清单；缺包仍是那张装依赖卡，装好继续时清单停在「运行校验」。看护：`test_ai_convert.py::test_convert_stage_reads_phase_target_and_corrections`、
+  `test_ai_tasks.py::test_run_phase_follows_the_orchestrator_for_progress_ui`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

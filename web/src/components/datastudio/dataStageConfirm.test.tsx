@@ -126,6 +126,14 @@ describe('CandidateStage：一张主图 + 一排切换', () => {
     expect(qa('[data-candidate-switch] [data-value]')).toHaveLength(3)
   })
 
+  it('切换排的选中格带 1px 描边（framed；浅色透明、暗色浅墨），未选中的没有', async () => {
+    const items = list()
+    await mount(<Harness items={items} thumbs={allReady(items)} />)
+    const cells = qa('[data-candidate-switch] [data-value]')
+    expect(cells[0]!.className).toContain('inset-ring-thumb-frame')
+    expect(cells[1]!.className).not.toContain('inset-ring')
+  })
+
   it('点切换项只换主图，不创建；点「创建可编辑图」才创建选中的那一张', async () => {
     const items = list()
     await mount(<Harness items={items} thumbs={allReady(items)} />)

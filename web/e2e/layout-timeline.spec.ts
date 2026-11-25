@@ -454,9 +454,12 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   await expect(canvasText(page, '丙版标注')).toBeVisible()
   await page.keyboard.press('ControlOrMeta+Shift+H')
   await expect(drawer).toBeVisible()
-  // 两个「打开」：第一次启动那一次（那时画布还是空的——关键时刻空画布也打，Codex #679）
-  // 与这次重开
-  await expect(drawer.locator('[data-timeline-moment="open"]')).toHaveCount(2, { timeout: 15_000 })
+  // 这次重开一定有一个「打开」（画布上有内容）。第一次启动那一次画布还是空的：空白排版的「打开」不再打
+  // （ADR 0211 第一期 4，不在用户项目里留只有空节点的 .vx）；只有当时用户的第一笔已经先于工作台就位落下时它才在，
+  // 所以那一条不计数
+  await expect
+    .poll(() => drawer.locator('[data-timeline-moment="open"]').count(), { timeout: 15_000 })
+    .toBeGreaterThanOrEqual(1)
 })
 
 test('两张不透明、内容相同的面板完全重叠：上层不被误判成「白画了」（缩略图合成，Codex #679）', async ({

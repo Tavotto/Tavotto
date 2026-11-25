@@ -109,6 +109,8 @@ export default defineConfig({
         'canvas-line-width-locate.spec.ts',
         // 助手草稿与提交可靠性（ADR 0132）：状态说明是中英两套文案，定位走 data-*，两种语言各走一遍
         'ai-draft.spec.ts',
+        // 改图助手的修改方案卡（ADR 0206 PR 4）：卡片 / 弹窗 / 状态文案中英两套，定位走 data-*，两种语言各走一遍
+        'change-plan.spec.ts',
         // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*
         'ai-restore.spec.ts',
         // 执行记录（ADR 0151 PR3）：Waterfall 的标签 / 指标 / 图例是中英两套，英文更长；定位走 data-*，两种语言各走一遍

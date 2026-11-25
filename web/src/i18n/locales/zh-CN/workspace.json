@@ -1543,6 +1543,13 @@
     },
     "progress": "进行中",
     "convert": {
+      "taskTitle": "生成可编辑版本",
+      "round": "第 {{n}} 轮",
+      "steps": {
+        "read": "读懂原脚本",
+        "write": "写 Python 版本",
+        "verify": "运行校验"
+      },
       "running": "正在生成可编辑版本…",
       "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
       "writingLong": "正在生成较长的文件…",
@@ -1868,7 +1875,7 @@
     "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
     "pill": {
       "chartSource": "图表来源缺失或损坏",
-      "choose": "找到了几份本机排版",
+      "choose": "从上次离开的地方继续",
       "indexDegraded": "恢复记录读不了",
       "invalid": "上次的排版读不出来",
       "missing": "上次的排版不在原文件内，可能已被移出",
@@ -1879,7 +1886,7 @@
     "retry": "重试",
     "title": {
       "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
-      "choose": "本机找到了几份排版，选一份打开。",
+      "choose": "找到了几份排版，选一份打开。",
       "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
       "invalid": "上次的排版“{{name}}”读不出来。",
       "missing": "上次的排版“{{name}}”不在原文件内，可能已被移出。",
@@ -2035,5 +2042,9 @@
       "reference_cycle": "有循环引用",
       "timeout": "太复杂、读不完"
     }
+  },
+  "agentMerge": {
+    "commit_other": "并入 Agent 加的 {{count}} 个标注",
+    "done_other": "已并入 {{count}} 个标注，保存后写进项目"
   }
 }
