@@ -3,20 +3,17 @@
  * 没有要用户裁决的事，**不提示**——
  *
  * 项目里有一份排版 → 桌面从「项目里的排版」打开它（绑定文件、记下基线）→ 插件那条引擎路往同一个文件里追加标注
- * （`tests/support/e2e_agent_annotate.py`，同一个数据目录）→ 窗口回到前台：标注**自动并进画布**（状态栏一句、可撤销）→
+ * （按引擎写入的格式直接写文件，见 `agentAnnotates`）→ 窗口回到前台：标注**自动并进画布**（状态栏一句、可撤销）→
  * 桌面这边改一处 → Agent 又加一批 → 直接 ⌘S：**不弹对话框**，并进来接着保存，磁盘上三处都在、圆点灭。
  *
  * 判据量的是**磁盘上那个文件**。
  */
-import { spawnSync } from 'node:child_process'
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, test, waitForDocumentReady } from './fixtures'
 
-const REPO = path.resolve(import.meta.dirname, '..', '..')
-const PYTHON = process.env.TAVOTTO_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
-const SRC = path.join(REPO, 'src')
 const NAME = '组图'
 
 function writeLayout(figures: string): string {
@@ -57,17 +54,52 @@ function writeLayout(figures: string): string {
   return file
 }
 
-function agentAnnotates(figures: string, dataDir: string, batch = 1): { revision: string; added: string[] } {
-  const r = spawnSync(PYTHON, [path.join(REPO, 'tests', 'support', 'e2e_agent_annotate.py'), figures, NAME, String(batch)], {
-    encoding: 'utf-8',
-    env: {
-      ...process.env,
-      TAVOTTO_DATA_DIR: dataDir,
-      PYTHONPATH: [SRC, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+/**
+ * 替插件往项目排版里追加一批标注——**按引擎写入的格式**直接写文件（不起 Python，Windows 打包冒烟上也能跑）：
+ * 先在数据目录 `state/agent-undo/<项目键>/<排版名>/` 存写前字节与 `{before, after}`，再换排版文件。格式与
+ * `engine/layoutannotate.write_canvas` / `_undo_dir` 同一份（修订号 = sha256 前 32 位；项目键 = 真实路径在
+ * 大小写不敏感的卷上小写后的 sha256 前 16 位）；引擎改了格式这条会红，桌面就认不出插件写的了。
+ */
+function caseInsensitive(p: string): boolean {
+  const base = path.basename(p)
+  const flipped = [...base].map((c) => (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase())).join('')
+  if (flipped === base) return process.platform !== 'linux'
+  try {
+    return statSync(path.join(path.dirname(p), flipped)).ino === statSync(p).ino
+  } catch {
+    return false
+  }
+}
+
+function agentAnnotates(figures: string, dataDir: string, batch = 1): { added: string[] } {
+  const file = path.join(figures, 'tavottofile', `${NAME}.json`)
+  const before = readFileSync(file)
+  const rev = (b: Buffer | string) => createHash('sha256').update(b).digest('hex').slice(0, 32)
+  const doc = JSON.parse(before.toString('utf-8'))
+  const dy = (batch - 1) * 12
+  const anchor = { v: 1, by: 'agent', anchors: [{ role: 'at', panel: { id: 'Fig1_kinetics.pdf', point: 'ne' } }] }
+  const ids = [`a_e2e${batch}arw`, `t_e2e${batch}txt`]
+  doc.canvases[0].objects.push(
+    {
+      id: ids[0], type: 'arrow', x: 96, y: 11 + dy, w: 6, h: 4, start: { rx: 1, ry: 0 }, end: { rx: 0, ry: 1 },
+      color: '#000000', strokePt: 0.75, head: 'end', anchor,
     },
-  })
-  if (r.status !== 0) throw new Error(`Agent 写入失败：\n${r.stdout}\n${r.stderr}`)
-  return JSON.parse(r.stdout.trim().split('\n').at(-1)!)
+    {
+      id: ids[1], type: 'text', x: 103, y: 9 + dy, w: 22, h: 4, text: batch === 1 ? 'Agent note' : `Agent note ${batch}`,
+      sizePt: 8, bold: false, color: '#000000', align: 'left', anchor,
+    },
+  )
+  const after = Buffer.from(JSON.stringify(doc, null, 1), 'utf-8')
+  let project = realpathSync.native(figures)
+  if (caseInsensitive(project)) project = project.toLowerCase()
+  const key = createHash('sha256').update(project, 'utf-8').digest('hex').slice(0, 16)
+  const undo = path.join(realpathSync.native(dataDir), 'state', 'agent-undo', key, NAME)
+  mkdirSync(undo, { recursive: true })
+  const token = `u${Date.now().toString(16)}${batch}`
+  writeFileSync(path.join(undo, `${token}.json`), before)
+  writeFileSync(path.join(undo, `${token}.meta`), JSON.stringify({ before: rev(before), after: rev(after) }))
+  writeFileSync(file, after)
+  return { added: ids }
 }
 
 const textsOnDisk = (file: string): string[] =>
