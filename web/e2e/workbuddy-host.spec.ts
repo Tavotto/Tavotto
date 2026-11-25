@@ -499,8 +499,8 @@ test('c01 真引擎：1.35 MB 画布经 guest 回拉进 ready；拖动 → 权�
     await expect(frame.getByText('已同步')).toBeVisible({ timeout: 60_000 })
 
     // ⑥ 投稿前检查（另一个工具 = 另一次授权）
-    // 编辑之后这颗按钮写的是「投稿前检查已过期」，编辑前写计数——两种都含「投稿前检查」或「项要改」
-    await frame.getByRole('button', { name: /投稿前检查|项要改/ }).click()
+    // 编辑之后这颗按钮写的是「投稿前检查已过期」，编辑前写不为 0 的计数（要改 / 需留意 / 无法核验）
+    await frame.getByRole('button', { name: /投稿前检查|项要改|项需留意|项无法核验/ }).click()
     await expect.poll(() => w<string[]>(page, '__PROMPTS__')).toContain('tavotto_preflight')
     await expect(frame.getByText(/仍要导出/)).toBeVisible({ timeout: 60_000 })
 
