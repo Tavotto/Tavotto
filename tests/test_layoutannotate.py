@@ -354,3 +354,90 @@ def test_anchor_never_reaches_the_export_payload(project):
     plan = la.propose(project, "组图", _items(), measure, base_revision=s["base_revision"])
     assert all("anchor" in o for o in plan["objects"])
     assert all("anchor" not in e for e in agentobjects.to_export_objects(plan["objects"]))
+
+
+def test_no_write_when_the_undo_copy_cannot_be_saved(project, monkeypatch):
+    """撤销副本存不下（数据目录只读 / 磁盘满）：不写排版——不交出一次没有撤销的写入（Codex #2204）。"""
+    path = project / "tavottofile" / "组图.json"
+    before = path.read_bytes()
+    s = la.read_scene(project, "组图", measure)
+    plan = la.propose(project, "组图", _items(), measure, base_revision=s["base_revision"])
+
+    def full(*_a, **_k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(la, "_save_undo", full)
+    with pytest.raises(la.LayoutError) as e:
+        la.commit(
+            project,
+            "组图",
+            _items(),
+            measure,
+            base_revision=s["base_revision"],
+            echo_digest_seen=plan["echo_digest"],
+        )
+    assert e.value.code == "undo_unavailable"
+    assert path.read_bytes() == before
+
+
+def test_cleanup_of_old_undo_copies_never_fails_a_write(project, monkeypatch):
+    """清理老副本失败（权限、被占用）只是少省点地方：这次写入照样成功、撤销照样能用。
+    只留 1 份、连写两次：第二次写入时要清掉第一次的副本，而删除被拒。"""
+    import pathlib
+
+    monkeypatch.setattr(la, "UNDO_KEEP", 1)
+    s = la.read_scene(project, "组图", measure)
+    plan = la.propose(project, "组图", _items(), measure, base_revision=s["base_revision"])
+    first = la.commit(
+        project,
+        "组图",
+        _items(),
+        measure,
+        base_revision=s["base_revision"],
+        echo_digest_seen=plan["echo_digest"],
+    )
+    items = [
+        {**_items()[0], "name": "peak2", "from": {**_items()[0]["from"], "offset_mm": [10, 30]}}
+    ]
+    plan2 = la.propose(project, "组图", items, measure, base_revision=first["revision"])
+    assert plan2["ok"], plan2
+    real_unlink = pathlib.Path.unlink
+    tried = []
+
+    def stubborn(self, *a, **k):
+        if "agent-undo" in str(self):
+            tried.append(self.name)
+            raise PermissionError(13, "in use")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", stubborn)
+    out = la.commit(
+        project,
+        "组图",
+        items,
+        measure,
+        base_revision=first["revision"],
+        echo_digest_seen=plan2["echo_digest"],
+    )
+    monkeypatch.setattr(pathlib.Path, "unlink", real_unlink)
+    assert tried, "清理确实跑了"
+    assert out["written"]
+    la.undo(project, "组图", out["undo_token"])
+
+
+def test_new_text_may_not_cover_an_annotation_already_on_the_canvas(project):
+    """同一批标注再写一次：新字压在上一次写下的字上——判压字，不写（Codex #2204）。"""
+    s = la.read_scene(project, "组图", measure)
+    plan = la.propose(project, "组图", _items(), measure, base_revision=s["base_revision"])
+    first = la.commit(
+        project,
+        "组图",
+        _items(),
+        measure,
+        base_revision=s["base_revision"],
+        echo_digest_seen=plan["echo_digest"],
+    )
+    again = la.propose(project, "组图", _items(), measure, base_revision=first["revision"])
+    clash = [f for f in again["failed"] if f["check"] == "text" and f["item"] == "label"]
+    assert clash and any(w.startswith("canvas:") for w in clash[0]["detail"]["with"])
+    assert not again["ok"]

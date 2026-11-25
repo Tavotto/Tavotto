@@ -57,6 +57,7 @@ ERROR_CODES = (
     "checks_failed",
     "undo_unknown",
     "undo_stale",
+    "undo_unavailable",
 )
 
 
@@ -412,8 +413,19 @@ def _plan(lay: Layout, canvas: dict, items: list, measure: Measure, fingerprint,
     checked = agentobjects.validate_new_objects(solved["objects"], taken_ids=_taken_ids(lay.doc))
     if not checked["ok"]:
         return {"ok": False, "errors": checked["errors"], "unmeasured": unmeasured}
+    existing = [
+        o
+        for o in canvas.get("objects") or []
+        if isinstance(o, dict) and o.get("type") == "text" and not o.get("hidden")
+    ]
     verdict = vectorcheck.check(
-        solved, checked["objects"], panels, items, page=page, profile=profile
+        solved,
+        checked["objects"],
+        panels,
+        items,
+        page=page,
+        profile=profile,
+        existing_texts=existing,
     )
     echo = describe(items, solved, panels)
     objects = []
@@ -499,9 +511,14 @@ def commit(
         target = _canvas(doc, canvas.get("id"))
         target.setdefault("objects", []).extend(plan["objects"])
         documents.validate_document(doc)
-        atomicio.write_json(lay.path, doc, indent=1)
-        after = atomicio.content_revision(lay.path)
-        token = _save_undo(Path(project), name, before, lay.revision, after)
+        data = atomicio.dumps_json(doc, indent=1)
+        after = atomicio.revision_of(data)
+        # 撤销副本**先**落盘，再换排版文件：副本存不下（数据目录只读、磁盘满）就不写——不交出一次没有撤销的写入
+        try:
+            token = _save_undo(Path(project), name, before, lay.revision, after)
+        except OSError as exc:
+            raise LayoutError("undo_unavailable") from exc
+        atomicio.write_bytes(lay.path, data)
     return {
         "written": True,
         "revision": after,
@@ -519,10 +536,14 @@ def _save_undo(
     token = f"u{int(time.time() * 1000):x}{os.urandom(3).hex()}"
     atomicio.write_bytes(d / f"{token}.json", before)
     atomicio.write_json(d / f"{token}.meta", {"before": before_rev, "after": after_rev})
-    metas = sorted(d.glob("*.meta"), key=lambda p: p.stat().st_mtime)
-    for old in metas[:-UNDO_KEEP]:
-        for p in (old, old.with_suffix(".json")):
-            p.unlink(missing_ok=True)
+    # 清理老副本只是省地方：失败了不影响这一次写入
+    try:
+        metas = sorted(d.glob("*.meta"), key=lambda p: p.stat().st_mtime)
+        for old in metas[:-UNDO_KEEP]:
+            for p in (old, old.with_suffix(".json")):
+                p.unlink(missing_ok=True)
+    except OSError:
+        pass
     return token
 
 
