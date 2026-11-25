@@ -6,9 +6,8 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
-
-import tomllib
 
 from tavotto.engine import vecops
 
@@ -20,9 +19,10 @@ def _spec_tree() -> ast.Module:
 
 
 def test_wasmtime_is_a_pinned_runtime_dependency_mirrored_in_requirements():
-    deps = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
-        "dependencies"
-    ]
+    # 不用 tomllib：它 3.11 才有，CI 还有 3.10 那一档。`dependencies` 列表里一行一个带引号的依赖串
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    start = text.index("\ndependencies = [")
+    deps = re.findall(r'^\s*"([^"]+)",', text[start : text.index("\n]", start)], flags=re.M)
     spec = next(d for d in deps if d.startswith("wasmtime"))
     assert ">=" in spec and "<" in spec  # 上下界都钉
     req = [
