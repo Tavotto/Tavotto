@@ -1372,7 +1372,27 @@ def build_model(conn: dict, **model_kwargs):
         fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
         **model_kwargs,
     )
+    if ai_providers.is_siwc_conn(conn):
+        _mark_siwc_rejection(model)
     return model, Redactor(conn["api_key"])
+
+
+def _mark_siwc_rejection(model) -> None:
+    """SIWC 模型被服务端以 `auth` 拒了当前令牌：标记「下次先刷新」（不清凭据），与改图路径的
+    `ai_bridge._siwc_after_runner_error` 同一个动作。AI 修复与结构化调用都经 `build_model`，所以挂在这里一处（Codex #2212）。"""
+    inner = model.complete
+
+    def complete(*args, **kwargs):
+        try:
+            return inner(*args, **kwargs)
+        except RunnerFailure as exc:
+            if exc.reason == "auth":
+                from . import siwc_login
+
+                siwc_login.provider().mark_rejected("http_401")
+            raise
+
+    model.complete = complete
 
 
 def audit_tail(session_ids: set[str], limit: int = 200) -> list[dict]:

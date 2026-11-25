@@ -545,12 +545,25 @@ def _call(
     from . import ai_providers, fixsession
 
     if ai_providers.is_siwc_conn(conn) and not conn.get("api_key"):
-        # SIWC（与 Key 连接同一条路，ADR 0209 §七）：挑连接时不取令牌，这里现取；单轮调用只要够这次用的寿命
-        conn = ai_providers.siwc_conn_with_token(conn, min_valid_s=int(limits.timeout_s) + 60)
-        if conn is None:
+        # SIWC（与 Key 连接同一条路，ADR 0209 §七）：挑连接时不取令牌，这里现取。与账号登录同一个预算闸：剩余时限够一次刷新
+        # （`REFRESH_NEEDS_S`）才允许联网刷新；不够就只用够新的现有令牌，不等锁、不联网（Codex #2212）
+        from . import siwc_auth, siwc_login
+
+        remaining = limits.timeout_s - (time.monotonic() - t0)
+        try:
+            token = siwc_login.provider().access_token(
+                min_valid_s=max(int(remaining), 1) + 30,
+                allow_refresh=remaining >= REFRESH_NEEDS_S,
+            )
+        except siwc_auth.NeedsLogin:
             return StructuredResult(
                 False, reason="no_connection", detail="needs_login", elapsed_ms=_ms(t0)
             )
+        except siwc_auth.TokenUnavailable:
+            return StructuredResult(
+                False, reason="no_connection", detail="token_unavailable", elapsed_ms=_ms(t0)
+            )
+        conn = {**conn, "api_key": token}
 
     sent = [
         0
