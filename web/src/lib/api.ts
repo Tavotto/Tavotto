@@ -6402,6 +6402,11 @@ export interface SyncPatch {
   value: unknown
   /** 点位越界后被钳进画布，位置可能需要微调 */
   clamped?: boolean
+  /**
+   * 只在 `skipped` 里出现，稳定原因码：`copy_not_synced` = 图内副本（ADR 0207）不跨图同步；
+   * 版面几何类的没有原因码。界面据它把两类分开数，不混成一句。
+   */
+  skip_reason?: string
 }
 
 export interface SyncResult {

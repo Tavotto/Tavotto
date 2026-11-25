@@ -1,0 +1,199 @@
+{
+ "_doc": "图内副本（ADR 0207）的 gid 判据向量：engine/overrides._copy_source_supported / _COPY_GID ↔ web/src/lib/figureElementCopy.ts。宿主取 gid 第一段（axes_N / fig）。",
+ "source": [
+  {
+   "gid": "axes_0.title",
+   "supported": true
+  },
+  {
+   "gid": "axes_0.title_left",
+   "supported": true
+  },
+  {
+   "gid": "axes_0.title_right",
+   "supported": true
+  },
+  {
+   "gid": "axes_3.xlabel",
+   "supported": true
+  },
+  {
+   "gid": "axes_12.ylabel",
+   "supported": true
+  },
+  {
+   "gid": "axes_0.texts_0",
+   "supported": true
+  },
+  {
+   "gid": "axes_2.texts_17",
+   "supported": true
+  },
+  {
+   "gid": "fig.texts_0",
+   "supported": true
+  },
+  {
+   "gid": "fig.texts_9",
+   "supported": true
+  },
+  {
+   "gid": "axes_0.xlabel2",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.texts_",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.texts_a",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.texts_1.extra",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.legend",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.legend.texts_0",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.xaxis.ticklabels_0",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.xticklabels_0",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.lines_0",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.colorbar",
+   "supported": false
+  },
+  {
+   "gid": "fig.title",
+   "supported": false
+  },
+  {
+   "gid": "fig.xlabel",
+   "supported": false
+  },
+  {
+   "gid": "fig.suptitle",
+   "supported": false
+  },
+  {
+   "gid": "fig.texts_",
+   "supported": false
+  },
+  {
+   "gid": "axes_.title",
+   "supported": false
+  },
+  {
+   "gid": "axes_x.title",
+   "supported": false
+  },
+  {
+   "gid": "axes.title",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.copy_abcd1234",
+   "supported": false
+  },
+  {
+   "gid": "fig.copy_abcd1234",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.title ",
+   "supported": false
+  },
+  {
+   "gid": " axes_0.title",
+   "supported": false
+  },
+  {
+   "gid": "Axes_0.title",
+   "supported": false
+  },
+  {
+   "gid": "axes_0.TITLE",
+   "supported": false
+  },
+  {
+   "gid": "figure.texts_0",
+   "supported": false
+  },
+  {
+   "gid": "axes_0",
+   "supported": false
+  },
+  {
+   "gid": "fig",
+   "supported": false
+  },
+  {
+   "gid": "",
+   "supported": false
+  }
+ ],
+ "copy_gid": [
+  {
+   "gid": "axes_0.copy_abcd1234",
+   "copy": true
+  },
+  {
+   "gid": "fig.copy_0a1b2c3d",
+   "copy": true
+  },
+  {
+   "gid": "axes_17.copy_zzzzzzzz",
+   "copy": true
+  },
+  {
+   "gid": "axes_0.copy_ABCD1234",
+   "copy": false
+  },
+  {
+   "gid": "axes_0.copy_abcd123",
+   "copy": false
+  },
+  {
+   "gid": "axes_0.copy_abcd12345",
+   "copy": false
+  },
+  {
+   "gid": "axes_0.copy_abcd-234",
+   "copy": false
+  },
+  {
+   "gid": "axes_x.copy_abcd1234",
+   "copy": false
+  },
+  {
+   "gid": "figure.copy_abcd1234",
+   "copy": false
+  },
+  {
+   "gid": "axes_0.texts_0",
+   "copy": false
+  },
+  {
+   "gid": "axes_0.copy_abcd1234.x",
+   "copy": false
+  },
+  {
+   "gid": "copy_abcd1234",
+   "copy": false
+  }
+ ]
+}
