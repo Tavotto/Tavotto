@@ -591,7 +591,7 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
 
 
 def first_key_connection(*, refresh: bool = False) -> dict | None:
-    """AI 修复用：第一个内置循环能直接用的连接（Key 或账号登录）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
+    """AI 修复用：第一个内置循环能直接用的连接（Key、账号登录，最后是 SIWC）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
 
     `refresh=True`（真要开跑时）：账号登录的记录先 `ai_oauth.ensure_fresh`（联网，可能很慢），刷不动的跳过；
     `False`（只问「有没有」，capabilities 用）绝不联网。已知被服务商拒绝（`last_error: unauthorized`）的记录一律跳过。"""
@@ -620,6 +620,11 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
         conn = ai_providers.builtin_conn(rec)
         if conn is not None:
             return conn
+    # Sign in with ChatGPT：与 Key 连接体验相同（用户 2026-11-25「SIWC 与 API 的体验完全相同」）——排在已存的 Key / 账号登录之后
+    # （老用户的结论不变）；只登录了 ChatGPT 的用户就用它。`refresh=False` 只问「有没有」、不取令牌（`api_key` 为空）
+    siwc = ai_providers.builtin_conn(ai_providers.siwc_record())
+    if siwc is not None:
+        return ai_providers.siwc_conn_with_token(siwc) if refresh else siwc
     return None
 
 

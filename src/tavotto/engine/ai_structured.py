@@ -537,20 +537,28 @@ def _call(
         return _call_cli(
             system, user, validate, limits, conn, t0, max_requests, effort, runner, schema
         )
-    from . import fixsession
+    from . import ai_providers, fixsession
+
+    if ai_providers.is_siwc_conn(conn) and not conn.get("api_key"):
+        # SIWC（与 Key 连接同一条路，ADR 0209 §七）：挑连接时不取令牌，这里现取；单轮调用只要够这次用的寿命
+        conn = ai_providers.siwc_conn_with_token(conn, min_valid_s=int(limits.timeout_s) + 60)
+        if conn is None:
+            return StructuredResult(
+                False, reason="no_connection", detail="needs_login", elapsed_ms=_ms(t0)
+            )
 
     sent = [
         0
     ]  # 传输层的真实请求数（`HttpModel.complete` 在换协议 / 字段降级时一次尝试可发多个请求）
     inner = post if post is not None else post_json
 
-    def counted(url, headers, body, *, timeout, max_bytes=None):
+    def counted(url, headers, body, *, timeout, max_bytes=None, reader=None):
         if max_requests is not None and sent[0] >= max_requests:
             raise RunnerFailure("budget", "requests")
         sent[0] += 1
-        if max_bytes is None:
-            return inner(url, headers, body, timeout=timeout)
-        return inner(url, headers, body, timeout=timeout, max_bytes=max_bytes)
+        # 只把调用方真给了的可选参数往下传：三条原协议的调用形状逐字不变；`reader` 是 siwc-responses 的 SSE 读取器
+        extra = {k: v for k, v in (("max_bytes", max_bytes), ("reader", reader)) if v is not None}
+        return inner(url, headers, body, timeout=timeout, **extra)
 
     deadline = t0 + limits.timeout_s  # 总时限从调用开始算：解析连接（可能联网刷新令牌）也在里面
     total = Usage()

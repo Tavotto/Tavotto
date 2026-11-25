@@ -4,7 +4,7 @@
 * 连接视图（`vendors()` / `connections()` 的返回值）：开关关时与原来一致；开时 OpenAI 首选「Continue with ChatGPT」，Codex 登录只给已装的；
 * 路由：`siwc:chatgpt` 只解析到内置执行器；
 * 起跑注入（父进程交给 runner 的 argv / env）：runner 自己的硬约束 `siwc_wire.runner_args_ok` 接受它；
-* 「挑第一个能用的连接」的调用点看不见 SIWC。
+* 用户不能把一条 Key 记录存成 / 探测成 SIWC（「挑第一个能用的连接」现在会挑到它，见 `test_siwc_parity.py`）。
 """
 
 from __future__ import annotations
@@ -196,14 +196,7 @@ def test_preflight_ok_with_fresh_token(env):
     assert ai_bridge._siwc_preflight(ai_providers.siwc_record()) is None
 
 
-# --------------------------------------------------------------------------- 别的调用点看不见它
-def test_pick_first_usable_connection_never_sees_siwc(env):
-    env.setenv(siwc_wire.ENV_FLAG, "1")
-    _sign_in()
-    assert ai_connections.first_key_connection() is None
-    assert ai_connections.first_key_connection(refresh=True) is None
-
-
+# --------------------------------------------------------------------------- 存储与探测碰不到它
 def test_cannot_save_or_probe_a_record_as_siwc(env):
     env.setenv(siwc_wire.ENV_FLAG, "1")
     _sign_in()

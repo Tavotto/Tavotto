@@ -944,7 +944,8 @@ def is_siwc(rec: dict | None) -> bool:
 
 def siwc_record() -> dict | None:
     """SIWC 的**虚拟**记录（不在 `ai.providers[]` 里，没有令牌字段）：开关开且有已登录、许可订阅额度的账号才有。
-    「挑第一个能用的连接」的调用点（AI 修复、结构化调用、探测）只遍历 `list_providers()`，结构上看不见它。"""
+    它不在 `list_providers()` 里：保存时探测、Key 的增删改结构上碰不到它；「挑第一个能用的连接」（`ai_connections.first_key_connection`）在所有 Key 之后显式取它
+    （ADR 0209 §七：SIWC 与 API 体验相同）。"""
     from . import siwc_store  # 函数内 import：不让 provider 记录模块在 import 时就碰 SIWC 存储
     from .agent_runner import siwc_wire
 
@@ -980,6 +981,25 @@ def _siwc_conn(rec: dict, model: str | None) -> dict | None:
         "auth": "bearer",
         "provider_id": SIWC_CONNECTION_ID,
     }
+
+
+def is_siwc_conn(conn: dict | None) -> bool:
+    """`builtin_conn` 形状的连接是不是 SIWC 的（AI 修复 / 结构化调用拿到的那种）。"""
+    return bool(conn) and conn.get("provider_id") == SIWC_CONNECTION_ID
+
+
+def siwc_conn_with_token(conn: dict, *, min_valid_s: int | None = None) -> dict | None:
+    """给 SIWC 连接装上一个够新的访问令牌（不够新就刷新，可能联网）。拿不到（没登录 / 没许可额度 / 暂时失败）→ None。
+    令牌只进返回的 dict（与 Key 连接的 `api_key` 同一出口：只给 `fixsession.build_model`），不落盘、不进日志。"""
+    from . import siwc_auth, siwc_login
+
+    try:
+        token = siwc_login.provider().access_token(
+            min_valid_s=siwc_auth.MIN_VALID_S if min_valid_s is None else min_valid_s
+        )
+    except (siwc_auth.NeedsLogin, siwc_auth.TokenUnavailable):
+        return None
+    return {**conn, "api_key": token}
 
 
 def siwc_overrides(rec: dict, model: str | None) -> tuple[list[str], dict[str, str]]:
