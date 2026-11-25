@@ -754,6 +754,7 @@
       "off": "不用 AI 分析",
       "more": "连接其他 AI…",
       "unavailable": "该模型无法连接，请换一个尝试",
+      "current": "当前：{{name}}",
       "chosen": "你选的模型"
     },
     "redraw": {

@@ -95,14 +95,14 @@ describe('图标：出不出、长什么样', () => {
   it('on：图标是当前连接的厂商标志（有标志就不是 ✦），悬停「分析用的 AI：名字」；auto 时名字是实际在用的那个', async () => {
     await mount(choice())
     expect(icon()!.getAttribute('data-data-ai-choice')).toBe('on')
-    expect(icon()!.getAttribute('title')).toBe('分析用的 AI：A')
+    expect(icon()!.getAttribute('aria-label')).toBe('分析用的 AI：A')
     expect(q('[data-data-connect]')).toBeNull()
   })
 
   it('off：✦ 上划斜线，悬停「不用 AI 分析」；形状与 on 不同', async () => {
     await mount(choice({ state: 'off', mode: 'off', connection: null }))
     expect(icon()!.getAttribute('data-data-ai-choice')).toBe('off')
-    expect(icon()!.getAttribute('title')).toBe('不用 AI 分析')
+    expect(icon()!.getAttribute('aria-label')).toBe('不用 AI 分析')
     expect(icon()!.querySelectorAll('svg')).toHaveLength(2) // 星 + 斜线
     expect(q('[data-data-connect]')).toBeNull()
   })
@@ -110,7 +110,7 @@ describe('图标：出不出、长什么样', () => {
   it('unavailable：另一种形状（拔掉的插头），悬停写明用不了；不出胶囊', async () => {
     await mount(choice({ state: 'unavailable', mode: 'connection', connection: null, chosen: 'zz' }))
     expect(icon()!.getAttribute('data-data-ai-choice')).toBe('unavailable')
-    expect(icon()!.getAttribute('title')).toBe('该模型无法连接，请换一个尝试')
+    expect(icon()!.getAttribute('aria-label')).toBe('该模型无法连接，请换一个尝试')
     expect(icon()!.querySelectorAll('svg')).toHaveLength(1)
     expect(q('[data-data-connect]')).toBeNull()
   })
@@ -128,6 +128,44 @@ describe('图标：出不出、长什么样', () => {
   })
 })
 
+describe('按钮是扁平的 ghost 图标钮；气泡是同一句、可达名也是它', () => {
+  it('没有白底、没有投影；悬停才有浅灰底（ghost 样式）；在用 text-ink-2，关了 / 用不了 text-ink-3', async () => {
+    await mount(choice())
+    const cls = icon()!.className
+    expect(cls).not.toContain('shadow-pop')
+    expect(cls).not.toMatch(/(^|\s)bg-surface(\s|$)/)
+    expect(cls).toContain('hover:bg-surface-hover')
+    expect(cls).toContain('text-ink-2')
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    useDataFigureStore.getState().clear()
+    await mount(choice({ state: 'off', mode: 'off', connection: null }))
+    expect(icon()!.className).toContain('text-ink-3')
+  })
+
+  it('关闭态的斜线满幅贯穿图标（对角 3,3 → 21,21），不是一小截', async () => {
+    await mount(choice({ state: 'off', mode: 'off', connection: null }))
+    const paths = [...icon()!.querySelectorAll('svg path')].map((p) => p.getAttribute('d'))
+    expect(paths).toContain('M3 3L21 21')
+  })
+
+  it('气泡真的接上了：聚焦按钮就出气泡，文案 = 可达名 =「分析用的 AI：A」', async () => {
+    await mount(choice())
+    await act(async () => icon()!.focus())
+    await flush()
+    const tip = document.querySelector('[data-tooltip-label]')
+    expect(tip?.textContent).toBe('分析用的 AI：A')
+    expect(icon()!.getAttribute('aria-label')).toBe('分析用的 AI：A')
+  })
+
+  it('关了 / 用不了的气泡也是各自那一句', async () => {
+    await mount(choice({ state: 'off', mode: 'off', connection: null }))
+    await act(async () => icon()!.focus())
+    await flush()
+    expect(document.querySelector('[data-tooltip-label]')?.textContent).toBe('不用 AI 分析')
+  })
+})
+
 describe('列表', () => {
   it('自动、每个 AI 一行（名字 + 次要文字是型号）、不用 AI 分析、分隔线后「连接其他 AI…」；当前生效的有选中态', async () => {
     await mount(choice())
@@ -136,8 +174,10 @@ describe('列表', () => {
     expect(rows.map((r) => r.getAttribute('data-data-ai-option'))).toEqual(['auto', 'conn:a', 'conn:b', 'off'])
     expect(rows[1]!.textContent).toContain('A')
     expect(rows[1]!.textContent).toContain('gpt-x')
-    expect(rows[0]!.textContent).toBe('自动')
+    expect(rows[0]!.textContent).toBe('自动当前：A') // 自动且在用：第二行小字说现在用的是谁
     expect(rows[3]!.textContent).toBe('不用 AI 分析')
+    // 五行（含「连接其他 AI…」）文字起点对齐：每一行都有自己的图标
+    for (const r of rows) expect(r.querySelector('svg'), r.getAttribute('data-data-ai-option') ?? '').not.toBeNull()
     expect(rows.map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false', 'false'])
     expect(q('[data-data-ai-connect]')!.textContent).toBe('连接其他 AI…')
     // 没有手拼的 radio / 600 字重
@@ -197,7 +237,7 @@ describe('选了之后', () => {
     await openMenu()
     await pick('conn:b')
     expect(set.mock.calls[0]![0]).toEqual({ mode: 'connection', connection: 'b' })
-    expect(icon()!.getAttribute('title')).toBe('分析用的 AI：B')
+    expect(icon()!.getAttribute('aria-label')).toBe('分析用的 AI：B')
   })
 
   it('失败：图标回到原来的，用胶囊说一句（后端那句），不卡在等待态', async () => {

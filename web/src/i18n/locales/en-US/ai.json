@@ -761,6 +761,7 @@
       "off": "Don't analyze with AI",
       "more": "Connect another AI…",
       "unavailable": "This model can't be reached; try another one",
+      "current": "Currently {{name}}",
       "chosen": "The model you chose"
     },
     "redraw": {

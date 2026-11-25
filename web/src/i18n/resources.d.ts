@@ -192,6 +192,7 @@ export default interface Resources {
       "aiChoice": {
         "auto": "自动",
         "chosen": "你选的模型",
+        "current": "当前：{{name}}",
         "more": "连接其他 AI…",
         "off": "不用 AI 分析",
         "tip": "分析用的 AI：{{name}}",
