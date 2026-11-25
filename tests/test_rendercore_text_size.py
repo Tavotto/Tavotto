@@ -368,16 +368,13 @@ def test_a_standard_all_green_pdf_keeps_its_overall_verdict(tmp_path):
         m = I.inspect(_strict_ok_pdf(tmp_path, body, name=name), "pdf", plan=_OK_PLAN)
         s = I.summary(m)
         assert s["checks"]["text_size"] == "not_applicable", name
-        # `glyphs`（T-004）在只有 ToUnicode 的简单 TrueType 上判不了、如实记 unknown：与字号无关，这里不看它
-        others = {k: v for k, v in s["checks"].items() if k != "glyphs"}
-        assert "unknown" not in others.values() and "failed" not in others.values()
-        before = {k: v for k, v in others.items() if k != "text_size"}
+        assert "unknown" not in s["checks"].values() and "failed" not in s["checks"].values()
+        before = {k: v for k, v in s["checks"].items() if k != "text_size"}
         assert (
             set(before.values()) <= {"verified", "not_applicable"} and "verified" in before.values()
         )
         assert s["verdict"] == "accepted"
-        assert set(m["policy"]["optional_unknown"]) <= {"glyphs"}
-        assert m["policy"]["optional_failed"] == []
+        assert m["policy"]["optional_unknown"] == [] and m["policy"]["optional_failed"] == []
         assert not any("字号" in n or "pt" in n for n in s["notes"]), s["notes"]
 
 

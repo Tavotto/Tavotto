@@ -211,8 +211,10 @@ def test_last_resort_only_counts_when_it_paints(tmp_path):
 
 
 @needs_pikepdf
-def test_a_font_whose_glyphs_cannot_be_checked_is_unknown_not_verified(tmp_path):
-    """简单 TrueType 没有 Differences：码 → 字形要读字体程序的 cmap，这里判不了——记 unknown（RC-088）。"""
+def test_a_simple_font_whose_glyphs_cannot_be_checked_is_not_counted_as_unknown(tmp_path):
+    """简单 TrueType 没有 Differences：码 → 字形要读字体程序的 cmap，这里判不了。2026-11-25 用户选了
+    不为它记 unknown（不再让文件进「未核验」名单）：只有这种字体时缺字一项「不适用」，附一句说明；
+    和能判的字体放在一起时只看能判的那个。"""
     import pikepdf
 
     pdf = pikepdf.new()
@@ -229,7 +231,28 @@ def test_a_font_whose_glyphs_cannot_be_checked_is_unknown_not_verified(tmp_path)
     page.obj["/Contents"] = pdf.make_indirect(pikepdf.Stream(pdf, b"BT /F1 10 Tf (hi) Tj ET"))
     pdf.save(str(tmp_path / "plain.pdf"))
     m = I.inspect(tmp_path / "plain.pdf", "pdf", plan=PLAN)
-    assert m["checks"]["glyphs"] == "unknown"
+    assert m["checks"]["glyphs"] == "not_applicable"
+    assert any("判不了缺字" in n for n in m["notes"]), m["notes"]
+
+    # 和一个能判的 Type0 放在一起：只看 Type0——它画的是缺字方块就报 failed，不是就 verified
+    for codes, want in ((b"\x00\x05", "verified"), (b"\x00\x00", "failed")):
+        mixed = _type0_pdf(tmp_path / f"mixed-{want}.pdf", codes)
+        with pikepdf.open(mixed, allow_overwriting_input=True) as doc:
+            pg = doc.pages[0]
+            plain = doc.make_indirect(
+                pikepdf.Dictionary(
+                    Type=pikepdf.Name.Font,
+                    Subtype=pikepdf.Name.TrueType,
+                    BaseFont=pikepdf.Name("/Plain"),
+                    FontDescriptor=pikepdf.Dictionary(FontFile2=pikepdf.Stream(doc, b"x")),
+                )
+            )
+            pg.obj["/Resources"]["/Font"]["/F2"] = plain
+            body = bytes(pg.obj["/Contents"].read_bytes()) + b" BT /F2 10 Tf 5 30 Td (hi) Tj ET"
+            pg.obj["/Contents"] = doc.make_indirect(pikepdf.Stream(doc, body))
+            doc.save(mixed)
+        got = I.inspect(mixed, "pdf", plan=PLAN)
+        assert got["checks"]["glyphs"] == want, got["notes"]
 
 
 def _png(path: Path, w: int = 40, h: int = 30) -> Path:

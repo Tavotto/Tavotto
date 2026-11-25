@@ -386,6 +386,10 @@ def _font_record(name: str, obj, seen: dict) -> _Font:
     return rec
 
 
+#: 缺字判不了时不记 unknown 的简单字体子类型（见 `checks["glyphs"]`）：Type 3 / Type0 判不了仍记 unknown
+_GLYPHS_UNJUDGED_SIMPLE = frozenset({"Type1", "TrueType", "MMType1"})
+
+
 #: 系统「最后一招」字体（macOS 的 LastResort / LastResortHE）：字体里没有真字形，每个字都画成一个方块——用到它就是缺字
 _LAST_RESORT = re.compile(r"^LastResort", re.IGNORECASE)
 
@@ -1174,10 +1178,22 @@ def _check_pdf(
         elif tofu:
             checks["glyphs"] = FAILED
             notes.append(f"有字画成了缺字方块（.notdef 或 LastResort 字体）：{tofu[:5]}")
-        elif any(f.get("notdef_unchecked") for f in used):
-            checks["glyphs"] = UNKNOWN
         else:
-            checks["glyphs"] = VERIFIED
+            # 简单字体（TrueType / Type 1）的码 → 字形要读字体程序自己的 cmap，这里判不了：不再因此记
+            # unknown（2026-11-25 用户：提示干净些），只看其余能判的字体；全是这种字体就说「不适用」
+            judged = [
+                f
+                for f in used
+                if not (f.get("notdef_unchecked") and f.get("subtype") in _GLYPHS_UNJUDGED_SIMPLE)
+            ]
+            if len(judged) < len(used):
+                notes.append("简单字体（TrueType / Type 1）判不了缺字方块，缺字这一项只看其余字体")
+            if not judged:
+                checks["glyphs"] = NOT_APPLICABLE
+            elif any(f.get("notdef_unchecked") for f in judged):
+                checks["glyphs"] = UNKNOWN
+            else:
+                checks["glyphs"] = VERIFIED
         expected = plan.get("text")
         if expected is None:
             checks["text_layer"] = UNKNOWN if used else NOT_APPLICABLE
