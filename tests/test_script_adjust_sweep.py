@@ -35,6 +35,8 @@ pytest_plugins = ("support.scriptadjust_harness",)
 _DEDICATED: dict[tuple[str, str], str] = {
     ("text", "pos_frac"): "test_moves_on_a_tight_cropped_figure_land_where_the_editor_shows",
     ("legend", "loc_frac"): "test_moves_on_a_tight_cropped_figure_land_where_the_editor_shows",
+    # 创建型修改：不在 manifest 的可编辑字段里，扫描采不到；六类源 × 无 / tight / constrained 布局各一条用例
+    ("text", "copy_of"): "test_edited_script_with_a_copy_passes_the_replay_gate",
     ("text", "fontfamily"): "test_font_edits_replay_identically",
     ("legend_text", "fontfamily"): "test_font_edits_replay_identically",
     ("ticks", "fontfamily"): "test_font_edits_replay_identically",

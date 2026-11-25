@@ -5174,7 +5174,9 @@ def _verify_edited_script(worker, stem: str, target: Path, adjusted, hot: dict, 
                     encoding="utf-8"
                 )
             )
-            diffs = _compare_manifests(hot, man_fresh)[0]
+            diffs = _compare_manifests(
+                _alias_baked_copies(hot, man_fresh, getattr(adjusted, "copies", ())), man_fresh
+            )[0]
             if not diffs:
                 pixel_diff, state = _replay_pixel_diff(worker, fresh, stem)
                 if pixel_diff is not None:
@@ -12679,6 +12681,48 @@ def _log_replay_divergence(stem: str, diffs: list[dict]) -> None:
         )
 
 
+_BAKED_COPY_SLOT = re.compile(r"^(?:(axes_\d+)\.texts_(\d+)|(fig)\.artists_(\d+))$")
+
+
+def _alias_baked_copies(hot: dict, fresh: dict, copies) -> dict:
+    """写进新脚本的图内副本（ADR 0207）在热态里叫 `axes_N.copy_xxxxxxxx`，到了新脚本里就是一段普通的
+    `ax.text`（子图的 `axes_N.texts_K`、整图的 `fig.artists_J`），gid 对不上不是它们画得不一样。
+
+    这里只做一件事：把热态 manifest 里这几个副本的 gid 换成新脚本里它们该有的序号名，**逐项比 bbox / anchor
+    照旧**。对应关系按宿主分组、按创建次序：新脚本里热态没有的序号名，次序上第几个就是第几个副本。
+    数目对不上（副本在新脚本里没被登记、或多出别的）就留着不换，那一项自然成为分歧——宁可不交付。
+    """
+    if not copies:
+        return hot
+    hot_gids = {el.get("gid") for el in hot.get("elements", [])}
+    slots: dict[str, list[tuple[int, str]]] = {}
+    for el in fresh.get("elements", []):
+        gid = el.get("gid") or ""
+        m = _BAKED_COPY_SLOT.match(gid)
+        if m is None or gid in hot_gids:
+            continue
+        host, k = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        slots.setdefault(host, []).append((int(k), gid))
+    rename: dict[str, str] = {}
+    used: dict[str, int] = {}
+    for gid in copies:
+        host = gid.split(".", 1)[0]
+        ordered = sorted(slots.get(host, []))
+        k = used.get(host, 0)
+        if k < len(ordered):
+            rename[gid] = ordered[k][1]
+            used[host] = k + 1
+    if not rename:
+        return hot
+    return {
+        **hot,
+        "elements": [
+            {**el, "gid": rename[el["gid"]]} if el.get("gid") in rename else el
+            for el in hot.get("elements", [])
+        ],
+    }
+
+
 def _replay_pixel_diff(worker, fresh, stem: str) -> dict | None:
     """写回像素门：热态当前的样子 vs 干净重放，逐像素比对（issue #81）。
 
@@ -13366,6 +13410,10 @@ def _write_back_error_response(exc):
 # ---- 组图 ↔ 子图 override 同步 ----------------------------------------------
 _SYNC_SKIP = {"position", "size_mm", "size_frac"}  # 版面几何不跨图搬
 _SYNC_POINT = {"pos_frac", "loc_frac"}  # 点位经 axes 框换算后可搬
+#: 图内副本（ADR 0207）的 gid：`axes_N.copy_xxxxxxxx` / `fig.copy_xxxxxxxx`（副本不跨图同步）
+_SYNC_COPY_GID = re.compile(r"^(?:axes_\d+|fig)\.copy_[a-z0-9]{8}$")
+#: `skipped[].skip_reason` 的稳定原因码：副本不跨图同步（版面几何类的没有原因码）
+SYNC_SKIP_COPY = "copy_not_synced"
 
 
 def _manifest_of(worker, stem: str) -> dict:
@@ -13387,8 +13435,8 @@ def _axes_info(man: dict) -> list[dict]:
             info[int(m.group(1))] = {"bbox": el.get("bbox"), "texts": set(), "n": 0}
     for el in man["elements"]:
         m = re.match(r"axes_(\d+)\.", el["gid"])
-        if not m:
-            continue
+        if not m or _SYNC_COPY_GID.match(el["gid"]):
+            continue  # 图内副本不参与对位：它不跨图同步，也不该让这张图的元素数 / 文字签名变了样
         i = int(m.group(1))
         ax = info.setdefault(i, {"bbox": None, "texts": set(), "n": 0})
         ax["n"] += 1
@@ -13514,6 +13562,10 @@ def api_engine_sync_overrides():
         gid, prop = str(p["gid"]), str(p["prop"])
         if prop in _SYNC_SKIP:
             skipped.append(p)
+            continue
+        if prop == "copy_of" or _SYNC_COPY_GID.match(gid):
+            # 图内副本（ADR 0207）及它 gid 上的全部修改：同步按位置映射，源在目标图上未必存在，不跨图同步
+            skipped.append({**p, "skip_reason": SYNC_SKIP_COPY})
             continue
         m = re.match(r"axes_(\d+)(\..+)?$", gid)
         if not m:

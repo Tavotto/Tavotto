@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import codecs
 import io
+import math
 import re
 import tokenize
 from dataclasses import dataclass, field
@@ -194,6 +195,8 @@ WRITES: dict[tuple[str, str], str | None] = {
     # 3D 轴标签沿投影轴推远 / 拉近（2D 的轴标签 manifest 不发这条）
     ("text", "labelpad"): "{o}.axis.labelpad = {v}",
     ("text", "pos_frac"): None,
+    # 图内副本（ADR 0207）：创建型语句，`_copy_statement` 生成；排在全部属性语句之前（`_rank` 的 "copy" 档）
+    ("text", "copy_of"): None,
     ("text", "fontfamily"): None,
     ("legend_text", "fontfamily"): None,
     ("ticks", "fontfamily"): None,
@@ -386,14 +389,16 @@ NOT_WRITABLE: dict[str, str] = {
     # 渐变色带的两端色：要认出「一摞逐条一色的长条」、保留深浅节奏重新配色并带着图例色块，不是一句公开 API
     "collection": "gradient pos_frac",
     "linecoll": "pos_frac",
-    # 图内副本（ADR 0207）是**创建型**修改：要在所有属性语句之前写出 `ax.text(...)` + `update_from(源)`，
-    # 本期（PR 1 引擎）还没有这种语句——留作重放；PR 2 接创建型语句时把它挪进 WRITES
-    "text": "copy_of",
 }
 
 
 # -------------------------------- gid → 表达式 --------------------------------
 _AX = re.compile(r"^axes_(\d+)(?:\.(.+))?$")
+#: 图内副本（ADR 0207）：`overrides.COPY_PROP` / `overrides._COPY_GID` 的镜像（对账见 `tests/test_script_adjust_copy.py`）
+COPY_PROP = "copy_of"
+_COPY_GID = re.compile(r"^(axes_\d+|fig)\.copy_[a-z0-9]{8}$")
+#: 第一期能当副本源的 gid 形状（`overrides._copy_source_supported` 的镜像）
+_COPY_SRC_AX = r"\.(?:title|title_left|title_right|xlabel|ylabel|texts_\d+)"
 #: 色条的 mappable 还可能是 QuadMesh / 等值线这类通用集合（`collections_N`，N 是 `ax.collections` 的下标）；
 #: 这一族自己的字段不写，所以只有认 mappable 时才用这个前缀（`_mappable`）。
 _MAPPABLE_ONLY = {"collections": "{ax}.collections"}
@@ -423,6 +428,8 @@ def _script_label(el: dict | None) -> str | None:
 def _selector(gid: str, el: dict | None) -> str:
     if gid == "figure":
         return "fig"
+    if _COPY_GID.match(gid):  # 副本：创建语句（`_copy_of`）把它存在图上，后续修改按 gid 取回
+        return f"_copy_ref(fig, {gid!r})"
     m = _AX.match(gid)
     if m is None:
         raise _Unsupported(gid)
@@ -500,6 +507,10 @@ def _literal(value, encoding: str) -> str:
 def _position(el: dict | None, gid: str, obj: str, value) -> str:
     fx, fy = float(value[0]), float(value[1])
     role = (el or {}).get("role")
+    if _COPY_GID.match(
+        gid
+    ):  # 副本沿用源的角色，但它是一段独立的 Text（标题的副本不走 `set_title`）
+        return f"_text_to({obj}, fig, {fx!r}, {fy!r})"
     if role == "title":
         i = _AX.match(gid)
         assert i is not None
@@ -756,12 +767,84 @@ def _stroke_statement(el: dict | None, gid: str, obj: str, patches, encoding: st
     )
 
 
+def _copy_statement(gid: str, value, manifest: dict, encoding: str) -> str:
+    """图内副本的创建语句（ADR 0207）：`_copy_of(fig, gid, 宿主, 源, [x, y], 文字)`。
+
+    条件与引擎 `_ensure_copy` 的受理一致（宿主是 2D 子图 / 整图、源是宿主上第一期认的那几类文字）；
+    源的选择器写不出（`_Unsupported`）、宿主 / 源在 manifest 里没有，一律不写：整条副本与它 gid 上的
+    全部修改留作重放（`_translate` 的级联），不生成半截代码。"""
+    m = _COPY_GID.match(gid)
+    if m is None or not isinstance(value, dict):
+        raise _Unsupported(gid)
+    src, text, at = value.get("src"), value.get("text"), value.get("at")
+    if not isinstance(src, str) or not isinstance(text, str):
+        raise _Unsupported(gid)
+    if not (
+        isinstance(at, (list, tuple))
+        and len(at) == 2
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in at)
+    ):
+        raise _Unsupported(gid)
+    x, y = float(at[0]), float(at[1])
+    if not (math.isfinite(x) and math.isfinite(y)):
+        raise _Unsupported(gid)
+    els = {e["gid"]: e for e in manifest.get("elements", [])}
+    host_gid = m.group(1)
+    if host_gid == "fig":
+        host = "fig"
+        sm = re.fullmatch(r"fig\.texts_(\d+)", src)
+        if sm is None:
+            raise _Unsupported(gid)
+        src_expr = (
+            f"_at(fig.texts, {int(sm.group(1))})"  # 副本在 `fig.artists`，不挤动 `fig.texts` 的序号
+        )
+    else:
+        i = int(host_gid[len("axes_") :])
+        if host_gid not in els or _is_3d(manifest, i) or f"{host_gid}.colorbar" in els:
+            raise _Unsupported(gid)
+        if re.fullmatch(re.escape(host_gid) + _COPY_SRC_AX, src) is None:
+            raise _Unsupported(gid)
+        host = f"_ax(fig, {i})"
+        src_expr = _selector(src, els.get(src))
+    if _cls_of(src, els.get(src)) != "text":
+        raise _Unsupported(gid)
+    return f"_copy_of(fig, {gid!r}, {host}, {src_expr}, [{x!r}, {y!r}], {_literal(text, encoding)})"
+
+
+def _hold_copies(live: list[tuple[dict, str]], residual: list[dict], patches: list[dict]) -> bool:
+    """副本是一整件事：它 gid 上有一条留作重放，整条副本（含 `copy_of`）与它全部修改一起留下。
+
+    写进脚本的副本只认写进脚本的修改；留作重放的修改要落在副本上，引擎里得有这个副本。
+    被留下的副本，它的源上的修改也一起留下：引擎的副本样式取「脚本原样的源」，源的修改要是已写进新脚本，
+    重放建出来的副本就抄到改过的样子，与热态不同。返回是否挪动了东西。"""
+    held = {str(r["gid"]) for r in residual if _COPY_GID.match(str(r["gid"]))}
+    if not held:
+        return False
+    srcs = {
+        p["value"]["src"]
+        for p in patches
+        if p["prop"] == COPY_PROP
+        and p["gid"] in held
+        and isinstance(p.get("value"), dict)
+        and isinstance(p["value"].get("src"), str)
+    }
+    moved = False
+    for entry in list(live):
+        if entry[0]["gid"] in held or entry[0]["gid"] in srcs:
+            live.remove(entry)
+            residual.append(entry[0])
+            moved = True
+    return moved
+
+
 def _statement(
     el: dict | None, gid: str, prop: str, value, patches, encoding: str, manifest: dict
 ) -> str:
     cls = _cls_of(gid, el)
     if cls is None or (cls, prop) not in WRITES:
         raise _Unsupported(prop)
+    if (cls, prop) == ("text", COPY_PROP):
+        return _copy_statement(gid, value, manifest, encoding)
     obj = _selector(gid, el)
     if prop == "hatch":  # 引擎：空串 / none 都是「不用花纹」
         value = None if value in (None, "", "none") else str(value)
@@ -880,14 +963,18 @@ def _rank(prop: str, kind: str | None) -> float:
     7. 示意线样式：写在「脚本原样 + 这几条」上；
     8. 改名（`label`）：最后落。
 
-    引擎在几何组（图幅 / 结构 / position / scale）与「其余」之间新开了 `_RANK_COPY` 一档给图内副本
-    （`copy_of`，ADR 0207）：它是创建型修改，本期在 `NOT_WRITABLE`（留作重放），所以这里没有对应的数字；
-    PR 2 接创建型语句时，它们排在**全部**属性语句之前（先建出对象，后面的修改才有地方落），再回来给这份表加一档。
+    图内副本（`copy_of`，ADR 0207）的创建语句排在**全部**属性语句之前（档位 -1，`kind == "copy"`）：先建出对象，
+    后面的修改才有地方落，副本也才拿得到脚本原样的源。引擎的 `_RANK_COPY` 在几何组之后、其余之前；脚本侧写得进的
+    几何组键只有 `xscale` / `yscale`，副本落在宿主的 transAxes / transFigure 上、与刻度类型无关，所以「副本先于
+    每一条写进脚本的属性语句」两边等价（`tests/test_script_adjust_copy.py::test_copy_rank_agrees_with_the_engine`）。
 
     箭头端点**不单列一档**：figure 分数换成数据坐标用的是落那一刻的坐标范围，引擎也是这样（端点排在 `ylim` 前，
     箭头钉在数据位置、随后范围一改就跟着数据走；排在后面才钉在屏幕上），同档按列表顺序，两边一致
     （`test_arrow_edits_combine_like_the_editor` 的两种顺序）。
     """
+    if kind == "copy":
+        # 图内副本的创建语句：先于一切属性语句（含它自己的源上的修改），副本才拿到脚本原样的样式
+        return -1
     if kind == "rename":
         return 8  # 曲线靠原 label 认（`_line`）、图例色块靠 label 对（`_with_legend`、重排）：改名要在所有别的语句之后
     if prop in ("xscale", "yscale"):
@@ -909,6 +996,8 @@ def _rank(prop: str, kind: str | None) -> float:
 
 def _kind(cls: str, prop: str) -> str | None:
     """这条 override 的语句属于哪一档（按 (cls, prop) 定，见 `_rank`）。"""
+    if cls == "text" and prop == COPY_PROP:
+        return "copy"
     if prop == "label" and cls in ("line", "collection", "bar_series", "stem_series"):
         return "rename"  # 色条的标签是 set_ylabel，不在此列
     if cls == "legend" and prop in _LEGEND_REBUILD:
@@ -1326,6 +1415,48 @@ def _title_to(ax, fig, fx, fy):
     )
     ax.set_title(t.get_text(), loc="center", y=t.get_position()[1], **look)
     t.set_position(tuple(t.get_transform().inverted().transform(_disp(fig, fx, fy))))
+
+
+def _copy_ref(fig, gid):
+    try:
+        return fig.__dict__["_tavotto_copies"][gid]
+    except KeyError:
+        raise _Skip("copy %s was not created" % gid)
+
+
+def _copy_of(fig, gid, host, src, at, text):
+    # An in-figure copy of a text: the look the script gave its source, placed in the host's axes
+    # (or figure) fractions and kept out of the layout, as in the editor. Later edits find it by gid.
+    from matplotlib.text import Text
+
+    if isinstance(src, _AxisLabel):
+        src = src.axis.label
+    t = Text(at[0], at[1], text)
+    t.update_from(src)
+    t.set_rotation_mode(src.get_rotation_mode())
+    t.set_zorder(src.get_zorder())
+    t.set_wrap(src.get_wrap())
+    t.set_parse_math(src.get_parse_math())
+    t.set_label("")
+    t.set_path_effects(list(src.get_path_effects()))
+    box = src.get_bbox_patch()
+    if box is not None:
+        t.set_bbox(
+            {
+                "boxstyle": box.get_boxstyle(),
+                "facecolor": box.get_facecolor(),
+                "edgecolor": box.get_edgecolor(),
+                "linewidth": box.get_linewidth(),
+                "linestyle": box.get_linestyle(),
+                "alpha": box.get_alpha(),
+                "visible": box.get_visible(),
+            }
+        )
+    t.set_transform(fig.transFigure if host is fig else host.transAxes)
+    host.add_artist(t)
+    t.set_clip_on(False)
+    t.set_in_layout(False)
+    fig.__dict__.setdefault("_tavotto_copies", {})[gid] = t
 
 
 def _legend_handle(ax, j):
@@ -1813,6 +1944,9 @@ class Adjusted:
     residual: list[dict] = field(default_factory=list)
     #: 给人看的清单：`{gid, prop, label}`
     skipped: list[dict] = field(default_factory=list)
+    #: 写进脚本的图内副本 gid（创建次序）：新脚本里它们是普通的 `ax.text`、没有副本 gid，
+    #: 验证要按这个次序把热态的副本 gid 对到新脚本里的序号名（`app._alias_baked_copies`）
+    copies: list[str] = field(default_factory=list)
 
 
 def _effective(patches: list[dict]) -> list[dict]:
@@ -1855,9 +1989,14 @@ def _translate(
     residual: list[dict] = []
     refresh: dict[int, str] = {}
     tags: dict[int, str | None] = {}
+    made = {str(p["gid"]) for p in patches if p["prop"] == COPY_PROP}
     for p in patches:
         try:
             el = els.get(p["gid"])
+            if _COPY_GID.match(str(p["gid"])) and p["gid"] not in made:
+                raise _Unsupported(
+                    p["gid"]
+                )  # 没有创建记录的副本修改：引擎里是「元素不存在」，留作重放照报
             stmt = _statement(el, p["gid"], p["prop"], p["value"], patches, encoding, manifest)
             cls = _cls_of(p["gid"], el) or ""
             tags[id(p)] = _kind(cls, p["prop"])
@@ -1950,6 +2089,7 @@ def _translate(
             ):
                 steps.remove((p, stmt))
                 residual.append(p)
+        _hold_copies(steps, residual, patches)
         changed = len(residual) != n
     # 留作 override 的「广播」条目在重放时排在窄条目之前、会盖掉写进脚本的窄条目：
     # 同一 prop、gid 是它子孙的，一起留下（ADR 0094 §五.3）
@@ -1967,6 +2107,9 @@ def _translate(
             residual.append(p)
         else:
             kept.append((p, stmt))
+    # 上面的广播规则可能又把某条副本上的修改留了下来：副本整件事一起留下
+    while _hold_copies(kept, residual, patches):
+        pass
     # 改名：对象按原 label 认，所以同一个对象上还有留作重放的修改（拖动带的 `identity` 是按**改名前**的 label 算的，
     # 改名写进脚本后重放里认不出它）时，改名也留作重放；子孙 gid 上的也算
     for p, stmt in list(kept):
@@ -2179,4 +2322,5 @@ def build(
     ordinal = src.decode(encoding).count(END)
     block = _block(stem, steps, ordinal, indent, version, _frame_inches(manifest), shown_index)
     written = len(patches) - len(residual)
-    return Adjusted(_insert(src, block, encoding, newline), written, residual, skipped)
+    copies = [w.removesuffix("." + COPY_PROP) for w, _s in steps if w.endswith("." + COPY_PROP)]
+    return Adjusted(_insert(src, block, encoding, newline), written, residual, skipped, copies)

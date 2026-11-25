@@ -100,7 +100,8 @@ order: 70
   宿主与源不在同一处、副本再抄副本 → 记「属性不支持」warning 并跳过（不抛、不留半个副本）；源不在 → 「元素不存在」。
   * **排序**：`_apply_rank` 新开一档 `_RANK_COPY`，在几何组（图幅 / 结构 / position / scale）**之后**、`_RANK_REST`
     **之前**；按 **prop 名**归档（副本的 gid 在创建前解不出对象）。对副本 gid 的其它修改都在「其余」档，创建总先于改样式。
-    脚本侧镜像（`scriptadjust._rank`，同源对）本期不用：`copy_of` 在 `NOT_WRITABLE`，PR 2 接创建型语句时排在全部属性语句之前。
+    脚本侧镜像（`scriptadjust._rank`，同源对）：`copy_of` 在 `WRITES`，创建语句（`kind == "copy"`，档位 -1）排在**全部**
+    属性语句之前——脚本写得进的几何组键只有 `xscale` / `yscale`，与落在 transAxes / transFigure 上的副本无关，两边等价。
   * **应用**：`_apply` 对 `copy_of` 在 resolve 之前单走 `overrides._ensure_copy`（创建 / 同值复用 / 值变了重建并清这个
     gid 上的旧账），随后与别的 prop 一样经 `HANDLERS[("text","copy_of")]` 记 applied / originals。副本 = `Text(*at, text)`
     + `update_from(源)`（再补 `update_from` 不管的 `rotation_mode` / `zorder` / `wrap` / `parse_math` / 底框）+ 宿主变换
@@ -118,7 +119,15 @@ order: 70
     副本 gid 上还留着的其它修改报「元素不存在」，其旧账（applied / originals）当场作废，副本回来时重新落。
   * **`value_original`**：新建的副本在创建那一刻读一次字段当它的「脚本原样」（记进 `pristine_fields` 与本轮快照），
     热态（副本早已存在）与冷重放（本轮新建）同一口径。
-  看护 `tests/test_figure_copy_override.py`（源 × 布局引擎热冷对拍、撤销、登记、不支持的源 / 宿主、数据指纹、写回验证门）。
+  * **导出修改后的 .py（ADR 0171 / 0207 PR 2）**：副本写成创建型语句 `_copy_of(fig, gid, 宿主, 源, [x, y], 文字)`
+    （`scriptadjust._copy_statement`；运行期函数与引擎 `_ensure_copy` 的静态部分同源，逐项对拍），副本 gid 上的后续修改
+    经 `_copy_ref(fig, gid)` 取回这只副本。源的选择器写不出 / 宿主是 3D 或色条轴 / 副本 gid 上有一条写不进去 →
+    **整条副本与它 gid 上全部修改一起留作重放**（`_hold_copies`；被留下的副本的源上的修改也留下，否则重放抄到改过的样式）。
+    写进新脚本的副本在新脚本里是普通 `ax.text`（序号名），验证用 `app._alias_baked_copies` 按宿主 + 创建次序把热态的
+    副本 gid 对到序号名，**几何与像素照比、不放松**。同步到同脚本的其他图：副本与它 gid 上的修改不跨图，进 `skipped`，
+    带 `skip_reason: "copy_not_synced"`。
+  看护 `tests/test_figure_copy_override.py`（源 × 布局引擎热冷对拍、撤销、登记、不支持的源 / 宿主、数据指纹、写回验证门）、
+  `tests/test_script_adjust_copy.py`（脚本侧生成、与引擎逐项对拍、端到端验证门、同步跳过）。
 - **应用顺序规范化 + figure 锚定 prop 的重放（2026-08-17，数据损坏级）**：
   `overrides.apply` 按**分档规范顺序**应用（`_apply_rank` 是唯一出处；ADR 0098 在最前面加了
   一档 `figure.frame`（`_RANK_FRAME = -1`：图幅按 figsize 还是按脚本存盘的裁切框——之后每一档
