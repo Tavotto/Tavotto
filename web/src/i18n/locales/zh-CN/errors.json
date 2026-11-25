@@ -117,7 +117,7 @@
     "oauth_unavailable": "这个服务暂不支持账号登录。",
     "oauth_start_failed": "无法连接登录服务，请检查网络后再试。",
     "oauth_flow_not_found": "这次登录已结束，请重新开始。",
-    "ai_siwc_plan_disabled": "这个 ChatGPT 账号没有授权 Tavotto 使用订阅额度。重新登录时允许即可，或改用 API Key。",
+    "ai_siwc_plan_disabled": "这个 ChatGPT 账号没有允许使用订阅额度。重新登录时允许即可，或改用 API Key。",
     "ai_siwc_token_unavailable": "暂时连不上 ChatGPT 登录服务，稍后再试。",
     "siwc_disabled": "ChatGPT 登录未开启。",
     "siwc_port_unavailable": "本机登录回调用不了（端口被占用）。关掉其他正在登录的程序后再试。",
