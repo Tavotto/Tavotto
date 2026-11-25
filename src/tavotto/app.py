@@ -138,6 +138,7 @@ from .engine import (
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
+    layoutannotate as engine_layoutannotate,
     layoutsession as engine_layoutsession,
     license as engine_license,
     locate as engine_locate,
@@ -19985,6 +19986,26 @@ def api_layout_get(name):
                 resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
             return resp
     abort(404)
+
+
+@app.get("/api/layouts/<name>/agent-additions")
+def api_layout_agent_additions(name):
+    """「把 Agent 加的并进来」（ADR 0208 §五）：桌面拿着基线 `base_revision`、磁盘上已是别的修订号时，
+    多出来的是不是**只有** Agent 追加的对象（判据在 `engine/layoutannotate.agent_additions`，全部来自撤销留存）。
+
+    只读、只认当前项目 `tavottofile/` 里的那份；不是就回 `{"available": false}`，桌面照旧走覆盖 / 另存。"""
+    ctx = _request_ctx()
+    base = request.args.get("base_revision") or ""
+    if ctx is None or not base:
+        return jsonify({"available": False})
+    stem = layout_path(name, project_layout_dir(ctx)).stem
+    try:
+        got = engine_layoutannotate.agent_additions(ctx.path, stem, base)
+    except engine_layoutannotate.LayoutError:
+        got = None
+    if got is None:
+        return jsonify({"available": False})
+    return jsonify({"available": True, **got})
 
 
 @app.post("/api/layouts/<name>")
