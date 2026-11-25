@@ -532,3 +532,9 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 **新增的闭集**：配方 `err` / `err_kind`（`ERR_KINDS`）；备选码 `line_err` / `points_err`；拒绝码 `summarised_not_raw` / `error_values_negative` / `error_cells_not_unique`（`REJECTIONS`，前端 `errors:backend.<码>` 文案由前端那一步补）；响应键 `error_source` / `error_column` / `error_stated` / `error_missing_for`。
 
 **没做**：已汇总的表上「柱 + 现成误差线」；多个 y 列、有个体编号、合画、大表的现成误差列；误差类型 `unknown` 时右栏「需要你确认」里加「不确定」之外的选项文案（前端）；图创建之后切换误差线类型；n 数写进图注（图里仍不写任何自动脚注）。
+
+**补充（2026-11-25，接手核对与界面）**
+
+- 类别轴那一列：没有分组列、没有有序横轴时取「每格都不同的那一个文字列」，**名字像编号的列（`sample` / `id`）也算**——已汇总的表里它就是每一行的名字；没有误差列的表不受影响（仍不把它当类别轴）。这一列在响应的列角色里如实报成 `group`（右栏「分组」一行显示它），误差列不再列为横轴的备选（右栏不出现「横轴 / 不要横轴」一行）。
+- 界面（`CandidateStage` / `DataPanel` / `lib/dataBasis.ts`）：两种画法的名字「点 + 误差线」「点 + 折线 + 误差线」；说明句不重复列名，列名只在依据句里（「依据：按表里的 N 行绘制，每行一个点；误差线取自「列」列」）；算出来的误差线缺位置时依据句末接「N 处只有 1 个数值，算不出误差线 / 误差带」，只有一处时直接点名，多处的位置在该行的 `title` 里；「误差线」一行——列名自己说明了种类的不进「需要你确认」，`unknown` 的进并显示「还不确定」。文案由用户 2026-11-25 过目同意（「这些文案都可以」）。
+- 推荐考卷（`tests/support/data_figure_recommend.py`、`recommend_cases.json`）：写考卷时这种画法还没实现，记作 `missing` 的占位码 `errorbar_from_columns`；实现后按族落成 `points_err`（比较）与 `line_err`（趋势）两个 `coded` 码，三条用例（RC-P06A / RC-P12A / RC-H05）的 `acceptable_top` 相应从占位码换成这两个码——标准答案的含义（用表里现成的误差列画误差线）没变。规则第一名落在标准答案里：25 / 41 → 28 / 41。
