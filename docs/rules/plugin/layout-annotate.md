@@ -1,14 +1,15 @@
 # 排版标注工具（ADR 0208 第 2 期）
 
+> 2026-11-25 新写（ADR 0208 第 2 期 ②），速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**。
 > 看护用例：`tests/test_mcp_layout_annotate.py`（真 stdio + 真 worker：读场景 → 方案 → 写入 → 撤销、快照子图不量、摘要不对拒写）、
 > `tests/test_layoutannotate.py`（引擎层）、`tests/test_mcp_server.py::test_tools_list_shape`。
 
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 135
-改到: `tavotto_layout_scene` / `tavotto_layout_annotate_plan` / `tavotto_layout_annotate_apply` / `tavotto_layout_annotate_undo`、`bridge.layout_*()`、`_layout_measure`
+改到: `tavotto_layout_*` 四个工具、`bridge.layout_*()`
 主题: 排版标注工具 → `layout-annotate.md`
-必守要点: 只翻译（求解 / 核对 / 复述 / 写入全在 `engine/layoutannotate.py`）；量子图与成品合成同一判定；写入必须带方案的 echo_digest；不进 `usage.TOOLS`
+必守要点: 只翻译；量子图与成品合成同一判定；写入带 echo_digest
 -->
 
 - **只翻译**：读排版、求解、核对、复述、写入、撤销全在 `engine/layoutannotate.py`。桥只做三件 MCP 才有的事：授权范围
