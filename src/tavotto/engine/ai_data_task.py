@@ -608,6 +608,7 @@ def prepare_v2(root: Path, sel: Selection) -> PreparedV2:
         data_rel=ai_data_propose.script_data_rel(sel.table),
         stem=pl.stem,
         style=sel.style,
+        fits=ai_data_template.fit_report(values, sel.recipe),
     )
     try:
         expected = ai_data_template.expected_fingerprints(values, sel.recipe)
@@ -680,6 +681,7 @@ def _prepare_merged(root: Path, sel: Selection) -> PreparedV2:
         data_rel=ai_data_propose.script_data_rel(first.rel),
         stem=pl.stem,
         style=sel.style,
+        fits=ai_data_template.fit_report(values, sel.recipe),
     )
     return PreparedV2(
         selection=sel,
@@ -850,14 +852,16 @@ class DataFigureV2Adapter:
             )
         )
         rows = prep.not_plotted
+        # 纵轴是空的行没有可画的点——那是缺失，不是「有数据没画上」，不让它把目标判成没达成（仍然如实列在 observed 里）
+        unmet_rows = ai_data_propose.unplotted_unmet(rows)
         out.append(
             CheckResult(
                 id="goal.rows_plotted",
                 layer="L2",
                 stage=st,
                 role="goal",
-                verdict=FAILED if rows else VERIFIED,
-                reason_code="rows_not_plotted" if rows else None,
+                verdict=FAILED if unmet_rows else VERIFIED,
+                reason_code="rows_not_plotted" if unmet_rows else None,
                 observed={"rows": rows[:50], "total": ai_data_propose.unplotted_total(rows)},
             )
         )

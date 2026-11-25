@@ -37,7 +37,7 @@ ADR，再动手。看护用例在细则头部。下表是生成的：改细则�
 | `tavotto_normalize_figure`、`bridge.normalize_figure()`、`engine/normalize.py` | 已有图的保留式规范化 → `normalize-figure.md` | 桥只翻译；任何异常都回退；提交之后会话挂合同；用户目标直接决定的规则不挡事务 |
 | `tavotto_fix_to_journal`、`tavotto_make_journal_ready`、`bridge.fix_to_journal()`、`bridge.issue_fix()` / `annotate_preflight_fix()`（preflight 结果的 `fix`） | Agent 一步改到期刊合规 → `fix-to-journal.md` | 只拼 normalize + `specfix.transaction`，不写第二份判据；整体提交或回 B0；`fix` 只在 MCP 整形层 |
 | 工具结果体积、`CANVAS_INLINE_BUDGET_BYTES`、`APPLY_SUMMARY_BUDGET_BYTES`、`tavotto_session_state`、`web/src/mcp/boot.ts` | 工具结果的体积预算与画布取件 → `result-budget-and-session-state.md` | 单图 open 与显式 apply 摘要量紧凑 UTF-8；旧 apply 默认完整；取件只读不重渲染；画布启动三路都不自己发起 open |
-| `tavotto_share_review`、`bridge.share_review()`、`reviewshare` 的 `renderer=` / `_Spec.renderer`、`reviewinbox.file_lock` | Agent 发外部审阅 → `review-share.md` | 不带确认零网络；出图回调随分享走、不改 `set_renderer`；收件箱写路径在 `shares.lock` 里重读再写；figure id = stem |
+| `tavotto_share_review` / `tavotto_review_feedback` / `tavotto_reply_review` / `tavotto_resolve_review`、`bridge.share_review()` / `review_feedback()` / `review_reply()` / `review_resolve()`、`reviewshare` 的 `renderer=` / `_Spec.renderer`、`reviewinbox.file_lock` | Agent 发外部审阅 → `review-share.md` | 未确认零网络；comment_id 只认本图链接；第三方文字标 source；出图回调随分享走；收件箱写在锁里；figure id = stem |
 | `tavotto_mcp/sessionjournal.py`、`_restore_session` | 会话跨进程恢复 → `session-journal.md` | 记录不能自证权限、越界拒在渲染之前；明确释放的不复活（草稿只经 open 带回）；落盘失败不让工具调用失败 |
 | `integrations/configure.py`、`HOSTS` 表、`RELOAD_HINT` / `RESTART_HOST`、`.claude-plugin/plugin.json` 与仓库根 `.claude-plugin/marketplace.json`、`package.json` 与 `dsh/`（DSH bundle） | 非 Codex 宿主 → `non-codex-hosts.md` | 同一份包 / 启动器 / Skill；不写任何文件；授权只来自 `--project-root`；不放别家自动读的 MCP 配置 |
 | `bridge.export`、`_inspection_summary`、导出前预检 | 导出：先预检与产物核验 → `export-preflight-and-inspection.md` | 有 error 或 `not_verifiable` 且没确认就一张不出；与 HTTP 导出同一份检查器接线；「未核验」永远不是「已核验」 |
@@ -45,6 +45,7 @@ ADR，再动手。看护用例在细则头部。下表是生成的：改细则�
 | `_bridge_error_from_worker`、`workdir=` / `prepare_dependencies=` / `argv=` / `adopt_environment=` 参数、`requirements` | 首开的「需要输入」与跑前依赖准备 → `first-open-questions.md` | 与桌面 / HTTP 是同一份决定；不替用户猜、不替用户授权；批量 open 不接受准备参数；新模块只经 `_optional_engine` |
 | `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()` | 批量打开与会话账本 → `sessions-and-batch-open.md` | 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；渲染成功后才登记 |
 | `web/src/lib/engineTransport.ts`、`mcp/widget/canvas.html`、`scripts/build_mcp_widget.py`、画布 CSP | 内嵌画布 → `embedded-canvas.md` | 画布 = Tavotto 前端同一份代码、唯一改动是 `engineTransport` 的可选覆盖；产物不进 git；不用「开浏览器」冒充 |
+| `tavotto_layout_*` 四个工具、`bridge.layout_*()` | 排版标注工具 → `layout-annotate.md` | 只翻译；量子图与成品合成同一判定；写入带 echo_digest |
 <!-- END GENERATED: agents-routes -->
 
 ## 验证

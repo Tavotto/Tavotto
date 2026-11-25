@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { formatDate } from '@/i18n/format'
+import { PRO_NAME } from '@/lib/brand'
 import type { LicenseFailureCode } from '@/lib/api'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
+import { FoundingPlate } from '../license/FoundingPlate'
 import { Button } from '../ui/Button'
 import { ICON_SIZE } from '../ui/Icon'
 import { ExternalLink } from '../ui/icons'
@@ -12,7 +14,7 @@ import { TextInput } from '../ui/Input'
 import { SettingRow } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
-  translate(`settings.license.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+  translate(`settings.license.${key}`, { ns: 'dialogs', pro: PRO_NAME, ...(values ?? {}) })
 
 /** 失败码 → 那一句话下面的唯一一颗按钮做什么：再提交一次 / 去付款页 / 去续费 */
 const FAILURE_ACTION: Record<LicenseFailureCode, 'retry' | 'buy' | 'renew'> = {
@@ -43,12 +45,18 @@ const dateOf = (expSeconds: number | null): string => (expSeconds ? formatDate(e
  *
  * 没有令牌时 `status` 是纯本机读取，不联网；联网只在用户点按钮时。
  */
-export function LicenseRow() {
+export function LicenseRow({
+  plate = true,
+  extra,
+  label,
+  title,
+  renewable = false,
+}: { plate?: boolean; extra?: ReactNode; label?: string; title?: string; renewable?: boolean } = {}) {
   useTranslation('dialogs')
   const status = useLicenseStore((s) => s.status)
   const failure = useLicenseStore((s) => s.failure)
   const busy = useLicenseStore((s) => s.busy)
-  const { load, activate, refresh, release, buy, clearFailure } = useLicenseStore.getState()
+  const { load, activate, refresh, release, buy, setPlateName, clearFailure } = useLicenseStore.getState()
   const [entering, setEntering] = useState(false)
   const [code, setCode] = useState('')
   /** 上一次联网做的是哪一件：失败后的「重试」重做那一件，不拿刷新顶替解绑（Codex #2071 P2） */
@@ -105,7 +113,13 @@ export function LicenseRow() {
         {hint && <span className="font-mono text-ink-3"> · {hint}</span>}
       </>
     )
-  else if (state === 'expired') line = st('state.expired', { date })
+  else if (state === 'expired')
+    line = (
+      <>
+        {st('state.expired', { date })}
+        {hint && <span className="font-mono text-ink-3"> · {hint}</span>}
+      </>
+    )
   else if (state === 'revoked') line = st('state.revoked')
   else if (state === 'lapsed') line = st('state.lapsed')
   else line = st('none')
@@ -137,15 +151,23 @@ export function LicenseRow() {
     )
   } else if (active) {
     control = (
-      <Button
-        variant="ghost"
-        loading={busy}
-        title={st('releaseTitle')}
-        onClick={() => void doRelease()}
-        data-license-action="release"
-      >
-        {st('action.release')}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          className="text-ink-2 hover:text-ink"
+          loading={busy}
+          title={st('releaseTitle')}
+          onClick={() => void doRelease()}
+          data-license-action="release"
+        >
+          {st('action.release')}
+        </Button>
+        {renewable && (
+          <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="renew">
+            {st('action.renew')}
+          </Button>
+        )}
+      </div>
     )
   } else if (state === 'lapsed') {
     control = (
@@ -158,9 +180,9 @@ export function LicenseRow() {
     control = (
       <div className="flex items-center gap-2">
         <Button variant="ghost" loading={busy} onClick={() => void doRefresh()} data-license-action="refresh">
-          {st('action.refresh')}
+          {st('action.renewed')}
         </Button>
-        <Button variant="secondary" loading={busy} onClick={() => void buy()} data-license-action="renew">
+        <Button variant="primary" loading={busy} onClick={() => void buy()} data-license-action="renew">
           {st('action.renew')}
         </Button>
       </div>
@@ -197,10 +219,10 @@ export function LicenseRow() {
   }
 
   return (
-    <FormSection data-settings-anchor="about.license" data-license-state={failure ? `failed:${failure}` : state}>
+    <FormSection title={title} data-settings-anchor="about.license" data-license-state={failure ? `failed:${failure}` : state}>
       <FieldGroup>
         <SettingRow
-          label={st('label')}
+          label={label ?? st('label', { pro: PRO_NAME })}
           description={<span data-license-line>{line}</span>}
           below={
             entering && !active ? (
@@ -225,12 +247,20 @@ export function LicenseRow() {
                 autoComplete="off"
                 className="max-w-xs font-mono text-xs tracking-wider"
               />
+            ) : plate && status.founding ? (
+              <FoundingPlate
+                no={status.founding.no}
+                since={status.founding.since}
+                name={status.founding.name}
+                onName={(n) => void setPlateName(n)}
+              />
             ) : undefined
           }
           control="auto"
         >
           {control}
         </SettingRow>
+        {extra}
       </FieldGroup>
     </FormSection>
   )

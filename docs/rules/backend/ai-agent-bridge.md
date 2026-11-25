@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_structured_cli.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_data_recipe.py`、`tests/test_ai_data_template.py`、`tests/test_ai_data_propose.py`、`tests/test_ai_data_merge.py`、`tests/test_ai_structured.py`、`tests/test_ai_structured_cli.py`、`tests/test_ai_data_model.py`、`tests/test_data_figure_bench.py`、`tests/test_ai_data_roles.py`、`tests/test_ai_data_text_tables.py`、`tests/test_changeplan.py`、`tests/test_changeplan_endpoints.py`、`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`tests/test_ai_probe.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`ai_structured.py`、`ai_data_*.py`、`changeplan.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`、`/api/change-plans*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -606,7 +606,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **SSE**：`Request.reader = compact_sse` → `wires.post_json(reader=…)` 对 2xx 边读边丢 `*.delta` 帧、终态后停读（总读入 64 MiB、留下 8 MiB 上限）；`HttpModel` 对带 `decode` 的协议用它折叠成最终响应再交 `OpenAIResponsesWire.parse`。只有 `response.completed` 是成功；无终态 = 可重试 `network/stream_incomplete`。三条原协议的 `post` 调用形状逐字不变（不传 `reader`）。
 - **错误码闭集**（`failure_for_code`，预流与流中 `response.failed` / `error` 同一张表）：用量超限 → `quota/plan_usage_limit` 不重试；`…usage_unavailable` / `…user_unavailable` → 可重试 `network`；`…user_not_eligible` → `refused/plan_not_eligible`（**不是 auth**）；403 无码 → `refused/plan_forbidden`；
   `…unsupported_capability` / `…route_not_supported` / `chatpass_v2_*` → `internal`；`…invalid_user` → `auth`。带 `classify` 的协议**不走换协议与字段降级**（官方：不得静默切换计费方式）。
-- 看护 `tests/test_agent_runner_siwc.py`（全 Mock）。真服务未验证项见模块说明，不得写成已验证。
+- 看护 `tests/test_agent_runner_siwc.py`（全 Mock）。2026-11-24 真服务核对过单轮 / 工具调用 / 多轮与 completed 带 output；仍未验证的项见模块说明，不得写成已验证。
 
 ### 连接（`engine/ai_connections.py`，ADR 0147 第二阶段）
 
@@ -614,7 +614,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 （`ai.active_provider` 只作旧字段兼容，连接的解析不看它）。依赖方向 `ai_agents ← ai_providers ← ai_connections ← ai_bridge`。
 
 - **`capabilities` 新字段**（旧字段一个不动，`agents[]` 仍只有 codex / claude）：`vendors[]`（厂商目录）、`connections[]`（已连接 / 需重新登录）、`locale_region`。
-  - `vendors` **按厂商合并接入方式**，每家一条，怎么接入放进 `methods[]`（订阅 / 账号登录在前，API Key 在后）：`{id, kind: key|login|oauth, label_key, catalog_id?, agent?, connection_id?, key_url?, key_hint_key?, needs_base_url?, available}`。
+  - `vendors` **按厂商合并接入方式**，每家一条，怎么接入放进 `methods[]`（订阅 / 账号登录在前，API Key 在后）：`{id, kind: key|login|oauth|siwc, label_key, catalog_id?, agent?, connection_id?, key_url?, key_hint_key?, needs_base_url?, available}`（`siwc` 只在 SIWC 开关开时出现，见下文「SIWC 登录、凭据与连接」）。
     login 方式 id `<厂商>:login`（`agent` = 对应 CLI，`connection_id` = `sub:codex` / `sub:claude`，`available` = CLI 已装）；oauth 方式 `<provider>:oauth`（`ai_oauth` 的 client_id 配了才出现，`connection_id` = `minimax-oauth`）；
     key 方式 `<catalog_id>:key`（`catalog_id` 就是 `POST /connections` 的 `vendor`）。旧字段保留：`connect` = `methods[0].kind`，`key_url` / `key_hint_key` / `needs_base_url` 取自第一个 Key 方式，`available` = 任一方式可用。
     合并来自目录：同 `brand` 的 Claude 行与 Codex 行成一个 Key 方式；行上的 `vendor` 把几个方式并进一家（OpenAI = `openai:login` + `openai-api:key`（`https://api.openai.com/v1`，Responses）；
@@ -673,6 +673,19 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **刷新状态机** `RefreshingProvider`：`MIN_VALID_S` = 最长任务 900 s + 300 s（**不复用** `ai_oauth` 的 10 分钟）；进程内串行刷新；`TokenSet` 四样整体替换、刷新没回 scope = 授权不变；
   终态刷新错误（`TERMINAL_REFRESH_ERRORS`）才清凭据，`invalid_client` 不清，暂时失败保留凭据（`TokenUnavailable`）；缺 `chatgpt.tokens.use.direct` → `PlanUsageDisabled`（已登录、不许用订阅额度、不换计费方式）；`earliest_refresh_at` 之前不刷新（含义官方未定义，未经真服务确认）。
 - **不碰 Codex CLI 的令牌**、不 import 网络模块 / `ai_agents` / `ai_oauth` / `ai_providers`（看护 `tests/test_siwc_auth.py` 按 AST 钉）。
+
+### SIWC 登录、凭据与连接（`engine/siwc_login.py` / `siwc_store.py`，ADR 0209，开关 `TAVOTTO_EXPERIMENTAL_SIWC=1`）
+
+- **登录**：授权码 + PKCE，前端用系统浏览器开 `authorize_url`；回调由**一次性**本机 `http.server`（只绑 127.0.0.1、只认 `GET /auth/callback` + 本次 `state`、收到一次 / 10 分钟 / 取消即关）接收——**不是 Flask 路由**，不提供任何 Tavotto 能力；
+  端口先 1455、被占用换系统分配的。首次注册 `dynamic_agent_client` → 回调须带回 `oaiapp_…`（`dynamic_agent_client` 永不落盘为已签发 id）；再次登录用存下的 client_id + `id_token_hint`，回调 client_id / `sub` 对不上 → 拒绝、不替换。
+  ID 令牌 RS256 验签（pycryptodomex，延后 import；import 不了 = 登录失败，不降级成不验）+ `iss` / `aud` / `exp`（5 分钟偏差）/ `nonce`。端点：`POST /api/ai/siwc/login`、`GET /api/ai/siwc/flows/<id>`、`POST /api/ai/siwc/flows/<id>/cancel`、`POST /api/ai/siwc/models/refresh`；
+  `POST /api/ai/connections/siwc:chatgpt/login` 同 `/api/ai/siwc/login`，`DELETE /api/ai/connections/siwc:chatgpt` = 退出（撤销刷新令牌，回 `revoked`）。出站 HTTPS 只经 `siwc_login._opener`。
+- **凭据**：`data_dir()/siwc/`（0700）：`host.json`（`ext_agent_host_id`，永不变）、`state.json`（当前账号）、`accounts/<client_id>.json`（0600 原子写；同一 client_id 换 `sub` 拒绝）。**不进 `ai.providers[]`**。
+  刷新整段在 `refresh.lock` 跨进程锁里（`fcntl` / `msvcrt`；等不到 = `TokenUnavailable`，凭据不动）。退出 / 终态失效只清令牌，保留 client_id、身份、`id_token`（下次 `id_token_hint`）。
+- **连接**：`siwc:chatgpt`（`ai_providers.SIWC_CONNECTION_ID`）只在开关开且有当前账号时出现；只走 `builtin`，`TAVOTTO_AI_BUILTIN=0` → `ai_agent_not_usable`；`efforts` 恒空；型号读登录时缓存的 `/v1/models`（连接视图不联网）。
+  `ai_providers.resolve(builtin, "siwc:chatgpt")` 给**虚拟记录**（无令牌字段）；`builtin_conn` / `spawn_overrides` 对它走专用分支 `siwc_overrides`（`--wire siwc-responses --base-url https://api.openai.com/v1 --auth bearer --model …`，无 effort / fallback；令牌与开关只进环境变量），
+  看护用例把父进程 argv 喂给 `siwc_wire.runner_args_ok`。`ai_bridge.run` 在锁外 `_siwc_preflight`（`ai_endpoint_needs_login` / `ai_siwc_plan_disabled` / `ai_siwc_token_unavailable`，去重之后才抛）；runner 报 `auth` → `mark_rejected("http_401")`（不清凭据）。
+  开关开时 OpenAI 一家只有 `openai:siwc`（kind `siwc`）+ API Key，`openai:login`（Codex）与 `sub:codex` 连接行一律不列（老用户也直接切换，用户 2026-11-25；`resolve_connection("sub:codex")` 仍认）。`first_key_connection` / 探测 / `add_connection` / `check_connection` 都碰不到它。看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`（本机假服务器，绝不连真实服务器）。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 
@@ -1023,8 +1036,9 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 
 - **逐字段降级**：形状层严格（未知键整份拒收），取值层一个字段一个字段判（列不存在 / 角色不在枚举 / 与列类型对不上 / 选择与自己给的角色矛盾 / 规则键对不上），丢了只记个数、回规则默认。**`replicate_unit` 永不变成用户事实**（建议里没有 `design` / `unit`）。采纳策略在 `suggest`：规则会问的地方用模型的选择；规则唯一确定的角色只在模型明确否决那一列时才换。
 - **四处「够得到」的采纳（2026-11-21）**：没有 `picks` 时规则逐字不变；每条都是「模型明确判断 + 列客观满足」，谓词只在 `ai_data_recipe`（`suggest` 采纳、`_resolve_roles` 落地共用），不满足 = 丢该项回规则结果、不报错。① 多列纵轴：`picks.y` 数组 2–3 列（`MULTI_Y_MAX`），`multi_y_ok`＝互不相同 / 数值列 / 非编号列 / 单位至多一种，且模型对每列的角色只能是 `measure`，**有有序横轴时**每列一条线（趋势类，至多 3 列）；**没有横轴时**改为「把列当分组」（宽表转长表：`FigureRecipe.stack`，客观条件 `stack_ok`＝2–`STACK_MAX_COLUMNS`(8) 个纯数值列 / 同单位 / 非编号 / 每列 ≥ 2 个数值格；转换只有运行时函数 `adf.apply_stack` 一份，脚本与 `with_cells_applied` 同源，类别顺序 = 列顺序、标签 = 列名；`roles.y` = 这几列、只在这时多 `roles.stack: true`，前端发 `answers = {y: [列…], x: "none"}`；有文字分组列 / 点名分组 / 合画 / 大表回规则结果；HO-17 / HO-25..30，ADR 0178）；`answers.y` 因此可以是 1–8 个列名的数组（`parse_answers` 只对 `y` 接受数组，规则不认的数组当没给），只在规则要问「选哪个值」、选中的列被否决、或模型明确要把几列当分组时采纳。② 有分组时的横轴：模型判 `time` / `ordered_x`、该列是规则此刻的横轴候选（日期 / 数值、不是 y / 编号列）。③ 编号样文字列当分组：模型判 `group` 且 `id_group_ok`（在 `s.groups` 里，即文字、2–12 个取值、有重复）；`answers.group` 点名才进 `cats`，`roles.options.group` 带上它，且它不再兼作重复测量的个体编号（全部编号列都被当分组时不再问 `pick_design`）。④ 整数编码的数值列当分组（HO-20，`knockout` 0 / 1）：`FigureRecipe.numcat` 这条事实贯穿配方→`validate_recipe`（`numcat_view`）→脚本（`apply_numcat`、类别按数值升序）→落盘再校验→指纹核对；客观条件 `DataSummary.numcat`（`adf.numcat_levels`，≤ `NUMCAT_MAX_LEVELS`=6），用户选或模型判 `group`（`numcat_pick_ok`）才进，规则从不自己用；`roles.options.group` 会列出它；大表 / 合画暂不支持、回规则结果（ADR 0178）。
+- **横轴是测量值就不连线（2026-11-22，准则 G-018 / G-052，ADR 0178 修订 2026-11-22）**：模型把规则（含它自己的选择）此刻选作有序横轴的那一列判成 `measure` → `Understanding.x_measure`（`ai_data_roles._x_measure`，只由已校验的列角色派生；`fixed.x` 用户已定则不派生）→ `answers.x_measure = 列名`（**不是** x / y / group 下拉的改动，不计「用户动过下拉」；`ai_data_propose._ANSWER_KEYS` / `confirmed_from` / `_user_took_over` 都认它）→ `default_candidates` 在 `roles.x_ord` 恰是该列（且是数值、关系图资格过）时不出趋势类、`scatter_fit` 与 `scatter` 排前，去掉的记 `dropped`（`roles_invalid`，`detail=x_is_measure`，不加新码）。**规则臂没有这条**：单凭数据事实分不出有序横轴与独立测量值（ADR 有逐条反例），没有模型时响应逐字不变；不要给规则加「不单调就当测量值」之类的启发式。绑列名是为了用户换横轴时自动失效。前端要把 `answers.x_measure` 并回 `propose` 才生效（现有 `suggestionFrom` 只认 x / y / group）。同一 x 有重复观测不逐点连线（G-052）一直由 `line_duplicate_x_unconfirmed` 管。看护 `tests/test_ai_data_x_measure.py`、`tests/test_data_figure_recommend_cases.py`（理想列角色回放）。
 - **`roles.y` = 每个备选实际画的列（2026-11-21）**：`default_candidates` 里最终 `ys` 多于一列时（规则宽表 / 模型点名 / 用户点名一视同仁）只留画全这些列的备选（现在只有趋势类），其余记进 `dropped`（`roles_invalid`，`detail=multi_y_not_drawn`，不加新码）；全被去掉（如量纲不同退到第一列）就用 `picks.y = ys[0]` 重算，不出零备选。看护 `tests/test_ai_data_roles.py` 的 `*_draws_*` 两条。「把列当分组」（`stack`）不在此列：它的备选画的是转换后的值列，`roles.y` 报的是被当分组的那几列，由 `roles.stack` 标明。
-- **用户永远优先**：请求带 `answers.y / x / group / cells` 或 `header_rows` 就不起任务（`ai_data_propose._user_took_over`，必须在懒模式循环往 `ans` 补默认答案**之前**记下）。
+- **用户永远优先**：请求带 `answers.y / x / group / cells / x_measure` 或 `header_rows` 就不起任务（`ai_data_propose._user_took_over`，必须在懒模式循环往 `ans` 补默认答案**之前**记下）。
 - **响应不变量**：没有可用连接（没连、订阅登录里适配器不支持 / 缓存里还没有、运维关内置）或非 lazy 时，响应里**没有** `understanding` 键；有连接时只多这一个键。后台线程不碰按项目绑定的状态（只读数据文件、联网、写缓存目录），所以没用 `bound_project`——将来加了任何按项目绑定的状态要补。
 - **缓存 / 单飞 / 负缓存**：缓存只存模型的**原始判断**（`Judgement`），建议每次按当前完整提示 + 规则现算（`derive`）——别把派生结果缓存起来；`data_dir()/cache/ai_data_roles/`（原子写、TTL 30 天、≤ 200 条）；key 含协议版本 + 系统提示哈希 + 数据字节哈希 + 表头行 + 模型看到的提示 + 连接身份（不含密钥 / 地址）；单飞只在 pending 期间、键含完整提示摘要；失败只做 60 s 内存负缓存；同 `(项目, key)` 在途单飞。缓存里有列名：**不进诊断包、不进遥测**（测试钉住）。
 - **外发清单**见 ADR 0178 本节：只发受控摘要 + 本地聚合（不同值个数 / 单调 / 全整数 / min / max）+ 仅 `unsure` 表的 ≤ 8 行 × 120 字预览；不发行数据、哈希、绝对路径。隐私说明文档开关打开前要补。
@@ -1032,3 +1046,13 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **手动基准**：`scripts/dev/data_figure_bench.py --suite roles`（默认假回答；`--arm rules` 只跑规则（与 `--real` / `--key-file` 同用直接 exit 2，在解析任何凭据之前）；`--real` 要 `--max-calls` ≥ 用例数 × 2 且硬拦实际请求数）。**真实跑分花额度，开跑前先报预算。** `--real --key-file PATH --model NAME [--base-url] [--effort low|medium|high]` 用一把单独存的 key 组**临时**连接（不读不写应用配置与 provider 存储，数据 / 配置目录指到临时目录；key 文件必须仅本人可读写，比 600 宽就拒绝；只能和 `--real` 同用、仍强制 `--max-calls`）；key 不出现在 stdout / stderr / 报告里（输出流与报告统一替换，`tests/test_data_figure_bench.py` 钉住），报告写型号 / 强度 / 实际请求数 / 输入输出（含推理）token / 按定价表的估算花费。
 
 - **小型号 + 最低档（2026-11-21）**：`ai_catalog.json` 顶层 `structured_small` 按「官方端点 + 协议」登记结构化调用用的 `(型号, effort)`（现只有 OpenAI 官方 + Responses → `gpt-6-luna` + `none`，出处是 2026-11-21 实测 + API 回的档位）；`call_structured(auto_small=True)` 才生效（默认关，只有 `ai_data_roles` 开，`ai_data_model` 不开），不登记的连接请求逐字不变，改图 / 修复路径不受影响。小型号失败为 `http_400/404/422`（transport）或 `http_403`（auth）→ 同一总时限 / `max_requests` 内改用用户原型号与原强度再试一次并记 10 分钟；其余失败码不换。`wires.RESPONSES_WIRE_EFFORTS` 比用户可选的 `RESPONSES_EFFORTS` 多 `none`；目录 `hidden_efforts` 放界面不露出的 none（`ai_catalog.verified_efforts`）。缓存键带实际型号与强度。看护 `tests/test_ai_structured_small.py`、`tests/test_ai_data_roles.py`（小型号三条）、`tests/test_data_figure_bench.py`（`--auto-small` / `--effort none`）。**只作用于 Key 连接：订阅登录（CLI）连接走 `_call_cli`，不受影响**（`small_plan` 对 CLI 连接返回 None）。全文见 ADR 0178 修订 2026-11-21。
+
+## 修改方案（`engine/changeplan.py` + `/api/change-plans*`，ADR 0206 §一，只算不写）
+
+- 模型通道就是上面的 `call_structured`（不新增执行器工具）；`changeplan.py` 是它第二个调用方（`tests/test_ai_data_roles.py::test_only_propose_and_the_model_pair_reach_the_model_modules` 列着调用方名单）。纯标准库，Flask 父进程 import。
+- **谁的话算数**：审阅意见是外来文本，只进用户内容的 `<comments>` 数据块（`<` 转义），称呼不发；模型的 `gid / prop / value` 只是提议，`validate_proposal` 逐条对 manifest 的 `editable` 核；卡上的改前 / 改后 / 框一律从 B0 与候选两份**真实渲染的 manifest** 现算（`effective_changes`），值没变的进 `unhandled(no_effect)`。每条输入意见必须落在某个组或 `unhandled`。
+- **渲染**：B0 / 候选的图与 manifest 走状态中立的 `preview_png_snapshot`；它不回 warnings，所以另走 `override(B0)`（基线 warning）与 `override(候选)`：候选比基线多出来的 warning = 不出方案。**只要对热 worker 做过 `override`，任务结束（成败都是）就 `_retire_hot_worker`、不还原 B0**（B0 是请求时的列表，期间用户可能已改过图），回包与 plan 带 `replay_required: true`，前端按自己的全量列表重放。全程 `bound_project(ctx)`、`safe_only=True`、每次渲染前 `_require_route_unchanged`，模型调用前后各算一次脚本修订（变了 = `change_plan_figure_changed`）。native 图 409 `change_plan_native_unsupported`，不渲染。
+- **落盘**：只写 `data_dir()/cache/change_plans/<项目id>/<方案id>/`，按项目隔离、TTL + 条数上限、`sweep()`；删除不用 `ignore_errors`；方案 id 过 `^[0-9a-f]{24}$` 才拼路径，图名只收 `before | after`。
+- **长任务**：POST 回 202 + 方案 id、后台线程、GET 轮询；同一张图同一时刻一个任务（进程内表，**不持 `script_guard`**——方案任务不写脚本；该脚本有改图助手会话在跑 = `ai_bridge.script_busy` → `change_plan_busy`），同一 `client_request_id` 回同一任务。稳定码闭集在 `changeplan.ERROR_CODES`（登记 `tests/test_error_codes.py` 与两份 `errors.json`）。
+- **助手来源（ADR 0206 PR 4）**：`source: "assistant"` + `instruction` / `target`，`changeplan.assistant_comments` 把指令包成唯一一条意见（id `a1`）；系统提示 `system_prompt("assistant")` 与审阅那份分开（指令是用户意图，元素表文字是内容）；单组改动上限 60、超出记 `over_limit`；同一条指令可同时在 `groups` 与 `unhandled(needs_script)`。开关 `changeplan.enabled()`（`ai.change_plan.enabled`，**默认开**，只认显式 `False` 才关）并入 `/api/ai/capabilities` 的 `change_plan_enabled`；设置页的一行开关走 `PUT /api/ai/change-plan`。
+- **整版预览**：`POST /api/change-plans/layout-preview`（`{canvas: {page_w_mm, page_h_mm, objects}}` → PNG）只给一键排版卡出图，经 `_export_png_bytes`（与外部审阅出排版图共用）；不写导出目录、不登记、不提交。

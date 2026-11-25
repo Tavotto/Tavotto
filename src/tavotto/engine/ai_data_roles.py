@@ -1,4 +1,4 @@
-"""「从数据到图」第 1 步：模型读懂每一列是什么（ADR 0178 修订 2026-11-19「读懂数据」，`ai.taf.enabled` 后面，无单独开关）。
+"""「从数据到图」第 1 步：模型读懂每一列是什么（ADR 0178 修订 2026-11-19「读懂数据」，`ai.taf.enabled` 后面；用户可在界面选用哪个 AI、或关掉——ADR 0178 修订 2026-11-25，选择与判据在 `ai_data_aichoice`）。
 
 **模型只给「列判断」，不出配方。** 判断被翻译成 `propose` 本来就接受的三种输入——`answers` 里的 `y` / `x` / `group`（`picks`）、`header_rows`、
 `answers.cells`——再由规则 `default_candidates` 生成配方、过 `validate_recipe` / `enforce_order`。闭集配方校验一步没绕过：模型改变的只是「规则在有歧义处
@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import (
+    ai_data_aichoice as choice_mod,
     ai_data_figure as adf,
     ai_data_model as model_mod,
     ai_data_recipe as recipe_mod,
@@ -348,10 +349,15 @@ class Understanding:
     header_row: int | None = None
     #: 因不合格被丢掉的字段个数（角色 / 选择 / 规则 / 表头）
     dropped: int = 0
+    #: G-018：规则（含模型的选择）此刻选作横轴的那一列，模型判它是 `measure`（与纵轴是两个独立测量，不是有序自变量）→ 列名；否则 None。
+    #: 不是对下拉的改动（`picks` 不含它），`to_payload` 里是 `answers.x_measure`，`propose` 据此不出趋势类
+    x_measure: str | None = None
 
     def to_payload(self, table: str) -> dict:
         """给前端的「建议」：`answers`（可原样并进下一次 propose 的 `answers`）、`header_rows`、列角色标注、丢弃数。"""
         answers: dict = dict(self.picks)
+        if self.x_measure is not None:
+            answers["x_measure"] = self.x_measure
         if self.cells:
             answers["cells"] = {
                 c: {k: v for k, v in r.to_dict().items() if k != "column"}
@@ -366,7 +372,9 @@ class Understanding:
 
     @property
     def empty(self) -> bool:
-        return not (self.picks or self.cells or self.header_row is not None)
+        return not (
+            self.picks or self.cells or self.header_row is not None or self.x_measure is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -411,6 +419,7 @@ def derive(
         out.cells,
         judgement.header_row,
         out.dropped + judgement.header_dropped,
+        out.x_measure,
     )
 
 
@@ -670,6 +679,29 @@ def suggest(
     return emit, dropped
 
 
+def _x_measure(
+    entry: adf.TableEntry, hint: str | None, roles: dict[str, str], picks: dict, fixed: dict | None
+) -> str | None:
+    """G-018：按规则此刻的结果（采纳 `picks` 之后；还要问的问题答「不确定」，与 lazy 的 `propose` 同一口径）选作有序横轴的那一列，模型判它是 `measure` → 列名。
+    **事实只来自模型已校验的列角色**（`valid_roles` 已保证 `measure` 只给得到数值列）。用户已定了横轴（`fixed.x`）= 用户的选择优先，不给；
+    没有横轴（规则落成没有 / 把列当分组）= None。模型判 `time` / `ordered_x` 或没给角色 = None（现状）。"""
+    if "x" in (fixed or {}):
+        return None
+    trial = {**(fixed or {}), **picks}
+    for _ in range(len(_QUESTION_KEY) + 1):
+        res = recipe_mod.resolve_roles(entry, hint, trial)
+        if isinstance(res, recipe_mod.NeedsChoice):
+            key = _QUESTION_KEY.get(res.question_code)
+            if key is None or key in trial:
+                return None
+            trial[key] = "unsure"
+            continue
+        if not isinstance(res, recipe_mod.Roles) or res.stack or res.x_ord is None:
+            return None
+        return res.x_ord if roles.get(res.x_ord) == "measure" else None
+    return None
+
+
 def interpret(
     entry: adf.TableEntry,
     values: adf.DataSummary,
@@ -702,7 +734,9 @@ def interpret(
             continue
         cells[rule.column] = rule
     ordered = tuple((c, roles[c]) for c in s.columns if c in roles)
-    return Understanding(ordered, picks, cells, None, dropped)
+    return Understanding(
+        ordered, picks, cells, None, dropped, _x_measure(entry, hint, roles, picks, fixed)
+    )
 
 
 # --------------------------------------------------------------------------- 缓存
@@ -797,6 +831,8 @@ class Job:
     usage: dict = field(default_factory=dict)
     #: 单飞登记键（项目、缓存键、**完整提示**的摘要）。只在 pending 期间登记：完成后复用靠磁盘缓存 + 按当前提示重新派生
     flight: tuple = ()
+    #: 这个任务用的连接身份（`_identity`）：用户换了连接 / 关了之后，身份对不上的任务登记被清掉（`apply_choice`）
+    identity: str = ""
 
 
 _LOCK = threading.RLock()
@@ -857,11 +893,9 @@ def _identity(conn: dict) -> str:
     return f"{conn.get('provider_id', '')}|{model}|{effort}"
 
 
-def _available_connection() -> dict | None:
-    """propose 时就要知道的：有没有能用的连接（不联网、不探测）——内置执行器能直接用的 Key 连接，其次是订阅登录里适配器支持无工具单轮的 CLI 连接
-    （只看已有的能力缓存，缓存还没有 = 没有）；都没有 = None → 响应里没有 `understanding` 键。"""
-    if "conn" in _OVERRIDES:
-        return _OVERRIDES["conn"]
+def _auto_connection() -> dict | None:
+    """`auto` 模式的挑法（逐字沿用）：内置执行器能直接用的 Key 连接，其次是订阅登录里适配器支持无工具单轮的 CLI 连接
+    （只看已有的能力缓存，缓存还没有 = 没有）；都没有 = None。"""
     try:
         from . import ai_connections
 
@@ -873,6 +907,57 @@ def _available_connection() -> dict | None:
         return ai_structured.find_cli_connection(cached_only=True)[0]
     except Exception:  # noqa: BLE001 - 探测失败 = 没有
         return None
+
+
+def _available_connection() -> dict | None:
+    """propose 时就要知道的：有没有能用的连接（不联网、不探测）。**用户的选择在这里生效**（`ai_data_aichoice.resolve`）：关了 = None；指定了某个连接 = 只用
+    那一个、此刻用不了就是 None（绝不换别家）；`auto` = `_auto_connection`。没有 = None → 响应里没有 `understanding` 键。"""
+    if "conn" in _OVERRIDES:
+        return _OVERRIDES["conn"]
+    try:
+        return choice_mod.resolve(_auto_connection)
+    except Exception:  # noqa: BLE001 - 探测失败 = 没有
+        return None
+
+
+def understanding_state() -> dict:
+    """界面要的那一个对象（`/api/ai/data-files` 与 `/api/ai/data-understanding` 共用）：
+    `{state: "on" | "off" | "none" | "unavailable", mode: "auto" | "off" | "connection", connection: 此刻实际会用的连接 id | null, chosen?: 用户指定的连接 id, options: [...]}`。
+    `off` = 用户关了；`unavailable` = 用户指定的那个此刻用不了；`none` = auto 且没有任何可用连接；`on` = 会用。只读配置与能力缓存：不联网、不刷新令牌。"""
+    mode, _cid = choice_mod.read_choice()
+    conn = _available_connection()
+    if mode == "off":
+        state = "off"
+    elif conn is not None:
+        state = "on"
+    else:
+        state = "unavailable" if mode == "connection" else "none"
+    return {
+        "state": state,
+        "mode": mode,
+        "connection": choice_mod.conn_id(conn),
+        # 用户指定的那个连接 id（只在 mode=connection 时有）：`unavailable` 时它不在 `connection`（没在用）、也可能不在 `options` 里，界面要靠它指认「你选的是哪一个」
+        **({"chosen": _cid} if mode == "connection" else {}),
+        "options": choice_mod.options(),
+    }
+
+
+def apply_choice(mode: str, connection: str | None = None) -> dict | None:
+    """写入用户的选择 → 新的 `understanding_state()`；`mode=connection` 的 id 不在**此刻**的可选清单里 = None（调用方回 400，什么都不写）。
+    写完后清掉「身份与新选择对不上」的任务登记（`_JOBS` / `_BY_KEY`，不分项目——选择是应用级的）：用旧连接判断出的建议 / 在途任务不再被轮询到
+    （轮询回 `off`），用同一个连接的任务不受影响。**已经发出去的那一次请求收不回**（后台线程在途，它的结果只会落进缓存，不会再被用）。"""
+    if mode not in choice_mod.MODES:
+        return None
+    if mode == "connection" and connection not in {o["id"] for o in choice_mod.options()}:
+        return None
+    choice_mod.write_choice(mode, connection)
+    keep = _identity(c) if (c := _available_connection()) is not None else None
+    with _LOCK:
+        for jid, job in list(_JOBS.items()):
+            if keep is None or job.identity != keep:
+                _JOBS.pop(jid, None)
+                _BY_KEY.pop(job.flight, None)
+    return understanding_state()
 
 
 def available() -> bool:
@@ -961,7 +1046,7 @@ def start(
             eff = effective_table(entry, values, data_path, cached.header_row)
             if eff is not None:  # 缓存里的是模型的判断：按**当前**完整提示重新派生建议
                 hit = derive(eff[0], eff[1], cached, hint, fixed=fixed)
-        job = Job(secrets.token_hex(8), project, key, entry.path)
+        job = Job(secrets.token_hex(8), project, key, entry.path, identity=_identity(conn))
         if hit is not None:
             job.state, job.payload = "ready", _payload(hit, entry.path)
         _JOBS[job.id] = job
@@ -969,7 +1054,9 @@ def start(
         if hit is None:
             _BY_KEY[flight] = job.id
     if hit is None:
-        args = (job, entry, values, hint, data_path, dict(fixed or {}), conn)
+        # 用户指定了某个连接：把它显式交给后面的调用（不让 `call_structured` 自己再挑「第一个 Key 连接」）
+        pin = "conn" not in _OVERRIDES and choice_mod.read_choice()[0] == "connection"
+        args = (job, entry, values, hint, data_path, dict(fixed or {}), conn, pin)
         if _OVERRIDES.get("sync"):
             _run(*args)
         else:
@@ -990,10 +1077,18 @@ def _run(
     data_path: Path | None,
     fixed: dict,
     conn: dict | None = None,
+    pin: bool = False,
 ) -> None:
     """任务体。**永不抛**；结果写进 `job`（`ready` / `failed`），成功写缓存，失败记 60 s 负缓存。`conn` 是 `start` 挑中的连接（只有 CLI 连接才往下传）。"""
     try:
-        judged = judge(entry, values, hint, data_path=data_path, job=job, conn=conn)
+        if pin and conn is not None:
+            conn = choice_mod.refresh_key(
+                conn
+            )  # 只刷新被选中的这一条；刷不动（要重新登录）= 没有连接
+        if pin and conn is None:
+            judged: object = ("failed", "no_connection")
+        else:
+            judged = judge(entry, values, hint, data_path=data_path, job=job, conn=conn, pin=pin)
         if isinstance(judged, tuple) and judged and isinstance(judged[0], Judgement):
             outcome = derive(judged[1], judged[2], judged[0], hint, fixed=fixed)
             judgement: Judgement | None = judged[0]
@@ -1061,14 +1156,19 @@ def judge(
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
     conn: dict | None = None,
+    pin: bool = False,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """订阅登录（CLI）连接同一时刻只许一个任务在跑（`ai_structured.cli_slot`）：先排队、拿到之后才开始计总时限——排队不吃预算。
     其余连接直接 `_judge`。"""
     if not ai_structured.is_cli_conn(_OVERRIDES.get("conn") or conn):
-        return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
+        return _judge(
+            entry, values, hint, data_path=data_path, job=job, call=call, conn=conn, pin=pin
+        )
     try:
         with ai_structured.cli_slot(ai_structured.CLI_QUEUE_MAX_S):
-            return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
+            return _judge(
+                entry, values, hint, data_path=data_path, job=job, call=call, conn=conn, pin=pin
+            )
     except TimeoutError:
         return ("failed", "timeout")
 
@@ -1082,6 +1182,7 @@ def _judge(
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
     conn: dict | None = None,
+    pin: bool = False,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """向模型要判断 → `(Judgement, 采纳表头之后的 entry, values)`，或 `("failed", 闭集原因)`。**永不抛**。总时限 `TIMEOUT_S`（表头那次与列角色那次共用）。
 
@@ -1091,8 +1192,10 @@ def _judge(
     t0 = time.monotonic()
     kw = {k: _OVERRIDES[k] for k in ("conn", "post", "runner") if k in _OVERRIDES}
     cli = ai_structured.is_cli_conn(kw.get("conn") or conn)
-    if cli and "conn" not in kw:
-        kw["conn"] = conn  # 缓存键用的就是这一条（含型号）：别让 `call_structured` 再挑一次
+    if (cli or pin) and "conn" not in kw:
+        kw["conn"] = (
+            conn  # 缓存键用的就是这一条（含型号）：别让 `call_structured` 再挑一次；用户指定了连接（`pin`）时 Key 连接同样显式传下去
+        )
     total = float(_OVERRIDES.get("timeout_s", ai_structured.CLI_TIMEOUT_S if cli else TIMEOUT_S))
     do_call = call or ai_structured.call_structured
     # 小型号 + 最低档策略（ADR 0178 2026-11-21）：产品里恒开；手动基准可经覆盖关掉，好显式比较型号 / 强度。

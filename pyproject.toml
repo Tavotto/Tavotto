@@ -37,7 +37,7 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: Editors :: Vector-Based",
 ]
 
-# Flask 父进程的运行时闭包：flask + packaging + RenderCore 的五个包 + truststore + pynacl。科学栈刻意不在这里——
+# Flask 父进程的运行时闭包：flask + packaging + RenderCore 的五个包 + truststore + pynacl + pycryptodomex。科学栈刻意不在这里——
 # engine/registry.py、pool.py、ai_bridge.py 必须保持纯标准库可 import，matplotlib 由 worker 解释器提供。
 # `packaging` 是 PEP 508 / 440 的参考实现（pip / uv 认的就是它），纯 Python、零依赖、
 # Apache-2.0 OR BSD-2-Clause；U04（ADR 0061）起依赖声明的无损读法与 marker 求值靠它，
@@ -69,6 +69,10 @@ dependencies = [
     # 与 win32 轮子（Intel Mac 桌面版会退到 Rust 源码构建），钉 48.x 又让它在 X.509 / PKCS#7 上我们根本用不到的告警一直挂着；
     # PyNaCl 1.6.x 三个平台都有 cp38-abi3 轮子，macOS universal2 约 0.4 MB（cryptography 约 7.8 MB）。
     "pynacl>=1.6,<2",
+    # Sign in with ChatGPT 的 ID 令牌 RS256 验签（engine/siwc_login.py，ADR 0209；pycryptodomex = BSD / 公有领域，三平台都有 cp37-abi3 轮子，
+    # 含 macOS x86_64 / universal2 与 win32）：用户 2026-11-25 同意。`Cryptodome` 命名空间不与用户环境里的旧 PyCrypto 撞名；
+    # 不用 `rsa`（2025-04 起归档、不再维护），不用 pyca cryptography（理由同上一条）。只在验签函数里延后 import。
+    "pycryptodomex>=3.24,<4",
 ]
 
 [project.optional-dependencies]

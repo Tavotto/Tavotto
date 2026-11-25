@@ -1772,6 +1772,35 @@ def _attach_attachments(sid: str, cand, ids) -> tuple[str, tuple[str, ...], int]
     return ai_prompt_pack.attachments_note(images, files), dirs, len(placed)
 
 
+def _siwc_preflight(rec: dict | None) -> AgentError | None:
+    """SIWC 连接起跑前：要一个够一次任务用的令牌（不够新就刷新）。→ 拒绝的 `AgentError` 或 None（可以起跑）。
+    令牌本身不在这里留：spawn 时 `ai_providers.siwc_overrides` 再取一次（那时已够新，不联网）。"""
+    from . import siwc_auth, siwc_login, siwc_store
+
+    if rec is None:
+        st = siwc_store.public_status()
+        if st.get("signed_in") and not st.get("plan_usage_enabled"):
+            return AgentError("ai_siwc_plan_disabled")
+        return AgentError("ai_endpoint_needs_login", {"endpoint": "ChatGPT"})
+    try:
+        siwc_login.provider().access_token(min_valid_s=siwc_auth.MIN_VALID_S)
+    except siwc_auth.PlanUsageDisabled:
+        return AgentError("ai_siwc_plan_disabled")
+    except siwc_auth.NeedsLogin:
+        return AgentError("ai_endpoint_needs_login", {"endpoint": "ChatGPT"})
+    except siwc_auth.TokenUnavailable:
+        return AgentError("ai_siwc_token_unavailable")
+    return None
+
+
+def _siwc_after_runner_error(endpoint: dict | None, runner_error: str) -> None:
+    """SIWC 会话里 runner 报 `agent_auth`（服务端拒了这个访问令牌）：下次先刷新。不清凭据——刷新报终态错误才要求重新登录（ADR 0201 §三）。"""
+    if ai_providers.is_siwc(endpoint) and runner_error == "agent_auth":
+        from . import siwc_login
+
+        siwc_login.provider().mark_rejected("http_401")
+
+
 def run(
     agent: str,
     script: str,
@@ -1825,8 +1854,12 @@ def run(
     # 所以放在脚本锁 / 请求锁**之外**做，不卡住别的请求；刷不动的结论先记下，等去重查找之后再抛——
     # 已受理请求的重发仍得到既有会话（ADR 0132，去重先于其他可变判断）
     needs_login: dict | None = None
+    siwc_refused: AgentError | None = None
     pre_chosen = ai_providers.resolve(agent, endpoint_id)
-    if pre_chosen is not None and pre_chosen.get("auth") == "oauth":
+    if agent == ai_agents.BUILTIN_ID and endpoint_id == ai_providers.SIWC_CONNECTION_ID:
+        # Sign in with ChatGPT（ADR 0209 §四）：同样在锁外先要一个够一次任务用的令牌（可能联网刷新）；结论等去重之后再抛
+        siwc_refused = _siwc_preflight(pre_chosen)
+    elif pre_chosen is not None and pre_chosen.get("auth") == "oauth":
         try:
             ai_oauth.ensure_fresh(pre_chosen)
         except ai_oauth.NeedsLogin:
@@ -1867,6 +1900,8 @@ def run(
             raise AgentError("ai_agent_not_usable", {"agent": agent})
         if needs_login is not None:
             raise AgentError("ai_endpoint_needs_login", needs_login)
+        if siwc_refused is not None:
+            raise siwc_refused
         if agent == ai_agents.BUILTIN_ID:
             # 内置执行器必须显式指到一条内置循环能用的连接（没有「当前选中」这回事）
             if ai_providers.builtin_conn(chosen, model) is None:
@@ -2341,7 +2376,14 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
-            if agent == ai_agents.BUILTIN_ID and endpoint and st.get("runner_report"):
+            if (
+                agent == ai_agents.BUILTIN_ID
+                and endpoint
+                and not ai_providers.is_siwc(
+                    endpoint
+                )  # SIWC 不换协议、不降字段：没有可落盘的自救回报
+                and st.get("runner_report")
+            ):
                 # 进程已退出：把 runner 的自救回报（换协议 / 长度字段 / 被剥字段）落进记录，下次直接用；失败不影响会话
                 try:
                     ai_providers.apply_runtime_report(
@@ -2356,6 +2398,7 @@ def run(
             if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")
+                _siwc_after_runner_error(endpoint, st["runner_error"])
         finally:
             complete.set()
             timer.cancel()

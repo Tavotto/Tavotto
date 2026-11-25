@@ -55,7 +55,8 @@
     "appearance": "默认填色描边 / 互换填色和描边 / 无填充",
     "eyedropper": "吸管",
     "compoundPath": "建立 / 释放复合路径",
-    "shapeBuilder": "形状生成器"
+    "shapeBuilder": "形状生成器",
+    "pencil": "铅笔"
   },
   "or": "或",
   "title": "快捷键",

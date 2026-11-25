@@ -104,6 +104,10 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
   const result = target && resultOf?.id === target.id ? resultOf.data : null
   const mapped = result?.mapped ?? []
   const clamped = mapped.filter((p) => p.clamped).length
+  // 图内副本（ADR 0207）不跨图同步，后端给的原因码把它与版面几何分开；按副本个数数（一只副本带着它 gid 上的几条修改）
+  const copySkipped = (result?.skipped ?? []).filter((p) => p.skip_reason === 'copy_not_synced')
+  const skippedCopies = new Set(copySkipped.map((p) => p.gid)).size
+  const skippedGeometry = (result?.skipped.length ?? 0) - copySkipped.length
 
   const pick = async (info: PanelInfo) => {
     const seq = ++reqSeq.current
@@ -255,10 +259,15 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
                   <span className="text-ink-2">{sy('clampedNote', { count: clamped })}</span>
                 )}
               </li>
-              {result.skipped.length > 0 && (
+              {skippedGeometry > 0 && (
                 <li className="rounded-md bg-surface px-2.5 py-1.5 text-ink-2 shadow-thumb">
-                  {sy('skippedPrefix')} <span className="tabular-nums">{result.skipped.length}</span>{' '}
+                  {sy('skippedPrefix')} <span className="tabular-nums">{skippedGeometry}</span>{' '}
                   {sy('skippedSuffix')}
+                </li>
+              )}
+              {skippedCopies > 0 && (
+                <li className="rounded-md bg-surface px-2.5 py-1.5 text-ink-2 shadow-thumb" data-sync-skipped-copies>
+                  {sy('skippedCopies', { count: skippedCopies })}
                 </li>
               )}
               {result.unmatched.length > 0 && (

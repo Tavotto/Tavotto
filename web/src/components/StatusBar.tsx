@@ -82,7 +82,7 @@ export function CanvasHud() {
 
   // 拖动 / 微调进行中不说工具提示：那时读数在选区旁边（MeasureChip），左下角安静
   const interacting = kind !== 'none' || !!nudge
-  const hint = !interacting && tool !== 'select' ? t(`toolHint.${tool}`) : null
+  const hint = !interacting && tool !== 'select' ? t(`toolHint.${tool}`, { alt: ALT, mod: MOD }) : null
 
   useLayoutEffect(() => {
     const measure = () => {

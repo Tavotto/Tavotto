@@ -99,6 +99,8 @@ def proxy(environ: dict, env: dict[str, str] | None = None, fetch: Fetcher | Non
     origin = (env.get(ORIGIN_ENV) or DEFAULT_ORIGIN).rstrip("/")
     url = f"{origin}{UPSTREAM_PREFIX}{path}" + (f"?{rest}" if rest else "")
     headers = {dst: environ[src] for src, dst in _FORWARD_HEADERS.items() if environ.get(src)}
+    if path == "index.signed.json" and environ.get("HTTP_IF_NONE_MATCH"):
+        headers["If-None-Match"] = environ["HTTP_IF_NONE_MATCH"]  # 只有签名索引走条件请求
     headers["X-Tavotto-Proxy-Secret"] = secret
     ip = client_ip(environ)
     if ip:
@@ -118,7 +120,9 @@ def proxy(environ: dict, env: dict[str, str] | None = None, fetch: Fetcher | Non
         return _reply(502, b'{"code":"origin_too_large"}')
     lower = {k.lower(): v for k, v in up_headers.items()}
     out = [(h, lower[h.lower()]) for h in _BACK_HEADERS if h.lower() in lower]
-    if status == 200 and path == "index.signed.json":
+    if status in (200, 304) and path == "index.signed.json":
+        if "etag" in lower:
+            out.append(("ETag", lower["etag"]))
         out.append(("Cache-Control", "public, max-age=300, s-maxage=300"))
     else:
         out.append(("Cache-Control", "private, no-store"))

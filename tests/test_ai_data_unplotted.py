@@ -1,0 +1,274 @@
+# ruff: noqa: F811 - `project` 是从 test_ai_data_propose 导入的 fixture，用例参数同名
+"""「没画的行」要有计数和规则（sciviz G-055；ADR 0178 修订 2026-11-24）。
+
+判据的主语：**生成的脚本里每一处跳过一行的地方，`unplotted_rows` 都有对应的一条**——用户看到的「有 N 行没画」与图上实际少的行数一致。
+比法：同一张表、同一个配方，拿脚本自己的数据准备函数（`comparison_data` / `trend_data` / `relationship_data`，生成的脚本运行时调的就是它们）
+数出画进去了多少行，与「总行数 − 没画的行数」对；再逐条看原因码。
+"""
+
+from __future__ import annotations
+
+import socket
+
+import pytest
+
+from tavotto.engine import ai_data_figure as adf, ai_data_propose as P, ai_data_template as tpl
+from tavotto.engine.agent_runner import wires
+from tests.test_ai_data_propose import (  # noqa: F401
+    checks_of,
+    commit,
+    needs_worker,
+    project,
+    propose,
+    put,
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("network touched")
+
+    monkeypatch.setattr(wires, "post_json", boom)
+    monkeypatch.setattr(socket.socket, "connect", boom)
+    monkeypatch.setattr(socket, "getaddrinfo", boom)
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("TAVOTTO_NO_TELEMETRY", "1")
+    monkeypatch.setattr(P, "CANDIDATE_ROOT", tmp_path / "propose")
+
+
+def recipes(client, **body):
+    """出一轮备选，回 `(摘要, {family: 第一个该类配方})`。"""
+    out = propose(client, render="lazy", **body).get_json()
+    assert out["kind"] == "candidates", out
+    sess = next(s for s in P._SESSIONS.values() if s.id == out["session"])
+    by = {}
+    for item in sess.items.values():
+        by.setdefault(item.recipe.family, item)
+    return out, sess, by
+
+
+def summary(figs, rel):
+    return adf.inspect_data_source(figs / rel)
+
+
+def reasons(values, recipe):
+    return [(r["row"], r["column"], r["reason"]) for r in P.unplotted_rows(values, recipe)]
+
+
+# 一张比较类的表：第 3 行分组空、第 5 行类别空、第 7 行纵轴空、第 9 行纵轴 NaN
+COMPARISON = [
+    ["treatment", "sex", "weight"],
+    ["a", "f", 1.0],
+    ["a", "", 1.1],
+    ["b", "m", 1.2],
+    ["", "f", 1.3],
+    ["b", "f", 1.4],
+    ["a", "m", ""],
+    ["a", "m", 1.6],
+    ["b", "m", "NaN"],
+    ["a", "f", 1.8],
+    ["b", "f", 1.9],
+    ["a", "m", 2.0],
+    ["b", "m", 2.1],
+]
+
+
+def test_comparison_counts_empty_category_empty_group_and_missing_y(project):
+    _, client, figs, _ = project
+    put(figs, "data/c.csv", COMPARISON)
+    _out, _sess, by = recipes(client, answers={"x": "treatment", "y": "weight", "group": "sex"})
+    item = by["comparison"]
+    rec = item.recipe
+    assert {rec.x, rec.group} == {"treatment", "sex"} and rec.y == ("weight",)
+    values = summary(figs, "data/c.csv")
+    got = reasons(values, rec)
+
+    def why(col):  # 哪一列当类别、哪一列当分组由规则定；原因码跟着角色走
+        return "category_empty" if col == rec.x else "group_empty"
+
+    assert got == [
+        (3, "sex", why("sex")),
+        (5, "treatment", why("treatment")),
+        (7, "weight", "y_missing"),
+        (9, "weight", "y_missing"),
+    ]
+    assert item.unplotted == 4
+    # 脚本自己的数据准备函数画进去的行数 = 总行数 − 没画的
+    d = tpl.comparison_data(
+        values.columns, values.rows, rec.x, rec.y[0], rec.group, rec.facet, rec.order
+    )
+    drawn = sum(len(v) for v in d["cells"].values())
+    assert drawn == len(values.rows) - len(got) == 8
+
+
+TREND = (
+    [["time", "signal", "sample"]]
+    + [[t, 1.0 + 0.5 * t, "A"] for t in range(3)]
+    + [[3, 2.5, ""]]  # 第 5 行：分组空
+    + [[4, "", "A"]]  # 纵轴空：缺失（线断开），不算没画
+    + [[t, 1.0 + 0.5 * t, "A"] for t in range(5, 9)]
+    + [["", 9.9, "B"]]  # 第 11 行：横轴没有值
+    + [[t, 2.0 + 0.5 * t, "B"] for t in range(9)]
+)
+
+
+def test_trend_counts_empty_group_and_keeps_missing_y_as_a_gap(project):
+    _, client, figs, _ = project
+    put(figs, "data/t.csv", TREND)
+    _out, _sess, by = recipes(client, answers={"x": "time", "y": "signal", "group": "sample"})
+    rec = by["trend"].recipe
+    assert (rec.x, rec.group) == ("time", "sample")
+    values = summary(figs, "data/t.csv")
+    assert reasons(values, rec) == [(5, "sample", "group_empty"), (11, "time", "x_not_a_value")]
+    assert by["trend"].unplotted == 2
+
+
+RELATIONSHIP = [
+    ["height", "mass", "site"],
+    [1.50, 50.1, "n"],
+    [1.61, "", "n"],  # 第 3 行：纵轴空
+    [1.72, 61.3, ""],  # 第 4 行：分组空
+    ["", 70.0, "s"],  # 第 5 行：横轴没有值
+    [1.83, 72.9, "s"],
+    [1.94, 80.2, "s"],
+    [1.55, 52.0, "n"],
+    [1.66, 58.4, "n"],
+    [1.77, 66.6, "s"],
+    [1.88, 75.5, "s"],
+]
+
+
+def test_relationship_counts_missing_y_and_empty_group(project):
+    _, client, figs, _ = project
+    put(figs, "data/r.csv", RELATIONSHIP)
+    _out, _sess, by = recipes(client, answers={"x": "height", "y": "mass", "group": "site"})
+    rec = by["relationship"].recipe
+    values = summary(figs, "data/r.csv")
+    got = reasons(values, rec)
+    assert got == [
+        (3, "mass", "y_missing"),
+        (4, "site", "group_empty"),
+        (5, "height", "x_not_a_value"),
+    ]
+    d = tpl.relationship_data(values.columns, values.rows, rec.x, rec.y[0], rec.group, rec.facet)
+    drawn = sum(len(xs) for xs, _ys in d["pairs"].values())
+    assert drawn == len(values.rows) - len(got) == 7
+
+
+def test_a_clean_table_reports_nothing(project):
+    _, client, figs, _ = project
+    clean = [r for r in COMPARISON if all(str(c) not in ("", "NaN") for c in r)]
+    put(figs, "data/ok.csv", clean)
+    out, sess, _by = recipes(client)
+    values = summary(figs, "data/ok.csv")
+    assert all(P.unplotted_rows(values, i.recipe) == [] for i in sess.items.values())
+    assert all(i["unplotted"] == {"count": 0, "code": None} for i in out["items"])
+
+
+def test_distribution_counts_missing_y_and_empty_group(project):
+    _, client, figs, _ = project
+    put(figs, "data/c.csv", COMPARISON)
+    _out, _sess, by = recipes(client, answers={"x": "treatment", "y": "weight", "group": "sex"})
+    rec = by["distribution"].recipe
+    values = summary(figs, "data/c.csv")
+    got = P.unplotted_rows(values, rec)
+    d = tpl.comparison_data(
+        values.columns, values.rows, None, rec.y[0], rec.group, rec.facet, "as_given"
+    )
+    drawn = sum(len(v) for v in d["cells"].values())
+    assert drawn == len(values.rows) - len(got)
+    assert {r["reason"] for r in got} <= {"group_empty", "facet_empty", "y_missing"}
+    assert sum(r["reason"] == "y_missing" for r in got) == 2
+
+
+def test_one_empty_group_cell_does_not_cost_the_whole_trend_chart(project):
+    """分组列有一格是空的：那一行不画、计数里有它，但**不能**被当成「只有一个点的一组」把整张趋势图判成画不了。"""
+    _, client, figs, _ = project
+    put(figs, "data/t.csv", TREND)
+    out, _sess, by = recipes(client, answers={"x": "time", "y": "signal", "group": "sample"})
+    assert "trend" in by
+    assert "trend_too_few_x" not in [d["reason_code"] for d in out.get("dropped", [])]
+
+
+@needs_worker
+def test_a_blank_y_cell_is_missing_data_not_an_unmet_goal_but_an_empty_group_cell_is(project):
+    """提交后的核对：纵轴空着的行没有可画的点（缺失），不让「所有行都画了」判成没达成；分组空着的行有数据却没画上，照旧判没达成。
+    两种都如实列在结果的 `unplotted` 里。"""
+    _, client, figs, _ = project
+    blank_y = (
+        [["group", "value"]] + [[g, v] for g in "ABC" for v in (1.0, 1.2, 0.9, 1.1)] + [["A", ""]]
+    )
+    put(figs, "data/y.csv", blank_y)
+    out = propose(client, render="lazy").get_json()
+    first = out["items"][0]
+    assert first["unplotted"]["count"] == 1
+    done = commit(client, out["session"], first["id"]).get_json()
+    assert done["task"]["outcome"] == "completed", done
+    assert done["unplotted"]["count"] == 1 and done["unplotted"]["rows"][0]["reason"] == "y_missing"
+    assert checks_of(done["task"]["task_id"])["goal.rows_plotted"][0] == "verified"
+
+    blank_g = [["time", "signal", "sample"]] + TREND[1:]
+    put(figs, "data2/g.csv", blank_g)
+    out2 = propose(
+        client,
+        folder="data2",
+        render="lazy",
+        answers={"x": "time", "y": "signal", "group": "sample"},
+    ).get_json()
+    trend = next(i for i in out2["items"] if i["values"]["family"] == "trend")
+    done2 = commit(client, out2["session"], trend["id"]).get_json()
+    assert done2["task"]["outcome"] == "partial", done2
+    assert checks_of(done2["task"]["task_id"])["goal.rows_plotted"] == (
+        "failed",
+        "rows_not_plotted",
+    )
+
+
+def _large_relationship(tmp_path, monkeypatch, extra: str):
+    from tavotto.engine import ai_data_recipe as R
+
+    monkeypatch.setattr(adf, "SMALL_BYTES", 0)
+    monkeypatch.setattr(adf, "SMALL_ROWS", 50)
+    body = "".join(f"{i * 0.37 + 1:.3f},{(i * 7) % 13 + 0.5:.2f}\n" for i in range(400))
+    p = tmp_path / "cloud.csv"
+    p.write_text("dose_mg,response_mV\n" + body + extra, encoding="utf-8")
+    values = adf.read_text_table(p).summary
+    assert values.large is not None
+    recipe = R.FigureRecipe.from_dict(
+        {
+            "table": "cloud.csv",
+            "family": "relationship",
+            "layers": [{"mark": "points"}],
+            "x": "dose_mg",
+            "y": ["response_mV"],
+            "why": "x",
+        }
+    )
+    return values, recipe
+
+
+def test_on_a_large_table_a_blank_y_is_still_missing_data_not_an_unmet_goal(tmp_path, monkeypatch):
+    """大表与小表同一口径（Codex 评审 #2158）：只有纵轴空着的行没画 → 原因是 `y_missing`、「有数据却没画上」的行数是 0。"""
+    values, recipe = _large_relationship(tmp_path, monkeypatch, "200.5,\n201.5,nan\n")
+    rows = P.unplotted_rows(values, recipe)
+    assert P.unplotted_total(rows) == 2 and {r["reason"] for r in rows} == {"y_missing"}
+    assert P.unplotted_unmet(rows) == 0
+
+
+def test_on_a_large_table_rows_with_data_that_are_not_drawn_still_count_as_unmet(
+    tmp_path, monkeypatch
+):
+    values, recipe = _large_relationship(tmp_path, monkeypatch, "200.5,\n,3.0\noops,4.0\n")
+    rows = P.unplotted_rows(values, recipe)
+    assert P.unplotted_total(rows) == 3 and {r["reason"] for r in rows} == {"row_not_plotted"}
+    assert P.unplotted_unmet(rows) == 2  # 横轴不是值的两行；纵轴空着的那一行不算
+
+
+def test_unplotted_unmet_on_a_small_table_counts_by_reason():
+    rows = [
+        {"row": 2, "column": "y", "reason": "y_missing"},
+        {"row": 3, "column": "g", "reason": "group_empty"},
+        {"row": 4, "column": "x", "reason": "x_not_a_value"},
+    ]
+    assert P.unplotted_unmet(rows) == 2 and P.unplotted_unmet([]) == 0

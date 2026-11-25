@@ -55,7 +55,8 @@
     "appearance": "Default fill and stroke / swap fill and stroke / no fill",
     "eyedropper": "Eyedropper",
     "compoundPath": "Make / release compound path",
-    "shapeBuilder": "Shape builder"
+    "shapeBuilder": "Shape builder",
+    "pencil": "Pencil"
   },
   "or": "or",
   "title": "Keyboard shortcuts",

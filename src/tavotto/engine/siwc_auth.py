@@ -17,14 +17,15 @@
   - `earliest_refresh_at`：官方只列了字段名、没有定义含义；这里保守地理解为「这之前不发刷新请求」（**未经真服务确认**）。
 * **不读取、不迁移 Codex CLI 的令牌**（`~/.codex` 一律不碰；看护用例按 AST / 源码钉住）。
 
-本阶段 `provider()` 恒返回 `DisabledProvider`（恒未登录），开关 `TAVOTTO_EXPERIMENTAL_SIWC` 开着也一样——没有登录实现，
-就没有令牌。测试用 `MemoryProvider`（内存里的 `TokenSet` + 注入的刷新函数与时钟）覆盖状态机。
+本模块的 `provider()` 恒返回 `DisabledProvider`（或测试换上的那个）；真正的提供方（落盘的账号 + 联网刷新）由
+`siwc_login.provider()` 组装（ADR 0209），这里保持不联网。测试用 `MemoryProvider`（内存里的 `TokenSet` + 注入的刷新函数与时钟）覆盖状态机。
 
 纯标准库，Flask 父进程可 import；不 import `ai_agents` / `ai_oauth` / 任何网络模块。
 """
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections.abc import Callable
@@ -171,9 +172,13 @@ class RefreshingProvider:
     def _refresh(self, current: TokenSet) -> TokenSet:
         raise NotImplementedError
 
+    def _critical(self) -> contextlib.AbstractContextManager:
+        """「读 → 判 → 刷新 → 写回」整段额外持有的锁（存储的跨进程文件锁，见 `siwc_store.StoreProvider`）；缺省无。"""
+        return contextlib.nullcontext()
+
     # -- 契约 --------------------------------------------------------------
     def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
-        with self._lock:
+        with self._lock, self._critical():
             ts = self._load()
             if ts is None or not ts.access:
                 raise NeedsLogin("not_signed_in")

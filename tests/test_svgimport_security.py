@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import socket
 import time
 
@@ -804,9 +805,10 @@ def test_parse_css_matches_the_old_regex_on_random_input():
 def test_import_with_trailing_css_whitespace_stays_within_the_wall_clock(monkeypatch):
     monkeypatch.setattr(svgimport, "DEADLINE_S", 0.3)
     text = SVG.format("<style>a{}" + " " * 60_000 + "</style>")
-    t0 = time.monotonic()
+    # CPU 时间、余量 2 s：同 SHORT_MARGIN_S 的理由（墙钟会混进 runner 排队等 CPU 的时间）
+    c0 = time.process_time()
     outcome(text)
-    assert time.monotonic() - t0 < 0.3 + 1.0
+    assert time.process_time() - c0 < 0.3 + SHORT_MARGIN_S
 
 
 def test_css_selector_count_is_capped():
@@ -821,18 +823,31 @@ def test_css_selector_count_is_capped():
 
 def test_stops_times_rules_stop_at_the_deadline(monkeypatch):
     """9000 条 `stop{}` 规则 × 1000 个色标（色标上限以内）：每个色标都要扫一遍规则表，原来不查墙钟、数秒后成功返回
-    （Codex 原例是 2000 规则 × 1 万色标，16 秒；现在色标数超过上限直接拒）"""
-    monkeypatch.setattr(svgimport, "DEADLINE_S", 0.3)
+    （Codex 原例是 2000 规则 × 1 万色标，16 秒；现在色标数超过上限直接拒）。
+
+    不计时（合并组里墙钟 1.38 s 假红，#2177；改量 CPU 时间也不行：不查墙钟时整份输入本机只要 1.6 s CPU，
+    再给 2 s 余量就抓不住了）：第 10 个色标算完时把这次导入的截止时间拨到「已经过了」，查墙钟的实现
+    在下一个色标就停，漏查的会把 1000 个色标全算完才报超时。"""
     stops = '<stop offset="0"/>' * 1_000
     rules = "stop{stop-color:red}" * 9_000
     text = SVG.format(
         f"<style>{rules}</style><defs><linearGradient id='g'>{stops}</linearGradient></defs>"
         '<rect width="5" height="5" fill="url(#g)"/>'
     )
-    t0 = time.monotonic()
-    got = outcome(text)
-    assert time.monotonic() - t0 < 0.3 + 1.0
-    assert got in (("rejected", "timeout"), ("ok", ""))
+    computed = svgimport._computed
+    seen = 0
+
+    def counting(el, parent, ctx):
+        nonlocal seen
+        if svgimport._local(el.tag) == "stop":
+            seen += 1
+            if seen == 10:
+                ctx.deadline = -math.inf
+        return computed(el, parent, ctx)
+
+    monkeypatch.setattr(svgimport, "_computed", counting)
+    assert outcome(text) == ("rejected", "timeout")
+    assert seen <= 11, seen
 
 
 def test_gradient_stop_count_is_capped():

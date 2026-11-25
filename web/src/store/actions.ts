@@ -69,19 +69,22 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, isKnownObject, objectLabel, objectRotation, type ProjectDocument } from '@/types/document'
+import { arrowHeads, emptyProject, isKnownObject, legacyHead, migrateToProject, objectLabel, objectRotation, type ArrowHeadType, type PathTextObject, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { vectorPrimaryFor } from '@/lib/figureGroup'
 import { useEnvStore } from './envStore'
 import {
+  activeProjectFile,
   adoptSlotBaseline,
   dropRecentEntry,
+  markProjectFileDirty,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
   useDocumentStore,
+  writesBlocked,
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
@@ -127,9 +130,17 @@ import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
 import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
-import { isFillStrokeMark, styleFamilyOf } from '@/lib/markStyle'
+import { styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
 import { remapLineIds } from '@/lib/pathText'
+import {
+  carriedStyleOverrides,
+  copyPlacementOf,
+  COPY_PROP,
+  isCopyGid,
+  newCopyGid,
+} from '@/lib/figureElementCopy'
+import { selectCopiesWhenDrawn } from './figureCopySelect'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -462,8 +473,45 @@ export function restorePanelOverrides(panelId: string, label: UiMessage, patches
   )
 }
 
-/** 布局版本恢复：当前画布的内容整份换成那一版（面板 overrides 的身份原样）。 */
-export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) {
+/**
+ * 布局版本恢复。按节点正文的 schema 分派（服务端从版本链里存的就是整份载荷）：
+ *
+ * - **schema 2**：单画布检查点，当前画布的内容整份换成那一版（面板 overrides 的身份
+ *   原样）。这条路径逐字保留，⌘Z 一步退回。
+ * - **schema 3 / 4**：整份项目节点（原地升级的备份原语产出）。经 `migrateToProject`
+ *   拿到 `ProjectDocument` 后 `switchDocument` 换进**同一个 documentId**——项目节点
+ *   的正文是多张画布，不能把 `version.objects` 当成当前画布的对象去 commit。
+ *   返回 false = 正文读不出来 / 换文档被取消，调用方不得说「已恢复」。
+ *
+ * 返回值可能是 Promise：schema 2 的 commit 同步完成，schema 3 / 4 要等 `switchDocument`。
+ */
+export function restoreLayoutVersion(
+  label: UiMessage,
+  version: FigureDocument | ProjectDocument,
+): boolean | Promise<boolean> {
+  if (writesBlocked()) return false
+  if (version.schema !== 2) {
+    const pd = migrateToProject(version)
+    if (!pd) return false
+    // 恢复的是同一份排版：documentId 不变，时间线 / 最近文档 / 项目归属都跟着这份走
+    const docId = useDocumentStore.getState().documentId
+    const project = captureProjectEpoch()
+    return useDocumentStore.getState().switchDocument(pd, docId, undefined, {
+      editCurrent: true,
+      beforeInstall: async () => project.still(),
+    }).then(async (ok) => {
+      // 换进来的正文与项目文件里那份不同了：绑定还在的话要标脏，否则 ⌘S 会以为
+      // 「已经存过」——恢复后的内容只在自动保存槽位里，项目文件还是旧的。
+      // 走 `markProjectFileDirty()`：它同时推进编辑代次，正在飞的项目文件保存
+      // 回来时 `projectFileSnapshot()` 才看得见这次变化，不会把 dirty 洗回 false。
+      // 等回来的这一下也可能已经换了排版：那就不碰新排版的绑定。
+      if (ok && project.still() && useDocumentStore.getState().documentId === docId && !writesBlocked()) {
+        if (activeProjectFile()) markProjectFileDirty()
+        return (await saveNowWithResult(true)).wrote
+      }
+      return false
+    })
+  }
   commit(
     label,
     (d) => {
@@ -479,6 +527,7 @@ export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) 
     },
     { overrides: 'restored' },
   )
+  return true
 }
 
 export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
@@ -581,6 +630,113 @@ export function duplicateStep(sources: readonly CanvasObject[]): { dx: number; d
   const b = objs.find((o) => o.id === last.to[0])
   if (!a || !b) return plain
   return { dx: b.x - a.x, dy: b.y - a.y, ddeg: a.type === 'panel' ? 0 : objectRotation(b) - objectRotation(a) }
+}
+
+/**
+ * 图内编辑里**创建副本**（ADR 0207）：⌘V（同一张图的图内编辑）、⌘D、右键「创建副本」都到这里，是图内副本的唯一创建点。
+ * 只认权威（exact）manifest：取不到 = 「还不能复制」的既有胶囊，不拿旧清单算位置（ADR 0017）。
+ *
+ * 一次 `setOverrides`、一条历史：每个源写 `copy_of`（落点 = 源画出来的锚点向页面右下错开 `DUPLICATE_OFFSET_MM`，文字 = 此刻显示的字），
+ * 再把源上已有的样式类 override 原样抄一份到副本 gid——粘出来与源此刻画出来的一模一样，此后两边各改各的。
+ * **不退出图内编辑**；副本在下一份权威 manifest 里出现后被选中（`figureCopySelect`）。
+ * 返回新副本的 gid（空 = 什么都没建，胶囊已经说明）。
+ */
+export function duplicateFigureElements(panelId: string, gids: readonly string[]): string[] {
+  if (isCanvasCovered()) return [] // 画布被「数据」临时标签盖住：不改看不见的文档
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !gids.length) return []
+  const exact = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!exact) {
+    status(note('elementNotCopyableGeneric'), 'info')
+    return []
+  }
+  const taken = new Set<string>([
+    ...exact.elements.map((e) => e.gid),
+    ...panel.overrides.map((o) => o.gid),
+  ])
+  const patches: { gid: string; prop: string; value: unknown }[] = []
+  const made: string[] = []
+  let refused: ManifestElement | null = null
+  for (const gid of gids) {
+    const el = exact.elements.find((e) => e.gid === gid)
+    if (!el) continue
+    const place = copyPlacementOf(panel, exact, el)
+    if (!place) {
+      refused ??= el
+      continue
+    }
+    const copy = newCopyGid(place.host, taken)
+    taken.add(copy)
+    made.push(copy)
+    patches.push({ gid: copy, prop: COPY_PROP, value: { src: place.src, text: place.text, at: place.at } })
+    patches.push(...carriedStyleOverrides(panel, place.styleFrom, copy))
+  }
+  if (!made.length) {
+    if (refused) {
+      const name = t(`role.${refused.role}`, { ns: 'inspector', defaultValue: '' })
+      status(name ? note('elementNotCopyable', { name }) : note('elementNotCopyableGeneric'), 'info')
+    }
+    return []
+  }
+  setOverrides(panelId, hist('duplicateFigureElements', { count: made.length }), patches)
+  selectCopiesWhenDrawn(panelId, made)
+  return made
+}
+
+/**
+ * ⌘D 与系统菜单「创建副本」的唯一出口：图内编辑里选着图内元素时，复制的是**元素**（原地建图内副本，不是整张图，ADR 0207）；
+ * 其余照旧 `duplicateSelected`。选着的元素不能复制（曲线、色块、刻度组……）也消费这次按键、只出「还不能复制」的胶囊——
+ * 放过去的话选区里那张整图会被复制走，与用户选中的东西不是一回事（与 ⌘C 同一个先例）。
+ */
+export function duplicateSelection(): void {
+  const ui = useUiStore.getState()
+  if (ui.elementPanelId && ui.selectedGids.length) {
+    duplicateFigureElements(ui.elementPanelId, ui.selectedGids)
+    return
+  }
+  duplicateSelected()
+}
+
+/**
+ * 删除图内副本：副本只是 override 里的一条 `copy_of` 加它 gid 上的修改，删掉就是把这个 gid 的**全部**修改摘掉，
+ * 一条历史、一次渲染；撤销把它整只请回来。不是写 `visible: false`（那样副本还在表里，「恢复图内修改」才能让它消失）。
+ * 非副本的 gid 不理。返回实际删了几只。
+ */
+export function deleteFigureCopies(panelId: string, gids: readonly string[]): number {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return 0
+  const doomed = new Set(gids.filter((g) => isCopyGid(g) && panel.overrides.some((o) => o.gid === g)))
+  if (!doomed.size) return 0
+  updateObject<PanelObject>(panelId, hist('deleteFigureCopies', { count: doomed.size }), (o) => {
+    o.overrides = o.overrides.filter((p) => !doomed.has(p.gid))
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+  const ui = useUiStore.getState()
+  if (ui.elementPanelId === panelId && ui.selectedGids.some((g) => doomed.has(g))) {
+    ui.setSelectedGids(ui.selectedGids.filter((g) => !doomed.has(g)))
+  }
+  status(note('copyDeleted'), 'done')
+  return doomed.size
+}
+
+/**
+ * 「恢复此元素修改」：清掉这个元素 gid 上的修改。**副本**上只清除 `copy_of` 以外的（回到刚粘出来的样子），不删副本——
+ * 删副本是另一个动作（`deleteFigureCopies`，右键里叫「删除副本」）。一次 commit。
+ */
+export function restoreElementEdits(panelId: string, gid: string): void {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const copy = isCopyGid(gid)
+  clearOverrides(
+    panelId,
+    msg('element.resetElement', undefined, 'inspector'),
+    panel.overrides
+      .filter((o) => o.gid === gid && !(copy && o.prop === COPY_PROP))
+      .map((o) => ({ gid: o.gid, prop: o.prop })),
+  )
 }
 
 export type ZMove = 'top' | 'bottom' | 'up' | 'down'
@@ -784,6 +940,11 @@ export async function newBlankDocument(): Promise<void> {
   status(note('blankCreated'), 'done')
 }
 
+export function reportLayoutOpenSkipped(name = ''): false {
+  useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+  return false
+}
+
 /**
  * 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份。
  *
@@ -797,10 +958,7 @@ export async function openLayoutDocument(
   // 入口那一刻的上下文（调用方 `doLoad` 刚核过）：下面每个 await（探测占用、读槽位、丢失确认）之后、
   // 安装之前都要再核，项目或排版变了就不装（Codex #1734 P1：旧项目的排版不能装进新选的工作区）
   const ctx = captureSaveContext()
-  const skipped = (): false => {
-    useUiStore.getState().setStatus(msg('layout.openSkipped', { name: projectFile?.name ?? '' }, 'dialogs'), 'error')
-    return false
-  }
+  const skipped = () => reportLayoutOpenSkipped(projectFile?.name)
   // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
   let reuse: string | null = null
   if (projectFile) {
@@ -1460,6 +1618,11 @@ export function disableTextEffect(panelId: string, gid: string, prop: string) {
  * 非破坏、进撤销、导出与写回原始文件都生效，随时可从「已隐藏元素」恢复。
  */
 export function hideElement(panelId: string, gid: string, label: string) {
+  // 图内副本没有「隐藏」：删除 = 摘掉它的全部修改（ADR 0207），Delete 键、属性页、元素树、右键同走这里
+  if (isCopyGid(gid)) {
+    deleteFigureCopies(panelId, [gid])
+    return
+  }
   setOverride(panelId, gid, 'visible', false, true)
   status(note('elementHidden', { label }), 'done')
 }
@@ -1467,6 +1630,15 @@ export function hideElement(panelId: string, gid: string, label: string) {
 /** 多选一起隐藏：一次撤销、一次渲染（键盘 Delete 走这条） */
 export function hideElements(panelId: string, targets: { gid: string; label: string }[]) {
   if (!targets.length) return
+  if (targets.some((x) => isCopyGid(x.gid))) {
+    // 副本整只删、其余照旧隐藏：各一条历史（两种动作的撤销语义不同）
+    deleteFigureCopies(
+      panelId,
+      targets.map((x) => x.gid),
+    )
+    targets = targets.filter((x) => !isCopyGid(x.gid))
+    if (!targets.length) return
+  }
   if (targets.length === 1) {
     hideElement(panelId, targets[0].gid, targets[0].label)
     return
@@ -3259,13 +3431,20 @@ export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
 type StyleClip =
   | { kind: 'panel'; crop?: CropRect; rotation?: PanelRotation; opacity?: number }
   | ({ kind: 'text' } & Partial<TextObject>)
+  | ({ kind: 'pathText' } & Partial<PathTextObject>)
   | ({ kind: 'arrow' } & Partial<ArrowObject>)
   | ({ kind: 'shape' } & Partial<ShapeObject>)
   | ({ kind: 'path' } & Partial<PathObject>)
 
-/** 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制） */
+/**
+ * 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制）。2026-11-16 起（ADR 0185 M7）补全：文字带上字体（三个通用族 /
+ * 原图字体身份）与科学文本解释，路径带上描边对齐，路径文字也能刷；描边一族（箭头 / 形状 / 路径）之间互刷线宽、颜色、虚线、
+ * 线端拐角、不透明度，箭头 ↔ 路径还带端型；文字一族（文字 / 路径文字）之间互刷字号、粗斜、颜色、字体。
+ */
 const TEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'underline', 'color', 'align',
-  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg'] as const
+  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg',
+  'fontFamily', 'sourceFont', 'interpretation'] as const
+const PATHTEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'color', 'fontFamily', 'textAlign', 'flip', 'baselineOffsetPt'] as const
 const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
   'headSizeStart', 'headSizeEnd', 'dash', 'strokeOpacity', 'lineCap', 'lineJoin',
   'miterLimit', 'dashPattern', 'rotationDeg'] as const
@@ -3276,20 +3455,24 @@ const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
 /**
  * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
  * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
+ * 描边对齐两边缺省不同（形状缺省内侧、路径缺省居中），跨类刷时按实际生效的值换（`transferStyle`）。
  */
 const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'fillRule', 'dash', 'stroke',
   'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'fillGradient', 'strokeGradient',
-  'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
+  'strokeAlign', 'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
 const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
   panel: [],
   text: TEXT_STYLE_KEYS,
+  pathText: PATHTEXT_STYLE_KEYS,
   arrow: ARROW_STYLE_KEYS,
   shape: SHAPE_STYLE_KEYS,
   path: PATH_STYLE_KEYS,
 }
-/** 从 `from` 类型刷到 `to` 类型时写哪些键：两边都参与样式复制的键 */
+/** 跨类刷时另外换算的键：描边对齐（两边缺省不同）、端型（箭头的旧 `head` 字段） */
+const CONVERTED = new Set(['strokeAlign', 'head', 'headStart', 'headEnd'])
+/** 从 `from` 类型刷到 `to` 类型时照搬的键：两边都参与样式复制的键（同类全部照搬；跨类时换算的那几个另算） */
 const styleKeysOf = (from: StyleClip['kind'], to: StyleClip['kind']): string[] =>
-  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k))
+  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k) && (from === to || !CONVERTED.has(k)))
 
 function pickKeys(src: object, keys: readonly string[]): Record<string, unknown> {
   const from = src as Record<string, unknown>
@@ -3305,10 +3488,58 @@ function assignKeys(target: object, clip: object, keys: readonly string[]): void
   }
 }
 
+/** 描边对齐实际生效的值：形状缺省内侧、路径缺省居中 */
+const effectiveAlign = (kind: StyleClip['kind'], v: unknown): 'inside' | 'center' | 'outside' =>
+  v === 'inside' || v === 'center' || v === 'outside' ? v : kind === 'shape' ? 'inside' : 'center'
+
+/** 来源的两端端型（箭头按 `arrowHeads` 读旧 `head`；路径缺省无） */
+function headsOf(clip: StyleClip): { start: ArrowHeadType; end: ArrowHeadType } | null {
+  if (clip.kind === 'arrow') return arrowHeads(clip as ArrowObject)
+  if (clip.kind === 'path') return { start: (clip as PathObject).headStart ?? 'none', end: (clip as PathObject).headEnd ?? 'none' }
+  return null
+}
+
+/** 把样式刷到一个对象上：同族的键照搬，跨类时描边对齐、端型按实际生效的值换算 */
+function transferStyle(o: CanvasObject, clip: StyleClip): void {
+  assignKeys(o, clip, styleKeysOf(clip.kind, o.type as StyleClip['kind']))
+  if (clip.kind === o.type) return
+  const target = o as unknown as Record<string, unknown>
+  // 描边对齐：形状 ↔ 路径
+  if (STYLE_KEYS[clip.kind].includes('strokeAlign') && (o.type === 'shape' || o.type === 'path')) {
+    const eff = effectiveAlign(clip.kind, (clip as Record<string, unknown>).strokeAlign)
+    if (eff === (o.type === 'shape' ? 'inside' : 'center') || (o.type === 'path' && eff === 'center')) delete target.strokeAlign
+    else target.strokeAlign = eff
+  }
+  // 端型：箭头 ↔ 路径
+  const heads = headsOf(clip)
+  if (heads && (o.type === 'arrow' || o.type === 'path')) {
+    if (o.type === 'arrow') {
+      target.headStart = heads.start
+      target.headEnd = heads.end
+      target.head = legacyHead(heads)
+    } else {
+      if (heads.start === 'none') delete target.headStart
+      else target.headStart = heads.start
+      if (heads.end === 'none') delete target.headEnd
+      else target.headEnd = heads.end
+    }
+  }
+}
+
 /** 样式剪贴板不属于文档，不进 undo；粘贴才是一条历史 */
 let styleClip: StyleClip | null = null
+/** 样式是从哪个对象复制的：粘贴时它还在选区里就跳过（它本来就是这个样式，不该算进「已粘贴到 N 个对象」） */
+let styleSourceId: string | null = null
 
 export const styleClipKind = () => styleClip?.kind ?? null
+
+const COPIED_NOTE: Record<Exclude<StyleClip['kind'], 'panel'>, string> = {
+  text: 'styleCopiedText',
+  pathText: 'styleCopiedText',
+  arrow: 'styleCopiedArrow',
+  shape: 'styleCopiedShape',
+  path: 'styleCopiedPath',
+}
 
 export function copySelectionStyle() {
   const src = selectedObjects().at(-1)
@@ -3319,19 +3550,13 @@ export function copySelectionStyle() {
       rotation: src.rotation,
       opacity: src.opacity,
     }
+    styleSourceId = src.id
     status(note('styleCopiedPanel'), 'done')
-  } else if (src?.type === 'text') {
-    styleClip = { kind: 'text', ...pickKeys(src, TEXT_STYLE_KEYS) }
-    status(note('styleCopiedText'), 'done')
-  } else if (src?.type === 'arrow') {
-    styleClip = { kind: 'arrow', ...pickKeys(src, ARROW_STYLE_KEYS) }
-    status(note('styleCopiedArrow'), 'done')
-  } else if (src?.type === 'shape') {
-    styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
-    status(note('styleCopiedShape'), 'done')
-  } else if (src?.type === 'path') {
-    styleClip = { kind: 'path', ...pickKeys(src, PATH_STYLE_KEYS) }
-    status(note('styleCopiedPath'), 'done')
+  } else if (src && src.type in COPIED_NOTE) {
+    const kind = src.type as Exclude<StyleClip['kind'], 'panel'>
+    styleClip = { kind, ...pickKeys(src, STYLE_KEYS[kind]) } as StyleClip
+    styleSourceId = src.id
+    status(note(COPIED_NOTE[kind]), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
   }
@@ -3340,9 +3565,9 @@ export function copySelectionStyle() {
 export function pasteSelectionStyle() {
   const clip = styleClip
   if (!clip) return
-  // 同族就能刷（形状 ↔ 自由路径是一族，`markStyle.styleFamilyOf`）
+  // 同族就能刷：描边一族（箭头 / 形状 / 路径）、文字一族（文字 / 路径文字）、图（`markStyle.styleFamilyOf`）
   const ids = selectedObjects()
-    .filter((o) => styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
+    .filter((o) => o.id !== styleSourceId && styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
     .map((o) => o.id)
   if (!ids.length) {
     status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
@@ -3353,12 +3578,8 @@ export function pasteSelectionStyle() {
       rotatePanelDraft(o, clip.rotation ?? 0)
       applyCropDraft(o, clip.crop)
       o.opacity = clip.opacity
-    } else if (clip.kind === 'text' && o.type === 'text') {
-      assignKeys(o, clip, TEXT_STYLE_KEYS)
-    } else if (clip.kind === 'arrow' && o.type === 'arrow') {
-      assignKeys(o, clip, ARROW_STYLE_KEYS)
-    } else if (styleFamilyOf(clip.kind) === 'fillStroke' && isFillStrokeMark(o)) {
-      assignKeys(o, clip, styleKeysOf(clip.kind, o.type))
+    } else if (o.type !== 'panel') {
+      transferStyle(o, clip)
     }
   })
   status(note('stylePasted', { count: ids.length }), 'done')

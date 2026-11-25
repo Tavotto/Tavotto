@@ -46,6 +46,10 @@ import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useUiStore } from '@/store/uiStore'
 import { schedule, useValidationStore } from '@/store/validationStore'
+import { JournalPicker } from '@/components/journal/JournalPicker'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { fieldBoxTrigger } from '@/components/ui/fieldBox'
+import { Row } from '@/components/ui/Field'
 import { Button, IconButton } from '../ui/Button'
 import { CountChip } from '../ui/CountChip'
 import { EmptyState } from '../ui/EmptyState'
@@ -394,6 +398,8 @@ export function ProblemPanel() {
         <PanelMenu view={view} />
       </DrawerHeaderActions>
 
+      <JournalRow />
+
       {/* 摘要条只在这一轮结果就绪后出现：还在检查时挂着一条计数，与下面的骨架是两句打架的话 */}
       {ready && issues.length > 0 && (
         <section
@@ -523,6 +529,25 @@ export function ProblemPanel() {
 
       {open && cursor && groups.length > 0 && <CursorBar view={cursorAt} onStep={step} />}
       <ReadinessLink />
+    </div>
+  )
+}
+
+/**
+ * 顶部一行「期刊」：问题清单按哪套规范判，就在这一行看、这一行换（与设置里同一个选择器、同一条路：写当前画布的绑定，
+ * 一次提交、可撤销）。不是筛选——同一时刻只按一份规范判。固定在清单上方、不随清单滚动；任何状态（检查中 / 没问题 / 失败）下都在原位，
+ * 不跟着内容出没。占位文档（恢复门没开）与被另一窗口接管的只读排版：禁用。入口关着（`journalCatalogUi()` 假）整行不出现。
+ */
+function JournalRow() {
+  const { t } = useTranslation('dialogs')
+  const blocked = useDocumentStore((s) => s.restoreGate.state !== 'ready' || s.windowHold != null)
+  if (!journalCatalogUi()) return null
+  return (
+    <div data-issues-journal className="shrink-0 pl-3 pr-2 pt-1">
+      {/* 标签按文字宽：「期刊」与上一行的「问题」左对齐，下拉框的左缘落在上一行范围胶囊的左缘上 */}
+      <Row label={t('journal.title')} labelWidth="auto">
+        <JournalPicker anchor="data-issues-journal-picker" triggerClassName={fieldBoxTrigger} disabled={blocked} />
+      </Row>
     </div>
   )
 }

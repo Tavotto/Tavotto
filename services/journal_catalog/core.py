@@ -163,6 +163,34 @@ def parse_client(value: str | None) -> str:
     return value if CLIENT_RE.fullmatch(value) else "unknown"
 
 
+def index_etag(body: bytes) -> str:
+    """签名索引的强 ETag：内容 sha256（同一份字节永远同一个值，与重启 / 多实例无关）。"""
+    return '"' + hashlib.sha256(body).hexdigest() + '"'
+
+
+_ETAG_CODING_SUFFIX = re.compile(r"-(?:gzip|br|zstd)$")
+
+
+def _etag_core(tag: str) -> str:
+    """If-None-Match 用弱比较：去掉 `W/`、引号，以及反代压缩可能附加的编码后缀（Caddy 压缩时会弱化 / 改写 ETag）。"""
+    tag = tag.strip()
+    if tag.startswith("W/"):
+        tag = tag[2:]
+    return _ETAG_CODING_SUFFIX.sub("", tag.strip('"'))
+
+
+def etag_matches(if_none_match: str | None, etag: str) -> bool:
+    """`If-None-Match`（逗号分隔、可带 `*`、`W/`）里有没有命中 `etag`。头缺失 / 空 = 不命中。"""
+    if not if_none_match:
+        return False
+    want = _etag_core(etag)
+    for raw in if_none_match.split(","):
+        raw = raw.strip()
+        if raw == "*" or (raw and _etag_core(raw) == want):
+            return True
+    return False
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -275,12 +303,24 @@ class Service:
         if route == "/index.signed.json":
             if method != "GET":
                 return _err(405, "method_not_allowed")
-            return self._file(
+            response = self._file(
                 data_dir / "index.signed.json",
                 "application/json",
                 "public, max-age=300",
                 missing=(503, "index_unavailable"),
             )
+            if response[0] != 200:
+                return response
+            # 条件请求：索引是整份下载的签名信封，内容没变就回 304（不带体），客户端沿用已验签的缓存。
+            # 只有索引做这件事；刊包 / 令牌 / 快照的计数与令牌校验必须每次到源站，不进条件请求。
+            etag = index_etag(response[2])
+            headers_out = [*response[1], ("ETag", etag)]
+            version = "v2" if facts_v2 else "v1"
+            if etag_matches(h.get("if-none-match"), etag):
+                self.store.count_index(now, version, 304)
+                return 304, headers_out, b""
+            self.store.count_index(now, version, 200)
+            return 200, headers_out, response[2]
         if route == "/device":
             if method != "POST":
                 return _err(405, "method_not_allowed")

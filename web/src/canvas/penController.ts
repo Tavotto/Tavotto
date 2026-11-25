@@ -195,7 +195,7 @@ function resumeTarget(clientX: number, clientY: number): { base: PathObject; sp:
   return null
 }
 
-/** 钢笔工具下在画布上按下：加点（或点到起点闭合、点到开放路径的端点续画）；按着拖 = 拉手柄（⌥ 拆开，⇧ 锁 45°） */
+/** 钢笔工具下在画布上按下：加点（或点到起点闭合、点到开放路径的端点续画）；按着拖 = 拉手柄（⌥ 拆开，⇧ 锁 45°，⌘ / Ctrl 只折不弯） */
 export function penPointerDown(e: ReactPointerEvent): void {
   e.preventDefault()
   const target = state.kind === 'idle' ? resumeTarget(e.clientX, e.clientY) : null
@@ -209,7 +209,7 @@ export function penPointerDown(e: ReactPointerEvent): void {
   }
   trackPointer(e, {
     threshold: 0,
-    onMove: (ev) => apply({ type: 'move', at: at(ev.clientX, ev.clientY, ev.shiftKey), alt: ev.altKey, shift: ev.shiftKey }),
+    onMove: (ev) => apply({ type: 'move', at: at(ev.clientX, ev.clientY, ev.shiftKey), alt: ev.altKey, shift: ev.shiftKey, mod: ev.metaKey || ev.ctrlKey }),
     // 系统作废了这一下（pointercancel）：当作松手，点已经落下的留着，不丢整条
     onEnd: (_moved, ev) => apply({ type: 'up', at: at(ev.clientX, ev.clientY, ev.shiftKey) }),
   })

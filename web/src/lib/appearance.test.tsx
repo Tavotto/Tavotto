@@ -196,7 +196,7 @@ describe('导出载荷 / 裁切 / 格式刷认新字段', () => {
     expect(d.x).toBeCloseTo(10, 9)
   })
 
-  it('格式刷：形状 → 形状带上描边的全部外观；形状 → 路径带上斜接上限与自定义虚线，对齐不写', async () => {
+  it('格式刷：形状 → 形状带上描边的全部外观；形状 → 路径带上斜接上限与自定义虚线，对齐按实际生效的值换（ADR 0185 M7）', async () => {
     const path: PathObject = {
       id: 'p',
       type: 'path',
@@ -216,6 +216,7 @@ describe('导出载荷 / 裁切 / 格式刷认新字段', () => {
     expect(byId<ShapeObject>('r2')).toMatchObject({ miterLimit: 3, dashPattern: [5, 1], strokeAlign: 'outside', lineJoin: 'miter', stroke: false })
     const p = byId<PathObject>('p')
     expect(p).toMatchObject({ miterLimit: 3, dashPattern: [5, 1], lineJoin: 'miter', stroke: false })
-    expect('strokeAlign' in p).toBe(false)
+    // 形状写的是「外侧」：路径也是外侧（两边缺省不同，按实际生效的值换，不再丢掉）
+    expect(p.strokeAlign).toBe('outside')
   })
 })

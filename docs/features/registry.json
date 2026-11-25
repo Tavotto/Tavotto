@@ -1113,6 +1113,22 @@
       ]
     },
     {
+      "id": "preflight.canvas-line-width",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布上的箭头、形状、路径也按期刊最小线宽检查（「线条太细」），点那一行选中对象、焦点落到线宽",
+        "en-US": "Arrows, shapes and paths on the canvas are checked against the journal's minimum line width (\"Line too thin\"); clicking the row selects the object and focuses its line width"
+      },
+      "entry": "问题 → 线条太细（选了规定最小线宽的期刊后）",
+      "e2e": [
+        {
+          "spec": "canvas-line-width-locate.spec.ts",
+          "title": "画布上的细箭头：问题清单出「线条太细」，点它选中箭头、焦点落到线宽"
+        }
+      ]
+    },
+    {
       "id": "style.journal-adjust",
       "status": "active",
       "platform": "both",
@@ -1452,14 +1468,42 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "图内编辑里选中图中的文字，⌘C / 右键「复制为标注」，⌘V 在原文字右下得到同字号同字体的文字标注",
-        "en-US": "In figure editing, select text inside the figure, press Cmd/Ctrl+C or right-click Copy as annotation, then paste to get a text annotation matching size and font, offset to the lower right of the original"
+        "zh-CN": "图内编辑里选中图中的文字，⌘C 后在别处（画布、别的图）⌘V 或右键「粘贴为标注」，在原文字右下得到同字号同字体的文字标注",
+        "en-US": "In figure editing, select text inside the figure, press Cmd/Ctrl+C, then paste elsewhere (the canvas, another figure) or choose Paste as annotation to get a text annotation matching size and font, offset to the lower right of the original"
       },
-      "entry": "图内编辑：选中图里的文字后 ⌘C / 右键「复制为标注」，⌘V 粘贴",
+      "entry": "图内编辑：选中图里的文字后 ⌘C，退出图内编辑后 ⌘V，或右键「粘贴为标注」",
       "e2e": [
         {
           "spec": "copy-figure-text.spec.ts",
-          "title": "图内文字复制为标注：选中标题 ⌘C ⌘V → 多一个同字的文字标注，在原文字右下"
+          "title": "图内文字复制为标注：选中标题 ⌘C，退出图内编辑后 ⌘V → 多一个同字的文字标注，在原文字右下"
+        },
+        {
+          "spec": "copy-figure-text.spec.ts",
+          "title": "图内编辑里右键「粘贴为标注」：画布上点选标题 ⌘C 后，弹层「粘贴为标注」落成同字的文字标注，标题本身不变"
+        }
+      ]
+    },
+    {
+      "id": "canvas.in-figure-duplicate",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑里选中图中的文字，⌘C ⌘V 或 ⌘D（右键「创建副本」）在同一张图里得到一只图内副本，不退出图内编辑、新副本被选中，可继续改样式、一次撤销消失",
+        "en-US": "In figure editing, select text inside the figure and press Cmd/Ctrl+C then V, or Cmd/Ctrl+D (right-click Duplicate), to get a copy of it inside the same figure; you stay in figure editing, the copy is selected, can be restyled right away, and one undo removes it"
+      },
+      "entry": "图内编辑：选中图里的文字后 ⌘C ⌘V / ⌘D，或右键「创建副本」",
+      "e2e": [
+        {
+          "spec": "figure-duplicate.spec.ts",
+          "title": "图内副本：选中标题 ⌘C ⌘V → 仍在图内编辑、多一只副本并被选中；改字号后 ⌘Z 两次副本消失"
+        },
+        {
+          "spec": "figure-duplicate.spec.ts",
+          "title": "图内副本：⌘D 在图内编辑里 = 原地建副本（不复制整张图），同样可撤销"
+        },
+        {
+          "spec": "figure-duplicate.spec.ts",
+          "title": "画布上点选标题后 ⌘C ⌘V：属性页文字框的残留选区不接粘贴，标题文字不变、建出图内副本"
         }
       ]
     },
@@ -1696,6 +1740,22 @@
         {
           "spec": "vector-path-text.spec.ts",
           "title": "路径文字 › 文字工具点在斜线路径上打字：字沿路径斜着排出来；撤销后路径文字消失"
+        }
+      ]
+    },
+    {
+      "id": "canvas.pencil",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "铅笔（N）拖一笔，松手后拟合成光滑的路径",
+        "en-US": "The pencil (N) draws a stroke that is fitted to a smooth path on release"
+      },
+      "entry": "画布工具栏 → 铅笔（N，与钢笔同一格）",
+      "e2e": [
+        {
+          "spec": "vector-pencil.spec.ts",
+          "title": "铅笔 › N 铅笔拖一条正弦形的笔迹：松手得到一个光滑 path（三次贝塞尔、段数远少于采样点）；一次撤销撤回"
         }
       ]
     }
