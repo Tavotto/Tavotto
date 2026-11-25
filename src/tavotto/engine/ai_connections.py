@@ -410,8 +410,8 @@ def _siwc_connections() -> list[dict]:
     details = [
         {
             "id": m["id"],
-            "efforts": [],
-            "default_effort": None,
+            "efforts": list(m.get("efforts") or []),
+            "default_effort": m.get("default_effort"),
             **({"display_name": m["display_name"]} if m.get("display_name") else {}),
         }
         for m in st.get("models") or []
@@ -437,8 +437,10 @@ def _siwc_connections() -> list[dict]:
         "model_details": details,
         **({"no_vision": nv} if (nv := ai_attachments.text_only_models(models)) else {}),
         "default_model": models[0] if models else None,
-        "efforts": [],
-        "default_effort": None,
+        "efforts": details[0]["efforts"]
+        if details
+        else [],  # 默认型号的档位（每个型号的在 model_details）
+        "default_effort": details[0]["default_effort"] if details else None,
         "route": ROUTE_BUILTIN,
         "method": SIWC_METHOD,
         "account_email": st.get("email") or "",

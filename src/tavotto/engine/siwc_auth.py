@@ -14,7 +14,8 @@
   - 终态刷新错误（`TERMINAL_REFRESH_ERRORS`）才清凭据并要求重新登录；`invalid_client` 是配置错，不清；网络 / 5xx 等暂时失败
     **保留凭据**（官方：不在暂时失败时抹掉凭据）。
   - 没有 `chatgpt.tokens.use.direct` 范围 = 仍算已登录、但不许用订阅额度（`PlanUsageDisabled`），**不自动换计费方式**。
-  - `earliest_refresh_at`：官方只列了字段名、没有定义含义；这里保守地理解为「这之前不发刷新请求」（**未经真服务确认**）。
+  - `earliest_refresh_at`：官方只列了字段名、没有定义含义；只记下、**不拦刷新**——2026-11-25 真服务核对：它约在签发后 54 分钟，
+    而签发后几分钟发的刷新照样 200 且轮换了刷新令牌。若把它当「之前不许刷新」，每小时会有约 14 分钟任务起不来（剩余寿命 < 20 分钟又不许刷）。
 * **不读取、不迁移 Codex CLI 的令牌**（`~/.codex` 一律不碰；看护用例按 AST / 源码钉住）。
 
 本模块的 `provider()` 恒返回 `DisabledProvider`（或测试换上的那个）；真正的提供方（落盘的账号 + 联网刷新）由
@@ -190,8 +191,6 @@ class RefreshingProvider:
                 return ts.access
             if not ts.refresh:
                 raise NeedsLogin("refresh_terminal")
-            if ts.earliest_refresh_at_ms is not None and now < ts.earliest_refresh_at_ms:
-                raise TokenUnavailable("refresh_not_yet_allowed")
             try:
                 new = self._refresh(ts)
             except RefreshError as exc:

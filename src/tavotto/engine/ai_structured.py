@@ -214,6 +214,11 @@ def _effort_kwargs(conn: dict, effort: str | None) -> dict:
     try:
         from . import ai_providers
 
+        if ai_providers.is_siwc_conn(conn):
+            # SIWC：型号自己在 /v1/models 里声明的档位（登录时缓存）；没声明的不发
+            return (
+                {"effort": effort} if effort in ai_providers.siwc_efforts(conn.get("model")) else {}
+            )
         rec = ai_providers.get(conn.get("provider_id"))
         if rec is None:
             return {}

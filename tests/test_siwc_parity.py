@@ -36,7 +36,9 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setenv(siwc_wire.ENV_FLAG, "1")
     monkeypatch.delenv(ai_connections.ENV_BUILTIN, raising=False)
     monkeypatch.setattr(ai_providers, "list_providers", lambda: [])
-    acc = siwc_store.Account(client_id=CID, subject="s", models=({"id": "gpt-a"},)).with_tokens(
+    acc = siwc_store.Account(
+        client_id=CID, subject="s", models=({"id": "gpt-a", "efforts": ["low", "high"]},)
+    ).with_tokens(
         siwc_auth.TokenSet(
             access=TOKEN,
             refresh="ref",
@@ -129,7 +131,8 @@ def test_structured_call_goes_out_compliant(env):
     assert req["headers"]["Authorization"] == f"Bearer {TOKEN}"
     assert req["body"]["stream"] is True and req["body"]["store"] is False
     assert not set(req["body"]) & set(siwc_wire.FORBIDDEN_FIELDS)
-    assert "reasoning" not in req["body"]  # 思考强度：SIWC 上未经真服务验证，不发
+    assert req["body"]["reasoning"] == {"effort": "high"}  # 型号声明了 high：和 Key 连接一样发
+    assert req["body"]["include"] == ["reasoning.encrypted_content"]
 
 
 def test_structured_call_without_token_is_no_connection(env):

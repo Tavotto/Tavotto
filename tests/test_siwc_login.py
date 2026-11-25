@@ -615,3 +615,29 @@ def test_backend_brand_mark_is_generated_from_the_single_source():
     assert (root / "src" / "tavotto" / "engine" / "brand_mark.py").read_text(
         encoding="utf-8"
     ) == mod.mark_py()
+
+
+def test_model_list_keeps_each_models_reasoning_levels(fake):
+    """真服务（2026-11-25）：每个型号带 supported_reasoning_levels 与 default_reasoning_level；只留 SIWC 能发的档。"""
+    fake.models = {
+        "models": [
+            {
+                "slug": "gpt-x",
+                "visibility": "list",
+                "default_reasoning_level": "medium",
+                "supported_reasoning_levels": [
+                    {"effort": e, "description": "d"}
+                    for e in ("minimal", "low", "medium", "high", "xhigh", "max")
+                ],
+            },
+            {"slug": "gpt-y", "visibility": "list"},
+        ]
+    }
+    _sign_in(fake)
+    x, y = siwc_store.active().models
+    assert x == {
+        "id": "gpt-x",
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": "medium",
+    }
+    assert y == {"id": "gpt-y"}
