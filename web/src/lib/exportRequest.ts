@@ -318,6 +318,27 @@ export function filenameProblem(raw: string, formats: readonly string[]): Filena
 }
 
 /**
+ * 一份排版文档的 `canvas` 段（`scope: 'canvas'` 导出请求 / 修改方案的整版预览共用这一处投影）：
+ * 页面尺寸 + 按 z 序（底 → 顶）的对象，隐藏对象不发，与画布预览同一条投影。
+ */
+export function canvasSegmentOf(
+  doc: Pick<FigureDocument, 'page' | 'objects'>,
+  includePanelTitles = false,
+): NonNullable<ExportRequest['canvas']> {
+  return {
+    page_w_mm: doc.page.w,
+    page_h_mm: doc.page.h,
+    objects: toExportObjects(doc.objects, doc.objects, includePanelTitles).map((object): ExportObject =>
+      // chart_render_profile 已由 toExportObjects 投影（单一出处）；
+      // 这里只把 overrides 从文档对象上摘下来
+      object.type === 'panel' && object.chart
+        ? { ...object, overrides: structuredClone(object.overrides) }
+        : object,
+    ),
+  }
+}
+
+/**
  * UI 状态 → 线上的 `ExportRequest`。**唯一一处**。
  *
  * 多格式共享**同一次调用**的输出，所以 PDF 与 PNG 必然出自同一份对象快照
@@ -358,18 +379,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     if (pdfPanelLayers) request.pdf_panel_layers = true
     if (input.pdfAnnotationLayer === true && formats.includes('pdf')) request.pdf_annotation_layer = true
     if (input.pdfTextAttachment === true && formats.includes('pdf')) request.pdf_text_attachment = true
-    request.canvas = {
-      page_w_mm: input.doc.page.w,
-      page_h_mm: input.doc.page.h,
-      // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
-      objects: toExportObjects(input.doc.objects, input.doc.objects, pdfPanelBookmarks || pdfPanelLayers).map((object): ExportObject =>
-        // chart_render_profile 已由 toExportObjects 投影（单一出处）；
-        // 这里只把 overrides 从文档对象上摘下来
-        object.type === 'panel' && object.chart
-          ? { ...object, overrides: structuredClone(object.overrides) }
-          : object,
-      ),
-    }
+    request.canvas = canvasSegmentOf(input.doc, pdfPanelBookmarks || pdfPanelLayers)
   } else {
     const sourceOf = (figureId: string, panel: PanelObject | null, spec: OriginalOutputSpec | null): ExportOriginalSource => {
       const chart = panel?.fileId === figureId && panel.chart ? panel.chart : null

@@ -23,6 +23,7 @@ import { pickJournal } from '@/lib/journalPick'
 import { bindingFor, builtinEntryById, type JournalPrev, type SpecBinding } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
+import { applyCanvasVersion } from './canvasVersionRecipe'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { sourceFrameOverride } from '@/lib/chartFrame'
 import {
@@ -30,7 +31,6 @@ import {
   frameSwitchAvailable,
   frameSwitchPatch,
   LEGACY_FRAME_OVERRIDE,
-  migrateFigureFrames,
   usesFigureFrame,
 } from '@/lib/figureFrame'
 import { modKey } from '@/lib/utils'
@@ -517,21 +517,8 @@ export function restoreLayoutVersion(
       return false
     })
   }
-  commit(
-    label,
-    (d) => {
-      d.name = version.name
-      d.page = structuredClone(version.page)
-      // 升级前存下的检查点里的面板照样按 ADR 0098 迁移（与读档同一个函数）
-      d.objects = migrateFigureFrames(structuredClone(version.objects))
-      d.guides = structuredClone(version.guides)
-      // 布局组跟着对象走：对象身上的 groupId 指向的是**那一版**的组。只换对象
-      // 不换组，恢复出来的对象会挂在当前排版里不存在（或成员不同）的组上
-      if (version.layoutGroups?.length) d.layoutGroups = structuredClone(version.layoutGroups)
-      else delete d.layoutGroups
-    },
-    { overrides: 'restored' },
-  )
+  // 配方唯一出处在 `canvasVersionRecipe`（从项目时间线找回的工作副本也用它，ADR 0211）
+  commit(label, (d) => applyCanvasVersion(d, version), { overrides: 'restored' })
   return true
 }
 

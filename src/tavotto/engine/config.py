@@ -597,6 +597,22 @@ def set_ai_settings(patch: dict) -> dict:
         return merged
 
 
+def set_taf_understanding(value: dict | None) -> None:
+    """「从数据到图」读懂数据用哪个 AI 的选择（`ai.taf.understanding`，应用级）：`None` = 清除（回到 auto）。在锁里读-改-写，保留 `ai.taf` 里的其它键
+    （实验开关 `enabled` 等）。校验由 `ai_data_aichoice` 做，这里只落盘。"""
+    with _LOCK:
+        cfg = load()
+        ai = dict(cfg.get("ai") or {})
+        taf = dict(ai["taf"]) if isinstance(ai.get("taf"), dict) else {}
+        if value is None:
+            taf.pop("understanding", None)
+        else:
+            taf["understanding"] = dict(value)
+        ai["taf"] = taf
+        cfg["ai"] = ai
+        save(cfg)
+
+
 #: 「转换时允许 AI 不受沙盒限制」（Windows 设置里的一个开关，默认关；方案 B）。只在 Windows 的转换会话里让 Codex 以
 #: `--sandbox danger-full-access` 运行，其它任务与平台完全不受影响（判定在 `ai_agents.codex_sandbox_policy`）
 CONVERT_UNSANDBOXED_KEY = "convert_unsandboxed_windows"

@@ -1,29 +1,63 @@
 import { useMemo } from 'react'
-import { useChangePlanStore } from '@/store/changePlanStore'
+import { useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { AssistantNoteBubble } from './AssistantNoteBubble'
 import { ChangePlanCard } from './ChangePlanCard'
 import { effectiveStatus } from './changePlanModel'
 import { ReviewNoteCard } from './ReviewNoteCard'
 import { usePlanPanel, usePlanSource } from './usePlanFigure'
 
 /**
+ * 助手里要画的方案条目（创建顺序，旧 → 新）：这张图的，加上当前这份文档 / 画布上一键排版的整版方案
+ * （不挂在某张图上，没选图时也看得到）。
+ */
+export function usePanelPlanEntries(panelId: string | undefined): PlanEntry[] {
+  const order = useChangePlanStore((s) => s.order)
+  const entries = useChangePlanStore((s) => s.entries)
+  const documentId = useDocumentStore((s) => s.documentId)
+  const loadSeq = useDocumentStore((s) => s.loadSeq)
+  const canvasId = useDocumentStore((s) => s.activeCanvasId)
+  return useMemo(
+    () =>
+      order
+        .map((k) => entries[k])
+        .filter((e) => e && (e.kind === 'layout' ? e.documentId === documentId && e.loadSeq === loadSeq && e.canvasId === canvasId : !!panelId && e.panelId === panelId)),
+    [order, entries, panelId, documentId, loadSeq, canvasId],
+  )
+}
+
+/** 最新一张**待确认**的方案卡（它的「查看」实心，旧的降次级） */
+export function useLatestReadyKey(mine: PlanEntry[], panelId: string): string | undefined {
+  const panel = usePlanPanel(mine.find((e) => e.kind !== 'layout') ?? { panelId, documentId: '', loadSeq: 0, canvasId: '' })
+  const source = usePlanSource(panel)
+  useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1))
+  return [...mine].reverse().find((e) => effectiveStatus(e, panel?.overrides ?? null, source) === 'ready')?.key
+}
+
+/** 一次方案的一轮：审阅来源 = 审阅意见卡 + 方案卡；助手来源 = 用户的指令气泡 + 方案卡（交给改脚本之后只剩那一行灰字，气泡由改脚本那一轮画） */
+export function ChangePlanTurn({ entry, latest }: { entry: PlanEntry; latest: boolean }) {
+  return (
+    <div className="flex flex-col gap-(--item-gap)" data-change-plan-turn={entry.key}>
+      {entry.from === 'assistant' ? entry.status !== 'handoff' && <AssistantNoteBubble entry={entry} /> : <ReviewNoteCard entry={entry} />}
+      <ChangePlanCard entry={entry} latest={latest} />
+    </div>
+  )
+}
+
+/**
  * 助手转录里这张图的方案卡（数据来自 `changePlanStore`，按项目 + 图分键；切图 / 换项目跟着走）：
  * 一次「交给 Agent 修改」= 一张审阅意见卡（用户一侧）+ 一张修改方案卡（助手一侧）。最新一张**待确认**的方案卡「查看」实心，旧的降次级。
  * 作为转录列表的子项直接排在同一个 flex 容器里（节奏由容器的 gap 管）。
+ * 助手面板里它与改脚本的会话按时间穿插（`AiPanel` 用 `usePanelPlanEntries` + `ChangePlanTurn` 自己排）；这个整块版本给单测与只有方案的场合。
  */
 export function ChangePlanTranscript({ panelId }: { panelId: string }) {
-  const order = useChangePlanStore((s) => s.order)
-  const entries = useChangePlanStore((s) => s.entries)
-  const mine = useMemo(() => order.map((k) => entries[k]).filter((e) => e && e.panelId === panelId), [order, entries, panelId])
-  const panel = usePlanPanel(mine[0] ?? { panelId, documentId: '', loadSeq: 0, canvasId: '' })
-  const source = usePlanSource(panel)
-  const latest = [...mine].reverse().find((e) => effectiveStatus(e, panel?.overrides ?? null, source) === 'ready')?.key
+  const mine = usePanelPlanEntries(panelId)
+  const latest = useLatestReadyKey(mine, panelId)
   return (
     <>
       {mine.map((e) => (
-        <div key={e.key} className="flex flex-col gap-(--item-gap)" data-change-plan-turn={e.key}>
-          <ReviewNoteCard entry={e} />
-          <ChangePlanCard entry={e} latest={e.key === latest} />
-        </div>
+        <ChangePlanTurn key={e.key} entry={e} latest={e.key === latest} />
       ))}
     </>
   )

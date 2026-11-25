@@ -36,13 +36,11 @@ import tempfile
 import threading
 import time
 import traceback
-import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
-import zlib
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -71,6 +69,7 @@ from .engine import (
     ai_catalog as engine_ai_catalog,
     ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
+    ai_data_aichoice as engine_ai_data_aichoice,
     ai_data_figure as engine_ai_data_figure,
     ai_data_overview as engine_ai_data_overview,
     ai_data_progress as engine_ai_data_progress,
@@ -107,6 +106,7 @@ from .engine import (
     diagnostics_frontend as engine_diagnostics_frontend,
     diagsend as engine_diagsend,
     discover as engine_discover,
+    doclock as engine_doclock,
     documentformat as engine_documentformat,
     documents as engine_documents,
     enginesession as engine_enginesession,
@@ -141,6 +141,7 @@ from .engine import (
     journalremote as engine_journalremote,
     launchctx as engine_launchctx,
     launcher as engine_launcher,
+    layoutannotate as engine_layoutannotate,
     layoutsession as engine_layoutsession,
     license as engine_license,
     locate as engine_locate,
@@ -168,6 +169,7 @@ from .engine import (
     project_watch as engine_watch,
     projectcopy as engine_projectcopy,
     projectenv as engine_projectenv,
+    projecthistory as engine_projecthistory,
     projscan as engine_projscan,
     quicklayout as engine_quicklayout,
     rasterhint as engine_rasterhint,
@@ -189,6 +191,7 @@ from .engine import (
     scriptlock as engine_scriptlock,
     session_client as engine_session_client,
     shadowscript as engine_shadowscript,
+    siwc_login as engine_siwc_login,
     sourcelang as engine_sourcelang,
     specfix as engine_specfix,
     startupphase as engine_startupphase,
@@ -891,6 +894,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         engine_pool.IMPORT_FOLDER_ABI_CODE,
         engine_pool.IMAGE_FORMAT_MISMATCH_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
+        engine_pool.SCRIPT_SOURCE_MISSING_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
         # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）
@@ -6333,19 +6337,10 @@ def api_exports(name):
 
 # ------------------------- 可复现项目包 -------------------------------------
 def _doc_objects(doc: dict) -> list[dict]:
-    """布局文档里的全部对象：schema 2 单画布 / schema 3、4 跨全部画布。"""
-    if doc.get("schema") in (
-        engine_documents.SCHEMA_PROJECT,
-        engine_documents.SCHEMA_CHART_PROJECT,
-    ):
-        return [
-            o
-            for c in doc.get("canvases", [])
-            if isinstance(c, dict)
-            for o in c.get("objects", [])
-            if isinstance(o, dict)
-        ]
-    return [o for o in doc.get("objects", []) if isinstance(o, dict)]
+    """布局文档里的全部对象：schema 2 单画布 / schema 3、4 跨全部画布。
+
+    唯一出处在 `engine/projecthistory.doc_objects`（项目内时间线的「非空节点」判据用同一把尺子）。"""
+    return engine_projecthistory.doc_objects(doc)
 
 
 _sha1_of = engine_baked.sha1_of
@@ -9034,6 +9029,14 @@ def _review_render(target: dict, render: dict, long_edge: int):
             ],
         }
         spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": export_seg}
+    data, job = _export_png_bytes(spec, long_mm, long_edge)
+    elements, size_mm = _review_elements(kind, job.request, seg)
+    return engine_reviewshare.Rendered(data, elements, size_mm)
+
+
+def _export_png_bytes(spec: dict, long_mm: float, long_edge: int):
+    """导出管线出一张 PNG（长边约 `long_edge` px），**不写项目导出目录**：中间文件全在私有临时目录。→ `(PNG 字节, job)`。
+    外部审阅的出图回调与修改方案的整版预览（`/api/change-plans/layout-preview`）共用这一处。"""
     ppi = round(long_edge / (long_mm / 25.4)) if long_mm > 0 else round(long_edge / 12)
     spec.update(
         {
@@ -9060,9 +9063,7 @@ def _review_render(target: dict, render: dict, long_edge: int):
         )
         if png is None:
             raise ValueError("render_no_png")
-        data = Path(png.tmp_path).read_bytes()
-        elements, size_mm = _review_elements(kind, job.request, seg)
-        return engine_reviewshare.Rendered(data, elements, size_mm)
+        return Path(png.tmp_path).read_bytes(), job
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -12820,7 +12821,7 @@ def _change_plan_comments(body: dict, rel_id: str) -> list[dict] | None:
 
 @app.post("/api/change-plans")
 def api_change_plans_create():
-    """按审阅意见生成一份修改方案（**只算不写**）。请求：`{id, patches, source: "review", comments | share_id, client_request_id?}`——
+    """按审阅意见生成一份修改方案（**只算不写**）。请求：`{id, patches, source: "review", comments | share_id, client_request_id?}`；`source: "assistant"` 改带 `instruction`（改图助手里用户的原话）与可选的 `target`（选中元素 gid）——
     `patches` 是这张图此刻的全量 override 列表（B0）。同步只做能立刻判的事：请求形状、native（409 `change_plan_native_unsupported`）、
     没有脚本的图（409 `change_plan_not_editable`）、没连 AI（409 `change_plan_no_connection` 等）、同一张图已有方案任务（409 `change_plan_busy`）；
     其余交给后台线程，回 202 `{plan_id, state: "running"}`，用 `GET /api/change-plans/<plan_id>` 轮询。同一 `client_request_id` 回同一个任务。"""
@@ -12829,11 +12830,12 @@ def api_change_plans_create():
         return _change_plan_error("invalid_change_plan")
     rel_id, base = body.get("id"), body.get("patches")
     rid = body.get("client_request_id")
+    source = body.get("source")
     if (
         not isinstance(rel_id, str)
         or not rel_id
         or not isinstance(base, list)
-        or body.get("source") != "review"
+        or source not in engine_changeplan.SOURCES
         or (
             rid is not None
             and not (isinstance(rid, str) and engine_changeplan.REQUEST_ID.match(rid))
@@ -12843,7 +12845,13 @@ def api_change_plans_create():
         return _change_plan_error("invalid_change_plan")
     if engine_patchspec.canonicalize_with_diagnostics(base)[1]:
         return jsonify({"error": "patches 含无效条目", "code": "invalid_patches"}), 400
-    comments = _change_plan_comments(body, rel_id)
+    if source == "assistant":
+        # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录
+        if any(k in body for k in ("comments", "share_id")):
+            return _change_plan_error("invalid_change_plan")
+        comments = engine_changeplan.assistant_comments(body.get("instruction"), body.get("target"))
+    else:
+        comments = _change_plan_comments(body, rel_id)
     if comments is None:
         return _change_plan_error("invalid_change_plan")
     if not comments:
@@ -12863,7 +12871,10 @@ def api_change_plans_create():
     script_name = getattr(worker, "script_name", None)
     if script_name and engine_ai.script_busy(require_project() / script_name):
         return _change_plan_error("change_plan_busy")
-    failure = engine_changeplan.connection_failure()
+    selection = engine_changeplan.clean_selection(body)
+    if selection is None:
+        return _change_plan_error("invalid_change_plan")
+    failure = engine_changeplan.connection_failure(selection)
     if failure is not None:
         return _change_plan_error(failure)
     ctx = current_ctx()
@@ -12874,7 +12885,7 @@ def api_change_plans_create():
     if created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), comments),
+            args=(ctx, task, rel_id, list(base), comments, source, None, selection),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12929,7 +12940,10 @@ def api_change_plans_revise(plan_id: str):
     script_name = getattr(worker, "script_name", None)
     if script_name and engine_ai.script_busy(require_project() / script_name):
         return _change_plan_error("change_plan_busy")
-    failure = engine_changeplan.connection_failure()
+    selection = engine_changeplan.clean_selection(body)
+    if selection is None:
+        return _change_plan_error("invalid_change_plan")
+    failure = engine_changeplan.connection_failure(selection)
     if failure is not None:
         return _change_plan_error(failure)
     try:
@@ -12939,7 +12953,7 @@ def api_change_plans_revise(plan_id: str):
     if created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), notes, prev),
+            args=(ctx, task, rel_id, list(base), notes, "review", prev, selection),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12950,12 +12964,16 @@ def api_change_plans_revise(plan_id: str):
     return resp
 
 
-def _change_plan_thread(ctx, task, rel_id, base, comments, prev=None) -> None:
+def _change_plan_thread(
+    ctx, task, rel_id, base, comments, source="review", prev=None, selection=None
+) -> None:
     """后台线程：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail = "", ""
     try:
         with bound_project(ctx):
-            plan, before_png, after_png = _change_plan_compute(task, rel_id, base, comments, prev)
+            plan, before_png, after_png = _change_plan_compute(
+                task, rel_id, base, comments, source, prev, selection
+            )
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png)
     except engine_changeplan.PlanFailure as exc:
         code, detail = exc.code, exc.detail
@@ -12983,7 +13001,13 @@ def _change_plan_snapshot(resp) -> tuple[bytes, dict]:
 
 
 def _change_plan_compute(
-    task, rel_id: str, base: list, comments: list[dict], prev: dict | None = None
+    task,
+    rel_id: str,
+    base: list,
+    comments: list[dict],
+    source: str = "review",
+    prev: dict | None = None,
+    selection: dict | None = None,
 ):
     """渲染 B0 → 问模型 → 候选渲染 → 现算有效改动 → 方案。→ `(plan, before_png, after_png)`；失败抛 `PlanFailure`。
 
@@ -13050,7 +13074,14 @@ def _change_plan_compute(
             start_png, start_man = snapshot(start)
             previous = ec.previous_summary(prev)
         task.phase = "model"
-        proposal = ec.ask_model(comments, start_man, previous)
+        # 续改用审阅那份提示（它带续改说明）；助手来源的首版用助手提示
+        proposal = ec.ask_model(
+            comments,
+            start_man,
+            "review" if prev is not None else source,
+            previous,
+            selection,
+        )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         cand, proposal = ec.candidate_patches(start, proposal, start_man)
@@ -13096,6 +13127,7 @@ def _change_plan_compute(
             groups=groups,
             unhandled=unhandled,
             base_patches=base,
+            source=source,
         )
     else:
         # 上一版没被批注改掉的审阅意见（组与未处理）带着走；组的标签取上一版的（批注组取批注文字）
@@ -13197,6 +13229,41 @@ def api_change_plans_discard(plan_id: str):
     if engine_changeplan.PLAN_ID.match(plan_id) is None:
         return _change_plan_error("change_plan_unknown")
     return jsonify({"discarded": engine_changeplan.discard(current_ctx().id, plan_id)})
+
+
+@app.post("/api/change-plans/layout-preview")
+def api_change_plans_layout_preview():
+    """一键排版方案卡的整版预览（ADR 0206 §一 `source: quick_layout`，前端算好方案、后端只出图）：`{canvas: {page_w_mm, page_h_mm, objects}, long_edge?}`
+    → 一张 PNG。走导出管线（与外部审阅出排版图同一处 `_export_png_bytes`），**不写项目导出目录、不登记、不提交**；
+    前端把「修改前」「修改后」两份画布各发一次。失败回稳定码 `change_plan_render_failed`，图一个字没动。"""
+    body = request.get_json(force=True, silent=True)
+    seg = body.get("canvas") if isinstance(body, dict) else None
+    objs = seg.get("objects") if isinstance(seg, dict) else None
+    if (
+        not isinstance(objs, list)
+        or len(objs) > 400
+        or not all(isinstance(o, dict) for o in objs)
+        or not all(
+            isinstance(seg.get(k), (int, float)) and not isinstance(seg.get(k), bool)
+            for k in ("page_w_mm", "page_h_mm")
+        )
+    ):
+        return _change_plan_error("invalid_change_plan")
+    edge = body.get("long_edge", 1600)
+    if not isinstance(edge, int) or isinstance(edge, bool):
+        return _change_plan_error("invalid_change_plan")
+    edge = max(400, min(2400, edge))
+    long_mm = max(float(seg["page_w_mm"]), float(seg["page_h_mm"]))
+    spec = {"scope": engine_exportreq.SCOPE_CANVAS, "canvas": dict(seg)}
+    pdfbackend.selected()
+    try:
+        data, _job = _export_png_bytes(spec, long_mm, edge)
+    except Exception:  # noqa: BLE001 - 预览出不来只是没有对比图：稳定码，不是 500
+        LOG.warning("整版预览渲染失败", exc_info=True)
+        return _change_plan_error("change_plan_render_failed")
+    resp = Response(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.post("/api/engine/invalidate")
@@ -14861,11 +14928,13 @@ def api_engine_sync_overrides():
             # 图内副本（ADR 0207）及它 gid 上的全部修改：同步按位置映射，源在目标图上未必存在，不跨图同步
             skipped.append({**p, "skip_reason": SYNC_SKIP_COPY})
             continue
-        m = re.match(r"axes_(\d+)(\..+)?$", gid)
-        if not m:
+        # 不用 `(\..+)?$` 这类回溯正则（CodeQL py/polynomial-redos #50）：只匹配前缀数字，余下部分按字符串判
+        m = re.match(r"axes_(\d+)", gid)
+        rest = gid[m.end() :] if m else ""
+        if not m or (rest and (len(rest) < 2 or rest[0] != ".")):
             skipped.append(p)  # figure / fig.texts 级不映射
             continue
-        i, rest = int(m.group(1)), m.group(2) or ""
+        i = int(m.group(1))
         ni = conv(i)
         if ni is None:
             unmatched.append(p)
@@ -15073,6 +15142,8 @@ def api_ai_capabilities():
         {
             **engine_ai.capabilities(refresh=refresh),
             "taf_enabled": engine_ai_figure_edit.enabled(),
+            # 「改图助手先出修改方案卡」的开关（ADR 0206 §一；默认开，`ai.change_plan.enabled = false` 才关）
+            "change_plan_enabled": engine_changeplan.enabled(),
             # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（ADR 0148 / 0149）：有内置执行器能直接用的 API 连接，
             # 或有可用的 Codex / Claude Code（经 MCP 修复模式，D3）时为 true；都没有则按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
             "ai_fix_available": engine_fixsession.available(),
@@ -15160,6 +15231,18 @@ def api_ai_convert_unsandboxed():
         abort(400)
     value = engine_config.set_convert_unsandboxed_windows(body["enabled"])
     resp = jsonify({"convert_unsandboxed_windows": value})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.put("/api/ai/change-plan")
+def api_ai_change_plan_switch():
+    """设置里的开关「改图前先给我看修改方案」（`ai.change_plan.enabled`，默认开；ADR 0206）：关了 = 改图助手与一键排版回到旧行为。"""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("enabled"), bool):
+        abort(400)
+    value = engine_changeplan.set_enabled(body["enabled"])
+    resp = jsonify({"change_plan_enabled": value})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -18870,6 +18953,67 @@ def api_ai_oauth_cancel(flow_id):
     return jsonify(flow)
 
 
+# ------------------------- Sign in with ChatGPT（ADR 0209；开关 `TAVOTTO_EXPERIMENTAL_SIWC` 关时一律 404） -------------------------
+#: 登录失败原因码 → 稳定错误码（文案在前端 errors.json）
+def _siwc_error(exc: "engine_siwc_login.LoginError"):
+    if exc.code == "disabled":
+        return jsonify({"error": "Sign in with ChatGPT 未开启", "code": "siwc_disabled"}), 404
+    if exc.code == "port_unavailable":
+        return jsonify({"error": "本机回调端口起不来", "code": "siwc_port_unavailable"}), 503
+    return jsonify(
+        {"error": "ChatGPT 登录失败", "code": "siwc_login_failed", "params": {"reason": exc.code}}
+    ), 502
+
+
+def _siwc_start(new_account: bool):
+    try:
+        flow = engine_siwc_login.start(new_account=new_account)
+    except engine_siwc_login.LoginError as exc:
+        return _siwc_error(exc)
+    resp = jsonify({"ok": True, "flow_id": flow["flow_id"], "flow": flow})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/siwc/login")
+def api_ai_siwc_login():
+    """发起 ChatGPT 登录：返回 `flow`（带 `authorize_url`，前端用系统浏览器打开）；进度轮询 `GET /api/ai/siwc/flows/<id>`。
+    body 可选 `{new_account: true}` = 换一个账号（首次注册），缺省 = 再次登录上次的账号。回调由一次性本机监听器接收（不是 Flask 路由）。"""
+    body = request.get_json(silent=True)
+    return _siwc_start(bool(isinstance(body, dict) and body.get("new_account") is True))
+
+
+@app.get("/api/ai/siwc/flows/<flow_id>")
+def api_ai_siwc_flow(flow_id):
+    flow = engine_siwc_login.status(flow_id)
+    if flow is None:
+        return jsonify({"error": "登录流程不存在", "code": "oauth_flow_not_found"}), 404
+    if flow["state"] in ("signed_in", "plan_disabled"):
+        engine_ai.invalidate_capabilities()
+    resp = jsonify(flow)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/siwc/flows/<flow_id>/cancel")
+def api_ai_siwc_cancel(flow_id):
+    flow = engine_siwc_login.cancel(flow_id)
+    if flow is None:
+        return jsonify({"error": "登录流程不存在", "code": "oauth_flow_not_found"}), 404
+    return jsonify(flow)
+
+
+@app.post("/api/ai/siwc/models/refresh")
+def api_ai_siwc_models_refresh():
+    """用当前账号重取一次型号清单（联网）。"""
+    try:
+        engine_siwc_login.refresh_models()
+    except engine_siwc_login.LoginError as exc:
+        return _siwc_error(exc)
+    engine_ai.invalidate_capabilities()
+    return jsonify(engine_ai.capabilities(refresh=True))
+
+
 # ------------------------- 「连接 AI」（接口约定 2026-10-24；视图见 engine/ai_connections.py） -------------------------
 def _connection_error(exc: "engine_ai_connections.ConnectionRefused"):
     return jsonify({"error": exc.code, "code": exc.code, "params": exc.params}), exc.status
@@ -18943,11 +19087,11 @@ def api_ai_connection_check(cid):
 def api_ai_connection_delete(cid):
     """断开一条 Key / 账号登录类连接（订阅类不可删，只能在对应的命令行里退出）。"""
     try:
-        engine_ai_connections.delete_connection(cid)
+        extra = engine_ai_connections.delete_connection(cid) or {}
     except engine_ai_connections.ConnectionRefused as exc:
         return _connection_error(exc)
     engine_ai.invalidate_capabilities()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, **extra})
 
 
 @app.post("/api/ai/connections/<cid>/login")
@@ -18963,6 +19107,8 @@ def api_ai_connection_login(cid):
             return jsonify({"ok": True, **engine_ai.start_login(target)})
         except engine_ai.AgentError as exc:
             return _agent_error(exc)
+    if kind == "siwc":
+        return _siwc_start(False)
     body = request.get_json(silent=True)
     region = body.get("region") if isinstance(body, dict) else None
     try:
@@ -19867,13 +20013,64 @@ def api_ai_data_files():
                 row["sheets"] = None
         files.append(row)
     # `understanding_available`：「读懂数据」此刻有没有可用连接（只读事实、不联网；前端据此决定要不要出「连接 AI」胶囊，连接状态变化后随清单重取）
+    understanding = engine_ai_data_roles.understanding_state()
     resp = jsonify(
         {
             "files": files,
             "truncated": truncated,
-            "understanding_available": engine_ai_data_roles.available(),
+            # 语义 = 此刻会用 AI（用户关了 / 指定的用不了 / 没有连接都是 False）；完整状态与可选清单在 `understanding`
+            "understanding_available": understanding["state"] == "on",
+            "understanding": understanding,
         }
     )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+_UNDERSTANDING_KEYS = frozenset({"mode", "connection"})
+
+
+@app.get("/api/ai/data-understanding")
+def api_ai_data_understanding_get():
+    """「读懂数据」用哪个 AI（**实验开关后面**、会话认证、只读）：回 `{understanding: {state, mode, connection, options}}`，见
+    `ai_data_roles.understanding_state`。只读本地配置与能力缓存——不联网、不刷新令牌、不探测，前端可以随连接状态变化反复调。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    resp = jsonify({"understanding": engine_ai_data_roles.understanding_state()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/data-understanding")
+def api_ai_data_understanding_set():
+    """设置「读懂数据」用哪个 AI（**实验开关后面**、会话认证）。body 只认 `{mode: "auto" | "off" | "connection", connection?: <连接 id>}`：
+    多余的键 / 类型不对 / `auto`、`off` 带了 `connection` = 400 `propose_input_invalid`；`connection` 的 id 不在**此刻**的可选清单里 = 400
+    `understanding_connection_unavailable`（什么都不写）。应用级设置（不是按项目）。回 `{understanding}`，不回显任何密钥 / 地址。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    body = request.get_json(force=True, silent=True)
+    mode = body.get("mode") if isinstance(body, dict) else None
+    cid = body.get("connection") if isinstance(body, dict) else None
+    if (
+        not isinstance(body, dict)
+        or set(body) - _UNDERSTANDING_KEYS
+        or mode not in engine_ai_data_aichoice.MODES
+        or (mode == "connection") != isinstance(cid, str)
+        or (mode == "connection" and not 0 < len(cid) <= 200)
+    ):
+        return jsonify({"error": "请求不合格", "code": "propose_input_invalid"}), 400
+    state = engine_ai_data_roles.apply_choice(mode, cid)
+    if state is None:
+        return (
+            jsonify(
+                {
+                    "error": "该模型无法连接，请换一个尝试",
+                    "code": "understanding_connection_unavailable",
+                }
+            ),
+            400,
+        )
+    resp = jsonify({"understanding": state})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -20702,6 +20899,26 @@ def api_layout_get(name):
     abort(404)
 
 
+@app.get("/api/layouts/<name>/agent-additions")
+def api_layout_agent_additions(name):
+    """「把 Agent 加的并进来」（ADR 0208 §五）：桌面拿着基线 `base_revision`、磁盘上已是别的修订号时，
+    多出来的是不是**只有** Agent 追加的对象（判据在 `engine/layoutannotate.agent_additions`，全部来自撤销留存）。
+
+    只读、只认当前项目 `tavottofile/` 里的那份；不是就回 `{"available": false}`，桌面照旧走覆盖 / 另存。"""
+    ctx = _request_ctx()
+    base = request.args.get("base_revision") or ""
+    if ctx is None or not base:
+        return jsonify({"available": False})
+    stem = layout_path(name, project_layout_dir(ctx)).stem
+    try:
+        got = engine_layoutannotate.agent_additions(ctx.path, stem, base)
+    except engine_layoutannotate.LayoutError:
+        got = None
+    if got is None:
+        return jsonify({"available": False})
+    return jsonify({"available": True, **got})
+
+
 @app.post("/api/layouts/<name>")
 def api_layout_save(name):
     """用户点名的那次保存：「另存为」，以及 ⌘S 写回项目里绑定的那份排版（ADR 0096）。
@@ -20888,50 +21105,18 @@ def _autosave_path(doc_id: str) -> Path:
 #: 用**固定条数的锁带**而不是「doc_id → 锁」的表：锁表要自己治理生命周期
 #: （什么时候能删掉一把锁没有可靠信号，而它会随打开过的文档数一直长），
 #: 锁带的内存是常数。不同文档偶尔共用一把锁只是多串行一点点，正确性不受影响。
-_DOCUMENT_LOCKS = [threading.Lock() for _ in range(64)]
-_DOCUMENT_LOCKS_HELD = threading.local()
+# 锁带与判据的唯一出处在 `engine/doclock.py`（ADR 0208 第 2 期：插件的排版写入口与这里共用同一把跨进程锁）
+_DOCUMENT_LOCKS = engine_doclock.LOCKS
+_DOCUMENT_LOCKS_HELD = engine_doclock.HELD
 
 
 #: 等槽位文档锁的上限（秒；要大于持锁方最长的合理停顿——有用例会让持锁方停 10 s）。超时抛 `SessionStateUnavailable` → 503 `session_unavailable`，正文一个字节没写
 DOCUMENT_LOCK_TIMEOUT_S = 30.0
 
 
-class _DocumentLock:
-    """一个条带的「线程锁 + 跨进程文件锁」。**不可重入**：持锁期间不要再取任何文档锁。"""
-
-    def __init__(self, stripe: int) -> None:
-        self._stripe = stripe
-        self._fd: int | None = None
-
-    def locked(self) -> bool:
-        """这个条带此刻有人持着（本进程内；测试与自检用）。"""
-        return _DOCUMENT_LOCKS[self._stripe].locked()
-
-    def __enter__(self) -> "_DocumentLock":
-        deadline = time.monotonic() + DOCUMENT_LOCK_TIMEOUT_S
-        thread_lock = _DOCUMENT_LOCKS[self._stripe]
-        if not thread_lock.acquire(timeout=DOCUMENT_LOCK_TIMEOUT_S):
-            raise engine_layoutsession.SessionStateUnavailable(
-                "槽位被本进程的另一个请求占着，等待超时"
-            )
-        try:
-            self._fd = engine_layoutsession.acquire_file_lock(
-                engine_layoutsession.doclock_path(self._stripe), deadline
-            )
-        except BaseException:
-            thread_lock.release()
-            raise
-        _DOCUMENT_LOCKS_HELD.depth = getattr(_DOCUMENT_LOCKS_HELD, "depth", 0) + 1
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        fd, self._fd = self._fd, None
-        _DOCUMENT_LOCKS_HELD.depth = getattr(_DOCUMENT_LOCKS_HELD, "depth", 1) - 1
-        try:
-            if fd is not None:
-                engine_layoutsession.release_file_lock(fd)
-        finally:
-            _DOCUMENT_LOCKS[self._stripe].release()
+def _DocumentLock(stripe: int) -> engine_doclock.DocumentLock:  # noqa: N802 — 保留旧名：调用方与用例都按它取锁
+    """一个条带的「线程锁 + 跨进程文件锁」（实现在 `engine/doclock.py`）；等锁上限读本模块的 `DOCUMENT_LOCK_TIMEOUT_S`。"""
+    return engine_doclock.DocumentLock(stripe, DOCUMENT_LOCK_TIMEOUT_S)
 
 
 def _holds_document_lock() -> bool:
@@ -20954,16 +21139,10 @@ def _all_document_locks():
         yield
 
 
-def _lock_stripe(path: Path) -> int:
-    """条带下标只取决于**文件名**（Unicode NFC + casefold），不取决于路径怎么拼：两个进程经符号链接别名 / 大小写不同的写法
-    走到同一个槽位时必须选到同一把锁。不同目录里的同名文件共用一个条带，只是多串行一点。"""
-    # NFC + casefold + NFC：组合 / 分解写法（macOS 上同一个文件）与大小写写法都落到同一个条带
-    name = unicodedata.normalize("NFC", Path(path).name)
-    name = unicodedata.normalize("NFC", name.casefold())
-    return zlib.crc32(name.encode("utf-8")) % len(_DOCUMENT_LOCKS)
+_lock_stripe = engine_doclock.lock_stripe
 
 
-def _document_lock(path: Path) -> _DocumentLock:
+def _document_lock(path: Path) -> engine_doclock.DocumentLock:
     """按**落盘路径**取锁，不按 doc_id / 画布名：`_autosave_path` 与
     `layout_path` 都会把非法字符归一成 `_`，于是两个不同的名字可能指向同一个
     文件——按名字分锁的话，那两个请求以为自己各写各的。
@@ -21089,27 +21268,9 @@ def _external_change(current: str | None, path: Path):
     ), 409
 
 
-#: `base_revision` 的哨兵：调用方**读过**，磁盘上当时没有这份文件。
-#: 没有它，判据就只钉住了一条边——两个标签页同时新建同一份文档时双方都没有
-#: hash 可带，后写的那个把先写的那份整份盖掉，而这正是这条判据要挡的事。
-REVISION_ABSENT = "absent"
-
-
-def _revision_conflict(base_revision: str, current: str | None) -> bool:
-    """带着这个基线来写，会不会盖掉别人的内容？
-
-    两侧**故意不对称**：
-
-    - 基线是 `absent`（我以为没有文件）而磁盘上有 → 冲突。那份内容不是我的，
-      整份 PUT 就是把它删掉。
-    - 基线是某个 hash 而磁盘上没有文件（被外部删了）→ **放行**。这条判据挡的
-      是「覆盖别人的内容」，不是「重建一个被删掉的文件」；此时磁盘上没有任何
-      内容会因为这次写入而消失，而内存里那份是用户真实的工作。
-    - 基线是某个 hash 而磁盘上是另一个 hash → 冲突。
-    """
-    if base_revision == REVISION_ABSENT:
-        return current is not None
-    return current is not None and current != base_revision
+#: `base_revision` 的哨兵与判据：唯一出处 `engine/doclock.py`（两侧故意不对称，说明在那里）
+REVISION_ABSENT = engine_doclock.REVISION_ABSENT
+_revision_conflict = engine_doclock.revision_conflict
 
 
 @app.put("/api/autosave/<doc_id>")
@@ -22190,6 +22351,223 @@ def api_layout_session_candidates():
     return resp
 
 
+# ---- 项目自己的时间线作为恢复证据（ADR 0211 第一期 1–4） ----
+# 项目文件夹挪走 / 复制 / 换电脑 / 换 origin 之后，按绝对路径作键的会话状态与前端索引都认不出它，
+# 随文件夹走的只有 `<项目>/tavottofile/versions/<docId>.vx/`。这里把其中有内容的列出来，并说清这一份
+# 该怎么用（`mode`）。判据只在后端：前端看不到项目路径，判不了旧路径还在不在。
+#
+#   mode = "slot"  本机槽位就是这份排版（归属是本项目 / 没有记录 / 记着的旧项目路径已不在 = 挪走了）
+#                  → 用槽位那份（它含节点之间的修改）；挪走 / 没有记录时先 `claim` 把归属改到本项目
+#   mode = "node"  没有本机槽位，归属不冲突 → 用最近一个非空节点恢复成同一个 docId 的工作副本
+#   mode = "copy"  旧项目路径还在（= 复制）/ 归属待核对 / 会话状态读不全 / 槽位坏了
+#                  → 用节点恢复成一份**新 docId** 的排版，不动旧项目的槽位与归属
+#
+# 只读端点不写任何东西；`claim` 在槽位文档锁里重判一遍再写（不信客户端自报）。都在 ADR 0008 认证之下。
+
+
+def _history_source_store(slot: Path, revision: str, state: dict, ctx) -> Path:
+    """判槽位能不能恢复时，图表附件到哪个存储根里去核。
+
+    平常与 `_autosave_source_store` 相同（按槽位归属记的项目）。**挪走**的那一档例外：归属里记的旧项目路径
+    确定已不在，而附件（`tavottofile/` 里）已经跟着文件夹到了当前项目——还去旧路径找，会把一份有效的自动保存
+    判成读不出、退成从更旧的节点另开一份，节点之后的修改（含后来新加的整张图表）就丢了（Codex #2235 P1）。
+    旧路径还在（复制）/ 没有归属记录时不改口径。"""
+    recorded = state["owners"].get(slot.stem)
+    if (
+        ctx is not None
+        and slot.stem in state["owners"]
+        and engine_projecthistory.owner_path_gone(recorded)
+    ):
+        return project_layout_dir(ctx)
+    return _autosave_source_store(slot, revision)
+
+
+def _history_slot(doc_id: str, state: dict, ctx) -> tuple[dict | None, str | None, bool]:
+    """槽位 `doc_id` 此刻的 `(可恢复的正文, revision, 槽位文件在不在)`。只读一遍字节，调用方持槽位文档锁。
+
+    「可恢复」与 `_slot_recoverable` 同一判据（`loads_document` + `validate_document` + 图表来源）；
+    图表附件的存储根见 `_history_source_store`（挪走时按当前项目核）。`state` 是调用方在同一把锁里读的会话状态。"""
+    slot = _file_named(_autosave_directory(), doc_id)
+    if slot is None:
+        return None, None, False
+    try:
+        raw = slot.read_bytes()
+    except OSError:
+        return None, None, True
+    revision = engine_atomicio.revision_of(raw)
+    try:
+        loaded = engine_documents.loads_document(raw)
+        document = _validate_storage_document(loaded)
+        if _has_chart_state(document):
+            _verify_document_chart_sources(
+                document, _history_source_store(slot, revision, state, ctx)
+            )
+    except (ValueError, RecursionError):
+        return None, revision, True
+    return (loaded if isinstance(loaded, dict) else None), revision, True
+
+
+def _history_verdict(doc_id: str, key, state: dict, status: str, slot_doc, slot_rev, slot_exists):
+    """`(mode, owner)`：这份项目内时间线该怎么用。见上面的表；owner ∈ this|none|moved|other|unknown。"""
+    if status == engine_layoutsession.STATUS_DEGRADED:
+        return "copy", "unknown"  # 归属表读不全：空的 owners 不是「没人认领」，不认领、不复用 docId
+    verdict, _verified = engine_layoutsession.owner_status_in(state, doc_id, key, slot_rev)
+    if verdict == "unverified":
+        return "copy", "unknown"
+    if verdict == "other":
+        recorded = state["owners"].get(doc_id)
+        if not engine_projecthistory.owner_path_gone(recorded):
+            return "copy", "other"  # 旧路径还在 = 复制：旧项目的排版与归属一个字节不动
+        owner = "moved"
+    elif verdict == "this":
+        owner = "this"
+    else:
+        owner = "none"
+    if slot_doc is not None:
+        return "slot", owner
+    if slot_exists:
+        return "copy", owner  # 槽位在但读不出：不拿节点覆盖它，另开一份
+    if owner == "moved":
+        # owners 还记着旧路径而槽位已不在：沿用 docId 的话第一次 `PUT last` 会按旧归属 409（`owner_conflict`），
+        # 认领又只认有槽位的那一档——另开一份，最省事也不碰旧记录
+        return "copy", owner
+    return "node", owner
+
+
+def _history_item(doc_id: str, versions_dir: Path, key, ctx) -> dict | None:
+    """一份项目内时间线的候选摘要；没有非空节点回 `None`。在槽位文档锁里读归属与槽位（与 `/owner` 同一条规则）。"""
+    node = engine_projecthistory.latest_content_node(versions_dir, doc_id)
+    if node is None:
+        return None  # 空时间线 / 只有空节点（旧版每次加载留下的空 `open`）：不进候选
+    with _document_lock(_autosave_path(doc_id)):
+        state, status = engine_layoutsession.read_readonly()
+        slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
+        mode, owner = _history_verdict(doc_id, key, state, status, slot_doc, slot_rev, slot_exists)
+    # 回出去的取值只能出自闭集（前端与假后端逐字镜像它）
+    assert mode in engine_projecthistory.HISTORY_MODES
+    assert owner in engine_projecthistory.HISTORY_OWNERS
+    name = ""
+    node_newer = False
+    if slot_doc is not None:
+        proj = slot_doc.get("project")
+        if isinstance(proj, dict) and isinstance(proj.get("name"), str):
+            name = proj["name"]
+        if mode == "slot" and not engine_projecthistory.same_canvas_content(slot_doc, node):
+            # 「比节点新」只比两边自己记下的时刻：槽位正文的 updatedAt（写它的那台机器的钟）与节点的 ts
+            # （写它的后端的钟）。同一台机器上是同一个钟；内容相同时直接算槽位不旧（节点就是从它拍的）
+            upd = slot_doc.get("updatedAt")
+            node_newer = (
+                node["schema"] == 2
+                and isinstance(upd, (int, float))
+                and not isinstance(upd, bool)
+                and node["ts"] > upd
+            )
+    if not name:
+        doc = node["doc"]
+        proj = doc.get("project") if isinstance(doc, dict) else None
+        if isinstance(proj, dict) and isinstance(proj.get("name"), str):
+            name = proj["name"]
+        elif node["canvasName"]:
+            name = node["canvasName"]
+        elif isinstance(doc, dict) and isinstance(doc.get("name"), str):
+            name = doc["name"]
+    return {
+        "doc_id": doc_id,
+        "name": name[: engine_layoutsession.MAX_NAME_CHARS],
+        "vid": node["vid"],
+        "ts": node["ts"],
+        "canvasId": node["canvasId"],
+        "schema": node["schema"],
+        "canvases": node["canvases"],
+        "objects": node["objects"],
+        "mode": mode,
+        "owner": owner,
+        "revision": slot_rev if mode == "slot" else None,
+        "node_newer": node_newer,
+    }
+
+
+@app.get("/api/layout-session/project-history")
+def api_layout_session_project_history():
+    """只读：当前项目 `tavottofile/versions/*.vx` 里有内容的排版（ADR 0211 第一期）。
+
+    回 `{items, index, truncated}`；没开项目回空列表。`truncated` = 没列全（目录条目太多 / 有内容的超过上限）。每项见 `_history_item`。不写任何东西、不回路径。
+    一份时间线读不出只赔它自己。"""
+    ctx = _request_ctx()
+    store = project_store_dir(ctx)
+    if ctx is None or store is None:
+        resp = jsonify({"items": [], "index": "ok"})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    key = engine_layoutsession.project_key(ctx.path)
+    versions = engine_documentformat.versions_dir(store, VERSIONS_DIR)
+    try:
+        names, truncated = engine_projecthistory.store_names(versions)
+    except OSError:
+        return jsonify(
+            {"error": "项目里的排版历史此刻读不出来", "code": "candidates_unavailable"}
+        ), 503
+    _state, index = engine_layoutsession.read_readonly()
+    items: list[dict] = []
+    for doc_id in names:
+        if len(items) >= engine_projecthistory.MAX_STORES:
+            truncated = True  # 有内容的太多：不保证列全，前端据此不自动采用
+            break
+        try:
+            item = _history_item(doc_id, versions, key, ctx)
+        except engine_layoutsession.SessionStateUnavailable:
+            return jsonify({"error": "本机排版此刻读不出来", "code": "candidates_unavailable"}), 503
+        if item is not None:
+            items.append(item)
+    items.sort(key=lambda i: (-int(i["ts"] or 0), i["doc_id"]))
+    resp = jsonify({"items": items, "index": index, "truncated": truncated})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/layout-session/project-history/claim")
+def api_layout_session_project_history_claim():
+    """把槽位 `doc_id` 的归属改到当前项目（挪走的项目 / 没有归属记录的旧槽位）。
+
+    在槽位文档锁里**重判一遍**：仍是 `mode == "slot"`、owner 是 moved / none（this 回 ok 不写）、
+    槽位 revision 等于请求带来的那个（客户端看到的就是这一份）才写 owners + owner_revisions。
+    否则 409 `claim_refused`，一个字节不动。旧项目路径还在（复制）永远拒。"""
+    body = request.get_json(silent=True)
+    doc_id = body.get("doc_id") if isinstance(body, dict) else None
+    revision = body.get("revision") if isinstance(body, dict) else None
+    if not engine_layoutsession.valid_doc_id(doc_id) or not isinstance(revision, str):
+        return jsonify({"error": "doc_id / revision 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    store = project_store_dir(ctx)
+    if ctx is None or store is None:
+        return jsonify({"error": "没有打开项目", "code": "claim_refused"}), 409
+    key = engine_layoutsession.project_key(ctx.path)
+    versions = engine_documentformat.versions_dir(store, VERSIONS_DIR)
+    refused = jsonify({"error": "这份排版此刻不能认领到当前项目", "code": "claim_refused"}), 409
+    try:
+        names, _truncated = engine_projecthistory.store_names(versions)
+    except OSError:
+        return _session_unavailable()
+    if doc_id not in names:
+        return refused
+    if engine_projecthistory.latest_content_node(versions, doc_id) is None:
+        return refused
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            state, status = engine_layoutsession.read_readonly()
+            slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
+            mode, owner = _history_verdict(
+                doc_id, key, state, status, slot_doc, slot_rev, slot_exists
+            )
+            if mode != "slot" or slot_rev != revision:
+                return refused
+            if owner != "this":
+                engine_layoutsession.record_owner(doc_id, key, slot_rev)
+    except OSError:
+        return _session_unavailable()
+    return jsonify({"ok": True, "revision": revision, "owner": "this"})
+
+
 @app.get("/api/preferences/export-defaults")
 def api_export_defaults_get():
     """导出默认值（按用户一份，数据目录）。没存过是 `{"defaults": null}`，不是 404。"""
@@ -23159,6 +23537,10 @@ def api_versions_get(doc_id, vid):
     return jsonify(v)
 
 
+#: 空白排版（`_doc_objects` 为空）上不写的关键时刻（ADR 0211 第一期 4）；与前端 `useVersionCheckpoints` 的同一判据
+_MOMENTS_SKIPPED_WHEN_BLANK = frozenset({"open", "close"})
+
+
 @app.post("/api/versions/<doc_id>")
 def api_versions_create(doc_id):
     body = request.get_json(force=True)
@@ -23179,6 +23561,10 @@ def api_versions_create(doc_id):
                 "params": {"moment": str(moment)[:40]},
             }
         ), 400
+    if moment in _MOMENTS_SKIPPED_WHEN_BLANK and not _doc_objects(doc):
+        # 空白排版的「打开」「离开」不是值得留下的事（ADR 0211 第一期 4）：以前每次加载新路径、离开项目都在用户项目里
+        # 留一个只有空节点的 `.vx` 目录。不建目录、不写任何东西；前端那一侧同样不发（纵深）。「恢复前」等别的时刻照旧
+        return jsonify({"skipped": True, **_document_save_extras(doc)})
     ver = {
         "id": "",  # 在版本锁内取（`_fresh_version_id`）：要对着锁内读到的现有节点核重名
         "name": given or time.strftime("%m-%d %H:%M"),

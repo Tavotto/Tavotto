@@ -233,6 +233,16 @@ const ISSUE_ICON: Record<DocIssue, typeof Info> = {
   restore_meta: Info,
 }
 
+/**
+ * 胶囊的色档与图标。按事情统一映射（`ISSUE_TONE` / `ISSUE_ICON`），唯一的例外是恢复里的「选一份」（ADR 0211，
+ * 维护者 2026-11-25 定稿）：找到了几份排版、等用户挑一份——不是出错，按中性档与中性图标（与「上次的排版没打开」
+ * 等中性那几件同一惯例），文案「从上次离开的地方继续」。其余恢复问题（读不出 / 找不到 / 暂时接不上……）仍是提醒档。
+ */
+function issueLook(issue: DocIssue, restoreKind: string | null): { tone: StatusTone; Icon: typeof Info } {
+  if (issue === 'restore' && restoreKind === 'choose') return { tone: 'neutral', Icon: Info }
+  return { tone: ISSUE_TONE[issue], Icon: ISSUE_ICON[issue] }
+}
+
 /** 锚点色胶囊（24 高）：底 / 字 / 环都从状态锚点派生，与 `ui/StatusPill` 同一份配色，但它是一颗按钮 */
 const PILL_TONE: Record<StatusTone, string> = {
   neutral: 'bg-surface-active text-ink-2 hover:bg-surface-hover',
@@ -379,6 +389,7 @@ export function SaveStateLabel() {
       >
         <IssuePill
           issue={issue}
+          restoreKind={restoreKind}
           text={bad ? text : issueLabel(issue, restoreKind)}
           title={`${text} · ${title}`}
         />
@@ -496,7 +507,18 @@ const msgText = (key: string) => translate(key, { ns: 'workspace' })
  * 出事时的那颗胶囊 + 320 宽说明块。胶囊是一颗按钮（`data-doc-status-pill`），说明块里是那件事的全句与出口——
  * 出口与横幅上的是同一批函数（冲突三出口 `ConflictActions`、重试 `saveNow`、恢复 / 保留主版本……）。
  */
-function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; title: string }) {
+function IssuePill({
+  issue,
+  restoreKind = null,
+  text,
+  title,
+}: {
+  issue: DocIssue
+  /** `restore` 时恢复问题的种类：「选一份」（`choose`）不是故障，单独按中性档（见 `issueLook`） */
+  restoreKind?: string | null
+  text: string
+  title: string
+}) {
   const { t } = useTranslation('workspace')
   const [open, setOpen] = useState(false)
   // 自动展开的那一次不搬焦点：用户可能正在画布上打字，说明块只是摆出来，Esc / 点外面就收
@@ -517,8 +539,7 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
     setOpen(v)
     if (!v) setAutoOpened(false)
   }
-  const tone = ISSUE_TONE[issue]
-  const Icon = ISSUE_ICON[issue]
+  const { tone, Icon } = issueLook(issue, restoreKind)
   return (
     <Popover
       open={open}

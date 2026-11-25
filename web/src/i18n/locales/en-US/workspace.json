@@ -1134,7 +1134,8 @@
     "outlineFailed_other": "{{count}} texts could not be converted to outlines (font unavailable)",
     "svgCopied": "Copied as SVG — paste into Illustrator, Inkscape or Figma",
     "svgCopyFailed": "Could not copy as SVG",
-    "arrayTooMany": "At most {{max}} copies at once"
+    "arrayTooMany": "At most {{max}} copies at once",
+    "quickLayoutNoPreview": "Couldn't make the comparison preview, so it was applied directly"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1786,7 +1787,6 @@
       "root_needs_msvc": "{{root}} needs the Visual Studio C++ tools to run on Windows, and they are not installed on this computer, so it was not used."
     },
     "pythonChange": {
-      "downloadBytes": "{{done}} / {{total}} MB downloaded",
       "stage": {
         "downloading": "Downloading Python…",
         "verifying": "Checking…",
@@ -1799,6 +1799,14 @@
       }
     },
     "aiFix": {
+      "taskTitle": "AI fix",
+      "round": "Round {{n}}",
+      "steps": {
+        "diagnose": "Find the cause",
+        "fix": "Fix it",
+        "verify": "Test run",
+        "finish": "Wrap up"
+      },
       "repairFolder": "The script uses a folder outside the project that this account can’t read; its permissions need repairing",
       "running": "AI is looking for the cause…",
       "cancel": "Cancel",
@@ -1955,10 +1963,10 @@
     "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
       "chartSource": "Chart source missing or damaged",
-      "choose": "Layouts found on this computer",
+      "choose": "Pick up where you left off",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
-      "missing": "Last layout not found",
+      "missing": "Last layout is no longer in its original file and may have been moved",
       "prepareFailed": "Example layout didn’t open",
       "tooNew": "Last layout is from a newer version",
       "unavailable": "Can’t reach your last layout right now"
@@ -1966,10 +1974,10 @@
     "retry": "Try again",
     "title": {
       "chartSource": "The chart source for “{{name}}” is missing or damaged.",
-      "choose": "Found a few layouts on this computer — pick one to open.",
+      "choose": "Found a few layouts — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",
-      "missing": "The last layout “{{name}}” wasn’t found.",
+      "missing": "The last layout “{{name}}” is no longer in its original file and may have been moved.",
       "prepareFailed": "The example layout didn’t open.",
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
       "unavailable": "Can’t reach your last layout right now."
@@ -2127,5 +2135,11 @@
       "reference_cycle": "it has circular references",
       "timeout": "it is too complex to read in time"
     }
+  },
+  "agentMerge": {
+    "commit_one": "Merge {{count}} annotation added by the agent",
+    "commit_other": "Merge {{count}} annotations added by the agent",
+    "done_one": "Merged {{count}} annotation — save to write it to the project",
+    "done_other": "Merged {{count}} annotations — save to write them to the project"
   }
 }

@@ -100,7 +100,9 @@ export function DataPanel() {
   // 误差线看的是**此刻预览的那一张**；重复测量一旦问过就留着（确认后后端不再问，但那一行要能再改）
   const shownCand = previewOf(candidates, thumbs, previewKey)
   const errKind = shownCand?.error ?? null
-  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error))
+  // 误差线的种类：点选过（`error_confirmed` / `answers.error`）或列名自己说明了（`error_stated`）都算已知，放在列角色下面；
+  // 现成的误差列没说明是哪一种（`unknown`）且没点选 = 需要你确认，当前值写「还不确定」
+  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (shownCand?.error_stated === true && errKind !== 'unknown'))
   const designDone = answers.design === 'independent' || answers.design === 'repeated'
   const pendingError = errKind != null && !errorDone
   const pendingDesign = designAsked && !designDone
@@ -146,8 +148,18 @@ export function DataPanel() {
           ) : null}
         </p>
         <h2 className="type-heading min-w-0 break-words py-1" title={group ? undefined : selected.path}>
-          {group ? t('dataFigureV2.batch.groupTitle', { count: group.length }) : baseName(selected.path)}
-          {!group && selected.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}
+          {group ? (
+            t('dataFigureV2.batch.groupTitle', { count: group.length })
+          ) : (
+            // 文件名 / 工作表名是用户自己的字符串：原样显示，不套标题类的中西文自动留白（`[data-literal]`，见 index.css）
+            <span data-literal>{baseName(selected.path)}</span>
+          )}
+          {!group && selected.sheet ? (
+            <span className="font-normal text-ink-3">
+              {' · '}
+              <span data-literal>{selected.sheet}</span>
+            </span>
+          ) : null}
         </h2>
         {rows != null && cols != null && (
           <p data-data-panel-meta className="mb-3 text-sm text-ink-2 tabular-nums">
@@ -223,7 +235,7 @@ export function DataPanel() {
           <p data-data-confirm-title className="flex h-6 items-center type-caption">
             {t('dataFigureV2.confirm.title')}
           </p>
-          {pendingError && confirmRow('error', ERROR_KINDS, errKind!, false)}
+          {pendingError && confirmRow('error', ERROR_KINDS, errKind === 'unknown' ? 'unsure' : errKind!, false)}
           {pendingDesign && confirmRow('design', DESIGNS, 'unsure', false)}
         </div>
       )}

@@ -319,8 +319,8 @@ export function withPageBasis<T extends { pt_basis?: 'page' }>(data: T): T {
 export const styleRoleLabel = (role: string): string =>
   t(`style.roleLabel.${role}`, { ns: 'dialogs', defaultValue: role })
 
-/** 参与配色循环的系列角色 → 承接颜色的 prop */
-const PALETTE_PROP: Record<string, string> = {
+/** 参与配色循环的系列角色 → 承接颜色的 prop（推荐配色 `lib/palette/colorKeys` 读同一张表，ADR 0210 §七） */
+export const PALETTE_PROP: Readonly<Record<string, string>> = {
   line: 'color',
   scatter: 'facecolor',
   bar_series: 'facecolor',

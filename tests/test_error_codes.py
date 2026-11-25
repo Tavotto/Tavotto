@@ -235,6 +235,8 @@ def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(sourc
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
+    # ADR 0178 修订 2026-11-25：「读懂数据」选用哪个 AI，指定的连接此刻不在可选清单里
+    "understanding_connection_unavailable": set(),
     "result_too_large": set(),
     "journal_catalog_disabled": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
@@ -320,6 +322,8 @@ USER_VISIBLE_CODES = {
     "tex_compile_failed": {"line"},
     "tex_failed": {"error"},
     "script_not_found": {"script"},
+    # 脚本文件在 worker 跑之前就不在了（被移动 / 删除）：文件名来自 `pool.recovery_params`
+    "script_source_missing": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
     "runtime_asset_unknown": {"id"},
@@ -420,6 +424,11 @@ USER_VISIBLE_CODES = {
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),
+    "ai_siwc_plan_disabled": set(),
+    "ai_siwc_token_unavailable": set(),
+    "siwc_disabled": set(),
+    "siwc_port_unavailable": set(),
+    "siwc_login_failed": {"reason"},
     "connection_not_found": set(),
     "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
@@ -837,6 +846,9 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 项目内时间线认领（ADR 0211 第一期）`POST /api/layout-session/project-history/claim`：前端只据此重列一次候选
+    # 再按后端说的 mode 装（复制 / 再认领），不展示文案
+    "claim_refused",
     # 一键排版方案（ADR 0199）`POST /api/pro/quick-layout/plan`：前端不读这几个码的文案——not_licensed 转成授权灰态，
     # 其余三个一律说「排不了，再试一次」（quickLayoutFailed），文档不改
     "invalid_panels",
@@ -899,7 +911,11 @@ NON_UI_CODES = {
 
 
 #: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
-DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
+DATA_ONLY_PARAMS = {
+    "ai_script_busy": {"session"},
+    "eps_annotations_unsupported": {"operation"},
+    "siwc_login_failed": {"reason"},  # 闭集原因码（siwc_login.REASONS），前端按它挑具体文案
+}
 
 
 def _response_dicts(text: str):

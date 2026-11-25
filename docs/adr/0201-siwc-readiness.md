@@ -1,6 +1,7 @@
 # ADR 0201：Sign in with ChatGPT（SIWC）预备——独立连接、专用 Responses 协议、Token Provider 契约
 
 日期：2026-11-23 · 状态：**Accepted（只做预备：默认关、无界面、不实现 OAuth、不联网验证）**
+**2026-11-25 修订**：§五的「真实 OAuth 与凭据落盘」「用真实账号测试」「改登录入口」三条由 [0209](0209-siwc-sign-in.md) 撤销（正式登录、取代 Codex CLI 订阅登录）；其余不变。
 **1.0 收敛纪律：新增产品能力，维护者 2026-11-23 给豁免（「先做吧……这些我都同意」），登记在 `docs/1.0-release-readiness.md` §1.8。**
 相关：[0147 内置执行器](0147-builtin-agent-runner.md)（循环、三种协议、路由；本 ADR 修订其 §六）、[0015 Agent 注册表](0015-coding-agent-registry-and-settings.md)、
 ADR 0200 Tavotto Agent（草稿 #2086 / #2103，虚拟连接的先例）；审计与方案全文 `docs/implementation/siwc-readiness-2026-11-23/PLAN.md`。

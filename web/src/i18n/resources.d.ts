@@ -3,6 +3,8 @@ export default interface Resources {
   "ai": {
     "changePlan": {
       "card": {
+        "appliedAssistant": "已应用 · 改了 {{places}} 处",
+        "appliedLayout": "已应用 · {{count}} 张图重新排了版",
         "applied_other": "已应用 · {{count}} 条意见已处理",
         "applyFailed": "没能应用，图没有改动",
         "applyNow": "直接应用",
@@ -11,15 +13,26 @@ export default interface Resources {
         "discarded": "已放弃这一版",
         "dismiss": "收起",
         "empty": "这些意见没法直接改图，图没有改动",
+        "emptyAssistant": "这条没法直接改图，图没有改动",
         "generatingAny": "正在按意见修改…",
+        "generatingAssistant": "正在按你的话修改…",
         "generating_other": "正在按 {{count}} 条意见修改…",
+        "handoff": "这条要改脚本，交给 Agent 改。",
         "holdBefore": "按住看修改前",
         "regenerate": "重新生成",
         "retry": "重试",
         "revising": "正在按批注重改…",
+        "runScript": "改脚本做剩下的",
+        "runScriptAll": "改脚本来做",
+        "runScriptTip": "会先应用这些图内修改",
+        "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
         "stale": "原图改过了，这版对不上",
         "summary": "按 {{done}} 条意见改了 {{places}} 处，{{script}} 条要改脚本",
         "summaryAll": "按 {{done}} 条意见改了 {{places}} 处",
+        "summaryAssistant": "改了 {{places}} 处",
+        "summaryAssistantOther": "改了 {{places}} 处，剩下的没法直接改",
+        "summaryAssistantScript": "改了 {{places}} 处，剩下的要改脚本，这次没动",
+        "summaryLayout": "{{count}} 张图重新排了版",
         "summaryNotes": "按 {{n}} 条批注又改了 {{places}} 处",
         "summaryOther": "按 {{done}} 条意见改了 {{places}} 处，{{rest}} 条没法直接改",
         "thumbAlt": "修改后的图",
@@ -47,6 +60,8 @@ export default interface Resources {
         "groupN": "第 {{n}} 条意见",
         "hold": "按住",
         "holdBefore": "看修改前",
+        "layoutGroupMeta": "{{count}} 张图",
+        "layoutHeading": "排版 · {{count}} 张图",
         "lockLearn": "了解高级版 ›",
         "lockTip": "在改好的图上点元素写批注，再改一版",
         "modeAnnotate": "批注",
@@ -55,6 +70,7 @@ export default interface Resources {
         "noteCancel": "取消",
         "noteDelete": "删除",
         "noteEdit": "点一下可以改",
+        "noteHere": "这一处",
         "noteOverall": "整体批注",
         "noteOverallLabel": "整体",
         "notePlaceholder": "想怎么改？",
@@ -113,6 +129,7 @@ export default interface Resources {
         "thisOne": "这一处",
         "unbold": "已取消{{el}}的加粗"
       },
+      "layoutGroup": "排版",
       "reviewNote": {
         "open": "看意见 ›",
         "title_other": "审阅意见 · {{count}} 条"
@@ -129,6 +146,7 @@ export default interface Resources {
         "out_of_scope": "不在图内修改的范围，这次没动",
         "over_limit": "改动太多，这条没动",
         "unclear": "意见不够具体，这次没动",
+        "unclearAssistant": "指令不够具体，这次没动",
         "unknown_element": "找不到对应的元素，这次没动"
       }
     },
@@ -189,13 +207,31 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "aiChoice": {
+        "auto": "自动",
+        "chosen": "你选的模型",
+        "current": "当前：{{name}}",
+        "more": "连接其他 AI…",
+        "off": "不用 AI 分析",
+        "tip": "分析用的 AI：{{name}}",
+        "tipPlain": "分析用的 AI",
+        "unavailable": "该模型无法连接，请换一个尝试"
+      },
       "basis": {
+        "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
+        "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
+        "errColumn": "误差线取自「{{column}}」列",
+        "errMissing": "{{count}} 处只有 1 个数值，算不出误差线",
+        "errMissingOne": "「{{label}}」只有 1 个数值，算不出误差线",
+        "etc": "等",
         "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
         "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
         "join": "；",
         "line": "依据：{{text}}。",
+        "listJoin": "、",
         "plain": "按 {{drawn}} 个数值绘制",
         "points": "按 {{drawn}} 个点绘制，每行一个点",
+        "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
         "skippedAll": "另有 {{count}} 行未计入",
         "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
         "skippedMissing": "另有 {{count}} 行因缺值未计入",
@@ -253,6 +289,10 @@ export default interface Resources {
           "title": "均值线 + 误差带",
           "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
         },
+        "line_err": {
+          "title": "点 + 折线 + 误差线",
+          "why": "表里已经是每个位置的均值，按顺序连起来。"
+        },
         "line_points": {
           "title": "点 + 折线",
           "why": "按顺序连起来，看量怎么随横轴变化。"
@@ -264,6 +304,10 @@ export default interface Resources {
         "other": {
           "title": "这种画法",
           "why": "用这份数据画出来的一种样子。"
+        },
+        "points_err": {
+          "title": "点 + 误差线",
+          "why": "表里已经是各组的均值，直接画出来。"
         },
         "points_mean": {
           "title": "原始点 + 均值",
@@ -2702,6 +2746,7 @@ export default interface Resources {
           "failed": "检测失败。显示上次结果。"
         },
         "backAria": "返回改图助手列表",
+        "changePlan": "改图前先给我看修改方案",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {
@@ -4046,6 +4091,8 @@ export default interface Resources {
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
       "ai_revert_not_applicable": "这次是「生成可编辑版本」，原脚本从未被改动，没有可撤销的内容。",
       "ai_script_busy": "{{script}} 上已有一个 AI 任务在运行。等它结束，或先中止它，再发新的。",
+      "ai_siwc_plan_disabled": "这个 ChatGPT 账号没有允许使用订阅额度。重新登录时允许即可，或改用 API Key。",
+      "ai_siwc_token_unavailable": "暂时连不上 ChatGPT 登录服务，稍后再试。",
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
       "ai_supersede_conflict": "上一次的修改其实已经开始了，没有改写成新指令。请先看它的结果。",
       "annotations_need_pdf": "该素材没有矢量 PDF，标注暂时无法写回原图。",
@@ -4189,6 +4236,8 @@ export default interface Resources {
       "eps_needs_script": "{{figure}} 没有可重新运行的脚本，无法生成 EPS。其余格式已照常导出。",
       "eps_not_for_canvas": "无法按画布导出 EPS。要 EPS，请按「原图尺寸」导出单张有脚本的图；其余格式已照常导出。",
       "eps_source_unverified": "{{figure}} 的 EPS 无法确认与这份 SVG 文件是同一张图（脚本可能已改动，或还没运行过），所以没有导出。要 EPS，请先运行这张图的脚本再导出；SVG 已按原文件导出。",
+      "error_cells_not_unique": "每个位置只能有一行，才能用表里现成的误差列画误差线。",
+      "error_values_negative": "误差列里有负数，误差不能是负的。",
       "execution_cancelled": "试运行已中断。",
       "execution_timeout": "脚本执行超时（入口 {{entry}}）",
       "explicit_python_unusable": "你指定的渲染环境用不了；Tavotto 不会自动换成别的环境。请在设置里重新指定，或清除它回到自动选择。",
@@ -4450,10 +4499,14 @@ export default interface Resources {
       "session_auth_required": "没有活动会话。请重新启动 Tavotto，从它打开的链接进入。",
       "session_dead": "画到一半被系统中断了，多半是内存不够。再操作一次会重新开始。",
       "settings_dir_unusable": "{{key}} 不可用：{{reason}}",
+      "siwc_disabled": "ChatGPT 登录未开启。",
+      "siwc_login_failed": "ChatGPT 登录没有完成，请重试。",
+      "siwc_port_unavailable": "本机登录回调用不了（端口被占用）。关掉其他正在登录的程序后再试。",
       "source_changed": "写回被阻止：原始文件在此期间被修改过，请刷新素材后再试",
       "source_missing": "该图的源文件暂时不可用：{{figure}}。",
       "specfix_native_unsupported": "用 {{product}} Run 打开的图暂不支持自动修复，图没有改动。",
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
+      "summarised_not_raw": "这张表已经是汇总过的数据，不再对它重新算均值、误差或分布。",
       "summary_misplaced": "原始数据的画法不能再套汇总方式。",
       "summary_missing": "误差线和误差带要写明是 SD、SEM、95% 置信区间还是 IQR。",
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
@@ -4490,6 +4543,7 @@ export default interface Resources {
       "tutorial_reset_incomplete": "教程已换成干净的副本，但上次的教程排版暂时清不掉（本机另一个 Tavotto 正在用会话记录），请稍后再点一次重置。",
       "tutorial_resources_invalid": "安装里的教程资源不完整。请重新安装 Tavotto：{{reason}}",
       "tutorial_resources_missing": "安装里没有教程资源。请重新安装 Tavotto：{{reason}}",
+      "understanding_connection_unavailable": "该模型无法连接，请换一个尝试",
       "unit_required": "这种图需要你先确认哪一列是个体编号。",
       "unit_unconfirmed": "个体编号列要你确认过才能用，列名像编号还不算。",
       "unsafe_project_name": "「{{name}}」不是合法的目录名：项目名只能是单个目录名，不含路径分隔符或 ..",
@@ -4671,7 +4725,6 @@ export default interface Resources {
       "repairCreatingEnv": "正在准备 Python 环境…",
       "repairDetails": "详情",
       "repairDone": "已安装 {{module}}，正在重新运行。",
-      "repairDownloadAria": "下载进度",
       "repairDownloadBytes": "{{done}} / {{total}} MB",
       "repairDownloadUnpacking": "正在解压 Python…",
       "repairEnvNotApplied": "切换没有生效：这个项目此刻用的还不是那个 Python，脚本没有重跑。",
@@ -4823,7 +4876,6 @@ export default interface Resources {
       "repairStage_packages": "安装所需的包",
       "repairStage_python": "准备 Python",
       "repairStage_rerun": "重新运行",
-      "repairStep": "（{{n}}/{{total}}）",
       "repairSystemHint": "{{python}} · Python {{version}}，不安装任何东西",
       "repairSystemRejectedNoMatplotlib": "{{python}} 装了 {{module}}，但 matplotlib 用不了，未采用。",
       "repairSystemRejectedUnsupported": "{{python}}（Python {{version}}）装了 {{module}}，但 {{product}} 不支持这个 Python 版本，未采用。",
@@ -6922,6 +6974,10 @@ export default interface Resources {
     "title": "快捷键"
   },
   "workspace": {
+    "agentMerge": {
+      "commit_other": "并入 Agent 加的 {{count}} 个标注",
+      "done_other": "已并入 {{count}} 个标注，保存后写进项目"
+    },
     "annotationEntry": {
       "arrow": "箭头",
       "label": "标注 · {{name}}",
@@ -7703,6 +7759,7 @@ export default interface Resources {
         "readTitle": "AI 查看过",
         "reasonLabel": "AI 的理由：{{reason}}",
         "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
+        "round": "第 {{n}} 轮",
         "running": "AI 正在查找原因…",
         "sendNo": "不发送",
         "sendNote": "AI 写的说明",
@@ -7720,7 +7777,14 @@ export default interface Resources {
           "cli_waiting_approval": "Codex 或 Claude Code 在等待批准，Tavotto 无法代为确认。停止后可以重试。",
           "stalled": "AI 暂时没有响应，稍后会自动停止。"
         },
+        "steps": {
+          "diagnose": "找原因",
+          "finish": "收尾",
+          "fix": "动手修",
+          "verify": "运行验证"
+        },
         "stop": "停止",
+        "taskTitle": "AI 修复",
         "useIt": "用它",
         "willInstall": "将要安装：{{packages}}"
       },
@@ -8227,7 +8291,6 @@ export default interface Resources {
       },
       "progress": "进行中",
       "pythonChange": {
-        "downloadBytes": "已下载 {{done}} / {{total}} MB",
         "stage": {
           "creating": "正在创建新的运行环境…",
           "downloading": "正在下载 Python…",
@@ -8428,10 +8491,10 @@ export default interface Resources {
       "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
       "pill": {
         "chartSource": "图表来源缺失或损坏",
-        "choose": "找到了几份本机排版",
+        "choose": "从上次离开的地方继续",
         "indexDegraded": "恢复记录读不了",
         "invalid": "上次的排版读不出来",
-        "missing": "上次的排版找不到了",
+        "missing": "上次的排版不在原文件内，可能已被移出",
         "prepareFailed": "示例排版没能打开",
         "tooNew": "上次的排版来自更新版本",
         "unavailable": "暂时接不上上次的排版"
@@ -8439,10 +8502,10 @@ export default interface Resources {
       "retry": "重试",
       "title": {
         "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
-        "choose": "本机找到了几份排版，选一份打开。",
+        "choose": "找到了几份排版，选一份打开。",
         "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
         "invalid": "上次的排版“{{name}}”读不出来。",
-        "missing": "上次的排版“{{name}}”找不到了。",
+        "missing": "上次的排版“{{name}}”不在原文件内，可能已被移出。",
         "prepareFailed": "示例排版没能打开。",
         "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
         "unavailable": "暂时接不上上次的排版。"
@@ -8692,6 +8755,7 @@ export default interface Resources {
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
       "quickLayoutDone": "已排好",
       "quickLayoutFailed": "这次没排好，再试一次",
+      "quickLayoutNoPreview": "没能生成对比预览，已直接排好",
       "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
       "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
       "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",

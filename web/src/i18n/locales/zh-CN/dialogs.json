@@ -1581,7 +1581,8 @@
         },
         "clearBody_other": "删掉全部 {{count}} 条？删了找不回。",
         "cancel": "取消"
-      }
+      },
+      "changePlan": "改图前先给我看修改方案"
     },
     "canvas": {
       "companionsExplain": "关联元素是手动摆过位置的标题、轴标签、图例，以及色条轴与 twinx 孪生轴。不带它们，挪动子图时会留在原地；关掉则只动子图本身。",

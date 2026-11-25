@@ -13,7 +13,7 @@ import type { ExportRoute } from '@/lib/exportRoute'
 import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
-import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
 import { SCHEMA_CURRENT } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'
@@ -1009,6 +1009,34 @@ export async function fetchLayout(name: string, pj?: string | null): Promise<Fet
   }
 }
 
+/**
+ * 「把 Agent 加的并进来」（ADR 0208 §五）：拿这份排版绑定的基线问后端，磁盘上多出来的是不是**只有** Agent 追加的对象。
+ * 后端判据在 `engine/layoutannotate.agent_additions`（全部来自插件写入时留的撤销副本）。读失败一律当「没有」——
+ * 照旧走覆盖 / 另存，不因为这一问把保存流程卡住。
+ */
+export interface AgentAdditions {
+  available: boolean
+  revision?: string
+  count?: number
+  canvases?: { id: string; objects: CanvasObject[] }[]
+}
+
+export async function fetchAgentAdditions(name: string, baseRevision: string): Promise<AgentAdditions> {
+  try {
+    const res = await fetch(
+      apiUrl(
+        `/api/layouts/${encodeURIComponent(name)}/agent-additions?base_revision=${encodeURIComponent(baseRevision)}`,
+      ),
+      withProject(),
+    )
+    if (!res.ok) return { available: false }
+    const body = (await res.json()) as AgentAdditions
+    return body && body.available === true ? body : { available: false }
+  } catch {
+    return { available: false }
+  }
+}
+
 export interface SavedLayout {
   project_file?: ProjectFileResult
   chart_sources?: ChartSourceReceipt[]
@@ -1609,6 +1637,99 @@ export async function fetchRecoveryCandidates(
     }
   } catch (e) {
     return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
+  }
+}
+
+/**
+ * 项目自己的时间线里有内容的排版（ADR 0211 第一期）：`<项目>/tavottofile/versions/*.vx`。
+ * 挪走 / 复制 / 换电脑 / 换 origin 之后，本机按路径记的会话状态与 `tavotto.docIndex` 都认不出它，
+ * 这里是唯一跟着文件夹走的证据。`mode` 由后端判（它看得到旧项目路径在不在，前端看不到）：
+ *  - `slot`：本机槽位就是这份（`owner` 为 `moved` / `none` 时先 `claimProjectHistory` 把归属改到本项目）；
+ *  - `node`：没有本机槽位，用最近一个非空节点恢复成同一个 docId；
+ *  - `copy`：复制 / 归属待核对 / 槽位坏了——用节点恢复成一份**新 docId**，旧项目一个字节不动。
+ */
+export interface ProjectHistoryItem {
+  doc_id: string
+  name: string
+  /** 最近一个有对象的节点 */
+  vid: string
+  ts: number
+  canvasId: string | null
+  schema: number | null
+  canvases: number
+  objects: number
+  mode: (typeof HISTORY_MODES)[number]
+  owner: (typeof HISTORY_OWNERS)[number]
+  /** `mode=slot` 时槽位正文的 revision（认领与探测都对着它） */
+  revision: string | null
+  /** `mode=slot` 且节点比槽位新、内容不同（只算单画布节点） */
+  node_newer: boolean
+}
+
+/**
+ * 候选 `mode` / `owner` 的取值闭集：**镜像**后端唯一出处 `engine/projecthistory.HISTORY_MODES` / `HISTORY_OWNERS`
+ * （同源对，`tests/test_project_history_restore.py::test_vocabulary_mirrors_are_literal` 逐字对拍）。
+ */
+export const HISTORY_MODES = ['slot', 'node', 'copy'] as const
+export const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as const
+
+function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
+  const r = raw as Record<string, unknown> | null
+  if (!r || typeof r !== 'object' || typeof r.doc_id !== 'string' || typeof r.vid !== 'string') return null
+  const mode = HISTORY_MODES.find((m) => m === r.mode)
+  const owner = HISTORY_OWNERS.find((o) => o === r.owner)
+  if (!mode || !owner) return null
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    doc_id: r.doc_id,
+    name: typeof r.name === 'string' ? r.name : '',
+    vid: r.vid,
+    ts: num(r.ts),
+    canvasId: typeof r.canvasId === 'string' ? r.canvasId : null,
+    schema: typeof r.schema === 'number' ? r.schema : null,
+    canvases: num(r.canvases),
+    objects: num(r.objects),
+    mode,
+    owner,
+    revision: typeof r.revision === 'string' ? r.revision : null,
+    node_newer: r.node_newer === true,
+  }
+}
+
+/** 列项目内时间线候选。`'unsupported'` = 旧后端没有这个端点；`'unavailable'` = 此刻问不到。 */
+export async function fetchProjectHistory(
+  pj: string | null,
+): Promise<{ items: ProjectHistoryItem[]; index: SessionIndexStatus; truncated: boolean } | 'unsupported' | 'unavailable'> {
+  try {
+    const body = await jsonFetch<Record<string, unknown>>('/api/layout-session/project-history', undefined, pj)
+    const items = Array.isArray(body?.items)
+      ? body.items.map(parseHistoryItem).filter((x): x is ProjectHistoryItem => x !== null)
+      : []
+    return { items, index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok', truncated: body?.truncated === true }
+  } catch (e) {
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
+  }
+}
+
+/**
+ * 把挪走的项目留下的槽位归属改到当前项目（后端在槽位文档锁里重判；复制场景永远拒）。
+ * `ok` = 后端此刻记的就是本项目、且对着的是 `revision` 那一版正文；`refused` = 后端明确拒（409，此刻不满足挪走的
+ * 条件或槽位刚被存过——调用方重列一次再定）；`unavailable` = 问不到（网络 / 503 / 旧后端），**不是**拒绝。
+ */
+export async function claimProjectHistory(
+  docId: string,
+  revision: string,
+  pj: string | null,
+): Promise<'ok' | 'refused' | 'unavailable'> {
+  try {
+    const body = await jsonFetch<{ ok?: boolean }>(
+      '/api/layout-session/project-history/claim',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc_id: docId, revision }) },
+      pj,
+    )
+    return body?.ok === true ? 'ok' : 'unavailable'
+  } catch (e) {
+    return e instanceof ApiError && e.status === 409 && e.body?.code === 'claim_refused' ? 'refused' : 'unavailable'
   }
 }
 
@@ -4164,11 +4285,16 @@ export interface CreateChangePlanBody {
   id: string
   /** 这张图此刻的全量 override 列表（B0） */
   patches: unknown[]
-  source: 'review'
+  /** `review` 带意见；`assistant` 带用户在改图助手里的原话（`instruction`）与可选的选中元素（`target`） */
+  source: 'review' | 'assistant'
   /** 审阅意见（只取未处理的）；与 `share_id` 二选一 */
   comments?: ReviewComment[]
   /** 本机分享记录 id：后端取最新版本的未处理意见；与 `comments` 二选一 */
   share_id?: string
+  /** `source: 'assistant'`：用户的指令原文 */
+  instruction?: string
+  /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
+  target?: string
   client_request_id?: string
 }
 
@@ -4201,6 +4327,26 @@ export async function createChangePlan(body: CreateChangePlanBody): Promise<Chan
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanTask
+}
+
+/**
+ * 一键排版方案卡的整版预览（状态中立，走导出管线，不登记不提交）：一份画布描述 → 一张 PNG。
+ * 失败抛带稳定 code 的 `EngineError`（`change_plan_render_failed` 等）；调用方一律兜底，不卡住。
+ */
+export async function fetchLayoutPreviewPng(
+  canvas: { page_w_mm: number; page_h_mm: number; objects: unknown[] },
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await fetch(
+    apiUrl('/api/change-plans/layout-preview'),
+    withProject({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ canvas }), signal }),
+  )
+  if (!res.ok) {
+    const out = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    noteProjectGone(res.status, out)
+    throw new EngineError((out.error as string) || t('render.failed', { ns: 'errors', status: res.status }), '', (out.code as string) || '', '')
+  }
+  return res.blob()
 }
 
 /** 批注重改的一条批注（高级版 `change-plan-rerun`）：锚点与审阅意见同形，元素锚带画面框 */
@@ -4721,6 +4867,8 @@ export interface AiCapabilities {
   checked_at_ms: number
   /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
   taf_enabled?: boolean
+  /** 「改图助手 / 一键排版先出修改方案卡」的开关（`ai.change_plan.enabled`，默认开）；老后端没有 = 当开着（但方案路径本身要新后端，老后端会回 invalid_change_plan 落到旧路径） */
+  change_plan_enabled?: boolean
   /**
    * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（ADR 0148 / 0149）。老后端没有；`false` = 没有内置执行器能用的 API 连接
    * （只连了命令行 AI 时也是 false）：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
@@ -4991,6 +5139,11 @@ export interface AiFixState {
   activity?: { tool: string; phase: 'start' | 'end' | 'denied'; detail: string; at_ms: number } | null
   /** 现在卡住了：`reason` 闭集；没卡住 = null */
   stalled?: { reason: 'cli_waiting_approval' | 'cli_tool_not_delivered' | 'stalled'; detail: string } | null
+  /**
+   * 任务清单的进度（`fixtools.next_stage`，按工具组归步；2026-11-25）：四步里走到哪一步 + 第几轮（验证没过又回去修 +1）。
+   * 还没调过推进步骤的工具 = null；老后端没有这个键
+   */
+  stage?: { step: 'diagnose' | 'fix' | 'verify' | 'finish'; round: number } | null
 }
 
 /** 三个读写都可显式指定项目（`pj`）：切项目之后要取消 / 重读的是发起时那个项目的修复，不是当前项目的 */
@@ -5111,6 +5264,14 @@ export const setAiEndpointActive = (agent: AiAgentId, id: string) =>
 /** Windows 设置里的开关「转换时允许 AI 不受沙盒限制」；非 Windows 后端会 400 */
 export const setConvertUnsandboxedWindows = (enabled: boolean) =>
   jsonFetch<{ convert_unsandboxed_windows: boolean }>('/api/ai/convert-unsandboxed', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
+/** 设置里的开关「改图前先给我看修改方案」（`ai.change_plan.enabled`，默认开） */
+export const setChangePlanEnabled = (enabled: boolean) =>
+  jsonFetch<{ change_plan_enabled: boolean }>('/api/ai/change-plan', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -5553,8 +5714,31 @@ export interface AiDataFileEntry {
   sheets?: AiDataSheet[] | null
 }
 
+/** 「读懂数据」用哪个 AI（`/api/ai/data-understanding` 与 `/api/ai/data-files` 共用的对象）：`on` 会用 / `off` 用户关了 / `none` 没有任何可用的 AI / `unavailable` 用户指定的那个此刻用不了（后端不会换别家） */
+export interface AiDataUnderstandingChoice {
+  state: 'on' | 'off' | 'none' | 'unavailable'
+  mode: 'auto' | 'off' | 'connection'
+  /** 此刻实际会用的连接 id */
+  connection: string | null
+  /** 用户指定的连接 id（只在 `mode === 'connection'` 时有；`unavailable` 时它可能已不在 `options` 里） */
+  chosen?: string
+  options: { id: string; label: string; logo: string; vendor: string; kind: 'key' | 'subscription'; model: string }[]
+}
+
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean; understanding?: AiDataUnderstandingChoice }>('/api/ai/data-files?formats=all', undefined, pj)
+
+/** 轻量、只读：只回「读懂数据」的选择与可选的 AI，可反复调（不联网、不探测） */
+export const aiDataChoiceGet = (pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>('/api/ai/data-understanding', undefined, pj)
+
+/** 设置：`auto` / `off` / 指定某个连接；id 不在此刻的可选清单里回 400 `understanding_connection_unavailable` */
+export const aiDataChoiceSet = (body: { mode: 'auto' | 'off' } | { mode: 'connection'; connection: string }, pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>(
+    '/api/ai/data-understanding',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
 export interface AiDataOverview {
   path: string
@@ -5650,11 +5834,20 @@ export interface AiDataProposeItem {
   facts?: AiDataFacts
   /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
   error?: AiDataErrorKind
+  /** 误差线从哪来：`column` = 表里现成的误差列（`error_column` 是列名），`computed` = 用重复值算的 */
+  error_source?: 'column' | 'computed'
+  /** 取自表里现成的列时，那一列的名字（用户数据：只当文本渲染） */
+  error_column?: string
+  /** 误差线的种类是列名自己说明的（如列名叫 sd） */
+  error_stated?: boolean
+  /** 算出来的误差线 / 带里因为只有 1 个值而没有误差线的位置标签（最多 50 个；没有就没有这个键） */
+  error_missing_for?: string[]
   /** 拟合线（有才有；界面暂不用） */
   fits?: unknown[]
 }
 
-export type AiDataErrorKind = 'sd' | 'sem' | 'ci95'
+/** `unknown` = 现成的误差列没说明是哪一种（只出现在 `points_err` / `line_err`） */
+export type AiDataErrorKind = 'sd' | 'sem' | 'ci95' | 'unknown'
 
 export interface AiDataFacts {
   rows: number

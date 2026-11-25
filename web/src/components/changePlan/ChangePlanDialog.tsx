@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MAX_NOTE_CHARS, notesOf, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
 import { PremiumLock } from '../license/PremiumLock'
+import { useDocumentStore } from '@/store/documentStore'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Lock, Pencil } from '../ui/icons'
@@ -9,7 +10,7 @@ import { ICON_SIZE } from '../ui/Icon'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { ChangeList, NoteList } from './ChangeList'
-import { CHANGE_PLAN_FEATURE, cp, effectiveStatus, failureText, groupViews, markNoteHintSeen, noteHintSeen, unhandledViews, useChangePlanAccess } from './changePlanModel'
+import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, markNoteHintSeen, noteHintSeen, unhandledViews, useChangePlanAccess } from './changePlanModel'
 import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
@@ -35,7 +36,11 @@ export function ChangePlanDialog() {
   const [editing, setEditing] = useState<NoteEditing | null>(null)
   const [armed, setArmed] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const { visible, pro } = useChangePlanAccess()
+  const access = useChangePlanAccess()
+  // 一键排版 / 脚本修改的卡不能批注重改：入口（对比 / 批注切换、写批注、悬停写批注）整个不出现
+  const revisable = !!entry && canRevise(entry)
+  const visible = access.visible && revisable
+  const pro = access.pro && revisable
   const panel = usePlanPanel(entry ?? { panelId: '', documentId: '', loadSeq: 0, canvasId: '' })
   const aspect = useImageAspect(entry?.afterSrc)
   // 换一份方案 / 换版本 / 重新打开：高亮与批注框不带过去，新版本出来回到「对比」
@@ -68,6 +73,8 @@ export function ChangePlanDialog() {
   const plan = entry?.plan
   // 弹窗开着时图被改了：基线对不上，不让点「应用」（卡片也已转「图已改过」）
   const source = usePlanSource(panel)
+  useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1))
   const status = entry ? effectiveStatus(entry, panel?.overrides ?? null, source) : 'stale'
   const open = !!entry && !!plan && !!entry.beforeSrc && !!entry.afterSrc && status === 'ready'
   // 「修改后」跟着勾选的组合走：与「应用」写入的是同一份
@@ -277,6 +284,7 @@ export function ChangePlanDialog() {
                 </p>
               )}
               <ChangeList
+                heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : undefined}
                 groups={groups}
                 unhandled={unhandledViews(entry)}
                 unchecked={entry.unchecked}

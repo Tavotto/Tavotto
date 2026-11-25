@@ -406,6 +406,9 @@ BUILDERS: dict[str, Callable[[Ctx], dict | None]] = {
 
 #: 显式的「没有可行下一步」：每项一句理由（为什么 Agent 手里没有可抄的动作）。
 NO_NEXT: dict[str, str] = {
+    # 排版标注（ADR 0208 第 2 期）
+    "bad_item": "排版标注描述写法不对，error 指出了是哪一项哪个字段，照 layout-annotate 说明改。",
+    "layout_annotate_unavailable": "装着的 Tavotto 还没有排版标注能力，要用户升级后新开会话。",
     # 参数 / 协议形状：error 文案已指出哪项不对，没有一个固定的正确值可抄
     "bad_arguments": "参数组合或取值不对，error 已指出是哪一项；没有固定的正确值可抄。",
     "bad_format": "导出格式名不在支持集合里，error 列出了支持的格式；由调用方按需选。",
