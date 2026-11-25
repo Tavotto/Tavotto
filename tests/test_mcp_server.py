@@ -206,6 +206,10 @@ def test_tools_list_shape():
         "tavotto_make_journal_ready",  # 同上（ADR 0192 §1）
         "tavotto_list_journals",  # 期刊库开关已打开（ADR 0155 §11）
         "tavotto_get_journal_facts",
+        "tavotto_layout_scene",  # 排版标注（ADR 0208 第 2 期），缺省开
+        "tavotto_layout_annotate_plan",
+        "tavotto_layout_annotate_apply",
+        "tavotto_layout_annotate_undo",
     ]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
