@@ -3,7 +3,7 @@
 插件（无头）与以后的改图助手共用这一份；插件只翻译（`codex-plugin/mcp/tavotto_mcp/bridge.py`）。
 
 * **读**：只读当前项目 `tavottofile/<名>.json`（落盘路径判据与 `app._project_layout_target` 一致：收纳目录本身
-  或这份文件是符号链接一律拒）。只认 schema 3 的项目文档。
+  或这份文件是符号链接一律拒）。认 schema 3 / 4 的项目文档（画布结构相同）。
 * **量**：每张子图的真值来自它这一次导出绘制（`export(..., data_points=…)`，第 1 期修订 1）。量由调用方注入
   （`measure(panel, requests) -> {"draw_manifest", "data_points"}`，插件经它自己的会话池）；量不了的子图
   （没有脚本的素材、缺数据、要输入……）只给外框，数据 / 元素锚点回 `anchor_unresolvable`，**一张失败不拖垮整份场景**。
@@ -132,9 +132,10 @@ def open_layout(project: str | Path, name: str) -> Layout:
         doc = documents.loads_document(data)
     except (ValueError, documents.DocumentError) as exc:
         raise LayoutError("layout_unreadable") from exc
+    # schema 3（项目）与 4（项目 + 计算图表子图，#1882 单一存储）的画布结构相同；计算图表子图没有脚本，量时只给外框
     if (
         not isinstance(doc, dict)
-        or doc.get("schema") != 3
+        or doc.get("schema") not in (documents.SCHEMA_PROJECT, documents.SCHEMA_CHART_PROJECT)
         or not isinstance(doc.get("canvases"), list)
     ):
         raise LayoutError("layout_format_unsupported")

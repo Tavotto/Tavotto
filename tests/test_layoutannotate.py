@@ -441,3 +441,28 @@ def test_new_text_may_not_cover_an_annotation_already_on_the_canvas(project):
     clash = [f for f in again["failed"] if f["check"] == "text" and f["item"] == "label"]
     assert clash and any(w.startswith("canvas:") for w in clash[0]["detail"]["with"])
     assert not again["ok"]
+
+
+def test_schema_4_projects_are_annotated_too(project):
+    """schema 4（#1882 单一存储：项目 + 计算图表子图）画布结构与 3 相同，照样能读、能写；schema 2 不认。"""
+    path = project / "tavottofile" / "组图.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["schema"] = 4
+    atomicio.write_json(path, doc, indent=1)
+    s = la.read_scene(project, "组图", measure)
+    plan = la.propose(project, "组图", _items(), measure, base_revision=s["base_revision"])
+    out = la.commit(
+        project,
+        "组图",
+        _items(),
+        measure,
+        base_revision=s["base_revision"],
+        echo_digest_seen=plan["echo_digest"],
+    )
+    assert out["written"]
+    assert json.loads(path.read_text(encoding="utf-8"))["schema"] == 4
+    doc["schema"] = 2
+    atomicio.write_json(path, doc, indent=1)
+    with pytest.raises(la.LayoutError) as e:
+        la.read_scene(project, "组图", measure)
+    assert e.value.code == "layout_format_unsupported"

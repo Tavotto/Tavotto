@@ -408,7 +408,7 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
      把复述句原样说给用户；统计标注照旧 `needs_confirmation`。「你已确认」这一档在第 3 期的修改方案卡（ADR 0206）上，
      卡片用同一份复述。
 2. **写入口**（`engine/layoutannotate.py`，插件与以后的改图助手共用，插件只翻译）：
-   - 只读写当前项目 `tavottofile/<名>.json`，收纳目录或文件是符号链接一律拒（与 `app._project_layout_target` 同一判据）；只认 schema 3。
+   - 只读写当前项目 `tavottofile/<名>.json`，收纳目录或文件是符号链接一律拒（与 `app._project_layout_target` 同一判据）；认 schema 3 / 4（#1882 单一存储后两者画布结构相同，计算图表子图没有脚本、只给外框）。
    - **服务端按同一份描述、同一个场景指纹与 `base_revision` 重新求解、重新核对**，不收 Agent 传回的对象或坐标；核对有 `fail` 不写，
      `unknown` 照写但如实列出。**只追加对象**，不改已有对象。
    - 每个新对象带 `anchor`（`{v: 1, by: "agent", anchors: [{role, data|element|panel|item, offset_mm?, identity?}]}`，子图短号换成
