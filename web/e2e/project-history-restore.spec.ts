@@ -189,22 +189,30 @@ test('整夹挪走 / 复制之后从项目自己的时间线找回排版，加�
   }
 })
 
-test('空白项目连续加载 3 次：项目里不出现只有空「打开」节点的 .vx', async ({ app, page }) => {
+test('空白项目连续加载 3 次、回主页再回来一次：项目里不出现只有空「打开」「离开」节点的 .vx', async ({ app, page }) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-blank-'))
   try {
     const proj = path.join(root, 'proj')
     cpSync(path.join(import.meta.dirname, '..', '..', 'examples', 'figures'), proj, { recursive: true })
     const a = await app({ figures: proj })
+    const versionPosts: string[] = []
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && /\/api\/versions\/[^/]+$/.test(new URL(r.url()).pathname)) versionPosts.push(r.url())
+    })
     for (let i = 0; i < 3; i++) {
-      // 「打开」节点在文档恢复完、工作台挂上之后才打：等到恢复门 ready 再多等一拍，让它有机会发出去
-      const opened = page
-        .waitForRequest((r) => r.method() === 'POST' && /\/api\/versions\/[^/]+$/.test(new URL(r.url()).pathname), {
-          timeout: 3_000,
-        })
-        .catch(() => null)
+      // 「打开」节点在文档恢复完、工作台挂上之后才打：等恢复门 ready 再多等一拍，让它有机会发出去
       await openAndWait(page, a.baseURL)
-      expect(await opened, '空白排版不该发「打开」节点').toBeNull()
+      await page.waitForTimeout(1_500)
     }
+    // 离开项目（回主页）= 「离开」时刻；再从主页回到当前项目 = 又一次「打开」
+    await page.locator('[data-home-button]').first().click()
+    const back = page.locator('[data-home-back-current]')
+    await expect(back).toBeVisible({ timeout: 30_000 })
+    await page.waitForTimeout(1_500)
+    await back.click()
+    await waitForDocumentReady(page)
+    await page.waitForTimeout(1_500)
+    expect(versionPosts, '空白排版不该发「打开」/「离开」节点').toEqual([])
     expect(vxDirs(proj)).toEqual([])
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })

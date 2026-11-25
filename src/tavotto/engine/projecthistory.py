@@ -19,6 +19,11 @@ from pathlib import Path
 
 from . import documents, layoutsession, versionstore
 
+#: 候选 `mode` / `owner` 的取值闭集——**唯一出处**（同源对：`web/src/lib/api.ts` 的同名常量与
+#: `web/src/test/fakeSessionBackend.ts` 逐字相同，`tests/test_project_history_restore.py::test_vocabulary_mirrors_are_literal` 对拍）
+HISTORY_MODES = ("slot", "node", "copy")
+HISTORY_OWNERS = ("this", "none", "moved", "other", "unknown")
+
 #: 一个项目最多回这么多份**有内容的**时间线（先筛掉空的再截：挪过的项目恰恰堆着成批只有空节点的 `.vx`）
 MAX_STORES = 200
 #: 目录里最多认这么多条目（防御：目录被塞进海量条目）；超过就如实报「没列全」

@@ -247,31 +247,71 @@ def test_only_empty_nodes_are_not_candidates(client, tmp_path):
     assert _history(client, a) == []
 
 
-def test_blank_open_moment_leaves_no_store(client, tmp_path):
+@pytest.mark.parametrize("moment", ["open", "close"])
+def test_blank_open_and_close_moments_leave_no_store(client, tmp_path, moment):
+    """空白排版的「打开」「离开」不写（ADR 0211 第一期 4）：新路径每加载 / 离开一次都多一个空 `.vx` 的现象。"""
     a = _open(client, tmp_path / "projA")
     for _ in range(3):
         r = client.post(
             "/api/versions/d_blank",
-            json={"doc": _canvas_doc(), "auto": True, "moment": "open"},
+            json={"doc": _canvas_doc(), "auto": True, "moment": moment},
             headers=_h(a),
         )
         assert r.status_code == 200 and r.get_json().get("skipped") is True
     vdir = tmp_path / "projA" / "tavottofile" / "versions"
     assert not (vdir / "d_blank.vx").exists()
-    # 有内容的打开照常记
+    # 有内容的照常记
     r = client.post(
         "/api/versions/d_blank",
-        json={"doc": _canvas_doc([TEXT]), "auto": True, "moment": "open"},
+        json={"doc": _canvas_doc([TEXT]), "auto": True, "moment": moment},
         headers=_h(a),
     )
     assert r.get_json().get("version"), r.get_json()
-    # 其他关键时刻（离开 / 恢复前）空画布照旧记——这一期只改 `open`
+
+
+def test_other_moments_on_blank_still_record(client, tmp_path):
+    """「恢复前」这类别的时刻不动：空画布照旧记（Codex #679）。"""
+    a = _open(client, tmp_path / "projA")
     r = client.post(
         "/api/versions/d_blank2",
-        json={"doc": _canvas_doc(), "auto": True, "moment": "close"},
+        json={"doc": _canvas_doc(), "auto": True, "moment": "before_restore", "name": "恢复前"},
         headers=_h(a),
     )
     assert r.get_json().get("version"), r.get_json()
+
+
+def test_vocabulary_mirrors_are_literal():
+    """同源对（`docs/rules/repo/same-origin-pairs.md`）：候选 `mode` / `owner` 的取值闭集唯一出处在
+    `engine/projecthistory`，`web/src/lib/api.ts` 与假后端 `web/src/test/fakeSessionBackend.ts` 逐字镜像。"""
+    import re
+
+    from tavotto.engine import projecthistory
+
+    root = Path(__file__).resolve().parent.parent / "web" / "src"
+    for rel in ("lib/api.ts", "test/fakeSessionBackend.ts"):
+        text = (root / rel).read_text(encoding="utf-8")
+        for name, want in (
+            ("HISTORY_MODES", projecthistory.HISTORY_MODES),
+            ("HISTORY_OWNERS", projecthistory.HISTORY_OWNERS),
+        ):
+            m = re.search(rf"export const {name} = \[([^\]]*)\] as const", text)
+            assert m, f"{rel} 里没有 `export const {name} = [...] as const`"
+            got = tuple(re.findall(r"'([^']*)'", m.group(1)))
+            assert got == want, f"{rel} 的 {name} 与后端不一致：{got} != {want}"
+
+
+def test_listing_values_stay_inside_the_vocabulary(client, tmp_path):
+    from tavotto.engine import projecthistory
+
+    a = _open(client, tmp_path / "projA")
+    _edit_in(client, a, "d_v1")
+    _edit_in(client, a, "d_v2")
+    (m.AUTOSAVE_DIR / "d_v2.json").unlink()
+    shutil.copytree(tmp_path / "projA", tmp_path / "projC")
+    for pj in (a, _open(client, tmp_path / "projC")):
+        for item in _history(client, pj):
+            assert item["mode"] in projecthistory.HISTORY_MODES
+            assert item["owner"] in projecthistory.HISTORY_OWNERS
 
 
 def test_listing_is_read_only(client, tmp_path, data_dir):

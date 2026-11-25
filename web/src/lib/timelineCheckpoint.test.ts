@@ -178,7 +178,6 @@ describe('关键时刻', () => {
       const { emitLayoutSaved } = await import('@/lib/layoutSaved')
       emitLayoutSaved('local', { moment: captureMoment() })
     }, 'save'],
-    ['离开', () => markMoment('close'), 'close'],
   ] as const)('空画布上%s也打一个关键时刻（Codex #679）', async (_name, fire, moment) => {
     const stop = startVersionCheckpoints()
     expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
@@ -187,17 +186,22 @@ describe('关键时刻', () => {
     stop()
   })
 
-  it('空白排版的「打开」不打点：不在用户项目里留只有空节点的 .vx（ADR 0211 第一期 4）', async () => {
+  it('空白排版的「打开」「离开」不打点：不在用户项目里留只有空节点的 .vx（ADR 0211 第一期 4）', async () => {
     const stop = startVersionCheckpoints()
     try {
       expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
       await markMoment('open')
       await markWorkspaceOpened()
+      await markMoment('close')
       expect(posts).toHaveLength(0)
-      // 有内容的打开照常打
+      // 「恢复前」这类别的时刻不动：空画布照打
+      await markMoment('before_restore')
+      await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toEqual(['before_restore']))
+      // 有内容的打开 / 离开照常打
       edit('t1')
       await markMoment('open')
-      await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toEqual(['open']))
+      await markMoment('close')
+      await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toEqual(['before_restore', 'open', 'close']))
     } finally {
       stop() // 失败时也摘掉时间线（否则它的 sink 漏进后面的用例）
     }

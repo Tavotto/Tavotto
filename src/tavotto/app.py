@@ -21256,6 +21256,9 @@ def _history_item(doc_id: str, versions_dir: Path, key) -> dict | None:
         state, status = engine_layoutsession.read_readonly()
         slot_doc, slot_rev, slot_exists = _history_slot(doc_id)
         mode, owner = _history_verdict(doc_id, key, state, status, slot_doc, slot_rev, slot_exists)
+    # 回出去的取值只能出自闭集（前端与假后端逐字镜像它）
+    assert mode in engine_projecthistory.HISTORY_MODES
+    assert owner in engine_projecthistory.HISTORY_OWNERS
     name = ""
     node_newer = False
     if slot_doc is not None:
@@ -22347,6 +22350,10 @@ def api_versions_get(doc_id, vid):
     return jsonify(v)
 
 
+#: 空白排版（`_doc_objects` 为空）上不写的关键时刻（ADR 0211 第一期 4）；与前端 `useVersionCheckpoints` 的同一判据
+_MOMENTS_SKIPPED_WHEN_BLANK = frozenset({"open", "close"})
+
+
 @app.post("/api/versions/<doc_id>")
 def api_versions_create(doc_id):
     body = request.get_json(force=True)
@@ -22367,9 +22374,9 @@ def api_versions_create(doc_id):
                 "params": {"moment": str(moment)[:40]},
             }
         ), 400
-    if moment == "open" and not _doc_objects(doc):
-        # 空白排版的「打开」不是一件值得留下的事（ADR 0211 第一期 4）：以前每次加载新路径都在用户项目里
-        # 留一个只有空 `open` 节点的 `.vx` 目录。不建目录、不写任何东西；前端那一侧同样不发（纵深）
+    if moment in _MOMENTS_SKIPPED_WHEN_BLANK and not _doc_objects(doc):
+        # 空白排版的「打开」「离开」不是值得留下的事（ADR 0211 第一期 4）：以前每次加载新路径、离开项目都在用户项目里
+        # 留一个只有空节点的 `.vx` 目录。不建目录、不写任何东西；前端那一侧同样不发（纵深）。「恢复前」等别的时刻照旧
         return jsonify({"skipped": True, **_document_save_extras(doc)})
     ver = {
         "id": "",  # 在版本锁内取（`_fresh_version_id`）：要对着锁内读到的现有节点核重名

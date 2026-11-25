@@ -50,6 +50,14 @@ export interface CandidateRow {
 
 export type Failure = number | 'network'
 
+/**
+ * 项目内时间线候选的取值闭集（同源对镜像，ADR 0211）：与后端 `engine/projecthistory.HISTORY_MODES` / `HISTORY_OWNERS`、
+ * `lib/api.ts` 同名常量逐字相同（`tests/test_project_history_restore.py::test_vocabulary_mirrors_are_literal`）。
+ * 用例摆出闭集之外的行时假后端当场抛错——不让假后端替真后端发明取值。
+ */
+export const HISTORY_MODES = ['slot', 'node', 'copy'] as const
+export const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as const
+
 export function createFakeBackend() {
   const b = {
     slots: new Map<string, Slot>(),
@@ -240,7 +248,13 @@ export function createFakeBackend() {
       // 没摆过 = 旧后端（404）。不记调用：既有用例的调用序列断言不因这个新端点变
       if (!entry) return json({ error: 'nf' }, 404)
       b.calls.push('GET history')
-      return json({ items: typeof entry === 'function' ? entry() : entry, index: 'ok' })
+      const items = typeof entry === 'function' ? entry() : entry
+      for (const it of items) {
+        if (!(HISTORY_MODES as readonly unknown[]).includes(it.mode) || !(HISTORY_OWNERS as readonly unknown[]).includes(it.owner)) {
+          throw new Error(`假后端：项目内候选的 mode / owner 不在闭集里：${String(it.mode)} / ${String(it.owner)}`)
+        }
+      }
+      return json({ items, index: 'ok' })
     }
     if (u.pathname === '/api/layout-session/project-history/claim' && method === 'POST') {
       const body = JSON.parse(String(init?.body)) as { doc_id: string; revision: string }

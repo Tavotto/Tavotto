@@ -342,7 +342,7 @@ order: 200
   「恢复前」全走它，它在**第一个 await 之前**同步取走 pj / 文档 / 画布身份 / 缩略图图源（离开
   项目那一刻紧跟着就是换 pj、清 renderStore）。`markMoment()` 只在 `startVersionCheckpoints`
   挂上时才发请求。「保存」时刻由保存侧发 `lib/layoutSaved.emitLayoutSaved()`、时间线订阅——
-  新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。**空白排版的「打开」不打点**（ADR 0211 第一期 4，2026-11-25）：其余关键时刻空画布照打（Codex #679），只有 `open` 在拍的那份没有对象时不发——以前挪走的项目每加载一次在 `tavottofile/versions/` 里多一个只有空节点的 `.vx`；后端对空白 `open` 同样不写（纵深）。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
+  新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。**空白排版的「打开」「离开」不打点**（ADR 0211 第一期 4，2026-11-25）：其余关键时刻（恢复前、保存、导出……）空画布照打（Codex #679），只有 `open` / `close` 在拍的那份没有对象时不发（`BLANK_SKIPPED_MOMENTS`）——以前挪走的项目每加载 / 离开一次在 `tavottofile/versions/` 里多一个只有空节点的 `.vx`；后端对这两个时刻同样不写（`_MOMENTS_SKIPPED_WHEN_BLANK`，纵深，同源对）。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
   恢复别的图（2026-10-31）：同一张画布上，这一版的图与画布上此刻的图不是同一组（换了 / 多了 / 少了，含单图编辑 ↔ 排版；比 fileId 集合，与后端 `_version_figures` 同一把尺子）→ 先确认、说清会变成几张图；恢复后图变了 → 时间线范围切到「全部图」（`timelineStore.revealAll`）；
   单图编辑时来自另一张画布的图，确认框按「图」说、不说「画布」。

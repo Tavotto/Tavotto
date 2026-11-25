@@ -1629,16 +1629,20 @@ export interface ProjectHistoryItem {
   schema: number | null
   canvases: number
   objects: number
-  mode: 'slot' | 'node' | 'copy'
-  owner: 'this' | 'none' | 'moved' | 'other' | 'unknown'
+  mode: (typeof HISTORY_MODES)[number]
+  owner: (typeof HISTORY_OWNERS)[number]
   /** `mode=slot` 时槽位正文的 revision（认领与探测都对着它） */
   revision: string | null
   /** `mode=slot` 且节点比槽位新、内容不同（只算单画布节点） */
   node_newer: boolean
 }
 
-const HISTORY_MODES = ['slot', 'node', 'copy'] as const
-const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as const
+/**
+ * 候选 `mode` / `owner` 的取值闭集：**镜像**后端唯一出处 `engine/projecthistory.HISTORY_MODES` / `HISTORY_OWNERS`
+ * （同源对，`tests/test_project_history_restore.py::test_vocabulary_mirrors_are_literal` 逐字对拍）。
+ */
+export const HISTORY_MODES = ['slot', 'node', 'copy'] as const
+export const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as const
 
 function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
   const r = raw as Record<string, unknown> | null

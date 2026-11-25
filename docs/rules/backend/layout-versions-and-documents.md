@@ -372,7 +372,8 @@ order: 200
     （只算单画布节点）。`POST …/project-history/claim {doc_id, revision}` 在同一把槽位锁里重判，仍是 `slot` 且 revision
     对得上才 `record_owner`（owners + owner_revisions），否则 409 `claim_refused`、零改动。`owner_conflict` 判据不变：认领之前
     `PUT last` 仍按旧归属 409。空白排版（`_doc_objects` 为空）的 `open` 关键时刻 `POST /api/versions` 回 `skipped`、不建目录。
-    看护 `tests/test_project_history_restore.py`。
+    空白排版上 `close` 同样不写（`_MOMENTS_SKIPPED_WHEN_BLANK`）。`mode` / `owner` 闭集是严格同源对（见 `same-origin-pairs.md`）。
+    看护 `tests/test_project_history_restore.py`（含 `test_vocabulary_mirrors_are_literal`）。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
