@@ -52,7 +52,7 @@ async function openAndWait(page: Page, baseURL: string) {
   await waitForDocumentReady(page)
 }
 
-test('整夹挪走 / 复制之后从项目自己的时间线找回排版，加载多次不留空 .vx', async ({ app, browser }) => {
+test('整夹挪走 / 复制之后从项目自己的时间线找回排版，加载多次不留空 .vx', { tag: '@feature:file.autosave-restore' }, async ({ app, browser }) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-projhist-'))
   try {
     const projA = path.join(root, 'projA')
@@ -189,7 +189,7 @@ test('整夹挪走 / 复制之后从项目自己的时间线找回排版，加�
   }
 })
 
-test('空白项目连续加载 3 次、回主页再回来一次：项目里不出现只有空「打开」「离开」节点的 .vx', async ({ app, page }) => {
+test('空白项目连续加载 3 次、回主页再回来一次：项目里不出现只有空「打开」「离开」节点的 .vx', { tag: '@feature:file.autosave-restore' }, async ({ app, page }) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-blank-'))
   try {
     const proj = path.join(root, 'proj')

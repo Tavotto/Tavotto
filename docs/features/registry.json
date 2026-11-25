@@ -870,6 +870,14 @@
         {
           "spec": "layout-session.spec.ts",
           "title": "新开一个空存储的浏览器 context：恢复上次的排版"
+        },
+        {
+          "spec": "project-history-restore.spec.ts",
+          "title": "整夹挪走 / 复制之后从项目自己的时间线找回排版，加载多次不留空 .vx"
+        },
+        {
+          "spec": "project-history-restore.spec.ts",
+          "title": "空白项目连续加载 3 次、回主页再回来一次：项目里不出现只有空「打开」「离开」节点的 .vx"
         }
       ],
       "desktop_manual": [
