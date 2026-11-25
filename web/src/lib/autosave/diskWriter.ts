@@ -19,6 +19,7 @@
  *     把它盖掉。
  */
 import { ApiError, REVISION_ABSENT, type DiskDocumentSummary } from '@/lib/api'
+import type { ChartSourceReceipt } from '@/lib/chartSourceReceipts'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
 
@@ -90,6 +91,7 @@ export interface WrittenInfo {
   /** 这份正文是替哪个项目写的（排队时的项目，不是回包时碰巧是哪个） */
   pj: string | null
   metadata: WrittenMetadata
+  chartSources?: ChartSourceReceipt[]
   figureSnapshots?: Record<string, FigureSnapshot>
   snapshotContext?: FigureSnapshotSaveContext
 }
@@ -102,7 +104,7 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot> }>
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; chart_sources?: ChartSourceReceipt[]; figure_snapshots?: Record<string, FigureSnapshot> }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -303,6 +305,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         ports.onWritten(id, res.saved_at ?? Date.now(), {
           pj,
           metadata: res.metadata,
+          ...(res.chart_sources !== undefined ? { chartSources: res.chart_sources, snapshotContext } : {}),
           ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
         })
         ports.outcome(trigger, 'ok')

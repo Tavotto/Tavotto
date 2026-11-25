@@ -7,6 +7,7 @@ import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
 import { fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, type AutosaveProbe } from '@/lib/api'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
+import { planSavedChartSources, type ChartSourceReceipt } from '@/lib/chartSourceReceipts'
 import { containsChartState } from '@/lib/documentFormat'
 import type { RestoreIssue } from '@/store/documentRestore'
 import {
@@ -1595,9 +1596,12 @@ const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === 
 function afterWriteOk(
   id: string,
   savedAt: number,
-  meta?: { pj?: string | null; metadata?: PersistedMetadata; figureSnapshots?: Record<string, FigureSnapshot>; snapshotContext?: FigureSnapshotSaveContext },
+  meta?: { pj?: string | null; metadata?: PersistedMetadata; figureSnapshots?: Record<string, FigureSnapshot>; chartSources?: ChartSourceReceipt[]; snapshotContext?: FigureSnapshotSaveContext },
 ): void {
-  if (meta?.snapshotContext) mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
+  if (meta?.snapshotContext) {
+    mergeSavedChartSources(meta.snapshotContext, meta.chartSources)
+    mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
+  }
   const pj = meta?.pj ?? null
   for (const fn of [...persistedListeners]) {
     try {
@@ -2244,6 +2248,8 @@ const editGenerationOf = (documentId: string) => editGeneration.get(documentId) 
 export function markProjectFileDirty(): void {
   const s = useDocumentStore.getState()
   editGeneration.set(s.documentId, editGenerationOf(s.documentId) + 1)
+  // 分叉期间仍计用户编辑，供新副本与已写命名文件比较；原排版的持久绑定留在原状。
+  if (isAutosaveSuspendedFor(s.documentId)) return
   const b = s.projectFile
   if (b && !b.dirty) setProjectFile({ ...b, dirty: true })
 }
@@ -2359,6 +2365,26 @@ export function captureFigureSnapshotSave(
     ownerGenerations: new Map(figureOwnerGenerations),
     receiptGeneration: figureReceiptGeneration,
   }
+}
+
+/** 只把服务端已落盘的来源引用合回当时送出的面板。 */
+export function mergeSavedChartSources(context: FigureSnapshotSaveContext, refs?: ChartSourceReceipt[]): void {
+  if (!refs?.length || writesBlocked(false)) return
+  const state = useDocumentStore.getState()
+  if ((projectOfDoc().id ?? currentProjectId()) !== context.pj) return
+  const scope = { pj: currentProjectId(), documentId: state.documentId, loadSeq: state.loadSeq }
+  const project = state.buildProject()
+  const plan = planSavedChartSources(context, project, scope, refs)
+  if (!plan.updates.length) return
+  const activeIndex = state.canvases.findIndex(canvas => canvas.id === state.activeCanvasId)
+  const canvases = produceWithPatches(project.canvases, draft => {
+    for (const { canvasIndex, objectIndex, source } of plan.updates) {
+      const panel = draft[canvasIndex].objects[objectIndex]
+      if (panel.type === 'panel') panel.chartSource = source
+    }
+  })[0]
+  const doc = activeIndex < 0 ? state.doc : { ...state.doc, objects: canvases[activeIndex].objects }
+  useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
 }
 
 /** Merge only the exact sent panel version; a late reply cannot reattach an old execution. */
@@ -2680,17 +2706,17 @@ export function startAutosave(): () => void {
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
     // 占位文档的变化不是编辑：写入口都看门，这里再守一道（绕过门的写入也不排队落盘）
     if (isDocumentPlaceholder()) return
-    if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return
     // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
     // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置
     // （字面含义就是"有改动还没写进自动保存"），落盘照排队，写盘失败照报。
     const derived = state.derivedSeq !== prev.derivedSeq
+    if (!derived) markProjectFileDirty()
+    if (isAutosaveSuspendedFor(state.documentId)) return
     if (!state.dirty) useDocumentStore.setState({ dirty: true })
     // 冲突未决时不覆盖状态：它要用户裁决，被一次编辑顶掉就等于替用户按了
     // 「算了」，而下一次防抖写盘又会去撞同一堵墙。编辑照常进本机副本。
     if (!derived && !blocksDiskWrite(state.saveState)) setSaveState('dirty')
     // 项目文件那根轴只跟用户编辑：派生同步不是用户做的事，圆点不该因它亮起
-    if (!derived) markProjectFileDirty()
     // 显式打开的别的项目的排版：真改了一笔才归到这个项目（派生同步不算）
     if (!derived) claimDocumentOnEdit()
     cancelPendingAutosave()

@@ -150,6 +150,28 @@ describe('存成副本（绑定了项目文件）', () => {
     expect(s().projectMeta.name).toBe('排版一 副本')
   })
 
+  it('项目 A 的重名冲突晚于切项目返回时，不继续向项目 B 尝试新名字', async () => {
+    bind()
+    projectFiles.set('排版一 副本', 'keep')
+    const pending = forkCurrentDocument()
+    setCurrentProjectId('pjB')
+    expect(await pending).toMatchObject({ ok: false, reason: 'switched', file: null })
+    expect(posts).toEqual(['排版一 副本'])
+    expect(s().documentId).toBe('d_orig')
+  })
+
+  it('写出命名文件后才发生的编辑留在副本，绑定仍提示待保存', async () => {
+    bind()
+    edit('before')
+    const pending = forkCurrentDocument()
+    edit('after')
+    const out = await pending
+    expect(out.ok).toBe(true)
+    expect(ids(projectFiles.get('排版一 副本'))).toEqual(['before'])
+    expect(s().doc.objects.map(o => o.id)).toEqual(['before', 'after'])
+    expect(s().projectFile?.dirty).toBe(true)
+  })
+
   it('重名加序号，已有的文件一个都不覆盖', async () => {
     bind()
     projectFiles.set('排版一 副本', '{"keep":1}')

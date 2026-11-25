@@ -18,6 +18,8 @@ import type { ProjectDocument } from '@/types/document'
 import {
   activeProjectFile,
   captureFigureSnapshotSave,
+  mergeSavedChartSources,
+  projectFileSnapshot,
   flushAutosave,
   getWindowHold,
   isAutosaveSuspendedFor,
@@ -92,12 +94,14 @@ export type ForkOutcome =
 async function writeNewProjectFile(
   stem: string,
   pd: ProjectDocument,
-): Promise<{ res: SavedLayout; name: string }> {
+  ctx: ReturnType<typeof captureSaveContext>,
+): Promise<{ res: SavedLayout; name: string } | null> {
   for (let n = 1; n <= MAX_NAME_TRIES; n++) {
+    if (!stillCurrent(ctx)) return null
     const name = n === 1 ? stem : `${stem} ${n}`
     try {
       const res = await saveLayout(name, { ...pd, project: { ...pd.project, name } }, REVISION_ABSENT, {
-        target: 'project',
+        target: 'project', pj: ctx.pj,
       })
       return { res, name }
     } catch (e) {
@@ -123,6 +127,7 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
   const stem = forkCopyName(state.projectMeta.name)
   const binding = activeProjectFile()
   const pj = currentProjectId()
+  const edited = projectFileSnapshot()
   const pd = state.buildProject()
   let name = stem
   let file: string | null = null
@@ -130,7 +135,11 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
   if (binding) {
     const snapshots = captureFigureSnapshotSave(pd, pj)
     try {
-      written = await writeNewProjectFile(stem, pd)
+      written = await writeNewProjectFile(stem, pd, ctx)
+      if (!written) {
+        resumeAutosaveAfterFork(ctx.documentId)
+        return { ok: false, reason: 'switched', file: null }
+      }
     } catch (error) {
       resumeAutosaveAfterFork(ctx.documentId)
       return { ok: false, reason: 'write_failed', error }
@@ -140,8 +149,10 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
     // 写的途中切走了：文件已经在项目里了（新名字、没覆盖任何东西），但不把此刻开着的另一份换掉
     if (!stillCurrent(ctx)) return { ok: false, reason: 'switched', file }
     // 回执里的快照引用合进内存里这份（再带进副本）；原排版已摘出自动保存，这次合并不会把它写回盘
+    mergeSavedChartSources(snapshots, written.res.chart_sources)
     mergeSavedFigureSnapshots(snapshots, written.res.figure_snapshots)
   }
+  const copyHasNewEdits = edited()
   const latest = useDocumentStore.getState().buildProject()
   const id = await installFork({ ...latest, project: { ...latest.project, name } }, opts.beforeSwitch)
   if (!id) return { ok: false, reason: 'busy' }
@@ -149,7 +160,7 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
     rememberLayoutName(name, written.res.name)
     rememberLayoutRevision(written.res.name ?? name, written.res.revision, pj)
     setProjectFile(
-      { projectId: pj, name: written.res.name ?? name, file, revision: written.res.revision, dirty: false },
+      { projectId: pj, name: written.res.name ?? name, file, revision: written.res.revision, dirty: copyHasNewEdits },
       id,
     )
   }
