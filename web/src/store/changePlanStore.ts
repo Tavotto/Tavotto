@@ -3,9 +3,11 @@ import { msg } from '@/i18n'
 import {
   EngineError,
   createChangePlan,
+  applyChangePlanScript,
   discardChangePlan,
   getChangePlan,
   reviseChangePlan,
+  undoChangePlanScript,
   type ChangePlan,
   type ChangePlanPatch,
   type ReviewAnchor,
@@ -21,6 +23,7 @@ import { releaseOwned } from '@/lib/styleOwned'
 import type { PanelObject, PanelOverride } from '@/types/document'
 import { currentRunSelection, newRequestId, useAiStore, type AiScope } from './aiStore'
 import { scriptHandoffPrompt } from '@/lib/assistantScriptContext'
+import { MAX_ASSISTANT_INSTRUCTION } from '@/lib/assistantPlanRoute'
 import { exactPanelManifest, useRenderStore } from './renderStore'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
@@ -53,6 +56,10 @@ export interface PlanRequest {
   /** 助手来源（ADR 0206 PR 4）：用户在改图助手里的原话与选中的元素 gid */
   instruction?: string
   target?: string
+  /** `script`：脚本修改方案（ADR 0206 PR 6）；「重新生成」按同一份请求再来 */
+  mode?: 'script'
+  /** 卡上 / 气泡里显示的原话（发给后端的 `instruction` 可能带了「图内已改好的部分」交接说明；缺省 = `instruction`） */
+  display?: string
 }
 
 /** 高级版：在某一版「修改后」的图上写的一条批注（只存本机，不上传审阅服务）；`label` 是元素名 / 「框选」/ 「整体」的显示名 */
@@ -106,6 +113,7 @@ export const ASSISTANT_FALLTHROUGH_CODES: ReadonlySet<string> = new Set([
   'change_plan_not_editable',
   'invalid_change_plan',
   'change_plan_too_large',
+  'change_plan_script_unsupported',
 ])
 
 export interface PlanEntry {
@@ -171,6 +179,8 @@ export interface PlanEntry {
   appliedSrc?: string
   /** 只应用了一部分组：卡片挂的不能是全量候选图 */
   appliedPartial?: boolean
+  /** 脚本修改方案：应用 / 撤销在途（防连点） */
+  scriptBusy?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
   notice?: 'apply_failed' | 'undo_failed'
   /** 应用后由这张卡标成「已处理」的意见 id（撤销时只还原这几条） */
@@ -237,6 +247,10 @@ interface ChangePlanState {
   /** `previewSrc`：弹窗里按勾选组合出的那张图（只应用部分组时给，卡片据此挂实际应用的那一张） */
   apply: (key: string, opts?: { previewSrc?: string }) => ApplyResult
   undo: (key: string) => boolean
+  /** 脚本修改方案的应用（后端写脚本，不进文档历史）：对不上方案那一版 = 「图已改过」 */
+  applyScript: (key: string) => Promise<ApplyResult>
+  /** 脚本修改方案的撤销（按备份还原；⌘Z 不撤脚本） */
+  undoScript: (key: string) => Promise<boolean>
   discard: (key: string) => void
   /** 高级版：按批注重改，同一张卡出下一版（出好后自动切到新版） */
   revise: (key: string) => Promise<ReviseResult>
@@ -411,7 +425,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const assistant = typeof req.instruction === 'string'
     const entry: PlanEntry = {
       key,
-      ...(assistant ? { from: 'assistant' as const, instruction: req.instruction, fallback, onSettle } : {}),
+      ...(assistant ? { from: 'assistant' as const, instruction: req.display ?? req.instruction, fallback, onSettle } : {}),
       pj: guard.pj,
       panelId,
       fileId: panel.fileId,
@@ -443,7 +457,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         id: panel.fileId,
         patches: panel.overrides,
         ...(assistant
-          ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}) }
+          ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}), ...(req.mode === 'script' ? { mode: 'script' as const } : {}) }
           : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
         // 输入框选的那条连接与型号：结构化调用用同一条，不顺延到别的（审阅来源同理）
         ...currentRunSelection(),
@@ -544,6 +558,12 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         unchecked: e.unchecked,
         labelOf: (gid) => labels.get(gid) || undefined,
       })
+      // 脚本修改也先出方案卡（ADR 0206 PR 6）：Agent 在副本里改、渲染出对比，看过再应用；这条路不适用（没连上模型 / native…）就落回现有的直接改脚本
+      const out = await start(e.panelId, { instruction: prompt.length <= MAX_ASSISTANT_INSTRUCTION ? prompt : fb.prompt, display: fb.prompt, ...(e.request.target ? { target: e.request.target } : {}), mode: 'script' }, fb)
+      if (out !== 'fallthrough') {
+        patch(key, e.plan && e.plan.groups.length > 0 ? { scriptStarted: true } : { status: 'handoff', scriptStarted: true, failure: undefined })
+        return out !== null
+      }
       try {
         await ai.start({
           project: fb.project,
@@ -599,6 +619,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const e = get().entries[key]
       const plan = e?.plan
       if (!e || !plan) return 'failed'
+      if (plan.kind === 'script') {
+        void get().applyScript(key)
+        return 'nothing'
+      }
       // 一键排版：落地就是现有的那一次 commit（核对「图还是出发时那样」也在里面）；对不上 = 「图已改过」，不写
       if (e.kind === 'layout') {
         const h = useDocumentStore.getState()
@@ -649,8 +673,60 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       return 'applied'
     },
 
+    applyScript: async (key) => {
+      const e = get().entries[key]
+      if (!e?.plan || e.plan.kind !== 'script' || !e.planId || e.scriptBusy) return 'failed'
+      const panel = panelOf(e)
+      const st = effectiveStatus(e, panel?.overrides ?? null, panel ? sourceOf(panel) : null)
+      if (st === 'stale') {
+        patch(key, { status: 'stale', notice: undefined })
+        return 'stale'
+      }
+      if (st !== 'ready') return 'failed'
+      const guard = captureProjectEpoch()
+      patch(key, { scriptBusy: true, notice: undefined })
+      try {
+        const applied = await applyChangePlanScript(e.planId)
+        if (!guard.still() || !get().entries[key]) return 'failed'
+        patch(key, { status: 'applied', scriptBusy: false, notice: undefined, plan: { ...e.plan, applied } })
+        set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
+        return 'applied'
+      } catch (err) {
+        if (!guard.still() || !get().entries[key]) return 'failed'
+        // 脚本在生成之后被改过：不写，卡片转「图已改过」+「重新生成」；其余（备份写不进 / 替换失败）一句灰字，脚本没动
+        if (err instanceof EngineError && err.code === 'change_plan_figure_changed') {
+          patch(key, { status: 'stale', scriptBusy: false, notice: undefined })
+          return 'stale'
+        }
+        patch(key, { scriptBusy: false, notice: 'apply_failed' })
+        return 'failed'
+      }
+    },
+
+    undoScript: async (key) => {
+      const e = get().entries[key]
+      if (!e?.plan || e.plan.kind !== 'script' || !e.planId || e.status !== 'applied' || e.scriptBusy) return false
+      const guard = captureProjectEpoch()
+      patch(key, { scriptBusy: true, notice: undefined })
+      try {
+        await undoChangePlanScript(e.planId)
+        if (!guard.still() || !get().entries[key]) return false
+        // 脚本回到改前：同一份方案又是待确认（应用时后端仍会核基线）
+        patch(key, { status: 'ready', scriptBusy: false, notice: undefined, plan: { ...e.plan, applied: null } })
+        return true
+      } catch {
+        if (!guard.still() || !get().entries[key]) return false
+        patch(key, { scriptBusy: false, notice: 'undo_failed' })
+        return false
+      }
+    },
+
     undo: (key) => {
       const e = get().entries[key]
+      if (e?.plan?.kind === 'script') {
+        void get().undoScript(key)
+        return true
+      }
       const panel = e ? panelOf(e) : null
       // 只撤我写的那一条：还是应用时那份、且历史栈顶还是那次 commit；之后又改了别的，撤的就是别的了
       if (!e || !panel || e.status !== 'applied' || !canUndoApplied(e, panel.overrides)) {

@@ -87,7 +87,11 @@ const ask = () => cps().requestFromAssistant('p1', { instruction: FALLBACK.promp
 
 beforeEach(async () => {
   vi.useFakeTimers()
-  createChangePlan.mockReset().mockResolvedValue({ plan_id: 'p1', state: 'running' })
+  // 脚本修改方案（PR 6）这条路在这里不适用：落回现有的直接改脚本（脚本方案本身见 changePlanScript.test.ts）
+  createChangePlan.mockReset().mockImplementation(async (body: { mode?: string }) => {
+    if (body.mode === 'script') throw new EngineError('x', '', 'change_plan_script_unsupported', '')
+    return { plan_id: 'p1', state: 'running' }
+  })
   getChangePlan.mockReset()
   discardChangePlan.mockClear()
   requestRender.mockReset()
@@ -166,6 +170,7 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
     const key = (await ask()) as string
     expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_busy' } })
     expect(cps().entries[key].instruction).toBe(FALLBACK.prompt)
+    createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_script_unsupported', '')) // 脚本方案这条路不适用 → 落回直接改脚本
     expect(await cps().runScript(key)).toBe(true)
     expect(start).toHaveBeenCalledOnce()
   })

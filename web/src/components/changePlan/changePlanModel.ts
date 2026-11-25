@@ -66,6 +66,8 @@ export function groupViews(e: PlanEntry): GroupView[] {
         boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: (g.boxes.before ?? []).find((x) => x.gid === b.gid)?.box as PlanBox | undefined })),
       }
     }
+    // 脚本修改组：没有画面框（改动在脚本里，看 diff）；标题就是用户的原话
+    if (g.kind === 'script') return { key: g.key, summary: clip(e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }), reviewers: [], commentNumbers: [], fromNote: false, boxes: [] }
     const fromNote = g.origin === 'note'
     const c = !fromNote && g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
     const n = fromNote ? 0 : numberOf(g.comment_id)
@@ -131,6 +133,8 @@ export function planTally(e: PlanEntry) {
 
 /** 卡片上那一句：按几条意见改了几处（还有几条没改） */
 export function summaryLine(e: PlanEntry): string {
+  const script = scriptInfo(e)
+  if (script) return cp('card.summaryScript', { added: script.added, removed: script.removed })
   const t = planTally(e)
   // 续改出的版本：先说这版按批注又改了几处，再说按意见改的
   if (t.notes > 0) return cp('card.summaryNotes', { n: t.notes, places: t.notePlaces })
@@ -142,6 +146,12 @@ export function summaryLine(e: PlanEntry): string {
   if (t.other > 0) return cp('card.summaryOther', { done: t.done, places: t.places, rest: t.script + t.other })
   return t.script > 0 ? cp('card.summary', { done: t.done, places: t.places, script: t.script }) : cp('card.summaryAll', { done: t.done, places: t.places })
 }
+
+/** 脚本修改方案里那一组的内容（图内方案没有） */
+export const scriptInfo = (e: Pick<PlanEntry, 'plan'>) => e.plan?.groups.find((g) => g.kind === 'script')?.script
+
+/** 脚本修改方案（一张卡只含一类：不是图内修改） */
+export const isScriptPlan = (e: Pick<PlanEntry, 'plan'>): boolean => e.plan?.kind === 'script'
 
 /** 失败之后用户能走的下一步（每个稳定码一个，绝不留死胡同） */
 export type FailureAction = 'connect' | 'retry' | 'regenerate' | 'dismiss' | 'script'
@@ -157,6 +167,13 @@ export function failureAction(code: string): FailureAction {
     case 'change_plan_figure_changed':
     case 'change_plan_unknown':
       return 'regenerate'
+    case 'change_plan_script_check_failed':
+    case 'change_plan_script_no_change':
+    case 'change_plan_script_agent_failed':
+    case 'change_plan_script_data_changed':
+    case 'change_plan_script_no_preview':
+    case 'change_plan_script_overreach':
+      return 'retry'
     case 'change_plan_busy':
     case 'change_plan_model_quota':
     case 'change_plan_model_timeout':
@@ -176,9 +193,21 @@ export function failureAction(code: string): FailureAction {
 export function failureText(code: string, params?: Record<string, unknown>, assistant = false): string {
   if (code === 'change_plan_empty') return cp(assistant ? 'card.emptyAssistant' : 'card.empty')
   if (code === 'change_plan_script_failed') return cp('card.scriptFailed')
+  // 外部 CLI 越界（R-03）：一句话说清脚本怎么样了（还原了 / 没替你还原 / 没动），文件名由卡片另列
+  if (code === 'change_plan_script_overreach') {
+    return cp(params?.restored === true ? 'card.overreachRestored' : params?.conflict === true ? 'card.overreachConflict' : 'card.overreachOthers')
+  }
   const known = (c: string) => formatMessage(backendCodeMsg(c, params, ''))
   // 本地的超时码与不认识的码都落到「生成失败，图没有改动」这一句，不留空白
   return (code === POLL_TIMEOUT ? '' : known(code)) || known('change_plan_failed')
+}
+
+/** 越界被改的文件名（最多 5 个）+「等 N 个」；没有文件名（只是目标脚本被改）= 空串 */
+export function overreachFiles(params?: Record<string, unknown>): string {
+  const files = Array.isArray(params?.files) ? (params.files as unknown[]).filter((f): f is string => typeof f === 'string') : []
+  if (!files.length) return ''
+  const total = typeof params?.total === 'number' ? params.total : files.length
+  return total > files.length ? cp('card.overreachMore', { files: listJoin(files), count: total }) : listJoin(files)
 }
 
 export const whoOf = (names: string[]) => listJoin([...new Set(names)])
@@ -217,7 +246,7 @@ export const markNoteHintSeen = (): void => {
  * 一键排版的整版方案（`quick_layout`）没有逐元素的改动可批注，脚本修改的卡（二期）是脚本副本——都不能重改。PR 6 的脚本卡复用这一个判断。
  */
 export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean {
-  if (e.kind === 'layout') return false
+  if (e.kind === 'layout' || e.plan?.kind === 'script') return false
   const from = e.from ?? 'review'
   return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
 }

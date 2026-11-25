@@ -4130,8 +4130,21 @@ export interface ChangePlanChange {
   patch: ChangePlanPatch
 }
 
+/** 脚本修改组的内容（ADR 0206 PR 6）：unified diff 与前后摘要；应用 / 撤销只认后端存的候选字节 */
+export interface ChangePlanScriptInfo {
+  rel: string
+  base_sha256: string
+  new_sha256: string
+  diff: string
+  added: number
+  removed: number
+}
+
 export interface ChangePlanGroup {
   key: string
+  /** `script` = 脚本修改组（没有图内改动，`script` 里是 diff） */
+  kind?: 'script'
+  script?: ChangePlanScriptInfo
   label: string
   comment_id?: string
   note_id?: string
@@ -4148,7 +4161,11 @@ export interface ChangePlan {
   /** 批注重改的版本才有：它是从哪一版续改来的（每一版是自己的方案，各有 `id` 与两张图） */
   parent?: string
   source: ChangePlanSource
-  base: { target: string; fingerprint: string }
+  base: { target: string; fingerprint: string; script_sha256?: string }
+  /** `script` = 脚本修改方案（一张卡只含一类）；缺省 = 图内修改 */
+  kind?: 'script'
+  /** 脚本方案已应用时：那份备份的 id 与应用之后的脚本摘要（后端记，重启后仍认）；没应用 / 已撤销 = null */
+  applied?: { backup: string; after_sha256: string } | null
   /** 请求时的 B0 全量 override（规范化后） */
   base_patches: ChangePlanPatch[]
   /** B0 ⊕ 全部组的 `patch`（规范化后）：「全部应用」直接写它；逐组取消勾选时前端用 `base_patches` ⊕ 勾选组的 `patch` 重算（与后端 `changeplan.apply_groups` 同源） */
@@ -4188,6 +4205,8 @@ export interface CreateChangePlanBody {
   instruction?: string
   /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
   target?: string
+  /** `script`：脚本修改（只接助手来源，必须带 `connection`；ADR 0206 PR 6） */
+  mode?: 'script'
   client_request_id?: string
 }
 
@@ -4279,6 +4298,21 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanView
+}
+
+/** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */
+export async function applyChangePlanScript(planId: string): Promise<{ backup: string; after_sha256: string }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/apply-script`, { method: 'POST' })
+  const applied = out.applied as { backup?: unknown; after_sha256?: unknown } | undefined
+  if (!applied || !isStr(applied.backup) || !isStr(applied.after_sha256)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return { backup: applied.backup, after_sha256: applied.after_sha256 }
+}
+
+/** 撤销一份已应用的脚本修改（按备份还原）；脚本在应用之后又被改过抛 `change_plan_script_undo_conflict`。 */
+export async function undoChangePlanScript(planId: string): Promise<void> {
+  await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/undo-script`, { method: 'POST' })
 }
 
 /** 放弃一份方案（幂等）。 */
