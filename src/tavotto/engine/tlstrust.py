@@ -25,7 +25,7 @@ pip 不受影响：新版 pip 经 truststore 走平台校验。
 没有 git 时下载 Codex 插件发行分支压缩包（`codexinstall._fetch`）、用户逐次确认后发送诊断包
 （`diagsend._opener`，ADR 0118；它另加一个不跟随重定向的处理器）、用户点「从服务商获取」时
 取型号列表（`ai_catalog._opener`，同样不跟随重定向）、用户点「用账号登录」后的设备码授权与令牌刷新
-（`ai_oauth._opener`，ADR 0146；同样不跟随重定向）。这些调用都使用 `urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))`；另有内置执行器的模型请求（`wires._opener`，ADR 0147，不跟随重定向）。别的 `urlopen`
+（`ai_oauth._opener`，ADR 0146；同样不跟随重定向）。这些调用都使用 `urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))`；另有内置执行器的模型请求（`wires._opener`，ADR 0147，不跟随重定向）、Sign in with ChatGPT 的换令牌 / 刷新 / 撤销 / JWKS / 型号清单（`siwc_login._opener`，ADR 0209，不跟随重定向）。别的 `urlopen`
 全是 `http://127.0.0.1` 上的本机回环（会话凭据 / 交接 / 已在运行的实例），不经 TLS。
 
 纯标准库 + 延后 import 的 truststore（`pyproject.toml` 的运行时依赖；冻结产物由 `packaging/tavotto.spec`

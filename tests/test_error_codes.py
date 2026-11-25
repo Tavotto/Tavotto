@@ -233,6 +233,8 @@ def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(sourc
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
+    # ADR 0178 修订 2026-11-25：「读懂数据」选用哪个 AI，指定的连接此刻不在可选清单里
+    "understanding_connection_unavailable": set(),
     "result_too_large": set(),
     "journal_catalog_disabled": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
@@ -419,6 +421,11 @@ USER_VISIBLE_CODES = {
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),
+    "ai_siwc_plan_disabled": set(),
+    "ai_siwc_token_unavailable": set(),
+    "siwc_disabled": set(),
+    "siwc_port_unavailable": set(),
+    "siwc_login_failed": {"reason"},
     "connection_not_found": set(),
     "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
@@ -898,7 +905,11 @@ NON_UI_CODES = {
 
 
 #: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
-DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
+DATA_ONLY_PARAMS = {
+    "ai_script_busy": {"session"},
+    "eps_annotations_unsupported": {"operation"},
+    "siwc_login_failed": {"reason"},  # 闭集原因码（siwc_login.REASONS），前端按它挑具体文案
+}
 
 
 def _response_dicts(text: str):

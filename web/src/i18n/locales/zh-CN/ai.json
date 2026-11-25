@@ -560,6 +560,14 @@
         "title": "均值线 + 误差带",
         "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
       },
+      "points_err": {
+        "title": "点 + 误差线",
+        "why": "表里已经是各组的均值，直接画出来。"
+      },
+      "line_err": {
+        "title": "点 + 折线 + 误差线",
+        "why": "表里已经是每个位置的均值，按顺序连起来。"
+      },
       "line_units": {
         "title": "每个对象一条线",
         "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
@@ -715,6 +723,14 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
+      "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
+      "errColumn": "误差线取自「{{column}}」列",
+      "errMissing": "{{count}} 处只有 1 个数值，算不出误差线",
+      "errMissingOne": "「{{label}}」只有 1 个数值，算不出误差线",
+      "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
+      "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
+      "listJoin": "、",
+      "etc": "等",
       "line": "依据：{{text}}。",
       "then": "，",
       "join": "；",
@@ -746,6 +762,16 @@
         "independent": "不是，每行是不同的样本",
         "repeated": "是，同一个样本测了多次"
       }
+    },
+    "aiChoice": {
+      "tipPlain": "分析用的 AI",
+      "tip": "分析用的 AI：{{name}}",
+      "auto": "自动",
+      "off": "不用 AI 分析",
+      "more": "连接其他 AI…",
+      "unavailable": "该模型无法连接，请换一个尝试",
+      "current": "当前：{{name}}",
+      "chosen": "你选的模型"
     },
     "redraw": {
       "from": "用 {{file}} 画的",
@@ -799,7 +825,20 @@
       "retry": "重试",
       "dismiss": "收起",
       "summaryNotes": "按 {{n}} 条批注又改了 {{places}} 处",
-      "revising": "正在按批注重改…"
+      "revising": "正在按批注重改…",
+      "generatingAssistant": "正在按你的话修改…",
+      "summaryAssistant": "改了 {{places}} 处",
+      "summaryAssistantScript": "改了 {{places}} 处，剩下的要改脚本，这次没动",
+      "summaryAssistantOther": "改了 {{places}} 处，剩下的没法直接改",
+      "appliedAssistant": "已应用 · 改了 {{places}} 处",
+      "emptyAssistant": "这条没法直接改图，图没有改动",
+      "handoff": "这条要改脚本，交给 Agent 改。",
+      "runScript": "改脚本做剩下的",
+      "runScriptAll": "改脚本来做",
+      "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
+      "summaryLayout": "{{count}} 张图重新排了版",
+      "appliedLayout": "已应用 · {{count}} 张图重新排了版",
+      "runScriptTip": "会先应用这些图内修改"
     },
     "dialog": {
       "title": "修改方案",
@@ -846,7 +885,10 @@
       "rerunning": "正在重改…",
       "rerunNeedNote": "先在「修改后」的图上点一处，写一条批注",
       "reviseNotLicensed": "高级版没有解锁，没能重改",
-      "groupMetaNote": "按批注改过 · {{count}} 处"
+      "groupMetaNote": "按批注改过 · {{count}} 处",
+      "layoutHeading": "排版 · {{count}} 张图",
+      "layoutGroupMeta": "{{count}} 张图",
+      "noteHere": "这一处"
     },
     "unhandled": {
       "needs_script": "要改脚本，这次没动",
@@ -860,7 +902,8 @@
       "conflict": "与别的改动冲突，这次没动",
       "not_applied": "没能生效，这次没动",
       "no_effect": "改了也看不出变化，这次没动",
-      "not_addressed": "这条没有处理到"
+      "not_addressed": "这条没有处理到",
+      "unclearAssistant": "指令不够具体，这次没动"
     },
     "draft": {
       "thisOne": "这一处",
@@ -898,6 +941,7 @@
         "center": "正中"
       },
       "many": "这 {{count}} 处"
-    }
+    },
+    "layoutGroup": "排版"
   }
 }

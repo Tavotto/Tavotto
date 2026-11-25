@@ -13,6 +13,7 @@ import { cp, whoOf, type GroupView, type UnhandledView } from './changePlanModel
  * 没改的意见是一行灰短横 + 一句原因，不假装处理了。选中 / 悬停浮成卡片（selected 底），不画左侧竖线；与左侧舞台的细框联动（`activeId`）。
  */
 export function ChangeList({
+  heading,
   groups,
   unhandled,
   unchecked,
@@ -20,6 +21,8 @@ export function ChangeList({
   activeId,
   onActive,
 }: {
+  /** 清单头的整句（一键排版的卡用它说「排版 · N 张图」）；缺省 = 「改动 · N 处」 */
+  heading?: string
   groups: GroupView[]
   unhandled: UnhandledView[]
   unchecked: Record<string, boolean>
@@ -31,7 +34,7 @@ export function ChangeList({
   const total = groups.filter((g) => !unchecked[g.key]).reduce((a, g) => a + g.boxes.length, 0)
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-change-plan-list>
-      <p className="shrink-0 px-4 pb-1.5 pt-4 type-meta">{cp('dialog.changes', { count: total })}</p>
+      <p className="shrink-0 px-4 pb-1.5 pt-4 type-meta">{heading ?? cp('dialog.changes', { count: total })}</p>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
         {/* 续改的版本：「按批注改的」置顶，用一条轻分隔线与按意见改的隔开 */}
         {groups.some((g) => g.fromNote) && (

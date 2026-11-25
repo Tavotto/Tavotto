@@ -251,9 +251,9 @@ describe('DependencyPrepareDialog', () => {
     await act(async () => button(en('dependencyPrepareRun'))!.click())
     await act(async () => {})
     expect(useDepRepairStore.getState().progress!.target_kind).toBe('project_venv')
-    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
-      `${en('dependencyPrepareState_preparing')}${en('repairStep', { n: 1, total: 2 })}`,
-    )
+    expect(document.querySelector('[data-repair-line] [data-task-title]')!.textContent).toBe(en('dependencyPrepareState_preparing'))
+    expect([...document.querySelectorAll('[data-repair-line] [data-task-step]')].map((li) => li.getAttribute('data-task-step')))
+      .toEqual(['packages', 'rerun'])
   })
 
   it('联合准备换用了 PyPI 镜像（#743 真事务实测的快照）：只在折叠的「详情」里说一句；没有这个键时不说', async () => {
@@ -275,8 +275,9 @@ describe('DependencyPrepareDialog', () => {
     const note = document.querySelector('[data-repair-pypi-mirror]')!
     expect(note.textContent).toBe(en('repairPypiMirror', { mirror: 'https://pypi.tuna.tsinghua.edu.cn/simple' }))
     expect(note.closest('details')!.open).toBe(false)
-    // 默认可见区不变：固定标题、一行进度、「详情」、「取消」与原位置灰的主按钮（页脚不跳）
-    expect(visibleBlocks(dialog()!).map((b) => b.tag)).toEqual(['h2', 'p', 'summary', 'button', 'button'])
+    // 默认可见区不变：固定标题、任务清单（其中的字都是 span）、「详情」、「取消」与原位置灰的主按钮（页脚不跳）
+    expect(dialog()!.querySelectorAll('[data-task-checklist]')).toHaveLength(1)
+    expect(visibleBlocks(dialog()!).map((b) => b.tag).filter((t) => t !== 'span')).toEqual(['h2', 'summary', 'button', 'button'])
   })
 
   it('一键修复进行中：只剩一行进度', async () => {
@@ -291,15 +292,15 @@ describe('DependencyPrepareDialog', () => {
         plan_id: 'jp9', state: 'installing', log: '', error: null, code: '', flow: 'joint',
       } as never),
     )
-    const tags = visibleBlocks(dialog()!).map((b) => b.tag)
-    // 固定标题 + 一行进度 + 折叠的「详情」+「取消」+ 原位置灰、带转圈的主按钮
-    expect(tags).toEqual(['h2', 'p', 'summary', 'button', 'button'])
+    const tags = visibleBlocks(dialog()!).map((b) => b.tag).filter((t) => t !== 'span')
+    // 固定标题 + 任务清单 +「取消」+ 原位置灰、带转圈的主按钮（没有日志 / 镜像时没有「详情」）
+    expect(dialog()!.querySelectorAll('[data-task-checklist]')).toHaveLength(1)
+    expect(tags).toEqual(['h2', 'button', 'button'])
     const running = dialog()!.querySelector('[data-dependency-prepare-running]') as HTMLButtonElement
     expect(running.disabled).toBe(true)
     expect(visiblePrimaryButtons(dialog()!)).toBe(1)
-    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
-      `${en('dependencyPrepareState_installing')}${en('repairStep', { n: 3, total: 4 })}`,
-    )
+    expect(document.querySelector('[data-repair-line] [data-task-title]')!.textContent).toBe(en('dependencyPrepareState_installing'))
+    expect(document.querySelector('[data-repair-line] [aria-current="step"]')!.getAttribute('data-task-step')).toBe('packages')
   })
 
   it('安装阶段的进度行说真正在装的整组包；「详情」第一段是「将安装：…」', async () => {
@@ -318,8 +319,8 @@ describe('DependencyPrepareDialog', () => {
         requirements: ['six', 'tabulate'],
       } as never),
     )
-    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
-      `${en('repairInstalling', { module: listJoin(['six', 'tabulate']) })}${en('repairStep', { n: 3, total: 4 })}`,
+    expect(document.querySelector('[data-repair-line] [data-task-title]')!.textContent).toBe(
+      en('repairInstalling', { module: listJoin(['six', 'tabulate']) }),
     )
   })
 

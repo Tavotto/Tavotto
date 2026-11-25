@@ -45,6 +45,8 @@ import { currentSpec } from './issueFixActions'
 void runUndoRedo
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
+import { useAiStore } from './aiStore'
+import { useChangePlanStore } from './changePlanStore'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 
@@ -101,6 +103,10 @@ beforeEach(async () => {
   takeCheckpoint.mockClear()
   exact.clear()
   localStorage.clear()
+  // 这一份用例验的是「落地」本身（一次 commit、核对、失败不改）：关掉「先出修改方案卡」走直接落地（`ai.change_plan.enabled = false`）。
+  // 出卡的路径在 `quickLayoutCard.test.ts`
+  useAiStore.setState({ caps: { change_plan_enabled: false } as never })
+  useChangePlanStore.getState().clear()
   useSelectionStore.getState().clear()
   useUiStore.getState().setStatus(null)
   await s().switchDocument(emptyProject(), 'd_quick_layout')

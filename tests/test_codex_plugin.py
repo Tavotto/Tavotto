@@ -298,6 +298,7 @@ def test_skill_routes_each_reference_explicitly():
         "issue-reporting.md",
         "compatibility.md",
         "normalize-existing.md",
+        "layout-annotate.md",
     ):
         assert ref in text, f"SKILL.md 没写什么时候读 {ref}"
         assert (SKILL_DIR / "references" / ref).is_file(), f"references/{ref} 不存在"
