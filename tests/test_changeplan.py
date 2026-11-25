@@ -852,3 +852,26 @@ def test_the_instruction_limit_matches_the_frontend_constant():
     )
     m = re.search(r"export const MAX_ASSISTANT_INSTRUCTION = (\d+)", src)
     assert m and int(m.group(1)) == cp.MAX_INSTRUCTION_CHARS
+
+
+def test_default_resolve_passes_selected_connection_through(monkeypatch):
+    """不替换 `_RESOLVE`：默认实现必须把输入框选的连接 / 型号原样交给 `ai_structured.resolve_connection`
+    （#2191 合并组 e2e 撞过：默认实现不收 `conn_id`，单元测试因为换了假 `_RESOLVE` 没测出来）。"""
+    from tavotto.engine import ai_structured
+
+    seen = {}
+
+    def fake(budget_s=None, *, conn_id=None, model=None):
+        seen.update(budget_s=budget_s, conn_id=conn_id, model=model)
+        return None, "no_connection", ""
+
+    monkeypatch.setattr(ai_structured, "resolve_connection", fake)
+    assert cp._RESOLVE is cp._default_resolve
+    assert cp._RESOLVE(cp.MODEL_TIMEOUT_S, conn_id="key:abc", model="m1") == (
+        None,
+        "no_connection",
+        "",
+    )
+    assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": "key:abc", "model": "m1"}
+    cp._RESOLVE(cp.MODEL_TIMEOUT_S)
+    assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": None, "model": None}

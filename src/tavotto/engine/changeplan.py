@@ -883,8 +883,11 @@ def _default_call(**kw):
     return ai_structured.call_structured(**kw)
 
 
-def _default_resolve(budget_s: float | None = None):
-    return ai_structured.resolve_connection(budget_s)
+def _default_resolve(
+    budget_s: float | None = None, *, conn_id: str | None = None, model: str | None = None
+):
+    """解析出这次方案用的连接；`conn_id` / `model` = 用户在输入框选的那条（只认它，不顺延到别的连接）。"""
+    return ai_structured.resolve_connection(budget_s, conn_id=conn_id, model=model)
 
 
 #: 测试缝：只有测试替换它们（永不真调模型）
