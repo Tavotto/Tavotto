@@ -12024,7 +12024,7 @@ def api_change_plans_create():
     if created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), comments, source, selection),
+            args=(ctx, task, rel_id, list(base), comments, source, None, selection),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()

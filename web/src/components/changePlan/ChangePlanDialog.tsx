@@ -10,7 +10,7 @@ import { ICON_SIZE } from '../ui/Icon'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { ChangeList, NoteList } from './ChangeList'
-import { CHANGE_PLAN_FEATURE, cp, effectiveStatus, failureText, groupViews, markNoteHintSeen, noteHintSeen, unhandledViews, useChangePlanAccess } from './changePlanModel'
+import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, markNoteHintSeen, noteHintSeen, unhandledViews, useChangePlanAccess } from './changePlanModel'
 import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
@@ -36,7 +36,11 @@ export function ChangePlanDialog() {
   const [editing, setEditing] = useState<NoteEditing | null>(null)
   const [armed, setArmed] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const { visible, pro } = useChangePlanAccess()
+  const access = useChangePlanAccess()
+  // 一键排版 / 脚本修改的卡不能批注重改：入口（对比 / 批注切换、写批注、悬停写批注）整个不出现
+  const revisable = !!entry && canRevise(entry)
+  const visible = access.visible && revisable
+  const pro = access.pro && revisable
   const panel = usePlanPanel(entry ?? { panelId: '', documentId: '', loadSeq: 0, canvasId: '' })
   const aspect = useImageAspect(entry?.afterSrc)
   // 换一份方案 / 换版本 / 重新打开：高亮与批注框不带过去，新版本出来回到「对比」
@@ -280,6 +284,7 @@ export function ChangePlanDialog() {
                 </p>
               )}
               <ChangeList
+                heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : undefined}
                 groups={groups}
                 unhandled={unhandledViews(entry)}
                 unchecked={entry.unchecked}

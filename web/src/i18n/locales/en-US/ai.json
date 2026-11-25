@@ -869,7 +869,9 @@
       "rerunning": "Redoing…",
       "rerunNeedNote": "Click an element in the After figure and write a note first",
       "reviseNotLicensed": "Premium is not unlocked, so nothing was redone",
-      "groupMetaNote": "From your note · {{count}}"
+      "groupMetaNote": "From your note · {{count}}",
+      "layoutHeading": "Layout · {{count}} figures",
+      "layoutGroupMeta": "{{count}} figures"
     },
     "unhandled": {
       "needs_script": "Needs a script change; left alone this time",

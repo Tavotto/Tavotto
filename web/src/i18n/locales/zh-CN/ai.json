@@ -859,7 +859,9 @@
       "rerunning": "正在重改…",
       "rerunNeedNote": "先在「修改后」的图上点一处，写一条批注",
       "reviseNotLicensed": "高级版没有解锁，没能重改",
-      "groupMetaNote": "按批注改过 · {{count}} 处"
+      "groupMetaNote": "按批注改过 · {{count}} 处",
+      "layoutHeading": "排版 · {{count}} 张图",
+      "layoutGroupMeta": "{{count}} 张图"
     },
     "unhandled": {
       "needs_script": "要改脚本，这次没动",

@@ -21,6 +21,8 @@ export type PlanBox = [number, number, number, number]
 
 /** 一个改动组在界面上的样子（清单一行 + 舞台上的细框） */
 export interface GroupView {
+  /** 清单行第二行的整句（一键排版的组说「N 张图」）；缺省按「谁 · N 处」 */
+  metaText?: string
   key: string
   /** 这一处改了什么：对应那条意见的原话（截短过的），没有就说「第 N 条意见」 */
   summary: string
@@ -53,6 +55,17 @@ export function groupViews(e: PlanEntry): GroupView[] {
   if (!plan) return []
   const numberOf = (id?: string) => commentNumber(e, id)
   return plan.groups.map((g: ChangePlanGroup, i) => {
+    if (e.kind === 'layout') {
+      return {
+        key: g.key,
+        summary: g.label,
+        reviewers: [],
+        commentNumbers: [],
+        fromNote: false,
+        metaText: cp('dialog.layoutGroupMeta', { count: e.layout?.count ?? g.boxes.after.length }),
+        boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: (g.boxes.before ?? []).find((x) => x.gid === b.gid)?.box as PlanBox | undefined })),
+      }
+    }
     const fromNote = g.origin === 'note'
     const c = !fromNote && g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
     const n = fromNote ? 0 : numberOf(g.comment_id)
@@ -64,6 +77,7 @@ export function groupViews(e: PlanEntry): GroupView[] {
         summary: clip(e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }),
         reviewers: [],
         commentNumbers: [],
+        fromNote: false,
         boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
       }
     }
@@ -196,4 +210,14 @@ export const markNoteHintSeen = (): void => {
   } catch {
     /* 存不下不影响本次 */
   }
+}
+
+/**
+ * 这张卡能不能「批注重改」：只有审阅 / 助手来源的**图内**方案（`ChangePlanDialog` 据此显示「对比 / 批注」切换、「写批注」与悬停写批注）。
+ * 一键排版的整版方案（`quick_layout`）没有逐元素的改动可批注，脚本修改的卡（二期）是脚本副本——都不能重改。PR 6 的脚本卡复用这一个判断。
+ */
+export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean {
+  if (e.kind === 'layout') return false
+  const from = e.from ?? 'review'
+  return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
 }

@@ -60,6 +60,8 @@ export default interface Resources {
         "groupN": "第 {{n}} 条意见",
         "hold": "按住",
         "holdBefore": "看修改前",
+        "layoutGroupMeta": "{{count}} 张图",
+        "layoutHeading": "排版 · {{count}} 张图",
         "lockLearn": "了解高级版 ›",
         "lockTip": "在改好的图上点元素写批注，再改一版",
         "modeAnnotate": "批注",
