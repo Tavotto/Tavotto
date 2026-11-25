@@ -25,16 +25,21 @@ def color_scale_fields(vmin, vmax, cmap_field, *, precision=4):
         value = float(value)
         return value if precision is None else round(value, precision)
 
+    step = number(step)
     return [
         cmap_field,
-        *(
-            {
-                "prop": prop,
-                "type": "number",
-                "value": number(value),
-                "step": number(step),
-                "group": "颜色映射",
-            }
-            for prop, value in (("vmin", vmin), ("vmax", vmax))
-        ),
+        {
+            "prop": "vmin",
+            "type": "number",
+            "value": number(vmin),
+            "step": step,
+            "group": "颜色映射",
+        },
+        {
+            "prop": "vmax",
+            "type": "number",
+            "value": number(vmax),
+            "step": step,
+            "group": "颜色映射",
+        },
     ]
