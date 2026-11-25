@@ -6285,9 +6285,12 @@ def _layout_measure(project: str, registry, la, opened: list, pdfs: dict):
         if panel.get("source") is not None or panel.get("fileKind") == "runtime":
             raise la.PanelUnavailable("runtime_panel")
         fid = str(panel.get("fileId") or panel.get("id") or "")
-        stem = os.path.splitext(fid)[0]
-        if registry is None or not stem or registry.for_stem(stem) is None:
+        # 「磁盘文件 → 图」只经注册表的 `for_artifact`（登记的产物表 + 文件名 stem 兜底，#1251）：子目录里的产物、
+        # 产物名与 stem 不同的，按路径自己拆都会误判成没有脚本（Codex #2213）
+        info = registry.for_artifact(fid) if registry is not None and fid else None
+        if info is None:
             raise la.PanelUnavailable("no_script")
+        stem = info["stem"]
         try:
             sid = open_figure(os.path.join(project, fid), stem=stem)["session_id"]
             session = get_session(sid)
@@ -6308,7 +6311,8 @@ def _layout_measure(project: str, registry, la, opened: list, pdfs: dict):
             )
         except (BridgeError, engine_pool.WorkerError) as exc:
             raise la.PanelUnavailable("export_failed") from exc
-        pdfs[fid] = str(out)
+        # 按子图**对象**存：同一张图放了两次、各带不同的改动时，两个实例各有各的那份（Codex #2213）
+        pdfs[str(panel.get("id") or fid)] = str(out)
         return {
             "draw_manifest": resp.get("draw_manifest"),
             "data_points": resp.get("data_points") or [],

@@ -582,7 +582,8 @@ def _panel_payload(o: dict) -> dict:
     """子图对象 → 合成用的载荷（与前端 `exportPayload` 的 panel 分支同一组几何字段：框、裁剪、旋转、翻转、不透明度）。"""
     out = {
         "type": "panel",
-        "id": o.get("fileId") or o.get("id"),
+        # 按子图对象 id：同一张图的两个实例各自解析到自己量出来的那份 PDF
+        "id": o.get("id") or o.get("fileId"),
         "x_mm": float(o["x"]),
         "y_mm": float(o["y"]),
         "w_mm": float(o["w"]),
@@ -647,18 +648,28 @@ def preview(
                 artifact=rc_sources.static_artifact(Path(path), str(obj.get("id"))), path=Path(path)
             )
 
-    panels, missing = [], []
-    for o in _figure_panels(canvas):
-        if (o.get("fileId") or o.get("id")) in panel_pdfs:
-            panels.append(_panel_payload(o))
-        else:
-            missing.append(o.get("id"))
+    # 按画布上原来的层级顺序：子图（量到的）与画布上已有的可见矢量对象都画进去，新对象叠在最上面——
+    # 局部图就是写入后那一块的样子（漏掉已有的标注，Agent 比对的就是另一张图，Codex #2213）
+    layers, missing = [], []
+    for o in canvas.get("objects") or []:
+        if not isinstance(o, dict) or o.get("hidden"):
+            continue
+        if o.get("type") == "panel":
+            if str(o.get("id")) in panel_pdfs:
+                layers.append(_panel_payload(o))
+            else:
+                missing.append(o.get("id"))
+        elif o.get("type") in ("text", "arrow", "shape", "path"):
+            try:
+                layers += agentobjects.to_export_objects([o])
+            except (KeyError, TypeError, ValueError):
+                missing.append(o.get("id"))  # 缺必填键的对象（外部工具写的）：画不出来，如实列出
     try:
         provider = facade.provider()
         compiled = rc_plan.compile_page(
             page["w"],
             page["h"],
-            panels + agentobjects.to_export_objects(objects),
+            layers + agentobjects.to_export_objects(objects),
             sources=_Measured(),
             faces=provider,
         )

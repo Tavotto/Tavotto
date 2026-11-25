@@ -527,3 +527,112 @@ def test_preview_is_a_real_composition_cropped_to_the_new_elements(project):
     # 没量到的子图不画、如实列出
     out = la.preview(lay.doc["canvases"][0], plan["objects"], {})
     assert out is not None and out["missing_panels"] == ["figures/fig1.pdf"]
+
+
+def _solid_pdf(path, color):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig = plt.figure(figsize=(80 / 25.4, 40 / 25.4))
+    fig.patch.set_facecolor(color)
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def _pixels(png):
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    return np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).astype(int)
+
+
+def test_preview_paints_each_panel_instance_with_its_own_measured_pdf(project, tmp_path):
+    """同一张图放了两次（不同改动）：局部图里两个实例各画各自量出来的那份（按子图对象 id，Codex #2213）。"""
+    blue, red = tmp_path / "blue.pdf", tmp_path / "red.pdf"
+    _solid_pdf(blue, "#0000ff")
+    _solid_pdf(red, "#ff0000")
+    lay = la.open_layout(project, "组图")
+    canvas = lay.doc["canvases"][0]
+    first = canvas["objects"][0]
+    second = {**first, "id": "o_second01", "y": 62.0, "h": 15.0}  # 同一个 fileId，放在下面
+    canvas["objects"].append(second)
+    canvas["page"]["h"] = 80
+    mark = {
+        "id": "t_mark0001",
+        "type": "text",
+        "x": 5,
+        "y": 1,
+        "w": 110,
+        "h": 78,
+        "text": " ",
+        "sizePt": 8,
+        "bold": False,
+        "color": "#000000",
+        "align": "left",
+    }
+    out = la.preview(
+        canvas, [mark], {first["id"]: str(blue), "o_second01": str(red)}, margin_mm=0, width_px=400
+    )
+    img = _pixels(out["png"])
+    k = img.shape[0] / 78
+    top, bottom = img[int((40 - 1) * k), :, :], img[int((70 - 1) * k), :, :]
+    assert ((top[:, 2] > 200) & (top[:, 0] < 80)).sum() > 20, "上面那个实例是蓝的"
+    assert ((bottom[:, 0] > 200) & (bottom[:, 2] < 80)).sum() > 20, "下面那个实例是红的"
+
+
+def test_preview_includes_existing_canvas_annotations(project, tmp_path):
+    """局部图把画布上已有的可见矢量对象也画进去（写入后就是这个样子，Codex #2213）；隐藏的不画。"""
+    lay = la.open_layout(project, "组图")
+    canvas = lay.doc["canvases"][0]
+    canvas["objects"].append(
+        {
+            "id": "s_green001",
+            "type": "shape",
+            "shape": "rect",
+            "x": 30,
+            "y": 25,
+            "w": 10,
+            "h": 10,
+            "color": "#00aa00",
+            "fill": "#00ff00",
+            "strokePt": 0.5,
+        }
+    )
+    canvas["objects"].append(
+        {
+            "id": "s_hidden01",
+            "type": "shape",
+            "shape": "rect",
+            "x": 45,
+            "y": 25,
+            "w": 10,
+            "h": 10,
+            "color": "#ff00ff",
+            "fill": "#ff00ff",
+            "strokePt": 0.5,
+            "hidden": True,
+        }
+    )
+    new = {
+        "id": "t_new00001",
+        "type": "text",
+        "x": 28,
+        "y": 22,
+        "w": 30,
+        "h": 16,
+        "text": " ",
+        "sizePt": 8,
+        "bold": False,
+        "color": "#000000",
+        "align": "left",
+    }
+    out = la.preview(canvas, [new], {}, margin_mm=1)
+    img = _pixels(out["png"])
+    green = (img[:, :, 1] > 200) & (img[:, :, 0] < 80) & (img[:, :, 2] < 80)
+    magenta = (img[:, :, 0] > 200) & (img[:, :, 2] > 200) & (img[:, :, 1] < 80)
+    assert green.sum() > 50 and magenta.sum() == 0

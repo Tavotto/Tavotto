@@ -185,3 +185,31 @@ def test_apply_without_the_plans_digest_is_refused(client, project):  # noqa: F8
     )["result"]
     assert raw["isError"] and raw["structuredContent"]["code"] == "echo_mismatch"
     assert path.read_bytes() == before
+
+
+def test_measure_finds_the_script_through_the_registrys_artifact_lookup(monkeypatch):
+    """子目录里的产物（`figures/fig1.pdf`）按注册表的 `for_artifact` 找到 stem，不按路径自己拆（Codex #2213）。"""
+    from tavotto.engine import layoutannotate as la
+    from tavotto_mcp import bridge
+
+    class Reg:
+        def for_stem(self, stem):
+            return None  # 拆路径得到的 `figures/fig1` 在 stem 索引里查不到
+
+        def for_artifact(self, rel):
+            return {"stem": "fig1", "script": "plot.py"} if rel == "figures/fig1.pdf" else None
+
+    seen = {}
+
+    def opened(target, *, stem=None, **_kw):
+        seen["stem"] = stem
+        raise bridge.BridgeError("stop here", code="needs_input")
+
+    monkeypatch.setattr(bridge, "open_figure", opened)
+    measure = bridge._layout_measure("/tmp/p", Reg(), la, [], {})
+    with pytest.raises(la.PanelUnavailable) as e:
+        measure({"id": "o_1", "fileId": "figures/fig1.pdf", "overrides": []}, [])
+    assert e.value.code == "open_failed" and seen["stem"] == "fig1"  # 认出了脚本，只是这次打不开
+    with pytest.raises(la.PanelUnavailable) as e:
+        measure({"id": "o_2", "fileId": "figures/other.pdf", "overrides": []}, [])
+    assert e.value.code == "no_script"
