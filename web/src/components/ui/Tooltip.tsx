@@ -17,10 +17,15 @@ interface TipProps {
    * 多行时按行排（期刊没列出的格式、期刊的分辨率分档、「按期刊调整」逐条改动）。
    */
   tone?: 'dark' | 'light'
+  /** 贴着触发器的哪一边对齐，与偏移（靠近容器边缘的触发器用 end，免得气泡越出容器） */
+  align?: 'start' | 'center' | 'end'
+  alignOffset?: number
+  /** 带指向触发器的小尖角（`light` 气泡） */
+  arrow?: boolean
   children: ReactElement
 }
 
-export function Tip({ label, shortcut, side = 'bottom', tone = 'dark', children }: TipProps) {
+export function Tip({ label, shortcut, side = 'bottom', tone = 'dark', align, alignOffset, arrow, children }: TipProps) {
   return (
     <RT.Root>
       <RT.Trigger asChild>{children}</RT.Trigger>
@@ -29,7 +34,9 @@ export function Tip({ label, shortcut, side = 'bottom', tone = 'dark', children 
           data-tooltip
           data-tooltip-tone={tone}
           side={side}
-          sideOffset={6}
+          align={align}
+          alignOffset={alignOffset}
+          sideOffset={arrow ? 8 : 6}
           className={cn(
             // pointer-events-none：气泡只是说明，不是控件。聚焦触发的气泡会停在
             // 触发器下方、盖住下一排按钮（弹层自动聚焦第一个分段项时实测撞见），
@@ -37,7 +44,7 @@ export function Tip({ label, shortcut, side = 'bottom', tone = 'dark', children 
             // `[data-radix-popper-content-wrapper]:has([role='tooltip'])`
             'pointer-events-none z-tooltip flex items-center gap-2',
             tone === 'light'
-              ? 'max-w-72 whitespace-pre-line rounded-md bg-surface px-2.5 py-1.5 text-xs leading-relaxed text-ink shadow-pop'
+              ? 'max-w-72 whitespace-pre-line rounded-md bg-surface px-2.5 py-1.5 text-xs leading-relaxed text-ink shadow-pop inset-ring inset-ring-border'
               : 'rounded-sm bg-ink px-2 py-1 text-sm text-surface',
             'origin-[var(--radix-tooltip-content-transform-origin)]',
             'data-[state=delayed-open]:animate-pop-in',
@@ -47,6 +54,7 @@ export function Tip({ label, shortcut, side = 'bottom', tone = 'dark', children 
             // 使刚获得焦点的编辑器收不到这一下键。
           )}
         >
+          {arrow && <RT.Arrow width={12} height={6} className="fill-surface stroke-border" />}
           <span data-tooltip-label>{label}</span>
           {shortcut && (
             <span className="text-xs tabular-nums text-surface/60">{shortcut}</span>

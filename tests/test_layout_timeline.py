@@ -84,6 +84,33 @@ def _file(doc_id="d1"):
     return m.VERSIONS_DIR / f"{doc_id}.json"
 
 
+def _project_doc(schema: int):
+    """整份项目文档：两张画布，正文里没有图表（schema 4 也只是格式版本）。"""
+    return {
+        "schema": schema,
+        "project": {"id": "p", "name": "项目"},
+        "canvases": [
+            {
+                "id": "c1",
+                "name": "Figure 1",
+                "page": {"w": 150, "h": 100},
+                "objects": [_doc("a")["objects"][0]],
+                "guides": [],
+            },
+            {
+                "id": "c2",
+                "name": "Figure 2",
+                "page": {"w": 120, "h": 90},
+                "objects": [_doc("b")["objects"][0]],
+                "guides": [],
+            },
+        ],
+        "activeCanvasId": "c2",
+        "createdAt": 1,
+        "updatedAt": 2,
+    }
+
+
 # --------------------------------------------------------------------------- 类型
 
 
@@ -843,3 +870,37 @@ def test_when_the_box_cannot_be_written_the_new_image_is_withdrawn(client, monke
     )
     assert r.status_code == 500 and r.get_json()["code"] == "version_thumb_write_failed"
     assert "thumb" not in _list(client)["versions"][0]
+
+
+# --------------------------------------------------- 项目文档节点（schema 3 / 4）
+
+
+@pytest.mark.parametrize("schema", [3, 4])
+def test_project_document_node_round_trips_with_all_canvases(client, schema):
+    """版本链存的是整份项目文档：读回来逐字段不变，元信息说得出它是 schema 3 / 4。"""
+    doc = _project_doc(schema)
+    created = _create(client, doc=doc, auto=True, canvasId="c2", canvasName="Figure 2")
+
+    got = client.get(f"/api/versions/d1/{created['id']}").get_json()
+    assert got["doc"] == doc
+    assert got["doc"]["canvases"] == doc["canvases"]
+    assert created["schema"] == schema
+    assert created["canvasId"] == "c2"
+
+    meta = _list(client)["versions"][0]
+    assert meta["schema"] == schema
+    # 列表元信息仍带节点记录的画布身份（时间线按画布分组 / 预览靠它取一张）
+    assert meta["canvasId"] == "c2"
+
+    # 读回来的正文保留原 schema：不因为正文里没有 chart 就把版本降成 3
+    assert client.get(f"/api/versions/d1/{created['id']}").get_json()["doc"]["schema"] == schema
+
+
+def test_single_canvas_node_still_reports_schema_2(client):
+    """既有单画布节点的判据不变：schema 2、只带一张画布的字段。"""
+    created = _create(client, doc=_doc("单画布"), auto=True, canvasId="c1")
+    got = client.get(f"/api/versions/d1/{created['id']}").get_json()
+    assert created["schema"] == 2
+    assert got["doc"]["schema"] == 2
+    assert "canvases" not in got["doc"]
+    assert [v["schema"] for v in _list(client)["versions"]] == [2]

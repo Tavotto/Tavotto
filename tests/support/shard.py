@@ -263,6 +263,10 @@ def weights_from_junit(xml_paths: Iterable[Path], root: Path) -> dict[str, float
         tree = ET.parse(xml_path)
         for case in tree.iter("testcase"):
             classname = case.get("classname", "")
+            if not classname:
+                # 收集阶段的条目（整个模块 importorskip 跳过 / 收集报错）classname 为空，
+                # 模块路径在 name 里：`<testcase classname="" name="tests.test_x">`。
+                classname = case.get("name", "")
             file = file_of_classname(classname, root)
             if file is None:
                 raise ShardError(f"{xml_path}：classname {classname!r} 对不回 {root} 下的任何 .py")

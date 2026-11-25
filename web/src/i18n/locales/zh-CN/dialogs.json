@@ -377,6 +377,7 @@
     "recoverFailUnavailable": "暂时读不到这份排版，请稍后重试。",
     "recoverFailForeign": "这份副本不属于当前项目，没有打开。",
     "recoverIssueInvalid": "读不了",
+    "recoverIssueChartSource": "图表来源缺失或损坏",
     "recoverIssueTooLarge": "文件太大，没有读取",
     "recoverIssueTooNew": "来自更新版本的 Tavotto，这个版本读不了",
     "recoverKeepLooking": "这一批里还没有找到，可以继续往后找。",
@@ -419,6 +420,7 @@
     "pillTitle": "重新运行出版规范预检",
     "renderFailed": "渲染失败",
     "rendering": "正在重渲染",
+    "splashBatch": "这次一起打开了 {{n}} 张图，画布一次只放一张。要改哪张，就让 Agent 单独打开它，比如「单独打开 {{stem}}」。",
     "splashConnecting": "正在连接 Codex…",
     "splashFetchFailed": "取回会话状态失败。重新打开这张图；仍然如此请连同下面的诊断一起报告。",
     "splashFetching": "正在从 Tavotto 取回会话状态…",
@@ -2241,12 +2243,12 @@
       "cancel": "取消"
     },
     "license": {
-      "label": "高级版",
+      "label": "{{pro}}",
       "none": "还没激活",
       "until": "有效期至 {{date}}",
       "codeLabel": "激活码",
       "state": {
-        "expired": "已于{{date}}到期",
+        "expired": "已于 {{date}} 到期",
         "revoked": "这份授权已失效",
         "lapsed": "需要联网确认一下授权"
       },
@@ -2258,7 +2260,8 @@
         "refresh": "现在确认",
         "renew": "续费",
         "retry": "再试一次",
-        "cancel": "取消"
+        "cancel": "取消",
+        "renewed": "我已续费"
       },
       "failure": {
         "invalid_code": "激活码不对，核对一下再试",
@@ -2272,8 +2275,8 @@
         "client_error": "没能完成，请稍后再试"
       },
       "lock": {
-        "tip": "高级版功能，点一下了解",
-        "aria": "高级版功能，了解高级版"
+        "tip": "{{pro}} 功能，点一下了解",
+        "aria": "{{pro}} 功能，了解 {{pro}}"
       },
       "releaseTitle": "解绑后可以在另一台电脑上激活",
       "plate": {
@@ -2285,7 +2288,8 @@
         "rename": "重新刻名",
         "turnTitle": "拖一下可以翻面",
         "issued": "ISSUED ON"
-      }
+      },
+      "open": "{{pro}} 与激活"
     }
   },
   "style": {
@@ -2443,9 +2447,13 @@
     "noDiff": "与当前画布没有差异",
     "enlarge": "放大查看",
     "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
+    "previewCanvasMissing": "这个节点记录的画布不在它的排版里，无法预览或恢复。",
     "rename": "改名…",
     "restore": "恢复到这里",
     "restoreHistory": "恢复排版节点「{{name}}」",
+    "restoreProjectBody": "这个节点存的是整份项目，恢复会把所有画布都换成那一版，不只是当前画布。现在的整份项目会先存成「恢复前」节点；恢复本身不能撤销，需要时从那个节点恢复回来。",
+    "restoreProjectInvalid": "这个节点的项目排版读不出来，这次没有恢复。",
+    "restoreProjectTitle": "恢复整份项目？",
     "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreMissingCanvasTitle": "原画布已不存在",
     "restoreOtherCanvasBody": "这个节点拍自画布「{{from}}」，你当前在「{{to}}」。恢复会切到「{{from}}」写入，不动当前画布。",
@@ -2461,6 +2469,7 @@
     "restoreUnknownCanvasBody": "它由旧版本留下，没有记录来自哪张画布。继续会写进当前画布「{{to}}」，覆盖现有内容。",
     "restoreUnknownCanvasTitle": "这个节点没有来源画布",
     "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
+    "restoredProject": "已恢复整份项目「{{name}}」。恢复前的整份项目已存成节点，需要时从时间线恢复回去。",
     "save": "存为命名节点",
     "saved": "已把现在存为命名节点「{{name}}」",
     "summary": {
@@ -2943,6 +2952,52 @@
     "shareNote": "拿到链接可查看和留言 · {{date}}失效",
     "privacyFoot": "只上传画面，脚本和数据不出本机",
     "dailyNew": "每天可新建 1 个",
-    "notePlaceholder": "给审阅者的话（选填）…"
+    "notePlaceholder": "给审阅者的话（选填）…",
+    "changePlan": {
+      "pill": "交给 Agent 修改",
+      "pillTip": "让 Agent 按这些意见改一版，改好之前不会动你的图",
+      "pillUpdate": "更新到同一链接",
+      "pillUpdateTip": "新版还没发到审阅链接，点一下更新，链接不变",
+      "pillUpdated": "链接已更新",
+      "resolveFailed": "没能把意见标成已处理",
+      "resolveRetry": "重试",
+      "draftLabel": "回复草稿",
+      "draftHint": "点发送才会回复给审阅者"
+    }
+  },
+  "pro": {
+    "title": "{{pro}}",
+    "tier": {
+      "label": "类型",
+      "year": "年度通行证",
+      "season": "投稿季通行证",
+      "sprint": "冲刺月通行证",
+      "team": "课题组通行证"
+    },
+    "days": {
+      "label": "剩余天数",
+      "value": "{{count}} 天"
+    },
+    "devices": {
+      "label": "电脑",
+      "value": "已用 {{used}} / {{limit}} 台"
+    },
+    "usage": {
+      "title": "用量",
+      "expired": "续费后恢复",
+      "unknown": "用量暂不可用",
+      "nearEnd": "快用完了，用完后会改用你自己的连接",
+      "agentBar": "{{name}} 本期已用",
+      "used": "已用 {{pct}}%"
+    },
+    "review": {
+      "label": "外部审阅",
+      "left_other": "今天还可新建 {{count}} 个链接"
+    },
+    "pass": "通行证",
+    "learn": {
+      "line": "{{pro}} 包含内置 AI 与更多外部审阅额度",
+      "link": "了解 {{pro}}"
+    }
   }
 }

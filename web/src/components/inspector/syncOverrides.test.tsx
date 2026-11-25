@@ -147,6 +147,33 @@ describe('选目标图', () => {
   })
 })
 
+describe('图内副本不跨图同步（ADR 0207）', () => {
+  const SKIPPED = [
+    { gid: 'axes_0', prop: 'position', value: [0, 0, 1, 1] },
+    { gid: 'axes_0.copy_abcd1234', prop: 'copy_of', value: {}, skip_reason: 'copy_not_synced' },
+    { gid: 'axes_0.copy_abcd1234', prop: 'fontsize', value: 12, skip_reason: 'copy_not_synced' },
+    { gid: 'fig.copy_wxyz0987', prop: 'copy_of', value: {}, skip_reason: 'copy_not_synced' },
+  ]
+
+  it('按原因码单独数、按副本个数数，不混进「版面几何无法跨图搬运」那句', async () => {
+    vi.mocked(syncOverrides).mockResolvedValue({ mapped: MAPPED, skipped: SKIPPED, unmatched: [] } as never)
+    await start([])
+    await click(target('Fig2.pdf'))
+    const copies = document.body.querySelector('[data-sync-skipped-copies]')!
+    expect(copies.textContent).toBe('跳过 2 个图内副本：不跨图同步')
+    // 版面几何那句只数没有原因码的那一条
+    expect(text()).toContain('跳过 1 项：版面几何')
+  })
+
+  it('只有副本被跳过时没有几何那一句', async () => {
+    vi.mocked(syncOverrides).mockResolvedValue({ mapped: MAPPED, skipped: SKIPPED.slice(1, 3), unmatched: [] } as never)
+    await start([])
+    await click(target('Fig2.pdf'))
+    expect(document.body.querySelector('[data-sync-skipped-copies]')!.textContent).toBe('跳过 1 个图内副本：不跨图同步')
+    expect(text()).not.toContain('版面几何')
+  })
+})
+
 describe('映射请求的竞态：返回后换目标，旧响应不许记到新目标名下', () => {
   const dfd = <T,>() => {
     let resolve!: (v: T) => void

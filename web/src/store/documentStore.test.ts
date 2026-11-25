@@ -1,7 +1,7 @@
 import { formatMessage, literal } from '@/i18n'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
-import type { TextObject } from '@/types/document'
+import type { PanelObject, TextObject } from '@/types/document'
 import { setTelemetryEnabled } from '@/lib/telemetry'
 import {
   discardLocalCopy,
@@ -21,6 +21,13 @@ import { resetRestoreStateForTests } from './documentRestore'
 const text = (id: string, t: string): TextObject => ({
   id, type: 'text', text: t, sizePt: 9, bold: false,
   color: '#000', align: 'left', x: 0, y: 0, w: 20, h: 8,
+})
+
+/** 带计算图表状态的面板：`chart` 只要在场就足以让正文是 schema 4（判据是字段，不是值）。 */
+const chartPanel = (id: string): PanelObject => ({
+  id, type: 'panel', fileId: 'input.svg', fileKind: 'svg',
+  nativeW: 10, nativeH: 10, x: 0, y: 0, w: 10, h: 10,
+  overrides: [], chart: null as unknown as PanelObject['chart'],
 })
 
 /**
@@ -105,6 +112,26 @@ describe('多画布数据层', () => {
     expect(pd.schema).toBe(3)
     expect(pd.canvases[0].objects).toHaveLength(1)
     expect(pd.activeCanvasId).toBe(s().activeCanvasId)
+  })
+
+  it('buildProject 按内容写 schema：无图表 3、有图表 4、删光回 3、再加回 4', () => {
+    const s = () => useDocumentStore.getState()
+    s().commit(literal('加字'), (d) => {
+      d.objects.push(text('t1', 'x'))
+    })
+    expect(s().buildProject().schema).toBe(3)
+    s().commit(literal('加图表'), (d) => {
+      d.objects.push(chartPanel('p1'))
+    })
+    expect(s().buildProject().schema).toBe(4)
+    s().commit(literal('删光'), (d) => {
+      d.objects = []
+    })
+    expect(s().buildProject().schema).toBe(3)
+    s().commit(literal('再加图表'), (d) => {
+      d.objects.push(chartPanel('p2'))
+    })
+    expect(s().buildProject().schema).toBe(4)
   })
 
   it('duplicateCanvas 换新全部对象/成组 id', () => {

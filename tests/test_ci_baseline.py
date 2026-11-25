@@ -148,14 +148,14 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
     # CI03a 起 matrix 是轴（python × shard），解析器回的是 {轴: 值}，不再是 include 列表
     assert live_workflow["backend-fast"]["matrix"] == {
         "python": ["3.10", "3.13", "3.14"],
-        "shard": ["1", "2", "3", "4", "5", "6"],
+        "shard": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"],
     }
-    # backend-fast 2026-10-24 起 6 片、backend-platforms 2026-10-24 起 8 片；两个 job
+    # backend-fast 2026-11-24 起 12 片（10-24 起 6 片）、backend-platforms 2026-10-24 起 8 片；两个 job
     # 片数不必相同，理由见 docs/rules/ci/pytest-shards.md。
-    assert live_workflow["backend-platforms"]["matrix"] == {
-        "os": ["macos-latest", "windows-latest"],
-        "shard": ["1", "2", "3", "4", "5", "6", "7", "8"],
-    }
+    # backend-platforms 2026-11-24 起片数按系统分（include 形状）：Windows 16、macOS 8。
+    assert live_workflow["backend-platforms"]["matrix"] == [
+        {"os": "macos-latest", "shard": str(k), "of": "8"} for k in range(1, 9)
+    ] + [{"os": "windows-latest", "shard": str(k), "of": "16"} for k in range(1, 17)]
 
 
 def test_sharded_display_names_map_back_to_the_job_id(live_workflow):

@@ -319,6 +319,7 @@
     "unsupportedTip": "{{title}} is not supported yet: {{reason}}",
     "count_one": "{{count}} element",
     "count_other": "{{count}} elements",
+    "deleteCopy": "Delete copy",
     "noPanelTitle": "Select an editable figure to see its elements",
     "noEditableTitle": "No editable figure on the canvas yet",
     "noEditableHint": "Only script-generated figures expose their objects",
@@ -360,10 +361,12 @@
     "clearProp": "Reset {{prop}}",
     "createLayoutGroup": "Create {{kind}}",
     "deleteGuide": "Delete guide",
+    "deleteFigureCopies": "Delete figure copy",
     "deleteObject": "Delete {{name}}",
     "deleteObjects": "Delete {{count}} objects",
     "dissolveLayoutGroup": "Dissolve layout group",
     "duplicateCanvasSuffix": "{{name}} copy",
+    "duplicateFigureElements": "Duplicate figure text",
     "duplicateObjects": "Duplicate objects",
     "editText": "Edit text",
     "fillPanel": "Fill frame",
@@ -505,6 +508,8 @@
     "transformReflect": "Reflect",
     "quickLayout": "Auto layout",
     "quickLayoutRatios": "Adjust layout proportions",
+    "applyChangePlan": "Apply change plan",
+    "undoChangePlan": "Undo change plan",
     "importSvg": "Paste SVG ({{count}} objects)",
     "explodeSvg": "Make editable",
     "outlineText": "Create outlines ({{count}})",
@@ -653,8 +658,10 @@
     "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
     "copy": "Copy",
     "paste": "Paste",
-    "copyAsAnnotation": "Copy as annotation",
+    "deleteCopy": "Delete copy",
     "pasteAsAnnotation": "Paste as annotation",
+    "selectSameKind_one": "Select all of this kind ({{count}})",
+    "selectSameKind_other": "Select all of this kind ({{count}})",
     "pathfinder": "Pathfinder",
     "addPathText": "Add text on path"
   },
@@ -675,13 +682,15 @@
       "settings": "Settings",
       "style": "Style",
       "workspace": "Project",
-      "data": "Data"
+      "data": "Data",
+      "pro": "{{pro}}"
     },
     "style": "Style",
     "workspace": "Projects",
     "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
     "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})",
-    "data": "Data"
+    "data": "Data",
+    "pro": "{{pro}}"
   },
   "readiness": {
     "foreign": {
@@ -982,6 +991,7 @@
     "documentReopened_other": "Switched back to {{name}} ({{count}} canvases)",
     "elementCycled": "Selected “{{label}}” — {{index}} of {{total}} overlapping here",
     "elementHidden": "Hid “{{label}}” — restore it from “Hidden elements”",
+    "copyDeleted": "Deleted the copy",
     "elementLocked": "Locked “{{label}}” — canvas clicks will skip it",
     "elementsHidden_one": "Hid {{count}} element. Restore it from “Hidden elements”.",
     "elementsHidden_other": "Hid {{count}} elements — restore them from “Hidden elements”",
@@ -1012,6 +1022,7 @@
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
     "packageTooNew": "This project package is from a newer {{product}} and this build can’t open it.",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
+    "packageIncomplete": "{{count}} chart sources are missing or damaged in the package. Restore them and try again.",
     "packaged_one": "Created project package {{name}} ({{count}} asset)",
     "packaged_other": "Created project package {{name}} ({{count}} assets)",
     "pasteNothing": "Nothing to paste. Objects with missing assets were skipped.",
@@ -1928,6 +1939,7 @@
     "openAlt": "Open “{{name}}”",
     "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
+      "chartSource": "Chart source missing or damaged",
       "choose": "Layouts found on this computer",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
@@ -1938,6 +1950,7 @@
     },
     "retry": "Try again",
     "title": {
+      "chartSource": "The chart source for “{{name}}” is missing or damaged.",
       "choose": "Found a few layouts on this computer — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",

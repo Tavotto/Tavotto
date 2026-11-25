@@ -274,3 +274,17 @@ describe('单宿主色条挂回子图', () => {
     expect(rowGids().some((g) => g.startsWith('group:'))).toBe(false)
   })
 })
+
+describe('行名的弯引号', () => {
+  it('整个被一对引号包住的内容去掉引号；图内副本「“A” 的副本」显示成「A 的副本」，不削成半个引号（ADR 0207）', async () => {
+    const m = shared()
+    m.elements.push(el('axes_0.copy_abcd1234', 'title', '标题 “A” 的副本') as Manifest['elements'][number])
+    await mount(m)
+    expect(row('axes_0.title')!.textContent).toContain('A')
+    expect(row('axes_0.title')!.textContent).not.toContain('“')
+    const copy = row('axes_0.copy_abcd1234')
+    expect(copy).not.toBeNull()
+    expect(copy!.textContent).toContain('A 的副本')
+    expect(copy!.textContent).not.toMatch(/[“”]/)
+  })
+})

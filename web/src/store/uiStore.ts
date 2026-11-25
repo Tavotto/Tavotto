@@ -477,6 +477,8 @@ interface UiState extends Persisted {
   shortcutHelpOpen: boolean
   /** 设置面板 */
   settingsOpen: boolean
+  /** 高级版页（ADR 0193 §八）：独立对话框，不入 `dialogStack`（不叠在导出 / 设置之上） */
+  proOpen: boolean
   /** 打开设置时直接跳到哪一节（如顶栏「有新版本」→ 检查更新）；null = 沿用上次 */
   settingsSection: string | null
   /**
@@ -594,6 +596,7 @@ interface UiState extends Persisted {
    * 关掉设置它自己就回来，用户填过的东西一个不丢。
    */
   setSettingsOpen: (v: boolean, section?: string) => void
+  setProOpen: (v: boolean) => void
   setConfirm: (req: ConfirmRequest | null) => void
   setLayout: (layout: WorkspaceLayout) => void
 }
@@ -688,6 +691,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   engineEnvPick: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
+  proOpen: false,
   settingsSection: null,
   layoutIntent: 'save',
   layoutConflict: null,
@@ -997,6 +1001,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         ? pushDialog(s.dialogStack, 'settings')
         : popDialog(s.dialogStack, 'settings'),
     })),
+  setProOpen: (proOpen) => set({ proOpen }),
   setConfirm: (confirm) => set({ confirm }),
   // **不 persist、不动 prefOpen**：这里改的是「窗口现在多宽」，
   // 而窗口宽度不是用户对常驻侧栏的偏好。

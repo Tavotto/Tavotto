@@ -1,0 +1,993 @@
+{
+ "_README": "修改方案应用的同源对（ADR 0206）：engine/changeplan.apply_groups 与 web/src/lib/changePlanApply.ts 的 applyGroups 各读这份向量，逐条对拍 expected。改任何一侧都要同步另一侧与本文件；期望值由后端实现生成（见 tests/test_changeplan_golden.py 头部）。",
+ "cases": [
+  {
+   "name": "none checked = canonical base",
+   "base": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "fontsize",
+        "value": 14
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "color",
+        "value": "#333333"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g2",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.legend",
+        "prop": "loc",
+        "value": "upper left"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g3",
+     "atomic": true,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax1.xlabel",
+        "prop": "fontsize",
+        "value": 9,
+        "identity": "Text:x"
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.xlabel",
+        "prop": "text",
+        "value": "Time (s)"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [],
+   "expected": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ]
+  },
+  {
+   "name": "all checked",
+   "base": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "fontsize",
+        "value": 14
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "color",
+        "value": "#333333"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g2",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.legend",
+        "prop": "loc",
+        "value": "upper left"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g3",
+     "atomic": true,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax1.xlabel",
+        "prop": "fontsize",
+        "value": 9,
+        "identity": "Text:x"
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.xlabel",
+        "prop": "text",
+        "value": "Time (s)"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g1",
+    "g2",
+    "g3"
+   ],
+   "expected": [
+    {
+     "gid": "ax0.legend",
+     "prop": "loc",
+     "value": "upper left"
+    },
+    {
+     "gid": "ax0.title",
+     "prop": "color",
+     "value": "#333333"
+    },
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 14
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "Time (s)"
+    },
+    {
+     "gid": "ax1.xlabel",
+     "prop": "fontsize",
+     "value": 9,
+     "identity": "Text:x"
+    }
+   ]
+  },
+  {
+   "name": "subset g2 only",
+   "base": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "fontsize",
+        "value": 14
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "color",
+        "value": "#333333"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g2",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.legend",
+        "prop": "loc",
+        "value": "upper left"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g3",
+     "atomic": true,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax1.xlabel",
+        "prop": "fontsize",
+        "value": 9,
+        "identity": "Text:x"
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.xlabel",
+        "prop": "text",
+        "value": "Time (s)"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g2"
+   ],
+   "expected": [
+    {
+     "gid": "ax0.legend",
+     "prop": "loc",
+     "value": "upper left"
+    },
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ]
+  },
+  {
+   "name": "subset g1+g3, later group wins",
+   "base": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "fontsize",
+        "value": 14
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "color",
+        "value": "#333333"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g2",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.legend",
+        "prop": "loc",
+        "value": "upper left"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g3",
+     "atomic": true,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax1.xlabel",
+        "prop": "fontsize",
+        "value": 9,
+        "identity": "Text:x"
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.xlabel",
+        "prop": "text",
+        "value": "Time (s)"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g1",
+    "g3"
+   ],
+   "expected": [
+    {
+     "gid": "ax0.title",
+     "prop": "color",
+     "value": "#333333"
+    },
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 14
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "Time (s)"
+    },
+    {
+     "gid": "ax1.xlabel",
+     "prop": "fontsize",
+     "value": 9,
+     "identity": "Text:x"
+    }
+   ]
+  },
+  {
+   "name": "group order not key order",
+   "base": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "fontsize",
+        "value": 14
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "color",
+        "value": "#333333"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g2",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.legend",
+        "prop": "loc",
+        "value": "upper left"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g3",
+     "atomic": true,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax1.xlabel",
+        "prop": "fontsize",
+        "value": 9,
+        "identity": "Text:x"
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.xlabel",
+        "prop": "text",
+        "value": "Time (s)"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g3",
+    "g1"
+   ],
+   "expected": [
+    {
+     "gid": "ax0.title",
+     "prop": "color",
+     "value": "#333333"
+    },
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 14
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "Time (s)"
+    },
+    {
+     "gid": "ax1.xlabel",
+     "prop": "fontsize",
+     "value": 9,
+     "identity": "Text:x"
+    }
+   ]
+  },
+  {
+   "name": "unknown key ignored",
+   "base": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "fontsize",
+        "value": 14
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "color",
+        "value": "#333333"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g2",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.legend",
+        "prop": "loc",
+        "value": "upper left"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g3",
+     "atomic": true,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax1.xlabel",
+        "prop": "fontsize",
+        "value": 9,
+        "identity": "Text:x"
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.xlabel",
+        "prop": "text",
+        "value": "Time (s)"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g2",
+    "g9"
+   ],
+   "expected": [
+    {
+     "gid": "ax0.legend",
+     "prop": "loc",
+     "value": "upper left"
+    },
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ]
+  },
+  {
+   "name": "duplicate keys in selection",
+   "base": [
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "fontsize",
+        "value": 14
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.title",
+        "prop": "color",
+        "value": "#333333"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g2",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax0.legend",
+        "prop": "loc",
+        "value": "upper left"
+       }
+      }
+     ]
+    },
+    {
+     "key": "g3",
+     "atomic": true,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ax1.xlabel",
+        "prop": "fontsize",
+        "value": 9,
+        "identity": "Text:x"
+       }
+      },
+      {
+       "patch": {
+        "gid": "ax0.xlabel",
+        "prop": "text",
+        "value": "Time (s)"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g2",
+    "g2"
+   ],
+   "expected": [
+    {
+     "gid": "ax0.legend",
+     "prop": "loc",
+     "value": "upper left"
+    },
+    {
+     "gid": "ax0.title",
+     "prop": "fontsize",
+     "value": 12
+    },
+    {
+     "gid": "ax0.xlabel",
+     "prop": "text",
+     "value": "时间 (s)"
+    }
+   ]
+  },
+  {
+   "name": "unsorted base with duplicates",
+   "base": [
+    {
+     "gid": "b",
+     "prop": "z",
+     "value": 1
+    },
+    {
+     "gid": "b",
+     "prop": "a",
+     "value": 2
+    },
+    {
+     "gid": "a",
+     "prop": "m",
+     "value": 3
+    },
+    {
+     "gid": "b",
+     "prop": "a",
+     "value": 5
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "a",
+        "prop": "m",
+        "value": 4
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g1"
+   ],
+   "expected": [
+    {
+     "gid": "a",
+     "prop": "m",
+     "value": 4
+    },
+    {
+     "gid": "b",
+     "prop": "a",
+     "value": 5
+    },
+    {
+     "gid": "b",
+     "prop": "z",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "invalid base entries dropped",
+   "base": [
+    "x",
+    {
+     "gid": 3,
+     "prop": "p",
+     "value": 1
+    },
+    {
+     "gid": "g",
+     "prop": "",
+     "value": 1
+    },
+    {
+     "gid": "g",
+     "prop": "p"
+    },
+    {
+     "gid": "g",
+     "prop": "q",
+     "value": 1,
+     "identity": ""
+    },
+    {
+     "gid": "ok",
+     "prop": "p",
+     "value": 1
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "ok",
+        "prop": "q",
+        "value": null
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g1"
+   ],
+   "expected": [
+    {
+     "gid": "ok",
+     "prop": "p",
+     "value": 1
+    },
+    {
+     "gid": "ok",
+     "prop": "q",
+     "value": null
+    }
+   ]
+  },
+  {
+   "name": "nested and unicode values",
+   "base": [
+    {
+     "gid": "é",
+     "prop": "k",
+     "value": {
+      "b": [
+       1,
+       2,
+       {
+        "z": true,
+        "a": null
+       }
+      ],
+      "a": "中文"
+     }
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "中",
+        "prop": "k",
+        "value": [
+         0.5,
+         0.25
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g1"
+   ],
+   "expected": [
+    {
+     "gid": "é",
+     "prop": "k",
+     "value": {
+      "b": [
+       1,
+       2,
+       {
+        "z": true,
+        "a": null
+       }
+      ],
+      "a": "中文"
+     }
+    },
+    {
+     "gid": "中",
+     "prop": "k",
+     "value": [
+      0.5,
+      0.25
+     ]
+    }
+   ]
+  },
+  {
+   "name": "code point ordering",
+   "base": [
+    {
+     "gid": "a",
+     "prop": "p",
+     "value": 1
+    },
+    {
+     "gid": "B",
+     "prop": "p",
+     "value": 2
+    },
+    {
+     "gid": "é",
+     "prop": "p",
+     "value": 3
+    },
+    {
+     "gid": "中",
+     "prop": "p",
+     "value": 4
+    },
+    {
+     "gid": "Z",
+     "prop": "p",
+     "value": 5
+    },
+    {
+     "gid": "_",
+     "prop": "p",
+     "value": 6
+    }
+   ],
+   "groups": [],
+   "keys": [],
+   "expected": [
+    {
+     "gid": "B",
+     "prop": "p",
+     "value": 2
+    },
+    {
+     "gid": "Z",
+     "prop": "p",
+     "value": 5
+    },
+    {
+     "gid": "_",
+     "prop": "p",
+     "value": 6
+    },
+    {
+     "gid": "a",
+     "prop": "p",
+     "value": 1
+    },
+    {
+     "gid": "é",
+     "prop": "p",
+     "value": 3
+    },
+    {
+     "gid": "中",
+     "prop": "p",
+     "value": 4
+    }
+   ]
+  },
+  {
+   "name": "identity replaced by later without identity",
+   "base": [
+    {
+     "gid": "a",
+     "prop": "p",
+     "value": 1,
+     "identity": "Line:0"
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "a",
+        "prop": "p",
+        "value": 2
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g1"
+   ],
+   "expected": [
+    {
+     "gid": "a",
+     "prop": "p",
+     "value": 2
+    }
+   ]
+  },
+  {
+   "name": "identity kept when later has one",
+   "base": [
+    {
+     "gid": "a",
+     "prop": "p",
+     "value": 1
+    }
+   ],
+   "groups": [
+    {
+     "key": "g1",
+     "atomic": false,
+     "changes": [
+      {
+       "patch": {
+        "gid": "a",
+        "prop": "p",
+        "value": 2,
+        "identity": "Line:0"
+       }
+      }
+     ]
+    }
+   ],
+   "keys": [
+    "g1"
+   ],
+   "expected": [
+    {
+     "gid": "a",
+     "prop": "p",
+     "value": 2,
+     "identity": "Line:0"
+    }
+   ]
+  }
+ ]
+}

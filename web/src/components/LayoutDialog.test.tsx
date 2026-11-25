@@ -443,7 +443,7 @@ describe('打开来自更新的 Tavotto 的排版（#1920 合同「打开排版�
     useDocumentStore.setState({ documentId: 'd_before', docNotice: null })
     const before = useDocumentStore.getState().documentId
     mockFetch.mockResolvedValue({
-      doc: { ...LAYOUT, schema: 4, canvases: [{ ...LAYOUT.canvases[0], objects: [{ id: 'x', type: 'chart' }] }] },
+      doc: { ...LAYOUT, schema: 5, canvases: [{ ...LAYOUT.canvases[0], objects: [{ id: 'x', type: 'chart' }] }] },
       revision: 'rev-future',
       file: 'tavottofile/Future.json',
     })
@@ -456,7 +456,7 @@ describe('打开来自更新的 Tavotto 的排版（#1920 合同「打开排版�
     expect(s.documentId).toBe(before)
     expect(s.projectFile?.name).not.toBe('Future')
     expect(knownLayoutRevision('Future')).toBeUndefined()
-    expect(s.docNotice).toEqual({ kind: 'schema_too_new', docId: 'layout:Future', schema: 4 })
+    expect(s.docNotice).toEqual({ kind: 'schema_too_new', docId: 'layout:Future', schema: 5 })
     expect(useUiStore.getState().layoutOpen).toBe(false)
   })
 
@@ -468,6 +468,27 @@ describe('打开来自更新的 Tavotto 的排版（#1920 合同「打开排版�
     })
     expect(useDocumentStore.getState().docNotice).toBeNull()
     expect(knownLayoutRevision('Fig 1')).toBe('rev-disk')
+  })
+
+  it('schema 4 是最高版本：按项目文档打开，内容不被当成未知形状丢掉', async () => {
+    useDocumentStore.setState({ docNotice: null })
+    mockFetch.mockResolvedValue({
+      doc: {
+        ...LAYOUT,
+        schema: 4,
+        canvases: [{ ...LAYOUT.canvases[0], objects: [
+          { id: 'keep', type: 'text', text: 'v4', sizePt: 9, bold: false, color: '#000', align: 'left', x: 0, y: 0, w: 10, h: 5 },
+        ] }],
+      },
+      revision: 'rev-v4',
+      file: null,
+    })
+    await open(['Fig 4'], 'load')
+    await act(async () => {
+      loadRow()!.click()
+    })
+    expect(useDocumentStore.getState().docNotice).toBeNull()
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['keep'])
   })
 })
 

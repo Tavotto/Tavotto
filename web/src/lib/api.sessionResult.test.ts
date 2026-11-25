@@ -88,6 +88,8 @@ describe('probeAutosave：纯读，四种结局', () => {
     expect(await probeAutosave('d_a', 'p1')).toEqual({ kind: 'missing' })
     stub(() => reply({ error: 'bad', code: 'non_finite_on_disk' }, 400))
     expect(await probeAutosave('d_a', 'p1')).toEqual({ kind: 'invalid', code: 'non_finite_on_disk' })
+    stub(() => reply({ error: 'missing attachment', code: 'chart_source_mismatch' }, 422))
+    expect(await probeAutosave('d_a', 'p1')).toEqual({ kind: 'invalid', code: 'chart_source_mismatch' })
     stub(() => reply('oops', 400))
     expect(await probeAutosave('d_a', 'p1')).toEqual({ kind: 'invalid', code: null })
     for (const status of [500, 503, 401, 403]) {
