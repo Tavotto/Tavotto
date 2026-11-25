@@ -34,12 +34,13 @@ function writeLayout(figures: string): string {
             type: 'panel',
             x: 10,
             y: 15,
-            w: 80,
-            h: 60,
+            // 写成 PDF 的实际尺寸：写错了，图第一次构建完桌面会把子图校正过来（一次真实改动）
+            w: 75.13,
+            h: 58.54,
             fileId: 'Fig1_kinetics.pdf',
             fileKind: 'pdf',
-            nativeW: 80,
-            nativeH: 60,
+            nativeW: 75.13,
+            nativeH: 58.54,
             overrides: [],
           },
         ],
@@ -137,6 +138,14 @@ test(
     await waitForDocumentReady(page)
     await openFromProject(page)
     await expect(page.locator('[data-save-destination]')).toHaveAttribute('data-save-destination', 'project')
+    // 起点要干净：等图第一次构建完（构建完桌面可能校正子图——慢机器上这一笔会晚到，落在后面的保存之后），
+    // 有改动先存一次，之后的「未保存」圆点只反映这条用例自己做的事
+    await expect(page.getByText('首次构建中…')).toHaveCount(0, { timeout: 120_000 })
+    await page.waitForTimeout(500)
+    if (await page.locator('[data-project-file-dirty]').count()) {
+      await page.keyboard.press('ControlOrMeta+s')
+      await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
+    }
     const stage = page.locator('[data-canvas-stage]')
 
     // 插件那条路往同一个文件里追加了两个标注 → 回到前台：自动并进画布，状态栏一句
