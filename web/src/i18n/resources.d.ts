@@ -206,6 +206,16 @@ export default interface Resources {
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
     "dataFigureV2": {
+      "aiChoice": {
+        "auto": "自动",
+        "chosen": "你选的模型",
+        "current": "当前：{{name}}",
+        "more": "连接其他 AI…",
+        "off": "不用 AI 分析",
+        "tip": "分析用的 AI：{{name}}",
+        "tipPlain": "分析用的 AI",
+        "unavailable": "该模型无法连接，请换一个尝试"
+      },
       "basis": {
         "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
         "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
@@ -4520,6 +4530,7 @@ export default interface Resources {
       "tutorial_reset_incomplete": "教程已换成干净的副本，但上次的教程排版暂时清不掉（本机另一个 Tavotto 正在用会话记录），请稍后再点一次重置。",
       "tutorial_resources_invalid": "安装里的教程资源不完整。请重新安装 Tavotto：{{reason}}",
       "tutorial_resources_missing": "安装里没有教程资源。请重新安装 Tavotto：{{reason}}",
+      "understanding_connection_unavailable": "该模型无法连接，请换一个尝试",
       "unit_required": "这种图需要你先确认哪一列是个体编号。",
       "unit_unconfirmed": "个体编号列要你确认过才能用，列名像编号还不算。",
       "unsafe_project_name": "「{{name}}」不是合法的目录名：项目名只能是单个目录名，不含路径分隔符或 ..",
@@ -7724,6 +7735,7 @@ export default interface Resources {
         "readTitle": "AI 查看过",
         "reasonLabel": "AI 的理由：{{reason}}",
         "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
+        "round": "第 {{n}} 轮",
         "running": "AI 正在查找原因…",
         "sendNo": "不发送",
         "sendNote": "AI 写的说明",
@@ -7741,7 +7753,14 @@ export default interface Resources {
           "cli_waiting_approval": "Codex 或 Claude Code 在等待批准，Tavotto 无法代为确认。停止后可以重试。",
           "stalled": "AI 暂时没有响应，稍后会自动停止。"
         },
+        "steps": {
+          "diagnose": "找原因",
+          "finish": "收尾",
+          "fix": "动手修",
+          "verify": "运行验证"
+        },
         "stop": "停止",
+        "taskTitle": "AI 修复",
         "useIt": "用它",
         "willInstall": "将要安装：{{packages}}"
       },

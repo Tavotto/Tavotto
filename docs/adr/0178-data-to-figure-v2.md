@@ -539,6 +539,33 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 - 界面（`CandidateStage` / `DataPanel` / `lib/dataBasis.ts`）：两种画法的名字「点 + 误差线」「点 + 折线 + 误差线」；说明句不重复列名，列名只在依据句里（「依据：按表里的 N 行绘制，每行一个点；误差线取自「列」列」）；算出来的误差线缺位置时依据句末接「N 处只有 1 个数值，算不出误差线 / 误差带」，只有一处时直接点名，多处的位置在该行的 `title` 里；「误差线」一行——列名自己说明了种类的不进「需要你确认」，`unknown` 的进并显示「还不确定」。文案由用户 2026-11-25 过目同意（「这些文案都可以」）。
 - 推荐考卷（`tests/support/data_figure_recommend.py`、`recommend_cases.json`）：写考卷时这种画法还没实现，记作 `missing` 的占位码 `errorbar_from_columns`；实现后按族落成 `points_err`（比较）与 `line_err`（趋势）两个 `coded` 码，三条用例（RC-P06A / RC-P12A / RC-H05）的 `acceptable_top` 相应从占位码换成这两个码——标准答案的含义（用表里现成的误差列画误差线）没变。规则第一名落在标准答案里：25 / 41 → 28 / 41。
 
+## 修订（2026-11-25，用户决定）：「读懂数据」用哪个 AI，可以选、可以关（`ai_data_aichoice`、`GET|POST /api/ai/data-understanding`）
+
+**起因**：用户原话——「这里应该需要有一个小图标，点击后可以打开列表，让用户可以选择进行分析的ai。也可以选择关闭。」（指「从数据到图」左栏数据抽屉；「分析」= 第 1 步「读懂数据」。）此前它自动用第一个可用连接，用户既不能选、也不能关。
+
+**决定**：
+
+1. **三种选择，存在后端**（应用级，不是按项目）：`ai.taf.understanding`——缺省 = `auto`（行为逐字不变）；`{"mode": "off"}`；`{"mode": "connection", "connection": "<连接 id>"}`。连接 id 沿用现有的：Key / 账号登录 = provider 记录 id，订阅登录 = `sub:codex` / `sub:claude`。**畸形 / 不认识的 mode 一律当 `off`**（宁可不发数据，也不把坏配置当成 `auto`）。
+2. **判据只有一处**：`ai_data_roles._available_connection()` 经 `ai_data_aichoice.resolve`。`off` → 没有连接；指定连接 → **只找那一个**，此刻用不了（被删 / 未登录 / 不在能力缓存里 / 被判不可用）= 没有连接，**绝不悄悄换成别家**（那等于把用户的数据发给他没选的服务）。
+3. **指定连接必须显式传下去**：以前 Key 连接只靠 `call_structured` 自己再挑一次「第一个 Key 连接」（并联网刷新令牌），只对订阅登录（CLI）连接才把挑中的传下去。指定连接时这样会把数据发给 A 而不是用户选的 B，所以现在 `start(...)` 在 `mode=connection` 时把解析出的连接显式传给 `judge`，并只刷新**被选中的这一条**（`ai_data_aichoice.refresh_key`，后台线程里；刷不动 = `no_connection`）。`auto` 下传给 `call_structured` 的参数与从前完全一致（`tests/test_ai_data_understanding_choice.py` 钉住）。
+4. **出站入口清单**（数据出图里会去找连接 / 调模型的地方，全仓 grep）：只有两处——`ai_data_roles`（`start` → `_run` → `judge` → `ai_structured.call_structured`）与 `ai_data_model.propose_recipes`（产品里目前没有调用方）。两处都服从上面的判据：`off` 时一个请求都不发、也不读磁盘里旧连接的判断（`start` 在查缓存之前就返回）。其余 `ai_data_*` 模块没有任何模型 / 网络调用。
+5. **可选清单**（`options`）：此刻真能用于「读懂数据」的连接——Key 连接（与 `first_key_connection` 同一套跳过规则）与订阅登录里 `supports_structured()` 且解析得出型号的；每项 `{id, label, logo, vendor, kind: "key" | "subscription", model}`，label / logo / vendor 沿用连接视图的字段，**不含密钥 / 地址 / 令牌**。只看本地配置与能力缓存：不联网、不刷新令牌、不探测。
+6. **接口**：`GET /api/ai/data-understanding`（轻量，随连接状态变化可反复取）与 `POST /api/ai/data-understanding`（body 只认 `{mode, connection?}`，多余键 / 类型不对 400 `propose_input_invalid`；`connection` 的 id 不在此刻的清单里 400 `understanding_connection_unavailable`，什么都不写），都在 `ai.taf.enabled` 后面、走会话鉴权 guard。`/api/ai/data-files` 多带 `understanding: {state: "on" | "off" | "none" | "unavailable", mode, connection, options}`；`understanding_available` 保留，语义 = `state == "on"`。`propose` 在 `off` / `unavailable` / `none` 时响应里没有 `understanding` 键（原有的 None 路径）。
+7. **换连接后的缓存与在途任务**：缓存键、单飞登记键、60 s 负缓存键都含连接身份（Key = provider id + 实际型号与强度；CLI = agent + 型号），换连接不会命中上一个连接的缓存 / 任务 / 负缓存。写入接口另会清掉「身份与新选择对不上」的任务登记（不分项目——选择是应用级的；同一连接的任务不动），用旧连接判断出的建议不再被轮询到（回 `off`）。**已经发出去的那一次请求收不回**（后台线程在途；它的结果只会落进缓存，不会再被用）。
+8. 不加任何遥测；用户的脚本与数据不被改动。
+
+**没做**：界面（小图标与列表，前端另做）；订阅登录的能力缓存为空时指定的订阅连接是 `unavailable`（前端在连接状态到达后重取）。
+
+**界面**（`components/datastudio/DataAiChoice.tsx`、`DataDrawer.tsx`、`useConnectAi.ts`、`store/dataFigureStore.ts`；用户 2026-11-25 看过本地真页面后回「可以，就这样继续」）
+
+- **位置与形状**：数据抽屉左下角一枚扁平的图标按钮（ghost，悬停 / 展开才有浅灰底；浮着、不占布局高度，清单底部留出内边距）。`none`（没有任何可用的 AI）不出图标，仍是原来居中的「连接 AI 以供智能分析」胶囊；其余三种状态靠**形状**区分：在用 = 当前连接的厂商图标（没有则星光）、关了 = 星光加一道贯穿的斜线（图标集新增 `SparklesOff`）、指定的用不了 = 拔掉的插头。悬停提示与无障碍名是同一句：「分析用的 AI：{{name}}」/「不用 AI 分析」/「该模型无法连接，请换一个尝试」。
+- **列表**（`ui/Menu` 的 `MenuRadioGroup`）：「自动」（在用时下面一行小字「当前：{{name}}」）、每个可用的 AI 一行（名字 + 型号小字）、「不用 AI 分析」、分隔线、「连接其他 AI…」（现有的连接弹窗）。指定的连接此刻不在清单里时补一行指认它（`understanding.chosen`），下面小字「该模型无法连接，请换一个尝试」。点选即关、图标立刻换，失败回退并用现有的胶囊说后端那一句。只选连接，不选型号；**不加任何解释数据发去哪里的句子**。
+- 为了让带小字与不带小字的行对齐、图标与勾相对整行垂直居中，`MenuRadioItem` 多一个可选的 `roomy`（不传 = 逐字不变；只带 `description` 的现有菜单仍是顶对齐，有用例锁住）。
+- **切换之后**：关 / 用不了 → 开，或换了一个 AI：对当前草稿走原有的「连上后重跑一次读懂数据」（用户动过下拉 / 正在出图时照旧不重跑）。变成关：停掉在途的轮询，**已经按 AI 建议填好的列角色保持原样、不回退**。留存的草稿（上一节）把 `mode + chosen` 放进命中判断，AI 选择不同 = 不命中、重新出。
+- **重新询问**（#2208 的那条路）：有这个状态对象时，只在 `none` / `unavailable` 且前端看到有可用连接时才重取，改用轻量的 `GET /api/ai/data-understanding`；`off` 时绝不为此重取。连接集合变了时任何状态都用这个轻量接口刷新一次清单选项（只读，不是模型调用）。
+- **界面显示的选择与实际行为保持一致**（Codex 评审 #2230）：①显式换 AI 重跑前，先把上一个 AI 自动填的那几个答案（`autoPicks` 记着、值仍是自动填的）从 `answers` 里拿掉——否则后端当成「用户定了」而不去问新 AI；用户自己动过的保留。②出候选请求带「实际在用的 AI」的代际，回来时代际变了，其中的读懂数据结果一律不应用（关了绝不会再套 AI 的结果）；换 AI 时候选正在加载，就等它落定后补跑一次。③读状态与写选择各自计序，读刷新排在未完成的写之后，一次 GET 吞不掉写的结果和它该触发的重跑。已知未处理：AI 建议改过的表头行不在 `autoPicks` 里，换 AI 时不会被清掉。
+- 用户定的两条行为：指定的 AI 用不了时**不自动换别家**（按不分析处理）；关闭后已由 AI 选好的横轴 / 纵轴 / 分组**保持原样**。
+
 ## 修订（2026-11-25）：按看图目的重排，并说明为什么不是另几张（`ai_data_purpose`、`ai_data_propose`；路线第③步）
 
 **起因**：维护者定的第③步是「按科学任务推荐并说明为什么不推荐另外几种」，口吻像老师 / 科研助理给建议，而不是直接画完。决策框架 §2 规定任务**不由推荐器自己定**：只有用户点选的算「用户确认过的目的」，从数据结构推出的永远只是假设。本期不让模型猜目的、不加自由文本入口。

@@ -5,6 +5,8 @@ import {
   aiDataFigureDiscard,
   aiDataProgressCancel,
   aiDataFigurePropose,
+  aiDataChoiceGet,
+  aiDataChoiceSet,
   aiDataFilesAll,
   aiDataUnderstanding,
   aiDataOverview,
@@ -15,6 +17,7 @@ import {
   type AiDataFileEntry,
   type AiDataOverview,
   type AiDataUnderstanding,
+  type AiDataUnderstandingChoice,
 } from '@/lib/api'
 import { setCanvasCovered } from '@/store/canvasCover'
 import { runExclusive } from '@/lib/dataCommitQueue'
@@ -184,6 +187,12 @@ interface DataFigureStore {
 
   /** 后端说「读懂数据」此刻有没有可用的连接（`/api/ai/data-files` 的 `understanding_available`，随清单取）；null = 还没取到 / 旧后端没有这个字段（前端退回 `hasUsableAi`） */
   understandingAvailable: boolean | null
+  /** 「读懂数据」用哪个 AI：后端给的整个对象（随清单 / 轻量 GET / 用户的选择回来；`understandingAvailable` 由它派生：`state === 'on'`）。null = 还没取到 / 旧后端没有这个对象（界面退回 `understandingAvailable`） */
+  understandingChoice: AiDataUnderstandingChoice | null
+  /** 用户在图标的列表里选了「自动 / 不用 AI 分析 / 某个连接」：失败（指定的连接此刻用不了等）抛出，调用方回退并说一句；成功后 `off` 停掉在途的读懂数据（已填好的列角色保持原样），换了实际在用的连接就对当前这份重跑一次 */
+  setUnderstandingChoice: (body: { mode: 'auto' | 'off' } | { mode: 'connection'; connection: string }) => Promise<void>
+  /** 轻量重取（`GET /api/ai/data-understanding`）：连接状态变化 / 打开列表时；请求序号保证后发先到不会被旧的盖掉 */
+  refreshUnderstandingChoice: () => Promise<void>
   /** 观察到过「读懂数据不可用」且连上之后还没因此重跑过：宿主（`useConnectAiWatch`，生命周期覆盖抽屉与草稿）重新挂上时据此补跑；记在 store 里而不是组件 ref */
   sawUnavailable: boolean
   /** 宿主汇报此刻「读懂数据」是否不可用：不可用 → 记下；从不可用变为可用 → 对当前数据重跑一次（`rerunForConnection` 自己拦「动过下拉 / 出图中」） */
@@ -314,6 +323,7 @@ const initial = {
   suggestion: null as Suggestion | null,
   autoPicks: {} as Record<string, unknown>,
   understandingAvailable: null as boolean | null,
+  understandingChoice: null as AiDataUnderstandingChoice | null,
   sawUnavailable: false,
   readRid: null as string | null,
   previewKey: null as string | null,
@@ -391,8 +401,27 @@ interface Kept {
   pj: string | null
   /** 切走时「读懂数据」还在跑的任务 id：还原后接着轮询 */
   job: string | null
+  /** 出这批候选时分析用的 AI 选择（mode + 指定的连接 + 实际在用的）：不同 = 不命中（建议是按那个 AI 的判断填的） */
+  ai: string
 }
 let kept: Kept[] = []
+/**
+ * 「读懂数据」用哪个 AI 的代际与读写顺序：
+ *  - `choiceGen`：**实际在用的 AI**（`state` + 连接）变了就加一；出候选的请求带着发起时的代际，回来时代际变了，响应里的 `understanding` 一律不应用
+ *    （关了绝不能还自动套 AI 的结果；换了 AI 也不能套旧 AI 的）；
+ *  - 写（用户的选择）与读（轻量 GET / 清单里带的，共用 `readSeq`：谁发得晚谁算数）各自计序：`writeSeq` 只认最新一次写；`choiceStamp` 在每次写开始和结束各加一，读发出时记下、
+ *    回来时对不上（中途有写开始 / 结束）或还有写在途就丢；读排在未完成的写之后（`writeChain`），一次读吞不掉写的结果和它该触发的副作用；
+ *  - `pendingChoiceRerun`：换 AI 时当前正有候选请求在途，等它落定后补跑一次。
+ */
+let choiceGen = 0
+let writeSeq = 0
+let readSeq = 0
+let choiceStamp = 0
+let writesInFlight = 0
+let writeChain: Promise<unknown> = Promise.resolve()
+let pendingChoiceRerun = false
+/** 实际在用的 AI 的键（`state` + 连接）；没取到 = '' */
+const effKeyOf = (c: AiDataUnderstandingChoice | null): string => (c ? `${c.state}|${c.connection ?? ''}` : '')
 /** 当前会话出候选**那一刻**（请求发出时）涉及文件的大小，跟着候选走：留存时用它，不用切走时才读的清单（那时清单可能已经是新的，候选却是按旧内容出的）。有一个读不到 = 没法验证，这份不留 */
 let sessionSizes: Record<string, number | undefined> = {}
 /** 这份草稿是还原出来的、会话没确认过还活着：它的缩略图取不到就静默重出（只一次） */
@@ -403,6 +432,9 @@ let sessionLiveAt = 0
 let understandingJob: string | null = null
 
 /** 键：这张表（合画 = 有序的一组）+ 各自当前的表头行；期刊绑定在命中判断里比（取得晚，不进字符串） */
+/** 分析用的 AI 选择的键（mode + 指定的连接 id）；没取到 = '' */
+const aiKeyOf = (c: AiDataUnderstandingChoice | null): string => (c ? `${c.mode}|${c.chosen ?? ''}|${effKeyOf(c)}` : '')
+
 const keepKeyOf = (refs: TableRef[], group: boolean, headerRows: Record<string, number>): string =>
   `${group ? 'g' : 't'}:${refs.map((r) => `${tableKey(r)}#${headerRows[r.path] ?? ''}`).join('|')}`
 
@@ -443,6 +475,23 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   const discardSession = () => {
     const sid = get().session
     if (sid) void aiDataFigureDiscard(sid, currentProjectId()).catch(() => undefined)
+  }
+
+  /** 采用后端给的「用哪个 AI」：实际在用的变了就换代际，并做该做的事（读 / 写 / 清单带回的都走这里，副作用不会因为是哪条路先看到而丢） */
+  function applyChoice(next: AiDataUnderstandingChoice): void {
+    const prev = get().understandingChoice
+    set({ understandingChoice: next, understandingAvailable: next.state === 'on' })
+    if (!prev || effKeyOf(prev) === effKeyOf(next)) return
+    choiceGen += 1
+    if (next.state !== 'on') pendingChoiceRerun = false
+    if (next.state === 'off') {
+      // 关了：在途的读懂数据不再等；已经按建议填好的列角色保持原样（不回退）
+      stopUnderstanding()
+      set({ understanding: false })
+    } else if (next.state === 'on' && prev.state === 'on') {
+      // 换了一个在用的 AI：对当前这份重跑一次（关 / 用不了 → 开由宿主的 `noteUnavailable` 接，同一个 `rerunForConnection`）
+      get().rerunForConnection()
+    }
   }
 
   /* ---- 按表记住（说明见模块级 `kept`） ---- */
@@ -496,6 +545,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       liveAt: sessionLiveAt,
       pj: currentProjectId(),
       job: understandingJob,
+      ai: aiKeyOf(s.understandingChoice),
     })
     while (kept.length > KEEP_MAX) dropKept(kept[0]!)
     return true
@@ -505,7 +555,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     ensureBinding()
     pruneKept()
     const key = keepKeyOf(refs, group, get().headerRows)
-    const hit = kept.find((e) => e.key === key && sameDraftBinding(e.binding, get().specBinding))
+    const hit = kept.find((e) => e.key === key && sameDraftBinding(e.binding, get().specBinding) && e.ai === aiKeyOf(get().understandingChoice))
     if (!hit) return null
     kept = kept.filter((e) => e !== hit)
     return hit
@@ -627,6 +677,19 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
    * 也不清掉已有的建议；这一轮还没起过（第一次响应被这次取代了）才照常起。
    */
   async function propose(still: () => boolean, pj: string | null, signal?: AbortSignal, fromSpec = false): Promise<void> {
+    const gen = choiceGen
+    try {
+      await proposeInner(still, pj, signal, fromSpec, gen)
+    } finally {
+      // 换 AI 时这次请求正在途：落定后（它仍是当前这一次）补跑，让新的 AI 被问到
+      if (pendingChoiceRerun && still()) {
+        pendingChoiceRerun = false
+        get().rerunForConnection()
+      }
+    }
+  }
+
+  async function proposeInner(still: () => boolean, pj: string | null, signal: AbortSignal | undefined, fromSpec: boolean, gen: number): Promise<void> {
     const sel = get().selected
     if (!sel) return
     ensureBinding()
@@ -704,10 +767,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         thumbs: Object.fromEntries(res.items.map((i) => [i.id, 'pending' as ThumbState])),
         nothingReasons: [],
       })
-      if (res.understanding && !(fromSpec && understandingTracked)) trackUnderstanding(res.understanding, pj)
+      if (res.understanding && gen === choiceGen && !(fromSpec && understandingTracked)) trackUnderstanding(res.understanding, pj)
     } else if (res.kind === 'nothing') {
       set({ ...common, phase: 'nothing', nothingReasons: [...(res.reasons ?? [])], candidates: [], session: null })
-      if (res.understanding && !(fromSpec && understandingTracked)) trackUnderstanding(res.understanding, pj)
+      if (res.understanding && gen === choiceGen && !(fromSpec && understandingTracked)) trackUnderstanding(res.understanding, pj)
     } else {
       // 形状不对按失败处理（不当成拿到了空的）
       set({ phase: 'failed', error: null })
@@ -764,6 +827,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const sel = get().selected
     if (!sel) return
     restoredSession = null
+    pendingChoiceRerun = false // 新的一轮请求本来就是在新的选择之后发的
     ensureBinding() // 读表 / 判断阶段（全是文字、要点表头行）也要让右栏「期刊」一行显示的是真绑定，不等到出候选
     const seq = { current: () => runSeq }
     runSeq += 1
@@ -974,6 +1038,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       const mine = ++filesSeq
       const ep = epoch
       const pj = currentProjectId()
+      const askedStamp = choiceStamp
+      const writeBusy = writesInFlight > 0
+      const askedRead = ++readSeq // 清单里带的对象与轻量 GET 共用读代际：谁发得晚谁算数，发得早的回来得晚就丢
       const prev = get().files
       const keep = prev.status === 'ready' || prev.status === 'error' || prev.status === 'loading' ? prev.entries : null
       set({ files: { status: 'loading', entries: keep } })
@@ -981,10 +1048,14 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         const r = await aiDataFilesAll(pj)
         if (ep !== epoch || mine !== filesSeq) return
         if (!r || !Array.isArray(r.files)) throw new Error('bad shape')
-        set({
-          files: { status: 'ready', entries: r.files, truncated: r.truncated === true },
-          understandingAvailable: typeof r.understanding_available === 'boolean' ? r.understanding_available : null,
-        })
+        // 「读懂数据」用哪个 AI：清单里带着的对象；发出时有写在途、或这期间有写开始 / 结束（`choiceStamp` 变了）、或现在还有写在途、或这期间又发出了更晚的读（轻量 GET / 另一次清单，`readSeq` 变了），这份就可能是旧的，不拿它盖掉
+        const fresh = !writeBusy && askedStamp === choiceStamp && writesInFlight === 0 && askedRead === readSeq
+        const choice = r.understanding && typeof r.understanding === 'object' ? r.understanding : undefined
+        set({ files: { status: 'ready', entries: r.files, truncated: r.truncated === true } })
+        if (fresh) {
+          if (choice) applyChoice(choice)
+          else set({ understandingChoice: null, understandingAvailable: typeof r.understanding_available === 'boolean' ? r.understanding_available : null })
+        }
         pruneKept() // 文件的大小变了：对应的留存作废
       } catch (e) {
         if (ep !== epoch || mine !== filesSeq) return
@@ -1168,6 +1239,44 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       await run({ keepChoices: true })
     },
 
+    refreshUnderstandingChoice: async () => {
+      const ep = epoch
+      const mine = ++readSeq
+      // 排在未完成的写之后（等的时候又有新的写开始就接着等）：读不会先于写到达后端、也吞不掉写的结果
+      let seen: number
+      do {
+        seen = choiceStamp
+        await writeChain
+      } while (seen !== choiceStamp)
+      if (ep !== epoch || mine !== readSeq) return
+      try {
+        const r = await aiDataChoiceGet(currentProjectId())
+        if (ep !== epoch || mine !== readSeq || seen !== choiceStamp || writesInFlight > 0 || !r?.understanding) return
+        applyChoice(r.understanding)
+      } catch {
+        /* 取不到就保持现状：下一次连接状态变化再问 */
+      }
+    },
+
+    setUnderstandingChoice: async (body) => {
+      const ep = epoch
+      const mine = ++writeSeq
+      choiceStamp += 1
+      writesInFlight += 1
+      const req = aiDataChoiceSet(body, currentProjectId())
+      writeChain = writeChain.then(() => req.then(() => undefined, () => undefined))
+      let r: Awaited<typeof req>
+      try {
+        r = await req
+      } finally {
+        writesInFlight -= 1
+        choiceStamp += 1
+      }
+      // 后来又有一次写：以它为准（两次写在后端是按顺序落的）
+      if (ep !== epoch || mine !== writeSeq || !r?.understanding) return
+      applyChoice(r.understanding)
+    },
+
     noteUnavailable: (unavailable) => {
       if (unavailable) {
         if (!get().sawUnavailable) set({ sawUnavailable: true })
@@ -1180,10 +1289,21 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     rerunForConnection: () => {
       const { selected, phase, drawingId, answers, autoPicks } = get()
-      if (!selected || drawingId || (phase !== 'ready' && phase !== 'nothing')) return
+      if (!selected || drawingId) return
+      // 候选请求还在途：它是按换 AI 之前的选择发的，回来的读懂数据结果不会被应用（`choiceGen`）；落定之后补跑一次（`propose` 收尾处）
+      if (phase === 'loading') {
+        pendingChoiceRerun = true
+        return
+      }
+      if (phase !== 'ready' && phase !== 'nothing') return
       // 「用户动过下拉」与 `onUnderstood` 同一口径：自动套用写进 `answers` 的键（`autoPicks`）不算
       if (SUGGEST_KEYS.some((k) => k in answers && !(k in autoPicks && sameValue(answers[k], autoPicks[k])))) return
-      reask((a) => a)
+      // 上一个 AI 自动填的答案要拿掉再发：后端见到 x / y / group / x_measure 就认为用户定了、不再问模型，新的 AI 就永远问不到；用户自己定的（上面已经拦下）才保留
+      reask((a) => {
+        const o = { ...a }
+        for (const k of Object.keys(autoPicks)) if (k in o && sameValue(o[k], autoPicks[k])) delete o[k]
+        return o
+      }, { autoPicks: {} })
     },
 
     applySuggestion: () => {

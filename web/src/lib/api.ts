@@ -4911,6 +4911,11 @@ export interface AiFixState {
   activity?: { tool: string; phase: 'start' | 'end' | 'denied'; detail: string; at_ms: number } | null
   /** 现在卡住了：`reason` 闭集；没卡住 = null */
   stalled?: { reason: 'cli_waiting_approval' | 'cli_tool_not_delivered' | 'stalled'; detail: string } | null
+  /**
+   * 任务清单的进度（`fixtools.next_stage`，按工具组归步；2026-11-25）：四步里走到哪一步 + 第几轮（验证没过又回去修 +1）。
+   * 还没调过推进步骤的工具 = null；老后端没有这个键
+   */
+  stage?: { step: 'diagnose' | 'fix' | 'verify' | 'finish'; round: number } | null
 }
 
 /** 三个读写都可显式指定项目（`pj`）：切项目之后要取消 / 重读的是发起时那个项目的修复，不是当前项目的 */
@@ -5481,8 +5486,31 @@ export interface AiDataFileEntry {
   sheets?: AiDataSheet[] | null
 }
 
+/** 「读懂数据」用哪个 AI（`/api/ai/data-understanding` 与 `/api/ai/data-files` 共用的对象）：`on` 会用 / `off` 用户关了 / `none` 没有任何可用的 AI / `unavailable` 用户指定的那个此刻用不了（后端不会换别家） */
+export interface AiDataUnderstandingChoice {
+  state: 'on' | 'off' | 'none' | 'unavailable'
+  mode: 'auto' | 'off' | 'connection'
+  /** 此刻实际会用的连接 id */
+  connection: string | null
+  /** 用户指定的连接 id（只在 `mode === 'connection'` 时有；`unavailable` 时它可能已不在 `options` 里） */
+  chosen?: string
+  options: { id: string; label: string; logo: string; vendor: string; kind: 'key' | 'subscription'; model: string }[]
+}
+
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean; understanding?: AiDataUnderstandingChoice }>('/api/ai/data-files?formats=all', undefined, pj)
+
+/** 轻量、只读：只回「读懂数据」的选择与可选的 AI，可反复调（不联网、不探测） */
+export const aiDataChoiceGet = (pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>('/api/ai/data-understanding', undefined, pj)
+
+/** 设置：`auto` / `off` / 指定某个连接；id 不在此刻的可选清单里回 400 `understanding_connection_unavailable` */
+export const aiDataChoiceSet = (body: { mode: 'auto' | 'off' } | { mode: 'connection'; connection: string }, pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>(
+    '/api/ai/data-understanding',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
 export interface AiDataOverview {
   path: string

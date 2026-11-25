@@ -1784,6 +1784,14 @@
       }
     },
     "aiFix": {
+      "taskTitle": "AI fix",
+      "round": "Round {{n}}",
+      "steps": {
+        "diagnose": "Find the cause",
+        "fix": "Fix it",
+        "verify": "Test run",
+        "finish": "Wrap up"
+      },
       "repairFolder": "The script uses a folder outside the project that this account can’t read; its permissions need repairing",
       "running": "AI is looking for the cause…",
       "cancel": "Cancel",
