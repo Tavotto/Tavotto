@@ -3,6 +3,8 @@ export default interface Resources {
   "ai": {
     "changePlan": {
       "card": {
+        "appliedAssistant": "已应用 · 改了 {{places}} 处",
+        "appliedLayout": "已应用 · {{count}} 张图重新排了版",
         "applied_other": "已应用 · {{count}} 条意见已处理",
         "applyFailed": "没能应用，图没有改动",
         "applyNow": "直接应用",
@@ -11,15 +13,26 @@ export default interface Resources {
         "discarded": "已放弃这一版",
         "dismiss": "收起",
         "empty": "这些意见没法直接改图，图没有改动",
+        "emptyAssistant": "这条没法直接改图，图没有改动",
         "generatingAny": "正在按意见修改…",
+        "generatingAssistant": "正在按你的话修改…",
         "generating_other": "正在按 {{count}} 条意见修改…",
+        "handoff": "这条要改脚本，交给 Agent 改。",
         "holdBefore": "按住看修改前",
         "regenerate": "重新生成",
         "retry": "重试",
         "revising": "正在按批注重改…",
+        "runScript": "改脚本做剩下的",
+        "runScriptAll": "改脚本来做",
+        "runScriptTip": "会先应用这些图内修改",
+        "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
         "stale": "原图改过了，这版对不上",
         "summary": "按 {{done}} 条意见改了 {{places}} 处，{{script}} 条要改脚本",
         "summaryAll": "按 {{done}} 条意见改了 {{places}} 处",
+        "summaryAssistant": "改了 {{places}} 处",
+        "summaryAssistantOther": "改了 {{places}} 处，剩下的没法直接改",
+        "summaryAssistantScript": "改了 {{places}} 处，剩下的要改脚本，这次没动",
+        "summaryLayout": "{{count}} 张图重新排了版",
         "summaryNotes": "按 {{n}} 条批注又改了 {{places}} 处",
         "summaryOther": "按 {{done}} 条意见改了 {{places}} 处，{{rest}} 条没法直接改",
         "thumbAlt": "修改后的图",
@@ -47,6 +60,8 @@ export default interface Resources {
         "groupN": "第 {{n}} 条意见",
         "hold": "按住",
         "holdBefore": "看修改前",
+        "layoutGroupMeta": "{{count}} 张图",
+        "layoutHeading": "排版 · {{count}} 张图",
         "lockLearn": "了解高级版 ›",
         "lockTip": "在改好的图上点元素写批注，再改一版",
         "modeAnnotate": "批注",
@@ -113,6 +128,7 @@ export default interface Resources {
         "thisOne": "这一处",
         "unbold": "已取消{{el}}的加粗"
       },
+      "layoutGroup": "排版",
       "reviewNote": {
         "open": "看意见 ›",
         "title_other": "审阅意见 · {{count}} 条"
@@ -129,6 +145,7 @@ export default interface Resources {
         "out_of_scope": "不在图内修改的范围，这次没动",
         "over_limit": "改动太多，这条没动",
         "unclear": "意见不够具体，这次没动",
+        "unclearAssistant": "指令不够具体，这次没动",
         "unknown_element": "找不到对应的元素，这次没动"
       }
     },
@@ -2708,6 +2725,7 @@ export default interface Resources {
           "failed": "检测失败。显示上次结果。"
         },
         "backAria": "返回改图助手列表",
+        "changePlan": "改图前先给我看修改方案",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {
@@ -8682,6 +8700,7 @@ export default interface Resources {
       "projectBackgroundError": "后台检查项目文件时出错。已打开的内容不受影响，修好文件后会自动重试。",
       "quickLayoutDone": "已排好",
       "quickLayoutFailed": "这次没排好，再试一次",
+      "quickLayoutNoPreview": "没能生成对比预览，已直接排好",
       "quickLayoutNoteEqualAspect": "图 {{label}} 是等比例坐标，没参与轴线对齐",
       "quickLayoutNoteSpecNotFixed": "图 {{label}} 还有几处字号没修到规范，可在「问题」里看",
       "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",

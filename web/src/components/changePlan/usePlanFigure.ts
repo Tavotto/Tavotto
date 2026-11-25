@@ -58,7 +58,18 @@ export function useImageAspect(src: string | null | undefined, fallback = 4 / 3)
 
 /** 这张图有没有方案卡要画（助手转录据此不显示空态） */
 export function useHasChangePlans(panelId: string | undefined): boolean {
-  return useChangePlanStore((s) => !!panelId && s.order.some((k) => s.entries[k]?.panelId === panelId))
+  const documentId = useDocumentStore((s) => s.documentId)
+  const loadSeq = useDocumentStore((s) => s.loadSeq)
+  const canvasId = useDocumentStore((s) => s.activeCanvasId)
+  return useChangePlanStore((s) =>
+    s.order.some((k) => {
+      const e = s.entries[k]
+      if (!e) return false
+      // 一键排版的整版方案不挂在某张图上：当前文档 / 画布上有就算（没选图也要看得到）
+      if (e.kind === 'layout') return e.documentId === documentId && e.loadSeq === loadSeq && e.canvasId === canvasId
+      return !!panelId && e.panelId === panelId
+    }),
+  )
 }
 
 /** 这张图此刻的图源身份（订阅素材修订：脚本 / 素材在磁盘上变了，方案卡跟着转「图已改过」） */
