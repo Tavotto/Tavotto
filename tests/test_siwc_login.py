@@ -568,3 +568,50 @@ def test_oversized_success_is_not_an_empty_success(fake, monkeypatch):
     fake.models = {"models": [{"slug": "gpt-a", "visibility": "list", "description": "x" * 5000}]}
     _sign_in(fake)
     assert siwc_login.fetch_models(ACCESS) is None  # 拿不到 ≠ 清单是空的
+
+
+# --------------------------------------------------------------------------- 回调页
+@pytest.mark.parametrize(
+    ("accept", "ok", "title"),
+    [
+        ("zh-CN,zh;q=0.9,en;q=0.8", True, "已连接 ChatGPT"),
+        ("zh-TW", False, "未能连接 ChatGPT"),
+        ("en-US,en;q=0.9", True, "Connected to ChatGPT"),
+        ("fr-FR", False, "Couldn’t connect to ChatGPT"),
+        ("", True, "Connected to ChatGPT"),
+    ],
+)
+def test_done_page_speaks_one_language(accept, ok, title):
+    page = siwc_login.done_page(ok, accept).decode("utf-8")
+    assert f"<h1>{title}</h1>" in page
+    other = "Connected" if "连接" in title else "连接"
+    assert other not in page.split("<body>")[1]  # 不再中英并排
+
+
+def test_done_page_is_static_and_branded():
+    from tavotto.engine import brand_mark
+
+    page = siwc_login.done_page(True, "en").decode("utf-8")
+    assert (
+        "<script" not in page.lower()
+        and "http://" not in page
+        and "https://" not in page.replace("http://www.w3.org", "")
+    )
+    assert all(d in page for _role, d in brand_mark.PATHS)
+    assert 'rel="icon"' in page  # 不向回调端口多要一次 /favicon.ico
+
+
+def test_backend_brand_mark_is_generated_from_the_single_source():
+    """`engine/brand_mark.py` 与 scripts/build_brand_assets.py 现在生成的逐字相同（改几何只改生成器）。"""
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location(
+        "build_brand_assets", root / "scripts" / "build_brand_assets.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert (root / "src" / "tavotto" / "engine" / "brand_mark.py").read_text(
+        encoding="utf-8"
+    ) == mod.mark_py()

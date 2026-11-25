@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """品牌标志几何的唯一出处：生成 assets/brand/*.svg、assets/icon/icon.svg、
 codex-plugin/assets/tavotto.svg（Codex 插件的 logo / composerIcon），并同步
-web/index.html 的 favicon、界面组件 BrandMark 的几何表、README hero 里内嵌的那一份。
+web/index.html 的 favicon、界面组件 BrandMark 的几何表、后端 engine/brand_mark.py（ChatGPT 登录回调页用）、README hero 里内嵌的那一份。
 
 标志 = Tavotto_Master_05（2026-09-11 定稿，`Tavotto_Brand_Final/master/
 Tavotto_Master_05.ai` 第 1 页）：一个带「t」字横笔的圆角方框，右下角
@@ -48,6 +48,8 @@ PLUGIN_ICON_SVG = ROOT / "codex-plugin" / "assets" / "tavotto.svg"
 INDEX_HTML = ROOT / "web" / "index.html"
 GEOMETRY_TS = ROOT / "web" / "src" / "components" / "ui" / "brandMark.geometry.ts"
 HERO_SVG = ROOT / "assets" / "readme" / "hero.svg"
+#: 后端需要内嵌标志的地方（ChatGPT 登录回调页，`engine/siwc_login.py`）：Python 侧拿不到 web 构建物，也不该手抄路径
+MARK_PY = ROOT / "src" / "tavotto" / "engine" / "brand_mark.py"
 
 # ---------------------------------------------------------------------------
 # 几何（画板 0 0 112 112；SVG path 语法，只用 M / L / C / Z，绝对坐标）。
@@ -221,6 +223,22 @@ def geometry_ts() -> str:
     )
 
 
+def mark_py() -> str:
+    """后端用的标志路径（纯数据，纯标准库可 import）。色值不进来：由用它的页面按浅 / 深底取 PALETTES 里的同一组值。"""
+    # 与 ruff format 的输出逐字相同（长元组拆成多行），重跑生成器不会和格式化打架
+    rows = "\n".join(f'    (\n        "{role}",\n        "{d}",\n    ),' for role, d in MARK)
+    pal = "\n".join(
+        f'    "{n}": {{"ink": "{c["ink"]}", "piece": "{c["piece"]}"}},' for n, c in PALETTES.items()
+    )
+    return (
+        f'"""{GENERATED}。\n\n品牌标志的路径（画板 0 0 {BOX:g} {BOX:g}，even-odd 填充）与配色；改几何 / 配色去 scripts/build_brand_assets.py。"""\n\n'
+        f"BOX = {BOX:g}\n\n"
+        f"#: (角色, SVG path)：ink = 框与横笔，piece = 右下角切开挪出的那片\n"
+        f"PATHS: tuple[tuple[str, str], ...] = (\n{rows}\n)\n\n"
+        f"PALETTES: dict[str, dict[str, str]] = {{\n{pal}\n}}\n"
+    )
+
+
 def hero_group(size: float = 72.0) -> str:
     """README hero 里 `<g id="brand-mark">` 的内容：画板缩到 size px。"""
     k = size / BOX
@@ -323,6 +341,9 @@ def main() -> int:
 
     GEOMETRY_TS.write_text(geometry_ts(), encoding="utf-8")
     print("✓ web/src/components/ui/brandMark.geometry.ts")
+
+    MARK_PY.write_text(mark_py(), encoding="utf-8")
+    print("✓ src/tavotto/engine/brand_mark.py")
 
     ok = _sync(
         INDEX_HTML,

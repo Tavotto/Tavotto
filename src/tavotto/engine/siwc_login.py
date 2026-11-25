@@ -431,11 +431,93 @@ class _CallbackServer(http.server.HTTPServer):
         super().server_bind()
 
 
-_DONE_PAGE = (
-    "<!doctype html><meta charset='utf-8'><title>{p}</title>"
-    "<body style='font-family:system-ui,sans-serif;margin:3em;color:#333'>"
-    "<p>{msg}</p></body>"
-)
+#: 回调页的文案：一个标题 + 一句话，按浏览器语言只给一种（不中英并排）
+_PAGE_TEXT = {
+    "zh": {
+        True: ("已连接 ChatGPT", "可以关掉这个页面，回到 {p} 了。"),
+        False: ("未能连接 ChatGPT", "回到 {p} 再试一次。"),
+    },
+    "en": {
+        True: ("Connected to ChatGPT", "You can close this tab and go back to {p}."),
+        False: ("Couldn’t connect to ChatGPT", "Go back to {p} and try again."),
+    },
+}
+
+
+def _page_lang(accept_language: str) -> str:
+    """`Accept-Language` 里第一个认得的语言（zh / en），都不认得给 en。"""
+    for part in (accept_language or "").split(","):
+        tag = part.split(";")[0].strip().lower()
+        if tag.startswith("zh"):
+            return "zh"
+        if tag.startswith("en"):
+            return "en"
+    return "en"
+
+
+def done_page(ok: bool, accept_language: str = "") -> bytes:
+    """浏览器里登录完成后看到的那一页：品牌标志 + 一个标题 + 一句话，浅 / 深色跟随系统。
+    纯静态（无脚本、无外链资源），标志路径与配色取自生成的 `brand_mark`（唯一出处 scripts/build_brand_assets.py）。"""
+    import html
+
+    from . import brand_mark
+
+    lang = _page_lang(accept_language)
+    title, line = _PAGE_TEXT[lang][ok]
+    p = brand.PRODUCT_NAME
+    light, dark = brand_mark.PALETTES["surface"], brand_mark.PALETTES["reverse"]
+    paths = "".join(
+        f'<path class="{role}" d="{d}" fill-rule="evenodd"/>' for role, d in brand_mark.PATHS
+    )
+    box = f"{brand_mark.BOX:g}"
+    # 标签页图标：同一个标志（浅底配色），内联免得向回调端口多要一次 /favicon.ico
+    icon_paths = "".join(
+        f"<path d='{d}' fill='{light[role]}' fill-rule='evenodd'/>" for role, d in brand_mark.PATHS
+    )
+    favicon = "data:image/svg+xml," + urllib.parse.quote(
+        f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {box} {box}'>{icon_paths}</svg>"
+    )
+    # 失败：标志退成灰（不加色块、不加红字），一眼和成功页分开（agy 审稿 2026-11-25）
+    muted_mark = "" if ok else " .ink { fill: var(--muted); }"
+    return f"""<!doctype html>
+<html lang="{"zh-CN" if lang == "zh" else "en"}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/svg+xml" href="{favicon}">
+<title>{html.escape(title)} · {html.escape(p)}</title>
+<style>
+  :root {{ --bg: #f7f6f2; --ink: {light["ink"]}; --piece: {light["piece"]}; --muted: #6b6a63; }}
+  @media (prefers-color-scheme: dark) {{
+    :root {{ --bg: #1b1b18; --ink: {dark["ink"]}; --piece: {dark["piece"]}; --muted: #a3a299; }}
+  }}
+  body {{
+    margin: 0; min-height: 100dvh; box-sizing: border-box;
+    padding: 32px 24px clamp(48px, 10vh, 96px);
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }}
+  main {{ text-align: center; }}
+  svg {{ width: 44px; height: 44px; display: block; margin: 0 auto 20px; }}
+  .ink {{ fill: var(--ink); }} .piece {{ fill: var(--piece); }}{muted_mark}
+  h1 {{ font-size: 20px; font-weight: 500; line-height: 1.35; letter-spacing: 0.01em; margin: 0 0 8px; }}
+  :lang(en) h1 {{ letter-spacing: -0.015em; }}
+  p {{ font-size: 14px; line-height: 1.65; color: var(--muted); margin: 0; }}
+  :lang(zh-CN) p {{ padding-left: 0.45em; }}
+</style>
+</head>
+<body>
+<main>
+  <svg viewBox="0 0 {box} {box}" role="img" aria-label="{html.escape(p)}">{paths}</svg>
+  <h1>{html.escape(title)}</h1>
+  <p>{html.escape(line.format(p=p))}</p>
+</main>
+</body>
+</html>
+""".encode("utf-8")
 
 
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -456,12 +538,7 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(400)  # 不是这次登录的回调：不收、也不结束流程
             return
         ok = "error" not in q and bool(q.get("code"))
-        msg = (
-            f"已收到，可以关掉这个页面回到 {brand.PRODUCT_NAME}。 / Done — you can close this page and return to {brand.PRODUCT_NAME}."
-            if ok
-            else f"没有完成登录，可以回到 {brand.PRODUCT_NAME} 重试。 / Sign-in was not completed. Return to {brand.PRODUCT_NAME} to try again."
-        )
-        body = _DONE_PAGE.format(p=brand.PRODUCT_NAME, msg=msg).encode("utf-8")
+        body = done_page(ok, self.headers.get("Accept-Language", ""))
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
