@@ -317,6 +317,13 @@ def test_schema3_and_schema4_share_one_directory_and_one_list(client, tmp_path):
         assert (versions_dir / f"{doc_id}{engine_versionstore.STORE_SUFFIX}").is_dir()
 
 
+def test_figure_snapshot_preview_uses_the_shared_document_route(client):
+    """前端统一预览 URL 必须进入归档预览校验，而不是落到 404。"""
+    response = client.post("/api/figure-preview", json={})
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "invalid_preview_options"
+
+
 def test_schema4_save_reports_figure_snapshots_from_its_canvases(client):
     """schema 4 的保存响应带上面板的 `figure_snapshots` 与 `chart_sources`；
     同一份正文改成 schema 3 时 `figure_snapshots` 一样（同一套存储），只少图表附加字段。"""
@@ -385,6 +392,7 @@ def test_schema4_named_save_freezes_the_chart_source_at_the_document_root(
     保存响应的 `chart_sources` 说得出它是哪一张画布、哪一个面板的哪一份来源。"""
     monkeypatch.setattr(m, "_render_chart_snapshot", _fake_chart_snapshot(tmp_path))
     doc = _chart_document()
+    doc["canvases"][0]["objects"][0].pop("chartSource")
     resp = client.post("/api/layouts/图表", json=doc)
     assert resp.status_code == 200, resp.get_json()
     digest = hashlib.sha256(SOURCE).hexdigest()
@@ -406,7 +414,9 @@ def test_schema4_named_save_freezes_the_chart_source_at_the_document_root(
 
 def test_schema4_autosave_freezes_the_chart_source_before_the_body(client, tmp_path, monkeypatch):
     monkeypatch.setattr(m, "_render_chart_snapshot", _fake_chart_snapshot(tmp_path))
-    resp = client.put("/api/autosave/d_chart", json=_chart_document())
+    doc = _chart_document()
+    doc["canvases"][0]["objects"][0].pop("chartSource")
+    resp = client.put("/api/autosave/d_chart", json=doc)
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["chart_sources"][0]["chart_source"] == chart_reference()
     assert (tmp_path / "chart_sources" / (hashlib.sha256(SOURCE).hexdigest() + ".svg")).is_file()

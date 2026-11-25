@@ -89,6 +89,7 @@ import {
   saveNowWithResult,
   setProjectFile,
   useDocumentStore,
+  writesBlocked,
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
@@ -137,6 +138,14 @@ import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
 import { styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
 import { remapLineIds } from '@/lib/pathText'
+import {
+  carriedStyleOverrides,
+  copyPlacementOf,
+  COPY_PROP,
+  isCopyGid,
+  newCopyGid,
+} from '@/lib/figureElementCopy'
+import { selectCopiesWhenDrawn } from './figureCopySelect'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -485,21 +494,27 @@ export function restoreLayoutVersion(
   label: UiMessage,
   version: FigureDocument | ProjectDocument,
 ): boolean | Promise<boolean> {
+  if (writesBlocked()) return false
   if (version.schema !== 2) {
     const pd = migrateToProject(version)
     if (!pd) return false
     // 恢复的是同一份排版：documentId 不变，时间线 / 最近文档 / 项目归属都跟着这份走
     const docId = useDocumentStore.getState().documentId
-    return useDocumentStore.getState().switchDocument(pd, docId).then((ok) => {
+    const project = captureProjectEpoch()
+    return useDocumentStore.getState().switchDocument(pd, docId, undefined, {
+      editCurrent: true,
+      beforeInstall: async () => project.still(),
+    }).then(async (ok) => {
       // 换进来的正文与项目文件里那份不同了：绑定还在的话要标脏，否则 ⌘S 会以为
       // 「已经存过」——恢复后的内容只在自动保存槽位里，项目文件还是旧的。
       // 走 `markProjectFileDirty()`：它同时推进编辑代次，正在飞的项目文件保存
       // 回来时 `projectFileSnapshot()` 才看得见这次变化，不会把 dirty 洗回 false。
       // 等回来的这一下也可能已经换了排版：那就不碰新排版的绑定。
-      if (ok && useDocumentStore.getState().documentId === docId) {
+      if (ok && project.still() && useDocumentStore.getState().documentId === docId && !writesBlocked()) {
         if (activeProjectFile()) markProjectFileDirty()
+        return (await saveNowWithResult(true)).wrote
       }
-      return ok
+      return false
     })
   }
   commit(
@@ -620,6 +635,113 @@ export function duplicateStep(sources: readonly CanvasObject[]): { dx: number; d
   const b = objs.find((o) => o.id === last.to[0])
   if (!a || !b) return plain
   return { dx: b.x - a.x, dy: b.y - a.y, ddeg: a.type === 'panel' ? 0 : objectRotation(b) - objectRotation(a) }
+}
+
+/**
+ * 图内编辑里**创建副本**（ADR 0207）：⌘V（同一张图的图内编辑）、⌘D、右键「创建副本」都到这里，是图内副本的唯一创建点。
+ * 只认权威（exact）manifest：取不到 = 「还不能复制」的既有胶囊，不拿旧清单算位置（ADR 0017）。
+ *
+ * 一次 `setOverrides`、一条历史：每个源写 `copy_of`（落点 = 源画出来的锚点向页面右下错开 `DUPLICATE_OFFSET_MM`，文字 = 此刻显示的字），
+ * 再把源上已有的样式类 override 原样抄一份到副本 gid——粘出来与源此刻画出来的一模一样，此后两边各改各的。
+ * **不退出图内编辑**；副本在下一份权威 manifest 里出现后被选中（`figureCopySelect`）。
+ * 返回新副本的 gid（空 = 什么都没建，胶囊已经说明）。
+ */
+export function duplicateFigureElements(panelId: string, gids: readonly string[]): string[] {
+  if (isCanvasCovered()) return [] // 画布被「数据」临时标签盖住：不改看不见的文档
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !gids.length) return []
+  const exact = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!exact) {
+    status(note('elementNotCopyableGeneric'), 'info')
+    return []
+  }
+  const taken = new Set<string>([
+    ...exact.elements.map((e) => e.gid),
+    ...panel.overrides.map((o) => o.gid),
+  ])
+  const patches: { gid: string; prop: string; value: unknown }[] = []
+  const made: string[] = []
+  let refused: ManifestElement | null = null
+  for (const gid of gids) {
+    const el = exact.elements.find((e) => e.gid === gid)
+    if (!el) continue
+    const place = copyPlacementOf(panel, exact, el)
+    if (!place) {
+      refused ??= el
+      continue
+    }
+    const copy = newCopyGid(place.host, taken)
+    taken.add(copy)
+    made.push(copy)
+    patches.push({ gid: copy, prop: COPY_PROP, value: { src: place.src, text: place.text, at: place.at } })
+    patches.push(...carriedStyleOverrides(panel, place.styleFrom, copy))
+  }
+  if (!made.length) {
+    if (refused) {
+      const name = t(`role.${refused.role}`, { ns: 'inspector', defaultValue: '' })
+      status(name ? note('elementNotCopyable', { name }) : note('elementNotCopyableGeneric'), 'info')
+    }
+    return []
+  }
+  setOverrides(panelId, hist('duplicateFigureElements', { count: made.length }), patches)
+  selectCopiesWhenDrawn(panelId, made)
+  return made
+}
+
+/**
+ * ⌘D 与系统菜单「创建副本」的唯一出口：图内编辑里选着图内元素时，复制的是**元素**（原地建图内副本，不是整张图，ADR 0207）；
+ * 其余照旧 `duplicateSelected`。选着的元素不能复制（曲线、色块、刻度组……）也消费这次按键、只出「还不能复制」的胶囊——
+ * 放过去的话选区里那张整图会被复制走，与用户选中的东西不是一回事（与 ⌘C 同一个先例）。
+ */
+export function duplicateSelection(): void {
+  const ui = useUiStore.getState()
+  if (ui.elementPanelId && ui.selectedGids.length) {
+    duplicateFigureElements(ui.elementPanelId, ui.selectedGids)
+    return
+  }
+  duplicateSelected()
+}
+
+/**
+ * 删除图内副本：副本只是 override 里的一条 `copy_of` 加它 gid 上的修改，删掉就是把这个 gid 的**全部**修改摘掉，
+ * 一条历史、一次渲染；撤销把它整只请回来。不是写 `visible: false`（那样副本还在表里，「恢复图内修改」才能让它消失）。
+ * 非副本的 gid 不理。返回实际删了几只。
+ */
+export function deleteFigureCopies(panelId: string, gids: readonly string[]): number {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return 0
+  const doomed = new Set(gids.filter((g) => isCopyGid(g) && panel.overrides.some((o) => o.gid === g)))
+  if (!doomed.size) return 0
+  updateObject<PanelObject>(panelId, hist('deleteFigureCopies', { count: doomed.size }), (o) => {
+    o.overrides = o.overrides.filter((p) => !doomed.has(p.gid))
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+  const ui = useUiStore.getState()
+  if (ui.elementPanelId === panelId && ui.selectedGids.some((g) => doomed.has(g))) {
+    ui.setSelectedGids(ui.selectedGids.filter((g) => !doomed.has(g)))
+  }
+  status(note('copyDeleted'), 'done')
+  return doomed.size
+}
+
+/**
+ * 「恢复此元素修改」：清掉这个元素 gid 上的修改。**副本**上只清除 `copy_of` 以外的（回到刚粘出来的样子），不删副本——
+ * 删副本是另一个动作（`deleteFigureCopies`，右键里叫「删除副本」）。一次 commit。
+ */
+export function restoreElementEdits(panelId: string, gid: string): void {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const copy = isCopyGid(gid)
+  clearOverrides(
+    panelId,
+    msg('element.resetElement', undefined, 'inspector'),
+    panel.overrides
+      .filter((o) => o.gid === gid && !(copy && o.prop === COPY_PROP))
+      .map((o) => ({ gid: o.gid, prop: o.prop })),
+  )
 }
 
 export type ZMove = 'top' | 'bottom' | 'up' | 'down'
@@ -823,6 +945,11 @@ export async function newBlankDocument(): Promise<void> {
   status(note('blankCreated'), 'done')
 }
 
+export function reportLayoutOpenSkipped(name = ''): false {
+  useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+  return false
+}
+
 /**
  * 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份。
  *
@@ -836,10 +963,7 @@ export async function openLayoutDocument(
   // 入口那一刻的上下文（调用方 `doLoad` 刚核过）：下面每个 await（探测占用、读槽位、丢失确认）之后、
   // 安装之前都要再核，项目或排版变了就不装（Codex #1734 P1：旧项目的排版不能装进新选的工作区）
   const ctx = captureSaveContext()
-  const skipped = (): false => {
-    useUiStore.getState().setStatus(msg('layout.openSkipped', { name: projectFile?.name ?? '' }, 'dialogs'), 'error')
-    return false
-  }
+  const skipped = () => reportLayoutOpenSkipped(projectFile?.name)
   // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
   let reuse: string | null = null
   if (projectFile) {
@@ -1512,6 +1636,11 @@ export function disableTextEffect(panelId: string, gid: string, prop: string) {
  * 非破坏、进撤销、导出与写回原始文件都生效，随时可从「已隐藏元素」恢复。
  */
 export function hideElement(panelId: string, gid: string, label: string) {
+  // 图内副本没有「隐藏」：删除 = 摘掉它的全部修改（ADR 0207），Delete 键、属性页、元素树、右键同走这里
+  if (isCopyGid(gid)) {
+    deleteFigureCopies(panelId, [gid])
+    return
+  }
   setOverride(panelId, gid, 'visible', false, true)
   status(note('elementHidden', { label }), 'done')
 }
@@ -1519,6 +1648,15 @@ export function hideElement(panelId: string, gid: string, label: string) {
 /** 多选一起隐藏：一次撤销、一次渲染（键盘 Delete 走这条） */
 export function hideElements(panelId: string, targets: { gid: string; label: string }[]) {
   if (!targets.length) return
+  if (targets.some((x) => isCopyGid(x.gid))) {
+    // 副本整只删、其余照旧隐藏：各一条历史（两种动作的撤销语义不同）
+    deleteFigureCopies(
+      panelId,
+      targets.map((x) => x.gid),
+    )
+    targets = targets.filter((x) => !isCopyGid(x.gid))
+    if (!targets.length) return
+  }
   if (targets.length === 1) {
     hideElement(panelId, targets[0].gid, targets[0].label)
     return

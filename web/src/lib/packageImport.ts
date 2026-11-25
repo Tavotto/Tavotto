@@ -5,40 +5,42 @@
  * 后端检视（不写入图库）→ 作为新文档打开；有缺失素材时接到统一的重新链接对话框，绝不静默出空面板。
  * 成功的那句话在这里说；**失败原样抛出**，由调用方决定怎么说（顶栏说原因，画布拖放给「发送问题反馈」）。
  */
-import { msg } from '@/i18n'
+import { msg, t } from '@/i18n'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { ApiError, openPackage } from '@/lib/api'
 import { PACKAGE_EXT } from '@/lib/brand'
 import { requestRelinkMissing } from '@/lib/clipboard'
-import { captureProjectEpoch } from '@/lib/projectEpoch'
-import { openLayoutDocument } from '@/store/actions'
+import { openLayoutDocument, reportLayoutOpenSkipped } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectPackageInstallStore } from '@/store/projectPackageInstallStore'
 import { useUiStore } from '@/store/uiStore'
 
-/**
- * 唯一入口：后端按包内容（`layout.json` 的 schema + 清单的 `document_format`）
- * 分流，前端只看响应里的 `document_format`——不让用户选格式（#1921）。
- */
-export async function openPackageFile(file: File): Promise<void> {
+export async function openPackageFile(file: File): Promise<boolean> {
   const ui = useUiStore.getState()
   const epoch = captureProjectEpoch()
   const before = useDocumentStore.getState()
   const res = await openPackage(file)
   const current = useDocumentStore.getState()
-  if (!epoch.still() || before.documentId !== current.documentId || before.loadSeq !== current.loadSeq) return
-  if ('document_format' in res) {
-    // 计算图表便携包：交给检视 / 安装流程，不在这里当排版打开。
-    await useProjectPackageInstallStore.getState().inspect(file)
-    return
+  if (!epoch.still() || before.documentId !== current.documentId || before.loadSeq !== current.loadSeq) {
+    reportLayoutOpenSkipped(file.name)
+    return false
   }
-  if (!await openLayoutDocument(res.doc)) return
-  const missing = requestRelinkMissing()
+  if ('document_format' in res) {
+    await useProjectPackageInstallStore.getState().inspect(file)
+    return epoch.still()
+  }
+  if (res.missing_chart_sources?.length) {
+    throw new Error(t('status.packageIncomplete', { ns: 'workspace', count: res.missing_chart_sources.length }))
+  }
+  if (!(await openLayoutDocument(res.doc)) || !epoch.still()) return false
+  const missing = requestRelinkMissing(res.verified_chart_sources)
   const drift = res.drifted.length
   if (!missing && !drift) {
     ui.setStatus(msg('status.packageOpened', { createdAt: res.manifest.created_at ?? '' }, 'workspace'), 'done')
   } else if (drift) {
     ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
   }
+  return true
 }
 
 /** 打开文件选择器，把选中的包交给唯一入口；`.magplot` 是 0.7 时代的同结构包。 */

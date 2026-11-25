@@ -410,7 +410,7 @@ export function onBlockedWrite(fn: (() => void) | null): void {
 }
 
 /** 写入口的门：占位文档不许写。`notify` = 用户动作被拒，要说一句；派生写入静默 */
-function writesBlocked(notify = true): boolean {
+export function writesBlocked(notify = true): boolean {
   if (windowHold) {
     if (notify) windowBlockedNotifier?.()
     return true
@@ -683,6 +683,8 @@ interface DocumentState {
  * `reason` 只在「普通」取代一次未落定的恢复时用（默认 `explicit`）。
  */
 export interface SwitchOptions {
+  /** 时间线还原是对当前排版的编辑，不能借换文档清掉编辑权。 */
+  editCurrent?: boolean
   placeholder?: boolean
   restoreToken?: RestoreToken
   reason?: Exclude<RestoreReason, 'initial'>
@@ -1226,6 +1228,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   switchDocument: async (next, nextId, confirmLoss, opts) => {
+    const loadSeq = get().loadSeq
+    const editBlocked = () => opts?.editCurrent && (writesBlocked() || get().documentId !== nextId || get().loadSeq !== loadSeq)
+    if (editBlocked()) return false
     const placeholder = opts?.placeholder === true
     const token = opts?.restoreToken
     if (!placeholder) {
@@ -1242,9 +1247,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (!isRestoreTokenCurrent(token)) return false
     } else if (!placeholder) {
       if (opts?.beforeInstall && !(await opts.beforeInstall())) return false
+      if (editBlocked()) return false
       // 显式意图取代未落定的恢复（门本来就开着时什么都不动）
       supersedeRestore(nextId, opts?.reason ?? 'explicit')
     }
+    if (editBlocked()) return false
     // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
     autosaveSuspendedFor = null
     // 编辑权属于「那份排版」：换到哪份都清（只读状态不跟着带过去）
@@ -1581,13 +1588,6 @@ function setDocNotice(notice: DocNotice | null): void {
 const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === id
 
 /**
- * 每份文档本会话**成功落盘**的次数（不看是不是当前文档）。手动保存据此回答「这次写成了
- * 没有」——看最终的实时 `saveState` 回答不了：写的途中又改过的话它照实是 dirty（与 #674
- * 的圆点同源），而 ⌘S 那一刻的内容其实已经在盘上了（Codex #679）。
- */
-const diskWrites = new Map<string, number>()
-
-/**
  * 写盘成功后：期间又编辑过就还是 dirty，没编辑过才是"存好了"。
  *
  * 两半，**判据不同**：
@@ -1603,7 +1603,6 @@ function afterWriteOk(
   if (meta?.snapshotContext) mergeSavedDocumentSources(meta.snapshotContext, {
     figure_snapshots: meta.figureSnapshots, chart_sources: meta.chartSources,
   })
-  diskWrites.set(id, (diskWrites.get(id) ?? 0) + 1)
   const pj = meta?.pj ?? null
   for (const fn of [...persistedListeners]) {
     try {
@@ -1674,12 +1673,12 @@ const disk = createDiskWriter({
 })
 
 /** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
-export function flushAutosave(): FlushResult {
+export function flushAutosave(allowEmpty = false): FlushResult {
   // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
-  return perfSpan('autosave.flush', flushAutosaveNow)
+  return perfSpan('autosave.flush', () => flushAutosaveNow(allowEmpty))
 }
 
-function flushAutosaveNow(): FlushResult {
+function flushAutosaveNow(allowEmpty: boolean): FlushResult {
   // 占位文档（恢复还没落定）一个字节都不写：它不是用户的文档，写了 last / 最近文档 / 本机副本就是假的
   if (isDocumentPlaceholder()) return 'skipped'
   const state = useDocumentStore.getState()
@@ -1687,7 +1686,8 @@ function flushAutosaveNow(): FlushResult {
   // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
   if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return 'skipped'
   const pd = state.buildProject()
-  if (!hasContent(pd)) {
+  // 只有尚未产生持久内容的新空白才免写；删除最后一个对象和失败的空正文重试仍须落盘。
+  if (!allowEmpty && !hasContent(pd) && !state.dirty && state.saveState === 'clean' && state.lastPersisted === null) {
     useDocumentStore.setState({ dirty: false, lastPersisted: null })
     return 'empty'
   }
@@ -1749,11 +1749,11 @@ export async function saveNow(): Promise<SaveState> {
 
 /**
  * 手动保存的两个答案：`state` 是写完之后**此刻**的保存状态（照实算：途中又改过就是
- * dirty）；`wrote` 是**按下那一刻的内容**写没写成——冲刷之后这份文档有没有一次成功落盘
+ * dirty）；`wrote` 是**按下那一刻的内容**写没写成——这次排队的代次是否成功落盘
  * （排队合并成更新的一份也算：盘上的内容只会比按下时更新），或者根本没有要写的（空文档）。
  * 「排版写成了」（时间线的「保存」点）跟 `wrote` 走，不跟 `state` 走（Codex #679）。
  */
-export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: boolean }> {
+export async function saveNowWithResult(allowEmpty = false): Promise<{ state: SaveState; wrote: boolean }> {
   // 恢复没落定时没有「要存的文档」：不举手动标志、不认领、不等写盘队列
   if (isDocumentPlaceholder()) {
     return { state: useDocumentStore.getState().saveState, wrote: false }
@@ -1761,10 +1761,11 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   // 手动保存是用户的动作：显式打开的别的项目的排版，存一下就归到这个项目（与真改一笔同一档）
   claimDocumentOnEdit()
   const id = useDocumentStore.getState().documentId
-  const before = diskWrites.get(id) ?? 0
+  const before = disk.writeVersion(id).scheduled
   cancelPendingAutosave()
   disk.markManual()
-  const result = flushAutosave()
+  const result = flushAutosave(allowEmpty)
+  const target = disk.writeVersion(id).scheduled
   if (result === 'empty') {
     disk.clearManual()
     setSaveState('clean')
@@ -1773,7 +1774,7 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   await disk.whenIdle()
   return {
     state: useDocumentStore.getState().saveState,
-    wrote: (diskWrites.get(id) ?? 0) > before,
+    wrote: target > before && disk.writeVersion(id).written >= target,
   }
 }
 

@@ -36,11 +36,21 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ai_structured, config, patchspec
+from . import ai_structured, config, license as engine_license, patchspec, reviewinbox
 
 LOG = logging.getLogger("tavotto.changeplan")
 
 SCHEMA = 1
+
+#: 批注重改的功能键（ADR 0206 §五、ADR 0193 §一）。授权判断只在本模块（`test_license_callsites` 登记）
+FEATURE = "change-plan-rerun"
+#: 同一张卡最多续改到第几版（落盘有每项目条数上限，版本也各占一份）
+MAX_VERSIONS = 8
+
+
+def licensed() -> bool:
+    return engine_license.has(FEATURE)
+
 
 # --------------------------------------------------------------------------- 稳定码
 #: 用户可见的失败码（后端发出的闭集；文案在 `web/src/i18n/locales/*/errors.json`，登记在 `tests/test_error_codes.py`）。
@@ -296,7 +306,7 @@ def _anchor_view(anchor: dict) -> dict:
     return out
 
 
-def system_prompt() -> str:
+def system_prompt(revise: bool = False) -> str:
     return (
         "你在帮一个科研绘图工具把审阅者留下的意见落成「图内修改」。你只能修改图里已有元素的属性（颜色、字号、线宽、位置、文字、显隐等）；"
         "不能改数据、不能改脚本、不能新增元素。\n\n"
@@ -308,7 +318,13 @@ def system_prompt() -> str:
         "- 只改 `<elements>` 里出现的 `gid` 与它的 `props` 里列出的 `prop`；值要符合 `type`：`bool` 给 true / false，`number` 给数（在 `min` / `max` 内），"
         "`enum` 取 `options` 之一，`color` 给 `#RRGGBB`，`text` 给字符串，`pair` / `rect` / `number_list` 给数组。\n"
         "- 一条意见可以对应几处修改；改动要小而准，意见没要求的不动。意见锚到某个元素时优先改那个元素，也可以改与它直接相关的元素。\n"
-        "- 做不到的意见放进 `unhandled`，`reason` 只能取：`needs_script`（要改脚本 / 数据才能做到）、`unclear`（意见看不懂或没法落成具体修改）、"
+        + (
+            "- 这是**续改**：`<comments>` 是用户在上一版结果上写的批注（`element` 锚到的就是上一版里的那个元素），`<elements>` 是**上一版改完之后**的元素表，"
+            "`<previous_changes>` 是上一版已经做过的修改摘要。只处理批注，上一版已经做好的不要重复或撤销（除非批注要求）。\n"
+            if revise
+            else ""
+        )
+        + "- 做不到的意见放进 `unhandled`，`reason` 只能取：`needs_script`（要改脚本 / 数据才能做到）、`unclear`（意见看不懂或没法落成具体修改）、"
         "`out_of_scope`（不是改图的要求）、`no_change_needed`（图已经满足）。\n\n"
         "## 本次调用的方式\n"
         "- 一问一答，没有工具，不能提问。\n"
@@ -321,7 +337,9 @@ def system_prompt() -> str:
     )
 
 
-def build_review_prompt(comments: object, table: list[dict]) -> tuple[str, str]:
+def build_review_prompt(
+    comments: object, table: list[dict], previous: list[dict] | None = None
+) -> tuple[str, str]:
     """→ `(system, user)`。意见只进用户内容里的数据块；称呼（author）不发给模型。
 
     `table` 由 `element_table` 给（已按意见锚点排序）；总长超过 `MODEL_MAX_INPUT_CHARS` 时从表尾丢元素
@@ -334,8 +352,13 @@ def build_review_prompt(comments: object, table: list[dict]) -> tuple[str, str]:
         }
         for c in partition(comments)[0]
     ]
-    system = system_prompt()
+    system = system_prompt(previous is not None)
     elements = list(table)
+    extra = (
+        ["<previous_changes>", _dumps(previous), "</previous_changes>"]
+        if previous is not None
+        else []
+    )
     while True:
         user = "\n".join(
             [
@@ -346,6 +369,7 @@ def build_review_prompt(comments: object, table: list[dict]) -> tuple[str, str]:
                 "<elements>",
                 _dumps(elements),
                 "</elements>",
+                *extra,
             ]
         )
         if len(system) + len(user) <= MODEL_MAX_INPUT_CHARS or not elements:
@@ -658,6 +682,8 @@ def build_plan(
     base_patches: list | None = None,
     version: int = 1,
     source: str = "review",
+    parent: str | None = None,
+    note_ids: set[str] | frozenset[str] | None = None,
 ) -> dict:
     """ADR 0206 §一的方案形状（`preview` 给两张图的文件名，由端点换成 URL）。
 
@@ -677,13 +703,17 @@ def build_plan(
                 "boxes": g["boxes"],
             }
         )
+        if note_ids is not None:  # 续改的版本：标出「这版按批注改的」组
+            out_groups[-1]["origin"] = "note" if g["comment_id"] in note_ids else "review"
     ids = [c["id"] for c in comments]
     base_canon = patchspec.canonicalize(base_patches or [])
+    extra = {"parent": parent} if parent else {}
     return {
         "schema": SCHEMA,
         "id": plan_id,
         "version": version,
         "source": source,
+        **extra,
         "base": {"target": target, "fingerprint": base_fingerprint},
         "base_patches": base_canon,
         "candidate_patches": apply_groups(base_canon, out_groups, {g["key"] for g in out_groups}),
@@ -691,6 +721,63 @@ def build_plan(
         "unhandled": _settle_unhandled(ids, groups, unhandled),
         "preview": {"before": "before.png", "after": "after.png"},
     }
+
+
+# --------------------------------------------------------------------------- 批注重改（ADR 0206 §五）
+def clean_notes(raw: object) -> list[dict] | None:
+    """请求里的批注 `[{id, anchor, text}]` → 与审阅意见同形的列表 `[{id, anchor, text, resolved: False}]`；形状不对 / 没有一条有字 → None。
+    锚点走审阅意见同一套清洗（元素锚要带画面框）；批注只在本机，称呼没有；文字截到意见同一个上限。"""
+    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_COMMENTS:
+        return None
+    out: list[dict] = []
+    seen: set[str] = set()
+    for n in raw:
+        if not isinstance(n, dict):
+            return None
+        nid, text = n.get("id"), n.get("text")
+        anchor = reviewinbox.clean_anchor(n.get("anchor"))
+        if (
+            not isinstance(nid, str)
+            or not _COMMENT_ID.match(nid)
+            or nid in seen
+            or anchor is None
+            or not isinstance(text, str)
+        ):
+            return None
+        text = text.replace("\x00", "").strip()[:MAX_COMMENT_CHARS]
+        if not text:
+            return None
+        seen.add(nid)
+        out.append({"id": nid, "anchor": anchor, "text": text, "resolved": False})
+    return out
+
+
+def previous_summary(plan: dict) -> list[dict]:
+    """上一版的改动摘要（给模型看）：`[{label, changes: [{gid, prop, value}]}]`，有界。"""
+    out: list[dict] = []
+    for g in plan.get("groups") or []:
+        changes = [
+            {"gid": c["target_gid"], "prop": c["prop"], "value": _brief_value(c["after"])}
+            for c in g["changes"][:MAX_CHANGES_PER_GROUP]
+        ]
+        out.append({"label": _clip(g.get("label", ""), 40), "changes": changes})
+    return out[:MAX_GROUPS]
+
+
+def carried_groups(plan: dict, proposal: dict) -> list[dict]:
+    """上一版的组（提议形状 `{comment_id, changes: [{gid, prop, value}]}`）去掉被这版批注改过同一 (gid, prop) 的条目；
+    空了的组不带。值取每条 change 的 `patch`（应用用的那条）。"""
+    taken = {(c["gid"], c["prop"]) for g in proposal["groups"] for c in g["changes"]}
+    out: list[dict] = []
+    for g in plan.get("groups") or []:
+        changes = [
+            {"gid": c["target_gid"], "prop": c["prop"], "value": c["patch"]["value"]}
+            for c in g["changes"]
+            if (c["target_gid"], c["prop"]) not in taken
+        ]
+        if changes:
+            out.append({"comment_id": g["comment_id"], "changes": changes})
+    return out
 
 
 # --------------------------------------------------------------------------- 问模型
@@ -735,8 +822,9 @@ def connection_failure() -> str | None:
     return None if ok else MODEL_FAILURE_CODES.get(reason, "change_plan_model_failed")
 
 
-def ask_model(comments: object, manifest: object) -> dict:
-    """问一次模型 → 已过 `validate_proposal` 的提议；失败抛 `PlanFailure(稳定码)`。"""
+def ask_model(comments: object, manifest: object, previous: list[dict] | None = None) -> dict:
+    """问一次模型 → 已过 `validate_proposal` 的提议；失败抛 `PlanFailure(稳定码)`。`previous` 给了 = 续改（批注重改）：
+    `manifest` 是上一版改完之后的渲染，`previous` 是上一版的改动摘要（`previous_summary`）。"""
     rows, over = partition(comments)
     if not rows:
         raise PlanFailure("change_plan_no_comments")
@@ -746,7 +834,7 @@ def ask_model(comments: object, manifest: object) -> dict:
         for c in rows
         if c["anchor"].get("kind") == "element" and isinstance(c["anchor"].get("gid"), str)
     )
-    system, user = build_review_prompt(rows, element_table(manifest, focus_gids=focus))
+    system, user = build_review_prompt(rows, element_table(manifest, focus_gids=focus), previous)
     conn, reason, detail = _RESOLVE(MODEL_TIMEOUT_S)
     if conn is None:
         raise PlanFailure(MODEL_FAILURE_CODES.get(reason, "change_plan_model_failed"), detail)

@@ -1,8 +1,5 @@
 """布局版本时间线 API：创建 / 去重 / 列表 / 重命名 / 复制 / 删除 / 裁剪。"""
 
-import hashlib
-from types import SimpleNamespace
-
 import pytest
 
 from tavotto import app as m
@@ -404,20 +401,14 @@ def test_version_meta_tells_project_from_canvas_even_without_a_schema_number():
     assert "schema" not in m._version_meta({"id": "v", "doc": None})
 
 
-def test_a_schema4_node_has_both_figures_and_a_sketch(client, monkeypatch):
+def test_a_schema4_node_has_both_figures_and_a_sketch(client):
     """schema 4 版本节点与 schema 3 走同一条时间线：`figures` 从正文派生，
     `sketch` 取节点记录的那张画布；图表来源在节点落盘前先冻结。"""
-    digest = hashlib.sha256(SOURCE).hexdigest()
+    from tavotto.engine import documentassets
 
-    def fake_snapshot(file_id, chart, **kwargs):
-        return SimpleNamespace(
-            input_svg=SOURCE,
-            scene={"scene_digest": SCENE_DIGEST},
-            path=m.project_layout_dir() / "chart_sources" / f"{digest}.svg",
-            source_sha256=digest,
-        )
-
-    monkeypatch.setattr(m, "_render_chart_snapshot", fake_snapshot)
+    documentassets.freeze_source(
+        m.project_layout_dir(), SOURCE_ID, SOURCE, scene_digest=SCENE_DIGEST
+    )
     panel = {
         "id": "p0",
         "type": "panel",

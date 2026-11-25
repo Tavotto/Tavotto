@@ -1,0 +1,3 @@
+## Premium: write notes on the revised figure and redo it
+
+On the change-plan comparison (Premium), switch to **Notes**, click an element (or drag an area, or add a note on the whole figure) on the "After" picture, write what should change, then press **Redo with notes**. The same card gets a new version built on top of the previous one; switch between versions at the top left, and apply whichever you prefer — ⌘Z undoes it as before. Hovering an element while comparing also offers **Add note**. Your notes stay on your computer; their text and the figure's list of editable elements go to the AI connection you picked, like the review comments do. Free users can still give the Agent another instruction in the chat, which produces a new card as before.

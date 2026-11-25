@@ -465,6 +465,8 @@ function issueLabel(issue: DocIssue, restoreKind: string | null): string {
           return msgText('restore.pill.missing')
         case 'invalid':
           return msgText('restore.pill.invalid')
+        case 'chart_source_mismatch':
+          return msgText('restore.pill.chartSource')
         case 'too_new':
           return msgText('restore.pill.tooNew')
         case 'choose':

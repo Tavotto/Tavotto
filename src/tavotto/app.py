@@ -23,6 +23,7 @@ import hashlib
 import io
 import json
 import logging
+import lzma
 import math
 import os
 import queue
@@ -1820,7 +1821,8 @@ def _read_chart_input(
 
     try:
         saved = documentassets.load_source(
-            # 与 _freeze_document_sources 共用存储：项目 tavottofile/ 或全局 layouts/。
+            # 与 `_freeze_document_sources` 同一根：项目 `tavottofile/`，未打开
+            # 项目时数据目录 `layouts/`。附件由这份文档自己的根派生，不借别的项目。
             source_storage if source_storage is not None else project_layout_dir(),
             chart_source,
             source_id=file_id,
@@ -4032,12 +4034,31 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
     """
     if not _has_chart_state(document):
         return _freeze_document_svg_sources(document)
-    from .engine import chartprofile, documentassets
+    from .engine import chartmodel, chartprofile, documentassets
 
     snapshots = []
     try:
         for obj in _doc_objects(document):
             if obj.get("chart") is None:
+                continue
+            if _request_ctx() is None and "chartSource" in obj:
+                # 本机保存已有附件不需要起项目 worker；来源身份仍逐项核验。
+                source = documentassets.load_source(
+                    project_layout_dir(),
+                    obj["chartSource"],
+                    source_id=obj["fileId"],
+                    scene_digest=obj["chart"]["model"]["scene_digest"],
+                )
+                from . import svgscene
+                from .rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+
+                root = parse_svg(strip_matplotlib_doctype(source.source_svg))
+                chartmodel.verify_scene(
+                    obj["chart"]["binding"],
+                    obj["chart"]["model"]["scene_digest"],
+                    set(svgscene.build_node_index(root)),
+                )
+                obj.pop("figureSnapshot", None)
                 continue
             snapshot = _render_chart_snapshot(
                 obj["fileId"],
@@ -4065,6 +4086,8 @@ def _freeze_document_sources(document: dict, *, capture_figures: bool = True) ->
             _assert_chart_source(snapshot.path, snapshot.source_sha256)
         return warnings
     except documentassets.DocumentAssetError as exc:
+        raise engine_documents.DocumentError(exc.code, exc.detail, status=422) from exc
+    except chartmodel.ChartModelError as exc:
         raise engine_documents.DocumentError(exc.code, exc.detail, status=422) from exc
     except engine_exportreq.ExportRequestError as exc:
         status = 409 if exc.code in ("chart_source_changed", "chart_engine_mismatch") else 422
@@ -6468,6 +6491,40 @@ class _PackageFilePlan:
         self.members[name] = source
 
 
+def _chart_source_entries(document: dict) -> list[dict]:
+    """schema 4 正文引用的来源附件，按 `bytesSha256` 去重（附带引用本身供打包/安装用）。
+
+    只认 schema 4：schema 2 / 3 里夹带的 `chartSource` 不是来源附件语义，打包时
+    不当图表来源处理（也不让它把包打成看起来缺附件）。
+    """
+    if not _has_chart_state(document):
+        return []
+    entries: dict[str, dict] = {}
+    for obj in _doc_objects(document):
+        reference = obj.get("chartSource")
+        if not isinstance(reference, dict):
+            continue
+        digest = reference.get("bytesSha256")
+        if not isinstance(digest, str):
+            continue
+        entry = entries.setdefault(
+            digest,
+            {
+                "sha256": digest,
+                "sizeBytes": reference.get("sizeBytes"),
+                "sceneDigest": reference.get("sceneDigest"),
+                "panels": [],
+                "_reference": reference,
+                "_references": [],
+            },
+        )
+        panel = obj.get("id")
+        entry["_references"].append(reference)
+        if isinstance(panel, str) and panel not in entry["panels"]:
+            entry["panels"].append(panel)
+    return [entries[digest] for digest in sorted(entries)]
+
+
 @app.post("/api/package")
 def api_package():
     """把布局打成可复现项目包（zip）：布局 + 引用素材 + 源脚本 + 清单。
@@ -6528,8 +6585,14 @@ def api_package():
         return _api_chart_package(body)
     if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
         return jsonify({"error": "无效的排版", "code": "invalid_document"}), 400
+    # 与保存同一条准入：schema 4 的正文必须带合法的 `chartSource` 引用，否则打出来
+    # 的包在接收方重开时第一笔保存就写不回去（缺来源）。schema 2 / 3 仍只查骨架。
+    doc = _validate_storage_document(doc)
     default_stem = (
-        (doc.get("project") or {}).get("name") if doc.get("schema") == 3 else doc.get("name")
+        (doc.get("project") or {}).get("name")
+        if doc.get("schema")
+        in (engine_documents.SCHEMA_PROJECT, engine_documents.SCHEMA_CHART_PROJECT)
+        else doc.get("name")
     )
     stem = re.sub(r"[^\w\-一-鿿]+", "_", body.get("stem") or default_stem or "package")
 
@@ -6576,7 +6639,6 @@ def api_package():
         # 旧读取端不认识这个键会原样忽略（package/open 本来就不校验 kind）
         "runtime_assets": runtime_assets,
     }
-
     out_dir = project_export_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     # 包是 .tavotto 单文件扩展（zip 容器）。**写出端只有这一个名字**——改名到
@@ -6631,7 +6693,14 @@ def api_package():
                     archive.write(source, member)
     LOG.info("项目包: %s（%d 素材, %d 脚本）", name, len(assets), len(scripts))
     return jsonify(
-        {"name": name, "url": f"/exports/{name}", "assets": len(assets), "missing": missing_now}
+        {
+            "name": name,
+            "url": f"/exports/{name}",
+            "assets": len(assets),
+            "missing": missing_now,
+            "chart_sources": 0,
+            "missing_chart_sources": [],
+        }
     )
 
 
@@ -7031,38 +7100,6 @@ def _api_chart_package_install():
         return jsonify({"error": str(exc), "code": exc.code, "params": {}}), 503
 
 
-def _chart_source_entries(document: dict) -> list[dict]:
-    """schema 4 正文引用的来源附件，按 `bytesSha256` 去重（附带引用本身供打包/安装用）。
-
-    只认 schema 4：schema 2 / 3 里夹带的 `chartSource` 不是来源附件语义，打包时
-    不当图表来源处理（也不让它把包打成看起来缺附件）。
-    """
-    if not _has_chart_state(document):
-        return []
-    entries: dict[str, dict] = {}
-    for obj in _doc_objects(document):
-        reference = obj.get("chartSource")
-        if not isinstance(reference, dict):
-            continue
-        digest = reference.get("bytesSha256")
-        if not isinstance(digest, str):
-            continue
-        entry = entries.setdefault(
-            digest,
-            {
-                "sha256": digest,
-                "sizeBytes": reference.get("sizeBytes"),
-                "sceneDigest": reference.get("sceneDigest"),
-                "panels": [],
-                "_reference": reference,
-            },
-        )
-        panel = obj.get("id")
-        if isinstance(panel, str) and panel not in entry["panels"]:
-            entry["panels"].append(panel)
-    return [entries[digest] for digest in sorted(entries)]
-
-
 @app.post("/api/package/open")
 def api_package_open():
     """按包内容分流，旧包继续按现有项目的排版处理。"""
@@ -7119,6 +7156,8 @@ def _open_package_stream(stream, budget):
 
 
 def _open_package_contents(z, doc, manifest):
+    import zipfile
+
     from .engine import documentpackage
 
     schema = doc.get("schema")
@@ -7157,6 +7196,7 @@ def _open_package_contents(z, doc, manifest):
             }
         ), 400
 
+    doc = _validate_storage_document(doc)
     root = require_project()
     missing, drifted = [], []
     assets = manifest.get("assets", [])
@@ -7177,6 +7217,7 @@ def _open_package_contents(z, doc, manifest):
             drifted.append(rel_id)
 
     missing_chart_sources: list[str] = []
+    verified_chart_sources: list[dict] = []
     chart_entries = _chart_source_entries(doc)
     if chart_entries:
         from .engine import documentassets
@@ -7184,24 +7225,34 @@ def _open_package_contents(z, doc, manifest):
         for entry in chart_entries:
             digest = entry["sha256"]
             reference = entry.pop("_reference")
+            references = entry.pop("_references")
             data = None
             try:
                 # 有界读取：包是上传上来的，不能先解压进内存再问大小。
                 with z.open(f"chart_sources/{digest}.svg") as stream:
                     data = stream.read(documentassets.MAX_SOURCE_BYTES + 1)
-            except KeyError:
+            except (
+                KeyError,
+                zipfile.BadZipFile,
+                zlib.error,
+                lzma.LZMAError,
+                EOFError,
+                OSError,
+                RuntimeError,
+            ):
                 data = None
             if data is not None and len(data) > documentassets.MAX_SOURCE_BYTES:
                 data = None
             if data is not None and hashlib.sha256(data).hexdigest() == digest:
                 try:
+                    for ref in references:
+                        documentassets.verify_source_bytes(data, ref)
                     documentassets.freeze_source(
                         project_layout_dir(),
                         reference.get("sourceId"),
                         data,
                         scene_digest=reference.get("sceneDigest"),
                     )
-                    continue
                 except (
                     OSError,
                     engine_documents.DocumentError,
@@ -7211,12 +7262,10 @@ def _open_package_contents(z, doc, manifest):
             # 包里没带 / 带的不对：当前项目里已经有一份内容相同的也算可用
             # （同机重新打开自己打的包、或之前已经安装过）。
             try:
-                installed = documentassets.source_path(project_layout_dir(), reference)
-                if (
-                    installed.is_file()
-                    and hashlib.sha256(installed.read_bytes()).hexdigest() == digest
-                ):
-                    continue
+                for ref in references:
+                    documentassets.load_source(project_layout_dir(), ref)
+                verified_chart_sources.extend(references)
+                continue
             except (
                 OSError,
                 engine_documents.DocumentError,
@@ -7235,6 +7284,7 @@ def _open_package_contents(z, doc, manifest):
             "drifted": drifted,
             # 来源附件装不上时明确报出来：这份文档打开后能看，但下一次保存会失败。
             "missing_chart_sources": missing_chart_sources,
+            "verified_chart_sources": verified_chart_sources,
         }
     )
 
@@ -12838,12 +12888,76 @@ def api_change_plans_create():
     return resp
 
 
-def _change_plan_thread(ctx, task, rel_id, base, comments) -> None:
+@app.post("/api/change-plans/<plan_id>/revise")
+def api_change_plans_revise(plan_id: str):
+    """批注重改（高级版 `change-plan-rerun`，ADR 0206 §五）：在上一版的「修改后」上写批注，产出**同一张卡的下一版**。
+    请求：`{notes: [{id, anchor: {kind: element, gid, box} | {kind: region, box} | {kind: overall}, text}], client_request_id?}`。
+    未授权回 `{ok: false, code: "not_licensed"}`（与一键排版同口径；权益判断在 `engine/changeplan.py`，`test_license_callsites` 看护）。
+    版本存储：每一版是**自己的方案**（新 `plan_id`、自己的 `before.png` / `after.png` / `plan.json`），带 `version`（上一版 + 1）与 `parent`（上一版 id）；
+    base 仍是原 B0（`base_patches` 与基线指纹沿用），应用与基线核对不变。其余（同步预检、202 轮询、互斥、去重、热态作废与 `replay_required`）与创建方案相同。"""
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return _change_plan_error("invalid_change_plan")
+    rid = body.get("client_request_id")
+    notes = engine_changeplan.clean_notes(body.get("notes"))
+    if (
+        engine_changeplan.PLAN_ID.match(plan_id) is None
+        or notes is None
+        or (
+            rid is not None
+            and not (isinstance(rid, str) and engine_changeplan.REQUEST_ID.match(rid))
+        )
+    ):
+        return _change_plan_error("invalid_change_plan")
+    if not engine_changeplan.licensed():
+        return jsonify({"ok": False, "code": "not_licensed"})
+    ctx = current_ctx()
+    prev = engine_changeplan.load(ctx.id, plan_id)
+    if prev is None:
+        return _change_plan_error("change_plan_unknown")
+    if prev["version"] >= engine_changeplan.MAX_VERSIONS:
+        return _change_plan_error("invalid_change_plan")
+    rel_id, base = prev["base"]["target"], prev["base_patches"]
+    _refuse_artifact_policy(body.get("source_policy"), body.get("expected_source"))
+    _refuse_adopted_source(rel_id)
+    if _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+        return _change_plan_error("change_plan_native_unsupported")
+    try:
+        worker, _stem = _engine_worker(rel_id, safe_only=True)
+    except NativeWorkerRefused:
+        return _change_plan_error("change_plan_native_unsupported")
+    except NotFound:
+        return _change_plan_error("change_plan_not_editable")
+    script_name = getattr(worker, "script_name", None)
+    if script_name and engine_ai.script_busy(require_project() / script_name):
+        return _change_plan_error("change_plan_busy")
+    failure = engine_changeplan.connection_failure()
+    if failure is not None:
+        return _change_plan_error(failure)
+    try:
+        task, created = engine_changeplan.begin(ctx.id, rel_id, rid)
+    except engine_changeplan.PlanFailure as exc:
+        return _change_plan_error(exc.code)
+    if created:
+        threading.Thread(
+            target=_change_plan_thread,
+            args=(ctx, task, rel_id, list(base), notes, prev),
+            name=f"change-plan-{task.id[:8]}",
+            daemon=True,
+        ).start()
+    state = "running" if created else task.state
+    resp = jsonify({"plan_id": task.id, "state": state, "phase": task.phase})
+    resp.status_code = 202 if state == "running" else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _change_plan_thread(ctx, task, rel_id, base, comments, prev=None) -> None:
     """后台线程：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail = "", ""
     try:
         with bound_project(ctx):
-            plan, before_png, after_png = _change_plan_compute(task, rel_id, base, comments)
+            plan, before_png, after_png = _change_plan_compute(task, rel_id, base, comments, prev)
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png)
     except engine_changeplan.PlanFailure as exc:
         code, detail = exc.code, exc.detail
@@ -12870,14 +12984,20 @@ def _change_plan_snapshot(resp) -> tuple[bytes, dict]:
     return png, manifest
 
 
-def _change_plan_compute(task, rel_id: str, base: list, comments: list[dict]):
+def _change_plan_compute(
+    task, rel_id: str, base: list, comments: list[dict], prev: dict | None = None
+):
     """渲染 B0 → 问模型 → 候选渲染 → 现算有效改动 → 方案。→ `(plan, before_png, after_png)`；失败抛 `PlanFailure`。
 
     B0 / 候选的图与 manifest 都走**状态中立**的 `preview_png_snapshot`（应用 → 出图 → 还原）。它不回 warnings，所以另走 specfix 式的
     `override`（带 warnings）两次：`override(B0)` 取基线 warning → `override(候选)`。候选比基线**多出来**的 warning = 不出方案。
     **只要对热 worker 做过 `override`，任务结束（成功或失败）一律 `_retire_hot_worker`、不还原**：B0 是请求时的列表，模型调用期间用户可能已经改过图，
     写回它会让画布与热态分叉；作废后下一次交互由前端按自己手里的全量列表冷重放。此时 `task.replay_required` / `plan["replay_required"]` 为真（与 specfix 同名同义）。
-    候选不存在（没有一条能落成改动）时没有 `override`，热态一个字没动。"""
+    候选不存在（没有一条能落成改动）时没有 `override`，热态一个字没动。
+
+    `prev` 给了 = 批注重改（ADR 0206 §五）：`comments` 是用户的批注，`base` 是上一版的 `base_patches`（仍是原 B0）；
+    起点 = 上一版的 `candidate_patches`，模型看**上一版之后**的元素表（状态中立的 `snapshot`，不碰热态）+ 上一版改动摘要，
+    候选 = 上一版候选 ⊕ 批注的改动；卡上的改动仍相对 B0 现算（上一版没被批注改掉的组原样带上），批注出的组标 `origin: "note"`。"""
     ec = engine_changeplan
     try:
         worker, stem = _engine_worker(rel_id, safe_only=True)
@@ -12921,15 +13041,32 @@ def _change_plan_compute(task, rel_id: str, base: list, comments: list[dict]):
     touched = False  # 对热 worker 做过 override
     try:
         rev0 = revision()
+        if prev is not None and ec.fingerprint(rev0, base) != prev["base"]["fingerprint"]:
+            raise ec.PlanFailure("change_plan_figure_changed")
         task.phase = "render_before"
         before_png, before_man = snapshot(base)
+        if prev is None:
+            start, start_png, start_man, previous = base, before_png, before_man, None
+        else:
+            start = prev["candidate_patches"]
+            start_png, start_man = snapshot(start)
+            previous = ec.previous_summary(prev)
         task.phase = "model"
-        proposal = ec.ask_model(comments, before_man)
+        proposal = ec.ask_model(comments, start_man, previous)
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
-        cand, proposal = ec.candidate_patches(base, proposal, before_man)
+        cand, proposal = ec.candidate_patches(start, proposal, start_man)
+        if prev is not None:  # 上一版没被批注改掉的组带进来，再与批注的组一起相对 B0 现算
+            proposal = {
+                "groups": ec.carried_groups(prev, proposal) + proposal["groups"],
+                "unhandled": proposal["unhandled"],
+            }
         if ec.change_count(proposal) == 0:
             groups, unhandled, after_png = [], proposal["unhandled"], before_png
+        elif prev is not None and cand == start:
+            after_png = start_png
+            groups, unhandled = ec.effective_changes(before_man, start_man, proposal)
+            groups = ec.attach_patches(groups, cand)
         else:
             task.phase = "render_after"
             touched = True
@@ -12952,15 +13089,42 @@ def _change_plan_compute(task, rel_id: str, base: list, comments: list[dict]):
         if touched:
             task.replay_required = True
             _retire_hot_worker(state["worker"])
-    plan = ec.build_plan(
-        plan_id=task.id,
-        target=rel_id,
-        base_fingerprint=ec.fingerprint(rev0, base),
-        comments=comments,
-        groups=groups,
-        unhandled=unhandled,
-        base_patches=base,
-    )
+    if prev is None:
+        plan = ec.build_plan(
+            plan_id=task.id,
+            target=rel_id,
+            base_fingerprint=ec.fingerprint(rev0, base),
+            comments=comments,
+            groups=groups,
+            unhandled=unhandled,
+            base_patches=base,
+        )
+    else:
+        # 上一版没被批注改掉的审阅意见（组与未处理）带着走；组的标签取上一版的（批注组取批注文字）
+        carried = {
+            g["comment_id"]: {"id": g["comment_id"], "text": g.get("label", "")}
+            for g in prev["groups"]
+        }
+        note_ids = {c["id"] for c in comments}
+        live = {g["comment_id"] for g in groups}
+        unhandled = [u for u in unhandled if u["comment_id"] in note_ids] + [
+            u
+            for u in prev["unhandled"]
+            if u["comment_id"] not in live and u["comment_id"] not in note_ids
+        ]
+        plan = ec.build_plan(
+            plan_id=task.id,
+            target=rel_id,
+            base_fingerprint=prev["base"]["fingerprint"],
+            comments=[*(carried[k] for k in carried if k in live), *comments],
+            groups=groups,
+            unhandled=unhandled,
+            base_patches=base,
+            version=prev["version"] + 1,
+            source=prev["source"],
+            parent=prev["id"],
+            note_ids=note_ids,
+        )
     plan["replay_required"] = task.replay_required
     return plan, before_png, after_png
 
@@ -20454,7 +20618,34 @@ def api_layouts():
     return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
-def serve_document(path: Path):
+def _verify_document_chart_sources(document: dict, storage_root: Path) -> None:
+    if not _has_chart_state(document):
+        return
+    from .engine import documentassets
+
+    try:
+        for obj in _doc_objects(document):
+            if obj.get("chart") is not None:
+                documentassets.load_source(
+                    storage_root,
+                    obj["chartSource"],
+                    source_id=obj["fileId"],
+                    scene_digest=obj["chart"]["model"]["scene_digest"],
+                )
+    except documentassets.DocumentAssetError as exc:
+        raise engine_documents.DocumentError(exc.code, exc.detail, status=422) from exc
+
+
+def _autosave_source_store(path: Path, revision: str) -> Path:
+    state, _status = engine_layoutsession.read_readonly()
+    owners = state["owners"]
+    if path.stem not in owners or engine_layoutsession.owner_is_stale(state, path.stem, revision):
+        return project_layout_dir()
+    owner = owners[path.stem]
+    return LAYOUT_DIR if owner is None else engine_config.project_store_dir(Path(owner))
+
+
+def serve_document(path: Path, *, autosave: bool = False, source_storage: Path | None = None):
     """把一份文档原样交出去，并附上**它这一份**的内容修订号。
 
     自动保存与命名画布文件走同一份实现，因为三条纪律对两者一字不差：
@@ -20475,6 +20666,8 @@ def serve_document(path: Path):
     """
     data = path.read_bytes()
     document = engine_documents.loads_document(data)
+    if autosave:
+        source_storage = _autosave_source_store(path, engine_atomicio.revision_of(data))
     # schema 4 的正文在读侧也过一遍来源身份判据；schema 2 / 3 的读路径不变
     # （旧文档只查骨架，读侧不加逐字段门）。
     if (
@@ -20482,6 +20675,9 @@ def serve_document(path: Path):
         and document.get("schema") == engine_documents.SCHEMA_CHART_PROJECT
     ):
         _validate_storage_document(document)
+        _verify_document_chart_sources(
+            document, source_storage if source_storage is not None else project_layout_dir()
+        )
     resp = app.response_class(data, mimetype="application/json")
     resp.headers["Cache-Control"] = "no-store"
     # 内容 hash 放 header 而不是塞进 body——body 就是文档本身，多一个字段会
@@ -20495,8 +20691,9 @@ def api_layout_get(name):
     for d in _layout_read_dirs():
         p = layout_path(name, d)
         if p.exists():
-            resp = serve_document(p)
             ctx = _request_ctx()
+            source_storage = LAYOUT_DIR if d == LAYOUT_DIR else project_layout_dir(ctx)
+            resp = serve_document(p, source_storage=source_storage)
             if ctx is not None:
                 # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
                 # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
@@ -20802,7 +20999,7 @@ def api_autosave_get(doc_id):
     # `absent` 为基线，把一份确实存在、只是此刻读不出来的文件整份盖掉。
     # 交出去的三条纪律（读一次就发这一份 / 不把文件句柄交出去 / 读侧的非有限数
     # 闸）见 `serve_document`——命名画布文件那条路一字不差，所以只有一份实现。
-    return serve_document(p)
+    return serve_document(p, autosave=True)
 
 
 def _autosave_newer_than(p: Path, base) -> int | None:
@@ -21303,7 +21500,9 @@ def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
         return False, None
     revision = engine_atomicio.revision_of(raw)
     try:
-        _validate_storage_document(engine_documents.loads_document(raw))
+        document = _validate_storage_document(engine_documents.loads_document(raw))
+        if _has_chart_state(document):
+            _verify_document_chart_sources(document, _autosave_source_store(path, revision))
     except (ValueError, RecursionError):
         return False, revision
     return True, revision
@@ -21847,8 +22046,16 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
             schema = loaded.get("schema")
             try:
                 doc = _validate_storage_document(loaded)
+                if _has_chart_state(doc):
+                    _verify_document_chart_sources(doc, _autosave_source_store(path, revision))
             except engine_documents.DocumentError as exc:
-                status = "too_new" if exc.code == "schema_too_new" else "invalid"
+                status = (
+                    "too_new"
+                    if exc.code == "schema_too_new"
+                    else "chart_source_mismatch"
+                    if exc.code == "chart_source_mismatch"
+                    else "invalid"
+                )
             except (ValueError, RecursionError):
                 status = "invalid"
     verdict, _verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)

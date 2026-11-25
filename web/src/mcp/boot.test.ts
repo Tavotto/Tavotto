@@ -185,9 +185,49 @@ describe('classifyToolResult', () => {
     expect(classifyToolResult(null)).toMatchObject({ kind: 'unusable' })
     expect(classifyToolResult('x')).toMatchObject({ kind: 'unusable' })
   })
+  it('批量打开（多张）→ batch，不是被清空的空壳（Codex 按工具定义也会给批量挂画布）', () => {
+    const batch = {
+      ok: true,
+      mode: 'batch',
+      status: 'done',
+      opened: [
+        { stem: 'FigA', session_id: 's-a' },
+        { stem: 'FigB', session_id: 's-b' },
+        { stem: 'FigC', session_id: 's-c' },
+      ],
+      canvas_ui: { available: false, code: 'batch_open', reason: '…' },
+    }
+    expect(classifyToolResult({ content: [], structuredContent: batch })).toEqual({
+      kind: 'batch',
+      stems: ['FigA', 'FigB', 'FigC'],
+    })
+  })
+
+  it('批量只开成一张 → 按那张的把手取件，画布照常出图', () => {
+    const batch = { mode: 'batch', opened: [{ stem: 'FigA', session_id: 's-a' }] }
+    expect(classifyToolResult({ structuredContent: batch })).toEqual({
+      kind: 'handle',
+      sessionId: 's-a',
+    })
+  })
 })
 
 describe('resolveToolResult', () => {
+  it('批量多张：不取件、不自己发起 open，回 batch 与 stem 列表', async () => {
+    const { bridge, calls } = bridgeWith(never)
+    const res = await resolveToolResult(bridge, {
+      structuredContent: {
+        mode: 'batch',
+        opened: [
+          { stem: 'FigA', session_id: 's-a' },
+          { stem: 'FigB', session_id: 's-b' },
+        ],
+      },
+    })
+    expect(res).toEqual({ ok: false, code: 'batch', stems: ['FigA', 'FigB'] })
+    expect(calls).toEqual([])
+  })
+
   it('完整结果：零往返，直接可种', async () => {
     const { bridge, calls } = bridgeWith(never)
     const res = await resolveToolResult(bridge, { structuredContent: full() })

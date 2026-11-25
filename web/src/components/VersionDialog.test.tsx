@@ -27,6 +27,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchVersionDoc: vi.fn(),
   updateVersion: vi.fn(),
   putVersionThumb: vi.fn(),
+  putAutosave: vi.fn(async () => ({ ok: true })),
+  fetchAutosave: vi.fn(async () => null),
 }))
 // 缩略图合成在 jsdom 里没有 canvas；这里只关心节点有没有拍、拍的是什么
 vi.mock('@/lib/timelineThumb', () => ({
@@ -36,6 +38,7 @@ vi.mock('@/lib/timelineThumb', () => ({
 
 import {
   ApiError,
+  putAutosave,
   createVersion,
   deleteVersion,
   duplicateVersion,
@@ -50,7 +53,7 @@ import { startNamedNode } from '@/store/actions'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { useDocumentStore } from '@/store/documentStore'
+import { useDocumentStore, setWindowHold, saveNowWithResult } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { isTimelineOpen, useUiStore } from '@/store/uiStore'
@@ -207,6 +210,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  setWindowHold(null)
   if (root) await act(async () => root.unmount())
   useUiStore.setState({ rightTab: 'properties' })
 })
@@ -349,6 +353,48 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
 })
 
 describe('项目文档节点（schema 3 / 4）：预览取一张画布，恢复换整份项目', () => {
+  it.each([false, true])('旧 PUT 成功、还原 PUT 失败（空=%s），时间线不宣布还原成功', async empty => {
+    await saveNowWithResult()
+    let release!: () => void
+    const put = vi.mocked(putAutosave)
+    put.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ ok: true, saved_at: 1, revision: null }) }))
+    put.mockRejectedValue(new Error('restore write failed'))
+    const version = empty ? emptyProject() : projectSnapshot()
+    if (empty) { version.canvases[0].id = CANVAS_ID; version.activeCanvasId = CANVAS_ID }
+    useUiStore.getState().setStatus(null)
+    const restoring = restoreNode(meta({ schema: 3 }), version, { projectConfirmed: true })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    await vi.waitFor(() => expect(useDocumentStore.getState().projectMeta.name).toBe(version.project.name))
+    release()
+    expect(await restoring).toBe(false)
+    expect(useDocumentStore.getState().saveState).toBe('save_error')
+    expect(useUiStore.getState().status?.key).not.toBe('versions.restoredProject')
+    put.mockResolvedValue({ ok: true, saved_at: 1, revision: null })
+    await saveNowWithResult(true)
+  })
+
+  it.each([3, 4] as const)('schema %s 只读窗口不能打恢复前节点或清掉编辑锁', async schema => {
+    await saveNowWithResult()
+    const before = useDocumentStore.getState().doc
+    setWindowHold({ role: 'contested', docId: 'd_versions' })
+    expect(await restoreNode(meta({ schema }), projectSnapshot(schema), { projectConfirmed: true })).toBe(false)
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc).toBe(before)
+    expect(useDocumentStore.getState().windowHold?.role).toBe('contested')
+  })
+
+  it('恢复前节点在途时失去编辑权，不安装节点正文', async () => {
+    const before = useDocumentStore.getState().doc
+    let done!: (value: { version: LayoutVersionMeta }) => void
+    mockCreate.mockImplementationOnce(() => new Promise(resolve => { done = resolve }))
+    const restoring = restoreNode(meta({ schema: 3 }), projectSnapshot(), { projectConfirmed: true })
+    await vi.waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    setWindowHold({ role: 'yielded', docId: 'd_versions' })
+    done({ version: meta({ id: 'backup' }) })
+    expect(await restoring).toBe(false)
+    expect(useDocumentStore.getState().doc).toBe(before)
+    expect(useDocumentStore.getState().windowHold?.role).toBe('yielded')
+  })
   it('预览画的是节点记录的那张画布，不是项目正文的 activeCanvasId', async () => {
     mockDoc.mockResolvedValue({ ...meta({ schema: 3 }), doc: projectSnapshot() })
     await mount([meta({ schema: 3 })], undefined, false)

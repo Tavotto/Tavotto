@@ -1285,7 +1285,7 @@ export async function probeAutosave(docId: string, pj?: string | null): Promise<
   if (!res.ok) {
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
-    if (res.status === 400) {
+    if (res.status === 400 || res.status === 422) {
       return { kind: 'invalid', code: typeof body.code === 'string' ? body.code : null }
     }
     return { kind: 'unavailable', status: res.status }
@@ -1522,8 +1522,8 @@ export interface RecoveryCandidateItem {
   /** 正文的内容 hash；确认恢复时用它核对「预览之后有没有被改过」 */
   revision: string | null
   schema: number | null
-  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读 */
-  status: 'ok' | 'invalid' | 'too_new' | 'too_large'
+  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读；`chart_source_mismatch` 图表附件缺损 */
+  status: 'ok' | 'invalid' | 'too_new' | 'too_large' | 'chart_source_mismatch'
   canvases: number
   objects: number
   owner: 'this' | 'unknown'
@@ -1543,7 +1543,7 @@ export interface RecoveryCandidatePage {
   index: SessionIndexStatus
 }
 
-const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large'] as const
+const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large', 'chart_source_mismatch'] as const
 
 function parseCandidate(v: unknown): RecoveryCandidateItem | null {
   const r = v as Record<string, unknown> | null
@@ -2682,6 +2682,7 @@ export interface PackageResult {
   missing: string[]
   chart_sources?: number
   document_format?: typeof CHART_PACKAGE_FORMAT
+  missing_chart_sources?: string[]
   execution_coverage?: {
     state: 'incomplete' | 'complete'
     issues: { script: string; reason: string }[]
@@ -2715,10 +2716,12 @@ export interface PackageOpenResult {
   /** 存在但内容与打包时不一致（sha1 漂移） */
   drifted: string[]
   /**
-   * schema 4 的来源附件没能装进当前项目（包损坏 / 项目只读）：文档能打开，但下一次
-   * 保存会因缺来源失败。缺省 = 没有这条问题（旧后端不发这个键）。
+   * schema 4 的来源附件没能装进当前项目（包损坏 / 项目只读）：这次包不完整，
+   * 打开入口明确报告失败。缺省 = 旧后端没有提供此事实。
    */
   missing_chart_sources?: string[]
+  /** 后端逐面板核实的完整附件引用，只有这些面板免于普通素材重链接。 */
+  verified_chart_sources?: ChartSourceRef[]
 }
 
 /**
@@ -4118,6 +4121,8 @@ export interface ChangePlanGroup {
   label: string
   comment_id?: string
   note_id?: string
+  /** 续改出的版本才有：这一组是按审阅意见改的（`review`）还是按用户在上一版上写的批注改的（`note`） */
+  origin?: 'review' | 'note'
   atomic: boolean
   changes: ChangePlanChange[]
   boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
@@ -4126,6 +4131,8 @@ export interface ChangePlanGroup {
 export interface ChangePlan {
   id: string
   version: number
+  /** 批注重改的版本才有：它是从哪一版续改来的（每一版是自己的方案，各有 `id` 与两张图） */
+  parent?: string
   source: ChangePlanSource
   base: { target: string; fingerprint: string }
   /** 请求时的 B0 全量 override（规范化后） */
@@ -4190,6 +4197,33 @@ export async function createChangePlan(body: CreateChangePlanBody): Promise<Chan
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+  if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as ChangePlanTask
+}
+
+/** 批注重改的一条批注（高级版 `change-plan-rerun`）：锚点与审阅意见同形，元素锚带画面框 */
+export interface ChangePlanNoteBody {
+  id: string
+  anchor: ReviewAnchor
+  text: string
+}
+
+/**
+ * 按批注重改（ADR 0206 §五）：在 `planId` 那一版的「修改后」上写的批注 → 同一张卡的下一版（新的 `plan_id`，轮询同 `getChangePlan`）。
+ * 没解锁回 `{ ok: false, code: 'not_licensed' }`（与一键排版同口径）；其余失败抛带稳定 code 的 `EngineError`。
+ */
+export async function reviseChangePlan(
+  planId: string,
+  body: { notes: ChangePlanNoteBody[]; client_request_id?: string },
+): Promise<ChangePlanTask | { ok: false; code: 'not_licensed' }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/revise`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (out.ok === false && out.code === 'not_licensed') return { ok: false, code: 'not_licensed' }
   if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
@@ -6475,6 +6509,11 @@ export interface SyncPatch {
   value: unknown
   /** 点位越界后被钳进画布，位置可能需要微调 */
   clamped?: boolean
+  /**
+   * 只在 `skipped` 里出现，稳定原因码：`copy_not_synced` = 图内副本（ADR 0207）不跨图同步；
+   * 版面几何类的没有原因码。界面据它把两类分开数，不混成一句。
+   */
+  skip_reason?: string
 }
 
 export interface SyncResult {

@@ -257,7 +257,7 @@ export function CanvasThumb({
           if ((o.type === 'path' || o.type === 'pathText') && Array.isArray(o.subpaths)) {
             // 自由路径的示意：沿它自己的轮廓画一圈灰线（同一个 `pathGeometry`，不画端型、不填色）
             const d = pathD(pathGeometry({ subpaths: o.subpaths }, o.w, o.h, 0).fill)
-            if (d) return <path {...common} d={d} transform={`translate(${o.x} ${o.y})`} />
+            if (d) return <path key={key} {...common} d={d} transform={`translate(${o.x} ${o.y})`} />
           }
           if (o.type === 'shape' && o.shape === 'ellipse') {
             return <ellipse key={key} {...common} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} />

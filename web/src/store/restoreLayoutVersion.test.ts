@@ -4,13 +4,14 @@
  * - schema 3 / 4 整份项目节点：经 migrateToProject → switchDocument 换整份项目；
  * - 读不出来的项目正文：返回 false，当前文档零改动。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { emptyProject } from '@/types/document'
 import type { FigureDocument, PanelObject, ProjectDocument, TextObject } from '@/types/document'
-import { projectFileSnapshot, setProjectFile, useDocumentStore } from './documentStore'
-import { restoreLayoutVersion } from './actions'
+import { projectFileSnapshot, setProjectFile, useDocumentStore, saveNowWithResult, setWindowHold } from './documentStore'
+import { fetchAutosave } from '@/lib/api'
+import { openRecentDocument, restoreLayoutVersion } from './actions'
 
 const text = (id: string, value: string): TextObject => ({
   id, type: 'text', text: value, sizePt: 9, bold: false,
@@ -65,9 +66,39 @@ beforeEach(async () => {
   await s().switchDocument(twoCanvasProject(), 'd_restore')
 })
 
-afterEach(() => setCurrentProjectId(null))
+afterEach(() => { setWindowHold(null); setCurrentProjectId(null); vi.unstubAllGlobals() })
 
 describe('restoreLayoutVersion：schema 分派', () => {
+  it('整份项目还原为空画布后，同一槽位重开仍然是空画布', async () => {
+    await saveNowWithResult()
+    let stored = s().buildProject()
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: RequestInit) => {
+      if (String(url).includes('/api/autosave/d_restore')) {
+        if (opts?.method === 'PUT') stored = JSON.parse(opts.body as string)
+        return new Response(JSON.stringify(opts?.method === 'PUT' ? { ok: true } : stored), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 200 })
+    }))
+    const empty = emptyProject()
+    expect(await restoreLayoutVersion(literal('恢复空画布'), empty)).toBe(true)
+    expect(s().documentId).toBe('d_restore')
+    expect(stored.canvases).toHaveLength(1)
+    expect(stored.canvases[0].objects).toEqual([])
+    const reopened = await fetchAutosave('d_restore')
+    expect(reopened).not.toBeNull()
+    await s().switchDocument(reopened!.doc as ProjectDocument, 'd_restore')
+    expect(s().doc.objects).toEqual([])
+  })
+
+  it('直接还原动作也不能绕过只读锁', async () => {
+    setWindowHold({ role: 'contested', docId: 'd_restore' })
+    const before = s().doc
+    expect(await restoreLayoutVersion(literal('restore'), projectVersion(3))).toBe(false)
+    expect(s().doc).toBe(before)
+    expect(s().windowHold?.role).toBe('contested')
+  })
   it('schema 2 单画布节点：只盖当前画布，别的画布不动，⌘Z 退回（既有路径）', async () => {
     const version: FigureDocument = {
       schema: 2,
@@ -139,4 +170,24 @@ describe('restoreLayoutVersion：schema 分派', () => {
     expect(s().doc.objects.map((o) => o.id)).toEqual(['now_a'])
     expect(s().canvases.find((c) => c.id === 'c_b')?.objects.map((o) => o.id)).toEqual(['now_b'])
   })
+})
+
+it('最近打开浏览器副本时，磁盘附件损坏的 422 不得变成无 revision PUT', async () => {
+  await saveNowWithResult()
+  const local = twoCanvasProject()
+  localStorage.setItem('tavotto.autosave.d_unread_attachment', JSON.stringify(local))
+  const puts: RequestInit[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: unknown, opts?: RequestInit) => {
+    if (String(url).includes('/api/autosave/d_unread_attachment')) {
+      if (opts?.method === 'PUT') puts.push(opts)
+      return new Response(JSON.stringify({ code: 'chart_source_mismatch' }), { status: 422 })
+    }
+    return new Response('{}', { status: 200 })
+  }))
+  await openRecentDocument('d_unread_attachment')
+  await saveNowWithResult()
+  expect(s().documentId).toBe('d_unread_attachment')
+  expect(s().saveState).toBe('save_error')
+  expect(puts).toEqual([])
+  expect(localStorage.getItem('tavotto.autosave.d_unread_attachment')).not.toBeNull()
 })

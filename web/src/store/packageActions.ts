@@ -1,5 +1,5 @@
 import { CHART_PACKAGE_FORMAT, createPackage } from '@/lib/api'
-import { msg } from '@/i18n'
+import { msg, t } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { isPackageTooNew, openPackageFile } from '@/lib/packageImport'
 import { currentProjectId } from '@/lib/session'
@@ -44,6 +44,9 @@ export async function exportPackage(scope: PackageScope = 'project', attempt = 0
       : scope === 'canvas' ? { canvasId } : scope
     const res = await createPackage(stem, project, {}, { pj: projectId, ...selection })
     if (!stillHere()) return
+    if (res.missing_chart_sources?.length) {
+      throw new Error(t('status.packageIncomplete', { ns: 'workspace', count: res.missing_chart_sources.length }))
+    }
     const executionIncomplete = res.document_format === CHART_PACKAGE_FORMAT && res.execution_coverage?.state === 'incomplete'
     const message = res.document_format === CHART_PACKAGE_FORMAT && res.missing.length > 0
       ? msg(executionIncomplete ? 'status.packagedIncompleteWithExecution' : 'status.packagedIncomplete', { name: res.name, count: res.missing.length }, 'workspace')

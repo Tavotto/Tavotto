@@ -64,6 +64,12 @@ describe('导出项目包失败', () => {
     expect(useDocumentStore.getState().buildProject().schema).toBe(3)
   })
 
+  it('有缺失图表附件的包不能报导出成功', async () => {
+    createPackage.mockResolvedValueOnce({ name: 'x.tavotto', assets: 1, missing_chart_sources: ['bad'] })
+    await exportPackage()
+    expect(statusKey()).toBe('status.packageFailed')
+    expect(formatMessage(ui().status)).toContain('图表来源缺失或损坏')
+  })
   it('提示带「再试一次」，点下去重做同一次导出，成功后收掉失败提示', async () => {
     createPackage.mockRejectedValueOnce(new Error('磁盘满了'))
     await exportPackage()

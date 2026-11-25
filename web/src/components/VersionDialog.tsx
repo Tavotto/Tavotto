@@ -41,7 +41,7 @@ import type { UiMessage } from '@/i18n/message'
 import { formatDate, formatTime } from '@/i18n/format'
 import { closeTimeline, restoreLayoutVersion } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { useDocumentStore, writesBlocked } from '@/store/documentStore'
 import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useTimelineStore } from '@/store/timelineStore'
 import { useInFlight } from '@/hooks/useInFlight'
@@ -1288,6 +1288,7 @@ export async function restoreNode(
    */
   opts?: { confirmed?: boolean; projectConfirmed?: boolean },
 ): Promise<boolean> {
+  if (writesBlocked()) return false
   const projectNode = isProjectVersion(versionDoc)
   finishActiveGesture()
   // 确认框与「恢复前」节点之间都可能换了项目 / 排版：那时再写，A 的节点会被写进 B
@@ -1308,7 +1309,7 @@ export async function restoreNode(
   const confirmed = projectNode
     ? opts?.projectConfirmed || (await confirmProjectRestore())
     : opts?.confirmed || (await confirmRestoreTarget(meta))
-  if (!after(() => confirmed)) return false
+  if (!after(() => confirmed) || writesBlocked()) return false
   // schema 2：原画布还在 → 切过去再写（「恢复前」拍的因此是**即将被覆盖的那张**）；
   // 已删除 / 没有身份 → 用户刚点头同意写进当前画布。
   // schema 3 / 4：目标由正文自己的 activeCanvasId 决定，不按节点记的 canvasId 猜。
@@ -1353,7 +1354,7 @@ export async function restoreNode(
     return false
   }
   // 「恢复前」节点已经存下了（服务端事实，留着）；上下文换了就不写
-  if (!after(() => true)) return false
+  if (!after(() => true) || writesBlocked()) return false
   const label = versionDisplayName(meta) || formatTime(meta.ts)
   // 面板 overrides 的身份原样恢复，不按此刻的 manifest 重抄（ADR 0083）
   const restored = await restoreLayoutVersion(
@@ -1361,6 +1362,9 @@ export async function restoreNode(
     versionDoc,
   )
   if (!restored) {
+    const saveState = useDocumentStore.getState().saveState
+    // 已安装但落盘失败：writer 已给出保存/冲突出口，不把它改说成节点正文损坏。
+    if (saveState === 'save_error' || saveState === 'conflict') return false
     // schema 3 / 4 读不出来 / 换文档被取消：一个字节都没写，不能说「已恢复」
     // 项目正文读不出来同样不是重试能好的：真做不了 →「发送问题反馈」
     after(() =>
@@ -1372,6 +1376,7 @@ export async function restoreNode(
     )
     return false
   }
+  if (!after(() => true) || writesBlocked()) return false
   recordDiagnosticEvent({
     type: 'layout_version.restore.complete',
     version: versionHash(meta.id),
@@ -1800,6 +1805,12 @@ export function LayoutSnapshot({
   onPending?: (pending: boolean) => void
 }) {
   const assets = useAssetStore((s) => s.byId)
+  const approximatePanels = useRef(new Set<string>())
+  const reportApproximate = useCallback((id: string, approximate: boolean) => {
+    if (approximate) approximatePanels.current.add(id)
+    else approximatePanels.current.delete(id)
+    onApproximate?.(approximatePanels.current.size > 0)
+  }, [onApproximate])
   const loadingPanels = useRef(new Set<string>())
   const onLoading = useCallback(
     (id: string, loading: boolean) => {
@@ -1852,7 +1863,7 @@ export function LayoutSnapshot({
                 style={style}
                 mtime={assets[o.fileId]?.mtime}
                 renderOverrides={renderOverrides}
-                onApproximate={onApproximate}
+                onApproximate={reportApproximate}
                 onLoading={onPending ? onLoading : undefined}
                 bucket={
                   displayWidth ? snapshotBucket(o.w, pw, displayWidth, window.devicePixelRatio || 1) : 200
@@ -1907,13 +1918,13 @@ function SnapshotPanel({
   style: React.CSSProperties
   mtime?: number
   renderOverrides: boolean
-  onApproximate?: (approximate: boolean) => void
+  onApproximate?: (id: string, approximate: boolean) => void
   /** 这张面板按 overrides 的图还在出（出好之前画的是磁盘素材，不是这一版的样子） */
   onLoading?: (id: string, loading: boolean) => void
   /** 取图档位（RENDER_BUCKETS 之一），见 `snapshotBucket` */
   bucket: number
 }) {
-  const wantsVariant = renderOverrides && (panel.overrides.length > 0 || isAdoptedPanel(panel))
+  const wantsVariant = renderOverrides && (!!panel.chart || panel.overrides.length > 0 || isAdoptedPanel(panel))
   const variant = useVariantPng(
     panel.fileId,
     panel.overrides,
@@ -1921,13 +1932,15 @@ function SnapshotPanel({
     wantsVariant,
     mtime ?? 0,
     adoptionGuardOf(panel),
+    panel.chart ? { chart: panel.chart, chart_source: panel.chartSource, render_profile: panel.chartFrame?.renderProfile ?? 'native-manifest/1' } : undefined,
   )
   useEffect(() => {
-    if (renderOverrides) onApproximate?.(variant.approximate)
-  }, [variant.approximate, renderOverrides, onApproximate])
+    if (renderOverrides) onApproximate?.(panel.id, variant.approximate || (!!panel.chart && !variant.url))
+    return () => onApproximate?.(panel.id, false)
+  }, [panel.id, panel.chart, variant.url, variant.approximate, renderOverrides, onApproximate])
   // 「还没出好」从第一帧就算：要出图、既没拿到也没失败（hook 的 loading 晚一帧才置上）
   // 零编辑的来源驱动面板 hook 有意不出图（磁盘原像素即是），不算「还在出」
-  const pending = wantsVariant && variantNeedsRender(panel.overrides, adoptionGuardOf(panel)) && !variant.url && !variant.approximate
+  const pending = wantsVariant && (!!panel.chart || variantNeedsRender(panel.overrides, adoptionGuardOf(panel))) && !variant.url && !variant.approximate
   useEffect(() => {
     if (!onLoading) return
     onLoading(panel.id, pending)
