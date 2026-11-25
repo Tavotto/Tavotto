@@ -885,6 +885,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         engine_pool.IMPORT_FOLDER_ABI_CODE,
         engine_pool.IMAGE_FORMAT_MISMATCH_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
+        engine_pool.SCRIPT_SOURCE_MISSING_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
         # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）

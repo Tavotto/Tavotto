@@ -35,3 +35,21 @@ def test_extra_path_is_reduced_to_a_file_name():
 
 def test_no_name_anywhere_is_not_invented():
     assert pool.recovery_params(_err()) == {}
+
+
+def test_render_error_response_carries_the_script_name():
+    """渲染端点的响应体（`app._worker_error_payload`）真的带上 `params.script`——不是只有 `recovery_params` 会算（Codex #2215）。"""
+    from tavotto import app as tavotto_app
+
+    body = tavotto_app._worker_error_payload(_err({"script": "plot.py"}))
+    assert body["code"] == pool.SCRIPT_SOURCE_MISSING_CODE
+    assert body["params"] == {"script": "plot.py"}
+
+
+def test_probe_error_carries_the_script_name():
+    """试运行（`probe._error_from_worker`）那条出口同样带上脚本名，码原样带出。"""
+    from tavotto.engine import probe
+
+    out = probe._error_from_worker(_err({"script": "plot.py"}), "")
+    assert out["code"] == pool.SCRIPT_SOURCE_MISSING_CODE
+    assert out["params"] == {"script": "plot.py"}
