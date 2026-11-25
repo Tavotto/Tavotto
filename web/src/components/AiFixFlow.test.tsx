@@ -193,6 +193,31 @@ describe('进度与卡住（D3）', () => {
     expect((await render(entry(CARDS.activity))).querySelector('[data-title]')?.textContent).toBe('Installing colorcet')
   })
 
+  it('运行中是一块任务清单：固定四步、走到哪听后端的 stage；第 2 轮写在进行中那步的胶囊里；没有进度条', async () => {
+    const steps = (card: Element) =>
+      [...card.querySelectorAll('[data-ai-fix-steps] [data-task-step]')].map(
+        (li) => `${li.getAttribute('data-task-step')}:${li.getAttribute('data-step-state')}`,
+      )
+    // 还没有 stage（刚起 / 老后端）：正在找原因
+    let card = await render(entry({ phase: 'running' }))
+    expect(steps(card)).toEqual(['diagnose:active', 'fix:pending', 'verify:pending', 'finish:pending'])
+    expect(card.querySelector('[data-ai-fix-steps] [data-task-title]')?.textContent).toBe('AI 修复')
+    expect(card.querySelector('[role="progressbar"]')).toBeNull()
+    card = await render(entry({ ...CARDS.activity, stage: { step: 'fix', round: 1 } }))
+    expect(steps(card)).toEqual(['diagnose:done', 'fix:active', 'verify:pending', 'finish:pending'])
+    expect(card.querySelector('[data-task-meta]')).toBeNull()
+    // 验证没过又回去修：第 2 轮，已打的勾不收回
+    card = await render(entry({ ...CARDS.activity, stage: { step: 'fix', round: 2 } }))
+    expect(steps(card)).toEqual(['diagnose:done', 'fix:active', 'verify:pending', 'finish:pending'])
+    expect(card.querySelector('[data-task-step="fix"] [data-task-meta]')?.textContent).toBe('第 2 轮')
+    card = await render(entry({ phase: 'running', stage: { step: 'finish', round: 2 } }))
+    expect(steps(card)).toEqual(['diagnose:done', 'fix:done', 'verify:done', 'finish:active'])
+    await setLocale('en-US')
+    card = await render(entry({ phase: 'running', stage: { step: 'verify', round: 2 } }))
+    expect(card.querySelector('[data-task-step="verify"]')?.textContent).toContain('Test run')
+    expect(card.querySelector('[data-task-meta]')?.textContent).toBe('Round 2')
+  })
+
   it('卡住：一句话原因 + 一个「停止」主按钮；点它取消，详情默认折叠', async () => {
     const cancel = vi.fn(async () => {})
     useAiFixStore.setState({ cancel } as never)

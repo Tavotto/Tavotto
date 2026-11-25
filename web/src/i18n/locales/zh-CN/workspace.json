@@ -1703,6 +1703,14 @@
       }
     },
     "aiFix": {
+      "taskTitle": "AI 修复",
+      "round": "第 {{n}} 轮",
+      "steps": {
+        "diagnose": "找原因",
+        "fix": "动手修",
+        "verify": "运行验证",
+        "finish": "收尾"
+      },
       "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
       "running": "AI 正在查找原因…",
       "cancel": "取消",

@@ -4884,6 +4884,11 @@ export interface AiFixState {
   activity?: { tool: string; phase: 'start' | 'end' | 'denied'; detail: string; at_ms: number } | null
   /** 现在卡住了：`reason` 闭集；没卡住 = null */
   stalled?: { reason: 'cli_waiting_approval' | 'cli_tool_not_delivered' | 'stalled'; detail: string } | null
+  /**
+   * 任务清单的进度（`fixtools.next_stage`，按工具组归步；2026-11-25）：四步里走到哪一步 + 第几轮（验证没过又回去修 +1）。
+   * 还没调过推进步骤的工具 = null；老后端没有这个键
+   */
+  stage?: { step: 'diagnose' | 'fix' | 'verify' | 'finish'; round: number } | null
 }
 
 /** 三个读写都可显式指定项目（`pj`）：切项目之后要取消 / 重读的是发起时那个项目的修复，不是当前项目的 */
