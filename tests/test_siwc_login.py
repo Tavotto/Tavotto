@@ -548,3 +548,23 @@ def test_frozen_build_collects_the_crypto_library():
         encoding="utf-8"
     )
     assert 'collect_all("Cryptodome")' in spec and "*CRYPTODOME_MODULES," in spec
+
+
+def test_large_real_world_model_list_is_not_dropped(fake):
+    """真服务的 /v1/models 每个型号带整套元数据，远超 256 KB（2026-11-25 真服务核对时被当成空清单）。"""
+    meta = {
+        "description": "x" * 4000,
+        "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high")],
+    }
+    fake.models = {
+        "models": [{"slug": f"gpt-{i}", "visibility": "list", **meta} for i in range(120)]
+    }
+    _sign_in(fake)
+    assert len(siwc_store.active().models) == 120
+
+
+def test_oversized_success_is_not_an_empty_success(fake, monkeypatch):
+    monkeypatch.setattr(siwc_login, "MODELS_BODY_LIMIT", 1024)
+    fake.models = {"models": [{"slug": "gpt-a", "visibility": "list", "description": "x" * 5000}]}
+    _sign_in(fake)
+    assert siwc_login.fetch_models(ACCESS) is None  # 拿不到 ≠ 清单是空的
