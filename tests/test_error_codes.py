@@ -419,6 +419,11 @@ USER_VISIBLE_CODES = {
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),
+    "ai_siwc_plan_disabled": set(),
+    "ai_siwc_token_unavailable": set(),
+    "siwc_disabled": set(),
+    "siwc_port_unavailable": set(),
+    "siwc_login_failed": {"reason"},
     "connection_not_found": set(),
     "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
@@ -898,7 +903,11 @@ NON_UI_CODES = {
 
 
 #: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
-DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
+DATA_ONLY_PARAMS = {
+    "ai_script_busy": {"session"},
+    "eps_annotations_unsupported": {"operation"},
+    "siwc_login_failed": {"reason"},  # 闭集原因码（siwc_login.REASONS），前端按它挑具体文案
+}
 
 
 def _response_dicts(text: str):

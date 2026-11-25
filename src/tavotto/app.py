@@ -186,6 +186,7 @@ from .engine import (
     scriptlock as engine_scriptlock,
     session_client as engine_session_client,
     shadowscript as engine_shadowscript,
+    siwc_login as engine_siwc_login,
     sourcelang as engine_sourcelang,
     specfix as engine_specfix,
     startupphase as engine_startupphase,
@@ -18003,6 +18004,67 @@ def api_ai_oauth_cancel(flow_id):
     return jsonify(flow)
 
 
+# ------------------------- Sign in with ChatGPT（ADR 0209；开关 `TAVOTTO_EXPERIMENTAL_SIWC` 关时一律 404） -------------------------
+#: 登录失败原因码 → 稳定错误码（文案在前端 errors.json）
+def _siwc_error(exc: "engine_siwc_login.LoginError"):
+    if exc.code == "disabled":
+        return jsonify({"error": "Sign in with ChatGPT 未开启", "code": "siwc_disabled"}), 404
+    if exc.code == "port_unavailable":
+        return jsonify({"error": "本机回调端口起不来", "code": "siwc_port_unavailable"}), 503
+    return jsonify(
+        {"error": "ChatGPT 登录失败", "code": "siwc_login_failed", "params": {"reason": exc.code}}
+    ), 502
+
+
+def _siwc_start(new_account: bool):
+    try:
+        flow = engine_siwc_login.start(new_account=new_account)
+    except engine_siwc_login.LoginError as exc:
+        return _siwc_error(exc)
+    resp = jsonify({"ok": True, "flow_id": flow["flow_id"], "flow": flow})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/siwc/login")
+def api_ai_siwc_login():
+    """发起 ChatGPT 登录：返回 `flow`（带 `authorize_url`，前端用系统浏览器打开）；进度轮询 `GET /api/ai/siwc/flows/<id>`。
+    body 可选 `{new_account: true}` = 换一个账号（首次注册），缺省 = 再次登录上次的账号。回调由一次性本机监听器接收（不是 Flask 路由）。"""
+    body = request.get_json(silent=True)
+    return _siwc_start(bool(isinstance(body, dict) and body.get("new_account") is True))
+
+
+@app.get("/api/ai/siwc/flows/<flow_id>")
+def api_ai_siwc_flow(flow_id):
+    flow = engine_siwc_login.status(flow_id)
+    if flow is None:
+        return jsonify({"error": "登录流程不存在", "code": "oauth_flow_not_found"}), 404
+    if flow["state"] in ("signed_in", "plan_disabled"):
+        engine_ai.invalidate_capabilities()
+    resp = jsonify(flow)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/siwc/flows/<flow_id>/cancel")
+def api_ai_siwc_cancel(flow_id):
+    flow = engine_siwc_login.cancel(flow_id)
+    if flow is None:
+        return jsonify({"error": "登录流程不存在", "code": "oauth_flow_not_found"}), 404
+    return jsonify(flow)
+
+
+@app.post("/api/ai/siwc/models/refresh")
+def api_ai_siwc_models_refresh():
+    """用当前账号重取一次型号清单（联网）。"""
+    try:
+        engine_siwc_login.refresh_models()
+    except engine_siwc_login.LoginError as exc:
+        return _siwc_error(exc)
+    engine_ai.invalidate_capabilities()
+    return jsonify(engine_ai.capabilities(refresh=True))
+
+
 # ------------------------- 「连接 AI」（接口约定 2026-10-24；视图见 engine/ai_connections.py） -------------------------
 def _connection_error(exc: "engine_ai_connections.ConnectionRefused"):
     return jsonify({"error": exc.code, "code": exc.code, "params": exc.params}), exc.status
@@ -18076,11 +18138,11 @@ def api_ai_connection_check(cid):
 def api_ai_connection_delete(cid):
     """断开一条 Key / 账号登录类连接（订阅类不可删，只能在对应的命令行里退出）。"""
     try:
-        engine_ai_connections.delete_connection(cid)
+        extra = engine_ai_connections.delete_connection(cid) or {}
     except engine_ai_connections.ConnectionRefused as exc:
         return _connection_error(exc)
     engine_ai.invalidate_capabilities()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, **extra})
 
 
 @app.post("/api/ai/connections/<cid>/login")
@@ -18096,6 +18158,8 @@ def api_ai_connection_login(cid):
             return jsonify({"ok": True, **engine_ai.start_login(target)})
         except engine_ai.AgentError as exc:
             return _agent_error(exc)
+    if kind == "siwc":
+        return _siwc_start(False)
     body = request.get_json(silent=True)
     region = body.get("region") if isinstance(body, dict) else None
     try:
