@@ -957,7 +957,8 @@ def siwc_record() -> dict | None:
     return {
         "id": SIWC_CONNECTION_ID,
         "auth": "siwc",
-        "agent": "codex",
+        # 不是任何 CLI 家族：按 `agent` 分流的路径（家族判断、Codex 注入、不兼容检查）一律碰不到它
+        "agent": ai_agents.BUILTIN_ID,
         "label": "ChatGPT",
         "models": models,
         "default_model": models[0] if models else None,

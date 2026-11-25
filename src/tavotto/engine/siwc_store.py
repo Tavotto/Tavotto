@@ -254,27 +254,43 @@ def active() -> Account | None:
 
 
 # --------------------------------------------------------------------------- 跨进程锁
+_HELD = threading.local()
+
+
 @contextlib.contextmanager
 def refresh_lock(timeout_s: float = LOCK_TIMEOUT_S) -> Iterator[None]:
-    """进程内 + 跨进程的刷新锁。等不到 → `siwc_auth.TokenUnavailable("refresh_locked")`（凭据不动，稍后再试）。"""
-    with _PROC_LOCK:
-        _ensure_dirs()
-        path = root() / "refresh.lock"
-        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    """进程内 + 跨进程的刷新锁，两段共用一个截止时间。等不到 → `siwc_auth.TokenUnavailable("refresh_locked")`（凭据不动，稍后再试）。
+
+    同一线程里重入直接放行：flock / msvcrt 对同一文件的两个打开描述互斥，重入时再开一个 fd 会自己等自己。"""
+    depth = getattr(_HELD, "depth", 0)
+    if depth:
+        _HELD.depth = depth + 1
         try:
-            deadline = time.monotonic() + timeout_s
-            while True:
-                if _try_lock(fd):
-                    break
+            yield
+        finally:
+            _HELD.depth -= 1
+        return
+    deadline = time.monotonic() + timeout_s
+    if not _PROC_LOCK.acquire(timeout=max(0.0, timeout_s)):
+        raise siwc_auth.TokenUnavailable("refresh_locked")
+    try:
+        _ensure_dirs()
+        fd = os.open(root() / "refresh.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            while not _try_lock(fd):
                 if time.monotonic() >= deadline:
                     raise siwc_auth.TokenUnavailable("refresh_locked")
                 time.sleep(0.1)
+            _HELD.depth = 1
             try:
                 yield
             finally:
+                _HELD.depth = 0
                 _unlock(fd)
         finally:
             os.close(fd)
+    finally:
+        _PROC_LOCK.release()
 
 
 if os.name == "nt":

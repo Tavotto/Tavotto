@@ -418,7 +418,7 @@ def test_store_never_mixes_two_accounts_under_one_client(fake):
 
 # --------------------------------------------------------------------------- 真验签
 def test_id_token_signature_and_claims():
-    pytest.importorskip("Cryptodome")
+    # 硬 import：pycryptodomex 是运行时依赖（pyproject / requirements），缺了就该红，不许静默跳过
     from Cryptodome.Hash import SHA256
     from Cryptodome.PublicKey import RSA
     from Cryptodome.Signature import pkcs1_15
@@ -481,3 +481,70 @@ def test_verification_library_missing_fails_closed(monkeypatch):
     with pytest.raises(siwc_login.LoginError) as ei:
         siwc_login._verify_rs256(b"x", b"y", {"n": "AQ", "e": "AQ"})
     assert ei.value.code == "verify_unavailable"
+
+
+def test_refresh_lock_is_reentrant_in_one_thread(fake):
+    """锁内再要令牌（以后的调用者 / 刷新函数）不会自己等自己。"""
+    _sign_in(fake)
+    t0 = time.monotonic()
+    with siwc_store.refresh_lock(timeout_s=0.5), siwc_store.refresh_lock(timeout_s=0.5):
+        assert siwc_login.provider().access_token() == ACCESS
+    assert time.monotonic() - t0 < 0.5
+
+
+def test_refresh_lock_times_out_against_another_thread_in_process(fake):
+    """进程内另一个线程正持锁（例如正在撤销 / 刷新）：这里按截止时间放弃，不无限等。"""
+    _sign_in(fake)
+    held, release = threading.Event(), threading.Event()
+
+    def holder():
+        with siwc_store.refresh_lock():
+            held.set()
+            release.wait(5)
+
+    th = threading.Thread(target=holder)
+    th.start()
+    held.wait(5)
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(siwc_auth.TokenUnavailable), siwc_store.refresh_lock(timeout_s=0.3):
+            pass
+        assert time.monotonic() - t0 < 2
+    finally:
+        release.set()
+        th.join()
+
+
+def test_importing_the_flask_app_does_not_load_the_crypto_library():
+    """验签库只在登录验签时才加载（延后 import）：Flask 父进程启动不为它付代价。子进程里做，免得别的用例已把它带进 sys.modules。"""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    code = (
+        "import sys; import tavotto.app, tavotto.engine.siwc_login; "
+        "loaded = sorted(m for m in sys.modules if m.split('.')[0] == 'Cryptodome'); "
+        "print(loaded); sys.exit(1 if loaded else 0)"
+    )
+    env = {**os.environ, "PYTHONPATH": str(root / "src")}
+    r = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        cwd=root,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_frozen_build_collects_the_crypto_library():
+    """冻结产物：spec 把 Cryptodome 点名收进 hiddenimports（延后 import 静态分析看不到）。"""
+    from pathlib import Path
+
+    spec = (Path(__file__).resolve().parent.parent / "packaging" / "tavotto.spec").read_text(
+        encoding="utf-8"
+    )
+    assert 'collect_all("Cryptodome")' in spec and "*CRYPTODOME_MODULES," in spec

@@ -685,7 +685,7 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **连接**：`siwc:chatgpt`（`ai_providers.SIWC_CONNECTION_ID`）只在开关开且有当前账号时出现；只走 `builtin`，`TAVOTTO_AI_BUILTIN=0` → `ai_agent_not_usable`；`efforts` 恒空；型号读登录时缓存的 `/v1/models`（连接视图不联网）。
   `ai_providers.resolve(builtin, "siwc:chatgpt")` 给**虚拟记录**（无令牌字段）；`builtin_conn` / `spawn_overrides` 对它走专用分支 `siwc_overrides`（`--wire siwc-responses --base-url https://api.openai.com/v1 --auth bearer --model …`，无 effort / fallback；令牌与开关只进环境变量），
   看护用例把父进程 argv 喂给 `siwc_wire.runner_args_ok`。`ai_bridge.run` 在锁外 `_siwc_preflight`（`ai_endpoint_needs_login` / `ai_siwc_plan_disabled` / `ai_siwc_token_unavailable`，去重之后才抛）；runner 报 `auth` → `mark_rejected("http_401")`（不清凭据）。
-  开关开时 OpenAI 一家首选 `openai:siwc`（kind `siwc`），`openai:login`（Codex）只给已装 Codex 的。`first_key_connection` / 探测 / `add_connection` / `check_connection` 都碰不到它。看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`（本机假服务器，绝不连真实服务器）。
+  开关开时 OpenAI 一家只有 `openai:siwc`（kind `siwc`）+ API Key，`openai:login`（Codex）与 `sub:codex` 连接行一律不列（老用户也直接切换，用户 2026-11-25；`resolve_connection("sub:codex")` 仍认）。`first_key_connection` / 探测 / `add_connection` / `check_connection` 都碰不到它。看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`（本机假服务器，绝不连真实服务器）。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 

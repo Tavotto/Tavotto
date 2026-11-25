@@ -84,18 +84,18 @@ def test_flag_off_views_unchanged(env):
 
 
 # --------------------------------------------------------------------------- 开关开
-def test_continue_with_chatgpt_leads_and_codex_login_only_for_installed(env):
+def test_continue_with_chatgpt_replaces_codex_login_for_everyone(env):
+    """用户 2026-11-25：老用户也直接切换——装没装 Codex，OpenAI 一家都只剩「Continue with ChatGPT」（+ API Key）。"""
     env.setenv(siwc_wire.ENV_FLAG, "1")
-    fresh = _openai(ai_connections.vendors(_agents(False)))
-    assert [m["id"] for m in fresh["methods"] if m["kind"] != "key"] == ["openai:siwc"]
-    assert fresh["connect"] == "siwc"
-    old = _openai(ai_connections.vendors(_agents(True)))
-    assert [m["id"] for m in old["methods"] if m["kind"] != "key"] == [
-        "openai:siwc",
-        "openai:login",
-    ]
-    # 没登录：没有连接行
-    assert all(c["id"] != "siwc:chatgpt" for c in ai_connections.connections(_agents(False)))
+    for installed in (False, True):
+        v = _openai(ai_connections.vendors(_agents(installed)))
+        assert [m["id"] for m in v["methods"] if m["kind"] != "key"] == ["openai:siwc"]
+        assert v["connect"] == "siwc"
+        ids = [c["id"] for c in ai_connections.connections(_agents(installed))]
+        assert "sub:codex" not in ids and "siwc:chatgpt" not in ids  # 没登录 ChatGPT：两行都没有
+    # Claude 订阅不受影响
+    claude = next(v for v in ai_connections.vendors(_agents(True)) if v["id"] == "anthropic")
+    assert any(m["id"] == "anthropic:login" for m in claude["methods"])
 
 
 def test_signed_in_row_is_builtin_without_efforts(env):
@@ -109,6 +109,9 @@ def test_signed_in_row_is_builtin_without_efforts(env):
     agent, rec = ai_connections.resolve_connection("siwc:chatgpt", _agents(True))
     assert agent == ai_agents.BUILTIN_ID and rec["id"] == "siwc:chatgpt"
     assert "api_key" not in rec and TOKEN not in repr(rec)
+    # 永不 cli:codex：CLI 家族按 id 解析不到它，不兼容 / 只走内置等按 agent 分流的判据也不当它是 Codex 记录
+    assert ai_providers.resolve("codex", "siwc:chatgpt") is None
+    assert rec["agent"] == ai_agents.BUILTIN_ID and ai_providers.incompatibility(rec) is None
 
 
 def test_plan_disabled_and_signed_out_states(env):

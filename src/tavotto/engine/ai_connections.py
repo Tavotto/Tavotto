@@ -210,8 +210,8 @@ def vendors(agents_info: dict[str, dict]) -> list[dict]:
             {"id": vid, "label": label, "label_key": None, "logo": logo, "region": "global"},
         )
         installed = bool((agents_info.get(agent_id) or {}).get("installed"))
-        if siwc_on and vid == SIWC_VENDOR and not installed:
-            continue  # 有了 SIWC：Codex 登录只给已装 Codex 的老用户留着（不再引导新用户去装命令行）
+        if siwc_on and vid == SIWC_VENDOR:
+            continue  # 有了 SIWC：ChatGPT 订阅一律走「Continue with ChatGPT」，老用户也直接切换（用户 2026-11-25 裁决）
         lead.setdefault(vid, []).append(
             {
                 "id": f"{vid}:login",
@@ -360,6 +360,8 @@ def _details(models: list[str]) -> list[dict]:
 def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
     out = []
     for cid, (agent_id, vid, label, logo) in SUBSCRIPTIONS.items():
+        if vid == SIWC_VENDOR and siwc_wire.enabled():
+            continue  # 同上：Codex 登录那一行不再列（`resolve_connection("sub:codex")` 仍认，已发出的旧请求不至于 404）
         info = agents_info.get(agent_id)
         if not info or not info.get("installed") or not info.get("enabled"):
             continue
