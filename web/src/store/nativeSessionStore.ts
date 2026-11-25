@@ -15,9 +15,9 @@ import {
   type NativePending,
   type NativeSessionInfo,
 } from '@/lib/api'
-import { addRuntimePanelToCanvas } from '@/store/workspace'
+import { addRuntimePanelToCanvas, focusLayoutPanel } from '@/store/workspace'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
-import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
+import { findFigurePanel, getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
 import { hasAcceptedFigureExecution } from '@/store/figureSnapshotInvalidation'
 import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { registerNativeExecutionCapture } from '@/lib/nativeExecutionAdmission'
@@ -658,6 +658,10 @@ function placeNativeFigures(descriptors: CapturedFigureDescriptor[]): void {
   if (already) {
     useSelectionStore.getState().set([already.id])
     return
+  }
+  if (only.capture_source === 'ggplot2') {
+    const saved = findFigurePanel(only.asset_id)
+    if (saved && focusLayoutPanel(saved.panel.id)) return
   }
   addRuntimePanelToCanvas(only)
 }

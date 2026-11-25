@@ -7150,6 +7150,7 @@ def _open_package_stream(stream, budget):
 
 def _open_package_contents(z, doc, manifest):
     import zipfile
+    import zlib
 
     from .engine import documentpackage
 

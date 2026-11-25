@@ -12,12 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
+from .manifest_fields import marker_field, opacity_field, point_size_field
 
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
 _CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
 _LEGEND_IDENTITY_PREFIX = "r3:"
 _LINE_IDENTITY_PREFIX = "r4:"
 _COLOR_SCALE_IDENTITY_PREFIX = "r5:"
+_POINT_SERIES_IDENTITY_PREFIX = "r6:"
 
 
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
@@ -156,6 +158,10 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            point_series = element.pop("point_series", None)
+            if point_series is not None:
+                GgplotTarget.annotate_point_series(element, point_series)
+                continue
             color_scale = element.pop("color_scale", None)
             if color_scale is not None:
                 GgplotTarget.annotate_color_scale(element, color_scale)
@@ -190,6 +196,39 @@ class GgplotTarget:
             if element["gid"] != "plot.title":
                 label = element["gid"].encode("utf-8") + b"\0" + label
             element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
+
+    @staticmethod
+    def annotate_point_series(element: dict, series: dict) -> None:
+        current = series["current"]
+        original = series["original"]
+        fields = []
+        if "size" in current:
+            fields.append(point_size_field(current["size"]))
+        if "marker" in current:
+            edited = "marker" in series["edited"]
+            marker = current["marker"] if edited else "original"
+            shape = {
+                "kind": "named",
+                "name": original["marker"] if marker == "original" else marker,
+            }
+            fields.append(
+                marker_field(
+                    "marker",
+                    marker,
+                    ["original", *series["markers"]],
+                    shape,
+                    {"kind": "named", "name": original["marker"]} if edited else None,
+                    strict_options=True,
+                )
+            )
+        if "alpha" in current:
+            fields.append(opacity_field(current["alpha"]))
+        for field in fields:
+            prop = field["prop"]
+            if prop in series["edited"]:
+                field["value_original"] = "original" if prop == "marker" else original[prop]
+        element["editable"] = fields
+        element["identity"] = _POINT_SERIES_IDENTITY_PREFIX + series["context"]
 
     @staticmethod
     def annotate_color_scale(element: dict, scale: dict) -> None:
@@ -254,6 +293,10 @@ class GgplotTarget:
             if expected is not None and expected.startswith(_COLOR_SCALE_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R colour scale changed. Select it again.")
+                continue
+            if expected is not None and expected.startswith(_POINT_SERIES_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R point series changed. Select it again.")
                 continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX

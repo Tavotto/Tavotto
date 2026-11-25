@@ -108,6 +108,7 @@ ENGINE_SIBLINGS = (
     "colorbarmodel",
     "colorscale",
     "legendmodel",
+    "manifest_fields",
     "overrides",
     "manifest",
 )

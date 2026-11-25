@@ -392,6 +392,7 @@ _ENGINE_MODULES = (
     "colorscale",
     "colorbarmodel",
     "legendmodel",
+    "manifest_fields",
     "overrides",
     "manifest",
     "previewbudget",

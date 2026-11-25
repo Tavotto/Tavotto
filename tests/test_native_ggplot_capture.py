@@ -63,6 +63,7 @@ def _pdf_text_colors(path):
 PROBE = r"""
 adapter <- new.env(parent = baseenv())
 sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
+sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) {
   quit(status = 77L)
@@ -483,6 +484,7 @@ if (capabilities("cairo")) {
 PRECISION_PROBE = r"""
 adapter <- new.env(parent = baseenv())
 sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
+sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
 
@@ -509,7 +511,7 @@ stopifnot(identical(state$tick_targets[[bar]]$values, c(-12, 0, 12)),
 pre_calls <- summary_calls
 
 edits <- list()
-edits[[ticks]] <- list(format = "%.2f", major_mode = "step", major_step = 1.5)
+edits[[ticks]] <- list(format = "%.2f", major_mode = "step", major_step = 1.5, fontsize = 18)
 edits[[bar]] <- list(format = "%.1f")
 edits[[curve]] <- list(linewidth = 2.4, linestyle = "--", color = "#538E25")
 svg <- adapter$render_ggplot(state, edits)
@@ -530,8 +532,11 @@ probe <- function(table) {
   guide <- box$grobs[[which(box$layout$name == "guides")]]
   bar <- guide$grobs[[which(guide$layout$name == "bar")]]
   label <- guide$grobs[[grep("^label", guide$layout$name)]]$children[[1L]]
+  tick_source <- state$text_targets[[ticks]]
+  tick_paint <- adapter$ggplot_text_target(table, tick_source$slots, "ticks",
+                                          group_label = tick_source$label)$paint
   list(grid_x = unique(as.numeric(major$x)), line = line, points = points,
-       raster = bar$raster, label_y = as.numeric(label$y))
+       raster = bar$raster, label_y = as.numeric(label$y), tick_size = tick_paint$fontsize)
 }
 before <- probe(state$table)
 after <- adapter$with_svg_frame(frame, function(capture) {
@@ -541,6 +546,7 @@ after <- adapter$with_svg_frame(frame, function(capture) {
 view <- state$built$layout$panel_params[[1L]]$x
 stopifnot(isTRUE(all.equal(after$grid_x, view$rescale(seq(0, 6, by = 1.5)))),
           length(before$grid_x) == 4L,
+          after$tick_size == 18, before$tick_size != after$tick_size,
           identical(after$line$x, before$line$x), identical(after$line$y, before$line$y),
           identical(after$points, before$points),
           identical(after$raster, before$raster),
@@ -554,7 +560,7 @@ stopifnot(identical(adapter$render_ggplot(state), captured$svg),
           summary_calls == pre_calls)
 
 for (invalid in list(list(major_step = 0), list(major_step = 1e-300),
-                     list(major_mode = "fixed"), list(format = "%n"))) {
+                     list(major_mode = "fixed"), list(format = "%n"), list(fontsize = 0))) {
   bad <- stats::setNames(list(invalid), ticks)
   stopifnot(inherits(try(adapter$render_ggplot(state, bad), silent = TRUE), "try-error"))
 }
@@ -575,6 +581,7 @@ adapter <- new.env(parent = baseenv())
 adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
 sys.source(adapter_file, envir = adapter)
 sys.source(file.path(dirname(adapter_file), "ggplot_colour_scale.R"), envir = adapter)
+sys.source(file.path(dirname(adapter_file), "ggplot_points.R"), envir = adapter)
 if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
                 quietly = TRUE))) quit(status = 77L)
 palettes <- jsonlite::fromJSON(
@@ -627,6 +634,44 @@ stopifnot(identical(element$color_scale$limits, as.list(c(1, 5))),
           identical(adapter$render_ggplot(state), captured$svg),
           identical(adapter$render_ggplot(state, edits), svg),
           computations == calls)
+
+# The same saved document can style the series and its colour scale together.
+point_gid <- "layer.2.scatter"
+stopifnot(identical(names(state$point_targets[[point_gid]]$values),
+                    c("size", "marker", "alpha")))
+point_edit <- list(size = 64, marker = "s", alpha = .5)
+mixed <- c(edits, stats::setNames(list(point_edit), point_gid))
+scene <- adapter$with_svg_frame(state$frame_pt, function(capture) {
+  adapter$ggplot_table_for(state, mixed)
+})$value
+target <- state$point_targets[[point_gid]]
+baseline_points <- adapter$ggplot_point_grob(state$table$grobs[[target$slot]], target)
+actual_points <- adapter$ggplot_point_grob(scene$table$grobs[[target$slot]], target)
+sibling <- state$point_targets[["layer.3.scatter"]]
+sibling_points <- adapter$ggplot_point_grob(scene$table$grobs[[sibling$slot]], sibling)
+stopifnot(identical(actual_points$x, baseline_points$x),
+          identical(actual_points$y, baseline_points$y),
+          identical(actual_points$pch, 15L),
+          all(abs(actual_points$gp$fontsize - actual_points$gp$lwd - 8) < 1e-10),
+          identical(tolower(actual_points$gp$col), paste0(expected, "80")),
+          identical(tolower(sibling_points$gp$col), expected))
+point_elements <- adapter$ggplot_manifest(state, "test", mixed)$elements
+point <- Filter(function(el) el$gid == point_gid, point_elements)[[1L]]
+stopifnot(identical(point$point_series$current, point_edit),
+          !identical(point$bbox, target$bbox),
+          identical(adapter$render_ggplot(state), captured$svg),
+          computations == calls)
+point_svg <- adapter$render_ggplot(state, mixed)
+stopifnot(grepl("fill: #440154; fill-opacity: 0.50", point_svg, fixed = TRUE),
+          !identical(point_svg, svg))
+bad_point <- function(patch) stats::setNames(list(patch), point_gid)
+for (bad in list(list(size = 0), list(marker = "unknown"), list(alpha = -1))) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, bad_point(bad)), silent = TRUE), "try-error"))
+}
+mapped <- adapter$capture_ggplot(ggplot2::ggplot(data, ggplot2::aes(x, y, size = z)) +
+  ggplot2::geom_point(show.legend = FALSE), c(432, 288), palettes)$state
+mapped_points <- mapped$point_targets[["layer.1.scatter"]]
+stopifnot(is.null(mapped_points$values$size), !is.null(mapped_points$values$marker))
 
 for (bad in list(list(vmin = 6, vmax = 6), list(vmin = 10), list(vmax = Inf),
                  list(cmap = "invented"))) {
@@ -753,6 +798,23 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         manifest = baseline["manifest"]
         assert manifest["size_mm"] == pytest.approx([152.4, 101.6])
         elements = {element["gid"]: element for element in manifest["elements"]}
+        scatter = elements["layer.1.scatter"]
+        assert scatter["role"] == "scatter" and scatter["identity"].startswith("r6:")
+        assert {field["prop"] for field in scatter["editable"]} == {"size", "marker", "alpha"}
+        point_patch = {"gid": scatter["gid"], "prop": "marker", "value": "s"}
+        for invalid_point in (point_patch, {**point_patch, "identity": "r6:old-series"}):
+            with pytest.raises(pool.WorkerError, match="point series changed"):
+                session.override(stem, [invalid_point], inline_svg=True)
+        changed = session.override(
+            stem, [{**point_patch, "identity": scatter["identity"]}], inline_svg=True
+        )
+        changed_scatter = next(
+            e for e in changed["manifest"]["elements"] if e["gid"] == scatter["gid"]
+        )
+        marker = next(field for field in changed_scatter["editable"] if field["prop"] == "marker")
+        assert marker["value"] == "s" and marker["value_original"] == "original"
+        assert "<polygon " in changed["svg"] and changed["svg"] != baseline["svg"]
+        assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
         title = elements["plot.title"]
         assert title["label"] == "Fuel economy"
         assert title["identity"] == "r1:568c4e10e2a02cd8"

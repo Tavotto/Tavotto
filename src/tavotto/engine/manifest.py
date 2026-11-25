@@ -87,6 +87,7 @@ from legendmodel import (
     legend_pos_cfg,
     legend_proxy_names,
 )
+from manifest_fields import marker_field as _marker_field, opacity_field, point_size_field
 from overrides import (
     _ARROWSTYLES,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
@@ -1487,16 +1488,7 @@ def _alpha_field(artist) -> list[dict]:
     a = getattr(artist, "get_alpha", lambda: None)()
     if a is not None and hasattr(a, "shape") and getattr(a, "ndim", 0) > 0:
         return []
-    return [
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if a is None else round(float(a), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        }
-    ]
+    return [opacity_field(1.0 if a is None else round(float(a), 2))]
 
 
 #: 三个通用族。**无条件保留**——它们由 rcParams 的族列表解析，运行时一定有
@@ -2481,36 +2473,6 @@ def _marker_original(state: FigState, gid: str, prop: str, to_shape) -> dict | N
         return None
 
 
-def _marker_field(
-    prop: str,
-    value: str,
-    options: list[str],
-    shape: dict | None,
-    original: dict | None = None,
-    **extra,
-) -> dict:
-    """marker 这一族 enum 字段的唯一构造处（曲线 / 散点 / 茎叶 / 图例示意）。
-
-    `marker_current` 是**只读事实**，不是 override 的落点：`value` 说的是
-    「用户选中的是哪个取值」，它说的是「图上此刻画的是什么形状」。有
-    override 时它自然就是 override 之后的形状——manifest 本来就是渲染态。
-
-    `marker_original` 是同一套五档结构的第二个只读事实：**override 之前**
-    那个形状。**没有 override 时它整个不出现**——缺席的含义就是「与
-    `marker_current` 相同」，前端不用再判一次「改没改过」。
-
-    引擎说不出形状时**这两个键都整个不出现**：「不知道」与「这个对象没有
-    标记」（`{"kind": "none"}`）是两个不同的答案，合并进同一档的话老引擎发来
-    的清单会被读成「图上没有标记」。
-    """
-    field = {"prop": prop, "type": "enum", "value": value, "options": options, **extra}
-    if shape is not None:
-        field["marker_current"] = shape
-    if original is not None:
-        field["marker_original"] = original
-    return field
-
-
 def _line_fields(ln, state: FigState, gid: str) -> list[dict]:
     lab = str(ln.get_label())
     marker = str(ln.get_marker())
@@ -2730,17 +2692,7 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
             )
     if "sizes" in caps:
         sizes = collection_sizes(coll)
-        fields.append(
-            {
-                "prop": "size",
-                "type": "number",
-                "value": round(float(np.mean(sizes)), 1) if len(sizes) else 20.0,
-                "min": 1,
-                "max": 400,
-                "step": 1,
-                "unit": "pt²",
-            }
-        )
+        fields.append(point_size_field(round(float(np.mean(sizes)), 1) if len(sizes) else 20.0))
     if "marker" in caps:
         # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径。
         # **`"original"` 说不出形状**——它是「继承脚本」这一档，不是一个图形。

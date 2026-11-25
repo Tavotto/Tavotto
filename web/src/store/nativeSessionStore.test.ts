@@ -17,11 +17,12 @@ import {
   type NativeSessionInfo,
   type NativeSessionState,
 } from '@/lib/api'
-import { addRuntimePanelToCanvas } from '@/store/workspace'
+import { addRuntimePanelToCanvas, focusLayoutPanel } from '@/store/workspace'
 import { setCurrentProjectId } from '@/lib/session'
 import { beginRestore, resetRestoreGateForTests, settleRestore, useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { registerFigureExecutionConsumer } from '@/lib/figureExecutionEvents'
+import type { PanelObject } from '@/types/document'
 import { nativePanelState, sortSessions, useNativeSessionStore } from './nativeSessionStore'
 
 vi.mock('@/lib/api', async (orig) => {
@@ -43,7 +44,7 @@ vi.mock('@/lib/api', async (orig) => {
   }
 })
 
-vi.mock('@/store/workspace', () => ({ addRuntimePanelToCanvas: vi.fn() }))
+vi.mock('@/store/workspace', () => ({ addRuntimePanelToCanvas: vi.fn(), focusLayoutPanel: vi.fn() }))
 // These tests cover entry admission; replay deduplication belongs to the snapshot coordinator.
 vi.mock('./figureSnapshotInvalidation', () => ({ hasAcceptedFigureExecution: () => false }))
 const acceptedExecution = vi.fn()
@@ -700,6 +701,32 @@ describe('屏障 → build → 图进画布', () => {
     })
     store().applyEvent(session({ state: 'barrier', sequence: 4 }))
     await vi.waitFor(() => expect(store().conflicts[`native-${ID}`]).toEqual(['Fig1']))
+  })
+
+  it('reuses the saved ggplot panel on another canvas after starting its script again', async () => {
+    const figure = { ...desc('ggplot2-identified'), asset_id: 'runtime:plot.R#ggplot2-identified',
+      script: 'plot.R', capture_source: 'ggplot2' } satisfies CapturedFigureDescriptor
+    const doc = useDocumentStore.getState()
+    const saved: PanelObject = {
+      id: 'saved-r-figure', type: 'panel', fileId: figure.asset_id, fileKind: 'runtime',
+      x: 3, y: 6, w: 64, h: 38, nativeW: 100, nativeH: 80,
+      overrides: [{ gid: 'layer.1.scatter', prop: 'size', value: 81 }],
+    }
+    const oldCanvases = doc.canvases
+    useDocumentStore.setState({ canvases: [...oldCanvases, {
+      ...doc.doc, id: 'other-canvas', name: 'Saved R plot', objects: [structuredClone(saved)],
+    }] })
+    try {
+      vi.mocked(focusLayoutPanel).mockReturnValue(true)
+      const barrier = session({ capture_source: 'ggplot2', owner: 'desktop', state: 'barrier', sequence: 4 })
+      mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [figure] })
+      store().applyEvent(barrier)
+      await vi.waitFor(() => expect(focusLayoutPanel).toHaveBeenCalledExactlyOnceWith(saved.id))
+      expect(mockAddPanel).not.toHaveBeenCalled()
+      expect(useDocumentStore.getState().canvases.at(-1)?.objects).toEqual([saved])
+    } finally {
+      useDocumentStore.setState({ canvases: oldCanvases })
+    }
   })
 
   it('build 失败不改变会话状态（那归 SSE 管），只记一条原因', async () => {

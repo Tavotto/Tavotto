@@ -117,6 +117,7 @@ _PHASE2 = (
     "colorscale",
     "colorbarmodel",
     "legendmodel",
+    "manifest_fields",
     "overrides",
     "manifest",
     "previewbudget",

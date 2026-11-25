@@ -225,8 +225,10 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
         params <- guides$params[[matches]]
         values <- ggplot_numeric_key(params, target)
         if (!is.null(values)) {
+          size <- target$paint$fontsize * ggplot_text_cex(target$paint)
           result[[gid]] <- list(kind = "axis", index = matches, values = values,
-                                spacing = ggplot_axis_spacing(built, panel, params, values))
+                                spacing = ggplot_axis_spacing(built, panel, params, values),
+                                size = if (is_positive_ggplot_number(size)) size)
         }
       }
     } else if (target$role == "legend_text" && target$legend_title %in% colourbar_titles) {
@@ -321,7 +323,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit) {
   list(panel = panel, params = ggplot_format_guide(params, format, values))
 }
 
-ggplot_guide_table <- function(state, edits, colour_edits) {
+ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes) {
   built <- state$built
   plot <- built$plot
   layout <- ggplot_clone(built$layout)
@@ -350,6 +352,18 @@ ggplot_guide_table <- function(state, edits, colour_edits) {
       }
       guide_params[[index]] <- ggplot_format_guide(guide_params[[index]], edit$format, values)
     }
+  }
+  for (gid in names(axis_sizes)) {
+    size <- axis_sizes[[gid]]
+    if (!is_positive_ggplot_number(size) || size < 3 || size > 200) {
+      stop("The native R tick font size must be between 3 and 200 points.")
+    }
+    index <- state$tick_targets[[gid]]$index
+    position <- strsplit(gid, ".", fixed = TRUE)[[1L]][2:3]
+    element <- paste(c("axis.text", position), collapse = ".")
+    patch <- do.call(ggplot2::theme, stats::setNames(list(ggplot2::element_text(size = size)), element))
+    theme <- axis_params[[index]]$theme
+    axis_params[[index]]$theme <- if (is.null(theme)) patch else theme + patch
   }
   if (length(panels) == 1L) {
     panels[[1L]]$guides <- ggplot_clone(panels[[1L]]$guides, params = axis_params)
@@ -689,6 +703,10 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     line_targets <- ggplot_line_targets(built, table, captured_layers$grobs)
     line_geometry <- measure_ggplot_lines(table, line_targets, frame_pt)
     line_targets <- line_targets[names(line_geometry)]
+    point_targets <- ggplot_point_targets(built, table, captured_layers$grobs)
+    point_boxes <- measure_ggplot_points(table, point_targets, frame_pt)
+    point_targets <- point_targets[names(point_boxes)]
+    for (gid in names(point_targets)) point_targets[[gid]]$bbox <- point_boxes[[gid]]
     legend_targets <- ggplot_legend_boxes(table)
     legend_boxes <- measure_ggplot_legends(legend_targets, frame_pt)
     legend_targets <- legend_targets[!vapply(legend_boxes, is.null, logical(1L))]
@@ -703,6 +721,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       layer_grobs = if (length(tick_targets) || length(colour_scales)) captured_layers$grobs,
       line_targets = line_targets,
       line_geometry = line_geometry,
+      point_targets = point_targets,
       legend_targets = legend_targets,
       layers = built$data,
       panel_ranges = lapply(built$layout$panel_params, function(panel) {
@@ -740,6 +759,11 @@ is_positive_ggplot_number <- function(value) {
 
 ggplot_text_cex <- function(paint) {
   if (is.null(paint$cex)) 1 else paint$cex
+}
+
+ggplot_text_edit <- function(edit, tick) {
+  guide_props <- if (is.null(tick$size)) ggplot_tick_props else c(ggplot_tick_props, "fontsize")
+  edit[setdiff(names(edit), guide_props)]
 }
 
 ggplot_text_paint <- function(target, edits) {
@@ -825,9 +849,12 @@ ggplot_table_for <- function(state, edits) {
   legend_targets <- state$legend_targets
   stops <- NULL
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
+  axis_sizes <- Filter(Negate(is.null), lapply(names(edits), function(gid) {
+    if (!is.null(state$tick_targets[[gid]]$size)) edits[[gid]]$fontsize
+  }) |> stats::setNames(names(edits)))
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
-  if (length(tick_edits) || length(colour_edits)) {
-    guides <- ggplot_guide_table(state, tick_edits, colour_edits)
+  if (length(tick_edits) || length(colour_edits) || length(axis_sizes)) {
+    guides <- ggplot_guide_table(state, tick_edits, colour_edits, axis_sizes)
     table <- guides$table
     stops <- guides$stops
     if (!identical(table$layout$name, state$table$layout$name)) {
@@ -843,6 +870,10 @@ ggplot_table_for <- function(state, edits) {
       if (is.null(current) || !identical(target$label, current$label) ||
           (!changes_ticks && !identical(target$tick_labels, current$tick_labels))) {
         stop("The native R text layout changed while formatting.")
+      }
+      size <- axis_sizes[[gid]]
+      if (!is.null(size) && !isTRUE(all.equal(size, current$paint$fontsize * ggplot_text_cex(current$paint)))) {
+        stop("The native R axis guide did not apply the requested font size.")
       }
       target[names(current)] <- current
       text_targets[[gid]] <- target
@@ -863,6 +894,11 @@ ggplot_table_for <- function(state, edits) {
       table <- ggplot_edit_line(table, line, edits[[gid]])
       next
     }
+    points <- state$point_targets[[gid]]
+    if (!is.null(points)) {
+      table <- ggplot_edit_points(table, points, edits[[gid]])
+      next
+    }
     legend <- legend_targets[[gid]]
     if (!is.null(legend)) {
       box <- table$grobs[[legend$slot]]
@@ -873,7 +909,7 @@ ggplot_table_for <- function(state, edits) {
     }
     target <- text_targets[[gid]]
     if (is.null(target)) stop("The requested native R text is unavailable.")
-    patch <- edits[[gid]][setdiff(names(edits[[gid]]), ggplot_tick_props)]
+    patch <- ggplot_text_edit(edits[[gid]], state$tick_targets[[gid]])
     if (!length(patch)) next
     paint <- ggplot_text_paint(target, patch)$paint
     if (!is.null(patch$fontsize)) original <- table$grobs[[target$slots[[1L]]]]$children[[1L]]
@@ -973,6 +1009,7 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
                   measure_ggplot_colour_scales(scene$table, state$colour_scales, frame_pt)
                 },
                 scale_stops = scene$stops,
+                points = measure_ggplot_points(scene$table, state$point_targets, frame_pt),
                 lines = measure_ggplot_lines(scene$table, state$line_targets, frame_pt)))
   }
   invisible(NULL)
@@ -986,6 +1023,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
                       logical(1L))) ||
     any(names(edits) %in% c(legend_gids, names(state$colour_scales)))
   line_edits <- any(names(edits) %in% names(state$line_targets))
+  point_edits <- any(names(edits) %in% names(state$point_targets))
   if (reflow) {
     geometry_gids <- names(state$text_targets)
   } else {
@@ -995,7 +1033,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     if (length(measured$text) != length(state$text_targets)) {
       stop("The native R text could not be measured in the PNG.")
     }
-  } else if (reflow || length(geometry_gids) || line_edits) {
+  } else if (reflow || length(geometry_gids) || line_edits || point_edits) {
     measured <- with_svg_frame(state$frame_pt, function(capture) {
       grid::grid.newpage()
       scene <- ggplot_table_for(state, edits)
@@ -1006,6 +1044,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
              measure_ggplot_colour_scales(scene$table, state$colour_scales, state$frame_pt)
            },
            scale_stops = scene$stops,
+           points = if (reflow || point_edits) {
+             measure_ggplot_points(scene$table, state$point_targets, state$frame_pt)
+           },
            lines = if (reflow || line_edits) {
              measure_ggplot_lines(scene$table, state$line_targets, state$frame_pt)
            })
@@ -1017,13 +1058,13 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
     edit <- edits[[gid]]
-    patch <- edit[setdiff(names(edit), ggplot_tick_props)]
+    tick <- state$tick_targets[[gid]]
+    patch <- ggplot_text_edit(edit, tick)
     color <- if (is.null(patch$color)) target$color else patch$color
     painted <- ggplot_text_paint(target, patch)
     face <- painted$face
     bbox <- if (is.null(measured$text[[gid]])) target$bbox else measured$text[[gid]]$bbox
     editable <- list(list(prop = "color", type = "color", value = color))
-    tick <- state$tick_targets[[gid]]
     if (!is.null(tick)) {
       field <- list(prop = "format", type = "enum", value = if (is.null(edit$format)) "auto" else edit$format,
                     options = as.list(ggplot_number_formats), strict_options = TRUE)
@@ -1047,12 +1088,13 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (!is.null(patch[[prop]])) field$value_original <- target$face[[prop]]
       editable[[length(editable) + 1L]] <- field
     }
-    if (!is.null(target$title_dimension)) {
-      value_original <- round(target$paint$fontsize * ggplot_text_cex(target$paint), 2)
-      fontsize <- round(painted$paint$fontsize * ggplot_text_cex(painted$paint), 2)
+    if (!is.null(target$title_dimension) || !is.null(tick$size)) {
+      native_size <- if (is.null(tick$size)) target$paint$fontsize * ggplot_text_cex(target$paint) else tick$size
+      value_original <- round(native_size, 2)
+      fontsize <- if (is.null(edit$fontsize)) value_original else round(edit$fontsize, 2)
       field <- list(prop = "fontsize", type = "number", value = fontsize,
                     min = 3, max = 200, step = 0.5, unit = "pt")
-      if (!is.null(patch$fontsize)) field$value_original <- value_original
+      if (!is.null(edit$fontsize)) field$value_original <- value_original
       editable[[length(editable) + 1L]] <- field
     }
     element <- list(
@@ -1102,5 +1144,6 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     ggplot_colour_scale_elements(state, edits, measured$colour_scales, measured$scale_stops)
   }
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
-       elements = c(legends, elements, lines, colour_scales))
+       elements = c(legends, elements, lines,
+                    ggplot_point_elements(state, edits, measured$points), colour_scales))
 }
