@@ -361,8 +361,19 @@ def test_min_font_size_only_lifts_text_below_the_floor(tmp_path):
 
 
 # ------------------------------ 缩小宽度 --------------------------------------
+#: `SCRIPT_TWO` 但左图 y 轴下方多留一段空白：右下角的图例离误差棒的墨迹远（不在边界上）。
+#: 「缩宽度只动子图落位」这条要的是确定的结论：原图的图例缩到 120 mm 后离橙色误差棒只差一点，
+#: 压没压上随 matplotlib 版本的 tight_layout 落位而变（3.8 不压、3.11 压上——#2140 的 3.10 腿），
+#: 那是另一件事（图例被挪开见 `test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly`）。
+SCRIPT_TWO_ROOMY = SCRIPT_TWO.replace(
+    '    ax1.legend(loc="lower right", frameon=False)',
+    '    ax1.set_ylim(-0.9, 1.1)\n    ax1.legend(loc="lower right", frameon=False)',
+)
+assert SCRIPT_TWO_ROOMY != SCRIPT_TWO
+
+
 def test_shrinking_width_keeps_structure_and_adapts_margins_within_budget(tmp_path):
-    project = _project(tmp_path, "two", SCRIPT_TWO, "Two")
+    project = _project(tmp_path, "two", SCRIPT_TWO_ROOMY, "Two")
     sid = _open(project, "Two")
     out = bridge.normalize_figure(
         sid,
@@ -380,6 +391,10 @@ def test_shrinking_width_keeps_structure_and_adapts_margins_within_budget(tmp_pa
     assert v["budget"]["over"] == [] and 0 < v["budget"]["max_edge_shift_mm"] <= 0.15 * 120
     assert {a["gid"] for a in out["adjustments"]} == {"axes_0", "axes_1"}
     assert all(a["prop"] == "position" for a in out["adjustments"])
+    # 图例离数据远：哪一轮都没有「图例压数据」
+    assert not any(
+        b["id"] == "legend-over-data" for r in out["rounds"] for b in r.get("blocking") or []
+    )
     assert _visible_inside(out["manifest"])
     # 两个子图仍并排、各自的图例仍在自己子图里
     man = out["manifest"]
@@ -435,7 +450,7 @@ def test_manual_layout_only_gets_bounded_margin_adjustments(tmp_path):
 
 # ------------------------------ 检测与正确退出 --------------------------------
 def test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly(tmp_path):
-    """150 → 80 mm、字号不许缩：装饰物装得下，但图例在自己子图的八个预设位置都压数据。
+    """150 → 80 mm、字号不许缩：装饰物装得下，但左图图例在自己子图的八个预设位置都压着东西。
     退出，会话回到 B0，磁盘上什么都没多出来。"""
     project = _project(tmp_path, "two", SCRIPT_TWO, "Two")
     sid = _open(project, "Two")
@@ -472,9 +487,12 @@ def test_new_collisions_are_detected_and_an_unsolvable_width_exits_cleanly(tmp_p
         for b in left
         if b["id"] == "element-outside-figure"
     )
-    # 没有一个预设位置让图例干干净净：一条图例调整都不许记成「已做的局部调整」
-    # （换到一个还在压别的东西的位置不叫修好，只是把问题换了个地方）
-    assert not any(a["prop"] == "loc" for a in out["adjustments"])
+    # 还挡着事务的那个图例：没有一个预设位置让它干干净净，它的调整不许记成「已做的局部调整」
+    # （换到一个还在压别的东西的位置不叫修好，只是把问题换了个地方）。另一个图例找得到干净位置
+    # 时可以有（V-011 图例一侧按真实挡住的东西判之后，右图图例就是这样）
+    stuck = {g for b in left for g in b["gids"] if g.endswith(".legend")}
+    assert stuck
+    assert not any(a["prop"] == "loc" and a["gid"] in stuck for a in out["adjustments"])
     assert out["rolled_back"] is True
     s = bridge.get_session(sid)
     assert s.patches == [] and s.patch_hash() == b0_hash

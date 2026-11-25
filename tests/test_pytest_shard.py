@@ -308,6 +308,30 @@ def test_weights_from_junit_sums_time_per_file_and_maps_classnames(tmp_path):
     }
 
 
+def test_weights_from_junit_maps_a_collection_level_entry_by_its_name(tmp_path):
+    # 3.10 上 tests/test_mcp_registry.py 整模块 importorskip（没有 tomllib），pytest 在 junit 里
+    # 记 `<testcase classname="" name="tests.test_mcp_registry">`：classname 空、模块在 name 里。
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_skipped_module.py").write_text("", encoding="utf-8")
+    xml = tmp_path / "junit.xml"
+    xml.write_text(
+        '<testsuites><testsuite><testcase classname="" name="tests.test_skipped_module" time="0.000">'
+        '<skipped message="collection skipped"/></testcase></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+    assert shard.weights_from_junit([xml], tmp_path) == {"tests/test_skipped_module.py": 0.0}
+
+
+def test_weights_from_junit_refuses_an_empty_classname_whose_name_maps_to_no_file(tmp_path):
+    xml = tmp_path / "junit.xml"
+    xml.write_text(
+        '<testsuites><testsuite><testcase classname="" name="tests.test_gone" time="0"/></testsuite></testsuites>',
+        encoding="utf-8",
+    )
+    with pytest.raises(shard.ShardError, match="对不回"):
+        shard.weights_from_junit([xml], tmp_path)
+
+
 def test_weights_from_junit_refuses_a_classname_that_maps_to_no_file(tmp_path):
     xml = tmp_path / "junit.xml"
     xml.write_text(

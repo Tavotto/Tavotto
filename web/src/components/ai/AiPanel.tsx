@@ -68,6 +68,9 @@ import { currentProjectId } from '@/lib/session'
 import { holdAssistantTabForNextSelection } from '@/hooks/useSelectionRouting'
 import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
+import { ChangePlanDialog } from '../changePlan/ChangePlanDialog'
+import { ChangePlanTranscript } from '../changePlan/ChangePlanTranscript'
+import { useHasChangePlans } from '../changePlan/usePlanFigure'
 import { DataFigureForm } from './DataFigureForm'
 
 export { TaskHistory }
@@ -444,6 +447,7 @@ function AssistantPanelBody() {
 
   // 「从数据出图」的轮次不属于任何面板（它新建脚本）：无论选没选图都在对话里，按发起时间与本面板的轮次合排
   const dataTurns = sessions.filter(isDataFigureSession)
+  const hasPlans = useHasChangePlans(panel?.id)
   const mine = panel ? sessions.filter((s) => isSessionOf(s, panel)) : []
   const turns = dataTurns.length
     ? [...mine, ...dataTurns].sort((a, b) => a.startedAt - b.startedAt)
@@ -711,6 +715,7 @@ function AssistantPanelBody() {
   const suggestions = panel ? chipsFor(scope, element, !!axes) : []
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <ChangePlanDialog />
       {/* 面板顶部只剩历史：作用目标挪到了输入框上方的上下文带（§6.5） */}
       <div className={cn('flex shrink-0 items-center px-3 pb-1', tafEnabled ? 'justify-between' : 'justify-end')}>
         {/* 「从数据出图」（TAF 实验开关后面）：开关关着时整个不渲染，这一行与以前逐字相同（只剩右侧的历史钮） */}
@@ -737,10 +742,10 @@ function AssistantPanelBody() {
           className="h-full overflow-y-auto px-3 pt-2"
           style={{ paddingBottom: 'calc(var(--composer-h, 0px) + 8px)' }}
         >
-          {!panel && dataTurns.length === 0 ? (
+          {!panel && dataTurns.length === 0 && !hasPlans ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <NoPanelState />
-          ) : turns.length > 0 ? (
+          ) : turns.length > 0 || hasPlans ? (
             // 节奏由列表容器统一管（§6.1）：轮与轮 16、轮内各块 8；子组件不带外边距
             <div
               ref={contentRef}
@@ -759,6 +764,7 @@ function AssistantPanelBody() {
                   onRetryStalled={isDataFigureSession(s) || s.panelId !== panel?.id ? undefined : (t) => void retryStalled(t)}
                 />
               ))}
+              {panel && <ChangePlanTranscript panelId={panel.id} />}
             </div>
           ) : (
             /* 还没发过任务：中间是空态 + 至多三条可点的示例提示（§6.7）——点一下填进输入框，改完再发 */

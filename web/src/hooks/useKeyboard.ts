@@ -43,6 +43,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
+import { setChangePlanUndoRunner } from '@/store/changePlanStore'
 import { setQuickLayoutUndoRunner } from '@/store/quickLayoutActions'
 import { canNudgeGap, nudgePathTextGap } from '@/store/pathTextActions'
 
@@ -190,6 +191,8 @@ export function runUndoRedo(redo: boolean) {
 
 // 一键排版胶囊上的「撤销」（ADR 0199 §七）：那一处不能 import 本模块（成环），在这里交进去
 setQuickLayoutUndoRunner(() => runUndoRedo(false))
+// 修改方案卡上的「撤销」（ADR 0206）：同一个入口，同样在这里交进去（store 不能反过来 import 本模块）
+setChangePlanUndoRunner(() => runUndoRedo(false))
 
 export function useKeyboard() {
   useEffect(() => {

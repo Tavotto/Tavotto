@@ -2241,12 +2241,12 @@
       "cancel": "取消"
     },
     "license": {
-      "label": "高级版",
+      "label": "{{pro}}",
       "none": "还没激活",
       "until": "有效期至 {{date}}",
       "codeLabel": "激活码",
       "state": {
-        "expired": "已于{{date}}到期",
+        "expired": "已于 {{date}} 到期",
         "revoked": "这份授权已失效",
         "lapsed": "需要联网确认一下授权"
       },
@@ -2258,7 +2258,8 @@
         "refresh": "现在确认",
         "renew": "续费",
         "retry": "再试一次",
-        "cancel": "取消"
+        "cancel": "取消",
+        "renewed": "我已续费"
       },
       "failure": {
         "invalid_code": "激活码不对，核对一下再试",
@@ -2272,8 +2273,8 @@
         "client_error": "没能完成，请稍后再试"
       },
       "lock": {
-        "tip": "高级版功能，点一下了解",
-        "aria": "高级版功能，了解高级版"
+        "tip": "{{pro}} 功能，点一下了解",
+        "aria": "{{pro}} 功能，了解 {{pro}}"
       },
       "releaseTitle": "解绑后可以在另一台电脑上激活",
       "plate": {
@@ -2285,7 +2286,8 @@
         "rename": "重新刻名",
         "turnTitle": "拖一下可以翻面",
         "issued": "ISSUED ON"
-      }
+      },
+      "open": "{{pro}} 与激活"
     }
   },
   "style": {
@@ -2943,6 +2945,52 @@
     "shareNote": "拿到链接可查看和留言 · {{date}}失效",
     "privacyFoot": "只上传画面，脚本和数据不出本机",
     "dailyNew": "每天可新建 1 个",
-    "notePlaceholder": "给审阅者的话（选填）…"
+    "notePlaceholder": "给审阅者的话（选填）…",
+    "changePlan": {
+      "pill": "交给 Agent 修改",
+      "pillTip": "让 Agent 按这些意见改一版，改好之前不会动你的图",
+      "pillUpdate": "更新到同一链接",
+      "pillUpdateTip": "新版还没发到审阅链接，点一下更新，链接不变",
+      "pillUpdated": "链接已更新",
+      "resolveFailed": "没能把意见标成已处理",
+      "resolveRetry": "重试",
+      "draftLabel": "回复草稿",
+      "draftHint": "点发送才会回复给审阅者"
+    }
+  },
+  "pro": {
+    "title": "{{pro}}",
+    "tier": {
+      "label": "类型",
+      "year": "年度通行证",
+      "season": "投稿季通行证",
+      "sprint": "冲刺月通行证",
+      "team": "课题组通行证"
+    },
+    "days": {
+      "label": "剩余天数",
+      "value": "{{count}} 天"
+    },
+    "devices": {
+      "label": "电脑",
+      "value": "已用 {{used}} / {{limit}} 台"
+    },
+    "usage": {
+      "title": "用量",
+      "expired": "续费后恢复",
+      "unknown": "用量暂不可用",
+      "nearEnd": "快用完了，用完后会改用你自己的连接",
+      "agentBar": "{{name}} 本期已用",
+      "used": "已用 {{pct}}%"
+    },
+    "review": {
+      "label": "外部审阅",
+      "left_other": "今天还可新建 {{count}} 个链接"
+    },
+    "pass": "通行证",
+    "learn": {
+      "line": "{{pro}} 包含内置 AI 与更多外部审阅额度",
+      "link": "了解 {{pro}}"
+    }
   }
 }

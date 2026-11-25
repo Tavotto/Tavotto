@@ -7,7 +7,8 @@ import { Select } from '@/components/ui/Select'
 import { draftClearJournal, draftPickJournal, draftPickV2Only, specParts } from '@/lib/dataFigureSpec'
 import { journalCatalogUi } from '@/lib/journalUi'
 import { currentProjectId } from '@/lib/session'
-import { dataFigureEpoch, overviewKeyOf, useDataFigureStore, type RoleKey } from '@/store/dataFigureStore'
+import { previewOf } from '@/lib/dataFigureAdapter'
+import { dataFigureEpoch, overviewKeyOf, useDataFigureStore, type ConfirmKey, type RoleKey } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useJournalV2Store } from '@/store/journalV2Store'
@@ -37,6 +38,13 @@ function draftTarget(ref: JournalPickTarget['ref']): JournalPickTarget {
   }
 }
 
+/** 标签放不下就截断、悬停看全（英文标签比列宽长时不撑高行） */
+const rowLabel = (text: string) => (
+  <span className="block truncate" title={text}>
+    {text}
+  </span>
+)
+
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1)
 /** 「不要横轴 / 不分组」的取值：不会和任何列名撞（列名里不会有控制字符） */
 const NONE = '\u0000none'
@@ -64,6 +72,12 @@ export function DataPanel() {
   const journalRef = useDataFigureStore((s) => s.specBinding?.journalRef)
   const figureStyle = useDataFigureStore((s) => s.figureStyle)
   const target = useMemo(() => draftTarget(journalRef), [journalRef])
+  const candidates = useDataFigureStore((s) => s.candidates)
+  const thumbs = useDataFigureStore((s) => s.thumbs)
+  const previewKey = useDataFigureStore((s) => s.previewKey)
+  const errorConfirmed = useDataFigureStore((s) => s.errorConfirmed)
+  const designAsked = useDataFigureStore((s) => s.designAsked)
+  const answers = useDataFigureStore((s) => s.answers)
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
   // 合画：概览只有第一份的，行列数不代表整组，不显示
@@ -82,6 +96,33 @@ export function DataPanel() {
         })
         .join(' · ')
     : ''
+  // 「需要你确认」：事实在后端（候选带 `error`、响应带 `error_confirmed`、`defaults` 里有 `pick_design`），这里只翻译成行。
+  // 误差线看的是**此刻预览的那一张**；重复测量一旦问过就留着（确认后后端不再问，但那一行要能再改）
+  const shownCand = previewOf(candidates, thumbs, previewKey)
+  const errKind = shownCand?.error ?? null
+  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error))
+  const designDone = answers.design === 'independent' || answers.design === 'repeated'
+  const pendingError = errKind != null && !errorDone
+  const pendingDesign = designAsked && !designDone
+  const confirm = (key: ConfirmKey) => (v: string) => useDataFigureStore.getState().setConfirm(key, v)
+  const optLabel = (v: string) => t(`dataFigureV2.confirm.option.${v}`)
+  /** 一行确认项：待确认时控件是空值 + 把当前取值写在触发器上（选任何一项，包括仍选当前这个，才算确认） */
+  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean) => (
+    <div key={key} data-data-role={key} className="contents">
+      <Row label={rowLabel(t(`dataFigureV2.confirm.${key}`))} labelWidth={LABEL_W}>
+        <Select
+          value={done ? now : ''}
+          disabled={busy}
+          ariaLabel={t(`dataFigureV2.confirm.${key}`)}
+          onChange={confirm(key)}
+          options={kinds.map((k) => ({ value: k, label: optLabel(k) }))}
+          title={optLabel(now)}
+          // 待确认时值是空的（选「当前这个」也要算一次选择），当前取值写在占位上
+          placeholder={done ? undefined : optLabel(now)}
+        />
+      </Row>
+    </div>
+  )
   const asOptions = (list: string[], none?: string) => [...(none ? [{ value: NONE, label: none }] : []), ...list.map((c) => ({ value: c, label: c }))]
   return (
     <div data-data-panel className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-2">
@@ -116,11 +157,11 @@ export function DataPanel() {
       </header>
       {journalCatalogUi() && (
         <div data-data-role="journal" className="mb-3 flex flex-col gap-1">
-          <Row label={t('journal.title', { ns: 'dialogs' })} labelWidth={LABEL_W}>
+          <Row label={rowLabel(t('journal.title', { ns: 'dialogs' }))} labelWidth={LABEL_W}>
             <JournalPicker target={target} triggerClassName={fieldBoxTrigger} disabled={busy} />
           </Row>
           {figureStyle && (
-            <p data-data-spec className="pl-[calc(44px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
+            <p data-data-spec className="pl-[calc(56px+1rem)] text-xs text-balance text-ink-3 tabular-nums">
               {t('dataFigureV2.spec.line', {
                 parts: specParts(figureStyle)
                   .map((p) => t(`dataFigureV2.spec.${p.key}`, p.values))
@@ -134,7 +175,7 @@ export function DataPanel() {
         <div data-data-roles className="flex flex-col gap-1">
           {roles.options.x.length > 0 && (
             <div data-data-role="x" className="contents">
-              <Row label={t('dataFigureV2.panel.x')} labelWidth={LABEL_W}>
+              <Row label={rowLabel(t('dataFigureV2.panel.x'))} labelWidth={LABEL_W}>
                 <Select
                   value={roles.x ?? NONE}
                   disabled={busy}
@@ -147,7 +188,7 @@ export function DataPanel() {
           )}
           {roles.options.y.length > 0 && (
             <div data-data-role="y" className="contents">
-              <Row label={t('dataFigureV2.panel.y')} labelWidth={LABEL_W}>
+              <Row label={rowLabel(t('dataFigureV2.panel.y'))} labelWidth={LABEL_W}>
                 <Select
                   value={roles.y ?? ''}
                   disabled={busy}
@@ -162,7 +203,7 @@ export function DataPanel() {
           )}
           {roles.options.group.length > 0 && (
             <div data-data-role="group" className="contents">
-              <Row label={t('dataFigureV2.panel.group')} labelWidth={LABEL_W}>
+              <Row label={rowLabel(t('dataFigureV2.panel.group'))} labelWidth={LABEL_W}>
                 <Select
                   value={roles.group ?? NONE}
                   disabled={busy}
@@ -173,6 +214,17 @@ export function DataPanel() {
               </Row>
             </div>
           )}
+          {errorDone && confirmRow('error', ERROR_KINDS, isErrorKind(answers.error) ? answers.error : errKind!, true)}
+          {designAsked && designDone && confirmRow('design', DESIGNS, String(answers.design), true)}
+        </div>
+      )}
+      {(pendingError || pendingDesign) && (
+        <div data-data-confirm className="mt-3 flex flex-col gap-1">
+          <p data-data-confirm-title className="flex h-6 items-center type-caption">
+            {t('dataFigureV2.confirm.title')}
+          </p>
+          {pendingError && confirmRow('error', ERROR_KINDS, errKind!, false)}
+          {pendingDesign && confirmRow('design', DESIGNS, 'unsure', false)}
         </div>
       )}
       {mixed && count > 0 && (
@@ -197,4 +249,9 @@ export function DataPanel() {
   )
 }
 
-const LABEL_W = 44
+/** 标签列宽：放得下「重复测量」四个字（12px 字约 48px）；所有行同一个宽度，控件左缘对齐 */
+const LABEL_W = 56
+
+const ERROR_KINDS = ['sd', 'sem', 'ci95'] as const
+const DESIGNS = ['unsure', 'independent', 'repeated'] as const
+const isErrorKind = (v: unknown): v is (typeof ERROR_KINDS)[number] => typeof v === 'string' && (ERROR_KINDS as readonly string[]).includes(v)

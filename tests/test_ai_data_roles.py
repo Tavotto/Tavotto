@@ -760,7 +760,12 @@ def test_only_propose_and_the_model_pair_reach_the_model_modules():
         for mod in ("ai_structured", "ai_data_model", "ai_data_roles"):
             if mod in imp and path.name not in (f"{mod}.py",):
                 users.setdefault(mod, []).append(path.name)
-    assert sorted(users["ai_structured"]) == ["ai_data_model.py", "ai_data_roles.py"]
+    # `changeplan.py`（ADR 0206 修订 2026-11-24）：修改方案走同一个无工具单轮入口，是第二个、也是目前唯一的非数据出图调用方
+    assert sorted(users["ai_structured"]) == [
+        "ai_data_model.py",
+        "ai_data_roles.py",
+        "changeplan.py",
+    ]
     assert sorted(users["ai_data_model"]) == ["ai_data_roles.py"]
     assert sorted(users["ai_data_roles"]) == ["ai_data_propose.py", "app.py"]
 

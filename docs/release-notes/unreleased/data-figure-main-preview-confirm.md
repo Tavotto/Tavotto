@@ -1,0 +1,3 @@
+## "Draw from data" shows one large preview, says what it was drawn from, and asks what it cannot know
+
+In the experimental "draw from data" page (still off by default), the four-tile grid is replaced by one large preview with a row of small chart types underneath. Switching between them only changes the preview; nothing is created until you press "Create editable figure". A line under the preview states what the figure was drawn from, for example how many groups and values, and how many rows were left out and why. A new "Needs your confirmation" group in the right-hand panel lists the things only you can know: what the error bars show (standard deviation, standard error or 95% confidence interval) and whether the rows are repeated measurements of the same samples.
