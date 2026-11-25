@@ -1951,7 +1951,7 @@
     "retry": "Try again",
     "title": {
       "chartSource": "The chart source for “{{name}}” is missing or damaged.",
-      "choose": "Found a few layouts on this computer — pick one to open.",
+      "choose": "Found a few layouts — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",
       "missing": "The last layout “{{name}}” wasn’t found.",
