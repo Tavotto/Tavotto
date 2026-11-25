@@ -391,34 +391,3 @@ def test_empty_stores_do_not_crowd_out_the_real_one(client, tmp_path, monkeypatc
     r = client.get("/api/layout-session/project-history", headers=_h(a)).get_json()
     assert [i["doc_id"] for i in r["items"]] == ["d_zz_real"]
     assert r["truncated"] is False
-
-
-def test_candidates_report_figure_counts(client, tmp_path):
-    """恢复卡区分同名候选用的「几张图」：按面板数（文字 / 形状不算），项目内候选与槽位发现都给。"""
-    a = _open(client, tmp_path / "projA")
-    panel = {
-        "id": "p1",
-        "type": "panel",
-        "fileId": "Fig1.pdf",
-        "fileKind": "pdf",
-        "nativeW": 80,
-        "nativeH": 60,
-        "x": 0,
-        "y": 0,
-        "w": 80,
-        "h": 60,
-        "figureFrame": 1,
-    }
-    r = client.put("/api/autosave/d_fig", json=_project_doc([TEXT, panel]), headers=_h(a))
-    assert r.status_code == 200, r.get_json()
-    v = client.post(
-        "/api/versions/d_fig",
-        json={"doc": _canvas_doc([TEXT, panel]), "auto": True, "canvasId": "c1"},
-        headers=_h(a),
-    )
-    assert v.get_json().get("version"), v.get_json()
-    item = _history(client, a)[0]
-    assert item["objects"] == 2 and item["figures"] == 1
-    page = client.get("/api/layout-session/candidates?scope=project", headers=_h(a)).get_json()
-    row = next(i for i in page["items"] if i["doc_id"] == "d_fig")
-    assert row["objects"] == 2 and row["figures"] == 1

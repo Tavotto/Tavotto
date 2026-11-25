@@ -106,19 +106,12 @@ export type RestoreIssueKind =
  * `alternatives` 是**已只读验证过可打开**的其他候选。界面只露一句话 + 一个主按钮，其余折叠。
  */
 /**
- * `at` / `figures`：恢复卡上区分同名候选的那行小字（最后修改时间 · 几张图）。只是辨认信息，不参与任何判决；
- * 拿不到就缺席（界面不写那一半）。
+ * `at`：恢复卡「选一份」名单上每行右侧的最后修改时间（区分同名候选）。只是辨认信息，不参与任何判决；拿不到就缺席。
  */
 export type AltCandidate = RestoreCandidate & {
   localCopy?: true
   history?: ProjectHistoryItem
   at?: number
-  figures?: number
-}
-
-/** 正文里的面板个数（「几张图」，与后端 `projecthistory.figure_count` 同一口径） */
-function figuresOf(pd: ProjectDocument): number {
-  return pd.canvases.reduce((n, c) => n + c.objects.filter((o) => o.type === 'panel').length, 0)
 }
 
 export interface RestoreIssue {
@@ -331,7 +324,7 @@ async function verifiedAlternatives(
     // 提供给用户之前读到的正文修订号记在候选上（候选自己没有时）：用户坐在面板上的这段时间里同一个 docId 可能被别的项目
     // 存过，点选时 `installChecked` 据此发现对不上并复核归属，而不是装「此刻磁盘上的任何东西」
     const seen = probe.from === 'disk' && probe.disk.kind === 'found' ? probe.disk.revision : null
-    const meta = probe.doc ? { at: probe.doc.updatedAt, figures: figuresOf(probe.doc) } : {}
+    const meta = probe.doc ? { at: probe.doc.updatedAt } : {}
     out.push({ ...(!c.expectedRevision && !c.expectedAbsent && seen ? { ...c, expectedRevision: seen } : c), ...meta })
   }
   return out
@@ -472,7 +465,6 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
     id: i.doc_id,
     name: i.name,
     ...(i.updatedAt !== null ? { at: i.updatedAt } : {}),
-    ...(i.figures !== null ? { figures: i.figures } : {}),
     sources: ['discovered'],
     ownership: 'this',
     ...(i.evidence ? { ownershipEvidence: i.evidence } : {}),
@@ -609,7 +601,6 @@ function asHistoryCandidate(h: ProjectHistoryItem, pj: string | null): AltCandid
     ownership: 'this',
     history: { ...h, mode },
     ...(h.ts ? { at: h.ts } : {}),
-    figures: h.figures,
     // 沿用 docId 时本机索引陈旧地记着旧项目（挪走）：装之前纠正，否则首次写盘按旧项目的 pj 发（`ownerProjectForWrite`）
     ...(mode !== 'copy' && isForeignDocument(h.doc_id, pj) ? { correctsIndex: true } : {}),
     ...(mode === 'slot' && h.revision ? { expectedRevision: h.revision } : {}),

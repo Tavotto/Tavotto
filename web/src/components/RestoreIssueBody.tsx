@@ -61,21 +61,21 @@ export function RestoreIssueBody({
     a.localCopy
       ? t('restore.openLocal', { name: a.name || t('docBanner.lastDocUnnamed') })
       : t('restore.openAlt', { name: a.name || t('docBanner.lastDocUnnamed') })
-  // 第二行的辨认信息：最后修改时间 · 几张图（同名候选靠它分开）。拿不到的那一半不写，两半都没有就没有这一行
-  const altMeta = (a: AltCandidate): string | undefined => {
-    const time = typeof a.at === 'number' && Number.isFinite(a.at) && a.at > 0 ? formatStamp(a.at) : ''
-    const figures = typeof a.figures === 'number' ? t('restore.altFigures', { count: a.figures }) : ''
-    if (time && figures) return t('restore.altMeta', { time, figures })
-    return time || figures || undefined
-  }
   const openAlt = (id: string, a: AltCandidate) => (
-    <MenuItem
-      key={`${id}${a.localCopy ? ':local' : ''}`}
-      data-restore-action="open-alt"
-      meta={altMeta(a)}
-      onSelect={done(() => openAlternative(id))}
-    >
+    <MenuItem key={`${id}${a.localCopy ? ':local' : ''}`} data-restore-action="open-alt" onSelect={done(() => openAlternative(id))}>
       {altLabel(a)}
+    </MenuItem>
+  )
+  // 「选一份」名单：按钮上已经写了「选一份打开」，每行只写排版名；右侧灰字是最后修改时间（同名候选靠它分开，
+  // 写法与时间线节点默认名相同）。右侧复用菜单项现成的右侧槽位（快捷键那一格：靠右、灰字、数字等宽），拿不到时间就留空
+  const chooseItem = (a: AltCandidate) => (
+    <MenuItem
+      key={`${a.id}${a.localCopy ? ':local' : ''}`}
+      data-restore-action="open-alt"
+      shortcut={typeof a.at === 'number' && Number.isFinite(a.at) && a.at > 0 ? formatStamp(a.at) : undefined}
+      onSelect={done(() => openAlternative(a.id))}
+    >
+      {a.localCopy ? altLabel(a) : a.name || t('docBanner.lastDocUnnamed')}
     </MenuItem>
   )
   const newItem = (
@@ -128,7 +128,7 @@ export function RestoreIssueBody({
           </Button>
         }
       >
-        {alts.map((a) => openAlt(a.id, a))}
+        {alts.map(chooseItem)}
       </Menu>
     )
     folded = [newItem]

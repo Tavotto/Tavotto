@@ -52,11 +52,6 @@ def doc_objects(doc: object) -> list[dict]:
     return [o for o in objects if isinstance(o, dict)] if isinstance(objects, list) else []
 
 
-def figure_count(objects: list[dict]) -> int:
-    """「几张图」：面板对象的个数（文字 / 形状 / 箭头不算）。恢复卡区分同名候选用。"""
-    return sum(1 for o in objects if o.get("type") == "panel")
-
-
 def store_names(versions_dir: Path) -> tuple[list[str], bool]:
     """`versions_dir` 里形如 `<docId>.vx` 的**真目录**（不跟随符号链接）的 docId（按名字排序），以及
     `truncated`：目录条目超过 `MAX_SCAN_ENTRIES`、没看全。
@@ -132,7 +127,6 @@ def latest_content_node(versions_dir: Path, doc_id: str) -> dict | None:
             "doc": doc,
             "canvases": len(canvases) if isinstance(canvases, list) else 1,
             "objects": len(objects),
-            "figures": figure_count(objects),
         }
     return None
 
