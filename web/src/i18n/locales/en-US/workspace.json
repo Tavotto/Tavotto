@@ -1622,6 +1622,13 @@
     },
     "progress": "In progress",
     "convert": {
+      "taskTitle": "Editable version",
+      "round": "Round {{n}}",
+      "steps": {
+        "read": "Read the original script",
+        "write": "Write the Python version",
+        "verify": "Test run"
+      },
       "running": "Making an editable version…",
       "runningElapsed": "Generating the editable version… ({{minutes}} min so far)",
       "writingLong": "Writing a long file…",

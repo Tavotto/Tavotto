@@ -1050,6 +1050,35 @@ def test_live_activity_is_only_for_running_convert_sessions():
     assert "cli_live" in ai_bridge.SESSION_INTERNAL_KEYS
 
 
+def test_convert_stage_reads_phase_target_and_corrections(tmp_path):
+    """转换的任务清单（用户 2026-11-25）：编排器在校验阶段 = 运行校验；否则候选里的新脚本有内容 = 写，没有 = 读懂；
+    第几轮 = 1 + 已记账的修正次数。内置执行器写到一半的 `check` 不改 `TaskRun.phase`，所以仍算「写」。"""
+    target = tmp_path / "fig_matplotlib.py"
+    run = SimpleNamespace(phase="executing", used={"corrections": 0})
+    live = {
+        "kind": "convert",
+        "status": "running",
+        "taf": {"run": run, "cand": SimpleNamespace(target=target)},
+    }
+    assert ai_bridge._convert_stage(live) == {"step": "read", "round": 1}
+    target.write_text("")  # 建了空文件还不算写
+    assert ai_bridge._convert_stage(live) == {"step": "read", "round": 1}
+    target.write_text("import matplotlib\n")
+    assert ai_bridge._convert_stage(live) == {"step": "write", "round": 1}
+    for ph in ("verifying", "ready_to_commit", "committing"):
+        run.phase = ph
+        assert ai_bridge._convert_stage(live) == {"step": "verify", "round": 1}, ph
+    # 校验没过、系统让 AI 修正：回到「写」，第 2 轮
+    run.phase, run.used = "correcting", {"corrections": 1}
+    assert ai_bridge._convert_stage(live) == {"step": "write", "round": 2}
+    assert set(ai_bridge.CONVERT_STEPS) == {"read", "write", "verify"}
+    # 不是进行中的转换会话 / 没有 Task Core 运行对象：不给
+    assert ai_bridge._convert_stage({**live, "kind": None}) is None
+    assert ai_bridge._convert_stage({**live, "status": "done"}) is None
+    assert ai_bridge._convert_stage({**live, "taf": {}}) is None
+    assert "taf" in ai_bridge.SESSION_INTERNAL_KEYS
+
+
 def test_write_denied_covers_sandbox_that_never_started_but_not_real_work():
     """沙盒起不来（TVD-BCZ0，Windows）：回合正常结束却 0 命令 0 写入 → 真；有命令没写入 / 回合没正常结束 / 没事件 → 假。"""
     cand = SimpleNamespace(extras={})

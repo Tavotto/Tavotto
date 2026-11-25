@@ -1543,6 +1543,13 @@
     },
     "progress": "进行中",
     "convert": {
+      "taskTitle": "生成可编辑版本",
+      "round": "第 {{n}} 轮",
+      "steps": {
+        "read": "读懂原脚本",
+        "write": "写 Python 版本",
+        "verify": "运行校验"
+      },
       "running": "正在生成可编辑版本…",
       "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
       "writingLong": "正在生成较长的文件…",
