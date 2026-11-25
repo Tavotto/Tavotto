@@ -1457,6 +1457,7 @@ export default interface Resources {
       "pillTitle": "重新运行出版规范预检",
       "renderFailed": "渲染失败",
       "rendering": "正在重渲染",
+      "splashBatch": "这次一起打开了 {{n}} 张图，画布一次只放一张。要改哪张，就让 Agent 单独打开它，比如「单独打开 {{stem}}」。",
       "splashConnecting": "正在连接 Codex…",
       "splashFetchFailed": "取回会话状态失败。重新打开这张图；仍然如此请连同下面的诊断一起报告。",
       "splashFetching": "正在从 Tavotto 取回会话状态…",
