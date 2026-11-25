@@ -121,14 +121,19 @@ export function VendorRow({
           </StatusPill>
         )}
         <Button
-          variant={anyReady ? 'ghost' : 'secondary'}
+          variant={anyReady || (open && !onChooseMethods) ? 'ghost' : 'secondary'}
           size="sm"
           data-connect-action="methods"
           aria-expanded={onChooseMethods ? undefined : open}
-          aria-label={anyReady ? cx('connect') : undefined}
+          aria-label={anyReady || (open && !onChooseMethods) ? cx('connect') : undefined}
           onClick={() => (onChooseMethods ? onChooseMethods(vendor) : setOpen((v) => !v))}
         >
-          {anyReady ? <ChevronRight size={ICON_SIZE.xs} aria-hidden /> : cx('connect')}
+          {/* 方式列表已在下面展开：入口退成一个朝下的箭头（再点收起），不再与下面每种方式的按钮抢 */}
+          {anyReady || (open && !onChooseMethods) ? (
+            <ChevronRight size={ICON_SIZE.xs} aria-hidden className={cn('transition-transform', open && !onChooseMethods && 'rotate-90')} />
+          ) : (
+            cx('connect')
+          )}
         </Button>
       </span>
     )
@@ -218,7 +223,8 @@ export function VendorRow({
         </div>
       )}
       {open && multi && !onChooseMethods && (
-        <div className="pl-9 pt-2">
+        // 不缩进：方式的图标与上面厂商 logo 同一列、方式名与厂商名同一列
+        <div className="pt-1">
           <MethodList vendor={vendor} connections={all} onConnected={onConnected} />
         </div>
       )}

@@ -5,12 +5,13 @@ import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import type { AiAgentCaps, AiAgentId, AiConnection, AiVendor, AiVendorMethod } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAiStore } from '@/store/aiStore'
+import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
 import { OAuthLoginDialog } from '../OAuthLoginDialog'
 import { useAgentStepAction } from './useAgentStepAction'
 import { InstallActionButton } from './InstallActionButton'
 import { agentStep } from './agentStep'
-import { ConnectionManage, SiwcManage } from './ConnectionManage'
+import { ConnectionManage, SiwcManage, SiwcSignOut } from './ConnectionManage'
 import { cx } from './copy'
 import { useLoginAfterInstall } from './useAgentInstall'
 import { connectionErrorText, connectionForMethod, loginAgentOf, methodHint, methodName, vendorName } from './vendors'
@@ -92,15 +93,18 @@ interface RowProps {
   onPick: (id: string | null) => void
 }
 
-const CARD_CLASS = 'flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left'
+/** 一行方式：列表里的一行（不是一张卡）——无边框、无左右内边距，图标与上面厂商名同一列；行与行之间由列表的细线分隔 */
+const CARD_CLASS = 'flex min-w-0 flex-1 items-center gap-3 py-2 text-left'
+/** 可点的那半行（名字区）：悬停只换字色，不铺底色块 */
+const PICK_CLASS = 'focus-visible:focus-ring rounded-md outline-none transition-colors'
 
 /** 一张方式卡的内容（图标 + 方式名 + 一句说明 + 右侧槽），壳由调用方决定是可点的 button 还是容器 */
 function MethodCardBody({ method, caption, right }: { method: AiVendorMethod; caption: string; right: ReactNode }) {
   const Icon = method.kind === 'key' ? KeyRound : Sparkles
   return (
     <>
-      {/* 无框 16px，坐在名字（第一行，text-base）的中线上 */}
-      <IconSlot className="self-start text-base text-ink-2">
+      {/* 无框 16px，放在与厂商 logo 同宽（24px）的一列里居中：上下几行的图标、名字各自对齐 */}
+      <IconSlot className="w-6 text-base text-ink-2">
         <Icon size={ICON_SIZE.md} aria-hidden />
       </IconSlot>
       <span className="flex min-w-0 flex-1 flex-col">
@@ -130,30 +134,36 @@ function MethodRow({ vendor, method: m, connections, onConnected, picked: on, on
   // 已连的非 Key 类（OAuth）没有可管理的东西（Change Key 对 OAuth 连接必 404）：卡片只显示状态，不展开
   const clickable = usable && !(ready && m.kind !== 'key')
   return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        data-connect-method={m.id}
-        data-connect-method-kind={m.kind}
-        data-connect-method-state={ready ? 'ready' : (conn?.state ?? 'none')}
-        aria-pressed={on}
-        disabled={!clickable}
-        onClick={() => onPick(on ? null : m.id)}
-        className={cn(
-          CARD_CLASS,
-          'focus-visible:focus-ring outline-none transition-colors',
-          on ? 'border-ink-3 bg-surface-hover' : 'border-border bg-surface hover:bg-surface-hover',
-          !usable && 'cursor-not-allowed opacity-40 hover:bg-surface',
+    <div className="flex flex-col">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          data-connect-method={m.id}
+          data-connect-method-kind={m.kind}
+          data-connect-method-state={ready ? 'ready' : (conn?.state ?? 'none')}
+          aria-pressed={on}
+          disabled={!clickable}
+          onClick={() => onPick(on ? null : m.id)}
+          className={cn(CARD_CLASS, PICK_CLASS, !usable && 'cursor-not-allowed opacity-40')}
+        >
+          <MethodCardBody method={m} caption={methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
+        </button>
+        {/* 每种方式右侧都有同一个位置的动作：没连 = 「连接」（与名字区同一个开关），已连 = 状态在名字区右侧 */}
+        {!ready && usable && (
+          <Button variant="secondary" size="sm" data-connect-action={m.kind} aria-expanded={on} onClick={() => onPick(on ? null : m.id)}>
+            {m.kind === 'oauth' ? cx('signIn') : cx('connect')}
+          </Button>
         )}
-      >
-        <MethodCardBody method={m} caption={methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
-      </button>
-      {on &&
-        (ready && conn ? (
-          <ConnectionManage vendor={vendor} connection={conn} method={m} />
-        ) : (
-          <MethodConnect vendor={vendor} method={m} connection={conn} onConnected={onConnected} onCancel={() => onPick(null)} />
-        ))}
+      </div>
+      {on && (
+        <div className="pb-2.5 pl-9">
+          {ready && conn ? (
+            <ConnectionManage vendor={vendor} connection={conn} method={m} />
+          ) : (
+            <MethodConnect vendor={vendor} method={m} connection={conn} onConnected={onConnected} onCancel={() => onPick(null)} />
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -189,9 +199,9 @@ function LoginMethodRow({ vendor, method: m, connections, onConnected, picked: o
   }
   const body = (right: ReactNode) => <MethodCardBody method={m} caption={caption} right={right} />
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col">
       {showAction && act.step?.action && act.step.action !== 'login' ? (
-        <div {...dataAttrs} className={cn(CARD_CLASS, 'border-border bg-surface')}>
+        <div {...dataAttrs} className={CARD_CLASS}>
           {body(
             <InstallActionButton
               label={act.step.actionLabel ?? ''}
@@ -209,13 +219,7 @@ function LoginMethodRow({ vendor, method: m, connections, onConnected, picked: o
           aria-pressed={on}
           disabled={!clickable}
           onClick={() => onPick(on ? null : m.id)}
-          className={cn(
-            CARD_CLASS,
-            'focus-visible:focus-ring outline-none transition-colors',
-            on ? 'border-ink-3 bg-surface-hover' : 'border-border bg-surface hover:bg-surface-hover',
-            !usable && 'cursor-not-allowed opacity-40 hover:bg-surface',
-            usable && !clickable && 'cursor-default hover:bg-surface',
-          )}
+          className={cn(CARD_CLASS, PICK_CLASS, !usable && 'cursor-not-allowed opacity-40', usable && !clickable && 'cursor-default')}
         >
           {body(connPill(conn, ready))}
         </button>
@@ -225,7 +229,11 @@ function LoginMethodRow({ vendor, method: m, connections, onConnected, picked: o
           {act.error}
         </span>
       )}
-      {!ready && (on || autoLogin) && !showAction && <LoginConnect key={on ? 'pick' : 'auto'} flow={flow} begin={on && !autoLogin} />}
+      {!ready && (on || autoLogin) && !showAction && (
+        <div className="pb-2.5 pl-9">
+          <LoginConnect key={on ? 'pick' : 'auto'} flow={flow} begin={on && !autoLogin} />
+        </div>
+      )}
     </div>
   )
 }
@@ -244,33 +252,34 @@ function SiwcMethodRow({ vendor, method: m, connections, onConnected, picked: on
     'data-connect-method-state': ready ? 'ready' : (conn?.state ?? 'none'),
   }
   if (!ready) {
-    // 没连 / 要重新登录 / 没允许订阅额度：按钮直接在卡片右侧（少点一下，agy 审稿 2026-11-25）；异常原因写在第二行
+    // 没连 / 要重新登录 / 没允许订阅额度：「Continue with ChatGPT」就在这一行右侧；异常原因写在第二行
     const caption = conn ? (conn.state === 'needs_auth' ? cx('needsAuth') : connectionErrorText(conn)) : methodCaption(vendor, m, undefined)
     return (
-      <div className="flex flex-col gap-2">
-        <div {...dataAttrs} className={cn(CARD_CLASS, 'border-border bg-surface', !m.available && 'opacity-40')}>
-          <MethodCardBody method={m} caption={caption} right={m.available ? flow.button : null} />
+      <div className="flex flex-col">
+        <div className="flex items-center gap-3">
+          <div {...dataAttrs} className={cn(CARD_CLASS, !m.available && 'opacity-40')}>
+            <MethodCardBody method={m} caption={caption} right={null} />
+          </div>
+          {m.available && <span className="shrink-0">{flow.button}</span>}
         </div>
-        {flow.hint}
+        {flow.hint && <div className="pb-2.5 pl-9">{flow.hint}</div>}
       </div>
     )
   }
+  // 已连：第二行是账号邮箱；右侧「已连接」+「退出登录」（撤销授权）；点名字展开默认型号
   return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        {...dataAttrs}
-        aria-pressed={on}
-        onClick={() => onPick(on ? null : m.id)}
-        className={cn(
-          CARD_CLASS,
-          'focus-visible:focus-ring outline-none transition-colors',
-          on ? 'border-ink-3 bg-surface-hover' : 'border-border bg-surface hover:bg-surface-hover',
-        )}
-      >
-        <MethodCardBody method={m} caption={conn?.account_email || methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
-      </button>
-      {on && conn && <SiwcManage connection={conn} />}
+    <div className="flex flex-col">
+      <div className="flex items-center gap-3">
+        <button type="button" {...dataAttrs} aria-pressed={on} onClick={() => onPick(on ? null : m.id)} className={cn(CARD_CLASS, PICK_CLASS)}>
+          <MethodCardBody method={m} caption={conn?.account_email || methodCaption(vendor, m, undefined)} right={connPill(conn, ready)} />
+        </button>
+        <SiwcSignOut connection={conn!} />
+      </div>
+      {on && conn && (
+        <div className="pb-2.5 pl-9">
+          <SiwcManage connection={conn} />
+        </div>
+      )}
     </div>
   )
 }
@@ -294,16 +303,21 @@ export function MethodList({
   const [picked, setPicked] = useState<string | null>(null)
   const methods = vendor.methods ?? []
   return (
-    <div data-connect-methods={vendor.id} className="flex flex-col gap-2">
-      {methods.map((m) =>
-        m.kind === 'siwc' ? (
-          <SiwcMethodRow key={m.id} vendor={vendor} method={m} connections={connections} onConnected={onConnected} picked={picked === m.id} onPick={setPicked} />
-        ) : m.kind === 'login' ? (
-          <LoginMethodRow key={m.id} vendor={vendor} method={m} connections={connections} onConnected={onConnected} picked={picked === m.id} onPick={setPicked} />
-        ) : (
-          <MethodRow key={m.id} vendor={vendor} method={m} connections={connections} onConnected={onConnected} picked={picked === m.id} onPick={setPicked} />
-        ),
-      )}
+    <div data-connect-methods={vendor.id} className="flex flex-col">
+      {methods.map((m, i) => (
+        <div key={m.id} className="flex flex-col">
+          {/* 组内分隔线从文字列开始（跳过图标列），与厂商之间的通栏线分开层级 */}
+          {i > 0 && <div aria-hidden className="ml-9 border-t border-border" />}
+          {renderRow(m)}
+        </div>
+      ))}
     </div>
   )
+
+  function renderRow(m: AiVendorMethod) {
+    const props = { vendor, method: m, connections, onConnected, picked: picked === m.id, onPick: setPicked }
+    if (m.kind === 'siwc') return <SiwcMethodRow {...props} />
+    if (m.kind === 'login') return <LoginMethodRow {...props} />
+    return <MethodRow {...props} />
+  }
 }

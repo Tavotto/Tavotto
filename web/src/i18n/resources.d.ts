@@ -3051,7 +3051,9 @@ export default interface Resources {
           "failed": "登录没有完成，再试一次。",
           "openAgain": "重新打开",
           "planDisabled": "登录时没有允许使用订阅额度，再试一次。",
-          "revokeUnconfirmed": "已退出，但没能确认撤销授权，可以到 ChatGPT 设置里断开 {{product}}。"
+          "revokeUnconfirmed": "已退出，但没能确认撤销授权，可以到 ChatGPT 设置里断开 {{product}}。",
+          "signOut": "退出登录",
+          "signOutTitle": "退出 ChatGPT 账号？"
         },
         "starter": {
           "key": "没有订阅：填一个 API Key",

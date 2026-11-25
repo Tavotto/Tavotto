@@ -126,7 +126,7 @@ describe('Continue with ChatGPT', () => {
     const card = q('[data-connect-method="openai:siwc"]')
     expect(card?.textContent).toContain(cx('method.subscription'))
     expect(card?.textContent).toContain(cx('method.hintChatgpt'))
-    const btn = card!.querySelector<HTMLElement>('[data-connect-action="siwc"]') // 按钮就在卡片里，不用先点开
+    const btn = q('[data-connect-action="siwc"]') // 按钮就在这一行右侧，不用先点开
     expect(btn?.textContent).toBe('Continue with ChatGPT')
     await click(btn)
     expect(calls.some((c) => c.url === '/api/ai/siwc/login' && c.method === 'POST')).toBe(true)
@@ -160,22 +160,22 @@ describe('Continue with ChatGPT', () => {
     expect(q('[role="alert"]')).toBeNull()
   })
 
-  it('已连：第二行是账号邮箱；展开只有默认型号与断开（没有换 Key）', async () => {
+  it('已连：第二行是账号邮箱，这一行右侧直接有「退出登录」；点名字展开默认型号（没有换 Key）', async () => {
     await render([SIWC_READY])
     const card = q('[data-connect-method="openai:siwc"]')
     expect(card?.dataset.connectMethodState).toBe('ready')
     expect(card?.textContent).toContain('me@example.com')
+    expect(q('[data-connect-disconnect]')?.textContent).toBe(cx('siwc.signOut')) // 不用先展开
     await click(card)
     expect(q('[data-connect-manage="siwc:chatgpt"]')).not.toBeNull()
     expect(q('[data-connect-change-key]')).toBeNull()
-    expect(q('[data-connect-disconnect]')).not.toBeNull()
   })
 
   it('没允许订阅额度的连接：第二行说原因，按钮仍在卡片上可以重新登录', async () => {
     await render([{ ...SIWC_READY, state: 'error', error: 'plan_usage_disabled' }])
     const card = q('[data-connect-method="openai:siwc"]')
     expect(card?.textContent).toContain(cx('err.planUsageDisabled'))
-    expect(card?.querySelector('[data-connect-action="siwc"]')).not.toBeNull()
+    expect(q('[data-connect-action="siwc"]')).not.toBeNull()
   })
 
   it('API Key 那张卡不会把 ChatGPT 登录的连接认成自己的', () => {

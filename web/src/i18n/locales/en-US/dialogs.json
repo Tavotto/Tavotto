@@ -2207,7 +2207,9 @@
         "expired": "Sign-in timed out. Try again.",
         "planDisabled": "Plan usage wasn’t allowed during sign-in. Try again.",
         "disconnectBody": "This signs out of this ChatGPT account and revokes {{product}}’s access.",
-        "revokeUnconfirmed": "Signed out, but revoking access couldn’t be confirmed. You can disconnect {{product}} in ChatGPT settings."
+        "revokeUnconfirmed": "Signed out, but revoking access couldn’t be confirmed. You can disconnect {{product}} in ChatGPT settings.",
+        "signOut": "Sign out",
+        "signOutTitle": "Sign out of ChatGPT?"
       }
     },
     "hosts": {
