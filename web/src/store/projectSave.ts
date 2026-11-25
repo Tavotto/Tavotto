@@ -86,6 +86,26 @@ export function writeBoundProjectFile(ctx: SaveContext): Promise<boolean> {
   return entry.promise
 }
 
+/** 文档连续 `quietMs` 没有变化（或到 `maxMs` 为止）才返回：给挂载后的排版测量留出时间 */
+function documentQuiet(quietMs = 150, maxMs = 2000): Promise<void> {
+  return new Promise((resolve) => {
+    const start = performance.now()
+    let last = useDocumentStore.getState().doc
+    let since = performance.now()
+    const tick = () => {
+      const now = performance.now()
+      const doc = useDocumentStore.getState().doc
+      if (doc !== last) {
+        last = doc
+        since = now
+      }
+      if (now - since >= quietMs || now - start >= maxMs) resolve()
+      else setTimeout(tick, 30)
+    }
+    requestAnimationFrame(() => requestAnimationFrame(tick))
+  })
+}
+
 async function writeOnce(ctx: SaveContext, agentMerged = false): Promise<boolean> {
   // 硬闸：只读窗口（ADR 0181）绝不写项目文件——入口（`runManualSave`）已经把保存记住了，这里兜住绕过入口的调用
   if (getWindowHold()) {
@@ -138,8 +158,9 @@ async function writeOnce(ctx: SaveContext, agentMerged = false): Promise<boolean
     if (typeof revision === 'string' && stillCurrent(ctx) && !agentMerged) {
       const m = await mergeableAgentAdditions()
       if (m && m.revision === revision && stillCurrent(ctx) && mergeAgentAdditions(m)) {
-        // 等两帧：并进来的文字框挂载后按真实排版量一次高度（`TextView`），那一笔要赶上这次保存
-        await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+        // 等文档安静下来再写：并进来的文字框挂载后要按真实排版量一次高度（`TextView`；字体加载慢的机器上不止两帧），
+        // 那一笔要赶上这次保存，否则刚写完圆点又亮（Linux CI 实测）
+        await documentQuiet()
         if (stillCurrent(ctx)) return writeOnce(ctx, true)
         return false
       }
