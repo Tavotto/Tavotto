@@ -505,6 +505,23 @@ def commit(
         return {"written": False, "plan": plan}
     if plan["echo_digest"] != echo_digest_seen:
         raise LayoutError("echo_mismatch")
+
+    def append(target: dict) -> None:
+        target.setdefault("objects", []).extend(plan["objects"])
+
+    after, token = write_canvas(project, name, lay, canvas.get("id"), append)
+    return {
+        "written": True,
+        "revision": after,
+        "added": [o["id"] for o in plan["objects"]],
+        "undo_token": token,
+        "plan": plan,
+    }
+
+
+def write_canvas(project: str | Path, name: str, lay: Layout, canvas_id, mutate) -> tuple[str, str]:
+    """在文档锁里改一张画布并落盘：再核修订号 → 读正文 → `mutate(画布)` → 校验 → **先**存撤销副本 → 原子替换排版。
+    回 `(新修订号, undo_token)`。追加（`commit`）与补丁（`vectoredit.commit`）共用这一段，锁 / 撤销 / 冲突判据只有一份。"""
     with doclock.document_lock(lay.path):
         try:
             before = lay.path.read_bytes()
@@ -513,8 +530,7 @@ def commit(
         if atomicio.revision_of(before) != lay.revision:
             raise LayoutError("layout_changed", revision=atomicio.revision_of(before))
         doc = documents.loads_document(before)
-        target = _canvas(doc, canvas.get("id"))
-        target.setdefault("objects", []).extend(plan["objects"])
+        mutate(_canvas(doc, canvas_id))
         documents.validate_document(doc)
         data = atomicio.dumps_json(doc, indent=1)
         after = atomicio.revision_of(data)
@@ -524,13 +540,7 @@ def commit(
         except OSError as exc:
             raise LayoutError("undo_unavailable") from exc
         atomicio.write_bytes(lay.path, data)
-    return {
-        "written": True,
-        "revision": after,
-        "added": [o["id"] for o in plan["objects"]],
-        "undo_token": token,
-        "plan": plan,
-    }
+    return after, token
 
 
 def _save_undo(
