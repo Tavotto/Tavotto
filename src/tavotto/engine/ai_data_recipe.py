@@ -2597,6 +2597,11 @@ def default_candidates(
             opts = role_info["options"]
             role_info["group"] = summ["x"]
             opts["group"] = [summ["x"], *(c for c in opts.get("group", []) if c != summ["x"])]
+        if summ["shape"] == "category":
+            # 已汇总的分组表没有横轴可选：误差列不是横轴的备选（其它数值列照旧列着）；一列都不剩时右栏不显示「横轴」那一行
+            role_info["options"]["x"] = [
+                c for c in role_info["options"].get("x", []) if c != summ["err"]
+            ]
         if summ["shape"] == "trend":
             if "trend" in ok_families:
                 grp(

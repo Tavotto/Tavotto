@@ -901,5 +901,6 @@ def test_the_label_column_used_as_the_category_axis_is_reported_as_the_group_rol
     res = candidates(tmp_path, rows)
     assert res.roles["group"] == "sample" and res.roles["options"]["group"][0] == "sample"
     assert res.roles["x"] is None
+    assert res.roles["options"]["x"] == []  # 误差列不是横轴的备选：右栏不显示「横轴」那一行
     trend = candidates(tmp_path, DOSE, picks={"y": "unsure"})
     assert trend.roles["group"] is None and trend.roles["x"] == "dose_uM"
