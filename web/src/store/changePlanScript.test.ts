@@ -302,7 +302,7 @@ describe('图内方案这条路不适用：先试脚本方案，脚本方案也�
 
   it('两条路都不适用 → fallthrough（调用方发现有的直接改脚本），不留卡', async () => {
     createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_too_large', ''))
-    expect(await ask()).toBe('fallthrough')
+    expect(await ask()).toMatchObject({ kind: 'fallthrough' })
     expect(createChangePlan).toHaveBeenCalledTimes(2)
     expect(cps().order).toEqual([])
   })
