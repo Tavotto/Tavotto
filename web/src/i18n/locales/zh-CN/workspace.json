@@ -1869,9 +1869,9 @@
     }
   },
   "renderProgress": {
-    "stepEnvironment": "第 1 步，共 3 步：正在找运行环境…",
-    "stepStarting": "第 2 步，共 3 步：正在启动 Python…",
-    "stepRunning": "第 3 步，共 3 步：正在运行脚本、生成可编辑元素，第一次可能需要几分钟…",
+    "stepEnvironment": "正在找运行环境（1/3）…",
+    "stepStarting": "正在启动 Python（2/3）…",
+    "stepRunning": "正在运行脚本、生成可编辑元素（3/3），第一次可能要几分钟…",
     "preparing": "正在准备图表…",
     "elapsed": "{{message}} · 已用时 {{seconds}} 秒"
   },

@@ -66,7 +66,7 @@ describe('跨过冷启动取会话与脚本执行的持久进度', () => {
     for (const node of progress()) expect(node.textContent).toContain('已用时 15 秒')
     await act(async () => event('render.started', { cold: true, cost: 'medium' }))
     for (const node of progress()) {
-      expect(node.textContent).toContain('可能需要几分钟')
+      expect(node.textContent).toContain('可能要几分钟')
       expect(node.textContent).toContain('已用时 15 秒')
     }
     await act(async () => vi.advanceTimersByTime(9000))
@@ -101,20 +101,20 @@ describe('跨过冷启动取会话与脚本执行的持久进度', () => {
     await act(async () => event('render.preparing'))
     for (const node of progress()) expect(node.textContent).toContain('正在准备图表')
     await act(async () => event('render.preparing', { stage: 'environment' }))
-    for (const node of progress()) expect(node.textContent).toContain('第 1 步，共 3 步：正在找运行环境')
+    for (const node of progress()) expect(node.textContent).toContain('正在找运行环境（1/3）')
     await act(async () => vi.advanceTimersByTime(3000))
     await act(async () => event('render.preparing', { stage: 'starting' }))
     for (const node of progress()) {
-      expect(node.textContent).toContain('第 2 步，共 3 步：正在启动 Python')
+      expect(node.textContent).toContain('正在启动 Python（2/3）')
       expect(node.textContent).toContain('已用时 3 秒')
     }
     // 迟到的早一步 / 不带 stage 的准备事件（同一文件的另一次请求）不让界面倒回去
     await act(async () => event('render.preparing', { stage: 'environment' }))
     await act(async () => event('render.preparing'))
-    for (const node of progress()) expect(node.textContent).toContain('第 2 步')
+    for (const node of progress()) expect(node.textContent).toContain('（2/3）')
     await act(async () => event('render.started', { cold: true, cost: 'medium' }))
     for (const node of progress()) {
-      expect(node.textContent).toContain('第 3 步，共 3 步：正在运行脚本、生成可编辑元素')
+      expect(node.textContent).toContain('正在运行脚本、生成可编辑元素（3/3）')
       expect(node.textContent).toContain('已用时 3 秒')
     }
     expect(useRenderStore.getState().building[panel.fileId]?.stage).toBeUndefined()
@@ -126,7 +126,7 @@ describe('跨过冷启动取会话与脚本执行的持久进度', () => {
     await act(async () => event('render.started', { cold: false, cost: '' }))
     expect(progress()).toHaveLength(2)
     for (const node of progress()) {
-      expect(node.textContent).not.toContain('步')
+      expect(node.textContent).not.toMatch(/\d\/3）/)
       expect(node.textContent).toContain('正在构建')
     }
   })
