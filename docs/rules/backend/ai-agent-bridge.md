@@ -674,6 +674,19 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   终态刷新错误（`TERMINAL_REFRESH_ERRORS`）才清凭据，`invalid_client` 不清，暂时失败保留凭据（`TokenUnavailable`）；缺 `chatgpt.tokens.use.direct` → `PlanUsageDisabled`（已登录、不许用订阅额度、不换计费方式）；`earliest_refresh_at` 之前不刷新（含义官方未定义，未经真服务确认）。
 - **不碰 Codex CLI 的令牌**、不 import 网络模块 / `ai_agents` / `ai_oauth` / `ai_providers`（看护 `tests/test_siwc_auth.py` 按 AST 钉）。
 
+### SIWC 登录、凭据与连接（`engine/siwc_login.py` / `siwc_store.py`，ADR 0209，开关 `TAVOTTO_EXPERIMENTAL_SIWC=1`）
+
+- **登录**：授权码 + PKCE，前端用系统浏览器开 `authorize_url`；回调由**一次性**本机 `http.server`（只绑 127.0.0.1、只认 `GET /auth/callback` + 本次 `state`、收到一次 / 10 分钟 / 取消即关）接收——**不是 Flask 路由**，不提供任何 Tavotto 能力；
+  端口先 1455、被占用换系统分配的。首次注册 `dynamic_agent_client` → 回调须带回 `oaiapp_…`（`dynamic_agent_client` 永不落盘为已签发 id）；再次登录用存下的 client_id + `id_token_hint`，回调 client_id / `sub` 对不上 → 拒绝、不替换。
+  ID 令牌 RS256 验签（pycryptodomex，延后 import；import 不了 = 登录失败，不降级成不验）+ `iss` / `aud` / `exp`（5 分钟偏差）/ `nonce`。端点：`POST /api/ai/siwc/login`、`GET /api/ai/siwc/flows/<id>`、`POST /api/ai/siwc/flows/<id>/cancel`、`POST /api/ai/siwc/models/refresh`；
+  `POST /api/ai/connections/siwc:chatgpt/login` 同 `/api/ai/siwc/login`，`DELETE /api/ai/connections/siwc:chatgpt` = 退出（撤销刷新令牌，回 `revoked`）。出站 HTTPS 只经 `siwc_login._opener`。
+- **凭据**：`data_dir()/siwc/`（0700）：`host.json`（`ext_agent_host_id`，永不变）、`state.json`（当前账号）、`accounts/<client_id>.json`（0600 原子写；同一 client_id 换 `sub` 拒绝）。**不进 `ai.providers[]`**。
+  刷新整段在 `refresh.lock` 跨进程锁里（`fcntl` / `msvcrt`；等不到 = `TokenUnavailable`，凭据不动）。退出 / 终态失效只清令牌，保留 client_id、身份、`id_token`（下次 `id_token_hint`）。
+- **连接**：`siwc:chatgpt`（`ai_providers.SIWC_CONNECTION_ID`）只在开关开且有当前账号时出现；只走 `builtin`，`TAVOTTO_AI_BUILTIN=0` → `ai_agent_not_usable`；`efforts` 恒空；型号读登录时缓存的 `/v1/models`（连接视图不联网）。
+  `ai_providers.resolve(builtin, "siwc:chatgpt")` 给**虚拟记录**（无令牌字段）；`builtin_conn` / `spawn_overrides` 对它走专用分支 `siwc_overrides`（`--wire siwc-responses --base-url https://api.openai.com/v1 --auth bearer --model …`，无 effort / fallback；令牌与开关只进环境变量），
+  看护用例把父进程 argv 喂给 `siwc_wire.runner_args_ok`。`ai_bridge.run` 在锁外 `_siwc_preflight`（`ai_endpoint_needs_login` / `ai_siwc_plan_disabled` / `ai_siwc_token_unavailable`，去重之后才抛）；runner 报 `auth` → `mark_rejected("http_401")`（不清凭据）。
+  开关开时 OpenAI 一家首选 `openai:siwc`（kind `siwc`），`openai:login`（Codex）只给已装 Codex 的。`first_key_connection` / 探测 / `add_connection` / `check_connection` 都碰不到它。看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`（本机假服务器，绝不连真实服务器）。
+
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 
 脚本跑不起来时让 AI 去查的工具集。**一张注册表、两种接法**：`REGISTRY: dict[str, FixTool]`（`__init__.py`）与接法无关，内置执行器经
