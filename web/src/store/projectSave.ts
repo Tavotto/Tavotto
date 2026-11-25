@@ -12,6 +12,7 @@
  * 把用户带到另存为那一屏的同一个冲突岔口，不静默覆盖。
  */
 import { msg } from '@/i18n'
+import { mergeAgentAdditions, mergeableAgentAdditions } from '@/lib/agentMerge'
 import { ApiError, REVISION_ABSENT, backendErrorText, saveLayout, type DiskDocumentSummary } from '@/lib/api'
 import { rememberLayoutRevision } from '@/lib/layoutRevision'
 import { readProjectFile } from '@/lib/projectFile'
@@ -85,7 +86,7 @@ export function writeBoundProjectFile(ctx: SaveContext): Promise<boolean> {
   return entry.promise
 }
 
-async function writeOnce(ctx: SaveContext): Promise<boolean> {
+async function writeOnce(ctx: SaveContext, agentMerged = false): Promise<boolean> {
   // 硬闸：只读窗口（ADR 0181）绝不写项目文件——入口（`runManualSave`）已经把保存记住了，这里兜住绕过入口的调用
   if (getWindowHold()) {
     useUiStore.getState().setStatus(msg('docWindow.choose', undefined, 'workspace'), 'info')
@@ -132,6 +133,17 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
         : null
     // 冲突岔口只在入口那一刻的上下文还开着时打开：切走之后再弹，「仍然覆盖」会带着此刻的
     // pj 把 A 的 409 hash 发到 B 的同名文件上
+    // 磁盘那份只比我多了 Agent 加的标注（ADR 0208 §五，判据在后端）：没有要用户裁决的事——并进来、接着把这次保存做完，
+    // 不弹对话框（维护者 2026-11-25：「有标注然后保存到文件是很自然的逻辑」）。只试一次：并完再撞上冲突就是别处也改过了
+    if (typeof revision === 'string' && stillCurrent(ctx) && !agentMerged) {
+      const m = await mergeableAgentAdditions()
+      if (m && m.revision === revision && stillCurrent(ctx) && mergeAgentAdditions(m)) {
+        // 等两帧：并进来的文字框挂载后按真实排版量一次高度（`TextView`），那一笔要赶上这次保存
+        await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+        if (stillCurrent(ctx)) return writeOnce(ctx, true)
+        return false
+      }
+    }
     if (typeof revision === 'string' && stillCurrent(ctx)) {
       ui.setStatus(msg('save.projectConflict', { file: binding.file }, 'workspace'), 'error')
       ui.setLayoutOpen(true, 'saveToProject', {

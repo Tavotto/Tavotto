@@ -1,10 +1,10 @@
 /**
- * 「把 Agent 加的并进来」（ADR 0208 §五、第 2 期 ③）的真浏览器全程，真后端、真引擎：
+ * 「把 Agent 加的并进来」（ADR 0208 §五、第 2 期 ③）的真浏览器全程，真后端、真引擎。维护者 2026-11-25：只多了 Agent 加的标注时
+ * 没有要用户裁决的事，**不提示**——
  *
- * 项目里有一份排版 → 桌面从「项目里的排版」打开它（绑定文件、记下基线）→ 插件那条引擎路往同一个文件里追加两个标注
- * （`tests/support/e2e_agent_annotate.py`，同一个数据目录）→ 窗口回到前台：状态栏挂「Agent 往这份排版里加了 2 个标注」胶囊；
- * 不点它，接着改一处再 ⌘S → 撞上冲突：对话框认出「只多了 Agent 加的」，主按钮是「并进来」→ 点它 → 画布上出现 Agent 的字，
- * 并接着把这次保存做完：磁盘上同时有 Agent 加的与桌面这边改的。
+ * 项目里有一份排版 → 桌面从「项目里的排版」打开它（绑定文件、记下基线）→ 插件那条引擎路往同一个文件里追加标注
+ * （`tests/support/e2e_agent_annotate.py`，同一个数据目录）→ 窗口回到前台：标注**自动并进画布**（状态栏一句、可撤销）→
+ * 桌面这边改一处 → Agent 又加一批 → 直接 ⌘S：**不弹对话框**，并进来接着保存，磁盘上三处都在、圆点灭。
  *
  * 判据量的是**磁盘上那个文件**。
  */
@@ -57,8 +57,8 @@ function writeLayout(figures: string): string {
   return file
 }
 
-function agentAnnotates(figures: string, dataDir: string): { revision: string; added: string[] } {
-  const r = spawnSync(PYTHON, [path.join(REPO, 'tests', 'support', 'e2e_agent_annotate.py'), figures, NAME], {
+function agentAnnotates(figures: string, dataDir: string, batch = 1): { revision: string; added: string[] } {
+  const r = spawnSync(PYTHON, [path.join(REPO, 'tests', 'support', 'e2e_agent_annotate.py'), figures, NAME, String(batch)], {
     encoding: 'utf-8',
     env: {
       ...process.env,
@@ -95,7 +95,7 @@ async function openFromProject(page: Page) {
 }
 
 test(
-  'Agent 往项目排版里加了标注：胶囊提醒；⌘S 撞冲突时「并进来」并保存，两边都在',
+  'Agent 往项目排版里加了标注：回到前台自动并进画布；⌘S 时直接并进来再保存，不弹对话框',
   { tag: '@feature:layout.agent-merge' },
   async ({ app, page }, testInfo) => {
     const a = await app()
@@ -105,38 +105,31 @@ test(
     await waitForDocumentReady(page)
     await openFromProject(page)
     await expect(page.locator('[data-save-destination]')).toHaveAttribute('data-save-destination', 'project')
+    const stage = page.locator('[data-canvas-stage]')
 
-    // 插件那条路往同一个文件里追加了两个标注
-    const wrote = agentAnnotates(a.figures, a.dataDir)
-    expect(wrote.added).toHaveLength(2)
-
-    // 回到前台：状态栏挂胶囊（一句话 + 「并进来」）
+    // 插件那条路往同一个文件里追加了两个标注 → 回到前台：自动并进画布，状态栏一句
+    expect(agentAnnotates(a.figures, a.dataDir).added).toHaveLength(2)
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-    // 读屏用的 live region 里也有这句话（sr-only），取看得见的那一份
-    const capsule = page.locator(':not([data-status-live])').getByText('Agent 往这份排版里加了 2 个标注', { exact: true }).last()
-    await expect(capsule).toBeVisible({ timeout: 15_000 })
-    await shots(page, 'agent-merge-capsule', (p) => testInfo.outputPath(p))
+    await expect(stage.getByText('Agent note', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator(':not([data-status-live])').getByText('已并入 2 个标注', { exact: false }).last()).toBeVisible()
+    await shots(page, 'agent-merge-auto', (p) => testInfo.outputPath(p))
+    // 可撤销：⌘Z 拿掉，⇧⌘Z 放回
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(stage.getByText('Agent note', { exact: true })).toHaveCount(0)
+    await page.keyboard.press('ControlOrMeta+Shift+z')
+    await expect(stage.getByText('Agent note', { exact: true })).toBeVisible()
 
-    // 不点胶囊：桌面这边接着改一处再 ⌘S → 撞冲突
+    // 桌面这边改一处；Agent 又加一批（这回不回前台）；直接 ⌘S：不弹对话框，并进来接着保存
     await page.getByRole('button', { name: '文字' }).click()
-    await page.locator('[data-canvas-stage]').click({ position: { x: 380, y: 420 } })
+    await stage.click({ position: { x: 380, y: 420 } })
     await page.keyboard.type('桌面这边')
     await page.keyboard.press('Escape')
+    agentAnnotates(a.figures, a.dataDir, 2)
     await page.keyboard.press('ControlOrMeta+s')
-    const dialog = page.getByRole('dialog')
-    const merge = dialog.locator('[data-layout-merge-agent]')
-    await expect(merge).toBeVisible({ timeout: 15_000 })
-    await expect(dialog.locator('[data-layout-conflict]')).toContainText('项目里那份只比你多了 Agent 加的 2 个标注')
-    // 这不是要警报的冲突：保存时挂的那条红色「已在别处改过」撤掉，只留对话框
-    await expect(page.getByText(/已在别处改过，这次没有写入/)).toHaveCount(0)
-    await shots(page, 'agent-merge-dialog', (p) => testInfo.outputPath(p))
-    await merge.click()
-    await expect(dialog).toBeHidden()
-    await expect(page.locator('[data-canvas-stage]').getByText('Agent note')).toBeVisible()
-
-    // 「并进来」接着把这次 ⌘S 做完：磁盘上两边都在，不再弹冲突
-    await expect.poll(() => textsOnDisk(file)).toEqual(['Agent note', '桌面这边'].sort())
+    await expect.poll(() => textsOnDisk(file)).toEqual(['Agent note', 'Agent note 2', '桌面这边'].sort())
     await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(stage.getByText('Agent note 2', { exact: true })).toBeVisible()
     await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
+    await expect(page.getByText(/已在别处改过/)).toHaveCount(0)
   },
 )

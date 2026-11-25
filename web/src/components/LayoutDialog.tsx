@@ -30,8 +30,6 @@ import { dirTail } from '@/lib/pathDisplay'
 import { FormRow } from './FormRow'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { LayoutRecover } from './LayoutRecover'
-import { mergeAgentAdditions, mergeableAgentAdditions, type MergeableAdditions } from '@/lib/agentMerge'
-import { writeBoundProjectFile } from '@/store/projectSave'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
@@ -104,26 +102,6 @@ export function LayoutDialog() {
     revision: string
     summary: DiskDocumentSummary | null
   } | null>(null)
-  /**
-   * 撞上的冲突是不是「磁盘那份只比我多了 Agent 加的标注」（ADR 0208 §五）：是的话主按钮换成「并进来」，
-   * 覆盖退到次按钮。只在 ⌘S 写回项目文件那一档问（另存为撞名不是这种情形）。
-   */
-  const [agentMerge, setAgentMerge] = useState<MergeableAdditions | null>(null)
-  useEffect(() => {
-    setAgentMerge(null)
-    if (!open || !conflict || !toProject) return
-    let alive = true
-    void mergeableAgentAdditions().then((m) => {
-      if (!alive || !m || m.revision !== conflict.revision) return
-      setAgentMerge(m)
-      // 这不是一次需要警报的冲突：撤掉保存时挂的那条红色「已在别处改过」，只留对话框这一处
-      const ui = useUiStore.getState()
-      if (ui.status?.key === 'save.projectConflict') ui.setStatus(null)
-    })
-    return () => {
-      alive = false
-    }
-  }, [open, conflict, toProject])
   const nameRef = useRef<HTMLInputElement>(null)
   /** 保存进行中（同步可读，不等渲染）：挡回车连按造成的并发写 */
   const inFlight = useRef(false)
@@ -358,41 +336,7 @@ export function LayoutDialog() {
 
   // 页脚（2026-10-07 设计审计 §10.2）：撞名时岔口进页脚——「改名」(secondary) + 「覆盖」(危险浅底胶囊)，
   // 不再是正文里一颗红字小按钮；「打开」那一屏是浏览型，没有页脚（×、Esc 关）
-  const footer = conflict && agentMerge
-    ? {
-        secondary: (
-          <Button
-            variant="danger-tinted"
-            size="lg"
-            loading={busy}
-            data-layout-overwrite
-            onClick={() => doSave({ revision: conflict.revision, target: conflict.name })}
-          >
-            {t('dialogs:layout.overwriteAgent')}
-          </Button>
-        ),
-        primary: (
-          <Button
-            variant="primary"
-            size="lg"
-            disabled={busy}
-            data-layout-merge-agent
-            onClick={() => {
-              // 用户按的是 ⌘S：并进来之后接着把这次保存做完（写回同一个项目文件，基线已推到磁盘那一份）
-              if (!mergeAgentAdditions(agentMerge)) return
-              setOpen(false)
-              // 等两帧再写：并进来的文字框挂载后要按真实排版量一次高度（`TextView`），那一笔改动要赶上这次保存，
-              // 否则刚写完圆点又亮
-              requestAnimationFrame(() =>
-                requestAnimationFrame(() => void writeBoundProjectFile(captureSaveContext())),
-              )
-            }}
-          >
-            {t('dialogs:layout.mergeAgent')}
-          </Button>
-        ),
-      }
-    : conflict
+  const footer = conflict
     ? {
         secondary: (
           <Button variant="secondary" size="lg" disabled={busy} data-layout-rename onClick={rename}>
@@ -527,12 +471,7 @@ export function LayoutDialog() {
         {!saving && <LayoutRecover open={open} onClose={() => setOpen(false)} />}
 
         {/* 撞名：一条警示放在页脚上方，裁决（改名 / 覆盖）在页脚 */}
-        {conflict && agentMerge && (
-          <p className="text-sm text-ink-2" data-layout-conflict>
-            {t('dialogs:layout.conflictAgent', { count: agentMerge.count })}
-          </p>
-        )}
-        {conflict && !agentMerge && (
+        {conflict && (
           <Notice tone="warn" data-layout-conflict>
             {t('dialogs:layout.conflict', { name: conflict.name })}
             {conflict.summary && (

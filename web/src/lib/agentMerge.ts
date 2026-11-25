@@ -67,24 +67,18 @@ export function mergeAndReport(m: MergeableAdditions): boolean {
 }
 
 /**
- * 不用等到 ⌘S：窗口回到前台时、以及开着期间每分钟，问一下绑定的项目排版有没有 Agent 刚加的标注；
- * 有就在状态栏挂一个胶囊「Agent 往这份排版里加了 N 个标注 · 并进来」（同一个修订号只挂一次）。
+ * 不用等到 ⌘S：窗口回到前台时、以及开着期间每分钟，问一下绑定的项目排版有没有 Agent 刚加的标注；有就**直接并进来**
+ * （一次 commit、可 ⌘Z 撤销），状态栏短暂说一句（维护者 2026-11-25：没有要用户裁决的事，不挂要点的胶囊）。
  * 返回停止函数（App 卸载时调）。
  */
 export function watchAgentAdditions(intervalMs = 60_000): () => void {
-  let shown: string | null = null
   let busy = false
   const check = async () => {
     if (busy || document.visibilityState === 'hidden') return
     busy = true
     try {
       const m = await mergeableAgentAdditions()
-      if (!m || m.revision === shown) return
-      shown = m.revision
-      useUiStore.getState().setStatus(msg('agentMerge.available', { count: m.count }, 'workspace'), 'info', {
-        owner: AGENT_MERGE_OWNER,
-        action: { label: msg('agentMerge.action', undefined, 'workspace'), run: () => void mergeAndReport(m) },
-      })
+      if (m) mergeAndReport(m)
     } finally {
       busy = false
     }

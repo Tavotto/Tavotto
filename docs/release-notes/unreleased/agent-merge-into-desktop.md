@@ -1,3 +1,3 @@
-## Annotations the agent added show up in the open layout with one click
+## Annotations the agent added just appear in your open layout
 
-When the agent adds annotations to a layout you have open, Tavotto now tells you ("The agent added 2 annotations to this layout") and lets you merge them in, as one step you can undo. If you press ⌘S before that, the save dialog recognizes that the only difference on disk is the agent's additions and offers "Merge and save" instead of asking you to overwrite.
+When the agent adds annotations to a layout you have open, Tavotto brings them onto your canvas when you return to the window, as one step you can undo. If you press ⌘S first, Tavotto merges them in and saves, with no dialog. You are only asked how to resolve a conflict when something other than the agent's additions changed the file.

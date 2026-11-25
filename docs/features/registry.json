@@ -1764,14 +1764,14 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "插件里的 Agent 往项目排版里加了标注后，桌面挂胶囊「Agent 往这份排版里加了 N 个标注 · 并进来」；⌘S 撞上冲突时识别出只多了 Agent 加的，主按钮「合并并保存」",
-        "en-US": "After the agent adds annotations to a project layout through the plugin, the desktop shows a capsule offering to merge them in; if ⌘S hits a conflict that only consists of the agent's additions, the main button is \"Merge and save\""
+        "zh-CN": "插件里的 Agent 往项目排版里加了标注后，桌面回到前台时直接并进画布（可撤销）；⌘S 撞上的冲突只是 Agent 加的标注时直接并进来再保存，不弹对话框",
+        "en-US": "After the agent adds annotations to a project layout through the plugin, the desktop merges them into the open canvas when the window regains focus (undoable); if ⌘S hits a conflict that only consists of the agent's additions, it merges and saves without a dialog"
       },
-      "entry": "状态栏胶囊「并进来」；⌘S 冲突对话框「合并并保存」",
+      "entry": "回到前台自动并入；⌘S 不弹对话框",
       "e2e": [
         {
           "spec": "agent-merge.spec.ts",
-          "title": "Agent 往项目排版里加了标注：胶囊提醒；⌘S 撞冲突时「并进来」并保存，两边都在"
+          "title": "Agent 往项目排版里加了标注：回到前台自动并进画布；⌘S 时直接并进来再保存，不弹对话框"
         }
       ]
     }

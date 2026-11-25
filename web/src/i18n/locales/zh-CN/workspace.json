@@ -2030,8 +2030,6 @@
   },
   "agentMerge": {
     "commit_other": "并入 Agent 加的 {{count}} 个标注",
-    "available_other": "Agent 往这份排版里加了 {{count}} 个标注",
-    "action": "并进来",
     "done_other": "已并入 {{count}} 个标注，保存后写进项目"
   }
 }

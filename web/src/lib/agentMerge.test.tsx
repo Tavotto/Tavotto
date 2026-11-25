@@ -1,9 +1,9 @@
 /**
  * 「把 Agent 加的并进来」（ADR 0208 §五）：后端说「磁盘多出来的只有 Agent 追加的对象」时，桌面一次 commit 并进当前画布
- * （一步可撤销）、把项目文件的基线推到磁盘那一份；冲突对话框的主按钮换成「并进来」；不用等 ⌘S，回到前台时挂胶囊。
+ * （一步可撤销）、把项目文件的基线推到磁盘那一份。维护者 2026-11-25：没有要用户裁决的事就**不提示**——⌘S 撞上冲突时直接
+ * 并进来再保存，回到前台时直接并进画布。
  */
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -13,11 +13,11 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   saveLayout: vi.fn(),
 }))
 
-import { fetchAgentAdditions, saveLayout } from '@/lib/api'
-import { LayoutDialog } from '@/components/LayoutDialog'
-import { TooltipProvider } from '@/components/ui/Tooltip'
-import { literal, msg } from '@/i18n'
+import { ApiError, fetchAgentAdditions, saveLayout } from '@/lib/api'
+import { literal } from '@/i18n'
 import { mergeAgentAdditions, mergeableAgentAdditions, watchAgentAdditions } from '@/lib/agentMerge'
+import { writeBoundProjectFile } from '@/store/projectSave'
+import { captureSaveContext } from '@/store/saveContext'
 import { setCurrentProjectId } from '@/lib/session'
 import { activeProjectFile, setProjectFile, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -48,7 +48,6 @@ const arrow = (id: string): ArrowObject => ({
   anchor: { v: 1, by: 'agent', anchors: [{ role: 'to', panel: { id: 'figures/a.pdf', point: 'n' } }] },
 })
 
-let root: Root | null = null
 
 beforeEach(async () => {
   vi.clearAllMocks()
@@ -62,8 +61,6 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  if (root) await act(async () => root!.unmount())
-  root = null
   document.body.innerHTML = ''
   useUiStore.setState({ layoutOpen: false, status: null })
 })
@@ -113,58 +110,54 @@ describe('并进来', () => {
   })
 })
 
-describe('冲突对话框', () => {
-  const openConflict = async (revision: string) => {
-    useUiStore.getState().setLayoutOpen(true, 'saveToProject', {
-      name: '组图',
-      conflict: { name: '组图', revision, summary: null },
-    })
-    const el = document.createElement('div')
-    document.body.appendChild(el)
-    root = createRoot(el)
-    await act(async () => {
-      root!.render(
-        <TooltipProvider>
-          <LayoutDialog />
-        </TooltipProvider>,
-      )
-    })
-    await act(async () => {
-      await Promise.resolve()
-    })
-  }
-  const footer = () => document.querySelector('[role="dialog"] [data-dialog-footer]')!
-
-  it('项目里那份只多了 Agent 加的：主按钮「并进来」、覆盖退到次按钮、撤掉红色冲突提示；点它并进来并接着保存（基线是磁盘那份）', async () => {
+describe('不提示：⌘S 撞上只多了 Agent 加的标注时直接并进来再保存', () => {
+  it('第一次写回 409（磁盘是 Agent 写过的那份）→ 并进来 → 以磁盘修订号再写一次；不弹对话框', async () => {
     mockAdd.mockResolvedValue(additions())
-    mockSave.mockResolvedValue({ ok: true, revision: 'rev-after', name: '组图' })
-    useUiStore.getState().setStatus(msg('save.projectConflict', { file: 'tavottofile/组图.json' }, 'workspace'), 'error')
-    await openConflict('rev-disk')
-    expect(useUiStore.getState().status).toBeNull()
-    const merge = footer().querySelector<HTMLButtonElement>('[data-layout-merge-agent]')!
-    expect(merge.getAttribute('data-variant')).toBe('primary')
-    expect(footer().querySelector('[data-layout-overwrite]')!.getAttribute('data-variant')).toBe('danger-tinted')
-    expect(document.querySelector('[data-layout-conflict]')!.textContent).toContain('2 个标注')
-    await act(async () => {
-      merge.click()
-    })
+    mockSave
+      .mockRejectedValueOnce(
+        new ApiError('external_change', 409, { code: 'external_change', revision: 'rev-disk', summary: null }),
+      )
+      .mockResolvedValueOnce({ ok: true, revision: 'rev-after', name: '组图' })
+    const ok = await writeBoundProjectFile(captureSaveContext())
+    expect(ok).toBe(true)
+    expect(mockSave).toHaveBeenCalledTimes(2)
+    expect(mockSave.mock.calls[0][2]).toBe('rev-base')
+    expect(mockSave.mock.calls[1][2]).toBe('rev-disk')
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['a_mine0001', 'a_agent001', 't_agent002'])
     expect(useUiStore.getState().layoutOpen).toBe(false)
-    expect(useDocumentStore.getState().doc.objects).toHaveLength(3)
-    await vi.waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1))
-    expect(mockSave.mock.calls[0][2]).toBe('rev-disk')
-    expect(mockSave.mock.calls[0][3]).toEqual({ target: 'project' })
+    expect(activeProjectFile()).toMatchObject({ revision: 'rev-after', dirty: false })
   })
 
-  it('后端给的修订号不是 409 回的那一份（又被改过）：照旧的岔口（改名 / 覆盖）', async () => {
-    mockAdd.mockResolvedValue(additions())
-    await openConflict('rev-someone-else')
-    expect(footer().querySelector('[data-layout-merge-agent]')).toBeNull()
-    expect(footer().querySelector('[data-layout-rename]')).not.toBeNull()
+  it('磁盘上还有别的改动（后端说不只是 Agent 加的）：照旧打开冲突对话框，什么都不并', async () => {
+    mockAdd.mockResolvedValue({ available: false })
+    mockSave.mockRejectedValueOnce(
+      new ApiError('external_change', 409, { code: 'external_change', revision: 'rev-other', summary: null }),
+    )
+    const ok = await writeBoundProjectFile(captureSaveContext())
+    expect(ok).toBe(false)
+    expect(mockSave).toHaveBeenCalledTimes(1)
+    expect(useUiStore.getState().layoutOpen).toBe(true)
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(1)
+  })
+
+  it('并完再撞上冲突（这期间别处又改过）：只试一次，然后照旧打开冲突对话框', async () => {
+    // 第二问后端又说「有一批新的」：仍然只并一次、写两次，不进循环
+    mockAdd
+      .mockResolvedValueOnce(additions())
+      .mockResolvedValue({ ...additions(undefined, ['a_agent003']), revision: 'rev-again' })
+    const conflict = (revision: string) =>
+      new ApiError('external_change', 409, { code: 'external_change', revision, summary: null })
+    mockSave.mockRejectedValueOnce(conflict('rev-disk')).mockRejectedValueOnce(conflict('rev-again'))
+    const ok = await writeBoundProjectFile(captureSaveContext())
+    expect(ok).toBe(false)
+    expect(mockSave).toHaveBeenCalledTimes(2)
+    expect(useUiStore.getState().layoutOpen).toBe(true)
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(3)
   })
 })
 
-describe('胶囊', () => {
-  it('回到前台时问一次：有就挂「并进来」胶囊，点它并进来；同一个修订号不重复挂', async () => {
+describe('回到前台自动并进来', () => {
+  it('窗口回到前台：有 Agent 加的标注就直接并进画布（可撤销），状态栏说一句，不挂要点的按钮', async () => {
     mockAdd.mockResolvedValue(additions())
     const stop = watchAgentAdditions(1_000_000)
     await act(async () => {
@@ -172,19 +165,10 @@ describe('胶囊', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    const st = useUiStore.getState()
-    expect(st.statusAction).toBeTruthy()
-    useUiStore.setState({ status: null, statusAction: null })
-    await act(async () => {
-      window.dispatchEvent(new Event('focus'))
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(useUiStore.getState().statusAction).toBeFalsy()
-    await act(async () => {
-      st.statusAction!.run()
-    })
     expect(useDocumentStore.getState().doc.objects).toHaveLength(3)
+    const st = useUiStore.getState()
+    expect(st.status?.key).toBe('agentMerge.done')
+    expect(st.statusAction).toBeNull()
     stop()
   })
 })
