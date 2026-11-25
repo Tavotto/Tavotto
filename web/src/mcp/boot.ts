@@ -22,6 +22,7 @@ import { fetchSessionState, isOpenResult, sessionIdOf, type OpenFigureResult } f
 export type ToolResultClass =
   | { kind: 'open'; payload: OpenFigureResult }
   | { kind: 'handle'; sessionId: string }
+  | { kind: 'batch'; stems: string[] }
   | { kind: 'unusable'; detail: string }
 
 interface Envelope {
@@ -46,7 +47,31 @@ export function classifyToolResult(params: unknown): ToolResultClass {
   if (isOpenResult(body)) return { kind: 'open', payload: body }
   const sessionId = sessionIdOf(body)
   if (sessionId) return { kind: 'handle', sessionId }
+  const batch = batchOpened(body)
+  if (batch && batch.length > 0) {
+    // 只开成一张：那次调用的会话就只有这一个，按把手取件，画布照常出图
+    if (batch.length === 1) return { kind: 'handle', sessionId: batch[0].sessionId }
+    return { kind: 'batch', stems: batch.map((e) => e.stem) }
+  }
   return { kind: 'unusable', detail: describeUnusable(params, result) }
+}
+
+/**
+ * 批量打开的结果（server 的 `mode: "batch"`，会话都在 `opened[]` 里、顶层没有
+ * session_id）。宿主按工具定义挂 iframe，批量调用也会带出一块画布；server 已经
+ * 写了 `canvas_ui.code = "batch_open"`，画布要认出来，**不能当成被清空的空壳**
+ * ——那会把用户指去「升级插件」，而图其实都开好了。
+ */
+function batchOpened(body: unknown): { stem: string; sessionId: string }[] | null {
+  const o = body as { mode?: unknown; canvas_ui?: { code?: unknown }; opened?: unknown } | null
+  if (!o || typeof o !== 'object') return null
+  if (o.mode !== 'batch' && o.canvas_ui?.code !== 'batch_open') return null
+  const opened = Array.isArray(o.opened) ? o.opened : []
+  return opened.flatMap((e) => {
+    const sid = sessionIdOf(e)
+    const stem = (e as { stem?: unknown } | null)?.stem
+    return sid ? [{ sessionId: sid, stem: typeof stem === 'string' && stem ? stem : sid }] : []
+  })
 }
 
 /**
@@ -79,6 +104,7 @@ function describeUnusable(params: unknown, result: Envelope | null): string {
 export type Resolution =
   | { ok: true; payload: OpenFigureResult; fetched: boolean }
   | { ok: false; code: 'stripped' | 'fetch_failed'; detail: string }
+  | { ok: false; code: 'batch'; stems: string[] }
 
 /**
  * 从一条 tool-result 走到可种的负载。`onFetching` 在真的要去取件时调一次，
@@ -92,6 +118,7 @@ export async function resolveToolResult(
   const cls = classifyToolResult(params)
   if (cls.kind === 'open') return { ok: true, payload: cls.payload, fetched: false }
   if (cls.kind === 'unusable') return { ok: false, code: 'stripped', detail: cls.detail }
+  if (cls.kind === 'batch') return { ok: false, code: 'batch', stems: cls.stems }
   onFetching?.()
   try {
     return { ok: true, payload: await fetchSessionState(bridge, cls.sessionId), fetched: true }
