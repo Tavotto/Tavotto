@@ -538,3 +538,28 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 - 类别轴那一列：没有分组列、没有有序横轴时取「每格都不同的那一个文字列」，**名字像编号的列（`sample` / `id`）也算**——已汇总的表里它就是每一行的名字；没有误差列的表不受影响（仍不把它当类别轴）。这一列在响应的列角色里如实报成 `group`（右栏「分组」一行显示它），误差列不再列为横轴的备选（右栏不出现「横轴 / 不要横轴」一行）。
 - 界面（`CandidateStage` / `DataPanel` / `lib/dataBasis.ts`）：两种画法的名字「点 + 误差线」「点 + 折线 + 误差线」；说明句不重复列名，列名只在依据句里（「依据：按表里的 N 行绘制，每行一个点；误差线取自「列」列」）；算出来的误差线缺位置时依据句末接「N 处只有 1 个数值，算不出误差线 / 误差带」，只有一处时直接点名，多处的位置在该行的 `title` 里；「误差线」一行——列名自己说明了种类的不进「需要你确认」，`unknown` 的进并显示「还不确定」。文案由用户 2026-11-25 过目同意（「这些文案都可以」）。
 - 推荐考卷（`tests/support/data_figure_recommend.py`、`recommend_cases.json`）：写考卷时这种画法还没实现，记作 `missing` 的占位码 `errorbar_from_columns`；实现后按族落成 `points_err`（比较）与 `line_err`（趋势）两个 `coded` 码，三条用例（RC-P06A / RC-P12A / RC-H05）的 `acceptable_top` 相应从占位码换成这两个码——标准答案的含义（用表里现成的误差列画误差线）没变。规则第一名落在标准答案里：25 / 41 → 28 / 41。
+
+## 修订（2026-11-25）：按看图目的重排，并说明为什么不是另几张（`ai_data_purpose`、`ai_data_propose`；路线第③步）
+
+**起因**：维护者定的第③步是「按科学任务推荐并说明为什么不推荐另外几种」，口吻像老师 / 科研助理给建议，而不是直接画完。决策框架 §2 规定任务**不由推荐器自己定**：只有用户点选的算「用户确认过的目的」，从数据结构推出的永远只是假设。本期不让模型猜目的、不加自由文本入口。
+
+**命名**：框架 §2 / 推荐考卷里的「任务」（`task`）在这里叫 **`purpose`（看图目的）**，只为避开 `ai_data_task`（提交 / 生成脚本的流程）。取值是同一套词，界面本期只开四个：`compare_groups` / `trend` / `relationship` / `distribution`；考卷里别的任务（`dose_response` / `paired_change` / `agreement` / `part_whole` / `ranking` / `pattern_in_matrix`）没有模板或不在本期范围，不进闭集。
+
+**事实**（规则判，不调模型、不联网、不读数据；仍在 `ai.taf.enabled` 后面）：
+
+1. **请求**：`answers.purpose`。进 `_ANSWER_KEYS`（闭集外的值丢弃、当没给）；**不进** `_user_took_over`（点选目的不算接管列角色，与 `error` 同理）；进幂等键（`_answers_digest` 带整个 `ans`）。
+2. **纯排列**：`ai_data_purpose.resolve` 在 `default_candidates`、合画成对、换误差类型**之后**只调换已有 `Candidate` 的顺序（稳定分区：该目的对应的画法排前，其余与每类内部保持规则原顺序）；不新增、不复活被规则拿掉的备选（`x_independent` 拿掉的折线、`summarised_not_raw`、`x_is_measure`、被 `MAX_CANDIDATES` 截掉的都不会因目的回来）。`Candidate` 对象原样搬动，所以合画里按 `id(recipe)` 记的 `variants` 标记不丢，成对的两张仍相邻。排前的码：看比较 = `points_mean` / `box_points` / `violin_points` / `points_err`（框架 §4）；看趋势 = `line_*`（G-018）；看关系 = `scatter_fit` / `scatter`（G-018）；看分布 = 规则**留着**的 `box_points` / `violin_points`（没留着——每组点太少被规则拿掉——就不重排）。没有依据的并列项（如 `line_band` 与 `line_points`、`hist` 与 `ecdf`）保持规则原顺序；`bar_error` 从不被提前。
+3. **没有 `answers.purpose` 时**：假设的目的 = 规则现在第一名所属的族，重排是恒等；候选的集合与顺序、`recommended`、响应里除新增键以外的一切逐项不变（对拍：41 条推荐考卷 × 带 / 不带标准 `picks`、14 条跑分用例，剥掉 `purpose` / `why_not` / 随机 id 后与改动前逐项相同）。
+4. **响应**：顶层新增 `purpose: {code, source: "user" | "data", options: [...]}`——`code` 是实际生效的目的（用户点的、且这批备选里有它的族；否则回到假设的，`source` 为 `data`），`options` 只列「这批备选里至少有一张能回答」的目的（固定顺序），不足两个时为空（界面不出这一行）。非推荐的备选可带 `why_not: {code, guidance: [G-…], tier}`，只在有适用理由时出现，推荐的那张没有。
+5. **原因码闭集 `WHY_NOT`（4 个）**：`summary_hides_spread`（G-012，`bar_error` 相对看比较 / 看分布）、`line_needs_order`（G-018，`line_*` 相对看关系）、`order_prefers_line`（G-018，`scatter*` 相对看趋势）、`answers_other_purpose`（无 G，`tier: "purpose"`，这张回答的是另一个问题）。前三个有 G 依据，**不论目的是用户点的还是假设的都给**；`answers_other_purpose` **只在 `source: "user"` 时给**（没确认过的目的不能当理由，框架 §6）。理由三档 `data_fact` / `perceptual` / `purpose` 分开，不出「最优」「置信度」。测试核每个码引用的 G 在 `sciviz_guidance` 里存在且 basis 不是 `taste`；品味条目（G-042–G-051，如 G-050）不能当把某种画法排后的理由。
+6. **推荐考卷回放臂**：`tests/support/data_figure_recommend.py` 的 `purpose_arm`——把用例标准答案里的 `task`（只取四个之内的，41 条里 30 条）当 `answers.purpose`，**等于「用户点了对的目的」**。规则第一名落在 `acceptable_top` 的条数 28 → 31（RC-P02B、RC-P04B、RC-N03 修好，无回退）。`acceptable_top` / `forbidden` 一个字不改，`expressible` 本期不重量。
+
+**已知限制**：
+
+- **先截到 4 张再重排**：规则先取至多 `MAX_CANDIDATES` 张，目的只在这几张里排；被截掉的族不出现在 `options` 里，点它（手填请求）也不会让它回来（`test_a_family_squeezed_out_by_the_four_card_cap_is_not_offered`）。
+- **分布的「箱线在场」是点数够不够的代理**：每组点数的门槛（`MIN_N_BOX`）是工程选择（G-013 没给 n）；没有箱线 / 小提琴时「看分布」不改顺序，也没有「点数太少」的理由码（被规则拿掉的备选用户预览不到，理由没处显示）。
+- **两条考卷用例没有目的时第一名就是 `forbidden`**：RC-P03B（`agreement`）、RC-H01（`paired_change`）——它们的任务不在这四个里、目标画法（`scatter_identity` / `paired_lines`）没有模板，本期救不了；RC-P04B 没有目的时同样违规，点对「看关系」后修好。测试把这三条列为有名字的例外，只要求带目的后不比从前差，其余用例不许新增 `forbidden_recommended`。
+- 换目的是一次新的 `propose`（新会话，懒模式下缩略图重画），不是本地切换。
+- 目的行的界面文案与交互（前端）不在这一期。
+
+**不变的**：不加遥测、不联网；用户脚本与数据不动；`default_candidates` 的签名与行为不变（目的在它之后才用）。
