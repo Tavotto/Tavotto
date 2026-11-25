@@ -573,3 +573,122 @@ def undo(project: str | Path, name: str, token: str) -> dict:
     for p in (meta_p, body_p):
         p.unlink(missing_ok=True)
     return {"revision": restored, "restored_to": meta.get("before")}
+
+
+# ------------------------------------------------------------------ 局部图
+
+
+def _panel_payload(o: dict) -> dict:
+    """子图对象 → 合成用的载荷（与前端 `exportPayload` 的 panel 分支同一组几何字段：框、裁剪、旋转、翻转、不透明度）。"""
+    out = {
+        "type": "panel",
+        "id": o.get("fileId") or o.get("id"),
+        "x_mm": float(o["x"]),
+        "y_mm": float(o["y"]),
+        "w_mm": float(o["w"]),
+        "h_mm": float(o["h"]),
+    }
+    if isinstance(o.get("crop"), dict):
+        out["crop"] = o["crop"]
+    if o.get("rotation"):
+        out["rotation"] = o["rotation"]
+    if o.get("opacity") is not None:
+        out["opacity"] = o["opacity"]
+    if o.get("flipH"):
+        out["flip_h"] = True
+    if o.get("flipV"):
+        out["flip_v"] = True
+    return out
+
+
+def preview(
+    canvas: dict,
+    objects: list[dict],
+    panel_pdfs: dict[str, str],
+    *,
+    margin_mm: float = 4.0,
+    width_px: int = 1000,
+) -> dict | None:
+    """这批新对象合成到画布上之后，框住它们的那一块（PNG 字节 + 区域毫米）。
+
+    **真合成**（`rendercore.plan.compile_page` + `pdfwriter`，与成品同一条路）：子图源用这次量它们时导出的那份 PDF
+    （`panel_pdfs`：子图对象 id → 路径），没量到的子图不画（局部图里留白，`missing` 列出来）。给 Agent 看图自查用，
+    不是交付物；画不出来回 None（不让方案因此失败）。"""
+    import tempfile
+
+    from PIL import Image
+
+    from ..rendercore import facade, pdfwriter, plan as rc_plan, sources as rc_sources
+
+    if not objects:
+        return None
+    page = _page(canvas)
+    xs0 = [o["x"] for o in objects]
+    ys0 = [o["y"] for o in objects]
+    xs1 = [o["x"] + o["w"] for o in objects]
+    ys1 = [o["y"] + o["h"] for o in objects]
+    region = [
+        max(0.0, min(xs0) - margin_mm),
+        max(0.0, min(ys0) - margin_mm),
+        min(page["w"], max(xs1) + margin_mm),
+        min(page["h"], max(ys1) + margin_mm),
+    ]
+    if region[2] - region[0] <= 0 or region[3] - region[1] <= 0:
+        return None
+
+    class _Measured:
+        def resolve(self, obj: dict):
+            path = panel_pdfs.get(str(obj.get("id", "")))
+            if path is None:
+                raise rc_sources.SourceError(
+                    "source_missing", "not measured", {"figure": str(obj.get("id"))}
+                )
+            return rc_sources.FrozenSource(
+                artifact=rc_sources.static_artifact(Path(path), str(obj.get("id"))), path=Path(path)
+            )
+
+    panels, missing = [], []
+    for o in _figure_panels(canvas):
+        if (o.get("fileId") or o.get("id")) in panel_pdfs:
+            panels.append(_panel_payload(o))
+        else:
+            missing.append(o.get("id"))
+    try:
+        provider = facade.provider()
+        compiled = rc_plan.compile_page(
+            page["w"],
+            page["h"],
+            panels + agentobjects.to_export_objects(objects),
+            sources=_Measured(),
+            faces=provider,
+        )
+        with tempfile.TemporaryDirectory(prefix="tavotto-annotate-") as tmp:
+            pdf = Path(tmp) / "page.pdf"
+            pdfwriter.write_pdf(
+                compiled.page,
+                pdf,
+                provider,
+                {k: rc_sources.read_frozen(fs) for k, fs in compiled.sources.items()},
+            )
+            px_per_mm = width_px / (region[2] - region[0])
+            full_w = int(min(6000, max(200, page["w"] * px_per_mm)))
+            png = Path(tmp) / "page.png"
+            facade.render_preview_png(pdf, full_w, png)
+            img = Image.open(png)
+            img.load()
+        k = img.width / page["w"]
+        crop = img.crop(
+            (
+                int(region[0] * k),
+                int(region[1] * k),
+                int(region[2] * k + 0.999),
+                int(region[3] * k + 0.999),
+            )
+        )
+        import io
+
+        buf = io.BytesIO()
+        crop.save(buf, format="PNG")
+    except Exception:  # noqa: BLE001 — 局部图是自查辅助，画不出来不影响方案
+        return None
+    return {"png": buf.getvalue(), "region_mm": region, "missing_panels": missing}

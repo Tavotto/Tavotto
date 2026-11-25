@@ -482,3 +482,48 @@ def test_undo_store_is_keyed_by_the_real_project_path(project, tmp_path_factory)
     )
     assert la._undo_dir(alias, "组图") == la._undo_dir(project, "组图")
     la.undo(project, "组图", out["undo_token"])
+
+
+def test_preview_is_a_real_composition_cropped_to_the_new_elements(project):
+    """局部图走真合成：子图源是量它时导出的 PDF，新对象叠在上面，裁到这批对象周围。"""
+    import io
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from PIL import Image
+
+    pdf = project / "figures" / "fig1.pdf"
+    pdf.parent.mkdir()
+    fig = plt.figure(figsize=(80 / 25.4, 40 / 25.4))
+    fig.patch.set_facecolor("#0000ff")  # 整张子图涂蓝：局部图里有蓝 = 子图源真的合成进来了
+    fig.savefig(pdf)
+    plt.close(fig)
+    s = la.read_scene(project, "组图", measure)
+    items = [
+        {
+            "kind": "arrow",
+            "name": "red",
+            "color": "#ff0000",
+            "strokePt": 2,
+            "from": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [20, 10]},
+            "to": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [40, 10]},
+        }
+    ]
+    plan = la.propose(project, "组图", items, measure, base_revision=s["base_revision"])
+    assert plan["ok"], plan
+    lay = la.open_layout(project, "组图")
+    out = la.preview(lay.doc["canvases"][0], plan["objects"], {"figures/fig1.pdf": str(pdf)})
+    assert out is not None and out["missing_panels"] == []
+    x0, y0, x1, y1 = out["region_mm"]
+    assert x0 <= 30 and x1 >= 50 and y0 <= 30 and y1 >= 30  # 箭头在画布 (30, 30)–(50, 30)
+    img = np.asarray(Image.open(io.BytesIO(out["png"])).convert("RGB")).astype(int)
+    red = (img[:, :, 0] > 200) & (img[:, :, 1] < 80) & (img[:, :, 2] < 80)
+    blue = (img[:, :, 2] > 200) & (img[:, :, 0] < 80) & (img[:, :, 1] < 80)
+    assert red.sum() > 50, "新加的箭头画进了局部图"
+    assert blue.sum() > 10, "子图本身也在（不是只画了新对象）"
+    # 没量到的子图不画、如实列出
+    out = la.preview(lay.doc["canvases"][0], plan["objects"], {})
+    assert out is not None and out["missing_panels"] == ["figures/fig1.pdf"]
