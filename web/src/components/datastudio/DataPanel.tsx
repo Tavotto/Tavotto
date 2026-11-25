@@ -104,9 +104,13 @@ export function DataPanel() {
   // 误差线看的是**此刻预览的那一张**；重复测量一旦问过就留着（确认后后端不再问，但那一行要能再改）
   const shownCand = previewOf(candidates, thumbs, previewKey)
   const errKind = shownCand?.error ?? null
+  // 多个 y 各配各的误差列：各列都由列名自己说明才算「说明了」（单个 y 看 `error_stated`）；各列种类不一致时顶层没有 `error`
+  const colFacts = shownCand?.error_columns && shownCand.error_columns.length > 1 ? shownCand.error_columns : null
+  const statedAll = colFacts ? colFacts.every((c) => c.stated) : shownCand?.error_stated === true
+  const kindsDiffer = errKind == null && colFacts != null
   // 误差线的种类：点选过（`error_confirmed` / `answers.error`）或列名自己说明了（`error_stated`）都算已知，放在列角色下面；
   // 现成的误差列没说明是哪一种（`unknown`）且没点选 = 需要你确认，当前值写「还不确定」
-  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (shownCand?.error_stated === true && errKind !== 'unknown'))
+  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (statedAll && errKind !== 'unknown'))
   const designDone = answers.design === 'independent' || answers.design === 'repeated'
   const pendingError = errKind != null && !errorDone
   const pendingDesign = designAsked && !designDone
@@ -250,6 +254,8 @@ export function DataPanel() {
               </Row>
             </div>
           )}
+          {/* 各列种类不同（没有顶层 error）：放在列角色下面、不进「需要你确认」，当前值「各列不同」；选一种 = 所有列一起换 */}
+          {kindsDiffer && confirmRow('error', ERROR_KINDS, 'mixed', false)}
           {errorDone && confirmRow('error', ERROR_KINDS, isErrorKind(answers.error) ? answers.error : errKind!, true)}
           {designAsked && designDone && confirmRow('design', DESIGNS, String(answers.design), true)}
         </div>

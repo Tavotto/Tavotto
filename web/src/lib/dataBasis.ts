@@ -16,11 +16,12 @@ import type { AiDataFacts } from '@/lib/api'
 const SCATTER = ['scatter', 'scatter_fit']
 const TREND = ['line_points', 'line_band', 'line_units']
 /** 表里现成的误差列画成误差线：已汇总的表，一行一个点，误差取自那一列；走专用句式（不按分组数句子），属比较（`points_err`）/ 趋势（`line_err`） */
-const ERR_COLUMN = ['points_err', 'line_err']
+const ERR_COLUMN = ['points_err', 'line_err', 'bar_err']
 
 export interface BasisSentence {
-  key: 'rowsErr' | 'errColumn' | 'errMissing' | 'bandMissing' | 'errMissingOne' | 'bandMissingOne' | 'points' | 'plain' | 'groupsEqual' | 'groupsRange' | 'xAlso' | 'xOnly' | 'skippedMissing' | 'skippedOther' | 'skippedBoth' | 'skippedAll'
-  values: Record<string, number | string>
+  key: 'rowsErr' | 'rowsBar' | 'errColumn' | 'errColumns' | 'errMissing' | 'bandMissing' | 'errMissingOne' | 'bandMissingOne' | 'points' | 'plain' | 'groupsEqual' | 'groupsRange' | 'xAlso' | 'xOnly' | 'skippedMissing' | 'skippedOther' | 'skippedBoth' | 'skippedAll'
+  /** `errColumns` 的 `columns` 是列名数组（界面各加引号再相连）；别的都是数 / 字符串 */
+  values: Record<string, number | string | string[]>
 }
 
 export interface Basis {
@@ -41,6 +42,7 @@ export function basisOf(c: {
   facts?: AiDataFacts | null
   unplotted?: { count: number } | null
   error_column?: string
+  error_columns?: { column: string }[]
   error_missing_for?: string[]
 }): Basis | null {
   const f = c.facts
@@ -49,7 +51,8 @@ export function basisOf(c: {
   const main: BasisSentence[] = []
   const viaColumn = ERR_COLUMN.includes(c.title_code)
   if (viaColumn) {
-    main.push({ key: 'rowsErr', values: { drawn: f.drawn } })
+    // 柱不是「点」：`bar_err` 写「每行一根柱」
+    main.push({ key: c.title_code === 'bar_err' ? 'rowsBar' : 'rowsErr', values: { drawn: f.drawn } })
   } else if (SCATTER.includes(c.title_code)) {
     main.push({ key: 'points', values: { drawn: f.drawn } })
   } else if (f.groups != null && f.n_min != null && f.n_max != null) {
@@ -67,11 +70,18 @@ export function basisOf(c: {
   const missingFor = c.error_missing_for ?? []
   return {
     main,
-    errColumn: viaColumn && c.error_column ? { key: 'errColumn', values: { column: c.error_column } } : null,
+    errColumn: viaColumn ? errColumnOf(c) : null,
     skipped: skippedOf(f, c.unplotted?.count ?? 0),
     errMissing: missingOf(missingFor, c.title_code === 'line_band'),
     missingFor,
   }
+}
+
+/** 误差线取自哪些列：多个 y 各配各的时写成「a_sd」「b_sd」（逐列事实在 `error_columns`），单个 y 是 `error_column` */
+function errColumnOf(c: { error_column?: string; error_columns?: { column: string }[] }): BasisSentence | null {
+  if (c.error_columns && c.error_columns.length > 1) return { key: 'errColumns', values: { columns: c.error_columns.map((x) => x.column) } }
+  const one = c.error_column ?? c.error_columns?.[0]?.column
+  return one ? { key: 'errColumn', values: { column: one } } : null
 }
 
 function skippedOf(f: AiDataFacts, total: number): BasisSentence | null {
