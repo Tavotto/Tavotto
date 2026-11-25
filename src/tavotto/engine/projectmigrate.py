@@ -7,7 +7,7 @@
 
 | 状态 | 处置 |
 | --- | --- |
-| 改指表 `config.json` `projects[<路径>].input_remap` | 迁：规则的 `to` 落在旧项目根之内的换成新根，项目外的原样 |
+| 改指表 `config.json` `projects[<路径>].input_remap` | 迁：规则的 `to` 落在旧项目根之内的换成新根，项目外的原样；`from` 是旧根内的绝对路径时另加一条 `from` 换根的 |
 | 运行配置 `runconfigs/<摘要>.json` | 迁：配置 / 默认 / 捕获史；**启动记录不迁**（解释器证据） |
 | 输入转录 `inputtranscripts/<摘要>.json` | 迁 |
 | 渲染缓存 / baked_overrides | 不迁（派生物，重建） |
@@ -75,8 +75,17 @@ def migrate(old_root: str, new_root: str) -> dict:
     bool, "failed": [失败的项]}`。任何一项失败只记日志（不抛），由调用方决定要不要留待办标记。"""
     result: dict = {"input_remap": 0, "runconfigs": False, "inputtranscripts": False, "failed": []}
 
-    def rebase(rule: dict) -> dict:
-        return {**rule, "to": rebase_path(rule["to"], old_root, new_root)}
+    def rebase(rule: dict) -> list[dict]:
+        moved = {**rule, "to": rebase_path(rule["to"], old_root, new_root)}
+        out = [moved]
+        src = rule["from"]
+        if src and os.path.isabs(src):
+            # 脚本用 `__file__` 拼出的绝对路径：挪走后它要的是新根下的那一串，另加一条（原规则留着）
+            # 脚本拼出来的多半是解析过符号链接的路径（`Path(__file__).resolve()`）：新根也取解析后的写法
+            rebased = rebase_path(src, old_root, os.path.realpath(new_root))
+            if rebased != src:
+                out.append({**moved, "from": rebased})
+        return out
 
     steps = (
         ("input_remap", lambda: inputremap.migrate_rules(old_root, new_root, rebase)),

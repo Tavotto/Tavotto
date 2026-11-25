@@ -265,3 +265,32 @@ def test_rebase_path_sees_through_symlinked_prefixes(tmp_path):
         str(link / "old" / "raw"), str(real / "old"), str(tmp_path / "new")
     )
     assert os.path.normpath(got) == os.path.normpath(str(tmp_path / "new" / "raw"))
+
+
+def test_absolute_from_inside_the_old_root_gets_a_rebased_twin(tmp_path, monkeypatch):
+    """脚本用 `__file__` 拼出的绝对路径（`BASE_DIR / "values.txt"`）：规则的 `from` 是旧项目根内的绝对路径。
+    挪走后脚本要的是新根下那一串——另加一条 `from` 换根的规则（`to` 同样换根），原规则留着。"""
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "config"))
+    old, new = tmp_path / "old", tmp_path / "new"
+    (new / "raw").mkdir(parents=True)
+    (new / "raw" / "values.txt").write_text("1\n", encoding="utf-8")
+    config.set_project_settings(
+        str(old),
+        {
+            inputremap.SETTINGS_KEY: {
+                "rules": [
+                    {
+                        "kind": "file",
+                        "from": str(old / "values.txt"),
+                        "to": str(old / "raw" / "values.txt"),
+                    }
+                ]
+            }
+        },
+    )
+    projectmigrate.claim_moved(str(old), new)
+    rules = {r["from"]: r["to"] for r in inputremap.rules_for(new)}
+    real_new = os.path.realpath(new)
+    assert rules[os.path.join(real_new, "values.txt")] == str(new / "raw" / "values.txt")
+    assert rules[str(old / "values.txt")] == str(new / "raw" / "values.txt")

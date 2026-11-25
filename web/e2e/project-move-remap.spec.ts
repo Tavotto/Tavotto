@@ -22,7 +22,20 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-function writeProject(dir: string): void {
+/** 两种脚本写法：相对路径（规则的 `from` 是相对串）与按 `__file__` 拼出的绝对路径（规则的 `from` 是旧根内的绝对路径） */
+const SHAPES = {
+  relative: ['with open("data/values.txt") as f:', '    value = f.read().strip()'],
+  file_based: [
+    'from pathlib import Path',
+    'BASE_DIR = Path(__file__).resolve().parent',
+    'path = BASE_DIR / "values.txt"',
+    'if not path.exists():',
+    '    raise FileNotFoundError(f"Data file not found: {path}")',
+    'value = path.read_text().strip()',
+  ],
+} as const
+
+function writeProject(dir: string, shape: keyof typeof SHAPES): void {
   mkdirSync(path.join(dir, 'raw'), { recursive: true })
   writeFileSync(
     path.join(dir, 'fig.py'),
@@ -31,8 +44,7 @@ function writeProject(dir: string): void {
       'matplotlib.use("Agg")',
       'import matplotlib.pyplot as plt',
       '',
-      'with open("data/values.txt") as f:',
-      '    value = f.read().strip()',
+      ...SHAPES[shape],
       'fig, ax = plt.subplots()',
       'ax.plot([0, 1], [0, int(value)])',
       'fig.savefig("values_" + value + ".png")',
@@ -53,13 +65,13 @@ async function runScript(page: Page) {
   return done
 }
 
-test('整夹挪走后重跑：指认过的数据随项目迁过来，不再弹缺数据卡', async ({ app, page, browser }) => {
+for (const shape of ['relative', 'file_based'] as const) test(`整夹挪走后重跑：指认过的数据随项目迁过来，不再弹缺数据卡（${shape}）`, async ({ app, page, browser }) => {
   test.setTimeout(360_000)
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-moveremap-'))
   try {
     const projA = path.join(root, 'projA')
     const projB = path.join(root, 'projB')
-    writeProject(projA)
+    writeProject(projA, shape)
     const env = { TAVOTTO_DATA_DIR: path.join(root, 'data'), TAVOTTO_CONFIG_DIR: path.join(root, 'config') }
     mkdirSync(env.TAVOTTO_DATA_DIR, { recursive: true })
     const port = await freePort()

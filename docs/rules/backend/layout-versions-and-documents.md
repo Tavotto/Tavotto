@@ -380,7 +380,7 @@ order: 200
     空白排版上 `close` 同样不写（`_MOMENTS_SKIPPED_WHEN_BLANK`）。`mode` / `owner` 闭集是严格同源对（见 `same-origin-pairs.md`）。
     看护 `tests/test_project_history_restore.py`（含 `test_vocabulary_mirrors_are_literal`）。
   - **本机设置随认领迁移（ADR 0211 第一期 5，`engine/projectmigrate.py`）**：认领时 owner 是 `moved`（旧路径确定不在）才迁；
-    复制不迁。改指表（`inputremap.migrate_rules`：`to` 在旧项目根内的换新根，项目外与 `from` 原样；新键下同一处的规则不覆盖）、
+    复制不迁。改指表（`inputremap.migrate_rules`：`to` 在旧项目根内的换新根，项目外原样；`from` 是旧根内的绝对路径——脚本按 `__file__` 拼的——时另加一条 `from` 换根的（取新根的 `realpath`），原规则留着；新键下同一处的规则不覆盖）、
     运行配置（`runconfig.migrate_store`：配置 / 默认 / 捕获史，**不搬 `launches` 启动记录**）、输入转录（`inputtranscript.migrate_store`）
     各自幂等，新键下已有就不动；路径比对先 `realpath`（`/var` ↔ `/private/var`）再按卷归一大小写。运行许可 / 执行策略 / 记住的解释器
     **不迁**（ADR 0021 §7.1，`NOT_MIGRATED_SETTINGS` 钉住）；渲染缓存与 baked_overrides 不迁（派生物）。一项失败只记日志、不让认领失败，
