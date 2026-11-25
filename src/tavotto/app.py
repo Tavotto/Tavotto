@@ -14066,11 +14066,13 @@ def api_engine_sync_overrides():
             # 图内副本（ADR 0207）及它 gid 上的全部修改：同步按位置映射，源在目标图上未必存在，不跨图同步
             skipped.append({**p, "skip_reason": SYNC_SKIP_COPY})
             continue
-        m = re.match(r"axes_(\d+)(\..+)?$", gid)
-        if not m:
+        # 不用 `(\..+)?$` 这类回溯正则（CodeQL py/polynomial-redos #50）：只匹配前缀数字，余下部分按字符串判
+        m = re.match(r"axes_(\d+)", gid)
+        rest = gid[m.end() :] if m else ""
+        if not m or (rest and (len(rest) < 2 or rest[0] != ".")):
             skipped.append(p)  # figure / fig.texts 级不映射
             continue
-        i, rest = int(m.group(1)), m.group(2) or ""
+        i = int(m.group(1))
         ni = conv(i)
         if ni is None:
             unmatched.append(p)
