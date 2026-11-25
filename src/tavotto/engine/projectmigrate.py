@@ -1,7 +1,8 @@
 """项目整夹挪走后，按路径作键的本机设置随认领迁到新路径（ADR 0211 第一期 5）。
 
 什么时候迁：**只在确认是挪走**时——项目内时间线认领成功、且归属里记的旧项目路径确定已不在
-（`projecthistory.owner_path_gone`）。复制（旧路径还在）不迁：旧项目的设置原样留给旧项目。
+（`projecthistory.owner_path_gone`）。复制（旧路径还在）时**只拷改指表**给复制品（`copy_remap`，维护者
+2026-11-26 拍板；运行配置与输入转录不跟），旧项目的设置一个字节不动。
 
 迁什么（ADR 0211「按路径失联的本机状态」表）：
 
@@ -70,22 +71,46 @@ def rebase_path(path: str, old_root: str, new_root: str) -> str:
     return os.path.join(os.fspath(new_root), *parts[len(old_parts) :])
 
 
-def migrate(old_root: str, new_root: str) -> dict:
-    """把三份本机设置从旧路径迁到新路径。回 `{"input_remap": 新加条数, "runconfigs": bool, "inputtranscripts":
-    bool, "failed": [失败的项]}`。任何一项失败只记日志（不抛），由调用方决定要不要留待办标记。"""
-    result: dict = {"input_remap": 0, "runconfigs": False, "inputtranscripts": False, "failed": []}
+def _rebase_rule(old_root: str, new_root: str):
+    """一条改指规则在新根下要的那几条（挪走与复制同一套）：`to` 在旧根内的换新根、项目外原样；`from` 是旧根内的
+    绝对路径（脚本按 `__file__` 拼的）时另加一条 `from` 换根的，原规则留着。"""
 
     def rebase(rule: dict) -> list[dict]:
         moved = {**rule, "to": rebase_path(rule["to"], old_root, new_root)}
         out = [moved]
         src = rule["from"]
         if src and os.path.isabs(src):
-            # 脚本用 `__file__` 拼出的绝对路径：挪走后它要的是新根下的那一串，另加一条（原规则留着）
             # 脚本拼出来的多半是解析过符号链接的路径（`Path(__file__).resolve()`）：新根也取解析后的写法
             rebased = rebase_path(src, old_root, os.path.realpath(new_root))
             if rebased != src:
                 out.append({**moved, "from": rebased})
         return out
+
+    return rebase
+
+
+def copy_remap(owner_key: str, new_root: str | os.PathLike) -> int:
+    """项目被**复制**（旧路径还在）、复制品另开一份排版时：把复制源的改指表拷一份到复制品（维护者 2026-11-26 拍板）。
+
+    规则换根的口径与挪走相同（`_rebase_rule`）；**只拷改指表**——运行配置、输入转录不跟；复制源的规则一个字节不动；
+    复制品自己已有的同一处规则不覆盖（幂等）；复制源没有规则就什么都不做。不抛：失败只记日志，回新加的条数。"""
+    new_root = os.fspath(new_root)
+    old_root = old_root_for(owner_key)
+    if _identity(old_root) == _identity(new_root):
+        return 0
+    try:
+        return inputremap.migrate_rules(old_root, new_root, _rebase_rule(old_root, new_root))
+    except Exception:  # noqa: BLE001
+        LOG.warning("复制品继承改指表失败", exc_info=True)
+        return 0
+
+
+def migrate(old_root: str, new_root: str) -> dict:
+    """把三份本机设置从旧路径迁到新路径。回 `{"input_remap": 新加条数, "runconfigs": bool, "inputtranscripts":
+    bool, "failed": [失败的项]}`。任何一项失败只记日志（不抛），由调用方决定要不要留待办标记。"""
+    result: dict = {"input_remap": 0, "runconfigs": False, "inputtranscripts": False, "failed": []}
+
+    rebase = _rebase_rule(old_root, new_root)
 
     steps = (
         ("input_remap", lambda: inputremap.migrate_rules(old_root, new_root, rebase)),

@@ -294,3 +294,44 @@ def test_absolute_from_inside_the_old_root_gets_a_rebased_twin(tmp_path, monkeyp
     real_new = os.path.realpath(new)
     assert rules[os.path.join(real_new, "values.txt")] == str(new / "raw" / "values.txt")
     assert rules[str(old / "values.txt")] == str(new / "raw" / "values.txt")
+
+
+def test_copied_project_inherits_only_the_remap_rules(client, tmp_path):
+    """复制（旧路径还在）：复制品另开一份排版时拷一份改指表（项目内的换新根、项目外原样），复制源一个字节不动；
+    运行配置与输入转录不跟；幂等（维护者 2026-11-26 拍板）。"""
+    a_root, c_root, outside = tmp_path / "projA", tmp_path / "projC", tmp_path / "elsewhere"
+    _a, rev, rc_id = _seed_project(client, a_root, outside)
+    a_settings = json.dumps(config.project_settings(str(a_root)), sort_keys=True)
+    shutil.copytree(a_root, c_root)
+    c = _open(client, c_root)
+
+    def copied():
+        r = client.post(
+            "/api/layout-session/project-history/copied", json={"doc_id": "d_mv"}, headers=_h(c)
+        )
+        assert r.status_code == 200, r.get_json()
+        return r.get_json()["copied"]
+
+    assert copied() == 2
+    rules = {r["from"]: r["to"] for r in inputremap.rules_for(c_root)}
+    assert rules == {"/old/data": str(c_root / "data"), "y.csv": str(outside / "y.csv")}
+    assert copied() == 0  # 幂等
+    # 复制源原样；运行配置、输入转录、运行许可都不跟
+    assert json.dumps(config.project_settings(str(a_root)), sort_keys=True) == a_settings
+    assert not runconfig.store_path(c_root).exists()
+    assert not inputtranscript.store_path(c_root).exists()
+    for key in projectmigrate.NOT_MIGRATED_SETTINGS:
+        assert key not in config.project_settings(str(c_root))
+
+
+def test_copied_endpoint_does_nothing_for_a_move(client, tmp_path):
+    """不是复制（挪走：旧路径不在）时这个端点什么都不做——挪走走认领那条迁移。"""
+    a_root, b_root, outside = tmp_path / "projA", tmp_path / "projB", tmp_path / "elsewhere"
+    _seed_project(client, a_root, outside)
+    a_root.rename(b_root)
+    b = _open(client, b_root)
+    r = client.post(
+        "/api/layout-session/project-history/copied", json={"doc_id": "d_mv"}, headers=_h(b)
+    )
+    assert r.get_json()["copied"] == 0
+    assert inputremap.rules_for(b_root) == []

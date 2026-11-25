@@ -1687,6 +1687,24 @@ export async function fetchProjectHistory(
  * `ok` = 后端此刻记的就是本项目、且对着的是 `revision` 那一版正文；`refused` = 后端明确拒（409，此刻不满足挪走的
  * 条件或槽位刚被存过——调用方重列一次再定）；`unavailable` = 问不到（网络 / 503 / 旧后端），**不是**拒绝。
  */
+/**
+ * 复制品从项目内节点另开了一份排版：请后端把复制源（归属里记的、仍然存在的旧项目路径）的改指表拷一份到当前项目
+ * （ADR 0211 第一期 5，维护者 2026-11-26 拍板）。后端在锁里重判「确实是复制」才拷；只拷改指表；幂等。失败不打扰——
+ * 回 0，最坏是复制品里重跑时再弹一次缺数据卡。
+ */
+export async function inheritRemapForCopy(docId: string, pj: string | null): Promise<number> {
+  try {
+    const body = await jsonFetch<{ copied?: unknown }>(
+      '/api/layout-session/project-history/copied',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc_id: docId }) },
+      pj,
+    )
+    return typeof body?.copied === 'number' ? body.copied : 0
+  } catch {
+    return 0
+  }
+}
+
 export async function claimProjectHistory(
   docId: string,
   revision: string,

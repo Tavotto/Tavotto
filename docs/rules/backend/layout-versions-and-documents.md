@@ -385,7 +385,9 @@ order: 200
     各自幂等，新键下已有就不动；路径比对先 `realpath`（`/var` ↔ `/private/var`）再按卷归一大小写。运行许可 / 执行策略 / 记住的解释器
     **不迁**（ADR 0021 §7.1，`NOT_MIGRATED_SETTINGS` 钉住）；渲染缓存与 baked_overrides 不迁（派生物）。一项失败只记日志、不让认领失败，
     新项目设置里留 `moved_from` 待办，下次打开项目（`_open_project`）重试，全成才摘掉；旧键原样保留。改指表真变了时与用户指认同一套收尾
-    （`_stop_remap_dependent_work` + `input_remap_changed`）。看护 `tests/test_project_move_migrate.py` + `web/e2e/project-move-remap.spec.ts`。
+    （`_stop_remap_dependent_work` + `input_remap_changed`）。**复制**（维护者 2026-11-26 拍板）：前端按复制另开新 docId 的那一刻调
+    `POST …/project-history/copied {doc_id}`，后端锁里重判仍是 `copy` 且 owner 是 `other`（旧路径还在）才 `projectmigrate.copy_remap`——
+    **只拷改指表**（同一套换根口径），运行配置 / 输入转录不跟，复制源一个字节不动，幂等。看护 `tests/test_project_move_migrate.py` + `web/e2e/project-move-remap.spec.ts`。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。

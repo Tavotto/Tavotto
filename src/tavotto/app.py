@@ -21614,6 +21614,42 @@ def api_layout_session_project_history_claim():
     return jsonify({"ok": True, "revision": revision, "owner": "this"})
 
 
+@app.post("/api/layout-session/project-history/copied")
+def api_layout_session_project_history_copied():
+    """项目被复制、复制品从项目内节点另开一份排版之后调（ADR 0211 第一期 5，维护者 2026-11-26 拍板）：
+    把复制源（槽位归属里记的、**仍然存在**的旧项目路径）的改指表拷一份到当前项目。
+
+    在槽位文档锁里重判一遍：仍是 `mode == "copy"` 且 owner 是 `other`（旧路径还在）才拷；别的情况（待核对、会话状态读不全、
+    槽位坏）不知道复制源是谁，什么都不做。只拷改指表；复制源一个字节不动；幂等。回 `{ok, copied: 新加条数}`。"""
+    body = request.get_json(silent=True)
+    doc_id = body.get("doc_id") if isinstance(body, dict) else None
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    store = project_store_dir(ctx)
+    if ctx is None or store is None:
+        return jsonify({"ok": True, "copied": 0})
+    key = engine_layoutsession.project_key(ctx.path)
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            state, status = engine_layoutsession.read_readonly()
+            slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
+            mode, owner = _history_verdict(
+                doc_id, key, state, status, slot_doc, slot_rev, slot_exists
+            )
+            recorded = state["owners"].get(doc_id)
+    except OSError:
+        return _session_unavailable()
+    if mode != "copy" or owner != "other" or not isinstance(recorded, str):
+        return jsonify({"ok": True, "copied": 0})
+    copied = engine_projectmigrate.copy_remap(recorded, ctx.path)
+    if copied:
+        root = str(ctx.path)
+        _stop_remap_dependent_work(root)
+        _publish_remap_changed(root, "added", engine_inputremap.state(root)["generation"])
+    return jsonify({"ok": True, "copied": copied})
+
+
 @app.get("/api/preferences/export-defaults")
 def api_export_defaults_get():
     """导出默认值（按用户一份，数据目录）。没存过是 `{"defaults": null}`，不是 404。"""

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
@@ -65,7 +65,13 @@ async function runScript(page: Page) {
   return done
 }
 
-for (const shape of ['relative', 'file_based'] as const) test(`整夹挪走后重跑：指认过的数据随项目迁过来，不再弹缺数据卡（${shape}）`, async ({ app, page, browser }) => {
+const CASES = [
+  { shape: 'relative', kind: 'move' },
+  { shape: 'file_based', kind: 'move' },
+  { shape: 'relative', kind: 'copy' },
+] as const
+
+for (const { shape, kind } of CASES) test(`整夹${kind === 'move' ? '挪走' : '复制'}后重跑：指认过的数据随项目${kind === 'move' ? '迁' : '带'}过来，不再弹缺数据卡（${shape}）`, async ({ app, page, browser }) => {
   test.setTimeout(360_000)
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-moveremap-'))
   try {
@@ -104,19 +110,38 @@ for (const shape of ['relative', 'file_based'] as const) test(`整夹挪走后�
     await page.close()
     await a1.stop()
 
-    // ---- 2. 整夹挪走、没按 ⌘S：新路径打开，排版从项目自己的时间线找回（认领 = 确认是挪走） ----
-    renameSync(projA, projB)
+    // ---- 2. 挪走：新路径打开，排版从项目自己的时间线找回（认领 = 确认是挪走）；
+    //         复制：旧项目还在，复制品从节点另开一份（新 docId），同时把复制源的改指表拷一份过来 ----
+    const configFile = path.join(env.TAVOTTO_CONFIG_DIR, 'config.json')
+    const rulesOf = (dir: string) => {
+      const projects = (JSON.parse(readFileSync(configFile, 'utf8')) as { projects?: Record<string, { input_remap?: unknown }> }).projects ?? {}
+      const real = (p: string) => {
+        try {
+          return realpathSync.native(p)
+        } catch {
+          return p
+        }
+      }
+      const hit = Object.entries(projects).find(([k]) => real(k) === real(dir))
+      return JSON.stringify(hit?.[1]?.input_remap ?? null)
+    }
+    if (kind === 'move') renameSync(projA, projB)
+    else cpSync(projA, projB, { recursive: true })
+    const sourceRules = kind === 'copy' ? rulesOf(projA) : null
     const a2 = await app({ figures: projB, env, port })
     const ctx = await browser.newContext()
     await ctx.addInitScript(() => localStorage.setItem('tavotto.preparationPanel', 'off'))
     const tab = await ctx.newPage()
-    const claimed = tab.waitForResponse(
-      (r) => new URL(r.url()).pathname === '/api/layout-session/project-history/claim' && r.ok(),
+    const settled = tab.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname ===
+          (kind === 'move' ? '/api/layout-session/project-history/claim' : '/api/layout-session/project-history/copied') &&
+        r.ok(),
       { timeout: 60_000 },
     )
     await tab.goto(a2.baseURL)
     await waitForDocumentReady(tab)
-    await claimed
+    await settled
     await expect(tab.locator('[data-object-id]')).toHaveCount(1, { timeout: 30_000 })
 
     // ---- 3. 重跑：不再弹缺数据卡，图照常出来 ----
@@ -127,6 +152,8 @@ for (const shape of ['relative', 'file_based'] as const) test(`整夹挪走后�
     expect(body.error?.missing_input, '重跑不该再报缺数据').toBeUndefined()
     await expect(tab.locator('[data-dialog="missing-input"]')).toHaveCount(0)
     await expect(tab.locator('[data-card="runtime:fig.py#values_42"]')).toBeVisible({ timeout: 60_000 })
+    // 复制：原项目的规则一个字节不动
+    if (kind === 'copy') expect(rulesOf(projA)).toBe(sourceRules)
     await ctx.close()
     await a2.stop()
   } finally {
@@ -134,4 +161,4 @@ for (const shape of ['relative', 'file_based'] as const) test(`整夹挪走后�
   }
 })
 
-// 复制场景不迁（旧项目还在）：由后端用例 `tests/test_project_move_migrate.py::test_copied_project_migrates_nothing` 钉住。
+// 复制只带改指表（运行配置 / 输入转录不跟）：后端用例 `tests/test_project_move_migrate.py::test_copied_project_inherits_only_the_remap_rules`。
