@@ -475,7 +475,11 @@ def propose(
 
 
 def _undo_dir(project: Path, name: str) -> Path:
-    key = hashlib.sha256(layoutsession.project_key(project).encode("utf-8")).hexdigest()[:16]
+    """撤销留存的目录：按项目的**真实路径**取键——插件拿到的项目路径与桌面后端的不一定是同一种写法（macOS 上
+    `/var/...` 与 `/private/var/...`、符号链接别名），按原样算会把同一个项目的留存放进两个目录，桌面认不出插件写的。"""
+    key = hashlib.sha256(
+        layoutsession.project_key(Path(project).resolve()).encode("utf-8")
+    ).hexdigest()[:16]
     return layoutsession.canonical_state_dir() / "agent-undo" / key / name
 
 

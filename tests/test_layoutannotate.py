@@ -466,3 +466,19 @@ def test_schema_4_projects_are_annotated_too(project):
     with pytest.raises(la.LayoutError) as e:
         la.read_scene(project, "组图", measure)
     assert e.value.code == "layout_format_unsupported"
+
+
+def test_undo_store_is_keyed_by_the_real_project_path(project, tmp_path_factory):
+    """同一个项目经符号链接别名访问（macOS 的 /var 与 /private/var 同理）：撤销留存落在同一个地方，从任何一种写法都能撤销。"""
+    alias = tmp_path_factory.mktemp("alias") / "proj"
+    try:
+        alias.symlink_to(project, target_is_directory=True)
+    except OSError:
+        pytest.skip("此平台不能建符号链接")
+    base = la.read_scene(alias, "组图", measure)["base_revision"]
+    plan = la.propose(alias, "组图", _items(), measure, base_revision=base)
+    out = la.commit(
+        alias, "组图", _items(), measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert la._undo_dir(alias, "组图") == la._undo_dir(project, "组图")
+    la.undo(project, "组图", out["undo_token"])
