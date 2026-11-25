@@ -1,4 +1,4 @@
-import { useEffect, type ReactElement } from 'react'
+import { useEffect, type ReactElement, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { PRO_NAME } from '@/lib/brand'
@@ -18,11 +18,23 @@ export function PremiumLock({
   feature,
   children,
   side = 'top',
+  tip,
+  align,
+  alignOffset,
+  arrow,
+  soft,
 }: {
   /** 功能键（闭集，见引擎 `license.FEATURES`） */
   feature: string
   children: ReactElement
   side?: 'top' | 'bottom' | 'left' | 'right'
+  /** 悬停那一句换成这个功能自己的（多行用换行；最后一行可以是「了解高级版 ›」）；不给就是通用那一句 */
+  tip?: ReactNode
+  align?: 'start' | 'center' | 'end'
+  alignOffset?: number
+  arrow?: boolean
+  /** 锁着的控件也是要读的字（分段里的「批注」）：置灰只降一小档 */
+  soft?: boolean
 }) {
   useTranslation('dialogs')
   const status = useLicenseStore((s) => s.status)
@@ -32,7 +44,7 @@ export function PremiumLock({
   }, [status, load])
   if (!licenseVisible(status) || licenseHas(status, feature)) return children
   return (
-    <Tip label={translate('settings.license.lock.tip', { ns: 'dialogs', pro: PRO_NAME })} side={side} tone="light">
+    <Tip label={tip ?? translate('settings.license.lock.tip', { ns: 'dialogs', pro: PRO_NAME })} side={side} tone="light" align={align} alignOffset={alignOffset} arrow={arrow}>
       <span
         data-premium-lock={feature}
         role="button"
@@ -46,7 +58,7 @@ export function PremiumLock({
             useUiStore.getState().setSettingsOpen(true, 'about')
           }
         }}
-        className={cn('inline-flex opacity-50 outline-none focus-visible:focus-ring')}
+        className={cn('inline-flex outline-none focus-visible:focus-ring', soft ? 'opacity-80' : 'opacity-50')}
       >
         <span className="pointer-events-none inline-flex" inert>
           {children}

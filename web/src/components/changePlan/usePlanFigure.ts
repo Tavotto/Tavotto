@@ -6,7 +6,7 @@ import { adoptionGuardOf } from '@/lib/artifactValidation'
 import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
 import { applyGroups, toOverrides, type PlanSource } from '@/lib/changePlanApply'
-import { enginePreviewPngSnapshot } from '@/lib/api'
+import { enginePreviewPngSnapshot, type Manifest } from '@/lib/api'
 import { useChangePlanStore, sourceOf, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -115,4 +115,37 @@ export function useSelectionPreview(entry: PlanEntry | undefined, active: boolea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, sig, plan, fileId, pj])
   return state
+}
+
+const manifestCache = new Map<string, Manifest>()
+
+/**
+ * 这一版「修改后」的元素表（批注点选的来源）：用全量候选（`candidate_patches`）经状态中立的出图取回 manifest，按方案 id 缓存；
+ * `enabled` 才取（高级版里第一次把鼠标移到图上 / 进入批注模式时），取不到 = null（悬停点选就不出，批注仍可框选 / 整体）。
+ */
+export function usePlanManifest(entry: PlanEntry | undefined, enabled: boolean): Manifest | null {
+  const plan = entry?.plan
+  const id = plan?.id
+  const [got, setGot] = useState<{ id: string; manifest: Manifest } | null>(null)
+  const fileId = entry?.fileId
+  const pj = entry?.pj ?? null
+  useEffect(() => {
+    if (!enabled || !plan || !id || !fileId) return
+    const hit = manifestCache.get(id)
+    if (hit) {
+      setGot({ id, manifest: hit })
+      return
+    }
+    const ctrl = new AbortController()
+    enginePreviewPngSnapshot(fileId, toOverrides(plan.candidate_patches), 1600, ctrl.signal, {}, pj)
+      .then((r) => {
+        if (ctrl.signal.aborted) return
+        if (manifestCache.size >= 16) manifestCache.delete(manifestCache.keys().next().value as string)
+        manifestCache.set(id, r.manifest)
+        setGot({ id, manifest: r.manifest })
+      })
+      .catch(() => undefined)
+    return () => ctrl.abort()
+  }, [enabled, id, fileId, pj]) // eslint-disable-line react-hooks/exhaustive-deps
+  return got && got.id === id ? got.manifest : null
 }
