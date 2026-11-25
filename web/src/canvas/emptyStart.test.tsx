@@ -212,6 +212,15 @@ describe('空画布提示坐在什么底上（宪法第二十八节）', () => {
     expect(hintBox().className).not.toContain('bg-surface')
   })
 
+  it('拿着钢笔等画图工具：选图卡不接点击，点空画布就是画（e2e vector-pen 在变大的选图卡上第一下放了一张图）', async () => {
+    useAssetStore.setState({ panels: [asset('a.pdf'), asset('b.pdf')], byId: {}, loaded: true })
+    await mount(<CanvasStage />)
+    expect(hintBox().className).toContain('pointer-events-auto')
+    act(() => useUiStore.setState({ tool: 'pen' }))
+    expect(hintBox().className).toContain('pointer-events-none')
+    expect(hintBox().className).not.toContain('pointer-events-auto')
+  })
+
   it('用户把页面背景设成深色：纸上的墨压不住，退回主题面板底 + 界面墨', async () => {
     act(() => useDocumentStore.setState((st) => ({ doc: { ...st.doc, page: { ...st.doc.page, bg: '#1f2430' } } })))
     await mount(<CanvasStage />)
