@@ -597,7 +597,8 @@ def measure(
     uni, _role = legal_universe(case, root)
     top = set(case["acceptable_top"])
     forb = {f["method"] for f in case.get("forbidden", [])}
-    ranks = {m: run["methods"].index(m) + 1 for m in top if m in run["methods"]}
+    # 按名字排序：`top` 是集合，迭代顺序随进程的哈希种子变，不排序的话每次 `write_back()` 都会把键的先后改一遍（纯噪声）
+    ranks = {m: run["methods"].index(m) + 1 for m in sorted(top) if m in run["methods"]}
     missing = {m: METHODS[m][0] for m in sorted(top - uni)}
     return {
         "rules_top": run["recommended"],
