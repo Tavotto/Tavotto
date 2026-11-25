@@ -393,6 +393,8 @@ interface Kept {
   job: string | null
 }
 let kept: Kept[] = []
+/** 当前会话出候选**那一刻**（请求发出时）涉及文件的大小，跟着候选走：留存时用它，不用切走时才读的清单（那时清单可能已经是新的，候选却是按旧内容出的）。有一个读不到 = 没法验证，这份不留 */
+let sessionSizes: Record<string, number | undefined> = {}
 /** 这份草稿是还原出来的、会话没确认过还活着：它的缩略图取不到就静默重出（只一次） */
 let restoredSession: string | null = null
 /** 当前会话的出候选时刻（还原的沿用原来的，再切走时存回去） */
@@ -473,6 +475,10 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
   /** 把此刻这份已完整的草稿留下（会话不放弃）；半成品 / 出过错 / 正在出图的不存，返回 false（调用方照旧放弃会话） */
   const stashCurrent = (): boolean => {
     const s = get()
+    // 出候选时就没读到大小：之后清单怎么变都没法判，这份不留（退回从前：丢并放弃会话）
+    if (Object.values(sessionSizes).some((n) => n === undefined) || Object.keys(sessionSizes).length === 0) return false
+    // 出候选之后清单刷新、发现这份草稿用的文件变了：候选是按旧内容出的，不能留
+    if (Object.entries(sessionSizes).some(([path, was]) => sizeOf(path) !== undefined && sizeOf(path) !== was)) return false
     if (!s.selected || s.phase !== 'ready' || !s.session || s.drawingId || s.problem || s.candidates.length === 0) return false
     if (!s.candidates.every((c) => s.thumbs[c.id] === 'ready' || s.thumbs[c.id] === 'failed')) return false
     const refs = s.group ?? [s.selected]
@@ -486,7 +492,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       group: s.group ? [...s.group] : null,
       snap: Object.fromEntries(KEEP_FIELDS.map((k) => [k, s[k]])) as KeepSnap,
       binding: s.specBinding ? structuredClone(s.specBinding) : null,
-      sizes: Object.fromEntries(refs.map((r) => [r.path, sizeOf(r.path)])),
+      sizes: { ...sessionSizes },
       liveAt: sessionLiveAt,
       pj: currentProjectId(),
       job: understandingJob,
@@ -513,6 +519,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     set({ selected: e.refs[0]!, group: e.group, draftOpen: true, draftActive: true, fresh: null, ...e.snap, drawingId: null, problem: null, error: null, understanding: false, readRid: null })
     restoredSession = e.snap.session
     sessionLiveAt = e.liveAt
+    sessionSizes = { ...e.sizes }
     if (e.group) for (const r of e.group) if (get().overviews[overviewKeyOf(r, get().headerRows)]) groupFresh.add(overviewKeyOf(r, get().headerRows))
     if (e.job) trackUnderstanding({ id: e.job, state: 'pending' }, currentProjectId())
   }
@@ -623,6 +630,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     const sel = get().selected
     if (!sel) return
     ensureBinding()
+    // 这次出候选读的是什么样的文件：发请求这一刻的大小（响应到达时清单可能已经变了），成功落地时跟着候选记下
+    const sizesAtAsk = Object.fromEntries((get().group ?? [sel]).map((r) => [r.path, sizeOf(r.path)]))
     const binding = get().specBinding
     const spec = binding ? (host.resolveSpec?.(binding) ?? null) : null
     const fontRange = fontRangeOf(binding)
@@ -686,6 +695,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
       restoredSession = null
       sessionLiveAt = keepClock()
+      sessionSizes = sizesAtAsk
       set({
         ...common,
         phase: 'ready',
@@ -1017,11 +1027,12 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       // 先取目标再存当前：存当前可能挤掉最旧的一条，不能挤掉要还原的那条
       const hit = takeKept([ref], false)
       const stashed = stashCurrent()
+      // 存不了的当前草稿（半成品 / 没法验证大小等）：无论目标命不命中，会话都要放弃，不能既不留也不放弃
+      if (!stashed) discardSession()
       if (hit) {
         restoreKept(hit)
         return
       }
-      if (!stashed) discardSession()
       commitRid = null
       set({ selected: ref, group: null, sources: null, draftOpen: true, draftActive: true, fresh: null })
       void run()
@@ -1046,11 +1057,11 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       const hit = takeKept(refs, true)
       // 重新合同一组 = 本来就要重出，不把当前这份当成「切走」存起来
       const stashed = keepKeyOf(refs, true, get().headerRows) === keepKeyOf(get().group ?? [], true, get().headerRows) ? false : stashCurrent()
+      if (!stashed) discardSession()
       if (hit) {
         restoreKept(hit)
         return
       }
-      if (!stashed) discardSession()
       commitRid = null
       set({ selected: refs[0]!, group: refs, sources: null, draftOpen: true, draftActive: true, fresh: null })
       void run()
@@ -1153,6 +1164,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         }
       }
       set({ problem: null })
+      discardSession() // `run` 会把会话 id 清掉：旧会话不放弃就成了没人认领的
       await run({ keepChoices: true })
     },
 

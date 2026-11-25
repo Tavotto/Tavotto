@@ -347,6 +347,64 @@ describe('还原之后会话其实没了', () => {
   })
 })
 
+describe('Codex #2209 两条', () => {
+  it('P2-1：出候选之后、切走之前清单刷新发现文件变了：这份不留（用的是出候选时的大小，不是切走时的）', async () => {
+    await st().loadFiles()
+    await open('a.csv') // 按 size 10 出的候选
+    sizes['a.csv'] = 11 // 数据变了
+    await st().loadFiles() // 清单刷新，A 还是当前草稿
+    await open('b.csv')
+    expect(discarded()).toContain(sessionOf('a.csv')) // 没留 → 放弃会话
+    const n = proposeCalls()
+    st().select(ref('a.csv'))
+    await flush()
+    await flush()
+    expect(proposeCalls()).toBe(n + 1) // 重新出，不是还原旧图
+  })
+
+  it('P2-1：出候选时没读到大小（清单还没读过）：没法验证，不留', async () => {
+    await open('a.csv') // 没 loadFiles
+    await open('b.csv')
+    expect(discarded()).toContain(sessionOf('a.csv'))
+    const n = proposeCalls()
+    st().select(ref('a.csv'))
+    await flush()
+    await flush()
+    expect(proposeCalls()).toBe(n + 1)
+  })
+
+  it('P2-1：出候选时清单就是新的、之后没变：照常留', async () => {
+    await st().loadFiles()
+    await open('a.csv')
+    await st().loadFiles() // 刷新但没变
+    await open('b.csv')
+    const n = proposeCalls()
+    st().select(ref('a.csv'))
+    expect(proposeCalls()).toBe(n)
+    expect(st().session).toBe(sessionOf('a.csv'))
+  })
+
+  it('P2-2：当前草稿存不了（缩略图还没到），切回留存的 A：B 的会话也要放弃', async () => {
+    await st().loadFiles()
+    await open('a.csv')
+    await open('b.csv', false) // 留了 A；B 的缩略图还在 pending
+    expect(discarded()).toEqual([])
+    st().select(ref('a.csv')) // 命中 A
+    expect(st().session).toBe(sessionOf('a.csv'))
+    expect(discarded()).toEqual([sessionOf('b.csv')])
+  })
+
+  it('P2-2：合画那条路同样（selectGroup 命中时放弃存不了的当前草稿）', async () => {
+    await st().loadFiles()
+    await openGroup(['a.csv', 'b.csv'])
+    await open('c.csv', false)
+    expect(discarded()).toEqual([])
+    st().selectGroup([ref('a.csv'), ref('b.csv')])
+    expect(st().session).toBe(sessionOf('a.csv+b.csv'))
+    expect(discarded()).toEqual([sessionOf('c.csv')])
+  })
+})
+
 describe('其它', () => {
   it('提交成功变成正式的图后不再存；它的留存条目也没有', async () => {
     await st().loadFiles()
