@@ -16,6 +16,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
+from functools import partial
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -289,7 +290,10 @@ class Service:
         query: str,
         headers: Mapping[str, str | None],
         remote_addr: str | None,
+        after: list[Callable[[], None]] | None = None,
     ) -> Response:
+        """`after`：给了就把响应发出之后才该做的事（目前只有索引计数）追加进去，由调用方（WSGI 适配层）
+        在响应送出后执行；不给就当场做（直接调用 / 测试）。"""
         if path == PREFIX or path.startswith(PREFIX + "/"):
             prefix, data_dir, facts_v2 = PREFIX, self.config.data_dir, False
         elif path == PREFIX_V2 or path.startswith(PREFIX_V2 + "/"):
@@ -316,11 +320,13 @@ class Service:
             etag = index_etag(response[2])
             headers_out = [*response[1], ("ETag", etag)]
             version = "v2" if facts_v2 else "v1"
-            if etag_matches(h.get("if-none-match"), etag):
-                self.store.count_index(now, version, 304)
-                return 304, headers_out, b""
-            self.store.count_index(now, version, 200)
-            return 200, headers_out, response[2]
+            status = 304 if etag_matches(h.get("if-none-match"), etag) else 200
+            count = partial(self.store.count_index, now, version, status)
+            if after is None:
+                count()
+            else:
+                after.append(count)
+            return status, headers_out, b"" if status == 304 else response[2]
         if route == "/device":
             if method != "POST":
                 return _err(405, "method_not_allowed")
