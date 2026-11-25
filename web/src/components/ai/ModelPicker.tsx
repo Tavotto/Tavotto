@@ -370,7 +370,7 @@ export function ConnectionModelList({
                   return (
                     // 公共单选 `ui/Radio`：同一连接的型号同一个 name，方向键在组内走、整组只占一个 Tab 停靠点；
                     // data-ai-model-item 在 label 上（整行可点、文字在里面），input 带 data-ai-model-radio
-                    <label key={m} data-ai-model-item={m} className={cn(ROW, 'cursor-pointer py-1 text-[13px]')}>
+                    <label key={m} data-ai-model-item={m} className={cn(ROW, 'py-1 text-base')}>
                       <IconSlot className="w-6">
                         <Radio
                           name={`model-${c.id}`}
