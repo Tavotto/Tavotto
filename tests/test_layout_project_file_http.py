@@ -183,7 +183,11 @@ def test_open_confirm_verifies_actual_file_and_ABA_ticket_cannot_rebind(env):
 
 
 def test_external_autosave_drift_is_unknown_and_old_axis_cannot_write_before_body(env):
-    _document_before, _revision, named = _bound(env)
+    _, revision, named = _bound(env)
+    saved = _read(env)
+    assert saved["edit"]["known"] is True
+    assert saved["edit"]["autosave_revision"] == revision
+    assert saved["binding"]["dirty"] is False
     path = m.AUTOSAVE_DIR / "working.json"
     external = atomicio.dumps_json(_document("external", updated=99))
     path.write_bytes(external)
@@ -197,7 +201,7 @@ def test_external_autosave_drift_is_unknown_and_old_axis_cannot_write_before_bod
         json={
             "name": "B",
             "axis": _axis(),
-            "autosave_revision": _revision,
+            "autosave_revision": revision,
             "expected_binding_sequence": current["binding"]["sequence"],
         },
         headers=headers,
