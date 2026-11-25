@@ -1,7 +1,7 @@
 # ADR 0203：成品 PDF 的实际字号接成一项产物检查（`text_size`）
 
-日期：2026-11-23 · 状态：**Proposed（只定契约，不实施；观测那一半已在 `rendercore/inspector.py`，见下）**
-**1.0 收敛纪律：新增一项用户看得见的检查，需要维护者确认是否落在科学图形检查族的豁免之内（`docs/1.0-release-readiness.md` §1.8），或另给豁免。编号原拟 0201，因 0201 / 0202 已分别被 #2125 / #2127 占用，顺延为 0203（2026-11-23）。**
+日期：2026-11-23 · 状态：**Accepted（2026-11-23 维护者裁决「3.接」：按本稿实施；1.0 豁免并入科学图形检查族那一行，见 `docs/1.0-release-readiness.md` §1.8）**
+**编号：原拟 0201，因 0201 / 0202 已分别被 #2125 / #2127 占用，顺延为 0203（2026-11-23）。**
 相关：[0068 产物检查器与 manifest](0068-artifact-inspector-and-manifest.md)（四值判据、两档政策、`checks` 闭集）、[0155 期刊标准库](0155-journal-catalog.md)（阈值只来自期刊）、[0072 PyMuPDF 退役](0072-default-render-backend-cutover-and-pymupdf-retirement.md)、[0152 文字编辑](0152-wysiwyg-text-editor.md)（公式画成轮廓 + 不画的文本层）；`docs/sciviz/validation-spec.md` V-009；`docs/research/external-figure-practice-absorption.md` §4.1。
 
 ## 问题
@@ -16,14 +16,16 @@
 
 这一半**只是观测**：不进 `checks`、不进 `summary()` 与 `public_projection()`、不改任何裁决，界面上看不到。同一份密集 PDF（16 个面板、931 段文字、26,732 条指令）遍历耗时的中位数改动前 54.2–55.8 ms、改动后 54.5–56.4 ms，在噪声之内。
 
-## 决定（待批）
+## 决定
 
 1. **`CHECKS_PDF` 加一项 `text_size`**，四值照 0068：
    - `failed`：成品里有一段看得见的文字小于规范下限；
    - `verified`：量到的都不小于下限，并且没有量不了的段；
-   - `unknown`：没有下限；预算耗尽；没有读取器；或有量不了的段（不画只进文本层的文字、em 不明的 Type 3、退化矩阵）；
-   - `not_applicable`：成品里没有可量的文字段。
-2. **阈值只取出版规范的 `min_effective_font_size_pt`**，容差取 `profiles.FONT_FLOOR_TOL_PT`，由 `engine/artifactinspect.py` 交给检查器；检查器里不出现任何 pt 数。中性底下限为 0 时结果是 `unknown`（没有规范，只记录不判），与 `image_ppi` 没有最低 dpi 时同一口径。期刊单独给了上下标下限（`advisories` 的 `script_min`）时怎么用，留给期刊库那条线定，首版不区分。
+   - `unknown`：有下限，但量不了——预算耗尽；没有读取器；文件损坏；或有量不了的段（不画只进文本层的文字、em 不明的 Type 3、退化矩阵）；
+   - `not_applicable`：没有下限（这一项没被要求检查：standard 不带规范、中性底下限为 0）；或成品里没有可量的文字段。
+   （2026-11-23 修订：初稿把「没有下限」记作 `unknown`，那会让原本全 verified 的普通导出整份降成「未核验」、MCP 文本
+   多一行「未核验 text_size」；没被要求的检查不该拖低总体结论。）
+2. **阈值只取出版规范的 `min_effective_font_size_pt`**，容差取 `profiles.FONT_FLOOR_TOL_PT`，由 `engine/artifactinspect.py` 交给检查器；检查器里不出现任何 pt 数。中性底下限为 0、或没有规范时结果是 `not_applicable`（没被要求检查，只记录不判）——与 `image_ppi` 没有最低 dpi 时记 `unknown` 的口径**有意不同**：那一项在 strict 是必需项，这一项两档都不是。期刊单独给了上下标下限（`advisories` 的 `script_min`）时怎么用，留给期刊库那条线定，首版不区分。
 3. **两档政策里都不是必需项**。`standard` 与 `strict` 的 `REQUIRED` 都不加它：这一项 failed 只写进说明，不拦导出。理由：
    - 预检的 `font-too-small` 已经在导出前拦过「整段文字太小」；本项多抓到的主要是上下标，许多期刊对上下标另有更低的下限或没有规定，直接拦会误伤；
    - Tavotto 自己的公式是轮廓加不画的文本层（0152），这类文件天然是 `unknown`，进 `strict` 的必需项会把所有带公式的导出拦住。
@@ -53,5 +55,24 @@
 ## 后果
 
 - 正面：字号这件事第一次有了成品上的独立读数；上下标太小在导出时就能看到，而不是等期刊退回。
-- 代价：检查项闭集多一项，前端与 i18n 各多一个键；带公式的 Tavotto 导出这一项长期是 `unknown`，需要一句说明免得用户以为出了问题。
-- 未做（NOT_RUN）：R / Cairo 产物的实测（只按写法造了手工 PDF）；真实导出管线（面板作为 Form 嵌进版面）上的端到端读数；界面稿。
+- 代价：检查项闭集多一项，前端与 i18n 各多一个键；勾了严格核验时，带公式的 Tavotto 导出这一项长期是 `unknown`——界面不说（核验只说失败），只在 manifest / MCP 文本里列为未核验。
+- 未做（NOT_RUN）：R / Cairo 产物的实测（只按写法造了手工 PDF）；界面稿（截图过 agy）。
+
+## 实施记录（2026-11-23）
+
+- `CHECKS_PDF` 末尾加 `text_size`；`_check_pdf` 经 `_check_text_size` 调 `text_size_verdict()`，下限取 `profile` 的
+  `min_effective_font_size_pt`，容差是 `inspect(text_size_tol_pt=…)`，`artifactinspect.inspect_produced` 交
+  `profiles.FONT_FLOOR_TOL_PT`。`REQUIRED` 两档都没动。
+- standard 政策下 `inspection_profile()` 照旧不解析规范（请求也不带 `profile_id`），所以这一项在普通导出里恒为
+  `not_applicable`（`no_threshold`），总体结论与加这一项之前一致；只在用户勾了严格核验时出结论。
+- `summary()` 多一个 `text_size: {reason, min_pt, floor_pt}`（界面那一句话的依据）；`public_projection()` 只经
+  `checks` 带四值，不带读数。
+- 界面：`artifactInspection.textSizeNote()` 是唯一解读。failed 时「核验未通过」那一行里换成
+  「成品里最小的文字是 4.9 pt，低于规范的 5 pt」；通过、没有规范、量不全都不画（2026-11-06「核验只说失败」，
+  初稿里那行「公式量不全」的灰字已按这条裁决去掉）。
+- 多页 PDF 的边界：`inspect_produced` 对各页只留拦截码、回执的 manifest 来自合并文件的检查，而检查器只读首页；
+  `text_size` 不是必需项，所以第 2 页起的小字既不拦也不进回执——这一项的结论只覆盖首页（未实测）。
+- 真实导出路由的端到端读数（`tests/test_export_text_size_e2e.py`，worker 重画的面板作为 Form 嵌进版面）：7 pt 的
+  `$R^2$` 量到 4.9 pt；版面放大 1.25 倍量到 6.12 pt；画布公式标注是 `unknown`（`unmeasured_runs`），同一处换成普通文字是 `verified`（对照）。
+- 读者核对：前端 `inspectionState()` 与 MCP `_inspection_summary()` 都**不按闭集过滤**，遍历 `checks` 的全部键，
+  未知键照样计入并以原键名显示（不会崩）。两者与后端同一份构建发出，没有版本错位，所以 `MANIFEST_VERSION` 不升。

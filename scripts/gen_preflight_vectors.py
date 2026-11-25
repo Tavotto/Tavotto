@@ -46,12 +46,15 @@ def _force_utf8() -> None:
 
 
 def _el(gid: str, role: str, **props) -> dict:
+    # 占位几何是**零面积**的点：这些向量量的是规范（字号 / 线宽 / 页面…），不是版面。
+    # 预检接进干涉检测（V-011）之后，旧的同一个 0.2×0.2 占位框会让每两段文字都「重叠」；
+    # 要量干涉的向量（`interference-*`）显式给框。
     return {
         "gid": gid,
         "role": role,
         "label": gid,
         "draggable": False,
-        "bbox": [0.1, 0.1, 0.2, 0.2],
+        "bbox": [0.1, 0.1, 0.0, 0.0],
         "editable": [{"prop": k, "type": "number", "value": v} for k, v in props.items()],
     }
 
@@ -547,6 +550,60 @@ def cases() -> list[dict]:
     m = _clean_manifest()  # 隐藏的细线不在导出里：不报
     _el_with(m, "axes_0.lines_0", visible=False)
     out.append(_lw_case("journal-min-line-width-hidden-line-skipped", 2.0, m))
+
+    # 9j'. 画布上的箭头 / 形状 / 路径（ADR 0208 §四 第 7 条，「都管」）：同一条 `line-width-below-min`，
+    #      读 spec.objects 的 `stroke_pt`（页面绝对 pt，不乘缩放）；缺席 = 没有描边，不判；等于下限不报；
+    #      隐藏的不判；文字 / 面板不判。数据线够粗，只看画布对象。
+    def _canvas_lw_case(name: str, floor, objs: list[dict]) -> dict:
+        m = _clean_manifest()
+        _el_with(m, "axes_0.lines_0", linewidth=3.0)
+        _el_with(m, "axes_0.lines_1", linewidth=3.0)
+        base = _lw_case(name, floor, m)
+        base["spec"] = _spec([_panel("p1", manifest=m)], extra_objects=objs)
+        return base
+
+    def _obj(oid: str, typ: str, stroke_pt=None, hidden=False) -> dict:
+        o = {"id": oid, "type": typ, "rect_mm": [5.0, 5.0, 10.0, 6.0], "hidden": hidden}
+        if stroke_pt is not None:
+            o["stroke_pt"] = stroke_pt
+        return o
+
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-thin-objects-reported",
+            0.5,
+            [_obj("a1", "arrow", 0.25), _obj("s1", "shape", 0.4), _obj("q1", "path", 0.1)],
+        )
+    )
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-equal-hidden-nostroke-skipped",
+            0.5,
+            [
+                _obj("a1", "arrow", 0.5),  # 正好等于下限
+                _obj("s1", "shape", 0.2, hidden=True),  # 隐藏
+                _obj("s2", "shape"),  # 没有描边（字段缺席）
+                _obj("t1", "text", 0.1),  # 文字不在判的类型里
+            ],
+        )
+    )
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-floor-not-set-no-report", None, [_obj("a1", "arrow", 0.1)]
+        )
+    )
+    out.append(  # 新建箭头 / 形状 / 钢笔路径的默认线宽都是 1 pt：常见期刊下限（0.25–0.5 pt）下不报
+        _canvas_lw_case(
+            "canvas-line-width-defaults-not-reported",
+            0.5,
+            [_obj("a1", "arrow", 1.0), _obj("s1", "shape", 1.0), _obj("q1", "path", 1.0)],
+        )
+    )
+    m = _clean_manifest()  # 数据线与画布对象都细：一条检查，最糟的那次（画布 0.1）决定文案与 detail
+    _el_with(m, "axes_0.lines_0", linewidth=0.3)
+    mixed = _lw_case("canvas-line-width-mixed-with-data-line", 0.5, m)
+    mixed["spec"] = _spec([_panel("p1", manifest=m)], extra_objects=[_obj("q1", "path", 0.1)])
+    out.append(mixed)
 
     # 9k. V-001 对数轴上有 ≤ 0 的值（`log-axis-nonpositive`）：事实只读 axes 元素的 `scale_domain`
     #     （`engine/manifest.scale_domain`）。那一维 `status == "ok"` 且两个计数之和 > 0 才报；
@@ -1385,12 +1442,94 @@ def cases() -> list[dict]:
             "spec": _spec([_panel("p1", manifest=m)]),
         }
     )
+
+    # 19. 干涉检测接进常规预检（V-011）：判据是 `engine/interference.detect`（逐对向量在
+    #     `tests/golden/interference_vectors.json`），这里看的是**折进 _Sink 之后**的聚合投影——
+    #     同一 id 的多对并成一条、最糟的一对决定文案与 detail；图例「确定」恒压过「风险」；
+    #     压到别的子图只把伸出去的文字当主语（被压的子图进 detail.against）。几何用二进制上精确的数。
+    def _box(gid: str, role: str, bbox: list, **props) -> dict:
+        el = _el(gid, role, **props)
+        el["bbox"] = bbox
+        return el
+
+    def _pos(el: dict, rect: list) -> dict:
+        el["editable"].append({"prop": "position", "type": "rect", "value": rect})
+        return el
+
+    def _geo(el: dict, *points) -> dict:
+        el["geometry"] = {
+            "kind": "polyline",
+            "paths": [{"points": [list(p) for p in points], "closed": False}],
+            "fill": False,
+            "stroke": True,
+        }
+        return el
+
+    def _icase(name: str, elements: list, *, profile_id: str = "lab-publication-v1", **kw) -> dict:
+        m = _clean_manifest()
+        m["elements"] += elements
+        return {
+            "name": name,
+            "profile_id": profile_id,
+            "spec": _spec([_panel("p1", manifest=m, **kw)]),
+        }
+
+    u = 1 / 512
+    three_texts = [
+        _box("axes_0.title", "title", [0.25, 0.25, 0.125, 0.0625]),
+        _box("axes_0.texts_0", "text", [0.25 + 0.125 - 8 * u, 0.25, 0.125, 0.0625]),
+        _box("axes_0.texts_1", "text", [0.25 + 0.25 - 16 * u, 0.25, 0.125, 0.0625]),
+    ]
+    out.append(_icase("interference-text-overlap-aggregates-pairs", three_texts))
+    out.append(
+        _icase(
+            "interference-text-over-axes-subject-is-the-text",
+            [
+                _pos(
+                    _box("axes_5", "axes", [0.125, 0.125, 0.25, 0.75]), [0.125, 0.125, 0.25, 0.75]
+                ),
+                _pos(_box("axes_6", "axes", [0.5, 0.125, 0.25, 0.75]), [0.5, 0.125, 0.25, 0.75]),
+                _box("axes_6.ylabel", "axis_label", [0.375 - 6 * u, 0.375, 8 * u, 0.125]),
+            ],
+        )
+    )
+    out.append(
+        _icase(
+            "interference-legend-certain-beats-risk",
+            [
+                _box("axes_7.legend", "legend", [0.5, 0.125, 0.25, 0.25]),
+                _geo(
+                    _box("axes_7.lines_0", "line", [0.125, 0.125, 0.75, 0.75]),
+                    (0.125, 0.875),
+                    (0.875, 0.125),
+                ),
+                _box("axes_8.legend", "legend", [0.5, 0.625, 0.25, 0.25]),
+                *(
+                    _box(f"axes_8.collections_{k}", "collection", [0.125, 0.5, 0.75, 0.5])
+                    for k in range(3)
+                ),
+            ],
+        )
+    )
+    out.append(
+        _icase(
+            "interference-legend-risk-only",
+            [
+                _box("axes_8.legend", "legend", [0.5, 0.625, 0.25, 0.25]),
+                _box("axes_8.collections_0", "collection", [0.125, 0.5, 0.75, 0.5]),
+            ],
+        )
+    )
+    out.append(_icase("interference-hidden-panel-skipped", three_texts, hidden=True))
+    out.append(_icase("interference-free-form", three_texts, profile_id="free-form-v1"))
+    out.append(_icase("interference-journal-base", three_texts, profile_id="journal-base-v1"))
     return out
 
 
 def evaluate(case: dict) -> list[dict]:
     profile = profiles.load(case.get("profile_id"), case.get("journal"))
-    issues = preflight.run(case["spec"], profile)
+    # 与 TS 的 runSpec 同一份输出：干涉检测（V-011）折进来（Python 生产调用方默认不折，见 `preflight.run`）
+    issues = preflight.run(case["spec"], profile, with_interference=True)
     # 比**判据**与**可翻译描述符**（message = key + params，issue #30：MCP 画布
     # 按 locale 渲染靠它），不比成文措辞：措辞是界面的事，两侧措辞各自演进。
     return [

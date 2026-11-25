@@ -137,6 +137,13 @@ function inIdleEditor(node: Node | null): boolean {
   return !!editor && !editor.contains(document.activeElement)
 }
 
+/** 没有焦点的 contenteditable 里（粘贴用：只有它会在没有焦点时收到 paste 事件） */
+function inIdleRichText(node: Node | null): boolean {
+  const at = node instanceof Element ? node : node?.parentElement
+  const editor = at?.closest('[contenteditable]')
+  return !!editor && !editor.contains(document.activeElement)
+}
+
 /** 顶栏胶囊：这个元素还不能复制（只用状态胶囊，不挤页面） */
 function announceNotCopyable(name: string | null): void {
   if (name == null) return
@@ -244,6 +251,10 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
  */
 export function handlePasteEvent(e: ClipboardEvent): boolean {
   const text = e.clipboardData?.getData('text/plain') ?? ''
+  // 残留在没有焦点的富文本框里的选区不算「焦点在输入框里」：按页面本身走。浏览器把 paste 派给选区所在的
+  // contenteditable（哪怕它没有焦点）；不然 ⌘V 被闸门当成「在输入框里粘贴」让位，而那个框自己也不接
+  // （`RichTextField` 无焦点时拒收）——这次粘贴就丢了。input / textarea 只有拿着焦点才会收到 paste，照旧让位
+  const target = inIdleRichText(e.target as Node | null) ? document.body : e.target
   const payload = parsePayload(text)
   if (!payload) {
     // 外部 SVG 标记（Illustrator / Inkscape 复制出来的，ADR 0189）：落成可编辑对象，做不准就整个当图片
@@ -252,20 +263,20 @@ export function handlePasteEvent(e: ClipboardEvent): boolean {
     const svg = looksLikeSvg(raw) ? raw : looksLikeSvg(text) ? text : ''
     if (svg) {
       return (
-        runDiscreteAction('canvas', e.target, () => {
+        runDiscreteAction('canvas', target, () => {
           e.preventDefault()
           void pasteSvgText(svg)
           return true
         }) ?? false
       )
     }
-    return pasteImageFiles(e, text)
+    return pasteImageFiles(e, text, target)
   }
   // 桌面壳「编辑 → 粘贴」与预置 ⌘V 加速键直达这里，不经 keydown：先过离散动作闸门——
   // 输入框 / 对话框里让位（不收手势），否则先落定开着的连续编辑，粘贴不并进方向键
   // 微调那条撤销（Codex #671）
   return (
-    runDiscreteAction('canvas', e.target, () => {
+    runDiscreteAction('canvas', target, () => {
       if (!consumePayload(payload)) return false
       e.preventDefault()
       return true
@@ -279,12 +290,12 @@ export function handlePasteEvent(e: ClipboardEvent): boolean {
  * **有文字就不拦**：电子表格 / 网页的复制常带一张预览图，那是在粘文字，外部文字粘贴不在这里管；
  * 输入框 / 对话框里让位（与对象粘贴同一个 `runDiscreteAction` 判据），浏览器照常处理。
  */
-function pasteImageFiles(e: ClipboardEvent, text: string): boolean {
+function pasteImageFiles(e: ClipboardEvent, text: string, target: EventTarget | null = e.target): boolean {
   if (text.trim()) return false
   const files = pastedAssetFiles(e.clipboardData)
   if (!files.length) return false
   return (
-    runDiscreteAction('canvas', e.target, () => {
+    runDiscreteAction('canvas', target, () => {
       e.preventDefault()
       void intakePastedImages(files)
       return true

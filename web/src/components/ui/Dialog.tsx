@@ -352,6 +352,8 @@ export function Dialog({
         'flex shrink-0 items-center gap-2 px-5 pb-4',
         hasStatus ? 'pt-2' : 'pt-3',
         floating && 'relative z-sticky',
+        // 自己管布局的外壳（shell）：页脚上方一条贯通全宽的发丝线，与标题栏下那条对称
+        shell && hasFooter && 'border-t border-border',
       )}
       style={floating && footerH ? { marginTop: -footerH } : undefined}
     >

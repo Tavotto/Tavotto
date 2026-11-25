@@ -550,7 +550,7 @@
       },
       "bar_error": {
         "title": "柱 + 误差线",
-        "why": "各组均值一目了然，误差线是标准差；个别点会藏在柱里。"
+        "why": "各组均值一目了然，误差线是{{error}}；个别点会藏在柱里。"
       },
       "line_points": {
         "title": "点 + 折线",
@@ -558,7 +558,7 @@
       },
       "line_band": {
         "title": "均值线 + 误差带",
-        "why": "每个横轴位置取均值，带是标准差，看总体趋势和波动。"
+        "why": "每个横轴位置取均值，带是{{error}}，看总体趋势和波动。"
       },
       "line_units": {
         "title": "每个对象一条线",
@@ -674,6 +674,8 @@
       "mismatchNext": "它的脚本还留在项目里：可以换一种画法重画，或者去文件夹里把这份脚本删掉。"
     },
     "draft": {
+      "create": "创建可编辑图",
+      "switchLabel": "候选画法",
       "pickLead": "点一张，放进画布接着改。",
       "guessRow": "把第 {{n}} 行当作列名。不对就点对的那一行。",
       "allText": "这张表里都是文字，没有能画的数字。",
@@ -712,6 +714,39 @@
       "fontMin": "≥ {{min}} pt 字号",
       "fontMax": "≤ {{max}} pt 字号"
     },
+    "basis": {
+      "line": "依据：{{text}}。",
+      "then": "，",
+      "join": "；",
+      "points": "按 {{drawn}} 个点绘制，每行一个点",
+      "plain": "按 {{drawn}} 个数值绘制",
+      "groupsEqual": "按 {{groups}} 组各 {{n}} 个数值绘制",
+      "groupsRange": "按 {{groups}} 组、每组 {{min}}–{{max}} 个数值绘制",
+      "xAlso": "横轴有 {{x}} 个不同取值",
+      "xOnly": "按 {{drawn}} 个数值绘制，横轴有 {{x}} 个不同取值",
+      "skippedMissing": "另有 {{count}} 行因缺值未计入",
+      "skippedOther": "另有 {{count}} 行因不是数值未计入",
+      "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
+      "skippedAll": "另有 {{count}} 行未计入"
+    },
+    "errorName": {
+      "sd": "标准差",
+      "sem": "标准误",
+      "ci95": "95% 置信区间"
+    },
+    "confirm": {
+      "title": "需要你确认",
+      "error": "误差线",
+      "design": "重复测量",
+      "option": {
+        "sd": "标准差 (SD)",
+        "sem": "标准误 (SEM)",
+        "ci95": "95% 置信区间",
+        "unsure": "还不确定",
+        "independent": "不是，每行是不同的样本",
+        "repeated": "是，同一个样本测了多次"
+      }
+    },
     "redraw": {
       "from": "用 {{file}} 画的",
       "again": "换个画法",
@@ -732,6 +767,109 @@
       "done": "已完成",
       "failed": "失败",
       "groupTitle": "{{count}} 个文件"
+    }
+  },
+  "changePlan": {
+    "reviewNote": {
+      "title_other": "审阅意见 · {{count}} 条",
+      "open": "看意见 ›"
+    },
+    "card": {
+      "title": "修改方案",
+      "version": "第 {{n}} 版",
+      "summary": "按 {{done}} 条意见改了 {{places}} 处，{{script}} 条要改脚本",
+      "summaryAll": "按 {{done}} 条意见改了 {{places}} 处",
+      "summaryOther": "按 {{done}} 条意见改了 {{places}} 处，{{rest}} 条没法直接改",
+      "view": "查看",
+      "applyNow": "直接应用",
+      "undo": "撤销",
+      "discarded": "已放弃这一版",
+      "stale": "原图改过了，这版对不上",
+      "regenerate": "重新生成",
+      "thumbAlt": "修改后的图",
+      "beforeAlt": "当前的图",
+      "holdBefore": "按住看修改前",
+      "generatingAny": "正在按意见修改…",
+      "generating_other": "正在按 {{count}} 条意见修改…",
+      "applied_other": "已应用 · {{count}} 条意见已处理",
+      "applyFailed": "没能应用，图没有改动",
+      "undoFailed": "图在应用之后又改过，没有替你撤回",
+      "empty": "这些意见没法直接改图，图没有改动",
+      "connect": "连接 AI",
+      "retry": "重试",
+      "dismiss": "收起"
+    },
+    "dialog": {
+      "title": "修改方案",
+      "compareLabel": "对比方式",
+      "slide": "滑动",
+      "side": "并排",
+      "toggle": "切换",
+      "before": "修改前",
+      "after": "修改后",
+      "dragHandle": "拖动分隔线",
+      "hold": "按住",
+      "space": "空格",
+      "holdBefore": "看修改前",
+      "changes": "改动 · {{count}} 处",
+      "groupMeta": "{{who}} · {{count}} 处",
+      "groupMetaNoWho": "{{count}} 处",
+      "groupN": "第 {{n}} 条意见",
+      "previewStale": "预览没更新，应用结果以勾选为准",
+      "checkTip": "取消勾选，这一处就不改",
+      "discard": "放弃",
+      "apply": "应用"
+    },
+    "unhandled": {
+      "needs_script": "要改脚本，这次没动",
+      "unclear": "意见不够具体，这次没动",
+      "out_of_scope": "不在图内修改的范围，这次没动",
+      "no_change_needed": "看起来不用改，这次没动",
+      "unknown_element": "找不到对应的元素，这次没动",
+      "not_editable": "这一项不能直接改，这次没动",
+      "bad_value": "给出的改法不可用，这次没动",
+      "over_limit": "改动太多，这条没动",
+      "conflict": "与别的改动冲突，这次没动",
+      "not_applied": "没能生效，这次没动",
+      "no_effect": "改了也看不出变化，这次没动",
+      "not_addressed": "这条没有处理到"
+    },
+    "draft": {
+      "thisOne": "这一处",
+      "fallback": "已按意见调整",
+      "join": "；",
+      "more": "（另有 {{count}} 处）",
+      "fontsize": "已把{{el}}的字号从 {{from}} pt 改到 {{to}} pt",
+      "fontsizeTo": "已把{{el}}的字号改到 {{to}} pt",
+      "linewidth": "已把{{el}}的线宽从 {{from}} 改到 {{to}}",
+      "linewidthTo": "已把{{el}}的线宽改到 {{to}}",
+      "color": "已改了{{el}}的颜色",
+      "show": "已显示{{el}}",
+      "hide": "已隐藏{{el}}",
+      "frameOn": "已给{{el}}加上边框",
+      "frameOff": "已去掉{{el}}的边框",
+      "move": "已把{{el}}挪到{{where}}",
+      "moveOther": "已调整{{el}}的位置",
+      "text": "已把{{el}}的文字改成「{{to}}」",
+      "bold": "已把{{el}}加粗",
+      "unbold": "已取消{{el}}的加粗",
+      "alpha": "已调整{{el}}的透明度",
+      "markersize": "已把{{el}}的标记改到 {{to}}",
+      "ncol": "已把{{el}}排成 {{to}} 列",
+      "loc": {
+        "best": "合适的位置",
+        "upper_right": "右上角",
+        "upper_left": "左上角",
+        "lower_left": "左下角",
+        "lower_right": "右下角",
+        "right": "右侧",
+        "center_left": "左侧中间",
+        "center_right": "右侧中间",
+        "lower_center": "下方中间",
+        "upper_center": "上方中间",
+        "center": "正中"
+      },
+      "many": "这 {{count}} 处"
     }
   }
 }

@@ -1381,6 +1381,9 @@ NORMAL_TOOLS = (
     "tavotto_fix_to_journal",
     "tavotto_make_journal_ready",
     "tavotto_share_review",
+    "tavotto_review_feedback",
+    "tavotto_reply_review",
+    "tavotto_resolve_review",
 )
 
 

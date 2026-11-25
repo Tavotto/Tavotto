@@ -2429,6 +2429,8 @@ export interface ArtifactManifestSummary {
   required: string[]
   checks: Record<string, ArtifactCheckVerdict>
   notes: string[]
+  /** 「留意」：不是失败、照常交付，但投稿时可能被退或有更好的做法（Type 3 字体、有脚本的图整张是位图）；老服务端没有 */
+  advisories?: ArtifactAdvisory[]
   carrier?: string | null
   size_pt?: [number, number] | null
   px?: [number, number] | null
@@ -2442,6 +2444,26 @@ export interface ArtifactManifestSummary {
   identity?: ArtifactIdentity | null
   /** 来源：源产物公开身份、回执公开事实、节点表（U09）；老服务端没有 */
   provenance?: ArtifactProvenance | null
+  /** 成品实测字号（`checks.text_size` 的依据，ADR 0203）：原因码 + 量到的最小字号 + 规范下限；老服务端没有 */
+  text_size?: ArtifactTextSize | null
+}
+
+export interface ArtifactTextSize {
+  /** `below_min` / `ok` / `no_threshold` / `not_observed` / `budget` / `no_reader` / `no_text` / `unmeasured_runs` */
+  reason: string
+  min_pt: number | null
+  floor_pt: number | null
+}
+
+export interface ArtifactAdvisory {
+  /** 闭集：`lib/artifactInspection.ADVISORY_CODES` */
+  code: string
+  /** `type3_fonts`：用到的 Type 3 字体名（至多 5 个） */
+  fonts?: string[]
+  /** `scripted_raster`：整张嵌成位图、却有脚本的图（项目内相对 id，至多 5 个） */
+  panels?: string[]
+  /** 全部个数（`fonts` / `panels` 只带前几个） */
+  count?: number
 }
 
 export interface ArtifactIdentity {
@@ -3199,6 +3221,15 @@ export interface BarBaselineFact {
   baselines?: { value: number; bars: number }[]
 }
 
+/** `ManifestElement.legend_cover`（`engine/manifest.LEGEND_COVER_STATUSES` 是 `status` 的闭集）。 */
+export interface LegendCoverFact {
+  status: 'ok' | 'over_budget' | 'unavailable'
+  opaque?: boolean
+  face_alpha?: number
+  px_mm?: number
+  handles?: [number, number, number, number][]
+}
+
 export interface ManifestElement {
   gid: string
   role: string
@@ -3301,6 +3332,13 @@ export interface ManifestElement {
    * 消费者只有 `lib/preflight.ts` 的 `checkBarBaselineTruncated`。
    */
   bar_baseline?: Partial<Record<'x' | 'y', BarBaselineFact>>
+  /**
+   * 图例**真正挡住数据的东西**的只读事实（V-011「图例一侧的取法」）：只在 legend 元素上。`opaque` = 框画出来且背景
+   * 有效不透明度 `face_alpha > 0`；`handles` = 每格示意的框（figure 分数、y 向下）；`px_mm` = 一个显示像素的 mm。
+   * `status` 不是 `ok`（超预算 / 读不出）时没有其余字段，判据退回整块图例框。产生者只有 `engine/manifest.legend_cover`；
+   * 消费者只有 `lib/interference.ts` 的 `legendCoverRects`。
+   */
+  legend_cover?: LegendCoverFact
   /** 该 axes 其实是色条轴；属性页应改用它的色条元素 */
   is_colorbar?: boolean
   colorbar_gid?: string
@@ -4105,6 +4143,152 @@ export async function quickLayoutPlan(body: QuickLayoutRequest): Promise<QuickLa
   }
   if (out.ok === true && out.grid === undefined) out.grid = null
   return out as unknown as QuickLayoutResponse
+}
+
+// --- 修改方案（ADR 0206 §一）：后端只算不写；这里只有类型与薄封装，界面在后续 PR ---
+
+export type ChangePlanSource = 'review' | 'quick_layout' | 'journal_fix' | 'assistant'
+
+/** 没处理的意见的一句话原因（闭集短码；文案归界面） */
+export type ChangePlanUnhandledReason =
+  | 'needs_script'
+  | 'unclear'
+  | 'out_of_scope'
+  | 'no_change_needed'
+  | 'unknown_element'
+  | 'not_editable'
+  | 'bad_value'
+  | 'over_limit'
+  | 'conflict'
+  | 'not_applied'
+  | 'no_effect'
+  | 'not_addressed'
+
+export interface ChangePlanBox {
+  gid: string
+  /** 图分数坐标 [x, y, 宽, 高]，y 向下 */
+  box: [number, number, number, number]
+}
+
+/** 一条 override 条目（规范化之后的形状） */
+export interface ChangePlanPatch {
+  gid: string
+  prop: string
+  value: unknown
+  identity?: string
+}
+
+export interface ChangePlanChange {
+  target_gid: string
+  prop: string
+  /** manifest 的展示值（格式可能与 override 的值不同，只用来显示） */
+  before: unknown
+  after: unknown
+  /** 应用时写进文档的那条 override（进入候选列表、规范化之后） */
+  patch: ChangePlanPatch
+}
+
+export interface ChangePlanGroup {
+  key: string
+  label: string
+  comment_id?: string
+  note_id?: string
+  atomic: boolean
+  changes: ChangePlanChange[]
+  boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
+}
+
+export interface ChangePlan {
+  id: string
+  version: number
+  source: ChangePlanSource
+  base: { target: string; fingerprint: string }
+  /** 请求时的 B0 全量 override（规范化后） */
+  base_patches: ChangePlanPatch[]
+  /** B0 ⊕ 全部组的 `patch`（规范化后）：「全部应用」直接写它；逐组取消勾选时前端用 `base_patches` ⊕ 勾选组的 `patch` 重算（与后端 `changeplan.apply_groups` 同源） */
+  candidate_patches: ChangePlanPatch[]
+  groups: ChangePlanGroup[]
+  unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
+  /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */
+  preview: { before: string; after: string }
+}
+
+/** `POST /api/change-plans` 的回包：任务已受理，轮询 `getChangePlan` */
+export interface ChangePlanTask {
+  plan_id: string
+  /** 新任务恒为 running；同一 `client_request_id` 重发时回它此刻的状态 */
+  state: 'running' | 'ready' | 'failed'
+  phase?: string
+}
+
+/** `GET /api/change-plans/<id>`：终态也是 200 + 稳定 code（`failed`、或 `ready` 但没有一条能落成修改的 `change_plan_empty`） */
+export type ChangePlanView =
+  | { plan_id: string; state: 'running'; phase: string }
+  | { plan_id: string; state: 'failed'; code: string; error: string; detail?: string; params?: Record<string, unknown> }
+  | { plan_id: string; state: 'ready'; plan: ChangePlan; code?: 'change_plan_empty'; error?: string }
+
+export interface CreateChangePlanBody {
+  /** 单图面板 id */
+  id: string
+  /** 这张图此刻的全量 override 列表（B0） */
+  patches: unknown[]
+  source: 'review'
+  /** 审阅意见（只取未处理的）；与 `share_id` 二选一 */
+  comments?: ReviewComment[]
+  /** 本机分享记录 id：后端取最新版本的未处理意见；与 `comments` 二选一 */
+  share_id?: string
+  client_request_id?: string
+}
+
+async function changePlanFetch(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
+  const res = await fetch(apiUrl(path), withProject(init ?? {}))
+  const out = await res.json().catch(() => ({}) as Record<string, unknown>)
+  if (!res.ok) {
+    noteProjectGone(res.status, out)
+    throw new EngineError(
+      (out.error as string) || t('render.failed', { ns: 'errors', status: res.status }),
+      (out.traceback as string) || '',
+      (out.code as string) || '',
+      (out.module as string) || '',
+      undefined,
+      undefined,
+      { params: out.params as Record<string, unknown> | undefined },
+    )
+  }
+  return out
+}
+
+/** 生成一份修改方案：立刻回任务（202）；同一 `client_request_id` 回同一个任务。失败（native / 没连 AI / 同图忙…）抛带稳定 code 的 `EngineError`。 */
+export async function createChangePlan(body: CreateChangePlanBody): Promise<ChangePlanTask> {
+  const out = await changePlanFetch('/api/change-plans', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as ChangePlanTask
+}
+
+/** 轮询 / 读取一份方案。 */
+export async function getChangePlan(planId: string): Promise<ChangePlanView> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}`)
+  if (
+    !isStr(out.plan_id) ||
+    (out.state === 'ready' ? !isRec(out.plan) : out.state !== 'running' && !(out.state === 'failed' && isStr(out.code)))
+  ) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as ChangePlanView
+}
+
+/** 放弃一份方案（幂等）。 */
+export async function discardChangePlan(planId: string): Promise<{ discarded: boolean }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/discard`, {
+    method: 'POST',
+  })
+  return { discarded: out.discarded === true }
 }
 
 /**
@@ -5503,6 +5687,26 @@ export interface AiDataProposeItem {
   thumbnail_status?: 'pending' | 'ready'
   /** 合画且文件里原本有分组列、文件内有多个取值时，候选成对出现（同一个 `title_code` / `why_code`）：`split` = 再按那一列分开，`by_file` = 只按文件比较；单份响应和没有这种列的合画没有这个键。`column` 是用户数据里的列名：只做文本渲染 */
   variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
+  /** 这张图是按什么数出来的（「依据」那句话的素材）：表里的行数、画进去的行数、组数、每组观测数范围、不同横轴取值个数；大表 / 把列当分组时没有这一项 */
+  facts?: AiDataFacts
+  /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
+  error?: AiDataErrorKind
+  /** 拟合线（有才有；界面暂不用） */
+  fits?: unknown[]
+}
+
+export type AiDataErrorKind = 'sd' | 'sem' | 'ci95'
+
+export interface AiDataFacts {
+  rows: number
+  drawn: number
+  groups: number | null
+  n_min: number | null
+  n_max: number | null
+  x_values: number | null
+  /** 没画的行里因缺值没画的行数 / 因那一格不是数没画的行数（两者之和 = `unplotted.count`）；旧响应没有 */
+  skipped_missing?: number
+  skipped_other?: number
 }
 
 /** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
@@ -5542,6 +5746,8 @@ export interface AiDataLazyInfo {
   defaults?: { question_code: string; answer?: Record<string, unknown> }[]
   /** 数值列里夹着文字的列：默认不画那几行（`skip`），用户可改成取数字（`extract`） */
   mixed_cells?: { column: string; non_numeric: number; rows: number; mode: 'skip' | 'extract' }[]
+  /** 用户点选过误差类型（请求的 `answers.error`）才有；没有 = 误差线画的是哪一种还没被确认 */
+  error_confirmed?: boolean
   /** 请求带了出版规范且有效时才有：这批图实际用的栏宽（mm）与正文字号（pt），界面如实显示、不另算 */
   figure_style?: AiDataFigureStyle
   /** 请求带的规范不合法、后端退回了默认规范（此时没有 `figure_style`） */
@@ -9708,3 +9914,23 @@ export const refreshLicense = () => jsonFetch<LicenseStatus>('/api/license/refre
 export const releaseLicense = () => jsonFetch<LicenseStatus>('/api/license/release', licenseBody())
 export const licenseCheckout = (lookupKey: string, locale: string, renew = false) =>
   jsonFetch<{ ok: true; url: string }>('/api/license/checkout', licenseBody({ lookup_key: lookupKey, locale, renew }))
+
+/**
+ * 账户详情（`GET /api/license/account`，引擎包一层 infra `POST /v1/me`，设备签名 `op = "me"`；失败一律静默降级成 `{ok:false}`）：
+ * `tier.key` 是档名（year / season / sprint / other；创始年度也归 year，创始身份看 `status.founding`），`term_days` 是那一笔的时长，
+ * `devices` 是这份授权的设备名额，`paid_at` / `exp` 是秒。拿不到 = 这几行不显示。
+ */
+export type LicenseAccount =
+  | { ok: true; tier: { key: string; term_days: number }; devices: { used: number; limit: number }; paid_at: number; exp: number }
+  | { ok: false }
+export const fetchLicenseAccount = () => jsonFetch<LicenseAccount>('/api/license/account')
+
+/**
+ * 内置 AI 用量（`GET /api/license/usage`，引擎包一层 infra `POST /v1/ai/usage`，设备签名 `op = "ai_usage"`）：
+ * `agent_used` = 1 − remaining，0–1 两位小数；`null` = 额度暂时算不准（界面写「用量暂不可用」）。失败 / 403 一律静默降级成 `null`，不报错。
+ * 外部审阅今天还剩几次走现有 `GET /api/review/quota` 的 `new_left`，不在这里。
+ */
+export interface LicenseUsage {
+  agent_used: number | null
+}
+export const fetchLicenseUsage = () => jsonFetch<LicenseUsage>('/api/license/usage')

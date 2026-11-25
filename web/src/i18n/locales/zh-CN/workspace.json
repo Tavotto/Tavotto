@@ -488,6 +488,8 @@
     "transformReflect": "镜像",
     "quickLayout": "一键排版",
     "quickLayoutRatios": "调整排版比例",
+    "applyChangePlan": "应用修改方案",
+    "undoChangePlan": "撤销修改方案",
     "importSvg": "粘贴 SVG（{{count}} 个对象）",
     "explodeSvg": "拆成可编辑对象",
     "outlineText": "文字转轮廓（{{count}} 个）",
@@ -636,6 +638,7 @@
     "paste": "粘贴",
     "copyAsAnnotation": "复制为标注",
     "pasteAsAnnotation": "粘贴为标注",
+    "selectSameKind_other": "选中全部同类（{{count}} 个）",
     "pathfinder": "路径查找器",
     "addPathText": "在路径上加文字"
   },
@@ -655,12 +658,14 @@
       "settings": "设置",
       "style": "样式",
       "workspace": "项目",
-      "data": "数据"
+      "data": "数据",
+      "pro": "{{pro}}"
     },
     "style": "样式",
     "workspace": "项目",
     "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
-    "data": "数据"
+    "data": "数据",
+    "pro": "{{pro}}"
   },
   "readiness": {
     "foreign": {

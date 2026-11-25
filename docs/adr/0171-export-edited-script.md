@@ -214,3 +214,20 @@ ADR 0094 设计过「写回原脚本」，但它改的是用户文件，所以�
 - 验收里的采样：整图扫描默认的采样值对这一族是隐形的——箭头样式采第一个不同的选项 `-`（无头，虚线改了头也没得看）、层次采「原值 +5.5」
   （全图同步上移，相对次序不变）。给 `(cls, prop)` 定向采样 `_SAMPLE_BY_KEY`：箭头样式 `<|-|>`、帽子大小 36（默认只大两成，在像素阈值边上）、箭头层次抬到最上、锚定框沉到最下，
   夹具 `AdjText` 里二者叠在左下角，各自单独扫（`_HELD_OUT`：同扫时一个的变化把另一个遮住）；右下角那根独立箭头什么也不压，留给帽子大小、线型。`_bbox` 的现建默认值与引擎 `_BBOX_CREATE` 逐 prop 对拍（`test_block_bbox_matches_the_engine`）。
+
+## 修订（2026-11-24）：图内副本的创建型语句（ADR 0207 PR 2）
+
+图内副本（`copy_of`，ADR 0207）是 override 里唯一「新增 artist」的一类，写得进脚本，且是本 ADR 里第一种**创建型**语句：
+
+- 块里多一个运行期函数 `_copy_of(fig, gid, 宿主, 源, [x, y], 文字)`：`Text(x, y, 文字)` + `update_from(源)`，再补 `update_from`
+  不管的 `rotation_mode` / `zorder` / `wrap` / `parse_math` / label / 描边特效 / 底框，换成宿主的变换（子图 `transAxes` /
+  整图 `transFigure`），`host.add_artist(t)`，`set_clip_on(False)`、`set_in_layout(False)`。全是公开 API，与引擎 `_ensure_copy`
+  的静态部分逐项对拍（`tests/test_script_adjust_copy.py`）。块里每条语句是独立函数，没有跨语句的变量，所以副本存在
+  `fig` 的一张私有表里，副本 gid 上的后续修改写成 `_copy_ref(fig, gid).set_fontsize(...)`。
+- **排在全部属性语句之前**（`_rank` 的 `"copy"` 档 -1）：副本拿到的是脚本原样的源（与引擎 `_RANK_COPY` 先于其余档同一语义），
+  源上的样式修改写在创建语句之后。
+- 整条副本要么**整件事写进脚本**，要么**整件事留作重放**：源的选择器写不出、宿主是 3D / 色条轴、或副本 gid 上有一条写不进去，
+  则 `copy_of` 与它 gid 上的全部修改进 `skipped`（由重放建出）；被留下的副本的源上的修改也一起留下。不生成半截代码。
+- 验证（`_verify_edited_script`）不放松：新脚本里的副本只是普通 `ax.text`，gid 是序号名（`axes_N.texts_K` / `fig.artists_J`），
+  `app._alias_baked_copies` 按宿主与创建次序把热态里副本的 gid 对到这些序号名，再照旧比 bbox / anchor 与像素；对不上就是分歧、不交付。
+

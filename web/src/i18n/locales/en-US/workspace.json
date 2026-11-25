@@ -505,6 +505,8 @@
     "transformReflect": "Reflect",
     "quickLayout": "Auto layout",
     "quickLayoutRatios": "Adjust layout proportions",
+    "applyChangePlan": "Apply change plan",
+    "undoChangePlan": "Undo change plan",
     "importSvg": "Paste SVG ({{count}} objects)",
     "explodeSvg": "Make editable",
     "outlineText": "Create outlines ({{count}})",
@@ -661,6 +663,8 @@
     "paste": "Paste",
     "copyAsAnnotation": "Copy as annotation",
     "pasteAsAnnotation": "Paste as annotation",
+    "selectSameKind_one": "Select all of this kind ({{count}})",
+    "selectSameKind_other": "Select all of this kind ({{count}})",
     "pathfinder": "Pathfinder",
     "addPathText": "Add text on path"
   },
@@ -681,13 +685,15 @@
       "settings": "Settings",
       "style": "Style",
       "workspace": "Project",
-      "data": "Data"
+      "data": "Data",
+      "pro": "{{pro}}"
     },
     "style": "Style",
     "workspace": "Projects",
     "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
     "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})",
-    "data": "Data"
+    "data": "Data",
+    "pro": "{{pro}}"
   },
   "readiness": {
     "foreign": {

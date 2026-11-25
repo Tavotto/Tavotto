@@ -26,6 +26,10 @@ export default defineConfig({
       '@journals': fileURLToPath(
         new URL('../src/tavotto/profiles/journals.json', import.meta.url),
       ),
+      // Agent 新增对象的字段表（ADR 0208 §五）：唯一出处在 Python 包里，后端 engine/agentobjects.py 读同一份
+      '@agentObjects': fileURLToPath(
+        new URL('../src/tavotto/profiles/agent_objects.json', import.meta.url),
+      ),
       '@glyphcoverage': fileURLToPath(
         new URL('../src/tavotto/pdfbackend/canvas_coverage.json', import.meta.url),
       ),

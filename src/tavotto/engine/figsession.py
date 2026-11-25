@@ -2133,8 +2133,13 @@ class LiveFigureSession:
         snapshot_only: bool = False,
         svg_fonttype: str | None = None,
         svg_text_path: str | None = None,
+        data_points: list | None = None,
     ) -> dict:
         """全质量导出（供画布合成 / 按原图导出）。
+
+        `data_points`（ADR 0208 §二）：给定数据点落在**这次导出绘制**里的哪里（`manifest.measure_data_points`），
+        连同同一次绘制量出的 manifest 回在 `data_points` / `draw_manifest` 里。挂在导出上而不是预览上：tight /
+        constrained 布局下 PNG 预览与 PDF 成品的坐标轴差到零点几毫米，对齐的真值是成品。
 
         与 preview_png 同一纪律：export 是**状态中立**的一次性动作。
         不还原的话导出用的 patches 会留在常驻 figure 上——历史版本恢复、
@@ -2246,13 +2251,21 @@ class LiveFigureSession:
                             if tee_targets
                             else nullcontext()
                         ) as tee_session:
-                            state.fig.savefig(
-                                fh,
-                                format=fmt,
-                                dpi=int(dpi),
-                                **export_format_kwargs(fmt),
-                                **pathgeom.output_kwargs(state.fig),
-                            )
+                            with (
+                                manifest_mod.capture_preview_manifest(state, stem)
+                                if data_points is not None
+                                else _NULL_CTX
+                            ) as measured:
+                                state.fig.savefig(
+                                    fh,
+                                    format=fmt,
+                                    dpi=int(dpi),
+                                    **export_format_kwargs(fmt),
+                                    **pathgeom.output_kwargs(state.fig),
+                                )
+                                if data_points is not None:
+                                    result["data_points"] = measured.data_points(data_points)
+                                    result["draw_manifest"] = measured()
                         if tee_session is not None:
                             tee_results = tee_session.errors()
             if companion is not None:
