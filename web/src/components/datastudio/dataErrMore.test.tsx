@@ -78,7 +78,7 @@ describe('多个 y 的依据句', () => {
   it('误差线取自「a_sd」「b_sd」列（各自带「」、直接相连）', async () => {
     const items = candidatesFromResponse([item('a', 'line_err', { facts: facts(), error: 'sd', error_source: 'column', error_columns: cols(['sd', 'sd']) })], 'pa')
     await mount(<CandidateStage items={items} thumbs={{ a: 'ready' }} drawingId={null} previewKey={null} onPreview={() => {}} onCreate={() => {}} onThumb={() => {}} />)
-    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按表里的 12 行绘制，每行一个点；误差线取自「a_sd」「b_sd」列。')
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按表里的 12 行绘制，每条线每行一个点；误差线取自「a_sd」「b_sd」列。')
   })
 })
 

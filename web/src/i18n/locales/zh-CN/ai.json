@@ -727,6 +727,7 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
+      "rowsErrLines": "按表里的 {{drawn}} 行绘制，每条线每行一个点",
       "rowsBar": "按表里的 {{drawn}} 行绘制，每行一根柱",
       "errColumns": "误差线取自{{columns}}列",
       "colQuote": "「{{column}}」",

@@ -21,6 +21,13 @@ describe('多个 y 各配各的误差列', () => {
     const b = basisOf({ title_code: 'line_err', facts: facts(), error_columns: [{ column: 'a_sd' }, { column: 'b_sd' }] })!
     expect(b.errColumn).toEqual({ key: 'errColumns', values: { columns: ['a_sd', 'b_sd'] } })
   })
+  it('主句换成「每条线每行一个点」（两项以上）；一项 / 单 y 仍是「每行一个点」；bar_err 仍是「每行一根柱」', () => {
+    const two = [{ column: 'a_sd' }, { column: 'b_sd' }]
+    expect(basisOf({ title_code: 'line_err', facts: facts(), error_columns: two })!.main).toEqual([{ key: 'rowsErrLines', values: { drawn: 12 } }])
+    expect(basisOf({ title_code: 'line_err', facts: facts(), error_columns: [{ column: 'a_sd' }] })!.main[0]!.key).toBe('rowsErr')
+    expect(basisOf({ title_code: 'line_err', facts: facts(), error_column: 'e' })!.main[0]!.key).toBe('rowsErr')
+    expect(basisOf({ title_code: 'bar_err', facts: facts(), error_columns: two })!.main[0]!.key).toBe('rowsBar')
+  })
   it('只有一项 error_columns：按单列写', () => {
     expect(basisOf({ title_code: 'line_err', facts: facts(), error_columns: [{ column: 'a_sd' }] })!.errColumn).toEqual({ key: 'errColumn', values: { column: 'a_sd' } })
   })

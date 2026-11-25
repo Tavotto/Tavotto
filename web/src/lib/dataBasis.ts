@@ -19,7 +19,7 @@ const TREND = ['line_points', 'line_band', 'line_units']
 const ERR_COLUMN = ['points_err', 'line_err', 'bar_err']
 
 export interface BasisSentence {
-  key: 'rowsErr' | 'rowsBar' | 'errColumn' | 'errColumns' | 'errMissing' | 'bandMissing' | 'errMissingOne' | 'bandMissingOne' | 'points' | 'plain' | 'groupsEqual' | 'groupsRange' | 'xAlso' | 'xOnly' | 'skippedMissing' | 'skippedOther' | 'skippedBoth' | 'skippedAll'
+  key: 'rowsErr' | 'rowsErrLines' | 'rowsBar' | 'errColumn' | 'errColumns' | 'errMissing' | 'bandMissing' | 'errMissingOne' | 'bandMissingOne' | 'points' | 'plain' | 'groupsEqual' | 'groupsRange' | 'xAlso' | 'xOnly' | 'skippedMissing' | 'skippedOther' | 'skippedBoth' | 'skippedAll'
   /** `errColumns` 的 `columns` 是列名数组（界面各加引号再相连）；别的都是数 / 字符串 */
   values: Record<string, number | string | string[]>
 }
@@ -52,7 +52,9 @@ export function basisOf(c: {
   const viaColumn = ERR_COLUMN.includes(c.title_code)
   if (viaColumn) {
     // 柱不是「点」：`bar_err` 写「每行一根柱」
-    main.push({ key: c.title_code === 'bar_err' ? 'rowsBar' : 'rowsErr', values: { drawn: f.drawn } })
+    // 多个 y（`error_columns` 两项以上）每条线每行一个点，不是「每行一个点」；柱仍是「每行一根柱」
+    const lines = (c.error_columns?.length ?? 0) >= 2
+    main.push({ key: c.title_code === 'bar_err' ? 'rowsBar' : lines ? 'rowsErrLines' : 'rowsErr', values: { drawn: f.drawn } })
   } else if (SCATTER.includes(c.title_code)) {
     main.push({ key: 'points', values: { drawn: f.drawn } })
   } else if (f.groups != null && f.n_min != null && f.n_max != null) {
