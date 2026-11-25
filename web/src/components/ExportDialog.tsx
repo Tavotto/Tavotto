@@ -85,6 +85,7 @@ import {
 import { adoptionGuardOf, artifactValidationIssue } from "@/lib/artifactValidation";
 import { inspectionState } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
+import { Spinner } from "@/components/ui/Spinner";
 import {
   contextFigureId,
   findExportPanel,
@@ -1857,8 +1858,9 @@ export function ExportDialog() {
               disabled={batchMode ? !canStartBatch : !canStart}
               onClick={startExport}
             >
-              <Download size={ICON_SIZE.sm} />
-              {ex("start")}
+              {/* 先重画位图再导：这一段要跑脚本，按钮灰着却不说在干什么会像卡住了 */}
+              {redrawBusy ? <Spinner size={ICON_SIZE.sm} /> : <Download size={ICON_SIZE.sm} />}
+              {redrawBusy ? ex("redrawingBitmaps") : ex("start")}
             </Button>
           ),
         };

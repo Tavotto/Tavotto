@@ -610,7 +610,7 @@
     "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure’s crop lies entirely outside it. Adjust or reset the crop in Properties first.",
     "bitmapOriginal": "Bitmap original",
     "redraw": "Redraw with script",
-    "redrawHint": "The canvas shows the bitmap file the script saved, and a PDF export embeds that bitmap as it is (boxes for missing characters included). Redraw with script runs the script once more and uses the redrawn vector figure on the canvas and in exports; if it differs from the original you compare the two first. You can undo it."
+    "redrawHint": "This is the bitmap the script saved, and a PDF export embeds it as is (missing-character boxes included). Redraw with script reruns the script and uses vectors on the canvas and in exports; if the result differs, you compare the two first. You can undo it."
   },
   "quickEdit": {
     "aria": "Quick edit",
