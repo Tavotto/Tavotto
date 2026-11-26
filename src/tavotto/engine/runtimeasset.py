@@ -59,7 +59,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import config, documents, figcapture, inputremap, patchspec, runconfig
+from . import config, documents, figcapture, inputremap, layoutdir, patchspec, runconfig
 
 LOG = logging.getLogger("tavotto.runtimeasset")
 
@@ -462,12 +462,19 @@ def saved_layouts_use_stem(layout_dirs, registry, script: str, stem: str) -> boo
     不进 `_autosave/` 与 versions（不在 `layout_dirs` 的直接子文件里）；读不了 / 坏掉的文档跳过。
     """
     for d in layout_dirs:
+        # 经 `layoutdir`：目录形态的排版（`<名>.tavotto/layout.json`）也要看；占位文件不是排版。
+        # 宁多留不误删：`*.json` 里的真排版（含因撞名等原因没被 `list_layouts` 认出的）也一并扫
         try:
-            files = sorted(Path(d).glob("*.json"))
+            candidates = [loc.read_path for loc in layoutdir.list_layouts(Path(d))]
+            candidates += sorted(Path(d).glob("*.json"))
         except OSError:
             continue
-        for path in files:
-            if not documents.is_user_document_stem(path.stem):
+        seen: set[Path] = set()
+        for path in candidates:
+            if path is None or path in seen or not documents.is_user_document_stem(path.stem):
+                continue
+            seen.add(path)
+            if layoutdir.is_placeholder(path):
                 continue
             try:
                 doc = documents.loads_document(path.read_bytes())

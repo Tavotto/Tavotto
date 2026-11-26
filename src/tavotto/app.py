@@ -140,6 +140,7 @@ from .engine import (
     launchctx as engine_launchctx,
     launcher as engine_launcher,
     layoutannotate as engine_layoutannotate,
+    layoutdir as engine_layoutdir,
     layoutsession as engine_layoutsession,
     license as engine_license,
     locate as engine_locate,
@@ -20568,12 +20569,42 @@ def _contained_layout_path(path: Path, root: Path) -> Path | None:
 
 def _layout_read_source(name: str) -> tuple[Path, Path] | None:
     """回排版的实际路径与来源目录，来源目录决定图表附件的存储归属。"""
+    ctx = _request_ctx()
+    main_dir = project_layout_dir(ctx) if ctx is not None else None
     for directory in _layout_read_dirs():
         # 每个来源都是项目根或数据根的直接子目录，根不能跟着来源的链接走。
+        if main_dir is not None and directory == main_dir:
+            # 主位置可能是目录形态（ADR 0211 第二期）：当前正文在 `<名>.tavotto/layout.json`，占位不是排版
+            located = _locate_project_layout(name, directory)
+            if located is not None and located.read_path is not None:
+                path = _contained_read_path(located, directory.parent)
+                if path is not None and path.exists():
+                    return path, directory
+            continue
         path = _contained_layout_path(layout_path(name, directory), directory.parent)
-        if path is not None and path.exists():
+        if path is not None and path.exists() and not engine_layoutdir.is_placeholder(path):
             return path, directory
     return None
+
+
+def _contained_read_path(located: "engine_layoutdir.Located", root: Path) -> Path | None:
+    """当前正文的实际文件，要求落在项目 / 数据根里。旧形态（`<名>.json`）沿用原来的判据，目录形态的 `layout.json` 只看越界。"""
+    path = located.read_path
+    if path is None:
+        return None
+    if path == located.logical:
+        return _contained_layout_path(path, root)
+    real = engine_projectenv.contained_path(root, path.absolute())
+    return None if real is None else Path(real)
+
+
+def _locate_project_layout(name: str, directory: Path) -> "engine_layoutdir.Located | None":
+    """主位置（项目 `tavottofile/`）里这个名字的当前正文在哪（只读）。读不了（越界链接 / 撞名）回 None。"""
+    stem = layout_path(name, directory).stem
+    located = engine_layoutdir.locate(directory, stem)
+    if located.problem not in (None, engine_layoutdir.PROBLEM_TOO_NEW):  # 太新的只读照读
+        return None
+    return located
 
 
 @app.get("/api/layouts")
@@ -20583,10 +20614,25 @@ def api_layouts():
     # 文档——不剔掉的话「打开画布」列表里会多出一条叫 `_styles` 的东西，
     # 点开是一份读不成画布的样式表。
     seen: dict[str, float] = {}
+    ctx = _request_ctx()
+    main_dir = project_layout_dir(ctx) if ctx is not None else None
     for directory in _layout_read_dirs():
         root = directory.parent
         real = engine_projectenv.contained_path(root, directory.absolute())
         if real is None or not Path(real).is_dir():
+            continue
+        if main_dir is not None and directory == main_dir:
+            # 主位置：目录形态的排版按 `<名>.tavotto/` 列，占位不算排版（ADR 0211 第二期）
+            for located in engine_layoutdir.list_layouts(Path(real)):
+                if located.stem in seen:
+                    continue
+                path = _contained_read_path(located, root)
+                if path is None:
+                    continue
+                try:
+                    seen[located.stem] = path.stat().st_mtime
+                except OSError:
+                    continue
             continue
         for candidate in Path(real).glob("*.json"):
             if not engine_documents.is_user_document_stem(candidate.stem):
@@ -20594,7 +20640,7 @@ def api_layouts():
             if candidate.stem in seen:
                 continue
             path = _contained_layout_path(candidate, root)
-            if path is None:
+            if path is None or engine_layoutdir.is_placeholder(path):
                 continue
             # 断链或 glob 后消失的条目不占名字，同名的合法后备文件仍可用。
             try:
@@ -20779,24 +20825,42 @@ def api_layout_save(name):
                 return _bad_project_file_request()
             except OSError:
                 return _session_unavailable()
+        # 项目里的排版可能是目录形态（ADR 0211 第二期）：锁与身份是逻辑路径 `<名>.json`，
+        # 「当前正文」与它的修订号以 `engine_layoutdir` 为准（占位不是正文）
+        located = engine_layoutdir.locate(path.parent, path.stem) if ctx is not None else None
         if base_revision:
             try:
-                current = engine_atomicio.existing_revision(path)
+                current = (
+                    located.current_revision()
+                    if located is not None
+                    else engine_atomicio.existing_revision(path)
+                )
             except OSError:
                 return _revision_unreadable()
             if _revision_conflict(base_revision, current):
-                return _external_change(current, path)
+                return _external_change(current, located.read_path if located is not None else path)
         _named_layout_dir(ctx, create=True)
         snapshot_warnings = _freeze_document_sources(body)
         try:
-            engine_atomicio.write_json(path, body, indent=1)
+            if ctx is not None:
+                revision = engine_layoutdir.write(
+                    path.parent,
+                    path.stem,
+                    body,
+                    doc_id=working_doc_id if has_binding else None,
+                )
+            else:
+                engine_atomicio.write_json(path, body, indent=1)
+        except engine_layoutdir.LayoutDirError as exc:
+            return _layout_dir_refused(exc.code)
         except engine_atomicio.AtomicWriteError as exc:
             if ctx is not None and _is_read_only_failure(exc):
                 return _layout_read_only()
             raise
         # **在锁里读**：放到锁外读的话，交回去的可能是另一个窗口刚写下的那份
         # 内容的 hash，于是下一次写会带着一个「不是我写的」基线过来。
-        revision = engine_atomicio.content_revision(path)
+        if ctx is None:
+            revision = engine_atomicio.content_revision(path)
         project_file = None
         if has_binding:
             project_file = pending
@@ -20841,6 +20905,22 @@ def _is_read_only_failure(exc: "engine_atomicio.AtomicWriteError") -> bool:
     return isinstance(cause, OSError) and cause.errno in _READ_ONLY_ERRNOS
 
 
+def _layout_dir_refused(code: str):
+    """目录形态的守卫不过（链接 / 撞名 / 容器太新）：一个字节没写。"""
+    if code == engine_layoutdir.PROBLEM_SYMLINK:
+        return jsonify(
+            {
+                "error": "排版文件只能保存在当前项目的 tavottofile/ 里",
+                "code": "layout_outside_project",
+            }
+        ), 400
+    messages = {
+        engine_layoutdir.PROBLEM_COLLISION: "项目里已有一份只差大小写的同名排版，这次没有写入",
+        engine_layoutdir.PROBLEM_TOO_NEW: "这份排版来自更新的 Tavotto，请先检查更新，这次没有写入",
+    }
+    return jsonify({"error": messages.get(code, code), "code": code}), 409
+
+
 def _layout_read_only():
     return jsonify({"error": "项目文件夹是只读的，排版没有写进去", "code": "layout_read_only"}), 403
 
@@ -20871,6 +20951,9 @@ def _project_layout_target(name: str, ctx: "ProjectCtx") -> Path | None:
     base = _named_layout_dir(ctx)
     path = layout_path(name, base)
     if not base.resolve().is_relative_to(ctx.path.resolve()) or path.is_symlink():
+        return None
+    # 目录形态（ADR 0211 第二期）：`<名>.tavotto/` 与里面的 `layout.json` / 清单同样不许是链接
+    if engine_layoutdir.locate(base, path.stem).problem == engine_layoutdir.PROBLEM_SYMLINK:
         return None
     return path
 
