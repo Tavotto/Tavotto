@@ -320,7 +320,18 @@ export function SaveStateLabel() {
   const hasContent = useDocumentStore(
     (s) => s.doc.objects.length > 0 || s.doc.guides.length > 0 || s.canvases.length > 1,
   )
+  // 自动保存写不进项目（文件夹只读）：本机那份存好了，落定那句换成一句灰字说清楚（ADR 0211 第二期 PR 2）
+  const writeFailedReadOnly = useDocumentStore((s) => s.projectReadOnlyDoc === s.documentId)
+  // 整个项目文件夹本来就不可写（后端开着「自动保存写进项目」时才这么说；关着时界面照旧）
+  const folderReadOnly = useProjectStore(
+    (s) => !!s.project?.open && s.project.autosave_into_project === true && s.project.writable === false,
+  )
+  const projectReadOnly = writeFailedReadOnly || folderReadOnly
   const bound = useActiveProjectFile()
+  // 自动保存写进项目时撞上外部修改、还没裁决：胶囊说「别处有改动」，点它 = ⌘S（进冲突岔口），不弹窗打断编辑
+  const projectConflict = useDocumentStore(
+    (s) => s.projectConflict?.docId === s.documentId && (s.projectFile?.revision ?? '') === s.projectConflict.base,
+  )
   const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
   const issue = useDocIssue()
   const restoreKind = useDocumentStore((s) => s.restoreIssue?.kind ?? null)
@@ -341,7 +352,9 @@ export function SaveStateLabel() {
 
   const settled = saveState === 'clean' || saveState === 'saved'
   // 落定时那句话（也是快的一轮里继续显示的那句）
-  const settledText = bound
+  const settledText = projectReadOnly
+    ? t('topbar.saveProjectReadOnly')
+    : bound
     ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
     : projectOpen
       ? // 开着项目但这份排版只在本机（没有项目文件）：说「未存进项目」，点它走 ⌘S 的「存进项目」命名框
@@ -360,7 +373,9 @@ export function SaveStateLabel() {
           ? t(saveState === 'saving' ? 'topbar.saveSaving' : 'topbar.saveDirty')
           : settledText
   const bad = saveState === 'save_error' || saveState === 'conflict'
-  const title = bound
+  const title = projectReadOnly
+    ? t('topbar.saveProjectReadOnly')
+    : bound
     ? t(bound.dirty || !settled ? 'topbar.saveTitleProjectPending' : 'topbar.saveTitleProject', {
         file: bound.file,
         mod: MOD,
@@ -376,6 +391,32 @@ export function SaveStateLabel() {
       {bad ? text : ''}
     </span>
   )
+
+  if (!issue && projectConflict) {
+    return (
+      <span data-save-state data-save-destination="project" data-save-shown="conflict" className="flex min-w-0 shrink items-center">
+        <button
+          type="button"
+          data-doc-status-pill="project_conflict"
+          data-tone="warn"
+          aria-label={t('topbar.issueAria', { status: t('topbar.saveConflict') })}
+          title={`${t('topbar.saveConflict')} · ${title}`}
+          onClick={() => void runManualSave()}
+          className={cn(
+            'inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+            'focus-visible:focus-ring',
+            PILL_TONE.warn,
+          )}
+        >
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+          <span data-save-text className="truncate max-[899px]:sr-only">
+            {t('topbar.saveConflict')}
+          </span>
+        </button>
+        {live}
+      </span>
+    )
+  }
 
   if (issue) {
     return (

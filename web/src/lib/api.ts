@@ -4,6 +4,7 @@ import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './fi
 import { figureOriginIdentity, sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
 import type { ProjectFileAxis, ProjectFileEdit, ProjectFileRead, ProjectFileRecovery, ProjectFileReservation, ProjectFileResult, ProjectFileView } from './projectFileSession'
 import type { ReadGradient } from './gradient'
+import type { ProjectLayoutResult, ProjectWriteSpec } from './autosaveProject'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -653,6 +654,8 @@ export interface ProjectStatus {
    * 「旧位置只读兼容」与「未打开项目退回数据目录」这两条分支。
    */
   document_dir?: string
+  /** 自动保存是否把工作副本写进项目（后端开关，ADR 0211 第二期）；缺 = 旧后端 / 关着 */
+  autosave_into_project?: boolean
   /** 打开动作附带：注册表是静态扫描草稿 / stem 归属冲突列表 */
   drafted?: boolean
   conflicts?: string[]
@@ -1140,6 +1143,8 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  /** 带了 `project_write` 且后端开着开关时：这次写进项目的结局 */
+  project_layout?: ProjectLayoutResult
   project_file?: ProjectFileResult
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
@@ -1168,8 +1173,10 @@ export const putAutosave = (
   baseRevision?: string,
   pj?: string | null,
   opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
+  projectWrite?: ProjectWriteSpec,
 ) => {
   const q = new URLSearchParams()
+  if (projectWrite) q.set('project_write', JSON.stringify({ name: projectWrite.name ?? null, base: projectWrite.base ?? null }))
   if (base !== undefined) q.set('base', String(base))
   if (baseRevision !== undefined) q.set('base_revision', baseRevision)
   if (opts) q.set('project_file_edit', JSON.stringify(opts.projectFileEdit))
@@ -1690,6 +1697,11 @@ export interface ProjectHistoryItem {
   revision: string | null
   /** `mode=slot` 且节点比槽位新、内容不同（只算单画布节点） */
   node_newer: boolean
+  /**
+   * 项目里这份排版的**工作副本**（目录形态，清单记着这个 docId；ADR 0211 第二期）：比最近的时间线节点新。
+   * 没有本机槽位（`mode` 是 `node` / `copy`）时按它装，不按节点；`vid` 为空 = 还没有任何时间线节点。
+   */
+  work?: { name: string; revision: string; ts: number }
 }
 
 /**
@@ -1701,7 +1713,7 @@ export const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as c
 
 function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
   const r = raw as Record<string, unknown> | null
-  if (!r || typeof r !== 'object' || typeof r.doc_id !== 'string' || typeof r.vid !== 'string') return null
+  if (!r || typeof r !== 'object' || typeof r.doc_id !== 'string' || typeof r.vid !== 'string') return null // `vid` 可为空串（只有工作副本）
   const mode = HISTORY_MODES.find((m) => m === r.mode)
   const owner = HISTORY_OWNERS.find((o) => o === r.owner)
   if (!mode || !owner) return null
@@ -1719,7 +1731,14 @@ function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
     owner,
     revision: typeof r.revision === 'string' ? r.revision : null,
     node_newer: r.node_newer === true,
+    ...(parseHistoryWork(r.work) ? { work: parseHistoryWork(r.work) as NonNullable<ProjectHistoryItem['work']> } : {}),
   }
+}
+
+function parseHistoryWork(raw: unknown): ProjectHistoryItem['work'] | null {
+  const w = raw as Record<string, unknown> | null
+  if (!w || typeof w !== 'object' || typeof w.name !== 'string' || typeof w.revision !== 'string') return null
+  return { name: w.name, revision: w.revision, ts: typeof w.ts === 'number' && Number.isFinite(w.ts) ? w.ts : 0 }
 }
 
 /** 列项目内时间线候选。`'unsupported'` = 旧后端没有这个端点；`'unavailable'` = 此刻问不到。 */
