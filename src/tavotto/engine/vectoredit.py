@@ -874,9 +874,6 @@ def _op_outline_stroke(s: _State, i: int, op: dict) -> None:
     if not vectorgeom.can_outline_stroke(orig):
         raise EditError("bad_op", i, "no_stroke")
     o = _as_path(i, orig)
-    why = vectorgeom.stroke_unsupported(o)
-    if why:
-        raise EditError("bad_op", i, f"stroke:{why}")
     kernel = _kernel(i)
     nid = _mint(s, i, "out", [o["id"]], 0)
     res = vectorgeom.outline_stroke(kernel, o, nid)
