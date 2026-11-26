@@ -1583,3 +1583,15 @@ def test_restyling_an_arrow_anchored_to_a_data_point_keeps_its_allowance(project
     )
     data = [f for f in plan["facts"] if f["check"] == "data" and f["item"] == aid]
     assert data and data[0]["status"] == "pass", data
+
+
+def test_make_compound_takes_a_closed_shape_like_the_desktop():
+    """前端 `makeCompound` 走 `operands`：封闭形状先转为路径；直线照样不收"""
+    objs = [_rect("r", 0, 0, 30, 30), _circle("c", 15, 15, 5)]
+    r = _run(objs, [{"op": "make_compound", "ids": ["r", "c"]}])
+    assert [o["id"] for o in r["objects"]] == ["r"]
+    out = r["objects"][0]
+    assert out["type"] == "path" and out["fillRule"] == "evenodd" and len(out["subpaths"]) == 2
+    line = {**_rect("ln", 0, 0, 10, 2), "shape": "line"}
+    e = _err([*objs, line], [{"op": "make_compound", "ids": ["r", "ln"]}])
+    assert e["field"] == "needs_closed"
