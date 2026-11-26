@@ -116,6 +116,21 @@ def _write(project_root: str | Path, bindings: dict, gens: dict) -> None:
     )
 
 
+def migrate_store(old_root: str | Path, new_root: str | Path) -> bool:
+    """项目整夹挪走（ADR 0211 第一期 5）：旧项目身份下的输入转录（绑定 + 作废令牌）搬到新身份下。
+
+    严格读旧的（读不出抛 `StoreUnreadable`，调用方记日志、下次重试）；新身份下已有存储就不动（幂等）；
+    旧存储原样留着。回「这次写了没有」。"""
+    with _LOCK:
+        bindings, gens = _load(old_root)
+        if not bindings and not gens:
+            return False
+        if store_path(new_root).exists():
+            return False
+        _write(new_root, bindings, gens)
+        return True
+
+
 def _basis_of(gens: dict, script: str, run_config: str | None) -> list:
     return [gens.get(script), gens.get(_key(script, run_config))]
 

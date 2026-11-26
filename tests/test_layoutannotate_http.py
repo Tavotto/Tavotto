@@ -40,7 +40,7 @@ def test_desktop_learns_the_agents_additions_since_its_base(env):
     )
     got = _get(client, pj, base)
     assert got["available"] is True and got["revision"] == out["revision"] and got["count"] == 2
-    assert [o["id"] for o in got["canvases"][0]["objects"]] == out["added"]
+    assert [o["id"] for o in got["canvases"][0]["added"]] == out["added"]
     assert _get(client, pj, out["revision"]) == {"available": False}  # 已经跟上
     assert _get(client, pj, "") == {"available": False}  # 没基线
     m.reset_projects()

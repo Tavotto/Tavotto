@@ -72,6 +72,14 @@ def collect_execution(
     return CollectedExecution(execution, current.resources, current.missing)
 
 
+def _copy_portable_script(entry: dict) -> dict:
+    # The local fingerprint helps relink moved scripts. Only the verified
+    # resource or capture describes the bytes sent to the receiving project.
+    portable = copy.deepcopy(entry)
+    portable.pop("sha256", None)
+    return portable
+
+
 def _capture_run_suggestions(project_root, registry, execution):
     """Carry available original argv as advice, without reconstructing history."""
     entries = registry.entries()
@@ -94,7 +102,7 @@ def _capture_run_suggestions(project_root, registry, execution):
         if address in addresses or script not in entries:
             continue
         addresses.add(address)
-        scripts.setdefault(script, copy.deepcopy(entries[script]))
+        scripts.setdefault(script, _copy_portable_script(entries[script]))
         if reference is None or reference in run_ids:
             continue
         try:
@@ -152,7 +160,7 @@ def _collect_execution_v1(
         if address in addresses:
             continue
         addresses.add(address)
-        scripts[script] = copy.deepcopy(entries[script])
+        scripts[script] = _copy_portable_script(entries[script])
         uses.append((script, reference, known))
 
     issues, issue_keys = [], set()

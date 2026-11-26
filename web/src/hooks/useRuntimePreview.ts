@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePreviewOwner } from './usePreviewOwner'
 import { fetchFigureSnapshotPreview, fetchRuntimePreviewForState } from '@/lib/api'
 import { figureSnapshotPreviewIdentity } from '@/lib/figureSnapshotPreview'
 import type { FigureSnapshot } from '@/types/document'
@@ -32,8 +33,9 @@ export function useRuntimePreview(
   snapshot?: FigureSnapshot,
 ): RuntimePreview {
   // 变体串（文件 + overrides 内容），与 `renderKeyOf` 同口径：runtime 面板没有来源驱动的 guard 后缀
+  const owner = usePreviewOwner()
   const snapshotKey = snapshot ? figureSnapshotPreviewIdentity(snapshot) : null
-  const variant = `${fileId} ${JSON.stringify(overrides)} ${snapshotKey ?? ''}`
+  const variant = JSON.stringify([owner.key, nonce, fileId, overrides, snapshotKey])
   const [state, setState] = useState<RuntimePreview & { key: string | null }>({ ...IDLE, key: null })
   const urlRef = useRef<string | null>(null)
 
@@ -41,18 +43,18 @@ export function useRuntimePreview(
     if (!enabled) return
     const ctrl = new AbortController()
     const preview = snapshot
-      ? fetchFigureSnapshotPreview(fileId, overrides as unknown[], snapshot, ctrl.signal)
+      ? fetchFigureSnapshotPreview(fileId, overrides as unknown[], snapshot, ctrl.signal, owner.pj)
         .then((got) => ({ blob: new Blob([got.svg], { type: 'image/svg+xml' }), exact: true }))
-      : fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal)
+      : fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal, owner.pj)
     void preview
       .then((got) => {
-        if (ctrl.signal.aborted) return
+        if (ctrl.signal.aborted || !owner.still()) return
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = got ? URL.createObjectURL(got.blob) : null
         setState({ key: variant, url: urlRef.current, exact: got ? got.exact : null, failed: false })
       })
       .catch(() => {
-        if (!ctrl.signal.aborted) setState({ key: variant, url: null, exact: null, failed: true })
+        if (!ctrl.signal.aborted && owner.still()) setState({ key: variant, url: null, exact: null, failed: true })
       })
     return () => ctrl.abort()
     // overrides 的内容变化由 variant 表达（数组引用每次 commit 都变）

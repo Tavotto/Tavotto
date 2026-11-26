@@ -52,6 +52,7 @@ def case(tmp_path):
                     "notes": "",
                     "stems": ["curve"],
                     "artifacts": {"out/curve.svg": "curve"},
+                    "sha256": "e" * 64,
                 },
                 "other.py": {"entry": "__main__", "stems": ["other"]},
             }
@@ -137,7 +138,11 @@ def test_collects_actual_csv_helper_and_original_argv_without_running_script(cas
     record(root, cfg.id)
     result = collect(case, [use(cfg.id), use(cfg.id)])
     value = result.execution
-    assert value["registry"]["scripts"] == {SCRIPT: registered.entries()[SCRIPT]}
+    local_entry = registered.entries()[SCRIPT]
+    assert local_entry.pop("sha256") == "e" * 64
+    assert value["registry"]["scripts"] == {SCRIPT: local_entry}
+    assert registered.fingerprint_of(SCRIPT) == "e" * 64
+    assert rows(result)["script", SCRIPT]["sha256"] == figcapture.hash_file(root / SCRIPT)[0]
     assert value["runs"] == [{"id": cfg.id, "script": SCRIPT, "argv": tokens}]
     assert len(value["contexts"]) == 1
     context = value["contexts"][0]

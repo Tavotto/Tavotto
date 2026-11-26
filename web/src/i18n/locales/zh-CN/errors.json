@@ -301,7 +301,7 @@
     "tex_failed": "LaTeX 排版（text.usetex）这一步失败了，原因无法从输出中判断：{{error}}",
     "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
     "script_entry_missing": "这个脚本被改写过，登记的入口函数已经不在了。",
-    "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
+    "script_source_missing": "找不到 {{script}}",
     "safe_file_operation_blocked": "脚本改了项目里的文件或读了刚存的图，而安全运行不会真改文件、读到的会和直接运行不同，所以这次没有出图；这类脚本需要按真实文件运行（终端里的「tavotto run」就是这样跑的）。",
     "script_needs_arguments": "脚本需要命令行参数，这次不带任何参数。请检查脚本说明，在运行参数中填写后重试；也可以在终端里用「tavotto run -- python 脚本.py 参数…」运行。展开输出查看具体错误。",
     "script_rejected_arguments": "已向脚本传入 {{argv_count}} 个参数，但它仍无法继续。请检查参数是否完整并符合脚本的要求（Tavotto 按你填的内容原样传入）。展开输出查看具体错误。",

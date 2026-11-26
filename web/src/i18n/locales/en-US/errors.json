@@ -301,7 +301,7 @@
     "tex_failed": "The LaTeX typesetting step (text.usetex) failed, and the output does not say why: {{error}}",
     "script_exited": "The script ended early by calling sys.exit() ({{error}}). Tavotto needs the figures the script leaves in memory when it finishes: remove that exit, or exit only on error.",
     "script_entry_missing": "This script was rewritten, and the entry function it was registered with no longer exists.",
-    "script_source_missing": "The script file itself is missing ({{script}}): it may have been moved or deleted. Put the script back in the project and run it again; Tavotto will not substitute another file with the same name.",
+    "script_source_missing": "Can’t find {{script}}",
     "safe_file_operation_blocked": "The script changed project files or read back a figure it just saved, and safe mode doesn't really change files, so what it read would differ from running it directly and no figure was made; this kind of script has to run on real files (“tavotto run” in a terminal does).",
     "script_needs_arguments": "The script needs command-line arguments, but none were supplied this time. Check the script's instructions, enter its run arguments and try again; alternatively, run “tavotto run -- python script.py args…” in a terminal. Expand the output for the error.",
     "script_rejected_arguments": "The script could not continue with the {{argv_count}} arguments supplied. Check that the arguments are complete and match what the script expects (Tavotto passed them exactly as entered). Expand the output for the error.",

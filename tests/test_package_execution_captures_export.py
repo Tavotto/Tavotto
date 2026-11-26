@@ -42,7 +42,7 @@ def case(world):
     (root / SCRIPT).write_bytes(CURRENT_SOURCE)
     (root / "current.csv").write_bytes(b"current input\n")
     registered = registry.Registry()
-    registered.load_data({"scripts": {SCRIPT: ENTRY}})
+    registered.load_data({"scripts": {SCRIPT: {**ENTRY, "sha256": "a" * 64}}})
     workdir.set_mode(root, workdir.MODE_PROJECT_ROOT)
     calls = []
 
