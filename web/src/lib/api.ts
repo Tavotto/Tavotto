@@ -451,6 +451,22 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 export const fetchPanelStem = (id: string) =>
   jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
 
+/**
+ * PDF 原件的字体事实（后端 `artifactinspect.original_font_facts`，ADR 0139 修订 2026-11-24 补充）：
+ * 只读文件、不执行脚本。`readable: false` = 读不出，不能据此说它有问题。
+ */
+export interface PanelFontFacts {
+  id: string
+  readable: boolean
+  /** 文字画成了 Type 3 字体（matplotlib 的默认 `pdf.fonttype=3`）：在别的软件里常常选不中、换不了字 */
+  type3: boolean
+  /** 有字形落到了占位字（LastResort / `.notdef`）：原件里那几个字是方框 */
+  missing_glyphs: boolean
+}
+
+export const fetchPanelFontFacts = (id: string, pj?: string | null) =>
+  jsonFetch<PanelFontFacts>(`/api/panel-font-facts?id=${encodeURIComponent(id)}`, undefined, pj)
+
 /** 精确磁盘 id 的只读事实；不授予执行、几何编辑或发布资格。 */
 export interface PanelSourceFacts {
   id: string

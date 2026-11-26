@@ -26,7 +26,11 @@
     "adoptReconstructed": "Edit from the redrawn figure",
     "refreshReconstruction": "Update redraw comparison",
     "showRedraw": "Use the figure redrawn by its script",
-    "redrawn": "Now using the figure redrawn by its script, on the canvas and in exports. Undo to go back."
+    "redrawn": "Now using the figure redrawn by its script, on the canvas and in exports. Undo to go back.",
+    "showRedrawType3": "Use standard fonts",
+    "showRedrawMissing": "Fill in missing fonts",
+    "redrawnType3": "Now using standard fonts, on the canvas and in exports. Undo to go back.",
+    "redrawnMissing": "Fonts filled in, on the canvas and in exports. Undo to go back."
   },
   "backend": {
     "change_plan_busy": "A change plan is already being generated for this figure. Please wait.",
