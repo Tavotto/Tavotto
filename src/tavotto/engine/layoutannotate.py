@@ -37,6 +37,7 @@ from . import (
     config,
     doclock,
     documents,
+    layoutdir,
     layoutsession,
     vectorcheck,
     vectorscene,
@@ -107,24 +108,36 @@ def layout_target(project: str | Path, name: str) -> Path:
     path = base / f"{name}.json"
     if not base.resolve().is_relative_to(root.resolve()) or path.is_symlink():
         raise LayoutError("layout_outside_project")
+    # 目录形态（ADR 0211 第二期）：返回的仍是逻辑路径 `<名>.json`（锁与撤销留存的身份）；当前正文由 `layoutdir` 定位
+    if layoutdir.locate(base, name).problem == layoutdir.PROBLEM_SYMLINK:
+        raise LayoutError("layout_outside_project")
     return path
+
+
+def _current_file(path: Path) -> Path | None:
+    """逻辑路径 `<名>.json` 背后当前正文的实际文件（目录形态是 `layout.json`；占位不是正文）。没有回 None。"""
+    return layoutdir.locate(path.parent, path.stem).read_path
 
 
 def list_layouts(project: str | Path) -> list[str]:
     base = config.project_store_dir(Path(project))
     if not base.is_dir() or base.is_symlink():
         return []
-    out = []
-    for p in sorted(base.glob("*.json")):
-        if documents.is_user_document_stem(p.stem) and not p.is_symlink():
-            out.append(p.stem)
-    return out
+    return [
+        loc.stem
+        for loc in layoutdir.list_layouts(base)
+        if documents.is_user_document_stem(loc.stem)
+        and not (loc.read_path == loc.logical and loc.logical.is_symlink())
+    ]
 
 
 def open_layout(project: str | Path, name: str) -> Layout:
     path = layout_target(project, name)
+    source = _current_file(path)
+    if source is None:
+        raise LayoutError("layout_not_found")
     try:
-        data = path.read_bytes()
+        data = source.read_bytes()
     except FileNotFoundError as exc:
         raise LayoutError("layout_not_found") from exc
     except OSError as exc:
@@ -531,8 +544,11 @@ def write_canvas(project: str | Path, name: str, lay: Layout, canvas_id, mutate)
     """在文档锁里改一张画布并落盘：再核修订号 → 读正文 → `mutate(画布)` → 校验 → **先**存撤销副本 → 原子替换排版。
     回 `(新修订号, undo_token)`。追加（`commit`）与补丁（`vectoredit.commit`）共用这一段，锁 / 撤销 / 冲突判据只有一份。"""
     with doclock.document_lock(lay.path):
+        source = _current_file(lay.path)
         try:
-            before = lay.path.read_bytes()
+            if source is None:
+                raise LayoutError("layout_not_found")
+            before = source.read_bytes()
         except OSError as exc:
             raise LayoutError("layout_unreadable") from exc
         if atomicio.revision_of(before) != lay.revision:
@@ -547,8 +563,20 @@ def write_canvas(project: str | Path, name: str, lay: Layout, canvas_id, mutate)
             token = _save_undo(Path(project), name, before, lay.revision, after)
         except OSError as exc:
             raise LayoutError("undo_unavailable") from exc
-        atomicio.write_bytes(lay.path, data)
+        _write_current(lay.path, data)
     return after, token
+
+
+def _write_current(path: Path, data: bytes) -> None:
+    """写当前正文：经 `layoutdir`（目录形态进 `layout.json`，绝不把正文盖在占位上）。调用方持逻辑路径的文档锁。"""
+    try:
+        layoutdir.write(path.parent, path.stem, data)
+    except layoutdir.LayoutDirError as exc:
+        raise LayoutError(
+            "layout_outside_project"
+            if exc.code == layoutdir.PROBLEM_SYMLINK
+            else "layout_unreadable"
+        ) from exc
 
 
 def _save_undo(
@@ -583,11 +611,12 @@ def undo(project: str | Path, name: str, token: str) -> dict:
     except (OSError, ValueError) as exc:
         raise LayoutError("undo_unknown") from exc
     with doclock.document_lock(path):
-        current = atomicio.existing_revision(path)
+        source = _current_file(path)
+        current = atomicio.existing_revision(source) if source is not None else None
         if current != meta.get("after"):
             raise LayoutError("undo_stale", revision=current)
-        atomicio.write_bytes(path, before)
-        restored = atomicio.content_revision(path)
+        _write_current(path, before)
+        restored = atomicio.revision_of(before)
     for p in (meta_p, body_p):
         p.unlink(missing_ok=True)
     return {"revision": restored, "restored_to": meta.get("before")}
@@ -761,8 +790,11 @@ def agent_additions(project: str | Path, name: str, base_revision: str) -> dict 
       除 `objects` / `layoutGroups` 以外的键都必须相同（Agent 的工具不改这些）——否则 None。
     """
     path = layout_target(project, name)
+    source = _current_file(path)
     try:
-        data = path.read_bytes()
+        if source is None:
+            return None
+        data = source.read_bytes()
     except OSError:
         return None
     current = atomicio.revision_of(data)
