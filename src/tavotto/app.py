@@ -9924,9 +9924,10 @@ def api_registry_relink_candidates():
     ctx = current_ctx()
     # 上一次接回停在两步之间（关了页面）：按注册表此刻的事实收尾，不留带过去又没用上的参数
     engine_scriptrelink.settle_stale(ctx.path)
-    script = str(request.args.get("script") or "").replace("\\", "/").strip()
-    empty = {"script": script, "missing": False, "fingerprint": False, "matches": [], "scripts": []}
-    if not script or script not in ctx.registry.all_scripts():
+    asked = str(request.args.get("script") or "").replace("\\", "/").strip()
+    empty = {"script": asked, "missing": False, "fingerprint": False, "matches": [], "scripts": []}
+    script = _registered_script_key(ctx, asked)
+    if script is None:
         return jsonify(empty)
     root = Path(ctx.path)
     if engine_registry.script_fingerprint(root, script) is not None or (root / script).exists():
@@ -9958,11 +9959,20 @@ def api_registry_relink_candidates():
     return resp
 
 
+def _registered_script_key(ctx, asked: str) -> str | None:
+    """请求里点名的脚本 → 注册表里**那一个键本身**（不是请求里的字符串）；没登记 → None。
+
+    之后拼路径只用注册表自己的键：请求值只拿来比对，不进路径表达式。"""
+    if not asked:
+        return None
+    return next((key for key in ctx.registry.all_scripts() if key == asked), None)
+
+
 def _relink_pair(ctx) -> tuple[str, str] | tuple[None, object]:
     """`{from, to}` → (注册表里那个已经不在的脚本, 项目里要接上的那份)；不成立回 (None, 拒绝响应)。"""
     body = request.get_json(silent=True) or {}
-    old = str(body.get("from") or "").replace("\\", "/").strip()
-    if not old or old not in ctx.registry.all_scripts() or (Path(ctx.path) / old).exists():
+    old = _registered_script_key(ctx, str(body.get("from") or "").replace("\\", "/").strip())
+    if old is None or (Path(ctx.path) / old).exists():
         return None, (jsonify({"error": "不是一个挪走了的登记脚本", "code": "bad_request"}), 400)
     new, rejected = _resolve_project_script(ctx, str(body.get("to") or "").strip())
     if rejected is not None:
