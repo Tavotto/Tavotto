@@ -140,10 +140,11 @@
 | `query` | 否 | 单行，≤120 字（选择器搜索框里的字） |
 | `rule_key` | 否 | `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$` |
 | `current` | 否 | 单行，≤200 字 |
-| `source_id` | 否 | `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$` |
+| `source_id` | 否 | `^(?:v2:)?[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$`（v2 出处原样带 `v2:` 前缀） |
 | `url` | 否 | `https://` 开头，≤2000 字，不含空白、控制字符与 `user:pass@` |
 | `catalog` | 否 | `{"v1"?: 1–999999 的整数, "v2"?: 同}` |
 
+- 带 `journal` 时 `body` 可以为空（只点「发送」也是有效线索，第五节）；不带时照旧必填。
 - `missing` 至少要有 `query`、`url`、附件三者之一，否则 422 `bad_request`。未知字段 422（与现有字段同一处置）。
 - 主题：客户端可以留空；服务端在 `subject` 为空时按 `期刊线索：<journal_label 或 query 或 journal_id>` 生成（英文界面 `Journal tip: …`）。
 - 幂等指纹把 `journal` 一并算进去：同一个 `client_message_id` 带不同的 `journal` 回 409（与改了正文同一处置）。
