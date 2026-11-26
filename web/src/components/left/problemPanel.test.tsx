@@ -345,7 +345,7 @@ describe('普通界面不出现内部标识', () => {
     expect(head.querySelector('svg.text-danger, svg.text-warn, .text-danger, .text-warn')).toBeNull()
     const dot = head.querySelector<HTMLElement>('span.size-1\\.5')!
     expect(dot.className).toMatch(/bg-(danger|warn|ink-faint)/)
-    expect(head.querySelector('.sr-only')!.textContent).toMatch(/阻断|警告|建议|无法核验/)
+    expect(head.querySelector('.sr-only')!.textContent).toMatch(/要改|需留意|建议|无法核验/)
   })
 })
 
@@ -528,7 +528,7 @@ describe('无障碍与键盘', () => {
     await openCard()
     const row = container.querySelector('[data-issue-row]')!
     const label = row.getAttribute('aria-label') ?? ''
-    expect(label).toContain('阻断')
+    expect(label).toContain('要改')
     expect(label).toContain('X 轴刻度')
   })
 
@@ -643,7 +643,7 @@ describe('安全修复', () => {
 })
 
 describe('左轨入口', () => {
-  it('有阻断项时图标上是一颗红点（只为阻断亮），不挂红底数字；「N 项阻断（共 M）」在可达名里', async () => {
+  it('有阻断项时图标上是一颗红点（只为阻断亮），不挂红底数字；「N 项要改（共 M）」在可达名里', async () => {
     await seed() // 两条都是阻断（字号低于绝对下限）
     useUiStore.setState({ leftOpen: false })
     await mount(<LeftRail />)
@@ -657,7 +657,7 @@ describe('左轨入口', () => {
     expect(entry.querySelector('svg.icon-list-checks')).toBeTruthy()
     // 轨钮下面写的是短名（2026-09-30 重设计），不是数字
     expect(entry.textContent?.trim(), '轨道上不再写数字').not.toMatch(/\d/)
-    expect(entry.getAttribute('aria-label')).toBe(`问题 · ${n} 项阻断（共 ${n}）`)
+    expect(entry.getAttribute('aria-label')).toBe(`问题 · ${n} 项要改（共 ${n}）`)
   })
 
   it('选中态是白底 + 1px 轮廓，不靠投影（卡片投影只属于 ui/Card）', async () => {
@@ -817,7 +817,7 @@ describe('按规则聚合（审计 T09）', () => {
     expect(text()).toContain('6.00 pt')
     expect(text()).toContain('7.00 pt')
     // 等级不只靠颜色：组头写着等级文字
-    expect(groups[0].textContent).toContain('阻断')
+    expect(groups[0].textContent).toContain('要改')
   })
 
   it('组头可折叠：折起来行就不在，展开又回来', async () => {
@@ -1586,7 +1586,7 @@ describe('卡片层：一张组图拆成子图（2026-09-28）', () => {
     expect(cardTotal()).toBe(onP1())
     // 尾随格静止时说阻断数与总数；各等级几项在可达名里，不列对象
     const c = partCard('(c)')!
-    expect(c.querySelector(':scope > button')!.getAttribute('aria-label')).toContain('阻断 2')
+    expect(c.querySelector(':scope > button')!.getAttribute('aria-label')).toContain('要改 2')
     expect(c.querySelector('[data-problem-trail-rest]')!.textContent).toBe('2·2')
     expect(c.textContent).not.toContain('Theory')
   })
@@ -2015,7 +2015,7 @@ describe('JPER 问题面板的画布级来源提示', () => {
     expect(notice()?.textContent).toContain('相同画布 · 2')
     expect(notice()?.textContent).not.toContain('无关画布')
     expect(notice()?.textContent).toContain('录用后最终稿')
-    expect(notice()?.textContent).toContain('预检未区分投稿阶段')
+    expect(notice()?.textContent).toContain('投稿前检查未区分投稿阶段')
     expect(notice()?.textContent).toContain('当前指南尚未核实')
     expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
     expect(notice()?.textContent).not.toContain('300')
@@ -2197,7 +2197,7 @@ describe('LEUKOS saved scope notice', () => {
     await mount(<ProblemPanel />)
     const notice = () => container.querySelector('[data-leukos-problem-scope-notice]')
     expect(notice()?.textContent).toContain('历史画布')
-    expect(notice()?.textContent).toContain('预检未区分投稿阶段和图类')
+    expect(notice()?.textContent).toContain('投稿前检查未区分投稿阶段和图类')
     expect(notice()?.textContent).toContain('现行要求未知')
     expect(notice()?.textContent).toContain('不能确认任何问题或阈值来自该来源')
     expect(container.querySelector('[data-problem-evidence]')).not.toBeNull()

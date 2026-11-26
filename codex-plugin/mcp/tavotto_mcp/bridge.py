@@ -160,12 +160,14 @@ OPTIONAL_ENGINE_MODULES = (
     "journalremote",
     "journalfacts_remote",
     "journals",
+    "layoutannotate",
     "nativefallback",
     "reviewinbox",
     "reviewshare",
     "runconfig",
     "scriptargs",
     "specfix",
+    "vectoredit",
 )
 
 
@@ -3681,7 +3683,7 @@ def export(
     )
     if checks["needs_confirm"] and not explicit_confirm:
         raise BridgeError(
-            f"预检有 {len(checks['errors'])} 类阻断性问题、"
+            f"投稿前检查有 {len(checks['errors'])} 类要改的问题、"
             f"{len(checks['not_verifiable'])} 类无法核验项，未导出。"
             "修好它们，或者在用户明确要求后带 explicit_confirm=true 再调一次。",
             code="preflight_blocked",
@@ -6214,3 +6216,329 @@ def review_resolve(session_id: str, *, comment_id: object, resolved: object = Tr
         "status": "resolved" if resolved else "reopened",
         "comment_id": comment["id"],
     }
+
+
+# ---------------------------------------------------------------- 排版标注（ADR 0208 第 2 期）
+#
+# 只翻译：读排版、求解、核对、复述、写入、撤销全在 `engine/layoutannotate.py`；这里只做三件 MCP 才有的事——
+# 授权范围（`check_scope`）、每张子图的「量」（经本桥的会话池导出 `data_points`，与 `tavotto_export` 同一条 worker 路）、
+# 以及把结果压成工具结果。
+
+#: 量子图时导出的 PDF 留在这里（局部图的子图源）；按项目 + 子图 + 改动摘要缓存，进程退出即丢
+_LAYOUT_PDF_DIR: Path | None = None
+
+#: 子图量不了的原因（工具层给 Agent 的码；文案在工具说明里）
+LAYOUT_PANEL_UNAVAILABLE = (
+    "composed_from_snapshot",  # 这张图在排版里按冻结的快照合成：现跑脚本的结果不一定是它，不量
+    "runtime_panel",  # 运行时捕获的素材
+    "no_script",  # 没有登记脚本的素材（只能当图片放）
+    "open_failed",  # 打开这张图失败（缺数据、要输入……）：码在 detail
+    "export_failed",
+)
+
+
+def layout_annotate_available() -> bool:
+    la = _optional_engine("layoutannotate")
+    return la is not None and all(
+        hasattr(la, n) for n in ("read_scene", "propose", "commit", "undo", "preview")
+    )
+
+
+def require_layout_annotate():
+    la = _optional_engine("layoutannotate") if layout_annotate_available() else None
+    if la is None:
+        raise BridgeError(
+            "这个 Tavotto 版本还不能往排版里加标注；升级 Tavotto 后新开会话再试。",
+            code="layout_annotate_unavailable",
+        )
+    return la
+
+
+def _layout_project(target: str) -> tuple[str, object | None]:
+    """授权过的项目目录 + 它的注册表（没有注册表也能读排版，只是子图都量不了）。"""
+    real = check_scope(target)
+    if not os.path.isdir(real):
+        raise BridgeError(f"不是一个项目目录: {real}", code="not_found")
+    try:
+        registry = engine_registry.open_registry(real)
+    except (FileNotFoundError, RuntimeError):
+        registry = None
+    return real, registry
+
+
+def _layout_pdf_dir() -> Path:
+    global _LAYOUT_PDF_DIR
+    if _LAYOUT_PDF_DIR is None:
+        import tempfile
+
+        _LAYOUT_PDF_DIR = Path(tempfile.mkdtemp(prefix="tavotto-layout-annotate-"))
+    return _LAYOUT_PDF_DIR
+
+
+def _layout_measure(project: str, registry, la, opened: list, pdfs: dict):
+    """`measure(panel, requests)`：这张子图**带它在排版里的改动**现跑一次导出，量数据点、拿这次绘制的 manifest。
+
+    与成品合成同一个判定：冻结快照 / 运行时素材 / 没有脚本的子图在成品里不是现画的，这里也不量（只给外框）。"""
+
+    def measure(panel: dict, requests: list) -> dict:
+        if panel.get("figureSnapshot") is not None or panel.get("figureOrigin") is not None:
+            raise la.PanelUnavailable("composed_from_snapshot")
+        if panel.get("source") is not None or panel.get("fileKind") == "runtime":
+            raise la.PanelUnavailable("runtime_panel")
+        fid = str(panel.get("fileId") or panel.get("id") or "")
+        # 「磁盘文件 → 图」只经注册表的 `for_artifact`（登记的产物表 + 文件名 stem 兜底，#1251）：子目录里的产物、
+        # 产物名与 stem 不同的，按路径自己拆都会误判成没有脚本（Codex #2213）
+        info = registry.for_artifact(fid) if registry is not None and fid else None
+        if info is None:
+            raise la.PanelUnavailable("no_script")
+        stem = info["stem"]
+        try:
+            sid = open_figure(os.path.join(project, fid), stem=stem)["session_id"]
+            session = get_session(sid)
+        except BridgeError as exc:
+            raise la.PanelUnavailable("open_failed") from exc
+        if sid not in opened:
+            opened.append(sid)
+        overrides = panel.get("overrides") or []
+        key = hashlib.sha1(
+            json.dumps([project, fid, overrides, requests], sort_keys=True, default=str).encode(
+                "utf-8"
+            )
+        ).hexdigest()[:16]
+        out = _layout_pdf_dir() / f"{key}.pdf"
+        try:
+            resp = session.acquire().export(
+                session.stem, overrides, str(out), "pdf", 600, data_points=list(requests)
+            )
+        except (BridgeError, engine_pool.WorkerError) as exc:
+            raise la.PanelUnavailable("export_failed") from exc
+        # 按子图**对象**存：同一张图放了两次、各带不同的改动时，两个实例各有各的那份（Codex #2213）
+        pdfs[str(panel.get("id") or fid)] = str(out)
+        return {
+            "draw_manifest": resp.get("draw_manifest"),
+            "data_points": resp.get("data_points") or [],
+        }
+
+    return measure
+
+
+def layout_scene(
+    target: str, layout: str, *, canvas_id: str | None = None, select: dict | None = None
+) -> dict:
+    la = require_layout_annotate()
+    project, registry = _layout_project(target)
+    opened: list = []
+    # 有编辑能力的引擎：场景里一并列出能改的矢量对象（`vectoredit.read_scene`）；旧引擎只有 0208 的场景，不收选择器
+    if select is not None:
+        require_layout_edit()
+    ve = _optional_engine("vectoredit") if layout_edit_available() else None
+    reader = ve.read_scene if ve is not None and hasattr(ve, "read_scene") else la.read_scene
+    kw = {"select": select} if select is not None else {}
+    try:
+        out = reader(
+            project,
+            layout,
+            _layout_measure(project, registry, la, opened, {}),
+            canvas_id=canvas_id,
+            **kw,
+        )
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    out["opened_sessions"] = opened
+    return out
+
+
+def _layout_profile(profile_id, journal, journal_id) -> dict | None:
+    if profile_id is None and journal is None and journal_id is None:
+        return None
+    return resolve_profile(profile_id, journal, journal_id)
+
+
+def layout_propose(
+    target: str,
+    layout: str,
+    items: list,
+    *,
+    base_revision: str,
+    fingerprint: str | None = None,
+    canvas_id: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    journal_id: str | None = None,
+    with_preview: bool = True,
+) -> dict:
+    la = require_layout_annotate()
+    project, registry = _layout_project(target)
+    opened: list = []
+    pdfs: dict = {}
+    try:
+        plan = la.propose(
+            project,
+            layout,
+            items,
+            _layout_measure(project, registry, la, opened, pdfs),
+            base_revision=base_revision,
+            fingerprint=fingerprint,
+            canvas_id=canvas_id,
+            profile=_layout_profile(profile_id, journal, journal_id),
+        )
+        lay = la.open_layout(project, layout)
+        canvas = la._canvas(lay.doc, canvas_id)  # noqa: SLF001 — 同一份画布选择
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    plan["opened_sessions"] = opened
+    if with_preview and plan.get("objects"):
+        pv = la.preview(canvas, plan["objects"], pdfs)
+        if pv is not None:
+            plan["preview"] = {
+                "png_base64": base64.b64encode(pv["png"]).decode("ascii"),
+                "region_mm": pv["region_mm"],
+                "missing_panels": pv["missing_panels"],
+            }
+    return plan
+
+
+def layout_commit(
+    target: str,
+    layout: str,
+    items: list,
+    *,
+    base_revision: str,
+    echo_digest: str,
+    fingerprint: str | None = None,
+    canvas_id: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    journal_id: str | None = None,
+) -> dict:
+    la = require_layout_annotate()
+    project, registry = _layout_project(target)
+    opened: list = []
+    try:
+        out = la.commit(
+            project,
+            layout,
+            items,
+            _layout_measure(project, registry, la, opened, {}),
+            base_revision=base_revision,
+            echo_digest_seen=echo_digest,
+            fingerprint=fingerprint,
+            canvas_id=canvas_id,
+            profile=_layout_profile(profile_id, journal, journal_id),
+        )
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    out["opened_sessions"] = opened
+    return out
+
+
+def layout_undo(target: str, layout: str, undo_token: str) -> dict:
+    la = require_layout_annotate()
+    project, _registry = _layout_project(target)
+    try:
+        return la.undo(project, layout, undo_token)
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+
+
+# ---------------------------------------------------------------- 改已有矢量对象（ADR 0212 第 5 期）
+#
+# 同样只翻译：补丁、复述、核对、写入全在 `engine/vectoredit.py`；撤销与标注共用 `layoutannotate.undo`。
+
+
+def layout_edit_available() -> bool:
+    ve = _optional_engine("vectoredit")
+    return (
+        layout_annotate_available()
+        and ve is not None
+        and all(hasattr(ve, n) for n in ("propose", "commit", "preview_edit", "read_scene"))
+    )
+
+
+def require_layout_edit():
+    ve = _optional_engine("vectoredit") if layout_edit_available() else None
+    if ve is None:
+        raise BridgeError(
+            "这个 Tavotto 版本还不能改排版里已有的矢量对象；升级 Tavotto 后新开会话再试。",
+            code="layout_annotate_unavailable",
+        )
+    return require_layout_annotate(), ve
+
+
+def layout_edit_propose(
+    target: str,
+    layout: str,
+    ops: list,
+    *,
+    base_revision: str,
+    canvas_id: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    journal_id: str | None = None,
+    with_preview: bool = True,
+) -> dict:
+    la, ve = require_layout_edit()
+    project, registry = _layout_project(target)
+    opened: list = []
+    pdfs: dict = {}
+    try:
+        lay = la.open_layout(project, layout)
+        canvas = la._canvas(lay.doc, canvas_id)  # noqa: SLF001 — 同一份画布选择
+        plan = ve.propose(
+            project,
+            layout,
+            ops,
+            _layout_measure(project, registry, la, opened, pdfs),
+            base_revision=base_revision,
+            canvas_id=canvas_id,
+            profile=_layout_profile(profile_id, journal, journal_id),
+        )
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    plan["opened_sessions"] = opened
+    # 局部图要的是方案所依据的那一份画布：读到的修订号与方案的不同（中途被改）就不画，免得拿别的版本给 Agent 比
+    if (
+        with_preview
+        and plan.get("objects") is not None
+        and plan.get("base_revision") == lay.revision
+    ):
+        pv = ve.preview_edit(canvas, plan, pdfs)
+        if pv is not None:
+            plan["preview"] = {
+                "png_base64": base64.b64encode(pv["png"]).decode("ascii"),
+                "region_mm": pv["region_mm"],
+                "missing_panels": pv["missing_panels"],
+            }
+    return plan
+
+
+def layout_edit_commit(
+    target: str,
+    layout: str,
+    ops: list,
+    *,
+    base_revision: str,
+    echo_digest: str,
+    canvas_id: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    journal_id: str | None = None,
+) -> dict:
+    la, ve = require_layout_edit()
+    project, registry = _layout_project(target)
+    opened: list = []
+    try:
+        out = ve.commit(
+            project,
+            layout,
+            ops,
+            _layout_measure(project, registry, la, opened, {}),
+            base_revision=base_revision,
+            echo_digest_seen=echo_digest,
+            canvas_id=canvas_id,
+            profile=_layout_profile(profile_id, journal, journal_id),
+        )
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    out["opened_sessions"] = opened
+    return out

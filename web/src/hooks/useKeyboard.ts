@@ -13,7 +13,7 @@ import {
   finishCrop,
   runManualSave,
   deleteSelected,
-  duplicateSelected,
+  duplicateSelection,
   hideElements,
   selectAll,
   startNamedNode,
@@ -288,8 +288,8 @@ export function useKeyboard() {
       }
       if (mod && !e.altKey && e.key.toLowerCase() === 'd') {
         e.preventDefault()
-        // 快速编辑里不加副本（副本落在版面上、这一屏看不见）：判据在 `duplicateSelected` 里
-        duplicateSelected()
+        // 图内编辑里选着图内元素：原地建图内副本（ADR 0207）；其余照旧复制选区（判据都在 `duplicateSelection` 里）
+        duplicateSelection()
         return
       }
       // ⌘C / ⌘V 不在 keydown 层拦：让浏览器派发原生 copy/paste 事件，

@@ -1,5 +1,4 @@
 import { PRODUCT_NAME } from './brand'
-import { chartVersionCanvas, chartVersionProject, documentApiPath, documentResponseFormat, type DocumentFormat, type VersionCanvasIdentity } from './documentFormat'
 import type { ChartSourceReceipt } from './chartSourceReceipts'
 import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './figureSnapshotPreview'
 import { figureOriginIdentity, sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
@@ -14,7 +13,7 @@ import type { ExportRoute } from '@/lib/exportRoute'
 import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
-import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
@@ -425,7 +424,7 @@ const errorBody = (res: Response): Promise<Record<string, unknown>> =>
  * `pj` 显式给出时用它，不用全局当前项目：见 `session.apiUrlFor` 的说明——
  * 排队稍后才发出的写入，属于**排队那一刻**的项目。`undefined` = 用全局的。
  */
-async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null, documentFormat?: DocumentFormat): Promise<T> {
+async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null): Promise<T> {
   const res =
     pj === undefined
       ? await fetch(apiUrl(url), withProject(init))
@@ -443,7 +442,6 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null,
     noteEngine500(res.status, body, init?.method, url)
     throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
-  if (documentFormat === 'v4' && (!init?.method || init.method === 'GET')) requireDocumentResponseFormat(res, documentFormat)
   return res.json() as Promise<T>
 }
 
@@ -977,47 +975,17 @@ export const panelSrc = (
   return null
 }
 
-function documentJsonFetch(format?: DocumentFormat) {
-  return <T>(path: string, init?: RequestInit, pj?: string | null): Promise<T> =>
-    format === 'v4' ? jsonFetch<T>(documentApiPath(path, format), init, pj, format) : jsonFetch<T>(path, init, pj)
-}
-
-function requireDocumentResponseFormat(res: Response, format?: DocumentFormat): void {
-  if (!documentResponseFormat(res.headers.get('X-Tavotto-Document-Format'), format)) {
-    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
-  }
-}
-
-/**
- * A namespace endpoint that answers "there is no such contract here": 404/405,
- * or a v4 request whose reply lacks the v4 format header. This is *not* a
- * transient outage; treating it as one blocks saves and vetoes the other
- * namespace's valid document.
- */
-function namespaceUnsupported(error: unknown, format?: DocumentFormat): boolean {
-  if (!(error instanceof ApiError)) return false
-  if (error.status === 404 || error.status === 405) return true
-  return format === 'v4' && error.status === 400 && error.body?.code === 'invalid_document'
-}
-
-function requireDocumentSchema(raw: unknown, format?: DocumentFormat): unknown {
-  if (format === 'v4' && (!raw || typeof raw !== 'object' || (raw as { schema?: unknown }).schema !== 4)) {
-    throw new ApiError('Unexpected document schema.', 400, { code: 'invalid_document' })
-  }
-  return raw
-}
-
 /* ----------------------------- 布局存取 ----------------------------------- */
 
-export const fetchLayoutNames = (format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
+export const fetchLayoutNames = () =>
+  jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
 
 /**
  * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
  * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
  */
-export const fetchLayoutList = (format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ layouts: string[]; modified?: Record<string, number>; document_dir?: unknown }>('/api/layouts').then((r) => ({
+export const fetchLayoutList = () =>
+  jsonFetch<{ layouts: string[]; modified?: Record<string, number>; document_dir?: unknown }>('/api/layouts').then((r) => ({
     names: r.layouts,
     modified: r.modified ?? {},
     ...(typeof r.document_dir === 'string' ? { documentDir: r.document_dir } : {}),
@@ -1034,8 +1002,8 @@ export interface FetchedLayout {
   file: string | null
 }
 
-export async function fetchLayout(name: string, format?: DocumentFormat, pj?: string | null): Promise<FetchedLayout> {
-  const path = documentApiPath(`/api/layouts/${encodeURIComponent(name)}`, format)
+export async function fetchLayout(name: string, pj?: string | null): Promise<FetchedLayout> {
+  const path = `/api/layouts/${encodeURIComponent(name)}`
   const res = pj === undefined ? await fetch(apiUrl(path), withProject())
     : await fetch(apiUrlFor(path, pj), withProjectFor(undefined, pj))
   if (!res.ok) {
@@ -1048,18 +1016,44 @@ export async function fetchLayout(name: string, format?: DocumentFormat, pj?: st
     noteProjectGone(res.status, body)
     throw new ApiError(typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`, res.status, body)
   }
-  requireDocumentResponseFormat(res, format)
   const file = res.headers.get('X-Tavotto-Layout-File')
   return {
-    doc: requireDocumentSchema(await res.json(), format),
+    doc: await res.json(),
     revision: res.headers.get('X-Tavotto-Revision'),
     file: file ? decodeURIComponent(file) : null,
   }
 }
 
+/**
+ * 「把 Agent 加的并进来」（ADR 0208 §五）：拿这份排版绑定的基线问后端，磁盘上多出来的是不是**只有** Agent 追加的对象。
+ * 后端判据在 `engine/layoutannotate.agent_additions`（全部来自插件写入时留的撤销副本）。读失败一律当「没有」——
+ * 照旧走覆盖 / 另存，不因为这一问把保存流程卡住。
+ */
+export interface AgentAdditions {
+  available: boolean
+  revision?: string
+  count?: number
+  canvases?: { id: string; objects: CanvasObject[] }[]
+}
+
+export async function fetchAgentAdditions(name: string, baseRevision: string): Promise<AgentAdditions> {
+  try {
+    const res = await fetch(
+      apiUrl(
+        `/api/layouts/${encodeURIComponent(name)}/agent-additions?base_revision=${encodeURIComponent(baseRevision)}`,
+      ),
+      withProject(),
+    )
+    if (!res.ok) return { available: false }
+    const body = (await res.json()) as AgentAdditions
+    return body && body.available === true ? body : { available: false }
+  } catch {
+    return { available: false }
+  }
+}
+
 export interface SavedLayout {
   project_file?: ProjectFileResult
-  document_format?: 'v4'
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
@@ -1086,16 +1080,15 @@ export const saveLayout = (
   name: string,
   doc: FigureDocument | ProjectDocument,
   baseRevision?: string,
-  opts?: { target?: 'project'; format?: DocumentFormat; pj?: string | null; workingDocId?: string; bindingIntent?: number },
+  opts?: { target?: 'project'; pj?: string | null; workingDocId?: string; bindingIntent?: number },
 ) => {
-  const format = opts?.format
   const params = new URLSearchParams()
   if (baseRevision !== undefined) params.set('base_revision', baseRevision)
   if (opts?.target) params.set('target', opts.target)
   if (opts?.workingDocId !== undefined) params.set('working_doc_id', opts.workingDocId)
   if (opts?.bindingIntent !== undefined) params.set('binding_intent', String(opts.bindingIntent))
   const qs = params.toString()
-  return documentJsonFetch(format)<SavedLayout>(
+  return jsonFetch<SavedLayout>(
     `/api/layouts/${encodeURIComponent(name)}` + (qs ? `?${qs}` : ''),
     {
       method: 'POST',
@@ -1137,7 +1130,6 @@ export const REVISION_ABSENT = 'absent'
  */
 export interface PutAutosaveResult {
   project_file?: ProjectFileResult
-  document_format?: 'v4'
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
@@ -1164,7 +1156,6 @@ export const putAutosave = (
   base?: number,
   baseRevision?: string,
   pj?: string | null,
-  format?: DocumentFormat,
   opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
 ) => {
   const q = new URLSearchParams()
@@ -1173,7 +1164,7 @@ export const putAutosave = (
   if (opts) q.set('project_file_edit', JSON.stringify(opts.projectFileEdit))
   if (opts?.projectFileRecovery) q.set('project_file_recovery', JSON.stringify(opts.projectFileRecovery))
   const qs = q.toString()
-  return documentJsonFetch(format)<PutAutosaveResult>(
+  return jsonFetch<PutAutosaveResult>(
     `/api/autosave/${encodeURIComponent(docId)}${qs ? `?${qs}` : ''}`,
     {
       method: 'PUT',
@@ -1218,9 +1209,9 @@ async function projectFileRequest<T>(request: (signal: AbortSignal) => Promise<T
 }
 
 /** 后端工作副本元信息；与可携的 schema 3/4 正文分离。只有明确 404 才兼容旧本机绑定。 */
-export async function fetchProjectFile(documentId: string, pj: string, format?: DocumentFormat): Promise<ProjectFileRead> {
+export async function fetchProjectFile(documentId: string, pj: string): Promise<ProjectFileRead> {
   try {
-    const value = await projectFileRequest(signal => documentJsonFetch(format)<ProjectFileRead>(
+    const value = await projectFileRequest(signal => jsonFetch<ProjectFileRead>(
       `/api/layout-session/project-file/${encodeURIComponent(documentId)}`, { signal }, pj,
     ))
     if (validProjectFileView(value)) return value
@@ -1236,7 +1227,7 @@ export async function fetchProjectFile(documentId: string, pj: string, format?: 
     }
     return { status: 'unsupported' }
   } catch (error) {
-    if (namespaceUnsupported(error, format)) return { status: 'unsupported' }
+    if (error instanceof ApiError && (error.status === 404 || error.status === 405)) return { status: 'unsupported' }
     throw error
   }
 }
@@ -1258,9 +1249,9 @@ function validProjectFileView(value: unknown): value is ProjectFileView {
 
 export async function reserveProjectFile(documentId: string, pj: string, body: {
   name: string; autosave_revision: string | null; axis: ProjectFileAxis; expected_binding_sequence: number | null
-}, format?: DocumentFormat): Promise<ProjectFileReservation> {
+}): Promise<ProjectFileReservation> {
   try {
-    return await projectFileRequest(signal => documentJsonFetch(format)<ProjectFileReservation>(`/api/layout-session/project-file/${encodeURIComponent(documentId)}/reserve`, {
+    return await projectFileRequest(signal => jsonFetch<ProjectFileReservation>(`/api/layout-session/project-file/${encodeURIComponent(documentId)}/reserve`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
     }, pj))
   } catch (error) {
@@ -1271,13 +1262,13 @@ export async function reserveProjectFile(documentId: string, pj: string, body: {
 
 export const confirmProjectFile = (documentId: string, pj: string, body: {
   name: string; intent_sequence: number; revision: string
-}, format?: DocumentFormat) => projectFileRequest(signal => documentJsonFetch(format)<ProjectFileResult>(
+}) => projectFileRequest(signal => jsonFetch<ProjectFileResult>(
   `/api/layout-session/project-file/${encodeURIComponent(documentId)}/confirm`,
   { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }, pj,
 )).then(validProjectFileResult)
 
-export const cancelProjectFile = (documentId: string, pj: string, sequence: number, format?: DocumentFormat) =>
-  projectFileRequest(signal => documentJsonFetch(format)<{ state: 'cancelled' | 'superseded' }>(
+export const cancelProjectFile = (documentId: string, pj: string, sequence: number) =>
+  projectFileRequest(signal => jsonFetch<{ state: 'cancelled' | 'superseded' }>(
     `/api/layout-session/project-file/${encodeURIComponent(documentId)}/intent/${sequence}`, { method: 'DELETE', signal }, pj,
   ))
 
@@ -1291,9 +1282,8 @@ export interface FetchedAutosave {
 export async function fetchAutosave(
   docId: string,
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<FetchedAutosave | null> {
-  const path = documentApiPath(`/api/autosave/${encodeURIComponent(docId)}`, format)
+  const path = `/api/autosave/${encodeURIComponent(docId)}`
   const res =
     pj === undefined
       ? await fetch(apiUrl(path), withProject())
@@ -1303,8 +1293,7 @@ export async function fetchAutosave(
     noteProjectGone(res.status, await errorBody(res))
     throw new Error(`HTTP ${res.status}`)
   }
-  requireDocumentResponseFormat(res, format)
-  return { doc: requireDocumentSchema(await res.json(), format), revision: res.headers.get('X-Tavotto-Revision') }
+  return { doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
 }
 
 /**
@@ -1324,8 +1313,8 @@ export type AutosaveProbe =
  * 纯读：问后端这个槽位里有什么，**不抛、不记 revision、不碰任何本机状态**。恢复流程遍历候选时
  * 用它（`fetchAutosave` 把 5xx 与「没有」都折成抛 / null，且 400 的原因丢了）。`pj` 见 putAutosave。
  */
-export async function probeAutosave(docId: string, pj?: string | null, format?: DocumentFormat): Promise<AutosaveProbe> {
-  const path = documentApiPath(`/api/autosave/${encodeURIComponent(docId)}`, format)
+export async function probeAutosave(docId: string, pj?: string | null): Promise<AutosaveProbe> {
+  const path = `/api/autosave/${encodeURIComponent(docId)}`
   let res: Response
   try {
     res =
@@ -1339,12 +1328,11 @@ export async function probeAutosave(docId: string, pj?: string | null, format?: 
   if (!res.ok) {
     const body = await errorBody(res)
     noteProjectGone(res.status, body)
-    if (res.status === 400) {
+    if (res.status === 400 || res.status === 422) {
       return { kind: 'invalid', code: typeof body.code === 'string' ? body.code : null }
     }
     return { kind: 'unavailable', status: res.status }
   }
-  if (!documentResponseFormat(res.headers.get('X-Tavotto-Document-Format'), format)) return { kind: 'invalid', code: 'invalid_document' }
   try {
     return { kind: 'found', doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
   } catch {
@@ -1355,15 +1343,15 @@ export async function probeAutosave(docId: string, pj?: string | null, format?: 
 }
 
 /** 磁盘那一份的摘要；没有这份文件返回 null */
-export const fetchAutosaveSummary =(docId: string, pj?: string | null, format?: DocumentFormat) =>
-  documentJsonFetch(format)<DiskDocumentSummary>(
+export const fetchAutosaveSummary = (docId: string, pj?: string | null) =>
+  jsonFetch<DiskDocumentSummary>(
     `/api/autosave/${encodeURIComponent(docId)}/summary`,
     undefined,
     pj,
   ).catch(() => null)
 
-export const deleteAutosave = (docId: string, format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
+export const deleteAutosave = (docId: string) =>
+  jsonFetch<{ ok: boolean }>(`/api/autosave/${encodeURIComponent(docId)}`, {
     method: 'DELETE',
   })
 
@@ -1400,7 +1388,7 @@ export type SessionIndexStatus = 'ok' | 'missing' | 'degraded' | 'recovered'
  * - `unavailable`：网络 / 超时 / 5xx / 401 / 403——**不是** 404，不许当旧端点放行。
  */
 export type OpenIntent =
-  | { version: 1; status: 'ok'; sequence: number; snapshot: string; latest: { document_format: DocumentFormat; doc_id: string; pointer: 'last' | 'pending' } | null }
+  | { version: 1; status: 'ok'; sequence: number; snapshot: string; latest: { doc_id: string; pointer: 'last' | 'pending' } | null }
   | { version: 1; status: 'stale' | 'untracked'; snapshot: string }
   | { version: 1; status: 'unavailable' }
 
@@ -1417,7 +1405,7 @@ function parseOpenIntent(raw: unknown): OpenIntent | undefined {
   if (r.latest !== null) {
     if (!r.latest || typeof r.latest !== 'object' || Array.isArray(r.latest)) return { version: 1, status: 'unavailable' }
     const v = r.latest as Record<string, unknown>
-    if (Object.keys(v).length !== 3 || !['legacy', 'v4'].includes(String(v.document_format)) || typeof v.doc_id !== 'string' || !v.doc_id || !['last', 'pending'].includes(String(v.pointer))) return { version: 1, status: 'unavailable' }
+    if (Object.keys(v).length !== 2 || typeof v.doc_id !== 'string' || !v.doc_id || !['last', 'pending'].includes(String(v.pointer))) return { version: 1, status: 'unavailable' }
   }
   return raw as OpenIntent
 }
@@ -1448,9 +1436,9 @@ function parseSessionRef(v: unknown): SessionPointer | null {
 
 const INDEX_STATUSES: readonly SessionIndexStatus[] = ['ok', 'missing', 'degraded', 'recovered']
 
-export async function fetchLayoutSessionResult(pj?: string | null, format?: DocumentFormat, opts?: { includeOpenIntent: true }): Promise<SessionFetch> {
+export async function fetchLayoutSessionResult(pj?: string | null, opts?: { includeOpenIntent: true }): Promise<SessionFetch> {
   try {
-    const body = await documentJsonFetch(format)<Record<string, unknown>>(`/api/layout-session${opts?.includeOpenIntent ? '?include_open_intent=1' : ''}`, undefined, pj)
+    const body = await jsonFetch<Record<string, unknown>>(`/api/layout-session${opts?.includeOpenIntent ? '?include_open_intent=1' : ''}`, undefined, pj)
     const index = INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok'
     return {
       kind: 'ok',
@@ -1462,11 +1450,9 @@ export async function fetchLayoutSessionResult(pj?: string | null, format?: Docu
     }
   } catch (e) {
     if (e instanceof ApiError) {
-      // A backend that does not implement this namespace answers with a
-      // generic error (or a plain 200 the format check rejects). That is
-      // "unsupported", never a transient outage that may veto the other
-      // namespace's valid document.
-      if (namespaceUnsupported(e, format)) return { kind: 'unsupported' }
+      // A backend that does not implement this namespace answers 404/405. That is
+      // "unsupported", never a transient outage.
+      if (e.status === 404 || e.status === 405) return { kind: 'unsupported' }
       return { kind: 'unavailable', status: e.status }
     }
     return { kind: 'unavailable', status: null }
@@ -1479,9 +1465,8 @@ export async function fetchLayoutSessionResult(pj?: string | null, format?: Docu
  */
 export async function fetchLayoutSession(
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<{ last: LayoutSessionLast | null } | undefined> {
-  const r = await (format === 'v4' ? fetchLayoutSessionResult(pj, format) : fetchLayoutSessionResult(pj))
+  const r = await fetchLayoutSessionResult(pj)
   return r.kind === 'ok' ? { last: r.last } : undefined
 }
 
@@ -1496,8 +1481,8 @@ export interface PutLayoutSessionLastResult {
   pending?: LayoutSessionLast | null
 }
 
-export const putLayoutSessionLast = (ref: { doc_id: string; name: string; repair?: true }, pj?: string | null, format?: DocumentFormat) =>
-  documentJsonFetch(format)<PutLayoutSessionLastResult>(
+export const putLayoutSessionLast = (ref: { doc_id: string; name: string; repair?: true }, pj?: string | null) =>
+  jsonFetch<PutLayoutSessionLastResult>(
     '/api/layout-session/last',
     { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
     pj,
@@ -1528,10 +1513,9 @@ export interface OwnerEvidence {
 export async function fetchLayoutOwnerEvidence(
   docId: string,
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<OwnerEvidence | 'unsupported' | 'unavailable'> {
   try {
-    const body = await documentJsonFetch(format)<{ owner?: unknown; evidence?: unknown; verified?: unknown; revision?: unknown }>(
+    const body = await jsonFetch<{ owner?: unknown; evidence?: unknown; verified?: unknown; revision?: unknown }>(
       `/api/layout-session/owner?doc_id=${encodeURIComponent(docId)}`,
       undefined,
       pj,
@@ -1550,7 +1534,7 @@ export async function fetchLayoutOwnerEvidence(
         : {}),
     }
   } catch (e) {
-    return namespaceUnsupported(e, format) ? 'unsupported' : 'unavailable'
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
   }
 }
 
@@ -1561,9 +1545,8 @@ export async function fetchLayoutOwnerEvidence(
 export async function fetchLayoutOwner(
   docId: string,
   pj?: string | null,
-  format?: DocumentFormat,
 ): Promise<'this' | 'other' | 'unknown' | null | undefined> {
-  const r = await (format === 'v4' ? fetchLayoutOwnerEvidence(docId, pj, format) : fetchLayoutOwnerEvidence(docId, pj))
+  const r = await fetchLayoutOwnerEvidence(docId, pj)
   if (r === 'unsupported') return undefined
   if (r === 'unavailable') return null
   return r.owner
@@ -1575,7 +1558,6 @@ export async function fetchLayoutOwner(
  * 拿不到就没有——前端不编缩略图。
  */
 export interface RecoveryCandidateItem {
-  format?: DocumentFormat
   doc_id: string
   name: string
   updatedAt: number | null
@@ -1583,8 +1565,8 @@ export interface RecoveryCandidateItem {
   /** 正文的内容 hash；确认恢复时用它核对「预览之后有没有被改过」 */
   revision: string | null
   schema: number | null
-  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读 */
-  status: 'ok' | 'invalid' | 'too_new' | 'too_large'
+  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读；`chart_source_mismatch` 图表附件缺损 */
+  status: 'ok' | 'invalid' | 'too_new' | 'too_large' | 'chart_source_mismatch'
   canvases: number
   objects: number
   owner: 'this' | 'unknown'
@@ -1604,7 +1586,7 @@ export interface RecoveryCandidatePage {
   index: SessionIndexStatus
 }
 
-const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large'] as const
+const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large', 'chart_source_mismatch'] as const
 
 function parseCandidate(v: unknown): RecoveryCandidateItem | null {
   const r = v as Record<string, unknown> | null
@@ -1650,18 +1632,17 @@ export async function fetchRecoveryCandidates(
   pj: string | null,
   cursor?: string,
   limit = 50,
-  format?: DocumentFormat,
 ): Promise<RecoveryCandidatePage | 'unsupported' | 'unavailable'> {
   const q = new URLSearchParams({ scope, limit: String(limit) })
   if (cursor) q.set('cursor', cursor)
   try {
-    const body = await documentJsonFetch(format)<Record<string, unknown>>(
+    const body = await jsonFetch<Record<string, unknown>>(
       `/api/layout-session/candidates?${q.toString()}`,
       undefined,
       pj,
     )
     const items = Array.isArray(body?.items)
-      ? body.items.map(value => { const item = parseCandidate(value); return item && format === 'v4' ? { ...item, format } : item }).filter((x): x is RecoveryCandidateItem => x !== null)
+      ? body.items.map(parseCandidate).filter((x): x is RecoveryCandidateItem => x !== null)
       : []
     return {
       items,
@@ -1670,7 +1651,100 @@ export async function fetchRecoveryCandidates(
       index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok',
     }
   } catch (e) {
-    return namespaceUnsupported(e, format) ? 'unsupported' : 'unavailable'
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
+  }
+}
+
+/**
+ * 项目自己的时间线里有内容的排版（ADR 0211 第一期）：`<项目>/tavottofile/versions/*.vx`。
+ * 挪走 / 复制 / 换电脑 / 换 origin 之后，本机按路径记的会话状态与 `tavotto.docIndex` 都认不出它，
+ * 这里是唯一跟着文件夹走的证据。`mode` 由后端判（它看得到旧项目路径在不在，前端看不到）：
+ *  - `slot`：本机槽位就是这份（`owner` 为 `moved` / `none` 时先 `claimProjectHistory` 把归属改到本项目）；
+ *  - `node`：没有本机槽位，用最近一个非空节点恢复成同一个 docId；
+ *  - `copy`：复制 / 归属待核对 / 槽位坏了——用节点恢复成一份**新 docId**，旧项目一个字节不动。
+ */
+export interface ProjectHistoryItem {
+  doc_id: string
+  name: string
+  /** 最近一个有对象的节点 */
+  vid: string
+  ts: number
+  canvasId: string | null
+  schema: number | null
+  canvases: number
+  objects: number
+  mode: (typeof HISTORY_MODES)[number]
+  owner: (typeof HISTORY_OWNERS)[number]
+  /** `mode=slot` 时槽位正文的 revision（认领与探测都对着它） */
+  revision: string | null
+  /** `mode=slot` 且节点比槽位新、内容不同（只算单画布节点） */
+  node_newer: boolean
+}
+
+/**
+ * 候选 `mode` / `owner` 的取值闭集：**镜像**后端唯一出处 `engine/projecthistory.HISTORY_MODES` / `HISTORY_OWNERS`
+ * （同源对，`tests/test_project_history_restore.py::test_vocabulary_mirrors_are_literal` 逐字对拍）。
+ */
+export const HISTORY_MODES = ['slot', 'node', 'copy'] as const
+export const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as const
+
+function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
+  const r = raw as Record<string, unknown> | null
+  if (!r || typeof r !== 'object' || typeof r.doc_id !== 'string' || typeof r.vid !== 'string') return null
+  const mode = HISTORY_MODES.find((m) => m === r.mode)
+  const owner = HISTORY_OWNERS.find((o) => o === r.owner)
+  if (!mode || !owner) return null
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    doc_id: r.doc_id,
+    name: typeof r.name === 'string' ? r.name : '',
+    vid: r.vid,
+    ts: num(r.ts),
+    canvasId: typeof r.canvasId === 'string' ? r.canvasId : null,
+    schema: typeof r.schema === 'number' ? r.schema : null,
+    canvases: num(r.canvases),
+    objects: num(r.objects),
+    mode,
+    owner,
+    revision: typeof r.revision === 'string' ? r.revision : null,
+    node_newer: r.node_newer === true,
+  }
+}
+
+/** 列项目内时间线候选。`'unsupported'` = 旧后端没有这个端点；`'unavailable'` = 此刻问不到。 */
+export async function fetchProjectHistory(
+  pj: string | null,
+): Promise<{ items: ProjectHistoryItem[]; index: SessionIndexStatus; truncated: boolean } | 'unsupported' | 'unavailable'> {
+  try {
+    const body = await jsonFetch<Record<string, unknown>>('/api/layout-session/project-history', undefined, pj)
+    const items = Array.isArray(body?.items)
+      ? body.items.map(parseHistoryItem).filter((x): x is ProjectHistoryItem => x !== null)
+      : []
+    return { items, index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok', truncated: body?.truncated === true }
+  } catch (e) {
+    return e instanceof ApiError && (e.status === 404 || e.status === 405) ? 'unsupported' : 'unavailable'
+  }
+}
+
+/**
+ * 把挪走的项目留下的槽位归属改到当前项目（后端在槽位文档锁里重判；复制场景永远拒）。
+ * `ok` = 后端此刻记的就是本项目、且对着的是 `revision` 那一版正文；`refused` = 后端明确拒（409，此刻不满足挪走的
+ * 条件或槽位刚被存过——调用方重列一次再定）；`unavailable` = 问不到（网络 / 503 / 旧后端），**不是**拒绝。
+ */
+export async function claimProjectHistory(
+  docId: string,
+  revision: string,
+  pj: string | null,
+): Promise<'ok' | 'refused' | 'unavailable'> {
+  try {
+    const body = await jsonFetch<{ ok?: boolean }>(
+      '/api/layout-session/project-history/claim',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc_id: docId, revision }) },
+      pj,
+    )
+    return body?.ok === true ? 'ok' : 'unavailable'
+  } catch (e) {
+    return e instanceof ApiError && e.status === 409 && e.body?.code === 'claim_refused' ? 'refused' : 'unavailable'
   }
 }
 
@@ -1737,6 +1811,12 @@ export interface LayoutVersionMeta {
   description: string
   objects: number
   page?: { w: number; h: number }
+  /**
+   * 节点正文的 schema（2 = 单画布；3 / 4 = 整份项目）。恢复按它分派「只盖当前
+   * 画布」还是「换整份项目」。旧后端不发这个字段 = 不知道；调用方按「不知道」
+   * 处理，不拿 `page` 在不在去猜。
+   */
+  schema?: number
   /**
    * 这个检查点拍的是**哪一张画布**（R-03）。
    * 检查点存的是激活画布的内容，却按 documentId（整个项目）归档；不记下画布
@@ -1925,8 +2005,7 @@ export async function fetchExecTraceDiagnostic(
 export const fetchVersions = (
   docId: string,
   sketch?: { objects: number; textChars: number },
-  format?: DocumentFormat,
-) => (format === 'v4' ? fetchTimeline(docId, sketch, format) : fetchTimeline(docId, sketch)).then((r) => r.versions)
+) => fetchTimeline(docId, sketch).then((r) => r.versions)
 
 /**
  * 时间线此刻的体积（ADR 0101）。`namedOver` = 命名节点自己就超出了字节上限：
@@ -1943,10 +2022,9 @@ export interface TimelineBudget {
 export const fetchTimeline = (
   docId: string,
   sketch?: { objects: number; textChars: number },
-  format?: DocumentFormat,
 ) => {
   const q = sketch ? `?sketch=${sketch.objects}&sketchText=${sketch.textChars}` : ''
-  return documentJsonFetch(format)<{
+  return jsonFetch<{
     versions: LayoutVersionMeta[]
     budget?: TimelineBudget
     /**
@@ -1960,10 +2038,8 @@ export const fetchTimeline = (
 }
 
 /** 节点缩略图的地址（`<img src>`）。没有缩略图的节点别调它。 */
-export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>, format?: DocumentFormat) =>
-  apiUrl(
-    documentApiPath(`/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`, format),
-  )
+export const versionThumbUrl = (docId: string, v: Pick<LayoutVersionMeta, 'id' | 'thumb'>) =>
+  apiUrl(`/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(v.id)}/thumb?f=${v.thumb ?? ''}`)
 
 /** 给节点挂缩略图。`pj` = 拍节点那一刻的项目（关项目 / 回主页时它随后就变了） */
 export const putVersionThumb = (
@@ -1971,25 +2047,19 @@ export const putVersionThumb = (
   vid: string,
   thumb: { blob: Blob; type: string; box?: { x: number; y: number; w: number; h: number } },
   pj?: string | null,
-  format?: DocumentFormat,
 ) =>
-  documentJsonFetch(format)<{ ok: true; thumb: 'webp' | 'png' }>(
+  jsonFetch<{ ok: true; thumb: 'webp' | 'png' }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/thumb` +
       (thumb.box ? `?box=${[thumb.box.x, thumb.box.y, thumb.box.w, thumb.box.h].join(',')}` : ''),
     { method: 'PUT', headers: { 'Content-Type': thumb.type }, body: thumb.blob },
     pj,
   )
 
-export const fetchVersionDoc = (docId: string, vid: string, format?: DocumentFormat, pj?: string | null) =>
-  documentJsonFetch(format)<{ doc: FigureDocument | ProjectDocument } & LayoutVersionMeta>(
+export const fetchVersionDoc = (docId: string, vid: string, pj?: string | null) =>
+  jsonFetch<{ doc: FigureDocument | ProjectDocument } & LayoutVersionMeta>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     undefined, pj,
-  ).then(result => {
-    if (format !== 'v4') return result as { doc: FigureDocument } & LayoutVersionMeta
-    const doc = chartVersionCanvas(result.doc)
-    if (!doc) throw new ApiError('Invalid canvas version.', 400, { code: 'invalid_document' })
-    return { ...result, doc }
-  })
+  )
 
 export const createVersion = (
   docId: string,
@@ -2000,33 +2070,34 @@ export const createVersion = (
     /** 用户起的名字才是命名节点（ADR 0101）；程序起的名字（「恢复前」）不带它 */
     named?: boolean
     moment?: LayoutMoment
-    doc: FigureDocument
+    /**
+     * 节点正文。schema 2 = 单画布节点（既有检查点）；schema 3 / 4 = 整份项目节点
+     * （原地升级的备份原语 `takeProjectCheckpoint`）。服务端本来就存整份载荷，
+     * `validate_document` 按 schema 号校验，版本链这一侧不再把项目文档压成一张画布。
+     */
+    doc: FigureDocument | ProjectDocument
     canvasId?: string
     canvasName?: string
   },
   pj?: string | null,
-  opts?: { format: 'v4'; identity: VersionCanvasIdentity },
-) => {
-  const format = opts?.format
-  return documentJsonFetch(format)<{ version?: LayoutVersionMeta; skipped?: boolean }>(
+) =>
+  jsonFetch<{ version?: LayoutVersionMeta; skipped?: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(opts ? { ...payload, doc: chartVersionProject(payload.doc, opts.identity) } : payload),
+      body: JSON.stringify(payload),
     },
     pj,
   )
-}
 
 export const updateVersion = (
   docId: string,
   vid: string,
   /** `name` 非空 = 命名 / 改名；`named: false` = 删掉名字，变回普通节点 */
   patch: { name?: string; named?: false; description?: string; auto?: boolean },
-  format?: DocumentFormat,
 ) =>
-  documentJsonFetch(format)<{ version: LayoutVersionMeta }>(
+  jsonFetch<{ version: LayoutVersionMeta }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     {
       method: 'PATCH',
@@ -2035,14 +2106,14 @@ export const updateVersion = (
     },
   )
 
-export const duplicateVersion = (docId: string, vid: string, format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ version: LayoutVersionMeta }>(
+export const duplicateVersion = (docId: string, vid: string) =>
+  jsonFetch<{ version: LayoutVersionMeta }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}/duplicate`,
     { method: 'POST' },
   )
 
-export const deleteVersion = (docId: string, vid: string, format?: DocumentFormat) =>
-  documentJsonFetch(format)<{ ok: boolean }>(
+export const deleteVersion = (docId: string, vid: string) =>
+  jsonFetch<{ ok: boolean }>(
     `/api/versions/${encodeURIComponent(docId)}/${encodeURIComponent(vid)}`,
     { method: 'DELETE' },
   )
@@ -2750,8 +2821,8 @@ export interface PackageResult {
   url: string
   assets: number
   missing: string[]
-  document_format?: 'v4'
   chart_sources?: number
+  missing_chart_sources?: string[]
   execution_coverage?: {
     state: 'incomplete' | 'complete'
     issues: { script: string; reason: string }[]
@@ -2762,23 +2833,16 @@ export const createPackage = async (
   stem: string,
   doc: FigureDocument | ProjectDocument,
   settings: Record<string, unknown>,
-  opts?: { format?: DocumentFormat; pj?: string | null },
-) => {
-  const init = {
+  opts?: { pj?: string | null },
+) =>
+  jsonFetch<PackageResult>('/api/package', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ stem, doc, settings }),
-  }
-  if (!opts) return jsonFetch<PackageResult>('/api/package', init)
-  const result = await documentJsonFetch(opts.format)<PackageResult>('/api/package', init, opts.pj)
-  if (opts.format === 'v4' && result.document_format !== 'v4') {
-    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
-  }
-  return result
-}
+  }, opts?.pj)
 
 export interface PackageOpenResult {
-  /** 旧包 schema 2 / 新包 schema 3；switchDocument 统一迁移 */
+  /** 旧包 schema 2 / 新包 schema 3 / 带计算图表的 schema 4；switchDocument 统一迁移 */
   doc: FigureDocument | ProjectDocument
   manifest: {
     created_at?: string
@@ -2791,6 +2855,13 @@ export interface PackageOpenResult {
   missing: string[]
   /** 存在但内容与打包时不一致（sha1 漂移） */
   drifted: string[]
+  /**
+   * schema 4 的来源附件没能装进当前项目（包损坏 / 项目只读）：这次包不完整，
+   * 打开入口明确报告失败。缺省 = 旧后端没有提供此事实。
+   */
+  missing_chart_sources?: string[]
+  /** 后端逐面板核实的完整附件引用，只有这些面板免于普通素材重链接。 */
+  verified_chart_sources?: ChartSourceRef[]
 }
 
 /**
@@ -2848,106 +2919,6 @@ export function openPackage(file: File): Promise<PackageOpenResult> {
   form.append('package', file)
   return jsonFetch<PackageOpenResult>('/api/package/open', { method: 'POST', body: form })
 }
-
-export interface ProjectPackageWarning {
-  reason: string
-  id: string
-}
-
-/** 显式v4检视事实；普通包仍由原openPackage消费。 */
-export interface ProjectPackageInspection {
-  document_format: 'v4'
-  doc: ProjectDocument
-  manifest: Record<string, unknown>
-  resources: { target: string; record: Record<string, unknown> }[]
-  missing: string[]
-  warnings: ProjectPackageWarning[]
-  figure_snapshots: number
-  execution_coverage: PackageResult['execution_coverage'] | null
-  captured_inputs?: Record<string, unknown>[]
-}
-
-/** 资源、配置及正文分别提交；503也可能携带已经发布的真实目录。 */
-export interface ProjectPackageInstallation {
-  state: 'resources_installed' | 'publication_unconfirmed' | 'installation_unconfirmed'
-  path: string
-  document_format: 'v4'
-  doc: ProjectDocument
-  references: unknown[]
-  execution: Record<string, unknown> | null
-  remap_fingerprint: string
-  missing: string[]
-  warnings: ProjectPackageWarning[]
-  execution_coverage: PackageResult['execution_coverage'] | null
-  configuration: 'pending' | 'needs_review' | 'ready'
-  configuration_review: {
-    version: 1
-    existing_local_metadata: boolean
-    workdir: WorkdirState | null
-    defaults: { script: string; selection: Record<string, unknown> | null; unavailable_code: string | null }[]
-    issues: { reason: string; script: string | null }[]
-  }
-  document_saved: false
-  configuration_error?: string
-  upload_cleanup?: 'pending'
-}
-
-export interface ProjectPackageInstallOptions {
-  destination: string
-  remap_rules?: Pick<InputRemapRule, 'kind' | 'from' | 'to'>[]
-}
-
-function isProjectPackageInstallation(value: unknown): value is ProjectPackageInstallation {
-  if (!value || typeof value !== 'object') return false
-  const body = value as Partial<ProjectPackageInstallation>
-  return body.document_format === 'v4' && body.doc?.schema === 4
-    && typeof body.path === 'string' && body.path.length > 0
-    && ['resources_installed', 'publication_unconfirmed', 'installation_unconfirmed'].includes(body.state ?? '')
-    && ['pending', 'needs_review', 'ready'].includes(body.configuration ?? '')
-    && body.document_saved === false && Array.isArray(body.missing) && Array.isArray(body.warnings)
-}
-
-export async function inspectProjectPackage(file: File, pj: string | null): Promise<ProjectPackageInspection> {
-  const form = new FormData()
-  form.append('package', file)
-  const result = await jsonFetch<ProjectPackageInspection>(
-    '/api/documents/v4/package/inspect', { method: 'POST', body: form }, pj, 'v4',
-  )
-  if (!result || typeof result !== 'object' || result.document_format !== 'v4' || result.doc?.schema !== 4) {
-    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
-  }
-  return result
-}
-
-export async function installProjectPackage(
-  file: File, options: ProjectPackageInstallOptions, pj: string | null,
-): Promise<ProjectPackageInstallation> {
-  const form = new FormData()
-  form.append('package', file)
-  form.append('options', JSON.stringify({
-    destination: options.destination,
-    ...(options.remap_rules === undefined ? {} : {
-      remap_rules: options.remap_rules.map(({ kind, from, to }) => ({ kind, from, to })),
-    }),
-  }))
-  try {
-    const result = await jsonFetch<ProjectPackageInstallation>(
-      '/api/documents/v4/package/install', { method: 'POST', body: form }, pj, 'v4',
-    )
-    if (!isProjectPackageInstallation(result)) {
-      throw new ApiError('Unexpected installation receipt.', 400, { code: 'invalid_document', receipt: result })
-    }
-    return result
-  } catch (error) {
-    // A known published tree is recoverable state, not permission to retry the
-    // same destination. Keep the original phase receipt for the dialog.
-    if (error instanceof ApiError && error.status === 503 && isProjectPackageInstallation(error.body)) {
-      return error.body
-    }
-    throw error
-  }
-}
-
 
 /* --------------------------- 参数化渲染引擎 -------------------------------- */
 
@@ -4188,11 +4159,26 @@ export interface ChangePlanChange {
   patch: ChangePlanPatch
 }
 
+/** 脚本修改组的内容（ADR 0206 PR 6）：unified diff 与前后摘要；应用 / 撤销只认后端存的候选字节 */
+export interface ChangePlanScriptInfo {
+  rel: string
+  base_sha256: string
+  new_sha256: string
+  diff: string
+  added: number
+  removed: number
+}
+
 export interface ChangePlanGroup {
   key: string
+  /** `script` = 脚本修改组（没有图内改动，`script` 里是 diff） */
+  kind?: 'script'
+  script?: ChangePlanScriptInfo
   label: string
   comment_id?: string
   note_id?: string
+  /** 续改出的版本才有：这一组是按审阅意见改的（`review`）还是按用户在上一版上写的批注改的（`note`） */
+  origin?: 'review' | 'note'
   atomic: boolean
   changes: ChangePlanChange[]
   boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
@@ -4201,8 +4187,14 @@ export interface ChangePlanGroup {
 export interface ChangePlan {
   id: string
   version: number
+  /** 批注重改的版本才有：它是从哪一版续改来的（每一版是自己的方案，各有 `id` 与两张图） */
+  parent?: string
   source: ChangePlanSource
-  base: { target: string; fingerprint: string }
+  base: { target: string; fingerprint: string; script_sha256?: string }
+  /** `script` = 脚本修改方案（一张卡只含一类）；缺省 = 图内修改 */
+  kind?: 'script'
+  /** 脚本方案已应用时：那份备份的 id 与应用之后的脚本摘要（后端记，重启后仍认）；没应用 / 已撤销 = null */
+  applied?: { backup: string; after_sha256: string } | null
   /** 请求时的 B0 全量 override（规范化后） */
   base_patches: ChangePlanPatch[]
   /** B0 ⊕ 全部组的 `patch`（规范化后）：「全部应用」直接写它；逐组取消勾选时前端用 `base_patches` ⊕ 勾选组的 `patch` 重算（与后端 `changeplan.apply_groups` 同源） */
@@ -4232,11 +4224,18 @@ export interface CreateChangePlanBody {
   id: string
   /** 这张图此刻的全量 override 列表（B0） */
   patches: unknown[]
-  source: 'review'
+  /** `review` 带意见；`assistant` 带用户在改图助手里的原话（`instruction`）与可选的选中元素（`target`） */
+  source: 'review' | 'assistant'
   /** 审阅意见（只取未处理的）；与 `share_id` 二选一 */
   comments?: ReviewComment[]
   /** 本机分享记录 id：后端取最新版本的未处理意见；与 `comments` 二选一 */
   share_id?: string
+  /** `source: 'assistant'`：用户的指令原文 */
+  instruction?: string
+  /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
+  target?: string
+  /** `script`：脚本修改（只接助手来源，必须带 `connection`；ADR 0206 PR 6） */
+  mode?: 'script'
   client_request_id?: string
 }
 
@@ -4271,6 +4270,53 @@ export async function createChangePlan(body: CreateChangePlanBody): Promise<Chan
   return out as unknown as ChangePlanTask
 }
 
+/**
+ * 一键排版方案卡的整版预览（状态中立，走导出管线，不登记不提交）：一份画布描述 → 一张 PNG。
+ * 失败抛带稳定 code 的 `EngineError`（`change_plan_render_failed` 等）；调用方一律兜底，不卡住。
+ */
+export async function fetchLayoutPreviewPng(
+  canvas: { page_w_mm: number; page_h_mm: number; objects: unknown[] },
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const res = await fetch(
+    apiUrl('/api/change-plans/layout-preview'),
+    withProject({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ canvas }), signal }),
+  )
+  if (!res.ok) {
+    const out = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    noteProjectGone(res.status, out)
+    throw new EngineError((out.error as string) || t('render.failed', { ns: 'errors', status: res.status }), '', (out.code as string) || '', '')
+  }
+  return res.blob()
+}
+
+/** 批注重改的一条批注（高级版 `change-plan-rerun`）：锚点与审阅意见同形，元素锚带画面框 */
+export interface ChangePlanNoteBody {
+  id: string
+  anchor: ReviewAnchor
+  text: string
+}
+
+/**
+ * 按批注重改（ADR 0206 §五）：在 `planId` 那一版的「修改后」上写的批注 → 同一张卡的下一版（新的 `plan_id`，轮询同 `getChangePlan`）。
+ * 没解锁回 `{ ok: false, code: 'not_licensed' }`（与一键排版同口径）；其余失败抛带稳定 code 的 `EngineError`。
+ */
+export async function reviseChangePlan(
+  planId: string,
+  body: { notes: ChangePlanNoteBody[]; client_request_id?: string },
+): Promise<ChangePlanTask | { ok: false; code: 'not_licensed' }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/revise`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (out.ok === false && out.code === 'not_licensed') return { ok: false, code: 'not_licensed' }
+  if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as ChangePlanTask
+}
+
 /** 轮询 / 读取一份方案。 */
 export async function getChangePlan(planId: string): Promise<ChangePlanView> {
   const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}`)
@@ -4281,6 +4327,30 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanView
+}
+
+/** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */
+export async function applyChangePlanScript(planId: string): Promise<{ backup: string; after_sha256: string }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/apply-script`, { method: 'POST' })
+  const applied = out.applied as { backup?: unknown; after_sha256?: unknown } | undefined
+  if (!applied || !isStr(applied.backup) || !isStr(applied.after_sha256)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return { backup: applied.backup, after_sha256: applied.after_sha256 }
+}
+
+/** 撤销一份已应用的脚本修改（按备份还原）；脚本在应用之后又被改过抛 `change_plan_script_undo_conflict`。 */
+export async function undoChangePlanScript(planId: string): Promise<void> {
+  await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/undo-script`, { method: 'POST' })
+}
+
+/** 脚本方案生成期间脚本被改过（冲突）之后，「恢复到开始前的版本」：按起跑快照那份备份还原；脚本此刻不再是冲突时看到的那一版就抛 `change_plan_script_restore_conflict`。 */
+export async function restoreChangePlanScript(body: { backup: string; script: string; expect_sha256: string }): Promise<void> {
+  await changePlanFetch('/api/change-plans/restore-script', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 /** 放弃一份方案（幂等）。 */
@@ -4367,7 +4437,7 @@ export async function fetchFigureSnapshotPreview(
 ): Promise<FigureSnapshotPreview> {
   if (!validFigureSnapshot(reference, id) || figureSnapshotPreviewIdentity(reference) === null) throw invalidFigureSnapshotPreview()
   const frozen = structuredClone(reference)
-  const res = await fetch(apiUrlFor('/api/documents/v4/figure-preview', pj), withProjectFor({
+  const res = await fetch(apiUrlFor('/api/figure-preview', pj), withProjectFor({
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, patches, figure_snapshot: frozen }), signal,
   }, pj))
@@ -4762,6 +4832,8 @@ export interface AiCapabilities {
   checked_at_ms: number
   /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
   taf_enabled?: boolean
+  /** 「改图助手 / 一键排版先出修改方案卡」的开关（`ai.change_plan.enabled`，默认开）；老后端没有 = 当开着（但方案路径本身要新后端，老后端会回 invalid_change_plan 落到旧路径） */
+  change_plan_enabled?: boolean
   /**
    * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（ADR 0148 / 0149）。老后端没有；`false` = 没有内置执行器能用的 API 连接
    * （只连了命令行 AI 时也是 false）：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
@@ -4783,7 +4855,8 @@ export interface AiCapabilities {
 /** 一家厂商的一种连接方式（同一厂商的 API Key 与订阅登录合并成一个厂商时有多种） */
 export interface AiVendorMethod {
   id: string
-  kind: 'key' | 'login' | 'oauth'
+  /** siwc = Sign in with ChatGPT（浏览器授权、我们自己保存令牌，只走内置；ADR 0209） */
+  kind: 'key' | 'login' | 'oauth' | 'siwc'
   /** 方式名的 i18n 键（`method.subscription` / `method.apiKey` / `method.kimiCode` / `method.codingPlan` / `method.account`） */
   label_key?: string | null
   /** key 类：对应的目录行 id（保存连接时作为厂商 id） */
@@ -4813,7 +4886,7 @@ export interface AiVendor {
   /** 彩色标志的键（`BrandLogo`）；表外 = 通用图标 */
   logo: string
   region: 'cn' | 'global' | 'custom'
-  connect: 'key' | 'login' | 'oauth'
+  connect: 'key' | 'login' | 'oauth' | 'siwc'
   /** 「去申请 Key」页面（https） */
   key_url?: string
   /** login 类：对应 CLI 已安装才 true；oauth 类：client_id 已配置才出现 */
@@ -4859,6 +4932,8 @@ export interface AiConnection {
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
   /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
   cli_update?: AiCliUpdate | null
+  /** SIWC 连接（`siwc:chatgpt`）：登录的 ChatGPT 账号邮箱，只作显示 */
+  account_email?: string
 }
 
 /** 对话协议（后端 `ai_providers.protocol_of`） */
@@ -4921,7 +4996,31 @@ export const checkAiConnection = (id: string) =>
 
 /** 断开一个连接（订阅类不可删，只能在命令行里退出登录） */
 export const disconnectAi = (id: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/ai/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  jsonFetch<{ ok: boolean; revoked?: boolean }>(`/api/ai/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+/** Sign in with ChatGPT 的一次登录（ADR 0209）。`state` 闭集；`reason` 只在 failed 时有（后端 `siwc_login.REASONS`） */
+export interface AiSiwcFlow {
+  flow_id: string
+  state: 'waiting' | 'exchanging' | 'signed_in' | 'plan_disabled' | 'denied' | 'cancelled' | 'expired' | 'failed'
+  authorize_url: string
+  reason?: string
+}
+
+/** 发起 ChatGPT 登录：返回授权地址（用系统浏览器打开），之后轮询 `fetchSiwcFlow` */
+export const startSiwcLogin = (newAccount = false) =>
+  jsonFetch<{ ok: boolean; flow_id: string; flow: AiSiwcFlow }>('/api/ai/siwc/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(newAccount ? { new_account: true } : {}),
+  })
+
+export const fetchSiwcFlow = (flowId: string) => jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}`)
+
+/** 失败选择题里选了「改用 Codex 登录」：后端记下来，之后列出 Codex 登录与 sub:codex 连接（登录本身仍走 `startAiLogin('codex')`） */
+export const siwcCodexFallback = () => jsonFetch<{ ok: boolean }>('/api/ai/siwc/codex-fallback', { method: 'POST' })
+
+export const cancelSiwcFlow = (flowId: string) =>
+  jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}/cancel`, { method: 'POST' })
 
 /** 订阅类 / 账号登录类连接发起登录；进度沿用 `fetchAiLoginStatus` / 设备码流程的轮询 */
 export const loginAiConnection = (id: string) =>
@@ -5032,6 +5131,11 @@ export interface AiFixState {
   activity?: { tool: string; phase: 'start' | 'end' | 'denied'; detail: string; at_ms: number } | null
   /** 现在卡住了：`reason` 闭集；没卡住 = null */
   stalled?: { reason: 'cli_waiting_approval' | 'cli_tool_not_delivered' | 'stalled'; detail: string } | null
+  /**
+   * 任务清单的进度（`fixtools.next_stage`，按工具组归步；2026-11-25）：四步里走到哪一步 + 第几轮（验证没过又回去修 +1）。
+   * 还没调过推进步骤的工具 = null；老后端没有这个键
+   */
+  stage?: { step: 'diagnose' | 'fix' | 'verify' | 'finish'; round: number } | null
 }
 
 /** 三个读写都可显式指定项目（`pj`）：切项目之后要取消 / 重读的是发起时那个项目的修复，不是当前项目的 */
@@ -5152,6 +5256,14 @@ export const setAiEndpointActive = (agent: AiAgentId, id: string) =>
 /** Windows 设置里的开关「转换时允许 AI 不受沙盒限制」；非 Windows 后端会 400 */
 export const setConvertUnsandboxedWindows = (enabled: boolean) =>
   jsonFetch<{ convert_unsandboxed_windows: boolean }>('/api/ai/convert-unsandboxed', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+
+/** 设置里的开关「改图前先给我看修改方案」（`ai.change_plan.enabled`，默认开） */
+export const setChangePlanEnabled = (enabled: boolean) =>
+  jsonFetch<{ change_plan_enabled: boolean }>('/api/ai/change-plan', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
@@ -5482,6 +5594,11 @@ export interface AiTaskSummary {
   phase?: 'correcting' | null
   /** 转换进行中的活动（后端闭集）：`writing_long` = 事件流静默已久、模型在生成较长的文件；事件一来后端就不再给。其它任务没有 */
   activity?: 'writing_long' | null
+  /**
+   * 转换进行中走到哪一步（后端 `ai_bridge._convert_stage`，闭集；用户 2026-11-25）：校验阶段 = verify，否则新脚本已有内容 = write、
+   * 还没有 = read；`round` = 1 + 已自动修正的次数。只有进行中的转换会话有；老后端没有
+   */
+  stage?: { step: 'read' | 'write' | 'verify'; round: number } | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
   /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */
@@ -5594,8 +5711,31 @@ export interface AiDataFileEntry {
   sheets?: AiDataSheet[] | null
 }
 
+/** 「读懂数据」用哪个 AI（`/api/ai/data-understanding` 与 `/api/ai/data-files` 共用的对象）：`on` 会用 / `off` 用户关了 / `none` 没有任何可用的 AI / `unavailable` 用户指定的那个此刻用不了（后端不会换别家） */
+export interface AiDataUnderstandingChoice {
+  state: 'on' | 'off' | 'none' | 'unavailable'
+  mode: 'auto' | 'off' | 'connection'
+  /** 此刻实际会用的连接 id */
+  connection: string | null
+  /** 用户指定的连接 id（只在 `mode === 'connection'` 时有；`unavailable` 时它可能已不在 `options` 里） */
+  chosen?: string
+  options: { id: string; label: string; logo: string; vendor: string; kind: 'key' | 'subscription'; model: string }[]
+}
+
 export const aiDataFilesAll = (pj?: string | null) =>
-  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean }>('/api/ai/data-files?formats=all', undefined, pj)
+  jsonFetch<{ files: AiDataFileEntry[]; truncated: boolean; understanding_available?: boolean; understanding?: AiDataUnderstandingChoice }>('/api/ai/data-files?formats=all', undefined, pj)
+
+/** 轻量、只读：只回「读懂数据」的选择与可选的 AI，可反复调（不联网、不探测） */
+export const aiDataChoiceGet = (pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>('/api/ai/data-understanding', undefined, pj)
+
+/** 设置：`auto` / `off` / 指定某个连接；id 不在此刻的可选清单里回 400 `understanding_connection_unavailable` */
+export const aiDataChoiceSet = (body: { mode: 'auto' | 'off' } | { mode: 'connection'; connection: string }, pj?: string | null) =>
+  jsonFetch<{ understanding: AiDataUnderstandingChoice }>(
+    '/api/ai/data-understanding',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
 export interface AiDataOverview {
   path: string
@@ -5691,11 +5831,34 @@ export interface AiDataProposeItem {
   facts?: AiDataFacts
   /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
   error?: AiDataErrorKind
+  /** 误差线从哪来：`column` = 表里现成的误差列（`error_column` 是列名），`computed` = 用重复值算的 */
+  error_source?: 'column' | 'computed'
+  /** 取自表里现成的列时，那一列的名字（用户数据：只当文本渲染） */
+  error_column?: string
+  /** 多个 y、各配各的现成误差列时的逐列事实（这时没有 `error_column` / `error_stated`；顶层 `error` 只在各列种类一致时才有）；单个 y 没有这个键 */
+  error_columns?: { y: string; column: string; kind: AiDataErrorKind; stated: boolean }[]
+  /** 误差线的种类是列名自己说明的（如列名叫 sd） */
+  error_stated?: boolean
+  /** 算出来的误差线 / 带里因为只有 1 个值而没有误差线的位置标签（最多 50 个；没有就没有这个键） */
+  error_missing_for?: string[]
   /** 拟合线（有才有；界面暂不用） */
   fits?: unknown[]
+  /** 相对当前看图目的，为什么这张不是推荐（只给非推荐的、且有适用理由的）；`guidance` 是引用的准则编号，界面不显示 */
+  why_not?: { code: AiDataWhyNotCode; guidance: string[]; tier: string }
 }
 
-export type AiDataErrorKind = 'sd' | 'sem' | 'ci95'
+export type AiDataPurposeCode = 'compare_groups' | 'trend' | 'relationship' | 'distribution'
+export type AiDataWhyNotCode = 'summary_hides_spread' | 'line_needs_order' | 'order_prefers_line' | 'answers_other_purpose'
+
+/** 这批候选是按什么看图目的排的：`user` = 用户点的、`data` = 从数据推出的假设（界面不区分）；`options` 至少两个才给，否则是空数组 */
+export interface AiDataPurpose {
+  code: AiDataPurposeCode | null
+  source: 'user' | 'data'
+  options: AiDataPurposeCode[]
+}
+
+/** `unknown` = 现成的误差列没说明是哪一种（只出现在 `points_err` / `line_err`） */
+export type AiDataErrorKind = 'sd' | 'sem' | 'ci95' | 'unknown'
 
 export interface AiDataFacts {
   rows: number
@@ -5734,6 +5897,8 @@ export interface AiDataFigureStyle {
 /** 懒模式响应里的公共部分（`candidates` 与 `nothing` 都有） */
 export interface AiDataLazyInfo {
   render?: 'lazy'
+  /** 看图目的：只在这批有候选且有第一名所属的族时才有 */
+  purpose?: AiDataPurpose
   table?: string
   sheet?: string | null
   /** 文本表是实际用的物理行号，XLSX 为 null */
@@ -5856,7 +6021,15 @@ export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
   )
 
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
+/** 改图助手改脚本那条路的任务清单进度：读脚本 → 改脚本 → 出图核对；`round` = 第几轮（有界修正 +1） */
+export interface AiEditStage {
+  step: 'read' | 'edit' | 'verify'
+  round: number
+}
+
 export interface AiSessionDetail {
+  /** 改图会话的任务清单进度（`ai_bridge._EditStage`）；转换 / 修改方案卡的脚本修改 / 老后端没有 */
+  stage?: AiEditStage | null
   /** 任务结局；老后端没有 */
   task?: AiTaskSummary
   agent?: string
@@ -6177,9 +6350,13 @@ interface ProjectScoped {
   pj?: string
 }
 
+/** 取会话的阶段（后端 `engine.pool.ACQUIRE_STAGE_OF`）：找运行环境 → 启动 Python */
+export type PreparingStage = 'environment' | 'starting'
+
 export type ServerEvent =
   | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
-  | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  /** `stage`：取会话里走到哪一步（#479）；第一条不带，只前进不后退 */
+  | ({ kind: 'render.preparing'; id: string; stage?: PreparingStage } & ProjectScoped)
   | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
@@ -6299,6 +6476,14 @@ export type ServerEvent =
       text: string
       kindOf?: AiDeltaKind
     }
+  /** 改图会话走到哪一步（后端 `ai_bridge._EditStage`，只前进；用户 2026-11-26）；老后端不发 */
+  | ({
+      kind: 'ai.stage'
+      pj?: string
+      client_request_id?: string
+      session: string
+      stage: AiEditStage
+    } & ProjectScoped)
   /** 任务进入新阶段（TAF 有界修正：上一版没过写回前检查，Agent 正在副本里修正）；老后端不发 */
   | ({
       kind: 'ai.task'
@@ -6374,6 +6559,7 @@ const EVENT_KINDS = [
   'export.progress',
   'ai.delta',
   'ai.task',
+  'ai.stage',
   'ai.stalled',
   'ai.done',
   'script.input_requested',
@@ -6550,6 +6736,11 @@ export interface SyncPatch {
   value: unknown
   /** 点位越界后被钳进画布，位置可能需要微调 */
   clamped?: boolean
+  /**
+   * 只在 `skipped` 里出现，稳定原因码：`copy_not_synced` = 图内副本（ADR 0207）不跨图同步；
+   * 版面几何类的没有原因码。界面据它把两类分开数，不混成一句。
+   */
+  skip_reason?: string
 }
 
 export interface SyncResult {

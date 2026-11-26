@@ -1,7 +1,13 @@
-"""文档格式的显式目录适配；不改变项目资产根、文档模型或写入事务。
+"""文档目录的派生出入口：命名文档、自动保存、版本时间线共用同一套路径。
 
-调用方传现有权威目录。legacy 原样派生旧路径，v4 的每个自有目录组件
-拒绝符号链接/目录联接，包括仍指向同一项目内部的重定向。
+**单一存储。** schema 3 与 schema 4 的文档落在同一组目录（项目 `tavottofile/`、
+未打开项目时的数据目录 `layouts/`），出现在同一个列表、共用同一条版本历史，
+只由文档正文里的 schema 号区分——这里没有格式参数、没有第二套子目录。来源附件
+（`documentassets`）同样以这里派生的目录为根，路径只由摘要派生。
+
+调用方传现有权威目录（`project_layout_dir()` / 数据目录 `layouts/`），不得自己
+拼路径。每个自有目录组件都拒绝符号链接 / 目录联接（包括仍指向同一项目内部的重
+定向）：上级允许系统级路径别名，根本身及其下每层都核对。
 """
 
 from __future__ import annotations
@@ -11,31 +17,9 @@ from pathlib import Path
 
 from . import documents
 
-LEGACY = "legacy"
-CHART4 = "v4"
-FORMATS = frozenset({LEGACY, CHART4})
-_NAMED_PARTS = ("documents", CHART4)
-
-
-def validate_format(value: object = LEGACY) -> str:
-    if not isinstance(value, str) or value not in FORMATS:
-        raise documents.DocumentError("invalid_document", "未知的文档存储格式")
-    return value
-
-
-def session_namespace(document_format: object = LEGACY) -> str | None:
-    return None if validate_format(document_format) == LEGACY else CHART4
-
-
-def validate_document(
-    raw: object, document_format: object = LEGACY, *, require_sources: bool = True
-) -> dict:
-    if validate_format(document_format) == LEGACY:
-        return documents.validate_document(raw)
-    return documents.validate_chart_document(raw, require_sources=require_sources)
-
 
 def _directory(path: Path, *, create: bool) -> None:
+    """目录守卫：不是目录、`is_symlink()`、`resolve()` 与父目录 + 名字对不上，三者任一即拒。"""
     try:
         mode = path.lstat().st_mode
     except FileNotFoundError:
@@ -51,7 +35,7 @@ def _directory(path: Path, *, create: bool) -> None:
         raise documents.DocumentError("layout_outside_project", "文档目录不能通过链接重定向")
 
 
-def _v4_directory(base: Path, parts: tuple[str, ...], *, create: bool) -> Path:
+def _owned(base: Path, parts: tuple[str, ...], *, create: bool) -> Path:
     requested = Path(base).expanduser().absolute()
     if ".." in requested.parts:
         raise documents.DocumentError("layout_outside_project", "无效的文档目录")
@@ -64,34 +48,24 @@ def _v4_directory(base: Path, parts: tuple[str, ...], *, create: bool) -> Path:
     return path
 
 
-def named_dir(
-    project_layout_dir: Path, document_format: object = LEGACY, *, create: bool = False
-) -> Path:
-    if validate_format(document_format) == LEGACY:
-        return Path(project_layout_dir)
-    return _v4_directory(project_layout_dir, _NAMED_PARTS, create=create)
+def named_dir(project_layout_dir: Path, *, create: bool = False) -> Path:
+    """命名文档目录：项目 `tavottofile/`；未打开项目时数据目录 `layouts/`。"""
+    return _owned(project_layout_dir, (), create=create)
 
 
-def autosave_dir(
-    layout_dir: Path, document_format: object = LEGACY, *, create: bool = False
-) -> Path:
-    if validate_format(document_format) == LEGACY:
-        return Path(layout_dir) / documents.AUTOSAVE_DIRNAME
-    return _v4_directory(layout_dir, (documents.AUTOSAVE_DIRNAME, CHART4), create=create)
+def autosave_dir(layout_dir: Path, *, create: bool = False) -> Path:
+    """自动保存槽位目录：`<布局根>/_autosave`。"""
+    return _owned(layout_dir, (documents.AUTOSAVE_DIRNAME,), create=create)
 
 
 def versions_dir(
     project_store: Path | None,
     legacy_versions_dir: Path,
-    document_format: object = LEGACY,
     *,
     create: bool = False,
 ) -> Path:
-    if validate_format(document_format) == LEGACY:
-        return (
-            Path(project_store) / "versions"
-            if project_store is not None
-            else Path(legacy_versions_dir)
-        )
-    base = Path(project_store) if project_store is not None else Path(legacy_versions_dir).parent
-    return _v4_directory(base, (*_NAMED_PARTS, "versions"), create=create)
+    """版本时间线目录：项目 `tavottofile/versions/`；未打开项目时 `layouts/_versions/`。"""
+    if project_store is not None:
+        return _owned(project_store, ("versions",), create=create)
+    legacy = Path(legacy_versions_dir).expanduser().absolute()
+    return _owned(legacy.parent, (legacy.name,), create=create)

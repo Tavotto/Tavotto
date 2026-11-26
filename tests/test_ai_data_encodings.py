@@ -222,8 +222,10 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 #: 2026-11-21 整数编码的分组（`knockout` 0 / 1）：公共模块多了 `NumCat` / `apply_numcat`，`distinct` 遇到整列 `NumCat` 按数值升序 → `tavotto_plot_f7aa140e.py`；
 #: 同日「把列当分组」（宽表转长表）：公共模块多了 `apply_stack` → `tavotto_plot_3bf67213.py`；
 #: 2026-11-23 按期刊字号范围出图：公共模块多了 `fit_fonts` / `place_legends` / `build_legend` / `legend_hits_data`（图例图内放不下挪到图外；文字互相干涉时同一类一起退字号）→ `tavotto_plot_e44d5b65.py`；
-#: 2026-11-24 没画的行要有计数（G-055）：大表缩减那一遍多记两个数（`key_empty` / `y_invalid`）→ 这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_5b98475c.py"
+#: 2026-11-24 没画的行要有计数（G-055）：大表缩减那一遍多记两个数（`key_empty` / `y_invalid`）→ `tavotto_plot_5b98475c.py`；
+#: 同日误差线取自现成的误差列（`FigureRecipe.err`）：`comparison_data` / `trend_data` 多一个可选的 `err` 参数，公共模块多了 `comparison_error_points` / `trend_error_points` → `tavotto_plot_3212ec84.py`；
+#: 2026-11-25 现成误差列的多个 y（每个 y 各配各的误差列）：`trend_data` 的 `err` 也可以是与 `ys` 等长的列名数组 → 这一个）
+PINNED_RUNTIME_NAME = "tavotto_plot_b40c1579.py"
 
 
 # =========================================================================== 接口

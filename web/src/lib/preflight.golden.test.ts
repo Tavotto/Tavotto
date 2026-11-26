@@ -83,7 +83,7 @@ it.each([
     await setLocale('zh-CN')
     expect(formatMessage(issue.message)).toContain('不一定是期刊规定的下限')
     expect(formatMessage(issue.message)).toContain(
-      roles.length === 2 ? '预检以正文数值比较，未区分文字类型' : '预检未区分文字类型',
+      roles.length === 2 ? '投稿前检查以正文数值比较，未区分文字类型' : '投稿前检查未区分文字类型',
     )
     expect(formatMessage(issue.message)).toContain('Text should be approximately 9 pt.')
     await setLocale('en-US')
@@ -91,7 +91,7 @@ it.each([
       roles.length === 2 ? 'not necessarily journal minima' : 'not necessarily a journal minimum',
     )
     expect(formatMessage(issue.message)).toContain(
-      roles.length === 2 ? 'compares against the body value without distinguishing text types' : 'preflight does not distinguish text types',
+      roles.length === 2 ? 'compares against the body value without distinguishing text types' : 'pre-submission check does not distinguish text types',
     )
     expect(formatMessage(issue.message)).toContain('Text should be approximately 9 pt.')
   } finally {

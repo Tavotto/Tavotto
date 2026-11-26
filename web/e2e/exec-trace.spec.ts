@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, selectCanvasFigure, test, waitForFigureEdit } from './fixtures'
 
+// 假 codex 当订阅登录（sub:codex）：SIWC 默认开后 Codex 登录被隐藏，只有 `TAVOTTO_EXPERIMENTAL_SIWC=0` 时还在（ADR 0209 §六）
 /**
  * 「执行记录」宽浮动卡里的执行追踪（ADR 0151 PR3；窄栏只有一行入口），经**真实后端**：假 `codex` 在用例放行前一直跑、放行后以非零码退出——
  * 真实的 `ai_bridge.run` → 执行追踪 → `/api/exec-trace` → 适配层 → Waterfall。断言运行中有条在跑、失败后
@@ -33,7 +34,7 @@ async function openAssistant(page: Page, baseURL: string) {
 
 test('执行追踪：运行中实时、失败归因到 Agent 运行、刷新后从后端恢复', async ({ app, page }, info) => {
   const { PATH: fakePath, release } = fakeFailingCodex()
-  const a = await app({ env: { PATH: fakePath } })
+  const a = await app({ env: { PATH: fakePath, TAVOTTO_EXPERIMENTAL_SIWC: '0' } })
   await openAssistant(page, a.baseURL)
   await page.locator('[data-ai-input]').fill('把线条加粗一点')
   await page.locator('[data-ai-send="send"]').click()

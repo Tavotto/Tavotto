@@ -100,9 +100,13 @@ export function sameSource(a: PlanSource, b: PlanSource): boolean {
 
 /** 卡片 / 弹窗 / 应用判据共用的状态来源（`PlanEntry` 的结构子集，免得 lib 反过来依赖 store） */
 export interface PlanStatusInput {
-  status: 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed'
-  plan?: { base_patches: readonly unknown[]; base?: { target: string } }
+  status: 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff'
+  /** 'layout' = 一键排版的整版方案：不挂在某张图上，基线由应用那一刻的 `layout.apply` 自己核 */
+  kind?: 'figure' | 'layout'
+  plan?: { base_patches: readonly unknown[]; base?: { target: string }; kind?: 'script' }
   appliedPatches?: readonly unknown[]
+  /** 应用那一次 commit 的历史条目（一键排版卡用它从文档历史派生状态） */
+  appliedEntry?: unknown
   source?: PlanSource
 }
 
@@ -116,8 +120,26 @@ export function effectiveStatus(
   e: PlanStatusInput,
   current: readonly unknown[] | null,
   source?: PlanSource | null,
+  /** 一键排版卡按文档历史派生状态用（调用方从 `documentStore` 取；别的卡不看） */
+  history?: { past: readonly unknown[]; future: readonly unknown[] },
 ): PlanStatusInput['status'] {
   if ((e.status !== 'ready' && e.status !== 'applied') || !e.plan) return e.status
+  if (e.kind === 'layout') {
+    // 与审阅卡一样以文档为准：应用那次 commit 还在历史里 = 已应用；⌘Z 撤回了（在重做栈里）= 又是待确认，可再查看 / 应用；
+    // 两处都不在（撤回后又改了别的）= 图已改过。从没应用过的待确认卡由 `layout.apply` 应用那一刻自己核基线
+    if (!history || !e.appliedEntry) return e.status
+    if (history.past.includes(e.appliedEntry)) return 'applied'
+    return history.future.includes(e.appliedEntry) ? 'ready' : 'stale'
+  }
+  // 脚本修改方案（ADR 0206 PR 6）：应用 / 撤销都是后端写脚本，不在文档历史里——已应用就是已应用（⌘Z 不撤脚本）；
+  // 待确认时脚本是否还是生成时那一版由后端在应用那一刻锁内核（对不上 409 → 卡片转「图已改过」），图源修订这里不看
+  // （撤销之后脚本回到改前，同一份方案可以再应用）
+  if (e.plan.kind === 'script') {
+    if (e.status === 'applied') return 'applied'
+    if (!current) return 'stale'
+    if (source && e.plan.base && e.plan.base.target !== source.fileId) return 'stale'
+    return samePatches(current, e.plan.base_patches) ? 'ready' : 'stale'
+  }
   if (!current) return 'stale'
   if (source) {
     if (e.source && !sameSource(e.source, source)) return 'stale'

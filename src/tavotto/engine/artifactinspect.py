@@ -70,6 +70,15 @@ def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
         Path(path).write_bytes(normalized)
 
 
+def normalize_worker_pdf(path: Path) -> int:
+    """worker 刚写出的导出 PDF：把 matplotlib 塞进 TrueType 槽的 CFF 字体程序换成真 TrueType（摸底 T-003，
+    `rendercore.pdfwriter.repair_cff_in_truetype_slots`）；回修了几个字体。与 `normalize_worker_svg` 同一条边界：
+    只改可信 worker 的产物，在字节被冻结 / 检查之前；用户磁盘上的原件不经这里，由检查器如实报。"""
+    from ..rendercore import pdfwriter
+
+    return pdfwriter.repair_cff_in_truetype_slots(Path(path))
+
+
 def svg_vector(path: Path) -> bool:
     """Classify generated SVG artwork without claiming that raster images are vectors.
 
@@ -326,6 +335,7 @@ __all__ = [
     "execution_provenance",
     "inspect_produced",
     "inspection_profile",
+    "normalize_worker_pdf",
     "normalize_worker_svg",
     "plan_half",
     "svg_vector",

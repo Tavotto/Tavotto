@@ -155,6 +155,16 @@ def test_skill_keeps_multi_panel_inside_matplotlib():
     assert "axes.labelweight" in text and "axes.labelweight" in template
 
 
+def test_figure_template_embeds_fonts_as_truetype_not_type3():
+    """模板脚本自己 savefig 的原图 PDF 不出 Type 3（matplotlib 默认 3，期刊会退）。
+
+    Tavotto 自己导出的 PDF 早就钉成 42（T-122）；原图是脚本自己写的，只能在模板里说清楚。
+    """
+    template = (SKILL_DIR / "references" / "figure-contract.md").read_text(encoding="utf-8")
+    assert '"pdf.fonttype": 42' in template
+    assert "Type 3" in template
+
+
 # ---------------------- 会话入口：先检查，不安装 ---------------------------
 # 2026-08-25 反转：旧契约「每个会话第一次触发时 marketplace add + plugin add」
 # 已删除——同一会话里工具不重载，健康会话里那条命令只有网络与解析成本。
@@ -288,6 +298,7 @@ def test_skill_routes_each_reference_explicitly():
         "issue-reporting.md",
         "compatibility.md",
         "normalize-existing.md",
+        "layout-annotate.md",
     ):
         assert ref in text, f"SKILL.md 没写什么时候读 {ref}"
         assert (SKILL_DIR / "references" / ref).is_file(), f"references/{ref} 不存在"

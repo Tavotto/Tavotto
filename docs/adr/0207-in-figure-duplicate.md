@@ -43,7 +43,13 @@
   与 `scriptadjust._RUNTIME` 的 `_rank` 同源对一起改。
 * 撤销 / 删掉这条记录 = `_RESTORE` 里 `remove()` 并从 index 摘掉。
 * **落点用源文字画出来的锚点**（draw 之后 `get_transform().transform(get_unitless_position())`），再向右下错开 `DUPLICATE_OFFSET_MM`
-  （与 ⌘D、标注粘贴同一个常量），换成 axes 分数存进 `at`；错出图外时收回图内。标题的位置是 draw 时才定的，用 pre-draw 坐标会落错。
+  （与 ⌘D、标注粘贴同一个常量），换成 axes 分数存进 `at`；错出图外时收回图内。
+  换算只认**权威 manifest 里画出来的**东西（Codex #2163）：子图宿主用它的 `position`（`ax.get_position()`，已含 `apply_aspect`，
+  不用 position override 的请求框——`aspect='equal'` 时实际框缩在请求框里，引擎按 `host.transAxes` 重放）；整图宿主的 `at` 是
+  figsize 的 figure 分数，脚本带 `bbox_inches` 且 `manifest.frame.active` 时，锚点是图幅分数，前端先按
+  `frame.figsize_mm / savefig_mm` 换回 figsize 分数再翻 y（引擎口径不变：`at` 始终按 `transFigure` / `transAxes` 解读，
+  副本跟 figsize 走，图幅随别的内容变了也不挪它；子图宿主的 `position` 与锚点同在图幅里，不需要换算）。
+  已有的换算口径是 `pathgeom.frac_to_display`（`pos_frac` 用），它按图幅解读分数；`at` 不用它，因为副本的位置要挂在宿主变换上。标题的位置是 draw 时才定的，用 pre-draw 坐标会落错。
 * 源不在了（脚本改了）：这条记录与副本的其余修改照常报「元素不存在」，进界面的失效修改列表；写回照常被挡（与任何修改失效同一出口）。
   不拿默认样式凑一个出来——那是「看着对、其实错」。
 
@@ -67,7 +73,7 @@
 
 ### 四、剪贴板与入口（修订 ADR 0163 第 4、7 条）
 
-* **一份负载两种落法**：图内编辑里 ⌘C 写的负载在现有 `objects`（换算好的标注，0163 原样）之外，多一段 `elements: {docId, panelId, gids}`。
+* **一份负载两种落法**：图内编辑里 ⌘C 写的负载在现有 `objects`（换算好的标注，0163 原样）之外，多一段 `elements: {docId, panelId, items: [{gid}]}`（只记 gid；落点与文字在粘贴那一刻按当时的权威 manifest 现算；选中的有一个不能复制成副本就整批不带；粘贴时也一样全有或全无——此刻任一项不可建副本就整批落成标注，不悄悄只粘幸存的）。
   * ⌘V 落在**同一份排版、同一张图的图内编辑里** → 按 `elements` 建图内副本，**不退出图内编辑**，新副本在下一次权威 manifest 出现后被选中；
   * 落在别处（画布、别的图、别的标签页 / 排版）→ 照旧用 `objects` 落成标注（0163 行为逐字不变）。
   * 分派在 `consumePayload` 里，不开第三条创建路径；标注那一支的 `setElementPanel(null)` 保留。

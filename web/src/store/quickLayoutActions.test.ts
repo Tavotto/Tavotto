@@ -35,6 +35,7 @@ vi.mock('@/store/renderStore', async (importOriginal) => {
 })
 
 import { addSubLabels, makeSubLabel } from './actions'
+import { CANVAS_TEXT_DEFAULT_FAMILY, effectiveCanvasFamily } from '@/lib/typography'
 import { useDocumentStore } from './documentStore'
 import { useRenderStore } from './renderStore'
 import { runUndoRedo } from '@/hooks/useKeyboard' // 加载它 = 把「撤销」交给一键排版的胶囊
@@ -45,6 +46,8 @@ import { currentSpec } from './issueFixActions'
 void runUndoRedo
 import { useSelectionStore } from './selectionStore'
 import { useUiStore } from './uiStore'
+import { useAiStore } from './aiStore'
+import { useChangePlanStore } from './changePlanStore'
 
 globalThis.fetch = (async () => new Response('{}', { status: 200 })) as typeof fetch
 
@@ -101,6 +104,10 @@ beforeEach(async () => {
   takeCheckpoint.mockClear()
   exact.clear()
   localStorage.clear()
+  // 这一份用例验的是「落地」本身（一次 commit、核对、失败不改）：关掉「先出修改方案卡」走直接落地（`ai.change_plan.enabled = false`）。
+  // 出卡的路径在 `quickLayoutCard.test.ts`
+  useAiStore.setState({ caps: { change_plan_enabled: false } as never })
+  useChangePlanStore.getState().clear()
   useSelectionStore.getState().clear()
   useUiStore.getState().setStatus(null)
   await s().switchDocument(emptyProject(), 'd_quick_layout')
@@ -518,16 +525,22 @@ describe('addSubLabels 没变', () => {
     addSubLabels()
     const labels = texts()
     expect(labels.map((l) => ({ ...l, id: '' }))).toEqual([
-      { id: '', type: 'text', text: '(a)', x: 11.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', bold: true },
-      { id: '', type: 'text', text: '(b)', x: 101.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', bold: true },
+      { id: '', type: 'text', text: '(a)', x: 11.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', fontFamily: 'sans-serif', bold: true },
+      { id: '', type: 'text', text: '(b)', x: 101.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', fontFamily: 'sans-serif', bold: true },
     ])
     expect(useSelectionStore.getState().ids).toEqual(labels.map((l) => l.id))
+  })
+
+  it('子图标签画成无衬线（T-006）：不跟画布文字的衬线默认族走', () => {
+    const a = makeSubLabel(0, 5, 6)
+    expect(effectiveCanvasFamily(a)).toBe('sans-serif')
+    expect(CANVAS_TEXT_DEFAULT_FAMILY).toBe('serif') // 别的画布文字的默认没动
   })
 
   it('共用构造：一键排版的标签与它是同一个形状，只有位置不同', () => {
     const a = makeSubLabel(2, 5, 6)
     expect({ ...a, id: '' }).toEqual({
-      id: '', type: 'text', text: '(c)', x: 5, y: 6, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', bold: true,
+      id: '', type: 'text', text: '(c)', x: 5, y: 6, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', fontFamily: 'sans-serif', bold: true,
     })
   })
 })

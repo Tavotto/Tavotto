@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
+import { noCopyleftPalettes } from './scripts/palette-copyleft-path.mjs'
 
 /**
  * 浏览器 playground（网站 `/try`）的构建配置。
@@ -16,7 +17,7 @@ import { fileURLToPath, URL } from 'node:url'
  * 钉死的版本在运行时从 CDN 拉（决定与代价见 ADR 0007）。
  */
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [noCopyleftPalettes(), react(), tailwindcss()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -29,6 +30,12 @@ export default defineConfig({
       // Agent 新增对象的字段表（ADR 0208 §五）：唯一出处在 Python 包里，后端 engine/agentobjects.py 读同一份
       '@agentObjects': fileURLToPath(
         new URL('../src/tavotto/profiles/agent_objects.json', import.meta.url),
+      ),
+      '@palettes': fileURLToPath(
+        new URL('../src/tavotto/profiles/palettes.json', import.meta.url),
+      ),
+      '@palettesCopyleft': fileURLToPath(
+        new URL('../src/tavotto/profiles/palettes_copyleft.json', import.meta.url),
       ),
       '@glyphcoverage': fileURLToPath(
         new URL('../src/tavotto/pdfbackend/canvas_coverage.json', import.meta.url),

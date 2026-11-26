@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChartLine, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings, Sparkles } from '@/components/ui/icons'
+import { ChartLine, Folder, Images, LayoutList, ListChecks, Paintbrush, Settings } from '@/components/ui/icons'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { PRO_NAME } from '@/lib/brand'
@@ -10,6 +10,7 @@ import { useValidationStore } from '@/store/validationStore'
 import { useHasDataFiles } from '@/components/datastudio/useHasDataFiles'
 import { useTafFlagStore } from '@/store/tafFlagStore'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
+import { ProRailMark } from '@/components/license/ProRailMark'
 import { Tip } from '../ui/Tooltip'
 
 /**
@@ -82,6 +83,8 @@ export function LeftRail() {
   const items = showData ? [...ITEMS.slice(0, 2), { id: 'data' as LeftTab, icon: ChartLine }, ...ITEMS.slice(2)] : ITEMS
   // 高级版入口：授权能力开着才有；没问过时顺手问一次（本机读取，不联网）
   const proVisible = useLicenseStore((s) => licenseVisible(s.status))
+  // 这台电脑激活了 Pro：入口换成钛色切面（只决定画法；权益判断在服务端）
+  const proActive = useLicenseStore((s) => s.status?.enabled === true && s.status.licensed)
   useEffect(() => {
     if (useLicenseStore.getState().status === null) void useLicenseStore.getState().load()
   }, [])
@@ -163,7 +166,7 @@ export function LeftRail() {
             aria-label={t('rail.pro', { pro: PRO_NAME })}
             className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
           >
-            <Sparkles size={ICON_SIZE.md} />
+            <ProRailMark active={proActive} />
             {!iconOnly && (
               <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
                 {t('rail.short.pro', { pro: PRO_NAME })}

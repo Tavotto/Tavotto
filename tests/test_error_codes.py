@@ -233,6 +233,8 @@ def test_declared_codes_keep_literal_response_and_legacy_assignment_shapes(sourc
 # 文案，且占位符与 params 对得上）
 USER_VISIBLE_CODES = {
     # Journal facts inspection may return a bounded result error.
+    # ADR 0178 修订 2026-11-25：「读懂数据」选用哪个 AI，指定的连接此刻不在可选清单里
+    "understanding_connection_unavailable": set(),
     "result_too_large": set(),
     "journal_catalog_disabled": set(),
     # --- ADR 0175：改图助手附文件（`POST /api/ai/attachments`）；固定文案 ---
@@ -269,7 +271,7 @@ USER_VISIBLE_CODES = {
     "read_failed": {"reason"},
     "internal_error": {"reason"},
     "backend_unavailable": {"reason"},
-    "export_render_failed": {"id", "reason"},
+    "export_render_failed": {"id", "name", "reason"},
     "invalid_document": set(),
     "package_file_missing": set(),
     "package_invalid": {"reason"},
@@ -314,6 +316,8 @@ USER_VISIBLE_CODES = {
     "tex_compile_failed": {"line"},
     "tex_failed": {"error"},
     "script_not_found": {"script"},
+    # 脚本文件在 worker 跑之前就不在了（被移动 / 删除）：文件名来自 `pool.recovery_params`
+    "script_source_missing": {"script"},
     "script_path_outside_project": {"script"},
     "unsupported_script_type": {"script"},
     "runtime_asset_unknown": {"id"},
@@ -349,6 +353,17 @@ USER_VISIBLE_CODES = {
     "change_plan_figure_changed": set(),
     "change_plan_empty": set(),
     "change_plan_failed": set(),
+    "change_plan_script_no_change": set(),
+    "change_plan_script_check_failed": set(),
+    "change_plan_script_data_changed": set(),
+    "change_plan_script_no_preview": set(),
+    "change_plan_script_overreach": set(),
+    "change_plan_script_agent_failed": set(),
+    "change_plan_script_unsupported": set(),
+    "change_plan_script_apply_failed": set(),
+    "change_plan_script_undo_conflict": set(),
+    "change_plan_script_not_applied": set(),
+    "change_plan_script_restore_conflict": set(),
     "invalid_patches": set(),
     "invalid_purpose": {"value"},
     "invalid_width": {"value"},
@@ -417,6 +432,11 @@ USER_VISIBLE_CODES = {
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),
+    "ai_siwc_plan_disabled": set(),
+    "ai_siwc_token_unavailable": set(),
+    "siwc_disabled": set(),
+    "siwc_port_unavailable": set(),
+    "siwc_login_failed": {"reason"},
     "connection_not_found": set(),
     "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
@@ -834,6 +854,12 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 画布角标问 PDF 原件字体（ADR 0139 修订 2026-11-24）`GET /api/panel-font-facts`：前端只对 PDF 原件来问，
+    # 失败记成 failed、角标不出，不展示文案
+    "not_pdf",
+    # 项目内时间线认领（ADR 0211 第一期）`POST /api/layout-session/project-history/claim`：前端只据此重列一次候选
+    # 再按后端说的 mode 装（复制 / 再认领），不展示文案
+    "claim_refused",
     # 一键排版方案（ADR 0199）`POST /api/pro/quick-layout/plan`：前端不读这几个码的文案——not_licensed 转成授权灰态，
     # 其余三个一律说「排不了，再试一次」（quickLayoutFailed），文档不改
     "invalid_panels",
@@ -896,7 +922,13 @@ NON_UI_CODES = {
 
 
 #: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
-DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}, "eps_annotations_unsupported": {"operation"}}
+DATA_ONLY_PARAMS = {
+    "ai_script_busy": {"session"},
+    "eps_annotations_unsupported": {"operation"},
+    # `id` 是文件 id，前端据它定位那张图；文案只按 `name`（图名）说话（T-009）
+    "export_render_failed": {"id"},
+    "siwc_login_failed": {"reason"},  # 闭集原因码（siwc_login.REASONS），前端按它挑具体文案
+}
 
 
 def _response_dicts(text: str):

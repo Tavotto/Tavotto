@@ -14,17 +14,19 @@
   - 终态刷新错误（`TERMINAL_REFRESH_ERRORS`）才清凭据并要求重新登录；`invalid_client` 是配置错，不清；网络 / 5xx 等暂时失败
     **保留凭据**（官方：不在暂时失败时抹掉凭据）。
   - 没有 `chatgpt.tokens.use.direct` 范围 = 仍算已登录、但不许用订阅额度（`PlanUsageDisabled`），**不自动换计费方式**。
-  - `earliest_refresh_at`：官方只列了字段名、没有定义含义；这里保守地理解为「这之前不发刷新请求」（**未经真服务确认**）。
+  - `earliest_refresh_at`：官方只列了字段名、没有定义含义；只记下、**不拦刷新**——2026-11-25 真服务核对：它约在签发后 54 分钟，
+    而签发后几分钟发的刷新照样 200 且轮换了刷新令牌。若把它当「之前不许刷新」，每小时会有约 14 分钟任务起不来（剩余寿命 < 20 分钟又不许刷）。
 * **不读取、不迁移 Codex CLI 的令牌**（`~/.codex` 一律不碰；看护用例按 AST / 源码钉住）。
 
-本阶段 `provider()` 恒返回 `DisabledProvider`（恒未登录），开关 `TAVOTTO_EXPERIMENTAL_SIWC` 开着也一样——没有登录实现，
-就没有令牌。测试用 `MemoryProvider`（内存里的 `TokenSet` + 注入的刷新函数与时钟）覆盖状态机。
+本模块的 `provider()` 恒返回 `DisabledProvider`（或测试换上的那个）；真正的提供方（落盘的账号 + 联网刷新）由
+`siwc_login.provider()` 组装（ADR 0209），这里保持不联网。测试用 `MemoryProvider`（内存里的 `TokenSet` + 注入的刷新函数与时钟）覆盖状态机。
 
 纯标准库，Flask 父进程可 import；不 import `ai_agents` / `ai_oauth` / 任何网络模块。
 """
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections.abc import Callable
@@ -115,9 +117,10 @@ class TokenStatus:
 
 
 class TokenProvider(Protocol):
-    def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
+    def access_token(self, *, min_valid_s: int = MIN_VALID_S, allow_refresh: bool = True) -> str:
         """剩余寿命 ≥ `min_valid_s` 的访问令牌；不够就（串行地）刷新。
-        没登录 / 终态失效 → `NeedsLogin`；没有订阅范围 → `PlanUsageDisabled`；暂时失败 → `TokenUnavailable`。"""
+        没登录 / 终态失效 → `NeedsLogin`；没有订阅范围 → `PlanUsageDisabled`；暂时失败 → `TokenUnavailable`。
+        `allow_refresh=False`（调用方剩余时限不够一次刷新）：不联网、不等锁——够新就给，不够 / 别人正在刷新 → `TokenUnavailable`。"""
         ...
 
     def mark_rejected(self, reason: str) -> None:
@@ -130,7 +133,7 @@ class TokenProvider(Protocol):
 class DisabledProvider:
     """本阶段唯一的生产实现：恒未登录，永不返回令牌。"""
 
-    def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
+    def access_token(self, *, min_valid_s: int = MIN_VALID_S, allow_refresh: bool = True) -> str:
         raise NeedsLogin("not_signed_in")
 
     def mark_rejected(self, reason: str) -> None:
@@ -171,9 +174,15 @@ class RefreshingProvider:
     def _refresh(self, current: TokenSet) -> TokenSet:
         raise NotImplementedError
 
+    def _critical(self) -> contextlib.AbstractContextManager:
+        """「读 → 判 → 刷新 → 写回」整段额外持有的锁（存储的跨进程文件锁，见 `siwc_store.StoreProvider`）；缺省无。"""
+        return contextlib.nullcontext()
+
     # -- 契约 --------------------------------------------------------------
-    def access_token(self, *, min_valid_s: int = MIN_VALID_S) -> str:
-        with self._lock:
+    def access_token(self, *, min_valid_s: int = MIN_VALID_S, allow_refresh: bool = True) -> str:
+        if not allow_refresh:
+            return self._cached_token(min_valid_s)
+        with self._lock, self._critical():
             ts = self._load()
             if ts is None or not ts.access:
                 raise NeedsLogin("not_signed_in")
@@ -185,8 +194,6 @@ class RefreshingProvider:
                 return ts.access
             if not ts.refresh:
                 raise NeedsLogin("refresh_terminal")
-            if ts.earliest_refresh_at_ms is not None and now < ts.earliest_refresh_at_ms:
-                raise TokenUnavailable("refresh_not_yet_allowed")
             try:
                 new = self._refresh(ts)
             except RefreshError as exc:
@@ -213,6 +220,22 @@ class RefreshingProvider:
             if new.expires_at_ms - self._clock() < need_ms:
                 raise TokenUnavailable("short_lived")
             return new.access
+
+    def _cached_token(self, min_valid_s: int) -> str:
+        """不刷新的取法：不等锁（别人正在刷新 = 暂时拿不到）、不联网；够新就给。"""
+        if not self._lock.acquire(blocking=False):
+            raise TokenUnavailable("refresh_in_progress")
+        try:
+            ts = self._load()
+            if ts is None or not ts.access:
+                raise NeedsLogin("not_signed_in")
+            if REQUIRED_SCOPE not in ts.scopes:
+                raise PlanUsageDisabled()
+            if self._rejected or ts.expires_at_ms - self._clock() < min_valid_s * 1000:
+                raise TokenUnavailable("refresh_deferred")
+            return ts.access
+        finally:
+            self._lock.release()
 
     def mark_rejected(self, reason: str) -> None:
         _check_reason(reason)

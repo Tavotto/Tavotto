@@ -206,6 +206,12 @@ def test_tools_list_shape():
         "tavotto_make_journal_ready",  # 同上（ADR 0192 §1）
         "tavotto_list_journals",  # 期刊库开关已打开（ADR 0155 §11）
         "tavotto_get_journal_facts",
+        "tavotto_layout_scene",  # 排版标注（ADR 0208 第 2 期），缺省开
+        "tavotto_layout_annotate_plan",
+        "tavotto_layout_annotate_apply",
+        "tavotto_layout_annotate_undo",
+        "tavotto_layout_edit_plan",  # 改已有矢量对象（ADR 0212 第 5 期）
+        "tavotto_layout_edit_apply",
     ]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"
@@ -2685,7 +2691,7 @@ def test_batch_preflight_is_a_summary_unless_asked(batch_project, batch_pool):
     args = {"project_path": str(batch_project), "stems": BATCH_STEMS}
     brief = _call("tavotto_open_figure", args)
     text = brief["content"][0]["text"]
-    assert "预检合计" in text
+    assert "投稿前检查合计" in text
     assert "逐条建议未展开" in text
     # 逐张的预检成文（`format_preflight` 的抬头 + 尺寸行）一份都不许出现
     assert text.count("尺寸 80.0×60.0 mm") == 0, "默认不许把四份预检成文糊上来"

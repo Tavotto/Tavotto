@@ -377,6 +377,18 @@ def replace(
         )
 
 
+def backup_only(
+    store: Store, script: str, data: bytes, *, kind: str, meta: dict | None = None
+) -> dict:
+    """把 `data` 备份两处（与 `replace` 同一套目录、同一套 fsync / 回滚），**不碰原件**：用来留一份「此刻的字节」或「起跑快照」，
+    之后由用户点了才经 `replace(expect_before=…)` 还原。返回备份记录（含 `id`；`before` 是 `data` 的摘要）。"""
+    path = resolve(store.root, script)
+    with scriptlock.script_guard(path):
+        return _replace_locked(
+            store, script, path, data, kind=kind, expect_before="", meta=meta, backup_data=data
+        )
+
+
 def _replace_locked(
     store: Store,
     script: str,
@@ -386,9 +398,11 @@ def _replace_locked(
     kind: str,
     expect_before: str,
     meta: dict | None,
+    backup_data: bytes | None = None,
 ) -> dict:
-    old = path.read_bytes()
-    if sha256(old) != expect_before:
+    """`backup_data` 给了 = 只备份它、不写原件（`backup_only`）；不给 = 备份磁盘上的原件再替换。"""
+    old = path.read_bytes() if backup_data is None else backup_data
+    if backup_data is None and sha256(old) != expect_before:
         raise ScriptEditError(
             ERROR_SCRIPT_CHANGED, "预览之后脚本被改过了，请重新预览", script=script
         )
@@ -445,12 +459,20 @@ def _replace_locked(
             ERROR_BACKUP_FAILED, f"备份写不进去，脚本没有被修改：{exc}", script=script
         ) from exc
     # 备份与确认之间的最后一次核对：竞争窗口只剩这一次读与 replace 之间
-    if sha256(path.read_bytes()) != expect_before:
+    if backup_data is None and sha256(path.read_bytes()) != expect_before:
         for d in created:
             shutil.rmtree(d, ignore_errors=True)
         raise ScriptEditError(
             ERROR_SCRIPT_CHANGED, "预览之后脚本被改过了，请重新预览", script=script
         )
+    if backup_data is not None:
+        record["durable"] = True
+        for parent in (store.project_dir / slug, store.mirror_dir / slug):
+            try:
+                _prune(parent)
+            except OSError:
+                pass
+        return record
     durable = True
     try:
         scriptlock.write_script(path, new_bytes, mode=stat.S_IMODE(st.st_mode))

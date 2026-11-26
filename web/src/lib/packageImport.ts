@@ -5,23 +5,33 @@
  * 后端检视（不写入图库）→ 作为新文档打开；有缺失素材时接到统一的重新链接对话框，绝不静默出空面板。
  * 成功的那句话在这里说；**失败原样抛出**，由调用方决定怎么说（顶栏说原因，画布拖放给「发送问题反馈」）。
  */
-import { msg } from '@/i18n'
+import { msg, t } from '@/i18n'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { ApiError, openPackage } from '@/lib/api'
 import { requestRelinkMissing } from '@/lib/clipboard'
-import { openLayoutDocument } from '@/store/actions'
+import { openLayoutDocument, reportLayoutOpenSkipped } from '@/store/actions'
 import { useUiStore } from '@/store/uiStore'
 
-export async function openPackageFile(file: File): Promise<void> {
+export async function openPackageFile(file: File): Promise<boolean> {
   const ui = useUiStore.getState()
+  const project = captureProjectEpoch()
   const res = await openPackage(file)
-  await openLayoutDocument(res.doc)
-  const missing = requestRelinkMissing()
+  if (!project.still()) {
+    reportLayoutOpenSkipped(file.name)
+    return false
+  }
+  if (res.missing_chart_sources?.length) {
+    throw new Error(t('status.packageIncomplete', { ns: 'workspace', count: res.missing_chart_sources.length }))
+  }
+  if (!(await openLayoutDocument(res.doc)) || !project.still()) return false
+  const missing = requestRelinkMissing(res.verified_chart_sources)
   const drift = res.drifted.length
   if (!missing && !drift) {
     ui.setStatus(msg('status.packageOpened', { createdAt: res.manifest.created_at ?? '' }, 'workspace'), 'done')
   } else if (drift) {
     ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
   }
+  return true
 }
 
 /** 包来自更新的 Tavotto（排版 schema 比本版本新）：调用方给「检查更新」，不说成坏包（#1921） */

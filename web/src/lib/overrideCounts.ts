@@ -1,3 +1,4 @@
+import { COPY_PROP, isCopyGid } from '@/lib/figureElementCopy'
 import type { PanelOverride } from '@/types/document'
 
 /**
@@ -9,7 +10,7 @@ import type { PanelOverride } from '@/types/document'
  * 菜单、属性页、历史标签都从这儿取数。
  */
 export interface OverrideCounts {
-  /** 落在这个元素（gid）上的修改数；没有 gid 时为 0 */
+  /** 落在这个元素（gid）上的修改数；没有 gid 时为 0。图内副本不数 `copy_of` 那条（它是副本的存在本身，不是「修改」；恢复不动它，ADR 0207） */
   element: number
   /** 整张图的修改总数（含写回时继承的基线） */
   figure: number
@@ -20,6 +21,8 @@ export function overrideCounts(
   gid: string | null | undefined,
 ): OverrideCounts {
   const figure = overrides.length
-  const element = gid ? overrides.filter((o) => o.gid === gid).length : 0
+  const element = gid
+    ? overrides.filter((o) => o.gid === gid && !(o.prop === COPY_PROP && isCopyGid(gid))).length
+    : 0
   return { element, figure }
 }

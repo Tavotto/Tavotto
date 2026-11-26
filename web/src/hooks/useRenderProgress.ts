@@ -18,10 +18,17 @@ export function useRenderProgress(fileId: string, rendering: boolean, buildingLa
   }, [active, startedAt])
 
   const phase = info?.phase ?? 'rendering'
+  // 冷启动按三步说（#479）：找运行环境 → 启动 Python → 运行脚本并生成可编辑元素。热路径的重画不报步数，
+  // 只说「正在构建…」——它一两秒就完，步数只会一闪而过。第三步里「运行脚本」与「生成可编辑元素」
+  // 在 worker 的同一次 build 里，中途没有信号，所以合成一步，不假装分得开。
   const label = phase === 'preparing'
-    ? t('renderProgress.preparing', { ns: 'workspace' })
+    ? info?.stage === 'starting'
+      ? t('renderProgress.stepStarting', { ns: 'workspace' })
+      : info?.stage === 'environment'
+        ? t('renderProgress.stepEnvironment', { ns: 'workspace' })
+        : t('renderProgress.preparing', { ns: 'workspace' })
     : info?.cold
-      ? t('panel.coldBuilding', { ns: 'inspector' })
+      ? t('renderProgress.stepRunning', { ns: 'workspace' })
       : buildingLabel
   const text = active && startedAt != null
     ? t('renderProgress.elapsed', {

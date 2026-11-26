@@ -657,6 +657,8 @@ function EmptyHint() {
   const fromData = useHasDataFiles()
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
+  // 拿着画图工具（钢笔、形状、文字…）时，点空画布就是要画：选图卡与提示让开，不接点击（否则第一下就把一张图放上去了）
+  const drawing = useUiStore((s) => s.tool !== 'select')
   // 恢复卡不看选区：它是这时唯一的出口，选区里留着什么都不能把它收走（Codex #1839）
   if (!selectionEmpty && !restoreIssue) return null
   const showCards = assetsLoaded && hasAssets
@@ -702,7 +704,7 @@ function EmptyHint() {
       <div
         {...(onLightPaper ? { 'data-on-paper': '' } : {})}
         className={cn(
-          'pointer-events-auto',
+          drawing ? 'pointer-events-none' : 'pointer-events-auto',
           !showCards && 'p-4',
           !onLightPaper && 'rounded-lg bg-surface',
         )}

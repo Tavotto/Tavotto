@@ -306,6 +306,7 @@
     "lock": "Lock (canvas clicks skip it)",
     "lockedState": "Locked",
     "needRender": "The element list for “{{name}}” needs one render.",
+    "needRenderBusy": "The element list for “{{name}}” needs one render. {{progress}}",
     "noMatch": "No matching element",
     "readonly": "Read-only",
     "rowActions": "Actions for {{label}}",
@@ -319,6 +320,7 @@
     "unsupportedTip": "{{title}} is not supported yet: {{reason}}",
     "count_one": "{{count}} element",
     "count_other": "{{count}} elements",
+    "deleteCopy": "Delete copy",
     "noPanelTitle": "Select an editable figure to see its elements",
     "noEditableTitle": "No editable figure on the canvas yet",
     "noEditableHint": "Only script-generated figures expose their objects",
@@ -360,10 +362,12 @@
     "clearProp": "Reset {{prop}}",
     "createLayoutGroup": "Create {{kind}}",
     "deleteGuide": "Delete guide",
+    "deleteFigureCopies": "Delete figure copy",
     "deleteObject": "Delete {{name}}",
     "deleteObjects": "Delete {{count}} objects",
     "dissolveLayoutGroup": "Dissolve layout group",
     "duplicateCanvasSuffix": "{{name}} copy",
+    "duplicateFigureElements": "Duplicate figure text",
     "duplicateObjects": "Duplicate objects",
     "editText": "Edit text",
     "fillPanel": "Fill frame",
@@ -590,7 +594,7 @@
   "panelBadge": {
     "approxPreview": "Approximate preview",
     "approxPreviewHint": "Showing the on-disk original for now — your figure edits aren’t reflected yet.",
-    "cold": "Cold start — this can take a few minutes…",
+    "cold": "Cold start — this can take a few minutes",
     "error": "Render failed",
     "firstBuild": "First build…",
     "memoryEfficientPreview": "Memory-efficient preview",
@@ -612,10 +616,10 @@
     "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure’s crop lies entirely outside it. Adjust or reset the crop in Properties first.",
     "bitmapOriginal": "Bitmap original",
     "redraw": "Redraw with script",
-    "redrawHint": "This is the bitmap the script saved, and a PDF export embeds it as is (missing-character boxes included). Redraw with script reruns the script and uses vectors on the canvas and in exports; if the result differs, you compare the two first. You can undo it.",
+    "redrawHint": "The script saved this figure as a bitmap, and a PDF export embeds it as is. Choose Redraw with script to rerun the script and switch to vectors; if the result differs, you compare the two first, and you can undo it.",
     "pdfType3": "Original uses Type 3 fonts",
     "pdfMissingGlyphs": "Original has missing characters",
-    "pdfRedrawHint": "This is the PDF the script saved. Its text uses Type 3 fonts or has missing-character boxes, and exports carry that over: journals such as IEEE and Elsevier send back Type 3 fonts, and other apps often can't select or edit the text. Redraw with script reruns the script and uses the redraw on the canvas and in exports, without moving anything on the page. You can undo it."
+    "pdfRedrawHint": "The script saved this figure as a PDF whose text uses Type 3 fonts or has missing-character boxes, and exports carry that over: journals such as IEEE and Elsevier send back Type 3 fonts, and other apps often can't select or edit the text. Choose Redraw with script to rerun the script and use the redraw instead, without moving anything on the page; you can undo it."
   },
   "quickEdit": {
     "aria": "Quick edit",
@@ -661,7 +665,7 @@
     "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
     "copy": "Copy",
     "paste": "Paste",
-    "copyAsAnnotation": "Copy as annotation",
+    "deleteCopy": "Delete copy",
     "pasteAsAnnotation": "Paste as annotation",
     "selectSameKind_one": "Select all of this kind ({{count}})",
     "selectSameKind_other": "Select all of this kind ({{count}})",
@@ -690,8 +694,8 @@
     },
     "style": "Style",
     "workspace": "Projects",
-    "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
-    "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})",
+    "problemsBlocking_one": "Problems · {{count}} to fix (of {{total}})",
+    "problemsBlocking_other": "Problems · {{count}} to fix (of {{total}})",
     "data": "Data",
     "pro": "{{pro}}"
   },
@@ -994,6 +998,7 @@
     "documentReopened_other": "Switched back to {{name}} ({{count}} canvases)",
     "elementCycled": "Selected “{{label}}” — {{index}} of {{total}} overlapping here",
     "elementHidden": "Hid “{{label}}” — restore it from “Hidden elements”",
+    "copyDeleted": "Deleted the copy",
     "elementLocked": "Locked “{{label}}” — canvas clicks will skip it",
     "elementsHidden_one": "Hid {{count}} element. Restore it from “Hidden elements”.",
     "elementsHidden_other": "Hid {{count}} elements — restore them from “Hidden elements”",
@@ -1024,6 +1029,7 @@
     "packageOpenFailed": "Couldn’t open the project package. {{error}}",
     "packageTooNew": "This project package is from a newer {{product}} and this build can’t open it.",
     "packageOpened": "Project package opened ({{createdAt}}); every asset is present",
+    "packageIncomplete": "{{count}} chart sources are missing or damaged in the package. Restore them and try again.",
     "packaged_one": "Created project package {{name}} ({{count}} asset)",
     "packaged_other": "Created project package {{name}} ({{count}} assets)",
     "pasteNothing": "Nothing to paste. Objects with missing assets were skipped.",
@@ -1123,7 +1129,8 @@
     "outlineFailed_other": "{{count}} texts could not be converted to outlines (font unavailable)",
     "svgCopied": "Copied as SVG — paste into Illustrator, Inkscape or Figma",
     "svgCopyFailed": "Could not copy as SVG",
-    "arrayTooMany": "At most {{max}} copies at once"
+    "arrayTooMany": "At most {{max}} copies at once",
+    "quickLayoutNoPreview": "Couldn't make the comparison preview, so it was applied directly"
   },
   "tabs": {
     "allCanvases": "All canvases",
@@ -1622,6 +1629,13 @@
     },
     "progress": "In progress",
     "convert": {
+      "taskTitle": "Editable version",
+      "round": "Round {{n}}",
+      "steps": {
+        "read": "Read the original script",
+        "write": "Write the Python version",
+        "verify": "Test run"
+      },
       "running": "Making an editable version…",
       "runningElapsed": "Generating the editable version… ({{minutes}} min so far)",
       "writingLong": "Writing a long file…",
@@ -1772,7 +1786,6 @@
       "root_needs_msvc": "{{root}} needs the Visual Studio C++ tools to run on Windows, and they are not installed on this computer, so it was not used."
     },
     "pythonChange": {
-      "downloadBytes": "{{done}} / {{total}} MB downloaded",
       "stage": {
         "downloading": "Downloading Python…",
         "verifying": "Checking…",
@@ -1785,6 +1798,14 @@
       }
     },
     "aiFix": {
+      "taskTitle": "AI fix",
+      "round": "Round {{n}}",
+      "steps": {
+        "diagnose": "Find the cause",
+        "fix": "Fix it",
+        "verify": "Test run",
+        "finish": "Wrap up"
+      },
       "repairFolder": "The script uses a folder outside the project that this account can’t read; its permissions need repairing",
       "running": "AI is looking for the cause…",
       "cancel": "Cancel",
@@ -1940,26 +1961,31 @@
     "openAlt": "Open “{{name}}”",
     "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
-      "choose": "Layouts found on this computer",
+      "chartSource": "Chart source missing or damaged",
+      "choose": "Pick up where you left off",
       "indexDegraded": "Recovery record unreadable",
       "invalid": "Last layout can’t be read",
-      "missing": "Last layout not found",
+      "missing": "Last layout is no longer in its original file and may have been moved",
       "prepareFailed": "Example layout didn’t open",
       "tooNew": "Last layout is from a newer version",
       "unavailable": "Can’t reach your last layout right now"
     },
     "retry": "Try again",
     "title": {
-      "choose": "Found a few layouts on this computer — pick one to open.",
+      "chartSource": "The chart source for “{{name}}” is missing or damaged.",
+      "choose": "Found a few layouts — pick one to open.",
       "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
       "invalid": "The last layout “{{name}}” can’t be read.",
-      "missing": "The last layout “{{name}}” wasn’t found.",
+      "missing": "The last layout “{{name}}” is no longer in its original file and may have been moved.",
       "prepareFailed": "The example layout didn’t open.",
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
       "unavailable": "Can’t reach your last layout right now."
     }
   },
   "renderProgress": {
+    "stepEnvironment": "Finding the Python environment (1/3)",
+    "stepStarting": "Starting Python (2/3)",
+    "stepRunning": "Running the script and building editable elements (3/3); the first run can take a few minutes…",
     "preparing": "Preparing the figure…",
     "elapsed": "{{message}} · {{seconds}} s elapsed"
   },
@@ -2106,5 +2132,11 @@
       "reference_cycle": "it has circular references",
       "timeout": "it is too complex to read in time"
     }
+  },
+  "agentMerge": {
+    "commit_one": "Merge {{count}} annotation added by the agent",
+    "commit_other": "Merge {{count}} annotations added by the agent",
+    "done_one": "Merged {{count}} annotation — save to write it to the project",
+    "done_other": "Merged {{count}} annotations — save to write them to the project"
   }
 }

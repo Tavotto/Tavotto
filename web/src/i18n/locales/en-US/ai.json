@@ -231,7 +231,8 @@
     "attachNoVision": "This model can't see images, ",
     "attachNoVisionOnly": "This model can't see images",
     "attachSwitch": "switch to {{model}}",
-    "attachAria": "Attach files"
+    "attachAria": "Attach files",
+    "kindSubscription": "Plan"
   },
   "process": {
     "thought": "Thought for {{duration}}",
@@ -262,7 +263,13 @@
     "dataFigureNeedsInput": "Nothing drawn; tell me which two columns to use",
     "dataFigureFailedWritten": "Created {{script}}, but verification failed",
     "dataFigureUnconfirmed": "Result unconfirmed",
-    "stalled": "No activity from the AI for {{seconds}}s"
+    "stalled": "No activity from the AI for {{seconds}}s",
+    "steps": {
+      "read": "Read the script",
+      "edit": "Edit the script",
+      "verify": "Render and check"
+    },
+    "round": "Round {{n}}"
   },
   "status": {
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",
@@ -567,6 +574,18 @@
         "title": "Mean line + band",
         "why": "The mean at each x position with a band showing {{error}}, for the overall trend and its spread."
       },
+      "points_err": {
+        "title": "Points + error bars",
+        "why": "The table already holds each group's mean, so it is drawn as is."
+      },
+      "line_err": {
+        "title": "Points + line + error bars",
+        "why": "The table already holds the mean at each position, so the points are joined in order."
+      },
+      "bar_err": {
+        "title": "Bars + error bars",
+        "why": "The table already holds each group's mean, shown as bar height."
+      },
       "line_units": {
         "title": "One line per subject",
         "why": "Repeated measures of the same subject are joined, so you see how each one changes."
@@ -722,6 +741,18 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
+      "rowsErrLines": "drawn from the {{drawn}} rows in the table, one point per row for each line",
+      "rowsBar": "drawn from the {{drawn}} rows in the table, one bar per row",
+      "errColumns": "error bars from the {{columns}} columns",
+      "colQuote": "“{{column}}”",
+      "rowsErr": "drawn from the {{drawn}} rows in the table, one point per row",
+      "errColumn": "error bars from the “{{column}}” column",
+      "errMissing": "{{count}} places have only one value, so no error bar can be computed",
+      "errMissingOne": "“{{label}}” has only one value, so no error bar can be computed",
+      "bandMissing": "{{count}} places have only one value, so no error band can be computed",
+      "bandMissingOne": "“{{label}}” has only one value, so no error band can be computed",
+      "listJoin": ", ",
+      "etc": ", etc.",
       "line": "Basis: {{text}}.",
       "then": ", ",
       "join": "; ",
@@ -749,10 +780,34 @@
         "sd": "Standard deviation (SD)",
         "sem": "Standard error (SEM)",
         "ci95": "95% confidence interval",
+        "mixed": "Differs by column",
         "unsure": "Not sure yet",
         "independent": "No, each row is a different sample",
         "repeated": "Yes, the same sample measured again"
       }
+    },
+    "aiChoice": {
+      "tipPlain": "AI used for analysis",
+      "tip": "AI used for analysis: {{name}}",
+      "auto": "Automatic",
+      "off": "Don't analyze with AI",
+      "more": "Connect another AI…",
+      "unavailable": "This model can't be reached; try another one",
+      "current": "Currently {{name}}",
+      "chosen": "The model you chose"
+    },
+    "purpose": {
+      "label": "Purpose",
+      "compare_groups": "Compare groups",
+      "trend": "See a trend",
+      "relationship": "See a relationship",
+      "distribution": "See the distribution"
+    },
+    "whyNot": {
+      "summary_hides_spread": "Bars and error bars usually stand for the mean and spread only; individual observations are not shown.",
+      "line_needs_order": "A connecting line usually stands for a quantity that changes continuously.",
+      "order_prefers_line": "The x axis has an order, so a line shows the trend better.",
+      "answers_other_purpose": "You chose “{{purpose}}”; this one answers a different question."
     },
     "redraw": {
       "from": "Drawn from {{file}}",
@@ -807,7 +862,38 @@
       "empty": "None of these comments can be changed directly; the figure is unchanged",
       "connect": "Connect AI",
       "retry": "Try again",
-      "dismiss": "Dismiss"
+      "dismiss": "Dismiss",
+      "summaryNotes": "{{n}} notes led to {{places}} more changes",
+      "revising": "Redoing with your notes…",
+      "generatingAssistant": "Working on your request…",
+      "steps": {
+        "before": "Read the figure",
+        "model": "Work out the changes",
+        "agent": "Edit the script",
+        "after": "Draw the result"
+      },
+      "summaryAssistant": "Changed {{places}} places",
+      "summaryAssistantScript": "Changed {{places}} places; the rest needs the script, so it wasn't touched",
+      "summaryAssistantOther": "Changed {{places}} places; the rest couldn't be changed directly",
+      "appliedAssistant": "Applied · changed {{places}} places",
+      "emptyAssistant": "This can't be done directly in the figure, so nothing changed",
+      "handoff": "This one needs the script, so it's going to the Agent.",
+      "runScript": "Edit the script for the rest",
+      "runScriptAll": "Edit the script instead",
+      "scriptFailed": "Couldn't hand this to the Agent; the figure is unchanged",
+      "summaryLayout": "{{count}} figures re-laid out",
+      "appliedLayout": "Applied · {{count}} figures re-laid out",
+      "runScriptTip": "Applies these in-figure changes first",
+      "summaryScript": "Script edited: +{{added}} −{{removed}}. Your script isn’t touched until you apply",
+      "appliedScript": "Applied · script updated",
+      "applyFailedScript": "Couldn’t apply. The script wasn’t changed",
+      "undoFailedScript": "The script changed again after applying, so nothing was undone",
+      "overreachOthers": "The agent changed files in your project. Your script wasn’t changed.",
+      "overreachMore": "{{files}} and {{count}} in all",
+      "overreachChanged": "Your script changed while this was running (you may have saved it, or the agent edited it directly). It wasn’t restored automatically. Both versions are backed up.",
+      "restoreScript": "Restore the version from before",
+      "keepCurrent": "Keep the current version",
+      "restoreFailed": "The script changed again, so it wasn’t restored"
     },
     "dialog": {
       "title": "Change plan",
@@ -828,7 +914,41 @@
       "previewStale": "The preview didn't update; what gets applied follows your checkmarks",
       "checkTip": "Uncheck to skip this change",
       "discard": "Discard",
-      "apply": "Apply"
+      "apply": "Apply",
+      "versionLabel": "Plan version",
+      "versionN": "Version {{n}}",
+      "modeLabel": "View",
+      "modeCompare": "Compare",
+      "modeAnnotate": "Notes",
+      "writeNote": "Add note",
+      "firstHint": "Something not right? Add a note here",
+      "lockTip": "Click elements on the new figure to leave notes, then redo it",
+      "lockLearn": "Learn about Premium ›",
+      "annotateHint": "Click an element on the figure to leave a note",
+      "notes": "Notes · {{count}}",
+      "notePlaceholder": "What should change?",
+      "noteSave": "Save",
+      "noteCancel": "Cancel",
+      "noteDelete": "Delete",
+      "noteEdit": "Click to edit",
+      "noteRemove": "Delete note",
+      "noteRegion": "Selected area",
+      "noteOverall": "Note on the whole figure",
+      "noteOverallLabel": "Whole figure",
+      "rerun": "Redo with notes",
+      "annotateRerun": "Redo with notes · {{count}}",
+      "rerunning": "Redoing…",
+      "rerunNeedNote": "Click an element in the After figure and write a note first",
+      "reviseNotLicensed": "Premium is not unlocked, so nothing was redone",
+      "groupMetaNote": "From your note · {{count}}",
+      "layoutHeading": "Layout · {{count}} figures",
+      "layoutGroupMeta": "{{count}} figures",
+      "noteHere": "This spot",
+      "stageLabel": "View",
+      "stageFigure": "Compare",
+      "stageScript": "Script changes",
+      "scriptMeta": "Script changes · +{{added}} −{{removed}}",
+      "scriptBackupNote": "Written only when you apply, backed up first"
     },
     "unhandled": {
       "needs_script": "Needs a script change; left alone this time",
@@ -842,7 +962,8 @@
       "conflict": "Conflicts with another change; left alone this time",
       "not_applied": "Didn't take effect; left alone this time",
       "no_effect": "No visible difference; left alone this time",
-      "not_addressed": "This one wasn't handled"
+      "not_addressed": "This one wasn't handled",
+      "unclearAssistant": "The request wasn't specific enough, so nothing changed"
     },
     "draft": {
       "thisOne": "this item",
@@ -880,6 +1001,7 @@
         "center": "center"
       },
       "many": "these {{count}} items"
-    }
+    },
+    "layoutGroup": "Layout"
   }
 }

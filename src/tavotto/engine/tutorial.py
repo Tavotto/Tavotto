@@ -700,7 +700,7 @@ def validate_tutorial_resources(root: Path | None = None) -> list[str]:
         except Exception as exc:  # noqa: BLE001 —— 坏 PDF 的异常类型由后端决定
             problems.append(f"{rel} 不是可读的 PDF：{exc}")
 
-    # 5. 教程画布文档：当前 schema、只引用教程自己的素材
+    # 5. 教程画布文档：项目排版（schema 3 / 4，随仓库发布的是 3）、只引用教程自己的素材
     doc_rel = f"{config.PROJECT_STORE_DIRNAME}/{meta['document_name']}.json"
     if doc_rel not in files:
         problems.append(f"缺少教程画布文档 {doc_rel}")
@@ -710,9 +710,13 @@ def validate_tutorial_resources(root: Path | None = None) -> list[str]:
         except ValueError as exc:
             problems.append(f"{doc_rel} 不是合法的项目文档：{exc}")
         else:
-            if doc.get("schema") != documents.SCHEMA_CURRENT:
+            if doc.get("schema") not in (
+                documents.SCHEMA_PROJECT,
+                documents.SCHEMA_CHART_PROJECT,
+            ):
                 problems.append(
-                    f"{doc_rel} schema {doc.get('schema')} 不是当前的 {documents.SCHEMA_CURRENT}"
+                    f"{doc_rel} schema {doc.get('schema')} 不是项目排版"
+                    f"（{documents.SCHEMA_PROJECT} / {documents.SCHEMA_CHART_PROJECT}）"
                 )
             if (
                 isinstance(doc.get("project"), dict)

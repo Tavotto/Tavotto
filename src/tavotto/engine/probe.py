@@ -253,6 +253,7 @@ def _error_from_worker(
         pool.IMPORT_FOLDER_UNREADABLE_CODE,
         pool.IMPORT_FOLDER_ABI_CODE,
         pool.IMAGE_FORMAT_MISMATCH_CODE,
+        pool.SCRIPT_SOURCE_MISSING_CODE,
     ):
         # TeX / 项目外文件夹读不了（ADR 0153） 工具链（缺命令 / 缺宏包或字体 / 编译错误）：码与参数原样带出，与渲染端点同一份
         # （`pool.recovery_params`）——素材库这条入口不能退化成一句「试运行失败」，更不能落成缺 Python 包
@@ -264,7 +265,7 @@ def _error_from_worker(
     if exc.code in ("worker_timeout", pool.BUILD_TIMEOUT_CODE):
         return _err(
             ERROR_TIMEOUT,
-            f"脚本执行超时（入口 {entry}）",
+            f"脚本运行超时：{entry}",
             params={"entry": entry},
             traceback_text=exc.traceback_text,
         )
@@ -591,7 +592,7 @@ def _probe(
         if first_error is None:
             first_error = _err(
                 ERROR_NO_FIGURE,
-                f"脚本跑通了，但没有捕获到任何 Figure（入口 {entry} 可能不出图）",
+                f"脚本跑完了，但没有画出图（{entry} 里可能没有画图的代码）",
                 params={"entry": entry},
             )
             # 多半是先 `exists()` 判空再自己退出（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径

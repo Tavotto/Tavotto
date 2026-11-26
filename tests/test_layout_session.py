@@ -111,19 +111,29 @@ def test_rejects_malformed_doc_ids(data_dir):
     assert layoutsession.record_owner("../evil", "/a") is False
 
 
-def test_concurrent_writers_lose_nothing(data_dir):
+def test_concurrent_writers_lose_nothing(data_dir, monkeypatch):
+    """主语：40 路并发读改写**不丢更新**（锁把它们串起来）。不是「40 个写在 5 秒内排完」——
+    每次写落两次盘（主文件 + bak），慢 Windows runner 上排到后面的会等锁超时、抛
+    SessionStateUnavailable（失败即关门，生产设计如此）；那是另一个判据，这里把锁超时放宽，
+    并把线程里的异常带回来，免得「等锁超时」被读成「丢了更新」（11-25 run 45645486146）。"""
+    monkeypatch.setattr(layoutsession, "LOCK_TIMEOUT_S", 120.0)
     ids = [f"d_{i}" for i in range(40)]
     barrier = threading.Barrier(len(ids))
+    errors: list[BaseException] = []
 
     def work(doc_id):
         barrier.wait()
-        layoutsession.record_owner(doc_id, f"/p/{doc_id}")
+        try:
+            layoutsession.record_owner(doc_id, f"/p/{doc_id}")
+        except BaseException as exc:  # noqa: BLE001 — 线程里的异常带回主线程断言
+            errors.append(exc)
 
     threads = [threading.Thread(target=work, args=(d,)) for d in ids]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+    assert errors == []
     assert layoutsession.owners() == {d: f"/p/{d}" for d in ids}
 
 
@@ -571,3 +581,83 @@ def test_tutorial_reset_forgets_the_tutorial_session_state(client, monkeypatch):
     assert layoutsession.owners()["d_user"] == "/elsewhere"
     new_pid = body["project"]["id"]
     assert client.get("/api/layout-session", headers=_pj(new_pid)).get_json()["last"] is None
+
+
+# ------------------------- 旧构建写过的格式轴（读时归一） ---------------------
+
+
+def _project_file_row(sequence: int, revision: str | None = None) -> dict:
+    return {
+        "intent_sequence": sequence,
+        "working_revision": revision,
+        "axis": None,
+        "axis_known": True,
+        "target": None,
+        "pending": None,
+    }
+
+
+def test_legacy_format_axes_are_normalized_instead_of_going_readonly(data_dir):
+    """b30 分支旧构建的 state：`latest` 带 `document_format`、项目文件按 legacy / v4
+    两层。单一存储后这两个轴不存在；不归一的话整份 state 判 invalid_* → 只读，
+    `set_last` / `commit_*` / `delete_slot` 全部不可用，用户只能手删 state 文件。"""
+    state = {
+        "version": 1,
+        "projects": {},
+        "no_project": {},
+        "owners": {},
+        "owner_revisions": {},
+        "document_open_intents": {
+            "version": 1,
+            "projects": {},
+            "no_project": {
+                "sequence": 1,
+                "latest": {
+                    "document_format": "legacy",
+                    "doc_id": "d_1",
+                    "pointer": "last",
+                },
+                "witness": "0" * 64,
+            },
+        },
+        "document_project_files": {
+            "version": 1,
+            "projects": {
+                "proj-key": {
+                    "legacy": {"d_1": _project_file_row(1)},
+                    "v4": {
+                        "d_1": _project_file_row(2, "c" * 32),
+                        "d_2": _project_file_row(1),
+                    },
+                }
+            },
+        },
+    }
+    layoutsession.state_path().parent.mkdir(parents=True, exist_ok=True)
+    layoutsession.state_path().write_text(json.dumps(state), encoding="utf-8")
+    assert layoutsession.read_status() == layoutsession.STATUS_OK
+
+    result = layoutsession.set_last(None, "d_1", "n", slot_ok=True)
+    assert result["state"] == "durable"
+
+    written = json.loads(layoutsession.state_path().read_text(encoding="utf-8"))
+    latest = written["document_open_intents"]["no_project"]["latest"]
+    assert latest == {"doc_id": "d_1", "pointer": "last"}
+    # 两层摊平成一层；同一个 docId 取 intent_sequence 大的（v4 那条）
+    files = written["document_project_files"]["projects"]["proj-key"]
+    assert set(files) == {"d_1", "d_2"}
+    assert files["d_1"]["intent_sequence"] == 2
+    assert files["d_1"]["working_revision"] == "c" * 32
+
+
+def test_repair_on_an_untracked_state_still_pushes_the_intent(data_dir):
+    """docstring 的承诺：没有意图记录（旧状态）时 `repair=True` 照旧补推。
+    删掉 legacy_only 分支后不能回 unconfirmed 且不写盘。"""
+    assert layoutsession.read_status() == layoutsession.STATUS_MISSING
+    result = layoutsession.set_last(None, "d_1", "n", slot_ok=True, repair=True)
+    assert result["state"] == "durable"
+    written = json.loads(layoutsession.state_path().read_text(encoding="utf-8"))
+    assert written["document_open_intents"]["no_project"]["latest"] == {
+        "doc_id": "d_1",
+        "pointer": "last",
+    }

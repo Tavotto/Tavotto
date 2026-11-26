@@ -267,7 +267,9 @@ export function useAiDraft(panel: PanelObject | null) {
     setDraftReplaced(false)
     replacePending.current = false
     text.current = ''
-    seq.current = 0
+    // 编辑序号跨目标切换**单调递增、不归零**：延迟清（方案落定时）靠「序号没变」判输入框没被动过，
+    // 归零会让 A → B → 回 A 再写新稿之后的序号撞上提交时的序号，清掉没提交的新稿
+    seq.current++
     draftStamp.current = null
     setDraftRead(project && fileId ? 'loading' : 'ok') // 没有可读的目标（无项目认领 / 无面板）= 没有要载入的草稿
     // 发件箱里还留着这个目标没落定的版本（上一个实例退役时没写成）：先显示它，不是服务器上的旧值；对账也不会覆盖它
@@ -345,7 +347,10 @@ export function useAiDraft(panel: PanelObject | null) {
    * 提交被接受之后清输入框：**只看本地有没有再动过（`seq` 没变），不比文本**。仅在发送时拿到了草稿戳
    * （后端会据此删草稿）才调用；之后后端的清理结果经 `mm:ai-draft-changed` 的对账回到输入框。
    */
-  const clearIfUnchanged = useCallback((seqAtSubmit: number) => {
+  const clearIfUnchanged = useCallback((seqAtSubmit: number, pinned?: { project: string | null; fileId: string | null }) => {
+    // 延迟清（方案落定时）：发起时钉住的草稿目标（项目 + 图文件）此刻还是输入框绑着的那一个才清——
+    // 换到别的图后序号会归零重数，只比序号可能撞上，清掉别的图正在写的字
+    if (pinned && (key.current.project !== pinned.project || key.current.fileId !== pinned.fileId)) return
     if (seq.current !== seqAtSubmit) return
     text.current = ''
     draftStamp.current = null

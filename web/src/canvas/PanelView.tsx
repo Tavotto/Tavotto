@@ -1460,6 +1460,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
           <Spinner size={ICON_SIZE.xs} aria-hidden className="opacity-80" />
         )}
         {shown.text}
+        {shown.redraw && <span aria-hidden className="opacity-60">·</span>}
         {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
             `pointer-events-none`（角标画在面板左上角，图内标题常常就在那儿），
             而 raster 那一档的角标**整个编辑期间常驻**——89×19 的一块死区会让
@@ -1496,7 +1497,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
               e.stopPropagation()
               void redrawWithScript(obj.id)
             }}
-            className="pointer-events-auto -my-0.5 rounded-full px-1.5 font-medium underline underline-offset-2 outline-none hover:opacity-80 focus-visible:focus-ring"
+            className="pointer-events-auto -my-0.5 rounded-full px-1.5 font-medium underline underline-offset-[3px] outline-none hover:opacity-80 focus-visible:focus-ring"
           >
             {badge('redraw')}
           </button>

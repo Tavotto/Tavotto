@@ -1296,3 +1296,115 @@ def write_pdf(
     """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）；`files` 是
     `FileResource` key → 冻结字节（`sources.read_frozen()` 核过 hash 的那份），面板要它。"""
     return PdfWriter(page, provider, files).write(out)
+
+
+# --- TrueType 槽里装着 CFF 字体程序（摸底 T-003）----------------------------------------------
+#
+# matplotlib 的 Type 42 嵌入（`pdf.fonttype = 42`，导出强制它，见 `engine/figsession.EXPORT_FONTTYPE`）对
+# CFF 轮廓的 OpenType（`.otf`：思源黑体 / Noto CJK 的 otf、Inter、Myriad……）也照写 `CIDFontType2` +
+# `FontFile2`，塞进去的却是 `OTTO` 开头的字体程序——字体类型与字体程序对不上，`pdffonts` / poppler 报
+# 「Mismatch between font type and embedded font file」，预检 / 投稿系统的转换可能拒收或掉字。
+#
+# 修法：把那段 CFF 轮廓**转成 TrueType 轮廓**（fontTools 的 cu2qu，误差 ≤ 1 个字体单位），字形序号原样
+# 保留——matplotlib 写的 `/CIDToGIDMap`、`/W` 宽度表、ToUnicode 全部照旧有效，字典与内容流一个字节不动。
+# 只认这一种确定的错配；别的形状原样不碰（判不了就不改）。
+
+#: 「这段字体程序是 CFF 轮廓的 OpenType」的文件头（OpenType 规范 sfntVersion）
+CFF_SFNT_TAG = b"OTTO"
+#: cu2qu 的最大偏差（字体单位）：fontTools `otf2ttf` 的默认值，upem 1000 的字上肉眼不可分
+CU2QU_MAX_ERR = 1.0
+
+
+def cff_program_as_truetype(data: bytes) -> bytes | None:
+    """`OTTO` 字体程序 → 同字形序号的 TrueType（`glyf`）字体程序；不是 CFF OpenType / 转不了 → None。"""
+    if not data.startswith(CFF_SFNT_TAG):
+        return None
+    import io
+
+    from fontTools.pens.cu2quPen import Cu2QuPen
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib import TTFont, newTable
+
+    font = TTFont(io.BytesIO(data))
+    if "CFF " not in font:  # CFF2（可变字体）不在 matplotlib 的 Type 42 路上，判不了就不改
+        return None
+    order = font.getGlyphOrder()
+    glyph_set = font.getGlyphSet()
+    glyphs = {}
+    for name in order:
+        pen = TTGlyphPen(glyph_set)
+        # CFF 外轮廓逆时针、TrueType 顺时针：reverse_direction 才不会把填充规则翻过来
+        glyph_set[name].draw(Cu2QuPen(pen, CU2QU_MAX_ERR, reverse_direction=True))
+        glyphs[name] = pen.glyph()
+    font["loca"] = newTable("loca")
+    glyf = font["glyf"] = newTable("glyf")
+    glyf.glyphOrder = order
+    glyf.glyphs = glyphs
+    del font["CFF "]
+    if "VORG" in font:
+        del font["VORG"]
+    glyf.compile(font)
+    hmtx = font["hmtx"]
+    for name, glyph in glyf.glyphs.items():
+        if hasattr(glyph, "xMin"):
+            hmtx[name] = (hmtx[name][0], glyph.xMin)
+    maxp = font["maxp"] = newTable("maxp")
+    maxp.tableVersion = 0x00010000
+    for attr in (
+        "maxTwilightPoints",
+        "maxStorage",
+        "maxFunctionDefs",
+        "maxInstructionDefs",
+        "maxStackElements",
+        "maxSizeOfInstructions",
+    ):
+        setattr(maxp, attr, 0)
+    maxp.maxZones = 1
+    maxp.maxComponentElements = 0
+    maxp.maxComponentDepth = 0
+    post = font["post"]
+    post.formatType = 3.0  # 不带字形名：PDF 里的 TrueType 按序号取字，名字用不上
+    post.extraNames = []
+    post.mapping = {}
+    font.sfntVersion = "\x00\x01\x00\x00"
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
+def repair_cff_in_truetype_slots(path: Path) -> int:
+    """把 PDF 里「`FontFile2` 装着 `OTTO` 字体程序」的字体就地改成真 TrueType 程序；回修了几个。
+
+    只在**可信的生产者边界**用（worker 刚写出的导出 PDF，`engine/artifactinspect.normalize_worker_pdf`）：
+    用户磁盘上的原件不在这里改，原样交付、由检查器如实报出（`inspector` 的 `font_program_mismatch`）。
+    一个都没修时文件一个字节不动。"""
+    import pikepdf
+
+    path = Path(path)
+    fixed = 0
+    with pikepdf.open(str(path), allow_overwriting_input=True) as pdf:
+        seen: set = set()
+        for obj in pdf.objects:
+            if not isinstance(obj, pikepdf.Dictionary) or obj.get("/Type") != "/FontDescriptor":
+                continue
+            stream = obj.get("/FontFile2")
+            if stream is None or stream.objgen in seen:
+                continue
+            seen.add(stream.objgen)
+            try:
+                converted = cff_program_as_truetype(bytes(stream.read_bytes()))
+            except Exception:  # noqa: BLE001 —— 转不了就原样留着，检查器照样报
+                converted = None
+            if converted is None:
+                continue
+            stream.write(converted)
+            stream["/Length1"] = len(converted)
+            fixed += 1
+        if fixed:
+            pdf.save(
+                str(path),
+                compress_streams=True,
+                object_stream_mode=pikepdf.ObjectStreamMode.preserve,
+                deterministic_id=True,
+            )
+    return fixed

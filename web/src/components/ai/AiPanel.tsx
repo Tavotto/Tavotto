@@ -35,7 +35,8 @@ import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { ApiError } from '@/lib/api'
+import { ApiError, type AiVendor } from '@/lib/api'
+import { useSiwcLogin } from '@/components/settings/connectAi/useSiwcLogin'
 import { refreshProjectNow } from '@/store/liveSync'
 import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { deferWhileWindowHeld } from '@/store/documentRestore'
@@ -62,15 +63,20 @@ import { Tip } from '../ui/Tooltip'
 import { TaskHistory, TaskHistoryPopover } from './TaskHistory'
 import { BrandLogo } from '@/components/settings/BrandLogo'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { ConnectionModelPicker, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
+import { ConnectionModelList, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { currentProjectId } from '@/lib/session'
 import { holdAssistantTabForNextSelection } from '@/hooks/useSelectionRouting'
 import { useAiDraft } from './useAiDraft'
 import { Turn } from './Transcript'
 import { ChangePlanDialog } from '../changePlan/ChangePlanDialog'
-import { ChangePlanTranscript } from '../changePlan/ChangePlanTranscript'
+import { ChangePlanTurn, useLatestReadyKey, usePanelPlanEntries } from '../changePlan/ChangePlanTranscript'
 import { useHasChangePlans } from '../changePlan/usePlanFigure'
+import { assistantUsesPlan } from '@/lib/assistantPlanRoute'
+import { changePlanEnabled } from '@/lib/changePlanSwitch'
+import { deleteAiDraftIf } from '@/lib/api'
+import { engineTransport } from '@/lib/engineTransport'
+import { isFallthrough, useChangePlanStore } from '@/store/changePlanStore'
 import { DataFigureForm } from './DataFigureForm'
 
 export { TaskHistory }
@@ -448,10 +454,20 @@ function AssistantPanelBody() {
   // 「从数据出图」的轮次不属于任何面板（它新建脚本）：无论选没选图都在对话里，按发起时间与本面板的轮次合排
   const dataTurns = sessions.filter(isDataFigureSession)
   const hasPlans = useHasChangePlans(panel?.id)
+  const planEntries = usePanelPlanEntries(panel?.id)
+  const latestPlanKey = useLatestReadyKey(planEntries, panel?.id ?? '')
+  // 这张图上有方案在生成：与「脚本正在被改」一样锁住发送（后端对同一张图也是一次一份）
+  const planBusy = planEntries.some((e) => e.status === 'generating')
   const mine = panel ? sessions.filter((s) => isSessionOf(s, panel)) : []
   const turns = dataTurns.length
     ? [...mine, ...dataTurns].sort((a, b) => a.startedAt - b.startedAt)
     : mine
+  // 方案卡与改脚本的会话按发起时间穿插（先出卡再续走改脚本时，次序就是用户看到的次序）
+  type Item = { at: number; turn: AiSession } | { at: number; plan: (typeof planEntries)[number] }
+  const items: Item[] = [
+    ...turns.map((turn): Item => ({ at: turn.startedAt, turn })),
+    ...planEntries.map((plan): Item => ({ at: plan.createdAt, plan })),
+  ].sort((a, b) => a.at - b.at)
   const tafEnabled = !!caps?.taf_enabled
   const [dataFormOpen, setDataFormOpen] = useState(false)
   // 只有「同一个脚本正在被改」才该挡住发送——别的面板在跑与这里无关
@@ -463,9 +479,11 @@ function AssistantPanelBody() {
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && !hasUsableAi(caps)
+  // 老用户升级（维护者 2026-11-26 选 a）：本机装了 Codex、ChatGPT 登录默认开、还没用它登录 → 这一行的按钮直接是「Continue with ChatGPT」
+  const siwcUpgradeVendor = noAgent ? siwcUpgradeVendorOf(caps) : undefined
   // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
   // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
-  const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && ledgerState === 'ok'
+  const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && !planBusy && ledgerState === 'ok'
 
   // 原先每个 delta 都把视口拽回底部——往上翻看旧回答时等于不让人看。
   // 换了目标面板视作重新贴底。jsdom 里 scrollHeight 恒 0，gap 恒 0，一律贴底。
@@ -576,6 +594,49 @@ function AssistantPanelBody() {
         return
       }
       // 只有输入框里发的才带参考图（历史里「重新发送 / 重试」的是那一轮的原话）；还在上传的图等它们落定
+      // 先出修改方案卡（ADR 0206 PR 4）：判据在 `assistantUsesPlan`；后端同步说「这条路不适用」时落回下面照旧的改脚本路径
+      if (
+        assistantUsesPlan({
+          enabled: changePlanEnabled(caps),
+          source,
+          pinned: !!pinned,
+          hasRefs: source === 'composer' && refItems.length > 0,
+          length: text.length,
+          panel,
+          embedded: !!engineTransport(),
+          planBusy,
+        })
+      ) {
+        const planned = await useChangePlanStore.getState().requestFromAssistant(
+          panel.id,
+          { instruction: text, ...(ctx.gid ? { target: ctx.gid } : {}) },
+          {
+            project: pinnedProject,
+            generation: pinnedGeneration,
+            prompt: text,
+            fileId: panel.fileId,
+            panelId: panel.id,
+            gid: ctx.gid,
+            label: ctx.label,
+            scope: ctx.scope,
+            target: ctx.target,
+            canvas: useDocumentStore.getState().activeCanvasId,
+            script: panel.script ?? null,
+          },
+          // 方案一落定才放掉输入框里的指令与后端草稿：生成中刷新页面，指令还在输入框里
+          source === 'composer' && snap.stamp !== null
+            ? () => {
+                void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
+                clearIfUnchanged(snap.seq, { project: pinnedProject, fileId: panel.fileId })
+              }
+            : undefined,
+        )
+        if (projectMoved()) return
+        if (!isFallthrough(planned)) {
+          // 方案任务已受理（或这张图已有一份在途，没发）。草稿与输入框先不动，方案落定时才清（见 `onSettle`）
+          return
+        }
+      }
       const taken = source === 'composer' ? await useAiAttachStore.getState().settle(refKey) : []
       const refs = taken.map((x) => ({ id: x.serverId as string, kind: x.kind, name: x.name, ext: x.ext, thumb: x.thumb }))
       if (projectMoved()) return
@@ -752,19 +813,22 @@ function AssistantPanelBody() {
               data-ai-transcript
               className="flex flex-col gap-(--turn-gap) [--item-gap:8px] [--turn-gap:16px]"
             >
-              {turns.map((s) => (
-                <Turn
-                  key={s.id}
-                  session={s}
-                  onResend={(text) => void send({ source: 'history', text })}
-                  onRetry={(t) => void retrySession(t)}
-                  canResend={canSend && !isDataFigureSession(s)}
-                  canRetry={canSend && !isDataFigureSession(s) && s.panelId === panel?.id}
-                  onCancel={(t) => void useAiStore.getState().cancel(t.id)}
-                  onRetryStalled={isDataFigureSession(s) || s.panelId !== panel?.id ? undefined : (t) => void retryStalled(t)}
-                />
-              ))}
-              {panel && <ChangePlanTranscript panelId={panel.id} />}
+              {items.map((it) =>
+                'turn' in it ? (
+                  <Turn
+                    key={it.turn.id}
+                    session={it.turn}
+                    onResend={(text) => void send({ source: 'history', text })}
+                    onRetry={(t) => void retrySession(t)}
+                    canResend={canSend && !isDataFigureSession(it.turn)}
+                    canRetry={canSend && !isDataFigureSession(it.turn) && it.turn.panelId === panel?.id}
+                    onCancel={(t) => void useAiStore.getState().cancel(t.id)}
+                    onRetryStalled={isDataFigureSession(it.turn) || it.turn.panelId !== panel?.id ? undefined : (t) => void retryStalled(t)}
+                  />
+                ) : (
+                  <ChangePlanTurn key={it.plan.key} entry={it.plan} latest={it.plan.key === latestPlanKey} />
+                ),
+              )}
             </div>
           ) : (
             /* 还没发过任务：中间是空态 + 至多三条可点的示例提示（§6.7）——点一下填进输入框，改完再发 */
@@ -932,7 +996,8 @@ function AssistantPanelBody() {
               {ai('panel.ledgerUnreadable')}
             </Notice>
           )}
-          {noAgent && (
+          {noAgent && siwcUpgradeVendor && <SiwcUpgradeNotice vendor={siwcUpgradeVendor} />}
+          {noAgent && !siwcUpgradeVendor && (
             // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步
             <Notice
               tone="neutral"
@@ -1068,7 +1133,7 @@ function AssistantPanelBody() {
                     !panel ||
                     (runningHere
                       ? false
-                      : noAgent || !!submission || finishingHere || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
+                      : noAgent || !!submission || finishingHere || planBusy || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
                   }
                   aria-busy={sending || runningHere || undefined}
                   onClick={runningHere ? stopRunning : () => send({ source: 'composer' })}
@@ -1390,14 +1455,16 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
               只有一项可选时不摆一个选不动的选择器（旧执行器视图；连接视图的选择器底部有「连接更多 AI…」，要常驻）：**但那一项写的是什么仍要看得见**，
               退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块不出现——执行器是谁，
               工具行的胶囊上已经写着了 */}
-          {optionCount > 1 || view ? (
+          {view ? (
+            // 连接视图：「AI 与模型」是一个列表（与设置里的连接列表同一种样子），不再「下拉里套二级菜单」
+            <div data-ai-agent-model="select" className="flex min-w-0 flex-col gap-1">
+              <span className="text-xs text-ink-2">{ai('panel.aiModel')}</span>
+              <ConnectionModelList connections={conns} active={active ?? ''} model={model} />
+            </div>
+          ) : optionCount > 1 ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
-              {view ? (
-                <ConnectionModelPicker connections={conns} active={active ?? ''} model={model} />
-              ) : (
-                <ModelPicker usable={usable} active={active ?? ''} model={model} />
-              )}
+              <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
+              <ModelPicker usable={usable} active={active ?? ''} model={model} />
             </div>
           ) : (
             cur &&
@@ -1466,5 +1533,31 @@ function Breadcrumb({
         </span>
       ))}
     </p>
+  )
+}
+
+
+/**
+ * 「还没有连接 AI」这一行在老用户升级时的样子（ADR 0209 §六，维护者 2026-11-26 选 a）：本机装着 Codex（原来多半靠它的
+ * ChatGPT 登录）、ChatGPT 登录默认开（Codex 登录随之不再列出）、还没用 ChatGPT 登录过 → 同一句话，按钮直接是
+ * 「Continue with ChatGPT」，登录的等待提示 / 失败选择题（含「改用 Codex 登录」）就在这一行里，与「连接 AI」里同一个 `useSiwcLogin`。
+ * 不加说明文字。
+ */
+function siwcUpgradeVendorOf(caps: ReturnType<typeof useAiStore.getState>['caps']): AiVendor | undefined {
+  if (!caps || !hasConnectionView(caps)) return undefined
+  if (!caps.agents.find((a) => a.id === 'codex')?.installed) return undefined
+  return (caps.vendors ?? []).find((v) => (v.methods ?? []).some((m) => m.kind === 'siwc' && m.available !== false))
+}
+
+function SiwcUpgradeNotice({ vendor }: { vendor: AiVendor }) {
+  const method = (vendor.methods ?? []).find((m) => m.kind === 'siwc')!
+  const flow = useSiwcLogin(vendor, method, () => undefined, { quiet: true })
+  // 每个状态只突出一件事：没登录 = 一颗按钮；等浏览器 = 「取消」+ 一行灰字；失败 = 按钮 + 一行灰字（原因 · 改用 Codex 登录）。
+  // 不套说明条、不画图标、不加字（维护者 11-26：之前那版「杂乱、不简洁」）
+  return (
+    <div data-ai-no-agent data-ai-siwc-upgrade className="mb-3 flex flex-col items-center gap-1.5 px-2 pt-1 text-center">
+      {flow.button}
+      {flow.hint}
+    </div>
   )
 }

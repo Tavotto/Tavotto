@@ -1,9 +1,8 @@
-import type { DocumentFormat } from './documentFormat'
 import type { ProjectFileBinding } from './projectFile'
 
 export type ProjectFileAxis = { editor_id: string; sequence: number } | null
 export interface ProjectFileEdit { axis: ProjectFileAxis; base_axis: ProjectFileAxis; base_revision: string | null }
-export interface ProjectFileAddress { projectId: string; format: DocumentFormat; documentId: string }
+export interface ProjectFileAddress { projectId: string; documentId: string }
 export interface ProjectFileView {
   version: 1
   status: 'ok'
@@ -28,7 +27,7 @@ export interface ProjectFileCapture {
   base_axis: ProjectFileAxis
 }
 
-const keyOf = (address: ProjectFileAddress) => JSON.stringify([address.projectId, address.format, address.documentId])
+const keyOf = (address: ProjectFileAddress) => JSON.stringify([address.projectId, address.documentId])
 const sameAxis = (a: ProjectFileAxis, b: ProjectFileAxis) => a === null ? b === null
   : b !== null && a.editor_id === b.editor_id && a.sequence === b.sequence
 const copy = <T>(value: T): T => structuredClone(value)

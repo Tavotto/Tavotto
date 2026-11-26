@@ -435,7 +435,7 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
       expect(visibleSentenceCount(card), name).toBe(1)
       expect(visiblePrimaryButtons(card), name).toBe(1)
     }
-    // 进行中：一行（不以「。」结尾也行），没有主按钮
+    // 进行中：一块任务清单（标题那句 + 列全的步骤，2026-11-25 用户拍板），没有句子堆叠、没有主按钮
     await act(async () => root.unmount())
     host.remove()
     await render()
@@ -444,7 +444,9 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     })
     const card = document.querySelector('.shadow-card')!
     expect(visibleSentenceCount(card)).toBeLessThanOrEqual(1)
-    expect(visibleBlocks(card).filter((b) => b.tag === 'p')).toHaveLength(1)
+    expect(card.querySelectorAll('[data-task-checklist]')).toHaveLength(1)
+    expect(visibleBlocks(card).filter((b) => b.tag === 'p')).toHaveLength(0)
+    expect(visiblePrimaryButtons(card)).toBe(0)
   })
 
   it('一句话里不出现版本号、路径与「隔离环境」；说明与明细都在「详情」里', async () => {
@@ -1353,50 +1355,54 @@ describe('安装进度', () => {
     expect(useDepRepairStore.getState().progress).toBeNull()
   })
 
-  it('进度只有一行：「正在下载 Python… 12 / 48 MB」，下载完换一句，进了下一步字节数就不再出现', async () => {
+  it('进度是一块任务清单：标题说这一刻在干什么，步骤一开始就列全；下载那步胶囊里是字节数，进了下一步就没有', async () => {
     const card = () => document.querySelector('[data-repair-line]')!.closest('.shadow-card')!
-    const line = () => document.querySelector('[data-repair-line]')!.textContent
+    const title = () => document.querySelector('[data-repair-line] [data-task-title]')!.textContent
+    const meta = () => document.querySelector('[data-repair-line] [data-task-meta]')?.textContent ?? null
+    const steps = () =>
+      [...document.querySelectorAll('[data-repair-line] [data-task-step]')].map(
+        (li) => `${li.getAttribute('data-task-step')}:${li.getAttribute('data-step-state')}`,
+      )
     await render()
     await progress('downloading_python', {
       target_kind: 'tavotto_managed',
       result: { download: { stage: 'downloading', done_bytes: 12 * 1048576, total_bytes: 48 * 1048576 } },
     })
-    expect(line()).toBe(
-      `${en('dependencyPrepareState_downloading_python')} ${en('repairDownloadBytes', { done: 12, total: 48 })}`,
-    )
-    expect(document.querySelector('[data-repair-download]')!.getAttribute('aria-valuenow')).toBe('25')
-    // 进行中默认可见：一行进度 + 「取消」，没有别的说明
-    // 进行中默认可见：一行进度 + 「取消」+ 折叠的「详情」（四个阶段与日志在里面）
-    expect(visibleBlocks(card()).map((b) => b.tag)).toEqual(['p', 'button', 'summary'])
-    const stages = document.querySelector('[data-repair-stages]')!
-    expect(stages.closest('details')!.open).toBe(false)
-    expect(
-      [...stages.querySelectorAll('[data-repair-stage]')].map(
-        (li) => `${li.getAttribute('data-repair-stage')}:${li.getAttribute('data-stage-state')}`,
-      ),
-    ).toEqual(['python:active', 'env:pending', 'packages:pending', 'rerun:pending'])
-    // 下载完、在解压：不再是字节数
+    expect(title()).toBe(en('dependencyPrepareState_downloading_python'))
+    expect(meta()).toBe(en('repairDownloadBytes', { done: 12, total: 48 }))
+    expect(document.querySelector('[data-repair-download]')!.getAttribute('data-repair-download')).toBe('25')
+    expect(steps()).toEqual(['python:active', 'env:pending', 'packages:pending', 'rerun:pending'])
+    // 默认可见：任务清单 + 「取消」（有日志 / 镜像时多一个折叠的「详情」）；没有进度条
+    expect(card().querySelector('[data-repair-progress-details]')?.hasAttribute('open') ?? false).toBe(false)
+    expect(card().querySelector('[role="progressbar"]')).toBeNull()
+    // 下载完、在解压：标题换一句，胶囊没了
     await progress('downloading_python', {
       target_kind: 'tavotto_managed',
       result: { download: { stage: 'extracting', done_bytes: 48 * 1048576, total_bytes: 48 * 1048576 } },
     })
-    expect(line()).toBe(en('repairDownloadUnpacking'))
-    // 进了创建环境：后端沿用上一条 result，下载那段还挂在进度上——不许再说字节数、画进度条
+    expect(title()).toBe(en('repairDownloadUnpacking'))
+    expect(meta()).toBeNull()
+    // 进了创建环境：后端沿用上一条 result，下载那段还挂在进度上——不许再说字节数
     await progress('creating_env', {
       target_kind: 'tavotto_managed',
       result: { download: { stage: 'committed', done_bytes: 48 * 1048576, total_bytes: 48 * 1048576 } },
     })
-    expect(line()).toBe(`${en('repairCreatingEnv')}${en('repairStep', { n: 2, total: 4 })}`)
+    expect(title()).toBe(en('repairCreatingEnv'))
+    expect(meta()).toBeNull()
+    expect(steps()).toEqual(['python:done', 'env:active', 'packages:pending', 'rerun:pending'])
+    expect(document.querySelector('[data-repair-line] [data-task-count]')!.textContent).toBe('1/4')
     await progress('installing', { target_kind: 'tavotto_managed' })
-    expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 3, total: 4 })}`)
-    // 计划里装的不止一个包：进度行说整组（真正在装的），不只是用户点的那一个
+    expect(title()).toBe(en('repairInstalling', { module: 'lmfit' }))
+    expect(steps()).toEqual(['python:done', 'env:done', 'packages:active', 'rerun:pending'])
+    // 计划里装的不止一个包：标题说整组（真正在装的），不只是用户点的那一个
     await progress('installing', { target_kind: 'tavotto_managed', requirements: ['pandas', 'lmfit>=1.3'] })
-    expect(line()).toBe(`${en('repairInstalling', { module: 'pandas 和 lmfit' })}${en('repairStep', { n: 3, total: 4 })}`)
+    expect(title()).toBe(en('repairInstalling', { module: 'pandas 和 lmfit' }))
     await progress('installing', { target_kind: 'tavotto_managed', requirements: ['numpy', 'pandas', 'lmfit'] })
-    expect(line()).toBe(`${en('repairInstalling', { module: 'numpy 等 3 个包' })}${en('repairStep', { n: 3, total: 4 })}`)
+    expect(title()).toBe(en('repairInstalling', { module: 'numpy 等 3 个包' }))
     // 装进项目自己的环境只有两步
     await progress('installing', { target_kind: 'project_venv' })
-    expect(line()).toBe(`${en('repairInstalling', { module: 'lmfit' })}${en('repairStep', { n: 1, total: 2 })}`)
+    expect(title()).toBe(en('repairInstalling', { module: 'lmfit' }))
+    expect(steps()).toEqual(['packages:active', 'rerun:pending'])
     expect(document.querySelector('[data-repair-download]')).toBeNull()
   })
 
@@ -1409,17 +1415,15 @@ describe('安装进度', () => {
     const p = useDepRepairStore.getState().progress!
     expect(p.state).toBe('preparing')
     expect(p.target_kind).toBe('project_venv')
-    expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
-      `${en('repairPreparing')}${en('repairStep', { n: 1, total: 2 })}`,
-    )
-    expect([...document.querySelectorAll('[data-repair-stage]')].map((li) => li.getAttribute('data-repair-stage')))
+    expect(document.querySelector('[data-repair-line] [data-task-title]')!.textContent).toBe(en('repairPreparing'))
+    expect([...document.querySelectorAll('[data-repair-line] [data-task-step]')].map((li) => li.getAttribute('data-task-step')))
       .toEqual(['packages', 'rerun'])
     // 之后某一条快照没带目标：沿用上一条的，不在两步与四步之间跳
     await act(() => {
       useDepRepairStore.getState().onProgress({ plan_id: 'plan-abc', state: 'installing', log: '', error: null, code: '' } as never)
     })
     expect(useDepRepairStore.getState().progress!.target_kind).toBe('project_venv')
-    expect(document.querySelector('[data-repair-line]')!.textContent).toContain(en('repairStep', { n: 1, total: 2 }))
+    expect(document.querySelectorAll('[data-repair-line] [data-task-step]')).toHaveLength(2)
   })
 
   it('私有 Python 的子阶段按 #743 的真实形状各说各的；自带归档不说「下载」；认不出的降级成通用一句', async () => {
@@ -1433,7 +1437,8 @@ describe('安装进度', () => {
         private_python: { id: 'pbs', version: '3.13.15', target: 'darwin-arm64', download_bytes: 25 * 1048576, source_host: 'github.com', origin },
       },
     })
-    const line = () => document.querySelector('[data-repair-line]')!.textContent
+    const line = () => document.querySelector('[data-repair-line] [data-task-title]')!.textContent
+    const meta = () => document.querySelector('[data-repair-line] [data-task-meta]')?.textContent ?? ''
     await render()
     for (const [stage, key] of [
       ['verifying', 'repairPythonVerifying'],
@@ -1448,10 +1453,10 @@ describe('安装进度', () => {
     // 安装包自带的归档：后端同样先发一条 0 字节的 downloading——不许说「正在下载… 0 / 25 MB」
     await progress('downloading_python', shape('downloading', 'bundled', 0))
     expect(line()).toBe(en('repairPythonPreparing'))
-    expect(line()).not.toContain('MB')
-    // 真在下载：字节数照说
+    expect(line() + meta()).not.toContain('MB')
+    // 真在下载：字节数照说（在胶囊里）
     await progress('downloading_python', shape('downloading', 'download', 10 * 1048576))
-    expect(line()).toContain('10 / 25 MB')
+    expect(meta()).toBe('10 / 25 MB')
   })
 
   it('换用了 PyPI 镜像（#743 的真实形状）：只在「详情」里说一句；之后的快照照样带着', async () => {

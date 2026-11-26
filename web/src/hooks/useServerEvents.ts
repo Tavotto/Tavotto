@@ -114,7 +114,7 @@ export function handleServerEvent(ev: ServerEvent) {
       break
 
     case 'render.preparing':
-      render.noteBuilding(ev.id, { cold: false, cost: '', phase: 'preparing' })
+      render.noteBuilding(ev.id, { cold: false, cost: '', phase: 'preparing', stage: ev.stage })
       break
     case 'render.progress':
       // 引擎说 build 还在跑（worker 日志仍在增长，#1207）：续上这个文件的看门狗租约
@@ -345,6 +345,11 @@ export function handleServerEvent(ev: ServerEvent) {
     case 'ai.task':
       // 阶段提示（「正在自动修正」）；不是本标签页持有的会话就什么都不做
       useAiStore.getState().setTaskPhase(ev.session, ev.phase, ev.task_type)
+      break
+
+    case 'ai.stage':
+      // 改图任务清单走到哪一步；不是本标签页持有的会话就什么都不做
+      useAiStore.getState().setStage(ev.session, ev.stage)
       break
 
     case 'ai.stalled':
