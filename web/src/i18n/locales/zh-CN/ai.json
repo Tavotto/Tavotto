@@ -885,6 +885,7 @@
       "holdBefore": "看修改前",
       "changes_other": "改动 · {{count}} 处",
       "groupMeta_other": "{{who}} · {{count}} 处改动",
+      "roomNote": "腾出边距，放下轴标签",
       "groupMetaNoWho_other": "{{count}} 处改动",
       "groupN": "第 {{n}} 条意见",
       "previewStale": "预览没更新，应用结果以勾选为准",

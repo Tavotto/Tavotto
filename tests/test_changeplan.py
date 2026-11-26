@@ -999,3 +999,141 @@ def test_both_system_prompts_tell_the_model_a_half_script_comment_goes_whole_to_
     for source in ("review", "assistant"):
         text = cp.system_prompt(source)
         assert "整条" in text and "needs_script" in text and "一半" in text
+
+
+# --------------------------------------------------------------------------- 改后元素出图幅：自动腾边距（维护者 2026-11-26）
+def _room_manifests():
+    """改前一切安好；改后纵轴标题探出左边（刻度文字变宽把它挤出去）。→ `(before, after)`。"""
+    from tests.test_normalize import _two_column_manifest
+
+    before = _two_column_manifest()
+    after = json.loads(json.dumps(before))
+    for e in after["elements"]:
+        if e["gid"] == "axes_0.ylabel":
+            e["bbox"] = [-0.03, 0.3, 0.03, 0.4]
+    return before, after
+
+
+def _room_render(after):
+    """假渲染：子图 position 的左边挪多少，它的装饰物（标题 / 刻度）就跟着挪多少。"""
+
+    def render(patches):
+        out = json.loads(json.dumps(after))
+        for p in patches:
+            if p["prop"] != "position":
+                continue
+            ax = next(e for e in out["elements"] if e["gid"] == p["gid"])
+            old = next(f for f in ax["editable"] if f["prop"] == "position")
+            dx = p["value"][0] - old["value"][0]
+            old["value"] = p["value"]
+            ax["bbox"] = list(p["value"])
+            for e in out["elements"]:
+                if e["gid"].startswith(p["gid"] + ".") and e["role"] in ("axis_label", "ticks"):
+                    e["bbox"][0] += dx
+        return out
+
+    return render
+
+
+def test_overflow_that_is_new_or_worse_is_found_and_old_overflow_is_not():
+    before, after = _room_manifests()
+    assert [c["gids"][0] for c in cp.worsened_overflow(before, after)] == ["axes_0.ylabel"]
+    assert cp.worsened_overflow(after, after) == []  # 改前就出界的不管
+    assert cp.worsened_overflow(before, before) == []
+
+
+def test_make_room_moves_the_axes_so_the_label_fits_again_and_keeps_identity():
+    before, after = _room_manifests()
+    cand = [{"gid": "axes_0", "prop": "yscale", "value": "log", "identity": "id-ax0"}]
+    room = cp.make_room(before, after, cand, [], _room_render(after))
+    assert room is not None
+    pos = room.positions["axes_0"]
+    assert pos["prop"] == "position" and pos["value"][0] > 0.08
+    assert room.candidate[0] == cand[0] and room.candidate[-1]["prop"] == "position"
+    assert cp.worsened_overflow(before, room.manifest) == []
+
+
+@pytest.mark.parametrize(
+    "render",
+    [
+        pytest.param(lambda p: None, id="new-warning"),
+        pytest.param(lambda p: _room_manifests()[1], id="no-progress"),
+    ],
+)
+def test_make_room_gives_up_quietly_on_a_warning_or_no_progress(render):
+    before, after = _room_manifests()
+    assert cp.make_room(before, after, [], [], render) is None
+
+
+def test_make_room_is_none_when_nothing_overflows_newly():
+    before, _after = _room_manifests()
+    assert cp.make_room(before, before, [], [], _room_render(before)) is None
+
+
+def _group(*gids):
+    return {
+        "comment_id": "c1",
+        "atomic": False,
+        "changes": [
+            {
+                "target_gid": g,
+                "prop": "yscale",
+                "before": "linear",
+                "after": "log",
+                "patch": {"gid": g, "prop": "yscale", "value": "log"},
+            }
+            for g in gids
+        ],
+        "boxes": {"before": [], "after": []},
+    }
+
+
+def test_room_position_follows_the_group_that_touched_the_overflowing_axes_only():
+    before, after = _room_manifests()
+    room = cp.make_room(before, after, [], [], _room_render(after))
+    log_group, other = _group("axes_0"), _group("axes_7")
+    groups = cp.attach_room([log_group, other], room, before, after)
+    # 两列并排：重排把两个子图一起挪
+    assert [(c["target_gid"], c["prop"]) for c in log_group["changes"]] == [
+        ("axes_0", "yscale"),
+        ("axes_0", "position"),
+        ("axes_1", "position"),
+    ]
+    room_change = log_group["changes"][1]
+    assert room_change["auto"] == "room"
+    assert room_change["patch"]["value"] == room.positions["axes_0"]["value"]
+    assert [c["prop"] for c in other["changes"]] == ["yscale"]
+    # 取消勾选那一组：边距不留下；勾着它：边距在
+    keys = lambda *k: {g["key"] for g in groups if g["key"] in k}  # noqa: E731
+    for i, g in enumerate(groups, 1):
+        g["key"] = f"g{i}"
+    assert not [e for e in cp.apply_groups([], groups, {"g2"}) if e["prop"] == "position"]
+    assert [e for e in cp.apply_groups([], groups, {"g1"}) if e["prop"] == "position"]
+    assert keys("g1") == {"g1"}
+
+
+def test_room_position_goes_into_every_group_when_none_can_be_matched_to_the_axes():
+    before, after = _room_manifests()
+    room = cp.make_room(before, after, [], [], _room_render(after))
+    a, b = _group("fig"), _group("fig2")
+    cp.attach_room([a, b], room, before, after)
+    assert a["changes"][-1]["prop"] == "position" and b["changes"][-1]["prop"] == "position"
+    assert a["changes"][-1]["auto"] == "room"
+
+
+def test_a_position_the_model_asked_for_itself_is_not_overwritten_by_the_room():
+    before, after = _room_manifests()
+    room = cp.make_room(before, after, [], [], _room_render(after))
+    own = _group("axes_0")
+    own["changes"].append(
+        {
+            "target_gid": "axes_0",
+            "prop": "position",
+            "before": 1,
+            "after": 2,
+            "patch": {"gid": "axes_0", "prop": "position", "value": [0, 0, 1, 1]},
+        }
+    )
+    cp.attach_room([own], room, before, after)
+    own_pos = [c for c in own["changes"] if c["target_gid"] == "axes_0" and c["prop"] == "position"]
+    assert [c.get("auto") for c in own_pos] == [None]

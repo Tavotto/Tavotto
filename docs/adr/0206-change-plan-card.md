@@ -161,7 +161,10 @@ plan = {
 - **对数轴下限必须大于 0。** 某一组把 `xscale` / `yscale` 改成 `log`、而这根轴改后的下限 ≤ 0（模型没写 `xlim` / `ylim` 时看元素表此刻的范围；写了看它写的）时，后端（`changeplan.require_log_lower_limits`，在模型回包校验之后、候选之前）
   把下限一起改成一个正数：**候选带着它渲染**，前后图都是对的那一张；这一组的 `changes` 里多一条下限改动（与别的改动同样从 manifest 现算、带 `patch`），组上标 `confirm: {kind: "log_lower_limit", axis, gid, from, to}`。
   建议值 = 上限 / 100 向下取到 10 的幂（上限 1.05 → 0.01）；manifest 不暴露各条线的正数最小值，所以不按数据取。上限也不是正数 = 这一处改动不要（`bad_value`）。模型自己已给了正数下限 = 不问。助手与审阅两个来源同一规则；脚本方案不在内。
-  卡片先问一句（「对数轴的下限必须大于 0，要把纵轴下限一起改成 0.01 吗？」）：主按钮「一起改」= 照方案走；次级「不改」= 这一组整组不要（`unchecked` + `answers[组 key] = no`，前端按 `applyGroups` 排除重算，同源对与向量不变），那条意见在没处理列表里写「对数轴下限没改，这次没动」（`log_limit_declined`，只在前端）；没有组剩下 = 与空方案一样。回答之前没有「查看 / 应用」（`openDialog` / `apply` 也拒绝）。这一句取代待确认卡的「查看」成为那一刻的主按钮，仍是「一屏至多两颗主按钮」。
+  卡片先问一句（「对数轴的下限要大于 0，把纵轴下限一起改成 10⁻² 吗？」）：主按钮「一起改」= 照方案走；次级「不改」= 这一组整组不要（`unchecked` + `answers[组 key] = no`，前端按 `applyGroups` 排除重算，同源对与向量不变），那条意见在没处理列表里写「对数轴下限没改，这次没动」（`log_limit_declined`，只在前端）；没有组剩下 = 与空方案一样。回答之前没有「查看 / 应用」（`openDialog` / `apply` 也拒绝）。这一句取代待确认卡的「查看」成为那一刻的主按钮，仍是「一屏至多两颗主按钮」。
 - **一条意见不被劈成两半。** 同一条意见既在 `groups` 又在 `unhandled(needs_script)` 时，`validate_proposal` 丢掉它的组、只留 `needs_script`（取代 PR 4「部分能改、部分要改脚本」的口径）；系统提示（审阅与助手两份）同步要求「任何一部分要改脚本，整条放 `needs_script`，不放任何图内修改」。助手来源整条都要改脚本时照旧自动续走脚本方案（`allNeedScript`），「改脚本做剩下的」只剩不同意见之间的部分情形。
 - **文案**：带数量的句子用各语言的复数键（英文 `_one` / `_other`，中文 `_other`），数量与单位成短语（`card.placesN` 等）；改动清单每组下面的裸数字改成「3 处改动 / 3 changes」。
-
+- **对数轴上 10 的整数次幂写成上标。** 界面上对数轴的范围值（确认句里的建议下限，以及以后任何展示 log 轴 `xlim` / `ylim` 改前改后的地方）里，10 的整数次幂写成 10⁻²、10⁰、10³（Unicode 上标，负号 ⁻），不写 0.01；别的数、线性轴照旧写小数。纯函数 `web/src/lib/logPower.ts`（`pow10Label` / `formatAxisLimit`），只管显示，写进文档的值不变。
+- **改完元素新探出图幅，Agent 自己腾边距。** 改成对数轴后刻度文字变宽（0.8 → 10⁻¹），会把纵轴标题挤出图幅左边。后端在候选渲染之后比一遍 `normalize.per_element_clipping`（判据 `preflight.element_overflow`）：相对改前**新增或加重**（容差同 `normalize.WORSEN_TOL_*`）就调现成的 `normalize.adapt_margins`（方向由 `repair_directions` 定，与 `specfix.transaction` 的外边距修复循环同一套），最多 `MAX_REPAIR_ROUNDS` 轮，每轮重新渲染，有新 warning 或没进步就退回上一版；冲突 / 装不下 = 静默不补，照常出卡（`changeplan.make_room`）。模型自己提了 `position` 的方案不替它补。
+  补出的 `axes.position` 是组里的一条改动（`change.auto = "room"`，`before` / `after` / `patch` 与别的改动同形），**跟着造成出界的组走**（`changeplan.attach_room`）：碰到出界元素所在子图（或被挪位的子图）的组各带同一份 position（应用时同键后者赢，规范化后只剩一条）；一个组也认不出（图级元素）就并进所有组；只有一组有效改动时就是并进那一组。所以取消勾选那一组、或在对数下限确认里点「不改」时，边距一起不应用，不会留下单独的挪位。`apply_groups` / `changePlanApply.applyGroups` 只读每条 change 的 `patch`，组与 patch 结构没变，同源对向量不动。
+  清单里这一组的灰字多一句「腾出边距，放下轴标签」（`dialog.roomNote`，英文 "Made room for the axis label"）。批注重改时 `auto` 标记随上一版的组带着走（`carried_groups`）。

@@ -1013,3 +1013,96 @@ def test_a_comment_split_between_label_and_script_is_only_needs_script(env):
         ("a1", "needs_script")
     ]
     assert [k for k, _ in worker.calls] == ["snap"]  # 没有候选渲染
+
+
+# --------------------------------------------------------------------------- 改后元素出图幅：自动腾边距（维护者 2026-11-26）
+def _room_base():
+    """两列并排的图（合成 manifest）；axes_0 的 yscale / ylim 带类型，好让模型的提议过校验。"""
+    from tests.test_normalize import _two_column_manifest
+
+    base = _two_column_manifest()
+    ax0 = next(e for e in base["elements"] if e["gid"] == "axes_0")
+    for f in ax0["editable"]:
+        f["type"] = {"xlim": "pair", "ylim": "pair", "position": "rect"}.get(f["prop"], "text")
+    ax0["editable"].append(
+        {"prop": "yscale", "type": "enum", "value": "linear", "options": ["linear", "log"]}
+    )
+    return base
+
+
+class RoomWorker(FakeWorker):
+    """改成对数轴后刻度变宽，把纵轴标题挤出左边；子图往右挪（`position`）它的装饰物就跟着挪。"""
+
+    def __init__(self, base, *, can_move=True):
+        super().__init__()
+        self.base, self.can_move = base, can_move
+
+    def _manifest(self, patches):
+        out = json.loads(json.dumps(self.base))
+        els = {e["gid"]: e for e in out["elements"]}
+        log = any(p["prop"] == "yscale" and p["value"] == "log" for p in patches)
+        for p in patches:
+            if p["gid"] not in els:  # 共用夹具里的 B0 点着别的元素
+                continue
+            fields = {f["prop"]: f for f in els[p["gid"]]["editable"]}
+            if p["prop"] == "position":
+                dx = p["value"][0] - fields["position"]["value"][0] if self.can_move else 0.0
+                for e in out["elements"]:
+                    if e["gid"].startswith(p["gid"] + ".") and e["role"] in ("axis_label", "ticks"):
+                        e["bbox"][0] += dx
+            if p["prop"] in fields:
+                fields[p["prop"]]["value"] = p["value"]
+        if log:
+            els["axes_0.ylabel"]["bbox"][0] -= 0.04
+        return out
+
+
+def _room_env(env, monkeypatch, **kw):
+    _m, client, _figs, _old, model, _retired = env
+    worker = RoomWorker(_room_base(), **kw)
+    monkeypatch.setattr(_m, "_resolve_engine_worker", lambda rel_id, **k: (worker, "Kin"))
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("axes_0", "yscale", "log")]}],
+        "unhandled": [],
+    }
+    return client, worker
+
+
+def test_a_change_that_pushes_an_element_out_of_the_figure_comes_back_with_the_margin_move_in_the_same_group(
+    env, monkeypatch
+):
+    client, worker = _room_env(env, monkeypatch)
+    out = run_assistant(client)
+    assert out["state"] == "ready", out
+    plan = out["plan"]
+    (group,) = plan["groups"]
+    by = {(c["target_gid"], c["prop"]): c for c in group["changes"]}
+    assert set(by) >= {("axes_0", "yscale"), ("axes_0", "ylim"), ("axes_0", "position")}
+    room = by[("axes_0", "position")]
+    assert room["auto"] == "room" and room["after"][0] > room["before"][0]
+    assert "auto" not in by[("axes_0", "yscale")]
+    # 勾着这一组：边距在候选里；取消它（或在对数下限确认里点「不改」）：边距一起不在
+    assert any(e["prop"] == "position" for e in plan["candidate_patches"])
+    assert not [
+        e
+        for e in cp.apply_groups(plan["base_patches"], plan["groups"], set())
+        if e["prop"] == "position"
+    ]
+    assert [
+        e
+        for e in cp.apply_groups(plan["base_patches"], plan["groups"], {group["key"]})
+        if e["prop"] == "position"
+    ]
+    assert group["confirm"]["kind"] == "log_lower_limit"
+    # 后图是补过边距的那一版
+    assert any(p["prop"] == "position" for p in worker.calls[-1][1])
+
+
+def test_when_the_margins_cannot_make_room_the_plan_still_comes_out_without_a_position(
+    env, monkeypatch
+):
+    client, _worker = _room_env(env, monkeypatch, can_move=False)
+    out = run_assistant(client)
+    assert out["state"] == "ready", out
+    (group,) = out["plan"]["groups"]
+    assert all(c["prop"] != "position" for c in group["changes"])

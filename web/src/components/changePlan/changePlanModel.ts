@@ -30,6 +30,8 @@ export interface GroupView {
   commentNumbers: number[]
   /** 续改出的版本里，这一组是按用户批注改的（清单里置顶、单独标注） */
   fromNote: boolean
+  /** 这一组里带着自动腾出的边距（`change.auto === 'room'`）：清单行的灰字里多说一句 */
+  room?: boolean
   /** 改动处的框，一处一个；`before` 是同一处在修改前的位置（按元素 gid 配对，没有 = 改前没有这一处） */
   boxes: { after: PlanBox; before?: PlanBox }[]
 }
@@ -54,7 +56,7 @@ export function groupViews(e: PlanEntry): GroupView[] {
   const plan = e.plan
   if (!plan) return []
   // 答了「不改」的组整组不要：不进清单，它那条意见在没处理列表里（`unhandledViews`）
-  return plan.groups.flatMap((g: ChangePlanGroup, i) => (e.answers?.[g.key] === 'no' ? [] : [groupView(e, g, i)]))
+  return plan.groups.flatMap((g: ChangePlanGroup, i) => (e.answers?.[g.key] === 'no' ? [] : [{ ...groupView(e, g, i), room: g.changes.some((c) => c.auto === 'room') }]))
 }
 
 function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {

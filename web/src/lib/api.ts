@@ -4128,6 +4128,8 @@ export interface ChangePlanChange {
   /** manifest 的展示值（格式可能与 override 的值不同，只用来显示） */
   before: unknown
   after: unknown
+  /** 后端自动补的改动（不是模型提的）：`room` = 改完有元素探出图幅，把子图往里挪腾出边距；跟着造成出界的那一组走 */
+  auto?: 'room'
   /** 应用时写进文档的那条 override（进入候选列表、规范化之后） */
   patch: ChangePlanPatch
 }

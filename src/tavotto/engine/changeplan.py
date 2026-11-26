@@ -36,7 +36,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ai_structured, config, license as engine_license, patchspec, reviewinbox
+from . import (
+    ai_structured,
+    config,
+    interference,
+    license as engine_license,
+    normalize,
+    patchspec,
+    reviewinbox,
+)
 
 LOG = logging.getLogger("tavotto.changeplan")
 
@@ -801,6 +809,8 @@ def effective_changes(
                     dead = True
                     continue
             changes.append({"target_gid": gid, "prop": prop, "before": before, "after": after})
+            if ch.get("auto"):
+                changes[-1]["auto"] = ch["auto"]
             box_b, box_a = _box_of(b_el), _box_of(a_el)
             if box_b is not None and len(boxes_b) < MAX_BOXES:
                 boxes_b.setdefault(gid, box_b)
@@ -855,6 +865,135 @@ def apply_groups(base: list, groups: list[dict], keys: object) -> list[dict]:
         if g["key"] in chosen:
             out.extend(ch["patch"] for ch in g["changes"])
     return patchspec.canonicalize(out)
+
+
+# --------------------------------------------------------------------------- 改完之后元素出图幅：自动腾边距（维护者 2026-11-26）
+ROOM_AUTO = "room"
+
+
+def worsened_overflow(before_manifest: dict, after_manifest: dict) -> list[dict]:
+    """改后相对改前**新增或加重**的「元素超出图幅」（逐元素，`normalize.per_element_clipping`，判据 `preflight.element_overflow`）。
+    「加重」的容差与规范化事务同一份（`normalize.WORSEN_TOL_*`）；改前就已经出界的不管。"""
+    before = {
+        c["gids"][0]: c["detail"]["overflow_mm"]
+        for c in normalize.per_element_clipping(before_manifest)
+    }
+    out = []
+    for c in normalize.per_element_clipping(after_manifest):
+        m0 = before.get(c["gids"][0])
+        m1 = c["detail"]["overflow_mm"]
+        if m0 is None or m1 > max(m0 * normalize.WORSEN_TOL_RATIO, m0 + normalize.WORSEN_TOL_MM):
+            out.append(c)
+    return out
+
+
+def _excess(need: list[dict]) -> float:
+    return sum(c["detail"]["overflow_mm"] for c in need)
+
+
+@dataclass
+class Room:
+    """`make_room` 的结果：补了外边距的候选、它渲染出的 manifest、补出来的 `axes.position`（`{gid: 条目}`，带元素 identity）、原本出界的元素。"""
+
+    candidate: list
+    manifest: dict
+    positions: dict[str, dict]
+    need: list[dict]
+
+
+def make_room(
+    before_manifest: dict,
+    after_manifest: dict,
+    candidate: list,
+    base: list,
+    render: Callable[[list], dict | None],
+) -> Room | None:
+    """改后出现新增 / 加重的出界时，用现成的外边距重排腾地方（`normalize.adapt_margins`，与 `specfix.transaction` 的修复循环同一套：
+    `repair_directions` 定方向、最多 `MAX_REPAIR_ROUNDS` 轮、每轮重新渲染、没进步就退回上一版）。
+
+    `render(patches) -> manifest | None`：渲染候选，**有新增 warning 返回 None**（这一轮不收，退回上一版）。
+    没有出界 / 没补出任何东西（冲突、装不下、没进步）= `None`——方案照常出卡，不报错。"""
+    need = worsened_overflow(before_manifest, after_manifest)
+    if not need:
+        return None
+    by_gid = _by_gid(before_manifest)
+    contract = normalize.build_contract(
+        before_manifest,
+        {},
+        profile=None,
+        base_patches=base,
+        profile_issues=[],
+        meta={"source": "change-plan"},
+    )
+    cand, man, left = list(candidate), after_manifest, need
+    added: dict[str, dict] = {}
+    for _round in range(normalize.MAX_REPAIR_ROUNDS):
+        step = normalize.adapt_margins(
+            contract, man, directions=normalize.repair_directions(left) or None
+        )
+        if "conflict" in step or not step["patches"]:
+            break
+        if normalize.authorize(contract, normalize.merge_patches(base, step["patches"])):
+            break  # 越出了「只许挪子图位置」的约定：不收
+        entries = {
+            p["gid"]: _entry(p["gid"], "position", p["value"], by_gid.get(p["gid"]))
+            for p in step["patches"]
+        }
+        trial = [*cand, *entries.values()]
+        m2 = render(trial)
+        if m2 is None:
+            break
+        left2 = worsened_overflow(before_manifest, m2)
+        if _excess(left2) >= _excess(left) - 0.01:
+            break  # 没进步
+        cand, man, left = trial, m2, left2
+        added.update(entries)
+        if not left:
+            break
+    if not added:
+        return None
+    return Room(cand, man, added, need)
+
+
+def attach_room(
+    groups: list[dict], room: Room, before_manifest: dict, after_manifest: dict
+) -> list[dict]:
+    """把补出来的 `axes.position` 并进「造成出界」的那些组（改动行带 `auto: "room"`），取消勾选 / 答「不改」那一组时边距一起不应用。
+
+    规则：碰到出界元素所在子图（或被挪位的子图）的组都带这些 position（各组带同一份条目，应用时同键后者赢、规范化后只剩一条）；
+    一个组也认不出（图级元素 / 认不得的 gid）就并进所有组。只有一组有效改动时就是并进那一组。
+    组里本来就有模型自己提的、同一元素的 position（非 `auto`）时不覆盖它。"""
+    owners = {interference.owner_axes(g) for c in room.need for g in c["gids"]}
+    owners |= {interference.owner_axes(g) for g in room.positions}
+    owners.discard("")
+    related = [
+        g
+        for g in groups
+        if owners and any(interference.owner_axes(c["target_gid"]) in owners for c in g["changes"])
+    ]
+    canon = {(e["gid"], e["prop"]): e for e in patchspec.canonicalize(room.candidate)}
+    b_els, a_els = _by_gid(before_manifest), _by_gid(after_manifest)
+    for g in related or groups:
+        for gid, entry in room.positions.items():
+            if any(
+                c["target_gid"] == gid and c["prop"] == "position" and not c.get("auto")
+                for c in g["changes"]
+            ):
+                continue
+            g["changes"] = [
+                c for c in g["changes"] if not (c["target_gid"] == gid and c["prop"] == "position")
+            ]
+            g["changes"].append(
+                {
+                    "target_gid": gid,
+                    "prop": "position",
+                    "before": _value_of(b_els.get(gid), "position")[1],
+                    "after": _value_of(a_els.get(gid), "position")[1],
+                    "auto": ROOM_AUTO,
+                    "patch": dict(canon.get((gid, "position"), entry)),
+                }
+            )
+    return groups
 
 
 # --------------------------------------------------------------------------- 方案
@@ -975,7 +1114,12 @@ def carried_groups(plan: dict, proposal: dict) -> list[dict]:
     out: list[dict] = []
     for g in plan.get("groups") or []:
         changes = [
-            {"gid": c["target_gid"], "prop": c["prop"], "value": c["patch"]["value"]}
+            {
+                "gid": c["target_gid"],
+                "prop": c["prop"],
+                "value": c["patch"]["value"],
+                **({"auto": c["auto"]} if c.get("auto") else {}),
+            }
             for c in g["changes"]
             if (c["target_gid"], c["prop"]) not in taken
         ]

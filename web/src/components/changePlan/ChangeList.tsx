@@ -108,6 +108,7 @@ function GroupRow({
           <span className={cn('text-sm', checked ? 'text-ink' : 'text-ink-3')}>{g.summary}</span>
           <span className="type-meta">
             {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}
+            {g.room ? ` · ${cp('dialog.roomNote')}` : ''}
           </span>
         </span>
       </label>

@@ -903,6 +903,7 @@
       "changes_other": "Changes · {{count}}",
       "groupMeta_one": "{{who}} · {{count}} change",
       "groupMeta_other": "{{who}} · {{count}} changes",
+      "roomNote": "Made room for the axis label",
       "groupMetaNoWho_one": "{{count}} change",
       "groupMetaNoWho_other": "{{count}} changes",
       "groupN": "Comment {{n}}",

@@ -125,7 +125,7 @@ it('带确认的组：卡上只有一句问话 + 「一起改」「不改」，�
   await put(entry('a', [LOG]))
   await render(<ChangePlanTranscript panelId="p1" />)
   const card = q('[data-change-plan-card="ready"]')!
-  expect(card.textContent).toContain('对数轴的下限必须大于 0，要把纵轴下限一起改成 0.01 吗？')
+  expect(card.textContent).toContain('对数轴的下限要大于 0，把纵轴下限一起改成 10⁻² 吗？')
   expect(q('[data-change-plan-confirm-log="yes"]')?.textContent).toBe('一起改')
   expect(q('[data-change-plan-confirm-log="no"]')?.textContent).toBe('不改')
   expect(q('[data-change-plan-view]')).toBeNull()
@@ -203,4 +203,23 @@ it('英文复数：1 place / 3 places，1 change / 3 changes，没有「1 places
   await render(<ChangePlanDialog />)
   expect(q('[data-change-group="g2"]')?.textContent).toContain('1 change')
   expect(q('[data-change-group="g2"]')?.textContent).not.toMatch(/^\s*1\s*$/)
+})
+
+it('带自动腾出的边距的组：清单行灰字里多一句「腾出边距，放下轴标签」；没有的组没有；英文同样', async () => {
+  const room: ChangePlanGroup = {
+    ...LOG,
+    confirm: undefined,
+    changes: [
+      ...LOG.changes,
+      { target_gid: 'ax0', prop: 'position', before: [0.1, 0.1, 0.8, 0.8], after: [0.14, 0.1, 0.76, 0.8], auto: 'room', patch: { gid: 'ax0', prop: 'position', value: [0.14, 0.1, 0.76, 0.8] } },
+    ],
+  }
+  await put(entry('a', [room, TITLE]))
+  act(() => cps().openDialog('a'))
+  await render(<ChangePlanDialog />)
+  expect(q('[data-change-group="g1"]')?.textContent).toContain('腾出边距，放下轴标签')
+  expect(q('[data-change-group="g2"]')?.textContent).not.toContain('腾出边距')
+  await setLocale('en-US')
+  await render(<ChangePlanDialog />)
+  expect(q('[data-change-group="g1"]')?.textContent).toContain('Made room for the axis label')
 })

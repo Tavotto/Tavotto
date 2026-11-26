@@ -12652,6 +12652,25 @@ def _change_plan_compute(
                 raise ec.PlanFailure("change_plan_render_failed", "warning")
             groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
             groups = ec.attach_patches(groups, cand)
+            # 改完有元素新探出图幅（对数轴刻度变宽把纵轴标题挤出去之类）：用现成的外边距重排腾地方，补出的 position 并进造成出界的那些组。
+            # 模型自己提了 position 的（用户的意思在排版上）不替它改；补不下 / 没进步 / 有新 warning = 照常出卡
+            if not any(
+                c["prop"] == "position" and not c.get("auto")
+                for g in proposal["groups"]
+                for c in g["changes"]
+            ):
+
+                def room_render(patches: list):
+                    resp = override(patches)
+                    return None if warned(resp) - base_warned else resp.get("manifest")
+
+                room = ec.make_room(before_man, after_man, cand, base, room_render)
+                if room is not None:
+                    cand = room.candidate
+                    after_png, after_man = snapshot(cand)
+                    groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
+                    groups = ec.attach_patches(groups, cand)
+                    groups = ec.attach_room(groups, room, before_man, after_man)
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         _require_route_unchanged(rel_id)

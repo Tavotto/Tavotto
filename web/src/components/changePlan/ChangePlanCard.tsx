@@ -9,6 +9,7 @@ import { Check, RefreshCw } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { StatusPill } from '../ui/StatusPill'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
+import { formatAxisLimit } from '@/lib/logPower'
 import { cp, effectiveStatus, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
@@ -121,7 +122,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 : status === 'stale'
                   ? cp('card.stale')
                   : ask?.confirm
-                    ? cp(`card.logLimitAsk`, { axis: cp(ask.confirm.axis === 'x' ? 'card.axisX' : 'card.axisY'), to: ask.confirm.to })
+                    ? cp(`card.logLimitAsk`, { axis: cp(ask.confirm.axis === 'x' ? 'card.axisX' : 'card.axisY'), to: formatAxisLimit(ask.confirm.to, true) })
                     : summaryLine(entry)}
           </p>
         )}
