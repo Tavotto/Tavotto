@@ -11950,6 +11950,7 @@ def api_pro_quick_layout_plan():
     """一键排版（ADR 0199，高级功能 `quick-layout`）。**只算不写**，照 `/api/engine/specfix`：
 
     请求：`{panels: [{key, id, patches, box}], fixed: [{key, box}], page: {w, h, margin}, target, gap_mm, profile, label_pt, fix_spec, columns?, canvas: keep|fit, ratios?: {cols, rows}}`。成功时另回 `grid`（行列、每张图的格子、比例），前端画分隔线用。
+    只有一张可排的图时做图内排版（`engine_quicklayout.plan_figure`，ADR 0199 §十二）：回的形状相同，另带 `mode: "figure"`、`grid: null`。
     `patches` 是每张图此刻的全量 override 列表（B0），`box` 是画布上的摆放（mm）。
     成功回 `{ok: true, panels: [{key, patches, box}], labels: [{key, x, y}], notes}`，由前端一次 commit；
     失败回 `{ok: false, code}`，每张图的 worker 回到 B0（或作废），**文档一个字不改**。
@@ -12048,22 +12049,38 @@ def api_pro_quick_layout_plan():
 
     ql_ctx = _request_ctx()  # 并行渲染线程没有 request context，要钉在发起请求的项目上
     try:
-        out = engine_quicklayout.plan(
-            panels,
-            fixed,
-            page=page,
-            target=str(body.get("target") or "double"),
-            gap_mm=gap_mm,
-            profile=profile,
-            label_pt=label_pt,
-            fix_spec=body.get("fix_spec") is not False,
-            columns=int(body["columns"])
-            if isinstance(body.get("columns"), int) and not isinstance(body.get("columns"), bool)
-            else None,
-            canvas=str(body.get("canvas") or "fit"),
-            ratios=body.get("ratios") if isinstance(body.get("ratios"), dict) else None,
-            bind=(lambda: bound_project(ql_ctx)) if ql_ctx is not None else None,
-        )
+        if len(panels) == 1:
+            # 作用范围里只有一张可排的图：同一个按钮做「图内排版」（ADR 0199 §十二）。
+            # 它有没有 ≥ 2 个主坐标轴要先渲出 B0 才知道（前端此刻不一定有精确 manifest），不够就回 too_few
+            out = engine_quicklayout.plan_figure(
+                panels[0],
+                fixed=fixed,
+                outer_gap_mm=gap_mm,
+                page=page,
+                target=str(body.get("target") or "double"),
+                profile=profile,
+                label_pt=label_pt,
+                fix_spec=body.get("fix_spec") is not False,
+                canvas=str(body.get("canvas") or "fit"),
+            )
+        else:
+            out = engine_quicklayout.plan(
+                panels,
+                fixed,
+                page=page,
+                target=str(body.get("target") or "double"),
+                gap_mm=gap_mm,
+                profile=profile,
+                label_pt=label_pt,
+                fix_spec=body.get("fix_spec") is not False,
+                columns=int(body["columns"])
+                if isinstance(body.get("columns"), int)
+                and not isinstance(body.get("columns"), bool)
+                else None,
+                canvas=str(body.get("canvas") or "fit"),
+                ratios=body.get("ratios") if isinstance(body.get("ratios"), dict) else None,
+                bind=(lambda: bound_project(ql_ctx)) if ql_ctx is not None else None,
+            )
         for st in states:
             _require_route_unchanged(st["id"])
     except engine_quicklayout.QuickLayoutError as exc:
