@@ -681,12 +681,15 @@ def require_log_lower_limits(proposal: dict, manifest: object) -> dict:
                     unhandled.append(item)
                 continue
             value = [to, hi] if lim[0] <= lim[1] else [hi, to]
+            added = {"gid": ch["gid"], "prop": lim_prop, "value": value}
             if own is not None:
-                own["value"] = value
+                # 模型自己提了下限：换成新条目（它可能在别的组里），不原地改字段的 value
+                added = {**own, **added}
+                for other in groups:
+                    other["changes"] = [added if c is own else c for c in other["changes"]]
             else:
-                added = {"gid": ch["gid"], "prop": lim_prop, "value": value}
                 g["changes"].append(added)
-                index[(ch["gid"], lim_prop)] = added
+            index[(ch["gid"], lim_prop)] = added
             note = {"kind": LOG_CONFIRM_KIND, "axis": axis, "gid": ch["gid"], "from": lo, "to": to}
             if "confirm" in g:  # 同一组把两根轴都改成对数：问第一根，另一根的一并带上、记在 `also`
                 g["confirm"].setdefault("also", []).append(note)
