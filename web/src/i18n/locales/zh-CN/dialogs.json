@@ -2559,7 +2559,7 @@
     "zoomOut": "缩小",
     "zoomFit": "适配",
     "diffTitle": "与当前画布相比",
-    "quickNameTitle": "把现在存为命名节点",
+    "quickNameTitle": "给这一版起名字",
     "scrubberLabel": "版本时间条：←/→ 逐个查看，回车打开"
   },
   "onboarding": {

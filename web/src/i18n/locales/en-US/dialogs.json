@@ -2593,7 +2593,7 @@
     "zoomOut": "Zoom out",
     "zoomFit": "Fit",
     "diffTitle": "Compared with the current canvas",
-    "quickNameTitle": "Save this moment as a named point",
+    "quickNameTitle": "Name this version",
     "scrubberLabel": "Version strip: ←/→ to step through, Enter to open"
   },
   "onboarding": {

@@ -4046,7 +4046,7 @@ export default interface Resources {
       "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
       "previewCanvasMissing": "这个节点记录的画布不在它的排版里，无法预览或恢复。",
       "previewTitle": "预览：{{time}} {{name}}",
-      "quickNameTitle": "把现在存为命名节点",
+      "quickNameTitle": "给这一版起名字",
       "rename": "改名…",
       "restore": "恢复到这里",
       "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
