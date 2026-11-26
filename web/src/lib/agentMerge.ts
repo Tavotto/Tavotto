@@ -213,18 +213,48 @@ export function mergeAgentAdditions(m: MergeableAdditions): boolean {
 /** 顶栏胶囊的 owner：同一条提醒只挂一个，并进来 / 换了排版之后由它认领清掉 */
 export const AGENT_MERGE_OWNER = 'agentMerge'
 
-/** 并进来，并在状态栏说一句结果（胶囊与冲突对话框共用） */
+let undoRunner: (() => void) | null = null
+/** 状态栏「撤销」走与 ⌘Z 同一个入口（`useKeyboard.runUndoRedo`）：那一处不能被本模块 import（成环），由它交进来 */
+export function setAgentMergeUndoRunner(run: () => void): void {
+  undoRunner = run
+}
+
+/** 含删除的那次并入，状态栏带「撤销」挂多久（之后照常收起，⌘Z 仍可撤） */
+export const AGENT_MERGE_UNDO_DISMISS_MS = 10_000
+
+/**
+ * 并进来，并在状态栏说一句结果（胶囊与冲突对话框共用）。
+ *
+ * 含**删除**的那次（维护者 2026-11-26 选「加一个撤销按钮」：东西少了比多了难察觉）：那句话旁边挂「撤销」，点了撤的是这一次并入——
+ * 只在同一份文档、栈顶还是这一条历史时撤；之后又改了别的，撤的就是别的了，只收起提示（同一键排版的胶囊）。
+ */
 export function mergeAndReport(m: MergeableAdditions): boolean {
   const ok = mergeAgentAdditions(m)
-  if (ok) {
-    useUiStore
-      .getState()
-      .setStatus(
-        msg(m.onlyAdded ? 'agentMerge.done' : 'agentMerge.doneEdit', { count: m.count }, 'workspace'),
-        'done',
-        { owner: AGENT_MERGE_OWNER },
-      )
+  if (!ok) return false
+  const ui = useUiStore.getState()
+  const text = msg(m.onlyAdded ? 'agentMerge.done' : 'agentMerge.doneEdit', { count: m.count }, 'workspace')
+  if (!m.diff.deleted.length) {
+    ui.setStatus(text, 'done', { owner: AGENT_MERGE_OWNER })
+    return ok
   }
+  const s = useDocumentStore.getState()
+  const entry = s.past.at(-1)
+  const documentId = s.documentId
+  // 说明这次「含删除」——那颗「撤销」为什么在这里（agy 审核意见）；「保存后写进项目」顶栏圆点已经在说，这句不再重复
+  ui.setStatus(msg('agentMerge.doneDeleted', { count: m.count }, 'workspace'), 'done', {
+    owner: AGENT_MERGE_OWNER,
+    dismissMs: AGENT_MERGE_UNDO_DISMISS_MS,
+    action: {
+      label: msg('agentMerge.undo', undefined, 'workspace'),
+      run: () => {
+        const cur = useDocumentStore.getState()
+        if (cur.documentId === documentId && entry && cur.past.at(-1) === entry) {
+          if (undoRunner) undoRunner() // 它自己会说「已撤销…」
+          else cur.undo()
+        } else useUiStore.getState().setStatus(null)
+      },
+    },
+  })
   return ok
 }
 

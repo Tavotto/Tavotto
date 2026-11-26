@@ -229,7 +229,7 @@ test(
 test(
   'Agent 改 / 删了已有对象：回到前台按字段并进画布、一步撤销；桌面也改过别处时 ⌘S 直接并进来再保存，不弹对话框',
   { tag: '@feature:layout.agent-merge' },
-  async ({ app, page }) => {
+  async ({ app, page }, testInfo) => {
     const a = await app()
     const file = writeLayout(a.figures)
     await page.setViewportSize({ width: 1440, height: 900 })
@@ -250,8 +250,12 @@ test(
     agentEdits(a.figures, a.dataDir, 'e1', { t_e2e1txt: { text: 'Agent edited' } }, ['a_e2e1arw'])
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'agentMerge.doneEdit')
-    await page.keyboard.press('ControlOrMeta+z')
+    await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'agentMerge.doneDeleted')
+    // 含删除：那句话旁边挂「撤销」（维护者 2026-11-26），点它与 ⌘Z 撤的是同一步
+    const undo = page.locator('[data-toast-action]')
+    await expect(undo).toHaveCount(1)
+    await shots(page, 'agent-merge-delete-undo', (p) => testInfo.outputPath(p))
+    await undo.click()
     await expect(stage.getByText('Agent note', { exact: true })).toBeVisible()
     await page.keyboard.press('ControlOrMeta+Shift+z')
     await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible()

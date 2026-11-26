@@ -2046,7 +2046,9 @@
   "agentMerge": {
     "commitEdit_other": "并入 Agent 的 {{count}} 处改动",
     "commit_other": "并入 Agent 加的 {{count}} 个标注",
+    "doneDeleted_other": "已并入 Agent 的 {{count}} 处改动（含删除）",
     "doneEdit_other": "已并入 Agent 的 {{count}} 处改动，保存后写进项目",
+    "undo": "撤销",
     "done_other": "已并入 {{count}} 个标注，保存后写进项目"
   }
 }

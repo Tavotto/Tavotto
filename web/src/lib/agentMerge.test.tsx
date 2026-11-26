@@ -15,7 +15,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 import { ApiError, fetchAgentAdditions, saveLayout, type AgentCanvasDiff } from '@/lib/api'
 import { literal } from '@/i18n'
-import { mergeAgentAdditions, mergeableAgentAdditions, planAgentMerge, watchAgentAdditions } from '@/lib/agentMerge'
+import { mergeAgentAdditions, mergeAndReport, mergeableAgentAdditions, planAgentMerge, watchAgentAdditions } from '@/lib/agentMerge'
 import { writeBoundProjectFile } from '@/store/projectSave'
 import { captureSaveContext } from '@/store/saveContext'
 import { setCurrentProjectId } from '@/lib/session'
@@ -318,6 +318,51 @@ describe('ADR 0212：Agent 改 / 删 / 重排过——按字段三方合并，�
     })
     expect(mergeAgentAdditions(m)).toBe(false)
     expect(activeProjectFile()).toMatchObject({ revision: 'rev-base' })
+  })
+})
+
+describe('维护者 2026-11-26：含删除的那次并入，状态栏那句话旁边挂「撤销」', () => {
+  const deleting = () => ({
+    available: true,
+    revision: 'rev-disk',
+    count: 1,
+    canvases: [diff({ deleted: [arrow('a_mine0001')], order: [] })],
+  })
+
+  it('删了东西：带「撤销」，点了把这次并入撤回、东西回来', async () => {
+    mockAdd.mockResolvedValue(deleting())
+    const m = (await mergeableAgentAdditions())!
+    expect(mergeAndReport(m)).toBe(true)
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+    const st = useUiStore.getState()
+    expect(st.status?.key).toBe('agentMerge.doneDeleted')
+    expect(st.statusAction?.label.key).toBe('agentMerge.undo')
+    st.statusAction!.run()
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['a_mine0001'])
+  })
+
+  it('之后又改了别的：点「撤销」不去撤别人的那一步，只收起提示', async () => {
+    mockAdd.mockResolvedValue(deleting())
+    const m = (await mergeableAgentAdditions())!
+    mergeAndReport(m)
+    const action = useUiStore.getState().statusAction!
+    useDocumentStore.getState().commit(literal('又加一个'), (d) => {
+      d.objects.push(arrow('a_later001'))
+    })
+    action.run()
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['a_later001'])
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('没删东西（只改 / 只加）：不挂按钮，照旧一句话', async () => {
+    mockAdd.mockResolvedValue({
+      available: true,
+      revision: 'rev-disk',
+      count: 1,
+      canvases: [diff({ changed: [{ before: arrow('a_mine0001'), after: { ...arrow('a_mine0001'), strokePt: 1 } }] })],
+    })
+    mergeAndReport((await mergeableAgentAdditions())!)
+    expect(useUiStore.getState().statusAction).toBeNull()
   })
 })
 
