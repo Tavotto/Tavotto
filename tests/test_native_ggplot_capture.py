@@ -297,6 +297,18 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
         assert client.post("/api/export/validate", json=request).json["conflicts"] == [edited.name]
 
+        without_title_resize = [
+            patch for patch in patches if patch["gid"] in ("plot.title", "axis.x.bottom.ticks")
+        ]
+        tick_request = {
+            **request,
+            "filename": "Tick styles",
+            "original": {"figure_id": figure, "overrides": without_title_resize},
+        }
+        tick_export = client.post("/api/export", json=tick_request)
+        assert tick_export.status_code == 200, tick_export.get_json()
+        assert tick_export.json["outputs"][0]["script_report"] == {"written": 3, "skipped": []}
+
         # Geometry changes caused by data on disk must not become an edited source export.
         numbers.write_text("x,y\n1,2\n2,40\n3,3\n", encoding="utf-8")
         mismatch = client.post("/api/export", json={**request, "filename": "Changed"})

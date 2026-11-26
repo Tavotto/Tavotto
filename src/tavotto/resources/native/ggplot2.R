@@ -1322,9 +1322,9 @@ ggplot_table_for <- function(state, edits) {
     make_guides <- function() ggplot_guide_table(
       state, tick_edits, colour_edits, axis_sizes, guide_strokes, axis_changes, grid_edits, title_theme
     )
-    # Recreate the title cells on the same metrics device used by the initial
+    # Recreate resized text on the same metrics device used by the initial
     # capture, then draw the resulting table on the requested output device.
-    guides <- if (length(title_edits)) {
+    guides <- if (length(title_edits) || length(axis_sizes)) {
       with_svg_frame(state$frame_pt, function(capture) make_guides())$value
     } else make_guides()
     table <- guides$table
