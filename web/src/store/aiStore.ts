@@ -25,6 +25,7 @@ import {
   fetchAiRequest,
   fetchAiSession,
   isDefiniteRunFailure,
+  type AiEditStage,
   type AiSessionDetail,
   type AiAgentId,
   type AiAgentCaps,
@@ -116,6 +117,8 @@ export interface AiSession {
   finalized?: boolean
   /** `ai.stalled`：CLI 已静默这么多秒（只在 running 时有意义；又有输出 / 收尾即清）。只提示，进程没被杀 */
   stalledS?: number
+  /** 改图会话的任务清单进度（`ai.stage` 事件 / 接回时的会话详情）；收尾后留着，界面据此画「全部做完」 */
+  stage?: AiEditStage
   /**
    * 查询接回时拿到的是**临时快照**（非 running / cancelled，却还不是终态：如另一个服务进程的 `interrupt_all()` 刚写了
    * `interrupted`、pump 还没收尾）。本地 status 按 `toStatus` 映射（interrupted → failed），这个标志让它照样留在
@@ -304,6 +307,8 @@ interface AiState {
   appendDelta: (sid: string, kind: AiDeltaKind, text: string, rid?: string) => void
   /** `ai.task`：任务进入新阶段（并入 `task.phase`；会话还没有 task 时由事件建立）；会话不在本标签页 / 已经收尾 → 不动 */
   setTaskPhase: (sid: string, phase: 'correcting', taskType: string) => void
+  /** `ai.stage`：改图会话走到哪一步；会话不在本标签页 / 已经收尾 → 不动 */
+  setStage: (sid: string, stage: AiEditStage) => void
   /** `ai.stalled`：静默秒数；`null` = 又有输出了。会话不在本标签页 / 已经收尾 → 不动 */
   setStalled: (sid: string, idleS: number | null) => void
   /** 回 `true` = 这是本标签页此刻持有的会话、且这是它的第一条 `ai.done`；`false` 时调用方不许再做任何副作用（#589） */
@@ -918,6 +923,10 @@ export const useAiStore = create<AiState>((set, get) => ({
           : x,
       ),
     }))
+  },
+
+  setStage: (sid, stage) => {
+    set((s) => ({ sessions: s.sessions.map((x) => (x.id === sid && !x.finalized ? { ...x, stage } : x)) }))
   },
 
   setStalled: (sid, idleS) => {
@@ -1761,6 +1770,7 @@ function accept(
     ...(!settled && status !== 'running' && status !== 'cancelled' ? { provisional: true } : {}),
     ...(settled && detail?.error ? { error: detail.error } : {}),
     ...(settled && detail?.task ? { task: detail.task } : {}),
+    ...(detail?.stage ? { stage: detail.stage } : {}),
   }
   set((s) => {
     const { [rid]: _gone, ...rest } = s.submissions

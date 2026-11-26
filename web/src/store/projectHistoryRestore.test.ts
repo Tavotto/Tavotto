@@ -259,6 +259,8 @@ describe('复制（旧路径还在）', () => {
     expect(be.state.owners.get(id)).toBe('p_new')
     await vi.waitFor(() => expect(be.session('p_new').last?.doc_id).toBe(id))
     expect(be.state.calls.some((c) => c.startsWith('POST claim'))).toBe(false)
+    // 复制品另开这一份的时候请后端把复制源的改指表拷过来（后端重判、只拷改指表）
+    expect(be.state.calls).toContain('POST copied d_copy')
     expect(be.state.slots.get('d_copy')?.revision).toBe(slot.revision)
     expect(be.state.owners.get('d_copy')).toBe('p_old')
     expect(be.session('p_old').last?.doc_id).toBe('d_copy')

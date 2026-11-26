@@ -1308,7 +1308,7 @@
     "topBarReadOnly": "项目已关闭「允许写回原始文件」，可在项目设置里打开。",
     "updateFailed": "无法更新：{{error}}",
     "updatedIntro": "已更新以下文件：",
-    "verified_other": "已通过干净重放校验，{{count}} 个元素一致。",
+    "verified_other": "已从头重画核对，{{count}} 个元素一致。",
     "withAnnotations_other": "同时写回 {{count}} 条画布标注"
   },
   "kindSwitch": {
@@ -1434,5 +1434,13 @@
     "offsetAutoBare": "自动",
     "offsetReset": "自动",
     "editPathTip": "改字；要改字排的那条路径，在画布上 {{mod}} 双击这段字"
+  },
+  "relink": {
+    "choose": "选脚本接回",
+    "linked": "已接到 {{script}}",
+    "note": "可能挪走或删了，仍显示上一版",
+    "otherScripts": "其他脚本",
+    "to": "接回 {{target}}",
+    "toRoot": "接回 项目根目录"
   }
 }

@@ -104,16 +104,25 @@ export function DataPanel() {
   // 误差线看的是**此刻预览的那一张**；重复测量一旦问过就留着（确认后后端不再问，但那一行要能再改）
   const shownCand = previewOf(candidates, thumbs, previewKey)
   const errKind = shownCand?.error ?? null
+  // 多个 y 各配各的误差列：各列都由列名自己说明才算「说明了」（单个 y 看 `error_stated`）；各列种类不一致时顶层没有 `error`
+  const colFacts = shownCand?.error_columns && shownCand.error_columns.length > 1 ? shownCand.error_columns : null
+  const statedAll = colFacts ? colFacts.every((c) => c.stated) : shownCand?.error_stated === true
+  const kindsDiffer = errKind == null && colFacts != null
+  // 各列不同、但其中有列名没说明是哪一种的（`unknown` / 没 `stated`）：那一列的含义仍未知，要留在「需要你确认」里
+  const mixedUnsure = kindsDiffer && colFacts!.some((c) => c.kind === 'unknown' || !c.stated)
   // 误差线的种类：点选过（`error_confirmed` / `answers.error`）或列名自己说明了（`error_stated`）都算已知，放在列角色下面；
   // 现成的误差列没说明是哪一种（`unknown`）且没点选 = 需要你确认，当前值写「还不确定」
-  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (shownCand?.error_stated === true && errKind !== 'unknown'))
+  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (statedAll && errKind !== 'unknown'))
   const designDone = answers.design === 'independent' || answers.design === 'repeated'
-  const pendingError = errKind != null && !errorDone
+  const usedKinds = kindsDiffer && !mixedUnsure
+    ? [...new Set(colFacts!.map((c) => c.kind))].map((k) => t(`dataFigureV2.confirm.short.${k}`)).join(t('dataFigureV2.confirm.join'))
+    : undefined
+  const pendingError = (errKind != null && !errorDone) || mixedUnsure
   const pendingDesign = designAsked && !designDone
   const confirm = (key: ConfirmKey) => (v: string) => useDataFigureStore.getState().setConfirm(key, v)
   const optLabel = (v: string) => t(`dataFigureV2.confirm.option.${v}`)
   /** 一行确认项：待确认时控件是空值 + 把当前取值写在触发器上（选任何一项，包括仍选当前这个，才算确认） */
-  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean) => (
+  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean, nowLabel?: string) => (
     <div key={key} data-data-role={key} className="contents">
       <Row label={rowLabel(t(`dataFigureV2.confirm.${key}`))} labelWidth={LABEL_W}>
         <Select
@@ -122,9 +131,9 @@ export function DataPanel() {
           ariaLabel={t(`dataFigureV2.confirm.${key}`)}
           onChange={confirm(key)}
           options={kinds.map((k) => ({ value: k, label: optLabel(k) }))}
-          title={optLabel(now)}
+          title={nowLabel ?? optLabel(now)}
           // 待确认时值是空的（选「当前这个」也要算一次选择），当前取值写在占位上
-          placeholder={done ? undefined : optLabel(now)}
+          placeholder={done ? undefined : (nowLabel ?? optLabel(now))}
         />
       </Row>
     </div>
@@ -250,6 +259,8 @@ export function DataPanel() {
               </Row>
             </div>
           )}
+          {/* 各列种类不同（没有顶层 error）：放在列角色下面、不进「需要你确认」，当前值把用到的几种按 y 的顺序去重列出（如「SD、SEM」）；选一种 = 所有列一起换 */}
+          {kindsDiffer && !mixedUnsure && confirmRow('error', ERROR_KINDS, 'mixed', false, usedKinds)}
           {errorDone && confirmRow('error', ERROR_KINDS, isErrorKind(answers.error) ? answers.error : errKind!, true)}
           {designAsked && designDone && confirmRow('design', DESIGNS, String(answers.design), true)}
         </div>
@@ -259,7 +270,7 @@ export function DataPanel() {
           <p data-data-confirm-title className="flex h-6 items-center type-caption">
             {t('dataFigureV2.confirm.title')}
           </p>
-          {pendingError && confirmRow('error', ERROR_KINDS, errKind === 'unknown' ? 'unsure' : errKind!, false)}
+          {pendingError && confirmRow('error', ERROR_KINDS, mixedUnsure ? 'mixed' : errKind === 'unknown' ? 'unsure' : errKind!, false)}
           {pendingDesign && confirmRow('design', DESIGNS, 'unsure', false)}
         </div>
       )}

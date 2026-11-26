@@ -27,7 +27,7 @@ vi.mock('@/store/renderScheduler', async (importOriginal) => ({
 import { setCurrentProjectId } from '@/lib/session'
 import { useDocumentStore } from './documentStore'
 import { useReviewStore } from './reviewStore'
-import { POLL_TIMEOUT, setChangePlanUndoRunner, useChangePlanStore } from './changePlanStore'
+import { nextPhase, POLL_TIMEOUT, setChangePlanUndoRunner, useChangePlanStore } from './changePlanStore'
 import { registerOverrideStamper } from './documentStore'
 import { effectiveStatus, failureAction } from '@/components/changePlan/changePlanModel'
 
@@ -132,6 +132,32 @@ describe('发起与轮询', () => {
     expect(e.status).toBe('ready')
     expect(e.afterSrc).toContain('/api/change-plans/p1/after.png')
     expect(e.afterSrc).toContain('pj=pj_a')
+  })
+
+  it('轮询把后端阶段记到卡上（三步清单按它勾），只前进：旧回包 / 不认识的阶段不让步骤退回去', async () => {
+    getChangePlan
+      .mockResolvedValueOnce({ plan_id: 'p1', state: 'running', phase: 'model' })
+      .mockResolvedValueOnce({ plan_id: 'p1', state: 'running', phase: 'render_before' })
+      .mockResolvedValueOnce({ plan_id: 'p1', state: 'running', phase: 'render_after' })
+      .mockResolvedValueOnce(ready())
+    const key = await request()
+    await tick()
+    expect(cps().entries[key].phase).toBe('model')
+    await tick()
+    expect(cps().entries[key].phase).toBe('model')
+    await tick()
+    expect(cps().entries[key].phase).toBe('render_after')
+    await tick()
+    expect(cps().entries[key].status).toBe('ready')
+  })
+
+  it('nextPhase：只前进；model 与 agent 同一级；不认识的不动', () => {
+    expect(nextPhase(undefined, 'render_before')).toBe('render_before')
+    expect(nextPhase('render_before', 'agent')).toBe('agent')
+    expect(nextPhase('agent', 'model')).toBe('agent')
+    expect(nextPhase('render_after', 'model')).toBe('render_after')
+    expect(nextPhase('model', 'x')).toBe('model')
+    expect(nextPhase(undefined, 3)).toBeUndefined()
   })
 
   it('同一张图同一批意见在途 / 待确认时再点 = 聚焦已有的卡，不发第二个请求', async () => {

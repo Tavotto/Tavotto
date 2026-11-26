@@ -55,6 +55,7 @@ Tavotto 是 AGPL 开源、本机运行；维护者 2026-11-25 判定按开源路
 ### 五、界面
 
 - 「连接 AI」里 OpenAI 一家的订阅方式只有「Continue with ChatGPT」（官方推荐文案，产品名不翻译；中文界面同一串）。**老用户也直接切换**（维护者 2026-11-25：「老用户直接切换成新的登录办法」）：Codex CLI 登录方式与 `sub:codex` 连接不再列出，老用户点一次「Continue with ChatGPT」即可（Codex 的令牌我们不读、不迁移）；`resolve_connection("sub:codex")` 仍认，已发出的旧请求不 404。
+- **失败时的选择题**（维护者 2026-11-25「用 1，失败时给选择题」）：登录没完成 / 超时 / 没允许订阅额度时，那一句后面给「改用 Codex 登录」（本机装了 Codex 才出现；重试就是原来的 Continue with ChatGPT）。点了先 `POST /api/ai/siwc/codex-fallback` 记下（`ai.siwc_codex_fallback`），之后这台机器一直列出 Codex 登录与 `sub:codex`，再走原来的 Codex 官方登录。
 - 失败兜底（新手不卡住）：额度用完 → 主按钮「Manage usage」开 `https://chatgpt.com/settings/usage`；不具备资格 → 选择题（填 API Key / 用 Codex 登录），**不循环 OAuth、不自动换计费**；
   `invalid_user` / 终态刷新错误 → 「重新登录」。文案与截图先过 agy、再给维护者看。
 - 官方 UX 指南里的「首次使用说明」「Using ChatGPT plan 指示」与本仓库「不加说明文字 / 卡片一句话」的界面规矩冲突：随截图交维护者定，不默认加。

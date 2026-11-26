@@ -44,6 +44,7 @@ let layoutGate: Promise<void> | null = null
 /** 同上，挂住本机自动保存的写盘（`saveNow()` 那一步） */
 let autosaveGate: Promise<void> | null = null
 let svgWarnings: string[] = []
+let layoutChartSources: import('@/lib/chartSourceReceipts').ChartSourceReceipt[] | undefined
 let layoutFigureSnapshots: Record<string, FigureSnapshot> | undefined
 
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
@@ -78,7 +79,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     projectFiles.set(name, String(init.body))
     written.push(String(init.body))
     return new Response(
-      JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json`, svg_snapshot_warnings: svgWarnings, figure_snapshots: layoutFigureSnapshots }),
+      JSON.stringify({ ok: true, revision: revisionOf(String(init.body)), name, file: `tavottofile/${name}.json`, svg_snapshot_warnings: svgWarnings, figure_snapshots: layoutFigureSnapshots, chart_sources: layoutChartSources }),
     )
   }
   return new Response('{}', { status: 404 })
@@ -113,6 +114,7 @@ beforeEach(async () => {
   layoutGate = null
   autosaveGate = null
   svgWarnings = []
+  layoutChartSources = undefined
   layoutFigureSnapshots = undefined
   forgetLayoutRevisions()
   setCurrentProjectId('pjA')
@@ -704,4 +706,21 @@ describe('project saves return immutable Figure references', () => {
     expect(s().projectFile?.dirty).toBe(rerun)
     expect(written).toHaveLength(1)
   })
+})
+
+it.each([false, true])('图表来源只归仍在当前项目的已提交面板（切项目=%s）', async (switched) => {
+  bind()
+  const digest = 'b'.repeat(64)
+  const panel: PanelObject = {
+    id: 'chart', type: 'panel', fileId: 'plot.svg', fileKind: 'svg',
+    nativeW: 20, nativeH: 10, x: 0, y: 0, w: 20, h: 10, overrides: [],
+    chart: { model: { scene_digest: digest }, binding: {} } as PanelObject['chart'],
+  }
+  s().commit(literal('chart'), d => { d.objects.push(panel) })
+  const source = { schema: 1 as const, sourceId: panel.fileId, bytesSha256: 'a'.repeat(64), sizeBytes: 20, sceneDigest: digest }
+  layoutChartSources = [{ canvas_index: 0, object_index: 0, canvas_id: s().activeCanvasId, panel_id: panel.id, chart_source: source }]
+  if (switched) beforeLayoutWrite = () => setCurrentProjectId('pjB')
+  await runManualSave()
+  expect(written).toHaveLength(1)
+  expect((s().doc.objects[0] as PanelObject).chartSource).toEqual(switched ? undefined : source)
 })

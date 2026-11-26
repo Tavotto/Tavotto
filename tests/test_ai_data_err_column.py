@@ -359,7 +359,7 @@ def test_dose_mean_sd_gives_line_err_first_with_the_sd_kind(tmp_path):
 
 def test_group_mean_sd_n_gives_points_err_first_and_n_is_never_an_axis(tmp_path):
     res = candidates(tmp_path, GROUPS)
-    assert codes(res) == ["points_err"]
+    assert codes(res) == ["points_err", "bar_err"]  # 柱 + 现成误差线排在点之后（2026-11-25）
     rec = first(res).recipe
     assert rec.family == "comparison" and rec.x == "group" and rec.y == ("mean",)
     assert (rec.err, rec.err_kind) == ("sd", "sd")
@@ -503,7 +503,7 @@ def test_group_summary_table_propose(project):
     put(figs, "data/g.csv", GROUPS)
     out = propose(client, render="lazy").get_json()
     assert out["kind"] == "candidates", out
-    assert [i["title_code"] for i in out["items"]] == ["points_err"]
+    assert [i["title_code"] for i in out["items"]] == ["points_err", "bar_err"]
     item = out["items"][0]
     assert item["values"]["x"] == "group" and item["values"]["y"] == ["mean"]
     assert item["error"] == "sd" and item["error_stated"] is True
@@ -881,7 +881,7 @@ def test_a_label_column_with_an_id_like_name_is_still_the_category_axis(tmp_path
         )
     ]
     res = candidates(tmp_path, rows)
-    assert codes(res) == ["points_err"]
+    assert codes(res) == ["points_err", "bar_err"]  # 柱 + 现成误差线排在点之后（2026-11-25）
     top = res.items[0].recipe
     assert (top.x, top.y, top.err, top.err_kind) == ("sample", ("mean_yield",), "err", "unknown")
 

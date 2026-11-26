@@ -12,7 +12,7 @@
  *
  * `not_applicable` 不出现在任何列表里（不画）。
  */
-import type { ArtifactManifestSummary } from './api'
+import type { ArtifactAdvisory, ArtifactManifestSummary } from './api'
 
 export type InspectionTone = 'verified' | 'unknown' | 'failed'
 
@@ -52,7 +52,29 @@ export const CHECK_NAMES = [
   'dpi_tag',
   'raster_density',
   'text_size',
+  'glyphs',
 ] as const
+
+/**
+ * 「留意」的码（闭集，镜像 `rendercore/inspector.ADVISORIES`，`tests/test_export_submission_checks.py` 看护）：
+ * 成品能用、不算失败，但投稿时可能被退，或者有更好的做法。文案 `dialogs:export.inspection.advisory.<code>`；
+ * 不认识的码不画（老前端遇到新服务端不该显示一串英文码）。
+ */
+export const ADVISORY_CODES = ['type3_fonts', 'scripted_raster'] as const
+export type AdvisoryCode = (typeof ADVISORY_CODES)[number]
+
+/** 这一件产物上前端认得的留意（顺序照服务端给的） */
+export function knownAdvisories(
+  manifest: ArtifactManifestSummary | null | undefined,
+): ArtifactAdvisory[] {
+  const list = manifest?.advisories
+  // 形状不对（不是数组 / 项不是对象）按「没有认得的留意」处理，不让一行说明把结果块弄崩
+  if (!Array.isArray(list)) return []
+  return list.filter(
+    (a): a is ArtifactAdvisory =>
+      !!a && typeof a === 'object' && (ADVISORY_CODES as readonly string[]).includes(a.code),
+  )
+}
 
 /**
  * 成品实测字号（`checks.text_size`，ADR 0203）失败时要说的那一句话：用界面上会显示的两个数说清「最小的字

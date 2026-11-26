@@ -11,7 +11,7 @@ import { FigureThumb } from './FigureThumb'
 
 const KNOWN_CANDIDATES = [
   'points_mean', 'box_points', 'violin_points', 'ecdf_groups', 'bar_error', 'line_points', 'line_band',
-  'line_units', 'points_err', 'line_err', 'scatter_fit', 'scatter', 'hist', 'ecdf', 'density', 'box_points_single',
+  'line_units', 'points_err', 'line_err', 'bar_err', 'scatter_fit', 'scatter', 'hist', 'ecdf', 'density', 'box_points_single',
 ]
 
 /** 出图超过这么久还没回来：换一句话，让人知道没卡住 */
@@ -181,7 +181,15 @@ export function CandidateStage({
             {t('dataFigureV2.basis.line', {
               text: [
                 basis.main.map((b) => t(`dataFigureV2.basis.${b.key}`, b.values)).join(t('dataFigureV2.basis.then')),
-                ...[basis.errColumn, basis.skipped, basis.errMissing].filter((x) => x != null).map((b) => t(`dataFigureV2.basis.${b.key}`, b.values)),
+                ...[basis.errColumn, basis.skipped, basis.errMissing]
+                  .filter((x) => x != null)
+                  .map((b) =>
+                    t(
+                      `dataFigureV2.basis.${b.key}`,
+                      // 多个误差列：各列名带引号、直接相连（引号写法随语言，在 `basis.colQuote`）
+                      Array.isArray(b.values.columns) ? { columns: b.values.columns.map((c) => t('dataFigureV2.basis.colQuote', { column: c })).join(/^zh/i.test(i18n.language) ? '' : ', ') } : b.values,
+                    ),
+                  ),
               ].join(t('dataFigureV2.basis.join')),
             })}
           </p>

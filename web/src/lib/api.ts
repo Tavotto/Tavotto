@@ -13,7 +13,7 @@ import type { ExportRoute } from '@/lib/exportRoute'
 import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
-import type { CanvasObject, ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, LayoutGroup, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
@@ -1009,15 +1009,26 @@ export async function fetchLayout(name: string, pj?: string | null): Promise<Fet
 }
 
 /**
- * 「把 Agent 加的并进来」（ADR 0208 §五）：拿这份排版绑定的基线问后端，磁盘上多出来的是不是**只有** Agent 追加的对象。
- * 后端判据在 `engine/layoutannotate.agent_additions`（全部来自插件写入时留的撤销副本）。读失败一律当「没有」——
- * 照旧走覆盖 / 另存，不因为这一问把保存流程卡住。
+ * 「把 Agent 的改动并进来」（ADR 0208 §五、ADR 0212 第 5 期）：拿这份排版绑定的基线问后端，基线之后是不是**只有** Agent 写过，
+ * 写了什么（新加 / 改前改后 / 删前 / 顺序 / 布局组）。后端判据在 `engine/layoutannotate.agent_additions`（全部来自插件写入时
+ * 留的撤销副本）。读失败一律当「没有」——照旧走覆盖 / 另存，不因为这一问把保存流程卡住。
  */
+export interface AgentCanvasDiff {
+  id: string
+  added: CanvasObject[]
+  changed: { before: CanvasObject; after: CanvasObject }[]
+  deleted: CanvasObject[]
+  base_order: string[]
+  order: string[]
+  reordered: boolean
+  layout_groups?: { before: LayoutGroup[] | null; after: LayoutGroup[] | null }
+}
+
 export interface AgentAdditions {
   available: boolean
   revision?: string
   count?: number
-  canvases?: { id: string; objects: CanvasObject[] }[]
+  canvases?: AgentCanvasDiff[]
 }
 
 export async function fetchAgentAdditions(name: string, baseRevision: string): Promise<AgentAdditions> {
@@ -1715,6 +1726,24 @@ export async function fetchProjectHistory(
  * `ok` = 后端此刻记的就是本项目、且对着的是 `revision` 那一版正文；`refused` = 后端明确拒（409，此刻不满足挪走的
  * 条件或槽位刚被存过——调用方重列一次再定）；`unavailable` = 问不到（网络 / 503 / 旧后端），**不是**拒绝。
  */
+/**
+ * 复制品从项目内节点另开了一份排版：请后端把复制源（归属里记的、仍然存在的旧项目路径）的改指表拷一份到当前项目
+ * （ADR 0211 第一期 5，维护者 2026-11-26 拍板）。后端在锁里重判「确实是复制」才拷；只拷改指表；幂等。失败不打扰——
+ * 回 0，最坏是复制品里重跑时再弹一次缺数据卡。
+ */
+export async function inheritRemapForCopy(docId: string, pj: string | null): Promise<number> {
+  try {
+    const body = await jsonFetch<{ copied?: unknown }>(
+      '/api/layout-session/project-history/copied',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc_id: docId }) },
+      pj,
+    )
+    return typeof body?.copied === 'number' ? body.copied : 0
+  } catch {
+    return 0
+  }
+}
+
 export async function claimProjectHistory(
   docId: string,
   revision: string,
@@ -1729,6 +1758,65 @@ export async function claimProjectHistory(
     return body?.ok === true ? 'ok' : 'unavailable'
   } catch (e) {
     return e instanceof ApiError && e.status === 409 && e.body?.code === 'claim_refused' ? 'refused' : 'unavailable'
+  }
+}
+
+/**
+ * 注册表指着的脚本不在了（ADR 0211 第一期 6）：项目里哪一份可以接回去。`matches` = 与登记时内容指纹字节完全相同的
+ * 脚本（恰好一个 → 一键接回）；`scripts` = 项目里全部 .py（手选用）。`missing=false`（脚本其实在 / 没登记）时其余为空。
+ */
+export interface RelinkCandidates {
+  script: string
+  missing: boolean
+  fingerprint: boolean
+  matches: string[]
+  scripts: string[]
+}
+
+export async function fetchRelinkCandidates(script: string, pj?: string | null): Promise<RelinkCandidates | null> {
+  try {
+    const q = new URLSearchParams({ script })
+    const body = await jsonFetch<Record<string, unknown>>(`/api/registry/relink-candidates?${q.toString()}`, undefined, pj)
+    const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+    return {
+      script: typeof body?.script === 'string' ? body.script : script,
+      missing: body?.missing === true,
+      fingerprint: body?.fingerprint === true,
+      matches: strings(body?.matches),
+      scripts: strings(body?.scripts),
+    }
+  } catch {
+    return null // 旧后端 / 此刻问不到：界面退回原来的「重试渲染」
+  }
+}
+
+/**
+ * 接回挪走的脚本之前：后端把旧脚本键下的运行配置 / 答案 / 输入转录复制到新脚本键下（待办），验证试跑用它们
+ * （ADR 0211 第一期 6）。回新的默认配置引用（没有 = 无参数试跑）；问不到回 null，照常无参数试跑。
+ */
+export async function relinkPrepare(from: string, to: string, pj?: string | null): Promise<{ runConfig: string | null } | null> {
+  try {
+    const body = await jsonFetch<{ run_config?: unknown }>(
+      '/api/registry/relink/prepare',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to }) },
+      pj,
+    )
+    return { runConfig: typeof body?.run_config === 'string' ? body.run_config : null }
+  } catch {
+    return null
+  }
+}
+
+/** 接回的终局：`ok` 且新脚本确实认领了图 → 带过来的状态留下；否则后端原样撤销。失败不打扰（下次接回时后端再收尾）。 */
+export async function relinkFinish(from: string, to: string, ok: boolean, pj?: string | null): Promise<void> {
+  try {
+    await jsonFetch(
+      '/api/registry/relink/finish',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to, ok }) },
+      pj,
+    )
+  } catch {
+    /* 待办留着：后端在下一次接回 / 列候选时按注册表的事实收尾 */
   }
 }
 
@@ -2484,6 +2572,8 @@ export interface ArtifactManifestSummary {
   required: string[]
   checks: Record<string, ArtifactCheckVerdict>
   notes: string[]
+  /** 「留意」：不是失败、照常交付，但投稿时可能被退或有更好的做法（Type 3 字体、有脚本的图整张是位图）；老服务端没有 */
+  advisories?: ArtifactAdvisory[]
   carrier?: string | null
   size_pt?: [number, number] | null
   px?: [number, number] | null
@@ -2506,6 +2596,17 @@ export interface ArtifactTextSize {
   reason: string
   min_pt: number | null
   floor_pt: number | null
+}
+
+export interface ArtifactAdvisory {
+  /** 闭集：`lib/artifactInspection.ADVISORY_CODES` */
+  code: string
+  /** `type3_fonts`：用到的 Type 3 字体名（至多 5 个） */
+  fonts?: string[]
+  /** `scripted_raster`：整张嵌成位图、却有脚本的图（项目内相对 id，至多 5 个） */
+  panels?: string[]
+  /** 全部个数（`fonts` / `panels` 只带前几个） */
+  count?: number
 }
 
 export interface ArtifactIdentity {
@@ -4105,6 +4206,9 @@ export type ChangePlanUnhandledReason =
   | 'not_applied'
   | 'no_effect'
   | 'not_addressed'
+  | 'merged_log'
+  /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
+  | 'log_limit_declined'
 
 export interface ChangePlanBox {
   gid: string
@@ -4126,6 +4230,8 @@ export interface ChangePlanChange {
   /** manifest 的展示值（格式可能与 override 的值不同，只用来显示） */
   before: unknown
   after: unknown
+  /** 后端自动补的改动（不是模型提的）：`room` = 改完有元素探出图幅，把子图往里挪腾出边距；跟着造成出界的那一组走 */
+  auto?: 'room'
   /** 应用时写进文档的那条 override（进入候选列表、规范化之后） */
   patch: ChangePlanPatch
 }
@@ -4153,6 +4259,11 @@ export interface ChangePlanGroup {
   atomic: boolean
   changes: ChangePlanChange[]
   boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
+  /**
+   * 这一组要先问用户：把一根轴改成对数，但它的下限 ≤ 0，方案里已经带上了一条把下限改成正数的改动（`to`）。
+   * 卡片问「一起改吗」，回答前不给「查看 / 应用」；`from` 是改前的下限。
+   */
+  confirm?: { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number }
 }
 
 export interface ChangePlan {
@@ -4172,6 +4283,8 @@ export interface ChangePlan {
   candidate_patches: ChangePlanPatch[]
   groups: ChangePlanGroup[]
   unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
+  /** 审阅来源的方案里后端存的意见原文（`{id, text}` 之外还有锚点）：「改脚本做剩下的」按它取，前端只传 id */
+  comments?: { id: string; text: string }[]
   /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */
   preview: { before: string; after: string }
 }
@@ -4205,8 +4318,12 @@ export interface CreateChangePlanBody {
   instruction?: string
   /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
   target?: string
-  /** `script`：脚本修改（只接助手来源，必须带 `connection`；ADR 0206 PR 6） */
+  /** `script`：脚本修改（必须带 `connection`；ADR 0206 PR 6）。审阅来源只接用户点「改脚本做剩下的」那条路：带 `from_plan` + `comment_ids`，不带意见文字 */
   mode?: 'script'
+  /** `source: 'review'` + `mode: 'script'`：来源（审阅）方案 id；意见原文后端取自这份存档 */
+  from_plan?: string
+  /** 同上：要转给脚本方案的意见 id（须在来源方案的 `unhandled` 里、原因 `needs_script`） */
+  comment_ids?: string[]
   client_request_id?: string
 }
 
@@ -4826,7 +4943,8 @@ export interface AiCapabilities {
 /** 一家厂商的一种连接方式（同一厂商的 API Key 与订阅登录合并成一个厂商时有多种） */
 export interface AiVendorMethod {
   id: string
-  kind: 'key' | 'login' | 'oauth'
+  /** siwc = Sign in with ChatGPT（浏览器授权、我们自己保存令牌，只走内置；ADR 0209） */
+  kind: 'key' | 'login' | 'oauth' | 'siwc'
   /** 方式名的 i18n 键（`method.subscription` / `method.apiKey` / `method.kimiCode` / `method.codingPlan` / `method.account`） */
   label_key?: string | null
   /** key 类：对应的目录行 id（保存连接时作为厂商 id） */
@@ -4856,7 +4974,7 @@ export interface AiVendor {
   /** 彩色标志的键（`BrandLogo`）；表外 = 通用图标 */
   logo: string
   region: 'cn' | 'global' | 'custom'
-  connect: 'key' | 'login' | 'oauth'
+  connect: 'key' | 'login' | 'oauth' | 'siwc'
   /** 「去申请 Key」页面（https） */
   key_url?: string
   /** login 类：对应 CLI 已安装才 true；oauth 类：client_id 已配置才出现 */
@@ -4902,6 +5020,8 @@ export interface AiConnection {
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
   /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
   cli_update?: AiCliUpdate | null
+  /** SIWC 连接（`siwc:chatgpt`）：登录的 ChatGPT 账号邮箱，只作显示 */
+  account_email?: string
 }
 
 /** 对话协议（后端 `ai_providers.protocol_of`） */
@@ -4964,7 +5084,31 @@ export const checkAiConnection = (id: string) =>
 
 /** 断开一个连接（订阅类不可删，只能在命令行里退出登录） */
 export const disconnectAi = (id: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/ai/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  jsonFetch<{ ok: boolean; revoked?: boolean }>(`/api/ai/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+/** Sign in with ChatGPT 的一次登录（ADR 0209）。`state` 闭集；`reason` 只在 failed 时有（后端 `siwc_login.REASONS`） */
+export interface AiSiwcFlow {
+  flow_id: string
+  state: 'waiting' | 'exchanging' | 'signed_in' | 'plan_disabled' | 'denied' | 'cancelled' | 'expired' | 'failed'
+  authorize_url: string
+  reason?: string
+}
+
+/** 发起 ChatGPT 登录：返回授权地址（用系统浏览器打开），之后轮询 `fetchSiwcFlow` */
+export const startSiwcLogin = (newAccount = false) =>
+  jsonFetch<{ ok: boolean; flow_id: string; flow: AiSiwcFlow }>('/api/ai/siwc/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(newAccount ? { new_account: true } : {}),
+  })
+
+export const fetchSiwcFlow = (flowId: string) => jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}`)
+
+/** 失败选择题里选了「改用 Codex 登录」：后端记下来，之后列出 Codex 登录与 sub:codex 连接（登录本身仍走 `startAiLogin('codex')`） */
+export const siwcCodexFallback = () => jsonFetch<{ ok: boolean }>('/api/ai/siwc/codex-fallback', { method: 'POST' })
+
+export const cancelSiwcFlow = (flowId: string) =>
+  jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}/cancel`, { method: 'POST' })
 
 /** 订阅类 / 账号登录类连接发起登录；进度沿用 `fetchAiLoginStatus` / 设备码流程的轮询 */
 export const loginAiConnection = (id: string) =>
@@ -5779,6 +5923,8 @@ export interface AiDataProposeItem {
   error_source?: 'column' | 'computed'
   /** 取自表里现成的列时，那一列的名字（用户数据：只当文本渲染） */
   error_column?: string
+  /** 多个 y、各配各的现成误差列时的逐列事实（这时没有 `error_column` / `error_stated`；顶层 `error` 只在各列种类一致时才有）；单个 y 没有这个键 */
+  error_columns?: { y: string; column: string; kind: AiDataErrorKind; stated: boolean }[]
   /** 误差线的种类是列名自己说明的（如列名叫 sd） */
   error_stated?: boolean
   /** 算出来的误差线 / 带里因为只有 1 个值而没有误差线的位置标签（最多 50 个；没有就没有这个键） */
@@ -5963,7 +6109,15 @@ export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
   )
 
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
+/** 改图助手改脚本那条路的任务清单进度：读脚本 → 改脚本 → 出图核对；`round` = 第几轮（有界修正 +1） */
+export interface AiEditStage {
+  step: 'read' | 'edit' | 'verify'
+  round: number
+}
+
 export interface AiSessionDetail {
+  /** 改图会话的任务清单进度（`ai_bridge._EditStage`）；转换 / 修改方案卡的脚本修改 / 老后端没有 */
+  stage?: AiEditStage | null
   /** 任务结局；老后端没有 */
   task?: AiTaskSummary
   agent?: string
@@ -6284,9 +6438,13 @@ interface ProjectScoped {
   pj?: string
 }
 
+/** 取会话的阶段（后端 `engine.pool.ACQUIRE_STAGE_OF`）：找运行环境 → 启动 Python */
+export type PreparingStage = 'environment' | 'starting'
+
 export type ServerEvent =
   | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
-  | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  /** `stage`：取会话里走到哪一步（#479）；第一条不带，只前进不后退 */
+  | ({ kind: 'render.preparing'; id: string; stage?: PreparingStage } & ProjectScoped)
   | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
@@ -6406,6 +6564,14 @@ export type ServerEvent =
       text: string
       kindOf?: AiDeltaKind
     }
+  /** 改图会话走到哪一步（后端 `ai_bridge._EditStage`，只前进；用户 2026-11-26）；老后端不发 */
+  | ({
+      kind: 'ai.stage'
+      pj?: string
+      client_request_id?: string
+      session: string
+      stage: AiEditStage
+    } & ProjectScoped)
   /** 任务进入新阶段（TAF 有界修正：上一版没过写回前检查，Agent 正在副本里修正）；老后端不发 */
   | ({
       kind: 'ai.task'
@@ -6481,6 +6647,7 @@ const EVENT_KINDS = [
   'export.progress',
   'ai.delta',
   'ai.task',
+  'ai.stage',
   'ai.stalled',
   'ai.done',
   'script.input_requested',

@@ -82,3 +82,14 @@ FontFile、Form 套 Form 有预算、外来页内部不重画就不知道被裁�
 | `/api/render` 的 503（候选后端的背压） | `<img>` 看不见状态码：`web/src/lib/imgRetry.useRetryingSrc` 对 `/api/render` 地址按 1 / 2 / 4 s 有界重试（cache-bust `r=n`），blob / data / `/api/file` 失败不重试；画布面板、缩略图、版本 / 图库 / 导出对话框的缩略图共用 | `web/src/lib/imgRetry.test.tsx` |
 | 四类 Web 构建 / Playground（RC-089） | 审计结论：SPA（浏览器 / 桌面壳同一份，`apiUrl` 相对根）、MCP 画布（`vite.mcp.config.ts`，MCP 传输、`panelSrc` 有 HTTP 时才给地址）、Playground（`vite.playground.config.ts` `base: './'`，`panelSrc: () => null`、**没有导出面板**、不发任何 `/api/*` 请求）——本切片没有改任何资源路径；Playground 里不存在能把「未核验」画成绿的组件 | `web/src/playground/browserEngineTransport.test.ts`、`tests/test_playground_build.py`（既有） |
 | 旧响应结构（RC-090） | `files[] / export_dir / warnings / vector` 一字不改；新增只有 `manifest` 键 | `test_mcp_export_inspection.py`（旧键逐个点名）、parity 里 `test_export_legacy_items_texts_contract` |
+
+## 6. 修订（2026-11-24）：缺字检查与「留意」
+
+* PDF 多一项可选检查 `glyphs`：画出来（渲染模式不是 3 / 7）的字落到 `.notdef`，或用到 LastResort 字体 → `failed`；
+  `.notdef` 的判法只认三类结构（Type0 + Identity-H/V 经 `CIDToGIDMap`、Type 3 的 `Differences` 对 `CharProcs`、简单字体
+  `Differences` 明写 `.notdef`），其余码判不了 → `unknown`（不编 verified）。两档政策都不把它列为必需（standard 交付并红着说，
+  strict 也不因判不了而阻断）。
+* manifest 多一段 `advisories`（闭集 `inspector.ADVISORIES`，前端 `artifactInspection.ADVISORY_CODES` 镜像）：不是失败、不影响
+  verdict，只是投稿前得知道——`type3_fonts`（成品里用到 Type 3 字体，只量字节）、`scripted_raster`（生产者经
+  `plan.scripted_raster_panels` 说这几张有脚本的图是按磁盘位图原件整张嵌进来的，且成品里确有位图）。导出对话框把它们用警示色
+  逐条说出，摘要行说「有要留意的地方」，结果不算干净。看护 `tests/test_export_submission_checks.py`。

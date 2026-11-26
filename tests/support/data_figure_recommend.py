@@ -159,6 +159,8 @@ METHODS: dict[str, tuple[str, str, str]] = {
     # 实现后按族落成这两个码——标准答案的含义没变，只是有了名字
     "points_err": ("coded", "comparison", "每个类别一个点 + 表里现成的误差线"),
     "line_err": ("coded", "trend", "点 + 连线 + 表里现成的误差线"),
+    # 已汇总的分组表上的柱（从 0 起）+ 表里现成的误差线（G-053 / G-002）；不是推荐第一（G-050），所以任何用例的 `acceptable_top` 都不含它
+    "bar_err": ("coded", "comparison", "均值柱 + 表里现成的误差线"),
     # legal_uncoded：模板画得出来、规则从不给
     "bar_points": ("legal_uncoded", "comparison", "均值柱 + 原始点"),
     "median_points": ("legal_uncoded", "comparison", "抖动点 + 中位数 / IQR"),
@@ -214,7 +216,9 @@ def classify(rec: dict | r.FigureRecipe) -> str | None:
     main = [ly["mark"] for ly in layers if ly["role"] == "main"]
     log_x = scale in ("log_x", "log_xy")
     if d.get("err"):
-        return {"comparison": "points_err", "trend": "line_err"}.get(fam)
+        if fam == "comparison":
+            return "bar_err" if "bar" in main else "points_err"
+        return {"trend": "line_err"}.get(fam)
     if fam == "comparison":
         if "bar" in main:
             return "bar_points" if marks & {"jitter", "points"} else "bar_error"
@@ -517,6 +521,11 @@ def _lazy_candidates(profile, values, case: dict, conf: r.Confirmed) -> r.Candid
     return None
 
 
+#: 取自表里现成误差列的画法：不按列角色实例化，直接取规则给出的那份配方（`legal_universe`）。新增这类画法（带 `err` 的 coded 码）必须加进来，否则它走 `_shape`、
+#: 得到 None，规则给出的候选就不在全集里（`test_every_rules_candidate_is_in_its_legal_universe` 拦）
+ERR_METHODS = frozenset({"points_err", "line_err", "bar_err"})
+
+
 def legal_universe(case: dict, root: Path) -> tuple[set[str], dict | None]:
     """这条用例「现有模板画得出来的全部画法」：把每个有模板的画法按标准答案的列角色实例化，过 `validate_recipe`（带行数据）与模板自己的检查。
     列角色、`stack` / `cells` / `numcat` 这几条事实取自规则对同一份 `picks` 落定的第一个候选（`rules_run`），所以**规则给出的每个候选必在全集里**（测试核）。
@@ -548,11 +557,7 @@ def legal_universe(case: dict, root: Path) -> tuple[set[str], dict | None]:
     for method, (status, _fam, _t) in METHODS.items():
         if status not in ("coded", "legal_uncoded"):
             continue
-        rec = (
-            by_err.get(method)
-            if method in ("points_err", "line_err")
-            else _shape(entry, method, role)
-        )
+        rec = by_err.get(method) if method in ERR_METHODS else _shape(entry, method, role)
         if rec is None:
             continue
         if stack:
@@ -592,7 +597,8 @@ def measure(
     uni, _role = legal_universe(case, root)
     top = set(case["acceptable_top"])
     forb = {f["method"] for f in case.get("forbidden", [])}
-    ranks = {m: run["methods"].index(m) + 1 for m in top if m in run["methods"]}
+    # 按名字排序：`top` 是集合，迭代顺序随进程的哈希种子变，不排序的话每次 `write_back()` 都会把键的先后改一遍（纯噪声）
+    ranks = {m: run["methods"].index(m) + 1 for m in sorted(top) if m in run["methods"]}
     missing = {m: METHODS[m][0] for m in sorted(top - uni)}
     return {
         "rules_top": run["recommended"],

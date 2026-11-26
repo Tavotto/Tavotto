@@ -199,7 +199,8 @@ def test_static_merge_marks_only_new_stems_and_preserves_unrun_candidates(projec
     before = registry.registry_path(root).read_bytes()
     assert before == atomicio.dumps_json(cfg, indent=1)
     assert all(
-        set(entry) == {"entry", "cost", "notes", "stems"} for entry in cfg["scripts"].values()
+        set(entry) == {"entry", "cost", "notes", "stems", "sha256"}
+        for entry in cfg["scripts"].values()
     )
     history = json.loads(runconfig.store_path(root).read_text(encoding="utf-8"))["captures"][
         "plot.py"
@@ -285,7 +286,8 @@ def test_discovery_history_is_local_and_only_records_a_successful_write(project,
     discover.write_config(root, cfg, static_discovery=True)
     assert registry_path.read_bytes() == atomicio.dumps_json(cfg, indent=1)
     assert all(
-        set(entry) == {"entry", "cost", "notes", "stems"} for entry in cfg["scripts"].values()
+        set(entry) == {"entry", "cost", "notes", "stems", "sha256"}
+        for entry in cfg["scripts"].values()
     )
     assert local_history.is_relative_to(root.parent / "state")
     assert runconfig.discovered_stems(root, "plot.py") == {"new"}

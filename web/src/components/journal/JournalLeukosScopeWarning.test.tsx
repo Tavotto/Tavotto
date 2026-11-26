@@ -75,7 +75,7 @@ it('shows bilingual saved-source limitations without a network request or snapsh
     await act(async () => root.render(<JournalLeukosScopeWarning />))
     const notice = () => host.querySelector('[data-leukos-scope-warning]')
     expect(notice()?.textContent).toContain('历史来源针对终稿并区分图类')
-    expect(notice()?.textContent).toContain('预检未区分投稿阶段和图类')
+    expect(notice()?.textContent).toContain('投稿前检查未区分投稿阶段和图类')
     expect(notice()?.textContent).toContain('现行要求未知')
     await act(async () => { await setLocale('en-US') })
     expect(notice()?.textContent).toContain('saved historical source')

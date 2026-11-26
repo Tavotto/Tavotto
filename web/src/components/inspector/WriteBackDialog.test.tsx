@@ -350,12 +350,12 @@ describe('写回被阻断时的文案', () => {
 })
 
 describe('写回成功的回执', () => {
-  it('带上「已通过干净重放校验」与元素数', async () => {
+  it('带上「已从头重画核对」与元素数', async () => {
     stubFetch(200, OK_BODY)
     render()
     await confirm()
     expect(text()).toContain('已更新以下文件')
-    expect(text()).toContain('已通过干净重放校验，17 个元素一致')
+    expect(text()).toContain('已从头重画核对，17 个元素一致')
     expect(text()).toContain(OK_BODY.backup_dir)
   })
 
@@ -375,7 +375,7 @@ describe('写回成功的回执', () => {
     render()
     await confirm()
     expect(text()).toContain('已更新以下文件')
-    expect(text()).not.toContain('已通过干净重放校验')
+    expect(text()).not.toContain('已从头重画核对')
   })
 
   it('落盘后尺寸对不上要说出来（文件已换、备份仍在）', async () => {

@@ -1,7 +1,8 @@
-# 往组图排版上加标注（箭头、文字、显著性括号、连线、外框）
+# 往组图排版上加标注、改已有的矢量对象
 
-用户想在**项目里的一份排版**（`tavottofile/<名>.json`，桌面「排版」里那份组图）上加矢量标注时用这四个工具。
-单张图里改字号、颜色、位置走 `tavotto_apply_overrides`，不走这里。
+用户想在**项目里的一份排版**（`tavottofile/<名>.json`，桌面「排版」里那份组图）上加矢量标注（箭头、文字、显著性括号、
+连线、外框），或改画布上已有的文字 / 箭头 / 形状 / 路径（含用户手画的，见文末「改已有的」）时用这里的工具。
+单张图里由脚本画出的元素（曲线、柱子、坐标轴文字）走 `tavotto_apply_overrides`，不走这里。
 
 ## 四步
 
@@ -42,7 +43,7 @@
 - **复述里 `intent: "unnamed"`**：锚到的元素在脚本里没有 `label=`，复述只说得出 `gid`。告诉用户「这个箭头指向的是 P1 里的第 2 条曲线（脚本没给它起名字）」，让用户确认。
 - **统计标注不编**：星号、n.s.、p 值、n 只能来自用户的话（`provenance: "user"`）或数据里算出来的结果（`"data"`）；不写来源整批回 `needs_confirmation`，先问用户。
 - `failed` 非空不能写入；`unverified` 是量不了的项（比如那张子图没有脚本），写入后照实告诉用户这几项没核。
-- 写入只追加，不改用户已有的东西。桌面正开着这份排版时，用户下一次保存会看到「别处有改动」。
+- 加标注只追加，不改用户已有的东西。桌面正开着这份排版时会自动并进去（一步可撤销），用户不用处理。
 
 ## 出错时
 
@@ -56,3 +57,41 @@
 | `undo_unavailable` | 撤销副本存不下（数据目录只读 / 磁盘满），这次没写：告诉用户，腾出空间后重试 |
 | `undo_stale` | 写入之后排版又被改过，不能一步撤销：告诉用户，在桌面里手动删 |
 | `layout_annotate_unavailable` | 这个 Tavotto 版本没有这项能力：请用户升级后新开会话 |
+| `bad_select` | `tavotto_layout_scene` 的 `select` 写错了（`detail.field` 指出哪一项）：改了重读 |
+
+## 改已有的（`tavotto_layout_edit_plan` → `tavotto_layout_edit_apply`）
+
+同样三步：`tavotto_layout_scene` 读场景（`vector_objects` 列出能改的对象：id、类型、名字、文字、毫米框、是不是 Agent 加的、
+锁定 / 隐藏、所在组；`select` 筛，如 `{"types": ["arrow"], "anchored_to": "P1"}`）→ `tavotto_layout_edit_plan` 出方案 →
+对照复述 → `tavotto_layout_edit_apply`（`ops` 一字不差 + `echo_digest`）。撤销同样用 `tavotto_layout_annotate_undo`。
+
+`ops` 是一列操作，按顺序执行、整批成或整批不动。服务端重算，**不要自己算坐标**：
+
+```json
+[{"op": "set", "id": "a_x1", "set": {"strokePt": 0.75, "color": "#c0392b"}},
+ {"op": "move", "id": "a_x1", "to": {"anchor": {"data": {"panel": "P1", "axes": "axes_0", "x": 8, "y": 0.6}}}, "attach": "to"},
+ {"op": "align", "ids": ["a_x1", "a_x2", "a_x3"], "mode": "left"},
+ {"op": "pathfinder", "ids": ["p_c1", "p_c2"], "mode": "unite"}]
+```
+
+| op | 键 |
+| --- | --- |
+| `set` | `id`、`set`（字段表里这一类的键 + `x y w h rotationDeg name locked hidden`；值有上下限） |
+| `move` | `id` + `by_mm: [dx, dy]`，或 `to`（锚点，同上）+ `attach`（方位点；箭头可写 `from` / `to` = 把箭尾 / 箭头尖对过去） |
+| `delete` | `id` |
+| `align` | `ids`、`mode`（`left hcenter right top vcenter bottom`）、`to`（缺省 `"selection"`；`"page"`、`{"key": id}`、`{"panel": "P1"}`） |
+| `distribute` | `ids`（≥ 3；给 `gap_mm` 时 ≥ 2）、`axis`（`h` / `v`）、`gap_mm` |
+| `order` | `id`、`to`（`front back forward backward`） |
+| `group` / `ungroup` | `ids` + `name` / `group`（组 id，取 `vector_objects` 的 `group`） |
+| `rotate` | `id`、`deg`（绝对角度，顺时针为正，绕框中心） |
+| `pathfinder` | `ids`、`mode`（`unite minus_front minus_back intersect exclude divide trim merge crop`） |
+| `offset` / `outline_stroke` / `simplify` | `id` + `delta_mm`、`join` / 无 / `tolerance_pt` |
+
+- **能改用户手画的**，但每次都复述、都能一步撤销；复述逐条是「谁：字段 前 → 后」，原话念给用户。
+- 桌面正开着这份排版时会按字段自动并进去（一步可撤销）；用户在桌面里也改了同一处（同一对象的同一字段，或改了你删的）才会在保存时让用户选。
+- 认不准是哪个对象（「那支箭头」有三支）就列候选（名字 + 位置）给用户选。
+- 只核这次动到的对象；`failed` 非空不能写入。拆组 / 删除让布局组成员不足 2 个时，约束一并去掉，复述里会说。
+- 布尔 / 偏移 / 轮廓化 / 简化目前只收 `path`；回 `kernel_unavailable` = 这台机器的几何内核没装上，其余操作照常，
+  告诉用户这一步可在桌面里做。
+- 方案没出来时 `errors` 是 `[{code, index, field}]`（`index` 从 0 数）：`bad_op` 写法不对、`unknown_object` id 不在这张画布、
+  `not_vector` 点名了子图 / 图片、`bad_field` 这一类没有这个字段、`bad_value` / `out_of_range` 值不对。

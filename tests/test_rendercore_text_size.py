@@ -270,7 +270,10 @@ def _strict_ok_pdf(tmp_path, content: bytes, *, name="ok.pdf"):
                 pikepdf.Dictionary(
                     Type=pikepdf.Name.FontDescriptor,
                     FontName="/ABCDEF+Body",
-                    FontFile2=pdf.make_indirect(pikepdf.Stream(pdf, b"\0" * 16)),
+                    # 字体程序以 TrueType 的 sfnt 头开始：TrueType 槽里装别的会被判成字体错配（`font_program_mismatch`）
+                    FontFile2=pdf.make_indirect(
+                        pikepdf.Stream(pdf, b"\x00\x01\x00\x00" + b"\0" * 12)
+                    ),
                 )
             ),
             ToUnicode=pdf.make_indirect(pikepdf.Stream(pdf, cmap)),

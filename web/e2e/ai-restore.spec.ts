@@ -5,6 +5,7 @@ import path from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, selectCanvasFigure, test, waitForFigureEdit } from './fixtures'
 
+// 假 codex 当订阅登录（sub:codex）：SIWC 默认开后 Codex 登录被隐藏，只有 `TAVOTTO_EXPERIMENTAL_SIWC=0` 时还在（ADR 0209 §六）
 /**
  * 运行中会话的恢复（PR4b）：发起一个跑着的会话 → 刷新 → 占位在、发送锁成「中止」→ 会话结束后转成终态、锁解开。
  *
@@ -41,7 +42,7 @@ async function openAssistant(page: Page, baseURL: string, reloaded = false) {
 
 test('刷新后运行中的会话接回为占位：发送锁成中止；结束后转终态、锁解开', async ({ app, page }) => {
   const { PATH: fakePath, release } = fakeRunningCodex()
-  const a = await app({ env: { PATH: fakePath } })
+  const a = await app({ env: { PATH: fakePath, TAVOTTO_EXPERIMENTAL_SIWC: '0' } })
   await openAssistant(page, a.baseURL)
   await page.locator('[data-ai-input]').fill('把线条加粗一点')
   await page.locator('[data-ai-send="send"]').click()

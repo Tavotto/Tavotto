@@ -314,3 +314,28 @@ manifest 带 `modified_after_save: true` + `save_moment_unavailable: <闭集原�
 但对**打开磁盘文件**不成立：`panel.pdf` 仍按文件名 stem 落到 `panel`。注册表现在按脚本记 `artifacts`（文件 → stem），
 `Registry.for_artifact` 先查它再退回按 stem，所以打开 `panel.pdf` 得到乙，编辑 / 写回 / 基线都归乙。细则见
 `docs/rules/backend/registry-discovery-and-probe.md`「磁盘文件 → 图」。
+
+## 修订（2026-11-24）：有脚本的位图原件——「用脚本重画」与导出前重画（摸底 T-005）
+
+**问题**：同一张有脚本的 PNG，不改直接导出 = 磁盘上的位图（PDF 里嵌整张位图，缺字的方框也照样）；改一个字号再导出 =
+脚本重画的矢量。画布上看到的是原件，双击进去看到的是重画（中文图：画布上是方框，进去后是正常中文）。用户定的方向：
+原件有问题时默认重画，保留「用原文件」。
+
+**裁决**：§五.1「零编辑 = 原像素」仍是默认；新增两条**由用户动作触发**的出路，都不在打开项目 / 预览 / 扫描时执行
+（§七、ADR 0013 §6），都是可撤销的提交：
+
+| 入口 | 做什么 | 结果 |
+|---|---|---|
+| 画布角标「位图原件 · 用脚本重画」（单选一张有脚本、零编辑、画布上挂着位图原件的图时出现，`lib/scriptedBitmaps.redrawOffered`） | `actions.redrawWithScript`：与进图内编辑**同一套**准入——矢量主文件（ADR 0184 §二）→ 精确策略 → 来源驱动 + 对照确认（§二的判据一字不改：非零差一律先给用户看原图 / 重画）；成功后不进编辑 | 换成矢量主文件 / 精确采用：本来就显示引擎图；来源驱动：面板记 `showsRedraw: true` |
+| 画布导出对话框「有脚本的位图导出前先用脚本重画成矢量图」（默认勾上；取消 = 用原文件） | `actions.prepareScriptedBitmapsForRedraw`：只做**不需要用户对照**的两件事——换矢量主文件、精确策略（逐像素零差）；**不试来源驱动**（差异要用户亲眼对照才算数，§二） | 转不成的这次用原文件，结果里如实说，并指向画布角标 |
+
+**`showsRedraw`**（面板上的可选字段，只在来源驱动采用旁边有意义）：用户点过「用脚本重画」并确认过对照，零编辑也**显示那份
+重画**——`isSourceBackedZeroEdit` 为假，画布走引擎图、自动渲染接手（`useEngineSync`），原图导出也照发 FRAME
+（`originalArtifactOverrides`），于是画布显示、画布导出、原图导出是同一份重画。清采用（重置、换素材、复制重链接）一并清掉；
+撤销回到原像素。旧前端读到会忽略——回到「零编辑显示原像素」，安全的降级。确认绑定的仍是 `reconstructionSha256` 那一份（§六）：
+重画摘要变了照旧回到对照。
+
+**没做**：PDF 原件里的 Type 3 / 缺字判定要读原件（route 是纯函数、不读文件），角标暂只认位图原件；导出端的核验已经会
+把 Type 3 与缺字报出来（摸底 T-004）。
+
+看护：`web/src/store/redrawWithScript.test.ts`、`web/src/store/bitmapRedrawPrep.test.ts`、`web/src/canvas/panelRedrawBadge.test.tsx`。

@@ -48,6 +48,7 @@ import {
   FileExclamationPoint,
   ImageOff,
   Info,
+  OctagonAlert,
   RefreshCw,
   TriangleAlert,
   X,
@@ -83,7 +84,7 @@ import {
   writeExportDefaults,
 } from "@/lib/exportDefaults";
 import { adoptionGuardOf, artifactValidationIssue } from "@/lib/artifactValidation";
-import { inspectionState, textSizeNote } from "@/lib/artifactInspection";
+import { inspectionState, knownAdvisories, textSizeNote } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
   contextFigureId,
@@ -119,6 +120,7 @@ import {
   type ExportRequestInput,
 } from "@/lib/exportRequest";
 import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels, type ExportRoute } from "@/lib/exportRoute";
+import { scriptedBitmapPanels } from "@/lib/scriptedBitmaps";
 import { fetchExportRoute, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
 import { buildBatchInput, buildMergedPdfInput, type BatchShared } from "@/lib/exportBatchInput";
 import { mergePdfPlan } from "@/lib/pdfPagesMerge";
@@ -146,7 +148,7 @@ import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
-import { isJustBakedBaseline } from "@/store/actions";
+import { isJustBakedBaseline, prepareScriptedBitmapsForRedraw } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
 import { renderKeyOf, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
@@ -171,7 +173,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
+import { isRuntimePanel, objectLabel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -316,6 +318,12 @@ export function ExportDialog() {
   const documentId = useDocumentStore((s) => s.documentId);
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId);
   const assets = useAssetStore((s) => s.byId);
+  const [redrawBitmaps, setRedrawBitmaps] = useState(true);
+  const [redrawBusy, setRedrawBusy] = useState(false);
+  const [redrawAttempted, setRedrawAttempted] = useState<ReadonlySet<string>>(() => new Set());
+  /** 试过但保留了原件的那几张（名字），导出前那一行如实说 */
+  const [redrawKept, setRedrawKept] = useState<string[]>([]);
+  const [rerunAfterRedraw, setRerunAfterRedraw] = useState<OverwritePolicy | null>(null);
   const mode = useWorkspaceStore((s) => s.mode);
   const activePanelId = useWorkspaceStore((s) => s.activePanelId);
   // 订阅**值**而不是订阅一个现算的摘要：摘要的组装只有 `summaryFor()` 一份
@@ -1006,6 +1014,7 @@ export function ExportDialog() {
     !filenameIssue &&
     newerObjects === 0 &&
     !locationUpdating &&
+    !redrawBusy &&
     (scope !== "original" || availability.ok);
 
   /**
@@ -1014,6 +1023,16 @@ export function ExportDialog() {
    * 走的就是单张导出的那条路，没有第二套。
    */
   const batchMode = !single && scope === "original";
+  /**
+   * 画布导出里会整张嵌入磁盘位图、但有脚本能重画的那些图（T-005）。默认导出前先转成脚本重画
+   * （`prepareScriptedBitmapsForRedraw`：矢量主文件 / 精确采用，不试要用户对照的来源驱动）；
+   * 取消勾选 = 用原文件。同一次打开里每张只试一次，试过没转成的不会每点一次导出就重跑一遍脚本。
+   */
+  const scriptedBitmaps = useMemo(
+    () => (scope === "canvas" && !batchMode ? scriptedBitmapPanels(exportDoc.objects, assets, formats, route) : []),
+    [scope, batchMode, exportDoc.objects, assets, formats, route],
+  );
+  const pendingRedraw = scriptedBitmaps.filter((p) => !redrawAttempted.has(p.id));
   /**
    * 「合成一个多页 PDF」（#1370）：多图档 + 勾着 PDF + 这几张图都出自脚本的同一份 `PdfPages` 才提供；
    * 页序跟脚本走、界面上不能改；SVG 没有多页，所以只在 PDF 格式下出现。默认勾上，不勾 = 照旧每张图一个单页文件。
@@ -1250,6 +1269,24 @@ export function ExportDialog() {
       // 判断没有被这个咽喉接管，而「覆盖 / 另存 / 重试」走的正是这里
       // 闸与主按钮读**同一个** `canStart`
       if (!canStart) return;
+      // 有脚本的整张位图：先转成脚本重画（会改文档，是可撤销的提交），转成了就等文档落进表单再走同一个入口重来——
+      // 检查、proof report、请求读的都是渲染时的 `doc`，同一个事件处理里接着发还是旧文档（与 `rerunAtPpi` 同一手法）
+      if (redrawBitmaps && pendingRedraw.length > 0) {
+        const ids = pendingRedraw.map((p) => p.id);
+        setRedrawAttempted((prev) => new Set([...prev, ...ids]));
+        setRedrawBusy(true);
+        let outcomes: Awaited<ReturnType<typeof prepareScriptedBitmapsForRedraw>> = {};
+        try {
+          outcomes = await prepareScriptedBitmapsForRedraw(ids);
+        } finally {
+          setRedrawBusy(false);
+        }
+        setRedrawKept(pendingRedraw.filter((p) => (outcomes[p.id] ?? "kept") === "kept").map(objectLabel));
+        if (ids.some((id) => outcomes[id] === "vector" || outcomes[id] === "adopted")) {
+          setRerunAfterRedraw(overwrite);
+          return;
+        }
+      }
       // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
       setSettledJobId(null);
       setRevealError(null);
@@ -1294,8 +1331,25 @@ export function ExportDialog() {
       original,
       originalWidthMm,
       originalHeightMm,
+      redrawBitmaps,
+      scriptedBitmaps,
+      redrawAttempted,
     ],
   );
+
+  useEffect(() => {
+    if (rerunAfterRedraw === null) return;
+    const overwrite = rerunAfterRedraw;
+    setRerunAfterRedraw(null);
+    void start(overwrite);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rerunAfterRedraw]);
+  // 每次打开对话框重新来过：上一次没转成的原因（环境、样式）可能已经解决
+  useEffect(() => {
+    if (!open) return;
+    setRedrawAttempted(new Set());
+    setRedrawKept([]);
+  }, [open]);
 
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
@@ -1802,8 +1856,11 @@ export function ExportDialog() {
               size="lg"
               data-export-start
               disabled={batchMode ? !canStartBatch : !canStart}
+              loading={redrawBusy}
+              loadingLabel={ex("redrawingBitmaps")}
               onClick={startExport}
             >
+              {/* 先重画位图再导：这一段要跑脚本，按钮灰着却不说在干什么会像卡住了 */}
               <Download size={ICON_SIZE.sm} />
               {ex("start")}
             </Button>
@@ -2045,6 +2102,29 @@ export function ExportDialog() {
                   <p id="export-eps-reason" className="type-caption">
                     {ex(`epsUnavailable.${eps.reason}`)}
                   </p>
+                </FormRow>
+              )}
+              {/* 画布范围：有脚本的整张位图默认先转成脚本重画；取消 = 用原文件 */}
+              {(scriptedBitmaps.length > 0 || redrawKept.length > 0) && (
+                <FormRow>
+                  <div className="flex w-full min-w-0 flex-col gap-1">
+                    {scriptedBitmaps.length > 0 && (
+                      <label data-export-redraw-bitmaps className="flex min-h-7 items-center gap-2 text-ink">
+                        <Checkbox checked={redrawBitmaps} onChange={() => setRedrawBitmaps((v) => !v)} />
+                        <span>{ex("redrawBitmaps", { count: scriptedBitmaps.length })}</span>
+                      </label>
+                    )}
+                    {redrawKept.length > 0 && (
+                      // 说明放在勾选项下面、占满整行；一句话，改用重画的做法放 title
+                      <p
+                        data-export-redraw-kept
+                        className="type-caption"
+                        title={ex("redrawBitmapsKeptHint", { files: redrawKept.join("、") })}
+                      >
+                        {ex("redrawBitmapsKept", { files: redrawKept.join("、") })}
+                      </p>
+                    )}
+                  </div>
                 </FormRow>
               )}
               {/* 画布范围：带编辑的图找不到脚本，后端画不出它——导出必然失败，点之前就说 */}
@@ -3305,6 +3385,10 @@ export function ResultBlock({
   const inspectionFailedCount = job.outputs.filter(
     (o) => outputSaved(o) && inspectionState(o.manifest).tone === "failed",
   ).length;
+  // 「留意」（Type 3 字体、有脚本的图整张是位图）：文件照常交付，但投稿时可能被退——和核验未通过一样上到摘要行
+  const advisoryCount = job.outputs.filter(
+    (o) => outputSaved(o) && knownAdvisories(o.manifest).length > 0,
+  ).length;
   const warningCount = job.warnings?.length ?? 0;
   // 脚本少了几处修改：拿去运行之前得知道，和核验未通过一样上到摘要行
   const scriptSkippedCount = job.outputs.reduce((n, o) => n + (o.script_report?.skipped.length ?? 0), 0);
@@ -3314,6 +3398,7 @@ export function ResultBlock({
   const noteParts = [
     firstFailure ? outputFailureReason(firstFailure) : null,
     inspectionFailedCount > 0 ? ex("resultInspectionFailed", { count: inspectionFailedCount }) : null,
+    advisoryCount > 0 ? ex("resultAdvisories", { count: advisoryCount }) : null,
     warningCount > 0 ? ex("resultWarnings", { count: warningCount }) : null,
     scriptSkippedCount > 0 ? ex("resultScriptSkipped", { count: scriptSkippedCount }) : null,
     job.outputs.some((o) => outputSaved(o) && svgTextOutlined(o)) ? ex("svgTextOutlined") : null,
@@ -3430,6 +3515,8 @@ export function exportResultClean(job: ExportJob, edited: boolean): boolean {
   if ((job.warnings?.length ?? 0) > 0) return false;
   // 文字转成了轮廓要在回执里说一句（`ResultBlock` 摘要行），所以这种结果不能只剩一个胶囊
   if (saved.some(svgTextOutlined)) return false;
+  // 有「留意」的产物也要留在对话框里说（胶囊装不下那句话）
+  if (saved.some((o) => knownAdvisories(o.manifest).length > 0)) return false;
   return !saved.some((o) => inspectionState(o.manifest).tone === "failed");
 }
 
@@ -3548,11 +3635,13 @@ function ScriptSkipped({ report }: { report: ExportScriptReport }) {
  *
  * 成品字号（ADR 0203）是唯一带数的一项：失败时它在这一行里说「最小的字多小、规范要多少」，不再只报名字
  * （`textSizeNote()`）；它的 unknown 与别的 unknown 一样不说。
+ * 「留意」（`manifest.advisories`，T-004）在同一行下面用警示色说：不是失败，但投稿前得知道。
  */
 function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
-  if (state.tone !== "failed") return null;
+  const advisories = knownAdvisories(manifest);
+  if (state.tone !== "failed" && advisories.length === 0) return null;
   const sizeNote = textSizeNote(manifest);
   const named = sizeNote ? state.failed.filter((k) => k !== "text_size") : state.failed;
   const parts = [
@@ -3564,15 +3653,36 @@ function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
     sizeNote ? ex("inspection.textSizeBelow", { min: sizeNote.min, floor: sizeNote.floor }) : null,
   ].filter((x): x is string => x !== null);
   return (
-    <p
-      data-inspection="failed"
-      className="flex items-start gap-1 text-sm text-danger-content"
-    >
-      <IconSlot>
-        <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
-      </IconSlot>
-      {parts.join("；")}
-    </p>
+    <>
+      {state.tone === "failed" && (
+        <p
+          data-inspection="failed"
+          className="flex items-start gap-1 text-sm text-danger-content"
+        >
+          {/* 形状也分等级（`lib/validationText` 的 SEVERITY_ICON：要改 = 八角、需留意 = 三角），不只靠颜色 */}
+          <IconSlot>
+            <OctagonAlert size={ICON_SIZE.sm} aria-hidden />
+          </IconSlot>
+          {parts.join("；")}
+        </p>
+      )}
+      {/* 留意（不是失败）：投稿时可能被退，或者有更好的做法——说清楚是哪几个字体 / 哪几张图 */}
+      {advisories.map((a) => (
+        <p
+          key={a.code}
+          data-inspection-advisory={a.code}
+          className="flex items-start gap-1 text-sm text-warn-content"
+        >
+          <IconSlot>
+            <TriangleAlert size={ICON_SIZE.sm} aria-hidden />
+          </IconSlot>
+          {ex(`inspection.advisory.${a.code}`, {
+            fonts: (a.fonts ?? []).join("、"),
+            panels: (a.panels ?? []).map((id) => id.split(/[\\/]/).pop() || id).join("、"),
+          })}
+        </p>
+      ))}
+    </>
   );
 }
 

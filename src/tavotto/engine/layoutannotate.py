@@ -58,6 +58,7 @@ ERROR_CODES = (
     "undo_unknown",
     "undo_stale",
     "undo_unavailable",
+    "bad_select",
 )
 
 
@@ -192,9 +193,15 @@ def measure_panels(canvas: dict, items: list | None, measure: Measure) -> tuple[
 
 
 def read_scene(
-    project: str | Path, name: str, measure: Measure, *, canvas_id: str | None = None
+    project: str | Path,
+    name: str,
+    measure: Measure,
+    *,
+    canvas_id: str | None = None,
+    extend: Callable[[dict, dict], dict] | None = None,
 ) -> dict:
-    """给 Agent 看的场景 + 这份排版的 `base_revision`。"""
+    """给 Agent 看的场景 + 这份排版的 `base_revision`。`extend(画布, 短号 → 子图对象 id)` 给了就把它回的键并进结果——
+    同一份读到的画布（ADR 0212 的对象列表经 `vectoredit.read_scene` 走这里；本模块不 import vectoredit，免得成环）。"""
     lay = open_layout(project, name)
     canvas = _canvas(lay.doc, canvas_id)
     panels, refs, unmeasured = measure_panels(canvas, None, measure)
@@ -204,6 +211,7 @@ def read_scene(
     ]
     scene = vectorscene.build_scene(panels, page=page, objects=existing)
     return {
+        **(extend(canvas, refs) if extend is not None else {}),
         "layout": name,
         "canvas_id": canvas.get("id"),
         "base_revision": lay.revision,
@@ -619,6 +627,7 @@ def preview(
     *,
     margin_mm: float = 4.0,
     width_px: int = 1000,
+    focus: list[dict] | None = None,
 ) -> dict | None:
     """这批新对象合成到画布上之后，框住它们的那一块（PNG 字节 + 区域毫米）。
 
@@ -631,13 +640,16 @@ def preview(
 
     from ..rendercore import facade, pdfwriter, plan as rc_plan, sources as rc_sources
 
-    if not objects:
+    # `focus`：框住哪些对象（缺省 = 新对象）。改已有对象时（ADR 0212）画布本身已是改后的样子、`objects` 为空，
+    # 框住的是改前与改后的位置
+    box = focus if focus is not None else objects
+    if not box:
         return None
     page = _page(canvas)
-    xs0 = [o["x"] for o in objects]
-    ys0 = [o["y"] for o in objects]
-    xs1 = [o["x"] + o["w"] for o in objects]
-    ys1 = [o["y"] + o["h"] for o in objects]
+    xs0 = [o["x"] for o in box]
+    ys0 = [o["y"] for o in box]
+    xs1 = [o["x"] + o["w"] for o in box]
+    ys1 = [o["y"] + o["h"] for o in box]
     region = [
         max(0.0, min(xs0) - margin_mm),
         max(0.0, min(ys0) - margin_mm),
@@ -734,15 +746,19 @@ def preview(
 
 
 def agent_additions(project: str | Path, name: str, base_revision: str) -> dict | None:
-    """桌面拿着基线 `base_revision`、磁盘上已是别的修订号时：多出来的**是不是只有** Agent 追加的对象？
+    """桌面拿着基线 `base_revision`、磁盘上已是别的修订号时：这中间是不是**只有** Agent 写过？是的话，改了什么？
 
-    是 → `{"revision": 磁盘修订号, "canvases": [{"id", "objects"}], "count"}`，桌面一次 commit 并进内存、把基线推到
-    `revision`，之后照常保存；否 → None（照旧走覆盖 / 另存）。判据全部来自撤销留存，不猜：
+    是 → `{"revision": 磁盘修订号, "count": 动到的对象数, "canvases": [每张有改动的画布]}`，每张画布
+    `{"id", "added": [新对象], "changed": [{"before", "after"}], "deleted": [删前的对象], "base_order": [基线 id 顺序],
+    "order": [此刻 id 顺序], "reordered": bool, "layout_groups"?: {"before", "after"}}`。桌面按字段三方合并（只改 Agent
+    改过的字段、且桌面这边那几个字段还是基线的值才并），把基线推到 `revision`；否 → None（照旧走覆盖 / 另存）。
 
-    * 从 `base_revision` 起，每一步都必须是一次 Agent 写入（留存里 `before` = 上一步的 `after`），一直走到磁盘此刻的修订号；
-      中间有任何一步不是 Agent 写的（桌面别的窗口、外部工具）、或留存已被清掉，链就断了 → None；
-    * 基线那一份的正文（第一步留存的写前字节，修订号核过）与磁盘此刻的正文相比：除了各画布**末尾追加**的、带
-      `anchor.by == "agent"` 的对象，其余逐字段相同 → 才算「只多了 Agent 加的」。
+    判据全部来自撤销留存，不猜：
+
+    * 从 `base_revision` 起，每一步都必须是一次 Agent 写入（加标注 0208 或编辑补丁 0212，留存里 `before` = 上一步的 `after`），
+      一直走到磁盘此刻的修订号；中间有任何一步不是 Agent 写的（桌面别的窗口、外部工具）、或留存已被清掉，链就断了 → None；
+    * 基线那一份的正文（第一步留存的写前字节，修订号核过）与磁盘此刻的正文相比：画布以外的键、画布的增删与顺序、画布上
+      除 `objects` / `layoutGroups` 以外的键都必须相同（Agent 的工具不改这些）——否则 None。
     """
     path = layout_target(project, name)
     try:
@@ -801,21 +817,50 @@ def agent_additions(project: str | Path, name: str, base_revision: str) -> dict 
     for b, n in zip(bc, nc):
         if not isinstance(b, dict) or not isinstance(n, dict) or b.get("id") != n.get("id"):
             return None
-        if {k: v for k, v in b.items() if k != "objects"} != {
-            k: v for k, v in n.items() if k != "objects"
+        fixed = ("objects", "layoutGroups")
+        if {k: v for k, v in b.items() if k not in fixed} != {
+            k: v for k, v in n.items() if k not in fixed
         }:
             return None
-        bo, no = b.get("objects") or [], n.get("objects") or []
-        if no[: len(bo)] != bo:
+        diff = _objects_diff(b.get("objects") or [], n.get("objects") or [])
+        if diff is None:
             return None
-        extra = no[len(bo) :]
-        if not all(
-            isinstance(o, dict) and (o.get("anchor") or {}).get("by") == "agent" for o in extra
-        ):
-            return None
-        if extra:
-            out.append({"id": n.get("id"), "objects": extra})
-            count += len(extra)
-    if not count:
+        if b.get("layoutGroups") != n.get("layoutGroups"):
+            diff["layout_groups"] = {
+                "before": b.get("layoutGroups"),
+                "after": n.get("layoutGroups"),
+            }
+        touched = len(diff["added"]) + len(diff["changed"]) + len(diff["deleted"])
+        if touched or diff["reordered"] or "layout_groups" in diff:
+            out.append({"id": n.get("id"), **diff})
+            count += touched
+    if not out:
         return None
     return {"revision": current, "canvases": out, "count": count}
+
+
+def _objects_diff(bo: list, no: list) -> dict | None:
+    """基线 → 此刻的对象差：新加 / 改了 / 删了（按 id）+ 顺序。对象没有 id 或 id 重复 = 说不清，None。"""
+
+    def by_id(objs: list) -> dict | None:
+        out: dict = {}
+        for o in objs:
+            if not isinstance(o, dict) or not isinstance(o.get("id"), str) or o["id"] in out:
+                return None
+            out[o["id"]] = o
+        return out
+
+    b, n = by_id(bo), by_id(no)
+    if b is None or n is None:
+        return None
+    base_order, order = list(b), list(n)
+    common_b = [i for i in base_order if i in n]
+    common_n = [i for i in order if i in b]
+    return {
+        "added": [n[i] for i in order if i not in b],
+        "changed": [{"before": b[i], "after": n[i]} for i in common_n if b[i] != n[i]],
+        "deleted": [b[i] for i in base_order if i not in n],
+        "base_order": base_order,
+        "order": order,
+        "reordered": common_b != common_n,
+    }
