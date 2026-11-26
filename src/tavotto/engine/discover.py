@@ -1670,6 +1670,10 @@ def build_draft(figures_dir: str | Path, *, target_python: str | None = None) ->
         stems = [s for s in info["stems"] if s not in rep["conflicts"]]
         if stems:
             cfg[script] = {"entry": info["entry"], "cost": "medium", "notes": "", "stems": stems}
+            fingerprint = registry.script_fingerprint(figures_dir, script)
+            if fingerprint:
+                # 登记那一刻的内容指纹（ADR 0211 第一期 6）：脚本挪走后在项目里找字节相同的那一份
+                cfg[script][registry.FINGERPRINT_KEY] = fingerprint
     return {"version": 1, "scripts": cfg}, rep
 
 
@@ -1716,7 +1720,8 @@ def write_config(
                     for script, entry in cfg["scripts"].items()
                 }
         revision = atomicio.write_json(path, cfg, indent=1)
-        # The project keeps its four-field registry contract. Only successfully published
+        # The project registry carries entry/cost/notes/stems plus the optional artifacts,
+        # stem_aliases and sha256 content fingerprint (ADR 0211). Only successfully published
         # new discoveries become local evidence; merely building a draft stays read-only.
         if discovered:
             runconfig.record_discovered(figures_dir, discovered)
@@ -1957,6 +1962,11 @@ def _register_locked(
     )
     if claimed:
         prev = prev_entry or {}
+        # 内容指纹（ADR 0211 第一期 6）：这次登记时脚本的字节；脚本此刻读不到（只是摘一张图的登记，脚本已经不在）
+        # 就沿用旧指纹——挪走之后正要靠它在项目里认出那一份
+        fingerprint = registry.script_fingerprint(figures_dir, script)
+        if fingerprint is None and registry.valid_fingerprint(prev.get(registry.FINGERPRINT_KEY)):
+            fingerprint = prev[registry.FINGERPRINT_KEY]
         scripts[script] = {
             "entry": entry,
             "cost": cost or prev.get("cost", "medium"),
@@ -1964,6 +1974,7 @@ def _register_locked(
             "stems": claimed_list,
             **({"artifacts": dict(sorted(new_arts.items()))} if new_arts else {}),
             **({"stem_aliases": aliases} if aliases else {}),
+            **({registry.FINGERPRINT_KEY: fingerprint} if fingerprint else {}),
         }
     else:
         scripts.pop(script, None)

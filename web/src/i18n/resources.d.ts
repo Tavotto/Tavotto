@@ -4573,7 +4573,7 @@ export default interface Resources {
       "script_replace_failed": "替换失败，脚本没有被修改：{{script}}。关闭正在占用它的程序后重试。",
       "script_restore_conflict": "那几处路径之后又被改过，没法只撤销它们。可以选择整份恢复（当前版本会先另存一份）。",
       "script_restore_stale": "{{script}} 在列出这份备份之后又被改过，列表已刷新。请按现在的状态重新选择复原方式（可以只撤销那几处路径）。",
-      "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
+      "script_source_missing": "找不到 {{script}}",
       "session_auth_required": "没有活动会话。请重新启动 Tavotto，从它打开的链接进入。",
       "session_dead": "画到一半被系统中断了，多半是内存不够。再操作一次会重新开始。",
       "settings_dir_unusable": "{{key}} 不可用：{{reason}}",
@@ -6399,6 +6399,14 @@ export default interface Resources {
         "facecolor": "填充色",
         "linewidth": "描边线宽"
       }
+    },
+    "relink": {
+      "choose": "选脚本接回",
+      "linked": "已接到 {{script}}",
+      "note": "可能挪走或删了，仍显示上一版",
+      "otherScripts": "其他脚本",
+      "to": "接回 {{target}}",
+      "toRoot": "接回 项目根目录"
     },
     "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
     "richText": {

@@ -28,6 +28,13 @@
     一律走 `for_artifact()`：先查这张表，查不到再退回按 stem。字段可缺（旧文件），旧版本
     读新文件时按未知键忽略（`load_data` 只取已知键）；表是**派生数据**，坏的条目（非字符串、
     stem 不在本脚本 stems 里、同一路径被两个脚本认领）静默丢弃，不让整份注册表打不开
+  * sha256（可选，ADR 0211 第一期 6）：登记那一刻脚本文件的**内容指纹**（小写十六进制）。脚本被挪走（注册表指着的
+    文件不在了）时，拿它在项目里找**字节完全相同**的那一份，给「接到 …」一键接回。写入时机：首次起草、统一刷新
+    并入新脚本、试运行 / 手工登记（`discover.register`）——都是本来就要写注册表的那一下，**不为了更新指纹单独写盘**，
+    只读打开也不写。所以用户改了脚本、之后没再登记过，指纹会是旧的：对不上就退回让用户从候选里选。
+    非法值（非 64 位十六进制）静默当没有。**不进 `entries()`**：`project_refresh` 拿 entries 比相等判 worker 过期，
+    指纹变了不该收掉活 worker；也不进本机缓存、诊断包、遥测——它只在这份随项目走的文件里。
+    v0.21.x 读到它按未知键忽略（`load_data` 只取已知键）；v0.21.x 重新登记某个脚本时会整条重写、丢掉它，下次登记补上。
   * stem_aliases（可选，ADR 0162）：`{脚本保存时的图名: 登记的图名}`。两份脚本保存同名的图（复制一份脚本
     换样本、输出到另一个文件夹）时，后登记的那份的图以 `原图名@脚本文件名` 登记，捕获层按这张表在收图之后
     改名（`figcapture.apply_stem_aliases`），之后缓存、预览、编辑请求、覆盖记录都只见登记图名，不会和
@@ -42,7 +49,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import re
 from pathlib import Path
 
 REGISTRY_NAME = "tavotto_registry.json"
@@ -57,6 +67,39 @@ INLINE_ENTRY = "__main__"
 # 历史上的三方言，仍是 discover 的首选顺序；校验不再限定在这三个之内
 KNOWN_ENTRIES = ("main", "render", INLINE_ENTRY)
 VALID_COSTS = {"light", "medium", "heavy"}
+#: 登记条目里脚本内容指纹的键（ADR 0211 第一期 6）
+FINGERPRINT_KEY = "sha256"
+_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
+#: 超过它的「脚本」不算指纹（不是正常的绘图脚本；也免得刷新时读一个巨大文件）
+FINGERPRINT_MAX_BYTES = 16 * 1024 * 1024
+
+
+def valid_fingerprint(value: object) -> bool:
+    return isinstance(value, str) and bool(_FINGERPRINT_RE.match(value))
+
+
+def file_fingerprint(path: str | Path) -> str | None:
+    """文件内容的 sha256（小写十六进制）；不是普通文件 / 读不出 / 太大 → None。"""
+    p = Path(path)
+    try:
+        if not p.is_file() or p.stat().st_size > FINGERPRINT_MAX_BYTES:
+            return None
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def script_fingerprint(figures_dir: str | Path, script: str) -> str | None:
+    """项目里脚本 `script`（项目相对路径）此刻的内容指纹；越出项目 / 不在 / 读不出 → None。"""
+    # realpath + 前缀判包含（符号链接解开后比）：越出项目根的一律不读
+    try:
+        base = os.path.realpath(os.fspath(figures_dir))
+        target = os.path.realpath(os.path.join(base, str(script).replace("\\", "/")))
+    except (OSError, ValueError):
+        return None
+    if not target.startswith(base.rstrip(os.sep) + os.sep):
+        return None
+    return file_fingerprint(target)
 
 
 def valid_entry(entry: object) -> bool:
@@ -91,6 +134,8 @@ class Registry:
         self._index: dict[str, str] = {}
         #: 磁盘文件（项目相对路径，POSIX）→ stem；见模块说明的 artifacts
         self._artifacts: dict[str, str] = {}
+        #: 脚本 → 登记时的内容指纹（`sha256`）；不进 `entries()`
+        self._fingerprints: dict[str, str] = {}
         self._source: str = "<未加载>"
 
     # ---------------- 装载 ----------------
@@ -117,6 +162,7 @@ class Registry:
         cleaned: dict[str, dict] = {}
         index: dict[str, str] = {}
         per_script: dict[str, dict[str, str]] = {}
+        fingerprints: dict[str, str] = {}
         for script, cfg in scripts.items():
             if not isinstance(cfg, dict):
                 raise RuntimeError(f"{source}: {script} 的配置必须是对象")
@@ -146,6 +192,10 @@ class Registry:
                 "notes": str(cfg.get("notes", "")),
                 "stems": list(stems),
             }
+            if valid_fingerprint(cfg.get(FINGERPRINT_KEY)):
+                fingerprints[script] = cfg[FINGERPRINT_KEY]
+                # 有才带：`entries()` 与磁盘上的条目同形（见下方 artifacts 那段），读回再写不丢指纹
+                cleaned[script][FINGERPRINT_KEY] = cfg[FINGERPRINT_KEY]
             aliases = clean_stem_aliases(cfg.get("stem_aliases"), stems)
             if aliases:
                 # 有才带（同 `artifacts`）：没有别名的条目与旧文件逐键相同
@@ -160,6 +210,7 @@ class Registry:
                 cleaned[script]["artifacts"] = dict(mine)
         self._scripts, self._index, self._source = cleaned, index, source
         self._artifacts = artifacts
+        self._fingerprints = fingerprints
 
     # ---------------- 查询 ----------------
     def loaded(self) -> bool:
@@ -205,6 +256,10 @@ class Registry:
         return {
             a: s for a, s in self._artifacts.items() if s in stems and self._index.get(s) == script
         }
+
+    def fingerprint_of(self, script: str) -> str | None:
+        """登记时记下的脚本内容指纹（`sha256`）；老登记没有 / 值非法 → None。"""
+        return self._fingerprints.get(script)
 
     def all_scripts(self) -> list[str]:
         return list(self._scripts)
