@@ -86,3 +86,45 @@ export function ConnectionManage({
     </div>
   )
 }
+
+/** 「退出登录」：退出这个 ChatGPT 账号并撤销授权（先确认）；远端撤销没确认时如实说一句（本机令牌照样清掉） */
+export function SiwcSignOut({
+  connection,
+  onRevokeUnconfirmed,
+}: {
+  connection: AiConnection
+  /** 远端撤销没确认：退出后这一行会换成未连接的样子、本组件随即卸载，提示由还活着的上层显示 */
+  onRevokeUnconfirmed?: () => void
+}) {
+  useTranslation('dialogs')
+  const [error, setError] = useState<string | null>(null)
+  const signOut = async () => {
+    const ok = await askConfirm({
+      title: msg('settings.connectAi.siwc.signOutTitle', undefined, 'dialogs'),
+      body: msg('settings.connectAi.siwc.disconnectBody', undefined, 'dialogs'),
+      confirmLabel: msg('settings.connectAi.siwc.signOut', undefined, 'dialogs'),
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      const r = await disconnectAi(connection.id)
+      if (r.revoked === false) onRevokeUnconfirmed?.()
+      await useAiStore.getState().loadCaps(true)
+    } catch (e) {
+      setError(backendErrorText(e))
+    }
+  }
+  return (
+    <span className="flex shrink-0 flex-col items-end gap-1">
+      {/* 次一级的灰字，负右边距让字的右缘与上下的箭头 / 下拉框对齐（agy 审稿） */}
+      <Button variant="ghost" size="sm" className="-mr-2 text-ink-2" data-connect-disconnect onClick={() => void signOut()}>
+        {cx('siwc.signOut')}
+      </Button>
+      {error && (
+        <span role="alert" className="text-xs text-danger">
+          {error}
+        </span>
+      )}
+    </span>
+  )
+}

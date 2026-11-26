@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, test, waitForFigureEdit, type RunningApp } from './fixtures'
 
+// 假 codex 当订阅登录（sub:codex）：SIWC 默认开后 Codex 登录被隐藏，只有 `TAVOTTO_EXPERIMENTAL_SIWC=0` 时还在（ADR 0209 §六）
 /**
  * 改图助手先出修改方案卡的端到端（ADR 0206 PR 4；真浏览器 + 真后端 + **假模型**）。
  *
@@ -28,7 +29,7 @@ function fakeCodexDir(): string {
 }
 
 async function start(app: (o?: Parameters<typeof import('./fixtures').startApp>[0]) => Promise<RunningApp>, planModel: 'ok' | 'log' | 'unsupported_sync' | 'unsupported_thread') {
-  return app({ planModel, env: { PATH: `${fakeCodexDir()}${path.delimiter}${process.env.PATH ?? ''}` } })
+  return app({ planModel, env: { PATH: `${fakeCodexDir()}${path.delimiter}${process.env.PATH ?? ''}`, TAVOTTO_EXPERIMENTAL_SIWC: '0' } })
 }
 
 async function openAssistant(page: Page, baseURL: string) {

@@ -92,3 +92,12 @@ def test_tally_survives_a_filtered_run_with_only_one_side_of_a_pair():
     assert t["cases"] == 1
     whole = RC.tally(RC.run_all([c for c in CASES if c["id"] in ("RC-P03A", "RC-P03B")]))
     assert whole["cases"] == 2
+
+
+def test_every_rules_candidate_is_in_its_legal_universe(tmp_path):
+    """`legal_universe` 的约定：规则给出的每个候选必在合法全集里（全集是「现有模板画得出来的全部画法」，候选是它的子集）。
+    新增一种取自现成误差列的画法却没进 `ERR_METHODS` 时它会走 `_shape`、得到 None，候选就跑到全集外面——这里逐条核 41 条（以前只有 A2 报告里一行「必须 0」的自检，没有断言）。"""
+    for case in CASES:
+        run = RC.rules_run(case, tmp_path / case["id"] / "run")
+        uni, _role = RC.legal_universe(case, tmp_path / case["id"] / "uni")
+        assert set(run["methods"]) <= uni, (case["id"], run["methods"], sorted(uni))

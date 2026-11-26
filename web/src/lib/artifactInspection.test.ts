@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ArtifactManifestSummary } from './api'
-import { CHECK_NAMES, inspectionRollup, inspectionState, noticeTone, ptPair, textSizeNote } from './artifactInspection'
+import {
+  CHECK_NAMES,
+  inspectionRollup,
+  inspectionState,
+  knownAdvisories,
+  noticeTone,
+  ptPair,
+  textSizeNote,
+} from './artifactInspection'
 
 const base: ArtifactManifestSummary = {
   manifest_version: 1,
@@ -128,5 +136,22 @@ describe('成品实测字号 text_size（ADR 0203）', () => {
     expect(ptPair(5.99, 6)).toEqual({ min: '5.99', floor: '6' })
     expect(ptPair(3.675, 5.5)).toEqual({ min: '3.7', floor: '5.5' })
     expect(ptPair(6, 7.25)).toEqual({ min: '6', floor: '7.25' })
+  })
+})
+
+describe('knownAdvisories', () => {
+  it('只留前端认得的码，顺序照服务端；老服务端没有这个键 = 没有留意', () => {
+    expect(knownAdvisories(base)).toEqual([])
+    expect(knownAdvisories(null)).toEqual([])
+    const m = {
+      ...base,
+      advisories: [{ code: 'later_code' }, { code: 'scripted_raster', panels: ['a.png'] }, { code: 'type3_fonts' }],
+    }
+    expect(knownAdvisories(m).map((a) => a.code)).toEqual(['scripted_raster', 'type3_fonts'])
+  })
+
+  it('留意不改变核验语气（不是失败）', () => {
+    const m = { ...base, checks: { integrity: 'verified', size: 'verified' } as const, advisories: [{ code: 'type3_fonts' }] }
+    expect(inspectionState(m).tone).toBe('verified')
   })
 })

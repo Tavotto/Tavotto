@@ -2484,6 +2484,8 @@ export interface ArtifactManifestSummary {
   required: string[]
   checks: Record<string, ArtifactCheckVerdict>
   notes: string[]
+  /** 「留意」：不是失败、照常交付，但投稿时可能被退或有更好的做法（Type 3 字体、有脚本的图整张是位图）；老服务端没有 */
+  advisories?: ArtifactAdvisory[]
   carrier?: string | null
   size_pt?: [number, number] | null
   px?: [number, number] | null
@@ -2506,6 +2508,17 @@ export interface ArtifactTextSize {
   reason: string
   min_pt: number | null
   floor_pt: number | null
+}
+
+export interface ArtifactAdvisory {
+  /** 闭集：`lib/artifactInspection.ADVISORY_CODES` */
+  code: string
+  /** `type3_fonts`：用到的 Type 3 字体名（至多 5 个） */
+  fonts?: string[]
+  /** `scripted_raster`：整张嵌成位图、却有脚本的图（项目内相对 id，至多 5 个） */
+  panels?: string[]
+  /** 全部个数（`fonts` / `panels` 只带前几个） */
+  count?: number
 }
 
 export interface ArtifactIdentity {
@@ -4842,7 +4855,8 @@ export interface AiCapabilities {
 /** 一家厂商的一种连接方式（同一厂商的 API Key 与订阅登录合并成一个厂商时有多种） */
 export interface AiVendorMethod {
   id: string
-  kind: 'key' | 'login' | 'oauth'
+  /** siwc = Sign in with ChatGPT（浏览器授权、我们自己保存令牌，只走内置；ADR 0209） */
+  kind: 'key' | 'login' | 'oauth' | 'siwc'
   /** 方式名的 i18n 键（`method.subscription` / `method.apiKey` / `method.kimiCode` / `method.codingPlan` / `method.account`） */
   label_key?: string | null
   /** key 类：对应的目录行 id（保存连接时作为厂商 id） */
@@ -4872,7 +4886,7 @@ export interface AiVendor {
   /** 彩色标志的键（`BrandLogo`）；表外 = 通用图标 */
   logo: string
   region: 'cn' | 'global' | 'custom'
-  connect: 'key' | 'login' | 'oauth'
+  connect: 'key' | 'login' | 'oauth' | 'siwc'
   /** 「去申请 Key」页面（https） */
   key_url?: string
   /** login 类：对应 CLI 已安装才 true；oauth 类：client_id 已配置才出现 */
@@ -4918,6 +4932,8 @@ export interface AiConnection {
   route?: 'cli:codex' | 'cli:claude' | 'builtin'
   /** 订阅类连接：背后那份 CLI 比它的模型清单旧时怎么更新（同 `AiAgentCaps.cli_update`） */
   cli_update?: AiCliUpdate | null
+  /** SIWC 连接（`siwc:chatgpt`）：登录的 ChatGPT 账号邮箱，只作显示 */
+  account_email?: string
 }
 
 /** 对话协议（后端 `ai_providers.protocol_of`） */
@@ -4980,7 +4996,31 @@ export const checkAiConnection = (id: string) =>
 
 /** 断开一个连接（订阅类不可删，只能在命令行里退出登录） */
 export const disconnectAi = (id: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/ai/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  jsonFetch<{ ok: boolean; revoked?: boolean }>(`/api/ai/connections/${encodeURIComponent(id)}`, { method: 'DELETE' })
+
+/** Sign in with ChatGPT 的一次登录（ADR 0209）。`state` 闭集；`reason` 只在 failed 时有（后端 `siwc_login.REASONS`） */
+export interface AiSiwcFlow {
+  flow_id: string
+  state: 'waiting' | 'exchanging' | 'signed_in' | 'plan_disabled' | 'denied' | 'cancelled' | 'expired' | 'failed'
+  authorize_url: string
+  reason?: string
+}
+
+/** 发起 ChatGPT 登录：返回授权地址（用系统浏览器打开），之后轮询 `fetchSiwcFlow` */
+export const startSiwcLogin = (newAccount = false) =>
+  jsonFetch<{ ok: boolean; flow_id: string; flow: AiSiwcFlow }>('/api/ai/siwc/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(newAccount ? { new_account: true } : {}),
+  })
+
+export const fetchSiwcFlow = (flowId: string) => jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}`)
+
+/** 失败选择题里选了「改用 Codex 登录」：后端记下来，之后列出 Codex 登录与 sub:codex 连接（登录本身仍走 `startAiLogin('codex')`） */
+export const siwcCodexFallback = () => jsonFetch<{ ok: boolean }>('/api/ai/siwc/codex-fallback', { method: 'POST' })
+
+export const cancelSiwcFlow = (flowId: string) =>
+  jsonFetch<AiSiwcFlow>(`/api/ai/siwc/flows/${encodeURIComponent(flowId)}/cancel`, { method: 'POST' })
 
 /** 订阅类 / 账号登录类连接发起登录；进度沿用 `fetchAiLoginStatus` / 设备码流程的轮询 */
 export const loginAiConnection = (id: string) =>
@@ -5795,6 +5835,8 @@ export interface AiDataProposeItem {
   error_source?: 'column' | 'computed'
   /** 取自表里现成的列时，那一列的名字（用户数据：只当文本渲染） */
   error_column?: string
+  /** 多个 y、各配各的现成误差列时的逐列事实（这时没有 `error_column` / `error_stated`；顶层 `error` 只在各列种类一致时才有）；单个 y 没有这个键 */
+  error_columns?: { y: string; column: string; kind: AiDataErrorKind; stated: boolean }[]
   /** 误差线的种类是列名自己说明的（如列名叫 sd） */
   error_stated?: boolean
   /** 算出来的误差线 / 带里因为只有 1 个值而没有误差线的位置标签（最多 50 个；没有就没有这个键） */
@@ -6300,9 +6342,13 @@ interface ProjectScoped {
   pj?: string
 }
 
+/** 取会话的阶段（后端 `engine.pool.ACQUIRE_STAGE_OF`）：找运行环境 → 启动 Python */
+export type PreparingStage = 'environment' | 'starting'
+
 export type ServerEvent =
   | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
-  | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  /** `stage`：取会话里走到哪一步（#479）；第一条不带，只前进不后退 */
+  | ({ kind: 'render.preparing'; id: string; stage?: PreparingStage } & ProjectScoped)
   | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)

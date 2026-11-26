@@ -17,6 +17,9 @@ colors:
   ink-2: "#4a4842"
   ink-3: "#6b6860"
   ink-faint: "#a39f95"
+  pro-ti-dark: "#42403d"
+  pro-ti-light: "#8c9096"
+  pro-ti-edge: "#3a3d42"
   accent: "#2c73de"
   accent-subtle: "#ebf2fc"
   danger: "#c4442a"
@@ -219,6 +222,9 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 | `ink-2` | `#c5c2b9` |
 | `ink-3` | `#9d9a90` |
 | `ink-faint` | `#6c6961` |
+| `pro-ti-dark` | `#686d75` |
+| `pro-ti-light` | `#e8ebf0` |
+| `pro-ti-edge` | `#a9aeb6` |
 | `accent` | `#5a92e5` |
 | `accent-subtle` | `#1d2a3d` |
 | `dim` | `#7db6f5` |

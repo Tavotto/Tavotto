@@ -1677,6 +1677,42 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()).toBeNull()
   })
 
+  it('缺字（glyphs failed）：红着说「缺字（显示成方块）」', async () => {
+    jobOutputs = [output(manifest({ integrity: 'verified', size: 'verified', glyphs: 'failed' }))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：缺字（显示成方块）')
+  })
+
+  it('留意（T-004）：Type 3 与整张位图各说一句、点名字体与图；摘要行说一句；结果不算「干净」', async () => {
+    jobWarnings = []
+    jobOutputs = [
+      output({
+        ...manifest({ integrity: 'verified', size: 'verified' }),
+        advisories: [
+          { code: 'type3_fonts', fonts: ['DejaVuSans'], count: 1 },
+          { code: 'scripted_raster', panels: ['figs/plot.png'], count: 1 },
+          { code: 'from_a_newer_server', count: 1 },
+        ],
+      }),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    const result = document.body.querySelector('[data-export-result]')
+    expect(result, '有留意的结果必须留在对话框里').not.toBeNull()
+    expect(result?.textContent).toContain('1 个文件有需留意的地方，见详情')
+    await openResultDetail()
+    const lines = [...document.body.querySelectorAll<HTMLElement>('[data-inspection-advisory]')]
+    // 不认识的码不画（老前端 + 新服务端）
+    expect(lines.map((l) => l.dataset.inspectionAdvisory)).toEqual(['type3_fonts', 'scripted_raster'])
+    expect(lines[0].textContent).toContain('Type 3 字体（DejaVuSans）')
+    expect(lines[1].textContent).toContain('plot.png 是整张位图嵌进来的')
+    expect(lines[1].className).toContain('text-warn')
+    // 留意不是失败：没有红色的核验未通过
+    expect(document.body.querySelector('[data-inspection="failed"]')).toBeNull()
+  })
+
   it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {
     const svg = (extra: Record<string, unknown>) => ({
       ...output(manifest({ integrity: 'verified', size: 'verified' })),

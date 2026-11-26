@@ -227,7 +227,8 @@
     "attachNoVision": "这个模型看不了图，",
     "attachNoVisionOnly": "这个模型看不了图",
     "attachSwitch": "换成 {{model}}",
-    "attachAria": "附文件"
+    "attachAria": "附文件",
+    "kindSubscription": "订阅"
   },
   "process": {
     "thought": "已思考 {{duration}}",
@@ -568,6 +569,10 @@
         "title": "点 + 折线 + 误差线",
         "why": "表里已经是每个位置的均值，按顺序连起来。"
       },
+      "bar_err": {
+        "title": "柱 + 误差线",
+        "why": "表里已经是各组的均值，用柱高表示。"
+      },
       "line_units": {
         "title": "每个对象一条线",
         "why": "同一对象的重复测量连成线，看每个对象各自怎么变。"
@@ -723,6 +728,10 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
+      "rowsErrLines": "按表里的 {{drawn}} 行绘制，每条线每行一个点",
+      "rowsBar": "按表里的 {{drawn}} 行绘制，每行一根柱",
+      "errColumns": "误差线取自{{columns}}列",
+      "colQuote": "「{{column}}」",
       "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
       "errColumn": "误差线取自「{{column}}」列",
       "errMissing": "{{count}} 处只有 1 个数值，算不出误差线",
@@ -758,6 +767,7 @@
         "sd": "标准差 (SD)",
         "sem": "标准误 (SEM)",
         "ci95": "95% 置信区间",
+        "mixed": "各列不同",
         "unsure": "还不确定",
         "independent": "不是，每行是不同的样本",
         "repeated": "是，同一个样本测了多次"

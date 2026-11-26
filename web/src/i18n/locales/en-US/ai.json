@@ -231,7 +231,8 @@
     "attachNoVision": "This model can't see images, ",
     "attachNoVisionOnly": "This model can't see images",
     "attachSwitch": "switch to {{model}}",
-    "attachAria": "Attach files"
+    "attachAria": "Attach files",
+    "kindSubscription": "Plan"
   },
   "process": {
     "thought": "Thought for {{duration}}",
@@ -575,6 +576,10 @@
         "title": "Points + line + error bars",
         "why": "The table already holds the mean at each position, so the points are joined in order."
       },
+      "bar_err": {
+        "title": "Bars + error bars",
+        "why": "The table already holds each group's mean, shown as bar height."
+      },
       "line_units": {
         "title": "One line per subject",
         "why": "Repeated measures of the same subject are joined, so you see how each one changes."
@@ -730,6 +735,10 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
+      "rowsErrLines": "drawn from the {{drawn}} rows in the table, one point per row for each line",
+      "rowsBar": "drawn from the {{drawn}} rows in the table, one bar per row",
+      "errColumns": "error bars from the {{columns}} columns",
+      "colQuote": "“{{column}}”",
       "rowsErr": "drawn from the {{drawn}} rows in the table, one point per row",
       "errColumn": "error bars from the “{{column}}” column",
       "errMissing": "{{count}} places have only one value, so no error bar can be computed",
@@ -765,6 +774,7 @@
         "sd": "Standard deviation (SD)",
         "sem": "Standard error (SEM)",
         "ci95": "95% confidence interval",
+        "mixed": "Differs by column",
         "unsure": "Not sure yet",
         "independent": "No, each row is a different sample",
         "repeated": "Yes, the same sample measured again"

@@ -685,10 +685,51 @@ ACQUIRE_SEGMENTS = (
 )
 _TRACE = threading.local()
 
+#: 取会话里用户看得懂的两个阶段（#479）：哪些子段算「找运行环境」，哪些算「启动 Python」。
+#: 只看段名、不看耗时；没列出的段（等池锁、指纹、淘汰…）不改阶段。阶段只前进不后退，由观察者自己保证。
+STAGE_ENVIRONMENT = "environment"
+STAGE_STARTING = "starting"
+ACQUIRE_STAGE_OF = {
+    "resolve_python_ms": STAGE_ENVIRONMENT,
+    "env_decide_ms": STAGE_ENVIRONMENT,
+    "launcher_prewarm_ms": STAGE_ENVIRONMENT,
+    "spawn_ms": STAGE_STARTING,
+    "handshake_ms": STAGE_STARTING,
+}
+
+
+@contextlib.contextmanager
+def stage_observer(callback: Callable[[str], None]):
+    """在本线程这段代码里取会话时，每进入一个有阶段的子段就回调一次阶段名（#479）。
+
+    渲染端点据此把「准备中」细分成找环境 / 启动 Python 发给界面。回调在取会话的线程上同步执行，
+    **只许做轻活**（发一条 SSE）；它抛异常不影响取会话。嵌套时内层覆盖外层，退出后复原。
+    """
+    outer = getattr(_TRACE, "stage_cb", None)
+    _TRACE.stage_cb = callback
+    try:
+        yield
+    finally:
+        _TRACE.stage_cb = outer
+
+
+def _note_stage(name: str) -> None:
+    stage = ACQUIRE_STAGE_OF.get(name)
+    cb = getattr(_TRACE, "stage_cb", None)
+    if stage is None or cb is None:
+        return
+    try:
+        cb(stage)
+    except Exception:  # noqa: BLE001 — 进度通知坏了不能拖垮取会话
+        LOG.debug("取会话阶段回调失败（%s）", name, exc_info=True)
+
 
 @contextlib.contextmanager
 def _seg(name: str):
-    """把这一段的耗时累进本线程当前 `acquire()` 的分段表；不在 `acquire` 里（one_shot、测试直接构造）什么都不做。"""
+    """把这一段的耗时累进本线程当前 `acquire()` 的分段表；不在 `acquire` 里（one_shot、测试直接构造）什么都不做。
+
+    进入有阶段的子段时顺带通知本线程的 `stage_observer`（与是否在 `acquire` 里无关）。"""
+    _note_stage(name)
     cur = getattr(_TRACE, "cur", None)
     if cur is None:
         yield

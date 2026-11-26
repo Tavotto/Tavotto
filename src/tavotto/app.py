@@ -4881,7 +4881,11 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     format=fmt, error_code="format_failed", error_params={"error": str(exc)[:200]}
                 )
             )
-    return _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
+    produced = _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
+    if disk_source is not None:
+        # 这次 PDF 嵌的就是磁盘上那份原件（不是现画）；它是位图、又有脚本 → 自检留意「可以重画成矢量」
+        produced = _note_scripted_raster(produced, _scripted_raster_panels(req))
+    return produced
 
 
 def _keep_disk_source_only_if_unchanged(
@@ -5183,7 +5187,7 @@ def _export_produce_rendercore(
     )
     _prepare_source_fonts()
     try:
-        return rc_job.produce(
+        produced = rc_job.produce(
             job,
             tmp_dir,
             sources=resolver,
@@ -5195,6 +5199,7 @@ def _export_produce_rendercore(
     except engine_exportreq.ExportRequestError as exc:
         # RenderCore 不认注册表：图名在这里补（`figure` / `id` 是画布面板的文件 id）
         raise _name_export_failure(exc)
+    return _note_scripted_raster(produced, _scripted_raster_panels(job.request))
 
 
 def _export_inspect(job, produced: list) -> list:
@@ -6128,6 +6133,53 @@ def _panel_file_kind(rel_id: str) -> str:
 
 def _export_route(req) -> dict:
     """这次导出每个面板 × 每种格式的来源（`engine/exportroute.py`，只回事实）：只查注册表，不执行、不读文件。"""
+    return engine_exportroute.build_route(
+        scope=req.scope, formats=req.formats, panels=_export_route_panels(req)
+    )
+
+
+def _scripted_raster_panels(req) -> list[str]:
+    """这次导出里**有脚本**、却按磁盘上的位图原件整张嵌进去的面板 id（导出自检「留意：可以重画成矢量」的来源）。
+
+    「整张嵌位图」只问 `exportroute.panel_route` 的 `embeds_disk_bitmap`（与 validate 的 route 同一判据），
+    「有脚本」只问注册表；算不出就当没有——留意不编。"""
+    try:
+        panels = _export_route_panels(req)
+    except Exception:  # noqa: BLE001
+        LOG.warning("算不出整张嵌位图的有脚本面板，导出自检不报这一条", exc_info=True)
+        return []
+    out: list[str] = []
+    for panel in panels:
+        route = engine_exportroute.panel_route(
+            scope=req.scope,
+            formats=req.formats,
+            file_kind=panel["file_kind"],
+            overrides=panel.get("overrides"),
+            has_script=panel["has_script"],
+            has_snapshot=bool(panel.get("has_snapshot")),
+        )
+        if route["embeds_disk_bitmap"] and panel["has_script"] and panel["id"] not in out:
+            out.append(panel["id"])
+    return out
+
+
+def _note_scripted_raster(produced: list, panels: list[str]) -> list:
+    """把「哪几张有脚本的图是整张位图」记进 PDF 产物的计划半张（`plan.scripted_raster_panels`），检查器据此报留意。
+    只记 PDF：PNG / TIFF 本来就是位图。"""
+    if not panels:
+        return produced
+    for item in produced:
+        if item.format != engine_exportreq.FORMAT_PDF or item.tmp_path is None:
+            continue
+        manifest = dict(item.manifest or {})
+        key = "plan" if isinstance(manifest.get("plan"), dict) else "provenance"
+        manifest[key] = {**(manifest.get(key) or {}), "scripted_raster_panels": list(panels)}
+        item.manifest = manifest
+    return produced
+
+
+def _export_route_panels(req) -> list[dict]:
+    """route 的输入：每个（可见）面板 `{id, overrides, has_snapshot, file_kind, has_script}`。"""
     if req.original is not None:
         raw = [
             {
@@ -6146,11 +6198,10 @@ def _export_route(req) -> dict:
             for o in (req.canvas.objects if req.canvas is not None else [])
             if o.get("type") == "panel" and not o.get("hidden")
         ]
-    panels = [
+    return [
         {**p, "file_kind": _panel_file_kind(p["id"]), "has_script": _has_runnable_script(p["id"])}
         for p in raw
     ]
-    return engine_exportroute.build_route(scope=req.scope, formats=req.formats, panels=panels)
 
 
 @app.get("/exports/<path:name>")
@@ -6574,6 +6625,31 @@ def sse_publish(event: str, data: dict) -> None:
             q.put_nowait((event, data))
         except queue.Full:
             pass
+
+
+#: 「准备中」的子阶段先后（#479）：只前进不后退，同一阶段只发一次
+_PREPARING_STAGE_ORDER = (engine_pool.STAGE_ENVIRONMENT, engine_pool.STAGE_STARTING)
+
+
+def _preparing_stage_relay(pj: str, rel_id: str):
+    """取会话期间把池报的阶段转成带 `stage` 的 `render.preparing`（#479）。
+
+    热路径只会走到「找运行环境」那一步，而且一闪而过；冷启动才会看到「启动 Python」。
+    阶段只前进：取会话里解析解释器可能在起子进程之后再碰一次，不能让界面倒回去。
+    """
+    reached = -1
+
+    def relay(stage: str) -> None:
+        nonlocal reached
+        if stage not in _PREPARING_STAGE_ORDER:
+            return
+        rank = _PREPARING_STAGE_ORDER.index(stage)
+        if rank <= reached:
+            return
+        reached = rank
+        sse_publish("render.preparing", {"pj": pj, "id": rel_id, "stage": stage})
+
+    return relay
 
 
 @contextlib.contextmanager
@@ -11368,12 +11444,18 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
     # 后台补渲染可能被暂缓（不起会话）：没有人在等它，不报「准备中」，免得暂缓时还要补一个终局事件
-    if engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND:
+    foreground = engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND
+    if foreground:
         sse_publish("render.preparing", {"pj": pj, "id": rel_id})
     acquire_mark = engine_pool.acquire_mark()
     try:
         # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
-        with engine_prewarm.PREWARM.foreground():
+        with (
+            engine_prewarm.PREWARM.foreground(),
+            engine_pool.stage_observer(_preparing_stage_relay(pj, rel_id))
+            if foreground
+            else contextlib.nullcontext(),
+        ):
             # 渲染端点独有冷重放：活会话照常准入；冷进程沿 runtime 渲染同一授权链
             # 重放归档输入并核验后采用新 receipt（PR03）。specfix/PNG/导出等其余
             # origin 消费者维持严格准入，由采用后的活 receipt 自然恢复。
@@ -18601,6 +18683,15 @@ def api_ai_siwc_cancel(flow_id):
     if flow is None:
         return jsonify({"error": "登录流程不存在", "code": "oauth_flow_not_found"}), 404
     return jsonify(flow)
+
+
+@app.post("/api/ai/siwc/codex-fallback")
+def api_ai_siwc_codex_fallback():
+    """ChatGPT 登录失败的选择题里点了「改用 Codex 登录」：记下来，之后列出 Codex 登录与 `sub:codex` 连接（登录本身仍走
+    `POST /api/ai/agents/codex/login`）。只写一个布尔设置，不碰任何凭据。"""
+    engine_ai_connections.set_codex_fallback()
+    engine_ai.invalidate_capabilities()
+    return jsonify({"ok": True})
 
 
 @app.post("/api/ai/siwc/models/refresh")

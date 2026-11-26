@@ -300,8 +300,8 @@
     ],
     "rules_top_ok": false,
     "acceptable_in_candidates": {
-     "ecdf_groups": 3,
-     "box_points": 2
+     "box_points": 2,
+     "ecdf_groups": 3
     },
     "acceptable_in_universe": [
      "box_points",
@@ -787,7 +787,8 @@
    "expressible": {
     "rules_top": "points_err",
     "rules_candidates": [
-     "points_err"
+     "points_err",
+     "bar_err"
     ],
     "rules_top_ok": true,
     "acceptable_in_candidates": {
@@ -1013,8 +1014,8 @@
     "rules_top_ok": true,
     "acceptable_in_candidates": {
      "box_points": 2,
-     "points_mean": 1,
-     "ecdf_groups": 3
+     "ecdf_groups": 3,
+     "points_mean": 1
     },
     "acceptable_in_universe": [
      "box_points",
@@ -2097,9 +2098,9 @@
     ],
     "rules_top_ok": true,
     "acceptable_in_candidates": {
+     "box_points_single": 3,
      "density": 4,
      "ecdf": 2,
-     "box_points_single": 3,
      "hist": 1
     },
     "acceptable_in_universe": [
@@ -2554,7 +2555,8 @@
    "expressible": {
     "rules_top": "points_err",
     "rules_candidates": [
-     "points_err"
+     "points_err",
+     "bar_err"
     ],
     "rules_top_ok": true,
     "acceptable_in_candidates": {

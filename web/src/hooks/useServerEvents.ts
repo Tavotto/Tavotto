@@ -114,7 +114,7 @@ export function handleServerEvent(ev: ServerEvent) {
       break
 
     case 'render.preparing':
-      render.noteBuilding(ev.id, { cold: false, cost: '', phase: 'preparing' })
+      render.noteBuilding(ev.id, { cold: false, cost: '', phase: 'preparing', stage: ev.stage })
       break
     case 'render.progress':
       // 引擎说 build 还在跑（worker 日志仍在增长，#1207）：续上这个文件的看门狗租约

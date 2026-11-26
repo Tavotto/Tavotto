@@ -246,7 +246,9 @@ export default interface Resources {
       "basis": {
         "bandMissing": "{{count}} 处只有 1 个数值，算不出误差带",
         "bandMissingOne": "「{{label}}」只有 1 个数值，算不出误差带",
+        "colQuote": "「{{column}}」",
         "errColumn": "误差线取自「{{column}}」列",
+        "errColumns": "误差线取自{{columns}}列",
         "errMissing": "{{count}} 处只有 1 个数值，算不出误差线",
         "errMissingOne": "「{{label}}」只有 1 个数值，算不出误差线",
         "etc": "等",
@@ -257,7 +259,9 @@ export default interface Resources {
         "listJoin": "、",
         "plain": "按 {{drawn}} 个数值绘制",
         "points": "按 {{drawn}} 个点绘制，每行一个点",
+        "rowsBar": "按表里的 {{drawn}} 行绘制，每行一根柱",
         "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
+        "rowsErrLines": "按表里的 {{drawn}} 行绘制，每条线每行一个点",
         "skippedAll": "另有 {{count}} 行未计入",
         "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
         "skippedMissing": "另有 {{count}} 行因缺值未计入",
@@ -283,6 +287,10 @@ export default interface Resources {
         "stop": "停止"
       },
       "candidate": {
+        "bar_err": {
+          "title": "柱 + 误差线",
+          "why": "表里已经是各组的均值，用柱高表示。"
+        },
         "bar_error": {
           "title": "柱 + 误差线",
           "why": "各组均值一目了然，误差线是{{error}}；个别点会藏在柱里。"
@@ -358,6 +366,7 @@ export default interface Resources {
         "option": {
           "ci95": "95% 置信区间",
           "independent": "不是，每行是不同的样本",
+          "mixed": "各列不同",
           "repeated": "是，同一个样本测了多次",
           "sd": "标准差 (SD)",
           "sem": "标准误 (SEM)",
@@ -662,6 +671,7 @@ export default interface Resources {
       "emptyTitle": "想怎么改这张图？",
       "finishing": "正在结束上一次修改…",
       "inputAria": "描述要怎么改这张图",
+      "kindSubscription": "订阅",
       "ledgerFailed": "未能确认本机任务状态，这条指令尚未发出。请稍后重试。",
       "ledgerUnreadable": "正在确认上一条指令的状态，请稍候片刻再发。",
       "noAi": "还没有连接 AI。",
@@ -1288,11 +1298,16 @@ export default interface Resources {
       "groupFormat": "格式",
       "groupOutput": "输出",
       "inspection": {
+        "advisory": {
+          "scripted_raster": "需留意：{{panels}} 是整张位图嵌进来的。它有脚本，可以重画成矢量。",
+          "type3_fonts": "需留意：用了 Type 3 字体（{{fonts}}），IEEE、Elsevier 等期刊会退回。有脚本的图用脚本重画就不再有 Type 3。"
+        },
         "check": {
           "carrier": "矢量构成",
           "clipping": "裁切",
           "dpi_tag": "分辨率标签",
           "fonts_embedded": "字体嵌入",
+          "glyphs": "缺字（显示成方块）",
           "image_ppi": "图像分辨率",
           "integrity": "完整性",
           "raster_density": "像素密度",
@@ -1368,6 +1383,7 @@ export default interface Resources {
       "profileUpdateAvailable": "这套规范有了新版本。",
       "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
       "reportToggle": "生成投稿前检查报告",
+      "resultAdvisories_other": "{{count}} 个文件有需留意的地方，见详情",
       "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
       "resultScriptSkipped_other": "{{count}} 处修改未写入 .py",
       "resultWarnings_other": "有 {{count}} 条提示，见详情",
@@ -3115,6 +3131,7 @@ export default interface Resources {
         "disconnectTitle": "断开 {{name}}？",
         "err": {
           "network": "连不上服务商。",
+          "planUsageDisabled": "未允许使用订阅额度",
           "timeout": "连接超时。",
           "unauthorized": "Key 无效或已过期。"
         },
@@ -3157,6 +3174,20 @@ export default interface Resources {
         "saveKey": "保存",
         "savedRefreshFailed": "已保存，但没能刷新状态。",
         "signIn": "登录",
+        "siwc": {
+          "browserHint": "在浏览器里完成登录。",
+          "cancel": "取消",
+          "continue": "Continue with ChatGPT",
+          "disconnectBody": "会退出这个 ChatGPT 账号，并撤销 {{product}} 的授权。",
+          "expired": "登录超时了。",
+          "failed": "登录没有完成。",
+          "openAgain": "重新打开",
+          "planDisabled": "登录时没有允许使用订阅额度。",
+          "revokeUnconfirmed": "已退出，但没能确认撤销授权，可以到 ChatGPT 设置里断开 {{product}}。",
+          "signOut": "退出登录",
+          "signOutTitle": "退出 ChatGPT 账号？",
+          "useCodex": "改用 Codex 登录"
+        },
         "starter": {
           "key": "没有订阅：填一个 API Key",
           "other": "其他方式",
@@ -7376,6 +7407,7 @@ export default interface Resources {
       "modifiedAfterSave": "与存盘文件不同",
       "modifiedAfterSaveHint": "脚本保存这张图之后又改动了它。这里编辑的是脚本跑完时的样子，可能与磁盘上的文件不一样。",
       "needRender": "「{{name}}」的元素清单需要渲染一次。",
+      "needRenderBusy": "「{{name}}」的元素清单需要渲染一次。{{progress}}",
       "noEditableHint": "由脚本生成的图才能改图内对象",
       "noEditableTitle": "画布上还没有可编辑的图",
       "noMatch": "没有匹配的元素",
@@ -8510,7 +8542,10 @@ export default interface Resources {
     },
     "renderProgress": {
       "elapsed": "{{message}} · 已用时 {{seconds}} 秒",
-      "preparing": "正在准备图表…"
+      "preparing": "正在准备图表…",
+      "stepEnvironment": "正在找运行环境（1/3）",
+      "stepRunning": "正在运行脚本、生成可编辑元素（3/3），首次可能要几分钟",
+      "stepStarting": "正在启动 Python（2/3）"
     },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
