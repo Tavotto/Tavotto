@@ -359,7 +359,7 @@ JOURNAL_CURRENT_MAX = 200
 JOURNAL_URL_MAX = 2000
 _JOURNAL_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 _JOURNAL_RULE_KEY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$")
-_JOURNAL_SOURCE_ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$")
+_JOURNAL_SOURCE_ID = re.compile(r"^(?:v2:)?[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$")
 _CTRL_OR_SPACE = re.compile(r"[\s\x00-\x1f\x7f]")
 #: 目录里的序列化值 / 刊名 / 搜索词只收单行：任何控制字符（含换行）都不合规
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")

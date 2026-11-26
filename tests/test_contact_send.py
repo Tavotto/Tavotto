@@ -1635,3 +1635,14 @@ def test_capability_reports_journal_tips_unless_journal_sync_is_off(on, monkeypa
     assert contactsend.capability()["journal_tips"] is True
     monkeypatch.setenv("TAVOTTO_NO_JOURNAL_SYNC", "1")
     assert contactsend.capability()["journal_tips"] is False
+
+
+def test_journal_source_id_keeps_the_v2_prefix_and_rejects_other_colons(on):
+    contactsend.start(_jmeta({**WRONG, "source_id": "v2:abc-1"}), [])
+    wait_for({"done"})
+    assert on.calls[0]["json"]["journal"]["source_id"] == "v2:abc-1"
+    contactsend.dismiss()
+    contactsend.start(_jmeta({**WRONG, "source_id": "x:abc"}), [])
+    wait_for({"done"})
+    inits = [c for c in on.calls if "journal" in c["json"]]
+    assert "source_id" not in inits[1]["json"]["journal"]

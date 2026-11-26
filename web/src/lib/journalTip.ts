@@ -1,5 +1,4 @@
 import { fieldLabel, valueText } from '@/lib/journalPick'
-import { isV2Source, V2_SOURCE_PREFIX } from '@/lib/journalV2'
 import type { JournalFieldSource } from '@/lib/journals'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useJournalV2Store } from '@/store/journalV2Store'
@@ -50,8 +49,7 @@ export function tipForSource(
     ruleKey: path,
     ruleLabel: fieldLabel(path),
     current: valueText(path, source).slice(0, 200),
-    // v2 的出处 id 带 `v2:` 前缀（同源对 `journalfacts_fold.V2_SOURCE_PREFIX`），线缆上的 source_id 不收冒号：去前缀，v2 版本号另在 catalog 里
-    sourceId: isV2Source(source) ? source.src.slice(V2_SOURCE_PREFIX.length) : source.src,
+    sourceId: source.src, // v2 的 `v2:` 前缀原样发（契约正则允许）
     catalog: catalogRevs(journalId),
   }
 }
