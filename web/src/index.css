@@ -112,6 +112,10 @@
   --color-ink-3: #6b6860;
   /* faint：仅装饰、禁用态、非必要信息；不用于需要阅读的文字 */
   --color-ink-faint: #a39f95;
+  /* Pro 已激活时左轨入口的钛色切面（与创始铭牌同一母题；浅色主题用暖调深钛灰压底，2026-11-26） */
+  --color-pro-ti-dark: #42403d;
+  --color-pro-ti-light: #8c9096;
+  --color-pro-ti-edge: #3a3d42;
 
   /* 品牌蓝：2026-09-30 用户定的 #5A92E5（色相 216°）。它本身对白只有 3.14:1、对桌面 2.7:1，
      当焦点环 / 蓝字不够格（焦点环 ≥3:1、字 ≥4.5:1，tokenContrast.test 守着）——所以焦点环、AI 与少数蓝字
@@ -1467,6 +1471,9 @@
     --color-ink-2: #c5c2b9;
     --color-ink-3: #9d9a90;
     --color-ink-faint: #6c6961;
+    --color-pro-ti-dark: #686d75;
+    --color-pro-ti-light: #e8ebf0;
+    --color-pro-ti-edge: #a9aeb6;
     --color-accent: #5a92e5;
     --color-accent-subtle: #1d2a3d;
     --color-dim: #7db6f5;
@@ -1506,6 +1513,9 @@
   --color-ink-2: #c5c2b9;
   --color-ink-3: #9d9a90;
   --color-ink-faint: #6c6961;
+  --color-pro-ti-dark: #686d75;
+  --color-pro-ti-light: #e8ebf0;
+  --color-pro-ti-edge: #a9aeb6;
   --color-accent: #5a92e5;
   --color-accent-subtle: #1d2a3d;
   --color-dim: #7db6f5;
