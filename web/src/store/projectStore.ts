@@ -1,3 +1,4 @@
+import { setProjectWriteCapability } from '@/lib/autosaveProject'
 import { create } from 'zustand'
 import { emitActivity } from '@/lib/activity'
 import { newId } from '@/lib/id'
@@ -761,3 +762,12 @@ useDocumentStore.subscribe((s, prev) => {
 
 // 某份文档的正文真的写盘成功了（不看是不是当前文档、pj 是排队那一刻的）：补记「上次开着的」可以重试了
 onDocumentPersisted((docId, pj) => notifyDocumentPersisted(docId, pj))
+
+// 自动保存写进项目（ADR 0211 第二期 PR 2）：后端开着开关、且这个项目可写时，前端才带 `project_write` 起节奏计时。
+// 关着 = 恒为 false，前端行为与改造前一字不差
+useProjectStore.subscribe((s, prev) => {
+  if (s.project === prev.project) return
+  setProjectWriteCapability(
+    !!s.project?.open && s.project.autosave_into_project === true && s.project.writable !== false,
+  )
+})

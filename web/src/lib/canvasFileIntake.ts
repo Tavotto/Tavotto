@@ -62,6 +62,22 @@ export function intakeKindOf(file: { name: string; type?: string }): IntakeKind 
   return 'other'
 }
 
+/**
+ * 被拖进来的**文件夹**里，名字以 `.tavotto` 结尾的那些（ADR 0211 第二期：项目里的排版是 `tavottofile/<名>.tavotto/` 目录）。
+ * `intakeKindOf` 只看扩展名，会把这种文件夹当成项目包去导入、再报一个看不懂的失败；调用方先用它剔掉。
+ * 必须在 drop 事件里同步调（事件返回后 `DataTransfer` 读不到）。
+ */
+export function layoutFolderNames(items: DropItems | undefined): Set<string> {
+  const out = new Set<string>()
+  for (const item of Array.from(items ?? [])) {
+    if (item.kind !== 'file') continue
+    const entry = item.webkitGetAsEntry?.()
+    if (entry?.isDirectory && extOf(entry.name) === '.tavotto') out.add(entry.name)
+  }
+  return out
+}
+type DropItems = NonNullable<import('./scriptImport').DropData['items']>
+
 export interface IntakePlan {
   assets: File[]
   scripts: File[]

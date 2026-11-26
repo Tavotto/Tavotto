@@ -126,7 +126,7 @@ order: 310
   `pyvenv.cfg` 的 home 在，home 在私有 Python 下则连带按需搬 `private-python/runtimes/<id>`）与 `managedcli.root_dir`（`cli/<名>/`，
   指针 + 入口文件在）调 `msixmigrate.adopt_dir`；复制到临时名 → 逐文件大小核对 → 校验 → 原子改名，校验不过当没有、走原创建 / 下载。
   幂等标记 `state/msix-migration-v1.json`（几个源 / 拷了 / 跳过 / 失败 / config 是否合并 / 按需搬了几个目录）；同步阶段 8 s 预算，超了不写
-  `complete`、下次接着补；跨进程锁 `state/msix-migration.lock`。诊断包 `system.msix_data_migration`（闭集 `state` + 数字，不带路径与包族名，
+  `complete`、下次接着补；跨进程锁 `state/msix-migration.lock`。**旧历史待补**（#2282）：消费者 `adopt_sqlite` 没搬成（超时 / 锁被占 / 出错）、迁移源里却有这个库时，调用方随即会新建空库——记 `state/msix-history-pending.json`；完成标记与 `MAX_ATTEMPTS` 都拦不住它，`run_once` 起后台线程 `merge_pending`（120 s，到点整体回滚、不计失败；真失败计次，满 5 次放弃）把旧库快照按主键只补缺合并回来（只合 `sessions` 与 `ai_requests`；补回的会话取新 `rev`、未结束行收尾成 interrupted）。**没有待补就绝不合并**：会话与账本都会被用户删 / 按保留期清，「旧库有、新库没有」分不清是空库顶替还是用户删的。诊断包 `system.msix_data_migration`（闭集 `state` + 数字，不带路径与包族名，
   bundle schema 13）。看护 `tests/test_msix_migrate.py`、`tests/test_windows_regressions.py`。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；

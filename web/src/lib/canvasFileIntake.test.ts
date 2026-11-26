@@ -23,6 +23,7 @@ import {
   ASSET_EXTENSIONS,
   feedbackAction,
   importAndPlace,
+  layoutFolderNames,
   intakeKindOf,
   pastedAssetFiles,
   pastedImageName,
@@ -63,6 +64,18 @@ beforeEach(() => {
     const panels = got.filter((a): a is ImportedAsset => !!a).map((a) => info(a.id))
     useAssetStore.setState({ panels, byId: Object.fromEntries(panels.map((p) => [p.id, p])) } as never)
     return { panels } as never
+  })
+})
+
+describe('layoutFolderNames（项目里的排版目录不是项目包）', () => {
+  const item = (name: string, isDirectory: boolean, kind = 'file') => ({
+    kind,
+    webkitGetAsEntry: () => ({ name, isDirectory }),
+  })
+  it('只认名字以 .tavotto 结尾的文件夹；同名的普通文件（真项目包）照旧', () => {
+    expect([...layoutFolderNames([item('a.tavotto', true), item('b.tavotto', false), item('c', true)])]).toEqual(['a.tavotto'])
+    expect(layoutFolderNames(undefined).size).toBe(0)
+    expect(layoutFolderNames([{ kind: 'string' }]).size).toBe(0)
   })
 })
 

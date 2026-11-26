@@ -49,6 +49,9 @@ LOG = logging.getLogger("tavotto.msixmigrate")
 SCHEMA = 1
 MARKER_REL = ("state", "msix-migration-v1.json")
 LOCK_REL = ("state", "msix-migration.lock")
+#: 「旧历史待补」：消费者补迁没搬成（超时 / 锁被占 / 出错）、随即新建了空库时记下来。完成标记与重试次数上限都**拦不住**它——
+#: 否则空库一建，下次迁移见目标已存在就跳过、随后写 complete，旧历史永远回不来（#2282）。合并在后台线程里做，不卡启动。
+PENDING_REL = ("state", "msix-history-pending.json")
 TMP_SUFFIX = ".msix-mig.tmp"
 #: 同步阶段（启动早期）的时间预算；超了就停手、不写 complete，下次启动接着补
 SYNC_BUDGET_S = 8.0
@@ -57,6 +60,10 @@ SYNC_BUDGET_S = 8.0
 CRITICAL_BUDGET_S = 4.0
 #: 消费者（`ai_history._connect`）发现库不存在时现场补迁的上限
 ADOPT_SQLITE_BUDGET_S = 3.0
+#: 后台补回「待补」旧历史的上限：不在启动关键路径上，给足；到点整体回滚，下次启动再来（不计失败）
+PENDING_MERGE_BUDGET_S = 120.0
+#: 「待补」合并真失败（快照取不出 / 库坏）最多试几次启动；超了放弃，免得坏源每次启动都白跑一遍
+PENDING_MAX_FAILURES = 5
 #: 有失败（拷贝 / config 合并出错）时最多重试几次启动；超了就标 complete（永久性失败不再每次启动都扫），失败计数留在标记里
 MAX_ATTEMPTS = 3
 
@@ -85,7 +92,9 @@ SQLITE_ITEMS = ("cache/ai_history.sqlite3",)
 #: 按需搬的目录（相对 `data_dir()` 的前两段以内；真正的触发点见 `adopt_dir` 的调用方）
 LAZY_ROOTS = ("environments", "cli", "private-python")
 #: 白名单目录内部也不搬的文件名（运行态 / 临时 / 迁移自己的账）
-EXCLUDE_NAMES = frozenset({"tutorial-cleanup-pending", "msix-migration-v1.json"})
+EXCLUDE_NAMES = frozenset(
+    {"tutorial-cleanup-pending", "msix-migration-v1.json", "msix-history-pending.json"}
+)
 EXCLUDE_SUFFIXES = (".lock", ".tmp", ".part", "-wal", "-shm", "-journal")
 
 _ADOPT_LOCK = threading.RLock()  # 校验里可能再按需搬私有 Python（同线程重入）
@@ -151,6 +160,39 @@ def _read_marker() -> dict | None:
 
 def _write_marker(data: dict) -> None:
     path = marker_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + f".{os.getpid()}{TMP_SUFFIX}")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _pending_path() -> Path:
+    return config.data_path(*PENDING_REL)
+
+
+def _read_pending() -> dict | None:
+    try:
+        data = json.loads(_pending_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not (
+        isinstance(data, dict)
+        and data.get("schema") == SCHEMA
+        and isinstance(data.get("items"), dict)
+    ):
+        return None
+    return data if data["items"] else None
+
+
+def _write_pending(data: dict | None) -> None:
+    path = _pending_path()
+    if not data or not data.get("items"):
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + f".{os.getpid()}{TMP_SUFFIX}")
     try:
@@ -356,9 +398,25 @@ def adopt_sqlite(*parts: str, budget_s: float = ADOPT_SQLITE_BUDGET_S) -> bool:
     """
     try:
         with _SQLITE_ADOPT_LOCK:
-            return _adopt_sqlite(parts, budget_s)
+            done = _adopt_sqlite(parts, budget_s)
+            if not done:
+                _note_pending_if_left_behind(parts)
+            return done
     except Exception:  # noqa: BLE001
         return False
+
+
+def _note_pending_if_left_behind(parts: tuple[str, ...]) -> None:
+    """补迁没搬成、目标仍不存在、而迁移源里确实有这个库：调用方马上要新建空库——记成「待补」，后台再合并回来。"""
+    if not _eligible() or os.path.lexists(config.data_path(*parts)):
+        return
+    if not any(local is not None and local.joinpath(*parts).is_file() for _r, local in sources()):
+        return
+    rel = "/".join(parts)
+    data = _read_pending() or {"schema": SCHEMA, "items": {}}
+    if rel not in data["items"]:
+        data["items"][rel] = {"failures": 0}
+        _write_pending(data)
 
 
 def _adopt_sqlite(parts: tuple[str, ...], budget_s: float) -> bool:
@@ -482,6 +540,7 @@ def run_once(*, budget_s: float = SYNC_BUDGET_S) -> dict | None:
 def _run_once(budget_s: float) -> dict | None:
     if not _eligible():
         return None
+    _kick_pending_merge()  # 在完成标记的提前返回之前：已标 complete 的安装也要能把待补的旧历史合并回来
     marker = _read_marker()
     if marker is not None and marker.get("complete") is True:
         return None
@@ -629,3 +688,152 @@ def base_runtime_available(home: str) -> bool:
         return False
     adopt_dir(*parts[:3])
     return Path(home).is_dir()
+
+
+# --------------------------------------------------------------- 待补旧历史（#2282）
+#: SQLite 项「补回旧行」的实现由拥有该库 schema 的模块在 import 时登记（`ai_history` 登记 `merge_legacy`）。
+#: 本模块**不** import 它们：`ai_history` 已经 import 本模块，反向再连一条边就成环（tests/test_import_architecture.py）。
+_SQLITE_MERGERS: dict = {}
+_MERGERS_CHANGED = threading.Condition()
+
+
+def register_sqlite_merger(rel: str, merge) -> None:
+    """`merge(snapshot, target, deadline) -> int`：把旧库快照里新库没有的行补进 target，到点抛 `TimeoutError`。"""
+    with _MERGERS_CHANGED:
+        _SQLITE_MERGERS[rel] = merge
+        _MERGERS_CHANGED.notify_all()
+
+
+def _merger_for(rel: str, deadline: float):
+    """后台线程可能比 `ai_history` 的 import 先跑：在截止时间内等它登记，等不到回 None（调用方当 deferred）。"""
+    with _MERGERS_CHANGED:
+        _MERGERS_CHANGED.wait_for(
+            lambda: rel in _SQLITE_MERGERS, timeout=max(0.0, deadline - time.monotonic())
+        )
+        return _SQLITE_MERGERS.get(rel)
+
+
+_PENDING_THREAD: threading.Thread | None = None
+_PENDING_THREAD_LOCK = threading.Lock()
+
+
+def _kick_pending_merge() -> None:
+    """有「待补」就起一个后台线程去合并（每个进程同时最多一个）。不等它：启动照常往下走。"""
+    global _PENDING_THREAD
+    pending = _read_pending()
+    if pending is None:
+        return
+    # 拥有这个库的模块（ai_history）没在本进程加载就不起线程：CLI（`handoff.cli`）也调 run_once，但不 import ai_history；
+    # 起了线程就会拿着迁移锁干等登记，正好挡住随后启动的桌面版同步迁移（d2 #2283 复核）。由加载了它的进程来合并。
+    with _MERGERS_CHANGED:
+        if any(rel in SQLITE_ITEMS and rel not in _SQLITE_MERGERS for rel in pending["items"]):
+            return
+    with _PENDING_THREAD_LOCK:
+        if _PENDING_THREAD is not None and _PENDING_THREAD.is_alive():
+            return
+        _PENDING_THREAD = threading.Thread(
+            target=merge_pending, name="msix-history-merge", daemon=True
+        )
+        _PENDING_THREAD.start()
+
+
+def merge_pending(budget_s: float = PENDING_MERGE_BUDGET_S) -> dict | None:
+    """把「待补」的旧历史合并回真实库；回每项结论（`done` / `deferred` / `failed` / `gave_up`），没有待补回 None。永不抛。
+
+    与同步迁移同一把跨进程锁（等它，最多到截止时间）。结论：done → 从待补里去掉；deferred（到点 / 源被占）→ 留着、不计次数；
+    failed → 计次数，到 `PENDING_MAX_FAILURES` 放弃（gave_up）。进程被杀在合并中途：合并是一个事务，整体回滚，待补还在。
+    """
+    try:
+        return _merge_pending(budget_s)
+    except Exception:  # noqa: BLE001
+        LOG.debug("补回 MSIX 旧历史意外失败（不影响使用）", exc_info=True)
+        return None
+
+
+def _merge_pending(budget_s: float) -> dict | None:
+    if not _eligible() or _read_pending() is None:
+        return None
+    deadline = time.monotonic() + budget_s
+    # 先确认合并实现都已登记、再拿锁：不拿着迁移锁干等（会挡住别的进程的同步迁移）
+    first = _read_pending() or {"items": {}}
+    for rel in first["items"]:
+        if rel in SQLITE_ITEMS and _merger_for(rel, deadline) is None:
+            return {rel: "deferred" for rel in first["items"]}
+    fd = layoutsession.acquire_file_lock(config.data_path(*LOCK_REL), deadline)
+    if fd is None:
+        return None
+    try:
+        data = _read_pending()
+        if data is None:
+            return None
+        outcomes: dict[str, str] = {}
+        for rel, state in list(data["items"].items()):
+            parts = tuple(rel.split("/"))
+            outcome = _merge_pending_item(parts, deadline) if rel in SQLITE_ITEMS else "done"
+            if outcome == "failed":
+                failures = _count(state.get("failures") if isinstance(state, dict) else 0) + 1
+                if failures >= PENDING_MAX_FAILURES:
+                    outcome = "gave_up"
+                else:
+                    data["items"][rel] = {"failures": failures}
+            if outcome in ("done", "gave_up"):
+                data["items"].pop(rel, None)
+            outcomes[rel] = outcome
+        _write_pending(data)
+        return outcomes
+    finally:
+        layoutsession.release_file_lock(fd)
+
+
+def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
+    target = config.data_path(*parts)
+    srcs = [local.joinpath(*parts) for _r, local in sources() if local is not None]
+    srcs = [p for p in srcs if p.is_file() and not p.is_symlink()]
+    if not srcs:
+        return "done"  # 源没了（用户卸了旧包）：没东西可补
+    if not os.path.lexists(target):
+        # 消费者终究没建库：走普通的只补缺复制
+        tally = _Tally()
+        for src in srcs:
+            _copy_sqlite(src, target, tally, deadline)
+            if os.path.lexists(target):
+                return "done"
+        return "deferred" if tally.deferred else "failed"
+    merge = _merger_for("/".join(parts), deadline)
+    if merge is None:
+        return "deferred"  # 拥有这个库的模块还没加载：不算失败，下次启动再来
+    for src in srcs:  # 新→旧；只补缺，后面的源只补前面没有的
+        snap = target.with_name(target.name + f".{os.getpid()}.legacy{TMP_SUFFIX}")
+        try:
+            try:
+                _backup_sqlite(src, snap, deadline)
+            except sqlite3.Error:
+                with contextlib.suppress(OSError):
+                    snap.unlink(missing_ok=True)
+                shutil.copy2(src, snap)
+            merge(snap, target, deadline)
+        except (_Deadline, TimeoutError):
+            return "deferred"
+        except sqlite3.OperationalError as e:
+            # 别的 Tavotto 进程占着新库写锁超过 busy_timeout（`database is locked` / `busy`）是暂时的：下次再来、不计失败，
+            # 否则连着几次撞上就被当成坏库放弃，旧历史再也回不来（Codex #2283）
+            return "deferred" if _is_lock_contention(e) else "failed"
+        except (OSError, sqlite3.Error):
+            return "failed"
+        finally:
+            with contextlib.suppress(OSError):
+                snap.unlink(missing_ok=True)
+    return "done"
+
+
+#: SQLite 的主错误码（固定值）。`sqlite3.SQLITE_BUSY` 等常量与 `sqlite_errorcode` 属性 3.11 才有——3.10 上直接引用会
+#: AttributeError，把真失败也甩出处理器、永远计不进次数（Codex #2283）。扩展码（如 517 BUSY_SNAPSHOT）取低 8 位比。
+_SQLITE_BUSY, _SQLITE_LOCKED = 5, 6
+
+
+def _is_lock_contention(e: sqlite3.OperationalError) -> bool:
+    code = getattr(e, "sqlite_errorcode", None)
+    if isinstance(code, int) and (code & 0xFF) in (_SQLITE_BUSY, _SQLITE_LOCKED):
+        return True
+    msg = str(e).lower()
+    return "database is locked" in msg or "database table is locked" in msg or "busy" in msg

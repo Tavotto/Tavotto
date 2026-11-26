@@ -94,6 +94,8 @@ export function createFakeBackend() {
     claimStatus: undefined as number | undefined,
     /** `${doc_id}/${vid}` → 节点正文（`GET /api/versions/<id>/<vid>`） */
     nodes: new Map<string, unknown>(),
+    /** 项目里的命名排版（`GET /api/layouts/<名>`，ADR 0211 第二期的工作副本）：名字 → 正文与修订号 */
+    layouts: new Map<string, { doc: unknown; revision: string }>(),
   }
 
   const session = (pj: string): Session => {
@@ -271,6 +273,21 @@ export function createFakeBackend() {
       b.calls.push(`POST copied ${body.doc_id}`)
       return json({ ok: true, copied: 0 })
     }
+    const lay = u.pathname.match(/^\/api\/layouts\/([^/]+)$/)
+    if (lay && method === 'GET') {
+      const name = decodeURIComponent(lay[1])
+      b.calls.push(`GET layout ${name}`)
+      const hit = b.layouts.get(name)
+      if (!hit) return json({ error: 'nf' }, 404)
+      return new Response(JSON.stringify(hit.doc), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tavotto-Revision': hit.revision,
+          'X-Tavotto-Layout-File': encodeURIComponent(`tavottofile/${name}.json`),
+        },
+      })
+    }
     const ver = u.pathname.match(/^\/api\/versions\/([^/]+)\/([^/]+)$/)
     if (ver && method === 'GET') {
       const key = `${decodeURIComponent(ver[1])}/${decodeURIComponent(ver[2])}`
@@ -333,6 +350,7 @@ export function createFakeBackend() {
       b.claimable.clear()
       b.claimStatus = undefined
       b.nodes.clear()
+      b.layouts.clear()
     },
   }
 }

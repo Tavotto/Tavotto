@@ -1,0 +1,3 @@
+## AI history from the Microsoft Store version is no longer lost on slow Windows machines
+
+When you switch from the Microsoft Store version of Tavotto to the regular desktop version, your AI task history is carried over. On a slow machine, the copy could run out of time twice in a row. When that happened, Tavotto started a fresh, empty history and never tried again, so your earlier history silently disappeared. Tavotto now remembers that the old history still needs to come back, and merges it in the background on a later start. Conversations you started in the meantime are kept, and nothing is duplicated. Sessions you deleted yourself are never brought back.

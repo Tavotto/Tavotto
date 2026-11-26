@@ -20,6 +20,13 @@ import {
   type WrittenInfo,
 } from '@/lib/autosave/diskWriter'
 import { emitActivity } from '@/lib/activity'
+import {
+  PROJECT_MAX_MS,
+  PROJECT_QUIET_MS,
+  projectWriteEnabled,
+  type ProjectLayoutResult,
+  type ProjectWriteSpec,
+} from '@/lib/autosaveProject'
 import { announceDocOpen } from '@/lib/docPresence'
 import { currentProjectLabel } from '@/lib/projectLabel'
 import {
@@ -554,6 +561,17 @@ interface DocumentState {
   /** 正文存下了、但「下次自动恢复」要用的元数据没更新（与 `saveState` 正交，下次保存成功清掉） */
   restoreMetaIssue: RestoreMetaIssue | null
   /**
+   * 这份排版的自动保存写不进项目（文件夹只读，ADR 0211 第二期 PR 2）：存的是 documentId，**等于当前文档时**顶栏保存处
+   * 说一句「这个文件夹只读 · 修改存在本机」。与 `saveState` 正交（本机那份照常存好）；下一次写进项目成功就清。
+   */
+  projectReadOnlyDoc: string | null
+  /**
+   * 自动保存写进项目时撞上外部修改、还没裁决（ADR 0211 第二期 PR 2，维护者 2026-11-27）：`base` 是当时绑定的修订号（没有 = ''）。
+   * **只走顶栏胶囊**（「别处有改动」），不弹对话框打断编辑；用户点胶囊或按 ⌘S 才进 ⌘S 同一个冲突岔口。
+   * 绑定的修订号变了（裁决完）它就不再成立，顶栏据此自己熄灭。与 `saveState` 正交：本机槽位照常写。
+   */
+  projectConflict: { docId: string; base: string } | null
+  /**
    * 「整体换文档」的代次，每次载入 +1（磁盘恢复 / 载入布局 / 切项目）。
    *
    * 自动保存的订阅靠它把**载入**与**编辑**区分开。两者都会换掉 `doc` 与
@@ -781,6 +799,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   windowHold: null,
   restoreIssue: null,
   restoreMetaIssue: null,
+  projectReadOnlyDoc: null,
+  projectConflict: null,
   loadSeq: 0,
   derivedSeq: 0,
   snapshotSeq: 0,
@@ -1635,7 +1655,11 @@ const disk = createDiskWriter({
   // （没有 putAutosave），模块加载那一刻去取它就会撞上 vitest 的「export 未定义」——
   // 搬出去之前这些名字只在调用那一刻才被读到，这里保持同样的懒。
   api: {
-    put: (id, pd, baseline, revision, pj) => putAutosave(id, pd, baseline, revision, pj),
+    // 没有 `projectWrite` 时调用形状逐字不变（几份用例钉着 putAutosave 的精确参数）
+    put: (id, pd, baseline, revision, pj, projectWrite) =>
+      projectWrite
+        ? putAutosave(id, pd, baseline, revision, pj, undefined, projectWrite)
+        : putAutosave(id, pd, baseline, revision, pj),
     fetch: (id, pj) => fetchAutosave(id, pj),
     fetchSummary: (id, pj) => fetchAutosaveSummary(id, pj),
   },
@@ -1670,15 +1694,100 @@ const disk = createDiskWriter({
   /* 遥测：一次写盘的结局。只有 manual / autosave 两档与 ok / conflict / failed
    * 三种结局，没有文档名、路径、修订号。 */
   outcome: (trigger, outcome) => captureTelemetry('document_saved', { trigger, outcome }),
+  projectSpec: projectWriteSpecFor,
+  onProjectLayout: afterProjectLayout,
 })
 
-/** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
-export function flushAutosave(allowEmpty = false): FlushResult {
-  // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
-  return perfSpan('autosave.flush', () => flushAutosaveNow(allowEmpty))
+/* -------------------------------------------------------------------------- */
+/*  自动保存写进项目（ADR 0211 第二期 PR 2）                                    */
+/*                                                                            */
+/*  本机槽位照旧每 1 s 写，是崩溃缓冲；项目里的 `layout.json` 走更稳的节奏       */
+/*  （停手 5 s / 最长 30 s，见 `lib/autosaveProject.ts`）。开关关着时这一整段    */
+/*  一行都不执行：不带 `project_write`、不起定时器。                            */
+/* -------------------------------------------------------------------------- */
+
+/** 冲突裁决悬而未决的文档 → 当时的基线（绑定的修订号，没有 = ''）：基线没变就不再带着它去撞 */
+const projectConflictBase = new Map<string, string>()
+let projectQuietTimer: number | undefined
+let projectMaxTimer: number | undefined
+
+function markProjectWriteScheduled(): void {
+  window.clearTimeout(projectQuietTimer)
+  window.clearTimeout(projectMaxTimer)
+  projectQuietTimer = undefined
+  projectMaxTimer = undefined
 }
 
-function flushAutosaveNow(allowEmpty: boolean): FlushResult {
+/** 编辑之后：停手 5 s 写一次；一直在改时第一次未写的编辑起算最长 30 s 写一次 */
+function noteProjectEdit(): void {
+  if (!projectWriteEnabled()) return
+  window.clearTimeout(projectQuietTimer)
+  projectQuietTimer = window.setTimeout(() => flushAutosave(), PROJECT_QUIET_MS)
+  if (projectMaxTimer === undefined) projectMaxTimer = window.setTimeout(() => flushAutosave(), PROJECT_MAX_MS)
+}
+
+function cancelProjectTimers(): void {
+  window.clearTimeout(projectQuietTimer)
+  window.clearTimeout(projectMaxTimer)
+  projectQuietTimer = undefined
+  projectMaxTimer = undefined
+}
+
+/** 真正发 PUT 那一刻问：这一笔写给哪个项目文件、基线是什么。`null` = 这次不写项目 */
+function projectWriteSpecFor(id: string, pj: string | null): ProjectWriteSpec | null {
+  if (!projectWriteEnabled() || pj === null || getWindowHold()) return null
+  const binding = bindingForProject(readProjectFile(id), pj)
+  const stuck = projectConflictBase.get(id)
+  // 冲突岔口还没裁决（绑定的基线没动）：不再带着旧基线去撞，编辑照常进本机槽位
+  if (stuck !== undefined && stuck === (binding?.revision ?? '')) return null
+  if (stuck !== undefined) {
+    projectConflictBase.delete(id)
+    if (useDocumentStore.getState().projectConflict?.docId === id) useDocumentStore.setState({ projectConflict: null })
+  }
+  return binding ? { name: binding.name, ...(binding.revision ? { base: binding.revision } : {}) } : {}
+}
+
+function afterProjectLayout(id: string, pj: string | null, result: ProjectLayoutResult, gen?: number): void {
+  if (result.state === 'saved') {
+    const current = readProjectFile(id)
+    // 写的途中被另存为改绑到了别的文件：新绑定是用户更晚的决定，这次的回执只属于旧文件
+    if (current && current.file !== result.file) return
+    if (pj === null) return
+    const behind = gen !== undefined && editGenerationOf(id) !== gen
+    setProjectFile(
+      { projectId: pj, name: result.name, file: result.file, revision: result.revision, dirty: behind },
+      id,
+    )
+    projectConflictBase.delete(id)
+    if (useDocumentStore.getState().projectConflict?.docId === id) useDocumentStore.setState({ projectConflict: null })
+    if (useDocumentStore.getState().projectReadOnlyDoc === id) useDocumentStore.setState({ projectReadOnlyDoc: null })
+    return
+  }
+  if (result.state === 'read_only') {
+    useDocumentStore.setState({ projectReadOnlyDoc: id })
+    return
+  }
+  if (result.state === 'external_change' && typeof result.revision === 'string') {
+    const base = bindingForProject(readProjectFile(id), pj)?.revision ?? ''
+    projectConflictBase.set(id, base)
+    // 只亮顶栏胶囊，不弹对话框（用户可能正在编辑）；裁决在用户点胶囊 / ⌘S 时进 `writeOnce` 的冲突岔口
+    useDocumentStore.setState({ projectConflict: { docId: id, base } })
+  }
+  // busy / skipped / refused / failed：本机那份已经存好，下次自动保存再试，不打扰
+}
+
+/**
+ * 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。
+ *
+ * `withProject`：这一笔要不要**顺带写进项目**（开关开着才有意义，ADR 0211 第二期 PR 2）。缺省 `true`——手动保存、
+ * 离开页面、切文档的冲刷都是用户在乎的时刻；只有 1 s 防抖那一笔传 `false`（本机槽位快写、项目里那份走它自己的 5 s / 30 s 节奏）。
+ */
+export function flushAutosave(allowEmpty = false, withProject = true): FlushResult {
+  // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
+  return perfSpan('autosave.flush', () => flushAutosaveNow(allowEmpty, withProject))
+}
+
+function flushAutosaveNow(allowEmpty: boolean, withProject: boolean): FlushResult {
   // 占位文档（恢复还没落定）一个字节都不写：它不是用户的文档，写了 last / 最近文档 / 本机副本就是假的
   if (isDocumentPlaceholder()) return 'skipped'
   const state = useDocumentStore.getState()
@@ -1709,7 +1818,12 @@ function flushAutosaveNow(allowEmpty: boolean): FlushResult {
   // 写盘记在**这份排版所属的项目**名下（后端按它记槽位归属）：切项目时离开那一下的冲刷发生在认领
   // 新项目之后，现问 `currentProjectId()` 会把旧项目的排版记成新项目的（#715 验收 P1）
   const owner = projectOfDoc().id ?? currentProjectId()
-  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner))
+  // 写进项目：开关开着、这份有归属项目、不是只读窗口才标；标了就把「项目里那份」的节奏计时清零（刚写）
+  const project = withProject && projectWriteEnabled() && owner !== null && !getWindowHold()
+  if (project) markProjectWriteScheduled()
+  // 编辑代次随**这一笔的快照**一起排队（回包按它自己的代次判断项目里那份是否落后）：共用一个 Map 的话，A 在写时排进 B，
+  // B 的代次会顶掉 A 的，A 成功后拿 B 的代次比，错把还落后的绑定判成最新
+  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner), project, editGenerationOf(state.documentId))
   if (!localOk) return 'error'
   const pj = projectOfDoc()
   const entry: RecentDoc = {
@@ -2746,12 +2860,15 @@ export function startAutosave(): () => void {
     // 显式打开的别的项目的排版：真改了一笔才归到这个项目（派生同步不算）
     if (!derived) claimDocumentOnEdit()
     cancelPendingAutosave()
-    autosaveTimer = window.setTimeout(flushAutosave, DEBOUNCE_MS)
+    // 1 s 的这一笔只写本机槽位（`withProject=false`）；项目里那份走自己的 5 s / 30 s 节奏
+    autosaveTimer = window.setTimeout(() => flushAutosave(false, false), DEBOUNCE_MS)
+    noteProjectEdit()
   })
   // 防抖窗口内刷新/关页也不丢最后一次改动
   window.addEventListener('beforeunload', onLeave)
   return () => {
     cancelPendingAutosave()
+    cancelProjectTimers()
     window.removeEventListener('beforeunload', onLeave)
     unsubscribe()
   }
