@@ -369,6 +369,7 @@ export default interface Resources {
       "confirm": {
         "design": "重复测量",
         "error": "误差线",
+        "errorBand": "误差带",
         "join": "、",
         "option": {
           "ci95": "95% 置信区间",

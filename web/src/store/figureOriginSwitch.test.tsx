@@ -7,6 +7,10 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { i18n } from '@/i18n'
+import { registerGesture, resetGestureCoordinator } from '@/store/gestureCoordinator'
+import { duplicateSelected } from '@/store/actions'
+import { useSelectionStore } from '@/store/selectionStore'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import {
   aiDataFigureCommit,
@@ -121,6 +125,7 @@ beforeEach(async () => {
   useDataFigureStore.getState().clear()
   useFigureOriginStore.getState().clear()
   cancelErrorBarSelect()
+  resetGestureCoordinator()
   useRenderStore.getState().clear()
   useTafFlagStore.setState({ enabled: true })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_switch')
@@ -537,10 +542,15 @@ describe('阴影带（趋势图的均值 ± 误差，`fill` 元素）', () => {
     register(bandOrigin())
     await mountRow(panels()[0]!, true)
     expect(row()).not.toBeNull()
+    // 阴影带上这一行叫「误差带」，误差棒上仍叫「误差线」
+    expect(hostEl.textContent).toContain(i18n.t('ai:dataFigureV2.confirm.errorBand'))
+    expect(hostEl.textContent).not.toContain(i18n.t('ai:dataFigureV2.confirm.error'))
     act(() => root.unmount())
     hostEl.remove()
     await mountRow(panels()[0]!, false)
     expect(row()).not.toBeNull()
+    expect(hostEl.textContent).toContain(i18n.t('ai:dataFigureV2.confirm.error'))
+    expect(hostEl.textContent).not.toContain(i18n.t('ai:dataFigureV2.confirm.errorBand'))
     act(() => root.unmount())
     hostEl.remove()
     useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
@@ -577,5 +587,143 @@ describe('阴影带（趋势图的均值 ± 误差，`fill` 元素）', () => {
     await useFigureOriginStore.getState().switchKind(pid(), 'sem')
     seedManifest(panels()[0]!, ['axes_0', 'axes_0.fill_0'])
     expect(useUiStore.getState().selectedGids).toEqual([])
+  })
+})
+
+describe('同一张图复制成两块：来历各带各的，只换发起的那一块', () => {
+  /** 真的走「创建副本」：副本是整份面板对象的深拷贝，`dataOrigin` 跟着复制 */
+  const duplicated = async () => {
+    register()
+    useSelectionStore.getState().set([pid()])
+    duplicateSelected()
+    const [p1, p2] = panels()
+    expect(panels()).toHaveLength(2)
+    return [p1!, p2!] as const
+  }
+  const mountBoth = async (p1: PanelObject, p2: PanelObject) => {
+    hostEl = document.createElement('div')
+    document.body.appendChild(hostEl)
+    root = createRoot(hostEl)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <div id="r1"><ErrorKindRow panel={p1} /></div>
+          <div id="r2"><ErrorKindRow panel={p2} /></div>
+        </TooltipProvider>,
+      )
+    })
+    await flush()
+    await flush()
+  }
+
+  it('副本各有自己的一份来历（内容相同、不是同一个对象）', async () => {
+    const [p1, p2] = await duplicated()
+    expect(readPanelOrigin(p1)).toMatchObject({ script: SCRIPT1, kind: 'sd' })
+    expect(readPanelOrigin(p2)).toMatchObject({ script: SCRIPT1, kind: 'sd' })
+    expect(p1.dataOrigin).toEqual(p2.dataOrigin)
+    expect(p1.dataOrigin).not.toBe(p2.dataOrigin)
+  })
+
+  it('换副本：原件的来历与图一个字不变；转圈只在发起的那块；换完两块还能各自再换', async () => {
+    const [p1, p2] = await duplicated()
+    const before = structuredClone(panels().find((o) => o.id === p1.id)!)
+    await mountBoth(p1, p2)
+    let release!: () => void
+    refresh.mockReturnValue(new Promise<void>((r) => (release = r)))
+    const p = useFigureOriginStore.getState().switchKind(p2.id, 'sem')
+    await flush()
+    await flush()
+    expect(document.querySelector('#r1 [data-error-kind]')!.getAttribute('aria-busy')).toBeNull()
+    expect(document.querySelector('#r2 [data-error-kind]')!.getAttribute('aria-busy')).toBe('true')
+    release()
+    await p
+    await flush()
+    expect(panels().find((o) => o.id === p1.id)).toEqual(before) // 原件整块不变（含 dataOrigin）
+    const swapped = panels().find((o) => o.id === p2.id)!
+    expect(swapped).toMatchObject({ fileId: 'runtime:a2', script: SCRIPT2 })
+    expect(readPanelOrigin(swapped)).toMatchObject({ script: SCRIPT2, kind: 'sem', fingerprint: 'F2' })
+    // 原件仍指向旧脚本、来历还在：可以独立再换
+    refresh.mockResolvedValue(undefined)
+    useRuntimeAssetStore.setState({ assets: [asset(D1), asset(D2)] })
+    useScriptRunStore.setState({ run: runResult(desc('tavotto_figures/a_3.py', 'runtime:a3', 'F3')) })
+    commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/a_3.py', stem: 'a_3', data_check: 'verified' } as AiDataCommitResult)
+    await useFigureOriginStore.getState().switchKind(p1.id, 'ci95')
+    expect(panels().find((o) => o.id === p1.id)).toMatchObject({ fileId: 'runtime:a3' })
+    expect(readPanelOrigin(panels().find((o) => o.id === p1.id)!)).toMatchObject({ script: 'tavotto_figures/a_3.py', kind: 'ci95' })
+    expect(panels().find((o) => o.id === p2.id)).toMatchObject({ fileId: 'runtime:a2' })
+    expect(readPanelOrigin(panels().find((o) => o.id === p2.id)!)).toMatchObject({ kind: 'sem' })
+  })
+
+  it('撤销只退发起的那一块，另一块的来历不受影响', async () => {
+    const [p1, p2] = await duplicated()
+    await useFigureOriginStore.getState().switchKind(p2.id, 'sem')
+    expect(panels().find((o) => o.id === p2.id)!.fileId).toBe('runtime:a2')
+    useDocumentStore.getState().undo()
+    expect(readPanelOrigin(panels().find((o) => o.id === p2.id)!)).toMatchObject({ script: SCRIPT1, kind: 'sd' })
+    expect(readPanelOrigin(panels().find((o) => o.id === p1.id)!)).toMatchObject({ script: SCRIPT1, kind: 'sd' })
+  })
+
+  it('发起的那块等待期间被删：另一块也不换', async () => {
+    const [p1, p2] = await duplicated()
+    useScriptRunStore.setState({
+      run: vi.fn(async (script: string) => {
+        await runResult(D2)(script)
+        useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+          d.objects = d.objects.filter((o) => o.id !== p2.id)
+        })
+      }),
+    })
+    await useFigureOriginStore.getState().switchKind(p2.id, 'sem')
+    expect(panels().map((o) => [o.id, o.fileId])).toEqual([[p1.id, 'runtime:a1']])
+  })
+})
+
+describe('换图是离散动作：先结束手势再复核再提交', () => {
+  it('等待期间开始拖动：提交前先结束手势，移动与换图是两条历史，撤销一次只退换图', async () => {
+    register()
+    const id = pid()
+    const x0 = panels()[0]!.x
+    let unregister = () => {}
+    useScriptRunStore.setState({
+      run: vi.fn(async (script: string) => {
+        await runResult(D2)(script)
+        useDocumentStore.getState().beginTxn({ key: 'history.move' } as never)
+        useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+          d.objects.find((o) => o.id === id)!.x += 5
+        })
+        unregister = registerGesture(() => {
+          useDocumentStore.getState().endTxn()
+          unregister()
+        })
+      }),
+    })
+    const past0 = useDocumentStore.getState().past.length
+    await useFigureOriginStore.getState().switchKind(id, 'sem')
+    expect(useDocumentStore.getState().txn).toBeFalsy()
+    expect(useDocumentStore.getState().past.length).toBe(past0 + 2)
+    expect(panels()[0]).toMatchObject({ fileId: 'runtime:a2', x: x0 + 5 })
+    useDocumentStore.getState().undo()
+    expect(panels()[0]).toMatchObject({ fileId: 'runtime:a1', x: x0 + 5 }) // 只退了换图，移动还在
+    useDocumentStore.getState().undo()
+    expect(panels()[0]!.x).toBe(x0)
+  })
+
+  it('结束手势后目标不再满足条件（手势收尾时落下一条手改）：不换', async () => {
+    register()
+    const id = pid()
+    useScriptRunStore.setState({
+      run: vi.fn(async (script: string) => {
+        await runResult(D2)(script)
+        const un = registerGesture(() => {
+          un()
+          useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+            ;(d.objects.find((o) => o.id === id) as PanelObject).overrides = [{ gid: 'g', prop: 'fontsize', value: 12 } as never]
+          })
+        })
+      }),
+    })
+    await useFigureOriginStore.getState().switchKind(id, 'sem')
+    expect(panels()[0]).toMatchObject({ fileId: 'runtime:a1' })
+    expect(panels()[0]!.overrides).toHaveLength(1)
   })
 })

@@ -14,7 +14,7 @@ import type { PanelObject } from '@/types/document'
 import { INSPECTOR_LABEL_W } from './layout'
 
 /**
- * 误差棒 / 阴影带属性页最上面的一行「误差线 [SD ▾]」：数据页（「从数据到图」，实验开关 `ai.taf.enabled`）画出的图，误差线是 Tavotto 用重复值**算出来的**时，
+ * 误差棒 / 阴影带属性页最上面的一行「误差线 [SD ▾]」（阴影带的属性页上叫「误差带」）：数据页（「从数据到图」，实验开关 `ai.taf.enabled`）画出的图，误差线是 Tavotto 用重复值**算出来的**时，
  * 在这里换成 SD / SEM / 95% CI 重画一版。选项与标签逐字沿用数据页右栏的 `dataFigureV2.confirm.*`。
  *
  * 来历在面板自己身上（`PanelObject.dataOrigin`，随项目文档落盘，关掉项目再打开仍在；`lib/dataFigureOrigin.readPanelOrigin` 严格读，读不出 = 没有）。
@@ -46,9 +46,11 @@ export function ErrorKindRow({ panel, band = false }: { panel: PanelObject; band
   if (!wanted || !origin || !figureUntouched(doc, panel, origin, { runtime, bakedCount })) return null
   if (typeof digest !== 'string' || digest !== origin.dataSha256) return null
   const shown: ErrorKind = switching ? switching.kind : origin.kind
+  // 点中的是阴影带时这一行叫「误差带」（与数据页候选「均值线 + 误差带」同名），误差棒上仍叫「误差线」
+  const label = t(band ? 'dataFigureV2.confirm.errorBand' : 'dataFigureV2.confirm.error')
   return (
     <Row
-      label={t('dataFigureV2.confirm.error')}
+      label={label}
       labelWidth={INSPECTOR_LABEL_W}
       className="mb-1.5"
       status={switching ? <Spinner size={ICON_SIZE.xs} aria-hidden className="text-ink-3" /> : undefined}
@@ -57,7 +59,7 @@ export function ErrorKindRow({ panel, band = false }: { panel: PanelObject; band
         <Select<ErrorKind>
           value={shown}
           disabled={busy}
-          ariaLabel={t('dataFigureV2.confirm.error')}
+          ariaLabel={label}
           onChange={(k) => void useFigureOriginStore.getState().switchKind(panel.id, k)}
           options={ERROR_KINDS.map((k) => ({ value: k, label: t(`dataFigureV2.confirm.option.${k}`) }))}
           title={t(`dataFigureV2.confirm.option.${shown}`)}
