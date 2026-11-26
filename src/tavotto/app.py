@@ -21377,13 +21377,13 @@ def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dic
             revision = engine_layoutdir.write_retrying(store, stem, body, doc_id=doc_id)
     except engine_layoutsession.SessionStateUnavailable:
         return {"state": "busy"}
-    except engine_atomicio.AtomicWriteError as exc:
-        kind = engine_layoutdir.classify_write_failure(exc)
-        return {"state": {"read_only": "read_only", "transient": "busy"}.get(kind, "failed")}
     except engine_layoutdir.LayoutDirError:
         return {"state": "refused"}
-    except OSError:
-        return {"state": "failed"}
+    except (
+        OSError
+    ) as exc:  # `AtomicWriteError` 与暂存目录 `mkdir` 直接抛的 PermissionError 一并分档
+        kind = engine_layoutdir.classify_write_failure(exc)
+        return {"state": {"read_only": "read_only", "transient": "busy"}.get(kind, "failed")}
     return {
         "state": "saved",
         "name": stem,

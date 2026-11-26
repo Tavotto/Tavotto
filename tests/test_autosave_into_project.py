@@ -255,3 +255,21 @@ def test_history_has_no_working_copy_without_a_directory_layout(env):
     _put(client, h, "d1")
     items = client.get("/api/layout-session/project-history", headers=h).get_json()["items"]
     assert all("work" not in i for i in items)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or __import__("os").geteuid() == 0, reason="需要 POSIX 权限位且非 root"
+)
+def test_real_read_only_store_directory_is_read_only_and_slot_survives(env, writer_on):
+    """真文件系统：`tavottofile/` 没有写权限时，暂存目录 `mkdir` 直接抛 PermissionError（不是 AtomicWriteError）——
+    也要判成 read_only，而不是笼统的 failed（界面那行灰字靠它）。"""
+    client, project, h = env
+    store = project / "tavottofile"
+    store.chmod(0o555)
+    try:
+        r = _put(client, h, "d1", spec={})
+    finally:
+        store.chmod(0o755)
+    assert r.get_json()["project_layout"] == {"state": "read_only"}
+    assert _slot("d1").is_file()
+    assert not list(store.glob("*.tavotto"))

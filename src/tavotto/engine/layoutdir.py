@@ -603,7 +603,9 @@ def write_retrying(
     for delay in (*RETRY_DELAYS, None):
         try:
             return write(store, stem, data, doc_id=doc_id)
-        except atomicio.AtomicWriteError as exc:
+        except (
+            OSError
+        ) as exc:  # 含 `AtomicWriteError`，也含暂存目录 `mkdir` 直接抛的 PermissionError
             if delay is None or classify_write_failure(exc) != "transient":
                 raise
             sleep(delay)
