@@ -1286,5 +1286,25 @@ def test_edit_preview_frames_both_where_it_was_and_where_it_went(project, monkey
     ve.preview_edit(canvas, plan, {})
     assert seen["objects"] == []
     assert [o["id"] for o in seen["canvas"]["objects"]] == [o.get("id") for o in plan["objects"]]
-    xs = sorted((o["id"], o["x"]) for o in seen["focus"])
-    assert xs == [("a_user0001", 30), ("a_user0001", 70.0), ("t_user0001", 95)]
+    xs = sorted(o["x"] for o in seen["focus"])
+    assert xs == [30, 70.0, 95]  # 箭头改前、改后，删掉的文字按删前
+
+
+def test_edit_preview_frames_the_visible_box_of_a_rotated_object(project, monkeypatch):
+    """转成竖的 20 × 5 mm 箭头：框要按转出来的外接框，不按原来的 x / y / w / h（Codex #2254）。"""
+    seen = {}
+    monkeypatch.setattr(
+        la, "preview", lambda canvas, objects, pdfs, *, focus=None, **_kw: seen.update(focus=focus)
+    )
+    canvas = _canvas(project)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "rotate", "id": "a_user0001", "deg": 90}],
+        measure,
+        base_revision=_base(project),
+    )
+    ve.preview_edit(canvas, plan, {})
+    after = seen["focus"][0]  # 改后的那个框：中心 (40, 7.5)，转 90° 后 5 宽 20 高
+    assert after["w"] == pytest.approx(5) and after["h"] == pytest.approx(20)
+    assert after["y"] == pytest.approx(-2.5)

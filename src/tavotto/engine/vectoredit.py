@@ -1173,8 +1173,9 @@ def preview_edit(canvas: dict, plan: dict, panel_pdfs: dict[str, str]) -> dict |
     before = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
     changed = plan.get("changed") or []
     ids = [o.get("id") for o in changed] + list(plan.get("deleted") or [])
+    # 框按**看得见的**外接框（旋转过的绕中心转出来，照对齐用的 `_vb`）：只拿 x / y / w / h 会把转成竖的长箭头两头裁掉（Codex #2254）
     focus = [
-        o
+        dict(zip(("x", "y", "w", "h"), _vb(o)))
         for o in [*changed, *(before.get(i) for i in ids)]
         if isinstance(o, dict) and all(agentobjects._is_num(o.get(k)) for k in ("x", "y", "w", "h"))  # noqa: SLF001
     ]
