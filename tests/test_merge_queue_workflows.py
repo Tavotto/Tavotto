@@ -1815,14 +1815,16 @@ class TestPlaywrightShards:
     """
 
     JOB = "windows-exe-smoke"
-    SHARDS = 3
+    SHARDS = 6
 
     def _entries(self) -> list[dict[str, str]]:
         entries = _matrix_include(_job(CI, self.JOB))
         assert [e.get("shard") for e in entries] == [str(i) for i in range(1, len(entries) + 1)], (
             f"{self.JOB} 的 include 条目的 shard 必须恰好是 1..N：{entries}"
         )
-        assert len(entries) == self.SHARDS, "现在定的是 3 片；改片数要同时改这里与文档里的实测"
+        assert len(entries) == self.SHARDS, (
+            "现在定的是 6 片（2026-11-26）；改片数要同时改这里与文档里的实测"
+        )
         for e in entries:
             assert set(e) == {"shard", "browsers", "projects", "others"}, (
                 f"include 条目的字段变了：{sorted(e)}——四个字段各有消费者（自验脚本 / e2e 命令 / 装浏览器）"
@@ -1859,12 +1861,18 @@ class TestPlaywrightShards:
                 "自验脚本会拿它去逐片跑 `--list`"
             )
 
-    def test_the_chromium_halves_are_shards_1_and_3_and_shard_2_keeps_its_meaning(self):
-        """已登记为必需检查的 check 名不许消失 / 改义：片 1 / 片 2 保持，新增的是片 3。"""
+    def test_the_shard_layout_is_chromium_quarters_then_webkit_then_chromium_en(self):
+        """2026-11-26 三片 → 六片：chromium 原生四等分在片 1–4，webkit、chromium-en 各自一片（片 5、6）。
+        必需检查只有三个 Gate（仓库规则集），片名改义不涉及仓库设置；这里钉住布局，免得悄悄回到大片。"""
         by = {e["shard"]: e["projects"] for e in self._entries()}
-        assert by["1"] == "--project=chromium --shard=1/2"
-        assert by["2"] == "--project=webkit --project=chromium-en"
-        assert by["3"] == "--project=chromium --shard=2/2"
+        assert by == {
+            "1": "--project=chromium --shard=1/4",
+            "2": "--project=chromium --shard=2/4",
+            "3": "--project=chromium --shard=3/4",
+            "4": "--project=chromium --shard=4/4",
+            "5": "--project=webkit",
+            "6": "--project=chromium-en",
+        }
 
     def test_each_shard_installs_exactly_the_engines_its_projects_need(self):
         """片 1、3 只装 chromium，片 2 chromium + webkit——按 project 的设备家族推，不按名字猜。"""
@@ -1929,8 +1937,9 @@ class TestPlaywrightShards:
         assert len(names) >= 3, f"前提：这条腿至少三个 upload-artifact：{names}"
         for n in names:
             assert "${{ matrix.shard }}" in n, f"artifact `{n}` 的名字里没有片号——两片会撞名"
-        expanded = {n.replace("${{ matrix.shard }}", k) for n in names for k in ("1", "2", "3")}
-        assert len(expanded) == 3 * len(names)
+        keys = [str(i) for i in range(1, self.SHARDS + 1)]
+        expanded = {n.replace("${{ matrix.shard }}", k) for n in names for k in keys}
+        assert len(expanded) == self.SHARDS * len(names)
 
     @pytest.mark.parametrize(
         "job_id, step_minutes, job_minutes",
@@ -1960,12 +1969,12 @@ class TestPlaywrightShards:
         assert self.JOB in _needs_of(gate) and self.JOB in _required_of(gate)
 
     def test_posix_e2e_shard_matrix_checks_all_planned_registered_cases(self):
-        """Issue #768：三台真 Runner、计划对拍、防漏测、不改变原 Gate 闭集。"""
+        """Issue #768：五台真 Runner（2026-11-26 由三台加到五台）、计划对拍、防漏测、不改变原 Gate 闭集。"""
         block = _job(CI, "posix-e2e")
         code = _code(block)
-        assert "name: posix-e2e (${{ matrix.shard }}/3)" in code
+        assert "name: posix-e2e (${{ matrix.shard }}/5)" in code
         assert re.search(
-            r"(?m)^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3\]",
+            r"(?m)^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3, 4, 5\]",
             code,
         )
         e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
@@ -1973,8 +1982,8 @@ class TestPlaywrightShards:
         # _project_flags 只解析 --project 参数；先分离 --shard，避免把 matrix 表达式当作 project。
         project_args, shard_args = e2e[0].split(" --shard=", 1)
         assert _project_flags(project_args, "posix-e2e") == {"chromium", "chromium-en"}
-        assert shard_args.strip() == "${{ matrix.shard }}/3"
-        assert "--shard=${{ matrix.shard }}/3" in e2e[0]
+        assert shard_args.strip() == "${{ matrix.shard }}/5"
+        assert "--shard=${{ matrix.shard }}/5" in e2e[0]
         assert "playwright test --list --reporter=json" in code
         assert "--expected-list" in code and "e2e-planned.json" in code
         # 一份无 --shard 的所有 POSIX project 清单必须先于本 shard 的计划。
