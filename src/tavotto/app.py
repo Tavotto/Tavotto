@@ -168,6 +168,7 @@ from .engine import (
     projectcopy as engine_projectcopy,
     projectenv as engine_projectenv,
     projecthistory as engine_projecthistory,
+    projectmigrate as engine_projectmigrate,
     projscan as engine_projscan,
     quicklayout as engine_quicklayout,
     rasterhint as engine_rasterhint,
@@ -187,6 +188,7 @@ from .engine import (
     scriptbackup as engine_scriptbackup,
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
+    scriptrelink as engine_scriptrelink,
     session_client as engine_session_client,
     shadowscript as engine_shadowscript,
     siwc_login as engine_siwc_login,
@@ -7089,6 +7091,8 @@ def _open_project(path: Path, make_default: bool) -> dict:
             reg.load_data(cfg, source="<memory>")
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)
+    # 上次挪走项目时本机设置没迁完（ADR 0211 第一期 5 的待办标记）：再迁一次。不抛、幂等，没有标记就什么都不做
+    engine_projectmigrate.retry_pending(path)
     # 刷新基线：现在的素材长什么样、注册表是哪一份。没有它，打开项目后的
     # 第一次刷新只能报「什么都没变」——而用户按刷新正是因为他刚在外面加了
     # 一张图（`engine/project_refresh.seed_state`）。
@@ -10038,6 +10042,115 @@ def api_runtime_remove():
     return jsonify({"removed": True, "id": rel_id})
 
 
+#: 「接回挪走的脚本」候选清单最多列多少个项目脚本（手选用）；内容比对也只看这么多个
+RELINK_MAX_SCRIPTS = 2000
+
+
+@app.get("/api/registry/relink-candidates")
+def api_registry_relink_candidates():
+    """注册表指着的脚本不在了（ADR 0211 第一期 6）：项目里哪一份可以接回去。
+
+    `?script=<注册表里那个脚本键>`。回 `{script, missing, fingerprint, matches, scripts}`：
+
+    * `missing`：这个脚本确实登记着、文件确实不在。不是这种情况其余字段都空（界面不给接回的出口）；
+    * `fingerprint`：登记里有没有内容指纹（`sha256`）。老登记没有；
+    * `matches`：项目里**字节完全相同**的脚本（与指纹逐字比，不按文件名或修改时间猜，ADR 0027 §5）。恰好一个时
+      界面给「接到 …」一键接回，多个 / 没有就交给用户选；
+    * `scripts`：项目里全部 .py（手选「其他脚本」用，项目相对路径）。
+
+    只读：不写注册表、不跑脚本。接回本身走现有的试运行登记——跑成了才改登记（`/api/registry/probe`）。"""
+    ctx = current_ctx()
+    # 上一次接回停在两步之间（关了页面）：按注册表此刻的事实收尾，不留带过去又没用上的参数
+    engine_scriptrelink.settle_stale(ctx.path, abort=False)
+    asked = str(request.args.get("script") or "").replace("\\", "/").strip()
+    empty = {"script": asked, "missing": False, "fingerprint": False, "matches": [], "scripts": []}
+    script = _registered_script_key(ctx, asked)
+    if script is None:
+        return jsonify(empty)
+    root = Path(ctx.path)
+    if engine_registry.script_fingerprint(root, script) is not None or (root / script).exists():
+        return jsonify(empty)
+    fingerprint = ctx.registry.fingerprint_of(script)
+    try:
+        paths = engine_discover.iter_all_scripts(root)[:RELINK_MAX_SCRIPTS]
+    except OSError:
+        paths = []
+    scripts = sorted(
+        {engine_discover.rel_key(p, root) for p in paths} - {script},
+        key=lambda rel: (rel.count("/"), rel),
+    )
+    matches = (
+        [rel for rel in scripts if engine_registry.script_fingerprint(root, rel) == fingerprint]
+        if fingerprint
+        else []
+    )
+    resp = jsonify(
+        {
+            "script": script,
+            "missing": True,
+            "fingerprint": bool(fingerprint),
+            "matches": matches,
+            "scripts": scripts,
+        }
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _registered_script_key(ctx, asked: str) -> str | None:
+    """请求里点名的脚本 → 注册表里**那一个键本身**（不是请求里的字符串）；没登记 → None。
+
+    之后拼路径只用注册表自己的键：请求值只拿来比对，不进路径表达式。"""
+    if not asked:
+        return None
+    return next((key for key in ctx.registry.all_scripts() if key == asked), None)
+
+
+def _relink_pair(ctx) -> tuple[str, str] | tuple[None, object]:
+    """`{from, to}` → (注册表里那个已经不在的脚本, 项目里要接上的那份)；不成立回 (None, 拒绝响应)。"""
+    body = request.get_json(silent=True) or {}
+    old = _registered_script_key(ctx, str(body.get("from") or "").replace("\\", "/").strip())
+    if old is None or (Path(ctx.path) / old).exists():
+        return None, (jsonify({"error": "不是一个挪走了的登记脚本", "code": "bad_request"}), 400)
+    new, rejected = _resolve_project_script(ctx, str(body.get("to") or "").strip())
+    if rejected is not None:
+        return None, rejected
+    return old, new
+
+
+@app.post("/api/registry/relink/prepare")
+def api_registry_relink_prepare():
+    """接回挪走的脚本之前（ADR 0211 第一期 6）：把旧脚本键下的运行配置 / 答案 / 输入转录复制到新脚本键下（待办），
+    验证试跑用它们。回 `{run_config: 新的默认配置引用 | null, carried}`；只有接回成功（`finish`）才算数。
+    运行许可 / 解释器信任不带。带不过去（读不出 / 新键下已有状态）就回 `run_config: null`，照常无参数试跑。"""
+    ctx = current_ctx()
+    old, new = _relink_pair(ctx)
+    if old is None:
+        return new
+    try:
+        out = engine_scriptrelink.prepare(ctx.path, old, new)
+    except (OSError, ValueError, engine_runconfig.RunConfigError):
+        LOG.warning("接回脚本：带参数失败，照常无参数试跑", exc_info=True)
+        out = {"run_config": None, "carried": False}
+    return jsonify(out)
+
+
+@app.post("/api/registry/relink/finish")
+def api_registry_relink_finish():
+    """接回的终局（ADR 0211 第一期 6）：`ok` 且新脚本确实认领了图 → 带过来的状态留下；否则原样撤销，新键下不留残留。"""
+    ctx = current_ctx()
+    old, new = _relink_pair(ctx)
+    if old is None:
+        return new
+    body = request.get_json(silent=True) or {}
+    try:
+        result = engine_scriptrelink.finish(ctx.path, old, new, ok=body.get("ok") is True)
+    except (OSError, ValueError, engine_runconfig.RunConfigError):
+        LOG.warning("接回脚本：收尾失败（下次接回时再收）", exc_info=True)
+        return _session_unavailable()
+    return jsonify({"ok": True, "result": result})
+
+
 @app.put("/api/registry")
 def api_registry_write():
     """手工裁决：直接写一条脚本的 stem 归属（冲突仲裁、改 entry/cost）。"""
@@ -12124,12 +12237,28 @@ def api_change_plans_create():
         return _change_plan_error("invalid_change_plan")
     if engine_patchspec.canonicalize_with_diagnostics(base)[1]:
         return jsonify({"error": "patches 含无效条目", "code": "invalid_patches"}), 400
+    script_mode = body.get("mode") == "script"
     if source == "assistant":
-        # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录
-        if any(k in body for k in ("comments", "share_id")):
+        # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录 / 来源方案
+        if any(k in body for k in ("comments", "share_id", "from_plan", "comment_ids")):
             return _change_plan_error("invalid_change_plan")
         comments = engine_changeplan.assistant_comments(body.get("instruction"), body.get("target"))
+    elif script_mode:
+        # 审阅方案卡上用户点「改脚本做剩下的」（ADR 0206 修订 2026-11-26）：只认「来源方案 id + 意见 id」，
+        # 意见原文取自后端存档的那份方案，请求里再带任何意见文字 / 指令 / 分享记录一律拒绝
+        if any(k in body for k in ("comments", "share_id", "instruction", "target")):
+            return _change_plan_error("invalid_change_plan")
+        from_plan = body.get("from_plan")
+        if not isinstance(from_plan, str) or engine_changeplan.PLAN_ID.match(from_plan) is None:
+            return _change_plan_error("invalid_change_plan")
+        prev = engine_changeplan.load(current_ctx().id, from_plan)
+        if prev is None:
+            return _change_plan_error("change_plan_unknown")
+        rows = engine_changeplan.review_script_rows(prev, body.get("comment_ids"), rel_id)
+        comments = engine_changeplan.review_script_comments(rows) if rows else None
     else:
+        if any(k in body for k in ("from_plan", "comment_ids")):
+            return _change_plan_error("invalid_change_plan")
         comments = _change_plan_comments(body, rel_id)
     if comments is None:
         return _change_plan_error("invalid_change_plan")
@@ -12153,9 +12282,8 @@ def api_change_plans_create():
     selection = engine_changeplan.clean_selection(body)
     if selection is None:
         return _change_plan_error("invalid_change_plan")
-    script_mode = body.get("mode") == "script"
-    if script_mode and (source != "assistant" or "connection" not in selection):
-        # 脚本修改只接助手来源（审阅意见是外来文本，不直接驱动改脚本）；要明确的连接（决定 Agent 走哪条路由）
+    if script_mode and "connection" not in selection:
+        # 脚本修改要明确的连接（决定 Agent 走哪条路由）；审阅来源只接用户点按钮那条路（上面核过来源方案与意见 id），不自动续走
         return _change_plan_error("invalid_change_plan")
     # 连接预检图内方案与脚本方案同一个：连接用不了（没连上 / 不支持）两条都走不通，回同一组稳定码，前端据此直接落回旧路径
     failure = engine_changeplan.connection_failure(selection)
@@ -12170,7 +12298,7 @@ def api_change_plans_create():
         threading.Thread(
             target=_change_plan_script_thread if script_mode else _change_plan_thread,
             args=(
-                (ctx, task, rel_id, list(base), comments, selection, body.get("target"))
+                (ctx, task, rel_id, list(base), comments, selection, body.get("target"), source)
                 if script_mode
                 else (ctx, task, rel_id, list(base), comments, source, None, selection)
             ),
@@ -12275,13 +12403,15 @@ def _change_plan_thread(
             engine_changeplan.forget_task(task)
 
 
-def _change_plan_script_thread(ctx, task, rel_id, base, comments, selection, target) -> None:
+def _change_plan_script_thread(
+    ctx, task, rel_id, base, comments, selection, target, origin="assistant"
+) -> None:
     """脚本修改的后台线程（ADR 0206 PR 6）：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail, params = "", "", {}
     try:
         with bound_project(ctx):
             plan, before_png, after_png, new_bytes = _change_plan_script_compute(
-                ctx, task, rel_id, base, comments, selection, target
+                ctx, task, rel_id, base, comments, selection, target, origin
             )
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png, new_bytes)
     except engine_changeplan.PlanFailure as exc:
@@ -12298,7 +12428,9 @@ def _change_plan_script_thread(ctx, task, rel_id, base, comments, selection, tar
 _PLAN_SCRIPT_DEADLINE_S = 25 * 60
 
 
-def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, target):
+def _change_plan_script_compute(
+    ctx, task, rel_id, base, comments, selection, target, origin="assistant"
+):
     """脚本修改：渲染 B0 → Agent 在候选里改（`plan_only`，不写用户脚本）→ 越界核对 → 候选字节用 B0 渲染出「改后」→ 数据指纹 → 方案。
     → `(plan, before_png, after_png, 候选字节)`；失败抛 `PlanFailure`，**用户脚本一个字节不动**（越界被还原的除外，如实报告）。"""
     ec = engine_changeplan
@@ -12440,6 +12572,7 @@ def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, ta
         base_bytes=outcome["base_bytes"],
         new_bytes=new_bytes,
         base_patches=base,
+        source=origin,
     )
     return plan, before_png, after_png, new_bytes
 
@@ -12726,6 +12859,8 @@ def _change_plan_compute(
         )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
+        # 改成对数轴而下限 ≤ 0：候选里一并把下限改成正数（卡片再问用户要不要），免得出一张坍掉的图
+        proposal = ec.require_log_lower_limits(proposal, start_man)
         cand, proposal = ec.candidate_patches(start, proposal, start_man)
         if prev is not None:  # 上一版没被批注改掉的组带进来，再与批注的组一起相对 B0 现算
             proposal = {
@@ -12748,6 +12883,25 @@ def _change_plan_compute(
                 raise ec.PlanFailure("change_plan_render_failed", "warning")
             groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
             groups = ec.attach_patches(groups, cand)
+            # 改完有元素新探出图幅（对数轴刻度变宽把纵轴标题挤出去之类）：用现成的外边距重排腾地方，补出的 position 并进造成出界的那些组。
+            # 模型自己提了 position 的（用户的意思在排版上）不替它改；补不下 / 没进步 / 有新 warning = 照常出卡
+            if not any(
+                c["prop"] == "position" and not c.get("auto")
+                for g in proposal["groups"]
+                for c in g["changes"]
+            ):
+
+                def room_render(patches: list):
+                    resp = override(patches)
+                    return None if warned(resp) - base_warned else resp.get("manifest")
+
+                room = ec.make_room(before_man, after_man, cand, base, room_render)
+                if room is not None:
+                    cand = room.candidate
+                    after_png, after_man = snapshot(cand)
+                    groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
+                    groups = ec.attach_patches(groups, cand)
+                    groups = ec.attach_room(groups, room, before_man, after_man)
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         _require_route_unchanged(rel_id)
@@ -12797,6 +12951,12 @@ def _change_plan_compute(
             parent=prev["id"],
             note_ids=note_ids,
         )
+    if prev is not None:
+        # 续改的版本：上一版存着的审阅意见原文带着走（再加这一版用户自己写的批注），「改脚本做剩下的」仍按存档取
+        plan["comments"] = [
+            *(prev.get("comments") or []),
+            *engine_changeplan.stored_comments(comments),
+        ]
     plan["replay_required"] = task.replay_required
     return plan, before_png, after_png
 
@@ -20598,8 +20758,8 @@ def api_layout_get(name):
 
 @app.get("/api/layouts/<name>/agent-additions")
 def api_layout_agent_additions(name):
-    """「把 Agent 加的并进来」（ADR 0208 §五）：桌面拿着基线 `base_revision`、磁盘上已是别的修订号时，
-    多出来的是不是**只有** Agent 追加的对象（判据在 `engine/layoutannotate.agent_additions`，全部来自撤销留存）。
+    """「把 Agent 的改动并进来」（ADR 0208 §五、ADR 0212 第 5 期）：桌面拿着基线 `base_revision`、磁盘上已是别的修订号时，
+    这中间是不是**只有** Agent 写过、写了什么（判据与对象差在 `engine/layoutannotate.agent_additions`，全部来自撤销留存）。
 
     只读、只认当前项目 `tavottofile/` 里的那份；不是就回 `{"available": false}`，桌面照旧走覆盖 / 另存。"""
     ctx = _request_ctx()
@@ -22251,11 +22411,57 @@ def api_layout_session_project_history_claim():
             )
             if mode != "slot" or slot_rev != revision:
                 return refused
+            recorded = state["owners"].get(doc_id)
             if owner != "this":
                 engine_layoutsession.record_owner(doc_id, key, slot_rev)
     except OSError:
         return _session_unavailable()
+    if owner == "moved" and isinstance(recorded, str):
+        # 确认是挪走（旧路径确定不在）：按路径作键的本机设置随认领迁到新路径（ADR 0211 第一期 5）。
+        # 锁外做、不抛：迁移失败只记日志并留待办，下次打开项目重试，认领本身照样成功
+        moved = engine_projectmigrate.claim_moved(recorded, ctx.path)
+        if moved["input_remap"]:
+            # 改指表变了：与用户指认同一套收尾——收掉按旧表起的会话 / 试运行，广播新代次（ADR 0106 §五）
+            root = str(ctx.path)
+            _stop_remap_dependent_work(root)
+            _publish_remap_changed(root, "added", engine_inputremap.state(root)["generation"])
     return jsonify({"ok": True, "revision": revision, "owner": "this"})
+
+
+@app.post("/api/layout-session/project-history/copied")
+def api_layout_session_project_history_copied():
+    """项目被复制、复制品从项目内节点另开一份排版之后调（ADR 0211 第一期 5，维护者 2026-11-26 拍板）：
+    把复制源（槽位归属里记的、**仍然存在**的旧项目路径）的改指表拷一份到当前项目。
+
+    在槽位文档锁里重判一遍：仍是 `mode == "copy"` 且 owner 是 `other`（旧路径还在）才拷；别的情况（待核对、会话状态读不全、
+    槽位坏）不知道复制源是谁，什么都不做。只拷改指表；复制源一个字节不动；幂等。回 `{ok, copied: 新加条数}`。"""
+    body = request.get_json(silent=True)
+    doc_id = body.get("doc_id") if isinstance(body, dict) else None
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    store = project_store_dir(ctx)
+    if ctx is None or store is None:
+        return jsonify({"ok": True, "copied": 0})
+    key = engine_layoutsession.project_key(ctx.path)
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            state, status = engine_layoutsession.read_readonly()
+            slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
+            mode, owner = _history_verdict(
+                doc_id, key, state, status, slot_doc, slot_rev, slot_exists
+            )
+            recorded = state["owners"].get(doc_id)
+    except OSError:
+        return _session_unavailable()
+    if mode != "copy" or owner != "other" or not isinstance(recorded, str):
+        return jsonify({"ok": True, "copied": 0})
+    copied = engine_projectmigrate.copy_remap(recorded, ctx.path)
+    if copied:
+        root = str(ctx.path)
+        _stop_remap_dependent_work(root)
+        _publish_remap_changed(root, "added", engine_inputremap.state(root)["generation"])
+    return jsonify({"ok": True, "copied": copied})
 
 
 @app.get("/api/preferences/export-defaults")

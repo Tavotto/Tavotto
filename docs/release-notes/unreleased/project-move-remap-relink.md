@@ -1,0 +1,3 @@
+## Moved scripts and data reconnect in one click
+
+After moving a whole project folder, the data locations you had pointed Tavotto to, your script parameters and saved answers now move with the project, so figures rerun without asking again; a copied project carries them too. If only a script was moved or renamed, the error card now says "Can't find fig1.py" and offers one button, "Reconnect to scripts/", to reconnect it. Tavotto finds the script by its content, not its name. When it can't tell, it lets you pick from a short list. The script's parameters come along, and your edits inside the figure are kept.

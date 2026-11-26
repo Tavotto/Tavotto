@@ -301,7 +301,14 @@ def test_t11_s1_script_only_first_run_through_the_public_entry(tmp_path):
         if "tavotto_registry.json" in after_open:
             registry_at_open = json.loads((proj / "tavotto_registry.json").read_text("utf-8"))
             assert set(registry_at_open["scripts"]) == {SCRIPT}
-            assert set(registry_at_open["scripts"][SCRIPT]) <= {"entry", "cost", "notes", "stems"}
+            # sha256 = 脚本文件字节的内容指纹（ADR 0211 第一期 6，挪走后认出新位置用）：读文件算出来的，不是执行结果
+            assert set(registry_at_open["scripts"][SCRIPT]) <= {
+                "entry",
+                "cost",
+                "notes",
+                "stems",
+                "sha256",
+            }
         _, panels = app.call("/api/panels", timeout=30)
         panels_at_open = [
             (p["id"], p.get("capability", {}).get("status")) for p in panels["panels"]

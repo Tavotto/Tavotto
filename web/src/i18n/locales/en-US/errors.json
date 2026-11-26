@@ -531,7 +531,7 @@
     "chart_source_changed": "The chart's source file has changed. This operation was not applied. Restore the matching source or import it again.",
     "chart_render_pair_missing": "The chart response did not include paired image and geometry. This render was not applied.",
     "figure_snapshot_unavailable": "A referenced Figure snapshot or its original could not be verified. No package was created. Restore the missing resource or regenerate the figure.",
-    "script_source_missing": "The script file itself is missing ({{script}}): it may have been moved or deleted. Put the script back in the project and run it again; Tavotto will not substitute another file with the same name.",
+    "script_source_missing": "Can’t find {{script}}",
     "input_declaration_conflict": "Input declarations changed elsewhere. Reload them before saving.",
     "input_declaration_invalid": "The input declaration or selected resources are unavailable. Check the files, run configuration, and data locations.",
     "input_declaration_unavailable": "Input declarations cannot be read or saved right now. Please try again later.",

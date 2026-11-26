@@ -28,7 +28,7 @@ function fakeCodexDir(): string {
   return dir
 }
 
-async function start(app: (o?: Parameters<typeof import('./fixtures').startApp>[0]) => Promise<RunningApp>, planModel: 'ok' | 'unsupported_sync' | 'unsupported_thread') {
+async function start(app: (o?: Parameters<typeof import('./fixtures').startApp>[0]) => Promise<RunningApp>, planModel: 'ok' | 'log' | 'unsupported_sync' | 'unsupported_thread') {
   return app({ planModel, env: { PATH: `${fakeCodexDir()}${path.delimiter}${process.env.PATH ?? ''}`, TAVOTTO_EXPERIMENTAL_SIWC: '0' } })
 }
 
@@ -86,6 +86,42 @@ test('方案卡：发指令 → 待确认 → 查看 → 应用（overrides 真�
   await page.keyboard.press('ControlOrMeta+z')
   await expect(card).toHaveAttribute('data-change-plan-card', 'ready')
   await expect.poll(() => hasWidth(doc.last()), { timeout: 30_000 }).toBe(false)
+})
+
+test('对数轴下限：先问「一起改吗」，没回答前没有查看 / 应用；一起改 → 应用带上正数下限', async ({ app, page }) => {
+  const a = await start(app, 'log')
+  const doc = trackAutosave(page)
+  await openAssistant(page, a.baseURL)
+  await page.locator('[data-ai-input]').fill('把纵轴改成对数坐标')
+  await page.locator('[data-ai-send="send"]').click()
+
+  const card = page.locator('[data-change-plan-card]')
+  await expect(card).toHaveAttribute('data-change-plan-card', 'ready', { timeout: 60_000 })
+  await expect(page.locator('[data-change-plan-confirm-log="yes"]')).toBeVisible()
+  // 建议的下限是 10 的幂：写成上标（10⁻²），不写 0.01
+  await expect(card).toContainText(/10[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+/)
+  await expect(page.locator('[data-change-plan-view]')).toHaveCount(0)
+  await expect(page.locator('[data-change-plan-apply]')).toHaveCount(0)
+  const shots = process.env.TAVOTTO_E2E_SHOTS // 只在要截图留档时设：目录
+  if (shots) {
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: scheme })
+      await card.screenshot({ path: path.join(shots, `confirm-row-${scheme}.png`) })
+    }
+    await page.emulateMedia({ colorScheme: 'light' })
+  }
+
+  await page.locator('[data-change-plan-confirm-log="yes"]').click()
+  await expect(page.locator('[data-change-plan-confirm-log]')).toHaveCount(0)
+  await page.locator('[data-change-plan-apply]').click()
+  await expect(card).toHaveAttribute('data-change-plan-card', 'applied')
+  await expect
+    .poll(() => {
+      const last = doc.last() ?? []
+      const lim = last.find((p) => p.prop === 'ylim')?.value as number[] | undefined
+      return last.some((p) => p.prop === 'yscale' && p.value === 'log') && !!lim && Math.min(...lim) > 0
+    }, { timeout: 30_000 })
+    .toBe(true)
 })
 
 for (const mode of ['unsupported_sync', 'unsupported_thread'] as const) {
