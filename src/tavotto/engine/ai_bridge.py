@@ -2326,6 +2326,21 @@ def run(
         except (OSError, ValueError, AttributeError):
             pass  # 子进程已经退出
 
+    # 改图助手的任务清单（只给改图：转换有自己的三步、修改方案卡的脚本修改有自己的阶段）
+    edit_stage: _EditStage | None = None
+    if (
+        convert is None
+        and not plan_only
+        and (envelope is None or envelope.task_type == "figure_edit")
+    ):
+        try:
+            if cand is not None:
+                edit_stage = _EditStage(sess, emit, cand.target, cand.base_bytes)
+            else:
+                edit_stage = _EditStage(sess, emit, script_path, snap.read_bytes())
+        except Exception:  # noqa: BLE001 —— 进度提示建不起来就不给，会话照常
+            edit_stage = None
+
     agent_runs = [0]
 
     def _consume():
@@ -2372,6 +2387,8 @@ def run(
         try:
             for line in proc.stdout:
                 silence.touch()
+                if edit_stage is not None:
+                    edit_stage.poll()
                 line = line.rstrip("\n")
                 if not line.strip():
                     continue
@@ -2389,6 +2406,8 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
+            if edit_stage is not None:
+                edit_stage.exited()
             if (
                 agent == ai_agents.BUILTIN_ID
                 and endpoint
@@ -2456,6 +2475,8 @@ def run(
             return  # 已取消：不起新进程；随后的 wait 读空输出、编排器按取消收尾
         # 界面的「正在自动修正」：会话详情（刷新后接回）读 `task.phase`，在线的标签页收 `ai.task`
         sess["task"] = {**sess["task"], "phase": "correcting"}
+        if edit_stage is not None:
+            edit_stage.correcting()
         emit(
             "ai.task",
             {"session": sid, "task_type": sess["task"]["task_type"], "phase": "correcting"},
@@ -3323,6 +3344,7 @@ SESSION_DTO_KEYS: tuple[str, ...] = (
     "cancel_requested",
     "rev",
     "attachment_count",
+    "stage",
 )
 #: **终态字段清单**：会话结束时一起确定、落进历史库的那一组。服务重启后「sidecar 合并历史」的路径用它整体覆盖 sidecar，
 #: 不再逐个字段抄（漏抄一个就会出现「final 为 true 但 error 是空」这类分叉）。新增终态字段时只改这里。
@@ -3397,6 +3419,59 @@ def _live_activity(live: dict) -> str | None:
     except Exception:  # noqa: BLE001 —— 判不出就当没有
         pass
     return None
+
+
+#: 改图助手改脚本那条路的任务清单（用户 2026-11-26）：读脚本 → 改脚本 → 出图核对，闭集
+EDIT_STEPS: tuple[str, ...] = ("read", "edit", "verify")
+#: 「改脚本」靠比对目标文件判：每个输出行最多每这么久读一次
+_EDIT_PROBE_S = 1.0
+
+
+class _EditStage:
+    """改图会话走到哪一步 `{step: read|edit|verify, round}`，只前进；变了就记进会话（`stage`，进会话详情）并推 `ai.stage`。
+
+    判据只用文件事实，不读模型输出、不靠 Agent 的计划工具：目标脚本（TAF / 内置执行器是候选里那一份）与开始时的字节不同 =
+    改脚本；Agent 进程退出 = 出图核对（提交前检查 / 刷新出图）；TAF 有界修正又起进程 = 回到改脚本、第几轮 +1，已打的勾不收回。
+    事件流里的 `file_change` 看不见用 shell 写成的改动（`CliRunFacts` 说明），所以不用它。永不抛。"""
+
+    def __init__(self, sess: dict, emit, target: Path, base: bytes | None):
+        self._sess, self._emit, self._target, self._base = sess, emit, target, base
+        self._next = 0.0
+        self.step, self.round = "read", 1
+        self._publish()
+
+    def _publish(self) -> None:
+        stage = {"step": self.step, "round": self.round}
+        self._sess["stage"] = stage
+        try:
+            self._emit("ai.stage", {"session": self._sess["id"], "stage": dict(stage)})
+        except Exception:  # noqa: BLE001 —— 进度提示失败不影响会话
+            pass
+
+    def _to(self, step: str, rnd: int) -> None:
+        if (rnd, EDIT_STEPS.index(step)) > (self.round, EDIT_STEPS.index(self.step)):
+            self.step, self.round = step, rnd
+            self._publish()
+
+    def poll(self, now: float | None = None) -> None:
+        if self.step != "read":
+            return
+        now = time.monotonic() if now is None else now
+        if now < self._next:
+            return
+        self._next = now + _EDIT_PROBE_S
+        try:
+            if self._base is not None and self._target.read_bytes() != self._base:
+                self._to("edit", self.round)
+        except OSError:
+            pass
+
+    def exited(self) -> None:
+        self.poll(float("inf"))
+        self._to("verify", self.round)
+
+    def correcting(self) -> None:
+        self._to("edit", self.round + 1)
 
 
 #: 生成可编辑版本的任务清单（用户 2026-11-25 拍板）：三步，闭集

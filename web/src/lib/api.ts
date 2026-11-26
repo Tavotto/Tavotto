@@ -6021,7 +6021,15 @@ export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
   )
 
 /** 会话详情（转录 + diff）；查询到已登记的会话后补全界面用 */
+/** 改图助手改脚本那条路的任务清单进度：读脚本 → 改脚本 → 出图核对；`round` = 第几轮（有界修正 +1） */
+export interface AiEditStage {
+  step: 'read' | 'edit' | 'verify'
+  round: number
+}
+
 export interface AiSessionDetail {
+  /** 改图会话的任务清单进度（`ai_bridge._EditStage`）；转换 / 修改方案卡的脚本修改 / 老后端没有 */
+  stage?: AiEditStage | null
   /** 任务结局；老后端没有 */
   task?: AiTaskSummary
   agent?: string
@@ -6468,6 +6476,14 @@ export type ServerEvent =
       text: string
       kindOf?: AiDeltaKind
     }
+  /** 改图会话走到哪一步（后端 `ai_bridge._EditStage`，只前进；用户 2026-11-26）；老后端不发 */
+  | ({
+      kind: 'ai.stage'
+      pj?: string
+      client_request_id?: string
+      session: string
+      stage: AiEditStage
+    } & ProjectScoped)
   /** 任务进入新阶段（TAF 有界修正：上一版没过写回前检查，Agent 正在副本里修正）；老后端不发 */
   | ({
       kind: 'ai.task'
@@ -6543,6 +6559,7 @@ const EVENT_KINDS = [
   'export.progress',
   'ai.delta',
   'ai.task',
+  'ai.stage',
   'ai.stalled',
   'ai.done',
   'script.input_requested',

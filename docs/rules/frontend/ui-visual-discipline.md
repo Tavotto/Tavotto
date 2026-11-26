@@ -113,7 +113,7 @@ Document 字体（Times）与 UI 字体严格分离。
 NumberField（框内 `unit`）、Select、Checkbox、Radio、Toggle、Badge、Kbd、Tabs（视图）、`listRowClass`、
 TreeRow（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）、SearchInput、Notice、StatusPill、Card、
 FormSection / FieldGroup、RowMenu、Section / Disclosure / Details、Dialog、Popover、Menu、Tooltip、Segmented（取值）、
-EmptyState、TaskChecklist（多步任务的进度：灰底块 + 列全的步骤，做完灰勾连字划掉、进行中转圈 + 只放真数字的胶囊，行数不变；2026-11-25 用户拍板）。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
+EmptyState、TaskChecklist（多步任务的进度：灰底块 + 列全的步骤，做完灰勾连字划掉、进行中转圈 + 只放真数字的胶囊，行数不变；2026-11-25 用户拍板。`bare` = 只要步骤不要标题行、行距收紧一档（修改方案卡）；`busyIcon={null}` = 标题行不画转圈（宿主旁边已有在动的标记时））。**同类控件出现第二套实现先删第二套，不给新写法开豁免。**
 树的键位只有 `ui/treeKeys` 一份、列表行焦点环内凹 `focus-ring-inset`；抽屉 / 栏的宽度把手只有 `ui/ResizeHandle`（双击复位、拖动中 Esc 回滚、键盘步进 + Home/End）。子树展开 / 折叠只有 `ui/TreeBranch`（grid rows 过渡，收起保活期间 inert；可见行查找 `findVisibleRow`）；抽屉 / 列表的空态一行用 `ui/EmptyLine`。
 跨区域的语义图标在 `ui/semanticIcons.ts`（「可编辑的图」= `EditableFigureIcon`，左轨 / 图层
 角标 / 素材卡 / 元素树空态从同一处取）；角色图标在 `inspector/roles/roleIcons.ts`。

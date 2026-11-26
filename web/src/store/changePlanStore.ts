@@ -177,6 +177,8 @@ export interface PlanEntry {
   status: PlanStatus
   planId?: string
   plan?: ChangePlan
+  /** 生成 / 重改进行中后端报的阶段（`render_before` → `model` | `agent` → `render_after`，只前进）：卡片的任务清单按它勾步骤 */
+  phase?: PlanPhase
   /** 修改前 / 修改后两张图的完整地址（已带项目参数） */
   beforeSrc?: string
   afterSrc?: string
@@ -221,6 +223,15 @@ export interface PlanEntry {
   resolveFailed?: boolean
   /** 回复草稿：意见 id → 用户改过的文字；null = 已发送（不再出草稿框） */
   drafts: Record<string, string | null>
+}
+
+export type PlanPhase = 'render_before' | 'model' | 'agent' | 'render_after'
+const PHASE_RANK: Record<PlanPhase, number> = { render_before: 0, model: 1, agent: 1, render_after: 2 }
+/** 只前进：轮询乱序 / 旧回包不让已勾的步骤退回去；不认识的阶段名不动 */
+export function nextPhase(cur: PlanPhase | undefined, seen: unknown): PlanPhase | undefined {
+  if (typeof seen !== 'string' || !(seen in PHASE_RANK)) return cur
+  const p = seen as PlanPhase
+  return cur && PHASE_RANK[cur] >= PHASE_RANK[p] ? cur : p
 }
 
 export type ApplyResult = 'applied' | 'stale' | 'nothing' | 'failed'
@@ -421,7 +432,11 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
       if (!alive()) return
       const e = get().entries[key]
-      if (view.state === 'running') continue
+      if (view.state === 'running') {
+        const ph = nextPhase(e?.phase, view.phase)
+        if (ph !== e?.phase) patch(key, { phase: ph })
+        continue
+      }
       if (view.state === 'failed') {
         // 助手来源：这条路不适用（线程里才解析出连接不支持结构化调用 / 没连上……）与同步被拒同一处理——不留失败卡，
         // 接着走现有的改脚本路径，用户的指令照旧交给 Agent（出的是改脚本那一轮自己的结果 / 错误卡）
@@ -902,7 +917,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (e.revising !== undefined) return 'busy'
       if (!notes.length) return 'nothing'
       const guard = captureProjectEpoch()
-      patch(key, { revising: '', reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
+      patch(key, { revising: '', phase: undefined, reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
       try {
         const task = await reviseChangePlan(e.planId, {
           notes: notes.map((n) => ({ id: n.id, anchor: n.anchor, text: n.text })),

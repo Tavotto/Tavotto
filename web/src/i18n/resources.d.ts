@@ -43,6 +43,12 @@ export default interface Resources {
         "runScriptTip": "会先应用这些图内修改",
         "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
         "stale": "原图改过了，这版对不上",
+        "steps": {
+          "after": "画出修改后的图",
+          "agent": "改脚本",
+          "before": "读取这张图",
+          "model": "想怎么改"
+        },
         "summaryAll": "按 {{done}}改了 {{places}}",
         "summaryAssistant": "改了 {{places}}",
         "summaryAssistantOther": "改了 {{places}}，剩下的没法直接改",
@@ -728,8 +734,14 @@ export default interface Resources {
       "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
       "reverted": "已回滚，脚本已恢复到修改前。",
       "revertedStatus": "已回滚助手的修改，正在重建图表…",
+      "round": "第 {{n}} 轮",
       "running": "正在修改脚本…",
       "stalled": "AI 已经 {{seconds}} 秒没有动静",
+      "steps": {
+        "edit": "改脚本",
+        "read": "读脚本",
+        "verify": "出图核对"
+      },
       "taskFailedChanged": "已改，但核对没通过",
       "taskPartial": "已改，部分检查没能完成",
       "taskRejected": "修改没通过写回前检查，项目未改动",
