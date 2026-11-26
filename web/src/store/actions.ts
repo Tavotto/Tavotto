@@ -1,5 +1,5 @@
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
-import { pdfRedrawCandidate, REDRAW_FRAME_OVERRIDE, redrawOffered } from '@/lib/scriptedBitmaps'
+import { pdfFontProblem, pdfRedrawCandidate, REDRAW_FRAME_OVERRIDE, redrawOffered } from '@/lib/scriptedBitmaps'
 import { currentProjectId } from '@/lib/session'
 import { isCanvasCovered } from '@/store/canvasCover'
 import '@/store/figureSnapshotInvalidation'
@@ -2701,11 +2701,12 @@ export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
   // `figure.frame = "savefig"`，面板就由引擎按脚本存盘的图幅重画；不走位图那套采用与对照
   if (pdfRedrawCandidate(panel)) {
     if (!redrawOffered(panel, pdfFontFactsOf(panel.fileId))) return false
-    commit(msg('artifact.showRedraw', undefined, 'errors'), (d) => {
+    const missing = pdfFontProblem(pdfFontFactsOf(panel.fileId)) === 'pdfMissingGlyphs'
+    commit(msg(missing ? 'artifact.showRedrawMissing' : 'artifact.showRedrawType3', undefined, 'errors'), (d) => {
       const o = d.objects.find((x) => x.id === panel.id)
       if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
     })
-    status(msg('artifact.redrawn', undefined, 'errors'), 'done')
+    status(msg(missing ? 'artifact.redrawnMissing' : 'artifact.redrawnType3', undefined, 'errors'), 'done')
     return true
   }
   if (!redrawOffered(panel)) return false

@@ -1404,7 +1404,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
     }
     if (offerRedraw) {
       return pdfProblem
-        ? { tone: 'info', cold: false, text: badge(pdfProblem), hint: badge('pdfRedrawHint'), redraw: true }
+        ? { tone: 'info', cold: false, text: badge(pdfProblem), hint: badge(pdfProblem === 'pdfType3' ? 'pdfType3Hint' : 'pdfMissingGlyphsHint'), redraw: true }
         : { tone: 'info', cold: false, text: badge('bitmapOriginal'), hint: badge('redrawHint'), redraw: true }
     }
     return null

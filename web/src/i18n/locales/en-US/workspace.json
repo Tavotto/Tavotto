@@ -617,9 +617,10 @@
     "bitmapOriginal": "Bitmap original",
     "redraw": "Redraw with script",
     "redrawHint": "The script saved this figure as a bitmap, and a PDF export embeds it as is. Choose Redraw with script to rerun the script and switch to vectors; if the result differs, you compare the two first, and you can undo it.",
-    "pdfType3": "Original uses Type 3 fonts",
+    "pdfType3": "Original font not compatible",
     "pdfMissingGlyphs": "Original has missing characters",
-    "pdfRedrawHint": "The script saved this figure as a PDF whose text uses Type 3 fonts or has missing-character boxes, and exports carry that over: journals such as IEEE and Elsevier send back Type 3 fonts, and other apps often can't select or edit the text. Choose Redraw with script to rerun the script and use the redraw instead, without moving anything on the page; you can undo it."
+    "pdfType3Hint": "The script saved this figure as a PDF with Type 3 fonts, which journals such as IEEE and Elsevier send back. Choose Redraw with script to rerun it with standard fonts; nothing moves on the page, and you can undo it.",
+    "pdfMissingGlyphsHint": "The script saved this figure as a PDF where some characters show as boxes. Choose Redraw with script to rerun it with the fonts filled in; nothing moves on the page, and you can undo it."
   },
   "quickEdit": {
     "aria": "Quick edit",
