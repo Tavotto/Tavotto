@@ -20957,6 +20957,7 @@ def api_ai_data_figure_propose():
                 tables=body.get("tables"),
                 spec=body.get("spec"),
                 font_range=body.get("font_range"),
+                understand=body.get("understand"),
             )
     except engine_ai_data_progress.Cancelled:
         return _cancelled_response()

@@ -777,6 +777,7 @@
       "join": ", ",
       "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
       "error": "Error bars",
+      "errorBand": "Error band",
       "design": "Repeated measures",
       "option": {
         "sd": "Standard deviation (SD)",

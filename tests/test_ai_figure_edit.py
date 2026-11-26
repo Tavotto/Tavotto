@@ -1328,3 +1328,19 @@ def test_the_stage_event_is_a_kind_the_frontend_listens_for():
     source = api_ts.read_text(encoding="utf-8")
     block = source[source.index("const EVENT_KINDS = [") :]
     assert "'ai.stage'" in block[: block.index("] as const")]
+
+
+def test_fingerprint_ignores_atomic_tmp_of_excluded_files_only(tmp_path):
+    """后台刷新改写注册表的那一瞬，`tavotto_registry.json.<pid>.<n>.tmp` 被指纹扫到不算「项目被改动」
+    （注册表本身已排除，它的原子写临时文件同属排除）；别的文件的临时文件照常算。"""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "fig.py").write_bytes(b"x")
+    own = ai_figure_edit._own_files("fig.py")
+    before = ai_figure_edit.project_fingerprint(root, exclude=own)
+    (root / "tavotto_registry.json.4242.7.tmp").write_bytes(b"{}")
+    after = ai_figure_edit.project_fingerprint(root, exclude=own)
+    assert ai_figure_edit.fingerprint_changes(before, after) == []
+    (root / "data.csv.4242.8.tmp").write_bytes(b"1")
+    after = ai_figure_edit.project_fingerprint(root, exclude=own)
+    assert ai_figure_edit.fingerprint_changes(before, after) == ["data.csv.4242.8.tmp"]
