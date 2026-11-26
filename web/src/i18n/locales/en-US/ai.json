@@ -263,7 +263,13 @@
     "dataFigureNeedsInput": "Nothing drawn; tell me which two columns to use",
     "dataFigureFailedWritten": "Created {{script}}, but verification failed",
     "dataFigureUnconfirmed": "Result unconfirmed",
-    "stalled": "No activity from the AI for {{seconds}}s"
+    "stalled": "No activity from the AI for {{seconds}}s",
+    "steps": {
+      "read": "Read the script",
+      "edit": "Edit the script",
+      "verify": "Render and check"
+    },
+    "round": "Round {{n}}"
   },
   "status": {
     "aiAlreadyRan": "This request already ran (its task record was deleted), so it won’t be sent again.",
@@ -860,6 +866,12 @@
       "summaryNotes": "{{n}} notes led to {{places}} more changes",
       "revising": "Redoing with your notes…",
       "generatingAssistant": "Working on your request…",
+      "steps": {
+        "before": "Read the figure",
+        "model": "Work out the changes",
+        "agent": "Edit the script",
+        "after": "Draw the result"
+      },
       "summaryAssistant": "Changed {{places}} places",
       "summaryAssistantScript": "Changed {{places}} places; the rest needs the script, so it wasn't touched",
       "summaryAssistantOther": "Changed {{places}} places; the rest couldn't be changed directly",

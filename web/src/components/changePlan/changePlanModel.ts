@@ -1,3 +1,4 @@
+import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
@@ -251,4 +252,17 @@ export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean
   if (e.kind === 'layout' || e.plan?.kind === 'script') return false
   const from = e.from ?? 'review'
   return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
+}
+
+/**
+ * 生成中卡片的任务清单（2026-11-26，照准备 / 修复的任务清单）：三步按后端 `phase` 勾，不靠 Agent 的计划工具。
+ * 图内修改 = 读取这张图 → 想怎么改 → 画出修改后的图；脚本修改中间一步是「改脚本」（Agent 在候选里改 + 预检）。
+ */
+export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'plan' | 'revising'>): TaskStep[] | null {
+  // 一键排版没有阶段；方案已经回来、正在交给改脚本的那一小会儿（不是重改）也不再画步骤，照旧一句话
+  if (e.kind === 'layout' || (e.plan && e.revising === undefined)) return null
+  const script = e.request.mode === 'script' || e.phase === 'agent'
+  const at = e.phase === 'render_after' ? 2 : e.phase === 'model' || e.phase === 'agent' ? 1 : 0
+  const ids = ['before', script ? 'agent' : 'model', 'after'] as const
+  return ids.map((id, i) => ({ id, label: cp(`card.steps.${id}`), state: i < at ? 'done' : i === at ? 'active' : 'pending' }))
 }

@@ -41,7 +41,9 @@ import {
   type ZoneWidths,
 } from '@/lib/tickSides'
 import { diagnosticHash } from '@/diagnostics'
-import { applyTickSidePlan, isJustBakedBaseline } from '@/store/actions'
+import { applyTickSidePlan, isJustBakedBaseline, redrawWithScript } from '@/store/actions'
+import { redrawOffered } from '@/lib/scriptedBitmaps'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useAssetStore } from '@/store/assetStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import {
@@ -1250,6 +1252,8 @@ type BadgeInfo = {
   hint?: string
   /** 角标上唯一的动作钮（目前只有「运行已结束」那档的「重新运行」） */
   rerun?: string
+  /** 「位图原件」那档的「用脚本重画」（T-005） */
+  redraw?: boolean
 }
 
 /**
@@ -1290,6 +1294,10 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
   const frameLegacy = !!legacyFrame
   // 旧裁剪与脚本图幅不相交时属性里切不过去：提示改说要先调裁剪
   const frameBlocked = !!legacyFrame && !frameSwitchPatch(obj, legacyFrame)
+  // 画布上挂的是有脚本的位图原件（T-005）：**只在单选这张图时**说，给「用脚本重画」。
+  // 不在打开项目时跑任何东西（ADR 0013 §6）——点了才重画；常驻在每张 PNG 上只会教人忽略角标
+  const soleSelected = useSelectionStore((s) => s.ids.length === 1 && s.ids[0] === obj.id)
+  const offerRedraw = soleSelected && !editing && redrawOffered(obj)
 
   // 角标画在世界层里，反向缩放保持屏幕上恒定大小
   const scale = 1 / zoom
@@ -1306,7 +1314,8 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
     !!runtimeBadge ||
     !!nativeState ||
     rasterEditing ||
-    approx
+    approx ||
+    offerRedraw
   // 一次普通的重渲染（松手、改一个值）画布上已经是用户要的样子了（预览平面 / 上一版
   // 留着），这时立刻亮「渲染中」只会让每次松手都闪一下角标（2026-09-25 用户反馈）。
   // 所以这一档**过了 BUSY_BADGE_DELAY_MS 还没画完**才说；冷启动本来就慢，挂着的是
@@ -1402,8 +1411,11 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
         hint: badge(frameBlocked ? 'frameLegacyBlockedHint' : 'frameLegacyHint'),
       }
     }
+    if (offerRedraw) {
+      return { tone: 'info', cold: false, text: badge('bitmapOriginal'), hint: badge('redrawHint'), redraw: true }
+    }
     return null
-  }, [render, relevant, obj.chart, building, runtimeBadge, nativeState, rerunScript, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
+  }, [render, relevant, obj.chart, building, runtimeBadge, nativeState, rerunScript, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending, offerRedraw])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)
@@ -1455,6 +1467,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
           <Spinner size={ICON_SIZE.xs} aria-hidden className="opacity-80" />
         )}
         {shown.text}
+        {shown.redraw && <span aria-hidden className="opacity-60">·</span>}
         {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
             `pointer-events-none`（角标画在面板左上角，图内标题常常就在那儿），
             而 raster 那一档的角标**整个编辑期间常驻**——89×19 的一块死区会让
@@ -1479,6 +1492,21 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
             className="pointer-events-auto -mx-1.5 -my-0.5 rounded-full px-1.5 py-0.5 outline-none hover:opacity-80 focus-visible:focus-ring"
           >
             {badge('nativeRerun')}
+          </button>
+        )}
+        {shown.redraw && (
+          // 与进图内编辑同一套准入与对照确认（`redrawWithScript`）；按下不冒到画布（不取消选中、不起拖）
+          <button
+            type="button"
+            data-badge-redraw
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              void redrawWithScript(obj.id)
+            }}
+            className="pointer-events-auto -my-0.5 rounded-full px-1.5 font-medium underline underline-offset-[3px] outline-none hover:opacity-80 focus-visible:focus-ring"
+          >
+            {badge('redraw')}
           </button>
         )}
         {shown.hint && (

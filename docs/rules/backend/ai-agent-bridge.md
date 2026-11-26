@@ -510,6 +510,11 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `convertStore` 轮询时写进条目 `stage`，准备卡显示「读懂原脚本 → 写 Python 版本 → 运行校验」（`ui/TaskChecklist`）；「和原图对照」是 ready
   之后用户自己做的事，不进清单；缺包仍是那张装依赖卡，装好继续时清单停在「运行校验」。看护：`test_ai_convert.py::test_convert_stage_reads_phase_target_and_corrections`、
   `test_ai_tasks.py::test_run_phase_follows_the_orchestrator_for_progress_ui`。
+- **改图的任务清单（2026-11-26，用户拍板）**：改图会话（非转换、非 `plan_only`、`task_type` 为空或 `figure_edit`）由 `_EditStage` 记
+  `sess["stage"] = {step: read|edit|verify, round}`（进 `SESSION_DTO_KEYS`，刷新后接回）并推 `ai.stage`。判据只用文件事实：目标脚本（TAF / 内置是
+  候选里那一份，否则是脚本本身）与开始时字节不同 = edit（每个输出行最多每秒读一次）；Agent 进程退出 = verify；有界修正起新进程 = edit、轮次 +1。
+  只前进，emit / 读文件失败都不抛。不用事件流的 `file_change`（shell 写的改动看不见）。前端 `Transcript.editSteps`：进行中按它勾，改成功收尾全勾、
+  清单留着；没改 / 失败不画。有清单时状态那句话在清单标题上，状态行只留执行器与耗时。看护：`test_ai_figure_edit.py::test_edit_stage_*`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

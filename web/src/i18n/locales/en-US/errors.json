@@ -24,7 +24,9 @@
     "adoptionStoreFull": "The record of adopted PNGs is full, so no new one can be adopted. The original is kept.",
     "reviewReconstruction": "Compare again",
     "adoptReconstructed": "Edit from the redrawn figure",
-    "refreshReconstruction": "Update redraw comparison"
+    "refreshReconstruction": "Update redraw comparison",
+    "showRedraw": "Use the figure redrawn by its script",
+    "redrawn": "Now using the figure redrawn by its script, on the canvas and in exports. Undo to go back."
   },
   "backend": {
     "chart_engine_unavailable": "The chart rendering engine is busy; try again shortly.",

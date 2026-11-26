@@ -258,7 +258,13 @@
     "dataFigureNeedsInput": "没有出图，需要你指明用哪两列",
     "dataFigureFailedWritten": "已生成 {{script}}，但核对没通过",
     "dataFigureUnconfirmed": "结果未确认",
-    "stalled": "AI 已经 {{seconds}} 秒没有动静"
+    "stalled": "AI 已经 {{seconds}} 秒没有动静",
+    "steps": {
+      "read": "读脚本",
+      "edit": "改脚本",
+      "verify": "出图核对"
+    },
+    "round": "第 {{n}} 轮"
   },
   "status": {
     "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",
@@ -850,6 +856,12 @@
       "summaryNotes": "按 {{n}} 条批注又改了 {{places}} 处",
       "revising": "正在按批注重改…",
       "generatingAssistant": "正在按你的话修改…",
+      "steps": {
+        "before": "读取这张图",
+        "model": "想怎么改",
+        "agent": "改脚本",
+        "after": "画出修改后的图"
+      },
       "summaryAssistant": "改了 {{places}} 处",
       "summaryAssistantScript": "改了 {{places}} 处，剩下的要改脚本，这次没动",
       "summaryAssistantOther": "改了 {{places}} 处，剩下的没法直接改",

@@ -7,8 +7,8 @@ import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
 import { fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, type AutosaveProbe } from '@/lib/api'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
-import { containsChartState } from '@/lib/documentFormat'
 import { planSavedChartSources, type ChartSourceReceipt } from '@/lib/chartSourceReceipts'
+import { containsChartState } from '@/lib/documentFormat'
 import { clearChangedChartSources } from '@/lib/chartSource'
 import type { RestoreIssue } from '@/store/documentRestore'
 import {
@@ -2249,8 +2249,20 @@ const editGenerationOf = (documentId: string) => editGeneration.get(documentId) 
 export function markProjectFileDirty(): void {
   const s = useDocumentStore.getState()
   editGeneration.set(s.documentId, editGenerationOf(s.documentId) + 1)
+  // 分叉期间仍计用户编辑，供新副本与已写命名文件比较；原排版的持久绑定留在原状。
+  if (isAutosaveSuspendedFor(s.documentId)) return
   const b = s.projectFile
   if (b && !b.dirty) setProjectFile({ ...b, dirty: true })
+}
+
+/**
+ * 分叉没成、原排版接回自动保存时用：挂起期间用户确实改过（编辑代次已前进），项目文件里那份
+ * 就落后了，把**发起分叉那份**的绑定补标为待保存。按 documentId 取绑定——此刻可能已经切到
+ * 别的项目 / 排版，`markProjectFileDirty()` 只作用于当前文档；代次在编辑时已经推过，这里不再推。
+ */
+export function markProjectFileDirtyFor(documentId: string): void {
+  const binding = readProjectFile(documentId)
+  if (binding && !binding.dirty) setProjectFile({ ...binding, dirty: true }, documentId)
 }
 
 /**
@@ -2714,17 +2726,17 @@ export function startAutosave(): () => void {
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
     // 占位文档的变化不是编辑：写入口都看门，这里再守一道（绕过门的写入也不排队落盘）
     if (isDocumentPlaceholder()) return
-    if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return
     // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
     // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置
     // （字面含义就是"有改动还没写进自动保存"），落盘照排队，写盘失败照报。
     const derived = state.derivedSeq !== prev.derivedSeq
+    if (!derived) markProjectFileDirty()
+    if (isAutosaveSuspendedFor(state.documentId)) return
     if (!state.dirty) useDocumentStore.setState({ dirty: true })
     // 冲突未决时不覆盖状态：它要用户裁决，被一次编辑顶掉就等于替用户按了
     // 「算了」，而下一次防抖写盘又会去撞同一堵墙。编辑照常进本机副本。
     if (!derived && !blocksDiskWrite(state.saveState)) setSaveState('dirty')
     // 项目文件那根轴只跟用户编辑：派生同步不是用户做的事，圆点不该因它亮起
-    if (!derived) markProjectFileDirty()
     // 显式打开的别的项目的排版：真改了一笔才归到这个项目（派生同步不算）
     if (!derived) claimDocumentOnEdit()
     cancelPendingAutosave()

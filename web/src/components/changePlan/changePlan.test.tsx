@@ -141,13 +141,21 @@ it('方案卡：生成中没有按钮；待确认「查看」实心 +「直接�
   render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
   const card = () => q('[data-change-plan-card]')!
   expect(card().dataset.changePlanCard).toBe('generating')
-  expect(q('[data-thinking-orb]')).not.toBeNull()
+  // 生成中：图下面三步清单，图的位置是坐标纸上的作图小画；不再放思考小球（用户 2026-11-26）
+  expect(qa('[data-task-step]').map((x) => x.dataset.stepState)).toEqual(['active', 'pending', 'pending'])
+  expect(q('[data-plot-sketch]')!.dataset.plotSketch).toBe('read')
+  expect(q('[data-thinking-orb]')).toBeNull()
   expect(card().querySelector('button')).toBeNull()
+  expect(q('[data-change-plan-body]')!.className).toContain('min-h-21.5')
 
   put(entry('a'))
   render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
   expect(card().dataset.changePlanCard).toBe('ready')
   expect([...card().querySelectorAll('button')].map((b) => b.dataset.variant)).toEqual(['primary', 'secondary'])
+  // 出好：清单与作图小画收掉；正文区与生成中同一最小高度（卡片不缩短）
+  expect(q('[data-task-step]')).toBeNull()
+  expect(q('[data-plot-sketch]')).toBeNull()
+  expect(q('[data-change-plan-body]')!.className).toContain('min-h-21.5')
   // 有一条要改脚本、一条没法直接改 → 「没法直接改」那一句
   expect(card().textContent).toContain('按 1 条意见改了 1 处，2 条没法直接改')
 })
@@ -386,4 +394,34 @@ it('并排：左图画改前的框、右图画改后的框', () => {
   const [l, r] = qa('[data-change-plan-frame]')
   expect(l.querySelector<HTMLElement>('[data-change-plan-box]')!.style.width).toBe('20%')
   expect(r.querySelector<HTMLElement>('[data-change-plan-box]')!.style.width).toBe('30%')
+})
+
+it('方案卡三步跟着后端阶段走：model → 第二步；render_after → 第三步、笔在描；改脚本那条第二步是「改脚本」', () => {
+  const steps = () => qa('[data-task-step]').map((x) => `${x.dataset.taskStep}:${x.dataset.stepState}`)
+  put(entry('a', { status: 'generating', plan: undefined, afterSrc: undefined, phase: 'model' }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(steps()).toEqual(['before:done', 'model:active', 'after:pending'])
+  expect(q('[data-plot-sketch]')!.dataset.plotSketch).toBe('think')
+
+  put(entry('a', { status: 'generating', plan: undefined, afterSrc: undefined, phase: 'render_after' }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(steps()).toEqual(['before:done', 'model:done', 'after:active'])
+  expect(q('[data-plot-sketch]')!.dataset.plotSketch).toBe('draw')
+
+  put(entry('a', { status: 'generating', plan: undefined, afterSrc: undefined, phase: 'agent' }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(steps()).toEqual(['before:done', 'agent:active', 'after:pending'])
+})
+
+it('按批注重改：卡片回到生成中，三步从头来；一键排版的整版卡没有阶段，照旧一句话', () => {
+  put(entry('a', { revising: '', phase: undefined }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('generating')
+  expect(qa('[data-task-step]').map((x) => x.dataset.stepState)).toEqual(['active', 'pending', 'pending'])
+
+  put(entry('a', { kind: 'layout', status: 'generating', plan: undefined, afterSrc: undefined }))
+  render(<ChangePlanCard entry={useChangePlanStore.getState().entries.a} />)
+  expect(q('[data-task-step]')).toBeNull()
+  expect(q('[data-thinking-orb]')).not.toBeNull()
+  expect(q('[data-change-plan-pending-actions]')).not.toBeNull()
 })

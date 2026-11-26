@@ -223,7 +223,7 @@ export function LayoutDialog() {
             name: res.name ?? stem,
             file: res.file,
             revision: res.revision,
-            dirty: forked ? false : edited(),
+            dirty: edited(),
           },
           boundId,
         )

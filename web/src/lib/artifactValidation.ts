@@ -47,7 +47,7 @@ export class ArtifactValidationError extends Error {
   }
 }
 type Subject = Pick<PanelObject, 'fileId' | 'overrides'> &
-  Partial<Pick<PanelObject, 'artifactValidation' | 'sourceBackedFigure'>>
+  Partial<Pick<PanelObject, 'artifactValidation' | 'sourceBackedFigure' | 'showsRedraw'>>
 const HEX64 = /^[0-9a-f]{64}$/
 const bytesValid = (hash: unknown, size: unknown) =>
   typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash) &&
@@ -124,6 +124,7 @@ export const policyOfGuard = (guard: AdoptionGuard): SourcePolicy =>
 export function clearAdoption(panel: Partial<PanelObject>): void {
   delete panel.artifactValidation
   delete panel.sourceBackedFigure
+  delete panel.showsRedraw
 }
 
 /** Present-but-invalid never becomes legacy. Last matching FRAME wins, like the worker. */
@@ -143,10 +144,12 @@ export function artifactValidationIssue(panel: Subject): string | null {
 }
 
 /**
- * 来源驱动采用 + 零编辑（只有结构性 FRAME）：此时显示 / 原图导出都用磁盘原像素，不出引擎图。
+ * 来源驱动采用 + 零编辑（只有结构性 FRAME）、且用户没选「用脚本重画」：此时显示 / 原图导出都用磁盘原像素，不出引擎图。
  * guard 无效（`artifactValidationIssue`）时为 false——无效的采用记录不凭空给出「原像素」结论，走各处的 fail-closed。
  */
 export function isSourceBackedZeroEdit(panel: Subject): boolean {
+  // 用户点过「用脚本重画」：零编辑也显示重画（画布 == 画布导出，T-005）
+  if (panel.showsRedraw === true) return false
   return adoptionOf(panel).kind === 'source' && !artifactValidationIssue(panel) && !hasRealEdits(panel.overrides)
 }
 
@@ -267,10 +270,13 @@ export function sourceBackedGuard(
   }
 }
 
-/** Only the sole effective structural FRAME is unedited for original-file export. */
+/**
+ * Only the sole effective structural FRAME is unedited for original-file export.
+ * 用户选了「用脚本重画」（`showsRedraw`）的面板例外：照发 FRAME，原图导出也是那份重画，与画布显示一致（T-005）。
+ */
 export function originalArtifactOverrides(panel: Subject): PanelOverride[] {
   artifactRequestFields(panel)
-  return isAdoptedPanel(panel) && !hasRealEdits(panel.overrides) ? [] : panel.overrides
+  return isAdoptedPanel(panel) && !hasRealEdits(panel.overrides) && panel.showsRedraw !== true ? [] : panel.overrides
 }
 
 export function refuseArtifactOperation(panel: Subject): void {
