@@ -5387,7 +5387,9 @@ def _new_worker(
             # A snapshot-less preview can arrive while the user opens an
             # archived layout. A missing source cannot start a new execution
             # and must never enter the pool as an unobserved replacement.
-            source = projectenv.contained_path(figures_dir, script_name)
+            source, _ = execspec.safe_source_override(figures_dir, script_name, write_roots)
+            if source is None:
+                source = projectenv.contained_path(figures_dir, script_name)
             if source is None or not Path(source).is_file():
                 error = WorkerError(
                     f"脚本文件不存在: {Path(script_name).name}（可能被移动或删除）",
