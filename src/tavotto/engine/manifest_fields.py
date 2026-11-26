@@ -48,3 +48,25 @@ def point_size_field(value: float) -> dict:
 
 def opacity_field(value: float) -> dict:
     return {"prop": "alpha", "type": "number", "value": value, "min": 0, "max": 1, "step": 0.05}
+
+
+def bar_paint_fields(values: dict) -> list[dict]:
+    """Bar paint supported by the source, with stroke width in points."""
+    fields = [
+        {"prop": prop, "type": "color", "value": values[prop]}
+        for prop in ("facecolor", "edgecolor")
+        if prop in values
+    ]
+    if "linewidth" in values:
+        fields.append(
+            {
+                "prop": "linewidth",
+                "type": "number",
+                "value": round(float(values["linewidth"]), 2),
+                "min": 0,
+                "max": 5,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return fields

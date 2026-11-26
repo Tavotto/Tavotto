@@ -64,6 +64,7 @@ PROBE = r"""
 adapter <- new.env(parent = baseenv())
 sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
 sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
+sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_bars.R"), envir = adapter)
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) {
   quit(status = 77L)
@@ -485,6 +486,7 @@ PRECISION_PROBE = r"""
 adapter <- new.env(parent = baseenv())
 sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
 sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
+sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_bars.R"), envir = adapter)
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
 
@@ -582,6 +584,7 @@ adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
 sys.source(adapter_file, envir = adapter)
 sys.source(file.path(dirname(adapter_file), "ggplot_colour_scale.R"), envir = adapter)
 sys.source(file.path(dirname(adapter_file), "ggplot_points.R"), envir = adapter)
+sys.source(file.path(dirname(adapter_file), "ggplot_bars.R"), envir = adapter)
 if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
                 quietly = TRUE))) quit(status = 77L)
 palettes <- jsonlite::fromJSON(
@@ -700,6 +703,80 @@ stopifnot(length(adapter$render_ggplot(paired, paired_edits)) == 1L)
 """
 
 
+BAR_PROBE = r"""
+adapter <- new.env(parent = baseenv())
+native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
+for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R")) {
+  sys.source(file.path(native, file), envir = adapter)
+}
+if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+frame <- c(216, 144)
+data <- data.frame(cat = c("One", "Three", "Two", "Three"), height = c(4, -1, 2, -3),
+                   group = c("control", "control", "control", "other"))
+runs <- 0L
+observed <- function(data) { runs <<- runs + 1L; data }
+plot <- ggplot2::ggplot(data, ggplot2::aes(cat)) +
+  ggplot2::geom_col(ggplot2::aes(y = height, group = group), data = observed,
+                    fill = "#226688", colour = "#101112", linewidth = .6) +
+  ggplot2::geom_bar(fill = "#77889A", width = .3)
+captured <- adapter$capture_ggplot(plot, frame)
+state <- captured$state
+first <- "layer.1.bars"
+second <- "layer.2.bars"
+stopifnot(identical(names(state$bar_targets), c(first, second)), runs == 1L)
+stopifnot(identical(sort(state$layers[[2L]]$count), c(1, 1, 2)))
+element <- function(manifest, gid) Filter(function(e) e$gid == gid, manifest$elements)[[1L]]
+original <- adapter$ggplot_manifest(state, "bars")
+baseline <- element(original, first)
+stopifnot(baseline$role == "bar_series", length(baseline$geometry$paths) == 4L,
+          length(element(original, second)$geometry$paths) == 3L)
+patch <- setNames(list(list(facecolor = "#E25832", edgecolor = "#663399", linewidth = 2.2,
+                            alpha = .75)), first)
+scene <- adapter$ggplot_table_for(state, patch)
+target <- state$bar_targets[[first]]
+before <- adapter$ggplot_bar_rect(state$table$grobs[[target$slot]], target)
+after <- adapter$ggplot_bar_rect(scene$table$grobs[[target$slot]], target)
+stopifnot(identical(before[c("x", "y", "width", "height")], after[c("x", "y", "width", "height")]),
+          all(abs(after$gp$lwd * adapter$ggplot_lwd_pt - 2.2) < 1e-9),
+          identical(toupper(after$gp$fill), "#E25832BF"),
+          identical(toupper(after$gp$col), "#663399BF"))
+edited_svg <- adapter$render_ggplot(state, patch)
+stopifnot(grepl("fill: #E25832", edited_svg, fixed = TRUE),
+          grepl("stroke: #663399", edited_svg, fixed = TRUE),
+          grepl("stroke-width: 2.20", edited_svg, fixed = TRUE),
+          grepl("fill-opacity: 0.75", edited_svg, fixed = TRUE))
+edited <- adapter$ggplot_manifest(state, "bars", patch)
+stopifnot(identical(element(edited, first)$geometry$paths, baseline$geometry$paths),
+          identical(element(edited, second), element(original, second)),
+          identical(adapter$render_ggplot(state), captured$svg),
+          identical(adapter$render_ggplot(state, patch), edited_svg), runs == 1L)
+bad <- list(facecolor = c(rgb(1, 0, 0), rgb(0, 1, 0)), edgecolor = "yellow",
+            linewidth = 5.1, alpha = -.1, bar_width = .4)
+for (prop in names(bad)) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, setNames(list(bad[prop]), first)),
+                        silent = TRUE), "try-error"))
+}
+boundaries <- setNames(list(list(edgecolor = "none", linewidth = 0, alpha = 0)), first)
+stopifnot(length(adapter$render_ggplot(state, boundaries)) == 1L,
+          !element(adapter$ggplot_manifest(state, "bars", boundaries), first)$geometry$fill)
+horizontal <- ggplot2::ggplot(data, ggplot2::aes(height, cat)) +
+  ggplot2::geom_col(fill = "#226688", linetype = 0)
+h <- adapter$capture_ggplot(horizontal, frame)$state
+stopifnot(identical(names(h$bar_targets[[first]]$values), c("facecolor", "alpha")),
+          grepl("fill-opacity: 0.75", adapter$render_ggplot(h, setNames(list(list(alpha = .75)), first)),
+                fixed = TRUE))
+mapped <- ggplot2::ggplot(data, ggplot2::aes(cat, height, fill = group)) + ggplot2::geom_col()
+stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$bar_targets) == 0L,
+          length(adapter$capture_ggplot(mapped + ggplot2::guides(fill = "none"), frame)$state$bar_targets) == 0L,
+          length(adapter$capture_ggplot(plot + ggplot2::facet_wrap(ggplot2::vars(group)), frame)$state$bar_targets) == 0L)
+many <- ggplot2::ggplot(data.frame(x = 1:501, y = rep(1, 501)), ggplot2::aes(x, y)) +
+  ggplot2::geom_col()
+large <- adapter$capture_ggplot(many, frame)$state
+stopifnot(is.null(large$bar_geometry[[first]]$geometry), length(large$bar_geometry[[first]]$bbox) == 4L)
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -728,6 +805,10 @@ def test_ggplot_tick_and_curve_edits_preserve_native_values_and_colours(tmp_path
 
 def test_ggplot_colour_scale_replays_all_mapped_layers_with_the_same_guide(tmp_path):
     _assert_r_probe(tmp_path, COLOR_SCALE_PROBE)
+
+
+def test_ggplot_bar_paint_preserves_counts_positions_and_siblings(tmp_path):
+    _assert_r_probe(tmp_path, BAR_PROBE)
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):

@@ -87,7 +87,12 @@ from legendmodel import (
     legend_pos_cfg,
     legend_proxy_names,
 )
-from manifest_fields import marker_field as _marker_field, opacity_field, point_size_field
+from manifest_fields import (
+    bar_paint_fields,
+    marker_field as _marker_field,
+    opacity_field,
+    point_size_field,
+)
 from overrides import (
     _ARROWSTYLES,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
@@ -3157,17 +3162,13 @@ def _bar_series_fields(grp) -> list[dict]:
     lab = str(grp.container.get_label() or "") if grp.container is not None else ""
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
-        {"prop": "facecolor", "type": "color", "value": _patch_face_hex(r0)},
-        {"prop": "edgecolor", "type": "color", "value": to_hex(r0.get_edgecolor())},
-        {
-            "prop": "linewidth",
-            "type": "number",
-            "value": round(float(r0.get_linewidth()), 2),
-            "min": 0,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
+        *bar_paint_fields(
+            {
+                "facecolor": _patch_face_hex(r0),
+                "edgecolor": to_hex(r0.get_edgecolor()),
+                "linewidth": r0.get_linewidth(),
+            }
+        ),
         _hatch_field(r0),
         *_hatch_style_fields(r0),
         {
@@ -3179,14 +3180,7 @@ def _bar_series_fields(grp) -> list[dict]:
             "step": 0.02,
             "unit": "数据单位",
         },
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        },
+        opacity_field(1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(r0.get_visible())},
         {
             "prop": "zorder",
@@ -3202,27 +3196,16 @@ def _bar_series_fields(grp) -> list[dict]:
 
 def _bar_fields(rect) -> list[dict]:
     return [
-        {"prop": "facecolor", "type": "color", "value": _patch_face_hex(rect)},
-        {"prop": "edgecolor", "type": "color", "value": to_hex(rect.get_edgecolor())},
-        {
-            "prop": "linewidth",
-            "type": "number",
-            "value": round(float(rect.get_linewidth()), 2),
-            "min": 0,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
+        *bar_paint_fields(
+            {
+                "facecolor": _patch_face_hex(rect),
+                "edgecolor": to_hex(rect.get_edgecolor()),
+                "linewidth": rect.get_linewidth(),
+            }
+        ),
         _hatch_field(rect),
         *_hatch_style_fields(rect),
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if rect.get_alpha() is None else round(float(rect.get_alpha()), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        },
+        opacity_field(1.0 if rect.get_alpha() is None else round(float(rect.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(rect.get_visible())},
     ]
 

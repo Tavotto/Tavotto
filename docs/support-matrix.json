@@ -80,6 +80,7 @@
         "fixed major tick interval aligned with the major grid on a supported single-panel linear axis",
         "stroke width, line style and unmapped RGB color of a supported single-group geom_line or geom_path",
         "fixed size, solid marker shape and opacity of a supported single-panel geom_point series",
+        "fill and outline colours, outline width and opacity of supported single-panel geom_bar and geom_col series",
         "focus the existing panel across canvases when rerunning the same ggplot2 source",
         "native guide box position by canvas drag",
         "distinct plain-text legend title RGB color",

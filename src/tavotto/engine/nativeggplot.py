@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
-from .manifest_fields import marker_field, opacity_field, point_size_field
+from .manifest_fields import bar_paint_fields, marker_field, opacity_field, point_size_field
 
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
 _CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
@@ -20,6 +20,7 @@ _LEGEND_IDENTITY_PREFIX = "r3:"
 _LINE_IDENTITY_PREFIX = "r4:"
 _COLOR_SCALE_IDENTITY_PREFIX = "r5:"
 _POINT_SERIES_IDENTITY_PREFIX = "r6:"
+_BAR_SERIES_IDENTITY_PREFIX = "r7:"
 
 
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
@@ -158,6 +159,10 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            bar_series = element.pop("bar_series", None)
+            if bar_series is not None:
+                GgplotTarget.annotate_bar_series(element, bar_series)
+                continue
             point_series = element.pop("point_series", None)
             if point_series is not None:
                 GgplotTarget.annotate_point_series(element, point_series)
@@ -196,6 +201,23 @@ class GgplotTarget:
             if element["gid"] != "plot.title":
                 label = element["gid"].encode("utf-8") + b"\0" + label
             element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
+
+    @staticmethod
+    def annotate_bar_series(element: dict, series: dict) -> None:
+        current = series["current"]
+        original = series["original"]
+        fields = bar_paint_fields(current)
+        if "alpha" in current:
+            fields.append(opacity_field(current["alpha"]))
+        original_fields = {field["prop"]: field["value"] for field in bar_paint_fields(original)}
+        if "alpha" in original:
+            original_fields["alpha"] = original["alpha"]
+        for field in fields:
+            prop = field["prop"]
+            if prop in series["edited"]:
+                field["value_original"] = original_fields[prop]
+        element["editable"] = fields
+        element["identity"] = _BAR_SERIES_IDENTITY_PREFIX + series["context"]
 
     @staticmethod
     def annotate_point_series(element: dict, series: dict) -> None:
@@ -297,6 +319,10 @@ class GgplotTarget:
             if expected is not None and expected.startswith(_POINT_SERIES_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R point series changed. Select it again.")
+                continue
+            if expected is not None and expected.startswith(_BAR_SERIES_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R bar series changed. Select it again.")
                 continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX

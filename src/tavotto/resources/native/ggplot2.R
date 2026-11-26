@@ -557,6 +557,38 @@ measure_ggplot_targets <- function(targets, frame_pt) {
 ggplot_line_types <- c("-" = "solid", "--" = "dashed", ":" = "dotted", "-." = "dotdash")
 ggplot_lwd_pt <- 72 / 96
 
+ggplot_styled_layer_mapping <- function(layer) {
+  mapping <- layer$computed_mapping
+  # The final colour can depend on another aesthetic, even when its input
+  # is fixed. Such staged mappings cannot be edited independently.
+  if (any(vapply(mapping, function(value) {
+    any(all.names(rlang::get_expr(value)) %in% c("after_scale", "stage"))
+  }, logical(1L)))) return(NULL)
+  setdiff(as.character(names(mapping)), names(layer$aes_params))
+}
+
+ggplot_layer_has_legend_key <- function(built, layer, mapped) {
+  if (identical(layer$show.legend, FALSE)) return(FALSE)
+  guides <- built$plot$guides
+  # A continuous colour bar describes its scale. Other guides may draw
+  # a key for this layer, which must agree with the painted series.
+  any(vapply(seq_along(guides$params), function(i) {
+    !inherits(guides$guides[[i]], "GuideColourbar") &&
+      (length(intersect(guides$params[[i]]$aesthetic, mapped)) > 0L ||
+       !identical(layer$show.legend, NA))
+  }, logical(1L)))
+}
+
+ggplot_drawn_panel_viewport <- function(drawn, table, slot, child) {
+  path <- c(table$name, ggplot_cell_name(table$layout[slot, ]), table$grobs[[slot]]$name)
+  row <- which(drawn$name == child & drawn$gPath == paste(path, collapse = "::"))
+  if (length(row) != 1L) return(NULL)
+  path <- strsplit(drawn$vpPath[[row]], "::", fixed = TRUE)[[1L]]
+  if (length(path) >= 2L && path[[1L]] == "ROOT") {
+    do.call(grid::vpPath, as.list(path[-1L]))
+  }
+}
+
 ggplot_line_targets <- function(built, table, layer_grobs) {
   slots <- which(table$layout$name == "panel")
   if (length(slots) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
@@ -707,6 +739,9 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     point_boxes <- measure_ggplot_points(table, point_targets, frame_pt)
     point_targets <- point_targets[names(point_boxes)]
     for (gid in names(point_targets)) point_targets[[gid]]$bbox <- point_boxes[[gid]]
+    bar_targets <- ggplot_bar_targets(built, table, captured_layers$grobs)
+    bar_geometry <- measure_ggplot_bars(table, bar_targets, frame_pt)
+    bar_targets <- bar_targets[names(bar_geometry)]
     legend_targets <- ggplot_legend_boxes(table)
     legend_boxes <- measure_ggplot_legends(legend_targets, frame_pt)
     legend_targets <- legend_targets[!vapply(legend_boxes, is.null, logical(1L))]
@@ -722,6 +757,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       line_targets = line_targets,
       line_geometry = line_geometry,
       point_targets = point_targets,
+      bar_targets = bar_targets,
+      bar_geometry = bar_geometry,
       legend_targets = legend_targets,
       layers = built$data,
       panel_ranges = lapply(built$layout$panel_params, function(panel) {
@@ -899,6 +936,11 @@ ggplot_table_for <- function(state, edits) {
       table <- ggplot_edit_points(table, points, edits[[gid]])
       next
     }
+    bars <- state$bar_targets[[gid]]
+    if (!is.null(bars)) {
+      table <- ggplot_edit_bars(table, bars, edits[[gid]])
+      next
+    }
     legend <- legend_targets[[gid]]
     if (!is.null(legend)) {
       box <- table$grobs[[legend$slot]]
@@ -1010,6 +1052,7 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
                 },
                 scale_stops = scene$stops,
                 points = measure_ggplot_points(scene$table, state$point_targets, frame_pt),
+                bars = measure_ggplot_bars(scene$table, state$bar_targets, frame_pt),
                 lines = measure_ggplot_lines(scene$table, state$line_targets, frame_pt)))
   }
   invisible(NULL)
@@ -1024,6 +1067,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     any(names(edits) %in% c(legend_gids, names(state$colour_scales)))
   line_edits <- any(names(edits) %in% names(state$line_targets))
   point_edits <- any(names(edits) %in% names(state$point_targets))
+  bar_edits <- any(names(edits) %in% names(state$bar_targets))
   if (reflow) {
     geometry_gids <- names(state$text_targets)
   } else {
@@ -1033,7 +1077,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     if (length(measured$text) != length(state$text_targets)) {
       stop("The native R text could not be measured in the PNG.")
     }
-  } else if (reflow || length(geometry_gids) || line_edits || point_edits) {
+  } else if (reflow || length(geometry_gids) || line_edits || point_edits || bar_edits) {
     measured <- with_svg_frame(state$frame_pt, function(capture) {
       grid::grid.newpage()
       scene <- ggplot_table_for(state, edits)
@@ -1046,6 +1090,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
            scale_stops = scene$stops,
            points = if (reflow || point_edits) {
              measure_ggplot_points(scene$table, state$point_targets, state$frame_pt)
+           },
+           bars = if (reflow || bar_edits) {
+             measure_ggplot_bars(scene$table, state$bar_targets, state$frame_pt)
            },
            lines = if (reflow || line_edits) {
              measure_ggplot_lines(scene$table, state$line_targets, state$frame_pt)
@@ -1145,5 +1192,6 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   }
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
        elements = c(legends, elements, lines,
-                    ggplot_point_elements(state, edits, measured$points), colour_scales))
+                    ggplot_point_elements(state, edits, measured$points),
+                    ggplot_bar_elements(state, edits, measured$bars), colour_scales))
 }

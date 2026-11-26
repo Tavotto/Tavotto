@@ -15,7 +15,6 @@ ggplot_point_targets <- function(built, table, layer_grobs) {
     return(list())
   }
   panel <- table$grobs[[slot]]
-  guides <- built$plot$guides$params
   targets <- list()
   for (index in seq_along(layer_grobs)) {
     layer <- built$plot$layers[[index]]
@@ -28,20 +27,8 @@ ggplot_point_targets <- function(built, table, layer_grobs) {
         !all(is.finite(c(as.numeric(points$x), as.numeric(points$y))))) next
     child <- which(panel$childrenOrder == points$name)
     if (length(child) != 1L) next
-    mapping <- layer$computed_mapping
-    if (any(vapply(mapping, function(value) {
-      any(all.names(rlang::get_expr(value)) %in% c("after_scale", "stage"))
-    }, logical(1L)))) next
-    mapped <- setdiff(names(mapping), names(layer$aes_params))
-    # A colour bar describes the scale, whereas a keyed legend draws the
-    # series itself. Only the latter would become stale after a style edit.
-    discrete_key <- any(vapply(seq_along(guides), function(i) {
-      guide <- built$plot$guides$guides[[i]]
-      !inherits(guide, "GuideColourbar") &&
-        (length(intersect(guides[[i]]$aesthetic, mapped)) > 0L ||
-         !identical(layer$show.legend, NA))
-    }, logical(1L)))
-    if (!identical(layer$show.legend, FALSE) && discrete_key) next
+    mapped <- ggplot_styled_layer_mapping(layer)
+    if (is.null(mapped) || ggplot_layer_has_legend_key(built, layer, mapped)) next
     base_size <- unique(round(points$gp$fontsize - points$gp$lwd, 9))
     marker <- ggplot_point_marker(unique(points$pch))
     alpha <- unique(data$alpha)
@@ -122,13 +109,10 @@ measure_ggplot_points <- function(table, targets, frame_pt) {
     target <- targets[[gid]]
     panel <- table$grobs[[target$slot]]
     points <- ggplot_point_grob(panel, target)
-    path <- c(table$name, ggplot_cell_name(table$layout[target$slot, ]), panel$name)
-    row <- which(drawn$name == points$name & drawn$gPath == paste(path, collapse = "::"))
-    if (length(row) != 1L) next
-    viewport <- strsplit(drawn$vpPath[[row]], "::", fixed = TRUE)[[1L]]
-    if (length(viewport) < 2L || viewport[[1L]] != "ROOT") next
+    viewport <- ggplot_drawn_panel_viewport(drawn, table, target$slot, points$name)
+    if (is.null(viewport)) next
     bbox <- tryCatch({
-      grid::downViewport(do.call(grid::vpPath, as.list(viewport[-1L])), strict = TRUE)
+      grid::downViewport(viewport, strict = TRUE)
       # The Cartesian viewport has no rotation. Transform the extrema only,
       # so the manifest size and device queries do not scale with point count.
       center <- grid::deviceLoc(grid::unit(range(as.numeric(points$x)), "native"),

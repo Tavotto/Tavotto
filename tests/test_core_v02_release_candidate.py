@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 def main():
     plt.rcParams["pdf.fonttype"] = 42
     fig, ax = plt.subplots(figsize=(3, 2))
+    ax.bar([0.45, 1.55], [0.7, 1.3], width=0.25, color="#617883", edgecolor="#352B58")
     ax.plot([0, 1, 2], [1, 4, 2], color="#317A75", marker="o")
     ax.set(xlabel="Time (min)", ylabel="Signal (mV)", title="Original signal")
     fig.tight_layout()
@@ -34,9 +35,11 @@ def main():
 R_SCRIPT = r"""
 cat("built\n", file = "r-builds.txt", append = TRUE)
 trend <- data.frame(displ = c(1.8, 3.3, 5.2), hwy = c(34, 31, 23))
+reference <- data.frame(displ = c(2.3, 4.2), hwy = c(7, 9))
 plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
   ggplot2::geom_point(ggplot2::aes(shape = drv, colour = cty), alpha = .5) +
   ggplot2::geom_line(data = trend, colour = "#1156A3", show.legend = FALSE) +
+  ggplot2::geom_col(data = reference, width = .36, fill = "#226688", colour = "#182834") +
   ggplot2::scale_colour_gradient(name = "City mileage", breaks = c(10, 17, 27),
     guide = ggplot2::guide_colourbar(position = "left", display = "rectangles")) +
   ggplot2::labs(x = "Displacement (L)", y = "Highway mileage", title = "Fuel economy",
@@ -64,6 +67,18 @@ R_COLOR_SCALE = {
     "cmap": "plasma",
 }
 R_COLOR_SCALE_GID = "legend.left.1.colourbar"
+BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
+
+
+def _bar_patches(baseline):
+    (bars,) = [el for el in baseline["manifest"]["elements"] if el["role"] == "bar_series"]
+    fields = {field["prop"]: field for field in bars["editable"]}
+    assert set(BAR_PAINT) <= fields.keys() and fields["linewidth"]["unit"] == "pt"
+    identity = {"identity": bars["identity"]} if "identity" in bars else {}
+    return bars, [
+        {"gid": bars["gid"], "prop": prop, "value": value, **identity}
+        for prop, value in BAR_PAINT.items()
+    ]
 
 
 def _run_ggplot(app, script, rscript):
@@ -235,6 +250,11 @@ def _pdf_pixels(path):
         ]
         assert curve["width"] == pytest.approx(R_CURVE_WIDTH * R_PANEL_SCALE, abs=0.02)
         assert curve["dashes"] != "[] 0"
+        face = tuple(component / 255 for component in bytes.fromhex(BAR_PAINT["facecolor"][1:]))
+        bars = [path for path in drawn if path["fill"] == pytest.approx(face, abs=0.003)]
+        assert len(bars) == 4
+        assert sum(path["rect"].x0 > page.rect.width / 2 for path in bars) == 2
+        assert all(path["fill_opacity"] == pytest.approx(0.75, abs=0.01) for path in bars)
         bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
         for title, size in {
             "Time (min)": AXIS_PAGE_SIZE,
@@ -265,6 +285,13 @@ def _format_pixels(files):
     ]
     assert "stroke-width: 2.40" in curve.attrib["style"]
     assert "stroke-dasharray" in curve.attrib["style"]
+    bar_styles = [
+        node.attrib["style"].lower()
+        for node in svg_tree.iter(f"{ns}rect")
+        if f"fill: {BAR_PAINT['facecolor'].lower()}" in node.attrib.get("style", "").lower()
+    ]
+    assert len(bar_styles) == 2  # R rectangles. Matplotlib emits paths.
+    assert all("stroke: #663399" in style and "stroke-width: 2.20" in style for style in bar_styles)
     for label, page_size in (
         ("Displacement (L)", R_AXIS_PAGE_SIZE),
         ("Highway mileage", AXIS_PAGE_SIZE),
@@ -549,6 +576,21 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert {
             field["prop"]: field["value"] for field in edited_scale["editable"]
         } == R_COLOR_SCALE
+        _, mpl_bar_patches = _bar_patches(mpl_baseline)
+        r_bars, r_bar_patches = _bar_patches(precision)
+        changed = _render(app, r_asset, [*r_patches, *r_bar_patches])
+        edited_bars = next(
+            el for el in changed["manifest"]["elements"] if el["gid"] == r_bars["gid"]
+        )
+        assert edited_bars["identity"] == r_bars["identity"]
+        assert edited_bars["geometry"]["paths"] == r_bars["geometry"]["paths"]
+        assert {field["prop"]: field["value"] for field in edited_bars["editable"]} == BAR_PAINT
+        with pytest.raises(HttpError):
+            _render(app, r_asset, [{**r_bar_patches[0], "identity": "r7:stale"}])
+        assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
+        r_patches.extend(r_bar_patches)
+        mpl_patches.extend(mpl_bar_patches)
+        assert _render(app, r_asset, r_patches)["svg"] == changed["svg"]
         document = {
             "schema": 3,
             "project": {"id": "mixed", "name": "Mixed native"},
