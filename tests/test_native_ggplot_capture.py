@@ -1248,8 +1248,22 @@ stopifnot(endsWith(edited_interval$label, "Trial"),
           identical(adapter$render_ggplot(facet_state), facet_capture$svg))
 
 mapped <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
-  ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, colour = x), show.legend = FALSE)
-stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$line_targets) == 0L)
+  ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, colour = x, alpha = y),
+                         width = .3, show.legend = FALSE) +
+  ggplot2::scale_alpha_continuous(range = c(.4, .8))
+mapped_capture <- adapter$capture_ggplot(mapped, frame)
+mapped_state <- mapped_capture$state
+mapped_target <- mapped_state$line_targets[[gid]]
+mapped_size <- stats::setNames(list(endpoint_style[c("linewidth", "capsize", "cap_thickness")]), gid)
+mapped_scene <- adapter$ggplot_table_for(mapped_state, mapped_size)
+mapped_colour <- mapped_state$table$grobs[[mapped_target$slot]]$children[[mapped_target$child]]$gp$col
+mapped_edited <- mapped_scene$table$grobs[[mapped_target$slot]]$children[[mapped_target$child]]
+mapped_element <- by_gid(adapter$ggplot_manifest(mapped_state, "mapped", mapped_size), gid)
+stopifnot(length(unique(mapped_colour)) == 2L,
+          identical(mapped_edited$gp$col, rep(mapped_colour, each = 3L)),
+          identical(mapped_element$errorbar_series$current, mapped_size[[gid]]),
+          identical(adapter$render_ggplot(mapped_state), mapped_capture$svg),
+          inherits(try(adapter$render_ggplot(mapped_state, patch), silent = TRUE), "try-error"))
 for (bad in list(list(alpha = 1.01), list(linewidth = 5.01), list(capsize = -2),
                  list(cap_thickness = .01))) {
   stopifnot(inherits(try(adapter$render_ggplot(state, setNames(list(bad), gid)),

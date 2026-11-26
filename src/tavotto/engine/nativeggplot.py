@@ -284,10 +284,11 @@ class GgplotTarget:
     @staticmethod
     def annotate_errorbar_series(element: dict, series: dict) -> None:
         def stroke(values: dict) -> list[dict]:
-            fields = errorbar_stroke_fields(values["color"], values["linewidth"])
+            fields = errorbar_stroke_fields(values.get("color"), values["linewidth"])
             if "capsize" in values:
                 fields.extend(errorbar_cap_fields(values["capsize"], values["cap_thickness"]))
-            fields.append(opacity_field(values["alpha"]))
+            if "alpha" in values:
+                fields.append(opacity_field(values["alpha"]))
             return fields
 
         fields = stroke(series["current"])

@@ -883,8 +883,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs) {
     key_name <- if (kind == "GeomLine") "geom_line" else "geom_path"
     guide_keys <- integer()
     if (interval) {
-      if (length(intersect(mapping, c("colour", "alpha"))) ||
-          ggplot_layer_has_legend_key(built, layer, mapping)) next
+      if (ggplot_layer_has_legend_key(built, layer, mapping)) next
     } else {
       guide_keys <- ggplot_line_guide_keys(built, layer, key_name, mapping)
       if (is.null(guide_keys)) next
@@ -904,8 +903,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs) {
       width <- unique(line$gp$lwd)
       if (!is_positive_ggplot_number(width)) next
       rgba <- tryCatch(grDevices::col2rgb(unique(line$gp$col), alpha = TRUE), error = function(error) NULL)
-      if (is.null(rgba) || !ncol(rgba) || any(rgba[4L, ] == 0L) ||
-          (interval && ncol(rgba) != 1L)) next
+      if (is.null(rgba) || !ncol(rgba) || any(rgba[4L, ] == 0L)) next
       lty <- unique(line$gp$lty)
       if (is.numeric(lty) && length(lty) == 1L && lty %in% 1:4) {
         lty <- unname(ggplot_line_types[[lty]])
@@ -931,7 +929,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs) {
         color = if (!"colour" %in% mapping && !length(guide_keys) && ncol(rgba) == 1L) {
           grDevices::rgb(rgba[1L], rgba[2L], rgba[3L], maxColorValue = 255)
         },
-        alpha = rgba[4L, 1L]
+        alpha = if (!interval || (!"alpha" %in% mapping && length(unique(rgba[4L, ])) == 1L)) rgba[4L, 1L]
       )
     }
   }
@@ -1026,7 +1024,7 @@ ggplot_line_style <- function(target, patch) {
     } else if (prop == "color" && !is.null(target$color) && is.character(value) &&
                length(value) == 1L && !is.na(value) && grepl("^#[0-9A-Fa-f]{6}$", value)) {
       change$col <- scales::alpha(value, target$alpha / 255)
-    } else if (target$interval && prop == "alpha" && is.numeric(value) &&
+    } else if (target$interval && !is.null(target$alpha) && prop == "alpha" && is.numeric(value) &&
                length(value) == 1L && is.finite(value) && value >= 0 && value <= 1) {
       next
     } else if (!is.null(target$caps) && is.numeric(value) && length(value) == 1L &&
@@ -1650,7 +1648,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     geometry <- if (is.null(measured$lines)) state$line_geometry[[gid]] else measured$lines[[gid]]
     if (is.null(geometry)) stop("The native R curve could not be measured.")
     if (target$interval) {
-      original <- list(color = target$color, linewidth = target$width, alpha = target$alpha / 255)
+      original <- list(linewidth = target$width)
+      if (!is.null(target$color)) original <- c(list(color = target$color), original)
+      if (!is.null(target$alpha)) original$alpha <- target$alpha / 255
       current <- original
       if (!is.null(target$caps)) {
         original$capsize <- state$line_geometry[[gid]]$capsize
