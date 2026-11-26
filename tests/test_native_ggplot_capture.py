@@ -758,8 +758,9 @@ for (prop in names(bad)) {
                         silent = TRUE), "try-error"))
 }
 boundaries <- setNames(list(list(edgecolor = "none", linewidth = 0, alpha = 0)), first)
+invisible_bar <- element(adapter$ggplot_manifest(state, "bars", boundaries), first)$geometry
 stopifnot(length(adapter$render_ggplot(state, boundaries)) == 1L,
-          !element(adapter$ggplot_manifest(state, "bars", boundaries), first)$geometry$fill)
+          !invisible_bar$fill, is.null(invisible_bar$fill_alpha))
 horizontal <- ggplot2::ggplot(data, ggplot2::aes(height, cat)) +
   ggplot2::geom_col(fill = "#226688", linetype = 0)
 h <- adapter$capture_ggplot(horizontal, frame)$state

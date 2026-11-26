@@ -162,7 +162,8 @@ ggplot_bar_geometry <- function(rect, target, frame_pt) {
     paths <- Map(function(l, r, t, b) list(points = list(c(l, t), c(r, t), c(r, b), c(l, b)),
                                             closed = TRUE), left, right, top, bottom)
     result$geometry <- list(kind = "multi_path", paths = paths, fill = face > 0,
-                            stroke = stroke_pt > 0, stroke_pt = stroke_pt, fill_alpha = face)
+                            stroke = stroke_pt > 0, stroke_pt = stroke_pt)
+    if (face > 0) result$geometry$fill_alpha <- face
     if (length(clip)) result$geometry$clip <- as.list(clip)
   }
   result
