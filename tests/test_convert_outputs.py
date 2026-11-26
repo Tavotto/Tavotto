@@ -94,6 +94,34 @@ def test_tampered_helper_is_rejected_and_different_conversions_do_not_share_name
         convertoutputs.normalize(changed, SID)
 
 
+def _failure_digest(result: dict) -> str:
+    """失败时先给出没满足的检查里观察到的东西（例如 `project.untouched` 列出的改动文件），再给任务摘要。
+    这条用例在慢 Windows runner 上红过两次而本机复现不了，下次红能直接看到是哪个文件。"""
+    observed = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("verdict") not in (None, "verified", "not_applicable") and "id" in node:
+                observed.append(
+                    {k: node.get(k) for k in ("id", "verdict", "reason_code", "observed")}
+                )
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    try:
+        from tavotto.engine import ai_history
+
+        walk(ai_history.get(result.get("id")) or {})
+    except Exception as exc:  # noqa: BLE001 - 诊断信息拿不到不能盖掉真正的断言
+        observed.append({"history_unavailable": repr(exc)})
+    return json.dumps(
+        {"unmet_checks": observed, "task": result.get("task")}, ensure_ascii=False, default=str
+    )[:6000]
+
+
 def test_adopted_output_does_not_take_original_owner_and_reopens_without_cache(project):
     m, client, root, state = project
     original = (root / "fig.py").read_bytes()
@@ -102,9 +130,7 @@ def test_adopted_output_does_not_take_original_owner_and_reopens_without_cache(p
     (root / registry.REGISTRY_NAME).write_text(json.dumps({"scripts": {"fig.py": record}}))
     sid = _start(client).get_json()["session"]
     result = _wait_final(client, sid)
-    assert result["task"]["outcome"] == "completed", json.dumps(
-        result["task"], ensure_ascii=False, default=str
-    )[:4000]
+    assert result["task"]["outcome"] == "completed", _failure_digest(result)
     staged = (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").read_bytes()
     adopted = client.post(f"/api/ai/convert/{sid}/adopt").get_json()
     assert (root / adopted["script"]).read_bytes() == staged
