@@ -119,6 +119,14 @@ def build(
             elif prop == "fontsize" and type(value) in (int, float) and 3 <= value <= 200:
                 elements.setdefault(element, {})["size"] = value
             elif (
+                prop == "rotation"
+                and tick_themes is not None
+                and gid in tick_themes
+                and type(value) in (int, float)
+                and -90 <= value <= 90
+            ):
+                elements.setdefault(element, {})["angle"] = value
+            elif (
                 prop in ("weight", "style") and face is not None and face_fields.get(prop) == value
             ):
                 elements.setdefault(element, {})["face"] = face

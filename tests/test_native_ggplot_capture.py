@@ -241,6 +241,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
             ("axis.x.bottom.ticks", "color", "#A64184"),
             ("axis.x.bottom.ticks", "fontsize", 12.5),
             ("axis.x.bottom.ticks", "weight", "bold"),
+            ("axis.x.bottom.ticks", "rotation", 35),
             ("axis.x.bottom.title", "weight", "bold"),
             ("axis.x.bottom.title", "fontsize", 18.5),
         ]
@@ -287,11 +288,11 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         assert exported.status_code == 200, (exported.get_json(), "".join(problems))
         (output,) = exported.json["outputs"]
         assert output["name"] == "Signal_edited.R"
-        assert output["script_report"] == {"written": 6, "skipped": []}
+        assert output["script_report"] == {"written": 7, "skipped": []}
         edited = Path(exported.json["export_dir"]) / output["name"]
         assert b'colour = "#572B82"' in edited.read_bytes()
         assert (
-            b'axis.text.x.bottom = ggplot2::element_text(colour = "#A64184", size = 12.5, face = "bold.italic")'
+            b'axis.text.x.bottom = ggplot2::element_text(colour = "#A64184", size = 12.5, face = "bold.italic", angle = 35)'
             in edited.read_bytes()
         )
         assert b'face = "bold.italic"' in edited.read_bytes()
@@ -310,7 +311,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         }
         tick_export = client.post("/api/export", json=tick_request)
         assert tick_export.status_code == 200, tick_export.get_json()
-        assert tick_export.json["outputs"][0]["script_report"] == {"written": 4, "skipped": []}
+        assert tick_export.json["outputs"][0]["script_report"] == {"written": 5, "skipped": []}
 
         tick_face_only = [
             patch
@@ -395,7 +396,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
             },
         )
         assert preview.status_code == 200, preview.json
-        assert preview.json["written"] == 6 and not preview.json["skipped"]
+        assert preview.json["written"] == 7 and not preview.json["skipped"]
         commit = "/api/script-edit/figure-style/commit"
         token = preview.json["token"]
         refused = client.post(commit, json={"token": token})
@@ -893,6 +894,36 @@ stopifnot(identical(restored, tick_state$svg),
           identical(render_colors(tick_state$state), tick_state$svg))
 single_axis <- render_colors(tick_state$state, tick_edits[1L])
 stopifnot(identical(gsub(tick_edits[[1L]], "#314259", single_axis, fixed = TRUE), tick_state$svg))
+
+category_data <- data.frame(x = c("January", "February", "March"), y = 1:3)
+category <- ggplot2::ggplot(category_data, ggplot2::aes(x, y)) + ggplot2::geom_point()
+category_state <- axis_capture(category)
+bottom <- "axis.x.bottom.ticks"
+left <- "axis.y.left.ticks"
+rotation <- setNames(list(list(rotation = -40, weight = "bold")), bottom)
+scene <- adapter$ggplot_table_for(category_state$state, rotation)
+stopifnot(scene$text[[bottom]]$rotation == -40,
+          identical(scene$text[[bottom]]$tick_labels,
+                    category_state$state$text_targets[[bottom]]$tick_labels),
+          identical(scene$text[[left]]$rotation, category_state$state$text_targets[[left]]$rotation))
+original <- adapter$ggplot_manifest(category_state$state, "category")
+rotated <- adapter$ggplot_manifest(category_state$state, "category", rotation)
+fields <- function(manifest, gid) {
+  element <- Filter(function(x) identical(x$gid, gid), manifest$elements)[[1L]]
+  setNames(element$editable, vapply(element$editable, function(f) f$prop, character(1L)))
+}
+before <- fields(original, bottom)
+after <- fields(rotated, bottom)
+native <- axis_capture(category + ggplot2::theme(
+  axis.text.x.bottom = ggplot2::element_text(angle = -40, face = "bold")))
+stopifnot(before$rotation$value == 0, after$rotation$value == -40,
+          after$rotation$value_original == before$rotation$value,
+          after$weight$value == "bold", is.null(before$format),
+          identical(adapter$render_ggplot(category_state$state, rotation), native$svg),
+          identical(adapter$render_ggplot(category_state$state, list()), category_state$svg))
+fixed_angle <- axis_capture(category + ggplot2::guides(x = ggplot2::guide_axis(angle = 30)))
+stopifnot(is.null(fields(adapter$ggplot_manifest(fixed_angle$state, "category"), bottom)$rotation))
+
 for (guide in list(ggplot2::guide_axis(n.dodge = 2L), ggplot2::guide_axis(check.overlap = TRUE))) {
   irregular <- axis_capture(suppressWarnings(ticks_plot + ggplot2::guides(x = guide)))
   stopifnot(is.null(irregular$state$text_targets[["axis.x.bottom.ticks"]]))
@@ -1155,8 +1186,12 @@ stopifnot(inherits(try(adapter$render_ggplot(state, stats::setNames(
 custom <- adapter$capture_ggplot(plot +
   ggplot2::scale_x_continuous(breaks = c(0, 2, 4, 6), labels = c("Zero", "Two", "Four", "Six")),
   frame)
-stopifnot(is.null(custom$state$tick_targets[[ticks]]),
-          !is.null(custom$state$text_targets[[ticks]]))
+custom_manifest <- adapter$ggplot_manifest(custom$state, "custom")
+custom_ticks <- Filter(function(element) element$gid == ticks, custom_manifest$elements)[[1L]]
+custom_props <- vapply(custom_ticks$editable, function(field) field$prop, character(1L))
+bad_format <- stats::setNames(list(list(format = "%.2f")), ticks)
+stopifnot(!"format" %in% custom_props, "rotation" %in% custom_props,
+          inherits(try(adapter$render_ggplot(custom$state, bad_format), silent = TRUE), "try-error"))
 secondary <- adapter$capture_ggplot(plot +
   ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis()), frame)
 stopifnot(is.null(secondary$state$tick_targets[[ticks]]$spacing))
