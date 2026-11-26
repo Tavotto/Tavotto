@@ -38,17 +38,18 @@ export function ScriptStyleAction({
     setBusy(true)
     setError(null)
     try {
-      const saved = await saveNowWithResult()
+      const saved = await saveNowWithResult(false, { withProject: false })
       if (!stillCurrent(ctx)) {
         setOrigin(null)
         return
       }
-      if (!saved.wrote || activeProjectFile()?.dirty) {
+      const current = activeProjectFile()
+      if (!saved.wrote || !current?.revision || current.dirty) {
         setError(t('export.sourceStyle.saveFirst'))
         return
       }
       const entry = await previewFigureStyle({
-        layout: binding.name, revision: binding.revision, canvas_id: canvas, panel_id: panel,
+        layout: current.name, revision: current.revision, canvas_id: canvas, panel_id: panel,
         working_doc_id: ctx.documentId,
       }, ctx.pj)
       if (stillCurrent(ctx)) setPreview(entry)

@@ -98,6 +98,21 @@ def _layout_revision(layout: Path) -> str | None:
     return located.current_revision()
 
 
+def _layout_content_revision(document: dict) -> str:
+    # Automatic saves can advance the timestamp without changing the layout.
+    contents = {key: value for key, value in document.items() if key != "updatedAt"}
+    return atomicio.revision_of(
+        json.dumps(contents, sort_keys=True, allow_nan=False, ensure_ascii=False).encode("utf-8")
+    )
+
+
+def matches_saved_layout(document: dict, revision: str, backup: dict) -> bool:
+    expected = backup.get("layout_after_content_revision")
+    return revision == backup["layout_after_revision"] or (
+        isinstance(expected, str) and _layout_content_revision(document) == expected
+    )
+
+
 def _working_plan(root: Path, layout: Path, change: Change, autosave_path) -> dict | None:
     doc_id = change.working_doc_id
     if doc_id is None:
@@ -278,6 +293,7 @@ def commit(
                         "style_change": operation,
                         "layout": change.layout,
                         "layout_after_revision": wanted_revision,
+                        "layout_after_content_revision": _layout_content_revision(document),
                     },
                 )
             except scriptbackup.ScriptEditError:

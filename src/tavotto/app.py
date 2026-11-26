@@ -17603,7 +17603,7 @@ def _restore_style_backup(ctx, store, meta, original, now, mode, working_doc_id)
     if mode != "full" or now != meta["after"]["sha256"]:
         raise engine_scriptstyle.Conflict("The R source changed after the style edit.")
     layout = engine_layoutannotate.open_layout(ctx.path, meta["layout"])
-    if layout.revision != meta["layout_after_revision"]:
+    if not engine_scriptstyle.matches_saved_layout(layout.doc, layout.revision, meta):
         raise engine_scriptstyle.Conflict("The saved layout changed after the style edit.")
     prior = engine_scriptstyle.select_panel(
         meta["layout_before"], meta["canvas_id"], meta["panel_id"]

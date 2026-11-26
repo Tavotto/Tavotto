@@ -988,7 +988,7 @@ export async function openLayoutDocument(
   }
   const installed = await useDocumentStore
     .getState()
-    .switchDocument(doc, reuse ?? newId('d'), confirmLoss, { beforeInstall })
+    .switchDocument(doc, reuse ?? newId('d'), confirmLoss, { beforeInstall, fromProjectFile: !!projectFile })
   if (!installed) return aborted ? skipped() : false
   if (projectFile) setProjectFile(projectFile)
   afterSwitch()

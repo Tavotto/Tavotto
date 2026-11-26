@@ -102,6 +102,11 @@ def test_recover_r_style_writeback(
     assert source.read_bytes() == AFTER
     assert layoutannotate.open_layout(project, layout.stem).doc == after
     assert atomicio.existing_revision(slot) == working_revision
+    backup_meta = scriptbackup.history(store, source.name)[0]
+    assert scriptstyle.matches_saved_layout(dict(after, updatedAt=200), "changed", backup_meta)
+    renamed = copy.deepcopy(after)
+    renamed["canvases"][0]["objects"][1]["x"] = 47
+    assert not scriptstyle.matches_saved_layout(renamed, "changed", backup_meta)
     for backup_root in (store.project_dir, store.mirror_dir):
         (backup,) = backup_root.glob("*/*/original.R")
         assert backup.read_bytes() == BEFORE

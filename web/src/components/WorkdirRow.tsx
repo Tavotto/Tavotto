@@ -267,7 +267,7 @@ export function ScriptBackupRows() {
     const binding = activeProjectFile()
     if (!binding || binding.name !== backup.layout) return restoreBackup(backup, 'full', { pj: ctx.pj })
     if (binding.dirty || getWindowHold()) return t('dialogs:export.sourceStyle.saveFirst')
-    const saved = await saveNowWithResult()
+    const saved = await saveNowWithResult(false, { withProject: false })
     if (!stillCurrent(ctx)) return null
     if (!saved.wrote || activeProjectFile()?.dirty) return t('dialogs:export.sourceStyle.saveFirst')
     return restoreBackup(backup, 'full', {

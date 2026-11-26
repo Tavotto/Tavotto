@@ -708,6 +708,8 @@ export interface SwitchOptions {
   reason?: Exclude<RestoreReason, 'initial'>
   /** 显式找回在取代恢复门、确定新文档归属前核实并纠正本机索引；拒绝时保留旧文档。 */
   beforeInstall?: () => Promise<boolean>
+  /** The project file already contains the document being installed. */
+  fromProjectFile?: boolean
 }
 
 function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<DocumentState> {
@@ -1313,7 +1315,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // 广播「我端着这份了」：别的标签页也开着同一个 documentId 时会回音报警
       announceDocOpen(nextId)
       // 新文档立刻落一次快照，这样它马上出现在「最近文档」里
-      flushAutosave()
+      flushAutosave(false, !opts?.fromProjectFile)
     } finally {
       installingUnderToken = false
     }
@@ -1867,7 +1869,10 @@ export async function saveNow(): Promise<SaveState> {
  * （排队合并成更新的一份也算：盘上的内容只会比按下时更新），或者根本没有要写的（空文档）。
  * 「排版写成了」（时间线的「保存」点）跟 `wrote` 走，不跟 `state` 走（Codex #679）。
  */
-export async function saveNowWithResult(allowEmpty = false): Promise<{ state: SaveState; wrote: boolean }> {
+export async function saveNowWithResult(
+  allowEmpty = false,
+  { withProject = true }: { withProject?: boolean } = {},
+): Promise<{ state: SaveState; wrote: boolean }> {
   // 恢复没落定时没有「要存的文档」：不举手动标志、不认领、不等写盘队列
   if (isDocumentPlaceholder()) {
     return { state: useDocumentStore.getState().saveState, wrote: false }
@@ -1878,7 +1883,7 @@ export async function saveNowWithResult(allowEmpty = false): Promise<{ state: Sa
   const before = disk.writeVersion(id).scheduled
   cancelPendingAutosave()
   disk.markManual()
-  const result = flushAutosave(allowEmpty)
+  const result = flushAutosave(allowEmpty, withProject)
   const target = disk.writeVersion(id).scheduled
   if (result === 'empty') {
     disk.clearManual()

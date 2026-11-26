@@ -165,6 +165,7 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
 
     rscript = _rscript_with_capture_packages()
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "local data"))
+    monkeypatch.setenv("TAVOTTO_LAYOUT_DIR_WRITER", "1")
     problems = []
     replay = nativeggplot_source.replay
 
@@ -352,16 +353,23 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
             ],
         }
         layout_url = "/api/layouts/Source_style"
-        saved = client.post(layout_url + "?target=project", json=layout)
+        doc_id = "d_native_r_writeback"
+        slot_url = f"/api/autosave/{doc_id}"
+        saved = client.put(
+            slot_url, query_string={"project_write": '{"name":"Source_style"}'}, json=layout
+        )
         assert saved.status_code == 200, saved.json
+        project_layout = saved.json["project_layout"]
+        assert project_layout["state"] == "saved" and project_layout["name"] == "Source_style"
         assert "signal" in saved.json["figure_snapshots"]
         preview = client.post(
             "/api/script-edit/figure-style/preview",
             json={
                 "layout": "Source_style",
-                "revision": saved.json["revision"],
+                "revision": project_layout["revision"],
                 "canvas_id": "main",
                 "panel_id": "signal",
+                "working_doc_id": doc_id,
             },
         )
         assert preview.status_code == 200, preview.json
@@ -375,6 +383,16 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         assert source.read_bytes() == edited.read_bytes()
         assert submitted.read_bytes() == original_pdf and protected.read_bytes() == b"external file"
         current = client.get(layout_url).json["canvases"][0]["objects"][0]
+        buffered = client.get(slot_url)
+        assert buffered.headers["X-Tavotto-Revision"] == applied.json["working_revision"]
+        assert buffered.json["canvases"][0]["objects"][0] == current
+        assert client.get(layout_url).headers["X-Tavotto-Revision"] == applied.json["revision"]
+        manifest = json.loads(
+            (root / "tavottofile/Source_style.tavotto/package_manifest.json").read_bytes()
+        )
+        assert (
+            manifest["doc_id"] == doc_id and manifest["layout_revision"] == applied.json["revision"]
+        )
         assert current["overrides"] == []
         assert current["figureSnapshot"] != saved.json["figure_snapshots"]["signal"]
         archived = client.post(
@@ -393,17 +411,35 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         )
         assert repeated.status_code == 200, repeated.json
         assert repeated.json["figure_snapshots"]["signal"] == current["figureSnapshot"]
+        invalidated_at = committed_layout.get("updatedAt", 0) + 1
+        closing = client.put(
+            slot_url,
+            query_string={
+                "base_revision": applied.json["working_revision"],
+                "project_write": json.dumps(
+                    {"name": "Source_style", "base": applied.json["revision"]}
+                ),
+            },
+            json={**committed_layout, "updatedAt": invalidated_at},
+        )
+        assert closing.status_code == 200, closing.json
+        assert closing.json["project_layout"]["state"] == "saved"
+        assert closing.json["project_layout"]["revision"] != applied.json["revision"]
         restored = client.post(
             "/api/script-backups/restore",
             json={
                 "backup_id": applied.json["backup_id"],
                 "mode": "full",
                 "expected_sha256": applied.json["script_revision"],
+                "working_doc_id": doc_id,
             },
         )
         assert restored.status_code == 200, restored.json
         assert source.read_bytes() == original
         previous = client.get(layout_url).json["canvases"][0]["objects"][0]
+        buffered = client.get(slot_url)
+        assert buffered.headers["X-Tavotto-Revision"] == restored.json["layout"]["working_revision"]
+        assert buffered.json["canvases"][0]["objects"][0] == previous
         assert previous["overrides"] == patches
         assert previous["figureSnapshot"] == saved.json["figure_snapshots"]["signal"]
     finally:

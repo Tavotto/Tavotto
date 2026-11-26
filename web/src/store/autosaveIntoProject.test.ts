@@ -140,6 +140,18 @@ describe('开关开着：节奏', () => {
     expect(puts.at(-1)?.spec).not.toBeNull()
   })
 
+  it('打开项目里的排版时先建立本机槽位，首次编辑才写回项目', async () => {
+    const opened = s().buildProject()
+    expect(await s().switchDocument(opened, 'd_opened', undefined, { fromProjectFile: true })).toBe(true)
+    await settle()
+    const writes = () => puts.filter(({ url }) => new URL(url, 'http://x').pathname.endsWith('/d_opened'))
+    expect(writes().map(({ spec }) => spec)).toEqual([null])
+    edit()
+    await vi.advanceTimersByTimeAsync(PROJECT_QUIET_MS)
+    await settle()
+    expect(writes().some(({ spec }) => spec !== null)).toBe(true)
+  })
+
   it('第一次写成：按后端起的名字绑定，基线是它回的修订号；之后的写带着绑定', async () => {
     reply = { project_layout: { state: 'saved', name: '排版一', file: 'tavottofile/排版一.json', revision: 'rev1' } }
     edit()
@@ -240,9 +252,12 @@ describe('开关开着：节奏', () => {
 
   it('没有归属项目 / 只读窗口：不写项目', async () => {
     setCurrentProjectId(null)
+    expect(await s().switchDocument(s().buildProject(), 'd_without_project')).toBe(true)
     edit()
     flushAutosave()
     await settle()
-    expect(puts.at(-1)?.spec).toBeNull()
+    const writes = puts.filter(({ url }) => new URL(url, 'http://x').pathname.endsWith('/d_without_project'))
+    expect(writes.length).toBeGreaterThan(0)
+    expect(writes.every(({ spec }) => spec === null)).toBe(true)
   })
 })

@@ -258,6 +258,8 @@ order: 200
   `skipped` / `refused` / `failed`。判只读与瞬时在 `layoutdir.classify_write_failure`（POSIX：`EROFS` / `EACCES` / `EPERM` = 只读；Windows：`EACCES` / `EBUSY` / winerror 5·32·33 = 瞬时，19 = 只读）；
   暂存目录 `mkdir` 直接抛的 `PermissionError` 也要分档。冲突基线：绑定的修订号；本机绑定丢了（挪走）则对清单 `doc_id` 且清单 `layout_revision` 提示对得上才算「还是我写的」。
   `project_status().autosave_into_project` 告诉前端开关；候选 `project-history` 带 `work`（`find_by_doc_id` 唯一才认，两份目录记着同一个 docId = 不猜）。
+  R 样式写回沿用同一个逻辑排版与本机恢复槽位。恢复脚本时，只有排版内容仍与写回结果相同才允许恢复，其中自动保存刷新 `updatedAt`
+  不算一次内容编辑。已存在的备份仍可按原先的精确修订号恢复。
 - **写前判冲突读修订号用 `atomicio.existing_revision()`，不用 `content_revision()`**（#674 评审 P1）：
   后者把「不存在」与「读不出」（mode 000、被别的程序独占）揉成一个 `None`，而 `_revision_conflict`
   对 `None` 的解释是「被删了，放行重建」——一份读不出却换得掉的文件会被闭眼整份覆盖。
