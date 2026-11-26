@@ -8,7 +8,12 @@ import { armBindingInherit } from '@/lib/dataFigureInherit'
 import { currentProjectId } from '@/lib/session'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { configureDataBatchHost } from '@/store/dataBatchStore'
-import { configureDataFigureHost } from '@/store/dataFigureStore'
+import { configureDataFigureHost, reserveBackendSession } from '@/store/dataFigureStore'
+import { configureFigureOriginHost, useFigureOriginStore } from '@/store/figureOriginStore'
+import { panelOfScript, panelUntouchedNow } from '@/lib/dataFigureOriginLive'
+import { normScript } from '@/lib/dataFigureOrigin'
+import { enterElementEdit, replaceRuntimeFigure } from '@/store/actions'
+import { useSelectionStore } from '@/store/selectionStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -67,3 +72,54 @@ configureDataBatchHost({
   },
   resolveSpec,
 })
+
+// 点选误差线换 SD / SEM / 95% CI（`figureOriginStore`）：新脚本落盘之后，在同一块面板上把图原位换成它画的
+const quietGuideCard = () => {
+  // 项目刷新会重扫，没运行过的新脚本会被当成「发现绘图脚本」弹准备卡；这个脚本是我们自己生成、自己运行的（同批量出图的做法）
+  const scan = useProjectScanStore.getState().scan
+  if (scan) markAutoShown(scan.project_id)
+}
+configureFigureOriginHost({
+  reserveSession: reserveBackendSession,
+  notify: (message) => useUiStore.getState().setStatus(message, 'info'),
+  replaceFigure: async ({ oldScript, newScript, origin, still }) => {
+    const pj = currentProjectId()
+    const same = () => still() && currentProjectId() === pj
+    // 换的是用户此刻在编辑的那一块（激活画布上、画旧脚本的面板）；等脚本跑的这段时间里他换了画布 / 删了它 / 改了它，一律不换
+    const canvasId = useDocumentStore.getState().activeCanvasId
+    const target = panelOfScript(oldScript, useWorkspaceStore.getState().activePanelId)
+    if (!target || !panelUntouchedNow(target, origin)) return null
+    quietGuideCard()
+    await refreshProjectNow().catch(() => undefined)
+    if (!same()) return null
+    await useScriptRunStore.getState().run(newScript)
+    if (!same()) return null
+    const run = useScriptRunStore.getState().byScript[newScript]
+    const desc = run?.phase === 'captured_one' ? run.descriptors[0] : undefined
+    if (!desc || normScript(desc.script) !== normScript(newScript)) return null
+    // 复核：还是那张画布、还是那一块面板、图仍然没被改过
+    const panel = panelOfScript(oldScript, target.id)
+    if (!panel || panel.id !== target.id || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return null
+    if (!replaceRuntimeFigure(panel.id, desc)) return null
+    // 回到图内编辑（与「打开并运行」之后落在的状态一样）：选中这块面板
+    useSelectionStore.getState().set([panel.id])
+    enterElementEdit(panel.id)
+    return { fingerprint: desc.source_fingerprint }
+  },
+})
+
+// 面板第一次出现在文档里：记下它的来源指纹（之后「脚本是否被改过」都对着它比）。只在有还没记到指纹的来历时才扫文档
+const bindOriginFingerprints = () => {
+  const reg = useFigureOriginStore.getState()
+  const need = new Set(reg.unbound())
+  if (!need.size) return
+  const s = useDocumentStore.getState()
+  const objects = [...s.doc.objects, ...s.canvases.filter((c) => c.id !== s.activeCanvasId).flatMap((c) => c.objects)]
+  for (const o of objects) {
+    if (o.type !== 'panel' || o.fileKind !== 'runtime' || !o.script || !o.source?.fingerprint) continue
+    const key = normScript(o.script)
+    if (need.has(key)) reg.bindFingerprint(key, o.source.fingerprint)
+  }
+}
+useDocumentStore.subscribe(bindOriginFingerprints)
+useFigureOriginStore.subscribe(bindOriginFingerprints)

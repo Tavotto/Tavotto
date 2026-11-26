@@ -3801,6 +3801,49 @@ export function adoptScriptFrame(panelId: string): boolean {
   return true
 }
 
+/**
+ * 把一块 runtime 面板（脚本捕获的图）原位换成另一个脚本捕获的图：「数据」页画出的图点选误差线换 SD / SEM / 95% CI 用
+ * （`figureOriginStore` → 宿主）。与 `replacePanelAsset` 同一口径：**保留面板 id（选区、组、锚在它上面的标注都不丢）与外框、
+ * 层级、裁剪、旋转、不透明度，只换图源**；一条可撤销的历史（撤销回到旧图），历史标签复用「替换素材为 …」。
+ * 图内修改带不过去：overrides 清空（调用方先核过「图没被改过」，见 `lib/dataFigureOrigin.figureUntouched`）；绑定了样式的画布上，
+ * 新图是新的 `figKey`，按「新图」被样式自动对齐。面板不在、不是 runtime 面板、已经是这张图 = false，什么都不改。
+ */
+export function replaceRuntimeFigure(panelId: string, desc: CapturedFigureDescriptor): boolean {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || panel.fileKind !== 'runtime' || panel.fileId === desc.asset_id) return false
+  if (useUiStore.getState().elementPanelId === panelId) useUiStore.getState().setElementPanel(null)
+  const [w, h] = desc.size_mm
+  commit(hist('replaceAsset', { name: desc.stem }), (d) => {
+    const o = d.objects.find((x) => x.id === panelId)
+    if (o?.type !== 'panel') return
+    clearAdoption(o)
+    o.fileId = desc.asset_id
+    o.fileKind = 'runtime'
+    o.nativeW = w
+    o.nativeH = h
+    delete o.pxW
+    delete o.pxH
+    o.script = desc.script
+    o.source = {
+      script: desc.script,
+      entry: desc.entry,
+      stem: desc.stem,
+      captureSource: desc.capture_source,
+      fingerprint: desc.source_fingerprint,
+      sizeMm: [w, h],
+      ...(desc.run_config ? { runConfig: desc.run_config } : {}),
+    }
+    delete o.cost
+    o.name = desc.stem
+    o.overrides = []
+    // 这两份都钉在旧素材的 fileId 上（`validFigureSnapshot(snapshot, fileId)`），换了图源就是无效记录
+    delete o.figureSnapshot
+    delete o.figureOrigin
+    o.figureFrame = FIGURE_FRAME_VERSION
+  })
+  return true
+}
+
 export function restorePanelNativeSize(ids: string[]) {
   updatePanels(ids, hist('restoreNativeSize'), (o) => {
     setContentSize(o, o.nativeW * (o.crop?.w ?? 1), o.nativeH * (o.crop?.h ?? 1))
