@@ -136,12 +136,19 @@ test(
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(a.baseURL)
     await waitForDocumentReady(page)
+    // 起点要干净：等图第一次**真的**构建完——认 `POST /api/engine/render` 的回包，不认「首次构建中…」那行字（Windows
+    // 打包产物上 workerd 冷启动约 3.7 s，那行字早就没了、渲染还没回；回来后桌面校正子图是一笔真实改动，落在用例最后那次
+    // 保存之后，圆点又亮——windows-exe-smoke 2026-11-26 连红两次），再等它校正完；有改动先存一次，之后的「未保存」圆点
+    // 只反映这条用例自己做的事
+    const built = page.waitForResponse(
+      (r) => r.url().includes('/api/engine/render') && r.request().method() === 'POST',
+      { timeout: 120_000 },
+    )
     await openFromProject(page)
     await expect(page.locator('[data-save-destination]')).toHaveAttribute('data-save-destination', 'project')
-    // 起点要干净：等图第一次构建完（构建完桌面可能校正子图——慢机器上这一笔会晚到，落在后面的保存之后），
-    // 有改动先存一次，之后的「未保存」圆点只反映这条用例自己做的事
+    await built
     await expect(page.getByText('首次构建中…')).toHaveCount(0, { timeout: 120_000 })
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(1500)
     if (await page.locator('[data-project-file-dirty]').count()) {
       await page.keyboard.press('ControlOrMeta+s')
       await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
