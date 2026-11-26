@@ -19930,6 +19930,20 @@ def api_ai_data_overview():
     return resp
 
 
+@app.get("/api/ai/data-figure/data-digest")
+def api_ai_data_figure_data_digest():
+    """一份数据文件原始字节的 sha256（**实验开关后面**、会话认证、只读）：query `table`（项目相对路径）。回 `{sha256: 十六进制 | null}`，
+    null = 文件不在 / 不是普通文件 / 路径出界 / 太大 / 读不了（不是错误）。给图的来历核对「数据变没变」（与 propose 响应的 `data_sha256` 同一口径）。"""
+    if not engine_ai_figure_edit.enabled():
+        return jsonify({"error": "实验功能未开启", "code": "taf_disabled"}), 404
+    ctx = current_ctx()
+    resp = jsonify(
+        {"sha256": engine_ai_data_propose.data_digest(ctx.path, request.args.get("table"))}
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 # --- 数据出图 v2（ADR 0178）：出备选 → 缩略图 → 选中落盘。全部在实验开关后面、过会话认证 guard ---------------------
 _PROPOSE_STATUS = {
     "propose_session_expired": 404,

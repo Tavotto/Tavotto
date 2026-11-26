@@ -10,8 +10,9 @@ import { resolveDocumentSpec } from '@/lib/specBinding'
 import { configureDataBatchHost } from '@/store/dataBatchStore'
 import { configureDataFigureHost, reserveBackendSession } from '@/store/dataFigureStore'
 import { configureFigureOriginHost, useFigureOriginStore } from '@/store/figureOriginStore'
-import { panelOfScript, panelUntouchedNow } from '@/lib/dataFigureOriginLive'
-import { normScript } from '@/lib/dataFigureOrigin'
+import { panelUntouchedNow } from '@/lib/dataFigureOriginLive'
+import { normScript, readPanelOrigin, toPanelOrigin } from '@/lib/dataFigureOrigin'
+import { writePanelDataOrigin } from '@/store/panelDataOrigin'
 import { enterElementEdit, replaceRuntimeFigure } from '@/store/actions'
 import { useSelectionStore } from '@/store/selectionStore'
 import { selectErrorBarWhenDrawn } from '@/store/figureSwitchSelect'
@@ -24,7 +25,7 @@ import { useProfileStore } from '@/store/profileStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
-import type { DocumentProfile } from '@/types/document'
+import type { DocumentProfile, PanelObject } from '@/types/document'
 
 /** 绑定 → 要发给后端的那份规范（快照优先 / 跟随全局 / 期刊覆盖并入，取舍只在 `resolveDocumentSpec`，后端不重做） */
 const resolveSpec = (binding: DocumentProfile): Record<string, unknown> =>
@@ -80,50 +81,64 @@ const quietGuideCard = () => {
   const scan = useProjectScanStore.getState().scan
   if (scan) markAutoShown(scan.project_id)
 }
+const activePanel = (panelId: string): PanelObject | null => {
+  const o = useDocumentStore.getState().doc.objects.find((x) => x.id === panelId)
+  return o?.type === 'panel' ? o : null
+}
 configureFigureOriginHost({
   reserveSession: reserveBackendSession,
   notify: (message) => useUiStore.getState().setStatus(message, 'info'),
-  replaceFigure: async ({ oldScript, newScript, origin, still }) => {
+  originOf: (panelId) => {
+    const panel = activePanel(panelId)
+    const origin = panel ? readPanelOrigin(panel) : null
+    return panel && origin && panelUntouchedNow(panel, origin) ? origin : null
+  },
+  replaceFigure: async ({ panelId, newScript, origin, kind, still }) => {
     const pj = currentProjectId()
     const same = () => still() && currentProjectId() === pj
-    // 换的是用户此刻在编辑的那一块（激活画布上、画旧脚本的面板）；等脚本跑的这段时间里他换了画布 / 删了它 / 改了它，一律不换
+    // 换的是用户此刻在编辑的那一块；等脚本跑的这段时间里他换了画布 / 删了它 / 改了它，一律不换
     const canvasId = useDocumentStore.getState().activeCanvasId
     const preferGid = useUiStore.getState().selectedGids[0] ?? null
-    const target = panelOfScript(oldScript, useWorkspaceStore.getState().activePanelId)
-    if (!target || !panelUntouchedNow(target, origin)) return null
     quietGuideCard()
     await refreshProjectNow().catch(() => undefined)
-    if (!same()) return null
+    if (!same()) return false
     await useScriptRunStore.getState().run(newScript)
-    if (!same()) return null
+    if (!same()) return false
     const run = useScriptRunStore.getState().byScript[newScript]
     const desc = run?.phase === 'captured_one' ? run.descriptors[0] : undefined
-    if (!desc || normScript(desc.script) !== normScript(newScript)) return null
-    // 复核：还是那张画布、还是那一块面板、图仍然没被改过
-    const panel = panelOfScript(oldScript, target.id)
-    if (!panel || panel.id !== target.id || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return null
-    if (!replaceRuntimeFigure(panel.id, desc)) return null
+    if (!desc || normScript(desc.script) !== normScript(newScript)) return false
+    // 复核：还是那张画布、还是那一块面板、图仍然没被改过、来历还是换之前那份
+    const panel = activePanel(panelId)
+    if (!panel || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return false
+    const next = toPanelOrigin({ ...origin, script: normScript(newScript), kind }, desc.source_fingerprint)
+    if (!replaceRuntimeFigure(panel.id, desc, next)) return false
     // 回到图内编辑（与「打开并运行」之后落在的状态一样）：选中这块面板
     useSelectionStore.getState().set([panel.id])
     enterElementEdit(panel.id)
-    // 新图的 manifest 到了就选回误差棒（属性页停在误差棒页，那一行显示新类型）
+    // 新图的 manifest 到了就选回误差棒 / 阴影带（属性页停在那一页，那一行显示新类型）
     selectErrorBarWhenDrawn(panel.id, preferGid, origin.band)
-    return { fingerprint: desc.source_fingerprint }
+    return true
   },
 })
 
-// 面板第一次出现在文档里：记下它的来源指纹（之后「脚本是否被改过」都对着它比）。只在有还没记到指纹的来历时才扫文档
-const bindOriginFingerprints = () => {
-  const reg = useFigureOriginStore.getState()
-  const need = new Set(reg.unbound())
-  if (!need.size) return
+// 面板第一次出现在文档里：把登记的来历写到它身上（随项目文档落盘；`script` 对得上、带着来源指纹的 runtime 面板才认）。
+// 只在有待认领的来历时才扫文档。路径不是项目相对 / 摘要不合格的来历 `toPanelOrigin` 回 null：不落盘，直接丢掉
+const claimPendingOrigins = () => {
+  const store = useFigureOriginStore.getState()
+  const pending = store.pending
+  const scripts = Object.keys(pending)
+  if (!scripts.length) return
   const s = useDocumentStore.getState()
   const objects = [...s.doc.objects, ...s.canvases.filter((c) => c.id !== s.activeCanvasId).flatMap((c) => c.objects)]
   for (const o of objects) {
-    if (o.type !== 'panel' || o.fileKind !== 'runtime' || !o.script || !o.source?.fingerprint) continue
+    if (o.type !== 'panel' || o.fileKind !== 'runtime' || !o.script || !o.source?.fingerprint || o.dataOrigin) continue
     const key = normScript(o.script)
-    if (need.has(key)) reg.bindFingerprint(key, o.source.fingerprint)
+    const origin = pending[key]
+    if (!origin) continue
+    const stored = toPanelOrigin(origin, o.source.fingerprint)
+    if (stored) writePanelDataOrigin(o.id, stored)
+    store.release(key)
   }
 }
-useDocumentStore.subscribe(bindOriginFingerprints)
-useFigureOriginStore.subscribe(bindOriginFingerprints)
+useDocumentStore.subscribe(claimPendingOrigins)
+useFigureOriginStore.subscribe(claimPendingOrigins)

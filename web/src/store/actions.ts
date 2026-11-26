@@ -117,7 +117,7 @@ import { askConfirm, isTimelineOpen, useUiStore, type StatusAction, type StatusT
 import { feedbackStatusAction, retryOrFeedback, tooNewAction } from './failureExit'
 import { useViewportStore } from './viewportStore'
 import { alignOneVisual, visualBounds, type Rect } from '@/lib/geometry'
-import type { CropRect, PanelRotation } from '@/types/document'
+import type { CropRect, PanelDataOrigin, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
   panelContentSize,
@@ -3950,7 +3950,7 @@ export function adoptScriptFrame(panelId: string): boolean {
  * 图内修改带不过去：overrides 清空（调用方先核过「图没被改过」，见 `lib/dataFigureOrigin.figureUntouched`）；绑定了样式的画布上，
  * 新图是新的 `figKey`，按「新图」被样式自动对齐。面板不在、不是 runtime 面板、已经是这张图 = false，什么都不改。
  */
-export function replaceRuntimeFigure(panelId: string, desc: CapturedFigureDescriptor): boolean {
+export function replaceRuntimeFigure(panelId: string, desc: CapturedFigureDescriptor, dataOrigin?: PanelDataOrigin | null): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel' || panel.fileKind !== 'runtime' || panel.fileId === desc.asset_id) return false
   if (useUiStore.getState().elementPanelId === panelId) useUiStore.getState().setElementPanel(null)
@@ -3983,6 +3983,9 @@ export function replaceRuntimeFigure(panelId: string, desc: CapturedFigureDescri
     // 这两份都钉在旧素材的 fileId 上（`validFigureSnapshot(snapshot, fileId)`），换了图源就是无效记录
     delete o.figureSnapshot
     delete o.figureOrigin
+    // 新图的来历跟这一次换图在同一条历史里（撤销一起回到旧图的来历）；没有 = 新图不给换
+    if (dataOrigin) o.dataOrigin = structuredClone(dataOrigin)
+    else delete o.dataOrigin
     o.figureFrame = FIGURE_FRAME_VERSION
   })
   return true
