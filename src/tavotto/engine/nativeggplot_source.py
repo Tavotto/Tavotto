@@ -110,7 +110,7 @@ def build(
     for patch in patches:
         gid, prop, value = patch["gid"], patch["prop"], patch["value"]
         element = themes.get(gid)
-        if element is None and prop == "color" and tick_themes is not None:
+        if element is None and prop in ("color", "fontsize") and tick_themes is not None:
             element = tick_themes.get(gid)
         if element is not None:
             face_fields = face_of.get(gid, {})
