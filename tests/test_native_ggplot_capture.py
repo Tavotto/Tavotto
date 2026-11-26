@@ -1349,6 +1349,25 @@ stopifnot(is.null(outline_state$ribbon_targets[[range_id]]$values$alpha),
           grepl("fill: #695DB2; fill-opacity: 0.40", outline_svg, fixed = TRUE))
 area <- base + ggplot2::geom_area(fill = "#559944", alpha = .4)
 stopifnot(length(adapter$capture_ggplot(area, frame)$state$ribbon_targets) == 1L)
+for (plot in list(base + band, area)) {
+  facet <- ggplot2::facet_grid(cols = ggplot2::vars(group), scales = "free_y")
+  faceted <- adapter$capture_ggplot(plot + facet, frame)
+  facet_state <- faceted$state
+  left <- "layer.1.panel.1.ribbon"
+  right <- "layer.1.panel.2.ribbon"
+  stopifnot(identical(names(facet_state$ribbon_targets), c(left, right)))
+  facet_change <- stats::setNames(list(list(facecolor = "#695DB2", alpha = .65)), right)
+  plain <- adapter$ggplot_manifest(facet_state, "range")
+  changed <- adapter$ggplot_manifest(facet_state, "range", facet_change)
+  find <- function(scene, gid) Filter(function(e) e$gid == gid, scene$elements)[[1L]]
+  left_plain <- find(plain, left)
+  right_changed <- find(changed, right)
+  stopifnot(identical(left_plain, find(changed, left)),
+            identical(find(plain, right)$geometry$paths, right_changed$geometry$paths),
+            endsWith(right_changed$label, "Treated"), right_changed$ribbon$current$alpha == .65,
+            grepl("fill: #695DB2", adapter$render_ggplot(facet_state, facet_change), fixed = TRUE),
+            identical(adapter$render_ggplot(facet_state), faceted$svg))
+}
 mapped <- base + ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper, fill = group))
 stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$ribbon_targets) == 0L)
 duplicated_key <- base + line + line + palette

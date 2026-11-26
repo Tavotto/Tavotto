@@ -1102,7 +1102,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     bar_targets <- ggplot_bar_targets(built, panels, captured_layers$grobs)
     bar_geometry <- measure_ggplot_bars(table, bar_targets, frame_pt)
     bar_targets <- bar_targets[names(bar_geometry)]
-    ribbon_targets <- ggplot_ribbon_targets(built, table, captured_layers$grobs)
+    ribbon_targets <- ggplot_ribbon_targets(built, panels, captured_layers$grobs)
     ribbon_geometry <- measure_ggplot_ribbons(table, ribbon_targets, frame_pt)
     ribbon_targets <- ribbon_targets[names(ribbon_geometry)]
     legend_targets <- ggplot_legend_boxes(table)

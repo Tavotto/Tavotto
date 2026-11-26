@@ -11,48 +11,48 @@ ggplot_ribbon_leaves <- function(grob) {
   unlist(children, recursive = FALSE, use.names = FALSE)
 }
 
-ggplot_ribbon_targets <- function(built, table, layer_grobs) {
-  slot <- which(table$layout$name == "panel")
-  if (length(slot) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
-    return(list())
-  }
-  panel <- table$grobs[[slot]]
+ggplot_ribbon_targets <- function(built, panels, layer_grobs) {
+  if (is.null(panels)) return(list())
   targets <- list()
   for (index in seq_along(layer_grobs)) {
     layer <- built$plot$layers[[index]]
     kind <- class(layer$geom)[[1L]]
-    if (!kind %in% c("GeomRibbon", "GeomArea") || length(layer_grobs[[index]]) != 1L) next
+    if (!kind %in% c("GeomRibbon", "GeomArea")) next
     mapped <- ggplot_styled_layer_mapping(layer)
     if (is.null(mapped) || length(intersect(mapped, c("fill", "alpha"))) ||
         ggplot_layer_has_legend_key(built, layer, mapped)) next
-    grob <- layer_grobs[[index]][[1L]]
-    child <- which(panel$childrenOrder == grob$name)
-    if (length(child) != 1L) next
-    leaves <- ggplot_ribbon_leaves(grob)
-    polygons <- Filter(function(g) inherits(g, "polygon"), leaves)
-    if (!length(polygons) || sum(vapply(polygons, function(g) length(g$x), integer(1L))) > 4096L) next
-    ok <- vapply(polygons, function(g) {
-      n <- length(g$x)
-      n >= 3L && length(g$y) == n && is.null(g$id.lengths) &&
-        (is.null(g$id) || (length(g$id) == n && !anyNA(g$id))) &&
-        all(grid::unitType(g$x) == "native") && all(grid::unitType(g$y) == "native")
-    }, logical(1L))
-    if (!all(ok)) next
-    pigments <- lapply(polygons, function(g) ggplot_uniform_pigment(g$gp$fill))
-    face <- pigments[[1L]]
-    if (is.null(face) || face$alpha <= 0 ||
-        !all(vapply(pigments, identical, logical(1L), face))) next
-    outlined <- any(vapply(leaves, function(g) {
-      stroke <- ggplot_uniform_pigment(g$gp$col)
-      # A nonuniform or unrecognized stroke is still an outline.
-      is.null(stroke) || stroke$alpha > 0
-    }, logical(1L)))
-    targets[[paste0("layer.", index, ".ribbon")]] <- list(
-      index = index, slot = slot, child = child, grob_name = grob$name, face = face,
-      values = list(facecolor = face$rgb, alpha = if (!outlined) face$alpha),
-      clip = identical(built$layout$coord$clip, "on"),
-      context = rlang::hash(list(kind, built$data[[index]], lapply(leaves, function(g) g$gp)))
-    )
+    for (draw in ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])) {
+      grob <- draw$grob
+      suffix <- if (panels$single) "" else paste0(".panel.", draw$panel_id)
+      leaves <- ggplot_ribbon_leaves(grob)
+      polygons <- Filter(function(g) inherits(g, "polygon"), leaves)
+      if (!length(polygons) || sum(vapply(polygons, function(g) length(g$x), integer(1L))) > 4096L) next
+      ok <- vapply(polygons, function(g) {
+        n <- length(g$x)
+        n >= 3L && length(g$y) == n && is.null(g$id.lengths) &&
+          (is.null(g$id) || (length(g$id) == n && !anyNA(g$id))) &&
+          all(grid::unitType(g$x) == "native") && all(grid::unitType(g$y) == "native")
+      }, logical(1L))
+      if (!all(ok)) next
+      pigments <- lapply(polygons, function(g) ggplot_uniform_pigment(g$gp$fill))
+      face <- pigments[[1L]]
+      if (is.null(face) || face$alpha <= 0 ||
+          !all(vapply(pigments, identical, logical(1L), face))) next
+      outlined <- any(vapply(leaves, function(g) {
+        stroke <- ggplot_uniform_pigment(g$gp$col)
+        # A nonuniform or unrecognized stroke is still an outline.
+        is.null(stroke) || stroke$alpha > 0
+      }, logical(1L)))
+      facts <- list(kind, draw$rows, lapply(leaves, function(g) g$gp))
+      if (!panels$single) facts <- c(facts, list(draw$facet))
+      targets[[paste0("layer.", index, suffix, ".ribbon")]] <- list(
+        index = index, slot = draw$slot, child = draw$child, grob_name = grob$name, face = face,
+        facet = draw$facet,
+        values = list(facecolor = face$rgb, alpha = if (!outlined) face$alpha),
+        clip = identical(built$layout$coord$clip, "on"),
+        context = rlang::hash(facts)
+      )
+    }
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
   targets[!(duplicated(contexts) | duplicated(contexts, fromLast = TRUE))]
@@ -134,7 +134,7 @@ ggplot_ribbon_elements <- function(state, edits, measured) {
     if (is.null(geometry)) stop("The native R range fill could not be measured.")
     edit <- edits[[gid]]
     c(list(gid = gid, role = "fill",
-           label = paste("\u8303\u56f4\u586b\u5145", target$index), draggable = FALSE, editable = list(),
+           label = ggplot_layer_label("\u8303\u56f4\u586b\u5145", target), draggable = FALSE, editable = list(),
            ribbon = list(context = target$context, current = ggplot_ribbon_values(target, edit),
                          original = ggplot_ribbon_values(target, NULL), edited = as.list(names(edit)))),
       geometry)
