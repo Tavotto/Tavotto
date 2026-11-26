@@ -85,7 +85,6 @@ import {
 import { adoptionGuardOf, artifactValidationIssue } from "@/lib/artifactValidation";
 import { inspectionState } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
-import { Spinner } from "@/components/ui/Spinner";
 import {
   contextFigureId,
   findExportPanel,
@@ -1856,11 +1855,13 @@ export function ExportDialog() {
               size="lg"
               data-export-start
               disabled={batchMode ? !canStartBatch : !canStart}
+              loading={redrawBusy}
+              loadingLabel={ex("redrawingBitmaps")}
               onClick={startExport}
             >
               {/* 先重画位图再导：这一段要跑脚本，按钮灰着却不说在干什么会像卡住了 */}
-              {redrawBusy ? <Spinner size={ICON_SIZE.sm} /> : <Download size={ICON_SIZE.sm} />}
-              {redrawBusy ? ex("redrawingBitmaps") : ex("start")}
+              <Download size={ICON_SIZE.sm} />
+              {ex("start")}
             </Button>
           ),
         };
@@ -2105,17 +2106,24 @@ export function ExportDialog() {
               {/* 画布范围：有脚本的整张位图默认先转成脚本重画；取消 = 用原文件 */}
               {(scriptedBitmaps.length > 0 || redrawKept.length > 0) && (
                 <FormRow>
-                  {scriptedBitmaps.length > 0 && (
-                    <label data-export-redraw-bitmaps className="flex min-h-7 items-center gap-2 text-ink">
-                      <Checkbox checked={redrawBitmaps} onChange={() => setRedrawBitmaps((v) => !v)} />
-                      <span>{ex("redrawBitmaps", { count: scriptedBitmaps.length })}</span>
-                    </label>
-                  )}
-                  {redrawKept.length > 0 && (
-                    <p data-export-redraw-kept className="type-caption">
-                      {ex("redrawBitmapsKept", { files: redrawKept.join("、") })}
-                    </p>
-                  )}
+                  <div className="flex w-full min-w-0 flex-col gap-1">
+                    {scriptedBitmaps.length > 0 && (
+                      <label data-export-redraw-bitmaps className="flex min-h-7 items-center gap-2 text-ink">
+                        <Checkbox checked={redrawBitmaps} onChange={() => setRedrawBitmaps((v) => !v)} />
+                        <span>{ex("redrawBitmaps", { count: scriptedBitmaps.length })}</span>
+                      </label>
+                    )}
+                    {redrawKept.length > 0 && (
+                      // 说明放在勾选项下面、占满整行；一句话，改用重画的做法放 title
+                      <p
+                        data-export-redraw-kept
+                        className="type-caption"
+                        title={ex("redrawBitmapsKeptHint", { files: redrawKept.join("、") })}
+                      >
+                        {ex("redrawBitmapsKept", { files: redrawKept.join("、") })}
+                      </p>
+                    )}
+                  </div>
                 </FormRow>
               )}
               {/* 画布范围：带编辑的图找不到脚本，后端画不出它——导出必然失败，点之前就说 */}
