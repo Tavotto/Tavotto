@@ -1,5 +1,5 @@
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
-import { redrawOffered } from '@/lib/scriptedBitmaps'
+import { pdfFontProblem, pdfRedrawCandidate, REDRAW_FRAME_OVERRIDE, redrawOffered } from '@/lib/scriptedBitmaps'
 import { currentProjectId } from '@/lib/session'
 import { isCanvasCovered } from '@/store/canvasCover'
 import '@/store/figureSnapshotInvalidation'
@@ -11,6 +11,7 @@ import { msg, t, type UiMessage } from '@/i18n'
 import { classifyArtifactFailure, classifyArtifactReason, isDefiniteRefusal, sourceBackedEligible, type ArtifactFailure } from '@/lib/artifactReason'
 import { registerReconstructionNotifier, registerSourceBackedReviewRunner, runSourceBackedReview, sourceReviewOwner, useSourceBackedReview } from '@/store/sourceBackedReview'
 import { pngAdmitOwner, pngIdentityOf, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { pdfFontFactsOf } from '@/store/pdfFontFacts'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
@@ -2719,7 +2720,20 @@ function swapToVectorPrimary(panel: PanelObject): boolean {
 export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
   finishActiveGesture()
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || !redrawOffered(panel)) return false
+  if (panel?.type !== 'panel') return false
+  // PDF 原件（原件用了 Type 3 / 有缺字）：本来就是矢量的脚本产物，重画只换掉字体——一条不改任何东西的
+  // `figure.frame = "savefig"`，面板就由引擎按脚本存盘的图幅重画；不走位图那套采用与对照
+  if (pdfRedrawCandidate(panel)) {
+    if (!redrawOffered(panel, pdfFontFactsOf(panel.fileId))) return false
+    const missing = pdfFontProblem(pdfFontFactsOf(panel.fileId)) === 'pdfMissingGlyphs'
+    commit(msg(missing ? 'artifact.showRedrawMissing' : 'artifact.showRedrawType3', undefined, 'errors'), (d) => {
+      const o = d.objects.find((x) => x.id === panel.id)
+      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
+    })
+    status(msg(missing ? 'artifact.redrawnMissing' : 'artifact.redrawnType3', undefined, 'errors'), 'done')
+    return true
+  }
+  if (!redrawOffered(panel)) return false
   const issue = artifactValidationIssue(panel)
   if (issue) {
     status(engineErrorMsg(new ArtifactValidationError(issue)), 'error', { action: feedbackStatusAction() })

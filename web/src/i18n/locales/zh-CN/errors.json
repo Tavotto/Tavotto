@@ -26,7 +26,11 @@
     "adoptReconstructed": "以重画为基础编辑",
     "refreshReconstruction": "更新重画对照",
     "showRedraw": "改用脚本重画的图",
-    "redrawn": "已改用脚本重画的图，画布和导出都是这一份。不想要可以撤销。"
+    "redrawn": "已改用脚本重画的图，画布和导出都是这一份。不想要可以撤销。",
+    "showRedrawType3": "改用标准字体",
+    "showRedrawMissing": "补齐字体",
+    "redrawnType3": "已改用标准字体，画布和导出都是这一份。不想要可以撤销。",
+    "redrawnMissing": "已补齐字体，画布和导出都是这一份。不想要可以撤销。"
   },
   "backend": {
     "chart_engine_unavailable": "计算图表的渲染引擎正忙，请稍后重试。",

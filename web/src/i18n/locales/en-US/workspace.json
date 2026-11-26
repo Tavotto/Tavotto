@@ -605,6 +605,7 @@
     "nativeOffline": "Run ended",
     "nativeRerun": "Run again",
     "nativeRerunHint": "Run this script again to keep editing this figure",
+    "hintLabel": "About this badge",
     "nativeRunning": "Script is running — editing resumes when it stops",
     "rendering": "Rendering…",
     "runtimeMissingEnvironment": "No rendering environment available",
@@ -618,7 +619,11 @@
     "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure’s crop lies entirely outside it. Adjust or reset the crop in Properties first.",
     "bitmapOriginal": "Bitmap original",
     "redraw": "Redraw with script",
-    "redrawHint": "The script saved this figure as a bitmap, and a PDF export embeds it as is. Choose Redraw with script to rerun the script and switch to vectors; if the result differs, you compare the two first, and you can undo it."
+    "redrawHint": "The script saved this figure as a bitmap, and a PDF export embeds it as is. Choose Redraw with script to rerun the script and switch to vectors; if the result differs, you compare the two first, and you can undo it.",
+    "pdfType3": "Original font not compatible",
+    "pdfMissingGlyphs": "Original has missing characters",
+    "pdfType3Hint": "The script saved this figure as a PDF with Type 3 fonts, which journals such as IEEE and Elsevier send back. Choose Redraw with script to rerun it with standard fonts; nothing moves on the page, and you can undo it.",
+    "pdfMissingGlyphsHint": "The script saved this figure as a PDF where some characters show as boxes. Choose Redraw with script to rerun it with the fonts filled in; nothing moves on the page, and you can undo it."
   },
   "quickEdit": {
     "aria": "Quick edit",

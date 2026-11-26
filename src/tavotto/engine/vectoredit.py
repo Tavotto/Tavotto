@@ -22,6 +22,11 @@
   内核不可用 = `kernel_unavailable`，其余操作照常。
 * `{"op": "convert_to_path", "ids": [...]}`：形状 / 箭头换成同 id 的路径（照前端 `actions.convertToPath`，画面逐点不动）。
 
+* 第 4 期「路径锚点」（纯函数在 `engine/pathedit.py`，照 `lib/pathEdit.ts` 与 `store/pathActions.ts`）：`move_anchors` / `move_handle` /
+  `add_anchors` / `delete_anchors` / `convert_anchors` / `average_anchors` / `cut_path` / `join_paths` / `reverse_path` / `make_compound` /
+  `release_compound`。锚点地址 `{sp, i}`（场景 `vector_objects[].anchors` 给的同一套）含义是**这一条操作执行时**的状态，每条复述末尾写明「现为」
+  各子路径的锚点数；只收 `path`（形状先 `convert_to_path`；`make_compound` 照前端也收封闭形状）。
+
 核对只看这次动到的对象（改后的样子），画布上没动的文字当障碍；用户早就接受的地方不重新报。
 """
 
@@ -37,6 +42,7 @@ from . import (
     agentobjects,
     doclock,
     layoutannotate as la,
+    pathedit as pedit,
     vecops,
     vectorcheck,
     vectorgeom,
@@ -87,7 +93,7 @@ def _box(o: dict) -> list[float]:
 
 
 def _brief(o: dict) -> dict:
-    return {
+    out = {
         "id": o.get("id"),
         "type": o.get("type"),
         "name": o.get("name"),
@@ -98,6 +104,41 @@ def _brief(o: dict) -> dict:
         "hidden": bool(o.get("hidden")),
         "group": (o.get("groupPath") or ([o["groupId"]] if o.get("groupId") else None)),
     }
+    if o.get("type") == "path":
+        # 路径：每条子路径的闭合与锚点数（锚点地址 `{sp, i}` 的范围）；逐点清单由 `read_scene` 在预算内另附
+        subs = vectorgeom.path_to_mm(o)
+        out["anchor_count"] = sum(len(sp["nodes"]) for sp in subs)
+        out["subpaths"] = [
+            {"sp": k, "closed": sp["closed"], "count": len(sp["nodes"])}
+            for k, sp in enumerate(subs)
+        ]
+        out["rotation_deg"] = float(o.get("rotationDeg") or 0.0)
+    return out
+
+
+#: 场景里锚点清单的预算：每个路径最多列多少个（点名了 `ids` 时放宽）、整次读取最多列多少个；超出的只给 `subpaths` 计数
+ANCHORS_PER_PATH = 60
+ANCHORS_PER_PATH_TARGETED = 200
+ANCHORS_PER_SCENE = 400
+
+
+def path_anchors(o: dict) -> list[dict]:
+    """路径的锚点清单（页面 mm、已旋转，两位小数）：`{sp, i, at_mm, smooth}`，有曲线手柄的再带 `in_mm` / `out_mm`。
+    下标与编辑操作的锚点地址是同一套（`vectorgeom.path_to_mm`）。"""
+    out = []
+    for si, sp in enumerate(vectorgeom.path_to_mm(o)):
+        for k, n in enumerate(sp["nodes"]):
+            row: dict = {
+                "sp": si,
+                "i": k,
+                "at_mm": [round(v, 2) + 0.0 for v in pedit.rotate_point(o, n["p"])],
+                "smooth": n["smooth"],
+            }
+            for key in ("in", "out"):
+                if n[key] != n["p"]:
+                    row[f"{key}_mm"] = [round(v, 2) + 0.0 for v in pedit.rotate_point(o, n[key])]
+            out.append(row)
+    return out
 
 
 _QUERY_KEYS = ("ids", "types", "name", "text", "by_agent", "within", "anchored_to")
@@ -189,10 +230,26 @@ def read_scene(
         if q.get("anchored_to") in refs:
             q["anchored_to"] = refs[q["anchored_to"]]
         picked = select_objects(canvas, q)
-        return {
-            "vector_objects": picked[:VECTOR_OBJECTS_SHOWN],
-            "vector_objects_total": len(picked),
-        }
+        shown = picked[:VECTOR_OBJECTS_SHOWN]
+        by_id = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+        cap = ANCHORS_PER_PATH_TARGETED if "ids" in q else ANCHORS_PER_PATH
+        left, omitted = ANCHORS_PER_SCENE, False
+        for b in shown:
+            if b["type"] != "path":
+                continue
+            if b["anchor_count"] <= min(cap, left):
+                b["anchors"] = path_anchors(by_id[b["id"]])
+                left -= b["anchor_count"]
+            else:
+                omitted = True
+        out = {"vector_objects": shown, "vector_objects_total": len(picked)}
+        if omitted:
+            out["anchors_note"] = (
+                f"锚点清单只给不超过 {cap} 个锚点的路径、整次最多 {ANCHORS_PER_SCENE} 个；没列的路径只有 subpaths 里的计数，"
+                "用 select {ids: [路径 id]} 单独读（单个路径放宽到 "
+                f"{ANCHORS_PER_PATH_TARGETED} 个）；锚点更多的路径不列清单"
+            )
+        return out
 
     return la.read_scene(project, name, measure, canvas_id=canvas_id, extend=extend)
 
@@ -770,6 +827,26 @@ def _count_check(s: _State, i: int) -> None:
         raise EditError("out_of_range", i, "objects")
 
 
+def _land_plan(s: _State, i: int, live: list[dict], src: list[dict], plan: dict) -> None:
+    """路径查找器 / 复合路径的落位方案（`vectorgeom.plan_replace`）落进工作态：原对象全删，结果放在最上面那个原对象原来的位置。"""
+    removed = set(plan["remove"])
+    new_live = [o for o in live if o.get("id") not in removed]
+    new_live[plan["at"] : plan["at"]] = plan["add"]
+    added = {o["id"] for o in plan["add"]}
+    for o in src:
+        if o["id"] not in added:
+            s.deleted.append(o["id"])
+            s.changes.append({"id": o["id"], "deleted": True})
+    for o in plan["add"]:
+        # 继承了原对象 id 的是「换掉」，其余是新长出来的
+        s.changes.append(
+            {"id": o["id"], "replaced" if o["id"] in plan["remove"] else "added": True}
+        )
+        s.touched.add(o["id"])
+    s.set_order(new_live)
+    _count_check(s, i)
+
+
 def _op_pathfinder(s: _State, i: int, op: dict) -> None:
     """`pathfinder.runPathfinder` + `pathfinderActions.applyPlan`：选中的路径按 `mode` 运算；原对象全删，结果放在**最上面那个**
     原对象原来的数组位置（结果之间按内核给的从后往前排）；每个原对象的样式第一次被沿用时，那块结果继承它的 id 与名字。"""
@@ -798,22 +875,7 @@ def _op_pathfinder(s: _State, i: int, op: dict) -> None:
     plan = vectorgeom.run_pathfinder(kernel, mode, live, src, lambda n: _mint(s, i, "pf", seed, n))
     if plan is None:
         raise EditError("bad_op", i, "empty_result")
-    removed = set(plan["remove"])
-    new_live = [o for o in live if o.get("id") not in removed]
-    new_live[plan["at"] : plan["at"]] = plan["add"]
-    added = {o["id"] for o in plan["add"]}
-    for o in src:
-        if o["id"] not in added:
-            s.deleted.append(o["id"])
-            s.changes.append({"id": o["id"], "deleted": True})
-    for o in plan["add"]:
-        # 继承了原对象 id 的是「换掉」，其余是新长出来的
-        s.changes.append(
-            {"id": o["id"], "replaced" if o["id"] in plan["remove"] else "added": True}
-        )
-        s.touched.add(o["id"])
-    s.set_order(new_live)
-    _count_check(s, i)
+    _land_plan(s, i, live, src, plan)
     shapes = any(o.get("type") != "path" for o in picked)
     s.echo.append(
         f"{_MODE_WORDS[mode]} {len(src)} 个{'对象' if shapes else '路径'}（{'、'.join(o['id'] for o in src)}）"
@@ -925,6 +987,420 @@ def _op_simplify(s: _State, i: int, op: dict) -> None:
     s.echo.append(f"简化 {_label(o)}：锚点 {count(o)} → {count(made)}（容差 {float(tol):g} pt）")
 
 
+# ------------------------------------------------------------------ 路径锚点（第 4 期）：纯函数在 `engine/pathedit.py`（照 `lib/pathEdit.ts`），这里只做校验、记账与复述
+#
+# 锚点地址 `{"sp": 第几条子路径, "i": 第几个}`（都从 0 数，下标与场景 `vector_objects[].paths` 给的同一套——`vectorgeom.path_to_mm`
+# 的下标）；含义是**这一条操作执行时**的状态：前面的加 / 删 / 剪 / 连会让后面的下标变，每条复述末尾都写明「现为」各子路径的锚点数。
+# 页面坐标（`by_mm` 位移、`to_mm` 点）是画出来的位置（已旋转）；对旋转过的路径按 `unrotate_*` 换到编辑空间再算。
+
+_ANCHOR_WORDS = 12  # 复述里最多列几个锚点地址（其余写总数；复述进摘要，必须确定且有上限）
+_CONVERT_TO = ("smooth", "corner")
+
+
+def _addrs(refs: list[tuple[int, int]]) -> str:
+    shown = "、".join(f"sp{sp}:i{k}" for sp, k in refs[:_ANCHOR_WORDS])
+    return shown + (f" 等共 {len(refs)} 个" if len(refs) > _ANCHOR_WORDS else "")
+
+
+def _anchor_count(subs: list[dict]) -> int:
+    return sum(len(sp["nodes"]) for sp in subs)
+
+
+def _shape_txt(subs: list[dict]) -> str:
+    """各子路径的闭合与锚点数（下标 = 之后的锚点地址）"""
+    kept = [sp for sp in subs if len(sp["nodes"]) >= 2]
+    return "；".join(
+        f"sp{k} {'闭合' if sp['closed'] else '开放'} {len(sp['nodes'])} 个"
+        for k, sp in enumerate(kept)
+    )
+
+
+def _anchor_ref(i: int, v: object, field: str, subs: list[dict]) -> tuple[int, int]:
+    if (
+        not isinstance(v, dict)
+        or set(v) != {"sp", "i"}
+        or any(type(v[k]) is not int for k in ("sp", "i"))
+    ):
+        raise EditError("bad_value", i, field)
+    sp, k = v["sp"], v["i"]
+    if not (0 <= sp < len(subs) and 0 <= k < len(subs[sp]["nodes"])):
+        raise EditError("bad_value", i, f"{field}:unknown")
+    return (sp, k)
+
+
+def _anchor_list(
+    i: int, v: object, field: str, subs: list[dict], *, at_least: int = 1
+) -> list[tuple[int, int]]:
+    if not isinstance(v, list) or len(v) < at_least:
+        raise EditError("bad_value", i, field)
+    refs = [_anchor_ref(i, a, field, subs) for a in v]
+    if len(set(refs)) != len(refs):
+        raise EditError("bad_value", i, f"{field}:duplicate")
+    return refs
+
+
+def _page_xy(s: _State, i: int, v: object, field: str) -> tuple[float, float]:
+    if not (isinstance(v, list) and len(v) == 2 and all(agentobjects._is_num(c) for c in v)):  # noqa: SLF001
+        raise EditError("bad_value", i, field)
+    if any(abs(c) > s.budgets["max_coord_mm"] for c in v):
+        raise EditError("out_of_range", i, field)
+    return (float(v[0]), float(v[1]))
+
+
+def _path_target(s: _State, i: int, op: dict, allowed: set[str]) -> tuple[dict, list[dict]]:
+    if set(op) - ({"op", "id"} | allowed):
+        raise EditError("bad_op", i)
+    o = _operand(s, i, op.get("id"), "id")
+    return o, vectorgeom.path_to_mm(o)
+
+
+def _check_path_result(s: _State, i: int, new: dict) -> None:
+    """改后的对象仍要过字段表的值判据（手柄拖得太远 / 框退化时比例坐标会超限）与总量预算"""
+    t = agentobjects.table()
+    for k in ("x", "y", "w", "h"):
+        if agentobjects._check_value(t["common"][k], new[k], s.budgets) is not None:  # noqa: SLF001
+            raise EditError("out_of_range", i, k)
+    if agentobjects._check_subpaths(new["subpaths"], s.budgets) is not None:  # noqa: SLF001
+        raise EditError("out_of_range", i, "subpaths")
+
+
+def _write_path(s: _State, i: int, o: dict, new: dict) -> None:
+    """把改后的路径换进原对象（同 id、同位置）；记 x / y / w / h / 渐变的前后值，锚点用 `nodes` 记前后计数（不落进 PAINT_ONLY）"""
+    _check_path_result(s, i, new)
+    nb = sum(len(sp["nodes"]) for sp in o["subpaths"])
+    for k in ("x", "y", "w", "h", "fillGradient", "strokeGradient"):
+        if new.get(k) != o.get(k):
+            s.set_field(o, k, new.get(k))
+    if new["subpaths"] != o["subpaths"]:
+        o["subpaths"] = new["subpaths"]
+        s.touched.add(o["id"])
+        s.changes.append(
+            {"id": o["id"], "field": "nodes", "before": nb, "after": _anchor_count(new["subpaths"])}
+        )
+    if agentobjects._node_count(s.live()) > s.budgets["max_nodes"]:  # noqa: SLF001
+        raise EditError("out_of_range", i, "nodes")
+
+
+def _delete_path(s: _State, o: dict) -> None:
+    s.deleted.append(o["id"])
+    s.changes.append({"id": o["id"], "deleted": True})
+
+
+def _finish_anchor_edit(
+    s: _State, i: int, o: dict, before: list[dict], after: list[dict], what: str, extra: str = ""
+) -> None:
+    """一次锚点编辑收尾：没变 = 照实说；锚点删光 = 对象一起删；否则换进原对象。复述末尾写明现状（之后的锚点地址以它为准）。"""
+    nb = _anchor_count(before)
+    if after == before:
+        s.echo.append(f"{what}：没有变化（未改动）{extra}")
+        return
+    new = vectorgeom.path_from_mm(o, after)
+    if new is None:
+        _delete_path(s, o)
+        s.echo.append(f"{what}：锚点 {nb} → 0，路径画不出来了，一并删除")
+        return
+    _write_path(s, i, o, new)
+    s.echo.append(
+        f"{what}：锚点 {nb} → {_anchor_count(new['subpaths'])}（现为 {_shape_txt(after)}）{extra}"
+    )
+
+
+def _op_move_anchors(s: _State, i: int, op: dict) -> None:
+    """平移锚点（连同两侧手柄）：`anchors` 点名、`by_mm` 是页面上的位移（对旋转过的路径换到编辑空间，照 `unrotateDelta`）"""
+    o, subs = _path_target(s, i, op, {"anchors", "by_mm"})
+    refs = _anchor_list(i, op.get("anchors"), "anchors", subs)
+    d = _page_xy(s, i, op.get("by_mm"), "by_mm")
+    if d == (0.0, 0.0):
+        raise EditError("bad_value", i, "by_mm")
+    after = pedit.move_anchors(subs, refs, pedit.unrotate_delta(o, d))
+    _finish_anchor_edit(
+        s,
+        i,
+        o,
+        subs,
+        after,
+        f"移动锚点 {_label(o)} 的 {_addrs(refs)} 平移 ({d[0]:+.2f}, {d[1]:+.2f}) mm",
+    )
+
+
+def _op_move_handle(s: _State, i: int, op: dict) -> None:
+    """拖一个手柄到页面上的点 `to_mm`：平滑点另一侧手柄保持共线；`break_smooth: true` 只动这一侧、锚点变尖角"""
+    o, subs = _path_target(s, i, op, {"anchor", "which", "to_mm", "break_smooth"})
+    ref = _anchor_ref(i, op.get("anchor"), "anchor", subs)
+    which = op.get("which")
+    if which not in ("in", "out"):
+        raise EditError("bad_value", i, "which")
+    pos = _page_xy(s, i, op.get("to_mm"), "to_mm")
+    brk = op.get("break_smooth", False)
+    if not isinstance(brk, bool):
+        raise EditError("bad_value", i, "break_smooth")
+    after = pedit.move_handle(subs, ref, which, pedit.unrotate_point(o, pos), brk)
+    _finish_anchor_edit(
+        s,
+        i,
+        o,
+        subs,
+        after,
+        f"拖手柄 {_label(o)} 的 sp{ref[0]}:i{ref[1]} 的{'入' if which == 'in' else '出'}手柄"
+        f"到 ({pos[0]:.2f}, {pos[1]:.2f}) mm{'，断开平滑' if brk else ''}",
+    )
+
+
+def _op_add_anchors(s: _State, i: int, op: dict) -> None:
+    """加锚点（曲线一点不变）：`anchors` = 在每个锚点后面那一段的中点加一个；都不给 = 每一段的中点；
+    或 `at: {sp, seg, t}` = 在第 sp 条子路径第 seg 段（锚点 seg → 下一个；闭合的最后一段回到 0）的参数 t（0–1 之间）处加一个"""
+    o, subs = _path_target(s, i, op, {"anchors", "at"})
+    if "anchors" in op and "at" in op:
+        raise EditError("bad_op", i, "anchors")
+    if "at" in op:
+        at = op["at"]
+        if (
+            not isinstance(at, dict)
+            or set(at) != {"sp", "seg", "t"}
+            or type(at["sp"]) is not int
+            or type(at["seg"]) is not int
+            or not agentobjects._is_num(at["t"])  # noqa: SLF001
+            or not 0 < at["t"] < 1
+        ):
+            raise EditError("bad_value", i, "at")
+        if not (0 <= at["sp"] < len(subs)) or pedit.seg_ends(subs[at["sp"]], at["seg"]) is None:
+            raise EditError("bad_value", i, "at:unknown")
+        after = pedit.insert_anchor(subs, at["sp"], at["seg"], float(at["t"]))
+        added = [(at["sp"], at["seg"] + 1)]
+        skipped: list = []
+        how = f"在 sp{at['sp']} 第 {at['seg']} 段 t={float(at['t']):.3g} 处"
+    else:
+        refs = _anchor_list(i, op["anchors"], "anchors", subs) if "anchors" in op else []
+        after, added, skipped = pedit.add_anchors(subs, refs)
+        how = f"在 {_addrs(refs)} 后面那一段的中点" if refs else "在每一段的中点"
+    extra = ""
+    if added:
+        extra += f"；新锚点 {_addrs(added)}"
+    if skipped:
+        extra += f"；{_addrs(skipped)} 后面没有线段（开放路径的末端），没加"
+    _finish_anchor_edit(s, i, o, subs, after, f"加锚点 {_label(o)} {how}", extra)
+
+
+def _op_delete_anchors(s: _State, i: int, op: dict) -> None:
+    """删锚点：闭合子路径剩不足 3 个变开放；子路径剩不足 2 个整条去掉（后面的子路径编号前移）；锚点删光 = 路径一起删"""
+    o, subs = _path_target(s, i, op, {"anchors"})
+    refs = _anchor_list(i, op.get("anchors"), "anchors", subs)
+    after = pedit.delete_anchors(subs, refs)
+    gone = [k for k, sp in enumerate(after) if len(sp["nodes"]) < 2]
+    extra = (
+        f"；子路径 {'、'.join(f'sp{k}' for k in gone)} 不足 2 个锚点，已去掉，后面的编号前移"
+        if gone and len(gone) < len(after)
+        else ""
+    )
+    _finish_anchor_edit(s, i, o, subs, after, f"删锚点 {_label(o)} 的 {_addrs(refs)}", extra)
+
+
+def _op_convert_anchors(s: _State, i: int, op: dict) -> None:
+    """转换锚点：`to: "smooth" | "corner"` 显式（缺省 = 桌面的「切换」：选中的全是平滑点 → 尖角，否则 → 平滑）。
+    平滑 = 手柄沿「前一个 → 后一个锚点」的方向、长度取到相邻锚点距离的 1/3；尖角 = 手柄收回锚点"""
+    o, subs = _path_target(s, i, op, {"anchors", "to"})
+    refs = _anchor_list(i, op.get("anchors"), "anchors", subs)
+    to = op.get("to")
+    if to is not None and to not in _CONVERT_TO:
+        raise EditError("bad_value", i, "to")
+    after = pedit.convert_anchors(subs, refs, to)
+    if to is None:
+        to = "corner" if all(subs[sp]["nodes"][k]["smooth"] for sp, k in refs) else "smooth"
+    _finish_anchor_edit(
+        s,
+        i,
+        o,
+        subs,
+        after,
+        f"转换锚点 {_label(o)} 的 {_addrs(refs)} → {'平滑' if to == 'smooth' else '尖角'}",
+    )
+
+
+def _op_average_anchors(s: _State, i: int, op: dict) -> None:
+    """平均：选中的锚点（≥ 2 个）挪到它们的平均位置（两侧手柄跟着走）"""
+    o, subs = _path_target(s, i, op, {"anchors"})
+    refs = _anchor_list(i, op.get("anchors"), "anchors", subs, at_least=2)
+    after = pedit.average_anchors(subs, refs)
+    _finish_anchor_edit(s, i, o, subs, after, f"平均锚点 {_label(o)} 的 {_addrs(refs)}")
+
+
+def _op_cut_path(s: _State, i: int, op: dict) -> None:
+    """剪断（桌面的剪刀）：在选中的锚点处断开；相邻两个都选了 = 剪掉它们之间那一段。断出来的第一段留在原对象里（同 id），
+    其余每段各成一个新路径对象（样式照搬、没有名字、紧挨着原对象往上放；id 由内容确定地派生）。开放路径的端点上断开等于没断。"""
+    o, subs = _path_target(s, i, op, {"anchors"})
+    refs = _anchor_list(i, op.get("anchors"), "anchors", subs)
+    pieces = pedit.cut_at_anchors(subs, refs)
+    if all(ps == [sp] for ps, sp in zip(pieces, subs)):
+        s.echo.append(
+            f"剪断 {_label(o)} 的 {_addrs(refs)}：没有可剪的（开放路径的端点上断开等于没断），未改动"
+        )
+        return
+    keep = [ps[0] for ps in pieces if ps]
+    extra = [p for ps in pieces for p in ps[1:]]
+    nxt = vectorgeom.path_from_mm(o, keep)
+    made = [m for m in (vectorgeom.path_from_mm(o, [sp]) for sp in extra) if m is not None]
+    nb = _anchor_count(subs)
+    what = f"剪断 {_label(o)} 的 {_addrs(refs)}"
+    for n, m in enumerate(made):
+        m["id"] = _mint(s, i, "cut", [o["id"]], n)
+        m.pop("name", None)
+        _check_path_result(s, i, m)
+    # 落位：紧挨原对象往上、按断出的顺序（原对象被删光时，原来的位置给第一块）
+    live = s.live()
+    k = next(n for n, x in enumerate(live) if x.get("id") == o["id"])
+    if nxt is None:
+        _delete_path(s, o)
+        live.pop(k)
+        live[k:k] = made
+    else:
+        _write_path(s, i, o, nxt)
+        live[k + 1 : k + 1] = made
+    s.set_order(live)
+    for m in made:
+        s.touched.add(m["id"])
+        s.changes.append({"id": m["id"], "added": True})
+    _count_check(s, i)
+    if agentobjects._node_count(s.live()) > s.budgets["max_nodes"]:  # noqa: SLF001
+        raise EditError("out_of_range", i, "nodes")
+    kept_txt = f"原对象现为 {_shape_txt(keep)}" if nxt is not None else "原对象没有可画的了，已删除"
+    new_txt = "；".join(f"新路径 {m['id']}（{_anchor_count(m['subpaths'])} 个锚点）" for m in made)
+    s.echo.append(
+        f"{what}：锚点 {nb} → 原对象 {_anchor_count(keep)} + 新路径共 {sum(_anchor_count(m['subpaths']) for m in made)}；"
+        f"{kept_txt}" + (f"；{new_txt}" if made else "")
+    )
+
+
+def _op_join_paths(s: _State, i: int, op: dict) -> None:
+    """连接（桌面 ⌘J）两种写法：
+    * `{id, anchors: [a, b]}`：同一个对象里两个**端点**（开放子路径的首 / 尾）——同一条子路径的两端 = 闭合；两条子路径的端点 = 连成一条；
+    * `{ids: [甲, 乙]}`：两个路径对象，取离得最近的那一对开放端点相连，合成一个对象——留 `ids` 里**最后一个**的 id 与样式，另一个删掉。
+    两端重合（< 1e-6 mm）就合成一个锚点，否则补一段直线。"""
+    if "ids" in op:
+        _join_objects(s, i, op)
+        return
+    o, subs = _path_target(s, i, op, {"anchors"})
+    anchors = op.get("anchors")
+    if not isinstance(anchors, list) or len(anchors) != 2:
+        raise EditError("bad_value", i, "anchors")
+    a, b = _anchor_list(i, anchors, "anchors", subs)
+    for r in (a, b):
+        if pedit.end_of(subs, r) is None:
+            raise EditError("bad_value", i, "anchors:not_end")
+    after = pedit.join_within(subs, a, b)
+    what = "闭合" if a[0] == b[0] else "连接"
+    _finish_anchor_edit(
+        s, i, o, subs, after, f"{what} {_label(o)} 的 sp{a[0]}:i{a[1]} 与 sp{b[0]}:i{b[1]}"
+    )
+
+
+def _join_objects(s: _State, i: int, op: dict) -> None:
+    if set(op) - {"op", "ids"}:
+        raise EditError("bad_op", i)
+    ids = op.get("ids")
+    if (
+        not isinstance(ids, list)
+        or len(ids) != 2
+        or not all(isinstance(v, str) for v in ids)
+        or ids[0] == ids[1]
+    ):
+        raise EditError("bad_op", i, "ids")
+    other, keep = (_operand(s, i, v, "ids") for v in ids)
+    ks, os_ = vectorgeom.path_to_mm(keep), vectorgeom.path_to_mm(other)
+    subs = pedit.join_objects(keep, ks, other, os_)
+    if subs is None:
+        raise EditError("bad_op", i, "no_open_ends")
+    new = vectorgeom.path_from_mm(keep, subs)
+    if new is None:
+        raise EditError("bad_op", i, "empty_result")
+    lab_k, lab_o = _label(keep), _label(other)
+    nb = _anchor_count(ks) + _anchor_count(os_)
+    # 先删被并掉的那个再换上合成的：总量预算按改后的整张画布量，别把它的锚点算两遍（Codex #2272）
+    _delete_path(s, other)
+    _write_path(s, i, keep, new)
+    s.echo.append(
+        f"连接 {lab_o} 与 {lab_k}：取最近的两个端点相连，合成一个路径，留 {keep['id']}（样式随它），删去 {other['id']}；"
+        f"锚点 {nb} → {_anchor_count(new['subpaths'])}（现为 {_shape_txt(subs)}）"
+    )
+
+
+def _op_reverse_path(s: _State, i: int, op: dict) -> None:
+    """反转方向：锚点倒过来排、进出手柄互换，曲线逐点不变；端型字段不跟着换（起点 / 终点换了头，箭头就指向另一边）"""
+    o, _subs = _path_target(s, i, op, set())
+    new = pedit.reverse_path(o)
+    n = _anchor_count(vectorgeom.path_to_mm(o))
+    o["subpaths"] = new["subpaths"]
+    s.touched.add(o["id"])
+    s.changes.append({"id": o["id"], "field": "nodes", "before": n, "after": n})
+    s.echo.append(f"反转方向 {_label(o)}：起点与终点互换（锚点数 {n} 不变，端型字段没换）")
+
+
+def _op_make_compound(s: _State, i: int, op: dict) -> None:
+    """建立复合路径（桌面 ⌘8）：所有子路径并进**最靠后**那个对象（沿用它的样式、id 与名字），填充规则设成奇偶——重叠的地方挖空"""
+    if set(op) - {"op", "ids"}:
+        raise EditError("bad_op", i)
+    ids = op.get("ids")
+    if (
+        not isinstance(ids, list)
+        or len(ids) < 2
+        or not all(isinstance(v, str) for v in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise EditError("bad_op", i, "ids")
+    for v in ids:
+        _operand(s, i, v, "ids", "closed")
+    live = s.live()
+    # 数组顺序（从后往前）；封闭形状照前端 `operands` 先转为路径
+    src = [_as_path(i, o) for o in live if o.get("id") in set(ids)]
+    seed = sorted(ids)
+    subs = [sp for o in src for sp in vectorgeom.world_subpaths(o)]
+    plan = vectorgeom.plan_replace(
+        live, src, [{"key": 0, "subs": subs}], lambda n: _mint(s, i, "cmp", seed, n)
+    )
+    if plan is None:
+        raise EditError("bad_op", i, "empty_result")
+    plan["add"] = [{**p, "fillRule": "evenodd"} for p in plan["add"]]
+    _land_plan(s, i, live, src, plan)
+    s.echo.append(
+        f"建立复合路径：{len(src)} 个路径（{'、'.join(o['id'] for o in src)}）→ {plan['add'][0]['id']}"
+        f"（{len(subs)} 条子路径，样式随最靠后的那个，奇偶填充）"
+    )
+
+
+def _op_release_compound(s: _State, i: int, op: dict) -> None:
+    """释放复合路径（桌面 ⌥⇧⌘8）：一个多子路径的路径拆成每条子路径一个对象，第一条留原 id；填充规则回到缺省"""
+    o, subs = _path_target(s, i, op, set())
+    if len(o.get("subpaths") or []) < 2:
+        raise EditError("bad_op", i, "not_compound")
+    live = s.live()
+    plan = vectorgeom.plan_replace(
+        live,
+        [o],
+        [{"key": 0, "subs": [sp]} for sp in vectorgeom.world_subpaths(o)],
+        lambda n: _mint(s, i, "rel", [o["id"]], n),
+    )
+    if plan is None:
+        raise EditError("bad_op", i, "empty_result")
+    _land_plan(s, i, live, [o], plan)
+    s.echo.append(
+        f"释放复合路径 {_label(o)}：{len(subs)} 条子路径 → {len(plan['add'])} 个路径（{'、'.join(p['id'] for p in plan['add'])}）"
+    )
+
+
+_ANCHOR_OPS = {
+    "move_anchors": _op_move_anchors,
+    "move_handle": _op_move_handle,
+    "add_anchors": _op_add_anchors,
+    "delete_anchors": _op_delete_anchors,
+    "convert_anchors": _op_convert_anchors,
+    "average_anchors": _op_average_anchors,
+    "cut_path": _op_cut_path,
+    "join_paths": _op_join_paths,
+    "reverse_path": _op_reverse_path,
+    "make_compound": _op_make_compound,
+    "release_compound": _op_release_compound,
+}
+
+
 _OPS = (
     "set",
     "move",
@@ -940,6 +1416,17 @@ _OPS = (
     "outline_stroke",
     "simplify",
     "convert_to_path",
+    "move_anchors",
+    "move_handle",
+    "add_anchors",
+    "delete_anchors",
+    "convert_anchors",
+    "average_anchors",
+    "cut_path",
+    "join_paths",
+    "reverse_path",
+    "make_compound",
+    "release_compound",
 )
 
 
@@ -958,6 +1445,11 @@ def apply_ops(
     for i, op in enumerate(ops):
         if not isinstance(op, dict) or op.get("op") not in _OPS:
             raise EditError("bad_op", i)
+        if (
+            op["op"] in _ANCHOR_OPS
+        ):  # 第 4 期：路径锚点（点名对象的校验在各自函数里，多对象的写 `ids`）
+            _ANCHOR_OPS[op["op"]](s, i, op)
+            continue
         if op["op"] in ("align", "distribute", "group", "ungroup", "pathfinder", "convert_to_path"):
             {
                 "convert_to_path": _op_convert_to_path,

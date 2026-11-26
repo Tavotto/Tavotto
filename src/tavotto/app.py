@@ -1561,6 +1561,22 @@ def api_panel_stem():
     return resp
 
 
+@app.get("/api/panel-font-facts")
+def api_panel_font_facts():
+    """磁盘上的 PDF 素材原件用没用 Type 3 字体、有没有缺字方块（`artifactinspect.original_font_facts`）。
+
+    给画布角标「用脚本重画」一个依据（ADR 0139 修订 2026-11-24 补充）：**只在用户单选一张有脚本、没动过的
+    PDF 原件时**由前端来问，不在扫描素材时普查（打开项目不为每张图走一遍内容流）。只读文件、不执行脚本。
+    """
+    rel_id = request.args.get("id", "")
+    path = safe_resolve(rel_id)
+    if path.suffix.lower() not in PDF_EXT:
+        return jsonify({"code": "not_pdf", "error": "Only PDF originals have font facts."}), 400
+    resp = jsonify({"id": rel_id, **engine_artifactinspect.original_font_facts(path)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/render")
 def api_render():
     """把面板渲染为指定像素宽度的 PNG（带磁盘缓存），用于画布显示与缩略图。

@@ -89,7 +89,7 @@ test('右键菜单：Esc 不清空选区 / 越界翻转 / 重新构建真跑脚�
     [300, 200, 'alpha'],
     [520, 320, 'beta'],
   ] as const) {
-    await page.getByRole('button', { name: '文字' }).click()
+    await page.getByRole('button', { name: '文字', exact: true }).click()
     await page.locator('[data-canvas-stage]').click({ position: { x, y } })
     await page.keyboard.type(s)
     await page.keyboard.press('Escape')
