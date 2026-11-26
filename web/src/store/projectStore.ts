@@ -80,6 +80,7 @@ import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { usePdfFontFacts } from '@/store/pdfFontFacts'
 import { useSourceBackedReview } from '@/store/sourceBackedReview'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
@@ -306,6 +307,8 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   // 「当前项目关过哪一版」这个投影。
   // PNG 采用被拒的会话记忆属于旧项目：不清的话，B 项目里同名 fileId 会被误判成「已被拒过」
   usePngAdmissionMemory.getState().clear()
+  // PDF 原件的字体事实同理：B 项目里同名同 mtime 的文件不是同一份
+  usePdfFontFacts.getState().clear()
   // 开着的「对照确认」属于旧项目：按取消收掉（什么都不写）
   useSourceBackedReview.getState().clear()
   useProjectReadinessStore.getState().clear()

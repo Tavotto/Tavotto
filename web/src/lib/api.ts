@@ -451,6 +451,22 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 export const fetchPanelStem = (id: string) =>
   jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
 
+/**
+ * PDF 原件的字体事实（后端 `artifactinspect.original_font_facts`，ADR 0139 修订 2026-11-24 补充）：
+ * 只读文件、不执行脚本。`readable: false` = 读不出，不能据此说它有问题。
+ */
+export interface PanelFontFacts {
+  id: string
+  readable: boolean
+  /** 文字画成了 Type 3 字体（matplotlib 的默认 `pdf.fonttype=3`）：在别的软件里常常选不中、换不了字 */
+  type3: boolean
+  /** 有字形落到了占位字（LastResort / `.notdef`）：原件里那几个字是方框 */
+  missing_glyphs: boolean
+}
+
+export const fetchPanelFontFacts = (id: string, pj?: string | null) =>
+  jsonFetch<PanelFontFacts>(`/api/panel-font-facts?id=${encodeURIComponent(id)}`, undefined, pj)
+
 /** 精确磁盘 id 的只读事实；不授予执行、几何编辑或发布资格。 */
 export interface PanelSourceFacts {
   id: string
@@ -4045,6 +4061,10 @@ export type QuickLayoutFailureCode =
   | 'not_converged'
   | 'render_failed'
   | 'page_too_small'
+  /** 图内排版：组件太旧、不认图内排版的命令（ADR 0199 §十二） */
+  | 'pro_outdated'
+  /** 图内排版：图里有认不出归属、又挡路的元素 */
+  | 'figure_obstacle'
 
 /** 求解器回的网格：行列数、每张图（画布对象 id）在哪一格、行 / 列相对权重 */
 export interface QuickLayoutGrid {
@@ -4055,7 +4075,11 @@ export interface QuickLayoutGrid {
   row_ratios: number[]
 }
 
-export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
+/**
+ * `in_figure`：这次排的是一张图里面的子图（ADR 0199 §十二）；`label_offset_varied`：为绕开图里原地不动的元素，
+ * 个别标签的偏移与别的不同（暂不出文案）
+ */
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed' | 'in_figure' | 'label_offset_varied'
 
 /** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
 export type QuickLayoutSpecChange =
@@ -4076,9 +4100,11 @@ export type QuickLayoutResponse =
       spec_changes: QuickLayoutSpecChange[]
       /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
       page: { w: number; h: number }
-      /** 网格（拖分隔线重排用）；后端说不出 = null */
+      /** 网格（拖分隔线重排用）；后端说不出 = null（图内排版没有网格） */
       grid: QuickLayoutGrid | null
       replay_required: boolean
+      /** `figure` = 图内排版（只有一张可排的图、图里有好几个坐标轴）；多图排版不带 */
+      mode?: 'figure'
     }
   | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
 
@@ -4093,8 +4119,10 @@ const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
   'not_converged',
   'render_failed',
   'page_too_small',
+  'pro_outdated',
+  'figure_obstacle',
 ])
-const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed', 'in_figure', 'label_offset_varied'])
 const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
   'font_family',
   'font_size',
@@ -4134,6 +4162,7 @@ function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
   if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
   return (
     body.ok === true &&
+    (body.mode === undefined || body.mode === 'figure') &&
     isQuickLayoutGrid(body.grid) &&
     Array.isArray(body.panels) &&
     body.panels.every(
@@ -6064,6 +6093,8 @@ export interface AiDataProposeBody {
   spec?: Record<string, unknown>
   /** 期刊自己规定的字号上下限（pt，只放规定了的那一端；都没规定 / 没有期刊绑定就不带这个键） */
   font_range?: { min_pt?: number; max_pt?: number }
+  /** `false` = 不起「读懂数据」的后台任务（不是用户在看数据的重出用，如点选误差线换类型：免得悄悄多发一次模型出站）；候选不变。不给 = 照旧 */
+  understand?: boolean
 }
 
 export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>

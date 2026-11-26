@@ -714,8 +714,14 @@ _LAYOUT_OPS = {
         'align {ids, mode: left/hcenter/right/top/vcenter/bottom, to?: "selection" | "page" | {key: id} | {panel: P1}}；'
         "distribute {ids, axis: h/v, gap_mm?}；order {id, to: front/back/forward/backward}；group {ids, name?}；"
         "ungroup {group}；rotate {id, deg}；pathfinder {ids, mode: unite/minus_front/minus_back/intersect/exclude/divide/"
-        "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}。"
-        "布尔等四个几何操作目前只收 path。"
+        "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}；"
+        "convert_to_path {ids}（形状 / 箭头换成同 id 的路径）。布尔 / 偏移收路径与封闭形状，轮廓化另收直线 / 箭头，简化只收 path。"
+        "路径锚点（只收 path，锚点地址 {sp, i} 取场景 vector_objects[].anchors，含义是这条操作执行时的状态）："
+        "move_anchors {id, anchors, by_mm}；move_handle {id, anchor, which: in/out, to_mm, break_smooth?}；"
+        "add_anchors {id, anchors?} 或 {id, at: {sp, seg, t}}；delete_anchors / average_anchors {id, anchors}；"
+        "convert_anchors {id, anchors, to?: smooth/corner}；cut_path {id, anchors}；"
+        "join_paths {id, anchors: [端点, 端点]} 或 {ids: [甲, 乙]}（留最后一个）；reverse_path {id}；"
+        "make_compound {ids}；release_compound {id}。"
         "id 取 tavotto_layout_scene 的 vector_objects。全文见 tavotto_guide section=layout-annotate。"
     ),
     "items": {"type": "object"},
@@ -839,7 +845,7 @@ def _layout_edit_tools() -> list[dict]:
             "title": "出编辑方案（不写入）",
             "description": (
                 "不写盘：在排版上已有的矢量对象（文字 / 箭头 / 形状 / 路径，含用户手画的）上跑一份补丁——改样式、挪位置、"
-                "对齐分布、层级、编组、旋转、删除、布尔 / 偏移 / 轮廓化 / 简化——回改后的核对、**复述**（echo：逐条「改了谁、"
+                "对齐分布、层级、编组、旋转、删除、布尔 / 偏移 / 轮廓化 / 简化、路径锚点逐点编辑——回改后的核对、**复述**（echo：逐条「改了谁、"
                 "从什么改成什么」）与一张局部图。**先拿复述逐条对照用户的原话**，对不上就改补丁再出方案。"
                 "只核这次动到的对象；failed 非空不能写入。图里由脚本画出的数据元素不在这里改（走 tavotto_apply_overrides）。"
             ),

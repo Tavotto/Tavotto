@@ -163,12 +163,30 @@ describe('收集', () => {
     expect(lastRequest().panels.map((p: { key: string }) => p.key)).toEqual(['p1', 'p2', 'p3'])
   })
 
-  it('不足两张可排的图：不发请求，胶囊说「至少要两张图」', async () => {
-    seed(panel('p1'), panel('p2', { fileKind: 'raster' }))
+  it('一张可排的图都没有：不发请求，胶囊说「至少要两张图」', async () => {
+    seed(panel('p1', { fileKind: 'raster' }), panel('p2', { fileKind: 'raster' }))
     expect(await runQuickLayout('double', 3)).toBe('too_few')
     expect(quickLayoutPlan).not.toHaveBeenCalled()
     expect(statusText()).toBe('至少要两张图')
     expect(useUiStore.getState().statusTone).toBe('info')
+  })
+
+  it('只有一张可排的图：照样发（后端看图里有没有 ≥ 2 个坐标轴，ADR 0199 §十二）；后端说不够就是「至少要两张图」', async () => {
+    seed(panel('p1'), panel('p2', { fileKind: 'raster' }))
+    quickLayoutPlan.mockResolvedValue({ ok: false, code: 'too_few' })
+    expect(await runQuickLayout('double', 3)).toBe('too_few')
+    expect(lastRequest().panels.map((p: { key: string }) => p.key)).toEqual(['p1'])
+    expect(statusText()).toBe('至少要两张图')
+  })
+
+  it('图内排版的两种失败各有一句话：组件太旧 / 图里有放不开的元素', async () => {
+    seed(panel('p1'))
+    quickLayoutPlan.mockResolvedValue({ ok: false, code: 'pro_outdated' })
+    expect(await runQuickLayout('double', 3)).toBe('failed')
+    expect(statusText()).toBe('先更新一下 Pro')
+    quickLayoutPlan.mockResolvedValue({ ok: false, code: 'figure_obstacle' })
+    expect(await runQuickLayout('double', 3)).toBe('failed')
+    expect(statusText()).toBe('有元素放不下，这次没排')
   })
 })
 
@@ -350,6 +368,35 @@ describe('应用', () => {
     const label = currentSpec().label
     expect(label).toBeTruthy()
     expect(sub).toBe(`已按「${label}」改了字体、字号、图例边框、其他样式；图 b 是等比例坐标，没参与轴线对齐`)
+  })
+
+  it('图内排版：先说排的是图里面，再说规范；修不到的不按「图 a」点名；不留网格记忆', async () => {
+    seed(panel('p1'))
+    quickLayoutPlan.mockResolvedValue({
+      ...okPlan(),
+      mode: 'figure',
+      panels: [{ key: 'p1', patches: [{ gid: 'figure', prop: 'size_mm', value: [80, 90] }], box: [0, 0, 80, 90] }],
+      labels: [
+        { key: 'p1', x: 2, y: 2 },
+        { key: 'p1', x: 40, y: 2 },
+      ],
+      page: { w: 80, h: 90 },
+      grid: null,
+      spec_changes: ['font_size'],
+      notes: [
+        { code: 'in_figure', ref: 'p1' },
+        { code: 'spec_not_fixed', ref: 'p1' },
+        // 个别标签为绕开障碍物偏移不同：认这个码，但暂不出一行
+        { code: 'label_offset_varied', ref: 'p1' },
+      ],
+    })
+    expect(await runQuickLayout('single', 3)).toBe('applied')
+    const sub = formatMessage(useUiStore.getState().statusSubline)
+    expect(sub).toBe(
+      `这次排的是图内子图；已按「${currentSpec().label}」改了字号；有几处字号还不合规范，去「问题」看看`,
+    )
+    expect(texts().map((l) => l.text)).toEqual(['(a)', '(b)'])
+    expect(s().doc.quickLayout).toBeUndefined()
   })
 
   it('spec_changes 为空：没有规范那一项', async () => {

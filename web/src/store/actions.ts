@@ -1,5 +1,5 @@
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
-import { redrawOffered } from '@/lib/scriptedBitmaps'
+import { pdfFontProblem, pdfRedrawCandidate, REDRAW_FRAME_OVERRIDE, redrawOffered } from '@/lib/scriptedBitmaps'
 import { currentProjectId } from '@/lib/session'
 import { isCanvasCovered } from '@/store/canvasCover'
 import '@/store/figureSnapshotInvalidation'
@@ -11,6 +11,7 @@ import { msg, t, type UiMessage } from '@/i18n'
 import { classifyArtifactFailure, classifyArtifactReason, isDefiniteRefusal, sourceBackedEligible, type ArtifactFailure } from '@/lib/artifactReason'
 import { registerReconstructionNotifier, registerSourceBackedReviewRunner, runSourceBackedReview, sourceReviewOwner, useSourceBackedReview } from '@/store/sourceBackedReview'
 import { pngAdmitOwner, pngIdentityOf, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { pdfFontFactsOf } from '@/store/pdfFontFacts'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
@@ -2695,7 +2696,20 @@ function swapToVectorPrimary(panel: PanelObject): boolean {
 export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
   finishActiveGesture()
   const panel = findObject(panelId)
-  if (panel?.type !== 'panel' || !redrawOffered(panel)) return false
+  if (panel?.type !== 'panel') return false
+  // PDF 原件（原件用了 Type 3 / 有缺字）：本来就是矢量的脚本产物，重画只换掉字体——一条不改任何东西的
+  // `figure.frame = "savefig"`，面板就由引擎按脚本存盘的图幅重画；不走位图那套采用与对照
+  if (pdfRedrawCandidate(panel)) {
+    if (!redrawOffered(panel, pdfFontFactsOf(panel.fileId))) return false
+    const missing = pdfFontProblem(pdfFontFactsOf(panel.fileId)) === 'pdfMissingGlyphs'
+    commit(msg(missing ? 'artifact.showRedrawMissing' : 'artifact.showRedrawType3', undefined, 'errors'), (d) => {
+      const o = d.objects.find((x) => x.id === panel.id)
+      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
+    })
+    status(msg(missing ? 'artifact.redrawnMissing' : 'artifact.redrawnType3', undefined, 'errors'), 'done')
+    return true
+  }
+  if (!redrawOffered(panel)) return false
   const issue = artifactValidationIssue(panel)
   if (issue) {
     status(engineErrorMsg(new ArtifactValidationError(issue)), 'error', { action: feedbackStatusAction() })
@@ -3939,6 +3953,51 @@ export function adoptScriptFrame(panelId: string): boolean {
     o.nativeH = patch.nativeH
     if (patch.crop) o.crop = patch.crop
     else delete o.crop
+  })
+  return true
+}
+
+/**
+ * 把一块 runtime 面板（脚本捕获的图）原位换成另一个脚本捕获的图：「数据」页画出的图点选误差线换 SD / SEM / 95% CI 用
+ * （`figureOriginStore` → 宿主）。与 `replacePanelAsset` 同一口径：**保留面板 id（选区、组、锚在它上面的标注都不丢）与外框、
+ * 层级、裁剪、旋转、不透明度，只换图源**；一条可撤销的历史（撤销回到旧图），历史标签复用「替换素材为 …」。
+ * 图内修改带不过去：overrides 清空（调用方先核过「图没被改过」，见 `lib/dataFigureOrigin.figureUntouched`）；绑定了样式的画布上，
+ * 新图是新的 `figKey`，按「新图」被样式自动对齐。面板不在、不是 runtime 面板、已经是这张图 = false，什么都不改。
+ */
+export function replaceRuntimeFigure(panelId: string, desc: CapturedFigureDescriptor): boolean {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || panel.fileKind !== 'runtime' || panel.fileId === desc.asset_id) return false
+  if (useUiStore.getState().elementPanelId === panelId) useUiStore.getState().setElementPanel(null)
+  const [w, h] = desc.size_mm
+  commit(hist('replaceAsset', { name: desc.stem }), (d) => {
+    const o = d.objects.find((x) => x.id === panelId)
+    if (o?.type !== 'panel') return
+    // 画布名还是旧图当初自动起的名字（`figureCanvasName` = 图名；用户没改过）：同一条历史里跟着改成新图名；改过名就不动
+    if (o.source?.stem && d.name === o.source.stem) d.name = desc.stem
+    clearAdoption(o)
+    o.fileId = desc.asset_id
+    o.fileKind = 'runtime'
+    o.nativeW = w
+    o.nativeH = h
+    delete o.pxW
+    delete o.pxH
+    o.script = desc.script
+    o.source = {
+      script: desc.script,
+      entry: desc.entry,
+      stem: desc.stem,
+      captureSource: desc.capture_source,
+      fingerprint: desc.source_fingerprint,
+      sizeMm: [w, h],
+      ...(desc.run_config ? { runConfig: desc.run_config } : {}),
+    }
+    delete o.cost
+    o.name = desc.stem
+    o.overrides = []
+    // 这两份都钉在旧素材的 fileId 上（`validFigureSnapshot(snapshot, fileId)`），换了图源就是无效记录
+    delete o.figureSnapshot
+    delete o.figureOrigin
+    o.figureFrame = FIGURE_FRAME_VERSION
   })
   return true
 }

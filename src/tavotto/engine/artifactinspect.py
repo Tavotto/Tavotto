@@ -340,3 +340,58 @@ __all__ = [
     "plan_half",
     "svg_vector",
 ]
+
+
+#: `original_font_facts` 的记忆：(真实路径, 字节数, mtime_ns) → 结果。文件一变键就变，旧项留着也不会被读到；
+#: 上限只防一个长会话里换过很多版的大项目把它撑大。
+_FONT_FACTS: dict[tuple[str, int, int], dict] = {}
+_FONT_FACTS_MAX = 512
+
+
+def original_font_facts(path: Path) -> dict:
+    """磁盘上的 PDF 原件（脚本自己存的那份）有没有「投稿会被挑」的字体问题（ADR 0139 修订 2026-11-24 补充）。
+
+    * `type3`：首页真正用到 Type 3 字体（matplotlib 默认 `pdf.fonttype=3`；不少期刊与 PDF eXpress 拒收）；
+    * `missing_glyphs`：首页真正用到的字里有缺字方块——退到 LastResort（matplotlib ≥ 3.11），或画成 `.notdef`
+      （检查器认得出时）。
+
+    只读文件、不执行脚本（ADR 0013 §6：这是画布选中一张图时的事实，不是打开项目时的工作）。读不出 / 不是 PDF：
+    两项都 False、`readable` False——不凭空给出「有问题」的结论。按文件身份记住，同一份文件只走一遍内容流。
+    """
+    from ..rendercore import inspector
+
+    p = Path(path)
+    try:
+        st = p.stat()
+    except OSError:
+        return {"readable": False, "type3": False, "missing_glyphs": False}
+    key = (str(p.resolve()), st.st_size, st.st_mtime_ns)
+    hit = _FONT_FACTS.get(key)
+    if hit is not None:
+        return dict(hit)
+    try:
+        observed = inspector.observe_pdf(p)
+    except Exception:  # noqa: BLE001 — 检查器自己出错：当作读不出，不当作有问题
+        LOG.warning("原件字体普查失败: %s", p.name, exc_info=True)
+        observed = {}
+    used = observed.get("fonts_used") if observed.get("integrity") == inspector.VERIFIED else None
+    if used is None:
+        facts = {"readable": False, "type3": False, "missing_glyphs": False}
+    else:
+        facts = {
+            "readable": True,
+            "type3": any(f.get("type3") for f in used),
+            # LastResort 只在真落了笔时才算缺字（检查器给 `painted` 时；选了没画、或只用在不可见的文本层里不算）
+            "missing_glyphs": any(
+                f.get("notdef")
+                or (
+                    (f.get("last_resort") or "LastResort" in (f.get("name") or ""))
+                    and f.get("painted", True)
+                )
+                for f in used
+            ),
+        }
+    if len(_FONT_FACTS) >= _FONT_FACTS_MAX:
+        _FONT_FACTS.clear()
+    _FONT_FACTS[key] = facts
+    return dict(facts)

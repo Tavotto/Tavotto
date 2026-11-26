@@ -8,8 +8,11 @@
 结果再换回来。内核几何见 `vecops/src/lib.rs`；这里只做坐标换算与规则。
 
 **与前端不同的地方**（如实）：
-* 形状（rect / ellipse …）不会自动「转为路径」——前端的 `convertToPath` 没有 Python 版，本期只收 `path`；
-* 轮廓化描边只做「居中的实线、没有端型」的路径（虚线 / 端型 / 内外对齐的拆件在前端 `lib/outlineStroke`，没有 Python 版）；
+* 「转为路径」（`to_path_object`）是前端 `lib/convertToPath.toPathObject` 的 Python 版，共享向量
+  `tests/golden/convert_to_path_vectors.json`（前端生成，`tests/test_vector_convert.py` 逐数比）；
+* 轮廓化描边的拆件（虚线、端型、内外对齐）是前端 `lib/outlineStroke` 的 Python 版（`stroke_parts` / `dash_subpaths`），
+  几何拆件复用导出那一份 `geometry.path_segments`；对拍样本 `tests/golden/outline_stroke_vectors.json` 的 `doc` 部分；
+* 路径锚点编辑（ADR 0212 第 4 期）也经这里的 `path_to_mm` / `path_from_mm` / `plan_replace` 落位，纯函数在 `engine/pathedit.py`；
 * 结果的比例坐标与包围盒保留 6 位小数（与 `rendercore/svgimport.path_object` 同一口径），前端不取整。
 """
 
@@ -335,6 +338,335 @@ def common_group(objs: list[dict]) -> str | None:
     return g if g and all(o.get("groupId") == g for o in objs) else None
 
 
+# ------------------------------------------------------------------ 转为路径
+
+#: 路径的缺省拐角（`pathGeom.PATH_DEFAULT_JOIN`）
+PATH_DEFAULT_JOIN = "round"
+
+
+def can_convert_to_path(o: dict) -> bool:
+    """`convertToPath.canConvertToPath`：形状（全部七种）与箭头"""
+    return o.get("type") in ("shape", "arrow")
+
+
+def _num_or(v: object, default: float) -> float:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
+
+
+def _shape_stroke_on(o: dict) -> bool:
+    """`types/document.shapeStrokeOn`"""
+    return o.get("shape") in geometry.STROKE_ONLY_SHAPES or o.get("stroke") is not False
+
+
+def _shape_inset(o: dict, sw: float) -> float:
+    """`shapeGeometry.shapeInset`（文档形态：`strokeAlign`）"""
+    if not _shape_stroke_on(o):
+        return 0.0
+    if o.get("shape") in geometry.STROKE_ONLY_SHAPES:
+        return sw / 2
+    align = o.get("strokeAlign")
+    return 0.0 if align == "center" else -sw / 2 if align == "outside" else sw / 2
+
+
+def _end(v: object, default: XY) -> XY:
+    if isinstance(v, dict):
+        return (_num_or(v.get("rx"), default[0]), _num_or(v.get("ry"), default[1]))
+    return default
+
+
+def arrow_heads(o: dict) -> tuple[str, str]:
+    """`types/document.arrowHeads`：新端型字段优先，没有就按旧 `head` 推三角头"""
+    if o.get("headStart") is not None or o.get("headEnd") is not None:
+        return (o.get("headStart") or "none", o.get("headEnd") or "none")
+    head = o.get("head")
+    return (
+        "triangle" if head == "both" else "none",
+        "triangle" if head in ("end", "both") else "none",
+    )
+
+
+def _node(p: XY, i: XY | None = None, out: XY | None = None, smooth: bool = False) -> dict:
+    n: dict = {"p": p}
+    if i is not None:
+        n["in"] = i
+    if out is not None:
+        n["out"] = out
+    if smooth:
+        n["smooth"] = True
+    return n
+
+
+def _local_subpaths(o: dict, sw: float) -> list[dict]:
+    """`convertToPath.localSubpaths`：对象自己的 mm（原点在框左上、未旋转）里的子路径；手柄缺省 = 不写。"""
+    w = max(float(o["w"]), 0.001)
+    h = max(float(o["h"]), 0.001)
+    if o.get("type") == "arrow":
+        s, e = _end(o.get("start"), (0.0, 0.0)), _end(o.get("end"), (0.0, 0.0))
+        return [
+            {"closed": False, "nodes": [_node((s[0] * w, s[1] * h)), _node((e[0] * w, e[1] * h))]}
+        ]
+    inset = _shape_inset(o, sw)
+    kind = o.get("shape")
+    if kind == "line":
+        s, e = _end(o.get("start"), (0.0, 0.5)), _end(o.get("end"), (1.0, 0.5))
+        return [
+            {"closed": False, "nodes": [_node((s[0] * w, s[1] * h)), _node((e[0] * w, e[1] * h))]}
+        ]
+    if kind == "rect":
+        x0 = y0 = inset
+        rw = max(w - 2 * inset, 0.001)
+        rh = max(h - 2 * inset, 0.001)
+        x1, y1 = x0 + rw, y0 + rh
+        cr = _num_or(o.get("cornerRadius"), 0.0)
+        r = min(cr, min(rw, rh) / 2) if cr else 0.0
+        if not r > 0:
+            return [
+                {
+                    "closed": True,
+                    "nodes": [_node((x0, y0)), _node((x1, y0)), _node((x1, y1)), _node((x0, y1))],
+                }
+            ]
+        k = geometry.KAPPA * r
+        return [
+            {
+                "closed": True,
+                "nodes": [
+                    _node((x0 + r, y0), (x0 + r - k, y0), None, True),
+                    _node((x1 - r, y0), None, (x1 - r + k, y0), True),
+                    _node((x1, y0 + r), (x1, y0 + r - k), None, True),
+                    _node((x1, y1 - r), None, (x1, y1 - r + k), True),
+                    _node((x1 - r, y1), (x1 - r + k, y1), None, True),
+                    _node((x0 + r, y1), None, (x0 + r - k, y1), True),
+                    _node((x0, y1 - r), (x0, y1 - r + k), None, True),
+                    _node((x0, y0 + r), None, (x0, y0 + r - k), True),
+                ],
+            }
+        ]
+    if kind == "ellipse":
+        cx, cy = w / 2, h / 2
+        rx, ry = max(w / 2 - inset, 0.001), max(h / 2 - inset, 0.001)
+        kx, ky = geometry.KAPPA * rx, geometry.KAPPA * ry
+        # 与后端 `ellipse_segments` 同一个起点与方向（最右点起、y 向下的空间里顺时针）
+        return [
+            {
+                "closed": True,
+                "nodes": [
+                    _node((cx + rx, cy), (cx + rx, cy - ky), (cx + rx, cy + ky), True),
+                    _node((cx, cy + ry), (cx + kx, cy + ry), (cx - kx, cy + ry), True),
+                    _node((cx - rx, cy), (cx - rx, cy + ky), (cx - rx, cy - ky), True),
+                    _node((cx, cy - ry), (cx - kx, cy - ry), (cx + kx, cy - ry), True),
+                ],
+            }
+        ]
+    if kind in ("triangle", "diamond", "polygon", "star"):
+        if kind == "triangle":
+            pts = [(w / 2, inset), (w - inset, h - inset), (inset, h - inset)]
+        elif kind == "diamond":
+            pts = [(w / 2, inset), (w - inset, h / 2), (w / 2, h - inset), (inset, h / 2)]
+        elif kind == "polygon":
+            pts = geometry.polygon_points(_num_or(o.get("sides"), 6), w, h, inset)  # type: ignore[arg-type]
+        else:
+            pts = geometry.star_points(
+                _num_or(o.get("sides"), geometry.DEFAULT_STAR_POINTS),  # type: ignore[arg-type]
+                w,
+                h,
+                inset,
+                _num_or(o.get("starRatio"), geometry.DEFAULT_STAR_RATIO),
+            )
+        return [{"closed": True, "nodes": [_node(p) for p in pts]}]
+    if kind == "brace":
+        # `shapeGeometry.braceParts`；二次贝塞尔 Q(p0, c, p1) 精确等于三次 C(p0 + ⅔(c − p0), p1 + ⅔(c − p1), p1)
+        cx = w / 2
+        tip = min(h * 0.06, h / 2 - inset)
+        parts: list[tuple[XY | None, XY]] = [
+            ((cx, inset), (cx, h * 0.25)),
+            (None, (cx, h / 2 - tip)),
+            ((cx, h / 2), (inset, h / 2)),
+            ((cx, h / 2), (cx, h / 2 + tip)),
+            (None, (cx, h * 0.75)),
+            ((cx, h - inset), (w - inset, h - inset)),
+        ]
+
+        def lift(a: XY, c: XY) -> XY:
+            return (a[0] + (2 / 3) * (c[0] - a[0]), a[1] + (2 / 3) * (c[1] - a[1]))
+
+        nodes = [_node((w - inset, inset))]
+        for c, p in parts:
+            if c is not None:
+                nodes[-1]["out"] = lift(nodes[-1]["p"], c)
+                nodes.append(_node(p, lift(p, c)))
+            else:
+                nodes.append(_node(p))
+        return [{"closed": False, "nodes": nodes}]
+    if kind == "arc":
+        cx, cy = w - inset, h - inset
+        rx, ry = max(w - 2 * inset, 0.001), max(h - 2 * inset, 0.001)
+        p0, c1 = (cx - rx, cy), (cx - rx, cy - geometry.KAPPA * ry)
+        c2, p3 = (cx - geometry.KAPPA * rx, cy - ry), (cx, cy - ry)
+        return [{"closed": False, "nodes": [_node(p0, None, c1), _node(p3, c2)]}]
+    return []
+
+
+def fit_path_box(subs: list[dict], deg: float, pivot: XY) -> dict | None:
+    """`pathGeom.fitPathBox`：页面 mm 的子路径（手柄可缺）→ 包围盒（曲线实际范围、短边钳到 0.01 mm）+ 比例坐标；
+    手柄写没写照原样（不因为与锚点重合就省掉）。旋转时框中心绕 `pivot` 转过去、整体补回。"""
+    full = [
+        {
+            "closed": sp["closed"],
+            "nodes": [
+                {"p": n["p"], "in": n.get("in", n["p"]), "out": n.get("out", n["p"])}
+                for n in sp["nodes"]
+            ],
+        }
+        for sp in subs
+        if len(sp["nodes"]) >= 2
+    ]
+    box = fit_box(full)
+    if box is None:
+        return None
+    x, y, w, h = box
+
+    def frac(q: XY) -> list[float]:
+        return [_r((q[0] - box[0]) / w), _r((q[1] - box[1]) / h)]
+
+    out_subs = []
+    for sp in subs:
+        nodes = []
+        for n in sp["nodes"]:
+            node: dict = {"p": frac(n["p"])}
+            for k in ("in", "out"):
+                if n.get(k) is not None:
+                    node[k] = frac(n[k])
+            if n.get("smooth"):
+                node["smooth"] = True
+            nodes.append(node)
+        out_subs.append({"closed": sp["closed"], "nodes": nodes})
+    if deg:
+        c = (x + w / 2, y + h / 2)
+        moved = rotate_about(c, pivot, deg)
+        x += moved[0] - c[0]
+        y += moved[1] - c[1]
+    return {"x": _r(x), "y": _r(y), "w": _r(w), "h": _r(h), "subpaths": out_subs}
+
+
+def to_path_object(o: dict) -> dict | None:
+    """`convertToPath.toPathObject`：一个形状 / 箭头 → 同 id 的路径对象（画面逐点不动）。几何退化（不到两个锚点）= None。
+    文档层的通用字段原样带过去；填充 / 描边 / 线型 / 端型字段照搬，缺省仍不写；直线与大括号原来的缺省拐角是尖角，
+    写明 `lineJoin: miter`。共享向量 `tests/golden/convert_to_path_vectors.json`（前端生成）。"""
+    if not can_convert_to_path(o):
+        return None
+    sw = max(_num_or(o.get("strokePt"), 1.0), 0.05) * MM_PER_PT
+    ox, oy = float(o["x"]), float(o["y"])
+
+    def page(q: XY) -> XY:
+        return (q[0] + ox, q[1] + oy)
+
+    subs = [
+        {
+            "closed": sp["closed"],
+            "nodes": [
+                {k: (page(v) if k in ("p", "in", "out") else v) for k, v in n.items()}
+                for n in sp["nodes"]
+            ],
+        }
+        for sp in _local_subpaths(o, sw)
+    ]
+    deg = rotation_of(o)
+    box = fit_path_box(subs, deg, _center(o))
+    if box is None:
+        return None
+    is_arrow = o.get("type") == "arrow"
+    closed_shape = not is_arrow and o.get("shape") not in geometry.STROKE_ONLY_SHAPES
+    join = o.get("lineJoin") or (
+        "round" if is_arrow else geometry.default_line_join(o.get("shape"))
+    )
+    fill = o.get("fill") if closed_shape else None
+    out: dict = {"id": o["id"], "type": "path", **{k: box[k] for k in ("x", "y", "w", "h")}}
+    for k in ("locked", "hidden"):
+        if o.get(k):
+            out[k] = o[k]
+    if o.get("name") is not None:
+        out["name"] = o["name"]
+    if o.get("groupId") is not None:
+        out["groupId"] = o["groupId"]
+    # 嵌套组的整条链与剪切蒙版的身份一起带过去（ADR 0191）
+    if o.get("groupPath"):
+        out["groupPath"] = list(o["groupPath"])
+    for k in ("clipMask", "clipOff"):
+        if o.get(k):
+            out[k] = True
+    for k in ("layoutPinned", "rotationDeg"):
+        if o.get(k):
+            out[k] = o[k]
+    out["subpaths"] = box["subpaths"]
+    out["strokePt"] = o.get("strokePt")
+    out["color"] = o.get("color")
+    out["fill"] = fill
+    if fill and not is_arrow and o.get("fillOpacity") is not None:
+        out["fillOpacity"] = o["fillOpacity"]
+    if closed_shape and not _shape_stroke_on(o):
+        out["stroke"] = False
+    if o.get("strokeOpacity") is not None:
+        out["strokeOpacity"] = o["strokeOpacity"]
+    for k in ("dash", "dashPattern"):
+        if o.get(k):
+            out[k] = o[k]
+    if o.get("miterLimit") is not None:
+        out["miterLimit"] = o["miterLimit"]
+    if o.get("lineCap"):
+        out["lineCap"] = o["lineCap"]
+    if join != PATH_DEFAULT_JOIN:
+        out["lineJoin"] = join
+    if is_arrow:
+        hs, he = arrow_heads(o)
+        if hs != "none":
+            out["headStart"] = hs
+        if he != "none":
+            out["headEnd"] = he
+        for k in ("headSizeStart", "headSizeEnd"):
+            if o.get(k):
+                out[k] = o[k]
+    else:
+        if fill and o.get("fillGradient"):
+            out["fillGradient"] = o["fillGradient"]
+        if o.get("strokeGradient"):
+            out["strokeGradient"] = o["strokeGradient"]
+    return _remap_gradients(out, o, out, deg)
+
+
+def is_pathfinder_operand(o: dict) -> bool:
+    """`pathfinder.isPathfinderOperand`：未锁定、未隐藏的路径，或封闭形状（直线 / 大括号 / 弧线、箭头不收）"""
+    if o.get("locked") or o.get("hidden"):
+        return False
+    if o.get("type") == "path":
+        return True
+    return o.get("type") == "shape" and o.get("shape") not in geometry.STROKE_ONLY_SHAPES
+
+
+def keep_identity(made: dict, src: dict) -> dict:
+    """同 id 换成路径时，0208 的标注记录（`anchor`：谁加的、锚在哪）跟着走——前端 `toPathObject` 的白名单不带它，
+    但 Agent 这边换完还要能按 `by_agent` / `anchored_to` 选中同一个对象（Codex #2268）。"""
+    if src.get("anchor") is not None:
+        made["anchor"] = src["anchor"]
+    return made
+
+
+def as_path(o: dict) -> dict | None:
+    """`pathfinder.asPath`：参与几何运算的对象 → 路径（形状 / 箭头按「转为路径」那份几何换；
+    「转为路径」不带的斜接上限与自定义虚线，结果对象接着用；标注记录照 `keep_identity` 带过去，与路径操作数一样）"""
+    if o.get("type") == "path":
+        return o
+    p = to_path_object(o)
+    if p is None:
+        return None
+    keep_identity(p, o)
+    if o.get("miterLimit") is not None:
+        p["miterLimit"] = o["miterLimit"]
+    if o.get("dashPattern"):
+        p["dashPattern"] = o["dashPattern"]
+    return p
+
+
 # ------------------------------------------------------------------ 路径查找器
 
 
@@ -424,21 +756,273 @@ def offset_path(kernel, o: dict, delta_mm: float, new_id: str) -> dict | None:
 # ------------------------------------------------------------------ 轮廓化描边
 
 
-def stroke_unsupported(o: dict) -> str | None:
-    """本期（Python）没有的描边外观：虚线 / 端型 / 内外对齐的拆件只在前端 `lib/outlineStroke`。回字段名；能做 = None。"""
-    if o.get("dash") not in (None, "solid") or geometry.valid_dash_pattern(o.get("dashPattern")):
-        return "dash"
-    if o.get("headStart", "none") != "none" or o.get("headEnd", "none") != "none":
-        return "head"
-    if o.get("strokeAlign") in ("inside", "outside"):
-        drawn = [sp for sp in path_to_mm(o) if len(sp["nodes"]) >= 2]
-        if drawn and all(sp["closed"] for sp in drawn):
-            return "strokeAlign"
-    return None
+# 轮廓化描边的完整外观：照前端 `lib/outlineStroke.ts`（拆件）+ `pathfinder.strokeArea`（拓宽、合并、裁剪）。
+# 虚线、端型（箭头头）、内外对齐先在这里摆好几何（页面 mm），再交给内核拓宽 / 合并 / 裁剪。几何拆件复用导出那一份
+# `rendercore.geometry.path_segments`（与前端 `pathGeometry` 严格同源，共享向量 `tests/golden/path_vectors.json`）。
+
+
+def _corner(p: XY) -> dict:
+    return {"p": p, "in": p, "out": p, "smooth": False}
+
+
+def _page_of(o: dict) -> Callable[[float, float], XY]:
+    """框空间 mm → 页面 mm（旋转已算进去）：`rotatePoint(o, [o.x + x, o.y + y])`"""
+    ox, oy, c, deg = float(o["x"]), float(o["y"]), _center(o), rotation_of(o)
+    return lambda x, y: rotate_about((ox + x, oy + y), c, deg)
+
+
+def segs_to_subpaths(segs: list, o: dict) -> list[dict]:
+    """`outlineStroke.segsToSubpaths`：`path_segments` 的段（框空间 mm）→ 页面 mm 的子路径"""
+    page = _page_of(o)
+    out: list[dict] = []
+    cur: dict | None = None
+    for s in segs:
+        if s[0] == "M":
+            cur = {"closed": False, "nodes": [_corner(page(s[1], s[2]))]}
+            out.append(cur)
+        elif s[0] == "L" and cur is not None:
+            cur["nodes"].append(_corner(page(s[1], s[2])))
+        elif s[0] == "C" and cur is not None:
+            cur["nodes"][-1]["out"] = page(s[1], s[2])
+            end = page(s[5], s[6])
+            cur["nodes"].append({"p": end, "in": page(s[3], s[4]), "out": end, "smooth": False})
+        elif s[0] == "Z" and cur is not None:
+            # 闭合：`path_segments` 已补了「末 → 首」那一段，末点与首点重合——并成首点（入手柄挪过去）
+            first, last = cur["nodes"][0], cur["nodes"][-1]
+            if (
+                len(cur["nodes"]) > 1
+                and math.hypot(last["p"][0] - first["p"][0], last["p"][1] - first["p"][1]) < 1e-9
+            ):
+                first["in"] = last["in"]
+                cur["nodes"].pop()
+            cur["closed"] = True
+    return [sp for sp in out if len(sp["nodes"]) >= 2]
+
+
+def _head_subpaths(h: tuple, o: dict) -> list[dict]:
+    """`outlineStroke.headSubpaths`：一个端型（`geometry.head_geometry` 的形状）→ 页面 mm 的子路径"""
+    page = _page_of(o)
+    if h[0] == "dot":
+        _, cx, cy, r = h
+        k = 0.5522847498 * r
+
+        def P(x: float, y: float) -> XY:
+            return page(cx + x, cy + y)
+
+        return [
+            {
+                "closed": True,
+                "nodes": [
+                    {"p": P(r, 0), "in": P(r, -k), "out": P(r, k), "smooth": True},
+                    {"p": P(0, r), "in": P(k, r), "out": P(-k, r), "smooth": True},
+                    {"p": P(-r, 0), "in": P(-r, k), "out": P(-r, -k), "smooth": True},
+                    {"p": P(0, -r), "in": P(-k, -r), "out": P(k, -r), "smooth": True},
+                ],
+            }
+        ]
+    pts = [_corner(page(x, y)) for x, y in h[1]]
+    if h[0] == "poly":
+        return [{"closed": True, "nodes": pts}]
+    return [{"closed": False, "nodes": pts}] if len(pts) >= 2 else []
+
+
+def _filled_head(h: tuple) -> bool:
+    """`shapeGeometry.isFilledHead`：开口 V / 短横是一笔描边，其余（三角 / 隐形 / 菱形 / 圆点）是面积"""
+    return h[0] in ("poly", "dot")
+
+
+def _dash_array(o: dict, sw_mm: float) -> list[float] | None:
+    """`shapeGeometry.dashArray(o.dash, sw, custom, MM_PER_PT)`：自定义虚线（pt）优先，点线 = 0.01×线宽 + 2×线宽，
+    预设线型按线宽比例。不取整（与 `geometry.dash_pattern` 给导出的那份不同：那份保留 3 位）。"""
+    custom = geometry.valid_dash_pattern(o.get("dashPattern"))
+    if custom:
+        return [v * MM_PER_PT for v in custom]
+    dash = o.get("dash")
+    if dash == "dotted":
+        return [sw_mm * 0.01, sw_mm * 2]
+    ratios = geometry.DASH_RATIOS.get(dash) if isinstance(dash, str) else None
+    return [sw_mm * r for r in ratios] if ratios else None
+
+
+_ARC_SAMPLES = 64
+
+
+def _lerp(p: XY, q: XY, t: float) -> XY:
+    return (p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t)
+
+
+def _seg_at(s: tuple, t: float) -> XY:
+    a, b, c, d = s
+    ab, bc, cd = _lerp(a, b, t), _lerp(b, c, t), _lerp(c, d, t)
+    return _lerp(_lerp(ab, bc, t), _lerp(bc, cd, t), t)
+
+
+def _split(q: tuple, t: float) -> tuple[tuple, tuple]:
+    a, b, c, d = q
+    ab, bc, cd = _lerp(a, b, t), _lerp(b, c, t), _lerp(c, d, t)
+    abc, bcd = _lerp(ab, bc, t), _lerp(bc, cd, t)
+    m = _lerp(abc, bcd, t)
+    return (a, ab, abc, m), (m, bcd, cd, d)
+
+
+def _sub_seg(s: tuple, t0: float, t1: float) -> tuple:
+    """三次段的 [t0, t1] 那一截（de Casteljau 两刀）"""
+    right = _split(s, t0)[1] if t0 > 0 else s
+    u = 1 if t0 >= 1 else (t1 - t0) / (1 - t0)
+    return _split(right, u)[0] if u < 1 else right
+
+
+def _arc_table(s: tuple) -> tuple[list[float], float]:
+    """一段的弧长表（t 等分 64 份，与前端 `SAMPLES` 同一个数）"""
+    ln = [0.0]
+    prev = s[0]
+    for k in range(1, _ARC_SAMPLES + 1):
+        q = _seg_at(s, k / _ARC_SAMPLES)
+        ln.append(ln[k - 1] + math.hypot(q[0] - prev[0], q[1] - prev[1]))
+        prev = q
+    return ln, ln[_ARC_SAMPLES]
+
+
+def _t_at(tab: tuple[list[float], float], d: float) -> float:
+    ln, total = tab
+    if d <= 0:
+        return 0.0
+    if d >= total:
+        return 1.0
+    i = 1
+    while i < _ARC_SAMPLES and ln[i] < d:
+        i += 1
+    a, b = ln[i - 1], ln[i]
+    return (i - 1 + ((d - a) / (b - a) if b > a else 0)) / _ARC_SAMPLES
+
+
+def dash_subpaths(subs: list[dict], dash: list[float]) -> list[dict]:
+    """`outlineStroke.dashSubpaths`：按虚线（画 / 空交替，mm）把子路径切成一段段画出来的部分（开放子路径）。
+    每条子路径从头量起；闭合子路径横跨起点的画段接回一段，一段盖满整圈 = 保持闭合。"""
+    total = sum(dash)
+    if not total > 0:
+        return [dict(sp) for sp in subs]
+    out: list[dict] = []
+    for sp in subs:
+        nodes = sp["nodes"]
+        n = len(nodes)
+        segs = []
+        i = 0
+        while i + 1 < n or (sp["closed"] and i < n):
+            p, q = nodes[i], nodes[(i + 1) % n]
+            segs.append((p["p"], p["out"], q["in"], q["p"]))
+            if i + 1 >= n:
+                break
+            i += 1
+        k = 0
+        left = dash[0]
+        on = True
+        cur: dict | None = None
+        first: dict | None = None
+        for si, s in enumerate(segs):
+            tab = _arc_table(s)
+            pos = 0.0
+            while pos < tab[1] - 1e-12:
+                step = min(left, tab[1] - pos)
+                if on:
+                    a, b, c, d = _sub_seg(s, _t_at(tab, pos), _t_at(tab, pos + step))
+                    if cur is None:
+                        cur = {
+                            "closed": False,
+                            "nodes": [{"p": a, "in": a, "out": b, "smooth": False}],
+                        }
+                        out.append(cur)
+                        if first is None and k == 0 and pos == 0 and si == 0:
+                            first = cur
+                    else:
+                        cur["nodes"][-1]["out"] = b
+                    cur["nodes"].append({"p": d, "in": c, "out": d, "smooth": False})
+                pos += step
+                left -= step
+                if left <= 1e-12:
+                    k = (k + 1) % len(dash)
+                    left = dash[k]
+                    on = not on
+                    if not on:
+                        cur = None
+                    while left <= 1e-12 and on:  # 长度为 0 的「画」段：出一个点
+                        q = _seg_at(s, _t_at(tab, pos))
+                        out.append({"closed": False, "nodes": [_corner(q), _corner(q)]})
+                        k = (k + 1) % len(dash)
+                        left = dash[k]
+                        on = not on
+        if sp["closed"] and first is not None and cur is not None and on:
+            if cur is first:
+                fn = first["nodes"]
+                if len(fn) >= 3:
+                    fn[0]["in"] = fn[-1]["in"]
+                    fn.pop()
+                    first["closed"] = True
+            else:
+                cur["nodes"][-1]["out"] = first["nodes"][0]["out"]
+                cur["nodes"].extend(first["nodes"][1:])
+                out.remove(first)
+    return out
+
+
+def _geom_input(o: dict) -> dict:
+    """文档形态 → `geometry.path_segments` 读的键（只这几个：子路径、描边开关、端型与大小、线宽）"""
+    out = {"subpaths": o.get("subpaths"), "stroke": o.get("stroke"), "stroke_pt": o.get("strokePt")}
+    for doc, exp in (
+        ("headStart", "head_start"),
+        ("headEnd", "head_end"),
+        ("headSizeStart", "head_size_start"),
+        ("headSizeEnd", "head_size_end"),
+        ("strokeAlign", "stroke_align"),
+    ):
+        if o.get(doc) is not None:
+            out[exp] = o[doc]
+    return out
+
+
+def stroke_parts(o: dict) -> dict | None:
+    """`outlineStroke.strokeParts`：一条路径的描边拆成要拓宽 / 要合并 / 要裁剪的几何（页面 mm）。没有描边 = None。"""
+    sw_pt = o.get("strokePt")
+    if o.get("stroke") is False or not (
+        isinstance(sw_pt, (int, float)) and not isinstance(sw_pt, bool) and sw_pt > 0
+    ):
+        return None
+    sw = max(float(sw_pt), 0.05) * MM_PER_PT
+    gi = _geom_input(o)
+    g = geometry.path_segments(gi, float(o["w"]), float(o["h"]), sw)
+    if not g["fill"]:
+        return None
+    custom = geometry.valid_dash_pattern(o.get("dashPattern"))
+    dash = _dash_array(o, sw)
+    strokes = segs_to_subpaths(g["stroke"] if g["heads"] else g["fill"], o)
+    if dash:
+        strokes = dash_subpaths(strokes, dash)
+    align = geometry.path_stroke_align(gi)
+    head_fills: list[dict] = []
+    head_strokes: list[tuple[list[dict], str]] = []
+    for h in g["heads"]:
+        subs = _head_subpaths(h, o)
+        if _filled_head(h):
+            head_fills += subs
+        else:
+            head_strokes.append(
+                (subs, o.get("lineJoin") or ("miter" if h[0] == "bar" else "round"))
+            )
+    return {
+        "strokes": strokes,
+        "cap": geometry.stroke_cap(o.get("lineCap"), None if custom else o.get("dash")),
+        "join": o.get("lineJoin") or PATH_DEFAULT_JOIN,
+        "miter": geometry.miter_limit(o.get("miterLimit")),
+        "head_fills": head_fills,
+        "head_strokes": head_strokes,
+        "head_cap": geometry.stroke_cap(o.get("lineCap"), None),
+        "align": align,
+        "region": segs_to_subpaths(g["fill"], o) if align else [],
+    }
 
 
 def can_outline_stroke(o: dict) -> bool:
-    """`pathfinder.canOutlineStroke`（路径部分）：有描边（`stroke !== false` 且线宽 > 0）"""
+    """`pathfinder.canOutlineStroke`（锁定 / 隐藏另判）：有描边（`stroke !== false` 且线宽 > 0）"""
     sw = o.get("strokePt")
     return (
         o.get("stroke") is not False
@@ -449,25 +1033,57 @@ def can_outline_stroke(o: dict) -> bool:
 
 
 def stroke_area(kernel, p: dict) -> list[dict] | None:
-    """`pathfinder.strokeArea`（居中实线、无端型）：线杆按线宽 / 线端 / 拐角拓宽成的面积（页面 mm）。算不出 = None。"""
-    strokes = [
-        {"closed": sp["closed"], "nodes": [{**n, "smooth": False} for n in sp["nodes"]]}
-        for sp in world_subpaths(p)
-        if len(sp["nodes"]) >= 2
-    ]
-    if not strokes:
+    """`pathfinder.strokeArea`：线杆（已切好虚线）按线宽 / 线端 / 拐角拓宽，并上端型；内外对齐时拓两倍宽再裁到
+    填充区域里面 / 外面（页面 mm）。算不出 = None。"""
+    parts = stroke_parts(p)
+    if parts is None:
         return None
-    cap = geometry.stroke_cap(p.get("lineCap"), p.get("dash"))
-    join = p.get("lineJoin") or DEFAULT_JOIN
-    r = kernel.outline(
-        encode_subpaths(strokes),
-        float(p["strokePt"]),
-        CAP_CODE[cap],
-        JOIN_CODE.get(join, JOIN_CODE[DEFAULT_JOIN]),
-        geometry.miter_limit(p.get("miterLimit")),
-    )
-    d = decode_subpaths(r) if r else None
-    return d[0] if d and d[0] else None
+    width = float(p["strokePt"]) * (2 if parts["align"] else 1)
+    pieces: list[list[dict]] = []
+
+    def widen(subs: list[dict], w: float, cap: str, join: str) -> bool:
+        if not subs:
+            return True
+        r = kernel.outline(
+            encode_subpaths(subs),
+            w,
+            CAP_CODE[cap],
+            JOIN_CODE.get(join, JOIN_CODE[DEFAULT_JOIN]),
+            parts["miter"],
+        )
+        d = decode_subpaths(r) if r else None
+        if d is None:
+            return False
+        pieces.append(d[0])
+        return True
+
+    if not widen(parts["strokes"], width, parts["cap"], parts["join"]):
+        return None
+    for subs, join in parts["head_strokes"]:
+        if not widen(subs, float(p["strokePt"]), parts["head_cap"], join):
+            return None
+    for f in parts["head_fills"]:
+        pieces.append([f])
+    if len(pieces) == 1:
+        area = pieces[0]
+    else:
+        # 线杆、各个端型叠在一起：并成一块（重叠处不叠两层）
+        out = kernel.pathfinder(PATHFINDER_MODES["unite"], encode_stack([(0, s) for s in pieces]))
+        res = decode_results(out) if out else None
+        if not res:
+            return None
+        area = [sp for r in res for sp in r["subs"]]
+    if parts["align"]:
+        rule = 1 if p.get("fillRule") == "evenodd" else 0
+        mode = "intersect" if parts["align"] == "inside" else "minus_front"
+        out = kernel.pathfinder(
+            PATHFINDER_MODES[mode], encode_stack([(0, area), (rule, parts["region"])])
+        )
+        res = decode_results(out) if out else None
+        if not res:
+            return None
+        area = [sp for r in res for sp in r["subs"]]
+    return area or None
 
 
 def outline_stroke(kernel, p: dict, new_id: str) -> tuple[dict, dict | None] | None:

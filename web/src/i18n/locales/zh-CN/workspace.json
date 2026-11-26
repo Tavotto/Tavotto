@@ -580,6 +580,7 @@
     "nativeOffline": "运行已结束",
     "nativeRerun": "重新运行",
     "nativeRerunHint": "重新运行这个脚本，之后就能继续编辑这张图",
+    "hintLabel": "角标说明",
     "nativeRunning": "脚本正在运行，停下来才能编辑",
     "rendering": "渲染中…",
     "runtimeMissingEnvironment": "找不到可用的渲染环境",
@@ -593,7 +594,11 @@
     "frameLegacyBlockedHint": "脚本保存的原图裁得不一样，但这张图的裁剪范围完全在原图之外。先在右侧属性里调整或重置裁剪。",
     "bitmapOriginal": "位图原件",
     "redraw": "用脚本重画",
-    "redrawHint": "此图由脚本存为位图，导出 PDF 时会原样嵌入。点「用脚本重画」可重跑脚本改用矢量图，有差异时会先让你对照，支持撤销。"
+    "redrawHint": "此图由脚本存为位图，导出 PDF 时会原样嵌入。点「用脚本重画」可重跑脚本改用矢量图，有差异时会先让你对照，支持撤销。",
+    "pdfType3": "原件字体不兼容",
+    "pdfMissingGlyphs": "原件有缺字",
+    "pdfType3Hint": "此图由脚本存为 PDF，文字是 Type 3 字体，IEEE、Elsevier 等期刊会退回。点「用脚本重画」可重跑脚本改用标准字体，版面不动，支持撤销。",
+    "pdfMissingGlyphsHint": "此图由脚本存为 PDF，有些字显示成了方框。点「用脚本重画」可重跑脚本补齐字体，版面不动，支持撤销。"
   },
   "quickEdit": {
     "aria": "快捷编辑",
@@ -1054,6 +1059,10 @@
       "other": "其他样式"
     },
     "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",
+    "quickLayoutProOutdated": "先更新一下 {{pro}}",
+    "quickLayoutFigureObstacle": "有元素放不下，这次没排",
+    "quickLayoutNoteInFigure": "这次排的是图内子图",
+    "quickLayoutNoteSpecNotFixedFigure": "有几处字号还不合规范，去「问题」看看",
     "svgImported_other": "已变成 {{count}} 个可编辑对象",
     "svgAsImage": "这个 SVG {{reason}}，已整体当图片放进来",
     "svgExplodeFailed": "这张图{{reason}}，没有拆开",
