@@ -1260,3 +1260,71 @@ def test_full_successful_check_clears_only_the_matching_dependency_evidence(env)
         c.reason_code == "missing_dependency"
         for c in ai_figure_edit.ADAPTER.verify("precommit", None, cand)
     )
+
+
+def _stages(events, sid):
+    return [
+        (d["stage"]["step"], d["stage"]["round"])
+        for n, d in events
+        if n == "ai.stage" and d["session"] == sid
+    ]
+
+
+def test_edit_stage_walks_read_edit_verify_and_a_correction_reopens_edit_with_round_two(env):
+    """改图助手的任务清单（用户 2026-11-26）：读脚本 → 改脚本（目标文件变了）→ 出图核对（进程退出）；
+    有界修正又起进程 = 回到「改脚本」、第 2 轮。只前进、每步只推一次；最后一步留在会话详情里（刷新后接回）。"""
+    env["codes"] = [SYNTAX, FIX]
+    events: list = []
+    sid, _ = _run(env, events=events)
+    sess = _wait(sid)
+    assert _stages(events, sid) == [
+        ("read", 1),
+        ("edit", 1),
+        ("verify", 1),
+        ("edit", 2),
+        ("verify", 2),
+    ]
+    assert sess["stage"] == {"step": "verify", "round": 2}
+    names = [n for n, _ in events]
+    assert names.index("ai.stage") < names.index("ai.done")
+
+
+def test_edit_stage_is_monotonic_and_never_raises(tmp_path):
+    """单元：比对目标文件判「改脚本」（每秒最多读一次）；退出 = 出图核对；读不到文件 / emit 抛都不出错。"""
+    target = tmp_path / "fig.py"
+    target.write_bytes(b"a")
+    sess: dict = {"id": "s"}
+    sent: list = []
+    st = ai_bridge._EditStage(sess, lambda n, d: sent.append(d["stage"]), target, b"a")
+    st.poll(now=0.0)
+    assert sess["stage"] == {"step": "read", "round": 1}
+    target.write_bytes(b"b")
+    st.poll(now=0.5)  # 一秒内不再读
+    assert sess["stage"]["step"] == "read"
+    st.poll(now=1.0)
+    assert sess["stage"] == {"step": "edit", "round": 1}
+    st.exited()
+    st.exited()
+    assert sess["stage"] == {"step": "verify", "round": 1}
+    st.correcting()
+    assert sess["stage"] == {"step": "edit", "round": 2}
+    assert sent == [
+        {"step": s, "round": r} for s, r in [("read", 1), ("edit", 1), ("verify", 1), ("edit", 2)]
+    ]
+
+    def boom(*_a):
+        raise RuntimeError("emit down")
+
+    gone = ai_bridge._EditStage({"id": "g"}, boom, tmp_path / "missing.py", b"x")
+    gone.poll(now=5.0)
+    gone.exited()
+    assert set(ai_bridge.EDIT_STEPS) == {"read", "edit", "verify"}
+
+
+def test_the_stage_event_is_a_kind_the_frontend_listens_for():
+    api_ts = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "api.ts"
+    if not api_ts.is_file():
+        pytest.skip("没有 web/（wheel/sdist 里不含前端源码）")
+    source = api_ts.read_text(encoding="utf-8")
+    block = source[source.index("const EVENT_KINDS = [") :]
+    assert "'ai.stage'" in block[: block.index("] as const")]
