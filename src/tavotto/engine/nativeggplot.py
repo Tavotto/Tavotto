@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
 from .manifest_fields import (
+    axis_grid_fields,
     axis_invert_field,
     axis_limits_field,
     axis_scale_field,
@@ -248,7 +249,7 @@ class GgplotTarget:
     @staticmethod
     def annotate_axes(element: dict, axes: dict) -> None:
         fields = []
-        for axis, original in axes["original"].items():
+        for axis, original in (axes["original"] or {}).items():
             current = axes["current"][axis]
             limits = axis_limits_field(axis, current["range"])
             scale = axis_scale_field(
@@ -260,6 +261,15 @@ class GgplotTarget:
             for field, source in candidates:
                 if field["prop"] in axes["edited"]:
                     field["value_original"] = source
+                fields.append(field)
+        if (grid := axes.get("grid")) is not None:
+            edited = grid["edited"] or {}
+            actual = axis_grid_fields(grid["original"] | edited)
+            original_values = {f["prop"]: f["value"] for f in axis_grid_fields(grid["original"])}
+            for field in actual:
+                prop = field["prop"]
+                if prop in edited:
+                    field["value_original"] = original_values[prop]
                 fields.append(field)
         element["editable"] = fields
         element["identity"] = _AXES_IDENTITY_PREFIX + axes["context"]

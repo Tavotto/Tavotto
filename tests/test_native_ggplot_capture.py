@@ -1012,6 +1012,56 @@ stopifnot(isTRUE(all.equal(positions$grid, expected)),
           identical(positions$labels, c("250", "500", "750", "1000")),
           calls == 4L, identical(adapter$render_ggplot(state), captured$svg))
 
+grid_patch <- reversed
+grid_patch$axes_0 <- c(grid_patch$axes_0, list(grid_x = TRUE, grid_y = FALSE,
+    grid_color = "#356897", grid_linewidth = 2.3, grid_alpha = .5, grid_linestyle = "--"))
+grill_for <- function(table) {
+  panel <- table$grobs[[which(table$layout$name == "panel")]]
+  panel$children[[grep("^grill", names(panel$children))]]
+}
+major_grid <- function(grill, axis) {
+  grobs <- grill$children[startsWith(names(grill$children), paste0("panel.grid.major.", axis))]
+  Filter(function(grob) inherits(grob, "polyline"), grobs)
+}
+device_grobs <- function(state, edits, axis) {
+  adapter$with_svg_frame(frame, function(capture) {
+    grid::grid.newpage()
+    major_grid(grill_for(adapter$ggplot_table_for(state, edits)$table), axis)
+  })$value
+}
+x_grid <- device_grobs(state, grid_patch, "x")[[1L]]
+stopifnot(isTRUE(all.equal(unique(as.numeric(x_grid$x)), expected)),
+          identical(toupper(x_grid$gp$col), "#35689780"),
+          identical(x_grid$gp$lty, "dashed"),
+          isTRUE(all.equal(x_grid$gp$lwd * 72 / 96, 2.3)),
+          !length(device_grobs(state, grid_patch, "y")),
+          identical(adapter$render_ggplot(state), captured$svg), calls == 4L)
+grid_y_off <- list(axes_0 = list(grid_y = FALSE))
+grid_y_before <- grill_for(state$table)
+grid_y_after <- adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  grill_for(adapter$ggplot_table_for(state, grid_y_off)$table)
+})$value
+minor_y <- function(grill) {
+  groove <- grill$children[[grep("^panel.grid.minor.y", names(grill$children))]]
+  groove[c("x", "y", "gp")]
+}
+stopifnot(!length(major_grid(grid_y_after, "y")),
+          identical(minor_y(grid_y_before), minor_y(grid_y_after)))
+for (bad in list(list(grid_x = 1), list(grid_alpha = 1.1), list(grid_linestyle = "foo"),
+                 list(grid_linewidth = 0), list(grid_color = c("#000000", "#FFFFFF")))) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, list(axes_0 = bad)), silent = TRUE), "try-error"))
+}
+categorical_plot <- ggplot2::ggplot(data.frame(x = c("A", "B"), y = c(2, 4)), ggplot2::aes(x, y)) +
+  ggplot2::geom_col() + ggplot2::theme_minimal() + ggplot2::theme(panel.grid = ggplot2::element_blank())
+categorical <- adapter$capture_ggplot(categorical_plot, frame)
+grid_spec <- categorical$state$axes_target$grid$original
+stopifnot(!grid_spec$grid_x, !grid_spec$grid_y)
+activate <- list(axes_0 = list(grid_x = TRUE, grid_color = "#016CA5"))
+stopifnot(length(device_grobs(categorical$state, activate, "x")) == 1L,
+          !length(device_grobs(categorical$state, activate, "y")),
+          identical(adapter$render_ggplot(categorical$state), categorical$svg))
+
 source_log <- adapter$capture_ggplot(plot + ggplot2::scale_x_log10(), frame)
 native_log <- element(adapter$ggplot_manifest(source_log$state, "dose"), "axes_0")
 native_linear <- element(adapter$ggplot_manifest(source_log$state, "dose",
@@ -1055,7 +1105,7 @@ for (change in invalid) {
   stopifnot(inherits(try(adapter$render_ggplot(zero_state, list(axes_0 = change)), silent = TRUE), "try-error"))
 }
 secondary <- plot + ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis())
-stopifnot(is.null(adapter$capture_ggplot(secondary, frame)$state$axes_target))
+stopifnot(!length(adapter$capture_ggplot(secondary, frame)$state$axes_target$axes))
 constant <- ggplot2::ggplot(data.frame(x = c(10, 10), y = c(2, 3)), ggplot2::aes(x, y)) +
   ggplot2::geom_point()
 flat <- adapter$capture_ggplot(constant, frame)$state
@@ -1178,6 +1228,15 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         manifest = baseline["manifest"]
         assert manifest["size_mm"] == pytest.approx([152.4, 101.6])
         elements = {element["gid"]: element for element in manifest["elements"]}
+        grid_fields = elements["axes_0"]["editable"]
+        assert {field["prop"] for field in grid_fields} == {
+            "grid_x",
+            "grid_y",
+            "grid_color",
+            "grid_linestyle",
+            "grid_linewidth",
+            "grid_alpha",
+        }
         scatter = elements["layer.1.scatter"]
         assert scatter["role"] == "scatter" and scatter["identity"].startswith("r6:")
         assert {field["prop"] for field in scatter["editable"]} == {"size", "marker", "alpha"}

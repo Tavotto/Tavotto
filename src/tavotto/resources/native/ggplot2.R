@@ -328,9 +328,10 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, projected = FALS
   list(panel = panel, params = ggplot_format_guide(params, format, values))
 }
 
-ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_strokes, axis_changes) {
+ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_strokes, axis_changes, grid_edits) {
   built <- state$built
   plot <- built$plot
+  if (length(grid_edits)) plot$theme <- ggplot_grid_theme(plot$theme, state$axes_target$grid, grid_edits)
   guide_params <- plot$guides$params
   remapped <- if (length(colour_edits)) ggplot_remap_colour_scales(state, colour_edits, guide_params)
   if (!is.null(remapped)) guide_params <- remapped$guides
@@ -866,7 +867,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     line_targets <- ggplot_line_targets(built, table, captured_layers$grobs)
     line_geometry <- measure_ggplot_lines(table, line_targets, frame_pt)
     line_targets <- line_targets[names(line_geometry)]
-    axes_target <- ggplot_axes_target(built, table)
+    axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
     axes_bbox <- measure_ggplot_axes(table, axes_target, frame_pt)
     rebuild_guides <- !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
       any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L)))
@@ -1061,7 +1062,10 @@ ggplot_table_for <- function(state, edits) {
   legend_targets <- state$legend_targets
   stops <- NULL
   axes <- NULL
-  axis_changes <- ggplot_axis_edits(state$axes_target, edits[[ggplot_axes_gid]])
+  axes_edits <- edits[[ggplot_axes_gid]]
+  grid_edits <- axes_edits[intersect(names(axes_edits), ggplot_grid_keys)]
+  axis_changes <- ggplot_axis_edits(state$axes_target,
+                                  axes_edits[setdiff(names(axes_edits), names(grid_edits))])
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
   axis_sizes <- Filter(Negate(is.null), lapply(names(edits), function(gid) {
@@ -1070,8 +1074,9 @@ ggplot_table_for <- function(state, edits) {
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
   if (length(tick_edits) || length(colour_edits) || length(axis_sizes) || length(guide_strokes) ||
-      length(axis_changes)) {
-    guides <- ggplot_guide_table(state, tick_edits, colour_edits, axis_sizes, guide_strokes, axis_changes)
+      length(axis_changes) || length(grid_edits)) {
+    guides <- ggplot_guide_table(state, tick_edits, colour_edits, axis_sizes, guide_strokes,
+                                 axis_changes, grid_edits)
     table <- guides$table
     stops <- guides$stops
     axes <- guides$axes

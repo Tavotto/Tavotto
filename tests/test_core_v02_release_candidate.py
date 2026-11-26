@@ -52,7 +52,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
   ggplot2::labs(x = "Displacement (L)", y = "Highway mileage", title = "Fuel economy",
                  shape = "Drive type") +
   ggplot2::theme_minimal() +
-  ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"))
+  ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"),
+                 panel.grid.minor.y = ggplot2::element_blank())
 """
 LAYOUT = "/api/layouts/Mixed%20native"
 MPL_EDIT = "Reviewed signal"
@@ -77,8 +78,16 @@ R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
 ERRORBAR_PAINT = {"color": "#803239", "linewidth": 1.8, "alpha": 0.6}
 RANGE_PAINT = {"facecolor": "#695DB2", "alpha": 0.6}
-R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log", "invert_x": True}
-MPL_AXIS_VIEW = {"xlim": [-0.25, 2.25], "ylim": [-0.3, 5.5]}
+AXIS_GRID = {
+    "grid_x": True,
+    "grid_y": False,
+    "grid_color": "#B58A34",
+    "grid_linestyle": "--",
+    "grid_linewidth": 0.85,
+    "grid_alpha": 0.65,
+}
+R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log", "invert_x": True, **AXIS_GRID}
+MPL_AXIS_VIEW = {"xlim": [-0.25, 2.25], "ylim": [-0.3, 5.5], **AXIS_GRID}
 
 
 def _series_patches(baseline, role, paint):
@@ -257,6 +266,13 @@ def _pdf_pixels(path):
         low = tuple(component / 255 for component in bytes.fromhex("0D0887"))
         high = tuple(component / 255 for component in bytes.fromhex("F0F921"))
         drawn = page.get_drawings()
+        grid_color = tuple(n / 255 for n in bytes.fromhex(AXIS_GRID["grid_color"][1:]))
+        grid = [p for p in drawn if p["color"] == pytest.approx(grid_color, abs=0.003)]
+        assert any(p["rect"].x0 < page.rect.width / 2 for p in grid)
+        assert any(p["rect"].x0 > page.rect.width / 2 for p in grid)
+        assert all(p["rect"].width < 0.01 and p["rect"].height > 10 for p in grid)
+        assert all(p["stroke_opacity"] == pytest.approx(0.65, abs=0.01) for p in grid)
+        assert all(p["dashes"] != "[] 0" for p in grid)
         for endpoint in (low, high):
             matches = [path for path in drawn if path["fill"] == pytest.approx(endpoint, abs=0.003)]
             assert any(path["rect"].width > 8 for path in matches), matches  # Guide strip

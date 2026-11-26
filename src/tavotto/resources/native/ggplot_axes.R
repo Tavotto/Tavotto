@@ -195,7 +195,10 @@ ggplot_axes_element <- function(target, current, bbox, edits) {
   list(list(gid = ggplot_axes_gid, role = "axes", label = "\u5b50\u56fe", bbox = bbox,
             draggable = FALSE, editable = list(), native_axes = list(
               context = target$context, current = current, original = original,
-              edited = as.list(names(edits)))))
+              edited = as.list(names(edits)),
+              grid = if (!is.null(target$grid)) {
+                list(original = target$grid$original, edited = edits[intersect(names(edits), ggplot_grid_keys)])
+              })))
 }
 
 ggplot_rebind_layer_targets <- function(table, targets, grobs) {
@@ -228,4 +231,94 @@ ggplot_axes_values <- function(layout, target, changes) {
     list(mode = ggplot_axis_modes[[trans$name]], range = as.list(range),
          inverted = if (target$can_invert) ggplot_inverted(panel$reverse, axis))
   }) |> stats::setNames(names(target$axes))
+}
+
+ggplot_grid_keys <- c("grid_x", "grid_y", "grid_color", "grid_linestyle", "grid_linewidth", "grid_alpha")
+ggplot_grid_cells <- c(grid_x = "panel.grid.major.x", grid_y = "panel.grid.major.y",
+                       minor_x = "panel.grid.minor.x", minor_y = "panel.grid.minor.y")
+
+ggplot_grid_target <- function(built, table, target) {
+  layout <- built$layout
+  slot <- which(table$layout$name == "panel")
+  if (length(slot) != 1L || length(layout$panel_params) != 1L ||
+      !identical(class(layout$coord)[[1L]], "CoordCartesian")) return(target)
+  theme <- built$plot$theme
+  lines <- lapply(ggplot_grid_cells, ggplot2::calc_element, theme = theme)
+  if (!all(vapply(lines, function(line) {
+    inherits(line, "element_blank") || identical(class(line), class(ggplot2::element_line()))
+  }, logical(1L)))) return(target)
+  visible <- !vapply(lines, inherits, logical(1L), "element_blank")
+  for (i in which(!visible & seq_along(lines) <= 2L)) {
+    base <- ggplot2::calc_element("panel.grid.major", theme)
+    if (inherits(base, "element_blank")) base <- ggplot2::calc_element("line", theme)
+    if (!identical(class(base), class(ggplot2::element_line()))) return(target)
+    lines[[i]] <- base
+  }
+  paints <- lapply(lines, function(line) {
+    if (!inherits(line, "element_blank")) ggplot_uniform_pigment(line$colour)
+  })
+  if (any((visible | seq_along(lines) <= 2L) & lengths(paints) == 0L)) return(target)
+  preferred <- if (visible[[2L]] && !visible[[1L]]) 2L else 1L
+  line <- lines[[preferred]]
+  pigment <- paints[[preferred]]
+  if (length(line$linetype) != 1L || is.na(line$linetype) ||
+      length(line$linewidth) != 1L || !is.finite(line$linewidth)) return(target)
+  native_types <- c("blank", "solid", "dashed", "dotted", "dotdash", "longdash", "twodash")
+  linetype <- line$linetype
+  if (is.numeric(linetype) && linetype %in% 0:6) linetype <- native_types[[linetype + 1L]]
+  name <- names(ggplot_line_types)[match(linetype, ggplot_line_types)]
+  if (is.na(name)) name <- as.character(linetype)
+  if (is.null(target)) {
+    # Grid styles work with discrete/custom scales too. Bind them to this panel
+    # without offering a numerical range editor for its scales.
+    target <- list(slot = slot, axes = list(),
+                   context = rlang::hash(list("grid", built$data, layout$coord$limits)))
+  }
+  target$grid <- list(lines = lines, paints = paints, visible = visible, original = list(
+    grid_x = visible[[1L]], grid_y = visible[[2L]], grid_color = pigment$rgb,
+    grid_linestyle = name, grid_linewidth = line$linewidth * ggplot2::.pt * ggplot_lwd_pt,
+    grid_alpha = pigment$alpha))
+  target
+}
+
+ggplot_grid_theme <- function(theme, grid, edit) {
+  if (is.null(grid)) stop("The requested native R grid edit is unavailable.")
+  for (prop in names(edit)) {
+    value <- edit[[prop]]
+    finite_number <- is.numeric(value) && length(value) == 1L && is.finite(value)
+    valid <- switch(prop,
+      grid_x = , grid_y = is.logical(value) && length(value) == 1L && !is.na(value),
+      grid_color = is.character(value) && length(value) == 1L && !is.na(value) &&
+        (value == "none" || grepl("^#[0-9A-Fa-f]{6}$", value)),
+      grid_linestyle = is.character(value) && length(value) == 1L &&
+        value %in% names(ggplot_line_types),
+      grid_linewidth = finite_number && value >= .1 && value <= 10,
+      grid_alpha = finite_number && value >= 0 && value <= 1,
+      FALSE)
+    if (!valid) stop("Invalid native R grid style.")
+  }
+  replacements <- list()
+  styled <- any(c("grid_color", "grid_alpha", "grid_linewidth", "grid_linestyle") %in% names(edit))
+  for (i in seq_along(grid$lines)) {
+    toggle <- if (i <= 2L) edit[[names(ggplot_grid_cells)[[i]]]]
+    if (!styled && is.null(toggle)) next
+    if (identical(toggle, FALSE)) {
+      replacements[[ggplot_grid_cells[[i]]]] <- ggplot2::element_blank()
+      next
+    }
+    if (!grid$visible[[i]] && !isTRUE(toggle)) next
+    line <- grid$lines[[i]]
+    if (!is.null(edit$grid_color) || !is.null(edit$grid_alpha)) {
+      pigment <- grid$paints[[i]]
+      colour <- if (is.null(edit$grid_color)) line$colour else edit$grid_color
+      if (identical(colour, "none")) colour <- NA_character_
+      alpha <- if (is.null(edit$grid_alpha)) pigment$alpha else edit$grid_alpha
+      line$colour <- scales::alpha(colour, alpha)
+    }
+    if (!is.null(edit$grid_linestyle)) line$linetype <- unname(ggplot_line_types[[edit$grid_linestyle]])
+    if (!is.null(edit$grid_linewidth)) line$linewidth <- edit$grid_linewidth / (ggplot2::.pt * ggplot_lwd_pt)
+    line$inherit.blank <- FALSE
+    replacements[[ggplot_grid_cells[[i]]]] <- line
+  }
+  theme + do.call(ggplot2::theme, replacements)
 }

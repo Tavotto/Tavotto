@@ -83,6 +83,42 @@ def axis_invert_field(axis: str, inverted: bool) -> dict:
     }
 
 
+def axis_grid_fields(values: dict) -> list[dict]:
+    """Major grid visibility by axis and strokes shared by both grid levels."""
+    group = "网格与边框"
+    return [
+        {"prop": "grid_x", "type": "bool", "value": bool(values["grid_x"]), "group": group},
+        {"prop": "grid_y", "type": "bool", "value": bool(values["grid_y"]), "group": group},
+        {"prop": "grid_color", "type": "color", "value": values["grid_color"], "group": group},
+        {
+            "prop": "grid_linestyle",
+            "type": "enum",
+            "value": str(values["grid_linestyle"]),
+            "options": ["-", "--", ":", "-."],
+            "group": group,
+        },
+        {
+            "prop": "grid_linewidth",
+            "type": "number",
+            "value": round(float(values["grid_linewidth"]), 2),
+            "min": 0.1,
+            "max": 10,
+            "step": 0.1,
+            "unit": "pt",
+            "group": group,
+        },
+        {
+            "prop": "grid_alpha",
+            "type": "number",
+            "value": round(float(values["grid_alpha"]), 2),
+            "min": 0,
+            "max": 1,
+            "step": 0.05,
+            "group": group,
+        },
+    ]
+
+
 def errorbar_stroke_fields(color: str, width: float) -> list[dict]:
     """Stroke fields whose values are independent of the native cap geometry."""
     return [

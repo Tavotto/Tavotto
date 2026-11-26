@@ -88,6 +88,7 @@ from legendmodel import (
     legend_proxy_names,
 )
 from manifest_fields import (
+    axis_grid_fields,
     axis_invert_field,
     axis_limits_field,
     axis_scale_field,
@@ -4446,40 +4447,16 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             "value": tick_side_visible(ax, "y", 2),
             "group": "刻度线",
         },
-        {"prop": "grid_x", "type": "bool", "value": _grid_visible(ax, "x"), "group": "网格与边框"},
-        {"prop": "grid_y", "type": "bool", "value": _grid_visible(ax, "y"), "group": "网格与边框"},
-        {
-            "prop": "grid_color",
-            "type": "color",
-            "value": to_hex(_grid_prop(lambda g: g.get_color(), "#b0b0b0")(ax)),
-            "group": "网格与边框",
-        },
-        {
-            "prop": "grid_linestyle",
-            "type": "enum",
-            "value": str(_grid_prop(lambda g: g.get_linestyle(), ":")(ax)),
-            "options": ["-", "--", ":", "-."],
-            "group": "网格与边框",
-        },
-        {
-            "prop": "grid_linewidth",
-            "type": "number",
-            "value": round(float(_grid_prop(lambda g: g.get_linewidth(), 0.5)(ax)), 2),
-            "min": 0.1,
-            "max": 10,
-            "step": 0.1,
-            "unit": "pt",
-            "group": "网格与边框",
-        },
-        {
-            "prop": "grid_alpha",
-            "type": "number",
-            "value": round(float(_grid_prop(lambda g: g.get_alpha(), None)(ax) or 1.0), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-            "group": "网格与边框",
-        },
+        *axis_grid_fields(
+            {
+                "grid_x": _grid_visible(ax, "x"),
+                "grid_y": _grid_visible(ax, "y"),
+                "grid_color": to_hex(_grid_prop(lambda g: g.get_color(), "#b0b0b0")(ax)),
+                "grid_linestyle": _grid_prop(lambda g: g.get_linestyle(), ":")(ax),
+                "grid_linewidth": _grid_prop(lambda g: g.get_linewidth(), 0.5)(ax),
+                "grid_alpha": _grid_prop(lambda g: g.get_alpha(), None)(ax) or 1.0,
+            }
+        ),
         {
             "prop": "spine_top",
             "type": "bool",

@@ -28,6 +28,8 @@ R 运行时须安装 ggplot2、svglite 和 jsonlite，并能打开 Cairo PDF 图
 
 在普通单面板图中选中子图，可在与 Matplotlib 相同的属性栏设置 X／Y 最小值和最大值，并在线性轴和以 10 为底的对数轴之间切换。端点始终按原数据单位从小到大输入。X／Y 轴可各自反转，并与范围、对数轴和固定刻度搭配。脚本用 `coord_cartesian(reverse = ...)` 设置的方向也可切换。未反转的 `geom_raster()` 图仍可修改显示范围。改范围只裁剪显示窗口。切换轴类型会重新投影已计算的位置与区间，并重建刻度，保留本次 R 运行得到的统计和分组结果。对数切换要求该轴上参与绘制的位置为正数，包括误差棒的端点和柱形的基线。原脚本中的范围过滤、次轴和自定义位置尺度沿用其原始设置。 [ggplot2 显示范围](https://ggplot2.tidyverse.org/reference/coord_cartesian.html) · [ggplot2 连续位置尺度](https://ggplot2.tidyverse.org/reference/scale_continuous.html)
 
+在普通单面板直角坐标图中，可用共用属性栏按 X／Y 开关主网格，并修改主、次网格的颜色、透明度、线宽和线型。网格沿用原生刻度位置，类别轴也可用。改变样式只修改网格中可绘制的线，移除编辑后恢复脚本主题。 [ggplot2 主题](https://ggplot2.tidyverse.org/reference/theme.html)
+
 单面板中的普通 `geom_point()` 系列复用散点属性。固定大小、形状和透明度可独立编辑，标记支持实心圆、方形、三角形和菱形之间替换。映射到数据的属性继续由原尺度控制，带分类图例键的系列保留原样。改动沿用已计算的点位，并可与连续色阶编辑叠加。
 
 单面板中的普通 `geom_col()` 和 `geom_bar()` 可使用共用的柱形系列控件编辑填充、描边颜色、描边宽度和透明度。支持样式统一的横向或纵向柱，保留原有柱高、柱宽、堆叠位置和计数结果。数据映射、分类图例键或每柱不同的样式沿用脚本设定。画布按实际柱形命中，较大图层可从元素列表选中系列。[ggplot2 柱形图](https://ggplot2.tidyverse.org/reference/geom_bar.html)
