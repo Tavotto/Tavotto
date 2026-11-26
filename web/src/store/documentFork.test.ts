@@ -191,6 +191,7 @@ describe('存成副本（绑定了项目文件）', () => {
     expect(out).toMatchObject({ ok: false, reason: 'write_failed' })
     expect(s().documentId).toBe('d_orig')
     expect(s().projectMeta.name).toBe('排版一')
+    expect(s().projectFile?.dirty).toBe(false)
   })
 
   it('分叉写失败期间改了名，原绑定要标成待保存', async () => {
@@ -213,5 +214,17 @@ describe('存成副本（绑定了项目文件）', () => {
     setCurrentProjectId('pjB')
     expect(await pending).toMatchObject({ ok: false, reason: 'switched', file: null })
     expect(readProjectFile('d_orig')?.dirty).toBe(true)
+  })
+
+  it('分叉等待中重新打开原文件：迟到的写失败不再把重新载入的干净绑定标脏', async () => {
+    bind()
+    layoutFail = true
+    const pending = forkCurrentDocument()
+    s().renameProject('排版一 改名')
+    // 重新打开同一个项目文件：沿用 d_orig 的身份，装回磁盘那份的干净绑定
+    await s().switchDocument({ ...emptyProject(), project: { id: 'p1', name: '排版一' } }, 'd_orig')
+    setProjectFile({ projectId: 'pjA', name: '排版一', file: 'tavottofile/排版一.json', revision: 'r0', dirty: false })
+    expect(await pending).toMatchObject({ ok: false, reason: 'write_failed' })
+    expect(readProjectFile('d_orig')?.dirty).toBe(false)
   })
 })

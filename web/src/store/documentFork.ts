@@ -131,6 +131,9 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
   const edited = projectFileSnapshot()
   /** 副本没装上、原排版留在这里：挂起期间的编辑要补标回原绑定；成功分叉不动原绑定。 */
   const markOriginalDirtyIfEdited = () => {
+    // 分叉开始后原排版被重新载入 / 换走（loadSeq 换代）：挂起期间的编辑随旧文档一起放弃，
+    // 此刻的绑定属于重新载入后的内容，不能再用分叉前的编辑代次补标（否则下次重开会换新身份、丢时间线）。
+    if (useDocumentStore.getState().loadSeq !== ctx.loadSeq) return
     if (edited()) markProjectFileDirtyFor(ctx.documentId)
   }
   const pd = state.buildProject()
