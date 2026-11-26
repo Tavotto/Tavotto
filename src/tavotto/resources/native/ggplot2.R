@@ -765,7 +765,8 @@ measure_ggplot_lines <- function(table, targets, frame_pt) {
       if (!length(paths) || !is_positive_ggplot_number(width)) stop("Invalid native R stroke geometry.")
       visible <- any(grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ] > 0)
       geometry <- list(kind = if (target$interval || length(paths) != 1L) "multi_path" else "polyline",
-                       paths = paths, fill = FALSE, stroke = visible, stroke_pt = width)
+                       paths = paths, fill = FALSE, stroke = visible, stroke_pt = width,
+                       paint_order = match(line$name, table$grobs[[target$slot]]$childrenOrder))
       if (target$clip) geometry$clip <- ggplot_panel_clip(frame_pt)
       pad <- width / (2 * frame_pt)
       bbox <- ggplot_paths_bbox(paths, pad)

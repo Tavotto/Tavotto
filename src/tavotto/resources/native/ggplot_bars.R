@@ -158,12 +158,15 @@ measure_ggplot_bars <- function(table, targets, frame_pt) {
   result <- list()
   for (gid in names(targets)) {
     target <- targets[[gid]]
-    rect <- ggplot_bar_rect(table$grobs[[target$slot]], target)
+    panel <- table$grobs[[target$slot]]
+    rect <- ggplot_bar_rect(panel, target)
     viewport <- ggplot_drawn_panel_viewport(drawn, table, target$slot, rect$name)
     if (is.null(viewport)) next
     result[[gid]] <- tryCatch({
       grid::downViewport(viewport, strict = TRUE)
-      ggplot_bar_geometry(rect, target, frame_pt)
+      measured <- ggplot_bar_geometry(rect, target, frame_pt)
+      if (!is.null(measured$geometry)) measured$geometry$paint_order <- match(rect$name, panel$childrenOrder)
+      measured
     }, error = function(error) NULL, finally = grid::upViewport(0))
   }
   result

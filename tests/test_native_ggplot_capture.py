@@ -874,6 +874,7 @@ stopifnot(initial_line$geometry$kind == "multi_path",
           identical(unname(lengths(lapply(initial_line$geometry$paths, `[[`, "points"))), c(2L, 2L, 5L)),
           length(initial_band$geometry$paths) == 2L,
           all(vapply(initial_band$geometry$paths, `[[`, logical(1L), "closed")),
+          initial_band$geometry$paint_order < initial_line$geometry$paint_order,
           !("color" %in% vapply(initial_line$editable, `[[`, character(1L), "prop")))
 patches <- setNames(list(list(facecolor = "#695DB2", alpha = .6),
                          list(linewidth = 2.5, linestyle = "--")), c(range_id, line_id))
@@ -891,8 +892,13 @@ for (color in c("#2369A3", "#A53658")) {
 stopifnot(sum(grepl("fill: #695DB2; fill-opacity: 0.60", rows, fixed = TRUE)) == 2L,
           identical(element(actual, range_id)$geometry$paths, initial_band$geometry$paths),
           identical(element(actual, line_id)$geometry$paths, initial_line$geometry$paths),
+          element(actual, range_id)$geometry$paint_order < element(actual, line_id)$geometry$paint_order,
           identical(adapter$render_ggplot(state), captured$svg),
           identical(adapter$render_ggplot(state, patches), svg), calls == 1L)
+covered <- adapter$capture_ggplot(base + line + band + palette, frame)$state
+covered_manifest <- adapter$ggplot_manifest(covered, "plot")
+stopifnot(element(covered_manifest, "layer.1.line")$geometry$paint_order <
+          element(covered_manifest, "layer.2.ribbon")$geometry$paint_order)
 outline <- base + ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper),
                                       fill = "#559944", colour = "#551144", alpha = .4)
 outline_state <- adapter$capture_ggplot(outline, frame)$state

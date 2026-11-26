@@ -117,7 +117,8 @@ measure_ggplot_ribbons <- function(table, targets, frame_pt) {
       bbox <- ggplot_paths_bbox(paths)
       if (!all(is.finite(bbox)) || any(bbox[3:4] <= 0)) stop("Empty native R range geometry.")
       alpha <- ggplot_uniform_pigment(polygons[[1L]]$gp$fill)$alpha
-      geometry <- list(kind = "multi_path", paths = paths, fill = alpha > 0, stroke = FALSE)
+      geometry <- list(kind = "multi_path", paths = paths, fill = alpha > 0, stroke = FALSE,
+                       paint_order = target$child)
       if (alpha > 0) geometry$fill_alpha <- alpha
       if (target$clip) geometry$clip <- ggplot_panel_clip(frame_pt)
       list(bbox = as.list(bbox), geometry = geometry)
