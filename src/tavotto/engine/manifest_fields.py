@@ -50,6 +50,10 @@ def opacity_field(value: float) -> dict:
     return {"prop": "alpha", "type": "number", "value": value, "min": 0, "max": 1, "step": 0.05}
 
 
+def fill_color_field(color: str) -> dict:
+    return {"prop": "facecolor", "type": "color", "value": color}
+
+
 def errorbar_stroke_fields(color: str, width: float) -> list[dict]:
     """Stroke fields whose values are independent of the native cap geometry."""
     return [

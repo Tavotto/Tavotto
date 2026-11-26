@@ -90,6 +90,7 @@ from legendmodel import (
 from manifest_fields import (
     bar_paint_fields,
     errorbar_stroke_fields,
+    fill_color_field,
     marker_field as _marker_field,
     opacity_field,
     point_size_field,
@@ -2737,13 +2738,7 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
             )
         else:
             fc = collection_face_rgba(coll)
-            fields.append(
-                {
-                    "prop": "facecolor",
-                    "type": "color",
-                    "value": to_hex(fc[0]) if len(fc) else "#000000",
-                }
-            )
+            fields.append(fill_color_field(to_hex(fc[0]) if len(fc) else "#000000"))
     if "sizes" in caps:
         sizes = collection_sizes(coll)
         fields.append(point_size_field(round(float(np.mean(sizes)), 1) if len(sizes) else 20.0))

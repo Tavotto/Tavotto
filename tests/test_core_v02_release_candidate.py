@@ -28,6 +28,7 @@ def main():
     plt.rcParams["pdf.fonttype"] = 42
     fig, ax = plt.subplots(figsize=(3, 2))
     ax.bar([0.45, 1.55], [0.7, 1.3], width=0.25, color="#617883", edgecolor="#352B58")
+    ax.fill_between([0, 1, 2], [.8, 3.6, 1.8], [1.2, 4.35, 2.2], color="#559944", alpha=.4)
     ax.plot([0, 1, 2], [1, 4, 2], color="#317A75", marker="o")
     ax.errorbar([0, 1, 2], [1, 4, 2], yerr=[.4, .7, .5], fmt="none", capsize=3)
     ax.set(xlabel="Time (min)", ylabel="Signal (mV)", title="Original signal")
@@ -43,6 +44,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
   ggplot2::geom_line(data = trend, colour = "#1156A3", show.legend = FALSE) +
   ggplot2::geom_col(data = reference, width = .36, fill = "#226688", colour = "#182834") +
   ggplot2::geom_errorbar(data = trend, ggplot2::aes(ymin = hwy - 2, ymax = hwy + 1), width = .25) +
+  ggplot2::geom_ribbon(data = trend, ggplot2::aes(ymin = hwy - 1, ymax = hwy + 1),
+                       fill = "#559944", alpha = .4) +
   ggplot2::scale_colour_gradient(name = "City mileage", breaks = c(10, 17, 27),
     guide = ggplot2::guide_colourbar(position = "left", display = "rectangles")) +
   ggplot2::labs(x = "Displacement (L)", y = "Highway mileage", title = "Fuel economy",
@@ -72,12 +75,15 @@ R_COLOR_SCALE = {
 R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
 ERRORBAR_PAINT = {"color": "#803239", "linewidth": 1.8, "alpha": 0.6}
+RANGE_PAINT = {"facecolor": "#695DB2", "alpha": 0.6}
 
 
 def _series_patches(baseline, role, paint):
     (series,) = [el for el in baseline["manifest"]["elements"] if el["role"] == role]
     fields = {field["prop"]: field for field in series["editable"]}
-    assert set(paint) <= fields.keys() and fields["linewidth"]["unit"] == "pt"
+    assert set(paint) <= fields.keys()
+    if "linewidth" in paint:
+        assert fields["linewidth"]["unit"] == "pt"
     identity = {"identity": series["identity"]} if "identity" in series else {}
     return series, [
         {"gid": series["gid"], "prop": prop, "value": value, **identity}
@@ -273,6 +279,11 @@ def _pdf_pixels(path):
         assert any(path["rect"].x0 > page.rect.width / 2 for path in errors)
         assert any(path["width"] == pytest.approx(1.8 * R_PANEL_SCALE, abs=0.02) for path in errors)
         assert all(path["stroke_opacity"] == pytest.approx(0.6, abs=0.01) for path in errors)
+        ribbon_color = tuple(n / 255 for n in bytes.fromhex(RANGE_PAINT["facecolor"][1:]))
+        ribbons = [path for path in drawn if path["fill"] == pytest.approx(ribbon_color, abs=0.003)]
+        assert len(ribbons) == 2
+        assert sum(path["rect"].x0 > page.rect.width / 2 for path in ribbons) == 1
+        assert all(path["fill_opacity"] == pytest.approx(0.6, abs=0.01) for path in ribbons)
         bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
         for title, size in {
             "Time (min)": AXIS_PAGE_SIZE,
@@ -317,6 +328,12 @@ def _format_pixels(files):
     ]
     assert len(bar_styles) == 2  # R rectangles. Matplotlib emits paths.
     assert all("stroke: #663399" in style and "stroke-width: 2.20" in style for style in bar_styles)
+    (ribbon,) = [
+        node
+        for node in svg_tree.iter(f"{ns}polygon")
+        if f"fill: {RANGE_PAINT['facecolor'].lower()}" in node.attrib.get("style", "").lower()
+    ]
+    assert "fill-opacity: 0.60" in ribbon.attrib["style"]
     for label, page_size in (
         ("Displacement (L)", R_AXIS_PAGE_SIZE),
         ("Highway mileage", AXIS_PAGE_SIZE),
@@ -637,7 +654,11 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         ]
         assert mpl_fields["cap_thickness"] == original_cap
         r_errors, r_error_patches = _series_patches(precision, "errorbar", ERRORBAR_PAINT)
-        changed = _render(app, r_asset, [*r_patches, *r_bar_patches, *r_error_patches])
+        _, mpl_range_patches = _series_patches(mpl_baseline, "fill", RANGE_PAINT)
+        r_range, r_range_patches = _series_patches(precision, "fill", RANGE_PAINT)
+        changed = _render(
+            app, r_asset, [*r_patches, *r_bar_patches, *r_error_patches, *r_range_patches]
+        )
         edited_bars = next(
             el for el in changed["manifest"]["elements"] if el["gid"] == r_bars["gid"]
         )
@@ -653,9 +674,16 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         } == ERRORBAR_PAINT
         with pytest.raises(HttpError):
             _render(app, r_asset, [{**r_bar_patches[0], "identity": "r7:stale"}])
+        edited_range = next(
+            el for el in changed["manifest"]["elements"] if el["gid"] == r_range["gid"]
+        )
+        assert edited_range["geometry"]["paths"] == r_range["geometry"]["paths"]
+        assert {field["prop"]: field["value"] for field in edited_range["editable"]} == RANGE_PAINT
+        with pytest.raises(HttpError):
+            _render(app, r_asset, [{**r_range_patches[0], "identity": "r9:stale"}])
         assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
-        r_patches.extend([*r_bar_patches, *r_error_patches])
-        mpl_patches.extend([*mpl_bar_patches, *mpl_error_patches])
+        r_patches.extend([*r_bar_patches, *r_error_patches, *r_range_patches])
+        mpl_patches.extend([*mpl_bar_patches, *mpl_error_patches, *mpl_range_patches])
         assert _render(app, r_asset, r_patches)["svg"] == changed["svg"]
         document = {
             "schema": 3,

@@ -71,6 +71,7 @@ main <- function() {
     sys.source(file.path(native, "ggplot_colour_scale.R"), envir = adapter)
     sys.source(file.path(native, "ggplot_points.R"), envir = adapter)
     sys.source(file.path(native, "ggplot_bars.R"), envir = adapter)
+    sys.source(file.path(native, "ggplot_ribbons.R"), envir = adapter)
     palettes <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
     probe <- file.path(args[[11L]], "cairo-device-check.pdf")
     device <- adapter$open_ggplot_pdf(frame_pt, probe)

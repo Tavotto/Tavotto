@@ -15,6 +15,7 @@ from . import execspec, executionfact, figcapture, projectenv, runcodes
 from .manifest_fields import (
     bar_paint_fields,
     errorbar_stroke_fields,
+    fill_color_field,
     marker_field,
     opacity_field,
     point_size_field,
@@ -28,6 +29,7 @@ _COLOR_SCALE_IDENTITY_PREFIX = "r5:"
 _POINT_SERIES_IDENTITY_PREFIX = "r6:"
 _BAR_SERIES_IDENTITY_PREFIX = "r7:"
 _ERRORBAR_IDENTITY_PREFIX = "r8:"
+_RIBBON_IDENTITY_PREFIX = "r9:"
 
 
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
@@ -175,6 +177,19 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            ribbon = element.pop("ribbon", None)
+            if ribbon is not None:
+                current = ribbon["current"]
+                fields = [fill_color_field(current["facecolor"])]
+                if "alpha" in current:
+                    fields.append(opacity_field(current["alpha"]))
+                for field in fields:
+                    prop = field["prop"]
+                    if prop in ribbon["edited"]:
+                        field["value_original"] = ribbon["original"][prop]
+                element["editable"] = fields
+                element["identity"] = _RIBBON_IDENTITY_PREFIX + ribbon["context"]
+                continue
             errorbar_series = element.pop("errorbar_series", None)
             if errorbar_series is not None:
                 GgplotTarget.annotate_errorbar_series(element, errorbar_series)
@@ -364,6 +379,10 @@ class GgplotTarget:
             if expected is not None and expected.startswith(_ERRORBAR_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R error bars changed. Select them again.")
+                continue
+            if expected is not None and expected.startswith(_RIBBON_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R range fill changed. Select it again.")
                 continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX

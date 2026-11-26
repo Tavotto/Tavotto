@@ -1,19 +1,5 @@
 # Project rectangle styles onto captured bars. Their native data, statistics,
 # orientation and position adjustments remain in the captured rectangle grob.
-ggplot_bar_pigment <- function(colour) {
-  if (is.logical(colour) && length(colour) && all(is.na(colour))) {
-    return(list(rgb = "none", alpha = 0))
-  }
-  if (!is.character(colour) || !length(colour)) return(NULL) # grid pattern or gradient
-  colours <- unique(colour)
-  rgba <- grDevices::col2rgb(colours, alpha = TRUE)
-  if (!all(rgba == rgba[, 1L])) return(NULL)
-  alpha <- rgba[4L, 1L] / 255
-  list(rgb = if (alpha == 0) "none" else grDevices::rgb(rgba[1L, 1L], rgba[2L, 1L],
-                                                       rgba[3L, 1L], maxColorValue = 255),
-       alpha = alpha)
-}
-
 ggplot_bar_targets <- function(built, table, layer_grobs) {
   slot <- which(table$layout$name == "panel")
   if (length(slot) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
@@ -40,8 +26,8 @@ ggplot_bar_targets <- function(built, table, layer_grobs) {
     mapped <- ggplot_styled_layer_mapping(layer)
     if (is.null(mapped) || ggplot_layer_has_legend_key(built, layer, mapped)) next
     if (length(intersect(mapped, c("fill", "colour", "alpha", "size", "linewidth", "linetype")))) next
-    face <- ggplot_bar_pigment(rect$gp$fill)
-    edge <- ggplot_bar_pigment(rect$gp$col)
+    face <- ggplot_uniform_pigment(rect$gp$fill)
+    edge <- ggplot_uniform_pigment(rect$gp$col)
     width <- unique(rect$gp$lwd) * ggplot_lwd_pt
     lty <- unique(rect$gp$lty)
     if (is.null(face) || is.null(edge) || length(width) != 1L ||
@@ -98,23 +84,16 @@ ggplot_bar_values <- function(target, edit) {
   values
 }
 
-ggplot_bar_colour <- function(value, original, alpha, layer_alpha) {
-  if (value == "none") return(NA_character_)
-  if (is.null(alpha)) alpha <- if (original$alpha > 0) original$alpha else layer_alpha
-  if (is.null(alpha)) alpha <- 1
-  scales::alpha(value, alpha)
-}
-
 ggplot_edit_bars <- function(table, target, edit) {
   values <- ggplot_bar_values(target, edit)
   panel <- table$grobs[[target$slot]]
   rect <- ggplot_bar_rect(panel, target)
   if (!is.null(edit$linewidth)) rect$gp$lwd <- values$linewidth / ggplot_lwd_pt
   if (!is.null(edit$facecolor) || !is.null(edit$alpha)) {
-    rect$gp$fill <- ggplot_bar_colour(values$facecolor, target$face, edit$alpha, target$values$alpha)
+    rect$gp$fill <- ggplot_edit_pigment(values$facecolor, target$face, edit$alpha, target$values$alpha)
   }
   if (!is.null(values$edgecolor) && (!is.null(edit$edgecolor) || !is.null(edit$alpha))) {
-    rect$gp$col <- ggplot_bar_colour(values$edgecolor, target$edge, edit$alpha, target$values$alpha)
+    rect$gp$col <- ggplot_edit_pigment(values$edgecolor, target$edge, edit$alpha, target$values$alpha)
   }
   panel$children[[target$child]] <- rect
   table$grobs[[target$slot]] <- panel
@@ -139,8 +118,8 @@ ggplot_bar_geometry <- function(rect, target, frame_pt) {
   right <- upper$x / frame[[1L]]
   top <- 1 - upper$y / frame[[2L]]
   bottom <- 1 - lower$y / frame[[2L]]
-  face <- ggplot_bar_pigment(rect$gp$fill)$alpha
-  stroke_pt <- if (target$outline && ggplot_bar_pigment(rect$gp$col)$alpha > 0) {
+  face <- ggplot_uniform_pigment(rect$gp$fill)$alpha
+  stroke_pt <- if (target$outline && ggplot_uniform_pigment(rect$gp$col)$alpha > 0) {
     unique(rect$gp$lwd) * ggplot_lwd_pt
   } else 0
   pad <- stroke_pt / (2 * frame_pt)

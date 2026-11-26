@@ -65,6 +65,7 @@ adapter <- new.env(parent = baseenv())
 sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
 sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
 sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_bars.R"), envir = adapter)
+sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_ribbons.R"), envir = adapter)
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) {
   quit(status = 77L)
@@ -487,6 +488,7 @@ adapter <- new.env(parent = baseenv())
 sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
 sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
 sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_bars.R"), envir = adapter)
+sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_ribbons.R"), envir = adapter)
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
 
@@ -585,6 +587,7 @@ sys.source(adapter_file, envir = adapter)
 sys.source(file.path(dirname(adapter_file), "ggplot_colour_scale.R"), envir = adapter)
 sys.source(file.path(dirname(adapter_file), "ggplot_points.R"), envir = adapter)
 sys.source(file.path(dirname(adapter_file), "ggplot_bars.R"), envir = adapter)
+sys.source(file.path(dirname(adapter_file), "ggplot_ribbons.R"), envir = adapter)
 if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
                 quietly = TRUE))) quit(status = 77L)
 palettes <- jsonlite::fromJSON(
@@ -706,7 +709,7 @@ stopifnot(length(adapter$render_ggplot(paired, paired_edits)) == 1L)
 BAR_PROBE = r"""
 adapter <- new.env(parent = baseenv())
 native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
-for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R")) {
+for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R", "ggplot_ribbons.R")) {
   sys.source(file.path(native, file), envir = adapter)
 }
 if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
@@ -780,7 +783,7 @@ stopifnot(is.null(large$bar_geometry[[first]]$geometry), length(large$bar_geomet
 ERRORBAR_PROBE = r"""
 adapter <- new.env(parent = baseenv())
 native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
-for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R")) {
+for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R", "ggplot_ribbons.R")) {
   sys.source(file.path(native, file), envir = adapter)
 }
 if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
@@ -835,6 +838,83 @@ stopifnot(identical(field$value, "monospace"), identical(field$value_original, "
           identical(adapter$render_ggplot(state), captured$svg), calls == 1L)
 """
 
+RANGE_AND_GROUPED_LINE_PROBE = r"""
+adapter <- new.env(parent = baseenv())
+native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
+for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R", "ggplot_ribbons.R")) {
+  sys.source(file.path(native, file), envir = adapter)
+}
+if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+d <- data.frame(x = rep(1:5, 2), y = c(2, 3, 2.7, 3.5, 4, 5, 5.2, 6, 5.9, 7),
+                group = rep(c("Control", "Treated"), each = 5))
+d$lower <- d$y - .2
+d$upper <- d$y + .38
+gapped <- d
+gapped$y[3L] <- NA_real_
+calls <- 0L
+observed <- function(data) { calls <<- calls + 1L; data }
+base <- ggplot2::ggplot(d, ggplot2::aes(x, y, group = group))
+band <- ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper),
+                             fill = "#559944", alpha = .4, data = observed)
+line <- ggplot2::geom_line(ggplot2::aes(colour = group), data = gapped, linewidth = .7)
+points <- ggplot2::geom_point(ggplot2::aes(colour = group))
+palette <- ggplot2::scale_colour_manual(values = c(Control = "#2369A3", Treated = "#A53658"))
+frame <- c(316, 212)
+captured <- adapter$capture_ggplot(base + band + line + points + palette, frame)
+state <- captured$state
+range_id <- "layer.1.ribbon"
+line_id <- "layer.2.line"
+stopifnot(calls == 1L, length(state$line_targets[[line_id]]$guide_keys) == 1L)
+element <- function(all, gid) Filter(function(e) e$gid == gid, all$elements)[[1L]]
+baseline <- adapter$ggplot_manifest(state, "plot")
+initial_line <- element(baseline, line_id)
+initial_band <- element(baseline, range_id)
+stopifnot(initial_line$geometry$kind == "multi_path",
+          identical(unname(lengths(lapply(initial_line$geometry$paths, `[[`, "points"))), c(2L, 2L, 5L)),
+          length(initial_band$geometry$paths) == 2L,
+          all(vapply(initial_band$geometry$paths, `[[`, logical(1L), "closed")),
+          !("color" %in% vapply(initial_line$editable, `[[`, character(1L), "prop")))
+patches <- setNames(list(list(facecolor = "#695DB2", alpha = .6),
+                         list(linewidth = 2.5, linestyle = "--")), c(range_id, line_id))
+actual <- adapter$ggplot_manifest(state, "plot", patches)
+svg <- adapter$render_ggplot(state, patches)
+rows <- strsplit(svg, "\n", fixed = TRUE)[[1L]]
+for (color in c("#2369A3", "#A53658")) {
+  painted <- grepl(paste0("stroke: ", color), rows, fixed = TRUE)
+  styled <- grepl("stroke-width: 2.50", rows, fixed = TRUE) &
+    grepl("stroke-dasharray:", rows, fixed = TRUE)
+  stopifnot(any(startsWith(rows, "<polyline ") & painted & styled),
+            sum(startsWith(rows, "<line ") & painted & styled) == 1L,
+            sum(startsWith(rows, "<circle ") & painted & !styled) == 6L)
+}
+stopifnot(sum(grepl("fill: #695DB2; fill-opacity: 0.60", rows, fixed = TRUE)) == 2L,
+          identical(element(actual, range_id)$geometry$paths, initial_band$geometry$paths),
+          identical(element(actual, line_id)$geometry$paths, initial_line$geometry$paths),
+          identical(adapter$render_ggplot(state), captured$svg),
+          identical(adapter$render_ggplot(state, patches), svg), calls == 1L)
+outline <- base + ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper),
+                                      fill = "#559944", colour = "#551144", alpha = .4)
+outline_state <- adapter$capture_ggplot(outline, frame)$state
+outline_svg <- adapter$render_ggplot(outline_state, setNames(list(list(facecolor = "#695DB2")), range_id))
+stopifnot(is.null(outline_state$ribbon_targets[[range_id]]$values$alpha),
+          grepl("stroke: #551144", outline_svg, fixed = TRUE),
+          grepl("fill: #695DB2; fill-opacity: 0.40", outline_svg, fixed = TRUE))
+area <- base + ggplot2::geom_area(fill = "#559944", alpha = .4)
+stopifnot(length(adapter$capture_ggplot(area, frame)$state$ribbon_targets) == 1L)
+mapped <- base + ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper, fill = group))
+stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$ribbon_targets) == 0L)
+duplicated_key <- base + line + line + palette
+stopifnot(length(adapter$capture_ggplot(duplicated_key, frame)$state$line_targets) == 0L)
+intentional_key <- base + line + palette +
+  ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(linetype = 2)))
+stopifnot(length(adapter$capture_ggplot(intentional_key, frame)$state$line_targets) == 0L)
+for (edit in list(setNames(list(list(color = "#115500")), line_id),
+                  setNames(list(list(alpha = 2)), range_id))) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, edit), silent = TRUE), "try-error"))
+}
+"""
+
 
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
@@ -872,6 +952,10 @@ def test_ggplot_bar_paint_preserves_counts_positions_and_siblings(tmp_path):
 
 def test_ggplot_errorbar_stroke_and_title_family_preserve_native_data(tmp_path):
     _assert_r_probe(tmp_path, ERRORBAR_PROBE)
+
+
+def test_range_and_grouped_line_edits_preserve_geometry_and_sync_the_legend(tmp_path):
+    _assert_r_probe(tmp_path, RANGE_AND_GROUPED_LINE_PROBE)
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):
