@@ -129,22 +129,40 @@ def axis_frame_fields(values: dict) -> list[dict]:
         {"prop": prop, "type": "bool", "value": bool(values[prop]), "group": group}
         for prop in (f"spine_{side}" for side in AXIS_FRAME_SIDES)
     ]
-    for prefix, section in [
-        ("spine", group),
-        *((f"spine_{side}", "边框（逐条）") for side in AXIS_FRAME_SIDES),
-    ]:
+    fields.extend(
+        (
+            {
+                "prop": "spine_color",
+                "type": "color",
+                "value": values["spine_color"],
+                "group": group,
+            },
+            {
+                "prop": "spine_linewidth",
+                "type": "number",
+                "value": round(float(values["spine_linewidth"]), 2),
+                "min": 0.1,
+                "max": 10,
+                "step": 0.1,
+                "unit": "pt",
+                "group": group,
+            },
+        )
+    )
+    section = "边框（逐条）"
+    for side in AXIS_FRAME_SIDES:
         fields.extend(
             (
                 {
-                    "prop": f"{prefix}_color",
+                    "prop": f"spine_{side}_color",
                     "type": "color",
-                    "value": values[f"{prefix}_color"],
+                    "value": values[f"spine_{side}_color"],
                     "group": section,
                 },
                 {
-                    "prop": f"{prefix}_linewidth",
+                    "prop": f"spine_{side}_linewidth",
                     "type": "number",
-                    "value": round(float(values[f"{prefix}_linewidth"]), 2),
+                    "value": round(float(values[f"spine_{side}_linewidth"]), 2),
                     "min": 0.1,
                     "max": 10,
                     "step": 0.1,
