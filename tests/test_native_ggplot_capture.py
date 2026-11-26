@@ -174,6 +174,8 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
             return replay(*args, **kwargs)
         except Exception as exc:
             problems.extend(traceback.format_exception(exc))
+            if isinstance(exc.__cause__, winappcontainer.ReplayFailed):
+                print("Protected R diagnostic for the test fixture:", exc.__cause__.diagnostic)
             raise
 
     monkeypatch.setattr(nativeggplot_source, "replay", diagnose)

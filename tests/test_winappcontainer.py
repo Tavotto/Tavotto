@@ -13,7 +13,7 @@ def test_configures_no_capabilities_and_restricts_child_processes(monkeypatch):
 
     class Kernel:
         def InitializeProcThreadAttributeList(self, storage, count, _flags, size):
-            assert count == 3
+            assert count == 4
             size._obj.value = 512
             return storage is not None
 
@@ -25,8 +25,9 @@ def test_configures_no_capabilities_and_restricts_child_processes(monkeypatch):
             pass
 
     monkeypatch.setattr(winappcontainer.ctypes, "get_last_error", lambda: 122, raising=False)
-    with winappcontainer._start_attributes(Kernel(), 10) as attributes:
+    with winappcontainer._start_attributes(Kernel(), 10, (20, 21)) as attributes:
         assert attributes.value
+        assert set(observed[winappcontainer._HANDLE_LIST]) == {20, 21}
         security = observed[winappcontainer._SECURITY_CAPABILITIES]
         assert security.AppContainerSid == 10
         assert security.CapabilityCount == 0
@@ -104,18 +105,22 @@ def test_create_and_suspend_before_verifying_the_appcontainer(tmp_path, monkeypa
     events = []
 
     @contextmanager
-    def attributes(_kernel, _sid):
+    def attributes(_kernel, _sid, handles):
+        assert handles == (20, 21)
         events.append("attributes")
         yield None
 
     class Kernel:
         def CreateProcessW(self, _program, _line, _access, _thread, inherits, flags, *_args):
-            assert not inherits
+            assert inherits
             assert flags & winappcontainer._CREATE_SUSPENDED
             assert flags & winappcontainer.EXTENDED_STARTUPINFO_PRESENT
             assert flags & winappcontainer._DETACHED_PROCESS
             assert not flags & 0x08000000  # CREATE_NO_WINDOW
-            assert _args[-2]._obj.StartupInfo.lpDesktop == "TavottoReplay-test\\Default"
+            startup = _args[-2]._obj.StartupInfo
+            assert startup.lpDesktop == "TavottoReplay-test\\Default"
+            assert startup.dwFlags & winappcontainer._USE_STD_HANDLES
+            assert (startup.hStdInput, startup.hStdOutput, startup.hStdError) == (20, 21, 21)
             output = _args[-1]._obj
             output.hProcess, output.hThread = 10, 11
             events.append("created")
@@ -160,6 +165,7 @@ def test_create_and_suspend_before_verifying_the_appcontainer(tmp_path, monkeypa
         {},
         1.0,
         "TavottoReplay-test\\Default",
+        (20, 21),
     )
     if isolated:
         assert winappcontainer._run(*arguments) == 0

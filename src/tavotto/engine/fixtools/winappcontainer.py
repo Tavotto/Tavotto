@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import uuid
 from contextlib import contextmanager
 from functools import lru_cache
@@ -20,6 +21,7 @@ _DWORD = ctypes.c_uint32
 _BOOL = ctypes.c_int
 _WIN_STRING = ctypes.c_wchar_p
 
+_HANDLE_LIST = 0x00020002
 _SECURITY_CAPABILITIES = 0x00020009
 _CHILD_PROCESS_POLICY = 0x0002000E
 _ALL_APPLICATION_PACKAGES_POLICY = 0x0002000F
@@ -39,12 +41,20 @@ _GENERIC_ALL = 0x10000000
 _CREATE_STATION_ONLY = 1
 _DESKTOP_CREATE_WINDOW = 0x0002
 _USER_OBJECT_NAME = 2
+_USE_STD_HANDLES = 0x00000100
+_OUTPUT_TAIL_BYTES = 4096
 
 CHILD_FLAG = "--win-offline-r-child"
 
 
 class Unavailable(OSError):
     """The restricted launch could not be established."""
+
+
+class ReplayFailed(OSError):
+    def __init__(self, status: int, diagnostic: str):
+        super().__init__(f"The isolated R process exited with status {status}.")
+        self.diagnostic = diagnostic
 
 
 class _SecurityCapabilities(ctypes.Structure):
@@ -301,8 +311,9 @@ def _private_desktop(kernel, security, package_sid):
 
 
 @contextmanager
-def _start_attributes(kernel, sid):
+def _start_attributes(kernel, sid, handles: tuple[int, int]):
     attributes = {
+        _HANDLE_LIST: (_POINTER * len(handles))(*handles),
         _SECURITY_CAPABILITIES: _SecurityCapabilities(sid, None, 0, 0),
         _CHILD_PROCESS_POLICY: _DWORD(_PROCESS_CREATION_CHILD_PROCESS_RESTRICTED),
         _ALL_APPLICATION_PACKAGES_POLICY: _DWORD(
@@ -361,11 +372,15 @@ def _run(
     env: dict[str, str],
     timeout: float,
     desktop: str,
+    handles: tuple[int, int],
 ) -> int:
     structs = ProcessStructures.get()
     info = structs.STARTUPINFOEXW()
     info.StartupInfo.cb = ctypes.sizeof(info)
     info.StartupInfo.lpDesktop = desktop
+    info.StartupInfo.dwFlags = _USE_STD_HANDLES
+    info.StartupInfo.hStdInput = handles[0]
+    info.StartupInfo.hStdOutput = info.StartupInfo.hStdError = handles[1]
     process = structs.PROCESS_INFORMATION()
     command = ctypes.create_unicode_buffer(subprocess.list2cmdline(argv))
     items = sorted(env.items(), key=lambda item: item[0].upper())
@@ -382,7 +397,7 @@ def _run(
     )
     exited = False
     try:
-        with _start_attributes(kernel, sid) as attributes:
+        with _start_attributes(kernel, sid, handles) as attributes:
             info.lpAttributeList = attributes
             _win_checked(
                 kernel.CreateProcessW(
@@ -390,7 +405,7 @@ def _run(
                     command,
                     None,
                     None,
-                    False,
+                    True,
                     flags,
                     environment,
                     str(cwd),
@@ -429,6 +444,35 @@ def _workspace_command(root: Path, argv: list[str], cwd: Path) -> tuple[list[str
     return [str(program), *argv[1:]], cwd
 
 
+def _run_with_workspace_streams(kernel, security, sid, package_sid, root, argv, cwd, request):
+    import msvcrt
+
+    # The only inherited handles point to two disposable files. The empty
+    # input and private output also give Rterm valid non-console stdio.
+    with tempfile.TemporaryFile(dir=root) as empty, tempfile.TemporaryFile(dir=root) as log:
+        handles = msvcrt.get_osfhandle(empty.fileno()), msvcrt.get_osfhandle(log.fileno())
+        for handle in handles:
+            os.set_handle_inheritable(handle, True)
+        with _private_desktop(kernel, security, package_sid) as desktop:
+            status = _run(
+                kernel,
+                security,
+                sid,
+                argv,
+                cwd,
+                request["env"],
+                request["timeout"],
+                desktop,
+                handles,
+            )
+        result = {"status": status}
+        if status:
+            length = log.seek(0, os.SEEK_END)
+            log.seek(max(0, length - _OUTPUT_TAIL_BYTES))
+            result["diagnostic"] = log.read(_OUTPUT_TAIL_BYTES).decode("utf-8", "replace")
+        return result
+
+
 def child_main() -> int:
     """Use a private desktop in a short-lived broker process."""
     if not available():
@@ -446,11 +490,9 @@ def child_main() -> int:
         sid = _POINTER()
         _win_checked(security.ConvertStringSidToSidW(package_sid, ctypes.byref(sid)))
         try:
-            with _private_desktop(kernel, security, package_sid) as desktop:
-                status = _run(
-                    kernel, security, sid, argv, cwd, request["env"], request["timeout"], desktop
-                )
-            result = {"status": status}
+            result = _run_with_workspace_streams(
+                kernel, security, sid, package_sid, root, argv, cwd, request
+            )
         finally:
             kernel.LocalFree(sid)
     except (OSError, ValueError, IndexError, TypeError, AttributeError, KeyError) as exc:
@@ -461,7 +503,7 @@ def child_main() -> int:
 
 def _isolated_desktop_command(
     root: Path, argv: list[str], cwd: Path, environment: dict[str, str], timeout: float, sid: str
-) -> int:
+) -> None:
     if is_frozen():
         host = [sys.executable, CHILD_FLAG]
     else:
@@ -495,7 +537,8 @@ def _isolated_desktop_command(
     status = result.get("status")
     if type(status) is not int or not 0 <= status <= 0xFFFFFFFF:
         raise Unavailable("The isolated Windows replay broker returned an invalid status.")
-    return status
+    if status:
+        raise ReplayFailed(status, result.get("diagnostic", ""))
 
 
 @contextmanager
@@ -517,9 +560,9 @@ def offline(workspace: Path, environment: dict[str, str]):
                 timeout=60,
             )
 
-        def execute(argv: list[str], cwd: Path, *, timeout: float) -> int:
+        def execute(argv: list[str], cwd: Path, *, timeout: float) -> None:
             argv, cwd = _workspace_command(root, argv, cwd)
-            return _isolated_desktop_command(root, argv, cwd, environment, timeout, label)
+            _isolated_desktop_command(root, argv, cwd, environment, timeout, label)
 
         yield execute
 

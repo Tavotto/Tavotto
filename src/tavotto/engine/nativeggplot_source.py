@@ -383,17 +383,16 @@ def replay(
 
             def run_stage():
                 try:
-                    result = execute(command, cwd, timeout=120)
+                    execute(command, cwd, timeout=120)
+                except winappcontainer.ReplayFailed as exc:
+                    raise scriptadjust.ScriptAdjustError(
+                        "script_export_run_failed", str(exc)
+                    ) from exc
                 except winappcontainer.Unavailable as exc:
                     raise scriptadjust.ScriptAdjustError(
                         "script_export_r_source_unavailable",
                         "Could not start protected R replay on Windows.",
                     ) from exc
-                if result:
-                    raise scriptadjust.ScriptAdjustError(
-                        "script_export_run_failed",
-                        f"The isolated R process exited with status {result}.",
-                    )
         else:
             prefix = cmdsandbox.prefix(*sandbox, scratch, project=str(project), offline=True)
             command = [*prefix, spec.interpreter, "--vanilla", str(driver), str(request)]
