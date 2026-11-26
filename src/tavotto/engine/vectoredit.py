@@ -1314,8 +1314,9 @@ def _join_objects(s: _State, i: int, op: dict) -> None:
         raise EditError("bad_op", i, "empty_result")
     lab_k, lab_o = _label(keep), _label(other)
     nb = _anchor_count(ks) + _anchor_count(os_)
-    _write_path(s, i, keep, new)
+    # 先删被并掉的那个再换上合成的：总量预算按改后的整张画布量，别把它的锚点算两遍（Codex #2272）
     _delete_path(s, other)
+    _write_path(s, i, keep, new)
     s.echo.append(
         f"连接 {lab_o} 与 {lab_k}：取最近的两个端点相连，合成一个路径，留 {keep['id']}（样式随它），删去 {other['id']}；"
         f"锚点 {nb} → {_anchor_count(new['subpaths'])}（现为 {_shape_txt(subs)}）"

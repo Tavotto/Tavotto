@@ -252,6 +252,19 @@ def test_join_within_one_object_validates_ends():
     assert "闭合" in r["echo"][0] and "现为 sp0 闭合 3 个" in r["echo"][0]
 
 
+def test_join_two_objects_near_the_node_budget_counts_the_result_once(monkeypatch):
+    """合成之后的锚点数没超总量预算就能连上：被并掉的那个不能和合成结果一起算（Codex #2272）"""
+    real = ve.agentobjects.table()
+    monkeypatch.setattr(
+        ve.agentobjects, "table", lambda: {**real, "budgets": {**real["budgets"], "max_nodes": 30}}
+    )
+    a = _line("a", [(i, 0) for i in range(12)])
+    b = _line("b", [(20 + i, 0) for i in range(12)])
+    r = _run([a, b], [{"op": "join_paths", "ids": ["a", "b"]}])
+    assert [o["id"] for o in r["objects"]] == ["b"]
+    assert len(r["objects"][0]["subpaths"][0]["nodes"]) == 24
+
+
 def test_join_two_objects_keeps_the_last_id_and_deletes_the_other():
     a = _line("a", [(0, 0), (10, 0)], name="甲", color="#ff0000")
     b = _line("b", [(11, 0), (20, 5)], name="乙", color="#0000ff")
