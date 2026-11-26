@@ -624,7 +624,18 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         } == R_COLOR_SCALE
         _, mpl_bar_patches = _series_patches(mpl_baseline, "bar_series", BAR_PAINT)
         r_bars, r_bar_patches = _series_patches(precision, "bar_series", BAR_PAINT)
-        _, mpl_error_patches = _series_patches(mpl_baseline, "errorbar", ERRORBAR_PAINT)
+        mpl_errors, mpl_error_patches = _series_patches(mpl_baseline, "errorbar", ERRORBAR_PAINT)
+        edited_mpl = _render(app, mpl_asset, [*mpl_patches, *mpl_bar_patches, *mpl_error_patches])
+        edited_mpl_errors = next(
+            el for el in edited_mpl["manifest"]["elements"] if el["gid"] == mpl_errors["gid"]
+        )
+        mpl_fields = {field["prop"]: field["value"] for field in edited_mpl_errors["editable"]}
+        for prop, value in ERRORBAR_PAINT.items():
+            assert mpl_fields[prop] == value
+        (original_cap,) = [
+            field["value"] for field in mpl_errors["editable"] if field["prop"] == "cap_thickness"
+        ]
+        assert mpl_fields["cap_thickness"] == original_cap
         r_errors, r_error_patches = _series_patches(precision, "errorbar", ERRORBAR_PAINT)
         changed = _render(app, r_asset, [*r_patches, *r_bar_patches, *r_error_patches])
         edited_bars = next(

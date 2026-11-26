@@ -3373,7 +3373,8 @@ def _eb_color_handler():
     return (g, s), r
 
 
-def _eb_linewidth_members(grp):
+def errorbar_linewidth_members(grp):
+    """The data line and interval strokes. Cap thickness is a separate field."""
     line = grp.artists.get("line")
     return ([line] if line is not None else []) + grp.artists["bars"]
 
@@ -5745,7 +5746,7 @@ for _prop, _pair in [
     (
         "linewidth",
         _eb_handler(
-            lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(v), _eb_linewidth_members
+            lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(v), errorbar_linewidth_members
         ),
     ),
     (

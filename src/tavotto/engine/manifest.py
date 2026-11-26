@@ -130,6 +130,7 @@ from overrides import (
     color_mapping_is_live,
     colorbar_mapping_is_live,
     entry_face_index,
+    errorbar_linewidth_members,
     fallback_tail,
     font_display_names,
     font_face_index,
@@ -3228,7 +3229,8 @@ def _errorbar_fields(grp) -> list[dict]:
     ):
         color = color[0]
     cap0 = caps[0] if caps else None
-    lw = probe.get_linewidth()
+    stroke = next(iter(errorbar_linewidth_members(grp)), probe)
+    lw = stroke.get_linewidth()
     if hasattr(lw, "__len__"):
         lw = lw[0] if len(lw) else 1.0
     return [
