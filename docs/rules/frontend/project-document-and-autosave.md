@@ -428,7 +428,7 @@ order: 200
 - **写给谁、基线是什么在发请求那一刻才问**（`projectWriteSpecFor`）：绑定的 `name` + 修订号；没有绑定 = 后端按清单 docId 找、找不到按画布名起名（`suggest_name`）。
   写成后 `afterProjectLayout` 建立 / 推进 `projectFile` 绑定（`dirty` = 途中又编辑过）。**本机槽位是崩溃缓冲，不因写项目成功而删**（「标为已落盘」= 绑定的 `dirty:false` + 修订号）。
 - **外部修改不覆盖**：后端回 `external_change`，**只亮顶栏胶囊「别处有改动」（`projectConflict`），不弹对话框**（维护者 2026-11-27：用户正在编辑不能被打断）；点胶囊或按 ⌘S 才进 ⌘S 同一个冲突岔口；岔口没裁决（绑定基线没动）前不再带着旧基线去撞，基线一变胶囊自己熄灭。
-- **写不进项目**：后端判 `read_only`（确实只读）→ `projectReadOnlyDoc`，顶栏保存处说一句「这个文件夹只读，修改存在本机」（整个文件夹不可写同一句）；
+- **写不进项目**：后端判 `read_only`（确实只读）→ `projectReadOnlyDoc`，顶栏保存处说一句「这个文件夹只读 · 修改存在本机」（整个文件夹不可写同一句）；
   Windows 的瞬时拒绝（`EACCES` / 共享冲突）后端退避重试、判 `busy`，**不是只读**。
 - **找回**：`/api/layout-session/project-history` 的候选带 `work`（目录形态的工作副本，按清单 `doc_id` 对上）；没有本机槽位时 `installFromWorkingCopy`
   按它装、同一个 docId、重新绑定；复制场景新 docId、不绑。

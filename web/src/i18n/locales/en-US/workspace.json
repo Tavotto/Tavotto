@@ -1203,7 +1203,7 @@
     "saveLocal": "Saved on this computer",
     "saveLocalAt": "Saved on this computer {{time}}",
     "saveProjectPending": "Not saved to project",
-    "saveProjectReadOnly": "This folder is read-only; changes stay on this computer",
+    "saveProjectReadOnly": "Folder is read-only · changes kept on this computer",
     "saveProjectSaved": "Saved to project",
     "saveSaving": "Saving…",
     "saveTitleLocal": "Saved on this computer (no project open). {{mod}}S saves; ⇧{{mod}}S saves as a new layout",

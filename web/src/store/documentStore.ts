@@ -560,7 +560,7 @@ interface DocumentState {
   restoreMetaIssue: RestoreMetaIssue | null
   /**
    * 这份排版的自动保存写不进项目（文件夹只读，ADR 0211 第二期 PR 2）：存的是 documentId，**等于当前文档时**顶栏保存处
-   * 说一句「这个文件夹只读，修改存在本机」。与 `saveState` 正交（本机那份照常存好）；下一次写进项目成功就清。
+   * 说一句「这个文件夹只读 · 修改存在本机」。与 `saveState` 正交（本机那份照常存好）；下一次写进项目成功就清。
    */
   projectReadOnlyDoc: string | null
   /**
