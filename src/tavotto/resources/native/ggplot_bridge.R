@@ -1,28 +1,24 @@
-# Owned R process. User output stays on stdout and stderr. Control uses the
-# existing local bridge envelope on a separate authenticated connection.
-
-main <- function() {
-  args <- commandArgs(trailingOnly = TRUE)
-  token <- Sys.getenv("TAVOTTO_BRIDGE_TOKEN")
-  Sys.unsetenv("TAVOTTO_BRIDGE_TOKEN")
-  if (!grepl("^[A-Za-z0-9_-]+$", token) || !length(args) %in% 11:12) {
-    stop("Invalid owned R launch.")
-  }
-
-  script <- args[[1L]]
-  object <- args[[2L]]
-  stem <- args[[8L]]
-  execution <- args[[9L]]
-  frame_pt <- as.numeric(args[3:4])
-  control <- socketConnection(args[[5L]], as.integer(args[[6L]]),
+# Both an owned Rscript launch and a caller's current R console share the
+# same captured figure and authenticated command loop.
+ggplot_serve <- function(spec, token, plot_for) {
+  if (!is.character(token) || length(token) != 1L || !grepl("^[A-Za-z0-9_-]+$", token) ||
+      !identical(spec$host, "127.0.0.1")) stop("Invalid native R connection.")
+  control <- socketConnection(spec$host, as.integer(spec$port),
                               blocking = TRUE, open = "r+", timeout = 3600)
   on.exit(close(control))
   send_raw <- function(text) {
     writeLines(text, control, useBytes = TRUE)
     flush(control)
   }
-  send_raw(sprintf('{"bridge_hello":1,"protocol_version":1,"token":"%s","pid":%d}',
-                   token, Sys.getpid()))
+  if (spec$console) {
+    rscript <- file.path(R.home("bin"), if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript")
+    send_raw(jsonlite::toJSON(
+      list(bridge_hello = 1L, protocol_version = 1L, token = token, pid = Sys.getpid(),
+           interpreter = normalizePath(rscript, winslash = "/", mustWork = TRUE)),
+      auto_unbox = TRUE))
+  } else {
+    send_raw(sprintf('{"bridge_hello":1,"protocol_version":1,"token":"%s","pid":%d}', token, Sys.getpid()))
+  }
   rm(token)
   fail_before_json <- function(message) {
     # Only fixed messages call this path, before jsonlite is available.
@@ -31,21 +27,21 @@ main <- function() {
       send_raw(sprintf(paste0('{"bridge_event":"exit","code":1,"figures":0,',
                               '"script_error":{"message":"%s"}}'), message))
     }
-    quit(status = 1L)
+    1L
   }
   # Apply the user-selected package library to this child before loading any
   # namespace, including jsonlite. Keep the existing interpreter defaults as
   # fallback and leave the caller's library and startup files untouched.
-  if (length(args) == 12L) {
-    lib <- tryCatch(normalizePath(args[[12L]], winslash = "/", mustWork = TRUE),
+  if (!is.null(spec$library)) {
+    lib <- tryCatch(normalizePath(spec$library, winslash = "/", mustWork = TRUE),
                     error = function(error) NULL)
     if (!is.null(lib)) .libPaths(c(lib, .libPaths()))
     if (!identical(.libPaths()[[1L]], lib)) {
-      fail_before_json("The selected R package library is unavailable.")
+      return(fail_before_json("The selected R package library is unavailable."))
     }
   }
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
-    fail_before_json("The selected R needs the jsonlite package.")
+    return(fail_before_json("The selected R needs the jsonlite package."))
   }
   send <- function(frame) {
     send_raw(jsonlite::toJSON(frame, auto_unbox = TRUE, null = "null", digits = NA))
@@ -57,7 +53,7 @@ main <- function() {
   }
   ack <- receive()
   if (!isTRUE(ack$ok) || !identical(ack$bridge_hello, 1L)) {
-    stop("Owned R control could not authenticate.")
+    stop("Tavotto could not authenticate this R session.")
   }
 
   adapter <- new.env(parent = baseenv())
@@ -66,8 +62,8 @@ main <- function() {
         !requireNamespace("svglite", quietly = TRUE)) {
       stop("The selected R needs ggplot2 and svglite.")
     }
-    sys.source(args[[7L]], envir = adapter)
-    native <- dirname(args[[7L]])
+    sys.source(spec$adapter, envir = adapter)
+    native <- dirname(spec$adapter)
     sys.source(file.path(native, "ggplot_colour_scale.R"), envir = adapter)
     sys.source(file.path(native, "ggplot_points.R"), envir = adapter)
     sys.source(file.path(native, "ggplot_bars.R"), envir = adapter)
@@ -75,27 +71,25 @@ main <- function() {
     sys.source(file.path(native, "ggplot_axes.R"), envir = adapter)
     sys.source(file.path(native, "ggplot_frame.R"), envir = adapter)
     palettes <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
-    probe <- file.path(args[[11L]], "cairo-device-check.pdf")
-    device <- adapter$open_ggplot_pdf(frame_pt, probe)
+    probe <- file.path(spec$out_dir, "cairo-device-check.pdf")
+    device <- adapter$open_ggplot_pdf(spec$frame_pt, probe)
     grDevices::dev.off(which = device)
     unlink(probe)
-    user <- new.env(parent = globalenv())
-    # Bind a named native object from the current invocation only.
-    program <- parse(file = script, keep.source = TRUE, encoding = "UTF-8")
-    send(list(bridge_event = "execution_started", execution_id = execution, script = args[[10L]]))
-    eval(program, envir = user)
-    if (!exists(object, envir = user, inherits = FALSE)) stop("The named ggplot object is absent.")
-    plot <- get(object, envir = user, inherits = FALSE)
-    adapter$capture_ggplot(plot, frame_pt, palettes)
+    start_execution <- function() {
+      send(list(bridge_event = "execution_started", execution_id = spec$execution,
+                script = spec$relative_script))
+    }
+    adapter$capture_ggplot(plot_for(start_execution), spec$frame_pt, palettes)
   }, error = function(error) {
     send(list(bridge_event = "exit", code = 1L, figures = 0L,
               script_error = list(message = substr(conditionMessage(error), 1L, 2000L))))
-    quit(status = 1L)
+    NULL
   })
-  send(list(bridge_event = "barrier", reason = "script_end", stems = list(stem)))
+  if (is.null(captured)) return(1L)
+  send(list(bridge_event = "barrier", reason = "script_end", stems = list(spec$stem)))
 
   edits_from <- function(request) {
-    if (!identical(request$stem, stem)) stop("Unknown ggplot object.")
+    if (!identical(request$stem, spec$stem)) stop("Unknown ggplot object.")
     patches <- request$payload$patches
     if (!is.list(patches)) stop("Expected a full list of plot patches.")
     edits <- list()
@@ -119,41 +113,41 @@ main <- function() {
 
   repeat {
     request <- receive()
-    if (is.null(request)) return(invisible(NULL))
+    if (is.null(request)) return(0L)
     if (!identical(request$protocol_version, 1L) || !is.character(request$request_id)) {
       stop("Invalid native worker envelope.")
     }
-    if (request$cmd %in% c("terminate", "shutdown")) return(invisible(NULL))
+    if (request$cmd %in% c("terminate", "shutdown")) return(0L)
     envelope <- request[c("protocol_version", "request_id", "worker_generation",
                           "render_revision")]
     answer <- tryCatch(
       switch(request$cmd,
-        build = list(ok = TRUE, stems = setNames(list(list()), stem),
+        build = list(ok = TRUE, stems = stats::setNames(list(list()), spec$stem),
                      svg = captured$svg, source = "ggplot2",
-                     manifest = adapter$ggplot_manifest(captured$state, stem),
+                     manifest = adapter$ggplot_manifest(captured$state, spec$stem),
                      ggplot2 = as.character(utils::packageVersion("ggplot2"))),
         render = {
           edits <- edits_from(request)
           list(ok = TRUE, svg = adapter$render_ggplot(captured$state, edits),
-               manifest = adapter$ggplot_manifest(captured$state, stem, edits))
+               manifest = adapter$ggplot_manifest(captured$state, spec$stem, edits))
         },
         preview_png = {
           edits <- edits_from(request)
           payload <- request$payload
           paired <- isTRUE(payload$with_manifest)
           if (paired) {
-            path <- tempfile(pattern = "preview-", tmpdir = args[[11L]], fileext = ".png")
+            path <- tempfile(pattern = "preview-", tmpdir = spec$out_dir, fileext = ".png")
           } else {
             tag <- payload$tag
             if (!is.character(tag) || length(tag) != 1L || is.na(tag) ||
                 !grepl("^[A-Za-z0-9_-]+$", tag)) stop("Invalid native R preview tag.")
-            path <- file.path(args[[11L]], paste0(stem, "__", tag, ".png"))
+            path <- file.path(spec$out_dir, paste0(spec$stem, "__", tag, ".png"))
           }
           tryCatch({
             measured <- adapter$preview_ggplot_png(captured$state, edits, path, payload$width, paired)
             if (paired) {
               list(ok = TRUE, png = jsonlite::base64_enc(readBin(path, "raw", file.info(path)$size)),
-                   manifest = adapter$ggplot_manifest(captured$state, stem, edits, measured))
+                   manifest = adapter$ggplot_manifest(captured$state, spec$stem, edits, measured))
             } else {
               list(ok = TRUE, path = path)
             }
@@ -179,10 +173,43 @@ main <- function() {
         list(ok = FALSE, error = list(code = "bad_request", message = conditionMessage(error)))
       }
     )
-    send(c(envelope, list(execution_id = execution), answer))
+    send(c(envelope, list(execution_id = spec$execution), answer))
     if (identical(request$cmd, "continue")) break
   }
   send(list(bridge_event = "exit", code = 0L, figures = 1L))
+  0L
 }
 
-main()
+tavotto_attach <- function(plot, offer_path) {
+  # The console stays in the current process, with its libraries,
+  # working directory and graphics devices. All plotting is scoped.
+  if (!file.exists(offer_path)) stop("This Tavotto connection command was used or has expired.")
+  offer <- jsonlite::fromJSON(offer_path)
+  if (!isTRUE(offer$spec$console)) stop("Invalid Tavotto console invitation.")
+  offer$spec$library <- NULL
+  status <- ggplot_serve(offer$spec, offer$token, function(start_execution) plot)
+  if (status != 0L) stop("Tavotto could not capture the current ggplot object.")
+  invisible(TRUE)
+}
+
+main <- function() {
+  args <- commandArgs(trailingOnly = TRUE)
+  token <- Sys.getenv("TAVOTTO_BRIDGE_TOKEN")
+  Sys.unsetenv("TAVOTTO_BRIDGE_TOKEN")
+  if (!length(args) %in% 11:12) stop("Invalid owned R launch.")
+  spec <- list(console = FALSE, frame_pt = as.numeric(args[3:4]), host = args[[5L]],
+               port = args[[6L]], adapter = args[[7L]], stem = args[[8L]],
+               execution = args[[9L]], relative_script = args[[10L]], out_dir = args[[11L]],
+               library = if (length(args) == 12L) args[[12L]])
+  status <- ggplot_serve(spec, token, function(start_execution) {
+    user <- new.env(parent = globalenv())
+    program <- parse(file = args[[1L]], keep.source = TRUE, encoding = "UTF-8")
+    start_execution()
+    eval(program, envir = user)
+    if (!exists(args[[2L]], envir = user, inherits = FALSE)) stop("The named ggplot object is absent.")
+    get(args[[2L]], envir = user, inherits = FALSE)
+  })
+  if (status != 0L) quit(status = status)
+}
+
+if (sys.nframe() == 0L) main()

@@ -1768,8 +1768,8 @@ class NativeSessionRegistry:
         with self._lock:
             self._reserved.discard(launch_id)
 
-    def adopt(self, session: NativeSession) -> None:
-        """登记一条**桌面拥有**的会话（`desktopproc.start` 在握手成功、传输起好之后调）。
+    def adopt(self, session: NativeSession, *, ticket: StartTicket | None = None) -> None:
+        """Register a session whose authenticated transport is already running.
 
         与 `attach` 的区别只在会话怎么来的（没有 relay / descriptor）；之后的注册表语义
         （live route、终态丢路由、`on_change`）是同一套。
@@ -1777,6 +1777,8 @@ class NativeSessionRegistry:
         with self._lock:
             if self._closing:
                 raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+            if ticket is not None:
+                self.check_start(ticket)
             prev = self._sessions.get(session.session_id)
             if prev is not None and (
                 prev.alive() or (prev.owned is not None and not prev.owned.finished)

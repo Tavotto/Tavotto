@@ -188,18 +188,20 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
             size="sm"
             loading={busy}
             onClick={act(store.resume)}
-            title={ns('resumeHint')}
+            title={session.capture_source === 'ggplot2' ? undefined : ns('resumeHint')}
           >
             <Play size={ICON_SIZE.sm} />
-            {ns('resume')}
+            {ns(session.capture_source === 'ggplot2' ? 'rConsoleResume' : 'resume')}
           </Button>
           <Button variant="secondary" size="sm" disabled={busy} onClick={act(store.detach)}>
             <Unplug size={ICON_SIZE.sm} />
             {ns('detach')}
           </Button>
-          <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>
-            {ns('terminate')}
-          </Button>
+          {session.capture_source !== 'ggplot2' && (
+            <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>
+              {ns('terminate')}
+            </Button>
+          )}
         </div>
       )}
     </section>
@@ -231,6 +233,7 @@ function stateLine(s: NativeSessionInfo): string {
   if (s.capture_source === 'ggplot2' && s.script_error?.message) return s.script_error.message
   switch (s.state) {
     case 'barrier':
+      if (s.capture_source === 'ggplot2' && s.owner === 'terminal') return ns('rConsoleReady')
       return s.script_error
         ? ns('state.barrierAfterError')
         : ns('state.barrier', { count: s.stems.length })

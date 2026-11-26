@@ -10082,6 +10082,16 @@ export const startNativeGgplot = (target: {
   body: JSON.stringify(target),
 })
 
+export const inviteNativeGgplot = (target: {
+  script: string
+  object: string
+  frame_pt: [number, number]
+}) => jsonFetch<{ command: string; expires_in: number }>('/api/native/ggplot2/invitation', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(target),
+})
+
 const nativeAction = (sessionId: string, action: string) =>
   jsonFetch<{ session: NativeSessionInfo }>(
     `/api/native/sessions/${encodeURIComponent(sessionId)}/${action}`,

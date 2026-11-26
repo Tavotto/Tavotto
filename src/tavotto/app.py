@@ -11200,6 +11200,37 @@ def api_native_ggplot2_start():
     return jsonify({"ok": True, "session": session.public_state()}), 202
 
 
+@app.post("/api/native/ggplot2/invitation")
+def api_native_ggplot2_invitation():
+    """Create an authenticated invitation for an existing local R console."""
+    from .engine import nativeggplot, nativeggplot_console
+
+    if not _desktop_initiated() or not _page_authenticated():
+        return _native_error(engine_runcodes.RunError(engine_runcodes.NATIVE_DESKTOP_REQUIRED))
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) - {"script", "object", "frame_pt"}:
+        return jsonify({"code": "bad_request", "error": "Invalid ggplot2 console request."}), 400
+    root = str(require_project())
+    registry = engine_nativesession.REGISTRY
+    epoch = registry.project_epoch(root)
+    relative = body.get("script")
+    script = engine_projectenv.contained_path(root, relative) if isinstance(relative, str) else None
+    if script is None or Path(script).suffix.lower() != ".r" or not Path(script).is_file():
+        return jsonify({"code": "bad_request", "error": "Select a project R script."}), 400
+    try:
+        target = nativeggplot.GgplotTarget(body.get("object"), tuple(body.get("frame_pt") or ()))
+        canonical_script = Path(script).relative_to(root).as_posix()
+    except (TypeError, ValueError) as exc:
+        return jsonify({"code": "bad_request", "error": str(exc)}), 400
+    try:
+        invitation = nativeggplot_console.invite(
+            root, canonical_script, target, registry=registry, project_epoch=epoch
+        )
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    return jsonify({"ok": True, **invitation}), 201
+
+
 @app.get("/api/native/pending/<native_id>")
 def api_native_pending(native_id: str):
     """待确认的一条 native 交接。**返回的 metadata 里没有 token、没有端口。**"""
@@ -11315,9 +11346,9 @@ def api_native_session_build(session_id: str):
         # The completed route identifies the baseline which already passed
         # through registration and materialization. A second window must not
         # publish the current edited SVG under the empty-patch cache key.
-        stem = ggplot.stem(session.spec.target)
+        stem = ggplot.stem(session.target_display)
         published = engine_nativesession.REGISTRY.route_for(
-            session.project_root, session.spec.target, stem
+            session.project_root, session.target_display, stem
         )
         if published is session and session.descriptors:
             return jsonify(
@@ -11352,11 +11383,14 @@ def _build_native_session(session, *, register_ggplot=False):
             try:
                 ctx = current_ctx()
                 engine_discover.register(
-                    ctx.path, session.spec.target, session.stems, entry="__main__", append=True
+                    ctx.path, session.target_display, session.stems, entry="__main__", append=True
                 )
                 refresh_project(ctx, reason="probe", allow_static_merge=False)
             except (OSError, ValueError, engine_refresh.RefreshError):
-                session.cancel_owned()
+                if session.owned is None:
+                    session.shutdown()
+                else:
+                    session.cancel_owned()
                 raise
         _svg_native_execution_update(session)
         _materialize_native(session)

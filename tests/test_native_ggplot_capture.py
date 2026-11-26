@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -14,6 +15,7 @@ import pymupdf
 import pytest
 from PIL import Image
 
+from support.foundation_app import sidecar_app
 from tavotto.engine import (
     desktopproc,
     envlease,
@@ -34,6 +36,161 @@ def _rscript():
     if executable is None:
         pytest.skip("real Rscript runtime is unavailable")
     return executable, explicit
+
+
+def test_connect_to_existing_r_and_release_its_console(tmp_path):
+    rscript, explicit = _rscript()
+    dependency = subprocess.run(
+        [
+            rscript,
+            "--vanilla",
+            "-e",
+            'quit(status = if (all(vapply(c("ggplot2", "svglite", "jsonlite"), '
+            "requireNamespace, logical(1L), quietly = TRUE))) 0L else 77L)",
+        ],
+        capture_output=True,
+        check=False,
+        timeout=45,
+    )
+    if dependency.returncode == 77 and not explicit:
+        pytest.skip("R console dependencies are unavailable")
+    assert dependency.returncode == 0, dependency.stderr
+    project = tmp_path / "R project"
+    project.mkdir()
+    (project / "source.R").write_text('stop("the desktop must not run this file")\n')
+    active = tmp_path / "already-running.R"
+    active.write_text(
+        r"""
+calls <- 0L
+record <- function(data) { calls <<- calls + 1L; data }
+data <- data.frame(x = 1:3, y = c(2, 4, 3))
+name <- "\U000056fe\U0001f4c8"
+assign(name, ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+       ggplot2::geom_point(data = record) + ggplot2::labs(title = "Already running"),
+       envir = .GlobalEnv)
+grDevices::pdf("existing-device.pdf")
+device <- grDevices::dev.cur()
+before <- list(cwd = getwd(), libraries = .libPaths())
+cat(Sys.getpid(), file = "console-ready")
+stdin <- file("stdin", open = "r")
+command <- readLines(stdin, n = 1L)
+eval(parse(text = command), envir = .GlobalEnv)
+stopifnot(calls == 1L, identical(before$cwd, getwd()), identical(before$libraries, .libPaths()),
+          identical(device, grDevices::dev.cur()), exists(name, envir = .GlobalEnv),
+          inherits(try(eval(parse(text = command), envir = .GlobalEnv), silent = TRUE), "try-error"))
+grDevices::dev.off(device)
+close(stdin)
+cat(Sys.getpid(), file = "console-resumed")
+""",
+        encoding="utf-8",
+    )
+    ready = tmp_path / "console-ready"
+    resumed = tmp_path / "console-resumed"
+    with (
+        sidecar_app(project, tmp_path / "desktop") as app,
+        subprocess.Popen(
+            [rscript, "--vanilla", str(active)],
+            cwd=tmp_path,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        ) as console,
+    ):
+        try:
+            deadline = time.monotonic() + _COLD_RENDER_TIMEOUT_SECONDS
+            while not ready.is_file() or not ready.stat().st_size:
+                assert console.poll() is None and time.monotonic() < deadline
+                time.sleep(0.05)
+            pid = int(ready.read_text())
+            status, offer = app.call(
+                "/api/native/ggplot2/invitation",
+                {"script": "source.R", "object": "图📈", "frame_pt": [320, 240]},
+            )
+            assert status == 201
+            assert "token" not in offer and set(offer) == {"ok", "command", "expires_in"}
+            console.stdin.write(offer["command"] + "\n")
+            console.stdin.flush()
+            deadline = time.monotonic() + _COLD_RENDER_TIMEOUT_SECONDS
+            while True:
+                _, result = app.call("/api/native/sessions")
+                sessions = result["sessions"]
+                if sessions and sessions[0]["state"] in {"barrier", "ended", "failed"}:
+                    break
+                assert console.poll() is None and time.monotonic() < deadline, sessions
+                time.sleep(0.05)
+            (session,) = sessions
+            assert session["state"] == "barrier", session
+            assert session["process_pid"] == pid
+            assert session["owner"] == "terminal" and session["capture_source"] == "ggplot2"
+            route = "/api/native/sessions/" + session["session_id"]
+            _, result = app.call(route + "/build", {}, timeout=_COLD_RENDER_TIMEOUT_SECONDS)
+            (descriptor,) = result["descriptors"]
+            assert descriptor["script"] == "source.R"
+            request = {"id": descriptor["asset_id"], "inline_svg": True, "patches": []}
+            _, base = app.call("/api/engine/render", request)
+            assert "Already running" in base["svg"]
+            patch = {"gid": "plot.title", "prop": "color", "value": "#572B82"}
+            _, edited = app.call("/api/engine/render", {**request, "patches": [patch]})
+            assert "#572B82" in edited["svg"] and "#572B82" not in base["svg"]
+            _, undone = app.call("/api/engine/render", request)
+            assert undone["svg"] == base["svg"]
+            _, replayed = app.call("/api/engine/render", {**request, "patches": [patch]})
+            assert replayed["svg"] == edited["svg"]
+            width, height = 320 * 25.4 / 72, 240 * 25.4 / 72
+            layout = {
+                "schema": 3,
+                "project": {"id": "console", "name": "Console"},
+                "activeCanvasId": "first",
+                "canvases": [
+                    {
+                        "id": "first",
+                        "name": "Console",
+                        "schema": 2,
+                        "page": {"w": width + 10, "h": height + 10},
+                        "guides": [],
+                        "objects": [
+                            {
+                                "id": "r",
+                                "type": "panel",
+                                "fileId": descriptor["asset_id"],
+                                "fileKind": "runtime",
+                                "name": "Already running",
+                                "x": 5,
+                                "y": 5,
+                                "w": width,
+                                "h": height,
+                                "nativeW": width,
+                                "nativeH": height,
+                                "overrides": [patch],
+                            }
+                        ],
+                    }
+                ],
+            }
+            layout_route = "/api/layouts/Console"
+            _, saved = app.call(layout_route + "?target=project", layout)
+            snapshot = saved["figure_snapshots"]["r"]
+            app.call(route + "/continue", {})
+            stdout, stderr = console.communicate(timeout=30)
+            assert console.returncode == 0, stdout + stderr
+            assert int(resumed.read_text()) == pid
+        finally:
+            if console.poll() is None:
+                console.terminate()
+                console.wait(timeout=15)
+    (project / "source.R").rename(project / "source.R.moved")
+    with sidecar_app(project, tmp_path / "cold") as app:
+        _, reopened = app.call(layout_route)
+        (panel,) = reopened["canvases"][0]["objects"]
+        assert panel["figureSnapshot"] == snapshot
+        assert panel["overrides"] == [patch]
+        _, archived = app.call(
+            "/api/figure-preview",
+            {"id": panel["fileId"], "patches": panel["overrides"], "figure_snapshot": snapshot},
+        )
+        assert "#572B82" in archived["svg"]
 
 
 ROOT = Path(__file__).resolve().parents[1]

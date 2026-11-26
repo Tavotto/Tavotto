@@ -29,6 +29,7 @@ from .manifest_fields import (
 )
 
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
+GGPLOT_BRIDGE = _RESOURCES / "ggplot_bridge.R"
 _CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
 _LEGEND_IDENTITY_PREFIX = "r3:"
 _LINE_IDENTITY_PREFIX = "r4:"
@@ -133,7 +134,7 @@ class GgplotTarget:
         return [
             spec.interpreter,
             "--vanilla",
-            str(_RESOURCES / "ggplot_bridge.R"),
+            str(GGPLOT_BRIDGE),
             script,
             self.object_name,
             *(str(value) for value in self.frame_pt),
@@ -150,7 +151,7 @@ class GgplotTarget:
     def publish_preview(self, session, response: dict, *, build: bool) -> dict:
         from . import pool
 
-        stem = self.stem(session.spec.target)
+        stem = self.stem(session.target_display)
         manifest, raw = response.get("manifest"), response.get("svg")
         if (
             not isinstance(manifest, dict)
@@ -171,7 +172,7 @@ class GgplotTarget:
         response = {**response, "svg": data.decode("utf-8")}
         if build:
             desc = figcapture.build_descriptor(
-                script=session.spec.target,
+                script=session.target_display,
                 entry="__main__",
                 stem=stem,
                 capture_source=figcapture.SOURCE_GGPLOT2,
