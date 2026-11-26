@@ -260,6 +260,39 @@ def test_stroked_labels_draw_the_split_runs_too(has_cjk):
     assert all("浓度" not in s for s, m in texts if m), drawn
 
 
+_STROKE_INK = r"""
+import numpy as np
+from matplotlib import patheffects
+
+def ink(stroke, armed):
+    mixedtext.arm() if armed else mixedtext.disarm()
+    fig = plt.figure(figsize=(4, 1), dpi=100)
+    t = fig.text(0.05, 0.5, "浓度 ($\\mu$mol/L) 随 $T$", va="center", fontsize=16)
+    if stroke:
+        t.set_path_effects([patheffects.withStroke(linewidth=3, foreground="w")])
+    fig.canvas.draw()
+    img = np.asarray(fig.canvas.buffer_rgba())[:, :, :3]
+    plt.close(fig)
+    ys, xs = np.nonzero(img.min(axis=2) < 200)
+    return [int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())], img.tobytes()
+
+plain, _ = ink(False, True)
+stroked_on, a = ink(True, True)
+stroked_off, b = ink(True, False)
+print(json.dumps({"plain": plain, "on": stroked_on, "off": stroked_off, "differs": a != b}))
+"""
+
+
+def test_stroked_mixed_label_is_laid_out_like_the_unstroked_one(has_cjk):
+    """像素：白描边叠在白底上不改变墨迹范围——描边标签的各段摆位与不描边一致（不是整行 mathtext 的方框）；
+    尺子先验活：不武装时（汉字画成方框）同一标签的像素不同。"""
+    if not has_cjk:
+        pytest.skip("worker 的解释器找不到任何中日韩候选字体")
+    out = _run(_STROKE_INK)
+    assert all(abs(a - b) <= 1 for a, b in zip(out["on"], out["plain"])), out
+    assert out["differs"], out
+
+
 _SURFACE = r"""
 import figcapture
 from matplotlib.backends import backend_agg
