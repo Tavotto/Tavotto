@@ -9,48 +9,89 @@ ggplot_point_marker <- function(pch) {
   if (!is.na(at)) names(ggplot_point_markers)[[at]]
 }
 
+ggplot_point_fields <- function(points, data, mapped) {
+  if (!inherits(points, "points") || !is.null(points$vp) || !nrow(data) ||
+      length(points$x) != nrow(data) || length(points$y) != nrow(data) ||
+      !all(grid::unitType(points$x) == "native") || !all(grid::unitType(points$y) == "native") ||
+      !all(is.finite(c(as.numeric(points$x), as.numeric(points$y))))) return(list())
+  base_size <- unique(round(points$gp$fontsize - points$gp$lwd, 9))
+  marker <- ggplot_point_marker(unique(points$pch))
+  alpha <- unique(data$alpha)
+  if (length(alpha) == 1L && is.na(alpha)) {
+    # Inherit the per-colour alpha unless every drawn pigment is opaque.
+    pigments <- unique(c(points$gp$col, points$gp$fill))
+    pigments <- pigments[!is.na(pigments)]
+    alpha <- unique(grDevices::col2rgb(pigments, alpha = TRUE)[4L, ]) / 255
+  }
+  Filter(Negate(is.null), list(
+    size = if (!"size" %in% mapped && is_positive_ggplot_number(base_size)) base_size^2,
+    marker = if (!"shape" %in% mapped) marker,
+    alpha = if (!"alpha" %in% mapped && is.numeric(alpha) && length(alpha) == 1L &&
+                is.finite(alpha) && alpha >= 0 && alpha <= 1) alpha
+  ))
+}
+
+# Link each already drawn grob to its exact panel cell by native grob name.
+# Facet wrap/grid can draw the same panel IDs in different row/column orders.
+ggplot_panel_children <- function(table, slots) {
+  children <- lapply(table$grobs[slots], function(grob) grob$childrenOrder)
+  grobs <- unlist(children, use.names = FALSE)
+  placements <- data.frame(grob = grobs, slot = rep(slots, lengths(children)),
+                           child = sequence(lengths(children)))
+  placements[!(duplicated(grobs) | duplicated(grobs, fromLast = TRUE)), , drop = FALSE]
+}
+
 ggplot_point_targets <- function(built, table, layer_grobs) {
-  slot <- which(table$layout$name == "panel")
-  if (length(slot) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
+  if (!identical(class(built$layout$coord)[[1L]], "CoordCartesian")) return(list())
+  slots <- which(grepl("^panel($|-)", table$layout$name))
+  if (!length(slots)) return(list())
+  layout <- built$layout
+  single <- identical(length(slots), 1L) && identical(table$layout$name[[slots]], "panel")
+  facets <- setdiff(names(layout$layout), c("PANEL", "ROW", "COL", "SCALE_X", "SCALE_Y", "COORD"))
+  if (!single && (!class(layout$facet)[[1L]] %in% c("FacetWrap", "FacetGrid") || !length(facets))) {
     return(list())
   }
-  panel <- table$grobs[[slot]]
+  children <- ggplot_panel_children(table, slots)
   targets <- list()
   for (index in seq_along(layer_grobs)) {
     layer <- built$plot$layers[[index]]
-    if (!identical(class(layer$geom)[[1L]], "GeomPoint") || length(layer_grobs[[index]]) != 1L) next
-    points <- layer_grobs[[index]][[1L]]
-    data <- built$data[[index]]
-    if (!inherits(points, "points") || !is.null(points$vp) || !nrow(data) ||
-        length(points$x) != nrow(data) || length(points$y) != nrow(data) ||
-        !all(grid::unitType(points$x) == "native") || !all(grid::unitType(points$y) == "native") ||
-        !all(is.finite(c(as.numeric(points$x), as.numeric(points$y))))) next
-    child <- which(panel$childrenOrder == points$name)
-    if (length(child) != 1L) next
+    if (!identical(class(layer$geom)[[1L]], "GeomPoint")) next
     mapped <- ggplot_styled_layer_mapping(layer)
     if (is.null(mapped) || ggplot_layer_has_legend_key(built, layer, mapped)) next
-    base_size <- unique(round(points$gp$fontsize - points$gp$lwd, 9))
-    marker <- ggplot_point_marker(unique(points$pch))
-    alpha <- unique(data$alpha)
-    if (length(alpha) == 1L && is.na(alpha)) {
-      # Inherit the per-colour alpha unless every drawn pigment is opaque.
-      pigments <- unique(c(points$gp$col, points$gp$fill))
-      pigments <- pigments[!is.na(pigments)]
-      alpha <- unique(grDevices::col2rgb(pigments, alpha = TRUE)[4L, ]) / 255
+    members <- layer_grobs[[index]]
+    data <- built$data[[index]]
+    groups <- if (is.null(names(members))) list(data) else split(data, data$PANEL)
+    if (length(groups) != length(members) || !identical(names(groups), names(members))) next
+    drawn_names <- vapply(members, function(member) member$name %||% "", character(1L))
+    placements <- match(drawn_names, children$grob)
+    for (i in seq_along(members)) {
+      placement <- placements[[i]]
+      if (is.na(placement)) next
+      points <- members[[i]]
+      rows <- groups[[i]]
+      fields <- ggplot_point_fields(points, rows, mapped)
+      if (!length(fields)) next
+      facet <- NULL
+      if (!single) {
+        id <- unique(as.character(rows$PANEL))
+        if (length(id) != 1L) next
+        panel <- match(id, as.character(layout$layout$PANEL))
+        if (is.na(panel)) next
+        panel_id <- layout$layout$PANEL[[panel]]
+        projected <- layout$coord$transform(rows[c("x", "y")], layout$panel_params[[panel_id]])
+        if (!isTRUE(all.equal(as.numeric(points$x), as.numeric(projected$x), tolerance = 1e-12)) ||
+            !isTRUE(all.equal(as.numeric(points$y), as.numeric(projected$y), tolerance = 1e-12))) next
+        facet <- lapply(layout$layout[panel, facets, drop = FALSE], as.character)
+      }
+      gid <- if (single) paste0("layer.", index, ".scatter") else {
+        paste0("layer.", index, ".panel.", panel_id, ".scatter")
+      }
+      context <- if (single) list("GeomPoint", rows) else list("GeomPoint", facet, rows)
+      targets[[gid]] <- list(
+        slot = children$slot[[placement]], child = children$child[[placement]],
+        index = index, count = nrow(rows), facet = facet, values = fields,
+        clip = identical(layout$coord$clip, "on"), context = rlang::hash(context))
     }
-    fields <- list(
-      size = if (!"size" %in% mapped && is_positive_ggplot_number(base_size)) base_size^2,
-      marker = if (!"shape" %in% mapped) marker,
-      alpha = if (!"alpha" %in% mapped && is.numeric(alpha) && length(alpha) == 1L &&
-                  is.finite(alpha) && alpha >= 0 && alpha <= 1) alpha
-    )
-    fields <- Filter(Negate(is.null), fields)
-    if (!length(fields)) next
-    gid <- paste0("layer.", index, ".scatter")
-    targets[[gid]] <- list(slot = slot, child = child, index = index, count = nrow(data),
-                           values = fields,
-                           clip = identical(built$layout$coord$clip, "on"),
-                           context = rlang::hash(list("GeomPoint", data)))
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
   targets[!(duplicated(contexts) | duplicated(contexts, fromLast = TRUE))]
@@ -144,7 +185,9 @@ ggplot_point_elements <- function(state, edits, measured) {
     bbox <- if (is.null(measured)) target$bbox else measured[[gid]]
     if (is.null(bbox)) stop("The native R point series could not be measured.")
     edit <- edits[[gid]]
-    list(gid = gid, role = "scatter", label = paste("\u6563\u70b9", target$index),
+    label <- paste("\u6563\u70b9", target$index)
+    if (length(target$facet)) label <- paste(label, paste(unlist(target$facet), collapse = " / "), sep = " \u00b7 ")
+    list(gid = gid, role = "scatter", label = label,
          bbox = bbox, draggable = FALSE, editable = list(),
          point_series = list(context = target$context, current = ggplot_point_values(target, edit),
                              original = target$values, markers = as.list(names(ggplot_point_markers)),

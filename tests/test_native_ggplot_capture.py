@@ -1398,6 +1398,74 @@ stopifnot(identical(adapter$render_ggplot(captured$state), captured$svg),
 """
 
 
+FACET_POINT_PROBE = r"""
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
+frame <- c(500, 350)
+calls <- 0L
+observe <- function(data) { calls <<- calls + 1L; data }
+data <- data.frame(x = c(1, 2, 4, 5, 7), y = c(1, 4, 3, 2, 5), z = 1:5,
+                   row = factor(c("Beta", "Beta", "Alpha", "Alpha", "Alpha"),
+                                levels = c("Beta", "Empty", "Alpha")),
+                   col = factor(c("c", "c", "c", "d", "d")))
+chart <- function(data) ggplot2::ggplot(data, ggplot2::aes(x, y, colour = z)) +
+  ggplot2::geom_point(data = observe, alpha = .6,
+                     position = ggplot2::position_jitter(width = .15, height = 0, seed = 18)) +
+  ggplot2::scale_colour_gradient(name = "Exposure")
+facet <- ggplot2::facet_wrap(ggplot2::vars(row), drop = FALSE, ncol = 2, as.table = FALSE)
+capture <- adapter$capture_ggplot(chart(data) + facet, frame)
+state <- capture$state
+beta <- "layer.1.panel.1.scatter"
+alpha <- "layer.1.panel.3.scatter"
+targets <- state$point_targets
+stopifnot(identical(names(targets), c(beta, alpha)), identical(targets[[beta]]$facet$row, "Beta"),
+          identical(targets[[alpha]]$facet$row, "Alpha"), targets[[beta]]$count == 2L,
+          targets[[alpha]]$count == 3L, targets[[beta]]$bbox[[2L]] > targets[[alpha]]$bbox[[2L]],
+          calls == 1L)
+grob <- function(table, gid) {
+  dest <- targets[[gid]]
+  adapter$ggplot_point_grob(table$grobs[[dest$slot]], dest)
+}
+points <- lapply(c(beta, alpha), function(gid) grob(state$table, gid))
+patch <- stats::setNames(list(list(size = 64, marker = "D", alpha = .8)), alpha)
+inspect <- function(edits) adapter$with_svg_frame(frame, function(device) {
+  grid::grid.newpage()
+  table <- adapter$ggplot_table_for(state, edits)$table
+  lapply(c(beta, alpha), function(gid) grob(table, gid))
+})$value
+changed <- inspect(patch)
+stopifnot(identical(changed[[1L]], points[[1L]]),
+          identical(changed[[2L]][c("x", "y")], points[[2L]][c("x", "y")]),
+          identical(changed[[2L]]$pch, 18L),
+          all(abs(changed[[2L]]$gp$fontsize - changed[[2L]]$gp$lwd - 8) < 1e-10),
+          identical(substr(changed[[2L]]$gp$col, 1L, 7L), substr(points[[2L]]$gp$col, 1L, 7L)),
+          all(endsWith(changed[[2L]]$gp$col, "CC")))
+svg <- adapter$render_ggplot(state, patch)
+stopifnot(!identical(svg, capture$svg), identical(adapter$render_ggplot(state), capture$svg),
+          identical(adapter$render_ggplot(state, patch), svg), calls == 1L)
+
+colourbar <- "legend.right.1.colourbar"
+with_layout <- c(patch, stats::setNames(list(list(orientation = "horizontal", extend = "min")), colourbar))
+stopifnot(identical(inspect(with_layout), changed))
+
+table <- adapter$capture_ggplot(
+  chart(data) + ggplot2::facet_grid(row ~ col, drop = FALSE, as.table = FALSE), frame)$state
+labels <- lapply(table$point_targets, function(t) unlist(t$facet, use.names = FALSE))
+stopifnot(length(labels) == 3L, any(vapply(labels, identical, logical(1L), c("Beta", "c"))),
+          any(vapply(labels, identical, logical(1L), c("Alpha", "c"))),
+          any(vapply(labels, identical, logical(1L), c("Alpha", "d"))))
+one <- adapter$capture_ggplot(chart(data[data$row == "Alpha", ]) +
+                              ggplot2::facet_wrap(ggplot2::vars(row)), frame)$state
+stopifnot(identical(names(one$point_targets), "layer.1.panel.1.scatter"))
+data$row <- stats::relevel(data$row, "Alpha")
+reordered <- adapter$capture_ggplot(chart(data) + facet, frame)$state
+stopifnot(identical(reordered$point_targets[[beta]]$facet$row, "Alpha"),
+          !identical(reordered$point_targets[[beta]]$context, targets[[beta]]$context))
+mapped <- chart(data) + ggplot2::aes(size = z)
+stopifnot(!"size" %in% names(adapter$capture_ggplot(mapped + facet, frame)$state$point_targets[[beta]]$values))
+"""
+
+
 MINOR_TICK_PROBE = r"""
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
@@ -1501,6 +1569,10 @@ def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):
 
 def test_ggplot_minor_tick_controls_use_native_positions_and_grid(tmp_path):
     _assert_r_probe(tmp_path, MINOR_TICK_PROBE)
+
+
+def test_ggplot_faceted_point_edits_stay_on_the_selected_native_panel(tmp_path):
+    _assert_r_probe(tmp_path, FACET_POINT_PROBE)
 
 
 def test_ggplot_tick_and_curve_edits_preserve_native_values_and_colours(tmp_path):
