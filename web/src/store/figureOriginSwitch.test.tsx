@@ -1,3 +1,4 @@
+import { i18n } from '@/i18n'
 /**
  * 点选误差线换 SD / SEM / 95% CI（`figureOriginStore` + 宿主 + 属性页那一行 `ErrorKindRow`，ADR 0178）。
  * 主语：**这一块面板**（同一个 id）上画的是哪个脚本的图；换成功 = 面板的 `fileId` 变成新脚本的图、旧脚本不删、一条历史；
@@ -516,10 +517,15 @@ describe('阴影带（趋势图的均值 ± 误差，`fill` 元素）', () => {
     register(bandOrigin())
     await mountRow(panels()[0]!, true)
     expect(row()).not.toBeNull()
+    // 阴影带上这一行叫「误差带」，误差棒上仍叫「误差线」
+    expect(hostEl.textContent).toContain(i18n.t('ai:dataFigureV2.confirm.errorBand'))
+    expect(hostEl.textContent).not.toContain(i18n.t('ai:dataFigureV2.confirm.error'))
     act(() => root.unmount())
     hostEl.remove()
     await mountRow(panels()[0]!, false)
     expect(row()).not.toBeNull()
+    expect(hostEl.textContent).toContain(i18n.t('ai:dataFigureV2.confirm.error'))
+    expect(hostEl.textContent).not.toContain(i18n.t('ai:dataFigureV2.confirm.errorBand'))
     act(() => root.unmount())
     hostEl.remove()
     useFigureOriginStore.getState().clear()
