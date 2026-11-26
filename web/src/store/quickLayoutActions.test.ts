@@ -35,6 +35,7 @@ vi.mock('@/store/renderStore', async (importOriginal) => {
 })
 
 import { addSubLabels, makeSubLabel } from './actions'
+import { CANVAS_TEXT_DEFAULT_FAMILY, effectiveCanvasFamily } from '@/lib/typography'
 import { useDocumentStore } from './documentStore'
 import { useRenderStore } from './renderStore'
 import { runUndoRedo } from '@/hooks/useKeyboard' // 加载它 = 把「撤销」交给一键排版的胶囊
@@ -524,16 +525,22 @@ describe('addSubLabels 没变', () => {
     addSubLabels()
     const labels = texts()
     expect(labels.map((l) => ({ ...l, id: '' }))).toEqual([
-      { id: '', type: 'text', text: '(a)', x: 11.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', bold: true },
-      { id: '', type: 'text', text: '(b)', x: 101.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', bold: true },
+      { id: '', type: 'text', text: '(a)', x: 11.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', fontFamily: 'sans-serif', bold: true },
+      { id: '', type: 'text', text: '(b)', x: 101.5, y: 11, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', fontFamily: 'sans-serif', bold: true },
     ])
     expect(useSelectionStore.getState().ids).toEqual(labels.map((l) => l.id))
+  })
+
+  it('子图标签画成无衬线（T-006）：不跟画布文字的衬线默认族走', () => {
+    const a = makeSubLabel(0, 5, 6)
+    expect(effectiveCanvasFamily(a)).toBe('sans-serif')
+    expect(CANVAS_TEXT_DEFAULT_FAMILY).toBe('serif') // 别的画布文字的默认没动
   })
 
   it('共用构造：一键排版的标签与它是同一个形状，只有位置不同', () => {
     const a = makeSubLabel(2, 5, 6)
     expect({ ...a, id: '' }).toEqual({
-      id: '', type: 'text', text: '(c)', x: 5, y: 6, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', bold: true,
+      id: '', type: 'text', text: '(c)', x: 5, y: 6, w: 10, h: 5, sizePt: 10, color: '#000000', align: 'left', fontFamily: 'sans-serif', bold: true,
     })
   })
 })

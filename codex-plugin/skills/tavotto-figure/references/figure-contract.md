@@ -51,6 +51,9 @@ fig.savefig(OUT / "Fig1_removal_rate.pdf")
 用 `fig.savefig(OUT / "<Stem>.pdf")`。不要拿 300 dpi 的 PNG 当交付物，也不要
 `rasterized=True`（`imshow` 的位图除外）——Tavotto 导出的是真矢量 PDF，投稿要的正是它。
 
+模板里的 `"pdf.fonttype": 42` 不要删：matplotlib 默认把字嵌成 Type 3，IEEE、Elsevier 等
+期刊会退稿，别的软件里也常常选不中、改不了字；42 是按 TrueType 嵌字。
+
 ## 5. 可复现
 
 随机数固定种子（`rng = np.random.default_rng(20260818)`）；**不要 `plt.show()`**。
@@ -116,6 +119,8 @@ mpl.rcParams.update({
     "xtick.minor.visible": False, "ytick.minor.visible": False,
     # 图例加不加框按开工问题的答案（默认无框）
     "legend.frameon": False,
+    # 字按 TrueType 嵌进 PDF（matplotlib 默认是 Type 3，期刊会退）
+    "pdf.fonttype": 42, "ps.fonttype": 42,
 })
 
 

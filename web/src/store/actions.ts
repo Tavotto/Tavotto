@@ -374,7 +374,7 @@ export function addShape(shape: ShapeObject['shape'], partial: Partial<ShapeObje
 }
 
 /**
- * 一个子图标签（小写字母 + 括号，加粗，字号 / 颜色 / 对齐取画布文字默认值，10 × 5 mm）。
+ * 一个子图标签（小写字母 + 括号，无衬线加粗，字号 / 颜色 / 对齐取画布文字默认值，10 × 5 mm）。
  * `addSubLabels` 与一键排版（ADR 0199 §二，`quickLayoutActions`）共用这一处，两条路出来的标签长得一样；
  * 位置由调用方给（`addSubLabels` 自己加 x+1.5、y+1 的偏移）。**免费能力的模块，不放任何权益判断。**
  */
@@ -391,8 +391,9 @@ export function makeSubLabel(index: number, x: number, y: number): TextObject {
     sizePt: def.sizePt,
     color: def.color,
     align: def.halign,
-    // 子图序号约定是加粗的——这是这一个入口自己的取舍，
-    // 不是另一套默认值，所以它叠在共用默认值**之上**
+    // 子图序号约定是无衬线加粗的（Nature / Cell / Science 都这么要求，matplotlib 图里的字默认也是无衬线）——
+    // 这是这一个入口自己的取舍，不是另一套默认值，所以它叠在共用默认值**之上**；别的画布文字仍跟文档默认族
+    fontFamily: 'sans-serif',
     bold: true,
   }
 }
