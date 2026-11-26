@@ -1,5 +1,30 @@
-# Project rectangle styles onto captured bars. Their native data, statistics,
-# orientation and position adjustments remain in the captured rectangle grob.
+# The rectangle grob holds the computed stack/dodge arrangement. Recover bar
+# centres in data units and check both ends against what the native geom drew.
+ggplot_bar_span <- function(layout, data, rect) {
+  ends <- c("xmin", "xmax")
+  if (!identical(unique(data$flipped_aes), FALSE) || !all(ends %in% names(data)) ||
+      !identical(as.list(layout$coord)$transform, as.list(ggplot2::CoordCartesian)$transform)) {
+    return(NULL)
+  }
+  panel <- layout$panel_params[[1L]]
+  project <- layout$coord$transform(data[ends], panel)
+  lower <- as.numeric(data$xmin)
+  upper <- as.numeric(data$xmax)
+  if (!isTRUE(all.equal(as.numeric(project$xmin), as.numeric(rect$x), tolerance = 1e-12)) ||
+      !isTRUE(all.equal(as.numeric(project$xmax - project$xmin),
+                        as.numeric(rect$width), tolerance = 1e-12))) return(NULL)
+  if (!isTRUE(panel$x$scale_is_discrete)) {
+    transform <- panel$x$scale$get_transformation()
+    if (!transform$name %in% names(ggplot_axis_modes)) return(NULL)
+    lower <- transform$inverse(lower)
+    upper <- transform$inverse(upper)
+  }
+  width <- upper - lower
+  centre <- lower + width / 2
+  if (any(!is.finite(width) | width <= 0 | !is.finite(centre))) return(NULL)
+  list(centre = centre, width = width[[1L]])
+}
+
 ggplot_bar_targets <- function(built, table, layer_grobs) {
   slot <- which(table$layout$name == "panel")
   if (length(slot) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
@@ -36,10 +61,12 @@ ggplot_bar_targets <- function(built, table, layer_grobs) {
     visible_alpha <- unique(c(face$alpha, edge$alpha[outline && width > 0]))
     visible_alpha <- visible_alpha[visible_alpha > 0]
     if (!length(visible_alpha)) next
+    span <- ggplot_bar_span(built$layout, data, rect)
     fields <- list(
       facecolor = face$rgb,
       edgecolor = if (outline) edge$rgb,
       linewidth = if (outline) width,
+      bar_width = span$width,
       alpha = if (length(visible_alpha) == 1L) visible_alpha
     )
     fields <- Filter(Negate(is.null), fields)
@@ -48,7 +75,7 @@ ggplot_bar_targets <- function(built, table, layer_grobs) {
     if (precise) remaining_paths <- remaining_paths - count
     targets[[gid]] <- list(
       slot = slot, child = child, index = index, count = count, precise = precise,
-      face = face, edge = edge, outline = outline, values = fields,
+      face = face, edge = edge, outline = outline, values = fields, centre = span$centre,
       clip = identical(built$layout$coord$clip, "on"),
       context = rlang::hash(list(kind, data, rect$gp))
     )
@@ -74,6 +101,7 @@ ggplot_bar_values <- function(target, edit) {
         !is.na(value) && (value == "none" || grepl("^#[0-9A-Fa-f]{6}$", value)),
       linewidth = is.numeric(value) && length(value) == 1L && is.finite(value) &&
         value >= 0 && value <= 5,
+      bar_width = is_positive_ggplot_number(value),
       alpha = is.numeric(value) && length(value) == 1L && is.finite(value) &&
         value >= 0 && value <= 1,
       FALSE
@@ -84,10 +112,39 @@ ggplot_bar_values <- function(target, edit) {
   values
 }
 
-ggplot_edit_bars <- function(table, target, edit) {
+ggplot_edit_bar_width <- function(rect, centres, width, layout) {
+  panel <- layout$panel_params[[1L]]
+  lower <- centres - width / 2
+  upper <- centres + width / 2
+  if (!isTRUE(panel$x$scale_is_discrete)) {
+    transform <- panel$x$scale$get_transformation()
+    if (identical(transform$name, "log-10") && any(lower <= 0)) {
+      stop("The native R bar width would cross zero on a logarithmic axis.")
+    }
+    lower <- transform$transform(lower)
+    upper <- transform$transform(upper)
+  }
+  if (any(!is.finite(lower) | !is.finite(upper) | upper <= lower)) {
+    stop("The native R bar width cannot be represented at the captured positions.")
+  }
+  project <- layout$coord$transform(data.frame(xmin = lower, xmax = upper), panel)
+  x <- as.numeric(project$xmin)
+  span <- as.numeric(project$xmax - project$xmin)
+  if (any(!is.finite(x) | !is.finite(span) | span == 0)) {
+    stop("The native R bar width cannot be represented in the current view.")
+  }
+  rect$x <- grid::unit(x, "native")
+  rect$width <- grid::unit(span, "native")
+  rect
+}
+
+ggplot_edit_bars <- function(table, target, edit, layout) {
   values <- ggplot_bar_values(target, edit)
   panel <- table$grobs[[target$slot]]
   rect <- ggplot_bar_rect(panel, target)
+  if (!is.null(edit$bar_width)) {
+    rect <- ggplot_edit_bar_width(rect, target$centre, values$bar_width, layout)
+  }
   if (!is.null(edit$linewidth)) rect$gp$lwd <- values$linewidth / ggplot_lwd_pt
   if (!is.null(edit$facecolor) || !is.null(edit$alpha)) {
     rect$gp$fill <- ggplot_edit_pigment(values$facecolor, target$face, edit$alpha, target$values$alpha)

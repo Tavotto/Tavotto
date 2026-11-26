@@ -19,6 +19,7 @@ from .manifest_fields import (
     axis_limits_field,
     axis_scale_field,
     bar_paint_fields,
+    bar_width_field,
     errorbar_stroke_fields,
     fill_color_field,
     marker_field,
@@ -297,14 +298,18 @@ class GgplotTarget:
 
     @staticmethod
     def annotate_bar_series(element: dict, series: dict) -> None:
-        current = series["current"]
-        original = series["original"]
-        fields = bar_paint_fields(current)
-        if "alpha" in current:
-            fields.append(opacity_field(current["alpha"]))
-        original_fields = {field["prop"]: field["value"] for field in bar_paint_fields(original)}
-        if "alpha" in original:
-            original_fields["alpha"] = original["alpha"]
+        def bar_fields(values: dict) -> list[dict]:
+            fields = bar_paint_fields(values)
+            if "bar_width" in values:
+                fields.append(bar_width_field(values["bar_width"]))
+            if "alpha" in values:
+                fields.append(opacity_field(values["alpha"]))
+            return fields
+
+        fields = bar_fields(series["current"])
+        original_fields = {
+            field["prop"]: field["value"] for field in bar_fields(series["original"])
+        }
         for field in fields:
             prop = field["prop"]
             if prop in series["edited"]:

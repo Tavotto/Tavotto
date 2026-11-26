@@ -751,8 +751,19 @@ stopifnot(identical(element(edited, first)$geometry$paths, baseline$geometry$pat
           identical(element(edited, second), element(original, second)),
           identical(adapter$render_ggplot(state), captured$svg),
           identical(adapter$render_ggplot(state, patch), edited_svg), runs == 1L)
+
+thinner <- stats::setNames(list(list(bar_width = .4)), first)
+thin_scene <- adapter$ggplot_table_for(state, thinner)
+thin <- adapter$ggplot_bar_rect(thin_scene$table$grobs[[target$slot]], target)
+centres <- function(rect) as.numeric(rect$x) + as.numeric(rect$width) / 2
+stopifnot(isTRUE(all.equal(centres(thin), centres(before))),
+          isTRUE(all.equal(as.numeric(thin$width) / as.numeric(before$width), rep(.4 / .9, 4))),
+          identical(thin[c("y", "height")], before[c("y", "height")]),
+          identical(element(adapter$ggplot_manifest(state, "bars", thinner), second),
+                    element(original, second)), runs == 1L,
+          identical(adapter$render_ggplot(state), captured$svg))
 bad <- list(facecolor = c(rgb(1, 0, 0), rgb(0, 1, 0)), edgecolor = "yellow",
-            linewidth = 5.1, alpha = -.1, bar_width = .4)
+            linewidth = 5.1, alpha = -.1, bar_width = 0)
 for (prop in names(bad)) {
   stopifnot(inherits(try(adapter$render_ggplot(state, setNames(list(bad[prop]), first)),
                         silent = TRUE), "try-error"))
@@ -797,6 +808,34 @@ for (bars in list(many, make_bars(1L))) {
   moved_panel <- unlist(element(moved, "axes_0")$bbox)
   stopifnot(isTRUE(all.equal(relative(moved_bbox, moved_panel), reflected)))
 }
+
+dodged <- data.frame(x = rep(c(1, 4, 7), each = 2), y = c(3, 4, 2, 1, 5, 6),
+                     group = rep(c("a", "b"), 3))
+dodged_plot <- ggplot2::ggplot(dodged, ggplot2::aes(x, y, group = group)) +
+  ggplot2::geom_col(width = .8, position = "dodge")
+dodged_state <- adapter$capture_ggplot(dodged_plot, frame)$state
+dodged_grob <- function(patches) adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  scene <- adapter$ggplot_table_for(dodged_state, patches)
+  target <- scene$bar_targets[[first]]
+  adapter$ggplot_bar_rect(scene$table$grobs[[target$slot]], target)
+})$value
+xy <- dodged_grob(list())
+zoomin <- list(axes_0 = list(xlim = c(.5, 7.5), xscale = "log", invert_x = TRUE))
+zoomed_baseline <- dodged_grob(zoomin)
+zoomin[[first]] <- list(bar_width = .25)
+log_grob <- dodged_grob(zoomin)
+raw_centres <- c(.8, 1.2, 3.8, 4.2, 6.8, 7.2)
+left <- 1 - log10((raw_centres - .125) / .5) / log10(7.5 / .5)
+right <- 1 - log10((raw_centres + .125) / .5) / log10(7.5 / .5)
+stopifnot(isTRUE(all.equal(as.numeric(xy$width),
+                          rep(.4 / diff(dodged_state$built$layout$panel_params[[1L]]$x.range), 6))),
+          isTRUE(all.equal(as.numeric(log_grob$x), left)),
+          isTRUE(all.equal(as.numeric(log_grob$x + log_grob$width), right)),
+          identical(log_grob[c("y", "height")], zoomed_baseline[c("y", "height")]),
+          identical(dodged_grob(list()), xy))
+zoomin[[first]]$bar_width <- 2
+stopifnot(inherits(try(dodged_grob(zoomin), silent = TRUE), "try-error"))
 """
 
 ERRORBAR_PROBE = r"""

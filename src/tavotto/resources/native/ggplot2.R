@@ -453,7 +453,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
   tick_values <- lapply(Filter(function(tick) !is.null(tick$spacing), state$tick_targets), function(tick) {
     ggplot_axis_key_values(panels[[1L]], axis_params[[tick$index]])
   })
-  list(table = ggplot2::ggplot_gtable(built), stops = remapped$stops,
+  list(table = ggplot2::ggplot_gtable(built), layout = layout, stops = remapped$stops,
        guide_ticks = remapped$guide_ticks, axes = axes, layer_grobs = captured$grobs,
        tick_values = tick_values, hidden_ticks = hidden_ticks)
 }
@@ -1118,6 +1118,7 @@ ggplot_guide_stroke_edits <- function(state, edits) {
 
 ggplot_table_for <- function(state, edits) {
   table <- state$table
+  layout <- state$built$layout
   text_targets <- state$text_targets
   legend_targets <- state$legend_targets
   stops <- NULL
@@ -1141,6 +1142,7 @@ ggplot_table_for <- function(state, edits) {
     guides <- ggplot_guide_table(state, tick_edits, colour_edits, axis_sizes, guide_strokes,
                                  axis_changes, grid_edits)
     table <- guides$table
+    layout <- guides$layout
     stops <- guides$stops
     axes <- guides$axes
     tick_values <- guides$tick_values
@@ -1198,7 +1200,7 @@ ggplot_table_for <- function(state, edits) {
     }
     bars <- layer_targets$bar_targets[[gid]]
     if (!is.null(bars)) {
-      table <- ggplot_edit_bars(table, bars, edits[[gid]])
+      table <- ggplot_edit_bars(table, bars, edits[[gid]], layout)
       next
     }
     ribbon <- layer_targets$ribbon_targets[[gid]]

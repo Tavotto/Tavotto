@@ -192,3 +192,15 @@ def bar_paint_fields(values: dict) -> list[dict]:
             }
         )
     return fields
+
+
+def bar_width_field(width: float) -> dict:
+    return {
+        "prop": "bar_width",
+        "type": "number",
+        "value": round(float(width), 3),
+        "min": 0.01,
+        "max": 5,
+        "step": 0.02,
+        "unit": "数据单位",
+    }

@@ -76,6 +76,7 @@ R_COLOR_SCALE = {
 }
 R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
+BAR_WIDTH = {"bar_width": 0.65}
 ERRORBAR_PAINT = {"color": "#803239", "linewidth": 1.8, "alpha": 0.6}
 RANGE_PAINT = {"facecolor": "#695DB2", "alpha": 0.6}
 AXIS_GRID = {
@@ -309,9 +310,23 @@ def _pdf_pixels(path):
         face = tuple(component / 255 for component in bytes.fromhex(BAR_PAINT["facecolor"][1:]))
         bars = [path for path in drawn if path["fill"] == pytest.approx(face, abs=0.003)]
         assert len(bars) == 4
+        mpl_bars = sorted(
+            (path["rect"] for path in bars if path["rect"].x0 < page.rect.width / 2),
+            key=lambda rect: rect.x0,
+        )
+        assert len(mpl_bars) == 2
+        spacing = (mpl_bars[1].x0 + mpl_bars[1].x1 - mpl_bars[0].x0 - mpl_bars[0].x1) / 2
+        expected_width = spacing * BAR_WIDTH["bar_width"] / (1.55 - 0.45)
+        assert [bar.width for bar in mpl_bars] == pytest.approx([expected_width] * 2, abs=0.02)
         r_bars = [path["rect"] for path in bars if path["rect"].x0 > page.rect.width / 2]
         assert len(r_bars) == 2  # Both R bars survived the inversion.
         assert all(bar.width > 0 and bar.height > 0 for bar in r_bars)
+        widths = sorted(bar.width for bar in r_bars)
+        half = BAR_WIDTH["bar_width"] / 2
+        expected_width_ratio = math.log((2.3 + half) / (2.3 - half)) / math.log(
+            (4.2 + half) / (4.2 - half)
+        )
+        assert widths[-1] / widths[0] == pytest.approx(expected_width_ratio, abs=0.006)
         assert all(path["fill_opacity"] == pytest.approx(0.75, abs=0.01) for path in bars)
         error_color = tuple(
             component / 255 for component in bytes.fromhex(ERRORBAR_PAINT["color"][1:])
@@ -407,6 +422,12 @@ def _png_pixels(path):
     title_color = (*bytes.fromhex(R_EDIT[1:]), 255)
     assert any(rgb == title_color for _, rgb in right.getcolors(right.width * right.height))
     return rgba.tobytes()
+
+
+def _rendered_svg_pixels(result):
+    svg = result["svg"]
+    with pymupdf.open(stream=svg.encode("utf-8"), filetype="svg") as image:
+        return image[0].get_pixmap().samples
 
 
 def _assert_structured_pdf_export(app, doc):
@@ -729,7 +750,8 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         )
         assert edited_bars["identity"] == r_bars["identity"]
         assert edited_bars["geometry"]["paths"] == r_bars["geometry"]["paths"]
-        assert {field["prop"]: field["value"] for field in edited_bars["editable"]} == BAR_PAINT
+        bar_fields = {field["prop"]: field["value"] for field in edited_bars["editable"]}
+        assert bar_fields == {**BAR_PAINT, "bar_width": 0.36}
         edited_errors = next(
             el for el in changed["manifest"]["elements"] if el["gid"] == r_errors["gid"]
         )
@@ -750,6 +772,21 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         r_patches.extend([*r_bar_patches, *r_error_patches, *r_range_patches])
         mpl_patches.extend([*mpl_bar_patches, *mpl_error_patches, *mpl_range_patches])
         assert _render(app, r_asset, r_patches)["svg"] == changed["svg"]
+        for asset, baseline, patches in (
+            (mpl_asset, mpl_baseline, mpl_patches),
+            (r_asset, precision, r_patches),
+        ):
+            series, width_patches = _series_patches(baseline, "bar_series", BAR_WIDTH)
+            before_width = _rendered_svg_pixels(_render(app, asset, patches))
+            wider = _render(app, asset, [*patches, *width_patches])
+            wider_series = next(
+                item for item in wider["manifest"]["elements"] if item["gid"] == series["gid"]
+            )
+            field = next(f for f in wider_series["editable"] if f["prop"] == "bar_width")
+            assert field["value"] == BAR_WIDTH["bar_width"]
+            assert _rendered_svg_pixels(wider) != before_width
+            assert _rendered_svg_pixels(_render(app, asset, patches)) == before_width
+            patches.extend(width_patches)
         document = {
             "schema": 3,
             "project": {"id": "mixed", "name": "Mixed native"},
