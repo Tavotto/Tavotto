@@ -19,7 +19,9 @@ import { useReviewStore } from '@/store/reviewStore'
 setChangePlanLabeler(engineLabel)
 
 /** 这份方案里「有生效改动、被勾选」的组对应的意见 id（去重） */
-export function resolvableIds(e: Pick<PlanEntry, 'plan' | 'unchecked'>): string[] {
+export function resolvableIds(e: Pick<PlanEntry, 'plan' | 'unchecked' | 'request'>): string[] {
+  // 审阅转出来的脚本方案卡（ADR 0206 修订 2026-11-26）：没有图内分组，转给脚本的那几条意见整体算这张卡处理的（应用成功才标，撤销还原）
+  if (e.plan?.kind === 'script') return [...new Set(e.request.scriptFrom?.comment_ids ?? [])]
   const ids = (e.plan?.groups ?? []).filter((g) => !e.unchecked[g.key] && g.comment_id && g.changes.length > 0).map((g) => g.comment_id!)
   return [...new Set(ids)]
 }

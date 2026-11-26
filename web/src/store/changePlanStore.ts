@@ -522,7 +522,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     pending.add(gate)
     try {
       if (!applyPendingFirst(key, e)) return false
-      const out = await start(e.panelId, { mode: 'script', scriptFrom: { plan_id: e.planId, comment_ids: ids } })
+      const out = await start(e.panelId, { mode: 'script', scriptFrom: { plan_id: e.planId, comment_ids: ids }, ...(e.request.share_id ? { share_id: e.request.share_id } : {}) })
       if (isFallthrough(out) || !out) return false
       patch(out, { followsKey: key })
       patch(key, { scriptStarted: true })
@@ -613,6 +613,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const same = (e: PlanEntry) =>
         e.panelId === panelId &&
         (e.status === 'generating' || e.status === 'ready') &&
+        !e.request.scriptFrom &&
         e.request.share_id === req.share_id &&
         JSON.stringify(Object.keys(e.request.numbers ?? {}).sort()) === JSON.stringify(Object.keys(req.numbers ?? {}).sort()) &&
         JSON.stringify((e.request.comments ?? []).map((c) => c.id)) === JSON.stringify((req.comments ?? []).map((c) => c.id))
