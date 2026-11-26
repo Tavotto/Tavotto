@@ -159,14 +159,33 @@ def test_figures_without_mixed_lines_are_byte_identical_when_armed():
 
 _EXPORT = r"""
 out_dir = sys.argv[2]
-mixedtext.arm() if sys.argv[3] == "on" else mixedtext.disarm()
+import pymupdf
 # Type 42 才带 ToUnicode，文本层读得回汉字（Type 3 的非 ASCII 字形读不回，尺子就不灵了）
 plt.rcParams["pdf.fonttype"] = 42
-fig, ax = plt.subplots(figsize=(4, 3), dpi=100)
-ax.plot([0, 1], [0, 1])
-ax.set_ylabel("浓度 ($\\mu$mol/L)")
-ax.set_xlabel("$\\Delta G$ 随 $T$ 变化 (kJ·mol$^{-1}$)")
-fig.savefig(out_dir + "/mix.pdf")
+def build(face):
+    plt.rcParams["font.family"] = [LATIN, face, *[n for n in CJK if n != face]]
+    fig, ax = plt.subplots(figsize=(4, 3), dpi=100)
+    ax.plot([0, 1], [0, 1])
+    ax.set_ylabel("浓度 ($\\mu$mol/L)")
+    ax.set_xlabel("$\\Delta G$ 随 $T$ 变化 (kJ·mol$^{-1}$)")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="pdf")
+    plt.close(fig)
+    return buf.getvalue()
+def text_of(data):
+    with pymupdf.open(stream=data) as d:
+        return "".join(p.get_text() for p in d)
+# 尺子的前提：回退链里有一张「嵌进 PDF 后文本层读得回」的中文脸。macOS 的苹方 / 冬青黑体
+# （.ttc 里的 CFF 轮廓）经 matplotlib 嵌入后只读得回第一个标签的汉字、其余丢字（纯中文标签、
+# 不分段也一样，与混排无关）。所以先武装着按候选顺序逐张试，选第一张三处汉字都读得回的；
+# 一张都没有才让测试跳过。Linux / Windows 上首选脸本来就读得回，选中的还是它。
+mixedtext.arm()
+good = next((n for n in CJK if all(w in text_of(build(n)) for w in ("浓度", "随", "变化"))), None)
+if good is None:
+    print(json.dumps({"ok": False}))
+    sys.exit(0)
+mixedtext.arm() if sys.argv[3] == "on" else mixedtext.disarm()
+open(out_dir + "/mix.pdf", "wb").write(build(good))
 print(json.dumps({"ok": True}))
 """
 
@@ -175,7 +194,8 @@ print(json.dumps({"ok": True}))
 def test_exported_pdf_reads_back_the_chinese_only_when_armed(tmp_path, has_cjk, state):
     if not has_cjk:
         pytest.skip("worker 的解释器找不到任何中日韩候选字体")
-    _run(_EXPORT, str(tmp_path), state)
+    if not _run(_EXPORT, str(tmp_path), state)["ok"]:
+        pytest.skip("回退链里没有一张嵌进 PDF 后文本层读得回汉字的中文脸（尺子的前提不在）")
     with pymupdf.open(tmp_path / "mix.pdf") as doc:
         text = "".join(p.get_text() for p in doc)
     has = [w for w in ("浓度", "随", "变化") if w in text]
