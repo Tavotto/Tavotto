@@ -298,13 +298,22 @@ def _legacy_revision(manifest: dict) -> str | None:
     return rev if isinstance(rev, str) else None
 
 
+def _inside(store: Path, name: str) -> Path:
+    """`S/<name>`，且规范化后仍是 `S` 的直接子项：名字里带分隔符 / `..` 一律拒绝（调用方的名字已经净化过，这里是第二道）。"""
+    base = os.path.normpath(os.fspath(store))
+    joined = os.path.normpath(os.path.join(base, name))
+    if not joined.startswith(base.rstrip(os.sep) + os.sep) or os.path.dirname(joined) != base:
+        raise LayoutDirError(PROBLEM_SYMLINK)
+    return Path(joined)
+
+
 def locate(store: Path, stem: str, *, names: Iterable[str] | None = None) -> Located:
     """这个名字此刻在盘上是哪一档、当前正文在哪。**只读，从不写。**
 
     `names`：`S` 的目录列表（批量列出时只扫一次）；不给就扫。"""
     store = Path(store)
-    logical = store / f"{stem}.json"
-    directory = store / dir_name(stem)
+    logical = _inside(store, f"{stem}.json")
+    directory = _inside(store, dir_name(stem))
 
     def done(state, read_path, *, problem=None, manifest=None):
         return Located(stem, state, logical, directory, read_path, problem, manifest)
