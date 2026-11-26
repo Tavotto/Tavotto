@@ -8,7 +8,14 @@ import { armBindingInherit } from '@/lib/dataFigureInherit'
 import { currentProjectId } from '@/lib/session'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { configureDataBatchHost } from '@/store/dataBatchStore'
-import { configureDataFigureHost } from '@/store/dataFigureStore'
+import { configureDataFigureHost, reserveBackendSession } from '@/store/dataFigureStore'
+import { configureFigureOriginHost, useFigureOriginStore } from '@/store/figureOriginStore'
+import { panelIfScript, panelUntouchedNow } from '@/lib/dataFigureOriginLive'
+import { normScript } from '@/lib/dataFigureOrigin'
+import { enterElementEdit, replaceRuntimeFigure } from '@/store/actions'
+import { runDiscreteAction } from '@/store/gestureCoordinator'
+import { useSelectionStore } from '@/store/selectionStore'
+import { selectErrorBarWhenDrawn } from '@/store/figureSwitchSelect'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -67,3 +74,62 @@ configureDataBatchHost({
   },
   resolveSpec,
 })
+
+// 点选误差线换 SD / SEM / 95% CI（`figureOriginStore`）：新脚本落盘之后，在同一块面板上把图原位换成它画的
+const quietGuideCard = () => {
+  // 项目刷新会重扫，没运行过的新脚本会被当成「发现绘图脚本」弹准备卡；这个脚本是我们自己生成、自己运行的（同批量出图的做法）
+  const scan = useProjectScanStore.getState().scan
+  if (scan) markAutoShown(scan.project_id)
+}
+configureFigureOriginHost({
+  reserveSession: reserveBackendSession,
+  notify: (message) => useUiStore.getState().setStatus(message, 'info'),
+  replaceFigure: async ({ panelId, oldScript, newScript, origin, still }) => {
+    const pj = currentProjectId()
+    const same = () => still() && currentProjectId() === pj
+    // 换的只是发起切换的那一块面板（属性页那一行传来的 id；同一张图复制出几份时不按脚本另找）；
+    // 等脚本跑的这段时间里他换了画布 / 删了它 / 它不再画旧脚本 / 改了它，一律不换
+    const canvasId = useDocumentStore.getState().activeCanvasId
+    const preferGid = useUiStore.getState().selectedGids[0] ?? null
+    const target = panelIfScript(panelId, oldScript)
+    if (!target || !panelUntouchedNow(target, origin)) return null
+    quietGuideCard()
+    await refreshProjectNow().catch(() => undefined)
+    if (!same()) return null
+    await useScriptRunStore.getState().run(newScript)
+    if (!same()) return null
+    const run = useScriptRunStore.getState().byScript[newScript]
+    const desc = run?.phase === 'captured_one' ? run.descriptors[0] : undefined
+    if (!desc || normScript(desc.script) !== normScript(newScript)) return null
+    // 换图是离散动作：先结束进行中的手势（拖动 / 缩放 / 属性页连续编辑），再复核、再提交，换图才是独立的一条历史
+    // （否则 commit 会并进手势事务、一次撤销连移动一起退）。结束手势可能再改文档，所以复核放在它之后
+    const placed = runDiscreteAction('app', null, (): { fingerprint: string } | null => {
+      const panel = panelIfScript(panelId, oldScript)
+      if (!panel || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return null
+      if (!replaceRuntimeFigure(panel.id, desc)) return null
+      // 回到图内编辑（与「打开并运行」之后落在的状态一样）：选中这块面板
+      useSelectionStore.getState().set([panel.id])
+      enterElementEdit(panel.id)
+      // 新图的 manifest 到了就选回误差棒（属性页停在误差棒页，那一行显示新类型）
+      selectErrorBarWhenDrawn(panel.id, preferGid, origin.band)
+      return { fingerprint: desc.source_fingerprint }
+    })
+    return placed ?? null
+  },
+})
+
+// 面板第一次出现在文档里：记下它的来源指纹（之后「脚本是否被改过」都对着它比）。只在有还没记到指纹的来历时才扫文档
+const bindOriginFingerprints = () => {
+  const reg = useFigureOriginStore.getState()
+  const need = new Set(reg.unbound())
+  if (!need.size) return
+  const s = useDocumentStore.getState()
+  const objects = [...s.doc.objects, ...s.canvases.filter((c) => c.id !== s.activeCanvasId).flatMap((c) => c.objects)]
+  for (const o of objects) {
+    if (o.type !== 'panel' || o.fileKind !== 'runtime' || !o.script || !o.source?.fingerprint) continue
+    const key = normScript(o.script)
+    if (need.has(key)) reg.bindFingerprint(key, o.source.fingerprint)
+  }
+}
+useDocumentStore.subscribe(bindOriginFingerprints)
+useFigureOriginStore.subscribe(bindOriginFingerprints)

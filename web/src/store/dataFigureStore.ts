@@ -28,6 +28,8 @@ import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixed
 import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { SUGGEST_KEYS, diffSuggestion, suggestionFrom, type Suggestion, type SuggestionDiff } from '@/lib/dataUnderstanding'
 import { fontRangeOf, sameDraftBinding } from '@/lib/dataFigureSpec'
+import { makeOrigin } from '@/lib/dataFigureOrigin'
+import { useFigureOriginStore } from '@/store/figureOriginStore'
 import type { DocumentProfile } from '@/types/document'
 import { msg, type UiMessage } from '@/i18n'
 
@@ -944,6 +946,30 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     }, 20000)
   }
 
+  /**
+   * 画成了：把「这张图是怎么画出来的」交给 `figureOriginStore`（点选误差线时换 SD / SEM / 95% CI 用）。要在 `goEditor` 清掉会话与候选**之前**取：
+   * 候选在 `get().candidates` 里按 id 找（重试那条路传进来的 `items` 是空的）；单文件、误差线是算出来的才登记（`makeOrigin` 判）。
+   */
+  function noteOrigin(script: string, sessionId: string, itemId: string): void {
+    const sel = get().selected
+    if (!sel || get().session !== sessionId) return
+    const item = get().candidates.find((c) => c.id === itemId)
+    if (!item) return
+    const binding = get().specBinding
+    const origin = makeOrigin({
+      script,
+      item,
+      file: sel,
+      grouped: !!get().group,
+      headerRow: get().headerRows[sel.path] ?? null,
+      answers: get().answers,
+      spec: binding ? (host.resolveSpec?.(binding) ?? null) : null,
+      fontRange: fontRangeOf(binding),
+      pj: currentProjectId(),
+    })
+    if (origin) useFigureOriginStore.getState().register(origin)
+  }
+
   /** 没成 / 要说话的结局：把临时标签翻出来（出图期间用户可能已经把它收起了） */
   const showOutcome = (patch: Partial<typeof initial>) => set({ draftOpen: true, draftActive: true, drawingId: null, ...patch })
 
@@ -996,6 +1022,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       const notes = notesOf(res)
       if (notes.check === 'unverifiable') host.notify(msg('dataFigureV2.result.unverifiable', undefined, 'ai'))
       else if (notes.check) host.notify(msg('dataFigureV2.result.unknown', undefined, 'ai'))
+      noteOrigin(res.script, sessionId, itemId)
       await goEditor(res.script)
     } catch (e) {
       if (!still()) return
@@ -1447,10 +1474,24 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       filesDirty = false
       commitRid = null
       overviewSeq.clear()
+      useFigureOriginStore.getState().clear()
       set({ ...initial })
     },
   }
 })
+
+/**
+ * 「点选误差线换类型」（`figureOriginStore`）要多开一个后端候选会话：当前草稿 1 个 + 留存最多 `KEEP_MAX` 个 + 它这个 = 7，
+ * 超过后端的 `MAX_SESSIONS`（6）就会悄悄删最老的——可能正是用户开着的草稿。所以先把留存的丢到只剩 `KEEP_MAX - 1` 个（最旧的先丢、同时放弃它的后端会话；
+ * 留存本来就只是「切回来不用重读」的缓存，丢了之后切回去静默重出）。当前草稿的状态一个字不动。
+ */
+export function reserveBackendSession(): void {
+  while (kept.length > KEEP_MAX - 1) {
+    const e = kept[0]!
+    kept = kept.slice(1)
+    if (e.snap.session) void aiDataFigureDiscard(e.snap.session, e.pj).catch(() => undefined)
+  }
+}
 
 // 「数据」临时标签激活 = 画布被盖住：同步给画布动作的让位判据（`store/canvasCover`），键盘 / 系统菜单 / 剪贴板 / 顶栏撤销都读它
 useDataFigureStore.subscribe((s, prev) => {

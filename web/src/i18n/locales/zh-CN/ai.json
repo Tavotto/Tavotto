@@ -770,6 +770,7 @@
       "join": "、",
       "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
       "error": "误差线",
+      "errorBand": "误差带",
       "design": "重复测量",
       "option": {
         "sd": "标准差 (SD)",

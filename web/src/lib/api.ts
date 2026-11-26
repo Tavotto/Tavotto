@@ -6077,6 +6077,8 @@ export interface AiDataProposeBody {
   spec?: Record<string, unknown>
   /** 期刊自己规定的字号上下限（pt，只放规定了的那一端；都没规定 / 没有期刊绑定就不带这个键） */
   font_range?: { min_pt?: number; max_pt?: number }
+  /** `false` = 不起「读懂数据」的后台任务（不是用户在看数据的重出用，如点选误差线换类型：免得悄悄多发一次模型出站）；候选不变。不给 = 照旧 */
+  understand?: boolean
 }
 
 export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>
