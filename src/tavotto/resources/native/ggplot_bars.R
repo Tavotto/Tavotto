@@ -22,7 +22,17 @@ ggplot_bar_span <- function(layout, data, rect) {
   width <- upper - lower
   centre <- lower + width / 2
   if (any(!is.finite(width) | width <= 0 | !is.finite(centre))) return(NULL)
-  list(centre = centre, width = width[[1L]])
+  list(centre = centre, width = width[[1L]],
+       uniform = all(abs(width - width[[1L]]) <= sqrt(.Machine$double.eps) * width[[1L]]))
+}
+
+# A mapped palette may vary the RGB values while every rectangle has the
+# same opacity. Keep the actual palette and use that opacity for hit testing.
+ggplot_bar_opacity <- function(colour) {
+  if (!length(colour) ||
+      !(is.character(colour) || (is.logical(colour) && all(is.na(colour))))) return(NULL)
+  alpha <- unique(grDevices::col2rgb(unique(colour), alpha = TRUE)[4L, ]) / 255
+  if (length(alpha) == 1L) alpha
 }
 
 ggplot_bar_targets <- function(built, table, layer_grobs) {
@@ -49,26 +59,31 @@ ggplot_bar_targets <- function(built, table, layer_grobs) {
     child <- which(panel$childrenOrder == rect$name)
     if (length(child) != 1L) next
     mapped <- ggplot_styled_layer_mapping(layer)
-    if (is.null(mapped) || ggplot_layer_has_legend_key(built, layer, mapped)) next
-    if (length(intersect(mapped, c("fill", "colour", "alpha", "size", "linewidth", "linetype")))) next
+    fixed <- !is.null(mapped) && !ggplot_layer_has_legend_key(built, layer, mapped) &&
+      !length(intersect(mapped, c("fill", "colour", "alpha", "size", "linewidth", "linetype")))
     face <- ggplot_uniform_pigment(rect$gp$fill)
     edge <- ggplot_uniform_pigment(rect$gp$col)
     width <- unique(rect$gp$lwd) * ggplot_lwd_pt
     lty <- unique(rect$gp$lty)
-    if (is.null(face) || is.null(edge) || length(width) != 1L ||
-        !is.finite(width) || width < 0 || length(lty) != 1L || is.na(lty)) next
+    if (length(width) != 1L || !is.finite(width) || width < 0 || length(lty) != 1L || is.na(lty)) next
     outline <- !(lty %in% c("0", "blank"))
-    visible_alpha <- unique(c(face$alpha, edge$alpha[outline && width > 0]))
+    fill_alpha <- ggplot_bar_opacity(rect$gp$fill)
+    stroke_alpha <- ggplot_bar_opacity(rect$gp$col)
+    if (is.null(fill_alpha) || is.null(stroke_alpha)) next
+    visible_alpha <- unique(c(fill_alpha, stroke_alpha[outline && width > 0]))
     visible_alpha <- visible_alpha[visible_alpha > 0]
     if (!length(visible_alpha)) next
     span <- ggplot_bar_span(built$layout, data, rect)
-    fields <- list(
-      facecolor = face$rgb,
-      edgecolor = if (outline) edge$rgb,
-      linewidth = if (outline) width,
-      bar_width = span$width,
-      alpha = if (length(visible_alpha) == 1L) visible_alpha
-    )
+    fields <- if (fixed && !is.null(face) && !is.null(edge)) {
+      list(
+        facecolor = face$rgb,
+        edgecolor = if (outline) edge$rgb,
+        linewidth = if (outline) width,
+        bar_width = span$width,
+        alpha = if (length(visible_alpha) == 1L) visible_alpha
+      )
+    } else if (isTRUE(span$uniform)) list(bar_width = span$width)
+    if (!length(fields)) next
     fields <- Filter(Negate(is.null), fields)
     gid <- paste0("layer.", index, ".bars")
     precise <- count <= remaining_paths
@@ -180,8 +195,8 @@ ggplot_bar_geometry <- function(rect, target, frame_pt, retain_clipped = FALSE) 
   right <- upper$x / frame[[1L]]
   top <- 1 - upper$y / frame[[2L]]
   bottom <- 1 - lower$y / frame[[2L]]
-  face <- ggplot_uniform_pigment(rect$gp$fill)$alpha
-  stroke_pt <- if (target$outline && ggplot_uniform_pigment(rect$gp$col)$alpha > 0) {
+  face <- ggplot_bar_opacity(rect$gp$fill)
+  stroke_pt <- if (target$outline && ggplot_bar_opacity(rect$gp$col) > 0) {
     unique(rect$gp$lwd) * ggplot_lwd_pt
   } else 0
   pad <- stroke_pt / (2 * frame_pt)

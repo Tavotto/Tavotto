@@ -1034,9 +1034,23 @@ stopifnot(identical(names(h$bar_targets[[first]]$values), c("facecolor", "alpha"
           grepl("fill-opacity: 0.75", adapter$render_ggplot(h, setNames(list(list(alpha = .75)), first)),
                 fixed = TRUE))
 mapped <- ggplot2::ggplot(data, ggplot2::aes(cat, height, fill = group)) + ggplot2::geom_col()
-stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$bar_targets) == 0L,
-          length(adapter$capture_ggplot(mapped + ggplot2::guides(fill = "none"), frame)$state$bar_targets) == 0L,
-          length(adapter$capture_ggplot(plot + ggplot2::facet_wrap(ggplot2::vars(group)), frame)$state$bar_targets) == 0L)
+for (mapped_plot in list(mapped, mapped + ggplot2::guides(fill = "none"))) {
+  mapped_capture <- adapter$capture_ggplot(mapped_plot, frame)
+  mapped_state <- mapped_capture$state
+  mapped_target <- mapped_state$bar_targets[[first]]
+  mapped_before <- adapter$ggplot_bar_rect(mapped_state$table$grobs[[mapped_target$slot]], mapped_target)
+  mapped_scene <- adapter$ggplot_table_for(mapped_state, thinner)
+  mapped_after <- adapter$ggplot_bar_rect(mapped_scene$table$grobs[[mapped_target$slot]], mapped_target)
+  mapped_legend <- grep("^guide-box", mapped_state$table$layout$name)
+  stopifnot(identical(names(mapped_target$values), "bar_width"), length(unique(mapped_before$gp$fill)) == 2L,
+            identical(mapped_after$gp, mapped_before$gp),
+            identical(mapped_scene$table$grobs[mapped_legend], mapped_state$table$grobs[mapped_legend]),
+            isTRUE(all.equal(centres(mapped_after), centres(mapped_before))),
+            isTRUE(all.equal(as.numeric(mapped_after$width) / as.numeric(mapped_before$width), rep(.4 / .9, 4))),
+            identical(mapped_after[c("y", "height")], mapped_before[c("y", "height")]),
+            identical(adapter$render_ggplot(mapped_state), mapped_capture$svg))
+}
+stopifnot(length(adapter$capture_ggplot(plot + ggplot2::facet_wrap(ggplot2::vars(group)), frame)$state$bar_targets) == 0L)
 make_bars <- function(n) {
   ggplot2::ggplot(data.frame(x = seq_len(n), y = rep(1, n)), ggplot2::aes(x, y)) + ggplot2::geom_col()
 }
