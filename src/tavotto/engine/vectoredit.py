@@ -1017,6 +1017,41 @@ def _needs_panels(ops: object) -> list:
     ]
 
 
+def _fact_key(f: dict) -> str:
+    return json.dumps(
+        [f.get("check"), f.get("item"), f.get("detail")],
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+def _check_items(objs: list[dict], ops: object) -> list[dict]:
+    """核对要的「描述」：只用来认锚定端（锚在数据 / 元素上的那一端让出尖端余量，与新加时同一条判据）。
+
+    来源两处：对象上落盘的 0208 锚点（`anchor.anchors[].role`），以及这批补丁里 `move` 把 `from` / `to` 对到的锚点。
+    不给的话，Agent 加的、尖端本来就指着曲线的箭头，改个线宽都会被判成「遮了数据」。"""
+    by: dict[str, dict] = {o["id"]: {"name": o["id"]} for o in objs}
+    for o in objs:
+        for a in (o.get("anchor") or {}).get("anchors") or []:
+            if not isinstance(a, dict) or a.get("role") not in ("from", "to"):
+                continue
+            kind = next((k for k in ("data", "element", "panel", "item") if k in a), None)
+            if kind:
+                by[o["id"]][a["role"]] = {"anchor": {kind: a[kind]}}
+    for op in ops if isinstance(ops, list) else []:
+        if (
+            isinstance(op, dict)
+            and op.get("op") == "move"
+            and op.get("id") in by
+            and op.get("attach") in ("from", "to")
+            and isinstance(op.get("to"), dict)
+            and isinstance(op["to"].get("anchor"), dict)
+        ):
+            by[op["id"]][op["attach"]] = {"anchor": op["to"]["anchor"]}
+    return list(by.values())
+
+
 def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
     # 子图总要量：改后的对象要核「不遮数据」；锚点挪动另要数据点
     panels, _refs, unmeasured = la.measure_panels(canvas, _needs_panels(ops), measure)
@@ -1052,10 +1087,30 @@ def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
             )
         visible = [o for o in visible if _exportable(o)]
         if visible:
-            solved = {"objects": [{"id": o["id"]} for o in visible], "anchors": []}
-            facts += vectorcheck.check(
-                solved, visible, panels, [], page=page, profile=profile, existing_texts=existing
-            )["facts"]
+            items = _check_items(visible, ops)
+
+            def run(objs: list[dict]) -> list[dict]:
+                solved = {"objects": [{"id": o["id"]} for o in objs], "anchors": []}
+                return vectorcheck.check(
+                    solved, objs, panels, items, page=page, profile=profile, existing_texts=existing
+                )["facts"]
+
+            got = run(visible)
+            # 改之前就已经这样的（用户手画的箭头本来就压着曲线、早就接受的一处压字）：不让它挡住这次编辑，
+            # 标 `preexisting` 如实报（ADR 0212 §四「没动的不重新报」的同一个意思，按对象改前的样子再量一次）
+            before_by = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+            olds = [
+                before_by[o["id"]]
+                for o in visible
+                if o["id"] in before_by
+                and not before_by[o["id"]].get("hidden")
+                and _exportable(before_by[o["id"]])
+            ]
+            was = {_fact_key(f) for f in run(olds) if f["status"] == "fail"} if olds else set()
+            for f in got:
+                if f["status"] == "fail" and _fact_key(f) in was:
+                    f = {**f, "status": "preexisting"}
+                facts.append(f)
     failed = [f for f in facts if f["status"] == "fail"]
     groups, dropped = prune_layout_groups(
         canvas.get("layoutGroups"),

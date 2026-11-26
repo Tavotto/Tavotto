@@ -1087,7 +1087,7 @@ def test_curved_paths_are_checked_along_the_curve_not_just_their_anchors(project
             "id": "p_curve001",
             "type": "path",
             "x": 95,
-            "y": 10,
+            "y": 40,
             "w": 20,
             "h": 5,
             "strokePt": 0.5,
@@ -1105,7 +1105,8 @@ def test_curved_paths_are_checked_along_the_curve_not_just_their_anchors(project
     plan = ve.propose(
         project,
         "组图",
-        [{"op": "set", "id": "p_curve001", "set": {"strokePt": 0.75}}],
+        # 先放在页内、再挪上去：改之前就出页的算 `preexisting`，这条要的是「改后出页」被判出来
+        [{"op": "move", "id": "p_curve001", "by_mm": [0, -30]}],
         measure,
         base_revision=_base(project),
     )
@@ -1120,7 +1121,7 @@ def test_a_filled_path_covering_text_is_a_clash(project):
             "id": "p_blob0001",
             "type": "path",
             "x": 90,
-            "y": 2,
+            "y": 50,
             "w": 25,
             "h": 10,
             "strokePt": 0.5,
@@ -1138,7 +1139,7 @@ def test_a_filled_path_covering_text_is_a_clash(project):
     plan = ve.propose(
         project,
         "组图",
-        [{"op": "set", "id": "p_blob0001", "set": {"strokePt": 0.75}}],
+        [{"op": "move", "id": "p_blob0001", "by_mm": [0, -48]}],  # 挪上去盖住那段字
         measure,
         base_revision=_base(project),
     )
@@ -1308,3 +1309,89 @@ def test_edit_preview_frames_the_visible_box_of_a_rotated_object(project, monkey
     after = seen["focus"][0]  # 改后的那个框：中心 (40, 7.5)，转 90° 后 5 宽 20 高
     assert after["w"] == pytest.approx(5) and after["h"] == pytest.approx(20)
     assert after["y"] == pytest.approx(-2.5)
+
+
+# ------------------------------------------------------------------ 核对：锚定端与改之前就有的问题
+
+
+def _annotated(project):
+    """先用 0208 加一支箭头（尖端锚在曲线 axes_0.lines_0 中点）+ 一段字，回箭头对象。"""
+    from test_layoutannotate import _items
+
+    base = _base(project)
+    plan = la.propose(project, "组图", _items(), measure, base_revision=base)
+    out = la.commit(
+        project, "组图", _items(), measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert out["written"], out
+    return _objs(project)[out["added"][0]]
+
+
+def test_restyling_the_agents_arrow_keeps_its_tip_allowance(project):
+    """Agent 加的箭头尖端本来就指着曲线（新加时按锚定端让出余量）：改个线宽不能被判成「遮了数据」。"""
+    arrow = _annotated(project)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": arrow["id"], "set": {"strokePt": 1.0}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert plan["ok"], plan["failed"]
+    assert not [
+        f for f in plan["facts"] if f["status"] == "preexisting"
+    ]  # 是锚定端让出的，不是靠「本来就这样」
+
+
+def test_a_problem_that_was_already_there_does_not_block_an_edit(project):
+    """用户手画的箭头本来就压着曲线：改颜色照样能写，这一处如实标 `preexisting`。"""
+    arrow = _annotated(project)
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    mine = {k: v for k, v in arrow.items() if k != "anchor"}
+    mine["id"] = "a_hand0001"
+    doc["canvases"][0]["objects"].append(mine)
+    atomicio.write_json(_path(project), doc, indent=1)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": "a_hand0001", "set": {"color": "#c0392b"}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert plan["ok"], plan["failed"]
+    old = [f for f in plan["facts"] if f["status"] == "preexisting"]
+    assert [(f["check"], f["item"]) for f in old] == [("data", "a_hand0001")]
+
+
+def test_moving_an_arrow_onto_the_data_is_still_caught(project):
+    """改之前不压、改之后压了：照样挡（「本来就这样」只认改前就有的同一处）。"""
+    arrow = _annotated(project)
+    mine = _objs(project)["a_user0001"]
+    ops = [
+        {
+            "op": "move",
+            "id": "a_user0001",
+            "by_mm": [arrow["x"] - mine["x"], arrow["y"] - mine["y"]],
+        },
+        {"op": "set", "id": "a_user0001", "set": {"w": arrow["w"], "h": arrow["h"]}},
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    assert not plan["ok"] and [f["check"] for f in plan["failed"]] == ["data"]
+
+
+def test_moving_a_tip_onto_a_data_point_with_an_anchor_gets_the_allowance(project):
+    """`move` 用锚点把箭头尖对到曲线上：与新加时一样让出尖端余量。"""
+    arrow = _annotated(project)
+    to = next(a for a in arrow["anchor"]["anchors"] if a["role"] == "to")
+    ops = [
+        {"op": "move", "id": "a_user0001", "by_mm": [arrow["x"] - 30, arrow["y"] - 5]},
+        {"op": "set", "id": "a_user0001", "set": {"w": arrow["w"], "h": arrow["h"]}},
+        {
+            "op": "move",
+            "id": "a_user0001",
+            "to": {"anchor": {"element": {**to["element"], "panel": "P1"}}},
+            "attach": "to",
+        },
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    assert plan["ok"], plan["failed"]

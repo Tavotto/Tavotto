@@ -2208,6 +2208,12 @@ def _call_layout_edit_plan(args: dict) -> dict:
         )
     else:
         lines.insert(0, "编辑方案（先对照用户的原话核一遍再写入）：")
+    old = [f for f in out.get("facts") or [] if f.get("status") == "preexisting"]
+    if old:
+        lines.append(
+            "改之前就是这样、不挡这次写入（照实告诉用户）："
+            + "、".join(f"{f['check']}·{f.get('item')}" for f in old)
+        )
     # 改后的全部对象只给写入用，回包不带（体积）；动到的对象在 changed 里
     out.pop("objects", None)
     content = _text(*lines)
