@@ -607,6 +607,36 @@ def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
     return reg.artifact_stem(rel), info
 
 
+def _export_figure_name(rel: object) -> str:
+    """导出报错里给人看的**图名**（T-009）：磁盘文件 id → 注册表里这张图的显示名。
+
+    报错原本只给 `id`（项目相对路径，如 `figures/fig1.pdf`），用户认的是图名。解析走 `artifact_stem` +
+    `display_name`，与素材区的名字同一出处；没有项目上下文 / 注册表认不得时退回文件名 stem，空 id 给空串。
+    只读注册表，不触发 `_disk_panel_rel` 里的入口纠正（报错路径上不该有副作用）。
+    """
+    key = str(rel or "").replace("\\", "/")
+    if not key:
+        return ""
+    fallback = Path(key).stem or key
+    try:
+        reg = current_registry()
+        return reg.display_name(reg.artifact_stem(key)) or fallback
+    except Exception:  # noqa: BLE001 —— 起名失败不能盖住原来那条导出失败
+        return fallback
+
+
+def _name_export_failure(
+    exc: engine_exportreq.ExportRequestError,
+) -> engine_exportreq.ExportRequestError:
+    """`export_render_failed` 补上 `name`（界面文案按图名说话；`id` 仍留着给前端定位那张图）。"""
+    if exc.code == "export_render_failed" and "name" not in exc.params:
+        exc.params = {
+            **exc.params,
+            "name": _export_figure_name(exc.params.get("figure") or exc.params.get("id")),
+        }
+    return exc
+
+
 def _disk_panel(path: Path) -> tuple[str, dict | None]:
     """`_disk_panel_rel` 的 Path 版（`path` 是 `safe_resolve` 解出来的真实路径）。"""
     try:
@@ -2903,7 +2933,11 @@ def _serialize_figure_with_worker(
         raise engine_exportreq.ExportRequestError(
             "export_render_failed",
             f"{rel_id}: Figure changed during export",
-            {"id": rel_id, "reason": "Figure changed during export"},
+            {
+                "id": rel_id,
+                "name": _export_figure_name(rel_id),
+                "reason": "Figure changed during export",
+            },
         )
     if include_svg or existing_only:
         _assert_artifact_current(artifact_source)
@@ -2930,9 +2964,17 @@ def _serialize_figure_with_worker(
             if sink is not None:
                 sink.append(f"{rel_id}: SVG unavailable: {str(exc)[:200]}")
     elif fmt == engine_exportreq.FORMAT_SVG:
-        _normalize_worker_svg(tmp)
+        try:
+            _normalize_worker_svg(tmp)
+        except engine_exportreq.ExportRequestError as exc:
+            # 闸只认字节、不认图：这里补上是哪张图（`id` 给前端定位，`name` 给文案）
+            exc.params = {"id": rel_id, **exc.params}
+            raise _name_export_failure(exc)
         if companion_args.get("svg_fonttype") == "none":
             _extend_text_svg_families(tmp)
+    if fmt == engine_exportreq.FORMAT_PDF and tmp.is_file():
+        # matplotlib 把 .otf（CFF）字体写进 TrueType 槽：交出去之前换成真 TrueType（摸底 T-003）
+        engine_artifactinspect.normalize_worker_pdf(tmp)
     if text_svg is not None:
         info = resp.get("svg_text") or {}
         try:
@@ -3103,7 +3145,7 @@ def _execution_source(
         raise engine_exportreq.ExportRequestError(
             "export_render_failed",
             f"{rel_id} 重渲染失败: {exc}",
-            {"id": rel_id, "reason": str(exc)},
+            {"id": rel_id, "name": _export_figure_name(rel_id), "reason": str(exc)},
         ) from exc
     if rendered is None and include_svg and origin is None:
         saved = _load_svg_snapshot(rel_id, overrides, out_dir)
@@ -5347,15 +5389,19 @@ def _export_produce_rendercore(
         else {}
     )
     _prepare_source_fonts()
-    return rc_job.produce(
-        job,
-        tmp_dir,
-        sources=resolver,
-        provider=rc_facade.provider(),
-        host=rc_facade.host(),
-        math=math,
-        **({"raster_target": raster_target} if raster_target else {}),
-    )
+    try:
+        return rc_job.produce(
+            job,
+            tmp_dir,
+            sources=resolver,
+            provider=rc_facade.provider(),
+            host=rc_facade.host(),
+            math=math,
+            **({"raster_target": raster_target} if raster_target else {}),
+        )
+    except engine_exportreq.ExportRequestError as exc:
+        # RenderCore 不认注册表：图名在这里补（`figure` / `id` 是画布面板的文件 id）
+        raise _name_export_failure(exc)
 
 
 def _export_inspect(job, produced: list) -> list:

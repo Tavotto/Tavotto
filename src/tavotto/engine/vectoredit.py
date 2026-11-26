@@ -98,6 +98,32 @@ def _brief(o: dict) -> dict:
     }
 
 
+_QUERY_KEYS = ("ids", "types", "name", "text", "by_agent", "within", "anchored_to")
+
+
+def check_query(query: object) -> dict:
+    """选择条件的形状：不认识的键、写错类型的值抛 `EditError("bad_op", field=键)`（不悄悄当成「全选」）。"""
+    if query is None:
+        return {}
+    if not isinstance(query, dict):
+        raise EditError("bad_op", field="select")
+    for k, v in query.items():
+        ok = {
+            "ids": lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v),
+            "types": lambda v: isinstance(v, list) and all(x in EDITABLE_TYPES for x in v),
+            "name": lambda v: isinstance(v, str),
+            "text": lambda v: isinstance(v, str),
+            "by_agent": lambda v: isinstance(v, bool),
+            "within": lambda v: (
+                isinstance(v, list) and len(v) == 4 and all(agentobjects._is_num(x) for x in v)
+            ),  # noqa: SLF001
+            "anchored_to": lambda v: isinstance(v, str),
+        }.get(k)
+        if ok is None or not ok(v):
+            raise EditError("bad_op", field=f"select.{k}")
+    return dict(query)
+
+
 def select(canvas: dict, query: dict | None = None) -> list[dict]:
     """画布上的矢量对象，按条件筛（条件之间是「且」）：`ids`、`types`、`name`（包含）、`text`（文字内容包含）、
     `by_agent`、`within`（画布毫米框 `[x, y, w, h]`，与对象框相交）、`anchored_to`（0208 锚点里指着的子图对象 id）。
@@ -134,6 +160,42 @@ def select(canvas: dict, query: dict | None = None) -> list[dict]:
                 continue
         out.append(_brief(o))
     return out
+
+
+#: 场景里最多列多少个矢量对象（结果体积）；多了用 `select` 缩小
+VECTOR_OBJECTS_SHOWN = 150
+
+
+def read_scene(
+    project: str | Path,
+    name: str,
+    measure,
+    *,
+    canvas_id: str | None = None,
+    select: dict | None = None,
+) -> dict:
+    """0208 的场景 + 画布上能改的矢量对象（`select` 筛；写错抛 `LayoutError("bad_select")`，不当成全选）。"""
+    query = None
+    try:
+        query = check_query(select)
+    except EditError as exc:
+        raise la.LayoutError("bad_select", field=exc.field) from exc
+
+    def extend(canvas: dict, refs: dict) -> dict:
+        q = dict(query)
+        # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
+        if q.get("anchored_to") in refs:
+            q["anchored_to"] = refs[q["anchored_to"]]
+        picked = select_objects(canvas, q)
+        return {
+            "vector_objects": picked[:VECTOR_OBJECTS_SHOWN],
+            "vector_objects_total": len(picked),
+        }
+
+    return la.read_scene(project, name, measure, canvas_id=canvas_id, extend=extend)
+
+
+select_objects = select  # `read_scene` 的参数也叫 select
 
 
 # ------------------------------------------------------------------ 改
@@ -271,6 +333,8 @@ class _State:
         self.echo: list[str] = []
         self.budgets = agentobjects.table()["budgets"]
         self.minted: set[str] = set()
+        #: 这次补丁拆掉的组 id（写入层按它清布局组约束，#2244）
+        self.ungrouped: set[str] = set()
         self.reindex()
 
     def reindex(self) -> None:
@@ -571,6 +635,7 @@ def _op_ungroup(s: _State, i: int, op: dict) -> None:
             _release_mask(s, o)
             if p and not any(x is not o and p[-1] in _gpath(x) for x in live):
                 s.set_path(o, p[:-1])
+    s.ungrouped.add(gid)
     s.echo.append(f"取消编组 {gid}（{len(members)} 个对象升到上一层）")
 
 
@@ -926,7 +991,35 @@ def apply_ops(
         "changes": changes,
         "order": order,
         "reordered": order != first,
+        "ungrouped": sorted(s.ungrouped),
     }
+
+
+def prune_layout_groups(
+    groups: object, objects: list[dict], *, deleted: bool, ungrouped: list[str]
+) -> tuple[list | None, list[str]]:
+    """补丁之后画布上的布局组约束（`canvas.layoutGroups`）还剩哪些——照前端（#2244）：
+
+    * 删了对象（`deleteSelected`）：**所有**直属成员（`groupId` = 组 id）不足 2 个的布局组都去掉；
+    * 拆了组（`ungroupSelected`）：被拆的组若也是布局组、成员不足 2 个，约束一并去掉。
+
+    回 `(剩下的组 | None = 没有这个键, 去掉的组 id)`；没有可去的就原样回。"""
+    if not isinstance(groups, list) or not groups:
+        return (groups if isinstance(groups, list) else None), []
+    gone = set(ungrouped)
+
+    def members(gid: object) -> int:
+        return sum(1 for o in objects if isinstance(o, dict) and o.get("groupId") == gid)
+
+    kept, dropped = [], []
+    for g in groups:
+        gid = g.get("id") if isinstance(g, dict) else None
+        short = members(gid) < 2
+        if short and (deleted or gid in gone):
+            dropped.append(str(gid))
+        else:
+            kept.append(g)
+    return kept, dropped
 
 
 def _exportable(o: dict) -> bool:
@@ -960,9 +1053,111 @@ def _needs_panels(ops: object) -> list:
     ]
 
 
+def _fact_key(f: dict) -> str:
+    return json.dumps(
+        [f.get("check"), f.get("item"), f.get("detail")],
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+
+
+#: 只换颜色 / 名字 / 锁定这类不改占地的字段：改之前就有的问题仍是同一处，可以标 `preexisting`（ADR 0212 §四）。
+#: 位置、尺寸、旋转、线宽、端型、字号字体、填充有无……任何会改变对象占地的字段变了，就按改后的样子完整核对（Codex #2254：
+#: 「同一检查项 + 同一对象」不等于同一处——左边出页挪成右边出页、压着曲线的另一段，都是新问题）。
+PAINT_ONLY = frozenset(
+    {
+        "name",
+        "locked",
+        "color",
+        "strokeOpacity",
+        "fillOpacity",
+        "fillGradient",
+        "strokeGradient",
+        "dash",
+        "dashPattern",
+        "borderColor",
+        "underline",
+    }
+)
+
+
+def _persisted_pos(o: dict, a: dict, id2ref: dict) -> dict | None:
+    """落盘锚点（子图写的是对象 id）→ 场景位置写法（子图短号），解不了 → None。"""
+    kind = next((k for k in ("data", "element", "panel") if k in a), None)
+    if kind is None or not isinstance(a[kind], dict):
+        return None
+    spec = dict(a[kind])
+    key = "id" if kind == "panel" else "panel"
+    if spec.get(key) not in id2ref:
+        return None
+    spec[key] = id2ref[spec[key]]
+    return {"anchor": {kind: spec}, "offset_mm": a.get("offset_mm", [0.0, 0.0])}
+
+
+def _anchor_requests(canvas: dict) -> list:
+    """画布上带 0208 锚点的对象要的数据点（核对时验锚点还成不成立用），写成 `required_data_points` 的描述。"""
+    id2ref = {
+        p.get("id"): f"P{n}"
+        for n, p in enumerate(la._figure_panels(canvas), start=1)  # noqa: SLF001
+    }
+    out = []
+    for o in canvas.get("objects") or []:
+        if not isinstance(o, dict):
+            continue
+        for a in (o.get("anchor") or {}).get("anchors") or []:
+            pos = _persisted_pos(o, a, id2ref) if isinstance(a, dict) and "data" in a else None
+            if pos is not None:
+                out.append({"kind": "text", "name": f"_anc{len(out)}", "at": pos})
+    return out
+
+
+def _check_items(objs: list[dict], ops: object, panels: dict) -> list[dict]:
+    """核对要的「描述」：只用来认锚定端（锚在数据 / 元素上的那一端让出尖端余量，与新加时同一条判据）。
+
+    候选两处：对象上落盘的 0208 锚点（`anchor.anchors[].role`）、这批补丁里 `move` 把 `from` / `to` 对到的锚点。
+    **只认补丁跑完之后还成立的**：那一端此刻离锚点解出来的位置不超过锚点残差限——挪开了、转开了、被后面的操作改了形，
+    就不再让余量（Codex #2254）。不给的话，Agent 加的、尖端本来就指着曲线的箭头，改个线宽都会被判成「遮了数据」。"""
+    id2ref = {(e.get("panel") or {}).get("id"): ref for ref, e in panels.items()}
+    ctx = vectorscene._Ctx(panels)  # noqa: SLF001
+    cands: dict[tuple[str, str], dict] = {}
+    for o in objs:
+        for a in (o.get("anchor") or {}).get("anchors") or []:
+            if isinstance(a, dict) and a.get("role") in ("from", "to"):
+                pos = _persisted_pos(o, a, id2ref)
+                if pos is not None:
+                    cands[(o["id"], a["role"])] = pos
+    ids = {o["id"] for o in objs}
+    for op in ops if isinstance(ops, list) else []:
+        if (
+            isinstance(op, dict)
+            and op.get("op") == "move"
+            and op.get("id") in ids
+            and op.get("attach") in ("from", "to")
+            and isinstance(op.get("to"), dict)
+        ):
+            cands[(op["id"], op["attach"])] = op["to"]
+    by: dict[str, dict] = {o["id"]: {"name": o["id"]} for o in objs}
+    exported = {o["id"]: e for o, e in zip(objs, agentobjects.to_export_objects(objs))}
+    for (oid, role), pos in cands.items():
+        kind = next(iter(pos.get("anchor") or {}), None)
+        if kind not in ("data", "element"):
+            continue
+        try:
+            tx, ty = vectorscene._position(pos, ctx, oid)  # noqa: SLF001
+        except vectorscene.SceneError:
+            continue
+        ax, ay = vectorcheck._actual(exported[oid], role, "center")  # noqa: SLF001
+        if math.hypot(ax - tx, ay - ty) <= vectorcheck.RESIDUAL_MM:
+            by[oid][role] = {"anchor": pos["anchor"]}
+    return list(by.values())
+
+
 def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
     # 子图总要量：改后的对象要核「不遮数据」；锚点挪动另要数据点
-    panels, _refs, unmeasured = la.measure_panels(canvas, _needs_panels(ops), measure)
+    panels, _refs, unmeasured = la.measure_panels(
+        canvas, _needs_panels(ops) + _anchor_requests(canvas), measure
+    )
     try:
         res = apply_ops(canvas.get("objects") or [], ops, panels, la._page(canvas))  # noqa: SLF001
     except EditError as exc:
@@ -995,21 +1190,58 @@ def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
             )
         visible = [o for o in visible if _exportable(o)]
         if visible:
-            solved = {"objects": [{"id": o["id"]} for o in visible], "anchors": []}
-            facts += vectorcheck.check(
-                solved, visible, panels, [], page=page, profile=profile, existing_texts=existing
-            )["facts"]
+            items = _check_items(visible, ops, panels)
+
+            def run(objs: list[dict]) -> list[dict]:
+                solved = {"objects": [{"id": o["id"]} for o in objs], "anchors": []}
+                return vectorcheck.check(
+                    solved, objs, panels, items, page=page, profile=profile, existing_texts=existing
+                )["facts"]
+
+            got = run(visible)
+            # 改之前就已经这样的（用户手画的箭头本来就压着曲线、早就接受的一处压字）：不让它挡住这次编辑，
+            # 标 `preexisting` 如实报（ADR 0212 §四「没动的不重新报」的同一个意思，按对象改前的样子再量一次）
+            before_by = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+            fields: dict[str, set] = {}
+            for c in res["changes"]:
+                fields.setdefault(c.get("id"), set()).add(c.get("field"))
+            olds = [
+                before_by[o["id"]]
+                for o in visible
+                if o["id"] in before_by
+                and fields.get(o["id"], set()) <= PAINT_ONLY
+                and not before_by[o["id"]].get("hidden")
+                and _exportable(before_by[o["id"]])
+            ]
+            was = {_fact_key(f) for f in run(olds) if f["status"] == "fail"} if olds else set()
+            for f in got:
+                if f["status"] == "fail" and _fact_key(f) in was:
+                    f = {**f, "status": "preexisting"}
+                facts.append(f)
     failed = [f for f in facts if f["status"] == "fail"]
+    groups, dropped = prune_layout_groups(
+        canvas.get("layoutGroups"),
+        res["objects"],
+        deleted=bool(res["deleted"]),
+        ungrouped=res["ungrouped"],
+    )
+    echo = list(res["echo"])
+    if dropped:
+        echo.append(
+            f"布局组 {'、'.join(dropped)} 剩下的成员不足 2 个，排列约束一并去掉（对象原地不动）"
+        )
     return {
         "ok": not failed,
         "objects": res["objects"],
+        "layout_groups": groups,
+        "layout_groups_dropped": dropped,
         "changed": changed,
         "deleted": res["deleted"],
         "changes": res["changes"],
-        "echo": res["echo"],
+        "echo": echo,
         "order": res["order"],
         "reordered": res["reordered"],
-        "echo_digest": edit_digest(res["echo"], ops),  # type: ignore[arg-type]
+        "echo_digest": edit_digest(echo, ops),  # type: ignore[arg-type]
         "facts": facts,
         "failed": failed,
         "unverified": [f for f in facts if f["status"] == "unknown"],
@@ -1079,6 +1311,12 @@ def commit(
                 key=lambda o: rank.get(o.get("id") if isinstance(o, dict) else None, len(rank))
             )
         target["objects"] = kept
+        # #2244：拆组 / 删除后成员不足的布局组约束（与前端同一规则）
+        if plan["layout_groups_dropped"]:
+            if plan["layout_groups"]:
+                target["layoutGroups"] = plan["layout_groups"]
+            else:
+                target.pop("layoutGroups", None)
 
     after, token = la.write_canvas(project, name, lay, canvas.get("id"), patch)
     return {
@@ -1089,3 +1327,21 @@ def commit(
         "undo_token": token,
         "plan": plan,
     }
+
+
+def preview_edit(canvas: dict, plan: dict, panel_pdfs: dict[str, str]) -> dict | None:
+    """改后的那一块局部图：画布换成方案里改后的全部对象（层级照方案），框住动到的对象改前与改后的位置
+    （删掉的按删前的位置）。与 0208 的局部图同一条真合成；画不出来回 None。"""
+    before = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+    changed = plan.get("changed") or []
+    ids = [o.get("id") for o in changed] + list(plan.get("deleted") or [])
+    # 框按**看得见的**外接框（旋转过的绕中心转出来，照对齐用的 `_vb`）：只拿 x / y / w / h 会把转成竖的长箭头两头裁掉（Codex #2254）
+    focus = [
+        dict(zip(("x", "y", "w", "h"), _vb(o)))
+        for o in [*changed, *(before.get(i) for i in ids)]
+        if isinstance(o, dict) and all(agentobjects._is_num(o.get(k)) for k in ("x", "y", "w", "h"))  # noqa: SLF001
+    ]
+    if not focus:
+        return None
+    after = {**canvas, "objects": plan.get("objects") or []}
+    return la.preview(after, [], panel_pdfs, focus=focus)

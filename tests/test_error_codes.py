@@ -276,7 +276,7 @@ USER_VISIBLE_CODES = {
     "backend_retired": {"value"},
     "backend_unknown": {"value"},
     "backend_unavailable": {"reason"},
-    "export_render_failed": {"id", "reason"},
+    "export_render_failed": {"id", "name", "reason"},
     "invalid_document": set(),
     "package_file_missing": set(),
     "package_invalid": {"reason"},
@@ -925,6 +925,8 @@ NON_UI_CODES = {
 DATA_ONLY_PARAMS = {
     "ai_script_busy": {"session"},
     "eps_annotations_unsupported": {"operation"},
+    # `id` 是文件 id，前端据它定位那张图；文案只按 `name`（图名）说话（T-009）
+    "export_render_failed": {"id"},
     "siwc_login_failed": {"reason"},  # 闭集原因码（siwc_login.REASONS），前端按它挑具体文案
 }
 
