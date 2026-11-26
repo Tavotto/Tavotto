@@ -810,6 +810,7 @@
       "width": "宽度（mm）",
       "height": "高度（mm）",
       "runtime": "Rscript 路径（可选）",
+      "library": "R 包库目录（可选）",
       "browse": "浏览",
       "run": "运行并捕获",
       "failed": "R 脚本未能启动。"

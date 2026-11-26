@@ -777,6 +777,64 @@ large <- adapter$capture_ggplot(many, frame)$state
 stopifnot(is.null(large$bar_geometry[[first]]$geometry), length(large$bar_geometry[[first]]$bbox) == 4L)
 """
 
+ERRORBAR_PROBE = r"""
+adapter <- new.env(parent = baseenv())
+native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
+for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R")) {
+  sys.source(file.path(native, file), envir = adapter)
+}
+if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+data <- data.frame(x = c(1, 2), y = c(3, 4), lower = c(2, 2.5), upper = c(5, 6))
+calls <- 0L
+observed <- function(data) { calls <<- calls + 1L; data }
+plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper), data = observed,
+                         linewidth = .5, colour = "#123456", width = .3) +
+  ggplot2::geom_point() + ggplot2::labs(y = "Diffusion (mm)")
+frame <- c(216, 144)
+captured <- adapter$capture_ggplot(plot, frame)
+state <- captured$state
+gid <- "layer.1.errorbar"
+element <- function(edits = list()) {
+  Filter(function(e) e$gid == gid, adapter$ggplot_manifest(state, "interval", edits)$elements)[[1L]]
+}
+original <- element()
+stopifnot(original$role == "errorbar", length(original$geometry$paths) == 6L,
+          all(lengths(lapply(original$geometry$paths, `[[`, "points")) == 2L))
+style <- list(color = "#8A2530", linewidth = 2.1, alpha = .6)
+patch <- setNames(list(style), gid)
+svg <- adapter$render_ggplot(state, patch)
+stopifnot(identical(element(patch)$geometry$paths, original$geometry$paths),
+          identical(element(patch)$errorbar_series$current, style),
+          any(grepl("stroke: #8A2530", strsplit(svg, "\n", fixed = TRUE)[[1L]], fixed = TRUE) &
+              grepl("stroke-width: 2.10", strsplit(svg, "\n", fixed = TRUE)[[1L]], fixed = TRUE) &
+              grepl("stroke-opacity: 0.60", strsplit(svg, "\n", fixed = TRUE)[[1L]], fixed = TRUE)),
+          identical(adapter$render_ggplot(state), captured$svg), calls == 1L)
+horizontal <- ggplot2::ggplot(data, ggplot2::aes(y, x)) +
+  ggplot2::geom_errorbar(ggplot2::aes(xmin = lower, xmax = upper), width = .3)
+stopifnot(length(adapter$capture_ggplot(horizontal, frame)$state$line_targets) == 1L)
+mapped <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, colour = x), show.legend = FALSE)
+stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$line_targets) == 0L)
+for (bad in list(list(alpha = 1.01), list(linewidth = 5.01), list(capsize = 2))) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, setNames(list(bad), gid)),
+                        silent = TRUE), "try-error"))
+}
+
+family_gid <- "axis.y.left.title"
+font <- setNames(list(list(fontfamily = "monospace")), family_gid)
+text <- function(edits) {
+  Filter(function(e) e$gid == family_gid, adapter$ggplot_manifest(state, "interval", edits)$elements)[[1L]]
+}
+field <- Filter(function(e) e$prop == "fontfamily", text(font)$editable)[[1L]]
+stopifnot(identical(field$value, "monospace"), identical(field$value_original, "sans-serif"),
+          !identical(text(font)$bbox, text(list())$bbox),
+          identical(adapter$ggplot_text_paint(state$text_targets[[family_gid]], font[[1L]])$paint$fontfamily,
+                    unname(systemfonts::font_info(family = "mono")$family)),
+          identical(adapter$render_ggplot(state), captured$svg), calls == 1L)
+"""
+
 
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
@@ -810,6 +868,10 @@ def test_ggplot_colour_scale_replays_all_mapped_layers_with_the_same_guide(tmp_p
 
 def test_ggplot_bar_paint_preserves_counts_positions_and_siblings(tmp_path):
     _assert_r_probe(tmp_path, BAR_PROBE)
+
+
+def test_ggplot_errorbar_stroke_and_title_family_preserve_native_data(tmp_path):
+    _assert_r_probe(tmp_path, ERRORBAR_PROBE)
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):
@@ -906,6 +968,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
             "color": "#112233",
             "weight": "normal",
             "style": "normal",
+            "fontfamily": "sans-serif",
             "fontsize": 13.2,
         }
         top = elements["axis.x.top.title"]
@@ -936,6 +999,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
             "color": "#6B6B6B",
             "weight": "bold",
             "style": "italic",
+            "fontfamily": "sans-serif",
             "fontsize": 19.25,
         }
         size_field = next(field for field in axis["editable"] if field["prop"] == "fontsize")

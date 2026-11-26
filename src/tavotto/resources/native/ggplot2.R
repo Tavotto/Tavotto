@@ -517,6 +517,7 @@ ggplot_bbox <- function(lower, upper, frame_pt) {
 
 ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
   targets <- list()
+  families <- ggplot_installed_title_fonts()
   for (gid in names(ggplot_text_slots)) {
     slot <- which(table$layout$name == ggplot_text_slots[[gid]])
     if (length(slot) != 1L) next
@@ -527,6 +528,7 @@ ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
         is_positive_ggplot_number(target$paint$fontsize) &&
         is_positive_ggplot_number(ggplot_text_cex(target$paint))) {
       target$title_dimension <- if (startsWith(gid, "axis.y.")) "width" else "height"
+      target$title_fonts <- families
     }
     targets[[gid]] <- target
   }
@@ -601,8 +603,13 @@ ggplot_line_targets <- function(built, table, layer_grobs) {
   for (index in seq_along(layer_grobs)) {
     layer <- built$plot$layers[[index]]
     kind <- class(layer$geom)[[1L]]
-    if (!kind %in% c("GeomLine", "GeomPath")) next
+    interval <- kind %in% c("GeomErrorbar", "GeomErrorbarh")
+    if (!interval && !kind %in% c("GeomLine", "GeomPath")) next
     mapping <- setdiff(names(layer$computed_mapping), names(layer$aes_params))
+    if (interval) {
+      mapping <- ggplot_styled_layer_mapping(layer)
+      if (is.null(mapping) || "colour" %in% mapping || "alpha" %in% mapping) next
+    }
     if (length(intersect(mapping, c("size", "linewidth", "linetype")))) next
     # Changing the stroke must not leave a key displaying the old mapping.
     if (!identical(layer$show.legend, FALSE) &&
@@ -612,30 +619,43 @@ ggplot_line_targets <- function(built, table, layer_grobs) {
     line <- layer_grobs[[index]][[1L]]
     if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
         length(line$x) < 2L || length(line$x) > 4096L ||
-        length(line$id.lengths) > 1L || length(unique(line$id)) > 1L ||
-        any(!is.finite(as.numeric(line$x))) || any(!is.finite(as.numeric(line$y)))) next
+        length(line$id.lengths) > 1L) next
+    if (interval) {
+      if (length(line$id) != length(line$x) || anyNA(line$id)) next
+    } else if (length(unique(line$id)) > 1L || any(!is.finite(as.numeric(line$x))) ||
+               any(!is.finite(as.numeric(line$y)))) next
     draw_slot <- which(panel$childrenOrder == line$name)
-    if (length(draw_slot) != 1L || !is_positive_ggplot_number(line$gp$lwd)) next
-    rgba <- tryCatch(grDevices::col2rgb(line$gp$col, alpha = TRUE), error = function(error) NULL)
+    width <- unique(line$gp$lwd)
+    if (length(draw_slot) != 1L || !is_positive_ggplot_number(width)) next
+    rgba <- tryCatch(grDevices::col2rgb(unique(line$gp$col), alpha = TRUE), error = function(error) NULL)
     if (is.null(rgba) || ncol(rgba) != 1L || rgba[4L] == 0L) next
-    lty <- line$gp$lty
+    lty <- unique(line$gp$lty)
     if (is.numeric(lty) && length(lty) == 1L && lty %in% 1:4) {
       lty <- unname(ggplot_line_types[[lty]])
     }
     style <- names(ggplot_line_types)[match(lty, ggplot_line_types, nomatch = 0L)]
     if (length(style) != 1L) next
-    gid <- paste0("layer.", index, ".line")
+    gid <- paste0("layer.", index, if (interval) ".errorbar" else ".line")
     context <- rlang::hash(list(kind, built$data[[index]], line$gp))
     targets[[gid]] <- list(
-      slot = slot, child = line$name, index = index, context = context,
+      slot = slot, child = line$name, index = index, context = context, interval = interval,
       clip = identical(built$layout$coord$clip, "on"),
-      width = line$gp$lwd * ggplot_lwd_pt, style = style,
+      width = width * ggplot_lwd_pt, style = style,
       color = if (!"colour" %in% mapping) grDevices::rgb(rgba[1L], rgba[2L], rgba[3L], maxColorValue = 255),
       alpha = rgba[4L]
     )
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
   targets[!(duplicated(contexts) | duplicated(contexts, fromLast = TRUE))]
+}
+
+ggplot_stroke_paths <- function(x, y, id) {
+  valid <- is.finite(x) & is.finite(y)
+  new_path <- c(TRUE, id[-1L] != id[-length(id)] | !valid[-length(valid)])
+  groups <- split(which(valid), cumsum(new_path)[valid])
+  lapply(groups[lengths(groups) > 1L], function(i) {
+    list(points = Map(function(x, y) list(x, y), x[i], y[i]), closed = FALSE)
+  })
 }
 
 measure_ggplot_lines <- function(table, targets, frame_pt) {
@@ -661,19 +681,30 @@ measure_ggplot_lines <- function(table, targets, frame_pt) {
       positions <- grid::deviceLoc(line$x, line$y, valueOnly = TRUE)
       x <- positions$x / frame[[1L]]
       y <- 1 - positions$y / frame[[2L]]
-      width <- line$gp$lwd * ggplot_lwd_pt
-      if (!all(is.finite(c(x, y, width)))) stop("Invalid native R curve geometry.")
-      geometry <- list(kind = "polyline", paths = list(list(
-        points = Map(function(x, y) list(x, y), x, y), closed = FALSE
-      )), fill = FALSE, stroke = TRUE, stroke_pt = width)
+      width <- unique(line$gp$lwd) * ggplot_lwd_pt
+      paths <- if (target$interval) {
+        unname(ggplot_stroke_paths(x, y, line$id))
+      } else {
+        list(list(points = Map(function(x, y) list(x, y), x, y), closed = FALSE))
+      }
+      if (!length(paths) || !is_positive_ggplot_number(width)) stop("Invalid native R stroke geometry.")
+      visible <- any(grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ] > 0)
+      geometry <- list(kind = if (target$interval) "multi_path" else "polyline",
+                       paths = paths, fill = FALSE, stroke = visible, stroke_pt = width)
       if (target$clip) {
         low <- grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"), valueOnly = TRUE)
         high <- grid::deviceLoc(grid::unit(1, "npc"), grid::unit(1, "npc"), valueOnly = TRUE)
         geometry$clip <- as.list(ggplot_bbox(low, high, frame_pt))
       }
       pad <- width / (2 * frame_pt)
-      bbox <- c(min(x) - pad[[1L]], min(y) - pad[[2L]],
-                diff(range(x)) + 2 * pad[[1L]], diff(range(y)) + 2 * pad[[2L]])
+      bounds <- vapply(paths, function(path) {
+        points <- do.call(rbind, path$points)
+        c(range(points[, 1L]), range(points[, 2L]))
+      }, numeric(4L))
+      x <- range(bounds[1:2, ])
+      y <- range(bounds[3:4, ])
+      bbox <- c(x[[1L]] - pad[[1L]], y[[1L]] - pad[[2L]],
+                diff(x) + 2 * pad[[1L]], diff(y) + 2 * pad[[2L]])
       list(bbox = as.list(bbox), geometry = geometry)
     }, error = function(error) NULL, finally = grid::upViewport(0))
     result[[gid]] <- geometry
@@ -684,20 +715,25 @@ measure_ggplot_lines <- function(table, targets, frame_pt) {
 ggplot_edit_line <- function(table, target, patch) {
   panel <- table$grobs[[target$slot]]
   line <- panel$children[[target$child]]
+  max_width <- if (target$interval) 5 else 20
   for (prop in names(patch)) {
     value <- patch[[prop]]
-    if (prop == "linewidth" && is_positive_ggplot_number(value) && value >= 0.1 && value <= 20) {
+    if (prop == "linewidth" && is_positive_ggplot_number(value) && value >= 0.1 && value <= max_width) {
       line$gp$lwd <- value / ggplot_lwd_pt
-    } else if (prop == "linestyle" && is.character(value) && length(value) == 1L &&
+    } else if (!target$interval && prop == "linestyle" && is.character(value) && length(value) == 1L &&
                value %in% names(ggplot_line_types)) {
       line$gp$lty <- unname(ggplot_line_types[[value]])
     } else if (prop == "color" && !is.null(target$color) && is.character(value) &&
-               length(value) == 1L && grepl("^#[0-9A-Fa-f]{6}$", value)) {
-      line$gp$col <- if (target$alpha == 255L) value else paste0(value, sprintf("%02X", target$alpha))
+               length(value) == 1L && !is.na(value) && grepl("^#[0-9A-Fa-f]{6}$", value)) {
+      line$gp$col <- scales::alpha(value, target$alpha / 255)
+    } else if (target$interval && prop == "alpha" && is.numeric(value) &&
+               length(value) == 1L && is.finite(value) && value >= 0 && value <= 1) {
+      next
     } else {
       stop("Invalid native R curve style.")
     }
   }
+  if (!is.null(patch$alpha)) line$gp$col <- scales::alpha(line$gp$col, patch$alpha)
   panel$children[[target$child]] <- line
   table$grobs[[target$slot]] <- panel
   table
@@ -789,6 +825,29 @@ edit_ggplot_text <- function(table, slots, path, paint) {
 }
 
 ggplot_face_options <- list(weight = c("normal", "bold"), style = c("normal", "italic"))
+ggplot_font_families <- c("sans-serif" = "sans", serif = "serif", monospace = "mono")
+
+ggplot_installed_title_fonts <- function() {
+  fonts <- tryCatch(
+    systemfonts::font_info(family = unname(ggplot_font_families)),
+    error = function(error) NULL
+  )
+  if (is.null(fonts)) return(character())
+  # Cairo and svglite interpret blank and generic names differently. Give
+  # both devices the concrete family resolved by the native font system.
+  valid <- !is.na(fonts$family) & nzchar(fonts$family) & !is.na(fonts$monospace) &
+    (fonts$monospace == (ggplot_font_families == "mono"))
+  stats::setNames(fonts$family[valid], names(ggplot_font_families)[valid])
+}
+
+ggplot_title_family <- function(target) {
+  if (!length(target$title_fonts)) return(NULL)
+  family <- target$paint$fontfamily
+  if (is.null(family) || identical(family, "")) return("sans-serif")
+  if (!is.character(family) || length(family) != 1L || is.na(family)) return(NULL)
+  index <- match(family, ggplot_font_families)
+  if (is.na(index)) family else names(ggplot_font_families)[[index]]
+}
 
 is_positive_ggplot_number <- function(value) {
   is.numeric(value) && length(value) == 1L && is.finite(value) && value > 0
@@ -806,6 +865,7 @@ ggplot_text_edit <- function(edit, tick) {
 ggplot_text_paint <- function(target, edits) {
   paint <- target$paint
   face <- target$face
+  family <- ggplot_title_family(target)
   for (prop in names(edits)) {
     value <- edits[[prop]]
     if (prop == "fontsize") {
@@ -822,6 +882,9 @@ ggplot_text_paint <- function(target, edits) {
         stop("The native R text color must be an RGB hex color.")
       }
       paint$col <- value
+    } else if (prop == "fontfamily" && !is.null(family) &&
+               value %in% c(family, names(target$title_fonts))) {
+      if (value != family) paint$fontfamily <- target$title_fonts[[value]]
     } else if (!is.null(face[[prop]]) && value %in% ggplot_face_options[[prop]]) {
       face[[prop]] <- value
     } else {
@@ -954,9 +1017,10 @@ ggplot_table_for <- function(state, edits) {
     patch <- ggplot_text_edit(edits[[gid]], state$tick_targets[[gid]])
     if (!length(patch)) next
     paint <- ggplot_text_paint(target, patch)$paint
-    if (!is.null(patch$fontsize)) original <- table$grobs[[target$slots[[1L]]]]$children[[1L]]
+    resize <- !is.null(patch$fontsize) || !is.null(patch$fontfamily)
+    if (resize) original <- table$grobs[[target$slots[[1L]]]]$children[[1L]]
     table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
-    if (!is.null(patch$fontsize)) {
+    if (resize) {
       table <- resize_ggplot_title_cell(table, target, original)
     }
   }
@@ -1062,7 +1126,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # A resized title can move the entire plot. Re-measure even targets whose
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)
-  reflow <- any(vapply(edits, function(edit) any(c("fontsize", ggplot_tick_props) %in% names(edit)),
+  reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props) %in% names(edit)),
                       logical(1L))) ||
     any(names(edits) %in% c(legend_gids, names(state$colour_scales)))
   line_edits <- any(names(edits) %in% names(state$line_targets))
@@ -1135,6 +1199,16 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (!is.null(patch[[prop]])) field$value_original <- target$face[[prop]]
       editable[[length(editable) + 1L]] <- field
     }
+    family_original <- ggplot_title_family(target)
+    if (!is.null(family_original)) {
+      requested <- patch$fontfamily
+      family <- list(prop = "fontfamily", type = "enum",
+                     value = if (is.null(requested)) family_original else requested,
+                     options = as.list(unique(c(family_original, names(target$title_fonts)))),
+                     strict_options = TRUE)
+      if (!is.null(requested)) family$value_original <- family_original
+      editable[[length(editable) + 1L]] <- family
+    }
     if (!is.null(target$title_dimension) || !is.null(tick$size)) {
       native_size <- if (is.null(tick$size)) target$paint$fontsize * ggplot_text_cex(target$paint) else tick$size
       value_original <- round(native_size, 2)
@@ -1169,6 +1243,16 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     patch <- edits[[gid]]
     geometry <- if (is.null(measured$lines)) state$line_geometry[[gid]] else measured$lines[[gid]]
     if (is.null(geometry)) stop("The native R curve could not be measured.")
+    if (target$interval) {
+      original <- list(color = target$color, linewidth = target$width, alpha = target$alpha / 255)
+      current <- original
+      current[names(patch)] <- patch
+      return(c(list(gid = gid, role = "errorbar",
+                    label = paste("\u8bef\u5dee\u68d2", target$index), draggable = FALSE,
+                    editable = list(), errorbar_series = list(
+                      context = target$context, current = current,
+                      original = original, edited = as.list(names(patch)))), geometry))
+    }
     width <- list(prop = "linewidth", type = "number", value = geometry$geometry$stroke_pt,
                   min = 0.1, max = 20, step = 0.1, unit = "pt")
     if (!is.null(patch$linewidth)) width$value_original <- target$width

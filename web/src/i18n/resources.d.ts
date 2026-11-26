@@ -8653,6 +8653,7 @@ export default interface Resources {
         "description": "在本机 R 中以你的账户权限执行 {{script}}。脚本需要创建指定名称的 ggplot 对象。",
         "failed": "R 脚本未能启动。",
         "height": "高度（mm）",
+        "library": "R 包库目录（可选）",
         "object": "图形对象名",
         "open": "用 R 运行",
         "run": "运行并捕获",

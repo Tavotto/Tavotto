@@ -845,6 +845,7 @@
       "width": "Width (mm)",
       "height": "Height (mm)",
       "runtime": "Rscript path (optional)",
+      "library": "R package library folder (optional)",
       "browse": "Browse",
       "run": "Run and capture",
       "failed": "The R script could not start."

@@ -12,7 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
-from .manifest_fields import bar_paint_fields, marker_field, opacity_field, point_size_field
+from .manifest_fields import (
+    bar_paint_fields,
+    errorbar_stroke_fields,
+    marker_field,
+    opacity_field,
+    point_size_field,
+)
 
 _RESOURCES = Path(__file__).resolve().parents[1] / "resources" / "native"
 _CONTEXTUAL_TEXT_IDENTITY_PREFIX = "r2:"
@@ -21,6 +27,7 @@ _LINE_IDENTITY_PREFIX = "r4:"
 _COLOR_SCALE_IDENTITY_PREFIX = "r5:"
 _POINT_SERIES_IDENTITY_PREFIX = "r6:"
 _BAR_SERIES_IDENTITY_PREFIX = "r7:"
+_ERRORBAR_IDENTITY_PREFIX = "r8:"
 
 
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
@@ -71,6 +78,7 @@ def _write_ggplot_svg(path: Path, raw: str) -> bytes:
 class GgplotTarget:
     object_name: str
     frame_pt: tuple[float, float]
+    library: str | None = None
 
     def __post_init__(self):
         if (
@@ -84,6 +92,13 @@ class GgplotTarget:
             for value in self.frame_pt
         ):
             raise ValueError("The SVG frame needs two positive dimensions in points.")
+        if self.library is not None and (
+            not isinstance(self.library, str)
+            or "\0" in self.library
+            or not Path(self.library).is_absolute()
+            or not Path(self.library).is_dir()
+        ):
+            raise ValueError("Select an existing R package library folder.")
 
     def stem(self, script: str) -> str:
         identity = json.dumps([script, self.object_name], ensure_ascii=False).encode("utf-8")
@@ -119,6 +134,7 @@ class GgplotTarget:
             executionfact.new_id(),
             spec.target,
             out_dir,
+            *([self.library] if self.library is not None else []),
         ]
 
     def publish_preview(self, session, response: dict, *, build: bool) -> dict:
@@ -159,6 +175,10 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            errorbar_series = element.pop("errorbar_series", None)
+            if errorbar_series is not None:
+                GgplotTarget.annotate_errorbar_series(element, errorbar_series)
+                continue
             bar_series = element.pop("bar_series", None)
             if bar_series is not None:
                 GgplotTarget.annotate_bar_series(element, bar_series)
@@ -201,6 +221,23 @@ class GgplotTarget:
             if element["gid"] != "plot.title":
                 label = element["gid"].encode("utf-8") + b"\0" + label
             element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
+
+    @staticmethod
+    def annotate_errorbar_series(element: dict, series: dict) -> None:
+        def stroke(values: dict) -> list[dict]:
+            return [
+                *errorbar_stroke_fields(values["color"], values["linewidth"]),
+                opacity_field(values["alpha"]),
+            ]
+
+        fields = stroke(series["current"])
+        original = {field["prop"]: field["value"] for field in stroke(series["original"])}
+        for field in fields:
+            prop = field["prop"]
+            if prop in series["edited"]:
+                field["value_original"] = original[prop]
+        element["editable"] = fields
+        element["identity"] = _ERRORBAR_IDENTITY_PREFIX + series["context"]
 
     @staticmethod
     def annotate_bar_series(element: dict, series: dict) -> None:
@@ -323,6 +360,10 @@ class GgplotTarget:
             if expected is not None and expected.startswith(_BAR_SERIES_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R bar series changed. Select it again.")
+                continue
+            if expected is not None and expected.startswith(_ERRORBAR_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R error bars changed. Select them again.")
                 continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX

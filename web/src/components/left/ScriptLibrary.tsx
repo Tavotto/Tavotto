@@ -18,7 +18,7 @@ import {
 } from '@/lib/api'
 import { splitNoticeText } from '@/lib/noticeText'
 import { offerForeignConvert } from '@/lib/foreignEntry'
-import { isDesktop, pickAnyFile } from '@/lib/desktop'
+import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { runNotebook } from '@/lib/notebookRun'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
@@ -338,6 +338,7 @@ function ForeignScriptRow({ source }: { source: ForeignSource }) {
 function NativeGgplotDialog({ script, onClose }: { script: string; onClose: () => void }) {
   const [object, setObject] = useState('')
   const [rscript, setRscript] = useState('')
+  const [library, setLibrary] = useState('')
   const [width, setWidth] = useState('152.4')
   const [height, setHeight] = useState('101.6')
   const [busy, setBusy] = useState(false)
@@ -355,6 +356,7 @@ function NativeGgplotDialog({ script, onClose }: { script: string; onClose: () =
         object: object.trim(),
         frame_pt: dimensions,
         ...(rscript.trim() ? { rscript: rscript.trim() } : {}),
+        ...(library.trim() ? { library: library.trim() } : {}),
       })
       if (!owner.still()) return
       useNativeSessionStore.getState().applyEvent(result.session)
@@ -405,6 +407,16 @@ function NativeGgplotDialog({ script, onClose }: { script: string; onClose: () =
           <Button variant="secondary" onClick={async () => {
             const file = await pickAnyFile(label('runtime'))
             if (file && owner.still()) setRscript(file)
+          }}>{label('browse')}</Button>
+        </div>
+        <div className="flex items-end gap-2">
+          <label className="flex min-w-0 flex-1 flex-col gap-1 type-meta">
+            {label('library')}
+            <TextInput aria-label={label('library')} value={library} onChange={(e) => setLibrary(e.target.value)} />
+          </label>
+          <Button variant="secondary" onClick={async () => {
+            const directory = await pickDirectory(label('library'))
+            if (directory && owner.still()) setLibrary(directory)
           }}>{label('browse')}</Button>
         </div>
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -28,6 +29,7 @@ def main():
     fig, ax = plt.subplots(figsize=(3, 2))
     ax.bar([0.45, 1.55], [0.7, 1.3], width=0.25, color="#617883", edgecolor="#352B58")
     ax.plot([0, 1, 2], [1, 4, 2], color="#317A75", marker="o")
+    ax.errorbar([0, 1, 2], [1, 4, 2], yerr=[.4, .7, .5], fmt="none", capsize=3)
     ax.set(xlabel="Time (min)", ylabel="Signal (mV)", title="Original signal")
     fig.tight_layout()
     fig.savefig("Signal.pdf")
@@ -40,6 +42,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
   ggplot2::geom_point(ggplot2::aes(shape = drv, colour = cty), alpha = .5) +
   ggplot2::geom_line(data = trend, colour = "#1156A3", show.legend = FALSE) +
   ggplot2::geom_col(data = reference, width = .36, fill = "#226688", colour = "#182834") +
+  ggplot2::geom_errorbar(data = trend, ggplot2::aes(ymin = hwy - 2, ymax = hwy + 1), width = .25) +
   ggplot2::scale_colour_gradient(name = "City mileage", breaks = c(10, 17, 27),
     guide = ggplot2::guide_colourbar(position = "left", display = "rectangles")) +
   ggplot2::labs(x = "Displacement (L)", y = "Highway mileage", title = "Fuel economy",
@@ -50,7 +53,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
 LAYOUT = "/api/layouts/Mixed%20native"
 MPL_EDIT = "Reviewed signal"
 R_EDIT = "#6C3799"
-AXIS_FACES = {"weight": "bold", "style": "italic"}
+AXIS_FACES = {"weight": "bold", "style": "italic", "fontfamily": "monospace"}
 AXIS_PAGE_SIZE = 12.4
 R_AXIS_PAGE_SIZE = 13.8
 R_PANEL_SCALE = 0.8
@@ -68,23 +71,30 @@ R_COLOR_SCALE = {
 }
 R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
+ERRORBAR_PAINT = {"color": "#803239", "linewidth": 1.8, "alpha": 0.6}
 
 
-def _bar_patches(baseline):
-    (bars,) = [el for el in baseline["manifest"]["elements"] if el["role"] == "bar_series"]
-    fields = {field["prop"]: field for field in bars["editable"]}
-    assert set(BAR_PAINT) <= fields.keys() and fields["linewidth"]["unit"] == "pt"
-    identity = {"identity": bars["identity"]} if "identity" in bars else {}
-    return bars, [
-        {"gid": bars["gid"], "prop": prop, "value": value, **identity}
-        for prop, value in BAR_PAINT.items()
+def _series_patches(baseline, role, paint):
+    (series,) = [el for el in baseline["manifest"]["elements"] if el["role"] == role]
+    fields = {field["prop"]: field for field in series["editable"]}
+    assert set(paint) <= fields.keys() and fields["linewidth"]["unit"] == "pt"
+    identity = {"identity": series["identity"]} if "identity" in series else {}
+    return series, [
+        {"gid": series["gid"], "prop": prop, "value": value, **identity}
+        for prop, value in paint.items()
     ]
 
 
-def _run_ggplot(app, script, rscript):
+def _run_ggplot(app, script, rscript, library=None):
     status, started = app.call(
         "/api/native/ggplot2",
-        {"script": script, "object": "plot", "frame_pt": [216, 144], "rscript": rscript},
+        {
+            "script": script,
+            "object": "plot",
+            "frame_pt": [216, 144],
+            "rscript": rscript,
+            **({"library": str(library)} if library is not None else {}),
+        },
     )
     assert status == 202, started
     session = started["session"]
@@ -255,6 +265,14 @@ def _pdf_pixels(path):
         assert len(bars) == 4
         assert sum(path["rect"].x0 > page.rect.width / 2 for path in bars) == 2
         assert all(path["fill_opacity"] == pytest.approx(0.75, abs=0.01) for path in bars)
+        error_color = tuple(
+            component / 255 for component in bytes.fromhex(ERRORBAR_PAINT["color"][1:])
+        )
+        errors = [path for path in drawn if path["color"] == pytest.approx(error_color, abs=0.003)]
+        assert any(path["rect"].x0 < page.rect.width / 2 for path in errors)
+        assert any(path["rect"].x0 > page.rect.width / 2 for path in errors)
+        assert any(path["width"] == pytest.approx(1.8 * R_PANEL_SCALE, abs=0.02) for path in errors)
+        assert all(path["stroke_opacity"] == pytest.approx(0.6, abs=0.01) for path in errors)
         bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
         for title, size in {
             "Time (min)": AXIS_PAGE_SIZE,
@@ -264,6 +282,13 @@ def _pdf_pixels(path):
         }.items():
             spans = [span for span in by_text[title] if span["text"].strip()]
             assert all(span["flags"] & bold_italic == bold_italic for span in spans), by_text[title]
+            assert all(
+                any(
+                    name in span["font"].lower()
+                    for name in ("mono", "courier", "consolas", "menlo")
+                )
+                for span in spans
+            ), by_text[title]
             assert [span["size"] for span in spans] == pytest.approx([size] * len(spans), abs=0.025)
         return page.get_pixmap().samples
 
@@ -464,7 +489,25 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
     project = tmp_path / "原始 项目"
     project.mkdir()
     (project / "mpl_response.py").write_text(MPL_SCRIPT, encoding="utf-8")
-    (project / "fuel.R").write_text(R_SCRIPT, encoding="utf-8")
+    library = tmp_path / "Project R library"
+    library.mkdir()
+    subprocess.run(
+        [
+            rscript,
+            "--vanilla",
+            "-e",
+            'stopifnot(file.copy(find.package("ggplot2"), commandArgs(TRUE)[[1]], recursive = TRUE))',
+            str(library),
+        ],
+        check=True,
+        timeout=45,
+    )
+    (project / "fuel.R").write_text(
+        'stopifnot(identical(normalizePath(find.package("ggplot2"), winslash = "/"), '
+        'normalizePath(file.path(.libPaths()[[1L]], "ggplot2"), winslash = "/")), '
+        'basename(.libPaths()[[1L]]) == "Project R library")\n' + R_SCRIPT,
+        encoding="utf-8",
+    )
     (project / "tavotto_registry.json").write_text(
         json.dumps(
             {
@@ -484,7 +527,10 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert status == 200 and run["registered"], run
         (mpl,) = [item for item in run["descriptors"] if item["stem"] == "Signal"]
         mpl_asset = mpl["asset_id"]
-        r_asset = _run_ggplot(app, "fuel.R", rscript)
+        with pytest.raises(HttpError) as missing_library:
+            _run_ggplot(app, "fuel.R", rscript, library / "absent")
+        assert missing_library.value.status == 400
+        r_asset = _run_ggplot(app, "fuel.R", rscript, library)
         mpl_baseline = _render(app, mpl_asset, [])
         r_baseline = _render(app, r_asset, [])
         mpl_title = _title(mpl_baseline, "text")
@@ -576,20 +622,29 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert {
             field["prop"]: field["value"] for field in edited_scale["editable"]
         } == R_COLOR_SCALE
-        _, mpl_bar_patches = _bar_patches(mpl_baseline)
-        r_bars, r_bar_patches = _bar_patches(precision)
-        changed = _render(app, r_asset, [*r_patches, *r_bar_patches])
+        _, mpl_bar_patches = _series_patches(mpl_baseline, "bar_series", BAR_PAINT)
+        r_bars, r_bar_patches = _series_patches(precision, "bar_series", BAR_PAINT)
+        _, mpl_error_patches = _series_patches(mpl_baseline, "errorbar", ERRORBAR_PAINT)
+        r_errors, r_error_patches = _series_patches(precision, "errorbar", ERRORBAR_PAINT)
+        changed = _render(app, r_asset, [*r_patches, *r_bar_patches, *r_error_patches])
         edited_bars = next(
             el for el in changed["manifest"]["elements"] if el["gid"] == r_bars["gid"]
         )
         assert edited_bars["identity"] == r_bars["identity"]
         assert edited_bars["geometry"]["paths"] == r_bars["geometry"]["paths"]
         assert {field["prop"]: field["value"] for field in edited_bars["editable"]} == BAR_PAINT
+        edited_errors = next(
+            el for el in changed["manifest"]["elements"] if el["gid"] == r_errors["gid"]
+        )
+        assert edited_errors["geometry"]["paths"] == r_errors["geometry"]["paths"]
+        assert {
+            field["prop"]: field["value"] for field in edited_errors["editable"]
+        } == ERRORBAR_PAINT
         with pytest.raises(HttpError):
             _render(app, r_asset, [{**r_bar_patches[0], "identity": "r7:stale"}])
         assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
-        r_patches.extend(r_bar_patches)
-        mpl_patches.extend(mpl_bar_patches)
+        r_patches.extend([*r_bar_patches, *r_error_patches])
+        mpl_patches.extend([*mpl_bar_patches, *mpl_error_patches])
         assert _render(app, r_asset, r_patches)["svg"] == changed["svg"]
         document = {
             "schema": 3,

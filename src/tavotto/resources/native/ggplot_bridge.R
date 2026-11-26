@@ -5,7 +5,7 @@ main <- function() {
   args <- commandArgs(trailingOnly = TRUE)
   token <- Sys.getenv("TAVOTTO_BRIDGE_TOKEN")
   Sys.unsetenv("TAVOTTO_BRIDGE_TOKEN")
-  if (!grepl("^[A-Za-z0-9_-]+$", token) || length(args) != 11L) {
+  if (!grepl("^[A-Za-z0-9_-]+$", token) || !length(args) %in% 11:12) {
     stop("Invalid owned R launch.")
   }
 
@@ -24,14 +24,28 @@ main <- function() {
   send_raw(sprintf('{"bridge_hello":1,"protocol_version":1,"token":"%s","pid":%d}',
                    token, Sys.getpid()))
   rm(token)
-  if (!requireNamespace("jsonlite", quietly = TRUE)) {
-    # The hello is the only request before dependency checks. The diagnostic
-    # is fixed text so it can also be reported without the JSON package.
+  fail_before_json <- function(message) {
+    # Only fixed messages call this path, before jsonlite is available.
     ack <- readLines(control, n = 1L, warn = FALSE)
     if (length(ack)) {
-      send_raw('{"bridge_event":"exit","code":1,"figures":0,"script_error":{"message":"The selected R needs the jsonlite package."}}')
+      send_raw(sprintf(paste0('{"bridge_event":"exit","code":1,"figures":0,',
+                              '"script_error":{"message":"%s"}}'), message))
     }
     quit(status = 1L)
+  }
+  # Apply the user-selected package library to this child before loading any
+  # namespace, including jsonlite. Keep the existing interpreter defaults as
+  # fallback and leave the caller's library and startup files untouched.
+  if (length(args) == 12L) {
+    lib <- tryCatch(normalizePath(args[[12L]], winslash = "/", mustWork = TRUE),
+                    error = function(error) NULL)
+    if (!is.null(lib)) .libPaths(c(lib, .libPaths()))
+    if (!identical(.libPaths()[[1L]], lib)) {
+      fail_before_json("The selected R package library is unavailable.")
+    }
+  }
+  if (!requireNamespace("jsonlite", quietly = TRUE)) {
+    fail_before_json("The selected R needs the jsonlite package.")
   }
   send <- function(frame) {
     send_raw(jsonlite::toJSON(frame, auto_unbox = TRUE, null = "null", digits = NA))

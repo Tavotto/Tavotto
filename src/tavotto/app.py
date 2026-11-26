@@ -10962,7 +10962,13 @@ def api_native_ggplot2_start():
     if not _desktop_initiated() or not _page_authenticated():
         return _native_error(engine_runcodes.RunError(engine_runcodes.NATIVE_DESKTOP_REQUIRED))
     body = request.get_json(silent=True)
-    if not isinstance(body, dict) or set(body) - {"script", "object", "frame_pt", "rscript"}:
+    if not isinstance(body, dict) or set(body) - {
+        "script",
+        "object",
+        "frame_pt",
+        "rscript",
+        "library",
+    }:
         return jsonify({"code": "bad_request", "error": "Invalid ggplot2 capture request."}), 400
     root = str(require_project())
     epoch = engine_nativesession.REGISTRY.project_epoch(root)
@@ -10985,7 +10991,9 @@ def api_native_ggplot2_start():
             )
         )
     try:
-        target = nativeggplot.GgplotTarget(body.get("object"), tuple(body.get("frame_pt") or ()))
+        target = nativeggplot.GgplotTarget(
+            body.get("object"), tuple(body.get("frame_pt") or ()), body.get("library")
+        )
         spec = engine_execspec.desktop_native_spec(
             script, interpreter=interpreter, cwd=os.fspath(Path(script).parent), project_root=root
         )

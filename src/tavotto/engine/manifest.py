@@ -89,6 +89,7 @@ from legendmodel import (
 )
 from manifest_fields import (
     bar_paint_fields,
+    errorbar_stroke_fields,
     marker_field as _marker_field,
     opacity_field,
     point_size_field,
@@ -3231,16 +3232,7 @@ def _errorbar_fields(grp) -> list[dict]:
     if hasattr(lw, "__len__"):
         lw = lw[0] if len(lw) else 1.0
     return [
-        {"prop": "color", "type": "color", "value": to_hex(color)},
-        {
-            "prop": "linewidth",
-            "type": "number",
-            "value": round(float(lw), 2),
-            "min": 0.1,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
+        *errorbar_stroke_fields(to_hex(color), lw),
         {
             "prop": "capsize",
             "type": "number",
@@ -3259,14 +3251,7 @@ def _errorbar_fields(grp) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        },
+        opacity_field(1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
     ]
 

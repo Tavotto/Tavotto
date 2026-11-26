@@ -9891,6 +9891,7 @@ export const startNativeGgplot = (target: {
   object: string
   frame_pt: [number, number]
   rscript?: string
+  library?: string
 }) => jsonFetch<{ session: NativeSessionInfo }>('/api/native/ggplot2', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
