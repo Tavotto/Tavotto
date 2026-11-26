@@ -152,8 +152,7 @@ ggplot_point_elements <- function(state, edits, measured) {
     bbox <- if (is.null(measured)) target$bbox else measured[[gid]]
     if (is.null(bbox)) stop("The native R point series could not be measured.")
     edit <- edits[[gid]]
-    label <- paste("\u6563\u70b9", target$index)
-    if (length(target$facet)) label <- paste(label, paste(unlist(target$facet), collapse = " / "), sep = " \u00b7 ")
+    label <- ggplot_layer_label("\u6563\u70b9", target)
     list(gid = gid, role = "scatter", label = label,
          bbox = bbox, draggable = FALSE, editable = list(),
          point_series = list(context = target$context, current = ggplot_point_values(target, edit),

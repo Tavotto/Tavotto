@@ -274,8 +274,7 @@ ggplot_bar_elements <- function(state, edits, measured) {
     geometry <- if (is.null(measured)) state$bar_geometry[[gid]] else measured[[gid]]
     if (is.null(geometry)) stop("The native R bar series could not be measured.")
     edit <- edits[[gid]]
-    label <- paste("\u67f1\u5f62\u7cfb\u5217", target$index)
-    if (length(target$facet)) label <- paste(label, paste(unlist(target$facet), collapse = " / "), sep = " \u00b7 ")
+    label <- ggplot_layer_label("\u67f1\u5f62\u7cfb\u5217", target)
     c(list(gid = gid, role = "bar_series", label = label,
            draggable = FALSE, editable = list(), bar_series = list(
              context = target$context, current = ggplot_bar_values(target, edit),

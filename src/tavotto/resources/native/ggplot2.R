@@ -761,6 +761,14 @@ ggplot_panel_draws <- function(panels, members, data) {
   Filter(Negate(is.null), draws)
 }
 
+ggplot_layer_label <- function(name, target) {
+  label <- paste(name, target$index)
+  if (length(target$facet)) {
+    label <- paste(label, paste(unlist(target$facet), collapse = " / "), sep = " \u00b7 ")
+  }
+  label
+}
+
 ggplot_drawn_panel_viewport <- function(drawn, table, slot, child) {
   path <- c(table$name, ggplot_cell_name(table$layout[slot, ]), table$grobs[[slot]]$name)
   row <- which(drawn$name == child & drawn$gPath == paste(path, collapse = "::"))
@@ -862,13 +870,8 @@ ggplot_edit_errorbar_caps <- function(line, caps, length_pt, width_pt) {
   line
 }
 
-ggplot_line_targets <- function(built, table, layer_grobs) {
-  slots <- which(table$layout$name == "panel")
-  if (length(slots) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
-    return(list())
-  }
-  slot <- slots[[1L]]
-  panel <- table$grobs[[slot]]
+ggplot_line_targets <- function(built, panels, layer_grobs) {
+  if (is.null(panels)) return(list())
   targets <- list()
   for (index in seq_along(layer_grobs)) {
     layer <- built$plot$layers[[index]]
@@ -887,44 +890,50 @@ ggplot_line_targets <- function(built, table, layer_grobs) {
       if (is.null(guide_keys)) next
     }
     if (length(intersect(mapping, c("size", "linewidth", "linetype")))) next
-    if (length(layer_grobs[[index]]) != 1L) next
-    line <- layer_grobs[[index]][[1L]]
-    if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
-        length(line$x) < 2L || length(line$x) > 4096L ||
-        length(line$id.lengths) > 1L) next
-    if (!is.null(line$id) && (length(line$id) != length(line$x) || anyNA(line$id))) next
-    if (interval && is.null(line$id)) next
-    draw_slot <- which(panel$childrenOrder == line$name)
-    width <- unique(line$gp$lwd)
-    if (length(draw_slot) != 1L || !is_positive_ggplot_number(width)) next
-    rgba <- tryCatch(grDevices::col2rgb(unique(line$gp$col), alpha = TRUE), error = function(error) NULL)
-    if (is.null(rgba) || !ncol(rgba) || any(rgba[4L, ] == 0L) ||
-        (interval && ncol(rgba) != 1L)) next
-    lty <- unique(line$gp$lty)
-    if (is.numeric(lty) && length(lty) == 1L && lty %in% 1:4) {
-      lty <- unname(ggplot_line_types[[lty]])
+    # One shared legend guide cannot represent different stroke styles for
+    # the same series in two facets.
+    if (!panels$single && length(guide_keys)) next
+    for (draw in ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])) {
+      line <- draw$grob
+      suffix <- if (panels$single) "" else paste0(".panel.", draw$panel_id)
+      if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
+          length(line$x) < 2L || length(line$x) > 4096L ||
+          length(line$id.lengths) > 1L) next
+      if (!is.null(line$id) && (length(line$id) != length(line$x) || anyNA(line$id))) next
+      if (interval && is.null(line$id)) next
+      width <- unique(line$gp$lwd)
+      if (!is_positive_ggplot_number(width)) next
+      rgba <- tryCatch(grDevices::col2rgb(unique(line$gp$col), alpha = TRUE), error = function(error) NULL)
+      if (is.null(rgba) || !ncol(rgba) || any(rgba[4L, ] == 0L) ||
+          (interval && ncol(rgba) != 1L)) next
+      lty <- unique(line$gp$lty)
+      if (is.numeric(lty) && length(lty) == 1L && lty %in% 1:4) {
+        lty <- unname(ggplot_line_types[[lty]])
+      }
+      style <- names(ggplot_line_types)[match(lty, ggplot_line_types, nomatch = 0L)]
+      if (length(style) != 1L) next
+      gid <- paste0("layer.", index, suffix, if (interval) ".errorbar" else ".line")
+      facts <- list(kind, draw$rows, line$gp)
+      if (!panels$single) facts <- c(facts, list(draw$facet))
+      if (length(guide_keys)) {
+        facts <- c(facts, lapply(built$plot$guides$params[guide_keys], function(params) {
+          list(key = params$key, stroke = params$decor[[key_name]]$data)
+        }))
+      }
+      context <- rlang::hash(facts)
+      targets[[gid]] <- list(
+        slot = draw$slot, child = line$name, index = index, context = context, interval = interval,
+        facet = draw$facet,
+        caps = if (interval) ggplot_errorbar_caps(line, draw$rows$flipped_aes),
+        guide_keys = guide_keys, key_name = key_name,
+        clip = identical(built$layout$coord$clip, "on"),
+        width = width * ggplot_lwd_pt, style = style,
+        color = if (!"colour" %in% mapping && !length(guide_keys) && ncol(rgba) == 1L) {
+          grDevices::rgb(rgba[1L], rgba[2L], rgba[3L], maxColorValue = 255)
+        },
+        alpha = rgba[4L, 1L]
+      )
     }
-    style <- names(ggplot_line_types)[match(lty, ggplot_line_types, nomatch = 0L)]
-    if (length(style) != 1L) next
-    gid <- paste0("layer.", index, if (interval) ".errorbar" else ".line")
-    facts <- list(kind, built$data[[index]], line$gp)
-    if (length(guide_keys)) {
-      facts <- c(facts, lapply(built$plot$guides$params[guide_keys], function(params) {
-        list(key = params$key, stroke = params$decor[[key_name]]$data)
-      }))
-    }
-    context <- rlang::hash(facts)
-    targets[[gid]] <- list(
-      slot = slot, child = line$name, index = index, context = context, interval = interval,
-      caps = if (interval) ggplot_errorbar_caps(line, built$data[[index]]$flipped_aes),
-      guide_keys = guide_keys, key_name = key_name,
-      clip = identical(built$layout$coord$clip, "on"),
-      width = width * ggplot_lwd_pt, style = style,
-      color = if (!"colour" %in% mapping && !length(guide_keys) && ncol(rgba) == 1L) {
-        grDevices::rgb(rgba[1L], rgba[2L], rgba[3L], maxColorValue = 255)
-      },
-      alpha = rgba[4L, 1L]
-    )
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
   targets[!(duplicated(contexts) | duplicated(contexts, fromLast = TRUE))]
@@ -1079,7 +1088,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       colour_scales <- colour_scales[names(bounds)]
       for (gid in names(colour_scales)) colour_scales[[gid]]$bbox <- bounds[[gid]]
     }
-    line_targets <- ggplot_line_targets(built, table, captured_layers$grobs)
+    panels <- ggplot_cartesian_panels(table, built$layout)
+    line_targets <- ggplot_line_targets(built, panels, captured_layers$grobs)
     line_geometry <- measure_ggplot_lines(table, line_targets, frame_pt)
     line_targets <- line_targets[names(line_geometry)]
     axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
@@ -1087,7 +1097,6 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     axes_bbox <- measure_ggplot_axes(table, axes_target, frame_pt)
     rebuild_guides <- !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
       any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L)))
-    panels <- ggplot_cartesian_panels(table, built$layout)
     point_targets <- ggplot_point_targets(built, panels, captured_layers$grobs)
     point_boxes <- measure_ggplot_points(table, point_targets, frame_pt)
     point_targets <- point_targets[names(point_boxes)]
@@ -1652,7 +1661,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       current[names(patch)] <- patch
       geometry$capsize <- NULL
       return(c(list(gid = gid, role = "errorbar",
-                    label = paste("\u8bef\u5dee\u68d2", target$index), draggable = FALSE,
+                    label = ggplot_layer_label("\u8bef\u5dee\u68d2", target), draggable = FALSE,
                     editable = list(), errorbar_series = list(
                       context = target$context, current = current,
                       original = original, edited = as.list(names(patch)))), geometry))
@@ -1671,7 +1680,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (!is.null(patch$color)) color$value_original <- target$color
       editable <- c(editable, list(color))
     }
-    c(list(gid = gid, role = "line", label = paste("\u66f2\u7ebf", target$index),
+    c(list(gid = gid, role = "line", label = ggplot_layer_label("\u66f2\u7ebf", target),
            draggable = FALSE, editable = editable, line_context = target$context),
       geometry)
   })

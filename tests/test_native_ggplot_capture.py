@@ -1216,6 +1216,37 @@ horizontal_frame <- adapter$ggplot_manifest(horizontal_state, "horizontal", capp
 horizontal_paths <- Filter(function(e) e$gid == gid, horizontal_frame$elements)[[1L]]$geometry$paths
 stopifnot(all(abs(vapply(horizontal_paths[c(1L, 3L, 4L, 6L)], physical_span,
                          numeric(1L), 2L) - 9) < 1e-10))
+
+facet_data <- rbind(transform(data, experiment = "Reference"),
+                    transform(data, x = x * 5, y = y + 1, lower = lower + 1,
+                              upper = upper + 1, experiment = "Trial"))
+facet_plot <- ggplot2::ggplot(facet_data, ggplot2::aes(x, y)) +
+  ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper), width = .3) +
+  ggplot2::geom_line(colour = "#301060") +
+  ggplot2::facet_wrap(ggplot2::vars(experiment), scales = "free_x")
+facet_capture <- adapter$capture_ggplot(facet_plot, c(300, 180))
+facet_state <- facet_capture$state
+trial <- "layer.1.panel.2.errorbar"
+reference <- "layer.1.panel.1.errorbar"
+curve <- "layer.2.panel.2.line"
+left_curve <- "layer.2.panel.1.line"
+stopifnot(identical(names(facet_state$line_targets), c(reference, trial, left_curve, curve)))
+facet_edits <- stats::setNames(list(list(capsize = 7, cap_thickness = 3), list(linewidth = 3)),
+                               c(trial, curve))
+by_gid <- function(manifest, key) Filter(function(e) e$gid == key, manifest$elements)[[1L]]
+f_original <- adapter$ggplot_manifest(facet_state, "intervals")
+f_edited <- adapter$ggplot_manifest(facet_state, "intervals", facet_edits)
+original_interval <- by_gid(f_original, trial)
+edited_interval <- by_gid(f_edited, trial)
+stopifnot(endsWith(edited_interval$label, "Trial"),
+          identical(edited_interval$geometry$paths[c(2L, 5L)], original_interval$geometry$paths[c(2L, 5L)]),
+          identical(edited_interval$errorbar_series$current$capsize, 7),
+          identical(edited_interval$errorbar_series$current$cap_thickness, 3),
+          identical(by_gid(f_original, reference), by_gid(f_edited, reference)),
+          identical(by_gid(f_original, left_curve), by_gid(f_edited, left_curve)),
+          isTRUE(all.equal(by_gid(f_edited, curve)$geometry$stroke_pt, 3)),
+          identical(adapter$render_ggplot(facet_state), facet_capture$svg))
+
 mapped <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
   ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, colour = x), show.legend = FALSE)
 stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$line_targets) == 0L)
