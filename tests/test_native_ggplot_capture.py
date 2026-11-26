@@ -1060,7 +1060,34 @@ for (mapped_plot in list(mapped, mapped + ggplot2::guides(fill = "none"))) {
             identical(mapped_after[c("y", "height")], mapped_before[c("y", "height")]),
             identical(adapter$render_ggplot(mapped_state), mapped_capture$svg))
 }
-stopifnot(length(adapter$capture_ggplot(plot + ggplot2::facet_wrap(ggplot2::vars(group)), frame)$state$bar_targets) == 0L)
+faceted_data <- data.frame(
+  x = c(2, 5, 10, 16), height = c(2, 3, 5, 6), group = rep(c("Alpha", "Beta"), 2L),
+  experiment = factor(rep(c("Reference", "Treatment"), each = 2L),
+                      levels = c("Reference", "Treatment", "Empty")))
+faceted_plot <- ggplot2::ggplot(faceted_data, ggplot2::aes(x, height, fill = group)) +
+  ggplot2::geom_col(width = .8)
+for (facet in list(
+  ggplot2::facet_wrap(ggplot2::vars(experiment), ncol = 1L, scales = "free_x", drop = FALSE),
+  ggplot2::facet_grid(cols = ggplot2::vars(experiment), scales = "free_x", drop = FALSE))) {
+  captured_facet <- adapter$capture_ggplot(faceted_plot + facet, frame)
+  facets <- captured_facet$state
+  keys <- paste0("layer.1.panel.", 1:2, ".bars")
+  stopifnot(identical(names(facets$bar_targets), keys))
+  reference <- facets$bar_targets[[keys[[1L]]]]
+  treatment <- facets$bar_targets[[keys[[2L]]]]
+  f_edit <- stats::setNames(list(list(bar_width = .55)), keys[[2L]])
+  f_scene <- adapter$ggplot_table_for(facets, f_edit)
+  untreated <- adapter$ggplot_bar_rect(facets$table$grobs[[treatment$slot]], treatment)
+  treated <- adapter$ggplot_bar_rect(f_scene$table$grobs[[treatment$slot]], treatment)
+  f_manifest <- adapter$ggplot_manifest(facets, "facets", f_edit)
+  stopifnot(identical(treated$gp, untreated$gp), length(unique(treated$gp$fill)) == 2L,
+            identical(f_scene$table$grobs[[reference$slot]], facets$table$grobs[[reference$slot]]),
+            isTRUE(all.equal(centres(treated), centres(untreated))),
+            isTRUE(all.equal(as.numeric(treated$width) / as.numeric(untreated$width), rep(.55 / .8, 2))),
+            identical(treated[c("y", "height")], untreated[c("y", "height")]),
+            endsWith(element(f_manifest, keys[[2L]])$label, "Treatment"),
+            identical(adapter$render_ggplot(facets), captured_facet$svg))
+}
 make_bars <- function(n) {
   ggplot2::ggplot(data.frame(x = seq_len(n), y = rep(1, n)), ggplot2::aes(x, y)) + ggplot2::geom_col()
 }

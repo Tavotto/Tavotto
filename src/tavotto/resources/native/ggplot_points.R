@@ -31,65 +31,32 @@ ggplot_point_fields <- function(points, data, mapped) {
   ))
 }
 
-# Link each already drawn grob to its exact panel cell by native grob name.
-# Facet wrap/grid can draw the same panel IDs in different row/column orders.
-ggplot_panel_children <- function(table, slots) {
-  children <- lapply(table$grobs[slots], function(grob) grob$childrenOrder)
-  grobs <- unlist(children, use.names = FALSE)
-  placements <- data.frame(grob = grobs, slot = rep(slots, lengths(children)),
-                           child = sequence(lengths(children)))
-  placements[!(duplicated(grobs) | duplicated(grobs, fromLast = TRUE)), , drop = FALSE]
-}
-
-ggplot_point_targets <- function(built, table, layer_grobs) {
-  if (!identical(class(built$layout$coord)[[1L]], "CoordCartesian")) return(list())
-  slots <- which(grepl("^panel($|-)", table$layout$name))
-  if (!length(slots)) return(list())
+ggplot_point_targets <- function(built, panels, layer_grobs) {
+  if (is.null(panels)) return(list())
   layout <- built$layout
-  single <- identical(length(slots), 1L) && identical(table$layout$name[[slots]], "panel")
-  facets <- setdiff(names(layout$layout), c("PANEL", "ROW", "COL", "SCALE_X", "SCALE_Y", "COORD"))
-  if (!single && (!class(layout$facet)[[1L]] %in% c("FacetWrap", "FacetGrid") || !length(facets))) {
-    return(list())
-  }
-  children <- ggplot_panel_children(table, slots)
   targets <- list()
   for (index in seq_along(layer_grobs)) {
     layer <- built$plot$layers[[index]]
     if (!identical(class(layer$geom)[[1L]], "GeomPoint")) next
     mapped <- ggplot_styled_layer_mapping(layer)
     if (is.null(mapped) || ggplot_layer_has_legend_key(built, layer, mapped)) next
-    members <- layer_grobs[[index]]
-    data <- built$data[[index]]
-    groups <- if (is.null(names(members))) list(data) else split(data, data$PANEL)
-    if (length(groups) != length(members) || !identical(names(groups), names(members))) next
-    drawn_names <- vapply(members, function(member) member$name %||% "", character(1L))
-    placements <- match(drawn_names, children$grob)
-    for (i in seq_along(members)) {
-      placement <- placements[[i]]
-      if (is.na(placement)) next
-      points <- members[[i]]
-      rows <- groups[[i]]
+    for (draw in ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])) {
+      points <- draw$grob
+      rows <- draw$rows
       fields <- ggplot_point_fields(points, rows, mapped)
       if (!length(fields)) next
-      facet <- NULL
-      if (!single) {
-        id <- unique(as.character(rows$PANEL))
-        if (length(id) != 1L) next
-        panel <- match(id, as.character(layout$layout$PANEL))
-        if (is.na(panel)) next
-        panel_id <- layout$layout$PANEL[[panel]]
-        projected <- layout$coord$transform(rows[c("x", "y")], layout$panel_params[[panel_id]])
+      if (!panels$single) {
+        projected <- layout$coord$transform(rows[c("x", "y")], layout$panel_params[[draw$panel_id]])
         if (!isTRUE(all.equal(as.numeric(points$x), as.numeric(projected$x), tolerance = 1e-12)) ||
             !isTRUE(all.equal(as.numeric(points$y), as.numeric(projected$y), tolerance = 1e-12))) next
-        facet <- lapply(layout$layout[panel, facets, drop = FALSE], as.character)
       }
-      gid <- if (single) paste0("layer.", index, ".scatter") else {
-        paste0("layer.", index, ".panel.", panel_id, ".scatter")
+      gid <- if (panels$single) paste0("layer.", index, ".scatter") else {
+        paste0("layer.", index, ".panel.", draw$panel_id, ".scatter")
       }
-      context <- if (single) list("GeomPoint", rows) else list("GeomPoint", facet, rows)
+      context <- if (panels$single) list("GeomPoint", rows) else list("GeomPoint", draw$facet, rows)
       targets[[gid]] <- list(
-        slot = children$slot[[placement]], child = children$child[[placement]],
-        index = index, count = nrow(rows), facet = facet, values = fields,
+        slot = draw$slot, child = draw$child,
+        index = index, count = nrow(rows), facet = draw$facet, values = fields,
         clip = identical(layout$coord$clip, "on"), context = rlang::hash(context))
     }
   }

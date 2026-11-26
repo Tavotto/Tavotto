@@ -1,6 +1,6 @@
 # The rectangle grob holds the computed stack/dodge arrangement. Recover bar
 # centres in data units and check both ends against what the native geom drew.
-ggplot_bar_span <- function(layout, data, rect) {
+ggplot_bar_span <- function(layout, panel_id, data, rect) {
   flipped <- unique(data$flipped_aes)
   if (length(flipped) != 1L || is.na(flipped) ||
       !identical(as.list(layout$coord)$transform, as.list(ggplot2::CoordCartesian)$transform)) {
@@ -10,7 +10,7 @@ ggplot_bar_span <- function(layout, data, rect) {
   ends <- paste0(axis, c("min", "max"))
   origin_key <- ends[[if (flipped) 2L else 1L]]
   if (!all(ends %in% names(data))) return(NULL)
-  panel <- layout$panel_params[[1L]]
+  panel <- layout$panel_params[[panel_id]]
   project <- layout$coord$transform(data[ends], panel)
   lower <- as.numeric(data[[ends[[1L]]]])
   upper <- as.numeric(data[[ends[[2L]]]])
@@ -29,7 +29,7 @@ ggplot_bar_span <- function(layout, data, rect) {
   centre <- lower + width / 2
   if (any(!is.finite(width) | width <= 0 | !is.finite(centre))) return(NULL)
   list(centre = centre, width = width[[1L]], axis = axis, ends = ends, origin_key = origin_key,
-       dimension = dimension,
+       dimension = dimension, coord = layout$coord, panel = panel,
        prop = if (flipped) "bar_thickness" else "bar_width",
        uniform = all(abs(width - width[[1L]]) <= sqrt(.Machine$double.eps) * width[[1L]]))
 }
@@ -43,64 +43,70 @@ ggplot_bar_opacity <- function(colour) {
   if (length(alpha) == 1L) alpha
 }
 
-ggplot_bar_targets <- function(built, table, layer_grobs) {
-  slot <- which(table$layout$name == "panel")
-  if (length(slot) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
-    return(list())
-  }
-  panel <- table$grobs[[slot]]
+ggplot_bar_target <- function(layout, draw, fixed) {
+  rect <- draw$grob
+  count <- nrow(draw$rows)
+  if (!inherits(rect, "rect") || !is.null(rect$vp) || !count ||
+      !identical(rect$just, c("left", "top")) || !is.null(rect$hjust) || !is.null(rect$vjust)) return(NULL)
+  dimensions <- rect[c("x", "y", "width", "height")]
+  if (!all(vapply(dimensions, function(u) length(u) == count &&
+                  all(grid::unitType(u) == "native") && all(is.finite(as.numeric(u))), logical(1L)))) return(NULL)
+  if (!any(as.numeric(rect$width) != 0 & as.numeric(rect$height) != 0)) return(NULL)
+  face <- ggplot_uniform_pigment(rect$gp$fill)
+  edge <- ggplot_uniform_pigment(rect$gp$col)
+  width <- unique(rect$gp$lwd) * ggplot_lwd_pt
+  lty <- unique(rect$gp$lty)
+  if (length(width) != 1L || !is.finite(width) || width < 0 || length(lty) != 1L || is.na(lty)) return(NULL)
+  outline <- !(lty %in% c("0", "blank"))
+  fill_alpha <- ggplot_bar_opacity(rect$gp$fill)
+  stroke_alpha <- ggplot_bar_opacity(rect$gp$col)
+  if (is.null(fill_alpha) || is.null(stroke_alpha)) return(NULL)
+  visible_alpha <- unique(c(fill_alpha, stroke_alpha[outline && width > 0]))
+  visible_alpha <- visible_alpha[visible_alpha > 0]
+  if (!length(visible_alpha)) return(NULL)
+  span <- ggplot_bar_span(layout, draw$panel_id, draw$rows, rect)
+  size <- if (is.null(span)) list() else stats::setNames(list(span$width), span$prop)
+  fields <- if (fixed && !is.null(face) && !is.null(edge)) {
+    c(list(
+      facecolor = face$rgb,
+      edgecolor = if (outline) edge$rgb,
+      linewidth = if (outline) width
+    ), size, list(alpha = if (length(visible_alpha) == 1L) visible_alpha))
+  } else if (isTRUE(span$uniform)) size
+  if (!length(fields)) return(NULL)
+  fields <- Filter(Negate(is.null), fields)
+  list(
+    slot = draw$slot, child = draw$child, panel_id = draw$panel_id, facet = draw$facet, count = count,
+    face = face, edge = edge, outline = outline, values = fields, span = span,
+    clip = identical(layout$coord$clip, "on")
+  )
+}
+
+ggplot_bar_targets <- function(built, panels, layer_grobs) {
+  if (is.null(panels)) return(list())
+  layout <- built$layout
   remaining_paths <- 500L
   targets <- list()
   for (index in seq_along(layer_grobs)) {
     layer <- built$plot$layers[[index]]
     kind <- class(layer$geom)[[1L]]
-    if (!kind %in% c("GeomBar", "GeomCol") || length(layer_grobs[[index]]) != 1L) next
-    rect <- layer_grobs[[index]][[1L]]
-    data <- built$data[[index]]
-    count <- nrow(data)
-    if (!inherits(rect, "rect") || !is.null(rect$vp) || !count ||
-        !identical(rect$just, c("left", "top")) || !is.null(rect$hjust) || !is.null(rect$vjust)) next
-    dimensions <- rect[c("x", "y", "width", "height")]
-    if (!all(vapply(dimensions, function(u) length(u) == count &&
-                    all(grid::unitType(u) == "native") && all(is.finite(as.numeric(u))), logical(1L)))) next
-    if (!any(as.numeric(rect$width) != 0 & as.numeric(rect$height) != 0)) next
-    child <- which(panel$childrenOrder == rect$name)
-    if (length(child) != 1L) next
+    if (!kind %in% c("GeomBar", "GeomCol")) next
     mapped <- ggplot_styled_layer_mapping(layer)
     fixed <- !is.null(mapped) && !ggplot_layer_has_legend_key(built, layer, mapped) &&
       !length(intersect(mapped, c("fill", "colour", "alpha", "size", "linewidth", "linetype")))
-    face <- ggplot_uniform_pigment(rect$gp$fill)
-    edge <- ggplot_uniform_pigment(rect$gp$col)
-    width <- unique(rect$gp$lwd) * ggplot_lwd_pt
-    lty <- unique(rect$gp$lty)
-    if (length(width) != 1L || !is.finite(width) || width < 0 || length(lty) != 1L || is.na(lty)) next
-    outline <- !(lty %in% c("0", "blank"))
-    fill_alpha <- ggplot_bar_opacity(rect$gp$fill)
-    stroke_alpha <- ggplot_bar_opacity(rect$gp$col)
-    if (is.null(fill_alpha) || is.null(stroke_alpha)) next
-    visible_alpha <- unique(c(fill_alpha, stroke_alpha[outline && width > 0]))
-    visible_alpha <- visible_alpha[visible_alpha > 0]
-    if (!length(visible_alpha)) next
-    span <- ggplot_bar_span(built$layout, data, rect)
-    size <- if (is.null(span)) list() else stats::setNames(list(span$width), span$prop)
-    fields <- if (fixed && !is.null(face) && !is.null(edge)) {
-      c(list(
-        facecolor = face$rgb,
-        edgecolor = if (outline) edge$rgb,
-        linewidth = if (outline) width
-      ), size, list(alpha = if (length(visible_alpha) == 1L) visible_alpha))
-    } else if (isTRUE(span$uniform)) size
-    if (!length(fields)) next
-    fields <- Filter(Negate(is.null), fields)
-    gid <- paste0("layer.", index, ".bars")
-    precise <- count <= remaining_paths
-    if (precise) remaining_paths <- remaining_paths - count
-    targets[[gid]] <- list(
-      slot = slot, child = child, index = index, count = count, precise = precise,
-      face = face, edge = edge, outline = outline, values = fields, span = span,
-      clip = identical(built$layout$coord$clip, "on"),
-      context = rlang::hash(list(kind, data, rect$gp))
-    )
+    for (draw in ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])) {
+      target <- ggplot_bar_target(layout, draw, fixed)
+      if (is.null(target)) next
+      suffix <- if (panels$single) "" else paste0(".panel.", draw$panel_id)
+      gid <- paste0("layer.", index, suffix, ".bars")
+      context <- list(kind, draw$rows, draw$grob$gp)
+      if (!panels$single) context <- c(context, list(draw$facet))
+      target$index <- index
+      target$context <- rlang::hash(context)
+      target$precise <- target$count <= remaining_paths
+      if (target$precise) remaining_paths <- remaining_paths - target$count
+      targets[[gid]] <- target
+    }
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
   targets[!(duplicated(contexts) | duplicated(contexts, fromLast = TRUE))]
@@ -134,8 +140,7 @@ ggplot_bar_values <- function(target, edit) {
   values
 }
 
-ggplot_edit_bar_span <- function(rect, span, width, layout) {
-  panel <- layout$panel_params[[1L]]
+ggplot_edit_bar_span <- function(rect, span, width, panel, coord) {
   lower <- span$centre - width / 2
   upper <- span$centre + width / 2
   if (!isTRUE(panel[[span$axis]]$scale_is_discrete)) {
@@ -150,7 +155,7 @@ ggplot_edit_bar_span <- function(rect, span, width, layout) {
     stop("The native R bar width cannot be represented at the captured positions.")
   }
   ends <- stats::setNames(data.frame(lower, upper), span$ends)
-  projected <- layout$coord$transform(ends, panel)
+  projected <- coord$transform(ends, panel)
   origin <- as.numeric(projected[[span$origin_key]])
   dimension <- as.numeric(projected[[span$ends[[2L]]]] - projected[[span$ends[[1L]]]])
   if (any(!is.finite(origin) | !is.finite(dimension) | dimension == 0)) {
@@ -166,7 +171,10 @@ ggplot_edit_bars <- function(table, target, edit, layout) {
   panel <- table$grobs[[target$slot]]
   rect <- ggplot_bar_rect(panel, target)
   if (!is.null(target$span) && !is.null(edit[[target$span$prop]])) {
-    rect <- ggplot_edit_bar_span(rect, target$span, values[[target$span$prop]], layout)
+    span <- target$span
+    view <- layout$panel_params[[target$panel_id]] %||% span$panel
+    coord <- layout$coord %||% span$coord
+    rect <- ggplot_edit_bar_span(rect, span, values[[span$prop]], view, coord)
   }
   if (!is.null(edit$linewidth)) rect$gp$lwd <- values$linewidth / ggplot_lwd_pt
   if (!is.null(edit$facecolor) || !is.null(edit$alpha)) {
@@ -266,7 +274,9 @@ ggplot_bar_elements <- function(state, edits, measured) {
     geometry <- if (is.null(measured)) state$bar_geometry[[gid]] else measured[[gid]]
     if (is.null(geometry)) stop("The native R bar series could not be measured.")
     edit <- edits[[gid]]
-    c(list(gid = gid, role = "bar_series", label = paste("\u67f1\u5f62\u7cfb\u5217", target$index),
+    label <- paste("\u67f1\u5f62\u7cfb\u5217", target$index)
+    if (length(target$facet)) label <- paste(label, paste(unlist(target$facet), collapse = " / "), sep = " \u00b7 ")
+    c(list(gid = gid, role = "bar_series", label = label,
            draggable = FALSE, editable = list(), bar_series = list(
              context = target$context, current = ggplot_bar_values(target, edit),
              original = target$values, edited = as.list(names(edit))

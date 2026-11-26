@@ -721,6 +721,46 @@ ggplot_layer_has_legend_key <- function(built, layer, mapped) {
   }, logical(1L)))
 }
 
+# Bind a drawn native layer to its actual panel cell. Facet grids and wraps
+# can pack the same PANEL values in different row and column orders.
+ggplot_cartesian_panels <- function(table, layout) {
+  if (!identical(class(layout$coord)[[1L]], "CoordCartesian")) return(NULL)
+  slots <- which(grepl("^panel($|-)", table$layout$name))
+  if (!length(slots)) return(NULL)
+  cells <- layout$layout
+  single <- length(slots) == 1L && identical(table$layout$name[[slots]], "panel")
+  facets <- setdiff(names(cells), c("PANEL", "ROW", "COL", "SCALE_X", "SCALE_Y", "COORD"))
+  if (!single && (!class(layout$facet)[[1L]] %in% c("FacetWrap", "FacetGrid") || !length(facets))) {
+    return(NULL)
+  }
+  members <- lapply(table$grobs[slots], function(grob) grob$childrenOrder)
+  drawn_names <- unlist(members, use.names = FALSE)
+  placements <- data.frame(grob = drawn_names, slot = rep(slots, lengths(members)),
+                           child = sequence(lengths(members)))
+  placements <- placements[!(duplicated(drawn_names) | duplicated(drawn_names, fromLast = TRUE)), , drop = FALSE]
+  list(placements = placements, cells = cells, facets = facets, single = single)
+}
+
+ggplot_panel_draws <- function(panels, members, data) {
+  groups <- if (is.null(names(members))) list(data) else split(data, data$PANEL)
+  if (length(groups) != length(members) || !identical(names(groups), names(members))) return(list())
+  draws <- vector("list", length(members))
+  for (i in seq_along(members)) {
+    member <- members[[i]]
+    position <- match(member$name %||% "", panels$placements$grob)
+    if (is.na(position)) next
+    rows <- groups[[i]]
+    id <- unique(as.character(rows$PANEL))
+    if (length(id) != 1L) next
+    panel <- match(id, as.character(panels$cells$PANEL))
+    if (is.na(panel)) next
+    facet <- if (!panels$single) lapply(panels$cells[panel, panels$facets, drop = FALSE], as.character)
+    draws[[i]] <- list(grob = member, rows = rows, facet = facet, panel_id = panels$cells$PANEL[[panel]],
+                       slot = panels$placements$slot[[position]], child = panels$placements$child[[position]])
+  }
+  Filter(Negate(is.null), draws)
+}
+
 ggplot_drawn_panel_viewport <- function(drawn, table, slot, child) {
   path <- c(table$name, ggplot_cell_name(table$layout[slot, ]), table$grobs[[slot]]$name)
   row <- which(drawn$name == child & drawn$gPath == paste(path, collapse = "::"))
@@ -1047,11 +1087,12 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     axes_bbox <- measure_ggplot_axes(table, axes_target, frame_pt)
     rebuild_guides <- !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
       any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L)))
-    point_targets <- ggplot_point_targets(built, table, captured_layers$grobs)
+    panels <- ggplot_cartesian_panels(table, built$layout)
+    point_targets <- ggplot_point_targets(built, panels, captured_layers$grobs)
     point_boxes <- measure_ggplot_points(table, point_targets, frame_pt)
     point_targets <- point_targets[names(point_boxes)]
     for (gid in names(point_targets)) point_targets[[gid]]$bbox <- point_boxes[[gid]]
-    bar_targets <- ggplot_bar_targets(built, table, captured_layers$grobs)
+    bar_targets <- ggplot_bar_targets(built, panels, captured_layers$grobs)
     bar_geometry <- measure_ggplot_bars(table, bar_targets, frame_pt)
     bar_targets <- bar_targets[names(bar_geometry)]
     ribbon_targets <- ggplot_ribbon_targets(built, table, captured_layers$grobs)
