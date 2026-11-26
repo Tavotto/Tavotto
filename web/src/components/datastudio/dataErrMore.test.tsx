@@ -136,6 +136,21 @@ describe('右栏「误差线」：多个 y', () => {
     expect(q('[data-data-roles] [data-data-role="error"]')).toBeNull()
   })
 
+  it('sd + unknown 在「需要你确认」里点选之后：后端所有列一起换、回了顶层 error，这一行收回列角色下面，「需要你确认」消失', async () => {
+    seed({ error_columns: cols(['sd', 'unknown'], [true, false]) })
+    propose.mockResolvedValue({
+      kind: 'candidates', session: 'S2', dropped: [], render: 'lazy', header_row: 1, defaults: [], mixed_cells: [], error_confirmed: true,
+      items: [item('n0', 'line_err', { error: 'sem', error_source: 'column', error_columns: cols(['sem', 'sem'], [false, false]) })],
+      roles: { x: 'x', y: ['y'], group: null, facet: null, unit: null, options: { x: ['x'], y: ['y'], group: [] } },
+    } as AiDataProposeResponse)
+    await mount(<DataPanel />)
+    expect(q('[data-data-confirm] [data-data-role="error"]')).not.toBeNull()
+    await choose('标准误 (SEM)')
+    expect(propose.mock.calls[0]![0].answers).toEqual({ error: 'sem' })
+    expect(q('[data-data-confirm-title]')).toBeNull()
+    expect(q('[data-data-roles] [data-data-role="error"]')!.textContent).toContain('标准误 (SEM)')
+  })
+
   it('各列种类不同（没有顶层 error）：在列角色下面、不进「需要你确认」，当前值「各列不同」；选一种发 answers.error，所有列一起换', async () => {
     seed({ error_columns: cols(['sd', 'sem']) })
     propose.mockResolvedValue({
