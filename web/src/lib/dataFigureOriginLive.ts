@@ -15,11 +15,9 @@ export function panelUntouchedNow(panel: PanelObject, origin: FigureOrigin): boo
   return figureUntouched(useDocumentStore.getState().doc, panel, origin, { runtime: rt, bakedCount })
 }
 
-/** 激活画布里画这个脚本的面板（先认 `prefer` 那一块，其次第一块）；没有 = null */
-export function panelOfScript(script: string, prefer?: string | null): PanelObject | null {
+/** 激活画布里 id 为 `panelId`、且此刻画的是 `script` 的面板；不是 / 不见了 = null（只认发起切换的那一块，不按脚本另找） */
+export function panelIfScript(panelId: string, script: string): PanelObject | null {
   const key = normScript(script)
-  const mine = useDocumentStore
-    .getState()
-    .doc.objects.filter((o): o is PanelObject => o.type === 'panel' && o.fileKind === 'runtime' && !!o.script && normScript(o.script) === key)
-  return mine.find((p) => p.id === prefer) ?? mine[0] ?? null
+  const o = useDocumentStore.getState().doc.objects.find((x) => x.id === panelId)
+  return o?.type === 'panel' && o.fileKind === 'runtime' && !!o.script && normScript(o.script) === key ? o : null
 }

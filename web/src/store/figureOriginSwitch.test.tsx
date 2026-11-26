@@ -25,6 +25,7 @@ import '@/lib/dataFigureHost'
 import { addRuntimePanel } from '@/store/actions'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { registerGesture, resetGestureCoordinator } from '@/store/gestureCoordinator'
 import { useFigureOriginStore } from '@/store/figureOriginStore'
 import { errorBarSelectPending, cancelErrorBarSelect } from '@/store/figureSwitchSelect'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
@@ -115,6 +116,7 @@ beforeEach(async () => {
   useDataFigureStore.getState().clear()
   useFigureOriginStore.getState().clear()
   cancelErrorBarSelect()
+  resetGestureCoordinator()
   useRenderStore.getState().clear()
   useTafFlagStore.setState({ enabled: true })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_switch')
@@ -261,7 +263,7 @@ describe('换类型', () => {
     register()
     const before = panels()[0]!
     const past = useDocumentStore.getState().past.length
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     const after = panels()
     expect(after).toHaveLength(1)
     expect(after[0]).toMatchObject({ id: before.id, fileId: 'runtime:a2', script: SCRIPT2, x: before.x, y: before.y, w: before.w, h: before.h, overrides: [] })
@@ -283,7 +285,7 @@ describe('换类型', () => {
   it('撤销回到旧图（同一块面板、旧的 fileId）', async () => {
     register()
     const id = panels()[0]!.id
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95', panels()[0]!.id)
     expect(panels()[0]!.fileId).toBe('runtime:a2')
     useDocumentStore.getState().undo()
     expect(panels()[0]).toMatchObject({ id, fileId: 'runtime:a1', script: SCRIPT1 })
@@ -294,26 +296,26 @@ describe('换类型', () => {
   it('认不回同一种画法 / 新一批里不是点选的那种误差：不换，静默', async () => {
     register()
     propose.mockResolvedValue({ kind: 'candidates', session: 'SW', dropped: [], render: 'lazy', items: [cand({ title_code: 'other_drawing', error: 'sem' })] } as never)
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(commit).not.toHaveBeenCalled()
     expect(panels()[0]).toMatchObject({ fileId: 'runtime:a1', script: SCRIPT1 })
     expect(discard).toHaveBeenCalledWith('SW', 'pa') // 会话照样放弃
     expect(useFigureOriginStore.getState().switching).toBeNull()
     propose.mockResolvedValue({ kind: 'candidates', session: 'SW2', dropped: [], render: 'lazy', items: [cand({ error: 'sd' })] } as never)
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(commit).not.toHaveBeenCalled()
   })
 
   it('提交没成（后端报错 / 没落盘 / 核对不过）：不换', async () => {
     register()
     commit.mockRejectedValueOnce(new Error('boom'))
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(panels()[0]!.fileId).toBe('runtime:a1')
     commit.mockResolvedValueOnce({ task: { outcome: 'failed' } } as AiDataCommitResult)
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(panels()[0]!.fileId).toBe('runtime:a1')
     commit.mockResolvedValueOnce({ task: { outcome: 'completed' }, script: SCRIPT2, stem: 's', data_check: 'mismatch' } as AiDataCommitResult)
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(panels()[0]!.fileId).toBe('runtime:a1')
     expect(useFigureOriginStore.getState().switching).toBeNull()
   })
@@ -321,7 +323,7 @@ describe('换类型', () => {
   it('运行新脚本没出图：不换', async () => {
     register()
     useScriptRunStore.setState({ run: vi.fn(async () => {}) })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(panels()[0]!.fileId).toBe('runtime:a1')
   })
 
@@ -331,7 +333,7 @@ describe('换类型', () => {
     refresh.mockReturnValue(new Promise<void>((r) => (release = r)))
     const run = vi.fn(async () => {})
     useScriptRunStore.setState({ run })
-    const p = useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    const p = useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     await flush()
     await flush()
     expect(useFigureOriginStore.getState().switching).toMatchObject({ kind: 'sem' })
@@ -354,7 +356,7 @@ describe('换类型', () => {
       })
     })
     useScriptRunStore.setState({ run })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(panels()[0]).toMatchObject({ fileId: 'runtime:a1' })
     expect(panels()[0]!.overrides).toHaveLength(1) // 用户的改动原样还在
     expect(useFigureOriginStore.getState().figures[SCRIPT2]).toBeUndefined()
@@ -370,16 +372,121 @@ describe('换类型', () => {
         })
       }),
     })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(panels()).toHaveLength(0)
+  })
+
+  it('同一张图复制成两块：只换发起的那一块（第二块），第一块原样；转圈只在发起那块；换完另一块仍能各自再换', async () => {
+    register()
+    addRuntimePanel(D1)
+    const [p1, p2] = panels()
+    expect(p1!.script).toBe(p2!.script)
+    // 排版模式：没有激活面板，旧实现会退回「第一块匹配脚本的面板」
+    hostEl = document.createElement('div')
+    document.body.appendChild(hostEl)
+    root = createRoot(hostEl)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <div id="r1"><ErrorKindRow panel={p1!} /></div>
+          <div id="r2"><ErrorKindRow panel={p2!} /></div>
+        </TooltipProvider>,
+      )
+    })
+    let release!: () => void
+    refresh.mockReturnValue(new Promise<void>((r) => (release = r)))
+    const p = useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', p2!.id)
+    await flush()
+    await flush()
+    expect(document.querySelector('#r1 [data-error-kind]')!.getAttribute('aria-busy')).toBeNull()
+    expect(document.querySelector('#r2 [data-error-kind]')!.getAttribute('aria-busy')).toBe('true')
+    release()
+    await p
+    await flush()
+    expect(panels().find((o) => o.id === p1!.id)).toMatchObject({ fileId: 'runtime:a1', script: SCRIPT1 })
+    expect(panels().find((o) => o.id === p2!.id)).toMatchObject({ fileId: 'runtime:a2', script: SCRIPT2 })
+    // 第一块仍指向旧脚本、来历还在：可以独立再换
+    refresh.mockResolvedValue(undefined)
+    useRuntimeAssetStore.setState({ assets: [asset(D1), asset(D2)] })
+    useScriptRunStore.setState({ run: runResult(desc('tavotto_figures/a_3.py', 'runtime:a3', 'F3')) })
+    commit.mockResolvedValue({ task: { outcome: 'completed' }, script: 'tavotto_figures/a_3.py', stem: 'a_3', data_check: 'verified' } as AiDataCommitResult)
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95', p1!.id)
+    expect(panels().find((o) => o.id === p1!.id)).toMatchObject({ fileId: 'runtime:a3' })
+    expect(panels().find((o) => o.id === p2!.id)).toMatchObject({ fileId: 'runtime:a2' })
+  })
+
+  it('同脚本两块、发起的那块等待期间被删：另一块也不换', async () => {
+    register()
+    addRuntimePanel(D1)
+    const [p1, p2] = panels()
+    useScriptRunStore.setState({
+      run: vi.fn(async (script: string) => {
+        await runResult(D2)(script)
+        useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+          d.objects = d.objects.filter((o) => o.id !== p2!.id)
+        })
+      }),
+    })
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', p2!.id)
+    expect(panels().map((o) => [o.id, o.fileId])).toEqual([[p1!.id, 'runtime:a1']])
+  })
+
+  it('等待期间开始拖动：提交换图前先结束手势，移动与换图是两条历史，撤销一次只退换图', async () => {
+    register()
+    const id = panels()[0]!.id
+    const x0 = panels()[0]!.x
+    let unregister = () => {}
+    useScriptRunStore.setState({
+      run: vi.fn(async (script: string) => {
+        await runResult(D2)(script)
+        // 用户这时按下拖动：开事务、移动一点、登记「收尾回调」
+        useDocumentStore.getState().beginTxn({ key: 'history.move' } as never)
+        useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+          d.objects.find((o) => o.id === id)!.x += 5
+        })
+        unregister = registerGesture(() => {
+          useDocumentStore.getState().endTxn()
+          unregister()
+        })
+      }),
+    })
+    const past0 = useDocumentStore.getState().past.length
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', id)
+    expect(useDocumentStore.getState().txn).toBeFalsy()
+    expect(useDocumentStore.getState().past.length).toBe(past0 + 2)
+    expect(panels()[0]).toMatchObject({ fileId: 'runtime:a2', x: x0 + 5 })
+    useDocumentStore.getState().undo()
+    expect(panels()[0]).toMatchObject({ fileId: 'runtime:a1', x: x0 + 5 }) // 只退了换图，移动还在
+    useDocumentStore.getState().undo()
+    expect(panels()[0]!.x).toBe(x0)
+  })
+
+  it('结束手势后目标不再满足条件（手势收尾时落下一条手改）：不换', async () => {
+    register()
+    const id = panels()[0]!.id
+    useScriptRunStore.setState({
+      run: vi.fn(async (script: string) => {
+        await runResult(D2)(script)
+        const un = registerGesture(() => {
+          un()
+          useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+            ;(d.objects.find((o) => o.id === id) as PanelObject).overrides = [{ gid: 'g', prop: 'fontsize', value: 12 } as never]
+          })
+        })
+      }),
+    })
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', id)
+    expect(panels()[0]).toMatchObject({ fileId: 'runtime:a1' })
+    expect(panels()[0]!.overrides).toHaveLength(1)
+    expect(useFigureOriginStore.getState().figures[SCRIPT2]).toBeUndefined()
   })
 
   it('同一时刻只换一份；选当前这一种是空操作；没记到指纹的不给换', async () => {
     register()
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sd')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sd', panels()[0]!.id)
     expect(propose).not.toHaveBeenCalled()
     useFigureOriginStore.getState().register({ ...baseOrigin(), script: 'x/y.py', fingerprint: null })
-    await useFigureOriginStore.getState().switchKind('x/y.py', 'sem')
+    await useFigureOriginStore.getState().switchKind('x/y.py', 'sem', panels()[0]!.id)
     expect(propose).not.toHaveBeenCalled()
   })
 
@@ -388,7 +495,7 @@ describe('换类型', () => {
     let release!: () => void
     refresh.mockReturnValue(new Promise<void>((r) => (release = r)))
     await mountRow(panels()[0]!)
-    const p = useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95')
+    const p = useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95', panels()[0]!.id)
     await flush()
     await flush()
     expect(row()!.textContent).toContain('95%')
@@ -406,7 +513,7 @@ describe('换类型', () => {
       candidates: [{ ...cand({ id: 'd1' }), thumb: '/t' }], thumbs: { d1: 'ready' },
     })
     const snap = { ...useDataFigureStore.getState() }
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     const s = useDataFigureStore.getState()
     expect(s.session).toBe(snap.session)
     expect(s.candidates).toBe(snap.candidates)
@@ -431,7 +538,7 @@ describe('换完之后选回误差棒（等新图的 manifest，不计时）', (
     register()
     const id = panels()[0]!.id
     useUiStore.setState({ elementPanelId: id, selectedGids: ['axes_0.errorbar_1'] })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     return id
   }
 
@@ -481,7 +588,7 @@ describe('画布名跟着换', () => {
       d.name = D1.stem
     })
     const past = useDocumentStore.getState().past.length
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(doc().name).toBe(D2.stem)
     expect(useDocumentStore.getState().past.length).toBe(past + 1)
     useDocumentStore.getState().undo()
@@ -493,7 +600,7 @@ describe('画布名跟着换', () => {
     useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
       d.name = '我的画布'
     })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     expect(panels()[0]!.fileId).toBe('runtime:a2')
     expect(doc().name).toBe('我的画布')
   })
@@ -538,7 +645,7 @@ describe('阴影带（趋势图的均值 ± 误差，`fill` 元素）', () => {
     register(bandOrigin())
     bandPropose()
     useUiStore.setState({ elementPanelId: panels()[0]!.id, selectedGids: ['axes_0.fill_2'] })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95', panels()[0]!.id)
     expect(panels()[0]!.fileId).toBe('runtime:a2')
     expect(propose.mock.calls[0]![0]).toMatchObject({ answers: { error: 'ci95' } })
     seedManifest(panels()[0]!, ['axes_0', 'axes_0.fill_0', 'axes_0.fill_2'])
@@ -549,7 +656,7 @@ describe('阴影带（趋势图的均值 ± 误差，`fill` 元素）', () => {
     register(bandOrigin())
     bandPropose()
     useUiStore.setState({ elementPanelId: panels()[0]!.id, selectedGids: ['axes_0.fill_9'] })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     seedManifest(panels()[0]!, ['axes_0', 'axes_0.fill_0', 'axes_0.fill_2'])
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.fill_0'])
   })
@@ -557,7 +664,7 @@ describe('阴影带（趋势图的均值 ± 误差，`fill` 元素）', () => {
   it('不是带的图：fill 不选', async () => {
     register()
     useUiStore.setState({ elementPanelId: panels()[0]!.id, selectedGids: ['axes_0.fill_0'] })
-    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem', panels()[0]!.id)
     seedManifest(panels()[0]!, ['axes_0', 'axes_0.fill_0'])
     expect(useUiStore.getState().selectedGids).toEqual([])
   })

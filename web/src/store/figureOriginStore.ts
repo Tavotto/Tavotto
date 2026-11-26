@@ -31,10 +31,10 @@ import { msg, type UiMessage } from '@/i18n'
 /** 宿主（项目 / 画布那一头）要做的事。不在这里 import：`projectStore` / `liveSync` / 工作区 import 本 store 会成环（`importArchitecture` 门禁） */
 export interface FigureOriginHost {
   /**
-   * 新脚本已落盘：刷新项目、运行它、在**旧脚本的那块面板**上原位换成新图（一条可撤销的历史）。成功回新图的来源指纹；
+   * 新脚本已落盘：刷新项目、运行它、在**发起切换的那块面板**（`panelId`，不按脚本另找）上原位换成新图（一条可撤销的历史）。成功回新图的来源指纹；
    * 面板不见了 / 被改过 / 项目换了 / 运行没成 = null（什么都没换）
    */
-  replaceFigure: (a: { oldScript: string; newScript: string; origin: FigureOrigin; still: () => boolean }) => Promise<{ fingerprint: string } | null>
+  replaceFigure: (a: { panelId: string; oldScript: string; newScript: string; origin: FigureOrigin; still: () => boolean }) => Promise<{ fingerprint: string } | null>
   /** 腾出一个后端候选会话名额（数据页的留存草稿丢最旧的）：换类型要多开一个会话，不能把用户开着的草稿挤掉 */
   reserveSession: () => void
   /** 浮动通知（一句话，没有按钮） */
@@ -50,7 +50,7 @@ interface FigureOriginStore {
   /** 脚本路径 → 来历；按登记先后排（最旧的在前） */
   figures: Record<string, FigureOrigin>
   /** 正在换：下拉立刻显示新值、转灰带转圈；同一时刻只有一份在换 */
-  switching: { script: string; kind: ErrorKind } | null
+  switching: { script: string; panelId: string; kind: ErrorKind } | null
   /** 数据页出图成功、进编辑器之前登记（同一个脚本再登记 = 覆盖） */
   register: (origin: FigureOrigin) => void
   /** 面板第一次出现在文档里：记下它的来源指纹（只在还没记过时） */
@@ -58,7 +58,7 @@ interface FigureOriginStore {
   /** 还没记到来源指纹的那些脚本（宿主据此决定要不要去文档里找面板） */
   unbound: () => string[]
   /** 把这张图的误差类型换成 `kind`：成功后图被换成新脚本画的；其它任何结局都静默不变 */
-  switchKind: (script: string, kind: ErrorKind) => Promise<void>
+  switchKind: (script: string, kind: ErrorKind, panelId: string) => Promise<void>
   clear: () => void
 }
 
@@ -90,16 +90,16 @@ export const useFigureOriginStore = create<FigureOriginStore>((set, get) => ({
 
   unbound: () => Object.values(get().figures).filter((o) => o.fingerprint == null).map((o) => o.script),
 
-  switchKind: async (script, kind) => {
+  switchKind: async (script, kind, panelId) => {
     const key = normScript(script)
     const origin = get().figures[key]
     if (!origin || get().switching || origin.kind === kind || origin.fingerprint == null) return
     const ep = epoch
     const pj = currentProjectId()
     const still = () => ep === epoch && pj === currentProjectId()
-    set({ switching: { script: key, kind } })
+    set({ switching: { script: key, panelId, kind } })
     try {
-      await runExclusive(() => run(origin, kind, pj, still))
+      await runExclusive(() => run(origin, kind, panelId, pj, still))
     } catch {
       /* 静默：回到原图 */
     } finally {
@@ -114,7 +114,7 @@ export const useFigureOriginStore = create<FigureOriginStore>((set, get) => ({
 }))
 
 /** 换类型的整条路；任何一步不成立就 return（调用方统一静默） */
-async function run(origin: FigureOrigin, kind: ErrorKind, pj: string | null, still: () => boolean): Promise<void> {
+async function run(origin: FigureOrigin, kind: ErrorKind, panelId: string, pj: string | null, still: () => boolean): Promise<void> {
   if (!still()) return
   host.reserveSession()
   const body: AiDataProposeBody = {
@@ -143,7 +143,7 @@ async function run(origin: FigureOrigin, kind: ErrorKind, pj: string | null, sti
       out = waited
     }
     if (!out.script || !out.stem || out.data_check === 'mismatch' || out.task?.outcome === 'failed') return
-    const placed = await host.replaceFigure({ oldScript: origin.script, newScript: out.script, origin, still })
+    const placed = await host.replaceFigure({ panelId, oldScript: origin.script, newScript: out.script, origin, still })
     if (!placed || !still()) return
     // 与数据页出图同一句话：这类图没法逐项核对 / 没能核对（已核对不提）
     if (out.data_check === 'unverifiable') host.notify(msg('dataFigureV2.result.unverifiable', undefined, 'ai'))

@@ -25,7 +25,7 @@ export function ErrorKindRow({ panel, band = false }: { panel: PanelObject; band
   const enabled = useTafFlagStore((s) => s.enabled)
   const key = panel.script ? normScript(panel.script) : ''
   const origin = useFigureOriginStore((s) => (key ? s.figures[key] : undefined))
-  const switching = useFigureOriginStore((s) => (s.switching?.script === key ? s.switching : null))
+  const switching = useFigureOriginStore((s) => (s.switching?.panelId === panel.id ? s.switching : null))
   const busy = useFigureOriginStore((s) => s.switching != null)
   const doc = useDocumentStore((s) => s.doc)
   const runtime = useRuntimeAssetStore((s) => s.assets?.find((a) => a.id === panel.fileId))
@@ -46,7 +46,7 @@ export function ErrorKindRow({ panel, band = false }: { panel: PanelObject; band
           value={shown}
           disabled={busy}
           ariaLabel={label}
-          onChange={(k) => void useFigureOriginStore.getState().switchKind(key, k)}
+          onChange={(k) => void useFigureOriginStore.getState().switchKind(key, k, panel.id)}
           options={ERROR_KINDS.map((k) => ({ value: k, label: t(`dataFigureV2.confirm.option.${k}`) }))}
           title={t(`dataFigureV2.confirm.option.${shown}`)}
         />

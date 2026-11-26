@@ -10,9 +10,10 @@ import { resolveDocumentSpec } from '@/lib/specBinding'
 import { configureDataBatchHost } from '@/store/dataBatchStore'
 import { configureDataFigureHost, reserveBackendSession } from '@/store/dataFigureStore'
 import { configureFigureOriginHost, useFigureOriginStore } from '@/store/figureOriginStore'
-import { panelOfScript, panelUntouchedNow } from '@/lib/dataFigureOriginLive'
+import { panelIfScript, panelUntouchedNow } from '@/lib/dataFigureOriginLive'
 import { normScript } from '@/lib/dataFigureOrigin'
 import { enterElementEdit, replaceRuntimeFigure } from '@/store/actions'
+import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { selectErrorBarWhenDrawn } from '@/store/figureSwitchSelect'
 import { refreshProjectNow } from '@/store/liveSync'
@@ -83,13 +84,14 @@ const quietGuideCard = () => {
 configureFigureOriginHost({
   reserveSession: reserveBackendSession,
   notify: (message) => useUiStore.getState().setStatus(message, 'info'),
-  replaceFigure: async ({ oldScript, newScript, origin, still }) => {
+  replaceFigure: async ({ panelId, oldScript, newScript, origin, still }) => {
     const pj = currentProjectId()
     const same = () => still() && currentProjectId() === pj
-    // 换的是用户此刻在编辑的那一块（激活画布上、画旧脚本的面板）；等脚本跑的这段时间里他换了画布 / 删了它 / 改了它，一律不换
+    // 换的只是发起切换的那一块面板（属性页那一行传来的 id；同一张图复制出几份时不按脚本另找）；
+    // 等脚本跑的这段时间里他换了画布 / 删了它 / 它不再画旧脚本 / 改了它，一律不换
     const canvasId = useDocumentStore.getState().activeCanvasId
     const preferGid = useUiStore.getState().selectedGids[0] ?? null
-    const target = panelOfScript(oldScript, useWorkspaceStore.getState().activePanelId)
+    const target = panelIfScript(panelId, oldScript)
     if (!target || !panelUntouchedNow(target, origin)) return null
     quietGuideCard()
     await refreshProjectNow().catch(() => undefined)
@@ -99,16 +101,20 @@ configureFigureOriginHost({
     const run = useScriptRunStore.getState().byScript[newScript]
     const desc = run?.phase === 'captured_one' ? run.descriptors[0] : undefined
     if (!desc || normScript(desc.script) !== normScript(newScript)) return null
-    // 复核：还是那张画布、还是那一块面板、图仍然没被改过
-    const panel = panelOfScript(oldScript, target.id)
-    if (!panel || panel.id !== target.id || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return null
-    if (!replaceRuntimeFigure(panel.id, desc)) return null
-    // 回到图内编辑（与「打开并运行」之后落在的状态一样）：选中这块面板
-    useSelectionStore.getState().set([panel.id])
-    enterElementEdit(panel.id)
-    // 新图的 manifest 到了就选回误差棒（属性页停在误差棒页，那一行显示新类型）
-    selectErrorBarWhenDrawn(panel.id, preferGid, origin.band)
-    return { fingerprint: desc.source_fingerprint }
+    // 换图是离散动作：先结束进行中的手势（拖动 / 缩放 / 属性页连续编辑），再复核、再提交，换图才是独立的一条历史
+    // （否则 commit 会并进手势事务、一次撤销连移动一起退）。结束手势可能再改文档，所以复核放在它之后
+    const placed = runDiscreteAction('app', null, (): { fingerprint: string } | null => {
+      const panel = panelIfScript(panelId, oldScript)
+      if (!panel || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return null
+      if (!replaceRuntimeFigure(panel.id, desc)) return null
+      // 回到图内编辑（与「打开并运行」之后落在的状态一样）：选中这块面板
+      useSelectionStore.getState().set([panel.id])
+      enterElementEdit(panel.id)
+      // 新图的 manifest 到了就选回误差棒（属性页停在误差棒页，那一行显示新类型）
+      selectErrorBarWhenDrawn(panel.id, preferGid, origin.band)
+      return { fingerprint: desc.source_fingerprint }
+    })
+    return placed ?? null
   },
 })
 
