@@ -67,6 +67,11 @@ SLUG_READABLE_MAX_BYTES = 96
 ORIGINAL_NAME = "original.py"
 META_NAME = "meta.json"
 
+
+def _original_name(script: str) -> str:
+    return "original.R" if Path(script).suffix.lower() == ".r" else ORIGINAL_NAME
+
+
 #: 备份状态：磁盘此刻就是这份备份记下的「改后」/ 还是「改前」（从未生效或已复原）/ 两者都不是。
 STATE_CURRENT = "current"
 STATE_BEFORE = "before"
@@ -339,7 +344,7 @@ def _metas(parent: Path) -> list[tuple[Path, dict]]:
             meta = json.loads((d / META_NAME).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(meta, dict) and (d / ORIGINAL_NAME).is_file():
+        if isinstance(meta, dict) and (d / _original_name(str(meta.get("script", "")))).is_file():
             out.append((d, meta))
     out.sort(key=lambda it: (it[1].get("created", 0), it[0].name))
     return out
@@ -441,8 +446,9 @@ def _replace_locked(
         mdir.mkdir(parents=True, exist_ok=False)
         created.append(mdir)
         record["id"] = f"{slug}/{pdir.name}"
+        backup_name = _original_name(script)
         for d in (pdir, mdir):
-            atomicio.write_bytes(d / ORIGINAL_NAME, old)
+            atomicio.write_bytes(d / backup_name, old)
             atomicio.write_json(d / META_NAME, record, indent=2)
         # 文件与时间戳目录自己落了盘不够：把它挂进备份树的那些目录项也要落盘，否则掉电后
         # 改后的脚本在、两份备份目录却可能都不在（Codex 评 #730 P2）
@@ -577,13 +583,11 @@ def load(store: Store, backup_id: str) -> tuple[dict, bytes]:
         d = base / parts[0] / parts[1]
         try:
             meta = json.loads((d / META_NAME).read_text(encoding="utf-8"))
-            data = (d / ORIGINAL_NAME).read_bytes()
+            if not isinstance(meta, dict) or not _bound(meta, parts[0], parts[1]):
+                continue
+            data = (d / _original_name(meta["script"])).read_bytes()
         except (OSError, ValueError):
             continue
-        if (
-            isinstance(meta, dict)
-            and _bound(meta, parts[0], parts[1])
-            and sha256(data) == (meta.get("before") or {}).get("sha256")
-        ):
+        if sha256(data) == (meta.get("before") or {}).get("sha256"):
             return meta, data
     raise ScriptEditError(ERROR_BACKUP_UNKNOWN, "没有这份备份", id=backup_id)

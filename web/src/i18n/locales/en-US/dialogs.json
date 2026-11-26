@@ -200,6 +200,17 @@
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
     "scriptHint": "Edited copy of the script. The original isn’t touched.",
     "scriptSkipped": "Not written: {{items}}",
+    "sourceStyle": {
+      "open": "Write styles to the R script…",
+      "title": "Write styles to the R script",
+      "saveFirst": "Save the current layout in the project before writing to the script.",
+      "verifying": "Replaying the proposed R source and comparing the figure…",
+      "count": "{{written}} edits will go into the script. {{remaining}} will stay in the layout.",
+      "commit": "Modify script",
+      "restore": "Restore script and layout",
+      "done": "The script and project layout were updated. Both backups are ready.",
+      "reopen": "Reopen the saved layout to see the updated version."
+    },
     "scriptUnavailable": {
       "canvas_scope": "Choose “Each figure separately” to export edited scripts.",
       "no_script": "No script for this figure",

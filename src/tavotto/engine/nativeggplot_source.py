@@ -12,7 +12,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, execspec, nativeggplot, projectenv, runtime, scriptadjust
+from . import config, execspec, executionfact, nativeggplot, projectenv, runtime, scriptadjust
 from .fixtools import cmdsandbox, trial
 
 _RGB = re.compile(r"#[0-9a-fA-F]{6}\Z")
@@ -38,6 +38,9 @@ class ReplayedRSource:
     original_bytes: bytes
     manifest: dict
     png: bytes
+    execution_id: str
+    pdf: bytes | None = None
+    svg: bytes | None = None
 
 
 def build(
@@ -184,6 +187,7 @@ def replay(
     width: int,
     *,
     hot: dict | None = None,
+    vectors: bool = False,
 ) -> ReplayedRSource:
     """Run the candidate in a protected copy using the recorded native interpreter."""
     sandbox = cmdsandbox.sandbox_kind(offline=True)
@@ -222,6 +226,8 @@ def replay(
         request = scratch / "request.json"
         result = scratch / "result.json"
         png = scratch / "candidate.png"
+        pdf = scratch / "candidate.pdf"
+        svg = scratch / "candidate.svg"
         environment = cmdsandbox.clean_env({**os.environ, **(spec.env or {})})
         r_temp = scratch / "r-tmp"
         r_temp.mkdir()
@@ -262,8 +268,10 @@ def replay(
             "png": png.as_posix(),
             "width": width,
             "residual": adjusted.residual,
+            **({"pdf": pdf.as_posix(), "svg": svg.as_posix()} if vectors else {}),
         }
         request.write_text(json.dumps(replay_request), encoding="utf-8")
+        execution_id = executionfact.new_id()
         _run(command, cwd, environment)
         manifest = json.loads(result.read_text(encoding="utf-8"))
         target.annotate_manifest(manifest)
@@ -271,4 +279,14 @@ def replay(
             raise scriptadjust.ScriptAdjustError(
                 "script_export_script_changed", "The R source changed during replay."
             )
-        return ReplayedRSource(adjusted, original, manifest, png.read_bytes())
+        return ReplayedRSource(
+            adjusted,
+            original,
+            manifest,
+            png.read_bytes(),
+            execution_id,
+            pdf.read_bytes() if vectors else None,
+            nativeggplot._write_ggplot_svg(svg, svg.read_text(encoding="utf-8"))
+            if vectors
+            else None,
+        )

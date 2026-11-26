@@ -1911,7 +1911,11 @@ export function forgetLocalDocument(id: string): void {
  * 没清），把它挪进恢复槽位，加载完立刻以 `recovery_available` 提供出来。
  * 所以"重新加载"不是一个会丢东西的按钮。
  */
-export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise<boolean> {
+export async function reloadFromDisk(opts: {
+  keepMine?: boolean
+  expectedRevision?: string
+  canInstall?: () => boolean
+} = {}): Promise<boolean> {
   const id = useDocumentStore.getState().documentId
   // 发请求那一刻的上下文：读盘期间用户切了排版 / 重新载入过 / 切了项目，响应不属于现在开着的这份，
   // 绝不装进去（A 项目的响应不得落进 B）。请求也按这一刻的项目发，不按回来时的
@@ -1940,6 +1944,8 @@ export async function reloadFromDisk(opts: { keepMine?: boolean } = {}): Promise
     return false // 读不回来就别动内存里那份
   }
   if (!stillHere()) return false // 上下文已被取代：丢弃响应
+  if (opts.expectedRevision !== undefined && fetched?.revision !== opts.expectedRevision) return false
+  if (opts.canInstall && !opts.canInstall()) return false
   const pd = fetched ? migrateToProject(fetched.doc) : null
   if (!pd) return false
   disk.rememberRevision(id, fetched)

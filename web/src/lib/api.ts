@@ -7858,6 +7858,7 @@ export interface ScriptBackup {
   /** 「只撤销那几处」此刻能不能做（后端按复原同一个判据算；只在 `changed` 时可能为 true） */
   undoable?: boolean
   edits?: ScriptEditPreview['edits']
+  layout?: string
 }
 
 /** 生成改写预览：脚本一个字节都不改（ADR 0110 §六） */
@@ -7883,6 +7884,38 @@ export const commitScriptEdit = (token: string) =>
     body: JSON.stringify({ token }),
   })
 
+export interface FigureStylePreview {
+  token: string
+  script_abs: string
+  written: number
+  skipped: { gid: string; prop: string; reason: string }[]
+  diff: string[]
+  backups: string[]
+  git: ScriptEditPreview['git']
+  checksums: string[]
+}
+
+export const previewFigureStyle = (
+  selection: { layout: string; revision: string; canvas_id: string; panel_id: string; working_doc_id: string },
+  pj: string | null,
+) =>
+  jsonFetch<FigureStylePreview>('/api/script-edit/figure-style/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selection),
+  }, pj)
+
+export const commitFigureStyle = (token: string, pj: string | null) =>
+  jsonFetch<{
+    ok: boolean; revision: string; working_revision: string | null; backup_id: string; script_revision: string
+  }>(
+    '/api/script-edit/figure-style/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, confirmed: true }),
+    }, pj,
+  )
+
 /** 本项目（或某个脚本）改写前留下的备份，新的在前 */
 export const listScriptBackups = (script?: string) =>
   jsonFetch<{ ok: boolean; backups: ScriptBackup[] }>(
@@ -7895,12 +7928,20 @@ export const restoreScriptBackup = (
   backupId: string,
   mode: 'full' | 'undo_edits',
   expectedSha256: string | null | undefined,
+  pj?: string | null,
+  workingDocId?: string,
 ) =>
-  jsonFetch<{ ok: boolean; script: string; unchanged?: boolean; durable?: boolean }>('/api/script-backups/restore', {
+  jsonFetch<{
+    ok: boolean; script: string; unchanged?: boolean; durable?: boolean;
+    layout?: { name: string; revision: string; working_revision: string | null }
+  }>('/api/script-backups/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ backup_id: backupId, mode, expected_sha256: expectedSha256 ?? null }),
-  })
+    body: JSON.stringify({
+      backup_id: backupId, mode, expected_sha256: expectedSha256 ?? null,
+      ...(workingDocId ? { working_doc_id: workingDocId } : {}),
+    }),
+  }, pj)
 
 /** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0047）。改了后端会关掉该项目的会话。 */
 export const setProjectWorkdir = (mode: WorkdirMode) =>

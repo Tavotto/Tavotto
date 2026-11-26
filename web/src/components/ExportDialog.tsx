@@ -57,6 +57,7 @@ import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportManuscriptPreview } from "./ExportManuscriptPreview";
 import { ExportZoomStage } from "./ExportZoomStage";
+import { ScriptStyleAction } from "./ScriptStyleAction";
 import { computeManuscriptLayout, type ManuscriptLayout } from "@/lib/manuscriptPreview";
 import { columnName } from "@/lib/pageColumns";
 import { ExportLocationRow, projectRelativeLocation, useExportLocationPicker } from "./ExportLocationRow";
@@ -2116,6 +2117,12 @@ export function ExportDialog() {
                     />
                   </div>
                 </FormRow>
+                <ScriptStyleAction
+                  visible={single && script.suffix?.endsWith(".R") === true}
+                  available={script.ok && !busy}
+                  canvas={activeCanvasId}
+                  panel={panel?.id ?? null}
+                />
               </fieldset>
               {/* 合成一个多页 PDF（#1370）：只在这几张图出自脚本同一份 PdfPages、且勾着 PDF 时出现；页序跟脚本走 */}
               {mergePlan && (

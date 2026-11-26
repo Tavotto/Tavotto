@@ -194,6 +194,17 @@
     "batchProgress": "第 {{k}}/{{n}} 张 · {{name}} · {{phase}}",
     "scriptHint": "修改后的脚本，原脚本不动",
     "scriptSkipped": "未写入：{{items}}",
+    "sourceStyle": {
+      "open": "将样式写入 R 脚本…",
+      "title": "将样式写入 R 脚本",
+      "saveFirst": "请先把当前排版保存到项目，再写入脚本。",
+      "verifying": "正在重放拟写入的 R 源码，并与当前图形比对…",
+      "count": "{{written}} 项写入脚本，{{remaining}} 项继续保留在排版中。",
+      "commit": "修改脚本",
+      "restore": "恢复脚本和排版",
+      "done": "脚本和项目排版已更新，两处备份均已保存。",
+      "reopen": "重新打开已保存的排版即可查看新版本。"
+    },
     "scriptUnavailable": {
       "canvas_scope": "选择「每张图单独导出」即可导出修改后的脚本",
       "no_script": "这张图没有脚本",

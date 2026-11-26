@@ -50,6 +50,7 @@ class Ledger:
                 "receipts": set(),
                 "sources": set(),
                 "retired_receipts": set(),
+                "verified_replays": {},
                 "unknown": False,
             }
             self.owners[key(identity)] = state
@@ -97,6 +98,22 @@ class Ledger:
             state = self.get(identity)
             return (
                 None if state is None else not state["unknown"] and receipt_id in state["receipts"]
+            )
+
+    def accept_verified_replay(self, identity, state, source_id, receipt_id):
+        """Approve a committed, independently verified snapshot for only this figure."""
+        with self.lock:
+            if state is not None and self.get(identity) is state and not state["unknown"]:
+                state["verified_replays"][source_id] = receipt_id
+
+    def verified_replay(self, identity, source_id, receipt_id):
+        with self.lock:
+            state = self.get(identity)
+            return (
+                state is not None
+                and not state["unknown"]
+                and receipt_id is not None
+                and state.get("verified_replays", {}).get(source_id) == receipt_id
             )
 
     def fact(self, state):

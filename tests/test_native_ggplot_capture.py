@@ -254,6 +254,94 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         )
         assert not (edited.parent / "Changed_edited.R").exists()
         assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
+
+        # Writeback uses the same pixel gate and requires an additional confirmation.
+        numbers.write_text("x,y\n1,2\n2,4\n3,3\n", encoding="utf-8")
+        width, height = rendered.json["manifest"]["size_mm"]
+        layout = {
+            "schema": 3,
+            "project": {"id": "source-style", "name": "Source style"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "guides": [],
+                    "objects": [
+                        {
+                            "type": "panel",
+                            "id": "signal",
+                            "fileId": figure,
+                            "fileKind": "pdf",
+                            "x": 5,
+                            "y": 5,
+                            "w": width,
+                            "h": height,
+                            "nativeW": width,
+                            "nativeH": height,
+                            "figureFrame": 1,
+                            "overrides": patches,
+                        }
+                    ],
+                }
+            ],
+        }
+        layout_url = "/api/layouts/Source_style"
+        saved = client.post(layout_url + "?target=project", json=layout)
+        assert saved.status_code == 200, saved.json
+        assert "signal" in saved.json["figure_snapshots"]
+        preview = client.post(
+            "/api/script-edit/figure-style/preview",
+            json={
+                "layout": "Source_style",
+                "revision": saved.json["revision"],
+                "canvas_id": "main",
+                "panel_id": "signal",
+            },
+        )
+        assert preview.status_code == 200, preview.json
+        assert preview.json["written"] == 3 and not preview.json["skipped"]
+        commit = "/api/script-edit/figure-style/commit"
+        token = preview.json["token"]
+        refused = client.post(commit, json={"token": token})
+        assert refused.status_code == 409 and source.read_bytes() == original
+        applied = client.post(commit, json={"token": token, "confirmed": True})
+        assert applied.status_code == 200, applied.json
+        assert source.read_bytes() == edited.read_bytes()
+        assert submitted.read_bytes() == original_pdf and protected.read_bytes() == b"external file"
+        current = client.get(layout_url).json["canvases"][0]["objects"][0]
+        assert current["overrides"] == []
+        assert current["figureSnapshot"] != saved.json["figure_snapshots"]["signal"]
+        archived = client.post(
+            "/api/figure-preview",
+            json={
+                "id": figure,
+                "patches": [],
+                "figure_snapshot": current["figureSnapshot"],
+            },
+        )
+        assert archived.status_code == 200 and "#572B82" in archived.json["svg"].upper()
+        committed_layout = client.get(layout_url).json
+        repeated = client.post(
+            "/api/layouts/Source_style_copy?target=project", json=committed_layout
+        )
+        assert repeated.status_code == 200, repeated.json
+        assert repeated.json["figure_snapshots"]["signal"] == current["figureSnapshot"]
+        restored = client.post(
+            "/api/script-backups/restore",
+            json={
+                "backup_id": applied.json["backup_id"],
+                "mode": "full",
+                "expected_sha256": applied.json["script_revision"],
+            },
+        )
+        assert restored.status_code == 200, restored.json
+        assert source.read_bytes() == original
+        previous = client.get(layout_url).json["canvases"][0]["objects"][0]
+        assert previous["overrides"] == patches
+        assert previous["figureSnapshot"] == saved.json["figure_snapshots"]["signal"]
     finally:
         if worker is not None:
             worker.cancel_owned()

@@ -32,6 +32,9 @@ if (identical(request$operation, "anchor")) {
     measured <- adapter$preview_ggplot_png(captured$state, edits, request$png, request$width, TRUE)
   }
   if (!is.null(request$pdf)) adapter$export_ggplot_pdf(captured$state, edits, request$pdf)
+  if (!is.null(request$svg)) {
+    writeLines(adapter$render_ggplot(captured$state, edits), request$svg, useBytes = TRUE)
+  }
   jsonlite::write_json(adapter$ggplot_manifest(captured$state, request$stem, edits, measured), request$result,
                        auto_unbox = TRUE, digits = NA, null = "null")
 } else {

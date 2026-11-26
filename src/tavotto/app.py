@@ -18,6 +18,7 @@ import contextlib
 import contextvars
 import copy
 import dataclasses
+import difflib
 import errno
 import functools
 import hashlib
@@ -194,6 +195,7 @@ from .engine import (
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
     scriptrelink as engine_scriptrelink,
+    scriptstyle as engine_scriptstyle,
     session_client as engine_session_client,
     shadowscript as engine_shadowscript,
     siwc_login as engine_siwc_login,
@@ -3337,7 +3339,20 @@ def _svg_reference_corpus(root: Path) -> frozenset[bytes] | None:
         )
 
     try:
-        for base in (store, Path(root) / "canvases", LAYOUT_DIR):
+        for journal in engine_scriptstyle.journals(root):
+            try:
+                data = journal.read_bytes()
+            except FileNotFoundError:
+                continue
+            if not admit(len(data)):
+                return None
+            found.update(_SVG_REFERENCE_ID.findall(data))
+        for base in (
+            store,
+            root / "canvases",
+            LAYOUT_DIR,
+            engine_config.data_path("script_backups", _project_id(root)),
+        ):
             if not base.is_dir():
                 continue
             for directory, dirnames, filenames in os.walk(base, onerror=_raise_walk_error):
@@ -3760,6 +3775,10 @@ def _svg_snapshot_matches_current(
             if exporting and engine_pool.execution_inflight_unobserved(worker):
                 return False  # Temporarily busy, not a fabricated execution fact.
     if ctx is not None and ctx.path.resolve() == Path(root).resolve() and identity is not None:
+        if explicit and ctx.svg_executions.verified_replay(
+            identity, source_id, record["receipt"].get("receipt_id")
+        ):
+            return True
         accepted = ctx.svg_executions.accepts(identity, record["receipt"].get("receipt_id"))
         if accepted is not None:
             if not accepted:
@@ -5746,24 +5765,7 @@ def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
         destination = job.export_dir / job.script_name
         if destination.exists() and os.path.samefile(destination, script_path):
             return engine_exportjob.Produced(format=key, error_code="script_export_same_file")
-        job.check_cancelled()
-        worker.ensure_built()
-        scope = {
-            "expected_execution_id": worker.execution_id,
-            "expected_snapshot_epoch": worker.snapshot_epoch,
-        }
-        hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
-        replay = engine_nativeggplot_source.replay(
-            spec, worker.ggplot_target, stem, patches, REPLAY_PIXEL_WIDTH, hot=hot["manifest"]
-        )
-        job.check_cancelled()
-        current = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
-        if (
-            hot["png"] != current["png"]
-            or _compare_manifests(hot["manifest"], replay.manifest)[0]
-            or base64.b64decode(hot["png"]) != replay.png
-        ):
-            return engine_exportjob.Produced(format=key, error_code="script_export_diverged")
+        replay = _verified_r_source(worker, stem, patches, check_cancelled=job.check_cancelled)
         target = tmp_dir / "edited-script.R"
         target.write_bytes(replay.source.data)
     except engine_scriptadjust.ScriptAdjustError as exc:
@@ -5775,6 +5777,39 @@ def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
         tmp_path=target,
         script_report={"written": replay.source.written, "skipped": replay.source.skipped},
     )
+
+
+def _verified_r_source(worker, stem, patches, *, check_cancelled=None, vectors=False):
+    """Measure the exact live capture and the independent protected replay."""
+    if check_cancelled is not None:
+        check_cancelled()
+    worker.ensure_built()
+    scope = {
+        "expected_execution_id": worker.execution_id,
+        "expected_snapshot_epoch": worker.snapshot_epoch,
+    }
+    hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
+    replay = engine_nativeggplot_source.replay(
+        worker.spec,
+        worker.ggplot_target,
+        stem,
+        patches,
+        REPLAY_PIXEL_WIDTH,
+        hot=hot["manifest"],
+        vectors=vectors,
+    )
+    if check_cancelled is not None:
+        check_cancelled()
+    current = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
+    if (
+        hot["png"] != current["png"]
+        or _compare_manifests(hot["manifest"], replay.manifest)[0]
+        or base64.b64decode(hot["png"]) != replay.png
+    ):
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_diverged", "The adjusted R source rendered a different figure."
+        )
+    return replay
 
 
 def _style_check_report(spec: dict):
@@ -7917,7 +7952,39 @@ def _open_project(path: Path, make_default: bool) -> dict:
     if not path.is_dir():
         raise RuntimeError(f"目录不存在: {path}")
     pid = _project_id(path)
+    with _PROJECT_LOCK:
+        opening = PROJECTS.get(pid)
 
+    def after_recovery(record):
+        if opening is None or record.get("panel_id") is None:
+            return
+        panel = engine_scriptstyle.select_panel(
+            record["document"], record["canvas_id"], record["panel_id"]
+        )
+        reference = panel.get("figureSnapshot")
+        if not reference:
+            return
+        observed = opening.svg_executions.get(reference.get("executionOwner"))
+        engine_nativesession.REGISTRY.cancel_project(str(path), script=record["script"])
+        _admit_r_writeback_archive(opening, reference, observed)
+
+    for journal in engine_scriptstyle.journals(path):
+        try:
+            engine_scriptstyle.recover(
+                path,
+                journal,
+                require_idle=_require_script_idle,
+                autosave_path=_autosave_path,
+                on_completed=after_recovery,
+            )
+        except (
+            OSError,
+            ValueError,
+            engine_layoutannotate.LayoutError,
+            engine_layoutdir.LayoutDirError,
+            engine_scriptbackup.ScriptEditError,
+        ):
+            LOG.warning("An interrupted script style change needs attention.")
     with _PROJECT_LOCK:
         existing = PROJECTS.get(pid)
     if existing is not None:
@@ -11299,13 +11366,18 @@ def api_native_ggplot2_start():
     except (TypeError, ValueError) as exc:
         return jsonify({"code": "bad_request", "error": str(exc)}), 400
     try:
-        session = engine_desktopproc.start(
-            engine_desktopproc.OwnedLaunch(spec, project_epoch=epoch, ggplot_target=target)
-        )
+        with engine_scriptlock.script_guard(Path(script)):
+            if engine_scriptstyle.pending(Path(root), spec.target):
+                raise engine_scriptstyle.Pending("Finish recovering this R source style change.")
+            session = engine_desktopproc.start(
+                engine_desktopproc.OwnedLaunch(spec, project_epoch=epoch, ggplot_target=target)
+            )
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
+    except engine_scriptstyle.Pending as exc:
+        return _style_change_error(exc)
     return jsonify({"ok": True, "session": session.public_state()}), 202
 
 
@@ -12281,6 +12353,10 @@ def _resolve_engine_worker(
         info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
+        if engine_scriptstyle.pending(Path(root), info["script"]):
+            raise engine_pool.WorkerError(
+                "A source style change is awaiting recovery.", code="script_style_pending"
+            )
         # T03：这张图当初的运行配置（资产 id 里冻结的引用）——不是项目此刻的任何配置。本机没有就显式拒绝
         run = engine_runtimeasset.run_selection(root, info)
         profile = (
@@ -17186,6 +17262,258 @@ def _after_script_edit(ctx: "ProjectCtx", script: str) -> None:
         _script_change_handler(ctx)([script])
 
 
+_STYLE_CHANGE_TOKENS = engine_scriptedit.TokenStore()
+
+
+def _r_style_target(ctx, selection):
+    from .engine import svgstore
+
+    name = selection.get("layout")
+    wanted_canvas, wanted_panel = selection.get("canvas_id"), selection.get("panel_id")
+    if not all(isinstance(value, str) and value for value in (name, wanted_canvas, wanted_panel)):
+        raise engine_scriptstyle.Conflict("Save and select the figure in a project layout first.")
+    layout = engine_layoutannotate.open_layout(ctx.path, name)
+    if selection.get("revision") != layout.revision:
+        raise engine_scriptstyle.Conflict("The saved layout has changed.")
+    panel = engine_scriptstyle.select_panel(layout.doc, wanted_canvas, wanted_panel)
+    if panel.get("figureOrigin") is not None:
+        raise engine_scriptstyle.Conflict("Select a current figure from the saved layout.")
+    source = panel.get("fileId")
+    if not engine_runtimeasset.is_runtime_id(source):
+        raise engine_scriptstyle.Conflict("Run the project's R script and save this figure first.")
+    worker, stem = _engine_worker(source, existing_only=True)
+    spec = getattr(worker, "spec", None)
+    if (
+        not engine_enginesession.is_native(worker)
+        or worker.ggplot_target is None
+        or spec is None
+        or not engine_nativeggplot_source.available()
+    ):
+        raise engine_scriptstyle.Conflict("Protected replay requires an active project R script.")
+    path = _script_edit_target(ctx.path, spec.target)
+    patches = panel.get("overrides") or []
+    existing = svgstore.load_document_snapshot(
+        ctx.path,
+        panel.get("figureSnapshot"),
+        source_id=source,
+        patch_hash=engine_patchspec.patch_hash(patches),
+        remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
+        storage_root=_svg_storage_root(ctx.path),
+    )
+    if (
+        existing is None
+        or existing["receipt"]["receipt_id"] != _execution_receipt(worker, spec.target).receipt_id
+    ):
+        raise engine_scriptstyle.Conflict("Save the current R figure before previewing the script.")
+    return layout, panel, worker, stem, path, patches
+
+
+def _r_style_archive(ctx, worker, source, replay):
+    """Publish the two vector renderings of the replay that passed the gates."""
+    from .engine import svgstore
+
+    spec = worker.spec
+    receipt = engine_receipt.ExecutionReceipt(
+        profile=engine_execspec.PROFILE_NATIVE,
+        control_plane=engine_receipt.CONTROL_PLANE_NATIVE,
+        python_source="",
+        generation=1,
+        source_revision=hashlib.sha1(replay.source.data).hexdigest(),
+        spec_stable=spec.stable_payload(),
+        launch_context=engine_execspec.launch_context(spec),
+        interpreter=spec.interpreter,
+        project_root=spec.project_root,
+        runtime=None,
+        instance=replay.execution_id,
+    )
+    patch_hash = engine_patchspec.patch_hash(replay.source.residual)
+    with tempfile.TemporaryDirectory(dir=engine_config.data_dir()) as temp:
+        path = Path(temp) / "candidate.pdf"
+        path.write_bytes(replay.pdf)
+        artifact = engine_receipt.source_artifact_for(
+            receipt, path, source_id=source, patch_hash=patch_hash
+        )
+        archive = svgstore.save(
+            ctx.path,
+            source,
+            patch_hash,
+            pdf=replay.pdf,
+            svg=replay.svg,
+            artifact=artifact.to_payload(),
+            receipt=receipt.to_payload(),
+            execution_owner=engine_svgexecution.owner(spec.target, worker.run_config or None),
+            remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
+            storage_root=_svg_storage_root(ctx.path),
+            archive_only=True,
+        )
+    return archive["snapshot_ref"]
+
+
+def _style_change_error(exc):
+    if isinstance(exc, engine_scriptbackup.ScriptEditError):
+        return _script_edit_error(exc)
+    return jsonify(
+        {"error": str(exc), "code": getattr(exc, "code", engine_scriptstyle.Conflict.code)}
+    ), 409
+
+
+def _admit_r_writeback_archive(ctx, reference, observed):
+    owner = reference.get("executionOwner")
+    if owner is not None:
+        ctx.svg_executions.accept_verified_replay(
+            owner, observed, reference["sourceId"], reference["receiptId"]
+        )
+
+
+@app.post("/api/script-edit/figure-style/preview")
+def api_script_style_preview():
+    ctx = current_ctx()
+    body = request.get_json(silent=True)
+    try:
+        if not _page_authenticated():
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptedit.ERROR_NEEDS_UI, "Confirm the source edit in Tavotto."
+            )
+        binding = _script_edit_binding()
+        if not isinstance(body, dict):
+            raise engine_scriptstyle.Conflict("Select a figure in a saved layout.")
+        layout, panel, worker, stem, path, patches = _r_style_target(ctx, body)
+        replay = _verified_r_source(worker, stem, patches)
+        if not replay.source.written:
+            raise engine_scriptstyle.Conflict(
+                "There are no supported source changes on this figure."
+            )
+    except (
+        OSError,
+        ValueError,
+        engine_pool.WorkerError,
+        engine_layoutannotate.LayoutError,
+        engine_scriptbackup.ScriptEditError,
+    ) as exc:
+        return _style_change_error(exc)
+    before = engine_scriptbackup.sha256(replay.original_bytes)
+    after = engine_scriptbackup.sha256(replay.source.data)
+    token = _STYLE_CHANGE_TOKENS.issue(
+        binding=binding,
+        project=ctx.id,
+        selection={key: body[key] for key in ("layout", "revision", "canvas_id", "panel_id")},
+        working_doc_id=body.get("working_doc_id"),
+        source=panel["fileId"],
+        script=worker.spec.target,
+        before=before,
+        after=after,
+        execution=worker.execution_id,
+    )
+    slug = engine_scriptbackup.slug_of(worker.spec.target)
+    store = _script_store(ctx)
+    diff = difflib.unified_diff(
+        replay.original_bytes.decode("utf-8").splitlines(),
+        replay.source.data.decode("utf-8").splitlines(),
+        n=3,
+        lineterm="",
+    )
+    return jsonify(
+        {
+            "token": token,
+            "script_abs": str(path),
+            "written": replay.source.written,
+            "skipped": replay.source.skipped,
+            "diff": list(diff)[2:],
+            "backups": [str(store.project_dir / slug), str(store.mirror_dir / slug)],
+            "git": engine_scriptbackup.git_state(path),
+            "checksums": engine_scriptbackup.checksum_manifests(path),
+            "layout": layout.name,
+        }
+    )
+
+
+@app.post("/api/script-edit/figure-style/commit")
+def api_script_style_commit():
+    ctx = current_ctx()
+    body = request.get_json(silent=True)
+    try:
+        if not _page_authenticated():
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptedit.ERROR_NEEDS_UI, "Confirm the source edit in Tavotto."
+            )
+        if not isinstance(body, dict) or body.get("confirmed") is not True:
+            raise engine_scriptstyle.Conflict("Confirm the preview before replacing the script.")
+        item = _STYLE_CHANGE_TOKENS.redeem(body.get("token"), binding=_script_edit_binding())
+        if item["project"] != ctx.id:
+            raise engine_scriptstyle.Conflict("The preview belongs to another project.")
+        selection = item["selection"]
+        layout, panel, worker, stem, _, patches = _r_style_target(ctx, selection)
+        if (
+            panel["fileId"] != item["source"]
+            or worker.spec.target != item["script"]
+            or worker.execution_id != item["execution"]
+        ):
+            raise engine_scriptstyle.Conflict("The captured R figure changed after preview.")
+        replay = _verified_r_source(worker, stem, patches, vectors=True)
+        if (
+            engine_scriptbackup.sha256(replay.original_bytes) != item["before"]
+            or engine_scriptbackup.sha256(replay.source.data) != item["after"]
+        ):
+            raise engine_scriptstyle.Conflict("The R source changed after preview.")
+        before_layout = copy.deepcopy(layout.doc)
+        execution_owner = _svg_worker_owner(worker)
+        observed_execution = ctx.svg_executions.get(execution_owner)
+
+        def publish_layout():
+            panel["figureSnapshot"] = _r_style_archive(ctx, worker, item["source"], replay)
+            panel["overrides"] = replay.source.residual
+            return engine_atomicio.dumps_json(layout.doc, indent=1)
+
+        def require_current(path, script):
+            _require_script_idle(path, script)
+            current = engine_nativesession.REGISTRY.route_for(str(ctx.path), script, stem)
+            if current is not worker or current.execution_id != item["execution"]:
+                raise engine_scriptstyle.Conflict("The live R session changed after verification.")
+
+        result = engine_scriptstyle.commit(
+            _script_store(ctx),
+            engine_scriptstyle.Change(
+                item["script"],
+                layout.name,
+                item["before"],
+                replay.source.data,
+                layout.revision,
+                publish_layout,
+                working_doc_id=item["working_doc_id"],
+                canvas_id=selection["canvas_id"],
+                panel_id=selection["panel_id"],
+            ),
+            require_idle=require_current,
+            autosave_path=_autosave_path,
+            metadata={
+                "layout_before": before_layout,
+                "source_id": item["source"],
+                "canvas_id": selection["canvas_id"],
+                "panel_id": selection["panel_id"],
+            },
+        )
+    except (
+        OSError,
+        ValueError,
+        engine_pool.WorkerError,
+        engine_layoutannotate.LayoutError,
+        engine_scriptbackup.ScriptEditError,
+    ) as exc:
+        return _style_change_error(exc)
+    _admit_r_writeback_archive(ctx, panel["figureSnapshot"], observed_execution)
+    worker.cancel_owned()
+    _after_script_edit(ctx, item["script"])
+    return jsonify(
+        {
+            "ok": True,
+            "revision": result["revision"],
+            "working_revision": result["working_revision"],
+            "backup_id": result["backup"]["id"],
+            "script_revision": item["after"],
+        }
+    )
+
+
 @app.post("/api/script-edit/commit")
 def api_script_edit_commit():
     """ADR 0110 §六：核销令牌 → 重算一遍（与预览逐字节相同才写）→ 两处备份 → 原子替换。"""
@@ -17248,8 +17576,61 @@ def api_script_backups():
     entries = engine_scriptbackup.history(
         _script_store(ctx), script, undoable=engine_scriptedit.undoable
     )
+    for entry in entries:
+        entry.pop("layout_before", None)
     # `script_abs` 是本机路径：给本机界面看的（与预览里的完整路径同一类），不出本机
     return jsonify({"ok": True, "script": script, "backups": entries})
+
+
+def _restore_style_backup(ctx, store, meta, original, now, mode, working_doc_id):
+    from .engine import svgstore
+
+    if mode != "full" or now != meta["after"]["sha256"]:
+        raise engine_scriptstyle.Conflict("The R source changed after the style edit.")
+    layout = engine_layoutannotate.open_layout(ctx.path, meta["layout"])
+    if layout.revision != meta["layout_after_revision"]:
+        raise engine_scriptstyle.Conflict("The saved layout changed after the style edit.")
+    prior = engine_scriptstyle.select_panel(
+        meta["layout_before"], meta["canvas_id"], meta["panel_id"]
+    )
+    restored = svgstore.load_document_snapshot(
+        ctx.path,
+        prior.get("figureSnapshot"),
+        source_id=meta["source_id"],
+        patch_hash=engine_patchspec.patch_hash(prior.get("overrides") or []),
+        remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
+        storage_root=_svg_storage_root(ctx.path),
+    )
+    if restored is None:
+        raise engine_scriptstyle.Conflict("The original Figure archive could not be verified.")
+    execution_owner = restored.get("execution_owner")
+    observed_execution = ctx.svg_executions.get(execution_owner)
+    target = engine_atomicio.dumps_json(meta["layout_before"], indent=1)
+    result = engine_scriptstyle.commit(
+        store,
+        engine_scriptstyle.Change(
+            meta["script"],
+            layout.name,
+            now,
+            original,
+            layout.revision,
+            target,
+            working_doc_id=working_doc_id,
+            canvas_id=meta["canvas_id"],
+            panel_id=meta["panel_id"],
+        ),
+        require_idle=_require_script_idle,
+        autosave_path=_autosave_path,
+        metadata={
+            "layout_before": layout.doc,
+            "source_id": meta["source_id"],
+            "canvas_id": meta["canvas_id"],
+            "panel_id": meta["panel_id"],
+            "restores": meta["id"],
+        },
+    )
+    _admit_r_writeback_archive(ctx, restored["snapshot_ref"], observed_execution)
+    return result
 
 
 @app.post("/api/script-backups/restore")
@@ -17266,6 +17647,7 @@ def api_script_backups_restore():
     root = ctx.path
     body = request.get_json(force=True) or {}
     mode = str(body.get("mode") or "full")
+    style_layout = None
     try:
         _script_edit_binding()
         store = _script_store(ctx)
@@ -17285,30 +17667,54 @@ def api_script_backups_restore():
                     "脚本在这之后又被改过，请刷新后重新选择复原方式",
                     script=script,
                 )
-            if now == (meta.get("before") or {}).get("sha256"):
-                return jsonify({"ok": True, "script": script, "unchanged": True})
-            if now == (meta.get("after") or {}).get("sha256") or mode == "full":
-                new = original
-            elif mode == "undo_edits":
-                new = engine_scriptedit.undo_edits_of(current, meta)
-            else:
-                raise engine_scriptbackup.ScriptEditError(
-                    engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"
+            if meta.get("kind") == engine_scriptstyle.KIND:
+                if not _page_authenticated():
+                    raise engine_scriptbackup.ScriptEditError(
+                        engine_scriptedit.ERROR_NEEDS_UI, "Restore the source in Tavotto."
+                    )
+                result = _restore_style_backup(
+                    ctx, store, meta, original, now, mode, body.get("working_doc_id")
                 )
-            record = engine_scriptbackup.replace(
-                store,
-                script,
-                new,
-                kind="restore",
-                expect_before=now,
-                meta={"restores": meta.get("id"), "mode": mode},
-            )
+                record = result["backup"]
+                style_layout = {
+                    "name": meta["layout"],
+                    "revision": result["revision"],
+                    "working_revision": result["working_revision"],
+                }
+                engine_nativesession.REGISTRY.cancel_project(str(root), script=script)
+            elif now == (meta.get("before") or {}).get("sha256"):
+                return jsonify({"ok": True, "script": script, "unchanged": True})
+            else:
+                if now == (meta.get("after") or {}).get("sha256") or mode == "full":
+                    new = original
+                elif mode == "undo_edits":
+                    new = engine_scriptedit.undo_edits_of(current, meta)
+                else:
+                    raise engine_scriptbackup.ScriptEditError(
+                        engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"
+                    )
+                record = engine_scriptbackup.replace(
+                    store,
+                    script,
+                    new,
+                    kind="restore",
+                    expect_before=now,
+                    meta={"restores": meta.get("id"), "mode": mode},
+                )
     except engine_scriptbackup.ScriptEditError as exc:
         return _script_edit_error(exc)
+    except (OSError, engine_scriptstyle.Conflict, engine_layoutannotate.LayoutError) as exc:
+        return _style_change_error(exc)
     LOG.info("复原脚本: %s（%s）", script, mode)
     _after_script_edit(ctx, script)
     return jsonify(
-        {"ok": True, "script": script, "backup": record, "durable": record.get("durable", True)}
+        {
+            "ok": True,
+            "script": script,
+            "backup": record,
+            "durable": record.get("durable", True),
+            **({"layout": style_layout} if style_layout is not None else {}),
+        }
     )
 
 

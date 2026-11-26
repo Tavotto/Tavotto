@@ -36,10 +36,12 @@ import {
   usesFigureFrame,
 } from '@/lib/figureFrame'
 import { modKey } from '@/lib/utils'
+import { rememberLayoutRevision } from '@/lib/layoutRevision'
 import { captureTelemetry } from '@/lib/telemetry'
 import {
   engineInvalidate,
   engineRender,
+  fetchLayout,
   enginePreviewPngSnapshot,
   fetchScriptBackedEnabled,
   panelSrc,
@@ -86,8 +88,10 @@ import {
   activeProjectFile,
   adoptSlotBaseline,
   dropRecentEntry,
+  getWindowHold,
   markProjectFileDirty,
   readAutosaveDoc,
+  reloadFromDisk,
   saveNowWithResult,
   setProjectFile,
   useDocumentStore,
@@ -98,7 +102,7 @@ import {
 import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { deferWhileWindowHeld } from './documentRestore'
-import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
+import { captureSaveContext, reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
 import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './saveFailureActions'
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
@@ -990,6 +994,22 @@ export async function openLayoutDocument(
   afterSwitch()
   const s = useDocumentStore.getState()
   status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }), 'done')
+  return true
+}
+
+/** Install the exact committed version while its original, clean binding is still current. */
+export async function reloadEditedProjectLayout(
+  ctx: SaveContext, name: string, expected: string, workingRevision: string | null,
+): Promise<boolean> {
+  if (!ctx.pj || !workingRevision) return false
+  const { file, revision } = await fetchLayout(name, ctx.pj)
+  const canInstall = () => stillCurrent(ctx) && activeProjectFile()?.dirty === false && !getWindowHold()
+  if (file !== ctx.file || !file || revision !== expected || !canInstall()) return false
+  // The commit already updated autosave. Reload it directly so switching layouts
+  // cannot flush the previously open copy over that revision.
+  if (!(await reloadFromDisk({ keepMine: false, expectedRevision: workingRevision, canInstall }))) return false
+  rememberLayoutRevision(name, revision, ctx.pj)
+  setProjectFile({ projectId: ctx.pj, name, file, revision, dirty: false }, ctx.documentId)
   return true
 }
 

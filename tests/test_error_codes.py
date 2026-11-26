@@ -77,6 +77,7 @@ _CODE_REGISTRIES = (
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
+    "tavotto.engine.scriptstyle",
     "tavotto.engine.runconfig",
     "tavotto.tiffprobe",
     "tavotto.engine.texdiag",
@@ -409,6 +410,8 @@ USER_VISIBLE_CODES = {
     "script_edit_needs_ui": set(),
     "script_restore_conflict": set(),
     "script_restore_stale": {"script"},
+    "script_style_conflict": set(),
+    "script_style_pending": set(),
     "workdir_confirmation_required": set(),
     "explicit_python_unusable": set(),
     "project_python_unusable": set(),

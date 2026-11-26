@@ -12,6 +12,9 @@
 * `ai_bridge.revert`：「是不是 AI 改完的那一版」的判定到写回快照。
 * `ai_bridge.resume_figure_edit`：复核候选与项目基线、预留跨进程任务并登记续跑；锁序与 `run` 一致。
 * `scriptbackup.replace`：校验和 → 两处备份 → 替换（改写与复原共用）。
+* `scriptstyle.commit`：核对 R 源码、排版和工作副本，备份并提交写回。
+* `scriptstyle.recover`：按源码和排版的当前哈希恢复未完成的写回。
+* `app.api_native_ggplot2_start`：检查 R 源码恢复日志后启动对应脚本。
 * `app.api_script_edit_commit`：锁内复判 `script_busy` → 重算 → `scriptbackup.replace`。
 * `app.api_script_backups_restore`：锁内复判 `script_busy` → 算复原字节 → `scriptbackup.replace`。
 * `ai_figure_edit.commit`（TAF 改图，ADR 0138 Phase 3）：锁内核项目里的脚本仍是起跑时那一版 → `write_script` 写回
