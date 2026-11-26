@@ -159,6 +159,27 @@ def test_unchanged_content_is_not_rewritten_but_a_real_change_is(env, writer_on)
     assert out["state"] == "saved" and out["revision"] != first["revision"]
 
 
+def test_emptying_an_existing_working_copy_is_written_and_not_resurrected(env, writer_on):
+    """Codex #2277 P1：「空白不写」只管**新建**。删光最后一个对象后，已有的工作副本必须收到空文档，
+    否则 layout.json 停在删除之前，换电脑 / 挪走重开会把删掉的对象找回来。"""
+    client, project, h = env
+    first = _put(client, h, "d1", spec={}).get_json()["project_layout"]
+    layout = project / "tavottofile" / "排版一.tavotto" / "layout.json"
+    assert json.loads(layout.read_bytes())["canvases"][0]["objects"]
+    spec = {"name": first["name"], "base": first["revision"]}
+    out = _put(client, h, "d1", doc=_doc(objects=(), updated=5), spec=spec).get_json()[
+        "project_layout"
+    ]
+    assert out["state"] == "saved" and out["revision"] != first["revision"]
+    assert json.loads(layout.read_bytes())["canvases"][0]["objects"] == []
+    # 全新的本机（槽位与会话状态都没了）：候选就是这份空的工作副本，不会退回删除之前的内容
+    _slot("d1").unlink()
+    items = client.get("/api/layout-session/project-history", headers=h).get_json()["items"]
+    mine = [i for i in items if i["doc_id"] == "d1"]
+    assert len(mine) == 1 and mine[0]["objects"] == 0
+    assert mine[0]["work"]["revision"] == out["revision"]
+
+
 def test_empty_document_creates_nothing(env, writer_on):
     client, project, h = env
     out = _put(client, h, "d1", doc=_doc(objects=()), spec={}).get_json()["project_layout"]

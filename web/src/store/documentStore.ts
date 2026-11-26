@@ -1712,8 +1712,6 @@ const disk = createDiskWriter({
 /*  一行都不执行：不带 `project_write`、不起定时器。                            */
 /* -------------------------------------------------------------------------- */
 
-/** 每份文档上次「排进写项目的那一笔」时的用户编辑代次：写成之后据此判断途中又改过没有（项目里那份是否落后） */
-const projectWriteGen = new Map<string, number>()
 /** 冲突裁决悬而未决的文档 → 当时的基线（绑定的修订号，没有 = ''）：基线没变就不再带着它去撞 */
 const projectConflictBase = new Map<string, string>()
 /** 每份文档写进项目连着失败了几次（成功 / 只读 / 冲突清零；`skipped` 不算） */
@@ -1722,12 +1720,11 @@ const PROJECT_FAILURES_BEFORE_ERROR = 2
 let projectQuietTimer: number | undefined
 let projectMaxTimer: number | undefined
 
-function markProjectWriteScheduled(id: string): void {
+function markProjectWriteScheduled(): void {
   window.clearTimeout(projectQuietTimer)
   window.clearTimeout(projectMaxTimer)
   projectQuietTimer = undefined
   projectMaxTimer = undefined
-  projectWriteGen.set(id, editGenerationOf(id))
 }
 
 /** 编辑之后：停手 5 s 写一次；一直在改时第一次未写的编辑起算最长 30 s 写一次 */
@@ -1766,11 +1763,14 @@ export function isProjectConflictActive(
   return s.projectConflict?.docId === s.documentId && (s.projectFile?.revision ?? '') === s.projectConflict.base
 }
 
-function afterProjectLayout(id: string, pj: string | null, result: ProjectLayoutResult): void {
+function afterProjectLayout(id: string, pj: string | null, result: ProjectLayoutResult, gen?: number): void {
   if (result.state === 'busy' || result.state === 'failed' || result.state === 'refused') {
     const n = (projectWriteFailures.get(id) ?? 0) + 1
     projectWriteFailures.set(id, n)
-    if (n >= PROJECT_FAILURES_BEFORE_ERROR && useDocumentStore.getState().projectWriteFailedDoc !== id) {
+    // 项目里那份已经落后（绑定还在、且有没写进去的编辑）：不能再说「已保存」，不等第二次；
+    // 还没有绑定（从没写成过）时才容忍单次瞬时失败（顶栏本来就说「已存在本机」，没有谎）
+    const lagging = readProjectFile(id)?.dirty === true
+    if ((n >= PROJECT_FAILURES_BEFORE_ERROR || lagging) && useDocumentStore.getState().projectWriteFailedDoc !== id) {
       useDocumentStore.setState({ projectWriteFailedDoc: id })
     }
     return
@@ -1784,7 +1784,7 @@ function afterProjectLayout(id: string, pj: string | null, result: ProjectLayout
     // 写的途中被另存为改绑到了别的文件：新绑定是用户更晚的决定，这次的回执只属于旧文件
     if (current && current.file !== result.file) return
     if (pj === null) return
-    const behind = editGenerationOf(id) !== (projectWriteGen.get(id) ?? editGenerationOf(id))
+    const behind = gen !== undefined && editGenerationOf(id) !== gen
     setProjectFile(
       { projectId: pj, name: result.name, file: result.file, revision: result.revision, dirty: behind },
       id,
@@ -1851,8 +1851,10 @@ function flushAutosaveNow(allowEmpty: boolean, withProject: boolean): FlushResul
   const owner = projectOfDoc().id ?? currentProjectId()
   // 写进项目：开关开着、这份有归属项目、不是只读窗口才标；标了就把「项目里那份」的节奏计时清零（刚写）
   const project = withProject && projectWriteEnabled() && owner !== null && !getWindowHold()
-  if (project) markProjectWriteScheduled(state.documentId)
-  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner), project)
+  if (project) markProjectWriteScheduled()
+  // 编辑代次随**这一笔的快照**一起排队（回包按它自己的代次判断项目里那份是否落后）：共用一个 Map 的话，A 在写时排进 B，
+  // B 的代次会顶掉 A 的，A 成功后拿 B 的代次比，错把还落后的绑定判成最新
+  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner), project, editGenerationOf(state.documentId))
   if (!localOk) return 'error'
   const pj = projectOfDoc()
   const entry: RecentDoc = {

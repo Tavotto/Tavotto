@@ -21403,8 +21403,9 @@ def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dic
     ctx = _request_ctx()
     if ctx is None or _layout_session_owner() != engine_layoutsession.project_key(ctx.path):
         return {"state": "skipped"}
-    if not engine_projecthistory.doc_objects(body):
-        return {"state": "skipped"}  # 第一期的「空白排版不留东西」：没内容不建目录
+    # 第一期的「空白排版不留东西」只管**新建**工作副本：已有的工作副本必须收到空文档的更新（删光最后一个对象也是用户的编辑），
+    # 否则项目里的 layout.json 停在删除之前，换电脑 / 挪走重开会把删掉的对象找回来。是不是新建要等定位到目录才知道（下面锁里）
+    empty = not engine_projecthistory.doc_objects(body)
     store = project_layout_dir(ctx)
     if not os.access(ctx.path, os.W_OK):
         return {"state": "read_only"}
@@ -21435,6 +21436,8 @@ def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dic
         with _document_lock(target):
             located = engine_layoutdir.locate(store, stem)
             current = located.current_revision()
+            if current is None and empty:
+                return {"state": "skipped"}  # 新建：没内容不建目录
             if current is not None:
                 known = base
                 if known is None and located.manifest and located.manifest.get("doc_id") == doc_id:
@@ -22492,6 +22495,11 @@ def _history_item(doc_id: str, versions_dir: Path, key, ctx) -> dict | None:
     work = _working_copy(project_layout_dir(ctx), doc_id) if ctx is not None else None
     if node is None and work is None:
         return None  # 空时间线 / 只有空节点（旧版每次加载留下的空 `open`）：不进候选
+    if work is not None and node is not None and work["ts"] < node["ts"]:
+        work = None  # 节点反而更新（项目里那份还没来得及写）：照旧按节点
+    if work is not None:
+        # 工作副本是最新的：节点字段按它填，`vid` 为空（前端按 `work` 装）；删光对象之后的空副本同样以它为准
+        node = None
     if node is None:
         # 只有项目里的工作副本（还没有时间线节点）：节点字段按工作副本填，`vid` 为空（前端按 `work` 装）
         wdoc = work["doc"]
@@ -22561,7 +22569,7 @@ def _history_item(doc_id: str, versions_dir: Path, key, ctx) -> dict | None:
 
 
 def _working_copy(store: Path, doc_id: str) -> dict | None:
-    """项目里清单记着 `doc_id` 的工作副本：`{name, revision, ts, doc}`；没有 / 唯一性不成立 / 没内容 / 读不出回 None。只读。"""
+    """项目里清单记着 `doc_id` 的工作副本：`{name, revision, ts, doc}`；没有 / 唯一性不成立 / 读不出回 None（**内容为空也返回**：那是用户删光之后的最新状态）。只读。"""
     try:
         located = engine_layoutdir.find_by_doc_id(store, doc_id)
         if located is None or located.read_path is None:
@@ -22571,8 +22579,9 @@ def _working_copy(store: Path, doc_id: str) -> dict | None:
         ts = int(located.read_path.stat().st_mtime * 1000)
     except (OSError, ValueError):
         return None
-    if not isinstance(doc, dict) or not engine_projecthistory.doc_objects(doc):
+    if not isinstance(doc, dict):
         return None
+    # 空的也算：它就是用户删光之后的最新状态（比任何时间线节点都新），不能退回删除之前的节点
     return {
         "name": located.stem,
         "revision": engine_atomicio.revision_of(raw),
