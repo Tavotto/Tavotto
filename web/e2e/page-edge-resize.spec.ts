@@ -38,15 +38,35 @@ async function toLayout(page: Page, baseURL: string) {
 const sheetBox = (page: Page) => page.locator('[data-page-sheet]').first().boundingBox()
 const objBox = (page: Page) => page.locator('[data-object-id]').first().boundingBox()
 
+/**
+ * 在页面某条边的命中区上挑一个按下去的点：避开所有图（外扩 12 px 盖住选中把手）。
+ * 第二张图会被自动放到贴着页面右边的位置并处于选中态，它的东侧缩放把手正好压在右边中点上——
+ * 按中点按到的是把手，图被缩放而纸面没动（11-26 #2262 windows-exe-smoke chromium-en，截图「Scale 55% → 60%」）。
+ */
+async function edgeGrabPoint(page: Page, edge: 'r' | 'l' | 't' | 'b') {
+  const eb = (await page.locator(`[data-page-edge="${edge}"]`).boundingBox())!
+  const objs = await page.locator('[data-object-id]').evaluateAll((nodes) =>
+    nodes.map((n) => {
+      const r = n.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    }))
+  const vertical = edge === 'l' || edge === 'r'
+  const pad = 12
+  for (const f of [0.5, 0.2, 0.8, 0.1, 0.9]) {
+    const x = vertical ? eb.x + eb.width / 2 : eb.x + eb.width * f
+    const y = vertical ? eb.y + eb.height * f : eb.y + eb.height / 2
+    const covered = objs.some((o) => x > o.x - pad && x < o.x + o.width + pad && y > o.y - pad && y < o.y + o.height + pad)
+    if (!covered) return { x, y }
+  }
+  throw new Error(`页面${edge}边上找不到不压着图的点`)
+}
+
 test('拖右边改宽：纸面变宽、标注出现又消失、图不动', async ({ app, page }) => {
   const a = await app()
   await toLayout(page, a.baseURL)
   const s0 = (await sheetBox(page))!
   const o0 = (await objBox(page))!
-  const edge = page.locator('[data-page-edge="r"]')
-  const eb = (await edge.boundingBox())!
-  const x = eb.x + eb.width / 2
-  const y = eb.y + eb.height / 2
+  const { x, y } = await edgeGrabPoint(page, 'r')
   await page.mouse.move(x, y)
   await page.mouse.down()
   await page.mouse.move(x + 60, y, { steps: 6 })
@@ -64,9 +84,7 @@ test('拖左边：纸面向左长出去，图在屏幕上不动', async ({ app, 
   await toLayout(page, a.baseURL)
   const s0 = (await sheetBox(page))!
   const o0 = (await objBox(page))!
-  const eb = (await page.locator('[data-page-edge="l"]').boundingBox())!
-  const x = eb.x + eb.width / 2
-  const y = eb.y + eb.height / 2
+  const { x, y } = await edgeGrabPoint(page, 'l')
   await page.mouse.move(x, y)
   await page.mouse.down()
   await page.mouse.move(x - 50, y, { steps: 6 })
@@ -98,9 +116,7 @@ for (const [edge, axis] of [['r', 'x'], ['l', 'x'], ['b', 'y'], ['t', 'y']] as c
   test(`拖${{ r: '右', l: '左', b: '下', t: '上' }[edge]}边：尺寸数字在线中点、页面一侧，无框无底，不压标尺、不抖`, async ({ app, page }) => {
     const a = await app()
     await toLayout(page, a.baseURL)
-    const eb = (await page.locator(`[data-page-edge="${edge}"]`).boundingBox())!
-    const x = eb.x + eb.width / 2
-    const y = eb.y + eb.height / 2
+    const { x, y } = await edgeGrabPoint(page, edge)
     const sign = edge === 'r' || edge === 'b' ? 1 : -1
     await page.mouse.move(x, y)
     await page.mouse.down()
