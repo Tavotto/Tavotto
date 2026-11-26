@@ -35,7 +35,8 @@ import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { ApiError } from '@/lib/api'
+import { ApiError, type AiVendor } from '@/lib/api'
+import { useSiwcLogin } from '@/components/settings/connectAi/useSiwcLogin'
 import { refreshProjectNow } from '@/store/liveSync'
 import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { deferWhileWindowHeld } from '@/store/documentRestore'
@@ -62,7 +63,7 @@ import { Tip } from '../ui/Tooltip'
 import { TaskHistory, TaskHistoryPopover } from './TaskHistory'
 import { BrandLogo } from '@/components/settings/BrandLogo'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { ConnectionModelPicker, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
+import { ConnectionModelList, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { currentProjectId } from '@/lib/session'
 import { holdAssistantTabForNextSelection } from '@/hooks/useSelectionRouting'
@@ -478,6 +479,8 @@ function AssistantPanelBody() {
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && !hasUsableAi(caps)
+  // 老用户升级（维护者 2026-11-26 选 a）：本机装了 Codex、ChatGPT 登录默认开、还没用它登录 → 这一行的按钮直接是「Continue with ChatGPT」
+  const siwcUpgradeVendor = noAgent ? siwcUpgradeVendorOf(caps) : undefined
   // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
   // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
   const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && !planBusy && ledgerState === 'ok'
@@ -993,7 +996,8 @@ function AssistantPanelBody() {
               {ai('panel.ledgerUnreadable')}
             </Notice>
           )}
-          {noAgent && (
+          {noAgent && siwcUpgradeVendor && <SiwcUpgradeNotice vendor={siwcUpgradeVendor} />}
+          {noAgent && !siwcUpgradeVendor && (
             // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步
             <Notice
               tone="neutral"
@@ -1451,14 +1455,16 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
               只有一项可选时不摆一个选不动的选择器（旧执行器视图；连接视图的选择器底部有「连接更多 AI…」，要常驻）：**但那一项写的是什么仍要看得见**，
               退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块不出现——执行器是谁，
               工具行的胶囊上已经写着了 */}
-          {optionCount > 1 || view ? (
+          {view ? (
+            // 连接视图：「AI 与模型」是一个列表（与设置里的连接列表同一种样子），不再「下拉里套二级菜单」
+            <div data-ai-agent-model="select" className="flex min-w-0 flex-col gap-1">
+              <span className="text-xs text-ink-2">{ai('panel.aiModel')}</span>
+              <ConnectionModelList connections={conns} active={active ?? ''} model={model} />
+            </div>
+          ) : optionCount > 1 ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
-              {view ? (
-                <ConnectionModelPicker connections={conns} active={active ?? ''} model={model} />
-              ) : (
-                <ModelPicker usable={usable} active={active ?? ''} model={model} />
-              )}
+              <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
+              <ModelPicker usable={usable} active={active ?? ''} model={model} />
             </div>
           ) : (
             cur &&
@@ -1527,5 +1533,31 @@ function Breadcrumb({
         </span>
       ))}
     </p>
+  )
+}
+
+
+/**
+ * 「还没有连接 AI」这一行在老用户升级时的样子（ADR 0209 §六，维护者 2026-11-26 选 a）：本机装着 Codex（原来多半靠它的
+ * ChatGPT 登录）、ChatGPT 登录默认开（Codex 登录随之不再列出）、还没用 ChatGPT 登录过 → 同一句话，按钮直接是
+ * 「Continue with ChatGPT」，登录的等待提示 / 失败选择题（含「改用 Codex 登录」）就在这一行里，与「连接 AI」里同一个 `useSiwcLogin`。
+ * 不加说明文字。
+ */
+function siwcUpgradeVendorOf(caps: ReturnType<typeof useAiStore.getState>['caps']): AiVendor | undefined {
+  if (!caps || !hasConnectionView(caps)) return undefined
+  if (!caps.agents.find((a) => a.id === 'codex')?.installed) return undefined
+  return (caps.vendors ?? []).find((v) => (v.methods ?? []).some((m) => m.kind === 'siwc' && m.available !== false))
+}
+
+function SiwcUpgradeNotice({ vendor }: { vendor: AiVendor }) {
+  const method = (vendor.methods ?? []).find((m) => m.kind === 'siwc')!
+  const flow = useSiwcLogin(vendor, method, () => undefined, { quiet: true })
+  // 每个状态只突出一件事：没登录 = 一颗按钮；等浏览器 = 「取消」+ 一行灰字；失败 = 按钮 + 一行灰字（原因 · 改用 Codex 登录）。
+  // 不套说明条、不画图标、不加字（维护者 11-26：之前那版「杂乱、不简洁」）
+  return (
+    <div data-ai-no-agent data-ai-siwc-upgrade className="mb-3 flex flex-col items-center gap-1.5 px-2 pt-1 text-center">
+      {flow.button}
+      {flow.hint}
+    </div>
   )
 }

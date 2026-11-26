@@ -4,6 +4,7 @@ import path from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, selectCanvasFigure, test, waitForFigureEdit, type RunningApp } from './fixtures'
 
+// 假 codex 当订阅登录（sub:codex）：SIWC 默认开后 Codex 登录被隐藏，只有 `TAVOTTO_EXPERIMENTAL_SIWC=0` 时还在（ADR 0209 §六）
 /**
  * 助手草稿与提交可靠性的黄金路径（ADR 0132，真浏览器 + 真后端）。
  *
@@ -36,7 +37,7 @@ async function startWithAgent(
   app: (o?: { env?: Record<string, string> }) => Promise<RunningApp>,
   editThenFail = false,
 ) {
-  return app({ env: { PATH: `${fakeCodexDir(editThenFail)}${path.delimiter}${process.env.PATH ?? ''}` } })
+  return app({ env: { PATH: `${fakeCodexDir(editThenFail)}${path.delimiter}${process.env.PATH ?? ''}`, TAVOTTO_EXPERIMENTAL_SIWC: '0' } })
 }
 
 /**

@@ -660,6 +660,7 @@ export default interface Resources {
       "emptyTitle": "想怎么改这张图？",
       "finishing": "正在结束上一次修改…",
       "inputAria": "描述要怎么改这张图",
+      "kindSubscription": "订阅",
       "ledgerFailed": "未能确认本机任务状态，这条指令尚未发出。请稍后重试。",
       "ledgerUnreadable": "正在确认上一条指令的状态，请稍候片刻再发。",
       "noAi": "还没有连接 AI。",
@@ -3119,6 +3120,7 @@ export default interface Resources {
         "disconnectTitle": "断开 {{name}}？",
         "err": {
           "network": "连不上服务商。",
+          "planUsageDisabled": "未允许使用订阅额度",
           "timeout": "连接超时。",
           "unauthorized": "Key 无效或已过期。"
         },
@@ -3161,6 +3163,20 @@ export default interface Resources {
         "saveKey": "保存",
         "savedRefreshFailed": "已保存，但没能刷新状态。",
         "signIn": "登录",
+        "siwc": {
+          "browserHint": "在浏览器里完成登录。",
+          "cancel": "取消",
+          "continue": "Continue with ChatGPT",
+          "disconnectBody": "会退出这个 ChatGPT 账号，并撤销 {{product}} 的授权。",
+          "expired": "登录超时了。",
+          "failed": "登录没有完成。",
+          "openAgain": "重新打开",
+          "planDisabled": "登录时没有允许使用订阅额度。",
+          "revokeUnconfirmed": "已退出，但没能确认撤销授权，可以到 ChatGPT 设置里断开 {{product}}。",
+          "signOut": "退出登录",
+          "signOutTitle": "退出 ChatGPT 账号？",
+          "useCodex": "改用 Codex 登录"
+        },
         "starter": {
           "key": "没有订阅：填一个 API Key",
           "other": "其他方式",

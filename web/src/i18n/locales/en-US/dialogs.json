@@ -2157,7 +2157,8 @@
       "err": {
         "unauthorized": "The key is invalid or expired.",
         "network": "Can’t reach the provider.",
-        "timeout": "The connection timed out."
+        "timeout": "The connection timed out.",
+        "planUsageDisabled": "Plan usage not allowed"
       },
       "checkConnection": "Check connection",
       "checking": "Checking",
@@ -2211,6 +2212,20 @@
         "reinstall": "Reinstall",
         "enable": "Turn on",
         "installingPct": "Installing… {{pct}}%"
+      },
+      "siwc": {
+        "continue": "Continue with ChatGPT",
+        "cancel": "Cancel",
+        "browserHint": "Finish signing in in your browser.",
+        "openAgain": "Open again",
+        "failed": "Sign-in didn’t finish.",
+        "expired": "Sign-in timed out.",
+        "planDisabled": "Plan usage wasn’t allowed during sign-in.",
+        "disconnectBody": "This signs out of this ChatGPT account and revokes {{product}}’s access.",
+        "revokeUnconfirmed": "Signed out, but revoking access couldn’t be confirmed. You can disconnect {{product}} in ChatGPT settings.",
+        "signOut": "Sign out",
+        "signOutTitle": "Sign out of ChatGPT?",
+        "useCodex": "Use Codex sign-in instead"
       }
     },
     "hosts": {

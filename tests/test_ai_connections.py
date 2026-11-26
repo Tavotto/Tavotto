@@ -69,6 +69,9 @@ def _world(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.mktemp("codex-home")))
     monkeypatch.delenv(ai_connections.ENV_BUILTIN, raising=False)
     monkeypatch.delenv("TAVOTTO_OAUTH_CLIENT_ID_MINIMAX", raising=False)
+    # 本文件守的是 SIWC 关着（`TAVOTTO_EXPERIMENTAL_SIWC=0`，仍受支持的设置）时的连接视图：Codex 登录 / sub:codex 那一套。
+    # SIWC 默认开（ADR 0209 §六）之后的视图在 tests/test_siwc_connection.py
+    monkeypatch.setenv("TAVOTTO_EXPERIMENTAL_SIWC", "0")
 
     def fake_fetch(base_url, api_key):
         state["fetched"].append((base_url, api_key))
