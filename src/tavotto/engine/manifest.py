@@ -3164,6 +3164,7 @@ def _bar_series_fields(grp) -> list[dict]:
     if r0 is None:
         return []
     lab = str(grp.container.get_label() or "") if grp.container is not None else ""
+    horizontal = getattr(grp.container, "orientation", None) == "horizontal"
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
         *bar_paint_fields(
@@ -3176,6 +3177,7 @@ def _bar_series_fields(grp) -> list[dict]:
         _hatch_field(r0),
         *_hatch_style_fields(r0),
         bar_width_field(r0.get_width()),
+        *([bar_width_field(r0.get_height(), horizontal=True)] if horizontal else []),
         opacity_field(1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(r0.get_visible())},
         {

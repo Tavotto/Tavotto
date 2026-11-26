@@ -305,6 +305,8 @@ class GgplotTarget:
             fields = bar_paint_fields(values)
             if "bar_width" in values:
                 fields.append(bar_width_field(values["bar_width"]))
+            if "bar_thickness" in values:
+                fields.append(bar_width_field(values["bar_thickness"], horizontal=True))
             if "alpha" in values:
                 fields.append(opacity_field(values["alpha"]))
             return fields

@@ -807,6 +807,7 @@
     "axline_width": "Axis line width",
     "azim": "Azimuth",
     "bar_width": "Bar width",
+    "bar_thickness": "Bar thickness",
     "bbox_alpha": "Background opacity",
     "bbox_edgecolor": "Border colour",
     "bbox_facecolor": "Background colour",

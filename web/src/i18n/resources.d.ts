@@ -6277,6 +6277,7 @@ export default interface Resources {
       "axline_color": "轴线颜色",
       "axline_width": "轴线线宽",
       "azim": "方位角",
+      "bar_thickness": "横向柱厚度",
       "bar_width": "柱宽",
       "bbox_alpha": "背景不透明度",
       "bbox_edgecolor": "边框色",

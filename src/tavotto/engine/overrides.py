@@ -3304,6 +3304,20 @@ def _bar_width_set(rect: Rectangle, v) -> None:
     rect.set_width(float(v))
 
 
+def _bar_thickness_get(rect: Rectangle):
+    return (rect.get_y(), rect.get_height())
+
+
+def _bar_thickness_set(rect: Rectangle, value) -> None:
+    if isinstance(value, (tuple, list)):
+        rect.set_y(float(value[0]))
+        rect.set_height(float(value[1]))
+        return
+    centre = rect.get_y() + rect.get_height() / 2
+    rect.set_y(centre - float(value) / 2)
+    rect.set_height(float(value))
+
+
 def _eb_handler(getter_each, setter_each, members_fn=None):
     """误差棒：作用于 members()（或指定子集），原值按成员列表还原。"""
 
@@ -5732,6 +5746,7 @@ for _prop, _g1, _s1 in [
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
     ("bar_width", _bar_width_get, _bar_width_set),
+    ("bar_thickness", _bar_thickness_get, _bar_thickness_set),
 ]:
     _h, _r = _bar_handler(_g1, _s1)
     HANDLERS[("bar_series", _prop)] = _h

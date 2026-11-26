@@ -1030,9 +1030,19 @@ stopifnot(length(adapter$render_ggplot(state, boundaries)) == 1L,
 horizontal <- ggplot2::ggplot(data, ggplot2::aes(height, cat)) +
   ggplot2::geom_col(fill = "#226688", linetype = 0)
 h <- adapter$capture_ggplot(horizontal, frame)$state
-stopifnot(identical(names(h$bar_targets[[first]]$values), c("facecolor", "alpha")),
+h_target <- h$bar_targets[[first]]
+h_original <- adapter$ggplot_bar_rect(h$table$grobs[[h_target$slot]], h_target)
+h_edit <- setNames(list(list(bar_thickness = .4)), first)
+h_scene <- adapter$ggplot_table_for(h, h_edit)
+h_rect <- adapter$ggplot_bar_rect(h_scene$table$grobs[[h_target$slot]], h_target)
+ycentre <- function(rect) as.numeric(rect$y) - as.numeric(rect$height) / 2
+stopifnot(identical(names(h_target$values), c("facecolor", "bar_thickness", "alpha")),
+          isTRUE(all.equal(ycentre(h_rect), ycentre(h_original))),
+          isTRUE(all.equal(as.numeric(h_rect$height) / as.numeric(h_original$height), rep(.4 / .9, 4))),
+          identical(h_rect[c("x", "width", "gp")], h_original[c("x", "width", "gp")]),
           grepl("fill-opacity: 0.75", adapter$render_ggplot(h, setNames(list(list(alpha = .75)), first)),
-                fixed = TRUE))
+                fixed = TRUE),
+          identical(adapter$render_ggplot(h), adapter$capture_ggplot(horizontal, frame)$svg))
 mapped <- ggplot2::ggplot(data, ggplot2::aes(cat, height, fill = group)) + ggplot2::geom_col()
 for (mapped_plot in list(mapped, mapped + ggplot2::guides(fill = "none"))) {
   mapped_capture <- adapter$capture_ggplot(mapped_plot, frame)
@@ -1105,6 +1115,24 @@ stopifnot(isTRUE(all.equal(as.numeric(xy$width),
           identical(dodged_grob(list()), xy))
 zoomin[[first]]$bar_width <- 2
 stopifnot(inherits(try(dodged_grob(zoomin), silent = TRUE), "try-error"))
+
+horizontal_dodged <- ggplot2::ggplot(dodged, ggplot2::aes(y, x, group = group)) +
+  ggplot2::geom_col(width = .8, position = "dodge", orientation = "y")
+h_dodge <- adapter$capture_ggplot(horizontal_dodged, frame)$state
+h_dodge_target <- h_dodge$bar_targets[[first]]
+h_zoom <- list(axes_0 = list(ylim = c(.5, 7.5), yscale = "log", invert_y = TRUE))
+h_zoom_thick <- h_zoom
+h_zoom_thick[[first]] <- list(bar_thickness = .25)
+h_dodge_grob <- function(patches) adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  scene <- adapter$ggplot_table_for(h_dodge, patches)
+  adapter$ggplot_bar_rect(scene$table$grobs[[h_dodge_target$slot]], scene$bar_targets[[first]])
+})$value
+h_before <- h_dodge_grob(h_zoom)
+h_after <- h_dodge_grob(h_zoom_thick)
+stopifnot(isTRUE(all.equal(as.numeric(h_after$y - h_after$height), left)),
+          isTRUE(all.equal(as.numeric(h_after$y), right)),
+          identical(h_before[c("x", "width", "gp")], h_after[c("x", "width", "gp")]))
 """
 
 ERRORBAR_PROBE = r"""

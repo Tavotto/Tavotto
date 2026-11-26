@@ -786,6 +786,7 @@
     "axline_width": "轴线线宽",
     "azim": "方位角",
     "bar_width": "柱宽",
+    "bar_thickness": "横向柱厚度",
     "bbox_alpha": "背景不透明度",
     "bbox_edgecolor": "边框色",
     "bbox_facecolor": "背景色",

@@ -235,9 +235,9 @@ def bar_paint_fields(values: dict) -> list[dict]:
     return fields
 
 
-def bar_width_field(width: float) -> dict:
+def bar_width_field(width: float, *, horizontal: bool = False) -> dict:
     return {
-        "prop": "bar_width",
+        "prop": "bar_thickness" if horizontal else "bar_width",
         "type": "number",
         "value": round(float(width), 3),
         "min": 0.01,

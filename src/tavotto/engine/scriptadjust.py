@@ -304,6 +304,7 @@ WRITES: dict[tuple[str, str], str | None] = {
     ("bar_series", "hatch_linewidth"): "_with_legend({o}, lambda _a: _a.set_hatch_linewidth({v}))",
     ("bar_series", "hatchcolor"): "_with_legend({o}, lambda _a: _a.set_hatchcolor({v}))",
     ("bar_series", "bar_width"): "{o}.set_bar_width({v})",
+    ("bar_series", "bar_thickness"): "{o}.set_bar_thickness({v})",
     ("bar_series", "label"): "{o}.set_label({v})",
     # 单根柱：窄条目，盖住它所在系列的同名广播键
     **{("bar", p): _SHAPE[p] for p in ("visible",)},
@@ -1124,6 +1125,12 @@ class _Group:
             centre = r.get_x() + r.get_width() / 2
             r.set_x(centre - width / 2)
             r.set_width(width)
+
+    def set_bar_thickness(self, thickness):
+        for r in self.members:
+            centre = r.get_y() + r.get_height() / 2
+            r.set_y(centre - thickness / 2)
+            r.set_height(thickness)
 
     def __getattr__(self, name):
         def call(*args, **kwargs):

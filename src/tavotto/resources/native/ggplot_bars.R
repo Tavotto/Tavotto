@@ -1,20 +1,26 @@
 # The rectangle grob holds the computed stack/dodge arrangement. Recover bar
 # centres in data units and check both ends against what the native geom drew.
 ggplot_bar_span <- function(layout, data, rect) {
-  ends <- c("xmin", "xmax")
-  if (!identical(unique(data$flipped_aes), FALSE) || !all(ends %in% names(data)) ||
+  flipped <- unique(data$flipped_aes)
+  if (length(flipped) != 1L || is.na(flipped) ||
       !identical(as.list(layout$coord)$transform, as.list(ggplot2::CoordCartesian)$transform)) {
     return(NULL)
   }
+  axis <- if (flipped) "y" else "x"
+  ends <- paste0(axis, c("min", "max"))
+  origin_key <- ends[[if (flipped) 2L else 1L]]
+  if (!all(ends %in% names(data))) return(NULL)
   panel <- layout$panel_params[[1L]]
   project <- layout$coord$transform(data[ends], panel)
-  lower <- as.numeric(data$xmin)
-  upper <- as.numeric(data$xmax)
-  if (!isTRUE(all.equal(as.numeric(project$xmin), as.numeric(rect$x), tolerance = 1e-12)) ||
-      !isTRUE(all.equal(as.numeric(project$xmax - project$xmin),
-                        as.numeric(rect$width), tolerance = 1e-12))) return(NULL)
-  if (!isTRUE(panel$x$scale_is_discrete)) {
-    transform <- panel$x$scale$get_transformation()
+  lower <- as.numeric(data[[ends[[1L]]]])
+  upper <- as.numeric(data[[ends[[2L]]]])
+  origin <- project[[origin_key]]
+  dimension <- if (flipped) "height" else "width"
+  if (!isTRUE(all.equal(as.numeric(origin), as.numeric(rect[[axis]]), tolerance = 1e-12)) ||
+      !isTRUE(all.equal(as.numeric(project[[ends[[2L]]]] - project[[ends[[1L]]]]),
+                        as.numeric(rect[[dimension]]), tolerance = 1e-12))) return(NULL)
+  if (!isTRUE(panel[[axis]]$scale_is_discrete)) {
+    transform <- panel[[axis]]$scale$get_transformation()
     if (!transform$name %in% names(ggplot_axis_modes)) return(NULL)
     lower <- transform$inverse(lower)
     upper <- transform$inverse(upper)
@@ -22,7 +28,9 @@ ggplot_bar_span <- function(layout, data, rect) {
   width <- upper - lower
   centre <- lower + width / 2
   if (any(!is.finite(width) | width <= 0 | !is.finite(centre))) return(NULL)
-  list(centre = centre, width = width[[1L]],
+  list(centre = centre, width = width[[1L]], axis = axis, ends = ends, origin_key = origin_key,
+       dimension = dimension,
+       prop = if (flipped) "bar_thickness" else "bar_width",
        uniform = all(abs(width - width[[1L]]) <= sqrt(.Machine$double.eps) * width[[1L]]))
 }
 
@@ -74,15 +82,14 @@ ggplot_bar_targets <- function(built, table, layer_grobs) {
     visible_alpha <- visible_alpha[visible_alpha > 0]
     if (!length(visible_alpha)) next
     span <- ggplot_bar_span(built$layout, data, rect)
+    size <- if (is.null(span)) list() else stats::setNames(list(span$width), span$prop)
     fields <- if (fixed && !is.null(face) && !is.null(edge)) {
-      list(
+      c(list(
         facecolor = face$rgb,
         edgecolor = if (outline) edge$rgb,
-        linewidth = if (outline) width,
-        bar_width = span$width,
-        alpha = if (length(visible_alpha) == 1L) visible_alpha
-      )
-    } else if (isTRUE(span$uniform)) list(bar_width = span$width)
+        linewidth = if (outline) width
+      ), size, list(alpha = if (length(visible_alpha) == 1L) visible_alpha))
+    } else if (isTRUE(span$uniform)) size
     if (!length(fields)) next
     fields <- Filter(Negate(is.null), fields)
     gid <- paste0("layer.", index, ".bars")
@@ -90,7 +97,7 @@ ggplot_bar_targets <- function(built, table, layer_grobs) {
     if (precise) remaining_paths <- remaining_paths - count
     targets[[gid]] <- list(
       slot = slot, child = child, index = index, count = count, precise = precise,
-      face = face, edge = edge, outline = outline, values = fields, centre = span$centre,
+      face = face, edge = edge, outline = outline, values = fields, span = span,
       clip = identical(built$layout$coord$clip, "on"),
       context = rlang::hash(list(kind, data, rect$gp))
     )
@@ -116,7 +123,7 @@ ggplot_bar_values <- function(target, edit) {
         !is.na(value) && (value == "none" || grepl("^#[0-9A-Fa-f]{6}$", value)),
       linewidth = is.numeric(value) && length(value) == 1L && is.finite(value) &&
         value >= 0 && value <= 5,
-      bar_width = is_positive_ggplot_number(value),
+      bar_width = , bar_thickness = is_positive_ggplot_number(value),
       alpha = is.numeric(value) && length(value) == 1L && is.finite(value) &&
         value >= 0 && value <= 1,
       FALSE
@@ -127,12 +134,12 @@ ggplot_bar_values <- function(target, edit) {
   values
 }
 
-ggplot_edit_bar_width <- function(rect, centres, width, layout) {
+ggplot_edit_bar_span <- function(rect, span, width, layout) {
   panel <- layout$panel_params[[1L]]
-  lower <- centres - width / 2
-  upper <- centres + width / 2
-  if (!isTRUE(panel$x$scale_is_discrete)) {
-    transform <- panel$x$scale$get_transformation()
+  lower <- span$centre - width / 2
+  upper <- span$centre + width / 2
+  if (!isTRUE(panel[[span$axis]]$scale_is_discrete)) {
+    transform <- panel[[span$axis]]$scale$get_transformation()
     if (identical(transform$name, "log-10") && any(lower <= 0)) {
       stop("The native R bar width would cross zero on a logarithmic axis.")
     }
@@ -142,14 +149,15 @@ ggplot_edit_bar_width <- function(rect, centres, width, layout) {
   if (any(!is.finite(lower) | !is.finite(upper) | upper <= lower)) {
     stop("The native R bar width cannot be represented at the captured positions.")
   }
-  project <- layout$coord$transform(data.frame(xmin = lower, xmax = upper), panel)
-  x <- as.numeric(project$xmin)
-  span <- as.numeric(project$xmax - project$xmin)
-  if (any(!is.finite(x) | !is.finite(span) | span == 0)) {
+  ends <- stats::setNames(data.frame(lower, upper), span$ends)
+  projected <- layout$coord$transform(ends, panel)
+  origin <- as.numeric(projected[[span$origin_key]])
+  dimension <- as.numeric(projected[[span$ends[[2L]]]] - projected[[span$ends[[1L]]]])
+  if (any(!is.finite(origin) | !is.finite(dimension) | dimension == 0)) {
     stop("The native R bar width cannot be represented in the current view.")
   }
-  rect$x <- grid::unit(x, "native")
-  rect$width <- grid::unit(span, "native")
+  rect[[span$axis]] <- grid::unit(origin, "native")
+  rect[[span$dimension]] <- grid::unit(dimension, "native")
   rect
 }
 
@@ -157,8 +165,8 @@ ggplot_edit_bars <- function(table, target, edit, layout) {
   values <- ggplot_bar_values(target, edit)
   panel <- table$grobs[[target$slot]]
   rect <- ggplot_bar_rect(panel, target)
-  if (!is.null(edit$bar_width)) {
-    rect <- ggplot_edit_bar_width(rect, target$centre, values$bar_width, layout)
+  if (!is.null(target$span) && !is.null(edit[[target$span$prop]])) {
+    rect <- ggplot_edit_bar_span(rect, target$span, values[[target$span$prop]], layout)
   }
   if (!is.null(edit$linewidth)) rect$gp$lwd <- values$linewidth / ggplot_lwd_pt
   if (!is.null(edit$facecolor) || !is.null(edit$alpha)) {

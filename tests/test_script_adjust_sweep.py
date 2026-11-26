@@ -42,6 +42,7 @@ _DEDICATED: dict[tuple[str, str], str] = {
     ("ticks", "fontfamily"): "test_font_edits_replay_identically",
     ("axes", "invert_x"): "test_inverted_axes_replay_identically",
     ("axes", "invert_y"): "test_inverted_axes_replay_identically",
+    ("bar_series", "bar_thickness"): "test_horizontal_bar_thickness_replays_identically",
     # 改名不动像素也不动几何（脚本的图例在 savefig 之前就建好了），整图扫描对它是隐形的：变异实测写成常量仍然绿
     **{
         (cls, "label"): "test_renames_reach_the_objects"

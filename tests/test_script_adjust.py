@@ -1266,6 +1266,47 @@ def test_series_edits_combine_like_the_editor(series_project, patches):
     assert _script_output(body)["script_report"]["written"] == len(patches)
 
 
+@real_worker
+def test_horizontal_bar_thickness_replays_identically(tmp_path, monkeypatch):
+    script = """\
+import matplotlib.pyplot as plt
+
+def main():
+    fig, ax = plt.subplots()
+    ax.barh([0, 1, 2], [3, 6, 4], height=.4, color="#226688")
+    ax.set(xlim=(0, 10), ylim=(-.5, 2.5))
+    fig.savefig("Fig1.pdf")
+
+if __name__ == "__main__":
+    main()
+"""
+    m, figs = _open_project(tmp_path, monkeypatch, script)
+    try:
+        body = _export(m.app.test_client(), [{"gid": _BARS, "prop": "bar_thickness", "value": 0.7}])
+        assert body["status"] == "done", body
+        assert _script_output(body)["script_report"]["written"] == 1
+        out = Path(body["export_dir"])
+        pdf = out / next(item["name"] for item in body["outputs"] if item["format"] == "pdf")
+
+        def bars(path):
+            colour = pytest.approx((0x22 / 255, 0x66 / 255, 0x88 / 255), abs=0.002)
+            with pymupdf.open(path) as doc:
+                return sorted(
+                    (item["rect"] for item in doc[0].get_drawings() if item["fill"] == colour),
+                    key=lambda rect: rect.y0,
+                )
+
+        before, after = bars(figs / "Fig1.pdf"), bars(pdf)
+        assert len(before) == len(after) == 3
+        for original, thicker in zip(before, after, strict=True):
+            assert (thicker.x0, thicker.x1) == pytest.approx((original.x0, original.x1))
+            assert thicker.y0 + thicker.y1 == pytest.approx(original.y0 + original.y1)
+            assert thicker.height / original.height == pytest.approx(0.7 / 0.4, abs=0.001)
+        assert (figs / "fig1.py").read_text(encoding="utf-8") == script
+    finally:
+        _close_project(m, figs)
+
+
 _TITLE = "axes_0.title"
 
 
