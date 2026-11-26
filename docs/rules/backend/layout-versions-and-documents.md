@@ -245,6 +245,12 @@ order: 200
   ⑦ 守卫：`<名>.tavotto` 目录 / `layout.json` / 清单是链接 → 400 `layout_outside_project`；目录名只差大小写 / Unicode 形式 → 409
   `layout_name_collision`；清单容器版本比本构建新 → 只读（409 `layout_dir_too_new`）；Windows 保留名 / 末尾点或空格 / 超长 / 同名普通文件占着
   目录名 → 退回 `<名>.json`。留底的只读位只在 POSIX 设（Windows 上只读属性会让整夹删除失败）。
+- **自动保存写进项目（ADR 0211 第二期 PR 2，开关后面）**：`PUT /api/autosave/<id>?project_write={"name","base"}` 在槽位（本机崩溃缓冲）**写成之后**、
+  锁外调 `app._autosave_into_project`（文档锁不可重入，条带可能相同）。只有前端明说要写、开关开着、开着项目且归属是它、文档有内容（空白排版不建目录）时才写，
+  其余响应里没有 `project_layout`（与改造前逐字相同）。结局 `saved` / `external_change`（不覆盖、带 `revision` 与摘要）/ `read_only` / `busy`（瞬时失败，已退避重试，**不判只读**）/
+  `skipped` / `refused` / `failed`。判只读与瞬时在 `layoutdir.classify_write_failure`（POSIX：`EROFS` / `EACCES` / `EPERM` = 只读；Windows：`EACCES` / `EBUSY` / winerror 5·32·33 = 瞬时，19 = 只读）；
+  暂存目录 `mkdir` 直接抛的 `PermissionError` 也要分档。冲突基线：绑定的修订号；本机绑定丢了（挪走）则对清单 `doc_id` 且清单 `layout_revision` 提示对得上才算「还是我写的」。
+  `project_status().autosave_into_project` 告诉前端开关；候选 `project-history` 带 `work`（`find_by_doc_id` 唯一才认，两份目录记着同一个 docId = 不猜）。
 - **写前判冲突读修订号用 `atomicio.existing_revision()`，不用 `content_revision()`**（#674 评审 P1）：
   后者把「不存在」与「读不出」（mode 000、被别的程序独占）揉成一个 `None`，而 `_revision_conflict`
   对 `None` 的解释是「被删了，放行重建」——一份读不出却换得掉的文件会被闭眼整份覆盖。

@@ -672,7 +672,8 @@ def _run_update_check(tmp_path, env_extra, *args, budget=_RELAXED_BUDGET):
 def test_explicit_entry_point_json(tmp_path, serve_manifest):
     proc = _run_update_check(
         tmp_path,
-        {"TAVOTTO_UPDATE_URL": serve_manifest(manifest("1.0.0"))},
+        # 清单版本要**严格高于**产品版本才是 available；写死 "1.0.0" 在版本号到 1.0.0 时就不成立了
+        {"TAVOTTO_UPDATE_URL": serve_manifest(manifest("99.0.0"))},
         "--json",
         "--force",
     )
@@ -680,9 +681,9 @@ def test_explicit_entry_point_json(tmp_path, serve_manifest):
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     # **两条分开写**：`assert A and B` 时 pytest 只报左边那个合取项，于是失败
     # 信息永远是 `assert ('unknown' == 'available')`，看不出 latest_version 是
-    # None（问不到）还是 "1.0.0"（问到了但版本号解不出）——而这两种成因的修法
+    # None（问不到）还是 "99.0.0"（问到了但版本号解不出）——而这两种成因的修法
     # 完全不同。失败信息本身也是断言。
-    assert out["latest_version"] == "1.0.0", f"清单没取到或解错了: {out}"
+    assert out["latest_version"] == "99.0.0", f"清单没取到或解错了: {out}"
     assert out["status"] == "available", f"取到了清单但状态不对: {out}"
 
 

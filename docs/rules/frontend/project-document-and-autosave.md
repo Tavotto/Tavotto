@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/artifactValidation.test.ts`、`store/documentStore.test.ts`、`store/panelSourceSync.test.ts`、`hooks/useEngineSync.test.ts`、`lib/projectDocs.test.ts`、`store/projectDocOwnership.test.ts`、`e2e/cross-tab-paste.spec.ts`、`lib/autosave/diskWriter.test.ts`、`lib/timelineCheckpoint.test.ts`、`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`store/recovery.acceptance.test.ts`、`lib/recoveryCandidates.test.ts`、`store/projectHistoryRestore.test.ts`、`e2e/project-history-restore.spec.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/artifactValidation.test.ts`、`store/documentStore.test.ts`、`store/panelSourceSync.test.ts`、`hooks/useEngineSync.test.ts`、`lib/projectDocs.test.ts`、`store/projectDocOwnership.test.ts`、`e2e/cross-tab-paste.spec.ts`、`lib/autosave/diskWriter.test.ts`、`lib/timelineCheckpoint.test.ts`、`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`store/recovery.acceptance.test.ts`、`lib/recoveryCandidates.test.ts`、`store/projectHistoryRestore.test.ts`、`e2e/project-history-restore.spec.ts`、`store/autosaveIntoProject.test.ts`、`e2e/autosave-into-project.spec.ts`
 > `web/AGENTS.md`「改到」压缩前原文（2026-10-23）：`lib/session.ts`、`types/document.ts`、`documentStore` 的 `loadSeq` / `derivedSeq` / `registerTxnFinalizer`、`lib/autosave/diskWriter.ts`、`panelSourceSync.ts`、`assetStore`、`lib/projectDocs.ts`、`lib/docOwnership.ts`、恢复门与判决 `store/documentRestore.ts`、找回入口 `LayoutRecover` / `lib/recoveryCandidates.ts`、排版时间线（`lib/timelineCheckpoint.ts` / `VersionDialog.tsx`）
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效；计算项目格式按ADR 0182同步）：schema 3/4 只在持久化边界；外部派生唯一写入口 `applyDerivedUpdate()`；手势中不许写；文档 ready 只看恢复门、新写入口必须看门（ADR 0120）
 
@@ -417,3 +417,19 @@ order: 200
 「继续只读打开」写 `settings.readonly_save_as_declined`（按项目路径，持久）；Esc 只是本次会话不再问、不写记忆
 （`lib/readOnlyPromptMemory`）。界面不判权限，事实只认后端的 `writable`；教程项目不问。
 看护：`components/ReadOnlyProjectPrompt.test.tsx`。
+
+## 自动保存写进项目（ADR 0211 第二期 PR 2；后端开关 `layoutdir.WRITER_ENABLED` 后面，默认关）
+
+- **开关的权威在后端**：`GET /api/project` 的 `autosave_into_project`；`projectStore` 订阅它写进 `lib/autosaveProject.setProjectWriteCapability`。
+  关着时前端**一个字节的行为都不变**：不带 `project_write`、不起定时器、`putAutosave` 的调用形状逐字不变（几份用例钉着精确参数）。
+- **节奏**（`lib/autosaveProject.ts` 是常量唯一出处）：本机槽位仍是停手 1 s（`flushAutosave(false, false)`，只写本机）；项目里的
+  `layout.json` 停手 5 s、一直在改时最长 30 s（`documentStore.noteProjectEdit`）；手动保存 / 离开页面 / 切文档的冲刷顺带写。
+  同一 id 排队合并时「要写项目」标记取并集（`diskWriter.schedule`），不被后来的 1 s 本机那笔吞掉。
+- **写给谁、基线是什么在发请求那一刻才问**（`projectWriteSpecFor`）：绑定的 `name` + 修订号；没有绑定 = 后端按清单 docId 找、找不到按画布名起名（`suggest_name`）。
+  写成后 `afterProjectLayout` 建立 / 推进 `projectFile` 绑定（`dirty` = 途中又编辑过）。**本机槽位是崩溃缓冲，不因写项目成功而删**（「标为已落盘」= 绑定的 `dirty:false` + 修订号）。
+- **外部修改不覆盖**：后端回 `external_change`，**只亮顶栏胶囊「别处有改动」（`projectConflict`），不弹对话框**（维护者 2026-11-27：用户正在编辑不能被打断）；点胶囊或按 ⌘S 才进 ⌘S 同一个冲突岔口；岔口没裁决（绑定基线没动）前不再带着旧基线去撞，基线一变胶囊自己熄灭。
+- **写不进项目**：后端判 `read_only`（确实只读）→ `projectReadOnlyDoc`，顶栏保存处说一句「这个文件夹只读 · 修改存在本机」（整个文件夹不可写同一句）；
+  Windows 的瞬时拒绝（`EACCES` / 共享冲突）后端退避重试、判 `busy`，**不是只读**。
+- **找回**：`/api/layout-session/project-history` 的候选带 `work`（目录形态的工作副本，按清单 `doc_id` 对上）；没有本机槽位时 `installFromWorkingCopy`
+  按它装、同一个 docId、重新绑定；复制场景新 docId、不绑。
+

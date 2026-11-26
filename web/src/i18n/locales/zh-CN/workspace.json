@@ -1147,6 +1147,7 @@
     "saveLocal": "已存在本机",
     "saveLocalAt": "已存在本机 {{time}}",
     "saveProjectPending": "未存进项目",
+    "saveProjectReadOnly": "这个文件夹只读 · 修改存在本机",
     "saveProjectSaved": "已保存到项目",
     "saveSaving": "正在保存…",
     "saveTitleLocal": "已保存在本机（没有打开项目）。{{mod}}S 保存；⇧{{mod}}S 另存为新排版",

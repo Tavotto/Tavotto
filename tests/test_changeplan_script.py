@@ -180,8 +180,11 @@ def sc(plan_env, monkeypatch):  # noqa: F811
 
     def fake_render(*a, **k):
         state["render_entry"] = a[-1] if len(a) > 9 else k.get("entry", "main")
-        return state["render"]
+        if state.get("render_error"):
+            raise cp.PlanFailure(state["render_error"])
+        return state["render"], state.get("data_confirm")
 
+    state["real_render"] = m._change_plan_script_render
     monkeypatch.setattr(m, "_change_plan_script_render", fake_render)
     monkeypatch.setattr(
         m,
@@ -652,3 +655,139 @@ def test_a_stored_plan_for_another_figure_is_not_accepted(sc):
     first = run_review(client)
     assert cp.review_script_rows(first["plan"], ["c2"], "Kin.pdf")
     assert cp.review_script_rows(first["plan"], ["c2"], "other.pdf") is None
+
+
+# --------------------------------------------------------------------------- 数据变了：先问一句（ADR 0206 修订 2026-11-27）
+def _fp(**parts):
+    return {"status": "ok", "parts": parts}
+
+
+def _man(**els):
+    """`{gid: 数据指纹 parts}` → 带数据指纹的 manifest（identity 缺省，gid 即身份）。"""
+    return {"elements": [{"gid": g, "data_fingerprint": _fp(y=p)} for g, p in els.items()]}
+
+
+def test_data_findings_are_structured_short_and_split_missing_figures_from_changed_data():
+    before = {"fig": _man(l0="a", l1="b"), "gone": _man(l0="a")}
+    after = {"fig": _man(l0="a2", l1="b")}  # l0 的数据变了；整张 "gone" 不再产出
+    findings, missing = cp.script_data_findings(after, before)
+    assert missing == ["gone"]
+    assert findings == [{"stem": "fig", "gid": "l0", "reason": "data_changed"}]
+    confirm = cp.data_confirm(findings)
+    assert confirm == {"kind": "script_data_changed", "items": findings, "total": 1}
+    assert cp.script_data_findings(before, before) == ([], [])
+    assert cp.data_confirm([]) is None
+    # 条目封顶，总数照实
+    many = [{"stem": "f", "gid": f"l{i}", "reason": "data_changed"} for i in range(30)]
+    capped = cp.data_confirm(many)
+    assert len(capped["items"]) == cp.MAX_DATA_CONFIRM_ITEMS and capped["total"] == 30
+
+
+def _real_render(m, state, monkeypatch, tmp_path, before, after):
+    """真走 `_change_plan_script_render`：只把影子脚本 / worker 换成假的，数据判定是真的。"""
+    cand = type("C", (), {"dir": tmp_path, "new_bytes": None})()
+    monkeypatch.setattr(ai_figure_edit, "create_candidate", lambda *a, **k: cand)
+    monkeypatch.setattr(ai_figure_edit, "remove_candidate", lambda d: None)
+    monkeypatch.setattr(ai_figure_edit, "_with_original_names", lambda mans, c: mans)
+    monkeypatch.setattr(
+        m.engine_ai_convert,
+        "run_validation",
+        lambda c, r: {"status": "ok", "manifests": after, "snapshot": object()},
+    )
+    monkeypatch.setattr(m, "_convert_runner", lambda *a, **k: None)
+    monkeypatch.setattr(m, "_change_plan_snapshot", lambda snap: (PNG, {}))
+    task = type("T", (), {"id": "t"})()
+    return state["real_render"](
+        None,
+        task,
+        "fig.py",
+        tmp_path / "fig.py",
+        tmp_path,
+        "fig",
+        [],
+        b"x",
+        {"check_before": lambda: before},
+        "main",
+    )
+
+
+def test_changed_data_gives_a_confirm_instead_of_failing_but_a_missing_figure_still_fails(
+    sc, monkeypatch, tmp_path
+):
+    m, client, figs, state = sc
+    png, confirm = _real_render(
+        m, state, monkeypatch, tmp_path, {"fig": _man(l0="a")}, {"fig": _man(l0="converted")}
+    )
+    assert png == PNG and confirm["kind"] == "script_data_changed"
+    assert confirm["items"] == [{"stem": "fig", "gid": "l0", "reason": "data_changed"}]
+    png, confirm = _real_render(
+        m, state, monkeypatch, tmp_path, {"fig": _man(l0="a")}, {"fig": _man(l0="a")}
+    )
+    assert confirm is None
+    with pytest.raises(cp.PlanFailure) as err:
+        _real_render(
+            m, state, monkeypatch, tmp_path, {"fig": _man(l0="a")}, {"other": _man(l0="a")}
+        )
+    assert err.value.code == "change_plan_script_figure_missing"
+
+
+CONFIRM = {
+    "kind": "script_data_changed",
+    "items": [{"stem": "fig", "gid": "l0", "reason": "data_changed"}],
+    "total": 1,
+}
+
+
+def test_a_plan_whose_data_changes_is_ready_with_a_confirm_on_the_script_group(sc):
+    m, client, figs, state = sc
+    state["data_confirm"] = CONFIRM
+    out = _make(client)
+    assert out["state"] == "ready"
+    (group,) = out["plan"]["groups"]
+    assert group["confirm"] == CONFIRM and group["kind"] == "script"
+    assert (figs / "fig.py").read_text() == SCRIPT
+
+
+def test_a_figure_that_is_not_drawn_any_more_still_fails_with_its_own_code(sc):
+    m, client, figs, state = sc
+    state["render_error"] = "change_plan_script_figure_missing"
+    out = _make(client)
+    assert out["state"] == "failed" and out["code"] == "change_plan_script_figure_missing"
+    assert (figs / "fig.py").read_text() == SCRIPT
+
+
+@pytest.mark.parametrize(
+    "body", [None, {}, {"confirm_data_change": False}, {"confirm_data_change": "yes"}, []]
+)
+def test_apply_without_an_explicit_confirmation_is_refused_and_writes_nothing(sc, body):
+    m, client, figs, state = sc
+    state["data_confirm"] = CONFIRM
+    plan_id = _make(client)["plan"]["id"]
+    resp = client.post(
+        f"/api/change-plans/{plan_id}/apply-script", **({} if body is None else {"json": body})
+    )
+    assert (
+        resp.status_code == 400 and resp.get_json()["code"] == "change_plan_script_data_unconfirmed"
+    )
+    assert (figs / "fig.py").read_text() == SCRIPT and not state.get("refreshed")
+    assert client.get(f"/api/change-plans/{plan_id}").get_json()["plan"]["applied"] is None
+
+
+def test_apply_with_the_confirmation_writes_and_can_be_undone(sc):
+    m, client, figs, state = sc
+    state["data_confirm"] = CONFIRM
+    plan_id = _make(client)["plan"]["id"]
+    resp = client.post(
+        f"/api/change-plans/{plan_id}/apply-script", json={"confirm_data_change": True}
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert (figs / "fig.py").read_text() == NEW
+    assert client.post(f"/api/change-plans/{plan_id}/undo-script").status_code == 200
+    assert (figs / "fig.py").read_text() == SCRIPT
+
+
+def test_plans_without_changed_data_still_apply_without_any_confirmation(sc):
+    m, client, figs, state = sc
+    plan_id = _make(client)["plan"]["id"]
+    assert "confirm" not in _make(client)["plan"]["groups"][0]
+    assert client.post(f"/api/change-plans/{plan_id}/apply-script").status_code == 200

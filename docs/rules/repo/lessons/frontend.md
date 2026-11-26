@@ -67,12 +67,7 @@
 - 为什么: 两个分支各自绿、合起来红且只有真浏览器看得见：NumberField 同值提交拦截 × e2e 写入等于初值；图内吸附让「拖动中改倍率不跳位」稳定红 6-9 px。仅 merge_group 才跑的套件，PR 绿不代表绿。
 - 证据: #127, #575, #591
 
-### L-078 测试/e2e 取元素别用「第一个匹配」的 role、aria-label 或文案
-- 类: 别这样
-- 触发: web/e2e/
-- Seen: 2026-09-07, 2026-11-03
-- 为什么: 断言用 querySelector('[role="status"]') 取播报，审计给浮动条加了一行同 role 的常驻说明且排在前面，选择器一夜之间换了主语，#296 被踢出队列而产品没坏。用登记过的稳定 data-* 锚点，并扫全仓同类消费者。11-03 字体行用例又按翻译后的 aria-label 取第一个，被评审报 P1。
-- 证据: #296, #1678
+### L-078 测试/e2e 取元素别用「第一个匹配」的 role、aria-label 或文案 → docs/rules/frontend/verification.md
 
 ### L-079 响应形状不对按失败处理，别当成拿到了空的
 - 类: 别这样
@@ -173,12 +168,7 @@
 - 为什么: macOS 允许删除进程的当前目录，本机浏览器用例全绿；Windows 上 worker 仍占着 cwd，清理报 EBUSY，打包 CI 两个场景加重试都红，多一轮返修。清理顺序按 Windows 的占用语义写，本机是 macOS 时打 full-ci 看 Windows 腿。
 - 证据: #1800
 
-### L-155 改界面行为前在 web/e2e 里搜被改的文案与锚点，钉旧行为的一并改
-- 类: 别这样
-- 触发: web/e2e/, web/src/components/PreparationCard.tsx
-- Seen: 2026-11-11, 2026-11-21
-- 为什么: 失败卡主按钮从「再试一次」改成别的，jsdom 用例全改了，PR 没碰 e2e 所以 PR 上不跑 posix-e2e；一条钉着旧按钮的 e2e 在合并队列里红，被连踢三次，前两次还被当成机器故障重排；同日改工作目录默认行为的 PR 又因一条钉旧流程的 e2e 被踢四次。改行为前 grep 被改的 data-* 与文案，命中的 spec 一起改、PR 上跑一次。11-21 矢量叠放栈给工具条加了钢笔，别人的 spec 里写死 5 颗钮，下层合入后上层首轮 CI 才红；叠放栈在栈顶本地跑一次全量 e2e，挂的先在 main 上对照。
-- 证据: #1828, #1846, #2030
+### L-155 改界面行为前在 web/e2e 里搜被改的文案与锚点，钉旧行为的一并改 → docs/rules/frontend/verification.md
 
 ### L-158 给失败配出口按错误来源列全产出路径，断言钉死结构化码不放兜底码
 - 类: 别这样
@@ -221,3 +211,10 @@
 - Seen: 2026-11-22
 - 为什么: Playwright 的 transform 缓存在 $TMPDIR，所有 worktree 共用；来回切提交后拿到旧的编译结果。feature_registry check 在 main 上也报「扫描器与 Playwright 对不上位置」（说用例在 76 行，源码在 64 行），CI 是绿的。跑 playwright clear-cache 后即过；多 worktree 并行时先清缓存再判红。
 - 证据: #2034
+
+### L-182 异步回来要写文档的回调，先判有没有进行中的手势事务与只读窗口，提交真落地才推进基线
+- 类: 别这样
+- 触发: web/src/lib/agentMerge.ts, web/src/lib/dataFigureHost.ts, web/src/store/figureOriginStore.ts, web/src/store/projectSave.ts
+- Seen: 2026-11-26, 2026-11-27
+- 为什么: Agent 标注定时并入、误差线原位换图都在用户正拖动或缩放时 commit，并进了手势事务，取消手势连带回滚；只读窗口里 commit 静默返回却照样推进了并入基线，改动再也不并。两个 PR 共三条 P1。有手势或只读就排队等它结束，基线只跟落地的提交走。
+- 证据: #2217, #2275

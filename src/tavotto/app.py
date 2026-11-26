@@ -7021,6 +7021,8 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
         # 它抄成了第二份，而旧位置兼容、未打开项目退回数据目录这两条分支
         # 抄不过去。
         "document_dir": str(project_layout_dir(ctx)),
+        # 自动保存是否把工作副本写进项目（ADR 0211 第二期；开关 `layoutdir.WRITER_ENABLED`，默认关）：前端据此才带 `project_write`
+        "autosave_into_project": engine_layoutdir.writer_enabled(),
         # 教程项目的标记（ADR 0039）：它走的是与普通项目同一条打开路径，
         # 界面上「重新开始教程」「教程角标」只认这一个字段，不自己比路径。
         "tutorial": engine_tutorial.is_tutorial_path(p),
@@ -12182,6 +12184,7 @@ _CHANGE_PLAN_STATUS = {
     "change_plan_no_comments": 400,
     "change_plan_unknown": 404,
     "change_plan_script_apply_failed": 500,
+    "change_plan_script_data_unconfirmed": 400,
 }
 #: 方案里两张图的宽度（`RENDER_BUCKETS` 里的一档）
 _CHANGE_PLAN_WIDTH = 1600
@@ -12573,7 +12576,7 @@ def _change_plan_script_compute(
     if len(new_bytes) > ec.SCRIPT_MAX_BYTES:
         raise ec.PlanFailure("change_plan_too_large")
     task.phase = "render_after"
-    after_png = _change_plan_script_render(
+    after_png, data_confirm = _change_plan_script_render(
         ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry
     )
     try:
@@ -12591,6 +12594,7 @@ def _change_plan_script_compute(
         new_bytes=new_bytes,
         base_patches=base,
         source=origin,
+        confirm=data_confirm,
     )
     return plan, before_png, after_png, new_bytes
 
@@ -12598,7 +12602,9 @@ def _change_plan_script_compute(
 def _change_plan_script_render(
     ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry="main"
 ):
-    """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图；数据指纹不变才放行。→ 改后 PNG。"""
+    """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图。→ `(改后 PNG, 数据确认 | None)`。
+    数据指纹变了不再失败（ADR 0206 修订 2026-11-27「先问一句再出卡」）：返回脚本组的 `confirm`，卡片先问、应用端点要显式确认；
+    改前有的图改后整张不再产出 = 坏了、不是改数据，仍失败 `change_plan_script_figure_missing`。"""
     ec = engine_changeplan
     cand = None
     try:
@@ -12624,10 +12630,13 @@ def _change_plan_script_render(
             raise ec.PlanFailure("change_plan_script_no_preview", "snapshot") from None
         baseline = engine_ai_figure_edit._call_hook(hooks.get("check_before"))
         after = engine_ai_figure_edit._with_original_names(res.get("manifests"), cand)
+        data_confirm = None
         if baseline and isinstance(after, dict) and after:
-            if engine_ai_figure_edit._data_lines(after, baseline):
-                raise ec.PlanFailure("change_plan_script_data_changed")
-        return after_png
+            findings, missing = ec.script_data_findings(after, baseline)
+            if missing:
+                raise ec.PlanFailure("change_plan_script_figure_missing")
+            data_confirm = ec.data_confirm(findings)
+        return after_png, data_confirm
     finally:
         if cand is not None:
             engine_ai_figure_edit.remove_candidate(cand.dir)
@@ -12662,6 +12671,12 @@ def api_change_plans_apply_script(plan_id: str):
         return refused
     if plan.get("applied"):
         return jsonify({"ok": True, "applied": plan["applied"], "unchanged": True})
+    # 数据变了的脚本方案：服务端强制显式确认（不只靠前端拦；审阅来源的脚本卡同样要问）
+    group = next(g for g in plan["groups"] if g.get("kind") == "script")
+    if isinstance(group.get("confirm"), dict):
+        body = request.get_json(force=True, silent=True)
+        if not isinstance(body, dict) or body.get("confirm_data_change") is not True:
+            return _change_plan_error("change_plan_script_data_unconfirmed")
     script = info["rel"]
     try:
         store = _script_store(ctx)
@@ -21364,6 +21379,9 @@ def api_autosave_put(doc_id):
                 else {}
             ),
         )
+    # 槽位（本机崩溃缓冲）已经落盘：项目里的工作副本在它**之后**写，写不成它也还在。
+    # 放在槽位锁**外**：文档锁不可重入，两个路径的条带可能相同。
+    project_layout = _autosave_into_project(doc_id, body, request.args.get("project_write"))
     # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
     _prune_autosave_slots(p)
     return jsonify(
@@ -21373,11 +21391,102 @@ def api_autosave_put(doc_id):
             "saved_at": int(time.time() * 1000),
             "revision": revision,
             "metadata": metadata,
+            **({"project_layout": project_layout} if project_layout is not None else {}),
             **({"project_file": project_file} if has_project_file_edit else {}),
             **_document_save_extras(body),
             **({"svg_snapshot_warnings": snapshot_warnings} if snapshot_warnings else {}),
         }
     )
+
+
+def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dict | None:
+    """自动保存把工作副本写进项目的 `tavottofile/<名>.tavotto/layout.json`（ADR 0211 第二期 PR 2；写入端开关后面）。
+
+    **只有前端明说要写（`project_write`）、开关开着、开着项目、归属是这个项目、文档有内容时才写**；其余回 `None`
+    （响应里没有 `project_layout`，与改造前逐字相同）。回 `{state, ...}`，`state` 取值：
+
+    * `saved`（`name` / `file` / `revision`）：写成了；
+    * `external_change`（`revision` / `summary`）：磁盘上那份不是我上次写的那份——**不覆盖**，前端走现有冲突裁决；
+    * `read_only`：这个文件夹确实写不进去（前端一行灰字，修改存在本机）；
+    * `busy`：瞬时失败（Windows 上杀毒软件 / 另一个进程占着，已退避重试）——**不是只读**，下次自动保存再写；
+    * `skipped`：没内容（空白排版不建目录）/ 归属对不上；`refused`：守卫不过（链接 / 撞名 / 容器太新）；`failed`：其它写失败。
+    """
+    if raw_spec is None or not engine_layoutdir.writer_enabled():
+        return None
+    try:
+        spec = json.loads(raw_spec)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(spec, dict):
+        return None
+    ctx = _request_ctx()
+    if ctx is None or _layout_session_owner() != engine_layoutsession.project_key(ctx.path):
+        return {"state": "skipped"}
+    # 第一期的「空白排版不留东西」只管**新建**工作副本：已有的工作副本必须收到空文档的更新（删光最后一个对象也是用户的编辑），
+    # 否则项目里的 layout.json 停在删除之前，换电脑 / 挪走重开会把删掉的对象找回来。是不是新建要等定位到目录才知道（下面锁里）
+    empty = not engine_projecthistory.doc_objects(body)
+    store = project_layout_dir(ctx)
+    if not os.access(ctx.path, os.W_OK):
+        return {"state": "read_only"}
+    name, base = spec.get("name"), spec.get("base")
+    if name is not None and not isinstance(name, str):
+        return {"state": "refused"}
+    if base is not None and not isinstance(base, str):
+        return {"state": "refused"}
+    try:
+        if isinstance(name, str) and name:
+            stem = layout_path(name, store).stem
+        else:
+            found = engine_layoutdir.find_by_doc_id(store, doc_id)
+            project = body.get("project")
+            stem = (
+                found.stem
+                if found is not None
+                else engine_layoutdir.suggest_name(
+                    store, project.get("name") if isinstance(project, dict) else None
+                )
+            )
+    except (OSError, engine_documents.DocumentError):
+        return {"state": "failed"}
+    target = _project_layout_target(stem, ctx)
+    if target is None:
+        return {"state": "refused"}
+    try:
+        with _document_lock(target):
+            located = engine_layoutdir.locate(store, stem)
+            current = located.current_revision()
+            if current is None and empty:
+                return {"state": "skipped"}  # 新建：没内容不建目录
+            if current is not None:
+                known = base
+                if known is None and located.manifest and located.manifest.get("doc_id") == doc_id:
+                    # 本机绑定丢了（挪走 / 清了站点数据）但这份目录记着是这个 docId：清单里的修订号是提示，
+                    # 对得上才算「这份还是我上次写的」
+                    known = located.manifest.get("layout_revision")
+                if known is None or _revision_conflict(known, current):
+                    return {
+                        "state": "external_change",
+                        "name": stem,
+                        "revision": current,
+                        "summary": document_summary(located.read_path),
+                    }
+            _named_layout_dir(ctx, create=True)
+            revision = engine_layoutdir.write_retrying(store, stem, body, doc_id=doc_id)
+    except engine_layoutsession.SessionStateUnavailable:
+        return {"state": "busy"}
+    except engine_layoutdir.LayoutDirError:
+        return {"state": "refused"}
+    except (
+        OSError
+    ) as exc:  # `AtomicWriteError` 与暂存目录 `mkdir` 直接抛的 PermissionError 一并分档
+        kind = engine_layoutdir.classify_write_failure(exc)
+        return {"state": {"read_only": "read_only", "transient": "busy"}.get(kind, "failed")}
+    return {
+        "state": "saved",
+        "name": stem,
+        "file": target.relative_to(ctx.path).as_posix(),
+        "revision": revision,
+    }
 
 
 _OWNER_UNKNOWN = object()
@@ -22388,8 +22497,27 @@ def _history_verdict(doc_id: str, key, state: dict, status: str, slot_doc, slot_
 def _history_item(doc_id: str, versions_dir: Path, key, ctx) -> dict | None:
     """一份项目内时间线的候选摘要；没有非空节点回 `None`。在槽位文档锁里读归属与槽位（与 `/owner` 同一条规则）。"""
     node = engine_projecthistory.latest_content_node(versions_dir, doc_id)
-    if node is None:
+    work = _working_copy(project_layout_dir(ctx), doc_id) if ctx is not None else None
+    if node is None and work is None:
         return None  # 空时间线 / 只有空节点（旧版每次加载留下的空 `open`）：不进候选
+    if work is not None and node is not None and work["ts"] < node["ts"]:
+        work = None  # 节点反而更新（项目里那份还没来得及写）：照旧按节点
+    if work is not None:
+        # 工作副本是最新的：节点字段按它填，`vid` 为空（前端按 `work` 装）；删光对象之后的空副本同样以它为准
+        node = None
+    if node is None:
+        # 只有项目里的工作副本（还没有时间线节点）：节点字段按工作副本填，`vid` 为空（前端按 `work` 装）
+        wdoc = work["doc"]
+        node = {
+            "vid": "",
+            "ts": work["ts"],
+            "canvasId": None,
+            "canvasName": None,
+            "schema": wdoc.get("schema") if isinstance(wdoc.get("schema"), int) else None,
+            "canvases": len(wdoc.get("canvases") or []),
+            "objects": len(engine_projecthistory.doc_objects(wdoc)),
+            "doc": wdoc,
+        }
     with _document_lock(_autosave_path(doc_id)):
         state, status = engine_layoutsession.read_readonly()
         slot_doc, slot_rev, slot_exists = _history_slot(doc_id, state, ctx)
@@ -22435,7 +22563,58 @@ def _history_item(doc_id: str, versions_dir: Path, key, ctx) -> dict | None:
         "owner": owner,
         "revision": slot_rev if mode == "slot" else None,
         "node_newer": node_newer,
+        # 项目里这份排版的工作副本（目录形态，清单记着这个 docId；ADR 0211 第二期）：它比最近的时间线节点新，
+        # 没有本机槽位（挪走 / 换电脑）时前端按它装。只回名字与修订号，不回路径
+        **(
+            {"work": {"name": work["name"], "revision": work["revision"], "ts": work["ts"]}}
+            if work
+            else {}
+        ),
     }
+
+
+def _working_copy(store: Path, doc_id: str) -> dict | None:
+    """项目里清单记着 `doc_id` 的工作副本：`{name, revision, ts, doc}`；没有 / 唯一性不成立 / 读不出回 None（**内容为空也返回**：那是用户删光之后的最新状态）。只读。"""
+    try:
+        located = engine_layoutdir.find_by_doc_id(store, doc_id)
+        if located is None or located.read_path is None:
+            return None
+        raw = located.read_path.read_bytes()
+        doc = engine_documents.loads_document(raw)
+        ts = int(located.read_path.stat().st_mtime * 1000)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    # 空的也算：它就是用户删光之后的最新状态（比任何时间线节点都新），不能退回删除之前的节点
+    return {
+        "name": located.stem,
+        "revision": engine_atomicio.revision_of(raw),
+        "ts": ts,
+        "doc": doc,
+    }
+
+
+def _working_doc_ids(store: Path) -> list[str]:
+    """项目里各目录形态排版的清单 docId（`valid_doc_id` 过滤）。只读。"""
+    out: list[str] = []
+    try:
+        names = [e.name for e in os.scandir(store)]
+    except OSError:
+        return out
+    for n in names:
+        if not n.endswith(engine_layoutdir.DIR_SUFFIX):
+            continue
+        try:
+            loc = engine_layoutdir.locate(
+                store, n[: -len(engine_layoutdir.DIR_SUFFIX)], names=names
+            )
+        except engine_layoutdir.LayoutDirError:
+            continue
+        doc_id = loc.manifest.get("doc_id") if loc.manifest else None
+        if loc.read_path is not None and engine_layoutsession.valid_doc_id(doc_id):
+            out.append(doc_id)
+    return out
 
 
 @app.get("/api/layout-session/project-history")
@@ -22460,6 +22639,7 @@ def api_layout_session_project_history():
         ), 503
     _state, index = engine_layoutsession.read_readonly()
     items: list[dict] = []
+    names = sorted({*names, *_working_doc_ids(project_layout_dir(ctx))})
     for doc_id in names:
         if len(items) >= engine_projecthistory.MAX_STORES:
             truncated = True  # 有内容的太多：不保证列全，前端据此不自动采用
@@ -22499,9 +22679,10 @@ def api_layout_session_project_history_claim():
         names, _truncated = engine_projecthistory.store_names(versions)
     except OSError:
         return _session_unavailable()
-    if doc_id not in names:
+    has_work = _working_copy(project_layout_dir(ctx), doc_id) is not None
+    if doc_id not in names and not has_work:
         return refused
-    if engine_projecthistory.latest_content_node(versions, doc_id) is None:
+    if engine_projecthistory.latest_content_node(versions, doc_id) is None and not has_work:
         return refused
     try:
         with _document_lock(_autosave_path(doc_id)):
