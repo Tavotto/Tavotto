@@ -785,6 +785,43 @@ def test_render_preparing_is_visible_before_worker_resolution(
     ]
 
 
+def test_render_preparing_reports_acquire_stages_in_order(client, tmp_path, monkeypatch, sse_spy):
+    """#479：取会话里进入「找运行环境」「启动 Python」时各补一条带 stage 的准备事件。
+
+    阶段只前进：起子进程之后再解析一次解释器，界面不能倒回「找运行环境」；同一阶段只发一次。
+    """
+    figs = _make_figs(tmp_path, "stage_progress")
+    pid = client.post("/api/projects/open", json={"path": str(figs)}).get_json()["id"]
+    worker = _FakeWorker()
+    _stub_engine(monkeypatch, worker)
+
+    def resolve(*args, **kwargs):
+        for name in ("resolve_python_ms", "env_decide_ms", "pool_wait_ms", "spawn_ms"):
+            with engine_pool._seg(name):
+                pass
+        with engine_pool._seg("handshake_ms"), engine_pool._seg("resolve_python_ms"):
+            pass
+        return worker
+
+    monkeypatch.setattr(m.engine_pool, "get", resolve)
+    response = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+    assert response.status_code == 200
+    assert [(kind, data) for kind, data in sse_spy if kind == "render.preparing"] == [
+        ("render.preparing", {"pj": pid, "id": "p1.pdf"}),
+        ("render.preparing", {"pj": pid, "id": "p1.pdf", "stage": "environment"}),
+        ("render.preparing", {"pj": pid, "id": "p1.pdf", "stage": "starting"}),
+    ]
+    assert [kind for kind, _ in sse_spy if kind.startswith("render.")][-2:] == [
+        "render.started",
+        "render.done",
+    ]
+    # 观察者只在这次取会话里挂着：之后进同名子段什么都不发
+    before = len(sse_spy)
+    with engine_pool._seg("spawn_ms"):
+        pass
+    assert len(sse_spy) == before
+
+
 @pytest.mark.parametrize(
     ("exc", "status"),
     [

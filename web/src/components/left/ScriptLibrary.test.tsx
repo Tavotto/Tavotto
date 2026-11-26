@@ -559,13 +559,13 @@ describe('运行 / 取消 / 结果', () => {
     mockProbe.mockResolvedValue({
       ...ok([]),
       registered: false,
-      error: { code: 'script_no_figure', message: '没有捕获到任何 Figure', params: { entry: '__main__' } },
+      error: { code: 'script_no_figure', message: '没有画出图', params: { entry: '__main__' } },
     })
     await mount()
     await act(async () => runButton().click())
     await flush()
     expect(host.textContent).not.toContain('可能需要原环境')
-    expect(host.textContent).toContain('没有捕获到任何 Figure')
+    expect(host.textContent).toContain('没有画出图')
   })
 
   it('缺包且后端给了修复 offer：脚本行上就有「安装到 Tavotto 环境」，点一次安装，装好后自动重跑', async () => {

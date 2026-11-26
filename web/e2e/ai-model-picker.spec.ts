@@ -76,30 +76,27 @@ async function openAssistant(page: Page, a: RunningApp) {
   await expect(page.locator('[data-ai-pill="model"]')).toBeVisible({ timeout: 30_000 })
 }
 
-test('两级选择：家族带图标，→ 进型号，选中后推理强度只给该型号的档位', async ({ app, page }) => {
+test('「AI 与模型」列表：每个连接带图标，点一行展开型号，选中后推理强度只给该型号的档位', async ({ app, page }) => {
   await openAssistant(page, await app())
   await page.locator('[data-ai-pill="model"]').click()
-  const trigger = page.locator('[data-ai-model-picker="trigger"]')
-  await expect(trigger).toBeVisible()
-  await trigger.click()
 
   const families = page.locator('[data-ai-connection]')
   await expect(families).toHaveCount(2)
   await expect(families.nth(0).locator('svg').first()).toBeVisible()
   await expect(families.nth(1).locator('svg').first()).toBeVisible()
 
-  // 键盘：→ 打开第二级
-  await page.locator('[data-ai-connection="chatgpt"]').focus()
-  await page.keyboard.press('ArrowRight')
-  const items = page.locator('[data-ai-model-item]')
+  const chatgpt = page.locator('[data-ai-connection="chatgpt"]')
+  if ((await chatgpt.getAttribute('aria-expanded')) !== 'true') await chatgpt.click()
+  const items = page.locator('[data-ai-model-menu="chatgpt"] [data-ai-model-item]')
   await expect(items).toHaveCount(3)
   const dir = process.env.TAVOTTO_SHOT_DIR
   if (dir) await page.waitForTimeout(600) // 过了弹出动画再截
-  if (dir) await page.screenshot({ path: `${dir}/${test.info().project.name}-two-level.png` })
+  if (dir) await page.screenshot({ path: `${dir}/${test.info().project.name}-model-list.png` })
 
   await page.locator('[data-ai-model-item="gpt-6-luna"]').click()
-  await expect(trigger).toContainText('GPT-6-Luna')
+  await expect(page.locator('[data-ai-model-item="gpt-6-luna"] input')).toBeChecked()
   await page.keyboard.press('Escape')
+  await expect(page.locator('[data-ai-pill="model"]')).toContainText('GPT-6-Luna')
   await page.locator('[data-ai-pill="effort"]').click()
   // luna 没有 ultra 档
   const efforts = page.locator('[data-ai-effort-item]')
@@ -107,19 +104,18 @@ test('两级选择：家族带图标，→ 进型号，选中后推理强度只�
   await expect(page.locator('[data-ai-effort-item="ultra"]')).toHaveCount(0)
 })
 
-test('Esc 逐层退出：先收子菜单（←）再关菜单，选择器不改值', async ({ app, page }) => {
+test('展开 / 收起一个连接、Esc 关掉弹层，都不改当前选择', async ({ app, page }) => {
   await openAssistant(page, await app())
-  await page.locator('[data-ai-pill="model"]').click()
-  const trigger = page.locator('[data-ai-model-picker="trigger"]')
-  const before = await trigger.textContent()
-  await trigger.click()
-  await page.locator('[data-ai-connection="claude"]').focus()
-  await page.keyboard.press('ArrowRight')
-  await expect(page.locator('[data-ai-model-item]')).toHaveCount(3)
-  await page.keyboard.press('ArrowLeft')
-  await expect(page.locator('[data-ai-model-item]')).toHaveCount(0)
+  const pill = page.locator('[data-ai-pill="model"]')
+  const before = await pill.textContent()
+  await pill.click()
+  const claude = page.locator('[data-ai-connection="claude"]')
+  await claude.click()
+  await expect(page.locator('[data-ai-model-menu="claude"] [data-ai-model-item]')).toHaveCount(3)
+  await claude.click()
+  await expect(page.locator('[data-ai-model-menu="claude"]')).toHaveCount(0)
   await expect(page.locator('[data-ai-connection]')).toHaveCount(2)
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-ai-connection]')).toHaveCount(0)
-  await expect(trigger).toHaveText(before ?? '')
+  await expect(pill).toHaveText(before ?? '')
 })

@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { expect, test, waitForFigureEdit } from './fixtures'
 
+// 假 codex 当订阅登录（sub:codex）：SIWC 默认开后 Codex 登录被隐藏，只有 `TAVOTTO_EXPERIMENTAL_SIWC=0` 时还在（ADR 0209 §六）
 /**
  * 大 Trace 的性能测量（ADR 0151 PR3 §3.6）：接近存储上限（`MAX_SPANS = 512`）的一份**运行中**快照——8 个 Agent 运行、
  * 每个 60 个模型 / 工具调用（相邻两个并行）、200 个阶段观察点。只替换 `/api/exec-trace` 的响应体（功能验收在
@@ -80,7 +81,7 @@ test('大 Trace：展开耗时与实时刷新期间的长任务', async ({ app, 
   const bin = path.join(dir, 'codex')
   writeFileSync(bin, '#!/bin/sh\ncase "$1" in\n  --version) echo "codex-cli 0.0.1" ;;\n  login) echo "Logged in" ;;\n  *) sleep 60 ;;\nesac\n')
   chmodSync(bin, 0o755)
-  const a = await app({ env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` } })
+  const a = await app({ env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, TAVOTTO_EXPERIMENTAL_SIWC: '0' } })
   const startedAt = Date.now() / 1000 - 46
   await page.route('**/api/exec-trace?**', (route) => route.fulfill({ json: { available: true, trace: bigTrace(startedAt) } }))
   await page.goto(a.baseURL)
@@ -132,7 +133,7 @@ test('大 Trace：已结束的回放（自动播放约 4 秒）期间的长任�
   const bin = path.join(dir, 'codex')
   writeFileSync(bin, '#!/bin/sh\ncase "$1" in\n  --version) echo "codex-cli 0.0.1" ;;\n  login) echo "Logged in" ;;\n  *) sleep 60 ;;\nesac\n')
   chmodSync(bin, 0o755)
-  const a = await app({ env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` } })
+  const a = await app({ env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, TAVOTTO_EXPERIMENTAL_SIWC: '0' } })
   const startedAt = Date.now() / 1000 - 60
   await page.route('**/api/exec-trace?**', (route) => route.fulfill({ json: { available: true, trace: bigTrace(startedAt, true) } }))
   await page.goto(a.baseURL)

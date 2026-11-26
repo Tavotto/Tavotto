@@ -54,6 +54,6 @@ export const reasonOfAgentError = (e: string | null | undefined): string =>
 export const isCheckableError = (c: Pick<AiConnection, 'error'> | undefined | null): boolean =>
   c?.error === 'endpoint_unusable' || c?.error === 'builtin_only'
 
-/** 这条连接能不能发 `/check`：只有 Key 类（订阅 / 账号登录类没有「地址 + Key」可探） */
+/** 这条连接能不能发 `/check`：只有 Key 类（订阅 / 账号登录 / ChatGPT 登录类没有「地址 + Key」可探） */
 export const canCheckConnection = (c: Pick<AiConnection, 'id'> | undefined | null): boolean =>
-  !!c && !c.id.startsWith('sub:') && !c.id.endsWith('-oauth')
+  !!c && !c.id.startsWith('sub:') && !c.id.startsWith('siwc:') && !c.id.endsWith('-oauth')

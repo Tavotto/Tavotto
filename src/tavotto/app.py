@@ -603,6 +603,36 @@ def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
     return reg.artifact_stem(rel), info
 
 
+def _export_figure_name(rel: object) -> str:
+    """导出报错里给人看的**图名**（T-009）：磁盘文件 id → 注册表里这张图的显示名。
+
+    报错原本只给 `id`（项目相对路径，如 `figures/fig1.pdf`），用户认的是图名。解析走 `artifact_stem` +
+    `display_name`，与素材区的名字同一出处；没有项目上下文 / 注册表认不得时退回文件名 stem，空 id 给空串。
+    只读注册表，不触发 `_disk_panel_rel` 里的入口纠正（报错路径上不该有副作用）。
+    """
+    key = str(rel or "").replace("\\", "/")
+    if not key:
+        return ""
+    fallback = Path(key).stem or key
+    try:
+        reg = current_registry()
+        return reg.display_name(reg.artifact_stem(key)) or fallback
+    except Exception:  # noqa: BLE001 —— 起名失败不能盖住原来那条导出失败
+        return fallback
+
+
+def _name_export_failure(
+    exc: engine_exportreq.ExportRequestError,
+) -> engine_exportreq.ExportRequestError:
+    """`export_render_failed` 补上 `name`（界面文案按图名说话；`id` 仍留着给前端定位那张图）。"""
+    if exc.code == "export_render_failed" and "name" not in exc.params:
+        exc.params = {
+            **exc.params,
+            "name": _export_figure_name(exc.params.get("figure") or exc.params.get("id")),
+        }
+    return exc
+
+
 def _disk_panel(path: Path) -> tuple[str, dict | None]:
     """`_disk_panel_rel` 的 Path 版（`path` 是 `safe_resolve` 解出来的真实路径）。"""
     try:
@@ -2899,7 +2929,11 @@ def _serialize_figure_with_worker(
         raise engine_exportreq.ExportRequestError(
             "export_render_failed",
             f"{rel_id}: Figure changed during export",
-            {"id": rel_id, "reason": "Figure changed during export"},
+            {
+                "id": rel_id,
+                "name": _export_figure_name(rel_id),
+                "reason": "Figure changed during export",
+            },
         )
     if include_svg or existing_only:
         _assert_artifact_current(artifact_source)
@@ -2926,9 +2960,17 @@ def _serialize_figure_with_worker(
             if sink is not None:
                 sink.append(f"{rel_id}: SVG unavailable: {str(exc)[:200]}")
     elif fmt == engine_exportreq.FORMAT_SVG:
-        _normalize_worker_svg(tmp)
+        try:
+            _normalize_worker_svg(tmp)
+        except engine_exportreq.ExportRequestError as exc:
+            # 闸只认字节、不认图：这里补上是哪张图（`id` 给前端定位，`name` 给文案）
+            exc.params = {"id": rel_id, **exc.params}
+            raise _name_export_failure(exc)
         if companion_args.get("svg_fonttype") == "none":
             _extend_text_svg_families(tmp)
+    if fmt == engine_exportreq.FORMAT_PDF and tmp.is_file():
+        # matplotlib 把 .otf（CFF）字体写进 TrueType 槽：交出去之前换成真 TrueType（摸底 T-003）
+        engine_artifactinspect.normalize_worker_pdf(tmp)
     if text_svg is not None:
         info = resp.get("svg_text") or {}
         try:
@@ -3099,7 +3141,7 @@ def _execution_source(
         raise engine_exportreq.ExportRequestError(
             "export_render_failed",
             f"{rel_id} 重渲染失败: {exc}",
-            {"id": rel_id, "reason": str(exc)},
+            {"id": rel_id, "name": _export_figure_name(rel_id), "reason": str(exc)},
         ) from exc
     if rendered is None and include_svg and origin is None:
         saved = _load_svg_snapshot(rel_id, overrides, out_dir)
@@ -4839,7 +4881,11 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                     format=fmt, error_code="format_failed", error_params={"error": str(exc)[:200]}
                 )
             )
-    return _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
+    produced = _keep_disk_source_only_if_unchanged(produced, src, source_path, disk_source)
+    if disk_source is not None:
+        # 这次 PDF 嵌的就是磁盘上那份原件（不是现画）；它是位图、又有脚本 → 自检留意「可以重画成矢量」
+        produced = _note_scripted_raster(produced, _scripted_raster_panels(req))
+    return produced
 
 
 def _keep_disk_source_only_if_unchanged(
@@ -5140,15 +5186,20 @@ def _export_produce_rendercore(
         else {}
     )
     _prepare_source_fonts()
-    return rc_job.produce(
-        job,
-        tmp_dir,
-        sources=resolver,
-        provider=rc_facade.provider(),
-        host=rc_facade.host(),
-        math=math,
-        **({"raster_target": raster_target} if raster_target else {}),
-    )
+    try:
+        produced = rc_job.produce(
+            job,
+            tmp_dir,
+            sources=resolver,
+            provider=rc_facade.provider(),
+            host=rc_facade.host(),
+            math=math,
+            **({"raster_target": raster_target} if raster_target else {}),
+        )
+    except engine_exportreq.ExportRequestError as exc:
+        # RenderCore 不认注册表：图名在这里补（`figure` / `id` 是画布面板的文件 id）
+        raise _name_export_failure(exc)
+    return _note_scripted_raster(produced, _scripted_raster_panels(job.request))
 
 
 def _export_inspect(job, produced: list) -> list:
@@ -6082,6 +6133,53 @@ def _panel_file_kind(rel_id: str) -> str:
 
 def _export_route(req) -> dict:
     """这次导出每个面板 × 每种格式的来源（`engine/exportroute.py`，只回事实）：只查注册表，不执行、不读文件。"""
+    return engine_exportroute.build_route(
+        scope=req.scope, formats=req.formats, panels=_export_route_panels(req)
+    )
+
+
+def _scripted_raster_panels(req) -> list[str]:
+    """这次导出里**有脚本**、却按磁盘上的位图原件整张嵌进去的面板 id（导出自检「留意：可以重画成矢量」的来源）。
+
+    「整张嵌位图」只问 `exportroute.panel_route` 的 `embeds_disk_bitmap`（与 validate 的 route 同一判据），
+    「有脚本」只问注册表；算不出就当没有——留意不编。"""
+    try:
+        panels = _export_route_panels(req)
+    except Exception:  # noqa: BLE001
+        LOG.warning("算不出整张嵌位图的有脚本面板，导出自检不报这一条", exc_info=True)
+        return []
+    out: list[str] = []
+    for panel in panels:
+        route = engine_exportroute.panel_route(
+            scope=req.scope,
+            formats=req.formats,
+            file_kind=panel["file_kind"],
+            overrides=panel.get("overrides"),
+            has_script=panel["has_script"],
+            has_snapshot=bool(panel.get("has_snapshot")),
+        )
+        if route["embeds_disk_bitmap"] and panel["has_script"] and panel["id"] not in out:
+            out.append(panel["id"])
+    return out
+
+
+def _note_scripted_raster(produced: list, panels: list[str]) -> list:
+    """把「哪几张有脚本的图是整张位图」记进 PDF 产物的计划半张（`plan.scripted_raster_panels`），检查器据此报留意。
+    只记 PDF：PNG / TIFF 本来就是位图。"""
+    if not panels:
+        return produced
+    for item in produced:
+        if item.format != engine_exportreq.FORMAT_PDF or item.tmp_path is None:
+            continue
+        manifest = dict(item.manifest or {})
+        key = "plan" if isinstance(manifest.get("plan"), dict) else "provenance"
+        manifest[key] = {**(manifest.get(key) or {}), "scripted_raster_panels": list(panels)}
+        item.manifest = manifest
+    return produced
+
+
+def _export_route_panels(req) -> list[dict]:
+    """route 的输入：每个（可见）面板 `{id, overrides, has_snapshot, file_kind, has_script}`。"""
     if req.original is not None:
         raw = [
             {
@@ -6100,11 +6198,10 @@ def _export_route(req) -> dict:
             for o in (req.canvas.objects if req.canvas is not None else [])
             if o.get("type") == "panel" and not o.get("hidden")
         ]
-    panels = [
+    return [
         {**p, "file_kind": _panel_file_kind(p["id"]), "has_script": _has_runnable_script(p["id"])}
         for p in raw
     ]
-    return engine_exportroute.build_route(scope=req.scope, formats=req.formats, panels=panels)
 
 
 @app.get("/exports/<path:name>")
@@ -6528,6 +6625,31 @@ def sse_publish(event: str, data: dict) -> None:
             q.put_nowait((event, data))
         except queue.Full:
             pass
+
+
+#: 「准备中」的子阶段先后（#479）：只前进不后退，同一阶段只发一次
+_PREPARING_STAGE_ORDER = (engine_pool.STAGE_ENVIRONMENT, engine_pool.STAGE_STARTING)
+
+
+def _preparing_stage_relay(pj: str, rel_id: str):
+    """取会话期间把池报的阶段转成带 `stage` 的 `render.preparing`（#479）。
+
+    热路径只会走到「找运行环境」那一步，而且一闪而过；冷启动才会看到「启动 Python」。
+    阶段只前进：取会话里解析解释器可能在起子进程之后再碰一次，不能让界面倒回去。
+    """
+    reached = -1
+
+    def relay(stage: str) -> None:
+        nonlocal reached
+        if stage not in _PREPARING_STAGE_ORDER:
+            return
+        rank = _PREPARING_STAGE_ORDER.index(stage)
+        if rank <= reached:
+            return
+        reached = rank
+        sse_publish("render.preparing", {"pj": pj, "id": rel_id, "stage": stage})
+
+    return relay
 
 
 @contextlib.contextmanager
@@ -11322,12 +11444,18 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
     # 后台补渲染可能被暂缓（不起会话）：没有人在等它，不报「准备中」，免得暂缓时还要补一个终局事件
-    if engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND:
+    foreground = engine_pool.current_purpose() == engine_pool.PURPOSE_FOREGROUND
+    if foreground:
         sse_publish("render.preparing", {"pj": pj, "id": rel_id})
     acquire_mark = engine_pool.acquire_mark()
     try:
         # 前台取会话期间后台预热让路（不开新的；已在飞的在池锁上与这一路合并成同一条会话）
-        with engine_prewarm.PREWARM.foreground():
+        with (
+            engine_prewarm.PREWARM.foreground(),
+            engine_pool.stage_observer(_preparing_stage_relay(pj, rel_id))
+            if foreground
+            else contextlib.nullcontext(),
+        ):
             # 渲染端点独有冷重放：活会话照常准入；冷进程沿 runtime 渲染同一授权链
             # 重放归档输入并核验后采用新 receipt（PR03）。specfix/PNG/导出等其余
             # origin 消费者维持严格准入，由采用后的活 receipt 自然恢复。
@@ -18510,6 +18638,15 @@ def api_ai_siwc_cancel(flow_id):
     return jsonify(flow)
 
 
+@app.post("/api/ai/siwc/codex-fallback")
+def api_ai_siwc_codex_fallback():
+    """ChatGPT 登录失败的选择题里点了「改用 Codex 登录」：记下来，之后列出 Codex 登录与 `sub:codex` 连接（登录本身仍走
+    `POST /api/ai/agents/codex/login`）。只写一个布尔设置，不碰任何凭据。"""
+    engine_ai_connections.set_codex_fallback()
+    engine_ai.invalidate_capabilities()
+    return jsonify({"ok": True})
+
+
 @app.post("/api/ai/siwc/models/refresh")
 def api_ai_siwc_models_refresh():
     """用当前账号重取一次型号清单（联网）。"""
@@ -20307,6 +20444,25 @@ def layout_path(name: str, base: Path | None = None) -> Path:
     return (base if base is not None else LAYOUT_DIR) / f"{name}.json"
 
 
+def _contained_layout_path(path: Path, root: Path) -> Path | None:
+    real = engine_projectenv.contained_path(root, path.absolute())
+    if real is None:
+        return None
+    resolved = Path(real)
+    # 确认持的是规范文件名的锁；链接目标也必须落在这条锁带上。
+    return resolved if _lock_stripe(resolved) == _lock_stripe(path) else None
+
+
+def _layout_read_source(name: str) -> tuple[Path, Path] | None:
+    """回排版的实际路径与来源目录，来源目录决定图表附件的存储归属。"""
+    for directory in _layout_read_dirs():
+        # 每个来源都是项目根或数据根的直接子目录，根不能跟着来源的链接走。
+        path = _contained_layout_path(layout_path(name, directory), directory.parent)
+        if path is not None and path.exists():
+            return path, directory
+    return None
+
+
 @app.get("/api/layouts")
 def api_layouts():
     # 主位置 = 项目 tavottofile/；旧位置只读兼容，重名以主位置为准。
@@ -20314,20 +20470,22 @@ def api_layouts():
     # 文档——不剔掉的话「打开画布」列表里会多出一条叫 `_styles` 的东西，
     # 点开是一份读不成画布的样式表。
     seen: dict[str, float] = {}
-    for d in _layout_read_dirs():
-        if not d.is_dir():
+    for directory in _layout_read_dirs():
+        root = directory.parent
+        real = engine_projectenv.contained_path(root, directory.absolute())
+        if real is None or not Path(real).is_dir():
             continue
-        for p in d.glob("*.json"):
-            if not engine_documents.is_user_document_stem(p.stem):
+        for candidate in Path(real).glob("*.json"):
+            if not engine_documents.is_user_document_stem(candidate.stem):
                 continue
-            if p.stem in seen:
+            if candidate.stem in seen:
                 continue
-            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
-            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
-            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
-            # 按 `exists()` 往下找的。
+            path = _contained_layout_path(candidate, root)
+            if path is None:
+                continue
+            # 断链或 glob 后消失的条目不占名字，同名的合法后备文件仍可用。
             try:
-                seen[p.stem] = p.stat().st_mtime
+                seen[candidate.stem] = path.stat().st_mtime
             except OSError:
                 continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
@@ -20406,20 +20564,20 @@ def serve_document(path: Path, *, autosave: bool = False, source_storage: Path |
 
 @app.get("/api/layouts/<name>")
 def api_layout_get(name):
-    for d in _layout_read_dirs():
-        p = layout_path(name, d)
-        if p.exists():
-            ctx = _request_ctx()
-            source_storage = LAYOUT_DIR if d == LAYOUT_DIR else project_layout_dir(ctx)
-            resp = serve_document(p, source_storage=source_storage)
-            if ctx is not None:
-                # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
-                # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
-                # `project_layout_dir()` 一份，前端不自己拼。百分号编码：header 只能是 latin-1。
-                target = layout_path(name, _named_layout_dir(ctx)).relative_to(ctx.path)
-                resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
-            return resp
-    abort(404)
+    source = _layout_read_source(name)
+    if source is None:
+        abort(404)
+    path, directory = source
+    ctx = _request_ctx()
+    source_storage = LAYOUT_DIR if directory == LAYOUT_DIR else project_layout_dir(ctx)
+    resp = serve_document(path, source_storage=source_storage)
+    if ctx is not None:
+        # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
+        # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
+        # `project_layout_dir()` 一份，前端不自己拼。百分号编码：header 只能是 latin-1。
+        target = layout_path(name, _named_layout_dir(ctx)).relative_to(ctx.path)
+        resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
+    return resp
 
 
 @app.get("/api/layouts/<name>/agent-additions")
@@ -20773,7 +20931,7 @@ def document_summary(path: Path) -> dict | None:
     }
 
 
-def _external_change(current: str | None, path: Path):
+def _external_change(current: str | None, path: Path | None):
     """「磁盘上那份不是我以为的那份」的 409 —— **自动保存与另存为共用这一份**。
 
     两条路给前端的形状必须逐字相同：前端的出口只有一套（重新加载 / 明确覆盖 /
@@ -20786,7 +20944,7 @@ def _external_change(current: str | None, path: Path):
             "error": "磁盘上的这份排版已被 Tavotto 之外的改动覆盖过",
             "code": "external_change",
             "revision": current,
-            "summary": document_summary(path),
+            "summary": document_summary(path) if path is not None else None,
         }
     ), 409
 
@@ -21217,6 +21375,130 @@ def _project_file_query_sequence(value: object) -> int:
     if not isinstance(value, str) or re.fullmatch(r"[1-9][0-9]*", value) is None:
         raise ValueError("invalid binding intent")
     return int(value)
+
+
+@app.get("/api/layout-session/project-file/<doc_id>")
+def api_layout_project_file_get(doc_id):
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    key = engine_layoutsession.project_key(ctx.path)
+    try:
+        slot = _autosave_path(doc_id)
+        with _document_lock(slot):
+            view = engine_layoutsession.read_project_file(
+                key, doc_id, actual_autosave_revision=engine_atomicio.existing_revision(slot)
+            )
+    except OSError:
+        view = {"version": 1, "status": "unavailable"}
+    response = jsonify(view)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/layout-session/project-file/<doc_id>/reserve")
+def api_layout_project_file_reserve(doc_id):
+    body = request.get_json(silent=True)
+    if (
+        not engine_layoutsession.valid_doc_id(doc_id)
+        or not isinstance(body, dict)
+        or set(body) != {"name", "autosave_revision", "axis", "expected_binding_sequence"}
+        or not isinstance(body["name"], str)
+        or not body["name"]
+    ):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    target = _project_layout_target(body["name"], ctx)
+    if target is None:
+        return _bad_project_file_request()
+    try:
+        slot = _autosave_path(doc_id)
+        with _document_lock(slot):
+            result = engine_layoutsession.reserve_project_file(
+                engine_layoutsession.project_key(ctx.path),
+                doc_id,
+                name=target.stem,
+                file=target.relative_to(ctx.path).as_posix(),
+                autosave_revision=body["autosave_revision"],
+                axis=body["axis"],
+                expected_binding_sequence=body["expected_binding_sequence"],
+                actual_autosave_revision=engine_atomicio.existing_revision(slot),
+            )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
+
+
+@app.post("/api/layout-session/project-file/<doc_id>/confirm")
+def api_layout_project_file_confirm(doc_id):
+    body = request.get_json(silent=True)
+    if (
+        not engine_layoutsession.valid_doc_id(doc_id)
+        or not isinstance(body, dict)
+        or set(body) != {"name", "intent_sequence", "revision"}
+        or not isinstance(body["name"], str)
+        or not body["name"]
+        or not isinstance(body["revision"], str)
+    ):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    key = engine_layoutsession.project_key(ctx.path)
+    target = _project_layout_target(body["name"], ctx)
+    if target is None:
+        return _bad_project_file_request()
+    try:
+        engine_layoutsession.validate_project_file_edit(
+            {"axis": None, "base_axis": None, "base_revision": body["revision"]}, None
+        )
+        # 不同时取AS和named两个非重入条带锁。票据由reserve持AS锁捕获，
+        # 锁内按 GET 的顺序重新解析来源，只接受本锁带覆盖的文件。
+        # commit 在会话锁内再次核完整票据/CAS，票据中的保存目标保持规范位置。
+        with _document_lock(target):
+            pending = engine_layoutsession.pending_project_file(
+                key,
+                doc_id,
+                body["intent_sequence"],
+                name=target.stem,
+                file=target.relative_to(ctx.path).as_posix(),
+            )
+            if pending["state"] != "pending":
+                return jsonify(pending)
+            try:
+                source = _layout_read_source(body["name"])
+                path = source[0] if source is not None else None
+                current = engine_atomicio.existing_revision(path) if path is not None else None
+            except OSError:
+                return _revision_unreadable()
+            if current != body["revision"]:
+                return _external_change(current, path)
+            result = engine_layoutsession.commit_project_file(
+                key, doc_id, pending["ticket"], revision=current
+            )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
+
+
+@app.delete("/api/layout-session/project-file/<doc_id>/intent/<sequence>")
+def api_layout_project_file_cancel(doc_id, sequence):
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return _bad_project_file_request()
+    ctx = current_ctx()
+    try:
+        result = engine_layoutsession.cancel_project_file_intent(
+            engine_layoutsession.project_key(ctx.path),
+            doc_id,
+            _project_file_query_sequence(sequence),
+        )
+    except ValueError:
+        return _bad_project_file_request()
+    except OSError:
+        return _session_unavailable()
+    return jsonify(result)
 
 
 @app.get("/api/layout-session")

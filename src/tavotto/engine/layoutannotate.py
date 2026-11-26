@@ -58,6 +58,7 @@ ERROR_CODES = (
     "undo_unknown",
     "undo_stale",
     "undo_unavailable",
+    "bad_select",
 )
 
 
@@ -192,9 +193,15 @@ def measure_panels(canvas: dict, items: list | None, measure: Measure) -> tuple[
 
 
 def read_scene(
-    project: str | Path, name: str, measure: Measure, *, canvas_id: str | None = None
+    project: str | Path,
+    name: str,
+    measure: Measure,
+    *,
+    canvas_id: str | None = None,
+    extend: Callable[[dict, dict], dict] | None = None,
 ) -> dict:
-    """给 Agent 看的场景 + 这份排版的 `base_revision`。"""
+    """给 Agent 看的场景 + 这份排版的 `base_revision`。`extend(画布, 短号 → 子图对象 id)` 给了就把它回的键并进结果——
+    同一份读到的画布（ADR 0212 的对象列表经 `vectoredit.read_scene` 走这里；本模块不 import vectoredit，免得成环）。"""
     lay = open_layout(project, name)
     canvas = _canvas(lay.doc, canvas_id)
     panels, refs, unmeasured = measure_panels(canvas, None, measure)
@@ -204,6 +211,7 @@ def read_scene(
     ]
     scene = vectorscene.build_scene(panels, page=page, objects=existing)
     return {
+        **(extend(canvas, refs) if extend is not None else {}),
         "layout": name,
         "canvas_id": canvas.get("id"),
         "base_revision": lay.revision,
@@ -619,6 +627,7 @@ def preview(
     *,
     margin_mm: float = 4.0,
     width_px: int = 1000,
+    focus: list[dict] | None = None,
 ) -> dict | None:
     """这批新对象合成到画布上之后，框住它们的那一块（PNG 字节 + 区域毫米）。
 
@@ -631,13 +640,16 @@ def preview(
 
     from ..rendercore import facade, pdfwriter, plan as rc_plan, sources as rc_sources
 
-    if not objects:
+    # `focus`：框住哪些对象（缺省 = 新对象）。改已有对象时（ADR 0212）画布本身已是改后的样子、`objects` 为空，
+    # 框住的是改前与改后的位置
+    box = focus if focus is not None else objects
+    if not box:
         return None
     page = _page(canvas)
-    xs0 = [o["x"] for o in objects]
-    ys0 = [o["y"] for o in objects]
-    xs1 = [o["x"] + o["w"] for o in objects]
-    ys1 = [o["y"] + o["h"] for o in objects]
+    xs0 = [o["x"] for o in box]
+    ys0 = [o["y"] for o in box]
+    xs1 = [o["x"] + o["w"] for o in box]
+    ys1 = [o["y"] + o["h"] for o in box]
     region = [
         max(0.0, min(xs0) - margin_mm),
         max(0.0, min(ys0) - margin_mm),

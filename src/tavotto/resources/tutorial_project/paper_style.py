@@ -30,6 +30,10 @@ mpl.rcParams.update(
         "ytick.direction": "in",
         "legend.frameon": False,
         "figure.dpi": 120,
+        # 字体按 TrueType 嵌进 PDF，不用 matplotlib 默认的 Type 3：IEEE、Elsevier 等期刊会退回 Type 3，
+        # 别的软件里也常常选不中、改不了字
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
     }
 )
 

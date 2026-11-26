@@ -227,7 +227,8 @@
     "attachNoVision": "这个模型看不了图，",
     "attachNoVisionOnly": "这个模型看不了图",
     "attachSwitch": "换成 {{model}}",
-    "attachAria": "附文件"
+    "attachAria": "附文件",
+    "kindSubscription": "订阅"
   },
   "process": {
     "thought": "已思考 {{duration}}",

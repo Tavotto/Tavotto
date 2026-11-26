@@ -97,8 +97,9 @@ _TERMINAL = ("response.completed", "response.failed", "response.incomplete", "er
 
 
 def enabled(env: dict[str, str] | None = None) -> bool:
-    """`TAVOTTO_EXPERIMENTAL_SIWC=1` 才开；其余（含缺省）一律关。"""
-    return ((env if env is not None else os.environ).get(ENV_FLAG) or "").strip() == "1"
+    """默认开（维护者 2026-11-25：「开关默认开」，ADR 0209 §六）；`TAVOTTO_EXPERIMENTAL_SIWC=0` 整体关掉。只认 `0` 这一个关值，
+    其余（含缺省、`1`）都算开——拼错的关值不会悄悄关掉一个用户已经在用的登录。"""
+    return ((env if env is not None else os.environ).get(ENV_FLAG) or "").strip() != "0"
 
 
 # --------------------------------------------------------------------------- 错误码

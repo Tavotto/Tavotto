@@ -2,7 +2,7 @@
   "mcpServers": {
     "tavotto": {
       "title": "Tavotto",
-      "description": "打开 Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出真矢量 PDF。",
+      "description": "打开 Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑投稿前检查、导出真矢量 PDF。",
       "command": "./mcp/launch",
       "args": ["./mcp/server.py"],
       "cwd": ".",
