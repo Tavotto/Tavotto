@@ -4292,8 +4292,21 @@ export interface ChangePlanGroup {
    * 这一组要先问用户：把一根轴改成对数，但它的下限 ≤ 0，方案里已经带上了一条把下限改成正数的改动（`to`）。
    * 卡片问「一起改吗」，回答前不给「查看 / 应用」；`from` 是改前的下限。
    */
-  confirm?: { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number }
+  confirm?: ChangePlanConfirm
 }
+
+/**
+ * 脚本方案候选的数据指纹变了（用户要的改动本身会改数据，如换算单位）：脚本组上挂这个，卡片先问「确定要这样改吗」，
+ * 应用时 `applyChangePlanScript` 要带显式确认，后端没带就拒（ADR 0206 修订 2026-11-27）。
+ * `items` 是受影响的数据元素（至多 8 个，`reason`：数据不同 / 元素没了 / 名字对调），`total` 是真实个数；不含任何提示句。
+ */
+export interface ScriptDataChangedConfirm {
+  kind: 'script_data_changed'
+  items: { stem: string; gid: string; reason: 'data_changed' | 'subject_removed' | 'label_swapped' }[]
+  total: number
+}
+
+export type ChangePlanConfirm = { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number } | ScriptDataChangedConfirm
 
 export interface ChangePlan {
   id: string
@@ -4447,8 +4460,14 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
 }
 
 /** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */
-export async function applyChangePlanScript(planId: string): Promise<{ backup: string; after_sha256: string }> {
-  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/apply-script`, { method: 'POST' })
+export async function applyChangePlanScript(planId: string, opts?: { confirmDataChange?: boolean }): Promise<{ backup: string; after_sha256: string }> {
+  // 数据会变的方案（`group.confirm.kind === 'script_data_changed'`）要带用户点过「就这样改」的确认；后端没带就拒（`change_plan_script_data_unconfirmed`）
+  const out = await changePlanFetch(
+    `/api/change-plans/${encodeURIComponent(planId)}/apply-script`,
+    opts?.confirmDataChange
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm_data_change: true }) }
+      : { method: 'POST' },
+  )
   const applied = out.applied as { backup?: unknown; after_sha256?: unknown } | undefined
   if (!applied || !isStr(applied.backup) || !isStr(applied.after_sha256)) {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')

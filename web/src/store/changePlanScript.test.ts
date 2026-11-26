@@ -225,7 +225,7 @@ describe('失败终态：一句话 + 下一步', () => {
     'change_plan_script_check_failed',
     'change_plan_script_no_change',
     'change_plan_script_agent_failed',
-    'change_plan_script_data_changed',
+    'change_plan_script_figure_missing',
     'change_plan_script_no_preview',
     'change_plan_script_overreach',
   ])('%s → 再试一次（重新生成）', (code) => {
