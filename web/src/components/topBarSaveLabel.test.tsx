@@ -20,6 +20,7 @@ import {
   type SaveState,
 } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useUiStore } from '@/store/uiStore'
 import { SAVE_PENDING_REVEAL_MS, SaveStateLabel } from './TopBar'
 
 declare global {
@@ -86,6 +87,38 @@ describe('顶栏保存状态', () => {
     expect(label().getAttribute('title')).toContain('这个文件夹只读，修改存在本机')
     act(() => useDocumentStore.setState({ projectReadOnlyDoc: null }))
     expect(visibleText()).toBe('已存在本机')
+  })
+
+  it('自动保存撞上外部修改：只亮胶囊「别处有改动」、不弹对话框；点它 = ⌘S（写回绑定的文件，进冲突岔口）；绑定基线变了就熄灭', async () => {
+    const urls: string[] = []
+    globalThis.fetch = (async (u: unknown) => {
+      urls.push(String(u))
+      return new Response('{}', { status: 404 })
+    }) as typeof fetch
+    const id = useDocumentStore.getState().documentId
+    const binding = { projectId: 'pj1', name: 'a', file: 'tavottofile/a.json', revision: 'old', dirty: false }
+    const { setProjectFile } = await import('@/store/documentStore')
+    const { setCurrentProjectId } = await import('@/lib/session')
+    setCurrentProjectId('pj1')
+    act(() => {
+      setProjectFile(binding, id)
+      useDocumentStore.setState({ projectConflict: { docId: id, base: 'old' } })
+    })
+    const pill = () => host.querySelector<HTMLButtonElement>('[data-doc-status-pill="project_conflict"]')
+    expect(pill()?.textContent).toBe('别处有改动')
+    expect(useUiStore.getState().layoutOpen, '不弹对话框').toBeFalsy()
+    await act(async () => {
+      pill()!.click()
+    })
+    expect(urls.some((u) => u.includes('/api/layouts/a'))).toBe(true)
+    act(() => setProjectFile({ ...binding, revision: 'theirs' }, id))
+    expect(pill()).toBeNull()
+    // 不把绑定 / 项目认领漏给后面的用例
+    act(() => {
+      setProjectFile(null, id)
+      useDocumentStore.setState({ projectConflict: null })
+    })
+    setCurrentProjectId(null)
   })
 
   it('整个项目文件夹不可写：同一句；后端没开「写进项目」时界面照旧', () => {

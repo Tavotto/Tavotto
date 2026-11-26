@@ -24,7 +24,6 @@ import {
   mergeSavedFigureSnapshots,
   projectFileSnapshot,
   setProjectFile,
-  setProjectLayoutConflictHandler,
   useDocumentStore,
 } from './documentStore'
 import { reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
@@ -192,18 +191,3 @@ async function writeOnce(ctx: SaveContext, agentMerged = false): Promise<boolean
     return false
   }
 }
-
-/**
- * 自动保存写进项目时撞上外部修改（git pull / 另一台电脑 / 同步盘；ADR 0211 第二期 PR 2）：后端没有覆盖，本机槽位保着这边的版本。
- * 进与 ⌘S 撞上冲突**同一个**岔口（状态条 + 「存进项目」对话框，覆盖 / 另存为 / 重新加载），不另起一套。
- * 只在撞上的那份仍是此刻开着的排版时打开；切走了就不弹（`documentStore` 已记下这份的基线，不再带着它去撞）。
- */
-setProjectLayoutConflictHandler((id, c) => {
-  if (useDocumentStore.getState().documentId !== id) return
-  const ui = useUiStore.getState()
-  ui.setStatus(msg('save.projectConflict', { file: c.file }, 'workspace'), 'error')
-  ui.setLayoutOpen(true, 'saveToProject', {
-    name: c.name,
-    conflict: { name: c.name, revision: c.revision, summary: (c.summary as DiskDocumentSummary | null) ?? null },
-  })
-})

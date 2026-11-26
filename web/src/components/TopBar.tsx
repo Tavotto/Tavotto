@@ -328,6 +328,10 @@ export function SaveStateLabel() {
   )
   const projectReadOnly = writeFailedReadOnly || folderReadOnly
   const bound = useActiveProjectFile()
+  // 自动保存写进项目时撞上外部修改、还没裁决：胶囊说「别处有改动」，点它 = ⌘S（进冲突岔口），不弹窗打断编辑
+  const projectConflict = useDocumentStore(
+    (s) => s.projectConflict?.docId === s.documentId && (s.projectFile?.revision ?? '') === s.projectConflict.base,
+  )
   const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
   const issue = useDocIssue()
   const restoreKind = useDocumentStore((s) => s.restoreIssue?.kind ?? null)
@@ -387,6 +391,32 @@ export function SaveStateLabel() {
       {bad ? text : ''}
     </span>
   )
+
+  if (!issue && projectConflict) {
+    return (
+      <span data-save-state data-save-destination="project" data-save-shown="conflict" className="flex min-w-0 shrink items-center">
+        <button
+          type="button"
+          data-doc-status-pill="project_conflict"
+          data-tone="warn"
+          aria-label={t('topbar.issueAria', { status: t('topbar.saveConflict') })}
+          title={`${t('topbar.saveConflict')} · ${title}`}
+          onClick={() => void runManualSave()}
+          className={cn(
+            'inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+            'focus-visible:focus-ring',
+            PILL_TONE.warn,
+          )}
+        >
+          <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
+          <span data-save-text className="truncate max-[899px]:sr-only">
+            {t('topbar.saveConflict')}
+          </span>
+        </button>
+        {live}
+      </span>
+    )
+  }
 
   if (issue) {
     return (

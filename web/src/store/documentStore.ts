@@ -564,6 +564,12 @@ interface DocumentState {
    */
   projectReadOnlyDoc: string | null
   /**
+   * 自动保存写进项目时撞上外部修改、还没裁决（ADR 0211 第二期 PR 2，维护者 2026-11-27）：`base` 是当时绑定的修订号（没有 = ''）。
+   * **只走顶栏胶囊**（「别处有改动」），不弹对话框打断编辑；用户点胶囊或按 ⌘S 才进 ⌘S 同一个冲突岔口。
+   * 绑定的修订号变了（裁决完）它就不再成立，顶栏据此自己熄灭。与 `saveState` 正交：本机槽位照常写。
+   */
+  projectConflict: { docId: string; base: string } | null
+  /**
    * 「整体换文档」的代次，每次载入 +1（磁盘恢复 / 载入布局 / 切项目）。
    *
    * 自动保存的订阅靠它把**载入**与**编辑**区分开。两者都会换掉 `doc` 与
@@ -792,6 +798,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   restoreIssue: null,
   restoreMetaIssue: null,
   projectReadOnlyDoc: null,
+  projectConflict: null,
   loadSeq: 0,
   derivedSeq: 0,
   snapshotSeq: 0,
@@ -1735,18 +1742,11 @@ function projectWriteSpecFor(id: string, pj: string | null): ProjectWriteSpec | 
   const stuck = projectConflictBase.get(id)
   // 冲突岔口还没裁决（绑定的基线没动）：不再带着旧基线去撞，编辑照常进本机槽位
   if (stuck !== undefined && stuck === (binding?.revision ?? '')) return null
-  if (stuck !== undefined) projectConflictBase.delete(id)
+  if (stuck !== undefined) {
+    projectConflictBase.delete(id)
+    if (useDocumentStore.getState().projectConflict?.docId === id) useDocumentStore.setState({ projectConflict: null })
+  }
   return binding ? { name: binding.name, ...(binding.revision ? { base: binding.revision } : {}) } : {}
-}
-
-type ProjectLayoutConflictHandler = (
-  id: string,
-  conflict: { name: string; file: string; revision: string; summary: unknown },
-) => void
-let projectConflictHandler: ProjectLayoutConflictHandler | null = null
-/** 冲突岔口的界面（状态条 + 「存进项目」对话框）在 `projectSave.ts`，这里只通知，不 import uiStore */
-export function setProjectLayoutConflictHandler(fn: ProjectLayoutConflictHandler | null): void {
-  projectConflictHandler = fn
 }
 
 function afterProjectLayout(id: string, pj: string | null, result: ProjectLayoutResult): void {
@@ -1761,6 +1761,7 @@ function afterProjectLayout(id: string, pj: string | null, result: ProjectLayout
       id,
     )
     projectConflictBase.delete(id)
+    if (useDocumentStore.getState().projectConflict?.docId === id) useDocumentStore.setState({ projectConflict: null })
     if (useDocumentStore.getState().projectReadOnlyDoc === id) useDocumentStore.setState({ projectReadOnlyDoc: null })
     return
   }
@@ -1769,13 +1770,10 @@ function afterProjectLayout(id: string, pj: string | null, result: ProjectLayout
     return
   }
   if (result.state === 'external_change' && typeof result.revision === 'string') {
-    projectConflictBase.set(id, bindingForProject(readProjectFile(id), pj)?.revision ?? '')
-    projectConflictHandler?.(id, {
-      name: result.name,
-      file: `tavottofile/${result.name}.json`,
-      revision: result.revision,
-      summary: result.summary ?? null,
-    })
+    const base = bindingForProject(readProjectFile(id), pj)?.revision ?? ''
+    projectConflictBase.set(id, base)
+    // 只亮顶栏胶囊，不弹对话框（用户可能正在编辑）；裁决在用户点胶囊 / ⌘S 时进 `writeOnce` 的冲突岔口
+    useDocumentStore.setState({ projectConflict: { docId: id, base } })
   }
   // busy / skipped / refused / failed：本机那份已经存好，下次自动保存再试，不打扰
 }

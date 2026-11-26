@@ -11,7 +11,6 @@ import type { CanvasData, PanelObject } from '@/types/document'
 import { canvasToDoc } from '@/types/document'
 import {
   flushAutosave,
-  setProjectLayoutConflictHandler,
   startAutosave,
   useDocumentStore,
 } from './documentStore'
@@ -88,7 +87,6 @@ beforeEach(() => {
 afterEach(() => {
   stop()
   setProjectWriteCapability(false)
-  setProjectLayoutConflictHandler(null)
   vi.useRealTimers()
 })
 
@@ -166,13 +164,12 @@ describe('开关开着：节奏', () => {
 
   it('外部修改：不覆盖、进冲突岔口一次；岔口没裁决前不再带着旧基线去撞', async () => {
     writeProjectFile(DOC_ID, { projectId: 'pj1', name: '排版一', file: 'tavottofile/排版一.json', revision: 'old', dirty: false })
-    const seen: string[] = []
-    setProjectLayoutConflictHandler((id, c) => seen.push(`${id}:${c.revision}`))
     reply = { project_layout: { state: 'external_change', name: '排版一', revision: 'theirs', summary: null } }
     edit()
     flushAutosave()
     await settle()
-    expect(seen).toEqual([`${DOC_ID}:theirs`])
+    // 只记在 store 里让顶栏胶囊亮起，不弹任何对话框打断编辑（见 topBarSaveLabel 用例）
+    expect(s().projectConflict).toEqual({ docId: DOC_ID, base: 'old' })
     edit(3)
     flushAutosave()
     await settle()
@@ -184,6 +181,7 @@ describe('开关开着：节奏', () => {
     flushAutosave()
     await settle()
     expect(puts.at(-1)?.spec).toEqual({ name: '排版一', base: 'theirs' })
+    expect(s().projectConflict).toBeNull()
   })
 
   it('只读：记下这份、顶栏说一句灰字；下一次写成就清', async () => {
