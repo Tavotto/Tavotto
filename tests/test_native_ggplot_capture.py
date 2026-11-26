@@ -160,63 +160,6 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
     assert original.read_bytes() == source
 
 
-def _windows_loader_probe(monkeypatch, stage, runtime, cwd, environment, label):
-    """Compare system startup and R --version with different private launch settings."""
-    system = Path(os.environ["SystemRoot"]) / "System32"
-    diagnostic = stage / "startup-probes"
-    diagnostic.mkdir(exist_ok=True)
-    commands = {
-        filename: [str(shutil.copyfile(system / filename, diagnostic / filename)), *arguments]
-        for filename, arguments in (
-            ("cmd.exe", ["/d", "/c", "exit 17"]),
-            ("whoami.exe", ["/?"]),
-        )
-    }
-    commands["R --version"] = [runtime, "--vanilla", "--default-packages=NULL", "--version"]
-    baseline = subprocess.run(
-        commands["R --version"],
-        cwd=stage,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=winappcontainer.CREATE_NO_WINDOW,
-        check=False,
-        timeout=20,
-    )
-    kernel, _, security = winappcontainer._apis()
-    sid = winappcontainer._POINTER()
-    winappcontainer._win_checked(
-        security.ConvertStringSidToSidW(label, winappcontainer.ctypes.byref(sid))
-    )
-    result = [f"Staged R --version without a container: 0x{baseline.returncode:08x}"]
-    try:
-        with winappcontainer._private_desktop(kernel, security, label) as desktop:
-            for policy, creation in (
-                ("LPAC no window", winappcontainer.CREATE_NO_WINDOW),
-                ("LPAC detached", 0x00000008),
-                ("LPAC new console", 0x00000010),
-                ("AppContainer no window", winappcontainer.CREATE_NO_WINDOW),
-            ):
-                with monkeypatch.context() as probe:
-                    probe.setattr(winappcontainer, "CREATE_NO_WINDOW", creation)
-                    if policy.startswith("AppContainer "):
-                        probe.setattr(
-                            winappcontainer, "_PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT", 0
-                        )
-                    for name, command in commands.items():
-                        try:
-                            status = winappcontainer._run(
-                                kernel, security, sid, command, cwd, environment, 20, desktop
-                            )
-                            result.append(f"{policy} {name}: 0x{status:08x}")
-                        except OSError as exc:
-                            result.append(f"{policy} {name}: {exc}")
-    finally:
-        kernel.LocalFree(sid)
-    return result
-
-
 def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
     from tavotto import app as service, security
 
@@ -234,22 +177,6 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
             raise
 
     monkeypatch.setattr(nativeggplot_source, "replay", diagnose)
-    if sys.platform == "win32":
-        launch = winappcontainer._isolated_desktop_command
-
-        def diagnose_loader(root, argv, cwd, environment, timeout, sid):
-            status = launch(root, argv, cwd, environment, timeout, sid)
-            if status == 0xC0000142:
-                try:
-                    for line in _windows_loader_probe(
-                        monkeypatch, root, argv[0], cwd, environment, sid
-                    ):
-                        print(line)
-                except Exception as exc:
-                    problems.extend(traceback.format_exception(exc))
-            return status
-
-        monkeypatch.setattr(winappcontainer, "_isolated_desktop_command", diagnose_loader)
 
     root = tmp_path / "研究 项目"
     graphs = root / "figure scripts"
