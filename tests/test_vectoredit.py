@@ -1163,3 +1163,128 @@ def test_rotating_a_filled_circle_does_not_count_its_bounding_box_corners(projec
         base_revision=_base(project),
     )
     assert plan["ok"], plan["failed"]
+
+
+# ------------------------------------------------------------------ 第 5 期：插件工具用到的场景选择器 / 布局组 / 局部图
+
+
+def _with_layout_groups(project, groups, member_of):
+    """给画布加布局组约束（`canvas.layoutGroups`），并把对象挂进组（直属成员 = `groupId`）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    c = doc["canvases"][0]
+    c["layoutGroups"] = groups
+    for o in c["objects"]:
+        if o["id"] in member_of:
+            o["groupId"] = member_of[o["id"]]
+    atomicio.write_json(_path(project), doc, indent=1)
+
+
+def _row(gid, order):
+    return {"id": gid, "kind": "row", "order": order, "gap": 4, "align": "start"}
+
+
+def _commit(project, ops):
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    assert plan["ok"], plan
+    out = ve.commit(
+        project,
+        "组图",
+        ops,
+        measure,
+        base_revision=plan["base_revision"],
+        echo_digest_seen=plan["echo_digest"],
+    )
+    assert out["written"]
+    return plan, json.loads(_path(project).read_text(encoding="utf-8"))["canvases"][0]
+
+
+def test_ungrouping_a_layout_group_drops_its_constraint_like_the_desktop(project):
+    """#2244：拆掉的组也是布局组、成员散了 → 约束一并去掉（照 `ungroupSelected`）；别的布局组不动。"""
+    _with_layout_groups(
+        project,
+        [_row("g_lay00001", ["a_user0001", "s_user0001"])],
+        {"a_user0001": "g_lay00001", "s_user0001": "g_lay00001"},
+    )
+    plan, c = _commit(project, [{"op": "ungroup", "group": "g_lay00001"}])
+    assert plan["layout_groups_dropped"] == ["g_lay00001"]
+    assert any("布局组 g_lay00001" in e for e in plan["echo"])  # 复述里说了，不悄悄改
+    assert "layoutGroups" not in c  # 空了就不写这个键（与前端落盘一致）
+
+
+def test_ungrouping_another_group_keeps_unrelated_layout_groups(project):
+    _with_layout_groups(
+        project,
+        [_row("g_lay00001", ["a_user0001", "s_user0001"])],
+        {"a_user0001": "g_lay00001", "s_user0001": "g_lay00001", "t_user0001": "g_other001"},
+    )
+    plan, c = _commit(project, [{"op": "ungroup", "group": "g_other001"}])
+    assert plan["layout_groups_dropped"] == []
+    assert [g["id"] for g in c["layoutGroups"]] == ["g_lay00001"]
+
+
+def test_deleting_a_member_drops_a_layout_group_left_with_one(project):
+    """#2244：删对象之后（`deleteSelected`）成员不足 2 个的布局组都去掉。"""
+    _with_layout_groups(
+        project,
+        [_row("g_lay00001", ["a_user0001", "s_user0001"])],
+        {"a_user0001": "g_lay00001", "s_user0001": "g_lay00001"},
+    )
+    plan, c = _commit(project, [{"op": "delete", "id": "a_user0001"}])
+    assert plan["layout_groups_dropped"] == ["g_lay00001"]
+    assert "layoutGroups" not in c
+
+
+def test_scene_lists_vector_objects_and_filters_with_select(project):
+    out = la.read_scene(project, "组图", measure)
+    assert {o["id"] for o in out["vector_objects"]} == {"a_user0001", "t_user0001", "s_user0001"}
+    assert out["vector_objects_total"] == 3
+    only = la.read_scene(project, "组图", measure, select={"types": ["arrow"]})
+    assert [o["id"] for o in only["vector_objects"]] == ["a_user0001"]
+
+
+def test_scene_select_takes_the_panel_short_ref_for_anchored_to(project):
+    """落盘锚点记的是子图对象 id；Agent 手里是场景短号 P1——两种写法都认。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    a = doc["canvases"][0]["objects"][1]
+    a["anchor"] = {"by": "agent", "anchors": [{"panel": {"id": "figures/fig1.pdf", "point": "e"}}]}
+    atomicio.write_json(_path(project), doc, indent=1)
+    for ref in ("P1", "figures/fig1.pdf"):
+        got = la.read_scene(project, "组图", measure, select={"anchored_to": ref})
+        assert [o["id"] for o in got["vector_objects"]] == ["a_user0001"], ref
+
+
+@pytest.mark.parametrize(
+    "query,field",
+    [
+        ({"colour": "red"}, "select.colour"),
+        ({"types": ["panel"]}, "select.types"),
+        ({"within": [0, 0, 10]}, "select.within"),
+        ({"by_agent": "yes"}, "select.by_agent"),
+    ],
+)
+def test_a_bad_select_is_refused_not_read_as_select_all(project, query, field):
+    with pytest.raises(la.LayoutError) as e:
+        la.read_scene(project, "组图", measure, select=query)
+    assert e.value.code == "bad_select" and e.value.detail == {"field": field}
+
+
+def test_edit_preview_frames_both_where_it_was_and_where_it_went(project, monkeypatch):
+    """局部图框住改前与改后的位置（删掉的按删前），画的是改后的整张画布。"""
+    seen = {}
+
+    def fake_preview(canvas, objects, pdfs, *, focus=None, **_kw):
+        seen.update(canvas=canvas, objects=objects, focus=focus)
+        return {"png": b"", "region_mm": [], "missing_panels": []}
+
+    monkeypatch.setattr(la, "preview", fake_preview)
+    canvas = _canvas(project)
+    ops = [
+        {"op": "move", "id": "a_user0001", "by_mm": [40, 0]},
+        {"op": "delete", "id": "t_user0001"},
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    ve.preview_edit(canvas, plan, {})
+    assert seen["objects"] == []
+    assert [o["id"] for o in seen["canvas"]["objects"]] == [o.get("id") for o in plan["objects"]]
+    xs = sorted((o["id"], o["x"]) for o in seen["focus"])
+    assert xs == [("a_user0001", 30), ("a_user0001", 70.0), ("t_user0001", 95)]

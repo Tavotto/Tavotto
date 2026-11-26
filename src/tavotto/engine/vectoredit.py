@@ -98,6 +98,32 @@ def _brief(o: dict) -> dict:
     }
 
 
+_QUERY_KEYS = ("ids", "types", "name", "text", "by_agent", "within", "anchored_to")
+
+
+def check_query(query: object) -> dict:
+    """选择条件的形状：不认识的键、写错类型的值抛 `EditError("bad_op", field=键)`（不悄悄当成「全选」）。"""
+    if query is None:
+        return {}
+    if not isinstance(query, dict):
+        raise EditError("bad_op", field="select")
+    for k, v in query.items():
+        ok = {
+            "ids": lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v),
+            "types": lambda v: isinstance(v, list) and all(x in EDITABLE_TYPES for x in v),
+            "name": lambda v: isinstance(v, str),
+            "text": lambda v: isinstance(v, str),
+            "by_agent": lambda v: isinstance(v, bool),
+            "within": lambda v: (
+                isinstance(v, list) and len(v) == 4 and all(agentobjects._is_num(x) for x in v)
+            ),  # noqa: SLF001
+            "anchored_to": lambda v: isinstance(v, str),
+        }.get(k)
+        if ok is None or not ok(v):
+            raise EditError("bad_op", field=f"select.{k}")
+    return dict(query)
+
+
 def select(canvas: dict, query: dict | None = None) -> list[dict]:
     """画布上的矢量对象，按条件筛（条件之间是「且」）：`ids`、`types`、`name`（包含）、`text`（文字内容包含）、
     `by_agent`、`within`（画布毫米框 `[x, y, w, h]`，与对象框相交）、`anchored_to`（0208 锚点里指着的子图对象 id）。
@@ -271,6 +297,8 @@ class _State:
         self.echo: list[str] = []
         self.budgets = agentobjects.table()["budgets"]
         self.minted: set[str] = set()
+        #: 这次补丁拆掉的组 id（写入层按它清布局组约束，#2244）
+        self.ungrouped: set[str] = set()
         self.reindex()
 
     def reindex(self) -> None:
@@ -571,6 +599,7 @@ def _op_ungroup(s: _State, i: int, op: dict) -> None:
             _release_mask(s, o)
             if p and not any(x is not o and p[-1] in _gpath(x) for x in live):
                 s.set_path(o, p[:-1])
+    s.ungrouped.add(gid)
     s.echo.append(f"取消编组 {gid}（{len(members)} 个对象升到上一层）")
 
 
@@ -926,7 +955,35 @@ def apply_ops(
         "changes": changes,
         "order": order,
         "reordered": order != first,
+        "ungrouped": sorted(s.ungrouped),
     }
+
+
+def prune_layout_groups(
+    groups: object, objects: list[dict], *, deleted: bool, ungrouped: list[str]
+) -> tuple[list | None, list[str]]:
+    """补丁之后画布上的布局组约束（`canvas.layoutGroups`）还剩哪些——照前端（#2244）：
+
+    * 删了对象（`deleteSelected`）：**所有**直属成员（`groupId` = 组 id）不足 2 个的布局组都去掉；
+    * 拆了组（`ungroupSelected`）：被拆的组若也是布局组、成员不足 2 个，约束一并去掉。
+
+    回 `(剩下的组 | None = 没有这个键, 去掉的组 id)`；没有可去的就原样回。"""
+    if not isinstance(groups, list) or not groups:
+        return (groups if isinstance(groups, list) else None), []
+    gone = set(ungrouped)
+
+    def members(gid: object) -> int:
+        return sum(1 for o in objects if isinstance(o, dict) and o.get("groupId") == gid)
+
+    kept, dropped = [], []
+    for g in groups:
+        gid = g.get("id") if isinstance(g, dict) else None
+        short = members(gid) < 2
+        if short and (deleted or gid in gone):
+            dropped.append(str(gid))
+        else:
+            kept.append(g)
+    return kept, dropped
 
 
 def _exportable(o: dict) -> bool:
@@ -1000,16 +1057,29 @@ def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
                 solved, visible, panels, [], page=page, profile=profile, existing_texts=existing
             )["facts"]
     failed = [f for f in facts if f["status"] == "fail"]
+    groups, dropped = prune_layout_groups(
+        canvas.get("layoutGroups"),
+        res["objects"],
+        deleted=bool(res["deleted"]),
+        ungrouped=res["ungrouped"],
+    )
+    echo = list(res["echo"])
+    if dropped:
+        echo.append(
+            f"布局组 {'、'.join(dropped)} 剩下的成员不足 2 个，排列约束一并去掉（对象原地不动）"
+        )
     return {
         "ok": not failed,
         "objects": res["objects"],
+        "layout_groups": groups,
+        "layout_groups_dropped": dropped,
         "changed": changed,
         "deleted": res["deleted"],
         "changes": res["changes"],
-        "echo": res["echo"],
+        "echo": echo,
         "order": res["order"],
         "reordered": res["reordered"],
-        "echo_digest": edit_digest(res["echo"], ops),  # type: ignore[arg-type]
+        "echo_digest": edit_digest(echo, ops),  # type: ignore[arg-type]
         "facts": facts,
         "failed": failed,
         "unverified": [f for f in facts if f["status"] == "unknown"],
@@ -1079,6 +1149,12 @@ def commit(
                 key=lambda o: rank.get(o.get("id") if isinstance(o, dict) else None, len(rank))
             )
         target["objects"] = kept
+        # #2244：拆组 / 删除后成员不足的布局组约束（与前端同一规则）
+        if plan["layout_groups_dropped"]:
+            if plan["layout_groups"]:
+                target["layoutGroups"] = plan["layout_groups"]
+            else:
+                target.pop("layoutGroups", None)
 
     after, token = la.write_canvas(project, name, lay, canvas.get("id"), patch)
     return {
@@ -1089,3 +1165,20 @@ def commit(
         "undo_token": token,
         "plan": plan,
     }
+
+
+def preview_edit(canvas: dict, plan: dict, panel_pdfs: dict[str, str]) -> dict | None:
+    """改后的那一块局部图：画布换成方案里改后的全部对象（层级照方案），框住动到的对象改前与改后的位置
+    （删掉的按删前的位置）。与 0208 的局部图同一条真合成；画不出来回 None。"""
+    before = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+    changed = plan.get("changed") or []
+    ids = [o.get("id") for o in changed] + list(plan.get("deleted") or [])
+    focus = [
+        o
+        for o in [*changed, *(before.get(i) for i in ids)]
+        if isinstance(o, dict) and all(agentobjects._is_num(o.get(k)) for k in ("x", "y", "w", "h"))  # noqa: SLF001
+    ]
+    if not focus:
+        return None
+    after = {**canvas, "objects": plan.get("objects") or []}
+    return la.preview(after, [], panel_pdfs, focus=focus)

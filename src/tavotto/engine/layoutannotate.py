@@ -58,6 +58,7 @@ ERROR_CODES = (
     "undo_unknown",
     "undo_stale",
     "undo_unavailable",
+    "bad_select",
 )
 
 
@@ -191,10 +192,21 @@ def measure_panels(canvas: dict, items: list | None, measure: Measure) -> tuple[
     return panels, refs, unmeasured
 
 
+#: 场景里最多列多少个矢量对象（结果体积）；多了用 `select` 缩小
+VECTOR_OBJECTS_SHOWN = 150
+
+
 def read_scene(
-    project: str | Path, name: str, measure: Measure, *, canvas_id: str | None = None
+    project: str | Path,
+    name: str,
+    measure: Measure,
+    *,
+    canvas_id: str | None = None,
+    select: dict | None = None,
 ) -> dict:
-    """给 Agent 看的场景 + 这份排版的 `base_revision`。"""
+    """给 Agent 看的场景 + 这份排版的 `base_revision`，外加画布上能改的矢量对象（ADR 0212 选择器，`select` 筛）。"""
+    from . import vectoredit  # 延后：vectoredit 依赖本模块
+
     lay = open_layout(project, name)
     canvas = _canvas(lay.doc, canvas_id)
     panels, refs, unmeasured = measure_panels(canvas, None, measure)
@@ -203,7 +215,17 @@ def read_scene(
         o for o in canvas.get("objects") or [] if isinstance(o, dict) and o.get("type") != "panel"
     ]
     scene = vectorscene.build_scene(panels, page=page, objects=existing)
+    try:
+        query = vectoredit.check_query(select)
+    except vectoredit.EditError as exc:
+        raise LayoutError("bad_select", field=exc.field) from exc
+    # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
+    if query.get("anchored_to") in refs:
+        query["anchored_to"] = refs[query["anchored_to"]]
+    picked = vectoredit.select(canvas, query)
     return {
+        "vector_objects": picked[:VECTOR_OBJECTS_SHOWN],
+        "vector_objects_total": len(picked),
         "layout": name,
         "canvas_id": canvas.get("id"),
         "base_revision": lay.revision,
@@ -619,6 +641,7 @@ def preview(
     *,
     margin_mm: float = 4.0,
     width_px: int = 1000,
+    focus: list[dict] | None = None,
 ) -> dict | None:
     """这批新对象合成到画布上之后，框住它们的那一块（PNG 字节 + 区域毫米）。
 
@@ -631,13 +654,16 @@ def preview(
 
     from ..rendercore import facade, pdfwriter, plan as rc_plan, sources as rc_sources
 
-    if not objects:
+    # `focus`：框住哪些对象（缺省 = 新对象）。改已有对象时（ADR 0212）画布本身已是改后的样子、`objects` 为空，
+    # 框住的是改前与改后的位置
+    box = focus if focus is not None else objects
+    if not box:
         return None
     page = _page(canvas)
-    xs0 = [o["x"] for o in objects]
-    ys0 = [o["y"] for o in objects]
-    xs1 = [o["x"] + o["w"] for o in objects]
-    ys1 = [o["y"] + o["h"] for o in objects]
+    xs0 = [o["x"] for o in box]
+    ys0 = [o["y"] for o in box]
+    xs1 = [o["x"] + o["w"] for o in box]
+    ys1 = [o["y"] + o["h"] for o in box]
     region = [
         max(0.0, min(xs0) - margin_mm),
         max(0.0, min(ys0) - margin_mm),

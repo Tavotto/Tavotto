@@ -1388,6 +1388,8 @@ NORMAL_TOOLS = (
     "tavotto_layout_annotate_plan",
     "tavotto_layout_annotate_apply",
     "tavotto_layout_annotate_undo",
+    "tavotto_layout_edit_plan",
+    "tavotto_layout_edit_apply",
 )
 
 

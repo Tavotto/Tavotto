@@ -44,7 +44,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 要交给 Tavotto 桌面窗口 | `references/desktop-handoff.md`（含全部错误码分诊） |
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了、大图 / 多图打开、改过脚本之后刷新 | `references/compatibility.md`（能改 / 必须回代码改） |
-| 往组图排版上加标注 | `references/layout-annotate.md` |
+| 往组图排版上加标注、改已有的箭头 / 文字 / 形状 | `references/layout-annotate.md` |
 
 普通画图任务只读前一行；故障与交接文档**用到才读**。
 
