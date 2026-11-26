@@ -69,6 +69,37 @@ ERROR_CODES = (
 
 _KIND_WORD = {"text": "文字", "arrow": "箭头", "shape": "形状", "path": "路径"}
 
+#: 编辑方案没出来时给 Agent / 模型的一句（码是 `ERROR_CODES`；index / field 在 errors 里）。插件与桌面改图助手共用这一份。
+ERROR_WORDS = {
+    "bad_op": "这条操作的写法不对",
+    "unknown_object": "点名的对象 / 组不在这张画布上（id 取场景的 vector_objects）",
+    "not_vector": "点名的不是矢量对象（子图、图片不在这里改）",
+    "bad_field": "这一类对象没有这个字段",
+    "bad_value": "值的类型或写法不对",
+    "out_of_range": "值超出允许范围",
+    "duplicate_target": "同一个对象在一条操作里点了两次",
+    "kernel_unavailable": "这台机器上的几何内核没装上：布尔 / 偏移 / 轮廓化 / 简化用不了，其余操作照常；告诉用户可在桌面里做这一步",
+}
+
+#: 补丁词汇的一份说明（给模型 / Agent 看的，**只此一处**）：插件 `tavotto_layout_edit_*` 的 `ops` 参数说明、改图助手的系统提示
+#: （`engine/vectorplan.py`）都从这里取，加 / 改操作只改这里与 `apply_ops`。
+OPS_DOC = (
+    "补丁：一列操作，按顺序执行，服务端重算（不收算好的坐标）。每条 {op, …}："
+    "set {id, set: {字段: 值}}（描边、填充、线宽 strokePt、颜色、字号、文字、x/y/w/h、rotationDeg、name、locked、hidden）；"
+    "move {id, by_mm: [dx, dy]} 或 {id, to: 位置（同标注的锚点写法）, attach: 方位点 | from | to}；delete {id}；"
+    'align {ids, mode: left/hcenter/right/top/vcenter/bottom, to?: "selection" | "page" | {key: id} | {panel: P1}}；'
+    "distribute {ids, axis: h/v, gap_mm?}；order {id, to: front/back/forward/backward}；group {ids, name?}；"
+    "ungroup {group}；rotate {id, deg}；pathfinder {ids, mode: unite/minus_front/minus_back/intersect/exclude/divide/"
+    "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}；"
+    "convert_to_path {ids}（形状 / 箭头换成同 id 的路径）。布尔 / 偏移收路径与封闭形状，轮廓化另收直线 / 箭头，简化只收 path。"
+    "路径锚点（只收 path，锚点地址 {sp, i} 取场景 vector_objects[].anchors，含义是这条操作执行时的状态）："
+    "move_anchors {id, anchors, by_mm}；move_handle {id, anchor, which: in/out, to_mm, break_smooth?}；"
+    "add_anchors {id, anchors?} 或 {id, at: {sp, seg, t}}；delete_anchors / average_anchors {id, anchors}；"
+    "convert_anchors {id, anchors, to?: smooth/corner}；cut_path {id, anchors}；"
+    "join_paths {id, anchors: [端点, 端点]} 或 {ids: [甲, 乙]}（留最后一个）；reverse_path {id}；"
+    "make_compound {ids}；release_compound {id}。"
+)
+
 
 class EditError(Exception):
     def __init__(self, code: str, index: int | None = None, field: str | None = None) -> None:
@@ -209,6 +240,56 @@ def select(canvas: dict, query: dict | None = None) -> list[dict]:
 VECTOR_OBJECTS_SHOWN = 150
 
 
+def scene_objects(canvas: dict, refs: dict, query: dict) -> dict:
+    """场景里的 `vector_objects`（`read_scene` 的那一段）：从一份**已在内存里的画布**现算，不读盘。
+    桌面改图助手（ADR 0212 第 6 期）从前端给的内存快照用同一个函数，形状与插件读到的逐键相同。
+    `refs` = 场景里子图短号 → 子图对象 id。"""
+    q = dict(query)
+    # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
+    if q.get("anchored_to") in refs:
+        q["anchored_to"] = refs[q["anchored_to"]]
+    picked = select_objects(canvas, q)
+    shown = picked[:VECTOR_OBJECTS_SHOWN]
+    by_id = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+    cap = ANCHORS_PER_PATH_TARGETED if "ids" in q else ANCHORS_PER_PATH
+    left, omitted = ANCHORS_PER_SCENE, False
+    for b in shown:
+        if b["type"] != "path":
+            continue
+        if b["anchor_count"] <= min(cap, left):
+            b["anchors"] = path_anchors(by_id[b["id"]])
+            left -= b["anchor_count"]
+        else:
+            omitted = True
+    out = {"vector_objects": shown, "vector_objects_total": len(picked)}
+    if omitted:
+        out["anchors_note"] = (
+            f"锚点清单只给不超过 {cap} 个锚点的路径、整次最多 {ANCHORS_PER_SCENE} 个；没列的路径只有 subpaths 里的计数，"
+            "用 select {ids: [路径 id]} 单独读（单个路径放宽到 "
+            f"{ANCHORS_PER_PATH_TARGETED} 个）；锚点更多的路径不列清单"
+        )
+    return out
+
+
+def panel_refs(canvas: dict) -> dict:
+    """子图短号（P1、P2…，按画布顺序）→ 子图对象 id；与 `layoutannotate.measure_panels` 的编号同一规则。"""
+    return {
+        f"P{n}": p.get("id")
+        for n, p in enumerate(la._figure_panels(canvas), start=1)  # noqa: SLF001
+    }
+
+
+def memory_scene(canvas: dict, select: dict | None = None) -> dict:
+    """内存快照：与 `read_scene` 的 `vector_objects` 一支同形，另带页面与子图短号表（桌面改图助手出方案的输入）。
+    选择条件写错抛 `EditError("bad_op")`。"""
+    return {
+        **scene_objects(canvas, panel_refs(canvas), check_query(select)),
+        "canvas_id": canvas.get("id"),
+        "page": la._page(canvas),  # noqa: SLF001
+        "panels_by_ref": panel_refs(canvas),
+    }
+
+
 def read_scene(
     project: str | Path,
     name: str,
@@ -225,31 +306,7 @@ def read_scene(
         raise la.LayoutError("bad_select", field=exc.field) from exc
 
     def extend(canvas: dict, refs: dict) -> dict:
-        q = dict(query)
-        # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
-        if q.get("anchored_to") in refs:
-            q["anchored_to"] = refs[q["anchored_to"]]
-        picked = select_objects(canvas, q)
-        shown = picked[:VECTOR_OBJECTS_SHOWN]
-        by_id = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
-        cap = ANCHORS_PER_PATH_TARGETED if "ids" in q else ANCHORS_PER_PATH
-        left, omitted = ANCHORS_PER_SCENE, False
-        for b in shown:
-            if b["type"] != "path":
-                continue
-            if b["anchor_count"] <= min(cap, left):
-                b["anchors"] = path_anchors(by_id[b["id"]])
-                left -= b["anchor_count"]
-            else:
-                omitted = True
-        out = {"vector_objects": shown, "vector_objects_total": len(picked)}
-        if omitted:
-            out["anchors_note"] = (
-                f"锚点清单只给不超过 {cap} 个锚点的路径、整次最多 {ANCHORS_PER_SCENE} 个；没列的路径只有 subpaths 里的计数，"
-                "用 select {ids: [路径 id]} 单独读（单个路径放宽到 "
-                f"{ANCHORS_PER_PATH_TARGETED} 个）；锚点更多的路径不列清单"
-            )
-        return out
+        return scene_objects(canvas, refs, query)
 
     return la.read_scene(project, name, measure, canvas_id=canvas_id, extend=extend)
 
@@ -1710,7 +1767,7 @@ def _check_items(objs: list[dict], ops: object, panels: dict) -> list[dict]:
     return list(by.values())
 
 
-def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
+def _plan(canvas: dict, ops: object, measure, profile) -> dict:
     # 子图总要量：改后的对象要核「不遮数据」；锚点挪动另要数据点
     panels, _refs, unmeasured = la.measure_panels(
         canvas, _needs_panels(ops) + _anchor_requests(canvas), measure
@@ -1822,7 +1879,18 @@ def propose(
     if doclock.revision_conflict(base_revision, lay.revision):
         raise la.LayoutError("layout_changed", revision=lay.revision)
     canvas = la._canvas(lay.doc, canvas_id)  # noqa: SLF001
-    return {"base_revision": lay.revision, **_plan(lay, canvas, ops, measure, profile)}
+    return {"base_revision": lay.revision, **_plan(canvas, ops, measure, profile)}
+
+
+def unmeasured_panel(panel: dict, requests: list) -> dict:  # noqa: ARG001
+    """内存快照里量不了子图（后端读不到桌面内存里的数据与脚本）：只给外框，核对照常跑。"""
+    raise la.PanelUnavailable("memory_snapshot")
+
+
+def propose_memory(canvas: dict, ops: object, *, profile: dict | None = None) -> dict:
+    """**不读盘、不写盘**：对一份内存里的画布（前端给的文档形态）算方案——`propose` 的同一个 `_plan`，只是子图量不了（只有外框）。
+    桌面改图助手（ADR 0212 第 6 期）用；回的形状与 `propose` 相同（没有 `base_revision`：基线核对由前端按对象指纹做）。"""
+    return _plan(canvas, ops, unmeasured_panel, profile)
 
 
 def commit(
@@ -1841,7 +1909,7 @@ def commit(
     if doclock.revision_conflict(base_revision, lay.revision):
         raise la.LayoutError("layout_changed", revision=lay.revision)
     canvas = la._canvas(lay.doc, canvas_id)  # noqa: SLF001
-    plan = _plan(lay, canvas, ops, measure, profile)
+    plan = _plan(canvas, ops, measure, profile)
     if not plan["ok"]:
         return {"written": False, "plan": plan}
     if plan["echo_digest"] != echo_digest_seen:

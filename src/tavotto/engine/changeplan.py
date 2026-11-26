@@ -45,6 +45,7 @@ from . import (
     normalize,
     patchspec,
     reviewinbox,
+    vectorplan,
 )
 from .ai_tasks import FAILED
 
@@ -203,6 +204,8 @@ MAX_TEXT_VALUE = 500
 MODEL_TIMEOUT_S = 90.0
 MODEL_MAX_OUTPUT_TOKENS = 4_000
 MODEL_MAX_INPUT_CHARS = 48_000
+#: 矢量编辑补丁一条条列出来，比图内属性改动长：输出上限放宽一些
+VECTOR_MAX_OUTPUT_TOKENS = 6_000
 #: 框的最大条数（每个方案、每侧）
 MAX_BOXES = 200
 
@@ -1466,6 +1469,45 @@ def connection_failure(selection: dict | None = None) -> str | None:
     return None if ok else MODEL_FAILURE_CODES.get(reason, "change_plan_model_failed")
 
 
+def _structured(
+    system: str,
+    user: str,
+    validate: Callable[[dict], dict],
+    selection: dict | None,
+    *,
+    max_output_tokens: int = MODEL_MAX_OUTPUT_TOKENS,
+) -> dict:
+    """方案类调用共用的一次无工具结构化调用 → 已过 `validate` 的 dict；失败抛 `PlanFailure(稳定码)`。
+    连接与型号用用户在输入框选的那条（没选 = 旧的挑法）。"""
+    sel = selection or {}
+    if sel.get("connection"):
+        conn, reason, detail = _RESOLVE(
+            MODEL_TIMEOUT_S, conn_id=sel["connection"], model=sel.get("model")
+        )
+    else:
+        conn, reason, detail = _RESOLVE(MODEL_TIMEOUT_S)
+    if conn is None:
+        raise PlanFailure(MODEL_FAILURE_CODES.get(reason, "change_plan_model_failed"), detail)
+    cli = ai_structured.is_cli_conn(conn)
+    res = _CALL(
+        system=system,
+        user=user,
+        validate=validate,
+        limits=ai_structured.Limits(
+            max_input_chars=MODEL_MAX_INPUT_CHARS,
+            max_output_tokens=max_output_tokens,
+            timeout_s=ai_structured.CLI_TIMEOUT_S if cli else MODEL_TIMEOUT_S,
+        ),
+        conn=conn,
+        **({"effort": sel["effort"]} if sel.get("effort") and not cli else {}),
+    )
+    if not res.ok or not isinstance(res.value, dict):
+        raise PlanFailure(
+            MODEL_FAILURE_CODES.get(res.reason, "change_plan_model_failed"), res.detail
+        )
+    return res.value
+
+
 def ask_model(
     comments: object,
     manifest: object,
@@ -1487,21 +1529,10 @@ def ask_model(
     system, user = build_review_prompt(
         rows, element_table(manifest, focus_gids=focus), source, previous
     )
-    sel = selection or {}
-    # 用户在输入框选的那条连接与型号：结构化调用用同一条（没选 = 旧的挑法）
-    if sel.get("connection"):
-        conn, reason, detail = _RESOLVE(
-            MODEL_TIMEOUT_S, conn_id=sel["connection"], model=sel.get("model")
-        )
-    else:
-        conn, reason, detail = _RESOLVE(MODEL_TIMEOUT_S)
-    if conn is None:
-        raise PlanFailure(MODEL_FAILURE_CODES.get(reason, "change_plan_model_failed"), detail)
-    cli = ai_structured.is_cli_conn(conn)
-    res = _CALL(
-        system=system,
-        user=user,
-        validate=lambda obj: validate_proposal(
+    res = _structured(
+        system,
+        user,
+        lambda obj: validate_proposal(
             obj,
             manifest,
             comment_ids=ids,
@@ -1509,24 +1540,34 @@ def ask_model(
                 MAX_ASSISTANT_CHANGES_PER_GROUP if source == "assistant" else MAX_CHANGES_PER_GROUP
             ),
         ),
-        limits=ai_structured.Limits(
-            max_input_chars=MODEL_MAX_INPUT_CHARS,
-            max_output_tokens=MODEL_MAX_OUTPUT_TOKENS,
-            timeout_s=ai_structured.CLI_TIMEOUT_S if cli else MODEL_TIMEOUT_S,
-        ),
-        conn=conn,
-        **({"effort": sel["effort"]} if sel.get("effort") and not cli else {}),
+        selection,
     )
-    if not res.ok or not isinstance(res.value, dict):
-        raise PlanFailure(
-            MODEL_FAILURE_CODES.get(res.reason, "change_plan_model_failed"), res.detail
-        )
-    proposal = res.value
+    proposal = res
     # 超出上限的意见没发给模型，但每条提交的意见都要有去处
     proposal["unhandled"] = list(proposal["unhandled"]) + [
         {"comment_id": c["id"], "reason": "over_limit"} for c in over
     ]
     return proposal
+
+
+def ask_vector_edits(
+    instruction: str,
+    canvas: dict,
+    selected: list[str] | None = None,
+    selection: dict | None = None,
+) -> dict:
+    """改图助手改画布矢量对象（ADR 0212 第 6 期）：问一次模型 → `{ops, unhandled}`（ops 已逐条过 `apply_ops` 干跑，
+    不合格的进 `unhandled`）；失败抛 `PlanFailure(稳定码)`。`canvas` 是前端给的内存画布，不读盘。"""
+    system, user = vectorplan.build_prompt(
+        instruction, canvas, selected, max_chars=MODEL_MAX_INPUT_CHARS
+    )
+    return _structured(
+        system,
+        user,
+        lambda obj: vectorplan.validate_ops(obj, canvas),
+        selection,
+        max_output_tokens=VECTOR_MAX_OUTPUT_TOKENS,
+    )
 
 
 # --------------------------------------------------------------------------- 任务登记（进程内）
