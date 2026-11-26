@@ -196,7 +196,7 @@ plan = {
 - **为什么放宽**：这道保护原本是防「Agent 顺手改了数据」，但用户**主动要求**改数据（换算单位、过滤、归一化）时它也拦，且没有任何出路。数据指纹变了不等于坏了，只是需要人点头。
 - **怎么放宽**：候选照常渲染，`changeplan.script_data_findings`（与 `ai_figure_edit._data_lines` 共用 `figureverify.data_unchanged`，precommit 口径；`_data_lines` 仍是给 Agent 自修用的英文句子，不进界面）取结构化结果；有发现就照常出脚本卡，脚本组上挂
   `confirm: {kind: "script_data_changed", items: [{stem, gid, reason}], total}`——`reason` ∈ `data_changed`（数据不同）/ `subject_removed`（元素没了或被顶替）/ `label_swapped`（名字对调）；`items` 至多 8 项（`MAX_DATA_CONFIRM_ITEMS`），`total` 是真实个数，不带任何提示句或 label 原文。
-- **卡片**（与对数轴下限同一套：`answers` / `pendingConfirm` / `answerConfirm`）：一句话「这次改动会改变图里画的数据，确定要这样改吗？」+ 主按钮「照样改」+ 次级「先不改」；回答前没有「查看 / 应用」，`openDialog` / `apply` / `applyScript` 也拒绝。
+- **卡片**（与对数轴下限同一套：`answers` / `pendingConfirm` / `answerConfirm`）：一句话「这会改动图里画的数据，要应用吗？」+ 主按钮「就这样改」+ 次级「先不改」；回答前没有「查看 / 应用」，`openDialog` / `apply` / `applyScript` 也拒绝。
   「先不改」= 整张脚本卡不应用（脚本只有一组），卡片落成一句灰字「数据没改，这次脚本也没有动。」（前端本地码 `change_plan_script_data_declined`，没有「改脚本来做」之类的后路）。测试钩 `data-change-plan-confirm-data="yes|no"`。
 - **服务端强制**：`POST /api/change-plans/<id>/apply-script` 对带 `confirm` 的方案要求请求体 `{"confirm_data_change": true}`，没带 / 不是 `true` = 400 `change_plan_script_data_unconfirmed`，脚本一个字节不动、方案不标已应用。不靠前端拦；重复应用幂等不变。
 - **图整张不再出仍失败**：改前有的图（stem）改后整张不再产出 = 坏了，不是改数据，仍不出方案；码换成更准的 `change_plan_script_figure_missing`（「改后的脚本不再画出原来的图」，「再试一次」），`change_plan_script_data_changed` 退役（不再发出）。

@@ -822,7 +822,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return 'stale'
       }
       if (st !== 'ready') return 'failed'
-      // 数据会变的方案：回答「照样改」之前不写；回答了就把确认带给后端（后端不信前端，没带就拒）
+      // 数据会变的方案：回答「就这样改」之前不写；回答了就把确认带给后端（后端不信前端，没带就拒）
       const ask = e.plan.groups.find((g) => g.kind === 'script' && g.confirm?.kind === 'script_data_changed')
       if (ask && e.answers?.[ask.key] !== 'yes') return 'failed'
       const guard = captureProjectEpoch()

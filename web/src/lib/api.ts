@@ -4432,7 +4432,7 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
 
 /** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */
 export async function applyChangePlanScript(planId: string, opts?: { confirmDataChange?: boolean }): Promise<{ backup: string; after_sha256: string }> {
-  // 数据会变的方案（`group.confirm.kind === 'script_data_changed'`）要带用户点过「照样改」的确认；后端没带就拒（`change_plan_script_data_unconfirmed`）
+  // 数据会变的方案（`group.confirm.kind === 'script_data_changed'`）要带用户点过「就这样改」的确认；后端没带就拒（`change_plan_script_data_unconfirmed`）
   const out = await changePlanFetch(
     `/api/change-plans/${encodeURIComponent(planId)}/apply-script`,
     opts?.confirmDataChange

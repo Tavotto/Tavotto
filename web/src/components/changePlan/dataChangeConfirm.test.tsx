@@ -1,6 +1,6 @@
 /**
  * 脚本方案「数据会变，先问一句」（ADR 0206 修订 2026-11-27）：卡片先问、回答前没有「查看 / 应用」、「先不改」后卡片落成一句灰字、
- * 「照样改」之后应用才把确认带给后端；没有 confirm 的脚本方案照旧直接应用（不带任何确认字段）。
+ * 「就这样改」之后应用才把确认带给后端；没有 confirm 的脚本方案照旧直接应用（不带任何确认字段）。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -105,8 +105,8 @@ it('数据会变：卡上先问一句 + 两颗按钮，回答前没有「查看 
   await put(entry(planWith(CONFIRM)))
   await render(<ChangePlanTranscript panelId="p1" />)
   const card = q('[data-change-plan-card="ready"]')!
-  expect(card.textContent).toContain('这次改动会改变图里画的数据，确定要这样改吗？')
-  expect(q('[data-change-plan-confirm-data="yes"]')!.textContent).toBe('照样改')
+  expect(card.textContent).toContain('这会改动图里画的数据，要应用吗？')
+  expect(q('[data-change-plan-confirm-data="yes"]')!.textContent).toBe('就这样改')
   expect(q('[data-change-plan-confirm-data="no"]')!.textContent).toBe('先不改')
   expect(q('[data-change-plan-view]')).toBeNull()
   expect(q('[data-change-plan-apply]')).toBeNull()
@@ -131,7 +131,7 @@ it('「先不改」：这张脚本卡整张不应用，落成一句灰字，脚�
   expect(applyChangePlanScript).not.toHaveBeenCalled()
 })
 
-it('「照样改」：出现「查看 / 应用」，应用时把确认带给后端', async () => {
+it('「就这样改」：出现「查看 / 应用」，应用时把确认带给后端', async () => {
   await put(entry(planWith(CONFIRM)))
   await render(<ChangePlanTranscript panelId="p1" />)
   click('[data-change-plan-confirm-data="yes"]')
