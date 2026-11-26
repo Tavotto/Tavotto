@@ -89,7 +89,7 @@ mixedtext.arm()
 with mixedtext.suspended():
     out["suspended_armed_inside"] = mixedtext.armed()
 out["suspended_after"] = mixedtext.armed()
-print(json.dumps(out, ensure_ascii=False))
+print(json.dumps(out, ensure_ascii=True))
 """
 
 
