@@ -6286,9 +6286,13 @@ interface ProjectScoped {
   pj?: string
 }
 
+/** 取会话的阶段（后端 `engine.pool.ACQUIRE_STAGE_OF`）：找运行环境 → 启动 Python */
+export type PreparingStage = 'environment' | 'starting'
+
 export type ServerEvent =
   | ({ kind: 'figure.snapshot_invalidated'; pj: string } & FigureSnapshotInvalidation)
-  | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
+  /** `stage`：取会话里走到哪一步（#479）；第一条不带，只前进不后退 */
+  | ({ kind: 'render.preparing'; id: string; stage?: PreparingStage } & ProjectScoped)
   | ({ kind: 'render.progress'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
