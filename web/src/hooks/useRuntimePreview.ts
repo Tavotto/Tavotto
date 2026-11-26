@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { usePreviewOwner } from './usePreviewOwner'
 import { fetchRuntimePreviewForState } from '@/lib/api'
 
 /**
@@ -29,22 +30,23 @@ export function useRuntimePreview(
   nonce = 0,
 ): RuntimePreview {
   // 变体串（文件 + overrides 内容），与 `renderKeyOf` 同口径：runtime 面板没有来源驱动的 guard 后缀
-  const variant = `${fileId} ${JSON.stringify(overrides)}`
+  const owner = usePreviewOwner()
+  const variant = `${owner.key} ${nonce} ${fileId} ${JSON.stringify(overrides)}`
   const [state, setState] = useState<RuntimePreview & { key: string | null }>({ ...IDLE, key: null })
   const urlRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!enabled) return
     const ctrl = new AbortController()
-    void fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal)
+    void fetchRuntimePreviewForState(fileId, overrides as unknown[], ctrl.signal, owner.pj)
       .then((got) => {
-        if (ctrl.signal.aborted) return
+        if (ctrl.signal.aborted || !owner.still()) return
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = got ? URL.createObjectURL(got.blob) : null
         setState({ key: variant, url: urlRef.current, exact: got ? got.exact : null, failed: false })
       })
       .catch(() => {
-        if (!ctrl.signal.aborted) setState({ key: variant, url: null, exact: null, failed: true })
+        if (!ctrl.signal.aborted && owner.still()) setState({ key: variant, url: null, exact: null, failed: true })
       })
     return () => ctrl.abort()
     // overrides 的内容变化由 variant 表达（数组引用每次 commit 都变）

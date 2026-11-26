@@ -209,7 +209,7 @@ export function resetValidation(): void {
  */
 export function startValidation(): () => void {
   const doc = useDocumentStore.getState()
-  let documentId = doc.documentId
+  let loadSeq = doc.loadSeq
   let activeCanvasId = doc.activeCanvasId
   let docRef: unknown = doc.doc
   let canvasesRef: unknown = doc.canvases
@@ -217,8 +217,8 @@ export function startValidation(): () => void {
   schedule()
 
   const stopDoc = useDocumentStore.subscribe((s) => {
-    if (s.documentId !== documentId) {
-      documentId = s.documentId
+    if (s.loadSeq !== loadSeq) {
+      loadSeq = s.loadSeq
       activeCanvasId = s.activeCanvasId
       docRef = s.doc
       canvasesRef = s.canvases
