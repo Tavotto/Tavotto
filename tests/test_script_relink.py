@@ -66,7 +66,7 @@ def _candidates(client, pj: dict, script: str) -> dict:
 def _project(tmp_path: Path, *, fingerprint: bool) -> Path:
     root = tmp_path / "proj"
     root.mkdir()
-    (root / "plot.py").write_text(PLOT, encoding="utf-8")
+    (root / "plot.py").write_bytes(PLOT.encode("utf-8"))
     entry = {"entry": "main", "cost": "light", "stems": ["plot_a"]}
     if fingerprint:
         entry["sha256"] = _sha(PLOT)
@@ -91,7 +91,7 @@ def test_register_records_and_refreshes_the_fingerprint(tmp_path):
     assert _entry(root, "plot.py")["sha256"] == _sha(PLOT)
     # 用户改了脚本，之后又登记（试运行 / 手工）了一次：指纹跟着换
     edited = PLOT + "# edited\n"
-    (root / "plot.py").write_text(edited, encoding="utf-8")
+    (root / "plot.py").write_bytes(edited.encode("utf-8"))
     discover.register(root, "plot.py", ["plot_a"])
     assert _entry(root, "plot.py")["sha256"] == _sha(edited)
     # 脚本已经不在时再登记（只是摘 / 并一张图）：沿用旧指纹——挪走之后正要靠它认出那一份
@@ -121,7 +121,7 @@ def test_fingerprint_round_trips_through_entries_and_bad_values_are_ignored(tmp_
 def test_static_merge_does_not_write_just_to_refresh_a_fingerprint(tmp_path):
     """统一刷新的静态合并只给**新并入**的脚本记指纹；已有条目原样——用户改脚本不触发重写注册表。"""
     root = _project(tmp_path, fingerprint=True)
-    (root / "plot.py").write_text(PLOT + "# edited\n", encoding="utf-8")
+    (root / "plot.py").write_bytes((PLOT + "# edited\n").encode("utf-8"))
     cfg, _rep, _changes = discover.merge(root)
     assert cfg["scripts"]["plot.py"]["sha256"] == _sha(PLOT)
 
@@ -132,7 +132,7 @@ def test_moved_script_is_matched_by_bytes(client, tmp_path):
     (root / "plot.py").rename(root / "scripts" / "plot.py")
     # 同名但内容不同的不算；名字不同、字节相同的才算
     (root / "other").mkdir()
-    (root / "other" / "plot.py").write_text(PLOT + "# different\n", encoding="utf-8")
+    (root / "other" / "plot.py").write_bytes((PLOT + "# different\n").encode("utf-8"))
     pj = _open(client, root)
     got = _candidates(client, pj, "plot.py")
     assert got["missing"] is True and got["fingerprint"] is True
