@@ -350,6 +350,9 @@ def locate(store: Path, stem: str, *, names: Iterable[str] | None = None) -> Loc
         layout_kind = _kind(directory / LAYOUT_FILE)
         if manifest is not None and layout_kind == "link":
             return done(BLOCKED, None, problem=PROBLEM_SYMLINK)
+        # 留底目录 `legacy/` 也只能是真目录：是链接 / reparse point / 别的东西时，冲突留底会顺着它写到项目外
+        if _kind(directory / LEGACY_DIR) not in ("absent", "dir"):
+            return done(BLOCKED, None, problem=PROBLEM_SYMLINK)
         if manifest is not None and layout_kind != "file":
             manifest = None  # 清单在、正文不在：不是完整目录
     d_valid = d_kind == "dir" and manifest is not None
@@ -479,7 +482,10 @@ def _write_dir_form(loc: Located, data: bytes, doc_id: str | None) -> str:
 
 def _archive(loc: Located, tag: str, data: bytes) -> None:
     rev = atomicio.revision_of(data)[:8]
-    (loc.directory / LEGACY_DIR).mkdir(exist_ok=True)
+    legacy_dir = loc.directory / LEGACY_DIR
+    legacy_dir.mkdir(exist_ok=True)
+    if _kind(legacy_dir) != "dir":  # 第二道：locate 与这里之间被换成链接
+        raise LayoutDirError(PROBLEM_SYMLINK)
     atomicio.write_bytes(loc.directory / LEGACY_DIR / f"{loc.stem}.{tag}-{rev}.json", data)
 
 
