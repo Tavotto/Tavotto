@@ -402,8 +402,9 @@ def _assistant_system_prompt() -> str:
         "- 只改 `<elements>` 里出现的 `gid` 与它的 `props` 里列出的 `prop`；值要符合 `type`：`bool` 给 true / false，`number` 给数（在 `min` / `max` 内），"
         "`enum` 取 `options` 之一，`color` 给 `#RRGGBB`，`text` 给字符串，`pair` / `rect` / `number_list` 给数组。\n"
         "- 改动要小而准，指令没要求的不动。指令说「所有 / 全部」就把每个符合的元素都列出来。\n"
-        "- 指令里**能**用上面的属性做到的部分照改；做不到的部分写进 `unhandled`（`comment_id` 仍是 `a1`）。同一条指令可以既在 `groups` 里（能改的那部分）"
-        "又在 `unhandled` 里（剩下的那部分）。`reason` 只能取：`needs_script`（要改脚本 / 数据 / 新增删除元素 / 换图类型才能做到）、"
+        "- 指令里能用上面的属性做到的照改；做不到的写进 `unhandled`（`comment_id` 仍是 `a1`）。"
+        "**只要指令的任何一部分要改脚本，就把整条指令放进 `unhandled`（`needs_script`），`groups` 里不要放这条指令的任何修改**——"
+        "只改一半会得到一张对不上的图（比如标签改成了「秒」，数据还是分钟）。`reason` 只能取：`needs_script`（要改脚本 / 数据 / 新增删除元素 / 换图类型才能做到）、"
         "`unclear`（指令看不懂或没法落成具体修改）、`out_of_scope`（不是改图的要求）、`no_change_needed`（图已经满足）。\n\n"
         "## 本次调用的方式\n"
         "- 一问一答，没有工具，不能提问。\n"
@@ -412,7 +413,7 @@ def _assistant_system_prompt() -> str:
         "- 只输出一个 JSON 对象，不要 Markdown 围栏、不要解释文字：\n"
         '  `{"groups": [{"comment_id": "a1", "changes": [{"gid": 元素gid, "prop": 属性, "value": 新值}]}], '
         '"unhandled": [{"comment_id": "a1", "reason": 原因}]}`\n'
-        "- `gid` 逐字照抄输入；能改的放 `groups`，其余放 `unhandled`，两者都可以有。\n"
+        "- `gid` 逐字照抄输入；整条能改的放 `groups`，其余放 `unhandled`。\n"
     )
 
 
@@ -434,7 +435,8 @@ def _review_system_prompt(revise: bool = False) -> str:
             if revise
             else ""
         )
-        + "- 做不到的意见放进 `unhandled`，`reason` 只能取：`needs_script`（要改脚本 / 数据才能做到）、`unclear`（意见看不懂或没法落成具体修改）、"
+        + "- 一条意见只要有任何一部分要改脚本，就把整条意见放进 `unhandled`（`needs_script`），`groups` 里不要放这条意见的任何修改，免得只改了一半。\n"
+        "- 做不到的意见放进 `unhandled`，`reason` 只能取：`needs_script`（要改脚本 / 数据才能做到）、`unclear`（意见看不懂或没法落成具体修改）、"
         "`out_of_scope`（不是改图的要求）、`no_change_needed`（图已经满足）。\n\n"
         "## 本次调用的方式\n"
         "- 一问一答，没有工具，不能提问。\n"
@@ -604,14 +606,86 @@ def validate_proposal(
         if isinstance(u, dict) and known(u.get("comment_id")):
             reason = u.get("reason")
             reject(u["comment_id"], reason if reason in _MODEL_REASONS else "unclear")
+    # 整条意见交给脚本：同一条意见既有图内修改又说要改脚本时，只留 `needs_script`，不给「改了一半」的方案（维护者 2026-11-26）
+    whole_script = {u["comment_id"] for u in unhandled if u["reason"] == "needs_script"}
     return {
-        "groups": [{"comment_id": cid, "changes": groups[cid]} for cid in order],
+        "groups": [
+            {"comment_id": cid, "changes": groups[cid]} for cid in order if cid not in whole_script
+        ],
         "unhandled": unhandled,
     }
 
 
 def change_count(proposal: dict) -> int:
     return sum(len(g["changes"]) for g in proposal["groups"])
+
+
+# --------------------------------------------------------------------------- 对数轴的下限必须大于 0（维护者 2026-11-26）
+LOG_CONFIRM_KIND = "log_lower_limit"
+#: 没有更好的依据时，建议的下限 = 上限的这么多分之一再向下取到 10 的幂（上限 1.05 → 0.01）。
+#: manifest 不暴露各条线的正数最小值（只有已经是 log 轴时才有 `scale_domain`），所以不按数据取。
+LOG_LOWER_DECADES = 100.0
+
+
+def suggest_log_lower(upper: float) -> float | None:
+    """给对数轴建议一个大于 0 的下限：`upper / 100` 向下取到 10 的幂；上限不是正数就没法建议（`None`）。"""
+    if not _finite(upper) or upper <= 0:
+        return None
+    exp = math.floor(math.log10(upper / LOG_LOWER_DECADES))
+    out = float(f"1e{exp}")
+    return out if 0 < out < upper else None
+
+
+def require_log_lower_limits(proposal: dict, manifest: object) -> dict:
+    """某一组把一根轴改成对数（`xscale` / `yscale` → `log`）、而这根轴改后的下限 ≤ 0 时，渲染出来是一张坍掉的图。
+
+    处理：候选里把下限一起改到一个正数（`suggest_log_lower`），并给这一组打上 `confirm`——卡片先问用户「要一起改吗」，
+    不问就不出「查看 / 应用」。下限取模型在同一份提议里写的 `xlim` / `ylim`（有就改它的值），否则取元素表里此刻的范围；
+    已经是正数下限的不打标；下限不可改（`limits_slaved` 等）或认不出的不碰。建议不出来（上限也不是正数）= 这一处改动不要，记 `bad_value`。
+    `confirm = {kind, axis, gid, from, to}`：`from` 是改前的下限、`to` 是建议值。返回新提议，不改入参。"""
+    by_gid = _by_gid(manifest)
+    groups = [{**g, "changes": [dict(c) for c in g["changes"]]} for g in proposal["groups"]]
+    unhandled = list(proposal["unhandled"])
+    index = {(c["gid"], c["prop"]): c for g in groups for c in g["changes"]}
+    for g in groups:
+        for ch in list(g["changes"]):
+            prop = ch["prop"]
+            if prop not in ("xscale", "yscale") or ch["value"] != "log":
+                continue
+            el = by_gid.get(ch["gid"])
+            if _value_of(el, prop)[1] == "log":
+                continue  # 本来就是对数：这一条没有变化，不归这里管
+            axis, lim_prop = prop[0], f"{prop[0]}lim"
+            if lim_prop not in _fields(el or {}):
+                continue
+            own = index.get((ch["gid"], lim_prop))
+            lim = own["value"] if own else _value_of(el, lim_prop)[1]
+            if not (isinstance(lim, list) and len(lim) == 2 and all(map(_finite, lim))):
+                continue
+            lo, hi = min(lim), max(lim)
+            if lo > 0:
+                continue
+            to = suggest_log_lower(hi)
+            if to is None:
+                g["changes"].remove(ch)
+                item = {"comment_id": g["comment_id"], "reason": "bad_value"}
+                if item not in unhandled:
+                    unhandled.append(item)
+                continue
+            value = [to, hi] if lim[0] <= lim[1] else [hi, to]
+            if own is not None:
+                own["value"] = value
+            else:
+                added = {"gid": ch["gid"], "prop": lim_prop, "value": value}
+                g["changes"].append(added)
+                index[(ch["gid"], lim_prop)] = added
+            note = {"kind": LOG_CONFIRM_KIND, "axis": axis, "gid": ch["gid"], "from": lo, "to": to}
+            if "confirm" in g:  # 同一组把两根轴都改成对数：问第一根，另一根的一并带上、记在 `also`
+                g["confirm"].setdefault("also", []).append(note)
+            else:
+                g["confirm"] = note
+    groups = [g for g in groups if g["changes"]]
+    return {"groups": groups, "unhandled": unhandled}
 
 
 # --------------------------------------------------------------------------- 候选
@@ -653,7 +727,7 @@ def candidate_patches(
         else:
             kept.setdefault(cid, []).append(ch)
     groups = [
-        {"comment_id": g["comment_id"], "changes": kept[g["comment_id"]]}
+        {**g, "changes": kept[g["comment_id"]]}
         for g in proposal["groups"]
         if g["comment_id"] in kept
     ]
@@ -737,17 +811,23 @@ def effective_changes(
             if item not in unhandled:
                 unhandled.append(item)
         if changes:
-            groups.append(
-                {
-                    "comment_id": g["comment_id"],
-                    "atomic": False,
-                    "changes": changes,
-                    "boxes": {
-                        "before": [{"gid": k, "box": v} for k, v in boxes_b.items()],
-                        "after": [{"gid": k, "box": v} for k, v in boxes_a.items()],
-                    },
-                }
-            )
+            out_group = {
+                "comment_id": g["comment_id"],
+                "atomic": False,
+                "changes": changes,
+                "boxes": {
+                    "before": [{"gid": k, "box": v} for k, v in boxes_b.items()],
+                    "after": [{"gid": k, "box": v} for k, v in boxes_a.items()],
+                },
+            }
+            confirm = g.get("confirm")
+            # 问的是「下限一起改」：下限那一条真的生效了才问，否则没东西可问
+            if isinstance(confirm, dict) and any(
+                c["target_gid"] == confirm["gid"] and c["prop"] == f"{confirm['axis']}lim"
+                for c in changes
+            ):
+                out_group["confirm"] = confirm
+            groups.append(out_group)
     return groups, unhandled
 
 
@@ -824,6 +904,7 @@ def build_plan(
                 "atomic": bool(g.get("atomic")),
                 "changes": g["changes"],
                 "boxes": g["boxes"],
+                **({"confirm": g["confirm"]} if g.get("confirm") else {}),
             }
         )
         if note_ids is not None:  # 续改的版本：标出「这版按批注改的」组
@@ -899,7 +980,14 @@ def carried_groups(plan: dict, proposal: dict) -> list[dict]:
             if (c["target_gid"], c["prop"]) not in taken
         ]
         if changes:
-            out.append({"comment_id": g["comment_id"], "changes": changes})
+            item = {"comment_id": g["comment_id"], "changes": changes}
+            confirm = g.get("confirm")
+            # 上一版问过「下限一起改」的组，下限那一条还在才继续问（新一版的回答从头记）
+            if isinstance(confirm, dict) and any(
+                c["gid"] == confirm["gid"] and c["prop"] == f"{confirm['axis']}lim" for c in changes
+            ):
+                item["confirm"] = confirm
+            out.append(item)
     return out
 
 

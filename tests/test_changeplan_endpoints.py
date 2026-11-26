@@ -701,12 +701,11 @@ def test_assistant_instruction_is_the_one_comment_and_gets_its_own_system_prompt
         "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
     }
     out = run_assistant(client, target="ax0.line0")
-    assert out["state"] == "ready"
+    # 模型把同一条指令既放进组又说要改脚本：整条交给脚本，不给「改了一半」的方案（维护者 2026-11-26）
+    assert out["state"] == "ready" and out["code"] == "change_plan_empty"
     plan = out["plan"]
     assert plan["source"] == "assistant"
-    (group,) = plan["groups"]
-    assert group["comment_id"] == "a1" and group["label"].startswith("把线条加粗")
-    # 部分能改、部分要改脚本：同一条指令既有组又有 unhandled(needs_script)
+    assert plan["groups"] == []
     assert {u["comment_id"]: u["reason"] for u in plan["unhandled"]} == {"a1": "needs_script"}
     assert "用户的一条改图指令" in seen["system"] and "审阅者" not in seen["system"]
     assert "把线条加粗" in seen["user"] and '"gid":"ax0.line0"' in seen["user"]
@@ -929,3 +928,88 @@ def test_review_source_takes_the_selection_too(env, monkeypatch):
     )
     assert run(client, connection="prov2")["state"] == "ready"
     assert seen["c"] == "prov2"
+
+
+# --------------------------------------------------------------------------- 对数轴下限 / 整条意见交给脚本（维护者 2026-11-26）
+def _axes_base():
+    from tests.test_changeplan import axes_el
+
+    base = json.loads(json.dumps(BASE))
+    base["elements"].append(axes_el())
+    return base
+
+
+def test_log_axis_with_a_zero_lower_limit_comes_back_with_the_limit_fix_and_a_confirm(
+    env, monkeypatch
+):
+    _m, client, _figs, worker, model, _retired = env
+    monkeypatch.setitem(globals(), "BASE", _axes_base())
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0", "yscale", "log")]}],
+        "unhandled": [],
+    }
+    out = run_assistant(client)
+    assert out["state"] == "ready", out
+    (group,) = out["plan"]["groups"]
+    assert {c["prop"]: c["after"] for c in group["changes"]} == {
+        "yscale": "log",
+        "ylim": [0.01, 1.05],
+    }
+    assert group["confirm"] == {
+        "kind": "log_lower_limit",
+        "axis": "y",
+        "gid": "ax0",
+        "from": 0.0,
+        "to": 0.01,
+    }
+    assert all("patch" in c for c in group["changes"])
+    # 候选渲染带着下限：前后图都是对的那一张
+    cand = out["plan"]["candidate_patches"]
+    assert {"gid": "ax0", "prop": "ylim", "value": [0.01, 1.05]} in [
+        {k: v for k, v in e.items() if k != "identity"} for e in cand
+    ]
+    assert worker.calls[-1][1] == worker.calls[-2][1]
+
+
+def test_log_axis_where_the_model_already_set_a_positive_limit_asks_nothing(env, monkeypatch):
+    _m, client, _figs, _worker, model, _retired = env
+    monkeypatch.setitem(globals(), "BASE", _axes_base())
+    model.result = {
+        "groups": [
+            {
+                "comment_id": "a1",
+                "changes": [ch("ax0", "yscale", "log"), ch("ax0", "ylim", [0.01, 1.05])],
+            }
+        ],
+        "unhandled": [],
+    }
+    out = run_assistant(client)
+    (group,) = out["plan"]["groups"]
+    assert "confirm" not in group and len(group["changes"]) == 2
+
+
+def test_log_xscale_gets_the_lower_limit_confirm_for_the_review_source_too(env, monkeypatch):
+    _m, client, _figs, _worker, model, _retired = env
+    monkeypatch.setitem(globals(), "BASE", _axes_base())
+    model.result = {
+        "groups": [{"comment_id": "c1", "changes": [ch("ax0", "xscale", "log")]}],
+        "unhandled": [],
+    }
+    out = run(client)
+    assert out["state"] == "ready", out
+    (group,) = out["plan"]["groups"]
+    assert group["confirm"]["axis"] == "x" and group["confirm"]["to"] == 0.1
+
+
+def test_a_comment_split_between_label_and_script_is_only_needs_script(env):
+    _m, client, _figs, worker, model, _retired = env
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0.title", "text", "(s)")]}],
+        "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
+    }
+    out = run_assistant(client)
+    assert out["code"] == "change_plan_empty" and out["plan"]["groups"] == []
+    assert [(u["comment_id"], u["reason"]) for u in out["plan"]["unhandled"]] == [
+        ("a1", "needs_script")
+    ]
+    assert [k for k, _ in worker.calls] == ["snap"]  # 没有候选渲染

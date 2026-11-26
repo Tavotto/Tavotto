@@ -10,6 +10,7 @@ import {
   restoreChangePlanScript,
   undoChangePlanScript,
   type ChangePlan,
+  type ChangePlanGroup,
   type ChangePlanPatch,
   type ReviewAnchor,
   type ReviewComment,
@@ -71,6 +72,9 @@ export interface PlanNote {
   text: string
 }
 
+/** 对数轴下限那类确认的回答：`yes` = 一起改（照方案应用）、`no` = 不改（这一组整组不要） */
+export type ConfirmAnswer = 'yes' | 'no'
+
 /** 一张卡的一版：每一版是后端自己的一份方案（各有 id 与两张图），逐组勾选是各版自己的 */
 export interface PlanVersionRec {
   planId: string
@@ -78,6 +82,8 @@ export interface PlanVersionRec {
   beforeSrc: string
   afterSrc: string
   unchecked: Record<string, boolean>
+  /** 方案要用户确认的组（`group.confirm`）各自的回答；没有 = 还没回答 */
+  answers?: Record<string, ConfirmAnswer>
 }
 
 /** 一键排版方案卡的两个动作：应用 = 现有的那一次 commit（一步撤销不变）；重来 = 按同样的选项再排一次 */
@@ -172,6 +178,8 @@ export interface PlanEntry {
   failure?: PlanFailure
   /** 每个改动组是否被取消勾选（没有的键按勾选算）；多版时是此刻正在看的那一版的 */
   unchecked: Record<string, boolean>
+  /** 方案里要用户确认的组各自的回答（组 key → 回答）；多版时是此刻正在看的那一版的 */
+  answers?: Record<string, ConfirmAnswer>
   /** 这张卡出过的各版（旧 → 新）；`planId` / `plan` / `beforeSrc` / `afterSrc` / `unchecked` 是正在看的那一版的镜像。没有 = 只有一版 */
   versions?: PlanVersionRec[]
   /** 批注重改（高级版）：正在写的批注（重改成功后清空） */
@@ -223,7 +231,7 @@ export const notesOf = (e: Pick<PlanEntry, 'notes'>): PlanNote[] => e.notes ?? [
 /** 各版（旧 → 新）；没存过的老条目 = 只有正在看的这一版 */
 export function versionsOf(e: PlanEntry): PlanVersionRec[] {
   if (e.versions?.length) return e.versions
-  return e.plan && e.planId && e.beforeSrc && e.afterSrc ? [{ planId: e.planId, plan: e.plan, beforeSrc: e.beforeSrc, afterSrc: e.afterSrc, unchecked: e.unchecked }] : []
+  return e.plan && e.planId && e.beforeSrc && e.afterSrc ? [{ planId: e.planId, plan: e.plan, beforeSrc: e.beforeSrc, afterSrc: e.afterSrc, unchecked: e.unchecked, answers: e.answers }] : []
 }
 
 /** 正在看的是第几版（1 起；按出现顺序数，不看后端的 `version` 字段——从旧版再续改会得到同一个后端版本号） */
@@ -231,6 +239,14 @@ export function versionNumber(e: PlanEntry): number {
   const i = versionsOf(e).findIndex((v) => v.planId === e.planId)
   return i < 0 ? (e.plan?.version ?? 1) : i + 1
 }
+
+/** 还等着用户回答的确认（对数轴下限）：有就先问、不给「查看 / 应用」；一次只问一个 */
+export function pendingConfirm(e: Pick<PlanEntry, 'plan' | 'answers'>): ChangePlanGroup | undefined {
+  return e.plan?.groups.find((g) => g.confirm && !e.answers?.[g.key])
+}
+
+/** 用户答了「不改」的组（整组不进方案；它那条意见在没处理列表里写一句原因） */
+export const declinedGroups = (e: Pick<PlanEntry, 'plan' | 'answers'>): ChangePlanGroup[] => (e.plan?.groups ?? []).filter((g) => e.answers?.[g.key] === 'no')
 
 /** 这张卡上所有版本（含在途的那一版）的后端方案 id：放弃时一并收掉 */
 const allPlanIds = (e: PlanEntry): string[] => [...new Set([...versionsOf(e).map((v) => v.planId), ...(e.planId ? [e.planId] : []), ...(e.revising ? [e.revising] : [])])]
@@ -263,6 +279,11 @@ interface ChangePlanState {
   openDialog: (key: string) => void
   closeDialog: () => void
   toggleGroup: (key: string, groupKey: string) => void
+  /**
+   * 回答方案里的一个确认（对数轴下限）：`yes` = 一起改，照方案应用；`no` = 不改，这一组整组不要（按「前端重算」口径取消勾选、
+   * 它那条意见进没处理列表）；没有一组剩下 = 与空方案一样，卡变成「没法直接改图」那张失败卡。
+   */
+  answerConfirm: (key: string, groupKey: string, answer: ConfirmAnswer) => void
   /** `previewSrc`：弹窗里按勾选组合出的那张图（只应用部分组时给，卡片据此挂实际应用的那一张） */
   apply: (key: string, opts?: { previewSrc?: string }) => ApplyResult
   undo: (key: string) => boolean
@@ -407,9 +428,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
           // 新一版入列并切过去；各版的勾选各记各的，批注随这次重改清空
           // 重改期间新写 / 改过的批注是用户的新工作：只清掉仍与提交时一致的那些
           const e0 = get().entries[key] ?? e
-          const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked } : v))
-          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }
-          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
+          const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
+          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {} }
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
         }
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
@@ -634,7 +655,12 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       return isFallthrough(out) ? null : out
     },
 
-    openDialog: (key) => set({ dialogKey: key }),
+    // 还有没回答的确认（对数轴下限）就不让看 / 应用：先问清楚，免得出一张坍掉的图
+    openDialog: (key) => {
+      const e = get().entries[key]
+      if (e && pendingConfirm(e)) return
+      set({ dialogKey: key })
+    },
     closeDialog: () => set({ dialogKey: null }),
     toggleGroup: (key, groupKey) =>
       set((s) => {
@@ -642,12 +668,23 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return e ? { entries: { ...s.entries, [key]: { ...e, unchecked: { ...e.unchecked, [groupKey]: !e.unchecked[groupKey] } } } } : {}
       }),
 
+    answerConfirm: (key, groupKey, answer) => {
+      const e = get().entries[key]
+      const g = e?.plan?.groups.find((x) => x.key === groupKey)
+      if (!e || !g?.confirm || e.answers?.[groupKey]) return
+      const answers = { ...e.answers, [groupKey]: answer }
+      const unchecked = answer === 'no' ? { ...e.unchecked, [groupKey]: true } : e.unchecked
+      const remains = (e.plan?.groups ?? []).some((x) => answers[x.key] !== 'no')
+      patch(key, answer === 'no' && !remains ? { answers, unchecked, status: 'failed', failure: { code: 'change_plan_empty' } } : { answers, unchecked })
+    },
+
     addLayoutEntry: (entry) => set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] })),
 
     apply: (key, opts) => {
       const e = get().entries[key]
       const plan = e?.plan
       if (!e || !plan) return 'failed'
+      if (pendingConfirm(e)) return 'nothing'
       if (plan.kind === 'script') {
         void get().applyScript(key)
         return 'nothing'
@@ -836,10 +873,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       set((s) => {
         const e = s.entries[key]
         if (!e || e.revising !== undefined || e.planId === planId) return {}
-        const recs = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked } : v))
+        const recs = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
         const to = recs.find((v) => v.planId === planId)
         if (!to) return {}
-        return { entries: { ...s.entries, [key]: { ...e, versions: recs, planId, plan: to.plan, beforeSrc: to.beforeSrc, afterSrc: to.afterSrc, unchecked: to.unchecked, reviseError: undefined } } }
+        return { entries: { ...s.entries, [key]: { ...e, versions: recs, planId, plan: to.plan, beforeSrc: to.beforeSrc, afterSrc: to.afterSrc, unchecked: to.unchecked, answers: to.answers ?? {}, reviseError: undefined } } }
       }),
 
     saveNote: (key, note) =>

@@ -875,3 +875,127 @@ def test_default_resolve_passes_selected_connection_through(monkeypatch):
     assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": "key:abc", "model": "m1"}
     cp._RESOLVE(cp.MODEL_TIMEOUT_S)
     assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": None, "model": None}
+
+
+# --------------------------------------------------------------------------- 对数轴的下限必须大于 0（维护者 2026-11-26）
+def axes_el(ylim=(0.0, 1.05), xlim=(0.0, 60.0), yscale="linear", xscale="linear"):
+    return el(
+        "ax0",
+        "axes",
+        [
+            field("xlim", "pair", list(xlim)),
+            field("ylim", "pair", list(ylim)),
+            field("xscale", "enum", xscale, options=["linear", "log", "symlog"]),
+            field("yscale", "enum", yscale, options=["linear", "log", "symlog"]),
+        ],
+    )
+
+
+def log_proposal(*changes, cid="c1"):
+    return {"groups": [{"comment_id": cid, "changes": list(changes)}], "unhandled": []}
+
+
+@pytest.mark.parametrize(
+    ("upper", "want"),
+    [(1.05, 0.01), (1.0, 0.01), (100.0, 1.0), (0.5, 0.001), (60.0, 0.1), (0.0, None), (-3.0, None)],
+)
+def test_suggested_log_lower_limit_is_a_power_of_ten_below_the_upper_limit(upper, want):
+    assert cp.suggest_log_lower(upper) == want
+
+
+def test_log_yscale_with_a_non_positive_lower_limit_gets_a_lower_limit_and_a_confirm():
+    out = cp.require_log_lower_limits(log_proposal(ch("ax0", "yscale", "log")), manifest(axes_el()))
+    (g,) = out["groups"]
+    assert g["changes"] == [ch("ax0", "yscale", "log"), ch("ax0", "ylim", [0.01, 1.05])]
+    assert g["confirm"] == {
+        "kind": "log_lower_limit",
+        "axis": "y",
+        "gid": "ax0",
+        "from": 0.0,
+        "to": 0.01,
+    }
+
+
+def test_log_xscale_gets_the_same_rule_on_xlim():
+    out = cp.require_log_lower_limits(log_proposal(ch("ax0", "xscale", "log")), manifest(axes_el()))
+    (g,) = out["groups"]
+    assert ch("ax0", "xlim", [0.1, 60.0]) in g["changes"]
+    assert g["confirm"]["axis"] == "x" and g["confirm"]["to"] == 0.1
+
+
+def test_a_positive_lower_limit_from_the_model_or_the_figure_needs_no_confirm():
+    own = log_proposal(ch("ax0", "yscale", "log"), ch("ax0", "ylim", [0.01, 1.05]))
+    assert "confirm" not in cp.require_log_lower_limits(own, manifest(axes_el()))["groups"][0]
+    fig = log_proposal(ch("ax0", "yscale", "log"))
+    out = cp.require_log_lower_limits(fig, manifest(axes_el(ylim=(0.5, 9.0))))
+    assert out["groups"][0] == fig["groups"][0]
+    # 本来就是对数轴：这一条没有变化，不归这里管
+    again = cp.require_log_lower_limits(fig, manifest(axes_el(yscale="log")))
+    assert again["groups"][0] == fig["groups"][0]
+
+
+def test_a_non_positive_lower_limit_written_by_the_model_is_replaced_in_place():
+    p = log_proposal(ch("ax0", "yscale", "log"), ch("ax0", "ylim", [-1, 2]))
+    (g,) = cp.require_log_lower_limits(p, manifest(axes_el(ylim=(0.5, 9.0))))["groups"]
+    assert [c for c in g["changes"] if c["prop"] == "ylim"] == [ch("ax0", "ylim", [0.01, 2])]
+    assert g["confirm"]["from"] == -1
+
+
+def test_log_with_no_positive_upper_limit_is_dropped_as_bad_value():
+    out = cp.require_log_lower_limits(
+        log_proposal(ch("ax0", "yscale", "log")), manifest(axes_el(ylim=(-5.0, -1.0)))
+    )
+    assert out["groups"] == []
+    assert out["unhandled"] == [{"comment_id": "c1", "reason": "bad_value"}]
+
+
+def test_the_input_proposal_is_not_mutated_and_an_inverted_axis_keeps_its_order():
+    p = log_proposal(ch("ax0", "yscale", "log"))
+    before = json.loads(json.dumps(p))
+    out = cp.require_log_lower_limits(p, manifest(axes_el(ylim=(1.05, 0.0))))
+    assert p == before
+    assert ch("ax0", "ylim", [1.05, 0.01]) in out["groups"][0]["changes"]
+
+
+def test_the_confirm_survives_effective_changes_candidate_and_the_plan():
+    man = manifest(axes_el())
+    prop = cp.require_log_lower_limits(log_proposal(ch("ax0", "yscale", "log")), man)
+    cand, prop = cp.candidate_patches([], prop, man)
+    after = manifest(axes_el(ylim=(0.01, 1.05), yscale="log"))
+    groups, unhandled = cp.effective_changes(man, after, prop)
+    groups = cp.attach_patches(groups, cand)
+    assert groups[0]["confirm"]["to"] == 0.01
+    plan = cp.build_plan(
+        plan_id="a" * 24,
+        target="Kin.pdf",
+        base_fingerprint="sha256:x",
+        comments=[{"id": "c1", "text": "纵轴改对数"}],
+        groups=groups,
+        unhandled=unhandled,
+        base_patches=[],
+    )
+    assert plan["groups"][0]["confirm"]["kind"] == "log_lower_limit"
+    assert {c["prop"] for c in plan["groups"][0]["changes"]} == {"yscale", "ylim"}
+    # 下限那一条没生效 = 没有可问的：confirm 不带
+    stuck = manifest(axes_el(ylim=(0.0, 1.05), yscale="log"))
+    g2, _ = cp.effective_changes(man, stuck, prop)
+    assert "confirm" not in g2[0]
+
+
+def test_a_comment_that_is_both_changed_and_needs_a_script_keeps_only_needs_script():
+    obj = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0.line0", "linewidth", 3)]},
+            {"comment_id": "c2", "changes": [ch("ax0.title", "fontsize", 12)]},
+        ],
+        "unhandled": [{"comment_id": "c1", "reason": "needs_script"}],
+    }
+    out = cp.validate_proposal(obj, BASE, comment_ids={"c1", "c2"})
+    assert [g["comment_id"] for g in out["groups"]] == ["c2"]
+    assert out["unhandled"] == [{"comment_id": "c1", "reason": "needs_script"}]
+
+
+def test_both_system_prompts_tell_the_model_a_half_script_comment_goes_whole_to_the_script():
+    for source in ("review", "assistant"):
+        text = cp.system_prompt(source)
+        assert "整条" in text and "needs_script" in text and "一半" in text

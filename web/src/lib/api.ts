@@ -4105,6 +4105,8 @@ export type ChangePlanUnhandledReason =
   | 'not_applied'
   | 'no_effect'
   | 'not_addressed'
+  /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
+  | 'log_limit_declined'
 
 export interface ChangePlanBox {
   gid: string
@@ -4153,6 +4155,11 @@ export interface ChangePlanGroup {
   atomic: boolean
   changes: ChangePlanChange[]
   boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
+  /**
+   * 这一组要先问用户：把一根轴改成对数，但它的下限 ≤ 0，方案里已经带上了一条把下限改成正数的改动（`to`）。
+   * 卡片问「一起改吗」，回答前不给「查看 / 应用」；`from` 是改前的下限。
+   */
+  confirm?: { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number }
 }
 
 export interface ChangePlan {

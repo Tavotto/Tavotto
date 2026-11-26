@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { canUndoApplied, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { canUndoApplied, declinedGroups, pendingConfirm, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
@@ -9,9 +9,9 @@ import { Check, RefreshCw } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { StatusPill } from '../ui/StatusPill'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
-import { cp, effectiveStatus, failureAction, failureText, isScriptPlan, overreachFiles, planTally, summaryLine, unhandledViews } from './changePlanModel'
+import { cp, effectiveStatus, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
-import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource } from './usePlanFigure'
+import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
 /**
  * 助手里的「修改方案」卡（助手一侧，占栏宽）：修改后的缩略图是主体，标题行「修改方案」+ 右侧版本，一句话说改了什么，
@@ -34,6 +34,10 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const store = useChangePlanStore.getState
   const primary = latest ? 'primary' : 'secondary'
   const btn = 'rounded-full'
+  // 对数轴下限：还没回答就先问，不给「查看 / 应用」；答了「不改」的组不进方案，卡面按剩下的组出图
+  const ask = status === 'ready' ? pendingConfirm(entry) : undefined
+  const declined = declinedGroups(entry).length > 0
+  const selection = useSelectionPreview(entry, status === 'ready' && declined)
 
   if (status === 'failed') return <FailedCard entry={entry} />
   // 助手来源，整条指令都要改脚本：这里只留一行灰字，接着由改脚本那一轮自己说话
@@ -50,7 +54,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   // 已放弃：后端那份已经收了，卡面画这张图此刻的样子（不再挂方案的图）
   const showAfter = !generating && !!entry.afterSrc && status !== 'discarded'
   // 已应用且只应用了部分组：挂实际应用的那一张（弹窗里按勾选出的图；没有就挂这张图此刻的样子），不挂全量候选图
-  const shownAfter = entry.status === 'applied' && entry.appliedPartial ? (entry.appliedSrc ?? thumb) : entry.afterSrc
+  const shownAfter = entry.status === 'applied' && entry.appliedPartial ? (entry.appliedSrc ?? thumb) : status === 'ready' && declined ? (selection.url ?? beforeSrc) : entry.afterSrc
   const dim = status === 'discarded' || status === 'stale'
   const handled = plan ? planTally(entry).done : 0
   // 「撤销」只在这张图还是我们写的那一份时给：用户之后又改过它，就不替他回到改前
@@ -110,19 +114,31 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 : entry.kind === 'layout'
                 ? cp('card.appliedLayout', { count: entry.layout?.count ?? 0 })
                 : entry.from === 'assistant'
-                  ? cp('card.appliedAssistant', { places: planTally(entry).places })
+                  ? cp('card.appliedAssistant', { places: placesPhrase(planTally(entry).places) })
                   : cp('card.applied', { count: handled })
               : status === 'discarded'
                 ? cp('card.discarded')
                 : status === 'stale'
                   ? cp('card.stale')
-                  : summaryLine(entry)}
+                  : ask?.confirm
+                    ? cp(`card.logLimitAsk`, { axis: cp(ask.confirm.axis === 'x' ? 'card.axisX' : 'card.axisY'), to: ask.confirm.to })
+                    : summaryLine(entry)}
           </p>
         )}
         {entry.notice && <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>{cp(entry.notice === 'apply_failed' ? (script ? 'card.applyFailedScript' : 'card.applyFailed') : script ? 'card.undoFailedScript' : 'card.undoFailed')}</p>}
         {!generating && (
           <div className="flex items-center gap-2 pt-0.5">
-            {status === 'ready' && (
+            {ask && (
+              <>
+                <Button variant={primary} size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'yes')} data-change-plan-confirm-log="yes">
+                  {cp('card.logLimitYes')}
+                </Button>
+                <Button variant="secondary" size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'no')} data-change-plan-confirm-log="no">
+                  {cp('card.logLimitNo')}
+                </Button>
+              </>
+            )}
+            {status === 'ready' && !ask && (
               <>
                 <Button variant={primary} size="md" className={btn} onClick={() => store().openDialog(entry.key)} data-change-plan-view>
                   {cp('card.view')}
@@ -137,7 +153,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 {cp('card.undo')}
               </Button>
             )}
-            {entry.from === 'assistant' && !entry.scriptStarted && (status === 'ready' || status === 'applied') && (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') && (
+            {entry.from === 'assistant' && !entry.scriptStarted && !ask && (status === 'ready' || status === 'applied') && (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') && (
               <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
                 {cp('card.runScript')}
               </Button>

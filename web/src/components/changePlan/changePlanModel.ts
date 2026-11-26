@@ -1,7 +1,7 @@
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
-import { POLL_TIMEOUT, type PlanEntry } from '@/store/changePlanStore'
+import { POLL_TIMEOUT, declinedGroups, type PlanEntry } from '@/store/changePlanStore'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
 import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
@@ -53,8 +53,13 @@ const clip = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s)
 export function groupViews(e: PlanEntry): GroupView[] {
   const plan = e.plan
   if (!plan) return []
+  // 答了「不改」的组整组不要：不进清单，它那条意见在没处理列表里（`unhandledViews`）
+  return plan.groups.flatMap((g: ChangePlanGroup, i) => (e.answers?.[g.key] === 'no' ? [] : [groupView(e, g, i)]))
+}
+
+function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
   const numberOf = (id?: string) => commentNumber(e, id)
-  return plan.groups.map((g: ChangePlanGroup, i) => {
+  {
     if (e.kind === 'layout') {
       return {
         key: g.key,
@@ -93,11 +98,21 @@ export function groupViews(e: PlanEntry): GroupView[] {
       fromNote,
       boxes: after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
     }
-  })
+  }
 }
 
 /** 一条没处理的意见：原话 + 谁说的 + 一句话原因（闭集短码 → 文案） */
 export function unhandledViews(e: PlanEntry): UnhandledView[] {
+  // 答了「不改」的对数轴下限：整组没动，那条意见在没处理列表里写一句原因
+  const declined = declinedGroups(e).map((g, i): UnhandledView => {
+    const c = g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
+    const text = e.from === 'assistant' ? clip(e.instruction ?? '') : clip(c?.text ?? g.label)
+    return { id: g.comment_id ?? `d${i}`, text: text || cp('dialog.groupN', { n: i + 1 }), reviewer: e.from === 'assistant' ? '' : (c?.author ?? ''), reason: unhandledReason('log_limit_declined') }
+  })
+  return [...unhandledViewsOf(e), ...declined]
+}
+
+function unhandledViewsOf(e: PlanEntry): UnhandledView[] {
   return (e.plan?.unhandled ?? []).map((u, i) => {
     const c = u.comment_id ? e.comments.find((x) => x.id === u.comment_id) : undefined
     if (e.from === 'assistant') {
@@ -127,7 +142,7 @@ export function planTally(e: PlanEntry) {
     done: new Set(views.flatMap((g) => g.commentNumbers)).size || views.length,
     places: views.reduce((a, g) => a + g.boxes.length, 0) || views.length,
     script: un.filter((u) => u.reason === 'needs_script').length,
-    other: un.filter((u) => u.reason !== 'needs_script').length,
+    other: un.filter((u) => u.reason !== 'needs_script').length + declinedGroups(e).length,
   }
 }
 
@@ -136,16 +151,22 @@ export function summaryLine(e: PlanEntry): string {
   const script = scriptInfo(e)
   if (script) return cp('card.summaryScript', { added: script.added, removed: script.removed })
   const t = planTally(e)
+  // 数量带单位的短语（「5 处」「1 place」）由各自的复数键出，句子里只放短语
+  const places = placesPhrase(t.places)
   // 续改出的版本：先说这版按批注又改了几处，再说按意见改的
-  if (t.notes > 0) return cp('card.summaryNotes', { n: t.notes, places: t.notePlaces })
+  if (t.notes > 0) return cp('card.summaryNotes', { notes: cp('card.notesN', { count: t.notes }), places: placesPhrase(t.notePlaces) })
   if (e.kind === 'layout') return cp('card.summaryLayout', { count: e.layout?.count ?? 0 })
   if (e.from === 'assistant') {
-    if (t.script > 0) return cp('card.summaryAssistantScript', { places: t.places })
-    return t.other > 0 ? cp('card.summaryAssistantOther', { places: t.places }) : cp('card.summaryAssistant', { places: t.places })
+    if (t.script > 0) return cp('card.summaryAssistantScript', { places })
+    return t.other > 0 ? cp('card.summaryAssistantOther', { places }) : cp('card.summaryAssistant', { places })
   }
-  if (t.other > 0) return cp('card.summaryOther', { done: t.done, places: t.places, rest: t.script + t.other })
-  return t.script > 0 ? cp('card.summary', { done: t.done, places: t.places, script: t.script }) : cp('card.summaryAll', { done: t.done, places: t.places })
+  const done = cp('card.commentsN', { count: t.done })
+  if (t.other > 0) return cp('card.summaryOther', { done, places, rest: t.script + t.other })
+  return t.script > 0 ? cp('card.summary', { done, places, count: t.script }) : cp('card.summaryAll', { done, places })
 }
+
+/** 「N 处」/ "N places"：数量与单位在一起，按各语言的复数规则 */
+export const placesPhrase = (count: number): string => cp('card.placesN', { count })
 
 /** 脚本修改方案里那一组的内容（图内方案没有） */
 export const scriptInfo = (e: Pick<PlanEntry, 'plan'>) => e.plan?.groups.find((g) => g.kind === 'script')?.script
