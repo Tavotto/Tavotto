@@ -196,6 +196,10 @@ def _tools() -> list[dict]:
                         "type": "boolean",
                         "description": "顺带探测渲染解释器（matplotlib 在哪个环境），较慢",
                     },
+                    "probe_kernel": {
+                        "type": "boolean",
+                        "description": "顺带探测矢量几何内核（布尔 / 偏移 / 轮廓化 / 简化）能不能加载",
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -2957,7 +2961,12 @@ def _call_health(args: dict) -> dict:
         "sessions": sorted(bridge.sessions()),
         # 已装引擎宣告的能力（`engine/capabilities.py`）：Agent 发 argv / 采用环境之前看这里；旧引擎是空列表
         "engine_features": bridge.engine_features(),
+        # 这个引擎缺的可选模块（旧引擎缺几个正常；冻结产物里缺 = 打包漏收，冒烟据此拦，#2247）
+        "engine_optional_missing": bridge.optional_engine_missing(),
     }
+    if args.get("probe_kernel"):
+        # 矢量几何内核（布尔 / 偏移 / 轮廓化 / 简化）能不能加载：True / False / None（引擎没有这个模块）
+        out["vector_kernel"] = {"available": bridge.vector_kernel_available()}
     if not widget.available():
         out["canvas"]["reason"] = widget.missing_reason()
     out["server"] = _package_identity()
