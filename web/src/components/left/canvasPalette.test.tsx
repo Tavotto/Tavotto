@@ -249,6 +249,53 @@ describe('样式登记的让渡不看颜色变没变', () => {
   })
 })
 
+describe('柱形系列：单根柱手改过的不被清掉', () => {
+  it('系列的填充色盖着各根柱；某根柱手改过，整条系列跳过，那根柱的颜色还在（Codex #2271）', async () => {
+    await seed()
+    const bars = (gid: string, label: string) =>
+      ({
+        gid,
+        role: 'bar_series',
+        label: gid,
+        identity: line(gid, label).identity,
+        bbox: [0, 0, 1, 1],
+        draggable: false,
+        editable: [
+          { prop: 'facecolor', type: 'color', value: '#1f77b4' },
+          { prop: 'label', type: 'text', value: label },
+        ],
+        alias_covers: { facecolor: { facecolor: [`${gid}.patch_0`, `${gid}.patch_1`] } },
+      }) as unknown as ManifestElement
+    const bar = (gid: string) =>
+      ({ gid, role: 'bar', label: gid, bbox: [0, 0, 1, 1], draggable: false, editable: [{ prop: 'facecolor', type: 'color', value: '#1f77b4' }] }) as unknown as ManifestElement
+    s().commit(literal('手改一根柱'), (d) => {
+      const b = d.objects.find((o) => o.id === 'B') as PanelObject
+      b.overrides = [{ gid: 'axes_0.bars_0.patch_1', prop: 'facecolor', value: '#ff00ff' }]
+    })
+    seedExactRender(panelOf('B'), {
+      stem: 'f',
+      size_mm: [80, 60],
+      elements: [
+        { gid: 'axes_0', role: 'axes', label: 'ax', bbox: [0, 0, 1, 1], editable: [], draggable: false },
+        bars('axes_0.bars_0', 'Control'),
+        bar('axes_0.bars_0.patch_0'),
+        bar('axes_0.bars_0.patch_1'),
+        bars('axes_0.bars_1', 'Drug A'),
+        bar('axes_0.bars_1.patch_0'),
+        bar('axes_0.bars_1.patch_1'),
+      ],
+    } as unknown as Manifest)
+    const r = applyPaletteScheme('okabe-ito')
+    expect(r?.skipped).toBe(1)
+    const face = (gid: string) => panelOf('B').overrides.filter((o) => o.gid === gid && o.prop === 'facecolor').at(-1)?.value
+    // 用户那根柱的颜色还在，它所在的系列没写
+    expect(face('axes_0.bars_0.patch_1')).toBe('#ff00ff')
+    expect(face('axes_0.bars_0')).toBeUndefined()
+    // 另一条没人动过的柱形系列照常上色
+    expect(face('axes_0.bars_1')).toBeTruthy()
+  })
+})
+
 describe('中性对照与合并只建议', () => {
   it('Control 只是建议中性灰；点了才变灰，再点回到数字槽', async () => {
     await seed()

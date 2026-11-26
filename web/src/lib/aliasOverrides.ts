@@ -22,6 +22,21 @@ type Key = { readonly gid: string; readonly prop: string }
 
 const keyOf = (k: Key) => `${k.gid}\u0000${k.prop}`
 
+/**
+ * 写广播端 `(gid, prop)` 时会被一并清掉的窄端地址（`alias_covers[prop]` 展开）：写之前要看这些地址上有没有
+ * 用户的 override——有就别写，写了 `aliasClearPlan` 会把它们删掉（推荐配色按此跳过「单根柱手改过」的柱形系列）。
+ * `manifest` 缺失 / 旧引擎没发字段 = 空。
+ */
+export function aliasCovered(
+  manifest: Pick<Manifest, 'elements'> | null | undefined,
+  gid: string,
+  prop: string,
+): Key[] {
+  const narrow = manifest?.elements.find((e) => e.gid === gid)?.alias_covers?.[prop]
+  if (!narrow) return []
+  return Object.entries(narrow).flatMap(([nprop, gids]) => gids.map((g) => ({ gid: g, prop: nprop })))
+}
+
 /** 这一批 patch 要连带清掉的 (gid, prop)；没有可清的就是空数组。`manifest` 缺失 / 旧引擎没发字段 = 空 */
 export function aliasClearPlan(
   overrides: readonly Key[],

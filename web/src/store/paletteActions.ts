@@ -11,6 +11,7 @@
  * 界面入口在 `components/left/CanvasPaletteSection.tsx`，默认关（`lib/paletteUi.ts`）。
  */
 import { msg, type UiMessage } from '@/i18n'
+import { aliasCovered } from '@/lib/aliasOverrides'
 import { paletteById, type CatalogPalette } from '@/lib/palette/catalog'
 import {
   collectSeries,
@@ -75,7 +76,16 @@ function commitTable(label: UiMessage, edit: (t: ColorKeyTable) => ColorKeyTable
   const series = state.groups.flatMap((g) => g.series).concat(state.unlabeled)
   const rec = reconcile(table, series)
   const panels = panelsOf(doc)
-  const plan = planPalette(rec.table, palette, rec.groups, panels, (p, gid, prop) => !!ownedLive(doc, p, gid, prop))
+  // 与写入时 `upsertOverrides` 清窄端用同一份 manifest：它会清的，这里先看有没有用户手改
+  const renders = useRenderStore.getState()
+  const plan = planPalette(
+    rec.table,
+    palette,
+    rec.groups,
+    panels,
+    (p, gid, prop) => !!ownedLive(doc, p, gid, prop),
+    (p, gid, prop) => aliasCovered(structuralPanelManifest(renders, p), gid, prop),
+  )
   useDocumentStore.getState().commit(label, (d) => {
     for (const { panel, patches } of plan.panels) {
       const o = d.objects.find((x) => x.id === panel.id)
