@@ -734,11 +734,11 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
-      "rowsErrLines": "按表里的 {{drawn}} 行绘制，每条线每行一个点",
-      "rowsBar": "按表里的 {{drawn}} 行绘制，每行一根柱",
+      "rowsErrLines": "按 {{drawn}} 行绘制，每条线每行一个点",
+      "rowsBar": "按 {{drawn}} 行绘制，每行一根柱",
       "errColumns": "误差线取自{{columns}}列",
       "colQuote": "「{{column}}」",
-      "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
+      "rowsErr": "按 {{drawn}} 行绘制，每行一个点",
       "errColumn": "误差线取自「{{column}}」列",
       "errMissing": "{{count}} 处只有 1 个数值，算不出误差线",
       "errMissingOne": "「{{label}}」只有 1 个数值，算不出误差线",
@@ -767,6 +767,8 @@
     },
     "confirm": {
       "title": "需要你确认",
+      "join": "、",
+      "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
       "error": "误差线",
       "design": "重复测量",
       "option": {

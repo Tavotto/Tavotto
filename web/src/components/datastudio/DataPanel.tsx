@@ -114,12 +114,15 @@ export function DataPanel() {
   // 现成的误差列没说明是哪一种（`unknown`）且没点选 = 需要你确认，当前值写「还不确定」
   const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (statedAll && errKind !== 'unknown'))
   const designDone = answers.design === 'independent' || answers.design === 'repeated'
+  const usedKinds = kindsDiffer && !mixedUnsure
+    ? [...new Set(colFacts!.map((c) => c.kind))].map((k) => t(`dataFigureV2.confirm.short.${k}`)).join(t('dataFigureV2.confirm.join'))
+    : undefined
   const pendingError = (errKind != null && !errorDone) || mixedUnsure
   const pendingDesign = designAsked && !designDone
   const confirm = (key: ConfirmKey) => (v: string) => useDataFigureStore.getState().setConfirm(key, v)
   const optLabel = (v: string) => t(`dataFigureV2.confirm.option.${v}`)
   /** 一行确认项：待确认时控件是空值 + 把当前取值写在触发器上（选任何一项，包括仍选当前这个，才算确认） */
-  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean) => (
+  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean, nowLabel?: string) => (
     <div key={key} data-data-role={key} className="contents">
       <Row label={rowLabel(t(`dataFigureV2.confirm.${key}`))} labelWidth={LABEL_W}>
         <Select
@@ -128,9 +131,9 @@ export function DataPanel() {
           ariaLabel={t(`dataFigureV2.confirm.${key}`)}
           onChange={confirm(key)}
           options={kinds.map((k) => ({ value: k, label: optLabel(k) }))}
-          title={optLabel(now)}
+          title={nowLabel ?? optLabel(now)}
           // 待确认时值是空的（选「当前这个」也要算一次选择），当前取值写在占位上
-          placeholder={done ? undefined : optLabel(now)}
+          placeholder={done ? undefined : (nowLabel ?? optLabel(now))}
         />
       </Row>
     </div>
@@ -256,8 +259,8 @@ export function DataPanel() {
               </Row>
             </div>
           )}
-          {/* 各列种类不同（没有顶层 error）：放在列角色下面、不进「需要你确认」，当前值「各列不同」；选一种 = 所有列一起换 */}
-          {kindsDiffer && !mixedUnsure && confirmRow('error', ERROR_KINDS, 'mixed', false)}
+          {/* 各列种类不同（没有顶层 error）：放在列角色下面、不进「需要你确认」，当前值把用到的几种按 y 的顺序去重列出（如「SD、SEM」）；选一种 = 所有列一起换 */}
+          {kindsDiffer && !mixedUnsure && confirmRow('error', ERROR_KINDS, 'mixed', false, usedKinds)}
           {errorDone && confirmRow('error', ERROR_KINDS, isErrorKind(answers.error) ? answers.error : errKind!, true)}
           {designAsked && designDone && confirmRow('design', DESIGNS, String(answers.design), true)}
         </div>

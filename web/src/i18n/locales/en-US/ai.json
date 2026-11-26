@@ -741,11 +741,11 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
-      "rowsErrLines": "drawn from the {{drawn}} rows in the table, one point per row for each line",
-      "rowsBar": "drawn from the {{drawn}} rows in the table, one bar per row",
+      "rowsErrLines": "drawn from {{drawn}} rows, one point per row for each line",
+      "rowsBar": "drawn from {{drawn}} rows, one bar per row",
       "errColumns": "error bars from the {{columns}} columns",
       "colQuote": "“{{column}}”",
-      "rowsErr": "drawn from the {{drawn}} rows in the table, one point per row",
+      "rowsErr": "drawn from {{drawn}} rows, one point per row",
       "errColumn": "error bars from the “{{column}}” column",
       "errMissing": "{{count}} places have only one value, so no error bar can be computed",
       "errMissingOne": "“{{label}}” has only one value, so no error bar can be computed",
@@ -774,6 +774,8 @@
     },
     "confirm": {
       "title": "Needs your confirmation",
+      "join": ", ",
+      "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
       "error": "Error bars",
       "design": "Repeated measures",
       "option": {
