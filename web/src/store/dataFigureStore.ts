@@ -14,6 +14,7 @@ import {
   isDefiniteRunFailure,
   type AiDataCommitResult,
   type AiDataFigureStyle,
+  type AiDataPurpose,
   type AiDataFileEntry,
   type AiDataOverview,
   type AiDataUnderstanding,
@@ -93,7 +94,7 @@ export interface MixedInfo {
 export type RoleKey = 'x' | 'y' | 'group'
 
 /** 「需要你确认」两项对应的 `answers` 键：只有用户点击才写；模型的建议（`SUGGEST_KEYS`）不含它们 */
-export type ConfirmKey = 'error' | 'design'
+export type ConfirmKey = 'error' | 'design' | 'purpose'
 
 /** 刚画出来的那张图：画布上的「换个画法」胶囊认它（只在这一次会话里，不持久化） */
 export interface FreshFigure {
@@ -230,6 +231,8 @@ interface DataFigureStore {
   previewKey: string | null
   /** 响应说用户点选过误差类型（`answers.error` 被后端认了）；没有 = 误差线画的是哪一种还没确认 */
   errorConfirmed: boolean
+  /** 这批候选按什么看图目的排的（响应的 `purpose`）；右栏「目的」一行显示它的 `code`，没有 / `code` 为 null / 选项不足两个 = 不出这一行 */
+  purpose: AiDataPurpose | null
   /** 「是不是同一对象重复测量」这个问题出现过（`defaults` 里有 `pick_design`）：确认之后后端不再问，但那一行要留着（可再改），所以只增不减，直到换文件 */
   designAsked: boolean
   /** 只换预览，不发请求、不创建 */
@@ -331,6 +334,7 @@ const initial = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  purpose: null as AiDataPurpose | null,
   designAsked: false,
   // 草稿自己的规范绑定只在 `initial`：换文件 / 关标签（`idleDraft`）不清它，项目代际（`clear()`）与重新进入（`enter()`）才清
   specBinding: null as DocumentProfile | null,
@@ -359,6 +363,7 @@ const idleDraft = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  purpose: null as AiDataPurpose | null,
   designAsked: false,
   figureStyle: null as AiDataFigureStyle | null,
   specFallback: false,
@@ -390,7 +395,7 @@ export const setKeepClock = (f: () => number): void => {
   keepClock = f
 }
 
-const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
+const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'purpose', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
 type KeepSnap = Pick<typeof initial, (typeof KEEP_FIELDS)[number]>
 interface Kept {
   key: string
@@ -780,6 +785,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       figureStyle: res.figure_style ?? null,
       specFallback: res.spec_fallback === true,
       errorConfirmed: res.error_confirmed === true,
+      purpose: res.purpose && res.purpose.code ? res.purpose : null,
       designAsked: get().designAsked || (res.defaults ?? []).some((d) => d.question_code === 'pick_design'),
     }
     if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
@@ -1363,11 +1369,14 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     setConfirm: (key, value) => {
       if (get().drawingId) return
       const was = get().answers[key]
+      // 「目的」是用户点的，和 `error` / `design` 一样只由右栏这一行写、不进 `autoPicks`（换 AI 重跑清的是自动答案，它保留）；
+      // 用户点过的值一直带着发，生不生效由后端定（这批候选里没有它的族就当没点，`purpose.code` 回到假设），界面显示以响应的 `purpose.code` 为准
       // 「不确定」是没人答过时的默认：从没答过又选「不确定」= 什么都没变
       if (key === 'design' && value === 'unsure' && was === undefined) return
       if (was === value && key !== 'error') return
       // 与换规范同一条路：重出候选、不动 `autoPicks`、这一轮「读懂数据」已起过就不再起（模型读的是数据，不是这两个答案）
-      reask((a) => ({ ...a, [key]: value }), {}, true)
+      // 只有换「目的」才把预览放回新的第一名（用户就是想看「按这个目的该先看哪张」）；换误差类型等别的确认项，预览仍跟着同一张候选走
+      reask((a) => ({ ...a, [key]: value }), key === 'purpose' ? { previewKey: null } : {}, true)
     },
 
     setSpecBinding: (binding) => {

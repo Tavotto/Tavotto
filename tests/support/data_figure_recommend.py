@@ -26,6 +26,7 @@ from pathlib import Path
 from tavotto.engine import (
     ai_data_figure as adf,
     ai_data_propose as P,
+    ai_data_purpose as purpose_mod,
     ai_data_recipe as r,
     ai_data_roles as R,
     ai_data_template as tpl,
@@ -319,7 +320,20 @@ def ideal_answers(case: dict, root: Path) -> dict:
     return {**answers_of(case), **und.to_payload(entry.path)["answers"]}
 
 
-def rules_run(case: dict, root: Path, *, raw: bool = False, ideal_roles: bool = False) -> dict:
+def purpose_of(case: dict) -> str | None:
+    """「目的臂」回放用的目的：用例标准答案里的 `task`，且要在界面这一期让用户选的四个里（`ai_data_purpose.PURPOSES`）；否则不带。
+    **回放等于「用户点了对的目的」**——`task_source` 多数是 `from_data`，真实使用里这个目的要用户自己点。"""
+    return case["task"] if case.get("task") in purpose_mod.PURPOSES else None
+
+
+def rules_run(
+    case: dict,
+    root: Path,
+    *,
+    raw: bool = False,
+    ideal_roles: bool = False,
+    purpose: str | None = None,
+) -> dict:
     """对这条用例用标准答案的列角色（`picks`）跑现有规则（懒模式，不调模型）。→ `{kind, methods: [画法 id 按推荐顺序], recommended: 画法 id | None, raw}`。
     `ideal_roles=True`：再带上「理想模型」对各列角色的判断（`ideal_answers`）——量「模型把列角色判对之后」规则能给出什么。"""
     folder = materialize(case, root)
@@ -329,7 +343,10 @@ def rules_run(case: dict, root: Path, *, raw: bool = False, ideal_roles: bool = 
         folder=folder,
         hint=case.get("hint"),
         render="lazy",
-        answers=ideal_answers(case, root) if ideal_roles else answers_of(case),
+        answers={
+            **(ideal_answers(case, root) if ideal_roles else answers_of(case)),
+            **({"purpose": purpose} if purpose else {}),
+        },
     )
     items = resp.get("items") or []
 
@@ -347,6 +364,8 @@ def rules_run(case: dict, root: Path, *, raw: bool = False, ideal_roles: bool = 
         "titles": [it["title_code"] for it in items],
         "reasons": resp.get("reasons"),
         "roles": resp.get("roles"),
+        "purpose": resp.get("purpose"),
+        "why_not": [it.get("why_not") for it in items],
         **({"raw_items": items} if raw else {}),
     }
 
@@ -559,10 +578,17 @@ def legal_universe(case: dict, root: Path) -> tuple[set[str], dict | None]:
 
 
 # --------------------------------------------------------------------------- 天花板（C）
-def measure(case: dict, root: Path, *, ideal_roles: bool = False) -> dict:
+def measure(
+    case: dict, root: Path, *, ideal_roles: bool = False, purpose_arm: bool = False
+) -> dict:
     """对一条新用例量天花板：规则第一名是否落在 `acceptable_top`、`acceptable_top` 是否在规则给出的候选里（第几）、是否在合法全集里、`forbidden` 是否出现 / 被标推荐。
     `ideal_roles`：带上理想模型的列角色判断（见 `rules_run`）；合法全集不受影响。"""
-    run = rules_run(case, root / "run", ideal_roles=ideal_roles)
+    run = rules_run(
+        case,
+        root / "run",
+        ideal_roles=ideal_roles,
+        purpose=purpose_of(case) if purpose_arm else None,
+    )
     uni, _role = legal_universe(case, root)
     top = set(case["acceptable_top"])
     forb = {f["method"] for f in case.get("forbidden", [])}
@@ -766,10 +792,15 @@ def check_pairs(cases: Sequence[dict], root: Path) -> None:
         assert set(a["acceptable_top"]) != set(b["acceptable_top"]) or a["task"] != b["task"], pid
 
 
-def run_all(cases: Sequence[dict], *, ideal_roles: bool = False) -> list[tuple[dict, dict]]:
+def run_all(
+    cases: Sequence[dict], *, ideal_roles: bool = False, purpose_arm: bool = False
+) -> list[tuple[dict, dict]]:
     with tempfile.TemporaryDirectory(prefix="recommend-measure-") as tmp:
         root = Path(tmp)
-        return [(c, measure(c, root / c["id"], ideal_roles=ideal_roles)) for c in cases]
+        return [
+            (c, measure(c, root / c["id"], ideal_roles=ideal_roles, purpose_arm=purpose_arm))
+            for c in cases
+        ]
 
 
 def write_back(path: Path = RECOMMEND_FILE) -> list[tuple[dict, dict]]:

@@ -565,3 +565,35 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 - **重新询问**（#2208 的那条路）：有这个状态对象时，只在 `none` / `unavailable` 且前端看到有可用连接时才重取，改用轻量的 `GET /api/ai/data-understanding`；`off` 时绝不为此重取。连接集合变了时任何状态都用这个轻量接口刷新一次清单选项（只读，不是模型调用）。
 - **界面显示的选择与实际行为保持一致**（Codex 评审 #2230）：①显式换 AI 重跑前，先把上一个 AI 自动填的那几个答案（`autoPicks` 记着、值仍是自动填的）从 `answers` 里拿掉——否则后端当成「用户定了」而不去问新 AI；用户自己动过的保留。②出候选请求带「实际在用的 AI」的代际，回来时代际变了，其中的读懂数据结果一律不应用（关了绝不会再套 AI 的结果）；换 AI 时候选正在加载，就等它落定后补跑一次。③读状态与写选择各自计序，读刷新排在未完成的写之后，一次 GET 吞不掉写的结果和它该触发的重跑。AI 建议改过的表头行不在 `autoPicks` 里：#2232 起另记一份 `autoHeaderRows`（路径 → AI 给的行号；用户自己点选表头行就从中删掉，那一条算用户的），显式换 AI 的重跑在清自动答案的同一处把「仍等于 AI 写的值」的表头行一并回退（所有文件的，不限当前这张表；用户 2026-11-25 定：「换 AI 时把 AI 改的表头行也回退」）。当前草稿的表头行因此变了就重新读表（`run({keepChoices: true})`，用户点的答案保留）。变成「关」不回退。正在出图 / 用户动过下拉时那一次重跑不发、也不回退，留一个标记到下一次重新读表之前再退。
 - 用户定的两条行为：指定的 AI 用不了时**不自动换别家**（按不分析处理）；关闭后已由 AI 选好的横轴 / 纵轴 / 分组**保持原样**。
+
+## 修订（2026-11-25）：按看图目的重排，并说明为什么不是另几张（`ai_data_purpose`、`ai_data_propose`；路线第③步）
+
+**起因**：维护者定的第③步是「按科学任务推荐并说明为什么不推荐另外几种」，口吻像老师 / 科研助理给建议，而不是直接画完。决策框架 §2 规定任务**不由推荐器自己定**：只有用户点选的算「用户确认过的目的」，从数据结构推出的永远只是假设。本期不让模型猜目的、不加自由文本入口。
+
+**命名**：框架 §2 / 推荐考卷里的「任务」（`task`）在这里叫 **`purpose`（看图目的）**，只为避开 `ai_data_task`（提交 / 生成脚本的流程）。取值是同一套词，界面本期只开四个：`compare_groups` / `trend` / `relationship` / `distribution`；考卷里别的任务（`dose_response` / `paired_change` / `agreement` / `part_whole` / `ranking` / `pattern_in_matrix`）没有模板或不在本期范围，不进闭集。
+
+**事实**（规则判，不调模型、不联网、不读数据；仍在 `ai.taf.enabled` 后面）：
+
+1. **请求**：`answers.purpose`。进 `_ANSWER_KEYS`（闭集外的值丢弃、当没给）；**不进** `_user_took_over`（点选目的不算接管列角色，与 `error` 同理）；进幂等键（`_answers_digest` 带整个 `ans`）。
+2. **纯排列**：`ai_data_purpose.resolve` 在 `default_candidates`、合画成对、换误差类型**之后**只调换已有 `Candidate` 的顺序（稳定分区：该目的对应的画法排前，其余与每类内部保持规则原顺序）；不新增、不复活被规则拿掉的备选（`x_independent` 拿掉的折线、`summarised_not_raw`、`x_is_measure`、被 `MAX_CANDIDATES` 截掉的都不会因目的回来）。`Candidate` 对象原样搬动，所以合画里按 `id(recipe)` 记的 `variants` 标记不丢，成对的两张仍相邻。排前的码：看比较 = `points_mean` / `box_points` / `violin_points` / `points_err`（框架 §4）；看趋势 = `line_*`（G-018）；看关系 = `scatter_fit` / `scatter`（G-018）；看分布 = 规则**留着**的 `box_points` / `violin_points`（没留着——每组点太少被规则拿掉——就不重排）。没有依据的并列项（如 `line_band` 与 `line_points`、`hist` 与 `ecdf`）保持规则原顺序；`bar_error` 从不被提前。
+3. **没有 `answers.purpose` 时**：假设的目的 = 规则现在第一名所属的族，重排是恒等；候选的集合与顺序、`recommended`、响应里除新增键以外的一切逐项不变（对拍：41 条推荐考卷 × 带 / 不带标准 `picks`、14 条跑分用例，剥掉 `purpose` / `why_not` / 随机 id 后与改动前逐项相同）。
+4. **响应**：顶层新增 `purpose: {code, source: "user" | "data", options: [...]}`——`code` 是实际生效的目的（用户点的、且这批备选里有它的族；否则回到假设的，`source` 为 `data`），`options` 只列「这批备选里至少有一张能回答」的目的（固定顺序），不足两个时为空（界面不出这一行）。非推荐的备选可带 `why_not: {code, guidance: [G-…], tier}`，只在有适用理由时出现，推荐的那张没有。
+5. **原因码闭集 `WHY_NOT`（4 个）**：`summary_hides_spread`（G-012，`bar_error` 相对看比较 / 看分布）、`line_needs_order`（G-018，`line_*` 相对看关系）、`order_prefers_line`（G-018，`scatter*` 相对看趋势）、`answers_other_purpose`（无 G，`tier: "purpose"`，这张回答的是另一个问题）。前三个有 G 依据，**不论目的是用户点的还是假设的都给**；`answers_other_purpose` **只在 `source: "user"` 时给**（没确认过的目的不能当理由，框架 §6）。理由三档 `data_fact` / `perceptual` / `purpose` 分开，不出「最优」「置信度」。测试核每个码引用的 G 在 `sciviz_guidance` 里存在且 basis 不是 `taste`；品味条目（G-042–G-051，如 G-050）不能当把某种画法排后的理由。
+6. **推荐考卷回放臂**：`tests/support/data_figure_recommend.py` 的 `purpose_arm`——把用例标准答案里的 `task`（只取四个之内的，41 条里 30 条）当 `answers.purpose`，**等于「用户点了对的目的」**。规则第一名落在 `acceptable_top` 的条数 28 → 31（RC-P02B、RC-P04B、RC-N03 修好，无回退）。`acceptable_top` / `forbidden` 一个字不改，`expressible` 本期不重量。
+
+**已知限制**：
+
+- **先截到 4 张再重排**：规则先取至多 `MAX_CANDIDATES` 张，目的只在这几张里排；被截掉的族不出现在 `options` 里，点它（手填请求）也不会让它回来（`test_a_family_squeezed_out_by_the_four_card_cap_is_not_offered`）。
+- **分布的「箱线在场」是点数够不够的代理**：每组点数的门槛（`MIN_N_BOX`）是工程选择（G-013 没给 n）；没有箱线 / 小提琴时「看分布」不改顺序，也没有「点数太少」的理由码（被规则拿掉的备选用户预览不到，理由没处显示）。
+- **两条考卷用例没有目的时第一名就是 `forbidden`**：RC-P03B（`agreement`）、RC-H01（`paired_change`）——它们的任务不在这四个里、目标画法（`scatter_identity` / `paired_lines`）没有模板，本期救不了；RC-P04B 没有目的时同样违规，点对「看关系」后修好。测试把这三条列为有名字的例外，只要求带目的后不比从前差，其余用例不许新增 `forbidden_recommended`。
+- 换目的是一次新的 `propose`（新会话，懒模式下缩略图重画），不是本地切换。
+- 目的行的界面文案与交互（前端）不在这一期。
+
+**不变的**：不加遥测、不联网；用户脚本与数据不动；`default_candidates` 的签名与行为不变（目的在它之后才用）。
+
+**界面**（`DataPanel.tsx`、`CandidateStage.tsx`、`store/dataFigureStore.ts`；用户 2026-11-25 在示意页上逐项点选、2026-11-26 改了两句原因的说法）
+
+- 右栏多一行「目的」（用户定的行名），放在列角色之后、「误差线」/「需要你确认」之前；选项来自响应的 `purpose.options`（「比较各组 / 看趋势 / 看关系 / 看分布」），当前值是 `purpose.code`。**没选时就是普通一行，不标它是推测的**（用户选的方案 C）：`source` 是 `data` 还是 `user` 在这一行上不做区分，也不进「需要你确认」。`options` 为空或 `code` 为 null 时这一行不出现。
+- 选了目的 = 带 `answers.purpose` 重新出候选；**改「目的」的这一次把预览放回重排后的第一名**（用户换目的就是想看按这个目的该先看哪张）。改误差线类型等其它项不重置预览；留存草稿还原、换 AI 重跑、套用 AI 建议也不重置。`purpose` 不进 `autoPicks`，换 AI 重跑时保留。
+- 主图下面「依据」之后多一行同样样式的小灰字，只在当前预览的那张带 `why_not` 时出现，**独立一行、不带开头**（用户定）。四句：`summary_hides_spread`「柱和误差线通常只代表均值与离散程度，不显示每个观测值。」；`line_needs_order`「连线通常代表连续变化的量。」（用户给的原话——原草稿「两个量没有先后顺序……」在横轴明明有序、而用户选了「看关系」时不是事实，所以改成陈述画法通常代表什么、不对数据下断言）；`order_prefers_line`「横轴有顺序，连线更能看出走势。」；`answers_other_purpose`「你选的是「{{purpose}}」，这张回答的是另一个问题。」。有这一行时主图的最大高度多让出约 20px。
+- 已知：`bar_error` 现有说明句末尾的「个别点会藏在柱里」与 `summary_hides_spread` 那句意思重叠，现有说明是已上线文案、没有动，是否合并待用户定。
