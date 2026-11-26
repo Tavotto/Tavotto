@@ -16,7 +16,13 @@ from pathlib import Path
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import discover, documents, project_watch as engine_watch, registry
+from tavotto.engine import (
+    discover,
+    documents,
+    project_watch as engine_watch,
+    registry,
+    scriptrelink,
+)
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "figures"
 PLOT = "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n\n\ndef main():\n    fig, ax = plt.subplots()\n    ax.plot([0, 1], [0, 1])\n    fig.savefig('plot_a.png')\n"
@@ -286,7 +292,28 @@ def test_relink_claimed_ok_without_ownership_is_still_undone(client, tmp_path):
 
 
 def test_stale_pending_is_settled_from_the_registry(client, tmp_path):
-    """关了页面停在两步之间：下一次列候选时按注册表此刻的事实收尾（没认领 = 撤销）。"""
+    """停在两步之间：列候选只做「认领了 = 留下」，不撤销（用户可能正在缺数据指认框里，指认完的自动重跑还要用
+    带过去的配置）；撤销等下一次接回（新的一次取代上一次）。"""
+    root = _project(tmp_path, fingerprint=True)
+    _seed_state(root)
+    (root / "scripts").mkdir()
+    (root / "plot.py").rename(root / "scripts" / "plot.py")
+    pj = _open(client, root)
+    h = {"X-Tavotto-Project": pj["id"]}
+    prepare = {"from": "plot.py", "to": "scripts/plot.py"}
+    client.post("/api/registry/relink/prepare", json=prepare, headers=h)
+    carried = _state_under(root, "scripts/plot.py")["configs"]
+    assert carried
+    _candidates(client, pj, "plot.py")
+    assert _state_under(root, "scripts/plot.py")["configs"] == carried
+    assert scriptrelink._pending(str(root))
+    # 下一次接回：上一次没认领 → 先撤销再重新带（不叠两份）
+    client.post("/api/registry/relink/prepare", json=prepare, headers=h)
+    assert len(_state_under(root, "scripts/plot.py")["configs"]) == len(carried)
+
+
+def test_pending_is_kept_once_the_new_script_owns_the_figure(client, tmp_path):
+    """指认完数据、自动重跑登记成功之后（前端没机会调 finish）：列候选时按注册表事实留下、清掉待办。"""
     root = _project(tmp_path, fingerprint=True)
     _seed_state(root)
     (root / "scripts").mkdir()
@@ -296,9 +323,11 @@ def test_stale_pending_is_settled_from_the_registry(client, tmp_path):
     client.post(
         "/api/registry/relink/prepare", json={"from": "plot.py", "to": "scripts/plot.py"}, headers=h
     )
-    assert _state_under(root, "scripts/plot.py")["configs"]
+    carried = _state_under(root, "scripts/plot.py")["configs"]
+    discover.register(root, "scripts/plot.py", ["plot_a"])
     _candidates(client, pj, "plot.py")
-    assert _state_under(root, "scripts/plot.py")["configs"] == []
+    assert _state_under(root, "scripts/plot.py")["configs"] == carried
+    assert not scriptrelink._pending(str(root))
 
 
 @pytest.mark.parametrize("fail", ["answers", "transcripts"])

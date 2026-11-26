@@ -182,14 +182,19 @@ def finish(project_root: str | Path, old: str, new: str, ok: bool) -> str:
     return "aborted"
 
 
-def settle_stale(project_root: str | Path) -> None:
+def settle_stale(project_root: str | Path, *, abort: bool = True) -> None:
     """上一次接回停在两步之间（关了页面 / 进程退出 / 等用户在弹框里定的那一下没回来）：按注册表此刻的事实收尾。
+
+    `abort=False`（只读的「接回候选」用）：新脚本已认领图 → 留下；否则**不动**——用户可能正在缺数据指认框里，
+    指认完的自动重跑还要用带过去的配置。撤销只在下一次 `prepare`（新的一次接回取代上一次）时做。
     不抛——收尾失败只记日志，待办留着下次再收。"""
     root = os.fspath(project_root)
     try:
         for new, record in list(_pending(root).items()):
             if isinstance(record, dict) and isinstance(record.get("from"), str):
-                finish(root, record["from"], new, ok=_owns_figures(root, new))
+                owns = _owns_figures(root, new)
+                if owns or abort:
+                    finish(root, record["from"], new, ok=owns)
     except Exception:  # noqa: BLE001
         LOG.warning("接回脚本的待办收尾失败（下次再收）", exc_info=True)
 

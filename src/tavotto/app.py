@@ -9923,7 +9923,7 @@ def api_registry_relink_candidates():
     只读：不写注册表、不跑脚本。接回本身走现有的试运行登记——跑成了才改登记（`/api/registry/probe`）。"""
     ctx = current_ctx()
     # 上一次接回停在两步之间（关了页面）：按注册表此刻的事实收尾，不留带过去又没用上的参数
-    engine_scriptrelink.settle_stale(ctx.path)
+    engine_scriptrelink.settle_stale(ctx.path, abort=False)
     asked = str(request.args.get("script") or "").replace("\\", "/").strip()
     empty = {"script": asked, "missing": False, "fingerprint": False, "matches": [], "scripts": []}
     script = _registered_script_key(ctx, asked)
