@@ -15,16 +15,13 @@ from pathlib import Path
 from . import config, execspec, nativeggplot, projectenv, scriptadjust
 from .fixtools import cmdsandbox, trial
 
-_TEXT_ELEMENTS = {
-    "plot.title": "plot.title",
-    "plot.subtitle": "plot.subtitle",
-    "plot.caption": "plot.caption",
-    "axis.x.bottom.title": "axis.title.x.bottom",
-    "axis.x.top.title": "axis.title.x.top",
-    "axis.y.left.title": "axis.title.y.left",
-    "axis.y.right.title": "axis.title.y.right",
-}
 _RGB = re.compile(r"#[0-9a-fA-F]{6}\Z")
+_FACES = {
+    ("normal", "normal"): "plain",
+    ("bold", "normal"): "bold",
+    ("normal", "italic"): "italic",
+    ("bold", "italic"): "bold.italic",
+}
 
 
 @dataclass(frozen=True)
@@ -44,7 +41,14 @@ class ReplayedRSource:
 
 
 def build(
-    data: bytes, object_name: str, patches: list[dict], end_line: int, end_byte: int
+    data: bytes,
+    object_name: str,
+    patches: list[dict],
+    end_line: int,
+    end_byte: int,
+    *,
+    themes: dict[str, str],
+    hot: dict | None = None,
 ) -> AdjustedRSource:
     """Insert the generated R block after the binding located by R's parser."""
     if b"\0" in data:
@@ -84,28 +88,49 @@ def build(
             )
         position = after
 
-    colours = {}
+    face_of = {
+        item["gid"]: {
+            field["prop"]: field["value"]
+            for field in item.get("editable", ())
+            if field.get("prop") in ("weight", "style")
+        }
+        for item in (hot or {}).get("elements", ())
+        if item["gid"] in themes
+    }
+    elements: dict[str, dict[str, str | float]] = {}
+    written: set[tuple[str, str]] = set()
     residual = []
     skipped = []
     for patch in patches:
         gid, prop, value = patch["gid"], patch["prop"], patch["value"]
-        if (
-            prop == "color"
-            and gid in _TEXT_ELEMENTS
-            and isinstance(value, str)
-            and _RGB.fullmatch(value)
-        ):
-            colours[_TEXT_ELEMENTS[gid]] = value
-        else:
-            residual.append(patch)
-            skipped.append({"gid": gid, "prop": prop, "reason": "unsupported"})
-    if not colours:
+        element = themes.get(gid)
+        if element is not None:
+            face_fields = face_of.get(gid, {})
+            face = _FACES.get((face_fields.get("weight"), face_fields.get("style")))
+            if prop == "color" and isinstance(value, str) and _RGB.fullmatch(value):
+                elements.setdefault(element, {})["colour"] = value
+            elif prop == "fontsize" and type(value) in (int, float) and 3 <= value <= 200:
+                elements.setdefault(element, {})["size"] = value
+            elif (
+                prop in ("weight", "style") and face is not None and face_fields.get(prop) == value
+            ):
+                elements.setdefault(element, {})["face"] = face
+            else:
+                element = None
+        if element is not None:
+            written.add((gid, prop))
+            continue
+        residual.append(patch)
+        skipped.append({"gid": gid, "prop": prop, "reason": "unsupported"})
+    if not elements:
         return AdjustedRSource(data, 0, residual, skipped)
 
     name = json.dumps(object_name, ensure_ascii=False)
     options = ",\n".join(
-        f'    {element} = ggplot2::element_text(colour = "{color}")'
-        for element, color in colours.items()
+        f"    {element} = ggplot2::element_text("
+        + ", ".join(f"{key} = {json.dumps(value)}" for key, value in fields.items())
+        + ")"
+        for element, fields in elements.items()
     )
     block = (
         f"\n{scriptadjust.BEGIN}\n"
@@ -117,7 +142,7 @@ def build(
     if not prefix.endswith(newline):
         prefix += newline
     result = prefix + block.encode().replace(b"\n", newline) + b"".join(lines[position:])
-    return AdjustedRSource(result, len(colours), residual, skipped)
+    return AdjustedRSource(result, len(written), residual, skipped)
 
 
 def _run(command: list[str], cwd: Path, environment: dict[str, str]) -> None:
@@ -156,6 +181,8 @@ def replay(
     stem: str,
     patches: list[dict],
     width: int,
+    *,
+    hot: dict | None = None,
 ) -> ReplayedRSource:
     """Run the candidate in a protected copy using the recorded native interpreter."""
     sandbox = cmdsandbox.sandbox_kind(offline=True)
@@ -209,17 +236,25 @@ def replay(
             "script": staged.as_posix(),
             "object": target.object_name,
             "result": result.as_posix(),
+            "adapter": bridge.with_name("ggplot2.R").as_posix(),
+            "bridge": bridge.as_posix(),
         }
         request.write_text(json.dumps({**common, "operation": "anchor"}), encoding="utf-8")
         _run(command, cwd, environment)
         anchor = json.loads(result.read_text(encoding="utf-8"))
-        adjusted = build(original, target.object_name, patches, anchor["line"], anchor["byte"])
+        adjusted = build(
+            original,
+            target.object_name,
+            patches,
+            anchor["line"],
+            anchor["byte"],
+            themes=anchor["themes"],
+            hot=hot,
+        )
         staged.write_bytes(adjusted.data)
         replay_request = {
             **common,
             "operation": "replay",
-            "adapter": bridge.with_name("ggplot2.R").as_posix(),
-            "bridge": bridge.as_posix(),
             "palettes": (bridge.parent.parent / "color_palettes.json").as_posix(),
             "frame_pt": target.frame_pt,
             "stem": stem,

@@ -2,6 +2,9 @@
 # with filesystem protection around the original project and its inputs.
 args <- commandArgs(trailingOnly = TRUE)
 request <- jsonlite::fromJSON(args[[1L]], simplifyVector = FALSE)
+bridge <- new.env(parent = baseenv())
+sys.source(request$bridge, envir = bridge)
+adapter <- bridge$ggplot_adapter(request$adapter)
 
 if (identical(request$operation, "anchor")) {
   expressions <- parse(file = request$script, keep.source = TRUE, encoding = "UTF-8")
@@ -13,11 +16,11 @@ if (identical(request$operation, "anchor")) {
   }, logical(1L)))
   if (length(definitions) != 1L) stop("The selected plot needs one top-level assignment.")
   end <- as.integer(attr(expressions, "srcref")[[definitions[[1L]]]])
-  jsonlite::write_json(list(line = end[[3L]], byte = end[[4L]]), request$result, auto_unbox = TRUE)
+  jsonlite::write_json(
+    list(line = end[[3L]], byte = end[[4L]], themes = as.list(adapter$ggplot_title_theme_names)),
+    request$result, auto_unbox = TRUE
+  )
 } else if (identical(request$operation, "replay")) {
-  bridge <- new.env(parent = baseenv())
-  sys.source(request$bridge, envir = bridge)
-  adapter <- bridge$ggplot_adapter(request$adapter)
   frame <- unlist(request$frame_pt, use.names = FALSE)
   palettes <- jsonlite::fromJSON(request$palettes, simplifyVector = FALSE)
   plot <- bridge$ggplot_source_plot(request$script, request$object)

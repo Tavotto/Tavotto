@@ -87,6 +87,8 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
                     "script": staged.as_posix(),
                     "object": object_name,
                     "result": result.as_posix(),
+                    "adapter": ADAPTER.as_posix(),
+                    "bridge": (native / "ggplot_bridge.R").as_posix(),
                     **extra,
                 },
                 ensure_ascii=False,
@@ -105,7 +107,9 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
 
     anchor = run("anchor")
     old = {"gid": "plot.title", "prop": "color", "value": "#572B82"}
-    first = nativeggplot_source.build(source, object_name, [old], anchor["line"], anchor["byte"])
+    first = nativeggplot_source.build(
+        source, object_name, [old], anchor["line"], anchor["byte"], themes=anchor["themes"]
+    )
     assert first.written == 1 and not first.residual
     staged.write_bytes(first.data)
     assert run("anchor") == anchor
@@ -115,15 +119,18 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
     ]
     untouched = {"gid": "plot.title", "prop": "rotation", "value": 15}
     second = nativeggplot_source.build(
-        first.data, object_name, [*changes, untouched], anchor["line"], anchor["byte"]
+        first.data,
+        object_name,
+        [*changes, untouched],
+        anchor["line"],
+        anchor["byte"],
+        themes=anchor["themes"],
     )
     assert second.written == 2 and second.residual == [untouched]
     assert b"# Keep\r\n" in second.data and b"\n" not in second.data.replace(b"\r\n", b"")
     staged.write_bytes(second.data)
     run(
         "replay",
-        adapter=ADAPTER.as_posix(),
-        bridge=(native / "ggplot_bridge.R").as_posix(),
         palettes=(native.parent / "color_palettes.json").as_posix(),
         frame_pt=[288, 216],
         stem="signal",
@@ -157,7 +164,8 @@ if (nzchar(protected)) {
 }
 d <- read.csv("../numbers.csv")
 p <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
-  ggplot2::geom_point() + ggplot2::labs(title = "Signal")
+  ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input") +
+  ggplot2::theme(axis.title.x.bottom = ggplot2::element_text(face = "italic"))
 ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
 """
     source.write_bytes(original)
@@ -192,23 +200,22 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         original_pdf = submitted.read_bytes()
         rendered = client.post("/api/engine/render", json={"id": figure, "patches": []})
         assert rendered.status_code == 200, rendered.get_json()
-        title = next(
-            element
-            for element in rendered.json["manifest"]["elements"]
-            if element["gid"] == "plot.title"
-        )
-        patch = {
-            "gid": title["gid"],
-            "identity": title["identity"],
-            "prop": "color",
-            "value": "#572B82",
-        }
+        elements = {item["gid"]: item for item in rendered.json["manifest"]["elements"]}
+        edits = [
+            ("plot.title", "color", "#572B82"),
+            ("axis.x.bottom.title", "weight", "bold"),
+            ("axis.x.bottom.title", "fontsize", 18.5),
+        ]
+        patches = [
+            {"gid": gid, "identity": elements[gid]["identity"], "prop": prop, "value": value}
+            for gid, prop, value in edits
+        ]
         request = {
             "filename": "Signal",
             "scope": "original",
             "formats": [],
             "include_edited_script": True,
-            "original": {"figure_id": figure, "overrides": [patch]},
+            "original": {"figure_id": figure, "overrides": patches},
         }
         validated = client.post("/api/export/validate", json=request)
         assert validated.status_code == 200 and validated.json.get("ok"), validated.json
@@ -223,9 +230,11 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         assert exported.status_code == 200, exported.get_json()
         (output,) = exported.json["outputs"]
         assert output["name"] == "Signal_edited.R"
-        assert output["script_report"] == {"written": 1, "skipped": []}
+        assert output["script_report"] == {"written": 3, "skipped": []}
         edited = Path(exported.json["export_dir"]) / output["name"]
         assert b'colour = "#572B82"' in edited.read_bytes()
+        assert b'face = "bold.italic"' in edited.read_bytes()
+        assert b"size = 18.5" in edited.read_bytes()
         assert protected.read_bytes() == b"external file"
         assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
         assert client.post("/api/export/validate", json=request).json["conflicts"] == [edited.name]

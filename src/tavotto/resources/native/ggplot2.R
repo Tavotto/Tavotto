@@ -17,15 +17,17 @@ with_svg_frame <- function(frame_pt, draw) {
   list(value = value, svg = as.character(capture()))
 }
 
-ggplot_text_slots <- c(
-  "plot.title" = "title",
-  "plot.subtitle" = "subtitle",
-  "plot.caption" = "caption",
-  "axis.x.bottom.title" = "xlab-b",
-  "axis.x.top.title" = "xlab-t",
-  "axis.y.left.title" = "ylab-l",
-  "axis.y.right.title" = "ylab-r"
+ggplot_title_fields <- rbind(
+  "plot.title" = c("title", "plot.title"),
+  "plot.subtitle" = c("subtitle", "plot.subtitle"),
+  "plot.caption" = c("caption", "plot.caption"),
+  "axis.x.bottom.title" = c("xlab-b", "axis.title.x.bottom"),
+  "axis.x.top.title" = c("xlab-t", "axis.title.x.top"),
+  "axis.y.left.title" = c("ylab-l", "axis.title.y.left"),
+  "axis.y.right.title" = c("ylab-r", "axis.title.y.right")
 )
+ggplot_text_slots <- ggplot_title_fields[, 1L]
+ggplot_title_theme_names <- ggplot_title_fields[, 2L]
 
 ggplot_cell_name <- function(cell) {
   paste0(cell$name, ".", paste(c(cell$t, cell$r, cell$b, cell$l), collapse = "-"))
@@ -395,10 +397,12 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
   list(panel = panel, params = ggplot_format_guide(params, format, values))
 }
 
-ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_strokes, axis_changes, grid_edits) {
+ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_strokes, axis_changes,
+                               grid_edits, title_theme) {
   built <- state$built
   plot <- built$plot
   if (length(grid_edits)) plot$theme <- ggplot_grid_theme(plot$theme, state$axes_target$grid, grid_edits)
+  if (length(title_theme)) plot$theme <- plot$theme + do.call(ggplot2::theme, title_theme)
   guide_params <- plot$guides$params
   remapped <- if (length(colour_edits)) ggplot_remap_colour_scales(state, colour_edits, guide_params)
   if (!is.null(remapped)) guide_params <- remapped$guides
@@ -1093,7 +1097,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
     axes_target <- ggplot_frame_target(built, table, axes_target)
     axes_bbox <- measure_ggplot_axes(table, axes_target, frame_pt)
-    rebuild_guides <- !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
+    has_sized_title <- any(vapply(text_targets, function(text) !is.null(text$title_dimension), logical(1L)))
+    rebuild_guides <- has_sized_title || !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
       any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L)))
     point_targets <- ggplot_point_targets(built, panels, captured_layers$grobs)
     point_boxes <- measure_ggplot_points(table, point_targets, frame_pt)
@@ -1230,18 +1235,25 @@ ggplot_text_paint <- function(target, edits) {
   list(paint = paint, face = face)
 }
 
-resize_ggplot_title_cell <- function(table, target, original) {
-  slot <- target$slots[[1L]]
-  cell <- table$layout[slot, ]
-  edited <- table$grobs[[slot]]$children[[1L]]
-  # The gtable row/column embeds the original title grob in a grid unit. Keep
-  # its padding and reserve the difference measured on the current device.
-  if (target$title_dimension == "width") {
-    table$widths[cell$l] <- table$widths[cell$l] + grid::grobWidth(edited) - grid::grobWidth(original)
-  } else {
-    table$heights[cell$t] <- table$heights[cell$t] + grid::grobHeight(edited) - grid::grobHeight(original)
+ggplot_title_theme <- function(targets, edits) {
+  # Rebuild title layout through the same ggplot2 theme operation as an R script.
+  # The guide table retains the built data and drawing work from the capture.
+  result <- list()
+  for (gid in intersect(names(edits), names(ggplot_title_theme_names))) {
+    edit <- edits[[gid]]
+    if (is.null(edit$fontsize) && is.null(edit$fontfamily)) next
+    target <- targets[[gid]]
+    styled <- ggplot_text_paint(target, edit)
+    face <- NULL
+    if (!is.null(edit$weight) || !is.null(edit$style)) {
+      face <- c("plain", "bold", "italic", "bold.italic")[[styled$paint$font]]
+    }
+    result[[gid]] <- ggplot2::element_text(
+      size = edit$fontsize, family = if (!is.null(edit$fontfamily)) styled$paint$fontfamily,
+      colour = edit$color, face = face
+    )
   }
-  table
+  result
 }
 
 ggplot_legend_position <- function(edit) {
@@ -1301,10 +1313,18 @@ ggplot_table_for <- function(state, edits) {
   }) |> stats::setNames(names(edits)))
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
+  title_edits <- ggplot_title_theme(text_targets, edits)
+  title_theme <- stats::setNames(title_edits, unname(ggplot_title_theme_names[names(title_edits)]))
   if (length(tick_edits) || length(colour_edits) || length(axis_sizes) || length(guide_strokes) ||
-      length(axis_changes) || length(grid_edits)) {
-    guides <- ggplot_guide_table(state, tick_edits, colour_edits, axis_sizes, guide_strokes,
-                                 axis_changes, grid_edits)
+      length(axis_changes) || length(grid_edits) || length(title_edits)) {
+    make_guides <- function() ggplot_guide_table(
+      state, tick_edits, colour_edits, axis_sizes, guide_strokes, axis_changes, grid_edits, title_theme
+    )
+    # Recreate the title cells on the same metrics device used by the initial
+    # capture, then draw the resulting table on the requested output device.
+    guides <- if (length(title_edits)) {
+      with_svg_frame(state$frame_pt, function(capture) make_guides())$value
+    } else make_guides()
     table <- guides$table
     layout <- guides$layout
     stops <- guides$stops
@@ -1351,7 +1371,7 @@ ggplot_table_for <- function(state, edits) {
     }
   }
   for (gid in names(edits)) {
-    if (gid == ggplot_axes_gid || !is.null(colour_edits[[gid]])) next
+    if (gid == ggplot_axes_gid || !is.null(colour_edits[[gid]]) || gid %in% names(title_edits)) next
     line <- layer_targets$line_targets[[gid]]
     if (!is.null(line)) {
       table <- ggplot_edit_line(table, line, edits[[gid]])
@@ -1386,12 +1406,7 @@ ggplot_table_for <- function(state, edits) {
     if (!length(patch)) next
     paint <- ggplot_text_paint(target, patch)$paint
     if (isTRUE(target$hidden)) next
-    resize <- !is.null(patch$fontsize) || !is.null(patch$fontfamily)
-    if (resize) original <- table$grobs[[target$slots[[1L]]]]$children[[1L]]
     table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
-    if (resize) {
-      table <- resize_ggplot_title_cell(table, target, original)
-    }
   }
   if (length(frame_edits)) {
     table <- ggplot_frame_edit(table, state$axes_target$slot, state$axes_target$frame$fallback, frame_edits)

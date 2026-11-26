@@ -5738,7 +5738,7 @@ def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
         }
         hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
         replay = engine_nativeggplot_source.replay(
-            spec, worker.ggplot_target, stem, patches, REPLAY_PIXEL_WIDTH
+            spec, worker.ggplot_target, stem, patches, REPLAY_PIXEL_WIDTH, hot=hot["manifest"]
         )
         job.check_cancelled()
         current = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
