@@ -44,10 +44,6 @@ ggplot_axes_target <- function(built, table) {
       !is.null(coord$ratio) || !identical(coord$clip, "on")) return(NULL)
   kinds <- ggplot_axis_layers(built$plot$layers)
   if (!length(kinds) || anyNA(kinds)) return(NULL)
-  # The stock raster geom indexes its image before transforming its cell bounds.
-  # Reversing the coordinate at that stage can crop or misplace the image.
-  can_invert <- !"GeomRaster" %in% kinds
-  if (!can_invert && coord$reverse != "none") return(NULL)
   panel <- layout$panel_params[[1L]]
   if (!all(vapply(panel$guides$guides, function(guide) {
     class(guide)[[1L]] %in% c("GuideAxis", "GuideNone")
@@ -89,7 +85,7 @@ ggplot_axes_target <- function(built, table) {
   # Preserve the saved identities of plots captured before direction was editable.
   context <- list(kinds, built$data, axes, coord$limits)
   if (coord$reverse != "none") context <- c(context, list(coord$reverse))
-  list(slot = slot, axes = axes, reverse = coord$reverse, can_invert = can_invert,
+  list(slot = slot, axes = axes, reverse = coord$reverse,
        context = rlang::hash(context))
 }
 
@@ -99,8 +95,7 @@ ggplot_axis_edits <- function(target, edits) {
     direction <- startsWith(prop, "invert_")
     axis <- if (direction) substring(prop, 8L) else substr(prop, 1L, 1L)
     spec <- target$axes[[axis]]
-    if (is.null(spec) || (direction && !target$can_invert) ||
-        (!direction && !prop %in% paste0(axis, c("lim", "scale")))) {
+    if (is.null(spec) || (!direction && !prop %in% paste0(axis, c("lim", "scale")))) {
       stop("The requested native R axis edit is unavailable.")
     }
     value <- edits[[prop]]
@@ -189,7 +184,7 @@ ggplot_axes_element <- function(target, current, bbox, edits) {
   original <- lapply(names(target$axes), function(axis) {
     spec <- target$axes[[axis]]
     list(mode = spec$mode, range = as.list(spec$range), options = as.list(spec$options),
-         inverted = if (target$can_invert) ggplot_inverted(target$reverse, axis))
+         inverted = ggplot_inverted(target$reverse, axis))
   }) |> stats::setNames(names(target$axes))
   if (is.null(current)) current <- original
   list(list(gid = ggplot_axes_gid, role = "axes", label = "\u5b50\u56fe", bbox = bbox,
@@ -234,7 +229,7 @@ ggplot_axes_values <- function(layout, target, changes) {
       range <- requested
     }
     list(mode = ggplot_axis_modes[[trans$name]], range = as.list(range),
-         inverted = if (target$can_invert) ggplot_inverted(panel$reverse, axis))
+         inverted = ggplot_inverted(panel$reverse, axis))
   }) |> stats::setNames(names(target$axes))
 }
 
@@ -333,4 +328,36 @@ ggplot_grid_theme <- function(theme, grid, edit) {
     replacements[[ggplot_grid_cells[[i]]]] <- line
   }
   theme + do.call(ggplot2::theme, replacements)
+}
+
+ggplot_mirror_raster_layer <- function(layer, coord) {
+  if (!identical(class(coord)[[1L]], "CoordCartesian") || !identical(class(layer$geom)[[1L]], "GeomRaster") ||
+      !identical(ggplot_axis_layers(list(layer)), "GeomRaster")) return(layer)
+  geom <- layer$geom
+  mirrored <- ggplot_clone(geom, draw_panel = function(data, panel_params, coord, ...) {
+    reverse <- panel_params$reverse
+    # Raster's native matrix is indexed before the coordinate transform. Render
+    # with the same view in forward order, then reflect both the raster and its placement.
+    panel_params$reverse <- "none"
+    grob <- geom$draw_panel(data, panel_params, coord, ...)
+    if (identical(reverse, "none") || inherits(grob, "zeroGrob")) return(grob)
+    if (!inherits(grob, "rastergrob") || !identical(grob$just, "centre") ||
+        !is.null(grob$vp) || !is.null(grob$hjust) || !is.null(grob$vjust) ||
+        !identical(grid::unitType(grob$x), "native") || !identical(grid::unitType(grob$y), "native")) {
+      stop("The native R raster no longer has a reversible placement.")
+    }
+    rows <- seq_len(nrow(grob$raster))
+    columns <- seq_len(ncol(grob$raster))
+    if (ggplot_inverted(reverse, "x")) {
+      columns <- rev(columns)
+      grob$x <- grid::unit(1 - as.numeric(grob$x), "native")
+    }
+    if (ggplot_inverted(reverse, "y")) {
+      rows <- rev(rows)
+      grob$y <- grid::unit(1 - as.numeric(grob$y), "native")
+    }
+    grob$raster <- grDevices::as.raster(grob$raster[rows, columns, drop = FALSE])
+    grob
+  })
+  ggplot_clone(layer, geom = mirrored)
 }

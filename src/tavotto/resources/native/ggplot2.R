@@ -394,8 +394,10 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
   if (length(axis_changes)) captured$grobs <- vector("list", length(plot$layers))
   plot$layers <- Map(function(layer, grobs, index) {
     if (length(axis_changes)) {
-      ggplot_watch_layer(layer, index, captured)
-    } else if (index %in% remapped$changed) layer else ggplot_frozen_layer(layer, grobs)
+      ggplot_watch_layer(ggplot_mirror_raster_layer(layer, layout$coord), index, captured)
+    } else if (index %in% remapped$changed) {
+      ggplot_mirror_raster_layer(layer, layout$coord)
+    } else ggplot_frozen_layer(layer, grobs)
   }, plot$layers, state$layer_grobs, seq_along(plot$layers))
   built$layout <- layout
   built$plot <- plot
@@ -845,8 +847,9 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     captured_layers <- new.env(parent = emptyenv())
     layers <- built$plot$layers
     captured_layers$grobs <- vector("list", length(layers))
-    layout_input$plot$layers <- Map(function(layer, i) ggplot_watch_layer(layer, i, captured_layers),
-                                    layers, seq_along(layers))
+    layout_input$plot$layers <- Map(function(layer, i) {
+      ggplot_watch_layer(ggplot_mirror_raster_layer(layer, built$layout$coord), i, captured_layers)
+    }, layers, seq_along(layers))
     table <- ggplot2::ggplot_gtable(layout_input)
     grid::grid.newpage()
     grid::grid.draw(table)

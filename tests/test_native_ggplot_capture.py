@@ -1088,9 +1088,10 @@ raster_plot <- ggplot2::ggplot(expand.grid(x = 1:3, y = 1:3), ggplot2::aes(x, y,
   ggplot2::geom_raster()
 raster <- adapter$capture_ggplot(raster_plot, frame)$state
 raster_control <- element(adapter$ggplot_manifest(raster, "raster"), "axes_0")$native_axes
-stopifnot(is.null(raster_control$original$x$inverted), is.null(raster_control$original$y$inverted),
-          inherits(try(adapter$render_ggplot(raster, list(axes_0 = list(invert_x = TRUE))),
-                       silent = TRUE), "try-error"))
+stopifnot(!raster_control$original$x$inverted, !raster_control$original$y$inverted)
+raster_reversed <- element(adapter$ggplot_manifest(raster, "raster",
+                                    list(axes_0 = list(invert_x = TRUE))), "axes_0")$native_axes
+stopifnot(raster_reversed$current$x$inverted, !raster_reversed$current$y$inverted)
 raster_crop <- element(adapter$ggplot_manifest(raster, "raster",
                                 list(axes_0 = list(xlim = c(1, 3)))), "axes_0")$native_axes
 stopifnot(identical(raster_crop$current$x$range, list(1, 3)))
@@ -1164,6 +1165,33 @@ for (bad in list(list(spine_top = 1), list(spine_left_linewidth = 0), list(spine
 """
 
 
+RASTER_PROBE = r"""
+if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+cells <- expand.grid(x = 1:3, y = 1:2)
+cells$color <- c("#D60000", "#059355", "#183ED0", "#6A1692", "#EA5303", "#6EE7D7")
+plot <- ggplot2::ggplot(cells, ggplot2::aes(x, y, fill = color)) +
+  ggplot2::geom_raster(hjust = .25, vjust = .75) + ggplot2::scale_fill_identity() +
+  ggplot2::theme_void() + ggplot2::theme(plot.background = ggplot2::element_rect(fill = "white"))
+coords <- function(reverse) ggplot2::coord_cartesian(xlim = c(0, 8), ylim = c(0, 5),
+                                                     expand = FALSE, reverse = reverse)
+frame <- c(576, 360)
+captured <- adapter$capture_ggplot(plot + coords("none"), frame)
+for (mode in c("none", "x", "y", "xy")) {
+  changes <- if (mode != "none") list(axes_0 = list(invert_x = grepl("x", mode),
+                                                   invert_y = grepl("y", mode))) else list()
+  png <- adapter$preview_ggplot_png(captured$state, changes, paste0(mode, ".png"), 800, TRUE)
+  stopifnot(file.info(paste0(mode, ".png"))$size > 0)
+}
+authored <- adapter$capture_ggplot(plot + coords("xy"), frame)
+adapter$preview_ggplot_png(authored$state, list(), "authored.png", 800, TRUE)
+adapter$preview_ggplot_png(authored$state, list(axes_0 = list(invert_x = FALSE, invert_y = FALSE)),
+                           "normalised.png", 800, TRUE)
+stopifnot(identical(adapter$render_ggplot(captured$state), captured$svg),
+          identical(adapter$render_ggplot(authored$state), authored$svg))
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -1212,6 +1240,24 @@ def test_axis_windows_and_transforms_reproject_captured_data_without_recalculati
 
 def test_ggplot_frame_uses_native_borders_and_axis_strokes(tmp_path):
     _assert_r_probe(tmp_path, FRAME_PROBE)
+
+
+def test_raster_reversal_preserves_the_color_and_position_of_every_cell(tmp_path):
+    _assert_r_probe(tmp_path, RASTER_PROBE)
+    with Image.open(tmp_path / "none.png") as file:
+        original = file.convert("RGB")
+    palette = ["d60000", "059355", "183ed0", "6a1692", "ea5303", "6ee7d7"]
+    for mode in ("x", "y", "xy", "authored", "normalised"):
+        with Image.open(tmp_path / f"{mode}.png") as file:
+            actual = file.convert("RGB")
+        expected = original
+        if "x" in mode or mode == "authored":
+            expected = expected.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if "y" in mode or mode == "authored":
+            expected = expected.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        assert actual.tobytes() == expected.tobytes(), mode
+        counts = actual.getcolors()
+        assert {tuple(bytes.fromhex(code)) for code in palette} <= {rgb for _, rgb in counts}
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):
