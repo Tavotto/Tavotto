@@ -72,15 +72,38 @@ function caseInsensitive(p: string): boolean {
   }
 }
 
-function agentAnnotates(figures: string, dataDir: string, batch = 1): { added: string[] } {
+interface DiskObject {
+  id: string
+  type: string
+  text?: string
+  [k: string]: unknown
+}
+
+/** 一次「Agent 写入」：按引擎的格式先存撤销留存、再换排版文件；`mutate` 改第一张画布 */
+function agentWrites(figures: string, dataDir: string, tag: string, mutate: (objects: DiskObject[]) => DiskObject[]) {
   const file = path.join(figures, 'tavottofile', `${NAME}.json`)
   const before = readFileSync(file)
   const rev = (b: Buffer | string) => createHash('sha256').update(b).digest('hex').slice(0, 32)
   const doc = JSON.parse(before.toString('utf-8'))
+  doc.canvases[0].objects = mutate(doc.canvases[0].objects)
+  const after = Buffer.from(JSON.stringify(doc, null, 1), 'utf-8')
+  let project = realpathSync.native(figures)
+  if (caseInsensitive(project)) project = project.toLowerCase()
+  const key = createHash('sha256').update(project, 'utf-8').digest('hex').slice(0, 16)
+  const undo = path.join(realpathSync.native(dataDir), 'state', 'agent-undo', key, NAME)
+  mkdirSync(undo, { recursive: true })
+  const token = `u${Date.now().toString(16)}${tag}`
+  writeFileSync(path.join(undo, `${token}.json`), before)
+  writeFileSync(path.join(undo, `${token}.meta`), JSON.stringify({ before: rev(before), after: rev(after) }))
+  writeFileSync(file, after)
+}
+
+function agentAnnotates(figures: string, dataDir: string, batch = 1): { added: string[] } {
   const dy = (batch - 1) * 12
   const anchor = { v: 1, by: 'agent', anchors: [{ role: 'at', panel: { id: 'Fig1_kinetics.pdf', point: 'ne' } }] }
   const ids = [`a_e2e${batch}arw`, `t_e2e${batch}txt`]
-  doc.canvases[0].objects.push(
+  agentWrites(figures, dataDir, `a${batch}`, (objects) => [
+    ...objects,
     {
       id: ids[0], type: 'arrow', x: 96, y: 11 + dy, w: 6, h: 4, start: { rx: 1, ry: 0 }, end: { rx: 0, ry: 1 },
       color: '#000000', strokePt: 0.75, head: 'end', anchor,
@@ -89,18 +112,15 @@ function agentAnnotates(figures: string, dataDir: string, batch = 1): { added: s
       id: ids[1], type: 'text', x: 103, y: 9 + dy, w: 22, h: 4, text: batch === 1 ? 'Agent note' : `Agent note ${batch}`,
       sizePt: 8, bold: false, color: '#000000', align: 'left', anchor,
     },
-  )
-  const after = Buffer.from(JSON.stringify(doc, null, 1), 'utf-8')
-  let project = realpathSync.native(figures)
-  if (caseInsensitive(project)) project = project.toLowerCase()
-  const key = createHash('sha256').update(project, 'utf-8').digest('hex').slice(0, 16)
-  const undo = path.join(realpathSync.native(dataDir), 'state', 'agent-undo', key, NAME)
-  mkdirSync(undo, { recursive: true })
-  const token = `u${Date.now().toString(16)}${batch}`
-  writeFileSync(path.join(undo, `${token}.json`), before)
-  writeFileSync(path.join(undo, `${token}.meta`), JSON.stringify({ before: rev(before), after: rev(after) }))
-  writeFileSync(file, after)
+  ])
   return { added: ids }
+}
+
+/** 替插件改已有对象（ADR 0212 补丁的落盘结果）：只换点名对象的字段、删掉要删的，其余逐字节不动 */
+function agentEdits(figures: string, dataDir: string, tag: string, set: Record<string, Partial<DiskObject>>, del: string[] = []) {
+  agentWrites(figures, dataDir, tag, (objects) =>
+    objects.filter((o) => !del.includes(o.id)).map((o) => (set[o.id] ? { ...o, ...set[o.id] } : o)),
+  )
 }
 
 const textsOnDisk = (file: string): string[] =>
@@ -174,3 +194,49 @@ test(
     await expect(page.getByText(/已在别处改过/)).toHaveCount(0)
   },
 )
+
+test(
+  'Agent 改 / 删了已有对象：回到前台按字段并进画布、一步撤销；桌面也改过别处时 ⌘S 直接并进来再保存，不弹对话框',
+  { tag: '@feature:layout.agent-merge' },
+  async ({ app, page }) => {
+    const a = await app()
+    const file = writeLayout(a.figures)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(a.baseURL)
+    await waitForDocumentReady(page)
+    await openFromProject(page)
+    await expect(page.getByText('首次构建中…')).toHaveCount(0, { timeout: 120_000 })
+    await page.waitForTimeout(500)
+    const stage = page.locator('[data-canvas-stage]')
+    // 先有一批 Agent 的标注并存进项目，作为桌面与 Agent 共同的基线
+    agentAnnotates(a.figures, a.dataDir)
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(stage.getByText('Agent note', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
+
+    // Agent 改字、删箭头 → 回到前台：按字段并进来（状态栏说「改动」），⌘Z 一步回去
+    agentEdits(a.figures, a.dataDir, 'e1', { t_e2e1txt: { text: 'Agent edited' } }, ['a_e2e1arw'])
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator(':not([data-status-live])').getByText('已并入 Agent 的 2 处改动', { exact: false }).last()).toBeVisible()
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(stage.getByText('Agent note', { exact: true })).toBeVisible()
+    await page.keyboard.press('ControlOrMeta+Shift+z')
+    await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible()
+
+    // 桌面这边新加一段字；Agent 又改了一次那段字；直接 ⌘S：不弹对话框，两边都在磁盘上
+    await page.getByRole('button', { name: '文字' }).click()
+    await stage.click({ position: { x: 380, y: 420 } })
+    await page.keyboard.type('桌面这边')
+    await page.keyboard.press('Escape')
+    agentEdits(a.figures, a.dataDir, 'e2', { t_e2e1txt: { text: 'Agent edited 2' } })
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => textsOnDisk(file)).toEqual(['Agent edited 2', '桌面这边'].sort())
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
+    const arrows = (JSON.parse(readFileSync(file, 'utf-8')) as { canvases: { objects: DiskObject[] }[] }).canvases[0].objects
+    expect(arrows.some((o) => o.id === 'a_e2e1arw')).toBe(false)
+  },
+)
+

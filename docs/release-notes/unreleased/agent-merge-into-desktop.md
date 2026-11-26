@@ -1,3 +1,3 @@
-## Annotations the agent added just appear in your open layout
+## What the agent adds or edits just appears in your open layout
 
-When the agent adds annotations to a layout you have open, Tavotto brings them onto your canvas when you return to the window, as one step you can undo. If you press ⌘S first, Tavotto merges them in and saves, with no dialog. You are only asked how to resolve a conflict when something other than the agent's additions changed the file.
+When the agent adds annotations to a layout you have open, or edits, deletes or restacks objects already on it, Tavotto brings those changes onto your canvas when you return to the window, as one step you can undo. If you press ⌘S first, Tavotto merges them in and saves, with no dialog. Your own unsaved edits are kept: the agent's changes are merged field by field. You are only asked how to resolve a conflict when you and the agent changed the same thing (the same property of the same object, or you edited something the agent deleted), or when something other than the agent changed the file.

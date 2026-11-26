@@ -20491,8 +20491,8 @@ def api_layout_get(name):
 
 @app.get("/api/layouts/<name>/agent-additions")
 def api_layout_agent_additions(name):
-    """「把 Agent 加的并进来」（ADR 0208 §五）：桌面拿着基线 `base_revision`、磁盘上已是别的修订号时，
-    多出来的是不是**只有** Agent 追加的对象（判据在 `engine/layoutannotate.agent_additions`，全部来自撤销留存）。
+    """「把 Agent 的改动并进来」（ADR 0208 §五、ADR 0212 第 5 期）：桌面拿着基线 `base_revision`、磁盘上已是别的修订号时，
+    这中间是不是**只有** Agent 写过、写了什么（判据与对象差在 `engine/layoutannotate.agent_additions`，全部来自撤销留存）。
 
     只读、只认当前项目 `tavottofile/` 里的那份；不是就回 `{"available": false}`，桌面照旧走覆盖 / 另存。"""
     ctx = _request_ctx()

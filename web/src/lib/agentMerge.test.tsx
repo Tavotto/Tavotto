@@ -13,16 +13,16 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   saveLayout: vi.fn(),
 }))
 
-import { ApiError, fetchAgentAdditions, saveLayout } from '@/lib/api'
+import { ApiError, fetchAgentAdditions, saveLayout, type AgentCanvasDiff } from '@/lib/api'
 import { literal } from '@/i18n'
-import { mergeAgentAdditions, mergeableAgentAdditions, watchAgentAdditions } from '@/lib/agentMerge'
+import { mergeAgentAdditions, mergeableAgentAdditions, planAgentMerge, watchAgentAdditions } from '@/lib/agentMerge'
 import { writeBoundProjectFile } from '@/store/projectSave'
 import { captureSaveContext } from '@/store/saveContext'
 import { setCurrentProjectId } from '@/lib/session'
 import { activeProjectFile, setProjectFile, useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
-import { emptyProject, type ArrowObject } from '@/types/document'
+import { emptyProject, type ArrowObject, type CanvasObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -65,11 +65,22 @@ afterEach(async () => {
   useUiStore.setState({ layoutOpen: false, status: null })
 })
 
+const diff = (over: Partial<AgentCanvasDiff> = {}): AgentCanvasDiff => ({
+  id: useDocumentStore.getState().activeCanvasId,
+  added: [],
+  changed: [],
+  deleted: [],
+  base_order: ['a_mine0001'],
+  order: ['a_mine0001'],
+  reordered: false,
+  ...over,
+})
+
 const additions = (canvasId = useDocumentStore.getState().activeCanvasId, ids = ['a_agent001', 't_agent002']) => ({
   available: true,
   revision: 'rev-disk',
   count: ids.length,
-  canvases: [{ id: canvasId, objects: ids.map(arrow) }],
+  canvases: [diff({ id: canvasId, added: ids.map(arrow), order: ['a_mine0001', ...ids] })],
 })
 
 describe('能不能并', () => {
@@ -210,3 +221,103 @@ describe('Codex #2217：回答只对发请求时那一份成立、不进手势�
     expect(activeProjectFile()).toMatchObject({ revision: 'rev-base' })
   })
 })
+
+describe('ADR 0212：Agent 改 / 删 / 重排过——按字段三方合并，桌面碰过同一处就不并', () => {
+  const mine = () => arrow('a_mine0001')
+  const edited = (patch: Partial<ArrowObject>) => ({ ...mine(), ...patch }) as ArrowObject
+  const ids = (objs: readonly CanvasObject[]) => objs.map((o) => o.id)
+
+  it('Agent 改了线宽、桌面改了位置：两样都留下', () => {
+    const memory = [edited({ x: 40 })]
+    const out = planAgentMerge(memory, null, diff({ changed: [{ before: mine(), after: edited({ strokePt: 1 }) }] }))!
+    expect(out.objects[0]).toMatchObject({ x: 40, strokePt: 1 })
+  })
+
+  it('两边改了同一个字段：不并', () => {
+    const memory = [edited({ strokePt: 0.5 })]
+    expect(planAgentMerge(memory, null, diff({ changed: [{ before: mine(), after: edited({ strokePt: 1 }) }] }))).toBeNull()
+  })
+
+  it('Agent 去掉了一个字段（缺省不写）：桌面那份也去掉', () => {
+    const before = edited({ name: '红箭头' })
+    const after = { ...before } as Partial<ArrowObject>
+    delete after.name
+    const out = planAgentMerge([before], null, diff({ changed: [{ before, after: after as ArrowObject }] }))!
+    expect('name' in out.objects[0]).toBe(false)
+  })
+
+  it('Agent 删了、桌面改过它：删 / 改冲突，不并；桌面没碰过：删掉；桌面也删了：一致', () => {
+    const d = diff({ deleted: [mine()], order: [] })
+    expect(planAgentMerge([edited({ x: 40 })], null, d)).toBeNull()
+    expect(planAgentMerge([mine()], null, d)!.objects).toEqual([])
+    expect(planAgentMerge([], null, d)!.objects).toEqual([])
+  })
+
+  it('Agent 改了、桌面删了：不并', () => {
+    expect(planAgentMerge([], null, diff({ changed: [{ before: mine(), after: edited({ strokePt: 1 }) }] }))).toBeNull()
+  })
+
+  it('Agent 重排过：桌面没动顺序就照 Agent 的；桌面新建的对象跟着它在桌面里的前一个；桌面也重排过就不并', () => {
+    const b = arrow('a_b0000001')
+    const c = arrow('a_c0000001')
+    const d = diff({ base_order: ['a_mine0001', b.id, c.id], order: [c.id, 'a_mine0001', b.id], reordered: true })
+    const mineNew = arrow('a_new00001')
+    expect(ids(planAgentMerge([mine(), b, mineNew, c], null, d)!.objects)).toEqual([
+      c.id,
+      'a_mine0001',
+      b.id,
+      mineNew.id,
+    ])
+    expect(planAgentMerge([b, mine(), c], null, d)).toBeNull()
+  })
+
+  it('新加的对象插在 Agent 那份里它前面那个之后（不总是追加到末尾）', () => {
+    const b = arrow('a_b0000001')
+    const out = planAgentMerge(
+      [mine(), b],
+      null,
+      diff({ base_order: ['a_mine0001', b.id], order: ['a_mine0001', 'p_new00001', b.id], added: [arrow('p_new00001')] }),
+    )!
+    expect(ids(out.objects)).toEqual(['a_mine0001', 'p_new00001', b.id])
+  })
+
+  it('布局组：桌面还是基线那份才换成 Agent 的；空数组与没有同义', () => {
+    const g = { id: 'g1', kind: 'row' as const, order: ['a_mine0001'], gap: 4, align: 'start' as const }
+    const d = diff({ layout_groups: { before: [g], after: null } })
+    expect(planAgentMerge([mine()], [g], d)!.layoutGroups).toBeNull()
+    expect(planAgentMerge([mine()], [{ ...g, gap: 8 }], d)).toBeNull()
+    expect(planAgentMerge([mine()], [], diff({ layout_groups: { before: null, after: [g] } }))!.layoutGroups).toEqual([g])
+  })
+
+  it('整条路：回到前台把改动并进来，一步撤销回去；状态栏说「改动」', async () => {
+    mockAdd.mockResolvedValue({
+      available: true,
+      revision: 'rev-disk',
+      count: 1,
+      canvases: [diff({ changed: [{ before: mine(), after: edited({ strokePt: 1 }) }] })],
+    })
+    const m = (await mergeableAgentAdditions())!
+    expect(m).toMatchObject({ onlyAdded: false, count: 1 })
+    expect(mergeAgentAdditions(m)).toBe(true)
+    expect((useDocumentStore.getState().doc.objects[0] as ArrowObject).strokePt).toBe(1)
+    expect(activeProjectFile()).toMatchObject({ revision: 'rev-disk', dirty: true })
+    useDocumentStore.getState().undo()
+    expect((useDocumentStore.getState().doc.objects[0] as ArrowObject).strokePt).toBe(0.75)
+  })
+
+  it('问完之后桌面又改了同一字段：commit 那一刻重算，不并、基线不动', async () => {
+    mockAdd.mockResolvedValue({
+      available: true,
+      revision: 'rev-disk',
+      count: 1,
+      canvases: [diff({ changed: [{ before: mine(), after: edited({ strokePt: 1 }) }] })],
+    })
+    const m = (await mergeableAgentAdditions())!
+    useDocumentStore.getState().commit(literal('改线宽'), (d) => {
+      ;(d.objects[0] as ArrowObject).strokePt = 0.5
+    })
+    expect(mergeAgentAdditions(m)).toBe(false)
+    expect(activeProjectFile()).toMatchObject({ revision: 'rev-base' })
+  })
+})
+
