@@ -119,6 +119,20 @@ describe('点「改脚本做剩下的」', () => {
     expect(cps().entries[other.key]).toMatchObject({ status: 'ready' })
   })
 
+  it('来源方案带着分享记录 id：脚本卡的请求记着同一个 id（应用后标已处理用），但不发给后端', async () => {
+    getChangePlan.mockResolvedValueOnce(ready(plan()))
+    createChangePlan.mockResolvedValueOnce({ plan_id: 'p1', state: 'running' })
+    const key = (await cps().requestFromReview('p1', { comments: COMMENTS, share_id: 's1' }))!
+    await tick()
+    createChangePlan.mockClear()
+    createChangePlan.mockResolvedValueOnce({ plan_id: 'p2', state: 'running' })
+    getChangePlan.mockResolvedValueOnce(ready(scriptPlan(), 'p2'))
+    expect(await cps().runScript(key)).toBe(true)
+    expect('share_id' in createChangePlan.mock.calls[0][0]).toBe(false)
+    const other = Object.values(cps().entries).find((e) => e.key !== key)!
+    expect(other.request.share_id).toBe('s1')
+  })
+
   it('没有 needs_script 的意见 / 已经交过一次：什么都不发', async () => {
     const key = await fromReview(plan({ unhandled: [{ comment_id: 'c3', reason: 'unclear' }] }))
     createChangePlan.mockClear()
