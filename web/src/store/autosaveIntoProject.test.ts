@@ -155,6 +155,15 @@ describe('开关开着：节奏', () => {
     expect(readProjectFile(DOC_ID)?.dirty).toBe(true)
   })
 
+  it('写的途中被另存为改绑到了别的文件：这次的回执只属于旧文件，不把新绑定改回去', async () => {
+    writeProjectFile(DOC_ID, { projectId: 'pj1', name: 'b', file: 'tavottofile/b.json', revision: 'rb', dirty: false })
+    reply = { project_layout: { state: 'saved', name: 'a', file: 'tavottofile/a.json', revision: 'ra' } }
+    edit()
+    flushAutosave()
+    await settle()
+    expect(readProjectFile(DOC_ID)).toMatchObject({ name: 'b', revision: 'rb' })
+  })
+
   it('外部修改：不覆盖、进冲突岔口一次；岔口没裁决前不再带着旧基线去撞', async () => {
     writeProjectFile(DOC_ID, { projectId: 'pj1', name: '排版一', file: 'tavottofile/排版一.json', revision: 'old', dirty: false })
     const seen: string[] = []

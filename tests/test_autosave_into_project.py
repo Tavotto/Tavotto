@@ -85,6 +85,7 @@ def test_writer_on_status_advertises_it(env, writer_on):
 def test_without_project_write_nothing_is_written_even_with_writer_on(env, writer_on):
     client, project, h = env
     r = _put(client, h, "d1")
+    assert r.status_code == 200
     assert "project_layout" not in r.get_json()
     assert not list((project / "tavottofile").glob("*.tavotto"))
 
