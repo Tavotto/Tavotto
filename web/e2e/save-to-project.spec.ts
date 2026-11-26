@@ -15,7 +15,7 @@ import { expect, test, waitForDocumentReady } from './fixtures'
 const NAME = '我的排版'
 
 async function addText(page: Page, text: string, x: number, y: number) {
-  await page.getByRole('button', { name: '文字' }).click()
+  await page.getByRole('button', { name: '文字', exact: true }).click()
   await page.locator('[data-canvas-stage]').click({ position: { x, y } })
   await page.keyboard.type(text)
   await page.keyboard.press('Escape')
