@@ -81,8 +81,19 @@ function commitTable(label: UiMessage, edit: (t: ColorKeyTable) => ColorKeyTable
       const o = d.objects.find((x) => x.id === panel.id)
       if (o?.type !== 'panel') continue
       writePaletteOverrides(o, patches)
-      // 样式登记过的那几格归配色了：从样式的登记里注销，样式以后再改不会把它改回去
-      releaseOwned(d, o, patches)
+    }
+    // 样式登记过的那几格归配色了：从样式的登记里注销，样式以后再改不会把它改回去。
+    // 按 `plan.owned`（配色接手的**每一格**）注销，不按 `patches`：颜色恰好已经是这套方案那一格的，
+    // 计划里不写 patch，但它同样归配色了——留着样式的登记，脚本原色一变，样式让位时会把配色选的颜色删掉
+    const ownedByPanel = new Map<string, { gid: string; prop: string }[]>()
+    for (const k of plan.owned) {
+      const list = ownedByPanel.get(k.panel) ?? []
+      list.push({ gid: k.gid, prop: k.prop })
+      ownedByPanel.set(k.panel, list)
+    }
+    for (const [id, keys] of ownedByPanel) {
+      const o = d.objects.find((x) => x.id === id)
+      if (o?.type === 'panel') releaseOwned(d, o, keys)
     }
     d.colorKeys = { ...rec.table, owned: plan.owned }
   })

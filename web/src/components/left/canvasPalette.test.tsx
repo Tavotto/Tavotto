@@ -17,6 +17,7 @@ import type { Manifest, ManifestElement } from '@/lib/api'
 import { paletteById } from '@/lib/palette/catalog'
 import { cvdFilterValues } from '@/lib/palette/cvd'
 import { PALETTE_UI_DEV_KEY, RECOMMENDED_PALETTE_UI, paletteUi } from '@/lib/paletteUi'
+import { colorForSlot } from '@/lib/palette/rank'
 import { planStyle } from '@/lib/stylePresets'
 import { useAssetStore } from '@/store/assetStore'
 import { cvdFilterRef, useCvdPreviewStore } from '@/store/cvdPreviewStore'
@@ -212,6 +213,39 @@ describe('选用方案：一次 commit、同名同色', () => {
     expect(r?.skipped).toBe(0)
     expect(colorOf('B', 'axes_0.lines_1')).toBe(paletteById('okabe-ito')!.colors[0])
     expect(s().doc.style?.owned).toBeUndefined()
+  })
+})
+
+describe('样式登记的让渡不看颜色变没变', () => {
+  it('样式写的颜色恰好就是这套方案那一格：不写 patch，但同样从样式的登记里注销（Codex #2231）', async () => {
+    // 先算出 B 的 lines_1（Control）在这套方案里落到哪一格颜色
+    await seed()
+    const g = canvasPaletteState(s().doc).groups.find((x) =>
+      x.series.some((r) => r.panelId === 'B' && r.gid === 'axes_0.lines_1'),
+    )!
+    const color = colorForSlot(g.slot, paletteById('okabe-ito')!)!
+    await seed({ overridesB: [{ gid: 'axes_0.lines_1', prop: 'color', value: color }] })
+    s().commit(literal('样式登记'), (d) => {
+      d.style = {
+        id: 's1',
+        name: 'S',
+        snapshot: {} as never,
+        owned: { 'B@B.pdf': { 'axes_0.lines_1': { color: { value: color } } } },
+      } as never
+    })
+    const linesOf = () => panelOf('B').overrides.filter((o) => o.gid === 'axes_0.lines_1').length
+    const before = linesOf()
+    const r = applyPaletteScheme('okabe-ito')
+    expect(r?.skipped).toBe(0)
+    expect(colorOf('B', 'axes_0.lines_1')).toBe(color)
+    // 颜色没变：这一格不写 patch
+    expect(linesOf()).toBe(before)
+    // 归配色了：样式那边不再登记，脚本原色变了样式也不会让位删掉它
+    expect(s().doc.style?.owned).toBeUndefined()
+    expect(s().doc.colorKeys?.owned.some((o) => o.panel === 'B' && o.gid === 'axes_0.lines_1')).toBe(true)
+    // 一步撤销：登记回来
+    s().undo()
+    expect(s().doc.style?.owned?.['B@B.pdf']?.['axes_0.lines_1']?.color).toBeTruthy()
   })
 })
 
