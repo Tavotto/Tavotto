@@ -13,17 +13,17 @@ order: 60
 必守要点: 各片 projects 并集 == 全集、POSIX 按 planned list 对拍；必需步骤不加 `if:`；artifact 名带 shard；step 级 `timeout-minutes`
 -->
 
-- **`windows-exe-smoke` 的 Playwright 分 3 片（CI03c，2026-09-16 按 project 分 2 片；2026-10-19 chromium 内部再拆一刀）**：
-  matrix `include` 三条（片 1 `--project=chromium --shard=1/2`；片 2 `--project=webkit --project=chromium-en`；片 3
-  `--project=chromium --shard=2/2`），每条带 `browsers`（本片要装的引擎）、`projects`（本片的参数，原样进 `pnpm e2e`；可带一个
+- **`windows-exe-smoke` 的 Playwright 分 6 片（CI03c，2026-09-16 按 project 分 2 片；2026-10-19 chromium 内部再拆一刀成 3 片；
+  2026-11-26 改 6 片：三片 job 中位 34 / 31 / 37 分钟、是改到界面的 PR 最晚完成的腿）**：
+  matrix `include` 六条（片 1–4 `--project=chromium --shard=i/4`；片 5 `--project=webkit`；片 6 `--project=chromium-en`），每条带 `browsers`（本片要装的引擎）、`projects`（本片的参数，原样进 `pnpm e2e`；可带一个
   Playwright 原生 `--shard=i/n`）与 `others`（**其余每一片**的 `projects`，按 matrix 顺序、用 `|` 隔开）；值里不能有逗号（`|` 可以）。
   三片**各自完整**构建产物并都跑三条断言与冒烟①②③——必需步骤一律不加 `if:`。完整性三层：合同测试
   `tests/test_merge_queue_workflows.py::TestPlaywrightShards`（与 `web/playwright.config.ts` 的 project 集比：并集相等；同一 project
   被多片声称时必须每片都带 `--shard=i/n`、n 相同、i 恰好 1..n 各一次；`others` == 其余各片的 `projects`；装的引擎 == 本片 project 要的）→ 每片 e2e 之前的自验
   `scripts/ci/playwright_shard_check.py`（对着 Playwright 自己的 `--list`，对本片与其余每一片各列一次；主语是 (project, file:line:col, title)
   集合，不是条数：各片两两不交、并集 == 全集；不完整 rc 1、清单读不懂 rc 2）→ matrix 语义 + Gate 闭集（不动）。**job id 不变**，
-  显示名 `windows-exe-smoke (1)` / `(2)` / `(3)`（显式 `name:`；不写的话 include 形状会把四个字段全排进显示名），required contexts 仍只有三个
-  Gate（`CI fast gate` / `CI integration gate` / `CodeQL gate`），**新增的 `(3)` 不用登记成必需检查**。artifact 名一律带 `${{ matrix.shard }}`
+  显示名 `windows-exe-smoke (1)` … `(6)`（显式 `name:`；不写的话 include 形状会把四个字段全排进显示名），required contexts 仍只有三个
+  Gate（`CI fast gate` / `CI integration gate` / `CodeQL gate`），**片名增减 / 改义都不用登记成必需检查**。artifact 名一律带 `${{ matrix.shard }}`
   （upload-artifact v4 同名失败）。加 / 删 / 改名一个 project、或改 chromium 的 `--shard` 分法，就要回去改那张 matrix，合同测试会红。
   **为什么 chromium 用原生 `--shard` 而不是文件清单**：新增 spec 不需要人工维护清单；`workers: 1` + `fullyParallel: false` 下分组 == 文件，
   原生按文件顺序、按条数等分（2026-10-19 实测 151 条 / 32 文件 与 141 条 / 43 文件；用 run 39235718807 的逐条耗时累加约 23.4 / 20.0 分钟）。

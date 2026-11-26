@@ -21,7 +21,7 @@ import { useQuickLayoutStore } from '@/store/quickLayoutActions'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { literal } from '@/i18n'
-import { emptyProject } from '@/types/document'
+import { emptyProject, type PanelObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -209,6 +209,30 @@ describe('一键排版按钮', () => {
       q('[data-quick-layout-options]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
     })
     expect(document.querySelector('[data-quick-layout-target="double"]')!.hasAttribute('data-disabled')).toBe(true)
+  })
+
+  it('范围里只有一张可排的图（图内排版）：「排列」的列数置灰；两张时不灰', async () => {
+    useLicenseStore.setState({ status: licensed(['quick-layout']) })
+    const fig = (id: string, x: number) =>
+      ({ id, type: 'panel', x, y: 10, w: 80, h: 60, fileId: `f_${id}`, fileKind: 'pdf', nativeW: 80, nativeH: 60, script: 'fig.py', overrides: [] }) as unknown as PanelObject
+    useDocumentStore.getState().commit(literal('放入'), (d) => {
+      d.objects.push(fig('p1', 10))
+    })
+    await mount()
+    const open = async () =>
+      act(async () => {
+        q('[data-quick-layout-options]')!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+      })
+    await open()
+    expect(document.querySelector('[data-quick-layout-columns="2"]')!.hasAttribute('data-disabled')).toBe(true)
+    await open() // 收起
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('再放一张'), (d) => {
+        d.objects.push(fig('p2', 100))
+      })
+    })
+    await open()
+    expect(document.querySelector('[data-quick-layout-columns="2"]')!.hasAttribute('data-disabled')).toBe(false)
   })
 
   it('本机存储坏了 / 不可用：退回默认值，不抛', () => {

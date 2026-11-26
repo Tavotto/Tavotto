@@ -4061,6 +4061,10 @@ export type QuickLayoutFailureCode =
   | 'not_converged'
   | 'render_failed'
   | 'page_too_small'
+  /** 图内排版：组件太旧、不认图内排版的命令（ADR 0199 §十二） */
+  | 'pro_outdated'
+  /** 图内排版：图里有认不出归属、又挡路的元素 */
+  | 'figure_obstacle'
 
 /** 求解器回的网格：行列数、每张图（画布对象 id）在哪一格、行 / 列相对权重 */
 export interface QuickLayoutGrid {
@@ -4071,7 +4075,11 @@ export interface QuickLayoutGrid {
   row_ratios: number[]
 }
 
-export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
+/**
+ * `in_figure`：这次排的是一张图里面的子图（ADR 0199 §十二）；`label_offset_varied`：为绕开图里原地不动的元素，
+ * 个别标签的偏移与别的不同（暂不出文案）
+ */
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed' | 'in_figure' | 'label_offset_varied'
 
 /** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
 export type QuickLayoutSpecChange =
@@ -4092,9 +4100,11 @@ export type QuickLayoutResponse =
       spec_changes: QuickLayoutSpecChange[]
       /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
       page: { w: number; h: number }
-      /** 网格（拖分隔线重排用）；后端说不出 = null */
+      /** 网格（拖分隔线重排用）；后端说不出 = null（图内排版没有网格） */
       grid: QuickLayoutGrid | null
       replay_required: boolean
+      /** `figure` = 图内排版（只有一张可排的图、图里有好几个坐标轴）；多图排版不带 */
+      mode?: 'figure'
     }
   | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
 
@@ -4109,8 +4119,10 @@ const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
   'not_converged',
   'render_failed',
   'page_too_small',
+  'pro_outdated',
+  'figure_obstacle',
 ])
-const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed', 'in_figure', 'label_offset_varied'])
 const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
   'font_family',
   'font_size',
@@ -4150,6 +4162,7 @@ function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
   if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
   return (
     body.ok === true &&
+    (body.mode === undefined || body.mode === 'figure') &&
     isQuickLayoutGrid(body.grid) &&
     Array.isArray(body.panels) &&
     body.panels.every(
