@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { ApiError, REVISION_ABSENT } from '@/lib/api'
+import type { ChartSourceReceipt } from '@/lib/chartSourceReceipts'
 import { emptyProject } from '@/types/document'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
@@ -51,6 +52,7 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
   const dropped: string[] = []
   let putMode: 'ok' | 'stale' | 'external' | 'io' = 'ok'
   let putMetadata: WrittenMetadata = undefined
+  let putChartSources: ChartSourceReceipt[] | undefined
   let putSnapshots: Record<string, FigureSnapshot> | undefined
   const written: ({ id: string; savedAt: number } & WrittenInfo)[] = []
   let gate: (() => void) | null = null
@@ -63,7 +65,7 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
         puts.push({ id, updatedAt: pd.updatedAt, baseline, revision, pj })
         const settle = () => {
           if (putMode === 'ok') {
-            return Promise.resolve({ saved_at: 1000, revision: `r${pd.updatedAt}`, metadata: putMetadata, figure_snapshots: putSnapshots })
+            return Promise.resolve({ saved_at: 1000, revision: `r${pd.updatedAt}`, metadata: putMetadata, chart_sources: putChartSources, figure_snapshots: putSnapshots })
           }
           if (putMode === 'io') return Promise.reject(new Error('boom'))
           return Promise.reject(
@@ -110,6 +112,7 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
     dropped,
     written,
     setPutSnapshots: (refs: Record<string, FigureSnapshot> | undefined) => { putSnapshots = refs },
+    setPutChartSources: (refs: ChartSourceReceipt[] | undefined) => { putChartSources = refs },
     setPutMetadata: (m: WrittenMetadata) => {
       putMetadata = m
     },
@@ -475,6 +478,37 @@ describe('onWritten 带出排队那一刻的写入上下文（A10 / A11 / A25）
     await tick()
     expect(h.written).toEqual([])
     expect(h.outcomes.map((o) => o[1])).toEqual(['failed', 'conflict'])
+  })
+
+  it('chart_sources 原样转给 onWritten 并带上排队那一刻的 snapshotContext；后端没发时不出现这个字段', async () => {
+    const h = harness()
+    const context: FigureSnapshotSaveContext = {
+      documentId: 'A', loadSeq: 1, pj: 'p1', document: doc(1), sourceGenerations: new Map(),
+    }
+    const receipt: ChartSourceReceipt = {
+      canvas_index: 0,
+      object_index: 0,
+      canvas_id: 'c1',
+      panel_id: 'panel',
+      chart_source: {
+        schema: 1,
+        sourceId: 'plot.svg',
+        bytesSha256: 'a'.repeat(64),
+        sizeBytes: 20,
+        sceneDigest: 'b'.repeat(64),
+      },
+    }
+    h.writer.rememberRevision('A', null)
+    h.setPutChartSources([receipt])
+    h.writer.schedule('A', doc(1), 'p1', context)
+    await tick()
+    expect(h.written[0].chartSources).toEqual([receipt])
+    expect(h.written[0].snapshotContext).toBe(context)
+
+    h.setPutChartSources(undefined)
+    h.writer.schedule('A', doc(2), 'p1', context)
+    await tick()
+    expect(h.written[1]).not.toHaveProperty('chartSources')
   })
 })
 
