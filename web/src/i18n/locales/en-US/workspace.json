@@ -1113,6 +1113,10 @@
       "other": "other styles"
     },
     "quickLayoutPageTooSmall": "The figures don't fit this canvas. Try fewer columns or a larger canvas.",
+    "quickLayoutProOutdated": "The {{pro}} component needs an update",
+    "quickLayoutFigureObstacle": "Something in this figure is in the way",
+    "quickLayoutNoteInFigure": "Laid out the panels inside this figure",
+    "quickLayoutNoteSpecNotFixedFigure": "Some font sizes are still below the spec — see Issues",
     "svgImported_one": "Turned into {{count}} editable object",
     "svgImported_other": "Turned into {{count}} editable objects",
     "svgAsImage": "Placed as an image because {{reason}}",

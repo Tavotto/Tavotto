@@ -28,6 +28,7 @@ import { ArtifactValidationError, refuseArtifactOperation } from '@/lib/artifact
 import { engineTransport } from '@/lib/engineTransport'
 import { takeCheckpoint } from '@/lib/timelineCheckpoint'
 import { isSubLabel } from '@/lib/stylePresets'
+import { PRO_NAME } from '@/lib/brand'
 import { canvasTextDefaults } from '@/lib/typography'
 import type { FigureDocument, PanelObject, PanelOverride } from '@/types/document'
 import { panelRotation } from '@/types/document'
@@ -178,6 +179,16 @@ function involvedPanels(doc: FigureDocument): PanelObject[] {
   return picked.length >= 2 ? picked : all
 }
 
+/**
+ * 作用范围里只有一张可排的图（ADR 0199 §十二：按钮做「图内排版」，下拉里的列数不适用）。
+ * 与 `runPlan` 用同一组判据（`involvedPanels` / `unlocked` / `resizable`）；图里有没有 ≥ 2 个主坐标轴只有后端渲出 B0 才知道，这里不猜。
+ */
+export function inFigureScope(doc: FigureDocument): boolean {
+  const involved = involvedPanels(doc)
+  const free = unlocked(involved)
+  return involved.filter((p) => free.has(p.id) && resizable(p)).length === 1
+}
+
 /** 子图标签字母：优先按返回的标签顺序（(a)(b)…），退到面板顺序 */
 function letterOf(ref: string, res: Extract<QuickLayoutResponse, { ok: true }>): string {
   let i = res.labels.findIndex((l) => l.key === ref)
@@ -211,11 +222,23 @@ function noteLine(res: Extract<QuickLayoutResponse, { ok: true }>, specName: str
   const lines: string[] = extra ? [extra] : []
   const spec = specLine(res, specName)
   if (spec) lines.push(spec)
+  const inFigure = res.mode === 'figure'
   for (const n of res.notes) {
     const id = `${n.code}:${n.ref}`
     if (seen.has(id)) continue
     seen.add(id)
-    const key = n.code === 'equal_aspect' ? 'status.quickLayoutNoteEqualAspect' : 'status.quickLayoutNoteSpecNotFixed'
+    if (n.code === 'in_figure') {
+      // 排在最前面：先说这次排的是图里面
+      lines.unshift(translate('status.quickLayoutNoteInFigure', { ns: 'workspace' }))
+      continue
+    }
+    // 图内排版只有一张图：不按「图 a」点名
+    const key =
+      n.code === 'equal_aspect'
+        ? 'status.quickLayoutNoteEqualAspect'
+        : inFigure
+          ? 'status.quickLayoutNoteSpecNotFixedFigure'
+          : 'status.quickLayoutNoteSpecNotFixed'
     lines.push(translate(key, { ns: 'workspace', label: letterOf(n.ref, res) }))
   }
   // 多条也只占一行：用「；」连成一句。成文那一刻的语言（胶囊几秒就走，不跟着切语言重翻）
@@ -386,7 +409,8 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
 
   const free = unlocked(involved)
   const solvable = involved.filter((p) => free.has(p.id) && resizable(p))
-  if (solvable.length < 2) {
+  // 只有一张可排的图也发：后端渲出 B0 看它有没有 ≥ 2 个主坐标轴，有就做图内排版（ADR 0199 §十二），没有回 too_few
+  if (solvable.length < 1) {
     say(note('quickLayoutTooFew'), 'info')
     return 'too_few'
   }
@@ -464,8 +488,12 @@ async function runPlan(run: PlanRun): Promise<QuickLayoutOutcome> {
           ? 'quickLayoutTooFew'
           : res.code === 'page_too_small'
             ? 'quickLayoutPageTooSmall'
-            : 'quickLayoutFailed'
-      say(note(key), 'info')
+            : res.code === 'pro_outdated'
+              ? 'quickLayoutProOutdated'
+              : res.code === 'figure_obstacle'
+                ? 'quickLayoutFigureObstacle'
+                : 'quickLayoutFailed'
+      say(note(key, { pro: PRO_NAME }), 'info')
       return res.code === 'too_few' ? 'too_few' : 'failed'
     }
 

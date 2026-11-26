@@ -18,7 +18,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import license as engine_license, prohost, specfix
+from . import license as engine_license, prohost, quicklayoutfig, specfix
 
 LOG = logging.getLogger("tavotto.quicklayout")
 
@@ -57,7 +57,8 @@ MAX_PAGE_MM = 2000.0
 
 
 class QuickLayoutError(Exception):
-    """方案作废。`code` 给前端选一句话：`not_licensed` / `unavailable` / `too_few` / `invalid_plan` / `not_converged` / `render_failed`。"""
+    """方案作废。`code` 给前端选一句话：`not_licensed` / `unavailable` / `too_few` / `invalid_plan` / `not_converged` / `render_failed`；
+    图内排版另有 `pro_outdated`（组件太旧、不认图内排版的命令）与 `figure_obstacle`（图里有放不开的元素）。"""
 
     def __init__(self, code: str, detail: str = "") -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
@@ -621,5 +622,246 @@ def plan(
         "notes": notes,
         "grid": _grid_out(grid, by_ref),
         # 按规范修了哪几类（`fix_spec` 关着时为空）
+        "spec_changes": sorted(spec_changed),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 图内排版（ADR 0199 §十二）：作用范围里只有一张可排的图、它有 ≥ 2 个主坐标轴
+# ---------------------------------------------------------------------------
+FIGURE_CMD = "quick_layout.plan_figure"
+#: 图内相邻两个坐标轴文字外沿之间的默认空隙（维护者 2026-11-26 定）
+INNER_GAP_MM = 1.5
+FIGURE_OPS = frozenset({"figure.size", "axes.position", "text.place", "label.place"})
+
+
+def figure_main_axes(manifest: dict) -> int:
+    """这张图有几个主坐标轴（去 twin、色条、inset；判据唯一出处 `quicklayoutfig.analyze`）。"""
+    try:
+        return len(quicklayoutfig.analyze(manifest).mains)
+    except ValueError:
+        return 0
+
+
+def _ask_figure(solver, payload: dict) -> dict:
+    if solver is not None:
+        return solver(payload)
+    try:
+        return prohost.call(FIGURE_CMD, payload, feature=FEATURE)
+    except prohost.ProUnavailable as exc:
+        # 组件活着、认得 quick-layout，但不认这条命令 = 旧版组件（不靠 pro_api 升版区分，免得旧版的多图排版也用不了）
+        if exc.code == "unsupported" and str(exc) == f"unsupported: {FIGURE_CMD}":
+            raise QuickLayoutError("pro_outdated") from None
+        raise QuickLayoutError("unavailable", exc.code) from None
+
+
+def _figure_ops(ops: object, mains: dict[str, str], labels: dict[str, str]) -> dict:
+    """校验图内排版的操作（ADR 0199 §十二，闭集）。任何一条不合规 = 整份作废。"""
+    if not isinstance(ops, list):
+        raise QuickLayoutError("invalid_plan", "ops not a list")
+    size = None
+    pos: dict[str, list[float]] = {}
+    moves: dict[str, list[float]] = {}
+    canvas: list[list[float]] = []
+    for op in ops:
+        if not isinstance(op, dict) or op.get("op") not in FIGURE_OPS or op.get("ref") != "f":
+            raise QuickLayoutError("invalid_plan", "unknown op")
+        kind = op["op"]
+        if kind == "figure.size":
+            w, h = op.get("w"), op.get("h")
+            if not _finite(w, h) or not (5 <= w <= 1000 and 5 <= h <= 1000):
+                raise QuickLayoutError("invalid_plan", "bad size")
+            size = (round(float(w), 3), round(float(h), 3))
+        elif kind == "axes.position":
+            er = op.get("element_ref")
+            x, y, w, h = (op.get(k) for k in ("x", "y", "w", "h"))
+            if (
+                er not in mains
+                or not _finite(x, y, w, h)
+                or w <= 0
+                or h <= 0
+                or x < -0.01
+                or y < -0.01
+                or x + w > 1.01
+                or y + h > 1.01
+            ):
+                raise QuickLayoutError("invalid_plan", "bad axes position")
+            pos[mains[er]] = [float(x), float(y), float(w), float(h)]
+        elif kind in ("text.place", "label.place"):
+            x, y = op.get("x"), op.get("y")
+            if not _finite(x, y) or not (-1 <= x <= 1000 and -1 <= y <= 1000):
+                raise QuickLayoutError("invalid_plan", "bad label")
+            if kind == "text.place":
+                er = op.get("element_ref")
+                # 只许挪认出来的子图标签
+                if er not in labels:
+                    raise QuickLayoutError("invalid_plan", "text.place outside labels")
+                moves[labels[er]] = [float(x), float(y)]
+            else:
+                canvas.append([float(x), float(y)])
+    if size is None or set(pos) != set(mains.values()):
+        raise QuickLayoutError("invalid_plan", "incomplete plan")
+    return {"size": size, "pos": pos, "moves": moves, "canvas": canvas}
+
+
+def plan_figure(
+    panel: Panel,
+    *,
+    page: dict,
+    target: str,
+    profile: dict,
+    label_pt: float,
+    gap_mm: float = INNER_GAP_MM,
+    fix_spec: bool = True,
+    canvas: str = "fit",
+    solver: Callable[[dict], dict] | None = None,
+) -> dict:
+    """图内排版事务本体（ADR 0199 §十二）。**只算不写**，结果形状与 `plan()` 相同（`panels` 只有这一张）。
+
+    排的单位是主坐标轴；twin、色条、共享轴标题按开源侧的确定规则跟着走（`quicklayoutfig.follow`），子图标签：
+    脚本里画了就挪（`pos_frac`），没画就在画布上加（`labels`），认不全就都不动。第 1 轮只改图幅（随后按规范修：
+    `position` 在 specfix 里算受保护的值），从第 2 轮起才写轴位置。失败抛 `QuickLayoutError`（调用方渲回 B0）。"""
+    if not licensed():
+        raise QuickLayoutError("not_licensed")
+    if (
+        target not in TARGETS
+        or canvas not in CANVAS_MODES
+        or not _finite(gap_mm)
+        or not (0 <= gap_mm <= 30)
+    ):
+        raise QuickLayoutError("invalid_plan", "bad options")
+    tw = float(page["w"]) if canvas == "keep" else target_width(profile, target, page)
+    padding = float(page.get("margin") or 0.0) or DEFAULT_PADDING_MM
+    if tw <= 2 * padding + 10:
+        raise QuickLayoutError("invalid_plan", "page too narrow")
+    t_all = time.perf_counter()
+    panel.patches = list(panel.base)
+    _render(panel, panel.patches)
+    a = quicklayoutfig.analyze(panel.manifest or {})
+    if len(a.mains) < 2:
+        raise QuickLayoutError("too_few")
+    if a.locked:
+        raise QuickLayoutError("figure_obstacle", "locked axes")
+    main_set = {m.gid for m in a.mains}
+    label_mode = a.label_mode
+    spec_changed: set[str] = set()
+    bad: list[dict] = []
+    canvas_rects: list[list[float]] = []
+    canvas_xy: list[list[float]] = []
+    lh = label_pt * PT_MM * 1.2
+    lw = label_pt * PT_MM * 0.6 * 3
+    for rnd in range(1, MAX_ROUNDS + 1):
+        refs = {m.gid: f"e{i + 1}" for i, m in enumerate(a.mains)}
+        lab_refs = {lab.gid: f"l{i + 1}" for i, lab in enumerate(a.labels)}
+        groups = {g: i for i, g in enumerate(dict.fromkeys(a.group_of[m.gid] for m in a.mains))}
+        w0, h0 = a.size
+        payload = {
+            "round": rnd,
+            "figure": {"size_mm": [round(w0, 4), round(h0, 4)]},
+            "target": {"width_mm": tw, "gap_mm": float(gap_mm), "padding_mm": padding},
+            "arrange": {"canvas": canvas, "page_h": float(page["h"])},
+            "label": {
+                "mode": label_mode,
+                "pt": float(label_pt),
+                "items": [
+                    {
+                        "ref": lab_refs[lab.gid],
+                        "group": groups[lab.group],
+                        "w_mm": round(lab.rect[2] - lab.rect[0], 4),
+                        "h_mm": round(lab.rect[3] - lab.rect[1], 4),
+                    }
+                    for lab in a.labels
+                ],
+            },
+            "axes": quicklayoutfig.solver_input(a, refs),
+        }
+        result = _ask_figure(solver, payload)
+        if result.get("error") == "page_too_small":
+            raise QuickLayoutError("page_too_small")
+        plan_ops = _figure_ops(
+            result.get("ops"),
+            {v: k for k, v in refs.items()},
+            {v: k for k, v in lab_refs.items()},
+        )
+        nw, nh = plan_ops["size"]
+        patches = _upsert(list(panel.patches), "figure", "size_mm", [nw, nh])
+        if rnd == 1 and fix_spec:
+            # 第 1 轮只定图幅，然后按规范修（字号变了装饰也变）；轴位置从第 2 轮起按修好后的占位来算
+            panel.patches = patches
+            before = {(x.get("gid"), x.get("prop")): x.get("value") for x in panel.patches}
+            _spec_fix(panel, profile)
+            for x in panel.patches:
+                k = (x.get("gid"), x.get("prop"))
+                if k not in before or before[k] != x.get("value"):
+                    spec_changed.add(SPEC_CATEGORY.get(str(x.get("prop"))) or "other")
+            _render(panel, panel.patches)
+            a = quicklayoutfig.analyze(panel.manifest or {})
+            if {m.gid for m in a.mains} != main_set:
+                raise QuickLayoutError("not_converged", "axes changed")
+            continue
+        new_plot = {
+            gid: [x * nw, y * nh, (x + w) * nw, (y + h) * nh]
+            for gid, (x, y, w, h) in plan_ops["pos"].items()
+        }
+        follow_axes, follow_texts = quicklayoutfig.follow(a, new_plot)
+        for gid, r in {**new_plot, **follow_axes}.items():
+            patches = _upsert(patches, gid, "position", quicklayoutfig.position_value(r, (nw, nh)))
+        by_shared = {s.gid: s for s in a.shared}
+        for gid, r in follow_texts:
+            s = by_shared[gid]
+            patches = _upsert(
+                patches,
+                gid,
+                "pos_frac",
+                quicklayoutfig.anchor_for(s.rect, s.anchor, a.size, r, (nw, nh)),
+            )
+        by_label = {lab.gid: lab for lab in a.labels}
+        for gid, (x, y) in plan_ops["moves"].items():
+            lab = by_label[gid]
+            r = [x, y, x + lab.rect[2] - lab.rect[0], y + lab.rect[3] - lab.rect[1]]
+            patches = _upsert(
+                patches,
+                gid,
+                "pos_frac",
+                quicklayoutfig.anchor_for(lab.rect, lab.anchor, a.size, r, (nw, nh)),
+            )
+        panel.patches = patches
+        _render(panel, panel.patches)
+        a = quicklayoutfig.analyze(panel.manifest or {})
+        if {m.gid for m in a.mains} != main_set or a.label_mode != label_mode:
+            raise QuickLayoutError("not_converged", "axes changed")
+        canvas_xy = plan_ops["canvas"] if label_mode == "canvas" else []
+        canvas_rects = [[x, y, x + lw, y + lh] for x, y in canvas_xy]
+        bad = quicklayoutfig.check(
+            a, gap=float(gap_mm), padding=padding, canvas_labels=canvas_rects
+        )
+        # 图铺满页宽：图幅宽 = 目标宽度（保持画布时 = 画布宽），不信求解器自己的
+        if abs(a.size[0] - tw) > WIDTH_TOL_MM:
+            bad.append({"metric": "width", "mm": round(a.size[0], 3)})
+        if not bad:
+            break
+    LOG.info("图内排版 总 %.2fs：%s", time.perf_counter() - t_all, bad or "ok")
+    if bad:
+        code = "figure_obstacle" if any(b["metric"] == "obstacle" for b in bad) else "not_converged"
+        raise QuickLayoutError(code, ",".join(sorted({b["metric"] for b in bad})))
+    w, h = a.size
+    # 图铺满页宽（缩放 = 1）：画布上的框与图幅等大，放在页面左上角；标签的 mm 就是页面 mm
+    panel.box = [0.0, 0.0, w, h]
+    # 等比例轴（示意图、imshow）只参与排位、不计轴线对齐：图内排版里常见（实例里上面那排示意图），不另说
+    notes = [{"code": "in_figure", "ref": panel.key}]
+    if panel.specfix_ok is False:
+        notes.append({"code": "spec_not_fixed", "ref": panel.key})
+    return {
+        "ok": True,
+        "mode": "figure",
+        "page": {"w": round(float(page["w"]), 3), "h": round(float(page["h"]), 3)}
+        if canvas == "keep"
+        else {"w": round(w, 3), "h": round(h, 3)},
+        "panels": [
+            {"key": panel.key, "patches": panel.patches, "box": [round(v, 3) for v in panel.box]}
+        ],
+        "labels": [{"key": panel.key, "x": round(x, 3), "y": round(y, 3)} for x, y in canvas_xy],
+        "notes": notes,
+        "grid": None,
         "spec_changes": sorted(spec_changed),
     }
