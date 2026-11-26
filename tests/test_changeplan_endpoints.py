@@ -84,7 +84,7 @@ def env(tmp_path, monkeypatch):
         "invalidate",
         lambda script, root=None, run=None, **kw: retired.append((script, root)),
     )
-    monkeypatch.setattr(cp, "_PRECHECK", lambda: (True, ""))
+    monkeypatch.setattr(cp, "_PRECHECK", lambda cid=None: (True, ""))
     monkeypatch.setattr(cp, "_RESOLVE", lambda budget=None: ({"kind": "fake"}, "", ""))
     monkeypatch.setattr(cp, "_TASKS", {})
     monkeypatch.setattr(cp, "_BY_FIGURE", {})

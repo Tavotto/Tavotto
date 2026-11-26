@@ -77,10 +77,15 @@ export function KeyCaps({
  */
 export function ShortcutText({
   children,
+  className,
   ...rest
-}: { children: string } & Record<`data-${string}`, string | number | boolean | undefined>) {
+}: {
+  children: string
+  /** 只给 `MenuItem.shortcutClassName` 透传：这一格放的不是快捷键时的个别覆盖。默认不给 = 原样 */
+  className?: string
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
-    <span {...rest} className="shrink-0 text-right text-xs tabular-nums tracking-wide text-ink-3">
+    <span {...rest} className={cn('shrink-0 text-right text-xs tabular-nums tracking-wide text-ink-3', className)}>
       {children}
     </span>
   )

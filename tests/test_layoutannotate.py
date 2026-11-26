@@ -690,3 +690,86 @@ def test_preview_does_not_paint_clipped_content_unclipped(project):
     magenta = (img[:, :, 0] > 200) & (img[:, :, 2] > 200) & (img[:, :, 1] < 80)
     assert magenta.sum() == 0
     assert {"s_member01", "s_mask0001"} <= set(out["missing_panels"])
+
+
+def _write(project, items, base):
+    plan = la.propose(project, "组图", items, measure, base_revision=base)
+    out = la.commit(
+        project, "组图", items, measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert out["written"], out
+    return out
+
+
+def test_additions_since_my_base_are_exactly_the_agents_objects(project):
+    """桌面拿着写入前的基线：磁盘上多出来的只有 Agent 追加的对象 → 列出来供「并进来」；连写两次也认。"""
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    first = _write(project, _items(), base)
+    second_items = [
+        {**_items()[0], "name": "p2", "from": {**_items()[0]["from"], "offset_mm": [10, 30]}}
+    ]
+    second = _write(project, second_items, first["revision"])
+    got = la.agent_additions(project, "组图", base)
+    assert got is not None and got["revision"] == second["revision"]
+    ids = [o["id"] for c in got["canvases"] for o in c["objects"]]
+    assert ids == first["added"] + second["added"] and got["count"] == 3
+    assert all(o["anchor"]["by"] == "agent" for c in got["canvases"] for o in c["objects"])
+    # 已经跟上了：没有要并的
+    assert la.agent_additions(project, "组图", second["revision"]) is None
+
+
+def test_no_merge_offer_when_someone_else_also_changed_the_file(project):
+    """Agent 写完之后别处又改过（桌面另一个窗口 / 外部工具）：链断了，不给「并进来」，照旧走覆盖 / 另存。"""
+    path = project / "tavottofile" / "组图.json"
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    _write(project, _items(), base)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["canvases"][0]["name"] = "别处改过"
+    atomicio.write_json(path, doc, indent=1)
+    assert la.agent_additions(project, "组图", base) is None
+
+
+def test_no_merge_offer_when_the_base_is_not_on_the_agents_chain(project):
+    """我的基线不是任何一次 Agent 写入的起点（比如别处先改过、Agent 再写）：不给「并进来」。"""
+    path = project / "tavottofile" / "组图.json"
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["canvases"][0]["name"] = "别处先改过"
+    atomicio.write_json(path, doc, indent=1)
+    mid = la.read_scene(project, "组图", measure)["base_revision"]
+    _write(project, _items(), mid)
+    assert la.agent_additions(project, "组图", base) is None
+    assert la.agent_additions(project, "组图", mid) is not None
+
+
+def test_no_merge_offer_when_the_undo_copy_was_tampered(project):
+    """留存的写前字节与基线修订号对不上（被改 / 坏了）：不信它。"""
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    out = _write(project, _items(), base)
+    body = next(la._undo_dir(project, "组图").glob(f"{out['undo_token']}.json"))
+    body.write_bytes(body.read_bytes() + b" ")
+    assert la.agent_additions(project, "组图", base) is None
+
+
+@pytest.mark.parametrize("edit", ["rename_canvas", "append_plain_object", "edit_existing"])
+def test_merge_offer_checks_the_content_not_just_the_chain(project, edit):
+    """链对得上（留存元信息被改成指向此刻的修订号）也要核正文：多出来的必须全是带 `anchor.by == agent` 的追加对象，
+    其余逐字段不变。"""
+    path = project / "tavottofile" / "组图.json"
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    out = _write(project, _items(), base)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if edit == "rename_canvas":
+        doc["canvases"][0]["name"] = "改过"
+    elif edit == "append_plain_object":
+        doc["canvases"][0]["objects"].append(
+            {"id": "t_manual01", "type": "text", "x": 1, "y": 1, "w": 5, "h": 3}
+        )
+    else:
+        doc["canvases"][0]["objects"][0]["x"] = 11.0
+    atomicio.write_json(path, doc, indent=1)
+    meta = la._undo_dir(project, "组图") / f"{out['undo_token']}.meta"
+    m = json.loads(meta.read_text(encoding="utf-8"))
+    m["after"] = atomicio.content_revision(path)
+    meta.write_text(json.dumps(m), encoding="utf-8")
+    assert la.agent_additions(project, "组图", base) is None

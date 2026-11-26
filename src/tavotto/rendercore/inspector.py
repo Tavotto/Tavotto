@@ -317,6 +317,8 @@ class _Font:
     notdef_unchecked: bool = False
     #: 用它**上墨**画过字（非空的一段、渲染模式不是 3 / 7，或是一个字形 Form）。只被 `Tf` 选中、只进文字层的不算
     painted: bool = False
+    #: 字体类型与嵌入的字体程序对不上（`font_program_mismatch`）：嵌进去了也不算「嵌入正确」
+    program_mismatch: bool = False
 
 
 @dataclass
@@ -367,6 +369,9 @@ def _font_record(name: str, obj, seen: dict) -> _Font:
             if any(k in desc for k in ("/FontFile", "/FontFile2", "/FontFile3"))
             else FAILED
         )
+    mismatch = desc is not None and not type3 and font_program_mismatch(desc)
+    if mismatch:
+        embedded = FAILED
     tu = obj.get("/ToUnicode")
     mapping: dict[int, str] | None = None
     code_len = 1 if subtype in ("Type1", "TrueType", "Type3", "MMType1") else 2
@@ -376,6 +381,7 @@ def _font_record(name: str, obj, seen: dict) -> _Font:
         except Exception:  # noqa: BLE001 —— 坏 CMap = 没有可用映射
             mapping = None
     rec = _Font(name, base, subtype, embedded, subset, mapping, code_len, type3, key)
+    rec.program_mismatch = mismatch
     if type3:
         rec.sized = _type3_em_is_standard(obj.get("/FontMatrix"))
     try:
@@ -499,6 +505,26 @@ def _note_notdef(font: _Font, raw: bytes) -> None:
             font.notdef_unchecked = True
         elif hit:
             font.notdef += 1
+
+
+#: `FontFile2` 只能装 TrueType 字体程序（PDF 32000 §9.9）：sfnt 头是这几种之一
+_TRUETYPE_SFNT_TAGS = (b"\x00\x01\x00\x00", b"true", b"ttcf")
+
+
+def font_program_mismatch(desc) -> bool:
+    """字体描述符里嵌的字体程序与它所在的槽对不上：`FontFile2`（TrueType 槽）里装的不是 TrueType。
+
+    最常见的来源是 matplotlib 对 `.otf`（CFF 轮廓）走 Type 42：写 `CIDFontType2` + `FontFile2`，内容却是 `OTTO`
+    开头的 CFF OpenType——poppler 报「Mismatch between font type and embedded font file」，Acrobat 预检与投稿系统
+    的转换可能拒收或掉字。只读前 4 个字节；读不了不判（不算错配）。"""
+    stream = desc.get("/FontFile2")
+    if stream is None:
+        return False
+    try:
+        head = bytes(stream.read_bytes()[:4])
+    except Exception:  # noqa: BLE001 —— 解不开的流交给完整性那一项，这里判不了就不判
+        return False
+    return len(head) == 4 and head not in _TRUETYPE_SFNT_TAGS
 
 
 def _type3_em_is_standard(matrix) -> bool:
@@ -887,6 +913,7 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
                 "painted": f.painted,
                 "notdef": f.notdef,
                 "notdef_unchecked": f.notdef_unchecked,
+                "program_mismatch": f.program_mismatch,
             }
             for f in walk.fonts.values()
             if f.used
@@ -1160,6 +1187,11 @@ def _check_pdf(
             checks["fonts_embedded"] = NOT_APPLICABLE
         elif any(f["embedded"] == FAILED for f in used):
             checks["fonts_embedded"] = FAILED
+            bad = [f["name"] for f in used if f.get("program_mismatch")]
+            if bad:
+                notes.append(
+                    f"字体类型与嵌入的字体程序对不上（TrueType 槽里装的不是 TrueType）：{bad[:5]}"
+                )
         elif any(f["embedded"] == UNKNOWN for f in used):
             checks["fonts_embedded"] = UNKNOWN
             notes.append("有 Type 3 字体（字形在 CharProcs 里），嵌入这一维记 unknown")

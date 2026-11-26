@@ -14,6 +14,7 @@ import {
   isDefiniteRunFailure,
   type AiDataCommitResult,
   type AiDataFigureStyle,
+  type AiDataPurpose,
   type AiDataFileEntry,
   type AiDataOverview,
   type AiDataUnderstanding,
@@ -93,7 +94,7 @@ export interface MixedInfo {
 export type RoleKey = 'x' | 'y' | 'group'
 
 /** 「需要你确认」两项对应的 `answers` 键：只有用户点击才写；模型的建议（`SUGGEST_KEYS`）不含它们 */
-export type ConfirmKey = 'error' | 'design'
+export type ConfirmKey = 'error' | 'design' | 'purpose'
 
 /** 刚画出来的那张图：画布上的「换个画法」胶囊认它（只在这一次会话里，不持久化） */
 export interface FreshFigure {
@@ -153,6 +154,8 @@ interface DataFigureStore {
   overviews: Record<string, OverviewState>
   /** 用户指了「哪一行是每列的名字」的文件：路径 → 物理行号；出图时原样带上 `header_rows` */
   headerRows: Record<string, number>
+  /** 其中**AI 建议**写进 `headerRows` 的那几条（路径 → AI 给的行号）：用户自己点选（`setHeaderRow`）就从这里删掉，那一条算用户的；换 AI 重跑时只回退仍等于这里记的值的（#2232） */
+  autoHeaderRows: Record<string, number>
   /** 用户在右栏改过的东西（`y` / `x` / `group` 的列名或 `none`、`cells`），重新出候选时原样带上；后端不再提问，没改的用它自己的默认 */
   answers: Record<string, unknown>
   /** 有非数字格时的处理方式（右栏的下拉），来自响应的 `mixed_cells` */
@@ -228,6 +231,8 @@ interface DataFigureStore {
   previewKey: string | null
   /** 响应说用户点选过误差类型（`answers.error` 被后端认了）；没有 = 误差线画的是哪一种还没确认 */
   errorConfirmed: boolean
+  /** 这批候选按什么看图目的排的（响应的 `purpose`）；右栏「目的」一行显示它的 `code`，没有 / `code` 为 null / 选项不足两个 = 不出这一行 */
+  purpose: AiDataPurpose | null
   /** 「是不是同一对象重复测量」这个问题出现过（`defaults` 里有 `pick_design`）：确认之后后端不再问，但那一行要留着（可再改），所以只增不减，直到换文件 */
   designAsked: boolean
   /** 只换预览，不发请求、不创建 */
@@ -305,6 +310,7 @@ const initial = {
   sources: null as GroupSource[] | null,
   overviews: {} as Record<string, OverviewState>,
   headerRows: {} as Record<string, number>,
+  autoHeaderRows: {} as Record<string, number>,
   answers: {} as Record<string, unknown>,
   mixed: null as MixedInfo | null,
   roles: null as ColumnRoles | null,
@@ -328,6 +334,7 @@ const initial = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  purpose: null as AiDataPurpose | null,
   designAsked: false,
   // 草稿自己的规范绑定只在 `initial`：换文件 / 关标签（`idleDraft`）不清它，项目代际（`clear()`）与重新进入（`enter()`）才清
   specBinding: null as DocumentProfile | null,
@@ -356,6 +363,7 @@ const idleDraft = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  purpose: null as AiDataPurpose | null,
   designAsked: false,
   figureStyle: null as AiDataFigureStyle | null,
   specFallback: false,
@@ -387,7 +395,7 @@ export const setKeepClock = (f: () => number): void => {
   keepClock = f
 }
 
-const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
+const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'purpose', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
 type KeepSnap = Pick<typeof initial, (typeof KEEP_FIELDS)[number]>
 interface Kept {
   key: string
@@ -420,6 +428,8 @@ let choiceStamp = 0
 let writesInFlight = 0
 let writeChain: Promise<unknown> = Promise.resolve()
 let pendingChoiceRerun = false
+/** 换了 AI（实际在用的变成另一个 `on`）而 AI 写的表头行还没回退：下一次重新读表（`run` 非重试）或换 AI 的重跑之前回退（正在出图 / 用户动过下拉时那一次重跑不发，这个标记留着） */
+let autoHeaderStale = false
 /** 实际在用的 AI 的键（`state` + 连接）；没取到 = '' */
 const effKeyOf = (c: AiDataUnderstandingChoice | null): string => (c ? `${c.state}|${c.connection ?? ''}` : '')
 /** 当前会话出候选**那一刻**（请求发出时）涉及文件的大小，跟着候选走：留存时用它，不用切走时才读的清单（那时清单可能已经是新的，候选却是按旧内容出的）。有一个读不到 = 没法验证，这份不留 */
@@ -483,6 +493,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     set({ understandingChoice: next, understandingAvailable: next.state === 'on' })
     if (!prev || effKeyOf(prev) === effKeyOf(next)) return
     choiceGen += 1
+    if (next.state === 'on') autoHeaderStale = true
     if (next.state !== 'on') pendingChoiceRerun = false
     if (next.state === 'off') {
       // 关了：在途的读懂数据不再等；已经按建议填好的列角色保持原样（不回退）
@@ -492,6 +503,27 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       // 换了一个在用的 AI：对当前这份重跑一次（关 / 用不了 → 开由宿主的 `noteUnavailable` 接，同一个 `rerunForConnection`）
       get().rerunForConnection()
     }
+  }
+
+  /**
+   * 回退 AI 写的表头行（换 AI 时）：对 `autoHeaderRows` 的每一条，`headerRows[path]` 仍是 AI 写的那个值才删（用户后来改过的、或别处写的不动），
+   * 记录一并清空。返回这次有没有动到当前这份草稿涉及的表（动到了表头行就变了，概览与候选都得重读）。
+   */
+  function rollbackAutoHeaders(): boolean {
+    const { headerRows, autoHeaderRows, selected, group } = get()
+    autoHeaderStale = false
+    if (Object.keys(autoHeaderRows).length === 0) return false
+    const next = { ...headerRows }
+    const gone: string[] = []
+    for (const [path, v] of Object.entries(autoHeaderRows)) {
+      if (next[path] === v) {
+        delete next[path]
+        gone.push(path)
+      }
+    }
+    set({ headerRows: next, autoHeaderRows: {} })
+    const mine = new Set((group ?? (selected ? [selected] : [])).map((r) => r.path))
+    return gone.some((p) => mine.has(p))
   }
 
   /* ---- 按表记住（说明见模块级 `kept`） ---- */
@@ -591,7 +623,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       // 换了表头行：列也跟着变，列名建议是按重读后的表给的——和 `setHeaderRow` 同一条路，但把建议的列一起带上
       discardSession()
       commitRid = null
-      set((s) => ({ headerRows: { ...s.headerRows, [sel.path]: d.headerRow! }, answers: { ...s.answers, ...patch } }))
+      set((s) => ({ headerRows: { ...s.headerRows, [sel.path]: d.headerRow! }, autoHeaderRows: { ...s.autoHeaderRows, [sel.path]: d.headerRow! }, answers: { ...s.answers, ...patch } }))
       void run({ keepChoices: true })
       return
     }
@@ -753,6 +785,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       figureStyle: res.figure_style ?? null,
       specFallback: res.spec_fallback === true,
       errorConfirmed: res.error_confirmed === true,
+      purpose: res.purpose && res.purpose.code ? res.purpose : null,
       designAsked: get().designAsked || (res.defaults ?? []).some((d) => d.question_code === 'pick_design'),
     }
     if (res.kind === 'candidates' && Array.isArray(res.items) && res.items.length > 0) {
@@ -828,6 +861,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     if (!sel) return
     restoredSession = null
     pendingChoiceRerun = false // 新的一轮请求本来就是在新的选择之后发的
+    if (!opts.keepChoices && autoHeaderStale) rollbackAutoHeaders() // 重新读表之前，上一个 AI 写的表头行先退掉
     ensureBinding() // 读表 / 判断阶段（全是文字、要点表头行）也要让右栏「期刊」一行显示的是真绑定，不等到出候选
     const seq = { current: () => runSeq }
     runSeq += 1
@@ -1164,7 +1198,8 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       if (get().drawingId) return
       discardSession()
       commitRid = null
-      set((s) => ({ headerRows: { ...s.headerRows, [path]: line } }))
+      // 用户自己点选的行：不再算 AI 的（换 AI 时保留）
+      set((s) => ({ headerRows: { ...s.headerRows, [path]: line }, autoHeaderRows: Object.fromEntries(Object.entries(s.autoHeaderRows).filter(([p]) => p !== path)) }))
       void run()
     },
 
@@ -1299,11 +1334,20 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       // 「用户动过下拉」与 `onUnderstood` 同一口径：自动套用写进 `answers` 的键（`autoPicks`）不算
       if (SUGGEST_KEYS.some((k) => k in answers && !(k in autoPicks && sameValue(answers[k], autoPicks[k])))) return
       // 上一个 AI 自动填的答案要拿掉再发：后端见到 x / y / group / x_measure 就认为用户定了、不再问模型，新的 AI 就永远问不到；用户自己定的（上面已经拦下）才保留
-      reask((a) => {
+      const strip = (a: Record<string, unknown>) => {
         const o = { ...a }
         for (const k of Object.keys(autoPicks)) if (k in o && sameValue(o[k], autoPicks[k])) delete o[k]
         return o
-      }, { autoPicks: {} })
+      }
+      // 上一个 AI 改的表头行也退掉（用户点选的保留）。当前这份用的表头行变了：列也跟着变，要重新读表（顺序：先清完自动答案再 `run`，保留下来的 answers 已是清完的那份）
+      if (rollbackAutoHeaders()) {
+        discardSession()
+        commitRid = null
+        set((st) => ({ answers: strip(st.answers), autoPicks: {} }))
+        void run({ keepChoices: true })
+        return
+      }
+      reask(strip, { autoPicks: {} })
     },
 
     applySuggestion: () => {
@@ -1325,11 +1369,14 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     setConfirm: (key, value) => {
       if (get().drawingId) return
       const was = get().answers[key]
+      // 「目的」是用户点的，和 `error` / `design` 一样只由右栏这一行写、不进 `autoPicks`（换 AI 重跑清的是自动答案，它保留）；
+      // 用户点过的值一直带着发，生不生效由后端定（这批候选里没有它的族就当没点，`purpose.code` 回到假设），界面显示以响应的 `purpose.code` 为准
       // 「不确定」是没人答过时的默认：从没答过又选「不确定」= 什么都没变
       if (key === 'design' && value === 'unsure' && was === undefined) return
       if (was === value && key !== 'error') return
       // 与换规范同一条路：重出候选、不动 `autoPicks`、这一轮「读懂数据」已起过就不再起（模型读的是数据，不是这两个答案）
-      reask((a) => ({ ...a, [key]: value }), {}, true)
+      // 只有换「目的」才把预览放回新的第一名（用户就是想看「按这个目的该先看哪张」）；换误差类型等别的确认项，预览仍跟着同一张候选走
+      reask((a) => ({ ...a, [key]: value }), key === 'purpose' ? { previewKey: null } : {}, true)
     },
 
     setSpecBinding: (binding) => {
@@ -1391,6 +1438,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
 
     clear: () => {
       epoch += 1
+      autoHeaderStale = false
       dropAllKept()
       stopUnderstanding()
       inheritOff?.()

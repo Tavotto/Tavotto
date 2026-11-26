@@ -46,6 +46,7 @@ from . import (
     ai_data_figure as adf,
     ai_data_merge as merge_mod,
     ai_data_progress as progress,
+    ai_data_purpose as purpose_mod,
     ai_data_recipe as recipe_mod,
     ai_data_roles as roles_mod,
     ai_data_template as tpl,
@@ -109,7 +110,20 @@ _ID = re.compile(r"[0-9a-f]{12}")
 _SESSION_ID = re.compile(r"[0-9a-f]{24}")
 _HINT_MAX = 400
 #: `x_measure`（G-018，读懂数据派生）：模型判「规则选作横轴的那一列是测量值、不是有序自变量」时给出的**列名**；不是用户动过的下拉（不进 `picks` 的 x / y / group）
-_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit", "x_measure", "error")
+#: `answers.purpose`：用户点选的看图目的（`ai_data_purpose.PURPOSES` 之一，闭集外的值当没给）。只重排规则已给出的备选、不新增；**不算**接管列角色
+#: （不进 `_user_took_over`，与 `error` 同理），进幂等键（`_answers_digest` 带整个 `ans`）
+_ANSWER_KEYS = (
+    "table",
+    "sheet",
+    "y",
+    "group",
+    "x",
+    "design",
+    "unit",
+    "x_measure",
+    "error",
+    "purpose",
+)
 #: `answers.error`：用户点选的「误差线 / 误差带画的是什么」→ 配方里的汇总方式。**只有用户点了才有**（模型的建议不写这个键）；
 #: 没点 = 模板的默认（均值 ± 标准差），响应里 `error.confirmed` 为 False
 ERROR_SUMMARY = {"sd": "mean_sd", "sem": "mean_sem", "ci95": "mean_ci95"}
@@ -182,6 +196,8 @@ class Item:
     #: 缩略图状态：`ready`（已有 PNG；旧模式一律如此）/ `pending`（懒模式，还没画）/ `failed`（`reason` 是 `DROP_REASONS` 里的码）
     state: str = "ready"
     reason: str | None = None
+    #: 相对当前看图目的，为什么这张不是推荐（`ai_data_purpose.why_not`：`{code, guidance, tier}`）；推荐的 / 没有适用理由 = None（响应里没有这一项）
+    why_not: dict | None = None
     fallback: bool = False  # 画这张时项目解释器没画成、回退过（诊断标记）
     #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
     #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
@@ -700,6 +716,8 @@ def parse_answers(answers) -> dict:
                 out[key] = names[0] if len(names) == 1 else names
                 continue
             val = _text(answers[key], key)
+            if key == "purpose" and val not in purpose_mod.PURPOSES:
+                continue
             if val is not None:
                 out[key] = val
     if "cells" in answers:
@@ -1331,6 +1349,7 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         # 算出来的误差线 / 带里 n < 2 因而没有误差线的位置（标签与图上一致）
         **({"error_missing_for": item.error_missing} if item.error_missing else {}),
         **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
+        **({"why_not": item.why_not} if item.why_not is not None and not recommended else {}),
     }
 
 
@@ -1545,6 +1564,11 @@ def propose(
             swapped.append(replace(c, recipe=new))
         res = replace(res, items=tuple(swapped))
 
+    # 看图目的：只重排（纯排列，不新增 / 不复活备选）；没点 `answers.purpose` 时是恒等，只多响应里的 `purpose` 一项
+    purpose = purpose_mod.resolve(res.items, ans.get("purpose")) if res.items else None
+    if purpose is not None:
+        res = replace(res, items=purpose.items)
+
     def merged_info() -> dict:
         """合画：各份是哪几份（路径与请求里一致）、各自的标签、合成的分组列名；单份没有这两项。"""
         if merged is None:
@@ -1653,6 +1677,11 @@ def propose(
             reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
             variant=variants.get(id(cand.recipe)),
+            why_not=(
+                None
+                if purpose is None or not order
+                else purpose_mod.why_not(cand.code, purpose.code, purpose.source)
+            ),
             fits=tpl.fit_report(values, cand.recipe),
             error_missing=error_missing_for(values, cand.recipe),
             error_stated=error_stated_of(chosen.summary, cand.recipe, ans),
@@ -1698,6 +1727,18 @@ def propose(
         "session": sid,
         "items": [item_to_dict(sess, items[i], k == 0) for k, i in enumerate(order)],
         "dropped": dropped,
+        # 这批是按什么看图目的排的、这个目的是用户点的（`user`）还是从数据推出的假设（`data`）、界面可让用户换成哪几个（不足两个 = 空）
+        **(
+            {
+                "purpose": {
+                    "code": purpose.code,
+                    "source": purpose.source,
+                    "options": list(purpose.options),
+                }
+            }
+            if purpose is not None and purpose.code is not None
+            else {}
+        ),
         # 诊断标记：至少有一张小图是项目解释器没画成、回退到默认链条画的
         "interpreter_fallback": fallback,
         **({"spec_fallback": True} if spec_bad else {}),

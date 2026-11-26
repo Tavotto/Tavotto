@@ -572,6 +572,8 @@ class FigureEditAdapter:
 
     def _postcommit(self, run, cand: Candidate) -> list[CheckResult]:
         st = "postcommit"
+        if cand.extras.get("plan_only"):
+            return []  # 修改方案：没写过用户文件，没有提交后的事实可验
         if not cand.committed:
             return [_check("commit.refresh", st, "integrity", NOT_APPLICABLE, "no_change")]
         status = (cand.refresh or {}).get("status")
@@ -761,6 +763,22 @@ class BridgeExecutor:
     def discard(self, run, cand: Candidate) -> None:
         if cand.hold is None:
             remove_candidate(cand.dir)
+
+
+class PlanOnlyExecutor(BridgeExecutor):
+    """修改方案的脚本修改（ADR 0206 PR 6）：走同一套「执行 → 提交前检查 → 有界修正」，但**提交 = 只留候选字节**，不碰用户脚本、不刷新。
+
+    候选字节放进 `cand.extras["plan_bytes"]`（没改动 = 不放）；`committed` 置真只是让编排器把结局算成 completed、
+    不再丢弃候选（候选目录由会话收尾 `_release_cand` 删）。提交后检查整个跳过（没有写过什么可验的）。"""
+
+    writes_user_files = False
+
+    def commit(self, run, cand: Candidate) -> None:
+        if cand.new_bytes is not None and cand.new_bytes != cand.base_bytes:
+            cand.extras["plan_bytes"] = cand.new_bytes
+        cand.extras["plan_only"] = True
+        cand.committed = True
+        cand.refresh = {"status": "skipped"}
 
 
 def _call_hook(hook):

@@ -271,7 +271,7 @@ USER_VISIBLE_CODES = {
     "read_failed": {"reason"},
     "internal_error": {"reason"},
     "backend_unavailable": {"reason"},
-    "export_render_failed": {"id", "reason"},
+    "export_render_failed": {"id", "name", "reason"},
     "invalid_document": set(),
     "package_file_missing": set(),
     "package_invalid": {"reason"},
@@ -353,6 +353,17 @@ USER_VISIBLE_CODES = {
     "change_plan_figure_changed": set(),
     "change_plan_empty": set(),
     "change_plan_failed": set(),
+    "change_plan_script_no_change": set(),
+    "change_plan_script_check_failed": set(),
+    "change_plan_script_data_changed": set(),
+    "change_plan_script_no_preview": set(),
+    "change_plan_script_overreach": set(),
+    "change_plan_script_agent_failed": set(),
+    "change_plan_script_unsupported": set(),
+    "change_plan_script_apply_failed": set(),
+    "change_plan_script_undo_conflict": set(),
+    "change_plan_script_not_applied": set(),
+    "change_plan_script_restore_conflict": set(),
     "invalid_patches": set(),
     "invalid_purpose": {"value"},
     "invalid_width": {"value"},
@@ -843,6 +854,9 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 项目内时间线认领（ADR 0211 第一期）`POST /api/layout-session/project-history/claim`：前端只据此重列一次候选
+    # 再按后端说的 mode 装（复制 / 再认领），不展示文案
+    "claim_refused",
     # 一键排版方案（ADR 0199）`POST /api/pro/quick-layout/plan`：前端不读这几个码的文案——not_licensed 转成授权灰态，
     # 其余三个一律说「排不了，再试一次」（quickLayoutFailed），文档不改
     "invalid_panels",
@@ -908,6 +922,8 @@ NON_UI_CODES = {
 DATA_ONLY_PARAMS = {
     "ai_script_busy": {"session"},
     "eps_annotations_unsupported": {"operation"},
+    # `id` 是文件 id，前端据它定位那张图；文案只按 `name`（图名）说话（T-009）
+    "export_render_failed": {"id"},
     "siwc_login_failed": {"reason"},  # 闭集原因码（siwc_login.REASONS），前端按它挑具体文案
 }
 

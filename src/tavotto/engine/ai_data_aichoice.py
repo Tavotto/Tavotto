@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from . import ai_connections, config
+from . import ai_connections, ai_providers, config
 
 MODES = ("auto", "off", "connection")
 
@@ -136,7 +136,8 @@ def options() -> list[dict]:
                     "label": v.get("label") or cid,
                     "logo": v.get("logo"),
                     "vendor": v.get("vendor"),
-                    "kind": "key",
+                    # ChatGPT 登录（SIWC）走 Key 那条路，但对用户它是订阅
+                    "kind": "subscription" if ai_providers.is_siwc_conn(conn) else "key",
                     "model": str(conn.get("model") or ""),
                 }
             )
@@ -165,9 +166,12 @@ def pinned() -> tuple[str, dict | None]:
 def refresh_key(conn: dict) -> dict | None:
     """指定的 Key 连接真要用之前，只刷新**这一条**（账号登录令牌 / 地址少写的 `/v1`），与 `ai_structured.resolve_connection` 同一套；刷不动（要重新登录）= None。
     联网，只在后台任务线程里调。订阅连接原样返回。"""
-    from . import ai_oauth, ai_providers
+    from . import ai_oauth
 
     if conn.get("kind") == "cli":
+        return conn
+    if ai_providers.is_siwc_conn(conn):
+        # ChatGPT 登录不是存下的记录：令牌由 `ai_structured.call_structured` 按剩余时限现取（ADR 0209 §七），这里原样交回
         return conn
     rec = ai_providers.get(conn.get("provider_id"))
     if rec is None:

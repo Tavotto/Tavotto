@@ -32,7 +32,7 @@ from . import cli_failure, exectrace, fixtools, folderrepair, pool
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
-from .agent_runner.wires import WIRES, AnthropicWire, OpenAIChatWire, Turn
+from .agent_runner.wires import WIRES, AnthropicWire, OpenAIChatWire, RunnerFailure, Turn
 from .fixtools.audit import AuditLog
 from .fixtools.observe import read_run_report
 
@@ -1350,6 +1350,12 @@ def _wire_for(name: str, conn: dict):
         return AnthropicWire(bearer_only=True)
     if name == "openai-chat":
         return OpenAIChatWire(token_field=conn.get("token_field") or "max_tokens")
+    from .agent_runner import siwc_wire
+
+    if name == siwc_wire.WIRE_NAME:
+        return (
+            siwc_wire.SiwcResponsesWire()
+        )  # 不在 WIRES 里（探测 / 备选碰不到它），只在这里按名字认
     return WIRES[name]
 
 
@@ -1357,6 +1363,13 @@ def build_model(conn: dict, **model_kwargs):
     """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。
     自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。
     `model_kwargs` 原样交给 `HttpModel`（重试次数 / 超时 / 注入的 `post`；`ai_structured` 的单轮调用用）；默认不传 = 行为不变。"""
+    from . import ai_providers
+
+    if ai_providers.is_siwc_conn(conn) and not conn.get("api_key"):
+        # 只问过「有没有」的 SIWC 连接（`first_key_connection(refresh=False)`）：开跑前现取令牌；拿不到 = 需要重新登录
+        conn = ai_providers.siwc_conn_with_token(conn)
+        if conn is None:
+            raise RunnerFailure("auth", "needs_login")
     model = loop.HttpModel(
         _wire_for(conn["wire"], conn),
         base_url=conn["base_url"],
@@ -1365,7 +1378,27 @@ def build_model(conn: dict, **model_kwargs):
         fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
         **model_kwargs,
     )
+    if ai_providers.is_siwc_conn(conn):
+        _mark_siwc_rejection(model)
     return model, Redactor(conn["api_key"])
+
+
+def _mark_siwc_rejection(model) -> None:
+    """SIWC 模型被服务端以 `auth` 拒了当前令牌：标记「下次先刷新」（不清凭据），与改图路径的
+    `ai_bridge._siwc_after_runner_error` 同一个动作。AI 修复与结构化调用都经 `build_model`，所以挂在这里一处（Codex #2212）。"""
+    inner = model.complete
+
+    def complete(*args, **kwargs):
+        try:
+            return inner(*args, **kwargs)
+        except RunnerFailure as exc:
+            if exc.reason == "auth":
+                from . import siwc_login
+
+                siwc_login.provider().mark_rejected("http_401")
+            raise
+
+    model.complete = complete
 
 
 def audit_tail(session_ids: set[str], limit: int = 200) -> list[dict]:
