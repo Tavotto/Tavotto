@@ -174,6 +174,8 @@
     "exportedCount_other": "Exported {{count}} files",
     "resultInspectionFailed_one": "{{count}} file failed its check; see details",
     "resultInspectionFailed_other": "{{count}} files failed their checks; see details",
+    "resultAdvisories_one": "{{count}} file has something to review; see details",
+    "resultAdvisories_other": "{{count}} files have something to review; see details",
     "resultScriptSkipped_one": "{{count}} edit not in the .py",
     "resultScriptSkipped_other": "{{count}} edits not in the .py",
     "resultWarnings_one": "{{count}} note; see details",
@@ -320,6 +322,10 @@
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
       "failedItems": "Check failed: {{items}}",
+      "advisory": {
+        "type3_fonts": "To review: uses Type 3 fonts ({{fonts}}), which journals such as IEEE and Elsevier send back. Redrawing a scripted figure from its script removes them.",
+        "scripted_raster": "To review: {{panels}} is embedded as a whole bitmap. It has a script, so it can be redrawn as vectors."
+      },
       "check": {
         "integrity": "integrity",
         "size": "size",
@@ -330,7 +336,8 @@
         "clipping": "clipping",
         "dpi_tag": "resolution tag",
         "raster_density": "pixel density",
-        "text_size": "text size"
+        "text_size": "text size",
+        "glyphs": "missing glyphs (shown as boxes)"
       },
       "textSizeBelow": "The smallest text in the file is {{min}} pt, below the {{floor}} pt the spec asks for"
     },

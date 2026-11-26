@@ -171,6 +171,7 @@
     "contentEach": "每张图单独导出",
     "exportedCount_other": "已导出 {{count}} 个文件",
     "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
+    "resultAdvisories_other": "{{count}} 个文件有需留意的地方，见详情",
     "resultScriptSkipped_other": "{{count}} 处修改未写入 .py",
     "resultWarnings_other": "有 {{count}} 条提示，见详情",
     "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
@@ -309,6 +310,10 @@
     "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
     "inspection": {
       "failedItems": "核验未通过：{{items}}",
+      "advisory": {
+        "type3_fonts": "需留意：用了 Type 3 字体（{{fonts}}），IEEE、Elsevier 等期刊会退回。有脚本的图用脚本重画就不再有 Type 3。",
+        "scripted_raster": "需留意：{{panels}} 是整张位图嵌进来的。它有脚本，可以重画成矢量。"
+      },
       "check": {
         "integrity": "完整性",
         "size": "尺寸",
@@ -319,7 +324,8 @@
         "clipping": "裁切",
         "dpi_tag": "分辨率标签",
         "raster_density": "像素密度",
-        "text_size": "字号"
+        "text_size": "字号",
+        "glyphs": "缺字（显示成方块）"
       },
       "textSizeBelow": "成品里最小的文字是 {{min}} pt，低于规范的 {{floor}} pt"
     },
