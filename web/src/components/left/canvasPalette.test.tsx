@@ -22,7 +22,13 @@ import { planStyle } from '@/lib/stylePresets'
 import { useAssetStore } from '@/store/assetStore'
 import { cvdFilterRef, useCvdPreviewStore } from '@/store/cvdPreviewStore'
 import { useDocumentStore } from '@/store/documentStore'
-import { applyPaletteScheme, canvasPaletteState, setPaletteGroupNeutral } from '@/store/paletteActions'
+import { applyPaletteScheme, canvasPaletteState, planPaletteSchemePreview, setPaletteGroupNeutral } from '@/store/paletteActions'
+import {
+  markPalettePreviewUnavailable,
+  palettePreviewGen,
+  palettePreviewHeld,
+  resetPalettePreview,
+} from '@/store/palettePreviewStore'
 import { useProfileStore } from '@/store/profileStore'
 import { useUiStore } from '@/store/uiStore'
 import { seedExactRender } from '@/test/renderFixtures'
@@ -132,6 +138,7 @@ beforeEach(() => {
   useCvdPreviewStore.setState({ vision: 'normal' })
   useProfileStore.setState({ styles: [], loaded: true, error: null })
   useUiStore.setState({ confirm: null })
+  resetPalettePreview()
 })
 
 afterEach(async () => {
@@ -358,6 +365,49 @@ describe('弹层预览与色觉预览只改显示', () => {
     })
     expect(s().doc.colorKeys?.scheme).toBe(activeId)
     expect(q('[data-palette-verdict]')).not.toBeNull()
+  })
+
+  it('↑↓ 时两张图一起在画布上预览（选用会写的就是预览的那些格）；Esc 还原，回车后挂着等图', async () => {
+    localStorage.setItem(PALETTE_UI_DEV_KEY, '1')
+    await seed()
+    await mount(<CanvasPaletteSection />)
+    await act(async () => {
+      q('[data-select-trigger]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const search = q<HTMLInputElement>('[data-select-search]')!
+    const key = (k: string) =>
+      act(async () => {
+        search.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+      })
+    await key('ArrowDown')
+    const activeId = q('[data-select-option][data-active]')!.getAttribute('data-select-option')!
+    expect(palettePreviewGen('A')).toBeGreaterThan(0)
+    expect(palettePreviewGen('B')).toBeGreaterThan(0)
+    // 预览的格子 = 选用会写的格子，每格带上 role（决定改描边还是填充）
+    const plan = planPaletteSchemePreview(activeId)
+    expect(plan.map((e) => e.panelId).sort()).toEqual(['A', 'B'])
+    expect(plan.flatMap((e) => e.patches).every((p) => p.role === 'line' && p.prop === 'color')).toBe(true)
+    // 一张图没有可画的矢量 SVG：弹层据实说出来，不假装画上了
+    await act(async () => markPalettePreviewUnavailable('B'))
+    expect(q('[data-palette-preview-missed]')?.textContent).toContain('2')
+    await key('Escape')
+    expect(palettePreviewGen('A')).toBe(0)
+    expect(palettePreviewGen('B')).toBe(0)
+
+    await act(async () => {
+      q('[data-select-trigger]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const search2 = q<HTMLInputElement>('[data-select-search]')!
+    await act(async () => {
+      search2.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
+    await act(async () => {
+      search2.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(s().doc.colorKeys?.scheme).toBeTruthy()
+    // 测试里没有 PanelView 挂 SVG，没画上去的面板选用时直接放掉：不留一个挂空的预览
+    expect(palettePreviewHeld()).toBe(false)
+    expect(palettePreviewGen('A')).toBe(0)
   })
 
   it('色觉预览挂的是滤镜，与模拟同一个矩阵；离开这一节就回到正常色觉', async () => {

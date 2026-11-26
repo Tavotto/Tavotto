@@ -31,6 +31,7 @@ import type { FigureDocument, PanelObject } from '@/types/document'
 import { writePaletteOverrides } from './actions'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
+import type { PalettePreviewEntry } from './palettePreviewStore'
 import { requestRender } from './renderScheduler'
 import { structuralPanelManifest, useRenderStore } from './renderStore'
 
@@ -65,9 +66,7 @@ export interface PaletteApplyResult {
  * 把 `next`（已经改好方案 / 合并 / 中性设置的表）连同颜色一起写进文档：一次 commit。
  * 拿不到方案（目录里没有这个 id，比如被许可开关排除了）就什么都不写。
  */
-function commitTable(label: UiMessage, edit: (t: ColorKeyTable) => ColorKeyTable): PaletteApplyResult | null {
-  finishActiveGesture()
-  const doc = useDocumentStore.getState().doc
+function planTable(doc: FigureDocument, edit: (t: ColorKeyTable) => ColorKeyTable) {
   const state = canvasPaletteState(doc)
   const table = edit(state.table)
   const palette: CatalogPalette | null = paletteById(table.scheme)
@@ -86,6 +85,15 @@ function commitTable(label: UiMessage, edit: (t: ColorKeyTable) => ColorKeyTable
     (p, gid, prop) => !!ownedLive(doc, p, gid, prop),
     (p, gid, prop) => aliasCovered(structuralPanelManifest(renders, p), gid, prop),
   )
+  return { rec, plan }
+}
+
+function commitTable(label: UiMessage, edit: (t: ColorKeyTable) => ColorKeyTable): PaletteApplyResult | null {
+  finishActiveGesture()
+  const doc = useDocumentStore.getState().doc
+  const planned = planTable(doc, edit)
+  if (!planned) return null
+  const { rec, plan } = planned
   useDocumentStore.getState().commit(label, (d) => {
     for (const { panel, patches } of plan.panels) {
       const o = d.objects.find((x) => x.id === panel.id)
@@ -131,6 +139,28 @@ export function applyPaletteScheme(
   return commitTable(hist('applyPalette', { name: p.name }), (t) =>
     setScheme(merges.reduce((acc, m) => mergeKeys(acc, m.into, m.from), t), schemeId),
   )
+}
+
+/**
+ * 选用这套方案**会**写下的颜色，按面板摊开、带上每个元素的 role——画布预览用（ADR 0210 §六）。
+ * 与 `applyPaletteScheme` 走同一个 `planTable`：预览里看到的就是选用后会写的那些格（手改过的照样跳过）。
+ * 只读，不碰文档。
+ */
+export function planPaletteSchemePreview(schemeId: string): PalettePreviewEntry[] {
+  if (!paletteById(schemeId)) return []
+  const doc = useDocumentStore.getState().doc
+  const planned = planTable(doc, (t) => setScheme(t, schemeId))
+  if (!planned) return []
+  const renders = useRenderStore.getState()
+  return planned.plan.panels.flatMap(({ panel, patches }) => {
+    const manifest = structuralPanelManifest(renders, panel)
+    const roles = new Map((manifest?.elements ?? []).map((e) => [e.gid, e.role]))
+    const withRole = patches.flatMap((p) => {
+      const role = roles.get(p.gid)
+      return role ? [{ gid: p.gid, prop: p.prop, value: p.value, role }] : []
+    })
+    return withRole.length ? [{ panelId: panel.id, patches: withRole, sizeMm: manifest?.size_mm }] : []
+  })
 }
 
 /** 把一组设成 / 取消中性灰（用户确认之后才调，ADR 0210 §四：只建议，不自动生效） */

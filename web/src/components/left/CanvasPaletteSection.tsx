@@ -11,11 +11,18 @@ import {
   applyPaletteScheme,
   canvasPaletteState,
   mergePaletteGroups,
+  planPaletteSchemePreview,
   setPaletteGroupNeutral,
   type PaletteApplyResult,
 } from '@/store/paletteActions'
 import { useRenderStore } from '@/store/renderStore'
 import { askConfirm } from '@/store/uiStore'
+import {
+  clearPalettePreview,
+  holdPalettePreview,
+  showPalettePreview,
+  usePalettePreviewMissed,
+} from '@/store/palettePreviewStore'
 import { useCvdPreviewStore } from '@/store/cvdPreviewStore'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
@@ -144,6 +151,13 @@ export function CanvasPaletteSection() {
   const vision = useCvdPreviewStore((s) => s.vision)
   // 色觉预览只是「看一眼」：这一节不在了（关面板、换到单图档）就回到正常色觉，不留一张悄悄变了色的画布
   useEffect(() => () => useCvdPreviewStore.getState().setVision('normal'), [])
+  // 弹层里 ↑↓ / 悬停到哪一套，画布上所有面板先换成那套颜色（只改显示，ADR 0210 §六）；关弹层 / Esc 还原
+  useEffect(() => {
+    if (active) showPalettePreview(planPaletteSchemePreview(active))
+    else clearPalettePreview()
+  }, [active])
+  useEffect(() => () => clearPalettePreview(), [])
+  const missed = usePalettePreviewMissed()
 
   if (!state.groups.length && !state.unlabeled.length) return null
 
@@ -179,7 +193,11 @@ export function CanvasPaletteSection() {
       })
       if (ok) merges = state.merges.map(({ into, from }) => ({ into, from }))
     }
+    // 画布上正预览着的就是这一套（且没有顺手并组，颜色与预览一致）：写完让预览挂着等新图，不先闪回旧色
+    const keep = id === active && !merges.length
+    if (!keep) clearPalettePreview()
     setLast(applyPaletteScheme(id, merges))
+    if (keep) holdPalettePreview()
   }
 
   // 弹层底部：↑↓ 到哪一套，就先看这几组在它下面的颜色与一句结论；键位提示一直在
@@ -199,6 +217,11 @@ export function CanvasPaletteSection() {
             <Verdict r={preview} groups={state.groups} where="preview" />
           </div>
         </div>
+      )}
+      {preview && missed > 0 && (
+        <p data-palette-preview-missed className="type-meta mb-1 text-ink-3">
+          {pp('canvasPreviewMissed', { count: missed })}
+        </p>
       )}
       <p className="type-meta text-ink-3">{pp('keysHint')}</p>
     </div>

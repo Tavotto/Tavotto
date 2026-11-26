@@ -263,13 +263,15 @@ order: 240
 - **画布档的「配色」一节（ADR 0210 方向 A，入口默认关）**：`components/left/CanvasPaletteSection.tsx`，挂在
   `CanvasStyleLayer` 的行之后，只在 `lib/paletteUi.paletteUi()` 为真时渲染（常量 `RECOMMENDED_PALETTE_UI = false`，
   单测 / e2e 用开发键 `tavotto.dev.paletteUi = '1'`；打开是单独一个 PR）。方案下拉 = `ui/SearchSelect` 的 `grouped`
-  弹层（「适合这张画布」在前、期刊风格在「更多」）；↑↓ / 悬停经 `onActiveChange` 只改弹层底部的预览，回车 / 点选才
-  写（`store/paletteActions`：色键表、各面板颜色 override、样式登记的让渡**一次 commit**，`releaseOwned` 注销样式写的那几格；
+  弹层（「适合这张画布」在前、期刊风格在「更多」）；↑↓ / 悬停经 `onActiveChange` 改弹层底部的预览，并经
+  `store/palettePreviewStore` 让所有面板在画布上一起换色（只动 DOM；`PanelView` 预览期间改挂这一版确切的矢量 SVG，
+  没有的记成画不了；选用后挂着等新图，撤销了就地还原），回车 / 点选才写（`store/paletteActions`：色键表、各面板颜色 override、样式登记的让渡**一次 commit**，`releaseOwned` 注销样式写的那几格；
   手改过的不动并数出来）。中性灰、并组只建议，点了才写；第一次建表有同名不同身份的组时 `askConfirm` 问一次。
   文档里有 `colorKeys` 的画布，`planStyle` 不再按样式的 `palette` 循环上色。色觉预览（`store/cvdPreviewStore`）
   只给世界层挂 SVG 滤镜（`canvas/CvdPreviewFilter`，与模拟同一个 Machado 矩阵），不写文档，这一节卸载就回正常。
   看护：`components/left/canvasPalette.test.tsx`、`components/ui/searchSelect.test.tsx`、
-  `components/settings/aboutPaletteCredits.test.tsx`。
+  `components/settings/aboutPaletteCredits.test.tsx`、`store/palettePreviewStore.test.ts`、
+  `canvas/palettePreviewPanel.test.tsx`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、
