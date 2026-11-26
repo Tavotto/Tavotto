@@ -2255,6 +2255,16 @@ export function markProjectFileDirty(): void {
 }
 
 /**
+ * 分叉没成、原排版接回自动保存时用：挂起期间用户确实改过（编辑代次已前进），项目文件里那份
+ * 就落后了，把**发起分叉那份**的绑定补标为待保存。按 documentId 取绑定——此刻可能已经切到
+ * 别的项目 / 排版，`markProjectFileDirty()` 只作用于当前文档；代次在编辑时已经推过，这里不再推。
+ */
+export function markProjectFileDirtyFor(documentId: string): void {
+  const binding = readProjectFile(documentId)
+  if (binding && !binding.dirty) setProjectFile({ ...binding, dirty: true }, documentId)
+}
+
+/**
  * 「这份排版此刻的样子」的快照令牌：写项目文件前取一个（与 `buildProject()` 同步，同一份），
  * 写成之后问一下——**这份**排版在写的途中又改过的话，项目里那份仍然落后，圆点不能灭；
  * 途中切到别的排版不算改过。

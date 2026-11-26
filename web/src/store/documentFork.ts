@@ -19,6 +19,7 @@ import {
   activeProjectFile,
   captureFigureSnapshotSave,
   mergeSavedChartSources,
+  markProjectFileDirtyFor,
   projectFileSnapshot,
   flushAutosave,
   getWindowHold,
@@ -128,6 +129,10 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
   const binding = activeProjectFile()
   const pj = currentProjectId()
   const edited = projectFileSnapshot()
+  /** 副本没装上、原排版留在这里：挂起期间的编辑要补标回原绑定；成功分叉不动原绑定。 */
+  const markOriginalDirtyIfEdited = () => {
+    if (edited()) markProjectFileDirtyFor(ctx.documentId)
+  }
   const pd = state.buildProject()
   let name = stem
   let file: string | null = null
@@ -137,17 +142,22 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
     try {
       written = await writeNewProjectFile(stem, pd, ctx)
       if (!written) {
+        markOriginalDirtyIfEdited()
         resumeAutosaveAfterFork(ctx.documentId)
         return { ok: false, reason: 'switched', file: null }
       }
     } catch (error) {
+      markOriginalDirtyIfEdited()
       resumeAutosaveAfterFork(ctx.documentId)
       return { ok: false, reason: 'write_failed', error }
     }
     name = written.name
     file = written.res.file ?? null
     // 写的途中切走了：文件已经在项目里了（新名字、没覆盖任何东西），但不把此刻开着的另一份换掉
-    if (!stillCurrent(ctx)) return { ok: false, reason: 'switched', file }
+    if (!stillCurrent(ctx)) {
+      markOriginalDirtyIfEdited()
+      return { ok: false, reason: 'switched', file }
+    }
     // 回执里的快照引用合进内存里这份（再带进副本）；原排版已摘出自动保存，这次合并不会把它写回盘
     mergeSavedChartSources(snapshots, written.res.chart_sources)
     mergeSavedFigureSnapshots(snapshots, written.res.figure_snapshots)
@@ -155,7 +165,10 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
   const copyHasNewEdits = edited()
   const latest = useDocumentStore.getState().buildProject()
   const id = await installFork({ ...latest, project: { ...latest.project, name } }, opts.beforeSwitch)
-  if (!id) return { ok: false, reason: 'busy' }
+  if (!id) {
+    markOriginalDirtyIfEdited()
+    return { ok: false, reason: 'busy' }
+  }
   if (written && pj && file) {
     rememberLayoutName(name, written.res.name)
     rememberLayoutRevision(written.res.name ?? name, written.res.revision, pj)

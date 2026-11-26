@@ -192,4 +192,26 @@ describe('存成副本（绑定了项目文件）', () => {
     expect(s().documentId).toBe('d_orig')
     expect(s().projectMeta.name).toBe('排版一')
   })
+
+  it('分叉写失败期间改了名，原绑定要标成待保存', async () => {
+    bind()
+    expect(s().projectFile?.dirty).toBe(false)
+    layoutFail = true
+    const pending = forkCurrentDocument()
+    s().renameProject('排版一 改名')
+    const out = await pending
+    expect(out).toMatchObject({ ok: false, reason: 'write_failed' })
+    expect(s().projectMeta.name).toBe('排版一 改名')
+    expect(s().projectFile?.dirty).toBe(true)
+  })
+
+  it('分叉等待中切走项目，挂起期间的改名补标回原绑定', async () => {
+    bind()
+    projectFiles.set('排版一 副本', 'keep')
+    const pending = forkCurrentDocument()
+    s().renameProject('排版一 改名')
+    setCurrentProjectId('pjB')
+    expect(await pending).toMatchObject({ ok: false, reason: 'switched', file: null })
+    expect(readProjectFile('d_orig')?.dirty).toBe(true)
+  })
 })
