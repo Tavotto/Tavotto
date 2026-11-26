@@ -518,6 +518,15 @@ def test_only_the_top_level_error_shape_is_understood():
 
 
 # --------------------------------------------------------------------------- 目的地不由响应决定
+@pytest.mark.parametrize("bad", ["a\u2028b", "a\u2029b", "a\x85b", "a\x9fb"])
+def test_journal_single_line_rejects_what_the_server_rejects(on, bad):
+    """服务端单行校验拒 C1 控制字符与 U+2028 / U+2029；本机必须先丢掉，否则整封 422（ADR 0213 契约）。"""
+    contactsend.start(_jmeta({**WRONG, "journal_label": bad, "query": bad, "current": bad}), [])
+    assert wait_for({"done", "failed"})["state"] == "done"
+    j = on.calls[0]["json"]["journal"]
+    assert "journal_label" not in j and "query" not in j and "current" not in j
+
+
 @pytest.mark.parametrize(
     "url",
     [
