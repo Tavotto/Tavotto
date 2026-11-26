@@ -306,6 +306,7 @@
     "lock": "Lock (canvas clicks skip it)",
     "lockedState": "Locked",
     "needRender": "The element list for “{{name}}” needs one render.",
+    "needRenderBusy": "The element list for “{{name}}” needs one render. {{progress}}",
     "noMatch": "No matching element",
     "readonly": "Read-only",
     "rowActions": "Actions for {{label}}",
@@ -588,7 +589,7 @@
   "panelBadge": {
     "approxPreview": "Approximate preview",
     "approxPreviewHint": "Showing the on-disk original for now — your figure edits aren’t reflected yet.",
-    "cold": "Cold start — this can take a few minutes…",
+    "cold": "Cold start — this can take a few minutes",
     "error": "Render failed",
     "firstBuild": "First build…",
     "memoryEfficientPreview": "Memory-efficient preview",
@@ -1948,8 +1949,8 @@
     }
   },
   "renderProgress": {
-    "stepEnvironment": "Finding the Python environment (1/3)…",
-    "stepStarting": "Starting Python (2/3)…",
+    "stepEnvironment": "Finding the Python environment (1/3)",
+    "stepStarting": "Starting Python (2/3)",
     "stepRunning": "Running the script and building editable elements (3/3); the first run can take a few minutes…",
     "preparing": "Preparing the figure…",
     "elapsed": "{{message}} · {{seconds}} s elapsed"

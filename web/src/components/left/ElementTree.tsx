@@ -349,8 +349,9 @@ function UnbuiltTree({ panel, rendering }: { panel: PanelObject; rendering: bool
       data-render-progress={progress.active ? progress.phase : undefined}
       action={progress.active ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
     >
-      {et('needRender', { name: panel.name ?? panel.fileId })}
-      {progress.active && ` ${progress.text}`}
+      {progress.active
+        ? et('needRenderBusy', { name: panel.name ?? panel.fileId, progress: progress.text })
+        : et('needRender', { name: panel.name ?? panel.fileId })}
     </EmptyLine>
   )
 }

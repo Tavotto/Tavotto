@@ -102,10 +102,13 @@ describe('跨过冷启动取会话与脚本执行的持久进度', () => {
     for (const node of progress()) expect(node.textContent).toContain('正在准备图表')
     await act(async () => event('render.preparing', { stage: 'environment' }))
     for (const node of progress()) expect(node.textContent).toContain('正在找运行环境（1/3）')
+    expect(host.textContent).not.toMatch(/。\s+正在/)
     await act(async () => vi.advanceTimersByTime(3000))
     await act(async () => event('render.preparing', { stage: 'starting' }))
     for (const node of progress()) {
       expect(node.textContent).toContain('正在启动 Python（2/3）')
+      expect(node.textContent).toContain('正在启动 Python（2/3） · 已用时 3 秒')
+      expect(node.textContent).not.toContain('…')
       expect(node.textContent).toContain('已用时 3 秒')
     }
     // 迟到的早一步 / 不带 stage 的准备事件（同一文件的另一次请求）不让界面倒回去
