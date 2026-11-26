@@ -1,8 +1,29 @@
 # Reproject the captured positions in original data units. The source's
 # stat, group, and position results stay the inputs to the stock geoms.
 ggplot_axes_gid <- "axes_0"
-ggplot_axis_modes <- c(identity = "linear", "log-10" = "log")
+ggplot_axis_modes <- c(identity = "linear", "log-10" = "log",
+                       "tavotto-symlog" = "symlog", "prob-logis" = "logit")
 ggplot_axis_names <- c("x", "y")
+
+ggplot_transform_symlog <- function() {
+  # Match the Matplotlib symlog preset used by the shared scale control.
+  base <- 10
+  threshold <- 2
+  slope <- 1 / (1 - 1 / base)
+  scales::new_transform("tavotto-symlog", transform = function(values) {
+    result <- values * slope
+    outside <- which(abs(values) > threshold)
+    tail <- values[outside]
+    result[outside] <- sign(tail) * threshold * (slope + log(abs(tail) / threshold, base))
+    result
+  }, inverse = function(values) {
+    result <- values / slope
+    outside <- which(abs(values) > threshold * slope)
+    tail <- values[outside]
+    result[outside] <- sign(tail) * threshold * base^(abs(tail) / threshold - slope)
+    result
+  })
+}
 
 ggplot_inverted <- function(reverse, axis) isTRUE(grepl(axis, reverse, fixed = TRUE))
 
@@ -78,12 +99,21 @@ ggplot_axes_target <- function(built, table) {
       all(vapply(native, function(v) all(v[!is.na(v)] > 0 & is.finite(v[!is.na(v)])), logical(1L))) &&
       all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] > 0)
     can_switch <- !is.null(trained) && !has_infinite && !"GeomRaster" %in% kinds
-    options <- if (!can_switch) mode else if (mode == "log" || positive) c("linear", "log") else "linear"
+    probability <- positive && all(trained < 1) &&
+      all(vapply(native, function(v) all(v[!is.na(v)] < 1), logical(1L))) &&
+      all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] < 1)
+    options <- if (!can_switch) mode else c(
+      "linear", if (mode == "log" || positive) "log", "symlog", if (mode == "logit" || probability) "logit")
     list(mode = mode, range = range, trained = trained, columns = columns, options = options)
   }) |> stats::setNames(ggplot_axis_names) |> Filter(f = Negate(is.null))
   if (!length(axes)) return(NULL)
   # Preserve the saved identities of plots captured before direction was editable.
-  context <- list(kinds, built$data, axes, coord$limits)
+  identity_axes <- lapply(axes, function(axis) {
+    # A new option on a previously editable axis must not invalidate saved overrides.
+    if (axis$mode %in% c("linear", "log")) axis$options <- setdiff(axis$options, c("symlog", "logit"))
+    axis
+  })
+  context <- list(kinds, built$data, identity_axes, coord$limits)
   if (coord$reverse != "none") context <- c(context, list(coord$reverse))
   list(slot = slot, axes = axes, reverse = coord$reverse,
        context = rlang::hash(context))
@@ -133,11 +163,15 @@ ggplot_project_axes <- function(built, target, changes) {
     if (mode == "log" && !is.null(range) && any(range <= 0)) {
       stop("Native R logarithmic axis limits must be strictly positive.")
     }
+    if (mode == "logit" && !is.null(range) && any(range <= 0 | range >= 1)) {
+      stop("Native R logit axis limits must be strictly between zero and one.")
+    }
     name <- paste0("panel_scales_", axis)
     scale <- layout[[name]][[1L]]
     if (mode != spec$mode) {
       previous <- scale$get_transformation()
-      trans <- if (mode == "log") scales::transform_log10() else scales::transform_identity()
+      trans <- switch(mode, linear = scales::transform_identity(), log = scales::transform_log10(),
+                      symlog = ggplot_transform_symlog(), logit = scales::transform_logit())
       trained <- trans$transform(spec$trained)
       if (any(!is.finite(trained))) stop("The native R scale has no finite transformed range.")
       scale <- scale$clone()

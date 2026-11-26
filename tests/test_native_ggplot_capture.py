@@ -1110,7 +1110,8 @@ stopifnot(calls == 4L, identical(layers[[1L]]$y, c(4, 6, 8, 10)))
 element <- function(manifest, gid) Filter(function(e) e$gid == gid, manifest$elements)[[1L]]
 baseline <- adapter$ggplot_manifest(state, "dose")
 regular <- element(baseline, "axes_0")
-stopifnot(regular$role == "axes", identical(regular$native_axes$original$x$options, list("linear", "log")))
+stopifnot(regular$role == "axes",
+          identical(regular$native_axes$original$x$options, list("linear", "log", "symlog")))
 edits <- list(axes_0 = list(xlim = list(1, 1000), ylim = c(2, 12), xscale = "log"),
               layer.1.line = list(color = "#695DB2", linewidth = 1.8))
 rendered <- adapter$ggplot_manifest(state, "dose", edits)
@@ -1304,8 +1305,8 @@ stopifnot(identical(raster_crop$current$x$range, list(1, 3)))
 
 with_zero <- plot + ggplot2::geom_hline(yintercept = 0)
 zero_state <- adapter$capture_ggplot(with_zero, frame)$state
-stopifnot(identical(zero_state$axes_target$axes$y$options, "linear"),
-          identical(zero_state$axes_target$axes$x$options, c("linear", "log")))
+stopifnot(identical(zero_state$axes_target$axes$y$options, c("linear", "symlog")),
+          identical(zero_state$axes_target$axes$x$options, c("linear", "log", "symlog")))
 invalid <- list(list(xlim = c(10, 2)), list(xlim = list("1", "10")),
                 list(xscale = "log", xlim = c(0, 100)), list(yscale = "log"))
 for (change in invalid) {
@@ -1395,6 +1396,84 @@ adapter$preview_ggplot_png(authored$state, list(axes_0 = list(invert_x = FALSE, 
                            "normalised.png", 800, TRUE)
 stopifnot(identical(adapter$render_ggplot(captured$state), captured$svg),
           identical(adapter$render_ggplot(authored$state), authored$svg))
+"""
+
+
+SCALE_MODES_PROBE = r"""
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
+frame <- c(320, 240)
+calls <- 0L
+observe <- function(data) { calls <<- calls + 1L; data }
+p <- c(.07, .15, .5, .82, .91)
+data <- data.frame(probability = p, score = c(2, 4, 3, 6, 8))
+chart <- function(data) ggplot2::ggplot(data, ggplot2::aes(probability, score)) +
+  ggplot2::geom_line(data = observe, colour = "#3366AA")
+capture <- adapter$capture_ggplot(chart(data), frame)
+state <- capture$state
+element <- function(manifest, gid) Filter(function(el) el$gid == gid, manifest$elements)[[1L]]
+manifest <- function(state, patch = list()) adapter$ggplot_manifest(state, "probability", patch)
+axes <- function(state, patch = list()) element(manifest(state, patch), "axes_0")
+original <- axes(state)$native_axes
+stopifnot(identical(original$current$x$options, list("linear", "log", "symlog", "logit")),
+          identical(original$current$y$options, list("linear", "log", "symlog")))
+patch <- list(axes_0 = list(xscale = "logit", xlim = c(.05, .95), invert_x = TRUE))
+patch$axis.x.bottom.ticks <- list(major_mode = "fixed", major_values = c(0, .1, .5, .9, 1),
+                                  format = "%.2f")
+after <- manifest(state, patch)
+output <- element(after, "axes_0")
+curve <- element(after, "layer.1.line")
+physical <- do.call(rbind, lapply(curve$geometry$paths[[1L]]$points, unlist))
+bbox <- unlist(output$bbox)
+reference <- 1 - (stats::qlogis(p) - stats::qlogis(.05)) /
+  (stats::qlogis(.95) - stats::qlogis(.05))
+stopifnot(identical(output$native_axes$current$x$mode, "logit"),
+          identical(output$native_axes$current$x$range, list(.05, .95)),
+          identical(output$native_axes$context, original$context),
+          isTRUE(all.equal((physical[, 1L] - bbox[[1L]]) / bbox[[3L]], reference)))
+svg <- adapter$render_ggplot(state, patch)
+stopifnot(grepl(">0.10</text>", svg, fixed = TRUE), grepl(">0.90</text>", svg, fixed = TRUE),
+          !grepl(">0.00</text>", svg, fixed = TRUE), !grepl(">1.00</text>", svg, fixed = TRUE),
+          identical(adapter$render_ggplot(state), capture$svg),
+          identical(adapter$render_ggplot(state, patch), svg), calls == 1L)
+outside <- patch
+outside$axes_0$xlim <- c(.05, 1)
+error <- try(adapter$render_ggplot(state, outside), silent = TRUE)
+stopifnot(inherits(error, "try-error"), grepl("between zero and one", as.character(error), fixed = TRUE))
+
+explicit <- adapter$capture_ggplot(chart(data) + ggplot2::scale_x_continuous(transform = "logit"), frame)
+stopifnot(identical(axes(explicit$state)$native_axes$current$x$mode, "logit"),
+          identical(adapter$render_ggplot(explicit$state), explicit$svg),
+          identical(axes(explicit$state, list(axes_0 = list(xscale = "linear")))$native_axes$current$x$mode,
+                    "linear"))
+data$probability[[1L]] <- 0
+invalid <- adapter$capture_ggplot(chart(data) + ggplot2::coord_cartesian(xlim = c(.1, .9)), frame)$state
+stopifnot(!"logit" %in% axes(invalid)$native_axes$current$x$options,
+          inherits(try(adapter$render_ggplot(invalid, patch), silent = TRUE), "try-error"))
+
+crossing <- c(-200, -2, -.5, 0, .5, 2, 200)
+signed_chart <- chart(data.frame(probability = crossing, score = seq_along(crossing)))
+signed <- adapter$capture_ggplot(signed_chart, frame)
+signed_base <- axes(signed$state)$native_axes
+stopifnot(identical(signed_base$current$x$options, list("linear", "symlog")))
+symlog <- list(axes_0 = list(xscale = "symlog", xlim = c(-200, 200)))
+symlog$axis.x.bottom.ticks <- list(major_mode = "fixed", major_values = c(-20, 0, 20), format = "%.0f")
+log_canvas <- manifest(signed$state, symlog)
+plot <- element(log_canvas, "axes_0")
+points <- element(log_canvas, "layer.1.line")$geometry$paths[[1L]]$points
+coords <- do.call(rbind, lapply(points, unlist))
+origin <- unlist(plot$bbox)
+# Matplotlib's default preset maps the bounds to +/- (2*10/9 + 4)
+# and is linear to +/- 2. The reference does not read the adapter's transform.
+magnitudes <- c(56/9, 20/9, 5/9, 0, 5/9, 20/9, 56/9)
+expect <- .5 + sign(crossing) * magnitudes / (112/9)
+rendered <- adapter$render_ggplot(signed$state, symlog)
+stopifnot(identical(plot$native_axes$current$x$mode, "symlog"),
+          identical(plot$native_axes$current$x$range, as.list(c(-200, 200))),
+          isTRUE(all.equal((coords[, 1L] - origin[[1L]]) / origin[[3L]], expect)),
+          grepl(">0</text>", rendered, fixed = TRUE), grepl(">20</text>", rendered, fixed = TRUE),
+          identical(adapter$render_ggplot(signed$state), signed$svg),
+          identical(adapter$render_ggplot(signed$state, symlog), rendered))
 """
 
 
@@ -1573,6 +1652,10 @@ def test_ggplot_minor_tick_controls_use_native_positions_and_grid(tmp_path):
 
 def test_ggplot_faceted_point_edits_stay_on_the_selected_native_panel(tmp_path):
     _assert_r_probe(tmp_path, FACET_POINT_PROBE)
+
+
+def test_ggplot_probability_and_symmetric_log_scales_reproject_captured_values(tmp_path):
+    _assert_r_probe(tmp_path, SCALE_MODES_PROBE)
 
 
 def test_ggplot_tick_and_curve_edits_preserve_native_values_and_colours(tmp_path):

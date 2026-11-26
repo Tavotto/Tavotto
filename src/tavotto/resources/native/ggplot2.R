@@ -238,7 +238,8 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
         key <- ggplot_major_axis_key(params$key)
         values <- ggplot_numeric_key(key, target)
         if (is.null(values) && identical(params$aesthetic, substr(gid, 6L, 6L)) &&
-            identical(panel[[params$aesthetic]]$scale$get_transformation()$name, "log-10")) {
+            isTRUE(panel[[params$aesthetic]]$scale$get_transformation()$name %in%
+                   setdiff(names(ggplot_axis_modes), "identity"))) {
           values <- ggplot_numeric_key(key, target, ggplot_axis_key_values(panel, params))
         }
         if (!is.null(values)) {
@@ -364,6 +365,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
       # Crop ticks to the visible view without expanding or retraining the axis.
       # Compare in scale coordinates so the guide and grid share the same marks.
       if (identical(transform$name, "log-10")) fixed <- fixed[fixed > 0]
+      if (identical(transform$name, "prob-logis")) fixed <- fixed[fixed > 0 & fixed < 1]
       values <- sort(unique(fixed))
       breaks <- transform$transform(values)
       visible <- breaks >= transformed_range[[1L]] & breaks <= transformed_range[[2L]]

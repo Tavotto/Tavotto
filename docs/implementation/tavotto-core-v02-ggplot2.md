@@ -32,6 +32,8 @@ R 运行时须安装 ggplot2、svglite 和 jsonlite，并能打开 Cairo PDF 图
 
 在普通单面板图中选中子图，可在与 Matplotlib 相同的属性栏设置 X／Y 最小值和最大值，并在线性轴和以 10 为底的对数轴之间切换。端点始终按原数据单位从小到大输入。X／Y 轴可各自反转，并与范围、对数轴和固定刻度搭配。脚本用 `coord_cartesian(reverse = ...)` 设置的方向也可切换。对于支持的 `geom_raster()` 图，反转会同时调整色块次序和整张栅格在绘图区的位置，保持颜色与数据坐标对应。改范围只裁剪显示窗口。切换轴类型会重新投影已计算的位置与区间，并重建刻度，保留本次 R 运行得到的统计和分组结果。对数切换要求该轴上参与绘制的位置为正数，包括误差棒的端点和柱形的基线。原脚本中的范围过滤、次轴和自定义位置尺度沿用其原始设置。 [ggplot2 显示范围](https://ggplot2.tidyverse.org/reference/coord_cartesian.html) · [ggplot2 连续位置尺度](https://ggplot2.tidyverse.org/reference/scale_continuous.html)
 
+同一属性栏也提供对称对数与对数几率。对称对数采用 Matplotlib 的默认尺度，在零附近使用线性刻度，可显示正数、零和负数。对数几率使用 R 的原生概率变换，要求图层位置和手动输入的范围端点都严格在 0 与 1 之间。两种尺度都保留 R 已算出的图层位置，可叠加轴反转和固定主刻度。 [Matplotlib 尺度定义](https://matplotlib.org/stable/api/scale_api.html) · [R 概率尺度](https://scales.r-lib.org/reference/transform_probability.html)
+
 使用原生矩形面板边框或普通轴线的图，可逐边开关边框，并给全部边或某一条边单独设置颜色和线宽。逐边样式优先于整框样式。保存和导出使用当前边框，清除编辑后恢复原主题。
 
 在普通单面板直角坐标图中，可用共用属性栏按 X／Y 开关主网格，并修改主、次网格的颜色、透明度、线宽和线型。网格沿用原生刻度位置，类别轴也可用。改变样式只修改网格中可绘制的线，移除编辑后恢复脚本主题。 [ggplot2 主题](https://ggplot2.tidyverse.org/reference/theme.html)
