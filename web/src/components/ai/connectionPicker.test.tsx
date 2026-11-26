@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { agentCaps, capsOf, claudeCaps, connectCapsOf, connection } from '@/components/settings/testCaps'
+import { agentCaps, capsOf, claudeCaps, connectCapsOf, connection, vendor } from '@/components/settings/testCaps'
 import { useAiStore } from '@/store/aiStore'
 import { useConnectAiStore } from '@/store/connectAiStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -181,6 +181,48 @@ describe('没有任何可用 AI 的空态', () => {
     await act(async () => btn.click())
     expect(useConnectAiStore.getState().open).toBe(true)
     expect(useUiStore.getState().settingsOpen).toBe(false)
+  })
+
+  // 老用户升级（ADR 0209 §六，维护者 2026-11-26 选 a）：装着 Codex、ChatGPT 登录默认开、还没登录 → 同一句话，按钮直接是 Continue with ChatGPT
+  const siwcOpenai = () =>
+    vendor('openai', {
+      label: 'ChatGPT',
+      region: 'global',
+      connect: 'siwc',
+      methods: [{ id: 'openai:siwc', kind: 'siwc', label_key: 'method.chatgptPlan', connection_id: 'siwc:chatgpt', available: true }],
+    })
+
+  it('老用户升级：装着 Codex、还没用 ChatGPT 登录 → 提示条同一句话，按钮直接是 Continue with ChatGPT，点了发起 ChatGPT 登录', async () => {
+    const posts: string[] = []
+    const prev = globalThis.fetch
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if ((init?.method ?? 'GET').toUpperCase() === 'POST') posts.push(String(url))
+      return new Response('{}', { status: 200 })
+    }) as typeof fetch
+    try {
+      useAiStore.setState({ caps: connectCapsOf([], { agents: [agentCaps({ installed: true })], vendors: [siwcOpenai()] }) })
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panelOf()] } }) as never)
+      await mount(<AssistantPanel />)
+      const notice = host.querySelector('[data-ai-siwc-upgrade]')!
+      expect(notice).toBeTruthy()
+      expect(notice.textContent).toContain(ai('panel.noAi'))
+      const btn = notice.querySelector<HTMLButtonElement>('[data-connect-action="siwc"]')!
+      expect(btn.textContent).toBe('Continue with ChatGPT')
+      expect([...notice.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(ai('panel.connectAi'))
+      await act(async () => btn.click())
+      expect(posts.some((u) => u.startsWith('/api/ai/siwc/login'))).toBe(true)
+      expect(useConnectAiStore.getState().open).toBe(false)
+    } finally {
+      globalThis.fetch = prev
+    }
+  })
+
+  it('没装 Codex（新用户）：提示条照旧是「连接 AI」', async () => {
+    useAiStore.setState({ caps: connectCapsOf([], { agents: [agentCaps({ installed: false })], vendors: [siwcOpenai()] }) })
+    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panelOf()] } }) as never)
+    await mount(<AssistantPanel />)
+    expect(host.querySelector('[data-ai-siwc-upgrade]')).toBeNull()
+    expect(host.querySelector('[data-ai-no-agent] button')!.textContent).toBe(ai('panel.connectAi'))
   })
 
   it('降级：老后端没有连接视图 → 仍是「打开改图助手设置」去设置页', async () => {

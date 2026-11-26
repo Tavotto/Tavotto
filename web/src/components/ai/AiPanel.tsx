@@ -35,7 +35,8 @@ import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { ApiError } from '@/lib/api'
+import { ApiError, type AiVendor } from '@/lib/api'
+import { useSiwcLogin } from '@/components/settings/connectAi/useSiwcLogin'
 import { refreshProjectNow } from '@/store/liveSync'
 import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { deferWhileWindowHeld } from '@/store/documentRestore'
@@ -478,6 +479,8 @@ function AssistantPanelBody() {
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
   const noAgent = caps !== null && !hasUsableAi(caps)
+  // 老用户升级（维护者 2026-11-26 选 a）：本机装了 Codex、ChatGPT 登录默认开、还没用它登录 → 这一行的按钮直接是「Continue with ChatGPT」
+  const siwcUpgradeVendor = noAgent ? siwcUpgradeVendorOf(caps) : undefined
   // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
   // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
   const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && !planBusy && ledgerState === 'ok'
@@ -993,7 +996,8 @@ function AssistantPanelBody() {
               {ai('panel.ledgerUnreadable')}
             </Notice>
           )}
-          {noAgent && (
+          {noAgent && siwcUpgradeVendor && <SiwcUpgradeNotice vendor={siwcUpgradeVendor} />}
+          {noAgent && !siwcUpgradeVendor && (
             // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步
             <Notice
               tone="neutral"
@@ -1529,5 +1533,28 @@ function Breadcrumb({
         </span>
       ))}
     </p>
+  )
+}
+
+
+/**
+ * 「还没有连接 AI」这一行在老用户升级时的样子（ADR 0209 §六，维护者 2026-11-26 选 a）：本机装着 Codex（原来多半靠它的
+ * ChatGPT 登录）、ChatGPT 登录默认开（Codex 登录随之不再列出）、还没用 ChatGPT 登录过 → 同一句话，按钮直接是
+ * 「Continue with ChatGPT」，登录的等待提示 / 失败选择题（含「改用 Codex 登录」）就在这一行里，与「连接 AI」里同一个 `useSiwcLogin`。
+ * 不加说明文字。
+ */
+function siwcUpgradeVendorOf(caps: ReturnType<typeof useAiStore.getState>['caps']): AiVendor | undefined {
+  if (!caps || !hasConnectionView(caps)) return undefined
+  if (!caps.agents.find((a) => a.id === 'codex')?.installed) return undefined
+  return (caps.vendors ?? []).find((v) => (v.methods ?? []).some((m) => m.kind === 'siwc' && m.available !== false))
+}
+
+function SiwcUpgradeNotice({ vendor }: { vendor: AiVendor }) {
+  const method = (vendor.methods ?? []).find((m) => m.kind === 'siwc')!
+  const flow = useSiwcLogin(vendor, method, () => undefined)
+  return (
+    <Notice tone="neutral" data-ai-no-agent data-ai-siwc-upgrade className="mb-2" title={ai('panel.noAi')} action={flow.button}>
+      {flow.hint ? <div className="pt-1.5">{flow.hint}</div> : undefined}
+    </Notice>
   )
 }
