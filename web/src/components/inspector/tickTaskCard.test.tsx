@@ -256,9 +256,34 @@ describe('刻度宿主映射', () => {
   })
 
   it('刻度元素 gid → 轴与宿主子图', () => {
-    expect(tickHostOf('axes_0.xticks')).toEqual({ axesGid: 'axes_0', axis: 'x' })
-    expect(tickHostOf('axes_1.zticks')).toEqual({ axesGid: 'axes_1', axis: 'z' })
-    expect(tickHostOf('axes_0.title')).toBeNull()
+    expect(tickHostOf(xTicksEl)).toEqual({ axesGid: 'axes_0', axis: 'x' })
+    expect(tickHostOf({ gid: 'axes_1.zticks', role: 'ticks' })).toEqual({ axesGid: 'axes_1', axis: 'z' })
+    expect(tickHostOf({ gid: 'axes_0.title', role: 'title' })).toBeNull()
+  })
+
+  it('原生刻度组使用共用的小刻度控件，编辑写到选中的轴侧', async () => {
+    const left: ManifestElement = {
+      ...yTicksEl,
+      gid: 'axis.y.left.ticks',
+      tick_host: { axes_gid: 'axes_0', axis: 'y' },
+      editable: [
+        f('fontsize', 'number', 8.5, { unit: 'pt' }),
+        f('minor_visible', 'bool', false),
+        f('minor_mode', 'enum', 'auto', { options: ['auto', 'step'] }),
+      ],
+    }
+    const right = { ...left, gid: 'axis.y.right.ticks' }
+    manifest = { ...manifest, elements: [axesEl, left, right] }
+    expect(tickElementOf(manifest, 'axes_0', 'y')).toBeUndefined()
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), { manifest })
+    engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
+    await mount(right.gid)
+    await openFold('minor')
+    const control = byAria('Y 轴的次刻度')!
+    expect(control.getAttribute('aria-checked')).toBe('false')
+    await act(async () => control.click())
+    const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === 'p1')
+    expect(panel).toMatchObject({ overrides: [{ gid: right.gid, prop: 'minor_visible', value: true }] })
   })
 })
 

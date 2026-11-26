@@ -327,11 +327,12 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
   // （同一属性不出两套控件）。刻度组页上被卡承接的是方向 / 次刻度 / 长宽——
   // 主刻度模式、间距、格式、次刻度定位仍留在通用列表与「更多」里，
   // 逐字段「恢复到脚本」一条都没少（卡里的每一行自己带 ResetChip）。
-  // 刻度组页只有在卡**真的接管了这个元素**时才让出字段。X / Y / Z 三条轴
-  // 同一套页（`TickPage`），Z 由 `has()` 自然少掉 3D 没有的字段；gid 不成
-  // `<axes>.<xyz>ticks` 形状的刻度元素（引擎将来的新形态）退回通用列表
-  // ——字段必须留在界面上，能力凭空消失是最坏的那种（#142 评审 P1）
-  const tickCardCoversSelf = element?.role === 'ticks' && !!tickHostOf(element.gid)
+  // 刻度组只有在宿主存在时才由专用卡接管。其余元素仍可用通用字段。
+  const tickHost = tickHostOf(element)
+  const sideHost = element?.role === 'axes'
+    ? element
+    : tickHost && manifest?.elements.find((entry) => entry.gid === tickHost.axesGid)
+  const tickCardCoversSelf = !!tickHost && !!sideHost
   // 图例卡只在图例**有项**时出现；没有项的图例（脚本只放了标题）字号照旧
   // 留在通用列表里——能力凭空消失是最坏的那种冗余的反面
   const legendCardCoversSelf =
@@ -378,19 +379,6 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           },
         )
       : null
-
-  // 四边状态图的宿主：axes 是自己；ticks 挂在宿主子图上（字段在那边）
-  const sideHost =
-    manifest && element
-      ? element.role === 'axes'
-        ? element
-        : element.role === 'ticks'
-          ? (() => {
-              const m = element.gid.match(/^(.*)\.[xyz]ticks$/)
-              return m ? manifest.elements.find((e) => e.gid === m[1]) : undefined
-            })()
-          : undefined
-      : undefined
 
   if (render?.error?.key === 'artifact.backgroundVisibilityRequired')
     return <BackgroundChoice key={`${panel.id} ${renderKeyOf(panel)}`} panel={panel} />
@@ -472,13 +460,14 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
                 ——否则这个元素在界面上就只剩一句「点一下开始编辑」 */}
             {element && <UnsupportedProps elements={[element]} />}
           </>
-        ) : tickCardCoversSelf && sideHost && element ? (
+        ) : tickHost && sideHost && element ? (
           /* 刻度组页：「刻度 / 文字」两段（审计 T13），X / Y / Z 同一套 */
           <TickPage
             panel={panel}
             manifest={manifest}
             host={sideHost}
             element={element}
+            axis={tickHost.axis}
             warnings={render?.warnings ?? []}
             buckets={buckets}
           />
@@ -1277,7 +1266,7 @@ function TickControl({
   const xAdapter = useTickAxisAdapter(panel, xEl, 'x')
   const yAdapter = useTickAxisAdapter(panel, yEl, 'y')
 
-  const selfAxis = element.role === 'ticks' ? (tickHostOf(element.gid)?.axis ?? null) : null
+  const selfAxis = tickHostOf(element)?.axis
   const all = [xAdapter, yAdapter].filter((a): a is NonNullable<typeof a> => !!a)
   /**
    * 刻度组页只给**它自己那个轴**。
@@ -1489,6 +1478,7 @@ function TickPage({
   manifest,
   host,
   element,
+  axis,
   warnings,
   buckets,
 }: {
@@ -1498,16 +1488,12 @@ function TickPage({
   host: ManifestElement
   /** 选中的刻度组 */
   element: ManifestElement
+  axis: TickAxis
   warnings: string[]
   buckets: { primary: PresentedField[]; more: PresentedField[]; folds: PresentedFold[] }
 }) {
   useTranslation('inspector')
-  const selfAxis: TickAxis = tickHostOf(element.gid)?.axis ?? 'x'
-  // hook 数量固定：三个轴各调一次，元素不在时 adapter 回 null
-  const xAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'x'), 'x')
-  const yAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'y'), 'y')
-  const zAdapter = useTickAxisAdapter(panel, tickElementOf(manifest, host.gid, 'z'), 'z')
-  const self = selfAxis === 'x' ? xAdapter : selfAxis === 'y' ? yAdapter : zAdapter
+  const self = useTickAxisAdapter(panel, element, axis)
 
   const model = readAxesTickModel(manifest, panel.overrides, host.gid)
   const applyPlan = (plan: SidePlan) => applyTickSidePlan(panel.id, plan)
@@ -1569,15 +1555,16 @@ function TickPage({
     () => locateFold && setFoldOpen(`ticks:${locateFold.spec.id}`, true),
   )
   const minorFields = foldFields('minor')
+  const hasMajorMarks = self && ['direction', 'length', 'width'].some(self.has)
   // 小刻度：开关 + 长 / 宽在卡里（`TickMinorBlock`），方式 / 间距 / 格式是认领来的字段。
   // 引擎一条次刻度能力都没发（Z 轴）时整行不出现——计数为 0 的节不显示
   const hasMinor = (!!self && self.has('minor_visible')) || minorFields.length > 0
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5" data-tick-section="marks">
-        <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
-        {self && (
+      {hasMajorMarks && (
+        <div className="flex flex-col gap-1.5" data-tick-section="marks">
+          <GroupHead>{translate('tick.sectionMarks', { ns: 'inspector' })}</GroupHead>
           <TickTaskCard
             axes={[self]}
             labelWidth={LABEL_W}
@@ -1585,8 +1572,8 @@ function TickPage({
             applyPlan={applyPlan}
             hideMinor
           />
-        )}
-      </div>
+        </div>
+      )}
       {labels.length > 0 && (
         <div className="flex flex-col gap-1.5" data-tick-section="labels">
           <GroupHead>{translate('tick.sectionLabels', { ns: 'inspector' })}</GroupHead>

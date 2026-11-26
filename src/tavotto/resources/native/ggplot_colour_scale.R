@@ -353,7 +353,7 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
         tick_gid <- descriptor$ticks
         guide_ticks <- c(guide_ticks, tick_gid)
         labels <- list(tick_labels = as.list(params$key$.label))
-        ticks[[tick_gid]] <- ggplot_numeric_key(params, labels, ggplot_colourbar_key_values(params))
+        ticks[[tick_gid]] <- ggplot_numeric_key(params$key, labels, ggplot_colourbar_key_values(params))
       }
       if (identical(key, target$index)) {
         colours <- params$decor$colour

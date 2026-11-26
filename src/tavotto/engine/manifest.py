@@ -6486,6 +6486,9 @@ def _measure_manifest(
                 _drop(el, "no_geometry")
                 continue
         elif el["role"] == "ticks":
+            host = gid_by_artist_id.get(id(artist.ax))
+            if host:
+                entry["tick_host"] = {"axes_gid": host, "axis": artist.which}
             boxes = []
             for t in artist.labels:
                 try:

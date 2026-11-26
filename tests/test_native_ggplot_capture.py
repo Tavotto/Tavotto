@@ -1398,6 +1398,85 @@ stopifnot(identical(adapter$render_ggplot(captured$state), captured$svg),
 """
 
 
+MINOR_TICK_PROBE = r"""
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
+frame <- c(320, 200)
+calls <- 0L
+observed <- function(data) { calls <<- calls + 1L; data }
+data <- data.frame(x = 1:10, y = 1:10)
+base <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::geom_point(data = observed) +
+  ggplot2::theme(axis.ticks.x.bottom = ggplot2::element_line(colour = "#228833"),
+                 axis.minor.ticks.x.bottom = ggplot2::element_line(colour = "#3366AA"),
+                 panel.grid.minor.x = ggplot2::element_line(colour = "#CC2266"))
+gid <- "axis.x.bottom.ticks"
+fields <- function(state, edits = list()) {
+  elements <- adapter$ggplot_manifest(state, "points", edits)$elements
+  fields <- Filter(function(element) element$gid == gid, elements)[[1L]]$editable
+  stats::setNames(fields, vapply(fields, function(field) field$prop, character(1L)))
+}
+axis_ink <- function(svg, colour) grepl(paste0("stroke: ", colour), svg, fixed = TRUE)
+positions <- function(state, patch) adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  table <- adapter$ggplot_table_for(state, patch)$table
+  panel <- table$grobs[[which(table$layout$name == "panel")]]
+  grill <- panel$children[[grep("^grill", names(panel$children))]]
+  grid <- grill$children[[grep("^panel.grid.minor.x", names(grill$children))]]
+  axis <- table$grobs[[which(table$layout$name == "axis-b")]]$children[["axis"]]
+  strokes <- Filter(function(grob) inherits(grob, "polyline"), axis$grobs[[1L]]$children)
+  coords <- lapply(strokes, function(stroke) unique(as.numeric(stroke$x)))
+  labels <- axis$grobs[[2L]]$children[[1L]]$label
+  list(grid = unique(as.numeric(grid$x)), ticks = unname(coords), labels = labels)
+})$value
+
+capture <- adapter$capture_ggplot(base, frame)
+state <- capture$state
+original <- fields(state)
+stopifnot(!original$minor_visible$value, !axis_ink(capture$svg, "#3366AA"))
+patch <- list(axes_0 = list(xlim = c(1, 10), invert_x = TRUE))
+patch[[gid]] <- list(minor_visible = TRUE, minor_mode = "step", minor_step = .75,
+                     major_mode = "fixed", major_values = c(1, 3, 6, 9, 10), format = "%.1f")
+actual <- positions(state, patch)
+major <- c(1, 3, 6, 9, 10)
+minor <- setdiff(seq(1.5, 9.75, by = .75), major)
+reversed <- function(values) 1 - (values - 1) / 9
+stopifnot(length(actual$ticks) == 2L,
+          isTRUE(all.equal(actual$ticks[[1L]], reversed(major))),
+          isTRUE(all.equal(actual$ticks[[2L]], reversed(minor))),
+          isTRUE(all.equal(actual$grid, reversed(minor))),
+          identical(actual$labels, sprintf("%.1f", major)))
+edited <- fields(state, patch)
+painted <- adapter$render_ggplot(state, patch)
+stopifnot(edited$minor_visible$value, !edited$minor_visible$value_original,
+          identical(edited$minor_step$value, .75),
+          axis_ink(painted, "#3366AA"), axis_ink(painted, "#CC2266"),
+          identical(adapter$render_ggplot(state), capture$svg),
+          identical(adapter$render_ggplot(state, patch), painted), calls == 1L)
+bad <- patch
+bad[[gid]]$minor_step <- .001
+error <- try(adapter$render_ggplot(state, bad), silent = TRUE)
+stopifnot(inherits(error, "try-error"), grepl("minor tick interval", as.character(error), fixed = TRUE))
+
+native <- ggplot2::guides(x = ggplot2::guide_axis(minor.ticks = TRUE))
+authored <- adapter$capture_ggplot(base + native, frame)
+off <- stats::setNames(list(list(minor_visible = FALSE, format = "%.2f")), gid)
+without <- adapter$render_ggplot(authored$state, off)
+stopifnot(fields(authored$state)$minor_visible$value,
+          axis_ink(authored$svg, "#3366AA"), !axis_ink(without, "#3366AA"),
+          axis_ink(without, "#CC2266"), grepl(">2.50</text>", without, fixed = TRUE),
+          identical(adapter$render_ggplot(authored$state), authored$svg))
+
+log_plot <- base + ggplot2::scale_x_log10() +
+  ggplot2::coord_cartesian(xlim = c(1, 10), expand = FALSE, reverse = "x")
+log_state <- adapter$capture_ggplot(log_plot, frame)$state
+native_log <- adapter$capture_ggplot(log_plot + native, frame)
+auto <- stats::setNames(list(list(minor_visible = TRUE)), gid)
+stopifnot(identical(adapter$render_ggplot(log_state, auto), native_log$svg),
+          identical(fields(log_state)$minor_mode$options, list("auto")))
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -1418,6 +1497,10 @@ def _assert_r_probe(tmp_path, program):
 
 def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):
     _assert_r_probe(tmp_path, PROBE)
+
+
+def test_ggplot_minor_tick_controls_use_native_positions_and_grid(tmp_path):
+    _assert_r_probe(tmp_path, MINOR_TICK_PROBE)
 
 
 def test_ggplot_tick_and_curve_edits_preserve_native_values_and_colours(tmp_path):

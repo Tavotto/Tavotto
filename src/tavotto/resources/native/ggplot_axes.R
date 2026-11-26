@@ -233,6 +233,93 @@ ggplot_axes_values <- function(layout, target, changes) {
   }) |> stats::setNames(names(target$axes))
 }
 
+ggplot_minor_tick_defaults <- function(built, params, panel, axis) {
+  view <- panel[[axis]]
+  breaks <- view$get_breaks_minor()
+  breaks <- sort(unique(breaks[is.finite(breaks)]))
+  if (length(breaks) < 2L) return(NULL)
+  guide <- ggplot2::GuideAxis
+  resolved <- guide$setup_params(params)
+  elements <- guide$setup_elements(resolved, guide$elements, built$plot$theme)
+  line <- inherits(elements$minor, "element_line") && inherits(elements$minor_length, "unit") &&
+    any(abs(grid::convertUnit(elements$minor_length, "bigpts", valueOnly = TRUE)) > 0)
+  step <- if (identical(view$scale$get_transformation()$name, "identity")) {
+    stats::median(diff(breaks))
+  }
+  list(visible = isTRUE(params$minor.ticks) && line &&
+         any(params$key$.type == "minor"),
+       theme = if (!line) {
+         base <- guide$setup_elements(resolved, guide$elements, ggplot2::theme_grey())
+         suffix <- paste(axis, params$position, sep = ".")
+         replacements <- list(base$minor, base$minor_length)
+         names(replacements) <- paste(c("axis.minor.ticks", "axis.minor.ticks.length"), suffix, sep = ".")
+         do.call(ggplot2::theme, replacements)
+       },
+       step = if (is_positive_ggplot_number(step)) step)
+}
+
+ggplot_minor_tick_fields <- function(defaults, edit) {
+  if (is.null(defaults)) return(list())
+  options <- c("auto", if (!is.null(defaults$step)) "step")
+  fields <- list(
+    list(prop = "minor_visible", type = "bool", value = edit$minor_visible %||% defaults$visible),
+    list(prop = "minor_mode", type = "enum", value = edit$minor_mode %||% "auto",
+         options = as.list(options), strict_options = TRUE)
+  )
+  if (!is.null(edit$minor_visible)) fields[[1L]]$value_original <- defaults$visible
+  if (!is.null(edit$minor_mode)) fields[[2L]]$value_original <- "auto"
+  if (!is.null(defaults$step)) {
+    step <- list(prop = "minor_step", type = "number", min = 0, step = defaults$step / 10,
+                 value = edit$minor_step %||% defaults$step)
+    if (!is.null(edit$minor_step)) step$value_original <- defaults$step
+    fields[[3L]] <- step
+  }
+  fields
+}
+
+ggplot_edit_minor_ticks <- function(panel, params, spacing, edit, coord) {
+  defaults <- spacing$minor
+  if (length(edit) && is.null(defaults)) stop("The requested native R minor ticks are unavailable.")
+  if (!is.null(edit$minor_visible) && (!is.logical(edit$minor_visible) ||
+      length(edit$minor_visible) != 1L || is.na(edit$minor_visible))) {
+    stop("Invalid native R minor tick visibility.")
+  }
+  visible <- edit$minor_visible %||% isTRUE(params$minor.ticks)
+  mode <- edit$minor_mode %||% "auto"
+  step <- edit$minor_step %||% defaults$step
+  allowed <- c("auto", if (!is.null(defaults$step)) "step")
+  if (!is.character(mode) || length(mode) != 1L || !mode %in% allowed ||
+      (!is.null(edit$minor_step) && !is_positive_ggplot_number(step))) {
+    stop("Invalid native R minor tick spacing.")
+  }
+  axis <- spacing$axis
+  view <- panel[[axis]]
+  major <- ggplot_major_axis_key(params$key)
+  if (mode == "step") {
+    trans <- view$scale$get_transformation()
+    limits <- sort(trans$inverse(view$continuous_range))
+    breaks <- trans$transform(ggplot_uniform_breaks(limits, step, "minor"))
+    panel[[axis]] <- view <- ggplot_clone(view, minor_breaks = breaks)
+  }
+  params$minor.ticks <- visible
+  params$key <- major
+  if (visible) {
+    if (isTRUE(edit$minor_visible) && !is.null(defaults$theme)) {
+      params$theme <- if (is.null(params$theme)) defaults$theme else params$theme + defaults$theme
+    }
+    minor <- view$get_breaks_minor()
+    minor <- setdiff(minor[is.finite(minor)], major$.value)
+    if (length(minor)) {
+      key <- data.frame(.value = minor, .label = NA_character_, .type = "minor")
+      key[[axis]] <- minor
+      current <- list(key = key, position = params$position, aesthetic = axis)
+      major$.type <- rep("major", nrow(major))
+      params$key <- rbind(major, ggplot2::GuideAxis$transform(current, coord, panel)$key)
+    }
+  }
+  list(panel = panel, params = params)
+}
+
 ggplot_grid_keys <- c("grid_x", "grid_y", "grid_color", "grid_linestyle", "grid_linewidth", "grid_alpha")
 ggplot_grid_cells <- c(grid_x = "panel.grid.major.x", grid_y = "panel.grid.major.y",
                        minor_x = "panel.grid.minor.x", minor_y = "panel.grid.minor.y")

@@ -53,7 +53,9 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy)) +
                  shape = "Drive type") +
   ggplot2::theme_minimal() +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#112233"),
-                 panel.grid.minor.y = ggplot2::element_blank())
+                 panel.grid.minor.y = ggplot2::element_blank(),
+                 axis.minor.ticks.y.left = ggplot2::element_line(colour = "#9B371F"),
+                 axis.minor.ticks.length.y.left = grid::unit(3, "bigpts"))
 """
 LAYOUT = "/api/layouts/Mixed%20native"
 MPL_EDIT = "Reviewed signal"
@@ -73,6 +75,8 @@ R_TICK_FORMATS = {
     "axis.x.bottom.ticks": "%.2f",
     "legend.left.1.colourbar.ticks": "%.1f",
 }
+R_MINOR_TICKS = {"minor_visible": True, "minor_mode": "step", "minor_step": 2}
+R_MINOR_TICK_GID = "axis.y.left.ticks"
 R_COLOR_SCALE = {
     "vmin": 10,
     "vmax": 30,
@@ -282,6 +286,11 @@ def _pdf_pixels(path):
         low = tuple(component / 255 for component in bytes.fromhex("0D0887"))
         high = tuple(component / 255 for component in bytes.fromhex("F0F921"))
         drawn = page.get_drawings()
+        minor_color = tuple(n / 255 for n in bytes.fromhex("9B371F"))
+        minor = [p["rect"] for p in drawn if p["color"] == pytest.approx(minor_color, abs=0.003)]
+        assert len(minor) >= 6
+        assert all(rect.x0 > split and rect.height < 0.01 for rect in minor)
+        assert all(rect.width == pytest.approx(3 * R_PANEL_SCALE, abs=0.02) for rect in minor)
         grid_color = tuple(n / 255 for n in bytes.fromhex(AXIS_GRID["grid_color"][1:]))
         grid = [p for p in drawn if p["color"] == pytest.approx(grid_color, abs=0.003)]
         assert any(p["rect"].x0 < split for p in grid)
@@ -734,6 +743,10 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         r_axes, r_view_patches = _series_patches(r_baseline, "axes", R_AXIS_VIEW)
         assert r_axes["identity"].startswith("r10:")
         before_view = _render(app, r_asset, r_patches)["svg"]
+        mpl_y = next(
+            el for el in mpl_baseline["manifest"]["elements"] if el["gid"] == "axes_0.yticks"
+        )
+        assert mpl_y["tick_host"] == {"axes_gid": "axes_0", "axis": "y"}
         precision = _render(app, r_asset, [*r_patches, *r_view_patches])
         assert precision["svg"] != before_view
         ticks = next(
@@ -756,6 +769,32 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert _render(app, r_asset, moved_patches)["svg"] == moved["svg"]
         r_patches.extend(r_view_patches)
         assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
+        assert "#9B371F" not in precision["svg"]
+        minor_target = r_elements[R_MINOR_TICK_GID]
+        assert minor_target["tick_host"] == mpl_y["tick_host"]
+        minor_patches = [
+            {
+                "gid": minor_target["gid"],
+                "prop": prop,
+                "value": value,
+                "identity": minor_target["identity"],
+            }
+            for prop, value in R_MINOR_TICKS.items()
+        ]
+        with_minor = _render(app, r_asset, [*r_patches, *minor_patches])
+        edited_minor = next(
+            el for el in with_minor["manifest"]["elements"] if el["gid"] == R_MINOR_TICK_GID
+        )
+        assert edited_minor["identity"] == minor_target["identity"]
+        assert {
+            field["prop"]: field["value"]
+            for field in edited_minor["editable"]
+            if field["prop"] in R_MINOR_TICKS
+        } == R_MINOR_TICKS
+        assert "#9B371F" in with_minor["svg"]
+        assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
+        r_patches.extend(minor_patches)
+        assert _render(app, r_asset, r_patches)["svg"] == with_minor["svg"]
         edited_scale = next(
             el for el in precision["manifest"]["elements"] if el["gid"] == R_COLOR_SCALE_GID
         )
@@ -766,7 +805,7 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
             field["prop"]: field["value"] for field in edited_scale["editable"]
         } == R_COLOR_SCALE
         _, mpl_bar_patches = _series_patches(mpl_baseline, "bar_series", BAR_PAINT)
-        r_bars, r_bar_patches = _series_patches(precision, "bar_series", BAR_PAINT)
+        r_bars, r_bar_patches = _series_patches(with_minor, "bar_series", BAR_PAINT)
         mpl_errors, mpl_error_patches = _series_patches(mpl_baseline, "errorbar", ERRORBAR_PAINT)
         edited_mpl = _render(app, mpl_asset, [*mpl_patches, *mpl_bar_patches, *mpl_error_patches])
         edited_mpl_errors = next(
@@ -779,9 +818,9 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
             field["value"] for field in mpl_errors["editable"] if field["prop"] == "cap_thickness"
         ]
         assert mpl_fields["cap_thickness"] == original_cap
-        r_errors, r_error_patches = _series_patches(precision, "errorbar", ERRORBAR_PAINT)
+        r_errors, r_error_patches = _series_patches(with_minor, "errorbar", ERRORBAR_PAINT)
         _, mpl_range_patches = _series_patches(mpl_baseline, "fill", RANGE_PAINT)
-        r_range, r_range_patches = _series_patches(precision, "fill", RANGE_PAINT)
+        r_range, r_range_patches = _series_patches(with_minor, "fill", RANGE_PAINT)
         changed = _render(
             app, r_asset, [*r_patches, *r_bar_patches, *r_error_patches, *r_range_patches]
         )
@@ -807,16 +846,16 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert {field["prop"]: field["value"] for field in edited_range["editable"]} == RANGE_PAINT
         with pytest.raises(HttpError):
             _render(app, r_asset, [{**r_range_patches[0], "identity": "r9:stale"}])
-        assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
+        assert _render(app, r_asset, r_patches)["svg"] == with_minor["svg"]
         r_patches.extend([*r_bar_patches, *r_error_patches, *r_range_patches])
         mpl_patches.extend([*mpl_bar_patches, *mpl_error_patches, *mpl_range_patches])
         assert _render(app, r_asset, r_patches)["svg"] == changed["svg"]
-        for baseline, patches in ((mpl_baseline, mpl_patches), (precision, r_patches)):
+        for baseline, patches in ((mpl_baseline, mpl_patches), (with_minor, r_patches)):
             _, cap_patches = _series_patches(baseline, "errorbar", ERRORBAR_CAPS)
             patches.extend(cap_patches)
         for asset, baseline, patches in (
             (mpl_asset, mpl_baseline, mpl_patches),
-            (r_asset, precision, r_patches),
+            (r_asset, with_minor, r_patches),
         ):
             series, width_patches = _series_patches(baseline, "bar_series", BAR_WIDTH)
             before_width = _rendered_svg_pixels(_render(app, asset, patches))

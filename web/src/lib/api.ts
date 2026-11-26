@@ -3501,6 +3501,8 @@ export interface ManifestElement {
   /** 真正绘制的数值顺序。反向时最小值在竖条上方或横条右端。 */
   colorbar_reversed?: boolean
   host_gid?: string
+  /** 刻度组所属的子图和轴向。与刻度组的稳定 gid 独立。 */
+  tick_host?: { axes_gid: string; axis: 'x' | 'y' | 'z' }
   /**
    * 色条**声明的宿主**（`fig.colorbar(..., ax=[…])` 的 ax 列表，matplotlib 建色条时
    * 记下的，引擎 `colorbarmodel.declared_parents`）。结构归属的证据，与颜色来源

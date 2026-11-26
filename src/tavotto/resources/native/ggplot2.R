@@ -149,8 +149,11 @@ ggplot_colourbar_titles <- function(built) {
 # as input. Only expose it when the rendered labels prove a one-to-one match
 # with plain numerical values. Custom labels, dates and transformed values
 # that differ from the guide's values keep their script formatting.
-ggplot_numeric_key <- function(params, target, values = params$key$.value) {
-  key <- params$key
+ggplot_major_axis_key <- function(key) {
+  if (".type" %in% names(key)) key[key$.type == "major", , drop = FALSE] else key
+}
+
+ggplot_numeric_key <- function(key, target, values = key$.value) {
   if (!is.data.frame(key) || !is.numeric(values) || !is.character(key$.label) ||
       any(!is.finite(values)) || anyNA(key$.label) ||
       !identical(as.list(key$.label), target$tick_labels)) return(NULL)
@@ -190,7 +193,7 @@ ggplot_axis_spacing <- function(built, panel, params, values) {
   axis <- params$aesthetic
   if (!identical(class(built$layout$coord)[[1L]], "CoordCartesian") ||
       length(axis) != 1L || !axis %in% c("x", "y") || !length(values) ||
-      isTRUE(params$minor.ticks) || !identical(as.numeric(params$n.dodge), 1)) return(NULL)
+      !identical(as.numeric(params$n.dodge), 1)) return(NULL)
   view <- panel[[axis]]
   scale <- view$scale
   if (!identical(class(view)[[1L]], "ViewScale") || isTRUE(view$scale_is_discrete) ||
@@ -199,22 +202,25 @@ ggplot_axis_spacing <- function(built, panel, params, values) {
       !inherits(scale$secondary.axis, "waiver") || !inherits(scale$labels, "waiver") ||
       (!is.null(scale$minor_breaks) && !inherits(scale$minor_breaks, "waiver"))) return(NULL)
   cross <- if (axis == "x") "y" else "x"
-  if (!setequal(names(params$key), c(axis, cross, ".label", ".value")) ||
-      length(unique(params$key[[cross]])) != 1L ||
-      !isTRUE(all.equal(params$key[[axis]], ggplot_axis_position(panel, axis, params$key$.value), tolerance = 1e-12))) {
+  key <- ggplot_major_axis_key(params$key)
+  if (!setequal(setdiff(names(key), ".type"), c(axis, cross, ".label", ".value")) ||
+      length(unique(key[[cross]])) != 1L ||
+      !isTRUE(all.equal(key[[axis]], ggplot_axis_position(panel, axis, key$.value), tolerance = 1e-12))) {
     return(NULL)
   }
   if (is.null(ggplot_axis_pair(sort(view$continuous_range)))) return(NULL)
   step <- if (identical(scale$get_transformation()$name, "identity") && length(values) >= 2L) {
     stats::median(diff(sort(values)))
   }
-  list(axis = axis, step = if (is_positive_ggplot_number(step)) step)
+  minor <- ggplot_minor_tick_defaults(built, params, panel, axis)
+  list(axis = axis, step = if (is_positive_ggplot_number(step)) step, minor = minor)
 }
 
 ggplot_axis_key_values <- function(panel, params) {
-  if (!length(params$key$.value)) return(numeric())
+  key <- ggplot_major_axis_key(params$key)
+  if (!length(key$.value)) return(numeric())
   transform <- panel[[params$aesthetic]]$scale$get_transformation()
-  transform$inverse(params$key$.value)
+  transform$inverse(key$.value)
 }
 
 ggplot_tick_targets <- function(built, targets, colourbar_titles) {
@@ -229,10 +235,11 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
       matches <- which(vapply(guides$params, function(p) identical(p$position, position), logical(1L)))
       if (length(matches) == 1L && identical(class(guides$guides[[matches]])[[1L]], "GuideAxis")) {
         params <- guides$params[[matches]]
-        values <- ggplot_numeric_key(params, target)
+        key <- ggplot_major_axis_key(params$key)
+        values <- ggplot_numeric_key(key, target)
         if (is.null(values) && identical(params$aesthetic, substr(gid, 6L, 6L)) &&
             identical(panel[[params$aesthetic]]$scale$get_transformation()$name, "log-10")) {
-          values <- ggplot_numeric_key(params, target, ggplot_axis_key_values(panel, params))
+          values <- ggplot_numeric_key(key, target, ggplot_axis_key_values(panel, params))
         }
         if (!is.null(values)) {
           size <- target$paint$fontsize * ggplot_text_cex(target$paint)
@@ -245,7 +252,7 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
       index <- match(target$legend_title, unname(colourbar_titles))
       key <- names(colourbar_titles)[[index]]
       params <- built$plot$guides$params[[key]]
-      values <- ggplot_numeric_key(params, target, ggplot_colourbar_key_values(params))
+      values <- ggplot_numeric_key(params$key, target, ggplot_colourbar_key_values(params))
       if (!is.null(values)) {
         result[[gid]] <- list(kind = "colourbar", index = key, values = values)
       }
@@ -255,18 +262,23 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
 }
 
 ggplot_number_formats <- c("auto", "%.0f", "%.1f", "%.2f", "%.3f", "%g", "sci")
-ggplot_tick_props <- c("format", "major_mode", "major_step", "major_values")
+ggplot_major_tick_props <- c("major_mode", "major_step", "major_values")
+ggplot_minor_tick_props <- c("minor_visible", "minor_mode", "minor_step")
+ggplot_tick_props <- c("format", ggplot_major_tick_props, ggplot_minor_tick_props)
 
 ggplot_format_guide <- function(params, format, values) {
   if (!is.character(format) || length(format) != 1L || !format %in% ggplot_number_formats) {
     stop("Invalid native R tick number format.")
   }
   if (format != "auto") {
-    params$key$.label <- if (format == "sci") {
+    labels <- if (format == "sci") {
       sprintf("%.2e", values)
     } else {
       sprintf(format, values)
     }
+    if (".type" %in% names(params$key)) {
+      params$key$.label[params$key$.type == "major"] <- labels
+    } else params$key$.label <- labels
   }
   params
 }
@@ -291,7 +303,7 @@ ggplot_clone <- function(parent, ...) {
   ggplot2::ggproto(NULL, parent, ...)
 }
 
-ggplot_uniform_breaks <- function(range, step) {
+ggplot_uniform_breaks <- function(range, step, kind = "major") {
   # Use the same zero-based origin as a standard multiple locator. Limit the
   # generated break count before allocating anything on the rendering path.
   bounds <- range / step
@@ -301,7 +313,7 @@ ggplot_uniform_breaks <- function(range, step) {
   count <- last - first + 1
   if (!is.finite(count) || count < 1 || count > 100 ||
       any(abs(c(first, last)) >= 2^52)) {
-    stop("The native R major tick interval must produce between 1 and 100 visible ticks.")
+    stop(paste0("The native R ", kind, " tick interval must produce between 1 and 100 visible ticks."))
   }
   seq.int(first, last) * step
 }
@@ -327,11 +339,12 @@ ggplot_fixed_tick_values <- function(value) {
   unname(value)
 }
 
-ggplot_edit_axis_guide <- function(panel, params, target, edit, projected = FALSE) {
+ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected = FALSE) {
   values <- if (projected) ggplot_axis_key_values(panel, params) else target$values
   format <- if (is.null(edit$format)) "auto" else edit$format
-  if (any(setdiff(ggplot_tick_props, "format") %in% names(edit))) {
-    spacing <- target$spacing
+  spacing <- target$spacing
+  replaced_breaks <- FALSE
+  if (any(ggplot_major_tick_props %in% names(edit))) {
     if (is.null(spacing)) stop("The requested native R tick spacing is unavailable.")
     mode <- ggplot_major_tick_mode(edit)
     step <- if (is.null(edit$major_step)) spacing$step else edit$major_step
@@ -362,12 +375,20 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, projected = FALS
         view$scale$get_breaks_minor(b = breaks, limits = transformed_range)
       }
       panel[[spacing$axis]] <- ggplot_clone(view, breaks = breaks, minor_breaks = minor)
-      key <- params$key[rep(1L, length(values)), , drop = FALSE]
+      major <- ggplot_major_axis_key(params$key)
+      key <- major[rep(1L, length(values)), , drop = FALSE]
       key[[spacing$axis]] <- ggplot_axis_position(panel, spacing$axis, breaks)
       key$.value <- breaks
       key$.label <- if (length(breaks)) view$scale$get_labels(breaks) else character()
       params$key <- key
+      replaced_breaks <- TRUE
     }
+  }
+  minor <- edit[intersect(names(edit), ggplot_minor_tick_props)]
+  if (length(minor) || (replaced_breaks && isTRUE(params$minor.ticks))) {
+    revised <- ggplot_edit_minor_ticks(panel, params, spacing, minor, coord)
+    panel <- revised$panel
+    params <- revised$params
   }
   list(panel = panel, params = ggplot_format_guide(params, format, values))
 }
@@ -402,11 +423,11 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
     edit <- edits[[gid]]
     if (target$kind == "axis") {
       params <- axis_params[[index]]
-      edited <- ggplot_edit_axis_guide(panels[[1L]], params, target, edit,
+      edited <- ggplot_edit_axis_guide(panels[[1L]], params, target, edit, layout$coord,
                                       projected = params$aesthetic %in% names(axis_changes))
       panels[[1L]] <- edited$panel
       axis_params[[index]] <- edited$params
-      if (is.data.frame(edited$params$key) && !nrow(edited$params$key)) {
+      if (is.data.frame(edited$params$key) && !nrow(ggplot_major_axis_key(edited$params$key))) {
         hidden_ticks <- c(hidden_ticks, gid)
       }
     } else {
@@ -1517,6 +1538,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         fixed_field <- list(prop = "major_values", type = "number_list", value = as.list(values))
         if (!is.null(edit$major_values)) fixed_field$value_original <- as.list(tick$values)
         editable[[length(editable) + 1L]] <- fixed_field
+        editable <- c(editable, ggplot_minor_tick_fields(tick$spacing$minor, edit))
       }
     }
     for (prop in names(face)) {
@@ -1550,6 +1572,12 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     )
     if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
     if (!is.null(target$tick_labels)) element$tick_labels <- target$tick_labels
+    if (identical(tick$kind, "axis") && !is.null(state$axes_target)) {
+      params <- state$built$layout$panel_params[[1L]]$guides$params[[tick$index]]
+      if (length(params$aesthetic) == 1L && params$aesthetic %in% c("x", "y")) {
+        element$tick_host <- list(axes_gid = ggplot_axes_gid, axis = params$aesthetic)
+      }
+    }
     if (target$role == "legend_text") {
       host <- sub("^(legend\\.[^.]+)\\..*$", "\\1", gid)
       if (host %in% legend_gids) element$drag_host <- host
