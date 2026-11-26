@@ -353,6 +353,12 @@ order: 240
   与 `discover.walk_files` 结果逐字比对，打开的是遍历结果里的那一项。响应一律有上界、控制字符换空格（表里的文字不可信）。读不了但能靠指定表头行补救的文本表（`data_ragged` 等）概览照带 `raw_lines` 与猜的行号（`raw_lines` 非空 = 前端可让用户点一行，二进制 / 散文为空），别在概览里提前丢掉 `read_text_table` 给的预览；XLSX 每个工作表的行列数在 `/api/ai/data-files?formats=all` 的 `sheets` 里
   （有预算，超出 `null` = 没读）。`/api/registry` 的 `all_scripts[]` 对 v2 生成的脚本加 `generated_from: {data, sheet}`：解析只有 `ai_data_template.parse_source_comment` 一处（严格：tokenize 真注释、第一条、固定键集合；
   只外传路径与工作表名，不给配方与哈希），开关关着整个不读、响应逐字不变。不写文件、不发遥测。看护 `tests/test_ai_data_overview.py`。
+- **修改方案的脚本修改（ADR 0206 PR 6，`ai_bridge.run(plan_only=True)`）**：对**所有**连接（内置 / Codex / Claude Code）强制走候选工作区、cwd = 候选目录，与 `ai.taf.enabled` 无关；
+  执行器换成 `ai_figure_edit.PlanOnlyExecutor`：过了提交前检查（含有界修正）后**不写用户脚本**，候选字节留在 `cand.extras["plan_bytes"]`，`commit` 只置 `committed`、刷新记 `skipped`，提交后检查整个跳过。
+  收尾 `_plan_guard`（R-03 兜底，外部 CLI 不遵守 cwd 只能事后检出）：目标脚本在运行期间变了 → **一律当冲突、不自动还原**（分不清用户保存与 Agent 直接改）：把此刻字节与起跑快照交给方案端点各备份两处（`scriptbackup.backup_only`），用户点了「恢复到开始前的版本」才经 `POST /api/change-plans/restore-script`（只认 `change_plan_snapshot` 备份、核此刻摘要，之后又变了 409 `change_plan_script_restore_conflict`）还原；
+  别的文件被改只列名（≤ 5 个，其余只报个数）、**不动**；任何越界都不出方案（`change_plan_script_overreach`，params `files / total / target_changed / backup / script / current_sha256`）。
+  方案端点 `POST /api/change-plans {mode:"script", source:"assistant", connection}`：渲染 B0 → 起 Agent（`plan_outcome` 取结局）→ 候选字节先把换行风格归一到原脚本的（`changeplan.match_newlines`），再用**影子脚本**按用户同一路由跑一遍并在那个 worker 上套 B0 出「改后」图（`_convert_runner(snapshot=…)`，同宽度同 run config）→ 数据指纹对基线（变了 = `change_plan_script_data_changed`）→ 候选字节 + diff + 前后图落方案目录、候选目录当场删。
+  写入根绊线（量不了预览）首版直接失败 `change_plan_script_no_preview`。应用 / 撤销见 `script-edits.md`。看护 `tests/test_changeplan_script.py`。
 - **TAF 改图（`engine/ai_figure_edit.py`，Phase 3a）**：只在 `config.ai_settings()["taf"]["enabled"] is True`（默认关、无界面开关）
   时由 `ai_bridge.run` 走到；开关关着时旧路径逐字不变（cwd 是项目目录、不写任务列、`ADAPTERS` 为空）。开着时：spawn 之前在
   `data_dir()/cache/ai_candidates/<sid>/` **字节复制**目标脚本（+ 项目根的 `paper_style.py`，绝不建链接），拍原项目有界指纹（跳过
@@ -497,6 +503,13 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `turn.completed` / `turn.failed` / `error`、最后 item 是 reasoning / agent_message / file_change / 已完成的 command_execution（或刚 `turn.started`），
   且静默 ≥ `LONG_WRITE_IDLE_MS`。只用结构化字段；事件一来静默清零，下一次轮询自然恢复。前端 `convertStore` 轮询时把它写进条目 `activity`，
   进度行只换文字（`convert.writingLong`），不加横条 / 弹窗。
+- **转换的任务清单（2026-11-25，用户拍板）**：`ai_bridge.get()` 对 running 的转换会话另给 `task.stage = {step: read|write|verify, round}`
+  （`_convert_stage`，闭集码 + 整数）：编排器在提交前 / 后的校验阶段（`TaskRun.phase` ∈ verifying / ready_to_commit / committing）= verify；
+  否则候选里的新脚本有内容 = write，没有 = read；`round` = 1 + 已记账的自动修正次数（修正时回到 write、轮次 +1）。内置执行器写到一半自己要的
+  `check` **不改** `TaskRun.phase`，所以仍算 write（用户裁决：它还在写，清单不来回跳）。`TaskRun.phase` 只观察、不参与判定。前端
+  `convertStore` 轮询时写进条目 `stage`，准备卡显示「读懂原脚本 → 写 Python 版本 → 运行校验」（`ui/TaskChecklist`）；「和原图对照」是 ready
+  之后用户自己做的事，不进清单；缺包仍是那张装依赖卡，装好继续时清单停在「运行校验」。看护：`test_ai_convert.py::test_convert_stage_reads_phase_target_and_corrections`、
+  `test_ai_tasks.py::test_run_phase_follows_the_orchestrator_for_progress_ui`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -686,7 +699,12 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **连接**：`siwc:chatgpt`（`ai_providers.SIWC_CONNECTION_ID`）只在开关开且有当前账号时出现；只走 `builtin`，`TAVOTTO_AI_BUILTIN=0` → `ai_agent_not_usable`；`efforts` 恒空；型号读登录时缓存的 `/v1/models`（连接视图不联网）。
   `ai_providers.resolve(builtin, "siwc:chatgpt")` 给**虚拟记录**（无令牌字段）；`builtin_conn` / `spawn_overrides` 对它走专用分支 `siwc_overrides`（`--wire siwc-responses --base-url https://api.openai.com/v1 --auth bearer --model …`，无 effort / fallback；令牌与开关只进环境变量），
   看护用例把父进程 argv 喂给 `siwc_wire.runner_args_ok`。`ai_bridge.run` 在锁外 `_siwc_preflight`（`ai_endpoint_needs_login` / `ai_siwc_plan_disabled` / `ai_siwc_token_unavailable`，去重之后才抛）；runner 报 `auth` → `mark_rejected("http_401")`（不清凭据）。
-  开关开时 OpenAI 一家只有 `openai:siwc`（kind `siwc`）+ API Key，`openai:login`（Codex）与 `sub:codex` 连接行一律不列（老用户也直接切换，用户 2026-11-25；`resolve_connection("sub:codex")` 仍认）。`first_key_connection` / 探测 / `add_connection` / `check_connection` 都碰不到它。看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`（本机假服务器，绝不连真实服务器）。
+  开关开时 OpenAI 一家只有 `openai:siwc`（kind `siwc`）+ API Key，`openai:login`（Codex）与 `sub:codex` 连接行一律不列（老用户也直接切换，用户 2026-11-25；`resolve_connection("sub:codex")` 仍认）。探测 / `add_connection` / `check_connection` 碰不到它。
+- **与 API 体验相同**（用户 2026-11-25「SIWC 与 API 的体验完全相同」，ADR 0209 §七）：`first_key_connection` 在所有 Key / 账号登录记录**之后**给 SIWC（`refresh=False` 不取令牌、`api_key` 为空；`refresh=True` 现取），
+  所以 AI 修复、结构化调用、数据出图、改图方案都能用它。令牌在 `fixsession.build_model`（拿不到 → `RunnerFailure("auth","needs_login")`）/ `ai_structured.call_structured`（→ `no_connection/needs_login`）现取；
+  `_wire_for` 认 `siwc-responses`；包 `post` 的中间层必须把 `reader` 往下传（SSE 读取器，漏了 = `transport/internal`）。小型号策略只给 `auth: key`，不碰它；`ai_pricing.vendor_of` 对它恒 None（订阅额度不按 API 价目估钱）。
+  **思考强度**同 Key 连接：每个型号的档位 = `/v1/models` 的 `supported_reasoning_levels` ∩ `siwc_wire.SIWC_EFFORTS`（登录时缓存进账号记录，`minimal` 真服务拒），默认档 = `default_reasoning_level`；改图经 `siwc_overrides` 发 `--effort`、结构化调用经 `_effort_kwargs`，型号没声明的档一律不发；wire 发 `reasoning.effort` + `include: [reasoning.encrypted_content]`，回放只留带 `encrypted_content` 的 reasoning 条目。`earliest_refresh_at` 只记不拦（真服务提前刷新照样 200）。
+  看护 `tests/test_siwc_login.py`、`tests/test_siwc_connection.py`、`tests/test_siwc_parity.py`（本机假服务器，绝不连真实服务器）。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 

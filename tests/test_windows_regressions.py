@@ -4550,3 +4550,42 @@ def test_environment_diagnostics_recovers_after_windows_reader_closes(tmp_path, 
     finally:
         thread.join(timeout=5)
         envdiag._cache.pop(key, None)
+
+
+# --------------------------------------------------------------------------- 修改方案的脚本修改：换行风格（ADR 0206 PR 6）
+# Windows 上 Agent / CLI 以文本模式写回脚本（`write_text`）会把整份 LF 写成 CRLF（或相反）：方案里的 diff 变成整份、
+# 应用后用户脚本的换行风格被悄悄改掉。候选字节进方案前归一到原脚本的风格；原文混用时不动。POSIX 上同样可跑（用字节构造）。
+@pytest.mark.parametrize(
+    "base, new, want",
+    [
+        (b"a\nb\nc\n", b"a\r\nB\r\nc\r\n", b"a\nB\nc\n"),  # 原文 LF、候选 CRLF → 去成 LF
+        (b"a\r\nb\r\nc\r\n", b"a\nB\nc\n", b"a\r\nB\r\nc\r\n"),  # 原文 CRLF、候选 LF → 补成 CRLF
+        (b"a\r\nb\r\n", b"a\r\nB\r\n", b"a\r\nB\r\n"),  # 已经一致：不重复补 \r
+        (b"a\r\nb\nc\n", b"a\nB\r\nc\n", b"a\nB\r\nc\n"),  # 原文混用：不动
+        (b"no newline", b"x\r\ny\n", b"x\r\ny\n"),  # 原文没有换行：不动
+        (b"a\nb\n", b"a\rb\r\n", b"a\rb\n"),  # 孤立的 CR 原样保留
+    ],
+)
+def test_script_plan_candidate_newlines_follow_the_original_script(base, new, want):
+    from tavotto.engine import changeplan
+
+    assert changeplan.match_newlines(base, new) == want
+
+
+@pytest.mark.parametrize("base_eol, agent_eol", [(b"\n", b"\r\n"), (b"\r\n", b"\n")])
+def test_script_plan_diff_counts_only_real_changes_when_the_agent_rewrites_newlines(
+    base_eol, agent_eol
+):
+    from tavotto.engine import changeplan
+
+    lines = [b"import x", b"ax.set_title('old')", b"ax.plot(1)", b"print(1)"]
+    base = base_eol.join(lines) + base_eol
+    edited = [lines[0], b"ax.set_title('new')", *lines[2:]]
+    agent = agent_eol.join(edited) + agent_eol  # 文本模式写回后的样子：整份换了换行
+    assert changeplan.script_diff("fig.py", base, agent)[1:] != (1, 1), (
+        "不归一时 diff 是整份（这条是对照）"
+    )
+    fixed = changeplan.match_newlines(base, agent)
+    _diff, added, removed = changeplan.script_diff("fig.py", base, fixed)
+    assert (added, removed) == (1, 1)
+    assert fixed.count(base_eol) == len(lines) and (base_eol == b"\r\n" or b"\r" not in fixed)

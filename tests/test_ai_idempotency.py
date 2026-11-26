@@ -196,7 +196,9 @@ def test_malformed_request_id_is_rejected_not_ignored(client, tmp_path, cli, bad
 # ---------------------------------------------------------------------------
 def test_second_request_on_a_busy_script_is_409(client, tmp_path, cli, monkeypatch):
     state, counter = cli
-    state["delay"] = 1.5
+    # 第一个会话一直占着脚本，直到下面放行——不靠固定秒数（11-25 Windows run 45665972308：
+    # 1.5 s 的 sleep 在两次请求之间走完，第二个拿到 200）
+    state["hold"] = True
     _open(client, _project(tmp_path))
     monkeypatch.setattr(m, "sse_publish", lambda *a: None)
     first = _post(client, RID)
@@ -211,7 +213,9 @@ def test_second_request_on_a_busy_script_is_409(client, tmp_path, cli, monkeypat
 
     # 被拒的请求没有留下任何东西：它的 id 查不到，之后空闲了可以正常发
     assert client.get(f"/api/ai/requests/{RID2}").status_code == 404
+    state["release"]()
     _wait_idle()
+    state["hold"] = False
     assert _post(client, RID2).status_code == 200
     _wait_idle()
     assert _spawned(counter) == 2
@@ -848,7 +852,7 @@ def test_detail_of_a_session_running_in_this_process_is_200_and_valid_json(
     client, tmp_path, cli, monkeypatch
 ):
     state, _ = cli
-    state["delay"] = 1.5
+    state["hold"] = True  # 「还在跑」由放行决定，不靠固定秒数（同上一条的 Windows 偶发）
     _open(client, _project(tmp_path))
     monkeypatch.setattr(m, "sse_publish", lambda *a: None)
     sid = _post(client).get_json()["session"]
@@ -862,6 +866,7 @@ def test_detail_of_a_session_running_in_this_process_is_200_and_valid_json(
         and "script_path" not in body
         and "snapshot" not in body
     )
+    state["release"]()
     _wait_idle()
     assert client.get(f"/api/ai/sessions/{sid}").status_code == 200
 

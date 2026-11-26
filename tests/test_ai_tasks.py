@@ -735,6 +735,33 @@ def test_a_correctable_precommit_failure_is_fixed_once_then_committed(corr, db):
     assert a.verify_calls == ["precommit", "precommit", "postcommit"]
 
 
+def test_run_phase_follows_the_orchestrator_for_progress_ui(corr, db):
+    """`TaskRun.phase` 是界面进度（转换的任务清单）读的「此刻在哪个阶段」：执行时 executing、提交前校验时 verifying、
+    修正时 correcting（且修正次数已记账，界面据此说「第 2 轮」）。只观察，不参与判定。"""
+    a = corr([SYNTAX_FAIL, OK])
+    seen: list[tuple[str, str | None, int]] = []
+    verify = a.verify
+
+    def spy_verify(stage, run, candidate):
+        seen.append((f"verify:{stage}", run.phase, run.used["corrections"]))
+        return verify(stage, run, candidate)
+
+    a.verify = spy_verify
+    ex = CorrectingExecutor(
+        on_correct=lambda run: seen.append(("correct", run.phase, run.used["corrections"]))
+    )
+    ex.on_execute = lambda run: seen.append(("execute", run.phase, run.used["corrections"]))
+    res = _run(_corr_env(), ex, db)
+    assert res["outcome"] == "completed"
+    assert seen == [
+        ("execute", "executing", 0),
+        ("verify:precommit", "verifying", 0),
+        ("correct", "correcting", 1),
+        ("verify:precommit", "verifying", 1),
+        ("verify:postcommit", "verifying", 1),
+    ]
+
+
 def test_the_same_failure_after_a_correction_is_not_retried(corr, db):
     corr([SYNTAX_FAIL, SYNTAX_FAIL])
     ex = CorrectingExecutor()

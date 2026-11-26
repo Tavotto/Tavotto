@@ -266,7 +266,7 @@ print(f"[tavotto.spec] PDFium: {[os.path.basename(b[0]) for b in _pdfium_libs]}�
 # 上缺 ISRG Root X1 时私有 Python 下载以 `private_python_tls` 失败，而源码模式一切正常（2026-09-28 实测的
 # 就是这个形状）。整包子模块点名收进（`_windows` / `_macos` / `_openssl` 按平台条件 import）；打包环境里
 # 没装它就在这里失败，不留到用户机器上。
-from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata  # noqa: E402
 
 TRUSTSTORE_MODULES = collect_submodules("truststore")
 if "truststore" not in TRUSTSTORE_MODULES:
@@ -310,6 +310,22 @@ if not {"Cryptodome.Signature.pkcs1_15", "Cryptodome.PublicKey.RSA", "Cryptodome
         "打包环境里没有 pycryptodomex（pip install -r requirements.txt）——冻结产物的 ChatGPT 登录会一律验签失败"
     )
 print(f"[tavotto.spec] Cryptodome 子模块: {len(CRYPTODOME_MODULES)} 个")
+# Agent 改画布矢量对象的几何内核（engine/vecops.py，ADR 0212 第 3 期，维护者 2026-11-25 拍板）：wasmtime 在函数里**延后** import；
+# 它的 Python 包靠 ctypes 按 `Path(__file__).parent / "<平台>-<架构>" / "_libwasmtime.*"` 加载自带的原生库（macOS `.dylib`、
+# Linux `.so`、Windows `_wasmtime.dll`，各约 20 MB），那不是 Python 扩展，静态分析既看不到函数内的 import、也不会收这个库。
+# `collect_dynamic_libs` 按相对包目录的路径把它收进 `wasmtime/<平台>-<架构>/`（与 `_ffi.py` 的相对路径一致）；整包子模块点名收进 hiddenimports。
+# 漏了的表现：冻结产物里内核不可用（`kernel_unavailable`），而源码模式一切正常。打包环境里没装就在这里失败。
+# 内核的字节 vecops.wasm 不用在这里另收：前端构建把它放进 `src/tavotto/web/assets/vecops-*.wasm`，随上面 `PKG / "web"` 那条 datas 进包。
+WASMTIME_MODULES = collect_submodules("wasmtime")
+_wasmtime_libs = collect_dynamic_libs("wasmtime")
+if "wasmtime" not in WASMTIME_MODULES or not _wasmtime_libs:
+    raise SystemExit(
+        "打包环境里没有 wasmtime 或没找到它的原生库（pip install -r requirements.txt）——冻结产物的矢量几何内核会不可用"
+    )
+binaries += _wasmtime_libs
+# 许可证原文（Apache-2.0 WITH LLVM-exception）随原生库一起进安装包：dist-info 里的 `licenses/LICENSE`
+datas += copy_metadata("wasmtime")
+print(f"[tavotto.spec] wasmtime: {len(WASMTIME_MODULES)} 个子模块，原生库 {[os.path.basename(b[0]) for b in _wasmtime_libs]}")
 
 # 「接入 AI 编辑器」（用户 2026-10-27）：`tavotto-cli mcp` 在进程内跑插件那一份 MCP 服务端（engine/mcpserve.py），
 # 宿主配置写这条命令，只装桌面版的用户不必再装 Python。服务端包在 `codex-plugin/mcp/tavotto_mcp/`（不在 src/ 下，
@@ -366,6 +382,8 @@ a = Analysis(
         *NACL_MODULES,
         # ChatGPT 登录的 ID 令牌验签（见上；siwc_login 延后 import）
         *CRYPTODOME_MODULES,
+        # 矢量几何内核（见上；engine/vecops 延后 import）
+        *WASMTIME_MODULES,
         # v2 期刊事实客户端经 MCP 可选 import 动态加载，冻结分析看不到。
         "tavotto.engine.journalfacts_remote", "tavotto.engine.journalfacts_contract",
         # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）

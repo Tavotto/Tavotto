@@ -12773,6 +12773,7 @@ _CHANGE_PLAN_STATUS = {
     "invalid_change_plan": 400,
     "change_plan_no_comments": 400,
     "change_plan_unknown": 404,
+    "change_plan_script_apply_failed": 500,
 }
 #: 方案里两张图的宽度（`RENDER_BUCKETS` 里的一档）
 _CHANGE_PLAN_WIDTH = 1600
@@ -12875,6 +12876,11 @@ def api_change_plans_create():
     selection = engine_changeplan.clean_selection(body)
     if selection is None:
         return _change_plan_error("invalid_change_plan")
+    script_mode = body.get("mode") == "script"
+    if script_mode and (source != "assistant" or "connection" not in selection):
+        # 脚本修改只接助手来源（审阅意见是外来文本，不直接驱动改脚本）；要明确的连接（决定 Agent 走哪条路由）
+        return _change_plan_error("invalid_change_plan")
+    # 连接预检图内方案与脚本方案同一个：连接用不了（没连上 / 不支持）两条都走不通，回同一组稳定码，前端据此直接落回旧路径
     failure = engine_changeplan.connection_failure(selection)
     if failure is not None:
         return _change_plan_error(failure)
@@ -12885,8 +12891,12 @@ def api_change_plans_create():
         return _change_plan_error(exc.code)
     if created:
         threading.Thread(
-            target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), comments, source, None, selection),
+            target=_change_plan_script_thread if script_mode else _change_plan_thread,
+            args=(
+                (ctx, task, rel_id, list(base), comments, selection, body.get("target"))
+                if script_mode
+                else (ctx, task, rel_id, list(base), comments, source, None, selection)
+            ),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12986,6 +12996,360 @@ def _change_plan_thread(
         engine_changeplan.finish(task, code=code, detail=detail)
         if task.cancelled:
             engine_changeplan.forget_task(task)
+
+
+def _change_plan_script_thread(ctx, task, rel_id, base, comments, selection, target) -> None:
+    """脚本修改的后台线程（ADR 0206 PR 6）：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
+    code, detail, params = "", "", {}
+    try:
+        with bound_project(ctx):
+            plan, before_png, after_png, new_bytes = _change_plan_script_compute(
+                ctx, task, rel_id, base, comments, selection, target
+            )
+            engine_changeplan.publish(task, ctx.id, plan, before_png, after_png, new_bytes)
+    except engine_changeplan.PlanFailure as exc:
+        code, detail, params = exc.code, exc.detail, exc.params
+    except BaseException:  # noqa: BLE001 - 线程里不许丢结局
+        code = "change_plan_failed"
+        LOG.exception("修改方案（脚本）任务异常")
+    finally:
+        engine_changeplan.finish(task, code=code, detail=detail, params=params)
+        if task.cancelled:
+            engine_changeplan.forget_task(task)
+
+
+_PLAN_SCRIPT_DEADLINE_S = 25 * 60
+
+
+def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, target):
+    """脚本修改：渲染 B0 → Agent 在候选里改（`plan_only`，不写用户脚本）→ 越界核对 → 候选字节用 B0 渲染出「改后」→ 数据指纹 → 方案。
+    → `(plan, before_png, after_png, 候选字节)`；失败抛 `PlanFailure`，**用户脚本一个字节不动**（越界被还原的除外，如实报告）。"""
+    ec = engine_changeplan
+    try:
+        worker, stem = _engine_worker(rel_id, safe_only=True)
+    except NativeWorkerRefused:
+        raise ec.PlanFailure("change_plan_native_unsupported") from None
+    except NotFound:
+        raise ec.PlanFailure("change_plan_not_editable") from None
+    script = getattr(worker, "script_name", None)
+    if not script:
+        raise ec.PlanFailure("change_plan_not_editable")
+    root = require_project()
+    script_path = root / script
+    instruction = comments[0]["text"] if comments else ""
+    agent, model, endpoint_id, refused = _apply_connection(
+        selection, "codex", selection.get("model"), None
+    )
+    if refused is not None:
+        raise ec.PlanFailure("change_plan_script_unsupported", "connection")
+    try:
+        rev0 = engine_preparation._script_revision(str(root), script) or ""
+        task.phase = "render_before"
+        before_png, _man = _change_plan_snapshot(
+            _engine_attempt(
+                rel_id,
+                worker,
+                stem,
+                lambda w, s: w.preview_png_snapshot(s, base, _CHANGE_PLAN_WIDTH),
+                safe_only=True,
+            )[2]
+        )
+    except (NativeWorkerRefused, _SpecfixRouteChanged):
+        raise ec.PlanFailure("change_plan_native_unsupported") from None
+    except engine_pool.WorkerError:
+        raise ec.PlanFailure("change_plan_render_failed", "before") from None
+    task.phase = "agent"
+    # 图的真实入口：与改脚本路线（`/api/ai/run`）同一套解析（`render()` 入口 / 没有 `main()` 的 `__main__` 脚本不能写死 main）
+    entry = "main"
+    try:
+        if engine_runtimeasset.is_runtime_id(rel_id):
+            info = _resolve_runtime_asset(rel_id)
+        else:
+            info = _disk_panel(safe_resolve(rel_id))[1]
+        entry = str((info or {}).get("entry") or "main")
+    except (NotFound, OSError):
+        pass
+    hooks = _ai_task_hooks(ctx, script, entry)
+    context = {"stem": stem, "gid": target, "scope": "element" if target else "figure"}
+    try:
+        sid = engine_ai.run(
+            agent,
+            script,
+            instruction,
+            str(root),
+            context=context,
+            on_event=None,
+            model=model,
+            effort=selection.get("effort") or None,
+            endpoint_id=endpoint_id,
+            on_changed=None,
+            task_hooks=hooks,
+            plan_only=True,
+        )
+    except engine_ai.AgentError as exc:
+        LOG.warning("脚本修改方案没能起 Agent: %s", exc.code)
+        raise ec.PlanFailure("change_plan_script_agent_failed", exc.code) from None
+    deadline = time.monotonic() + _PLAN_SCRIPT_DEADLINE_S
+    outcome = None
+    cancel_sent = False
+    while outcome is None:
+        outcome = engine_ai.plan_outcome(sid, str(root))
+        if outcome is not None:
+            break
+        if (task.cancelled or time.monotonic() > deadline) and not cancel_sent:
+            engine_ai.cancel(sid, str(root))
+            cancel_sent = True
+        if time.monotonic() > deadline + 120:
+            raise ec.PlanFailure("change_plan_script_agent_failed", "timeout")
+        time.sleep(0.4)
+    over = outcome["overreach"] or {}
+    if over.get("touched"):
+        params: dict = {
+            "files": list(over.get("files") or [])[:5],
+            "total": int(over.get("total") or 0),
+            "target_changed": bool(over.get("target_changed")),
+        }
+        if over.get("target_changed"):
+            # 目标脚本在运行期间变了（分不清是用户保存还是 Agent 直接改）：**不自动还原**；此刻的字节与起跑快照各备份两处，
+            # 用户点了「恢复到开始前的版本」才按快照还原（`restore-script`，核此刻摘要）
+            try:
+                store = _script_store(ctx)
+                current = over.get("current_bytes")
+                snap_rec = engine_scriptbackup.backup_only(
+                    store, script, over["snapshot_bytes"], kind="change_plan_snapshot"
+                )
+                if isinstance(current, bytes):
+                    engine_scriptbackup.backup_only(
+                        store, script, current, kind="change_plan_conflict"
+                    )
+                    params["current_sha256"] = engine_scriptbackup.sha256(current)
+                params["backup"] = snap_rec["id"]
+                params["script"] = script
+            except engine_scriptbackup.ScriptEditError as exc:
+                LOG.warning("脚本方案冲突备份失败: %s", exc.code)
+                params["backup_failed"] = True
+        raise ec.PlanFailure("change_plan_script_overreach", "overreach", params)
+    if task.cancelled:
+        raise ec.PlanFailure("change_plan_script_agent_failed", "cancelled")
+    # 换行风格归一到原脚本的（Windows 上文本模式写回会把整份换成 CRLF / LF）：diff、渲染、应用写入的都是归一后的字节
+    new_bytes = outcome["new_bytes"]
+    if new_bytes:
+        new_bytes = ec.match_newlines(outcome["base_bytes"], new_bytes)
+    if outcome["status"] != "done" or outcome["outcome"] not in ("completed", "partial"):
+        precheck = outcome.get("error") == "precommit_not_verified"
+        raise ec.PlanFailure(
+            "change_plan_script_check_failed" if precheck else "change_plan_script_agent_failed",
+            str(outcome.get("error") or ""),
+        )
+    if not new_bytes or new_bytes == outcome["base_bytes"]:
+        raise ec.PlanFailure("change_plan_script_no_change")
+    if len(new_bytes) > ec.SCRIPT_MAX_BYTES:
+        raise ec.PlanFailure("change_plan_too_large")
+    task.phase = "render_after"
+    after_png = _change_plan_script_render(
+        ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry
+    )
+    try:
+        if (engine_preparation._script_revision(str(root), script) or "") != rev0:
+            raise ec.PlanFailure("change_plan_figure_changed")
+    except OSError:
+        raise ec.PlanFailure("change_plan_figure_changed") from None
+    plan = ec.build_script_plan(
+        plan_id=task.id,
+        target=rel_id,
+        base_fingerprint=ec.fingerprint(rev0, base),
+        comments=comments,
+        script_rel=script,
+        base_bytes=outcome["base_bytes"],
+        new_bytes=new_bytes,
+        base_patches=base,
+    )
+    return plan, before_png, after_png, new_bytes
+
+
+def _change_plan_script_render(
+    ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry="main"
+):
+    """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图；数据指纹不变才放行。→ 改后 PNG。"""
+    ec = engine_changeplan
+    cand = None
+    try:
+        cand = engine_ai_figure_edit.create_candidate("plan-" + task.id, script_path, root, script)
+        cand.new_bytes = new_bytes
+        runner = _convert_runner(
+            ctx,
+            script,
+            with_manifests=True,
+            entry=entry,
+            snapshot=(base, _CHANGE_PLAN_WIDTH, stem),
+        )
+        res = engine_ai_convert.run_validation(cand, runner)
+        status = res.get("status")
+        if status != "ok":
+            code = str(res.get("code") or "")
+            if engine_ai_figure_edit.tripped_write_roots(code, res.get("cause")):
+                raise ec.PlanFailure("change_plan_script_no_preview", code)
+            raise ec.PlanFailure("change_plan_script_check_failed", code or str(status))
+        try:
+            after_png, _man = _change_plan_snapshot(res["snapshot"])
+        except KeyError:
+            raise ec.PlanFailure("change_plan_script_no_preview", "snapshot") from None
+        baseline = engine_ai_figure_edit._call_hook(hooks.get("check_before"))
+        after = engine_ai_figure_edit._with_original_names(res.get("manifests"), cand)
+        if baseline and isinstance(after, dict) and after:
+            if engine_ai_figure_edit._data_lines(after, baseline):
+                raise ec.PlanFailure("change_plan_script_data_changed")
+        return after_png
+    finally:
+        if cand is not None:
+            engine_ai_figure_edit.remove_candidate(cand.dir)
+
+
+def _change_plan_script_target(ctx, plan_id: str):
+    """应用 / 撤销共用：取方案、核它是脚本方案且字节没被动 → `(plan, group.script, new_bytes, 被拒的响应 | None)`。"""
+    if engine_changeplan.PLAN_ID.match(plan_id) is None:
+        return None, None, None, _change_plan_error("change_plan_unknown")
+    plan = engine_changeplan.load(ctx.id, plan_id)
+    group = next((g for g in (plan or {}).get("groups") or [] if g.get("kind") == "script"), None)
+    if plan is None or plan.get("kind") != "script" or group is None:
+        return None, None, None, _change_plan_error("change_plan_unknown")
+    new_bytes = engine_changeplan.script_new_bytes(ctx.id, plan_id)
+    info = group["script"]
+    if new_bytes is None or engine_changeplan.sha256_bytes(new_bytes) != info["new_sha256"]:
+        return None, None, None, _change_plan_error("change_plan_unknown")
+    return plan, info, new_bytes, None
+
+
+@app.post("/api/change-plans/<plan_id>/apply-script")
+def api_change_plans_apply_script(plan_id: str):
+    """应用一份脚本修改方案（只在 Tavotto 窗口里，会话 cookie 把关）：锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换。
+    脚本被改过 → 409 `change_plan_figure_changed`（一个字节不动）；成功回 `{ok, applied: {backup, after_sha256}}`，同一份方案重复应用幂等。"""
+    ctx = current_ctx()
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    plan, info, new_bytes, refused = _change_plan_script_target(ctx, plan_id)
+    if refused is not None:
+        return refused
+    if plan.get("applied"):
+        return jsonify({"ok": True, "applied": plan["applied"], "unchanged": True})
+    script = info["rel"]
+    try:
+        store = _script_store(ctx)
+        path = engine_scriptbackup.resolve(ctx.path, script)
+        with engine_scriptlock.script_guard(path):
+            _require_script_idle(path, script)
+            record = engine_scriptbackup.replace(
+                store,
+                script,
+                new_bytes,
+                kind="change_plan",
+                expect_before=info["base_sha256"],
+                meta={"plan_id": plan_id},
+            )
+    except engine_scriptbackup.ScriptEditError as exc:
+        if exc.code in (
+            engine_scriptbackup.ERROR_SCRIPT_CHANGED,
+            engine_scriptbackup.ERROR_SCRIPT_BUSY,
+        ):
+            return _change_plan_error("change_plan_figure_changed")
+        LOG.warning("脚本修改方案应用失败: %s", exc.code)
+        return _change_plan_error("change_plan_script_apply_failed")
+    applied = {"backup": record.get("id"), "after_sha256": info["new_sha256"]}
+    engine_changeplan.mark_applied(ctx.id, plan_id, applied)
+    _after_script_edit(ctx, script)
+    return jsonify({"ok": True, "applied": applied})
+
+
+@app.post("/api/change-plans/<plan_id>/undo-script")
+def api_change_plans_undo_script(plan_id: str):
+    """撤销一份已应用的脚本修改（卡片上的「撤销」；⌘Z 不撤脚本）：锁内核脚本仍是应用之后那一版，按备份还原（还原本身也备份一份）。
+    之后又被改过 → 409 `change_plan_script_undo_conflict`，脚本不动。"""
+    ctx = current_ctx()
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    plan, info, _new, refused = _change_plan_script_target(ctx, plan_id)
+    if refused is not None:
+        return refused
+    applied = plan.get("applied")
+    if not applied:
+        return _change_plan_error("change_plan_script_not_applied")
+    script = info["rel"]
+    try:
+        store = _script_store(ctx)
+        meta, original = engine_scriptbackup.load(store, applied.get("backup"))
+        path = engine_scriptbackup.resolve(ctx.path, script)
+        with engine_scriptlock.script_guard(path):
+            _require_script_idle(path, script)
+            now = engine_scriptbackup.sha256(path.read_bytes())
+            if now != applied.get("after_sha256"):
+                return _change_plan_error("change_plan_script_undo_conflict")
+            engine_scriptbackup.replace(
+                store,
+                script,
+                original,
+                kind="change_plan_undo",
+                expect_before=now,
+                meta={"restores": meta.get("id"), "plan_id": plan_id},
+            )
+    except engine_scriptbackup.ScriptEditError as exc:
+        if exc.code == engine_scriptbackup.ERROR_SCRIPT_CHANGED:
+            return _change_plan_error("change_plan_script_undo_conflict")
+        LOG.warning("脚本修改方案撤销失败: %s", exc.code)
+        return _change_plan_error("change_plan_script_apply_failed")
+    engine_changeplan.mark_applied(ctx.id, plan_id, None)
+    _after_script_edit(ctx, script)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/change-plans/restore-script")
+def api_change_plans_restore_script():
+    """脚本方案生成期间脚本被改过（冲突）之后，卡片上的「恢复到开始前的版本」：`{backup, script, expect_sha256}`。
+    只认 `change_plan_snapshot` 那种备份、且备份里记的脚本就是请求的脚本；锁内核「脚本此刻还是冲突时看到的那一版」（`expect_sha256`），
+    之后又变了就拒（409 `change_plan_script_restore_conflict`）；还原前先把此刻的版本再备份一份（`replace` 自带）。"""
+    ctx = current_ctx()
+    try:
+        _script_edit_binding()
+    except engine_scriptbackup.ScriptEditError as exc:
+        return _script_edit_error(exc)
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return _change_plan_error("invalid_change_plan")
+    script, expect = body.get("script"), body.get("expect_sha256")
+    if not isinstance(script, str) or not script or not isinstance(expect, str):
+        return _change_plan_error("invalid_change_plan")
+    try:
+        store = _script_store(ctx)
+        meta, original = engine_scriptbackup.load(store, body.get("backup"))
+        if meta.get("kind") != "change_plan_snapshot" or meta.get("script") != script.replace(
+            "\\", "/"
+        ):
+            return _change_plan_error("change_plan_unknown")
+        path = engine_scriptbackup.resolve(ctx.path, script)
+        with engine_scriptlock.script_guard(path):
+            _require_script_idle(path, script)
+            engine_scriptbackup.replace(
+                store,
+                script,
+                original,
+                kind="change_plan_restore",
+                expect_before=expect,
+                meta={"restores": meta.get("id")},
+            )
+    except engine_scriptbackup.ScriptEditError as exc:
+        if exc.code in (
+            engine_scriptbackup.ERROR_SCRIPT_CHANGED,
+            engine_scriptbackup.ERROR_SCRIPT_BUSY,
+        ):
+            return _change_plan_error("change_plan_script_restore_conflict")
+        if exc.code == engine_scriptbackup.ERROR_BACKUP_UNKNOWN:
+            return _change_plan_error("change_plan_unknown")
+        return _change_plan_error("change_plan_script_apply_failed")
+    _after_script_edit(ctx, script)
+    return jsonify({"ok": True})
 
 
 def _change_plan_snapshot(resp) -> tuple[bytes, dict]:
@@ -13177,6 +13541,16 @@ def _change_plan_view(ctx, plan_id: str):
                 "detail": task.detail,
                 "replay_required": task.replay_required,
                 **_change_plan_params(task.code),
+                **(
+                    {
+                        "params": {
+                            **(_change_plan_params(task.code).get("params") or {}),
+                            **task.params,
+                        }
+                    }
+                    if task.params
+                    else {}
+                ),
             }
         )
     plan = engine_changeplan.load(project, plan_id)
@@ -19379,6 +19753,7 @@ def _convert_runner(
     with_manifests: bool = False,
     entry: str | None = None,
     selection=None,
+    snapshot: tuple[list, int, str] | None = None,
 ):
     """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。
 
@@ -19522,6 +19897,21 @@ def _convert_runner(
                     except (OSError, ValueError):
                         continue
                 out["manifests"] = mans
+            if snapshot is not None and worker is not None and stems:
+                # 修改方案（ADR 0206 PR 6）：在这个候选的 worker 上先套用户的 override（B0）再出图，与「改前」同口径同宽度；
+                # 出不来就整条校验算失败（卡上不能缺「改后」的图）
+                patches, width, want = snapshot
+                try:
+                    out["snapshot"] = worker.preview_png_snapshot(
+                        want if want in stems else stems[0], patches, width
+                    )
+                except Exception:  # noqa: BLE001
+                    return {
+                        "error": {
+                            "code": "preview_render_failed",
+                            "message": "The candidate could not be rendered with the current overrides.",
+                        }
+                    }
             return out
         finally:
             try:
@@ -20785,6 +21175,25 @@ def layout_path(name: str, base: Path | None = None) -> Path:
     return (base if base is not None else LAYOUT_DIR) / f"{name}.json"
 
 
+def _contained_layout_path(path: Path, root: Path) -> Path | None:
+    real = engine_projectenv.contained_path(root, path.absolute())
+    if real is None:
+        return None
+    resolved = Path(real)
+    # 确认持的是规范文件名的锁；链接目标也必须落在这条锁带上。
+    return resolved if _lock_stripe(resolved) == _lock_stripe(path) else None
+
+
+def _layout_read_source(name: str) -> tuple[Path, Path] | None:
+    """回排版的实际路径与来源目录，来源目录决定图表附件的存储归属。"""
+    for directory in _layout_read_dirs():
+        # 每个来源都是项目根或数据根的直接子目录，根不能跟着来源的链接走。
+        path = _contained_layout_path(layout_path(name, directory), directory.parent)
+        if path is not None and path.exists():
+            return path, directory
+    return None
+
+
 @app.get("/api/layouts")
 def api_layouts():
     # 主位置 = 项目 tavottofile/；旧位置只读兼容，重名以主位置为准。
@@ -20792,20 +21201,22 @@ def api_layouts():
     # 文档——不剔掉的话「打开画布」列表里会多出一条叫 `_styles` 的东西，
     # 点开是一份读不成画布的样式表。
     seen: dict[str, float] = {}
-    for d in _layout_read_dirs():
-        if not d.is_dir():
+    for directory in _layout_read_dirs():
+        root = directory.parent
+        real = engine_projectenv.contained_path(root, directory.absolute())
+        if real is None or not Path(real).is_dir():
             continue
-        for p in d.glob("*.json"):
-            if not engine_documents.is_user_document_stem(p.stem):
+        for candidate in Path(real).glob("*.json"):
+            if not engine_documents.is_user_document_stem(candidate.stem):
                 continue
-            if p.stem in seen:
+            if candidate.stem in seen:
                 continue
-            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
-            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
-            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
-            # 按 `exists()` 往下找的。
+            path = _contained_layout_path(candidate, root)
+            if path is None:
+                continue
+            # 断链或 glob 后消失的条目不占名字，同名的合法后备文件仍可用。
             try:
-                seen[p.stem] = p.stat().st_mtime
+                seen[candidate.stem] = path.stat().st_mtime
             except OSError:
                 continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
@@ -20884,20 +21295,20 @@ def serve_document(path: Path, *, autosave: bool = False, source_storage: Path |
 
 @app.get("/api/layouts/<name>")
 def api_layout_get(name):
-    for d in _layout_read_dirs():
-        p = layout_path(name, d)
-        if p.exists():
-            ctx = _request_ctx()
-            source_storage = LAYOUT_DIR if d == LAYOUT_DIR else project_layout_dir(ctx)
-            resp = serve_document(p, source_storage=source_storage)
-            if ctx is not None:
-                # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
-                # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
-                # `project_layout_dir()` 一份，前端不自己拼。百分号编码：header 只能是 latin-1。
-                target = layout_path(name, _named_layout_dir(ctx)).relative_to(ctx.path)
-                resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
-            return resp
-    abort(404)
+    source = _layout_read_source(name)
+    if source is None:
+        abort(404)
+    path, directory = source
+    ctx = _request_ctx()
+    source_storage = LAYOUT_DIR if directory == LAYOUT_DIR else project_layout_dir(ctx)
+    resp = serve_document(path, source_storage=source_storage)
+    if ctx is not None:
+        # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
+        # 哪怕这次是从旧位置读出来的（保存后以 tavottofile/ 为准）。收纳规则只有
+        # `project_layout_dir()` 一份，前端不自己拼。百分号编码：header 只能是 latin-1。
+        target = layout_path(name, _named_layout_dir(ctx)).relative_to(ctx.path)
+        resp.headers["X-Tavotto-Layout-File"] = urllib.parse.quote(target.as_posix())
+    return resp
 
 
 @app.get("/api/layouts/<name>/agent-additions")
@@ -21251,7 +21662,7 @@ def document_summary(path: Path) -> dict | None:
     }
 
 
-def _external_change(current: str | None, path: Path):
+def _external_change(current: str | None, path: Path | None):
     """「磁盘上那份不是我以为的那份」的 409 —— **自动保存与另存为共用这一份**。
 
     两条路给前端的形状必须逐字相同：前端的出口只有一套（重新加载 / 明确覆盖 /
@@ -21264,7 +21675,7 @@ def _external_change(current: str | None, path: Path):
             "error": "磁盘上的这份排版已被 Tavotto 之外的改动覆盖过",
             "code": "external_change",
             "revision": current,
-            "summary": document_summary(path),
+            "summary": document_summary(path) if path is not None else None,
         }
     ), 409
 
@@ -21783,7 +22194,8 @@ def api_layout_project_file_confirm(doc_id):
             {"axis": None, "base_axis": None, "base_revision": body["revision"]}, None
         )
         # 不同时取AS和named两个非重入条带锁。票据由reserve持AS锁捕获，
-        # 此处只锁实际named正文；commit在会话锁内再次核完整票据/CAS。
+        # 锁内按 GET 的顺序重新解析来源，只接受本锁带覆盖的文件。
+        # commit 在会话锁内再次核完整票据/CAS，票据中的保存目标保持规范位置。
         with _document_lock(target):
             pending = engine_layoutsession.pending_project_file(
                 key,
@@ -21795,11 +22207,13 @@ def api_layout_project_file_confirm(doc_id):
             if pending["state"] != "pending":
                 return jsonify(pending)
             try:
-                current = engine_atomicio.existing_revision(target)
+                source = _layout_read_source(body["name"])
+                path = source[0] if source is not None else None
+                current = engine_atomicio.existing_revision(path) if path is not None else None
             except OSError:
                 return _revision_unreadable()
             if current != body["revision"]:
-                return _external_change(current, target)
+                return _external_change(current, path)
             result = engine_layoutsession.commit_project_file(
                 key, doc_id, pending["ticket"], revision=current
             )

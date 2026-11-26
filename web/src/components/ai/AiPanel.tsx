@@ -75,7 +75,7 @@ import { assistantUsesPlan } from '@/lib/assistantPlanRoute'
 import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { deleteAiDraftIf } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
-import { useChangePlanStore } from '@/store/changePlanStore'
+import { isFallthrough, useChangePlanStore } from '@/store/changePlanStore'
 import { DataFigureForm } from './DataFigureForm'
 
 export { TaskHistory }
@@ -629,7 +629,7 @@ function AssistantPanelBody() {
             : undefined,
         )
         if (projectMoved()) return
-        if (planned !== 'fallthrough') {
+        if (!isFallthrough(planned)) {
           // 方案任务已受理（或这张图已有一份在途，没发）。草稿与输入框先不动，方案落定时才清（见 `onSettle`）
           return
         }

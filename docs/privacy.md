@@ -197,7 +197,18 @@ has connected in the "Connect an AI" dialog. Tavotto never relays these
 requests through its own servers; the request goes from the user's machine to the
 AI the user chose, in one of two ways:
 
-* **Subscription sign-in (ChatGPT or Claude).** Tavotto passes the request to the
+* **Continue with ChatGPT (Sign in with ChatGPT).** The user signs in once in their
+  browser with OpenAI; Tavotto keeps the resulting tokens in its own data folder
+  (`siwc/`, readable by your user only where the platform supports it — never in
+  logs, usage statistics or diagnostics bundles, and never readable by the AI
+  assistant's own file tools) and sends requests directly to OpenAI's API
+  (`api.openai.com`) under the user's ChatGPT plan, without storing them on OpenAI's
+  side (`store: false`). Signing out revokes Tavotto's access with OpenAI. This
+  connection is used wherever an API-key connection would be (editing figures, AI
+  repair, reading data tables for data-to-figure), so when it is the only AI you have
+  connected, those features send their requests to ChatGPT; if you also have API-key
+  connections, they are tried first. Usage counts against your ChatGPT plan.
+* **Subscription sign-in through a command-line tool (Codex or Claude).** Tavotto passes the request to the
   Codex or Claude command-line tool installed on the user's machine, which talks to
   its own service under its own account and privacy terms.
 * **API key or account sign-in (DeepSeek, Kimi, Zhipu GLM, MiniMax, Alibaba Bailian,

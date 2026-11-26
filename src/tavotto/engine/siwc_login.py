@@ -344,9 +344,21 @@ def fetch_models(access: str) -> list[dict] | None:
             and len(slug) <= 200
             and all(x["id"] != slug for x in out)
         ):
-            item = {"id": slug}
+            item: dict = {"id": slug}
             if isinstance(m.get("display_name"), str) and m["display_name"].strip():
                 item["display_name"] = m["display_name"].strip()[:200]
+            # 思考强度：型号自己声明的档位（`supported_reasoning_levels[].effort`）∩ SIWC 能发的闭集；默认档 = `default_reasoning_level`
+            levels = m.get("supported_reasoning_levels")
+            declared = {
+                lv.get("effort")
+                for lv in (levels if isinstance(levels, list) else [])
+                if isinstance(lv, dict)
+            }
+            efforts = [e for e in siwc_wire.SIWC_EFFORTS if e in declared]
+            if efforts:
+                item["efforts"] = efforts
+                if m.get("default_reasoning_level") in efforts:
+                    item["default_effort"] = m["default_reasoning_level"]
             out.append(item)
     return out
 

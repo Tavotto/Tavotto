@@ -164,6 +164,8 @@ def vendor_of(endpoint) -> str | None:
     """连接 → 计价厂商。只认目录预设的官方 base_url（逐字相同，去掉末尾斜杠）。"""
     if not isinstance(endpoint, dict):
         return None
+    if endpoint.get("provider_id") == "siwc:chatgpt" or endpoint.get("id") == "siwc:chatgpt":
+        return None  # ChatGPT 订阅额度（SIWC，ADR 0209）：不按 token 计价，地址虽是 api.openai.com 也不套 API 价目
     url = str(endpoint.get("base_url") or "").rstrip("/")
     return _BASE_URLS.get(url)
 

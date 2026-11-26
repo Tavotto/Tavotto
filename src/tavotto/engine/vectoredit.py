@@ -15,6 +15,10 @@
 * `{"op": "delete", "id"}`；
 * 第 2 期「排」（与前端同一语义，见各函数注释）：`align`（对齐到选区 / 关键对象 / 子图 / 页面，按看得见的框）、`distribute`
   （等间距 / 按间距排）、`order`（前后层级）、`group` / `ungroup`（编组一层）、`rotate`（设绝对角度，绕框中心）。
+* 第 3 期「几何」（内核是前端同一份 vecops.wasm，经 `engine/vecops.py`；语义在 `engine/vectorgeom.py`，照 `lib/pathfinder.ts`）：
+  `pathfinder`（`ids` + `mode`：合并 / 减去顶层 / 相交 / 排除重叠 / 分割 / 修边…）、`offset`（旁边多一个偏移后的新路径）、
+  `outline_stroke`（描边变成填充轮廓）、`simplify`（在容差内删多余锚点）。目前只收 `path`（形状要先有「转为路径」的 Python 版）；
+  内核不可用 = `kernel_unavailable`，其余操作照常。
 
 核对只看这次动到的对象（改后的样子），画布上没动的文字当障碍；用户早就接受的地方不重新报。
 """
@@ -27,7 +31,15 @@ import json
 import math
 from pathlib import Path
 
-from . import agentobjects, doclock, layoutannotate as la, vectorcheck, vectorscene
+from . import (
+    agentobjects,
+    doclock,
+    layoutannotate as la,
+    vecops,
+    vectorcheck,
+    vectorgeom,
+    vectorscene,
+)
 
 #: 能改的对象类型（矢量对象）
 EDITABLE_TYPES = ("text", "arrow", "shape", "path")
@@ -44,6 +56,7 @@ ERROR_CODES = (
     "bad_value",
     "out_of_range",
     "duplicate_target",
+    "kernel_unavailable",
 )
 
 _KIND_WORD = {"text": "文字", "arrow": "箭头", "shape": "形状", "path": "路径"}
@@ -257,6 +270,7 @@ class _State:
         self.changes: list[dict] = []
         self.echo: list[str] = []
         self.budgets = agentobjects.table()["budgets"]
+        self.minted: set[str] = set()
         self.reindex()
 
     def reindex(self) -> None:
@@ -581,7 +595,223 @@ def _op_rotate(s: _State, i: int, op: dict, o: dict) -> None:
     s.echo.append(f"{_label(o)}：转到 {after:g}°（原 {before:g}°）")
 
 
-_OPS = ("set", "move", "delete", "align", "distribute", "order", "group", "ungroup", "rotate")
+# ------------------------------------------------------------------ 几何（第 3 期）：内核是前端同一份 wasm，语义照 `lib/pathfinder.ts`
+
+_MODE_WORDS = {
+    "unite": "合并",
+    "minus_front": "减去顶层",
+    "intersect": "相交",
+    "exclude": "排除重叠",
+    "divide": "分割",
+    "trim": "修边",
+    "merge": "合并同色",
+    "crop": "裁剪",
+    "minus_back": "减去后方",
+}
+_JOINS = ("miter", "round", "bevel")
+
+
+def _kernel(i: int):
+    """内核不可用（wasmtime 装不上 / 找不到 .wasm / ABI 对不上）= 这一类操作报错，其余操作照常。"""
+    if not vecops.available():
+        raise EditError("kernel_unavailable", i)
+    return vecops
+
+
+def _mint(s: _State, i: int, tag: str, seed: list[str], n: int) -> str:
+    """新路径 id：`p_` + 8 位 `[a-z0-9]`，由内容确定地派生（方案与写入各算一遍，摘要里的东西必须逐位一致）。"""
+    taken = {o.get("id") for o in s.out if isinstance(o, dict)} | s.minted
+    k = 0
+    while True:
+        h = hashlib.sha256(
+            json.dumps([i, tag, seed, n, k], ensure_ascii=False).encode("utf-8")
+        ).digest()
+        cand = "p_" + "".join(agentobjects._ID_ALPHABET[b % 36] for b in h[:8])  # noqa: SLF001
+        if cand not in taken:
+            s.minted.add(cand)
+            return cand
+        k += 1
+
+
+def _operand(s: _State, i: int, oid: object, field: str) -> dict:
+    """几何操作的操作数：未锁定、未隐藏的 `path`（形状要先「转为路径」，Python 版还没有 → `needs_path`）。"""
+    if not isinstance(oid, str) or oid not in s.index or oid in s.deleted:
+        raise EditError("unknown_object", i, field)
+    o = s.out[s.index[oid]]
+    if o.get("type") not in EDITABLE_TYPES or o.get("type") == "text":
+        raise EditError("not_vector", i, field)
+    if o.get("type") != "path":
+        raise EditError("bad_op", i, "needs_path")
+    if o.get("locked"):
+        raise EditError("bad_op", i, "locked")
+    if o.get("hidden"):
+        raise EditError("bad_op", i, "hidden")
+    return o
+
+
+def _count_check(s: _State, i: int) -> None:
+    if len(s.live()) > s.budgets["max_objects"]:
+        raise EditError("out_of_range", i, "objects")
+
+
+def _op_pathfinder(s: _State, i: int, op: dict) -> None:
+    """`pathfinder.runPathfinder` + `pathfinderActions.applyPlan`：选中的路径按 `mode` 运算；原对象全删，结果放在**最上面那个**
+    原对象原来的数组位置（结果之间按内核给的从后往前排）；每个原对象的样式第一次被沿用时，那块结果继承它的 id 与名字。"""
+    if set(op) - {"op", "ids", "mode"}:
+        raise EditError("bad_op", i)
+    mode = op.get("mode")
+    if mode not in vectorgeom.PATHFINDER_MODES:
+        raise EditError("bad_op", i, "mode")
+    ids = op.get("ids")
+    if (
+        not isinstance(ids, list)
+        or not all(isinstance(v, str) for v in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise EditError("bad_op", i, "ids")
+    for v in ids:
+        _operand(s, i, v, "ids")
+    if len(ids) < 2:
+        raise EditError("bad_op", i, "ids")
+    live = s.live()
+    src = [o for o in live if o.get("id") in set(ids)]  # 数组顺序（从后往前），与前端 `operands` 同
+    kernel = _kernel(i)
+    seed = sorted(ids)
+    plan = vectorgeom.run_pathfinder(kernel, mode, live, src, lambda n: _mint(s, i, "pf", seed, n))
+    if plan is None:
+        raise EditError("bad_op", i, "empty_result")
+    removed = set(plan["remove"])
+    new_live = [o for o in live if o.get("id") not in removed]
+    new_live[plan["at"] : plan["at"]] = plan["add"]
+    added = {o["id"] for o in plan["add"]}
+    for o in src:
+        if o["id"] not in added:
+            s.deleted.append(o["id"])
+            s.changes.append({"id": o["id"], "deleted": True})
+    for o in plan["add"]:
+        # 继承了原对象 id 的是「换掉」，其余是新长出来的
+        s.changes.append(
+            {"id": o["id"], "replaced" if o["id"] in plan["remove"] else "added": True}
+        )
+        s.touched.add(o["id"])
+    s.set_order(new_live)
+    _count_check(s, i)
+    s.echo.append(
+        f"{_MODE_WORDS[mode]} {len(src)} 个路径（{'、'.join(o['id'] for o in src)}）→ {len(plan['add'])} 个路径"
+        f"（{'、'.join(o['id'] for o in plan['add'])}）"
+    )
+
+
+def _insert_after(s: _State, anchor_id: str, new: dict) -> None:
+    live = s.live()
+    at = next(n for n, o in enumerate(live) if o.get("id") == anchor_id)
+    live.insert(at + 1, new)
+    s.set_order(live)
+
+
+def _op_offset(s: _State, i: int, op: dict) -> None:
+    """`pathfinder.offsetPaths`：原对象不动，旁边多一个偏移后的新路径（紧挨着放在它上面）；正 = 往外扩、负 = 往里缩；
+    拐角跟原对象的拐角（给了 `join` 就用它，只影响这一次偏移的几何）。"""
+    if set(op) - {"op", "id", "delta_mm", "join"}:
+        raise EditError("bad_op", i)
+    o = _operand(s, i, op.get("id"), "id")
+    d = op.get("delta_mm")
+    if not agentobjects._is_num(d) or not math.isfinite(d) or d == 0:  # noqa: SLF001
+        raise EditError("bad_value", i, "delta_mm")
+    if abs(d) > s.budgets["max_coord_mm"]:
+        raise EditError("out_of_range", i, "delta_mm")
+    join = op.get("join")
+    if join is not None and join not in _JOINS:
+        raise EditError("bad_value", i, "join")
+    kernel = _kernel(i)
+    nid = _mint(s, i, "off", [o["id"]], 0)
+    src = {**o, "lineJoin": join} if join else o
+    made = vectorgeom.offset_path(kernel, src, float(d), nid)
+    if made is None:
+        raise EditError("bad_op", i, "empty_result")
+    if join:  # 新对象的样式仍是原对象的（`join` 只管这一次几何）
+        if o.get("lineJoin") is None:
+            made.pop("lineJoin", None)
+        else:
+            made["lineJoin"] = o["lineJoin"]
+    _insert_after(s, o["id"], made)
+    s.touched.add(nid)
+    s.changes.append({"id": nid, "added": True})
+    _count_check(s, i)
+    way = "往外" if d > 0 else "往里"
+    s.echo.append(f"偏移 {_label(o)}：{way} {abs(float(d)):.3g} mm → 新路径 {nid}（在它上面）")
+
+
+def _op_outline_stroke(s: _State, i: int, op: dict) -> None:
+    """`pathfinder.outlineStrokes`：描边画出来的那块面积变成一个填充对象（填充色 = 原描边色与不透明度，无描边）。
+    原对象没有填充：轮廓同 id 换掉它；有填充：原对象留下、关掉描边，轮廓作为新对象紧挨着放在它上面。"""
+    if set(op) - {"op", "id"}:
+        raise EditError("bad_op", i)
+    o = _operand(s, i, op.get("id"), "id")
+    if not vectorgeom.can_outline_stroke(o):
+        raise EditError("bad_op", i, "no_stroke")
+    why = vectorgeom.stroke_unsupported(o)
+    if why:
+        raise EditError("bad_op", i, f"stroke:{why}")
+    kernel = _kernel(i)
+    nid = _mint(s, i, "out", [o["id"]], 0)
+    res = vectorgeom.outline_stroke(kernel, o, nid)
+    if res is None:
+        raise EditError("bad_op", i, "empty_result")
+    replace, extra = res
+    s.out[s.index[o["id"]]] = replace
+    s.touched.add(o["id"])
+    if extra is None:
+        s.changes.append(
+            {"id": o["id"], "field": "subpaths", "before": "stroke", "after": "outline"}
+        )
+        s.echo.append(f"轮廓化描边 {_label(o)}：描边变成填充轮廓（同一个对象，id 不变）")
+    else:
+        s.changes.append(
+            {"id": o["id"], "field": "stroke", "before": o.get("stroke"), "after": False}
+        )
+        _insert_after(s, o["id"], extra)
+        s.touched.add(nid)
+        s.changes.append({"id": nid, "added": True})
+        s.echo.append(f"轮廓化描边 {_label(o)}：原对象关掉描边，轮廓作为新路径 {nid} 放在它上面")
+        _count_check(s, i)
+
+
+def _op_simplify(s: _State, i: int, op: dict) -> None:
+    """`pathfinder.simplifyPaths`：在容差内删掉多余的锚点；同 id、旋转、样式都不变；一个锚点都省不掉 = 不算改动（复述里照实说）。"""
+    if set(op) - {"op", "id", "tolerance_pt"}:
+        raise EditError("bad_op", i)
+    o = _operand(s, i, op.get("id"), "id")
+    tol = op.get("tolerance_pt", vectorgeom.SIMPLIFY_TOLERANCE_PT)
+    if not agentobjects._is_num(tol) or not 0 < tol <= 100:  # noqa: SLF001
+        raise EditError("bad_value", i, "tolerance_pt")
+    kernel = _kernel(i)
+    made = vectorgeom.simplify_path(kernel, o, float(tol))
+    if made is None:
+        s.echo.append(f"{_label(o)}：没有可省的锚点（容差 {float(tol):g} pt），未改动")
+        return
+    count = lambda ob: sum(len(sp["nodes"]) for sp in ob["subpaths"])  # noqa: E731
+    s.out[s.index[o["id"]]] = made
+    s.touched.add(o["id"])
+    s.changes.append({"id": o["id"], "field": "nodes", "before": count(o), "after": count(made)})
+    s.echo.append(f"简化 {_label(o)}：锚点 {count(o)} → {count(made)}（容差 {float(tol):g} pt）")
+
+
+_OPS = (
+    "set",
+    "move",
+    "delete",
+    "align",
+    "distribute",
+    "order",
+    "group",
+    "ungroup",
+    "rotate",
+    "pathfinder",
+    "offset",
+    "outline_stroke",
+    "simplify",
+)
 
 
 def apply_ops(
@@ -599,12 +829,13 @@ def apply_ops(
     for i, op in enumerate(ops):
         if not isinstance(op, dict) or op.get("op") not in _OPS:
             raise EditError("bad_op", i)
-        if op["op"] in ("align", "distribute", "group", "ungroup"):
+        if op["op"] in ("align", "distribute", "group", "ungroup", "pathfinder"):
             {
                 "align": _op_align,
                 "distribute": _op_distribute,
                 "group": _op_group,
                 "ungroup": _op_ungroup,
+                "pathfinder": _op_pathfinder,
             }[op["op"]](s, i, op)
             continue
         oid = op.get("id")
@@ -619,6 +850,11 @@ def apply_ops(
             continue
         if op["op"] == "rotate":
             _op_rotate(s, i, op, o)
+            continue
+        if op["op"] in ("offset", "outline_stroke", "simplify"):
+            {"offset": _op_offset, "outline_stroke": _op_outline_stroke, "simplify": _op_simplify}[
+                op["op"]
+            ](s, i, op)
             continue
         if op["op"] == "delete":
             if set(op) - {"op", "id"}:
@@ -831,6 +1067,10 @@ def commit(
             for o in objs
             if not (isinstance(o, dict) and o.get("id") in gone)
         ]
+        have = {o.get("id") for o in objs if isinstance(o, dict)}
+        kept += [
+            o for oid, o in new_by_id.items() if oid not in have
+        ]  # 第 3 期：几何操作新长出来的对象
         if plan[
             "reordered"
         ]:  # 层级 / 编组挪了顺序：按方案里的顺序重排（同一份修订号，id 集合一致）
