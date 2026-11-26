@@ -204,9 +204,15 @@ test(
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(a.baseURL)
     await waitForDocumentReady(page)
+    // 等第一次渲染真的回来、桌面校正完子图再定起点（同上一条：不认「首次构建中…」那行字）
+    const built = page.waitForResponse(
+      (r) => r.url().includes('/api/engine/render') && r.request().method() === 'POST',
+      { timeout: 120_000 },
+    )
     await openFromProject(page)
+    await built
     await expect(page.getByText('首次构建中…')).toHaveCount(0, { timeout: 120_000 })
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(1500)
     const stage = page.locator('[data-canvas-stage]')
     // 先有一批 Agent 的标注并存进项目，作为桌面与 Agent 共同的基线
     agentAnnotates(a.figures, a.dataDir)
