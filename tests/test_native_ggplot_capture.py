@@ -5,6 +5,7 @@ import io
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -26,6 +27,7 @@ from tavotto.engine import (
     nativesession,
     pool,
 )
+from tavotto.engine.fixtools import cmdsandbox, winappcontainer
 
 # Cold graphics-device and font discovery can exceed 40 seconds on hosted Intel Macs.
 _COLD_RENDER_TIMEOUT_SECONDS = 120
@@ -160,6 +162,12 @@ if (nzchar(protected)) {
   attempted <- try(suppressWarnings(writeLines("must not land", protected)), silent = TRUE)
   if (!inherits(attempted, "try-error")) stop("The protected file could be changed.")
 }
+port <- Sys.getenv("TAVOTTO_R_REPLAY_PROBE_PORT")
+if (nzchar(port)) {
+  network <- try(suppressWarnings(socketConnection("127.0.0.1", as.integer(port),
+                 blocking = TRUE, timeout = 2)), silent = TRUE)
+  if (!inherits(network, "try-error")) stop("The protected replay reached a local server.")
+}
 d <- read.csv("../numbers.csv")
 p <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
   ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input") +
@@ -177,6 +185,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
     client.set_cookie(security.COOKIE_NAME, auth.redeem(nonce))
     service.open_project(str(root))
     worker = None
+    listener = socket.create_server(("127.0.0.1", 0))
     try:
         launched = client.post(
             "/api/native/ggplot2",
@@ -222,19 +231,28 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         protected = tmp_path / "keep-private"
         protected.write_bytes(b"external file")
         monkeypatch.setenv("TAVOTTO_R_REPLAY_PROTECTED_FILE", str(protected))
-        exported = client.post("/api/export", json=request)
-        if sys.platform == "win32":
-            assert offer == {
+        monkeypatch.setenv("TAVOTTO_R_REPLAY_PROBE_PORT", str(listener.getsockname()[1]))
+        with monkeypatch.context() as unavailable:
+            if sys.platform == "win32":
+                unavailable.setattr(winappcontainer, "available", lambda: False)
+            else:
+                unavailable.setattr(cmdsandbox, "sandbox_kind", lambda **_options: None)
+            rejected = client.post("/api/export/validate", json=request)
+            rejected_offer = rejected.json["route"]["panels"][figure]["offers"]["script"]
+            assert rejected_offer == {
                 "how": "unavailable",
                 "reason": "script_export_r_source_unavailable",
                 "suffix": "_edited.R",
             }
-            assert exported.json["outputs"][0]["error"]["code"] == offer["reason"], exported.json
-            assert not (Path(exported.json["export_dir"]) / "Signal_edited.R").exists()
+            refused = client.post("/api/export", json=request)
+            assert refused.json["outputs"][0]["error"]["code"] == rejected_offer["reason"], (
+                refused.json
+            )
+            assert not (Path(refused.json["export_dir"]) / "Signal_edited.R").exists()
             assert protected.read_bytes() == b"external file"
             assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
-            return
         assert offer == {"how": "redraw", "suffix": "_edited.R"}
+        exported = client.post("/api/export", json=request)
         assert exported.status_code == 200, exported.get_json()
         (output,) = exported.json["outputs"]
         assert output["name"] == "Signal_edited.R"
@@ -348,6 +366,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         assert previous["overrides"] == patches
         assert previous["figureSnapshot"] == saved.json["figure_snapshots"]["signal"]
     finally:
+        listener.close()
         if worker is not None:
             worker.cancel_owned()
         service.reset_projects()

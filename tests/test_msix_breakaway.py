@@ -6,6 +6,7 @@ Windows 专属逻辑用可注入的 kernel32 替身测**参数**（属性值 0x0
 
 from __future__ import annotations
 
+import ast
 import ctypes
 import re
 import subprocess
@@ -286,11 +287,19 @@ def test_posix_handoff_spawn_is_unchanged(monkeypatch):
 
 
 def test_only_handoff_creates_desktop_processes_with_the_policy():
-    """单一权威：0x00020012 / CreateProcessW 只出现在 msixbreakaway.py（Rust 壳的镜像除外）。"""
+    """仅 MSIX 交接使用 DESKTOP_APP_POLICY，普通 Win32 或沙盒进程可共用启动原语。"""
     hits = []
     for p in (REPO / "src" / "tavotto").rglob("*.py"):
-        text = p.read_text(encoding="utf-8")
-        if "DESKTOP_APP_POLICY" in text or "CreateProcessW" in text:
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        if any(
+            (isinstance(node, ast.Constant) and node.value == 0x00020012)
+            or (
+                isinstance(node, (ast.Name, ast.Attribute))
+                and getattr(node, "id", getattr(node, "attr", ""))
+                == "PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY"
+            )
+            for node in ast.walk(tree)
+        ):
             hits.append(p.name)
     assert hits == ["msixbreakaway.py"], hits
 
