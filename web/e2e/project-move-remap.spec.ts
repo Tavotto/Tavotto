@@ -71,7 +71,7 @@ const CASES = [
   { shape: 'relative', kind: 'copy' },
 ] as const
 
-for (const { shape, kind } of CASES) test(`整夹${kind === 'move' ? '挪走' : '复制'}后重跑：指认过的数据随项目${kind === 'move' ? '迁' : '带'}过来，不再弹缺数据卡（${shape}）`, async ({ app, page, browser }) => {
+for (const { shape, kind } of CASES) test(`整夹${kind === 'move' ? '挪走' : '复制'}后重跑：指认过的数据随项目${kind === 'move' ? '迁' : '带'}过来，不再弹缺数据卡（${shape}）`, { tag: '@feature:assets.missing-input-relink' }, async ({ app, page, browser }) => {
   test.setTimeout(360_000)
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-moveremap-'))
   try {

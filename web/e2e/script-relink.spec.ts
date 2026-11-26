@@ -74,7 +74,7 @@ test.describe('只挪了脚本：错误卡上一步接回', () => {
   test.setTimeout(420_000)
 
   for (const withFingerprint of [true, false]) {
-    test(withFingerprint ? '有指纹且字节对上：「接回 scripts/」一键接回，图内修改还在' : '老登记没有指纹：从名单里选一个接上', async ({ app, page }) => {
+    test(`${withFingerprint ? '有指纹且字节对上：「接回 scripts/」一键接回，图内修改还在' : '老登记没有指纹：从名单里选一个接上'}`, { tag: '@feature:assets.script-relink' }, async ({ app, page }) => {
       const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-relink-'))
       try {
         const proj = path.join(root, 'proj')
@@ -123,7 +123,7 @@ test.describe('只挪了脚本：错误卡上一步接回', () => {
     })
   }
 
-  test('要参数才能跑的脚本：接回时带上旧脚本的默认参数，一键接回成功', async ({ app, page }) => {
+  test('要参数才能跑的脚本：接回时带上旧脚本的默认参数，一键接回成功', { tag: '@feature:assets.script-relink' }, async ({ app, page }) => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-relink-argv-'))
     try {
       const proj = path.join(root, 'proj')
