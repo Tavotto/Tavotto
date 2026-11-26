@@ -63,3 +63,10 @@ it('助手来源的脚本卡（没有 scriptFrom）不牵连审阅意见', () =>
   expect(resolvableIds(e)).toEqual([])
   expect(pendingSync(e, BASE, detail(), null)).toBeNull()
 })
+
+it('应用后又在画布上改了别的：脚本卡的标记与撤回看卡片状态，不被画布覆盖带偏（#2278 Codex P2）', () => {
+  const edited = [...BASE, { gid: 'ax.xlabel', prop: 'fontsize', value: 12 }]
+  expect(pendingSync(entry({ status: 'applied' }), edited, detail(), null)).toEqual({ kind: 'mark', ids: ['c2', 'c3'] })
+  const undone = entry({ status: 'ready', resolvedIds: ['c2', 'c3'] })
+  expect(pendingSync(undone, edited, detail(['c2', 'c3']), null)).toEqual({ kind: 'restore', ids: ['c2', 'c3'] })
+})

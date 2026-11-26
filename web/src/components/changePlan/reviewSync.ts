@@ -39,7 +39,9 @@ export type SyncTodo = { kind: 'mark' | 'restore'; ids: string[] }
  */
 export function pendingSync(e: PlanEntry, current: readonly unknown[] | null, detail: ReviewShareDetail | null, source?: PlanSource | null): SyncTodo | null {
   if (!e.plan || e.resolveFailed || !detail || !e.request.share_id || detail.share_id !== e.request.share_id) return null
-  const st = effectiveStatus(e, current, source)
+  // 脚本卡的「已应用 / 撤销」看脚本本身（卡片状态），不看画布覆盖：应用后在画布上又改了别的，`effectiveStatus` 会说 stale，
+  // 撤销脚本后就永远还原不了这几条意见（#2278 Codex P2）
+  const st = e.plan.kind === 'script' ? e.status : effectiveStatus(e, current, source)
   if (st === 'applied') {
     const ids = resolvableIds(e).filter((id) => !e.resolvedIds?.includes(id) && detail.comments.some((c) => c.id === id && !c.resolved))
     return ids.length ? { kind: 'mark', ids } : null
