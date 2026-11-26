@@ -22502,7 +22502,12 @@ def _working_doc_ids(store: Path) -> list[str]:
     for n in names:
         if not n.endswith(engine_layoutdir.DIR_SUFFIX):
             continue
-        loc = engine_layoutdir.locate(store, n[: -len(engine_layoutdir.DIR_SUFFIX)], names=names)
+        try:
+            loc = engine_layoutdir.locate(
+                store, n[: -len(engine_layoutdir.DIR_SUFFIX)], names=names
+            )
+        except engine_layoutdir.LayoutDirError:
+            continue
         doc_id = loc.manifest.get("doc_id") if loc.manifest else None
         if loc.read_path is not None and engine_layoutsession.valid_doc_id(doc_id):
             out.append(doc_id)

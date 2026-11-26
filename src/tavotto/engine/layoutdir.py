@@ -558,7 +558,10 @@ def find_by_doc_id(store: Path, doc_id: str) -> Located | None:
         stem = n[: -len(DIR_SUFFIX)]
         if not documents.is_user_document_stem(stem):
             continue
-        loc = locate(store, stem, names=names)
+        try:
+            loc = locate(store, stem, names=names)
+        except LayoutDirError:
+            continue  # 名字过不了 `_inside`：不是我们的目录
         if loc.read_path is None or loc.problem == PROBLEM_SYMLINK or not loc.manifest:
             continue
         if loc.manifest.get("doc_id") == doc_id:
