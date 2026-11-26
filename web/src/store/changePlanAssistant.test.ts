@@ -321,6 +321,68 @@ describe('整条指令都要改脚本', () => {
   })
 })
 
+describe('聊天 / 提问（整条都是 out_of_scope）', () => {
+  const chat = plan({ groups: [], candidate_patches: BASE, unhandled: [{ comment_id: 'a1', reason: 'out_of_scope' }] })
+
+  it('不出失败卡：原话交给普通助手对话（不走脚本方案、不加交接句），卡撤掉、输入框草稿放掉', async () => {
+    getChangePlan.mockResolvedValue(ready(chat, { code: 'change_plan_empty' }))
+    const settled = vi.fn()
+    const key = (await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation }, settled)) as string
+    await tick()
+    expect(start).toHaveBeenCalledOnce()
+    expect(start.mock.calls[0][0]).toMatchObject({ prompt: FALLBACK.prompt, fileId: 'f_p1', panelId: 'p1', script: 'fig.py' })
+    expect(createChangePlan.mock.calls.filter(([b]) => (b as { mode?: string }).mode === 'script')).toHaveLength(0)
+    expect(cps().entries[key]).toBeUndefined()
+    expect(cps().order).not.toContain(key)
+    expect(settled).toHaveBeenCalledOnce()
+  })
+
+  it('发不出去（没有可用 Agent）：留失败卡，指令不丢', async () => {
+    start.mockRejectedValueOnce(new Error('no-usable-agent'))
+    getChangePlan.mockResolvedValue(ready(chat, { code: 'change_plan_empty' }))
+    const key = (await ask()) as string
+    await tick()
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_script_failed' } })
+  })
+
+  it('混合（有 out_of_scope 也有 needs_script / unclear）：照旧出失败卡，不落回', async () => {
+    const mixed = plan({ groups: [], unhandled: [{ comment_id: 'a1', reason: 'out_of_scope' }, { comment_id: 'a1', reason: 'unclear' }] })
+    getChangePlan.mockResolvedValue(ready(mixed, { code: 'change_plan_empty' }))
+    const key = (await ask()) as string
+    await tick()
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_empty' } })
+  })
+
+  it('有能改的组（另一部分 out_of_scope）：照旧出方案卡', async () => {
+    getChangePlan.mockResolvedValue(ready(plan({ unhandled: [{ comment_id: 'a1', reason: 'out_of_scope' }] })))
+    const key = (await ask()) as string
+    await tick()
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key].status).toBe('ready')
+  })
+
+  it('unclear / no_change_needed 单独出现：照旧出失败卡', async () => {
+    for (const reason of ['unclear', 'no_change_needed'] as const) {
+      cps().clear()
+      getChangePlan.mockResolvedValue(ready(plan({ groups: [], unhandled: [{ comment_id: 'a1', reason }] }), { code: 'change_plan_empty' }))
+      const key = (await ask()) as string
+      await tick()
+      expect(start).not.toHaveBeenCalled()
+      expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_empty' } })
+    }
+  })
+
+  it('审阅来源全 out_of_scope：照旧失败卡，不落回助手对话', async () => {
+    const review = plan({ source: 'review', groups: [], unhandled: [{ comment_id: 'c1', reason: 'out_of_scope' }] })
+    getChangePlan.mockResolvedValue(ready(review, { code: 'change_plan_empty' }))
+    const key = (await cps().requestFromReview('p1', { share_id: 's1', comments: [{ id: 'c1', text: '你好' }] } as never)) as string
+    await tick()
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_empty' } })
+  })
+})
+
 describe('部分能改、部分要改脚本', () => {
   it('出卡；「改脚本做剩下的」点了才走改脚本路径，卡留着', async () => {
     getChangePlan.mockResolvedValue(ready(partial))
