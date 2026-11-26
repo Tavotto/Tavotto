@@ -162,6 +162,7 @@ export default interface Resources {
         "bad_value": "给出的改法不可用，这次没动",
         "conflict": "与别的改动冲突，这次没动",
         "log_limit_declined": "对数轴下限没改，这次没动",
+        "merged_log": "范围并进了改对数轴那一条",
         "needs_script": "要改脚本，这次没动",
         "no_change_needed": "看起来不用改，这次没动",
         "no_effect": "改了也看不出变化，这次没动",

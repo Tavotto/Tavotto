@@ -940,6 +940,7 @@
       "not_applied": "没能生效，这次没动",
       "no_effect": "改了也看不出变化，这次没动",
       "not_addressed": "这条没有处理到",
+      "merged_log": "范围并进了改对数轴那一条",
       "unclearAssistant": "指令不够具体，这次没动",
       "log_limit_declined": "对数轴下限没改，这次没动"
     },

@@ -1138,3 +1138,38 @@ def test_a_position_the_model_asked_for_itself_is_not_overwritten_by_the_room():
     cp.attach_room([own], room, before, after)
     own_pos = [c for c in own["changes"] if c["target_gid"] == "axes_0" and c["prop"] == "position"]
     assert [c.get("auto") for c in own_pos] == [None]
+
+
+def test_a_range_proposed_by_another_comment_moves_into_the_log_group():
+    """#2261 Codex P2：c1 改对数、c2 改范围 [0, 2]——下限要在对数那组里问，不能留在 c2 的组里不问而改。"""
+    p = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0", "yscale", "log")]},
+            {"comment_id": "c2", "changes": [ch("ax0", "ylim", [0, 2])]},
+        ],
+        "unhandled": [],
+    }
+    out = cp.require_log_lower_limits(p, manifest(axes_el()))
+    (g,) = out["groups"]
+    assert g["comment_id"] == "c1"
+    assert ch("ax0", "ylim", [0.01, 2]) in g["changes"]
+    assert g["confirm"]["to"] == 0.01 and g["confirm"]["from"] == 0
+    assert out["unhandled"] == [{"comment_id": "c2", "reason": "merged_log"}]
+
+
+def test_the_other_group_keeps_its_other_changes_when_its_range_moves():
+    p = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0", "yscale", "log")]},
+            {
+                "comment_id": "c2",
+                "changes": [ch("ax0", "ylim", [0, 2]), ch("ax0", "xlim", [0, 50])],
+            },
+        ],
+        "unhandled": [],
+    }
+    out = cp.require_log_lower_limits(p, manifest(axes_el()))
+    g1, g2 = out["groups"]
+    assert ch("ax0", "ylim", [0.01, 2]) in g1["changes"] and "confirm" in g1
+    assert g2["changes"] == [ch("ax0", "xlim", [0, 50])]
+    assert out["unhandled"] == []

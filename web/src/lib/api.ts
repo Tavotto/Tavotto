@@ -4105,6 +4105,7 @@ export type ChangePlanUnhandledReason =
   | 'not_applied'
   | 'no_effect'
   | 'not_addressed'
+  | 'merged_log'
   /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
   | 'log_limit_declined'
 

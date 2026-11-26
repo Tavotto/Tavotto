@@ -97,7 +97,8 @@ ERROR_CODES = (
 #: 没处理的意见的一句话原因（闭集短码；界面文案归前端）。
 #: * needs_script / unclear / out_of_scope / no_change_needed：模型自己说的；
 #: * unknown_element / not_editable / bad_value / over_limit / conflict：校验没过；
-#: * not_applied：规范化把它剔了；no_effect：渲染出来值没变；not_addressed：模型没提这条意见。
+#: * not_applied：规范化把它剔了；no_effect：渲染出来值没变；not_addressed：模型没提这条意见；
+#: * merged_log：它的坐标范围并进了把这根轴改成对数的那一组（下限要一起问，见 `require_log_lower_limits`）。
 UNHANDLED_REASONS = (
     "needs_script",
     "unclear",
@@ -111,6 +112,7 @@ UNHANDLED_REASONS = (
     "not_applied",
     "no_effect",
     "not_addressed",
+    "merged_log",
 )
 _MODEL_REASONS = ("needs_script", "unclear", "out_of_scope", "no_change_needed")
 
@@ -683,10 +685,22 @@ def require_log_lower_limits(proposal: dict, manifest: object) -> dict:
             value = [to, hi] if lim[0] <= lim[1] else [hi, to]
             added = {"gid": ch["gid"], "prop": lim_prop, "value": value}
             if own is not None:
-                # 模型自己提了下限：换成新条目（它可能在别的组里），不原地改字段的 value
+                # 模型自己提了这根轴的范围：一律挪进改对数的这一组（换成新条目，不原地改字段的 value）。
+                # 留在别的组里的话，确认只挂在这一组、`effective_changes` 会把它丢掉，下限就不问而改；两组还能分开勾选，
+                # 只勾对数那组又得到一张坍掉的图。被挪空的那组意见记 `merged_log`。
                 added = {**own, **added}
                 for other in groups:
-                    other["changes"] = [added if c is own else c for c in other["changes"]]
+                    if other is g:
+                        other["changes"] = [added if c is own else c for c in other["changes"]]
+                        continue
+                    kept = [c for c in other["changes"] if c is not own]
+                    if len(kept) != len(other["changes"]) and not kept:
+                        item = {"comment_id": other["comment_id"], "reason": "merged_log"}
+                        if item not in unhandled:
+                            unhandled.append(item)
+                    other["changes"] = kept
+                if added not in g["changes"]:
+                    g["changes"].append(added)
             else:
                 g["changes"].append(added)
             index[(ch["gid"], lim_prop)] = added

@@ -962,6 +962,7 @@
       "not_applied": "Didn't take effect; left alone this time",
       "no_effect": "No visible difference; left alone this time",
       "not_addressed": "This one wasn't handled",
+      "merged_log": "Its range was folded into the log-axis change",
       "unclearAssistant": "The request wasn't specific enough, so nothing changed",
       "log_limit_declined": "Log axis limit left as it was; this one wasn't changed"
     },
