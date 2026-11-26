@@ -1118,7 +1118,7 @@ export default interface Resources {
       "attachRemove": "移除 {{name}}",
       "bodyCount": "{{count}} / {{max}}",
       "bodyLabel": "想说的话",
-      "bodyPlaceholder": "比如官网现在怎么写的，或编辑部邮件里的原话。直接点发送也可以。",
+      "bodyPlaceholder": "遇到的问题、想要的功能、使用中的困惑，都可以写在这里。",
       "buttonLabel": "联系作者",
       "cancelSending": "取消发送",
       "cancelledNote": "已取消，没有发送。",
@@ -1168,7 +1168,7 @@ export default interface Resources {
         "send_in_progress": "上一封还在发送中。",
         "subjectTooLong": "主题太长了。",
         "subject_too_long": "主题太长了。",
-        "urlInvalid": "原文链接要以 https:// 开头。"
+        "urlInvalid": "链接要以 https:// 开头。"
       },
       "failedTitle": "没有发送出去",
       "failure": {
@@ -1205,7 +1205,7 @@ export default interface Resources {
         "about": "关于 {{what}}",
         "aboutMissing": "想加的期刊 · {{query}}",
         "bodyLabel": "补充一句（选填）",
-        "bodyPlaceholder": "比如编辑部退稿信里写的是什么。不写也可以。",
+        "bodyPlaceholder": "比如官网现在怎么写的，或编辑部邮件里的原话。直接点发送也可以。",
         "bodyPlaceholderMissing": "比如期刊全称、出版社。直接点发送也可以。",
         "urlLabel": "投稿须知链接（选填）",
         "urlPlaceholder": "贴上期刊官网或投稿须知网址"
@@ -1431,7 +1431,7 @@ export default interface Resources {
       "redrawBitmapsKeptHint": "{{files}} 重画后和原件对不上，这次照原文件导出。要改用重画：在画布上选中它，点角标「用脚本重画」对照确认。",
       "redrawBitmaps_other": "导出前把 {{count}} 张有脚本的位图重画成矢量图",
       "redrawingBitmaps": "正在重画位图…",
-      "reportTitle": "发来官网链接或截图，我们来核对",
+      "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
       "reportToggle": "生成投稿前检查报告",
       "resultAdvisories_other": "{{count}} 个文件有需留意的地方，见详情",
       "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
@@ -1498,7 +1498,7 @@ export default interface Resources {
         "fromV2": "新版",
         "open": "打开原网页",
         "report": "这条不对",
-        "reportTitle": "告诉作者这条和原文对不上，附上链接或截图就行。"
+        "reportTitle": "发来官网链接或截图，我们来核对"
       },
       "cleared": "已不按期刊检查",
       "confirm": {
