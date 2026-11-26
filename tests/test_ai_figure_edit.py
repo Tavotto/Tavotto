@@ -1328,3 +1328,42 @@ def test_the_stage_event_is_a_kind_the_frontend_listens_for():
     source = api_ts.read_text(encoding="utf-8")
     block = source[source.index("const EVENT_KINDS = [") :]
     assert "'ai.stage'" in block[: block.index("] as const")]
+
+
+def test_plan_only_check_lets_changed_data_through_but_not_a_missing_figure(env):
+    """#2286 Codex P2：修改方案卡的脚本修改（plan_only）里，内置执行器的 check 不能再逼模型把数据改回去——
+    卡片会先问用户、服务端强制确认；不在 plan_only 时照旧不通过；图整张不再出两边都不通过。"""
+    root = env["figs"]
+    cand = ai_figure_edit.create_candidate("plan-data", root / "fig1.py", root, "fig1.py")
+    cand.target.write_text(SCRIPT.replace('"old"', '"seconds"'))
+    cand.extras["runner"] = object()
+    cand.extras["check_before"] = lambda: {"Fig1": _manifest("a" * 64)}
+
+    def changed(*_):
+        return {"status": "ok", "stems": ["Fig1"], "manifests": {"Fig1": _manifest("b" * 64)}}
+
+    ok, report = ai_figure_edit.agent_check(cand, changed)
+    assert not ok and "restore the data" in report
+    ok, report = ai_figure_edit.agent_check(cand, changed, data_change_allowed=True)
+    assert ok and "asked to confirm" in report
+
+    cand.extras["check_before"] = lambda: {"Fig1": _manifest("a" * 64), "Fig2": _manifest("c" * 64)}
+    cand.extras.pop("check_baseline", None)
+    ok, report = ai_figure_edit.agent_check(cand, changed, data_change_allowed=True)
+    assert not ok and "not produced any more" in report
+
+
+def test_fingerprint_ignores_atomic_tmp_of_excluded_files_only(tmp_path):
+    """后台刷新改写注册表的那一瞬，`tavotto_registry.json.<pid>.<n>.tmp` 被指纹扫到不算「项目被改动」
+    （注册表本身已排除，它的原子写临时文件同属排除）；别的文件的临时文件照常算。"""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "fig.py").write_bytes(b"x")
+    own = ai_figure_edit._own_files("fig.py")
+    before = ai_figure_edit.project_fingerprint(root, exclude=own)
+    (root / "tavotto_registry.json.4242.7.tmp").write_bytes(b"{}")
+    after = ai_figure_edit.project_fingerprint(root, exclude=own)
+    assert ai_figure_edit.fingerprint_changes(before, after) == []
+    (root / "data.csv.4242.8.tmp").write_bytes(b"1")
+    after = ai_figure_edit.project_fingerprint(root, exclude=own)
+    assert ai_figure_edit.fingerprint_changes(before, after) == ["data.csv.4242.8.tmp"]

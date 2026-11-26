@@ -12,6 +12,7 @@
   `tests/golden/convert_to_path_vectors.json`（前端生成，`tests/test_vector_convert.py` 逐数比）；
 * 轮廓化描边的拆件（虚线、端型、内外对齐）是前端 `lib/outlineStroke` 的 Python 版（`stroke_parts` / `dash_subpaths`），
   几何拆件复用导出那一份 `geometry.path_segments`；对拍样本 `tests/golden/outline_stroke_vectors.json` 的 `doc` 部分；
+* 路径锚点编辑（ADR 0212 第 4 期）也经这里的 `path_to_mm` / `path_from_mm` / `plan_replace` 落位，纯函数在 `engine/pathedit.py`；
 * 结果的比例坐标与包围盒保留 6 位小数（与 `rendercore/svgimport.path_object` 同一口径），前端不取整。
 """
 

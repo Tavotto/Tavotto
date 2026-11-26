@@ -2308,7 +2308,9 @@ def run(
                     convert_checks += 1
                     ok, report = ai_convert.agent_check(cand, evidence=evidence)
             else:
-                ok, report = ai_figure_edit.agent_check(cand, ai_convert.run_validation)
+                ok, report = ai_figure_edit.agent_check(
+                    cand, ai_convert.run_validation, data_change_allowed=bool(plan_only)
+                )
         except Exception:  # noqa: BLE001 - 校验流水自身出错：告诉 Agent 不通过，不拖垮会话
             LOG.exception("内置执行器的 check 回调出错（session %s）", sid)
             ok, report = False, "check_failed"

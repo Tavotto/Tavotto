@@ -1,0 +1,9658 @@
+{
+ "note": "前端 lib/pathEdit + store/pathActions + pathfinderActions 的输出（文档形态）；后端 tests/test_pathedit_golden.py 经 vectoredit.apply_ops 逐数比",
+ "cases": [
+  {
+   "name": "move-open-two",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_anchors",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 2
+     }
+    ],
+    "by_mm": [
+     3,
+     -2
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.425,
+          0.2
+         ],
+         "in": [
+          0.325,
+          0.2
+         ],
+         "out": [
+          0.525,
+          0.2
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.775,
+          0.7
+         ],
+         "in": [
+          0.675,
+          0.8
+         ],
+         "out": [
+          0.875,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "move-rotated-closed",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_anchors",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     }
+    ],
+    "by_mm": [
+     5,
+     4
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 19.758974596,
+     "y": 15.899519053,
+     "w": 36,
+     "h": 23.035898385,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.675836862,
+          0
+         ],
+         "in": [
+          0.475836862,
+          0
+         ],
+         "out": [
+          0.875836862,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.374888717
+         ],
+         "in": [
+          1,
+          0.166518289
+         ],
+         "out": [
+          1,
+          0.583259145
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.374888717
+         ],
+         "in": [
+          0,
+          0.583259145
+         ],
+         "out": [
+          0,
+          0.166518289
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "move-multi-rotated",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_anchors",
+    "id": "multi",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 1,
+      "i": 2
+     }
+    ],
+    "by_mm": [
+     -6,
+     7.5
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5.854293433,
+     "y": 39.849365018,
+     "w": 50,
+     "h": 34.995573796,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.235933864,
+          0.142748732
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.428625634
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.428625634
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.085725127
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.428625634
+         ]
+        },
+        {
+         "p": [
+          0.535933864,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "move-gradient-rotated",
+   "objects": [
+    {
+     "type": "path",
+     "x": 12,
+     "y": 10,
+     "w": 30,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "grad",
+     "rotationDeg": 45,
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       0.5,
+       0.5
+      ],
+      "radius": 0.6,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.9,
+          0
+         ],
+         "out": [
+          1.1,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_anchors",
+    "id": "grad",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 2
+     }
+    ],
+    "by_mm": [
+     4,
+     9
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10.658750551,
+     "y": 9.702528705,
+     "w": 30.623090214,
+     "h": 19.535533906,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "grad",
+     "rotationDeg": 45,
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       0.979652928,
+       0.819020359
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       0.489826464,
+       0.40951018
+      ],
+      "radius": 0.587791757,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.979652928,
+          0
+         ],
+         "in": [
+          0.881687635,
+          0
+         ],
+         "out": [
+          1.077618221,
+          0.081902036
+         ]
+        },
+        {
+         "p": [
+          0.790004797,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "move-hline-collinear",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 5,
+     "w": 40,
+     "h": 0.01,
+     "strokePt": 1,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "hline",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_anchors",
+    "id": "hline",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     }
+    ],
+    "by_mm": [
+     0,
+     6
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 5.005,
+     "w": 40,
+     "h": 6,
+     "strokePt": 1,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "hline",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "handle-smooth-collinear",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_handle",
+    "id": "curve",
+    "anchor": {
+     "sp": 0,
+     "i": 1
+    },
+    "which": "out",
+    "to_mm": [
+     28,
+     10
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.30527864,
+          0.478885438
+         ],
+         "out": [
+          0.45,
+          -0.1
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "handle-break-smooth",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_handle",
+    "id": "curve",
+    "anchor": {
+     "sp": 0,
+     "i": 2
+    },
+    "which": "in",
+    "to_mm": [
+     26,
+     30
+    ],
+    "break_smooth": true
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.4,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "handle-corner-rotated",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_handle",
+    "id": "blob",
+    "anchor": {
+     "sp": 0,
+     "i": 2
+    },
+    "which": "out",
+    "to_mm": [
+     60,
+     45
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ],
+         "out": [
+          1.279237747,
+          0.69118572
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "handle-zero-length-mirror",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "move_handle",
+    "id": "blob",
+    "anchor": {
+     "sp": 0,
+     "i": 0
+    },
+    "which": "in",
+    "to_mm": [
+     30,
+     8
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20.006884334,
+     "y": 14.974307315,
+     "w": 36,
+     "h": 24.027537337,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0.001146074
+         ],
+         "in": [
+          0.043661021,
+          -0.017769001
+         ],
+         "out": [
+          0.69992351,
+          0.009432827
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.400687644
+         ],
+         "in": [
+          1,
+          0.200916859
+         ],
+         "out": [
+          1,
+          0.60045843
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.400687644
+         ],
+         "in": [
+          0,
+          0.60045843
+         ],
+         "out": [
+          0,
+          0.200916859
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "add-all-segments-open",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "add_anchors",
+    "id": "curve"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.075,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          0.19375,
+          0.35
+         ],
+         "in": [
+          0.1375,
+          0.425
+         ],
+         "out": [
+          0.25,
+          0.275
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.3,
+          0.3
+         ],
+         "out": [
+          0.4,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.525,
+          0.5875
+         ],
+         "in": [
+          0.4625,
+          0.45
+         ],
+         "out": [
+          0.5875,
+          0.725
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.65,
+          0.85
+         ],
+         "out": [
+          0.75,
+          0.75
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8575,
+          0.4
+         ],
+         "in": [
+          0.805,
+          0.575
+         ],
+         "out": [
+          0.91,
+          0.225
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.96,
+          0.05
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "add-after-anchors-rotated",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "add_anchors",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 4
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.4,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.5
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.9,
+          0.775
+         ],
+         "in": [
+          0.95,
+          0.65
+         ],
+         "out": [
+          0.85,
+          0.9
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.175,
+          0.125
+         ],
+         "in": [
+          0.075,
+          0.2
+         ],
+         "out": [
+          0.275,
+          0.05
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "add-multi-all",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "add_anchors",
+    "id": "multi"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.25
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.25
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.8,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.85,
+          0.75
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "add-at-seg-t",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "add_anchors",
+    "id": "curve",
+    "at": {
+     "sp": 0,
+     "seg": 1,
+     "t": 0.3
+    }
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.38,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.4508,
+          0.4269
+         ],
+         "in": [
+          0.4145,
+          0.354
+         ],
+         "out": [
+          0.5355,
+          0.597
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.63,
+          0.87
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "add-at-closing-seg",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "add_anchors",
+    "id": "blob",
+    "at": {
+     "sp": 0,
+     "seg": 4,
+     "t": 0.7
+    }
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.44,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.26
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.3038,
+          0.0486
+         ],
+         "in": [
+          0.147,
+          0.12
+         ],
+         "out": [
+          0.371,
+          0.018
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "add-at-straight-seg",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "add_anchors",
+    "id": "multi",
+    "at": {
+     "sp": 1,
+     "seg": 0,
+     "t": 0.25
+    }
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "delete-one-open",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "delete_anchors",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "delete-closed-stays-closed",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "delete_anchors",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 18.5,
+     "y": 20.598076211,
+     "w": 36,
+     "h": 18,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          1,
+          0.2
+         ],
+         "in": [
+          1,
+          -0.066666667
+         ],
+         "out": [
+          1,
+          0.466666667
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.2
+         ],
+         "in": [
+          0,
+          0.466666667
+         ],
+         "out": [
+          0,
+          -0.066666667
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "delete-closed-turns-open",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "delete_anchors",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 2
+     },
+     {
+      "sp": 0,
+      "i": 4
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 24.317691454,
+     "y": 25.756921938,
+     "w": 28.8,
+     "h": 14.4,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          1,
+          -0.333333333
+         ],
+         "out": [
+          1,
+          0.333333333
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0,
+          1
+         ],
+         "in": [
+          0.125,
+          1
+         ],
+         "out": [
+          -0.125,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "delete-subpath-vanishes",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "delete_anchors",
+    "id": "multi",
+    "anchors": [
+     {
+      "sp": 1,
+      "i": 0
+     },
+     {
+      "sp": 1,
+      "i": 1
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 3.339459613,
+     "y": 45.582607494,
+     "w": 20,
+     "h": 15,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "delete-everything-removes-object",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "delete_anchors",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 2
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "delete-gradient",
+   "objects": [
+    {
+     "type": "path",
+     "x": 12,
+     "y": 10,
+     "w": 30,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "grad",
+     "rotationDeg": 45,
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       0.5,
+       0.5
+      ],
+      "radius": 0.6,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.9,
+          0
+         ],
+         "out": [
+          1.1,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "delete_anchors",
+    "id": "grad",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 14.196699141,
+     "y": 4.696699141,
+     "w": 15,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "grad",
+     "rotationDeg": 45,
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       2,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       1,
+       0.5
+      ],
+      "radius": 1.125,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "convert-toggle-to-smooth",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "convert_anchors",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.116666667,
+          0.766666667
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.186666667,
+          0.346666667
+         ],
+         "out": [
+          0.491931126,
+          0.25944825
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.9,
+          0.266666667
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "convert-toggle-to-corner",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "convert_anchors",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 2
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "convert-explicit-corner",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "convert_anchors",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 1
+     }
+    ],
+    "to": "corner"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ]
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "convert-explicit-smooth",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "convert_anchors",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 2
+     }
+    ],
+    "to": "smooth"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 19.642229124,
+     "y": 14.904135583,
+     "w": 36,
+     "h": 25.431083506,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.311111111,
+          0
+         ],
+         "out": [
+          0.688888889,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.377490798
+         ],
+         "in": [
+          1,
+          0.188745399
+         ],
+         "out": [
+          1,
+          0.566236197
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          0.943726994
+         ],
+         "in": [
+          0.933333333,
+          0.849354295
+         ],
+         "out": [
+          0.621114562,
+          1.070341257
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.2,
+          0.943726994
+         ],
+         "in": [
+          0.3,
+          0.943726994
+         ],
+         "out": [
+          0.1,
+          0.943726994
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.377490798
+         ],
+         "in": [
+          0,
+          0.566236197
+         ],
+         "out": [
+          0,
+          0.188745399
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "convert-closed-wraps",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "convert_anchors",
+    "id": "multi",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 1.786443164,
+     "y": 38.788858997,
+     "w": 53,
+     "h": 31.777777778,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.056603774,
+          0.055944056
+         ],
+         "in": [
+          -0.018867925,
+          0.15034965
+         ],
+         "out": [
+          0.157232704,
+          -0.06993007
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.433962264,
+          0.055944056
+         ]
+        },
+        {
+         "p": [
+          0.433962264,
+          0.527972028
+         ]
+        },
+        {
+         "p": [
+          0.056603774,
+          0.527972028
+         ],
+         "in": [
+          0.157232704,
+          0.653846154
+         ],
+         "out": [
+          -0.018867925,
+          0.433566434
+         ],
+         "smooth": true
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.622641509,
+          0.15034965
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.527972028
+         ]
+        },
+        {
+         "p": [
+          0.716981132,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "average-two-ends",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "average_anchors",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 23.34952526,
+     "y": 13.68,
+     "w": 15.326233322,
+     "h": 14.544852071,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.433927541,
+          0.572023693
+         ],
+         "out": [
+          0.825413164,
+          -0.528021871
+         ]
+        },
+        {
+         "p": [
+          0.042441918,
+          0.297012302
+         ],
+         "in": [
+          -0.218548497,
+          0.297012302
+         ],
+         "out": [
+          0.303432333,
+          0.297012302
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.955908372,
+          0.98454078
+         ],
+         "in": [
+          0.694917956,
+          1.122046475
+         ],
+         "out": [
+          1.216898787,
+          0.847035084
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.433927541,
+          0.572023693
+         ],
+         "in": [
+          0.225135209,
+          0.709529389
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "average-rotated-three",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "average_anchors",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 3
+     },
+     {
+      "sp": 0,
+      "i": 4
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 32.424871131,
+     "y": 16.4,
+     "w": 16,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.325,
+          0
+         ],
+         "in": [
+          -0.125,
+          0
+         ],
+         "out": [
+          0.775,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.1,
+          0.6
+         ],
+         "in": [
+          0.1,
+          0.4
+         ],
+         "out": [
+          0.1,
+          0.8
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.1,
+          0.6
+         ],
+         "in": [
+          0.325,
+          0.6
+         ],
+         "out": [
+          -0.125,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          0.1,
+          0.6
+         ],
+         "in": [
+          0.1,
+          0.8
+         ],
+         "out": [
+          0.1,
+          0.4
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-open-middle",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 17.92,
+     "w": 14,
+     "h": 14.08,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.428571429,
+          -0.136363636
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.005681818
+         ],
+         "in": [
+          0.714285714,
+          0.005681818
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 24,
+     "y": 12,
+     "w": 26,
+     "h": 16.224852071,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "NEW1",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.369803063
+         ],
+         "out": [
+          0.153846154,
+          0.369803063
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.538461538,
+          0.986141503
+         ],
+         "in": [
+          0.384615385,
+          1.10940919
+         ],
+         "out": [
+          0.692307692,
+          0.862873815
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.876923077,
+          0.123267688
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-open-segment",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 2
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 17.92,
+     "w": 14,
+     "h": 14.08,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.428571429,
+          -0.136363636
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.005681818
+         ],
+         "in": [
+          0.714285714,
+          0.005681818
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 38,
+     "y": 12,
+     "w": 12,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "NEW1",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.333333333,
+          0.875
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.733333333,
+          0.125
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-open-endpoint-is-noop",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-closed-once",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-closed-twice",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 24.317691454,
+     "y": 25.756921938,
+     "w": 28.8,
+     "h": 14.4,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          0
+         ],
+         "out": [
+          1,
+          0.333333333
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.75,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ],
+         "in": [
+          0.125,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "NEW1",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-closed-segment",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 2
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-closed-wrap-segment",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "blob",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 4
+     },
+     {
+      "sp": 0,
+      "i": 0
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "blob",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-multi-both",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "multi",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 2
+     },
+     {
+      "sp": 1,
+      "i": 1
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 2.434848925,
+     "y": 40.452305344,
+     "w": 50,
+     "h": 15,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.4,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          1
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 41.509771939,
+     "y": 48.562342148,
+     "w": 15,
+     "h": 15,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "NEW1",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "cut-keeps-group",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "grouped",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ],
+     "groupId": "g_1"
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "grouped",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 2
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 17.92,
+     "w": 28,
+     "h": 14.08,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "grouped",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.214285714,
+          -0.136363636
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.005681818
+         ],
+         "in": [
+          0.357142857,
+          0.005681818
+         ],
+         "out": [
+          0.642857143,
+          0.005681818
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.715909091
+         ],
+         "in": [
+          0.857142857,
+          0.857954545
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ],
+     "groupId": "g_1"
+    },
+    {
+     "type": "path",
+     "x": 38,
+     "y": 12,
+     "w": 12,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "NEW1",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.333333333,
+          0.875
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.733333333,
+          0.125
+         ]
+        }
+       ]
+      }
+     ],
+     "groupId": "g_1"
+    }
+   ]
+  },
+  {
+   "name": "cut-gradient",
+   "objects": [
+    {
+     "type": "path",
+     "x": 12,
+     "y": 10,
+     "w": 30,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "grad",
+     "rotationDeg": 45,
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       0.5,
+       0.5
+      ],
+      "radius": 0.6,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.9,
+          0
+         ],
+         "out": [
+          1.1,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "cut_path",
+    "id": "grad",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 1
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 11.950606765,
+     "y": 10.119245818,
+     "w": 30.337278107,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "grad",
+     "rotationDeg": 45,
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       0.988882387,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       0.494441194,
+       0.5
+      ],
+      "radius": 0.593329432,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.988882387,
+          0
+         ],
+         "out": [
+          1.087770626,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.494441194,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.988882387,
+          0
+         ],
+         "in": [
+          0.889994149,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-close-with-gap",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "id": "curve",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 0,
+      "i": 3
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-close-coincident",
+   "objects": [
+    {
+     "type": "path",
+     "x": 30,
+     "y": 6,
+     "w": 20,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "loopOpen",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ],
+         "out": [
+          0.2,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ],
+         "in": [
+          0,
+          0.2
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "id": "loopOpen",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 4
+     },
+     {
+      "sp": 0,
+      "i": 0
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 30,
+     "y": 6,
+     "w": 20,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "loopOpen",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ],
+         "in": [
+          0,
+          0.2
+         ],
+         "out": [
+          0.2,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-two-subpaths-end-start",
+   "objects": [
+    {
+     "type": "path",
+     "x": 8,
+     "y": 8,
+     "w": 30,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "twoOpen",
+     "rotationDeg": 10,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.3,
+          0.2
+         ],
+         "out": [
+          0.4,
+          0.3
+         ],
+         "in": [
+          0.2,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.6
+         ],
+         "out": [
+          0.7,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "id": "twoOpen",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 2
+     },
+     {
+      "sp": 1,
+      "i": 0
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 8,
+     "y": 8,
+     "w": 30,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "twoOpen",
+     "rotationDeg": 10,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.3,
+          0.2
+         ],
+         "in": [
+          0.2,
+          0.1
+         ],
+         "out": [
+          0.4,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.6,
+          0.6
+         ],
+         "out": [
+          0.7,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-two-subpaths-start-start",
+   "objects": [
+    {
+     "type": "path",
+     "x": 8,
+     "y": 8,
+     "w": 30,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "twoOpen",
+     "rotationDeg": 10,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.3,
+          0.2
+         ],
+         "out": [
+          0.4,
+          0.3
+         ],
+         "in": [
+          0.2,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.6
+         ],
+         "out": [
+          0.7,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "id": "twoOpen",
+    "anchors": [
+     {
+      "sp": 0,
+      "i": 0
+     },
+     {
+      "sp": 1,
+      "i": 0
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 8,
+     "y": 8,
+     "w": 30,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "twoOpen",
+     "rotationDeg": 10,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.6,
+          0.6
+         ],
+         "in": [
+          0.7,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.3,
+          0.2
+         ],
+         "in": [
+          0.2,
+          0.1
+         ],
+         "out": [
+          0.4,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.5
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-two-subpaths-end-end",
+   "objects": [
+    {
+     "type": "path",
+     "x": 8,
+     "y": 8,
+     "w": 30,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "twoOpen",
+     "rotationDeg": 10,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.3,
+          0.2
+         ],
+         "out": [
+          0.4,
+          0.3
+         ],
+         "in": [
+          0.2,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.6
+         ],
+         "out": [
+          0.7,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "id": "twoOpen",
+    "anchors": [
+     {
+      "sp": 1,
+      "i": 1
+     },
+     {
+      "sp": 0,
+      "i": 2
+     }
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 8,
+     "y": 8,
+     "w": 30,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "twoOpen",
+     "rotationDeg": 10,
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.6
+         ],
+         "out": [
+          0.7,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.3,
+          0.2
+         ],
+         "in": [
+          0.4,
+          0.3
+         ],
+         "out": [
+          0.2,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-objects-gap",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 60,
+     "w": 20,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#aa0000",
+     "fill": null,
+     "id": "joinA",
+     "rotationDeg": 15,
+     "name": "甲",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.6
+         ],
+         "out": [
+          0.6,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ],
+         "in": [
+          0.9,
+          0.9
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 30,
+     "y": 58,
+     "w": 18,
+     "h": 14,
+     "strokePt": 3,
+     "color": "#0000aa",
+     "fill": null,
+     "id": "joinB",
+     "name": "乙",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.2
+         ],
+         "out": [
+          0.1,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.6,
+          0.9
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "ids": [
+     "joinA",
+     "joinB"
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 6.634836963,
+     "y": 57.582180418,
+     "w": 41.365163037,
+     "h": 14.835639165,
+     "strokePt": 3,
+     "color": "#0000aa",
+     "fill": null,
+     "id": "joinB",
+     "name": "乙",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          0.028163234
+         ]
+        },
+        {
+         "p": [
+          0.82594049,
+          0.877469413
+         ]
+        },
+        {
+         "p": [
+          0.564851226,
+          0.216897941
+         ],
+         "in": [
+          0.608366103,
+          0.216897941
+         ]
+        },
+        {
+         "p": [
+          0.404454494,
+          1
+         ],
+         "out": [
+          0.364009044,
+          0.9
+         ]
+        },
+        {
+         "p": [
+          0.195970314,
+          0.565108474
+         ],
+         "in": [
+          0.242672696,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-objects-gap-keep-first-by-order",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 60,
+     "w": 20,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#aa0000",
+     "fill": null,
+     "id": "joinA",
+     "rotationDeg": 15,
+     "name": "甲",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          0.6
+         ],
+         "out": [
+          0.6,
+          0.6
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ],
+         "in": [
+          0.9,
+          0.9
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 30,
+     "y": 58,
+     "w": 18,
+     "h": 14,
+     "strokePt": 3,
+     "color": "#0000aa",
+     "fill": null,
+     "id": "joinB",
+     "name": "乙",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.2
+         ],
+         "out": [
+          0.1,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.6,
+          0.9
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "ids": [
+     "joinB",
+     "joinA"
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5.99141378,
+     "y": 52.469464704,
+     "w": 40.063818952,
+     "h": 20.302509272,
+     "strokePt": 1.5,
+     "color": "#aa0000",
+     "fill": null,
+     "id": "joinA",
+     "rotationDeg": 15,
+     "name": "甲",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.507450046
+         ]
+        },
+        {
+         "p": [
+          0.249601767,
+          0.802980019
+         ],
+         "out": [
+          0.29952212,
+          0.802980019
+         ]
+        },
+        {
+         "p": [
+          0.499203534,
+          1
+         ],
+         "in": [
+          0.44928318,
+          0.950745005
+         ]
+        },
+        {
+         "p": [
+          0.584114246,
+          0.362681037
+         ],
+         "out": [
+          0.627511669,
+          0.339734402
+         ]
+        },
+        {
+         "p": [
+          0.90780844,
+          0.691252611
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-objects-coincident",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 60,
+     "w": 20,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#aa00aa",
+     "fill": null,
+     "id": "joinD",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ],
+         "in": [
+          0.8,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 25,
+     "y": 60,
+     "w": 10,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#00aa00",
+     "fill": null,
+     "id": "joinC",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ],
+         "in": [
+          0,
+          0
+         ],
+         "out": [
+          0.2,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "ids": [
+     "joinD",
+     "joinC"
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 60,
+     "w": 30,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#00aa00",
+     "fill": null,
+     "id": "joinC",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.666666667,
+          0
+         ],
+         "in": [
+          0.733333333,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          0.666666667,
+          1
+         ],
+         "out": [
+          0.533333333,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "join-objects-coincident-reversed",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 60,
+     "w": 20,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#aa00aa",
+     "fill": null,
+     "id": "joinD",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ],
+         "in": [
+          0.8,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 25,
+     "y": 60,
+     "w": 10,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#00aa00",
+     "fill": null,
+     "id": "joinC",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ],
+         "in": [
+          0,
+          0
+         ],
+         "out": [
+          0.2,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "join_paths",
+    "ids": [
+     "joinC",
+     "joinD"
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 60,
+     "w": 30,
+     "h": 10,
+     "strokePt": 1.5,
+     "color": "#aa00aa",
+     "fill": null,
+     "id": "joinD",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.666666667,
+          1
+         ],
+         "in": [
+          0.533333333,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.666666667,
+          0
+         ],
+         "out": [
+          0.733333333,
+          0.3
+         ]
+        },
+        {
+         "p": [
+          1,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "reverse-open",
+   "objects": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "reverse_path",
+    "id": "curve"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "curve",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          1,
+          0
+         ],
+         "out": [
+          0.92,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.8,
+          0.7
+         ],
+         "out": [
+          0.6,
+          0.9
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.45,
+          0.3
+         ],
+         "out": [
+          0.25,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0,
+          1
+         ],
+         "in": [
+          0.15,
+          0.2
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "reverse-multi",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "reverse_path",
+    "id": "multi"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0,
+          0
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "compound-make",
+   "objects": [
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "back",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "mid",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "front",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "make_compound",
+    "ids": [
+     "front",
+     "back"
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "mid",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 45.274174192,
+     "h": 30.792304845,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "back",
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.750980015,
+          0.149637878
+         ],
+         "in": [
+          0.613255075,
+          0.032725551
+         ],
+         "out": [
+          0.888704954,
+          0.266550205
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.989271656,
+          0.711916147
+         ],
+         "in": [
+          1.04228201,
+          0.576917421
+         ],
+         "out": [
+          0.936261302,
+          0.846914874
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.692515654,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.279340835,
+          0.64926302
+         ],
+         "in": [
+          0.348203305,
+          0.707719184
+         ],
+         "out": [
+          0.210478366,
+          0.590806857
+         ]
+        },
+        {
+         "p": [
+          0.300646958,
+          0.127354514
+         ],
+         "in": [
+          0.247636604,
+          0.262353241
+         ],
+         "out": [
+          0.353657312,
+          -0.007644212
+         ],
+         "smooth": true
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.649512925
+         ],
+         "out": [
+          0.132525885,
+          0.129902585
+         ]
+        },
+        {
+         "p": [
+          0.309227065,
+          0.194853878
+         ],
+         "in": [
+          0.220876475,
+          0.194853878
+         ],
+         "out": [
+          0.397577655,
+          0.194853878
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.61845413,
+          0.51961034
+         ],
+         "in": [
+          0.53010354,
+          0.584561633
+         ],
+         "out": [
+          0.70680472,
+          0.454659048
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8835059,
+          0
+         ],
+         "in": [
+          0.812825428,
+          0.064951293
+         ]
+        }
+       ]
+      }
+     ],
+     "fillRule": "evenodd"
+    }
+   ]
+  },
+  {
+   "name": "compound-make-gradient-rotated",
+   "objects": [
+    {
+     "type": "path",
+     "x": 12,
+     "y": 10,
+     "w": 30,
+     "h": 16,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "g",
+     "rotationDeg": 45,
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       0.5,
+       0.5
+      ],
+      "radius": 0.6,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.9,
+          0
+         ],
+         "out": [
+          1.1,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          0.5,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 20,
+     "y": 15,
+     "w": 36,
+     "h": 24,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#ffcc00",
+     "id": "b",
+     "rotationDeg": 30,
+     "fillOpacity": 0.8,
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.5,
+          0
+         ],
+         "in": [
+          0.3,
+          0
+         ],
+         "out": [
+          0.7,
+          0
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0.4
+         ],
+         "in": [
+          1,
+          0.2
+         ],
+         "out": [
+          1,
+          0.6
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.8,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.2,
+          1
+         ],
+         "out": [
+          0.1,
+          1
+         ],
+         "in": [
+          0.3,
+          1
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.4
+         ],
+         "in": [
+          0,
+          0.6
+         ],
+         "out": [
+          0,
+          0.2
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "make_compound",
+    "ids": [
+     "b",
+     "g"
+    ]
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 20.947301389,
+     "y": 1.736544033,
+     "w": 34.326872803,
+     "h": 41.055760813,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#336699",
+     "id": "g",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.032130837,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.650107416,
+          0.516692494
+         ],
+         "in": [
+          0.588309758,
+          0.465023244
+         ],
+         "out": [
+          0.678946323,
+          0.595918676
+         ]
+        },
+        {
+         "p": [
+          0.011531617,
+          0.533915577
+         ]
+        }
+       ]
+      },
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0.671564192,
+          0.362218379
+         ],
+         "in": [
+          0.489916917,
+          0.274532755
+         ],
+         "out": [
+          0.853211467,
+          0.449904003
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.985850243,
+          0.783933713
+         ],
+         "in": [
+          1.055766311,
+          0.682683076
+         ],
+         "out": [
+          0.915934174,
+          0.88518435
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.594454761,
+          1
+         ]
+        },
+        {
+         "p": [
+          0.049512936,
+          0.736943128
+         ],
+         "in": [
+          0.140336573,
+          0.78078594
+         ],
+         "out": [
+          -0.041310702,
+          0.693100316
+         ]
+        },
+        {
+         "p": [
+          0.077613867,
+          0.345505593
+         ],
+         "in": [
+          0.007697798,
+          0.44675623
+         ],
+         "out": [
+          0.147529936,
+          0.244254956
+         ],
+         "smooth": true
+        }
+       ]
+      }
+     ],
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     },
+     "strokeGradient": {
+      "kind": "radial",
+      "center": [
+       0.5,
+       0.5
+      ],
+      "radius": 0.6,
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#00ff00"
+       },
+       {
+        "offset": 1,
+        "color": "#000000"
+       }
+      ]
+     },
+     "fillRule": "evenodd"
+    }
+   ]
+  },
+  {
+   "name": "compound-release",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "after",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "op": {
+    "op": "release_compound",
+    "id": "multi"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 1.37738233,
+     "y": 42.614711405,
+     "w": 23.924154566,
+     "h": 20.935792178,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "multi",
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.326732459
+         ]
+        },
+        {
+         "p": [
+          0.785559731,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.673267541
+         ]
+        },
+        {
+         "p": [
+          0.214440269,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 30.594221384,
+     "y": 42.013587834,
+     "w": 22.898094136,
+     "h": 23.661600045,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "NEW1",
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.187472892
+         ]
+        },
+        {
+         "p": [
+          0.608478893,
+          1
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "path",
+     "x": 10,
+     "y": 12,
+     "w": 40,
+     "h": 20,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": null,
+     "id": "after",
+     "name": "曲线",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          1
+         ],
+         "out": [
+          0.15,
+          0.2
+         ]
+        },
+        {
+         "p": [
+          0.35,
+          0.3
+         ],
+         "in": [
+          0.25,
+          0.3
+         ],
+         "out": [
+          0.45,
+          0.3
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          0.7,
+          0.8
+         ],
+         "in": [
+          0.6,
+          0.9
+         ],
+         "out": [
+          0.8,
+          0.7
+         ],
+         "smooth": true
+        },
+        {
+         "p": [
+          1,
+          0
+         ],
+         "in": [
+          0.92,
+          0.1
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "compound-release-grouped-gradient",
+   "objects": [
+    {
+     "type": "path",
+     "x": 5,
+     "y": 40,
+     "w": 50,
+     "h": 30,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#abcdef",
+     "id": "mg",
+     "rotationDeg": -20,
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0
+         ]
+        },
+        {
+         "p": [
+          0.4,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0,
+          0.5
+         ]
+        }
+       ]
+      },
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0.6,
+          0.1
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.5
+         ]
+        },
+        {
+         "p": [
+          0.7,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "groupId": "g_2",
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     }
+    }
+   ],
+   "op": {
+    "op": "release_compound",
+    "id": "mg"
+   },
+   "expect": [
+    {
+     "type": "path",
+     "x": 1.37738233,
+     "y": 42.614711405,
+     "w": 23.924154566,
+     "h": 20.935792178,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#abcdef",
+     "id": "mg",
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": true,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0.326732459
+         ]
+        },
+        {
+         "p": [
+          0.785559731,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.673267541
+         ]
+        },
+        {
+         "p": [
+          0.214440269,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "groupId": "g_2",
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     }
+    },
+    {
+     "type": "path",
+     "x": 30.594221384,
+     "y": 42.013587834,
+     "w": 22.898094136,
+     "h": 23.661600045,
+     "strokePt": 1.5,
+     "color": "#1b3a4b",
+     "fill": "#abcdef",
+     "id": "NEW1",
+     "headEnd": "triangle",
+     "subpaths": [
+      {
+       "closed": false,
+       "nodes": [
+        {
+         "p": [
+          0,
+          0
+         ]
+        },
+        {
+         "p": [
+          1,
+          0.187472892
+         ]
+        },
+        {
+         "p": [
+          0.608478893,
+          1
+         ]
+        }
+       ]
+      }
+     ],
+     "groupId": "g_2",
+     "fillGradient": {
+      "kind": "linear",
+      "from": [
+       0,
+       0
+      ],
+      "to": [
+       1,
+       1
+      ],
+      "stops": [
+       {
+        "offset": 0,
+        "color": "#ff0000"
+       },
+       {
+        "offset": 1,
+        "color": "#0000ff",
+        "opacity": 0.5
+       }
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

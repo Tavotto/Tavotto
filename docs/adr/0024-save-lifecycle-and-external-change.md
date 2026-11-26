@@ -193,6 +193,7 @@ hash 这一份」——不然前端根本拿不到基线；而 `send_file` 留�
 
 - **autosave 仍在数据目录**（`LAYOUT_DIR/_autosave`）而不是项目内（R-07）。
   搬家会改变「项目拷到另一台电脑带不带工作副本」的语义，单独处置。
+  （2026-11-26：由 [ADR 0211](0211-always-saved-project-local-history.md) 第二期处置——工作副本搬进项目，外部修改沿用本 ADR 的修订号判据。）
 - **没有 index.json**：`/api/layouts` 仍靠 `glob` 现算。引入 index 就多一份
   可能与磁盘不一致的真相，得先说清它坏了怎么重建。
 - **编辑历史面板的形态**：现有版本抽屉已经区分 undo 栈 / 检查点 / 恢复，

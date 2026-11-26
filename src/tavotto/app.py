@@ -1555,6 +1555,22 @@ def api_panel_stem():
     return resp
 
 
+@app.get("/api/panel-font-facts")
+def api_panel_font_facts():
+    """磁盘上的 PDF 素材原件用没用 Type 3 字体、有没有缺字方块（`artifactinspect.original_font_facts`）。
+
+    给画布角标「用脚本重画」一个依据（ADR 0139 修订 2026-11-24 补充）：**只在用户单选一张有脚本、没动过的
+    PDF 原件时**由前端来问，不在扫描素材时普查（打开项目不为每张图走一遍内容流）。只读文件、不执行脚本。
+    """
+    rel_id = request.args.get("id", "")
+    path = safe_resolve(rel_id)
+    if path.suffix.lower() not in PDF_EXT:
+        return jsonify({"code": "not_pdf", "error": "Only PDF originals have font facts."}), 400
+    resp = jsonify({"id": rel_id, **engine_artifactinspect.original_font_facts(path)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/render")
 def api_render():
     """把面板渲染为指定像素宽度的 PNG（带磁盘缓存），用于画布显示与缩略图。
@@ -12168,6 +12184,7 @@ _CHANGE_PLAN_STATUS = {
     "change_plan_no_comments": 400,
     "change_plan_unknown": 404,
     "change_plan_script_apply_failed": 500,
+    "change_plan_script_data_unconfirmed": 400,
 }
 #: 方案里两张图的宽度（`RENDER_BUCKETS` 里的一档）
 _CHANGE_PLAN_WIDTH = 1600
@@ -12559,7 +12576,7 @@ def _change_plan_script_compute(
     if len(new_bytes) > ec.SCRIPT_MAX_BYTES:
         raise ec.PlanFailure("change_plan_too_large")
     task.phase = "render_after"
-    after_png = _change_plan_script_render(
+    after_png, data_confirm = _change_plan_script_render(
         ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry
     )
     try:
@@ -12577,6 +12594,7 @@ def _change_plan_script_compute(
         new_bytes=new_bytes,
         base_patches=base,
         source=origin,
+        confirm=data_confirm,
     )
     return plan, before_png, after_png, new_bytes
 
@@ -12584,7 +12602,9 @@ def _change_plan_script_compute(
 def _change_plan_script_render(
     ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry="main"
 ):
-    """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图；数据指纹不变才放行。→ 改后 PNG。"""
+    """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图。→ `(改后 PNG, 数据确认 | None)`。
+    数据指纹变了不再失败（ADR 0206 修订 2026-11-27「先问一句再出卡」）：返回脚本组的 `confirm`，卡片先问、应用端点要显式确认；
+    改前有的图改后整张不再产出 = 坏了、不是改数据，仍失败 `change_plan_script_figure_missing`。"""
     ec = engine_changeplan
     cand = None
     try:
@@ -12610,10 +12630,13 @@ def _change_plan_script_render(
             raise ec.PlanFailure("change_plan_script_no_preview", "snapshot") from None
         baseline = engine_ai_figure_edit._call_hook(hooks.get("check_before"))
         after = engine_ai_figure_edit._with_original_names(res.get("manifests"), cand)
+        data_confirm = None
         if baseline and isinstance(after, dict) and after:
-            if engine_ai_figure_edit._data_lines(after, baseline):
-                raise ec.PlanFailure("change_plan_script_data_changed")
-        return after_png
+            findings, missing = ec.script_data_findings(after, baseline)
+            if missing:
+                raise ec.PlanFailure("change_plan_script_figure_missing")
+            data_confirm = ec.data_confirm(findings)
+        return after_png, data_confirm
     finally:
         if cand is not None:
             engine_ai_figure_edit.remove_candidate(cand.dir)
@@ -12648,6 +12671,12 @@ def api_change_plans_apply_script(plan_id: str):
         return refused
     if plan.get("applied"):
         return jsonify({"ok": True, "applied": plan["applied"], "unchanged": True})
+    # 数据变了的脚本方案：服务端强制显式确认（不只靠前端拦；审阅来源的脚本卡同样要问）
+    group = next(g for g in plan["groups"] if g.get("kind") == "script")
+    if isinstance(group.get("confirm"), dict):
+        body = request.get_json(force=True, silent=True)
+        if not isinstance(body, dict) or body.get("confirm_data_change") is not True:
+            return _change_plan_error("change_plan_script_data_unconfirmed")
     script = info["rel"]
     try:
         store = _script_store(ctx)
@@ -20049,6 +20078,7 @@ def api_ai_data_figure_propose():
                 tables=body.get("tables"),
                 spec=body.get("spec"),
                 font_range=body.get("font_range"),
+                understand=body.get("understand"),
             )
     except engine_ai_data_progress.Cancelled:
         return _cancelled_response()

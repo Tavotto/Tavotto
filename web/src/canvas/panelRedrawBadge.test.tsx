@@ -7,9 +7,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const redraw = vi.hoisted(() => vi.fn(async () => true))
+const fetchFacts = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/api', async (orig) => {
   const real = await orig<typeof import('@/lib/api')>()
-  return { ...real, fetchRuntimeStatus: vi.fn(), fetchRuntimeAssets: vi.fn(), engineRender: vi.fn() }
+  return { ...real, fetchRuntimeStatus: vi.fn(), fetchRuntimeAssets: vi.fn(), engineRender: vi.fn(), fetchPanelFontFacts: fetchFacts }
 })
 vi.mock('@/store/actions', async (orig) => ({
   ...(await orig<typeof import('@/store/actions')>()),
@@ -20,6 +21,10 @@ import { t } from '@/i18n'
 import { engineRender } from '@/lib/api'
 import { PanelView } from '@/canvas/PanelView'
 import { useRenderStore } from '@/store/renderStore'
+import { useAssetStore } from '@/store/assetStore'
+import { usePdfFontFacts } from '@/store/pdfFontFacts'
+import { setCurrentProjectId } from '@/lib/session'
+import type { PanelInfo } from '@/lib/api'
 import { useSelectionStore } from '@/store/selectionStore'
 import type { PanelObject } from '@/types/document'
 
@@ -86,6 +91,57 @@ describe('位图原件角标', () => {
   ])('%s：不给', (_name, extra) => {
     select('p1')
     show(png(extra))
+    expect(button()).toBeNull()
+  })
+})
+
+describe('PDF 原件角标（Type 3 / 缺字）', () => {
+  const pdf = (extra: Partial<PanelObject> = {}) => png({ fileId: 'plot.pdf', fileKind: 'pdf', pxW: undefined, pxH: undefined, ...extra })
+  const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+  beforeEach(() => {
+    setCurrentProjectId('A')
+    useAssetStore.setState({ byId: { 'plot.pdf': { id: 'plot.pdf', kind: 'pdf', mtime: 1, script: 'figure.py' } as unknown as PanelInfo } })
+    usePdfFontFacts.getState().clear()
+    fetchFacts.mockReset().mockResolvedValue({ id: 'plot.pdf', readable: true, type3: true, missing_glyphs: false })
+  })
+
+  it('没选中不问；单选时问一次，Type 3 就给按钮', async () => {
+    show(pdf())
+    await flush()
+    expect(fetchFacts).not.toHaveBeenCalled()
+    select('p1')
+    show(pdf())
+    await flush()
+    expect(fetchFacts).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[data-panel-badge]')?.textContent).toContain(label('pdfType3'))
+    expect(host.querySelector('[data-badge-hint]')?.getAttribute('title')).toBe(label('pdfType3Hint'))
+    // 无障碍名要短且不含提示正文：整句塞进 aria-label 会与工具栏「文字」按钮撞名（e2e quick-menu 严格模式）
+    expect(host.querySelector('[data-badge-hint]')?.getAttribute('aria-label')).toBe(label('hintLabel'))
+    act(() => button()!.click())
+    expect(redraw).toHaveBeenCalledWith('p1')
+    expect(engineRender).not.toHaveBeenCalled()
+  })
+
+  it('有缺字时说缺字', async () => {
+    fetchFacts.mockResolvedValue({ id: 'plot.pdf', readable: true, type3: true, missing_glyphs: true })
+    select('p1')
+    show(pdf())
+    await flush()
+    expect(host.querySelector('[data-panel-badge]')?.textContent).toContain(label('pdfMissingGlyphs'))
+    expect(host.querySelector('[data-badge-hint]')?.getAttribute('title')).toBe(label('pdfMissingGlyphsHint'))
+  })
+
+  it('字体没问题 / 带编辑：不给', async () => {
+    fetchFacts.mockResolvedValue({ id: 'plot.pdf', readable: true, type3: false, missing_glyphs: false })
+    select('p1')
+    show(pdf())
+    await flush()
+    expect(button()).toBeNull()
+    usePdfFontFacts.getState().clear()
+    fetchFacts.mockClear()
+    show(pdf({ overrides: [{ gid: 'axes_0.title', prop: 'text', value: 'x' }] }))
+    await flush()
+    expect(fetchFacts).not.toHaveBeenCalled()
     expect(button()).toBeNull()
   })
 })

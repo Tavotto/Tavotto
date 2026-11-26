@@ -355,7 +355,8 @@ USER_VISIBLE_CODES = {
     "change_plan_failed": set(),
     "change_plan_script_no_change": set(),
     "change_plan_script_check_failed": set(),
-    "change_plan_script_data_changed": set(),
+    "change_plan_script_figure_missing": set(),
+    "change_plan_script_data_unconfirmed": set(),
     "change_plan_script_no_preview": set(),
     "change_plan_script_overreach": set(),
     "change_plan_script_agent_failed": set(),
@@ -854,6 +855,9 @@ SCANNED = [n for n in _SOURCE_FILES if (SRC_DIR / n).is_file()]
 #: 分诊）。会话 guard 那几个的拒绝对象是攻击页面/畸形请求，正常界面路径由
 #: main.tsx 的专用启动页兜住；401 的 session_auth_required 另有 backend 文案。
 NON_UI_CODES = {
+    # 画布角标问 PDF 原件字体（ADR 0139 修订 2026-11-24）`GET /api/panel-font-facts`：前端只对 PDF 原件来问，
+    # 失败记成 failed、角标不出，不展示文案
+    "not_pdf",
     # 项目内时间线认领（ADR 0211 第一期）`POST /api/layout-session/project-history/claim`：前端只据此重列一次候选
     # 再按后端说的 mode 装（复制 / 再认领），不展示文案
     "claim_refused",
