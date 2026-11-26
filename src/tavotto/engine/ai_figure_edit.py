@@ -1109,7 +1109,9 @@ def legend_label_suggestions(cand: object, outcome: str | None) -> list[dict]:
     return sorted(out, key=lambda s: (s["stem"], s["gid"]))[:LABEL_SUGGESTION_MAX]
 
 
-def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
+def agent_check(
+    cand: Candidate, run_validation, *, data_change_allowed: bool = False
+) -> tuple[bool, str]:
     """内置执行器改图任务里 `check` 工具的回调（Agent 在候选里改完自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
 
     **与产品提交前同一套**，不另写判据：
@@ -1179,9 +1181,18 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
         # 图例文字跟进：先记、再判数据——现在 label 改动会让数据检查失败（身份里带 label），记录不能依赖它通过
         record_label_findings(cand, baseline, after)
         bad = _data_lines(after, baseline)
-        if bad:
+        missing = [stem for stem, man in baseline.items() if man is not None and stem not in after]
+        if bad and (missing or not data_change_allowed):
             return False, "check failed: " + " ".join(bad)[:1400]
-        notes.append("data unchanged")
+        if bad:
+            # 修改方案卡的脚本修改（`plan_only`，ADR 0206 修订 2026-11-27）：画出来的数据变了不算不通过——卡片会先问用户
+            # 要不要这样改、服务端强制确认；这里只提醒模型别在用户没要求时动数据。图整张不再出仍不通过（上面）。
+            notes.append(
+                "the plotted data changed; before anything is applied the user will be asked to confirm it. "
+                "Keep the data change only if the user asked for it; otherwise restore the data"
+            )
+        else:
+            notes.append("data unchanged")
         text_note = ". " + text_changes_note(after, baseline)
     # A full successful check supersedes only evidence for the exact bytes it
     # validated. A later failed check or a different candidate cannot erase it.
