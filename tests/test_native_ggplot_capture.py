@@ -148,8 +148,6 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
 
     rscript = _rscript_with_capture_packages()
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "local data"))
-    if not nativeggplot_source.available():
-        pytest.skip("Protected R source replay is unavailable")
 
     root = tmp_path / "研究 项目"
     graphs = root / "figure scripts"
@@ -219,14 +217,23 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         }
         validated = client.post("/api/export/validate", json=request)
         assert validated.status_code == 200 and validated.json.get("ok"), validated.json
-        assert validated.json["route"]["panels"][figure]["offers"]["script"] == {
-            "how": "redraw",
-            "suffix": "_edited.R",
-        }
+        offer = validated.json["route"]["panels"][figure]["offers"]["script"]
         protected = tmp_path / "keep-private"
         protected.write_bytes(b"external file")
         monkeypatch.setenv("TAVOTTO_R_REPLAY_PROTECTED_FILE", str(protected))
         exported = client.post("/api/export", json=request)
+        if sys.platform == "win32":
+            assert offer == {
+                "how": "unavailable",
+                "reason": "script_export_r_source_unavailable",
+                "suffix": "_edited.R",
+            }
+            assert exported.json["outputs"][0]["error"]["code"] == offer["reason"], exported.json
+            assert not (Path(exported.json["export_dir"]) / "Signal_edited.R").exists()
+            assert protected.read_bytes() == b"external file"
+            assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
+            return
+        assert offer == {"how": "redraw", "suffix": "_edited.R"}
         assert exported.status_code == 200, exported.get_json()
         (output,) = exported.json["outputs"]
         assert output["name"] == "Signal_edited.R"
