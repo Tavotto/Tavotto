@@ -590,7 +590,10 @@
     "stale": "脚本已更新",
     "frameLegacy": "按 figsize 显示",
     "frameLegacyHint": "脚本保存的原图裁得不一样。在右侧属性里可以改用原图的图幅。",
-    "frameLegacyBlockedHint": "脚本保存的原图裁得不一样，但这张图的裁剪范围完全在原图之外。先在右侧属性里调整或重置裁剪。"
+    "frameLegacyBlockedHint": "脚本保存的原图裁得不一样，但这张图的裁剪范围完全在原图之外。先在右侧属性里调整或重置裁剪。",
+    "bitmapOriginal": "位图原件",
+    "redraw": "用脚本重画",
+    "redrawHint": "此图由脚本存为位图，导出 PDF 时会原样嵌入。点「用脚本重画」可重跑脚本改用矢量图，有差异时会先让你对照，支持撤销。"
   },
   "quickEdit": {
     "aria": "快捷编辑",
