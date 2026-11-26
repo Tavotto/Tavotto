@@ -1,0 +1,3 @@
+## Agents can now edit the arrows, text and shapes already on your layout
+
+In the plugin, the agent can now change vector objects that are already on a layout, including the ones you drew yourself: restyle them (stroke width, colour, font size, text), move an arrow so its tip points at a data point, align and distribute, change stacking order, group and ungroup, rotate, delete, and combine or offset paths. Before saving, it reads back each change in plain words ("red arrow: line width 0.5 → 0.75 pt") with a preview of that area, checks only the objects it touched, and every edit can be undone in one step. Lines and bars drawn by your script are still changed through the figure itself, not here.

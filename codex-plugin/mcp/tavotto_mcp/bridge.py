@@ -167,6 +167,7 @@ OPTIONAL_ENGINE_MODULES = (
     "runconfig",
     "scriptargs",
     "specfix",
+    "vectoredit",
 )
 
 
@@ -6321,13 +6322,25 @@ def _layout_measure(project: str, registry, la, opened: list, pdfs: dict):
     return measure
 
 
-def layout_scene(target: str, layout: str, *, canvas_id: str | None = None) -> dict:
+def layout_scene(
+    target: str, layout: str, *, canvas_id: str | None = None, select: dict | None = None
+) -> dict:
     la = require_layout_annotate()
     project, registry = _layout_project(target)
     opened: list = []
+    # 有编辑能力的引擎：场景里一并列出能改的矢量对象（`vectoredit.read_scene`）；旧引擎只有 0208 的场景，不收选择器
+    if select is not None:
+        require_layout_edit()
+    ve = _optional_engine("vectoredit") if layout_edit_available() else None
+    reader = ve.read_scene if ve is not None and hasattr(ve, "read_scene") else la.read_scene
+    kw = {"select": select} if select is not None else {}
     try:
-        out = la.read_scene(
-            project, layout, _layout_measure(project, registry, la, opened, {}), canvas_id=canvas_id
+        out = reader(
+            project,
+            layout,
+            _layout_measure(project, registry, la, opened, {}),
+            canvas_id=canvas_id,
+            **kw,
         )
     except la.LayoutError as exc:
         raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
@@ -6426,3 +6439,106 @@ def layout_undo(target: str, layout: str, undo_token: str) -> dict:
         return la.undo(project, layout, undo_token)
     except la.LayoutError as exc:
         raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+
+
+# ---------------------------------------------------------------- 改已有矢量对象（ADR 0212 第 5 期）
+#
+# 同样只翻译：补丁、复述、核对、写入全在 `engine/vectoredit.py`；撤销与标注共用 `layoutannotate.undo`。
+
+
+def layout_edit_available() -> bool:
+    ve = _optional_engine("vectoredit")
+    return (
+        layout_annotate_available()
+        and ve is not None
+        and all(hasattr(ve, n) for n in ("propose", "commit", "preview_edit", "read_scene"))
+    )
+
+
+def require_layout_edit():
+    ve = _optional_engine("vectoredit") if layout_edit_available() else None
+    if ve is None:
+        raise BridgeError(
+            "这个 Tavotto 版本还不能改排版里已有的矢量对象；升级 Tavotto 后新开会话再试。",
+            code="layout_annotate_unavailable",
+        )
+    return require_layout_annotate(), ve
+
+
+def layout_edit_propose(
+    target: str,
+    layout: str,
+    ops: list,
+    *,
+    base_revision: str,
+    canvas_id: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    journal_id: str | None = None,
+    with_preview: bool = True,
+) -> dict:
+    la, ve = require_layout_edit()
+    project, registry = _layout_project(target)
+    opened: list = []
+    pdfs: dict = {}
+    try:
+        lay = la.open_layout(project, layout)
+        canvas = la._canvas(lay.doc, canvas_id)  # noqa: SLF001 — 同一份画布选择
+        plan = ve.propose(
+            project,
+            layout,
+            ops,
+            _layout_measure(project, registry, la, opened, pdfs),
+            base_revision=base_revision,
+            canvas_id=canvas_id,
+            profile=_layout_profile(profile_id, journal, journal_id),
+        )
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    plan["opened_sessions"] = opened
+    # 局部图要的是方案所依据的那一份画布：读到的修订号与方案的不同（中途被改）就不画，免得拿别的版本给 Agent 比
+    if (
+        with_preview
+        and plan.get("objects") is not None
+        and plan.get("base_revision") == lay.revision
+    ):
+        pv = ve.preview_edit(canvas, plan, pdfs)
+        if pv is not None:
+            plan["preview"] = {
+                "png_base64": base64.b64encode(pv["png"]).decode("ascii"),
+                "region_mm": pv["region_mm"],
+                "missing_panels": pv["missing_panels"],
+            }
+    return plan
+
+
+def layout_edit_commit(
+    target: str,
+    layout: str,
+    ops: list,
+    *,
+    base_revision: str,
+    echo_digest: str,
+    canvas_id: str | None = None,
+    profile_id: str | None = None,
+    journal: dict | None = None,
+    journal_id: str | None = None,
+) -> dict:
+    la, ve = require_layout_edit()
+    project, registry = _layout_project(target)
+    opened: list = []
+    try:
+        out = ve.commit(
+            project,
+            layout,
+            ops,
+            _layout_measure(project, registry, la, opened, {}),
+            base_revision=base_revision,
+            echo_digest_seen=echo_digest,
+            canvas_id=canvas_id,
+            profile=_layout_profile(profile_id, journal, journal_id),
+        )
+    except la.LayoutError as exc:
+        raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    out["opened_sessions"] = opened
+    return out

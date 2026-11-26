@@ -666,6 +666,8 @@ def _tools() -> list[dict]:
         tools.extend(_review_feedback_tools())
     if bridge.layout_annotate_available():
         tools.extend(_layout_annotate_tools())
+    if bridge.layout_edit_available():
+        tools.extend(_layout_edit_tools())
     return tools
 
 
@@ -690,6 +692,31 @@ _LAYOUT_ITEMS = {
         "panel = {id, point}（子图框的方位点 nw/n/ne/w/center/e/sw/s/se）、item = {name, point}（本批里另一个元素）。"
         "显著性星号 / n.s. / p 值 / n 必须写 provenance: user（用户说的）或 data（数据里算出来的），否则整批要用户确认。"
         "全文见 tavotto_guide section=layout-annotate。"
+    ),
+    "items": {"type": "object"},
+}
+
+
+_LAYOUT_SELECT = {
+    "type": "object",
+    "description": (
+        "筛 vector_objects（条件之间是「且」）：ids、types（text/arrow/shape/path）、name（包含）、text（文字内容包含）、"
+        "by_agent、within（画布毫米框 [x, y, w, h]，与对象框相交）、anchored_to（锚在哪张子图上，写短号 P1）。"
+    ),
+}
+
+_LAYOUT_OPS = {
+    "type": "array",
+    "description": (
+        "补丁：一列操作，按顺序执行，服务端重算（不收算好的坐标）。每条 {op, …}："
+        "set {id, set: {字段: 值}}（描边、填充、线宽 strokePt、颜色、字号、文字、x/y/w/h、rotationDeg、name、locked、hidden）；"
+        "move {id, by_mm: [dx, dy]} 或 {id, to: 位置（同标注的锚点写法）, attach: 方位点 | from | to}；delete {id}；"
+        'align {ids, mode: left/hcenter/right/top/vcenter/bottom, to?: "selection" | "page" | {key: id} | {panel: P1}}；'
+        "distribute {ids, axis: h/v, gap_mm?}；order {id, to: front/back/forward/backward}；group {ids, name?}；"
+        "ungroup {group}；rotate {id, deg}；pathfinder {ids, mode: unite/minus_front/minus_back/intersect/exclude/divide/"
+        "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}。"
+        "布尔等四个几何操作目前只收 path。"
+        "id 取 tavotto_layout_scene 的 vector_objects。全文见 tavotto_guide section=layout-annotate。"
     ),
     "items": {"type": "object"},
 }
@@ -720,11 +747,13 @@ def _layout_annotate_tools() -> list[dict]:
                 "只读：读项目里一份排版，回每张子图、坐标轴、带名字的元素（脚本 label= 的名字与角色）、空白区、"
                 "字体字号线宽，全部是画布毫米，外加 base_revision 与 fingerprint。每张子图带它在排版里的改动现跑一次导出来量；"
                 "量不了的子图（unmeasured：冻结快照、没有脚本的素材、打不开）只给外框。"
-                "用户说的「那条线 / 那根柱子」对应不到唯一一个元素时，**把候选（名字 + 子图）列给用户选，别自己挑**。"
+                "另回 vector_objects：画布上能改的矢量对象（文字 / 箭头 / 形状 / 路径，含用户手画的）的 id、类型、名字、"
+                "文字、毫米框、是否 Agent 加的、锁定 / 隐藏、所在组，可用 select 筛。"
+                "用户说的「那条线 / 那根柱子 / 那支箭头」对应不到唯一一个时，**把候选（名字 + 子图）列给用户选，别自己挑**。"
             ),
             "inputSchema": {
                 "type": "object",
-                "properties": _layout_props(),
+                "properties": _layout_props(("select", _LAYOUT_SELECT)),
                 "required": ["project_path", "layout"],
                 "additionalProperties": False,
             },
@@ -752,7 +781,7 @@ def _layout_annotate_tools() -> list[dict]:
                 "把方案写进排版文件（只追加新元素，不改已有的）。items 必须与出方案时**一字不差**，并带回方案的 echo_digest；"
                 "服务端会重新求解、重新核对，描述变了或排版在这期间被改过就拒绝。"
                 "写完**把复述原话告诉用户**（加了什么、各锚在哪），并给出 undo_token 能一步撤销。"
-                "桌面正开着这份排版时，桌面下次保存会提示别处有改动。"
+                "桌面正开着这份排版时会自动并进去（一步可撤销），不用用户处理。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -774,9 +803,10 @@ def _layout_annotate_tools() -> list[dict]:
         },
         {
             "name": "tavotto_layout_annotate_undo",
-            "title": "撤销上一次写入的标注",
+            "title": "撤销上一次 Agent 写入",
             "description": (
-                "把排版恢复到那次写入之前。只在排版文件还是那次写下的那一份时才恢复；之后被桌面或别人改过就拒绝（不替用户覆盖）。"
+                "把排版恢复到那次写入之前（加标注与 tavotto_layout_edit_apply 的编辑都用它撤销）。"
+                "只在排版文件还是那次写下的那一份时才恢复；之后被桌面或别人改过就拒绝（不替用户覆盖）。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -790,6 +820,58 @@ def _layout_annotate_tools() -> list[dict]:
                     )
                 ),
                 "required": ["project_path", "layout", "undo_token"],
+                "additionalProperties": False,
+            },
+        },
+    ]
+
+
+def _layout_edit_tools() -> list[dict]:
+    """改排版上已有的矢量对象（ADR 0212 第 5 期）：同一份场景 → 出编辑方案（复述 + 局部图）→ 写入；撤销共用标注的。"""
+    rev = (
+        "base_revision",
+        {"type": "string", "description": "tavotto_layout_scene 回的 base_revision。"},
+    )
+    ops = ("ops", _LAYOUT_OPS)
+    return [
+        {
+            "name": "tavotto_layout_edit_plan",
+            "title": "出编辑方案（不写入）",
+            "description": (
+                "不写盘：在排版上已有的矢量对象（文字 / 箭头 / 形状 / 路径，含用户手画的）上跑一份补丁——改样式、挪位置、"
+                "对齐分布、层级、编组、旋转、删除、布尔 / 偏移 / 轮廓化 / 简化——回改后的核对、**复述**（echo：逐条「改了谁、"
+                "从什么改成什么」）与一张局部图。**先拿复述逐条对照用户的原话**，对不上就改补丁再出方案。"
+                "只核这次动到的对象；failed 非空不能写入。图里由脚本画出的数据元素不在这里改（走 tavotto_apply_overrides）。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": _layout_props(ops, rev),
+                "required": ["project_path", "layout", "ops", "base_revision"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_layout_edit_apply",
+            "title": "写入编辑",
+            "description": (
+                "把编辑方案写进排版文件：只换掉被点名的对象、删掉要删的，其余逐字节不动。ops 必须与出方案时**一字不差**，"
+                "并带回方案的 echo_digest；服务端重算、重核，补丁变了或排版在这期间被改过就拒绝。"
+                "写完**把复述原话告诉用户**，并给出 undo_token（用 tavotto_layout_annotate_undo 一步撤销）。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": _layout_props(
+                    ops,
+                    rev,
+                    (
+                        "echo_digest",
+                        {
+                            "type": "string",
+                            "description": "tavotto_layout_edit_plan 回的 echo_digest。",
+                        },
+                    ),
+                ),
+                "required": ["project_path", "layout", "ops", "base_revision", "echo_digest"],
                 "additionalProperties": False,
             },
         },
@@ -1989,10 +2071,17 @@ def _layout_args(args: dict) -> tuple[str, str, str | None]:
 def _call_layout_scene(args: dict) -> dict:
     bridge.require_layout_annotate()
     project, layout, canvas_id = _layout_args(args)
-    out = bridge.layout_scene(project, layout, canvas_id=canvas_id)
+    select = args.get("select")
+    if select is not None and not isinstance(select, dict):
+        raise bridge.BridgeError("select 必须是对象", code="bad_arguments")
+    out = bridge.layout_scene(project, layout, canvas_id=canvas_id, select=select)
     n = len(out.get("panels_by_ref") or {})
     miss = out.get("unmeasured") or {}
     lines = [f"排版「{layout}」：{n} 张子图。"]
+    if "vector_objects_total" in out:
+        total, shown = out["vector_objects_total"], len(out.get("vector_objects") or [])
+        more = f"（只列了前 {shown} 个，用 select 缩小）" if total > shown else ""
+        lines.append(f"能改的矢量对象 {total} 个{more}。")
     if miss:
         lines.append("量不了（只有外框）：" + "、".join(f"{k}（{v}）" for k, v in miss.items()))
     return {"content": _text(*lines), "structuredContent": out}
@@ -2063,6 +2152,107 @@ def _call_layout_apply(args: dict) -> dict:
             + "、".join(f"{f['check']}·{f.get('item')}" for f in plan["unverified"])
         )
     plan.pop("objects", None)  # 已写进文件；回执不重复带一份
+    return {"content": _text(*lines), "structuredContent": out}
+
+
+def _layout_ops(args: dict) -> list:
+    ops = args.get("ops")
+    if not isinstance(ops, list) or not ops:
+        raise bridge.BridgeError("ops 必须是非空数组", code="bad_arguments")
+    return ops
+
+
+#: 编辑方案没出来时，给 Agent 的一句（码是 `engine/vectoredit.ERROR_CODES`；index / field 在 errors 里）
+_EDIT_ERROR_WORDS = {
+    "bad_op": "这条操作的写法不对",
+    "unknown_object": "点名的对象 / 组不在这张画布上（id 取 tavotto_layout_scene 的 vector_objects）",
+    "not_vector": "点名的不是矢量对象（子图、图片不在这里改）",
+    "bad_field": "这一类对象没有这个字段",
+    "bad_value": "值的类型或写法不对",
+    "out_of_range": "值超出允许范围",
+    "duplicate_target": "同一个对象在一条操作里点了两次",
+    "kernel_unavailable": "这台机器上的几何内核没装上：布尔 / 偏移 / 轮廓化 / 简化用不了，其余操作照常；告诉用户可在桌面里做这一步",
+}
+
+
+def _edit_error_lines(errors: list) -> list[str]:
+    out = []
+    for e in errors:
+        code = str(e.get("code"))
+        where = (f"第 {e['index'] + 1} 条" if isinstance(e.get("index"), int) else "") + (
+            f"（{e['field']}）" if e.get("field") else ""
+        )
+        out.append(f"{where}{_EDIT_ERROR_WORDS.get(code, code)}：{code}")
+    return out
+
+
+def _call_layout_edit_plan(args: dict) -> dict:
+    bridge.require_layout_edit()
+    project, layout, canvas_id = _layout_args(args)
+    out = bridge.layout_edit_propose(
+        project,
+        layout,
+        _layout_ops(args),
+        base_revision=str(args.get("base_revision") or ""),
+        canvas_id=canvas_id,
+    )
+    pv = out.pop("preview", None)
+    lines = list(out.get("echo") or [])
+    if out.get("errors") and not out.get("echo"):
+        lines = ["方案没出来，整批没动："] + _edit_error_lines(out["errors"])
+    elif out.get("failed"):
+        lines.insert(
+            0,
+            "核对没过，不能写入："
+            + "、".join(f"{f['check']}·{f.get('item')}" for f in out["failed"]),
+        )
+    else:
+        lines.insert(0, "编辑方案（先对照用户的原话核一遍再写入）：")
+    old = [f for f in out.get("facts") or [] if f.get("status") == "preexisting"]
+    if old:
+        lines.append(
+            "改之前就是这样、不挡这次写入（照实告诉用户）："
+            + "、".join(f"{f['check']}·{f.get('item')}" for f in old)
+        )
+    # 改后的全部对象只给写入用，回包不带（体积）；动到的对象在 changed 里
+    out.pop("objects", None)
+    content = _text(*lines)
+    if pv is not None:
+        content.append({"type": "image", "data": pv["png_base64"], "mimeType": "image/png"})
+        out["preview"] = {k: v for k, v in pv.items() if k != "png_base64"}
+    return {"content": content, "structuredContent": out}
+
+
+def _call_layout_edit_apply(args: dict) -> dict:
+    bridge.require_layout_edit()
+    project, layout, canvas_id = _layout_args(args)
+    out = bridge.layout_edit_commit(
+        project,
+        layout,
+        _layout_ops(args),
+        base_revision=str(args.get("base_revision") or ""),
+        echo_digest=str(args.get("echo_digest") or ""),
+        canvas_id=canvas_id,
+    )
+    plan = out.get("plan") or {}
+    plan.pop("objects", None)
+    if not out.get("written"):
+        why = (
+            _edit_error_lines(plan["errors"])
+            if plan.get("errors") and not plan.get("echo")
+            else ["核对没过，先重新出方案。"]
+        )
+        return {"content": _text("没有写入：", *why), "structuredContent": out}
+    lines = [
+        f"已改「{layout}」：改了 {len(out.get('changed') or [])} 个、删了 "
+        f"{len(out.get('deleted') or [])} 个对象（可用 undo_token 一步撤销）。"
+    ]
+    lines += list(plan.get("echo") or [])
+    if plan.get("unverified"):
+        lines.append(
+            "这几项量不了、没核："
+            + "、".join(f"{f['check']}·{f.get('item')}" for f in plan["unverified"])
+        )
     return {"content": _text(*lines), "structuredContent": out}
 
 
@@ -2875,6 +3065,8 @@ HANDLERS = {
     "tavotto_layout_annotate_plan": _call_layout_plan,
     "tavotto_layout_annotate_apply": _call_layout_apply,
     "tavotto_layout_annotate_undo": _call_layout_undo,
+    "tavotto_layout_edit_plan": _call_layout_edit_plan,
+    "tavotto_layout_edit_apply": _call_layout_edit_apply,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
