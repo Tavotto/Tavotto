@@ -67,8 +67,9 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
     object_name = "signal 📈"
     source = (
         'd <- read.csv("data.csv")\r\n'
-        "`signal 📈` <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +\r\n"
-        '  ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input")  # Keep\r\n'
+        "`signal 📈` <- ggplot2::ggplot(d, ggplot2::aes(x, y))\r\n"
+        "`signal 📈` <- `signal 📈` + ggplot2::geom_point() +\r\n"
+        '  ggplot2::labs(title = "Signal", x = "Input")  # Keep\r\n'
         'ggplot2::ggsave("standalone.pdf", `signal 📈`, width = 4, height = 3)\r\n'
     ).encode()
     original = tmp_path / "original.R"
@@ -82,7 +83,7 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
     request = stage / "request.json"
     native = ADAPTER.parent
 
-    def run(operation, **extra):
+    def run(operation, *, rejected=None, **extra):
         request.write_text(
             json.dumps(
                 {
@@ -105,6 +106,9 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
             check=False,
             timeout=_COLD_RENDER_TIMEOUT_SECONDS,
         )
+        if rejected is not None:
+            assert proc.returncode != 0 and rejected in proc.stderr
+            return None
         assert proc.returncode == 0, proc.stderr
         return json.loads(result.read_text(encoding="utf-8"))
 
@@ -143,6 +147,16 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
         colours = _pdf_text_colors(pdf)
         assert colours["Signal"] == {0x206A30}
         assert colours["Input"] == {0x892854}
+    before = (stage / "standalone.pdf").read_bytes()
+    interleaved = source.replace(
+        "`signal 📈` <- `signal 📈`".encode(),
+        "print(`signal 📈`)\r\n`signal 📈` <- `signal 📈`".encode(),
+    )
+    assert interleaved != source
+    staged.write_bytes(interleaved)
+    result.unlink()
+    run("anchor", rejected=b"consecutive sequence")
+    assert not result.exists() and (stage / "standalone.pdf").read_bytes() == before
     assert original.read_bytes() == source
 
 
@@ -181,8 +195,8 @@ if (nzchar(port)) {
   if (!inherits(network, "try-error")) stop("The protected replay reached a local server.")
 }
 d <- read.csv("../numbers.csv")
-p <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
-  ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input") +
+p <- ggplot2::ggplot(d, ggplot2::aes(x, y))
+p <- p + ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input") +
   ggplot2::theme(axis.title.x.bottom = ggplot2::element_text(face = "italic"))
 ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
 """

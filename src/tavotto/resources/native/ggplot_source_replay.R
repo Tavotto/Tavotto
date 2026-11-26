@@ -14,8 +14,13 @@ if (identical(request$operation, "anchor")) {
       (identical(expression[[1L]], as.name("<-")) || identical(expression[[1L]], as.name("="))) &&
       identical(expression[[2L]], binding)
   }, logical(1L)))
-  if (length(definitions) != 1L) stop("The selected plot needs one top-level assignment.")
-  end <- as.integer(attr(expressions, "srcref")[[definitions[[1L]]]])
+  if (!length(definitions) || any(diff(definitions) != 1L)) {
+    stop("The selected plot needs a consecutive sequence of top-level assignments.")
+  }
+  # Place the edit after the last assignment without crossing unrelated
+  # top-level expressions, such as a separate plot export.
+  final <- definitions[[length(definitions)]]
+  end <- as.integer(attr(expressions, "srcref")[[final]])
   jsonlite::write_json(
     list(line = end[[3L]], byte = end[[4L]], themes = as.list(adapter$ggplot_title_theme_names),
          tick_themes = as.list(adapter$ggplot_axis_tick_theme_names)),
