@@ -143,8 +143,9 @@ order: 200
   跨项目或内部机制仍留在数据目录。
 - 项目文件绑定按项目和工作副本 id 定位。会话接口 `/api/layout-session/project-file/<doc_id>` 的 GET 与
   POST `/reserve` 在同一槽位锁内读取磁盘修订。POST `/confirm` 在命名文件锁内经与 GET 共用的
-  `_layout_read_path()` 解析实际来源（规范位置 → 旧项目 `canvases/` → 数据目录），复核该文件修订；
-  票据中的保存目标仍是项目规范位置，提交时再核对仍有效的票据。各来源同名，共用同一条锁带。
+  `_layout_read_source()` 解析实际来源（规范位置 → 旧项目 `canvases/` → 数据目录），复核该文件修订。
+  读取与确认使用 `contained_path` 返回的实际路径。解析后超出对应项目根或数据根、或落在不同文档锁带
+  的候选按不存在处理；列表也跳过这些候选。票据中的保存目标仍是项目规范位置，提交时再核对仍有效的票据。
   DELETE `/intent/<sequence>` 只取消相应的待确认意图。看护：`tests/test_layout_project_file_http.py`。
 - **单一存储：schema 4 与 schema 3 同一套目录 / 列表 / 版本历史（#1920 合同，ADR 0182 §3）**：
   正文 `schema` 号是唯一区分——命名保存、自动保存槽位、版本时间线、项目包与「打开」列表

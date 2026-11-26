@@ -19720,12 +19720,22 @@ def layout_path(name: str, base: Path | None = None) -> Path:
     return (base if base is not None else LAYOUT_DIR) / f"{name}.json"
 
 
-def _layout_read_path(name: str) -> Path | None:
-    """命名排版的实际读取来源；保存目标仍由 `_project_layout_target` 决定。"""
+def _contained_layout_path(path: Path, root: Path) -> Path | None:
+    real = engine_projectenv.contained_path(root, path.absolute())
+    if real is None:
+        return None
+    resolved = Path(real)
+    # 确认持的是规范文件名的锁；链接目标也必须落在这条锁带上。
+    return resolved if _lock_stripe(resolved) == _lock_stripe(path) else None
+
+
+def _layout_read_source(name: str) -> tuple[Path, Path] | None:
+    """回排版的实际路径与来源目录，来源目录决定图表附件的存储归属。"""
     for directory in _layout_read_dirs():
-        path = layout_path(name, directory)
-        if path.exists():
-            return path
+        # 每个来源都是项目根或数据根的直接子目录，根不能跟着来源的链接走。
+        path = _contained_layout_path(layout_path(name, directory), directory.parent)
+        if path is not None and path.exists():
+            return path, directory
     return None
 
 
@@ -19736,20 +19746,22 @@ def api_layouts():
     # 文档——不剔掉的话「打开画布」列表里会多出一条叫 `_styles` 的东西，
     # 点开是一份读不成画布的样式表。
     seen: dict[str, float] = {}
-    for d in _layout_read_dirs():
-        if not d.is_dir():
+    for directory in _layout_read_dirs():
+        root = directory.parent
+        real = engine_projectenv.contained_path(root, directory.absolute())
+        if real is None or not Path(real).is_dir():
             continue
-        for p in d.glob("*.json"):
-            if not engine_documents.is_user_document_stem(p.stem):
+        for candidate in Path(real).glob("*.json"):
+            if not engine_documents.is_user_document_stem(candidate.stem):
                 continue
-            if p.stem in seen:
+            if candidate.stem in seen:
                 continue
-            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
-            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
-            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
-            # 按 `exists()` 往下找的。
+            path = _contained_layout_path(candidate, root)
+            if path is None:
+                continue
+            # 断链或 glob 后消失的条目不占名字，同名的合法后备文件仍可用。
             try:
-                seen[p.stem] = p.stat().st_mtime
+                seen[candidate.stem] = path.stat().st_mtime
             except OSError:
                 continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
@@ -19828,11 +19840,12 @@ def serve_document(path: Path, *, autosave: bool = False, source_storage: Path |
 
 @app.get("/api/layouts/<name>")
 def api_layout_get(name):
-    path = _layout_read_path(name)
-    if path is None:
+    source = _layout_read_source(name)
+    if source is None:
         abort(404)
+    path, directory = source
     ctx = _request_ctx()
-    source_storage = LAYOUT_DIR if path.parent == LAYOUT_DIR else project_layout_dir(ctx)
+    source_storage = LAYOUT_DIR if directory == LAYOUT_DIR else project_layout_dir(ctx)
     resp = serve_document(path, source_storage=source_storage)
     if ctx is not None:
         # ⌘S 会把这份写到哪（ADR 0096）：永远是当前项目 `tavottofile/` 下的那个名字，
@@ -20212,7 +20225,7 @@ def document_summary(path: Path) -> dict | None:
     }
 
 
-def _external_change(current: str | None, path: Path):
+def _external_change(current: str | None, path: Path | None):
     """「磁盘上那份不是我以为的那份」的 409 —— **自动保存与另存为共用这一份**。
 
     两条路给前端的形状必须逐字相同：前端的出口只有一套（重新加载 / 明确覆盖 /
@@ -20225,7 +20238,7 @@ def _external_change(current: str | None, path: Path):
             "error": "磁盘上的这份排版已被 Tavotto 之外的改动覆盖过",
             "code": "external_change",
             "revision": current,
-            "summary": document_summary(path),
+            "summary": document_summary(path) if path is not None else None,
         }
     ), 409
 
@@ -20752,7 +20765,7 @@ def api_layout_project_file_confirm(doc_id):
             {"axis": None, "base_axis": None, "base_revision": body["revision"]}, None
         )
         # 不同时取AS和named两个非重入条带锁。票据由reserve持AS锁捕获，
-        # 各来源与规范目标同名，共用一条文档锁带；锁内按 GET 的顺序重新解析来源。
+        # 锁内按 GET 的顺序重新解析来源，只接受本锁带覆盖的文件。
         # commit 在会话锁内再次核完整票据/CAS，票据中的保存目标保持规范位置。
         with _document_lock(target):
             pending = engine_layoutsession.pending_project_file(
@@ -20765,12 +20778,13 @@ def api_layout_project_file_confirm(doc_id):
             if pending["state"] != "pending":
                 return jsonify(pending)
             try:
-                source = _layout_read_path(body["name"])
-                current = engine_atomicio.existing_revision(source) if source is not None else None
+                source = _layout_read_source(body["name"])
+                path = source[0] if source is not None else None
+                current = engine_atomicio.existing_revision(path) if path is not None else None
             except OSError:
                 return _revision_unreadable()
             if current != body["revision"]:
-                return _external_change(current, source if source is not None else target)
+                return _external_change(current, path)
             result = engine_layoutsession.commit_project_file(
                 key, doc_id, pending["ticket"], revision=current
             )

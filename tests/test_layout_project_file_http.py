@@ -1,6 +1,8 @@
 """项目文件绑定通过统一 HTTP 路由核对槽位、命名文件与操作顺序。"""
 
 import json
+import sys
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -251,6 +253,78 @@ def test_open_confirm_rejects_external_change_to_the_read_source(env, location):
     assert changed.get_json()["revision"] == atomicio.revision_of(external)
     assert _binding(env) is None
     assert source.read_bytes() == external
+
+
+@pytest.mark.parametrize(
+    ("location", "link_kind"),
+    [
+        ("canvases", "directory"),
+        ("data", "directory"),
+        ("canvases", "file"),
+        ("data", "file"),
+        ("canvases", "different-stripe"),
+    ],
+)
+def test_open_confirm_ignores_unsafe_fallback_links(
+    env, tmp_path, monkeypatch, location, link_kind
+):
+    client, root, headers = env
+    directory = m.LAYOUT_DIR if location == "data" else root / location
+    # 模拟后备目录在 reserve 后被换成链接，自动保存槽位仍是独立的普通目录。
+    monkeypatch.setattr(m, "AUTOSAVE_DIR", tmp_path / "slots" / "_autosave")
+    directory.mkdir(parents=True, exist_ok=True)
+    source = directory / "A.json"
+    source.write_bytes(atomicio.dumps_json(_document()))
+    opened = client.get("/api/layouts/A", headers=headers)
+    assert opened.status_code == 200, opened.get_json()
+    _saved(_put(env, opened.get_json(), _axis(), None, None))
+    ticket = _reserve(env)
+
+    destination = (root if link_kind == "different-stripe" else tmp_path) / "other"
+    destination.mkdir()
+    linked_file = destination / ("A.json" if link_kind == "directory" else "other.json")
+    linked_file.write_bytes(atomicio.dumps_json(_document("other", updated=100)))
+    source.unlink()
+    if link_kind == "directory":
+        directory.rmdir()
+        if sys.platform == "win32":
+            import _winapi
+
+            _winapi.CreateJunction(str(destination), str(directory))
+        else:
+            directory.symlink_to(destination, target_is_directory=True)
+    else:
+        try:
+            source.symlink_to(linked_file)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                pytest.skip("file symlinks require Windows privileges")
+            raise
+    linked_file = linked_file.resolve(strict=True)
+    assert source.resolve(strict=True) == linked_file
+    if link_kind == "different-stripe":
+        assert m._lock_stripe(source) != m._lock_stripe(linked_file)
+
+    reads = []
+    read_bytes = Path.read_bytes
+
+    def record_reads(path):
+        if path.resolve() == linked_file:
+            reads.append(path)
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", record_reads)
+    confirmed = _confirm(env, "A", ticket, opened.headers["X-Tavotto-Revision"])
+    assert confirmed.status_code == 409, confirmed.get_json()
+    assert confirmed.get_json()["code"] == "external_change"
+    assert reads == []
+    assert confirmed.get_json()["revision"] is None
+    assert confirmed.get_json()["summary"] is None
+    assert _binding(env) is None
+    assert client.get("/api/layouts/A", headers=headers).status_code == 404
+    listing = client.get("/api/layouts", headers=headers)
+    assert listing.status_code == 200, listing.get_json()
+    assert listing.get_json()["layouts"] == []
 
 
 def test_external_autosave_drift_is_unknown_and_old_axis_cannot_write_before_body(env):
