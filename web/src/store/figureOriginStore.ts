@@ -12,6 +12,7 @@ import { runExclusive } from '@/lib/dataCommitQueue'
 import { ORIGIN_MAX, answersWithKind, findSameDrawing, normScript, type ErrorKind, type FigureOrigin } from '@/lib/dataFigureOrigin'
 import { currentProjectId } from '@/lib/session'
 import { msg, type UiMessage } from '@/i18n'
+import type { PanelDataOrigin } from '@/types/document'
 
 /**
  * 「点选误差线时换 SD / SEM / 95% CI」的来历与换图（ADR 0178，实验开关 `ai.taf.enabled` 后面）。
@@ -56,6 +57,11 @@ export type DigestState = 'checking' | string | null
 interface FigureOriginStore {
   /** 脚本路径 → 还没认领到面板的来历；按登记先后排（最旧的在前） */
   pending: Record<string, FigureOrigin>
+  /**
+   * 脚本路径 → 已经写到面板上的那份来历（连同当时面板的来源指纹）。只为一件事留着：新建图那一步被撤销再重做时，面板是照
+   * 历史里「还没有来历」的样子回来的，宿主凭这里把同一份来历补回去（指纹对得上才补）。本次会话内、最多 `ORIGIN_MAX` 份、换项目即清
+   */
+  claimed: Record<string, { fingerprint: string; origin: PanelDataOrigin }>
   /** 正在换：下拉立刻显示新值、转灰带转圈；同一时刻只有一份在换 */
   switching: { panelId: string; kind: ErrorKind } | null
   /** 数据文件路径 → 核对状态（本次会话内；换项目即清） */
@@ -64,6 +70,8 @@ interface FigureOriginStore {
   register: (origin: FigureOrigin) => void
   /** 宿主把来历写到面板上之后，从待认领表里拿掉 */
   release: (script: string) => void
+  /** 来历写到面板上之后记一笔（见 `claimed`） */
+  markClaimed: (script: string, fingerprint: string, origin: PanelDataOrigin) => void
   /** 去磁盘核对这份数据此刻的摘要（每次调用都重新问一次；回来前保留上一次的结果，不闪） */
   checkData: (path: string) => Promise<void>
   /** 把这块面板上那张图的误差类型换成 `kind`：成功后图被换成新脚本画的；其它任何结局都静默不变 */
@@ -77,6 +85,7 @@ const newRid = (): string => `df2e-${Date.now().toString(36)}-${(ridCounter++).t
 
 export const useFigureOriginStore = create<FigureOriginStore>((set, get) => ({
   pending: {},
+  claimed: {},
   switching: null,
   digests: {},
 
@@ -97,6 +106,18 @@ export const useFigureOriginStore = create<FigureOriginStore>((set, get) => ({
     const next = { ...get().pending }
     delete next[key]
     set({ pending: next })
+  },
+
+  markClaimed: (script, fingerprint, origin) => {
+    const key = normScript(script)
+    const next = { ...get().claimed }
+    delete next[key]
+    next[key] = { fingerprint, origin }
+    for (const k of Object.keys(next)) {
+      if (Object.keys(next).length <= ORIGIN_MAX) break
+      delete next[k]
+    }
+    set({ claimed: next })
   },
 
   checkData: async (path) => {
@@ -133,7 +154,7 @@ export const useFigureOriginStore = create<FigureOriginStore>((set, get) => ({
 
   clear: () => {
     epoch += 1
-    set({ pending: {}, switching: null, digests: {} })
+    set({ pending: {}, claimed: {}, switching: null, digests: {} })
   },
 }))
 

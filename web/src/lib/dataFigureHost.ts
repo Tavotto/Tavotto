@@ -126,21 +126,34 @@ configureFigureOriginHost({
 
 // 面板第一次出现在文档里：把登记的来历写到它身上（随项目文档落盘；`script` 对得上、带着来源指纹的 runtime 面板才认）。
 // 只在有待认领的来历时才扫文档。路径不是项目相对 / 摘要不合格的来历 `toPanelOrigin` 回 null：不落盘，直接丢掉
+let scannedDoc: unknown = null
+let scannedCanvases: unknown = null
+let scannedOrigins: unknown = null
 const claimPendingOrigins = () => {
   const store = useFigureOriginStore.getState()
   const pending = store.pending
-  const scripts = Object.keys(pending)
-  if (!scripts.length) return
+  const claimed = store.claimed
+  if (!Object.keys(pending).length && !Object.keys(claimed).length) return
   const s = useDocumentStore.getState()
+  // 对象表与两张来历表都没换过 = 上次已经扫过，不再扫（文档 store 每次拖动都会通知）
+  if (s.doc.objects === scannedDoc && s.canvases === scannedCanvases && store.pending === scannedOrigins) return
+  scannedDoc = s.doc.objects
+  scannedCanvases = s.canvases
+  scannedOrigins = store.pending
   const objects = [...s.doc.objects, ...s.canvases.filter((c) => c.id !== s.activeCanvasId).flatMap((c) => c.objects)]
   for (const o of objects) {
     if (o.type !== 'panel' || o.fileKind !== 'runtime' || !o.script || !o.source?.fingerprint || o.dataOrigin) continue
     const key = normScript(o.script)
     const origin = pending[key]
-    if (!origin) continue
-    const stored = toPanelOrigin(origin, o.source.fingerprint)
-    if (stored) writePanelDataOrigin(o.id, stored)
-    store.release(key)
+    if (origin) {
+      const stored = toPanelOrigin(origin, o.source.fingerprint)
+      if (stored && writePanelDataOrigin(o.id, stored)) store.markClaimed(key, o.source.fingerprint, stored)
+      store.release(key)
+      continue
+    }
+    // 新建图那一步被撤销再重做：面板照历史里「还没有来历」的样子回来——同一个脚本、同一个来源指纹，就把写过的那份补回去
+    const again = claimed[key]
+    if (again && again.fingerprint === o.source.fingerprint) writePanelDataOrigin(o.id, again.origin)
   }
 }
 useDocumentStore.subscribe(claimPendingOrigins)
