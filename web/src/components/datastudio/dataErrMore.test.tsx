@@ -128,6 +128,14 @@ describe('右栏「误差线」：多个 y', () => {
     expect(q('[data-data-confirm] [data-data-role="error"]')!.textContent).toContain('还不确定')
   })
 
+  it('各列种类不同、其中一列没说明是哪一种（sd + unknown）：留在「需要你确认」，当前值「各列不同」，列角色下面不重复出', async () => {
+    seed({ error_columns: cols(['sd', 'unknown'], [true, false]) })
+    await mount(<DataPanel />)
+    expect(q('[data-data-confirm-title]')!.textContent).toBe('需要你确认')
+    expect(q('[data-data-confirm] [data-data-role="error"]')!.textContent).toContain('各列不同')
+    expect(q('[data-data-roles] [data-data-role="error"]')).toBeNull()
+  })
+
   it('各列种类不同（没有顶层 error）：在列角色下面、不进「需要你确认」，当前值「各列不同」；选一种发 answers.error，所有列一起换', async () => {
     seed({ error_columns: cols(['sd', 'sem']) })
     propose.mockResolvedValue({
