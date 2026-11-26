@@ -486,7 +486,7 @@ def _tools() -> list[dict]:
         },
         {
             "name": "tavotto_preflight",
-            "title": "出版规范预检",
+            "title": "投稿前检查",
             "description": (
                 "按出版规范给当前会话的图做体检：尺寸/比例、最终有效字号、字体与中文 "
                 "fallback、刻度朝向、封闭坐标轴、图例边框、线宽档位、色系、DPI 等。"
@@ -1404,7 +1404,7 @@ def _call_open_batch(target: str, args: dict, plan: dict, *, workdir: str | None
         lines.append("失败/未尝试的那几张不影响已打开的会话，各自重试即可。")
     summary = "、".join(f"{k}×{v}" for k, v in sorted(total.items())) or "无"
     lines.append(
-        f"预检合计 {summary}"
+        f"投稿前检查合计 {summary}"
         + ("" if detailed else "（逐条建议未展开；要就 preflight=true 或调 tavotto_preflight）")
     )
     if blocking_stems:
@@ -1522,7 +1522,7 @@ def _open_figure_result(args: dict) -> dict:
                 if out.get("script_rerun")
                 else f"已打开 {out['stem']}（会话 {out['session_id']}）",
                 _brief_manifest(out.get("manifest")),
-                f"? 出版规范预检没跑出结论（{out['preflight'].get('error') or '见 code'}）"
+                f"? 投稿前检查没跑出结论（{out['preflight'].get('error') or '见 code'}）"
                 "——这**不等于通过**；会话是好的，可以改图，体检重跑 tavotto_preflight。",
             ),
             "structuredContent": out,
@@ -1537,7 +1537,7 @@ def _open_figure_result(args: dict) -> dict:
         ),
         _brief_manifest(out.get("manifest")),
         f"规范 {out['profile']['profile_id']} v{out['profile']['profile_version']}；"
-        f"预检 {checks['counts']}"
+        f"投稿前检查 {checks['counts']}"
         + ("" if detailed else "（逐条建议未展开；要就 preflight=true 或调 tavotto_preflight）"),
     ]
     # **`blocking` 是布尔不是列表**（`engine/preflight.summarize` 里
@@ -2683,7 +2683,7 @@ def _call_export(args: dict) -> dict:
     if out.get("proof_error"):
         lines.append("留档没写成：" + str(out["proof_error"].get("code")))
     if out["forced"]:
-        lines.append("注意：这次是带着阻断性问题强制导出的，已记进 proof report。")
+        lines.append("注意：这次是带着要改的问题强制导出的，已记进投稿前检查报告。")
     norm = out.get("normalized")
     if norm is not None:
         lines.append(

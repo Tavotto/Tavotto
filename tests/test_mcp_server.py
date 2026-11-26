@@ -2691,7 +2691,7 @@ def test_batch_preflight_is_a_summary_unless_asked(batch_project, batch_pool):
     args = {"project_path": str(batch_project), "stems": BATCH_STEMS}
     brief = _call("tavotto_open_figure", args)
     text = brief["content"][0]["text"]
-    assert "预检合计" in text
+    assert "投稿前检查合计" in text
     assert "逐条建议未展开" in text
     # 逐张的预检成文（`format_preflight` 的抬头 + 尺寸行）一份都不许出现
     assert text.count("尺寸 80.0×60.0 mm") == 0, "默认不许把四份预检成文糊上来"
