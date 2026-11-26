@@ -113,6 +113,8 @@ def test_create_and_suspend_before_verifying_the_appcontainer(tmp_path, monkeypa
             assert not inherits
             assert flags & winappcontainer._CREATE_SUSPENDED
             assert flags & winappcontainer.EXTENDED_STARTUPINFO_PRESENT
+            assert flags & winappcontainer._DETACHED_PROCESS
+            assert not flags & 0x08000000  # CREATE_NO_WINDOW
             assert _args[-2]._obj.StartupInfo.lpDesktop == "TavottoReplay-test\\Default"
             output = _args[-1]._obj
             output.hProcess, output.hThread = 10, 11

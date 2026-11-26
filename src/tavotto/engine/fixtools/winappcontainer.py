@@ -26,6 +26,7 @@ _ALL_APPLICATION_PACKAGES_POLICY = 0x0002000F
 _PROCESS_CREATION_CHILD_PROCESS_RESTRICTED = 1
 _PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT = 1
 _CREATE_SUSPENDED = 0x00000004
+_DETACHED_PROCESS = 0x00000008
 _CREATE_UNICODE_ENVIRONMENT = 0x00000400
 _TOKEN_QUERY = 0x0008
 _TOKEN_USER = 1
@@ -371,8 +372,10 @@ def _run(
     environment = ctypes.create_unicode_buffer(
         "\0".join(f"{key}={value}" for key, value in items) + "\0"
     )
+    # Attaching a hidden or new console fails during DLL initialization in
+    # the LPAC. Rterm reads the staged driver directly and needs no console.
     flags = (
-        CREATE_NO_WINDOW
+        _DETACHED_PROCESS
         | _CREATE_SUSPENDED
         | _CREATE_UNICODE_ENVIRONMENT
         | EXTENDED_STARTUPINFO_PRESENT
