@@ -52,6 +52,7 @@ def build(
     *,
     themes: dict[str, str],
     hot: dict | None = None,
+    tick_themes: dict[str, str] | None = None,
 ) -> AdjustedRSource:
     """Insert the generated R block after the binding located by R's parser."""
     if b"\0" in data:
@@ -107,6 +108,8 @@ def build(
     for patch in patches:
         gid, prop, value = patch["gid"], patch["prop"], patch["value"]
         element = themes.get(gid)
+        if element is None and prop == "color" and tick_themes is not None:
+            element = tick_themes.get(gid)
         if element is not None:
             face_fields = face_of.get(gid, {})
             face = _FACES.get((face_fields.get("weight"), face_fields.get("style")))
@@ -257,6 +260,7 @@ def replay(
             anchor["byte"],
             themes=anchor["themes"],
             hot=hot,
+            tick_themes=anchor["tick_themes"],
         )
         staged.write_bytes(adjusted.data)
         replay_request = {

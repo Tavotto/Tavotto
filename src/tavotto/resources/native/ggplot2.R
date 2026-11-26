@@ -29,6 +29,15 @@ ggplot_title_fields <- rbind(
 ggplot_text_slots <- ggplot_title_fields[, 1L]
 ggplot_title_theme_names <- ggplot_title_fields[, 2L]
 
+# A source edit and a canvas edit address the same four tick-label groups.
+ggplot_axis_tick_fields <- rbind(
+  "axis.x.bottom.ticks" = c("axis-b", "\u4e0b", "axis.text.x.bottom"),
+  "axis.x.top.ticks" = c("axis-t", "\u4e0a", "axis.text.x.top"),
+  "axis.y.left.ticks" = c("axis-l", "\u5de6", "axis.text.y.left"),
+  "axis.y.right.ticks" = c("axis-r", "\u53f3", "axis.text.y.right")
+)
+ggplot_axis_tick_theme_names <- ggplot_axis_tick_fields[, 3L]
+
 ggplot_cell_name <- function(cell) {
   paste0(cell$name, ".", paste(c(cell$t, cell$r, cell$b, cell$l), collapse = "-"))
 }
@@ -87,16 +96,9 @@ ggplot_axis_ticks <- function(table) {
   # A panel can repeat guides within a facet. Start with the four unique outer
   # cells of a single-panel plot, even when a cell contains a secondary axis.
   if (length(which(grepl("^panel(-[0-9]+-[0-9]+)?$", table$layout$name))) != 1L) return(list())
-  # Keep generated Chinese labels portable when R sources this file in a non-UTF-8 locale.
-  sides <- list(
-    "axis.x.bottom.ticks" = c("axis-b", "\u4e0b"),
-    "axis.x.top.ticks" = c("axis-t", "\u4e0a"),
-    "axis.y.left.ticks" = c("axis-l", "\u5de6"),
-    "axis.y.right.ticks" = c("axis-r", "\u53f3")
-  )
   targets <- list()
-  for (gid in names(sides)) {
-    side <- sides[[gid]]
+  for (gid in rownames(ggplot_axis_tick_fields)) {
+    side <- ggplot_axis_tick_fields[gid, ]
     slot <- which(table$layout$name == side[[1L]])
     if (length(slot) != 1L) next
     axis <- table$grobs[[slot]]$children[["axis"]]

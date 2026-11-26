@@ -201,6 +201,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         elements = {item["gid"]: item for item in rendered.json["manifest"]["elements"]}
         edits = [
             ("plot.title", "color", "#572B82"),
+            ("axis.x.bottom.ticks", "color", "#A64184"),
             ("axis.x.bottom.title", "weight", "bold"),
             ("axis.x.bottom.title", "fontsize", 18.5),
         ]
@@ -237,9 +238,12 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         assert exported.status_code == 200, exported.get_json()
         (output,) = exported.json["outputs"]
         assert output["name"] == "Signal_edited.R"
-        assert output["script_report"] == {"written": 3, "skipped": []}
+        assert output["script_report"] == {"written": 4, "skipped": []}
         edited = Path(exported.json["export_dir"]) / output["name"]
         assert b'colour = "#572B82"' in edited.read_bytes()
+        assert (
+            b'axis.text.x.bottom = ggplot2::element_text(colour = "#A64184")' in edited.read_bytes()
+        )
         assert b'face = "bold.italic"' in edited.read_bytes()
         assert b"size = 18.5" in edited.read_bytes()
         assert protected.read_bytes() == b"external file"
@@ -302,7 +306,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
             },
         )
         assert preview.status_code == 200, preview.json
-        assert preview.json["written"] == 3 and not preview.json["skipped"]
+        assert preview.json["written"] == 4 and not preview.json["skipped"]
         commit = "/api/script-edit/figure-style/commit"
         token = preview.json["token"]
         refused = client.post(commit, json={"token": token})
@@ -322,7 +326,8 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
                 "figure_snapshot": current["figureSnapshot"],
             },
         )
-        assert archived.status_code == 200 and "#572B82" in archived.json["svg"].upper()
+        assert archived.status_code == 200
+        assert all(color in archived.json["svg"].upper() for color in ("#572B82", "#A64184"))
         committed_layout = client.get(layout_url).json
         repeated = client.post(
             "/api/layouts/Source_style_copy?target=project", json=committed_layout

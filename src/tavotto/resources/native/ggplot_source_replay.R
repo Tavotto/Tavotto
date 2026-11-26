@@ -17,7 +17,8 @@ if (identical(request$operation, "anchor")) {
   if (length(definitions) != 1L) stop("The selected plot needs one top-level assignment.")
   end <- as.integer(attr(expressions, "srcref")[[definitions[[1L]]]])
   jsonlite::write_json(
-    list(line = end[[3L]], byte = end[[4L]], themes = as.list(adapter$ggplot_title_theme_names)),
+    list(line = end[[3L]], byte = end[[4L]], themes = as.list(adapter$ggplot_title_theme_names),
+         tick_themes = as.list(adapter$ggplot_axis_tick_theme_names)),
     request$result, auto_unbox = TRUE
   )
 } else if (identical(request$operation, "replay")) {
