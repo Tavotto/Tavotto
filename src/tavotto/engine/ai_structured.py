@@ -169,7 +169,9 @@ def parse_json_object(text: str) -> dict | None:
 REFRESH_NEEDS_S = 35.0
 
 
-def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str, str]:
+def resolve_connection(
+    budget_s: float | None = None, *, conn_id: str | None = None, model: str | None = None
+) -> tuple[dict | None, str, str]:
     """用户当前连着的、内置执行器能直接用的连接 → `(builtin_conn 形状 | None, 原因码, detail)`。
 
     「当前」= 连接视图里第一个可用的 Key / 账号登录连接（`ai_connections.first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径）。
@@ -184,7 +186,18 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
     budget = DEFAULT_LIMITS.timeout_s if budget_s is None else budget_s
     if ai_connections.builtin_forced() is False:
         return None, "no_connection", "builtin_disabled"
-    conn = ai_connections.first_key_connection(refresh=False)
+    if conn_id:
+        # 用户在输入框选的那一条（连接 id + 型号）：只认它，不顺延到别的连接
+        if conn_id in ai_connections.SUBSCRIPTIONS:
+            return find_cli_connection(cached_only=False, conn_id=conn_id, model=model)
+        rec = ai_providers.get(conn_id)
+        if rec is None:
+            return None, "no_connection", "connection_not_found"
+        conn = ai_providers.builtin_conn(rec, model)
+        if conn is None:
+            return None, "unsupported_connection", "not_builtin_usable"
+    else:
+        conn = ai_connections.first_key_connection(refresh=False)
     if conn is None:
         return find_cli_connection(cached_only=False)
     if budget >= REFRESH_NEEDS_S:
@@ -214,6 +227,11 @@ def _effort_kwargs(conn: dict, effort: str | None) -> dict:
     try:
         from . import ai_providers
 
+        if ai_providers.is_siwc_conn(conn):
+            # SIWC：型号自己在 /v1/models 里声明的档位（登录时缓存）；没声明的不发
+            return (
+                {"effort": effort} if effort in ai_providers.siwc_efforts(conn.get("model")) else {}
+            )
         rec = ai_providers.get(conn.get("provider_id"))
         if rec is None:
             return {}
@@ -346,12 +364,15 @@ def cli_identity(conn: dict) -> str:
     return f"cli:{conn.get('agent', '')}|{conn.get('model', '')}"
 
 
-def find_cli_connection(*, cached_only: bool) -> tuple[dict | None, str, str]:
+def find_cli_connection(
+    *, cached_only: bool, conn_id: str | None = None, model: str | None = None
+) -> tuple[dict | None, str, str]:
     """订阅登录连接里第一个「可用且适配器支持无工具单轮」的 → `({"kind": "cli", "agent", "model", "conn_id"} | None, 原因码, detail)`。
 
     * 没有可用的订阅登录 = `no_connection`；有，但适配器都没覆写 `build_structured_command` / 解析不出型号 = `unsupported_connection`。
     * 型号 = 连接里已解析出的 `default_model`，没有就取它型号清单的第一项（适配器自己的目录顺序）；都没有 = 不支持（不写死型号名）。
-    * `cached_only`：只看已有的能力缓存，绝不探测（同步路径用）；缓存还没有 = `no_connection`。"""
+    * `cached_only`：只看已有的能力缓存，绝不探测（同步路径用）；缓存还没有 = `no_connection`。
+    * `conn_id` / `model`：用户在输入框选的那条订阅连接与型号——只认它（不是它 / 不可用 = `no_connection`，适配器不支持 = `unsupported_connection`），不顺延到别的连接。"""
     from . import ai_agents, ai_bridge, ai_connections
 
     try:
@@ -363,14 +384,16 @@ def find_cli_connection(*, cached_only: bool) -> tuple[dict | None, str, str]:
     saw_unsupported = False
     for c in caps.get("connections") or []:
         sub = ai_connections.SUBSCRIPTIONS.get(c.get("id"))
-        if sub is None or c.get("state") != "ready":
+        if sub is None or c.get("state") != "ready" or (conn_id and c.get("id") != conn_id):
             continue
         agent = ai_agents.get_agent(sub[0])
         if agent is None or not agent.supports_structured():
             saw_unsupported = True
             continue
-        model = str(c.get("default_model") or "").strip() or next(
-            (str(m) for m in (c.get("models") or []) if m), ""
+        model = (
+            str(model or "").strip()
+            or str(c.get("default_model") or "").strip()
+            or next((str(m) for m in (c.get("models") or []) if m), "")
         )
         if not model:
             saw_unsupported = True
@@ -537,20 +560,41 @@ def _call(
         return _call_cli(
             system, user, validate, limits, conn, t0, max_requests, effort, runner, schema
         )
-    from . import fixsession
+    from . import ai_providers, fixsession
+
+    if ai_providers.is_siwc_conn(conn) and not conn.get("api_key"):
+        # SIWC（与 Key 连接同一条路，ADR 0209 §七）：挑连接时不取令牌，这里现取。与账号登录同一个预算闸：剩余时限够一次刷新
+        # （`REFRESH_NEEDS_S`）才允许联网刷新；不够就只用够新的现有令牌，不等锁、不联网（Codex #2212）
+        from . import siwc_auth, siwc_login
+
+        remaining = limits.timeout_s - (time.monotonic() - t0)
+        try:
+            token = siwc_login.provider().access_token(
+                min_valid_s=max(int(remaining), 1) + 30,
+                allow_refresh=remaining >= REFRESH_NEEDS_S,
+            )
+        except siwc_auth.NeedsLogin:
+            return StructuredResult(
+                False, reason="no_connection", detail="needs_login", elapsed_ms=_ms(t0)
+            )
+        except siwc_auth.TokenUnavailable:
+            return StructuredResult(
+                False, reason="no_connection", detail="token_unavailable", elapsed_ms=_ms(t0)
+            )
+        conn = {**conn, "api_key": token}
 
     sent = [
         0
     ]  # 传输层的真实请求数（`HttpModel.complete` 在换协议 / 字段降级时一次尝试可发多个请求）
     inner = post if post is not None else post_json
 
-    def counted(url, headers, body, *, timeout, max_bytes=None):
+    def counted(url, headers, body, *, timeout, max_bytes=None, reader=None):
         if max_requests is not None and sent[0] >= max_requests:
             raise RunnerFailure("budget", "requests")
         sent[0] += 1
-        if max_bytes is None:
-            return inner(url, headers, body, timeout=timeout)
-        return inner(url, headers, body, timeout=timeout, max_bytes=max_bytes)
+        # 只把调用方真给了的可选参数往下传：三条原协议的调用形状逐字不变；`reader` 是 siwc-responses 的 SSE 读取器
+        extra = {k: v for k, v in (("max_bytes", max_bytes), ("reader", reader)) if v is not None}
+        return inner(url, headers, body, timeout=timeout, **extra)
 
     deadline = t0 + limits.timeout_s  # 总时限从调用开始算：解析连接（可能联网刷新令牌）也在里面
     total = Usage()

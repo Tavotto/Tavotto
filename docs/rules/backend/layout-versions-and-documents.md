@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layoutannotate.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -141,6 +141,12 @@ order: 200
   合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
   tavottofile**，否则导出成图会混进素材面板。autosave / styles 等
   跨项目或内部机制仍留在数据目录。
+- 项目文件绑定按项目和工作副本 id 定位。会话接口 `/api/layout-session/project-file/<doc_id>` 的 GET 与
+  POST `/reserve` 在同一槽位锁内读取磁盘修订。POST `/confirm` 在命名文件锁内经与 GET 共用的
+  `_layout_read_source()` 解析实际来源（规范位置 → 旧项目 `canvases/` → 数据目录），复核该文件修订。
+  读取与确认使用 `contained_path` 返回的实际路径。解析后超出对应项目根或数据根、或落在不同文档锁带
+  的候选按不存在处理；列表也跳过这些候选。票据中的保存目标仍是项目规范位置，提交时再核对仍有效的票据。
+  DELETE `/intent/<sequence>` 只取消相应的待确认意图。看护：`tests/test_layout_project_file_http.py`。
 - **单一存储：schema 4 与 schema 3 同一套目录 / 列表 / 版本历史（#1920 合同，ADR 0182 §3）**：
   正文 `schema` 号是唯一区分——命名保存、自动保存槽位、版本时间线、项目包与「打开」列表
   都不按格式分叉，没有 `documents/v4` 命名空间、没有第二套文档端点或会话域。schema 4 只表示
@@ -203,6 +209,13 @@ order: 200
   `_document_lock(path)`（按落盘路径，自动保存 / 另存为 / 槽位清理共用，
   **不可重入**）。GET 交出 `X-Tavotto-Revision` 且不用 `send_file`
   （句柄会在 Windows 上挡住下一次 `os.replace`）。
+- **锁带与判据的唯一出处是 `engine/doclock.py`**（2026-11-25，ADR 0208 第 2 期）：`DocumentLock` / `lock_stripe` /
+  `REVISION_ABSENT` / `revision_conflict` 从 `app.py` 搬进引擎，`app.py` 的 `_DocumentLock` / `_lock_stripe` /
+  `_revision_conflict` / `REVISION_ABSENT` 只是别名（等锁上限仍读 `app.DOCUMENT_LOCK_TIMEOUT_S`）。插件的排版写入口
+  （`engine/layoutannotate.py`）与桌面保存是两个进程写同一个 `tavottofile/<名>.json`，**必须用同一把锁、同一个判据**，
+  不许在插件侧另写一份。Agent 写入只追加对象、写前留撤销副本（`state/agent-undo/`），撤销只在文件还是那次写下的那一份时恢复。
+  `GET /api/layouts/<名>/agent-additions?base_revision=` 只读：从基线到磁盘修订号的每一步都是 Agent 写入、正文只多了末尾追加的
+  `anchor.by == "agent"` 对象时才回 `available: true`（判据在 `layoutannotate.agent_additions`，桌面据此给「并进来」，不自己判）。
 - **⌘S 写回项目里绑定的排版文件（ADR 0096，2026-09-26）**：同一个端点
   `POST /api/layouts/<name>?target=project`，**不加端点**。这一档必须开着项目
   （`current_ctx()`，否则 409 `no_project`——不许静默退回数据目录）；冲突判据、锁、
@@ -362,6 +375,18 @@ order: 200
     `/owner` 与这里都不为 runtime 面板作证，也不凭脚本同名 / fingerprint / mtime 自动归项目。一个坏文件只让自己
     `invalid`；不写任何东西、不回路径、不运行脚本。**恢复副本不加端点**：前端读源正文（带 revision）→ 用户确认时再读一次比对 →
     固定目标 id 走正常 `switchDocument` + 自动保存，源槽位与源归属不动。
+  - **项目自己的时间线作为恢复证据（ADR 0211 第一期，2026-11-25）**：`GET /api/layout-session/project-history`
+    列当前项目 `tavottofile/versions/*.vx` 里有内容的排版（`engine/projecthistory.py`：目录名过 `valid_doc_id`、不跟符号链接、
+    条目与读信封个数 / 字节有上界、索引只读不写），每项 `{doc_id, name, vid, ts, canvasId, schema, canvases, objects, mode, owner,
+    revision, node_newer}`，不回路径。只有空节点的 `.vx`（旧版每次加载留下的空 `open`）不进候选。`mode` 在槽位文档锁里判：
+    owners 记着别的项目且那条路径**确定不存在**（`FileNotFoundError` / `NotADirectoryError`；其余 `OSError` 当它还在）= 挪走
+    （`owner:"moved"`）；路径还在 = 复制（`copy`，新 docId，旧项目零改动）；待核对 / 会话状态 degraded / 槽位坏 / 挪走但槽位已不在 → `copy`；
+    其余有可恢复槽位 → `slot`，没有槽位 → `node`。先筛掉没有内容的 `.vx` 再截个数（≤ 200），没列全回 `truncated:true`。`node_newer`：槽位那张画布与节点内容不同、且节点 `ts` 晚于槽位正文的 `updatedAt`
+    （只算单画布节点）。`POST …/project-history/claim {doc_id, revision}` 在同一把槽位锁里重判，仍是 `slot` 且 revision
+    对得上才 `record_owner`（owners + owner_revisions），否则 409 `claim_refused`、零改动。`owner_conflict` 判据不变：认领之前
+    `PUT last` 仍按旧归属 409。空白排版（`_doc_objects` 为空）的 `open` 关键时刻 `POST /api/versions` 回 `skipped`、不建目录。
+    空白排版上 `close` 同样不写（`_MOMENTS_SKIPPED_WHEN_BLANK`）。`mode` / `owner` 闭集是严格同源对（见 `same-origin-pairs.md`）。
+    看护 `tests/test_project_history_restore.py`（含 `test_vocabulary_mirrors_are_literal`）。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。

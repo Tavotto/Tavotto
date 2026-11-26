@@ -99,6 +99,7 @@ export function DataDraft() {
   const reasons = useDataFigureStore((s) => s.nothingReasons)
   const error = useDataFigureStore((s) => s.error)
   const drawingId = useDataFigureStore((s) => s.drawingId)
+  const purpose = useDataFigureStore((s) => s.purpose)
   const previewKey = useDataFigureStore((s) => s.previewKey)
   const problem = useDataFigureStore((s) => s.problem)
   const root = useRef<HTMLDivElement>(null)
@@ -261,7 +262,7 @@ export function DataDraft() {
             {drawingId || waitingThumbs ? drawingLine : settled ? '' : t('dataFigureV2.working.drawing')}
           </p>
         )}
-        <CandidateStage items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} previewKey={previewKey} onPreview={(id) => st().selectPreview(id)} onCreate={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
+        <CandidateStage purposeCode={purpose?.code ?? null} items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} previewKey={previewKey} onPreview={(id) => st().selectPreview(id)} onCreate={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
       </>
     )
   }

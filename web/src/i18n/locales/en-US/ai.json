@@ -567,6 +567,14 @@
         "title": "Mean line + band",
         "why": "The mean at each x position with a band showing {{error}}, for the overall trend and its spread."
       },
+      "points_err": {
+        "title": "Points + error bars",
+        "why": "The table already holds each group's mean, so it is drawn as is."
+      },
+      "line_err": {
+        "title": "Points + line + error bars",
+        "why": "The table already holds the mean at each position, so the points are joined in order."
+      },
       "line_units": {
         "title": "One line per subject",
         "why": "Repeated measures of the same subject are joined, so you see how each one changes."
@@ -722,6 +730,14 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
+      "rowsErr": "drawn from the {{drawn}} rows in the table, one point per row",
+      "errColumn": "error bars from the “{{column}}” column",
+      "errMissing": "{{count}} places have only one value, so no error bar can be computed",
+      "errMissingOne": "“{{label}}” has only one value, so no error bar can be computed",
+      "bandMissing": "{{count}} places have only one value, so no error band can be computed",
+      "bandMissingOne": "“{{label}}” has only one value, so no error band can be computed",
+      "listJoin": ", ",
+      "etc": ", etc.",
       "line": "Basis: {{text}}.",
       "then": ", ",
       "join": "; ",
@@ -753,6 +769,29 @@
         "independent": "No, each row is a different sample",
         "repeated": "Yes, the same sample measured again"
       }
+    },
+    "aiChoice": {
+      "tipPlain": "AI used for analysis",
+      "tip": "AI used for analysis: {{name}}",
+      "auto": "Automatic",
+      "off": "Don't analyze with AI",
+      "more": "Connect another AI…",
+      "unavailable": "This model can't be reached; try another one",
+      "current": "Currently {{name}}",
+      "chosen": "The model you chose"
+    },
+    "purpose": {
+      "label": "Purpose",
+      "compare_groups": "Compare groups",
+      "trend": "See a trend",
+      "relationship": "See a relationship",
+      "distribution": "See the distribution"
+    },
+    "whyNot": {
+      "summary_hides_spread": "Bars and error bars usually stand for the mean and spread only; individual observations are not shown.",
+      "line_needs_order": "A connecting line usually stands for a quantity that changes continuously.",
+      "order_prefers_line": "The x axis has an order, so a line shows the trend better.",
+      "answers_other_purpose": "You chose “{{purpose}}”; this one answers a different question."
     },
     "redraw": {
       "from": "Drawn from {{file}}",
@@ -809,7 +848,30 @@
       "retry": "Try again",
       "dismiss": "Dismiss",
       "summaryNotes": "{{n}} notes led to {{places}} more changes",
-      "revising": "Redoing with your notes…"
+      "revising": "Redoing with your notes…",
+      "generatingAssistant": "Working on your request…",
+      "summaryAssistant": "Changed {{places}} places",
+      "summaryAssistantScript": "Changed {{places}} places; the rest needs the script, so it wasn't touched",
+      "summaryAssistantOther": "Changed {{places}} places; the rest couldn't be changed directly",
+      "appliedAssistant": "Applied · changed {{places}} places",
+      "emptyAssistant": "This can't be done directly in the figure, so nothing changed",
+      "handoff": "This one needs the script, so it's going to the Agent.",
+      "runScript": "Edit the script for the rest",
+      "runScriptAll": "Edit the script instead",
+      "scriptFailed": "Couldn't hand this to the Agent; the figure is unchanged",
+      "summaryLayout": "{{count}} figures re-laid out",
+      "appliedLayout": "Applied · {{count}} figures re-laid out",
+      "runScriptTip": "Applies these in-figure changes first",
+      "summaryScript": "Script edited: +{{added}} −{{removed}}. Your script isn’t touched until you apply",
+      "appliedScript": "Applied · script updated",
+      "applyFailedScript": "Couldn’t apply. The script wasn’t changed",
+      "undoFailedScript": "The script changed again after applying, so nothing was undone",
+      "overreachOthers": "The agent changed files in your project. Your script wasn’t changed.",
+      "overreachMore": "{{files}} and {{count}} in all",
+      "overreachChanged": "Your script changed while this was running (you may have saved it, or the agent edited it directly). It wasn’t restored automatically. Both versions are backed up.",
+      "restoreScript": "Restore the version from before",
+      "keepCurrent": "Keep the current version",
+      "restoreFailed": "The script changed again, so it wasn’t restored"
     },
     "dialog": {
       "title": "Change plan",
@@ -856,7 +918,15 @@
       "rerunning": "Redoing…",
       "rerunNeedNote": "Click an element in the After figure and write a note first",
       "reviseNotLicensed": "Premium is not unlocked, so nothing was redone",
-      "groupMetaNote": "From your note · {{count}}"
+      "groupMetaNote": "From your note · {{count}}",
+      "layoutHeading": "Layout · {{count}} figures",
+      "layoutGroupMeta": "{{count}} figures",
+      "noteHere": "This spot",
+      "stageLabel": "View",
+      "stageFigure": "Compare",
+      "stageScript": "Script changes",
+      "scriptMeta": "Script changes · +{{added}} −{{removed}}",
+      "scriptBackupNote": "Written only when you apply, backed up first"
     },
     "unhandled": {
       "needs_script": "Needs a script change; left alone this time",
@@ -870,7 +940,8 @@
       "conflict": "Conflicts with another change; left alone this time",
       "not_applied": "Didn't take effect; left alone this time",
       "no_effect": "No visible difference; left alone this time",
-      "not_addressed": "This one wasn't handled"
+      "not_addressed": "This one wasn't handled",
+      "unclearAssistant": "The request wasn't specific enough, so nothing changed"
     },
     "draft": {
       "thisOne": "this item",
@@ -908,6 +979,7 @@
         "center": "center"
       },
       "many": "these {{count}} items"
-    }
+    },
+    "layoutGroup": "Layout"
   }
 }

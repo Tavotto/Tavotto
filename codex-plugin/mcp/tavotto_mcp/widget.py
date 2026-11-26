@@ -106,7 +106,7 @@ def resource_meta() -> dict:
         },
         RESOURCE_URI_META_KEY: RESOURCE_URI,
         OPENAI_TEMPLATE_KEY: RESOURCE_URI,
-        "openai/widgetDescription": "Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑出版规范预检、导出矢量 PDF。",
+        "openai/widgetDescription": "Tavotto 交互画布：拖图例与图内文字、改字号线宽刻度、跑投稿前检查、导出矢量 PDF。",
         "openai/widgetPrefersBorder": False,
         "openai/widgetCSP": {"connect_domains": [], "resource_domains": []},
     }
@@ -131,7 +131,7 @@ def resource_descriptor() -> dict:
         "uri": RESOURCE_URI,
         "name": "tavotto-canvas",
         "title": "Tavotto 画布",
-        "description": "Codex 内嵌的 Tavotto 交互画布（拖拽、字号线宽、预检、导出）。",
+        "description": "Codex 内嵌的 Tavotto 交互画布（拖拽、字号线宽、投稿前检查、导出）。",
         "mimeType": RESOURCE_MIME_TYPE,
         "_meta": resource_meta(),
     }

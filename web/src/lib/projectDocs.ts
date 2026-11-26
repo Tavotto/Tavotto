@@ -256,6 +256,8 @@ export type CandidateSource =
   | 'local_cache'
   | 'global_current'
   | 'discovered'
+  /** 项目自己的时间线（`tavottofile/versions/*.vx`，ADR 0211）：挪走 / 复制 / 换 origin 之后唯一随文件夹走的证据 */
+  | 'project_history'
 
 /** 归属证据的来源：`local_index` = 本机最近文档索引；其余是后端 `/owner` 给的证据等级 */
 export type OwnershipEvidence = 'local_index' | 'owners' | 'versions' | 'assets'

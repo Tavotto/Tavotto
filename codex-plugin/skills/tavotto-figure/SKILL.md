@@ -1,6 +1,6 @@
 ---
 name: tavotto-figure
-description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖图例、改字号线宽、调刻度、按出版规范预检、导出矢量 PDF）；也把用户**已经画好的图**按投稿要求改宽度 / 字体 / 最小字号而不重画（保留式规范化）。用户要画图、出图、做 figure、画折线/柱状/散点/误差棒、做论文配图、scientific plot / publication figure，要把现有图改成 8 cm / 换 Times New Roman / 字号不小于 8 pt，或提到 Tavotto 时使用。
+description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖图例、改字号线宽、调刻度、按出版规范检查、导出矢量 PDF）；也把用户**已经画好的图**按投稿要求改宽度 / 字体 / 最小字号而不重画（保留式规范化）。用户要画图、出图、做 figure、画折线/柱状/散点/误差棒、做论文配图、scientific plot / publication figure，要把现有图改成 8 cm / 换 Times New Roman / 字号不小于 8 pt，或提到 Tavotto 时使用。
 ---
 
 # Tavotto Figure
@@ -44,6 +44,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 要交给 Tavotto 桌面窗口 | `references/desktop-handoff.md`（含全部错误码分诊） |
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了、大图 / 多图打开、改过脚本之后刷新 | `references/compatibility.md`（能改 / 必须回代码改） |
+| 往组图排版上加标注、改已有的箭头 / 文字 / 形状 | `references/layout-annotate.md` |
 
 普通画图任务只读前一行；故障与交接文档**用到才读**。
 

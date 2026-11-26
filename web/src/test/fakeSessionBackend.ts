@@ -50,6 +50,14 @@ export interface CandidateRow {
 
 export type Failure = number | 'network'
 
+/**
+ * 项目内时间线候选的取值闭集（同源对镜像，ADR 0211）：与后端 `engine/projecthistory.HISTORY_MODES` / `HISTORY_OWNERS`、
+ * `lib/api.ts` 同名常量逐字相同（`tests/test_project_history_restore.py::test_vocabulary_mirrors_are_literal`）。
+ * 用例摆出闭集之外的行时假后端当场抛错——不让假后端替真后端发明取值。
+ */
+export const HISTORY_MODES = ['slot', 'node', 'copy'] as const
+export const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as const
+
 export function createFakeBackend() {
   const b = {
     slots: new Map<string, Slot>(),
@@ -76,6 +84,16 @@ export function createFakeBackend() {
     stripRevisionHeader: false,
     /** 候选扫描碰到后端上限（回包 truncated:true） */
     truncated: false,
+    /**
+     * 项目自己的时间线候选（ADR 0211，`/api/layout-session/project-history`）：按 pj 摆好的行。
+     * `claimable` 里的 docId 认领成功（owners 改成请求的 pj）；其余回 409。
+     */
+    history: new Map<string, Record<string, unknown>[] | (() => Record<string, unknown>[])>(),
+    claimable: new Set<string>(),
+    /** 非 undefined = 认领端点回这个状态码（503 = 问不到） */
+    claimStatus: undefined as number | undefined,
+    /** `${doc_id}/${vid}` → 节点正文（`GET /api/versions/<id>/<vid>`） */
+    nodes: new Map<string, unknown>(),
   }
 
   const session = (pj: string): Session => {
@@ -225,6 +243,36 @@ export function createFakeBackend() {
       const next = cursor + limit < all.length ? String(cursor + limit) : null
       return json({ items, next_cursor: next, truncated: b.truncated, index: 'ok' })
     }
+    if (u.pathname === '/api/layout-session/project-history' && method === 'GET') {
+      const entry = b.history.get(pj)
+      // 没摆过 = 旧后端（404）。不记调用：既有用例的调用序列断言不因这个新端点变
+      if (!entry) return json({ error: 'nf' }, 404)
+      b.calls.push('GET history')
+      const items = typeof entry === 'function' ? entry() : entry
+      for (const it of items) {
+        if (!(HISTORY_MODES as readonly unknown[]).includes(it.mode) || !(HISTORY_OWNERS as readonly unknown[]).includes(it.owner)) {
+          throw new Error(`假后端：项目内候选的 mode / owner 不在闭集里：${String(it.mode)} / ${String(it.owner)}`)
+        }
+      }
+      return json({ items, index: 'ok' })
+    }
+    if (u.pathname === '/api/layout-session/project-history/claim' && method === 'POST') {
+      const body = JSON.parse(String(init?.body)) as { doc_id: string; revision: string }
+      b.calls.push(`POST claim ${body.doc_id}`)
+      if (b.claimStatus !== undefined) return json({ error: 'boom' }, b.claimStatus)
+      if (!b.claimable.has(body.doc_id) || b.slots.get(body.doc_id)?.revision !== body.revision) {
+        return json({ error: 'refused', code: 'claim_refused' }, 409)
+      }
+      b.owners.set(body.doc_id, pj)
+      return json({ ok: true, revision: body.revision, owner: 'this' })
+    }
+    const ver = u.pathname.match(/^\/api\/versions\/([^/]+)\/([^/]+)$/)
+    if (ver && method === 'GET') {
+      const key = `${decodeURIComponent(ver[1])}/${decodeURIComponent(ver[2])}`
+      b.calls.push(`GET version ${key}`)
+      const doc = b.nodes.get(key)
+      return doc ? json({ id: ver[2], name: 'node', ts: 1, doc }) : json({ error: 'nf' }, 404)
+    }
     return json({ error: 'nf' }, 404)
   }) as typeof fetch
 
@@ -276,6 +324,10 @@ export function createFakeBackend() {
       b.pageSize = 50
       b.stripRevisionHeader = false
       b.truncated = false
+      b.history.clear()
+      b.claimable.clear()
+      b.claimStatus = undefined
+      b.nodes.clear()
     },
   }
 }

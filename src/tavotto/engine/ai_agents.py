@@ -1729,7 +1729,9 @@ class ClaudeAgent(AgentDefinition):
         for pat in deny.get("names", ()):
             rules += [f"Read(**/{pat})", f"Read(//**/{pat})"]
         for ab in deny.get("absolute", ()):
-            rules.append("Read(//" + str(ab).replace("\\", "/").lstrip("/") + ")")
+            # 文件或目录（ChatGPT 登录的凭据目录 `data_dir()/siwc/`）：本身 + 目录下的一切
+            root = "//" + str(ab).replace("\\", "/").lstrip("/").rstrip("/")
+            rules += [f"Read({root})", f"Read({root}/**)"]
         rules += [
             "Edit",
             "Write",

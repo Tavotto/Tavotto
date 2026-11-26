@@ -152,6 +152,13 @@ job 自己变快之后 PR 反馈还会退回 40 分钟：
   （`docs/implementation/ci-foundation/CI05_COMPARISON.md` §5）。CI00 记的「几秒内推
   5–6 个 stacked PR 都排队」同一成因。
 
+> **2026-11-25 现状**（上面两条是 free 计划时的成因，保留作历史）：org 已是 **Enterprise**，托管 runner
+> 并发总计 500、macOS 50（维护者确认；API 无权限读，见 GitHub 文档「Actions limits」）。runner 排队实测
+> p90 ≤ 0.1 分钟，并发不再是约束。分片后一个 plain PR run 约 51 个 job（backend-fast 3 版本 × 12 片），
+> `full-ci` 约 91 个，一个合并组约 85 个；仍受约束的只有 macOS：每个合并组 11 个 macOS job，4 组并行 44 个，
+> 离上限 50 很近（所以 backend-platforms 的 macOS 保持 8 片，见 `docs/rules/ci/pytest-shards.md`）。
+> 下面「stacked PR 一次只让一个在跑」的规矩照旧——它现在防的是合并队列连坐与重复构建，不再是抢槽。
+
 因此：
 
 1. **stacked PR 一次只让一个在跑**：从底向上直接进合并队列串行。2026-09-21 起这一条

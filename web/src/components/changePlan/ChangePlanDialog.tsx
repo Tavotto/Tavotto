@@ -2,14 +2,16 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MAX_NOTE_CHARS, notesOf, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
 import { PremiumLock } from '../license/PremiumLock'
+import { useDocumentStore } from '@/store/documentStore'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
 import { Lock, Pencil } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
+import { DiffView } from '../ai/DiffView'
 import { ChangeList, NoteList } from './ChangeList'
-import { CHANGE_PLAN_FEATURE, cp, effectiveStatus, failureText, groupViews, markNoteHintSeen, noteHintSeen, unhandledViews, useChangePlanAccess } from './changePlanModel'
+import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, isScriptPlan, markNoteHintSeen, noteHintSeen, scriptInfo, unhandledViews, useChangePlanAccess } from './changePlanModel'
 import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
@@ -35,7 +37,13 @@ export function ChangePlanDialog() {
   const [editing, setEditing] = useState<NoteEditing | null>(null)
   const [armed, setArmed] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const { visible, pro } = useChangePlanAccess()
+  // 脚本修改方案：左侧舞台在「对比图 / 脚本改动」之间切（弹窗不新造风格，diff 用现成的 `DiffView`）
+  const [stage, setStage] = useState<'figure' | 'script'>('figure')
+  const access = useChangePlanAccess()
+  // 一键排版 / 脚本修改的卡不能批注重改：入口（对比 / 批注切换、写批注、悬停写批注）整个不出现
+  const revisable = !!entry && canRevise(entry)
+  const visible = access.visible && revisable
+  const pro = access.pro && revisable
   const panel = usePlanPanel(entry ?? { panelId: '', documentId: '', loadSeq: 0, canvasId: '' })
   const aspect = useImageAspect(entry?.afterSrc)
   // 换一份方案 / 换版本 / 重新打开：高亮与批注框不带过去，新版本出来回到「对比」
@@ -44,6 +52,7 @@ export function ChangePlanDialog() {
     setActiveId(null)
     setEditing(null)
     setView('compare')
+    setStage('figure')
   }, [key, planId])
   // 第一次打开（高级版）：「写批注」上方出一次轻提示，点任意处或 5 秒后消失，本机记住
   const [hint, setHint] = useState(false)
@@ -68,17 +77,22 @@ export function ChangePlanDialog() {
   const plan = entry?.plan
   // 弹窗开着时图被改了：基线对不上，不让点「应用」（卡片也已转「图已改过」）
   const source = usePlanSource(panel)
+  useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1))
   const status = entry ? effectiveStatus(entry, panel?.overrides ?? null, source) : 'stale'
   const open = !!entry && !!plan && !!entry.beforeSrc && !!entry.afterSrc && status === 'ready'
   // 「修改后」跟着勾选的组合走：与「应用」写入的是同一份
   const preview = useSelectionPreview(entry, open)
   if (!entry || !plan || !entry.beforeSrc || !entry.afterSrc) return null
-  const groups = groupViews(entry)
+  const script = isScriptPlan(entry)
+  const info = scriptInfo(entry)
+  // 脚本方案只有一个 `atomic` 的脚本组：整组要或不要，没有逐组勾选（不要就「放弃」）；应用不进文档历史
+  const groups = script ? [] : groupViews(entry)
   const chosen = groups.filter((g) => !entry.unchecked[g.key])
-  const canApply = status === 'ready' && chosen.length > 0
-  const partial = chosen.length < groups.length
+  const canApply = status === 'ready' && (script ? !entry.scriptBusy : chosen.length > 0)
+  const partial = !script && chosen.length < groups.length
   // 一组都没勾 = 不改，「修改后」就是改前；部分勾选 = 按勾选出的那张（还没出来 / 失败时先用全量图，失败另有一句灰字）
-  const after = chosen.length === 0 ? entry.beforeSrc : partial && preview.url ? preview.url : entry.afterSrc
+  const after = script ? entry.afterSrc : chosen.length === 0 ? entry.beforeSrc : partial && preview.url ? preview.url : entry.afterSrc
   const previewBusy = partial && preview.loading
   // 只有「出好的、且正是此刻勾选组合」的那张才交给卡片当实际应用的图
   const keysSig = chosen.map((g) => g.key).join('\u0000')
@@ -115,7 +129,7 @@ export function ChangePlanDialog() {
     <Button
       variant={annotating ? 'secondary' : 'primary'}
       size="lg"
-      onClick={() => void store().apply(entry.key, { previewSrc: appliedSrc })}
+      onClick={() => void (script ? store().applyScript(entry.key) : store().apply(entry.key, { previewSrc: appliedSrc }))}
       disabled={!canApply || revising}
       data-change-plan-confirm
     >
@@ -207,9 +221,22 @@ export function ChangePlanDialog() {
       }}
     >
       <div className="flex min-h-0 flex-1" data-change-plan-dialog data-change-plan-dialog-view={annotating ? 'annotate' : 'compare'} data-change-plan-version={current}>
-        <div className="flex min-w-0 flex-1 flex-col bg-canvas">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
           <div className="flex h-11 shrink-0 items-end justify-center px-5">
-            {!annotating && (
+            {script && (
+              <Segmented<'figure' | 'script'>
+                value={stage}
+                onChange={setStage}
+                ariaLabel={cp('dialog.stageLabel')}
+                compact
+                className="mr-3 w-44"
+                items={[
+                  { value: 'figure', label: cp('dialog.stageFigure') },
+                  { value: 'script', label: cp('dialog.stageScript') },
+                ]}
+              />
+            )}
+            {!annotating && (!script || stage === 'figure') && (
               <Segmented<CompareMode>
                 value={mode}
                 onChange={setMode}
@@ -224,6 +251,11 @@ export function ChangePlanDialog() {
               />
             )}
           </div>
+          {script && stage === 'script' && info ? (
+            <div className="flex min-h-0 flex-1 flex-col px-5 pb-5" data-change-plan-script-diff>
+              <DiffView diff={info.diff} script={info.rel} fill />
+            </div>
+          ) : (
           <CompareStage
             before={entry.beforeSrc}
             // 批注写在这一版完整的「修改后」上（重改从它出发），不按勾选的组合出图
@@ -259,6 +291,7 @@ export function ChangePlanDialog() {
                 : undefined
             }
           />
+          )}
         </div>
         <div className="flex w-[19rem] shrink-0 flex-col border-l border-border">
           {annotating ? (
@@ -276,14 +309,23 @@ export function ChangePlanDialog() {
                   {cp('dialog.previewStale')}
                 </p>
               )}
-              <ChangeList
-                groups={groups}
-                unhandled={unhandledViews(entry)}
-                unchecked={entry.unchecked}
-                onToggle={(g) => store().toggleGroup(entry.key, g)}
-                activeId={activeId}
-                onActive={setActiveId}
-              />
+              {script && info ? (
+                <div className="flex flex-col gap-1 px-4 pt-4" data-change-plan-script-meta>
+                  <p className="type-meta">{cp('dialog.scriptMeta', { added: info.added, removed: info.removed })}</p>
+                  <p className="break-all text-sm text-ink-2">{info.rel}</p>
+                  <p className="type-meta">{cp('dialog.scriptBackupNote')}</p>
+                </div>
+              ) : (
+                <ChangeList
+                  heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : undefined}
+                  groups={groups}
+                  unhandled={unhandledViews(entry)}
+                  unchecked={entry.unchecked}
+                  onToggle={(g) => store().toggleGroup(entry.key, g)}
+                  activeId={activeId}
+                  onActive={setActiveId}
+                />
+              )}
             </>
           )}
         </div>

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { JournalPicker, type JournalPickTarget } from '@/components/journal/JournalPicker'
 import { Row } from '@/components/ui/Field'
@@ -77,6 +77,10 @@ export function DataPanel() {
   const previewKey = useDataFigureStore((s) => s.previewKey)
   const errorConfirmed = useDataFigureStore((s) => s.errorConfirmed)
   const designAsked = useDataFigureStore((s) => s.designAsked)
+  const purpose = useDataFigureStore((s) => s.purpose)
+  // 点选即显示所选：等新一批候选回来之前下拉先显示用户点的，回来（`purpose` 换成新响应）就以响应为准
+  const [pendingPurpose, setPendingPurpose] = useState<string | null>(null)
+  useEffect(() => setPendingPurpose(null), [purpose])
   const answers = useDataFigureStore((s) => s.answers)
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
@@ -100,7 +104,9 @@ export function DataPanel() {
   // 误差线看的是**此刻预览的那一张**；重复测量一旦问过就留着（确认后后端不再问，但那一行要能再改）
   const shownCand = previewOf(candidates, thumbs, previewKey)
   const errKind = shownCand?.error ?? null
-  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error))
+  // 误差线的种类：点选过（`error_confirmed` / `answers.error`）或列名自己说明了（`error_stated`）都算已知，放在列角色下面；
+  // 现成的误差列没说明是哪一种（`unknown`）且没点选 = 需要你确认，当前值写「还不确定」
+  const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (shownCand?.error_stated === true && errKind !== 'unknown'))
   const designDone = answers.design === 'independent' || answers.design === 'repeated'
   const pendingError = errKind != null && !errorDone
   const pendingDesign = designAsked && !designDone
@@ -123,6 +129,9 @@ export function DataPanel() {
       </Row>
     </div>
   )
+  // 「目的」：选项与当前值都以响应为准（`source` 是 data 还是 user 这一行上不区分）；没有 / 选项不足两个 / code 为 null 不出这一行；
+  // 当前值万一不在选项里（后端不该这样）补进去，免得下拉显示一个选不到的值
+  const purposeOptions = purpose && purpose.code && purpose.options.length >= 2 ? (purpose.options.includes(purpose.code) ? purpose.options : [purpose.code, ...purpose.options]) : null
   const asOptions = (list: string[], none?: string) => [...(none ? [{ value: NONE, label: none }] : []), ...list.map((c) => ({ value: c, label: c }))]
   return (
     <div data-data-panel className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-2">
@@ -146,8 +155,18 @@ export function DataPanel() {
           ) : null}
         </p>
         <h2 className="type-heading min-w-0 break-words py-1" title={group ? undefined : selected.path}>
-          {group ? t('dataFigureV2.batch.groupTitle', { count: group.length }) : baseName(selected.path)}
-          {!group && selected.sheet ? <span className="font-normal text-ink-3"> · {selected.sheet}</span> : null}
+          {group ? (
+            t('dataFigureV2.batch.groupTitle', { count: group.length })
+          ) : (
+            // 文件名 / 工作表名是用户自己的字符串：原样显示，不套标题类的中西文自动留白（`[data-literal]`，见 index.css）
+            <span data-literal>{baseName(selected.path)}</span>
+          )}
+          {!group && selected.sheet ? (
+            <span className="font-normal text-ink-3">
+              {' · '}
+              <span data-literal>{selected.sheet}</span>
+            </span>
+          ) : null}
         </h2>
         {rows != null && cols != null && (
           <p data-data-panel-meta className="mb-3 text-sm text-ink-2 tabular-nums">
@@ -214,6 +233,23 @@ export function DataPanel() {
               </Row>
             </div>
           )}
+          {purpose && purposeOptions && (
+            <div data-data-role="purpose" className="contents">
+              <Row label={rowLabel(t('dataFigureV2.purpose.label'))} labelWidth={LABEL_W}>
+                <Select
+                  value={pendingPurpose ?? purpose.code!}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.purpose.label')}
+                  onChange={(v) => {
+                    // 点的就是此刻显示的也算用户确认过的目的（`answers.purpose`），后端据此把「假设」变成「用户点的」
+                    setPendingPurpose(v)
+                    useDataFigureStore.getState().setConfirm('purpose', v)
+                  }}
+                  options={purposeOptions.map((c) => ({ value: c, label: t(`dataFigureV2.purpose.${c}`) }))}
+                />
+              </Row>
+            </div>
+          )}
           {errorDone && confirmRow('error', ERROR_KINDS, isErrorKind(answers.error) ? answers.error : errKind!, true)}
           {designAsked && designDone && confirmRow('design', DESIGNS, String(answers.design), true)}
         </div>
@@ -223,7 +259,7 @@ export function DataPanel() {
           <p data-data-confirm-title className="flex h-6 items-center type-caption">
             {t('dataFigureV2.confirm.title')}
           </p>
-          {pendingError && confirmRow('error', ERROR_KINDS, errKind!, false)}
+          {pendingError && confirmRow('error', ERROR_KINDS, errKind === 'unknown' ? 'unsure' : errKind!, false)}
           {pendingDesign && confirmRow('design', DESIGNS, 'unsure', false)}
         </div>
       )}

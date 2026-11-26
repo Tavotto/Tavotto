@@ -9,7 +9,7 @@ import { Check, RefreshCw } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { StatusPill } from '../ui/StatusPill'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
-import { cp, effectiveStatus, failureAction, failureText, planTally, summaryLine, unhandledViews } from './changePlanModel'
+import { cp, effectiveStatus, failureAction, failureText, isScriptPlan, overreachFiles, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource } from './usePlanFigure'
 
@@ -26,6 +26,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const plan = entry.plan
   // 历史栈顶：「撤销」只在它还是应用那一次 commit 时给（订阅它，之后改了别的这里跟着收起）
   useDocumentStore((s) => s.past.at(-1))
+  useDocumentStore((s) => s.future.at(-1)) // 一键排版卡：⌘Z / ⌘⇧Z 之后状态跟着变
   // 方案出来之后卡面用方案自己的两张图；只有还没有（生成中）/ 已放弃时才为缩略图出图
   const thumb = usePanelThumbSrc(panel, !entry.beforeSrc || entry.status === 'discarded' || (entry.status === 'applied' && !!entry.appliedPartial && !entry.appliedSrc))
   const beforeSrc = entry.beforeSrc ?? thumb
@@ -35,6 +36,14 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const btn = 'rounded-full'
 
   if (status === 'failed') return <FailedCard entry={entry} />
+  // 助手来源，整条指令都要改脚本：这里只留一行灰字，接着由改脚本那一轮自己说话
+  if (status === 'handoff') {
+    return (
+      <p className="px-1 text-sm text-ink-3" data-change-plan-handoff>
+        {cp('card.handoff')}
+      </p>
+    )
+  }
 
   // 按批注重改进行中：卡片也回到「生成中」（旧版仍在弹窗里），出好后自动换成新版
   const generating = status === 'generating' || !plan || (status === 'ready' && entry.revising !== undefined)
@@ -45,7 +54,9 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const dim = status === 'discarded' || status === 'stale'
   const handled = plan ? planTally(entry).done : 0
   // 「撤销」只在这张图还是我们写的那一份时给：用户之后又改过它，就不替他回到改前
-  const canUndo = status === 'applied' && !!panel && canUndoApplied(entry, panel.overrides)
+  // 脚本修改方案：不在文档历史里（⌘Z 不撤脚本），卡片上的「撤销」按备份还原；后端核「脚本还是应用之后那一版」
+  const script = isScriptPlan(entry)
+  const canUndo = status === 'applied' && (script ? !!plan?.applied && !entry.scriptBusy : !!panel && canUndoApplied(entry, panel.overrides))
   // 分量：待处理（生成中 / 待确认 / 图已改过）是完整卡面 + 微投影；已应用沉到次级卡面；已放弃再降一档、预览区收矮
   const pending = generating || status === 'ready' || status === 'stale'
 
@@ -88,13 +99,19 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
         {generating ? (
           <p className="flex items-center gap-2 text-sm text-ink-2" data-change-plan-generating>
             <ThinkingOrb form="solving" />
-            <span>{entry.revising !== undefined ? cp('card.revising') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')}</span>
+            <span>{entry.revising !== undefined ? cp('card.revising') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')}</span>
           </p>
         ) : (
           <p className={cn('flex items-center gap-1.5 text-sm', status === 'discarded' ? 'text-ink-3' : 'text-ink-2')}>
             {status === 'applied' && <Check size={ICON_SIZE.sm} className="shrink-0 text-ok" />}
             {status === 'applied'
-              ? cp('card.applied', { count: handled })
+              ? script
+                ? cp('card.appliedScript')
+                : entry.kind === 'layout'
+                ? cp('card.appliedLayout', { count: entry.layout?.count ?? 0 })
+                : entry.from === 'assistant'
+                  ? cp('card.appliedAssistant', { places: planTally(entry).places })
+                  : cp('card.applied', { count: handled })
               : status === 'discarded'
                 ? cp('card.discarded')
                 : status === 'stale'
@@ -102,7 +119,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                   : summaryLine(entry)}
           </p>
         )}
-        {entry.notice && <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>{cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}</p>}
+        {entry.notice && <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>{cp(entry.notice === 'apply_failed' ? (script ? 'card.applyFailedScript' : 'card.applyFailed') : script ? 'card.undoFailedScript' : 'card.undoFailed')}</p>}
         {!generating && (
           <div className="flex items-center gap-2 pt-0.5">
             {status === 'ready' && (
@@ -110,7 +127,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 <Button variant={primary} size="md" className={btn} onClick={() => store().openDialog(entry.key)} data-change-plan-view>
                   {cp('card.view')}
                 </Button>
-                <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} data-change-plan-apply>
+                <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} disabled={entry.scriptBusy} data-change-plan-apply>
                   {cp('card.applyNow')}
                 </Button>
               </>
@@ -118,6 +135,11 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
             {canUndo && (
               <Button variant="ghost" className="-ml-3" onClick={() => void store().undo(entry.key)} data-change-plan-undo>
                 {cp('card.undo')}
+              </Button>
+            )}
+            {entry.from === 'assistant' && !entry.scriptStarted && (status === 'ready' || status === 'applied') && (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') && (
+              <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
+                {cp('card.runScript')}
               </Button>
             )}
             {status === 'stale' && (
@@ -139,21 +161,36 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
  */
 function FailedCard({ entry }: { entry: PlanEntry }) {
   const code = entry.failure?.code ?? 'change_plan_failed'
-  const action = failureAction(code)
+  const action = failureAction(code, entry.failure?.params)
   const store = useChangePlanStore.getState
   const un = code === 'change_plan_empty' ? unhandledViews(entry) : []
-  const label = { connect: cp('card.connect'), retry: cp('card.retry'), regenerate: cp('card.regenerate'), dismiss: cp('card.dismiss') }[action]
+  const assistant = entry.from === 'assistant'
+  const label = { connect: cp('card.connect'), retry: cp('card.retry'), regenerate: cp('card.regenerate'), dismiss: cp('card.dismiss'), script: cp('card.retry'), restore: cp('card.restoreScript') }[action]
   const run = () => {
     // 连上 AI 之后接着生成（同一份请求），不用再回来点一次
     if (action === 'connect') requestConnectAi({ onConnected: () => void store().regenerate(entry.key) })
     else if (action === 'dismiss') store().dismiss(entry.key)
+    else if (action === 'restore') void store().restoreScript(entry.key)
+    else if (action === 'script') void store().runScript(entry.key)
     else void store().regenerate(entry.key)
   }
+  // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
+  const scriptWay = assistant && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">
         <span className="text-base font-medium text-ink">{cp('card.title')}</span>
-        <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params)}</p>
+        <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params, assistant)}</p>
+        {entry.notice === 'restore_failed' && (
+          <p className="text-xs text-ink-3" data-change-plan-notice="restore_failed">
+            {cp('card.restoreFailed')}
+          </p>
+        )}
+        {code === 'change_plan_script_overreach' && overreachFiles(entry.failure?.params) && (
+          <p className="type-meta break-all" data-change-plan-overreach-files>
+            {overreachFiles(entry.failure?.params)}
+          </p>
+        )}
         {un.length > 0 && (
           <ul className="flex flex-col gap-1">
             {un.map((u) => (
@@ -165,12 +202,17 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           </ul>
         )}
         <div className="flex items-center gap-1 pt-0.5">
-          <Button variant="ghost" className="-ml-3" onClick={run} data-change-plan-failed-action={action}>
+          <Button variant="ghost" className="-ml-3" onClick={run} disabled={entry.scriptBusy} data-change-plan-failed-action={action}>
             {label}
           </Button>
+          {scriptWay && (
+            <Button variant="ghost" onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
+              {cp('card.runScriptAll')}
+            </Button>
+          )}
           {action !== 'dismiss' && (
             <Button variant="ghost" onClick={() => store().dismiss(entry.key)} data-change-plan-dismiss>
-              {cp('card.dismiss')}
+              {action === 'restore' ? cp('card.keepCurrent') : cp('card.dismiss')}
             </Button>
           )}
         </div>

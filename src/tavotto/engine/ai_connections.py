@@ -33,7 +33,9 @@ from . import (
     ai_providers,
     config,
     netpolicy,
+    siwc_store,
 )
+from .agent_runner import siwc_wire
 from .agent_runner.wires import check_base_url
 
 #: 订阅类连接 id → (内部 agent, 厂商 id, 显示名（产品名，不翻译）, logo 键)
@@ -46,6 +48,10 @@ SUBSCRIPTIONS: dict[str, tuple[str, str, str, str]] = {
 _OAUTH_VENDOR = {"minimax": "minimax"}
 
 ROUTE_BUILTIN = "builtin"
+#: Sign in with ChatGPT（ADR 0209）：连接 id 与它在 OpenAI 一家里的接入方式 id
+SIWC_ID = ai_providers.SIWC_CONNECTION_ID
+SIWC_METHOD = "openai:siwc"
+SIWC_VENDOR = "openai"
 ENV_BUILTIN = "TAVOTTO_AI_BUILTIN"
 
 #: 保存连接时对 Key 的形状要求：可打印 ASCII、无空白（Key 会进 HTTP 头与环境变量，换行 / 空格都是注入面）
@@ -186,11 +192,26 @@ def vendors(agents_info: dict[str, dict]) -> list[dict]:
         if mid == "custom":
             method["needs_base_url"] = True
         keys.setdefault(vid, []).append(method)
+    siwc_on = siwc_wire.enabled()
+    if siwc_on:
+        # 「Continue with ChatGPT」是 OpenAI 一家的首选方式；不依赖任何 CLI（ADR 0209 §五）
+        lead.setdefault(SIWC_VENDOR, []).append(
+            {
+                "id": SIWC_METHOD,
+                "kind": "siwc",
+                "label_key": "method.chatgptPlan",
+                "connection_id": SIWC_ID,
+                "available": builtin_forced() is not False,
+            }
+        )
     for cid, (agent_id, vid, label, logo) in SUBSCRIPTIONS.items():
         by_vendor.setdefault(
             vid,
             {"id": vid, "label": label, "label_key": None, "logo": logo, "region": "global"},
         )
+        installed = bool((agents_info.get(agent_id) or {}).get("installed"))
+        if siwc_on and vid == SIWC_VENDOR:
+            continue  # 有了 SIWC：ChatGPT 订阅一律走「Continue with ChatGPT」，老用户也直接切换（用户 2026-11-25 裁决）
         lead.setdefault(vid, []).append(
             {
                 "id": f"{vid}:login",
@@ -198,7 +219,7 @@ def vendors(agents_info: dict[str, dict]) -> list[dict]:
                 "label_key": "method.subscription",
                 "agent": agent_id,
                 "connection_id": cid,
-                "available": bool((agents_info.get(agent_id) or {}).get("installed")),
+                "available": installed,
             }
         )
     for provider, spec in ai_oauth.available().items():
@@ -238,7 +259,7 @@ def vendors(agents_info: dict[str, dict]) -> list[dict]:
         out.append(v)
     cn = [v for v in out if v["region"] == "cn"]
     login_global = [
-        v for v in out if v["region"] == "global" and v["methods"][0]["kind"] == "login"
+        v for v in out if v["region"] == "global" and v["methods"][0]["kind"] in ("login", "siwc")
     ]
     other_global = [v for v in out if v["region"] == "global" and v not in login_global]
     custom = [v for v in out if v["region"] == "custom"]
@@ -339,6 +360,8 @@ def _details(models: list[str]) -> list[dict]:
 def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
     out = []
     for cid, (agent_id, vid, label, logo) in SUBSCRIPTIONS.items():
+        if vid == SIWC_VENDOR and siwc_wire.enabled():
+            continue  # 同上：Codex 登录那一行不再列（`resolve_connection("sub:codex")` 仍认，已发出的旧请求不至于 404）
         info = agents_info.get(agent_id)
         if not info or not info.get("installed") or not info.get("enabled"):
             continue
@@ -374,6 +397,57 @@ def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
             }
         )
     return out
+
+
+def _siwc_connections() -> list[dict]:
+    """SIWC 连接（开关开、且有当前账号才有一行）。只读本地存储，**不联网**（型号是登录时缓存的那份）。"""
+    if not siwc_wire.enabled():
+        return []
+    st = siwc_store.public_status()
+    if not st.get("has_account"):
+        return []
+    models = [m["id"] for m in st.get("models") or []]
+    details = [
+        {
+            "id": m["id"],
+            "efforts": list(m.get("efforts") or []),
+            "default_effort": m.get("default_effort"),
+            **({"display_name": m["display_name"]} if m.get("display_name") else {}),
+        }
+        for m in st.get("models") or []
+    ]
+    error = None
+    if not st.get("signed_in"):
+        state = "needs_auth"
+    elif not st.get("plan_usage_enabled"):
+        state, error = "error", "plan_usage_disabled"
+    elif builtin_forced() is False:
+        state, error = "error", "builtin_unavailable"
+    elif not models:
+        state, error = "error", "no_model"
+    else:
+        state = "ready"
+    conn = {
+        "id": SIWC_ID,
+        "vendor": SIWC_VENDOR,
+        "label": "ChatGPT",
+        "logo": "openai",
+        "state": state,
+        "models": models,
+        "model_details": details,
+        **({"no_vision": nv} if (nv := ai_attachments.text_only_models(models)) else {}),
+        "default_model": models[0] if models else None,
+        "efforts": details[0]["efforts"]
+        if details
+        else [],  # 默认型号的档位（每个型号的在 model_details）
+        "default_effort": details[0]["default_effort"] if details else None,
+        "route": ROUTE_BUILTIN,
+        "method": SIWC_METHOD,
+        "account_email": st.get("email") or "",
+    }
+    if error:
+        conn["error"] = error
+    return [conn]
 
 
 def _key_connection(
@@ -461,7 +535,7 @@ def connections(
     agents_info: dict[str, dict], *, transient: dict[str, str] | None = None
 ) -> list[dict]:
     """已连接 / 需要重新登录的连接，订阅类在前。`transient` = `{连接 id: 原因码}`：刚保存时试取型号清单失败的那一次（不落盘）。"""
-    out = _subscription_connections(agents_info)
+    out = [*_siwc_connections(), *_subscription_connections(agents_info)]
     vindex = {v["id"]: v for v in vendors(agents_info)}
     keys = []
     for rec in ai_providers.list_providers():
@@ -494,6 +568,18 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
     走不通 → `ai_agent_not_usable`。"""
     if cid in SUBSCRIPTIONS:
         return SUBSCRIPTIONS[cid][0], None
+    if cid == SIWC_ID:
+        # 只走内置；永不 cli:codex（Codex 拿不到这个令牌）。没登录 / 没许可额度：照样解析，起跑前由 `ai_bridge.run` 给出确切的拒绝
+        if not siwc_wire.enabled():
+            raise ConnectionRefused("connection_not_found", {}, 404)
+        if builtin_forced() is False:
+            raise ConnectionRefused(
+                "ai_agent_not_usable",
+                {"agent": ai_agents.BUILTIN_ID, "reason": ai_providers.BUILTIN_ONLY},
+                409,
+            )
+        rec = ai_providers.siwc_record()
+        return ai_agents.BUILTIN_ID, rec or {"id": SIWC_ID}
     rec = ai_providers.get(cid) if isinstance(cid, str) else None
     if rec is None:
         raise ConnectionRefused("connection_not_found", {}, 404)
@@ -506,11 +592,9 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
     return (ai_agents.BUILTIN_ID if route == ROUTE_BUILTIN else route.split(":", 1)[1]), rec
 
 
-def first_key_connection(*, refresh: bool = False) -> dict | None:
-    """AI 修复用：第一个内置循环能直接用的连接（Key 或账号登录）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
-
-    `refresh=True`（真要开跑时）：账号登录的记录先 `ai_oauth.ensure_fresh`（联网，可能很慢），刷不动的跳过；
-    `False`（只问「有没有」，capabilities 用）绝不联网。已知被服务商拒绝（`last_error: unauthorized`）的记录一律跳过。"""
+def key_connections(*, refresh: bool = False):
+    """内置循环能直接用的连接（Key 或账号登录，最后是 SIWC）逐个给出 → `builtin_conn` 形状（带 `provider_id`），顺序与 `first_key_connection` 一致：旧版「选中」的接口排在前。
+    `refresh` 的语义见 `first_key_connection`；`False` 绝不联网。"""
     recs = ai_providers.list_providers()
     active = {v for v in (config.ai_settings().get("active_provider") or {}).values() if v}
     for rec in sorted(recs, key=lambda r: r.get("id") not in active):
@@ -535,8 +619,45 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
             rec = ai_providers.ensure_api_root(rec) or rec
         conn = ai_providers.builtin_conn(rec)
         if conn is not None:
-            return conn
-    return None
+            yield conn
+    # Sign in with ChatGPT：与 Key 连接体验相同（用户 2026-11-25「SIWC 与 API 的体验完全相同」「要能够被其他功能调到」）——排在已存的 Key / 账号登录之后
+    # （老用户的结论不变）；只登录了 ChatGPT 的用户就用它。`refresh=False` 只问「有没有」、不取令牌（`api_key` 为空）；`refresh=True` 拿不到令牌就不给
+    siwc = ai_providers.builtin_conn(ai_providers.siwc_record())
+    if siwc is not None:
+        conn = ai_providers.siwc_conn_with_token(siwc) if refresh else siwc
+        if conn is not None:
+            yield conn
+
+
+def first_key_connection(*, refresh: bool = False) -> dict | None:
+    """AI 修复用：第一个内置循环能直接用的连接（Key 或账号登录）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
+
+    `refresh=True`（真要开跑时）：账号登录的记录先 `ai_oauth.ensure_fresh`（联网，可能很慢），刷不动的跳过；
+    `False`（只问「有没有」，capabilities 用）绝不联网。已知被服务商拒绝（`last_error: unauthorized`）的记录一律跳过。"""
+    return next(key_connections(refresh=refresh), None)
+
+
+def structured_cli_connections(caps: dict | None) -> tuple[list[tuple[dict, dict]], bool]:
+    """订阅登录连接里「可用且适配器支持无工具单轮」的（按能力缓存 `caps` 里的顺序）→ `([(能力里的连接, {"kind": "cli", "agent", "model", "conn_id"})], 有没有因不支持被跳过的)`。
+    型号 = 连接里已解析出的 `default_model`，没有就取它型号清单的第一项（适配器自己的目录顺序）；都没有 = 不支持（不写死型号名）。`caps` 为空 = 没有。不联网。"""
+    out: list[tuple[dict, dict]] = []
+    saw_unsupported = False
+    for c in (caps or {}).get("connections") or []:
+        sub = SUBSCRIPTIONS.get(c.get("id"))
+        if sub is None or c.get("state") != "ready":
+            continue
+        agent = ai_agents.get_agent(sub[0])
+        if agent is None or not agent.supports_structured():
+            saw_unsupported = True
+            continue
+        model = str(c.get("default_model") or "").strip() or next(
+            (str(m) for m in (c.get("models") or []) if m), ""
+        )
+        if not model:
+            saw_unsupported = True
+            continue
+        out.append((c, {"kind": "cli", "agent": agent.id, "model": model, "conn_id": c["id"]}))
+    return out, saw_unsupported
 
 
 def builtin_usable() -> bool:
@@ -836,22 +957,30 @@ def check_connection(cid: str) -> dict:
     return summary
 
 
-def delete_connection(cid: str) -> None:
+def delete_connection(cid: str) -> dict | None:
     """`DELETE /api/ai/connections/<id>`：删一条 Key / 账号登录连接。订阅类不可删（只能在 CLI 里退出）。"""
     if cid in SUBSCRIPTIONS:
         raise ConnectionRefused("connection_not_deletable", {}, 409)
+    if cid == SIWC_ID:
+        if not siwc_wire.enabled():
+            raise ConnectionRefused("connection_not_found", {}, 404)
+        from . import siwc_login  # 退出 = 撤销刷新令牌 + 清本机令牌（联网）；只在用户点「断开」时走
+
+        return siwc_login.logout()  # {"revoked": bool}：远端撤销没确认时界面要如实说
     if ai_providers.get(cid) is None:
         raise ConnectionRefused("connection_not_found", {}, 404)
     ai_providers.delete(cid)
 
 
 def login_target(cid: str) -> tuple[str, str]:
-    """`POST /api/ai/connections/<id>/login` 该走哪条流程 → `("cli", agent_id)` 或 `("oauth", provider)`。"""
+    """`POST /api/ai/connections/<id>/login` 该走哪条流程 → `("cli", agent_id)`、`("oauth", provider)` 或 `("siwc", "siwc:chatgpt")`。"""
     cid = {f"{v}:login": c for c, (_a, v, _l, _g) in SUBSCRIPTIONS.items()}.get(
         cid, cid
     )  # 方式 id 也认
     if cid in SUBSCRIPTIONS:
         return "cli", SUBSCRIPTIONS[cid][0]
+    if cid in (SIWC_ID, SIWC_METHOD) and siwc_wire.enabled():
+        return "siwc", SIWC_ID
     for provider, spec in ai_oauth.available().items():
         if cid in (_oauth_connection_id(provider), f"{provider}:oauth") and spec.get(
             "oauth_available"
@@ -862,6 +991,7 @@ def login_target(cid: str) -> tuple[str, str]:
 
 __all__ = [
     "ROUTE_BUILTIN",
+    "SIWC_ID",
     "SUBSCRIPTIONS",
     "ConnectionRefused",
     "add_connection",
@@ -869,6 +999,8 @@ __all__ = [
     "connections",
     "delete_connection",
     "first_key_connection",
+    "key_connections",
+    "structured_cli_connections",
     "locale_region",
     "login_target",
     "resolve_connection",

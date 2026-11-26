@@ -84,7 +84,7 @@ def env(tmp_path, monkeypatch):
         "invalidate",
         lambda script, root=None, run=None, **kw: retired.append((script, root)),
     )
-    monkeypatch.setattr(cp, "_PRECHECK", lambda: (True, ""))
+    monkeypatch.setattr(cp, "_PRECHECK", lambda cid=None: (True, ""))
     monkeypatch.setattr(cp, "_RESOLVE", lambda budget=None: ({"kind": "fake"}, "", ""))
     monkeypatch.setattr(cp, "_TASKS", {})
     monkeypatch.setattr(cp, "_BY_FIGURE", {})
@@ -666,3 +666,266 @@ def test_a_discard_arriving_between_the_cancel_check_and_the_publish_leaves_noth
     assert box["resp"].get_json() == {"discarded": True}
     assert client.get(f"/api/change-plans/{plan_id}").status_code == 404
     assert client.get(f"/api/change-plans/{plan_id}/after.png").status_code == 404
+
+
+# --------------------------------------------------------------------------- 助手来源（ADR 0206 PR 4）
+def post_assistant(client, **over):
+    body = {
+        "id": "Kin.pdf",
+        "patches": B0,
+        "source": "assistant",
+        "instruction": "把线条加粗，再把数据换成对数坐标",
+        **over,
+    }
+    return client.post("/api/change-plans", json=body)
+
+
+def run_assistant(client, **over):
+    resp = post_assistant(client, **over)
+    assert resp.status_code == 202, resp.get_json()
+    return wait(client, resp.get_json()["plan_id"])
+
+
+def test_assistant_instruction_is_the_one_comment_and_gets_its_own_system_prompt(env):
+    _m, client, _figs, _worker, model, _retired = env
+    seen = {}
+    real = model.__call__
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    cp._CALL = spy
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0.line0", "linewidth", 3)]}],
+        "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
+    }
+    out = run_assistant(client, target="ax0.line0")
+    assert out["state"] == "ready"
+    plan = out["plan"]
+    assert plan["source"] == "assistant"
+    (group,) = plan["groups"]
+    assert group["comment_id"] == "a1" and group["label"].startswith("把线条加粗")
+    # 部分能改、部分要改脚本：同一条指令既有组又有 unhandled(needs_script)
+    assert {u["comment_id"]: u["reason"] for u in plan["unhandled"]} == {"a1": "needs_script"}
+    assert "用户的一条改图指令" in seen["system"] and "审阅者" not in seen["system"]
+    assert "把线条加粗" in seen["user"] and '"gid":"ax0.line0"' in seen["user"]
+    assert "用户的指令" in seen["user"]
+
+
+def test_assistant_everything_needs_script_is_an_empty_plan_with_only_needs_script(env):
+    _m, client, _figs, worker, model, _retired = env
+    model.result = {"groups": [], "unhandled": [{"comment_id": "a1", "reason": "needs_script"}]}
+    out = run_assistant(client)
+    assert out["state"] == "ready" and out["code"] == "change_plan_empty"
+    assert out["plan"]["groups"] == []
+    assert [(u["comment_id"], u["reason"]) for u in out["plan"]["unhandled"]] == [
+        ("a1", "needs_script")
+    ]
+    assert [k for k, _ in worker.calls] == ["snap"]
+
+
+def test_assistant_many_changes_for_one_instruction_are_not_silently_cut_at_twelve(env):
+    _m, client, _figs, _worker, model, _retired = env
+    # 单条指令超过审阅意见的每组 12 处上限：助手来源放到 60；仍超的留一条 over_limit
+    model.result = {
+        "groups": [
+            {
+                "comment_id": "a1",
+                "changes": [ch("ax0.title", "fontsize", 10 + i % 3) for i in range(20)],
+            }
+        ],
+        "unhandled": [],
+    }
+    out = run_assistant(client)
+    assert out["state"] == "ready"
+    assert out["plan"]["groups"] and not any(
+        u["reason"] == "over_limit" for u in out["plan"]["unhandled"]
+    )
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"instruction": ""},
+        {"instruction": "   "},
+        {"instruction": 3},
+        {"instruction": "x" * (cp.MAX_INSTRUCTION_CHARS + 1)},
+        {"target": ""},
+        {"target": 5},
+        {"comments": []},
+        {"share_id": "abc"},
+    ],
+)
+def test_assistant_bad_requests_start_nothing(env, over):
+    _m, client, _figs, worker, model, _retired = env
+    resp = post_assistant(client, **over)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert worker.calls == [] and model.calls == 0 and cp._TASKS == {}
+
+
+def test_assistant_same_sync_refusals_as_review(env, monkeypatch):
+    _m, client, *_ = env
+    monkeypatch.setattr(cp, "_PRECHECK", lambda: (False, "no_connection"))
+    resp = post_assistant(client)
+    assert resp.status_code == 409 and resp.get_json()["code"] == "change_plan_no_connection"
+
+
+def test_unknown_source_is_refused(env):
+    _m, client, *_ = env
+    assert post_assistant(client, source="quick_layout").status_code == 400
+
+
+def test_capabilities_expose_the_switch_default_on(env, monkeypatch):
+    m, client, *_ = env
+    monkeypatch.setattr(m.engine_ai, "capabilities", lambda refresh=False: {})
+    assert client.get("/api/ai/capabilities").get_json()["change_plan_enabled"] is True
+    monkeypatch.setattr(cp.config, "ai_settings", lambda: {"change_plan": {"enabled": False}})
+    assert client.get("/api/ai/capabilities").get_json()["change_plan_enabled"] is False
+
+
+# --------------------------------------------------------------------------- 一键排版的整版预览
+def _canvas(**over):
+    return {"page_w_mm": 180, "page_h_mm": 120, "objects": [], **over}
+
+
+def test_layout_preview_returns_the_export_pipeline_png_and_writes_nothing(env, monkeypatch):
+    m, client, figs, _worker, model, _retired = env
+    seen = {}
+
+    def fake(spec, long_mm, edge):
+        seen.update(spec=spec, long_mm=long_mm, edge=edge)
+        return PNG, None
+
+    monkeypatch.setattr(m, "_export_png_bytes", fake)
+    before = tree(figs)
+    resp = client.post(
+        "/api/change-plans/layout-preview", json={"canvas": _canvas(), "long_edge": 99999}
+    )
+    assert resp.status_code == 200 and resp.data == PNG and resp.mimetype == "image/png"
+    assert seen["spec"]["scope"] == "canvas" and seen["long_mm"] == 180 and seen["edge"] == 2400
+    assert resp.headers["Cache-Control"] == "no-store"
+    assert tree(figs) == before and model.calls == 0
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        {},
+        {"canvas": {"page_w_mm": 1}},
+        {"canvas": _canvas(page_w_mm="a")},
+        {"canvas": _canvas(objects=[1])},
+        {"canvas": _canvas(), "long_edge": "x"},
+    ],
+)
+def test_layout_preview_bad_bodies_are_a_stable_400(env, body):
+    _m, client, *_ = env
+    resp = client.post("/api/change-plans/layout-preview", json=body)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+
+
+def test_layout_preview_render_failure_is_a_stable_code_not_a_500(env, monkeypatch):
+    m, client, *_ = env
+
+    def boom(*_a, **_k):
+        raise ValueError("render_no_png")
+
+    monkeypatch.setattr(m, "_export_png_bytes", boom)
+    resp = client.post("/api/change-plans/layout-preview", json={"canvas": _canvas()})
+    assert resp.status_code == 409 and resp.get_json()["code"] == "change_plan_render_failed"
+
+
+def test_the_settings_switch_is_stored_and_read_back_by_capabilities(env, monkeypatch):
+    m, client, *_ = env
+    store: dict = {}
+    monkeypatch.setattr(m.engine_ai, "capabilities", lambda refresh=False: {})
+    monkeypatch.setattr(cp.config, "ai_settings", lambda: store)
+    monkeypatch.setattr(cp.config, "set_ai_settings", lambda patch: store.update(patch) or store)
+    resp = client.put("/api/ai/change-plan", json={"enabled": False})
+    assert resp.status_code == 200 and resp.get_json() == {"change_plan_enabled": False}
+    assert client.get("/api/ai/capabilities").get_json()["change_plan_enabled"] is False
+    assert client.put("/api/ai/change-plan", json={"enabled": True}).get_json() == {
+        "change_plan_enabled": True
+    }
+    assert client.get("/api/ai/capabilities").get_json()["change_plan_enabled"] is True
+
+
+@pytest.mark.parametrize("body", [None, {}, {"enabled": "yes"}, {"enabled": 1}, [True]])
+def test_the_settings_switch_refuses_anything_but_a_boolean(env, body):
+    _m, client, *_ = env
+    assert client.put("/api/ai/change-plan", json=body).status_code == 400
+
+
+# --------------------------------------------------------------------------- 用输入框选的那条连接与型号
+def test_the_selected_connection_model_and_effort_reach_the_resolver_and_the_call(env, monkeypatch):
+    _m, client, _figs, _worker, model, _retired = env
+    seen = {}
+
+    def resolve(budget=None, conn_id=None, model=None):
+        seen["resolve"] = (conn_id, model)
+        return {"kind": "fake"}, "", ""
+
+    monkeypatch.setattr(cp, "_RESOLVE", resolve)
+    monkeypatch.setattr(cp, "_PRECHECK", lambda cid=None: (True, ""))
+    real = model.__call__
+
+    def spy(**kw):
+        seen["effort"] = kw.get("effort")
+        return real(**kw)
+
+    cp._CALL = spy
+    out = run_assistant(client, connection="prov1", model="m-1", effort="high")
+    assert out["state"] == "ready"
+    assert seen["resolve"] == ("prov1", "m-1") and seen["effort"] == "high"
+
+
+def test_without_a_selection_the_old_pick_is_used(env):
+    _m, client, *_ = env
+    assert (
+        run_assistant(client)["state"] == "ready"
+    )  # 假 _RESOLVE 只收 budget：不带选择时不传 conn_id
+
+
+def test_the_precheck_gets_the_selected_connection_and_refusals_keep_their_codes(env, monkeypatch):
+    _m, client, *_ = env
+    got = []
+    monkeypatch.setattr(
+        cp, "_PRECHECK", lambda cid=None: got.append(cid) or (False, "unsupported_connection")
+    )
+    resp = post_assistant(client, connection="prov1")
+    assert got == ["prov1"]
+    assert (
+        resp.status_code == 409 and resp.get_json()["code"] == "change_plan_unsupported_connection"
+    )
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"connection": ""},
+        {"connection": 5},
+        {"connection": "a" * 200},
+        {"model": 3, "connection": "x"},
+    ],
+)
+def test_a_malformed_selection_is_refused(env, over):
+    _m, client, _figs, worker, model, _retired = env
+    resp = post_assistant(client, **over)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert model.calls == 0
+
+
+def test_review_source_takes_the_selection_too(env, monkeypatch):
+    _m, client, *_ = env
+    monkeypatch.setattr(cp, "_PRECHECK", lambda cid=None: (True, ""))
+    seen = {}
+    monkeypatch.setattr(
+        cp,
+        "_RESOLVE",
+        lambda budget=None, conn_id=None, model=None: (
+            seen.setdefault("c", conn_id) and ({"kind": "fake"}, "", "")
+        ),
+    )
+    assert run(client, connection="prov2")["state"] == "ready"
+    assert seen["c"] == "prov2"

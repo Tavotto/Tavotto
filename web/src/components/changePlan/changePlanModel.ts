@@ -4,7 +4,14 @@ import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePl
 import { POLL_TIMEOUT, type PlanEntry } from '@/store/changePlanStore'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
-export { effectiveStatus } from '@/lib/changePlanApply'
+import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
+import { useDocumentStore } from '@/store/documentStore'
+
+/** 卡片此刻的状态（`lib/changePlanApply.effectiveStatus`）；一键排版卡另按文档历史派生 */
+export function effectiveStatus(e: Parameters<typeof effectiveStatusOf>[0], current: readonly unknown[] | null, source?: PlanSource | null) {
+  const h = useDocumentStore.getState()
+  return effectiveStatusOf(e, current, source, e.kind === 'layout' ? { past: h.past, future: h.future } : undefined)
+}
 
 /** 修改方案的文案助手：命名空间 + 前缀固定在这一处，调用点只写最后一段 */
 export const cp = (key: string, values?: Record<string, unknown>) => translate(`changePlan.${key}`, { ns: 'ai', ...(values ?? {}) })
@@ -14,6 +21,8 @@ export type PlanBox = [number, number, number, number]
 
 /** 一个改动组在界面上的样子（清单一行 + 舞台上的细框） */
 export interface GroupView {
+  /** 清单行第二行的整句（一键排版的组说「N 张图」）；缺省按「谁 · N 处」 */
+  metaText?: string
   key: string
   /** 这一处改了什么：对应那条意见的原话（截短过的），没有就说「第 N 条意见」 */
   summary: string
@@ -46,9 +55,34 @@ export function groupViews(e: PlanEntry): GroupView[] {
   if (!plan) return []
   const numberOf = (id?: string) => commentNumber(e, id)
   return plan.groups.map((g: ChangePlanGroup, i) => {
+    if (e.kind === 'layout') {
+      return {
+        key: g.key,
+        summary: g.label,
+        reviewers: [],
+        commentNumbers: [],
+        fromNote: false,
+        metaText: cp('dialog.layoutGroupMeta', { count: e.layout?.count ?? g.boxes.after.length }),
+        boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: (g.boxes.before ?? []).find((x) => x.gid === b.gid)?.box as PlanBox | undefined })),
+      }
+    }
+    // 脚本修改组：没有画面框（改动在脚本里，看 diff）；标题就是用户的原话
+    if (g.kind === 'script') return { key: g.key, summary: clip(e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }), reviewers: [], commentNumbers: [], fromNote: false, boxes: [] }
     const fromNote = g.origin === 'note'
     const c = !fromNote && g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
     const n = fromNote ? 0 : numberOf(g.comment_id)
+    // 助手来源：这一组就是用户那条指令（原话作标题，没有审阅者与编号）
+    if (e.from === 'assistant' && !fromNote) {
+      const before = new Map<string, ChangePlanBox>((g.boxes.before ?? []).map((b) => [b.gid, b]))
+      return {
+        key: g.key,
+        summary: clip(e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }),
+        reviewers: [],
+        commentNumbers: [],
+        fromNote: false,
+        boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
+      }
+    }
     const before = new Map<string, ChangePlanBox>((g.boxes.before ?? []).map((b) => [b.gid, b]))
     const after = g.boxes.after.length ? g.boxes.after : []
     return {
@@ -66,6 +100,10 @@ export function groupViews(e: PlanEntry): GroupView[] {
 export function unhandledViews(e: PlanEntry): UnhandledView[] {
   return (e.plan?.unhandled ?? []).map((u, i) => {
     const c = u.comment_id ? e.comments.find((x) => x.id === u.comment_id) : undefined
+    if (e.from === 'assistant') {
+      const reason = u.reason === 'unclear' ? cp('unhandled.unclearAssistant') : unhandledReason(u.reason)
+      return { id: u.comment_id ?? `u${i}`, text: clip(e.instruction ?? ''), reviewer: '', reason }
+    }
     return {
       id: u.comment_id ?? `u${i}`,
       text: clip(c?.text ?? (u.comment_id ? e.noteTexts?.[u.comment_id] : '') ?? '') || cp('dialog.groupN', { n: i + 1 }),
@@ -95,25 +133,49 @@ export function planTally(e: PlanEntry) {
 
 /** 卡片上那一句：按几条意见改了几处（还有几条没改） */
 export function summaryLine(e: PlanEntry): string {
+  const script = scriptInfo(e)
+  if (script) return cp('card.summaryScript', { added: script.added, removed: script.removed })
   const t = planTally(e)
   // 续改出的版本：先说这版按批注又改了几处，再说按意见改的
   if (t.notes > 0) return cp('card.summaryNotes', { n: t.notes, places: t.notePlaces })
+  if (e.kind === 'layout') return cp('card.summaryLayout', { count: e.layout?.count ?? 0 })
+  if (e.from === 'assistant') {
+    if (t.script > 0) return cp('card.summaryAssistantScript', { places: t.places })
+    return t.other > 0 ? cp('card.summaryAssistantOther', { places: t.places }) : cp('card.summaryAssistant', { places: t.places })
+  }
   if (t.other > 0) return cp('card.summaryOther', { done: t.done, places: t.places, rest: t.script + t.other })
   return t.script > 0 ? cp('card.summary', { done: t.done, places: t.places, script: t.script }) : cp('card.summaryAll', { done: t.done, places: t.places })
 }
 
-/** 失败之后用户能走的下一步（每个稳定码一个，绝不留死胡同） */
-export type FailureAction = 'connect' | 'retry' | 'regenerate' | 'dismiss'
+/** 脚本修改方案里那一组的内容（图内方案没有） */
+export const scriptInfo = (e: Pick<PlanEntry, 'plan'>) => e.plan?.groups.find((g) => g.kind === 'script')?.script
 
-export function failureAction(code: string): FailureAction {
+/** 脚本修改方案（一张卡只含一类：不是图内修改） */
+export const isScriptPlan = (e: Pick<PlanEntry, 'plan'>): boolean => e.plan?.kind === 'script'
+
+/** 失败之后用户能走的下一步（每个稳定码一个，绝不留死胡同） */
+export type FailureAction = 'connect' | 'retry' | 'regenerate' | 'dismiss' | 'script' | 'restore'
+
+export function failureAction(code: string, params?: Record<string, unknown>): FailureAction {
+  // 生成期间脚本被改过（冲突，已备份、没自动还原）：主动作是用户点了才按起跑快照恢复
+  if (code === 'change_plan_script_overreach' && params?.target_changed === true && typeof params.backup === 'string' && typeof params.current_sha256 === 'string') return 'restore'
   switch (code) {
     case 'change_plan_no_connection':
     case 'change_plan_unsupported_connection':
     case 'change_plan_model_auth':
       return 'connect'
+    case 'change_plan_script_failed':
+      return 'script'
     case 'change_plan_figure_changed':
     case 'change_plan_unknown':
       return 'regenerate'
+    case 'change_plan_script_check_failed':
+    case 'change_plan_script_no_change':
+    case 'change_plan_script_agent_failed':
+    case 'change_plan_script_data_changed':
+    case 'change_plan_script_no_preview':
+    case 'change_plan_script_overreach':
+      return 'retry'
     case 'change_plan_busy':
     case 'change_plan_model_quota':
     case 'change_plan_model_timeout':
@@ -130,11 +192,24 @@ export function failureAction(code: string): FailureAction {
 }
 
 /** 卡片上那一句灰字：稳定码 → `errors:backend.<code>`（后端的 `error` 原文只在没有文案时露出） */
-export function failureText(code: string, params?: Record<string, unknown>): string {
-  if (code === 'change_plan_empty') return cp('card.empty')
+export function failureText(code: string, params?: Record<string, unknown>, assistant = false): string {
+  if (code === 'change_plan_empty') return cp(assistant ? 'card.emptyAssistant' : 'card.empty')
+  if (code === 'change_plan_script_failed') return cp('card.scriptFailed')
+  // 外部 CLI 越界（R-03）：一句话说清脚本怎么样了（还原了 / 没替你还原 / 没动），文件名由卡片另列
+  if (code === 'change_plan_script_overreach') {
+    return cp(params?.target_changed === true ? 'card.overreachChanged' : 'card.overreachOthers')
+  }
   const known = (c: string) => formatMessage(backendCodeMsg(c, params, ''))
   // 本地的超时码与不认识的码都落到「生成失败，图没有改动」这一句，不留空白
   return (code === POLL_TIMEOUT ? '' : known(code)) || known('change_plan_failed')
+}
+
+/** 越界被改的文件名（最多 5 个）+「等 N 个」；没有文件名（只是目标脚本被改）= 空串 */
+export function overreachFiles(params?: Record<string, unknown>): string {
+  const files = Array.isArray(params?.files) ? (params.files as unknown[]).filter((f): f is string => typeof f === 'string') : []
+  if (!files.length) return ''
+  const total = typeof params?.total === 'number' ? params.total : files.length
+  return total > files.length ? cp('card.overreachMore', { files: listJoin(files), count: total }) : listJoin(files)
 }
 
 export const whoOf = (names: string[]) => listJoin([...new Set(names)])
@@ -166,4 +241,14 @@ export const markNoteHintSeen = (): void => {
   } catch {
     /* 存不下不影响本次 */
   }
+}
+
+/**
+ * 这张卡能不能「批注重改」：只有审阅 / 助手来源的**图内**方案（`ChangePlanDialog` 据此显示「对比 / 批注」切换、「写批注」与悬停写批注）。
+ * 一键排版的整版方案（`quick_layout`）没有逐元素的改动可批注，脚本修改的卡（二期）是脚本副本——都不能重改。PR 6 的脚本卡复用这一个判断。
+ */
+export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean {
+  if (e.kind === 'layout' || e.plan?.kind === 'script') return false
+  const from = e.from ?? 'review'
+  return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
 }

@@ -1049,15 +1049,42 @@ jobs:
         run: |
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
+      # 2026-11-25 起按图分三组、同机三个进程并行（#2205 在这一步串行 25.5 分钟后撞 30 分钟上限；
+      # 96% 在 test_invariants_engine.py、按图参数化，按文件分片拆不开）。组 = 图，见
+      # tests/support/invariant_figures.py INVARIANT_GROUPS；不按图参数化的用例带 invariant_rest，只在 c 组跑，
+      # 其余五个轻文件也只在 c 组。合起来 == 原来串行的全集由 tests/test_invariant_groups.py 静态钉。
+      # `-m` 会覆盖 pytest.ini 的 addopts，所以 a / b 写全 "not slow and not invariant_rest"。
+      # 每组各自 --basetemp、不写 .pytest_cache；三个退出码逐个进控制流，日志按组顺序整段打出。
+      # 中文旁的变量一律写 ${x}：非 UTF-8 locale 下 bash 会把紧跟的全角字节当成变量名（本机实测 `rc�: unbound variable`）。
       - name: 结构性不变式
         run: |
-          python -m pytest -q \
-            tests/test_invariants_engine.py \
-            tests/test_docs_references.py \
-            tests/test_artist_families.py \
-            tests/test_artist_census_tool.py \
-            tests/test_patchspec.py \
-            tests/test_preflight.py
+          set -uo pipefail
+          pids=()
+          for g in a b c; do
+            if [ "$g" = c ]; then
+              sel="not slow"
+              files="tests/test_invariants_engine.py tests/test_docs_references.py tests/test_artist_families.py tests/test_artist_census_tool.py tests/test_patchspec.py tests/test_preflight.py"
+            else
+              sel="not slow and not invariant_rest"
+              files="tests/test_invariants_engine.py"
+            fi
+            # shellcheck disable=SC2086
+            TAVOTTO_INVARIANT_GROUP="$g" python -m pytest -q -p no:cacheprovider -m "$sel" \
+              --basetemp="$RUNNER_TEMP/invariants-$g" $files > "$RUNNER_TEMP/invariants-$g.log" 2>&1 &
+            pids+=("$!")
+          done
+          fail=0
+          i=0
+          for g in a b c; do
+            pid="${pids[$i]}"
+            i=$((i + 1))
+            if wait "$pid"; then rc=0; else rc=$?; fail=1; fi
+            echo "::group::不变式 ${g} 组（rc=${rc}）"
+            cat "$RUNNER_TEMP/invariants-$g.log"
+            echo "::endgroup::"
+            [ "$rc" -eq 0 ] || echo "::error::不变式 ${g} 组失败（rc=${rc}），日志在上面的 ${g} 组里"
+          done
+          exit "$fail"
       # 探针自己也要能单独跑起来——它是排兼容缺口时第一个被拿起来的东西
       - name: 不变式探针（人看的那份）
         if: always()

@@ -12,6 +12,7 @@ import type { FigureDocument, PanelObject, ProjectDocument, TextObject } from '@
 import { projectFileSnapshot, setProjectFile, useDocumentStore, saveNowWithResult, setWindowHold } from './documentStore'
 import { fetchAutosave } from '@/lib/api'
 import { openRecentDocument, restoreLayoutVersion } from './actions'
+import { fullCanvasNode, OPTIONAL_FIELDS } from '@/test/fullCanvasNode'
 
 const text = (id: string, value: string): TextObject => ({
   id, type: 'text', text: value, sizePt: 9, bold: false,
@@ -117,6 +118,21 @@ describe('restoreLayoutVersion：schema 分派', () => {
     s().undo()
     expect(s().doc.name).toBe('A')
     expect(s().doc.objects.map((o) => o.id)).toEqual(['now_a'])
+  })
+
+  it('schema 2 节点存下的每个可选字段（留白 / 紧凑边 / 规范 / 样式 / 色键 / 一键排版 / 布局组）逐字恢复；节点里没有的去掉', async () => {
+    const version = fullCanvasNode([text('ver', '全字段')])
+    await restoreLayoutVersion(literal('恢复全字段'), version)
+    for (const key of OPTIONAL_FIELDS) expect(s().doc[key], key).toEqual(version[key])
+    expect(s().doc.page).toEqual(version.page)
+    expect(s().doc.guides).toEqual(version.guides)
+    // 再恢复一个没有这些字段的旧节点：那一刻就没有，当前画布上的也去掉（⌘Z 仍一步退回）
+    await restoreLayoutVersion(literal('恢复旧节点'), {
+      schema: 2, name: '旧', page: { w: 150, h: 100 }, objects: [text('old', '旧')], guides: [],
+    })
+    for (const key of OPTIONAL_FIELDS) expect(s().doc[key], key).toBeUndefined()
+    s().undo()
+    for (const key of OPTIONAL_FIELDS) expect(s().doc[key], key).toEqual(version[key])
   })
 
   it('schema 3 整份项目节点：换整份项目，documentId 不变，所有画布都换成那一版', async () => {

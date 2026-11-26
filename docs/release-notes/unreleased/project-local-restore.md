@@ -1,0 +1,3 @@
+## Moving or copying a project folder no longer loses your layouts
+
+Moving a whole project folder (for example while reorganizing your data), copying it, or opening it on another computer used to open a blank layout, with the previous work reachable only through a hidden menu entry, or not at all after a browser-storage reset. Tavotto now reads the layout history stored inside the project folder itself and opens where you left off. When it finds several layouts, a one-line list shows each name with its last-modified time. A copied project keeps its own separate layout, and loading a blank project no longer leaves empty history folders behind.

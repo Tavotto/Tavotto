@@ -1772,6 +1772,35 @@ def _attach_attachments(sid: str, cand, ids) -> tuple[str, tuple[str, ...], int]
     return ai_prompt_pack.attachments_note(images, files), dirs, len(placed)
 
 
+def _siwc_preflight(rec: dict | None) -> AgentError | None:
+    """SIWC 连接起跑前：要一个够一次任务用的令牌（不够新就刷新）。→ 拒绝的 `AgentError` 或 None（可以起跑）。
+    令牌本身不在这里留：spawn 时 `ai_providers.siwc_overrides` 再取一次（那时已够新，不联网）。"""
+    from . import siwc_auth, siwc_login, siwc_store
+
+    if rec is None:
+        st = siwc_store.public_status()
+        if st.get("signed_in") and not st.get("plan_usage_enabled"):
+            return AgentError("ai_siwc_plan_disabled")
+        return AgentError("ai_endpoint_needs_login", {"endpoint": "ChatGPT"})
+    try:
+        siwc_login.provider().access_token(min_valid_s=siwc_auth.MIN_VALID_S)
+    except siwc_auth.PlanUsageDisabled:
+        return AgentError("ai_siwc_plan_disabled")
+    except siwc_auth.NeedsLogin:
+        return AgentError("ai_endpoint_needs_login", {"endpoint": "ChatGPT"})
+    except siwc_auth.TokenUnavailable:
+        return AgentError("ai_siwc_token_unavailable")
+    return None
+
+
+def _siwc_after_runner_error(endpoint: dict | None, runner_error: str) -> None:
+    """SIWC 会话里 runner 报 `agent_auth`（服务端拒了这个访问令牌）：下次先刷新。不清凭据——刷新报终态错误才要求重新登录（ADR 0201 §三）。"""
+    if ai_providers.is_siwc(endpoint) and runner_error == "agent_auth":
+        from . import siwc_login
+
+        siwc_login.provider().mark_rejected("http_401")
+
+
 def run(
     agent: str,
     script: str,
@@ -1787,8 +1816,15 @@ def run(
     task_hooks: dict | None = None,
     convert: dict | None = None,
     attachments: list[str] | None = None,
+    plan_only: bool = False,
 ) -> str:
-    """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
+    """启动一次 AI 修改任务，返回 session id。
+
+    `plan_only`（ADR 0206 PR 6，修改方案卡的脚本修改）：对**所有**连接强制走候选工作区（cwd = 候选目录），过了提交前检查也**不写**
+    用户脚本——候选字节留在 `cand.extras["plan_bytes"]`，由方案端点取走（`plan_outcome`）；收尾时核「越界」：目标脚本被原地改了就按
+    起跑快照还原，别的文件被改只报告不动（`_plan_guard`）。
+
+    事件经 on_event(name, data) 回调。
 
     **先过 `require_usable`**：未知 / 未安装 / 被用户关掉的 Agent 在这里就被
     拒绝。只靠前端隐藏是不够的——这个端点可以被直接调。
@@ -1825,8 +1861,12 @@ def run(
     # 所以放在脚本锁 / 请求锁**之外**做，不卡住别的请求；刷不动的结论先记下，等去重查找之后再抛——
     # 已受理请求的重发仍得到既有会话（ADR 0132，去重先于其他可变判断）
     needs_login: dict | None = None
+    siwc_refused: AgentError | None = None
     pre_chosen = ai_providers.resolve(agent, endpoint_id)
-    if pre_chosen is not None and pre_chosen.get("auth") == "oauth":
+    if agent == ai_agents.BUILTIN_ID and endpoint_id == ai_providers.SIWC_CONNECTION_ID:
+        # Sign in with ChatGPT（ADR 0209 §四）：同样在锁外先要一个够一次任务用的令牌（可能联网刷新）；结论等去重之后再抛
+        siwc_refused = _siwc_preflight(pre_chosen)
+    elif pre_chosen is not None and pre_chosen.get("auth") == "oauth":
         try:
             ai_oauth.ensure_fresh(pre_chosen)
         except ai_oauth.NeedsLogin:
@@ -1839,7 +1879,7 @@ def run(
     project_key = str(Path(figures_dir).resolve())
     # 内置执行器**一律**走候选工作区 + 提交前检查 + 事务写回（与 TAF 实验开关无关）：它不是用户装的 CLI，
     # 没有理由拿到真实项目路径；候选建不起来就整条拒绝（见下），绝不退回原地修改
-    taf = _taf_enabled() or agent == ai_agents.BUILTIN_ID
+    taf = _taf_enabled() or agent == ai_agents.BUILTIN_ID or plan_only
     # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
     # 就是改后的脚本），要么在这之后看到 running 的会话而让路
     with script_guard(script_path), _REQUEST_LOCK:
@@ -1867,6 +1907,8 @@ def run(
             raise AgentError("ai_agent_not_usable", {"agent": agent})
         if needs_login is not None:
             raise AgentError("ai_endpoint_needs_login", needs_login)
+        if siwc_refused is not None:
+            raise siwc_refused
         if agent == ai_agents.BUILTIN_ID:
             # 内置执行器必须显式指到一条内置循环能用的连接（没有「当前选中」这回事）
             if ai_providers.builtin_conn(chosen, model) is None:
@@ -2129,6 +2171,8 @@ def run(
                     "snapshot_path": str(snap),
                     "client_request_id": client_request_id,
                     "attachment_count": attachment_count,
+                    # 修改方案的脚本修改（PR 6）：历史库照记（审计），带标；历史列表与对账接口不列它
+                    **({"plan_only": True} if plan_only else {}),
                     **(
                         {
                             "task_type": envelope.task_type,
@@ -2231,7 +2275,11 @@ def run(
         if task_run is not None:
             #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
             sess["task"] = {"task_type": envelope.task_type, "outcome": None}
-            sess["taf"] = {"cand": cand, "run": task_run}
+            sess["taf"] = {
+                "cand": cand,
+                "run": task_run,
+                **({"plan_only": True} if plan_only else {}),
+            }
             task_run.trace = trace
         SESSIONS[sid] = sess
     # `record_start` 提交之后、上一行之前，别的进程可能已经写了取消意图（tick 看到会话不在内存里就不消费它）：入内存后立刻补一次，
@@ -2341,7 +2389,14 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
-            if agent == ai_agents.BUILTIN_ID and endpoint and st.get("runner_report"):
+            if (
+                agent == ai_agents.BUILTIN_ID
+                and endpoint
+                and not ai_providers.is_siwc(
+                    endpoint
+                )  # SIWC 不换协议、不降字段：没有可落盘的自救回报
+                and st.get("runner_report")
+            ):
                 # 进程已退出：把 runner 的自救回报（换协议 / 长度字段 / 被剥字段）落进记录，下次直接用；失败不影响会话
                 try:
                     ai_providers.apply_runtime_report(
@@ -2356,6 +2411,7 @@ def run(
             if st.get("runner_error"):  # 内置执行器与 Codex / Claude 适配器都可能写
                 sess["runner_error"] = st["runner_error"]
                 sess["runner_detail"] = st.get("runner_detail")
+                _siwc_after_runner_error(endpoint, st["runner_error"])
         finally:
             complete.set()
             timer.cancel()
@@ -2449,6 +2505,8 @@ def run(
                 _consume()
             else:
                 task = _drive_task(sess, task_run, cand, _consume, on_changed, script, _respawn)
+            if task is not None and sess["taf"].get("plan_only"):
+                sess["taf"]["overreach"] = _plan_guard(cand, snap)
             # 「这次 AI 改完的那一版」：回滚只认它（STATE-09）。在 `ai.done` 之前记下，
             # 前端收到完成事件后立刻点回滚也有据可查；sidecar 一并记，重启后照样认。
             dependency_edit = (
@@ -2636,6 +2694,14 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, re
             refresh=lambda: {"status": REFRESH_SKIPPED},  # 没写用户文件，没有可刷新的
             respawn=respawn,
             transcript=lambda: sess["transcript"],  # Agent 停下说明（needs_input 标记）从这里读
+        )
+    elif sess["taf"].get("plan_only"):
+        executor = ai_figure_edit.PlanOnlyExecutor(
+            sess["agent"],
+            cand,
+            wait=wait,
+            refresh=lambda: {"status": REFRESH_SKIPPED},
+            respawn=respawn,
         )
     else:
         executor = ai_figure_edit.BridgeExecutor(
@@ -3333,6 +3399,42 @@ def _live_activity(live: dict) -> str | None:
     return None
 
 
+#: 生成可编辑版本的任务清单（用户 2026-11-25 拍板）：三步，闭集
+CONVERT_STEPS: tuple[str, ...] = ("read", "write", "verify")
+_VERIFY_PHASES = frozenset({"verifying", "ready_to_commit", "committing"})
+
+
+def _convert_stage(live: dict) -> dict | None:
+    """进行中的转换会话走到哪一步 `{step: read|write|verify, round}`（界面的任务清单「读懂原脚本 → 写 Python 版本 → 运行校验」）。
+
+    判据只用结构化事实，不读模型输出：编排器进了提交前 / 后的校验阶段（`TaskRun.phase`）= 运行校验；否则候选里的新脚本
+    已经有内容 = 写 Python 版本，还没有 = 读懂原脚本。内置执行器写到一半自己要的 `check` **不算**运行校验（用户裁决：它还在写，
+    清单不来回跳）。第几轮 = 1 + 已记账的自动修正次数：校验没过、系统让 AI 修正时回到「写」、轮次 +1，已打的勾不收回。
+    不是进行中的转换会话 = None。"""
+    if live.get("kind") != "convert" or live.get("status") != "running":
+        return None
+    taf = live.get("taf") or {}
+    run, cand = taf.get("run"), taf.get("cand")
+    if run is None:
+        return None
+    try:
+        rnd = 1 + int(run.used.get("corrections", 0))
+        if run.phase in _VERIFY_PHASES:
+            step = "verify"
+        else:
+            target = getattr(cand, "target", None)
+            written = (
+                target is not None
+                and not target.is_symlink()
+                and target.is_file()
+                and target.stat().st_size > 0
+            )
+            step = "write" if written else "read"
+    except Exception:  # noqa: BLE001 —— 判不出就不给，界面回到第一步
+        return None
+    return {"step": step, "round": rnd}
+
+
 def get(sid: str) -> dict | None:
     sess = SESSIONS.get(sid)
     if sess is not None:
@@ -3344,6 +3446,9 @@ def get(sid: str) -> dict | None:
         activity = _live_activity(live)
         if activity is not None and isinstance(live.get("task"), dict):
             live["task"] = {**live["task"], "activity": activity}
+        stage = _convert_stage(live)
+        if stage is not None and isinstance(live.get("task"), dict):
+            live["task"] = {**live["task"], "stage": stage}
         return _session_dto(live)
     side = _load_sidecar(sid)
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）
@@ -3588,3 +3693,64 @@ def interrupt_all() -> int:
             ai_history.update_status(sess["id"], "interrupted")
             n += 1
     return n
+
+
+# ---------------------------------------------------------------- 修改方案的脚本修改（ADR 0206 PR 6）
+PLAN_OVERREACH_FILES_MAX = 5
+
+
+def _plan_guard(cand, snap: Path) -> dict:
+    """方案任务收尾的越界核对（R-03 兜底，外部 CLI 不遵守 cwd 只能事后检出）。
+
+    * 目标脚本在运行期间变了：**分不清是用户在编辑器里保存、还是 Agent 直接改的**，所以一律当冲突——**不自动还原**（还原会冲掉用户的合法保存，
+      且违反「覆盖前先备份」）。只把「此刻的字节」`current_bytes` 与「起跑快照」`snapshot_bytes` 交给方案端点，由它两处备份后告诉用户，
+      用户点了「恢复到开始前的版本」才经 `scriptbackup.replace(expect_before=此刻摘要)` 还原；
+    * 项目里别的文件被改 → 只列名（≤ 5 个，其余只报个数）、**不动**（`files`，已按名字排序）。
+    回 `{"touched": bool, "target_changed": bool, "files": [...], "total": int, "current_bytes", "snapshot_bytes"}`；没越界 `touched` 为假。"""
+    from . import ai_figure_edit
+
+    out: dict = {"touched": False, "target_changed": False, "files": [], "total": 0}
+    try:
+        seen = cand.script_path.read_bytes()
+    except OSError:
+        seen = None
+    changed = ai_figure_edit.fingerprint_changes(
+        cand.project_before,
+        ai_figure_edit.project_fingerprint(
+            cand.project_root, exclude=ai_figure_edit._own_files(cand.script_rel)
+        ),
+    )
+    others = sorted(changed or [])
+    out["files"], out["total"] = others[:PLAN_OVERREACH_FILES_MAX], len(others)
+    if seen != cand.base_bytes:
+        out["touched"] = out["target_changed"] = True
+        out["current_bytes"] = seen
+        try:
+            out["snapshot_bytes"] = snap.read_bytes()
+        except OSError:
+            out["snapshot_bytes"] = cand.base_bytes
+    if others:
+        out["touched"] = True
+    return out
+
+
+def plan_outcome(sid: str, project: str) -> dict | None:
+    """方案任务的结局（会话终态之后才有；没有 / 别的项目的 → None）：`{status, error, outcome, unmet, new_bytes, base_bytes, overreach}`。"""
+    sess = SESSIONS.get(sid)
+    if sess is None or sess.get("project") != str(Path(project).resolve()) or not sess.get("final"):
+        return None
+    taf = sess.get("taf") or {}
+    cand = taf.get("cand")
+    if cand is None or not taf.get("plan_only"):
+        return None
+    task = sess.get("task") or {}
+    return {
+        "status": sess["status"],
+        "error": sess.get("error"),
+        "outcome": task.get("outcome"),
+        "unmet": task.get("unmet") or [],
+        "new_bytes": cand.extras.get("plan_bytes"),
+        "base_bytes": cand.base_bytes,
+        "base_sha256": cand.base_sha256,
+        "overreach": taf.get("overreach") or {},
+    }

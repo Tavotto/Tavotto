@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/artifactValidation.test.ts`、`store/documentStore.test.ts`、`store/panelSourceSync.test.ts`、`hooks/useEngineSync.test.ts`、`lib/projectDocs.test.ts`、`store/projectDocOwnership.test.ts`、`e2e/cross-tab-paste.spec.ts`、`lib/autosave/diskWriter.test.ts`、`lib/timelineCheckpoint.test.ts`、`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`store/recovery.acceptance.test.ts`、`lib/recoveryCandidates.test.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/artifactValidation.test.ts`、`store/documentStore.test.ts`、`store/panelSourceSync.test.ts`、`hooks/useEngineSync.test.ts`、`lib/projectDocs.test.ts`、`store/projectDocOwnership.test.ts`、`e2e/cross-tab-paste.spec.ts`、`lib/autosave/diskWriter.test.ts`、`lib/timelineCheckpoint.test.ts`、`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`store/recovery.acceptance.test.ts`、`lib/recoveryCandidates.test.ts`、`store/projectHistoryRestore.test.ts`、`e2e/project-history-restore.spec.ts`
 > `web/AGENTS.md`「改到」压缩前原文（2026-10-23）：`lib/session.ts`、`types/document.ts`、`documentStore` 的 `loadSeq` / `derivedSeq` / `registerTxnFinalizer`、`lib/autosave/diskWriter.ts`、`panelSourceSync.ts`、`assetStore`、`lib/projectDocs.ts`、`lib/docOwnership.ts`、恢复门与判决 `store/documentRestore.ts`、找回入口 `LayoutRecover` / `lib/recoveryCandidates.ts`、排版时间线（`lib/timelineCheckpoint.ts` / `VersionDialog.tsx`）
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效；计算项目格式按ADR 0182同步）：schema 3/4 只在持久化边界；外部派生唯一写入口 `applyDerivedUpdate()`；手势中不许写；文档 ready 只看恢复门、新写入口必须看门（ADR 0120）
 
@@ -56,6 +56,7 @@ order: 200
   `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
   `PageSetup.userSized`（用户明确设过画布尺寸：属性栏宽高 / 预设 / 方向、拖页边；一键排版自己写页面不置，ADR 0199）、
   `FigureDocument.quickLayout`（一键排版记下的网格：行列、每张图的格子、比例、排好时的框；框被用户动过即失效，拖分隔线只在有效时出现，ADR 0199）、
+  `FigureDocument.colorKeys`（推荐配色的色键表：方案 id、键 → 槽、配色写下的 override；只存 label 的身份摘要不存原文，槽一旦分配不动，`canvasToDoc` / `docToCanvas` 随画布带着，ADR 0210）、
   `FigureDocument.layoutGroups`（行/列/网格约束，id 即 groupId，
   尺寸变化自动重排）。**自动重排只跟用户编辑**（`startLayoutAutoReflow`，按
   `historyMove` 在栈上认：新条目 = 编辑，条目在 past / future 间挪格 = 撤销 / 重做，
@@ -203,6 +204,20 @@ order: 200
   `isCurrentDoc` 守，元数据一半无论当前与否都经 `onDocumentPersisted` 交给 `projectDocs.notifyDocumentPersisted`（缓存意图 == 这份且上次推送
   pending / 失败才重推，不被同值去重挡住）。`loadProjectDocument` 不再在验证正文之前把本机引用推成后端 last（迁移在 `confirmRestored` 里、接受之后）。
   C1：本机索引说别的项目、后端 `/owner` 回 `owners` 证据且 `verified` → 可纠正本机索引；只有 assets / versions → 不翻案；问不到 → 不认领。
+- **从项目自己的时间线找回（2026-11-25，ADR 0211 第一期 1–4）**：项目文件夹挪走 / 复制 / 换电脑 / 换 origin 之后，
+  按路径记的会话状态与本机索引都认不出这个项目，随文件夹走的只有 `tavottofile/versions/*.vx`。`resolve()` 在「没有可用的目标」
+  分支、槽位发现之后再问 `GET /api/layout-session/project-history`（`lib/api.fetchProjectHistory`），按 docId 与槽位发现去重、
+  合并计数：恰好 1 份项目内候选 → 自动采用（同一句「自动采用」提示）；合计 ≥ 2 份 → 现有 `choose` 恢复卡（不新造 UI，
+  `AltCandidate.history` 让 `openAlternative` 走 `installFromHistory`）；端点 404 = 没有，读不到且槽位也没有 → `session_unavailable`。
+  `mode` 由后端判（它看得到旧路径在不在）：`slot`（挪走 / 本项目 / 没有归属记录）→ 归属不是本项目时先
+  `POST …/project-history/claim`（后端锁里重判、绑 revision），再走普通槽位探测与 `installChecked`，本机索引经 `correctsIndex`
+  在装之前改到当前项目——两侧归属记录一起改，判据本身（`isForeignDocument` / `owner_conflict`）不变；`node_newer` 时装好槽位
+  再把节点作为一笔可撤销的编辑写上去；`node`（同 docId）/ `copy`（新 docId）→ 先装一份空白工作副本（画布 id 沿用节点的），门放开后
+  一笔 commit（配方唯一出处 `store/canvasVersionRecipe.applyCanvasVersion`，与 `actions.restoreLayoutVersion` 共用；⌘Z 一步退回；
+  整份项目节点直接装成工作副本并当场落盘），随后照常自动保存、记成 last。documentRestore 不 import actions（会多一个 import 环）。**前端再加一道**：后端 `owner:'none'` 而本机索引
+  确知属于别的项目 → 按复制（那个项目可能就在旁边）。认领问不到（503 / 网络）→ `needs_user{unavailable}`，**不**另开一份；
+  409 `claim_refused` → 重列一次，后端仍说 `slot` 就对着新 revision 再认领一次，明说 `copy` / `node` 才照办。项目内候选没列全（`truncated`）不自动采用。不按文件名 / mtime 猜（ADR 0027 §5）。
+  已知局限：普通节点只拍当前画布，多画布排版从节点只能找回那一张；复制出的新 docId 时间线从空开始（旧节点仍在 `D.vx` 里）。
 - **找回本机排版（2026-10-11，ADR 0120 §六 / ADR 0108 §四）**：「打开排版」对话框的 `components/LayoutRecover.tsx`（逻辑在 `lib/recoveryCandidates.ts`）
   两组：本项目的（原 id 打开）、折叠的归属待确认（默认**恢复副本**：固定目标 id、确认时重比 revision、经 `actions.openDocumentAs` + 正常保存链建立归属，
   源槽位与源归属不动，取消零写入）。不为列表运行脚本、不编缩略图。看护 `lib/recoveryCandidates.test.ts`、`components/LayoutDialog.recover.test.tsx`。
@@ -328,7 +343,7 @@ order: 200
   「恢复前」全走它，它在**第一个 await 之前**同步取走 pj / 文档 / 画布身份 / 缩略图图源（离开
   项目那一刻紧跟着就是换 pj、清 renderStore）。`markMoment()` 只在 `startVersionCheckpoints`
   挂上时才发请求。「保存」时刻由保存侧发 `lib/layoutSaved.emitLayoutSaved()`、时间线订阅——
-  新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
+  新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。**空白排版的「打开」「离开」不打点**（ADR 0211 第一期 4，2026-11-25）：其余关键时刻（恢复前、保存、导出……）空画布照打（Codex #679），只有 `open` / `close` 在拍的那份没有对象时不发（`BLANK_SKIPPED_MOMENTS`）——以前挪走的项目每加载 / 离开一次在 `tavottofile/versions/` 里多一个只有空节点的 `.vx`；后端对这两个时刻同样不写（`_MOMENTS_SKIPPED_WHEN_BLANK`，纵深，同源对）。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
   恢复别的图（2026-10-31）：同一张画布上，这一版的图与画布上此刻的图不是同一组（换了 / 多了 / 少了，含单图编辑 ↔ 排版；比 fileId 集合，与后端 `_version_figures` 同一把尺子）→ 先确认、说清会变成几张图；恢复后图变了 → 时间线范围切到「全部图」（`timelineStore.revealAll`）；
   单图编辑时来自另一张画布的图，确认框按「图」说、不说「画布」。
