@@ -428,6 +428,7 @@ def test_every_input_comment_ends_up_in_a_group_or_in_unhandled():
         "candidate_patches",
         "groups",
         "unhandled",
+        "comments",
         "preview",
     }
     assert plan["groups"][0]["key"] == "g1" and plan["groups"][0]["atomic"] is False
@@ -875,3 +876,300 @@ def test_default_resolve_passes_selected_connection_through(monkeypatch):
     assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": "key:abc", "model": "m1"}
     cp._RESOLVE(cp.MODEL_TIMEOUT_S)
     assert seen == {"budget_s": cp.MODEL_TIMEOUT_S, "conn_id": None, "model": None}
+
+
+# --------------------------------------------------------------------------- 对数轴的下限必须大于 0（维护者 2026-11-26）
+def axes_el(ylim=(0.0, 1.05), xlim=(0.0, 60.0), yscale="linear", xscale="linear"):
+    return el(
+        "ax0",
+        "axes",
+        [
+            field("xlim", "pair", list(xlim)),
+            field("ylim", "pair", list(ylim)),
+            field("xscale", "enum", xscale, options=["linear", "log", "symlog"]),
+            field("yscale", "enum", yscale, options=["linear", "log", "symlog"]),
+        ],
+    )
+
+
+def log_proposal(*changes, cid="c1"):
+    return {"groups": [{"comment_id": cid, "changes": list(changes)}], "unhandled": []}
+
+
+@pytest.mark.parametrize(
+    ("upper", "want"),
+    [(1.05, 0.01), (1.0, 0.01), (100.0, 1.0), (0.5, 0.001), (60.0, 0.1), (0.0, None), (-3.0, None)],
+)
+def test_suggested_log_lower_limit_is_a_power_of_ten_below_the_upper_limit(upper, want):
+    assert cp.suggest_log_lower(upper) == want
+
+
+def test_log_yscale_with_a_non_positive_lower_limit_gets_a_lower_limit_and_a_confirm():
+    out = cp.require_log_lower_limits(log_proposal(ch("ax0", "yscale", "log")), manifest(axes_el()))
+    (g,) = out["groups"]
+    assert g["changes"] == [ch("ax0", "yscale", "log"), ch("ax0", "ylim", [0.01, 1.05])]
+    assert g["confirm"] == {
+        "kind": "log_lower_limit",
+        "axis": "y",
+        "gid": "ax0",
+        "from": 0.0,
+        "to": 0.01,
+    }
+
+
+def test_log_xscale_gets_the_same_rule_on_xlim():
+    out = cp.require_log_lower_limits(log_proposal(ch("ax0", "xscale", "log")), manifest(axes_el()))
+    (g,) = out["groups"]
+    assert ch("ax0", "xlim", [0.1, 60.0]) in g["changes"]
+    assert g["confirm"]["axis"] == "x" and g["confirm"]["to"] == 0.1
+
+
+def test_a_positive_lower_limit_from_the_model_or_the_figure_needs_no_confirm():
+    own = log_proposal(ch("ax0", "yscale", "log"), ch("ax0", "ylim", [0.01, 1.05]))
+    assert "confirm" not in cp.require_log_lower_limits(own, manifest(axes_el()))["groups"][0]
+    fig = log_proposal(ch("ax0", "yscale", "log"))
+    out = cp.require_log_lower_limits(fig, manifest(axes_el(ylim=(0.5, 9.0))))
+    assert out["groups"][0] == fig["groups"][0]
+    # 本来就是对数轴：这一条没有变化，不归这里管
+    again = cp.require_log_lower_limits(fig, manifest(axes_el(yscale="log")))
+    assert again["groups"][0] == fig["groups"][0]
+
+
+def test_a_non_positive_lower_limit_written_by_the_model_is_replaced_in_place():
+    p = log_proposal(ch("ax0", "yscale", "log"), ch("ax0", "ylim", [-1, 2]))
+    (g,) = cp.require_log_lower_limits(p, manifest(axes_el(ylim=(0.5, 9.0))))["groups"]
+    assert [c for c in g["changes"] if c["prop"] == "ylim"] == [ch("ax0", "ylim", [0.01, 2])]
+    assert g["confirm"]["from"] == -1
+
+
+def test_log_with_no_positive_upper_limit_is_dropped_as_bad_value():
+    out = cp.require_log_lower_limits(
+        log_proposal(ch("ax0", "yscale", "log")), manifest(axes_el(ylim=(-5.0, -1.0)))
+    )
+    assert out["groups"] == []
+    assert out["unhandled"] == [{"comment_id": "c1", "reason": "bad_value"}]
+
+
+def test_the_input_proposal_is_not_mutated_and_an_inverted_axis_keeps_its_order():
+    p = log_proposal(ch("ax0", "yscale", "log"))
+    before = json.loads(json.dumps(p))
+    out = cp.require_log_lower_limits(p, manifest(axes_el(ylim=(1.05, 0.0))))
+    assert p == before
+    assert ch("ax0", "ylim", [1.05, 0.01]) in out["groups"][0]["changes"]
+
+
+def test_the_confirm_survives_effective_changes_candidate_and_the_plan():
+    man = manifest(axes_el())
+    prop = cp.require_log_lower_limits(log_proposal(ch("ax0", "yscale", "log")), man)
+    cand, prop = cp.candidate_patches([], prop, man)
+    after = manifest(axes_el(ylim=(0.01, 1.05), yscale="log"))
+    groups, unhandled = cp.effective_changes(man, after, prop)
+    groups = cp.attach_patches(groups, cand)
+    assert groups[0]["confirm"]["to"] == 0.01
+    plan = cp.build_plan(
+        plan_id="a" * 24,
+        target="Kin.pdf",
+        base_fingerprint="sha256:x",
+        comments=[{"id": "c1", "text": "纵轴改对数"}],
+        groups=groups,
+        unhandled=unhandled,
+        base_patches=[],
+    )
+    assert plan["groups"][0]["confirm"]["kind"] == "log_lower_limit"
+    assert {c["prop"] for c in plan["groups"][0]["changes"]} == {"yscale", "ylim"}
+    # 下限那一条没生效 = 没有可问的：confirm 不带
+    stuck = manifest(axes_el(ylim=(0.0, 1.05), yscale="log"))
+    g2, _ = cp.effective_changes(man, stuck, prop)
+    assert "confirm" not in g2[0]
+
+
+def test_a_comment_that_is_both_changed_and_needs_a_script_keeps_only_needs_script():
+    obj = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0.line0", "linewidth", 3)]},
+            {"comment_id": "c2", "changes": [ch("ax0.title", "fontsize", 12)]},
+        ],
+        "unhandled": [{"comment_id": "c1", "reason": "needs_script"}],
+    }
+    out = cp.validate_proposal(obj, BASE, comment_ids={"c1", "c2"})
+    assert [g["comment_id"] for g in out["groups"]] == ["c2"]
+    assert out["unhandled"] == [{"comment_id": "c1", "reason": "needs_script"}]
+
+
+def test_both_system_prompts_tell_the_model_a_half_script_comment_goes_whole_to_the_script():
+    for source in ("review", "assistant"):
+        text = cp.system_prompt(source)
+        assert "整条" in text and "needs_script" in text and "一半" in text
+
+
+# --------------------------------------------------------------------------- 改后元素出图幅：自动腾边距（维护者 2026-11-26）
+def _room_manifests():
+    """改前一切安好；改后纵轴标题探出左边（刻度文字变宽把它挤出去）。→ `(before, after)`。"""
+    from tests.test_normalize import _two_column_manifest
+
+    before = _two_column_manifest()
+    after = json.loads(json.dumps(before))
+    for e in after["elements"]:
+        if e["gid"] == "axes_0.ylabel":
+            e["bbox"] = [-0.03, 0.3, 0.03, 0.4]
+    return before, after
+
+
+def _room_render(after):
+    """假渲染：子图 position 的左边挪多少，它的装饰物（标题 / 刻度）就跟着挪多少。"""
+
+    def render(patches):
+        out = json.loads(json.dumps(after))
+        for p in patches:
+            if p["prop"] != "position":
+                continue
+            ax = next(e for e in out["elements"] if e["gid"] == p["gid"])
+            old = next(f for f in ax["editable"] if f["prop"] == "position")
+            dx = p["value"][0] - old["value"][0]
+            old["value"] = p["value"]
+            ax["bbox"] = list(p["value"])
+            for e in out["elements"]:
+                if e["gid"].startswith(p["gid"] + ".") and e["role"] in ("axis_label", "ticks"):
+                    e["bbox"][0] += dx
+        return out
+
+    return render
+
+
+def test_overflow_that_is_new_or_worse_is_found_and_old_overflow_is_not():
+    before, after = _room_manifests()
+    assert [c["gids"][0] for c in cp.worsened_overflow(before, after)] == ["axes_0.ylabel"]
+    assert cp.worsened_overflow(after, after) == []  # 改前就出界的不管
+    assert cp.worsened_overflow(before, before) == []
+
+
+def test_make_room_moves_the_axes_so_the_label_fits_again_and_keeps_identity():
+    before, after = _room_manifests()
+    cand = [{"gid": "axes_0", "prop": "yscale", "value": "log", "identity": "id-ax0"}]
+    room = cp.make_room(before, after, cand, [], _room_render(after))
+    assert room is not None
+    pos = room.positions["axes_0"]
+    assert pos["prop"] == "position" and pos["value"][0] > 0.08
+    assert room.candidate[0] == cand[0] and room.candidate[-1]["prop"] == "position"
+    assert cp.worsened_overflow(before, room.manifest) == []
+
+
+@pytest.mark.parametrize(
+    "render",
+    [
+        pytest.param(lambda p: None, id="new-warning"),
+        pytest.param(lambda p: _room_manifests()[1], id="no-progress"),
+    ],
+)
+def test_make_room_gives_up_quietly_on_a_warning_or_no_progress(render):
+    before, after = _room_manifests()
+    assert cp.make_room(before, after, [], [], render) is None
+
+
+def test_make_room_is_none_when_nothing_overflows_newly():
+    before, _after = _room_manifests()
+    assert cp.make_room(before, before, [], [], _room_render(before)) is None
+
+
+def _group(*gids):
+    return {
+        "comment_id": "c1",
+        "atomic": False,
+        "changes": [
+            {
+                "target_gid": g,
+                "prop": "yscale",
+                "before": "linear",
+                "after": "log",
+                "patch": {"gid": g, "prop": "yscale", "value": "log"},
+            }
+            for g in gids
+        ],
+        "boxes": {"before": [], "after": []},
+    }
+
+
+def test_room_position_follows_the_group_that_touched_the_overflowing_axes_only():
+    before, after = _room_manifests()
+    room = cp.make_room(before, after, [], [], _room_render(after))
+    log_group, other = _group("axes_0"), _group("axes_7")
+    groups = cp.attach_room([log_group, other], room, before, after)
+    # 两列并排：重排把两个子图一起挪
+    assert [(c["target_gid"], c["prop"]) for c in log_group["changes"]] == [
+        ("axes_0", "yscale"),
+        ("axes_0", "position"),
+        ("axes_1", "position"),
+    ]
+    room_change = log_group["changes"][1]
+    assert room_change["auto"] == "room"
+    assert room_change["patch"]["value"] == room.positions["axes_0"]["value"]
+    assert [c["prop"] for c in other["changes"]] == ["yscale"]
+    # 取消勾选那一组：边距不留下；勾着它：边距在
+    keys = lambda *k: {g["key"] for g in groups if g["key"] in k}  # noqa: E731
+    for i, g in enumerate(groups, 1):
+        g["key"] = f"g{i}"
+    assert not [e for e in cp.apply_groups([], groups, {"g2"}) if e["prop"] == "position"]
+    assert [e for e in cp.apply_groups([], groups, {"g1"}) if e["prop"] == "position"]
+    assert keys("g1") == {"g1"}
+
+
+def test_room_position_goes_into_every_group_when_none_can_be_matched_to_the_axes():
+    before, after = _room_manifests()
+    room = cp.make_room(before, after, [], [], _room_render(after))
+    a, b = _group("fig"), _group("fig2")
+    cp.attach_room([a, b], room, before, after)
+    assert a["changes"][-1]["prop"] == "position" and b["changes"][-1]["prop"] == "position"
+    assert a["changes"][-1]["auto"] == "room"
+
+
+def test_a_position_the_model_asked_for_itself_is_not_overwritten_by_the_room():
+    before, after = _room_manifests()
+    room = cp.make_room(before, after, [], [], _room_render(after))
+    own = _group("axes_0")
+    own["changes"].append(
+        {
+            "target_gid": "axes_0",
+            "prop": "position",
+            "before": 1,
+            "after": 2,
+            "patch": {"gid": "axes_0", "prop": "position", "value": [0, 0, 1, 1]},
+        }
+    )
+    cp.attach_room([own], room, before, after)
+    own_pos = [c for c in own["changes"] if c["target_gid"] == "axes_0" and c["prop"] == "position"]
+    assert [c.get("auto") for c in own_pos] == [None]
+
+
+def test_a_range_proposed_by_another_comment_moves_into_the_log_group():
+    """#2261 Codex P2：c1 改对数、c2 改范围 [0, 2]——下限要在对数那组里问，不能留在 c2 的组里不问而改。"""
+    p = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0", "yscale", "log")]},
+            {"comment_id": "c2", "changes": [ch("ax0", "ylim", [0, 2])]},
+        ],
+        "unhandled": [],
+    }
+    out = cp.require_log_lower_limits(p, manifest(axes_el()))
+    (g,) = out["groups"]
+    assert g["comment_id"] == "c1"
+    assert ch("ax0", "ylim", [0.01, 2]) in g["changes"]
+    assert g["confirm"]["to"] == 0.01 and g["confirm"]["from"] == 0
+    assert out["unhandled"] == [{"comment_id": "c2", "reason": "merged_log"}]
+
+
+def test_the_other_group_keeps_its_other_changes_when_its_range_moves():
+    p = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0", "yscale", "log")]},
+            {
+                "comment_id": "c2",
+                "changes": [ch("ax0", "ylim", [0, 2]), ch("ax0", "xlim", [0, 50])],
+            },
+        ],
+        "unhandled": [],
+    }
+    out = cp.require_log_lower_limits(p, manifest(axes_el()))
+    g1, g2 = out["groups"]
+    assert ch("ax0", "ylim", [0.01, 2]) in g1["changes"] and "confirm" in g1
+    assert g2["changes"] == [ch("ax0", "xlim", [0, 50])]
+    assert out["unhandled"] == []

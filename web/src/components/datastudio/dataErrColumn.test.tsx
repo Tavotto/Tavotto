@@ -73,9 +73,9 @@ describe('主图：两种新画法', () => {
     expect(q('[data-candidate-why]')!.textContent).not.toMatch(/标准差|标准误|置信/)
   })
 
-  it('依据句：按表里的 N 行绘制，每行一个点；误差线取自「列」列；没画的行接在后面', async () => {
+  it('依据句：按 N 行绘制，每行一个点；误差线取自「列」列；没画的行接在后面', async () => {
     await show('points_err', { facts: facts({ skipped_missing: 1, skipped_other: 0 }), unplotted: { count: 1, code: null } })
-    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按表里的 12 行绘制，每行一个点；误差线取自「<b>SD</b> of 值」列；另有 1 行因缺值未计入。')
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 12 行绘制，每行一个点；误差线取自「<b>SD</b> of 值」列；另有 1 行因缺值未计入。')
     expect(q('[data-candidate-basis]')!.getAttribute('title')).toBeNull()
   })
 })

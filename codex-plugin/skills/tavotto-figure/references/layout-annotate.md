@@ -86,12 +86,13 @@
 | `rotate` | `id`、`deg`（绝对角度，顺时针为正，绕框中心） |
 | `pathfinder` | `ids`、`mode`（`unite minus_front minus_back intersect exclude divide trim merge crop`） |
 | `offset` / `outline_stroke` / `simplify` | `id` + `delta_mm`、`join` / 无 / `tolerance_pt` |
+| `convert_to_path` | `ids`（形状 / 箭头 → 同 id 的路径，画面不动） |
 
 - **能改用户手画的**，但每次都复述、都能一步撤销；复述逐条是「谁：字段 前 → 后」，原话念给用户。
 - 桌面正开着这份排版时会按字段自动并进去（一步可撤销）；用户在桌面里也改了同一处（同一对象的同一字段，或改了你删的）才会在保存时让用户选。
 - 认不准是哪个对象（「那支箭头」有三支）就列候选（名字 + 位置）给用户选。
 - 只核这次动到的对象；`failed` 非空不能写入。拆组 / 删除让布局组成员不足 2 个时，约束一并去掉，复述里会说。
-- 布尔 / 偏移 / 轮廓化 / 简化目前只收 `path`；回 `kernel_unavailable` = 这台机器的几何内核没装上，其余操作照常，
-  告诉用户这一步可在桌面里做。
+- 布尔 / 偏移收路径与封闭形状（矩形、椭圆、多边形…会先转为路径，结果是路径），轮廓化另收直线 / 弧线 / 箭头，简化只收
+  `path`（形状先 `convert_to_path`）；回 `kernel_unavailable` = 这台机器的几何内核没装上，其余操作照常，告诉用户这一步可在桌面里做。
 - 方案没出来时 `errors` 是 `[{code, index, field}]`（`index` 从 0 数）：`bad_op` 写法不对、`unknown_object` id 不在这张画布、
   `not_vector` 点名了子图 / 图片、`bad_field` 这一类没有这个字段、`bad_value` / `out_of_range` 值不对。

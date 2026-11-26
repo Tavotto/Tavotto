@@ -4064,6 +4064,10 @@ export type QuickLayoutFailureCode =
   | 'not_converged'
   | 'render_failed'
   | 'page_too_small'
+  /** 图内排版：组件太旧、不认图内排版的命令（ADR 0199 §十二） */
+  | 'pro_outdated'
+  /** 图内排版：图里有认不出归属、又挡路的元素 */
+  | 'figure_obstacle'
 
 /** 求解器回的网格：行列数、每张图（画布对象 id）在哪一格、行 / 列相对权重 */
 export interface QuickLayoutGrid {
@@ -4074,7 +4078,11 @@ export interface QuickLayoutGrid {
   row_ratios: number[]
 }
 
-export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
+/**
+ * `in_figure`：这次排的是一张图里面的子图（ADR 0199 §十二）；`label_offset_varied`：为绕开图里原地不动的元素，
+ * 个别标签的偏移与别的不同（暂不出文案）
+ */
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed' | 'in_figure' | 'label_offset_varied'
 
 /** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
 export type QuickLayoutSpecChange =
@@ -4095,9 +4103,11 @@ export type QuickLayoutResponse =
       spec_changes: QuickLayoutSpecChange[]
       /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
       page: { w: number; h: number }
-      /** 网格（拖分隔线重排用）；后端说不出 = null */
+      /** 网格（拖分隔线重排用）；后端说不出 = null（图内排版没有网格） */
       grid: QuickLayoutGrid | null
       replay_required: boolean
+      /** `figure` = 图内排版（只有一张可排的图、图里有好几个坐标轴）；多图排版不带 */
+      mode?: 'figure'
     }
   | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
 
@@ -4112,8 +4122,10 @@ const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
   'not_converged',
   'render_failed',
   'page_too_small',
+  'pro_outdated',
+  'figure_obstacle',
 ])
-const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed', 'in_figure', 'label_offset_varied'])
 const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
   'font_family',
   'font_size',
@@ -4153,6 +4165,7 @@ function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
   if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
   return (
     body.ok === true &&
+    (body.mode === undefined || body.mode === 'figure') &&
     isQuickLayoutGrid(body.grid) &&
     Array.isArray(body.panels) &&
     body.panels.every(
@@ -4225,6 +4238,9 @@ export type ChangePlanUnhandledReason =
   | 'not_applied'
   | 'no_effect'
   | 'not_addressed'
+  | 'merged_log'
+  /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
+  | 'log_limit_declined'
 
 export interface ChangePlanBox {
   gid: string
@@ -4246,6 +4262,8 @@ export interface ChangePlanChange {
   /** manifest 的展示值（格式可能与 override 的值不同，只用来显示） */
   before: unknown
   after: unknown
+  /** 后端自动补的改动（不是模型提的）：`room` = 改完有元素探出图幅，把子图往里挪腾出边距；跟着造成出界的那一组走 */
+  auto?: 'room'
   /** 应用时写进文档的那条 override（进入候选列表、规范化之后） */
   patch: ChangePlanPatch
 }
@@ -4273,6 +4291,11 @@ export interface ChangePlanGroup {
   atomic: boolean
   changes: ChangePlanChange[]
   boxes: { before?: ChangePlanBox[]; after: ChangePlanBox[] }
+  /**
+   * 这一组要先问用户：把一根轴改成对数，但它的下限 ≤ 0，方案里已经带上了一条把下限改成正数的改动（`to`）。
+   * 卡片问「一起改吗」，回答前不给「查看 / 应用」；`from` 是改前的下限。
+   */
+  confirm?: { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number }
 }
 
 export interface ChangePlan {
@@ -4292,6 +4315,8 @@ export interface ChangePlan {
   candidate_patches: ChangePlanPatch[]
   groups: ChangePlanGroup[]
   unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
+  /** 审阅来源的方案里后端存的意见原文（`{id, text}` 之外还有锚点）：「改脚本做剩下的」按它取，前端只传 id */
+  comments?: { id: string; text: string }[]
   /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */
   preview: { before: string; after: string }
 }
@@ -4325,8 +4350,12 @@ export interface CreateChangePlanBody {
   instruction?: string
   /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
   target?: string
-  /** `script`：脚本修改（只接助手来源，必须带 `connection`；ADR 0206 PR 6） */
+  /** `script`：脚本修改（必须带 `connection`；ADR 0206 PR 6）。审阅来源只接用户点「改脚本做剩下的」那条路：带 `from_plan` + `comment_ids`，不带意见文字 */
   mode?: 'script'
+  /** `source: 'review'` + `mode: 'script'`：来源（审阅）方案 id；意见原文后端取自这份存档 */
+  from_plan?: string
+  /** 同上：要转给脚本方案的意见 id（须在来源方案的 `unhandled` 里、原因 `needs_script`） */
+  comment_ids?: string[]
   client_request_id?: string
 }
 
