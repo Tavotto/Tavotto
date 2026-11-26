@@ -101,7 +101,29 @@ test('不按任何键：编辑自动写进项目的 layout.json，杀进程重�
     expect(docId, '沿用清单里记的 docId').toBe(manifest.doc_id)
     // 没有另起一个目录
     expect(layoutDirs(project)).toEqual([dir])
+
+    // ---- 4. 删空排版：已有的工作副本必须收到空文档（Codex #2277 P1），再换全新本机数据重开，删掉的对象不会被找回 ----
+    await tabF.locator('[data-canvas-stage] [data-object-id]').first().click()
+    await tabF.keyboard.press('ControlOrMeta+a')
+    await tabF.keyboard.press('Delete')
+    await expect(tabF.locator('[data-object-id]')).toHaveCount(0)
+    await expect.poll(() => objectCount(project, dir), { timeout: 30_000 }).toBe(0)
     await fresh.close()
+    await killHard(a3)
+    const dataC = path.join(root, 'dataC')
+    mkdirSync(dataC, { recursive: true })
+    const fresh2 = await browser.newContext()
+    expect((await fresh2.storageState()).origins).toEqual([])
+    const a4 = await app({ figures: project, env: { ...base, TAVOTTO_DATA_DIR: dataC }, port })
+    started.push(a4)
+    const tabE = await fresh2.newPage()
+    await openAndWait(tabE, a4.baseURL)
+    // 等项目历史的恢复落定：此刻要么是空画布（工作副本就是空的），要么是被找回的旧内容——不许是后者
+    await tabE.waitForTimeout(3000)
+    await expect(tabE.locator('[data-object-id]'), '删空之后重开，不能把删掉的对象找回来').toHaveCount(0)
+    expect(objectCount(project, dir)).toBe(0)
+    expect(layoutDirs(project)).toEqual([dir])
+    await fresh2.close()
   } finally {
     for (const a of started) await a.stop().catch(() => undefined)
     try {
