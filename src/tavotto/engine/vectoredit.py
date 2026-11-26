@@ -1026,35 +1026,102 @@ def _fact_key(f: dict) -> str:
     )
 
 
-def _check_items(objs: list[dict], ops: object) -> list[dict]:
+#: 只换颜色 / 名字 / 锁定这类不改占地的字段：改之前就有的问题仍是同一处，可以标 `preexisting`（ADR 0212 §四）。
+#: 位置、尺寸、旋转、线宽、端型、字号字体、填充有无……任何会改变对象占地的字段变了，就按改后的样子完整核对（Codex #2254：
+#: 「同一检查项 + 同一对象」不等于同一处——左边出页挪成右边出页、压着曲线的另一段，都是新问题）。
+PAINT_ONLY = frozenset(
+    {
+        "name",
+        "locked",
+        "color",
+        "strokeOpacity",
+        "fillOpacity",
+        "fillGradient",
+        "strokeGradient",
+        "dash",
+        "dashPattern",
+        "borderColor",
+        "underline",
+    }
+)
+
+
+def _persisted_pos(o: dict, a: dict, id2ref: dict) -> dict | None:
+    """落盘锚点（子图写的是对象 id）→ 场景位置写法（子图短号），解不了 → None。"""
+    kind = next((k for k in ("data", "element", "panel") if k in a), None)
+    if kind is None or not isinstance(a[kind], dict):
+        return None
+    spec = dict(a[kind])
+    key = "id" if kind == "panel" else "panel"
+    if spec.get(key) not in id2ref:
+        return None
+    spec[key] = id2ref[spec[key]]
+    return {"anchor": {kind: spec}, "offset_mm": a.get("offset_mm", [0.0, 0.0])}
+
+
+def _anchor_requests(canvas: dict) -> list:
+    """画布上带 0208 锚点的对象要的数据点（核对时验锚点还成不成立用），写成 `required_data_points` 的描述。"""
+    id2ref = {
+        p.get("id"): f"P{n}"
+        for n, p in enumerate(la._figure_panels(canvas), start=1)  # noqa: SLF001
+    }
+    out = []
+    for o in canvas.get("objects") or []:
+        if not isinstance(o, dict):
+            continue
+        for a in (o.get("anchor") or {}).get("anchors") or []:
+            pos = _persisted_pos(o, a, id2ref) if isinstance(a, dict) and "data" in a else None
+            if pos is not None:
+                out.append({"kind": "text", "name": f"_anc{len(out)}", "at": pos})
+    return out
+
+
+def _check_items(objs: list[dict], ops: object, panels: dict) -> list[dict]:
     """核对要的「描述」：只用来认锚定端（锚在数据 / 元素上的那一端让出尖端余量，与新加时同一条判据）。
 
-    来源两处：对象上落盘的 0208 锚点（`anchor.anchors[].role`），以及这批补丁里 `move` 把 `from` / `to` 对到的锚点。
-    不给的话，Agent 加的、尖端本来就指着曲线的箭头，改个线宽都会被判成「遮了数据」。"""
-    by: dict[str, dict] = {o["id"]: {"name": o["id"]} for o in objs}
+    候选两处：对象上落盘的 0208 锚点（`anchor.anchors[].role`）、这批补丁里 `move` 把 `from` / `to` 对到的锚点。
+    **只认补丁跑完之后还成立的**：那一端此刻离锚点解出来的位置不超过锚点残差限——挪开了、转开了、被后面的操作改了形，
+    就不再让余量（Codex #2254）。不给的话，Agent 加的、尖端本来就指着曲线的箭头，改个线宽都会被判成「遮了数据」。"""
+    id2ref = {(e.get("panel") or {}).get("id"): ref for ref, e in panels.items()}
+    ctx = vectorscene._Ctx(panels)  # noqa: SLF001
+    cands: dict[tuple[str, str], dict] = {}
     for o in objs:
         for a in (o.get("anchor") or {}).get("anchors") or []:
-            if not isinstance(a, dict) or a.get("role") not in ("from", "to"):
-                continue
-            kind = next((k for k in ("data", "element", "panel", "item") if k in a), None)
-            if kind:
-                by[o["id"]][a["role"]] = {"anchor": {kind: a[kind]}}
+            if isinstance(a, dict) and a.get("role") in ("from", "to"):
+                pos = _persisted_pos(o, a, id2ref)
+                if pos is not None:
+                    cands[(o["id"], a["role"])] = pos
+    ids = {o["id"] for o in objs}
     for op in ops if isinstance(ops, list) else []:
         if (
             isinstance(op, dict)
             and op.get("op") == "move"
-            and op.get("id") in by
+            and op.get("id") in ids
             and op.get("attach") in ("from", "to")
             and isinstance(op.get("to"), dict)
-            and isinstance(op["to"].get("anchor"), dict)
         ):
-            by[op["id"]][op["attach"]] = {"anchor": op["to"]["anchor"]}
+            cands[(op["id"], op["attach"])] = op["to"]
+    by: dict[str, dict] = {o["id"]: {"name": o["id"]} for o in objs}
+    exported = {o["id"]: e for o, e in zip(objs, agentobjects.to_export_objects(objs))}
+    for (oid, role), pos in cands.items():
+        kind = next(iter(pos.get("anchor") or {}), None)
+        if kind not in ("data", "element"):
+            continue
+        try:
+            tx, ty = vectorscene._position(pos, ctx, oid)  # noqa: SLF001
+        except vectorscene.SceneError:
+            continue
+        ax, ay = vectorcheck._actual(exported[oid], role, "center")  # noqa: SLF001
+        if math.hypot(ax - tx, ay - ty) <= vectorcheck.RESIDUAL_MM:
+            by[oid][role] = {"anchor": pos["anchor"]}
     return list(by.values())
 
 
 def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
     # 子图总要量：改后的对象要核「不遮数据」；锚点挪动另要数据点
-    panels, _refs, unmeasured = la.measure_panels(canvas, _needs_panels(ops), measure)
+    panels, _refs, unmeasured = la.measure_panels(
+        canvas, _needs_panels(ops) + _anchor_requests(canvas), measure
+    )
     try:
         res = apply_ops(canvas.get("objects") or [], ops, panels, la._page(canvas))  # noqa: SLF001
     except EditError as exc:
@@ -1087,7 +1154,7 @@ def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
             )
         visible = [o for o in visible if _exportable(o)]
         if visible:
-            items = _check_items(visible, ops)
+            items = _check_items(visible, ops, panels)
 
             def run(objs: list[dict]) -> list[dict]:
                 solved = {"objects": [{"id": o["id"]} for o in objs], "anchors": []}
@@ -1099,10 +1166,14 @@ def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
             # 改之前就已经这样的（用户手画的箭头本来就压着曲线、早就接受的一处压字）：不让它挡住这次编辑，
             # 标 `preexisting` 如实报（ADR 0212 §四「没动的不重新报」的同一个意思，按对象改前的样子再量一次）
             before_by = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+            fields: dict[str, set] = {}
+            for c in res["changes"]:
+                fields.setdefault(c.get("id"), set()).add(c.get("field"))
             olds = [
                 before_by[o["id"]]
                 for o in visible
                 if o["id"] in before_by
+                and fields.get(o["id"], set()) <= PAINT_ONLY
                 and not before_by[o["id"]].get("hidden")
                 and _exportable(before_by[o["id"]])
             ]

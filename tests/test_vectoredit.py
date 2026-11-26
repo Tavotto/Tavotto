@@ -1395,3 +1395,61 @@ def test_moving_a_tip_onto_a_data_point_with_an_anchor_gets_the_allowance(projec
     ]
     plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
     assert plan["ok"], plan["failed"]
+
+
+def test_moving_an_already_off_page_text_off_the_other_side_is_caught(project):
+    """改前左边出页、挪完右边出页：不是「改之前就有的同一处」，照挡（Codex #2254）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    for o in doc["canvases"][0]["objects"]:
+        if o["id"] == "t_user0001":
+            o["x"] = -1
+    atomicio.write_json(_path(project), doc, indent=1)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "move", "id": "t_user0001", "by_mm": [115, 0]}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert not plan["ok"] and [f["check"] for f in plan["failed"]] == ["page"]
+
+
+def test_an_arrow_moved_off_its_anchor_loses_the_tip_allowance(project):
+    """Agent 的箭头整支挪开半毫米：尖端不在锚点上了，压着的就是那条曲线——落盘锚点已不成立，不再让余量（Codex #2254）。"""
+    arrow = _annotated(project)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "move", "id": arrow["id"], "by_mm": [0, 0.5]}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert not plan["ok"] and [f["check"] for f in plan["failed"]] == ["data"]
+
+
+def test_restyling_an_arrow_anchored_to_a_data_point_keeps_its_allowance(project):
+    """尖端锚在**数据点**上（要现量那个点才验得了锚点还成不成立）：改线宽照样过。"""
+    item = {
+        "kind": "arrow",
+        "name": "pt",
+        "from": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [30, 5]},
+        "to": {"anchor": {"data": {"panel": "P1", "axes": "axes_0", "x": 5, "y": 5}}},
+        "over_data": True,
+    }
+    base = _base(project)
+    plan = la.propose(project, "组图", [item], measure, base_revision=base)
+    out = la.commit(
+        project, "组图", [item], measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert out["written"], out
+    aid = out["added"][0]
+    # 新加时的 over_data 不落盘：编辑时尖端压着那个点能过，靠的只是锚定端余量（拿掉 `_anchor_requests` 这条就红）
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": aid, "set": {"strokePt": 1.0}}],
+        measure,
+        base_revision=_base(project),
+    )
+    data = [f for f in plan["facts"] if f["check"] == "data" and f["item"] == aid]
+    assert data and data[0]["status"] == "pass", data

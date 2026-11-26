@@ -30,7 +30,9 @@ order: 135
   方案回包**不带**改后的整张对象表（`objects`），只带动到的；局部图（`vectoredit.preview_edit`）画改后的整张画布、框住改前与改后的位置。
   撤销与标注共用 `tavotto_layout_annotate_undo`（同一份按文件留存）。拆组 / 删除后成员不足的布局组约束在写入层去掉并写进复述（#2244）。
   几何内核没装上时四个几何操作回 `kernel_unavailable`，工具文案说明其余操作照常。
-  核对的锚定端（尖端余量）取对象上落盘的 0208 锚点与本批 `move` 的锚点；改之前就已失败的同一处标 `preexisting`、不挡写入、照实说。
+  核对的锚定端（尖端余量）取对象上落盘的 0208 锚点与本批 `move` 的锚点，**只认补丁跑完仍成立的**（端点离锚点解出的位置
+  ≤ 锚点残差限；数据锚点为此现量）。只改了颜色 / 名字 / 锁定这类不改占地的字段（`vectoredit.PAINT_ONLY`）时，改之前就失败的
+  同一项标 `preexisting`、不挡写入、照实说；挪了、改了形就按改后完整核对。
 - 六个工具同 `tavotto_share_review` 处置：**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）；引擎没有
   `layoutannotate`（旧引擎）时不出现在 tools/list，调用回 `layout_annotate_unavailable`；有它没有 `vectoredit` 时
   只缺两个编辑工具，`select` 参数同样回这个码。
