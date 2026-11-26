@@ -1471,6 +1471,7 @@
   "relink": {
     "choose": "Pick the script",
     "linked": "Now using {{script}}",
+    "note": "It may have been moved or deleted. Showing the previous image.",
     "otherScripts": "Other scripts",
     "to": "Reconnect to {{target}}",
     "toRoot": "Reconnect to the project root"

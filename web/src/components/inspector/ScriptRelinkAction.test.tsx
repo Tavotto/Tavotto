@@ -1,6 +1,6 @@
 /**
  * 「找不到这个脚本的文件」错误卡的主按钮位（ADR 0211 第一期 6）：恰好一份字节相同 → 一颗「接到 …」；
- * 没有指纹 / 对不上 / 多份 → 「选一个脚本接上」名单（字节相同的 + 就绪度候选），另有「其他脚本」可手动指认；
+ * 没有指纹 / 对不上 / 多份 → 「选脚本接回」名单（字节相同的 + 就绪度候选），另有「其他脚本」可手动指认；
  * 不是这种情况（问不到 / 脚本其实在）→ 不出现。主语认 `data-script-relink*`。
  */
 import { act } from 'react'
@@ -74,7 +74,7 @@ describe('ScriptRelinkAction', () => {
     await render(found({ fingerprint: false }), ['scripts/plot.py'])
     expect(host.querySelector('[data-script-relink]')).toBeNull()
     const trigger = host.querySelector<HTMLButtonElement>('[data-script-relink-choose]')!
-    expect(trigger.textContent).toBe('选一个脚本接上')
+    expect(trigger.textContent).toBe('选脚本接回')
     await act(async () => {
       trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
     })

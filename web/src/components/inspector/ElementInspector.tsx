@@ -426,11 +426,12 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             missingInput={render.missingInput}
             workdirHint={render.workdirHint}
             onRetry={() => requestRender(panel, true)}
+            note={render.code === SCRIPT_SOURCE_MISSING_CODE ? translate('relink.note', { ns: 'inspector' }) : undefined}
             relink={
-              // 脚本挪走了（ADR 0211 第一期 6）：卡里给「接到 …」/「选一个脚本接上」。只给磁盘上的图——
+              // 脚本挪走了（ADR 0211 第一期 6）：卡里给「接到 …」/「选脚本接回」。只给磁盘上的图——
               // 运行时图的身份里带着脚本路径，换脚本等于换一张图
               render.code === SCRIPT_SOURCE_MISSING_CODE && !panel.fileId.startsWith('runtime:') && relinkScriptOf(panel) ? (
-                <ScriptRelinkAction panel={panel} script={relinkScriptOf(panel)!} />
+                (retry) => <ScriptRelinkAction panel={panel} script={relinkScriptOf(panel)!} fallback={retry} />
               ) : undefined
             }
           />
@@ -717,6 +718,7 @@ export function ErrorBlock({
   workdirHint,
   onRetry,
   relink,
+  note,
 }: {
   error: UiMessage
   traceback: string
@@ -726,9 +728,20 @@ export function ErrorBlock({
   missingInput?: MissingInputOffer | null
   workdirHint?: WorkdirConfirmation | null
   onRetry?: () => void
-  /** 脚本挪走时接回它的出口（「接到 …」），与指认数据 / 选运行目录同一处：消息下面一行，不挤主按钮位的宽 */
-  relink?: ReactNode
+  /**
+   * 脚本挪走时接回它的出口：占卡右侧那唯一的动作位，替掉「重试渲染」（脚本不在，重试只会再报同一句）。
+   * 收到的是「重试渲染」按钮本身——还没问出来 / 不是这种情况时照旧显示它
+   */
+  relink?: (retry: ReactNode) => ReactNode
+  /** 换掉「仍显示上一版图像」那行灰字（脚本挪走时把「可能被挪走或删了」并进这一行，主句只剩一句短的） */
+  note?: ReactNode
 }) {
+  const retry = onRetry && (
+    <Button size="sm" onClick={onRetry}>
+      <RotateCcw size={ICON_SIZE.xs} />
+      {el('retryRender')}
+    </Button>
+  )
   return (
     <Section>
       {/* 一行中性提示：一句话 + 至多一个动作（重试）；完整 traceback 在「详情」里（折叠、可复制） */}
@@ -736,14 +749,7 @@ export function ErrorBlock({
         tone="danger"
         data-render-error
         detail={traceback || null}
-        action={
-          onRetry && (
-            <Button size="sm" onClick={onRetry}>
-              <RotateCcw size={ICON_SIZE.xs} />
-              {el('retryRender')}
-            </Button>
-          )
-        }
+        action={relink ? relink(retry) : retry}
       >
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
         <p className="text-ink">{formatMessage(error)}</p>
@@ -760,9 +766,7 @@ export function ErrorBlock({
         <MissingInputButton offer={missingInput ?? null} />
         {/* 沙盒里落空、脚本目录里找得到（#1254）：不论错误码都给「在脚本目录里运行」的入口 */}
         {code !== WORKDIR_CONFIRMATION_CODE && <WorkdirChooseButton confirmation={workdirHint ?? null} />}
-        <p className="text-xs">{el('keptPrevious')}</p>
-        {/* 脚本挪走了（ADR 0211 第一期 6）：接回它。放在「仍显示上一版图像」下面——弹出的名单不盖住那一行 */}
-        {relink}
+        <p className="text-xs">{note ?? el('keptPrevious')}</p>
       </Notice>
     </Section>
   )
