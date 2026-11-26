@@ -580,6 +580,7 @@
     "nativeOffline": "运行已结束",
     "nativeRerun": "重新运行",
     "nativeRerunHint": "重新运行这个脚本，之后就能继续编辑这张图",
+    "hintLabel": "角标说明",
     "nativeRunning": "脚本正在运行，停下来才能编辑",
     "rendering": "渲染中…",
     "runtimeMissingEnvironment": "找不到可用的渲染环境",

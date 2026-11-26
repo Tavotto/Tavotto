@@ -115,6 +115,8 @@ describe('PDF 原件角标（Type 3 / 缺字）', () => {
     expect(fetchFacts).toHaveBeenCalledTimes(1)
     expect(host.querySelector('[data-panel-badge]')?.textContent).toContain(label('pdfType3'))
     expect(host.querySelector('[data-badge-hint]')?.getAttribute('title')).toBe(label('pdfType3Hint'))
+    // 无障碍名要短且不含提示正文：整句塞进 aria-label 会与工具栏「文字」按钮撞名（e2e quick-menu 严格模式）
+    expect(host.querySelector('[data-badge-hint]')?.getAttribute('aria-label')).toBe(label('hintLabel'))
     act(() => button()!.click())
     expect(redraw).toHaveBeenCalledWith('p1')
     expect(engineRender).not.toHaveBeenCalled()

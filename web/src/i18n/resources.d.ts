@@ -7781,6 +7781,7 @@ export default interface Resources {
       "frameLegacy": "按 figsize 显示",
       "frameLegacyBlockedHint": "脚本保存的原图裁得不一样，但这张图的裁剪范围完全在原图之外。先在右侧属性里调整或重置裁剪。",
       "frameLegacyHint": "脚本保存的原图裁得不一样。在右侧属性里可以改用原图的图幅。",
+      "hintLabel": "角标说明",
       "memoryEfficientPreview": "低内存编辑预览",
       "memoryEfficientPreviewHint": "图形较复杂，Tavotto 已改用低内存编辑预览。导出质量不受影响。",
       "nativeInconsistent": "有改动没能还原，重新运行原命令可继续编辑",

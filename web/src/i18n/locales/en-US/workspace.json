@@ -603,6 +603,7 @@
     "nativeOffline": "Run ended",
     "nativeRerun": "Run again",
     "nativeRerunHint": "Run this script again to keep editing this figure",
+    "hintLabel": "About this badge",
     "nativeRunning": "Script is running — editing resumes when it stops",
     "rendering": "Rendering…",
     "runtimeMissingEnvironment": "No rendering environment available",
