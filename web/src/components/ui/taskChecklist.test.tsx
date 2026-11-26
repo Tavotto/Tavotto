@@ -87,4 +87,15 @@ describe('TaskChecklist', () => {
     expect(list.hidden).toBe(false)
     expect(states()).toEqual(['done', 'done', 'done', 'active'])
   })
+
+  it('bare：只有步骤、没有标题行与收起钮，行距收紧一档；busyIcon={null} 时标题行不画转圈', async () => {
+    await act(async () => root.render(<TaskChecklist bare steps={steps(1)} />))
+    expect(host.querySelector('button')).toBeNull()
+    expect(host.querySelector('ol')!.hidden).toBe(false)
+    expect(host.querySelector('[data-task-step]')!.className).toContain('h-6')
+    await act(async () => root.render(<TaskChecklist title="正在修改脚本…" busyIcon={null} steps={steps(1)} />))
+    expect(host.querySelector('[data-task-step]')!.className).toContain('h-7')
+    // 只剩进行中那一步的转圈
+    expect(host.querySelectorAll('.animate-spin')).toHaveLength(host.querySelectorAll('[data-task-step] .animate-spin').length)
+  })
 })

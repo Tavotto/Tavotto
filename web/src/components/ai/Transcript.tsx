@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ChevronRight, Pencil, RefreshCw, Sparkles, Wrench, type IconComponent } from '@/components/ui/icons'
 import { ICON_SIZE, IconSlot as RowIconSlot } from '@/components/ui/Icon'
 import { ThinkingOrb, type OrbForm } from '@/components/ui/ThinkingOrb'
+import { TaskChecklist, type TaskStep } from '@/components/ui/TaskChecklist'
 import { SwapText } from '@/components/ui/SwapText'
 import { t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
@@ -119,6 +120,22 @@ function statusText(s: AiSession): string {
 }
 
 /** 从数据出图（TAF Phase 5c）的状态行：只翻译 `task.outcome`；失败走通用的「失败」 */
+const EDIT_STEPS = ['read', 'edit', 'verify'] as const
+
+/** 改图会话的三步（后端 `ai_bridge._EditStage` 的事实）：进行中按 `stage` 勾；改成功收尾 = 全勾；其余（没改 / 失败 / 历史里的旧会话）不画 */
+export function editSteps(s: AiSession): TaskStep[] | null {
+  const ok = s.status === 'done' && s.changed && !!s.stage
+  if (s.status !== 'running' && !ok) return null
+  const at = ok ? EDIT_STEPS.length : EDIT_STEPS.indexOf(s.stage?.step ?? 'read')
+  const round = s.stage?.round ?? 1
+  return EDIT_STEPS.map((id, i) => ({
+    id,
+    label: ai(`session.steps.${id}`),
+    state: i < at ? 'done' : i === at ? 'active' : 'pending',
+    ...(i === at && round > 1 ? { meta: ai('session.round', { n: round }) } : {}),
+  }))
+}
+
 function dataFigureStatusText(s: AiSession): string {
   if (s.status === 'running') return ai('session.dataFigureRunning')
   if (s.unconfirmed) return ai('session.dataFigureUnconfirmed')
@@ -252,11 +269,23 @@ export function Turn({
   const unconfirmedCard = dataFigureTurn && session.unconfirmed === true && session.status !== 'running'
   const preview = session.task?.preview
   const previewY = preview?.y?.[0]
+  // 任务清单（用户 2026-11-26）：改脚本那条路进行中画三步；改成功了留着「全部做完」（卡不缩短），没改 / 失败就不画
+  const steps = dataFigureTurn ? null : editSteps(session)
 
   return (
     // 新的一轮落位：淡入 + 4px 上浮 + 0.985 缩放，弹簧收尾（settle-in，宪法第十八节）
     <div data-ai-session={session.status} className="flex animate-settle-in flex-col gap-(--item-gap)">
       <UserBubble session={session} onResend={onResend} canResend={canResend} />
+
+      {steps && (
+        <TaskChecklist
+          data-ai-edit-steps
+          title={<SwapText text={statusText(session)} textClassName={running ? 'text-shimmer' : undefined} data-ai-status={session.status} />}
+          steps={steps}
+          // 过程行自己有思考小球、当前步有转圈：标题行留空位，不再多一样在动的（agy 审 2026-11-26）
+          busyIcon={null}
+        />
+      )}
 
       {/* 接回来的运行中会话（刷新 / 重连 / 回切）：说清为什么没有过程输出，别让人以为卡住了 */}
       {session.restored && running && session.entries.length === 0 && (
@@ -425,12 +454,18 @@ export function Turn({
             <ThinkingOrb form="connecting" />
           </RowIconSlot>
         )}
-        <span className="shrink-0">{sessionAgentLabel(caps, session)} ·</span>
-        <SwapText
-          text={statusText(session)}
-          textClassName={running ? 'text-shimmer' : 'text-ink-3'}
-          data-ai-status={session.status}
-        />
+        {/* 有任务清单时那句话在清单标题上（不说两遍）；这一行只留执行器与耗时 */}
+        <span className="shrink-0">
+          {sessionAgentLabel(caps, session)}
+          {!steps && ' ·'}
+        </span>
+        {!steps && (
+          <SwapText
+            text={statusText(session)}
+            textClassName={running ? 'text-shimmer' : 'text-ink-3'}
+            data-ai-status={session.status}
+          />
+        )}
         {total != null && !running && <span className="type-number shrink-0 text-ink-3">· {formatDuration(total)}</span>}
         {running && session.stalledS != null && (
           <span data-ai-stalled-actions className="ml-auto flex shrink-0 items-center gap-1">

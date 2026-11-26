@@ -1,0 +1,49 @@
+/*
+ * 修改方案生成中的「作图」小画（PlotSketch）：读数线扫过 / 数据点落下 / 笔描出曲线。
+ * 不带动画时就是这一步的终态（点都在、曲线画完），减少动态效果时停在这里。
+ */
+@keyframes plot-scan {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--plot-span)); }
+}
+@keyframes plot-pop {
+  0% { opacity: 0; transform: scale(0.3); }
+  10%, 82% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+@keyframes plot-draw {
+  0% { stroke-dashoffset: 1; opacity: 1; }
+  70%, 88% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes plot-pen {
+  0% { offset-distance: 0%; opacity: 1; }
+  70% { offset-distance: 100%; opacity: 1; }
+  80%, 100% { offset-distance: 100%; opacity: 0; }
+}
+
+[data-plot-sketch] [data-plot='scan'] {
+  animation: plot-scan 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+}
+[data-plot-sketch] [data-plot='point'] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: plot-pop 3.2s cubic-bezier(0.3, 0.7, 0.4, 1) infinite both;
+}
+[data-plot-sketch] [data-plot='curve'] {
+  stroke-dasharray: 1;
+  animation: plot-draw 3.8s cubic-bezier(0.45, 0, 0.55, 1) infinite both;
+}
+[data-plot-sketch] [data-plot='pen'] {
+  offset-rotate: 0deg;
+  animation: plot-pen 3.8s cubic-bezier(0.45, 0, 0.55, 1) infinite both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-plot-sketch] [data-plot] {
+    animation: none;
+  }
+  [data-plot-sketch] [data-plot='pen'] {
+    display: none;
+  }
+}
