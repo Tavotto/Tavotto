@@ -119,6 +119,43 @@ async function shots(page: Page, name: string, out: (p: string) => string) {
   await page.waitForTimeout(600)
 }
 
+/** 在打开排版**之前**挂上：图的第一次渲染回包（`POST /api/engine/render`） */
+function firstRender(page: Page) {
+  return page.waitForResponse((r) => r.url().includes('/api/engine/render') && r.request().method() === 'POST', {
+    timeout: 120_000,
+  })
+}
+
+/**
+ * 起点要干净，等**确定的信号**、不拿墙钟赌：第一次渲染回包里的图幅（`manifest.size_mm`）就是桌面接下来要把子图校正到的
+ * 尺寸（`useEngineSync.nativeSizeFixes`，容差 0.05 mm）。Windows 打包产物上字体不同、图幅与夹具写的差一点，校正是一笔真实改动，
+ * 冷启动慢时它落在用例最后一次保存之后，圆点又亮（windows-exe-smoke 2026-11-26 连红两次）。所以：有改动就存，直到磁盘上
+ * 那个子图的原生图幅等于渲染回来的、且圆点灭——此后的「未保存」圆点只反映这条用例自己做的事。
+ */
+async function cleanStart(page: Page, file: string, built: ReturnType<typeof firstRender>) {
+  const body = (await (await built).json().catch(() => null)) as { manifest?: { size_mm?: [number, number] } } | null
+  const size = body?.manifest?.size_mm
+  const dirty = page.locator('[data-project-file-dirty]')
+  await expect
+    .poll(
+      async () => {
+        if (await dirty.count()) {
+          await page.keyboard.press('ControlOrMeta+s')
+          return false
+        }
+        if (!size) return true
+        type Obj = { type: string; nativeW?: number; nativeH?: number }
+        const panel = (JSON.parse(readFileSync(file, 'utf-8')) as { canvases: { objects: Obj[] }[] }).canvases[0].objects.find(
+          (o) => o.type === 'panel',
+        )
+        if (panel?.nativeW === undefined || panel.nativeH === undefined) return false
+        return Math.abs(panel.nativeW - size[0]) <= 0.05 && Math.abs(panel.nativeH - size[1]) <= 0.05
+      },
+      { timeout: 60_000, intervals: [250, 500, 1000] },
+    )
+    .toBe(true)
+}
+
 async function openFromProject(page: Page) {
   await page.getByRole('button', { name: /^(文档|排版)：/ }).click()
   await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
@@ -136,23 +173,10 @@ test(
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(a.baseURL)
     await waitForDocumentReady(page)
-    // 起点要干净：等图第一次**真的**构建完——认 `POST /api/engine/render` 的回包，不认「首次构建中…」那行字（Windows
-    // 打包产物上 workerd 冷启动约 3.7 s，那行字早就没了、渲染还没回；回来后桌面校正子图是一笔真实改动，落在用例最后那次
-    // 保存之后，圆点又亮——windows-exe-smoke 2026-11-26 连红两次），再等它校正完；有改动先存一次，之后的「未保存」圆点
-    // 只反映这条用例自己做的事
-    const built = page.waitForResponse(
-      (r) => r.url().includes('/api/engine/render') && r.request().method() === 'POST',
-      { timeout: 120_000 },
-    )
+    const built = firstRender(page)
     await openFromProject(page)
     await expect(page.locator('[data-save-destination]')).toHaveAttribute('data-save-destination', 'project')
-    await built
-    await expect(page.getByText('首次构建中…')).toHaveCount(0, { timeout: 120_000 })
-    await page.waitForTimeout(1500)
-    if (await page.locator('[data-project-file-dirty]').count()) {
-      await page.keyboard.press('ControlOrMeta+s')
-      await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
-    }
+    await cleanStart(page, file, built)
     const stage = page.locator('[data-canvas-stage]')
 
     // 插件那条路往同一个文件里追加了两个标注 → 回到前台：自动并进画布，状态栏一句
