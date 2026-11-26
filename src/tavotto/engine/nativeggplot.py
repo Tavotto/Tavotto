@@ -354,6 +354,21 @@ class GgplotTarget:
 
     @staticmethod
     def annotate_color_scale(element: dict, scale: dict) -> None:
+        from .colorscale import colorbar_layout_fields
+
+        fields = colorbar_layout_fields(scale["orientation"], scale["extend"])
+        for field in fields:
+            field["strict_options"] = True
+            if field["prop"] in scale["layout_edited"]:
+                field["value_original"] = scale["layout_original"][field["prop"]]
+        if scale["limits"] is not None:
+            fields.extend(GgplotTarget.color_mapping_fields(scale))
+        element["editable"] = fields
+        element["colorbar_reversed"] = scale["reversed"]
+        element["identity"] = _COLOR_SCALE_IDENTITY_PREFIX + scale["context"]
+
+    @staticmethod
+    def color_mapping_fields(scale: dict) -> list[dict]:
         from .colorscale import CMAPS, color_scale_fields
 
         original = {
@@ -389,8 +404,7 @@ class GgplotTarget:
                     field["value_original"] = value
         else:
             fields = [cmap]
-        element["editable"] = fields
-        element["identity"] = _COLOR_SCALE_IDENTITY_PREFIX + scale["context"]
+        return fields
 
     @staticmethod
     def validate_edit_targets(session, patches: list) -> None:

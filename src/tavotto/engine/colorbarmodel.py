@@ -146,7 +146,6 @@ _CB_INSIDE = {
     "min": slice(1, None),
     "max": slice(0, -1),
 }
-_CB_EXTENDS = ["neither", "both", "min", "max"]
 
 
 def _cb_box_aspect0(cb):

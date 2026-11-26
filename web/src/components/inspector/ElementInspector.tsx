@@ -2440,6 +2440,7 @@ function FieldRow({
           ariaLabel={label}
           cmap={String(siblingValue('cmap') ?? '')}
           cmapFacts={siblingCmapFacts()}
+          reversed={element.colorbar_reversed}
         />,
       )
     case 'colorbar-extend':
@@ -2452,6 +2453,7 @@ function FieldRow({
           cmap={String(siblingValue('cmap') ?? '')}
           cmapFacts={siblingCmapFacts()}
           orientation={colorbarOrientationOf(panel, element)}
+          reversed={element.colorbar_reversed}
         />,
       )
     case 'legend-position':

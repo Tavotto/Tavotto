@@ -437,7 +437,9 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
     panels[[1L]]$guides <- ggplot_clone(panels[[1L]]$guides, params = axis_params)
     layout$panel_params <- panels
   }
-  plot$guides <- ggplot_clone(plot$guides, params = guide_params)
+  plot$guides <- ggplot_colourbar_guides(
+    ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions
+  )
   captured <- new.env(parent = emptyenv())
   if (length(axis_changes)) captured$grobs <- vector("list", length(plot$layers))
   plot$layers <- Map(function(layer, grobs, index) {
@@ -469,9 +471,8 @@ ggplot_colourbar_ticks <- function(table, slots, guide, prefix, title) {
   stats::setNames(list(target), paste0(prefix, ".colourbar.ticks"))
 }
 
-ggplot_legend_targets <- function(table, colourbar_titles) {
-  titles <- list()
-  guide_labels <- list()
+ggplot_legend_guides <- function(table) {
+  result <- list()
   for (box_slot in which(startsWith(table$layout$name, "guide-box-"))) {
     box <- table$grobs[[box_slot]]
     if (!inherits(box, "gtable")) next
@@ -481,19 +482,32 @@ ggplot_legend_targets <- function(table, colourbar_titles) {
       guide_slot <- guides[[index]]
       guide <- box$grobs[[guide_slot]]
       if (!inherits(guide, "gtable")) next
-      title_slot <- which(guide$layout$name == "title")
-      if (length(title_slot) != 1L) next
-      slots <- c(box_slot, guide_slot)
-      target <- ggplot_text_target(table, c(slots, title_slot), "legend_text")
-      if (is.null(target)) next
       prefix <- paste("legend", position, index, sep = ".")
-      gid <- paste0(prefix, ".title")
-      titles[[gid]] <- target
-      guide_labels[[gid]] <- if (target$label %in% colourbar_titles) {
-        ggplot_colourbar_ticks(table, slots, guide, prefix, target$label)
-      } else {
-        ggplot_legend_entries(table, slots, guide, prefix, target$label)
-      }
+      result[[prefix]] <- list(guide = guide, slots = c(box_slot, guide_slot),
+                               host = paste("legend", position, sep = "."))
+    }
+  }
+  result
+}
+
+ggplot_legend_targets <- function(table, colourbar_titles) {
+  titles <- list()
+  guide_labels <- list()
+  guides <- ggplot_legend_guides(table)
+  for (prefix in names(guides)) {
+    item <- guides[[prefix]]
+    guide <- item$guide
+    slots <- item$slots
+    title_slot <- which(guide$layout$name == "title")
+    if (length(title_slot) != 1L) next
+    target <- ggplot_text_target(table, c(slots, title_slot), "legend_text")
+    if (is.null(target)) next
+    gid <- paste0(prefix, ".title")
+    titles[[gid]] <- target
+    guide_labels[[gid]] <- if (target$label %in% colourbar_titles) {
+      ggplot_colourbar_ticks(table, slots, guide, prefix, target$label)
+    } else {
+      ggplot_legend_entries(table, slots, guide, prefix, target$label)
     }
   }
   # An index and a label cannot distinguish same-named guides after reordering.
@@ -978,6 +992,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     if (!is.null(palettes)) plot <- ggplot_observe_colour_maps(plot, colour_capture)
     built <- ggplot2::ggplot_build(plot)
     layout_input <- built
+    layout_input$plot$guides <- ggplot_colourbar_guides(built$plot$guides, built$plot$scales)
     captured_layers <- new.env(parent = emptyenv())
     layers <- built$plot$layers
     captured_layers$grobs <- vector("list", length(layers))
@@ -993,7 +1008,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       ggplot_tick_targets(built, text_targets, colourbar_titles)
     }
     colour_scales <- list()
-    if (!is.null(palettes) && all(lengths(captured_layers$grobs) > 0L)) {
+    if (all(lengths(captured_layers$grobs) > 0L)) {
       colour_scales <- ggplot_colour_scale_targets(
         built, table, text_targets, colourbar_titles, colour_capture$maps
       )

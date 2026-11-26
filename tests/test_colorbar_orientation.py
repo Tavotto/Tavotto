@@ -55,10 +55,12 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 
 
-def _draw(stem, **kw):
+def _draw(stem, *, reverse=False, **kw):
     fig, ax = plt.subplots(figsize=(4.0, 3.0))
     im = ax.imshow(np.arange(64).reshape(8, 8), cmap="viridis")
     cb = fig.colorbar(im, ax=ax, **kw)
+    if reverse:
+        cb.ax.invert_yaxis()
     cb.set_label("intensity")
     ax.set_title("Map")
     fig.savefig(stem + ".pdf")
@@ -77,6 +79,7 @@ def main():
     _draw("CbarFig")
     _draw("CbarNative", extend="both")
     _draw("CbarLeft", location="left")
+    _draw("CbarReversed", reverse=True)
     _draw_proxy("CbarProxy")
 """
 
@@ -121,6 +124,11 @@ def _tick_gids(man, ax_gid, which):
 
 
 HORIZONTAL = [{"gid": CB, "prop": "orientation", "value": "horizontal"}]
+
+
+def test_manifest_reports_rendered_colorbar_direction(library):
+    assert _el(_render(library), CB)["colorbar_reversed"] is False
+    assert _el(_render(library, stem="CbarReversed"), CB)["colorbar_reversed"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -3498,6 +3498,8 @@ export interface ManifestElement {
    * 色条」；引擎在 index 里两个都认，所以旧文档的 gid 照旧生效。
    */
   colorbar_key?: string
+  /** 真正绘制的数值顺序。反向时最小值在竖条上方或横条右端。 */
+  colorbar_reversed?: boolean
   host_gid?: string
   /**
    * 色条**声明的宿主**（`fig.colorbar(..., ax=[…])` 的 ax 列表，matplotlib 建色条时

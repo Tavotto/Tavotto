@@ -681,13 +681,17 @@ mapped_points <- mapped$point_targets[["layer.1.scatter"]]
 stopifnot(is.null(mapped_points$values$size), !is.null(mapped_points$values$marker))
 
 for (bad in list(list(vmin = 6, vmax = 6), list(vmin = 10), list(vmax = Inf),
-                 list(cmap = "invented"))) {
+                 list(cmap = "invented"), list(orientation = "diagonal"), list(extend = "far"))) {
   stopifnot(inherits(try(adapter$render_ggplot(state, stats::setNames(list(bad), gid)),
                         silent = TRUE), "try-error"))
 }
 stopifnot(identical(adapter$render_ggplot(state), captured$svg))
 unstable <- plot + ggplot2::geom_point(ggplot2::aes(colour = z, alpha = ggplot2::after_scale(alpha)))
-stopifnot(is.null(adapter$capture_ggplot(unstable, c(432, 288), palettes)$state$colour_scales[[gid]]))
+unstable_state <- adapter$capture_ggplot(unstable, c(432, 288), palettes)$state
+stopifnot(is.null(unstable_state$colour_scales[[gid]]$scale),
+          identical(unstable_state$colour_scales[[gid]]$orientation, "vertical"),
+          length(adapter$render_ggplot(unstable_state,
+            stats::setNames(list(list(orientation = "horizontal")), gid))) == 1L)
 
 paired_plot <- ggplot2::ggplot(data, ggplot2::aes(x, y, colour = z, fill = z)) +
   ggplot2::geom_point(shape = 21) +
@@ -695,15 +699,109 @@ paired_plot <- ggplot2::ggplot(data, ggplot2::aes(x, y, colour = z, fill = z)) +
   ggplot2::guides(colour = ggplot2::guide_colourbar(title = "Edge", position = "right"),
                  fill = ggplot2::guide_colourbar(title = "Interior", position = "left"))
 paired <- adapter$capture_ggplot(paired_plot, c(432, 288), palettes)$state
-stopifnot(length(paired$colour_scales) == 1L, length(paired$colour_scales[[1L]]$guides) == 2L)
-paired_edits <- stats::setNames(list(scale_edit), names(paired$colour_scales))
+mapping <- Filter(function(x) !is.null(x$scale), paired$colour_scales)
+stopifnot(length(paired$colour_scales) == 2L, length(mapping) == 1L, length(mapping[[1L]]$guides) == 2L)
+independent <- setdiff(names(paired$colour_scales), names(mapping))
+paired_edits <- c(stats::setNames(list(scale_edit), names(mapping)),
+                  stats::setNames(list(list(orientation = "horizontal", extend = "min")), independent))
 paired_result <- adapter$ggplot_remap_colour_scales(paired, paired_edits, paired$built$plot$guides$params)
 stopifnot(identical(paired_result$data[[1L]]$colour, expected),
           identical(paired_result$data[[1L]]$fill, expected),
           all(vapply(paired_result$guides, function(guide) {
             identical(toupper(guide$decor$colour[c(1L, nrow(guide$decor))]), c(lower, upper))
           }, logical(1L))))
+stopifnot(identical(paired_result$extensions[[paired$colour_scales[[independent]]$index]], "min"),
+          identical(paired_result$guides[[paired$colour_scales[[independent]]$index]]$direction, "horizontal"))
 stopifnot(length(adapter$render_ggplot(paired, paired_edits)) == 1L)
+
+scene_for <- function(state, overrides) adapter$with_svg_frame(state$frame_pt, function(capture) {
+  adapter$ggplot_table_for(state, overrides)
+})$value
+guide_for <- function(state, table, gid) {
+  slots <- state$colour_scales[[gid]]$slots
+  table$grobs[[slots[[1L]]]]$grobs[[slots[[2L]]]]
+}
+element_for <- function(state, overrides, id = gid) {
+  Filter(function(el) el$gid == id, adapter$ggplot_manifest(state, "colourbar", overrides)$elements)[[1L]]
+}
+layout_only <- stats::setNames(list(list(orientation = "horizontal", extend = "both")), gid)
+before_layout <- computations
+layout_data <- adapter$ggplot_remap_colour_scales(state, layout_only, state$built$plot$guides$params)
+stopifnot(identical(layout_data$data, state$layers), !length(layout_data$changed))
+combined <- edits
+combined[[gid]] <- c(combined[[gid]], layout_only[[gid]])
+base_case <- combined
+base_case[[gid]]$extend <- "neither"
+base <- element_for(state, base_case)
+current <- element_for(state, combined)
+stopifnot(identical(current$color_scale$context, state$colour_scales[[gid]]$context),
+          identical(current$color_scale$orientation, "horizontal"),
+          identical(current$color_scale$extend, "both"),
+          identical(current$color_scale$layout_original, list(orientation = "vertical", extend = "neither")),
+          isTRUE(all.equal(current$bbox[[3L]], base$bbox[[3L]] * 1.1)),
+          isTRUE(all.equal(current$bbox[[4L]], base$bbox[[4L]])),
+          current$bbox[[3L]] * state$frame_pt[[1L]] > current$bbox[[4L]] * state$frame_pt[[2L]])
+combined_svg <- adapter$render_ggplot(state, combined)
+stopifnot(identical(adapter$render_ggplot(state, edits), svg), computations == before_layout)
+moved_layout <- c(combined, list(legend.right = list(loc_frac = c(.45, .8))))
+moved <- element_for(state, moved_layout)
+stopifnot(!identical(moved$bbox[1:2], current$bbox[1:2]),
+          isTRUE(all.equal(moved$bbox[3:4], current$bbox[3:4])))
+
+faceted <- plot + ggplot2::facet_wrap(ggplot2::vars(x)) +
+  ggplot2::scale_colour_gradient(name = NULL, transform = "log1p",
+    guide = ggplot2::guide_colourbar(position = "right", direction = "horizontal"))
+faceted_state <- adapter$capture_ggplot(faceted, c(480, 300), palettes)$state
+faceted_edit <- stats::setNames(list(list(orientation = "vertical", extend = "max")), gid)
+faceted_bar <- element_for(faceted_state, faceted_edit)
+stopifnot(is.null(faceted_bar$color_scale$limits),
+          identical(faceted_bar$color_scale$orientation, "vertical"),
+          identical(faceted_bar$color_scale$layout_original$orientation, "horizontal"))
+descending <- plot + ggplot2::scale_colour_gradient(
+  name = "Exposure", transform = "reverse",
+  guide = ggplot2::guide_colourbar(position = "right", display = "rectangles"))
+desc_state <- adapter$capture_ggplot(descending, c(432, 288), palettes)$state
+desc_edit <- stats::setNames(list(list(orientation = "horizontal", extend = "min")), gid)
+desc_guide <- guide_for(desc_state, scene_for(desc_state, desc_edit)$table, gid)
+desc_cells <- desc_guide$layout$name
+desc_tip <- which(desc_cells == paste0(adapter$ggplot_colourbar_tip_prefix, "min"))
+stopifnot(element_for(desc_state, desc_edit)$color_scale$reversed,
+          desc_guide$layout$l[[desc_tip]] == desc_guide$layout$r[desc_cells == "bar"] + 1L)
+orientation_cases <- expand.grid(direction = c("horizontal", "vertical"),
+                                 display = c("rectangles", "raster", "gradient"))
+for (j in seq_len(nrow(orientation_cases))) {
+  direction <- as.character(orientation_cases$direction[[j]])
+  display <- as.character(orientation_cases$display[[j]])
+  reversed_plot <- plot + ggplot2::guides(colour = ggplot2::guide_colourbar(
+    position = "right", reverse = TRUE, display = display))
+  reversed <- adapter$capture_ggplot(reversed_plot, c(432, 288), palettes)$state
+  for (mode in c("min", "max", "both", "neither")) {
+    extra <- stats::setNames(list(list(orientation = direction, extend = mode)), gid)
+    scene <- scene_for(reversed, extra)
+    guide <- guide_for(reversed, scene$table, gid)
+    meta <- attr(guide, "tavotto_colourbar", exact = TRUE)
+    stopifnot(identical(meta$orientation, direction))
+    cells <- guide$layout$name
+    bar <- guide$layout[cells == "bar", ]
+    tips <- guide$layout[startsWith(cells, adapter$ggplot_colourbar_tip_prefix), ]
+    end <- c(min = 9L, max = 1L)
+    requested <- intersect(names(end), switch(mode, both = c("min", "max"), mode))
+    stopifnot(identical(tips$name, paste0(adapter$ggplot_colourbar_tip_prefix, requested, recycle0 = TRUE)))
+    for (side in requested) {
+      slot <- which(cells == paste0(adapter$ggplot_colourbar_tip_prefix, side))
+      tip <- guide$layout[slot, ]
+      stopifnot(identical(guide$grobs[[slot]]$gp$fill, reversed$colour_scales[[gid]]$stops[[end[[side]]]]))
+      if (direction == "horizontal") {
+        stopifnot(if (side == "min") tip$l == bar$r + 1L else tip$r == bar$l - 1L)
+      } else {
+        stopifnot(if (side == "min") tip$b == bar$t - 1L else tip$t == bar$b + 1L)
+      }
+    }
+  }
+}
+after_captures <- computations
+stopifnot(identical(adapter$render_ggplot(state), captured$svg),
+          identical(adapter$render_ggplot(state, combined), combined_svg), computations == after_captures)
 """
 
 

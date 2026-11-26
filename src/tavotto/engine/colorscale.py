@@ -14,6 +14,18 @@ with PALETTE_CATALOG_PATH.open(encoding="utf-8") as source:
     CMAPS = list(json.load(source)["palettes"])
 
 
+def colorbar_layout_fields(orientation, extend):
+    """Guide layout is independent of the data-to-color mapping."""
+    fields = []
+    for prop, value, options in (
+        ("orientation", orientation, ["vertical", "horizontal"]),
+        ("extend", extend, ["neither", "both", "min", "max"]),
+    ):
+        if value is not None:
+            fields.append({"prop": prop, "type": "enum", "value": value, "options": options})
+    return fields
+
+
 def color_scale_fields(vmin, vmax, cmap_field, *, precision=4):
     """Project and inspector properties for a continuous data-to-color scale."""
     span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0

@@ -702,6 +702,17 @@ describe('脚本自定义的色图（2026-09-13 用户反馈：图 A 显示 from
     const extend = rowOf('extend')!.querySelector('[data-cb-preview]') as HTMLElement
     expect(extend.style.background).toContain('rgb(207, 106, 44)')
   })
+
+  it('反向色条的最小值延伸指向高处，色标顺序一起翻转', async () => {
+    await mount('axes_1.colorbar', {
+      manifest: withElements(customImage(), { ...customColorbar(), colorbar_reversed: true }),
+    })
+    const reversedMin = rowOf('extend')!.querySelector<HTMLElement>('[data-cb-preview="vertical:min"]')!
+    expect(reversedMin.style.clipPath).toMatch(/^polygon\(50% 0,/)
+    // CSSOM 会省略默认的向下方向。第一个色标应当位于最上端。
+    expect(reversedMin.style.background).not.toContain('to top')
+    expect(reversedMin.style.background).toContain('rgb(37, 111, 168)')
+  })
 })
 
 describe('色阶组整组换色（用户裁决 2026-10-18，ADR 0135 修订）', () => {

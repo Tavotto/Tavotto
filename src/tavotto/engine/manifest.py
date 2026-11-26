@@ -54,7 +54,6 @@ from matplotlib.transforms import Bbox, IdentityTransform
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
 from colorbarmodel import (
-    _CB_EXTENDS,
     ColorbarProxy,
     _cb_axis,
     _cb_tick_color,
@@ -71,7 +70,7 @@ from colorbarmodel import (
     scale_gids,
     scale_siblings,
 )
-from colorscale import CMAPS, color_scale_fields
+from colorscale import CMAPS, color_scale_fields, colorbar_layout_fields
 from legendmodel import (
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
@@ -3518,26 +3517,10 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
         # 控件比一个不存在的控件糟糕得多，而用户没有理由预料到它会这样。
         # 真修法要把宿主从一个 axes 改成一组、`_cb_place` / `_cb_target_rect` /
         # `axes_follow` 三处按并集算——那是落位模型的改动，1.0 稳定期不做。
-        *(
-            [
-                {
-                    "prop": "orientation",
-                    "type": "enum",
-                    "value": str(getattr(cb, "orientation", "vertical")),
-                    "options": ["vertical", "horizontal"],
-                }
-            ]
-            if colorbar_host_count(cb) == 1
-            else []
+        *colorbar_layout_fields(
+            str(getattr(cb, "orientation", "vertical")) if colorbar_host_count(cb) == 1 else None,
+            str(getattr(cb, "extend", "neither")),
         ),
-        # 两端的延伸三角（「超出色阶的值画成箭头」）。同样是结构改造：
-        # 见 overrides._set_cb_extend
-        {
-            "prop": "extend",
-            "type": "enum",
-            "value": str(getattr(cb, "extend", "neither")),
-            "options": list(_CB_EXTENDS),
-        },
         # 色图这三条要与**它的 mappable** 同一个判据开闸。色条与 mappable 是
         # 同一份状态的两个 gid（见 ALIAS_GROUPS），所以「此刻映射还在不在」
         # 也只能有一处答案——`color_mapping_is_live`。
@@ -6566,6 +6549,10 @@ def _measure_manifest(
             # 名字，这个才是「这是谁的色条」。两者都在 state.index 里认得出
             entry["colorbar_key"] = artist.identity
             entry["host_gid"] = artist.host_gid
+            cb = artist.cb
+            entry["colorbar_reversed"] = bool(
+                cb.ax.xaxis_inverted() if cb.orientation == "horizontal" else cb.ax.yaxis_inverted()
+            )
             # 色条的几何归它的**轴**（`axes_i` 的 position override，与位图代理到
             # 宿主子图同一套 `geom_gid` 机制）。色条元素与色条轴的 bbox 逐位相同，
             # 而命中测试里色条元素恒胜（容器有降权），于是从前点色条选中的是一个

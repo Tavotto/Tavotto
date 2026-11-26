@@ -62,6 +62,10 @@ AXIS_FACES = {"weight": "bold", "style": "italic", "fontfamily": "monospace"}
 AXIS_PAGE_SIZE = 12.4
 R_AXIS_PAGE_SIZE = 13.8
 R_PANEL_SCALE = 0.8
+R_FRAME_PT = (340, 144)
+R_NATIVE_WIDTH = R_FRAME_PT[0] * 25.4 / 72
+R_PANEL_X = 88
+PAGE_MM = (192, 61)
 R_LEGEND_POSITION = [0.42, 0.64]
 R_CURVE_COLOR = "#923579"
 R_CURVE_WIDTH = 2.4
@@ -73,6 +77,8 @@ R_COLOR_SCALE = {
     "vmin": 10,
     "vmax": 30,
     "cmap": "plasma",
+    "orientation": "horizontal",
+    "extend": "both",
 }
 R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
@@ -117,7 +123,7 @@ def _run_ggplot(app, script, rscript, library=None):
         {
             "script": script,
             "object": "plot",
-            "frame_pt": [216, 144],
+            "frame_pt": list(R_FRAME_PT),
             "rscript": rscript,
             **({"library": str(library)} if library is not None else {}),
         },
@@ -155,7 +161,7 @@ def _title(body, prop):
     )
 
 
-def _panel(id_, asset, x, patches, *, scale=1):
+def _panel(id_, asset, x, patches, *, scale=1, native_width=76.2):
     return {
         "id": id_,
         "type": "panel",
@@ -163,9 +169,9 @@ def _panel(id_, asset, x, patches, *, scale=1):
         "fileKind": "runtime",
         "x": x,
         "y": 5,
-        "w": 76.2 * scale,
+        "w": native_width * scale,
         "h": 50.8 * scale,
-        "nativeW": 76.2,
+        "nativeW": native_width,
         "nativeH": 50.8,
         "figureFrame": 1,
         "overrides": patches,
@@ -246,8 +252,9 @@ def _export_files(app, request, *, svg_unavailable=None):
 
 
 def _assert_canvas_size(page):
-    assert page.rect.width == pytest.approx(170 * 72 / 25.4, abs=0.01)
-    assert page.rect.height == pytest.approx(61 * 72 / 25.4, abs=0.01)
+    assert (page.rect.width, page.rect.height) == pytest.approx(
+        [size * 72 / 25.4 for size in PAGE_MM], abs=0.01
+    )
 
 
 def _pdf_pixels(path):
@@ -255,6 +262,7 @@ def _pdf_pixels(path):
         assert len(pdf) == 1
         (page,) = pdf
         _assert_canvas_size(page)
+        split = R_PANEL_X * 72 / 25.4
         lines = [
             line["spans"]
             for block in page.get_text("dict")["blocks"]
@@ -264,10 +272,10 @@ def _pdf_pixels(path):
         assert "Original signal" not in by_text
         mpl = by_text[MPL_EDIT]
         ggplot = by_text["Fuel economy"]
-        assert max(span["bbox"][2] for span in mpl) < page.rect.width / 2
-        assert min(span["bbox"][0] for span in ggplot) > page.rect.width / 2
+        assert max(span["bbox"][2] for span in mpl) < split
+        assert min(span["bbox"][0] for span in ggplot) > split
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
-        legend_left = 88 * 72 / 25.4 + R_LEGEND_POSITION[0] * 216 * R_PANEL_SCALE
+        legend_left = split + R_LEGEND_POSITION[0] * R_FRAME_PT[0] * R_PANEL_SCALE
         assert legend_left < by_text["Drive type"][0]["bbox"][0] < legend_left + 10
         assert page.search_for("2.00") and page.search_for("7.00") and page.search_for("15.0")
         assert not page.search_for("3.00")
@@ -276,8 +284,8 @@ def _pdf_pixels(path):
         drawn = page.get_drawings()
         grid_color = tuple(n / 255 for n in bytes.fromhex(AXIS_GRID["grid_color"][1:]))
         grid = [p for p in drawn if p["color"] == pytest.approx(grid_color, abs=0.003)]
-        assert any(p["rect"].x0 < page.rect.width / 2 for p in grid)
-        assert any(p["rect"].x0 > page.rect.width / 2 for p in grid)
+        assert any(p["rect"].x0 < split for p in grid)
+        assert any(p["rect"].x0 > split for p in grid)
         assert all(p["rect"].width < 0.01 and p["rect"].height > 10 for p in grid)
         assert all(p["stroke_opacity"] == pytest.approx(0.65, abs=0.01) for p in grid)
         assert all(p["dashes"] != "[] 0" for p in grid)
@@ -287,14 +295,14 @@ def _pdf_pixels(path):
             key=lambda p: p["rect"].x0,
         )
         assert len(edges) == 2
-        assert edges[0]["rect"].x0 < page.rect.width / 2 < edges[1]["rect"].x0
+        assert edges[0]["rect"].x0 < split < edges[1]["rect"].x0
         assert all(p["rect"].width < 0.01 and p["rect"].height > 10 for p in edges)
         assert edges[0]["width"] == pytest.approx(2.1, abs=0.02)
         assert edges[1]["width"] == pytest.approx(2.1 * R_PANEL_SCALE, abs=0.02)
         for endpoint in (low, high):
             matches = [path for path in drawn if path["fill"] == pytest.approx(endpoint, abs=0.003)]
-            assert any(path["rect"].width > 8 for path in matches), matches  # Guide strip
-            assert any(path["rect"].width < 7 for path in matches), matches  # Data markers
+            assert any(path["rect"].height > 8 for path in matches), matches  # Guide strip and tip
+            assert any(path["rect"].height < 7 for path in matches), matches  # Data markers
         curve_color = tuple(component / 255 for component in bytes.fromhex(R_CURVE_COLOR[1:]))
         (curve,) = [
             path
@@ -312,14 +320,14 @@ def _pdf_pixels(path):
         bars = [path for path in drawn if path["fill"] == pytest.approx(face, abs=0.003)]
         assert len(bars) == 4
         mpl_bars = sorted(
-            (path["rect"] for path in bars if path["rect"].x0 < page.rect.width / 2),
+            (path["rect"] for path in bars if path["rect"].x0 < split),
             key=lambda rect: rect.x0,
         )
         assert len(mpl_bars) == 2
         spacing = (mpl_bars[1].x0 + mpl_bars[1].x1 - mpl_bars[0].x0 - mpl_bars[0].x1) / 2
         expected_width = spacing * BAR_WIDTH["bar_width"] / (1.55 - 0.45)
         assert [bar.width for bar in mpl_bars] == pytest.approx([expected_width] * 2, abs=0.02)
-        r_bars = [path["rect"] for path in bars if path["rect"].x0 > page.rect.width / 2]
+        r_bars = [path["rect"] for path in bars if path["rect"].x0 > split]
         assert len(r_bars) == 2  # Both R bars survived the inversion.
         assert all(bar.width > 0 and bar.height > 0 for bar in r_bars)
         widths = sorted(bar.width for bar in r_bars)
@@ -333,14 +341,14 @@ def _pdf_pixels(path):
             component / 255 for component in bytes.fromhex(ERRORBAR_PAINT["color"][1:])
         )
         errors = [path for path in drawn if path["color"] == pytest.approx(error_color, abs=0.003)]
-        assert any(path["rect"].x0 < page.rect.width / 2 for path in errors)
-        assert any(path["rect"].x0 > page.rect.width / 2 for path in errors)
+        assert any(path["rect"].x0 < split for path in errors)
+        assert any(path["rect"].x0 > split for path in errors)
         assert any(path["width"] == pytest.approx(1.8 * R_PANEL_SCALE, abs=0.02) for path in errors)
         assert all(path["stroke_opacity"] == pytest.approx(0.6, abs=0.01) for path in errors)
         r_caps = [
             path["rect"]
             for path in errors
-            if path["rect"].x0 > page.rect.width / 2
+            if path["rect"].x0 > split
             and path["width"]
             == pytest.approx(ERRORBAR_CAPS["cap_thickness"] * R_PANEL_SCALE, abs=0.02)
         ]
@@ -350,14 +358,14 @@ def _pdf_pixels(path):
             [ERRORBAR_CAPS["capsize"] * R_PANEL_SCALE] * 6, abs=0.02
         )
         assert any(
-            path["rect"].x0 < page.rect.width / 2
+            path["rect"].x0 < split
             and path["width"] == pytest.approx(ERRORBAR_CAPS["cap_thickness"], abs=0.02)
             for path in errors
         )
         ribbon_color = tuple(n / 255 for n in bytes.fromhex(RANGE_PAINT["facecolor"][1:]))
         ribbons = [path for path in drawn if path["fill"] == pytest.approx(ribbon_color, abs=0.003)]
         assert len(ribbons) == 2
-        assert sum(path["rect"].x0 > page.rect.width / 2 for path in ribbons) == 1
+        assert sum(path["rect"].x0 > split for path in ribbons) == 1
         assert all(path["fill_opacity"] == pytest.approx(0.6, abs=0.01) for path in ribbons)
         bold_italic = pymupdf.TEXT_FONT_BOLD | pymupdf.TEXT_FONT_ITALIC
         for title, size in {
@@ -389,6 +397,17 @@ def _format_pixels(files):
     assert R_EDIT.lower() in title.attrib["style"].lower()
     assert {"2.00", "7.00", "15.0"} <= {node.text for node in svg_tree.iter(f"{ns}text")}
     assert not any(node.text == "3.00" for node in svg_tree.iter(f"{ns}text"))
+    tips = {}
+    for endpoint in ("#0d0887", "#f0f921"):
+        candidates = []
+        for node in svg_tree.iter(f"{ns}polygon"):
+            if f"fill: {endpoint}" not in node.attrib.get("style", "").lower():
+                continue
+            points = [tuple(map(float, pair.split(","))) for pair in node.attrib["points"].split()]
+            if len(points) == 3 and len({x for x, _ in points}) == 2:
+                candidates.append(points)
+        (tips[endpoint],) = candidates
+    assert max(x for x, _ in tips["#0d0887"]) < min(x for x, _ in tips["#f0f921"])
     (curve,) = [
         node
         for node in svg_tree.iter(f"{ns}polyline")
@@ -433,10 +452,10 @@ def _format_pixels(files):
 
 def _png_pixels(path):
     with Image.open(path) as png:
-        assert png.size == (964, 346)
+        assert png.size == tuple(round(size * 144 / 25.4) for size in PAGE_MM)
         assert png.info["dpi"] == pytest.approx((144, 144), abs=0.01)
         rgba = png.convert("RGBA")
-    right = rgba.crop((rgba.width // 2, 0, rgba.width, rgba.height))
+    right = rgba.crop((round(R_PANEL_X * 144 / 25.4), 0, rgba.width, rgba.height))
     title_color = (*bytes.fromhex(R_EDIT[1:]), 255)
     assert any(rgb == title_color for _, rgb in right.getcolors(right.width * right.height))
     return rgba.tobytes()
@@ -486,7 +505,7 @@ def _assert_structured_pdf_export(app, doc):
         assert outline.Count == 2 and second.objgen == outline.Last.objgen
         rectangles_mm = [
             (5, 5.2, 81.2, 56),
-            (88, 56 - 50.8 * R_PANEL_SCALE, 88 + 76.2 * R_PANEL_SCALE, 56),
+            (R_PANEL_X, 56 - 50.8 * R_PANEL_SCALE, R_PANEL_X + R_NATIVE_WIDTH * R_PANEL_SCALE, 56),
         ]
         for node, title, rect in zip((first, second), titles, rectangles_mm, strict=True):
             page, fit, *coords = node.Dest
@@ -511,7 +530,7 @@ def _assert_structured_pdf_export(app, doc):
         layers = actual.layer_ui_configs()
         assert [layer["text"] for layer in layers] == [*titles, "Canvas annotations"]
         assert all(layer["on"] for layer in layers)
-        left = pymupdf.Rect(0, 0, actual[0].rect.width / 2, actual[0].rect.height)
+        left = pymupdf.Rect(0, 0, (R_PANEL_X - 1) * 72 / 25.4, actual[0].rect.height)
         right = pymupdf.Rect(left.x1, 0, actual[0].rect.width, actual[0].rect.height)
         before = actual[0].get_pixmap(clip=right).samples
         actual.set_layer_ui_config(layers[1]["number"], action=pymupdf.PDF_OC_OFF)
@@ -740,6 +759,9 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         edited_scale = next(
             el for el in precision["manifest"]["elements"] if el["gid"] == R_COLOR_SCALE_GID
         )
+        assert edited_scale["identity"] == scale["identity"]
+        assert scale["bbox"][2] * R_FRAME_PT[0] < scale["bbox"][3] * R_FRAME_PT[1]
+        assert edited_scale["bbox"][2] * R_FRAME_PT[0] > edited_scale["bbox"][3] * R_FRAME_PT[1]
         assert {
             field["prop"]: field["value"] for field in edited_scale["editable"]
         } == R_COLOR_SCALE
@@ -816,11 +838,18 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                     "id": "first",
                     "name": "Mixed native",
                     "schema": 2,
-                    "page": {"w": 170, "h": 61},
+                    "page": {"w": PAGE_MM[0], "h": PAGE_MM[1]},
                     "guides": [],
                     "objects": [
                         _panel("mpl", mpl_asset, 5, mpl_patches),
-                        _panel("r", r_asset, 88, r_patches, scale=R_PANEL_SCALE),
+                        _panel(
+                            "r",
+                            r_asset,
+                            R_PANEL_X,
+                            r_patches,
+                            scale=R_PANEL_SCALE,
+                            native_width=R_NATIVE_WIDTH,
+                        ),
                     ],
                 }
             ],
