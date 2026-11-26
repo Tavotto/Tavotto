@@ -210,11 +210,11 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
   // 未绑定项目文件的排版：正式保存先等本机写队列排空，才打开命名框。
   // 单独一个同内容的迟到 200 仍可能早于队列里更旧的正文，不能据此关页。
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-layout-save]')).toBeVisible()
+  await expect(page.locator('[data-timeline-quick-name-input]')).toBeVisible() // ⌘S = 给这一版起名字（PR 3）
   const written = await savedEdits
   expect(await written.finished()).toBeNull()
   await page.keyboard.press('Escape')
-  await expect(page.locator('[data-layout-save]')).toBeHidden()
+  await expect(page.locator('[data-timeline-quick-name-input]')).toBeHidden()
   const evidence = autosavePanelEvidence(written, saveTarget)
   expect(evidence).not.toBeNull()
   const { docId, panel: writtenPanel } = evidence!

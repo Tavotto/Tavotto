@@ -70,7 +70,7 @@ test(`成功空图 → ${sandboxChosen ? '选过沙盒：照沙盒跑、不自�
     await expect(object).toHaveCount(1)
     const panelId = (await object.getAttribute('data-object-id'))!
     await page.keyboard.press('ControlOrMeta+s')
-    await expect(page.locator('[data-layout-save]')).toBeVisible()
+    await expect(page.locator('[data-timeline-quick-name-input]')).toBeVisible() // ⌘S = 给这一版起名字（PR 3）
     const autosaves = path.join(a.dataDir, 'layouts', '_autosave')
     await expect.poll(() => existsSync(autosaves) && readdirSync(autosaves).some((name) => {
       if (!name.endsWith('.json')) return false

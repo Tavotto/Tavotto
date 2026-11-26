@@ -9,12 +9,21 @@
  * 判据量的是**磁盘上那个文件**。
  */
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, test, waitForDocumentReady } from './fixtures'
 
 const NAME = '组图'
+
+/**
+ * 这份排版此刻的权威文件：自动保存第一次写进项目后（ADR 0211 第二期 PR 3 起默认开）旧的 `<名>.json` 被迁成占位、
+ * 正文在 `<名>.tavotto/layout.json`；没迁之前还是 `<名>.json`。插件那条路（`layoutannotate`）也是同一个判据。
+ */
+function layoutPath(figures: string): string {
+  const dir = path.join(figures, 'tavottofile', `${NAME}.tavotto`, 'layout.json')
+  return existsSync(dir) ? dir : path.join(figures, 'tavottofile', `${NAME}.json`)
+}
 
 function writeLayout(figures: string): string {
   const dir = path.join(figures, 'tavottofile')
@@ -81,7 +90,7 @@ interface DiskObject {
 
 /** 一次「Agent 写入」：按引擎的格式先存撤销留存、再换排版文件；`mutate` 改第一张画布 */
 function agentWrites(figures: string, dataDir: string, tag: string, mutate: (objects: DiskObject[]) => DiskObject[]) {
-  const file = path.join(figures, 'tavottofile', `${NAME}.json`)
+  const file = layoutPath(figures)
   const before = readFileSync(file)
   const rev = (b: Buffer | string) => createHash('sha256').update(b).digest('hex').slice(0, 32)
   const doc = JSON.parse(before.toString('utf-8'))
@@ -152,7 +161,7 @@ function firstRender(page: Page) {
  * 冷启动慢时它落在用例最后一次保存之后，圆点又亮（windows-exe-smoke 2026-11-26 连红两次）。所以：有改动就存，直到磁盘上
  * 那个子图的原生图幅等于渲染回来的、且圆点灭——此后的「未保存」圆点只反映这条用例自己做的事。
  */
-async function cleanStart(page: Page, file: string, built: ReturnType<typeof firstRender>) {
+async function cleanStart(page: Page, figures: string, built: ReturnType<typeof firstRender>) {
   const body = (await (await built).json().catch(() => null)) as { manifest?: { size_mm?: [number, number] } } | null
   const size = body?.manifest?.size_mm
   const dirty = page.locator('[data-project-file-dirty]')
@@ -165,7 +174,7 @@ async function cleanStart(page: Page, file: string, built: ReturnType<typeof fir
         }
         if (!size) return true
         type Obj = { type: string; nativeW?: number; nativeH?: number }
-        const panel = (JSON.parse(readFileSync(file, 'utf-8')) as { canvases: { objects: Obj[] }[] }).canvases[0].objects.find(
+        const panel = (JSON.parse(readFileSync(layoutPath(figures), 'utf-8')) as { canvases: { objects: Obj[] }[] }).canvases[0].objects.find(
           (o) => o.type === 'panel',
         )
         if (panel?.nativeW === undefined || panel.nativeH === undefined) return false
@@ -189,14 +198,14 @@ test(
   { tag: '@feature:layout.agent-merge' },
   async ({ app, page }, testInfo) => {
     const a = await app()
-    const file = writeLayout(a.figures)
+    writeLayout(a.figures)
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(a.baseURL)
     await waitForDocumentReady(page)
     const built = firstRender(page)
     await openFromProject(page)
     await expect(page.locator('[data-save-destination]')).toHaveAttribute('data-save-destination', 'project')
-    await cleanStart(page, file, built)
+    await cleanStart(page, a.figures, built)
     const stage = page.locator('[data-canvas-stage]')
 
     // 插件那条路往同一个文件里追加了两个标注 → 回到前台：自动并进画布，状态栏一句
@@ -218,7 +227,7 @@ test(
     await page.keyboard.press('Escape')
     agentAnnotates(a.figures, a.dataDir, 2)
     await page.keyboard.press('ControlOrMeta+s')
-    await expect.poll(() => textsOnDisk(file)).toEqual(['Agent note', 'Agent note 2', '桌面这边'].sort())
+    await expect.poll(() => textsOnDisk(layoutPath(a.figures))).toEqual(['Agent note', 'Agent note 2', '桌面这边'].sort())
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(stage.getByText('Agent note 2', { exact: true })).toBeVisible()
     await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
@@ -231,20 +240,22 @@ test(
   { tag: '@feature:layout.agent-merge' },
   async ({ app, page }, testInfo) => {
     const a = await app()
-    const file = writeLayout(a.figures)
+    writeLayout(a.figures)
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(a.baseURL)
     await waitForDocumentReady(page)
     const built = firstRender(page)
     await openFromProject(page)
-    await cleanStart(page, file, built)
+    await cleanStart(page, a.figures, built)
     const stage = page.locator('[data-canvas-stage]')
     // 先有一批 Agent 的标注并存进项目，作为桌面与 Agent 共同的基线
     agentAnnotates(a.figures, a.dataDir)
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await expect(stage.getByText('Agent note', { exact: true })).toBeVisible({ timeout: 15_000 })
-    await page.keyboard.press('ControlOrMeta+s')
-    await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
+    await page.keyboard.press('ControlOrMeta+s') // ⌘S = 给这一版起名字：冲刷写进项目（并进来的标注已在盘上）、弹命名小框，这里不起名
+    await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect.poll(() => textsOnDisk(layoutPath(a.figures))).toEqual(['Agent note'])
 
     // Agent 改字、删箭头 → 回到前台：按字段并进来（状态栏说「改动」），⌘Z 一步回去
     agentEdits(a.figures, a.dataDir, 'e1', { t_e2e1txt: { text: 'Agent edited' } }, ['a_e2e1arw'])
@@ -267,10 +278,10 @@ test(
     await page.keyboard.press('Escape')
     agentEdits(a.figures, a.dataDir, 'e2', { t_e2e1txt: { text: 'Agent edited 2' } })
     await page.keyboard.press('ControlOrMeta+s')
-    await expect.poll(() => textsOnDisk(file)).toEqual(['Agent edited 2', '桌面这边'].sort())
+    await expect.poll(() => textsOnDisk(layoutPath(a.figures))).toEqual(['Agent edited 2', '桌面这边'].sort())
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
-    const arrows = (JSON.parse(readFileSync(file, 'utf-8')) as { canvases: { objects: DiskObject[] }[] }).canvases[0].objects
+    const arrows = (JSON.parse(readFileSync(layoutPath(a.figures), 'utf-8')) as { canvases: { objects: DiskObject[] }[] }).canvases[0].objects
     expect(arrows.some((o) => o.id === 'a_e2e1arw')).toBe(false)
   },
 )

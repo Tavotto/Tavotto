@@ -591,8 +591,8 @@
         "label": "Show / hide rulers"
       },
       "save-document": {
-        "keywords": "save layout write disk",
-        "label": "Save layout"
+        "keywords": "save layout write disk name version milestone",
+        "label": "Name this version…"
       },
       "save-layout": {
         "keywords": "save as layout copy canvas file",

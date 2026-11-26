@@ -2019,8 +2019,8 @@ export default interface Resources {
           "label": "显示 / 隐藏标尺"
         },
         "save-document": {
-          "keywords": "save layout bc baocun cunpan pb paiban",
-          "label": "保存排版"
+          "keywords": "save layout name version bc baocun qmz qimingzi mingming pb paiban",
+          "label": "给这一版起名字…"
         },
         "save-layout": {
           "keywords": "save as layout lcw lingcunwei bc baocun pb paiban",
@@ -7033,7 +7033,7 @@ export default interface Resources {
       "pen": "钢笔",
       "pencil": "铅笔",
       "quickEdit": "按对象打开快捷编辑菜单",
-      "saveDocument": "保存排版",
+      "saveDocument": "给这一版起名字（排版始终自动保存）",
       "saveLayout": "另存为新排版",
       "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
@@ -9082,9 +9082,10 @@ export default interface Resources {
       "saveProjectReadOnly": "这个文件夹只读 · 修改存在本机",
       "saveProjectSaved": "已保存到项目",
       "saveSaving": "正在保存…",
-      "saveTitleLocal": "已保存在本机（没有打开项目）。{{mod}}S 保存；⇧{{mod}}S 另存为新排版",
+      "saveTitleLocalAlways": "已保存在本机。{{mod}}S 给这一版起名字；⇧{{mod}}S 另存为新排版",
       "saveTitleLocalInProject": "这份排版只存在本机，还没有存进项目。{{mod}}S 存进项目",
       "saveTitleProject": "已保存到项目：{{file}}。{{mod}}S 保存到这个文件；⇧{{mod}}S 另存为新排版",
+      "saveTitleProjectAlways": "已保存到项目：{{file}}。{{mod}}S 给这一版起名字；⇧{{mod}}S 另存为新排版",
       "saveTitleProjectPending": "项目里的 {{file}} 有未保存的改动（改动已暂存在本机）。{{mod}}S 保存到这个文件",
       "shortcutHelp": "快捷键帮助",
       "subLabelsTip": "按阅读顺序添加 (a)(b)(c) 标签",

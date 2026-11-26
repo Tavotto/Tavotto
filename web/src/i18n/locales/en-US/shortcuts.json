@@ -30,7 +30,7 @@
     "nudge": "Nudge the selection or in-figure elements by 0.5 mm / 5 mm / 0.1 mm on the page; a run of presses undoes as one step",
     "palette": "Command palette",
     "pan": "Pan the canvas",
-    "saveDocument": "Save layout",
+    "saveDocument": "Name this version (layouts always autosave)",
     "saveLayout": "Save layout as",
     "script": "Superscript / subscript (in the properties panel text box)",
     "selectAll": "Select all",

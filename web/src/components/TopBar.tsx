@@ -43,6 +43,7 @@ import { scopeReadiness } from '@/lib/figureGroup'
 import {
   discardLocalCopy,
   dismissDocNotice,
+  isProjectConflictActive,
   recoverLocalCopy,
   saveNow,
   useDocumentStore,
@@ -288,8 +289,9 @@ function useDocIssue(): DocIssue | null {
   // 恢复问题与保存进度是两根轴：`saved → clean` 清不掉它，只有恢复成功 / 用户选了出口才清
   const restore = useDocumentStore((s) => s.restoreIssue !== null)
   const metaIssue = useDocumentStore((s) => s.restoreMetaIssue?.docId === s.documentId)
+  const projectWriteFailed = useDocumentStore((s) => s.projectWriteFailedDoc === s.documentId)
   if (saveState === 'conflict') return 'conflict'
-  if (saveState === 'save_error') return 'save_error'
+  if (saveState === 'save_error' || projectWriteFailed) return 'save_error'
   if (restore) return 'restore'
   if (notice === 'recovery') return 'recovery'
   // 版本过新排在「上次的排版没打开」之前：启动时那份上次的排版若来自更新的版本，两件会同时在
@@ -329,10 +331,13 @@ export function SaveStateLabel() {
   const projectReadOnly = writeFailedReadOnly || folderReadOnly
   const bound = useActiveProjectFile()
   // 自动保存写进项目时撞上外部修改、还没裁决：胶囊说「别处有改动」，点它 = ⌘S（进冲突岔口），不弹窗打断编辑
-  const projectConflict = useDocumentStore(
-    (s) => s.projectConflict?.docId === s.documentId && (s.projectFile?.revision ?? '') === s.projectConflict.base,
-  )
+  const projectConflict = useDocumentStore(isProjectConflictActive)
   const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
+  // 「始终保存」（ADR 0211 第二期 PR 3）：开着项目、后端开着「自动保存写进项目」时，保存状态里不再有「未存进项目」，⌘S 是起名字。
+  // 只有后端把开关关了（应急回退）才保留改造前的几句
+  const alwaysSaved = useProjectStore((s) => s.project?.autosave_into_project === true)
+  const legacySaveUi = projectOpen && !alwaysSaved
+  const projectWriteFailed = useDocumentStore((s) => s.projectWriteFailedDoc === s.documentId)
   const issue = useDocIssue()
   const restoreKind = useDocumentStore((s) => s.restoreIssue?.kind ?? null)
   const localPending = saveState === 'dirty' || saveState === 'saving'
@@ -355,9 +360,9 @@ export function SaveStateLabel() {
   const settledText = projectReadOnly
     ? t('topbar.saveProjectReadOnly')
     : bound
-    ? t(bound.dirty ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
-    : projectOpen
-      ? // 开着项目但这份排版只在本机（没有项目文件）：说「未存进项目」，点它走 ⌘S 的「存进项目」命名框
+    ? t(bound.dirty && legacySaveUi ? 'topbar.saveProjectPending' : 'topbar.saveProjectSaved')
+    : legacySaveUi
+      ? // （应急回退）开着项目但这份排版只在本机（没有项目文件）：说「未存进项目」，点它走 ⌘S 的「存进项目」命名框
         t('topbar.saveProjectPending')
       : saveState === 'saved'
         ? t('topbar.saveLocal')
@@ -365,22 +370,26 @@ export function SaveStateLabel() {
           ? t('topbar.saveLocalAt', { time: formatTime(lastPersisted) })
           : t('topbar.saveLocal')
   const text =
-    saveState === 'save_error'
+    saveState === 'save_error' || projectWriteFailed
       ? t('topbar.saveError')
       : saveState === 'conflict'
         ? t('topbar.saveConflict')
         : revealPending
           ? t(saveState === 'saving' ? 'topbar.saveSaving' : 'topbar.saveDirty')
           : settledText
-  const bad = saveState === 'save_error' || saveState === 'conflict'
+  const bad = saveState === 'save_error' || saveState === 'conflict' || projectWriteFailed
   const title = projectReadOnly
     ? t('topbar.saveProjectReadOnly')
-    : bound
-    ? t(bound.dirty || !settled ? 'topbar.saveTitleProjectPending' : 'topbar.saveTitleProject', {
-        file: bound.file,
-        mod: MOD,
-      })
-    : t(projectOpen ? 'topbar.saveTitleLocalInProject' : 'topbar.saveTitleLocal', { mod: MOD })
+    : !legacySaveUi
+      ? bound
+        ? t('topbar.saveTitleProjectAlways', { file: bound.file, mod: MOD })
+        : t('topbar.saveTitleLocalAlways', { mod: MOD })
+      : bound
+        ? t(bound.dirty || !settled ? 'topbar.saveTitleProjectPending' : 'topbar.saveTitleProject', {
+            file: bound.file,
+            mod: MOD,
+          })
+        : t('topbar.saveTitleLocalInProject', { mod: MOD })
   const shownState = bad ? saveState : revealPending ? saveState : 'settled'
   // 读屏只在出事时说：标签本身不 aria-live（每秒一轮的保存不该每秒播一次）。
   // 不带 role（`role=status` 全产品只留通知轨那一个）。两个分支的根都是同一种 span、播报区带同一个 key：
@@ -439,7 +448,7 @@ export function SaveStateLabel() {
   }
 
   // 落定那枚图标：项目里那份是最新的才打 ✓；只在本机（或项目里那份落后）是一枚硬盘
-  const SettledIcon = bound && !bound.dirty ? Check : HardDrive
+  const SettledIcon = bound && (!bound.dirty || !legacySaveUi) ? Check : HardDrive
   // 占位：会在本机自动保存一轮里轮到的那几句（落定那句 + 两句进行中）。叠在同一格里，
   // 格宽取最宽那句——只是给宽度，不可见、不给读屏。窄于 900 时整格只给读屏（芯片只剩图标）
   const localSettled = bound
@@ -449,7 +458,7 @@ export function SaveStateLabel() {
     (r) => r !== text,
   )
   // 已经存进项目且最新：点它没有事可做（不禁用——禁用钮会退出 Tab 顺序、气泡也更难出），点击空操作 + aria-disabled
-  const nothingToSave = !!bound && !bound.dirty && settled && !revealPending
+  const nothingToSave = legacySaveUi && !!bound && !bound.dirty && settled && !revealPending
   return (
     // 根仍是 span（与出事分支同种元素：播报区 `live` 是早已挂着的同一个节点，Codex #947），里面一颗整枚芯片大的按钮：
     // 点击 = ⌘S（`runManualSave`：本机那份先写、绑了项目文件就写回、开着项目没文件就弹「存进项目」命名框）。
@@ -749,6 +758,8 @@ export function DocumentMenu() {
   const documentId = useDocumentStore((s) => s.documentId)
   const recentDocs = useDocumentStore((s) => s.recentDocs)
   const projectFile = useActiveProjectFile()
+  // 「始终保存」时文档名旁没有「项目里那份落后」的空心环（ADR 0211 第二期 PR 3）；只有应急回退才保留
+  const alwaysSavedUi = useProjectStore((s) => !!s.project?.open && s.project.autosave_into_project === true)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -814,7 +825,7 @@ export function DocumentMenu() {
           <span className="truncate">{name}</span>
           {/* 点的词汇（2026-10-07 设计审计 §10.1 P2）：**空心环 = 还没写进项目文件**（ADR 0096，项目里那份落后于这份排版）；
               实心 accent 点只留给「有更新」（「更多」上那颗）。画布页签上不再有「未保存」点 */}
-          {projectFile?.dirty && (
+          {projectFile?.dirty && !alwaysSavedUi && (
             <span
               data-project-file-dirty
               aria-label={t('topbar.projectFileUnsaved', { file: projectFile.file })}

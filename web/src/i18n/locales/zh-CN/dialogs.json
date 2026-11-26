@@ -574,8 +574,8 @@
         "label": "显示 / 隐藏标尺"
       },
       "save-document": {
-        "keywords": "save layout bc baocun cunpan pb paiban",
-        "label": "保存排版"
+        "keywords": "save layout name version bc baocun qmz qimingzi mingming pb paiban",
+        "label": "给这一版起名字…"
       },
       "save-layout": {
         "keywords": "save as layout lcw lingcunwei bc baocun pb paiban",

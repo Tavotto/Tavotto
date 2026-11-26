@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 import { addSecondFigure, expect, freePort, test, waitForDocumentReady } from './fixtures'
 
 /**
- * ADR 0211 第二期 PR 2：自动保存把工作副本写进项目（开关 `TAVOTTO_LAYOUT_DIR_WRITER=1`）。
+ * ADR 0211 第二期 PR 2：自动保存把工作副本写进项目（PR 3 起默认开；应急回退 `TAVOTTO_LAYOUT_DIR_WRITER=0`）。
  *
  * 真后端、真页面、真文件系统。**不按任何键**：双击素材卡放一张图 → 停下 → 杀进程（SIGKILL，不给优雅退出的机会）→ 重开，
  * 最后一次编辑在项目的 `tavottofile/<名>.tavotto/layout.json` 里，重开就是它；再换一份全新的本机数据目录 + 空 localStorage
@@ -38,7 +38,6 @@ async function killHard(a: { proc: import('node:child_process').ChildProcess }) 
 }
 
 test('不按任何键：编辑自动写进项目的 layout.json，杀进程重开就是它；换空的本机存储也能从工作副本找回', { tag: '@feature:file.autosave-restore' }, async ({ app, browser }) => {
-  test.skip(process.platform === 'win32', 'SIGKILL 语义在 Windows 上不同；Windows 腿由后端用例覆盖瞬时失败')
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-autosave-project-'))
   const started: { stop: () => Promise<void> }[] = []
   try {
@@ -46,7 +45,8 @@ test('不按任何键：编辑自动写进项目的 layout.json，杀进程重�
     cpSync(path.join(import.meta.dirname, '..', '..', 'examples', 'figures'), project, { recursive: true })
     const dataA = path.join(root, 'dataA')
     mkdirSync(dataA, { recursive: true })
-    const base = { TAVOTTO_LAYOUT_DIR_WRITER: '1', TAVOTTO_CONFIG_DIR: path.join(root, 'config') }
+    // 写入端现在默认开（PR 3），不再带 TAVOTTO_LAYOUT_DIR_WRITER
+    const base = { TAVOTTO_CONFIG_DIR: path.join(root, 'config') }
     const port = await freePort()
 
     // ---- 1. 编辑、停下，不按任何键 ----
