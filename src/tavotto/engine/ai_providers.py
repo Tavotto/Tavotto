@@ -918,7 +918,7 @@ def _builtin_overrides(
 ) -> tuple[list[str], dict[str, str]]:
     """内置执行器的注入：地址 / 型号 / 协议名进 argv，**密钥（或账号登录的令牌）只进环境变量**（不进 argv / 日志 / 事件）。不可用 → 两者皆空。"""
     if is_siwc(rec):
-        return siwc_overrides(rec, model)
+        return siwc_overrides(rec, model, effort)
     conn = builtin_conn(rec, model)
     if conn is None:
         return [], {}
@@ -944,7 +944,8 @@ def is_siwc(rec: dict | None) -> bool:
 
 def siwc_record() -> dict | None:
     """SIWC 的**虚拟**记录（不在 `ai.providers[]` 里，没有令牌字段）：开关开且有已登录、许可订阅额度的账号才有。
-    「挑第一个能用的连接」的调用点（AI 修复、结构化调用、探测）只遍历 `list_providers()`，结构上看不见它。"""
+    它不在 `list_providers()` 里：保存时探测、Key 的增删改结构上碰不到它；「挑第一个能用的连接」（`ai_connections.first_key_connection`）在所有 Key 之后显式取它
+    （ADR 0209 §七：SIWC 与 API 体验相同）。"""
     from . import siwc_store  # 函数内 import：不让 provider 记录模块在 import 时就碰 SIWC 存储
     from .agent_runner import siwc_wire
 
@@ -982,8 +983,39 @@ def _siwc_conn(rec: dict, model: str | None) -> dict | None:
     }
 
 
-def siwc_overrides(rec: dict, model: str | None) -> tuple[list[str], dict[str, str]]:
-    """SIWC 的内置执行器注入：专用 argv（满足 `siwc_wire.runner_args_ok`：Bearer、官方地址、无 `--fallback` / `--effort` / `--thinking`）；
+def is_siwc_conn(conn: dict | None) -> bool:
+    """`builtin_conn` 形状的连接是不是 SIWC 的（AI 修复 / 结构化调用拿到的那种）。"""
+    return bool(conn) and conn.get("provider_id") == SIWC_CONNECTION_ID
+
+
+def siwc_conn_with_token(conn: dict, *, min_valid_s: int | None = None) -> dict | None:
+    """给 SIWC 连接装上一个够新的访问令牌（不够新就刷新，可能联网）。拿不到（没登录 / 没许可额度 / 暂时失败）→ None。
+    令牌只进返回的 dict（与 Key 连接的 `api_key` 同一出口：只给 `fixsession.build_model`），不落盘、不进日志。"""
+    from . import siwc_auth, siwc_login
+
+    try:
+        token = siwc_login.provider().access_token(
+            min_valid_s=siwc_auth.MIN_VALID_S if min_valid_s is None else min_valid_s
+        )
+    except (siwc_auth.NeedsLogin, siwc_auth.TokenUnavailable):
+        return None
+    return {**conn, "api_key": token}
+
+
+def siwc_efforts(model: str | None) -> list[str]:
+    """SIWC 某个型号能选的思考强度（登录 / 刷新型号时从 `/v1/models` 缓存的那份；没缓存 = 空 = 不发）。"""
+    from . import siwc_store
+
+    for m in siwc_store.public_status().get("models") or []:
+        if m.get("id") == model:
+            return list(m.get("efforts") or [])
+    return []
+
+
+def siwc_overrides(
+    rec: dict, model: str | None, effort: str | None = None
+) -> tuple[list[str], dict[str, str]]:
+    """SIWC 的内置执行器注入：专用 argv（满足 `siwc_wire.runner_args_ok`：Bearer、官方地址、无 `--fallback` / `--thinking`，`--effort` 只给型号声明过的档位）；
     令牌（`siwc_login.provider().access_token`）与开关只进环境变量。拿不到令牌 → 两者皆空（调用方据此拒绝起跑）。"""
     from . import siwc_auth, siwc_login
     from .agent_runner import siwc_wire
@@ -1005,6 +1037,11 @@ def siwc_overrides(rec: dict, model: str | None) -> tuple[list[str], dict[str, s
         "--auth",
         "bearer",
     ]
+    if effort and effort in siwc_efforts(conn["model"]):
+        args += [
+            "--effort",
+            effort,
+        ]  # 只发这个型号声明过的档位（与 Key 连接的 builtin_effort_args 同一口径：不确定就不发）
     return args, {ai_agents.BUILTIN_KEY_ENV: token, siwc_wire.ENV_FLAG: "1"}
 
 

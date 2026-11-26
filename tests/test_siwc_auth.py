@@ -130,17 +130,17 @@ def test_missing_plan_scope_is_signed_in_but_not_usable():
     assert st.signed_in and not st.plan_usage_enabled
 
 
-def test_earliest_refresh_at_is_respected():
+def test_earliest_refresh_at_does_not_block_a_needed_refresh():
+    """真服务核对（2026-11-25）：earliest_refresh_at 约在签发后 54 分钟，提前刷新照样 200 并轮换——它不是「之前不许刷」。
+    当成门槛的话，剩余寿命不够一次任务时又不许刷，每小时约 14 分钟任务起不来。"""
     clock = Clock()
-    calls = []
+    new = _ts(clock, access="acc-new", refresh="ref-new")
     p = sa.MemoryProvider(
         _ts(clock, left_ms=60_000, earliest=clock() + 120_000),
-        refresh=lambda t: calls.append(t),
+        refresh=lambda t: new,
         clock=clock,
     )
-    with pytest.raises(sa.TokenUnavailable) as exc:
-        p.access_token()
-    assert exc.value.reason == "refresh_not_yet_allowed" and calls == []
+    assert p.access_token() == "acc-new"
 
 
 def test_short_lived_refresh_result_is_not_handed_out():

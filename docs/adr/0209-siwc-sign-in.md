@@ -61,23 +61,30 @@ Tavotto 是 AGPL 开源、本机运行；维护者 2026-11-25 判定按开源路
 
 ### 六、开关与上线顺序
 
-`TAVOTTO_EXPERIMENTAL_SIWC` 在前几个 PR 里**仍默认关**（ADR / 登录、凭据与连接 / 界面）；开关开着时就是完整的新行为（含 Codex 登录「已装才列」），关着与原来逐字节相同。
-维护者本人账号跑一轮真服务核对之后，单独一个 PR 只把默认改成开（`=0` 关掉）。真服务核对清单：0201 列的未验证项（错误码含用量超限、`response.incomplete` / `error` 载荷、
-刷新令牌轮换、https 下流到一半取消、`reasoning` 回放），加上首次注册走非 1455 端口能否成功、`earliest_refresh_at` 的单位与含义（若是相对秒，每小时可能有一段任务起不来）。
+后端两个 PR（登录、凭据与连接 #2210；与 API 体验相同 #2212）合入时开关**仍默认关**（界面还不认 `siwc` 方式）；界面 PR（#2228）把默认改成**开**
+（维护者 2026-11-25：「开关默认开」），`TAVOTTO_EXPERIMENTAL_SIWC=0` 整体关掉。开着时即完整新行为：OpenAI 一家只有「Continue with ChatGPT」+ API Key，
+Codex 登录与 `sub:codex` 行不再列出（老用户也直接切换）。
+
+两轮真服务核对（2026-11-25，维护者本人账号）已做：首次注册在 1455 被占时换端口成功、ID 令牌对真实 JWKS 验签通过、型号清单（曾因响应超过 256 KB 被当成空清单，已修）
+与每型号的思考强度档位、low–xhigh 实发、刷新令牌轮换、早于 `earliest_refresh_at` 刷新照样成功（所以只记不拦）、https 流到一半取消、撤销。
+**仍未真服务验证**：用量超限等错误码、`response.incomplete` / `error` 载荷、带 `encrypted_content` 的 reasoning 条目回放、`max` 档实发——上线后在真实使用里观察，不写成已验证。
 
 ### 七（前）、11-23 三条规矩在这里怎么变
 
+维护者 2026-11-25 确认（原话）：「1.开关默认开。2.可以真联调，不用问我。3.要能够被其他功能调到」。下表是确认后的结论。
+
 | 11-23 定的（0201） | 0209 之后 |
 | --- | --- |
-| 放在 `TAVOTTO_EXPERIMENTAL_SIWC` 开关后面 | **不变**直到真服务核对完；之后单独 PR 改为默认开，`=0` 仍可整体关掉 |
-| 只做 Mock 验证 | 仓库里的用例**仍全是 Mock**（本机假服务器）。真服务联调**要做**：维护者本人账号、一次性、上线前一轮（清单见 §六），每次联调前当面征得维护者同意；结论写回本 ADR，不写进用例 |
-| SIWC 记录不进 `first_key_connection` / 探测 / 用户可声明的 `PROTOCOLS` | **不变**：凭据不进 `ai.providers[]`，虚拟记录只经 `resolve(builtin, "siwc:chatgpt")` 出现；`siwc-responses` 仍不在 `ai_providers.PROTOCOLS`（看护 `tests/test_siwc_connection.py`） |
+| 放在 `TAVOTTO_EXPERIMENTAL_SIWC` 开关后面 | **默认开**：随界面 PR 一起落地（后端先于界面合入时仍关，免得「连接 AI」里只剩一个界面不认的方式）；`TAVOTTO_EXPERIMENTAL_SIWC=0` 整体关掉 |
+| 只做 Mock 验证 | 仓库里的用例**仍全是 Mock**（本机假服务器）。真服务联调**要做、不必每次再问**：维护者本人账号、一次性脚本、临时数据目录、跑完撤销授权；结论写回本 ADR / `siwc_wire` 模块说明，不写进用例 |
+| SIWC 记录不进 `first_key_connection` / 探测 / 用户可声明的 `PROTOCOLS` | **改**：`first_key_connection` 在所有 Key / 账号登录记录之后给 SIWC，AI 修复、结构化调用、数据出图、改图方案都能用（与 API 体验相同，§七）。**不变**：保存时探测不用它；凭据不进 `ai.providers[]`；`siwc-responses` 不在 `ai_providers.PROTOCOLS`，用户记录不能声明它（看护 `tests/test_siwc_connection.py` / `tests/test_siwc_parity.py`） |
 
 ### 七、不随 SIWC 一起替换的能力
 
 0201 §五 把 AI 修复、结构化调用、数据出图（数据角色）、保存时探测排除在 SIWC 之外（不让「挑第一个能用的连接」静默花订阅额度）。
-维护者 2026-11-25 指出 SIWC 本质上就是用户自己的 API 连接（「理想中 SIWC 不是就等同于使用 API 吗」）：**计划另开 PR 接上**前三项——用户连了 ChatGPT 就算显式选择，
-请求改走 `siwc-responses`（这几处现在直接用旧 Responses 协议，会发官方禁用的 `max_output_tokens`）；保存时探测仍不用（SIWC 不需要探测）。接上之前，只登录了 ChatGPT 的用户这几项不可用。
+维护者 2026-11-25 指出 SIWC 本质上就是用户自己的 API 连接（「理想中 SIWC 不是就等同于使用 API 吗」「我们的目标是 SIWC 与 API 的体验完全相同」）：
+**已接上**前三项（#2212）——用户连了 ChatGPT 就算显式选择，`first_key_connection` 在所有 Key 之后给它；请求走 `siwc-responses`（令牌在 `fixsession.build_model` / `ai_structured.call_structured` 现取）；
+订阅额度不按 API 价目估钱；保存时探测仍不用（SIWC 不需要探测）。**思考强度**同 Key 连接：每个型号的档位取自 `/v1/models` 的 `supported_reasoning_levels`（第二次真服务核对：low–xhigh 实发 200、`minimal` 被拒）。
 
 ## 后果
 

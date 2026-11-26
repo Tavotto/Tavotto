@@ -87,7 +87,11 @@ const ask = () => cps().requestFromAssistant('p1', { instruction: FALLBACK.promp
 
 beforeEach(async () => {
   vi.useFakeTimers()
-  createChangePlan.mockReset().mockResolvedValue({ plan_id: 'p1', state: 'running' })
+  // 脚本修改方案（PR 6）这条路在这里不适用：落回现有的直接改脚本（脚本方案本身见 changePlanScript.test.ts）
+  createChangePlan.mockReset().mockImplementation(async (body: { mode?: string }) => {
+    if (body.mode === 'script') throw new EngineError('x', '', 'change_plan_script_unsupported', '')
+    return { plan_id: 'p1', state: 'running' }
+  })
   getChangePlan.mockReset()
   discardChangePlan.mockClear()
   requestRender.mockReset()
@@ -136,7 +140,7 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
     'change_plan_too_large',
   ])('同步被拒 %s', async (code) => {
     createChangePlan.mockRejectedValue(new EngineError('x', '', code, ''))
-    expect(await ask()).toBe('fallthrough')
+    expect(await ask()).toMatchObject({ kind: 'fallthrough' })
     expect(cps().order).toEqual([])
     expect(start).not.toHaveBeenCalled() // 续走由调用方（发送路径）做，store 不替它发
   })
@@ -166,6 +170,7 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
     const key = (await ask()) as string
     expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_busy' } })
     expect(cps().entries[key].instruction).toBe(FALLBACK.prompt)
+    createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_script_unsupported', '')) // 脚本方案这条路不适用 → 落回直接改脚本
     expect(await cps().runScript(key)).toBe(true)
     expect(start).toHaveBeenCalledOnce()
   })
@@ -178,6 +183,88 @@ describe('这条路不适用：落回旧路径，不留卡', () => {
     await cps().regenerate(key)
     const e = Object.values(cps().entries)[0]
     expect(e).toMatchObject({ status: 'failed', failure: { code: 'change_plan_no_connection' } })
+  })
+})
+
+describe('连接用不了：脚本方案同样走不通，直接落回旧路径', () => {
+  it.each(['change_plan_no_connection', 'change_plan_unsupported_connection'])('同步被拒（%s）：只发一次方案请求，不再发脚本方案', async (code) => {
+    createChangePlan.mockRejectedValue(new EngineError('x', '', code, ''))
+    expect(await ask()).toMatchObject({ kind: 'fallthrough' })
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(createChangePlan.mock.calls[0][0].mode).toBeUndefined()
+    expect(cps().order).toEqual([])
+  })
+
+  it('其它不适用码（太长）：才再试一次脚本方案', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_too_large', '')).mockResolvedValue({ plan_id: 'p2', state: 'running' })
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    const key = await ask()
+    expect(typeof key).toBe('string')
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+    expect(createChangePlan.mock.calls[1][0]).toMatchObject({ mode: 'script' })
+  })
+
+  it('线程里才判出连接不支持（轮询 failed）：直接改脚本，不发脚本方案请求', async () => {
+    getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code: 'change_plan_unsupported_connection' })
+    const key = (await ask()) as string
+    await tick()
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(start).toHaveBeenCalledOnce()
+    expect(cps().entries[key].status).toBe('handoff')
+  })
+
+  it('脚本方案自己在线程里被拒：直接改脚本，不循环再发脚本方案', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_too_large', '')).mockResolvedValue({ plan_id: 'p2', state: 'running' })
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'failed', code: 'change_plan_native_unsupported' })
+    await ask()
+    await tick()
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+    expect(start).toHaveBeenCalledOnce()
+  })
+})
+
+describe('落回改脚本的原因码是这次调用自己的返回值', () => {
+  it('两个面板几乎同时发起：各自拿到自己的码（可控 Promise 制造交错），互不串值', async () => {
+    ds().commit(literal('放入第二张'), (d) => {
+      d.objects.push({ id: 'p2', type: 'panel', x: 100, y: 10, w: 80, h: 60, fileId: 'f_p2', fileKind: 'pdf', nativeW: 80, nativeH: 60, script: 'fig2.py', overrides: [] } as PanelObject)
+    })
+    const gates: Record<string, (e: Error) => void> = {}
+    createChangePlan.mockImplementation(
+      (b: { id: string }) => new Promise((_resolve, reject) => { gates[b.id] = reject }),
+    )
+    const fb2 = { ...FALLBACK, fileId: 'f_p2', panelId: 'p2', script: 'fig2.py' }
+    const a = cps().requestFromAssistant('p1', { instruction: 'A' }, FALLBACK)
+    const b = cps().requestFromAssistant('p2', { instruction: 'B' }, fb2)
+    await tick(10)
+    expect(Object.keys(gates).sort()).toEqual(['f_p1', 'f_p2'])
+    // 后发起的先落定、码不同；先发起的后落定
+    gates.f_p2(new EngineError('x', '', 'change_plan_no_connection', ''))
+    const rb = await b
+    gates.f_p1(new EngineError('x', '', 'change_plan_unsupported_connection', ''))
+    const ra = await a
+    expect(ra).toEqual({ kind: 'fallthrough', code: 'change_plan_unsupported_connection' })
+    expect(rb).toEqual({ kind: 'fallthrough', code: 'change_plan_no_connection' })
+  })
+
+  it('旧值不残留：上一次带连接码落回，这一次是别的码——各读各的，连接码也不会让下一次跳过脚本方案', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_no_connection', ''))
+    expect(await ask()).toEqual({ kind: 'fallthrough', code: 'change_plan_no_connection' })
+    expect(createChangePlan).toHaveBeenCalledOnce() // 连接码：没发脚本方案
+    createChangePlan.mockReset().mockRejectedValueOnce(new EngineError('x', '', 'change_plan_too_large', '')).mockRejectedValueOnce(new EngineError('x', '', 'change_plan_not_editable', ''))
+    // 这次是别的码：不被上一次的连接码带偏，会再试脚本方案；脚本方案自己的码是最终返回
+    expect(await ask()).toEqual({ kind: 'fallthrough', code: 'change_plan_not_editable' })
+    expect(createChangePlan).toHaveBeenCalledTimes(2)
+  })
+
+  it('不适用来自 legacyOnly 的路径（没有后端码）：返回自带的标记码，不会读到旧值', async () => {
+    createChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_no_connection', ''))
+    await ask()
+    getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code: 'change_plan_unsupported_connection' })
+    createChangePlan.mockReset().mockResolvedValue({ plan_id: 'p1', state: 'running' })
+    const key = (await ask()) as string
+    await tick()
+    expect(start).toHaveBeenCalledOnce()
+    expect(cps().entries[key].status).toBe('handoff')
   })
 })
 
@@ -286,7 +373,7 @@ describe('用输入框选的那条连接与型号', () => {
 
   it('选中的连接不支持结构化调用（后端 unsupported_connection）：落回改脚本路径，不留卡', async () => {
     createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_unsupported_connection', ''))
-    expect(await ask()).toBe('fallthrough')
+    expect(await ask()).toMatchObject({ kind: 'fallthrough' })
   })
 })
 
@@ -411,7 +498,7 @@ describe('草稿与输入框留到方案落定', () => {
     cps().clear()
     const settle2 = vi.fn()
     createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_no_connection', ''))
-    expect(await cps().requestFromAssistant('p1', { instruction: 'x' }, FALLBACK, settle2)).toBe('fallthrough')
+    expect(await cps().requestFromAssistant('p1', { instruction: 'x' }, FALLBACK, settle2)).toMatchObject({ kind: 'fallthrough' })
     expect(settle2).not.toHaveBeenCalled()
   })
 })

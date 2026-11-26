@@ -39,6 +39,7 @@ export function OptionGrid<T extends string>({
   ariaLabel,
   cellClassName,
   previewHasLabel = false,
+  framed = false,
 }: {
   value: T | null
   options: GridOption<T>[]
@@ -58,6 +59,11 @@ export function OptionGrid<T extends string>({
    * 可达名仍由每个格子的 `aria-label` 提供，读屏不受影响。
    */
   previewHasLabel?: boolean
+  /**
+   * 格子里放的是**白底缩略图**（数据页的候选切换排）：选中那一格另加 1px 内描边（`--color-thumb-frame`：浅色透明、暗色是随主题的浅墨），
+   * 暗色下白图卡托在暗灰 thumb 上与槽的反差弱，描边用形状再说一遍选中。缺省关：别的选择器一点不变
+   */
+  framed?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -125,7 +131,7 @@ export function OptionGrid<T extends string>({
               'relative flex h-8 items-center justify-center rounded-md outline-none transition-colors',
               'focus-visible:focus-ring',
               active
-                ? 'bg-thumb font-semibold text-ink shadow-thumb'
+                ? cn('bg-thumb font-semibold text-ink shadow-thumb', framed && 'inset-ring inset-ring-thumb-frame')
                 : 'text-ink-2 hover:bg-surface-active hover:text-ink',
               opt.disabled && 'cursor-default hover:bg-transparent hover:text-ink-2',
               cellClassName,

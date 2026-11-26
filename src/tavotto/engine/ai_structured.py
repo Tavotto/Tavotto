@@ -227,6 +227,11 @@ def _effort_kwargs(conn: dict, effort: str | None) -> dict:
     try:
         from . import ai_providers
 
+        if ai_providers.is_siwc_conn(conn):
+            # SIWC：型号自己在 /v1/models 里声明的档位（登录时缓存）；没声明的不发
+            return (
+                {"effort": effort} if effort in ai_providers.siwc_efforts(conn.get("model")) else {}
+            )
         rec = ai_providers.get(conn.get("provider_id"))
         if rec is None:
             return {}
@@ -555,20 +560,41 @@ def _call(
         return _call_cli(
             system, user, validate, limits, conn, t0, max_requests, effort, runner, schema
         )
-    from . import fixsession
+    from . import ai_providers, fixsession
+
+    if ai_providers.is_siwc_conn(conn) and not conn.get("api_key"):
+        # SIWC（与 Key 连接同一条路，ADR 0209 §七）：挑连接时不取令牌，这里现取。与账号登录同一个预算闸：剩余时限够一次刷新
+        # （`REFRESH_NEEDS_S`）才允许联网刷新；不够就只用够新的现有令牌，不等锁、不联网（Codex #2212）
+        from . import siwc_auth, siwc_login
+
+        remaining = limits.timeout_s - (time.monotonic() - t0)
+        try:
+            token = siwc_login.provider().access_token(
+                min_valid_s=max(int(remaining), 1) + 30,
+                allow_refresh=remaining >= REFRESH_NEEDS_S,
+            )
+        except siwc_auth.NeedsLogin:
+            return StructuredResult(
+                False, reason="no_connection", detail="needs_login", elapsed_ms=_ms(t0)
+            )
+        except siwc_auth.TokenUnavailable:
+            return StructuredResult(
+                False, reason="no_connection", detail="token_unavailable", elapsed_ms=_ms(t0)
+            )
+        conn = {**conn, "api_key": token}
 
     sent = [
         0
     ]  # 传输层的真实请求数（`HttpModel.complete` 在换协议 / 字段降级时一次尝试可发多个请求）
     inner = post if post is not None else post_json
 
-    def counted(url, headers, body, *, timeout, max_bytes=None):
+    def counted(url, headers, body, *, timeout, max_bytes=None, reader=None):
         if max_requests is not None and sent[0] >= max_requests:
             raise RunnerFailure("budget", "requests")
         sent[0] += 1
-        if max_bytes is None:
-            return inner(url, headers, body, timeout=timeout)
-        return inner(url, headers, body, timeout=timeout, max_bytes=max_bytes)
+        # 只把调用方真给了的可选参数往下传：三条原协议的调用形状逐字不变；`reader` 是 siwc-responses 的 SSE 读取器
+        extra = {k: v for k, v in (("max_bytes", max_bytes), ("reader", reader)) if v is not None}
+        return inner(url, headers, body, timeout=timeout, **extra)
 
     deadline = t0 + limits.timeout_s  # 总时限从调用开始算：解析连接（可能联网刷新令牌）也在里面
     total = Usage()

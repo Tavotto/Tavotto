@@ -1543,6 +1543,13 @@
     },
     "progress": "进行中",
     "convert": {
+      "taskTitle": "生成可编辑版本",
+      "round": "第 {{n}} 轮",
+      "steps": {
+        "read": "读懂原脚本",
+        "write": "写 Python 版本",
+        "verify": "运行校验"
+      },
       "running": "正在生成可编辑版本…",
       "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
       "writingLong": "正在生成较长的文件…",
@@ -2035,5 +2042,9 @@
       "reference_cycle": "有循环引用",
       "timeout": "太复杂、读不完"
     }
+  },
+  "agentMerge": {
+    "commit_other": "并入 Agent 加的 {{count}} 个标注",
+    "done_other": "已并入 {{count}} 个标注，保存后写进项目"
   }
 }

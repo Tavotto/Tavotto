@@ -13,7 +13,7 @@ import type { ExportRoute } from '@/lib/exportRoute'
 import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
-import type { ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
@@ -1005,6 +1005,34 @@ export async function fetchLayout(name: string, pj?: string | null): Promise<Fet
     doc: await res.json(),
     revision: res.headers.get('X-Tavotto-Revision'),
     file: file ? decodeURIComponent(file) : null,
+  }
+}
+
+/**
+ * 「把 Agent 加的并进来」（ADR 0208 §五）：拿这份排版绑定的基线问后端，磁盘上多出来的是不是**只有** Agent 追加的对象。
+ * 后端判据在 `engine/layoutannotate.agent_additions`（全部来自插件写入时留的撤销副本）。读失败一律当「没有」——
+ * 照旧走覆盖 / 另存，不因为这一问把保存流程卡住。
+ */
+export interface AgentAdditions {
+  available: boolean
+  revision?: string
+  count?: number
+  canvases?: { id: string; objects: CanvasObject[] }[]
+}
+
+export async function fetchAgentAdditions(name: string, baseRevision: string): Promise<AgentAdditions> {
+  try {
+    const res = await fetch(
+      apiUrl(
+        `/api/layouts/${encodeURIComponent(name)}/agent-additions?base_revision=${encodeURIComponent(baseRevision)}`,
+      ),
+      withProject(),
+    )
+    if (!res.ok) return { available: false }
+    const body = (await res.json()) as AgentAdditions
+    return body && body.available === true ? body : { available: false }
+  } catch {
+    return { available: false }
   }
 }
 
@@ -4179,8 +4207,21 @@ export interface ChangePlanChange {
   patch: ChangePlanPatch
 }
 
+/** 脚本修改组的内容（ADR 0206 PR 6）：unified diff 与前后摘要；应用 / 撤销只认后端存的候选字节 */
+export interface ChangePlanScriptInfo {
+  rel: string
+  base_sha256: string
+  new_sha256: string
+  diff: string
+  added: number
+  removed: number
+}
+
 export interface ChangePlanGroup {
   key: string
+  /** `script` = 脚本修改组（没有图内改动，`script` 里是 diff） */
+  kind?: 'script'
+  script?: ChangePlanScriptInfo
   label: string
   comment_id?: string
   note_id?: string
@@ -4197,7 +4238,11 @@ export interface ChangePlan {
   /** 批注重改的版本才有：它是从哪一版续改来的（每一版是自己的方案，各有 `id` 与两张图） */
   parent?: string
   source: ChangePlanSource
-  base: { target: string; fingerprint: string }
+  base: { target: string; fingerprint: string; script_sha256?: string }
+  /** `script` = 脚本修改方案（一张卡只含一类）；缺省 = 图内修改 */
+  kind?: 'script'
+  /** 脚本方案已应用时：那份备份的 id 与应用之后的脚本摘要（后端记，重启后仍认）；没应用 / 已撤销 = null */
+  applied?: { backup: string; after_sha256: string } | null
   /** 请求时的 B0 全量 override（规范化后） */
   base_patches: ChangePlanPatch[]
   /** B0 ⊕ 全部组的 `patch`（规范化后）：「全部应用」直接写它；逐组取消勾选时前端用 `base_patches` ⊕ 勾选组的 `patch` 重算（与后端 `changeplan.apply_groups` 同源） */
@@ -4237,6 +4282,8 @@ export interface CreateChangePlanBody {
   instruction?: string
   /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
   target?: string
+  /** `script`：脚本修改（只接助手来源，必须带 `connection`；ADR 0206 PR 6） */
+  mode?: 'script'
   client_request_id?: string
 }
 
@@ -4328,6 +4375,30 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanView
+}
+
+/** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */
+export async function applyChangePlanScript(planId: string): Promise<{ backup: string; after_sha256: string }> {
+  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/apply-script`, { method: 'POST' })
+  const applied = out.applied as { backup?: unknown; after_sha256?: unknown } | undefined
+  if (!applied || !isStr(applied.backup) || !isStr(applied.after_sha256)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return { backup: applied.backup, after_sha256: applied.after_sha256 }
+}
+
+/** 撤销一份已应用的脚本修改（按备份还原）；脚本在应用之后又被改过抛 `change_plan_script_undo_conflict`。 */
+export async function undoChangePlanScript(planId: string): Promise<void> {
+  await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/undo-script`, { method: 'POST' })
+}
+
+/** 脚本方案生成期间脚本被改过（冲突）之后，「恢复到开始前的版本」：按起跑快照那份备份还原；脚本此刻不再是冲突时看到的那一版就抛 `change_plan_script_restore_conflict`。 */
+export async function restoreChangePlanScript(body: { backup: string; script: string; expect_sha256: string }): Promise<void> {
+  await changePlanFetch('/api/change-plans/restore-script', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 /** 放弃一份方案（幂等）。 */
@@ -5544,6 +5615,11 @@ export interface AiTaskSummary {
   phase?: 'correcting' | null
   /** 转换进行中的活动（后端闭集）：`writing_long` = 事件流静默已久、模型在生成较长的文件；事件一来后端就不再给。其它任务没有 */
   activity?: 'writing_long' | null
+  /**
+   * 转换进行中走到哪一步（后端 `ai_bridge._convert_stage`，闭集；用户 2026-11-25）：校验阶段 = verify，否则新脚本已有内容 = write、
+   * 还没有 = read；`round` = 1 + 已自动修正的次数。只有进行中的转换会话有；老后端没有
+   */
+  stage?: { step: 'read' | 'write' | 'verify'; round: number } | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
   /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */
