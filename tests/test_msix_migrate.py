@@ -1102,3 +1102,13 @@ def test_a_permanent_operational_error_is_still_counted_as_a_failure(world, monk
     )
     assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "failed"}
     assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 1
+
+
+def test_no_registered_merger_yet_is_deferred_not_failed(world, monkeypatch):
+    """后台线程比 ai_history 的 import 先跑、截止前也没等到登记：当 deferred，不计失败。"""
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    monkeypatch.setattr(msixmigrate, "_SQLITE_MERGERS", {})
+    assert msixmigrate.merge_pending(budget_s=0.05) == {"cache/ai_history.sqlite3": "deferred"}
+    assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 0

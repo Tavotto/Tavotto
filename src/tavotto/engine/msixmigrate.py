@@ -691,6 +691,28 @@ def base_runtime_available(home: str) -> bool:
 
 
 # --------------------------------------------------------------- 待补旧历史（#2282）
+#: SQLite 项「补回旧行」的实现由拥有该库 schema 的模块在 import 时登记（`ai_history` 登记 `merge_legacy`）。
+#: 本模块**不** import 它们：`ai_history` 已经 import 本模块，反向再连一条边就成环（tests/test_import_architecture.py）。
+_SQLITE_MERGERS: dict = {}
+_MERGERS_CHANGED = threading.Condition()
+
+
+def register_sqlite_merger(rel: str, merge) -> None:
+    """`merge(snapshot, target, deadline) -> int`：把旧库快照里新库没有的行补进 target，到点抛 `TimeoutError`。"""
+    with _MERGERS_CHANGED:
+        _SQLITE_MERGERS[rel] = merge
+        _MERGERS_CHANGED.notify_all()
+
+
+def _merger_for(rel: str, deadline: float):
+    """后台线程可能比 `ai_history` 的 import 先跑：在截止时间内等它登记，等不到回 None（调用方当 deferred）。"""
+    with _MERGERS_CHANGED:
+        _MERGERS_CHANGED.wait_for(
+            lambda: rel in _SQLITE_MERGERS, timeout=max(0.0, deadline - time.monotonic())
+        )
+        return _SQLITE_MERGERS.get(rel)
+
+
 _PENDING_THREAD: threading.Thread | None = None
 _PENDING_THREAD_LOCK = threading.Lock()
 
@@ -766,8 +788,9 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
             if os.path.lexists(target):
                 return "done"
         return "deferred" if tally.deferred else "failed"
-    from . import ai_history  # noqa: PLC0415 —— ai_history 顶层已 import 本模块，这里延迟导入避免环
-
+    merge = _merger_for("/".join(parts), deadline)
+    if merge is None:
+        return "deferred"  # 拥有这个库的模块还没加载：不算失败，下次启动再来
     for src in srcs:  # 新→旧；只补缺，后面的源只补前面没有的
         snap = target.with_name(target.name + f".{os.getpid()}.legacy{TMP_SUFFIX}")
         try:
@@ -777,7 +800,7 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
                 with contextlib.suppress(OSError):
                     snap.unlink(missing_ok=True)
                 shutil.copy2(src, snap)
-            ai_history.merge_legacy(snap, target, deadline)
+            merge(snap, target, deadline)
         except (_Deadline, TimeoutError):
             return "deferred"
         except sqlite3.OperationalError as e:

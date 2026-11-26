@@ -725,6 +725,13 @@ def _merge_legacy_tables(con: sqlite3.Connection) -> int:
     return imported
 
 
+# 登记给 MSIX 迁移的「待补旧历史」合并（它不能反过来 import 本模块：会成环）。经 lambda 在调用时取全局名，测试 monkeypatch 才生效。
+msixmigrate.register_sqlite_merger(
+    "cache/ai_history.sqlite3",
+    lambda snapshot, target, deadline: merge_legacy(snapshot, target, deadline),
+)
+
+
 def mark_interrupted_running(db_path: Path | None = None) -> int:
     """启动时调用：上个进程留下的「还没结束」的会话收尾。**只动属主已死的**（`owner_alive`）：共用同一数据目录的
     另一个服务进程里仍在跑的会话不能被这次启动动掉（否则它的脚本被当成空闲、再被另一个进程改写）。
