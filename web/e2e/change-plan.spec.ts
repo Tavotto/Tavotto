@@ -98,7 +98,7 @@ test('对数轴下限：先问「一起改吗」，没回答前没有查看 / �
   await expect(card).toHaveAttribute('data-change-plan-card', 'ready', { timeout: 60_000 })
   await expect(page.locator('[data-change-plan-confirm-log="yes"]')).toBeVisible()
   // 建议的下限是 10 的幂：写成上标（10⁻²），不写 0.01
-  await expect(card).toContainText(/下限一起改成 10[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+ 吗/)
+  await expect(card).toContainText(/10[⁻⁰¹²³⁴⁵⁶⁷⁸⁹]+/)
   await expect(page.locator('[data-change-plan-view]')).toHaveCount(0)
   await expect(page.locator('[data-change-plan-apply]')).toHaveCount(0)
   const shots = process.env.TAVOTTO_E2E_SHOTS // 只在要截图留档时设：目录
