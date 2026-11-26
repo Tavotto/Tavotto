@@ -2131,9 +2131,16 @@
     }
   },
   "agentMerge": {
+    "commitEdit_one": "Merge {{count}} change made by the agent",
+    "commitEdit_other": "Merge {{count}} changes made by the agent",
     "commit_one": "Merge {{count}} annotation added by the agent",
     "commit_other": "Merge {{count}} annotations added by the agent",
+    "doneDeleted_one": "Merged {{count}} change by the agent (includes a deletion)",
+    "doneDeleted_other": "Merged {{count}} changes by the agent (includes deletions)",
+    "doneEdit_one": "Merged {{count}} change by the agent — save to write it to the project",
+    "doneEdit_other": "Merged {{count}} changes by the agent — save to write them to the project",
     "done_one": "Merged {{count}} annotation — save to write it to the project",
+    "undo": "Undo",
     "done_other": "Merged {{count}} annotations — save to write them to the project"
   }
 }

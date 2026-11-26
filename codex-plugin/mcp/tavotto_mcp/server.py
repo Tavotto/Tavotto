@@ -857,6 +857,7 @@ def _layout_edit_tools() -> list[dict]:
                 "把编辑方案写进排版文件：只换掉被点名的对象、删掉要删的，其余逐字节不动。ops 必须与出方案时**一字不差**，"
                 "并带回方案的 echo_digest；服务端重算、重核，补丁变了或排版在这期间被改过就拒绝。"
                 "写完**把复述原话告诉用户**，并给出 undo_token（用 tavotto_layout_annotate_undo 一步撤销）。"
+                "桌面正开着这份排版时会按字段自动并进去。"
             ),
             "inputSchema": {
                 "type": "object",

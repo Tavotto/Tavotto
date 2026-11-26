@@ -213,9 +213,11 @@ order: 200
   `REVISION_ABSENT` / `revision_conflict` 从 `app.py` 搬进引擎，`app.py` 的 `_DocumentLock` / `_lock_stripe` /
   `_revision_conflict` / `REVISION_ABSENT` 只是别名（等锁上限仍读 `app.DOCUMENT_LOCK_TIMEOUT_S`）。插件的排版写入口
   （`engine/layoutannotate.py`）与桌面保存是两个进程写同一个 `tavottofile/<名>.json`，**必须用同一把锁、同一个判据**，
-  不许在插件侧另写一份。Agent 写入只追加对象、写前留撤销副本（`state/agent-undo/`），撤销只在文件还是那次写下的那一份时恢复。
-  `GET /api/layouts/<名>/agent-additions?base_revision=` 只读：从基线到磁盘修订号的每一步都是 Agent 写入、正文只多了末尾追加的
-  `anchor.by == "agent"` 对象时才回 `available: true`（判据在 `layoutannotate.agent_additions`，桌面据此给「并进来」，不自己判）。
+  不许在插件侧另写一份。Agent 写入（加标注 0208、编辑补丁 0212）写前留撤销副本（`state/agent-undo/`），撤销只在文件还是那次写下的那一份时恢复。
+  `GET /api/layouts/<名>/agent-additions?base_revision=` 只读：从基线到磁盘修订号的每一步都是 Agent 写入、画布以外与画布上
+  `objects` / `layoutGroups` 以外的键都没变时才回 `available: true`，并给每张画布的对象差（新加 / 改前改后 / 删前 / 两份 id 顺序 /
+  布局组前后；判据在 `layoutannotate.agent_additions`）。桌面拿它做**字段三方合并**（`web/src/lib/agentMerge.planAgentMerge`：
+  Agent 改过的字段桌面还是基线的值、删的对象桌面没改过、Agent 重排时桌面没重排、布局组桌面没动，才并），不自己判链。
 - **⌘S 写回项目里绑定的排版文件（ADR 0096，2026-09-26）**：同一个端点
   `POST /api/layouts/<name>?target=project`，**不加端点**。这一档必须开着项目
   （`current_ctx()`，否则 409 `no_project`——不许静默退回数据目录）；冲突判据、锁、

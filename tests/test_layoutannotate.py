@@ -711,9 +711,11 @@ def test_additions_since_my_base_are_exactly_the_agents_objects(project):
     second = _write(project, second_items, first["revision"])
     got = la.agent_additions(project, "组图", base)
     assert got is not None and got["revision"] == second["revision"]
-    ids = [o["id"] for c in got["canvases"] for o in c["objects"]]
+    ids = [o["id"] for c in got["canvases"] for o in c["added"]]
     assert ids == first["added"] + second["added"] and got["count"] == 3
-    assert all(o["anchor"]["by"] == "agent" for c in got["canvases"] for o in c["objects"])
+    assert all(o["anchor"]["by"] == "agent" for c in got["canvases"] for o in c["added"])
+    c = got["canvases"][0]
+    assert c["changed"] == [] and c["deleted"] == [] and c["reordered"] is False
     # 已经跟上了：没有要并的
     assert la.agent_additions(project, "组图", second["revision"]) is None
 
@@ -751,25 +753,71 @@ def test_no_merge_offer_when_the_undo_copy_was_tampered(project):
     assert la.agent_additions(project, "组图", base) is None
 
 
-@pytest.mark.parametrize("edit", ["rename_canvas", "append_plain_object", "edit_existing"])
+@pytest.mark.parametrize("edit", ["rename_canvas", "resize_page", "duplicate_id"])
 def test_merge_offer_checks_the_content_not_just_the_chain(project, edit):
-    """链对得上（留存元信息被改成指向此刻的修订号）也要核正文：多出来的必须全是带 `anchor.by == agent` 的追加对象，
-    其余逐字段不变。"""
+    """链对得上（留存元信息被改成指向此刻的修订号）也要核正文：Agent 的工具只动对象与布局组，画布的其它键变了、
+    对象 id 说不清（重复）就不给并。"""
     path = project / "tavottofile" / "组图.json"
     base = la.read_scene(project, "组图", measure)["base_revision"]
     out = _write(project, _items(), base)
     doc = json.loads(path.read_text(encoding="utf-8"))
     if edit == "rename_canvas":
         doc["canvases"][0]["name"] = "改过"
-    elif edit == "append_plain_object":
-        doc["canvases"][0]["objects"].append(
-            {"id": "t_manual01", "type": "text", "x": 1, "y": 1, "w": 5, "h": 3}
-        )
+    elif edit == "resize_page":
+        doc["canvases"][0]["page"] = {"w": 200, "h": 80}
     else:
-        doc["canvases"][0]["objects"][0]["x"] = 11.0
+        objs = doc["canvases"][0]["objects"]
+        objs.append(dict(objs[-1]))
     atomicio.write_json(path, doc, indent=1)
     meta = la._undo_dir(project, "组图") / f"{out['undo_token']}.meta"
     m = json.loads(meta.read_text(encoding="utf-8"))
     m["after"] = atomicio.content_revision(path)
     meta.write_text(json.dumps(m), encoding="utf-8")
     assert la.agent_additions(project, "组图", base) is None
+
+
+def test_edit_patches_on_the_chain_are_offered_as_a_field_diff(project):
+    """ADR 0212：Agent 的编辑补丁也在链上——回改了谁（改前 / 改后）、删了谁、顺序变没变、布局组前后。"""
+    from tavotto.engine import vectoredit as ve
+
+    path = project / "tavottofile" / "组图.json"
+    base0 = la.read_scene(project, "组图", measure)["base_revision"]
+    added = _write(project, _items(), base0)  # 先加三个标注，再以此为基线做编辑
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    c = doc["canvases"][0]
+    ids = added["added"]
+    c["layoutGroups"] = [
+        {"id": "g_lay00001", "kind": "row", "order": ids, "gap": 4, "align": "start"}
+    ]
+    for o in c["objects"]:
+        if o["id"] in ids:
+            o["groupId"] = "g_lay00001"
+    atomicio.write_json(path, doc, indent=1)
+    base = la.read_scene(project, "组图", measure)["base_revision"]
+    arrow, label = ids  # 两个标注：箭头 + 文字，同在一个布局组里
+    ops = [
+        {"op": "set", "id": arrow, "set": {"strokePt": 1.0}},
+        {"op": "delete", "id": label},
+        {"op": "order", "id": arrow, "to": "back"},
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=base)
+    out = ve.commit(
+        project, "组图", ops, measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert out["written"], out
+    got = la.agent_additions(project, "组图", base)
+    assert got is not None and got["revision"] == out["revision"]
+    (cv,) = got["canvases"]
+    assert [d["after"]["id"] for d in cv["changed"]] == [arrow]
+    ch = cv["changed"][0]
+    assert ch["before"].get("strokePt") != 1.0 and ch["after"]["strokePt"] == 1.0
+    assert [o["id"] for o in cv["deleted"]] == [label] and cv["added"] == []
+    assert cv["reordered"] is True
+    assert cv["base_order"] == ["figures/fig1.pdf", arrow, label]
+    assert cv["order"] == [arrow, "figures/fig1.pdf"]
+    # 删掉一个成员 → 布局组成员不足，约束被去掉（#2244），前后都给桌面
+    assert (
+        cv["layout_groups"]["after"] is None
+        and cv["layout_groups"]["before"][0]["id"] == "g_lay00001"
+    )
+    assert got["count"] == 2

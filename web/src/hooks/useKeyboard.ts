@@ -44,6 +44,7 @@ import { isTimelineOpen, useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
 import { setChangePlanUndoRunner } from '@/store/changePlanStore'
+import { setAgentMergeUndoRunner } from '@/lib/agentMerge'
 import { setQuickLayoutUndoRunner } from '@/store/quickLayoutActions'
 import { canNudgeGap, nudgePathTextGap } from '@/store/pathTextActions'
 
@@ -193,6 +194,8 @@ export function runUndoRedo(redo: boolean) {
 setQuickLayoutUndoRunner(() => runUndoRedo(false))
 // 修改方案卡上的「撤销」（ADR 0206）：同一个入口，同样在这里交进去（store 不能反过来 import 本模块）
 setChangePlanUndoRunner(() => runUndoRedo(false))
+// 并进来含删除时状态栏上的「撤销」（ADR 0212 第 5 期 ②，维护者 2026-11-26 选 2）：同一个入口
+setAgentMergeUndoRunner(() => runUndoRedo(false))
 
 export function useKeyboard() {
   useEffect(() => {
