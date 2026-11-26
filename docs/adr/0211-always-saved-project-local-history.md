@@ -102,7 +102,10 @@
 `GET /api/layouts/<名>` 的 `serve_document` 只做 JSON 解析不做结构校验；前端 `LayoutDialog.doLoad` 在 `normalizeLayout` **之前**先判
 `tooNewSchema(doc)`（`schema` 是有限数且大于本构建的 `SCHEMA_CURRENT`）→ 不打开、挂「来自更新的 Tavotto」+「检查更新」；恢复探测走
 `validate_document`，先判 `schema` → `too_new`。所以占位只需 `{"schema": <远大于现役的整数>, "tavotto_layout_dir": "<名>.tavotto"}`，不带画布。
-第二期第一个 PR 用 v0.21.3 构建对一份带占位的夹具真跑一遍列表 / 打开 / 恢复探测，结果补进本节。
+**v0.21.3 真跑结果（2026-11-26，夹具由第二期存储模块生成，隔离数据目录）**：`GET /api/layouts` 列出占位名、不列目录；
+`GET /api/layouts/<名>` 回占位 JSON（`schema 1000`）；LayoutRecover 只走 autosave / owner / candidates，不读 `tavottofile/*.json`，不受影响；
+浏览器里点「打开排版…」→ 占位那一行：画布不打开，顶栏「排版版本较新」，点开是「这份排版来自更新的 Tavotto / Tavotto 没有打开它，文件没有改动。
+升级后再试。」，占位与目录零改动。「检查更新」按钮只在桌面壳里出现（读代码，未在桌面壳跑）。旧版在占位上另存会成功，新版随即判为外部修改（修订号对得上）。
 
 **实现规则（第二期 PR 共用）**
 
