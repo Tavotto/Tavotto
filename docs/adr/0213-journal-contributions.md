@@ -127,3 +127,28 @@
 ## 未验证 / 待定
 
 - 二期自动入库的实际放行比例，要用一期积累的人工结案数据回放来估，再决定要不要收紧门槛。
+
+## 附：一期线缆契约（diagnostics-api `/v1/messages/*`，API 1.6.0 → 1.7.0，加法）
+
+`POST /v1/messages/init` 多一个可选字段 `journal`（对象）。有它，这封信就是期刊线索（服务端 `origin='journal'`）；它和 `report_id` 互斥，两个都带回 422 `bad_request`。
+
+| 字段 | 必填 | 形状 |
+| --- | --- | --- |
+| `type` | 是 | `"wrong"` \| `"missing"` \| `"editor"` |
+| `journal_id` | `wrong` / `editor` 必填 | `^[a-z0-9][a-z0-9._-]{0,79}$` |
+| `journal_label` | 否 | 单行，≤200 字（目录里的刊名，用来生成主题） |
+| `query` | 否 | 单行，≤120 字（选择器搜索框里的字） |
+| `rule_key` | 否 | `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$` |
+| `current` | 否 | 单行，≤200 字 |
+| `source_id` | 否 | `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$` |
+| `url` | 否 | `https://` 开头，≤2000 字，不含空白、控制字符与 `user:pass@` |
+| `catalog` | 否 | `{"v1"?: 1–999999 的整数, "v2"?: 同}` |
+
+- `missing` 至少要有 `query`、`url`、附件三者之一，否则 422 `bad_request`。未知字段 422（与现有字段同一处置）。
+- 主题：客户端可以留空；服务端在 `subject` 为空时按 `期刊线索：<journal_label 或 query 或 journal_id>` 生成（英文界面 `Journal tip: …`）。
+- 幂等指纹把 `journal` 一并算进去：同一个 `client_message_id` 带不同的 `journal` 回 409（与改了正文同一处置）。
+- 保存期：信件本身与普通来信相同（365 天）；`origin='journal'` 的附件在维护者结案（`closed_at`）后 90 天删除，信件正文与结构化头保留到 365 天。
+- 通知（企业微信 / 邮件）标题前缀「期刊线索」，正文带 `type`、刊名、规则键，**不带 `url` 以外的用户正文全文**（与现有来信通知同口径截断）。
+- 管理工具新增：`diag-admin msg export --kind journal --out <目录> [--all]`（默认只导出没导出过的，写 `exported_at`；每封一个子目录：`report.json` + 附件原文件）；
+  `diag-admin msg close <message_id> --outcome accepted|rejected|duplicate|not_actionable`（写 `closed_at` 与 `outcome`；对非 `journal` 来信报错）。
+- 客户端本机记录 `contactinbox` 的 `kind` 增加 `"journal"`；保存期与 `letter` 相同。
