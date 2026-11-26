@@ -90,6 +90,23 @@ describe('relinkScript', () => {
     expect(relinkFinish).not.toHaveBeenCalled()
   })
 
+  it('带着参数、又缺数据（弹出「找不到数据」指认框）：也是等用户定，不撤销带过去的配置', async () => {
+    runResult(() =>
+      useScriptRunStore.setState({
+        byScript: {
+          'scripts/plot.py': {
+            phase: 'failed',
+            error: { code: 'missing_input', message: 'x', missing_input: { files: ['data.csv'] } },
+          },
+        },
+      } as never),
+    )
+    capability('source_missing', 'plot.py')
+    expect(await relinkScript(panel, 'plot.py', 'scripts/plot.py')).toBe('gated')
+    expect(requestRender).not.toHaveBeenCalled()
+    expect(relinkFinish).not.toHaveBeenCalled()
+  })
+
   it('跑成了但这张图没归到它（它画的是别的图）：不算接上，不重画', async () => {
     runResult(() => capability('source_missing', 'plot.py'))
     capability('source_missing', 'plot.py')

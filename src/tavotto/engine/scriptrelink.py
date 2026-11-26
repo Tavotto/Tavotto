@@ -59,30 +59,60 @@ def prepare(project_root: str | Path, old: str, new: str) -> dict:
     settle_stale(root)
     if old == new or _has_state(root, new):
         return {"run_config": None, "carried": False}
-    mapping: dict[str, str] = {}
-    for cfg in runconfig.configs_of(root, old):
-        if cfg.argv is None:
-            continue  # 敏感值已不在本进程：带不过去（照旧要用户重新提供）
-        moved = runconfig.put(root, new, list(cfg.argv), sensitive=cfg.sensitive, source=cfg.source)
-        if moved is not None:
-            mapping[cfg.id] = moved.id
-    try:
-        default = runconfig.default_selection(root, old)
-    except runconfig.RunConfigError:
-        default = None
-    record = {
-        "from": old,
-        "configs": mapping,
-        "answers": _copy_answers(root, old, new, mapping),
-        **_copy_transcripts(root, old, new, mapping),
-    }
-    carried = bool(mapping or record["answers"] or record["transcripts"] or record["gens"])
-    if carried:
+    # 先记待办、再动手：中途抛 / 进程退出，状态都已有回滚依据（下一次 `prepare` / `settle_stale` 按注册表事实收尾）
+    record: dict = {"from": old, "configs": {}, "answers": False, "transcripts": [], "gens": []}
+    mapping: dict[str, str] = record["configs"]
+
+    def persist() -> None:
         pending = _pending(root)
         pending[new] = record
         _set_pending(root, pending)
+
+    persist()
+    try:
+        for cfg in runconfig.configs_of(root, old):
+            if cfg.argv is None:
+                continue  # 敏感值已不在本进程：带不过去（照旧要用户重新提供）
+            moved = runconfig.put(
+                root, new, list(cfg.argv), sensitive=cfg.sensitive, source=cfg.source
+            )
+            if moved is not None:
+                mapping[cfg.id] = moved.id
+                persist()
+        try:
+            default = runconfig.default_selection(root, old)
+        except runconfig.RunConfigError:
+            default = None
+        # 答案 / 转录一动手就先标上「可能写过」：撤销只删新键下的，新键下本来没有（上面已核），多删无害
+        record["answers"] = True
+        persist()
+        record["answers"] = _copy_answers(root, old, new, mapping)
+        record.update(
+            _copy_transcripts(
+                root, old, new, mapping, on_plan=lambda plan: (record.update(plan), persist())
+            )
+        )
+        carried = bool(mapping or record["answers"] or record["transcripts"] or record["gens"])
+        if carried:
+            persist()
+        else:
+            _drop_pending(root, new)
+    except BaseException:
+        # 已经复制的原样撤销，别让下一次 `_has_state` 把残留当成用户自己的状态而永远带不过去
+        try:
+            _undo(root, new, record)
+            _drop_pending(root, new)
+        except Exception:  # noqa: BLE001
+            LOG.warning("接回脚本：带参数失败后撤销也没成（待办留着，下次再收）", exc_info=True)
+        raise
     run_config = mapping.get(default.config_id) if default is not None else None
     return {"run_config": run_config, "carried": carried}
+
+
+def _drop_pending(root: str, new: str) -> None:
+    pending = _pending(root)
+    if pending.pop(new, None) is not None:
+        _set_pending(root, pending)
 
 
 def _copy_answers(root: str, old: str, new: str, mapping: dict[str, str]) -> bool:
@@ -109,7 +139,9 @@ def _copy_answers(root: str, old: str, new: str, mapping: dict[str, str]) -> boo
         return True
 
 
-def _copy_transcripts(root: str, old: str, new: str, mapping: dict[str, str]) -> dict:
+def _copy_transcripts(
+    root: str, old: str, new: str, mapping: dict[str, str], on_plan=lambda plan: None
+) -> dict:
     sep = inputtranscript._SEP
 
     def rekey(key: str) -> str | None:
@@ -127,6 +159,7 @@ def _copy_transcripts(root: str, old: str, new: str, mapping: dict[str, str]) ->
         added_b = {k: v for k, v in added_b.items() if k not in bindings}
         added_g = {k: v for k, v in added_g.items() if k not in gens}
         if added_b or added_g:
+            on_plan({"transcripts": sorted(added_b), "gens": sorted(added_g)})  # 先记账、再写
             inputtranscript._write(root, {**bindings, **added_b}, {**gens, **added_g})
     return {"transcripts": sorted(added_b), "gens": sorted(added_g)}
 
@@ -180,13 +213,18 @@ def _undo(root: str, new: str, record: dict) -> None:
             old_ctx = scriptanswers._read_contexts(root, strict=True)
             prefix = new + scriptanswers._SEP
             new_ctx = {k: v for k, v in old_ctx.items() if not k.startswith(prefix)}
-            scripts = {k: v for k, v in scripts.items() if k != new}
-            scriptanswers._commit(root, scripts, old_ctx, new_ctx)
+            if (
+                new in scripts or new_ctx != old_ctx
+            ):  # 复制中途就失败的：没写进去的不必再写（盘写不动时撤销也不会再抛）
+                scripts = {k: v for k, v in scripts.items() if k != new}
+                scriptanswers._commit(root, scripts, old_ctx, new_ctx)
     drop_b = set(record.get("transcripts") or [])
     drop_g = set(record.get("gens") or [])
     if drop_b or drop_g:
         with inputtranscript._LOCK:
             bindings, gens = inputtranscript._load(root)
+            if not (drop_b & bindings.keys() or drop_g & gens.keys()):
+                return
             inputtranscript._write(
                 root,
                 {k: v for k, v in bindings.items() if k not in drop_b},

@@ -30,7 +30,9 @@ export async function relinkScript(panel: PanelObject, from: string, target: str
   if (currentProjectId() !== pj) return 'superseded'
   const st = useScriptRunStore.getState().byScript[target]
   if (st?.error) {
-    if (isGatePhase(st.phase)) return 'gated'
+    // 门 = 缺用户的一个决定：运行目录 / 依赖，或「找不到数据」的指认（带 `missing_input` 载荷）。指认完会按带过来的配置
+    // 自动重跑，此刻撤销就会让它撞上已删的配置；收尾交给后端按注册表事实做
+    if (isGatePhase(st.phase) || st.error.missing_input) return 'gated'
     await relinkFinish(from, target, false, pj)
     return 'not_linked'
   }

@@ -301,6 +301,64 @@ def test_stale_pending_is_settled_from_the_registry(client, tmp_path):
     assert _state_under(root, "scripts/plot.py")["configs"] == []
 
 
+@pytest.mark.parametrize("fail", ["answers", "transcripts"])
+def test_prepare_failing_midway_unwinds_every_completed_copy(tmp_path, monkeypatch, fail):
+    """复制到一半写不动（答案文件 / 转录文件）：已建好的配置等一并撤销，新键下不留残留，
+    下一次 `prepare` 不会把残留当成用户自己的状态而永远带不过去。"""
+    from tavotto.engine import config, inputtranscript, runconfig, scriptanswers, scriptrelink
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "config"))
+    root = _project(tmp_path, fingerprint=True)
+    old_rc = _seed_state(root)
+    old_before = _state_under(root, "plot.py")
+    target = scriptanswers if fail == "answers" else inputtranscript
+    real = target._write
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(target, "_write", boom)
+    with pytest.raises(OSError):
+        scriptrelink.prepare(root, "plot.py", "scripts/plot.py")
+    empty = {"configs": [], "answers": [], "transcripts": []}
+    assert _state_under(root, "scripts/plot.py") == empty
+    assert _state_under(root, "plot.py") == old_before
+    assert scriptrelink.PENDING_KEY not in config.project_settings(str(root))
+
+    monkeypatch.setattr(target, "_write", real)
+    out = scriptrelink.prepare(root, "plot.py", "scripts/plot.py")
+    assert out["carried"] is True
+    assert out["run_config"] and out["run_config"] != old_rc
+    assert runconfig.get(root, out["run_config"], script="scripts/plot.py").argv == ("--n", "3")
+
+
+def test_prepare_crash_after_pending_is_recoverable(tmp_path, monkeypatch):
+    """撤销也没成（进程退出级别）：待办先于任何写入落盘，下一次 `prepare` 按注册表事实收尾后照常带过去。"""
+    from tavotto.engine import config, scriptanswers, scriptrelink
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(tmp_path / "config"))
+    root = _project(tmp_path, fingerprint=True)
+    _seed_state(root)
+    real_write, real_undo = scriptanswers._write, scriptrelink._undo
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(scriptanswers, "_write", boom)
+    monkeypatch.setattr(scriptrelink, "_undo", boom)
+    with pytest.raises(OSError):
+        scriptrelink.prepare(root, "plot.py", "scripts/plot.py")
+    assert "scripts/plot.py" in config.project_settings(str(root))[scriptrelink.PENDING_KEY]
+    assert _state_under(root, "scripts/plot.py")["configs"]  # 残留还在，但有回滚依据
+
+    monkeypatch.setattr(scriptanswers, "_write", real_write)
+    monkeypatch.setattr(scriptrelink, "_undo", real_undo)
+    out = scriptrelink.prepare(root, "plot.py", "scripts/plot.py")
+    assert out["carried"] is True and out["run_config"]
+
+
 def test_relink_does_not_touch_a_new_key_that_already_has_state(client, tmp_path):
     """用户已经在新位置配过参数：什么都不带（他新给的更新），撤销也不会误删他的。"""
     from tavotto.engine import runconfig

@@ -105,7 +105,7 @@ test.describe('只挪了脚本：错误卡上一步接回', () => {
         } else {
           await expect(page.locator('[data-script-relink]')).toHaveCount(0)
           await page.locator('[data-script-relink-choose]').click({ timeout: 30_000 })
-          await page.locator('[data-script-relink-option="scripts/fig1_kinetics.py"]').first().click()
+          await page.locator('[data-script-relink-option="scripts/fig1_kinetics.py"]').click()
         }
         expect((await probed).ok()).toBe(true)
         // 图回来：错误卡消失；登记换到新位置（带上新指纹）
