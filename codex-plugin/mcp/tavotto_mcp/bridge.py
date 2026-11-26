@@ -6328,11 +6328,14 @@ def layout_scene(
     la = require_layout_annotate()
     project, registry = _layout_project(target)
     opened: list = []
+    # 有编辑能力的引擎：场景里一并列出能改的矢量对象（`vectoredit.read_scene`）；旧引擎只有 0208 的场景，不收选择器
     if select is not None:
-        require_layout_edit()  # 旧引擎的 read_scene 没有选择器参数
+        require_layout_edit()
+    ve = _optional_engine("vectoredit") if layout_edit_available() else None
+    reader = ve.read_scene if ve is not None and hasattr(ve, "read_scene") else la.read_scene
     kw = {"select": select} if select is not None else {}
     try:
-        out = la.read_scene(
+        out = reader(
             project,
             layout,
             _layout_measure(project, registry, la, opened, {}),
@@ -6448,7 +6451,7 @@ def layout_edit_available() -> bool:
     return (
         layout_annotate_available()
         and ve is not None
-        and all(hasattr(ve, n) for n in ("propose", "commit", "preview_edit"))
+        and all(hasattr(ve, n) for n in ("propose", "commit", "preview_edit", "read_scene"))
     )
 
 

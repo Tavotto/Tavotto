@@ -162,6 +162,42 @@ def select(canvas: dict, query: dict | None = None) -> list[dict]:
     return out
 
 
+#: 场景里最多列多少个矢量对象（结果体积）；多了用 `select` 缩小
+VECTOR_OBJECTS_SHOWN = 150
+
+
+def read_scene(
+    project: str | Path,
+    name: str,
+    measure,
+    *,
+    canvas_id: str | None = None,
+    select: dict | None = None,
+) -> dict:
+    """0208 的场景 + 画布上能改的矢量对象（`select` 筛；写错抛 `LayoutError("bad_select")`，不当成全选）。"""
+    query = None
+    try:
+        query = check_query(select)
+    except EditError as exc:
+        raise la.LayoutError("bad_select", field=exc.field) from exc
+
+    def extend(canvas: dict, refs: dict) -> dict:
+        q = dict(query)
+        # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
+        if q.get("anchored_to") in refs:
+            q["anchored_to"] = refs[q["anchored_to"]]
+        picked = select_objects(canvas, q)
+        return {
+            "vector_objects": picked[:VECTOR_OBJECTS_SHOWN],
+            "vector_objects_total": len(picked),
+        }
+
+    return la.read_scene(project, name, measure, canvas_id=canvas_id, extend=extend)
+
+
+select_objects = select  # `read_scene` 的参数也叫 select
+
+
 # ------------------------------------------------------------------ 改
 
 

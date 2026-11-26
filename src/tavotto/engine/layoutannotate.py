@@ -192,21 +192,16 @@ def measure_panels(canvas: dict, items: list | None, measure: Measure) -> tuple[
     return panels, refs, unmeasured
 
 
-#: 场景里最多列多少个矢量对象（结果体积）；多了用 `select` 缩小
-VECTOR_OBJECTS_SHOWN = 150
-
-
 def read_scene(
     project: str | Path,
     name: str,
     measure: Measure,
     *,
     canvas_id: str | None = None,
-    select: dict | None = None,
+    extend: Callable[[dict, dict], dict] | None = None,
 ) -> dict:
-    """给 Agent 看的场景 + 这份排版的 `base_revision`，外加画布上能改的矢量对象（ADR 0212 选择器，`select` 筛）。"""
-    from . import vectoredit  # 延后：vectoredit 依赖本模块
-
+    """给 Agent 看的场景 + 这份排版的 `base_revision`。`extend(画布, 短号 → 子图对象 id)` 给了就把它回的键并进结果——
+    同一份读到的画布（ADR 0212 的对象列表经 `vectoredit.read_scene` 走这里；本模块不 import vectoredit，免得成环）。"""
     lay = open_layout(project, name)
     canvas = _canvas(lay.doc, canvas_id)
     panels, refs, unmeasured = measure_panels(canvas, None, measure)
@@ -215,17 +210,8 @@ def read_scene(
         o for o in canvas.get("objects") or [] if isinstance(o, dict) and o.get("type") != "panel"
     ]
     scene = vectorscene.build_scene(panels, page=page, objects=existing)
-    try:
-        query = vectoredit.check_query(select)
-    except vectoredit.EditError as exc:
-        raise LayoutError("bad_select", field=exc.field) from exc
-    # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
-    if query.get("anchored_to") in refs:
-        query["anchored_to"] = refs[query["anchored_to"]]
-    picked = vectoredit.select(canvas, query)
     return {
-        "vector_objects": picked[:VECTOR_OBJECTS_SHOWN],
-        "vector_objects_total": len(picked),
+        **(extend(canvas, refs) if extend is not None else {}),
         "layout": name,
         "canvas_id": canvas.get("id"),
         "base_revision": lay.revision,

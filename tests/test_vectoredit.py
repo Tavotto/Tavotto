@@ -1236,10 +1236,10 @@ def test_deleting_a_member_drops_a_layout_group_left_with_one(project):
 
 
 def test_scene_lists_vector_objects_and_filters_with_select(project):
-    out = la.read_scene(project, "组图", measure)
+    out = ve.read_scene(project, "组图", measure)
     assert {o["id"] for o in out["vector_objects"]} == {"a_user0001", "t_user0001", "s_user0001"}
     assert out["vector_objects_total"] == 3
-    only = la.read_scene(project, "组图", measure, select={"types": ["arrow"]})
+    only = ve.read_scene(project, "组图", measure, select={"types": ["arrow"]})
     assert [o["id"] for o in only["vector_objects"]] == ["a_user0001"]
 
 
@@ -1250,7 +1250,7 @@ def test_scene_select_takes_the_panel_short_ref_for_anchored_to(project):
     a["anchor"] = {"by": "agent", "anchors": [{"panel": {"id": "figures/fig1.pdf", "point": "e"}}]}
     atomicio.write_json(_path(project), doc, indent=1)
     for ref in ("P1", "figures/fig1.pdf"):
-        got = la.read_scene(project, "组图", measure, select={"anchored_to": ref})
+        got = ve.read_scene(project, "组图", measure, select={"anchored_to": ref})
         assert [o["id"] for o in got["vector_objects"]] == ["a_user0001"], ref
 
 
@@ -1265,7 +1265,7 @@ def test_scene_select_takes_the_panel_short_ref_for_anchored_to(project):
 )
 def test_a_bad_select_is_refused_not_read_as_select_all(project, query, field):
     with pytest.raises(la.LayoutError) as e:
-        la.read_scene(project, "组图", measure, select=query)
+        ve.read_scene(project, "组图", measure, select=query)
     assert e.value.code == "bad_select" and e.value.detail == {"field": field}
 
 
