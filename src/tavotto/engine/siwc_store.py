@@ -153,6 +153,21 @@ def _account_path(client_id: str) -> Path:
     return _accounts_dir() / f"{client_id}.json"
 
 
+def _model_entry(m: dict) -> dict:
+    """型号缓存的一项：只留认得的键（id / display_name / efforts / default_effort），值都核过形状。"""
+    from .agent_runner import siwc_wire
+
+    out: dict = {"id": m["id"]}
+    if isinstance(m.get("display_name"), str):
+        out["display_name"] = m["display_name"]
+    efforts = [e for e in (m.get("efforts") or []) if e in siwc_wire.SIWC_EFFORTS]
+    if efforts:
+        out["efforts"] = efforts
+        if m.get("default_effort") in efforts:
+            out["default_effort"] = m["default_effort"]
+    return out
+
+
 def _from_dict(d: dict) -> Account | None:
     cid, sub = d.get("client_id"), d.get("subject")
     if not valid_client_id(cid) or not isinstance(sub, str) or not sub:
@@ -167,14 +182,7 @@ def _from_dict(d: dict) -> Account | None:
         return v if isinstance(v, int) and not isinstance(v, bool) else None
 
     models = tuple(
-        {
-            "id": m["id"],
-            **(
-                {"display_name": m["display_name"]}
-                if isinstance(m.get("display_name"), str)
-                else {}
-            ),
-        }
+        _model_entry(m)
         for m in (d.get("models") or [])
         if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]
     )

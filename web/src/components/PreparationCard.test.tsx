@@ -2269,7 +2269,27 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
         expect.anything(),
       )
       expect(panel().dataset.convertPhase).toBe('running')
-      expect(panel().querySelector('[data-prep-progress]')).not.toBeNull()
+      // 进行中是任务清单（2026-11-25）：三步，还没有 stage = 读懂原脚本；没有进度条
+      const steps = () =>
+        [...panel().querySelectorAll('[data-convert-steps] [data-task-step]')].map(
+          (li) => `${li.getAttribute('data-task-step')}:${li.getAttribute('data-step-state')}`,
+        )
+      expect(steps()).toEqual(['read:active', 'write:pending', 'verify:pending'])
+      expect(panel().querySelector('[data-prep-progress]')).toBeNull()
+      expect(panel().querySelector('[data-convert-steps] [data-task-title]')?.textContent).toBe('生成可编辑版本')
+      await act(async () =>
+        useConvertStore.setState((st) => ({
+          entries: { ...st.entries, 'plot.py': { ...st.entries['plot.py']!, stage: { step: 'write', round: 2 } } },
+        })),
+      )
+      expect(steps()).toEqual(['read:done', 'write:active', 'verify:pending'])
+      expect(panel().querySelector('[data-convert-steps] [data-task-meta]')?.textContent).toBe('第 2 轮')
+      await act(async () =>
+        useConvertStore.setState((st) => ({
+          entries: { ...st.entries, 'plot.py': { ...st.entries['plot.py']!, stage: { step: 'verify', round: 1 } } },
+        })),
+      )
+      expect(steps()).toEqual(['read:done', 'write:done', 'verify:active'])
       expect(primary()).toBeNull()
       await settle()
       expect(panel().dataset.convertPhase).toBe('ready')

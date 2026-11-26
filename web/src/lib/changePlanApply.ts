@@ -103,7 +103,7 @@ export interface PlanStatusInput {
   status: 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff'
   /** 'layout' = 一键排版的整版方案：不挂在某张图上，基线由应用那一刻的 `layout.apply` 自己核 */
   kind?: 'figure' | 'layout'
-  plan?: { base_patches: readonly unknown[]; base?: { target: string } }
+  plan?: { base_patches: readonly unknown[]; base?: { target: string }; kind?: 'script' }
   appliedPatches?: readonly unknown[]
   /** 应用那一次 commit 的历史条目（一键排版卡用它从文档历史派生状态） */
   appliedEntry?: unknown
@@ -130,6 +130,15 @@ export function effectiveStatus(
     if (!history || !e.appliedEntry) return e.status
     if (history.past.includes(e.appliedEntry)) return 'applied'
     return history.future.includes(e.appliedEntry) ? 'ready' : 'stale'
+  }
+  // 脚本修改方案（ADR 0206 PR 6）：应用 / 撤销都是后端写脚本，不在文档历史里——已应用就是已应用（⌘Z 不撤脚本）；
+  // 待确认时脚本是否还是生成时那一版由后端在应用那一刻锁内核（对不上 409 → 卡片转「图已改过」），图源修订这里不看
+  // （撤销之后脚本回到改前，同一份方案可以再应用）
+  if (e.plan.kind === 'script') {
+    if (e.status === 'applied') return 'applied'
+    if (!current) return 'stale'
+    if (source && e.plan.base && e.plan.base.target !== source.fileId) return 'stale'
+    return samePatches(current, e.plan.base_patches) ? 'ready' : 'stale'
   }
   if (!current) return 'stale'
   if (source) {

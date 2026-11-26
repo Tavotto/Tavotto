@@ -870,7 +870,17 @@
       "scriptFailed": "Couldn't hand this to the Agent; the figure is unchanged",
       "summaryLayout": "{{count}} figures re-laid out",
       "appliedLayout": "Applied · {{count}} figures re-laid out",
-      "runScriptTip": "Applies these in-figure changes first"
+      "runScriptTip": "Applies these in-figure changes first",
+      "summaryScript": "Script edited: +{{added}} −{{removed}}. Your script isn’t touched until you apply",
+      "appliedScript": "Applied · script updated",
+      "applyFailedScript": "Couldn’t apply. The script wasn’t changed",
+      "undoFailedScript": "The script changed again after applying, so nothing was undone",
+      "overreachOthers": "The agent changed files in your project. Your script wasn’t changed.",
+      "overreachMore": "{{files}} and {{count}} in all",
+      "overreachChanged": "Your script changed while this was running (you may have saved it, or the agent edited it directly). It wasn’t restored automatically. Both versions are backed up.",
+      "restoreScript": "Restore the version from before",
+      "keepCurrent": "Keep the current version",
+      "restoreFailed": "The script changed again, so it wasn’t restored"
     },
     "dialog": {
       "title": "Change plan",
@@ -920,7 +930,12 @@
       "groupMetaNote": "From your note · {{count}}",
       "layoutHeading": "Layout · {{count}} figures",
       "layoutGroupMeta": "{{count}} figures",
-      "noteHere": "This spot"
+      "noteHere": "This spot",
+      "stageLabel": "View",
+      "stageFigure": "Compare",
+      "stageScript": "Script changes",
+      "scriptMeta": "Script changes · +{{added}} −{{removed}}",
+      "scriptBackupNote": "Written only when you apply, backed up first"
     },
     "unhandled": {
       "needs_script": "Needs a script change; left alone this time",

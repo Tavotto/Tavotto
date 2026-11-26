@@ -686,6 +686,330 @@ def test_arrange_ops_roundtrip_through_propose_commit_and_undo(project):
     assert _path(project).read_bytes() == before
 
 
+# ------------------------------------------------------------------ 第 3 期：几何（内核 = 前端同一份 vecops.wasm）
+
+_K = 0.5522847498
+
+
+def _circle(oid, cx, cy, r, **kw):
+    """四个平滑锚点的圆（比例坐标）；描边 1 pt、填充红。"""
+    nodes = []
+    for px, py, tx, ty in ((1, 0.5, 0, 1), (0.5, 1, -1, 0), (0, 0.5, 0, -1), (0.5, 0, 1, 0)):
+        k = _K / 2
+        nodes.append(
+            {
+                "p": [px, py],
+                "in": [px - tx * k, py - ty * k],
+                "out": [px + tx * k, py + ty * k],
+                "smooth": True,
+            }
+        )
+    return {
+        "id": oid,
+        "type": "path",
+        "x": cx - r,
+        "y": cy - r,
+        "w": 2 * r,
+        "h": 2 * r,
+        "subpaths": [{"closed": True, "nodes": nodes}],
+        "strokePt": 1,
+        "color": "#112233",
+        "fill": "#ff0000",
+        **kw,
+    }
+
+
+def _line(oid, pts, **kw):
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    x0, y0, w, h = min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+    return {
+        "id": oid,
+        "type": "path",
+        "x": x0,
+        "y": y0,
+        "w": w,
+        "h": h,
+        "subpaths": [
+            {
+                "closed": False,
+                "nodes": [{"p": [(x - x0) / (w or 1), (y - y0) / (h or 1)]} for x, y in pts],
+            }
+        ],
+        "strokePt": 2,
+        "color": "#0000ff",
+        "fill": None,
+        **kw,
+    }
+
+
+def _two_circles(**kw):
+    return [
+        _circle("p_back", 20, 20, 10, name="后", **kw),
+        _circle("p_front", 28, 20, 10, name="前", fill="#00ff00", **kw),
+    ]
+
+
+def _by(res):
+    return {o["id"]: o for o in res["objects"]}
+
+
+def test_pathfinder_unite_keeps_the_front_style_id_and_name_at_the_top_position():
+    objs = [_t("below", 0, 0, 5), *_two_circles(), _t("above", 1, 1, 5)]
+    r = _run(objs, [{"op": "pathfinder", "ids": ["p_front", "p_back"], "mode": "unite"}])
+    assert [o["id"] for o in r["objects"]] == ["below", "p_front", "above"]
+    out = _by(r)["p_front"]
+    assert (out["name"], out["fill"]) == ("前", "#00ff00") and out["type"] == "path"
+    assert abs(out["x"] - 10) < 0.02 and abs(out["w"] - 28) < 0.02  # 两圆并起来的范围
+    assert r["deleted"] == ["p_back"] and r["changed"] == [out]
+    assert r["echo"] == ["合并 2 个路径（p_back、p_front）→ 1 个路径（p_front）"]
+
+
+def test_pathfinder_result_lands_where_the_topmost_source_was_not_the_lowest():
+    a, b = _two_circles()
+    objs = [a, _t("mid", 0, 0, 5), b, _t("top", 1, 1, 5)]  # 两个源之间隔着 mid
+    r = _run(objs, [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"}])
+    assert [o["id"] for o in r["objects"]] == ["mid", "p_front", "top"]  # 在 mid 的上面，不是下面
+
+
+def test_pathfinder_minus_front_uses_the_back_style():
+    r = _run(
+        _two_circles(), [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "minus_front"}]
+    )
+    assert [o["id"] for o in r["objects"]] == ["p_back"]
+    assert _by(r)["p_back"]["fill"] == "#ff0000" and r["deleted"] == ["p_front"]
+
+
+def test_pathfinder_divide_gives_each_original_its_id_once_and_mints_ids_deterministically():
+    ops = [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "divide"}]
+    a, b = _run(_two_circles(), ops), _run(_two_circles(), ops)
+    ids = [o["id"] for o in a["objects"]]
+    assert len(ids) == 3 and {"p_back", "p_front"} <= set(ids) and a["deleted"] == []
+    assert ids == [o["id"] for o in b["objects"]]  # 方案与写入各算一遍：新 id 必须逐位一致
+    new = next(i for i in ids if i not in ("p_back", "p_front"))
+    assert re.fullmatch(r"p_[a-z0-9]{8}", new) and _by(a)[new].get("name") is None
+    assert [c for c in a["changes"] if c.get("added")] == [{"id": new, "added": True}]
+    assert {c["id"] for c in a["changes"] if c.get("replaced")} == {"p_back", "p_front"}
+
+
+def test_pathfinder_result_stays_in_the_sources_common_group():
+    objs = _two_circles(groupId="g_one")
+    r = _run(objs, [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"}])
+    assert _by(r)["p_front"]["groupId"] == "g_one"
+    objs[1]["groupId"] = "g_two"
+    r = _run(objs, [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"}])
+    assert "groupId" not in _by(r)["p_front"]
+
+
+def test_pathfinder_without_overlap_is_an_error_and_deletes_nothing():
+    far = [_circle("a", 10, 10, 5), _circle("b", 80, 10, 5)]
+    assert _err(far, [{"op": "pathfinder", "ids": ["a", "b"], "mode": "intersect"}]) == {
+        "code": "bad_op",
+        "index": 0,
+        "field": "empty_result",
+    }
+
+
+@pytest.mark.parametrize(
+    "op,field",
+    [
+        ({"op": "pathfinder", "ids": ["p_back"], "mode": "unite"}, "ids"),
+        ({"op": "pathfinder", "ids": ["p_back", "p_back"], "mode": "unite"}, "ids"),
+        ({"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "nope"}, "mode"),
+        ({"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite", "x": 1}, None),
+    ],
+)
+def test_pathfinder_bad_params(op, field):
+    e = _err(_two_circles(), [op])
+    assert e["code"] == "bad_op" and e.get("field") == field
+
+
+def test_geometry_ops_take_only_unlocked_visible_paths():
+    shape = {**_t("s", 0, 0, 5), "type": "shape", "shape": "rect", "fill": "#fff", "strokePt": 1}
+    objs = [
+        *_two_circles(),
+        shape,
+        _circle("lk", 5, 5, 3, locked=True),
+        _circle("hd", 5, 5, 3, hidden=True),
+    ]
+    two = lambda other: [{"op": "pathfinder", "ids": ["p_back", other], "mode": "unite"}]  # noqa: E731
+    assert _err(objs, two("s")) == {"code": "bad_op", "index": 0, "field": "needs_path"}
+    assert _err(objs, two("lk"))["field"] == "locked"
+    assert _err(objs, two("hd"))["field"] == "hidden"
+    assert _err(objs, two("ghost"))["code"] == "unknown_object"
+    assert _err([*objs, _t("tx", 0, 0, 1)], two("tx"))["code"] == "not_vector"
+    assert _err(objs, [{"op": "offset", "id": "s", "delta_mm": 1}])["field"] == "needs_path"
+
+
+def test_offset_adds_one_new_path_right_above_and_leaves_the_original():
+    objs = _two_circles()
+    r = _run(objs, [{"op": "offset", "id": "p_back", "delta_mm": 2}])
+    ids = [o["id"] for o in r["objects"]]
+    assert ids[0] == "p_back" and ids[2] == "p_front" and len(ids) == 3
+    new = _by(r)[ids[1]]
+    assert _by(r)["p_back"] == objs[0]  # 原对象逐字不动
+    assert abs(new["w"] - 24) < 0.05 and new["fill"] == "#ff0000" and "name" not in new
+    assert new["type"] == "path" and new["id"] == ids[1]
+    assert r["changed"] == [new] and "往外 2 mm" in r["echo"][0] and ids[1] in r["echo"][0]
+    inward = _run(objs, [{"op": "offset", "id": "p_back", "delta_mm": -2}])
+    assert abs(_by(inward)[[o["id"] for o in inward["objects"]][1]]["w"] - 16) < 0.05
+
+
+def test_offset_join_overrides_only_the_geometry_not_the_new_objects_style():
+    sq = _line("sq", [(0, 0), (10, 0), (10, 10), (0, 10)], fill="#ffffff")
+    sq["subpaths"][0]["closed"] = True
+    miter = _run([sq], [{"op": "offset", "id": "sq", "delta_mm": 2, "join": "miter"}])
+    rnd = _run([sq], [{"op": "offset", "id": "sq", "delta_mm": 2, "join": "round"}])
+    m, n = miter["objects"][1], rnd["objects"][1]
+    assert len(m["subpaths"][0]["nodes"]) < len(
+        n["subpaths"][0]["nodes"]
+    )  # 斜接 4 个角，圆角每角多出弧段
+    assert "lineJoin" not in m  # 原对象没写拐角，新对象也不写
+
+
+@pytest.mark.parametrize(
+    "op,code,field",
+    [
+        ({"op": "offset", "id": "p_back", "delta_mm": 0}, "bad_value", "delta_mm"),
+        ({"op": "offset", "id": "p_back", "delta_mm": "2"}, "bad_value", "delta_mm"),
+        ({"op": "offset", "id": "p_back", "delta_mm": 1e9}, "out_of_range", "delta_mm"),
+        ({"op": "offset", "id": "p_back", "delta_mm": 1, "join": "x"}, "bad_value", "join"),
+        ({"op": "simplify", "id": "p_back", "tolerance_pt": 0}, "bad_value", "tolerance_pt"),
+        ({"op": "outline_stroke", "id": "p_back", "extra": 1}, "bad_op", None),
+    ],
+)
+def test_geometry_bad_values(op, code, field):
+    e = _err(_two_circles(), [op])
+    assert (e["code"], e.get("field")) == (code, field)
+
+
+def test_outline_stroke_without_fill_replaces_the_object_in_place():
+    ln = _line("ln", [(0, 0), (30, 0)], name="线", strokeOpacity=0.5)
+    r = _run([ln], [{"op": "outline_stroke", "id": "ln"}])
+    out = r["objects"][0]
+    assert [o["id"] for o in r["objects"]] == ["ln"] and out["name"] == "线"
+    assert out["fill"] == "#0000ff" and out["stroke"] is False and out["fillOpacity"] == 0.5
+    assert out["subpaths"][0]["closed"] is True and "strokeOpacity" not in out
+    assert abs(out["h"] - 2 * 25.4 / 72) < 0.02  # 线宽 2 pt 拓成的带高（mm）
+    assert r["deleted"] == [] and r["echo"] == [
+        "轮廓化描边 路径线（ln，约在 15, 0 mm）：描边变成填充轮廓（同一个对象，id 不变）"
+    ]
+
+
+def test_outline_stroke_with_fill_turns_the_stroke_off_and_adds_the_outline_above():
+    r = _run(_two_circles(), [{"op": "outline_stroke", "id": "p_back"}])
+    ids = [o["id"] for o in r["objects"]]
+    assert ids[0] == "p_back" and ids[2] == "p_front" and len(ids) == 3
+    assert _by(r)["p_back"]["stroke"] is False and _by(r)["p_back"]["fill"] == "#ff0000"
+    ring = _by(r)[ids[1]]
+    assert ring["fill"] == "#112233" and ring["stroke"] is False and "name" not in ring
+    assert set(r["changed"][i]["id"] for i in range(2)) == {"p_back", ids[1]}
+
+
+@pytest.mark.parametrize(
+    "extra,field",
+    [
+        ({"dash": "dashed"}, "stroke:dash"),
+        ({"dashPattern": [3, 2]}, "stroke:dash"),
+        ({"headEnd": "triangle"}, "stroke:head"),
+        ({"strokeAlign": "inside"}, "stroke:strokeAlign"),
+        ({"stroke": False}, "no_stroke"),
+    ],
+)
+def test_outline_stroke_says_what_it_cannot_do_yet(extra, field):
+    assert (
+        _err([_circle("c", 10, 10, 5, **extra)], [{"op": "outline_stroke", "id": "c"}])["field"]
+        == field
+    )
+
+
+def test_simplify_drops_redundant_anchors_in_place_and_says_so_when_nothing_to_drop():
+    pts = [(i * 1.0, 0.0) for i in range(21)]  # 共线的一串点
+    ln = _line("dense", pts, rotationDeg=30, name="n")
+    r = _run([ln], [{"op": "simplify", "id": "dense"}])
+    out = r["objects"][0]
+    assert len(out["subpaths"][0]["nodes"]) < 21 and out["id"] == "dense"
+    assert (out["rotationDeg"], out["name"], out["color"]) == (30, "n", "#0000ff")
+    assert r["echo"][0].startswith("简化 路径n（dense") and "锚点 21 →" in r["echo"][0]
+    again = _run([out], [{"op": "simplify", "id": "dense"}])
+    assert again["changes"] == [] and "没有可省的锚点" in again["echo"][0]
+    assert again["objects"][0] == out
+
+
+def test_kernel_unavailable_only_blocks_the_geometry_ops(monkeypatch):
+    from tavotto.engine import vecops
+
+    monkeypatch.setattr(vecops, "available", lambda: False)
+    objs = [*_two_circles(), _t("t", 1, 1, 5)]
+    for op in (
+        {"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"},
+        {"op": "offset", "id": "p_back", "delta_mm": 1},
+        {"op": "outline_stroke", "id": "p_back"},
+        {"op": "simplify", "id": "p_back"},
+    ):
+        assert _err(objs, [op]) == {"code": "kernel_unavailable", "index": 0}
+    r = _run(
+        objs,
+        [{"op": "move", "id": "t", "by_mm": [2, 0]}, {"op": "rotate", "id": "p_back", "deg": 10}],
+    )
+    assert _by(r)["t"]["x"] == 3 and _by(r)["p_back"]["rotationDeg"] == 10
+    # 校验在前：坏参数照报原来的错，不被「内核不可用」盖住
+    assert _err(objs, [{"op": "offset", "id": "p_back", "delta_mm": 0}])["code"] == "bad_value"
+
+
+def test_a_batch_can_chain_geometry_with_other_ops():
+    r = _run(
+        _two_circles(),
+        [
+            {"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"},
+            {"op": "offset", "id": "p_front", "delta_mm": 1},
+            {"op": "set", "id": "p_front", "set": {"strokePt": 2}},
+        ],
+    )
+    assert len(r["objects"]) == 2 and _by(r)["p_front"]["strokePt"] == 2
+    assert len(r["echo"]) == 3
+
+
+@pytest.fixture
+def geo_project(tmp_path):
+    store = tmp_path / "tavottofile"
+    store.mkdir()
+    atomicio.write_json(store / "组图.json", _doc([*MINE, *_two_circles()]), indent=1)
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "ops",
+    [
+        [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "divide"}],
+        [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"}],
+        [
+            {"op": "offset", "id": "p_back", "delta_mm": 1.5},
+            {"op": "outline_stroke", "id": "p_front"},
+        ],
+    ],
+)
+def test_geometry_ops_roundtrip_through_propose_commit_and_undo(geo_project, ops):
+    before = _path(geo_project).read_bytes()
+    plan = ve.propose(geo_project, "组图", ops, measure, base_revision=_base(geo_project))
+    assert plan["ok"], plan.get("failed") or plan.get("errors")
+    out = ve.commit(
+        geo_project,
+        "组图",
+        ops,
+        measure,
+        base_revision=plan["base_revision"],
+        echo_digest_seen=plan["echo_digest"],
+    )
+    assert out["written"]
+    written = json.loads(_path(geo_project).read_text(encoding="utf-8"))["canvases"][0]["objects"]
+    # 写进文件的 == 方案里算出来的（含新长出来的对象与顺序）
+    assert [o["id"] for o in written] == plan["order"]
+    assert {o["id"]: o for o in written} == {o["id"]: o for o in plan["objects"]}
+    assert set(plan["deleted"]) == set(out["deleted"])
+    la.undo(geo_project, "组图", out["undo_token"])
+    assert _path(geo_project).read_bytes() == before
+
+
 def test_moving_a_rotated_arrow_puts_its_visible_tip_on_target(project):
     """转过 90° 的 20 mm 水平箭头：尖端对到 (50, 30)，**画出来**的尖端就在那里（Codex #2220 的例子）。"""
     doc = json.loads(_path(project).read_text(encoding="utf-8"))

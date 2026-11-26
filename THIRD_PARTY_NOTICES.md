@@ -123,6 +123,18 @@ Copyright (c) 2026 ArtCraft Team and the VectorCraft contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option.
 ```
 
+## WebAssembly 运行时（wasmtime，Apache-2.0 WITH LLVM-exception）
+
+不是随源码内联的，而是 PyPI 上的 [wasmtime](https://pypi.org/project/wasmtime/)（Bytecode Alliance）——列在这里是因为
+**桌面版安装包里带着它的原生库**（`wasmtime/<平台>-<架构>/_libwasmtime.*` / `_wasmtime.dll`，`packaging/tavotto.spec`
+收进），引擎用它跑前端同一份 `vecops.wasm`，给 Agent 改矢量对象的布尔 / 偏移 / 轮廓化 / 简化用（ADR 0212 第 3 期）。
+许可证原文随包附在 `wasmtime-<版本>.dist-info/licenses/LICENSE`（桌面版安装包里同样带上）。
+
+```
+Copyright (c) the Wasmtime Project Developers (Bytecode Alliance).
+Licensed under the Apache License, Version 2.0, with the LLVM Exception.
+```
+
 ## 推荐配色目录（ADR 0210）
 
 `src/tavotto/profiles/palettes.json`（许可宽松）与 `src/tavotto/profiles/palettes_copyleft.json`（GPL）里的色值，
