@@ -24,6 +24,9 @@ from tavotto.engine import (
     pool,
 )
 
+# Cold graphics-device and font discovery can exceed 40 seconds on hosted Intel Macs.
+_COLD_RENDER_TIMEOUT_SECONDS = 120
+
 
 def _rscript():
     explicit = os.environ.get("TAVOTTO_TEST_RSCRIPT")
@@ -932,7 +935,7 @@ def _assert_r_probe(tmp_path, program):
         capture_output=True,
         encoding="utf-8",
         check=False,
-        timeout=40,
+        timeout=_COLD_RENDER_TIMEOUT_SECONDS,
     )
     if result.returncode == 77 and not explicit_rscript:
         pytest.skip("Rscript does not have ggplot2 and svglite")
@@ -1237,7 +1240,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         ],
         cwd=root,
         check=True,
-        timeout=40,
+        timeout=_COLD_RENDER_TIMEOUT_SECONDS,
     )
     nonce = "native-ggplot-test"
     auth = security.SessionState(nonce)
