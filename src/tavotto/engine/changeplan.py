@@ -39,12 +39,14 @@ from pathlib import Path
 from . import (
     ai_structured,
     config,
+    figureverify,
     interference,
     license as engine_license,
     normalize,
     patchspec,
     reviewinbox,
 )
+from .ai_tasks import FAILED
 
 LOG = logging.getLogger("tavotto.changeplan")
 
@@ -83,7 +85,8 @@ ERROR_CODES = (
     # 脚本修改（PR 6）
     "change_plan_script_no_change",
     "change_plan_script_check_failed",
-    "change_plan_script_data_changed",
+    "change_plan_script_figure_missing",
+    "change_plan_script_data_unconfirmed",
     "change_plan_script_no_preview",
     "change_plan_script_overreach",
     "change_plan_script_agent_failed",
@@ -150,7 +153,8 @@ MESSAGES = {
     "change_plan_failed": "生成修改方案失败，图没有改动",
     "change_plan_script_no_change": "Agent 没有改动脚本",
     "change_plan_script_check_failed": "改后的脚本没能通过检查，没有动你的脚本",
-    "change_plan_script_data_changed": "改动影响了数据，不能应用",
+    "change_plan_script_figure_missing": "改后的脚本不再画出原来的图，没有动你的脚本",
+    "change_plan_script_data_unconfirmed": "这份方案会改变图里的数据，需要你先确认",
     "change_plan_script_no_preview": "改后的脚本没法在副本里预览，没有动你的脚本",
     "change_plan_script_overreach": "Agent 越界改了项目里的文件",
     "change_plan_script_agent_failed": "Agent 没有跑完，没有动你的脚本",
@@ -1268,6 +1272,44 @@ def script_diff(rel: str, old: bytes, new: bytes) -> tuple[str, int, int]:
     return "".join(lines)[:SCRIPT_DIFF_MAX_CHARS], added, removed
 
 
+#: 脚本方案「数据变了，先问一句」（ADR 0206 修订 2026-11-27）：confirm 里最多列几项（其余只记总数）
+MAX_DATA_CONFIRM_ITEMS = 8
+DATA_CONFIRM_KIND = "script_data_changed"
+#: 数据指纹判 FAILED 的几类原因（`figureverify.data_unchanged`）；界面按它们分语气，闭集短码
+_DATA_REASONS = ("data_changed", "subject_removed", "label_swapped")
+
+
+def script_data_findings(after: dict, before: dict) -> tuple[list[dict], list[str]]:
+    """候选脚本的数据指纹对改前基线（与 `ai_figure_edit._data_lines` 共用 `figureverify.data_unchanged`，precommit 口径）：
+    → `(findings, missing_stems)`。`findings` = 每个没过的数据元素 `{stem, gid, reason}`（`reason` ∈ `_DATA_REASONS`，
+    不带任何英文提示句 / label 原文）；`missing_stems` = 改前有、改后整张图不再产出的图名（这是坏了，不是改数据）。"""
+    findings: list[dict] = []
+    missing: list[str] = []
+    for stem, man in sorted(before.items()):
+        if man is None:
+            continue
+        if stem not in after:
+            missing.append(stem)
+            continue
+        for c in figureverify.data_unchanged(after[stem], man, stage="precommit"):
+            if c.verdict != FAILED:
+                continue
+            reason = c.reason_code if c.reason_code in _DATA_REASONS else "data_changed"
+            findings.append({"stem": stem, "gid": str(c.id).split(".", 1)[-1], "reason": reason})
+    return findings, missing
+
+
+def data_confirm(findings: list[dict]) -> dict | None:
+    """数据变了的发现 → 脚本组的 `confirm`；没有 → None。`items` 封顶 `MAX_DATA_CONFIRM_ITEMS`，`total` 是真实个数。"""
+    if not findings:
+        return None
+    return {
+        "kind": DATA_CONFIRM_KIND,
+        "items": [dict(f) for f in findings[:MAX_DATA_CONFIRM_ITEMS]],
+        "total": len(findings),
+    }
+
+
 def build_script_plan(
     *,
     plan_id: str,
@@ -1279,8 +1321,10 @@ def build_script_plan(
     new_bytes: bytes,
     base_patches: list | None = None,
     source: str = "assistant",
+    confirm: dict | None = None,
 ) -> dict:
-    """脚本修改方案：一个 `atomic` 的脚本组，没有图内改动。候选字节另存（`CANDIDATE_FILE`），应用只认它。"""
+    """脚本修改方案：一个 `atomic` 的脚本组，没有图内改动。候选字节另存（`CANDIDATE_FILE`），应用只认它。
+    `confirm`：数据指纹变了时挂在脚本组上（`data_confirm`），卡片先问、应用端点要显式确认。"""
     diff, added, removed = script_diff(script_rel, base_bytes, new_bytes)
     c = comments[0] if comments else None
     base_canon = patchspec.canonicalize(base_patches or [])
@@ -1314,6 +1358,7 @@ def build_script_plan(
                     "added": added,
                     "removed": removed,
                 },
+                **({"confirm": confirm} if confirm else {}),
             }
         ],
         "unhandled": [],

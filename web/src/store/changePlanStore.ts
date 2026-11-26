@@ -256,13 +256,16 @@ export function versionNumber(e: PlanEntry): number {
   return i < 0 ? (e.plan?.version ?? 1) : i + 1
 }
 
-/** 还等着用户回答的确认（对数轴下限）：有就先问、不给「查看 / 应用」；一次只问一个 */
+/** 还等着用户回答的确认（对数轴下限 / 脚本方案数据会变）：有就先问、不给「查看 / 应用」；一次只问一个 */
 export function pendingConfirm(e: Pick<PlanEntry, 'plan' | 'answers'>): ChangePlanGroup | undefined {
   return e.plan?.groups.find((g) => g.confirm && !e.answers?.[g.key])
 }
 
 /** 用户答了「不改」的组（整组不进方案；它那条意见在没处理列表里写一句原因） */
 export const declinedGroups = (e: Pick<PlanEntry, 'plan' | 'answers'>): ChangePlanGroup[] => (e.plan?.groups ?? []).filter((g) => e.answers?.[g.key] === 'no')
+
+/** 数据会变的脚本方案答了「先不改」：卡片落成一句灰字（本地码，后端不发） */
+export const DATA_DECLINED = 'change_plan_script_data_declined'
 
 /** 这张卡上所有版本（含在途的那一版）的后端方案 id：放弃时一并收掉 */
 const allPlanIds = (e: PlanEntry): string[] => [...new Set([...versionsOf(e).map((v) => v.planId), ...(e.planId ? [e.planId] : []), ...(e.revising ? [e.revising] : [])])]
@@ -745,7 +748,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const answers = { ...e.answers, [groupKey]: answer }
       const unchecked = answer === 'no' ? { ...e.unchecked, [groupKey]: true } : e.unchecked
       const remains = (e.plan?.groups ?? []).some((x) => answers[x.key] !== 'no')
-      patch(key, answer === 'no' && !remains ? { answers, unchecked, status: 'failed', failure: { code: 'change_plan_empty' } } : { answers, unchecked })
+      patch(key, answer === 'no' && !remains ? { answers, unchecked, status: 'failed', failure: { code: g.confirm.kind === 'script_data_changed' ? DATA_DECLINED : 'change_plan_empty' } } : { answers, unchecked })
     },
 
     addLayoutEntry: (entry) => set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] })),
@@ -819,10 +822,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return 'stale'
       }
       if (st !== 'ready') return 'failed'
+      // 数据会变的方案：回答「照样改」之前不写；回答了就把确认带给后端（后端不信前端，没带就拒）
+      const ask = e.plan.groups.find((g) => g.kind === 'script' && g.confirm?.kind === 'script_data_changed')
+      if (ask && e.answers?.[ask.key] !== 'yes') return 'failed'
       const guard = captureProjectEpoch()
       patch(key, { scriptBusy: true, notice: undefined })
       try {
-        const applied = await applyChangePlanScript(e.planId)
+        const applied = ask ? await applyChangePlanScript(e.planId, { confirmDataChange: true }) : await applyChangePlanScript(e.planId)
         if (!guard.still() || !get().entries[key]) return 'failed'
         patch(key, { status: 'applied', scriptBusy: false, notice: undefined, plan: { ...e.plan, applied } })
         set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
