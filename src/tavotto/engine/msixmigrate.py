@@ -720,8 +720,14 @@ _PENDING_THREAD_LOCK = threading.Lock()
 def _kick_pending_merge() -> None:
     """有「待补」就起一个后台线程去合并（每个进程同时最多一个）。不等它：启动照常往下走。"""
     global _PENDING_THREAD
-    if _read_pending() is None:
+    pending = _read_pending()
+    if pending is None:
         return
+    # 拥有这个库的模块（ai_history）没在本进程加载就不起线程：CLI（`handoff.cli`）也调 run_once，但不 import ai_history；
+    # 起了线程就会拿着迁移锁干等登记，正好挡住随后启动的桌面版同步迁移（d2 #2283 复核）。由加载了它的进程来合并。
+    with _MERGERS_CHANGED:
+        if any(rel in SQLITE_ITEMS and rel not in _SQLITE_MERGERS for rel in pending["items"]):
+            return
     with _PENDING_THREAD_LOCK:
         if _PENDING_THREAD is not None and _PENDING_THREAD.is_alive():
             return
@@ -748,6 +754,11 @@ def _merge_pending(budget_s: float) -> dict | None:
     if not _eligible() or _read_pending() is None:
         return None
     deadline = time.monotonic() + budget_s
+    # 先确认合并实现都已登记、再拿锁：不拿着迁移锁干等（会挡住别的进程的同步迁移）
+    first = _read_pending() or {"items": {}}
+    for rel in first["items"]:
+        if rel in SQLITE_ITEMS and _merger_for(rel, deadline) is None:
+            return {rel: "deferred" for rel in first["items"]}
     fd = layoutsession.acquire_file_lock(config.data_path(*LOCK_REL), deadline)
     if fd is None:
         return None

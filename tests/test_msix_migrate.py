@@ -1112,3 +1112,23 @@ def test_no_registered_merger_yet_is_deferred_not_failed(world, monkeypatch):
     monkeypatch.setattr(msixmigrate, "_SQLITE_MERGERS", {})
     assert msixmigrate.merge_pending(budget_s=0.05) == {"cache/ai_history.sqlite3": "deferred"}
     assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 0
+
+
+def test_a_process_without_ai_history_does_not_start_the_merge_or_hold_the_lock(world, monkeypatch):
+    """d2 #2283 复核：CLI 也调 run_once 但不 import ai_history。不能起线程拿着迁移锁干等登记、挡住随后桌面版的同步迁移。"""
+    real_kick = msixmigrate._kick_pending_merge
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    monkeypatch.setattr(msixmigrate, "_SQLITE_MERGERS", {})
+    monkeypatch.setattr(msixmigrate, "_PENDING_THREAD", None)
+    monkeypatch.setattr(msixmigrate, "_kick_pending_merge", real_kick)
+    msixmigrate.run_once()
+    assert msixmigrate._PENDING_THREAD is None  # 没起线程
+    fd = msixmigrate.layoutsession.acquire_file_lock(
+        msixmigrate.config.data_path(*msixmigrate.LOCK_REL), time.monotonic() + 0.2
+    )
+    assert fd is not None  # 迁移锁没被占
+    msixmigrate.layoutsession.release_file_lock(fd)
+    # 直接调用也不在等登记期间持锁：等不到就 deferred
+    assert msixmigrate.merge_pending(budget_s=0.05) == {"cache/ai_history.sqlite3": "deferred"}
