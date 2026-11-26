@@ -771,7 +771,7 @@
     "backHome": "Tavotto homepage",
     "bootDownloadDesktop": "Download desktop {{product}}",
     "bootListSeparator": ", ",
-    "bootUnsupportedBrowser": "{{product}} browser playground needs a modern browser with WebAssembly and module Worker support (missing {{missing}}). Desktop {{product}} isn’t affected.",
+    "bootUnsupportedBrowser": "This browser can’t run the {{product}} playground (missing {{missing}}). Open it in the latest Chrome, Edge, Firefox or Safari, or use the desktop app.",
     "cancelLoading": "Cancel",
     "cdnNote": "The browser downloads the Python runtime from jsDelivr (Pyodide v{{version}}).",
     "changed": "changed unexpectedly",
