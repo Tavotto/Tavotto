@@ -78,6 +78,7 @@ R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
 BAR_WIDTH = {"bar_width": 0.65}
 ERRORBAR_PAINT = {"color": "#803239", "linewidth": 1.8, "alpha": 0.6}
+ERRORBAR_CAPS = {"capsize": 8, "cap_thickness": 2.6}
 RANGE_PAINT = {"facecolor": "#695DB2", "alpha": 0.6}
 AXIS_GRID = {
     "grid_x": True,
@@ -336,6 +337,23 @@ def _pdf_pixels(path):
         assert any(path["rect"].x0 > page.rect.width / 2 for path in errors)
         assert any(path["width"] == pytest.approx(1.8 * R_PANEL_SCALE, abs=0.02) for path in errors)
         assert all(path["stroke_opacity"] == pytest.approx(0.6, abs=0.01) for path in errors)
+        r_caps = [
+            path["rect"]
+            for path in errors
+            if path["rect"].x0 > page.rect.width / 2
+            and path["width"]
+            == pytest.approx(ERRORBAR_CAPS["cap_thickness"] * R_PANEL_SCALE, abs=0.02)
+        ]
+        assert len(r_caps) == 6
+        assert all(rect.height < 0.01 for rect in r_caps)
+        assert [rect.width for rect in r_caps] == pytest.approx(
+            [ERRORBAR_CAPS["capsize"] * R_PANEL_SCALE] * 6, abs=0.02
+        )
+        assert any(
+            path["rect"].x0 < page.rect.width / 2
+            and path["width"] == pytest.approx(ERRORBAR_CAPS["cap_thickness"], abs=0.02)
+            for path in errors
+        )
         ribbon_color = tuple(n / 255 for n in bytes.fromhex(RANGE_PAINT["facecolor"][1:]))
         ribbons = [path for path in drawn if path["fill"] == pytest.approx(ribbon_color, abs=0.003)]
         assert len(ribbons) == 2
@@ -756,9 +774,8 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
             el for el in changed["manifest"]["elements"] if el["gid"] == r_errors["gid"]
         )
         assert edited_errors["geometry"]["paths"] == r_errors["geometry"]["paths"]
-        assert {
-            field["prop"]: field["value"] for field in edited_errors["editable"]
-        } == ERRORBAR_PAINT
+        error_fields = {field["prop"]: field["value"] for field in edited_errors["editable"]}
+        assert {prop: error_fields[prop] for prop in ERRORBAR_PAINT} == ERRORBAR_PAINT
         with pytest.raises(HttpError):
             _render(app, r_asset, [{**r_bar_patches[0], "identity": "r7:stale"}])
         edited_range = next(
@@ -772,6 +789,9 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         r_patches.extend([*r_bar_patches, *r_error_patches, *r_range_patches])
         mpl_patches.extend([*mpl_bar_patches, *mpl_error_patches, *mpl_range_patches])
         assert _render(app, r_asset, r_patches)["svg"] == changed["svg"]
+        for baseline, patches in ((mpl_baseline, mpl_patches), (precision, r_patches)):
+            _, cap_patches = _series_patches(baseline, "errorbar", ERRORBAR_CAPS)
+            patches.extend(cap_patches)
         for asset, baseline, patches in (
             (mpl_asset, mpl_baseline, mpl_patches),
             (r_asset, precision, r_patches),

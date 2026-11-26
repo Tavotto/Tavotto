@@ -863,18 +863,40 @@ style <- list(color = "#8A2530", linewidth = 2.1, alpha = .6)
 patch <- setNames(list(style), gid)
 svg <- adapter$render_ggplot(state, patch)
 stopifnot(identical(element(patch)$geometry$paths, original$geometry$paths),
-          identical(element(patch)$errorbar_series$current, style),
+          identical(element(patch)$errorbar_series$current[names(style)], style),
           any(grepl("stroke: #8A2530", strsplit(svg, "\n", fixed = TRUE)[[1L]], fixed = TRUE) &
               grepl("stroke-width: 2.10", strsplit(svg, "\n", fixed = TRUE)[[1L]], fixed = TRUE) &
               grepl("stroke-opacity: 0.60", strsplit(svg, "\n", fixed = TRUE)[[1L]], fixed = TRUE)),
           identical(adapter$render_ggplot(state), captured$svg), calls == 1L)
+endpoint_style <- c(style, list(capsize = 9, cap_thickness = 3.25))
+capped <- stats::setNames(list(endpoint_style), gid)
+resized <- element(capped)
+paths <- resized$geometry$paths
+physical_span <- function(path, axis) {
+  abs(diff(vapply(path$points, `[[`, numeric(1L), axis))) * frame[[axis]]
+}
+stopifnot(identical(resized$errorbar_series$current, endpoint_style),
+          identical(paths[c(2L, 5L)], original$geometry$paths[c(2L, 5L)]),
+          all(abs(vapply(paths[c(1L, 3L, 4L, 6L)], physical_span, numeric(1L), 1L) - 9) < 1e-10))
+capped_rows <- strsplit(adapter$render_ggplot(state, capped), "\n", fixed = TRUE)[[1L]]
+colored <- capped_rows[startsWith(capped_rows, "<polyline ") &
+                         grepl("stroke: #8A2530", capped_rows, fixed = TRUE)]
+stopifnot(sum(grepl("stroke-width: 3.25", colored, fixed = TRUE)) == 4L,
+          sum(grepl("stroke-width: 2.10", colored, fixed = TRUE)) == 2L)
+uncapped <- stats::setNames(list(list(capsize = 0)), gid)
+stopifnot(identical(element(uncapped)$geometry$paths, original$geometry$paths[c(2L, 5L)]))
 horizontal <- ggplot2::ggplot(data, ggplot2::aes(y, x)) +
   ggplot2::geom_errorbar(ggplot2::aes(xmin = lower, xmax = upper), width = .3)
-stopifnot(length(adapter$capture_ggplot(horizontal, frame)$state$line_targets) == 1L)
+horizontal_state <- adapter$capture_ggplot(horizontal, frame)$state
+horizontal_frame <- adapter$ggplot_manifest(horizontal_state, "horizontal", capped)
+horizontal_paths <- Filter(function(e) e$gid == gid, horizontal_frame$elements)[[1L]]$geometry$paths
+stopifnot(all(abs(vapply(horizontal_paths[c(1L, 3L, 4L, 6L)], physical_span,
+                         numeric(1L), 2L) - 9) < 1e-10))
 mapped <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
   ggplot2::geom_errorbar(ggplot2::aes(ymin = lower, ymax = upper, colour = x), show.legend = FALSE)
 stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$line_targets) == 0L)
-for (bad in list(list(alpha = 1.01), list(linewidth = 5.01), list(capsize = 2))) {
+for (bad in list(list(alpha = 1.01), list(linewidth = 5.01), list(capsize = -2),
+                 list(cap_thickness = .01))) {
   stopifnot(inherits(try(adapter$render_ggplot(state, setNames(list(bad), gid)),
                         silent = TRUE), "try-error"))
 }

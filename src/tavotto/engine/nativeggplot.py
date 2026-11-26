@@ -20,6 +20,7 @@ from .manifest_fields import (
     axis_scale_field,
     bar_paint_fields,
     bar_width_field,
+    errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
     marker_field,
@@ -282,10 +283,11 @@ class GgplotTarget:
     @staticmethod
     def annotate_errorbar_series(element: dict, series: dict) -> None:
         def stroke(values: dict) -> list[dict]:
-            return [
-                *errorbar_stroke_fields(values["color"], values["linewidth"]),
-                opacity_field(values["alpha"]),
-            ]
+            fields = errorbar_stroke_fields(values["color"], values["linewidth"])
+            if "capsize" in values:
+                fields.extend(errorbar_cap_fields(values["capsize"], values["cap_thickness"]))
+            fields.append(opacity_field(values["alpha"]))
+            return fields
 
         fields = stroke(series["current"])
         original = {field["prop"]: field["value"] for field in stroke(series["original"])}

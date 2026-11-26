@@ -96,6 +96,7 @@ from manifest_fields import (
     axis_scale_field,
     bar_paint_fields,
     bar_width_field,
+    errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
     marker_field as _marker_field,
@@ -3229,24 +3230,10 @@ def _errorbar_fields(grp) -> list[dict]:
         lw = lw[0] if len(lw) else 1.0
     return [
         *errorbar_stroke_fields(to_hex(color), lw),
-        {
-            "prop": "capsize",
-            "type": "number",
-            "value": round(float(cap0.get_markersize()), 2) if cap0 is not None else 0.0,
-            "min": 0,
-            "max": 15,
-            "step": 0.5,
-            "unit": "pt",
-        },
-        {
-            "prop": "cap_thickness",
-            "type": "number",
-            "value": round(float(cap0.get_markeredgewidth()), 2) if cap0 is not None else 1.0,
-            "min": 0.1,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
+        *errorbar_cap_fields(
+            cap0.get_markersize() if cap0 is not None else 0.0,
+            cap0.get_markeredgewidth() if cap0 is not None else 1.0,
+        ),
         opacity_field(1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
     ]

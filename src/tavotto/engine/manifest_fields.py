@@ -190,6 +190,29 @@ def errorbar_stroke_fields(color: str, width: float) -> list[dict]:
     ]
 
 
+def errorbar_cap_fields(length: float, width: float) -> list[dict]:
+    return [
+        {
+            "prop": "capsize",
+            "type": "number",
+            "value": round(float(length), 2),
+            "min": 0,
+            "max": 15,
+            "step": 0.5,
+            "unit": "pt",
+        },
+        {
+            "prop": "cap_thickness",
+            "type": "number",
+            "value": round(float(width), 2),
+            "min": 0.1,
+            "max": 5,
+            "step": 0.1,
+            "unit": "pt",
+        },
+    ]
+
+
 def bar_paint_fields(values: dict) -> list[dict]:
     """Bar paint supported by the source, with stroke width in points."""
     fields = [

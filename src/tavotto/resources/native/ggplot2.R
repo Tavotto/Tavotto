@@ -723,6 +723,68 @@ ggplot_line_guide_keys <- function(built, layer, key_name, mapped) {
   indices
 }
 
+ggplot_errorbar_caps <- function(line, flipped) {
+  runs <- rle(line$id)
+  if (length(unique(flipped)) != 1L || !is.logical(flipped) || anyNA(flipped) ||
+      any(runs$lengths != 8L) || anyDuplicated(runs$values)) return(NULL)
+  points <- matrix(seq_along(line$id), nrow = 8L)
+  horizontal <- isTRUE(flipped[[1L]])
+  along <- as.numeric(if (horizontal) line$y else line$x)
+  across <- as.numeric(if (horizontal) line$x else line$y)
+  ends <- points[c(1L, 2L, 4L, 5L, 7L, 8L), , drop = FALSE]
+  separators <- points[c(3L, 6L), , drop = FALSE]
+  if (!all(is.finite(along[ends]) & is.finite(across[ends])) ||
+      !all(is.na(along[separators]) & is.na(across[separators])) ||
+      !all(along[points[4L, ]] == along[points[5L, ]]) ||
+      !all(across[points[1L, ]] == across[points[4L, ]] &
+           across[points[2L, ]] == across[points[4L, ]] &
+           across[points[7L, ]] == across[points[5L, ]] &
+           across[points[8L, ]] == across[points[5L, ]])) return(NULL)
+  list(points = points, axis = if (horizontal) "y" else "x")
+}
+
+ggplot_cap_span <- function(line, caps) {
+  if (!is.null(line$tavotto_cap_span)) return(line$tavotto_cap_span)
+  positions <- line[[caps$axis]]
+  positions[caps$points[2L, 1L]] - positions[caps$points[1L, 1L]]
+}
+
+ggplot_edit_errorbar_caps <- function(line, caps, length_pt, width_pt) {
+  points <- caps$points
+  span <- ggplot_cap_span(line, caps)
+  if (!is.null(length_pt)) {
+    span <- grid::unit(length_pt / 72, "inches")
+    positions <- line[[caps$axis]]
+    centre <- positions[points[c(4L, 4L, 5L, 5L), , drop = FALSE]]
+    positions[points[c(1L, 2L, 7L, 8L), , drop = FALSE]] <-
+      centre + grid::unit(rep(c(-1, 1), length.out = length(centre)) * length_pt / 144, "inches")
+    line[[caps$axis]] <- positions
+  }
+  line$tavotto_cap_span <- span
+  hide_caps <- isTRUE(length_pt == 0)
+  if (!is.null(width_pt) || hide_caps) {
+    segments <- if (hide_caps) points[c(4L, 5L), , drop = FALSE] else
+      points[c(1L, 2L, 4L, 5L, 7L, 8L), , drop = FALSE]
+    segment_count <- nrow(segments) / 2L
+    line$x <- line$x[segments]
+    line$y <- line$y[segments]
+    line$id <- rep(seq_len(length(segments) / 2L), each = 2L)
+    source_strokes <- rep(seq_len(ncol(points)), each = segment_count)
+    for (key in names(line$gp)) {
+      value <- line$gp[[key]]
+      if (length(value) != 1L) {
+        line$gp[[key]] <- rep_len(value, ncol(points))[source_strokes]
+      }
+    }
+    if (!hide_caps) {
+      stroke <- rep_len(line$gp$lwd, length(line$id) / 2L)
+      stroke[rep(c(TRUE, FALSE, TRUE), ncol(points))] <- width_pt / ggplot_lwd_pt
+      line$gp$lwd <- stroke
+    }
+  }
+  line
+}
+
 ggplot_line_targets <- function(built, table, layer_grobs) {
   slots <- which(table$layout$name == "panel")
   if (length(slots) != 1L || !identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
@@ -777,6 +839,7 @@ ggplot_line_targets <- function(built, table, layer_grobs) {
     context <- rlang::hash(facts)
     targets[[gid]] <- list(
       slot = slot, child = line$name, index = index, context = context, interval = interval,
+      caps = if (interval) ggplot_errorbar_caps(line, built$data[[index]]$flipped_aes),
       guide_keys = guide_keys, key_name = key_name,
       clip = identical(built$layout$coord$clip, "on"),
       width = width * ggplot_lwd_pt, style = style,
@@ -832,7 +895,7 @@ measure_ggplot_lines <- function(table, targets, frame_pt) {
     geometry <- tryCatch({
       grid::downViewport(do.call(grid::vpPath, as.list(viewport[-1L])), strict = TRUE)
       line <- grid::grid.get(do.call(grid::gPath, as.list(c(path, target$child))), strict = TRUE)
-      width <- unique(line$gp$lwd) * ggplot_lwd_pt
+      width <- max(line$gp$lwd) * ggplot_lwd_pt
       paths <- ggplot_device_paths(line$x, line$y, line$id, FALSE, frame_pt)
       if (!length(paths) || !is_positive_ggplot_number(width)) stop("Invalid native R stroke geometry.")
       visible <- any(grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ] > 0)
@@ -842,7 +905,12 @@ measure_ggplot_lines <- function(table, targets, frame_pt) {
       if (target$clip) geometry$clip <- ggplot_panel_clip(frame_pt)
       pad <- width / (2 * frame_pt)
       bbox <- ggplot_paths_bbox(paths, pad)
-      list(bbox = as.list(bbox), geometry = geometry)
+      capsize <- if (!is.null(target$caps)) {
+        span <- ggplot_cap_span(line, target$caps)
+        abs(grid::convertUnit(span, "inches", axisFrom = target$caps$axis,
+                              typeFrom = "dimension", valueOnly = TRUE)) * 72
+      }
+      list(bbox = as.list(bbox), geometry = geometry, capsize = capsize)
     }, error = function(error) NULL, finally = grid::upViewport(0))
     result[[gid]] <- geometry
   }
@@ -875,6 +943,11 @@ ggplot_line_style <- function(target, patch) {
     } else if (target$interval && prop == "alpha" && is.numeric(value) &&
                length(value) == 1L && is.finite(value) && value >= 0 && value <= 1) {
       next
+    } else if (!is.null(target$caps) && is.numeric(value) && length(value) == 1L &&
+               is.finite(value) &&
+               (prop == "capsize" && value >= 0 && value <= 15 ||
+                prop == "cap_thickness" && value >= 0.1 && value <= 5)) {
+      next
     } else {
       stop("Invalid native R curve style.")
     }
@@ -888,6 +961,11 @@ ggplot_edit_line <- function(table, target, patch) {
   change <- ggplot_line_style(target, patch)
   line$gp[names(change)] <- change
   if (!is.null(patch$alpha)) line$gp$col <- scales::alpha(line$gp$col, patch$alpha)
+  if (!is.null(patch$capsize) || !is.null(patch$cap_thickness)) {
+    caps <- ggplot_errorbar_caps(line, target$caps$axis == "y")
+    if (is.null(caps)) stop("The native R error bar caps changed.")
+    line <- ggplot_edit_errorbar_caps(line, caps, patch$capsize, patch$cap_thickness)
+  }
   panel$children[[target$child]] <- line
   table$grobs[[target$slot]] <- panel
   table
@@ -1479,7 +1557,14 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     if (target$interval) {
       original <- list(color = target$color, linewidth = target$width, alpha = target$alpha / 255)
       current <- original
+      if (!is.null(target$caps)) {
+        original$capsize <- state$line_geometry[[gid]]$capsize
+        original$cap_thickness <- target$width
+        current$capsize <- geometry$capsize
+        current$cap_thickness <- if (is.null(patch$linewidth)) target$width else patch$linewidth
+      }
       current[names(patch)] <- patch
+      geometry$capsize <- NULL
       return(c(list(gid = gid, role = "errorbar",
                     label = paste("\u8bef\u5dee\u68d2", target$index), draggable = FALSE,
                     editable = list(), errorbar_series = list(
