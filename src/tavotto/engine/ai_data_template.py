@@ -1384,8 +1384,10 @@ def style_from_profile(
         d["frame_lw_pt"] = float(frame[0])
     if axis.get("tick_direction") in ("in", "out", "inout"):
         d["tick_direction"] = axis["tick_direction"]
-    if isinstance(axis.get("enclosed_spines"), bool):
-        d["enclosed_spines"] = axis["enclosed_spines"]
+    # `enclosed_spines` 是判据（预检 `spines-not-enclosed`）：True = 要求四周边框，False = 不要求（期刊底 / 自由排版）。
+    # 「不要求」不是「要去掉」——只有 True 才覆盖；False 时沿用具名默认（四周边框），选了期刊不会把上、右边框拿掉。
+    if axis.get("enclosed_spines") is True:
+        d["enclosed_spines"] = True
     legend = profile.get("legend_policy") or {}
     if isinstance(legend.get("frame"), bool):
         d["legend_frame"] = legend["frame"]

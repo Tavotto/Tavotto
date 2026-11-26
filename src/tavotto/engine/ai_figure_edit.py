@@ -29,6 +29,7 @@ from . import (
     ai_attachments,
     ai_prompt_pack,
     ai_tasks,
+    atomicio,
     config,
     discover,
     figureverify,
@@ -85,6 +86,13 @@ def is_python_env_dir(p: Path) -> bool:
         return False
 
 
+def _own_atomic_tmp(rel: str, exclude: frozenset[str]) -> bool:
+    """被排除的文件（Tavotto 自己写的注册表等）正在原子写时留下的临时文件：与目标同属排除——后台刷新改写注册表的
+    那一瞬被指纹扫到，否则会判成「项目被改动」（慢 Windows runner 上 `project.untouched` 偶发 failed）。"""
+    target = atomicio.tmp_target(rel)
+    return target is not None and target in exclude
+
+
 def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) -> dict:
     """原项目目录的有界文件指纹：`{"status": "ok", "files": {相对路径: [size, mtime_ns, sha256 | None, 链接目标?]}}`，
     超出文件数上限回 `{"status": "over_budget"}`。`exclude` 是 posix 相对路径。
@@ -127,7 +135,7 @@ def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) ->
                 continue  # 同步客户端 / 系统自己写的（闭集见 `syncnoise`）：不是校验运行改的
             p = Path(dirpath) / name
             rel = p.relative_to(root).as_posix()
-            if rel in exclude:
+            if rel in exclude or _own_atomic_tmp(rel, exclude):
                 continue
             if len(files) >= FINGERPRINT_MAX_FILES:
                 return {"status": "over_budget"}

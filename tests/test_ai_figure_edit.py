@@ -1351,3 +1351,19 @@ def test_plan_only_check_lets_changed_data_through_but_not_a_missing_figure(env)
     cand.extras.pop("check_baseline", None)
     ok, report = ai_figure_edit.agent_check(cand, changed, data_change_allowed=True)
     assert not ok and "not produced any more" in report
+
+
+def test_fingerprint_ignores_atomic_tmp_of_excluded_files_only(tmp_path):
+    """后台刷新改写注册表的那一瞬，`tavotto_registry.json.<pid>.<n>.tmp` 被指纹扫到不算「项目被改动」
+    （注册表本身已排除，它的原子写临时文件同属排除）；别的文件的临时文件照常算。"""
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "fig.py").write_bytes(b"x")
+    own = ai_figure_edit._own_files("fig.py")
+    before = ai_figure_edit.project_fingerprint(root, exclude=own)
+    (root / "tavotto_registry.json.4242.7.tmp").write_bytes(b"{}")
+    after = ai_figure_edit.project_fingerprint(root, exclude=own)
+    assert ai_figure_edit.fingerprint_changes(before, after) == []
+    (root / "data.csv.4242.8.tmp").write_bytes(b"1")
+    after = ai_figure_edit.project_fingerprint(root, exclude=own)
+    assert ai_figure_edit.fingerprint_changes(before, after) == ["data.csv.4242.8.tmp"]
