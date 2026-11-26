@@ -12,7 +12,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, execspec, nativeggplot, projectenv, scriptadjust
+from . import config, execspec, nativeggplot, projectenv, runtime, scriptadjust
 from .fixtools import cmdsandbox, trial
 
 _RGB = re.compile(r"#[0-9a-fA-F]{6}\Z")
@@ -153,6 +153,7 @@ def _run(command: list[str], cwd: Path, environment: dict[str, str]) -> None:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        creationflags=runtime.CREATE_NO_WINDOW,
         start_new_session=True,
     ) as process:
         try:
