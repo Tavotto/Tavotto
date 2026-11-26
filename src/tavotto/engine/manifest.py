@@ -88,6 +88,8 @@ from legendmodel import (
     legend_proxy_names,
 )
 from manifest_fields import (
+    axis_limits_field,
+    axis_scale_field,
     bar_paint_fields,
     errorbar_stroke_fields,
     fill_color_field,
@@ -4396,34 +4398,16 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             []
             if flags.get("limits_slaved")
             else [
-                {
-                    "prop": "xlim",
-                    "type": "pair",
-                    "value": [float(x0), float(x1)],
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "ylim",
-                    "type": "pair",
-                    "value": [float(y0), float(y1)],
-                    "group": "数据范围",
-                },
+                axis_limits_field("x", (x0, x1)),
+                axis_limits_field("y", (y0, y1)),
                 # 选项由**当前这套 matplotlib 真正注册了的 scale** 决定，不写死清单：
                 # 列一个 set_[xy]scale 吃不下的名字，用户点了只会得到一次渲染失败
-                {
-                    "prop": "xscale",
-                    "type": "enum",
-                    "value": str(ax.get_xscale()),
-                    "options": scale_options(ax.get_xscale(), ax, "x"),
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "yscale",
-                    "type": "enum",
-                    "value": str(ax.get_yscale()),
-                    "options": scale_options(ax.get_yscale(), ax, "y"),
-                    "group": "数据范围",
-                },
+                axis_scale_field(
+                    "x", str(ax.get_xscale()), scale_options(ax.get_xscale(), ax, "x")
+                ),
+                axis_scale_field(
+                    "y", str(ax.get_yscale()), scale_options(ax.get_yscale(), ax, "y")
+                ),
                 {
                     "prop": "invert_x",
                     "type": "bool",

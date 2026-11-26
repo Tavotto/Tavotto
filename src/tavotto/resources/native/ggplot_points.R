@@ -96,7 +96,7 @@ ggplot_edit_points <- function(table, target, edit) {
   table
 }
 
-measure_ggplot_points <- function(table, targets, frame_pt) {
+measure_ggplot_points <- function(table, targets, frame_pt, retain_clipped = FALSE) {
   if (!length(targets)) return(list())
   drawn <- tryCatch({
     grid::grid.force()
@@ -128,6 +128,9 @@ measure_ggplot_points <- function(table, targets, frame_pt) {
       }
       if (all(is.finite(c(lower, upper))) && all(upper > lower)) {
         as.list(c(lower[[1L]] / frame[[1L]], 1 - upper[[2L]] / frame[[2L]], (upper - lower) / frame))
+      } else if (retain_clipped && all(is.finite(c(lower, upper)))) {
+        # The same series may carry style overrides while outside the view.
+        as.list(c(-1, -1, 0, 0))
       }
     }, error = function(error) NULL, finally = grid::upViewport(0))
     result[[gid]] <- bbox

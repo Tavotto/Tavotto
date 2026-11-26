@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import subprocess
 import time
@@ -76,6 +77,8 @@ R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
 ERRORBAR_PAINT = {"color": "#803239", "linewidth": 1.8, "alpha": 0.6}
 RANGE_PAINT = {"facecolor": "#695DB2", "alpha": 0.6}
+R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log"}
+MPL_AXIS_VIEW = {"xlim": [-0.25, 2.25], "ylim": [-0.3, 5.5]}
 
 
 def _series_patches(baseline, role, paint):
@@ -266,6 +269,10 @@ def _pdf_pixels(path):
         ]
         assert curve["width"] == pytest.approx(R_CURVE_WIDTH * R_PANEL_SCALE, abs=0.02)
         assert curve["dashes"] != "[] 0"
+        first, second = curve["items"]
+        assert first[0] == second[0] == "l" and first[2] == second[1]
+        actual_ratio = (first[2].x - first[1].x) / (second[2].x - first[1].x)
+        assert actual_ratio == pytest.approx(math.log(3.3 / 1.8) / math.log(5.2 / 1.8), abs=0.003)
         face = tuple(component / 255 for component in bytes.fromhex(BAR_PAINT["facecolor"][1:]))
         bars = [path for path in drawn if path["fill"] == pytest.approx(face, abs=0.003)]
         assert len(bars) == 4
@@ -566,6 +573,8 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                 == patch["value"]
             )
         mpl_patches = [mpl_patch, *_axis_style_patches(mpl_baseline, AXIS_PAGE_SIZE)]
+        _, mpl_view_patches = _series_patches(mpl_baseline, "axes", MPL_AXIS_VIEW)
+        mpl_patches.extend(mpl_view_patches)
         r_bulk = [r_patch, *_axis_style_patches(r_baseline, AXIS_PAGE_SIZE / R_PANEL_SCALE)]
         r_single = [
             {**patch, "value": R_AXIS_PAGE_SIZE / R_PANEL_SCALE}
@@ -629,9 +638,21 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                 for prop, value in R_COLOR_SCALE.items()
             ],
         ]
-        precision = _render(app, r_asset, r_patches)
+        r_axes, r_view_patches = _series_patches(r_baseline, "axes", R_AXIS_VIEW)
+        assert r_axes["identity"].startswith("r10:")
+        before_view = _render(app, r_asset, r_patches)["svg"]
+        precision = _render(app, r_asset, [*r_patches, *r_view_patches])
+        assert precision["svg"] != before_view
+        (edited_axes,) = [el for el in precision["manifest"]["elements"] if el["role"] == "axes"]
+        assert edited_axes["identity"] == r_axes["identity"]
+        view_fields = {f["prop"]: f["value"] for f in edited_axes["editable"]}
+        assert {prop: view_fields[prop] for prop in R_AXIS_VIEW} == R_AXIS_VIEW
+        with pytest.raises(HttpError):
+            _render(app, r_asset, [{**r_view_patches[0], "identity": "r10:stale"}])
+        assert _render(app, r_asset, r_patches)["svg"] == before_view
         assert precision["svg"] != moved["svg"]
         assert _render(app, r_asset, moved_patches)["svg"] == moved["svg"]
+        r_patches.extend(r_view_patches)
         assert _render(app, r_asset, r_patches)["svg"] == precision["svg"]
         edited_scale = next(
             el for el in precision["manifest"]["elements"] if el["gid"] == R_COLOR_SCALE_GID

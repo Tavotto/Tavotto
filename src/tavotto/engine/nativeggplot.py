@@ -13,6 +13,8 @@ from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
 from .manifest_fields import (
+    axis_limits_field,
+    axis_scale_field,
     bar_paint_fields,
     errorbar_stroke_fields,
     fill_color_field,
@@ -30,6 +32,7 @@ _POINT_SERIES_IDENTITY_PREFIX = "r6:"
 _BAR_SERIES_IDENTITY_PREFIX = "r7:"
 _ERRORBAR_IDENTITY_PREFIX = "r8:"
 _RIBBON_IDENTITY_PREFIX = "r9:"
+_AXES_IDENTITY_PREFIX = "r10:"
 
 
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
@@ -177,6 +180,10 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            axes = element.pop("native_axes", None)
+            if axes is not None:
+                GgplotTarget.annotate_axes(element, axes)
+                continue
             ribbon = element.pop("ribbon", None)
             if ribbon is not None:
                 current = ribbon["current"]
@@ -236,6 +243,22 @@ class GgplotTarget:
             if element["gid"] != "plot.title":
                 label = element["gid"].encode("utf-8") + b"\0" + label
             element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
+
+    @staticmethod
+    def annotate_axes(element: dict, axes: dict) -> None:
+        fields = []
+        for axis, original in axes["original"].items():
+            current = axes["current"][axis]
+            limits = axis_limits_field(axis, current["range"])
+            scale = axis_scale_field(
+                axis, current["mode"], original["options"], strict_options=True
+            )
+            for field, source in ((limits, original["range"]), (scale, original["mode"])):
+                if field["prop"] in axes["edited"]:
+                    field["value_original"] = source
+            fields.extend((limits, scale))
+        element["editable"] = fields
+        element["identity"] = _AXES_IDENTITY_PREFIX + axes["context"]
 
     @staticmethod
     def annotate_errorbar_series(element: dict, series: dict) -> None:
@@ -383,6 +406,10 @@ class GgplotTarget:
             if expected is not None and expected.startswith(_RIBBON_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R range fill changed. Select it again.")
+                continue
+            if expected is not None and expected.startswith(_AXES_IDENTITY_PREFIX):
+                if identity != expected:
+                    raise pool.WorkerError("The native R axes changed. Select them again.")
                 continue
             requires_identity = expected is not None and expected.startswith(
                 _CONTEXTUAL_TEXT_IDENTITY_PREFIX

@@ -100,7 +100,7 @@ ggplot_edit_bars <- function(table, target, edit) {
   table
 }
 
-ggplot_bar_geometry <- function(rect, target, frame_pt) {
+ggplot_bar_geometry <- function(rect, target, frame_pt, retain_clipped = FALSE) {
   x0 <- as.numeric(rect$x)
   x1 <- x0 + as.numeric(rect$width)
   y1 <- as.numeric(rect$y)
@@ -131,7 +131,10 @@ ggplot_bar_geometry <- function(rect, target, frame_pt) {
   if (target$clip) {
     clip <- ggplot_bbox(grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"), valueOnly = TRUE),
                        grid::deviceLoc(grid::unit(1, "npc"), grid::unit(1, "npc"), valueOnly = TRUE), frame_pt)
-    if (!all(pmin(content_hi, clip[1:2] + clip[3:4]) > pmax(content_lo, clip[1:2]))) return(NULL)
+    if (!all(pmin(content_hi, clip[1:2] + clip[3:4]) > pmax(content_lo, clip[1:2]))) {
+      if (retain_clipped) return(list(bbox = as.list(c(-1, -1, 0, 0))))
+      return(NULL)
+    }
     lo <- pmax(lo, clip[1:2])
     hi <- pmin(hi, clip[1:2] + clip[3:4])
   }
@@ -148,7 +151,7 @@ ggplot_bar_geometry <- function(rect, target, frame_pt) {
   result
 }
 
-measure_ggplot_bars <- function(table, targets, frame_pt) {
+measure_ggplot_bars <- function(table, targets, frame_pt, retain_clipped = FALSE) {
   if (!length(targets)) return(list())
   drawn <- tryCatch({
     grid::grid.force()
@@ -164,7 +167,7 @@ measure_ggplot_bars <- function(table, targets, frame_pt) {
     if (is.null(viewport)) next
     result[[gid]] <- tryCatch({
       grid::downViewport(viewport, strict = TRUE)
-      measured <- ggplot_bar_geometry(rect, target, frame_pt)
+      measured <- ggplot_bar_geometry(rect, target, frame_pt, retain_clipped)
       if (!is.null(measured$geometry)) measured$geometry$paint_order <- match(rect$name, panel$childrenOrder)
       measured
     }, error = function(error) NULL, finally = grid::upViewport(0))

@@ -72,6 +72,7 @@ main <- function() {
     sys.source(file.path(native, "ggplot_points.R"), envir = adapter)
     sys.source(file.path(native, "ggplot_bars.R"), envir = adapter)
     sys.source(file.path(native, "ggplot_ribbons.R"), envir = adapter)
+    sys.source(file.path(native, "ggplot_axes.R"), envir = adapter)
     palettes <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
     probe <- file.path(args[[11L]], "cairo-device-check.pdf")
     device <- adapter$open_ggplot_pdf(frame_pt, probe)
@@ -105,7 +106,7 @@ main <- function() {
           !is.character(patch$prop) || length(patch$prop) != 1L ||
           is.na(patch$prop) || !nzchar(patch$prop) ||
           (!is.character(patch$value) && !is.numeric(patch$value) &&
-           !(patch$prop == "loc_frac" && is.list(patch$value)))) {
+           !(patch$prop %in% c("loc_frac", "xlim", "ylim") && is.list(patch$value)))) {
         stop("Invalid native R edit.")
       }
       edits[[patch$gid]][[patch$prop]] <- patch$value

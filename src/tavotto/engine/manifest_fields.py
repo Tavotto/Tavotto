@@ -54,6 +54,26 @@ def fill_color_field(color: str) -> dict:
     return {"prop": "facecolor", "type": "color", "value": color}
 
 
+def axis_limits_field(axis: str, limits) -> dict:
+    return {
+        "prop": f"{axis}lim",
+        "type": "pair",
+        "value": list(map(float, limits)),
+        "group": "数据范围",
+    }
+
+
+def axis_scale_field(axis: str, mode: str, options: list[str], **extra) -> dict:
+    return {
+        "prop": f"{axis}scale",
+        "type": "enum",
+        "value": mode,
+        "options": options,
+        "group": "数据范围",
+        **extra,
+    }
+
+
 def errorbar_stroke_fields(color: str, width: float) -> list[dict]:
     """Stroke fields whose values are independent of the native cap geometry."""
     return [

@@ -63,12 +63,18 @@ def _pdf_text_colors(path):
         }
 
 
-PROBE = r"""
+R_PROBE_SETUP = r"""
 adapter <- new.env(parent = baseenv())
-sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
-sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
-sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_bars.R"), envir = adapter)
-sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_ribbons.R"), envir = adapter)
+adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
+native <- dirname(adapter_file)
+parts <- c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R",
+           "ggplot_ribbons.R", "ggplot_axes.R")
+for (part in parts) sys.source(file.path(native, part), envir = adapter)
+"""
+
+
+PROBE = r"""
+
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) {
   quit(status = 77L)
@@ -487,11 +493,7 @@ if (capabilities("cairo")) {
 """
 
 PRECISION_PROBE = r"""
-adapter <- new.env(parent = baseenv())
-sys.source(commandArgs(trailingOnly = TRUE)[[1L]], envir = adapter)
-sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_points.R"), envir = adapter)
-sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_bars.R"), envir = adapter)
-sys.source(file.path(dirname(commandArgs(trailingOnly = TRUE)[[1L]]), "ggplot_ribbons.R"), envir = adapter)
+
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
 
@@ -584,13 +586,7 @@ stopifnot(is.null(secondary$state$tick_targets[[ticks]]$spacing))
 """
 
 COLOR_SCALE_PROBE = r"""
-adapter <- new.env(parent = baseenv())
-adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
-sys.source(adapter_file, envir = adapter)
-sys.source(file.path(dirname(adapter_file), "ggplot_colour_scale.R"), envir = adapter)
-sys.source(file.path(dirname(adapter_file), "ggplot_points.R"), envir = adapter)
-sys.source(file.path(dirname(adapter_file), "ggplot_bars.R"), envir = adapter)
-sys.source(file.path(dirname(adapter_file), "ggplot_ribbons.R"), envir = adapter)
+
 if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
                 quietly = TRUE))) quit(status = 77L)
 palettes <- jsonlite::fromJSON(
@@ -710,11 +706,7 @@ stopifnot(length(adapter$render_ggplot(paired, paired_edits)) == 1L)
 
 
 BAR_PROBE = r"""
-adapter <- new.env(parent = baseenv())
-native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
-for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R", "ggplot_ribbons.R")) {
-  sys.source(file.path(native, file), envir = adapter)
-}
+
 if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
                 quietly = TRUE))) quit(status = 77L)
 frame <- c(216, 144)
@@ -784,11 +776,7 @@ stopifnot(is.null(large$bar_geometry[[first]]$geometry), length(large$bar_geomet
 """
 
 ERRORBAR_PROBE = r"""
-adapter <- new.env(parent = baseenv())
-native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
-for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R", "ggplot_ribbons.R")) {
-  sys.source(file.path(native, file), envir = adapter)
-}
+
 if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
                 quietly = TRUE))) quit(status = 77L)
 data <- data.frame(x = c(1, 2), y = c(3, 4), lower = c(2, 2.5), upper = c(5, 6))
@@ -842,11 +830,7 @@ stopifnot(identical(field$value, "monospace"), identical(field$value_original, "
 """
 
 RANGE_AND_GROUPED_LINE_PROBE = r"""
-adapter <- new.env(parent = baseenv())
-native <- dirname(commandArgs(trailingOnly = TRUE)[[1L]])
-for (file in c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R", "ggplot_ribbons.R")) {
-  sys.source(file.path(native, file), envir = adapter)
-}
+
 if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
                 quietly = TRUE))) quit(status = 77L)
 d <- data.frame(x = rep(1:5, 2), y = c(2, 3, 2.7, 3.5, 4, 5, 5.2, 6, 5.9, 7),
@@ -925,10 +909,85 @@ for (edit in list(setNames(list(list(color = "#115500")), line_id),
 """
 
 
+AXES_PROBE = r"""
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
+frame <- c(312, 224)
+values <- data.frame(x = rep(c(1, 10, 100, 1000), each = 2),
+                     y = c(3, 5, 5, 7, 7, 9, 9, 11))
+calls <- 0L
+counted_mean <- function(y) { calls <<- calls + 1L; mean(y) }
+plot <- ggplot2::ggplot(values, ggplot2::aes(x, y)) +
+  ggplot2::stat_summary(geom = "line", fun = counted_mean, colour = "#3658AC") +
+  ggplot2::geom_point() + ggplot2::labs(x = "Dose", y = "Response")
+captured <- adapter$capture_ggplot(plot, frame)
+state <- captured$state
+layers <- state$built$data
+stopifnot(calls == 4L, identical(layers[[1L]]$y, c(4, 6, 8, 10)))
+element <- function(manifest, gid) Filter(function(e) e$gid == gid, manifest$elements)[[1L]]
+baseline <- adapter$ggplot_manifest(state, "dose")
+regular <- element(baseline, "axes_0")
+stopifnot(regular$role == "axes", identical(regular$native_axes$original$x$options, list("linear", "log")))
+edits <- list(axes_0 = list(xlim = list(1, 1000), ylim = c(2, 12), xscale = "log"),
+              layer.1.line = list(color = "#695DB2", linewidth = 1.8))
+rendered <- adapter$ggplot_manifest(state, "dose", edits)
+axes <- element(rendered, "axes_0")
+curve <- element(rendered, "layer.1.line")
+stopifnot(identical(axes$native_axes$current$x, list(mode = "log", range = list(1, 1000))),
+          identical(axes$native_axes$current$y, list(mode = "linear", range = list(2, 12))),
+          identical(axes$native_axes$context, regular$native_axes$context),
+          identical(curve$line_context, element(baseline, "layer.1.line")$line_context))
+xy <- do.call(rbind, lapply(curve$geometry$paths[[1L]]$points, unlist))
+bbox <- unlist(axes$bbox)
+stopifnot(isTRUE(all.equal((xy[, 1L] - bbox[[1L]]) / bbox[[3L]], c(0, 1/3, 2/3, 1))),
+          isTRUE(all.equal(1 - (xy[, 2L] - bbox[[2L]]) / bbox[[4L]], c(.2, .4, .6, .8))),
+          identical(curve$geometry$clip, axes$bbox))
+svg <- adapter$render_ggplot(state, edits)
+rows <- strsplit(svg, "\n", fixed = TRUE)[[1L]]
+stopifnot(any(grepl("stroke: #695DB2", rows, fixed = TRUE) & grepl("stroke-width: 1.80", rows, fixed = TRUE)),
+          identical(adapter$render_ggplot(state), captured$svg),
+          identical(adapter$render_ggplot(state, edits), svg),
+          identical(state$built$data, layers), calls == 4L)
+png <- adapter$preview_ggplot_png(state, edits, "axis-log.png", 800, TRUE)
+png_axes <- element(adapter$ggplot_manifest(state, "dose", edits, png), "axes_0")
+stopifnot(identical(png_axes$native_axes$current, axes$native_axes$current), file.info("axis-log.png")$size > 0)
+outside <- list(axes_0 = list(xlim = c(2000, 3000)))
+outside_scene <- adapter$ggplot_manifest(state, "dose", outside)
+stopifnot(identical(element(outside_scene, "layer.2.scatter")$bbox, list(-1, -1, 0, 0)))
+interval <- edits
+interval$axis.x.bottom.ticks <- list(format = "%.0f", major_mode = "step", major_step = 250)
+stopifnot(grepl(">250</text>", adapter$render_ggplot(state, interval), fixed = TRUE), calls == 4L)
+
+source_log <- adapter$capture_ggplot(plot + ggplot2::scale_x_log10(), frame)
+native_log <- element(adapter$ggplot_manifest(source_log$state, "dose"), "axes_0")
+native_linear <- element(adapter$ggplot_manifest(source_log$state, "dose",
+                         list(axes_0 = list(xscale = "linear", xlim = c(1, 1000)))), "axes_0")
+stopifnot(native_log$native_axes$current$x$mode == "log", native_linear$native_axes$current$x$mode == "linear",
+          identical(native_linear$native_axes$current$x$range, list(1, 1000)), calls == 8L)
+
+with_zero <- plot + ggplot2::geom_hline(yintercept = 0)
+zero_state <- adapter$capture_ggplot(with_zero, frame)$state
+stopifnot(identical(zero_state$axes_target$axes$y$options, "linear"),
+          identical(zero_state$axes_target$axes$x$options, c("linear", "log")))
+invalid <- list(list(xlim = c(10, 2)), list(xlim = list("1", "10")),
+                list(xscale = "log", xlim = c(0, 100)), list(yscale = "log"))
+for (change in invalid) {
+  stopifnot(inherits(try(adapter$render_ggplot(zero_state, list(axes_0 = change)), silent = TRUE), "try-error"))
+}
+secondary <- plot + ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis())
+stopifnot(is.null(adapter$capture_ggplot(secondary, frame)$state$axes_target))
+constant <- ggplot2::ggplot(data.frame(x = c(10, 10), y = c(2, 3)), ggplot2::aes(x, y)) +
+  ggplot2::geom_point()
+flat <- adapter$capture_ggplot(constant, frame)$state
+flat_axes <- element(adapter$ggplot_manifest(flat, "flat", list(axes_0 = list(xscale = "log"))), "axes_0")
+stopifnot(flat_axes$native_axes$current$x$mode == "log")
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
-    driver.write_text(program, encoding="utf-8")
+    driver.write_text(R_PROBE_SETUP + program, encoding="utf-8")
     result = subprocess.run(
         [rscript, "--vanilla", str(driver), str(ADAPTER)],
         cwd=tmp_path,
@@ -965,6 +1024,10 @@ def test_ggplot_errorbar_stroke_and_title_family_preserve_native_data(tmp_path):
 
 def test_range_and_grouped_line_edits_preserve_geometry_and_sync_the_legend(tmp_path):
     _assert_r_probe(tmp_path, RANGE_AND_GROUPED_LINE_PROBE)
+
+
+def test_axis_windows_and_transforms_reproject_captured_data_without_recalculating(tmp_path):
+    _assert_r_probe(tmp_path, AXES_PROBE)
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):
