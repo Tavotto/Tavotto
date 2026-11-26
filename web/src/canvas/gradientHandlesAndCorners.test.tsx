@@ -7,7 +7,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { literal } from '@/i18n'
+import { liveCornerRecord } from '@/lib/liveCornerRecord'
+import { roundCorners } from '@/lib/liveCorners'
+import { reflectObject, rotateObjectAbout, scaleObject } from '@/lib/transform'
 import { pathToMm } from '@/lib/pathEdit'
+import { rotateAbout } from '@/lib/pathGeom'
 import { useDocumentStore } from '@/store/documentStore'
 import { useGradientEditStore } from '@/store/gradientEditStore'
 import { editAnchors } from '@/store/pathActions'
@@ -197,6 +201,138 @@ describe('实时圆角', () => {
     expect(p.type).toBe('path')
     expect(pathToMm(p)[0].nodes).toHaveLength(8)
     expect(past()).toBe(1)
+  })
+
+  /* -------- 圆过的角还能再调（ADR 0185 M7 方案 B：烤好的几何 + 圆角记录，对不上就丢） -------- */
+  const cornerDot = (key: string) => host.querySelector(`[data-live-corner="${key}"]`)!
+  const dotAt = (key: string): [number, number] => {
+    const c = cornerDot(key)
+    return [Number(c.getAttribute('cx')) / px(1), Number(c.getAttribute('cy')) / px(1)]
+  }
+  const roundAll = async (r: number) => {
+    // 角 (50, 10)：往里拖到离两边各 r 的圆心——圆心离顶点 r·√2，与拖动方向的投影就是半径
+    const from = dotAt('0:1')
+    await drag(cornerDot('0:1'), from, [50 - r, 10 + r])
+  }
+
+  it('圆过之后仍是四个角、圆点落在圆心上；接着拖改的是同一个角的半径，几何从尖角重新圆（不是圆上再圆）', async () => {
+    await seed([square()], ['p'])
+    await roundAll(5)
+    const p1 = objects()[0] as PathObject
+    expect(pathToMm(p1)[0].nodes).toHaveLength(8)
+    expect(liveCornerRecord(p1, 0)?.radii.map((r) => Math.round(r * 1e6) / 1e6)).toEqual([5, 5, 5, 5])
+    expect(host.querySelectorAll('[data-live-corner]')).toHaveLength(4)
+    const at = dotAt('0:1')
+    expect(at[0]).toBeCloseTo(45, 6)
+    expect(at[1]).toBeCloseTo(15, 6)
+    await roundAll(2)
+    const p2 = objects()[0] as PathObject
+    expect(pathToMm(p2)[0].nodes).toHaveLength(8)
+    expect(liveCornerRecord(p2, 0)?.radii[1]).toBeCloseTo(2, 6)
+    // 与一次直接圆成 2 的结果逐点相同
+    const direct = roundCorners(pathToMm(square()), [0, 1, 2, 3].map((i) => ({ sp: 0, i })), 2)[0].nodes
+    pathToMm(p2)[0].nodes.forEach((n, i) => {
+      expect(n.p[0]).toBeCloseTo(direct[i].p[0], 6)
+      expect(n.p[1]).toBeCloseTo(direct[i].p[1], 6)
+    })
+    // 拖回 0：角又尖了，记录没了
+    await drag(cornerDot('0:1'), dotAt('0:1'), [55, 5])
+    const p3 = objects()[0] as PathObject
+    expect(pathToMm(p3)[0].nodes).toHaveLength(4)
+    expect(p3.subpaths[0].liveCorners).toBeUndefined()
+  })
+
+  it('已旋转的不对称路径（三角形转 30°）圆角：圆完记录还在、能接着调半径（换框的整体平移也要落进尖角记录）', async () => {
+    const tri = square({
+      rotationDeg: 30,
+      subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0.2] }, { p: [0.3, 1] }] }],
+    })
+    await seed([tri], ['p'])
+    const turn = (q: [number, number]): [number, number] => {
+      const o = objects()[0] as PathObject
+      return rotateAbout(q, [o.x + o.w / 2, o.y + o.h / 2], 30)
+    }
+    const from = dotAt('0:0')
+    await drag(cornerDot('0:0'), turn(from), turn([from[0] + 5, from[1] + 4]))
+    const p1 = objects()[0] as PathObject
+    expect(pathToMm(p1)[0].nodes.length).toBeGreaterThan(3)
+    expect(p1.subpaths[0].liveCorners).toBeDefined()
+    expect(liveCornerRecord(p1, 0)).not.toBeNull()
+    const r1 = liveCornerRecord(p1, 0)!.radii[0]
+    expect(r1).toBeGreaterThan(0)
+    // 接着再拖：改的是同一个角的半径，记录仍有效
+    await drag(cornerDot('0:0'), turn(dotAt('0:0')), turn([dotAt('0:0')[0] + 2, dotAt('0:0')[1] + 1]))
+    expect(liveCornerRecord(objects()[0] as PathObject, 0)).not.toBeNull()
+  })
+
+  it('移动、等比缩放、旋转、镜像、复制、阵列之后记录还在；非等比缩放之后圆弧变成椭圆，对不上，提交时就丢', async () => {
+    await seed([square()], ['p'])
+    await roundAll(5)
+    const ok = (o: PathObject) => liveCornerRecord(o, 0) != null
+    const base = objects()[0] as PathObject
+    expect(ok({ ...base, x: base.x + 30, y: base.y - 7 })).toBe(true)
+    expect(ok(scaleObject(base, 1.7, 1.7, [0, 0], { strokes: false, text: 'size' }))).toBe(true)
+    expect(liveCornerRecord(scaleObject(base, 2, 2, [0, 0], { strokes: false, text: 'size' }), 0)?.radii[0]).toBeCloseTo(10, 6)
+    expect(ok(rotateObjectAbout(base, 33, [0, 0]))).toBe(true)
+    expect(ok(reflectObject(base, 'h', [0, 0]) as PathObject)).toBe(true)
+    expect(ok(reflectObject(rotateObjectAbout(base, 20, [5, 5]), 'v', [0, 0]) as PathObject)).toBe(true)
+    expect(ok(structuredClone(base))).toBe(true)
+    expect(ok(scaleObject(base, 2, 1, [0, 0], { strokes: false, text: 'size' }))).toBe(false)
+    // 通过文档改：非等比缩放的提交把记录删掉；移动的提交不碰
+    useDocumentStore.getState().commit(literal('挪'), (d) => {
+      d.objects[0].x += 5
+    })
+    expect((objects()[0] as PathObject).subpaths[0].liveCorners).toBeDefined()
+    useDocumentStore.getState().commit(literal('拉宽'), (d) => {
+      d.objects[0].w *= 2
+    })
+    expect((objects()[0] as PathObject).subpaths[0].liveCorners).toBeUndefined()
+  })
+
+  it('旧版本打开再保存：原样带回记录 → 照常能调；改了几何却原样留着旧记录（比如旧版的镜像只翻锚点）→ 新版识别出来并丢掉', async () => {
+    await seed([square()], ['p'])
+    await roundAll(5)
+    const saved = JSON.parse(JSON.stringify(objects()[0])) as PathObject
+    // 1) 旧版本不认识这个字段、原样带回：记录照常有效
+    expect(liveCornerRecord(saved, 0)).not.toBeNull()
+    // 2) 旧版本的镜像：只翻 nodes（旧代码不知道 liveCorners），记录原样留着
+    const flipOld = (o: PathObject): PathObject => ({
+      ...o,
+      subpaths: o.subpaths.map((sp) => ({
+        ...sp,
+        nodes: sp.nodes.map((n) => ({ ...n, p: [1 - n.p[0], n.p[1]] as [number, number], ...(n.in ? { in: [1 - n.in[0], n.in[1]] as [number, number] } : {}), ...(n.out ? { out: [1 - n.out[0], n.out[1]] as [number, number] } : {}) })),
+      })),
+    })
+    // 半径改了而几何没改：对不上
+    const radiiOff = JSON.parse(JSON.stringify(saved)) as PathObject
+    radiiOff.subpaths[0].liveCorners!.radii = radiiOff.subpaths[0].liveCorners!.radii.map((r, i) => (i === 0 ? r * 0.5 : r))
+    expect(liveCornerRecord(radiiOff, 0)).toBeNull()
+    // 不对称的四边形圆过之后让旧版镜像：几何翻了、记录没翻
+    const quad: PathObject = square({ subpaths: [{ closed: true, nodes: [{ p: [0, 0] }, { p: [1, 0] }, { p: [0.7, 1] }, { p: [0, 0.6] }] }] })
+    await seed([quad], ['p'])
+    await drag(cornerDot('0:1'), dotAt('0:1'), [46, 14])
+    const rounded = JSON.parse(JSON.stringify(objects()[0])) as PathObject
+    expect(liveCornerRecord(rounded, 0)).not.toBeNull()
+    // 旧版删了最后一个锚点（前面的都没动）、记录原样留着：锚点个数对不上
+    const dropped = JSON.parse(JSON.stringify(rounded)) as PathObject
+    dropped.subpaths[0].nodes = dropped.subpaths[0].nodes.slice(0, -1)
+    expect(liveCornerRecord(dropped, 0)).toBeNull()
+    // 旧版把闭合路径断开成开放的、记录原样留着
+    const opened = JSON.parse(JSON.stringify(rounded)) as PathObject
+    opened.subpaths[0].closed = false
+    expect(liveCornerRecord(opened, 0)).toBeNull()
+    // 新版的镜像连记录里的尖角一起翻：仍对得上
+    expect(liveCornerRecord(reflectObject(rounded, 'h', [0, 0]) as PathObject, 0)).not.toBeNull()
+    const stale = flipOld(rounded)
+    expect(stale.subpaths[0].liveCorners).toBeDefined()
+    expect(liveCornerRecord(stale, 0)).toBeNull()
+    // 3) 新版打开这份文档：照着圆点拖时不会从旧尖角重新圆（那会把旧版做的镜像抹掉）——圆点按现在的几何算，提交时记录被删
+    await seed([stale], ['p'])
+    expect(host.querySelectorAll('[data-live-corner]').length).toBe(0) // 圆过的角都是弧，没有直线夹角可以圆
+    useDocumentStore.getState().commit(literal('碰一下'), (d) => {
+      d.objects[0].x += 1
+    })
+    expect((objects()[0] as PathObject).subpaths[0].liveCorners).toBeUndefined()
   })
 
   it('编辑锚点时：只有选中的角有圆点，拖一个就圆选中的那几个；松手清掉锚点选择（下标变了）', async () => {

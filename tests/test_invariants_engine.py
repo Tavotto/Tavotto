@@ -34,7 +34,7 @@ import subprocess
 
 import pytest
 
-from support.invariant_figures import ENTRY, LIBRARY, SCRIPT_NAME, STEMS
+from support.invariant_figures import ENTRY, LIBRARY, SCRIPT_NAME, STEMS, in_group
 from support.overridesample import (
     _NON_VISUAL_BY_ROLE,
     _NON_VISUAL_PROPS,
@@ -58,6 +58,12 @@ pytestmark = pytest.mark.skipif(
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROBE = os.path.join(REPO, "tests", "support", "engine_invariant_probe.py")
+
+#: 按图分组（`TAVOTTO_INVARIANT_GROUP`，见 support/invariant_figures.py INVARIANT_GROUPS）：不设 = 全部。
+GROUP_STEMS = tuple(st for st in STEMS if in_group(st))
+GROUP_STEMS_WITH_SCALE = tuple(st for st in (*STEMS, "InvScale") if in_group(st))
+#: 不按图参数化的用例：只在 c 组跑（`-m "not invariant_rest"` 排掉）
+rest = pytest.mark.invariant_rest
 
 
 @pytest.fixture(scope="module")
@@ -120,7 +126,7 @@ def _png(worker, stem, patches, tag):
     return hashlib.sha1(path.read_bytes()).hexdigest()
 
 
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", GROUP_STEMS)
 def test_capability_truthfulness(hot, stem):
     """宣称可编辑的每一条，都必须**真的改得动**。
 
@@ -183,7 +189,7 @@ _ENUM_PLACEHOLDERS = {
 }
 
 
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", GROUP_STEMS)
 def test_every_enum_option_can_actually_be_applied(hot, stem):
     """下拉框里列出来的每一个选项，**选了都得能用**。
 
@@ -278,7 +284,7 @@ def _fingerprint_diff(before: dict, after: dict, vanish_ok=frozenset()) -> list[
     return out
 
 
-@pytest.mark.parametrize("stem", (*STEMS, "InvScale"))
+@pytest.mark.parametrize("stem", GROUP_STEMS_WITH_SCALE)
 def test_in_figure_edits_do_not_change_data(hot, stem):
     """应用一条图内编辑之后，**worker 那张活 Figure 上每个数据元素的 `data_fingerprint`** 与编辑前逐项相等。
 
@@ -369,6 +375,7 @@ def test_in_figure_edits_do_not_change_data(hot, stem):
     assert back == [], f"{stem} 全撤后指纹没回基线：{back}"
 
 
+@rest
 def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
     """cmap / vmin / vmax 只在**映射此刻真的在决定颜色**时才出现。
 
@@ -409,6 +416,7 @@ def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
 # ---------------------------------------------------------------------------
 # 不变式 2：逐字还原（exact restore）
 # ---------------------------------------------------------------------------
+@rest
 def test_colorbar_mapping_controls_follow_the_same_gate(hot_restore):
     """色条的 cmap / vmin / vmax 与**它的 mappable** 用同一道闸。
 
@@ -451,7 +459,7 @@ def test_colorbar_mapping_controls_follow_the_same_gate(hot_restore):
     assert back == base
 
 
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", GROUP_STEMS)
 def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     """改一条 → 撤销 → **像素与 manifest 都逐位回到原样**。
 
@@ -495,6 +503,7 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     )
 
 
+@rest
 def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
     """只改「文字背景色」再撤销，**框要跟着消失**；开关关着时样式不露框。
 
@@ -562,7 +571,7 @@ _LEGEND_REBUILD_PROPS = frozenset(
 )
 
 
-@pytest.mark.parametrize("stem", ["InvCont"])
+@pytest.mark.parametrize("stem", [st for st in ["InvCont"] if in_group(st)])
 def test_legend_rebuild_restores_exactly(hot_restore, stem):
     """重建型 prop：改 → 再改 → 撤销到底，manifest 与像素都逐位回到脚本原样。
 
@@ -613,8 +622,10 @@ _SAME_ELEMENT_PAIRS = [
 
 @pytest.mark.parametrize(
     "stem,gid,broad,narrow",
-    _SAME_ELEMENT_PAIRS,
-    ids=[f"{c[1].split('.')[-1]}-{c[2][0]}+{c[3][0]}" for c in _SAME_ELEMENT_PAIRS],
+    [c for c in _SAME_ELEMENT_PAIRS if in_group(c[0])],
+    ids=[
+        f"{c[1].split('.')[-1]}-{c[2][0]}+{c[3][0]}" for c in _SAME_ELEMENT_PAIRS if in_group(c[0])
+    ],
 )
 def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narrow):
     """同一个元素上两条 prop **成对**改，撤销之后仍要逐字回到脚本原样。
@@ -674,6 +685,7 @@ def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narro
         )
 
 
+@rest
 def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
     """脚本**显式**设过范围的轴，不许被「自动缩放」那条哨兵改掉语义。
 
@@ -702,6 +714,7 @@ def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
     _man(hot_restore, "InvMix")
 
 
+@rest
 @pytest.mark.parametrize("axis", ["x", "y"])
 def test_explicit_no_inversion_beats_descending_endpoints(hot_restore, axis):
     """明确要求**不翻转**时，降序端点也要被扶正。
@@ -740,6 +753,7 @@ def test_explicit_no_inversion_beats_descending_endpoints(hot_restore, axis):
     _man(hot_restore, stem)
 
 
+@rest
 @pytest.mark.parametrize("axis", ["x", "y"])
 def test_range_and_direction_both_survive_together(hot_restore, axis):
     """范围与方向是**两条正交的 prop**，同时设时两条都得生效。
@@ -776,6 +790,7 @@ def test_range_and_direction_both_survive_together(hot_restore, axis):
     _man(hot_restore, stem)
 
 
+@rest
 def test_every_alias_group_survives_both_orders(hot_replay, library):
     """别名表里的**每一条**都要经得起「两个序 + 撤销」。
 
@@ -1252,7 +1267,11 @@ REMOVAL_CASES = [
 ]
 
 
-@pytest.mark.parametrize("case_id,stem,steps", REMOVAL_CASES, ids=[c[0] for c in REMOVAL_CASES])
+@pytest.mark.parametrize(
+    "case_id,stem,steps",
+    [c for c in REMOVAL_CASES if in_group(c[1])],
+    ids=[c[0] for c in REMOVAL_CASES if in_group(c[1])],
+)
 def test_hot_equals_replay_after_removal(hot_replay, library, case_id, stem, steps):
     """`HOT(P) == REPLAY(P)` —— 尤其是 P 是**删出来**的那种。
 
@@ -1319,6 +1338,7 @@ def _boxes(man):
     return {el["gid"]: el.get("bbox") for el in man["elements"] if el["gid"].startswith("axes_")}
 
 
+@rest
 def test_position_survives_a_persistent_tight_layout(hot_replay, library):
     """`layout="tight"` 的图上拖子图：真的动了、热态 == 重放、撤销逐位回得去。
 
@@ -1399,7 +1419,11 @@ def test_position_survives_a_persistent_tight_layout(hot_replay, library):
     )
 
 
-@pytest.mark.parametrize("case_id,stem,patches", ORDER_CASES, ids=[c[0] for c in ORDER_CASES])
+@pytest.mark.parametrize(
+    "case_id,stem,patches",
+    [c for c in ORDER_CASES if in_group(c[1])],
+    ids=[c[0] for c in ORDER_CASES if in_group(c[1])],
+)
 def test_patch_order_does_not_change_the_result(hot_replay, stem, patches, case_id):
     """`[A, B]` 与 `[B, A]` 必须给出同一张图。"""
     forward = _man(hot_replay, stem, patches)
@@ -1424,6 +1448,7 @@ def probe():
     return json.loads(proc.stdout)
 
 
+@rest
 def test_no_artist_vanishes_between_elements_and_unsupported(probe):
     """登记范围内的 artist：**要么进元素表、要么进 unsupported**，不许两头都没有。
 
@@ -1445,6 +1470,7 @@ def test_no_artist_vanishes_between_elements_and_unsupported(probe):
     # 的这一半由上面两条合起来保证：登记过的必须有代表 + 树里的必须被看见。
 
 
+@rest
 def test_the_churn_exemption_stays_small_and_named(probe):
     """豁免表不许变成垃圾桶。
 
@@ -1459,6 +1485,7 @@ def test_the_churn_exemption_stays_small_and_named(probe):
     )
 
 
+@rest
 def test_unsupported_says_what_and_why(probe):
     """报出来的每一条都要说得出类名与原因——说不出来就等于没报。"""
     for row in probe["completeness"]["unsupported"]:
@@ -1494,6 +1521,7 @@ def test_unsupported_says_what_and_why(probe):
     assert poly3d[0]["where"] != "axes_0", f"报出来了，但位置指到了主 axes 上：{poly3d[0]}"
 
 
+@rest
 def test_colorbars_on_child_axes_are_recognised(probe):
     """插图上的色条也要被认出来，它的内部件一个都不许漏进元素表。
 
@@ -1543,6 +1571,7 @@ def test_colorbars_on_child_axes_are_recognised(probe):
     )
 
 
+@rest
 def test_family_classification_has_a_single_authority(probe):
     """「这个 artist 属于哪一族」只能有一处判据。
 
@@ -1566,6 +1595,7 @@ def test_family_classification_has_a_single_authority(probe):
     )
 
 
+@rest
 def test_every_advertised_prop_has_a_handler(probe):
     """元素表宣称的每一条 prop，dispatch 侧都必须有 handler。
 
@@ -1579,6 +1609,7 @@ def test_every_advertised_prop_has_a_handler(probe):
     )
 
 
+@rest
 def test_the_faces_table_holds_in_both_directions(probe):
     """`facecolor` 能不能用，判据与实测必须**双向**吻合。
 
@@ -1624,6 +1655,7 @@ def test_the_faces_table_holds_in_both_directions(probe):
         )
 
 
+@rest
 def test_the_mesh_stroke_style_table_still_holds(probe):
     """`honours_stroke_style` 那张实测表**每次跑都重新渲染核对一遍**。
 
@@ -1666,6 +1698,7 @@ def test_the_mesh_stroke_style_table_still_holds(probe):
             )
 
 
+@rest
 def test_alias_groups_are_self_consistent(probe):
     """别名表里的广播端自己得有 handler，否则那一组永远解析不出来。"""
     a = probe["single_authority"]

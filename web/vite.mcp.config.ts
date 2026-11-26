@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
+import { noCopyleftPalettes } from './scripts/palette-copyleft-path.mjs'
 
 /**
  * MCP App 画布的构建配置。
@@ -12,7 +13,7 @@ import { fileURLToPath, URL } from 'node:url'
  * 而我们声明的是**空的 connectDomains**（画布与后端之间只走 tools/call）。
  */
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [noCopyleftPalettes(), react(), tailwindcss()],
   // 路径查找器的 WASM 内核（ADR 0185 M2）不进内嵌画布：单文件里塞不下也没必要（宿主 CSP 不放行外部请求），
   // `lib/vecops/kernel` 读到 off 就把按钮灰掉、停上去说原因；连同 `?url` 的导入一起被摇掉
   define: { 'import.meta.env.VITE_VECOPS': JSON.stringify('off') },
@@ -24,6 +25,16 @@ export default defineConfig({
       ),
       '@journals': fileURLToPath(
         new URL('../src/tavotto/profiles/journals.json', import.meta.url),
+      ),
+      // Agent 新增对象的字段表（ADR 0208 §五）：唯一出处在 Python 包里，后端 engine/agentobjects.py 读同一份
+      '@agentObjects': fileURLToPath(
+        new URL('../src/tavotto/profiles/agent_objects.json', import.meta.url),
+      ),
+      '@palettes': fileURLToPath(
+        new URL('../src/tavotto/profiles/palettes.json', import.meta.url),
+      ),
+      '@palettesCopyleft': fileURLToPath(
+        new URL('../src/tavotto/profiles/palettes_copyleft.json', import.meta.url),
       ),
       '@glyphcoverage': fileURLToPath(
         new URL('../src/tavotto/pdfbackend/canvas_coverage.json', import.meta.url),

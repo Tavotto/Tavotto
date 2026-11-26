@@ -11,8 +11,10 @@ import hashlib
 import json
 import re
 import sqlite3
+import time
 import urllib.error
 import urllib.request
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
@@ -34,6 +36,9 @@ _FILE = re.compile(r"^snapshots/([0-9a-f]{64})\.webp$")
 MAX_INDEX_BYTES = 16 << 20
 MAX_SNAPSHOT_BYTES = 8 << 20
 MAX_PAGE_BYTES = 300 << 10
+#: 刚同步过的签名索引多久内直接用缓存、不发请求（秒）。强制刷新（`sync(force=True)`）不受限。
+INDEX_FRESH_S = 300
+_now = time.time  # 测试替换
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -43,8 +48,24 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _http(method: str, url: str, cap: int, headers: dict[str, str]) -> tuple[int, bytes]:
-    """HTTPS using the shared TLS trust, with redirects refused at every origin."""
+def _gunzip(data: bytes, cap: int) -> bytes:
+    """gzip 响应体按**解压后**大小封顶（防压缩炸弹）：解压到 cap+1 字节就停，超了当作过大。"""
+    try:
+        out = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(data, cap + 1)
+    except zlib.error as exc:
+        raise journalremote.RemoteCatalogError("bundle_invalid", "bad gzip") from exc
+    if len(out) > cap:
+        raise journalremote.RemoteCatalogError("bundle_invalid", "response too large")
+    return out
+
+
+def _http(
+    method: str, url: str, cap: int, headers: dict[str, str]
+) -> tuple[int, bytes, dict[str, str]]:
+    """HTTPS using the shared TLS trust, with redirects refused at every origin.
+
+    只有调用方自己带了 `Accept-Encoding: gzip` 才会收到压缩体；`Content-Encoding: gzip` 的 200 响应
+    在这里解压（封顶按解压后算）。其余编码一律拒绝，不猜。"""
     if not url.startswith("https://"):
         raise journalremote.RemoteCatalogError("network", "https required")
     req = urllib.request.Request(
@@ -62,22 +83,42 @@ def _http(method: str, url: str, cap: int, headers: dict[str, str]) -> tuple[int
     try:
         with opener.open(req, timeout=journalremote.NETWORK_TIMEOUT_S) as response:
             status, data = response.status, response.read(cap + 1)
+            coding = (response.headers.get("Content-Encoding") or "").strip().lower()
+            etag = response.headers.get("ETag") or ""
     except urllib.error.HTTPError as exc:
-        status, data = exc.code, exc.read(65536)
+        status, data, coding, etag = exc.code, exc.read(65536), "", ""
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise journalremote.RemoteCatalogError("network", type(exc).__name__) from exc
+    if status == 200:
+        if coding in ("gzip", "x-gzip"):
+            if len(data) > cap:  # 压缩体本身也不该比解压后的上限还大
+                raise journalremote.RemoteCatalogError("bundle_invalid", "response too large")
+            data = _gunzip(data, cap)
+        elif coding not in ("", "identity"):
+            raise journalremote.RemoteCatalogError("bundle_invalid", "unsupported encoding")
     if status == 200 and len(data) > cap:
         raise journalremote.RemoteCatalogError("bundle_invalid", "response too large")
-    return status, data
+    return status, data, ({"etag": etag} if etag else {})
 
 
 _request = _http
 
 
-def _call(method: str, url: str, cap: int, headers: dict[str, str]) -> tuple[int, bytes]:
+def _call_full(
+    method: str, url: str, cap: int, headers: dict[str, str]
+) -> tuple[int, bytes, dict[str, str]]:
+    """同 `_call`，另带回响应头（目前只有小写键 `etag`）。`_request` 可以只回 (状态码, 体)。"""
     if journalremote.disabled():
         raise journalremote.RemoteCatalogError("disabled")
-    return _request(method, url, cap, {"X-Tavotto-Client": journalremote.client_type(), **headers})
+    result = _request(
+        method, url, cap, {"X-Tavotto-Client": journalremote.client_type(), **headers}
+    )
+    return (result[0], result[1], result[2] if len(result) > 2 else {})
+
+
+def _call(method: str, url: str, cap: int, headers: dict[str, str]) -> tuple[int, bytes]:
+    status, data, _headers = _call_full(method, url, cap, headers)
+    return status, data
 
 
 class FactsError(RuntimeError):
@@ -162,6 +203,10 @@ def _connect() -> sqlite3.Connection:
         con.execute(
             "CREATE TABLE IF NOT EXISTS current_index (singleton INTEGER PRIMARY KEY CHECK(singleton=1), rev INTEGER NOT NULL, envelope BLOB NOT NULL)"
         )
+        # 条件请求元数据：ETag 与「上次确认索引没变」的时刻，绑在某一份信封的 sha256 上（信封换了就作废）。
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS index_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), envelope_sha256 TEXT NOT NULL, etag TEXT, checked_at REAL NOT NULL)"
+        )
         return con
     except (OSError, sqlite3.Error) as exc:
         raise FactsError("cache_error") from exc
@@ -181,6 +226,36 @@ def _row(con: sqlite3.Connection) -> tuple[bytes, dict] | None:
     return raw, index
 
 
+def _meta(con: sqlite3.Connection, raw: bytes) -> tuple[str | None, float] | None:
+    """(etag, checked_at)；只在它记的是当前这份信封时才算数。"""
+    try:
+        row = con.execute(
+            "SELECT envelope_sha256, etag, checked_at FROM index_meta WHERE singleton=1"
+        ).fetchone()
+    except sqlite3.Error as exc:
+        raise FactsError("cache_error") from exc
+    if row is None or row[0] != hashlib.sha256(raw).hexdigest():
+        return None
+    return (row[1] if isinstance(row[1], str) and row[1] else None), float(row[2])
+
+
+def _write_meta(con: sqlite3.Connection, raw: bytes, etag: str | None) -> None:
+    con.execute(
+        "INSERT OR REPLACE INTO index_meta VALUES (1, ?, ?, ?)",
+        (hashlib.sha256(raw).hexdigest(), etag, _now()),
+    )
+
+
+def _clean_etag(value: str | None) -> str | None:
+    """服务端给的 ETag 原样存、原样回（含 `W/`）；只拒绝过长 / 含控制字符的值。"""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > 200 or any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        return None
+    return value
+
+
 def cached_index() -> dict | None:
     try:
         con = _connect()
@@ -193,7 +268,7 @@ def cached_index() -> dict | None:
         raise FactsError("cache_error") from exc
 
 
-def _save_index(raw: bytes, index: dict) -> bool:
+def _save_index(raw: bytes, index: dict, etag: str | None = None) -> bool:
     """Serialize compare-and-write with SQLite so concurrent clients cannot lower rev."""
     con = _connect()
     try:
@@ -206,11 +281,13 @@ def _save_index(raw: bytes, index: dict) -> bool:
             if index["catalog_rev"] == old["catalog_rev"]:
                 if index != old:
                     raise FactsError("index_conflict")
+                _write_meta(con, current[0], etag)
                 con.commit()
                 return False
         con.execute(
             "INSERT OR REPLACE INTO current_index VALUES (1, ?, ?)", (index["catalog_rev"], raw)
         )
+        _write_meta(con, raw, etag)
         con.commit()
         return True
     except (sqlite3.Error, OSError) as exc:
@@ -227,22 +304,79 @@ def _remote_error(exc: journalremote.RemoteCatalogError) -> FactsError:
     return FactsError(exc.code, exc.retry_after_s)
 
 
-def sync(ui_locale: str | None = None) -> dict:
+def _cached_with_meta() -> tuple[dict | None, str | None, float | None]:
+    """已验签的缓存索引，加上它对应的 (ETag, 上次确认时刻)；元数据与信封对不上就当没有。"""
+    try:
+        con = _connect()
+        try:
+            current = _row(con)
+            if current is None:
+                return None, None, None
+            meta = _meta(con, current[0])
+            return current[1], (meta[0] if meta else None), (meta[1] if meta else None)
+        finally:
+            con.close()
+    except (sqlite3.Error, OSError) as exc:
+        raise FactsError("cache_error") from exc
+
+
+def _touch_meta(index: dict) -> bool:
+    """304：索引没变，只把「上次确认」记到现在。信封在这期间被别的进程换了就不动它（返回 False）。"""
+    con = _connect()
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        current = _row(con)
+        if current is None or current[1] != index:
+            con.rollback()
+            return False
+        meta = _meta(con, current[0])
+        _write_meta(con, current[0], meta[0] if meta else None)
+        con.commit()
+        return True
+    except (sqlite3.Error, OSError) as exc:
+        con.rollback()
+        raise FactsError("cache_error") from exc
+    finally:
+        con.close()
+
+
+def sync(ui_locale: str | None = None, *, force: bool = False) -> dict:
     """Refresh signed index; failure preserves and returns a verified v2 cache.
 
     No valid v2 cache means index=None, not a v1 or seed substitution.
+
+    省流量（索引会涨到几百 KB）：缓存里记着服务端给的 ETag，请求带 `If-None-Match` 与 `Accept-Encoding: gzip`，
+    304 沿用已验签的缓存（state=unchanged）；`INDEX_FRESH_S` 内刚确认过就不发请求。`force=True` 跳过
+    新鲜期（版本竞态后要看服务端现在是什么）。验签、回滚保护、离线回退语义不变：200 才验签落盘，304 不改缓存内容。
     """
-    old = cached_index()
+    old, etag, checked = _cached_with_meta()
     if journalremote.disabled():
         return {"state": "disabled", "code": "disabled", "index": old}
+    if (
+        not force
+        and old is not None
+        and checked is not None
+        and 0 <= _now() - checked < INDEX_FRESH_S  # 时钟被往回拨时 now < checked：当作过期
+    ):
+        return {"state": "unchanged", "code": None, "index": old}
+    conditional = old is not None and etag is not None
+    request_headers = {"Accept-Encoding": "gzip"}
+    if conditional:
+        request_headers["If-None-Match"] = etag
     last = FactsError("network")
     for base in _bases(ui_locale):
         try:
-            status, raw = _call("GET", base + "index.signed.json", MAX_INDEX_BYTES, {})
+            status, raw, got = _call_full(
+                "GET", base + "index.signed.json", MAX_INDEX_BYTES, request_headers
+            )
+            if status == 304 and conditional:
+                # 缓存在请求期间被别的进程换成了更新的已验签索引时 `_touch_meta` 回 False：以当前缓存为准
+                current = old if _touch_meta(old) else cached_index()
+                return {"state": "unchanged", "code": None, "index": current}
             if status != 200:
                 raise _remote_error(journalremote._error_of(status, raw))
             index = verify_index(raw)
-            changed = _save_index(raw, index)
+            changed = _save_index(raw, index, _clean_etag(got.get("etag")))
             return {"state": "updated" if changed else "unchanged", "code": None, "index": index}
         except journalremote.RemoteCatalogError as exc:
             last = _remote_error(exc)
@@ -492,7 +626,7 @@ def get_journal(jid: str, *, ui_locale: str | None = None, _allow_refresh: bool 
         if last.code not in ("network", "server_error"):
             break
     if last.code == "stale_rev" and _allow_refresh:
-        state = sync(ui_locale)
+        state = sync(ui_locale, force=True)  # 版本竞态：不能被新鲜期挡回缓存
         fresh = state["index"]
         if fresh is not None and fresh["catalog_rev"] > index["catalog_rev"]:
             return get_journal(jid, ui_locale=ui_locale, _allow_refresh=False)

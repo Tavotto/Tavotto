@@ -55,6 +55,7 @@ class FakeServer:
         self.features = ["review-plus"]
         self.exp = int(now()) + 30 * 86400
         self.offline_days = 14
+        self.extra: dict = {}  # 额外的令牌键（创始标记等）
 
     @property
     def pubkey_b64(self) -> str:
@@ -72,6 +73,7 @@ class FakeServer:
             "refresh_after": iat + 86400,
             "offline_until": min(self.exp, iat + self.offline_days * 86400),
             "email_hint": "m***@gmail.com",
+            **self.extra,
             **over,
         }
         raw = json.dumps(payload, separators=(",", ":")).encode()
@@ -695,9 +697,16 @@ def test_failure_codes_are_the_adr_closed_set():
         "refresh",
         "release",
         "renew",
-        "pro_manifest",
-    }  # pro_manifest：ADR 0198 §五
-    assert lic.FEATURES == {"hosted-ai", "review-plus", "quick-layout"}  # quick-layout：ADR 0199
+        "pro_manifest",  # ADR 0198 §五
+        "me",
+        "ai_usage",  # Pro 页的两个只读接口
+    }
+    assert lic.FEATURES == {
+        "hosted-ai",
+        "review-plus",
+        "quick-layout",
+        "change-plan-rerun",
+    }  # quick-layout：ADR 0199；change-plan-rerun：ADR 0206 §五
 
 
 def test_background_refresh_thread_is_a_noop_when_disabled(monkeypatch):
@@ -821,3 +830,335 @@ def test_route_failures_use_the_closed_codes(client, server):
     assert res.status_code == 400 and res.get_json()["error"] == "invalid_code"
     res = client.post("/api/license/checkout", json={})
     assert res.get_json()["error"] == "client_error"
+
+
+# ---------------------------------------------------------------------------
+# 创始会员标记（founding_no / founding_since）
+# ---------------------------------------------------------------------------
+FOUNDING = {"founding_no": 37, "founding_since": 1_763_000_000}
+
+
+def test_status_has_no_founding_for_a_regular_license(server):
+    activated(server)
+    assert "founding" not in lic.status()
+
+
+def test_status_carries_founding_when_the_signed_token_has_it(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    st = lic.status()
+    assert st["founding"] == {"no": 37, "since": 1_763_000_000, "name": ""}
+    assert st["state"] == "active"
+
+    # 创始编号只出现在 founding 里：逐个字段比值，不用子串（时间戳 / 令牌里碰巧有「37」会假红）
+    def leaves(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                yield from leaves(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                yield from leaves(x)
+        else:
+            yield v
+
+    rest = [x for k, v in st.items() if k != "founding" for x in leaves(v)]
+    assert not any(x == 37 and not isinstance(x, bool) for x in rest)
+    assert 1_763_000_000 not in rest
+
+
+def test_founding_survives_expiry_and_lapse_but_not_revocation(server, clock):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    clock["now"] += 14 * 86400 + 5  # lapsed
+    st = lic.status()
+    assert st["state"] == "lapsed" and st["founding"]["no"] == 37
+    clock["now"] = server.exp + 5
+    st = lic.status()
+    assert st["state"] == "expired" and st["founding"]["no"] == 37
+    # 服务端判吊销：标记不给
+    rec = json.loads(lic._token_path().read_text())
+    rec["state"] = "revoked"
+    lic._token_path().write_text(json.dumps(rec))
+    st = lic.status()
+    assert st["state"] == "revoked" and "founding" not in st
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"founding_no": 0, "founding_since": 1_763_000_000},
+        {"founding_no": 1000, "founding_since": 1_763_000_000},
+        {"founding_no": -3, "founding_since": 1_763_000_000},
+        {"founding_no": True, "founding_since": 1_763_000_000},
+        {"founding_no": 5.0, "founding_since": 1_763_000_000},
+        {"founding_no": "5", "founding_since": 1_763_000_000},
+        {"founding_no": 5, "founding_since": 0},
+        {"founding_no": 5, "founding_since": -1},
+        {"founding_no": 5, "founding_since": True},
+        {"founding_no": 5, "founding_since": "1763000000"},
+        {"founding_no": 5},
+        {"founding_since": 1_763_000_000},
+    ],
+)
+def test_malformed_founding_is_treated_as_absent_and_never_raises(server, extra):
+    server.extra = extra
+    activated(server)
+    st = lic.status()
+    assert "founding" not in st
+    assert st["state"] == "active" and st["licensed"] is True  # 授权本身不受影响
+
+
+def test_founding_bounds_are_inclusive(server):
+    for no in (1, 999):
+        server.extra = {"founding_no": no, "founding_since": 1}
+        lic.activate(CODE)
+        assert lic.status()["founding"] == {"no": no, "since": 1, "name": ""}
+
+
+def test_unsigned_founding_cannot_be_forged_by_editing_the_token(server):
+    activated(server)
+
+    def tamper(env):
+        raw = json.loads(base64.b64decode(env["payload"]))
+        raw.update(FOUNDING)
+        env["payload"] = _b64(json.dumps(raw, separators=(",", ":")).encode())
+
+    _rewrite(tamper)
+    assert "founding" not in lic.status()
+
+
+# ---------------------------------------------------------------------------
+# 铭牌刻字：只存本机，不联网，不进令牌 / 诊断包
+# ---------------------------------------------------------------------------
+def test_plate_name_roundtrip_is_local_only_and_in_the_license_dir(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    assert lic.status()["founding"]["name"] == ""
+    n = len(server.calls)
+    out = lic.set_plate_name("  林小雨  ")
+    assert out["founding"]["name"] == "林小雨" and lic.plate_name() == "林小雨"
+    assert len(server.calls) == n  # 零网络
+    p = lic._plate_path()
+    assert p.parent == lic._token_path().parent and p.parent.name == "license"
+    if os.name != "nt":
+        assert stat.S_IMODE(p.stat().st_mode) == 0o600
+    # 令牌文件里没有名字
+    assert "林小雨" not in lic._token_path().read_text(encoding="utf-8")
+    lic.set_plate_name("")
+    assert not p.exists() and lic.status()["founding"]["name"] == ""
+
+
+def test_plate_name_is_cleaned_and_capped(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    lic.set_plate_name("a\n\tb\x00c" + "x" * 100)
+    got = lic.plate_name()
+    assert len(got) == lic.PLATE_NAME_MAX
+    assert "\n" not in got and "\x00" not in got and "\t" not in got
+    with pytest.raises(lic.LicenseError) as e:
+        lic.set_plate_name(123)  # type: ignore[arg-type]
+    assert e.value.code == "client_error"
+
+
+def test_plate_name_survives_release_and_reactivation_and_junk_file_is_empty(server):
+    server.extra = dict(FOUNDING)
+    activated(server)
+    lic.set_plate_name("林小雨")
+    lic.release()
+    assert lic.plate_name() == "林小雨"
+    lic._plate_path().write_text("{not json", encoding="utf-8")
+    assert lic.plate_name() == ""
+    lic._plate_path().write_text(json.dumps({"name": ["x"]}), encoding="utf-8")
+    assert lic.plate_name() == ""
+
+
+def test_plate_name_is_not_in_status_for_non_founders_and_route_is_gated(
+    server, monkeypatch, client
+):
+    activated(server)
+    lic.set_plate_name("路人")
+    assert "founding" not in lic.status()
+    r = client.post("/api/license/plate-name", json={"name": "林小雨"})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    monkeypatch.setenv(lic.ENV_HARD_OFF, "1")
+    assert client.post("/api/license/plate-name", json={"name": "x"}).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Pro 页的两个只读接口：/v1/me（账户）与 /v1/ai/usage（内置 AI 用量）——失败一律静默降级
+# ---------------------------------------------------------------------------
+def _me(**over):
+    base = {
+        "state": "active",
+        "tier": "founding_year_cny",
+        "term_days": 365,
+        "paid_at": 1_795_000_000,
+        "exp": 1_826_536_000,
+        "devices": {"used": 1, "limit": 2},
+    }
+    return (200, {**base, **over})
+
+
+def test_account_maps_tier_and_signs_with_op_me(server):
+    activated(server)
+    server.script = [_me()]
+    out = lic.account()
+    assert out == {
+        "ok": True,
+        "tier": {"key": "year", "term_days": 365},
+        "devices": {"used": 1, "limit": 2},
+        "paid_at": 1_795_000_000,
+        "exp": 1_826_536_000,
+    }
+    path, body = server.calls[-1]
+    assert path == "/v1/me" and body["op"] == "me" and body["license_id"] == LID
+    nacl_signing.VerifyKey(base64.b64decode(body["device_pub"])).verify(
+        lic.signed_bytes(body), base64.b64decode(body["sig"])
+    )
+
+
+@pytest.mark.parametrize(
+    ("lookup", "key"),
+    [
+        ("year_usd", "year"),
+        ("founding_year_usd", "year"),
+        ("season_90_cny", "season"),
+        ("sprint_30_usd", "sprint"),
+        ("team_year_cny", "other"),
+        ("", "other"),
+    ],
+)
+def test_account_tier_keys(server, lookup, key):
+    activated(server)
+    server.script = [_me(tier=lookup)]
+    assert lic.account()["tier"]["key"] == key
+
+
+def test_account_without_a_token_is_silent_and_offline(server):
+    assert lic.account() == {"ok": False}
+    assert server.calls == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        err(403, "revoked"),
+        err(404, "invalid_code"),
+        err(500, "server"),
+        (200, {"state": "active"}),
+        _me(term_days=0),
+        _me(devices={"used": -1, "limit": 2}),
+        _me(devices="x"),
+        _me(exp="soon"),
+        _me(tier=7),
+        (200, ["not", "an", "object"]),
+    ],
+)
+def test_account_failures_degrade_silently(server, reply):
+    activated(server)
+    server.script = [reply]
+    assert lic.account() == {"ok": False}
+
+
+def test_account_network_error_is_silent(server):
+    activated(server)
+    server.script = [(diagsend._Failure("network"), None)]
+    assert lic.account() == {"ok": False}
+
+
+def test_account_revoked_marks_the_local_token(server):
+    activated(server)
+    server.script = [(200, {"state": "revoked"})]
+    assert lic.account() == {"ok": False}
+    assert lic.status()["state"] == "revoked" and lic.has("review-plus") is False
+
+
+def test_account_expired_license_still_reads(server, clock):
+    activated(server)
+    clock["now"] = server.exp + 5
+    server.script = [_me(state="expired")]
+    assert lic.account()["ok"] is True
+
+
+def test_read_endpoints_cache_for_a_minute(server, clock):
+    server.features = ["hosted-ai"]
+    activated(server)
+    server.script = [_me(), _me(exp=1)]
+    lic.account()
+    lic.account()
+    assert [p for p, _b in server.calls].count("/v1/me") == 1
+    clock["now"] += lic.READ_TTL_S + 1
+    assert lic.account()["exp"] == 1
+
+
+def test_ai_usage_is_used_ratio_rounded(server):
+    server.features = ["hosted-ai"]
+    activated(server)
+    server.script = [(200, {"remaining": 0.75})]
+    assert lic.ai_usage() == {"agent_used": 0.25}
+    path, body = server.calls[-1]
+    assert path == "/v1/ai/usage" and body["op"] == "ai_usage"
+
+
+@pytest.mark.parametrize(
+    ("reply", "want"),
+    [
+        ((200, {"remaining": 0}), 1.0),
+        ((200, {"remaining": 1}), 0.0),
+        ((200, {"remaining": 0.333}), 0.67),
+        ((200, {"remaining": 5}), 0.0),  # 越界先夹到 0–1
+        ((200, {"remaining": -1}), 1.0),
+        ((200, {"remaining": None}), None),
+        ((200, {"remaining": "x"}), None),
+        ((200, {"remaining": True}), None),
+        ((200, {}), None),
+        (err(403, "not_entitled"), None),
+        (err(500, "server"), None),
+    ],
+)
+def test_ai_usage_edge_values_and_failures(server, reply, want):
+    server.features = ["hosted-ai"]
+    activated(server)
+    server.script = [reply]
+    assert lic.ai_usage() == {"agent_used": want}
+
+
+def test_ai_usage_without_the_feature_or_token_is_offline(server):
+    assert lic.ai_usage() == {"agent_used": None}  # 没有令牌
+    activated(server)  # 令牌里只有 review-plus
+    assert lic.ai_usage() == {"agent_used": None}
+    assert server.calls == []
+
+
+def test_ai_usage_network_error_is_silent(server):
+    server.features = ["hosted-ai"]
+    activated(server)
+    server.script = [(diagsend._Failure("network"), None)]
+    assert lic.ai_usage() == {"agent_used": None}
+
+
+def test_pro_page_routes_are_gated_and_silent(server, client, monkeypatch):
+    server.features = ["hosted-ai"]
+    activated(server)
+    server.script = [_me(), (200, {"remaining": 0.5})]
+    r = client.get("/api/license/account")
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    r = client.get("/api/license/usage")
+    assert r.status_code == 200 and r.get_json() == {"agent_used": 0.5}
+    monkeypatch.setenv(lic.ENV_HARD_OFF, "1")
+    assert client.get("/api/license/account").status_code == 404
+    assert client.get("/api/license/usage").status_code == 404
+
+
+def test_pro_name_is_one_constant_on_both_sides():
+    """`engine/brand.py` 与 `web/src/lib/brand.ts` 的 `PRO_NAME` 是同一个名字（严格同源对，维护者 2026-11-24：中英文都叫 Pro）。"""
+    import re
+    from pathlib import Path
+
+    from tavotto.engine import brand as engine_brand
+
+    brand_ts = (Path(__file__).resolve().parent.parent / "web/src/lib/brand.ts").read_text(
+        encoding="utf-8"
+    )
+    (ts,) = re.findall(r"^export const PRO_NAME = '([^']+)'$", brand_ts, re.M)
+    assert engine_brand.PRO_NAME == ts == "Pro"

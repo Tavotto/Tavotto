@@ -7,6 +7,8 @@ import { intakePastedImages, pastedAssetFiles } from '@/lib/canvasFileIntake'
 import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 import { figureTextToAnnotation } from '@/lib/figureTextCopy'
+import { isDuplicableElement } from '@/lib/figureElementCopy'
+import { duplicateFigureElements } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { exactPanelManifest, structuralPanelManifest, useRenderStore } from '@/store/renderStore'
@@ -15,7 +17,8 @@ import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
-import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
+import type { CanvasObject, ChartSourceRef, LayoutGroup, PanelObject } from '@/types/document'
+import { sameRules } from '@/lib/specBinding'
 import { isRuntimePanel, objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
 import { DUPLICATE_OFFSET_MM } from '@/lib/units'
@@ -53,6 +56,20 @@ interface ClipPayload {
   objects: CanvasObject[]
   /** 完整包含在选区里的布局组约束 */
   layoutGroups: LayoutGroup[]
+  /**
+   * 图内编辑里复制的、**第一期能复制成图内副本**的元素（ADR 0207）：与 `objects` 里换算好的标注是**同一批东西的两种落法**——
+   * 粘在同一份排版、同一张图的图内编辑里按它建图内副本，落在别处照旧用 `objects` 落成标注。旧负载 / 画布对象负载没有它。
+   * 只记 gid：落点与文字在粘贴那一刻按当时的权威 manifest 现算（复制之后源可能被挪过、改过字）。
+   */
+  elements?: ClipElements
+}
+
+export interface ClipElements {
+  /** 复制发生时的文档（`documentStore.documentId`）：只有同一份文档里的粘贴才建副本 */
+  docId: string
+  /** 复制发生时在图内编辑的那张图（面板 id） */
+  panelId: string
+  items: { gid: string }[]
 }
 
 /** 当前选区的剪贴板负载；没有可复制的对象返回 null */
@@ -106,6 +123,10 @@ export function buildElementClipPayload(
     // 只说元素类别（元素树里已有的类别词）；类别不认识时空串 = 「这个元素还不能复制」
     return { payload: null, refusedName: translate(`role.${first.role}`, { ns: 'inspector', defaultValue: '' }) }
   }
+  // 图内副本那一份：选中的每一段都能复制成副本才带（混着不能的就整批只落成标注，不让粘贴悄悄少一部分）
+  const items = exact
+    ? els.filter((el) => isDuplicableElement(panel, exact, el)).map((el) => ({ gid: el.gid }))
+    : []
   return {
     payload: {
       magic: MAGIC,
@@ -113,6 +134,7 @@ export function buildElementClipPayload(
       sourceCanvasId: activeCanvasId,
       objects,
       layoutGroups: [],
+      ...(items.length && items.length === els.length ? { elements: { docId: documentId, panelId, items } } : {}),
     },
     refusedName: null,
   }
@@ -137,6 +159,13 @@ function inIdleEditor(node: Node | null): boolean {
   return !!editor && !editor.contains(document.activeElement)
 }
 
+/** 没有焦点的 contenteditable 里（粘贴用：只有它会在没有焦点时收到 paste 事件） */
+function inIdleRichText(node: Node | null): boolean {
+  const at = node instanceof Element ? node : node?.parentElement
+  const editor = at?.closest('[contenteditable]')
+  return !!editor && !editor.contains(document.activeElement)
+}
+
 /** 顶栏胶囊：这个元素还不能复制（只用状态胶囊，不挤页面） */
 function announceNotCopyable(name: string | null): void {
   if (name == null) return
@@ -144,10 +173,10 @@ function announceNotCopyable(name: string | null): void {
 }
 
 /**
- * 右键弹层的「复制为标注」：复制 `gids` 里的文字元素（点击是用户手势，`writeText` 各浏览器都放行）。
- * 不能复制的元素只出胶囊、不动剪贴板。
+ * 右键弹层的「复制」：复制 `gids` 里的元素，写的负载与图内编辑里的 ⌘C 同一份（标注 + 图内副本两种落法，ADR 0207；
+ * 点击是用户手势，`writeText` 各浏览器都放行）。不能复制的元素只出胶囊、不动剪贴板。
  */
-export async function copyElementsAsAnnotations(panelId: string, gids: readonly string[]): Promise<boolean> {
+export async function copyFigureElements(panelId: string, gids: readonly string[]): Promise<boolean> {
   const { payload, refusedName } = buildElementClipPayload(panelId, gids)
   if (!payload) {
     announceNotCopyable(refusedName)
@@ -244,6 +273,10 @@ export function handleCopyEvent(e: ClipboardEvent): boolean {
  */
 export function handlePasteEvent(e: ClipboardEvent): boolean {
   const text = e.clipboardData?.getData('text/plain') ?? ''
+  // 残留在没有焦点的富文本框里的选区不算「焦点在输入框里」：按页面本身走。浏览器把 paste 派给选区所在的
+  // contenteditable（哪怕它没有焦点）；不然 ⌘V 被闸门当成「在输入框里粘贴」让位，而那个框自己也不接
+  // （`RichTextField` 无焦点时拒收）——这次粘贴就丢了。input / textarea 只有拿着焦点才会收到 paste，照旧让位
+  const target = inIdleRichText(e.target as Node | null) ? document.body : e.target
   const payload = parsePayload(text)
   if (!payload) {
     // 外部 SVG 标记（Illustrator / Inkscape 复制出来的，ADR 0189）：落成可编辑对象，做不准就整个当图片
@@ -252,20 +285,20 @@ export function handlePasteEvent(e: ClipboardEvent): boolean {
     const svg = looksLikeSvg(raw) ? raw : looksLikeSvg(text) ? text : ''
     if (svg) {
       return (
-        runDiscreteAction('canvas', e.target, () => {
+        runDiscreteAction('canvas', target, () => {
           e.preventDefault()
           void pasteSvgText(svg)
           return true
         }) ?? false
       )
     }
-    return pasteImageFiles(e, text)
+    return pasteImageFiles(e, text, target)
   }
   // 桌面壳「编辑 → 粘贴」与预置 ⌘V 加速键直达这里，不经 keydown：先过离散动作闸门——
   // 输入框 / 对话框里让位（不收手势），否则先落定开着的连续编辑，粘贴不并进方向键
   // 微调那条撤销（Codex #671）
   return (
-    runDiscreteAction('canvas', e.target, () => {
+    runDiscreteAction('canvas', target, () => {
       if (!consumePayload(payload)) return false
       e.preventDefault()
       return true
@@ -279,16 +312,28 @@ export function handlePasteEvent(e: ClipboardEvent): boolean {
  * **有文字就不拦**：电子表格 / 网页的复制常带一张预览图，那是在粘文字，外部文字粘贴不在这里管；
  * 输入框 / 对话框里让位（与对象粘贴同一个 `runDiscreteAction` 判据），浏览器照常处理。
  */
-function pasteImageFiles(e: ClipboardEvent, text: string): boolean {
+function pasteImageFiles(e: ClipboardEvent, text: string, target: EventTarget | null = e.target): boolean {
   if (text.trim()) return false
   const files = pastedAssetFiles(e.clipboardData)
   if (!files.length) return false
   return (
-    runDiscreteAction('canvas', e.target, () => {
+    runDiscreteAction('canvas', target, () => {
       e.preventDefault()
       void intakePastedImages(files)
       return true
     }) ?? false
+  )
+}
+
+function validElements(v: unknown): v is ClipElements {
+  const e = v as ClipElements | null | undefined
+  return (
+    !!e &&
+    typeof e.docId === 'string' &&
+    typeof e.panelId === 'string' &&
+    Array.isArray(e.items) &&
+    e.items.length > 0 &&
+    e.items.every((i) => !!i && typeof i.gid === 'string')
   )
 }
 
@@ -297,6 +342,8 @@ export function parsePayload(text: string): ClipPayload | null {
   try {
     const data = JSON.parse(text)
     if (!MAGICS.includes(data?.magic) || !Array.isArray(data.objects)) return null
+    // `elements` 形状不对就当没有（别的版本 / 手改过的剪贴板）：粘贴退回只落标注，不拿半截数据建副本
+    if (!validElements(data.elements)) delete data.elements
     return data as ClipPayload
   } catch {
     return null
@@ -310,6 +357,8 @@ export interface MissingAsset {
   name: string
   /** 引用它的剪贴板面板数量 */
   count: number
+  /** 这次检视确需重链接的面板；同 fileId 的自包含图表不在其中。 */
+  panelIds?: string[]
   /** 用户选择：重新链接到哪个现有素材；undefined = 跳过 */
   relinkTo?: string
 }
@@ -354,18 +403,23 @@ function panelSourceKnown(p: PanelObject): boolean {
 }
 
 /** 项目包导入后：把当前文档里缺失素材的面板交给重链接对话框处理 */
-export function requestRelinkMissing(): number {
+export function requestRelinkMissing(verifiedChartSources: readonly ChartSourceRef[] = []): number {
   const { doc } = useDocumentStore.getState()
   const missingMap = new Map<string, MissingAsset>()
   for (const o of doc.objects) {
     if (o.type !== 'panel' || panelSourceKnown(o)) continue
+    if (o.chartSource && verifiedChartSources.some(ref => sameRules(ref, o.chartSource))) continue
     const cur = missingMap.get(o.fileId)
-    if (cur) cur.count += 1
+    if (cur) {
+      cur.count += 1
+      cur.panelIds!.push(o.id)
+    }
     else {
       missingMap.set(o.fileId, {
         fileId: o.fileId,
         name: o.name ?? o.fileId.split('/').pop() ?? o.fileId,
         count: 1,
+        panelIds: [o.id],
       })
     }
   }
@@ -404,12 +458,13 @@ export function materializeRelink(resolved: MissingAsset[], { keepEdits = false 
     useUiStore.getState().setStatus(note('relinkNone'), 'info')
     return
   }
-  const byFileId = new Map(relink.map((m) => [m.fileId, assets[m.relinkTo!]]))
+  const byFileId = new Map(relink.map((m) => [m.fileId, { asset: assets[m.relinkTo!], panelIds: m.panelIds }]))
   useDocumentStore.getState().commit(hist('relinkAssets', { count: relink.length }), (d) => {
     for (const o of d.objects) {
       if (o.type !== 'panel') continue
-      const info = byFileId.get(o.fileId)
-      if (!info) continue
+      const choice = byFileId.get(o.fileId)
+      if (!choice || (choice.panelIds && !choice.panelIds.includes(o.id))) continue
+      const info = choice.asset
       clearAdoption(o)
       o.fileId = info.id
       o.fileKind = info.kind
@@ -464,8 +519,11 @@ export async function peekClipboardHasObjects(): Promise<boolean | null> {
  */
 let readUnsupportedNotified = false
 
-/** ⌘V 入口。返回 true = 消费了这次粘贴（是本工具的对象负载）。 */
-export async function pasteObjects(): Promise<boolean> {
+/**
+ * 右键菜单的「粘贴」/「粘贴为标注」入口。返回 true = 消费了这次粘贴（是本工具的对象负载）。
+ * `asAnnotation`：不按图内副本分派、强制落成标注（图内编辑里想要标注时用）。
+ */
+export async function pasteObjects(opts: PasteOptions = {}): Promise<boolean> {
   // Firefox 默认不暴露 readText：对象粘贴在这类浏览器上永远走不通，
   // 静默失败会让用户以为是复制没成功，反复重试。
   if (typeof navigator.clipboard?.readText !== 'function') {
@@ -490,7 +548,12 @@ export async function pasteObjects(): Promise<boolean> {
   }
   const payload = parsePayload(text)
   if (!payload) return false
-  return consumePayload(payload)
+  return consumePayload(payload, opts)
+}
+
+export interface PasteOptions {
+  /** 强制走 `objects`（落成标注），不按 `elements` 建图内副本 */
+  asAnnotation?: boolean
 }
 
 /**
@@ -500,9 +563,12 @@ export async function pasteObjects(): Promise<boolean> {
  * 粘出一张图 = 第二张图，模式订阅切到多图排版；粘标注就留在单图编辑。图内文字编辑器 / 输入框里的粘贴在
  * `handlePasteEvent` 的离散动作闸门那一步就让位给浏览器了，到不了这里。
  */
-function consumePayload(payload: ClipPayload): boolean {
+function consumePayload(payload: ClipPayload, opts: PasteOptions = {}): boolean {
   // 上次的排版还在恢复：这次粘贴排队到文档就绪再落（一次）；需要用户先处理恢复问题时拒掉并说一句。都算消费了这次粘贴
-  if (deferUserEntry(() => void consumePayload(payload)) !== 'run') return true
+  if (deferUserEntry(() => void consumePayload(payload, opts)) !== 'run') return true
+  // 同一份文档、同一张图的图内编辑里粘贴 → 建图内副本、不退出图内编辑（ADR 0207）；别处照旧落成标注。
+  // 分派只在这一处，创建仍只在 `duplicateFigureElements`：不开第三条创建路径
+  if (!opts.asAnnotation && pasteIntoFigure(payload)) return true
   const missingMap = new Map<string, MissingAsset>()
   for (const o of payload.objects) {
     if (o.type !== 'panel') continue
@@ -528,6 +594,35 @@ function consumePayload(payload: ClipPayload): boolean {
     return true
   }
   materializePaste(payload, [])
+  return true
+}
+
+/**
+ * 负载带 `elements` 且此刻正在**同一份文档、同一张图**的图内编辑 → 按它建图内副本，返回 true（消费了）。
+ * 权威 manifest 不在（正在重渲染）：不拿旧清单算落点，出「还不能复制」的胶囊并消费这次粘贴（落成标注会无端退出图内编辑）。
+ * 权威清单在而其中**任何一段**不能复制了（脚本改过、源没了）：返回 false，整批退回落成标注（0163 行为），不只粘幸存的。
+ */
+function pasteIntoFigure(payload: ClipPayload): boolean {
+  const el = payload.elements
+  const { doc, documentId } = useDocumentStore.getState()
+  if (!el || el.docId !== documentId || useUiStore.getState().elementPanelId !== el.panelId) return false
+  const panel = doc.objects.find((o): o is PanelObject => o.id === el.panelId && o.type === 'panel')
+  if (!panel) return false
+  const exact = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!exact) {
+    announceNotCopyable('')
+    return true
+  }
+  // 粘贴这一刻按当前清单重新过判据：不信剪贴板里的那份
+  // 全有或全无（与 `buildElementClipPayload` 同口径）：任一项此刻不可建副本（源删了、脚本改了）就整批落成标注，
+  // 不悄悄只粘幸存的几个（Codex #2163）
+  const ok = (g: string) => {
+    const e = exact.elements.find((x) => x.gid === g)
+    return !!e && isDuplicableElement(panel, exact, e)
+  }
+  const gids = el.items.map((i) => i.gid)
+  if (!gids.length || !gids.every(ok)) return false
+  duplicateFigureElements(el.panelId, gids)
   return true
 }
 

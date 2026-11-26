@@ -2269,7 +2269,27 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
         expect.anything(),
       )
       expect(panel().dataset.convertPhase).toBe('running')
-      expect(panel().querySelector('[data-prep-progress]')).not.toBeNull()
+      // 进行中是任务清单（2026-11-25）：三步，还没有 stage = 读懂原脚本；没有进度条
+      const steps = () =>
+        [...panel().querySelectorAll('[data-convert-steps] [data-task-step]')].map(
+          (li) => `${li.getAttribute('data-task-step')}:${li.getAttribute('data-step-state')}`,
+        )
+      expect(steps()).toEqual(['read:active', 'write:pending', 'verify:pending'])
+      expect(panel().querySelector('[data-prep-progress]')).toBeNull()
+      expect(panel().querySelector('[data-convert-steps] [data-task-title]')?.textContent).toBe('生成可编辑版本')
+      await act(async () =>
+        useConvertStore.setState((st) => ({
+          entries: { ...st.entries, 'plot.py': { ...st.entries['plot.py']!, stage: { step: 'write', round: 2 } } },
+        })),
+      )
+      expect(steps()).toEqual(['read:done', 'write:active', 'verify:pending'])
+      expect(panel().querySelector('[data-convert-steps] [data-task-meta]')?.textContent).toBe('第 2 轮')
+      await act(async () =>
+        useConvertStore.setState((st) => ({
+          entries: { ...st.entries, 'plot.py': { ...st.entries['plot.py']!, stage: { step: 'verify', round: 1 } } },
+        })),
+      )
+      expect(steps()).toEqual(['read:done', 'write:done', 'verify:active'])
       expect(primary()).toBeNull()
       await settle()
       expect(panel().dataset.convertPhase).toBe('ready')
@@ -4651,13 +4671,18 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
   const change = (over: Partial<NonNullable<PreparationReport['python_change']>> = {}, extra: Partial<PreparationReport> = {}) =>
     report({ ...STATES.pythonChange, python_change: { ...STATES.pythonChange.python_change!, ...over }, ...extra })
 
-  it('系统 Python：「正在换成 Python 3.12…」，阶段一句 + 不定态进度条 + 文字「停止」；没有主按钮之外的第二件事', async () => {
+  it('系统 Python：「正在换成 Python 3.12…」，任务清单（只有建环境、装包两步）+ 文字「停止」；没有主按钮之外的第二件事', async () => {
     await mount()
     await openWith(change())
     expect(panel().dataset.prepState).toBe('python_change')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在换成 Python 3.12…')
-    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('正在创建新的运行环境…')
-    expect(panel().querySelector('[data-prep-progress]')).not.toBeNull()
+    expect(panel().querySelector('[data-prep-python-change] [data-task-title]')?.textContent).toBe('正在创建新的运行环境…')
+    expect(panel().querySelector('[data-prep-progress]')).toBeNull()
+    expect(
+      [...panel().querySelectorAll('[data-prep-python-change] [data-task-step]')].map(
+        (li) => `${li.getAttribute('data-task-step')}:${li.getAttribute('data-step-state')}`,
+      ),
+    ).toEqual(['env:active', 'packages:pending'])
     expect(panel().querySelector('[data-prep-stop]')).not.toBeNull()
     expect(visibleSentenceCount(panel())).toBeLessThanOrEqual(1)
     // 只讲「连接/换成」，不出现「执行器」
@@ -4667,25 +4692,41 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
   it('项目上另一个依赖安装还没完：阶段一句说在等它（TVD-22EY），不退回「正在准备…」', async () => {
     await mount()
     await openWith(change({ stage: 'waiting' }))
-    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('正在等另一个安装完成…')
+    expect(panel().querySelector('[data-prep-python-change] [data-task-title]')?.textContent).toBe('正在等另一个安装完成…')
     expect(panel().querySelector('[data-prep-stop]')).not.toBeNull()
     expect(visibleSentenceCount(panel())).toBeLessThanOrEqual(1)
   })
 
-  it('私有 Python 要下载：标题如实说约多少 MB；下载那一段说已下载字节并画确定的进度条（百分比）', async () => {
+  it('私有 Python 要下载：标题如实说约多少 MB；清单三步，下载那步胶囊里是已下载字节，没有进度条', async () => {
     await mount()
     await openWith(report(STATES.pythonChangeDownload))
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在换成 Python 3.13（下载约 24 MB）…')
-    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('已下载 5 / 24 MB')
-    const bar = panel().querySelector('[role="progressbar"]') as HTMLElement | null
-    expect(bar?.getAttribute('aria-valuenow')).toBe('21')
+    expect(panel().querySelector('[data-prep-python-change] [data-task-title]')?.textContent).toBe('正在下载 Python…')
+    expect(panel().querySelector('[data-prep-python-change] [data-task-meta]')?.textContent).toBe('5 / 24 MB')
+    expect(panel().querySelector('[data-prep-python-change] [aria-current="step"]')?.getAttribute('data-task-step')).toBe('python')
+    expect(panel().querySelectorAll('[data-prep-python-change] [data-task-step]')).toHaveLength(3)
+    expect(panel().querySelector('[role="progressbar"]')).toBeNull()
+  })
+
+  it('「校验」两边都有：建环境之前是校验 Python，建过环境之后是装包后的校验（按这张卡走到过的最远一步分）', async () => {
+    const active = () => panel().querySelector('[data-prep-python-change] [aria-current="step"]')?.getAttribute('data-task-step')
+    await mount()
+    await openWith(change({ base: 'private', stage: 'verifying' }))
+    expect(active()).toBe('python')
+    await openWith(change({ base: 'private', stage: 'creating' }))
+    expect(active()).toBe('env')
+    await openWith(change({ base: 'private', stage: 'verifying' }))
+    expect(active()).toBe('packages')
+    // 用机器上已有的 Python：没有「准备 Python」，校验只可能是装包之后
+    await openWith(change({ base: 'system', stage: 'verifying' }))
+    expect(active()).toBe('packages')
   })
 
   it('已就位 / 本地缓存的私有 Python（下载字节为 0）不说"下载约…"', async () => {
     await mount()
     await openWith(change({ base: 'private', stage: 'launching' }))
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在换成 Python 3.12…')
-    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('正在启动 Python…')
+    expect(panel().querySelector('[data-prep-python-change] [data-task-title]')?.textContent).toBe('正在启动 Python…')
   })
 
   it('「停止」认领报告里的 cancel 动作（会话里的取消，后端把它转给换环境的事务）', async () => {
@@ -4710,7 +4751,7 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
       }),
     )
     expect(panel().dataset.prepState).not.toBe('python_change')
-    expect(panel().querySelector('[data-python-change-line]')).toBeNull()
+    expect(panel().querySelector('[data-prep-python-change]')).toBeNull()
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-row="python-changed"]')?.textContent).toBe('换成了Python 3.12')
     // 运行记录只数执行：两次执行，不是三条
@@ -4723,7 +4764,8 @@ describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句�
       await mount()
       await openWith(report(STATES.pythonChangeDownload))
       expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('Switching to Python 3.13 (about 24 MB to download)…')
-      expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('5 / 24 MB downloaded')
+      expect(panel().querySelector('[data-prep-python-change] [data-task-title]')?.textContent).toBe('Downloading Python…')
+      expect(panel().querySelector('[data-prep-python-change] [data-task-meta]')?.textContent).toBe('5 / 24 MB')
       expect(panel().textContent?.toLowerCase()).not.toContain('executor')
     } finally {
       await i18n.changeLanguage('zh-CN')

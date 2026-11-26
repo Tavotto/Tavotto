@@ -30,8 +30,14 @@
 场景、数据和模型以字节摘要及 revision 绑定，Python/TypeScript 镜像共用 golden 向量。
 场景解析沿用 `svgcheck` 的安全边界；坐标先由 SVG 用户单位转换为物理 pt，再进入现有面板放置链。
 
+HTTP 绑定请求携带校准时 `/api/svg/chart/inspect` 返回的 `scene_digest`。摘要缺失时返回 422，
+重新读取的场景摘要不符时返回 409 `chart_source_changed`，调用方需重新检查并校准。
+重放按完整场景索引验证绑定节点。新建绑定目前仍受检视清单上限约束，见 [#2147](https://github.com/Tavotto/Tavotto/issues/2147)。
+
 计算仍由 Matplotlib 的 locator、formatter、scale、norm 和既有 override/manifest 权威完成。
 组合器替换明确归属的区域，并保持 defs/use、clip、透明度和层序；未绑定内容不被整体重画。
+PNG 预览与 manifest 使用同一次 worker 绘制。预览转为 RenderCore 路径时，
+字形定义的缩放和各实例的位移直接并入无描边的轮廓坐标，避免为这两种变换增加分组。
 
 与 ADR 0178 的关系：两者都需要确定性计算和数据事实，但本方案服务于“已有 SVG 的显式绑定”，
 不增加模型写代码或任意执行入口。配方、统计规则、数据出图工具集继续以 ADR 0178 为唯一权威；
@@ -63,12 +69,24 @@ HTTP 响应与 TS 镜像在 4e（[#1927](https://github.com/Tavotto/Tavotto/pull
 
 ### 3. schema 4、附件与保存
 
-schema 4 显式表达计算状态及不可变 SVG 来源附件；旧 `SCHEMA_CURRENT` 和 legacy 命名空间保持。
+schema 4 显式表达计算状态及不可变 SVG 来源附件。**维护者已确认（[#1920](https://github.com/Tavotto/Tavotto/issues/1920)）单一存储合同**：
+schema 4 与 schema 3 落在**同一套目录、同一个文档列表、同一条版本历史**里，只由正文里的 schema 号区分；
+不设第二套命名空间、不复制目录、不另开列表或版本链。
+`documents.validate_document` 按 schema 号分派（4 走 `validate_chart_document`）；保存、自动保存、
+槽位探测、恢复候选、版本节点与教程校验共用这一个入口，不按格式加端点或会话域；
+项目包按同一 `SUPPORTED_SCHEMAS` 集合准入。
 附件先按精确字节和摘要保存，正文仍通过原 writer 单次提交。缺失或篡改的附件明确报错，
 不回退到同名路径。项目文件身份、保存回执、恢复选择和预览归属沿同一文档代际与事务链传递。
 
-**维护者要求修改，待独立落实**（[#1920](https://github.com/Tavotto/Tavotto/issues/1920)）：schema 必须升号，但使用同一套存储、列表与历史；首次加入计算图表原地升级并保留版本历史。上面的隔离命名空间是候选现状，不是已批准合同。
-本草案不重定义现役保存 writer，也不预先宣称该格式已成为现役标准。
+**首次加入计算图表是原地升级**：同一 documentId、同一文件 / 自动保存槽位与版本时间线，正文在提交时写成
+schema 4，既有版本历史保留。**升级前必须先**把整份项目文档存成时间线节点作为可退回的备份
+（`takeProjectCheckpoint` 原语已就位），备份没落定不得继续写图表。版本节点按正文 schema 分派：2 是单画布检查点，
+3 / 4 是整份项目，恢复整份项目节点换的是同一 documentId 的全部画布。
+**接线状态（勿读成已实现）**：把图表第一次写进正文的入口属于 7/9；在它接线之前，
+`takeProjectCheckpoint` 在生产代码里只有「恢复前」节点一个调用方，本层没有「先备份再升级」的
+执行路径。`tests/test_chart_document_upgrade.py` 只覆盖后端能强制的边界（同一文件 / 时间线、
+来源冻结失败时正文零改动），**不覆盖**前端那条备份接线。
+本草案不重定义现役保存 writer；ADR 整体仍为 Proposed，不因这一合同成立而宣称已取得合入或发布资格。
 
 ### 4. 项目包封存、检视与安装
 
@@ -101,6 +119,8 @@ workerd 消费。workerd 通过 `bounded_chart_tasks` 能力握手；旧二进�
 
 - 同一计算 revision 冻结模型、绑定、数据、来源、profile 和原序 overrides；各导出 scope 消费同一事实。
 - PDF 经 `pdfbackend`/RenderCore；零 PyMuPDF 不变。不能表达的格式能力按既有逐格式结果披露。
+- PNG 预览以 worker 在测量 manifest 的同一次绘制中输出的字形轮廓生成 Canonical PDF。
+  导入计算包时先按包的原有 SVG 表示验证冷重放，再生成用于 PNG 的轮廓。
 - 原件写回仍是 prepare → 全量重放/几何/像素 verify → commit；失败保持原件，外部新版本不得被覆盖。
 - 历史来源意图与当前执行权限分开；重跑、取消、失败、旧响应和跨项目切换不提升历史来源权限。
 - 诊断、遥测和运行目录继续沿现有边界，不新增用户文字、数据或路径的遥测入口。

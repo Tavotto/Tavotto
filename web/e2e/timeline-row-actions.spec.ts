@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { expect, test, waitForDocumentReady } from './fixtures'
 
 /**
  * 时间线行上的操作在真浏览器里走得通（Codex #679）。
@@ -19,9 +19,40 @@ async function only(loc: Locator, timeout?: number): Promise<Locator> {
 }
 
 /**
- * 打开时间线，拿到那唯一的一个节点：第一次启动时的「打开项目」关键时刻（空画布也打）。
- * 画布一直空着，自动节点不拍（空画布不拍），行数稳定。
+ * 让时间线上**恰好有一个**节点，而且它走的是产品的真实路径：
+ *
+ * 空白排版的「打开」「离开」不再打点（ADR 0211 第一期 4：不在用户项目里留只有空节点的 `.vx`），所以不能再靠
+ * 「第一次启动时的打开项目节点」。这里先在画布上放一段文字、等自动保存落盘，再重载一次——重载后文档恢复出来是
+ * 有内容的，「打开项目」关键时刻照常打一个节点。自动节点的停顿 / 间隔经 `__TAVOTTO_TIMELINE_TIMING__` 注入成
+ * 一小时（不改产品默认值），用例期间一个也不会拍，所以行数是确定的 1，不靠卡时间窗。
  */
+async function openWithOneNode(page: Page, baseURL: string) {
+  await page.addInitScript(() => {
+    ;(window as unknown as Record<string, unknown>).__TAVOTTO_TIMELINE_TIMING__ = {
+      debounceMs: 3_600_000,
+      minGapMs: 3_600_000,
+    }
+  })
+  await page.goto(baseURL)
+  await waitForDocumentReady(page)
+  const saved = page.waitForResponse(
+    (r) =>
+      r.request().method() === 'PUT' && r.url().includes('/api/autosave/') && r.status() >= 200 && r.status() < 300,
+    { timeout: 30_000 },
+  )
+  await (await only(page.locator('[data-tool="text"]'), 30_000)).click()
+  await (await only(page.locator('[data-canvas-stage]'))).click({ position: { x: 400, y: 300 } })
+  await page.keyboard.type('起点')
+  await page.keyboard.press('Escape')
+  const text = page.locator('[data-canvas-stage]').getByText('起点', { exact: true })
+  await expect(text).toBeVisible()
+  await saved
+  await page.reload()
+  await waitForDocumentReady(page)
+  await expect(text).toBeVisible({ timeout: 30_000 })
+}
+
+/** 打开时间线，拿到那唯一的一个节点：`openWithOneNode` 重载之后（有内容的）「打开项目」关键时刻 */
 async function drawerWithOneNode(page: Page) {
   await (await only(page.locator('[data-inspector-tab="timeline"]'), 30_000)).click()
   const drawer = await only(page.locator('[data-timeline-panel]'))
@@ -31,7 +62,7 @@ async function drawerWithOneNode(page: Page) {
 
 test('双击一行进入改名（前导 click 不开模态），回车存成命名节点', async ({ app, page }) => {
   const a = await app()
-  await page.goto(a.baseURL)
+  await openWithOneNode(page, a.baseURL)
   const { drawer, node } = await drawerWithOneNode(page)
   await (await only(node.locator('[data-timeline-row]'))).dblclick()
   // 双击的前两下 click 只选中：没有模态盖住这一行
@@ -46,7 +77,7 @@ test('双击一行进入改名（前导 click 不开模态），回车存成命�
 
 test('单击一行弹出对比卡片（悬停不冒按钮）；⋯ 里的「改名」进入改名，卡片的「放大查看」打开预览', async ({ app, page }) => {
   const a = await app()
-  await page.goto(a.baseURL)
+  await openWithOneNode(page, a.baseURL)
   const { drawer, node } = await drawerWithOneNode(page)
   const row = await only(node.locator('[data-timeline-row]'))
   // 悬停只有轻微底色，不再冒「预览」「恢复到这里」两颗按钮
@@ -81,7 +112,7 @@ for (const [locale, width] of [['zh-CN', 320], ['en-US', 320], ['zh-CN', 480]] a
       { locale, width },
     )
     const a = await app()
-    await page.goto(a.baseURL)
+    await openWithOneNode(page, a.baseURL)
     const { node } = await drawerWithOneNode(page)
     // 在右栏里，而不是盖在画布上的浮卡
     await expect(page.locator('[data-inspector-panel] [data-timeline-panel]')).toHaveCount(1)
@@ -110,13 +141,13 @@ const row = (node: Locator) => node.locator('[data-timeline-row]')
 
 test('多张画布：时间线默认只显示当前画布自己的节点，切到「全部画布」才混在一起', async ({ app, page }) => {
   const a = await app()
-  await page.goto(a.baseURL)
+  await openWithOneNode(page, a.baseURL)
   const { drawer } = await drawerWithOneNode(page)
   // 只有一张画布：没有范围切换
   await expect(drawer.locator('[data-timeline-scope]')).toHaveCount(0)
   await page.getByRole('button', { name: '新建画布', exact: true }).first().click()
   const scope = await only(drawer.locator('[data-timeline-scope]'), 15_000)
-  // 新画布还没有自己的节点：第一张画布的那条「打开项目」不混进来
+  // 新画布还没有自己的节点：第一张画布的那条（重载后有内容的）「打开项目」不混进来
   await expect(drawer.locator('[data-timeline-node]')).toHaveCount(0)
   const shots = process.env.TAVOTTO_SHOTS
   if (shots) await page.screenshot({ path: `${shots}/timeline-scope-new-canvas.png` })

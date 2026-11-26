@@ -179,6 +179,15 @@ _INTERPRETER_ENV = ("TAVOTTO_WORKER_PYTHON",)
 
 
 @pytest.fixture(autouse=True)
+def _journal_facts_index_always_stale(monkeypatch):
+    """v2 签名索引的 5 分钟新鲜期在测试里关掉：很多用例连续 `sync()` 并期待每次都去「服务器」取。
+    新鲜期自己的用例（tests/test_journalfacts_remote.py）把它改回来并注入假时钟。"""
+    from tavotto.engine import journalfacts_remote as _facts
+
+    monkeypatch.setattr(_facts, "INDEX_FRESH_S", 0)
+
+
+@pytest.fixture(autouse=True)
 def _no_after_license_hooks(monkeypatch):
     """授权后回调（`proinstall.register` 在 `app.py` 导入时登记）清空：否则同一进程里先导入过 app 的用例之后，
     每次激活 / 刷新都会起后台线程去要 `/v1/pro/manifest`，打乱假服务器的请求记录与排队响应。要测回调的用例自己登记。"""

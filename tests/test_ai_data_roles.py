@@ -760,7 +760,12 @@ def test_only_propose_and_the_model_pair_reach_the_model_modules():
         for mod in ("ai_structured", "ai_data_model", "ai_data_roles"):
             if mod in imp and path.name not in (f"{mod}.py",):
                 users.setdefault(mod, []).append(path.name)
-    assert sorted(users["ai_structured"]) == ["ai_data_model.py", "ai_data_roles.py"]
+    # `changeplan.py`（ADR 0206 修订 2026-11-24）：修改方案走同一个无工具单轮入口，是第二个、也是目前唯一的非数据出图调用方
+    assert sorted(users["ai_structured"]) == [
+        "ai_data_model.py",
+        "ai_data_roles.py",
+        "changeplan.py",
+    ]
     assert sorted(users["ai_data_model"]) == ["ai_data_roles.py"]
     assert sorted(users["ai_data_roles"]) == ["ai_data_propose.py", "app.py"]
 
@@ -1212,9 +1217,11 @@ def test_list_valued_y_that_is_not_usable_is_ignored_by_the_rules(tmp_path):
 def test_ho19_the_model_gives_the_x_axis_even_though_the_table_has_a_group(tmp_path):
     case = HBY["HO-19"]
     rules = run_case(case, tmp_path, conn=None).rules
-    assert rules["x"] is None
+    # 2026-11-24 起规则自己也认得出来：`sem` 是误差列、不进横轴候选，剩下的数值列只有 `day`（以前是 `day` / `sem` 两个候选、有分组列时不猜，x 为 None）
+    assert rules["x"] == "day"
     run, _ = with_model(case, tmp_path)
-    assert run.model == case["expect_default"] and run.payload["answers"]["x"] == "day"
+    # 模型与规则一致时建议里不重复带这一项（建议只装与规则不同的地方）
+    assert run.model == case["expect_default"] and "x" not in run.payload["answers"]
     candidates_of(tmp_path, case, run.payload["answers"])
 
 
@@ -1233,8 +1240,11 @@ def test_ho19_x_is_dropped_unless_it_is_time_or_ordered_and_a_real_candidate(tmp
         run, _ = with_model(
             case, tmp_path, reach_answer(r, y=["mean_length_mm"], group="strain", **pk)
         )
+        # 不合格的 x（含模型说的 `none`）被丢掉后回到规则的结果：规则现在认得出 `day`（`sem` 是误差列，不进横轴候选）
         assert (
-            run.state == "ready" and run.model["x"] is None and run.model["y"] == ["mean_length_mm"]
+            run.state == "ready"
+            and run.model["x"] == "day"
+            and run.model["y"] == ["mean_length_mm"]
         ), name
 
 

@@ -38,10 +38,9 @@ const bridge = new AppsBridge()
 installMcpTransport(bridge)
 
 type BootState = 'connecting' | 'waiting' | 'fetching' | 'ready' | 'nohost' | 'failed'
-interface Failure {
-  code: 'stripped' | 'fetch_failed'
-  detail: string
-}
+type Failure =
+  | { code: 'stripped' | 'fetch_failed'; detail: string }
+  | { code: 'batch'; stems: string[] }
 
 function Boot() {
   const [open, setOpen] = useState<OpenFigureResult | null>(null)
@@ -75,7 +74,11 @@ function Boot() {
           settle(res.payload)
           return
         }
-        setFailure({ code: res.code, detail: res.detail })
+        setFailure(
+          res.code === 'batch'
+            ? { code: 'batch', stems: res.stems }
+            : { code: res.code, detail: res.detail },
+        )
         setState('failed')
       })
     }
@@ -166,9 +169,14 @@ function Splash({
   else if (state === 'connecting') text = tr('splashConnecting')
   else if (state === 'fetching') text = tr('splashFetching')
   else if (state === 'failed' && failure) {
-    text =
-      failure.code === 'stripped' ? tr('splashStripped') : tr('splashFetchFailed')
-    detail = failure.detail
+    if (failure.code === 'batch') {
+      // 不是故障：图都开好了，只是画布一次放一张。不摆诊断，给一句能照着说的话
+      text = tr('splashBatch', { n: failure.stems.length, stem: failure.stems[0] ?? '' })
+    } else {
+      text =
+        failure.code === 'stripped' ? tr('splashStripped') : tr('splashFetchFailed')
+      detail = failure.detail
+    }
   } else if (waitedLong) {
     text = tr('splashWaitingLong', { seconds: Math.round(WAITING_NOTICE_MS / 1000) })
     detail = `tool-result notifications received: ${seen}`

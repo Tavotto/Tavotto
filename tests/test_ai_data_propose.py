@@ -1050,7 +1050,11 @@ def test_unplotted_rows_reports_rows_without_an_x_value(tmp_path):
         }
     )
     rows = ai_data_task.unplotted_rows(values, recipe)
-    assert rows == [{"row": len(values.rows) + 1, "column": "dose_mg", "reason": "x_not_a_value"}]
+    # 夹具里倒数第二行纵轴是空的、最后一行横轴是空的：散点一行一个点，两行都画不出来、都要报（G-055）
+    assert rows == [
+        {"row": len(values.rows), "column": "response_mV", "reason": "y_missing"},
+        {"row": len(values.rows) + 1, "column": "dose_mg", "reason": "x_not_a_value"},
+    ]
     assert trend_rows() and cmp_rows()  # 夹具可用（防止导入被优化掉）
 
 

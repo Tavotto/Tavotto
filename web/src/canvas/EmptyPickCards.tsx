@@ -3,8 +3,8 @@ import { visibleFigureCards } from '@/lib/figureGroup'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { Card } from '@/components/ui/Card'
-import { MiddleEllipsis } from '@/components/ui/MiddleEllipsis'
-import { formatOf, nameTail } from '@/lib/assetCardText'
+import { CardMeta, CardPreview } from '@/components/left/assetCardParts'
+import { formatOf } from '@/lib/assetCardText'
 import { panelSrc, type PanelInfo } from '@/lib/api'
 import { statusLabel } from '@/lib/readinessText'
 import { formatCm } from '@/lib/units'
@@ -16,16 +16,16 @@ import { useAssetStore } from '@/store/assetStore'
 export const PICK_LIMIT = 4
 /** 一张卡的宽（px）：要完整放下「PDF · 7.3 × 5.8 cm」 */
 export const CARD_W = 136
-const GAP = 10
+const GAP = 14
 /** 提示面板的内边距（px） */
 const PAD = 16
 
 const pk = (key: string, values?: Record<string, unknown>) =>
   translate(`stage.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-/** 一张卡的高（px，缩略图 64 + 名字 + 元数据 + 内边距）与提示面板其余部分（内边距 + 标题 + 说明 + 间距）的高 */
-const CARD_H = 128
-const CHROME_H = 112
+/** 一张卡的高（px，3:2 缩略图 ≈ 91 + 名字 + 元数据 + 内边距，与左栏素材卡同一套外观）与提示面板其余部分（内边距 + 标题 + 说明 + 间距）的高 */
+const CARD_H = 144
+const CHROME_H = 120
 
 /** 纸面放得下几行（至少一行） */
 export function pickRows(paperH: number): number {
@@ -60,7 +60,7 @@ export function EmptyPickCards({ panels: files, paperW, paperH }: { panels: Pane
   const cols = pickColumns(paperW, Math.min(panels.length, PICK_LIMIT))
   const shown = panels.slice(0, Math.min(PICK_LIMIT, cols * pickRows(paperH)))
   return (
-    <div data-empty-pick className="grid justify-items-center gap-2.5" style={{ padding: PAD }}>
+    <div data-empty-pick className="grid justify-items-center gap-3.5" style={{ padding: PAD }}>
       <h4 className="type-title">{pk('pickTitle')}</h4>
       <div className="flex flex-wrap justify-center" style={{ width: cols * CARD_W + (cols - 1) * GAP, gap: GAP }}>
         {shown.map((p, i) => (
@@ -109,11 +109,12 @@ function PickCard({
       className="min-w-0 shrink-0 motion-safe:animate-rise-in"
       style={{ width: CARD_W, animationDelay: `${index * 70}ms`, animationFillMode: 'both' }}
     >
+      {/* 外观与左栏素材卡同一套（`CardPreview` + `CardMeta`）：3:2 满幅缩略图、底边细线、下面名字 + 元数据两行 */}
       <Card
         appearance="raised"
-        padding="sm"
+        padding="none"
         interactive
-        className={cn('transition-opacity', placed && 'pointer-events-none opacity-40')}
+        className={cn('overflow-hidden transition-opacity', placed && 'pointer-events-none opacity-40')}
       >
         <button
           type="button"
@@ -124,27 +125,30 @@ function PickCard({
           onMouseLeave={() => hint(false)}
           onFocus={() => hint(true)}
           onBlur={() => hint(false)}
-          className="grid w-full min-w-0 gap-1 rounded-md text-left outline-none focus-visible:focus-ring"
+          className="block w-full min-w-0 text-left outline-none"
         >
-          <span className="relative flex h-16 items-center justify-center overflow-hidden rounded-md bg-paper">
+          <CardPreview>
             {src && (
               <img loading="lazy" src={src} alt="" draggable={false} className="h-full w-full object-contain p-1" />
             )}
             {abnormal && (
               <span
                 data-card-status={cap.status}
-                className="pointer-events-none absolute bottom-1 left-1 rounded-full bg-thumb px-1.5 type-meta text-paper-ink-2 shadow-thumb"
+                className="pointer-events-none absolute bottom-1.5 left-1.5 rounded-full bg-thumb px-1.5 type-meta text-paper-ink-2 shadow-thumb"
               >
                 {statusLabel(cap.status)}
               </span>
             )}
-          </span>
-          <span className="block min-w-0 text-sm font-medium text-ink">
-            <MiddleEllipsis text={name} tail={nameTail(name)} />
-          </span>
-          <span className="block whitespace-nowrap type-meta tabular-nums text-ink-3">
-            {formatOf(panel)} · {translate('measure.cmSize', { w: formatCm(panel.native_w_mm), h: formatCm(panel.native_h_mm) })}
-          </span>
+          </CardPreview>
+          <CardMeta
+            name={name}
+            selected={false}
+            parts={[
+              formatOf(panel),
+              translate('measure.cmSize', { w: formatCm(panel.native_w_mm), h: formatCm(panel.native_h_mm) }),
+            ]}
+            used={0}
+          />
         </button>
       </Card>
     </div>

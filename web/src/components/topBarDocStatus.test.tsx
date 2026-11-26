@@ -166,7 +166,7 @@ describe('出事：锚点色胶囊 + 说明块', () => {
     useDiagSendStore.setState({ capability: { enabled: true } as never, open: false })
     try {
       await act(async () => {
-        useDocumentStore.setState({ docNotice: { kind: 'schema_too_new', docId: 'layout:Future', schema: 4 } })
+        useDocumentStore.setState({ docNotice: { kind: 'schema_too_new', docId: 'layout:Future', schema: 5 } })
       })
       const pop = (await openPill())!
       expect(pop.querySelector('[data-docbanner-check-update]')).toBeNull()

@@ -135,7 +135,7 @@ describe('项目失效（409 no_project）的前端出口', () => {
     expect(recentCalls()).toBe(before) // 连列表都不重新拉
   })
 
-  it('未落盘的改动留在本机兜底副本里，自动保存请求仍打向失效的那个项目', async () => {
+  it('未落盘改动留在本机副本，基线探测仍绑定原项目且失败后不发 PUT', async () => {
     const s = () => useDocumentStore.getState()
     await s().switchDocument(emptyProject(), 'd_gone')
     await tick() // 切文档那次落盘走完，diskBusy 复位
@@ -149,13 +149,13 @@ describe('项目失效（409 no_project）的前端出口', () => {
 
     // 兜底副本：磁盘那份此刻必然写不进去，本机这份绝不能跟着没
     expect(localStorage.getItem('tavotto.autosave.d_gone')).not.toBeNull()
-    // 先冲刷再忘掉 pj：这次 PUT 仍带着失效的 p_dead，不会落到后端默认项目上。
-    // 等一拍：每份文档第一次落盘前会先 GET 一次确认磁盘状况（ensureDiskKnown），
-    // PUT 排在那之后。
+    // 先冲刷再忘掉 pj：基线 GET 属于原项目；读不到正文时不猜基线、不覆盖。
     await tick()
-    const put = calls.find((c) => c.method === 'PUT' && c.url.includes('/api/autosave/'))
-    expect(put?.url).toContain('pj=p_dead')
-    await tick()
+    const autosaves = calls.filter(c => c.url.includes('/api/autosave/'))
+    expect(autosaves.find(c => c.method === 'GET')?.url).toContain('pj=p_dead')
+    expect(autosaves.filter(c => c.method === 'PUT')).toEqual([])
+    const local = JSON.parse(localStorage.getItem('tavotto.autosave.d_gone')!)
+    expect(local.canvases[0].objects[0]).toMatchObject({ id: 't1', text: '还没存的改动' })
   })
 
   it('对照组：409 stale_write / file_locked 不触发恢复', async () => {

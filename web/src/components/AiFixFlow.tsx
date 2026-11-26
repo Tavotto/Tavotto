@@ -7,7 +7,7 @@ import type { AiFixCard } from '@/lib/api'
 import { TraceDetails } from './ai/TraceDetails'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
-import { ProgressBar } from './ui/ProgressBar'
+import { TaskChecklist, type TaskStep } from './ui/TaskChecklist'
 
 const ft = (key: string, values?: Record<string, unknown>) =>
   translate(`prep.aiFix.${key}`, { ns: 'workspace', ...(values ?? {}) })
@@ -131,6 +131,30 @@ const activityLine = (a: NonNullable<AiFixEntry['activity']>) => {
   return known || ft('activity.generic')
 }
 
+/**
+ * 修复的任务清单（2026-11-25 用户拍板「照视频的设计」）：固定四步「找原因 → 动手修 → 运行验证 → 收尾」，走到哪一步、第几轮
+ * 全听后端的 `stage`（按工具组归步，界面不判断）；还没有 `stage`（刚起 / 老后端）= 正在找原因。轮次只在进行中那一步的胶囊里说。
+ */
+const FIX_STEPS = ['diagnose', 'fix', 'verify', 'finish'] as const
+//: 文案键写成字面量：死键门禁按「源码里出现过这个串」判活
+const FIX_STEP_LABEL: Record<(typeof FIX_STEPS)[number], string> = {
+  diagnose: 'prep.aiFix.steps.diagnose',
+  fix: 'prep.aiFix.steps.fix',
+  verify: 'prep.aiFix.steps.verify',
+  finish: 'prep.aiFix.steps.finish',
+}
+
+const fixSteps = (stage: AiFixEntry['stage']): TaskStep[] => {
+  const cur = Math.max(0, stage ? FIX_STEPS.indexOf(stage.step) : 0)
+  const round = stage?.round ?? 1
+  return FIX_STEPS.map((id, i) => ({
+    id,
+    label: translate(FIX_STEP_LABEL[id], { ns: 'workspace' }),
+    state: i < cur ? 'done' : i === cur ? 'active' : 'pending',
+    meta: i === cur && round > 1 ? translate('prep.aiFix.round', { ns: 'workspace', n: round }) : undefined,
+  }))
+}
+
 /** 卡住的原因：一句话 + 折叠详情里多说一点 */
 const stalledLine = (st: NonNullable<AiFixEntry['stalled']>) =>
   ft(`stalled.${st.reason}`, { defaultValue: ft('stalled.stalled') })
@@ -222,7 +246,7 @@ function buildAiFixFlow(
   if (entry.phase === 'running') {
     return {
       title: entry.activity ? activityLine(entry.activity) : ft('running'),
-      slot: <ProgressBar pct={null} label={ft('running')} data-prep-progress />,
+      slot: <TaskChecklist title={ft('taskTitle')} steps={fixSteps(entry.stage)} data-ai-fix-steps />,
       ghost: (
         <Button variant="ghost" size="md" className="text-ink-2" data-ai-fix-cancel onClick={() => void store.cancel(fixKey)}>
           {ft('cancel')}

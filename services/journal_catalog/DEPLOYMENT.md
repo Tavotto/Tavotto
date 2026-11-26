@@ -89,6 +89,9 @@ $A rules clear 203.0.113.0/24                              # 删一条网段例�
 $A rules clear ip_tokens_per_day                           # 删一条默认值覆盖，回到环境变量 / 内置默认
 $A kill-switch on                                          # 紧急：所有 IP 维度限额一律不拦（设备维度照常）；off 恢复
 $A top --n 10                                              # 当天不同设备最多的 10 个出口（ip_key 前 8 位）与被拒次数
+$A index-stats --days 7                                    # 签名索引最近 7 天的 200 / 304 次数与 304 占比（按日 × v1/v2）
+# 纯只读的等价查询（不经 admin、不建表）：
+sqlite3 -readonly "$TAVOTTO_JC_DB" "select date(day*86400,'unixepoch') d, version, n200, n304 from index_hits order by day desc, version limit 14"
 ```
 
 典型场景：监控里 `ip_tokens` / `ip_day` 的 429 突增 → `top` 看是哪个出口、设备数是否合理（几十到几百台 = 校园 / 公司网络）→ 与对方确认后

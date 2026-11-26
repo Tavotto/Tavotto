@@ -350,6 +350,7 @@ TEST_MODULES = (
     "test_script_adjust_sweep",
     "test_script_adjust_heldout_a",
     "test_script_adjust_heldout_b",
+    "test_script_adjust_copy",
 )
 
 

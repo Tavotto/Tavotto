@@ -25,6 +25,7 @@ Flask 父进程 import；**不调模型**（模型工具集是下一个 PR，复
 
 from __future__ import annotations
 
+import datetime
 import errno
 import hashlib
 import json
@@ -45,6 +46,7 @@ from . import (
     ai_data_figure as adf,
     ai_data_merge as merge_mod,
     ai_data_progress as progress,
+    ai_data_purpose as purpose_mod,
     ai_data_recipe as recipe_mod,
     ai_data_roles as roles_mod,
     ai_data_template as tpl,
@@ -90,7 +92,8 @@ MAX_SESSIONS = 6
 #: 新会话放不下就先丢最老的（用户已经往前走了的）。小表（≤ `adf.SMALL_BYTES`）不计入。
 LARGE_STAGE_BUDGET = 1024 * 1024 * 1024
 #: 缩略图宽度（像素）与单张字节上限
-THUMB_WIDTH_PX = 640
+#: 候选图的渲染宽度（像素）：主图在 2 倍屏上约 700 CSS 像素宽，640 放大了会糊（2026-11-24 改成一张主图 + 小图切换）
+THUMB_WIDTH_PX = 1440
 MAX_THUMB_BYTES = 4 * 1024 * 1024
 #: 同时渲染几个备选（每个一条 worker；池自己还有上限）。懒渲染下是「全进程同时在画的缩略图」上限（`_RENDER_SLOTS`）
 MAX_PARALLEL = 2
@@ -106,7 +109,24 @@ UNPLOTTED_CODE = "rows_not_plotted"
 _ID = re.compile(r"[0-9a-f]{12}")
 _SESSION_ID = re.compile(r"[0-9a-f]{24}")
 _HINT_MAX = 400
-_ANSWER_KEYS = ("table", "sheet", "y", "group", "x", "design", "unit")
+#: `x_measure`（G-018，读懂数据派生）：模型判「规则选作横轴的那一列是测量值、不是有序自变量」时给出的**列名**；不是用户动过的下拉（不进 `picks` 的 x / y / group）
+#: `answers.purpose`：用户点选的看图目的（`ai_data_purpose.PURPOSES` 之一，闭集外的值当没给）。只重排规则已给出的备选、不新增；**不算**接管列角色
+#: （不进 `_user_took_over`，与 `error` 同理），进幂等键（`_answers_digest` 带整个 `ans`）
+_ANSWER_KEYS = (
+    "table",
+    "sheet",
+    "y",
+    "group",
+    "x",
+    "design",
+    "unit",
+    "x_measure",
+    "error",
+    "purpose",
+)
+#: `answers.error`：用户点选的「误差线 / 误差带画的是什么」→ 配方里的汇总方式。**只有用户点了才有**（模型的建议不写这个键）；
+#: 没点 = 模板的默认（均值 ± 标准差），响应里 `error.confirmed` 为 False
+ERROR_SUMMARY = {"sd": "mean_sd", "sem": "mean_sem", "ci95": "mean_ci95"}
 _ANSWER_MAX = 400
 
 
@@ -169,17 +189,27 @@ class Item:
     recipe: recipe_mod.FigureRecipe
     coverage: dict
     thumb: Path | None = None
-    unplotted: int = 0  # 有多少行因为横轴没有值而没画（稳定码 `rows_not_plotted` + 计数）
+    unplotted: int = 0  # 有多少行没画（`unplotted_rows` 的总数；稳定码 `rows_not_plotted` + 计数）
     cells: list | None = None  # 处理规则作用的统计（没有规则 = None）
     #: 大表：画出来的是缩减后的点 `{"rows": 整表行数, "kept": 留下的行数}`；小表 = None（响应里没有这一项）
     reduced: dict | None = None
     #: 缩略图状态：`ready`（已有 PNG；旧模式一律如此）/ `pending`（懒模式，还没画）/ `failed`（`reason` 是 `DROP_REASONS` 里的码）
     state: str = "ready"
     reason: str | None = None
+    #: 相对当前看图目的，为什么这张不是推荐（`ai_data_purpose.why_not`：`{code, guidance, tier}`）；推荐的 / 没有适用理由 = None（响应里没有这一项）
+    why_not: dict | None = None
     fallback: bool = False  # 画这张时项目解释器没画成、回退过（诊断标记）
     #: 合画且文件里原本有可再拆的分组列时，成对出现的两种画法各自的标记：`{"kind": "split", "column": 列名}`（按它再拆开）/
     #: `{"kind": "by_file"}`（不拆、只按文件比较）；没有成对的另一张（两种画法画出来一样）就是 None
     variant: dict | None = None
+    #: 给界面「依据」那句话用的数（`candidate_facts`；大表 / 把列当分组 = None，响应里没有这一项）
+    facts: dict | None = None
+    #: 这张图上每条拟合线的系数（`tpl.fit_report`；没有拟合线 = 空，响应里没有这一项）
+    fits: list = field(default_factory=list)
+    #: 误差线 / 误差带是**算出来的**（均值 ± 误差）时，哪些位置因为 n < 2 没有误差线 / 带（标签与图上一致；`error_missing_for`）；没有 = 空，响应里没有这一项
+    error_missing: list = field(default_factory=list)
+    #: 误差线取自现成的误差列、而且「是哪一种」是**列名自己说的**（不是用户点的、也不是 `unknown`）：界面据此写「取自列名」而不是「需要你确认」
+    error_stated: bool = False
     # 懒渲染的素材：候选脚本在会话目录里，这里记下渲染一张要的最少东西
     stem: str | None = None
     n: int = 0
@@ -478,6 +508,183 @@ def parse_spec(raw, font_range=None) -> tuple[dict | None, str | None, bool]:
     return style, digest, False
 
 
+def with_error_summary(recipe: recipe_mod.FigureRecipe, error: str | None):
+    """把配方里「均值 ± 某种误差」的层换成用户点选的那一种（`sd` / `sem` / `ci95`）；没点 / 不认识 / 配方里没有这样的层 = 原样。
+    只换误差的定义，中心仍是均值（中位数 + 四分位距的层不动）。误差线取自现成的误差列（`recipe.err`）的配方：用户点选的覆盖列名说的那一种（`err_kind`），画的数不变。"""
+    target = ERROR_SUMMARY.get(error or "")
+    if target is not None and recipe.err is not None:
+        return replace(recipe, err_kind=error)
+    if target is None or not any(
+        layer.summary in ERROR_SUMMARY.values() for layer in recipe.layers
+    ):
+        return recipe
+    layers = tuple(
+        replace(layer, summary=target) if layer.summary in ERROR_SUMMARY.values() else layer
+        for layer in recipe.layers
+    )
+    return replace(recipe, layers=layers)
+
+
+def error_of(recipe: recipe_mod.FigureRecipe) -> str | None:
+    """这份配方的误差线 / 误差带画的是哪一种（`sd` / `sem` / `ci95`；取自现成误差列、名字没说是哪种的是 `unknown`——绝不当成 SD）；没有这样的层 = None。"""
+    if recipe.err is not None:
+        return recipe.err_kind
+    back = {v: k for k, v in ERROR_SUMMARY.items()}
+    for layer in recipe.layers:
+        if layer.summary in back and layer.mark in ("errorbar", "band"):
+            return back[layer.summary]
+    return None
+
+
+def error_source(recipe: recipe_mod.FigureRecipe) -> str | None:
+    """误差线 / 误差带从哪来：`column` = 取自表里现成的误差列；`computed` = 用这份数据的重复值算出来的均值 ± 误差；没有误差线 = None。"""
+    if recipe.err is not None:
+        return "column"
+    return "computed" if error_of(recipe) is not None else None
+
+
+def error_stated_of(
+    summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe, answers: dict
+) -> bool:
+    """误差线取自现成的误差列、而且是哪一种**由列名自己说明**：`err_kind` 不是 `unknown`、与列名说的一致、用户没点选过别的（`answers.error`）。
+    名字没说（`unknown`）从来不算「已说明」——界面要问用户，不替他定成 SD。"""
+    return (
+        recipe.err is not None
+        and recipe.err_kind not in (None, "unknown")
+        and answers.get("error") not in ERROR_SUMMARY
+        and recipe_mod.error_kind_of(summary, recipe.err) == recipe.err_kind
+    )
+
+
+#: `error_missing_for` 最多列几个标签（超出的不列；图上一个位置也没有误差线的情形不会让响应变得很大）
+ERROR_MISSING_MAX = 50
+
+
+def _x_text(x: float, is_date: bool) -> str:
+    if is_date:
+        return (adf._EPOCH + datetime.timedelta(days=round(x))).isoformat()
+    return f"{x:.12g}"
+
+
+def error_missing_for(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[str]:
+    """误差线 / 误差带是算出来的（均值 ± SD / SEM / 95% CI 的 `errorbar` / `band` 层）时，**图上哪些位置没有误差线 / 带**：该位置只有 1 个值（n < 2，没有标准差）。
+    用的是脚本画图的同一批函数（`summarize` / `trend_centers`），所以报的就是图上缺的那几处。标签与图上的写法一致：比较类是类别（有分组 / 分面再加上，用 ` / ` 连），
+    趋势类是横轴取值（日期用 ISO 日期）；多个 y 列再加列名。没有这样的层、取自现成误差列的、大表 = 空（响应里没有这一项）。"""
+    summaries = {
+        layer.summary
+        for layer in recipe.layers
+        if layer.mark in ("errorbar", "band") and layer.summary in ERROR_SUMMARY.values()
+    }
+    if not summaries or recipe.err is not None or values.large is not None:
+        return []
+    summary = sorted(summaries)[0]
+    values = recipe_mod.with_cells_applied(values, recipe)
+    out: list[str] = []
+
+    def label(*parts) -> str:
+        return " / ".join(str(p) for p in parts if p)
+
+    if recipe.family == "comparison":
+        d = tpl.comparison_data(
+            values.columns,
+            values.rows,
+            recipe.x,
+            recipe.y[0],
+            recipe.group,
+            recipe.facet,
+            recipe.order,
+        )
+        for p in d["panels"]:
+            for g in d["groups"]:
+                for ci, vals in tpl.comparison_cells(d, p, g):
+                    _c, lo, hi = tpl.summarize(vals, summary)
+                    if not (lo == lo and hi == hi):
+                        out.append(label(d["cats"][ci], g, p if recipe.facet else ""))
+    elif recipe.family == "trend" and recipe.x:
+        is_date = values.per_column[recipe.x].kind == "date"
+        d = tpl.trend_data(
+            values.columns,
+            values.rows,
+            recipe.x,
+            list(recipe.y),
+            recipe.group,
+            recipe.facet,
+            recipe.unit,
+            is_date,
+        )
+        for p in d["panels"]:
+            for g in d["groups"]:
+                for y in recipe.y:
+                    cx, cc, lo, hi = tpl.trend_centers(tpl.trend_pool(d, p, g, y), summary)
+                    for x, c, a, b in zip(cx, cc, lo, hi):
+                        if c == c and not (a == a and b == b):
+                            out.append(
+                                label(
+                                    y if len(recipe.y) > 1 else "",
+                                    g,
+                                    p if recipe.facet else "",
+                                    _x_text(x, is_date),
+                                )
+                            )
+    return list(dict.fromkeys(out))[:ERROR_MISSING_MAX]
+
+
+def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict | None:
+    """这张图是按什么数出来的——给界面那句「依据」用的**数**（只有数与列名，文案在前端按封闭句式拼）：
+    `{rows: 表里的行数, drawn: 画进去的行数, groups: 组数 | None, n_min / n_max: 每组（每个类别 × 分组 × 分面格子）的观测数范围 | None,
+    x_values: 不同横轴取值的个数 | None, skipped_missing: 因为缺值（某一格是空的 / NaN）没画的行数, skipped_other: 因为那一格不是数（文字）没画的行数}`。
+    两个 skipped 加起来就是 `unplotted_rows` 的总数。大表不逐行数（None）；把列当分组的也先不给。"""
+    if values.large is not None or recipe.stack:
+        return None
+    # 「画进去的行」与出图用同一套判据：先套用户选的处理规则（「取数字部分」取出了数的格子算数），再去掉 `unplotted_rows` 里的行
+    # （横轴不是值、分组 / 分面 / 个体空、纵轴空……），剩下的行里纵轴是数的才是一个画出来的值（折线的纵轴空格是断开，不算画进去）
+    applied = recipe_mod.with_cells_applied(values, recipe) if recipe.cells else values
+    idx = {c: i for i, c in enumerate(values.columns)}
+    y = recipe.y[0]
+    skipped = unplotted_rows(values, recipe)
+    gone = {item["row"] for item in skipped}
+    usable = [
+        r
+        for n, r in enumerate(applied.rows)
+        if values.row_number(n) not in gone and adf.parse_cell(r[idx[y]])[0] == "numeric"
+    ]
+    out: dict = {
+        "rows": len(values.rows),
+        "drawn": len(usable),
+        "groups": None,
+        "n_min": None,
+        "n_max": None,
+        "x_values": None,
+        "skipped_missing": 0,
+        "skipped_other": 0,
+    }
+    row_at = {values.row_number(n): n for n in range(len(values.rows))}
+    for item in skipped:
+        cell = ""
+        n = row_at.get(item["row"])
+        if n is not None and item["column"] in idx:
+            cell = values.rows[n][idx[item["column"]]]
+        # 缺值 = 那一格是空的或 NaN；其余（横轴 / 纵轴那一格是文字）算「不是数」
+        missing = item["reason"] != "not_a_number" and adf.parse_cell(cell)[0] != "text"
+        out["skipped_missing" if missing else "skipped_other"] += 1
+    by = [c for c in (recipe.group, recipe.facet) if c]
+    if recipe.family == "comparison" and recipe.x:
+        by = [recipe.x, *by]
+    if by:
+        cells: dict[tuple, int] = {}
+        for r in usable:
+            key = tuple(r[idx[c]].strip() for c in by)
+            cells[key] = cells.get(key, 0) + 1
+        if cells:
+            out["groups"] = len(cells)
+            out["n_min"], out["n_max"] = min(cells.values()), max(cells.values())
+    if recipe.family in ("trend", "relationship") and recipe.x:
+        out["x_values"] = len(
+            {r[idx[recipe.x]].strip() for r in usable if r[idx[recipe.x]].strip()}
+        )
+    return out
+
+
 def figure_style(style: dict) -> dict:
     out = {k: style[k] for k in ("width_single_mm", "width_double_mm", "font_pt")}
     lo, hi = style.get("font_range") or (None, None)
@@ -509,6 +716,8 @@ def parse_answers(answers) -> dict:
                 out[key] = names[0] if len(names) == 1 else names
                 continue
             val = _text(answers[key], key)
+            if key == "purpose" and val not in purpose_mod.PURPOSES:
+                continue
             if val is not None:
                 out[key] = val
     if "cells" in answers:
@@ -525,6 +734,8 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
         picks["design"] = "unsure"
     if "unit" in answers:
         picks["unit"] = answers["unit"]
+    if "x_measure" in answers:
+        picks["x_measure"] = answers["x_measure"]
     if design == "repeated":
         return recipe_mod.Confirmed(
             "repeated", answers.get("unit") if "unit" in answers else None
@@ -534,10 +745,19 @@ def confirmed_from(answers: dict[str, str]) -> tuple[recipe_mod.Confirmed, dict]
     return recipe_mod.Confirmed(), picks
 
 
+def unplotted_unmet(rows: list[dict]) -> int:
+    """没画的行里「有数据却没画上」的有多少（`goal.rows_plotted` 看这个数）：纵轴空着的行（`y_missing`）没有可画的点，是缺失，不算。
+    大表的清单只有前 100 个样例、不逐行分原因，这个数由缩减那一遍单独记（`Examples.unmet`）。"""
+    unmet = getattr(rows, "unmet", None)
+    return unmet if unmet is not None else sum(1 for r in rows if r.get("reason") != "y_missing")
+
+
 class Examples(list):
     """大表上「没画的行」只给前 100 个例子；`total` 是精确的总数（来自概览扫描）。小表直接是普通列表（`total` 同长度）。"""
 
     total: int = 0
+    #: 「有数据却没画上」的行数（见 `unplotted_unmet`）；None = 没单独记，按每行的原因数
+    unmet: int | None = None
 
 
 def unplotted_total(rows: list[dict]) -> int:
@@ -545,21 +765,48 @@ def unplotted_total(rows: list[dict]) -> int:
 
 
 def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
-    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）：横轴（trend / relationship）没有值（空 / NaN / 不是数或日期）的行
-    画不到坐标里。y 列的空 / NaN 是缺失，折线在那里断开，不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`），
-    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。"""
+    """配方画不出来的行（`row` 是文件里的行号，表头算第 1 行，XLSX 是表内行号）。**脚本里每一处跳过一行的地方，这里都有对应的一条**
+    （sciviz G-055「没画的观测要有计数和规则」；每行只记一个原因）：
+
+    * `x_not_a_value`：折线 / 散点的横轴没有值（空 / NaN / 不是数或日期），画不到坐标里；
+    * `category_empty`：比较类的类别那一格是空的；
+    * `group_empty` / `facet_empty` / `unit_empty`：分组 / 分面 / 个体那一格是空的，归不到任何一组里；
+    * `not_a_number`：纵轴那一格是文字（用户还没选处理方式的）；
+    * `y_missing`：比较类 / 分布类 / 散点类的纵轴是空的或 NaN——这一行没有可画的点。
+
+    折线的纵轴空 / NaN 是缺失（线在那里断开，看得见），不算没画；夹着文字格的数值列用户已选了处理方式（`recipe.cells`）的，
+    那些格子是用户明确决定过的，不在这里报（统计在 `cell_stats`）。大表只给总数与前 100 个行号，不逐行分原因（全都是横轴不是值记 `x_not_a_value`，全都是纵轴空着记 `y_missing`，混着的记 `row_not_plotted`；「有数据却没画上」的行数另记在 `Examples.unmet`）。"""
     if (
         recipe.stack
     ):  # 把列当分组：被转的列都是纯数值列，空格 / NaN 是缺失（不是「没画」），没有横轴
         return []
     if values.large is not None:
-        total, numbers = tpl.large_unplotted(values, recipe)
-        ex = Examples({"row": n, "column": recipe.x, "reason": "x_not_a_value"} for n in numbers)
+        total, numbers, counts = tpl.large_unplotted(values, recipe)
+        if total == counts["x"]:
+            why, col = "x_not_a_value", recipe.x
+        elif total == counts["y"]:
+            why, col = "y_missing", recipe.y[0]
+        else:
+            why, col = "row_not_plotted", recipe.x
+        ex = Examples({"row": n, "column": col, "reason": why} for n in numbers)
         ex.total = total
+        # 「有数据却没画上」的行数（横轴不是值、分组 / 分面 / 个体空）：纵轴空着的是缺失，不算（与小表同一口径）
+        ex.unmet = counts["x"] + counts["key"]
         return ex
     out: list[dict] = []
     idx = {c: i for i, c in enumerate(values.columns)}
     x = recipe.x if recipe.family in ("trend", "relationship") else None
+    category = recipe.x if recipe.family == "comparison" else None
+    keys = [
+        (category, "category_empty"),
+        (recipe.group, "group_empty"),
+        (recipe.facet, "facet_empty"),
+    ]
+    if recipe.family == "trend":
+        keys.append((recipe.unit, "unit_empty"))
+    keys = [(c, why) for c, why in keys if c and c in idx]
+    # 比较 / 分布（都走 `comparison_data`）与散点：一行一个点，纵轴没有数就没有这个点；折线的缺失是断开，不在此列
+    point_needs_y = recipe.family != "trend"
     covered = {c.column for c in recipe.cells}
     # 横轴列有处理规则时按**规则作用之后**的格子判：「取数字部分」取出了数的行画得出来，不算；「不画那几行」之后是空格，算没画
     applied = (
@@ -577,9 +824,18 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
             if not ok:
                 out.append(_unplotted(values, n, x, "x_not_a_value"))
                 continue
+        empty = next(((c, why) for c, why in keys if not row[idx[c]].strip()), None)
+        if empty is not None:
+            out.append(_unplotted(values, n, *empty))
+            continue
         for y in recipe.y:
-            if y not in covered and adf.parse_cell(row[idx[y]])[0] == "text":
+            if y in covered:
+                continue
+            kind = adf.parse_cell(row[idx[y]])[0]
+            if kind == "text":
                 out.append(_unplotted(values, n, y, "not_a_number"))
+            elif kind != "numeric" and point_needs_y:
+                out.append(_unplotted(values, n, y, "y_missing"))
     return out
 
 
@@ -740,7 +996,12 @@ def _plan_candidates(
         stem = f"cand_{n}"
         try:
             rendered = tpl.render_recipe_script(
-                entry, recipe, data_rel=data_rel, stem=stem, style=style
+                entry,
+                recipe,
+                data_rel=data_rel,
+                stem=stem,
+                style=style,
+                fits=tpl.fit_report(values, recipe),
             )
             expected = tpl.expected_fingerprints(values, recipe)
         except tpl.TemplateError:
@@ -1076,7 +1337,19 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         "thumbnail_url": f"/api/ai/data-figure/thumbnail/{sess.id}/{item.id}",
         "thumbnail_status": item.state,
         **({"reduced": item.reduced} if item.reduced is not None else {}),
+        # 有拟合线才有：每条线的截距 / 斜率 / n（描述性的最小二乘直线；对数轴那一维是 log10）
+        **({"fits": item.fits} if item.fits else {}),
+        **({"facts": item.facts} if item.facts is not None else {}),
+        # 有误差线 / 误差带才有：画的是哪一种（`sd` / `sem` / `ci95`）
+        **({"error": error_of(r)} if error_of(r) is not None else {}),
+        # 误差线从哪来（`column` 现成的误差列 / `computed` 用重复值算的）；取自列的另带列名与「列名自己说明了是哪一种」
+        **({"error_source": error_source(r)} if error_source(r) is not None else {}),
+        **({"error_column": r.err} if r.err is not None else {}),
+        **({"error_stated": True} if item.error_stated else {}),
+        # 算出来的误差线 / 带里 n < 2 因而没有误差线的位置（标签与图上一致）
+        **({"error_missing_for": item.error_missing} if item.error_missing else {}),
         **({"variant": item.variant} if sess.merge is not None and sess.merge.splittable else {}),
+        **({"why_not": item.why_not} if item.why_not is not None and not recommended else {}),
     }
 
 
@@ -1280,6 +1553,22 @@ def propose(
     ):
         res, variants = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
 
+    if ans.get("error") in ERROR_SUMMARY and res.items:
+        # 用户点选了误差线 / 误差带画哪一种：换掉每个备选里「均值 ± 某种误差」的层（其余不动）
+        swapped = []
+        for c in res.items:
+            new = with_error_summary(c.recipe, ans["error"])
+            if new is not c.recipe and id(c.recipe) in variants:
+                # 合画里成对候选的标记是按配方对象记的：换了配方要把标记带过去，否则两张成对的图分不清是哪一张
+                variants[id(new)] = variants.pop(id(c.recipe))
+            swapped.append(replace(c, recipe=new))
+        res = replace(res, items=tuple(swapped))
+
+    # 看图目的：只重排（纯排列，不新增 / 不复活备选）；没点 `answers.purpose` 时是恒等，只多响应里的 `purpose` 一项
+    purpose = purpose_mod.resolve(res.items, ans.get("purpose")) if res.items else None
+    if purpose is not None:
+        res = replace(res, items=purpose.items)
+
     def merged_info() -> dict:
         """合画：各份是哪几份（路径与请求里一致）、各自的标签、合成的分组列名；单份没有这两项。"""
         if merged is None:
@@ -1312,6 +1601,8 @@ def propose(
             "roles": res.roles,
             "defaults": defaults,
             "mixed_cells": mixed_auto,
+            # 用户亲手点过「误差线画的是什么」才有这一项（没有 = 模板默认的均值 ± 标准差，界面把它列进「需要你确认」）
+            **({"error_confirmed": True} if ans.get("error") in ERROR_SUMMARY else {}),
         }
 
     if not res.items:
@@ -1386,6 +1677,15 @@ def propose(
             reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
             variant=variants.get(id(cand.recipe)),
+            why_not=(
+                None
+                if purpose is None or not order
+                else purpose_mod.why_not(cand.code, purpose.code, purpose.source)
+            ),
+            fits=tpl.fit_report(values, cand.recipe),
+            error_missing=error_missing_for(values, cand.recipe),
+            error_stated=error_stated_of(chosen.summary, cand.recipe, ans),
+            facts=candidate_facts(values, cand.recipe),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],
@@ -1427,6 +1727,18 @@ def propose(
         "session": sid,
         "items": [item_to_dict(sess, items[i], k == 0) for k, i in enumerate(order)],
         "dropped": dropped,
+        # 这批是按什么看图目的排的、这个目的是用户点的（`user`）还是从数据推出的假设（`data`）、界面可让用户换成哪几个（不足两个 = 空）
+        **(
+            {
+                "purpose": {
+                    "code": purpose.code,
+                    "source": purpose.source,
+                    "options": list(purpose.options),
+                }
+            }
+            if purpose is not None and purpose.code is not None
+            else {}
+        ),
         # 诊断标记：至少有一张小图是项目解释器没画成、回退到默认链条画的
         "interpreter_fallback": fallback,
         **({"spec_fallback": True} if spec_bad else {}),
@@ -1450,7 +1762,7 @@ def propose(
 
 def _user_took_over(ans: dict) -> bool:
     """请求里已有用户（或前端替用户带上的模型建议）定下的列角色 / 处理规则：不再起模型任务，也避免「采纳建议 → 再来一次 → 再起任务」的循环。"""
-    return any(k in ans for k in ("y", "x", "group", "cells"))
+    return any(k in ans for k in ("y", "x", "group", "cells", "x_measure"))
 
 
 def _answers_digest(ans: dict) -> dict:

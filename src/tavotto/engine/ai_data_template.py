@@ -274,14 +274,17 @@ def linear_fit(xs, ys):
 
 
 # ---- 比较各组（comparison）
-def comparison_data(header, rows, x, y, group, facet, order):
+def comparison_data(header, rows, x, y, group, facet, order, err=None):
     """每个（分面, 类别, 分组）格子里的有效 y 值（行序）。没有 x（`x` 为 None，distribution 的一种形态）时只有一个类别 `""`。
     给了 x / 分组 / 分面但格子为空的行不画；y 不是数（空、NaN、文字）的行不画。
-    类别顺序：`as_given` = 首次出现；`value_desc` / `value_asc` = 按该类别全部有效值的均值排。"""
+    类别顺序：`as_given` = 首次出现；`value_desc` / `value_asc` = 按该类别全部有效值的均值排。
+    `err`（误差列名，配方的 `err`）：另给 `d["errs"]`——与 `cells` 同键、同序、逐项对应的误差值（同一份行过滤：画进去的行才有；
+    这一行的误差格是空 / NaN / 文字 / 负数 = NaN，即「这个点没有误差线」）。不给 `err` 时返回的字典里没有 `errs`。"""
     xi, yi = (header.index(x) if x else None), header.index(y)
     gi = header.index(group) if group else None
     fi = header.index(facet) if facet else None
-    cats, groups, panels, cells = [], [], [], {}
+    ei = header.index(err) if err else None
+    cats, groups, panels, cells, errs = [], [], [], {}, {}
     for r in rows:
         c = r[xi].strip() if xi is not None else ""
         g = r[gi].strip() if gi is not None else ""
@@ -295,12 +298,18 @@ def comparison_data(header, rows, x, y, group, facet, order):
         groups.append(g)
         panels.append(p)
         cells.setdefault((p, c, g), []).append(v)
+        if ei is not None:
+            ek, ev = parse_cell(r[ei])
+            errs.setdefault((p, c, g), []).append(ev if ek == "numeric" and ev >= 0 else math.nan)
     cats, groups, panels = distinct(cats), distinct(groups) or [""], distinct(panels) or [""]
     if order != "as_given":
         pooled = {c: [v for (p, cc, g), vs in cells.items() if cc == c for v in vs] for c in cats}
         means = {c: mean_of(vs) for c, vs in pooled.items()}
         cats = sorted(cats, key=lambda c: means[c], reverse=(order == "value_desc"))
-    return {"cats": cats, "groups": groups, "panels": panels, "cells": cells}
+    out = {"cats": cats, "groups": groups, "panels": panels, "cells": cells}
+    if ei is not None:
+        out["errs"] = errs
+    return out
 
 
 def comparison_cells(d, p, g):
@@ -357,6 +366,19 @@ def comparison_errors(cells, gi, ng, summary):
     return pos, centers, lower, upper
 
 
+def comparison_error_points(d, p, g, gi, ng):
+    """误差线取自现成的误差列：这一格（分面 p、分组 g）里每个有误差值的点 `(横轴位置, 纵轴值, 误差)`——位置与 `comparison_points`（不抖动）一致；
+    误差是空 / NaN 的点不出现在这里（点仍由点那一层画出来，只是没有误差线）。"""
+    pos, centers, errs = [], [], []
+    for ci, vals in comparison_cells(d, p, g):
+        for v, e in zip(vals, d["errs"][(p, d["cats"][ci], g)]):
+            if e == e:
+                pos.append(cell_pos(ci, gi, ng))
+                centers.append(v)
+                errs.append(e)
+    return pos, centers, errs
+
+
 def comparison_boxes(cells, gi, ng):
     return [cell_pos(ci, gi, ng) for ci, _ in cells], [box_stats(v) for _, v in cells]
 
@@ -382,15 +404,18 @@ def category_labels(d, p, with_n):
 
 
 # ---- 变化趋势（trend）
-def trend_data(header, rows, x, ys, group, facet, unit, x_is_date):
+def trend_data(header, rows, x, ys, group, facet, unit, x_is_date, err=None):
     """每个（分面, 分组, y 列, 个体）一条序列 `(xs, vals)`，按 x 稳定排序（同 x 保持行序）。x 不是值（日期格式不对 / 非数）、
-    分组 / 分面 / 个体为空的行不画；y 不是数 → NaN（折线在这里断开，不插值不填 0）。"""
+    分组 / 分面 / 个体为空的行不画；y 不是数 → NaN（折线在这里断开，不插值不填 0）。
+    `err`（误差列名，配方的 `err`，只配单个 y）：另给 `d["errs"]`——每个（分面, 分组, y 列）一条 `(xs, ys, 误差)`，只含 x 与 y 都有值的行，按 x 稳定排序；
+    误差格是空 / NaN / 文字 / 负数 = NaN（这个点没有误差线）。不给 `err` 时返回的字典里没有 `errs`。"""
     xi = header.index(x)
     yis = [header.index(y) for y in ys]
     gi = header.index(group) if group else None
     fi = header.index(facet) if facet else None
     ui = header.index(unit) if unit else None
-    panels, groups, series = [], [], {}
+    ei = header.index(err) if err else None
+    panels, groups, series, epoints = [], [], {}, {}
     for r in rows:
         if x_is_date:
             dv = parse_date(r[xi])
@@ -413,11 +438,27 @@ def trend_data(header, rows, x, ys, group, facet, unit, x_is_date):
         for y, yi in zip(ys, yis):
             kind, v = parse_cell(r[yi])
             series.setdefault((p, g, y, u), []).append((xv, v if kind == "numeric" else math.nan))
+            if ei is not None and kind == "numeric":
+                ek, ev = parse_cell(r[ei])
+                epoints.setdefault((p, g, y), []).append(
+                    (xv, v, ev if ek == "numeric" and ev >= 0 else math.nan)
+                )
     out = {}
     for key, pairs in series.items():
         pairs = sorted(pairs, key=lambda t: t[0])
         out[key] = ([a for a, _ in pairs], [b for _, b in pairs])
-    return {"panels": distinct(panels) or [""], "groups": distinct(groups) or [""], "series": out}
+    result = {
+        "panels": distinct(panels) or [""],
+        "groups": distinct(groups) or [""],
+        "series": out,
+    }
+    if ei is not None:
+        errs = {}
+        for key, pts in epoints.items():
+            pts = sorted(pts, key=lambda t: t[0])
+            errs[key] = ([a for a, _, _ in pts], [b for _, b, _ in pts], [c for _, _, c in pts])
+        result["errs"] = errs
+    return result
 
 
 def trend_units(d, p, g, y):
@@ -432,6 +473,13 @@ def trend_pool(d, p, g, y):
         pairs += list(zip(xs, vals))
     pairs.sort(key=lambda t: t[0])
     return [a for a, _ in pairs], [b for _, b in pairs]
+
+
+def trend_error_points(d, p, g, y):
+    """误差线取自现成的误差列：这一条（分面 p、分组 g、y 列）里每个有误差值的点 `(x, y, 误差)`；误差是空 / NaN 的点不出现在这里（点仍由点 / 线那一层画出来）。"""
+    xs, ys, errs = d["errs"].get((p, g, y), ([], [], []))
+    keep = [(a, b, c) for a, b, c in zip(xs, ys, errs) if c == c]
+    return [k[0] for k in keep], [k[1] for k in keep], [k[2] for k in keep]
 
 
 def finite_pairs(xs, vals):
@@ -687,6 +735,8 @@ def reduce_trend(header, body, spec):
     gap_over = False
     n_rows = 0
     x_invalid = 0
+    key_empty = 0  # 横轴有值、但分组 / 分面 / 个体那一格是空的行（归不到任何一条线 / 一组点里）
+    y_invalid = 0  # 只有散点类会加：横轴有值、纵轴不是数的行
     examples = []
     ystat = [[0, None, None] for _ in yis]
     for ln, r in body:
@@ -717,6 +767,9 @@ def reduce_trend(header, body, spec):
             continue
         key = tuple(r[k].strip() for k in kis)
         if "" in key:
+            key_empty += 1
+            if len(examples) < 100:
+                examples.append(ln)
             continue
         st = series.get(key)
         if st is None:
@@ -796,6 +849,8 @@ def reduce_trend(header, body, spec):
         "kept": len(rows),
         "ords": ords,
         "x_invalid": x_invalid,
+        "key_empty": key_empty,
+        "y_invalid": y_invalid,
         "examples": examples,
         "series": len(series),
         "y": [tuple(s) for s in ystat],
@@ -824,6 +879,8 @@ def reduce_relationship(header, body, spec):
     series = {}
     n_rows = 0
     x_invalid = 0
+    key_empty = 0  # 横轴有值、但分组 / 分面 / 个体那一格是空的行（归不到任何一条线 / 一组点里）
+    y_invalid = 0  # 只有散点类会加：横轴有值、纵轴不是数的行
     examples = []
     xstat = [0, None, None]
     ystat = [0, None, None]
@@ -852,9 +909,16 @@ def reduce_relationship(header, body, spec):
             elif vy > ystat[2]:
                 ystat[2] = vy
         if kx != "numeric" or ky != "numeric":
+            if kx == "numeric":  # 横轴有值、纵轴没有：这个点也画不出来（横轴不是值的上面已经记过）
+                y_invalid += 1
+                if len(examples) < 100:
+                    examples.append(ln)
             continue
         key = tuple(r[k].strip() for k in kis)
         if "" in key:
+            key_empty += 1
+            if len(examples) < 100:
+                examples.append(ln)
             continue
         st = series.get(key)
         if st is None:
@@ -892,6 +956,8 @@ def reduce_relationship(header, body, spec):
         "kept": len(rows),
         "ords": ords,
         "x_invalid": x_invalid,
+        "key_empty": key_empty,
+        "y_invalid": y_invalid,
         "examples": examples,
         "series": len(series),
         "x": tuple(xstat),
@@ -1190,6 +1256,7 @@ RUNTIME_FUNCTIONS = (
     comparison_hlines,
     comparison_bars,
     comparison_errors,
+    comparison_error_points,
     comparison_boxes,
     comparison_violins,
     cell_counts,
@@ -1197,6 +1264,7 @@ RUNTIME_FUNCTIONS = (
     trend_data,
     trend_units,
     trend_pool,
+    trend_error_points,
     finite_pairs,
     line_xy,
     isolated_idx,
@@ -1390,9 +1458,19 @@ def _check(entry: adf.TableEntry, recipe: recipe_mod.FigureRecipe) -> None:
         ):
             raise TemplateError("template_option_unsupported", "stack")
         cols = recipe_mod.stack_view(entry.summary, recipe.stack).per_column
-    named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit]
+    named = [recipe.x, *recipe.y, recipe.group, recipe.facet, recipe.unit, recipe.err]
     if any(c is not None and c not in cols for c in named):
         raise TemplateError("template_recipe_mismatch", "column")
+    if recipe.err is not None and (
+        recipe.family not in ("comparison", "trend")
+        or len(recipe.y) != 1
+        or recipe.unit is not None
+        or recipe.stack
+        or entry.summary.large is not None
+    ):
+        raise TemplateError(
+            "template_option_unsupported", "err"
+        )  # 现成误差列只有比较 / 趋势、单个 y、小表的实现
     allowed = MARKS_RENDERED[recipe.family]
     for layer in recipe.layers:
         if layer.mark not in allowed:
@@ -1805,6 +1883,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"ORDER = {recipe.order!r}",
+        *([f"ERR = {recipe.err!r}"] if recipe.err is not None else []),
         f"XLABEL = {xlabel!r}",
         f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
         f"PALETTE = {list(PALETTE)!r}",
@@ -1817,7 +1896,8 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     main_at = len(L)
     L += _read_lines(recipe, reader)
     L += [
-        "    d = comparison_data(header, rows, X, Y, GROUP, FACET, ORDER)",
+        "    d = comparison_data(header, rows, X, Y, GROUP, FACET, ORDER"
+        + (", ERR)" if recipe.err is not None else ")"),
         "    cats, groups, panels = d['cats'], d['groups'], d['panels']",
         "    ng = len(groups)",
     ]
@@ -1833,6 +1913,17 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
         for line in _comparison_layer_lines(layer, tag, lw):
             L.append("            " + line)
+    if (
+        recipe.err is not None
+    ):  # 误差线取自现成的误差列（`FigureRecipe.err`）：与「均值 ± 误差」的误差线同一套线宽 / 帽 / 颜色
+        mid = lw[min(1, len(lw) - 1)]
+        L += [
+            "            pos, centers, errs = comparison_error_points(d, p, g, gi, ng)",
+            "            if pos:",
+            "                ax.errorbar(",
+            f"                    pos, centers, yerr=errs, fmt='none', ecolor=color, elinewidth={mid!r}, capsize=2, capthick={mid!r}, label=make_label('errorbar', g, p)",
+            "                )",
+        ]
     if recipe.x is None:
         L.append("        ax.set_xticks([])  # 没有类别轴：只有一个位置，组在其中并排")
     else:
@@ -1947,6 +2038,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
         f"UNIT = {recipe.unit!r}",
+        *([f"ERR = {recipe.err!r}"] if recipe.err is not None else []),
         f"X_IS_DATE = {x_is_date!r}",
         f"XLABEL = {adf.axis_label(recipe.x)!r}",
         f"YLABEL = {ylabel!r}",
@@ -1973,7 +2065,8 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
             "        pass",
         ]
     L += [
-        "    d = trend_data(header, rows, X, YS, GROUP, FACET, UNIT, X_IS_DATE)",
+        "    d = trend_data(header, rows, X, YS, GROUP, FACET, UNIT, X_IS_DATE"
+        + (", ERR)" if recipe.err is not None else ")"),
         "    groups, panels = d['groups'], d['panels']",
     ]
     L += _rc_lines(style, True)
@@ -1993,6 +2086,15 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     for layer, tag in zip(recipe.layers, _layer_tags(recipe)):
         for line in _trend_layer_lines(layer, tag, lw, logs):
             L.append("                " + line)
+    if recipe.err is not None:  # 误差线取自现成的误差列（`FigureRecipe.err`，只配单个 y）
+        mid = lw[min(1, len(lw) - 1)]
+        L += [
+            "                ex, ey, ee = trend_error_points(d, p, g, y)",
+            "                if ex:",
+            "                    ax.errorbar(",
+            f"                        ex, ey, yerr=ee, fmt='none', ecolor=color, elinewidth={mid!r}, capsize=2, capthick={mid!r}, label=make_label('errorbar', g, p, ytag)",
+            "                    )",
+        ]
     L += [
         "        ax.set_xlabel(XLABEL)",
         "        if FACET:",
@@ -2270,16 +2372,24 @@ def render_recipe_script(
     data_rel: str,
     stem: str,
     style: dict | None = None,
+    fits: list[dict] | None = None,
 ) -> Rendered:
     """配方 → 短脚本 + 公共模块。`entry` 是配方指的那张表（来自 `profile_folder`，不带行数据：脚本运行时自己读文件）；
     `data_rel` 是数据文件相对**脚本所在目录**的 POSIX 路径（调用方保证不出数据文件夹）；`stem` 决定输出 `<stem>.pdf`；
     `style` 缺省取 `profiles.load()` 的默认出版规范。调用方须先 `validate_recipe`；对不认识的组合抛 `TemplateError`。
-    脚本里数据文字只以 `repr()` 字面量出现；公共模块不含任何数据。"""
+    脚本里数据文字只以 `repr()` 字面量出现；公共模块不含任何数据。`fits`（可选，`fit_report` 的结果）：生成那一刻的拟合线系数，
+    写成来源注释下面的一行注释（不给 / 为空时脚本逐字不变）。"""
     _check(entry, recipe)
     if style is None:
         style = style_from_profile()
     name, data = runtime_module()
-    return Rendered(RENDERERS[recipe.family](entry, recipe, data_rel, stem, style), name, data)
+    script = RENDERERS[recipe.family](entry, recipe, data_rel, stem, style)
+    if fits:  # 拟合线的系数写在来源注释下面一行（`fit_report` 给的；内容是 ASCII JSON，不会把数据里的文字带出注释）
+        lines = script.split("\n")
+        at = next(i for i, ln in enumerate(lines) if ln.startswith(SOURCE_COMMENT_PREFIX))
+        lines.insert(at + 1, fit_comment(fits))
+        script = "\n".join(lines)
+    return Rendered(script, name, data)
 
 
 # =========================================================================== 期望数据指纹（父进程；与脚本同一批函数）
@@ -2333,6 +2443,9 @@ def fingerprint_coverage(recipe: recipe_mod.FigureRecipe) -> Coverage:
         out.append(LayerCoverage(i, m, True, ""))
         if m in _CHECKED_RAW or (m in ("line", "step") and layer.summary == "none"):
             raw = True
+    if recipe.err is not None:
+        # 取自现成误差列的误差线不是配方里的一层，也没有 label、核不了：列在最后（与「均值 ± 误差」的误差线层同一个原因码），点 / 线那几层照核
+        out.append(LayerCoverage(len(recipe.layers), "errorbar", False, _UNCHECKED["errorbar"]))
     return Coverage(tuple(out), raw, any(c.checked for c in out))
 
 
@@ -2522,14 +2635,21 @@ def large_reduce_pending(values: adf.DataSummary, recipes) -> int:
 
 def large_unplotted(
     values: adf.DataSummary, recipe: recipe_mod.FigureRecipe
-) -> tuple[int, list[int]]:
-    """大表上画不出的行：`(总数, 前 100 个文件行号)`。横轴不是值（空 / NaN / 不是数或日期）的行——总数取自概览扫描（精确），行号取自缩减那一遍。"""
+) -> tuple[int, list[int], dict]:
+    """大表上画不出的行：`(总数, 前 100 个文件行号, 各原因的行数 {x, key, y})`，都取自缩减那一遍（精确）：横轴不是值（空 / NaN / 不是数或日期）、
+    分组 / 分面 / 个体那一格是空的、散点类里纵轴不是数的。折线的纵轴空格是缺失（线在那里断开），不算没画。"""
     s = values.per_column[recipe.x]
-    total = s.empty + s.nan + (s.text_count if s.kind != "date" else 0)
-    if total == 0:
-        return 0, []
+    roles = [c for c in (recipe.group, recipe.facet, recipe.unit) if c]
+    maybe = s.empty + s.nan + (s.text_count if s.kind != "date" else 0)
+    maybe += sum(values.per_column[c].empty for c in roles)
+    if recipe.family == "relationship":
+        sy = values.per_column[recipe.y[0]]
+        maybe += sy.empty + sy.nan + sy.text_count
+    if maybe == 0:  # 概览扫描已经说明没有任何一格会让行画不出来：不用为计数再缩减一遍
+        return 0, [], {"x": 0, "key": 0, "y": 0}
     _rows, info = large_reduce(values, recipe)
-    return total, list(info["examples"])
+    counts = {"x": info["x_invalid"], "key": info["key_empty"], "y": info["y_invalid"]}
+    return sum(counts.values()), list(info["examples"]), counts
 
 
 def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:
@@ -2552,6 +2672,53 @@ def expected_fingerprints(values: adf.DataSummary, recipe: recipe_mod.FigureReci
     if recipe.family == "relationship":
         return _expected_relationship(values, recipe)
     return _expected_trend(values, recipe)
+
+
+#: 脚本头里「拟合线系数」那一行注释的前缀（紧跟在来源注释后面；内容是一行 ASCII JSON）
+FIT_COMMENT_PREFIX = "# tavotto-fit: "
+
+
+def _fit_record(pool, logx: bool, logy: bool, group: str, panel: str, y: str) -> dict:
+    """一条拟合线的系数（与 `fit_segment` 同一份数据、同一个 `linear_fit`）：在**画出来的坐标**里 `y' = intercept + slope · x'`，
+    对数轴那一维 `x'` / `y'` 是 log10。描述性的最小二乘直线，不带显著性。"""
+    xs, ys = finite_pairs(*pool)
+    tx = [math.log10(x) for x in xs] if logx else xs
+    ty = [math.log10(v) for v in ys] if logy else ys
+    intercept, slope = linear_fit(tx, ty)
+    return {
+        "y": y,
+        "group": group or None,
+        "panel": panel or None,
+        "n": len(tx),
+        "intercept": intercept,
+        "slope": slope,
+        "log_x": logx,
+        "log_y": logy,
+    }
+
+
+def fit_report(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:
+    """这份配方画出来的每一条拟合线的系数（没有拟合线层 = 空）：`[{y, group, panel, n, intercept, slope, log_x, log_y}]`。
+    与期望指纹走同一条路（同样的规则、同样的数据准备函数），所以报的就是图上那条线。大表不画拟合线（汇总类），回空。"""
+    if not any(layer.mark == "fit_line" for layer in recipe.layers) or values.large is not None:
+        return []
+    values = recipe_mod.with_cells_applied(values, recipe)
+    fits: list[dict] = []
+    if recipe.family == "relationship":
+        _expected_relationship(values, recipe, fits)
+    elif recipe.family == "trend":
+        _expected_trend(values, recipe, fits)
+    return fits
+
+
+def fit_comment(fits: list[dict]) -> str:
+    """脚本头里的一行注释：生成那一刻的拟合线系数（之后数据变了它不会跟着变——脚本运行时仍然现算现画）。"""
+    return FIT_COMMENT_PREFIX + json.dumps(
+        {"at": "generation", "method": "least_squares", "fits": fits},
+        ensure_ascii=True,
+        sort_keys=True,
+        allow_nan=False,
+    )
 
 
 def _expected_comparison(values, recipe) -> list[dict]:
@@ -2589,7 +2756,7 @@ def _expected_comparison(values, recipe) -> list[dict]:
     return out
 
 
-def _expected_relationship(values, recipe) -> list[dict]:
+def _expected_relationship(values, recipe, fits: list | None = None) -> list[dict]:
     d = relationship_data(
         values.columns, values.rows, recipe.x, recipe.y[0], recipe.group, recipe.facet
     )
@@ -2608,6 +2775,8 @@ def _expected_relationship(values, recipe) -> list[dict]:
                     seg = fit_segment((xs, ys), logx, logy)
                     if seg:
                         out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
+                        if fits is not None:
+                            fits.append(_fit_record((xs, ys), logx, logy, g, p, recipe.y[0]))
     return out
 
 
@@ -2649,7 +2818,7 @@ def _expected_distribution_x(values, recipe) -> list[dict]:
     return out
 
 
-def _expected_trend(values, recipe) -> list[dict]:
+def _expected_trend(values, recipe, fits: list | None = None) -> list[dict]:
     x_is_date = values.per_column[recipe.x].kind == "date"
     d = trend_data(
         values.columns,
@@ -2701,6 +2870,17 @@ def _expected_trend(values, recipe) -> list[dict]:
                         )
                         if seg:
                             out.append(_entry(lab, "xy", _interleave(*seg), (len(seg[0]), 2)))
+                            if fits is not None:
+                                fits.append(
+                                    _fit_record(
+                                        pool,
+                                        recipe.scale in ("log_x", "log_xy"),
+                                        recipe.scale in ("log_y", "log_xy"),
+                                        g,
+                                        p,
+                                        y,
+                                    )
+                                )
                     elif m == "hline_summary":
                         seg = hline_segment(pool, s)
                         if seg:

@@ -1,8 +1,8 @@
 import { newId } from '@/lib/id'
 import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
 import { pathFromMm, pathToMm, rotatePoint, type MmSubpath, type XY } from '@/lib/pathEdit'
-import { pathStrokeAlign } from '@/lib/pathGeom'
 import { MM_PER_PT } from '@/lib/units'
+import { strokeParts } from './outlineStroke'
 import type { VecopsKernel } from '@/lib/vecops/kernel'
 import { isStrokeOnlyShape, type CanvasObject, type PathObject } from '@/types/document'
 
@@ -55,7 +55,8 @@ export function isPathfinderOperand(o: CanvasObject): boolean {
 /** 参与运算的对象 → 路径（形状按「转为路径」那份几何换） */
 export function asPath(o: CanvasObject): PathObject | null {
   if (o.type === 'path') return o
-  if (o.type === 'shape' && canConvertToPath(o)) {
+  // 箭头只在轮廓化描边时走到这里（路径查找器的操作数不收箭头，`isPathfinderOperand`）：端型跟着「转为路径」带过来
+  if ((o.type === 'shape' || o.type === 'arrow') && canConvertToPath(o)) {
     const p = toPathObject(o)
     if (!p) return null
     // 「转为路径」不带的第二批描边外观，结果对象要接着用
@@ -295,14 +296,51 @@ export function offsetPaths(
 /** 能轮廓化描边的：有描边、没有自定义 / 预设虚线、没有端型、路径没设内外对齐（这几样内核不画，转出来会和画面不一样） */
 export function canOutlineStroke(o: CanvasObject): boolean {
   if (o.locked || o.hidden) return false
-  if (o.type !== 'path' && !(o.type === 'shape' && canConvertToPath(o))) return false
-  const p = o as { stroke?: boolean; strokePt: number; dash?: string; dashPattern?: number[] }
-  if (p.stroke === false || !(p.strokePt > 0)) return false
-  if ((p.dash && p.dash !== 'solid') || p.dashPattern?.length) return false
-  if (o.type === 'path' && ((o.headStart && o.headStart !== 'none') || (o.headEnd && o.headEnd !== 'none'))) return false
-  // 路径的内侧 / 外侧对齐是裁出来的半条两倍宽描边，内核按居中描；形状的对齐已经进了「转为路径」的几何，不受影响
-  if (o.type === 'path' && pathStrokeAlign(o)) return false
-  return true
+  if (o.type !== 'path' && !((o.type === 'shape' || o.type === 'arrow') && canConvertToPath(o))) return false
+  const p = o as { stroke?: boolean; strokePt: number }
+  // 虚线、端型（箭头头）、内外对齐都能转（ADR 0185 M7，`lib/outlineStroke`）：只要有描边
+  return p.stroke !== false && p.strokePt > 0
+}
+
+/**
+ * 描边画出来的那块面积（页面 mm）：线杆（已切好虚线）按线宽 / 线端 / 拐角拓宽，并上端型；内外对齐时拓两倍宽再裁到填充区域
+ * 里面 / 外面。几何拆件在 `lib/outlineStroke.strokeParts`，这里只调内核。算不出 = null
+ */
+export function strokeArea(kernel: VecopsKernel, p: PathObject): MmSubpath[] | null {
+  const parts = strokeParts(p)
+  if (!parts) return null
+  const width = p.strokePt * (parts.align ? 2 : 1)
+  const pieces: MmSubpath[][] = []
+  const widen = (subs: MmSubpath[], w: number, cap: keyof typeof CAP_CODE, join: keyof typeof JOIN_CODE) => {
+    if (!subs.length) return true
+    const r = kernel.outline(encodeSubpaths(subs), w, CAP_CODE[cap], JOIN_CODE[join], parts.miter)
+    const d = r && decodeSubpaths(r)
+    if (!d) return false
+    pieces.push(d.subs)
+    return true
+  }
+  if (!widen(parts.strokes, width, parts.cap, parts.join)) return null
+  for (const h of parts.headStrokes) if (!widen(h.subs, p.strokePt, parts.headCap, h.join)) return null
+  for (const f of parts.headFills) pieces.push([f])
+  let area: MmSubpath[]
+  if (pieces.length === 1) area = pieces[0]
+  else {
+    // 线杆、各个端型叠在一起：并成一块（重叠处不叠两层）
+    const out = kernel.pathfinder(OP_CODE.unite, encodeStack(pieces.map((subs) => ({ rule: 0 as const, subs }))))
+    const res = out && decodeResults(out)
+    if (!res?.length) return null
+    area = res.flatMap((r) => r.subs)
+  }
+  if (parts.align) {
+    // 内侧 = 两倍宽的带与填充区域求交；外侧 = 带减去填充区域（与画布 / 导出「裁到里面 / 外面」同一个意思）
+    const rule = p.fillRule === 'evenodd' ? (1 as const) : (0 as const)
+    const op = parts.align === 'inside' ? OP_CODE.intersect : OP_CODE.minusFront
+    const out = kernel.pathfinder(op, encodeStack([{ rule: 0, subs: area }, { rule, subs: parts.region }]))
+    const res = out && decodeResults(out)
+    if (!res?.length) return null
+    area = res.flatMap((r) => r.subs)
+  }
+  return area.length ? area : null
 }
 
 /**
@@ -322,15 +360,8 @@ export function outlineStrokes(
   for (const o of picked) {
     const p = asPath(o)
     if (!p) continue
-    const r = kernel.outline(
-      encodeSubpaths(worldSubpaths(p)),
-      p.strokePt,
-      CAP_CODE[p.lineCap ?? 'butt'],
-      JOIN_CODE[p.lineJoin ?? 'round'],
-      p.miterLimit ?? 10,
-    )
-    const d = r && decodeSubpaths(r)
-    if (!d) continue
+    const area = strokeArea(kernel, p)
+    if (!area) continue
     const base = styleBase(p, p.groupId)
     const {
       dash: _d,
@@ -353,7 +384,7 @@ export function outlineStrokes(
         ...(p.strokeOpacity != null ? { fillOpacity: p.strokeOpacity } : {}),
         stroke: false,
       },
-      d.subs,
+      area,
     )
     if (!made) continue
     // 描边渐变变成轮廓的填充渐变（ADR 0186）：比例坐标照原样，铺满轮廓的框

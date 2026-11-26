@@ -576,11 +576,13 @@ def test_a_cancel_that_reads_the_owner_before_the_probe_records_it_is_still_seen
     root = _project(tmp_path, "p")
     pj = _open(client, root)
     lock = _stepped(monkeypatch, jittery_pool)
+    entered = threading.Event()
     taking = threading.Event()
     checked = threading.Event()
     real_build = engine_pool.build
 
     def build(script, root_, entry, *, before_build=None, **kw):
+        entered.set()
         assert taking.wait(_STEP_WAIT)
 
         def gated(worker):
@@ -594,10 +596,12 @@ def test_a_cancel_that_reads_the_owner_before_the_probe_records_it_is_still_seen
     monkeypatch.setattr(engine_pool, "build", build)
     lock.after_cancel_read = checked
     th, done = _start_probe(client)
-    deadline = time.time() + _STEP_WAIT
-    while (pj, "fig.py") not in m._PROBES:
-        assert time.time() < deadline
-        time.sleep(0.005)
+    # 要等试运行**已经进到 build、停在 taking 上**，再放取消出去——只等它登记进 _PROBES 不够：
+    # 试运行在调 build 之前先看一次取消标志（probe.py 的 entry 循环），慢 runner 上取消先到，
+    # 试运行就正确地提前退出、根本不进 build，checked 永远不置，取消端点里注入的等待 60 s 后冒成 500
+    # （11-25 macOS run 45673762570）。那是测试没把它要的交错排出来，不是取消丢了。
+    assert entered.wait(_STEP_WAIT), "试运行一直没进到 build"
+    assert (pj, "fig.py") in m._PROBES
     canceller = threading.Thread(target=lambda: done.update(cancel=_cancel(client)))
     canceller.start()
     assert lock.cancel_read_done.wait(_STEP_WAIT)

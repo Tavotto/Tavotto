@@ -44,6 +44,19 @@ const tick = async () => {
   for (let i = 0; i < 12; i++) await Promise.resolve()
 }
 
+/**
+ * 等换文档那一次快照**真的落完**（含它回来的 `afterWriteOk`）。
+ *
+ * `switchDocument` 换进来就 `flushAutosave()` 一次，那次 PUT 没回来之前往下走的话，
+ * 它会在**后面某个用例的断言窗口里**才落地：`puts` 多出一条 `d_close`，`afterWriteOk`
+ * 还会把用例刚设的 `saveState` 推成 `saved`（冲突那条因此被判成「没有未保存的工作」而放行关窗）。
+ * 本机靠固定 12 次微任务轮询碰巧躲过去——轮询次数不是屏障。
+ */
+const settleInitialSnapshot = async () => {
+  await vi.waitFor(() => expect(s().saveState).toBe('saved'))
+  await tick()
+}
+
 /* 假磁盘：只需要「写得进 / 写不进」两档 */
 let putOk = true
 const puts: string[] = []
@@ -68,7 +81,7 @@ beforeEach(async () => {
   putOk = true
   localStorage.clear()
   await s().switchDocument(seeded(), 'd_close')
-  await tick()
+  await settleInitialSnapshot()
   puts.length = 0
 })
 

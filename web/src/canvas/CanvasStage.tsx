@@ -48,6 +48,7 @@ import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
 import { penHover, penPointerDown } from './penController'
+import { pencilPointerDown } from './pencilController'
 import { eyedropperPointerDown } from './eyedropper'
 import { startAnchorMarquee } from './pathEditDrag'
 import { activePathEdit } from '@/store/pathEditStore'
@@ -207,6 +208,11 @@ export function CanvasStage() {
     // 钢笔（ADR 0185 M1）：加点 / 拉手柄 / 点起点闭合，状态机在 `lib/penTool`
     if (tool === 'pen') {
       penPointerDown(e)
+      return
+    }
+    // 铅笔（ADR 0185 M8）：拖一笔，松手拟合（`canvas/pencilController`）
+    if (tool === 'pencil') {
+      pencilPointerDown(e)
       return
     }
     // 吸管：读点到的东西画出来的颜色，给选区上色（`canvas/eyedropper`）
@@ -651,6 +657,8 @@ function EmptyHint() {
   const fromData = useHasDataFiles()
   const restoreIssue = useDocumentStore((s) => (s.restoreGate.state === 'needs_user' ? s.restoreIssue : null))
   const held = useSyncExternalStore(subscribeHeldEntries, heldEntryCount) > 0
+  // 拿着画图工具（钢笔、形状、文字…）时，点空画布就是要画：选图卡与提示让开，不接点击（否则第一下就把一张图放上去了）
+  const drawing = useUiStore((s) => s.tool !== 'select')
   // 恢复卡不看选区：它是这时唯一的出口，选区里留着什么都不能把它收走（Codex #1839）
   if (!selectionEmpty && !restoreIssue) return null
   const showCards = assetsLoaded && hasAssets
@@ -696,7 +704,7 @@ function EmptyHint() {
       <div
         {...(onLightPaper ? { 'data-on-paper': '' } : {})}
         className={cn(
-          'pointer-events-auto',
+          drawing ? 'pointer-events-none' : 'pointer-events-auto',
           !showCards && 'p-4',
           !onLightPaper && 'rounded-lg bg-surface',
         )}

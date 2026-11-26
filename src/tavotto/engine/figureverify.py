@@ -451,8 +451,9 @@ def verify(
 
 
 def _issue_keys(man: dict, profile: dict) -> set[tuple[str, tuple[str, ...]]]:
+    # 干涉逐对取自 `detect`；预检不再折一遍聚合项（V-011），否则同一次碰撞有两把键
     issues = interference.detect(man, profile) + preflight.run(
-        preflight.spec_from_manifest(man), profile
+        preflight.spec_from_manifest(man), profile, with_interference=False
     )
     return {
         (i["id"], tuple(sorted(i.get("gids") or ())))

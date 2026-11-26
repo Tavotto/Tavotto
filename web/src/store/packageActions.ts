@@ -1,5 +1,5 @@
 import { createPackage } from '@/lib/api'
-import { msg } from '@/i18n'
+import { msg, t } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { isPackageTooNew, openPackageFile } from '@/lib/packageImport'
 import { currentProjectId } from '@/lib/session'
@@ -22,6 +22,9 @@ export async function exportPackage(attempt = 0): Promise<void> {
   const projectId = currentProjectId()
   try {
     const res = await createPackage(doc.projectMeta.name || doc.doc.name, doc.buildProject(), {})
+    if (res.missing_chart_sources?.length) {
+      throw new Error(t('status.packageIncomplete', { ns: 'workspace', count: res.missing_chart_sources.length }))
+    }
     ui.setStatus(msg('status.packaged', { name: res.name, count: res.assets }, 'workspace'), 'done')
   } catch (e) {
     ui.setStatus(

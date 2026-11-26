@@ -15,6 +15,8 @@ export interface GridOption<T extends string = string> {
    * T15 / T21 点名的噪音。要看代码的人在源文件与高级里看。
    */
   code?: string
+  /** 这一格暂时不可选（图还没到等）：`disabled`、点不动、方向键漫游时跳过它；不传 = 与以前一样 */
+  disabled?: boolean
 }
 
 /** 格子的 tooltip / 可达名：只有名字，没有代码 */
@@ -37,6 +39,7 @@ export function OptionGrid<T extends string>({
   ariaLabel,
   cellClassName,
   previewHasLabel = false,
+  framed = false,
 }: {
   value: T | null
   options: GridOption<T>[]
@@ -56,6 +59,11 @@ export function OptionGrid<T extends string>({
    * 可达名仍由每个格子的 `aria-label` 提供，读屏不受影响。
    */
   previewHasLabel?: boolean
+  /**
+   * 格子里放的是**白底缩略图**（数据页的候选切换排）：选中那一格另加 1px 内描边（`--color-thumb-frame`：浅色透明、暗色是随主题的浅墨），
+   * 暗色下白图卡托在暗灰 thumb 上与槽的反差弱，描边用形状再说一遍选中。缺省关：别的选择器一点不变
+   */
+  framed?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -71,7 +79,15 @@ export function OptionGrid<T extends string>({
     if (delta == null) return
     e.preventDefault()
     const i = options.findIndex((o) => o.value === value)
-    const next = options[Math.max(0, Math.min(options.length - 1, (i < 0 ? 0 : i) + delta))]
+    let at = Math.max(0, Math.min(options.length - 1, (i < 0 ? 0 : i) + delta))
+    // 落点被禁用：顺着同一方向找最近一个能选的；找不到（或全部禁用）就不动
+    if (options[at]?.disabled) {
+      const dir = delta > 0 ? 1 : -1
+      at += dir
+      while (at >= 0 && at < options.length && options[at]!.disabled) at += dir
+      if (at < 0 || at >= options.length) return
+    }
+    const next = options[at]
     if (next && next.value !== value) {
       onChange(next.value)
       // 焦点跟着选中走，连续按方向键才能继续漫游
@@ -101,6 +117,7 @@ export function OptionGrid<T extends string>({
             role="radio"
             aria-checked={active}
             aria-label={opt.label}
+            disabled={opt.disabled}
             data-value={opt.value}
             data-code={opt.code}
             // radiogroup 的漫游焦点：选中项可 Tab 进入，其余用方向键到达
@@ -114,8 +131,9 @@ export function OptionGrid<T extends string>({
               'relative flex h-8 items-center justify-center rounded-md outline-none transition-colors',
               'focus-visible:focus-ring',
               active
-                ? 'bg-thumb font-semibold text-ink shadow-thumb'
+                ? cn('bg-thumb font-semibold text-ink shadow-thumb', framed && 'inset-ring inset-ring-thumb-frame')
                 : 'text-ink-2 hover:bg-surface-active hover:text-ink',
+              opt.disabled && 'cursor-default hover:bg-transparent hover:text-ink-2',
               cellClassName,
             )}
           >

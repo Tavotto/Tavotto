@@ -178,3 +178,16 @@
   `web/src/lib/figureTextClipboard.test.tsx`（⌘C 分派与曲线胶囊、权威缺席、粘贴一条历史与撤销重做、选中新标注并退出图内编辑、右键弹层两项与置灰）、
   `tests/test_manifest_text_block.py`（块中心 / 尺寸 / 第一行基线对任意转角——期望值取自 `va=baseline` 锚点与真实 artist 外接框两把独立的尺）、
   `tests/test_text_line_box.py`（前端基线常数 ↔ 导出行盒常数；2026-11-16 前是 `test_figure_text_copy_metrics.py` 从字体文件反推三族常数）。
+
+## 修订（2026-11-24，ADR 0207）
+
+[0207 图内复制粘贴](0207-in-figure-duplicate.md) 修订本 ADR「图内文字复制为标注」一节的第 4、7 条：
+
+* **第 4 条（剪贴板）**：⌘C 的负载在换算好的 `objects` 之外，第一期能复制成图内副本的元素再带一段 `elements`；⌘V 在**同一份文档、同一张图**的图内编辑里
+  建图内副本（**不再退出图内编辑**），落在别处照旧用 `objects` 落成标注（本节其余行为——换算、错开 `DUPLICATE_OFFSET_MM`、一条历史、退出图内编辑的那一支——逐字不变）。
+  ⌘C 对不能复制的元素的处理（消费、胶囊「还不能复制」）不变。
+* **第 7 条（右键入口）**：元素弹层的「复制为标注」「粘贴为标注 ⌘V」改为「复制 ⌘C」「粘贴 ⌘V」「创建副本 ⌘D」「粘贴为标注」（无快捷键）；
+  「复制为标注」去掉（⌘C 已同时带着标注那一份）。
+* 范围外的元素（刻度数字、图例文字、3D、色条轴）仍只落成标注，本节「已知边界」不变。
+
+看护追加：`web/src/lib/figureTextClipboard.test.tsx`（负载分派、同图 / 别处粘贴、弹层四项）、`web/src/store/figureDuplicate.test.tsx`、`web/e2e/figure-duplicate.spec.ts`。

@@ -15,7 +15,7 @@ import math
 import re
 import struct
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from tavotto import svgcoord
 from tavotto.rendercore import ir, typography
@@ -447,8 +447,9 @@ class _Translator:
         "noto sans sc": "cjk",
     }
 
-    def __init__(self, root, w_pt, h_pt, fonts, files):
+    def __init__(self, root, w_pt, h_pt, fonts, files, *, compact_path_instances=False):
         self.root, self.w_pt, self.h_pt, self.fonts, self.files = root, w_pt, h_pt, fonts, files
+        self.compact_path_instances = compact_path_instances
         self.resources, self.faces, self.font_cache, self.notes = {}, {}, {}, []
         self.cjk_faces = {}
         self.ids = {e.get("id"): e for e in root.iter() if e.get("id")}
@@ -1288,6 +1289,23 @@ class _Translator:
         clip_ref = st.get("clip-path", "none")
         clip = self._clip(clip_ref) if clip_ref != "none" else None
         if (
+            self.compact_path_instances
+            and local != ir.IDENTITY
+            and clip is None
+            and opacity == 1
+            and ((instance and tag == "path") or (tag == "use" and not el.get("id")))
+            and len(children) == 1
+            and isinstance(children[0], ir.Path)
+            and isinstance(children[0].fill, ir.Paint)
+            and children[0].stroke is None
+        ):
+            # Solid glyph outlines need neither a group for the definition's
+            # scale nor one for each <use>'s position. Keep the transform
+            # validation even when the matrix won't appear in the IR.
+            ir._matrix(local, el.get("id", "") or tag)
+            path = children[0]
+            return [replace(path, segments=_transformed_segments(path.segments, local))]
+        if (
             local != ir.IDENTITY
             or clip
             or opacity != 1
@@ -1319,7 +1337,13 @@ class _Translator:
 
 
 def svg_to_ir(
-    data: bytes, w_pt: float, h_pt: float, fonts, *, files: dict[str, bytes] | None = None
+    data: bytes,
+    w_pt: float,
+    h_pt: float,
+    fonts,
+    *,
+    files: dict[str, bytes] | None = None,
+    compact_path_instances: bool = False,
 ) -> tuple[ir.Page, list[str]]:
     """Page/notes; pass resource-keyed ``files`` to ``pdfwriter.write_pdf``.
 
@@ -1331,7 +1355,9 @@ def svg_to_ir(
         raise SVGIRError("svgir_invalid", "root element is not svg")
     try:
         pending_files = {} if files is not None else None
-        tr = _Translator(root, w_pt, h_pt, fonts, pending_files)
+        tr = _Translator(
+            root, w_pt, h_pt, fonts, pending_files, compact_path_instances=compact_path_instances
+        )
         page = tr.translate()
         if files is not None:
             if any(key in files and files[key] != value for key, value in pending_files.items()):
