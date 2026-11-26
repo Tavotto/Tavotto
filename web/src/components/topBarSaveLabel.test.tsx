@@ -19,6 +19,7 @@ import {
   useDocumentStore,
   type SaveState,
 } from '@/store/documentStore'
+import { useProjectStore } from '@/store/projectStore'
 import { SAVE_PENDING_REVEAL_MS, SaveStateLabel } from './TopBar'
 
 declare global {
@@ -76,6 +77,28 @@ afterEach(() => {
 })
 
 describe('顶栏保存状态', () => {
+  it('写不进项目（文件夹只读，ADR 0211 第二期）：落定那句换成一句灰字；别的文档的只读标记不影响这份', () => {
+    expect(visibleText()).toBe('已存在本机')
+    act(() => useDocumentStore.setState({ projectReadOnlyDoc: 'another' }))
+    expect(visibleText()).toBe('已存在本机')
+    act(() => useDocumentStore.setState({ projectReadOnlyDoc: useDocumentStore.getState().documentId }))
+    expect(visibleText()).toBe('这个文件夹只读，修改存在本机')
+    expect(label().getAttribute('title')).toContain('这个文件夹只读，修改存在本机')
+    act(() => useDocumentStore.setState({ projectReadOnlyDoc: null }))
+    expect(visibleText()).toBe('已存在本机')
+  })
+
+  it('整个项目文件夹不可写：同一句；后端没开「写进项目」时界面照旧', () => {
+    const set = (project: Record<string, unknown> | null) => act(() => useProjectStore.setState({ project: project as never }))
+    set({ open: true, id: 'p', writable: false })
+    expect(visibleText()).toBe('已存在本机')
+    set({ open: true, id: 'p', writable: false, autosave_into_project: true })
+    expect(visibleText()).toBe('这个文件夹只读，修改存在本机')
+    set({ open: true, id: 'p', writable: true, autosave_into_project: true })
+    expect(visibleText()).toBe('已存在本机')
+    set(null)
+  })
+
   it('从没落过盘的新排版（Codex #821 P2）：第一次改动不等门槛，直接说进行中，不先声称「已存在本机」', () => {
     act(() => useDocumentStore.setState({ saveState: 'clean', lastPersisted: null }))
     go('dirty')

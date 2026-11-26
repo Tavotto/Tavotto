@@ -19,6 +19,7 @@
  *     把它盖掉。
  */
 import { ApiError, REVISION_ABSENT, type DiskDocumentSummary } from '@/lib/api'
+import type { ProjectLayoutResult, ProjectWriteSpec } from '@/lib/autosaveProject'
 import type { ChartSourceReceipt } from '@/lib/chartSourceReceipts'
 import type { FigureSnapshotSaveContext } from '@/lib/figureSnapshot'
 import type { FigureSnapshot, ProjectDocument } from '@/types/document'
@@ -104,7 +105,8 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; chart_sources?: ChartSourceReceipt[]; figure_snapshots?: Record<string, FigureSnapshot> }>
+    projectWrite?: ProjectWriteSpec,
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; chart_sources?: ChartSourceReceipt[]; figure_snapshots?: Record<string, FigureSnapshot>; project_layout?: ProjectLayoutResult }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -134,6 +136,13 @@ export interface DiskWriterPorts {
   dropLocalCopy: (id: string, written: ProjectDocument) => void
   /** 遥测：一次写盘的结局 */
   outcome: (trigger: SaveTrigger, outcome: SaveOutcome) => void
+  /**
+   * 这次 PUT 要不要顺带把工作副本写进项目、写给谁（**真正发请求那一刻**才问：排在前面的那次写成之后绑定的修订号
+   * 已经推进）。`null` = 不写。只在排队时标了 `project` 的才问；开关关着时前端从不标，行为与改造前相同。
+   */
+  projectSpec?: (id: string, pj: string | null) => ProjectWriteSpec | null
+  /** 带了 `project_write` 的 PUT 回来后，写进项目的结局（`pj` 是排队那一刻的项目） */
+  onProjectLayout?: (id: string, pj: string | null, result: ProjectLayoutResult) => void
 }
 
 /** 「先别写，这是个待裁决的冲突」——走 catch 那条路，不占用 ApiError 的语义 */
@@ -160,7 +169,13 @@ export function conflictIssue(id: string, err: unknown): SaveIssue {
 
 export interface DiskWriter {
   /** 把这一份排进队列（或立刻开始写） */
-  schedule: (id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext) => void
+  schedule: (
+    id: string,
+    pd: ProjectDocument,
+    pj: string | null,
+    snapshotContext?: FigureSnapshotSaveContext,
+    project?: boolean,
+  ) => void
   /** 排队和成功写入的代次；旧的在途写入不能替后排快照作证。 */
   writeVersion: (id: string) => { scheduled: number; written: number }
   /** 队列排空（含在途那一次）后 resolve。已经空了就立刻 resolve。 */
@@ -185,7 +200,10 @@ export interface DiskWriter {
 export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
   let diskBusy = false
   /** 按 documentId 排队：同一个 id 天然合并成最新一份，不同 id 依次串行 PUT。 */
-  const diskQueue = new Map<string, { pd: ProjectDocument; pj: string | null; snapshotContext?: FigureSnapshotSaveContext; version: number }>()
+  const diskQueue = new Map<
+    string,
+    { pd: ProjectDocument; pj: string | null; snapshotContext?: FigureSnapshotSaveContext; version: number; project: boolean }
+  >()
   let nextVersion = 0
   const scheduledVersions = new Map<string, number>()
   const writtenVersions = new Map<string, number>()
@@ -275,15 +293,17 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
     }
   }
 
-  function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext): void {
+  function schedule(id: string, pd: ProjectDocument, pj: string | null, snapshotContext?: FigureSnapshotSaveContext, project = false): void {
     const version = ++nextVersion
     scheduledVersions.set(id, version)
-    enqueue(id, pd, pj, snapshotContext, version)
+    // 同一个 id 合并成最新一份时，「要写进项目」的标记取并集：排在前面那份要写项目、后来的只是本机 1 s 的一笔，
+    // 合并后不能把前者想写的那一笔吞掉
+    enqueue(id, pd, pj, snapshotContext, version, project || (diskQueue.get(id)?.project ?? false))
   }
 
-  function enqueue(id: string, pd: ProjectDocument, pj: string | null, snapshotContext: FigureSnapshotSaveContext | undefined, version: number): void {
+  function enqueue(id: string, pd: ProjectDocument, pj: string | null, snapshotContext: FigureSnapshotSaveContext | undefined, version: number, project: boolean): void {
     if (diskBusy) {
-      diskQueue.set(id, { pd, pj, snapshotContext, version })
+      diskQueue.set(id, { pd, pj, snapshotContext, version, project })
       return
     }
     diskBusy = true
@@ -295,7 +315,8 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         if (issue) throw new PendingConflict(issue)
         // `null`（确认过但拿不到 hash）与「缺席」在这里都变成 undefined = 不带，
         // 但两者在 `ensureDiskKnown` 那里是两回事：前者不再探，后者要探。
-        return ports.api.put(id, pd, diskBaseline.get(id), diskRevision.get(id) ?? undefined, pj)
+        const spec = project ? (ports.projectSpec?.(id, pj) ?? undefined) : undefined
+        return ports.api.put(id, pd, diskBaseline.get(id), diskRevision.get(id) ?? undefined, pj, ...(spec ? [spec] : []))
       })
       .then((res) => {
         writtenVersions.set(id, version)
@@ -309,6 +330,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
         })
         ports.outcome(trigger, 'ok')
+        if (res.project_layout) ports.onProjectLayout?.(id, pj, res.project_layout)
       })
       .catch((err: unknown) => {
         // 磁盘写失败（含被 409 挡下的过期写）：本机副本仍在（flush 时已写，
@@ -332,7 +354,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           // 内容已经在本机副本里，等用户裁决完再写。只跳过它——排在后面的别的
           // 文档照写，否则它们没人处理、等待方也一直醒不来（#411）。
           if (ports.writeBlocked() && ports.isCurrent(qid)) continue
-          enqueue(qid, queued.pd, queued.pj, queued.snapshotContext, queued.version)
+          enqueue(qid, queued.pd, queued.pj, queued.snapshotContext, queued.version, queued.project)
           return
         }
         settleIdle()

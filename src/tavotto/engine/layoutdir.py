@@ -47,11 +47,14 @@ BLOCKED    任意                                 有，但不是有效目录（
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
 import shutil
 import stat
+import sys
+import time
 import unicodedata
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -537,3 +540,71 @@ def write(
         return atomicio.write_json(loc.logical, document, indent=1)
     atomicio.write_bytes(loc.logical, data)
     return atomicio.revision_of(data)
+
+
+# ------------------------------------------------------------------ 工作副本（自动保存写进项目，ADR 0211 第二期 PR 2）
+
+
+def find_by_doc_id(store: Path, doc_id: str) -> Located | None:
+    """清单里记着这个 docId 的目录形态排版（挪走 / 换电脑后本机绑定没了，靠它把工作副本找回来）。
+
+    **只认唯一的一份**：两份目录记着同一个 docId（整夹被拷贝过）= 不知道哪份是它，回 None，不猜。只读。"""
+    store = Path(store)
+    names = _listing(store)
+    hits: list[Located] = []
+    for n in names:
+        if not n.endswith(DIR_SUFFIX):
+            continue
+        stem = n[: -len(DIR_SUFFIX)]
+        if not documents.is_user_document_stem(stem):
+            continue
+        loc = locate(store, stem, names=names)
+        if loc.read_path is None or loc.problem == PROBLEM_SYMLINK or not loc.manifest:
+            continue
+        if loc.manifest.get("doc_id") == doc_id:
+            hits.append(loc)
+    return hits[0] if len(hits) == 1 else None
+
+
+def classify_write_failure(exc: BaseException, *, platform: str | None = None) -> str:
+    """一次写盘失败是 `read_only`（换位置 / 改权限，重试不会变好）、`transient`（杀毒软件 / 另一个进程占着，稍后会好）
+    还是 `other`。**Windows 上 EACCES / 共享冲突是瞬时的**：杀毒软件扫描、同步盘、另一个进程短暂占着文件，
+    都会让 `os.replace` 报「拒绝访问」，把它判成只读会让用户的项目被无故降级成本机存储。"""
+    plat = platform or sys.platform
+    cause = exc.__cause__ if exc.__cause__ is not None else exc
+    code = getattr(cause, "errno", None)
+    winerror = getattr(cause, "winerror", None)
+    if code == errno.EROFS or winerror == 19:  # ERROR_WRITE_PROTECT
+        return "read_only"
+    if plat == "win32":
+        if code in (errno.EACCES, errno.EPERM, errno.EBUSY) or winerror in (5, 32, 33):
+            return "transient"
+        return "other"
+    if code in (errno.EACCES, errno.EPERM):
+        return "read_only"
+    if code == errno.EBUSY:
+        return "transient"
+    return "other"
+
+
+#: 瞬时失败的退避（秒）：总共不到一秒，持着文档锁等，不能更长
+RETRY_DELAYS = (0.15, 0.5)
+
+
+def write_retrying(
+    store: Path,
+    stem: str,
+    data: bytes | dict,
+    *,
+    doc_id: str | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    """`write()`，瞬时失败退避重试；确实只读 / 其它失败原样抛出（调用方用 `classify_write_failure` 分档）。"""
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return write(store, stem, data, doc_id=doc_id)
+        except atomicio.AtomicWriteError as exc:
+            if delay is None or classify_write_failure(exc) != "transient":
+                raise
+            sleep(delay)
+    raise AssertionError("unreachable")

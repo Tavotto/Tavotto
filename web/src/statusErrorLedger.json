@@ -304,7 +304,7 @@
     {
       "file": "store/projectSave.ts",
       "key": "save.projectConflict",
-      "count": 1,
+      "count": 2,
       "reason": "紧跟着 setLayoutOpen(true, \"saveToProject\", { conflict })，会弹出带「仍然覆盖 / 另存」按钮的冲突对话框；这条是对话框背后的状态。"
     },
     {

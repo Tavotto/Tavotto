@@ -59,6 +59,7 @@ import {
   refreshRecentDocsFromIndex,
   relabelReadyGate,
   saveNowWithResult,
+  setProjectFile,
   resetRestoreGateForTests,
   settleRestore,
   supersedeRestore,
@@ -72,6 +73,7 @@ import {
 import {
   claimProjectHistory,
   inheritRemapForCopy,
+  fetchLayout,
   fetchLayoutOwnerEvidence,
   fetchProjectHistory,
   fetchRecoveryCandidates,
@@ -671,6 +673,7 @@ async function installFromHistory(token: RestoreToken, picked: AltCandidate, rea
     if (out.kind === 'restored' && h.node_newer) await applyNodeOnTop(token, cand.id, h)
     return out
   }
+  if (h.work) return installFromWorkingCopy(token, cand, h.work, mode, reason)
   let node: Awaited<ReturnType<typeof fetchVersionDoc>>
   try {
     node = await fetchVersionDoc(cand.id, h.vid, token.pj)
@@ -712,6 +715,45 @@ async function installFromHistory(token: RestoreToken, picked: AltCandidate, rea
   } else {
     commitNode(node.doc as FigureDocument, node.name)
   }
+  return { kind: 'restored', id }
+}
+
+/**
+ * 按项目里的**工作副本**装（目录形态的 `layout.json`，清单记着这个 docId；ADR 0211 第二期 PR 2）：它比最近的时间线节点新，
+ * 没有本机槽位时（挪走 / 换电脑）「上次开着的」就指回它。`node` 沿用 docId 并重新绑上这个项目文件（基线 = 读到的修订号，
+ * 随后的自动保存接着写它）；`copy`（旧项目还在）是新 docId、不绑——复制品第一次自动保存时自己起名，两边互不影响。
+ */
+async function installFromWorkingCopy(
+  token: RestoreToken,
+  cand: AltCandidate,
+  work: NonNullable<ProjectHistoryItem['work']>,
+  mode: ProjectHistoryItem['mode'],
+  reason: Reason,
+): Promise<RestoreOutcome> {
+  let fetched: Awaited<ReturnType<typeof fetchLayout>>
+  try {
+    fetched = await fetchLayout(work.name, token.pj)
+  } catch {
+    return isRestoreTokenCurrent(token)
+      ? needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
+      : { kind: 'superseded' }
+  }
+  if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
+  const pd = migrateToProject(fetched.doc)
+  if (!pd) return needsUser(token, 'invalid', { id: cand.id, name: cand.name })
+  const id = mode === 'node' ? cand.id : newId('d')
+  if (!canCommitRestore(token)) {
+    settleRestore(token, { state: 'ready', reason: 'superseded' })
+    return { kind: 'kept_explicit' }
+  }
+  if (cand.correctsIndex && mode === 'node' && token.pj) correctRecordedProject(id, token.pj)
+  if (!installRestoredDocument(token, pd, id, null)) return { kind: 'superseded' }
+  if (mode === 'node' && token.pj && fetched.file) {
+    setProjectFile({ projectId: token.pj, name: work.name, file: fetched.file, revision: fetched.revision, dirty: false }, id)
+  }
+  settleRestore(token, { state: 'ready', reason })
+  // 没有可撤销的那一步：当场落盘，下次打开按 last 恢复
+  void saveNowWithResult(true)
   return { kind: 'restored', id }
 }
 
