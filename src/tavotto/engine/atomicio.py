@@ -77,7 +77,15 @@ def _next_tmp(path: Path) -> Path:
 
 #: `_next_tmp` 起的名字：`<目标文件名>.<pid>.<序号>.tmp`。回收只认这一种形状，
 #: 别人放在同一目录里的 `*.tmp` 不归这里管。
-_TMP_NAME = re.compile(r"^.+\.(?P<pid>\d+)\.\d+\.tmp$")
+_TMP_NAME = re.compile(r"^(?P<target>.+)\.(?P<pid>\d+)\.\d+\.tmp$")
+
+
+def tmp_target(name: str) -> str | None:
+    """`name` 是 `_next_tmp` 起的临时文件名时，回它要原子替换的目标文件名；否则 None。"""
+    m = _TMP_NAME.match(name)
+    return m.group("target") if m else None
+
+
 #: 比这个年轻的临时文件一律不碰：一次原子写从建 tmp 到 replace 是毫秒级，一小时
 #: 还没收尾的只可能是写它的进程已经死在半路（QA 2026-09-24 SCI-05-B2）。
 ORPHAN_TMP_MIN_AGE_S = 3600
