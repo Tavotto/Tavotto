@@ -121,6 +121,7 @@ async function run(origin: FigureOrigin, kind: ErrorKind, pj: string | null, sti
     table: origin.file.path,
     ...(origin.file.sheet == null ? {} : { sheet: origin.file.sheet }),
     render: 'lazy',
+    understand: false, // 这次重出不是用户在看数据：绝不为它多发一次「读懂数据」的模型出站
     answers: answersWithKind(origin, kind),
     ...(origin.headerRow != null ? { header_rows: { [origin.file.path]: origin.headerRow } } : {}),
     ...(origin.spec ? { spec: origin.spec } : {}),

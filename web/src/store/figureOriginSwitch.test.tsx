@@ -269,7 +269,7 @@ describe('换类型', () => {
     // 请求：同一张表、同一份 answers 只换 error、表头行 / 规范 / 字号范围原样
     expect(propose).toHaveBeenCalledTimes(1)
     expect(propose.mock.calls[0]![0]).toMatchObject({
-      table: 'a.csv', render: 'lazy', answers: { y: 'resp', purpose: 'compare_groups', error: 'sem' }, header_rows: { 'a.csv': 2 }, spec: { width_single_mm: 85 }, font_range: { min_pt: 6 },
+      table: 'a.csv', render: 'lazy', understand: false, answers: { y: 'resp', purpose: 'compare_groups', error: 'sem' }, header_rows: { 'a.csv': 2 }, spec: { width_single_mm: 85 }, font_range: { min_pt: 6 },
     })
     // 新的一批会话用完就放弃；旧脚本的来历还在、新脚本有自己的来历（可以再换回去）
     expect(discard).toHaveBeenCalledWith('SW', 'pa')
