@@ -569,7 +569,9 @@ stopifnot(identical(adapter$render_ggplot(state), captured$svg),
           summary_calls == pre_calls)
 
 for (invalid in list(list(major_step = 0), list(major_step = 1e-300),
-                     list(major_mode = "fixed"), list(format = "%n"), list(fontsize = 0))) {
+                     list(major_mode = "unknown"), list(major_values = c(1, Inf)),
+                     list(major_values = list(1, "2")), list(format = "%n"),
+                     list(fontsize = 0))) {
   bad <- stats::setNames(list(invalid), ticks)
   stopifnot(inherits(try(adapter$render_ggplot(state, bad), silent = TRUE), "try-error"))
 }
@@ -995,9 +997,9 @@ projected <- do.call(rbind, lapply(flipped$geometry$paths[[1L]]$points, unlist))
 stopifnot(isTRUE(all.equal((projected[, 1L] - flipped_bbox[[1L]]) / flipped_bbox[[3L]], c(1, 2/3, 1/3, 0))),
           isTRUE(all.equal((projected[, 2L] - flipped_bbox[[2L]]) / flipped_bbox[[4L]], c(.2, .4, .6, .8))),
           identical(flipped$geometry$clip, element(flip, "axes_0")$bbox))
-positions <- adapter$with_svg_frame(frame, function(capture) {
+guide_positions <- function(patches) adapter$with_svg_frame(frame, function(capture) {
   grid::grid.newpage()
-  table <- adapter$ggplot_table_for(state, reversed)$table
+  table <- adapter$ggplot_table_for(state, patches)$table
   panel <- table$grobs[[which(table$layout$name == "panel")]]
   grill <- panel$children[[grep("^grill", names(panel$children))]]
   major <- grill$children[[grep("^panel.grid.major.x", names(grill$children))]]
@@ -1006,11 +1008,56 @@ positions <- adapter$with_svg_frame(frame, function(capture) {
   text <- axis$grobs[[tick$slots[[3L]]]]$children[[1L]]
   list(grid = unique(as.numeric(major$x)), ticks = as.numeric(text$x), labels = unname(text$label))
 })$value
+positions <- guide_positions(reversed)
 expected <- 1 - log10(c(250, 500, 750, 1000)) / 3
 stopifnot(isTRUE(all.equal(positions$grid, expected)),
           isTRUE(all.equal(positions$ticks, expected)),
           identical(positions$labels, c("250", "500", "750", "1000")),
           calls == 4L, identical(adapter$render_ggplot(state), captured$svg))
+
+tick_gid <- "axis.x.bottom.ticks"
+fixed <- list(axes_0 = reversed$axes_0)
+marks <- c(-5, 1, 2, 50, 150, 1000, 2000)
+fixed[[tick_gid]] <- list(major_mode = "fixed", major_values = as.list(marks), format = "%.0f")
+fixed_scene <- adapter$ggplot_manifest(state, "dose", fixed)
+fixed_axes <- element(fixed_scene, "axes_0")
+field <- function(manifest, prop) {
+  Filter(function(f) f$prop == prop, element(manifest, tick_gid)$editable)[[1L]]
+}
+stopifnot(identical(field(fixed_scene, "major_values")$value, as.list(marks)),
+          identical(field(fixed_scene, "major_mode")$value, "fixed"),
+          identical(fixed_axes$native_axes$current, flipped_axes$current))
+fixed_positions <- guide_positions(fixed)
+visible <- c(1, 2, 50, 150, 1000)
+expected_fixed <- 1 - log10(visible) / 3
+stopifnot(isTRUE(all.equal(fixed_positions$grid, expected_fixed)),
+          isTRUE(all.equal(fixed_positions$ticks, expected_fixed)),
+          identical(fixed_positions$labels, as.character(visible)))
+
+fixed_svg <- adapter$render_ggplot(state, fixed)
+empty <- fixed
+empty[[tick_gid]] <- list(major_mode = "fixed", major_values = c(-5, 2000),
+                          format = "%.2f", color = "#A52A55", fontsize = 15)
+empty_svg <- adapter$render_ggplot(state, empty)
+empty_png <- adapter$preview_ggplot_png(state, empty, "empty-ticks.png", 800, TRUE)
+empty_scene <- adapter$ggplot_manifest(state, "dose", empty, empty_png)
+stopifnot(identical(element(empty_scene, tick_gid)$bbox, as.list(c(-1, -1, 0, 0))),
+          identical(field(empty_scene, "major_values")$value, list(-5, 2000)),
+          !grepl("#A52A55", empty_svg, fixed = TRUE),
+          identical(adapter$render_ggplot(state, fixed), fixed_svg),
+          identical(adapter$render_ggplot(state), captured$svg), calls == 4L)
+empty$axes_0$xlim <- c(1900, 2100)
+stopifnot(grepl(">2000.00</text>", adapter$render_ggplot(state, empty), fixed = TRUE))
+
+# An authored logarithmic scale also accepts explicit positions in data units.
+authored <- adapter$capture_ggplot(ggplot2::ggplot(data.frame(x = c(1, 10, 100), y = 1:3),
+  ggplot2::aes(x, y)) + ggplot2::geom_point() + ggplot2::scale_x_log10() +
+  ggplot2::coord_cartesian(xlim = c(1, 100), expand = FALSE), frame)
+authored_manifest <- adapter$ggplot_manifest(authored$state, "authored")
+stopifnot(identical(field(authored_manifest, "major_mode")$options, list("auto", "fixed")),
+          identical(field(authored_manifest, "major_values")$value, list(1, 10, 100)))
+authored_fixed <- stats::setNames(list(list(major_values = list(3), format = "%.1f")), tick_gid)
+stopifnot(grepl(">3.0</text>", adapter$render_ggplot(authored$state, authored_fixed), fixed = TRUE))
 
 grid_patch <- reversed
 grid_patch$axes_0 <- c(grid_patch$axes_0, list(grid_x = TRUE, grid_y = FALSE,

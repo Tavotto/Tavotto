@@ -189,13 +189,13 @@ ggplot_colourbar_key_values <- function(params) {
 ggplot_axis_spacing <- function(built, panel, params, values) {
   axis <- params$aesthetic
   if (!identical(class(built$layout$coord)[[1L]], "CoordCartesian") ||
-      length(axis) != 1L || !axis %in% c("x", "y") || length(values) < 2L ||
+      length(axis) != 1L || !axis %in% c("x", "y") || !length(values) ||
       isTRUE(params$minor.ticks) || !identical(as.numeric(params$n.dodge), 1)) return(NULL)
   view <- panel[[axis]]
   scale <- view$scale
   if (!identical(class(view)[[1L]], "ViewScale") || isTRUE(view$scale_is_discrete) ||
       !identical(class(scale)[[1L]], "ScaleContinuousPosition") ||
-      !identical(scale$get_transformation()$name, "identity") ||
+      !scale$get_transformation()$name %in% names(ggplot_axis_modes) ||
       !inherits(scale$secondary.axis, "waiver") || !inherits(scale$labels, "waiver") ||
       (!is.null(scale$minor_breaks) && !inherits(scale$minor_breaks, "waiver"))) return(NULL)
   cross <- if (axis == "x") "y" else "x"
@@ -204,11 +204,17 @@ ggplot_axis_spacing <- function(built, panel, params, values) {
       !isTRUE(all.equal(params$key[[axis]], ggplot_axis_position(panel, axis, params$key$.value), tolerance = 1e-12))) {
     return(NULL)
   }
-  range <- sort(view$continuous_range)
-  step <- stats::median(diff(sort(values)))
-  if (length(range) != 2L || !all(is.finite(range)) || !is_positive_ggplot_number(diff(range)) ||
-      !is_positive_ggplot_number(step)) return(NULL)
-  list(axis = axis, range = range, step = step)
+  if (is.null(ggplot_axis_pair(sort(view$continuous_range)))) return(NULL)
+  step <- if (identical(scale$get_transformation()$name, "identity") && length(values) >= 2L) {
+    stats::median(diff(sort(values)))
+  }
+  list(axis = axis, step = if (is_positive_ggplot_number(step)) step)
+}
+
+ggplot_axis_key_values <- function(panel, params) {
+  if (!length(params$key$.value)) return(numeric())
+  transform <- panel[[params$aesthetic]]$scale$get_transformation()
+  transform$inverse(params$key$.value)
 }
 
 ggplot_tick_targets <- function(built, targets, colourbar_titles) {
@@ -224,6 +230,10 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
       if (length(matches) == 1L && identical(class(guides$guides[[matches]])[[1L]], "GuideAxis")) {
         params <- guides$params[[matches]]
         values <- ggplot_numeric_key(params, target)
+        if (is.null(values) && identical(params$aesthetic, substr(gid, 6L, 6L)) &&
+            identical(panel[[params$aesthetic]]$scale$get_transformation()$name, "log-10")) {
+          values <- ggplot_numeric_key(params, target, ggplot_axis_key_values(panel, params))
+        }
         if (!is.null(values)) {
           size <- target$paint$fontsize * ggplot_text_cex(target$paint)
           result[[gid]] <- list(kind = "axis", index = matches, values = values,
@@ -245,7 +255,7 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
 }
 
 ggplot_number_formats <- c("auto", "%.0f", "%.1f", "%.2f", "%.3f", "%g", "sci")
-ggplot_tick_props <- c("format", "major_mode", "major_step")
+ggplot_tick_props <- c("format", "major_mode", "major_step", "major_values")
 
 ggplot_format_guide <- function(params, format, values) {
   if (!is.character(format) || length(format) != 1L || !format %in% ggplot_number_formats) {
@@ -296,32 +306,66 @@ ggplot_uniform_breaks <- function(range, step) {
   seq.int(first, last) * step
 }
 
+ggplot_major_tick_mode <- function(edit) {
+  if (!is.null(edit$major_mode)) return(edit$major_mode)
+  if (!is.null(edit$major_values)) return("fixed")
+  if (!is.null(edit$major_step)) return("step")
+  "auto"
+}
+
+ggplot_major_tick_modes <- function(spacing) {
+  c("auto", if (!is.null(spacing$step)) "step", "fixed")
+}
+
+ggplot_fixed_tick_values <- function(value) {
+  if (is.list(value) && is.null(names(value)) && all(vapply(value, function(x) {
+    is.numeric(x) && length(x) == 1L
+  }, logical(1L)))) value <- if (length(value)) unlist(value, use.names = FALSE) else numeric()
+  if (!is.numeric(value) || !is.null(dim(value)) || any(!is.finite(value))) {
+    stop("The native R fixed ticks must be a list of finite numbers.")
+  }
+  unname(value)
+}
+
 ggplot_edit_axis_guide <- function(panel, params, target, edit, projected = FALSE) {
-  values <- target$values
-  transform <- if (projected) panel[[params$aesthetic]]$scale$get_transformation()
-  if (!is.null(transform)) values <- transform$inverse(params$key$.value)
+  values <- if (projected) ggplot_axis_key_values(panel, params) else target$values
   format <- if (is.null(edit$format)) "auto" else edit$format
-  if (any(c("major_mode", "major_step") %in% names(edit))) {
+  if (any(setdiff(ggplot_tick_props, "format") %in% names(edit))) {
     spacing <- target$spacing
     if (is.null(spacing)) stop("The requested native R tick spacing is unavailable.")
-    mode <- if (is.null(edit$major_mode)) "step" else edit$major_mode
+    mode <- ggplot_major_tick_mode(edit)
     step <- if (is.null(edit$major_step)) spacing$step else edit$major_step
-    if (!is.character(mode) || length(mode) != 1L || !mode %in% c("auto", "step") ||
-        !is_positive_ggplot_number(step)) stop("Invalid native R tick spacing.")
+    fixed <- if (!is.null(edit$major_values)) ggplot_fixed_tick_values(edit$major_values)
+    if (!is.character(mode) || length(mode) != 1L || !mode %in% ggplot_major_tick_modes(spacing) ||
+        (!is.null(edit$major_step) && !is_positive_ggplot_number(step))) {
+      stop("Invalid native R tick spacing.")
+    }
+    view <- panel[[spacing$axis]]
+    transform <- view$scale$get_transformation()
+    transformed_range <- sort(view$continuous_range)
+    supplied <- length(fixed) && mode == "fixed"
     if (mode == "step") {
-      view <- panel[[spacing$axis]]
-      range <- if (is.null(transform)) spacing$range else transform$inverse(view$continuous_range)
-      values <- ggplot_uniform_breaks(range, step)
-      transformed_range <- view$continuous_range
-      breaks <- if (is.null(transform)) values else transform$transform(values)
-      minor <- if (length(values) >= 2L) {
+      values <- ggplot_uniform_breaks(transform$inverse(transformed_range), step)
+      breaks <- transform$transform(values)
+    } else if (supplied) {
+      # Crop ticks to the visible view without expanding or retraining the axis.
+      # Compare in scale coordinates so the guide and grid share the same marks.
+      if (identical(transform$name, "log-10")) fixed <- fixed[fixed > 0]
+      values <- sort(unique(fixed))
+      breaks <- transform$transform(values)
+      visible <- breaks >= transformed_range[[1L]] & breaks <= transformed_range[[2L]]
+      values <- values[visible]
+      breaks <- breaks[visible]
+    }
+    if (mode == "step" || supplied) {
+      minor <- if (length(breaks) >= 2L) {
         view$scale$get_breaks_minor(b = breaks, limits = transformed_range)
       }
       panel[[spacing$axis]] <- ggplot_clone(view, breaks = breaks, minor_breaks = minor)
       key <- params$key[rep(1L, length(values)), , drop = FALSE]
       key[[spacing$axis]] <- ggplot_axis_position(panel, spacing$axis, breaks)
       key$.value <- breaks
-      key$.label <- view$scale$get_labels(breaks)
+      key$.label <- if (length(breaks)) view$scale$get_labels(breaks) else character()
       params$key <- key
     }
   }
@@ -350,6 +394,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
     }
   }
   if (length(panels) == 1L) axis_params <- panels[[1L]]$guides$params
+  hidden_ticks <- character()
   for (gid in names(edits)) {
     target <- state$tick_targets[[gid]]
     if (is.null(target)) stop("The requested native R tick edit is unavailable.")
@@ -361,6 +406,9 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
                                       projected = params$aesthetic %in% names(axis_changes))
       panels[[1L]] <- edited$panel
       axis_params[[index]] <- edited$params
+      if (is.data.frame(edited$params$key) && !nrow(edited$params$key)) {
+        hidden_ticks <- c(hidden_ticks, gid)
+      }
     } else {
       if (!identical(names(edit), "format")) stop("The requested native R colourbar edit is unavailable.")
       values <- remapped$ticks[[gid]]
@@ -402,8 +450,12 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
   built$layout <- layout
   built$plot <- plot
   axes <- if (length(axis_changes)) ggplot_axes_values(layout, state$axes_target, axis_changes)
+  tick_values <- lapply(Filter(function(tick) !is.null(tick$spacing), state$tick_targets), function(tick) {
+    ggplot_axis_key_values(panels[[1L]], axis_params[[tick$index]])
+  })
   list(table = ggplot2::ggplot_gtable(built), stops = remapped$stops,
-       guide_ticks = remapped$guide_ticks, axes = axes, layer_grobs = captured$grobs)
+       guide_ticks = remapped$guide_ticks, axes = axes, layer_grobs = captured$grobs,
+       tick_values = tick_values, hidden_ticks = hidden_ticks)
 }
 
 ggplot_colourbar_ticks <- function(table, slots, guide, prefix, title) {
@@ -571,6 +623,10 @@ measure_ggplot_targets <- function(targets, frame_pt) {
   }, error = function(error) NULL)
   if (is.null(drawn)) return(list())
   for (gid in names(targets)) {
+    if (isTRUE(targets[[gid]]$hidden)) {
+      targets[[gid]]$bbox <- c(-1, -1, 0, 0)
+      next
+    }
     bbox <- tryCatch(measure_ggplot_text(drawn, targets[[gid]], frame_pt),
                      error = function(error) NULL)
     if (length(bbox) == 4L && all(is.finite(bbox)) && all(bbox[3:4] > 0)) {
@@ -1066,6 +1122,7 @@ ggplot_table_for <- function(state, edits) {
   legend_targets <- state$legend_targets
   stops <- NULL
   axes <- NULL
+  tick_values <- NULL
   axes_edits <- edits[[ggplot_axes_gid]]
   grid_edits <- axes_edits[intersect(names(axes_edits), ggplot_grid_keys)]
   frame_edits <- axes_edits[intersect(names(axes_edits), ggplot_frame_keys)]
@@ -1086,6 +1143,7 @@ ggplot_table_for <- function(state, edits) {
     table <- guides$table
     stops <- guides$stops
     axes <- guides$axes
+    tick_values <- guides$tick_values
     if (!identical(table$layout$name, state$table$layout$name)) {
       stop("The native R guide layout changed while formatting.")
     }
@@ -1093,6 +1151,10 @@ ggplot_table_for <- function(state, edits) {
     # content. Match each original cell before moving or styling it.
     for (gid in names(text_targets)) {
       target <- text_targets[[gid]]
+      if (gid %in% guides$hidden_ticks) {
+        text_targets[[gid]]$hidden <- TRUE
+        next
+      }
       group <- if (!is.null(target$tick_labels)) target$label
       current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group)
       changes_ticks <- !is.null(tick_edits[[gid]]) || gid %in% guides$guide_ticks ||
@@ -1157,6 +1219,7 @@ ggplot_table_for <- function(state, edits) {
     patch <- ggplot_text_edit(edits[[gid]], state$tick_targets[[gid]])
     if (!length(patch)) next
     paint <- ggplot_text_paint(target, patch)$paint
+    if (isTRUE(target$hidden)) next
     resize <- !is.null(patch$fontsize) || !is.null(patch$fontfamily)
     if (resize) original <- table$grobs[[target$slots[[1L]]]]$children[[1L]]
     table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
@@ -1167,7 +1230,8 @@ ggplot_table_for <- function(state, edits) {
   if (length(frame_edits)) {
     table <- ggplot_frame_edit(table, state$axes_target$slot, state$axes_target$frame$fallback, frame_edits)
   }
-  c(list(table = table, text = text_targets, legends = legend_targets, stops = stops, axes = axes),
+  c(list(table = table, text = text_targets, legends = legend_targets, stops = stops, axes = axes,
+         tick_values = tick_values),
     layer_targets)
 }
 
@@ -1260,6 +1324,7 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
                 colour_scales = if (length(state$colour_scales)) {
                   measure_ggplot_colour_scales(scene$table, state$colour_scales, frame_pt)
                 },
+                tick_values = scene$tick_values,
                 scale_stops = scene$stops,
                 points = measure_ggplot_points(scene$table, scene$point_targets, frame_pt, !is.null(scene$axes)),
                 bars = measure_ggplot_bars(scene$table, scene$bar_targets, frame_pt, !is.null(scene$axes)),
@@ -1302,6 +1367,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
            colour_scales = if (reflow && length(state$colour_scales)) {
              measure_ggplot_colour_scales(scene$table, state$colour_scales, state$frame_pt)
            },
+           tick_values = scene$tick_values,
            scale_stops = scene$stops,
            points = if (reflow || point_edits) {
              measure_ggplot_points(scene$table, scene$point_targets, state$frame_pt, !is.null(scene$axes))
@@ -1336,15 +1402,26 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (!is.null(edit$format)) field$value_original <- "auto"
       editable[[length(editable) + 1L]] <- field
       if (!is.null(tick$spacing)) {
-        mode <- if (!is.null(edit$major_mode)) edit$major_mode else if (is.null(edit$major_step)) "auto" else "step"
-        step <- if (is.null(edit$major_step)) tick$spacing$step else edit$major_step
+        mode <- ggplot_major_tick_mode(edit)
+        default_step <- tick$spacing$step
         mode_field <- list(prop = "major_mode", type = "enum", value = mode,
-                           options = list("auto", "step"), strict_options = TRUE)
-        step_field <- list(prop = "major_step", type = "number", value = step,
-                           min = 0, step = tick$spacing$step / 10)
+                           options = as.list(ggplot_major_tick_modes(tick$spacing)),
+                           strict_options = TRUE)
         if (!is.null(edit$major_mode)) mode_field$value_original <- "auto"
-        if (!is.null(edit$major_step)) step_field$value_original <- tick$spacing$step
-        editable <- c(editable, list(mode_field, step_field))
+        editable[[length(editable) + 1L]] <- mode_field
+        if (!is.null(default_step)) {
+          step_field <- list(prop = "major_step", type = "number",
+                             value = if (is.null(edit$major_step)) default_step else edit$major_step,
+                             min = 0, step = default_step / 10)
+          if (!is.null(edit$major_step)) step_field$value_original <- default_step
+          editable[[length(editable) + 1L]] <- step_field
+        }
+        values <- measured$tick_values[[gid]]
+        if (is.null(values)) values <- tick$values
+        if (mode == "fixed" && length(edit$major_values)) values <- ggplot_fixed_tick_values(edit$major_values)
+        fixed_field <- list(prop = "major_values", type = "number_list", value = as.list(values))
+        if (!is.null(edit$major_values)) fixed_field$value_original <- as.list(tick$values)
+        editable[[length(editable) + 1L]] <- fixed_field
       }
     }
     for (prop in names(face)) {

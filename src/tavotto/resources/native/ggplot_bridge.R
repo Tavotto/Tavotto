@@ -107,7 +107,7 @@ main <- function() {
           !is.character(patch$prop) || length(patch$prop) != 1L ||
           is.na(patch$prop) || !nzchar(patch$prop) ||
           (!is.character(patch$value) && !is.numeric(patch$value) &&
-           !(patch$prop %in% c("loc_frac", "xlim", "ylim") && is.list(patch$value)) &&
+           !(patch$prop %in% c("loc_frac", "xlim", "ylim", "major_values") && is.list(patch$value)) &&
            !(patch$prop %in% c("invert_x", "invert_y", "grid_x", "grid_y", adapter$ggplot_frame_visibility) && is.logical(patch$value)))) {
         stop("Invalid native R edit.")
       }

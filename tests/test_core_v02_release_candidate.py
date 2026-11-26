@@ -267,7 +267,7 @@ def _pdf_pixels(path):
         assert {span["color"] for span in ggplot} == {int(R_EDIT[1:], 16)}
         legend_left = 88 * 72 / 25.4 + R_LEGEND_POSITION[0] * 216 * R_PANEL_SCALE
         assert legend_left < by_text["Drive type"][0]["bbox"][0] < legend_left + 10
-        assert page.search_for("2.00") and page.search_for("15.0")
+        assert page.search_for("2.00") and page.search_for("7.00") and page.search_for("15.0")
         assert not page.search_for("3.00")
         low = tuple(component / 255 for component in bytes.fromhex("0D0887"))
         high = tuple(component / 255 for component in bytes.fromhex("F0F921"))
@@ -354,7 +354,7 @@ def _format_pixels(files):
     assert svg_tree.find(f".//{ns}image") is None
     (title,) = [node for node in svg_tree.iter(f"{ns}text") if node.text == "Fuel economy"]
     assert R_EDIT.lower() in title.attrib["style"].lower()
-    assert {"2.00", "15.0"} <= {node.text for node in svg_tree.iter(f"{ns}text")}
+    assert {"2.00", "7.00", "15.0"} <= {node.text for node in svg_tree.iter(f"{ns}text")}
     assert not any(node.text == "3.00" for node in svg_tree.iter(f"{ns}text"))
     (curve,) = [
         node
@@ -658,7 +658,7 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
                     "value": value,
                     "identity": r_elements["axis.x.bottom.ticks"]["identity"],
                 }
-                for prop, value in {"major_mode": "step", "major_step": 2}.items()
+                for prop, value in {"major_mode": "fixed", "major_values": [2, 4, 7]}.items()
             ],
             *[
                 {"gid": curve["gid"], "prop": prop, "value": value, "identity": curve["identity"]}
@@ -678,6 +678,13 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         before_view = _render(app, r_asset, r_patches)["svg"]
         precision = _render(app, r_asset, [*r_patches, *r_view_patches])
         assert precision["svg"] != before_view
+        ticks = next(
+            el for el in precision["manifest"]["elements"] if el["gid"] == "axis.x.bottom.ticks"
+        )
+        assert ticks["identity"] == r_elements["axis.x.bottom.ticks"]["identity"]
+        tick_fields = {field["prop"]: field["value"] for field in ticks["editable"]}
+        assert tick_fields["major_mode"] == "fixed"
+        assert tick_fields["major_values"] == [2, 4, 7]
         (edited_axes,) = [el for el in precision["manifest"]["elements"] if el["role"] == "axes"]
         assert edited_axes["identity"] == r_axes["identity"]
         view_fields = {f["prop"]: f["value"] for f in edited_axes["editable"]}
