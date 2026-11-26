@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { Ellipsis } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { continueNew, openAlternative, retryRestore, type RestoreIssue } from '@/store/documentRestore'
+import { continueNew, openAlternative, retryRestore, type AltCandidate, type RestoreIssue } from '@/store/documentRestore'
+import { formatStamp } from '@/i18n/format'
 import { saveNow, useDocumentStore } from '@/store/documentStore'
 import { Button } from './ui/Button'
 import { Menu, MenuItem } from './ui/Menu'
@@ -13,7 +14,7 @@ import { Menu, MenuItem } from './ui/Menu'
  * 也不并列摆几颗看不懂区别的按钮。主按钮按失败原因定：
  *  - 暂时读不到（网络 / 服务忙）→ 「重试」；
  *  - 那份找不到 / 读不出来 / 版本过新 → 有已验证的别的排版就「打开“它”」，没有就「继续新建」；
- *  - 本机找到了几份 → 「选一份打开」（点开是名单）；
+ *  - 找到了几份（本机槽位或项目自己的时间线）→ 「选一份打开」（点开是名单）；
  *  - 示例没打开 → 「继续新建」。
  * 同一块也摆在空画布正中（`canvas/CanvasStage` 的 `RestoreIssueCard`）：恢复没成时画布是一份空白占位，出口不能只藏在顶栏。
  * 「继续新建」不删任何旧稿：旧候选与旧正文一个字节不动，之后晚到的旧响应也盖不过新文档。
@@ -43,6 +44,8 @@ export function RestoreIssueBody({
         return t('restore.title.missing', { name })
       case 'invalid':
         return t('restore.title.invalid', { name })
+      case 'chart_source_mismatch':
+        return t('restore.title.chartSource', { name })
       case 'too_new':
         return t('restore.title.tooNew', { name })
       case 'choose':
@@ -58,9 +61,23 @@ export function RestoreIssueBody({
     a.localCopy
       ? t('restore.openLocal', { name: a.name || t('docBanner.lastDocUnnamed') })
       : t('restore.openAlt', { name: a.name || t('docBanner.lastDocUnnamed') })
-  const openAlt = (id: string, a: { name: string; localCopy?: true }) => (
+  const openAlt = (id: string, a: AltCandidate) => (
     <MenuItem key={`${id}${a.localCopy ? ':local' : ''}`} data-restore-action="open-alt" onSelect={done(() => openAlternative(id))}>
       {altLabel(a)}
+    </MenuItem>
+  )
+  // 「选一份」名单：按钮上已经写了「选一份打开」，每行只写排版名；右侧灰字是最后修改时间（同名候选靠它分开，
+  // 写法与时间线节点默认名相同）。右侧复用菜单项现成的右侧槽位（快捷键那一格：靠右、灰字、数字等宽；字距改回正常、按基线对齐），拿不到时间就留空
+  const chooseItem = (a: AltCandidate) => (
+    <MenuItem
+      key={`${a.id}${a.localCopy ? ':local' : ''}`}
+      data-restore-action="open-alt"
+      shortcut={typeof a.at === 'number' && Number.isFinite(a.at) && a.at > 0 ? formatStamp(a.at) : undefined}
+      // 时间不是快捷键：正常字距；与名字按基线对齐（居中时数字比中文名字看着低一点）
+      shortcutClassName="tracking-normal self-baseline"
+      onSelect={done(() => openAlternative(a.id))}
+    >
+      {a.localCopy ? altLabel(a) : a.name || t('docBanner.lastDocUnnamed')}
     </MenuItem>
   )
   const newItem = (
@@ -113,7 +130,7 @@ export function RestoreIssueBody({
           </Button>
         }
       >
-        {alts.map((a) => openAlt(a.id, a))}
+        {alts.map(chooseItem)}
       </Menu>
     )
     folded = [newItem]

@@ -91,7 +91,7 @@ describe('归档SVG显示响应不冒充编辑manifest', () => {
   it.each(['owner-A', null])('SVG同ref同pj=%s，并返回已核尺寸', async pj => {
     const value = svg(); response = async () => Response.json(value)
     expect(await fetchFigureSnapshotPreview('History.pdf', patches, ref(), undefined, pj)).toEqual(value)
-    expect(requests[0].url.pathname).toBe('/api/documents/v4/figure-preview')
+    expect(requests[0].url.pathname).toBe('/api/figure-preview')
     expect(requests[0].url.searchParams.get('pj')).toBe(pj)
     expect(new Headers(requests[0].init.headers).get('X-Tavotto-Project')).toBe(pj)
     expect(requests[0].body).toEqual({ id: 'History.pdf', patches, figure_snapshot: ref() })

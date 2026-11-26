@@ -42,7 +42,8 @@ function fakeOldCodex(version: string, catalogVersion: string): Record<string, s
     `#!/bin/sh\ncase "$1" in\n  --version) echo "codex-cli ${version}" ;;\n  login) echo "Logged in using ChatGPT" ;;\n  *) echo '${line}'; exit 1 ;;\nesac\n`,
   )
   chmodSync(bin, 0o755)
-  return { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, CODEX_HOME: home }
+  // 本 spec 守的是 Codex CLI 那条订阅登录（sub:codex）：SIWC 默认开之后它只在 `TAVOTTO_EXPERIMENTAL_SIWC=0` 时还在（ADR 0209 §六）
+  return { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`, CODEX_HOME: home, TAVOTTO_EXPERIMENTAL_SIWC: '0' }
 }
 
 async function openAssistant(page: Page, baseURL: string) {
@@ -54,15 +55,15 @@ async function openAssistant(page: Page, baseURL: string) {
 }
 
 async function openChatGptModels(page: Page) {
+  // 「AI 与模型」是一个列表（2026-11-25 改版）：点开模型胶囊，ChatGPT 一行没展开就点开它
   await page.locator('[data-ai-pill="model"]').click()
-  await page.locator('[data-ai-model-picker="trigger"]').click()
-  await page.locator('[data-ai-connection="sub:codex"]').focus()
-  await page.keyboard.press('ArrowRight')
+  const row = page.locator('[data-ai-connection="sub:codex"]')
+  if ((await row.getAttribute('aria-expanded')) !== 'true') await row.click()
   await expect(page.locator('[data-ai-model-menu="sub:codex"]')).toBeVisible()
 }
 
 async function closeMenus(page: Page) {
-  for (let i = 0; i < 3 && (await page.locator('[data-ai-model-picker="trigger"]').count()) > 0; i++) {
+  for (let i = 0; i < 3 && (await page.locator('[data-ai-connection]').count()) > 0; i++) {
     await page.keyboard.press('Escape')
   }
 }
@@ -126,7 +127,7 @@ test('只能自己更新：菜单末行置灰写怎么做，失败卡主按钮�
   await openChatGptModels(page)
   const item = page.locator('[data-ai-cli-update="manual"]')
   await expect(item).toBeVisible()
-  await expect(item).toHaveAttribute('data-disabled', '')
+  await expect(item).toBeDisabled()
   for (const scheme of ['light', 'dark'] as const) {
     await page.emulateMedia({ colorScheme: scheme })
     await shootMenu(page, `menu-manual-${scheme}`)

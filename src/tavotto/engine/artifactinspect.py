@@ -15,7 +15,17 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from . import databinding, exportjob, exportreq, figcapture, pool, profilestore, receipt, workdir
+from . import (
+    databinding,
+    exportjob,
+    exportreq,
+    figcapture,
+    pool,
+    profiles,
+    profilestore,
+    receipt,
+    workdir,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -58,6 +68,15 @@ def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
         normalized = repaired
     if normalized != data:
         Path(path).write_bytes(normalized)
+
+
+def normalize_worker_pdf(path: Path) -> int:
+    """worker 刚写出的导出 PDF：把 matplotlib 塞进 TrueType 槽的 CFF 字体程序换成真 TrueType（摸底 T-003，
+    `rendercore.pdfwriter.repair_cff_in_truetype_slots`）；回修了几个字体。与 `normalize_worker_svg` 同一条边界：
+    只改可信 worker 的产物，在字节被冻结 / 检查之前；用户磁盘上的原件不经这里，由检查器如实报。"""
+    from ..rendercore import pdfwriter
+
+    return pdfwriter.repair_cff_in_truetype_slots(Path(path))
 
 
 def svg_vector(path: Path) -> bool:
@@ -211,6 +230,7 @@ def plan_half(job: exportjob.ExportJob, p: exportjob.Produced, *, backend: str) 
 
 def inspection_profile(policy: exportreq.InspectionPolicy) -> dict | None:
     """严格政策的阈值只从出版规范来（`profilestore.resolve_spec` 是唯一权威，RC-071）。standard 不需要。
+    回的就是整份规范：`min_raster_dpi` 与成品字号的下限 `min_effective_font_size_pt`（ADR 0203）都从这里取。
     规范 id 不认识 → `bad_inspection`（不退默认）。"""
     if policy.mode != exportreq.INSPECTION_STRICT:
         return None
@@ -252,6 +272,9 @@ def inspect_produced(
                 profile=profile,
                 probe=probe,
                 run_id=job.id,
+                # 成品字号（ADR 0203）：下限是 `profile` 里规范自己的 `min_effective_font_size_pt`，容差与预检
+                # 的字号判据同一个数（`profiles.FONT_FLOOR_TOL_PT`）；standard 没有规范 → 这一项 unknown
+                text_size_tol_pt=profiles.FONT_FLOOR_TOL_PT,
             )
         except Exception as exc:  # noqa: BLE001 —— 检查器炸了 = 没检查，不是通过
             LOG.warning("产物检查器异常（%s）：%s", p.format, exc, exc_info=True)
@@ -312,6 +335,7 @@ __all__ = [
     "execution_provenance",
     "inspect_produced",
     "inspection_profile",
+    "normalize_worker_pdf",
     "normalize_worker_svg",
     "plan_half",
     "svg_vector",

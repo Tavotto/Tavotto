@@ -223,7 +223,7 @@ describe('控件下面一行灰字（按 … 出图）', () => {
     await mount()
     const row = q('[data-data-role="journal"]')!
     expect(row.lastElementChild).toBe(q('[data-data-spec]'))
-    expect(q('[data-data-spec]')!.className).toContain('pl-[calc(44px+1rem)]')
+    expect(q('[data-data-spec]')!.className).toContain('pl-[calc(56px+1rem)]')
     expect(row.className).toContain('mb-3')
   })
 

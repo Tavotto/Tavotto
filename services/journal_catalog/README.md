@@ -28,7 +28,7 @@ DATA/snapshots/<sha256>.webp                高亮短图，内容寻址
 
 | 路由 | 令牌 | 计数 | 成功响应 |
 |---|---|---|---|
-| `GET /index.signed.json` | 不需要 | 不计 | 原样字节，`application/json`，`Cache-Control: public, max-age=300` |
+| `GET /index.signed.json` | 不需要 | 不计 | 原样字节，`application/json`，`Cache-Control: public, max-age=300`，强 `ETag`（内容 sha256）；`If-None-Match` 命中回 `304`（无体）。只有索引做条件请求，刊包 / 令牌 / 快照不做（计数与令牌校验必须到源站） |
 | `POST /device` | 不需要 | 计 IP 签发数 | 200 `{"token": "..."}` |
 | `GET /journals/<journal_id>?rev=<int>` | `X-Tavotto-Device` | 首次读取计 | 刊包原样字节，`Cache-Control: private, no-store` |
 | `GET /snapshots/<sha256>.webp` | `X-Tavotto-Device` | 不计 | `image/webp`，`public, max-age=31536000, immutable` |
@@ -85,6 +85,7 @@ IP 维度默认 200 个令牌 / 2000 本 per 天 ≈ 一个出口背后约 200 �
   （只在前面确有受信任反代、且反代覆盖该头时使用）。
 * 读取记录（`reads`：哪个令牌、哪本刊、何时、哪类客户端）保留 **1 年**，到期删除；用途仅「统计热门刊」。
   `devices` 在自身满 1 年且已无任何 reads 后清除。
+* 签名索引的按日计数（`index_hits`：UTC 日期 × `v1`/`v2` × 回 200 的次数 × 回 304 的次数）只有聚合数字，不含 IP、令牌、刊 id、User-Agent，也没有逐请求时间戳；保留 **1 年**。用途仅「看条件请求（ETag / 304）省了多少下载」。计数失败不影响响应。
 * 服务不写访问日志；任何日志都不写令牌、IP、刊 id 的明文组合。
 * **清理**：`purge(now)`（`Service.purge`）。用 cron 每日跑一次：
   `python -m services.journal_catalog.wsgi --purge`（需同样的环境变量；只打印删除数量）。

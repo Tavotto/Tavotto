@@ -3,17 +3,19 @@ import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { engineLabel, groupName } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
-import { Clipboard, ClipboardPaste, ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from '@/components/ui/icons'
+import { Clipboard, ClipboardPaste, Copy, CopyCheck, ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { round4, scaleGroupAbout } from '@/lib/axesLayout'
-import { geomTarget, positionOf } from '@/lib/elementGeom'
+import { geomTarget, positionOf, sameKindGids } from '@/lib/elementGeom'
 import type { EditableField, ManifestElement } from '@/lib/api'
 import { LEGEND_ANCHOR_PROP, legendAnchorRange, toLegendAnchor } from '@/lib/legendModel'
 import { pagePtLens, PT_DECIMALS } from '@/lib/stylePresets'
 import { cn } from '@/lib/utils'
 import {
-  clearOverrides,
+  deleteFigureCopies,
+  duplicateFigureElements,
   hideElement,
+  restoreElementEdits,
   setLegendPlacement,
   setOverride,
   setOverrides,
@@ -21,6 +23,7 @@ import {
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useExactPanelManifest, usePanelDisplayManifest } from '@/store/renderStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from '@/components/inspector/roles/registry'
@@ -40,8 +43,9 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
 import { figurePrimaryValue } from '@/lib/figureFontChoice'
 import { BOTTOM_SAFE } from './context-bar/position'
 import { trapTab } from '@/lib/focusTrap'
-import { canPasteFromMenu, copyElementsAsAnnotations, pasteObjects, peekClipboardHasObjects } from '@/lib/clipboard'
+import { canPasteFromMenu, copyFigureElements, pasteObjects, peekClipboardHasObjects } from '@/lib/clipboard'
 import { isCopyableText } from '@/lib/figureTextCopy'
+import { copyStyleOverrides, isCopyGid, isDuplicableElement } from '@/lib/figureElementCopy'
 import { keyOf } from '@/lib/keymap'
 import { usePresence } from '@/lib/motion'
 
@@ -289,6 +293,9 @@ function ElementQuick({
     s.doc.objects.find((o) => o.id === target.panelId && o.type === 'panel'),
   ) as PanelObject | undefined
   const manifest = usePanelDisplayManifest(panel)
+  const selectedGids = useUiStore((s) => s.selectedGids)
+  // 「创建副本」要读锚点、写位置：只认权威（exact）清单（ADR 0017）；正在重渲染时置灰，不拿旧清单算
+  const exact = useExactPanelManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === target.gid)
   // 从元素树选中的真实组（ADR 0102，`Manifest.groups`）不在元素表里：右键它的组框手柄时目标是组 gid
   // （Codex #833）。组没有自己的样式字段，弹层只说它是谁、给「全部属性」——不把一个不存在的元素当目标关掉
@@ -336,19 +343,39 @@ function ElementQuick({
   }
 
   const hidden = read('visible') === false
+  // 图内副本（ADR 0207）：没有「隐藏」，只有「删除副本」（摘掉它的全部修改）；「恢复」只清除 `copy_of` 以外的修改
+  const isCopy = isCopyGid(el.gid)
   const toggleVisible = () => {
-    if (hidden) unhideElement(panel.id, el.gid)
+    if (isCopy) deleteFigureCopies(panel.id, [el.gid])
+    else if (hidden) unhideElement(panel.id, el.gid)
     else hideElement(panel.id, el.gid, el.label)
     close()
   }
   // 「恢复此元素修改」：与属性页同一个 action、同一条历史标签，一次 commit
-  const own = panel.overrides.filter((o) => o.gid === el.gid)
+  const own = isCopy ? copyStyleOverrides(panel.overrides, el.gid) : panel.overrides.filter((o) => o.gid === el.gid)
   const resetElement = () => {
-    clearOverrides(
-      panel.id,
-      msg('element.resetElement', undefined, 'inspector'),
-      own.map((o) => ({ gid: o.gid, prop: o.prop })),
-    )
+    restoreElementEdits(panel.id, el.gid)
+    close()
+  }
+  const picked = () => {
+    const sel = useUiStore.getState().selectedGids
+    return sel.includes(el.gid) ? sel : [el.gid]
+  }
+
+  // 「选中全部同类」（来信 TVM-CKRH）：同一张图里同角色的元素一次选中，属性页随即给出批量表单。
+  // 只有它自己、或这一类已经全选着时不摆（同「同步修改」的先例：没有作用的项不出现，不做置灰）
+  const sameKind = sameKindGids(manifest.elements, el, panel.lockedGids)
+  const canSelectSameKind = sameKind.length >= 2 && !sameKind.every((g) => selectedGids.includes(g))
+  const selectSameKind = () => {
+    const ui = useUiStore.getState()
+    // 混排进来的画布标注（⇧ 点的文字 / 箭头 / 形状）一并放下：选区里有标注时属性页只给混排对齐、不出批量表单，
+    // 这一项要的正是那张批量表单（Codex #2150）
+    const sel = useSelectionStore.getState()
+    const objects = useDocumentStore.getState().doc.objects
+    const keep = sel.ids.filter((id) => objects.find((o) => o.id === id)?.type === 'panel')
+    if (keep.length !== sel.ids.length) sel.set(keep)
+    ui.setSelectedGids(sameKind)
+    ui.setRightTab('properties')
     close()
   }
 
@@ -390,26 +417,60 @@ function ElementQuick({
       )}
 
       <Divider />
-      {/* 复制为标注（ADR 0163）：图里的文字 → 页面上同一处的文字标注。曲线 / 色块 / 刻度组置灰（⌘C 时是顶栏胶囊说「还不能复制」）；
+      {canSelectSameKind && (
+        <MenuButton icon={CopyCheck} onClick={selectSameKind} data-quick-item="select-same-kind">
+          {qe('selectSameKind', { count: sameKind.length })}
+        </MenuButton>
+      )}
+      {/* 复制 / 粘贴 / 创建副本（ADR 0207，取代 0163 的「复制为标注」）：⌘C 写的负载同时带着标注和图内副本两种落法，
+          同一张图的图内编辑里 ⌘V 得到图内副本、别处得到标注；「粘贴为标注」在图内编辑里想要标注时用。
+          「复制」对文字元素可点（曲线 / 色块 / 刻度组置灰，⌘C 时是顶栏胶囊说「还不能复制」）；「创建副本」只对第一期能当副本的文字可点；
           粘贴靠异步读剪贴板，读不了的引擎上不摆（同对象右键菜单，`canPasteFromMenu`），用 ⌘V；已知剪贴板里没有对象时置灰 */}
       <MenuButton
         icon={Clipboard}
         shortcut={keyOf('copy')}
         disabled={!isCopyableText(el)}
         className="disabled:opacity-40"
-        data-quick-item="copy-as-annotation"
+        data-quick-item="copy"
         onClick={() => {
-          const picked = useUiStore.getState().selectedGids
-          void copyElementsAsAnnotations(panel.id, picked.includes(el.gid) ? picked : [el.gid])
+          void copyFigureElements(panel.id, picked())
           close()
         }}
       >
-        {qe('copyAsAnnotation')}
+        {qe('copy')}
       </MenuButton>
       {canPasteFromMenu() && (
-        <PasteAsAnnotation
+        <PasteItem
+          item="paste"
+          icon={ClipboardPaste}
+          shortcut={keyOf('paste')}
+          label={qe('paste')}
           onPaste={() => {
             void pasteObjects()
+            close()
+          }}
+        />
+      )}
+      <MenuButton
+        icon={Copy}
+        shortcut={keyOf('duplicate')}
+        disabled={!exact || !isDuplicableElement(panel, exact, el)}
+        className="disabled:opacity-40"
+        data-quick-item="duplicate"
+        onClick={() => {
+          duplicateFigureElements(panel.id, picked())
+          close()
+        }}
+      >
+        {qe('duplicate')}
+      </MenuButton>
+      {canPasteFromMenu() && (
+        <PasteItem
+          item="paste-as-annotation"
+          icon={ClipboardPaste}
+          label={qe('pasteAsAnnotation')}
+          onPaste={() => {
+            void pasteObjects({ asAnnotation: true })
             close()
           }}
         />
@@ -421,8 +482,12 @@ function ElementQuick({
         </MenuButton>
       )}
       {field('visible') && (
-        <MenuButton icon={hidden ? Eye : EyeOff} onClick={toggleVisible}>
-          {qe(hidden ? 'unhide' : 'hide')}
+        <MenuButton
+          icon={isCopy ? Trash2 : hidden ? Eye : EyeOff}
+          onClick={toggleVisible}
+          data-quick-item={isCopy ? 'delete-copy' : undefined}
+        >
+          {qe(isCopy ? 'deleteCopy' : hidden ? 'unhide' : 'hide')}
         </MenuButton>
       )}
       <MenuButton icon={ExternalLink} onClick={openInPanel} data-quick-item="open-inspector">
@@ -432,8 +497,20 @@ function ElementQuick({
   )
 }
 
-/** 「粘贴为标注」：已知剪贴板里没有本工具的对象时置灰（读不出来 = 不知道 = 可点）。 */
-function PasteAsAnnotation({ onPaste }: { onPaste: () => void }) {
+/** 「粘贴」/「粘贴为标注」：已知剪贴板里没有本工具的对象时置灰（读不出来 = 不知道 = 可点）。 */
+function PasteItem({
+  item,
+  icon,
+  shortcut,
+  label,
+  onPaste,
+}: {
+  item: string
+  icon: typeof ClipboardPaste
+  shortcut?: string
+  label: string
+  onPaste: () => void
+}) {
   const [has, setHas] = useState<boolean | null>(null)
   useEffect(() => {
     let live = true
@@ -444,14 +521,14 @@ function PasteAsAnnotation({ onPaste }: { onPaste: () => void }) {
   }, [])
   return (
     <MenuButton
-      icon={ClipboardPaste}
-      shortcut={keyOf('paste')}
+      icon={icon}
+      shortcut={shortcut}
       disabled={has === false}
       className="disabled:opacity-40"
-      data-quick-item="paste-as-annotation"
+      data-quick-item={item}
       onClick={onPaste}
     >
-      {qe('pasteAsAnnotation')}
+      {label}
     </MenuButton>
   )
 }

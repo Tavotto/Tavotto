@@ -28,6 +28,7 @@ import {
 } from './validation'
 import type { CanvasData, FigureDocument, PanelObject } from '@/types/document'
 import { fixRoute } from './issueFix'
+import { formatMessage } from '@/i18n'
 
 const profile = loadProfile()
 
@@ -875,4 +876,46 @@ it('new proof uses a neutral journal base stamp without changing the saved profi
   expect(oldLabel).toContain('期刊未规定的项一律不判')
   expect(report.profile.label).toBe('期刊检查基础')
   expect(journal.label).toBe(oldLabel)
+})
+
+describe('干涉检测接进常规检查（V-011）', () => {
+  /** 一张图：标题与一段标注叠在一起、图例压住一条真画出来的折线（几何是 figure 分数、y 向下） */
+  const crowded = {
+    stem: 'Fig1',
+    size_mm: [80, 60] as [number, number],
+    elements: [
+      { gid: 'axes_0', role: 'axes', label: '子图 1', draggable: false, bbox: [0.125, 0.125, 0.75, 0.75] },
+      { gid: 'axes_0.title', role: 'title', label: '标题', draggable: false, bbox: [0.25, 0.25, 0.125, 0.0625] },
+      { gid: 'axes_0.texts_0', role: 'text', label: '标注', draggable: false, bbox: [0.34375, 0.25, 0.125, 0.0625] },
+      { gid: 'axes_0.legend', role: 'legend', label: '图例', draggable: false, bbox: [0.5, 0.5, 0.25, 0.25] },
+      {
+        gid: 'axes_0.lines_0',
+        role: 'line',
+        label: '曲线 1',
+        draggable: false,
+        bbox: [0.125, 0.125, 0.75, 0.75],
+        geometry: { kind: 'polyline', paths: [{ points: [[0.125, 0.875], [0.875, 0.125]], closed: false }], fill: false, stroke: true },
+      },
+    ],
+  }
+
+  it('三条都登记在「版面」类、不给自动修复', () => {
+    for (const code of ['text-overlap', 'text-over-axes', 'legend-over-data']) {
+      expect(ruleEntry(code)).toEqual({ category: 'layout', context: 'document', fix: 'none' })
+    }
+  })
+
+  it('问题面板列出来，主语是撞上的那个元素；成文里不出现内部标识', () => {
+    const p = panel()
+    const issues = runOne(docWith([p]), renderFor(p, crowded)).issues
+    const overlap = issues.filter((i) => i.ruleCode === 'text-overlap').map((i) => i.objectRef.gid).sort()
+    expect(overlap).toEqual(['axes_0.texts_0', 'axes_0.title'])
+    const legend = issues.filter((i) => i.ruleCode === 'legend-over-data')
+    expect(legend.map((i) => i.objectRef.gid)).toEqual(['axes_0.legend'])
+    expect(legend[0].technicalDetails.certain).toBe(true)
+    for (const i of issues.filter((x) => ['text-overlap', 'legend-over-data'].includes(x.ruleCode))) {
+      expect(i.fixKind).toBe('none')
+      expect(formatMessage(i.message)).not.toMatch(/axes_|lines_|texts_/)
+    }
+  })
 })

@@ -13,6 +13,7 @@ import {
   LockOpen,
   Ruler,
   Shapes,
+  Trash2,
   TriangleAlert,
   Type,
   X,
@@ -23,6 +24,7 @@ import { roleIcon } from '@/components/inspector/roles/roleIcons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
+import { isCopyGid } from '@/lib/figureElementCopy'
 import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
 import { findVisibleRow, TreeBranch } from '@/components/ui/TreeBranch'
@@ -349,8 +351,9 @@ function UnbuiltTree({ panel, rendering }: { panel: PanelObject; rendering: bool
       data-render-progress={progress.active ? progress.phase : undefined}
       action={progress.active ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
     >
-      {et('needRender', { name: panel.name ?? panel.fileId })}
-      {progress.active && ` ${progress.text}`}
+      {progress.active
+        ? et('needRenderBusy', { name: panel.name ?? panel.fileId, progress: progress.text })
+        : et('needRender', { name: panel.name ?? panel.fileId })}
     </EmptyLine>
   )
 }
@@ -829,7 +832,8 @@ const ElementRow = memo(function ElementRow({
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
   const { prefix, name: restRaw } = splitTypePrefix(name)
   // 类型词与内容同一种灰（前缀自带一个空格分隔），内容不再包中文弯引号（可达名 / title 仍用原串）
-  const rest = prefix ? restRaw.replace(/^[“"‘']/, '').replace(/[”"’']$/, '') : restRaw
+  // 拆掉开头那一对引号（内容本身）：副本的名字是 `“Sample 2” 的副本`，只削两头会剩半个引号——行上显示 `Sample 2 的副本`，与同级一个体例
+  const rest = prefix ? restRaw.replace(/^[“"‘']([^”"’']*)[”"’']/, '$1') : restRaw
 
   return (
     <li
@@ -933,12 +937,12 @@ const ElementRow = memo(function ElementRow({
           )}
           {canHide && (
             <MenuItem
-              icon={hidden ? Eye : EyeOff}
+              icon={isCopyGid(gid) ? Trash2 : hidden ? Eye : EyeOff}
               // ⌫ 在这棵树上与画布上一样只「隐藏」（删除 = visible:false），不反向显示：已隐藏的行不标它
               shortcut={hidden ? undefined : '⌫'}
               onSelect={() => (hidden ? unhideElement(panelId, gid) : hideElement(panelId, gid, label))}
             >
-              {et(hidden ? 'unhide' : 'hide')}
+              {et(isCopyGid(gid) ? 'deleteCopy' : hidden ? 'unhide' : 'hide')}
             </MenuItem>
           )}
         </RowMenu>

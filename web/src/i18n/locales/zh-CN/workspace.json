@@ -274,6 +274,7 @@
     "building": "正在构建图表…",
     "collapse": "折叠",
     "count_other": "{{count}} 个元素",
+    "deleteCopy": "删除副本",
     "exitIsolate": "退出",
     "expand": "展开",
     "groupAria_other": "{{label}}（{{count}} 个元素）",
@@ -294,6 +295,7 @@
     "lock": "锁定（画布点击跳过）",
     "lockedState": "已锁定",
     "needRender": "「{{name}}」的元素清单需要渲染一次。",
+    "needRenderBusy": "「{{name}}」的元素清单需要渲染一次。{{progress}}",
     "noMatch": "没有匹配的元素",
     "readonly": "只读",
     "rowActions": "{{label}} 的操作",
@@ -346,10 +348,12 @@
     "clearProp": "恢复{{prop}}",
     "createLayoutGroup": "创建{{kind}}",
     "deleteGuide": "删除参考线",
+    "deleteFigureCopies": "删除图内副本",
     "deleteObject": "删除 {{name}}",
     "deleteObjects": "删除 {{count}} 个对象",
     "dissolveLayoutGroup": "解散布局组",
     "duplicateCanvasSuffix": "{{name}} 副本",
+    "duplicateFigureElements": "创建图内副本",
     "duplicateObjects": "复制对象",
     "editText": "编辑文字",
     "fillPanel": "填满当前框",
@@ -488,6 +492,8 @@
     "transformReflect": "镜像",
     "quickLayout": "一键排版",
     "quickLayoutRatios": "调整排版比例",
+    "applyChangePlan": "应用修改方案",
+    "undoChangePlan": "撤销修改方案",
     "importSvg": "粘贴 SVG（{{count}} 个对象）",
     "explodeSvg": "拆成可编辑对象",
     "outlineText": "文字转轮廓（{{count}} 个）",
@@ -634,8 +640,9 @@
     "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
     "copy": "复制",
     "paste": "粘贴",
-    "copyAsAnnotation": "复制为标注",
+    "deleteCopy": "删除副本",
     "pasteAsAnnotation": "粘贴为标注",
+    "selectSameKind_other": "选中全部同类（{{count}} 个）",
     "pathfinder": "路径查找器",
     "addPathText": "在路径上加文字"
   },
@@ -655,12 +662,14 @@
       "settings": "设置",
       "style": "样式",
       "workspace": "项目",
-      "data": "数据"
+      "data": "数据",
+      "pro": "{{pro}}"
     },
     "style": "样式",
     "workspace": "项目",
-    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）",
-    "data": "数据"
+    "problemsBlocking_other": "问题 · {{count}} 项要改（共 {{total}}）",
+    "data": "数据",
+    "pro": "{{pro}}"
   },
   "readiness": {
     "foreign": {
@@ -946,6 +955,7 @@
       "unsupported": "暂不支持拖动「{{label}}」这类对象"
     },
     "elementCycled": "已选中「{{label}}」（此处第 {{index}}/{{total}} 个重叠元素）",
+    "copyDeleted": "已删除副本",
     "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
     "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
     "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
@@ -973,6 +983,7 @@
     "packageOpenFailed": "无法打开项目包。{{error}}",
     "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
+    "packageIncomplete": "项目包有 {{count}} 份图表来源缺失或损坏，请补齐后重试。",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
     "pastedWithSkips_other": "已粘贴 {{count}} 个对象，跳过 {{skipped}} 张缺失素材的图。{{undo}} 可撤销。",
@@ -1055,7 +1066,8 @@
     "outlineFailed_other": "{{count}} 个文字没转成轮廓（字体不可用）",
     "svgCopied": "已复制为 SVG，可以粘贴到 Illustrator、Inkscape、Figma",
     "svgCopyFailed": "没能复制为 SVG",
-    "arrayTooMany": "一次最多阵列 {{max}} 份"
+    "arrayTooMany": "一次最多阵列 {{max}} 份",
+    "quickLayoutNoPreview": "没能生成对比预览，已直接排好"
   },
   "tabs": {
     "allCanvases": "全部画布",
@@ -1538,6 +1550,13 @@
     },
     "progress": "进行中",
     "convert": {
+      "taskTitle": "生成可编辑版本",
+      "round": "第 {{n}} 轮",
+      "steps": {
+        "read": "读懂原脚本",
+        "write": "写 Python 版本",
+        "verify": "运行校验"
+      },
       "running": "正在生成可编辑版本…",
       "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
       "writingLong": "正在生成较长的文件…",
@@ -1687,7 +1706,6 @@
       "root_needs_msvc": "{{root}} 在 Windows 上要装 Visual Studio 的 C++ 工具才能运行，这台电脑还没装，所以没用它。"
     },
     "pythonChange": {
-      "downloadBytes": "已下载 {{done}} / {{total}} MB",
       "stage": {
         "downloading": "正在下载 Python…",
         "verifying": "正在检查…",
@@ -1700,6 +1718,14 @@
       }
     },
     "aiFix": {
+      "taskTitle": "AI 修复",
+      "round": "第 {{n}} 轮",
+      "steps": {
+        "diagnose": "找原因",
+        "fix": "动手修",
+        "verify": "运行验证",
+        "finish": "收尾"
+      },
       "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
       "running": "AI 正在查找原因…",
       "cancel": "取消",
@@ -1855,26 +1881,31 @@
     "openAlt": "打开“{{name}}”",
     "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
     "pill": {
-      "choose": "找到了几份本机排版",
+      "chartSource": "图表来源缺失或损坏",
+      "choose": "从上次离开的地方继续",
       "indexDegraded": "恢复记录读不了",
       "invalid": "上次的排版读不出来",
-      "missing": "上次的排版找不到了",
+      "missing": "上次的排版不在原文件内，可能已被移出",
       "prepareFailed": "示例排版没能打开",
       "tooNew": "上次的排版来自更新版本",
       "unavailable": "暂时接不上上次的排版"
     },
     "retry": "重试",
     "title": {
-      "choose": "本机找到了几份排版，选一份打开。",
+      "chartSource": "上次的排版“{{name}}”的图表来源缺失或损坏。",
+      "choose": "找到了几份排版，选一份打开。",
       "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
       "invalid": "上次的排版“{{name}}”读不出来。",
-      "missing": "上次的排版“{{name}}”找不到了。",
+      "missing": "上次的排版“{{name}}”不在原文件内，可能已被移出。",
       "prepareFailed": "示例排版没能打开。",
       "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
       "unavailable": "暂时接不上上次的排版。"
     }
   },
   "renderProgress": {
+    "stepEnvironment": "正在找运行环境（1/3）",
+    "stepStarting": "正在启动 Python（2/3）",
+    "stepRunning": "正在运行脚本、生成可编辑元素（3/3），首次可能要几分钟",
     "preparing": "正在准备图表…",
     "elapsed": "{{message}} · 已用时 {{seconds}} 秒"
   },
@@ -2021,5 +2052,9 @@
       "reference_cycle": "有循环引用",
       "timeout": "太复杂、读不完"
     }
+  },
+  "agentMerge": {
+    "commit_other": "并入 Agent 加的 {{count}} 个标注",
+    "done_other": "已并入 {{count}} 个标注，保存后写进项目"
   }
 }

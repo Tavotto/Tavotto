@@ -54,11 +54,14 @@ def test_capabilities_shape(client, monkeypatch):
         "checked_at_ms",
         "taf_enabled",
         "ai_fix_available",
+        # 「改图前先给我看修改方案」开关（ADR 0206 PR 4，只在 app 层并入；默认开）
+        "change_plan_enabled",
         # 「转换时允许 AI 不受沙盒限制」（#1631）只在 Windows 并入
         *(("convert_unsandboxed_windows",) if app_module._IS_WINDOWS else ()),
     }
     assert body["ai_fix_available"] is True  # 上面装了（假的）Codex / Claude Code：D3 起 CLI 也能修
     assert body["taf_enabled"] is False
+    assert body["change_plan_enabled"] is True
     assert isinstance(body["checked_at_ms"], int) and body["checked_at_ms"] > 0
     codex = _agent(body, "codex")
     for key in (

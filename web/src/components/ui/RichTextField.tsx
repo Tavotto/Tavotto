@@ -328,6 +328,15 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
           cb.current.onBlur?.()
           return false
         },
+        // 没有焦点时不接粘贴：在画布上点选带文字的图内元素时，这个框会抢一下焦点并全选、随后焦点还给页面，
+        // 框里留着一段**没有焦点**的残留选区；浏览器把随后的 ⌘V 派给选区所在的可编辑节点，于是剪贴板里的
+        // 对象负载（一长串 JSON）被当成文字写进了元素内容。用户此刻粘的是画布上的东西，不是往这个框里打字：
+        // 不让浏览器默认插入，交给文档上的粘贴处理（`lib/clipboard.handlePasteEvent` 按页面本身走）
+        paste: (v, e) => {
+          if (v.hasFocus()) return false
+          e.preventDefault()
+          return true
+        },
         // 键盘事件留在框里：画布与全局快捷键（删除对象、方向键微调……）不该在打字时触发。
         // 宿主没接 Esc 的（快捷编辑弹层）放 Esc 出去：关弹层由外层统一接管
         keydown: (v, e) => {

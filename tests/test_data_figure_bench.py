@@ -536,3 +536,23 @@ def test_arm_rules_prints_the_gate_table_and_the_hard_zero(tmp_path):
         assert gate["versions"][v]["all"]["skipped_but_rules_wrong"] == 0
     assert gate["rules_right"]["all"]["cases"] == 52
     assert "必须 0" in text and "holdout-plain" in text
+
+
+def test_suite_recommend_prints_the_ceiling_table_with_rules_only(tmp_path):
+    out = tmp_path / "report.json"
+    done = bench(tmp_path, "--suite", "recommend", "--arm", "rules", "--out", str(out))
+    assert done.returncode == 0, done.stderr
+    assert "天花板测量（41 条" in done.stdout and "A2" in done.stdout
+    report = json.loads(out.read_text(encoding="utf-8"))
+    t = report["tally"]
+    assert report["suite"] == "recommend" and report["arm"] == "rules" and t["cases"] == 41
+    assert t["rules_baseline"] <= t["rerank_ceiling"] <= t["universe_ceiling"] <= t["cases"]
+    assert report["existing"]["given_not_in_universe"] == 0
+
+
+def test_suite_recommend_refuses_key_file_at_parse_time(tmp_path):
+    done = bench(
+        tmp_path, "--suite", "recommend", "--key-file", str(tmp_path / "nope"), "--model", "m"
+    )
+    assert done.returncode == 2 and "--suite recommend" in done.stderr
+    assert "读不到" not in done.stderr  # 解析阶段就拒绝，没有去读那个文件

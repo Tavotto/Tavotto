@@ -1,4 +1,4 @@
-# Export formats, preflight levels and the publication profile
+# Export formats, pre-submission check levels and the publication profile
 
 > Part of the [Tavotto README](../../README.md). This page holds the detail the README links to.
 
@@ -24,14 +24,14 @@ and tells you what a reviewer would have told you three weeks later:
 
 Font sizes are judged at their **final physical size** — a panel placed at 60% is
 checked against `fontsize × 0.6`, not against what the script asked for. Findings come
-in four levels, shown as chips in the export dialog: **to fix** (blocking), **to review**
-(warning), **not verifiable** and **suggestion**. Nothing locks the Export button. **Not verifiable** is what genuinely cannot be checked —
+in four levels, shown as chips in the export dialog: **to fix**, **to review**,
+**not verifiable** and **suggestion**. Nothing locks the Export button. **Not verifiable** is what genuinely cannot be checked —
 text inside an imported bitmap — and needs a human. **Suggestion** never decides
-anything for you. Findings that are still unresolved when you export (blocking and not
-verifiable ones, or a check that could not run) are recorded automatically in a style-check
-report written next to the exported files; the report can also be switched on for clean runs.
+anything for you. Findings that are still unresolved when you export (to fix and not
+verifiable ones, or a check that could not run) are recorded automatically in a pre-submission
+check report written next to the exported files; the report can also be switched on for clean runs.
 
-## Publication profile and preflight
+## Publication profile and the pre-submission check
 
 The rules live in one versioned JSON file
 ([`src/tavotto/profiles/publication.json`](../../src/tavotto/profiles/publication.json))

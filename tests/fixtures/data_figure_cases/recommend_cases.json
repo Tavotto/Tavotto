@@ -1,0 +1,2833 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "id": "RC-P01A",
+   "theme": "药理",
+   "lang": "en",
+   "title": "同一批小鼠给药前后各称一次体重（用户说明是配对）",
+   "hint": "同一批小鼠给药前后各称一次体重，想看每只的变化",
+   "roles": {
+    "subject_id": "replicate_unit",
+    "timepoint": "group",
+    "weight_g": "measure"
+   },
+   "picks": {
+    "y": [
+     "weight_g"
+    ],
+    "x": "none",
+    "group": "timepoint"
+   },
+   "identity": "raw",
+   "task": "paired_change",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "paired_lines"
+   ],
+   "forbidden": [
+    {
+     "method": "line_points",
+     "g": "G-018"
+    }
+   ],
+   "guidance": [
+    "G-012",
+    "G-018",
+    "G-038"
+   ],
+   "reason": {
+    "data_fact": "每个小鼠编号在 pre 与 post 下各出现一次。",
+    "perceptual": "同一对象的两次测量用连线并排的位置比较，比各自算均值更能看出每只的变化。",
+    "user_purpose": "用户说明是同一批小鼠前后测，想看每只的变化。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P01",
+    "side": "A",
+    "differs_by": [
+     "meaning",
+     "hint",
+     "id_repeat"
+    ]
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "subject_id,timepoint,weight_g\nM1,pre,24.2\nM1,post,22.2\nM2,pre,28.1\nM2,post,26.2\nM3,pre,23.0\nM3,post,20.6\nM4,pre,25.2\nM4,post,22.5\nM5,pre,24.5\nM5,post,21.2\nM6,pre,25.9\nM6,post,21.9\nM7,pre,25.8\nM7,post,23.4\nM8,pre,27.0\nM8,post,24.2\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {
+     "paired_lines": "no_template"
+    },
+    "extra_gaps": []
+   },
+   "note": "现有 ASK_FIRST 要求点选确认配对；是否放宽为「用户用自己的话说明也算确认」待维护者定。系统照配对画时应在响应里写明，并可一键改回独立。"
+  },
+  {
+   "id": "RC-P01B",
+   "theme": "生物",
+   "lang": "en",
+   "title": "16 个孔各自独立测荧光，编号每行不同（独立分组）",
+   "roles": {
+    "well_id": "row_id",
+    "treatment": "group",
+    "fluorescence": "measure"
+   },
+   "picks": {
+    "y": [
+     "fluorescence"
+    ],
+    "x": "none",
+    "group": "treatment"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_mean",
+    "box_points"
+   ],
+   "guidance": [
+    "G-012",
+    "G-050"
+   ],
+   "reason": {
+    "data_fact": "孔编号每行不同，两个处理各 8 个独立观测。",
+    "perceptual": "每组 8 个值，露出原始点再叠均值，比只画均值柱多保留变异。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P01",
+    "side": "B",
+    "differs_by": [
+     "meaning",
+     "hint",
+     "id_repeat"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "well_id,treatment,fluorescence\nW01,ctrl,557\nW02,ctrl,570\nW03,ctrl,554\nW04,ctrl,582\nW05,ctrl,485\nW06,ctrl,492\nW07,ctrl,477\nW08,ctrl,481\nW09,drug,663\nW10,drug,625\nW11,drug,570\nW12,drug,573\nW13,drug,663\nW14,drug,560\nW15,drug,587\nW16,drug,633\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "points_mean"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P02A",
+   "theme": "材料",
+   "lang": "en",
+   "title": "同一句话「看分布形状」，每组只有 3 个值",
+   "hint": "想看每组数值的分布形状",
+   "roles": {
+    "alloy": "group",
+    "hardness_HV": "measure"
+   },
+   "picks": {
+    "y": [
+     "hardness_HV"
+    ],
+    "x": "none",
+    "group": "alloy"
+   },
+   "identity": "raw",
+   "task": "distribution",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "points_mean"
+   ],
+   "forbidden": [
+    {
+     "method": "violin_points",
+     "g": "G-013"
+    },
+    {
+     "method": "box_points",
+     "g": "G-013"
+    },
+    {
+     "method": "density_groups",
+     "g": "G-013"
+    },
+    {
+     "method": "bar_error",
+     "g": "G-012"
+    }
+   ],
+   "guidance": [
+    "G-012",
+    "G-013"
+   ],
+   "reason": {
+    "data_fact": "每组只有 3 个值，估不出分布形状。",
+    "perceptual": "点很少时小提琴 / 密度会凭空造出形状，只能把 3 个点原样画出来。",
+    "user_purpose": "用户想看分布形状；数据量不够时诚实地给原始点。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P02",
+    "side": "A",
+    "differs_by": [
+     "n_rows",
+     "n_per_group"
+    ]
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "alloy,hardness_HV\nA,11.0\nA,10.4\nA,11.0\nB,12.0\nB,12.0\nB,10.2\nC,7.0\nC,9.4\nC,6.7\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "points_mean"
+    ],
+    "universe_size": 7,
+    "forbidden_present": [
+     "bar_error"
+    ],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P02B",
+   "theme": "材料",
+   "lang": "en",
+   "title": "同一句话「看分布形状」，每组 200 个值",
+   "hint": "想看每组数值的分布形状",
+   "roles": {
+    "alloy": "group",
+    "hardness_HV": "measure"
+   },
+   "picks": {
+    "y": [
+     "hardness_HV"
+    ],
+    "x": "none",
+    "group": "alloy"
+   },
+   "identity": "raw",
+   "task": "distribution",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "violin_points",
+    "ecdf_groups",
+    "box_points",
+    "density_groups"
+   ],
+   "forbidden": [
+    {
+     "method": "bar_error",
+     "g": "G-012"
+    }
+   ],
+   "guidance": [
+    "G-012",
+    "G-013",
+    "G-045"
+   ],
+   "reason": {
+    "data_fact": "每组 200 个值，足够估计分布形状。",
+    "perceptual": "把整个分布画出来（小提琴 / 累积分布 / 箱线），均值柱会藏起形状。",
+    "user_purpose": "用户想看每组的分布形状。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P02",
+    "side": "B",
+    "differs_by": [
+     "n_rows",
+     "n_per_group"
+    ]
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "alloy,hardness_HV\nA,10.2\nA,8.3\nA,9.3\nA,10.4\nA,8.6\nA,7.2\nA,7.9\nA,11.0\nA,11.4\nA,10.3\nA,10.4\nA,11.3\nA,8.2\nA,8.5\nA,7.6\nA,9.7\nA,9.7\nA,10.6\nA,8.1\nA,10.4\nA,9.9\nA,9.7\nA,10.0\nA,10.9\nA,7.7\nA,10.4\nA,10.0\nA,10.4\nA,11.9\nA,8.6\nA,10.0\nA,9.7\nA,9.9\nA,10.7\nA,10.5\nA,9.7\nA,10.6\nA,10.6\nA,10.2\nA,9.2\nA,11.0\nA,9.9\nA,9.5\nA,9.4\nA,9.4\nA,12.3\nA,10.9\nA,10.0\nA,9.8\nA,10.3\nA,10.4\nA,11.1\nA,8.4\nA,9.8\nA,9.6\nA,10.6\nA,9.0\nA,9.6\nA,8.2\nA,12.7\nA,9.8\nA,9.9\nA,13.1\nA,9.2\nA,7.4\nA,12.1\nA,12.1\nA,11.6\nA,11.2\nA,12.1\nA,8.7\nA,7.3\nA,9.4\nA,11.7\nA,10.6\nA,9.8\nA,10.6\nA,11.4\nA,10.3\nA,10.3\nA,11.1\nA,10.1\nA,9.2\nA,8.9\nA,9.8\nA,9.8\nA,11.2\nA,10.9\nA,10.1\nA,10.2\nA,11.6\nA,10.7\nA,11.4\nA,9.6\nA,10.8\nA,10.0\nA,9.1\nA,8.1\nA,10.4\nA,11.3\nA,11.5\nA,10.3\nA,10.1\nA,8.6\nA,10.2\nA,9.1\nA,9.3\nA,8.8\nA,9.6\nA,9.7\nA,8.4\nA,10.5\nA,10.2\nA,11.5\nA,11.2\nA,10.2\nA,11.6\nA,9.4\nA,7.6\nA,9.9\nA,9.5\nA,8.7\nA,8.3\nA,11.7\nA,8.7\nA,9.5\nA,9.5\nA,10.5\nA,10.6\nA,11.5\nA,8.0\nA,9.5\nA,8.9\nA,10.4\nA,9.1\nA,9.7\nA,11.7\nA,9.6\nA,9.6\nA,11.3\nA,11.6\nA,7.5\nA,9.2\nA,7.7\nA,10.4\nA,8.9\nA,8.8\nA,10.7\nA,11.5\nA,10.5\nA,8.0\nA,9.3\nA,8.2\nA,12.8\nA,9.9\nA,8.4\nA,10.4\nA,12.8\nA,9.3\nA,8.4\nA,10.3\nA,10.7\nA,10.9\nA,12.5\nA,8.3\nA,10.7\nA,9.2\nA,8.0\nA,9.8\nA,10.8\nA,10.6\nA,9.8\nA,11.2\nA,10.0\nA,11.0\nA,10.1\nA,10.1\nA,8.8\nA,10.3\nA,10.4\nA,11.5\nA,10.5\nA,8.8\nA,11.3\nA,10.7\nA,10.7\nA,9.0\nA,9.6\nA,9.7\nA,9.1\nA,10.0\nA,8.2\nA,8.4\nA,11.0\nA,8.5\nA,12.2\nA,9.9\nA,9.0\nA,11.0\nA,8.6\nB,13.2\nB,10.6\nB,13.3\nB,11.2\nB,10.9\nB,13.6\nB,13.3\nB,11.3\nB,11.7\nB,10.4\nB,11.6\nB,12.7\nB,11.5\nB,11.5\nB,10.0\nB,12.7\nB,11.1\nB,12.9\nB,13.6\nB,11.7\nB,11.2\nB,11.8\nB,12.0\nB,10.8\nB,11.4\nB,9.1\nB,12.4\nB,11.3\nB,13.6\nB,11.2\nB,12.2\nB,12.3\nB,12.0\nB,13.6\nB,11.9\nB,12.0\nB,12.4\nB,11.9\nB,12.7\nB,10.8\nB,12.7\nB,9.9\nB,11.6\nB,10.9\nB,11.2\nB,11.9\nB,12.0\nB,12.3\nB,10.3\nB,13.9\nB,11.9\nB,11.6\nB,11.3\nB,13.1\nB,10.6\nB,11.8\nB,12.4\nB,11.3\nB,10.9\nB,10.7\nB,12.7\nB,12.1\nB,13.2\nB,13.1\nB,13.6\nB,10.1\nB,12.8\nB,10.7\nB,10.7\nB,10.8\nB,11.6\nB,13.3\nB,12.7\nB,12.8\nB,10.0\nB,14.2\nB,12.4\nB,13.3\nB,12.4\nB,12.2\nB,10.4\nB,11.8\nB,8.5\nB,11.5\nB,10.3\nB,12.3\nB,12.4\nB,11.6\nB,12.1\nB,11.4\nB,13.5\nB,10.6\nB,12.5\nB,9.7\nB,12.5\nB,12.1\nB,11.6\nB,12.2\nB,12.6\nB,11.6\nB,12.2\nB,13.9\nB,13.9\nB,13.5\nB,11.1\nB,13.2\nB,12.2\nB,11.6\nB,12.0\nB,13.2\nB,11.7\nB,11.0\nB,11.3\nB,12.4\nB,10.9\nB,11.3\nB,11.9\nB,11.9\nB,9.3\nB,11.0\nB,12.1\nB,12.9\nB,12.1\nB,11.3\nB,10.8\nB,11.9\nB,12.5\nB,12.9\nB,12.5\nB,10.4\nB,12.0\nB,13.6\nB,12.7\nB,12.0\nB,11.9\nB,11.4\nB,12.0\nB,12.6\nB,10.5\nB,11.2\nB,11.6\nB,10.4\nB,11.4\nB,11.5\nB,11.9\nB,12.6\nB,12.5\nB,11.9\nB,12.7\nB,11.0\nB,12.8\nB,11.0\nB,13.8\nB,11.3\nB,12.1\nB,11.6\nB,11.9\nB,11.7\nB,11.1\nB,11.2\nB,12.8\nB,13.1\nB,11.5\nB,13.3\nB,11.6\nB,11.6\nB,10.8\nB,12.2\nB,14.4\nB,10.5\nB,11.8\nB,13.1\nB,11.0\nB,12.3\nB,14.2\nB,11.2\nB,13.0\nB,14.0\nB,13.3\nB,10.0\nB,11.8\nB,12.1\nB,11.7\nB,11.3\nB,11.9\nB,11.4\nB,11.5\nB,11.8\nB,11.3\nB,11.5\nB,14.2\nB,12.8\nB,12.0\nB,10.3\nB,11.3\nB,13.0\nB,11.2\nB,11.7\nB,11.8\nB,11.5\nC,9.5\nC,9.7\nC,8.7\nC,7.7\nC,10.9\nC,8.8\nC,10.7\nC,9.6\nC,9.7\nC,8.0\nC,8.3\nC,11.2\nC,9.4\nC,9.0\nC,12.0\nC,7.6\nC,7.7\nC,8.9\nC,11.6\nC,7.6\nC,6.8\nC,13.3\nC,7.8\nC,11.2\nC,9.2\nC,9.6\nC,7.7\nC,12.7\nC,7.1\nC,10.5\nC,12.5\nC,6.3\nC,12.6\nC,8.4\nC,9.4\nC,10.4\nC,8.8\nC,8.2\nC,8.7\nC,10.7\nC,7.4\nC,8.9\nC,11.2\nC,9.4\nC,10.3\nC,9.0\nC,9.9\nC,9.3\nC,9.6\nC,12.9\nC,8.8\nC,7.3\nC,12.4\nC,7.6\nC,9.4\nC,10.1\nC,9.4\nC,9.1\nC,11.3\nC,8.6\nC,9.0\nC,13.1\nC,9.1\nC,8.3\nC,8.7\nC,6.8\nC,12.7\nC,13.7\nC,9.6\nC,11.2\nC,9.2\nC,9.2\nC,10.1\nC,8.7\nC,9.4\nC,9.6\nC,10.1\nC,12.4\nC,9.9\nC,9.3\nC,8.5\nC,10.3\nC,10.7\nC,9.6\nC,10.1\nC,9.7\nC,9.7\nC,12.1\nC,8.2\nC,12.1\nC,8.6\nC,9.1\nC,9.3\nC,8.1\nC,10.0\nC,12.7\nC,12.6\nC,8.3\nC,8.8\nC,9.4\nC,8.6\nC,8.6\nC,8.8\nC,13.1\nC,8.8\nC,9.7\nC,10.8\nC,8.8\nC,9.5\nC,9.4\nC,12.5\nC,9.6\nC,10.1\nC,8.8\nC,12.2\nC,8.9\nC,12.5\nC,8.3\nC,9.9\nC,8.3\nC,9.3\nC,9.5\nC,8.8\nC,12.4\nC,8.5\nC,14.5\nC,8.6\nC,11.1\nC,8.0\nC,10.3\nC,11.8\nC,11.2\nC,11.6\nC,13.2\nC,8.3\nC,9.7\nC,9.5\nC,13.5\nC,10.0\nC,8.8\nC,12.9\nC,10.0\nC,11.1\nC,9.5\nC,12.7\nC,10.4\nC,8.4\nC,8.4\nC,13.1\nC,9.0\nC,9.3\nC,11.9\nC,9.5\nC,8.0\nC,10.2\nC,10.0\nC,7.8\nC,12.1\nC,9.7\nC,9.9\nC,8.9\nC,8.8\nC,9.8\nC,6.9\nC,10.1\nC,6.1\nC,7.6\nC,10.6\nC,13.2\nC,8.6\nC,9.1\nC,10.4\nC,12.4\nC,9.9\nC,9.5\nC,10.5\nC,11.8\nC,12.0\nC,10.0\nC,7.3\nC,9.7\nC,6.5\nC,8.7\nC,12.3\nC,10.1\nC,9.0\nC,11.3\nC,9.2\nC,8.4\nC,12.3\nC,11.2\nC,7.7\nC,8.9\nC,11.2\nC,10.0\nC,10.5\nC,11.9\nC,10.0\nC,9.0\nC,9.3\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "ecdf_groups": 3
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "density_groups",
+     "ecdf_groups",
+     "violin_points"
+    ],
+    "universe_size": 11,
+    "forbidden_present": [
+     "bar_error"
+    ],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P03A",
+   "theme": "化学",
+   "lang": "en",
+   "title": "吸光度随反应时间升高（时间列单调）",
+   "roles": {
+    "time_min": "time",
+    "absorbance": "measure"
+   },
+   "picks": {
+    "y": [
+     "absorbance"
+    ],
+    "x": "time_min",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_points"
+   ],
+   "guidance": [
+    "G-018"
+   ],
+   "reason": {
+    "data_fact": "横轴是单调递增的时间，同一反应被连续跟踪。",
+    "perceptual": "有序横轴上连线表达连续变化，位置比其他通道更易读。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P03",
+    "side": "A",
+    "differs_by": [
+     "meaning",
+     "hint"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "time_min,absorbance\n0,-0.022\n5,0.234\n10,0.367\n15,0.510\n20,0.606\n25,0.698\n30,0.729\n35,0.811\n40,0.804\n45,0.864\n50,0.858\n55,0.867\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_points": 1
+    },
+    "acceptable_in_universe": [
+     "line_points"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P03B",
+   "theme": "化学",
+   "lang": "en",
+   "title": "两种方法测同一批样品的浓度，看是否一致（用户说明）",
+   "hint": "两种方法测的是同一批样品的浓度，想看它们一不一致",
+   "roles": {
+    "method_a_mgL": "measure",
+    "method_b_mgL": "measure"
+   },
+   "picks": {
+    "y": [
+     "method_b_mgL"
+    ],
+    "x": "method_a_mgL",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "agreement",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "scatter_identity"
+   ],
+   "forbidden": [
+    {
+     "method": "line_points",
+     "g": "G-018"
+    },
+    {
+     "method": "line_band",
+     "g": "G-018"
+    }
+   ],
+   "guidance": [
+    "G-018",
+    "G-026"
+   ],
+   "reason": {
+    "data_fact": "两列同单位（mg/L），每行是同一个样品的两次测量，横轴并非有序量。",
+    "perceptual": "两轴是同一个量时用相等的轴比例并加 y = x 参考线，偏离一眼可见。",
+    "user_purpose": "用户说两种方法测的是同一批样品：这句话就是「两轴是同一个量」的确认（G-026），不必再问。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P03",
+    "side": "B",
+    "differs_by": [
+     "meaning",
+     "hint"
+    ]
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "method_a_mgL,method_b_mgL\n38.7,39.4\n22.5,22.8\n23.0,23.5\n20.0,20.9\n9.2,10.7\n3.4,3.3\n17.1,15.8\n21.1,20.9\n31.5,33.0\n14.9,14.9\n38.9,40.2\n6.3,5.9\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points",
+     "scatter_fit"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 13,
+    "forbidden_present": [
+     "line_points"
+    ],
+    "forbidden_recommended": true,
+    "needs": {
+     "scatter_identity": "missing"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P04A",
+   "theme": "药理",
+   "lang": "en",
+   "title": "浓度跨 5 个数量级的剂量-响应，每个浓度 3 个重复",
+   "roles": {
+    "conc_uM": "ordered_x",
+    "viability_pct": "measure"
+   },
+   "picks": {
+    "y": [
+     "viability_pct"
+    ],
+    "x": "conc_uM",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "dose_response",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_band_logx",
+    "line_points_logx"
+   ],
+   "guidance": [
+    "G-018",
+    "G-054"
+   ],
+   "reason": {
+    "data_fact": "浓度由低到高跨 5 个数量级（0.01–1000 uM），每个浓度有重复；线性轴上 0.01–10 这四档会挤在横轴最左边不到 1% 的范围里。",
+    "perceptual": "跨数量级的剂量用对数横轴才分得开；同一浓度的重复汇总成线再看变异。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P04",
+    "side": "A",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "conc_uM,viability_pct\n0.01,95.5\n0.01,99.8\n0.01,102.9\n0.1,91.7\n0.1,99.2\n0.1,94.3\n1,89.1\n1,85.9\n1,88.2\n10,39.2\n10,48.7\n10,53.9\n100,8.6\n100,7.9\n100,9.5\n1000,0.0\n1000,0.7\n1000,1.2\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [
+     "line_band_logx"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P04B",
+   "theme": "材料",
+   "lang": "en",
+   "title": "晶粒尺寸与屈服强度：两个不同的量，每行一个样品",
+   "roles": {
+    "grain_size_um": "measure",
+    "yield_MPa": "measure"
+   },
+   "picks": {
+    "y": [
+     "yield_MPa"
+    ],
+    "x": "grain_size_um",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "relationship",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "scatter",
+    "scatter_fit"
+   ],
+   "forbidden": [
+    {
+     "method": "line_points",
+     "g": "G-018"
+    },
+    {
+     "method": "line_band",
+     "g": "G-018"
+    }
+   ],
+   "guidance": [
+    "G-016",
+    "G-018"
+   ],
+   "reason": {
+    "data_fact": "两个不同单位的数值量，每行一个独立样品，横轴不是有序跟踪量。",
+    "perceptual": "散点用位置编码两个量；连线会暗示相邻样品之间有渐变。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P04",
+    "side": "B",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "tables": {
+    "t.csv": "grain_size_um,yield_MPa\n50.2,370\n27.3,288\n35.2,271\n42.5,330\n51.2,364\n39.2,343\n31.3,265\n43.0,278\n31.7,301\n31.3,242\n13.3,217\n25.6,281\n55.4,388\n36.1,323\n20.5,236\n17.5,214\n40.9,289\n28.3,233\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {
+     "scatter_fit": 2
+    },
+    "acceptable_in_universe": [
+     "scatter",
+     "scatter_fit"
+    ],
+    "universe_size": 10,
+    "forbidden_present": [
+     "line_band"
+    ],
+    "forbidden_recommended": true,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P05A",
+   "theme": "医学",
+   "lang": "en",
+   "title": "流式分选：5 类细胞计数，合计为总体",
+   "hint": "各类细胞占总体的比例",
+   "roles": {
+    "cell_type": "group",
+    "count": "measure"
+   },
+   "picks": {
+    "y": [
+     "count"
+    ],
+    "x": "none",
+    "group": "cell_type"
+   },
+   "identity": "counts",
+   "task": "part_whole",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "stacked_bar"
+   ],
+   "guidance": [
+    "G-035",
+    "G-019"
+   ],
+   "reason": {
+    "data_fact": "5 类互斥，计数合计就是总细胞数。",
+    "perceptual": "部分之和是整体时，用占整体的长度比较。",
+    "user_purpose": "用户要看各类占总体的比例。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P05",
+    "side": "A",
+    "differs_by": [
+     "meaning",
+     "hint"
+    ]
+   },
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "cell_type,count\nT cell,412\nB cell,168\nNK,95\nmonocyte,231\nother,94\n"
+   },
+   "expressible": {
+    "rules_top": "ecdf",
+    "rules_candidates": [
+     "ecdf",
+     "box_points_single"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 2,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {
+     "stacked_bar": "no_template"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P05B",
+   "theme": "生物",
+   "lang": "en",
+   "title": "5 个菌株各一个菌落计数，互不相干（排名）",
+   "hint": "哪个菌株长得最多",
+   "roles": {
+    "strain": "group",
+    "colony_count": "measure"
+   },
+   "picks": {
+    "y": [
+     "colony_count"
+    ],
+    "x": "none",
+    "group": "strain"
+   },
+   "identity": "counts",
+   "task": "ranking",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "ranking_bar",
+    "ranking_points"
+   ],
+   "forbidden": [
+    {
+     "method": "stacked_bar",
+     "g": "G-035"
+    }
+   ],
+   "guidance": [
+    "G-035",
+    "G-040"
+   ],
+   "reason": {
+    "data_fact": "5 个菌株是各自独立的培养，计数之和没有「整体」的含义。",
+    "perceptual": "按数值排序后沿共同基线比较长度，谁高谁低一眼可见。",
+    "user_purpose": "用户问哪个菌株长得最多。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P05",
+    "side": "B",
+    "differs_by": [
+     "meaning",
+     "hint"
+    ]
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "strain,colony_count\nE. coli,412\nB. subtilis,168\nS. aureus,95\nP. putida,231\nL. lactis,94\n"
+   },
+   "expressible": {
+    "rules_top": "ecdf",
+    "rules_candidates": [
+     "ecdf",
+     "box_points_single"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 2,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {
+     "ranking_bar": "no_template",
+     "ranking_points": "no_template"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P06A",
+   "theme": "生物",
+   "lang": "en",
+   "title": "已汇总：每个基因型一行（均值 + sd 列）",
+   "roles": {
+    "genotype": "group",
+    "mean_activity": "measure",
+    "sd_activity": "error"
+   },
+   "picks": {
+    "y": [
+     "mean_activity"
+    ],
+    "x": "none",
+    "group": "genotype"
+   },
+   "identity": "summary_with_error",
+   "task": "compare_groups",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_err",
+    "line_err"
+   ],
+   "guidance": [
+    "G-005",
+    "G-038",
+    "G-053"
+   ],
+   "reason": {
+    "data_fact": "每组只有一行，且旁边有 sd 列：这是汇总值，不是原始观测。",
+    "perceptual": "误差线直接用表里的 sd 画（G-053）；对 4 个汇总值再算一遍均值 ± sd 是没有意义的统计。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P06",
+    "side": "A",
+    "differs_by": [
+     "meaning",
+     "n_rows"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "genotype,mean_activity,sd_activity\nWT,24.1,2.3\nKO,17.8,3.1\nKO+rescue,22.9,2.6\nHET,21.0,2.8\n"
+   },
+   "expressible": {
+    "rules_top": "points_err",
+    "rules_candidates": [
+     "points_err",
+     "bar_err"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "points_err": 1
+    },
+    "acceptable_in_universe": [
+     "points_err"
+    ],
+    "universe_size": 2,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P06B",
+   "theme": "生物",
+   "lang": "en",
+   "title": "原始观测：每个基因型 6 个重复",
+   "roles": {
+    "genotype": "group",
+    "replicate": "replicate_unit",
+    "activity": "measure"
+   },
+   "picks": {
+    "y": [
+     "activity"
+    ],
+    "x": "none",
+    "group": "genotype"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_mean",
+    "box_points"
+   ],
+   "guidance": [
+    "G-012",
+    "G-050"
+   ],
+   "reason": {
+    "data_fact": "每个基因型 6 行原始重复，编号列只是重复序号。",
+    "perceptual": "每组 6 个点：露出原始点再叠均值，保留变异。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P06",
+    "side": "B",
+    "differs_by": [
+     "meaning",
+     "n_rows"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "genotype,replicate,activity\nWT,1,25.3\nWT,2,27.2\nWT,3,24.0\nWT,4,22.9\nWT,5,23.7\nWT,6,21.1\nKO,1,21.1\nKO,2,14.2\nKO,3,15.4\nKO,4,20.8\nKO,5,15.2\nKO,6,16.0\nKO+rescue,1,20.9\nKO+rescue,2,19.5\nKO+rescue,3,23.0\nKO+rescue,4,25.2\nKO+rescue,5,20.5\nKO+rescue,6,22.0\nHET,1,20.5\nHET,2,19.2\nHET,3,21.2\nHET,4,23.8\nHET,5,25.0\nHET,6,22.2\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "points_mean"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P07A",
+   "theme": "心理",
+   "lang": "en",
+   "title": "同一张表（两组各 30 人的得分）：问「平均水平有没有差别」",
+   "hint": "两组的平均水平有没有差别",
+   "roles": {
+    "group": "group",
+    "score": "measure"
+   },
+   "picks": {
+    "y": [
+     "score"
+    ],
+    "x": "none",
+    "group": "group"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "points_mean",
+    "box_points",
+    "bar_points"
+   ],
+   "guidance": [
+    "G-012",
+    "G-050",
+    "G-007"
+   ],
+   "reason": {
+    "data_fact": "两个独立分组，每组 30 个值。",
+    "perceptual": "比较高低用共同基线上的位置；叠上原始点保留变异。",
+    "user_purpose": "用户要比较两组的平均水平（不报显著性）。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P07",
+    "side": "A",
+    "differs_by": [
+     "hint"
+    ]
+   },
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "group,score\ncontrol,49.9\ncontrol,42.9\ncontrol,55.8\ncontrol,54.9\ncontrol,50.4\ncontrol,57.4\ncontrol,57.5\ncontrol,49.9\ncontrol,53.6\ncontrol,51.0\ncontrol,52.8\ncontrol,47.9\ncontrol,48.7\ncontrol,51.2\ncontrol,47.5\ncontrol,55.1\ncontrol,63.9\ncontrol,48.2\ncontrol,57.7\ncontrol,56.8\ncontrol,49.9\ncontrol,57.5\ncontrol,42.3\ncontrol,49.2\ncontrol,44.1\ncontrol,47.7\ncontrol,44.3\ncontrol,52.0\ncontrol,51.3\ncontrol,53.6\ntreated,64.0\ntreated,56.0\ntreated,69.7\ntreated,46.5\ntreated,53.6\ntreated,45.8\ntreated,54.2\ntreated,44.3\ntreated,55.7\ntreated,62.0\ntreated,52.5\ntreated,56.0\ntreated,63.1\ntreated,50.9\ntreated,54.1\ntreated,46.5\ntreated,67.8\ntreated,66.5\ntreated,67.5\ntreated,61.8\ntreated,54.6\ntreated,62.1\ntreated,59.6\ntreated,51.9\ntreated,68.9\ntreated,41.3\ntreated,51.5\ntreated,75.7\ntreated,70.6\ntreated,51.8\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "bar_points",
+     "box_points",
+     "points_mean"
+    ],
+    "universe_size": 11,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P07B",
+   "theme": "心理",
+   "lang": "en",
+   "title": "同一张表：问「分布形状一不一样」",
+   "hint": "两组得分的分布形状一样吗",
+   "roles": {
+    "group": "group",
+    "score": "measure"
+   },
+   "picks": {
+    "y": [
+     "score"
+    ],
+    "x": "none",
+    "group": "group"
+   },
+   "identity": "raw",
+   "task": "distribution",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "points_mean",
+    "ecdf_groups",
+    "violin_points",
+    "density_groups",
+    "box_points"
+   ],
+   "forbidden": [
+    {
+     "method": "bar_error",
+     "g": "G-012"
+    }
+   ],
+   "guidance": [
+    "G-012",
+    "G-045"
+   ],
+   "reason": {
+    "data_fact": "两个独立分组，每组 30 个值，够画分布。",
+    "perceptual": "要看形状就得画出整个分布；只有均值与 sd 的图会藏起形状。",
+    "user_purpose": "用户问两组的分布形状。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P07",
+    "side": "B",
+    "differs_by": [
+     "hint"
+    ]
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "group,score\ncontrol,49.9\ncontrol,42.9\ncontrol,55.8\ncontrol,54.9\ncontrol,50.4\ncontrol,57.4\ncontrol,57.5\ncontrol,49.9\ncontrol,53.6\ncontrol,51.0\ncontrol,52.8\ncontrol,47.9\ncontrol,48.7\ncontrol,51.2\ncontrol,47.5\ncontrol,55.1\ncontrol,63.9\ncontrol,48.2\ncontrol,57.7\ncontrol,56.8\ncontrol,49.9\ncontrol,57.5\ncontrol,42.3\ncontrol,49.2\ncontrol,44.1\ncontrol,47.7\ncontrol,44.3\ncontrol,52.0\ncontrol,51.3\ncontrol,53.6\ntreated,64.0\ntreated,56.0\ntreated,69.7\ntreated,46.5\ntreated,53.6\ntreated,45.8\ntreated,54.2\ntreated,44.3\ntreated,55.7\ntreated,62.0\ntreated,52.5\ntreated,56.0\ntreated,63.1\ntreated,50.9\ntreated,54.1\ntreated,46.5\ntreated,67.8\ntreated,66.5\ntreated,67.5\ntreated,61.8\ntreated,54.6\ntreated,62.1\ntreated,59.6\ntreated,51.9\ntreated,68.9\ntreated,41.3\ntreated,51.5\ntreated,75.7\ntreated,70.6\ntreated,51.8\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "ecdf_groups": 3,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "density_groups",
+     "ecdf_groups",
+     "points_mean",
+     "violin_points"
+    ],
+    "universe_size": 11,
+    "forbidden_present": [
+     "bar_error"
+    ],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P08A",
+   "theme": "生物",
+   "lang": "en",
+   "title": "酶活随反应温度（4 / 25 / 37 ℃ 三档，每档 6 个重复）",
+   "roles": {
+    "temperature_C": "ordered_x",
+    "activity_U": "measure"
+   },
+   "picks": {
+    "y": [
+     "activity_U"
+    ],
+    "x": "temperature_C",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_band",
+    "line_points"
+   ],
+   "guidance": [
+    "G-012",
+    "G-018"
+   ],
+   "reason": {
+    "data_fact": "温度是有大小顺序的连续量，3 档，每档有重复。",
+    "perceptual": "有序横轴可连线，汇总成线加误差带表达变化。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P08",
+    "side": "A",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "temperature_C,activity_U\n4,25.0\n4,24.3\n4,23.5\n4,17.6\n4,14.8\n4,22.2\n25,63.4\n25,63.7\n25,63.0\n25,68.7\n25,55.4\n25,61.7\n37,46.4\n37,53.0\n37,55.8\n37,53.8\n37,46.3\n37,50.8\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_band": 1
+    },
+    "acceptable_in_universe": [
+     "line_band"
+    ],
+    "universe_size": 10,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P08B",
+   "theme": "生物",
+   "lang": "en",
+   "title": "三个批号的酶活（批号是整数标签，不是量）",
+   "roles": {
+    "batch_no": "group",
+    "activity_U": "measure"
+   },
+   "picks": {
+    "y": [
+     "activity_U"
+    ],
+    "x": "none",
+    "group": "batch_no"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_mean",
+    "box_points"
+   ],
+   "forbidden": [
+    {
+     "method": "line_band",
+     "g": "G-018"
+    },
+    {
+     "method": "line_points",
+     "g": "G-018"
+    }
+   ],
+   "guidance": [
+    "G-012",
+    "G-018",
+    "G-020"
+   ],
+   "reason": {
+    "data_fact": "批号 1/2/3 只是无序类别标签，各批之间没有「相邻」的含义。",
+    "perceptual": "类别横轴上用点或箱，不连线；连线会暗示批号之间有渐变。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P08",
+    "side": "B",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "tables": {
+    "t.csv": "batch_no,activity_U\n1,17.2\n1,20.5\n1,20.6\n1,25.1\n1,25.4\n1,29.9\n2,57.9\n2,55.9\n2,65.2\n2,59.3\n2,64.6\n2,57.4\n3,47.5\n3,41.2\n3,54.2\n3,45.1\n3,53.0\n3,47.6\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "points_mean"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P09A",
+   "theme": "生物",
+   "lang": "en",
+   "title": "一条生长曲线：10 个时间点各测一次",
+   "roles": {
+    "day": "time",
+    "od600": "measure"
+   },
+   "picks": {
+    "y": [
+     "od600"
+    ],
+    "x": "day",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_points"
+   ],
+   "guidance": [
+    "G-018"
+   ],
+   "reason": {
+    "data_fact": "每个 day 只有一个值，同一培养被连续跟踪。",
+    "perceptual": "每个 x 一个值，直接连线表达变化。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P09",
+    "side": "A",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "day,od600\n1,0.058\n2,0.092\n3,0.110\n4,0.153\n5,0.208\n6,0.261\n7,0.337\n8,0.403\n9,0.517\n10,0.635\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_points": 1
+    },
+    "acceptable_in_universe": [
+     "line_points"
+    ],
+    "universe_size": 13,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P09B",
+   "theme": "生物",
+   "lang": "en",
+   "title": "每个时间点各测 2 个平行样",
+   "roles": {
+    "day": "time",
+    "od600": "measure"
+   },
+   "picks": {
+    "y": [
+     "od600"
+    ],
+    "x": "day",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_band"
+   ],
+   "guidance": [
+    "G-012",
+    "G-052"
+   ],
+   "reason": {
+    "data_fact": "同一 day 有 2 个值，且没有确认过的个体编号。",
+    "perceptual": "同一 x 有重复时只画汇总线加误差带，并露出原始点；逐点连线会来回折。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P09",
+    "side": "B",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "day,od600\n2,0.131\n2,0.084\n4,0.149\n4,0.164\n6,0.309\n6,0.248\n8,0.409\n8,0.424\n10,0.586\n10,0.618\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_band": 1
+    },
+    "acceptable_in_universe": [
+     "line_band"
+    ],
+    "universe_size": 10,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P10A",
+   "theme": "医学",
+   "lang": "en",
+   "title": "同一批受试者在 4 个时间点各测一次（用户说明）",
+   "hint": "同一批受试者在每个时间点都测了，想看每个人怎么变",
+   "roles": {
+    "subject": "replicate_unit",
+    "day": "time",
+    "score": "measure"
+   },
+   "picks": {
+    "y": [
+     "score"
+    ],
+    "x": "day",
+    "group": "none",
+    "design": "repeated",
+    "unit": "subject"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "line_units",
+    "trajectories"
+   ],
+   "guidance": [
+    "G-012",
+    "G-018",
+    "G-038"
+   ],
+   "reason": {
+    "data_fact": "每个受试者在 4 个 day 各出现一次，day 有序。",
+    "perceptual": "每个个体一条线，个体之间的差异与共同趋势同时可见。",
+    "user_purpose": "用户说明是同一批受试者的重复测量，想看每个人的变化。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P10",
+    "side": "A",
+    "differs_by": [
+     "meaning",
+     "hint",
+     "id_repeat"
+    ]
+   },
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "subject,day,score\nS1,1,60.6\nS1,7,65.3\nS1,14,64.2\nS1,28,82.1\nS2,1,70.5\nS2,7,71.1\nS2,14,75.2\nS2,28,88.7\nS3,1,54.0\nS3,7,55.1\nS3,14,59.4\nS3,28,68.0\nS4,1,51.6\nS4,7,49.8\nS4,14,53.6\nS4,28,60.9\nS5,1,66.9\nS5,7,72.3\nS5,14,68.5\nS5,28,85.5\n"
+   },
+   "expressible": {
+    "rules_top": "line_units",
+    "rules_candidates": [
+     "line_units",
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_units": 1
+    },
+    "acceptable_in_universe": [
+     "line_units"
+    ],
+    "universe_size": 11,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P10B",
+   "theme": "医学",
+   "lang": "en",
+   "title": "每个时间点换一批新受试者（用户说明）",
+   "hint": "每个时间点都是不同的人，没有人被测两次",
+   "roles": {
+    "sample_id": "row_id",
+    "day": "time",
+    "score": "measure"
+   },
+   "picks": {
+    "y": [
+     "score"
+    ],
+    "x": "day",
+    "group": "none",
+    "design": "independent"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "line_band"
+   ],
+   "forbidden": [
+    {
+     "method": "line_units",
+     "g": "G-038"
+    }
+   ],
+   "guidance": [
+    "G-012",
+    "G-018",
+    "G-038"
+   ],
+   "reason": {
+    "data_fact": "编号每行不同，每个 day 是 5 个不同的人。",
+    "perceptual": "没有「同一个体」的连续跟踪，只能按时间点汇总成线并露出原始点。",
+    "user_purpose": "用户说明每个时间点是不同的人。"
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P10",
+    "side": "B",
+    "differs_by": [
+     "meaning",
+     "hint",
+     "id_repeat"
+    ]
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "sample_id,day,score\nN01,1,52.3\nN02,1,59.5\nN03,1,61.4\nN04,1,64.8\nN05,1,49.4\nN06,7,65.3\nN07,7,55.1\nN08,7,55.6\nN09,7,61.9\nN10,7,65.2\nN11,14,70.6\nN12,14,82.3\nN13,14,59.3\nN14,14,73.3\nN15,14,62.4\nN16,28,64.8\nN17,28,81.5\nN18,28,84.4\nN19,28,66.1\nN20,28,61.5\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_band": 1
+    },
+    "acceptable_in_universe": [
+     "line_band"
+    ],
+    "universe_size": 10,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P11A",
+   "theme": "环境",
+   "lang": "en",
+   "title": "一个量只测了 8 次",
+   "roles": {
+    "pH": "measure"
+   },
+   "picks": {
+    "y": [
+     "pH"
+    ],
+    "x": "none",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "distribution",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "box_points_single",
+    "ecdf"
+   ],
+   "forbidden": [
+    {
+     "method": "density",
+     "g": "G-013"
+    }
+   ],
+   "guidance": [
+    "G-012",
+    "G-013",
+    "G-014"
+   ],
+   "reason": {
+    "data_fact": "只有一个数值列，8 个值。",
+    "perceptual": "点很少时核密度会凭空造形状；累积分布与带原始点的箱线不依赖分箱。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P11",
+    "side": "A",
+    "differs_by": [
+     "meaning",
+     "n_rows"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "tables": {
+    "t.csv": "pH\n5.28\n9.57\n6.88\n7.58\n8.29\n6.91\n8.34\n8.76\n"
+   },
+   "expressible": {
+    "rules_top": "ecdf",
+    "rules_candidates": [
+     "ecdf",
+     "box_points_single"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points_single": 2,
+     "ecdf": 1
+    },
+    "acceptable_in_universe": [
+     "box_points_single",
+     "ecdf"
+    ],
+    "universe_size": 2,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P11B",
+   "theme": "环境",
+   "lang": "en",
+   "title": "同一个量测了 300 次",
+   "roles": {
+    "pH": "measure"
+   },
+   "picks": {
+    "y": [
+     "pH"
+    ],
+    "x": "none",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "distribution",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "hist",
+    "density",
+    "ecdf"
+   ],
+   "guidance": [
+    "G-014",
+    "G-045"
+   ],
+   "reason": {
+    "data_fact": "只有一个数值列，300 个值，可能不止一个峰。",
+    "perceptual": "值多时直方图 / 密度才能看出形状（试几个 bin 宽，G-014）。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P11",
+    "side": "B",
+    "differs_by": [
+     "meaning",
+     "n_rows"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "pH\n9.01\n9.05\n8.40\n8.72\n6.92\n6.66\n6.91\n9.05\n8.77\n6.68\n8.67\n6.69\n6.71\n6.75\n6.37\n8.56\n6.54\n7.88\n8.37\n8.00\n7.60\n7.28\n8.36\n6.43\n7.07\n8.28\n8.17\n8.40\n7.35\n7.90\n5.29\n9.32\n7.06\n7.96\n8.50\n8.08\n7.31\n6.68\n8.13\n7.18\n6.42\n8.29\n8.09\n7.76\n8.45\n6.66\n6.19\n6.51\n8.05\n8.73\n9.01\n7.58\n9.49\n7.88\n7.25\n8.81\n5.99\n8.31\n7.05\n8.88\n9.07\n7.07\n7.11\n7.76\n6.59\n6.25\n7.02\n6.90\n7.36\n8.21\n9.26\n7.69\n8.15\n8.63\n7.43\n8.60\n7.64\n5.81\n6.50\n6.51\n7.12\n7.23\n8.69\n7.57\n6.41\n7.24\n8.72\n8.09\n9.14\n6.66\n8.95\n6.11\n7.17\n8.77\n8.57\n9.26\n7.68\n6.80\n7.07\n7.37\n8.11\n8.02\n8.88\n7.82\n6.43\n6.62\n7.26\n8.61\n6.52\n7.91\n9.12\n7.72\n8.05\n9.17\n8.78\n6.23\n8.79\n8.00\n7.28\n6.69\n6.64\n9.02\n7.62\n6.48\n8.24\n7.37\n8.18\n7.61\n6.55\n7.89\n6.29\n6.33\n7.26\n8.79\n9.04\n7.48\n8.50\n5.93\n7.36\n8.64\n9.00\n7.28\n8.00\n7.26\n6.10\n7.75\n8.07\n8.19\n8.78\n8.19\n7.78\n8.00\n7.46\n8.05\n8.59\n6.36\n7.27\n8.54\n6.20\n8.12\n8.87\n6.16\n7.24\n8.52\n7.67\n8.29\n7.08\n6.98\n7.64\n7.83\n6.07\n7.40\n7.89\n8.46\n7.44\n8.13\n6.90\n8.39\n5.95\n8.14\n7.82\n7.77\n6.78\n6.24\n8.48\n9.48\n8.65\n8.31\n8.66\n7.03\n7.53\n6.64\n7.25\n8.21\n7.25\n7.49\n7.48\n7.54\n8.07\n6.57\n8.42\n6.74\n8.35\n9.05\n8.27\n6.28\n6.14\n8.77\n7.06\n7.81\n8.52\n7.85\n6.96\n7.02\n6.61\n8.20\n8.34\n8.67\n7.58\n9.02\n8.57\n8.55\n8.46\n9.23\n7.30\n6.51\n7.78\n6.61\n7.58\n8.46\n6.53\n8.71\n8.58\n8.26\n7.20\n6.53\n8.01\n6.74\n7.66\n6.69\n6.48\n8.42\n6.33\n6.59\n7.04\n8.97\n9.39\n7.18\n8.01\n8.28\n8.55\n8.53\n9.03\n8.31\n8.02\n7.76\n7.38\n6.30\n7.66\n9.28\n7.54\n6.90\n7.04\n8.30\n7.35\n9.08\n8.42\n8.52\n8.09\n7.54\n8.55\n6.62\n8.27\n6.38\n8.02\n8.74\n8.98\n8.66\n6.78\n8.38\n6.57\n7.94\n8.54\n8.40\n8.35\n9.16\n8.28\n8.93\n7.68\n8.36\n7.83\n9.42\n7.89\n7.40\n7.19\n7.49\n7.03\n8.83\n6.33\n8.34\n"
+   },
+   "expressible": {
+    "rules_top": "hist",
+    "rules_candidates": [
+     "hist",
+     "ecdf",
+     "box_points_single",
+     "density"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "density": 4,
+     "ecdf": 2,
+     "hist": 1
+    },
+    "acceptable_in_universe": [
+     "density",
+     "ecdf",
+     "hist"
+    ],
+    "universe_size": 4,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P12A",
+   "theme": "药理",
+   "lang": "en",
+   "title": "已汇总的剂量-响应：均值列 + sd 列",
+   "roles": {
+    "dose_uM": "ordered_x",
+    "response_mean": "measure",
+    "response_sd": "error"
+   },
+   "picks": {
+    "y": [
+     "response_mean"
+    ],
+    "x": "dose_uM",
+    "group": "none"
+   },
+   "identity": "summary_with_error",
+   "task": "dose_response",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_err",
+    "line_err"
+   ],
+   "guidance": [
+    "G-005",
+    "G-038",
+    "G-053"
+   ],
+   "reason": {
+    "data_fact": "response_sd 是 response_mean 的附属离散度；每个剂量一行。",
+    "perceptual": "误差线用表里的 sd 画在均值点上，sd 不单独成一条曲线。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P12",
+    "side": "A",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "dose_uM,response_mean,response_sd\n0.1,96.8,7.8\n0.3,90.9,7.5\n1,75.0,6.8\n3,50.0,5.5\n10,23.1,4.2\n30,9.1,3.5\n"
+   },
+   "expressible": {
+    "rules_top": "line_err",
+    "rules_candidates": [
+     "line_err",
+     "line_points",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_err": 1
+    },
+    "acceptable_in_universe": [
+     "line_err"
+    ],
+    "universe_size": 12,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-P12B",
+   "theme": "药理",
+   "lang": "en",
+   "title": "同一批剂量下两种检测各一列读数（同单位）",
+   "roles": {
+    "dose_uM": "ordered_x",
+    "assay1_signal": "measure",
+    "assay2_signal": "measure"
+   },
+   "picks": {
+    "y": [
+     "assay1_signal",
+     "assay2_signal"
+    ],
+    "x": "dose_uM",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_points"
+   ],
+   "guidance": [
+    "G-018",
+    "G-029"
+   ],
+   "reason": {
+    "data_fact": "两列都是 measure、同单位，共用有序的剂量横轴。",
+    "perceptual": "共用一个坐标轴的两条线直接比较位置；两层不拥挤。",
+    "user_purpose": null
+   },
+   "tier": "pair",
+   "pair": {
+    "id": "P12",
+    "side": "B",
+    "differs_by": [
+     "meaning"
+    ]
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "dose_uM,assay1_signal,assay2_signal\n0.1,96.8,90.2\n0.3,90.9,86.8\n1,75.0,76.7\n3,50.0,57.5\n10,23.1,30.7\n30,9.1,13.1\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_points": 1
+    },
+    "acceptable_in_universe": [
+     "line_points"
+    ],
+    "universe_size": 11,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N01",
+   "tier": "plain",
+   "theme": "生物",
+   "lang": "en",
+   "title": "两个基因型各 10 只小鼠的体重",
+   "roles": {
+    "genotype": "group",
+    "body_weight_g": "measure"
+   },
+   "picks": {
+    "y": [
+     "body_weight_g"
+    ],
+    "x": "none",
+    "group": "genotype"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_mean",
+    "box_points"
+   ],
+   "guidance": [
+    "G-012",
+    "G-050"
+   ],
+   "reason": {
+    "data_fact": "两个独立分组，每组 10 个值。",
+    "perceptual": "露出原始点并叠汇总，保留变异。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "genotype,body_weight_g\nWT,23.7\nWT,24.2\nWT,27.2\nWT,25.8\nWT,27.0\nWT,24.3\nWT,22.6\nWT,23.9\nWT,23.5\nWT,23.4\nKO,21.5\nKO,22.4\nKO,21.1\nKO,21.0\nKO,23.0\nKO,20.8\nKO,20.7\nKO,20.2\nKO,18.9\nKO,24.1\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "points_mean"
+    ],
+    "universe_size": 11,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N02",
+   "tier": "plain",
+   "theme": "化学",
+   "lang": "zh",
+   "title": "吸光度随反应时间升高",
+   "roles": {
+    "时间_min": "time",
+    "吸光度": "measure"
+   },
+   "picks": {
+    "y": [
+     "吸光度"
+    ],
+    "x": "时间_min",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_points"
+   ],
+   "guidance": [
+    "G-018"
+   ],
+   "reason": {
+    "data_fact": "横轴是单调递增的时间，每个时刻一个值。",
+    "perceptual": "有序横轴上连线。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "时间_min,吸光度\n0,-0.002\n4,0.140\n8,0.273\n12,0.342\n16,0.441\n20,0.454\n24,0.508\n28,0.536\n32,0.555\n36,0.587\n40,0.588\n44,0.593\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_points": 1
+    },
+    "acceptable_in_universe": [
+     "line_points"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N03",
+   "tier": "plain",
+   "theme": "物理",
+   "lang": "en",
+   "title": "应变与应力：两个不同的量，每行一个测点",
+   "roles": {
+    "strain_pct": "measure",
+    "stress_MPa": "measure"
+   },
+   "picks": {
+    "y": [
+     "stress_MPa"
+    ],
+    "x": "strain_pct",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "relationship",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "scatter",
+    "scatter_fit"
+   ],
+   "forbidden": [
+    {
+     "method": "line_points",
+     "g": "G-018"
+    }
+   ],
+   "guidance": [
+    "G-016",
+    "G-018"
+   ],
+   "reason": {
+    "data_fact": "两个不同单位的数值量，横轴不是时间也不是跟踪顺序。",
+    "perceptual": "散点保留每个测点，描述性拟合线要写明方法。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "tables": {
+    "t.csv": "strain_pct,stress_MPa\n0.89,15.8\n1.49,14.7\n2.84,23.2\n3.47,21.5\n2.97,24.0\n1.52,16.4\n3.22,23.1\n1.91,18.4\n2.53,20.3\n2.79,22.4\n2.50,20.1\n0.75,14.0\n3.39,22.4\n2.73,22.8\n0.79,10.9\n0.86,14.6\n1.04,14.5\n2.25,20.5\n0.55,7.8\n2.79,21.0\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {
+     "scatter_fit": 2
+    },
+    "acceptable_in_universe": [
+     "scatter",
+     "scatter_fit"
+    ],
+    "universe_size": 10,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N04",
+   "tier": "plain",
+   "theme": "环境",
+   "lang": "zh",
+   "title": "三个采样点各 6 个叶绿素 a 值",
+   "roles": {
+    "采样点": "group",
+    "叶绿素a_ug_L": "measure"
+   },
+   "picks": {
+    "y": [
+     "叶绿素a_ug_L"
+    ],
+    "x": "none",
+    "group": "采样点"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_mean",
+    "box_points"
+   ],
+   "guidance": [
+    "G-012",
+    "G-050"
+   ],
+   "reason": {
+    "data_fact": "三个独立采样点，每点 6 个值。",
+    "perceptual": "每组 6 个点，露出原始点叠汇总。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "采样点,叶绿素a_ug_L\n上游,1.53\n上游,2.86\n上游,3.33\n上游,3.93\n上游,2.49\n上游,2.02\n中游,3.83\n中游,4.24\n中游,5.99\n中游,6.31\n中游,6.67\n中游,4.41\n下游,3.22\n下游,2.59\n下游,3.07\n下游,4.72\n下游,5.38\n下游,4.66\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "points_mean"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N05",
+   "tier": "plain",
+   "theme": "环境",
+   "lang": "en",
+   "title": "两种处理下株高随天数的变化，每个时间点 4 株",
+   "roles": {
+    "day": "time",
+    "treatment": "group",
+    "height_cm": "measure"
+   },
+   "picks": {
+    "y": [
+     "height_cm"
+    ],
+    "x": "day",
+    "group": "treatment"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_band"
+   ],
+   "guidance": [
+    "G-012",
+    "G-018",
+    "G-021"
+   ],
+   "reason": {
+    "data_fact": "day 有序、有两个处理、每个时间点有重复。",
+    "perceptual": "每组一条汇总线加误差带、露出原始点，两层不拥挤。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "day,treatment,height_cm\n0,control,3.4\n0,control,4.2\n0,control,4.6\n0,control,6.2\n7,control,13.1\n7,control,12.7\n7,control,12.4\n7,control,10.3\n14,control,20.1\n14,control,19.0\n14,control,22.7\n14,control,22.5\n21,control,28.4\n21,control,27.1\n21,control,26.8\n21,control,27.3\n0,fertilized,7.0\n0,fertilized,1.5\n0,fertilized,4.0\n0,fertilized,3.5\n7,fertilized,16.9\n7,fertilized,18.8\n7,fertilized,18.0\n7,fertilized,18.1\n14,fertilized,29.0\n14,fertilized,31.1\n14,fertilized,32.4\n14,fertilized,30.8\n21,fertilized,47.6\n21,fertilized,46.8\n21,fertilized,46.6\n21,fertilized,44.4\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit",
+     "points_mean",
+     "box_points"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_band": 1
+    },
+    "acceptable_in_universe": [
+     "line_band"
+    ],
+    "universe_size": 14,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N06",
+   "tier": "plain",
+   "theme": "物理",
+   "lang": "en",
+   "title": "拟合残差，一个量 80 个值",
+   "roles": {
+    "residual_V": "measure"
+   },
+   "picks": {
+    "y": [
+     "residual_V"
+    ],
+    "x": "none",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "distribution",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "hist",
+    "density",
+    "ecdf",
+    "box_points_single"
+   ],
+   "guidance": [
+    "G-014",
+    "G-045"
+   ],
+   "reason": {
+    "data_fact": "只有一个数值列，80 个值。",
+    "perceptual": "单个分布用直方图或密度都可以；试几个 bin 宽。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "residual_V\n-0.47\n-0.17\n0.97\n-0.61\n-0.45\n-0.19\n0.03\n1.41\n0.61\n1.55\n0.15\n-0.86\n-0.37\n-0.82\n-0.51\n1.13\n-0.31\n1.42\n-1.92\n1.34\n0.88\n1.68\n0.07\n-1.94\n-0.71\n-0.49\n0.49\n0.37\n-1.61\n0.25\n-1.39\n1.10\n-2.78\n-0.47\n-0.65\n-1.28\n-1.44\n-1.11\n-2.95\n0.36\n1.11\n3.62\n-1.33\n0.33\n0.17\n-0.03\n1.68\n-1.15\n0.43\n0.87\n-0.04\n-0.85\n0.72\n0.93\n-1.34\n-0.50\n-1.44\n-0.60\n0.63\n1.76\n2.35\n-3.00\n0.57\n0.38\n0.37\n-0.48\n1.68\n-0.63\n-0.55\n0.10\n2.04\n0.07\n-1.58\n0.37\n-2.30\n-0.34\n-0.16\n-1.80\n-1.37\n1.40\n"
+   },
+   "expressible": {
+    "rules_top": "hist",
+    "rules_candidates": [
+     "hist",
+     "ecdf",
+     "box_points_single",
+     "density"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points_single": 3,
+     "density": 4,
+     "ecdf": 2,
+     "hist": 1
+    },
+    "acceptable_in_universe": [
+     "box_points_single",
+     "density",
+     "ecdf",
+     "hist"
+    ],
+    "universe_size": 4,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N07",
+   "tier": "plain",
+   "theme": "心理",
+   "lang": "en",
+   "title": "四种条件的反应时，每种 7 人",
+   "roles": {
+    "condition": "group",
+    "rt_ms": "measure"
+   },
+   "picks": {
+    "y": [
+     "rt_ms"
+    ],
+    "x": "none",
+    "group": "condition"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "points_mean",
+    "box_points"
+   ],
+   "guidance": [
+    "G-012",
+    "G-020"
+   ],
+   "reason": {
+    "data_fact": "四个独立条件，每组 7 个值。",
+    "perceptual": "类别用位置分开，露出原始点。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "condition,rt_ms\nA,436\nA,473\nA,475\nA,359\nA,452\nA,379\nA,409\nB,421\nB,432\nB,448\nB,468\nB,449\nB,381\nB,469\nC,506\nC,507\nC,571\nC,540\nC,499\nC,619\nC,483\nD,391\nD,404\nD,507\nD,421\nD,458\nD,506\nD,482\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "box_points": 2,
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "box_points",
+     "points_mean"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-N08",
+   "tier": "plain",
+   "theme": "化学",
+   "lang": "mixed",
+   "title": "酸化过程中 pH 随时间下降",
+   "roles": {
+    "time_min": "time",
+    "pH值": "measure"
+   },
+   "picks": {
+    "y": [
+     "pH值"
+    ],
+    "x": "time_min",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "line_points"
+   ],
+   "guidance": [
+    "G-018"
+   ],
+   "reason": {
+    "data_fact": "横轴是单调递增的时间，每个时刻一个值。",
+    "perceptual": "有序横轴上连线。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "time_min,pH值\n0,7.43\n10,7.08\n20,6.90\n30,6.78\n40,6.68\n50,6.59\n60,6.63\n70,6.53\n80,6.60\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_points": 1
+    },
+    "acceptable_in_universe": [
+     "line_points"
+    ],
+    "universe_size": 7,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H01",
+   "tier": "hard",
+   "theme": "医学",
+   "lang": "en",
+   "title": "血压 before / after 两列（没说是不是同一批人）",
+   "roles": {
+    "before_mmHg": "measure",
+    "after_mmHg": "measure"
+   },
+   "picks": {
+    "y": [
+     "after_mmHg"
+    ],
+    "x": "before_mmHg",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "paired_change",
+   "task_source": "needs_confirm",
+   "confirm": "paired_design",
+   "acceptable_top": [
+    "scatter_identity",
+    "paired_lines"
+   ],
+   "derive": [
+    "difference"
+   ],
+   "forbidden": [
+    {
+     "method": "line_points",
+     "g": "G-018"
+    },
+    {
+     "method": "line_band",
+     "g": "G-018"
+    }
+   ],
+   "guidance": [
+    "G-018",
+    "G-026",
+    "G-037",
+    "G-038"
+   ],
+   "reason": {
+    "data_fact": "两列同单位、列名是 before / after，每行像是同一个对象的前后。",
+    "perceptual": "同一个量的两次测量：等比例坐标轴加 y = x，或配对连线。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "tables": {
+    "t.csv": "before_mmHg,after_mmHg\n139,123\n138,124\n139,121\n151,143\n161,153\n135,127\n156,154\n141,131\n141,131\n116,100\n147,137\n124,107\n"
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 10,
+    "forbidden_present": [
+     "line_band"
+    ],
+    "forbidden_recommended": true,
+    "needs": {
+     "paired_lines": "no_template",
+     "scatter_identity": "missing"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H02",
+   "tier": "hard",
+   "theme": "生物",
+   "lang": "en",
+   "title": "三个孔起点差得很远，用户想比相对初始值的变化（不擅自归一化）",
+   "hint": "想比较三个样品相对起点涨了多少",
+   "roles": {
+    "time_h": "time",
+    "sample": "group",
+    "intensity_RFU": "measure"
+   },
+   "picks": {
+    "y": [
+     "intensity_RFU"
+    ],
+    "x": "time_h",
+    "group": "sample"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "line_points",
+    "line_band"
+   ],
+   "derive": [
+    "normalize",
+    "ratio"
+   ],
+   "guidance": [
+    "G-018",
+    "G-037"
+   ],
+   "reason": {
+    "data_fact": "三个样品的起点相差近 7 倍，原始刻度下低的曲线被压扁。",
+    "perceptual": "先照原始值画，并提示可选「相对初始值」；做了要写明丢掉了绝对量。",
+    "user_purpose": "用户想比较相对起点的变化。"
+   },
+   "forbidden": [],
+   "tables": {
+    "t.csv": "time_h,sample,intensity_RFU\n0,well_1,1217\n2,well_1,1680\n4,well_1,2054\n6,well_1,2504\n8,well_1,2892\n0,well_2,3488\n2,well_2,4592\n4,well_2,5678\n6,well_2,7080\n8,well_2,8309\n0,well_3,7882\n2,well_3,10409\n4,well_3,13624\n6,well_3,16427\n8,well_3,18651\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points",
+     "scatter",
+     "points_mean",
+     "box_points"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_points": 1
+    },
+    "acceptable_in_universe": [
+     "line_band",
+     "line_points"
+    ],
+    "universe_size": 13,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H03",
+   "tier": "hard",
+   "theme": "医学",
+   "lang": "en",
+   "title": "三组细菌载量 CFU，跨 3 个数量级",
+   "hint": "比较各组的细菌载量",
+   "roles": {
+    "group": "group",
+    "CFU_per_g": "measure"
+   },
+   "picks": {
+    "y": [
+     "CFU_per_g"
+    ],
+    "x": "none",
+    "group": "group"
+   },
+   "identity": "raw",
+   "task": "compare_groups",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "points_mean"
+   ],
+   "derive": [
+    "log"
+   ],
+   "forbidden": [
+    {
+     "method": "points_mean_logy",
+     "g": "G-011"
+    }
+   ],
+   "guidance": [
+    "G-003",
+    "G-011",
+    "G-012",
+    "G-037"
+   ],
+   "reason": {
+    "data_fact": "每组 6 个值，三组跨约 3 个数量级。",
+    "perceptual": "先画原始点；若用户同意取对数，要先取对数再算均值（对数轴上画原值的均值会误导）。",
+    "user_purpose": "用户要比较各组的载量。"
+   },
+   "tables": {
+    "t.csv": "group,CFU_per_g\nPBS,329\nPBS,891\nPBS,833\nPBS,486\nPBS,9068\nPBS,378\ndrugA,384417\ndrugA,89209\ndrugA,82924\ndrugA,52024\ndrugA,4320\ndrugA,25187\ndrugB,7318996\ndrugB,1400572\ndrugB,1147464\ndrugB,886453\ndrugB,2569233\ndrugB,647413\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "points_mean": 1
+    },
+    "acceptable_in_universe": [
+     "points_mean"
+    ],
+    "universe_size": 9,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": [
+     "points_geomean_on_log_scale"
+    ]
+   },
+   "note": "禁 points_mean_logy 的依据（G-011）只来自 GoG（p.93、p.218），FDV 没有这一条。",
+   "extra_gaps": [
+    "points_geomean_on_log_scale"
+   ]
+  },
+  {
+   "id": "RC-H04",
+   "tier": "hard",
+   "theme": "医学",
+   "lang": "en",
+   "title": "各组阳性数与样本总数（要算出阴性数才是构成）",
+   "hint": "各处理组阳性所占的比例",
+   "roles": {
+    "treatment": "group",
+    "positive": "measure",
+    "total": "measure"
+   },
+   "picks": {
+    "y": [
+     "positive"
+    ],
+    "x": "none",
+    "group": "treatment"
+   },
+   "identity": "counts",
+   "task": "part_whole",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "stacked_bar"
+   ],
+   "derive": [
+    "difference",
+    "ratio"
+   ],
+   "guidance": [
+    "G-035",
+    "G-037"
+   ],
+   "reason": {
+    "data_fact": "positive 与 total 是两列计数，阴性数 = total − positive，需要派生。",
+    "perceptual": "占比用共同基线上的长度比较。",
+    "user_purpose": "用户要看各组阳性的比例；派生阴性数 / 占比前要先问。"
+   },
+   "forbidden": [],
+   "tables": {
+    "t.csv": "treatment,positive,total\ncontrol,38,400\ndrug_1,61,380\ndrug_2,22,410\ndrug_3,75,395\n"
+   },
+   "expressible": {
+    "rules_top": "ecdf",
+    "rules_candidates": [
+     "ecdf"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 1,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {
+     "stacked_bar": "no_template"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H05",
+   "tier": "hard",
+   "theme": "化学",
+   "lang": "en",
+   "title": "均值 + 一列叫 err 的东西（不知道是 SD 还是 SEM）",
+   "roles": {
+    "sample": "group",
+    "mean_yield": "measure",
+    "err": "error"
+   },
+   "picks": {
+    "y": [
+     "mean_yield"
+    ],
+    "x": "none",
+    "group": "sample"
+   },
+   "identity": "summary_with_error",
+   "task": "compare_groups",
+   "task_source": "needs_confirm",
+   "confirm": "error_kind",
+   "acceptable_top": [
+    "points_err",
+    "line_err"
+   ],
+   "guidance": [
+    "G-005",
+    "G-038",
+    "G-053"
+   ],
+   "reason": {
+    "data_fact": "err 是 mean_yield 的附属离散度，但没有说明是 SD / SEM / CI。",
+    "perceptual": "误差线用表里的数画；含义要问，不默认成 SD。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "sample,mean_yield,err\ncontrol,10.2,1.1\nlow,14.8,1.9\nmid,21.3,2.2\nhigh,27.9,3.0\n"
+   },
+   "expressible": {
+    "rules_top": "points_err",
+    "rules_candidates": [
+     "points_err",
+     "bar_err"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "points_err": 1
+    },
+    "acceptable_in_universe": [
+     "points_err"
+    ],
+    "universe_size": 2,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H06",
+   "tier": "hard",
+   "theme": "医学",
+   "lang": "en",
+   "title": "葡萄糖（mM）与胰岛素（pM）随时间：量纲不同",
+   "roles": {
+    "time_h": "time",
+    "glucose_mM": "measure",
+    "insulin_pM": "measure"
+   },
+   "picks": {
+    "y": [
+     "glucose_mM",
+     "insulin_pM"
+    ],
+    "x": "time_h",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "trend",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "trend_facets"
+   ],
+   "guidance": [
+    "G-018",
+    "G-041"
+   ],
+   "reason": {
+    "data_fact": "两列单位不同（mM / pM），共用时间横轴。",
+    "perceptual": "量纲不同的量上下分面、各画各的坐标轴，不画成同一个纵轴。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "time_h,glucose_mM,insulin_pM\n0,5.08,37.0\n3,6.17,39.6\n6,6.37,45.0\n9,7.49,43.3\n12,8.11,37.7\n15,8.61,36.5\n18,10.20,36.5\n21,10.31,37.4\n"
+   },
+   "expressible": {
+    "rules_top": "line_points",
+    "rules_candidates": [
+     "line_points"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 7,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {
+     "trend_facets": "missing"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H07",
+   "tier": "hard",
+   "theme": "生物",
+   "lang": "en",
+   "title": "12 个基因 × 6 个样本的表达矩阵",
+   "roles": {
+    "gene": "row_id",
+    "s1": "measure",
+    "s2": "measure",
+    "s3": "measure",
+    "s4": "measure",
+    "s5": "measure",
+    "s6": "measure"
+   },
+   "picks": {
+    "y": [
+     "s1",
+     "s2",
+     "s3",
+     "s4",
+     "s5",
+     "s6"
+    ],
+    "x": "none",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "pattern_in_matrix",
+   "task_source": "from_data",
+   "acceptable_top": [
+    "heatmap"
+   ],
+   "guidance": [
+    "G-022",
+    "G-023"
+   ],
+   "reason": {
+    "data_fact": "每行一个基因、每列一个样本，格子里是同一种量。",
+    "perceptual": "行 × 列的矩阵用颜色亮度单调的色图看高低模式；是否有意义的中点要问。",
+    "user_purpose": null
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [],
+   "tables": {
+    "t.csv": "gene,s1,s2,s3,s4,s5,s6\nACTB,7.52,7.15,9.06,7.88,8.39,7.14\nGAPDH,8.77,9.29,9.10,9.42,9.98,9.73\nTP53,7.83,10.98,10.22,8.66,10.31,10.72\nMYC,13.10,10.35,12.81,11.31,11.26,11.43\nIL6,8.77,8.65,7.84,7.55,6.63,7.03\nTNF,9.94,8.24,9.54,9.35,9.13,8.25\nVEGFA,10.70,11.08,9.48,9.97,10.30,11.98\nCDK1,12.68,12.31,12.08,10.67,12.15,12.14\nBRCA1,7.04,8.93,7.02,8.07,8.78,9.34\nEGFR,10.55,9.22,9.71,8.27,9.56,7.59\nJUN,10.65,9.82,9.38,10.20,10.17,10.64\nFOS,9.68,11.65,11.41,11.11,11.37,10.07\n"
+   },
+   "expressible": {
+    "rules_top": "points_mean",
+    "rules_candidates": [
+     "points_mean",
+     "box_points",
+     "ecdf_groups",
+     "bar_error"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 10,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {
+     "heatmap": "no_template"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H08",
+   "tier": "hard",
+   "theme": "医学",
+   "lang": "en",
+   "title": "各症状的发生率（百分比），合计 187%，一个人可有多个症状",
+   "hint": "各症状的发生率怎么样",
+   "roles": {
+    "symptom": "group",
+    "pct_patients": "measure"
+   },
+   "picks": {
+    "y": [
+     "pct_patients"
+    ],
+    "x": "none",
+    "group": "symptom"
+   },
+   "identity": "percent",
+   "task": "ranking",
+   "task_source": "from_hint",
+   "acceptable_top": [
+    "ranking_bar",
+    "ranking_points"
+   ],
+   "forbidden": [
+    {
+     "method": "stacked_bar",
+     "g": "G-035"
+    }
+   ],
+   "guidance": [
+    "G-035",
+    "G-040"
+   ],
+   "reason": {
+    "data_fact": "百分比合计 187%，同一个病人可以同时有几个症状，不是互斥的部分。",
+    "perceptual": "按数值排序后沿共同基线比较长度；不画成合计为整体的堆叠。",
+    "user_purpose": "用户问各症状的发生率。"
+   },
+   "derive": [],
+   "tables": {
+    "t.csv": "symptom,pct_patients\nfatigue,62\nheadache,41\nnausea,27\ncough,33\nfever,18\nrash,6\n"
+   },
+   "expressible": {
+    "rules_top": "ecdf",
+    "rules_candidates": [
+     "ecdf",
+     "box_points_single"
+    ],
+    "rules_top_ok": false,
+    "acceptable_in_candidates": {},
+    "acceptable_in_universe": [],
+    "universe_size": 2,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {
+     "ranking_bar": "no_template",
+     "ranking_points": "no_template"
+    },
+    "extra_gaps": []
+   }
+  },
+  {
+   "id": "RC-H09",
+   "tier": "hard",
+   "theme": "药理",
+   "lang": "en",
+   "title": "剂量-响应里有剂量 0 的对照组：对数横轴放不下这个点",
+   "tables": {
+    "t.csv": "dose_uM,response_pct\n0,100.2\n0,98.7\n0,101.5\n0.1,96.1\n0.1,94.8\n0.1,97.3\n1,81.4\n1,78.9\n1,83.0\n10,46.2\n10,49.5\n10,44.1\n100,12.3\n100,10.8\n100,14.0\n"
+   },
+   "hint": null,
+   "derive": [],
+   "forbidden": [
+    {
+     "method": "line_band_logx",
+     "g": "G-001"
+    },
+    {
+     "method": "line_points_logx",
+     "g": "G-001"
+    }
+   ],
+   "roles": {
+    "dose_uM": "ordered_x",
+    "response_pct": "measure"
+   },
+   "picks": {
+    "y": [
+     "response_pct"
+    ],
+    "x": "dose_uM",
+    "group": "none"
+   },
+   "identity": "raw",
+   "task": "dose_response",
+   "task_source": "needs_confirm",
+   "confirm": "zero_control",
+   "acceptable_top": [
+    "line_band",
+    "logx_with_zero_control"
+   ],
+   "guidance": [
+    "G-001",
+    "G-054"
+   ],
+   "reason": {
+    "data_fact": "剂量 0.1–100 跨 3 个数量级，但还有 3 个剂量为 0 的对照点。",
+    "perceptual": "对数轴上 0 画不出来（G-001），直接上对数轴会把对照静默丢到轴外；线性轴保留全部点，或对数轴并把 0 对照单独标在轴外（断轴）并告知用户。",
+    "user_purpose": null
+   },
+   "expressible": {
+    "rules_top": "line_band",
+    "rules_candidates": [
+     "line_band",
+     "scatter_fit"
+    ],
+    "rules_top_ok": true,
+    "acceptable_in_candidates": {
+     "line_band": 1
+    },
+    "acceptable_in_universe": [
+     "line_band"
+    ],
+    "universe_size": 7,
+    "forbidden_present": [],
+    "forbidden_recommended": false,
+    "needs": {},
+    "extra_gaps": []
+   }
+  }
+ ]
+}

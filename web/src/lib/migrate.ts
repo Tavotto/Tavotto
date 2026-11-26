@@ -6,7 +6,7 @@ import type {
   ProjectDocument,
   TextObject,
 } from '@/types/document'
-import { SCHEMA_CURRENT, emptyDocument, migrateToProject } from '@/types/document'
+import { SCHEMA_CURRENT, SCHEMA_PROJECT, emptyDocument, migrateToProject } from '@/types/document'
 
 type Unknown = Record<string, unknown>
 
@@ -74,14 +74,15 @@ export function tooNewSchema(payload: unknown): number | null {
 
 /**
  * 把 /api/layouts 返回的任意载荷规范化成当前文档模型。
- * schema:3 项目文档直接透传（switchDocument 会校验），
+ * schema:3 / schema:4 项目文档直接透传（switchDocument 会校验），
  * schema:2 原样透传（补齐缺失字段），v1 结构走字段映射。
  */
 export function normalizeLayout(
   payload: unknown,
   name: string,
 ): FigureDocument | ProjectDocument {
-  if (payload && typeof payload === 'object' && (payload as { schema?: number }).schema === 3) {
+  const schema = payload && typeof payload === 'object' ? (payload as { schema?: unknown }).schema : undefined
+  if (schema === SCHEMA_PROJECT || schema === SCHEMA_CURRENT) {
     const pd = migrateToProject(payload)
     if (pd) return pd
   }

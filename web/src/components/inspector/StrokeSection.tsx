@@ -240,21 +240,24 @@ function DashRow({
  * 两种标注的外观分组共用这一行，不再一边与颜色挤一行、一边与不透明度挤一行。
  */
 function StrokeWidthRow({ value, onChange }: { value: number | undefined; onChange: (v: number) => void }) {
+  // `data-prop`：问题面板「线条太细」（画布对象那一条，ADR 0208）定位到这一栏
   return (
-    <Row label={sk('lineWidth')} labelWidth={INSPECTOR_LABEL_W}>
-      <NumberField
-        half
-        ariaLabel={sk('lineWidth')}
-        value={value ?? 1}
-        mixed={value === undefined}
-        step={0.25}
-        min={0.1}
-        max={20}
-        precision={2}
-        unit="pt"
-        onChange={onChange}
-      />
-    </Row>
+    <div data-prop="strokePt">
+      <Row label={sk('lineWidth')} labelWidth={INSPECTOR_LABEL_W}>
+        <NumberField
+          half
+          ariaLabel={sk('lineWidth')}
+          value={value ?? 1}
+          mixed={value === undefined}
+          step={0.25}
+          min={0.1}
+          max={20}
+          precision={2}
+          unit="pt"
+          onChange={onChange}
+        />
+      </Row>
+    </div>
   )
 }
 

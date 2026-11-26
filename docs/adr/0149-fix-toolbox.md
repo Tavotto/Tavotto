@@ -176,3 +176,10 @@ Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档。两档�
 用界面语言写。`POST /api/ai/fix` 带上前端的 `i18n.language`，`fixsession.language_rule` 按闭集（目前只有 `zh` → 简体中文）在
 提示词末尾加一段 LANGUAGE；英文与认不出的语言不加（提示词本身是英文）。内置循环的系统提示与 CLI 提示词同一段，CLI 那份放在
 准备报告之前，报告被截断时不跟着丢。包名、命令、路径、报错原文不翻译。
+
+**修订（2026-11-25，任务清单）**：用户拍板「照视频的设计」把修复进度做成任务清单「找原因 → 动手修 → 运行验证 → 收尾」。
+会话公开状态加 `stage: {step: diagnose|fix|verify|finish, round}`（闭集码 + 整数，没有自由文本），在工具**开始**时由
+`fixtools.next_stage` 推进：按工具**所在的组**归步（看 = 找原因；改 / 接数据 / 跳过导入文件夹 / 跑命令 + `propose_fix` = 动手修；
+试 = 运行验证；`finish` = 收尾；`ask_user` / `pick_file` / `prepare_diagnostics` 不推进），只往后走；验证之后又动手修算第 2 轮，
+不把已打的勾收回。不靠模型自己列计划，三种模式（Codex CLI / Claude CLI / 内置循环）同一条路（都经 `_activity`）。
+注册表全覆盖由 `tests/test_fix_stages.py::test_fix_stage_of_tool_covers_registry` 守着：新工具不归类就红。

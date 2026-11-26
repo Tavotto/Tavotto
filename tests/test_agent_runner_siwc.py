@@ -144,11 +144,19 @@ def _assert_compliant(req: dict) -> None:
     for f in siwc_wire.FORBIDDEN_FIELDS:
         assert f not in body, f
     assert body["stream"] is True and body["store"] is False
-    assert "reasoning" not in body and "include" not in body
+    # 思考：只在选了 SIWC_EFFORTS 里的档位时发，且一定连着 include 加密思考（2026-11-25 真服务核对）
+    if "reasoning" in body:
+        assert body["reasoning"]["effort"] in siwc_wire.SIWC_EFFORTS
+        assert body["include"] == ["reasoning.encrypted_content"]
+    else:
+        assert "include" not in body
     assert isinstance(body["input"], list)
     for it in body["input"]:
         assert it.get("role") != "system"
-        assert it.get("type") != "reasoning"
+        # 回放的 reasoning 条目必须带 encrypted_content（store: false 下不带的会被拒）
+        assert it.get("type") != "reasoning" or (
+            "reasoning" in body and it.get("encrypted_content")
+        )
     for t in body.get("tools") or []:
         assert t["type"] == "namespace" and t["name"] == siwc_wire.NAMESPACE
         assert all(inner["type"] == "function" for inner in t["tools"])
@@ -496,12 +504,14 @@ def test_error_event_maps_closed_codes():
 
 
 # --------------------------------------------------------------------------- 开关与进程入口
-def test_flag_is_off_by_default(monkeypatch):
+def test_flag_is_on_by_default_and_only_0_turns_it_off(monkeypatch):
+    """维护者 2026-11-25：「开关默认开」。只认 `0` 一个关值：拼错的关值不会悄悄关掉一个用户已经在用的登录。"""
     monkeypatch.delenv(siwc_wire.ENV_FLAG, raising=False)
-    assert not siwc_wire.enabled()
-    for v in ("", "0", "true", "yes"):
-        assert not siwc_wire.enabled({siwc_wire.ENV_FLAG: v})
-    assert siwc_wire.enabled({siwc_wire.ENV_FLAG: "1"})
+    assert siwc_wire.enabled()
+    for v in ("", "1", "true", "yes", "off"):
+        assert siwc_wire.enabled({siwc_wire.ENV_FLAG: v})
+    assert not siwc_wire.enabled({siwc_wire.ENV_FLAG: "0"})
+    assert not siwc_wire.enabled({siwc_wire.ENV_FLAG: " 0 "})
 
 
 def test_siwc_is_not_a_regular_wire():
@@ -523,7 +533,7 @@ def _cli(monkeypatch, cand, tmp_path, capsys, *, flag: bool, extra=(), replies=(
     if flag:
         monkeypatch.setenv(siwc_wire.ENV_FLAG, "1")
     else:
-        monkeypatch.delenv(siwc_wire.ENV_FLAG, raising=False)
+        monkeypatch.setenv(siwc_wire.ENV_FLAG, "0")  # 显式关（默认已是开）
     prompt = tmp_path / "prompt.txt"
     prompt.write_text("make the line blue", encoding="utf-8")
     argv = [
@@ -555,7 +565,7 @@ GOOD = ("--base-url", siwc_wire.BASE_URL, "--auth", "bearer")
         (False, GOOD),  # 开关没开
         (True, ("--base-url", siwc_wire.BASE_URL)),  # 不是 bearer
         (True, ("--base-url", "https://example.test/v1", "--auth", "bearer")),  # 令牌不去别处
-        (True, (*GOOD, "--effort", "high")),
+        (True, (*GOOD, "--effort", "minimal")),  # SIWC 拒 minimal（真服务 unsupported_value）
         (True, (*GOOD, "--fallback", "openai-chat=https://api.openai.com/v1")),
     ],
 )
@@ -700,3 +710,74 @@ def test_real_transport_stops_reading_after_the_terminal_event(cand):
         srv.close()
     assert res.ok, done
     assert time.monotonic() - t0 < 4
+
+
+# --------------------------------------------------------------------------- 思考强度（2026-11-25 真服务核对后打开）
+def _build(effort, history):
+    return siwc_wire.SiwcResponsesWire().build(
+        base_url=siwc_wire.BASE_URL,
+        api_key=TOKEN,
+        model="m",
+        system="sys",
+        tools=[],
+        history=history,
+        effort=effort,
+        max_output_tokens=1024,
+    )
+
+
+def test_effort_sends_reasoning_with_encrypted_include():
+    req = _build("high", [wires.Msg(role="user", text="hi")])
+    assert req.body["reasoning"] == {"effort": "high"}
+    assert req.body["include"] == ["reasoning.encrypted_content"]
+    _assert_compliant({**req.__dict__})
+
+
+@pytest.mark.parametrize("effort", [None, "minimal", "none", "adaptive"])
+def test_unsupported_or_missing_effort_sends_no_reasoning(effort):
+    req = _build(effort, [wires.Msg(role="user", text="hi")])
+    assert "reasoning" not in req.body and "include" not in req.body
+
+
+def test_replay_keeps_only_encrypted_reasoning_items():
+    turn = wires.Turn(
+        text="",
+        tool_calls=[wires.ToolCall("c1", "read_file", {"path": "a"})],
+        native=[
+            {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "ENC"},
+            {"type": "reasoning", "id": "rs_2", "summary": []},
+            _call("read_file", {"path": "a"}, "c1"),
+        ],
+    )
+    hist = [
+        wires.Msg(role="user", text="go"),
+        wires.Msg(role="assistant", turn=turn),
+        wires.Msg(role="tool", results=[wires.ToolResult("c1", "read_file", "x")]),
+    ]
+    with_effort = [
+        it.get("id") for it in _build("medium", hist).body["input"] if it.get("type") == "reasoning"
+    ]
+    assert with_effort == ["rs_1"]
+    without = [it for it in _build(None, hist).body["input"] if it.get("type") == "reasoning"]
+    assert without == []
+
+
+@pytest.mark.parametrize(
+    ("effort", "ok"),
+    [
+        (None, True),
+        ("low", True),
+        ("xhigh", True),
+        ("max", True),
+        ("minimal", False),
+        ("none", False),
+    ],
+)
+def test_runner_accepts_only_siwc_efforts(monkeypatch, effort, ok):
+    monkeypatch.setenv(siwc_wire.ENV_FLAG, "1")
+    assert (
+        siwc_wire.runner_args_ok(
+            base_url=siwc_wire.BASE_URL, auth="bearer", fallback=[], effort=effort, thinking="none"
+        )
+        is ok
+    )

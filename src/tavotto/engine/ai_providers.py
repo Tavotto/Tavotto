@@ -618,6 +618,8 @@ def resolve(agent: str, pid: str | None = None) -> dict | None:
         return None
     if agent == ai_agents.BUILTIN_ID:
         # 内置执行器没有「家族」：它能用任何一条 Key 连接，只认显式指定（没有「当前选中」这回事）
+        if pid == SIWC_CONNECTION_ID:
+            return siwc_record()
         return get(pid) if pid else None
     rec = get(pid) if pid else get(active_id(agent))
     if rec is None or rec.get("agent") != agent:
@@ -709,6 +711,8 @@ def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
     **判据只在这一处**（改图的 `spawn_overrides("builtin")`、AI 修复的 `fixsession.connection()`、连接视图的路由都问它）：
     有 Key（账号登录的记录看访问令牌）、有型号、地址合规（`check_base_url`：https 或本机回环）、不是不兼容的旧记录、家族认得。
     账号登录记录的令牌可能快过期：spawn 之前由 `ai_oauth.ensure_fresh` 刷新（这里只看有没有令牌 + 刷新令牌）。"""
+    if is_siwc(rec):
+        return _siwc_conn(rec, model)
     if not rec or incompatibility(rec):
         return None
     wire = protocol_of(rec)
@@ -913,6 +917,8 @@ def _builtin_overrides(
     rec: dict, model: str | None, effort: str | None = None
 ) -> tuple[list[str], dict[str, str]]:
     """内置执行器的注入：地址 / 型号 / 协议名进 argv，**密钥（或账号登录的令牌）只进环境变量**（不进 argv / 日志 / 事件）。不可用 → 两者皆空。"""
+    if is_siwc(rec):
+        return siwc_overrides(rec, model, effort)
     conn = builtin_conn(rec, model)
     if conn is None:
         return [], {}
@@ -925,6 +931,118 @@ def _builtin_overrides(
         args += ["--auth", "bearer"]
     args += builtin_effort_args(rec, effort, conn["model"])
     return args, {ai_agents.BUILTIN_KEY_ENV: conn["api_key"]}
+
+
+# --------------------------------------------------------------------------- Sign in with ChatGPT（ADR 0209 §四）
+#: SIWC 连接 id：不以 `sub:` 开头（与 Codex 登录态、「订阅类不可管理」判据都不混），也不是任何 provider 记录的 id
+SIWC_CONNECTION_ID = "siwc:chatgpt"
+
+
+def is_siwc(rec: dict | None) -> bool:
+    return bool(rec) and rec.get("auth") == "siwc" and rec.get("id") == SIWC_CONNECTION_ID
+
+
+def siwc_record() -> dict | None:
+    """SIWC 的**虚拟**记录（不在 `ai.providers[]` 里，没有令牌字段）：开关开且有已登录、许可订阅额度的账号才有。
+    它不在 `list_providers()` 里：保存时探测、Key 的增删改结构上碰不到它；「挑第一个能用的连接」（`ai_connections.first_key_connection`）在所有 Key 之后显式取它
+    （ADR 0209 §七：SIWC 与 API 体验相同）。"""
+    from . import siwc_store  # 函数内 import：不让 provider 记录模块在 import 时就碰 SIWC 存储
+    from .agent_runner import siwc_wire
+
+    if not siwc_wire.enabled():
+        return None
+    st = siwc_store.public_status()
+    if not st.get("signed_in") or not st.get("plan_usage_enabled"):
+        return None
+    models = [m["id"] for m in st.get("models") or []]
+    return {
+        "id": SIWC_CONNECTION_ID,
+        "auth": "siwc",
+        # 不是任何 CLI 家族：按 `agent` 分流的路径（家族判断、Codex 注入、不兼容检查）一律碰不到它
+        "agent": ai_agents.BUILTIN_ID,
+        "label": "ChatGPT",
+        "models": models,
+        "default_model": models[0] if models else None,
+    }
+
+
+def _siwc_conn(rec: dict, model: str | None) -> dict | None:
+    """SIWC 的 `builtin_conn` 形状：协议 / 地址写死（`siwc_wire`），**不带令牌**（spawn 前由 `siwc_overrides` 现取），无 fallback、无 effort。"""
+    from .agent_runner import siwc_wire
+
+    chosen = str(model or "").strip() or str(rec.get("default_model") or "").strip()
+    if not chosen or not siwc_wire.enabled():
+        return None
+    return {
+        "wire": siwc_wire.WIRE_NAME,
+        "base_url": siwc_wire.BASE_URL,
+        "api_key": "",
+        "model": chosen,
+        "auth": "bearer",
+        "provider_id": SIWC_CONNECTION_ID,
+    }
+
+
+def is_siwc_conn(conn: dict | None) -> bool:
+    """`builtin_conn` 形状的连接是不是 SIWC 的（AI 修复 / 结构化调用拿到的那种）。"""
+    return bool(conn) and conn.get("provider_id") == SIWC_CONNECTION_ID
+
+
+def siwc_conn_with_token(conn: dict, *, min_valid_s: int | None = None) -> dict | None:
+    """给 SIWC 连接装上一个够新的访问令牌（不够新就刷新，可能联网）。拿不到（没登录 / 没许可额度 / 暂时失败）→ None。
+    令牌只进返回的 dict（与 Key 连接的 `api_key` 同一出口：只给 `fixsession.build_model`），不落盘、不进日志。"""
+    from . import siwc_auth, siwc_login
+
+    try:
+        token = siwc_login.provider().access_token(
+            min_valid_s=siwc_auth.MIN_VALID_S if min_valid_s is None else min_valid_s
+        )
+    except (siwc_auth.NeedsLogin, siwc_auth.TokenUnavailable):
+        return None
+    return {**conn, "api_key": token}
+
+
+def siwc_efforts(model: str | None) -> list[str]:
+    """SIWC 某个型号能选的思考强度（登录 / 刷新型号时从 `/v1/models` 缓存的那份；没缓存 = 空 = 不发）。"""
+    from . import siwc_store
+
+    for m in siwc_store.public_status().get("models") or []:
+        if m.get("id") == model:
+            return list(m.get("efforts") or [])
+    return []
+
+
+def siwc_overrides(
+    rec: dict, model: str | None, effort: str | None = None
+) -> tuple[list[str], dict[str, str]]:
+    """SIWC 的内置执行器注入：专用 argv（满足 `siwc_wire.runner_args_ok`：Bearer、官方地址、无 `--fallback` / `--thinking`，`--effort` 只给型号声明过的档位）；
+    令牌（`siwc_login.provider().access_token`）与开关只进环境变量。拿不到令牌 → 两者皆空（调用方据此拒绝起跑）。"""
+    from . import siwc_auth, siwc_login
+    from .agent_runner import siwc_wire
+
+    conn = _siwc_conn(rec, model)
+    if conn is None:
+        return [], {}
+    try:
+        token = siwc_login.provider().access_token(min_valid_s=siwc_auth.MIN_VALID_S)
+    except (siwc_auth.NeedsLogin, siwc_auth.TokenUnavailable):
+        return [], {}
+    args = [
+        "--wire",
+        conn["wire"],
+        "--base-url",
+        conn["base_url"],
+        "--model",
+        conn["model"],
+        "--auth",
+        "bearer",
+    ]
+    if effort and effort in siwc_efforts(conn["model"]):
+        args += [
+            "--effort",
+            effort,
+        ]  # 只发这个型号声明过的档位（与 Key 连接的 builtin_effort_args 同一口径：不确定就不发）
+    return args, {ai_agents.BUILTIN_KEY_ENV: token, siwc_wire.ENV_FLAG: "1"}
 
 
 def create(rec: dict) -> dict:

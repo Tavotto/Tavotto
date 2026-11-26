@@ -171,6 +171,7 @@ describe('进行中的信号', () => {
     expect(statusLine().dataset.aiStatus).toBe('running')
     expect(statusLine().classList.contains('text-shimmer')).toBe(true)
     expect(statusLine().textContent).toBe(ai('session.running'))
+    expect(statusLine().closest('[data-ai-edit-steps]')).not.toBeNull()
 
     await act(async () => {
       useAiStore.getState().finish({ session: 's1', status: 'done', changed: false, diff: '' })
@@ -178,8 +179,8 @@ describe('进行中的信号', () => {
     expect(statusLine().dataset.aiStatus).toBe('done')
     expect(statusLine().classList.contains('text-shimmer')).toBe(false)
     expect(statusLine().textContent).toBe(ai('session.doneNoChange'))
-    // running → done 那一下原位换（宪法第二十三节）：旧句留在 data-ghost 里退场，DOM 文本已是新句
-    expect(statusLine().closest<HTMLElement>('.swap-text')!.dataset.ghost).toBe(ai('session.running'))
+    // 进行中那句话在改图任务清单的标题上；没改成就收掉清单，那句话回到状态行（用户 2026-11-26）
+    expect(host.querySelector('[data-ai-edit-steps]')).toBeNull()
     // 整个面板里没有别的忙碌指示（旧版在这里摆过 loader + 骨架）；中止钮那圈轨道也随完成消失
     expect(host.querySelectorAll('.animate-spin')).toHaveLength(0)
   })
@@ -364,5 +365,29 @@ describe('过程与正文', () => {
     await act(async () => useAiStore.getState().appendDelta('s1', 'message', 'move **legend** now'))
     expect(host.querySelector('strong')?.textContent).toBe('legend')
     expect(host.querySelectorAll(`.${STREAM_WORD_CLASS}`)).toHaveLength(0)
+  })
+})
+
+describe('改图任务清单（ai_bridge._EditStage 的事实）', () => {
+  const stepStates = () => [...host.querySelectorAll<HTMLElement>('[data-ai-edit-steps] [data-task-step]')].map((x) => `${x.dataset.taskStep}:${x.dataset.stepState}`)
+
+  it('进行中按 stage 勾，自动修正第 2 轮在「改脚本」上挂轮次；改成功收尾全勾、清单留着', async () => {
+    await mount([session()])
+    expect(stepStates()).toEqual(['read:active', 'edit:pending', 'verify:pending'])
+    await act(async () => useAiStore.getState().setStage('s1', { step: 'verify', round: 1 }))
+    expect(stepStates()).toEqual(['read:done', 'edit:done', 'verify:active'])
+    await act(async () => useAiStore.getState().setStage('s1', { step: 'edit', round: 2 }))
+    expect(stepStates()).toEqual(['read:done', 'edit:active', 'verify:pending'])
+    expect(host.querySelector('[data-task-meta]')!.textContent).toBe(ai('session.round', { n: 2 }))
+    await act(async () => useAiStore.getState().finish({ session: 's1', status: 'done', changed: true, diff: '-a\n+b' }))
+    expect(stepStates()).toEqual(['read:done', 'edit:done', 'verify:done'])
+  })
+
+  it('失败收尾：清单收掉，那句话回到状态行', async () => {
+    await mount([session({ stage: { step: 'edit', round: 1 } })])
+    expect(host.querySelector('[data-ai-edit-steps]')).not.toBeNull()
+    await act(async () => useAiStore.getState().finish({ session: 's1', status: 'failed', changed: false, diff: '' }))
+    expect(host.querySelector('[data-ai-edit-steps]')).toBeNull()
+    expect(statusLine().closest('[data-ai-edit-steps]')).toBeNull()
   })
 })

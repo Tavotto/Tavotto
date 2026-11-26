@@ -344,7 +344,14 @@ export function PreflightPill({
           ? mc('pillStale')
           : clean
             ? mc('pillClean')
-            : mc('pillCounts', { errors: err, warnings: warn, notVerifiable: nv })}
+            : // 只写不为 0 的几项（2026-11-25 用户选的）：「0 项要改 · 1 项需留意」里的 0 是噪音
+              [
+                err ? mc('pillError', { count: err }) : null,
+                warn ? mc('pillWarn', { count: warn }) : null,
+                nv ? mc('pillNotVerifiable', { count: nv }) : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
       </StatusPill>
     </Button>
   )
