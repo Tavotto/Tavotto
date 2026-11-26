@@ -681,7 +681,11 @@ def _make_history(local: Path, value: int = 42) -> Path:
     return db
 
 
-def test_history_migrated_first_even_when_sync_budget_exhausted(world):
+def test_history_migrated_first_even_when_sync_budget_exhausted(world, monkeypatch):
+    # 历史库走独立的 CRITICAL_BUDGET_S（产品值 4 s 墙钟）。本用例要证明的是「主预算耗尽时历史库仍排在最前迁过去」，
+    # 不是「4 s 内迁完」：慢 Windows runner 上一次 sqlite backup 可以超过 4 s，于是被记成 deferred、目标库没建出来，
+    # 读的时候 connect 新建了空库 → no such table（11-26 #2266 合并组，backend-platforms (windows, 14)，用例耗时 4.9 s）。
+    monkeypatch.setattr(msixmigrate, "CRITICAL_BUDGET_S", 120.0)
     _r, local = world.pkg(PFN_A)
     _make_history(local)
     put(local / "origin" / "a.json")

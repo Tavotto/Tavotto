@@ -421,7 +421,7 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 
 **决定**：
 
-1. `propose` 多一个可选的 `spec`：前端按画布绑定解析好的出版规范（`lib/specBinding.resolveDocumentSpec`，期刊覆盖已并入、快照优先那套取舍只在前端一处）。后端过 `profiles.validate_spec` 后只取模板要的数字，**不在 `ai_data_*` 里重做合并**。不带 = 默认规范，样式、脚本、响应逐字不变。
+1. `propose` 多一个可选的 `spec`：前端按画布绑定解析好的出版规范（`lib/specBinding.resolveDocumentSpec`，期刊覆盖已并入、快照优先那套取舍只在前端一处）。后端过 `profiles.validate_spec` 后只取模板要的数字，**不在 `ai_data_*` 里重做合并**。不带 = 默认规范，样式、脚本、响应逐字不变。 **判据不是画法（2026-11-27 更正）**：`axis_policy.enclosed_spines` 为 False 只表示这份规范不要求四周边框（期刊底、自由排版），模板只在它为 True 时才取；False 时沿用具名默认（四周边框）——此前一选期刊就把上、右边框去掉，是把「不要求」读成了「去掉」。
 2. **栏宽**：`widths_mm.single / double` 有就用；缺的那档按规范的唯一读法 `profiles.derive_page_columns` 取（最窄一档当单栏、最宽一档当双栏，只有一档就两处都用它）；一档都没规定才落到具名默认 `_STYLE_DEFAULTS`——期刊没写就是没写（ADR 0155 §2），不拿别家规范的数字补。
 3. **字号**（同日用户再定，原话：「出图的时候，首要条件就是字号符合期刊的规定的字号范围，然后再在不干涉的情况下，选用字号范围内的最大值，同时还要保证相同对象的字号大小一致」）：
    * 请求另带 `font_range: {min_pt?, max_pt?}`——**期刊自己规定的**上下限（前端 `journalStyleTargets`，按 `journalSources` 认，不把中性底的兜底数字当成期刊的规定）。

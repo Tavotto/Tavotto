@@ -2216,14 +2216,22 @@ jobs:
     #     （合同测试与自验都认单 project 整片的形状；片 3 的 check 名消失前，先把它从必需检查里移除）；
     #   · 全部撤销：删掉 strategy 与 name，`pnpm e2e` 去掉 `${{ matrix.projects }}`，artifact 名去掉
     #     片号；自验步骤与 step 级 timeout 留着也无害。
+    # **三片 → 六片（2026-11-26）**：合并组里三片的 job 中位 34 / 31 / 37 分钟（Playwright 步 29 / 25 / 31，构建约 6 分钟），
+    # 改到界面的 PR 的 CI 中位 57–58 分钟、最晚完成的就是这条腿（不改界面的 PR 加片后已是 34–35 分钟）。按 project 实测：
+    # webkit 87 条约 17 分钟、chromium-en 58 条约 8.5 分钟、chromium 两半各约 30 分钟。于是 chromium 原生 `--shard=i/4`
+    # 切四份（片 1–4）、webkit 与 chromium-en 各自一片（片 5、6；片 6 的 chromium-en 只装 chromium）。最长一片 e2e
+    # 约 17 分钟，job 约 23 分钟。必需检查只有三个 Gate，片名改义不用动仓库设置。回退 = 把 include 换回上面那三行的形状。
     name: windows-exe-smoke (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { shard: 1, browsers: "chromium",        projects: "--project=chromium --shard=1/2",         others: "--project=webkit --project=chromium-en|--project=chromium --shard=2/2" }
-          - { shard: 2, browsers: "chromium webkit", projects: "--project=webkit --project=chromium-en", others: "--project=chromium --shard=1/2|--project=chromium --shard=2/2" }
-          - { shard: 3, browsers: "chromium",        projects: "--project=chromium --shard=2/2",         others: "--project=chromium --shard=1/2|--project=webkit --project=chromium-en" }
+          - { shard: 1, browsers: "chromium", projects: "--project=chromium --shard=1/4", others: "--project=chromium --shard=2/4|--project=chromium --shard=3/4|--project=chromium --shard=4/4|--project=webkit|--project=chromium-en" }
+          - { shard: 2, browsers: "chromium", projects: "--project=chromium --shard=2/4", others: "--project=chromium --shard=1/4|--project=chromium --shard=3/4|--project=chromium --shard=4/4|--project=webkit|--project=chromium-en" }
+          - { shard: 3, browsers: "chromium", projects: "--project=chromium --shard=3/4", others: "--project=chromium --shard=1/4|--project=chromium --shard=2/4|--project=chromium --shard=4/4|--project=webkit|--project=chromium-en" }
+          - { shard: 4, browsers: "chromium", projects: "--project=chromium --shard=4/4", others: "--project=chromium --shard=1/4|--project=chromium --shard=2/4|--project=chromium --shard=3/4|--project=webkit|--project=chromium-en" }
+          - { shard: 5, browsers: "webkit",   projects: "--project=webkit",               others: "--project=chromium --shard=1/4|--project=chromium --shard=2/4|--project=chromium --shard=3/4|--project=chromium --shard=4/4|--project=chromium-en" }
+          - { shard: 6, browsers: "chromium", projects: "--project=chromium-en",          others: "--project=chromium --shard=1/4|--project=chromium --shard=2/4|--project=chromium --shard=3/4|--project=chromium --shard=4/4|--project=webkit" }
     # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
     permissions:
       contents: read
@@ -2887,7 +2895,7 @@ jobs:
           gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   posix-e2e:
-    name: posix-e2e (${{ matrix.shard }}/3)
+    name: posix-e2e (${{ matrix.shard }}/5)
     # **POSIX 那条 e2e 腿**（issue #30 / STATUS 的 R-16）。
     #
     # 在这之前，全仓唯一执行 `pnpm e2e` 的地方是 windows-exe-smoke，于是
@@ -2922,12 +2930,13 @@ jobs:
       && needs.docs-scope.outputs.docs_only != 'true'
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [docs-scope, frontend]
-    # #768：三台独立 GitHub 托管 Runner 通过 Playwright 原生 --shard 划分测试。
+    # #768：独立 GitHub 托管 Runner 通过 Playwright 原生 --shard 划分测试（2026-11-26 三台 → 五台：每片 job 22–26 分钟、
+    # 在 frontend 之后才开始，Windows 那条切六片后它会变成最晚的腿；五片每片约 14–16 分钟）。
     # Gate 原有 posix-e2e id 不变；任一矩阵副本失败整个 needs 都失败。
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4, 5]
     # 快速失败步骤取消本 run 要 actions: write；其余保持顶层的只读（最小授权；ci-lanes.md「合并组快速失败」）。
     permissions:
       contents: read
@@ -3013,9 +3022,9 @@ jobs:
           TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
             --project=chromium --project=chromium-en > "$RUNNER_TEMP/e2e-planned-all.json"
           TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
-            --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3 \
+            --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/5 \
             > "$RUNNER_TEMP/e2e-planned.json"
-          pnpm e2e --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3
+          pnpm e2e --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/5
 
       # 功能登记表的「真跑」那一半（ADR 0097）：合并态这次运行的报告里，每个 active 功能登记的
       # 用例都出现了、结论都是 expected / flaky。skipped 判红（skip 不是绿），报告里没有它也判红
