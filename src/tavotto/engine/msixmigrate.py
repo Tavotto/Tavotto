@@ -792,9 +792,14 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
     return "done"
 
 
+#: SQLite 的主错误码（固定值）。`sqlite3.SQLITE_BUSY` 等常量与 `sqlite_errorcode` 属性 3.11 才有——3.10 上直接引用会
+#: AttributeError，把真失败也甩出处理器、永远计不进次数（Codex #2283）。扩展码（如 517 BUSY_SNAPSHOT）取低 8 位比。
+_SQLITE_BUSY, _SQLITE_LOCKED = 5, 6
+
+
 def _is_lock_contention(e: sqlite3.OperationalError) -> bool:
     code = getattr(e, "sqlite_errorcode", None)
-    if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+    if isinstance(code, int) and (code & 0xFF) in (_SQLITE_BUSY, _SQLITE_LOCKED):
         return True
     msg = str(e).lower()
     return "database is locked" in msg or "database table is locked" in msg or "busy" in msg

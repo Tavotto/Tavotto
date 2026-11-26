@@ -1074,3 +1074,31 @@ def test_a_destination_held_locked_by_another_process_is_deferred_not_counted_as
     monkeypatch.setattr(ai_history, "merge_legacy", real)
     assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
     assert _session_ids(db) == ["old1"]
+
+
+def test_lock_classification_works_without_the_311_sqlite_constants(monkeypatch):
+    """Codex #2283：3.10 的 sqlite3 没有 SQLITE_BUSY / SQLITE_LOCKED 常量、异常也没有 sqlite_errorcode——
+    判据不能依赖它们，否则 AttributeError 把真失败甩出处理器。"""
+    monkeypatch.delattr(sqlite3, "SQLITE_BUSY", raising=False)
+    monkeypatch.delattr(sqlite3, "SQLITE_LOCKED", raising=False)
+    assert msixmigrate._is_lock_contention(sqlite3.OperationalError("database is locked")) is True
+    assert msixmigrate._is_lock_contention(sqlite3.OperationalError("disk I/O error")) is False
+    busy_snapshot = sqlite3.OperationalError("x")
+    busy_snapshot.sqlite_errorcode = 517  # SQLITE_BUSY_SNAPSHOT：扩展码，低 8 位是 BUSY
+    assert msixmigrate._is_lock_contention(busy_snapshot) is True
+
+
+def test_a_permanent_operational_error_is_still_counted_as_a_failure(world, monkeypatch):
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    monkeypatch.delattr(sqlite3, "SQLITE_BUSY", raising=False)  # 3.10 的样子
+    monkeypatch.setattr(
+        ai_history,
+        "merge_legacy",
+        lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")),
+    )
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "failed"}
+    assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 1
