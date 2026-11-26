@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -150,6 +151,17 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
 
     rscript = _rscript_with_capture_packages()
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "local data"))
+    problems = []
+    replay = nativeggplot_source.replay
+
+    def diagnose(*args, **kwargs):
+        try:
+            return replay(*args, **kwargs)
+        except Exception as exc:
+            problems.extend(traceback.format_exception(exc))
+            raise
+
+    monkeypatch.setattr(nativeggplot_source, "replay", diagnose)
 
     root = tmp_path / "研究 项目"
     graphs = root / "figure scripts"
@@ -253,8 +265,9 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
             assert protected.read_bytes() == b"external file"
             assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
         assert offer == {"how": "redraw", "suffix": "_edited.R"}
+        problems.clear()
         exported = client.post("/api/export", json=request)
-        assert exported.status_code == 200, exported.get_json()
+        assert exported.status_code == 200, (exported.get_json(), "".join(problems))
         (output,) = exported.json["outputs"]
         assert output["name"] == "Signal_edited.R"
         assert output["script_report"] == {"written": 5, "skipped": []}

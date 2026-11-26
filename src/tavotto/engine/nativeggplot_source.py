@@ -385,7 +385,7 @@ def replay(
                 if result:
                     raise scriptadjust.ScriptAdjustError(
                         "script_export_run_failed",
-                        "The selected plot could not be replayed from R source.",
+                        f"The isolated R process exited with status {result}.",
                     )
         else:
             prefix = cmdsandbox.prefix(*sandbox, scratch, project=str(project), offline=True)
