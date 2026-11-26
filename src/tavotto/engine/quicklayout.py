@@ -714,12 +714,15 @@ def plan_figure(
     gap_mm: float = INNER_GAP_MM,
     fix_spec: bool = True,
     canvas: str = "fit",
+    fixed: list[dict] | None = None,
+    outer_gap_mm: float = 3.0,
     solver: Callable[[dict], dict] | None = None,
 ) -> dict:
     """图内排版事务本体（ADR 0199 §十二）。**只算不写**，结果形状与 `plan()` 相同（`panels` 只有这一张）。
 
     排的单位是主坐标轴；twin、色条、共享轴标题按开源侧的确定规则跟着走（`quicklayoutfig.follow`），子图标签：
-    脚本里画了就挪（`pos_frac`），没画就在画布上加（`labels`），认不全就都不动。第 1 轮只改图幅（随后按规范修：
+    脚本里画了就挪（`pos_frac`），没画或认不出就在画布上加（`labels`）；`fixed`：范围里固定不动的盒子（页面 mm），
+    排好的图不许盖住它们（`outer_gap_mm`：放到它们下方时空出的图间距）。第 1 轮只改图幅（随后按规范修：
     `position` 在 specfix 里算受保护的值），从第 2 轮起才写轴位置。失败抛 `QuickLayoutError`（调用方渲回 B0）。"""
     if not licensed():
         raise QuickLayoutError("not_licensed")
@@ -824,6 +827,13 @@ def plan_figure(
             for gid, (x, y, w, h) in plan_ops["pos"].items()
         }
         follow_axes, follow_texts = quicklayoutfig.follow(a, new_plot)
+        # 拖过的 inset（有 position 覆盖，locator 已脱开）不会自己跟宿主走：按宿主的同一仿射写新 position；
+        # 没拖过的由 locator 跟着宿主走，不写（写了反而把 locator 脱开）
+        by_main = {m.gid: m for m in a.mains}
+        dragged = {x.get("gid") for x in patches if x.get("prop") == "position"}
+        for gid, r, host in a.insets:
+            if gid in dragged:
+                follow_axes[gid] = quicklayoutfig.map_inset(r, by_main[host].plot, new_plot[host])
         for gid, r in {**new_plot, **follow_axes}.items():
             patches = _upsert(patches, gid, "position", quicklayoutfig.position_value(r, (nw, nh)))
         by_shared = {s.gid: s for s in a.shared}
@@ -869,8 +879,29 @@ def plan_figure(
         code = "figure_obstacle" if any(b["metric"] == "obstacle" for b in bad) else "not_converged"
         raise QuickLayoutError(code, ",".join(sorted({b["metric"] for b in bad})))
     w, h = a.size
-    # 图铺满页宽（缩放 = 1）：画布上的框与图幅等大，放在页面左上角；标签的 mm 就是页面 mm
-    panel.box = [0.0, 0.0, w, h]
+    # 图铺满页宽（缩放 = 1）：画布上的框与图幅等大，先试页面左上角；与范围里固定不动的盒子（位图、旋转 / 锁定的图）
+    # 重叠就放到它们并集的下方（空一个图间距）。任何情况都不许静默盖住它们
+    boxes = [[float(v) for v in f["box"]] for f in fixed or []]
+
+    def hits(b: list[float]) -> bool:
+        return any(
+            b[0] < f[0] + f[2] and f[0] < b[0] + b[2] and b[1] < f[1] + f[3] and f[1] < b[1] + b[3]
+            for f in boxes
+        )
+
+    box = [0.0, 0.0, w, h]
+    if hits(box):
+        box = [0.0, max(f[1] + f[3] for f in boxes) + float(outer_gap_mm), w, h]
+    if hits(box):
+        raise QuickLayoutError("figure_obstacle", "fixed boxes")
+    # 保持画布：图（连同落位）必须在画布里，超出 = 放不下，不让导出把底部裁掉
+    if canvas == "keep" and (
+        box[3] > float(page["h"]) + WIDTH_TOL_MM
+        or box[1] + box[3] > float(page["h"]) + WIDTH_TOL_MM
+    ):
+        raise QuickLayoutError("page_too_small")
+    panel.box = box
+    bx, by = box[0], box[1]
     # 等比例轴（示意图、imshow）只参与排位、不计轴线对齐：图内排版里常见（实例里上面那排示意图），不另说
     notes = [{"code": "in_figure", "ref": panel.key}]
     if varied:
@@ -882,11 +913,17 @@ def plan_figure(
         "mode": "figure",
         "page": {"w": round(float(page["w"]), 3), "h": round(float(page["h"]), 3)}
         if canvas == "keep"
-        else {"w": round(w, 3), "h": round(h, 3)},
+        else {
+            # 页面跟着内容：包住排好的图与固定盒子
+            "w": round(max([w] + [f[0] + f[2] for f in boxes]), 3),
+            "h": round(max([by + h] + [f[1] + f[3] for f in boxes]), 3),
+        },
         "panels": [
             {"key": panel.key, "patches": panel.patches, "box": [round(v, 3) for v in panel.box]}
         ],
-        "labels": [{"key": panel.key, "x": round(x, 3), "y": round(y, 3)} for x, y in canvas_xy],
+        "labels": [
+            {"key": panel.key, "x": round(bx + x, 3), "y": round(by + y, 3)} for x, y in canvas_xy
+        ],
         "notes": notes,
         "grid": None,
         "spec_changes": sorted(spec_changed),

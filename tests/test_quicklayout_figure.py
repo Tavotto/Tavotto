@@ -89,6 +89,12 @@ def roomy_stray_fig():
     fig.text(0.1, 0.78, "(b)")
     return fig
 
+def roomy_inset():
+    # 左边的轴里有一个 inset；测试里先把它「拖过」（写 position 覆盖），locator 就脱开了
+    fig = roomy()
+    fig.axes[0].inset_axes([0.5, 0.5, 0.4, 0.4]).plot([0, 1], [1, 0])
+    return fig
+
 def roomy():
     # 两个轴、四周留足了地方：假求解器原样摆回去也能过验收（用来测事务的管线，不测求解）
     fig = plt.figure(figsize=(80 / 25.4, 50 / 25.4))
@@ -124,11 +130,13 @@ else:
     exec(sys.argv[5])  # 定义 solver(payload)
     name = sys.argv[6]
     r = render_of(globals()[name]())
-    p = ql.Panel(key="k", rel_id="s.py", base=[], box=[0, 0, 1, 1], render=r)
+    base = json.loads(sys.argv[7]) if len(sys.argv) > 7 else []
+    kw = {"page": {"w": 210, "h": 297, "margin": 0}, **(json.loads(sys.argv[8]) if len(sys.argv) > 8 else {})}
+    p = ql.Panel(key="k", rel_id="s.py", base=base, box=[0, 0, 1, 1], render=r)
     try:
-        out = ql.plan_figure(p, page={"w": 210, "h": 297, "margin": 0}, target="single",
+        out = ql.plan_figure(p, target="single",
                              profile={"widths_mm": {"single": 80.0}, "severity": {}},
-                             label_pt=8, fix_spec=False, solver=solver)
+                             label_pt=8, fix_spec=False, solver=solver, **kw)
         cold = render_of(globals()[name]())(out["panels"][0]["patches"])
         hot = {e["gid"]: e.get("bbox") for e in p.manifest["elements"]}
         same = all(hot.get(e["gid"]) == e.get("bbox") for e in cold["manifest"]["elements"])
@@ -512,3 +520,66 @@ def test_obstacles_are_not_held_to_the_page_margin_but_still_block():
     assert "edge" not in metrics  # 脚本原样贴边的字不归我们管
     hit = quicklayoutfig.check(a, gap=1.5, padding=2.0, canvas_labels=[[1, 1, 4, 4]])
     assert any(b["metric"] == "obstacle" for b in hit)  # 新加的标签压上去照样作废
+
+
+# ---------------------------------------------------------------------------
+# #2266 Codex 首轮三条 P1
+# ---------------------------------------------------------------------------
+#: 把两个轴左右对调的假求解器：宿主挪了位置，拖过的 inset 不跟着走就会留在原地压到另一个轴
+SWAP_SOLVER = r"""
+def solver(payload):
+    w, h = payload["figure"]["size_mm"]
+    tw = payload["target"]["width_mm"]
+    axes = sorted(payload["axes"], key=lambda a: a["bbox"][0])
+    ops = [{"op": "figure.size", "ref": "f", "w": tw, "h": h}]
+    for a, b in zip(axes, axes[::-1]):
+        x, y, bw, bh = b["bbox"]
+        ops.append({"op": "axes.position", "ref": "f", "element_ref": a["ref"], "x": x, "y": y, "w": a["bbox"][2], "h": bh})
+    for a in axes:
+        ops.append({"op": "label.place", "ref": "f", "x": a["ink"][0] * tw, "y": a["ink"][1] * h - 4.0})
+    return {"ops": ops}
+"""
+
+#: 保持画布 80 × 40，求解器却回 80 × 80 的图
+TALL_SOLVER = IDENTITY_SOLVER.replace(
+    'ops = [{"op": "figure.size", "ref": "f", "w": tw, "h": h}]',
+    'ops = [{"op": "figure.size", "ref": "f", "w": tw, "h": 80.0}]',
+)
+
+
+@needs_worker
+def test_a_dragged_inset_follows_its_host():
+    dragged = [{"gid": "axes_2", "prop": "position", "value": [0.3, 0.45, 0.12, 0.2]}]
+    got = _run("plan", SWAP_SOLVER, "roomy_inset", json.dumps(dragged))
+    assert got["ok"], got
+    els = {e["gid"]: e for e in got["manifest"]["elements"]}
+    inset, host = els["axes_2"]["bbox"], els["axes_0"]["bbox"]
+    # 宿主挪到了右边，inset 还在宿主的绘图区里（同一仿射跟过去）
+    assert host[0] > 0.5
+    assert host[0] <= inset[0] and inset[0] + inset[2] <= host[0] + host[2] + 1e-6
+    assert any(
+        p["gid"] == "axes_2" and p["prop"] == "position" for p in got["out"]["panels"][0]["patches"]
+    )
+
+
+@needs_worker
+def test_keep_canvas_refuses_a_figure_taller_than_the_page():
+    got = _run(
+        "plan",
+        TALL_SOLVER,
+        "roomy",
+        "[]",
+        json.dumps({"page": {"w": 80, "h": 40, "margin": 0}, "canvas": "keep"}),
+    )
+    assert got == {"ok": False, "code": "page_too_small"}
+
+
+@needs_worker
+def test_figure_never_covers_a_fixed_box():
+    kw = {"fixed": [{"key": "img", "box": [0, 0, 30, 20]}], "outer_gap_mm": 3}
+    got = _run("plan", IDENTITY_SOLVER, "roomy", "[]", json.dumps(kw))
+    assert got["ok"], got
+    x, y, w, h = got["out"]["panels"][0]["box"]
+    assert y >= 23 - 1e-6  # 放到固定盒子下方、空一个图间距
+    assert got["out"]["page"]["h"] >= y + h - 1e-6
+    assert all(lab["y"] >= y for lab in got["out"]["labels"])  # 画布标签跟着图一起下移

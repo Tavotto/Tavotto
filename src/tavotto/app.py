@@ -11941,6 +11941,8 @@ def api_pro_quick_layout_plan():
             # 它有没有 ≥ 2 个主坐标轴要先渲出 B0 才知道（前端此刻不一定有精确 manifest），不够就回 too_few
             out = engine_quicklayout.plan_figure(
                 panels[0],
+                fixed=fixed,
+                outer_gap_mm=gap_mm,
                 page=page,
                 target=str(body.get("target") or "double"),
                 profile=profile,

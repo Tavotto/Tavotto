@@ -139,6 +139,9 @@ class Analysis:
     group_of: dict[str, str] = field(default_factory=dict)
     #: 一张图里有锁定的主轴（子轴的落位归父级 locator 管）：不排
     locked: bool = False
+    #: inset（插图轴）：(gid, 外框 mm, 宿主主轴 gid)。没被拖过的由 locator 跟着宿主走；拖过的（有 position 覆盖、
+    #: locator 已脱开）由 `plan_figure` 按宿主的同一仿射写新 position。验收也量它们
+    insets: list[tuple[str, Rect, str]] = field(default_factory=list)
 
 
 def _main_axes(elements: list[dict], size) -> tuple[list[dict], dict[str, str], bool, set[str]]:
@@ -354,7 +357,26 @@ def analyze(manifest: dict) -> Analysis:
                 vertical=(rect[3] - rect[1]) >= (rect[2] - rect[0]),
             )
         )
-    del inset_gids  # inset 跟着宿主的 position 走（落位归父级），不单独处理
+    insets: list[tuple[str, Rect, str]] = []
+    for e in elements:
+        if e["gid"] not in inset_gids or e.get("role") != "axes":
+            continue
+        r = _rect(e["bbox"], size)
+        host = main_of.get(e.get("inset_of") or "")
+        if host is None:
+            host = next(
+                (
+                    m.gid
+                    for m in mains
+                    if r[0] >= m.plot[0] - 1e-6
+                    and r[1] >= m.plot[1] - 1e-6
+                    and r[2] <= m.plot[2] + 1e-6
+                    and r[3] <= m.plot[3] + 1e-6
+                ),
+                None,
+            )
+        if host is not None:
+            insets.append((e["gid"], r, host))
 
     group_of: dict[str, str] = {m.gid: m.gid for m in mains}
     if labels:
@@ -417,6 +439,7 @@ def analyze(manifest: dict) -> Analysis:
         label_mode=label_mode,
         group_of=group_of,
         locked=locked,
+        insets=insets,
     )
 
 
@@ -586,6 +609,18 @@ def follow(
     return axes, texts
 
 
+def map_inset(r: Rect, old_host: Rect, new_host: Rect) -> Rect:
+    """拖过的 inset 跟着宿主绘图区按同一仿射走（相对宿主的比例位置与比例大小不变）。"""
+    sx = (new_host[2] - new_host[0]) / (old_host[2] - old_host[0])
+    sy = (new_host[3] - new_host[1]) / (old_host[3] - old_host[1])
+    return [
+        new_host[0] + (r[0] - old_host[0]) * sx,
+        new_host[1] + (r[1] - old_host[1]) * sy,
+        new_host[0] + (r[2] - old_host[0]) * sx,
+        new_host[1] + (r[3] - old_host[1]) * sy,
+    ]
+
+
 def anchor_for(
     old_rect: Rect, old_anchor: tuple[float, float], old_size, new_rect: Rect, new_size
 ) -> list[float]:
@@ -701,6 +736,18 @@ def check(
     things += [(s.gid, s.rect) for s in a.shared]
     things += [(lab.gid, lab.rect) for lab in a.labels]
     things += [(f"canvas_label_{i}", r) for i, r in enumerate(canvas_labels or [])]
+    # inset：不越出图框、不压别的轴的文字外沿（落在自己宿主的绘图区里本来就是它的位置）
+    for g, r, host in a.insets:
+        if (
+            r[0] < -EDGE_TOL_MM
+            or r[1] < -EDGE_TOL_MM
+            or r[2] > w + EDGE_TOL_MM
+            or r[3] > h + EDGE_TOL_MM
+        ):
+            bad.append({"metric": "inset_edge", "ref": g})
+        for m in a.mains:
+            if m.gid != host and _overlaps(r, m.ink):
+                bad.append({"metric": "inset_overlap", "refs": [g, m.gid]})
     obstacles = [(g, r) for g, r in a.obstacles]
     # 留白只量我们摆的东西；障碍物是脚本原样、原地不动的元素，贴边不归这里管（重叠照样判）
     for g, r in things:
