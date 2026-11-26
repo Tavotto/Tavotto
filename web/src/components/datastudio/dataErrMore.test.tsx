@@ -60,7 +60,7 @@ describe('bar_err 的名字与说明', () => {
     await show()
     expect(q('[data-candidate-title]')!.textContent).toBe('柱 + 误差线')
     expect(q('[data-candidate-why]')!.textContent).toBe('表里已经是各组的均值，用柱高表示。')
-    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按表里的 12 行绘制，每行一根柱；误差线取自「SD 列」列。')
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 12 行绘制，每行一根柱；误差线取自「SD 列」列。')
   })
   it('没有 why_not（后端不给）：不多出一行，主图不让位', async () => {
     await show()
@@ -78,7 +78,7 @@ describe('多个 y 的依据句', () => {
   it('误差线取自「a_sd」「b_sd」列（各自带「」、直接相连）', async () => {
     const items = candidatesFromResponse([item('a', 'line_err', { facts: facts(), error: 'sd', error_source: 'column', error_columns: cols(['sd', 'sd']) })], 'pa')
     await mount(<CandidateStage items={items} thumbs={{ a: 'ready' }} drawingId={null} previewKey={null} onPreview={() => {}} onCreate={() => {}} onThumb={() => {}} />)
-    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按表里的 12 行绘制，每条线每行一个点；误差线取自「a_sd」「b_sd」列。')
+    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 12 行绘制，每条线每行一个点；误差线取自「a_sd」「b_sd」列。')
   })
 })
 
@@ -151,7 +151,7 @@ describe('右栏「误差线」：多个 y', () => {
     expect(q('[data-data-roles] [data-data-role="error"]')!.textContent).toContain('标准误 (SEM)')
   })
 
-  it('各列种类不同（没有顶层 error）：在列角色下面、不进「需要你确认」，当前值「各列不同」；选一种发 answers.error，所有列一起换', async () => {
+  it('各列种类不同（没有顶层 error）：在列角色下面、不进「需要你确认」；选一种发 answers.error，所有列一起换；当前值列出用到的几种「SD、SEM」', async () => {
     seed({ error_columns: cols(['sd', 'sem']) })
     propose.mockResolvedValue({
       kind: 'candidates', session: 'S2', dropped: [], render: 'lazy', header_row: 1, defaults: [], mixed_cells: [], error_confirmed: true,
@@ -161,7 +161,8 @@ describe('右栏「误差线」：多个 y', () => {
     await mount(<DataPanel />)
     expect(q('[data-data-confirm-title]')).toBeNull()
     const row = q('[data-data-roles] [data-data-role="error"]')!
-    expect(row.textContent).toContain('各列不同')
+    expect(row.textContent).toContain('SD、SEM')
+    expect(row.textContent).not.toContain('各列不同')
     await choose('95% 置信区间')
     expect(propose.mock.calls[0]![0].answers).toEqual({ error: 'ci95' })
     expect(q('[data-data-roles] [data-data-role="error"]')!.textContent).toContain('95% 置信区间')

@@ -248,9 +248,9 @@ export default interface Resources {
         "listJoin": "、",
         "plain": "按 {{drawn}} 个数值绘制",
         "points": "按 {{drawn}} 个点绘制，每行一个点",
-        "rowsBar": "按表里的 {{drawn}} 行绘制，每行一根柱",
-        "rowsErr": "按表里的 {{drawn}} 行绘制，每行一个点",
-        "rowsErrLines": "按表里的 {{drawn}} 行绘制，每条线每行一个点",
+        "rowsBar": "按 {{drawn}} 行绘制，每行一根柱",
+        "rowsErr": "按 {{drawn}} 行绘制，每行一个点",
+        "rowsErrLines": "按 {{drawn}} 行绘制，每条线每行一个点",
         "skippedAll": "另有 {{count}} 行未计入",
         "skippedBoth": "另有 {{missing}} 行因缺值、{{other}} 行因不是数值未计入",
         "skippedMissing": "另有 {{count}} 行因缺值未计入",
@@ -352,6 +352,7 @@ export default interface Resources {
       "confirm": {
         "design": "重复测量",
         "error": "误差线",
+        "join": "、",
         "option": {
           "ci95": "95% 置信区间",
           "independent": "不是，每行是不同的样本",
@@ -360,6 +361,11 @@ export default interface Resources {
           "sd": "标准差 (SD)",
           "sem": "标准误 (SEM)",
           "unsure": "还不确定"
+        },
+        "short": {
+          "ci95": "95% CI",
+          "sd": "SD",
+          "sem": "SEM"
         },
         "title": "需要你确认"
       },
