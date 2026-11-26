@@ -1705,19 +1705,16 @@ const disk = createDiskWriter({
 /*  一行都不执行：不带 `project_write`、不起定时器。                            */
 /* -------------------------------------------------------------------------- */
 
-/** 每份文档上次「排进写项目的那一笔」时的用户编辑代次：写成之后据此判断途中又改过没有（项目里那份是否落后） */
-const projectWriteGen = new Map<string, number>()
 /** 冲突裁决悬而未决的文档 → 当时的基线（绑定的修订号，没有 = ''）：基线没变就不再带着它去撞 */
 const projectConflictBase = new Map<string, string>()
 let projectQuietTimer: number | undefined
 let projectMaxTimer: number | undefined
 
-function markProjectWriteScheduled(id: string): void {
+function markProjectWriteScheduled(): void {
   window.clearTimeout(projectQuietTimer)
   window.clearTimeout(projectMaxTimer)
   projectQuietTimer = undefined
   projectMaxTimer = undefined
-  projectWriteGen.set(id, editGenerationOf(id))
 }
 
 /** 编辑之后：停手 5 s 写一次；一直在改时第一次未写的编辑起算最长 30 s 写一次 */
@@ -1749,13 +1746,13 @@ function projectWriteSpecFor(id: string, pj: string | null): ProjectWriteSpec | 
   return binding ? { name: binding.name, ...(binding.revision ? { base: binding.revision } : {}) } : {}
 }
 
-function afterProjectLayout(id: string, pj: string | null, result: ProjectLayoutResult): void {
+function afterProjectLayout(id: string, pj: string | null, result: ProjectLayoutResult, gen?: number): void {
   if (result.state === 'saved') {
     const current = readProjectFile(id)
     // 写的途中被另存为改绑到了别的文件：新绑定是用户更晚的决定，这次的回执只属于旧文件
     if (current && current.file !== result.file) return
     if (pj === null) return
-    const behind = editGenerationOf(id) !== (projectWriteGen.get(id) ?? editGenerationOf(id))
+    const behind = gen !== undefined && editGenerationOf(id) !== gen
     setProjectFile(
       { projectId: pj, name: result.name, file: result.file, revision: result.revision, dirty: behind },
       id,
@@ -1822,8 +1819,10 @@ function flushAutosaveNow(allowEmpty: boolean, withProject: boolean): FlushResul
   const owner = projectOfDoc().id ?? currentProjectId()
   // 写进项目：开关开着、这份有归属项目、不是只读窗口才标；标了就把「项目里那份」的节奏计时清零（刚写）
   const project = withProject && projectWriteEnabled() && owner !== null && !getWindowHold()
-  if (project) markProjectWriteScheduled(state.documentId)
-  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner), project)
+  if (project) markProjectWriteScheduled()
+  // 编辑代次随**这一笔的快照**一起排队（回包按它自己的代次判断项目里那份是否落后）：共用一个 Map 的话，A 在写时排进 B，
+  // B 的代次会顶掉 A 的，A 成功后拿 B 的代次比，错把还落后的绑定判成最新
+  disk.schedule(state.documentId, pd, owner, captureFigureSnapshotSave(pd, owner), project, editGenerationOf(state.documentId))
   if (!localOk) return 'error'
   const pj = projectOfDoc()
   const entry: RecentDoc = {

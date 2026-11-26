@@ -18,13 +18,19 @@ import {
 const DOC_ID = 'd_project'
 const puts: { url: string; spec: { name: string | null; base: string | null } | null }[] = []
 let reply: Record<string, unknown> = {}
+/** 按 PUT 的先后各自的回复（用完退回 `reply`）；`gateNext` 非空时下一笔 PUT 挂起到它落定 */
+let replyQueue: Record<string, unknown>[] = []
+let gateNext: Promise<void> | null = null
 globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
   const u = String(url)
   if (!/\/api\/autosave\//.test(u)) return new Response('{}', { status: 404 })
   if (init?.method === 'PUT') {
     const q = new URL(u, 'http://x').searchParams.get('project_write')
     puts.push({ url: u, spec: q ? JSON.parse(q) : null })
-    return new Response(JSON.stringify({ ok: true, saved_at: 1, revision: 'r1', ...reply }), { status: 200 })
+    const gate = gateNext
+    gateNext = null
+    if (gate) await gate
+    return new Response(JSON.stringify({ ok: true, saved_at: 1, revision: 'r1', ...(replyQueue.shift() ?? reply) }), { status: 200 })
   }
   return new Response('{}', { status: 404 })
 }) as typeof fetch
@@ -80,6 +86,8 @@ beforeEach(() => {
   forgetProjectFilesInSession()
   puts.length = 0
   reply = {}
+  replyQueue = []
+  gateNext = null
   setCurrentProjectId('pj1')
   seed()
   stop = startAutosave()
@@ -160,6 +168,28 @@ describe('开关开着：节奏', () => {
     flushAutosave()
     await settle()
     expect(readProjectFile(DOC_ID)).toMatchObject({ name: 'b', revision: 'rb' })
+  })
+
+  it('A 在写时排进 B：A 成功后绑定仍是 dirty（回包按这一笔自己的编辑代次判断）；B 没写成时绑定仍是 dirty', async () => {
+    let release!: () => void
+    gateNext = new Promise<void>((r) => (release = r))
+    replyQueue = [
+      { project_layout: { state: 'saved', name: '排版一', file: 'tavottofile/排版一.json', revision: 'revA' } },
+      { project_layout: { state: 'busy' } },
+    ]
+    edit(1)
+    flushAutosave() // A：挂起在途
+    await settle()
+    edit(2)
+    flushAutosave() // B：排队（共用一个代次 Map 的话它的代次会顶掉 A 的）
+    await settle()
+    release()
+    await settle()
+    await settle()
+    // A 成功：A 之后又有编辑（B 的内容），项目里那份落后
+    expect(readProjectFile(DOC_ID)).toMatchObject({ revision: 'revA', dirty: true })
+    // B 没写成（busy）：绑定不被改回「最新」，仍是 dirty
+    expect(readProjectFile(DOC_ID)?.dirty).toBe(true)
   })
 
   it('外部修改：不覆盖、进冲突岔口一次；岔口没裁决前不再带着旧基线去撞', async () => {
