@@ -62,9 +62,9 @@
 
 1. 引擎数据层：选择器 + 补丁式写入（复述、摘要、只动点名字段、撤销留存记 id）+ 样式 / 文字 / 锁隐 / 名字 / 删除；
 2. 变换、镜像、倾斜、对齐分布、层级、编组、阵列、实时圆角（参考实现升格 + 黄金对拍）；
-3. wasmtime 内核：布尔、偏移、轮廓化、简化（与前端 `pathfinder.golden` 同一组输入，逐数对拍；打包核 PyInstaller / 受管环境 / Intel Mac）；
-4. 路径锚点编辑：加 / 删 / 转换锚点、断开 / 连接 / 平均 / 反转 / 复合路径 / 转为路径；
-5. 插件工具（`tavotto_layout_edit_plan` / `_apply`，选择器并进 `tavotto_layout_scene`）+ 「并进来」认补丁（2026-11-26 拆成两个 PR：① 工具 + 布局组清理 #2244；② 桌面并进来认补丁）；
+3. wasmtime 内核：布尔、偏移、轮廓化、简化（与前端 `pathfinder.golden` 同一组输入，逐数对拍；打包核 PyInstaller / 受管环境 / Intel Mac）；（2026-11-26 补：轮廓化的虚线 / 端型 / 内外对齐照前端 `lib/outlineStroke` 有了 Python 版，与前端逐数对拍）
+4. 路径锚点编辑：**逐点平移锚点 / 拖手柄**（原列表漏写，补上）、加 / 删 / 转换锚点、断开（剪断）/ 连接 / 平均 / 反转 / 复合路径 / 转为路径。2026-11-26 做了除「转为路径」外的全部（后者另一个 PR）：补丁操作 `move_anchors` / `move_handle` / `add_anchors` / `delete_anchors` / `convert_anchors` / `average_anchors` / `cut_path` / `join_paths` / `reverse_path` / `make_compound` / `release_compound`，纯函数 `engine/pathedit.py` 逐个对应前端 `lib/pathEdit.ts` 与 `store/pathActions.ts` 的对象级规则（剪断后多出的段各成新对象、连接两对象留最后一个的 id……），操作层 `vectoredit.py` 做严格校验与复述（锚点地址 `{sp, i}` 含义是**该操作执行时**的状态，每条复述写明「现为」各子路径锚点数）；场景 `vector_objects` 给路径的 `subpaths` 计数与有上限的 `anchors` 清单（页面 mm、已旋转）；与前端的逐数对拍 `tests/golden/path_edit_vectors.json`（驱动真的 store 动作录出）。不需要内核，不依赖 wasmtime；
+5. 插件工具（`tavotto_layout_edit_plan` / `_apply`，选择器并进 `tavotto_layout_scene`）+ 「并进来」认补丁（2026-11-26 拆成两个 PR：① 工具 + 布局组清理 #2244；② 桌面并进来认补丁：字段三方合并）；
 6. 改图助手接前端命令表 + 方案卡。
 
 每期合入后重跑 0208 的评测任务集，另加编辑类任务（「把三支箭头左对齐并统一成 0.75 pt」「把两个圆合并成一个轮廓」）。

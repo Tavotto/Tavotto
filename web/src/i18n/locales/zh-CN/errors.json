@@ -26,7 +26,11 @@
     "adoptReconstructed": "以重画为基础编辑",
     "refreshReconstruction": "更新重画对照",
     "showRedraw": "改用脚本重画的图",
-    "redrawn": "已改用脚本重画的图，画布和导出都是这一份。不想要可以撤销。"
+    "redrawn": "已改用脚本重画的图，画布和导出都是这一份。不想要可以撤销。",
+    "showRedrawType3": "改用标准字体",
+    "showRedrawMissing": "补齐字体",
+    "redrawnType3": "已改用标准字体，画布和导出都是这一份。不想要可以撤销。",
+    "redrawnMissing": "已补齐字体，画布和导出都是这一份。不想要可以撤销。"
   },
   "backend": {
     "change_plan_busy": "这张图正在生成修改方案，请稍等。",
@@ -531,7 +535,7 @@
     "chart_source_changed": "计算图表的源文件已变化，本次操作未应用。请恢复匹配的源文件或重新导入。",
     "chart_render_pair_missing": "计算图表没有返回同一版的图像与几何，暂未应用本次渲染。",
     "figure_snapshot_unavailable": "项目包引用的 Figure 配对或原件无法核验，未生成项目包。请恢复缺失资源或重新生成这张图。",
-    "script_source_missing": "找不到这个脚本的文件（{{script}}）：它可能被移动或删除了。请把脚本放回项目里再运行；Tavotto 不会用同名的其它文件代替它。",
+    "script_source_missing": "找不到 {{script}}",
     "input_declaration_conflict": "输入声明已在另一处更新，请重新读取后再保存。",
     "input_declaration_invalid": "输入声明或已选择的资源不可用，请检查文件、运行配置和数据位置。",
     "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。",

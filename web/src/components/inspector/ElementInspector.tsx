@@ -111,12 +111,15 @@ import { GroupHead } from './GroupHead'
 import { GroupToggle } from './GroupToggle'
 import { INSPECTOR_CONTROL_X, INSPECTOR_HALF, INSPECTOR_LABEL_W } from './layout'
 import { OriginalFileActions } from './OriginalFileActions'
+import { ScriptRelinkAction } from './ScriptRelinkAction'
+import { useAssetStore } from '@/store/assetStore'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { Notice } from '../ui/Notice'
 import { ColorField, NumberField, TextInput } from '../ui/Input'
 import { RichTextField } from '../ui/RichTextField'
 import { Select } from '../ui/Select'
+import { ErrorKindRow } from './ErrorKindRow'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
@@ -424,6 +427,14 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             missingInput={render.missingInput}
             workdirHint={render.workdirHint}
             onRetry={() => requestRender(panel, true)}
+            note={render.code === SCRIPT_SOURCE_MISSING_CODE ? translate('relink.note', { ns: 'inspector' }) : undefined}
+            relink={
+              // 脚本挪走了（ADR 0211 第一期 6）：卡里给「接到 …」/「选脚本接回」。只给磁盘上的图——
+              // 运行时图的身份里带着脚本路径，换脚本等于换一张图
+              render.code === SCRIPT_SOURCE_MISSING_CODE && !panel.fileId.startsWith('runtime:') && relinkScriptOf(panel) ? (
+                (retry) => <ScriptRelinkAction panel={panel} script={relinkScriptOf(panel)!} fallback={retry} />
+              ) : undefined
+            }
           />
         )
       )}
@@ -485,6 +496,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
+            /* 阴影带（趋势图的均值 ± 误差）：与误差棒页同一行「误差线」；组件自己判这张图是不是带 */
+            lead={element?.role === 'fill' ? <ErrorKindRow panel={panel} band /> : undefined}
             primaryExtra={
               patchSizeAvailable && exactManifest ? (
                 <PatchSizeControls key={element.gid} panel={panel} element={element} />
@@ -689,6 +702,15 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
   </>
 }
 
+/** 渲染报「脚本文件不在」（worker 的 `script_source_missing`）：错误卡主按钮位换成接回脚本的出口 */
+const SCRIPT_SOURCE_MISSING_CODE = 'script_source_missing'
+
+/** 注册表里那个已经不在的脚本键：就绪度事实（`source_missing` 带着它）优先，退回面板上记的脚本 */
+function relinkScriptOf(panel: PanelObject): string | null {
+  const cap = useAssetStore.getState().byId[panel.fileId]?.capability
+  return (cap?.status === 'source_missing' ? cap.script : null) || panel.script || null
+}
+
 export function ErrorBlock({
   error,
   traceback,
@@ -698,6 +720,8 @@ export function ErrorBlock({
   missingInput,
   workdirHint,
   onRetry,
+  relink,
+  note,
 }: {
   error: UiMessage
   traceback: string
@@ -707,7 +731,20 @@ export function ErrorBlock({
   missingInput?: MissingInputOffer | null
   workdirHint?: WorkdirConfirmation | null
   onRetry?: () => void
+  /**
+   * 脚本挪走时接回它的出口：占卡右侧那唯一的动作位，替掉「重试渲染」（脚本不在，重试只会再报同一句）。
+   * 收到的是「重试渲染」按钮本身——还没问出来 / 不是这种情况时照旧显示它
+   */
+  relink?: (retry: ReactNode) => ReactNode
+  /** 换掉「仍显示上一版图像」那行灰字（脚本挪走时把「可能被挪走或删了」并进这一行，主句只剩一句短的） */
+  note?: ReactNode
 }) {
+  const retry = onRetry && (
+    <Button size="sm" onClick={onRetry}>
+      <RotateCcw size={ICON_SIZE.xs} />
+      {el('retryRender')}
+    </Button>
+  )
   return (
     <Section>
       {/* 一行中性提示：一句话 + 至多一个动作（重试）；完整 traceback 在「详情」里（折叠、可复制） */}
@@ -715,14 +752,7 @@ export function ErrorBlock({
         tone="danger"
         data-render-error
         detail={traceback || null}
-        action={
-          onRetry && (
-            <Button size="sm" onClick={onRetry}>
-              <RotateCcw size={ICON_SIZE.xs} />
-              {el('retryRender')}
-            </Button>
-          )
-        }
+        action={relink ? relink(retry) : retry}
       >
         {/* 描述符在**显示这一刻**才翻，切语言后这条跟着换 */}
         <p className="text-ink">{formatMessage(error)}</p>
@@ -739,7 +769,7 @@ export function ErrorBlock({
         <MissingInputButton offer={missingInput ?? null} />
         {/* 沙盒里落空、脚本目录里找得到（#1254）：不论错误码都给「在脚本目录里运行」的入口 */}
         {code !== WORKDIR_CONFIRMATION_CODE && <WorkdirChooseButton confirmation={workdirHint ?? null} />}
-        <p className="text-xs">{el('keptPrevious')}</p>
+        <p className="text-xs">{note ?? el('keptPrevious')}</p>
       </Notice>
     </Section>
   )
@@ -995,6 +1025,7 @@ function ErrorBarPage({
         element={element}
         warnings={warnings}
         buckets={buckets}
+        lead={<ErrorKindRow panel={panel} />}
         primaryExtra={
           <div className="flex justify-center" data-errorbar-figure>
             <ErrorBarDiagram active={active} />
@@ -1062,6 +1093,7 @@ function FieldList({
   warnings,
   buckets,
   primaryExtra,
+  lead,
 }: {
   panel: PanelObject
   element: ManifestElement
@@ -1069,6 +1101,8 @@ function FieldList({
   buckets: { primary: PresentedField[]; more: PresentedField[]; folds: PresentedFold[] }
   /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
   primaryExtra?: ReactNode
+  /** 排在 primary 行之前的一行（误差棒页的「误差线」类型）；组件自己不渲染时不占位 */
+  lead?: ReactNode
 }) {
   // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
   // 平铺列表要把它们让出来——同一个属性出两套控件是最坏的那种冗余
@@ -1154,6 +1188,7 @@ function FieldList({
   )
   return (
     <>
+      {lead}
       {rows(headPrimary, groupHeads)}
       {bar && (
         <div className={cn(headPrimary.length > 0 && 'mt-1.5')}>

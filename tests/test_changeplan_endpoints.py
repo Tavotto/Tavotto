@@ -701,12 +701,11 @@ def test_assistant_instruction_is_the_one_comment_and_gets_its_own_system_prompt
         "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
     }
     out = run_assistant(client, target="ax0.line0")
-    assert out["state"] == "ready"
+    # 模型把同一条指令既放进组又说要改脚本：整条交给脚本，不给「改了一半」的方案（维护者 2026-11-26）
+    assert out["state"] == "ready" and out["code"] == "change_plan_empty"
     plan = out["plan"]
     assert plan["source"] == "assistant"
-    (group,) = plan["groups"]
-    assert group["comment_id"] == "a1" and group["label"].startswith("把线条加粗")
-    # 部分能改、部分要改脚本：同一条指令既有组又有 unhandled(needs_script)
+    assert plan["groups"] == []
     assert {u["comment_id"]: u["reason"] for u in plan["unhandled"]} == {"a1": "needs_script"}
     assert "用户的一条改图指令" in seen["system"] and "审阅者" not in seen["system"]
     assert "把线条加粗" in seen["user"] and '"gid":"ax0.line0"' in seen["user"]
@@ -929,3 +928,181 @@ def test_review_source_takes_the_selection_too(env, monkeypatch):
     )
     assert run(client, connection="prov2")["state"] == "ready"
     assert seen["c"] == "prov2"
+
+
+# --------------------------------------------------------------------------- 对数轴下限 / 整条意见交给脚本（维护者 2026-11-26）
+def _axes_base():
+    from tests.test_changeplan import axes_el
+
+    base = json.loads(json.dumps(BASE))
+    base["elements"].append(axes_el())
+    return base
+
+
+def test_log_axis_with_a_zero_lower_limit_comes_back_with_the_limit_fix_and_a_confirm(
+    env, monkeypatch
+):
+    _m, client, _figs, worker, model, _retired = env
+    monkeypatch.setitem(globals(), "BASE", _axes_base())
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0", "yscale", "log")]}],
+        "unhandled": [],
+    }
+    out = run_assistant(client)
+    assert out["state"] == "ready", out
+    (group,) = out["plan"]["groups"]
+    assert {c["prop"]: c["after"] for c in group["changes"]} == {
+        "yscale": "log",
+        "ylim": [0.01, 1.05],
+    }
+    assert group["confirm"] == {
+        "kind": "log_lower_limit",
+        "axis": "y",
+        "gid": "ax0",
+        "from": 0.0,
+        "to": 0.01,
+    }
+    assert all("patch" in c for c in group["changes"])
+    # 候选渲染带着下限：前后图都是对的那一张
+    cand = out["plan"]["candidate_patches"]
+    assert {"gid": "ax0", "prop": "ylim", "value": [0.01, 1.05]} in [
+        {k: v for k, v in e.items() if k != "identity"} for e in cand
+    ]
+    assert worker.calls[-1][1] == worker.calls[-2][1]
+
+
+def test_log_axis_where_the_model_already_set_a_positive_limit_asks_nothing(env, monkeypatch):
+    _m, client, _figs, _worker, model, _retired = env
+    monkeypatch.setitem(globals(), "BASE", _axes_base())
+    model.result = {
+        "groups": [
+            {
+                "comment_id": "a1",
+                "changes": [ch("ax0", "yscale", "log"), ch("ax0", "ylim", [0.01, 1.05])],
+            }
+        ],
+        "unhandled": [],
+    }
+    out = run_assistant(client)
+    (group,) = out["plan"]["groups"]
+    assert "confirm" not in group and len(group["changes"]) == 2
+
+
+def test_log_xscale_gets_the_lower_limit_confirm_for_the_review_source_too(env, monkeypatch):
+    _m, client, _figs, _worker, model, _retired = env
+    monkeypatch.setitem(globals(), "BASE", _axes_base())
+    model.result = {
+        "groups": [{"comment_id": "c1", "changes": [ch("ax0", "xscale", "log")]}],
+        "unhandled": [],
+    }
+    out = run(client)
+    assert out["state"] == "ready", out
+    (group,) = out["plan"]["groups"]
+    assert group["confirm"]["axis"] == "x" and group["confirm"]["to"] == 0.1
+
+
+def test_a_comment_split_between_label_and_script_is_only_needs_script(env):
+    _m, client, _figs, worker, model, _retired = env
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0.title", "text", "(s)")]}],
+        "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
+    }
+    out = run_assistant(client)
+    assert out["code"] == "change_plan_empty" and out["plan"]["groups"] == []
+    assert [(u["comment_id"], u["reason"]) for u in out["plan"]["unhandled"]] == [
+        ("a1", "needs_script")
+    ]
+    assert [k for k, _ in worker.calls] == ["snap"]  # 没有候选渲染
+
+
+# --------------------------------------------------------------------------- 改后元素出图幅：自动腾边距（维护者 2026-11-26）
+def _room_base():
+    """两列并排的图（合成 manifest）；axes_0 的 yscale / ylim 带类型，好让模型的提议过校验。"""
+    from tests.test_normalize import _two_column_manifest
+
+    base = _two_column_manifest()
+    ax0 = next(e for e in base["elements"] if e["gid"] == "axes_0")
+    for f in ax0["editable"]:
+        f["type"] = {"xlim": "pair", "ylim": "pair", "position": "rect"}.get(f["prop"], "text")
+    ax0["editable"].append(
+        {"prop": "yscale", "type": "enum", "value": "linear", "options": ["linear", "log"]}
+    )
+    return base
+
+
+class RoomWorker(FakeWorker):
+    """改成对数轴后刻度变宽，把纵轴标题挤出左边；子图往右挪（`position`）它的装饰物就跟着挪。"""
+
+    def __init__(self, base, *, can_move=True):
+        super().__init__()
+        self.base, self.can_move = base, can_move
+
+    def _manifest(self, patches):
+        out = json.loads(json.dumps(self.base))
+        els = {e["gid"]: e for e in out["elements"]}
+        log = any(p["prop"] == "yscale" and p["value"] == "log" for p in patches)
+        for p in patches:
+            if p["gid"] not in els:  # 共用夹具里的 B0 点着别的元素
+                continue
+            fields = {f["prop"]: f for f in els[p["gid"]]["editable"]}
+            if p["prop"] == "position":
+                dx = p["value"][0] - fields["position"]["value"][0] if self.can_move else 0.0
+                for e in out["elements"]:
+                    if e["gid"].startswith(p["gid"] + ".") and e["role"] in ("axis_label", "ticks"):
+                        e["bbox"][0] += dx
+            if p["prop"] in fields:
+                fields[p["prop"]]["value"] = p["value"]
+        if log:
+            els["axes_0.ylabel"]["bbox"][0] -= 0.04
+        return out
+
+
+def _room_env(env, monkeypatch, **kw):
+    _m, client, _figs, _old, model, _retired = env
+    worker = RoomWorker(_room_base(), **kw)
+    monkeypatch.setattr(_m, "_resolve_engine_worker", lambda rel_id, **k: (worker, "Kin"))
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("axes_0", "yscale", "log")]}],
+        "unhandled": [],
+    }
+    return client, worker
+
+
+def test_a_change_that_pushes_an_element_out_of_the_figure_comes_back_with_the_margin_move_in_the_same_group(
+    env, monkeypatch
+):
+    client, worker = _room_env(env, monkeypatch)
+    out = run_assistant(client)
+    assert out["state"] == "ready", out
+    plan = out["plan"]
+    (group,) = plan["groups"]
+    by = {(c["target_gid"], c["prop"]): c for c in group["changes"]}
+    assert set(by) >= {("axes_0", "yscale"), ("axes_0", "ylim"), ("axes_0", "position")}
+    room = by[("axes_0", "position")]
+    assert room["auto"] == "room" and room["after"][0] > room["before"][0]
+    assert "auto" not in by[("axes_0", "yscale")]
+    # 勾着这一组：边距在候选里；取消它（或在对数下限确认里点「不改」）：边距一起不在
+    assert any(e["prop"] == "position" for e in plan["candidate_patches"])
+    assert not [
+        e
+        for e in cp.apply_groups(plan["base_patches"], plan["groups"], set())
+        if e["prop"] == "position"
+    ]
+    assert [
+        e
+        for e in cp.apply_groups(plan["base_patches"], plan["groups"], {group["key"]})
+        if e["prop"] == "position"
+    ]
+    assert group["confirm"]["kind"] == "log_lower_limit"
+    # 后图是补过边距的那一版
+    assert any(p["prop"] == "position" for p in worker.calls[-1][1])
+
+
+def test_when_the_margins_cannot_make_room_the_plan_still_comes_out_without_a_position(
+    env, monkeypatch
+):
+    client, _worker = _room_env(env, monkeypatch, can_move=False)
+    out = run_assistant(client)
+    assert out["state"] == "ready", out
+    (group,) = out["plan"]["groups"]
+    assert all(c["prop"] != "position" for c in group["changes"])

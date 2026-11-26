@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layoutannotate.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layoutannotate.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`、`test_layoutdir.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -213,9 +213,11 @@ order: 200
   `REVISION_ABSENT` / `revision_conflict` 从 `app.py` 搬进引擎，`app.py` 的 `_DocumentLock` / `_lock_stripe` /
   `_revision_conflict` / `REVISION_ABSENT` 只是别名（等锁上限仍读 `app.DOCUMENT_LOCK_TIMEOUT_S`）。插件的排版写入口
   （`engine/layoutannotate.py`）与桌面保存是两个进程写同一个 `tavottofile/<名>.json`，**必须用同一把锁、同一个判据**，
-  不许在插件侧另写一份。Agent 写入只追加对象、写前留撤销副本（`state/agent-undo/`），撤销只在文件还是那次写下的那一份时恢复。
-  `GET /api/layouts/<名>/agent-additions?base_revision=` 只读：从基线到磁盘修订号的每一步都是 Agent 写入、正文只多了末尾追加的
-  `anchor.by == "agent"` 对象时才回 `available: true`（判据在 `layoutannotate.agent_additions`，桌面据此给「并进来」，不自己判）。
+  不许在插件侧另写一份。Agent 写入（加标注 0208、编辑补丁 0212）写前留撤销副本（`state/agent-undo/`），撤销只在文件还是那次写下的那一份时恢复。
+  `GET /api/layouts/<名>/agent-additions?base_revision=` 只读：从基线到磁盘修订号的每一步都是 Agent 写入、画布以外与画布上
+  `objects` / `layoutGroups` 以外的键都没变时才回 `available: true`，并给每张画布的对象差（新加 / 改前改后 / 删前 / 两份 id 顺序 /
+  布局组前后；判据在 `layoutannotate.agent_additions`）。桌面拿它做**字段三方合并**（`web/src/lib/agentMerge.planAgentMerge`：
+  Agent 改过的字段桌面还是基线的值、删的对象桌面没改过、Agent 重排时桌面没重排、布局组桌面没动，才并），不自己判链。
 - **⌘S 写回项目里绑定的排版文件（ADR 0096，2026-09-26）**：同一个端点
   `POST /api/layouts/<name>?target=project`，**不加端点**。这一档必须开着项目
   （`current_ctx()`，否则 409 `no_project`——不许静默退回数据目录）；冲突判据、锁、
@@ -226,6 +228,23 @@ order: 200
   `layout_read_only`，磁盘满照旧 atomicio 的通用映射。响应带 `name` / `file`（相对项目根），
   GET 开着项目时带 `X-Tavotto-Layout-File`（⌘S 会写到哪，百分号编码）——界面原样说，不自己拼。
   **自动保存仍只写数据目录的槽位**，不写项目文件。
+- **排版的目录形态（ADR 0211 第二期，`engine/layoutdir.py` 是唯一出处；写入端默认关）**：`tavottofile/<名>.tavotto/layout.json`
+  是当前权威正文，旁边的 `<名>.json` 是**占位**（`{"schema": PLACEHOLDER_SCHEMA, "tavotto_layout_dir": "<名>.tavotto"}`，旧版据 schema 判
+  「来自更新的 Tavotto」）。目录里还有 `package_manifest.json`（容器版本、工作副本 docId、`layout_revision` 提示、占位与留底修订号；
+  第三期 `.tavotto` 容器骨架）与 `legacy/`（迁移留底、覆盖时两边都留）。规则：
+  ① **锁键、会话绑定的 `file`、`X-Tavotto-Layout-File` 永远是逻辑路径 `<名>.json`**（锁带只看文件名，用 `layout.json` 当键所有排版会共用一条）；
+  **修订号永远是当前正文那份字节的 hash**，清单里的 `layout_revision` 只是提示。② **所有读 `tavottofile/*.json` 的地方都要认占位**：
+  列表 / 读取 / 冲突摘要 / 会话绑定确认 / 插件与 Agent（`layoutannotate`）/ `runtimeasset.saved_layouts_use_stem` / `tutorial.saved_layouts` 经 `layoutdir.locate()` /
+  `list_layouts()` / `is_placeholder()`，不自己拼 `<名>.json` 当正文读；`_svg_reference_corpus` 是递归扫描，天然覆盖目录形态。
+  ③ **任何写入口都不许把正文写在占位上**（`app.api_layout_save`、`layoutannotate.write_canvas` / `undo` 都经 `layoutdir.write`）。
+  ④ **迁移只在写入时发生、与那次保存分开**：同级暂存目录备齐（`layout.json` = 旧文件同一份字节、留底、清单）→ 整个目录一次发布 →
+  **最后**原子地换占位 → 再做这次保存；中断后两边正文逐字节相同（PENDING / DIR），下一次写入续完。「真 `<名>.json` + 目录」
+  按清单里的留底修订号分：相等 = 迁移中断（PENDING），不等 = 旧版覆盖了占位（CONFLICT，当外部修改：读给外来的 `<名>.json`、409 的
+  `revision` 与明确覆盖的基线是同一份；覆盖时外来的与被取代的 `layout.json` 都留进 `legacy/`）。⑤ 打开 / 列出 / 读取一个字节都不写。
+  ⑥ 开关 `layoutdir.WRITER_ENABLED`（或环境变量 `TAVOTTO_LAYOUT_DIR_WRITER=1`）只管**创建与迁移**；已是目录形态的排版无论开关都写进目录。
+  ⑦ 守卫：`<名>.tavotto` 目录 / `layout.json` / 清单是链接 → 400 `layout_outside_project`；目录名只差大小写 / Unicode 形式 → 409
+  `layout_name_collision`；清单容器版本比本构建新 → 只读（409 `layout_dir_too_new`）；Windows 保留名 / 末尾点或空格 / 超长 / 同名普通文件占着
+  目录名 → 退回 `<名>.json`。留底的只读位只在 POSIX 设（Windows 上只读属性会让整夹删除失败）。
 - **写前判冲突读修订号用 `atomicio.existing_revision()`，不用 `content_revision()`**（#674 评审 P1）：
   后者把「不存在」与「读不出」（mode 000、被别的程序独占）揉成一个 `None`，而 `_revision_conflict`
   对 `None` 的解释是「被删了，放行重建」——一份读不出却换得掉的文件会被闭眼整份覆盖。
@@ -387,6 +406,15 @@ order: 200
     `PUT last` 仍按旧归属 409。空白排版（`_doc_objects` 为空）的 `open` 关键时刻 `POST /api/versions` 回 `skipped`、不建目录。
     空白排版上 `close` 同样不写（`_MOMENTS_SKIPPED_WHEN_BLANK`）。`mode` / `owner` 闭集是严格同源对（见 `same-origin-pairs.md`）。
     看护 `tests/test_project_history_restore.py`（含 `test_vocabulary_mirrors_are_literal`）。
+  - **本机设置随认领迁移（ADR 0211 第一期 5，`engine/projectmigrate.py`）**：认领时 owner 是 `moved`（旧路径确定不在）才迁；
+    复制不迁。改指表（`inputremap.migrate_rules`：`to` 在旧项目根内的换新根，项目外原样；`from` 是旧根内的绝对路径——脚本按 `__file__` 拼的——时另加一条 `from` 换根的（取新根的 `realpath`），原规则留着；新键下同一处的规则不覆盖）、
+    运行配置（`runconfig.migrate_store`：配置 / 默认 / 捕获史，**不搬 `launches` 启动记录**）、输入转录（`inputtranscript.migrate_store`）
+    各自幂等，新键下已有就不动；路径比对先 `realpath`（`/var` ↔ `/private/var`）再按卷归一大小写。运行许可 / 执行策略 / 记住的解释器
+    **不迁**（ADR 0021 §7.1，`NOT_MIGRATED_SETTINGS` 钉住）；渲染缓存与 baked_overrides 不迁（派生物）。一项失败只记日志、不让认领失败，
+    新项目设置里留 `moved_from` 待办，下次打开项目（`_open_project`）重试，全成才摘掉；旧键原样保留。改指表真变了时与用户指认同一套收尾
+    （`_stop_remap_dependent_work` + `input_remap_changed`）。**复制**（维护者 2026-11-26 拍板）：前端按复制另开新 docId 的那一刻调
+    `POST …/project-history/copied {doc_id}`，后端锁里重判仍是 `copy` 且 owner 是 `other`（旧路径还在）才 `projectmigrate.copy_remap`——
+    **只拷改指表**（同一套换根口径），运行配置 / 输入转录不跟，复制源一个字节不动，幂等。看护 `tests/test_project_move_migrate.py` + `web/e2e/project-move-remap.spec.ts`。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
@@ -403,6 +431,7 @@ order: 200
 - 另存为与自动保存共用 `_revision_conflict`、锁不可重入、GET 不用 `send_file`
 - 槽位清理顺带 `atomicio.reap_orphan_tmps`（只认 `_next_tmp` 的名字，年龄 + pid 已死，一天后只看年龄）
 - ⌘S 写回项目（ADR 0096）：`target=project` 必须开着项目、落点只在 `tavottofile/`（符号链接逃逸拒）、只读卷有自己的 code
+- 排版目录形态（ADR 0211 第二期）：`engine/layoutdir.py` 是唯一出处；占位不是排版、锁与修订号规则见上；写入端默认关
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 

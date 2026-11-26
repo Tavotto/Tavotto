@@ -130,6 +130,11 @@ const batchBuildLog: number[] = []
 let jobStatusSeq: string[] | null = null
 /** `/api/export/validate` 回包前先等多久（模拟 route 慢：冻结段每张最多等它 1.5 s） */
 let routeDelayMs = 0
+/**
+ * 非 null 时 validate 先等它再回：把「route 还没回来」变成**确定的事实**，而不是和 250 ms 防抖赛跑
+ * （本机渲染慢一点 route 就会先到，断言读到的已经是 route 之后的界面）。见 `holdRoute()`。
+ */
+let routeGate: Promise<void> | null = null
 let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = null
 /** `/api/runtime/status` 的回答（null = 走兜底）；`runtimeStatusGate` 非 null 时先等它再回（模拟 ensure() 往返） */
 let runtimeStatus: Record<string, unknown> | null = null
@@ -199,6 +204,7 @@ function stubFetch() {
       return new Response(JSON.stringify(runtimeStatus), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url.includes('/api/export/validate') && routeOf) {
+      if (routeGate) await routeGate
       if (routeDelayMs) await new Promise((r) => setTimeout(r, routeDelayMs))
       const req = JSON.parse(String(init?.body ?? '{}'))
       return new Response(JSON.stringify({ ok: true, conflicts: [], writable: true, route: routeOf(req) }), {
@@ -395,6 +401,7 @@ beforeEach(() => {
   jobStatus = 'done'
   jobStatusSeq = null
   routeDelayMs = 0
+  routeGate = null
   jobOutputs = null
   jobWarnings = []
   fontFacts = null
@@ -1437,7 +1444,25 @@ describe('来源读后端 route（#1209）', () => {
   })
   afterEach(() => { routeOf = null })
 
+  /**
+   * 挂住 `/api/export/validate` 的回包，返回放行函数。
+   *
+   * 「route 还没回来时的界面」只能这样测：route 在输入稳定 250 ms 后才发（`ExportDialog` 的防抖），
+   * 靠「setup 还没跑完 250 ms」是**和本机渲染速度赛跑**——同一棵树多几次渲染（例如预览按项目代际
+   * 重取图）就会越线，断言读到的是 route 之后的界面。挂住回包后「没有 route」是确定的事实，
+   * 放行之后再断言 route 的结论。
+   */
+  const holdRoute = () => {
+    let release!: () => void
+    routeGate = new Promise<void>((r) => { release = r })
+    return async () => {
+      routeGate = null
+      await act(async () => { release() })
+    }
+  }
+
   it('route 说这次会被重画：像素预览不再报源像素网格（即使前端旧判据会说照抄）', async () => {
+    const release = holdRoute()
     routeOf = (req) => ({
       scope: req.scope,
       formats: req.formats,
@@ -1445,11 +1470,13 @@ describe('来源读后端 route（#1209）', () => {
     })
     await setupRaster([])
     expect(text(), '还没拿到 route：旧判据（无编辑 = 照抄）').toContain('120 × 80')
+    await release()
     await settle()
     expect(text(), 'route 说重画，前端不再自己推算').not.toContain('120 × 80')
   })
 
   it('EPS 可不可用读 route.offers，不看前端素材表里有没有 script', async () => {
+    const release = holdRoute()
     routeOf = (req) => ({
       scope: req.scope,
       formats: req.formats,
@@ -1459,6 +1486,7 @@ describe('来源读后端 route（#1209）', () => {
     const epsDisabled = () =>
       document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
     expect(epsDisabled(), '还没拿到 route：旧判据').toBe('true')
+    await release()
     await settle()
     expect(epsDisabled(), 'route.offers.eps 可用').toBeNull()
   })
@@ -1468,6 +1496,7 @@ describe('来源读后端 route（#1209）', () => {
     const box = () => row()?.querySelector('input') as HTMLInputElement | null
 
     it('可不可用读 route.offers.script，不看前端素材表', async () => {
+      const release = holdRoute()
       routeOf = (req) => ({
         scope: req.scope,
         formats: req.formats,
@@ -1475,6 +1504,7 @@ describe('来源读后端 route（#1209）', () => {
       })
       await setupRaster([])
       expect(row()?.getAttribute('aria-disabled'), '还没拿到 route：退路看素材表').toBe('true')
+      await release()
       await settle()
       expect(row()?.getAttribute('aria-disabled'), 'route 说有').toBeNull()
     })
@@ -1514,9 +1544,6 @@ describe('来源读后端 route（#1209）', () => {
   })
 
   it('重开对话框：新 route 到之前读到的是「没有 route」，不拿旧 offers 禁用 / 放开 EPS', async () => {
-    // 让重开后那次 validate 一定晚于本用例的断言：否则快机器上 act 会把回包一起冲掉，
-    // 断言读到的是新 route，测不到「旧 offers 不能当退路」这件事。
-    routeDelayMs = 50
     routeOf = (req) => ({
       scope: req.scope,
       formats: req.formats,
@@ -1527,9 +1554,12 @@ describe('来源读后端 route（#1209）', () => {
       document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
     await settle()
     expect(epsDisabled(), 'route 到了：可用').toBeNull()
+    // 重开后的那次 validate 挂住：不靠固定睡眠把回包压在断言之后（见 `holdRoute`）
+    const release = holdRoute()
     await act(async () => { useUiStore.getState().setExportOpen(false) })
     await act(async () => { useUiStore.getState().setExportOpen(true) })
     expect(epsDisabled(), '重开后、响应到达前：退路，而不是关着时的旧答案').toBe('true')
+    await release()
     await settle()
     expect(epsDisabled(), '新响应到达').toBeNull()
   })
@@ -2436,7 +2466,7 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     const imgs = [...document.body.querySelectorAll(`[data-canvas-thumb] [data-thumb-panel="${RT}"]`)]
     expect(imgs.length).toBeGreaterThan(0)
     for (const n of imgs) expect(n.getAttribute('href')).toBe('blob:state-rt')
-    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.anything())
+    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.any(AbortSignal), null)
   })
 })
 

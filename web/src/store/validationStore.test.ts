@@ -171,13 +171,13 @@ describe('失败不清空', () => {
     expect(getValidationSummary('project').failed).toBe(true)
   })
 
-  it('换项目才清空——上一份项目的问题挂在新项目上是彻头彻尾的假话', async () => {
+  it.each(['d_other', 'd_validation'])('换文档或整份恢复后，旧问题立即清空 (%s)', async (id) => {
     await seedProject()
     runValidation()
     expect(useValidationStore.getState().issues.length).toBeGreaterThan(0)
     const stop = startValidation()
     await act(async () => {
-      await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+      await useDocumentStore.getState().switchDocument(emptyProject(), id)
     })
     expect(useValidationStore.getState().ready).toBe(false)
     expect(useValidationStore.getState().issues).toEqual([])

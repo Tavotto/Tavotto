@@ -114,7 +114,9 @@ describe('PDF 原件角标（Type 3 / 缺字）', () => {
     await flush()
     expect(fetchFacts).toHaveBeenCalledTimes(1)
     expect(host.querySelector('[data-panel-badge]')?.textContent).toContain(label('pdfType3'))
-    expect(host.querySelector('[data-badge-hint]')?.getAttribute('title')).toBe(label('pdfRedrawHint'))
+    expect(host.querySelector('[data-badge-hint]')?.getAttribute('title')).toBe(label('pdfType3Hint'))
+    // 无障碍名要短且不含提示正文：整句塞进 aria-label 会与工具栏「文字」按钮撞名（e2e quick-menu 严格模式）
+    expect(host.querySelector('[data-badge-hint]')?.getAttribute('aria-label')).toBe(label('hintLabel'))
     act(() => button()!.click())
     expect(redraw).toHaveBeenCalledWith('p1')
     expect(engineRender).not.toHaveBeenCalled()
@@ -126,6 +128,7 @@ describe('PDF 原件角标（Type 3 / 缺字）', () => {
     show(pdf())
     await flush()
     expect(host.querySelector('[data-panel-badge]')?.textContent).toContain(label('pdfMissingGlyphs'))
+    expect(host.querySelector('[data-badge-hint]')?.getAttribute('title')).toBe(label('pdfMissingGlyphsHint'))
   })
 
   it('字体没问题 / 带编辑：不给', async () => {

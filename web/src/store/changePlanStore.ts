@@ -10,6 +10,7 @@ import {
   restoreChangePlanScript,
   undoChangePlanScript,
   type ChangePlan,
+  type ChangePlanGroup,
   type ChangePlanPatch,
   type ReviewAnchor,
   type ReviewComment,
@@ -59,6 +60,11 @@ export interface PlanRequest {
   target?: string
   /** `script`：脚本修改方案（ADR 0206 PR 6）；「重新生成」按同一份请求再来 */
   mode?: 'script'
+  /**
+   * 审阅来源的脚本方案（ADR 0206 修订 2026-11-26，用户点「改脚本做剩下的」才有）：只带来源方案 id 与要转的意见 id，
+   * 意见原文由后端取自存档、请求里不带文字
+   */
+  scriptFrom?: { plan_id: string; comment_ids: string[] }
   /** 卡上 / 气泡里显示的原话（发给后端的 `instruction` 可能带了「图内已改好的部分」交接说明；缺省 = `instruction`） */
   display?: string
 }
@@ -71,6 +77,9 @@ export interface PlanNote {
   text: string
 }
 
+/** 对数轴下限那类确认的回答：`yes` = 一起改（照方案应用）、`no` = 不改（这一组整组不要） */
+export type ConfirmAnswer = 'yes' | 'no'
+
 /** 一张卡的一版：每一版是后端自己的一份方案（各有 id 与两张图），逐组勾选是各版自己的 */
 export interface PlanVersionRec {
   planId: string
@@ -78,6 +87,8 @@ export interface PlanVersionRec {
   beforeSrc: string
   afterSrc: string
   unchecked: Record<string, boolean>
+  /** 方案要用户确认的组（`group.confirm`）各自的回答；没有 = 还没回答 */
+  answers?: Record<string, ConfirmAnswer>
 }
 
 /** 一键排版方案卡的两个动作：应用 = 现有的那一次 commit（一步撤销不变）；重来 = 按同样的选项再排一次 */
@@ -174,6 +185,8 @@ export interface PlanEntry {
   failure?: PlanFailure
   /** 每个改动组是否被取消勾选（没有的键按勾选算）；多版时是此刻正在看的那一版的 */
   unchecked: Record<string, boolean>
+  /** 方案里要用户确认的组各自的回答（组 key → 回答）；多版时是此刻正在看的那一版的 */
+  answers?: Record<string, ConfirmAnswer>
   /** 这张卡出过的各版（旧 → 新）；`planId` / `plan` / `beforeSrc` / `afterSrc` / `unchecked` 是正在看的那一版的镜像。没有 = 只有一版 */
   versions?: PlanVersionRec[]
   /** 批注重改（高级版）：正在写的批注（重改成功后清空） */
@@ -234,7 +247,7 @@ export const notesOf = (e: Pick<PlanEntry, 'notes'>): PlanNote[] => e.notes ?? [
 /** 各版（旧 → 新）；没存过的老条目 = 只有正在看的这一版 */
 export function versionsOf(e: PlanEntry): PlanVersionRec[] {
   if (e.versions?.length) return e.versions
-  return e.plan && e.planId && e.beforeSrc && e.afterSrc ? [{ planId: e.planId, plan: e.plan, beforeSrc: e.beforeSrc, afterSrc: e.afterSrc, unchecked: e.unchecked }] : []
+  return e.plan && e.planId && e.beforeSrc && e.afterSrc ? [{ planId: e.planId, plan: e.plan, beforeSrc: e.beforeSrc, afterSrc: e.afterSrc, unchecked: e.unchecked, answers: e.answers }] : []
 }
 
 /** 正在看的是第几版（1 起；按出现顺序数，不看后端的 `version` 字段——从旧版再续改会得到同一个后端版本号） */
@@ -242,6 +255,14 @@ export function versionNumber(e: PlanEntry): number {
   const i = versionsOf(e).findIndex((v) => v.planId === e.planId)
   return i < 0 ? (e.plan?.version ?? 1) : i + 1
 }
+
+/** 还等着用户回答的确认（对数轴下限）：有就先问、不给「查看 / 应用」；一次只问一个 */
+export function pendingConfirm(e: Pick<PlanEntry, 'plan' | 'answers'>): ChangePlanGroup | undefined {
+  return e.plan?.groups.find((g) => g.confirm && !e.answers?.[g.key])
+}
+
+/** 用户答了「不改」的组（整组不进方案；它那条意见在没处理列表里写一句原因） */
+export const declinedGroups = (e: Pick<PlanEntry, 'plan' | 'answers'>): ChangePlanGroup[] => (e.plan?.groups ?? []).filter((g) => e.answers?.[g.key] === 'no')
 
 /** 这张卡上所有版本（含在途的那一版）的后端方案 id：放弃时一并收掉 */
 const allPlanIds = (e: PlanEntry): string[] => [...new Set([...versionsOf(e).map((v) => v.planId), ...(e.planId ? [e.planId] : []), ...(e.revising ? [e.revising] : [])])]
@@ -274,6 +295,11 @@ interface ChangePlanState {
   openDialog: (key: string) => void
   closeDialog: () => void
   toggleGroup: (key: string, groupKey: string) => void
+  /**
+   * 回答方案里的一个确认（对数轴下限）：`yes` = 一起改，照方案应用；`no` = 不改，这一组整组不要（按「前端重算」口径取消勾选、
+   * 它那条意见进没处理列表）；没有一组剩下 = 与空方案一样，卡变成「没法直接改图」那张失败卡。
+   */
+  answerConfirm: (key: string, groupKey: string, answer: ConfirmAnswer) => void
   /** `previewSrc`：弹窗里按勾选组合出的那张图（只应用部分组时给，卡片据此挂实际应用的那一张） */
   apply: (key: string, opts?: { previewSrc?: string }) => ApplyResult
   undo: (key: string) => boolean
@@ -329,6 +355,17 @@ export function setChangePlanLabeler(fn: (raw: string) => string): void {
 function revokeLayoutImages(e: PlanEntry | undefined): void {
   if (e?.kind !== 'layout') return
   for (const u of [e.beforeSrc, e.afterSrc]) if (u?.startsWith('blob:')) URL.revokeObjectURL(u)
+}
+
+/**
+ * 审阅来源的卡上可以「改脚本做剩下的」的意见 id：没处理列表里原因是「要改脚本」、且后端方案里存着原文的那几条。
+ * 助手来源 / 一键排版 / 脚本方案卡没有（它们各有自己的路）。
+ */
+export function reviewScriptIds(e: Pick<PlanEntry, 'from' | 'kind' | 'plan'>): string[] {
+  const plan = e.plan
+  if (!plan || e.from === 'assistant' || e.kind === 'layout' || plan.kind === 'script') return []
+  const stored = new Set((plan.comments ?? []).map((c) => c.id))
+  return [...new Set(plan.unhandled.filter((u) => u.reason === 'needs_script' && u.comment_id && stored.has(u.comment_id)).map((u) => u.comment_id as string))]
 }
 
 /** 这份方案一处图内修改都没有、没处理的全是「要改脚本」（助手来源据此把整条指令交给改脚本那条路） */
@@ -422,9 +459,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
           // 新一版入列并切过去；各版的勾选各记各的，批注随这次重改清空
           // 重改期间新写 / 改过的批注是用户的新工作：只清掉仍与提交时一致的那些
           const e0 = get().entries[key] ?? e
-          const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked } : v))
-          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }
-          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
+          const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
+          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {} }
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
         }
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
@@ -450,6 +487,51 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     }
   }
 
+  /**
+   * 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了。
+   * 应用没成（图已改过 / 写不进）→ null（不续走，卡上说一句）；否则回「有无图内修改」与取此刻有效状态的函数。
+   */
+  const applyPendingFirst = (key: string, e: PlanEntry): { hasChanges: boolean; statusNow: () => PlanStatus } | null => {
+    const hasChanges = !!e.plan && e.plan.groups.some((g) => !e.unchecked[g.key] && g.changes.length > 0)
+    const statusNow = () => {
+      const cur = get().entries[key] ?? e
+      const p = panelOf(cur)
+      return effectiveStatus(cur, p?.overrides ?? null, p ? sourceOf(p) : null)
+    }
+    if (hasChanges) {
+      const st = statusNow()
+      if (st === 'stale') {
+        patch(key, { status: 'stale', notice: undefined })
+        return null
+      }
+      if (st === 'ready' && get().apply(key) !== 'applied') return null
+    }
+    return { hasChanges, statusNow }
+  }
+
+  /**
+   * 审阅来源的「改脚本做剩下的」（ADR 0206 修订 2026-11-26）：只由用户点按钮触发；请求只带来源方案 id + 要转的意见 id，
+   * 意见文字由后端取自存档的方案（外来文本不经前端再传一遍）。出一张新的脚本方案卡（`mode: 'script'`），挂在原卡后面。
+   */
+  const runReviewScript = async (key: string): Promise<boolean> => {
+    const e = get().entries[key]
+    const ids = e ? reviewScriptIds(e) : []
+    if (!e || !e.planId || !ids.length || e.scriptStarted) return false
+    const gate = e.panelId
+    if (pending.has(gate) || get().order.some((k) => get().entries[k]?.panelId === gate && get().entries[k]?.status === 'generating')) return false
+    pending.add(gate)
+    try {
+      if (!applyPendingFirst(key, e)) return false
+      const out = await start(e.panelId, { mode: 'script', scriptFrom: { plan_id: e.planId, comment_ids: ids }, ...(e.request.share_id ? { share_id: e.request.share_id } : {}) })
+      if (isFallthrough(out) || !out) return false
+      patch(out, { followsKey: key })
+      patch(key, { scriptStarted: true })
+      return true
+    } finally {
+      pending.delete(gate)
+    }
+  }
+
   const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false, onSettle?: () => void): Promise<string | null | Fallthrough> => {
     const ds = useDocumentStore.getState()
     const panel = ds.doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
@@ -458,7 +540,11 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const guard = captureProjectEpoch()
     // 只给了分享记录 id（后端取最新版本的未处理意见）：界面上的编号 / 称呼取审阅页签里同一份记录的未处理意见
     const detail = useReviewStore.getState().detail
-    const comments = req.comments ?? (req.share_id && detail?.share_id === req.share_id ? detail.comments.filter((c) => !c.resolved) : [])
+    const from = req.scriptFrom
+    const source = from ? Object.values(get().entries).find((x) => allPlanIds(x).includes(from.plan_id)) : undefined
+    const comments = from
+      ? (source?.comments ?? []).filter((c) => from.comment_ids.includes(c.id))
+      : (req.comments ?? (req.share_id && detail?.share_id === req.share_id ? detail.comments.filter((c) => !c.resolved) : []))
     const assistant = typeof req.instruction === 'string'
     const entry: PlanEntry = {
       key,
@@ -495,7 +581,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         patches: panel.overrides,
         ...(assistant
           ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}), ...(req.mode === 'script' ? { mode: 'script' as const } : {}) }
-          : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
+          : req.scriptFrom
+            ? { source: 'review' as const, mode: 'script' as const, from_plan: req.scriptFrom.plan_id, comment_ids: req.scriptFrom.comment_ids }
+            : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
         // 输入框选的那条连接与型号：结构化调用用同一条，不顺延到别的（审阅来源同理）
         ...currentRunSelection(),
         client_request_id: key,
@@ -525,6 +613,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const same = (e: PlanEntry) =>
         e.panelId === panelId &&
         (e.status === 'generating' || e.status === 'ready') &&
+        !e.request.scriptFrom &&
         e.request.share_id === req.share_id &&
         JSON.stringify(Object.keys(e.request.numbers ?? {}).sort()) === JSON.stringify(Object.keys(req.numbers ?? {}).sort()) &&
         JSON.stringify((e.request.comments ?? []).map((c) => c.id)) === JSON.stringify((req.comments ?? []).map((c) => c.id))
@@ -561,6 +650,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
 
     runScript: async (key, opts) => {
       const e = get().entries[key]
+      // 审阅来源：只能由用户点按钮走到这里（没有任何自动续走），交给「审阅意见 → 脚本方案」
+      if (e && e.from !== 'assistant' && e.kind !== 'layout') return runReviewScript(key)
       const fb = e?.fallback
       if (!e || !fb || e.from !== 'assistant') return false
       // 发送那一刻的项目 / 文档 / 面板：途中换了就不替他发（换项目整表已清；换文档 / 画布 / 面板被删这里挡）
@@ -573,24 +664,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
       // 图内那部分就丢了。应用没成（图已改过 / 写不进）= 不续走，卡上说一句
       // 与卡片 / `apply()` 同一个有效状态（⌘Z 撤回过的「已应用」又是待确认，存着的 `e.status` 不算数）
-      const hasChanges = !!e.plan && e.plan.groups.some((g) => !e.unchecked[g.key] && g.changes.length > 0)
-      const statusNow = () => {
-        const cur = get().entries[key] ?? e
-        const p = panelOf(cur)
-        return effectiveStatus(cur, p?.overrides ?? null, p ? sourceOf(p) : null)
-      }
-      if (hasChanges) {
-        const st = statusNow()
-        if (st === 'stale') {
-          patch(key, { status: 'stale', notice: undefined })
-          return false
-        }
-        if (st === 'ready') {
-          const r = get().apply(key)
-          if (r !== 'applied') return false
-        }
-        panel = panelOf(e) ?? panel
-      }
+      const pre = applyPendingFirst(key, e)
+      if (!pre) return false
+      panel = panelOf(e) ?? panel
+      const { hasChanges, statusNow } = pre
       // 上下文按**实际**情况写：真正落在文档里的才写「已改好」
       const appliedNow = hasChanges && statusNow() === 'applied'
       // 图内已经改（或待用户应用）的部分，确定性地写进指令：Agent 不在脚本里重做它们（`lib/assistantScriptContext`）
@@ -649,7 +726,12 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       return isFallthrough(out) ? null : out
     },
 
-    openDialog: (key) => set({ dialogKey: key }),
+    // 还有没回答的确认（对数轴下限）就不让看 / 应用：先问清楚，免得出一张坍掉的图
+    openDialog: (key) => {
+      const e = get().entries[key]
+      if (e && pendingConfirm(e)) return
+      set({ dialogKey: key })
+    },
     closeDialog: () => set({ dialogKey: null }),
     toggleGroup: (key, groupKey) =>
       set((s) => {
@@ -657,12 +739,23 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return e ? { entries: { ...s.entries, [key]: { ...e, unchecked: { ...e.unchecked, [groupKey]: !e.unchecked[groupKey] } } } } : {}
       }),
 
+    answerConfirm: (key, groupKey, answer) => {
+      const e = get().entries[key]
+      const g = e?.plan?.groups.find((x) => x.key === groupKey)
+      if (!e || !g?.confirm || e.answers?.[groupKey]) return
+      const answers = { ...e.answers, [groupKey]: answer }
+      const unchecked = answer === 'no' ? { ...e.unchecked, [groupKey]: true } : e.unchecked
+      const remains = (e.plan?.groups ?? []).some((x) => answers[x.key] !== 'no')
+      patch(key, answer === 'no' && !remains ? { answers, unchecked, status: 'failed', failure: { code: 'change_plan_empty' } } : { answers, unchecked })
+    },
+
     addLayoutEntry: (entry) => set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] })),
 
     apply: (key, opts) => {
       const e = get().entries[key]
       const plan = e?.plan
       if (!e || !plan) return 'failed'
+      if (pendingConfirm(e)) return 'nothing'
       if (plan.kind === 'script') {
         void get().applyScript(key)
         return 'nothing'
@@ -851,10 +944,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       set((s) => {
         const e = s.entries[key]
         if (!e || e.revising !== undefined || e.planId === planId) return {}
-        const recs = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked } : v))
+        const recs = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
         const to = recs.find((v) => v.planId === planId)
         if (!to) return {}
-        return { entries: { ...s.entries, [key]: { ...e, versions: recs, planId, plan: to.plan, beforeSrc: to.beforeSrc, afterSrc: to.afterSrc, unchecked: to.unchecked, reviseError: undefined } } }
+        return { entries: { ...s.entries, [key]: { ...e, versions: recs, planId, plan: to.plan, beforeSrc: to.beforeSrc, afterSrc: to.afterSrc, unchecked: to.unchecked, answers: to.answers ?? {}, reviseError: undefined } } }
       }),
 
     saveNote: (key, note) =>

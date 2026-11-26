@@ -1404,7 +1404,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
     }
     if (offerRedraw) {
       return pdfProblem
-        ? { tone: 'info', cold: false, text: badge(pdfProblem), hint: badge('pdfRedrawHint'), redraw: true }
+        ? { tone: 'info', cold: false, text: badge(pdfProblem), hint: badge(pdfProblem === 'pdfType3' ? 'pdfType3Hint' : 'pdfMissingGlyphsHint'), redraw: true }
         : { tone: 'info', cold: false, text: badge('bitmapOriginal'), hint: badge('redrawHint'), redraw: true }
     }
     return null
@@ -1507,7 +1507,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
             type="button"
             data-badge-hint
             title={shown.hint}
-            aria-label={shown.hint}
+            aria-label={badge('hintLabel')}
             onPointerDown={(e) => e.stopPropagation()}
             className="pointer-events-auto -my-0.5 flex size-4 items-center justify-center rounded-full opacity-80 outline-none hover:opacity-100 focus-visible:focus-ring"
           >

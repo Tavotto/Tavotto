@@ -187,3 +187,16 @@ def test_clean_notes_shapes():
         json.dumps(cp.clean_notes([dict(dup, text="y" * 900)])[0]["text"]).count("y")
         == cp.MAX_COMMENT_CHARS
     )
+
+
+def test_revised_version_keeps_review_comments_and_its_notes_for_the_script_hand_off(env, licensed):
+    _m, client, _figs, _worker, model, _retired = env
+    v1 = first_plan(client)
+    model.result = {
+        "groups": [],
+        "unhandled": [{"comment_id": "n1", "reason": "needs_script"}],
+    }
+    v2 = run_revise(client, v1["id"])["plan"]
+    stored = {c["id"]: c["text"] for c in v2["comments"]}
+    assert stored == {"c1": "线太细了", "c2": "标题改大一点", "n1": "标题再大一点"}
+    assert cp.review_script_rows(v2, ["c2", "n1"], "Kin.pdf") is not None
