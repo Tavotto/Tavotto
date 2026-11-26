@@ -50,7 +50,8 @@ _FRONT = {
 
 #: 「这个目的也回答」的码（不属于它们、又是用户点的目的 → `answers_other_purpose`）
 _ANSWERS = {
-    "compare_groups": _RAW_COMPARE | {"bar_error"},
+    # `bar_err`：已汇总表上的均值柱 + 表里现成的误差线——回答「比较各组」，但不上提（与 `bar_error` 同理，排在点之后）
+    "compare_groups": _RAW_COMPARE | {"bar_error", "bar_err"},
     "trend": _LINES,
     "relationship": _SCATTERS,
     "distribution": _SHAPE

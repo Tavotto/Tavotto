@@ -5886,6 +5886,8 @@ export interface AiDataProposeItem {
   error_source?: 'column' | 'computed'
   /** 取自表里现成的列时，那一列的名字（用户数据：只当文本渲染） */
   error_column?: string
+  /** 多个 y、各配各的现成误差列时的逐列事实（这时没有 `error_column` / `error_stated`；顶层 `error` 只在各列种类一致时才有）；单个 y 没有这个键 */
+  error_columns?: { y: string; column: string; kind: AiDataErrorKind; stated: boolean }[]
   /** 误差线的种类是列名自己说明的（如列名叫 sd） */
   error_stated?: boolean
   /** 算出来的误差线 / 带里因为只有 1 个值而没有误差线的位置标签（最多 50 个；没有就没有这个键） */
