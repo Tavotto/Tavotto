@@ -160,7 +160,17 @@ async function cleanStart(page: Page, file: string, built: ReturnType<typeof fir
     .poll(
       async () => {
         if (await dirty.count()) {
+          // 等这一次保存收到回执、推进内存基线后才再看圆点。冷启动时在轮询里重复按键会把另一次写入排进队尾，
+          // 用例随后写的 Agent 标注可能撞上那次保存，或刚合并完成的状态被上一笔保存回执盖掉。
+          const saved = page.waitForResponse((response) => {
+            const url = new URL(response.url())
+            return response.request().method() === 'POST'
+              && decodeURIComponent(url.pathname) === `/api/layouts/${NAME}`
+              && url.searchParams.get('target') === 'project'
+          })
           await page.keyboard.press('ControlOrMeta+s')
+          expect((await saved).ok()).toBe(true)
+          await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'save.doneProject')
           return false
         }
         if (!size) return true
