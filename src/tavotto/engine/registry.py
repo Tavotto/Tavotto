@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -90,12 +91,13 @@ def file_fingerprint(path: str | Path) -> str | None:
 
 def script_fingerprint(figures_dir: str | Path, script: str) -> str | None:
     """项目里脚本 `script`（项目相对路径）此刻的内容指纹；越出项目 / 不在 / 读不出 → None。"""
-    root = Path(figures_dir)
+    # realpath + 前缀判包含（符号链接解开后比）：越出项目根的一律不读
     try:
-        target = (root / str(script).replace("\\", "/")).resolve()
-        if not target.is_relative_to(root.resolve()):
-            return None
+        base = os.path.realpath(os.fspath(figures_dir))
+        target = os.path.realpath(os.path.join(base, str(script).replace("\\", "/")))
     except (OSError, ValueError):
+        return None
+    if not target.startswith(base.rstrip(os.sep) + os.sep):
         return None
     return file_fingerprint(target)
 
