@@ -643,14 +643,23 @@ def is_pathfinder_operand(o: dict) -> bool:
     return o.get("type") == "shape" and o.get("shape") not in geometry.STROKE_ONLY_SHAPES
 
 
+def keep_identity(made: dict, src: dict) -> dict:
+    """同 id 换成路径时，0208 的标注记录（`anchor`：谁加的、锚在哪）跟着走——前端 `toPathObject` 的白名单不带它，
+    但 Agent 这边换完还要能按 `by_agent` / `anchored_to` 选中同一个对象（Codex #2268）。"""
+    if src.get("anchor") is not None:
+        made["anchor"] = src["anchor"]
+    return made
+
+
 def as_path(o: dict) -> dict | None:
     """`pathfinder.asPath`：参与几何运算的对象 → 路径（形状 / 箭头按「转为路径」那份几何换；
-    「转为路径」不带的斜接上限与自定义虚线，结果对象接着用）"""
+    「转为路径」不带的斜接上限与自定义虚线，结果对象接着用；标注记录照 `keep_identity` 带过去，与路径操作数一样）"""
     if o.get("type") == "path":
         return o
     p = to_path_object(o)
     if p is None:
         return None
+    keep_identity(p, o)
     if o.get("miterLimit") is not None:
         p["miterLimit"] = o["miterLimit"]
     if o.get("dashPattern"):

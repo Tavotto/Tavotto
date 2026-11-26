@@ -815,7 +815,7 @@ def _op_convert_to_path(s: _State, i: int, op: dict) -> None:
         made = vectorgeom.to_path_object(o)
         if made is None:
             raise EditError("bad_op", i, "degenerate")
-        s.out[s.index[oid]] = made
+        s.out[s.index[oid]] = vectorgeom.keep_identity(made, o)
         s.touched.add(oid)
         s.changes.append({"id": oid, "field": "type", "before": o.get("type"), "after": "path"})
         n = sum(len(sp["nodes"]) for sp in made["subpaths"])

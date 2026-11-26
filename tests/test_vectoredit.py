@@ -942,6 +942,24 @@ def test_convert_to_path_keeps_id_position_and_says_so():
     assert objs[1] == rect  # 输入不动
 
 
+_AGENT_ANCHOR = {
+    "v": 1,
+    "by": "agent",
+    "anchors": [{"role": "at", "panel": {"id": "panel_1", "point": "center"}}],
+}
+
+
+def test_convert_and_outline_keep_the_agent_annotation_record():
+    """同 id 换成路径后仍是「Agent 加的、锚在那个子图上的」那个对象（Codex #2268）"""
+    canvas = {"objects": [_rect("r", 10, 10, 20, 10, fill=None, anchor=_AGENT_ANCHOR)]}
+    for op in ({"op": "convert_to_path", "ids": ["r"]}, {"op": "outline_stroke", "id": "r"}):
+        out = _run(canvas["objects"], [op])["objects"]
+        assert out[0]["type"] == "path" and out[0]["anchor"] == _AGENT_ANCHOR
+        after = {"objects": out}
+        assert [o["id"] for o in ve.select(after, {"by_agent": True})] == ["r"]
+        assert [o["id"] for o in ve.select(after, {"anchored_to": "panel_1"})] == ["r"]
+
+
 @pytest.mark.parametrize(
     "op,code,field",
     [
