@@ -12,6 +12,7 @@ import {
 } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../../ui/Button'
+import { BrandLogo } from '../BrandLogo'
 import { cx } from './copy'
 import { refreshAndFind, useLoginFlow } from './useLoginFlow'
 
@@ -44,6 +45,8 @@ export function useSiwcLogin(
   vendor: AiVendor,
   method: AiVendorMethod,
   onConnected: (c: AiConnection) => void,
+  /** `quiet`：给助手面板那一行用——按钮带 ChatGPT 标志，失败那句是灰字、与「改用 Codex 登录」同一行用「 · 」隔开（不出红字） */
+  opts: { quiet?: boolean } = {},
 ): { button: ReactNode; hint: ReactNode; begin: () => void } {
   const [phase, setPhase] = useState<Phase>('idle')
   // 失败选择题的第二个选项（维护者 2026-11-25「失败时给选择题」）：本机装了 Codex 才出现，点了走原来的 Codex 官方登录
@@ -150,13 +153,31 @@ export function useSiwcLogin(
     </Button>
   ) : (
     <Button variant="secondary" size="sm" data-connect-action="siwc" data-connect-login={phase} onClick={() => void begin()}>
+      {opts.quiet && <BrandLogo logo={vendor.logo} size={14} />}
       {cx('siwc.continue')}
     </Button>
   )
 
   // 失败（登录没完成 / 超时 / 没允许订阅额度 / 起不来）：一句话 + 选择题——重试就是右侧那个「Continue with ChatGPT」（不再摆一个
   // 同义的「再试一次」），另一个选项「改用 Codex 登录」只在本机装了 Codex 时出现；同列表里下面还有 API Key，不让新手卡住
-  const choice = error ? (
+  const choice = error && opts.quiet ? (
+    <p role="alert" data-connect-login-hint="failed" className="type-caption">
+      {codexInstalled ? error.replace(/[。.]$/, '') : error}
+      {codexInstalled && (
+        <>
+          {' · '}
+          <button
+            type="button"
+            data-connect-action="siwc-use-codex"
+            onClick={() => void switchToCodex()}
+            className="focus-visible:focus-ring rounded-sm text-ink-2 underline underline-offset-2 outline-none hover:text-ink"
+          >
+            {cx('siwc.useCodex')}
+          </button>
+        </>
+      )}
+    </p>
+  ) : error ? (
     // 「改用 Codex 登录」与「重新打开」同一种文字链接（下划线），紧跟在那句后面、贴着这一行（agy 审稿：看得出能点、归属清楚）
     <div role="alert" data-connect-login-hint="failed" className="-mt-1 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-xs">
       <span className="text-danger">{error}</span>

@@ -192,7 +192,7 @@ describe('没有任何可用 AI 的空态', () => {
       methods: [{ id: 'openai:siwc', kind: 'siwc', label_key: 'method.chatgptPlan', connection_id: 'siwc:chatgpt', available: true }],
     })
 
-  it('老用户升级：装着 Codex、还没用 ChatGPT 登录 → 提示条同一句话，按钮直接是 Continue with ChatGPT，点了发起 ChatGPT 登录', async () => {
+  it('老用户升级：装着 Codex、还没用 ChatGPT 登录 → 只有一颗 Continue with ChatGPT（不套说明条、不加字），点了发起 ChatGPT 登录', async () => {
     const posts: string[] = []
     const prev = globalThis.fetch
     globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
@@ -205,7 +205,8 @@ describe('没有任何可用 AI 的空态', () => {
       await mount(<AssistantPanel />)
       const notice = host.querySelector('[data-ai-siwc-upgrade]')!
       expect(notice).toBeTruthy()
-      expect(notice.textContent).toContain(ai('panel.noAi'))
+      expect(notice.querySelector('[data-notice]')).toBeNull()
+      expect(notice.textContent).toBe('Continue with ChatGPT')
       const btn = notice.querySelector<HTMLButtonElement>('[data-connect-action="siwc"]')!
       expect(btn.textContent).toBe('Continue with ChatGPT')
       expect([...notice.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(ai('panel.connectAi'))

@@ -1551,10 +1551,13 @@ function siwcUpgradeVendorOf(caps: ReturnType<typeof useAiStore.getState>['caps'
 
 function SiwcUpgradeNotice({ vendor }: { vendor: AiVendor }) {
   const method = (vendor.methods ?? []).find((m) => m.kind === 'siwc')!
-  const flow = useSiwcLogin(vendor, method, () => undefined)
+  const flow = useSiwcLogin(vendor, method, () => undefined, { quiet: true })
+  // 每个状态只突出一件事：没登录 = 一颗按钮；等浏览器 = 「取消」+ 一行灰字；失败 = 按钮 + 一行灰字（原因 · 改用 Codex 登录）。
+  // 不套说明条、不画图标、不加字（维护者 11-26：之前那版「杂乱、不简洁」）
   return (
-    <Notice tone="neutral" data-ai-no-agent data-ai-siwc-upgrade className="mb-2" title={ai('panel.noAi')} action={flow.button}>
-      {flow.hint ? <div className="pt-1.5">{flow.hint}</div> : undefined}
-    </Notice>
+    <div data-ai-no-agent data-ai-siwc-upgrade className="mb-3 flex flex-col items-center gap-1.5 px-2 pt-1 text-center">
+      {flow.button}
+      {flow.hint}
+    </div>
   )
 }
