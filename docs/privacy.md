@@ -662,6 +662,14 @@ figure changes when you press *Apply*.
   points at), the table of elements as they look after the previous version, and
   a short list of what the previous version changed, to the same AI connection.
   The notes themselves are never uploaded to the review service.
+* **Comments that need a script change (only when you press the button).** If a
+  comment can only be done by editing the script, the plan card offers *Edit the
+  script for the rest*. Only when you press it, the text of those comments (still
+  without the reviewers' names) goes to the AI connection **you** selected, together
+  with the script of this figure, the same as asking the assistant to edit the
+  script; the comments are given to it as material to work from, not as
+  instructions. The result is a script plan you review before it changes anything.
+  Nothing is sent automatically.
 * **What stays on your computer.** The plan, the before/after pictures and your
   edits to it. When you apply a plan, the app automatically marks the matching
   comments as resolved and syncs that to the review service (undoing the plan

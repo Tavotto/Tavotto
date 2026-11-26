@@ -12221,12 +12221,28 @@ def api_change_plans_create():
         return _change_plan_error("invalid_change_plan")
     if engine_patchspec.canonicalize_with_diagnostics(base)[1]:
         return jsonify({"error": "patches 含无效条目", "code": "invalid_patches"}), 400
+    script_mode = body.get("mode") == "script"
     if source == "assistant":
-        # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录
-        if any(k in body for k in ("comments", "share_id")):
+        # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录 / 来源方案
+        if any(k in body for k in ("comments", "share_id", "from_plan", "comment_ids")):
             return _change_plan_error("invalid_change_plan")
         comments = engine_changeplan.assistant_comments(body.get("instruction"), body.get("target"))
+    elif script_mode:
+        # 审阅方案卡上用户点「改脚本做剩下的」（ADR 0206 修订 2026-11-26）：只认「来源方案 id + 意见 id」，
+        # 意见原文取自后端存档的那份方案，请求里再带任何意见文字 / 指令 / 分享记录一律拒绝
+        if any(k in body for k in ("comments", "share_id", "instruction", "target")):
+            return _change_plan_error("invalid_change_plan")
+        from_plan = body.get("from_plan")
+        if not isinstance(from_plan, str) or engine_changeplan.PLAN_ID.match(from_plan) is None:
+            return _change_plan_error("invalid_change_plan")
+        prev = engine_changeplan.load(current_ctx().id, from_plan)
+        if prev is None:
+            return _change_plan_error("change_plan_unknown")
+        rows = engine_changeplan.review_script_rows(prev, body.get("comment_ids"), rel_id)
+        comments = engine_changeplan.review_script_comments(rows) if rows else None
     else:
+        if any(k in body for k in ("from_plan", "comment_ids")):
+            return _change_plan_error("invalid_change_plan")
         comments = _change_plan_comments(body, rel_id)
     if comments is None:
         return _change_plan_error("invalid_change_plan")
@@ -12250,9 +12266,8 @@ def api_change_plans_create():
     selection = engine_changeplan.clean_selection(body)
     if selection is None:
         return _change_plan_error("invalid_change_plan")
-    script_mode = body.get("mode") == "script"
-    if script_mode and (source != "assistant" or "connection" not in selection):
-        # 脚本修改只接助手来源（审阅意见是外来文本，不直接驱动改脚本）；要明确的连接（决定 Agent 走哪条路由）
+    if script_mode and "connection" not in selection:
+        # 脚本修改要明确的连接（决定 Agent 走哪条路由）；审阅来源只接用户点按钮那条路（上面核过来源方案与意见 id），不自动续走
         return _change_plan_error("invalid_change_plan")
     # 连接预检图内方案与脚本方案同一个：连接用不了（没连上 / 不支持）两条都走不通，回同一组稳定码，前端据此直接落回旧路径
     failure = engine_changeplan.connection_failure(selection)
@@ -12267,7 +12282,7 @@ def api_change_plans_create():
         threading.Thread(
             target=_change_plan_script_thread if script_mode else _change_plan_thread,
             args=(
-                (ctx, task, rel_id, list(base), comments, selection, body.get("target"))
+                (ctx, task, rel_id, list(base), comments, selection, body.get("target"), source)
                 if script_mode
                 else (ctx, task, rel_id, list(base), comments, source, None, selection)
             ),
@@ -12372,13 +12387,15 @@ def _change_plan_thread(
             engine_changeplan.forget_task(task)
 
 
-def _change_plan_script_thread(ctx, task, rel_id, base, comments, selection, target) -> None:
+def _change_plan_script_thread(
+    ctx, task, rel_id, base, comments, selection, target, origin="assistant"
+) -> None:
     """脚本修改的后台线程（ADR 0206 PR 6）：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail, params = "", "", {}
     try:
         with bound_project(ctx):
             plan, before_png, after_png, new_bytes = _change_plan_script_compute(
-                ctx, task, rel_id, base, comments, selection, target
+                ctx, task, rel_id, base, comments, selection, target, origin
             )
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png, new_bytes)
     except engine_changeplan.PlanFailure as exc:
@@ -12395,7 +12412,9 @@ def _change_plan_script_thread(ctx, task, rel_id, base, comments, selection, tar
 _PLAN_SCRIPT_DEADLINE_S = 25 * 60
 
 
-def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, target):
+def _change_plan_script_compute(
+    ctx, task, rel_id, base, comments, selection, target, origin="assistant"
+):
     """脚本修改：渲染 B0 → Agent 在候选里改（`plan_only`，不写用户脚本）→ 越界核对 → 候选字节用 B0 渲染出「改后」→ 数据指纹 → 方案。
     → `(plan, before_png, after_png, 候选字节)`；失败抛 `PlanFailure`，**用户脚本一个字节不动**（越界被还原的除外，如实报告）。"""
     ec = engine_changeplan
@@ -12537,6 +12556,7 @@ def _change_plan_script_compute(ctx, task, rel_id, base, comments, selection, ta
         base_bytes=outcome["base_bytes"],
         new_bytes=new_bytes,
         base_patches=base,
+        source=origin,
     )
     return plan, before_png, after_png, new_bytes
 
@@ -12823,6 +12843,8 @@ def _change_plan_compute(
         )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
+        # 改成对数轴而下限 ≤ 0：候选里一并把下限改成正数（卡片再问用户要不要），免得出一张坍掉的图
+        proposal = ec.require_log_lower_limits(proposal, start_man)
         cand, proposal = ec.candidate_patches(start, proposal, start_man)
         if prev is not None:  # 上一版没被批注改掉的组带进来，再与批注的组一起相对 B0 现算
             proposal = {
@@ -12845,6 +12867,25 @@ def _change_plan_compute(
                 raise ec.PlanFailure("change_plan_render_failed", "warning")
             groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
             groups = ec.attach_patches(groups, cand)
+            # 改完有元素新探出图幅（对数轴刻度变宽把纵轴标题挤出去之类）：用现成的外边距重排腾地方，补出的 position 并进造成出界的那些组。
+            # 模型自己提了 position 的（用户的意思在排版上）不替它改；补不下 / 没进步 / 有新 warning = 照常出卡
+            if not any(
+                c["prop"] == "position" and not c.get("auto")
+                for g in proposal["groups"]
+                for c in g["changes"]
+            ):
+
+                def room_render(patches: list):
+                    resp = override(patches)
+                    return None if warned(resp) - base_warned else resp.get("manifest")
+
+                room = ec.make_room(before_man, after_man, cand, base, room_render)
+                if room is not None:
+                    cand = room.candidate
+                    after_png, after_man = snapshot(cand)
+                    groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
+                    groups = ec.attach_patches(groups, cand)
+                    groups = ec.attach_room(groups, room, before_man, after_man)
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         _require_route_unchanged(rel_id)
@@ -12894,6 +12935,12 @@ def _change_plan_compute(
             parent=prev["id"],
             note_ids=note_ids,
         )
+    if prev is not None:
+        # 续改的版本：上一版存着的审阅意见原文带着走（再加这一版用户自己写的批注），「改脚本做剩下的」仍按存档取
+        plan["comments"] = [
+            *(prev.get("comments") or []),
+            *engine_changeplan.stored_comments(comments),
+        ]
     plan["replay_required"] = task.replay_required
     return plan, before_png, after_png
 

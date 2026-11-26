@@ -42,9 +42,11 @@ export function ChangePlanTurn({ entry, latest }: { entry: PlanEntry; latest: bo
     const prev = entry.followsKey ? s.entries[entry.followsKey] : undefined
     return !!prev && prev.status !== 'handoff'
   })
+  // 审阅来源的脚本方案卡接在原审阅卡后面：那几条意见已经在上面的审阅意见卡里，不再画第二张
+  const prevExists = useChangePlanStore((s) => !!entry.followsKey && !!s.entries[entry.followsKey])
   return (
     <div className="flex flex-col gap-(--item-gap)" data-change-plan-turn={entry.key}>
-      {entry.from === 'assistant' ? entry.status !== 'handoff' && !prevShowsBubble && <AssistantNoteBubble entry={entry} /> : <ReviewNoteCard entry={entry} />}
+      {entry.from === 'assistant' ? entry.status !== 'handoff' && !prevShowsBubble && <AssistantNoteBubble entry={entry} /> : !(entry.followsKey && prevExists) && <ReviewNoteCard entry={entry} />}
       <ChangePlanCard entry={entry} latest={latest} />
     </div>
   )
