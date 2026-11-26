@@ -266,6 +266,11 @@ export function createFakeBackend() {
       b.owners.set(body.doc_id, pj)
       return json({ ok: true, revision: body.revision, owner: 'this' })
     }
+    if (u.pathname === '/api/layout-session/project-history/copied' && method === 'POST') {
+      const body = JSON.parse(String(init?.body)) as { doc_id: string }
+      b.calls.push(`POST copied ${body.doc_id}`)
+      return json({ ok: true, copied: 0 })
+    }
     const ver = u.pathname.match(/^\/api\/versions\/([^/]+)\/([^/]+)$/)
     if (ver && method === 'GET') {
       const key = `${decodeURIComponent(ver[1])}/${decodeURIComponent(ver[2])}`

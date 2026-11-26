@@ -25,16 +25,19 @@ export function usePlanPanel(e: Pick<PlanEntry, 'panelId' | 'documentId' | 'load
  * 这张图**此刻**的缩略图地址（方案还没出来时卡片 / 审阅意见卡用它当主体；`enabled = false` 时不为它发出图请求，只剩磁盘图地址）：有图内修改就按 override 出图
  * （与版本预览同一条 `useVariantPng`），出来之前 / 没有修改时挂磁盘图；runtime 面板挂最近一次预览。拿不到 = null（卡片显示纸底）。
  */
+/** 卡片里的图约 300 CSS px 宽：按 2× 屏取 800（400 在视网膜屏上被放大、发糊；800 是引擎已有的档） */
+const THUMB_BUCKET = 800
+
 export function usePanelThumbSrc(panel: PanelObject | undefined, enabled = true): string | null {
   const byId = useAssetStore((s) => s.byId)
   const nonce = useRuntimeAssetStore((s) => s.previewNonce)
   const fileId = panel?.fileId ?? ''
   const rev = panel?.fileKind === 'runtime' ? (nonce[fileId] ?? 0) : (byId[fileId]?.mtime ?? 0)
-  const variant = useVariantPng(fileId, panel?.overrides ?? [], 400, !!panel && enabled, rev, panel ? adoptionGuardOf(panel) : undefined)
+  const variant = useVariantPng(fileId, panel?.overrides ?? [], THUMB_BUCKET, !!panel && enabled, rev, panel ? adoptionGuardOf(panel) : undefined)
   const byState = panel?.fileKind === 'runtime' && !engineTransport()
   const runtime = useRuntimePreview(fileId, panel?.overrides ?? [], !!panel && enabled && byState, rev)
   if (!panel) return null
-  const disk = panel.fileKind === 'runtime' ? (byState ? (runtime.exact === true ? runtime.url : null) : runtimePreviewUrl(fileId, nonce[fileId])) : renderUrl(fileId, 400, byId[fileId]?.mtime)
+  const disk = panel.fileKind === 'runtime' ? (byState ? (runtime.exact === true ? runtime.url : null) : runtimePreviewUrl(fileId, nonce[fileId])) : renderUrl(fileId, THUMB_BUCKET, byId[fileId]?.mtime)
   return variant.url ?? disk
 }
 

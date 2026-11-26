@@ -71,6 +71,7 @@ import {
 } from '@/store/documentStore'
 import {
   claimProjectHistory,
+  inheritRemapForCopy,
   fetchLayoutOwnerEvidence,
   fetchProjectHistory,
   fetchRecoveryCandidates,
@@ -654,6 +655,12 @@ async function installFromHistory(token: RestoreToken, picked: AltCandidate, rea
     cand = { ...cand, history: h, ...(h.mode === 'slot' && h.revision ? { expectedRevision: h.revision } : {}) }
   }
   const mode = h.mode
+  if (mode === 'copy' && h.owner === 'other') {
+    // 复制（旧项目还在）：复制品另开一份排版的这一刻，把复制源的改指表拷一份过来（后端重判、幂等、只拷改指表）。
+    // 在装文档之前等它：随后的首次渲染就按拷过来的规则读数据
+    await inheritRemapForCopy(cand.id, token.pj)
+    if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
+  }
   if (mode === 'slot') {
     const probe = await probeWithRetry(token, cand.id)
     if (!probe) return { kind: 'superseded' }

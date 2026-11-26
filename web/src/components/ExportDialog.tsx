@@ -120,6 +120,7 @@ import {
   type ExportRequestInput,
 } from "@/lib/exportRequest";
 import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels, type ExportRoute } from "@/lib/exportRoute";
+import { scriptedBitmapPanels } from "@/lib/scriptedBitmaps";
 import { fetchExportRoute, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
 import { buildBatchInput, buildMergedPdfInput, type BatchShared } from "@/lib/exportBatchInput";
 import { mergePdfPlan } from "@/lib/pdfPagesMerge";
@@ -147,7 +148,7 @@ import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
-import { isJustBakedBaseline } from "@/store/actions";
+import { isJustBakedBaseline, prepareScriptedBitmapsForRedraw } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
 import { renderKeyOf, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
@@ -172,7 +173,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
+import { isRuntimePanel, objectLabel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -317,6 +318,12 @@ export function ExportDialog() {
   const documentId = useDocumentStore((s) => s.documentId);
   const activeCanvasId = useDocumentStore((s) => s.activeCanvasId);
   const assets = useAssetStore((s) => s.byId);
+  const [redrawBitmaps, setRedrawBitmaps] = useState(true);
+  const [redrawBusy, setRedrawBusy] = useState(false);
+  const [redrawAttempted, setRedrawAttempted] = useState<ReadonlySet<string>>(() => new Set());
+  /** 试过但保留了原件的那几张（名字），导出前那一行如实说 */
+  const [redrawKept, setRedrawKept] = useState<string[]>([]);
+  const [rerunAfterRedraw, setRerunAfterRedraw] = useState<OverwritePolicy | null>(null);
   const mode = useWorkspaceStore((s) => s.mode);
   const activePanelId = useWorkspaceStore((s) => s.activePanelId);
   // 订阅**值**而不是订阅一个现算的摘要：摘要的组装只有 `summaryFor()` 一份
@@ -1007,6 +1014,7 @@ export function ExportDialog() {
     !filenameIssue &&
     newerObjects === 0 &&
     !locationUpdating &&
+    !redrawBusy &&
     (scope !== "original" || availability.ok);
 
   /**
@@ -1015,6 +1023,16 @@ export function ExportDialog() {
    * 走的就是单张导出的那条路，没有第二套。
    */
   const batchMode = !single && scope === "original";
+  /**
+   * 画布导出里会整张嵌入磁盘位图、但有脚本能重画的那些图（T-005）。默认导出前先转成脚本重画
+   * （`prepareScriptedBitmapsForRedraw`：矢量主文件 / 精确采用，不试要用户对照的来源驱动）；
+   * 取消勾选 = 用原文件。同一次打开里每张只试一次，试过没转成的不会每点一次导出就重跑一遍脚本。
+   */
+  const scriptedBitmaps = useMemo(
+    () => (scope === "canvas" && !batchMode ? scriptedBitmapPanels(exportDoc.objects, assets, formats, route) : []),
+    [scope, batchMode, exportDoc.objects, assets, formats, route],
+  );
+  const pendingRedraw = scriptedBitmaps.filter((p) => !redrawAttempted.has(p.id));
   /**
    * 「合成一个多页 PDF」（#1370）：多图档 + 勾着 PDF + 这几张图都出自脚本的同一份 `PdfPages` 才提供；
    * 页序跟脚本走、界面上不能改；SVG 没有多页，所以只在 PDF 格式下出现。默认勾上，不勾 = 照旧每张图一个单页文件。
@@ -1251,6 +1269,24 @@ export function ExportDialog() {
       // 判断没有被这个咽喉接管，而「覆盖 / 另存 / 重试」走的正是这里
       // 闸与主按钮读**同一个** `canStart`
       if (!canStart) return;
+      // 有脚本的整张位图：先转成脚本重画（会改文档，是可撤销的提交），转成了就等文档落进表单再走同一个入口重来——
+      // 检查、proof report、请求读的都是渲染时的 `doc`，同一个事件处理里接着发还是旧文档（与 `rerunAtPpi` 同一手法）
+      if (redrawBitmaps && pendingRedraw.length > 0) {
+        const ids = pendingRedraw.map((p) => p.id);
+        setRedrawAttempted((prev) => new Set([...prev, ...ids]));
+        setRedrawBusy(true);
+        let outcomes: Awaited<ReturnType<typeof prepareScriptedBitmapsForRedraw>> = {};
+        try {
+          outcomes = await prepareScriptedBitmapsForRedraw(ids);
+        } finally {
+          setRedrawBusy(false);
+        }
+        setRedrawKept(pendingRedraw.filter((p) => (outcomes[p.id] ?? "kept") === "kept").map(objectLabel));
+        if (ids.some((id) => outcomes[id] === "vector" || outcomes[id] === "adopted")) {
+          setRerunAfterRedraw(overwrite);
+          return;
+        }
+      }
       // 这一回在对话框里起的作业：它跑完就该给完成态脚部（不论 job_id 是否与上一回重号）
       setSettledJobId(null);
       setRevealError(null);
@@ -1295,8 +1331,25 @@ export function ExportDialog() {
       original,
       originalWidthMm,
       originalHeightMm,
+      redrawBitmaps,
+      scriptedBitmaps,
+      redrawAttempted,
     ],
   );
+
+  useEffect(() => {
+    if (rerunAfterRedraw === null) return;
+    const overwrite = rerunAfterRedraw;
+    setRerunAfterRedraw(null);
+    void start(overwrite);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rerunAfterRedraw]);
+  // 每次打开对话框重新来过：上一次没转成的原因（环境、样式）可能已经解决
+  useEffect(() => {
+    if (!open) return;
+    setRedrawAttempted(new Set());
+    setRedrawKept([]);
+  }, [open]);
 
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
@@ -1803,8 +1856,11 @@ export function ExportDialog() {
               size="lg"
               data-export-start
               disabled={batchMode ? !canStartBatch : !canStart}
+              loading={redrawBusy}
+              loadingLabel={ex("redrawingBitmaps")}
               onClick={startExport}
             >
+              {/* 先重画位图再导：这一段要跑脚本，按钮灰着却不说在干什么会像卡住了 */}
               <Download size={ICON_SIZE.sm} />
               {ex("start")}
             </Button>
@@ -2046,6 +2102,29 @@ export function ExportDialog() {
                   <p id="export-eps-reason" className="type-caption">
                     {ex(`epsUnavailable.${eps.reason}`)}
                   </p>
+                </FormRow>
+              )}
+              {/* 画布范围：有脚本的整张位图默认先转成脚本重画；取消 = 用原文件 */}
+              {(scriptedBitmaps.length > 0 || redrawKept.length > 0) && (
+                <FormRow>
+                  <div className="flex w-full min-w-0 flex-col gap-1">
+                    {scriptedBitmaps.length > 0 && (
+                      <label data-export-redraw-bitmaps className="flex min-h-7 items-center gap-2 text-ink">
+                        <Checkbox checked={redrawBitmaps} onChange={() => setRedrawBitmaps((v) => !v)} />
+                        <span>{ex("redrawBitmaps", { count: scriptedBitmaps.length })}</span>
+                      </label>
+                    )}
+                    {redrawKept.length > 0 && (
+                      // 说明放在勾选项下面、占满整行；一句话，改用重画的做法放 title
+                      <p
+                        data-export-redraw-kept
+                        className="type-caption"
+                        title={ex("redrawBitmapsKeptHint", { files: redrawKept.join("、") })}
+                      >
+                        {ex("redrawBitmapsKept", { files: redrawKept.join("、") })}
+                      </p>
+                    )}
+                  </div>
                 </FormRow>
               )}
               {/* 画布范围：带编辑的图找不到脚本，后端画不出它——导出必然失败，点之前就说 */}

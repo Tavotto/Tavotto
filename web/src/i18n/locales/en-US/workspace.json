@@ -613,7 +613,10 @@
     "stale": "Script changed",
     "frameLegacy": "Shown at figsize",
     "frameLegacyHint": "The script saved this figure cropped differently. Switch to the saved figure size in Properties.",
-    "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure’s crop lies entirely outside it. Adjust or reset the crop in Properties first."
+    "frameLegacyBlockedHint": "The script saved this figure cropped differently, but this figure’s crop lies entirely outside it. Adjust or reset the crop in Properties first.",
+    "bitmapOriginal": "Bitmap original",
+    "redraw": "Redraw with script",
+    "redrawHint": "The script saved this figure as a bitmap, and a PDF export embeds it as is. Choose Redraw with script to rerun the script and switch to vectors; if the result differs, you compare the two first, and you can undo it."
   },
   "quickEdit": {
     "aria": "Quick edit",
@@ -2128,9 +2131,16 @@
     }
   },
   "agentMerge": {
+    "commitEdit_one": "Merge {{count}} change made by the agent",
+    "commitEdit_other": "Merge {{count}} changes made by the agent",
     "commit_one": "Merge {{count}} annotation added by the agent",
     "commit_other": "Merge {{count}} annotations added by the agent",
+    "doneDeleted_one": "Merged {{count}} change by the agent (includes a deletion)",
+    "doneDeleted_other": "Merged {{count}} changes by the agent (includes deletions)",
+    "doneEdit_one": "Merged {{count}} change by the agent — save to write it to the project",
+    "doneEdit_other": "Merged {{count}} changes by the agent — save to write them to the project",
     "done_one": "Merged {{count}} annotation — save to write it to the project",
+    "undo": "Undo",
     "done_other": "Merged {{count}} annotations — save to write them to the project"
   }
 }

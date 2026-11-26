@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { canUndoApplied, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { canUndoApplied, declinedGroups, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
@@ -8,10 +8,13 @@ import { Button } from '../ui/Button'
 import { Check, RefreshCw } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { StatusPill } from '../ui/StatusPill'
+import { TaskChecklist } from '../ui/TaskChecklist'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
-import { cp, effectiveStatus, failureAction, failureText, isScriptPlan, overreachFiles, planTally, summaryLine, unhandledViews } from './changePlanModel'
+import { formatAxisLimit } from '@/lib/logPower'
+import { cp, effectiveStatus, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
-import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource } from './usePlanFigure'
+import { GraphPaper, PlotSketch, type PlotStage } from './PlotSketch'
+import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
 /**
  * 助手里的「修改方案」卡（助手一侧，占栏宽）：修改后的缩略图是主体，标题行「修改方案」+ 右侧版本，一句话说改了什么，
@@ -19,6 +22,9 @@ import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource } from '.
  * `latest = false`（后面还有更新的待确认卡）时「查看」降成次级——除「发送」外一屏只有最新一张待确认卡的这一颗主按钮（ADR 0206 §三）。
  * 悬停缩略图换成修改前（`title` 说明，不堆文字）。
  */
+/** 画框最宽的比例：再宽的图在框里上下留纸，框不再变矮——生成中三步清单要叠在上面放得下（各状态同一个框，卡片不跳） */
+const MAX_THUMB_ASPECT = 2
+
 export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; latest?: boolean }) {
   useTranslation('ai')
   const panel = usePlanPanel(entry)
@@ -34,6 +40,10 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const store = useChangePlanStore.getState
   const primary = latest ? 'primary' : 'secondary'
   const btn = 'rounded-full'
+  // 对数轴下限：还没回答就先问，不给「查看 / 应用」；答了「不改」的组不进方案，卡面按剩下的组出图
+  const ask = status === 'ready' ? pendingConfirm(entry) : undefined
+  const declined = declinedGroups(entry).length > 0
+  const selection = useSelectionPreview(entry, status === 'ready' && declined)
 
   if (status === 'failed') return <FailedCard entry={entry} />
   // 助手来源，整条指令都要改脚本：这里只留一行灰字，接着由改脚本那一轮自己说话
@@ -50,7 +60,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   // 已放弃：后端那份已经收了，卡面画这张图此刻的样子（不再挂方案的图）
   const showAfter = !generating && !!entry.afterSrc && status !== 'discarded'
   // 已应用且只应用了部分组：挂实际应用的那一张（弹窗里按勾选出的图；没有就挂这张图此刻的样子），不挂全量候选图
-  const shownAfter = entry.status === 'applied' && entry.appliedPartial ? (entry.appliedSrc ?? thumb) : entry.afterSrc
+  const shownAfter = entry.status === 'applied' && entry.appliedPartial ? (entry.appliedSrc ?? thumb) : status === 'ready' && declined ? (selection.url ?? beforeSrc) : entry.afterSrc
   const dim = status === 'discarded' || status === 'stale'
   const handled = plan ? planTally(entry).done : 0
   // 「撤销」只在这张图还是我们写的那一份时给：用户之后又改过它，就不替他回到改前
@@ -59,6 +69,13 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const canUndo = status === 'applied' && (script ? !!plan?.applied && !entry.scriptBusy : !!panel && canUndoApplied(entry, panel.overrides))
   // 分量：待处理（生成中 / 待确认 / 图已改过）是完整卡面 + 微投影；已应用沉到次级卡面；已放弃再降一档、预览区收矮
   const pending = generating || status === 'ready' || status === 'stale'
+  const busyText = entry.revising !== undefined ? cp('card.revising') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')
+  // 生成中的三步清单（一键排版的整版卡没有阶段，照旧一句话）
+  const steps = generating ? planSteps(entry) : null
+  // 有三步清单的卡（生成中 / 刚出好待确认）正文区同高
+  const activeStep = steps?.find((x) => x.state === 'active')?.id
+  const plotStage: PlotStage = activeStep === 'before' ? 'read' : activeStep === 'after' ? 'draw' : 'think'
+  const freshFlow = !!steps || (status === 'ready' && entry.kind !== 'layout')
 
   return (
     <Card
@@ -67,11 +84,16 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
       className={cn(pending && 'bg-field', status === 'discarded' && 'opacity-80')}
       data-change-plan-card={generating ? 'generating' : status}
     >
+      {/* 标题在图上面、三步清单在图下面（用户 2026-11-26） */}
+      <div className="flex items-baseline justify-between gap-2 px-1.5 pb-2 pt-0.5">
+        <span className="text-base font-medium text-ink">{cp('card.title')}</span>
+        {!generating && plan && <span className="type-meta">{cp('card.version', { n: versionNumber(entry) })}</span>}
+      </div>
       <div className="group/thumb" title={showAfter ? cp('card.holdBefore') : undefined}>
         <FigureThumb
           src={showAfter ? shownAfter : status === 'discarded' ? thumb : beforeSrc}
           alt={cp('card.thumbAlt')}
-          aspect={status === 'discarded' ? 2.8 : aspect}
+          aspect={status === 'discarded' ? 2.8 : Math.min(aspect, MAX_THUMB_ASPECT)}
           dim={dim}
           cover={status === 'discarded'}
         >
@@ -88,18 +110,28 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
               </StatusPill>
             </>
           )}
-          {generating && <span aria-hidden data-change-plan-frost className="absolute inset-0 rounded-md bg-surface/40 backdrop-blur-sm" />}
+          {/* 生成中：坐标纸上一幅正在作图的小画，跟着清单走到的那一步（用户 2026-11-26：传达品牌、不重复上面的思考小球） */}
+          {generating && (
+            <span aria-hidden data-change-plan-frost className="absolute -inset-px overflow-hidden rounded-md bg-paper">
+              <GraphPaper />
+              <PlotSketch stage={plotStage} />
+            </span>
+          )}
         </FigureThumb>
       </div>
-      <div className="flex flex-col gap-2 px-1.5 pb-1 pt-2.5">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-base font-medium text-ink">{cp('card.title')}</span>
-          {!generating && plan && <span className="type-meta">{cp('card.version', { n: versionNumber(entry) })}</span>}
-        </div>
-        {generating ? (
+      {/* 正文区留够三步清单的高度：从生成中到出好卡片不变高（用户 2026-11-26「完成时卡片不要缩短」） */}
+      <div className={cn('flex flex-col gap-2 px-1.5 pb-1 pt-2.5', freshFlow && 'min-h-21.5')} data-change-plan-body>
+        {steps ? (
+          <>
+            <p className="sr-only" role="status" data-change-plan-generating>
+              {busyText}
+            </p>
+            <TaskChecklist bare steps={steps} className="-mx-1.5 bg-transparent px-1.5 py-0" data-change-plan-steps />
+          </>
+        ) : generating ? (
           <p className="flex items-center gap-2 text-sm text-ink-2" data-change-plan-generating>
             <ThinkingOrb form="solving" />
-            <span>{entry.revising !== undefined ? cp('card.revising') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')}</span>
+            <span>{busyText}</span>
           </p>
         ) : (
           <p className={cn('flex items-center gap-1.5 text-sm', status === 'discarded' ? 'text-ink-3' : 'text-ink-2')}>
@@ -110,19 +142,42 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 : entry.kind === 'layout'
                 ? cp('card.appliedLayout', { count: entry.layout?.count ?? 0 })
                 : entry.from === 'assistant'
-                  ? cp('card.appliedAssistant', { places: planTally(entry).places })
+                  ? cp('card.appliedAssistant', { places: placesPhrase(planTally(entry).places) })
                   : cp('card.applied', { count: handled })
               : status === 'discarded'
                 ? cp('card.discarded')
                 : status === 'stale'
                   ? cp('card.stale')
-                  : summaryLine(entry)}
+                  : ask?.confirm
+                    ? cp(`card.logLimitAsk`, { axis: cp(ask.confirm.axis === 'x' ? 'card.axisX' : 'card.axisY'), to: formatAxisLimit(ask.confirm.to, true) })
+                    : summaryLine(entry)}
           </p>
         )}
         {entry.notice && <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>{cp(entry.notice === 'apply_failed' ? (script ? 'card.applyFailedScript' : 'card.applyFailed') : script ? 'card.undoFailedScript' : 'card.undoFailed')}</p>}
+        {/* 生成中先把两颗按钮摆好（灰着）：出好时只是亮起来，卡片不挪 */}
+        {generating && !steps && (
+          <div className="flex items-center gap-2 pt-0.5" data-change-plan-pending-actions>
+            <Button variant="secondary" size="md" className={btn} disabled>
+              {cp('card.view')}
+            </Button>
+            <Button variant="secondary" size="md" className={btn} disabled>
+              {cp('card.applyNow')}
+            </Button>
+          </div>
+        )}
         {!generating && (
           <div className="flex items-center gap-2 pt-0.5">
-            {status === 'ready' && (
+            {ask && (
+              <>
+                <Button variant={primary} size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'yes')} data-change-plan-confirm-log="yes">
+                  {cp('card.logLimitYes')}
+                </Button>
+                <Button variant="secondary" size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'no')} data-change-plan-confirm-log="no">
+                  {cp('card.logLimitNo')}
+                </Button>
+              </>
+            )}
+            {status === 'ready' && !ask && (
               <>
                 <Button variant={primary} size="md" className={btn} onClick={() => store().openDialog(entry.key)} data-change-plan-view>
                   {cp('card.view')}
@@ -137,7 +192,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 {cp('card.undo')}
               </Button>
             )}
-            {entry.from === 'assistant' && !entry.scriptStarted && (status === 'ready' || status === 'applied') && (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') && (
+            {!entry.scriptStarted && !ask && (status === 'ready' || status === 'applied') && (entry.from === 'assistant' ? (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') : reviewScriptIds(entry).length > 0) && (
               <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
                 {cp('card.runScript')}
               </Button>
@@ -175,7 +230,8 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
     else void store().regenerate(entry.key)
   }
   // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
-  const scriptWay = assistant && action !== 'script' && action !== 'restore'
+  // 审阅来源：没有一条能落成图内修改、但有「要改脚本」的意见时，同样给这条路（只由用户点，不自动续走）
+  const scriptWay = (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">

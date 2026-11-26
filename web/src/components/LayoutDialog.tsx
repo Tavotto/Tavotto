@@ -21,7 +21,7 @@ import {
 import { normalizeLayout, tooNewSchema } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { captureFigureSnapshotSave, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
+import { captureFigureSnapshotSave, mergeSavedChartSources, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
 import { installFork, resumeAutosaveAfterFork } from '@/store/documentFork'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
@@ -188,7 +188,10 @@ export function LayoutDialog() {
         toProject ? { target: 'project' } : undefined,
       )
       // 分叉时合并留到换走之前、且先把原排版摘出自动保存（见下）：这次合并不能把原排版写回盘
-      if (!fork) mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+      if (!fork) {
+        mergeSavedChartSources(snapshots, res.chart_sources)
+        mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
+      }
       // 写成了：立刻说「排版写成了」，时间线打「保存」点（ADR 0101 §7）——在后面任何一步
       // （关对话框、记账、状态条）之前，与它们的成败无关（Codex #679）；点属于点下另存为的
       // 那一份（`ctx.moment`：入口取的快照，与上面序列化的是同一刻）。存进项目的是项目文件，
@@ -206,6 +209,7 @@ export function LayoutDialog() {
       let forked = false
       if (fork && stillCurrent(ctx)) {
         suspendAutosaveFor(ctx.documentId)
+        mergeSavedChartSources(snapshots, res.chart_sources)
         mergeSavedFigureSnapshots(snapshots, res.figure_snapshots)
         const latest = useDocumentStore.getState().buildProject()
         const id = await installFork({ ...latest, project: { ...latest.project, name: forkTitle } })
@@ -223,7 +227,7 @@ export function LayoutDialog() {
             name: res.name ?? stem,
             file: res.file,
             revision: res.revision,
-            dirty: forked ? false : edited(),
+            dirty: edited(),
           },
           boundId,
         )

@@ -30,9 +30,19 @@ export interface TaskStep {
 export function TaskChecklist({
   title,
   steps,
+  busyIcon,
+  bare = false,
   className,
   ...rest
-}: Omit<HTMLAttributes<HTMLDivElement>, 'title'> & { title: ReactNode; steps: TaskStep[] }) {
+}: Omit<HTMLAttributes<HTMLDivElement>, 'title'> & {
+  /** 标题行那句话（`bare` 时不画，可不给） */
+  title?: ReactNode
+  steps: TaskStep[]
+  /** 标题行进行中的图标（默认 `Spinner`；`null` = 留空位不画——宿主别处已有在动的标记时，免得一屏几样东西一起转）；步骤行仍是转圈 */
+  busyIcon?: ReactNode
+  /** 只要步骤、不要标题行（例如修改方案卡：清单在缩略图下面、占正文的位置）：不能收起，行距收紧一档 */
+  bare?: boolean
+}) {
   const [open, setOpen] = useState(true)
   const listId = useId()
   const total = steps.length
@@ -43,43 +53,45 @@ export function TaskChecklist({
       {...rest}
       data-task-checklist
       data-task-all={all || undefined}
-      className={cn('flex flex-col rounded-lg bg-surface-hover px-3.5', open ? 'pb-2 pt-2.5' : 'py-2', className)}
+      className={cn('flex flex-col rounded-lg bg-surface-hover px-3.5', bare ? 'py-1.5' : open ? 'pb-2 pt-2.5' : 'py-2', className)}
     >
-      <button
-        type="button"
-        data-task-toggle
-        aria-expanded={open}
-        aria-controls={listId}
-        onClick={() => setOpen((v) => !v)}
-        className="group flex h-6 w-full items-center gap-2 rounded-sm text-left outline-none focus-visible:focus-ring"
-      >
-        <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
-          {all ? (
-            <CircleCheck size={ICON_SIZE.sm} className="text-ink" />
-          ) : (
-            <Spinner size={ICON_SIZE.sm} className="text-ink" />
-          )}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-base font-medium text-ink" data-task-title>
-          {title}
-        </span>
-        <span className={cn('text-sm tabular-nums', all ? 'font-medium text-ink' : 'text-ink-3')} data-task-count>
-          {done}/{total}
-        </span>
-        <ChevronDown
-          size={ICON_SIZE.xs}
-          aria-hidden
-          className={cn('-ml-1 text-ink-3 transition-transform group-hover:text-ink-2 motion-reduce:transition-none', !open && '-rotate-90')}
-        />
-      </button>
-      <ol id={listId} hidden={!open} className="flex flex-col pt-2" data-task-steps>
+      {!bare && (
+        <button
+          type="button"
+          data-task-toggle
+          aria-expanded={open}
+          aria-controls={listId}
+          onClick={() => setOpen((v) => !v)}
+          className="group flex h-6 w-full items-center gap-2 rounded-sm text-left outline-none focus-visible:focus-ring"
+        >
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
+            {all ? (
+              <CircleCheck size={ICON_SIZE.sm} className="text-ink" />
+            ) : (
+              (busyIcon === undefined ? <Spinner size={ICON_SIZE.sm} className="text-ink" /> : busyIcon)
+            )}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-base font-medium text-ink" data-task-title>
+            {title}
+          </span>
+          <span className={cn('text-sm tabular-nums', all ? 'font-medium text-ink' : 'text-ink-3')} data-task-count>
+            {done}/{total}
+          </span>
+          <ChevronDown
+            size={ICON_SIZE.xs}
+            aria-hidden
+            className={cn('-ml-1 text-ink-3 transition-transform group-hover:text-ink-2 motion-reduce:transition-none', !open && '-rotate-90')}
+          />
+        </button>
+      )}
+      <ol id={listId} hidden={!bare && !open} className={cn('flex flex-col', !bare && 'pt-2')} data-task-steps>
         {steps.map((s) => (
           <li
             key={s.id}
             data-task-step={s.id}
             data-step-state={s.state}
             aria-current={s.state === 'active' ? 'step' : undefined}
-            className="flex h-7 items-center gap-2"
+            className={cn('flex items-center gap-2', bare ? 'h-6' : 'h-7')}
           >
             {/* 删除线挂在「图标 + 文字」整组上：做完时从左往右连勾一起划掉（用户 11-25） */}
             <span

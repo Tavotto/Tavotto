@@ -11,6 +11,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearVariantPngCache, useVariantPng, variantNeedsRender } from './useVariantPng'
 import { setCurrentProjectId } from '@/lib/session'
+import { useDocumentStore } from '@/store/documentStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -22,8 +23,8 @@ const previewPng = vi.fn()
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
-  enginePreviewPng: (id: string, patches: unknown[], bucket: number, signal?: AbortSignal) =>
-    previewPng(id, patches, bucket, signal),
+  enginePreviewPng: (id: string, patches: unknown[], bucket: number, signal?: AbortSignal, options?: unknown, pj?: string | null) =>
+    previewPng(id, patches, bucket, signal, options, pj),
 }))
 
 const OV = [{ gid: 't1', prop: 'pos_frac', value: [0.1, 0.2] }]
@@ -101,10 +102,23 @@ describe('缓存键：项目 + 素材版本 + 变体，少一个都会串图', (
 
   it('换项目之后同名同 overrides 不得命中旧项目的图', async () => {
     const a = await fetchOnce('fig1.pdf', OV)
-    setCurrentProjectId('projB')
+    await act(async () => setCurrentProjectId('projB'))
     const b = await fetchOnce('fig1.pdf', OV)
     expect(b).not.toBe(a)
     expect(previewPng).toHaveBeenCalledTimes(2)
+  })
+
+  it('项目 A 的请求晚于切换到 B 返回，挂载中的预览只接受 B 的图', async () => {
+    let finishA!: (image: Blob) => void
+    previewPng.mockImplementationOnce(() => new Promise<Blob>(resolve => { finishA = resolve }))
+    await fetchOnce('fig1.pdf', OV)
+    await act(async () => { setCurrentProjectId('projB') })
+    const b = last.url
+    await act(async () => { finishA(new Blob(['A'])) })
+    expect(previewPng).toHaveBeenCalledTimes(2)
+    expect(b).not.toBeNull()
+    expect(last.url).toBe(b)
+    expect(revoked).not.toContain(b)
   })
 
   it('磁盘素材被改过（rev 变了）也不得命中旧缩略图', async () => {
@@ -112,6 +126,29 @@ describe('缓存键：项目 + 素材版本 + 变体，少一个都会串图', (
     const b = await fetchOnce('fig1.pdf', OV, 200, 2000)
     expect(b).not.toBe(a)
     expect(previewPng).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * 整份恢复 / 重新载入**同一个** `documentId`（`switchDocument` / `applyProject` 把 `loadSeq` +1，
+   * 项目 id 与文件都没变）：上一代取回的图不能当这一代的。只按「项目 + 文件 + 变体」分键的话，
+   * 这里会一次请求都不发、直接把重载前那张图显示成重载后的样子——正是本层要修的那类冒充。
+   */
+  it('同一份文档重新载入（loadSeq 变了）也不得命中上一代的缩略图', async () => {
+    const a = await fetchOnce('fig1.pdf', OV)
+    await act(async () => {
+      useDocumentStore.setState({ loadSeq: useDocumentStore.getState().loadSeq + 1 })
+    })
+    const b = await fetchOnce('fig1.pdf', OV)
+    expect(b).not.toBe(a)
+    expect(previewPng).toHaveBeenCalledTimes(2)
+  })
+
+  /** 后端按「项目 + 相对路径」解析文件：请求必须带上发起时的项目，否则同名文件会取到别的项目里那张 */
+  it('请求带上发起时的项目 id', async () => {
+    await fetchOnce('fig1.pdf', OV)
+    await act(async () => setCurrentProjectId('projB'))
+    await fetchOnce('fig1.pdf', OV)
+    expect(previewPng.mock.calls.map((c) => c[5])).toEqual(['projA', 'projB'])
   })
 
   it('没有 overrides 的面板压根不发请求（与磁盘图一模一样）', async () => {

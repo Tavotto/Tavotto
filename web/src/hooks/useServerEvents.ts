@@ -347,6 +347,11 @@ export function handleServerEvent(ev: ServerEvent) {
       useAiStore.getState().setTaskPhase(ev.session, ev.phase, ev.task_type)
       break
 
+    case 'ai.stage':
+      // 改图任务清单走到哪一步；不是本标签页持有的会话就什么都不做
+      useAiStore.getState().setStage(ev.session, ev.stage)
+      break
+
     case 'ai.stalled':
       // 「AI 没有动静」提示；不是本标签页持有的会话就什么都不做
       useAiStore.getState().setStalled(ev.session, ev.stalled ? ev.idle_s : null)

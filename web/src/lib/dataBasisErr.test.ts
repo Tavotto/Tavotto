@@ -6,7 +6,7 @@ type C = Parameters<typeof basisOf>[0]
 const facts = (o: Partial<NonNullable<C['facts']>> = {}) => ({ rows: 12, drawn: 12, groups: 4, n_min: 3, n_max: 3, x_values: 4, ...o })
 
 describe('现成的误差列', () => {
-  it.each(['points_err', 'line_err'])('%s：「按表里的 N 行绘制，每行一个点」+「误差线取自「列」列」，不按分组数句子', (code) => {
+  it.each(['points_err', 'line_err'])('%s：「按 N 行绘制，每行一个点」+「误差线取自「列」列」，不按分组数句子', (code) => {
     const b = basisOf({ title_code: code, facts: facts(), error_column: 'SD of 值' })!
     expect(b.main).toEqual([{ key: 'rowsErr', values: { drawn: 12 } }])
     expect(b.errColumn).toEqual({ key: 'errColumn', values: { column: 'SD of 值' } })

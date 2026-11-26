@@ -22,7 +22,7 @@ import { chartRequestIdentity } from '@/lib/chartSource'
 import { useEffect, useState } from 'react'
 import { EngineError, enginePreviewPng, enginePreviewPngSnapshot, type EnginePngOptions } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
-import { currentProjectId } from '@/lib/session'
+import { usePreviewOwner } from './usePreviewOwner'
 
 /** 缓存上限：一次对话框里用户来回比对的版本数远小于它 */
 const CACHE_MAX = 24
@@ -39,8 +39,8 @@ let cacheEpoch = 0
  * 之后切到项目 B，会直接命中 A 的 blob 并把**别人的图**当成这一版的预览显示
  * 出来，而且一次请求都不发。素材本身被改过（mtime 变了）同理。
  */
-const keyOf = (fileId: string, overrides: unknown[], bucket: number, rev: number) =>
-  `${currentProjectId() ?? '-'} ${rev} ${bucket} ${fileId} ${JSON.stringify(overrides)}`
+const keyOf = (owner: string, fileId: string, overrides: unknown[], bucket: number, rev: number) =>
+  `${owner} ${rev} ${bucket} ${fileId} ${JSON.stringify(overrides)}`
 
 function remember(key: string, url: string) {
   cache.set(key, url)
@@ -94,7 +94,8 @@ export function useVariantPng(
   artifactValidation?: AdoptionGuard | null,
   chartSource?: Pick<EnginePngOptions, 'chart' | 'chart_source' | 'render_profile'>,
 ): VariantPng {
-  const key = keyOf(fileId, overrides, bucket, rev) + artifactKeySuffix(artifactValidation) + (chartRequestIdentity(chartSource?.chart, chartSource?.chart_source, chartSource?.render_profile) ?? '')
+  const owner = usePreviewOwner()
+  const key = keyOf(owner.key, fileId, overrides, bucket, rev) + artifactKeySuffix(artifactValidation) + (chartRequestIdentity(chartSource?.chart, chartSource?.chart_source, chartSource?.render_profile) ?? '')
   const [state, setState] = useState<VariantPng & {key?: string}>(() => ({
     key,
     url: artifactValidation !== undefined ? null : cache.get(key) ?? null,
@@ -128,23 +129,24 @@ export function useVariantPng(
     const transport = engineTransport()
     const pending = chartSource?.chart
       ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
-        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, chartSource).then(s => s.url)
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, chartSource, owner.pj).then(s => s.url)
       : artifactValidation
       ? transport ? Promise.reject(new ArtifactValidationError('unsupported_render_state'))
-        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject)).then(s=>s.url)
+        : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, artifactRequestFields(subject), owner.pj).then(s=>s.url)
       : transport
       ? transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
-      : enginePreviewPng(fileId, overrides, bucket, ctrl.signal).then((b) =>
+      : enginePreviewPng(fileId, overrides, bucket, ctrl.signal, {}, owner.pj).then((b) =>
           URL.createObjectURL(b),
         )
     void pending
       .then((url) => {
-        if (!live || epoch !== cacheEpoch) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return }
+        if (!live || epoch !== cacheEpoch || !owner.still()) { if (url.startsWith('blob:')) URL.revokeObjectURL(url); return }
         if (artifactValidation === undefined) remember(key, url)
         if (live) setState({ key, url, loading: false, approximate: false })
       })
       .catch((error) => {
-        if (live && epoch === cacheEpoch && artifactValidation &&
+        if (!live || epoch !== cacheEpoch || !owner.still()) return
+        if (artifactValidation &&
             (error instanceof ArtifactValidationError || (error instanceof EngineError && error.code === 'artifact_source_unavailable'))) {
           rejectArtifactRenders(fileId, artifactValidation, error, renderKey(fileId, overrides, artifactValidation))
         }

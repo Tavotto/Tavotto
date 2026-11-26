@@ -24,7 +24,9 @@
     "adoptionStoreFull": "The record of adopted PNGs is full, so no new one can be adopted. The original is kept.",
     "reviewReconstruction": "Compare again",
     "adoptReconstructed": "Edit from the redrawn figure",
-    "refreshReconstruction": "Update redraw comparison"
+    "refreshReconstruction": "Update redraw comparison",
+    "showRedraw": "Use the figure redrawn by its script",
+    "redrawn": "Now using the figure redrawn by its script, on the canvas and in exports. Undo to go back."
   },
   "backend": {
     "change_plan_busy": "A change plan is already being generated for this figure. Please wait.",
@@ -529,7 +531,7 @@
     "chart_source_changed": "The chart's source file has changed. This operation was not applied. Restore the matching source or import it again.",
     "chart_render_pair_missing": "The chart response did not include paired image and geometry. This render was not applied.",
     "figure_snapshot_unavailable": "A referenced Figure snapshot or its original could not be verified. No package was created. Restore the missing resource or regenerate the figure.",
-    "script_source_missing": "The script file itself is missing ({{script}}): it may have been moved or deleted. Put the script back in the project and run it again; Tavotto will not substitute another file with the same name.",
+    "script_source_missing": "Can’t find {{script}}",
     "input_declaration_conflict": "Input declarations changed elsewhere. Reload them before saving.",
     "input_declaration_invalid": "The input declaration or selected resources are unavailable. Check the files, run configuration, and data locations.",
     "input_declaration_unavailable": "Input declarations cannot be read or saved right now. Please try again later.",

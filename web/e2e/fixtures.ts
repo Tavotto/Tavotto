@@ -63,7 +63,7 @@ export interface AppOptions {
    * 用 `tests/support/e2e_change_plan_app.py` 起：把修改方案的模型缝换成假件（e2e 绝不真调模型），模式见该文件。
    * 隐含 `changePlan: true`。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
    */
-  planModel?: 'ok' | 'unsupported_sync' | 'unsupported_thread'
+  planModel?: 'ok' | 'log' | 'unsupported_sync' | 'unsupported_thread'
   /**
    * 用 `tests/support/e2e_offline_app.py` 起（`python -m tavotto` 的同一个入口，只多套了「受管环境能在离线机器上建出来」
    * 的补丁，见该文件）。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。

@@ -72,15 +72,38 @@ function caseInsensitive(p: string): boolean {
   }
 }
 
-function agentAnnotates(figures: string, dataDir: string, batch = 1): { added: string[] } {
+interface DiskObject {
+  id: string
+  type: string
+  text?: string
+  [k: string]: unknown
+}
+
+/** 一次「Agent 写入」：按引擎的格式先存撤销留存、再换排版文件；`mutate` 改第一张画布 */
+function agentWrites(figures: string, dataDir: string, tag: string, mutate: (objects: DiskObject[]) => DiskObject[]) {
   const file = path.join(figures, 'tavottofile', `${NAME}.json`)
   const before = readFileSync(file)
   const rev = (b: Buffer | string) => createHash('sha256').update(b).digest('hex').slice(0, 32)
   const doc = JSON.parse(before.toString('utf-8'))
+  doc.canvases[0].objects = mutate(doc.canvases[0].objects)
+  const after = Buffer.from(JSON.stringify(doc, null, 1), 'utf-8')
+  let project = realpathSync.native(figures)
+  if (caseInsensitive(project)) project = project.toLowerCase()
+  const key = createHash('sha256').update(project, 'utf-8').digest('hex').slice(0, 16)
+  const undo = path.join(realpathSync.native(dataDir), 'state', 'agent-undo', key, NAME)
+  mkdirSync(undo, { recursive: true })
+  const token = `u${Date.now().toString(16)}${tag}`
+  writeFileSync(path.join(undo, `${token}.json`), before)
+  writeFileSync(path.join(undo, `${token}.meta`), JSON.stringify({ before: rev(before), after: rev(after) }))
+  writeFileSync(file, after)
+}
+
+function agentAnnotates(figures: string, dataDir: string, batch = 1): { added: string[] } {
   const dy = (batch - 1) * 12
   const anchor = { v: 1, by: 'agent', anchors: [{ role: 'at', panel: { id: 'Fig1_kinetics.pdf', point: 'ne' } }] }
   const ids = [`a_e2e${batch}arw`, `t_e2e${batch}txt`]
-  doc.canvases[0].objects.push(
+  agentWrites(figures, dataDir, `a${batch}`, (objects) => [
+    ...objects,
     {
       id: ids[0], type: 'arrow', x: 96, y: 11 + dy, w: 6, h: 4, start: { rx: 1, ry: 0 }, end: { rx: 0, ry: 1 },
       color: '#000000', strokePt: 0.75, head: 'end', anchor,
@@ -89,18 +112,15 @@ function agentAnnotates(figures: string, dataDir: string, batch = 1): { added: s
       id: ids[1], type: 'text', x: 103, y: 9 + dy, w: 22, h: 4, text: batch === 1 ? 'Agent note' : `Agent note ${batch}`,
       sizePt: 8, bold: false, color: '#000000', align: 'left', anchor,
     },
-  )
-  const after = Buffer.from(JSON.stringify(doc, null, 1), 'utf-8')
-  let project = realpathSync.native(figures)
-  if (caseInsensitive(project)) project = project.toLowerCase()
-  const key = createHash('sha256').update(project, 'utf-8').digest('hex').slice(0, 16)
-  const undo = path.join(realpathSync.native(dataDir), 'state', 'agent-undo', key, NAME)
-  mkdirSync(undo, { recursive: true })
-  const token = `u${Date.now().toString(16)}${batch}`
-  writeFileSync(path.join(undo, `${token}.json`), before)
-  writeFileSync(path.join(undo, `${token}.meta`), JSON.stringify({ before: rev(before), after: rev(after) }))
-  writeFileSync(file, after)
+  ])
   return { added: ids }
+}
+
+/** 替插件改已有对象（ADR 0212 补丁的落盘结果）：只换点名对象的字段、删掉要删的，其余逐字节不动 */
+function agentEdits(figures: string, dataDir: string, tag: string, set: Record<string, Partial<DiskObject>>, del: string[] = []) {
+  agentWrites(figures, dataDir, tag, (objects) =>
+    objects.filter((o) => !del.includes(o.id)).map((o) => (set[o.id] ? { ...o, ...set[o.id] } : o)),
+  )
 }
 
 const textsOnDisk = (file: string): string[] =>
@@ -117,6 +137,43 @@ async function shots(page: Page, name: string, out: (p: string) => string) {
   await page.screenshot({ path: out(`${name}-dark.png`) })
   await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))
   await page.waitForTimeout(600)
+}
+
+/** 在打开排版**之前**挂上：图的第一次渲染回包（`POST /api/engine/render`） */
+function firstRender(page: Page) {
+  return page.waitForResponse((r) => r.url().includes('/api/engine/render') && r.request().method() === 'POST', {
+    timeout: 120_000,
+  })
+}
+
+/**
+ * 起点要干净，等**确定的信号**、不拿墙钟赌：第一次渲染回包里的图幅（`manifest.size_mm`）就是桌面接下来要把子图校正到的
+ * 尺寸（`useEngineSync.nativeSizeFixes`，容差 0.05 mm）。Windows 打包产物上字体不同、图幅与夹具写的差一点，校正是一笔真实改动，
+ * 冷启动慢时它落在用例最后一次保存之后，圆点又亮（windows-exe-smoke 2026-11-26 连红两次）。所以：有改动就存，直到磁盘上
+ * 那个子图的原生图幅等于渲染回来的、且圆点灭——此后的「未保存」圆点只反映这条用例自己做的事。
+ */
+async function cleanStart(page: Page, file: string, built: ReturnType<typeof firstRender>) {
+  const body = (await (await built).json().catch(() => null)) as { manifest?: { size_mm?: [number, number] } } | null
+  const size = body?.manifest?.size_mm
+  const dirty = page.locator('[data-project-file-dirty]')
+  await expect
+    .poll(
+      async () => {
+        if (await dirty.count()) {
+          await page.keyboard.press('ControlOrMeta+s')
+          return false
+        }
+        if (!size) return true
+        type Obj = { type: string; nativeW?: number; nativeH?: number }
+        const panel = (JSON.parse(readFileSync(file, 'utf-8')) as { canvases: { objects: Obj[] }[] }).canvases[0].objects.find(
+          (o) => o.type === 'panel',
+        )
+        if (panel?.nativeW === undefined || panel.nativeH === undefined) return false
+        return Math.abs(panel.nativeW - size[0]) <= 0.05 && Math.abs(panel.nativeH - size[1]) <= 0.05
+      },
+      { timeout: 60_000, intervals: [250, 500, 1000] },
+    )
+    .toBe(true)
 }
 
 async function openFromProject(page: Page) {
@@ -136,23 +193,17 @@ test(
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(a.baseURL)
     await waitForDocumentReady(page)
+    const built = firstRender(page)
     await openFromProject(page)
     await expect(page.locator('[data-save-destination]')).toHaveAttribute('data-save-destination', 'project')
-    // 起点要干净：等图第一次构建完（构建完桌面可能校正子图——慢机器上这一笔会晚到，落在后面的保存之后），
-    // 有改动先存一次，之后的「未保存」圆点只反映这条用例自己做的事
-    await expect(page.getByText('首次构建中…')).toHaveCount(0, { timeout: 120_000 })
-    await page.waitForTimeout(500)
-    if (await page.locator('[data-project-file-dirty]').count()) {
-      await page.keyboard.press('ControlOrMeta+s')
-      await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
-    }
+    await cleanStart(page, file, built)
     const stage = page.locator('[data-canvas-stage]')
 
     // 插件那条路往同一个文件里追加了两个标注 → 回到前台：自动并进画布，状态栏一句
     expect(agentAnnotates(a.figures, a.dataDir).added).toHaveLength(2)
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await expect(stage.getByText('Agent note', { exact: true })).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator(':not([data-status-live])').getByText('已并入 2 个标注', { exact: false }).last()).toBeVisible()
+    await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'agentMerge.done')
     await shots(page, 'agent-merge-auto', (p) => testInfo.outputPath(p))
     // 可撤销：⌘Z 拿掉，⇧⌘Z 放回
     await page.keyboard.press('ControlOrMeta+z')
@@ -161,7 +212,7 @@ test(
     await expect(stage.getByText('Agent note', { exact: true })).toBeVisible()
 
     // 桌面这边改一处；Agent 又加一批（这回不回前台）；直接 ⌘S：不弹对话框，并进来接着保存
-    await page.getByRole('button', { name: '文字' }).click()
+    await page.locator('[data-tool="text"]').click()
     await stage.click({ position: { x: 380, y: 420 } })
     await page.keyboard.type('桌面这边')
     await page.keyboard.press('Escape')
@@ -174,3 +225,53 @@ test(
     await expect(page.getByText(/已在别处改过/)).toHaveCount(0)
   },
 )
+
+test(
+  'Agent 改 / 删了已有对象：回到前台按字段并进画布、一步撤销；桌面也改过别处时 ⌘S 直接并进来再保存，不弹对话框',
+  { tag: '@feature:layout.agent-merge' },
+  async ({ app, page }, testInfo) => {
+    const a = await app()
+    const file = writeLayout(a.figures)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(a.baseURL)
+    await waitForDocumentReady(page)
+    const built = firstRender(page)
+    await openFromProject(page)
+    await cleanStart(page, file, built)
+    const stage = page.locator('[data-canvas-stage]')
+    // 先有一批 Agent 的标注并存进项目，作为桌面与 Agent 共同的基线
+    agentAnnotates(a.figures, a.dataDir)
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(stage.getByText('Agent note', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
+
+    // Agent 改字、删箭头 → 回到前台：按字段并进来（状态栏说「改动」），⌘Z 一步回去
+    agentEdits(a.figures, a.dataDir, 'e1', { t_e2e1txt: { text: 'Agent edited' } }, ['a_e2e1arw'])
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'agentMerge.doneDeleted')
+    // 含删除：那句话旁边挂「撤销」（维护者 2026-11-26），点它与 ⌘Z 撤的是同一步
+    const undo = page.locator('[data-toast-action]')
+    await expect(undo).toHaveCount(1)
+    await shots(page, 'agent-merge-delete-undo', (p) => testInfo.outputPath(p))
+    await undo.click()
+    await expect(stage.getByText('Agent note', { exact: true })).toBeVisible()
+    await page.keyboard.press('ControlOrMeta+Shift+z')
+    await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible()
+
+    // 桌面这边新加一段字；Agent 又改了一次那段字；直接 ⌘S：不弹对话框，两边都在磁盘上
+    await page.locator('[data-tool="text"]').click()
+    await stage.click({ position: { x: 380, y: 420 } })
+    await page.keyboard.type('桌面这边')
+    await page.keyboard.press('Escape')
+    agentEdits(a.figures, a.dataDir, 'e2', { t_e2e1txt: { text: 'Agent edited 2' } })
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => textsOnDisk(file)).toEqual(['Agent edited 2', '桌面这边'].sort())
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(page.locator('[data-project-file-dirty]')).toHaveCount(0)
+    const arrows = (JSON.parse(readFileSync(file, 'utf-8')) as { canvases: { objects: DiskObject[] }[] }).canvases[0].objects
+    expect(arrows.some((o) => o.id === 'a_e2e1arw')).toBe(false)
+  },
+)
+

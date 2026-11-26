@@ -90,7 +90,8 @@ export function ChangePlanDialog() {
   const groups = script ? [] : groupViews(entry)
   const chosen = groups.filter((g) => !entry.unchecked[g.key])
   const canApply = status === 'ready' && (script ? !entry.scriptBusy : chosen.length > 0)
-  const partial = !script && chosen.length < groups.length
+  // 答了「不改」的组不在清单里，但仍是没勾选的组：按方案的全部组数判「部分」，出图才不带上它
+  const partial = !script && chosen.length < (entry.plan?.groups.length ?? groups.length)
   // 一组都没勾 = 不改，「修改后」就是改前；部分勾选 = 按勾选出的那张（还没出来 / 失败时先用全量图，失败另有一句灰字）
   const after = script ? entry.afterSrc : chosen.length === 0 ? entry.beforeSrc : partial && preview.url ? preview.url : entry.afterSrc
   const previewBusy = partial && preview.loading

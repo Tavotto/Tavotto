@@ -1579,3 +1579,14 @@ samp,
 [data-literal] {
   text-autospace: no-autospace;
 }
+
+/* 画布上的「位图原件」提示角标：纸上的墨底在深色画稿上会糊成一团，暗色下描一圈细亮边把它托出来。
+   两套暗色入口（跟随系统 / 手动深色）写同一条，与 token 表同一约定。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) [data-panel-badge='info'] {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 28%, transparent);
+  }
+}
+:root[data-theme='dark'] [data-panel-badge='info'] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 28%, transparent);
+}
