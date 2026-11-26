@@ -290,7 +290,7 @@ def test_cancel_closes_the_listener(fake):
 
 
 def test_disabled_flag_blocks_everything(fake, monkeypatch):
-    monkeypatch.delenv(siwc_wire.ENV_FLAG)
+    monkeypatch.setenv(siwc_wire.ENV_FLAG, "0")
     with pytest.raises(siwc_login.LoginError):
         siwc_login.start()
     assert isinstance(siwc_login.provider(), siwc_auth.DisabledProvider)

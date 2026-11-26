@@ -124,7 +124,7 @@ test('cancelled and invalidated queued drags do not move the figure', async ({ a
   const axes0 = await box(page, 'axes_0')
   await drag(page, legend0.x + legend0.width * 0.3, legend0.y + legend0.height * 0.5, -35, 0)
   await expect.poll(() => held.length).toBe(1)
-  const legend1 = await box(page, 'axes_0.legend')
+  const legend1 = await legendMovedBy(page, legend0.x, -35)
   const x = legend1.x + legend1.width * 0.3, y = legend1.y + legend1.height * 0.5
   await page.mouse.move(x, y)
   await page.mouse.down()
@@ -175,7 +175,7 @@ test('failed authority cancels the queued drag and keeps the committed preview',
   const axes0 = await box(page, 'axes_0')
   await drag(page, start.x + start.width * 0.3, start.y + start.height * 0.5, -35, 0)
   await expect.poll(() => held.length).toBe(1)
-  const first = await box(page, 'axes_0.legend')
+  const first = await legendMovedBy(page, start.x, -35)
   await drag(page, first.x + first.width * 0.3, first.y + first.height * 0.5, -30, 0)
   await held.shift()!.fulfill({ status: 500, json: { error: 'synthetic legend failure' } })
   await expect(page.locator('[data-panel-badge="error"]')).toBeVisible()

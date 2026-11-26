@@ -174,6 +174,8 @@
     "exportedCount_other": "Exported {{count}} files",
     "resultInspectionFailed_one": "{{count}} file failed its check; see details",
     "resultInspectionFailed_other": "{{count}} files failed their checks; see details",
+    "resultAdvisories_one": "{{count}} file has something to review; see details",
+    "resultAdvisories_other": "{{count}} files have something to review; see details",
     "resultScriptSkipped_one": "{{count}} edit not in the .py",
     "resultScriptSkipped_other": "{{count}} edits not in the .py",
     "resultWarnings_one": "{{count}} note; see details",
@@ -324,6 +326,10 @@
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
       "failedItems": "Check failed: {{items}}",
+      "advisory": {
+        "type3_fonts": "To review: uses Type 3 fonts ({{fonts}}), which journals such as IEEE and Elsevier send back. Redrawing a scripted figure from its script removes them.",
+        "scripted_raster": "To review: {{panels}} is embedded as a whole bitmap. It has a script, so it can be redrawn as vectors."
+      },
       "check": {
         "integrity": "integrity",
         "size": "size",
@@ -334,7 +340,8 @@
         "clipping": "clipping",
         "dpi_tag": "resolution tag",
         "raster_density": "pixel density",
-        "text_size": "text size"
+        "text_size": "text size",
+        "glyphs": "missing glyphs (shown as boxes)"
       },
       "textSizeBelow": "The smallest text in the file is {{min}} pt, below the {{floor}} pt the spec asks for"
     },
@@ -2154,7 +2161,8 @@
       "err": {
         "unauthorized": "The key is invalid or expired.",
         "network": "Can’t reach the provider.",
-        "timeout": "The connection timed out."
+        "timeout": "The connection timed out.",
+        "planUsageDisabled": "Plan usage not allowed"
       },
       "checkConnection": "Check connection",
       "checking": "Checking",
@@ -2208,6 +2216,20 @@
         "reinstall": "Reinstall",
         "enable": "Turn on",
         "installingPct": "Installing… {{pct}}%"
+      },
+      "siwc": {
+        "continue": "Continue with ChatGPT",
+        "cancel": "Cancel",
+        "browserHint": "Finish signing in in your browser.",
+        "openAgain": "Open again",
+        "failed": "Sign-in didn’t finish.",
+        "expired": "Sign-in timed out.",
+        "planDisabled": "Plan usage wasn’t allowed during sign-in.",
+        "disconnectBody": "This signs out of this ChatGPT account and revokes {{product}}’s access.",
+        "revokeUnconfirmed": "Signed out, but revoking access couldn’t be confirmed. You can disconnect {{product}} in ChatGPT settings.",
+        "signOut": "Sign out",
+        "signOutTitle": "Sign out of ChatGPT?",
+        "useCodex": "Use Codex sign-in instead"
       }
     },
     "hosts": {

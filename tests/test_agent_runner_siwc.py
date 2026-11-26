@@ -504,12 +504,14 @@ def test_error_event_maps_closed_codes():
 
 
 # --------------------------------------------------------------------------- 开关与进程入口
-def test_flag_is_off_by_default(monkeypatch):
+def test_flag_is_on_by_default_and_only_0_turns_it_off(monkeypatch):
+    """维护者 2026-11-25：「开关默认开」。只认 `0` 一个关值：拼错的关值不会悄悄关掉一个用户已经在用的登录。"""
     monkeypatch.delenv(siwc_wire.ENV_FLAG, raising=False)
-    assert not siwc_wire.enabled()
-    for v in ("", "0", "true", "yes"):
-        assert not siwc_wire.enabled({siwc_wire.ENV_FLAG: v})
-    assert siwc_wire.enabled({siwc_wire.ENV_FLAG: "1"})
+    assert siwc_wire.enabled()
+    for v in ("", "1", "true", "yes", "off"):
+        assert siwc_wire.enabled({siwc_wire.ENV_FLAG: v})
+    assert not siwc_wire.enabled({siwc_wire.ENV_FLAG: "0"})
+    assert not siwc_wire.enabled({siwc_wire.ENV_FLAG: " 0 "})
 
 
 def test_siwc_is_not_a_regular_wire():
@@ -531,7 +533,7 @@ def _cli(monkeypatch, cand, tmp_path, capsys, *, flag: bool, extra=(), replies=(
     if flag:
         monkeypatch.setenv(siwc_wire.ENV_FLAG, "1")
     else:
-        monkeypatch.delenv(siwc_wire.ENV_FLAG, raising=False)
+        monkeypatch.setenv(siwc_wire.ENV_FLAG, "0")  # 显式关（默认已是开）
     prompt = tmp_path / "prompt.txt"
     prompt.write_text("make the line blue", encoding="utf-8")
     argv = [

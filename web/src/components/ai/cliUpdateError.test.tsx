@@ -48,7 +48,6 @@ async function mount(node: React.ReactNode) {
   root = createRoot(host)
   await act(async () => root.render(<TooltipProvider>{node}</TooltipProvider>))
 }
-const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
 
 beforeEach(async () => {
   localStorage.clear()
@@ -68,25 +67,14 @@ const fail = (over: Record<string, unknown>) =>
   })
 
 describe('更新失败要说出来', () => {
-  it('型号菜单的更新项：下载失败的原因顶替那句提示，项仍可点（再试一次）', async () => {
+  it('型号列表的更新行：下载失败的原因顶替那句提示，行仍可点（再试一次）', async () => {
     await mount(<ScopeAgentContent panel={panelOf()} element={null} axes={null} scope="figure" scopes={['figure']} />)
     await fail({ code: 'managed_cli_offline' })
-    await act(async () => {
-      host.querySelector<HTMLElement>('[data-ai-model-picker="trigger"]')!.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, pointerType: 'mouse' }),
-      )
-    })
-    await tick()
-    const fam = document.body.querySelector<HTMLElement>('[data-ai-connection]')!
-    fam.focus()
-    await act(async () => {
-      fam.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
-    })
-    await tick()
-    const item = document.body.querySelector<HTMLElement>('[data-ai-cli-update]')!
+    // 当前连接（sub:codex）在列表里默认展开，型号下面就是更新行
+    const item = host.querySelector<HTMLButtonElement>('[data-ai-cli-update]')!
     expect(item.textContent).toContain(OFFLINE)
     expect(item.textContent).not.toContain(t('cliUpdate.menuHint', { ns: 'ai' }))
-    expect(item.getAttribute('aria-disabled')).not.toBe('true')
+    expect(item.disabled).toBe(false)
   })
 
   it('失败卡：详情里有失败原因；主按钮仍是「更新 Codex」', async () => {

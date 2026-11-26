@@ -18,6 +18,7 @@ import {
   type ProjectEnvFailure,
   type WorkdirConfirmation,
   INPUT_REMAP_CHANGED_CODE,
+  type PreparingStage,
 } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { RENDER_DEFERRED_CODE, type RenderPurpose } from '@/lib/renderPurpose'
@@ -39,11 +40,22 @@ import { matchesComputedFrame, validComputedFrame, type PairedFrameAuthority } f
 
 export type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error'
 
+const PREPARING_STAGES: readonly PreparingStage[] = ['environment', 'starting']
+
+/** 两个准备阶段里靠后的那个（任一为空取另一个）。 */
+function laterStage(a: PreparingStage | undefined, b: PreparingStage | undefined): PreparingStage | undefined {
+  if (!a) return b
+  if (!b) return a
+  return PREPARING_STAGES.indexOf(b) > PREPARING_STAGES.indexOf(a) ? b : a
+}
+
 /** 文件级等待；准备阶段尚不知道会话是否为冷启动。时间只用于本地显示。 */
 export interface BuildingInfo {
   cold: boolean
   cost: string
   phase?: 'preparing' | 'rendering'
+  /** 准备阶段走到哪一步（#479）；进了 rendering 就不再看它 */
+  stage?: PreparingStage
   startedAt?: number
 }
 
@@ -674,9 +686,13 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         delete building[fileId]
         return { building }
       }
+      const prev = s.building[fileId]
+      const phase = info.phase ?? 'rendering'
       return { building: { ...s.building, [fileId]: {
         ...info,
-        phase: info.phase ?? 'rendering',
+        phase,
+        // 准备阶段只前进：没带 stage 的那条（或乱序到达的较早一步）不把界面倒回去
+        stage: phase === 'preparing' ? laterStage(prev?.phase === 'preparing' ? prev.stage : undefined, info.stage) : undefined,
         // worker 准备完只是换阶段，不是另一次等待；冷启动前半段也要算进去。
         startedAt: s.building[fileId]?.startedAt ?? Date.now(),
       } } }
