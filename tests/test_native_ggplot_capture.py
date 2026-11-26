@@ -769,10 +769,32 @@ mapped <- ggplot2::ggplot(data, ggplot2::aes(cat, height, fill = group)) + ggplo
 stopifnot(length(adapter$capture_ggplot(mapped, frame)$state$bar_targets) == 0L,
           length(adapter$capture_ggplot(mapped + ggplot2::guides(fill = "none"), frame)$state$bar_targets) == 0L,
           length(adapter$capture_ggplot(plot + ggplot2::facet_wrap(ggplot2::vars(group)), frame)$state$bar_targets) == 0L)
-many <- ggplot2::ggplot(data.frame(x = 1:501, y = rep(1, 501)), ggplot2::aes(x, y)) +
-  ggplot2::geom_col()
+make_bars <- function(n) {
+  ggplot2::ggplot(data.frame(x = seq_len(n), y = rep(1, n)), ggplot2::aes(x, y)) + ggplot2::geom_col()
+}
+many <- make_bars(501L)
 large <- adapter$capture_ggplot(many, frame)$state
 stopifnot(is.null(large$bar_geometry[[first]]$geometry), length(large$bar_geometry[[first]]$bbox) == 4L)
+
+for (bars in list(many, make_bars(1L))) {
+  plain <- adapter$capture_ggplot(bars, frame)$state
+  authored <- adapter$capture_ggplot(bars + ggplot2::coord_cartesian(reverse = "xy"), frame)$state
+  stopifnot(first %in% names(authored$bar_targets))
+  plain_bbox <- unlist(plain$bar_geometry[[first]]$bbox)
+  authored_bbox <- unlist(authored$bar_geometry[[first]]$bbox)
+  plain_panel <- unlist(element(adapter$ggplot_manifest(plain, "plain"), "axes_0")$bbox)
+  authored_panel <- unlist(element(adapter$ggplot_manifest(authored, "reverse"), "axes_0")$bbox)
+  relative <- function(box, panel) c((box[1:2] - panel[1:2]) / panel[3:4], box[3:4] / panel[3:4])
+  normal <- relative(plain_bbox, plain_panel)
+  reflected <- relative(authored_bbox, authored_panel)
+  stopifnot(isTRUE(all.equal(reflected, c(1 - normal[1:2] - normal[3:4], normal[3:4]))))
+  changes <- list(axes_0 = list(invert_x = TRUE, invert_y = TRUE))
+  changes[[first]] <- patch[[first]]["facecolor"]
+  moved <- adapter$ggplot_manifest(plain, "plain", changes)
+  moved_bbox <- unlist(element(moved, first)$bbox)
+  moved_panel <- unlist(element(moved, "axes_0")$bbox)
+  stopifnot(isTRUE(all.equal(relative(moved_bbox, moved_panel), reflected)))
+}
 """
 
 ERRORBAR_PROBE = r"""
@@ -933,8 +955,8 @@ edits <- list(axes_0 = list(xlim = list(1, 1000), ylim = c(2, 12), xscale = "log
 rendered <- adapter$ggplot_manifest(state, "dose", edits)
 axes <- element(rendered, "axes_0")
 curve <- element(rendered, "layer.1.line")
-stopifnot(identical(axes$native_axes$current$x, list(mode = "log", range = list(1, 1000))),
-          identical(axes$native_axes$current$y, list(mode = "linear", range = list(2, 12))),
+stopifnot(identical(axes$native_axes$current$x, list(mode = "log", range = list(1, 1000), inverted = FALSE)),
+          identical(axes$native_axes$current$y, list(mode = "linear", range = list(2, 12), inverted = FALSE)),
           identical(axes$native_axes$context, regular$native_axes$context),
           identical(curve$line_context, element(baseline, "layer.1.line")$line_context))
 xy <- do.call(rbind, lapply(curve$geometry$paths[[1L]]$points, unlist))
@@ -958,12 +980,70 @@ interval <- edits
 interval$axis.x.bottom.ticks <- list(format = "%.0f", major_mode = "step", major_step = 250)
 stopifnot(grepl(">250</text>", adapter$render_ggplot(state, interval), fixed = TRUE), calls == 4L)
 
+reversed <- interval
+reversed$axes_0$invert_x <- TRUE
+reversed$axes_0$invert_y <- TRUE
+flip <- adapter$ggplot_manifest(state, "dose", reversed)
+flipped_axes <- element(flip, "axes_0")$native_axes
+stopifnot(flipped_axes$current$x$inverted, flipped_axes$current$y$inverted,
+          !flipped_axes$original$x$inverted,
+          identical(flipped_axes$current$x$range, list(1, 1000)),
+          identical(flipped_axes$context, regular$native_axes$context))
+flipped <- element(flip, "layer.1.line")
+flipped_bbox <- unlist(element(flip, "axes_0")$bbox)
+projected <- do.call(rbind, lapply(flipped$geometry$paths[[1L]]$points, unlist))
+stopifnot(isTRUE(all.equal((projected[, 1L] - flipped_bbox[[1L]]) / flipped_bbox[[3L]], c(1, 2/3, 1/3, 0))),
+          isTRUE(all.equal((projected[, 2L] - flipped_bbox[[2L]]) / flipped_bbox[[4L]], c(.2, .4, .6, .8))),
+          identical(flipped$geometry$clip, element(flip, "axes_0")$bbox))
+positions <- adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  table <- adapter$ggplot_table_for(state, reversed)$table
+  panel <- table$grobs[[which(table$layout$name == "panel")]]
+  grill <- panel$children[[grep("^grill", names(panel$children))]]
+  major <- grill$children[[grep("^panel.grid.major.x", names(grill$children))]]
+  tick <- state$text_targets[["axis.x.bottom.ticks"]]
+  axis <- table$grobs[[tick$slots[[1L]]]]$children[["axis"]]
+  text <- axis$grobs[[tick$slots[[3L]]]]$children[[1L]]
+  list(grid = unique(as.numeric(major$x)), ticks = as.numeric(text$x), labels = unname(text$label))
+})$value
+expected <- 1 - log10(c(250, 500, 750, 1000)) / 3
+stopifnot(isTRUE(all.equal(positions$grid, expected)),
+          isTRUE(all.equal(positions$ticks, expected)),
+          identical(positions$labels, c("250", "500", "750", "1000")),
+          calls == 4L, identical(adapter$render_ggplot(state), captured$svg))
+
 source_log <- adapter$capture_ggplot(plot + ggplot2::scale_x_log10(), frame)
 native_log <- element(adapter$ggplot_manifest(source_log$state, "dose"), "axes_0")
 native_linear <- element(adapter$ggplot_manifest(source_log$state, "dose",
                          list(axes_0 = list(xscale = "linear", xlim = c(1, 1000)))), "axes_0")
 stopifnot(native_log$native_axes$current$x$mode == "log", native_linear$native_axes$current$x$mode == "linear",
           identical(native_linear$native_axes$current$x$range, list(1, 1000)), calls == 8L)
+
+source_reversed <- adapter$capture_ggplot(plot + ggplot2::coord_cartesian(reverse = "xy"), frame)
+reversed_state <- source_reversed$state
+authored <- element(adapter$ggplot_manifest(reversed_state, "dose"), "axes_0")$native_axes
+back <- element(adapter$ggplot_manifest(reversed_state, "dose",
+                        list(axes_0 = list(invert_x = FALSE))), "axes_0")$native_axes
+stopifnot(authored$current$x$inverted, authored$current$y$inverted,
+          !identical(authored$context, regular$native_axes$context),
+          !back$current$x$inverted, back$current$y$inverted, back$original$x$inverted,
+          !is.null(reversed_state$tick_targets[["axis.x.bottom.ticks"]]$spacing),
+          identical(adapter$render_ggplot(reversed_state), source_reversed$svg))
+for (invalid in list("true", 1, NA, c(TRUE, FALSE))) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, list(axes_0 = list(invert_x = invalid))),
+                        silent = TRUE), "try-error"))
+}
+
+raster_plot <- ggplot2::ggplot(expand.grid(x = 1:3, y = 1:3), ggplot2::aes(x, y, fill = x + y)) +
+  ggplot2::geom_raster()
+raster <- adapter$capture_ggplot(raster_plot, frame)$state
+raster_control <- element(adapter$ggplot_manifest(raster, "raster"), "axes_0")$native_axes
+stopifnot(is.null(raster_control$original$x$inverted), is.null(raster_control$original$y$inverted),
+          inherits(try(adapter$render_ggplot(raster, list(axes_0 = list(invert_x = TRUE))),
+                       silent = TRUE), "try-error"))
+raster_crop <- element(adapter$ggplot_manifest(raster, "raster",
+                                list(axes_0 = list(xlim = c(1, 3)))), "axes_0")$native_axes
+stopifnot(identical(raster_crop$current$x$range, list(1, 3)))
 
 with_zero <- plot + ggplot2::geom_hline(yintercept = 0)
 zero_state <- adapter$capture_ggplot(with_zero, frame)$state

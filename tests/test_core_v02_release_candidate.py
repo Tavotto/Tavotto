@@ -77,7 +77,7 @@ R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}
 ERRORBAR_PAINT = {"color": "#803239", "linewidth": 1.8, "alpha": 0.6}
 RANGE_PAINT = {"facecolor": "#695DB2", "alpha": 0.6}
-R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log"}
+R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log", "invert_x": True}
 MPL_AXIS_VIEW = {"xlim": [-0.25, 2.25], "ylim": [-0.3, 5.5]}
 
 
@@ -271,12 +271,15 @@ def _pdf_pixels(path):
         assert curve["dashes"] != "[] 0"
         first, second = curve["items"]
         assert first[0] == second[0] == "l" and first[2] == second[1]
+        assert first[1].x > first[2].x > second[2].x
         actual_ratio = (first[2].x - first[1].x) / (second[2].x - first[1].x)
         assert actual_ratio == pytest.approx(math.log(3.3 / 1.8) / math.log(5.2 / 1.8), abs=0.003)
         face = tuple(component / 255 for component in bytes.fromhex(BAR_PAINT["facecolor"][1:]))
         bars = [path for path in drawn if path["fill"] == pytest.approx(face, abs=0.003)]
         assert len(bars) == 4
-        assert sum(path["rect"].x0 > page.rect.width / 2 for path in bars) == 2
+        r_bars = [path["rect"] for path in bars if path["rect"].x0 > page.rect.width / 2]
+        assert len(r_bars) == 2  # Both R bars survived the inversion.
+        assert all(bar.width > 0 and bar.height > 0 for bar in r_bars)
         assert all(path["fill_opacity"] == pytest.approx(0.75, abs=0.01) for path in bars)
         error_color = tuple(
             component / 255 for component in bytes.fromhex(ERRORBAR_PAINT["color"][1:])
@@ -647,6 +650,8 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert edited_axes["identity"] == r_axes["identity"]
         view_fields = {f["prop"]: f["value"] for f in edited_axes["editable"]}
         assert {prop: view_fields[prop] for prop in R_AXIS_VIEW} == R_AXIS_VIEW
+        invert_x = next(f for f in edited_axes["editable"] if f["prop"] == "invert_x")
+        assert invert_x["value"] is True and invert_x["value_original"] is False
         with pytest.raises(HttpError):
             _render(app, r_asset, [{**r_view_patches[0], "identity": "r10:stale"}])
         assert _render(app, r_asset, r_patches)["svg"] == before_view

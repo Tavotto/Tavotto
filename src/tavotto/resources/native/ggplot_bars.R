@@ -20,7 +20,7 @@ ggplot_bar_targets <- function(built, table, layer_grobs) {
     dimensions <- rect[c("x", "y", "width", "height")]
     if (!all(vapply(dimensions, function(u) length(u) == count &&
                     all(grid::unitType(u) == "native") && all(is.finite(as.numeric(u))), logical(1L)))) next
-    if (!any(as.numeric(rect$width) > 0 & as.numeric(rect$height) > 0)) next
+    if (!any(as.numeric(rect$width) != 0 & as.numeric(rect$height) != 0)) next
     child <- which(panel$childrenOrder == rect$name)
     if (length(child) != 1L) next
     mapped <- ggplot_styled_layer_mapping(layer)
@@ -101,10 +101,15 @@ ggplot_edit_bars <- function(table, target, edit) {
 }
 
 ggplot_bar_geometry <- function(rect, target, frame_pt, retain_clipped = FALSE) {
-  x0 <- as.numeric(rect$x)
-  x1 <- x0 + as.numeric(rect$width)
-  y1 <- as.numeric(rect$y)
-  y0 <- y1 - as.numeric(rect$height)
+  # Native ggplot2 rectangles carry signed dimensions on reversed axes.
+  x <- as.numeric(rect$x)
+  y <- as.numeric(rect$y)
+  x_end <- x + as.numeric(rect$width)
+  y_end <- y - as.numeric(rect$height)
+  x0 <- pmin(x, x_end)
+  x1 <- pmax(x, x_end)
+  y0 <- pmin(y, y_end)
+  y1 <- pmax(y, y_end)
   if (!target$precise) {
     x0 <- min(x0)
     x1 <- max(x1)

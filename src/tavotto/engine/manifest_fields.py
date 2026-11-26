@@ -74,6 +74,15 @@ def axis_scale_field(axis: str, mode: str, options: list[str], **extra) -> dict:
     }
 
 
+def axis_invert_field(axis: str, inverted: bool) -> dict:
+    return {
+        "prop": f"invert_{axis}",
+        "type": "bool",
+        "value": bool(inverted),
+        "group": "数据范围",
+    }
+
+
 def errorbar_stroke_fields(color: str, width: float) -> list[dict]:
     """Stroke fields whose values are independent of the native cap geometry."""
     return [

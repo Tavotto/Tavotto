@@ -2,6 +2,14 @@
 # stat, group, and position results stay the inputs to the stock geoms.
 ggplot_axes_gid <- "axes_0"
 ggplot_axis_modes <- c(identity = "linear", "log-10" = "log")
+ggplot_axis_names <- c("x", "y")
+
+ggplot_inverted <- function(reverse, axis) isTRUE(grepl(axis, reverse, fixed = TRUE))
+
+ggplot_axis_position <- function(panel, axis, values) {
+  view <- panel[[axis]]
+  if (ggplot_inverted(panel$reverse, axis)) view$reverse(values) else view$rescale(values)
+}
 
 ggplot_axis_pair <- function(value) {
   if (is.list(value) && length(value) == 2L && all(vapply(value, function(end) {
@@ -31,20 +39,25 @@ ggplot_axes_target <- function(built, table) {
   coord <- layout$coord
   slot <- which(table$layout$name == "panel")
   if (length(slot) != 1L || length(layout$panel_params) != 1L ||
-      !identical(class(coord)[[1L]], "CoordCartesian") || !identical(coord$reverse, "none") ||
+      !identical(class(coord)[[1L]], "CoordCartesian") ||
+      length(coord$reverse) != 1L || !coord$reverse %in% c("none", "x", "y", "xy") ||
       !is.null(coord$ratio) || !identical(coord$clip, "on")) return(NULL)
   kinds <- ggplot_axis_layers(built$plot$layers)
   if (!length(kinds) || anyNA(kinds)) return(NULL)
+  # The stock raster geom indexes its image before transforming its cell bounds.
+  # Reversing the coordinate at that stage can crop or misplace the image.
+  can_invert <- !"GeomRaster" %in% kinds
+  if (!can_invert && coord$reverse != "none") return(NULL)
   panel <- layout$panel_params[[1L]]
   if (!all(vapply(panel$guides$guides, function(guide) {
     class(guide)[[1L]] %in% c("GuideAxis", "GuideNone")
-  }, logical(1L))) || any(vapply(c("x", "y"), function(axis) {
+  }, logical(1L))) || any(vapply(ggplot_axis_names, function(axis) {
     scale <- panel[[axis]]$scale
     (!is.null(scale$secondary.axis) && !inherits(scale$secondary.axis, "waiver")) ||
       any(vapply(list(scale$breaks, scale$labels, scale$minor_breaks, scale$limits),
                  is.function, logical(1L)))
   }, logical(1L)))) return(NULL)
-  axes <- lapply(c("x", "y"), function(axis) {
+  axes <- lapply(ggplot_axis_names, function(axis) {
     scale <- panel[[axis]]$scale
     if (!identical(class(scale)[[1L]], "ScaleContinuousPosition") ||
         !inherits(scale$secondary.axis, "waiver") || !is.null(scale$limits) ||
@@ -71,21 +84,32 @@ ggplot_axes_target <- function(built, table) {
     can_switch <- !is.null(trained) && !has_infinite && !"GeomRaster" %in% kinds
     options <- if (!can_switch) mode else if (mode == "log" || positive) c("linear", "log") else "linear"
     list(mode = mode, range = range, trained = trained, columns = columns, options = options)
-  }) |> stats::setNames(c("x", "y")) |> Filter(f = Negate(is.null))
+  }) |> stats::setNames(ggplot_axis_names) |> Filter(f = Negate(is.null))
   if (!length(axes)) return(NULL)
-  list(slot = slot, axes = axes, context = rlang::hash(list(kinds, built$data, axes, coord$limits)))
+  # Preserve the saved identities of plots captured before direction was editable.
+  context <- list(kinds, built$data, axes, coord$limits)
+  if (coord$reverse != "none") context <- c(context, list(coord$reverse))
+  list(slot = slot, axes = axes, reverse = coord$reverse, can_invert = can_invert,
+       context = rlang::hash(context))
 }
 
 ggplot_axis_edits <- function(target, edits) {
   changes <- list()
   for (prop in names(edits)) {
-    axis <- substr(prop, 1L, 1L)
+    direction <- startsWith(prop, "invert_")
+    axis <- if (direction) substring(prop, 8L) else substr(prop, 1L, 1L)
     spec <- target$axes[[axis]]
-    if (is.null(spec) || !prop %in% paste0(axis, c("lim", "scale"))) {
+    if (is.null(spec) || (direction && !target$can_invert) ||
+        (!direction && !prop %in% paste0(axis, c("lim", "scale")))) {
       stop("The requested native R axis edit is unavailable.")
     }
     value <- edits[[prop]]
-    if (endsWith(prop, "lim")) {
+    if (direction) {
+      if (!is.logical(value) || length(value) != 1L || is.na(value)) {
+        stop("Native R axis direction must be a boolean.")
+      }
+      changes[[axis]]$inverted <- value
+    } else if (endsWith(prop, "lim")) {
       value <- ggplot_axis_pair(value)
       if (is.null(value)) stop("Native R axis limits must be finite and increasing.")
       changes[[axis]]$range <- value
@@ -103,9 +127,12 @@ ggplot_project_axes <- function(built, target, changes) {
   layout <- ggplot_clone(built$layout)
   limits <- layout$coord$limits
   expand <- layout$coord_params$expand
+  inverted <- vapply(ggplot_axis_names, function(axis) ggplot_inverted(target$reverse, axis),
+                     logical(1L))
   for (axis in names(changes)) {
     spec <- target$axes[[axis]]
     change <- changes[[axis]]
+    if (!is.null(change$inverted)) inverted[[axis]] <- change$inverted
     mode <- if (is.null(change$mode)) spec$mode else change$mode
     range <- change$range
     if (mode == "log" && !is.null(range) && any(range <= 0)) {
@@ -135,7 +162,9 @@ ggplot_project_axes <- function(built, target, changes) {
       expand[if (axis == "x") c(4L, 2L) else c(3L, 1L)] <- FALSE
     }
   }
-  layout$coord <- ggplot_clone(layout$coord, limits = limits)
+  reverse <- paste(ggplot_axis_names[inverted], collapse = "")
+  if (!nzchar(reverse)) reverse <- "none"
+  layout$coord <- ggplot_clone(layout$coord, limits = limits, reverse = reverse)
   layout$coord_params$expand <- expand
   layout$setup_panel_params()
   layout$setup_panel_guides(built$plot$guides, built$plot$layers)
@@ -157,9 +186,11 @@ measure_ggplot_axes <- function(table, target, frame_pt) {
 
 ggplot_axes_element <- function(target, current, bbox, edits) {
   if (is.null(target)) return(list())
-  original <- lapply(target$axes, function(axis) {
-    list(mode = axis$mode, range = as.list(axis$range), options = as.list(axis$options))
-  })
+  original <- lapply(names(target$axes), function(axis) {
+    spec <- target$axes[[axis]]
+    list(mode = spec$mode, range = as.list(spec$range), options = as.list(spec$options),
+         inverted = if (target$can_invert) ggplot_inverted(target$reverse, axis))
+  }) |> stats::setNames(names(target$axes))
   if (is.null(current)) current <- original
   list(list(gid = ggplot_axes_gid, role = "axes", label = "\u5b50\u56fe", bbox = bbox,
             draggable = FALSE, editable = list(), native_axes = list(
@@ -194,6 +225,7 @@ ggplot_axes_values <- function(layout, target, changes) {
       }
       range <- requested
     }
-    list(mode = ggplot_axis_modes[[trans$name]], range = as.list(range))
+    list(mode = ggplot_axis_modes[[trans$name]], range = as.list(range),
+         inverted = if (target$can_invert) ggplot_inverted(panel$reverse, axis))
   }) |> stats::setNames(names(target$axes))
 }

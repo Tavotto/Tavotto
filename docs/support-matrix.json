@@ -80,6 +80,7 @@
         "shared palette and range of a supported linear continuous colorbar and its mapped point, tile, rectangle or raster layers",
         "fixed major tick interval aligned with the major grid on a supported single-panel linear axis",
         "exact continuous X and Y viewing limits and linear or base-10 logarithmic projection for supported single-panel Cartesian layers",
+        "independent X and Y axis reversal for supported single-panel Cartesian layers without geom_raster",
         "stroke width and line style of supported single- or multi-group geom_line and geom_path layers, including their identifiable standard legend keys",
         "unmapped RGB color of supported geom_line and geom_path layers without legend keys",
         "fixed size, solid marker shape and opacity of a supported single-panel geom_point series",

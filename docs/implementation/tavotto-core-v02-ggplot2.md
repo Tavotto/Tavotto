@@ -26,7 +26,7 @@ R 运行时须安装 ggplot2、svglite 和 jsonlite，并能打开 Cairo PDF 图
 
 单面板上能与原生数值逐项匹配的普通轴刻度还可按侧调整字号。刻度占用的空间由原生轴重新测量，其他轴侧和数据图层沿用各自的样式。
 
-在普通单面板图中选中子图，可在与 Matplotlib 相同的属性栏设置 X／Y 最小值和最大值，并在线性轴和以 10 为底的对数轴之间切换。端点始终按原数据单位输入。改范围只裁剪显示窗口。切换轴类型会重新投影已计算的位置与区间，并重建刻度，保留本次 R 运行得到的统计和分组结果。对数切换要求该轴上参与绘制的位置为正数，包括误差棒的端点和柱形的基线。原脚本中的范围过滤、次轴和自定义位置尺度沿用其原始设置。 [ggplot2 显示范围](https://ggplot2.tidyverse.org/reference/coord_cartesian.html) · [ggplot2 连续位置尺度](https://ggplot2.tidyverse.org/reference/scale_continuous.html)
+在普通单面板图中选中子图，可在与 Matplotlib 相同的属性栏设置 X／Y 最小值和最大值，并在线性轴和以 10 为底的对数轴之间切换。端点始终按原数据单位从小到大输入。X／Y 轴可各自反转，并与范围、对数轴和固定刻度搭配。脚本用 `coord_cartesian(reverse = ...)` 设置的方向也可切换。未反转的 `geom_raster()` 图仍可修改显示范围。改范围只裁剪显示窗口。切换轴类型会重新投影已计算的位置与区间，并重建刻度，保留本次 R 运行得到的统计和分组结果。对数切换要求该轴上参与绘制的位置为正数，包括误差棒的端点和柱形的基线。原脚本中的范围过滤、次轴和自定义位置尺度沿用其原始设置。 [ggplot2 显示范围](https://ggplot2.tidyverse.org/reference/coord_cartesian.html) · [ggplot2 连续位置尺度](https://ggplot2.tidyverse.org/reference/scale_continuous.html)
 
 单面板中的普通 `geom_point()` 系列复用散点属性。固定大小、形状和透明度可独立编辑，标记支持实心圆、方形、三角形和菱形之间替换。映射到数据的属性继续由原尺度控制，带分类图例键的系列保留原样。改动沿用已计算的点位，并可与连续色阶编辑叠加。
 

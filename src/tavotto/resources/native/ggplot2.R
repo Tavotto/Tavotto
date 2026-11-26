@@ -201,7 +201,7 @@ ggplot_axis_spacing <- function(built, panel, params, values) {
   cross <- if (axis == "x") "y" else "x"
   if (!setequal(names(params$key), c(axis, cross, ".label", ".value")) ||
       length(unique(params$key[[cross]])) != 1L ||
-      !isTRUE(all.equal(params$key[[axis]], view$rescale(params$key$.value), tolerance = 1e-12))) {
+      !isTRUE(all.equal(params$key[[axis]], ggplot_axis_position(panel, axis, params$key$.value), tolerance = 1e-12))) {
     return(NULL)
   }
   range <- sort(view$continuous_range)
@@ -319,7 +319,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, projected = FALS
       }
       panel[[spacing$axis]] <- ggplot_clone(view, breaks = breaks, minor_breaks = minor)
       key <- params$key[rep(1L, length(values)), , drop = FALSE]
-      key[[spacing$axis]] <- view$rescale(breaks)
+      key[[spacing$axis]] <- ggplot_axis_position(panel, spacing$axis, breaks)
       key$.value <- breaks
       key$.label <- view$scale$get_labels(breaks)
       params$key <- key

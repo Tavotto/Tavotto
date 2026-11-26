@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
 from .manifest_fields import (
+    axis_invert_field,
     axis_limits_field,
     axis_scale_field,
     bar_paint_fields,
@@ -253,10 +254,13 @@ class GgplotTarget:
             scale = axis_scale_field(
                 axis, current["mode"], original["options"], strict_options=True
             )
-            for field, source in ((limits, original["range"]), (scale, original["mode"])):
+            candidates = [(limits, original["range"]), (scale, original["mode"])]
+            if (inverted := current["inverted"]) is not None:
+                candidates.append((axis_invert_field(axis, inverted), original["inverted"]))
+            for field, source in candidates:
                 if field["prop"] in axes["edited"]:
                     field["value_original"] = source
-            fields.extend((limits, scale))
+                fields.append(field)
         element["editable"] = fields
         element["identity"] = _AXES_IDENTITY_PREFIX + axes["context"]
 

@@ -88,6 +88,7 @@ from legendmodel import (
     legend_proxy_names,
 )
 from manifest_fields import (
+    axis_invert_field,
     axis_limits_field,
     axis_scale_field,
     bar_paint_fields,
@@ -4408,18 +4409,8 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 axis_scale_field(
                     "y", str(ax.get_yscale()), scale_options(ax.get_yscale(), ax, "y")
                 ),
-                {
-                    "prop": "invert_x",
-                    "type": "bool",
-                    "value": bool(ax.xaxis_inverted()),
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "invert_y",
-                    "type": "bool",
-                    "value": bool(ax.yaxis_inverted()),
-                    "group": "数据范围",
-                },
+                axis_invert_field("x", ax.xaxis_inverted()),
+                axis_invert_field("y", ax.yaxis_inverted()),
                 {
                     "prop": "aspect",
                     "type": "text",
