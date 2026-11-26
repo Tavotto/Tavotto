@@ -714,8 +714,8 @@ _LAYOUT_OPS = {
         'align {ids, mode: left/hcenter/right/top/vcenter/bottom, to?: "selection" | "page" | {key: id} | {panel: P1}}；'
         "distribute {ids, axis: h/v, gap_mm?}；order {id, to: front/back/forward/backward}；group {ids, name?}；"
         "ungroup {group}；rotate {id, deg}；pathfinder {ids, mode: unite/minus_front/minus_back/intersect/exclude/divide/"
-        "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}。"
-        "布尔等四个几何操作目前只收 path。"
+        "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}；"
+        "convert_to_path {ids}（形状 / 箭头换成同 id 的路径）。布尔 / 偏移收路径与封闭形状，轮廓化另收直线 / 箭头，简化只收 path。"
         "id 取 tavotto_layout_scene 的 vector_objects。全文见 tavotto_guide section=layout-annotate。"
     ),
     "items": {"type": "object"},
