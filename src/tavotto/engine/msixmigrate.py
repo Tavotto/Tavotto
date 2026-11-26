@@ -780,9 +780,21 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
             ai_history.merge_legacy(snap, target, deadline)
         except (_Deadline, TimeoutError):
             return "deferred"
+        except sqlite3.OperationalError as e:
+            # 别的 Tavotto 进程占着新库写锁超过 busy_timeout（`database is locked` / `busy`）是暂时的：下次再来、不计失败，
+            # 否则连着几次撞上就被当成坏库放弃，旧历史再也回不来（Codex #2283）
+            return "deferred" if _is_lock_contention(e) else "failed"
         except (OSError, sqlite3.Error):
             return "failed"
         finally:
             with contextlib.suppress(OSError):
                 snap.unlink(missing_ok=True)
     return "done"
+
+
+def _is_lock_contention(e: sqlite3.OperationalError) -> bool:
+    code = getattr(e, "sqlite_errorcode", None)
+    if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+        return True
+    msg = str(e).lower()
+    return "database is locked" in msg or "database table is locked" in msg or "busy" in msg

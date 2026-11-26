@@ -1051,3 +1051,26 @@ def test_run_once_starts_the_background_merge_even_after_complete(world, monkeyp
     msixmigrate._PENDING_THREAD.join(30)
     assert _session_ids(db) == ["old1"]
     assert msixmigrate._read_pending() is None
+
+
+def test_a_destination_held_locked_by_another_process_is_deferred_not_counted_as_failure(
+    world, monkeypatch
+):
+    """Codex #2283：另一个 Tavotto 进程占着新库写锁超过 busy_timeout——暂时的，不计失败、不会被当坏库放弃。"""
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    real = ai_history.merge_legacy
+    monkeypatch.setattr(
+        ai_history,
+        "merge_legacy",
+        lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
+    )
+    for _ in range(msixmigrate.PENDING_MAX_FAILURES + 2):
+        assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "deferred"}
+    assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 0
+    monkeypatch.setattr(ai_history, "merge_legacy", real)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["old1"]
