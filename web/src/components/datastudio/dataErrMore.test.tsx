@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { i18n } from '@/i18n'
 import { aiDataFigurePropose, type AiDataProposeResponse } from '@/lib/api'
 import { candidatesFromResponse } from '@/lib/dataFigureAdapter'
 import { setCurrentProjectId } from '@/lib/session'
@@ -75,10 +76,38 @@ describe('bar_err 的名字与说明', () => {
 })
 
 describe('多个 y 的依据句', () => {
-  it('误差线取自「a_sd」「b_sd」列（各自带「」、直接相连）', async () => {
-    const items = candidatesFromResponse([item('a', 'line_err', { facts: facts(), error: 'sd', error_source: 'column', error_columns: cols(['sd', 'sd']) })], 'pa')
+  const show = async (extra: Record<string, unknown>) => {
+    const items = candidatesFromResponse([item('a', 'line_err', { error: 'sd', error_source: 'column', error_columns: cols(['sd', 'sd']), ...extra })], 'pa')
     await mount(<CandidateStage items={items} thumbs={{ a: 'ready' }} drawingId={null} previewKey={null} onPreview={() => {}} onCreate={() => {}} onThumb={() => {}} />)
-    expect(q('[data-candidate-basis]')!.textContent).toBe('依据：按 12 行绘制，每条线每行一个点；误差线取自「a_sd」「b_sd」列。')
+    return q('[data-candidate-basis]')?.textContent
+  }
+  const sf = (ns: [number, number], o: Record<string, unknown> = {}, gap: [number, number] = [0, 0]) => ({
+    rows: 6, eligible_rows: 6, rows_any: 6, rows_all: 6,
+    series: [
+      { y: 'a_mean', n: ns[0], x_values: ns[0], err_drawn: ns[0] - gap[0], err_missing: gap[0] },
+      { y: 'b_mean', n: ns[1], x_values: ns[1], err_drawn: ns[1] - gap[1], err_missing: gap[1] },
+    ],
+    ...o,
+  })
+  it('数量相同：各含 6 个有效值；误差线取自「a_sd」「b_sd」列（各自带「」、直接相连）', async () => {
+    expect(await show({ series_facts: sf([6, 6]) })).toBe('依据：2 个系列，各含 6 个有效值；误差线取自「a_sd」「b_sd」列。')
+  })
+  it('数量不同：分别含 4、5 个有效值；有缺误差的再接「；1 处缺少误差值」', async () => {
+    expect(await show({ series_facts: sf([4, 5], {}, [0, 1]) })).toBe('依据：2 个系列，分别含 4、5 个有效值；1 处缺少误差值；误差线取自「a_sd」「b_sd」列。')
+  })
+  it('其余句式（中文）：覆盖位置不同、超过 3 个系列用范围', async () => {
+    expect(await show({ series_facts: sf([2, 2], { rows_any: 4, rows_all: 0 }) })).toBe('依据：2 个系列，各含 2 个有效值；有效数据覆盖位置不同；误差线取自「a_sd」「b_sd」列。')
+  })
+  it('其余句式（中文）：超过 3 个系列且数量不同', async () => {
+    const series = [116, 120, 118, 117, 119].map((n, i) => ({ y: `y${i}`, n, x_values: n }))
+    expect(await show({ title_code: 'line_points', error: undefined, error_source: undefined, error_columns: undefined, series_facts: { rows: 120, eligible_rows: 120, rows_any: 120, rows_all: 116, series } })).toBe('依据：5 个系列，各含 116–120 个有效值。')
+  })
+  it('英文界面的各句式', async () => {
+    await act(() => i18n.changeLanguage('en-US'))
+    expect(await show({ series_facts: sf([4, 5], {}, [0, 1]) })).toBe('Basis: 2 series, with 4 / 5 valid values respectively; 1 place is missing an error value; error bars from the “a_sd”, “b_sd” columns.')
+  })
+  it('旧响应（多个 y 没有 series_facts）：不写数字，绝不拿旧的第一列数字顶替；误差线取自哪几列照旧', async () => {
+    expect(await show({ facts: facts() })).toBe('依据：误差线取自「a_sd」「b_sd」列。')
   })
 })
 

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
-import { basisOf } from '@/lib/dataBasis'
+import { basisOf, type BasisSentence } from '@/lib/dataBasis'
 import { previewOf, type Candidate, type ThumbState } from '@/lib/dataFigureAdapter'
 import { reducedNumbers } from '@/lib/dataFigure'
 import { OptionGrid } from '@/components/inspector/controls/OptionGrid'
@@ -107,6 +107,16 @@ export function CandidateStage({
 }) {
   const { t, i18n } = useTranslation('ai')
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
+  // 依据里的一句：多个误差列各加引号直接相连（引号写法随语言，在 `basis.colQuote`）；多个系列的数量用 `basis.countJoin` 相连
+  const sentenceText = (b: BasisSentence) =>
+    t(
+      `dataFigureV2.basis.${b.key}`,
+      Array.isArray(b.values.columns)
+        ? { columns: b.values.columns.map((c) => t('dataFigureV2.basis.colQuote', { column: c })).join(/^zh/i.test(i18n.language) ? '' : ', ') }
+        : Array.isArray(b.values.counts)
+          ? { ...b.values, counts: b.values.counts.join(t('dataFigureV2.basis.countJoin')) }
+          : b.values,
+    )
   const title = (c: string) => (known(c) ? t(`dataFigureV2.candidate.${c}.title`) : t('dataFigureV2.candidate.other.title'))
   // 带误差线 / 误差带的画法：说明里写的是这张图**实际**画的那一种（用户在「需要你确认」里改过就跟着变），没有这一项的按默认的标准差说
   // 取自表里现成误差列的两种画法（`points_err` / `line_err`）说明里写列名（用户数据，只当文本），不写误差种类（`unknown` 时没法写）
@@ -180,17 +190,10 @@ export function CandidateStage({
           <p data-candidate-basis className="mt-1 text-xs text-ink-3" title={missingTip}>
             {t('dataFigureV2.basis.line', {
               text: [
-                basis.main.map((b) => t(`dataFigureV2.basis.${b.key}`, b.values)).join(t('dataFigureV2.basis.then')),
-                ...[basis.errColumn, basis.skipped, basis.errMissing]
-                  .filter((x) => x != null)
-                  .map((b) =>
-                    t(
-                      `dataFigureV2.basis.${b.key}`,
-                      // 多个误差列：各列名带引号、直接相连（引号写法随语言，在 `basis.colQuote`）
-                      Array.isArray(b.values.columns) ? { columns: b.values.columns.map((c) => t('dataFigureV2.basis.colQuote', { column: c })).join(/^zh/i.test(i18n.language) ? '' : ', ') } : b.values,
-                    ),
-                  ),
-              ].join(t('dataFigureV2.basis.join')),
+                // 旧的多 y 响应没有数可写：主句是空的，不留空段
+                basis.main.length ? basis.main.map(sentenceText).join(t('dataFigureV2.basis.then')) : null,
+                ...[basis.errGap, basis.errColumn, basis.skipped, basis.errMissing].map((b) => b && sentenceText(b)),
+              ].filter((x) => x != null).join(t('dataFigureV2.basis.join')),
             })}
           </p>
         )}

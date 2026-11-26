@@ -741,7 +741,13 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
-      "rowsErrLines": "drawn from {{drawn}} rows, one point per row for each line",
+      "seriesEqual": "{{k}} series, {{n}} valid values each",
+      "seriesApart": "{{k}} series, {{n}} valid values each; the valid data cover different positions",
+      "seriesEach": "{{k}} series, with {{counts}} valid values respectively",
+      "seriesRange": "{{k}} series, {{min}}–{{max}} valid values each",
+      "errGap_one": "{{count}} place is missing an error value",
+      "errGap_other": "{{count}} places are missing an error value",
+      "countJoin": " / ",
       "rowsBar": "drawn from {{drawn}} rows, one bar per row",
       "errColumns": "error bars from the {{columns}} columns",
       "colQuote": "“{{column}}”",

@@ -734,7 +734,12 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
-      "rowsErrLines": "按 {{drawn}} 行绘制，每条线每行一个点",
+      "seriesEqual": "{{k}} 个系列，各含 {{n}} 个有效值",
+      "seriesApart": "{{k}} 个系列，各含 {{n}} 个有效值；有效数据覆盖位置不同",
+      "seriesEach": "{{k}} 个系列，分别含 {{counts}} 个有效值",
+      "seriesRange": "{{k}} 个系列，各含 {{min}}–{{max}} 个有效值",
+      "errGap_other": "{{count}} 处缺少误差值",
+      "countJoin": "、",
       "rowsBar": "按 {{drawn}} 行绘制，每行一根柱",
       "errColumns": "误差线取自{{columns}}列",
       "colQuote": "「{{column}}」",
