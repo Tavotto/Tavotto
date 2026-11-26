@@ -1067,6 +1067,10 @@
       "other": "其他样式"
     },
     "quickLayoutPageTooSmall": "画布放不下这几张图，可以减少列数或调大画布",
+    "quickLayoutProOutdated": "先更新一下 {{pro}}",
+    "quickLayoutFigureObstacle": "有元素放不下，这次没排",
+    "quickLayoutNoteInFigure": "这次排的是图内子图",
+    "quickLayoutNoteSpecNotFixedFigure": "有几处字号还不合规范，去「问题」看看",
     "svgImported_other": "已变成 {{count}} 个可编辑对象",
     "svgAsImage": "这个 SVG {{reason}}，已整体当图片放进来",
     "svgExplodeFailed": "这张图{{reason}}，没有拆开",

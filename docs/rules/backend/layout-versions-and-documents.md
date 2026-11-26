@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layoutannotate.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layoutannotate.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`、`test_layoutdir.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -235,6 +235,23 @@ order: 200
   `layout_read_only`，磁盘满照旧 atomicio 的通用映射。响应带 `name` / `file`（相对项目根），
   GET 开着项目时带 `X-Tavotto-Layout-File`（⌘S 会写到哪，百分号编码）——界面原样说，不自己拼。
   **自动保存仍只写数据目录的槽位**，不写项目文件。
+- **排版的目录形态（ADR 0211 第二期，`engine/layoutdir.py` 是唯一出处；写入端默认关）**：`tavottofile/<名>.tavotto/layout.json`
+  是当前权威正文，旁边的 `<名>.json` 是**占位**（`{"schema": PLACEHOLDER_SCHEMA, "tavotto_layout_dir": "<名>.tavotto"}`，旧版据 schema 判
+  「来自更新的 Tavotto」）。目录里还有 `package_manifest.json`（容器版本、工作副本 docId、`layout_revision` 提示、占位与留底修订号；
+  第三期 `.tavotto` 容器骨架）与 `legacy/`（迁移留底、覆盖时两边都留）。规则：
+  ① **锁键、会话绑定的 `file`、`X-Tavotto-Layout-File` 永远是逻辑路径 `<名>.json`**（锁带只看文件名，用 `layout.json` 当键所有排版会共用一条）；
+  **修订号永远是当前正文那份字节的 hash**，清单里的 `layout_revision` 只是提示。② **所有读 `tavottofile/*.json` 的地方都要认占位**：
+  列表 / 读取 / 冲突摘要 / 会话绑定确认 / 插件与 Agent（`layoutannotate`）/ `runtimeasset.saved_layouts_use_stem` / `tutorial.saved_layouts` 经 `layoutdir.locate()` /
+  `list_layouts()` / `is_placeholder()`，不自己拼 `<名>.json` 当正文读；`_svg_reference_corpus` 是递归扫描，天然覆盖目录形态。
+  ③ **任何写入口都不许把正文写在占位上**（`app.api_layout_save`、`layoutannotate.write_canvas` / `undo` 都经 `layoutdir.write`）。
+  ④ **迁移只在写入时发生、与那次保存分开**：同级暂存目录备齐（`layout.json` = 旧文件同一份字节、留底、清单）→ 整个目录一次发布 →
+  **最后**原子地换占位 → 再做这次保存；中断后两边正文逐字节相同（PENDING / DIR），下一次写入续完。「真 `<名>.json` + 目录」
+  按清单里的留底修订号分：相等 = 迁移中断（PENDING），不等 = 旧版覆盖了占位（CONFLICT，当外部修改：读给外来的 `<名>.json`、409 的
+  `revision` 与明确覆盖的基线是同一份；覆盖时外来的与被取代的 `layout.json` 都留进 `legacy/`）。⑤ 打开 / 列出 / 读取一个字节都不写。
+  ⑥ 开关 `layoutdir.WRITER_ENABLED`（或环境变量 `TAVOTTO_LAYOUT_DIR_WRITER=1`）只管**创建与迁移**；已是目录形态的排版无论开关都写进目录。
+  ⑦ 守卫：`<名>.tavotto` 目录 / `layout.json` / 清单是链接 → 400 `layout_outside_project`；目录名只差大小写 / Unicode 形式 → 409
+  `layout_name_collision`；清单容器版本比本构建新 → 只读（409 `layout_dir_too_new`）；Windows 保留名 / 末尾点或空格 / 超长 / 同名普通文件占着
+  目录名 → 退回 `<名>.json`。留底的只读位只在 POSIX 设（Windows 上只读属性会让整夹删除失败）。
 - **写前判冲突读修订号用 `atomicio.existing_revision()`，不用 `content_revision()`**（#674 评审 P1）：
   后者把「不存在」与「读不出」（mode 000、被别的程序独占）揉成一个 `None`，而 `_revision_conflict`
   对 `None` 的解释是「被删了，放行重建」——一份读不出却换得掉的文件会被闭眼整份覆盖。
@@ -423,6 +440,7 @@ order: 200
 - 另存为与自动保存共用 `_revision_conflict`、锁不可重入、GET 不用 `send_file`
 - 槽位清理顺带 `atomicio.reap_orphan_tmps`（只认 `_next_tmp` 的名字，年龄 + pid 已死，一天后只看年龄）
 - ⌘S 写回项目（ADR 0096）：`target=project` 必须开着项目、落点只在 `tavottofile/`（符号链接逃逸拒）、只读卷有自己的 code
+- 排版目录形态（ADR 0211 第二期）：`engine/layoutdir.py` 是唯一出处；占位不是排版、锁与修订号规则见上；写入端默认关
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 

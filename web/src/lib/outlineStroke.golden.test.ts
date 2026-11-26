@@ -2,6 +2,8 @@
  * 轮廓化描边的像素对拍样本（ADR 0185 M7）：前端（真 WASM 内核）把虚线、端型、内外对齐的描边转成面积，原对象与转出来的对象的
  * 导出载荷一起写进 `tests/golden/outline_stroke_vectors.json`；后端 `tests/test_outline_stroke.py` 把两边按导出画出来逐像素比。
  *
+ * 每例另带 `doc`（原对象与结果的文档形态），后端 `tests/test_vector_outline.py` 拿它与 Python 版逐数比。
+ *
  * 平时这里核「现在算出来的 = 金样」（改了几何 / 换了内核就红）；`UPDATE_GOLDEN=1` 时重写金样。
  */
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -65,7 +67,15 @@ function build() {
     const made = outlineStrokes(kernel, [obj], [obj.id])
     if (!made) throw new Error(`算不出：${name}`)
     const after = made.flatMap((m) => [m.replace, ...(m.extra ? [m.extra] : [])])
-    return { name, original: round(toExportObjects([obj])), outlined: round(toExportObjects(after)) }
+    // 文档形态（camelCase、不取整）给后端 `engine/vectorgeom.outline_stroke` 逐数对拍（`tests/test_vector_outline.py`）；
+    // 新长出来的轮廓 id 是随机的，写成固定的 `extra`
+    const doc = made.flatMap((m) => [m.replace, ...(m.extra ? [{ ...m.extra, id: 'extra' }] : [])])
+    return {
+      name,
+      original: round(toExportObjects([obj])),
+      outlined: round(toExportObjects(after)),
+      doc: JSON.parse(JSON.stringify({ original: obj, outlined: doc })),
+    }
   })
 }
 
