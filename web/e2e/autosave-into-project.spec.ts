@@ -30,6 +30,7 @@ async function openAndWait(page: Page, baseURL: string) {
   await waitForDocumentReady(page)
 }
 
+// SIGKILL 在 Windows 上由 Node 映射成 TerminateProcess：同样是不给优雅退出的强杀
 async function killHard(a: { proc: import('node:child_process').ChildProcess }) {
   a.proc.kill('SIGKILL')
   for (let i = 0; i < 60 && a.proc.exitCode === null && a.proc.signalCode === null; i++) {
@@ -38,7 +39,6 @@ async function killHard(a: { proc: import('node:child_process').ChildProcess }) 
 }
 
 test('不按任何键：编辑自动写进项目的 layout.json，杀进程重开就是它；换空的本机存储也能从工作副本找回', { tag: '@feature:file.autosave-restore' }, async ({ app, browser }) => {
-  test.skip(process.platform === 'win32', 'SIGKILL 语义在 Windows 上不同；Windows 腿由后端用例覆盖瞬时失败')
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-autosave-project-'))
   const started: { stop: () => Promise<void> }[] = []
   try {
