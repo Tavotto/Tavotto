@@ -172,7 +172,7 @@ test(
     expect(agentAnnotates(a.figures, a.dataDir).added).toHaveLength(2)
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await expect(stage.getByText('Agent note', { exact: true })).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator(':not([data-status-live])').getByText('已并入 2 个标注', { exact: false }).last()).toBeVisible()
+    await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'agentMerge.done')
     await shots(page, 'agent-merge-auto', (p) => testInfo.outputPath(p))
     // 可撤销：⌘Z 拿掉，⇧⌘Z 放回
     await page.keyboard.press('ControlOrMeta+z')
@@ -181,7 +181,7 @@ test(
     await expect(stage.getByText('Agent note', { exact: true })).toBeVisible()
 
     // 桌面这边改一处；Agent 又加一批（这回不回前台）；直接 ⌘S：不弹对话框，并进来接着保存
-    await page.getByRole('button', { name: '文字' }).click()
+    await page.locator('[data-tool="text"]').click()
     await stage.click({ position: { x: 380, y: 420 } })
     await page.keyboard.type('桌面这边')
     await page.keyboard.press('Escape')
@@ -219,14 +219,14 @@ test(
     agentEdits(a.figures, a.dataDir, 'e1', { t_e2e1txt: { text: 'Agent edited' } }, ['a_e2e1arw'])
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator(':not([data-status-live])').getByText('已并入 Agent 的 2 处改动', { exact: false }).last()).toBeVisible()
+    await expect(page.locator('[data-status-live]')).toHaveAttribute('data-status-key', 'agentMerge.doneEdit')
     await page.keyboard.press('ControlOrMeta+z')
     await expect(stage.getByText('Agent note', { exact: true })).toBeVisible()
     await page.keyboard.press('ControlOrMeta+Shift+z')
     await expect(stage.getByText('Agent edited', { exact: true })).toBeVisible()
 
     // 桌面这边新加一段字；Agent 又改了一次那段字；直接 ⌘S：不弹对话框，两边都在磁盘上
-    await page.getByRole('button', { name: '文字' }).click()
+    await page.locator('[data-tool="text"]').click()
     await stage.click({ position: { x: 380, y: 420 } })
     await page.keyboard.type('桌面这边')
     await page.keyboard.press('Escape')
