@@ -34,7 +34,7 @@ import subprocess
 
 import pytest
 
-from support.invariant_figures import ENTRY, LIBRARY, SCRIPT_NAME, STEMS
+from support.invariant_figures import ENTRY, LIBRARY, SCRIPT_NAME, STEMS, in_group
 from support.overridesample import (
     _NON_VISUAL_BY_ROLE,
     _NON_VISUAL_PROPS,
@@ -58,6 +58,12 @@ pytestmark = pytest.mark.skipif(
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROBE = os.path.join(REPO, "tests", "support", "engine_invariant_probe.py")
+
+#: 按图分组（`TAVOTTO_INVARIANT_GROUP`，见 support/invariant_figures.py INVARIANT_GROUPS）：不设 = 全部。
+GROUP_STEMS = tuple(st for st in STEMS if in_group(st))
+GROUP_STEMS_WITH_SCALE = tuple(st for st in (*STEMS, "InvScale") if in_group(st))
+#: 不按图参数化的用例：只在 c 组跑（`-m "not invariant_rest"` 排掉）
+rest = pytest.mark.invariant_rest
 
 
 @pytest.fixture(scope="module")
@@ -120,7 +126,7 @@ def _png(worker, stem, patches, tag):
     return hashlib.sha1(path.read_bytes()).hexdigest()
 
 
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", GROUP_STEMS)
 def test_capability_truthfulness(hot, stem):
     """宣称可编辑的每一条，都必须**真的改得动**。
 
@@ -183,7 +189,7 @@ _ENUM_PLACEHOLDERS = {
 }
 
 
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", GROUP_STEMS)
 def test_every_enum_option_can_actually_be_applied(hot, stem):
     """下拉框里列出来的每一个选项，**选了都得能用**。
 
@@ -220,6 +226,156 @@ def test_every_enum_option_can_actually_be_applied(hot, stem):
     )
 
 
+# ---------------------------------------------------------------------------
+# 不变式 1 的另一面：图内编辑不改数据（P4 / 科学图形七问第 1 问）
+# ---------------------------------------------------------------------------
+#: **允许改动数据指纹**的编辑，`(role, prop) → 理由`。判据是「这条编辑的本意就是改数据」，
+#: 不是「它改了数据所以放过」——往里加一条之前先确认产品本来就打算开放这条数据编辑
+#: （P4 的「数据」一类），否则那是该点名上报的 handler 缺陷，不是例外。
+#: 2026-11-23 立表时实测为空：现有开放的样式 / 结构 / 尺度编辑一条都不动指纹。
+_DATA_CHANGING_PROPS: dict[tuple[str, str], str] = {}
+
+#: 编辑之后**量不到**（不是「变了」）的那几种：`(prop, value) → 理由`。只放过「数据元素从元素表里消失、
+#: 且 manifest 在同一根轴的 `unsupported` 里如实报了 `not_finite` / `no_geometry`」这一种形状——
+#: 它的数组没被 setter 动过，只是这一刻画不出有限几何、指纹跟着元素一起没出。parts 变了、
+#: 状态变了、或者消失却没报，照样红。这些算 unknown，计数打印出来，不冒充「比过、相等」。
+_LOGIT_WHY = "logit 把 0 / 1 及区间外的值映成 ±∞：落在那里的线没有有限几何，元素被丢进 unsupported"
+_UNMEASURABLE_AFTER_EDIT: dict[tuple[str, str], str] = {
+    ("xscale", "logit"): _LOGIT_WHY,  # InvCbarH 的 `plot([0, 1], …)` 实测命中
+    ("yscale", "logit"): _LOGIT_WHY,
+}
+_UNMEASURABLE_REASONS = frozenset({"not_finite", "no_geometry"})
+
+#: 采样器（`_sample_value`）挑不出值的 **pair** 类结构编辑，这里按当前值现算一个不同的值。
+#: 只放这一条用例要的：不进共享的 `_SAMPLE_OVERRIDE`，免得改动能力真实 / 逐字还原 / 操作序列的覆盖。
+#: 范围取当前区间的中间 60%——缩放 / 平移视窗正是「只改展示、不改数据」的典型（GoG：坐标编辑不改统计）。
+_PAIR_SAMPLES = {
+    "xlim": lambda v: [round(v[0] + 0.2 * (v[1] - v[0]), 4), round(v[1] - 0.2 * (v[1] - v[0]), 4)],
+    "ylim": lambda v: [round(v[0] + 0.2 * (v[1] - v[0]), 4), round(v[1] - 0.2 * (v[1] - v[0]), 4)],
+}
+
+#: 尺度类不只挑一个值：每个选项都施加一遍（log / symlog / logit / asinh / function… 都只是变换）。
+_EVERY_OPTION_PROPS = frozenset({"xscale", "yscale", "zscale"})
+
+
+def _fingerprints(man) -> dict:
+    """`{gid: data_fingerprint}`——manifest 里带指纹字段的元素（不带的不是数据类元素）。"""
+    return {e["gid"]: e["data_fingerprint"] for e in man["elements"] if "data_fingerprint" in e}
+
+
+def _fingerprint_diff(before: dict, after: dict, vanish_ok=frozenset()) -> list[str]:
+    """两份指纹表的差：消失 / 新增 / 状态变 / 某几块 parts 变，各说一句。空列表 = 逐项相等。
+    `vanish_ok` 里的 gid 消失不算差（调用方已核过它是「量不到」而不是「变了」）。"""
+    out = []
+    for gid in sorted(before.keys() | after.keys()):
+        a, b = before.get(gid), after.get(gid)
+        if a == b or (b is None and gid in vanish_ok):
+            continue
+        if b is None:
+            out.append(f"{gid} 的数据元素消失了")
+        elif a is None:
+            out.append(f"{gid} 多出一个数据元素（{b.get('status')}）")
+        elif a.get("status") != b.get("status"):
+            out.append(f"{gid} 指纹状态 {a.get('status')} → {b.get('status')}")
+        else:
+            pa, pb = a.get("parts") or {}, b.get("parts") or {}
+            changed = sorted(k for k in pa.keys() | pb.keys() if pa.get(k) != pb.get(k))
+            out.append(f"{gid} 的 {'/'.join(changed)} 变了")
+    return out
+
+
+@pytest.mark.parametrize("stem", GROUP_STEMS_WITH_SCALE)
+def test_in_figure_edits_do_not_change_data(hot, stem):
+    """应用一条图内编辑之后，**worker 那张活 Figure 上每个数据元素的 `data_fingerprint`** 与编辑前逐项相等。
+
+    主语：`hot.override(stem, patch)` 回的 manifest——真实的 override 应用路径（`HANDLERS` 的 setter）
+    跑完之后、在热态 Figure 上现量的指纹；时刻：同一个 worker 上「只有这一条（连同使能项）」对
+    「一条都没有」；维度：每个数据元素的 `parts` 逐块相等，数据元素集合与各自的 `status` 也不变。
+
+    为什么：颜色、线宽、字体、xlim / ylim、xscale / yscale、柱宽、图例位置……这些样式 / 结构 / 尺度
+    编辑都不该动绘图数组（`docs/sciviz/principles.md` P4；GoG：尺度与坐标编辑只改展示、不改统计）。
+    能改数据的编辑本来就不开放（`overrides.py`：挪柱子「不给 bar」）。
+
+    取值与能力真实那条**同一份采样器**（`_editable_targets` + `_patch_for`），只补 pair 类的
+    `xlim` / `ylim`；尺度类每个选项都施加。`InvScale` 是严格为正的数据，log 尺度在那里不被夹住。
+    盲点：`_editable_targets` 跳过的 figure / axes3d / ticks / ticklabel 与采样器挑不出值的结构化类型
+    （rect / order / number_list）不在这条里。
+    """
+    base = _man(hot, stem)
+    before = _fingerprints(base)
+    advertised = {el["gid"]: {f["prop"] for f in el["editable"]} for el in base["elements"]}
+    role_of = {el["gid"]: el["role"] for el in base["elements"]}
+
+    # 前提：有东西可比，且基线上每个数据元素这次都真量了——over_budget / unavailable 记 unknown，
+    # 在它们上面比「相等」是空转
+    unmeasured = sorted(g for g, fp in before.items() if fp.get("status") != "ok")
+    assert not unmeasured, f"{stem}：夹具里有没量出来的数据指纹，比较会空转：{unmeasured}"
+    assert before, f"{stem}：manifest 里一个带 data_fingerprint 的元素都没有，「全相等」恒真"
+
+    changed, keys, applied, unknown = [], set(), 0, 0
+    # 每个 (role, prop) 只施加一次（尺度类每个选项一次）：同一 handler 在同类元素上重复施加不增加覆盖，
+    # 却让 CI 的 invariants 作业逼近超时（#2123 合入后「结构性不变式」由 11–16 分钟涨到 24–26 分钟）
+    seen: set[tuple] = set()
+    for gid, field in _editable_targets(base):
+        prop = field["prop"]
+        if (role_of[gid], prop) in seen:
+            continue
+        seen.add((role_of[gid], prop))
+        if prop in _PAIR_SAMPLES and field.get("type") == "pair" and field.get("value"):
+            patches = [[{"gid": gid, "prop": prop, "value": _PAIR_SAMPLES[prop](field["value"])}]]
+        elif prop in _EVERY_OPTION_PROPS and field.get("type") == "enum":
+            patches = [
+                [{"gid": gid, "prop": prop, "value": opt}]
+                for opt in field.get("options") or []
+                if opt != field.get("value")
+            ]
+        else:
+            _enablers, patch = _patch_for(gid, field, advertised)
+            patches = [patch] if patch is not None else []
+        for patch in patches:
+            resp = hot.override(stem, patch)
+            # 报了 warning 就是没应用上——在没应用的编辑上比出「相等」不算数
+            assert not (resp.get("warnings") or []), (
+                f"{stem} {gid}.{prop} = {patch[-1]['value']!r} 报了 warning：{resp['warnings']}"
+            )
+            after = _fingerprints(resp["manifest"])
+            vanish_ok = frozenset()
+            value = patch[-1]["value"]
+            if isinstance(value, str) and (prop, value) in _UNMEASURABLE_AFTER_EDIT:
+                reported = {
+                    row.get("where")
+                    for row in resp["manifest"].get("unsupported") or []
+                    if row.get("reason") in _UNMEASURABLE_REASONS
+                }
+                vanish_ok = frozenset(
+                    g for g in before.keys() - after.keys() if g.split(".", 1)[0] in reported
+                )
+                unknown += len(vanish_ok)
+            diff = _fingerprint_diff(before, after, vanish_ok)
+            if diff and (role_of[gid], prop) not in _DATA_CHANGING_PROPS:
+                changed.append(f"{gid}.{prop} = {value!r} → " + "；".join(diff))
+            keys.add((role_of[gid], prop))
+            applied += 1
+
+    # 全撤之后指纹也得回到基线（不把状态留给下一个用例，也顺带验撤销不动数据）
+    back = _fingerprint_diff(before, _fingerprints(_man(hot, stem)))
+
+    print(f"[data-fingerprint] {stem}: elements={len(before)} applied={applied}", end=" ")
+    print(f"keys={len(keys)} unknown={unknown}")
+    # 前提：覆盖不能薄到让「没发现改数据」只是因为没怎么改。
+    # 下限取 2026-11-23 实测各 stem 最小值（Inv3DS：19 个 (role, prop)）往下留余量；每个键至少施加一次
+    assert applied >= len(keys) and len(keys) >= 15, (
+        f"{stem}：只施加了 {applied} 条编辑、{len(keys)} 个 (role, prop)，覆盖太薄"
+    )
+    assert not changed, (
+        f"{stem}：这些图内编辑改动了数据指纹——样式 / 结构 / 尺度编辑不许动绘图数组。"
+        f"是 handler 缺陷就修 handler；确属有意开放的数据编辑，才往 _DATA_CHANGING_PROPS 写理由：\n  "
+        + "\n  ".join(changed)
+    )
+    assert back == [], f"{stem} 全撤后指纹没回基线：{back}"
+
+
+@rest
 def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
     """cmap / vmin / vmax 只在**映射此刻真的在决定颜色**时才出现。
 
@@ -260,6 +416,7 @@ def test_colormap_controls_appear_only_while_the_mapping_is_live(hot):
 # ---------------------------------------------------------------------------
 # 不变式 2：逐字还原（exact restore）
 # ---------------------------------------------------------------------------
+@rest
 def test_colorbar_mapping_controls_follow_the_same_gate(hot_restore):
     """色条的 cmap / vmin / vmax 与**它的 mappable** 用同一道闸。
 
@@ -302,7 +459,7 @@ def test_colorbar_mapping_controls_follow_the_same_gate(hot_restore):
     assert back == base
 
 
-@pytest.mark.parametrize("stem", STEMS)
+@pytest.mark.parametrize("stem", GROUP_STEMS)
 def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     """改一条 → 撤销 → **像素与 manifest 都逐位回到原样**。
 
@@ -346,6 +503,7 @@ def test_exact_restore_is_pixel_and_manifest_identical(hot_restore, stem):
     )
 
 
+@rest
 def test_undoing_a_background_edit_removes_the_box_it_created(hot_restore):
     """只改「文字背景色」再撤销，**框要跟着消失**；开关关着时样式不露框。
 
@@ -413,7 +571,7 @@ _LEGEND_REBUILD_PROPS = frozenset(
 )
 
 
-@pytest.mark.parametrize("stem", ["InvCont"])
+@pytest.mark.parametrize("stem", [st for st in ["InvCont"] if in_group(st)])
 def test_legend_rebuild_restores_exactly(hot_restore, stem):
     """重建型 prop：改 → 再改 → 撤销到底，manifest 与像素都逐位回到脚本原样。
 
@@ -464,8 +622,10 @@ _SAME_ELEMENT_PAIRS = [
 
 @pytest.mark.parametrize(
     "stem,gid,broad,narrow",
-    _SAME_ELEMENT_PAIRS,
-    ids=[f"{c[1].split('.')[-1]}-{c[2][0]}+{c[3][0]}" for c in _SAME_ELEMENT_PAIRS],
+    [c for c in _SAME_ELEMENT_PAIRS if in_group(c[0])],
+    ids=[
+        f"{c[1].split('.')[-1]}-{c[2][0]}+{c[3][0]}" for c in _SAME_ELEMENT_PAIRS if in_group(c[0])
+    ],
 )
 def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narrow):
     """同一个元素上两条 prop **成对**改，撤销之后仍要逐字回到脚本原样。
@@ -525,6 +685,7 @@ def test_same_element_pairs_restore_exactly(hot_restore, stem, gid, broad, narro
         )
 
 
+@rest
 def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
     """脚本**显式**设过范围的轴，不许被「自动缩放」那条哨兵改掉语义。
 
@@ -553,6 +714,7 @@ def test_explicit_script_limits_are_not_turned_into_autoscale(hot_restore):
     _man(hot_restore, "InvMix")
 
 
+@rest
 @pytest.mark.parametrize("axis", ["x", "y"])
 def test_explicit_no_inversion_beats_descending_endpoints(hot_restore, axis):
     """明确要求**不翻转**时，降序端点也要被扶正。
@@ -591,6 +753,7 @@ def test_explicit_no_inversion_beats_descending_endpoints(hot_restore, axis):
     _man(hot_restore, stem)
 
 
+@rest
 @pytest.mark.parametrize("axis", ["x", "y"])
 def test_range_and_direction_both_survive_together(hot_restore, axis):
     """范围与方向是**两条正交的 prop**，同时设时两条都得生效。
@@ -627,6 +790,7 @@ def test_range_and_direction_both_survive_together(hot_restore, axis):
     _man(hot_restore, stem)
 
 
+@rest
 def test_every_alias_group_survives_both_orders(hot_replay, library):
     """别名表里的**每一条**都要经得起「两个序 + 撤销」。
 
@@ -1103,7 +1267,11 @@ REMOVAL_CASES = [
 ]
 
 
-@pytest.mark.parametrize("case_id,stem,steps", REMOVAL_CASES, ids=[c[0] for c in REMOVAL_CASES])
+@pytest.mark.parametrize(
+    "case_id,stem,steps",
+    [c for c in REMOVAL_CASES if in_group(c[1])],
+    ids=[c[0] for c in REMOVAL_CASES if in_group(c[1])],
+)
 def test_hot_equals_replay_after_removal(hot_replay, library, case_id, stem, steps):
     """`HOT(P) == REPLAY(P)` —— 尤其是 P 是**删出来**的那种。
 
@@ -1170,6 +1338,7 @@ def _boxes(man):
     return {el["gid"]: el.get("bbox") for el in man["elements"] if el["gid"].startswith("axes_")}
 
 
+@rest
 def test_position_survives_a_persistent_tight_layout(hot_replay, library):
     """`layout="tight"` 的图上拖子图：真的动了、热态 == 重放、撤销逐位回得去。
 
@@ -1250,7 +1419,11 @@ def test_position_survives_a_persistent_tight_layout(hot_replay, library):
     )
 
 
-@pytest.mark.parametrize("case_id,stem,patches", ORDER_CASES, ids=[c[0] for c in ORDER_CASES])
+@pytest.mark.parametrize(
+    "case_id,stem,patches",
+    [c for c in ORDER_CASES if in_group(c[1])],
+    ids=[c[0] for c in ORDER_CASES if in_group(c[1])],
+)
 def test_patch_order_does_not_change_the_result(hot_replay, stem, patches, case_id):
     """`[A, B]` 与 `[B, A]` 必须给出同一张图。"""
     forward = _man(hot_replay, stem, patches)
@@ -1275,6 +1448,7 @@ def probe():
     return json.loads(proc.stdout)
 
 
+@rest
 def test_no_artist_vanishes_between_elements_and_unsupported(probe):
     """登记范围内的 artist：**要么进元素表、要么进 unsupported**，不许两头都没有。
 
@@ -1296,6 +1470,7 @@ def test_no_artist_vanishes_between_elements_and_unsupported(probe):
     # 的这一半由上面两条合起来保证：登记过的必须有代表 + 树里的必须被看见。
 
 
+@rest
 def test_the_churn_exemption_stays_small_and_named(probe):
     """豁免表不许变成垃圾桶。
 
@@ -1310,6 +1485,7 @@ def test_the_churn_exemption_stays_small_and_named(probe):
     )
 
 
+@rest
 def test_unsupported_says_what_and_why(probe):
     """报出来的每一条都要说得出类名与原因——说不出来就等于没报。"""
     for row in probe["completeness"]["unsupported"]:
@@ -1345,6 +1521,7 @@ def test_unsupported_says_what_and_why(probe):
     assert poly3d[0]["where"] != "axes_0", f"报出来了，但位置指到了主 axes 上：{poly3d[0]}"
 
 
+@rest
 def test_colorbars_on_child_axes_are_recognised(probe):
     """插图上的色条也要被认出来，它的内部件一个都不许漏进元素表。
 
@@ -1394,6 +1571,7 @@ def test_colorbars_on_child_axes_are_recognised(probe):
     )
 
 
+@rest
 def test_family_classification_has_a_single_authority(probe):
     """「这个 artist 属于哪一族」只能有一处判据。
 
@@ -1417,6 +1595,7 @@ def test_family_classification_has_a_single_authority(probe):
     )
 
 
+@rest
 def test_every_advertised_prop_has_a_handler(probe):
     """元素表宣称的每一条 prop，dispatch 侧都必须有 handler。
 
@@ -1430,6 +1609,7 @@ def test_every_advertised_prop_has_a_handler(probe):
     )
 
 
+@rest
 def test_the_faces_table_holds_in_both_directions(probe):
     """`facecolor` 能不能用，判据与实测必须**双向**吻合。
 
@@ -1475,6 +1655,7 @@ def test_the_faces_table_holds_in_both_directions(probe):
         )
 
 
+@rest
 def test_the_mesh_stroke_style_table_still_holds(probe):
     """`honours_stroke_style` 那张实测表**每次跑都重新渲染核对一遍**。
 
@@ -1517,6 +1698,7 @@ def test_the_mesh_stroke_style_table_still_holds(probe):
             )
 
 
+@rest
 def test_alias_groups_are_self_consistent(probe):
     """别名表里的广播端自己得有 handler，否则那一组永远解析不出来。"""
     a = probe["single_authority"]

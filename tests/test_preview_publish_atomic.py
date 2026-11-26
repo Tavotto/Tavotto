@@ -1239,15 +1239,18 @@ def _publish_with_timeout(out, stem):
 
 
 def test_a_lock_holder_killed_hard_releases_the_lock_at_once(tmp_path):
-    """持锁进程被强杀：内核放锁，下一个进程立即拿到——不等任何超时 / 陈旧阈值。"""
-    import time  # noqa: PLC0415
+    """持锁进程被强杀：内核放锁，下一个进程拿到——没有 pid / 陈旧阈值 / 遗留回收。
 
+    不拿墙钟量「马上」：Windows 上进程终止后 `msvcrt.locking` 的锁由系统异步回收，
+    慢 runner 上要好几秒（11-26 #2188 合并组 5.7 s）。这里等的是可观察的释放信号——
+    另一个句柄真能锁上第 0 字节——宽上限只防挂死；之后发布照常成功。
+    """
     holder = _spawn_holder(tmp_path)
     holder.kill()
     holder.wait()
-    t0 = time.monotonic()
+    with figcapture._ledger_lock(tmp_path, timeout=30.0):
+        pass
     assert _publish(tmp_path, "fig") == 1
-    assert time.monotonic() - t0 < 2.0
     assert figcapture.published_preview_stems(tmp_path) == ["fig"]
 
 

@@ -214,26 +214,51 @@ def _matrix_axes(job_block: str) -> dict[str, list[str]]:
     return axes
 
 
+def _matrix_cells(job_block: str) -> list[dict[str, str]]:
+    """matrix 展开后的每一格：轴形状取笛卡尔积；`include:` 形状（backend-platforms 2026-11-24 起，
+    片数按系统分）逐行读 `- { k: v, … }`。认不出的写法当场抛。"""
+    code = _code(job_block)
+    m = re.search(r"(?m)^      matrix:\n        include:\n((?:          - \{.*\}\n)+)", code)
+    if not m:
+        axes = _matrix_axes(job_block)
+        cells: list[dict[str, str]] = [{}]
+        for k, vs in axes.items():
+            cells = [{**c, k: v} for c in cells for v in vs]
+        return cells
+    out = []
+    for line in m.group(1).splitlines():
+        body = re.fullmatch(r"\s+- \{(.*)\}", line)
+        assert body, f"include 行的写法认不出：{line!r}"
+        cell = {}
+        for part in body.group(1).split(","):
+            k, sep, v = part.partition(":")
+            assert sep, f"include 行的写法认不出：{line!r}"
+            cell[k.strip()] = v.strip().strip("\"'")
+        out.append(cell)
+    assert out, "include 块是空的"
+    return out
+
+
 def _tiers_of(job_block: str) -> set[tuple[str, str]]:
     """一个 backend job 实际跑的 (os, python) 档：轴上有就取轴，没有就取写死的那个值。
 
     os 不在轴上时 `runs-on` 必须是字面量（`${{ matrix.os }}` 却没有 os 轴 = 空档）；
     python 不在轴上时 `python-version` 必须是字面量，同理。
     """
-    axes = _matrix_axes(job_block)
+    cells = _matrix_cells(job_block)
     code = _code(job_block)
-    if "os" in axes:
-        oses = axes["os"]
+    if all("os" in c for c in cells):
+        oses = {c["os"] for c in cells}
     else:
         m = re.search(r"(?m)^    runs-on: ([\w.-]+)$", code)
-        assert m, "os 不在 matrix 轴上，runs-on 又不是字面量"
-        oses = [m.group(1)]
-    if "python" in axes:
-        pys = axes["python"]
+        assert m, "os 不在 matrix 上，runs-on 又不是字面量"
+        oses = {m.group(1)}
+    if all("python" in c for c in cells):
+        pys = {c["python"] for c in cells}
     else:
         m = re.search(r'python-version: "([\d.]+)"', code)
-        assert m, "python 不在 matrix 轴上，python-version 又不是字面量"
-        pys = [m.group(1)]
+        assert m, "python 不在 matrix 上，python-version 又不是字面量"
+        pys = {m.group(1)}
     return {(o, py) for o in oses for py in pys}
 
 
@@ -1200,10 +1225,14 @@ class TestGates:
         }, f"backend 覆盖漂了：{sorted(tiers)}"
         assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
 
-    #: 各 job 现在定的片数——两个 job **不必相同**；backend-fast 2026-10-12 起 4 片（#896）、2026-10-24 起 6 片、
-    #: backend-platforms 2026-10-21 起 4 片、2026-10-24 起 8 片（docs/rules/ci/pytest-shards.md）。改一个 job
+    #: 各 job 现在定的片数——两个 job **不必相同**；backend-fast 2026-10-12 起 4 片（#896）、2026-10-24 起 6 片、2026-11-24 起 12 片、
+    #: backend-platforms 2026-10-21 起 4 片、2026-10-24 起 8 片、2026-11-24 起按系统分（docs/rules/ci/pytest-shards.md）。改一个 job
     #: 的片数要同时改这里与文档里的实测。
-    _EXPECTED_SHARD_COUNTS = {"backend-fast": 6, "backend-platforms": 8}
+    #: 2026-11-24 起 backend-platforms 片数按系统分（include 形状，每格带 of）：Windows 16、macOS 8。
+    _EXPECTED_SHARD_COUNTS = {
+        "backend-fast": 12,
+        "backend-platforms": {"macos-latest": 8, "windows-latest": 16},
+    }
 
     @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
     def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):
@@ -1214,27 +1243,56 @@ class TestGates:
         却没人跑。这一位只有静态合同钉得住（CI03A_PYTEST_SHARDS.md「漏片兜底链」第二层）。
         """
         block = _job(CI, job_id)
-        axes = _matrix_axes(block)
-        assert "shard" in axes, f"{job_id} 的 matrix 没有 shard 轴"
-        n = len(axes["shard"])
-        assert axes["shard"] == [str(i) for i in range(1, n + 1)], (
-            f"{job_id} 的 shard 轴必须恰好是 1..N，收到 {axes['shard']}"
-        )
-        expected = self._EXPECTED_SHARD_COUNTS[job_id]
-        assert n == expected, f"{job_id} 现在定的是 {expected} 片；改片数要同时改这里与文档里的实测"
         code = _code(block)
+        expected = self._EXPECTED_SHARD_COUNTS[job_id]
+        if isinstance(expected, dict):
+            # 按系统分片数（include 形状）：每个系统的片号恰好 1..N、每格 of == N、N 是定好的数，
+            # 命令里的 N 取 matrix.of——片号与 of 写在同一行，对不上只能是这张表写错，这里逐系统钉住。
+            cells = _matrix_cells(block)
+            by_os: dict[str, list[dict[str, str]]] = {}
+            for c in cells:
+                assert {"os", "shard", "of"} <= set(c), (
+                    f"{job_id} 的 include 格缺 os / shard / of：{c}"
+                )
+                by_os.setdefault(c["os"], []).append(c)
+            assert set(by_os) == set(expected), f"{job_id} 的系统集合漂了：{sorted(by_os)}"
+            for os_name, n in expected.items():
+                group = by_os[os_name]
+                assert [c["shard"] for c in group] == [str(i) for i in range(1, n + 1)], (
+                    f"{job_id} {os_name} 的片号必须恰好是 1..{n}，收到 {[c['shard'] for c in group]}"
+                )
+                assert {c["of"] for c in group} == {str(n)}, (
+                    f"{job_id} {os_name} 的 of 必须都是 {n}"
+                )
+            assert re.search(
+                r"python -m pytest --shard=\$\{\{ matrix\.shard \}\}/\$\{\{ matrix\.of \}\}", code
+            ), (
+                f"{job_id} 的 pytest 命令要写成 `--shard=${{{{ matrix.shard }}}}/${{{{ matrix.of }}}}`"
+            )
+            n = None
+        else:
+            axes = _matrix_axes(block)
+            assert "shard" in axes, f"{job_id} 的 matrix 没有 shard 轴"
+            n = len(axes["shard"])
+            assert axes["shard"] == [str(i) for i in range(1, n + 1)], (
+                f"{job_id} 的 shard 轴必须恰好是 1..N，收到 {axes['shard']}"
+            )
+            assert n == expected, (
+                f"{job_id} 现在定的是 {expected} 片；改片数要同时改这里与文档里的实测"
+            )
         # `--shard=K/N` 与 `--shard-manifest=PATH` **必须是 `=` 形式**：这两个选项在
         # tests/conftest.py 里注册，pytest 预解析时把未知选项的下一个 token 当路径去找
         # conftest；`--shard-manifest PATH` 在 PATH 已存在时只加载 PATH 所在目录的 conftest，
         # tests/conftest.py 没加载，整条命令 rc 4「unrecognized arguments」。托管 runner 的
         # RUNNER_TEMP 每次都是新的，CI 自己永远不会撞上——所以这一位只能静态钉。
-        m = re.search(r"python -m pytest --shard=\$\{\{ matrix\.shard \}\}/(\d+)", code)
-        assert m, (
-            f"{job_id} 的 pytest 命令里没有 `--shard=${{{{ matrix.shard }}}}/N`（要 `=` 形式）"
-        )
-        assert int(m.group(1)) == n, (
-            f"{job_id}：命令里的 N={m.group(1)} 与 matrix.shard 的片数 {n} 不是同一个数"
-        )
+        if n is not None:
+            m = re.search(r"python -m pytest --shard=\$\{\{ matrix\.shard \}\}/(\d+)", code)
+            assert m, (
+                f"{job_id} 的 pytest 命令里没有 `--shard=${{{{ matrix.shard }}}}/N`（要 `=` 形式）"
+            )
+            assert int(m.group(1)) == n, (
+                f"{job_id}：命令里的 N={m.group(1)} 与 matrix.shard 的片数 {n} 不是同一个数"
+            )
         # 证据链：manifest + junit 上传成按片命名的 artifact（只作证据，不作判定输入）
         assert "--shard-manifest=" in code and "--junitxml" in code
         assert "--shard-manifest " not in code, f"{job_id}：--shard-manifest 要写成 `=` 形式"
@@ -3834,7 +3892,7 @@ class TestCLAServiceContracts:
         assert "backend-fast" in _required_of(_job(CI, "ci-fast-gate"))
         assert "github.event_name == 'pull_request' || github.event_name == 'merge_group'" in job
         assert 'python: ["3.10", "3.13", "3.14"]' in job
-        assert "shard: [1, 2, 3, 4, 5, 6]" in job
+        assert "shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]" in job
         marker = "      - name: CLA service contract tests (isolated)\n"
         assert job.count(marker) == 1
         step = job.split(marker, 1)[1].split("      - ", 1)[0]

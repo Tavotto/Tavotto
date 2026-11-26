@@ -15,6 +15,7 @@
 | `palette-semantic` | visual | G-022 |
 | `palette-line-markers` | visual | G-024 |
 | `log-axis-nonpositive` | encoding | G-001（V-001） |
+| `bar-baseline-truncated` | encoding | G-002（V-002） |
 
 ### V-001 对数轴上有画不出来的数据
 
@@ -42,7 +43,7 @@
 
 ### V-002 线性轴上柱的基线被截掉
 
-- **预检 id**：（待定）· **basis**：encoding（**这是 Tavotto 的工程归类**：FDV 把截断柱标为「misleading」，没有贴 wrong）· **状态**：设计中。
+- **预检 id**：`bar-baseline-truncated` · **basis**：encoding（**这是 Tavotto 的工程归类**：FDV 把截断柱标为「misleading」，没有贴 wrong）· **状态**：已实现（维护者 2026-11-21 定 warn、`fix: none`、归 `lines`，1.0 豁免与 V-001 同一行）。看护：`tests/test_preflight_bar_baseline.py`。
 - **依据**：
   - FDV 第 17 章，「Bars on a linear scale should always start at 0.」（p.209）[原文]。
   - 注意：GoG p.92 反而说条形的定义本身不要求底在零，所以不能拿它当支持证据。
@@ -55,7 +56,13 @@
   - 共同基线不在可见范围内时报。
   - 没有共同基线（浮动柱、甘特图）时不判。
   - 差值柱（有正有负、0 可见）不报。
-- **严重度**：warn · **修复**：none · **误报风险**：中。
+- **实现口径**：worker 只读事实 `bar_baseline` 只记基线（只看可见柱、直角坐标轴、竖柱 y / 横柱 x，堆叠上层与浮动柱不收）；
+  范围与尺度由规则从同一 axes 元素的 `[xy]lim` / `[xy]scale` 读，尺度正是 `linear` 才判；可见范围按 min / max 取闭区间。
+  直方图（`hist` 也是 `BarContainer`）按同一规则判。全文见 `docs/rules/backend/profiles-and-preflight.md`。
+- **严重度**：warn · **修复**：none（MCP 手修提示只说两种改法：从 0 起，或改成点图）· **误报风险**：中。
+  已知会报、尚未裁决的写法：inset 放大图、断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器一根柱，天然有共同基线）。
+  仓库里含柱的真脚本实测都不报：figurebench `grouped_bars` 与 examples / compat / acceptance 共 10 份量到了柱；
+  `ca_projections` 只有极坐标柱，不发事实；另 5 份跑不起来（要命令行参数、没有 `main` 入口、缺 pandas），未执行。
 - **测试**：
   - 正常：0 可见。
   - 错误：柱高 5、8，ylim 设为 4–9。
@@ -147,6 +154,140 @@
   - 错误：组名横轴上画了折线。
   - 边界：月份缩写、日期刻度。
 
+### V-009 成品里的实际字号低于规范下限
+
+- **预检 id**：无（不是预检规则，是导出后对成品的观测）· **basis**：visual · **状态**：观测已实现（`rendercore/inspector.py` 的 `observed.text_size` 与 `text_size_verdict()`；看护 `tests/test_rendercore_text_size.py`）。2026-11-23 起接成产物检查项 `checks.text_size`（ADR 0203，Accepted）：下限只取出版规范的 `min_effective_font_size_pt`，两档政策都不是必需项、不拦导出；没有下限时 not_applicable（没被要求检查）、有下限却量不了时 unknown；界面只在失败时说一句（看护另有 `tests/test_export_text_size_e2e.py`）。
+- **依据**：
+  - FDV 第 24 章，文字大小要在最终尺寸下看（p.291）[原文]。
+  - 上下标被排成更小的字：matplotlib 3.11.2 实测，7 pt 的 `$R^2$` 在 PDF 里有一段 4.9 pt 的文字 [推导]。
+  - XG 的 `audit_pdf_text.py` 用同一个思路量 PDF 的 `Tf` [二手]；它写死的 5 pt 不引用。
+- **适用**：导出的 PDF。预检的 `font-too-small` 按 manifest 的 `fontsize × scale` 判，看不到一段文字内部更小的字；本条量的是成品。
+- **检测所需信息**：成品 PDF 的内容流（有，检查器本来就在遍历）；下限（只来自出版规范，中性底没有下限时不判）。
+- **检测逻辑**：
+  - 每段看得见的文字的有效字号 = `Tf` 字号 × 文字矩阵与累计 CTM（含 Form 的 `/Matrix`）在字高方向的缩放。
+  - 找到一段低于下限即 failed。
+  - 量到的都够大，但有量不了的段，记 unknown。量不了的段有三种：不画只进文本层的文字；em 不明的 Type 3；矩阵退化。
+  - 没有任何可量的文字段：not_applicable。预算耗尽或没有读取器：unknown。
+- **严重度**：待定（接成检查时由规范决定是否必需；默认只说明、不拦导出）· **修复**：none。
+- **误报风险**：低。量的是字节里的数，不做估计。已知漏报：画成轮廓又不带文本层的字，在内容流里与普通路径分不开，量不到也数不到。
+- **测试**：
+  - 正常：纯文字、`Tm` 里带字号的写法、缩放后的面板。
+  - 边界：旋转文字、`q`/`Q` 恢复字号、`BT` 重置矩阵、下限取等号、容差由调用方给。
+  - 错误：有一段小字，同时有量不了的段，仍是 failed。
+  - 判不了：不画的文字、非标准 Type 3、退化矩阵、预算耗尽、没有读取器、没有下限。
+  - 真 matplotlib：带上下标的图量出 4.9 pt（fonttype 3 与 42）；不带上下标的同一张图量出 7 pt，不报。
+
+### V-010 线条、标记与背景的对比度不够
+
+- **basis**：visual · **状态**：待评估（2026-11-23 登记，先评估误报再决定是否实现）。
+- **依据**：
+  - WCAG 2.2 SC 1.4.11：读图必需的图形对象与相邻颜色至少 3:1；SC 1.4.3：文字至少 4.5:1。经 KD 转述，[二手]。
+  - VAD §10.2.2：文字的亮度对比至少 3:1（p.223）[原文]。
+  - WCAG 是网页标准，期刊没有这项规定：本条只作可读性建议，`suggestion` 档，不进期刊判据。
+- **适用**：线、散点、柱、填充带这类数据元素与它所在 axes 的背景色。图的背景是透明时，按导出页面的白底算。
+- **检测所需信息**：
+  - 元素颜色与 alpha：manifest 有。
+  - axes 背景色：manifest 有 `facecolor`。
+  - 渲染后的实际混色：没有。半透明元素要按 alpha 与背景混合后再算。
+- **检测逻辑**：
+  - 按 WCAG 的相对亮度公式，算出元素颜色（与背景按 alpha 混合后）和背景色的对比度；数据元素低于 3:1 时报。
+  - 网格、参考线、被标为背景的元素不判（G-064 的例外）。
+  - 色图映射的元素不判，那归色图规则管。
+- **严重度**：suggestion · **修复**：none。
+- **误报风险**：中。
+  - 有意淡化的背景曲线（例如「其他组」灰线）会被报。
+  - 很细的线即使颜色够深也可能看不清，本条判不到。
+  - 先在 figurebench 和 compat 语料上量误报率，再决定实现。
+- **测试**（实现时）：
+  - 正常：黑线配白底。
+  - 错误：`#FFFF99` 细线配白底。
+  - 边界：alpha 0.2 的深色线、深色背景配浅色线、灰色背景线（例外）、色图散点（不判）、透明背景。
+  - 判不了：颜色字段缺失时不出 issue。
+
+### V-011 画出来的东西撞上了（干涉检测接进常规预检）
+
+- **预检 id**：`text-overlap` / `text-over-axes` / `legend-over-data` · **basis**：visual（版面，不是数据语义） ·
+  **状态**：已实现（维护者 2026-11-23 裁决「接」；1.0 豁免并在 V-001 那一行）。看护：`tests/test_preflight_interference.py`、
+  `web/src/lib/interference.test.ts`、`web/src/lib/validation.test.ts`「干涉检测接进常规检查」。
+- **依据**：文字压字、文字压进别的子图、图例盖住数据都是**测得出来的版面缺陷**——读者读不到被压住的那部分 [推导]；
+  不涉及科学判断，所以不在 `sciviz_guidance.json` 另起 G 条目。
+- **适用**：有引擎 manifest 的矢量面板（位图面板没有几何，不判）；隐藏的面板不判。
+- **检测所需信息**（都已有，不加协议字段）：元素 `bbox` 先折进 `clip_bbox`（画出来的部分）；数据的 `geometry`（真画出来的折线 /
+  路径）；`editable` 里的 `visible` 与顶层子图的 `position`。
+- **检测逻辑**：判据只有 `engine/interference.detect` 一份（MCP 与保留式规范化逐对用的也是它），`preflight.run` 把逐对结果折成聚合项：
+  - `text-overlap`：两段文字的布局框在两个方向都咬进 ≥ 0.25 mm（`MIN_OVERLAP_MM`，含等号）。同一图例的条目之间、条目与自己的框不算；
+    整体隐藏的图例的条目不算（条目自己仍报 visible）。斜排文字（`text_block.rotation` 不是 90° 的整数倍、没有 `clip_bbox`）
+    布局框命中后再按 `text_block` 的有向矩形复核一次（四条边法线上的投影都 ≥ 0.25 mm 才算），**只否决不新增**，
+    detail 与文案仍是布局框那组数。主语是两段文字。
+  - `text-over-axes`：子图的装饰文字（标题 / 轴标题 / 刻度 / 图例）伸进**另一个顶层子图**的绘图区 ≥ 0.25 mm × 0.25 mm。自己的
+    插图、被自己包住的子图、没有 `position` 的次坐标轴 / 寄生轴不算；标注（`text`）不算。主语是那段文字，被压的子图进 `detail.against`。
+  - `legend-over-data`：图例框与**同一子图**数据的真实几何相交是「确定」（`detail.certain = true`）。真实几何是 manifest 的
+    `geometry`：曲线折线、散点每颗 marker、**误差棒每个点 / 每根误差线段 / 每个帽**、茎叶的茎与 markerline（维护者 2026-11-23
+    裁决：误差棒 / 茎叶不再按容器包围盒判，`BBOX_BASIS_ROLES` 清空）；图像的包围盒就是它画出来的矩形（`RECT_BASIS_ROLES`），
+    相交也是确定。给不出 geometry 的（超预算 / 超 `MAX_MARKERS`、柱形系列里单根柱的元素、没有路径的 Collection）只有包围盒，
+    是「风险」（`certain = false`，文案说「可能」）。两种同一 id、同一档位。
+    聚合时确定恒排在风险前（`INTERFERENCE_CERTAIN_RANK`）。figure 级图例不判。主语是图例，被压的数据在 `detail.targets`。
+- **图例一侧的取法（与数据出图摆放共用）**（维护者 2026-11-23，与数据出图 tavotto-46 同一口径）：`legend-over-data` 量的是
+  图例**真正挡住数据的东西**，不是图例的整块外框。唯一实现 `interference.legend_cover_rects` ↔ `interference.ts`
+  `legendCoverRects`，数据出图给图例找位置时复用同一个函数，不另写一份。
+  - 框画出来且背景不透明（`frameon` 为真、框可见、背景此刻的有效不透明度 > 0）：用整块图例框（图例默认 zorder 5，
+    框确实盖在数据上面）。有效不透明度取 `frame.get_facecolor()` 的 alpha——matplotlib 的 `framealpha` 是**替换**
+    颜色里的 alpha，不是相乘，这就是画出来的那个数；`facecolor="none"` 为 0。
+  - 无框或背景完全透明：只用每条条目文字（本图例的 `legend_text`）的框，加上每一格示意（色块 / 线段 / marker）的框，
+    各外扩 1 个显示像素，不用整块框。
+  - 图例和所在坐标区的数据区不相交（放在轴外）：一律不报。
+  - 「确定」与「可能」沿用原写法：数据的真实几何（或图像的矩形）压到整块框 / 示意格是确定；只擦到条目文字的框、
+    字形本身未必压住的，归「可能」；数据给不出几何、只有包围盒相交的，仍是「可能」。
+  - 事实来源：manifest 只读事实 `legend_cover`（`engine/manifest.legend_cover`，legend 元素上；`status`
+    闭集 `LEGEND_COVER_STATUSES` = `ok` / `over_budget` / `unavailable`，`opaque` / `face_alpha` / `px_mm` / `handles`）。
+    单个图例条目数上限同 `pathgeom.MAX_MARKERS`，整图与 geometry 同一个上限、另一份计数器（同 V-001）；量不了
+    （老 manifest 没有这条、`status` 不是 `ok`）退回整块图例框。`detail.legend_basis` 写明用的是 `frame` 还是 `entries`。
+  - 测试：有框、线只穿过框内空白（报，确定）；无框、同一摆法（不报）；无框、文字压住线（报，可能）；无框、示意压住线
+    （报，确定）；外扩 1 px 的边界；图例在轴外、`clip_on=False` 的线伸过去（不报）；事实量不了时退回整块框。
+- **严重度**：沿用 `publication.json` 原有登记——`lab-publication-v1` / `journal-base-v1` 都是 warn，`free-form-v1` 没写、兜底 warn。
+  **修复**：`fix: none`（挪图例 / 重排外边距要真实渲染裁决、可能放不下，目标值不唯一，不进 safe_auto；MCP 的
+  `tavotto_normalize_figure` 仍是它们的修法）。问题面板归「版面」（`layout`）。
+- **误报风险**：
+  - 低：`legend-over-data` 的风险档只剩给不出 geometry 的元素；误差棒按真实几何判后，`errorbar_fit`（`loc="best"`）不再报。
+    单根柱（`bar` 元素）没有自己的 geometry，图例整个落在一根柱的内部时只说「可能」（压到柱边时柱形系列的 geometry 报确定）。
+  - 低：斜排文字有 `text_block` 时按有向矩形复核（45° 长标签不再报，排得太密真叠上的照报）；没有 `text_block`
+    （wrap / usetex / 排不出的文字）或带 `clip_bbox` 的斜排文字仍按布局框判，可能多报。`text-over-axes` 不做这层复核。
+  - 低：其余写法（`loc="best"`、inset、色条、90° 竖排标签）在真 worker 上不报。
+- **两侧同源**：`engine/interference.detect` ↔ `web/src/lib/interference.ts` `detectInterference`（逐行移植，数值格式化与取整按
+  Python 的取偶规则 `pyFixed` / `pyRound`）；`preflight._check_panel_interference` ↔ `preflight.ts` `checkPanelInterference`。
+  golden：`tests/golden/interference_vectors.json`（逐对）与 `preflight_vectors.json` 的 `interference-*`（聚合）。
+- **不重复报**：Python 侧 `preflight.run` 的 `with_interference` 默认关（生产调用方——规范化 / 按规范修图事务、改图验收、
+  MCP 桥，含已发布插件里不带参数调 `run()` 的旧桥——都已逐对调 `detect`）；golden 生成器与对拍用例显式开，与 TS `runSpec` 同一份输出。
+  MCP 桥另按 id 滤掉聚合项（`bridge._without_interference`），对外仍是逐对清单。
+- **测试**：
+  - 正常：FigureBench `line_two_series` / `cjk_labels` / `log_decay` / `heatmap_colorbar` / `grouped_bars` 不报；
+    `loc="best"`、inset、色条不报；90° 竖排与 45° 斜排的长标签不报；`errorbar_fit` 与「图例只落在误差棒包围盒里的空白处」不报。
+  - 错误：横排长刻度标签互相重叠；图例压住一根误差线段（点在框外）判「确定」；排得太密的 45° 标签墨迹叠上；`loc="center"` 的图例压住两条线（确定）；`multi_panel`（没有 tight_layout，右列的 y 轴标题与刻度
+    画进了左列子图框里，肉眼可见）报恰好那 4 段文字。
+  - 边界：恰好 0.25 mm（含等号）、差一点、贴边；clip 折叠；单点 / 闭合回边 / 水平线段的路径；同图例家族；隐藏图例的条目；
+    恰好落在一半上的取整（1.25 → "1.2"）。
+  - 判不了：bbox 读不懂（布尔、字符串）的元素不参与；图幅读不出来什么都不报；只有包围盒时只说「可能」、不冒充确定。
+
+## 评测方法：人为埋缺陷的图集（2026-11-23 立，思路借自 ARS）
+
+每条 V 规则在升级严重度、或从「待评估」进入实现之前，都要在一批已知答案的图上量过召回率和误报率。不能只靠手写的正例反例。
+
+- **图集**：在真实科研图结构上，每次只埋一个已知缺陷，例如：
+  - 对数轴上混入 0；
+  - 用 ylim 截掉柱底；
+  - 浅黄细线配白底；
+  - 小倍数用不同的 y 范围。
+  同时保留同一批图的「干净版」。
+  - 来源：figurebench、compat 语料，加上按需新写的夹具。
+  - 与 FigureBench 一样，夹具目录逐字节不变，在临时副本里运行。
+- **口径**：
+  - 召回率 = 埋了缺陷且被报的 / 埋了缺陷的；
+  - 误报率 = 干净版被报的 / 干净版总数。
+  - 量不了（status 不是 `ok`）的单独计数，不算进分子，也不算进分母。
+- **留出集**：调规则时只看开发集。另留一份调规则时不看的留出集，用来报最终的数，避免对着答案调参。
+- **门槛**：误报率的上限按 basis 定，在规则的规格里写明。V-010 先跑这一套，再决定是否实现。
+- **不做**：不用多模态模型看图打分代替这套确定性评测。
+
 ## 不做成规则的条目
 
 依据与理由见 `sciviz_guidance.json` 中 `basis: taste` 的条目（G-042 至 G-051），以及 G-041（双 y 轴）。
@@ -154,3 +295,8 @@
 - 「图上必须标 n」：三本书都没有这条。
 - 任何 pt 字号阈值：只来自期刊。
 - 凭 y 落在 [0, 1] 就猜「做过归一化」：伪规则。
+
+XG（来源登记见 `sources.md`）里另有几样明确不做成规则：
+- 面板重复、缺对照、「一张图一个结论」：见 G-058（`basis: taste`）。
+- 按源码里有没有 `dropna`、`sample`、随机数来猜数据被丢或被伪造（XG 的 `validate_figure.py`）：判的是脚本文字，不是数据，改个写法就绕过，也会冤枉正常脚本。
+- 行内三四张图必须等宽：版面选择，不是对错。

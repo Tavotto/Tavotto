@@ -1,0 +1,579 @@
+{
+  "$comment": "推荐配色目录（ADR 0210）。只收许可证宽松的方案；GPL 的期刊风格色板在 palettes_copyleft.json。重新生成：scripts/dev/gen_palettes.py。前端经 @palettes 别名整份 import，引擎经 engine/palettes.py 读，两边是同一个文件。",
+  "version": 1,
+  "neutral": "#A6A6A6",
+  "sources": {
+    "okabe-ito": {
+      "name": "Okabe & Ito, Color Universal Design",
+      "license": "LicenseRef-Factual",
+      "url": "https://jfly.uni-koeln.de/color/",
+      "cite": "Okabe M, Ito K (2008). Color Universal Design (CUD): how to make figures and presentations that are friendly to colorblind people."
+    },
+    "tol": {
+      "name": "Paul Tol, SRON colour schemes",
+      "license": "BSD-3-Clause",
+      "url": "https://personal.sron.nl/~pault/",
+      "version": "tol-colors 2.2.0",
+      "cite": "Tol P (2021). Colour Schemes. SRON Technical Note SRON/EPS/TN/09-002, issue 3.2."
+    },
+    "colorbrewer": {
+      "name": "ColorBrewer",
+      "license": "Apache-2.0",
+      "url": "https://colorbrewer2.org/",
+      "attribution": "This product includes color specifications and designs developed by Cynthia Brewer (http://colorbrewer.org/)."
+    },
+    "crameri": {
+      "name": "Scientific colour maps (Fabio Crameri)",
+      "license": "MIT",
+      "url": "https://www.fabiocrameri.ch/colourmaps/",
+      "version": "8 (cmcrameri 1.10)",
+      "doi": "10.5281/zenodo.1243862",
+      "cite": "Crameri F, Shephard GE, Heron PJ (2020). The misuse of colour in science communication. Nature Communications 11, 5444."
+    }
+  },
+  "palettes": [
+    {
+      "id": "okabe-ito",
+      "name": "Okabe–Ito",
+      "source": "okabe-ito",
+      "kind": "categorical",
+      "colors": [
+        "#E69F00",
+        "#56B4E9",
+        "#009E73",
+        "#F0E442",
+        "#0072B2",
+        "#D55E00",
+        "#CC79A7",
+        "#000000"
+      ]
+    },
+    {
+      "id": "tol.bright",
+      "name": "Tol Bright",
+      "source": "tol",
+      "kind": "categorical",
+      "colors": [
+        "#4477AA",
+        "#EE6677",
+        "#228833",
+        "#CCBB44",
+        "#66CCEE",
+        "#AA3377"
+      ],
+      "neutral": "#BBBBBB"
+    },
+    {
+      "id": "tol.vibrant",
+      "name": "Tol Vibrant",
+      "source": "tol",
+      "kind": "categorical",
+      "colors": [
+        "#EE7733",
+        "#0077BB",
+        "#33BBEE",
+        "#EE3377",
+        "#CC3311",
+        "#009988"
+      ],
+      "neutral": "#BBBBBB"
+    },
+    {
+      "id": "tol.muted",
+      "name": "Tol Muted",
+      "source": "tol",
+      "kind": "categorical",
+      "colors": [
+        "#CC6677",
+        "#332288",
+        "#DDCC77",
+        "#117733",
+        "#88CCEE",
+        "#882255",
+        "#44AA99",
+        "#999933",
+        "#AA4499"
+      ]
+    },
+    {
+      "id": "tol.high-contrast",
+      "name": "Tol High contrast",
+      "source": "tol",
+      "kind": "categorical",
+      "colors": [
+        "#004488",
+        "#BB5566",
+        "#DDAA33"
+      ]
+    },
+    {
+      "id": "colorbrewer.set1",
+      "name": "Set1",
+      "source": "colorbrewer",
+      "kind": "categorical",
+      "colors": [
+        "#E41A1C",
+        "#377EB8",
+        "#4DAF4A",
+        "#984EA3",
+        "#FF7F00",
+        "#FFFF33",
+        "#A65628",
+        "#F781BF",
+        "#999999"
+      ]
+    },
+    {
+      "id": "colorbrewer.set2",
+      "name": "Set2",
+      "source": "colorbrewer",
+      "kind": "categorical",
+      "colors": [
+        "#66C2A5",
+        "#FC8D62",
+        "#8DA0CB",
+        "#E78AC3",
+        "#A6D854",
+        "#FFD92F",
+        "#E5C494",
+        "#B3B3B3"
+      ]
+    },
+    {
+      "id": "colorbrewer.dark2",
+      "name": "Dark2",
+      "source": "colorbrewer",
+      "kind": "categorical",
+      "colors": [
+        "#1B9E77",
+        "#D95F02",
+        "#7570B3",
+        "#E7298A",
+        "#66A61E",
+        "#E6AB02",
+        "#A6761D",
+        "#666666"
+      ]
+    },
+    {
+      "id": "colorbrewer.paired",
+      "name": "Paired",
+      "source": "colorbrewer",
+      "kind": "categorical",
+      "colors": [
+        "#A6CEE3",
+        "#1F78B4",
+        "#B2DF8A",
+        "#33A02C",
+        "#FB9A99",
+        "#E31A1C",
+        "#FDBF6F",
+        "#FF7F00",
+        "#CAB2D6",
+        "#6A3D9A",
+        "#FFFF99",
+        "#B15928"
+      ]
+    },
+    {
+      "id": "crameri.actonS",
+      "name": "acton S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#2E214D",
+        "#C36D9A",
+        "#775A86",
+        "#503E6A",
+        "#9E6592",
+        "#3E305B",
+        "#B06795",
+        "#634D79",
+        "#8B618E",
+        "#CB74A0",
+        "#473763",
+        "#594672"
+      ]
+    },
+    {
+      "id": "crameri.bamakoS",
+      "name": "bamako S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#00404C",
+        "#607D15",
+        "#2B5A34",
+        "#154C41",
+        "#878E03",
+        "#426A26",
+        "#0B4647",
+        "#73880A",
+        "#9E950C",
+        "#50731D",
+        "#20533A",
+        "#36622D"
+      ]
+    },
+    {
+      "id": "crameri.batlowKS",
+      "name": "batlowK S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#04050A",
+        "#787C41",
+        "#39555F",
+        "#1B2F45",
+        "#546955",
+        "#111A27",
+        "#91883A",
+        "#46605C",
+        "#2A4559",
+        "#65724B",
+        "#324F5E",
+        "#0D111A"
+      ]
+    },
+    {
+      "id": "crameri.batlowS",
+      "name": "batlow S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#011959",
+        "#828231",
+        "#226061",
+        "#4D734D",
+        "#114360",
+        "#175262",
+        "#356A59",
+        "#0D315D",
+        "#A18A2B",
+        "#677B3E",
+        "#08255B",
+        "#B18D2F"
+      ]
+    },
+    {
+      "id": "crameri.batlowWS",
+      "name": "batlowW S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#011959",
+        "#7C8738",
+        "#205F61",
+        "#114360",
+        "#497451",
+        "#0D315D",
+        "#9C9232",
+        "#326B5C",
+        "#165162",
+        "#637E44",
+        "#134A61",
+        "#08255B"
+      ]
+    },
+    {
+      "id": "crameri.bilbaoS",
+      "name": "bilbao S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#4D0001",
+        "#A98565",
+        "#924946",
+        "#A16959",
+        "#722625",
+        "#9C5A51",
+        "#601516",
+        "#A5775F",
+        "#833837",
+        "#A3705C",
+        "#AB8C68",
+        "#560A0D"
+      ]
+    },
+    {
+      "id": "crameri.budaS",
+      "name": "buda S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#B301B3",
+        "#BC4E90",
+        "#B32F9C",
+        "#C56A87",
+        "#B73F95",
+        "#C97882",
+        "#B31CA6",
+        "#C05C8B",
+        "#B326A0",
+        "#CB7E80",
+        "#B94793",
+        "#B53798"
+      ]
+    },
+    {
+      "id": "crameri.davosS",
+      "name": "davos S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#00054A",
+        "#688B94",
+        "#2D5895",
+        "#4B769D",
+        "#133075",
+        "#081C61",
+        "#76958E",
+        "#3B689C",
+        "#1F4487",
+        "#59819A",
+        "#264E8F",
+        "#031256"
+      ]
+    },
+    {
+      "id": "crameri.devonS",
+      "name": "devon S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#2C1A4C",
+        "#778BDA",
+        "#28568C",
+        "#29376A",
+        "#3E6FB8",
+        "#3063A2",
+        "#577CCB",
+        "#2A295B",
+        "#27467A",
+        "#6784D3",
+        "#2B2154",
+        "#3669AD"
+      ]
+    },
+    {
+      "id": "crameri.glasgowS",
+      "name": "glasgow S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#361338",
+        "#6D702D",
+        "#702D06",
+        "#521B20",
+        "#745101",
+        "#638A6A",
+        "#687D4C",
+        "#45172C",
+        "#612013",
+        "#726210",
+        "#754001",
+        "#609689"
+      ]
+    },
+    {
+      "id": "crameri.hawaiiS",
+      "name": "hawaii S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#8C0273",
+        "#9C951C",
+        "#974E3E",
+        "#922E55",
+        "#9B6F28",
+        "#953E49",
+        "#995E33",
+        "#901D63",
+        "#9C801F",
+        "#985538",
+        "#9D8A1C",
+        "#9A662E"
+      ]
+    },
+    {
+      "id": "crameri.imolaS",
+      "name": "imola S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#1A33B3",
+        "#53857F",
+        "#305E9D",
+        "#2549A8",
+        "#3E708F",
+        "#61937B",
+        "#2B53A2",
+        "#203EAD",
+        "#487A86",
+        "#366797",
+        "#2D59A0",
+        "#2344AA"
+      ]
+    },
+    {
+      "id": "crameri.lajollaS",
+      "name": "lajolla S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#1A1A01",
+        "#DE764F",
+        "#7F3B34",
+        "#492A1B",
+        "#B84F47",
+        "#633328",
+        "#302210",
+        "#9C443F",
+        "#D0614C",
+        "#241E09",
+        "#8D403A",
+        "#562F21"
+      ]
+    },
+    {
+      "id": "crameri.lapazS",
+      "name": "lapaz S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#1A0C64",
+        "#5C8CA3",
+        "#2D5393",
+        "#3D71A0",
+        "#24327E",
+        "#7097A0",
+        "#33629B",
+        "#4B80A3",
+        "#202071",
+        "#284289",
+        "#222978",
+        "#1D176B"
+      ]
+    },
+    {
+      "id": "crameri.lipariS",
+      "name": "lipari S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#031326",
+        "#A36267",
+        "#525B7A",
+        "#D86E5E",
+        "#183E61",
+        "#775F73",
+        "#BE6561",
+        "#092844",
+        "#8C606D",
+        "#365176",
+        "#655E77",
+        "#B06364"
+      ]
+    },
+    {
+      "id": "crameri.naviaS",
+      "name": "navia S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#031327",
+        "#418A80",
+        "#1B608F",
+        "#073966",
+        "#2F798B",
+        "#59A072",
+        "#052546",
+        "#0E4D81",
+        "#266F90",
+        "#378186",
+        "#4C9579",
+        "#206891"
+      ]
+    },
+    {
+      "id": "crameri.nuukS",
+      "name": "nuuk S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#05598C",
+        "#537785",
+        "#2D6483",
+        "#7D8F91",
+        "#68838B",
+        "#3F6C82",
+        "#1C5E87",
+        "#5E7D88",
+        "#366882",
+        "#256185",
+        "#879594",
+        "#135C89"
+      ]
+    },
+    {
+      "id": "crameri.osloS",
+      "name": "oslo S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#030609",
+        "#4E7ABB",
+        "#163A5D",
+        "#26578C",
+        "#0E1F31",
+        "#658AC7",
+        "#3666A4",
+        "#1D4875",
+        "#112B45",
+        "#0B141E",
+        "#7091C9",
+        "#194169"
+      ]
+    },
+    {
+      "id": "crameri.tokyoS",
+      "name": "tokyo S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#1A0E34",
+        "#908786",
+        "#76466C",
+        "#89697D",
+        "#4B2350",
+        "#92968A",
+        "#63335F",
+        "#331741",
+        "#8D7882",
+        "#825976",
+        "#86617A",
+        "#27133A"
+      ]
+    },
+    {
+      "id": "crameri.turkuS",
+      "name": "turku S",
+      "source": "crameri",
+      "kind": "categorical",
+      "colors": [
+        "#070707",
+        "#948D5B",
+        "#4D4C3B",
+        "#6D6C4A",
+        "#2B2B26",
+        "#3C3C32",
+        "#7F7D52",
+        "#1C1C19",
+        "#5C5C43",
+        "#76744E",
+        "#646447",
+        "#444437"
+      ]
+    }
+  ]
+}

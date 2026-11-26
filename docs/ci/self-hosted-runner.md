@@ -59,7 +59,7 @@ GitHub 托管机上的 trust-check
 
 - SSH 私钥（除了管理员登录用的，且那把不该有仓库权限）
 - 云生产环境凭据
-- Apple 签名证书 / SignPath 私钥 / PyPI token
+- Apple 签名证书 / Certum 签名种子 / PyPI token
 - 用户真实科研数据
 - 实验室共享盘凭据
 - 任何与 CI 无关的 secret
@@ -417,7 +417,7 @@ Settings → Secrets and variables → Actions → Variables：
 | `LAB_VISUAL_GATE` | `true` | 视觉回归是否阻断 |
 | `LAB_MUTATION_GATE` | `false` | mutation 是否阻断 |
 
-**不新增 secret。**这台 runner 拿不到、也不该拿到 PyPI / Apple / SignPath
+**不新增 secret。**这台 runner 拿不到、也不该拿到 PyPI / Apple / Certum
 的任何凭据。
 
 性能与 mutation 默认不阻断是有意的：没有历史 baseline 就把发行卡死，只会让人

@@ -1,4 +1,5 @@
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
+import { redrawOffered } from '@/lib/scriptedBitmaps'
 import { currentProjectId } from '@/lib/session'
 import { isCanvasCovered } from '@/store/canvasCover'
 import '@/store/figureSnapshotInvalidation'
@@ -9,7 +10,7 @@ import { engineTransport } from '@/lib/engineTransport'
 import { msg, t, type UiMessage } from '@/i18n'
 import { classifyArtifactFailure, classifyArtifactReason, isDefiniteRefusal, sourceBackedEligible, type ArtifactFailure } from '@/lib/artifactReason'
 import { registerReconstructionNotifier, registerSourceBackedReviewRunner, runSourceBackedReview, sourceReviewOwner, useSourceBackedReview } from '@/store/sourceBackedReview'
-import { pngAdmitOwner, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { pngAdmitOwner, pngIdentityOf, pngRefusalOf, runPngRebuild, usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
 import { rescueFocus } from '@/lib/focusRescue'
 import { newId } from '@/lib/id'
 import { flipCapture } from '@/lib/motion'
@@ -23,13 +24,13 @@ import { pickJournal } from '@/lib/journalPick'
 import { bindingFor, builtinEntryById, type JournalPrev, type SpecBinding } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
+import { applyCanvasVersion } from './canvasVersionRecipe'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
   frameSwitchAvailable,
   frameSwitchPatch,
   LEGACY_FRAME_OVERRIDE,
-  migrateFigureFrames,
 } from '@/lib/figureFrame'
 import { modKey } from '@/lib/utils'
 import { captureTelemetry } from '@/lib/telemetry'
@@ -69,19 +70,22 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { emptyProject, isKnownObject, objectLabel, objectRotation, type ProjectDocument } from '@/types/document'
+import { arrowHeads, emptyProject, isKnownObject, legacyHead, migrateToProject, objectLabel, objectRotation, type ArrowHeadType, type PathTextObject, type ProjectDocument } from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
 import { vectorPrimaryFor } from '@/lib/figureGroup'
 import { useEnvStore } from './envStore'
 import {
+  activeProjectFile,
   adoptSlotBaseline,
   dropRecentEntry,
+  markProjectFileDirty,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
   useDocumentStore,
+  writesBlocked,
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
@@ -97,6 +101,7 @@ import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, st
 import { useSelectionStore } from './selectionStore'
 import { isolationScope } from './isolationStore'
 import { useTransformPrefs } from './transformPrefs'
+import { useArrangeStore } from './arrangeStore'
 import {
   gatherContiguous,
   gidOfKey,
@@ -126,8 +131,17 @@ import { useJournalV2Store } from './journalV2Store'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
 import { canConvertToPath, toPathObject } from '@/lib/convertToPath'
-import { isFillStrokeMark, styleFamilyOf } from '@/lib/markStyle'
+import { styleFamilyOf } from '@/lib/markStyle'
 import { fitStageNow } from '@/store/zoomToSelection'
+import { remapLineIds } from '@/lib/pathText'
+import {
+  carriedStyleOverrides,
+  copyPlacementOf,
+  COPY_PROP,
+  isCopyGid,
+  newCopyGid,
+} from '@/lib/figureElementCopy'
+import { selectCopiesWhenDrawn } from './figureCopySelect'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -356,7 +370,7 @@ export function addShape(shape: ShapeObject['shape'], partial: Partial<ShapeObje
 }
 
 /**
- * 一个子图标签（小写字母 + 括号，加粗，字号 / 颜色 / 对齐取画布文字默认值，10 × 5 mm）。
+ * 一个子图标签（小写字母 + 括号，无衬线加粗，字号 / 颜色 / 对齐取画布文字默认值，10 × 5 mm）。
  * `addSubLabels` 与一键排版（ADR 0199 §二，`quickLayoutActions`）共用这一处，两条路出来的标签长得一样；
  * 位置由调用方给（`addSubLabels` 自己加 x+1.5、y+1 的偏移）。**免费能力的模块，不放任何权益判断。**
  */
@@ -373,8 +387,9 @@ export function makeSubLabel(index: number, x: number, y: number): TextObject {
     sizePt: def.sizePt,
     color: def.color,
     align: def.halign,
-    // 子图序号约定是加粗的——这是这一个入口自己的取舍，
-    // 不是另一套默认值，所以它叠在共用默认值**之上**
+    // 子图序号约定是无衬线加粗的（Nature / Cell / Science 都这么要求，matplotlib 图里的字默认也是无衬线）——
+    // 这是这一个入口自己的取舍，不是另一套默认值，所以它叠在共用默认值**之上**；别的画布文字仍跟文档默认族
+    fontFamily: 'sans-serif',
     bold: true,
   }
 }
@@ -460,23 +475,48 @@ export function restorePanelOverrides(panelId: string, label: UiMessage, patches
   )
 }
 
-/** 布局版本恢复：当前画布的内容整份换成那一版（面板 overrides 的身份原样）。 */
-export function restoreLayoutVersion(label: UiMessage, version: FigureDocument) {
-  commit(
-    label,
-    (d) => {
-      d.name = version.name
-      d.page = structuredClone(version.page)
-      // 升级前存下的检查点里的面板照样按 ADR 0098 迁移（与读档同一个函数）
-      d.objects = migrateFigureFrames(structuredClone(version.objects))
-      d.guides = structuredClone(version.guides)
-      // 布局组跟着对象走：对象身上的 groupId 指向的是**那一版**的组。只换对象
-      // 不换组，恢复出来的对象会挂在当前排版里不存在（或成员不同）的组上
-      if (version.layoutGroups?.length) d.layoutGroups = structuredClone(version.layoutGroups)
-      else delete d.layoutGroups
-    },
-    { overrides: 'restored' },
-  )
+/**
+ * 布局版本恢复。按节点正文的 schema 分派（服务端从版本链里存的就是整份载荷）：
+ *
+ * - **schema 2**：单画布检查点，当前画布的内容整份换成那一版（面板 overrides 的身份
+ *   原样）。这条路径逐字保留，⌘Z 一步退回。
+ * - **schema 3 / 4**：整份项目节点（原地升级的备份原语产出）。经 `migrateToProject`
+ *   拿到 `ProjectDocument` 后 `switchDocument` 换进**同一个 documentId**——项目节点
+ *   的正文是多张画布，不能把 `version.objects` 当成当前画布的对象去 commit。
+ *   返回 false = 正文读不出来 / 换文档被取消，调用方不得说「已恢复」。
+ *
+ * 返回值可能是 Promise：schema 2 的 commit 同步完成，schema 3 / 4 要等 `switchDocument`。
+ */
+export function restoreLayoutVersion(
+  label: UiMessage,
+  version: FigureDocument | ProjectDocument,
+): boolean | Promise<boolean> {
+  if (writesBlocked()) return false
+  if (version.schema !== 2) {
+    const pd = migrateToProject(version)
+    if (!pd) return false
+    // 恢复的是同一份排版：documentId 不变，时间线 / 最近文档 / 项目归属都跟着这份走
+    const docId = useDocumentStore.getState().documentId
+    const project = captureProjectEpoch()
+    return useDocumentStore.getState().switchDocument(pd, docId, undefined, {
+      editCurrent: true,
+      beforeInstall: async () => project.still(),
+    }).then(async (ok) => {
+      // 换进来的正文与项目文件里那份不同了：绑定还在的话要标脏，否则 ⌘S 会以为
+      // 「已经存过」——恢复后的内容只在自动保存槽位里，项目文件还是旧的。
+      // 走 `markProjectFileDirty()`：它同时推进编辑代次，正在飞的项目文件保存
+      // 回来时 `projectFileSnapshot()` 才看得见这次变化，不会把 dirty 洗回 false。
+      // 等回来的这一下也可能已经换了排版：那就不碰新排版的绑定。
+      if (ok && project.still() && useDocumentStore.getState().documentId === docId && !writesBlocked()) {
+        if (activeProjectFile()) markProjectFileDirty()
+        return (await saveNowWithResult(true)).wrote
+      }
+      return false
+    })
+  }
+  // 配方唯一出处在 `canvasVersionRecipe`（从项目时间线找回的工作副本也用它，ADR 0211）
+  commit(label, (d) => applyCanvasVersion(d, version), { overrides: 'restored' })
+  return true
 }
 
 export function updateObjects(ids: string[], label: UiMessage, patch: (o: CanvasObject) => void) {
@@ -529,6 +569,7 @@ export function duplicateSelected() {
   // 对任何 Proxy 都直接抛 DataCloneError（引擎级行为）——复制会 100% 静默失败。
   // 对已 finalize 的 plain object 克隆好再整体 push，与 clipboard.materializePaste 同一模式。
   const regroup = new Map<string, string>()
+  const renamed = new Map<string, string>()
   const sources = doc().objects.filter((o) => ids.includes(o.id))
   const step = duplicateStep(sources)
   const scope = isolationScope()
@@ -536,6 +577,7 @@ export function duplicateSelected() {
     .map((o) => {
       const copy = structuredClone(o)
       copy.id = newId(o.type[0])
+      renamed.set(o.id, copy.id)
       copy.x += step.dx
       copy.y += step.dy
       // 重复复制（ADR 0185 M4 第二批）：副本上次被转过，这一份再转同样的角度（面板只走 90°，不跟）
@@ -556,6 +598,7 @@ export function duplicateSelected() {
       return copy
     })
   if (!clones.length) return
+  remapLineIds(clones, renamed)
   commit(hist('duplicateObjects'), (d) => {
     d.objects.push(...clones)
   })
@@ -576,6 +619,113 @@ export function duplicateStep(sources: readonly CanvasObject[]): { dx: number; d
   const b = objs.find((o) => o.id === last.to[0])
   if (!a || !b) return plain
   return { dx: b.x - a.x, dy: b.y - a.y, ddeg: a.type === 'panel' ? 0 : objectRotation(b) - objectRotation(a) }
+}
+
+/**
+ * 图内编辑里**创建副本**（ADR 0207）：⌘V（同一张图的图内编辑）、⌘D、右键「创建副本」都到这里，是图内副本的唯一创建点。
+ * 只认权威（exact）manifest：取不到 = 「还不能复制」的既有胶囊，不拿旧清单算位置（ADR 0017）。
+ *
+ * 一次 `setOverrides`、一条历史：每个源写 `copy_of`（落点 = 源画出来的锚点向页面右下错开 `DUPLICATE_OFFSET_MM`，文字 = 此刻显示的字），
+ * 再把源上已有的样式类 override 原样抄一份到副本 gid——粘出来与源此刻画出来的一模一样，此后两边各改各的。
+ * **不退出图内编辑**；副本在下一份权威 manifest 里出现后被选中（`figureCopySelect`）。
+ * 返回新副本的 gid（空 = 什么都没建，胶囊已经说明）。
+ */
+export function duplicateFigureElements(panelId: string, gids: readonly string[]): string[] {
+  if (isCanvasCovered()) return [] // 画布被「数据」临时标签盖住：不改看不见的文档
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !gids.length) return []
+  const exact = exactPanelManifest(useRenderStore.getState(), panel)
+  if (!exact) {
+    status(note('elementNotCopyableGeneric'), 'info')
+    return []
+  }
+  const taken = new Set<string>([
+    ...exact.elements.map((e) => e.gid),
+    ...panel.overrides.map((o) => o.gid),
+  ])
+  const patches: { gid: string; prop: string; value: unknown }[] = []
+  const made: string[] = []
+  let refused: ManifestElement | null = null
+  for (const gid of gids) {
+    const el = exact.elements.find((e) => e.gid === gid)
+    if (!el) continue
+    const place = copyPlacementOf(panel, exact, el)
+    if (!place) {
+      refused ??= el
+      continue
+    }
+    const copy = newCopyGid(place.host, taken)
+    taken.add(copy)
+    made.push(copy)
+    patches.push({ gid: copy, prop: COPY_PROP, value: { src: place.src, text: place.text, at: place.at } })
+    patches.push(...carriedStyleOverrides(panel, place.styleFrom, copy))
+  }
+  if (!made.length) {
+    if (refused) {
+      const name = t(`role.${refused.role}`, { ns: 'inspector', defaultValue: '' })
+      status(name ? note('elementNotCopyable', { name }) : note('elementNotCopyableGeneric'), 'info')
+    }
+    return []
+  }
+  setOverrides(panelId, hist('duplicateFigureElements', { count: made.length }), patches)
+  selectCopiesWhenDrawn(panelId, made)
+  return made
+}
+
+/**
+ * ⌘D 与系统菜单「创建副本」的唯一出口：图内编辑里选着图内元素时，复制的是**元素**（原地建图内副本，不是整张图，ADR 0207）；
+ * 其余照旧 `duplicateSelected`。选着的元素不能复制（曲线、色块、刻度组……）也消费这次按键、只出「还不能复制」的胶囊——
+ * 放过去的话选区里那张整图会被复制走，与用户选中的东西不是一回事（与 ⌘C 同一个先例）。
+ */
+export function duplicateSelection(): void {
+  const ui = useUiStore.getState()
+  if (ui.elementPanelId && ui.selectedGids.length) {
+    duplicateFigureElements(ui.elementPanelId, ui.selectedGids)
+    return
+  }
+  duplicateSelected()
+}
+
+/**
+ * 删除图内副本：副本只是 override 里的一条 `copy_of` 加它 gid 上的修改，删掉就是把这个 gid 的**全部**修改摘掉，
+ * 一条历史、一次渲染；撤销把它整只请回来。不是写 `visible: false`（那样副本还在表里，「恢复图内修改」才能让它消失）。
+ * 非副本的 gid 不理。返回实际删了几只。
+ */
+export function deleteFigureCopies(panelId: string, gids: readonly string[]): number {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return 0
+  const doomed = new Set(gids.filter((g) => isCopyGid(g) && panel.overrides.some((o) => o.gid === g)))
+  if (!doomed.size) return 0
+  updateObject<PanelObject>(panelId, hist('deleteFigureCopies', { count: doomed.size }), (o) => {
+    o.overrides = o.overrides.filter((p) => !doomed.has(p.gid))
+  })
+  const next = findObject(panelId)
+  if (next?.type === 'panel') requestRender(next, true)
+  const ui = useUiStore.getState()
+  if (ui.elementPanelId === panelId && ui.selectedGids.some((g) => doomed.has(g))) {
+    ui.setSelectedGids(ui.selectedGids.filter((g) => !doomed.has(g)))
+  }
+  status(note('copyDeleted'), 'done')
+  return doomed.size
+}
+
+/**
+ * 「恢复此元素修改」：清掉这个元素 gid 上的修改。**副本**上只清除 `copy_of` 以外的（回到刚粘出来的样子），不删副本——
+ * 删副本是另一个动作（`deleteFigureCopies`，右键里叫「删除副本」）。一次 commit。
+ */
+export function restoreElementEdits(panelId: string, gid: string): void {
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel') return
+  const copy = isCopyGid(gid)
+  clearOverrides(
+    panelId,
+    msg('element.resetElement', undefined, 'inspector'),
+    panel.overrides
+      .filter((o) => o.gid === gid && !(copy && o.prop === COPY_PROP))
+      .map((o) => ({ gid: o.gid, prop: o.prop })),
+  )
 }
 
 export type ZMove = 'top' | 'bottom' | 'up' | 'down'
@@ -648,7 +798,13 @@ export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.l
  * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
  */
 export function selectAllIds(objects: readonly CanvasObject[]): string[] {
-  return objects.filter(isSelectAllTarget).map((o) => o.id)
+  // 剪切组的蒙版是隐藏的（给旧构建的，ADR 0191），但它是组的一部分：组里有成员被全选，蒙版跟着进选区——
+  // 否则 ⌘A + Delete 删掉内容、蒙版被当成孤立的还原出来，平白多出一个形状
+  const base = objects.filter(isSelectAllTarget)
+  const gids = new Set(base.flatMap((o) => groupPathOf(o)))
+  return objects
+    .filter((o) => isSelectAllTarget(o) || (!!o.clipMask && !o.locked && !!o.groupId && gids.has(o.groupId)))
+    .map((o) => o.id)
 }
 
 export function selectAll() {
@@ -773,6 +929,11 @@ export async function newBlankDocument(): Promise<void> {
   status(note('blankCreated'), 'done')
 }
 
+export function reportLayoutOpenSkipped(name = ''): false {
+  useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+  return false
+}
+
 /**
  * 载入画布文件：每次载入都是一个新的编辑会话，因此给一个新的文档身份。
  *
@@ -786,10 +947,7 @@ export async function openLayoutDocument(
   // 入口那一刻的上下文（调用方 `doLoad` 刚核过）：下面每个 await（探测占用、读槽位、丢失确认）之后、
   // 安装之前都要再核，项目或排版变了就不装（Codex #1734 P1：旧项目的排版不能装进新选的工作区）
   const ctx = captureSaveContext()
-  const skipped = (): false => {
-    useUiStore.getState().setStatus(msg('layout.openSkipped', { name: projectFile?.name ?? '' }, 'dialogs'), 'error')
-    return false
-  }
+  const skipped = () => reportLayoutOpenSkipped(projectFile?.name)
   // 重开同一个项目文件沿用上次的身份：时间线按 documentId 分存，新建身份会看不到命名节点（QA-WIN-46）
   let reuse: string | null = null
   if (projectFile) {
@@ -1449,6 +1607,11 @@ export function disableTextEffect(panelId: string, gid: string, prop: string) {
  * 非破坏、进撤销、导出与写回原始文件都生效，随时可从「已隐藏元素」恢复。
  */
 export function hideElement(panelId: string, gid: string, label: string) {
+  // 图内副本没有「隐藏」：删除 = 摘掉它的全部修改（ADR 0207），Delete 键、属性页、元素树、右键同走这里
+  if (isCopyGid(gid)) {
+    deleteFigureCopies(panelId, [gid])
+    return
+  }
   setOverride(panelId, gid, 'visible', false, true)
   status(note('elementHidden', { label }), 'done')
 }
@@ -1456,6 +1619,15 @@ export function hideElement(panelId: string, gid: string, label: string) {
 /** 多选一起隐藏：一次撤销、一次渲染（键盘 Delete 走这条） */
 export function hideElements(panelId: string, targets: { gid: string; label: string }[]) {
   if (!targets.length) return
+  if (targets.some((x) => isCopyGid(x.gid))) {
+    // 副本整只删、其余照旧隐藏：各一条历史（两种动作的撤销语义不同）
+    deleteFigureCopies(
+      panelId,
+      targets.map((x) => x.gid),
+    )
+    targets = targets.filter((x) => !isCopyGid(x.gid))
+    if (!targets.length) return
+  }
   if (targets.length === 1) {
     hideElement(panelId, targets[0].gid, targets[0].label)
     return
@@ -2138,7 +2310,11 @@ function showAdmissionFailure(panel: PanelObject, failure: ArtifactFailure): voi
  * 进来时传 `'keep'`——那份清单就是用户此刻的导航，切走它等于每定位一条都要
  * 重新打开问题面板（审计 T09）。
  */
-async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): Promise<boolean> {
+/**
+ * 准入一张 PNG 源图（ADR 0139）。`redraw`：用户点的是「用脚本重画」（T-005）而不是进图内编辑——
+ * 准入与对照确认完全相同，成功后不进编辑，来源驱动采用的面板记 `showsRedraw`（零编辑也显示重画）。
+ */
+async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep', redraw = false): Promise<boolean> {
   finishActiveGesture()
   const initial = useDocumentStore.getState()
   let epoch = renderEpoch()
@@ -2220,6 +2396,7 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
           const p = d.objects.find(o => o.id === panel.id) as PanelObject
           p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
           p.sourceBackedFigure = guard
+          if (redraw) p.showsRedraw = true
           p.nativeW = w
           p.nativeH = h
         })
@@ -2231,6 +2408,13 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
           return false
         }
         if (settled === 'stale') return false
+        const now = findObject(panel.id)
+        if (redraw && now?.type === 'panel' && !now.showsRedraw) {
+          commit(msg('artifact.showRedraw', undefined, 'errors'), d => {
+            const p = d.objects.find(o => o.id === panel.id) as PanelObject
+            p.showsRedraw = true
+          })
+        }
       }
     } else {
       const guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
@@ -2247,6 +2431,10 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
     // 采用成功：这张图之前被拒的 toast 与会话记忆都不再成立
     useUiStore.getState().clearStatusOwnedBy(pngAdmitOwner(panel.id))
     usePngAdmissionMemory.getState().forget(panel.fileId)
+    if (redraw) {
+      status(msg('artifact.redrawn', undefined, 'errors'), 'done')
+      return true
+    }
     return finishElementEntry(panel.id, leftTab)
   } catch (error) {
     if (current() && error instanceof EngineError &&
@@ -2263,7 +2451,7 @@ async function admitPngEntry(panel: PanelObject, leftTab: 'elements' | 'keep'): 
           // validation can ask about another missing file without its offer being dropped.
           const env = useEnvStore.getState()
           if (error.missingInput && env.missingInput === error.missingInput) env.dismissMissingInput()
-          void admitPngEntry(panel, leftTab)
+          void admitPngEntry(panel, leftTab, redraw)
         }
       })
       const env = useEnvStore.getState()
@@ -2497,6 +2685,34 @@ function swapToVectorPrimary(panel: PanelObject): boolean {
   return true
 }
 
+/**
+ * 画布角标「用脚本重画」（T-005，ADR 0139 修订 2026-11-24）：有脚本、零编辑的位图原件，由用户点了才重画。
+ *
+ * 与进图内编辑同一套准入（矢量主文件 → 精确 → 来源驱动 + 对照确认），成功后不进编辑：
+ * 换成矢量主文件 / 精确采用的面板本来就显示引擎图；来源驱动采用的面板记 `showsRedraw`，零编辑也显示那份重画。
+ * 于是画布显示、画布导出、原图导出是同一份重画。每一步都是可撤销的提交；撤销回到原像素。
+ */
+export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
+  finishActiveGesture()
+  const panel = findObject(panelId)
+  if (panel?.type !== 'panel' || !redrawOffered(panel)) return false
+  const issue = artifactValidationIssue(panel)
+  if (issue) {
+    status(engineErrorMsg(new ArtifactValidationError(issue)), 'error', { action: feedbackStatusAction() })
+    return false
+  }
+  if (!isAdoptedPanel(panel) && swapToVectorPrimary(panel)) {
+    status(msg('artifact.redrawn', undefined, 'errors'), 'done')
+    return true
+  }
+  const refused = isAdoptedPanel(panel) ? null : pngRefusalOf(panel.fileId)
+  if (refused) {
+    showAdmissionFailure(panel, refused.failure)
+    return false
+  }
+  return admitPngEntry(panel, 'keep', true)
+}
+
 export function enterElementEdit(
   panelId: string,
   { leftTab = 'elements' }: { leftTab?: 'elements' | 'keep' } = {},
@@ -2531,6 +2747,102 @@ export function enterElementEdit(
     status(engineErrorMsg(new ArtifactValidationError('not_untouched')), 'info')
   }
   return entered
+}
+
+/** 一张有脚本的位图在画布导出前的处置（`prepareScriptedBitmapsForRedraw`） */
+export type BitmapRedrawOutcome =
+  /** 换成了同一张图的矢量主文件（ADR 0184 §二） */
+  | 'vector'
+  /** 精确采用通过：脚本零编辑重画与磁盘原件逐像素相同，画布导出改由脚本重画 */
+  | 'adopted'
+  /** 保留原件：精确采用被拒（像素对不上、保存不唯一……）、要先在画布上处理环境，或本次会话已被拒过 */
+  | 'kept'
+
+/**
+ * 画布导出前，把「有脚本、没动过、还没采用」的位图面板转成能由脚本重画的图（ADR 0139 修订 2026-11-24）。
+ *
+ * 只做两件不需要用户对照的事：有矢量主文件就换成它；否则只试**精确**策略（`selected-figsize-v1`，逐像素零差）。
+ * 来源驱动策略（重画与原件有可见差异）在这里**一律不试**——差异要用户亲眼对照才算数（ADR 0139 §二），
+ * 那些图保留原件，导出结果里如实提示。不进图内编辑、不弹环境对话框、不发 toast；每一项都是一次可撤销的提交。
+ * 由用户按下导出触发（ADR 0013 §6：导出是「对这个面板动手了」），打开项目 / 打开对话框不执行。
+ */
+export async function prepareScriptedBitmapsForRedraw(panelIds: readonly string[]): Promise<Record<string, BitmapRedrawOutcome>> {
+  const out: Record<string, BitmapRedrawOutcome> = {}
+  for (const id of panelIds) {
+    const panel = findObject(id)
+    if (panel?.type !== 'panel') continue
+    out[id] = await adoptBitmapForRedraw(panel)
+  }
+  return out
+}
+
+/**
+ * 导出前只试精确策略；被「只挡精确」的理由（像素对不上 / 白名单）拒过的图，同一项目代际、同一磁盘身份内
+ * 下次导出不再重跑脚本。它与 `usePngAdmissionMemory` 分开记：那份会挡住角标与进图内编辑，而这两条路
+ * 仍该走到来源驱动的对照确认。
+ */
+const exactOnlyRefusedForExport = new Map<string, string>()
+const exportRefusalKey = (fileId: string) => `${usePngAdmissionMemory.getState().epoch}:${pngIdentityOf(fileId)}`
+
+async function adoptBitmapForRedraw(panel: PanelObject): Promise<BitmapRedrawOutcome> {
+  finishActiveGesture()
+  if (isAdoptedPanel(panel) || !isUnadoptedPngSource(panel) || engineTransport()) return 'kept'
+  if (!useAssetStore.getState().byId[panel.fileId]?.script) return 'kept'
+  if (pngRefusalOf(panel.fileId)) return 'kept'
+  if (exactOnlyRefusedForExport.get(panel.fileId) === exportRefusalKey(panel.fileId)) return 'kept'
+  if (swapToVectorPrimary(panel)) return 'vector'
+  const initial = useDocumentStore.getState()
+  const epoch = renderEpoch()
+  const pj = currentProjectId()
+  const snapshot = JSON.stringify(panel)
+  const eligible = () => {
+    const style = useDocumentStore.getState().doc.style
+    return (!style || style.detached) && !hasPendingStyleWork(panel) &&
+      !useRenderStore.getState().tracked[panel.fileId] &&
+      !(useAssetStore.getState().byId[panel.fileId]?.baked_overrides?.length)
+  }
+  // 与 admitPngEntry 同一套「这次结果还算数」：项目、渲染纪元、文档、撤销栈、这块面板本身都没变
+  const current = () => {
+    const now = useDocumentStore.getState()
+    return renderEpoch() === epoch && currentProjectId() === pj &&
+      now.documentId === initial.documentId && now.loadSeq === initial.loadSeq &&
+      now.activeCanvasId === initial.activeCanvasId && now.doc === initial.doc &&
+      now.past === initial.past && now.future === initial.future && !now.txn &&
+      JSON.stringify(findObject(panel.id)) === snapshot
+  }
+  if (!eligible()) return 'kept'
+  let res: Awaited<ReturnType<typeof engineRender>>
+  try {
+    res = await engineRender(panel.fileId, [], { source_policy: FIGSIZE_SOURCE_POLICY })
+  } catch (error) {
+    if (renderEpoch() === epoch && currentProjectId() === pj && error instanceof EngineError &&
+        error.code === 'artifact_source_unavailable') {
+      // 与进图内编辑共用同一份会话记忆：脚本已为此跑过一遍，同一张图不再重跑。
+      // 但这里只试了精确策略：只挡精确、仍可转来源驱动的拒绝（像素对不上 / 白名单）不能记，
+      // 否则角标「用脚本重画」与进图内编辑都会被这条记忆挡住，永远到不了对照确认。
+      const failure = classifyArtifactFailure(error)
+      if (sourceBackedEligible(failure.reason)) exactOnlyRefusedForExport.set(panel.fileId, exportRefusalKey(panel.fileId))
+      else usePngAdmissionMemory.getState().remember(panel.fileId, failure)
+    }
+    return 'kept'
+  }
+  if (!current() || !eligible()) return 'kept'
+  const [w, h] = res.manifest.size_mm
+  if (![w, h].every(n => Number.isFinite(n) && n > 0)) return 'kept'
+  let guard: ReturnType<typeof validationFromSource>
+  try {
+    guard = validationFromSource(res.artifact_source, panel.fileId, panel.artifactValidation)
+  } catch {
+    return 'kept'
+  }
+  commit(msg('artifact.adoptFrame', undefined, 'errors'), d => {
+    const p = d.objects.find(o => o.id === panel.id) as PanelObject
+    p.overrides = [structuredClone(LEGACY_FRAME_OVERRIDE)]
+    p.artifactValidation = guard
+    p.nativeW = w
+    p.nativeH = h
+  })
+  return 'adopted'
 }
 
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
@@ -3051,6 +3363,10 @@ export function releaseOrphanMasks(d: FigureDocument) {
     delete o.clipMask
     delete o.clipOff
     delete o.hidden
+    // 组里只剩它自己：这一层组也拿掉（不留一个「组 · 1 个对象」）
+    const p = groupPathOf(o)
+    const gid = p[p.length - 1]
+    if (gid && !d.objects.some((x) => x.id !== o.id && groupPathOf(x).includes(gid))) setGroupPath(o, p.slice(0, -1))
   }
 }
 
@@ -3217,17 +3533,23 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
 export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
   const ids = useSelectionStore.getState().ids
   if (ids.length < 2) return
+  finishActiveGesture()
+  // 有关键对象（ADR 0185 M6）：它不动，其余的按间距排在它两边；没有就是第一个不动（原来的规则）
+  const key = useArrangeStore.getState().alignRef === 'primary' ? ids.at(-1) : undefined
   commit(hist(axis === 'x' ? 'spacingX' : 'spacingY'), (d) => {
     const objs = d.objects.filter((o) => ids.includes(o.id))
     const s = axis === 'x' ? 'w' : 'h'
     // 间距量的是看得见的盒（旋转过的标注取外接框），写回只平移
     const sorted = objs.slice().sort((a, b) => visualBounds(a)[axis] - visualBounds(b)[axis])
+    const starts = new Map<CanvasObject, number>()
     let cur = visualBounds(sorted[0])[axis]
     for (const o of sorted) {
-      const vb = visualBounds(o)
-      o[axis] += cur - vb[axis]
-      cur += vb[s] + gap
+      starts.set(o, cur)
+      cur += visualBounds(o)[s] + gap
     }
+    const anchor = sorted.find((o) => o.id === key)
+    const shift = anchor ? visualBounds(anchor)[axis] - starts.get(anchor)! : 0
+    for (const o of sorted) o[axis] += starts.get(o)! + shift - visualBounds(o)[axis]
   })
 }
 
@@ -3238,13 +3560,20 @@ export function setSelectionSpacing(axis: 'x' | 'y', gap: number) {
 type StyleClip =
   | { kind: 'panel'; crop?: CropRect; rotation?: PanelRotation; opacity?: number }
   | ({ kind: 'text' } & Partial<TextObject>)
+  | ({ kind: 'pathText' } & Partial<PathTextObject>)
   | ({ kind: 'arrow' } & Partial<ArrowObject>)
   | ({ kind: 'shape' } & Partial<ShapeObject>)
   | ({ kind: 'path' } & Partial<PathObject>)
 
-/** 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制） */
+/**
+ * 每类对象参与样式复制的键（几何 x/y/w/h 与内容永不复制）。2026-11-16 起（ADR 0185 M7）补全：文字带上字体（三个通用族 /
+ * 原图字体身份）与科学文本解释，路径带上描边对齐，路径文字也能刷；描边一族（箭头 / 形状 / 路径）之间互刷线宽、颜色、虚线、
+ * 线端拐角、不透明度，箭头 ↔ 路径还带端型；文字一族（文字 / 路径文字）之间互刷字号、粗斜、颜色、字体。
+ */
 const TEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'underline', 'color', 'align',
-  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg'] as const
+  'lineHeight', 'padding', 'bg', 'borderColor', 'borderPt', 'rotationDeg',
+  'fontFamily', 'sourceFont', 'interpretation'] as const
+const PATHTEXT_STYLE_KEYS = ['sizePt', 'bold', 'italic', 'color', 'fontFamily', 'textAlign', 'flip', 'baselineOffsetPt'] as const
 const ARROW_STYLE_KEYS = ['strokePt', 'color', 'head', 'headStart', 'headEnd',
   'headSizeStart', 'headSizeEnd', 'dash', 'strokeOpacity', 'lineCap', 'lineJoin',
   'miterLimit', 'dashPattern', 'rotationDeg'] as const
@@ -3255,20 +3584,24 @@ const SHAPE_STYLE_KEYS = ['strokePt', 'color', 'fill', 'cornerRadius',
 /**
  * 自由路径（ADR 0185）：填充 / 描边字段与形状同名同义，端型与箭头同名同义。形状 ↔ 路径同族互刷
  * （`markStyle.styleFamilyOf`），写的是两边**都有**的那几个键（`styleKeysOf` 取交集）——圆角不刷到路径上、端型不刷到形状上。
+ * 描边对齐两边缺省不同（形状缺省内侧、路径缺省居中），跨类刷时按实际生效的值换（`transferStyle`）。
  */
 const PATH_STYLE_KEYS = ['strokePt', 'color', 'fill', 'fillOpacity', 'fillRule', 'dash', 'stroke',
   'strokeOpacity', 'lineCap', 'lineJoin', 'miterLimit', 'dashPattern', 'fillGradient', 'strokeGradient',
-  'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
+  'strokeAlign', 'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd', 'rotationDeg'] as const
 const STYLE_KEYS: Record<StyleClip['kind'], readonly string[]> = {
   panel: [],
   text: TEXT_STYLE_KEYS,
+  pathText: PATHTEXT_STYLE_KEYS,
   arrow: ARROW_STYLE_KEYS,
   shape: SHAPE_STYLE_KEYS,
   path: PATH_STYLE_KEYS,
 }
-/** 从 `from` 类型刷到 `to` 类型时写哪些键：两边都参与样式复制的键 */
+/** 跨类刷时另外换算的键：描边对齐（两边缺省不同）、端型（箭头的旧 `head` 字段） */
+const CONVERTED = new Set(['strokeAlign', 'head', 'headStart', 'headEnd'])
+/** 从 `from` 类型刷到 `to` 类型时照搬的键：两边都参与样式复制的键（同类全部照搬；跨类时换算的那几个另算） */
 const styleKeysOf = (from: StyleClip['kind'], to: StyleClip['kind']): string[] =>
-  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k))
+  STYLE_KEYS[from].filter((k) => STYLE_KEYS[to].includes(k) && (from === to || !CONVERTED.has(k)))
 
 function pickKeys(src: object, keys: readonly string[]): Record<string, unknown> {
   const from = src as Record<string, unknown>
@@ -3284,10 +3617,58 @@ function assignKeys(target: object, clip: object, keys: readonly string[]): void
   }
 }
 
+/** 描边对齐实际生效的值：形状缺省内侧、路径缺省居中 */
+const effectiveAlign = (kind: StyleClip['kind'], v: unknown): 'inside' | 'center' | 'outside' =>
+  v === 'inside' || v === 'center' || v === 'outside' ? v : kind === 'shape' ? 'inside' : 'center'
+
+/** 来源的两端端型（箭头按 `arrowHeads` 读旧 `head`；路径缺省无） */
+function headsOf(clip: StyleClip): { start: ArrowHeadType; end: ArrowHeadType } | null {
+  if (clip.kind === 'arrow') return arrowHeads(clip as ArrowObject)
+  if (clip.kind === 'path') return { start: (clip as PathObject).headStart ?? 'none', end: (clip as PathObject).headEnd ?? 'none' }
+  return null
+}
+
+/** 把样式刷到一个对象上：同族的键照搬，跨类时描边对齐、端型按实际生效的值换算 */
+function transferStyle(o: CanvasObject, clip: StyleClip): void {
+  assignKeys(o, clip, styleKeysOf(clip.kind, o.type as StyleClip['kind']))
+  if (clip.kind === o.type) return
+  const target = o as unknown as Record<string, unknown>
+  // 描边对齐：形状 ↔ 路径
+  if (STYLE_KEYS[clip.kind].includes('strokeAlign') && (o.type === 'shape' || o.type === 'path')) {
+    const eff = effectiveAlign(clip.kind, (clip as Record<string, unknown>).strokeAlign)
+    if (eff === (o.type === 'shape' ? 'inside' : 'center') || (o.type === 'path' && eff === 'center')) delete target.strokeAlign
+    else target.strokeAlign = eff
+  }
+  // 端型：箭头 ↔ 路径
+  const heads = headsOf(clip)
+  if (heads && (o.type === 'arrow' || o.type === 'path')) {
+    if (o.type === 'arrow') {
+      target.headStart = heads.start
+      target.headEnd = heads.end
+      target.head = legacyHead(heads)
+    } else {
+      if (heads.start === 'none') delete target.headStart
+      else target.headStart = heads.start
+      if (heads.end === 'none') delete target.headEnd
+      else target.headEnd = heads.end
+    }
+  }
+}
+
 /** 样式剪贴板不属于文档，不进 undo；粘贴才是一条历史 */
 let styleClip: StyleClip | null = null
+/** 样式是从哪个对象复制的：粘贴时它还在选区里就跳过（它本来就是这个样式，不该算进「已粘贴到 N 个对象」） */
+let styleSourceId: string | null = null
 
 export const styleClipKind = () => styleClip?.kind ?? null
+
+const COPIED_NOTE: Record<Exclude<StyleClip['kind'], 'panel'>, string> = {
+  text: 'styleCopiedText',
+  pathText: 'styleCopiedText',
+  arrow: 'styleCopiedArrow',
+  shape: 'styleCopiedShape',
+  path: 'styleCopiedPath',
+}
 
 export function copySelectionStyle() {
   const src = selectedObjects().at(-1)
@@ -3298,19 +3679,13 @@ export function copySelectionStyle() {
       rotation: src.rotation,
       opacity: src.opacity,
     }
+    styleSourceId = src.id
     status(note('styleCopiedPanel'), 'done')
-  } else if (src?.type === 'text') {
-    styleClip = { kind: 'text', ...pickKeys(src, TEXT_STYLE_KEYS) }
-    status(note('styleCopiedText'), 'done')
-  } else if (src?.type === 'arrow') {
-    styleClip = { kind: 'arrow', ...pickKeys(src, ARROW_STYLE_KEYS) }
-    status(note('styleCopiedArrow'), 'done')
-  } else if (src?.type === 'shape') {
-    styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
-    status(note('styleCopiedShape'), 'done')
-  } else if (src?.type === 'path') {
-    styleClip = { kind: 'path', ...pickKeys(src, PATH_STYLE_KEYS) }
-    status(note('styleCopiedPath'), 'done')
+  } else if (src && src.type in COPIED_NOTE) {
+    const kind = src.type as Exclude<StyleClip['kind'], 'panel'>
+    styleClip = { kind, ...pickKeys(src, STYLE_KEYS[kind]) } as StyleClip
+    styleSourceId = src.id
+    status(note(COPIED_NOTE[kind]), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
   }
@@ -3319,9 +3694,9 @@ export function copySelectionStyle() {
 export function pasteSelectionStyle() {
   const clip = styleClip
   if (!clip) return
-  // 同族就能刷（形状 ↔ 自由路径是一族，`markStyle.styleFamilyOf`）
+  // 同族就能刷：描边一族（箭头 / 形状 / 路径）、文字一族（文字 / 路径文字）、图（`markStyle.styleFamilyOf`）
   const ids = selectedObjects()
-    .filter((o) => styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
+    .filter((o) => o.id !== styleSourceId && styleFamilyOf(o.type) === styleFamilyOf(clip.kind))
     .map((o) => o.id)
   if (!ids.length) {
     status(note('stylePasteNoTarget', { kind: t(`objectType.${clip.kind}`) }), 'error')
@@ -3332,12 +3707,8 @@ export function pasteSelectionStyle() {
       rotatePanelDraft(o, clip.rotation ?? 0)
       applyCropDraft(o, clip.crop)
       o.opacity = clip.opacity
-    } else if (clip.kind === 'text' && o.type === 'text') {
-      assignKeys(o, clip, TEXT_STYLE_KEYS)
-    } else if (clip.kind === 'arrow' && o.type === 'arrow') {
-      assignKeys(o, clip, ARROW_STYLE_KEYS)
-    } else if (styleFamilyOf(clip.kind) === 'fillStroke' && isFillStrokeMark(o)) {
-      assignKeys(o, clip, styleKeysOf(clip.kind, o.type))
+    } else if (o.type !== 'panel') {
+      transferStyle(o, clip)
     }
   })
   status(note('stylePasted', { count: ids.length }), 'done')

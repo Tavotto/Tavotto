@@ -155,12 +155,7 @@
 
 ### L-123 await 之后先判上下文还在，请求身份用不复用的代次 → docs/rules/frontend/asset-library.md
 
-### L-136 前端本地验证带 pnpm lint 与 i18n:check，碰 locale 后重生成类型
-- 类: 别这样
-- 触发: web/src/i18n/, web/package.json, web/scripts/i18n-check.mjs
-- Seen: 2026-11-03, 2026-11-04
-- 为什么: vitest、tsc、build 全绿也查不出 rules-of-hooks 和过期的 resources.d.ts；git 自动合并 locale json 不报冲突，生成文件没跟上，frontend 腿红在 CI。叠栈 PR 下层合入前没有 CI，会一直藏到那时。任务书的验证一节同样写上。
-- 证据: #1674, #1692, #1695, #1702
+### L-136 前端本地验证带 pnpm lint 与 i18n:check，碰 locale 后重生成类型 → docs/rules/frontend/i18n.md
 
 ### L-143 失败走兜底时只说没成功，不猜原因，码传丢按未知显示 → docs/rules/frontend/i18n.md
 
@@ -219,3 +214,10 @@
 - Seen: 2026-11-18, 2026-11-19
 - 为什么: 设置页的 `toPass` 只等清单可见一次，随后能力接口 1 秒内刷新多次、重挂载视图把「高级」收回，后面的点击落在隐藏元素上；点击没有短超时，每次白烧约 3 分钟到用例超时，Windows 打包版分片两天里踢出合并队列 8 次以上。每次需要前置状态的交互都在动作里重新确立它，并整段重试。
 - 证据: #2059
+
+### L-178 本地 e2e 或登记检查报行号对不上，先清 Playwright 编译缓存
+- 类: 别这样
+- 触发: scripts/ci/feature_registry.py, web/playwright.config.ts
+- Seen: 2026-11-22
+- 为什么: Playwright 的 transform 缓存在 $TMPDIR，所有 worktree 共用；来回切提交后拿到旧的编译结果。feature_registry check 在 main 上也报「扫描器与 Playwright 对不上位置」（说用例在 76 行，源码在 64 行），CI 是绿的。跑 playwright clear-cache 后即过；多 worktree 并行时先清缓存再判红。
+- 证据: #2034

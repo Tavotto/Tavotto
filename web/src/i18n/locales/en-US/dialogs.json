@@ -174,6 +174,8 @@
     "exportedCount_other": "Exported {{count}} files",
     "resultInspectionFailed_one": "{{count}} file failed its check; see details",
     "resultInspectionFailed_other": "{{count}} files failed their checks; see details",
+    "resultAdvisories_one": "{{count}} file has something to review; see details",
+    "resultAdvisories_other": "{{count}} files have something to review; see details",
     "resultScriptSkipped_one": "{{count}} edit not in the .py",
     "resultScriptSkipped_other": "{{count}} edits not in the .py",
     "resultWarnings_one": "{{count}} note; see details",
@@ -207,6 +209,11 @@
     "exportAgain": "Export again",
     "newerObjects_other": "{{count}} objects come from a newer version. Update to export them.",
     "newerObjects_one": "1 object comes from a newer version. Update to export it.",
+    "redrawBitmaps_one": "Redraw the scripted bitmap as vectors before export",
+    "redrawBitmaps_other": "Redraw {{count}} scripted bitmaps as vectors before export",
+    "redrawingBitmaps": "Redrawing bitmaps…",
+    "redrawBitmapsKept": "{{files}} didn't redraw to match the original, so the original files are exported this time.",
+    "redrawBitmapsKeptHint": "{{files}} didn't redraw to match the original, so the original files are exported this time. To switch, select one on the canvas and choose Redraw with script on its badge to compare.",
     "routeNeedsScript": "These figures carry edits but their scripts can’t be found, so a canvas export can’t draw them: {{files}}. Restore the scripts or undo the edits first.",
     "showInFolder": "Show in folder",
     "finish": "Done",
@@ -226,7 +233,7 @@
     "chipWarn_other": "to review",
     "checkScopeCanvasNamed": "checks the whole canvas “{{name}}”",
     "checkScopeFigureNamed": "checks only the original “{{name}}”",
-    "checkScopeOffCanvas": "“{{name}}” is not on the canvas, so this export gets no spec check",
+    "checkScopeOffCanvas": "“{{name}}” is not on the canvas, so this export gets no pre-submission check",
     "needsRerun": "This figure has to be re-run before it can be exported at its original size. You can also export it as the canvas (lower fidelity).",
     "exportAsCanvas": "Export as canvas instead",
     "checkingFigure": "Checking this figure…",
@@ -270,7 +277,7 @@
       "preparing": "Preparing…",
       "queued": "Queued…",
       "rendering": "Composing…",
-      "report": "Generating the style check report…",
+      "report": "Generating the pre-submission check report…",
       "unknown": "This export was interrupted",
       "writing": "Writing files ({{step}}/{{total}})…",
       "inspecting": "Verifying exported files…"
@@ -278,8 +285,8 @@
     "pngHint": "Raster",
     "ppiLabel": "Resolution",
     "ppiSelectLabel": "Raster resolution",
-    "preflightFailed": "Couldn’t run the pre-export check. Verify before exporting.",
-    "preflightFailedKept": "Couldn’t run the pre-export check. The findings below are from an earlier run and may be out of date.",
+    "preflightFailed": "Couldn’t run the pre-submission check. Verify before exporting.",
+    "preflightFailedKept": "Couldn’t run the pre-submission check. The findings below are from an earlier run and may be out of date.",
     "preflightCoverage": "Covers recognised text, lines and layout only; anything not recognised (such as embedded images) isn’t checked",
     "preflightOk": "No problems found against {{spec}}",
     "profileAria": "Publication profile",
@@ -290,7 +297,7 @@
     "profileSync": "Sync to the new version",
     "profileUpdateAvailable": "A newer version of this spec is available.",
     "reportTitle": "Also writes a JSON report for your submission records.",
-    "reportToggle": "Generate a style check report",
+    "reportToggle": "Generate a pre-submission check report",
     "retry": "Try again",
     "revealFailed": "Couldn’t reveal it in the file manager. The file is at: {{path}}",
     "savedTo": "Saved to {{dir}}",
@@ -320,6 +327,10 @@
     "strictTitle": "Reopens each finished file and checks it against the selected profile. A file that fails or can’t be checked is not saved. EPS is not checked.",
     "inspection": {
       "failedItems": "Check failed: {{items}}",
+      "advisory": {
+        "type3_fonts": "To review: uses Type 3 fonts ({{fonts}}), which journals such as IEEE and Elsevier send back. Redrawing a scripted figure from its script removes them.",
+        "scripted_raster": "To review: {{panels}} is embedded as a whole bitmap. It has a script, so it can be redrawn as vectors."
+      },
       "check": {
         "integrity": "integrity",
         "size": "size",
@@ -329,8 +340,11 @@
         "image_ppi": "image resolution",
         "clipping": "clipping",
         "dpi_tag": "resolution tag",
-        "raster_density": "pixel density"
-      }
+        "raster_density": "pixel density",
+        "text_size": "text size",
+        "glyphs": "missing glyphs (shown as boxes)"
+      },
+      "textSizeBelow": "The smallest text in the file is {{min}} pt, below the {{floor}} pt the spec asks for"
     },
     "cancelPending": "Requesting cancellation…",
     "cancelRequested": "Cancellation requested",
@@ -386,6 +400,7 @@
     "recoverFailUnavailable": "Can’t read this layout right now. Try again in a moment.",
     "recoverFailForeign": "This copy doesn’t belong to the current project, so it wasn’t opened.",
     "recoverIssueInvalid": "Can’t be read",
+    "recoverIssueChartSource": "Chart source missing or damaged",
     "recoverIssueTooLarge": "Too large, not read",
     "recoverIssueTooNew": "Made with a newer Tavotto; this version can’t read it",
     "recoverKeepLooking": "Nothing in this batch yet. You can keep looking.",
@@ -417,21 +432,27 @@
     "exportBoth": "Export PDF+PNG",
     "exportPendingTitle": "Some edits aren’t drawn yet. Wait for this render, then export.",
     "exported": "Exported {{files}}",
-    "issuesTitle": "Publication preflight",
-    "issuesTitleStale": "Publication preflight (verdict from the previous version)",
+    "issuesTitle": "Pre-submission check",
+    "issuesTitleStale": "Pre-submission check (verdict from the previous version)",
     "panelGone": "This figure is no longer in the session. Ask Codex to open it again.",
     "pending": "Edits pending",
-    "pillClean": "Preflight passed",
-    "pillCounts": "{{errors}} blocking · {{warnings}} warnings · {{notVerifiable}} to verify",
-    "pillStale": "Preflight out of date",
+    "pillClean": "Pre-submission check passed",
+    "pillError_one": "{{count}} to fix",
+    "pillError_other": "{{count}} to fix",
+    "pillNotVerifiable_one": "{{count}} not verifiable",
+    "pillNotVerifiable_other": "{{count}} not verifiable",
+    "pillWarn_one": "{{count}} to review",
+    "pillWarn_other": "{{count}} to review",
+    "pillStale": "Pre-submission check out of date",
     "pillStaleTitle": "The figure changed — this verdict is from the previous version. Click to re-run.",
-    "pillTitle": "Run the publication preflight again",
+    "pillTitle": "Run the pre-submission check again",
     "renderFailed": "Render failed",
     "rendering": "Re-rendering",
+    "splashBatch": "{{n}} figures were opened together; the canvas holds one at a time. To edit one, ask the agent to open it on its own, e.g. \"open {{stem}} on its own\".",
     "splashConnecting": "Connecting to Codex…",
     "splashFetchFailed": "Could not fetch the session state. Reopen the figure; if it persists, report it with the diagnostics below.",
     "splashFetching": "Fetching the session state from Tavotto…",
-    "splashNoHost": "This canvas runs inside a Codex that supports MCP Apps. In a host without a UI, the same tavotto_* tools still open, edit, preflight and export figures.",
+    "splashNoHost": "This canvas runs inside a Codex that supports MCP Apps. In a host without a UI, the same tavotto_* tools still open, edit, check and export figures.",
     "splashStripped": "The tool result the host handed to the canvas has no session (structuredContent is empty). Most likely the result exceeded the host's size cap and was cleared — update the Tavotto plugin and reopen the figure; if it persists, report it with the diagnostics below.",
     "splashWaiting": "Waiting for the result of tavotto_open_figure…",
     "splashWaitingLong": "No result from tavotto_open_figure yet ({{seconds}} s). If the tool already returned, the host did not hand its result to the canvas: reopen the figure; if it persists, report it with the diagnostics below.",
@@ -728,6 +749,18 @@
       "quick-layout": {
         "keywords": "quick layout auto arrange align yjpb",
         "label": "Auto layout"
+      },
+      "explode-svg": {
+        "keywords": "explode svg editable vector",
+        "label": "Make editable"
+      },
+      "outline-text": {
+        "keywords": "outline text create outlines path",
+        "label": "Create outlines"
+      },
+      "copy-as-svg": {
+        "keywords": "copy svg clipboard illustrator",
+        "label": "Copy as SVG"
       }
     },
     "listLabel": "Commands",
@@ -746,7 +779,7 @@
     "backHome": "Tavotto homepage",
     "bootDownloadDesktop": "Download desktop {{product}}",
     "bootListSeparator": ", ",
-    "bootUnsupportedBrowser": "{{product}} browser playground needs a modern browser with WebAssembly and module Worker support (missing {{missing}}). Desktop {{product}} isn’t affected.",
+    "bootUnsupportedBrowser": "This browser can’t run the {{product}} playground (missing {{missing}}). Open it in the latest Chrome, Edge, Firefox or Safari, or use the desktop app.",
     "cancelLoading": "Cancel",
     "cdnNote": "The browser downloads the Python runtime from jsDelivr (Pyodide v{{version}}).",
     "changed": "changed unexpectedly",
@@ -1242,7 +1275,7 @@
           "figure_edit_completed": "One completed edit: the kind of change and how many.",
           "figure_opened": "Entering in-figure editing: PDF or raster image, and whether it’s editable.",
           "package_action": "A package job: install, update or remove, and how it ended. Never the package name.",
-          "preflight_completed": "A finished check: how many errors, warnings, not-verifiable items and suggestions, and whether it passed overall.",
+          "preflight_completed": "A finished pre-submission check: how many items to fix, to review, not verifiable and suggestions, and whether it passed overall.",
           "project_readiness_opened": "Opening project readiness: which entry point, and whether the project is all editable, mixed, or layout only.",
           "project_refresh_completed": "A successful project refresh: which entry point, and the size bucket of changes.",
           "recovery_action": "The crash-recovery banner: restore or keep the current file.",
@@ -1582,7 +1615,8 @@
         "clearBody_one": "Delete the {{count}} remembered fix? This can't be undone.",
         "clearBody_other": "Delete all {{count}} remembered fixes? This can't be undone.",
         "cancel": "Cancel"
-      }
+      },
+      "changePlan": "Show a change plan before editing"
     },
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
@@ -2128,7 +2162,8 @@
       "err": {
         "unauthorized": "The key is invalid or expired.",
         "network": "Can’t reach the provider.",
-        "timeout": "The connection timed out."
+        "timeout": "The connection timed out.",
+        "planUsageDisabled": "Plan usage not allowed"
       },
       "checkConnection": "Check connection",
       "checking": "Checking",
@@ -2182,6 +2217,20 @@
         "reinstall": "Reinstall",
         "enable": "Turn on",
         "installingPct": "Installing… {{pct}}%"
+      },
+      "siwc": {
+        "continue": "Continue with ChatGPT",
+        "cancel": "Cancel",
+        "browserHint": "Finish signing in in your browser.",
+        "openAgain": "Open again",
+        "failed": "Sign-in didn’t finish.",
+        "expired": "Sign-in timed out.",
+        "planDisabled": "Plan usage wasn’t allowed during sign-in.",
+        "disconnectBody": "This signs out of this ChatGPT account and revokes {{product}}’s access.",
+        "revokeUnconfirmed": "Signed out, but revoking access couldn’t be confirmed. You can disconnect {{product}} in ChatGPT settings.",
+        "signOut": "Sign out",
+        "signOutTitle": "Sign out of ChatGPT?",
+        "useCodex": "Use Codex sign-in instead"
       }
     },
     "hosts": {
@@ -2252,7 +2301,7 @@
       "cancel": "Cancel"
     },
     "license": {
-      "label": "Premium",
+      "label": "{{pro}}",
       "none": "Not activated",
       "until": "Valid until {{date}}",
       "codeLabel": "Activation code",
@@ -2269,7 +2318,8 @@
         "refresh": "Check now",
         "renew": "Renew",
         "retry": "Try again",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "renewed": "I have renewed"
       },
       "failure": {
         "invalid_code": "That code isn't right. Check it and try again",
@@ -2283,10 +2333,21 @@
         "client_error": "That didn't go through. Please try again later"
       },
       "lock": {
-        "tip": "Premium feature. Click to learn more",
-        "aria": "Premium feature, learn about Premium"
+        "tip": "{{pro}} feature. Click to learn more",
+        "aria": "{{pro}} feature, learn about {{pro}}"
       },
-      "releaseTitle": "After unbinding, you can activate it on another computer"
+      "releaseTitle": "After unbinding, you can activate it on another computer",
+      "plate": {
+        "label": "Founding member",
+        "defaultName": "Early supporter",
+        "nameLabel": "Name engraved on the plate",
+        "nameTitle": "The name stays on this computer",
+        "engrave": "Engrave your name",
+        "rename": "Change name",
+        "turnTitle": "Drag to turn it over",
+        "issued": "ISSUED ON"
+      },
+      "open": "{{pro}} & activation"
     }
   },
   "style": {
@@ -2377,7 +2438,7 @@
     "reconsentDelta": "One new item since you last agreed: how many times an AI editor looks up the journal list (only that it did, never what it searched for or which journal).",
     "sendsErrorSummary": "an error summary (no content) when you send feedback yourself",
     "sendsFeatures": "which features you use",
-    "sendsOutcome": "how preflight and export ended",
+    "sendsOutcome": "how the pre-submission check and export ended",
     "sendsPlatform": "operating system family and processor architecture",
     "sendsTitle": "What is sent",
     "sendsVersion": "the Tavotto version",
@@ -2445,9 +2506,13 @@
     "noDiff": "No differences from the current canvas",
     "enlarge": "View larger",
     "previewApproximate": "Figure-edit preview unavailable. Panels show the original files on disk.",
+    "previewCanvasMissing": "The canvas this point records isn’t in its saved layout, so it can’t be previewed or restored.",
     "rename": "Rename…",
     "restore": "Restore to here",
     "restoreHistory": "Restore layout point “{{name}}”",
+    "restoreProjectBody": "This point holds the whole project. Restoring replaces every canvas with that version, not just the current one. The project as it is now is saved as a “before restore” point first; the restore itself can’t be undone, but you can restore that point later.",
+    "restoreProjectInvalid": "This point’s project layout can’t be read, so nothing was restored.",
+    "restoreProjectTitle": "Restore the whole project?",
     "restoreMissingCanvasBody": "This point came from canvas “{{from}}”, now deleted. Continuing writes into the current canvas “{{to}}”, replacing what’s there.",
     "restoreMissingCanvasTitle": "Original canvas is gone",
     "restoreOtherCanvasBody": "This point was taken on canvas “{{from}}”; you’re on “{{to}}”. Restoring switches to “{{from}}” and writes there, leaving the current canvas alone.",
@@ -2463,6 +2528,7 @@
     "restoreUnknownCanvasBody": "It was left by an older version and doesn’t record its canvas. Continuing writes into the current canvas “{{to}}”, replacing what’s there.",
     "restoreUnknownCanvasTitle": "This point has no source canvas",
     "restored": "Restored to “{{name}}”. The layout before the restore was saved as a point, and {{undo}} undoes it.",
+    "restoredProject": "Restored the whole project “{{name}}”. The project as it was before the restore is saved as a point; restore that point if you need to go back.",
     "save": "Save as named point",
     "saved": "Saved now as named point “{{name}}”",
     "summary": {
@@ -2730,11 +2796,11 @@
     "nanophotonicsUnknownWarning": "The resolution source for this journal is missing or cannot be identified; check the current guidelines and effective project settings.",
     "nanophotonicsLegacyWarning": "Saved Nanophotonics resolution sources from De Gruyter may be outdated; the journal is now published by Wiley. Check current guidelines, image-specific conditions and effective project settings; this notice does not attribute any specific issue to the source.",
     "nanophotonicsGuide": "Open Wiley author guidelines",
-    "leukosScopeWarning": "The saved historical source concerns final-submission figures by type. Preflight does not distinguish submission stages or figure types; current requirements are unverified. Check the journal guidelines.",
-    "leukosProblemScopeWarning": "The listed canvases have a historical source for final-submission figures by type. Preflight does not distinguish submission stages or figure types; current requirements are unverified. This notice does not attribute any finding or threshold to that source.",
-    "jperStageWarning": "A saved source in this layout corresponds to historical guidelines for the final version of accepted manuscripts. Current preflight does not distinguish submission stages. Current requirements have not been verified; check the journal guidelines.",
-    "jperProblemGeneralWarning": "A historical source saved for these canvases concerns the final version of accepted manuscripts. Preflight does not distinguish submission stages, and current guidelines have not been verified. This notice does not establish that any issue or threshold comes from that source.",
-    "sourceIdentityWarning": "The heading of historical text captured for a saved source in this layout says Adult, while Child is selected. The source identity needs verification; check the author guidelines. Existing preflight rules are unchanged.",
+    "leukosScopeWarning": "The saved historical source concerns final-submission figures by type. The pre-submission check does not distinguish submission stages or figure types; current requirements are unverified. Check the journal guidelines.",
+    "leukosProblemScopeWarning": "The listed canvases have a historical source for final-submission figures by type. The pre-submission check does not distinguish submission stages or figure types; current requirements are unverified. This notice does not attribute any finding or threshold to that source.",
+    "jperStageWarning": "A saved source in this layout corresponds to historical guidelines for the final version of accepted manuscripts. The current pre-submission check does not distinguish submission stages. Current requirements have not been verified; check the journal guidelines.",
+    "jperProblemGeneralWarning": "A historical source saved for these canvases concerns the final version of accepted manuscripts. The pre-submission check does not distinguish submission stages, and current guidelines have not been verified. This notice does not establish that any issue or threshold comes from that source.",
+    "sourceIdentityWarning": "The heading of historical text captured for a saved source in this layout says Adult, while Child is selected. The source identity needs verification; check the author guidelines. Existing pre-submission check rules are unchanged.",
     "title": "Journal",
     "pick": "Choose a journal",
     "search": "Search name, abbreviation or ISSN",
@@ -2950,6 +3016,53 @@
     "shareNote": "Anyone with the link can view and comment · expires {{date}}",
     "privacyFoot": "Only the picture is uploaded; scripts and data stay on this computer",
     "dailyNew": "1 new link per day",
-    "notePlaceholder": "Note for reviewers (optional)…"
+    "notePlaceholder": "Note for reviewers (optional)…",
+    "changePlan": {
+      "pill": "Hand to Agent",
+      "pillTip": "Have the Agent revise the figure from these comments. Your figure stays as is until you apply",
+      "pillUpdate": "Update same link",
+      "pillUpdateTip": "The review link doesn't have the new version yet. Update it; the link stays the same",
+      "pillUpdated": "Link updated",
+      "resolveFailed": "Couldn't mark the comments as resolved",
+      "resolveRetry": "Retry",
+      "draftLabel": "Draft reply",
+      "draftHint": "Sent to the reviewer only when you press Send"
+    }
+  },
+  "pro": {
+    "title": "{{pro}}",
+    "tier": {
+      "label": "Plan",
+      "year": "Annual pass",
+      "season": "Submission-season pass",
+      "sprint": "Sprint-month pass",
+      "team": "Lab pass"
+    },
+    "days": {
+      "label": "Days left",
+      "value": "{{count}}"
+    },
+    "devices": {
+      "label": "Computers",
+      "value": "{{used}} of {{limit}} used"
+    },
+    "usage": {
+      "title": "Usage",
+      "expired": "Comes back after you renew",
+      "unknown": "Usage is unavailable for now",
+      "nearEnd": "Almost used up. It will switch to your own connection when it runs out",
+      "agentBar": "{{name}} used this period",
+      "used": "{{pct}}% used"
+    },
+    "review": {
+      "label": "External review",
+      "left_one": "{{count}} new link left today",
+      "left_other": "{{count}} new links left today"
+    },
+    "pass": "Pass",
+    "learn": {
+      "line": "{{pro}} includes built-in AI and more external review links",
+      "link": "Learn about {{pro}}"
+    }
   }
 }

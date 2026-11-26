@@ -568,7 +568,7 @@ describe('文字 / 箭头 / 形状', () => {
   it('文字：编辑文字 / 全部属性 ── 副本 / 锁 / 隐藏 / 层级 ── 删除；编辑文字 → setEditingText', async () => {
     await openOn('t1')
     expect(menu()?.dataset.quickMenu).toBe('text')
-    expect(itemKeys()).toEqual(['edit-text', 'open-inspector', 'copy', 'paste', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
+    expect(itemKeys()).toEqual(['edit-text', 'outline-text', 'open-inspector', 'copy', 'copy-as-svg', 'paste', 'duplicate', 'lock', 'hide', 'z-order', 'delete'])
     await click(item('edit-text'))
     expect(useUiStore.getState().editingTextId).toBe('t1')
   })
@@ -581,10 +581,13 @@ describe('文字 / 箭头 / 形状', () => {
       expect(itemKeys()).toEqual([
         'change-kind',
         'convert-to-path',
-        // 封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2），收在「路径查找器 ›」里；箭头两样都不适用
-        ...(id === 's1' ? ['pathfinder'] : []),
+        // 路径文字（ADR 0190）：能放字的路径 / 形状 / 箭头都给
+        'add-path-text',
+        // 「路径查找器 ›」：封闭形状能偏移路径 / 轮廓化描边（ADR 0185 M2）；箭头从 M7 起也能轮廓化描边（端型一起转）
+        'pathfinder',
         'open-inspector',
         'copy',
+        'copy-as-svg',
         'paste',
         'duplicate',
         'lock',
@@ -595,6 +598,17 @@ describe('文字 / 箭头 / 形状', () => {
       expect(menu()?.querySelector('input')).toBeNull()
     },
   )
+
+  it('在路径上加文字：放一段路径文字、和它成组、进入输入', async () => {
+    await openOn('s1')
+    await click(item('add-path-text'))
+    const made = objs().at(-1)!
+    expect(objs().map((o) => o.id).indexOf(made.id)).toBe(objs().findIndex((o) => o.id === 's1') + 1)
+    expect(made.type).toBe('pathText')
+    expect(made.groupId).toBeDefined()
+    expect(byId('s1').groupId).toBe(made.groupId)
+    expect(useUiStore.getState().editingTextId).toBe(made.id)
+  })
 
   // Codex #833：菜单的粘贴只能走异步 readText；WebKit（Safari / 桌面壳）不给非编辑区读、Firefox 默认没有，
   // 那里点了只会报「无法读取剪贴板」——不提供这一项（⌘V 的原生事件照常）
@@ -876,12 +890,15 @@ describe('多选', () => {
     expect(menu()?.dataset.quickMenuCount).toBe('3')
     expect(document.querySelector('[data-quick-heading]')?.textContent).toBe('已选 3 个对象')
     expect(itemKeys()).toEqual([
+      // 三个都是文字：文字转轮廓（ADR 0189）
+      'outline-text',
       'arrange',
       'align-samew',
       'align-sameh',
       'group',
       'open-arrange',
       'copy',
+      'copy-as-svg',
       'paste',
       'duplicate',
       'lock',
@@ -1063,7 +1080,7 @@ describe('键盘、关闭与无障碍', () => {
     await key('ArrowDown', menu())
     expect(document.activeElement).toBe(item('edit-text'))
     await key('ArrowDown')
-    expect(document.activeElement).toBe(item('open-inspector'))
+    expect(document.activeElement).toBe(item('outline-text'))
     await key('ArrowUp')
     expect(document.activeElement).toBe(item('edit-text'))
     await key('End')
@@ -1262,6 +1279,52 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
     expect(past().at(-1)!.label.key).toBe('element.resetElement')
   })
 
+  it('图内副本（ADR 0207）：「恢复」只清 copy_of 以外的、计数不数 copy_of；「隐藏」换成「删除副本」（摘掉全部修改）', async () => {
+    const cg = 'axes_0.copy_abcd1234'
+    await seed([
+      panel('p1', {
+        overrides: [
+          { gid: cg, prop: 'copy_of', value: { src: 'axes_0.title', text: 'Hi', at: [0.5, 0.5] } },
+          { gid: cg, prop: 'fontsize', value: 12 },
+        ],
+      }),
+    ])
+    const { seedExactRender } = await import('@/test/renderFixtures')
+    const copyManifest = {
+      stem: 'Fig1',
+      size_mm: [40, 30],
+      elements: [
+        {
+          gid: cg,
+          role: 'title',
+          label: '标题 的副本',
+          bbox: [0.1, 0.1, 0.5, 0.2],
+          editable: [
+            { prop: 'text', type: 'text', value: 'Hi' },
+            { prop: 'visible', type: 'bool', value: true },
+          ],
+        },
+      ],
+    } as never
+    seedExactRender(byId<PanelObject>('p1'), copyManifest)
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: cg }, 50, 50)
+    })
+    const reset = document.querySelector<HTMLElement>('[data-quick-item="reset-element"]')!
+    expect(reset.textContent).toContain('1')
+    expect(reset.textContent).not.toContain('2')
+    expect(document.querySelector('[data-quick-item="delete-copy"]')?.textContent).toContain('删除副本')
+    expect(document.body.textContent).not.toContain('隐藏此元素')
+    await click(reset)
+    expect(byId<PanelObject>('p1').overrides.map((o) => [o.gid, o.prop])).toEqual([[cg, 'copy_of']])
+    seedExactRender(byId<PanelObject>('p1'), copyManifest) // 渲染回来
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: cg }, 50, 50)
+    })
+    await click(document.querySelector<HTMLElement>('[data-quick-item="delete-copy"]'))
+    expect(byId<PanelObject>('p1').overrides).toEqual([])
+  })
+
   it('Select 的 portal 不算点在外面；点别处才关；Esc 关', async () => {
     await openElement()
     const portal = document.createElement('div')
@@ -1288,6 +1351,74 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     await gone()
+  })
+})
+
+describe('图内元素弹层的「选中全部同类」（来信 TVM-CKRH）', () => {
+  const title = (gid: string, visible = true) => ({
+    gid,
+    role: 'title',
+    label: '标题',
+    group: 'axes',
+    bbox: [0.1, 0.1, 0.3, 0.1],
+    editable: [
+      { prop: 'text', type: 'text', value: gid },
+      { prop: 'visible', type: 'bool', value: visible },
+    ],
+  })
+  const seedTitles = async (elements: unknown[], lockedGids: string[] = []) => {
+    await seed([panel('p1', { lockedGids })])
+    const { seedExactRender } = await import('@/test/renderFixtures')
+    seedExactRender(byId<PanelObject>('p1'), { stem: 'Fig1', size_mm: [40, 30], elements } as never)
+    await mount()
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_1.title' }, 50, 50)
+    })
+  }
+  const item = () => document.querySelector<HTMLElement>('[data-quick-item="select-same-kind"]')
+
+  it('同角色、可见、未锁定的一起选中，右键的那个排最后（主选），并打开属性页', async () => {
+    await seedTitles(
+      [
+        title('axes_0.title'),
+        title('axes_1.title'),
+        title('axes_2.title'),
+        title('axes_3.title', false),
+        title('axes_4.title'),
+        { ...title('axes_0.xlabel'), role: 'axis_label' },
+      ],
+      ['axes_4.title'],
+    )
+    expect(item()?.textContent).toContain('3')
+    useUiStore.getState().setRightTab('assistant')
+    await click(item())
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title', 'axes_2.title', 'axes_1.title'])
+    expect(useUiStore.getState().rightTab).toBe('properties')
+  })
+
+  it('混排进来的画布标注一并放下，属性页才出批量表单（Codex #2150）', async () => {
+    await seedTitles([title('axes_0.title'), title('axes_1.title')])
+    const note = { id: 'n1', type: 'text', x: 0, y: 0, w: 10, h: 5, text: 'x' }
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [...s.doc.objects, note as never] } }))
+      useSelectionStore.getState().set(['p1', 'n1'])
+    })
+    await click(item())
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title', 'axes_1.title'])
+  })
+
+  it('这一类已经全选着时不摆这一项', async () => {
+    useUiStore.getState().setSelectedGids(['axes_0.title', 'axes_1.title'])
+    await seedTitles([title('axes_0.title'), title('axes_1.title')])
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(item()).toBeNull()
+  })
+
+  it('没有同类时不摆这一项', async () => {
+    await seedTitles([title('axes_1.title'), { ...title('axes_0.xlabel'), role: 'axis_label' }])
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    expect(item()).toBeNull()
   })
 })
 

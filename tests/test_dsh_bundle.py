@@ -145,23 +145,34 @@ def node() -> str:
 BOGUS_COMSPEC = "X:\\not-a-shell\\cmd.exe"
 
 
-def _launch_spec(node: str, platform: str) -> dict:
+#: 三个平台的启动参数在**同一个** node 进程里一次算完：Windows runner 上 node 冷启动偶尔要 60 s 上下
+#: （11-25 run 45681643344：darwin / linux 两次各 60–63 s、win32 那次 6 s；胶水只读两个 JSON，慢的是起进程本身），
+#: 一次一个进程就是三次赌。超时只防挂死，不是速度预算。
+_LAUNCH_PLATFORMS = ("darwin", "linux", "win32")
+_LAUNCH_TIMEOUT_S = 180
+
+
+@pytest.fixture(scope="module")
+def launch_specs(node) -> dict[str, dict]:
     script = (
         f"const m = await import({json.dumps(GLUE.as_uri())});"
-        f"console.log(JSON.stringify(m.launchSpec(m.packageRoot, {json.dumps(platform)})))"
+        f"console.log(JSON.stringify(Object.fromEntries({json.dumps(list(_LAUNCH_PLATFORMS))}"
+        f".map(p => [p, m.launchSpec(m.packageRoot, p)]))))"
     )
     proc = subprocess.run(
         [node, "--input-type=module", "-e", script],
         capture_output=True,
         text=True,
         encoding="utf-8",
-        timeout=60,
+        timeout=_LAUNCH_TIMEOUT_S,
         # 继承本机环境：从零造的环境在 Windows 上缺 SystemRoot，node 起不来（CSPRNG 断言，退出码 134）。
         # 只把 ComSpec 换成一个不存在的路径——胶水交出去的启动参数不许依赖它（旧形态就是拿它当 command）。
         env={**os.environ, "ComSpec": BOGUS_COMSPEC},
     )
     assert proc.returncode == 0, proc.stderr
-    return json.loads(proc.stdout)
+    specs = json.loads(proc.stdout)
+    assert sorted(specs) == sorted(_LAUNCH_PLATFORMS), specs
+    return specs
 
 
 @pytest.mark.parametrize(
@@ -172,7 +183,7 @@ def _launch_spec(node: str, platform: str) -> dict:
         ("win32", "mcp/launch.cmd", ["mcp/server.py"]),
     ],
 )
-def test_glue_launches_the_bundled_launcher(node, platform, command, args):
+def test_glue_launches_the_bundled_launcher(launch_specs, platform, command, args):
     """胶水插件交出去的是**包里那对**启动器 + server.py 的绝对路径。
 
     POSIX 上经 sh 解释 `mcp/launch`，不依赖 pnpm 保不保留执行位；Windows 上 command 就是
@@ -180,7 +191,7 @@ def test_glue_launches_the_bundled_launcher(node, platform, command, args):
     就起不来（见 `test_windows_cmd_line_survives_awkward_paths`）。超时唯一出处是 Codex 配置
     `codex.mcp.json` 的 `tool_timeout_sec`，dsh 的单位是毫秒。
     """
-    spec = _launch_spec(node, platform)
+    spec = launch_specs[platform]
     assert BOGUS_COMSPEC not in [spec["command"], *spec["args"]]
     if platform == "win32":
         assert spec["command"] == str(PLUGIN / command)

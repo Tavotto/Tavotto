@@ -80,6 +80,24 @@ const setIssue = (i: RestoreIssue | null) => act(async () => useDocumentStore.se
 const actions = (pop: HTMLElement) => [...pop.querySelectorAll<HTMLElement>('[data-restore-action]')]
 
 describe('restore 芯片', () => {
+  it('「选一份」不是故障：胶囊是中性档（没有 warning 样式、没有 ⚠），文案「从上次离开的地方继续」；别的恢复问题仍是提醒档', async () => {
+    await setIssue(
+      issue({ kind: 'choose', ref: null, alternatives: [{ id: 'd_1', name: 'A', sources: ['project_history'], ownership: 'this' }] }),
+    )
+    expect(chip()!.dataset.docIssue).toBe('restore')
+    expect(pill()!.dataset.tone).toBe('neutral')
+    expect(pill()!.className).not.toMatch(/warn/)
+    expect(pill()!.className).toMatch(/bg-surface-active/)
+    expect(pill()!.textContent).toContain('从上次离开的地方继续')
+    // 图标是中性那一枚（与「上次的排版没打开」同一惯例），不是别的恢复问题用的警示三角
+    const neutralIcon = pill()!.querySelector('svg')!.innerHTML
+    for (const kind of ['missing', 'invalid', 'unavailable'] as const) {
+      await setIssue(issue({ kind }))
+      expect(pill()!.dataset.tone, kind).toBe('warn')
+      expect(pill()!.querySelector('svg')!.innerHTML, kind).not.toBe(neutralIcon)
+    }
+  })
+
   it('暂时读不到：一句话 + 一个主按钮「重试」；「继续新建」折在 ⋯ 里', async () => {
     await setIssue(issue({ kind: 'unavailable' }))
     expect(chip()!.dataset.docIssue).toBe('restore')
@@ -94,7 +112,7 @@ describe('restore 芯片', () => {
     expect(retryRestore).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['unavailable', 'session_unavailable', 'missing', 'invalid', 'too_new', 'choose', 'prepare_failed'] as const)(
+  it.each(['unavailable', 'session_unavailable', 'missing', 'invalid', 'chart_source_mismatch', 'too_new', 'choose', 'prepare_failed'] as const)(
     '说明里没有实现名（%s）',
     async (kind) => {
       await setIssue(

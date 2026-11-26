@@ -38,7 +38,7 @@ Codex 内嵌画布、Tavotto 桌面窗口——背后是同一个引擎、同一
   （带 index 与原因，如 `bad_gid` / `non_finite_float`）。元素不存在则出现在
   `warnings` 里（多半是脚本改过了：先 `tavotto_refresh_project` 让 Tavotto 跟上，会话要继续用就重开）。两者都要看。
 
-## 出版规范预检查什么
+## 投稿前检查查什么
 
 `tavotto_preflight` 按 profile（默认 `lab-publication-v1`）体检，四档：
 

@@ -2,7 +2,7 @@ import { msg } from '@/i18n'
 import { isCanvasCovered } from '@/store/canvasCover'
 import type { MenuAction } from '@/lib/desktop'
 import type { AlignMode } from '@/lib/geometry'
-import { alignSelectedTo, duplicateSelected, runManualSave } from '@/store/actions'
+import { alignSelectedTo, duplicateSelection, runManualSave } from '@/store/actions'
 import { alignSelectedPanelElements, type AlignBlocked } from '@/store/alignAction'
 import { groupBlockedMessage, type GroupBlockReason } from '@/lib/elementGeom'
 import { alignRefFor } from '@/store/arrangeStore'
@@ -168,8 +168,8 @@ function performMenuAction(action: MenuAction) {
       ui.setExportOpen(true)
       break
     case 'menu-duplicate':
-      // 快速编辑里不往看不见的版面上加副本：判据在 `duplicateSelected` 里（与 ⌘D 同一处）
-      duplicateSelected()
+      // 与 ⌘D 同一个出口：图内编辑里选着图内元素 = 原地建图内副本（ADR 0207）
+      duplicateSelection()
       break
     case 'menu-delete':
       deleteSelection()

@@ -97,9 +97,9 @@ pipx install "tavotto[worker]" --index-url https://mirrors.aliyun.com/pypi/simpl
 
 ### 投稿前检查并导出
 
-导出 PDF 时文字保持为真正的矢量文字，另可导出 PNG、TIFF 和 SVG（PNG、TIFF 可选 300 到 1200 ppi；单独导出一张有脚本的图时还有 EPS）。同时，图会按**最终物理尺寸**对照出版规范检查：字号低于下限、栏宽不对、位图分辨率不够。结果分为要改、留意、无法核验和建议四类，不会锁住导出按钮；导出时仍未处理的项会记进随成图写出的样式检查报告。[格式、等级与规范](docs/guide/export-and-preflight.zh-CN.md)。
+导出 PDF 时文字保持为真正的矢量文字，另可导出 PNG、TIFF 和 SVG（PNG、TIFF 可选 300 到 1200 ppi；单独导出一张有脚本的图时还有 EPS）。同时，图会按**最终物理尺寸**对照出版规范检查：字号低于下限、栏宽不对、位图分辨率不够。结果分为要改、需留意、无法核验和建议四类，不会锁住导出按钮；导出时仍未处理的项会记进随成图写出的投稿前检查报告。[格式、等级与规范](docs/guide/export-and-preflight.zh-CN.md)。
 
-![导出弹窗：整页或逐图导出，PDF 与 PNG 600 ppi，按默认规范的导出前检查显示 1 项留意、3 项无法核验。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.zh.png)
+![导出弹窗：整页或逐图导出，PDF 与 PNG 600 ppi，按默认规范的导出前检查显示 1 项需留意、3 项无法核验。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.zh.png)
 
 ### 连接你自己的 AI 来改图
 
@@ -158,7 +158,7 @@ Tavotto 会找到你写这个脚本时用的 conda、venv 或系统 Python，并
 | 你要做什么 | 需要安装什么 |
 | --- | --- |
 | Codex 画完图后，在 Tavotto 桌面窗口里继续拖拽修改 | Tavotto 桌面版 + Codex 插件（不需要 Python 引擎） |
-| 在 Codex 里直接使用 Tavotto 画布、预检、修改与导出工具 | Codex 插件 + Tavotto Python 引擎 |
+| 在 Codex 里直接使用 Tavotto 画布、投稿前检查、修改与导出工具 | Codex 插件 + Tavotto Python 引擎 |
 | 修改 Tavotto 本身 | 见下方「贡献者：从源码开发」 |
 
 #### 完整的 Codex 集成
@@ -226,7 +226,7 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 
 渲染、排版和导出都在本机进行，Tavotto 不会上传你的图、脚本、项目或数据。它自己只发两类请求：每天一次检查 GitHub Releases 有没有新版本（按时区和语言，也可能先问项目的国内镜像 `dl.tavotto.cn`；在**设置 → 检查更新**里可以关），以及默认**关闭**、由你同意才开启的匿名使用统计，其中绝不会出现图、脚本、路径或文字内容。诊断包只保存在本地、已脱敏，确认后才会发送。详见 [docs/privacy.md](docs/privacy.md) 与[事件契约](docs/analytics/telemetry-events.md)。Tavotto 把文件放在哪：[docs/guide/files-and-data.zh-CN.md](docs/guide/files-and-data.zh-CN.md)。
 
-Free code signing provided by SignPath.io, certificate by SignPath Foundation。完整内容见[签名政策](docs/code-signing-policy.md)。安全问题请走[私密报告](https://github.com/Tavotto/Tavotto/security/advisories/new)，不要开公开 issue。
+Windows 安装包启用签名后用维护者的 Certum 代码签名证书签名（每一版的发布说明会写明这一版签没签）。完整内容见[签名政策](docs/code-signing-policy.md)。安全问题请走[私密报告](https://github.com/Tavotto/Tavotto/security/advisories/new)，不要开公开 issue。
 
 ## 参与开发
 

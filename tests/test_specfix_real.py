@@ -872,3 +872,63 @@ def test_a_worker_that_floods_stderr_still_answers(tmp_path):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+#: 带色条、色条刻度 6 pt（低于 8 pt 绝对下限）：「按规范修」要把色条刻度也抬上去。色条元素的
+#: `tick_fontsize` 是盖着色条两组刻度 `fontsize` 的广播别名——此前它跟着变被判成受保护属性被改，
+#: 整组回滚，带色条的图色条刻度永远修不上（2026-11-20 一键排版走查）。
+COLORBAR = """\
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+OUT = Path(__file__).resolve().parent
+
+
+def main():
+    plt.rcParams["font.family"] = "DejaVu Serif"
+    rng = np.random.default_rng(0)
+    x, y = rng.random(40), rng.random(40)
+    fig, ax = plt.subplots(figsize=(80 / 25.4, 60 / 25.4))
+    sc = ax.scatter(x, y, c=x + y, s=8)
+    ax.set_xlabel("x (a.u.)", fontsize=9)
+    ax.set_ylabel("y (a.u.)", fontsize=9)
+    ax.tick_params(labelsize=8.5, direction="in")
+    cb = fig.colorbar(sc, ax=ax)
+    cb.ax.tick_params(labelsize=6, direction="in")
+    fig.savefig(OUT / "Cbar.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@pytest.fixture
+def cbar(tmp_path):
+    proc, fn = _spawn_render(tmp_path, COLORBAR, "Cbar")
+    yield fn
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait(timeout=10)
+
+
+def test_colorbar_ticks_below_the_floor_are_really_fixed(cbar):
+    profile = _profile()
+    before = cbar([])["manifest"]
+    assert "font-below-absolute-floor" in _ids(before, profile, 1.0)
+    res = m._specfix_transaction(cbar, [], 1.0, profile, None)
+    assert res["ok"], res
+    after = cbar(res["patches"])["manifest"]
+    assert "font-below-absolute-floor" not in _ids(after, profile, 1.0)
+    cb_ticks = [
+        f.get("value")
+        for el in after["elements"]
+        if el.get("role") == "ticks" and str(el.get("gid", "")).startswith("axes_1.")
+        for f in el.get("editable") or []
+        if f.get("prop") == "fontsize"
+    ]
+    assert cb_ticks and min(cb_ticks) >= profile["absolute_min_font_size_pt"]

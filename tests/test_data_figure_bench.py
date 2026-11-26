@@ -266,6 +266,49 @@ def test_key_file_run_with_a_fake_transport_reports_usage_and_never_leaks_the_ke
     assert not (tmp_path / "c0").exists() or not any((tmp_path / "c0").rglob("*"))
 
 
+def _role_rec():
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests" / "support"))
+    import data_figure_roles as DR
+
+    case = next(c for c in DR.load_role_cases() if c["id"] == "RC-01")
+    return Recorder([json.dumps(case["model_answer"])])
+
+
+def test_auto_small_switches_model_and_effort_only_when_asked(tmp_path, monkeypatch, capsys):
+    rec = _role_rec()
+    rc, text, report = run_inproc(tmp_path, monkeypatch, capsys, rec, "--auto-small")
+    assert rc == 0, text
+    assert rec.calls[0]["body"]["model"] == "gpt-6-luna"
+    assert rec.calls[0]["body"]["reasoning"] == {"effort": "none"}
+    data = json.loads(report)
+    assert data["connection"]["effort"] is None  # 临时连接不带 effort：自动策略自己定
+
+
+def test_explicit_effort_none_is_sent_as_given_and_model_is_not_switched(
+    tmp_path, monkeypatch, capsys
+):
+    rec = _role_rec()
+    rc, text, _report = run_inproc(tmp_path, monkeypatch, capsys, rec, "--effort", "none")
+    assert rc == 0, text
+    assert rec.calls[0]["body"]["model"] == "gpt-5"
+    assert rec.calls[0]["body"]["reasoning"] == {"effort": "none"}
+
+
+def test_auto_small_flag_combinations_are_refused(tmp_path):
+    kf = key_file(tmp_path)
+    base = ["--real", "--key-file", str(kf), "--model", "gpt-5", "--max-calls", "50"]
+    for args in (
+        [*base, "--auto-small", "--effort", "low"],  # 与 --effort 互斥
+        ["--auto-small"],  # 没有 --real
+        [*base, "--suite", "recipes", "--auto-small"],  # 只给 roles
+    ):
+        done = bench(tmp_path, *args)
+        assert done.returncode == 2, args
+        assert KEY not in done.stdout + done.stderr
+
+
 @pytest.mark.parametrize("mode", ["leaky", "401"])
 def test_key_never_appears_in_outputs_even_when_errors_echo_it(
     tmp_path, monkeypatch, capsys, caplog, mode
@@ -400,7 +443,7 @@ def test_mixed_fake_answers_make_the_per_case_counts_vary(tmp_path):
 
 def test_cases_flag_selects_the_set_and_the_report_names_it(tmp_path):
     hold, _ = roles_report(tmp_path, "--fake", "good", "--cases", "holdout")
-    assert hold["case_set"] == "holdout" and hold["stats"]["cases"] == 24
+    assert hold["case_set"] == "holdout" and hold["stats"]["cases"] == 30
     assert {c["id"][:3] for c in hold["cases"]} == {"HO-"}
     both, _ = roles_report(tmp_path, "--fake", "good", "--cases", "all", "--only", "RC-01,HO-01")
     assert [c["id"] for c in both["cases"]] == ["RC-01", "HO-01"]
@@ -491,5 +534,25 @@ def test_arm_rules_prints_the_gate_table_and_the_hard_zero(tmp_path):
     assert set(gate["versions"]) == {"strict", "medium", "loose"}
     for v in ("strict", "medium"):
         assert gate["versions"][v]["all"]["skipped_but_rules_wrong"] == 0
-    assert gate["rules_right"]["all"]["cases"] == 46
+    assert gate["rules_right"]["all"]["cases"] == 52
     assert "必须 0" in text and "holdout-plain" in text
+
+
+def test_suite_recommend_prints_the_ceiling_table_with_rules_only(tmp_path):
+    out = tmp_path / "report.json"
+    done = bench(tmp_path, "--suite", "recommend", "--arm", "rules", "--out", str(out))
+    assert done.returncode == 0, done.stderr
+    assert "天花板测量（41 条" in done.stdout and "A2" in done.stdout
+    report = json.loads(out.read_text(encoding="utf-8"))
+    t = report["tally"]
+    assert report["suite"] == "recommend" and report["arm"] == "rules" and t["cases"] == 41
+    assert t["rules_baseline"] <= t["rerank_ceiling"] <= t["universe_ceiling"] <= t["cases"]
+    assert report["existing"]["given_not_in_universe"] == 0
+
+
+def test_suite_recommend_refuses_key_file_at_parse_time(tmp_path):
+    done = bench(
+        tmp_path, "--suite", "recommend", "--key-file", str(tmp_path / "nope"), "--model", "m"
+    )
+    assert done.returncode == 2 and "--suite recommend" in done.stderr
+    assert "读不到" not in done.stderr  # 解析阶段就拒绝，没有去读那个文件

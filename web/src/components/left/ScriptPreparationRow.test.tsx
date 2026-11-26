@@ -255,7 +255,7 @@ describe('脚本行：开跑前要先准备依赖', () => {
     expect(prepareJointDependencies).toHaveBeenCalledWith('joint-row', 'shown-digest')
     expect(useDepRepairStore.getState().jointScript).toBe(SCRIPT)
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
-    expect(dialog()!.querySelector('[data-repair-line]')!.textContent).toBe('正在安装 pandas 和 openpyxl…（3/4）')
+    expect(dialog()!.querySelector('[data-repair-line] [data-task-title]')!.textContent).toBe('正在安装 pandas 和 openpyxl…')
     expect(host.querySelector('[data-repair-line]')).toBeNull()
     mockProbe.mockClear()
     succeedProbe()

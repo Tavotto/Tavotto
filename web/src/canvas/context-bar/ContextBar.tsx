@@ -48,6 +48,7 @@ import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { useActivePathEdit } from '@/store/pathEditStore'
 import { OpenInspectorButton } from './shared'
 import { qb } from './text'
+import { usePathTextGlyphStore } from '@/store/pathTextGlyphStore'
 
 /**
  * 选中对象旁的轻量上下文工具条（Quick Edit 的可发现入口）。
@@ -166,6 +167,8 @@ function ContextBarBody() {
   const anchorEditId = useActivePathEdit()?.path.id ?? null
   const obj: CanvasObject | null =
     !cropTarget && !panel && ids.length === 1 && ids[0] !== anchorEditId ? (selected[0] ?? null) : null
+  // 路径文字的字画完 / 挪了：浮动栏要重新让开（下面量锚点的依赖）
+  const glyphBounds = usePathTextGlyphStore((s) => (obj?.type === 'pathText' ? s.bounds[obj.id] : undefined))
   // 图内编辑态里 shift 加选的标注是混排选区（归 ElementInspector 的对齐工具条管），
   // 不出多选栏——判据是「在不在图内编辑」，不是「那张面板还在不在」
   const multi: CanvasObject[] | null =
@@ -361,6 +364,17 @@ function ContextBarBody() {
       if (node) {
         const r = (node as Element).getBoundingClientRect()
         anchor = { left: r.left, top: r.top, width: r.width, height: r.height }
+        // 路径文字：字常伸出路径的框（离线以后），浮动栏让开字的实际范围（ADR 0190）
+        if (mode === 'object' && obj?.type === 'pathText') {
+          const g = (node as Element).querySelector('[data-path-text-glyphs]')?.getBoundingClientRect()
+          if (g && (g.width > 0 || g.height > 0)) {
+            const left = Math.min(anchor.left, g.left)
+            const top = Math.min(anchor.top, g.top)
+            const right = Math.max(anchor.left + anchor.width, g.left + g.width)
+            const bottom = Math.max(anchor.top + anchor.height, g.top + g.height)
+            anchor = { left, top, width: right - left, height: bottom - top }
+          }
+        }
         // 文字标注的旋转柄伸在选框外（随旋转转到哪都算）：把柄并进锚点，工具栏停在柄之外，别盖住它
         if (mode === 'object' && obj?.type === 'text' && !obj.locked && editingText !== obj.id) {
           const k = rotateKnobCenterOffset(mmToPx(obj.h, { zoom, panX, panY, originX, originY }), objectRotation(obj))
@@ -447,6 +461,7 @@ function ContextBarBody() {
     freeWidth,
     resizeTick,
     textBarCompact,
+    glyphBounds,
     multiBarDocked,
     manifest,
     noticeTop,

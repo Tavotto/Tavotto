@@ -144,6 +144,8 @@ const EDIT_KIND_BY_LABEL: Record<string, EditKind> = {
   clearProp: 'style',
   resetOverrides: 'style',
   hideElements: 'style',
+  duplicateFigureElements: 'style',
+  deleteFigureCopies: 'style',
   unhideElement: 'style',
   seedBaked: 'style',
 }

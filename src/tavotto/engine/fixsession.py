@@ -32,7 +32,7 @@ from . import cli_failure, exectrace, fixtools, folderrepair, pool
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
-from .agent_runner.wires import WIRES, AnthropicWire, OpenAIChatWire, Turn
+from .agent_runner.wires import WIRES, AnthropicWire, OpenAIChatWire, RunnerFailure, Turn
 from .fixtools.audit import AuditLog
 from .fixtools.observe import read_run_report
 
@@ -240,6 +240,11 @@ commands, file paths and error messages exactly as they are.\n"
 
 
 def _first_message(ctx: fixtools.FixContext, script: str) -> str:
+    if not ctx.first_shape and ctx.report is not None:
+        try:
+            ctx.first_shape = fixtools.hints.shape_of_report(ctx.report())
+        except Exception:  # noqa: BLE001 - 读不到就留空
+            pass
     report = read_run_report(ctx, {})
     body = report.content if not report.is_error else "(no report available; call read_run_report)"
     return (
@@ -412,6 +417,9 @@ class FixSession:
     done: threading.Event = field(default_factory=threading.Event)
     #: 进度与卡住（D3）：`activity` 是最近一次工具活动；`stalled` 非空 = 现在卡住了，界面要说原因
     activity: dict | None = None
+    #: 走到四步里的哪一步（`fixtools.FIX_STAGES`）与第几轮（验证没过又回去修 +1）；还没调过推进步骤的工具 = None
+    stage: str | None = None
+    stage_round: int = 1
     stalled: dict | None = None
     stall_since: float | None = None
     stall_code: str = ""  # 自动取消时记下的原因码；收尾时据此判 failed
@@ -462,8 +470,11 @@ def _remember_fix(s: FixSession) -> None:
     try:
         from . import fixmemory
 
+        shape = next((str(a.get("before")) for a in attempts if a.get("before")), "") or getattr(
+            ctx, "first_shape", ""
+        )
         fixmemory.remember(
-            str(attempts[0].get("before") or ""),
+            shape,
             list(made),
             script=s.script,
             sensitive_args=bool(getattr(ctx, "run_arguments_sensitive", False)),
@@ -640,6 +651,8 @@ class FixSessions:
             "seq": s.seq,
             #: 最近一次工具活动 `{tool, phase: start|end|denied, detail, at_ms}`（界面按 tool 映射成一句话）；还没有 = None
             "activity": dict(s.activity) if s.activity else None,
+            #: 任务清单的进度 `{step: diagnose|fix|verify|finish, round}`（按工具组归步，`fixtools.next_stage`）；还没开始 = None
+            "stage": {"step": s.stage, "round": s.stage_round} if s.stage else None,
             #: 现在卡住了：`{reason: cli_waiting_approval|cli_tool_not_delivered|stalled, detail}`；没卡住 = None
             "stalled": dict(s.stalled) if s.stalled else None,
         }
@@ -853,6 +866,7 @@ class FixSessions:
             }
             s.last_progress = now
             if phase == "start":
+                s.stage, s.stage_round = fixtools.next_stage(s.stage, s.stage_round, tool)
                 if s.inflight == 0:
                     s.tool_started = now
                 s.inflight += 1
@@ -1336,6 +1350,12 @@ def _wire_for(name: str, conn: dict):
         return AnthropicWire(bearer_only=True)
     if name == "openai-chat":
         return OpenAIChatWire(token_field=conn.get("token_field") or "max_tokens")
+    from .agent_runner import siwc_wire
+
+    if name == siwc_wire.WIRE_NAME:
+        return (
+            siwc_wire.SiwcResponsesWire()
+        )  # 不在 WIRES 里（探测 / 备选碰不到它），只在这里按名字认
     return WIRES[name]
 
 
@@ -1343,6 +1363,13 @@ def build_model(conn: dict, **model_kwargs):
     """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。
     自填地址带备选协议（`conn["fallbacks"]`，与改图的 `--fallback` 同一份）：第一轮「协议不对」时换。
     `model_kwargs` 原样交给 `HttpModel`（重试次数 / 超时 / 注入的 `post`；`ai_structured` 的单轮调用用）；默认不传 = 行为不变。"""
+    from . import ai_providers
+
+    if ai_providers.is_siwc_conn(conn) and not conn.get("api_key"):
+        # 只问过「有没有」的 SIWC 连接（`first_key_connection(refresh=False)`）：开跑前现取令牌；拿不到 = 需要重新登录
+        conn = ai_providers.siwc_conn_with_token(conn)
+        if conn is None:
+            raise RunnerFailure("auth", "needs_login")
     model = loop.HttpModel(
         _wire_for(conn["wire"], conn),
         base_url=conn["base_url"],
@@ -1351,7 +1378,27 @@ def build_model(conn: dict, **model_kwargs):
         fallbacks=[(_wire_for(w, conn), u) for w, u in conn.get("fallbacks") or ()],
         **model_kwargs,
     )
+    if ai_providers.is_siwc_conn(conn):
+        _mark_siwc_rejection(model)
     return model, Redactor(conn["api_key"])
+
+
+def _mark_siwc_rejection(model) -> None:
+    """SIWC 模型被服务端以 `auth` 拒了当前令牌：标记「下次先刷新」（不清凭据），与改图路径的
+    `ai_bridge._siwc_after_runner_error` 同一个动作。AI 修复与结构化调用都经 `build_model`，所以挂在这里一处（Codex #2212）。"""
+    inner = model.complete
+
+    def complete(*args, **kwargs):
+        try:
+            return inner(*args, **kwargs)
+        except RunnerFailure as exc:
+            if exc.reason == "auth":
+                from . import siwc_login
+
+                siwc_login.provider().mark_rejected("http_401")
+            raise
+
+    model.complete = complete
 
 
 def audit_tail(session_ids: set[str], limit: int = 200) -> list[dict]:

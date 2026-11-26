@@ -16,13 +16,6 @@
 - 为什么: 用 sysconfig 按 base 算出的目录在 hosted CI 存在，在 Ubuntu 系统 Python 上真目录叫 dist-packages，实验室才红；hosted CI 绿证明不了发行版布局。
 - 证据: （迁移自维护者记录，无编号）
 
-### L-049 路径守卫的相等分支返回可信 root，别返回候选算出的值
-- 类: 照这样
-- 触发: src/tavotto/app.py, src/tavotto/engine/projectenv.py
-- Seen: 2026-09-21
-- 为什么: realpath 加 startswith 的净化器逻辑本就对，CodeQL 仍报 14 条 py/path-injection；条件要拆成两段，相等分支 return root，污点才断。先改形状看 SARIF 流。
-- 证据: #456
-
 ### L-050 预计算查找表的裁剪条件照抄前面每一步的否定
 - 类: 别这样
 - 触发: src/tavotto/glyphplan.py, tests/test_glyph_plan.py
@@ -117,9 +110,9 @@
 ### L-126 新 worktree 先补齐 gitignore 的内置字体，大片同类红先单跑看 stderr
 - 类: 别这样
 - 触发: scripts/fetch_fonts.py
-- Seen: 2026-11-03
-- 为什么: git worktree add 不带被忽略的 src/tavotto/resources/fonts，约 170 条导出、公式、字体用例假红（backend_unavailable、child_failed），看着像改坏了。先跑 scripts/fetch_fonts.py 或从主工作区拷。
-- 证据: （会话记录，无编号）
+- Seen: 2026-11-03, 2026-11-23
+- 为什么: git worktree add 不带被忽略的 src/tavotto/resources/fonts，约 170 条导出、公式、字体用例假红（backend_unavailable、child_failed），看着像改坏了。先跑 scripts/fetch_fonts.py 或从主工作区拷。11-23 新 worktree 30 条后端用例红、main 上同样红，被当成本机环境问题放过，补字体后全过：「main 上也红」不等于环境问题。
+- 证据: #1927
 
 ### L-128 带锁的不变式用确定性交错反证，多线程跑几轮没红不算证据
 - 类: 别这样
@@ -218,3 +211,10 @@
 - Seen: 2026-11-19
 - 为什么: 给依赖计划接启动脚本时条件写成 `target_kind == "script"`，而那里的 `target_kind` 是安装目标，条件恒假；用例只断言 `inspect.getsource` 里有这行调用，一直绿，修复从没生效，定向复核才抓到。改成真调入口后又暴露拼接 AST 没挪行号、导入扫描照样认错。同名参数在两个模块含义不同，先核语义再用。
 - 证据: #2048
+
+### L-180 给不回收的持久存储加上限时，用例按真实节奏写满再走主路径；回收的引用集合扫不全就不删
+- 类: 别这样
+- 触发: src/tavotto/engine/svgstore.py, tests/test_svgstore.py, tests/test_export_svg.py
+- Seen: 2026-11-24
+- 为什么: 导出快照存储满额只断言「拒绝新增、旧字节不动」，同一次运行里每次编辑都算 current、永远不判旧，写满后 SVG 导出一直卡死，一份用户反馈才暴露；补回收时评审又报 3 条 P1：并发提交的新引用、目录枚举失败、迁移中断的旧版本文件，都让引用集合看似完整却漏项，会删掉仍被引用的快照。写满用例断言用户还能导出；扫描任一处失败、或与提交不互斥，就整轮不删。
+- 证据: #2166

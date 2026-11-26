@@ -623,6 +623,8 @@ class TaskRun:
         #: 最近一轮没过的提交前检查（`<id>:<reason_code>`，已脱敏成码）：validate 段收尾时进 attributes，
         #: 让执行记录看得出「哪条检查没过」（用户诊断包 TVD-ZG0Y）
         self._unmet_checks: list[str] = []
+        #: 编排器此刻所在的阶段（`PHASES` 之一；还没开始 = None）。只读给界面的进度用（转换的任务清单），不参与任何判定
+        self.phase: str | None = None
 
     def charge(self, key: str, n: int = 1) -> None:
         """记一笔预算；超出上限抛 `BudgetExceeded`，**不记**超出的那一笔（它没被执行）。"""
@@ -1055,6 +1057,7 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
     committed = False
 
     def phase(name: str) -> None:
+        run.phase = name
         ai_history.record_task_phase(run.task_id, name, db_path=db_path)
         _trace_phase(run, name, committed=committed)
 

@@ -67,8 +67,13 @@ def svc(tmp_path, data):
 P = core.PREFIX
 
 
-def call(s, method, path, query="", token=None, ip="1.2.3.4", client=None, xff=None):
-    h = {"x-tavotto-device": token, "x-tavotto-client": client, "x-forwarded-for": xff}
+def call(s, method, path, query="", token=None, ip="1.2.3.4", client=None, xff=None, inm=None):
+    h = {
+        "x-tavotto-device": token,
+        "x-tavotto-client": client,
+        "x-forwarded-for": xff,
+        "if-none-match": inm,
+    }
     return s.handle(method, P + path, query, h, ip)
 
 
@@ -102,6 +107,37 @@ def test_index_no_token_and_headers(svc):
     assert dict(h)["Cache-Control"] == "public, max-age=300"
     assert dict(h)["Content-Type"] == "application/json"
     assert db_rows(s, "select count(*) from reads") == [(0,)]
+
+
+def test_index_etag_and_conditional_304(svc):
+    """签名索引带内容 sha256 的强 ETag；If-None-Match 命中回 304（无体、仍带 ETag 与缓存头），不命中 / 缺失回 200。"""
+    import hashlib
+
+    s, _ = svc
+    st, h, b = call(s, "GET", "/index.signed.json")
+    etag = dict(h)["ETag"]
+    assert etag == '"' + hashlib.sha256(b).hexdigest() + '"'
+    for inm in (etag, "W/" + etag, f'"zzz", {etag}', "*", etag[:-1] + '-gzip"'):
+        st, h, b2 = call(s, "GET", "/index.signed.json", inm=inm)
+        assert (st, b2) == (304, b"")
+        assert dict(h)["ETag"] == etag and dict(h)["Cache-Control"] == "public, max-age=300"
+    for inm in ('"other"', "", None, "garbage"):
+        st, _, b2 = call(s, "GET", "/index.signed.json", inm=inm)
+        assert (st, b2) == (200, b)
+    # 内容变了 ETag 跟着变
+    (s.config.data_dir / "index.signed.json").write_bytes(b'{"alg":"ed25519","x":1}')
+    st, h, _ = call(s, "GET", "/index.signed.json", inm=etag)
+    assert st == 200 and dict(h)["ETag"] != etag
+    assert db_rows(s, "select count(*) from reads") == [(0,)]
+
+
+def test_conditional_requests_do_not_apply_to_bundles_or_snapshots(svc):
+    """刊包的首次读取计数与令牌校验必须每次到源站：If-None-Match 对它们无效，不出 304、不出 ETag。"""
+    s, _ = svc
+    tok = new_token(s)
+    st, h, _ = call(s, "GET", "/journals/j1", "rev=5", tok, inm="*")
+    assert st == 200 and "ETag" not in dict(h)
+    assert db_rows(s, "select count(*) from reads") == [(1,)]
 
 
 def test_device_token_stored_hashed(svc):
@@ -610,6 +646,19 @@ def test_only_the_signed_index_is_edge_cached():
     )
 
 
+def test_proxy_passes_index_etag_and_304_but_nothing_else():
+    px = _load_proxy()
+    up = _Up(304, {"ETag": '"abc"', "Content-Type": "application/json"}, b"")
+    st, h, b = px.proxy(_env("p=index.signed.json", HTTP_IF_NONE_MATCH='"abc"'), CFG, up)
+    assert up.calls[0][2]["If-None-Match"] == '"abc"'
+    assert (st, b) == (304, b"") and dict(h)["ETag"] == '"abc"'
+    assert dict(h)["Cache-Control"] == "public, max-age=300, s-maxage=300"
+    # 刊包 / 快照：不转发条件头、不回 ETag（计数与令牌校验必须到源站）
+    up = _Up(200, {"ETag": '"x"'}, b"B")
+    _, h, _ = px.proxy(_env("p=journals%2Fj1&rev=5", HTTP_IF_NONE_MATCH="*"), CFG, up)
+    assert "If-None-Match" not in up.calls[0][2] and "ETag" not in dict(h)
+
+
 @pytest.mark.parametrize(
     "query",
     [
@@ -646,3 +695,107 @@ def test_proxy_origin_failure_is_502():
         raise urllib.error.URLError("down")
 
     assert px.proxy(_env(), CFG, boom)[0] == 502
+
+
+# ---- 签名索引按日计数（只有聚合：日期 × 版本 × 200 / 304）--------------------------------------
+def _index_hits(s):
+    return db_rows(s, "select day, version, n200, n304 from index_hits order by day, version")
+
+
+def test_index_hits_count_200_and_304_per_day_and_version(svc, tmp_path):
+    s, clk = svc
+    etag = dict(call(s, "GET", "/index.signed.json")[1])["ETag"]  # 200 ×1
+    call(s, "GET", "/index.signed.json", inm=etag)  # 304
+    call(s, "GET", "/index.signed.json", inm=etag)  # 304
+    call(s, "GET", "/index.signed.json", inm='"other"')  # 200
+    assert _index_hits(s) == [(T0 // DAY, "v1", 2, 2)]
+    clk.t += DAY  # 次日另起一行
+    call(s, "GET", "/index.signed.json")
+    assert _index_hits(s) == [(T0 // DAY, "v1", 2, 2), (T0 // DAY + 1, "v1", 1, 0)]
+
+
+def test_index_hits_split_by_version(tmp_path, data):
+    v2 = data / "v2"
+    v2.mkdir()
+    (v2 / "index.signed.json").write_bytes(b'{"alg":"ed25519","v":2}')
+    s, _ = make(tmp_path, data)
+    s.handle("GET", core.PREFIX_V2 + "/index.signed.json", "", {}, "1.2.3.4")
+    s.handle("GET", core.PREFIX + "/index.signed.json", "", {}, "1.2.3.4")
+    assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0), (T0 // DAY, "v2", 1, 0)]
+
+
+def test_index_hits_hold_nothing_but_counters_and_ignore_other_routes(svc):
+    s, _ = svc
+    tok = new_token(s, ip="9.9.9.9", client="agent-x")
+    call(s, "GET", "/journals/j1", "rev=5", tok, ip="9.9.9.9")
+    call(s, "GET", f"/snapshots/{SHA}.webp", token=tok)
+    call(s, "GET", "/index.signed.json", ip="9.9.9.9")
+    cols = [r[1] for r in db_rows(s, "pragma table_info(index_hits)")]
+    assert cols == ["day", "version", "n200", "n304"]  # 没有 IP / 令牌 / 刊 id / UA 的列
+    assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]  # 令牌、刊包、快照不计入
+
+
+def test_index_count_failure_never_breaks_the_response(svc, monkeypatch):
+    s, _ = svc
+
+    def boom(*_a, **_k):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr("services.journal_catalog.store.sqlite3.connect", boom)
+    st, _, b = call(s, "GET", "/index.signed.json")
+    assert (st, b) == (200, b'{"alg":"ed25519"}')
+
+
+def test_index_hits_purged_after_a_year_and_admin_prints_stats(svc, tmp_path):
+    from services.journal_catalog import admin
+
+    s, clk = svc
+    call(s, "GET", "/index.signed.json")
+    s.purge()
+    assert len(_index_hits(s)) == 1  # 当天的不删
+    clk.t += READ_RETENTION_S + 2 * DAY
+    s.purge()
+    assert _index_hits(s) == []
+    clk.t = T0
+    call(s, "GET", "/index.signed.json")
+    import io
+
+    out = io.StringIO()
+    rc = admin.run(
+        ["--db", str(tmp_path / "db.sqlite"), "index-stats", "--days", "3"], {}, clk, out
+    )
+    text = out.getvalue()
+    assert rc == 0 and "v1" in text and "0%" in text
+
+
+def test_index_count_does_not_wait_for_the_write_lock(svc, monkeypatch):
+    """别的连接持有写锁时：响应照常是 200，计数被丢掉（不重试、不排队），锁放开后照常计。
+    判据是确定性的，不量墙钟：计数连接的 busy timeout 恰好是 `INDEX_COUNT_BUSY_S`（极短），
+    被测的毛病是「等满 10 秒」，所以只要它不是 10 秒、且持锁时没把这一次记进去，就说明没有等锁。"""
+    from services.journal_catalog import store as store_mod
+
+    s, _ = svc
+    call(s, "GET", "/index.signed.json")  # 先建好表 / 行
+    assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]
+    timeouts = []
+    real = sqlite3.connect
+
+    def spy(*args, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(store_mod.sqlite3, "connect", spy)
+    holder = real(s.store.db_path, isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        st, _, b = call(s, "GET", "/index.signed.json")
+        assert (st, b) == (200, b'{"alg":"ed25519"}')
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    # 只认计数用的那个连接：同一请求里别的路径（懒初始化、限流读）也可能开普通连接（timeout=10），
+    # 顺序不固定；要求「整个请求只开一个连接」会在合并组里偶发红（2026-11-25 #2214 被带出）。
+    assert store_mod.INDEX_COUNT_BUSY_S in timeouts and store_mod.INDEX_COUNT_BUSY_S <= 0.1
+    assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]  # 被跳过的那一次没有记
+    call(s, "GET", "/index.signed.json")
+    assert _index_hits(s) == [(T0 // DAY, "v1", 2, 0)]  # 锁放开后照常记

@@ -1,0 +1,3 @@
+## The change plan card shows what the AI is doing — and keeps its size
+
+While the AI prepares a change plan (from review comments or from your instruction in the assistant), the card now lists its steps — read the figure, work out the changes (or edit the script), draw the changed figure — and ticks them off. Instead of a blurred copy of your figure, the preview shows a small plot being drawn on graph paper: a reading line sweeps, data points land, then a pen traces the curve. The card stays the same height when the plan is ready, and the preview images on the card are now sharp on high-resolution screens.

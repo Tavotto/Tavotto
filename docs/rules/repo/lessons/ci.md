@@ -190,16 +190,11 @@
 ### L-113 入队前验按队列次序累积 merge 出的树，不只是分支
 - 类: 照这样
 - 触发: *
-- Seen: 2026-08-27
-- 为什么: 并行 PR 的 hunk 原样插进重排后的文件，合并态可能不合规；两两验过不等于组合验过，新增文件也不在全仓格式化的覆盖集里。
-- 证据: #175, #177, #186
+- Seen: 2026-08-27, 2026-11-22
+- 为什么: 并行 PR 的 hunk 原样插进重排后的文件，合并态可能不合规；两两验过不等于组合验过，新增文件也不在全仓格式化的覆盖集里。11-22 两个 PR 各给根 AGENTS.md 加一段，各自在体积棘轮上限内，叠加后超限，合并组三条后端分片红、被踢一次（#2105 与 #2084）。
+- 证据: #175, #177, #186, #2105
 
-### L-114 合并组里裸 cancelled 先核 job 时长是否贴 timeout-minutes
-- 类: 照这样
-- 触发: .github/workflows/ci.yml, .github/workflows/desktop-tauri.yml, docs/rules/ci/ci-lanes.md, scripts/ci/aggregate_gate.py
-- Seen: 2026-09-13, 2026-11-17
-- 为什么: Windows 腿 32 到 42 分钟顶着 45 分钟上限，被取消后聚合门禁红、被踢出队列，易误读为 flaky；套件变长要回头量时长再定上限。快速失败会取消其余腿（ci-lanes.md）：summary 有 `root_failures` 时 cancelled 是收尾，无 failure 才按本条核。fast gate 的 `root_failures` 可能为空、根因只在 integration gate 里，两个 gate 都读（#1991）。
-- 证据: #340, #345, #346, #1991
+### L-114 合并组里裸 cancelled 先核 job 时长是否贴 timeout-minutes → docs/rules/ci/ci-lanes.md
 
 ### L-134 碰上游 API 与边缘行为写成新旧都认：CI 装当天最新版，本地按锁文件
 - 类: 别这样
@@ -217,10 +212,10 @@
 
 ### L-149 验字段未泄漏先解析结构，别在整个 JSON 里搜短数字或随机片段
 - 类: 别这样
-- 触发: tests/native/test_native_handoff.py, tests/native/test_native_api.py, tests/test_telemetry_invariants.py
-- Seen: 2026-11-06
-- 为什么: 端口未泄漏的判据在整个序列化 JSON 里搜五位数字，随机 native_id 偶然含相同片段，误红把无关导出 PR 踢出队列。断言公开字段集合与敏感字段缺席；若必须比内容，构造可区分的夹具，别让随机合法值决定结论。
-- 证据: #1790
+- 触发: tests/native/test_native_handoff.py, tests/native/test_native_api.py, tests/test_telemetry_invariants.py, tests/test_license.py
+- Seen: 2026-11-06, 2026-11-24
+- 为什么: 端口未泄漏的判据在整个序列化 JSON 里搜五位数字，随机 native_id 偶然含相同片段，误红把无关导出 PR 踢出队列。断言公开字段集合与敏感字段缺席；若必须比内容，构造可区分的夹具，别让随机合法值决定结论。11-24 许可证用例断言创始编号 37 不在状态 JSON 里，签名时间戳恰含 37，三个无关 PR 被踢（#2164、#2165、#2182），#2177 改按字段比值。
+- 证据: #1790, #2164, #2177
 
 ### L-159 平台故障残局：gate 卡住整轮 rerun，PR 无检查空提交，超时踢出按原 head 重排
 - 类: 照这样
@@ -228,3 +223,10 @@
 - Seen: 2026-11-12, 2026-11-21
 - 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。11-21 队列第 3 位的 CLA 判定报 budget_deferred（服务按合并前缀控预算）整组红，同理不改代码，等前序合入后按原 head 重排（#2064）。
 - 证据: #1857, #1864, #1866, #2064
+
+### L-179 golden 里由三角、开方算出的浮点先截位再写，新生成器在 Windows 腿跑一次
+- 类: 别这样
+- 触发: scripts/gen_*, tests/golden/
+- Seen: 2026-11-24
+- 为什么: 干涉检测的 golden 在本机生成，斜排文字外接框的三角函数末位在 Windows 与 Linux 上不同，PR 阶段不跑 Windows 后端，合并组 Windows 分片两次红，同组排在后面的三个 PR 一起被取消；修法是外接框取 9 位小数。生成器输出 libm 结果时按容差位数截位，或开 PR 就打 full-ci。
+- 证据: #2140

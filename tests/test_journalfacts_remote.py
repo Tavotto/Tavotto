@@ -247,7 +247,7 @@ def test_https_redirect_cannot_forward_device_token(tmp_path, monkeypatch):
         tlstrust, "client_context", lambda: ssl.create_default_context(cafile=str(cert["ca"]))
     )
     try:
-        status, _ = client._http(
+        status, *_ = client._http(
             "GET",
             f"https://127.0.0.1:{src.server_port}/start",
             1024,
@@ -689,3 +689,220 @@ def test_guard_preserves_integrity_errors_during_concurrent_revision(isolated, m
     expected_error = "catalog_changed" if code == "stale_rev" else code
     with pytest.raises(client.FactsError, match=expected_error):
         client.get_facts("fx-journal", offset=1, expected_catalog_rev=1)
+
+
+# ---- 省流量：ETag / 304、gzip、5 分钟新鲜期 --------------------------------------------------------
+def _index_server(key, monkeypatch, index_doc, etag='"e1"'):
+    """假服务器：记录每次索引请求的头；If-None-Match 命中回 304，否则 200 + ETag。"""
+    calls = []
+
+    def request(method, url, cap, headers):
+        assert url.endswith("index.signed.json")
+        calls.append(dict(headers))
+        if etag is not None and headers.get("If-None-Match") == etag:
+            return 304, b"", {}
+        return 200, index_doc, ({"etag": etag} if etag else {})
+
+    monkeypatch.setattr(client, "_request", request)
+    return calls
+
+
+def test_sync_sends_conditional_gzip_request_and_reuses_cache_on_304(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    doc = signed(key, index_for(raw, 6))
+    calls = _index_server(key, monkeypatch, doc)
+    first = client.sync()
+    assert first["state"] == "updated" and first["index"]["catalog_rev"] == 6
+    assert calls[0]["Accept-Encoding"] == "gzip" and "If-None-Match" not in calls[0]
+    second = client.sync()
+    assert second["state"] == "unchanged" and second["code"] is None
+    assert second["index"] == first["index"] and len(calls) == 2
+    assert calls[1]["If-None-Match"] == '"e1"'  # 服务端给的 ETag 原样回
+    assert client.cached_index() == first["index"]
+
+
+def test_new_content_after_etag_changes_updates_the_cache(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    docs = {"v": signed(key, index_for(raw, 6)), "etag": '"e1"'}
+
+    def request(method, url, cap, headers):
+        if headers.get("If-None-Match") == docs["etag"]:
+            return 304, b"", {}
+        return 200, docs["v"], {"etag": docs["etag"]}
+
+    monkeypatch.setattr(client, "_request", request)
+    assert client.sync()["state"] == "updated"
+    docs.update(v=signed(key, index_for(raw, 7)), etag='"e2"')
+    result = client.sync()
+    assert result["state"] == "updated" and result["index"]["catalog_rev"] == 7
+    assert client.sync()["state"] == "unchanged"
+
+
+def test_304_never_replaces_a_missing_or_foreign_cache(isolated, monkeypatch):
+    """没有缓存就不会带 If-None-Match；服务端无缘无故回 304 当失败，不当「沿用缓存」。"""
+    calls = []
+
+    def request(method, url, cap, headers):
+        calls.append(dict(headers))
+        return 304, b"", {}
+
+    monkeypatch.setattr(client, "_request", request)
+    result = client.sync()
+    assert "If-None-Match" not in calls[0]
+    assert result["index"] is None and result["state"] in ("offline", "rejected")
+
+
+def test_etag_is_bound_to_the_stored_envelope(isolated, monkeypatch):
+    """信封被别处换掉后，旧 ETag 不能再用（否则会对着新缓存说「没变」）。"""
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    calls = _index_server(key, monkeypatch, signed(key, index_for(raw, 6)))
+    client.sync()
+    newer = index_for(raw, 7)
+    client._save_index(signed(key, newer), newer)  # 别的进程落了新信封，没有 ETag
+    client.sync()
+    assert "If-None-Match" not in calls[-1]
+
+
+def test_fresh_window_skips_the_request_and_force_bypasses_it(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    calls = _index_server(key, monkeypatch, signed(key, index_for(raw, 6)))
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(client, "_now", lambda: clock["t"])
+    monkeypatch.setattr(client, "INDEX_FRESH_S", 300)
+    assert client.sync()["state"] == "updated"
+    clock["t"] += 299
+    assert client.sync()["state"] == "unchanged" and len(calls) == 1  # 新鲜期内不发请求
+    assert client.sync(force=True)["state"] == "unchanged" and len(calls) == 2
+    clock["t"] += 301
+    assert (
+        client.sync()["state"] == "unchanged" and len(calls) == 3
+    )  # 过期：带 If-None-Match 重新确认
+    assert calls[-1]["If-None-Match"] == '"e1"'
+    clock["t"] -= 10_000  # 时钟被往回拨：当作过期，不是永远新鲜
+    client.sync()
+    assert len(calls) == 4
+
+
+def test_failed_refresh_keeps_verified_cache_and_does_not_extend_freshness(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    state = {"fail": False}
+
+    def request(method, url, cap, headers):
+        if state["fail"]:
+            raise journalremote.RemoteCatalogError("network", "down")
+        return 200, signed(key, index_for(raw, 6)), {"etag": '"e1"'}
+
+    monkeypatch.setattr(client, "_request", request)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(client, "_now", lambda: clock["t"])
+    monkeypatch.setattr(client, "INDEX_FRESH_S", 300)
+    client.sync()
+    clock["t"] += 400
+    state["fail"] = True
+    result = client.sync()
+    assert result["state"] == "offline" and result["index"]["catalog_rev"] == 6
+    clock["t"] += 1  # 失败没有刷新「上次确认」：仍然过期，继续尝试
+    assert client.sync()["state"] == "offline"
+
+
+def test_tampered_200_is_still_rejected_and_rollback_still_blocked(isolated, monkeypatch):
+    key, _ = isolated
+    raw = json.dumps(fact_bundle()).encode()
+    good = signed(key, index_for(raw, 6))
+    monkeypatch.setattr(client, "_request", lambda *a: (200, good, {"etag": '"e1"'}))
+    client.sync()
+    lower = signed(key, index_for(raw, 5))
+    monkeypatch.setattr(client, "_request", lambda *a: (200, lower, {"etag": '"e0"'}))
+    assert client.sync()["code"] == "rev_rollback" and client.cached_index()["catalog_rev"] == 6
+    bad = json.loads(good)
+    bad["sig"] = bad["sig"][:-4] + "AAAA"
+    monkeypatch.setattr(client, "_request", lambda *a: (200, json.dumps(bad).encode(), {}))
+    assert client.sync()["code"] == "signature_invalid"
+
+
+def test_gzip_index_is_decoded_and_capped_after_decompression(isolated, monkeypatch):
+    import gzip
+
+    # _gunzip 单测：正常、超限（压缩炸弹：很小的压缩体解出超过上限）、坏数据
+    body = b"x" * 1000
+    assert client._gunzip(gzip.compress(body), 2000) == body
+    bomb = gzip.compress(b"\0" * (4 << 20))
+    assert len(bomb) < 10_000
+    with pytest.raises(journalremote.RemoteCatalogError, match="too large"):
+        client._gunzip(bomb, 1 << 20)
+    with pytest.raises(journalremote.RemoteCatalogError):
+        client._gunzip(b"not gzip", 100)
+
+
+def _serve_tls(handler, cert):
+    import ssl
+
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.minimum_version = ssl.TLSVersion.TLSv1_2
+    tls.load_cert_chain(str(cert["cert"]), str(cert["key"]))
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    srv.socket = tls.wrap_socket(srv.socket, server_side=True)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    return srv, t
+
+
+@pytest.mark.parametrize("mode", ["gzip", "bomb", "br", "plain"])
+def test_http_transport_content_encoding(monkeypatch, mode, tmp_path):
+    """真 HTTPS 往返：gzip 解压后封顶；未知编码拒绝；明文照旧；ETag 带回。"""
+    import gzip
+    import ssl
+
+    from support.tls_certs import make_pki
+
+    cert = make_pki().write(tmp_path)
+    payload = b"y" * 500
+    sent = {"inm": None}
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            sent["inm"] = self.headers.get("Accept-Encoding")
+            body = {
+                "gzip": gzip.compress(payload),
+                "bomb": gzip.compress(b"\0" * (4 << 20)),
+                "br": payload,
+                "plain": payload,
+            }[mode]
+            self.send_response(200)
+            if mode in ("gzip", "bomb"):
+                self.send_header("Content-Encoding", "gzip")
+            if mode == "br":
+                self.send_header("Content-Encoding", "br")
+            self.send_header("ETag", '"abc"')
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    srv, thread = _serve_tls(H, cert)
+    monkeypatch.setattr(journalremote, "disabled", lambda: False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    monkeypatch.setattr(
+        tlstrust, "client_context", lambda: ssl.create_default_context(cafile=str(cert["ca"]))
+    )
+    try:
+        url = f"https://127.0.0.1:{srv.server_port}/x"
+        if mode in ("gzip", "plain"):
+            status, data, got = client._http("GET", url, 1 << 20, {"Accept-Encoding": "gzip"})
+            assert (status, data, got) == (200, payload, {"etag": '"abc"'})
+            assert sent["inm"] == "gzip"
+        else:
+            with pytest.raises(journalremote.RemoteCatalogError):
+                client._http("GET", url, 1 << 20, {"Accept-Encoding": "gzip"})
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join()

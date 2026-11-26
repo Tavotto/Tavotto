@@ -430,3 +430,15 @@ describe('recoverCopy：恢复副本', () => {
     expect(backend.writes()).toEqual([])
   })
 })
+
+it('候选响应的附件问题保留为独立行状态', async () => {
+  vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
+    items: [{ doc_id: 'd_chart', status: 'chart_source_mismatch', schema: 4, owner: 'this' }],
+    next_cursor: null, index: 'ok',
+  }), { status: 200 }))
+  try {
+    const result = await loadCandidates('project', PJ)
+    expect(result.kind).toBe('ok')
+    if (result.kind === 'ok') expect(rowIssue(result.list.rows[0])).toBe('chart_source_mismatch')
+  } finally { vi.unstubAllGlobals() }
+})

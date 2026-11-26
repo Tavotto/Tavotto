@@ -36,6 +36,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   aiDataFigureCommit: vi.fn(),
   aiDataFigureDiscard: vi.fn(async () => ({ ok: true })),
   aiDataUnderstanding: vi.fn(),
+  fetchAiCapabilities: vi.fn(() => new Promise(() => {})),
   aiDataProgressCancel: vi.fn(async () => ({ cancelled: false, state: 'none' })),
 }))
 vi.mock('@/store/liveSync', () => ({ refreshProjectNow: vi.fn(async () => {}) }))

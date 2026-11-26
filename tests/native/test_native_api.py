@@ -56,6 +56,15 @@ def client(tmp_path, monkeypatch):
     return appmod.app.test_client()
 
 
+def _leaf_values(obj) -> list:
+    """JSON 里所有叶子值（dict / list 一路展开）。"""
+    if isinstance(obj, dict):
+        return [v for x in obj.values() for v in _leaf_values(x)]
+    if isinstance(obj, list):
+        return [v for x in obj for v in _leaf_values(x)]
+    return [obj]
+
+
 def make_descriptor(**kw) -> str:
     native_id, _ = nativehandoff.create(**{**FIELDS, **kw})
     return native_id
@@ -70,8 +79,11 @@ def test_pending_never_returns_the_token_or_the_port(client):
     assert resp.status_code == 200
     blob = resp.get_data(as_text=True)
     assert FIELDS["attach_token"] not in blob
-    assert "51234" not in blob and "attach_port" not in blob
+    assert "attach_port" not in blob
     body = json.loads(blob)["pending"]
+    # 端口按「值」查，不按子串：created_at / expires_at 是 time.time()，小数位碰巧含 51234 会误报
+    assert FIELDS["attach_port"] not in _leaf_values(body)
+    assert str(FIELDS["attach_port"]) not in _leaf_values(body)
     assert body["interpreter"] == FIELDS["interpreter"]  # 该有的确实有
     assert body["remembered"] is False  # 默认不勾"记住"
 

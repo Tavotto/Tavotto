@@ -23,6 +23,13 @@
   复杂裁剪、着色、透明组的内部不分析（`carrier` 只按顶层对象种类分：vector / mixed / raster / empty / unknown）。
 * 「有没有被裁掉」只对**计划里知道包围盒的对象**判（画布上的文字 / 形状 / 箭头 / 面板框 vs 页面），外来页内部是
   `unknown`（RC-069：碰不到的不声称 no clipping）。
+* **成品里的实际字号**（`observed.text_size`）量的是内容流里每一段**看得见的**文字：`Tf` 字号 × 文字矩阵 × 累计 CTM
+  （含 Form 的 `/Matrix`）的纵向缩放 × 页面 `/UserUnit`；Form 继承调用处的字体 / 字号 / 渲染模式（画完不带回）。数学上下标在这里就是一段更小的 `Tf`（matplotlib 的 mathtext 约 0.7 倍），
+  面板被缩放摆上版面也已经乘在 CTM 里。检查项 `text_size`（ADR 0203）：阈值是调用方交进来的出版规范的
+  `min_effective_font_size_pt`、容差是 `inspect(text_size_tol_pt=…)`（这里不写任何 pt 数），判据本体是
+  `text_size_verdict()`；没有下限是 `not_applicable`（没被要求检查），有下限却量不了才是 `unknown`；两档政策里都**不是**必需项（failed 只写进说明，不拦导出）。
+  量不了的不冒充量过：不画只进文本层的文字（渲染模式 3 / 7，画出来的是轮廓）、没有字体或矩阵退化的段、FontMatrix 不是千分之一的 Type 3 各自计数；预算耗尽 / 没有读取器整项 `unknown`。画成轮廓又不带
+  文本层的字在内容流里与普通路径无法区分，这一种量不到也数不到。
 * 文字层的判据是「期望的每一行都能从 ToUnicode（或 ActualText）抽回来」——ToUnicode 存在 ≠ 映射正确，所以比的是**抽出来的
   字符串**（05 §5）。没有期望值（旧后端路）→ `unknown`。
 
@@ -64,6 +71,7 @@ CARRIER_EMPTY = "empty"
 CARRIER_UNKNOWN = "unknown"
 
 #: 每个格式的检查项（闭集）。`standard` 必需的只有前两项；`strict` 必需的见 `REQUIRED`。
+#: `text_size`（ADR 0203）两档都不是必需项：上下标在许多期刊另有下限，公式轮廓天然 unknown。
 CHECKS_PDF = (
     "integrity",
     "size",
@@ -72,6 +80,8 @@ CHECKS_PDF = (
     "text_layer",
     "image_ppi",
     "clipping",
+    "text_size",
+    "glyphs",
 )
 CHECKS_RASTER = ("integrity", "size", "dpi_tag", "raster_density")
 CHECKS_SVG = ("integrity", "size", "structure", "carrier", "fonts_embedded", "text_layer")
@@ -297,6 +307,18 @@ class _Font:
     type3: bool
     key: tuple
     used: bool = False
+    #: `Tf` 的数就是字的大小（em）吗。Type 3 没有声明 em，只有 FontMatrix 是千分之一时才按惯例认（matplotlib / dvips 如此）
+    sized: bool = True
+    #: 一个字符码画出来是不是 `.notdef`（缺字方块）：True / False / None（这种字体这个码判不了）；整个字体判不了时为 None
+    notdef_of: object = None
+    #: 画出来的码里落到 `.notdef` 的个数（只计数，不带文字内容）
+    notdef: int = 0
+    #: 有画出来的码判不了是不是 `.notdef`
+    notdef_unchecked: bool = False
+    #: 用它**上墨**画过字（非空的一段、渲染模式不是 3 / 7，或是一个字形 Form）。只被 `Tf` 选中、只进文字层的不算
+    painted: bool = False
+    #: 字体类型与嵌入的字体程序对不上（`font_program_mismatch`）：嵌进去了也不算「嵌入正确」
+    program_mismatch: bool = False
 
 
 @dataclass
@@ -313,6 +335,13 @@ class _Walk:
     lines: list = field(default_factory=list)
     undecodable_runs: int = 0
     fonts: dict = field(default_factory=dict)  # key → _Font
+    #: 看得见的文字段的有效字号（四舍五入到 0.01 pt）→ 段数；只有数，不带文字内容
+    text_sizes: dict = field(default_factory=dict)
+    text_hidden: int = 0  # 不画、只进文本层的段（渲染模式 3 / 7）
+    text_unsized: int = 0  # 量不了的段：没有字体、字号或矩阵退化、Type 3 的 em 不明
+    #: 页面的 `/UserUnit`（默认空间一个单位 = 多少 pt，缺省 1）。只乘在字号上：CTM 照旧从单位矩阵起步，
+    #: 别的观测（位图 ppi 等）的口径不因此改变；页面尺寸的换算在 `_visible_size` 里另算，两边不叠加
+    text_unit: float = 1.0
 
 
 def _font_record(name: str, obj, seen: dict) -> _Font:
@@ -340,6 +369,9 @@ def _font_record(name: str, obj, seen: dict) -> _Font:
             if any(k in desc for k in ("/FontFile", "/FontFile2", "/FontFile3"))
             else FAILED
         )
+    mismatch = desc is not None and not type3 and font_program_mismatch(desc)
+    if mismatch:
+        embedded = FAILED
     tu = obj.get("/ToUnicode")
     mapping: dict[int, str] | None = None
     code_len = 1 if subtype in ("Type1", "TrueType", "Type3", "MMType1") else 2
@@ -349,8 +381,158 @@ def _font_record(name: str, obj, seen: dict) -> _Font:
         except Exception:  # noqa: BLE001 —— 坏 CMap = 没有可用映射
             mapping = None
     rec = _Font(name, base, subtype, embedded, subset, mapping, code_len, type3, key)
+    rec.program_mismatch = mismatch
+    if type3:
+        rec.sized = _type3_em_is_standard(obj.get("/FontMatrix"))
+    try:
+        rec.notdef_of = _notdef_probe(obj, subtype)
+    except Exception:  # noqa: BLE001 —— 结构读不懂 = 判不了，不是「没有缺字」
+        rec.notdef_of = None
     seen[key] = rec
     return rec
+
+
+#: 缺字判不了时不记 unknown 的简单字体子类型（见 `checks["glyphs"]`）：Type 3 / Type0 判不了仍记 unknown
+_GLYPHS_UNJUDGED_SIMPLE = frozenset({"Type1", "TrueType", "MMType1"})
+
+
+#: 系统「最后一招」字体（macOS 的 LastResort / LastResortHE）：字体里没有真字形，每个字都画成一个方块——用到它就是缺字
+_LAST_RESORT = re.compile(r"^LastResort", re.IGNORECASE)
+
+
+def is_last_resort(base: str) -> bool:
+    return bool(_LAST_RESORT.match(base or ""))
+
+
+def _differences(encoding) -> dict[int, str]:
+    """简单字体 `/Encoding` 字典里 `/Differences` 给出的 码 → 字形名（没有就空）。"""
+    out: dict[int, str] = {}
+    diffs = (
+        encoding.get("/Differences") if encoding is not None and hasattr(encoding, "get") else None
+    )
+    if diffs is None:
+        return out
+    code = 0
+    for item in diffs:
+        if isinstance(item, int):
+            code = int(item)
+        else:
+            out[code] = str(item).lstrip("/")
+            code += 1
+    return out
+
+
+def _notdef_probe(obj, subtype: str):
+    """这种字体的「码 → 是不是 .notdef」判据；结构不在能判的范围里回 None（判不了，不猜）。
+
+    * Type0 + `Identity-H/V`：CID = 码。`CIDFontType2` 经 `/CIDToGIDMap`（Identity 或映射流）得 GID，GID 0 是 .notdef；
+      `CIDFontType0` 的 CID 0 是 .notdef（RenderCore 与 matplotlib Type 42 都走这一类）；
+    * Type 3：`/Differences` 里的名字是 `.notdef`，或 `CharProcs` 里没有这个名字，就是缺字（matplotlib Type 3 如此）；
+      `/Differences` 没覆盖的码判不了；
+    * 其余简单字体：只有 `/Differences` 明写 `.notdef` 的码能判，其余判不了。
+    """
+    if subtype == "Type0":
+        enc = str(obj.get("/Encoding", "")).lstrip("/")
+        kids = obj.get("/DescendantFonts")
+        if enc not in ("Identity-H", "Identity-V") or kids is None or len(kids) == 0:
+            return None
+        kid = kids[0]
+        kind = str(kid.get("/Subtype", "")).lstrip("/")
+        if kind == "CIDFontType0":
+            return lambda code: code == 0
+        if kind != "CIDFontType2":
+            return None
+        c2g = kid.get("/CIDToGIDMap")
+        if c2g is None or str(c2g).lstrip("/") == "Identity":
+            return lambda code: code == 0
+        table = bytes(c2g.read_bytes())
+
+        def via_map(code: int) -> bool:
+            pair = table[2 * code : 2 * code + 2]
+            return len(pair) < 2 or int.from_bytes(pair, "big") == 0
+
+        return via_map
+    names = _differences(obj.get("/Encoding"))
+    if subtype == "Type3":
+        procs = obj.get("/CharProcs")
+        glyphs = {str(k).lstrip("/") for k in procs.keys()} if procs is not None else set()
+
+        def type3(code: int):
+            name = names.get(code)
+            if name is None:
+                return None
+            return name == ".notdef" or name not in glyphs
+
+        return type3
+    if not names:
+        return None
+    return lambda code: True if names.get(code) == ".notdef" else None
+
+
+#: matplotlib < 3.11 的 Type 3：码位 > 255 的字不进 `Tj`，画成名为 `/<字体资源名>-<PostScript 名>-<字形名>` 的
+#: Form XObject（`backend_pdf.RendererPdf.draw_text` 的 multibyte 分支）。缺字时字形名是 `.notdef`。
+_MPL_TYPE3_GLYPH_FORM = re.compile(r"^/([^-/]+)-.+-(?P<glyph>[^-]+)$")
+
+
+def _note_type3_glyph_form(w, name: str, res_fonts, fonts_seen: dict) -> None:
+    """一个 `Do` 若是 matplotlib Type 3 的字形 Form：记到那个字体上（用到了；字形名是 `.notdef` 就是缺字方块）。"""
+    m = _MPL_TYPE3_GLYPH_FORM.match(name)
+    if m is None or res_fonts is None:
+        return
+    fobj = res_fonts.get("/" + m.group(1))
+    if fobj is None or str(fobj.get("/Subtype", "")) != "/Type3":
+        return
+    font = _font_record("/" + m.group(1), fobj, fonts_seen)
+    font.used = True
+    font.painted = True  # 字形 Form 是上了墨的
+    w.fonts[font.key] = font
+    if m.group("glyph") == ".notdef":
+        font.notdef += 1
+
+
+def _note_notdef(font: _Font, raw: bytes) -> None:
+    """一段文字里有几个码落到 `.notdef`（缺字方块）；判不了的码让这个字体记「未核」。"""
+    probe = font.notdef_of
+    if probe is None:
+        font.notdef_unchecked = True
+        return
+    n = (
+        2 if font.subtype == "Type0" else 1
+    )  # 能判的 Type0 只有 Identity-H/V（两字节）；简单字体一字节
+    for i in range(0, len(raw) - n + 1, n):
+        hit = probe(int.from_bytes(raw[i : i + n], "big"))
+        if hit is None:
+            font.notdef_unchecked = True
+        elif hit:
+            font.notdef += 1
+
+
+#: `FontFile2` 只能装 TrueType 字体程序（PDF 32000 §9.9）：sfnt 头是这几种之一
+_TRUETYPE_SFNT_TAGS = (b"\x00\x01\x00\x00", b"true", b"ttcf")
+
+
+def font_program_mismatch(desc) -> bool:
+    """字体描述符里嵌的字体程序与它所在的槽对不上：`FontFile2`（TrueType 槽）里装的不是 TrueType。
+
+    最常见的来源是 matplotlib 对 `.otf`（CFF 轮廓）走 Type 42：写 `CIDFontType2` + `FontFile2`，内容却是 `OTTO`
+    开头的 CFF OpenType——poppler 报「Mismatch between font type and embedded font file」，Acrobat 预检与投稿系统
+    的转换可能拒收或掉字。只读前 4 个字节；读不了不判（不算错配）。"""
+    stream = desc.get("/FontFile2")
+    if stream is None:
+        return False
+    try:
+        head = bytes(stream.read_bytes()[:4])
+    except Exception:  # noqa: BLE001 —— 解不开的流交给完整性那一项，这里判不了就不判
+        return False
+    return len(head) == 4 and head not in _TRUETYPE_SFNT_TAGS
+
+
+def _type3_em_is_standard(matrix) -> bool:
+    try:
+        a, b, c, d = (float(v) for v in list(matrix)[:4])
+    except (TypeError, ValueError):
+        return False
+    return abs(a - 0.001) < 1e-9 and abs(d - 0.001) < 1e-9 and b == 0 and c == 0
 
 
 def _decode(font: _Font, raw: bytes) -> str | None:
@@ -371,6 +553,26 @@ def _decode(font: _Font, raw: bytes) -> str | None:
     return "".join(out)
 
 
+_IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def _note_text_size(w: _Walk, font: _Font | None, size: float, mode: int, tm, ctm) -> None:
+    """记一段文字的有效字号：`|Tf|` × （文字矩阵 × CTM）把字高方向拉长了多少。只记数，不记内容。"""
+    if mode in (3, 7):
+        w.text_hidden += 1
+        return
+    if font is None or not font.sized or tm is None:
+        w.text_unsized += 1
+        return
+    m = _mul(tm, ctm)
+    eff = abs(size) * math.hypot(m[2], m[3]) * w.text_unit
+    if not (math.isfinite(eff) and eff > 0):
+        w.text_unsized += 1
+        return
+    key = round(eff, 2)
+    w.text_sizes[key] = w.text_sizes.get(key, 0) + 1
+
+
 def _mul(m1, m2):
     a1, b1, c1, d1, e1, f1 = m1
     a2, b2, c2, d2, e2, f2 = m2
@@ -384,7 +586,18 @@ def _mul(m1, m2):
     )
 
 
-def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: dict) -> None:
+def _walk(
+    pikepdf,
+    container,
+    resources,
+    ctm,
+    depth: int,
+    w: _Walk,
+    fonts_seen: dict,
+    inherited: tuple | None = None,
+) -> None:
+    """`inherited` = 调用处的（字体, Tf 字号, Tr 渲染模式, 图形状态里的字体）：Form XObject 按 PDF 规范继承调用时的
+    图形与文字状态，画完之后调用方的状态原样不动（这里的修改只在本层局部变量里）。页面本身从空状态起步。"""
     if depth > w.budget.max_depth:
         raise _BudgetExceeded("depth")
     try:
@@ -392,7 +605,16 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
     except Exception as exc:  # noqa: BLE001
         raise _BudgetExceeded(f"unparseable:{type(exc).__name__}") from exc
     stack: list = []
-    font: _Font | None = None
+    font: _Font | None = inherited[0] if inherited else None
+    # 文字状态里决定「字有多大、画不画」的三样：Tf 字号与渲染模式属于图形状态（q / Q 存取），文字矩阵每个 BT 重置。
+    # `font` 本身同样属于图形状态，但它决定文字层怎么解码：这里**不动**既有行为（Q 之后沿用最近一次 Tf 的字体），
+    # 免得一次只加观测的改动顺带改了 `text_layer` 的结论
+    font_size = inherited[1] if inherited else 0.0
+    text_mode = inherited[2] if inherited else 0
+    # 缺字核验要的是**按规范**此刻在画的那张脸：它随 q / Q 存取（`/F1 Tf q /F2 Tf … Q (A) Tj` 的 A 是 F1 画的）。
+    # 与上面的 `font` 分开记，文字层的解码沿用既有行为不变（Codex #2169）
+    paint_font: _Font | None = inherited[3] if inherited and len(inherited) > 3 else font
+    text_matrix = _IDENTITY
     in_text = False
     line: list[str] = []
     actual: list[list] = []  # [text, consumed]
@@ -408,10 +630,10 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
         op = str(ins.operator)
         args = ins.operands
         if op == "q":
-            stack.append(ctm)
+            stack.append((ctm, font_size, text_mode, paint_font))
         elif op == "Q":
             if stack:
-                ctm = stack.pop()
+                ctm, font_size, text_mode, paint_font = stack.pop()
         elif op == "cm" and len(args) == 6:
             ctm = _mul(tuple(float(a) for a in args), ctm)
         elif op in ("S", "s", "f", "F", "f*", "B", "B*", "b", "b*"):
@@ -420,11 +642,26 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
             w.shadings += 1
         elif op == "BT":
             in_text, line = True, []
+            text_matrix = _IDENTITY
+        elif op == "Tm" and len(args) == 6:
+            try:
+                text_matrix = tuple(float(a) for a in args)
+            except (TypeError, ValueError):
+                text_matrix = None  # 读不懂的矩阵：之后的段记「量不了」，不拿上一个矩阵顶替
+        elif op == "Tr" and args:
+            try:
+                text_mode = int(args[0])
+            except (TypeError, ValueError):
+                text_mode = 0
         elif op == "ET":
             if in_text and line:
                 w.lines.append("".join(line))
             in_text = False
         elif op == "Tf" and args:
+            try:
+                font_size = float(args[1]) if len(args) > 1 else 0.0
+            except (TypeError, ValueError):
+                font_size = 0.0
             name = str(args[0])
             fobj = res_fonts.get(name) if res_fonts is not None else None
             if fobj is None:
@@ -434,6 +671,7 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
                 font = _font_record(name, fobj, fonts_seen)
                 font.used = True
                 w.fonts[font.key] = font
+            paint_font = font
         elif op == "BDC" and len(args) == 2 and isinstance(args[1], pikepdf.Dictionary):
             at = args[1].get("/ActualText")
             actual.append([str(at) if at is not None else None, False])
@@ -442,11 +680,18 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
                 actual.pop()
         elif op in ("Tj", "'", '"', "TJ"):
             w.texts += 1
+            _note_text_size(w, font, font_size, text_mode, text_matrix, ctm)
             pieces: list[bytes] = []
             if op == "TJ" and args and isinstance(args[-1], pikepdf.Array):
                 pieces = [bytes(a) for a in args[-1] if isinstance(a, pikepdf.String)]
             elif args and isinstance(args[-1], pikepdf.String):
                 pieces = [bytes(args[-1])]
+            if paint_font is not None and text_mode not in (3, 7):
+                # 缺字只看**画出来**的字（渲染模式 3 / 7 只进文字层、不上墨）；与 ActualText 无关——那只是检索用的文字
+                for raw in pieces:
+                    _note_notdef(paint_font, raw)
+                if any(pieces):
+                    paint_font.painted = True
             scope = actual[-1] if actual else None
             if scope is not None and scope[0] is not None:
                 if not scope[1]:
@@ -467,6 +712,7 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
             xobj = res_xobj.get(name) if res_xobj is not None else None
             if xobj is None:
                 continue
+            _note_type3_glyph_form(w, name, res_fonts, fonts_seen)
             sub = str(xobj.get("/Subtype", ""))
             if sub == "/Image":
                 w.images.append(_image_facts(xobj, ctm))
@@ -487,6 +733,7 @@ def _walk(pikepdf, container, resources, ctm, depth: int, w: _Walk, fonts_seen: 
                     depth + 1,
                     w,
                     fonts_seen,
+                    (font, font_size, text_mode, paint_font),
                 )
                 w.forms_seen.add(key)
 
@@ -565,6 +812,7 @@ def observe_pdf_basic(path: Path, probe) -> dict:
         images=[],
         text_lines=[],
         undecodable_runs=0,
+        text_size={"status": UNKNOWN, "reason": "no_reader"},
         reader="probe",
     )
     return out
@@ -619,7 +867,7 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
         w_pt, h_pt, boxes = _visible_size(page, pikepdf)
         out.update(size_pt=[round(w_pt, 3), round(h_pt, 3)], **boxes)
         out["integrity"] = VERIFIED
-        walk = _Walk(budget)
+        walk = _Walk(budget, text_unit=boxes["user_unit"])
         fonts_seen: dict = {}
         declared: list[str] = []
         res = page.obj.get("/Resources")
@@ -661,6 +909,11 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
                 "subset": f.subset,
                 "tounicode": f.tounicode is not None,
                 "type3": f.type3,
+                "last_resort": is_last_resort(f.base),
+                "painted": f.painted,
+                "notdef": f.notdef,
+                "notdef_unchecked": f.notdef_unchecked,
+                "program_mismatch": f.program_mismatch,
             }
             for f in walk.fonts.values()
             if f.used
@@ -668,7 +921,65 @@ def observe_pdf(path: Path, *, budget: Budget | None = None) -> dict:
         out["images"] = walk.images
         out["text_lines"] = walk.lines
         out["undecodable_runs"] = walk.undecodable_runs
+        out["text_size"] = _text_size_facts(walk, exceeded)
     return out
+
+
+#: `observed.text_size.smallest` 最多带几档（从小到大）：够定位「哪一档太小」，又不把整张字号表搬进 manifest
+TEXT_SIZE_BUCKETS = 8
+
+
+def _text_size_facts(walk: _Walk, exceeded: str | None) -> dict:
+    """成品 PDF 里看得见的文字实际有多大（`status`：`measured` 量到了 / `none` 没有可量的文字段 / `unknown` 没看完）。"""
+    if exceeded:
+        return {"status": UNKNOWN, "reason": "budget"}
+    sizes = sorted(walk.text_sizes.items())
+    return {
+        "status": "measured" if sizes else "none",
+        "min_pt": sizes[0][0] if sizes else None,
+        "runs": sum(n for _s, n in sizes),
+        "hidden_runs": walk.text_hidden,
+        "unsized_runs": walk.text_unsized,
+        "smallest": [[s, n] for s, n in sizes[:TEXT_SIZE_BUCKETS]],
+    }
+
+
+def text_size_verdict(
+    observed: dict, min_pt: float | None, *, tol_pt: float = 0.0
+) -> tuple[str, str]:
+    """成品里的最小实际字号对不对得上规范下限：回（四值判据，原因码）。
+
+    **阈值只从调用方来**（出版规范的字号下限；本模块不写任何 pt 数，RC-071）。`tol_pt` 同理，由调用方给规范那边
+    的数值容差。判据不对称是有意的——找到一段低于下限的字就是 `failed`（别的段量没量到都不改变这一点）；而
+    「量到的都够大」只有在**没有量不了的段**时才算 `verified`，否则是 `unknown`：不画只进文本层的字（画出来的是
+    轮廓）、em 不明的 Type 3、退化矩阵，都可能藏着更小的字。
+
+    **没有下限 = 这一项没被要求检查 → `not_applicable`**（ADR 0203 §1），不是 `unknown`：standard 档不带规范，
+    中性底的下限是 0，让它们记 unknown 会把原本全 verified 的普通导出整份降成「未核验」。`unknown` 只留给
+    「有下限却量不了」（预算耗尽 / 没有读取器 / 量不了的段）；文件打不开由 `_check_pdf` 的完整性分支整项 unknown。
+
+    原因码（闭集）：`below_min` / `ok` / `no_threshold` / `not_observed` / `budget` / `no_text` / `unmeasured_runs`。
+    """
+    try:
+        floor = float(min_pt) if min_pt is not None else 0.0
+    except (TypeError, ValueError):
+        floor = 0.0
+    if not (math.isfinite(floor) and floor > 0):
+        return NOT_APPLICABLE, "no_threshold"
+    facts = observed.get("text_size") if isinstance(observed, dict) else None
+    if not isinstance(facts, dict):
+        return UNKNOWN, "not_observed"
+    if facts.get("status") == UNKNOWN:
+        return UNKNOWN, str(facts.get("reason") or "budget")
+    unmeasured = int(facts.get("hidden_runs") or 0) + int(facts.get("unsized_runs") or 0)
+    smallest = facts.get("min_pt")
+    if smallest is not None and float(smallest) < floor - tol_pt:
+        return FAILED, "below_min"
+    if unmeasured:
+        return UNKNOWN, "unmeasured_runs"
+    if smallest is None:
+        return NOT_APPLICABLE, "no_text"
+    return VERIFIED, "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -802,7 +1113,30 @@ def _norm(s: str) -> str:
     return " ".join(str(s).split())
 
 
-def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, list[str]]:
+def _check_text_size(observed: dict, profile: dict | None, tol_pt: float, notes: list[str]) -> str:
+    """成品实测字号这一项（ADR 0203）：阈值只从出版规范的 `min_effective_font_size_pt` 来、容差由调用方给
+    （本模块不写 pt 数，RC-071）；判据本体是 `text_size_verdict()`。判定的原因码与两个数（量到的最小字号、
+    规范下限）记回 `observed.text_size`，`summary()` 只投影这三样，界面据此说一句人话。"""
+    floor = (profile or {}).get("min_effective_font_size_pt")
+    verdict, reason = text_size_verdict(observed, floor, tol_pt=tol_pt)
+    facts = observed.get("text_size")
+    if isinstance(facts, dict):
+        facts["verdict_reason"] = reason
+        facts["floor_pt"] = (
+            float(floor) if reason in ("below_min", "ok", "unmeasured_runs") else None
+        )
+        if verdict == FAILED:
+            notes.append(
+                f"成品里最小的文字 {facts.get('min_pt')} pt，低于规范的 {float(floor):g} pt"
+            )
+        elif reason == "unmeasured_runs":
+            notes.append("有文字没画出字形（公式轮廓 / 只进文本层）或 em 不明，成品字号量不全")
+    return verdict
+
+
+def _check_pdf(
+    observed: dict, plan: dict, profile: dict | None, *, text_size_tol_pt: float = 0.0
+) -> tuple[dict, list[str]]:
     checks: dict[str, str] = {}
     notes: list[str] = []
     checks["integrity"] = observed["integrity"]
@@ -830,7 +1164,7 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
         checks["size"] = VERIFIED if ok else FAILED
     exceeded = observed.get("budget_exceeded")
     if exceeded:
-        for k in ("carrier", "fonts_embedded", "text_layer", "image_ppi"):
+        for k in ("carrier", "fonts_embedded", "text_layer", "image_ppi", "glyphs"):
             checks[k] = UNKNOWN
         notes.append(f"内容流遍历预算耗尽（{exceeded}），普查 / 字体 / 文字 / 位图未核验")
     else:
@@ -853,11 +1187,45 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
             checks["fonts_embedded"] = NOT_APPLICABLE
         elif any(f["embedded"] == FAILED for f in used):
             checks["fonts_embedded"] = FAILED
+            bad = [f["name"] for f in used if f.get("program_mismatch")]
+            if bad:
+                notes.append(
+                    f"字体类型与嵌入的字体程序对不上（TrueType 槽里装的不是 TrueType）：{bad[:5]}"
+                )
         elif any(f["embedded"] == UNKNOWN for f in used):
             checks["fonts_embedded"] = UNKNOWN
             notes.append("有 Type 3 字体（字形在 CharProcs 里），嵌入这一维记 unknown")
         else:
             checks["fonts_embedded"] = VERIFIED
+        # LastResort 只有**上墨**画过字才是图上的方块：只被选中、只进文字层（Tr 3 / 7）的不算（Codex #2169）
+        tofu = sorted(
+            {
+                f["name"]
+                for f in used
+                if (f.get("last_resort") and f.get("painted", True)) or f.get("notdef")
+            }
+        )
+        if not used:
+            checks["glyphs"] = NOT_APPLICABLE
+        elif tofu:
+            checks["glyphs"] = FAILED
+            notes.append(f"有字画成了缺字方块（.notdef 或 LastResort 字体）：{tofu[:5]}")
+        else:
+            # 简单字体（TrueType / Type 1）的码 → 字形要读字体程序自己的 cmap，这里判不了：不再因此记
+            # unknown（2026-11-25 用户：提示干净些），只看其余能判的字体；全是这种字体就说「不适用」
+            judged = [
+                f
+                for f in used
+                if not (f.get("notdef_unchecked") and f.get("subtype") in _GLYPHS_UNJUDGED_SIMPLE)
+            ]
+            if len(judged) < len(used):
+                notes.append("简单字体（TrueType / Type 1）判不了缺字方块，缺字这一项只看其余字体")
+            if not judged:
+                checks["glyphs"] = NOT_APPLICABLE
+            elif any(f.get("notdef_unchecked") for f in judged):
+                checks["glyphs"] = UNKNOWN
+            else:
+                checks["glyphs"] = VERIFIED
         expected = plan.get("text")
         if expected is None:
             checks["text_layer"] = UNKNOWN if used else NOT_APPLICABLE
@@ -913,6 +1281,7 @@ def _check_pdf(observed: dict, plan: dict, profile: dict | None) -> tuple[dict, 
         if outside:
             notes.append(f"这些对象的包围盒越出页面（会被裁掉）：{outside[:5]}")
         notes.append("裁切只对计划里的对象判；外来页内部不分析（unknown）")
+    checks["text_size"] = _check_text_size(observed, profile, text_size_tol_pt, notes)
     return checks, notes
 
 
@@ -967,6 +1336,32 @@ def _check_raster(observed: dict, plan: dict, profile: dict | None) -> tuple[dic
     return checks, notes
 
 
+#: 「留意」（不是失败、不拦交付）：成品能用，但投稿时可能被退，或者有更好的做法。闭集，前端按码出文案
+ADVISORY_TYPE3_FONTS = "type3_fonts"
+ADVISORY_SCRIPTED_RASTER = "scripted_raster"
+ADVISORIES = (ADVISORY_TYPE3_FONTS, ADVISORY_SCRIPTED_RASTER)
+
+
+def advisories(fmt: str, observed: dict, plan: dict) -> list[dict]:
+    """PDF 成品上要「留意」的事：
+
+    * `type3_fonts`：用到了 Type 3 字体（只量字节）——IEEE、Elsevier 等会退稿；
+    * `scripted_raster`：生产者说这几张有脚本的图是按磁盘上的位图原件整张嵌进来的（`plan.scripted_raster_panels`），
+      而成品里确实有位图——用脚本重画就是矢量。
+
+    预算耗尽 / 没有读取器时字体没看完，不报 `type3_fonts`（不知道 ≠ 没有，但也不编一条）。"""
+    if fmt != "pdf" or observed.get("integrity") != VERIFIED or observed.get("budget_exceeded"):
+        return []
+    out: list[dict] = []
+    type3 = sorted({f["name"] or "?" for f in observed.get("fonts_used", []) if f.get("type3")})
+    if type3:
+        out.append({"code": ADVISORY_TYPE3_FONTS, "fonts": type3[:5], "count": len(type3)})
+    panels = [str(x) for x in (plan.get("scripted_raster_panels") or [])]
+    if panels and observed.get("images"):
+        out.append({"code": ADVISORY_SCRIPTED_RASTER, "panels": panels[:5], "count": len(panels)})
+    return out
+
+
 def inspect(
     path: Path,
     fmt: str,
@@ -978,11 +1373,13 @@ def inspect(
     probe=None,
     run_id: str | None = None,
     svg_budget: SVGBudget | None = None,
+    text_size_tol_pt: float = 0.0,
 ) -> dict:
     """封口产物 → ArtifactManifest（plan / observed / checks / policy 分开；`artifact.sha256` 是文件字节）。
 
     `plan` 由生产者给（不改）；`profile` 是出版规范（严格政策的阈值来源，调用方从 `profilestore` 解析）；
     `run_id` 是这次作业的 id（U09 四身份里的 `run`——只进 `identity.run`，不进语义 / render 身份）。
+    `text_size_tol_pt` 是字号下限判据的数值容差（调用方从 `profiles.FONT_FLOOR_TOL_PT` 给，ADR 0203）。
     """
     if policy not in POLICIES:
         raise ValueError(f"policy 非法: {policy!r}")
@@ -1003,7 +1400,7 @@ def inspect(
         sha256 = hashlib.sha256(data).hexdigest()
     if fmt == "pdf":
         observed = observe_pdf_any(path, probe=probe, budget=budget)
-        checks, notes = _check_pdf(observed, plan, profile)
+        checks, notes = _check_pdf(observed, plan, profile, text_size_tol_pt=text_size_tol_pt)
         kind = "pdf"
     elif fmt == "svg":
         observed = observe_svg(path, budget=svg_budget)
@@ -1053,6 +1450,7 @@ def inspect(
             "optional_unknown": optional_unknown,
         },
         "notes": notes,
+        "advisories": advisories(fmt, observed, plan),
         "scope": {
             "budget": asdict(svg_budget or SVGBudget())
             if fmt == "svg"
@@ -1158,6 +1556,7 @@ def summary(manifest: dict) -> dict:
         "required": list(manifest["policy"]["required"]),
         "checks": dict(manifest["checks"]),
         "notes": list(manifest["notes"]),
+        "advisories": [dict(a) for a in manifest.get("advisories") or []],
         "carrier": manifest["observed"].get("carrier"),
         "size_pt": manifest["observed"].get("size_pt"),
         "px": manifest["observed"].get("px"),
@@ -1169,6 +1568,18 @@ def summary(manifest: dict) -> dict:
         "text_outlined": manifest["plan"].get("text_outlined") is True,
         "identity": dict(manifest.get("identity") or {}),
         "provenance": dict(manifest.get("provenance") or {}),
+        "text_size": _text_size_summary(manifest["observed"].get("text_size")),
+    }
+
+
+def _text_size_summary(facts) -> dict | None:
+    """`checks.text_size` 那一句话要的三样（ADR 0203）：原因码、量到的最小字号、规范下限。不带字号表。"""
+    if not isinstance(facts, dict) or "verdict_reason" not in facts:
+        return None
+    return {
+        "reason": facts["verdict_reason"],
+        "min_pt": facts.get("min_pt"),
+        "floor_pt": facts.get("floor_pt"),
     }
 
 
@@ -1176,6 +1587,7 @@ def summary(manifest: dict) -> dict:
 _PUBLIC_SOURCE_KEYS = ("origin", "kind", "bytes_sha256", "receipt_identity", "patch_hash")
 _PUBLIC_RECEIPT_KEYS = (
     "receipt_identity",
+    "profile",
     "completeness",
     "runtime_rejected",
     "pid_check",
@@ -1269,5 +1681,6 @@ __all__ = [
     "parse_tounicode",
     "public_projection",
     "summary",
+    "text_size_verdict",
     "uninspected",
 ]

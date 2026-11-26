@@ -64,6 +64,7 @@ export function CanvasThumb({
   transparent = false,
   flush = false,
   pxWidth,
+  media = true,
   editedPanel,
   exportedText,
   exportedShape,
@@ -87,6 +88,12 @@ export function CanvasThumb({
    * （放大预览时更清晰）；不给就是缩略图档 200。
    */
   pxWidth?: number
+  /**
+   * 面板是否请求磁盘 / 引擎图片。默认 true，DOM 与不带这个 prop 之前逐字相同。
+   * 归属待确认的候选行关掉它：那里的 `fileId` 只在别的项目里验证过，按当前项目
+   * `/api/render` 取同名素材等于拿另一张图冒充这一版；面板退回下面的结构矩形。
+   */
+  media?: boolean
   /**
    * 导出预览用：这张面板要画「带图内修改」的那一版时返回它的文档对象（按它的 overrides 走
    * `useVariantPng` 出图，出来之前 / 出不来时挂磁盘图）；返回 null 或不给 = 磁盘素材。
@@ -182,20 +189,33 @@ export function CanvasThumb({
         .map((o, i) => {
           const key = o.id ?? `i${i}`
           if (o.type === 'panel' && o.fileId) {
-            const bucket = pxWidth && w > 0 ? bucketFor((o.w / w) * pxWidth) : 200
-            const href =
-              o.fileKind === 'runtime'
-                ? runtimePreviewUrl(o.fileId, nonce[o.fileId])
-                : renderUrl(o.fileId, bucket, byId[o.fileId]?.mtime)
-            const edited = editedPanel?.(o)
-            if (edited) {
+            if (media) {
+              const bucket = pxWidth && w > 0 ? bucketFor((o.w / w) * pxWidth) : 200
+              const href =
+                o.fileKind === 'runtime'
+                  ? runtimePreviewUrl(o.fileId, nonce[o.fileId])
+                  : renderUrl(o.fileId, bucket, byId[o.fileId]?.mtime)
+              const edited = editedPanel?.(o)
+              if (edited) {
+                return (
+                  <EditedThumbImage
+                    key={key}
+                    panel={edited}
+                    bucket={bucket}
+                    rev={o.fileKind === 'runtime' ? (nonce[o.fileId] ?? 0) : (byId[o.fileId]?.mtime ?? 0)}
+                    fallbackHref={href}
+                    x={o.x}
+                    y={o.y}
+                    width={o.w}
+                    height={o.h}
+                  />
+                )
+              }
               return (
-                <EditedThumbImage
+                <ThumbImage
                   key={key}
-                  panel={edited}
-                  bucket={bucket}
-                  rev={o.fileKind === 'runtime' ? (nonce[o.fileId] ?? 0) : (byId[o.fileId]?.mtime ?? 0)}
-                  fallbackHref={href}
+                  fileId={o.fileId}
+                  href={href}
                   x={o.x}
                   y={o.y}
                   width={o.w}
@@ -203,17 +223,7 @@ export function CanvasThumb({
                 />
               )
             }
-            return (
-              <ThumbImage
-                key={key}
-                fileId={o.fileId}
-                href={href}
-                x={o.x}
-                y={o.y}
-                width={o.w}
-                height={o.h}
-              />
-            )
+            // 不取图：落到下面统一的结构矩形（面板落位仍看得见）
           }
           if (o.type === 'text') {
             const exact = exportedText?.(o)
@@ -238,25 +248,25 @@ export function CanvasThumb({
           const exactShape = exportedShape?.(o)
           if (exactShape) return <ThumbShape key={key} obj={exactShape} />
           const common = {
-            key,
             fill: 'none',
             stroke: 'currentColor',
             strokeWidth: Math.max(w, h) / 150,
             className: 'text-paper-ink-3',
           }
-          if (o.type === 'path' && Array.isArray(o.subpaths)) {
+          if ((o.type === 'path' || o.type === 'pathText') && Array.isArray(o.subpaths)) {
             // 自由路径的示意：沿它自己的轮廓画一圈灰线（同一个 `pathGeometry`，不画端型、不填色）
             const d = pathD(pathGeometry({ subpaths: o.subpaths }, o.w, o.h, 0).fill)
-            if (d) return <path {...common} d={d} transform={`translate(${o.x} ${o.y})`} />
+            if (d) return <path key={key} {...common} d={d} transform={`translate(${o.x} ${o.y})`} />
           }
           if (o.type === 'shape' && o.shape === 'ellipse') {
-            return <ellipse {...common} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} />
+            return <ellipse key={key} {...common} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} />
           }
           if (o.type === 'arrow' || (o.type === 'shape' && o.shape === 'line')) {
-            return <line {...common} x1={o.x} y1={o.y} x2={o.x + o.w} y2={o.y + o.h} />
+            return <line key={key} {...common} x1={o.x} y1={o.y} x2={o.x + o.w} y2={o.y + o.h} />
           }
           return (
             <rect
+              key={key}
               {...common}
               x={o.x}
               y={o.y}

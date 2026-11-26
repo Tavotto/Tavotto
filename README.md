@@ -53,7 +53,7 @@
 
 1. **Install it.** Open the `.dmg` or run the `.exe` from the buttons above. The installer carries its own Python with numpy, matplotlib, pandas, scipy, seaborn and Pillow, so you do not install Python. The download is about 195 MB on macOS and 89 MB on Windows.
 2. **Open your figures.** Drag a matplotlib script (`.py`) onto the window, or open the folder that holds your figure scripts. The home page also offers a guided example.
-3. **Edit and export.** Double-click a panel to edit inside it, arrange panels on the page, then press Export. The preflight runs before anything is written.
+3. **Edit and export.** Double-click a panel to edit inside it, arrange panels on the page, then press Export. The pre-submission check runs before anything is written.
 
 On Windows, an unsigned installer makes SmartScreen show a prompt on first run: choose *More info → Run anyway*, or check the file against `SHA256SUMS.txt` on the release page first. More: [installation details](docs/guide/install-advanced.md).
 
@@ -99,7 +99,7 @@ Place panels on a page measured in millimetres at the size their script drew the
 
 ### Check and export for submission
 
-Export writes PDF with real vector text, plus PNG, TIFF and SVG (PNG and TIFF at 300 to 1200 ppi; EPS too when you export a single figure that has a script). Alongside, the figure is checked against a publication profile at its final physical size: text under the font floor, the wrong column width, low-dpi rasters. Findings are sorted into to fix, to review, not verifiable and suggestions. They never lock the Export button; anything still unresolved is recorded in a style-check report written with the files. [Formats, levels and profile](docs/guide/export-and-preflight.md).
+Export writes PDF with real vector text, plus PNG, TIFF and SVG (PNG and TIFF at 300 to 1200 ppi; EPS too when you export a single figure that has a script). Alongside, the figure is checked against a publication profile at its final physical size: text under the font floor, the wrong column width, low-dpi rasters. Findings are sorted into to fix, to review, not verifiable and suggestions. They never lock the Export button; anything still unresolved is recorded in a pre-submission check report written with the files. [Formats, levels and profile](docs/guide/export-and-preflight.md).
 
 ![The export dialog: output as whole page or each figure, PDF and PNG at 600 ppi, and the pre-export checks against the default spec showing 1 to review and 3 not verifiable.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.png)
 
@@ -160,7 +160,7 @@ Just want AI inside Tavotto? You don't need this section: click "Connect AI" in 
 | What you want to do | What to install |
 | --- | --- |
 | Codex draws the figure; you keep dragging and tweaking it in the Tavotto desktop window | The Tavotto desktop app + the Codex plugin (no Python engine needed) |
-| Use Tavotto's canvas, preflight, editing and export tools directly inside Codex | The Codex plugin + the Tavotto Python engine |
+| Use Tavotto's canvas, pre-submission check, editing and export tools directly inside Codex | The Codex plugin + the Tavotto Python engine |
 | Change Tavotto itself | See "Contributors: developing from source" below |
 
 #### The full Codex integration
@@ -228,7 +228,7 @@ Send Codex this message, in full:
 
 Rendering, composition and export are local; Tavotto does not upload your figures, scripts, projects or data. It makes two requests on its own: a once-a-day check of GitHub Releases for a new version (or the project's China mirror, `dl.tavotto.cn`, depending on your time zone; switch it off under **Settings → Check for updates**), and anonymous usage statistics that stay **off until you say yes** and can never contain figures, scripts, paths or text. Diagnostics bundles are saved locally, redacted, and sent only if you confirm. Details: [docs/privacy.md](docs/privacy.md) and the [event contract](docs/analytics/telemetry-events.md). Where Tavotto keeps its files: [docs/guide/files-and-data.md](docs/guide/files-and-data.md).
 
-Free code signing is provided by SignPath.io, certificate by SignPath Foundation; see the [code signing policy](docs/code-signing-policy.md). Report security issues through [private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new), not a public issue.
+Windows installers are signed with the maintainer's Certum code signing certificate once signing is enabled for a release (each release's notes say whether it is); see the [code signing policy](docs/code-signing-policy.md). Report security issues through [private reporting](https://github.com/Tavotto/Tavotto/security/advisories/new), not a public issue.
 
 ## Contributing
 

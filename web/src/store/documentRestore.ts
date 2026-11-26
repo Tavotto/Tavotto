@@ -38,7 +38,7 @@
 import { msg } from '@/i18n'
 import { newId } from '@/lib/id'
 import { currentProjectId } from '@/lib/session'
-import { emptyProject } from '@/types/document'
+import { emptyProject, migrateToProject, type CanvasData, type FigureDocument, type ProjectDocument } from '@/types/document'
 import { useUiStore } from '@/store/uiStore'
 import {
   acceptProbe,
@@ -58,6 +58,7 @@ import {
   registerRestoreSession,
   refreshRecentDocsFromIndex,
   relabelReadyGate,
+  saveNowWithResult,
   resetRestoreGateForTests,
   settleRestore,
   supersedeRestore,
@@ -68,10 +69,21 @@ import {
   type RestoreGate,
   type RestoreToken,
 } from '@/store/documentStore'
-import { fetchLayoutOwnerEvidence, fetchRecoveryCandidates, type RecoveryCandidateItem, type SessionIndexStatus } from '@/lib/api'
+import {
+  claimProjectHistory,
+  inheritRemapForCopy,
+  fetchLayoutOwnerEvidence,
+  fetchProjectHistory,
+  fetchRecoveryCandidates,
+  fetchVersionDoc,
+  type ProjectHistoryItem,
+  type RecoveryCandidateItem,
+  type SessionIndexStatus,
+} from '@/lib/api'
 import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
 import { confirmRestored, planRestore, type CandidatePlan, type RestoreCandidate } from '@/lib/projectDocs'
 import { fitStageNow } from '@/store/zoomToSelection'
+import { applyCanvasVersion } from '@/store/canvasVersionRecipe'
 
 export { whenDocumentReady }
 /** 显式意图取代未落定的恢复（普通 `switchDocument` 已经会做；不换文档的入口用这个） */
@@ -80,6 +92,7 @@ export const supersede = supersedeRestore
 /* ------------------------------ 类型 ------------------------------ */
 
 export type RestoreIssueKind =
+  | 'chart_source_mismatch'
   | 'unavailable'
   | 'missing'
   | 'invalid'
@@ -93,7 +106,14 @@ export type RestoreIssueKind =
  * 恢复没成、等用户处理的那件事。`ref` 是失败的首选（`session_unavailable` 时还不知道 docId，可为 null）；
  * `alternatives` 是**已只读验证过可打开**的其他候选。界面只露一句话 + 一个主按钮，其余折叠。
  */
-export type AltCandidate = RestoreCandidate & { localCopy?: true }
+/**
+ * `at`：恢复卡「选一份」名单上每行右侧的最后修改时间（区分同名候选）。只是辨认信息，不参与任何判决；拿不到就缺席。
+ */
+export type AltCandidate = RestoreCandidate & {
+  localCopy?: true
+  history?: ProjectHistoryItem
+  at?: number
+}
 
 export interface RestoreIssue {
   pj: string | null
@@ -263,7 +283,10 @@ async function installChecked(
 /** 磁盘读失败（不可用 / 坏）但手边有本机副本：把它作为**用户明确选择**才打开的备选（它可能比磁盘旧） */
 function localCopyAlt(c: RestoreCandidate, probe: ProbeResult): AltCandidate[] {
   if ((probe.kind !== 'unavailable' && probe.kind !== 'invalid') || !probe.local) return []
-  return [{ ...c, localCopy: true }]
+  // 本机副本就是这个 docId 的槽位正文：不带项目内时间线的分派信息，选了它走「打开本机副本」，
+  // 不再回到 `installFromHistory`（那会再读一次读不出的槽位、又回到同一张恢复卡，Codex #2235 P2）
+  const { history: _history, ...plain } = c as AltCandidate
+  return [{ ...plain, localCopy: true }]
 }
 
 function needsUser(
@@ -286,15 +309,17 @@ function needsUser(
 }
 
 const issueKindOf = (probe: ProbeResult): RestoreIssueKind =>
-  probe.kind === 'found' ? 'invalid' : probe.kind === 'too_new' ? 'too_new' : probe.kind
+  probe.disk.kind === 'invalid' && probe.disk.code === 'chart_source_mismatch'
+    ? 'chart_source_mismatch'
+    : probe.kind === 'found' ? 'invalid' : probe.kind === 'too_new' ? 'too_new' : probe.kind
 
 /** 已只读验证过可打开的候选（最多 5 份；探测零副作用） */
 async function verifiedAlternatives(
   token: RestoreToken,
   candidates: RestoreCandidate[],
   excludeId: string | null,
-): Promise<RestoreCandidate[] | null> {
-  const out: RestoreCandidate[] = []
+): Promise<AltCandidate[] | null> {
+  const out: AltCandidate[] = []
   for (const c of candidates.slice(0, 5)) {
     if (c.id === excludeId || out.some((o) => o.id === c.id)) continue
     const probe = await probeDocument(c.id, token.pj)
@@ -303,7 +328,8 @@ async function verifiedAlternatives(
     // 提供给用户之前读到的正文修订号记在候选上（候选自己没有时）：用户坐在面板上的这段时间里同一个 docId 可能被别的项目
     // 存过，点选时 `installChecked` 据此发现对不上并复核归属，而不是装「此刻磁盘上的任何东西」
     const seen = probe.from === 'disk' && probe.disk.kind === 'found' ? probe.disk.revision : null
-    out.push(!c.expectedRevision && !c.expectedAbsent && seen ? { ...c, expectedRevision: seen } : c)
+    const meta = probe.doc ? { at: probe.doc.updatedAt } : {}
+    out.push({ ...(!c.expectedRevision && !c.expectedAbsent && seen ? { ...c, expectedRevision: seen } : c), ...meta })
   }
   return out
 }
@@ -439,28 +465,47 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       (!isForeignDocument(i.doc_id, pj) || i.evidence === 'owners'),
   )
   // 发现的行带着扫描那一刻的正文修订号：之后读正文时对不上（共用 docId 的别的项目在两次读之间存过）就要复核归属
-  const asCandidate = (i: RecoveryCandidateItem): RestoreCandidate => ({
+  const asCandidate = (i: RecoveryCandidateItem): AltCandidate => ({
     id: i.doc_id,
     name: i.name,
+    ...(i.updatedAt !== null ? { at: i.updatedAt } : {}),
     sources: ['discovered'],
     ownership: 'this',
     ...(i.evidence ? { ownershipEvidence: i.evidence } : {}),
     ...(i.revision ? { expectedRevision: i.revision } : {}),
     ...(isForeignDocument(i.doc_id, pj) && i.evidence === 'owners' ? { correctsIndex: true } : {}),
   })
-  const asCandidates = items.slice(0, 5).map(asCandidate)
-  if (!scan.complete) {
+  // 项目自己的时间线（ADR 0211 第一期）：挪走 / 复制 / 换 origin 之后本机会话状态与索引都认不出这个项目，
+  // 随文件夹走的只有 `tavottofile/versions/*.vx`。槽位发现已列出的 docId 以槽位那一行为准，不重复
+  const hist = await discoverHistory(token, new Set(items.map((i) => i.doc_id)))
+  if (hist === null) return { kind: 'superseded' }
+  if (hist === 'unavailable' && items.length === 0) return needsUser(token, 'session_unavailable', null)
+  const histCandidates = hist === 'unavailable' ? [] : hist.items
+  const total = items.length + histCandidates.length
+  const asCandidates: AltCandidate[] = [...items.map(asCandidate), ...histCandidates].slice(0, 5)
+  // 项目内候选没列全（太多 / 读不到）同样是「数不清」：不自动采用
+  if (!scan.complete || hist === 'unavailable' || !hist.complete) {
     // 数不清（翻到上限游标还在，或中途读不到）：不自动采用、也不说没有。已经看到的给用户选；一份都没有就给重试
     //（最接近的现有类别 `index_degraded`：「恢复记录读不全」，出口 = 重试 / 继续新建）
-    return items.length > 0
+    return total > 0
       ? needsUser(token, 'choose', null, asCandidates)
       : needsUser(token, 'index_degraded', null)
   }
   // 索引读不全 / 坏过（degraded）时归属表是空的，发现的行只能按较弱的 versions / assets 证据归类；
   // 单独一行只有这种弱证据也一样——自动采用只给最强的 `owners` 证据。这两种情况都交给用户选，不替他认领
   const indexDegraded = plan.session.index === 'degraded' || scan.index === 'degraded'
-  if (items.length >= 1 && (indexDegraded || (items.length === 1 && items[0].evidence !== 'owners'))) {
+  if (total >= 1 && (indexDegraded || (total === 1 && items.length === 1 && items[0].evidence !== 'owners'))) {
     return needsUser(token, 'choose', null, asCandidates)
+  }
+  // 多份候选不猜（ADR 0027 §5 / 0211）：列出来让用户选
+  if (total >= 2) return needsUser(token, 'choose', null, asCandidates)
+  if (histCandidates.length === 1) {
+    const cand = histCandidates[0]
+    const out = await installFromHistory(token, cand, 'restored')
+    if (out.kind === 'restored') {
+      useUiStore.getState().setStatus(msg('restore.autoAdopted', { name: cand.name }, 'workspace'), 'info')
+    }
+    return out
   }
   if (items.length === 1) {
     const item = items[0]
@@ -485,7 +530,6 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       probe.kind === 'too_new' ? { docId: item.doc_id, schema: probe.schema ?? 0 } : undefined,
     )
   }
-  if (items.length >= 2) return needsUser(token, 'choose', null, asCandidates)
   // 索引退化时项目归属可能读不全，零行并不证明没有历史。
   if (indexDegraded) return needsUser(token, 'index_degraded', null)
   // 0 份且索引完整：新项目 / 没有历史。
@@ -538,6 +582,200 @@ async function discoverAll(
     cursor = res.next_cursor
   }
   return { items, complete: false, index }
+}
+
+/* ------------------------------ 项目自己的时间线（ADR 0211 第一期） ------------------------------ */
+
+/**
+ * 后端给的 `mode` 在前端还要过一道本机索引（`isForeignDocument`，与后端 `owner_conflict` 同一条判据的另一侧）：
+ * 后端**没有**归属记录（`owner: 'none'`）而本机索引确知它属于别的项目——那个项目可能就在旁边（复制），
+ * 后端判不出来，这边也不认领：按复制处理，新开一个 docId。后端确知挪走（`moved`）/ 本项目（`this`）才沿用 docId。
+ */
+function historyMode(h: ProjectHistoryItem, pj: string | null): ProjectHistoryItem['mode'] {
+  if (h.mode !== 'copy' && h.owner === 'none' && isForeignDocument(h.doc_id, pj)) return 'copy'
+  return h.mode
+}
+
+function asHistoryCandidate(h: ProjectHistoryItem, pj: string | null): AltCandidate {
+  const mode = historyMode(h, pj)
+  return {
+    id: h.doc_id,
+    name: h.name,
+    sources: ['project_history'],
+    ownership: 'this',
+    history: { ...h, mode },
+    ...(h.ts ? { at: h.ts } : {}),
+    // 沿用 docId 时本机索引陈旧地记着旧项目（挪走）：装之前纠正，否则首次写盘按旧项目的 pj 发（`ownerProjectForWrite`）
+    ...(mode !== 'copy' && isForeignDocument(h.doc_id, pj) ? { correctsIndex: true } : {}),
+    ...(mode === 'slot' && h.revision ? { expectedRevision: h.revision } : {}),
+  }
+}
+
+/** 列项目内时间线候选（有界重试同 session 读取）。令牌过期回 null；404（旧后端）= 没有 */
+async function discoverHistory(
+  token: RestoreToken,
+  skip: Set<string>,
+): Promise<{ items: AltCandidate[]; complete: boolean } | 'unavailable' | null> {
+  let res = await fetchProjectHistory(token.pj)
+  for (let attempt = 0; res === 'unavailable' && attempt < retryDelays.length; attempt++) {
+    if (!isRestoreTokenCurrent(token)) return null
+    await pause(retryDelays[attempt], token)
+    if (!isRestoreTokenCurrent(token)) return null
+    res = await fetchProjectHistory(token.pj)
+  }
+  if (!isRestoreTokenCurrent(token)) return null
+  if (res === 'unsupported') return { items: [], complete: true }
+  if (res === 'unavailable') return 'unavailable'
+  return {
+    items: res.items.filter((h) => !skip.has(h.doc_id)).map((h) => asHistoryCandidate(h, token.pj)),
+    complete: !res.truncated,
+  }
+}
+
+/**
+ * 装一份项目内时间线候选：
+ *  - `slot`：本机槽位就是这份。归属不是本项目（挪走 / 没有记录）先认领（后端锁里重判、对着候选里的 revision），
+ *    再走普通的槽位探测与 `installChecked`；节点比槽位新时，装好之后把节点内容作为一笔可撤销的编辑写进去；
+ *  - `node` / `copy`：读最近一个非空节点，先装一份空白工作副本（`node` 沿用 docId，`copy` 新 docId），再把节点内容
+ *    作为一笔 commit 写进去（配方与时间线恢复同一份 `canvasVersionRecipe`）——⌘Z 一步退回；整份项目节点直接装成工作副本并当场落盘。随后照常自动保存、记成 last。
+ * 认领被拒（此刻不再满足挪走的条件）退成复制，不越过后端去抢归属。
+ */
+async function installFromHistory(token: RestoreToken, picked: AltCandidate, reason: Reason): Promise<RestoreOutcome> {
+  if (!picked.history) return needsUser(token, 'missing', { id: picked.id, name: picked.name })
+  let cand = picked
+  let h: ProjectHistoryItem = picked.history
+  if (h.mode === 'slot' && h.owner !== 'this') {
+    const claimed = await claimSlot(token, cand, h)
+    if (claimed === null) return { kind: 'superseded' }
+    // 问不到 ≠ 被拒：不拿节点另开一份（那会把含节点之后修改的槽位丢在旧归属下、再把新的一份记成 last），给重试
+    if (claimed === 'unavailable') return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
+    if (claimed === 'missing') return needsUser(token, 'missing', { id: cand.id, name: cand.name })
+    // 认领成功（可能对着重列之后的新 revision）或后端重列后明说是复制 / 只剩节点：照它说的装
+    h = claimed
+    cand = { ...cand, history: h, ...(h.mode === 'slot' && h.revision ? { expectedRevision: h.revision } : {}) }
+  }
+  const mode = h.mode
+  if (mode === 'copy' && h.owner === 'other') {
+    // 复制（旧项目还在）：复制品另开一份排版的这一刻，把复制源的改指表拷一份过来（后端重判、幂等、只拷改指表）。
+    // 在装文档之前等它：随后的首次渲染就按拷过来的规则读数据
+    await inheritRemapForCopy(cand.id, token.pj)
+    if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
+  }
+  if (mode === 'slot') {
+    const probe = await probeWithRetry(token, cand.id)
+    if (!probe) return { kind: 'superseded' }
+    if (probe.kind !== 'found') {
+      return needsUser(token, issueKindOf(probe), { id: cand.id, name: cand.name }, [...localCopyAlt(cand, probe)])
+    }
+    const out = await installChecked(token, probe, null, cand, reason)
+    if (out.kind === 'restored' && h.node_newer) await applyNodeOnTop(token, cand.id, h)
+    return out
+  }
+  let node: Awaited<ReturnType<typeof fetchVersionDoc>>
+  try {
+    node = await fetchVersionDoc(cand.id, h.vid, token.pj)
+  } catch {
+    return isRestoreTokenCurrent(token)
+      ? needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
+      : { kind: 'superseded' }
+  }
+  if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
+  const id = mode === 'node' ? cand.id : newId('d')
+  const projectNode = node.doc.schema !== 2
+  let pd: ProjectDocument | null
+  if (projectNode) {
+    // 整份项目节点（原地升级的备份原语产出）：它本身就是一份完整的排版，直接装成工作副本
+    pd = migrateToProject(node.doc)
+    if (pd && cand.name) pd = { ...pd, project: { ...pd.project, name: cand.name } }
+  } else {
+    // 单画布节点：先装一份空白工作副本（画布 id 沿用节点的，时间线按画布分组仍对得上），门放开后一笔 commit 写进去
+    const base = emptyProject()
+    const canvas: CanvasData = { ...base.canvases[0], ...(h.canvasId ? { id: h.canvasId } : {}) }
+    pd = {
+      ...base,
+      project: { ...base.project, ...(cand.name ? { name: cand.name } : {}) },
+      canvases: [canvas],
+      activeCanvasId: canvas.id,
+    }
+  }
+  if (!pd) return needsUser(token, 'invalid', { id: cand.id, name: cand.name })
+  if (!canCommitRestore(token)) {
+    settleRestore(token, { state: 'ready', reason: 'superseded' })
+    return { kind: 'kept_explicit' }
+  }
+  if (cand.correctsIndex && mode === 'node' && token.pj) correctRecordedProject(id, token.pj)
+  if (!installRestoredDocument(token, pd, id, null)) return { kind: 'superseded' }
+  settleRestore(token, { state: 'ready', reason })
+  if (projectNode) {
+    // 没有可撤销的那一步（与时间线恢复整份项目节点同一处境）：当场落盘，下次打开按 last 恢复
+    void saveNowWithResult(true)
+  } else {
+    commitNode(node.doc as FigureDocument, node.name)
+  }
+  return { kind: 'restored', id }
+}
+
+/** 节点内容作为一笔普通的恢复写进当前画布：⌘Z 一步退回，随后照常自动保存 */
+function commitNode(version: FigureDocument, name?: string): void {
+  useDocumentStore
+    .getState()
+    .commit(historyLabel({ name }), (d) => applyCanvasVersion(d, version), { overrides: 'restored' })
+}
+
+/**
+ * 认领槽位（`mode=slot` 且归属不是本项目）。回认领成功时的那一行（`owner:'this'`），或后端重列之后它说该怎么装的那一行；
+ * `'unavailable'` = 问不到（含重列问不到）；`'missing'` = 重列里这份不见了；令牌过期回 null。
+ * 409 只说明此刻不满足条件或槽位刚被存过（revision 变了）：重列一次，仍是 `slot` 就对着新 revision 再认领一次，
+ * 后端这次明说 `copy` / `node` 才照办——不在前端自己把「被拒」折成复制。
+ */
+async function claimSlot(
+  token: RestoreToken,
+  cand: AltCandidate,
+  h: ProjectHistoryItem,
+): Promise<ProjectHistoryItem | 'unavailable' | 'missing' | null> {
+  let row = h
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = row.revision ? await claimProjectHistory(cand.id, row.revision, token.pj) : 'refused'
+    if (!isRestoreTokenCurrent(token)) return null
+    if (res === 'ok') return { ...row, owner: 'this' }
+    if (res === 'unavailable') return 'unavailable'
+    const listed = await fetchProjectHistory(token.pj)
+    if (!isRestoreTokenCurrent(token)) return null
+    if (listed === 'unavailable' || listed === 'unsupported') return 'unavailable'
+    const again = listed.items.find((i) => i.doc_id === cand.id)
+    if (!again) return 'missing'
+    const next = { ...again, mode: historyMode(again, token.pj) }
+    if (next.mode !== 'slot') return next
+    if (next.owner === 'this') return next
+    row = next
+  }
+  return 'unavailable'
+}
+
+function historyLabel(node: { name?: string; ts?: number }) {
+  return msg('versions.restoreHistory', { name: node.name || '' }, 'dialogs')
+}
+
+/** 节点比槽位新（历史在别处接着写过）：槽位装好之后，把节点那张画布作为一笔可撤销的编辑写回去 */
+async function applyNodeOnTop(token: RestoreToken, id: string, h: ProjectHistoryItem): Promise<void> {
+  // 取正文要 await：回来时已经换了文档 / 开了新一轮恢复 / 用户动过手，就不往上叠（不替用户盖掉刚做的修改）
+  const before = useDocumentStore.getState()
+  const mark = { past: before.past.length, future: before.future.length, doc: before.doc }
+  let node: Awaited<ReturnType<typeof fetchVersionDoc>>
+  try {
+    node = await fetchVersionDoc(id, h.vid, token.pj)
+  } catch {
+    return
+  }
+  const st = useDocumentStore.getState()
+  const gate = getRestoreGate()
+  if (st.documentId !== id || gate.state !== 'ready' || gate.gen !== token.gen || node.doc.schema !== 2) return
+  if (st.past.length !== mark.past || st.future.length !== mark.future || st.doc !== mark.doc) return
+  if (h.canvasId && st.activeCanvasId !== h.canvasId) {
+    if (!st.canvases.some((c) => c.id === h.canvasId)) return
+    st.switchCanvas(h.canvasId)
+  }
+  commitNode(node.doc as FigureDocument, node.name)
 }
 
 /** 被扣下的 durable last 挡住了回退：给出口，不替用户越过它。其余已验证的候选（含 prev）只作为可选项 */
@@ -697,6 +935,9 @@ export async function openAlternative(id: string): Promise<RestoreOutcome> {
   if (!picked) return { kind: 'superseded' }
   const token = beginRestore(issue.pj)
   armRestoreToken(token)
+  // 项目自己的时间线里的那份（ADR 0211）：不是槽位，按后端给的 mode 走自己的安装路径
+  // 「打开本机副本」是用户的显式选择，先于项目内时间线的分派处理（Codex #2235 P2）
+  if (picked.history && !picked.localCopy) return fitIfRestored(await installFromHistory(token, picked, 'explicit'))
   const probe = await probeWithRetry(token, id)
   if (!probe) return { kind: 'superseded' }
   if (probe.kind === 'found') return fitIfRestored(await installChecked(token, probe, null, picked, 'explicit'))
@@ -996,7 +1237,7 @@ export function whenDocumentSettledForEntry(
 /* ------------------------------ 恢复没成时用户动了手 ------------------------------ */
 
 /** 首选那份明确打不开（不是暂时读不到）：没有别的排版可接时，新排版是唯一的去处 */
-const DEAD_END_KINDS = new Set<RestoreIssueKind>(['missing', 'invalid', 'too_new', 'prepare_failed'])
+const DEAD_END_KINDS = new Set<RestoreIssueKind>(['missing', 'invalid', 'chart_source_mismatch', 'too_new', 'prepare_failed'])
 /** 暂时读不到：再试一次很可能就好了 */
 const TRANSIENT_KINDS = new Set<RestoreIssueKind>(['unavailable', 'session_unavailable', 'index_degraded'])
 

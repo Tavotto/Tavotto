@@ -20,7 +20,7 @@ key 不出现在 stdout / stderr / 报告 / 错误文字里（输出流与报告
 * **完成** = 模型任务 `state == ready`，且并进建议后的默认横轴 / 纵轴 / 分组与标准答案（或用例的 `also_ok`）三项全部一致。没起任务 / 失败都不算。
 * 报：整体完成率、每条用例 N 次里对几次、「N 次全对的用例占比」、不比规则差的比例（没有出现「规则本来对、模型改错」）与「改坏规则本来对的」次数 / 用例（任何用例集都算）。
 * 每次调用记耗时（p50 / p95 / 最大值；另给每张表的合计）、请求数、输入 / 输出 / 命中缓存的输入 token、估价、**每张表平均花费**（一次运行 = 一张表）。
-* `--cases main|holdout|all`：用例集。`main` 是调提示词时用过的 22 条（已被调优污染，只当回归）；`holdout` 是留出的 24 条（标准答案先写定，不许据它改提示词）；`all` 两者合并。
+* `--cases main|holdout|all`：用例集。`main` 是调提示词时用过的 22 条（已被调优污染，只当回归）；`holdout` 是留出的 30 条（标准答案先写定，不许据它改提示词）；`all` 两者合并。
 * `--arm rules` 另输出「规则已经很确定就不问模型」的门（严 / 中 / 松三个版本）：各跳过几条、被跳过的里规则实际错了几条（硬指标：必须 0）。**只测量，没有接进产品。**
 * `--real` 的请求数上限不得少于 用例数 × 2 × N。
 
@@ -57,15 +57,21 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     )
     p.add_argument(
         "--suite",
-        choices=("recipes", "roles"),
+        choices=("recipes", "roles", "recommend"),
         default="recipes",
-        help="recipes = 配方排序用例（第 0 步）；roles = 读懂数据用例（第 1 步，规则 / 规则+模型两臂）",
+        help="recipes = 配方排序用例（第 0 步）；roles = 读懂数据用例（第 1 步，规则 / 规则+模型两臂）；"
+        "recommend = 按科学意义推荐图型用例（第 2 步；只有规则臂，量天花板，不连模型）",
     )
     p.add_argument(
         "--arm",
         choices=("rules", "both"),
         default="both",
         help="仅 --suite roles：rules = 只跑规则（不连模型、不花钱）；both = 规则 + 模型两臂（默认；规则臂就是同一次请求里的第一份响应）",
+    )
+    p.add_argument(
+        "--ideal-roles",
+        action="store_true",
+        help="仅 --suite recommend：把用例标准答案里每列的角色当「理想模型」的判断（走真的 interpret，不调模型）再量一遍；只打印，不写回用例",
     )
     p.add_argument("--real", action="store_true", help="对真模型跑（花钱）；必须同时给 --max-calls")
     p.add_argument(
@@ -75,9 +81,15 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--base-url", default=OPENAI_BASE, help="--key-file 的地址（默认 OpenAI 官方）")
     p.add_argument(
         "--effort",
-        choices=("minimal", "low", "medium", "high"),
+        choices=("none", "minimal", "low", "medium", "high"),
         default="",
-        help="--key-file 的思考强度（默认 low）",
+        help="--key-file 的思考强度（默认 low；不认的型号 / 档位服务端会 400）",
+    )
+    p.add_argument(
+        "--auto-small",
+        action="store_true",
+        help="仅 --suite roles 且 --real：开「小型号 + 最低档」自动策略（默认关：显式给什么型号 / 强度就用什么）。"
+        "与 --effort 互斥（临时连接不带 effort，型号当成「用户选的型号」）",
     )
     p.add_argument(
         "--max-calls", type=int, default=0, help="--real 的实际请求数上限（至少 用例数 × 2）"
@@ -90,7 +102,7 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         "--cases",
         choices=("main", "holdout", "all"),
         default="main",
-        help="仅 --suite roles：用例集（main 22 条已被调优污染只当回归；holdout 24 条留出集；all 两者合并）",
+        help="仅 --suite roles：用例集（main 22 条已被调优污染只当回归；holdout 30 条留出集；all 两者合并）",
     )
     p.add_argument(
         "--repeats",
@@ -105,6 +117,11 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         p.error("--repeats 要在 1 到 50 之间")
     if args.suite != "roles" and (args.repeats != 1 or args.cases != "main"):
         p.error("--repeats / --cases 只用于 --suite roles")
+    if args.suite == "recommend" and (
+        args.real or args.key_file or args.arm == "both" and "--arm" in (argv or sys.argv)
+    ):
+        # 第 2 步用例集现在只有规则臂：不连模型、不读 key 文件
+        p.error("--suite recommend 只有规则臂（--arm rules），不能和 --real / --key-file 同用")
     if args.arm == "rules" and (args.real or args.key_file):
         # 在解析任何连接 / 读任何 key 文件之前就拒绝：`--arm rules` 的意思是「不连模型、不花钱」
         p.error("--arm rules 不连模型，不能和 --real / --key-file 同用")
@@ -113,9 +130,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
             p.error("--key-file 只能和 --real 同用")
         if not args.model:
             p.error("--key-file 要同时给 --model")
-        args.effort = args.effort or "low"
+        if args.auto_small and args.effort:
+            p.error("--auto-small 与 --effort 互斥：自动策略自己定型号与强度")
+        args.effort = "" if args.auto_small else (args.effort or "low")
     elif args.model or args.effort or args.base_url != OPENAI_BASE:
         p.error("--model / --base-url / --effort 只在 --key-file 下有意义")
+    if args.auto_small and (not args.real or args.suite != "roles"):
+        p.error("--auto-small 只用于 --suite roles --real")
     if args.wire is None:
         args.wire = "openai-responses" if args.key_file else "anthropic"
     return args
@@ -193,8 +214,9 @@ def _real_connection(args, n_cases: int, label: str, repeats: int = 1):
             "model": args.model,
             "auth": "key",
             "provider_id": "bench-temp",  # 临时连接：不在 provider 存储里
-            "effort": args.effort,  # 只有这条临时连接带；`ai_structured._effort_kwargs` 认它
         }
+        if args.effort:  # 只有这条临时连接带（且显式给了才带）；`ai_structured._effort_kwargs` 认它，也让自动策略不插手
+            conn["effort"] = args.effort
     else:
         from tavotto.engine import ai_structured
 
@@ -262,6 +284,8 @@ def main(argv: list[str] | None = None) -> int:
     D = cases_mod
     if args.suite == "roles":
         return _main_roles(args, D, roles_mod, tmp_iso)
+    if args.suite == "recommend":
+        return _main_recommend(args)
     cases = D.load_cases()
     if args.only:
         wanted = {x.strip() for x in args.only.split(",") if x.strip()}
@@ -401,6 +425,7 @@ def _main_roles(args, D, DR, tmp_iso) -> int:
                     post=post,
                     request_budget=budget,
                     fresh=True,
+                    auto_small=args.auto_small,  # 默认 False：跑分显式给什么型号 / 强度就用什么
                 )
                 runs.append((k, run))
                 a = DR.default_hits(case, run.rules)["all"]
@@ -443,6 +468,9 @@ def _main_roles(args, D, DR, tmp_iso) -> int:
                 "model": r.model,
                 "expect": r.case["expect_default"],
                 "dropped": r.payload.get("dropped"),
+                # 诊断用：模型给的列角色与换算出的建议（用例是仓库里的假表，没有用户数据）
+                "roles": r.payload.get("roles"),
+                "answers": r.payload.get("answers"),
                 "usage": r.usage,
                 "calls": [
                     {
@@ -540,6 +568,36 @@ def _print_stats(st: dict, args) -> None:
         + (f"每张表平均花费 ${cost:.5f}" if cost is not None else "每张表平均花费：无法估价")
         + (f"（{st['cost_unknown_tables']} 张表无法估价）" if st["cost_unknown_tables"] else "")
     )
+
+
+def _main_recommend(args) -> int:
+    """第 2 步用例集的规则基线：对每条用例用标准答案的列角色跑现有规则，打印天花板那张表（不联网、不调模型）。"""
+    import data_figure_recommend as RC  # noqa: PLC0415 — 在隔离环境变量设好之后才 import 产品模块
+
+    cases = RC.load_recommend_cases()
+    if args.only:
+        wanted = {x.strip() for x in args.only.split(",") if x.strip()}
+        unknown = wanted - {c["id"] for c in cases}
+        if unknown:
+            print(f"未知用例：{sorted(unknown)}", file=sys.stderr)
+            return 2
+        cases = [c for c in cases if c["id"] in wanted]
+    ideal = bool(getattr(args, "ideal_roles", False))
+    rows = RC.run_all(cases, ideal_roles=ideal)
+    with tempfile.TemporaryDirectory(prefix="data-figure-recommend-a-") as work:
+        existing = RC.existing_cases_stats(Path(work)) if not args.only else None
+    print(RC.format_report(rows, existing, ideal_roles=ideal))
+    _write_report(
+        args,
+        {
+            "suite": "recommend",
+            "arm": "rules+ideal_roles" if ideal else "rules",
+            "tally": RC.tally(rows),
+            "cases": [{"id": c["id"], **m} for c, m in rows],
+            "existing": existing,
+        },
+    )
+    return 0
 
 
 def _print_gate(gate: dict) -> None:

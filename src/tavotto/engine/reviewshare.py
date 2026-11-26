@@ -5,7 +5,7 @@
 
 * **只上传画面**：每个版本只有 `snapshot.png`（走现有导出管线、长边 ≤ 3000 px、≤ 8 MiB）、元素位置表（≤ 4000 项 / 256 KiB，
   画面比例坐标）与标题 / 给审阅者的话。脚本、数据、项目文件、路径、本机信息一律不传。**出图与元素表由 `app.py` 注册的渲染回调
-  给**（`set_renderer`）：父进程这里不碰 `manifest` / `figsession`（子进程模块）。
+  给**（`set_renderer`；插件的 MCP 进程改由 `start_share` / `start_update` 的 `renderer=` 随这一次分享传入，ADR 0205）：父进程这里不碰 `manifest` / `figsession`（子进程模块）。
 * **逐次授权**：上传只由 `start_share` / `start_update`（一次点击）引出；失败、取消后不自己重试。**没有记录时轮询一次网络都不发。**
 * **目的地由代码钉死**：`REVIEW_HOSTS = {review.tavotto.cn}`；`TAVOTTO_REVIEW_ENDPOINT` 设了就必须合规（或回环开发模式
   `TAVOTTO_DIAG_DEV_LOOPBACK=1`），不合规整个功能关闭、**不回退内置端点**；`TAVOTTO_NO_REVIEW_SHARE=1` 整个功能不出现、不联网。
@@ -757,20 +757,28 @@ def _signing_key():
             seed = p.read_bytes()
         except OSError:
             seed = b""
-        if len(seed) == 32:
+        if len(seed) == 32:  # 已存在：无锁读，签名路径不为它抢跨进程锁
             return SigningKey(seed)
-        key = SigningKey.generate()
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                p.parent.chmod(0o700)
-            except OSError:
-                pass
-            atomicio.write_bytes(p, bytes(key), mode=0o600)
+            # 首次生成在跨进程锁里（ADR 0205 §四）：桌面与插件同时第一次用时只生成一把；锁里重读，已存在就用它、不覆盖
+            with reviewinbox.file_lock():
+                try:
+                    seed = p.read_bytes()
+                except OSError:
+                    seed = b""
+                if len(seed) == 32:
+                    return SigningKey(seed)
+                key = SigningKey.generate()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    p.parent.chmod(0o700)
+                except OSError:
+                    pass
+                atomicio.write_bytes(p, bytes(key), mode=0o600)
+                return key
         except OSError:
             LOG.warning("外部审阅: 设备密钥写入失败")
             raise _Failure("client_error") from None
-        return key
 
 
 def sign_headers(method: str, path: str, body: bytes, ts: int) -> dict[str, str]:
@@ -1024,7 +1032,7 @@ def _size_mm(res: Rendered) -> list[float] | None:
 
 def _render(spec: "_Spec") -> _Artifact:
     """出图：长边 ≤ 3000 px 且 ≤ 8 MiB，超了降分辨率重出；元素表超限按面积从小到大丢。"""
-    fn = _RENDERER
+    fn = spec.renderer or _RENDERER  # 随这一次分享走的回调优先（ADR 0205 §三）；没有才用桌面注册的
     if fn is None:
         raise _Failure("render_failed")
     edge = LONG_EDGE_PX
@@ -1090,6 +1098,8 @@ class _Spec:
     scope: Callable[[], AbstractContextManager] = field(
         default=nullcontext, repr=False, compare=False
     )
+    #: 只管这一次分享的出图回调（ADR 0205：MCP 进程里的会话出图）；None = 用模块级 `set_renderer` 注册的（桌面）
+    renderer: Callable | None = field(default=None, repr=False, compare=False)
 
     def fingerprint(self) -> str:
         blob = json.dumps(
@@ -1182,7 +1192,11 @@ def _clean_render(raw: object) -> dict:
 
 
 def start_share(
-    body: object, *, scope: Callable[[], AbstractContextManager] = nullcontext, project: str = ""
+    body: object,
+    *,
+    scope: Callable[[], AbstractContextManager] = nullcontext,
+    project: str = "",
+    renderer: Callable | None = None,
 ) -> dict:
     """**用户点了「生成链接」**：render → init → 直传 → complete。已在进行中 → 409。`scope`：后台线程里包住出图的上下文
     （`app.bound_project(ctx)`——线程里没有 request context，不绑定会落到默认项目）。"""
@@ -1198,6 +1212,7 @@ def start_share(
         _clean_render(body.get("render")),
         project=project,
         scope=scope,
+        renderer=renderer,
     )
     return _begin(spec)
 
@@ -1226,7 +1241,11 @@ def changed(share_id: object, render: object, *, project: str = "") -> dict:
 
 
 def start_update(
-    body: object, *, scope: Callable[[], AbstractContextManager] = nullcontext, project: str = ""
+    body: object,
+    *,
+    scope: Callable[[], AbstractContextManager] = nullcontext,
+    project: str = "",
+    renderer: Callable | None = None,
 ) -> dict:
     """**用户点了「更新到同一链接」**：版本 +1。"""
     if not isinstance(body, dict):
@@ -1259,6 +1278,7 @@ def start_update(
         share_id=rec["share_id"],
         project=project,
         scope=scope,
+        renderer=renderer,
     )
     return _begin(spec)
 

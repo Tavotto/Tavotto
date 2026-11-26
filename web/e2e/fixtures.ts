@@ -17,14 +17,19 @@ const REPO = path.resolve(import.meta.dirname, '..', '..')
  * 本地跑之前记得 `python scripts/build_frontend.py`：包内 `src/tavotto/web/`
  * 优先于 `web/dist`，只跑 `pnpm build` 的话测的还是上一次的界面。
  */
-function launchCommand(offline = false): { cmd: string; args: string[] } {
+function launchCommand(offline = false, planModel?: string): { cmd: string; args: string[] } {
   const exe = process.env.TAVOTTO_EXE
   // 离线入口是 Python 脚本：打包产物（.exe）没有它，调用方必须自己 skip（见 import-origin.spec.ts）
-  if (exe && !offline) return { cmd: exe, args: [] }
+  // 假模型入口是 Python 脚本：打包产物（.exe）没有它，用到的用例只在源码形态下跑
+  if (exe && !offline && !planModel) return { cmd: exe, args: [] }
   const py = process.env.TAVOTTO_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
   return {
     cmd: py,
-    args: offline ? [path.join(REPO, 'tests', 'support', 'e2e_offline_app.py')] : ['-m', 'tavotto'],
+    args: offline
+      ? [path.join(REPO, 'tests', 'support', 'e2e_offline_app.py')]
+      : planModel
+        ? [path.join(REPO, 'tests', 'support', 'e2e_change_plan_app.py')]
+        : ['-m', 'tavotto'],
   }
 }
 
@@ -48,6 +53,17 @@ export interface AppOptions {
   env?: Record<string, string>
   /** 指定端口（测端口冲突时用） */
   port?: number
+  /**
+   * 改图助手「先出修改方案卡」（ADR 0206，`ai.change_plan.enabled`，产品默认开）。**e2e 默认关**：既有的助手用例（草稿 / 账本 / 会话错误卡 /
+   * 重启恢复 / 执行追踪 / CLI 更新）验的是「发送 → 改脚本的会话」这条路，假 CLI 对结构化调用的答复也不是一份方案，开着它那些用例走的是另一条路。
+   * 要测方案路径的用例显式传 `changePlan: true`。
+   */
+  changePlan?: boolean
+  /**
+   * 用 `tests/support/e2e_change_plan_app.py` 起：把修改方案的模型缝换成假件（e2e 绝不真调模型），模式见该文件。
+   * 隐含 `changePlan: true`。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
+   */
+  planModel?: 'ok' | 'log' | 'unsupported_sync' | 'unsupported_thread'
   /**
    * 用 `tests/support/e2e_offline_app.py` 起（`python -m tavotto` 的同一个入口，只多套了「受管环境能在离线机器上建出来」
    * 的补丁，见该文件）。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
@@ -97,12 +113,16 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
     mkdirSync(configDir, { recursive: true })
     const configFile = path.join(configDir, 'config.json')
     if (!existsSync(configFile)) {
-      writeFileSync(configFile, JSON.stringify({ updates: { auto_check: false } }), 'utf8')
+      writeFileSync(
+        configFile,
+        JSON.stringify({ updates: { auto_check: false }, ai: { change_plan: { enabled: opts.changePlan === true || !!opts.planModel } } }),
+        'utf8',
+      )
     }
   }
 
   const port = opts.port ?? (await freePort())
-  const { cmd, args } = launchCommand(opts.offline)
+  const { cmd, args } = launchCommand(opts.offline, opts.planModel)
   const proc = spawn(
     cmd,
     [...args, '--port', String(port), '--no-browser',
@@ -132,6 +152,7 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
         USERPROFILE: home,
         APPDATA: path.join(workdir, 'AppData', 'Roaming'),
         LOCALAPPDATA: path.join(workdir, 'AppData', 'Local'),
+        ...(opts.planModel ? { TAVOTTO_E2E_PLAN_MODE: opts.planModel } : {}),
         ...opts.env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],

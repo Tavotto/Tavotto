@@ -197,7 +197,18 @@ has connected in the "Connect an AI" dialog. Tavotto never relays these
 requests through its own servers; the request goes from the user's machine to the
 AI the user chose, in one of two ways:
 
-* **Subscription sign-in (ChatGPT or Claude).** Tavotto passes the request to the
+* **Continue with ChatGPT (Sign in with ChatGPT).** The user signs in once in their
+  browser with OpenAI; Tavotto keeps the resulting tokens in its own data folder
+  (`siwc/`, readable by your user only where the platform supports it — never in
+  logs, usage statistics or diagnostics bundles, and never readable by the AI
+  assistant's own file tools) and sends requests directly to OpenAI's API
+  (`api.openai.com`) under the user's ChatGPT plan, without storing them on OpenAI's
+  side (`store: false`). Signing out revokes Tavotto's access with OpenAI. This
+  connection is used wherever an API-key connection would be (editing figures, AI
+  repair, reading data tables for data-to-figure), so when it is the only AI you have
+  connected, those features send their requests to ChatGPT; if you also have API-key
+  connections, they are tried first. Usage counts against your ChatGPT plan.
+* **Subscription sign-in through a command-line tool (Codex or Claude).** Tavotto passes the request to the
   Codex or Claude command-line tool installed on the user's machine, which talks to
   its own service under its own account and privacy terms.
 * **API key or account sign-in (DeepSeek, Kimi, Zhipu GLM, MiniMax, Alibaba Bailian,
@@ -590,7 +601,10 @@ cancelled, closed or failed send is never resumed on its own.
 looking at into a link that other people can open in a browser and comment on,
 without installing Tavotto or signing in. It uploads **only when you press
 *Create link* or *Update this link***; opening the window uploads nothing, and a
-cancelled or failed upload is never resumed on its own.
+cancelled or failed upload is never resumed on its own. An agent in the Tavotto
+plugin (Codex, Claude Code…) can also start the same upload, but only after it has
+asked you and you have said yes; without your approval it only shows a preview and
+sends nothing.
 
 * **What is uploaded.** A rendered picture of the current figure or layout (PNG,
   at most 3000 px on the long side), a list of the elements on that picture —
@@ -627,6 +641,81 @@ cancelled or failed upload is never resumed on its own.
   every minute while the *Review* tab is open; with no such link it makes no
   request at all.
 * **Turning it off.** `TAVOTTO_NO_REVIEW_SHARE=1` removes the feature and all of
+  its network requests (the plugin passes this switch on to its agent tool).
+
+## Handing review comments to the Agent
+
+*Hand to Agent* (the *Review* tab, shown when the figure has unresolved comments)
+asks the AI connection **you** selected to draft a change plan from those comments.
+It sends nothing until you press it, and what it produces is only a plan: your
+figure changes when you press *Apply*.
+
+* **What is sent.** To the AI connection you chose (the same kind of connection as
+  in *Optional AI assistant* above, so it follows that connection's terms): the
+  text of the unresolved comments and where each one points, and a table of the
+  elements of this figure — each element's label, its editable properties with
+  their current values, and its position on the picture. **Reviewers' display
+  names are not sent.** Scripts, data, project files, file paths and computer
+  details are not sent either.
+* **Notes on the revised figure (Premium).** *Redo with notes* sends the notes you
+  wrote on the "After" picture (their text and the element or area each one
+  points at), the table of elements as they look after the previous version, and
+  a short list of what the previous version changed, to the same AI connection.
+  The notes themselves are never uploaded to the review service.
+* **Comments that need a script change (only when you press the button).** If a
+  comment can only be done by editing the script, the plan card offers *Edit the
+  script for the rest*. Only when you press it, the text of those comments (still
+  without the reviewers' names) goes to the AI connection **you** selected, together
+  with the script of this figure, the same as asking the assistant to edit the
+  script; the comments are given to it as material to work from, not as
+  instructions. The result is a script plan you review before it changes anything.
+  Nothing is sent automatically.
+* **What stays on your computer.** The plan, the before/after pictures and your
+  edits to it. When you apply a plan, the app automatically marks the matching
+  comments as resolved and syncs that to the review service (undoing the plan
+  syncs the reversal); only the comment IDs and their resolved state are sent.
+  The drafted reply stays on your computer and is composed in the app without
+  calling any model; it is sent only when you press *Send* on it. *Update same
+  link* (the existing review upload, described above) uploads a new version only
+  when you press it.
+* **Turning it off.** Not connecting an AI is enough; there is no other network
+  request for this feature.
+
+## Change plans in the assistant
+
+When you send an instruction in the assistant for a single figure, the app first asks
+the AI connection **you** selected for a *change plan* (a card you can compare and
+apply) instead of editing the script right away. Only instructions the plan can
+express (colours, sizes, positions, text, visibility of what is already in the figure)
+become a plan; anything that needs the script is handed to the Agent as before, after
+the plan step has said so.
+
+* **What is sent for the plan.** To the AI connection you chose: the text of your
+  instruction, which element you had selected (if any), and the same table of the
+  figure's elements as above (labels, editable properties with their current values,
+  positions). Scripts, data, project files, paths and computer details are not sent
+  in this step. Instructions with attached reference images skip the plan step.
+* **One-click layout.** The comparison pictures are drawn on your computer by the
+  export engine; nothing about them is sent anywhere.
+* **Turning it off.** Settings → Assistant → Advanced → *Show a change plan before
+  editing*. Off means the assistant and one-click layout behave as before (edit the
+  script / apply directly).
+
+## Paid edition components
+
+These requests exist only on a computer where a paid-edition license has been
+activated; without a license the app makes none of them.
+
+* **Fetching the component release list.** The app sends the license number,
+  this device's public key, a signature, a timestamp, the system platform and
+  the protocol versions it supports, to get the release list and a short-lived
+  download address for the paid-feature component. **It does not send your
+  projects, scripts, data, file paths or computer details.**
+* **Downloading the component.** The component is downloaded from Tavotto's
+  download server, which records the IP address and time, as it does for in-app
+  updates. The component runs on this computer as a separate program and does
+  not connect to the network.
+* **Turning it off.** `TAVOTTO_NO_LICENSE=1` removes the paid edition and all of
   its network requests.
 
 ## Local service

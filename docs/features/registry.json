@@ -209,6 +209,18 @@
         {
           "spec": "missing-input.spec.ts",
           "title": "先检查再自己报找不到：弹框指认数据所在文件夹 → 重跑按那份数据出图"
+        },
+        {
+          "spec": "project-move-remap.spec.ts",
+          "title": "整夹挪走后重跑：指认过的数据随项目迁过来，不再弹缺数据卡（relative）"
+        },
+        {
+          "spec": "project-move-remap.spec.ts",
+          "title": "整夹挪走后重跑：指认过的数据随项目迁过来，不再弹缺数据卡（file_based）"
+        },
+        {
+          "spec": "project-move-remap.spec.ts",
+          "title": "整夹复制后重跑：指认过的数据随项目带过来，不再弹缺数据卡（relative）"
         }
       ],
       "desktop_manual": [
@@ -217,6 +229,30 @@
         "脚本按 Path(__file__).resolve().parent 拼数据路径、先 exists() 再自己 raise FileNotFoundError，数据放在上一级文件夹：同样弹框，选中那份数据后自动重跑出图，脚本不变",
         "脚本 glob(\"<某文件夹>/*.csv\") 读一批数据、把那个文件夹整个挪走：弹框只给「选择文件夹」，选中新位置后自动重跑出图",
         "设置 →「环境诊断」里看到这条数据位置，点「删除」后重跑又弹框"
+      ]
+    },
+    {
+      "id": "assets.script-relink",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图的脚本被挪走或改名后，错误卡上一键接回（按内容指纹认出新位置，认不出就从名单里选），参数随之带上",
+        "en-US": "When a figure's script was moved or renamed, reconnect it from the error card in one click (found by content fingerprint, or picked from a list), carrying its parameters along"
+      },
+      "entry": "图内编辑里渲染报「找不到 x.py」时，错误卡右侧「接回 scripts/」或「选脚本接回」",
+      "e2e": [
+        {
+          "spec": "script-relink.spec.ts",
+          "title": "只挪了脚本：错误卡上一步接回 › 有指纹且字节对上：「接回 scripts/」一键接回，图内修改还在"
+        },
+        {
+          "spec": "script-relink.spec.ts",
+          "title": "只挪了脚本：错误卡上一步接回 › 老登记没有指纹：从名单里选一个接上"
+        },
+        {
+          "spec": "script-relink.spec.ts",
+          "title": "只挪了脚本：错误卡上一步接回 › 要参数才能跑的脚本：接回时带上旧脚本的默认参数，一键接回成功"
+        }
       ]
     },
     {
@@ -870,6 +906,14 @@
         {
           "spec": "layout-session.spec.ts",
           "title": "新开一个空存储的浏览器 context：恢复上次的排版"
+        },
+        {
+          "spec": "project-history-restore.spec.ts",
+          "title": "整夹挪走 / 复制之后从项目自己的时间线找回排版，加载多次不留空 .vx"
+        },
+        {
+          "spec": "project-history-restore.spec.ts",
+          "title": "空白项目连续加载 3 次、回主页再回来一次：项目里不出现只有空「打开」「离开」节点的 .vx"
         }
       ],
       "desktop_manual": [
@@ -1109,6 +1153,22 @@
         {
           "spec": "journal-picker.spec.ts",
           "title": "期刊下拉在设置对话框里能用滚轮滚（弹层挂在对话框外，不能被对话框的滚动锁吃掉）"
+        }
+      ]
+    },
+    {
+      "id": "preflight.canvas-line-width",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布上的箭头、形状、路径也按期刊最小线宽检查（「线条太细」），点那一行选中对象、焦点落到线宽",
+        "en-US": "Arrows, shapes and paths on the canvas are checked against the journal's minimum line width (\"Line too thin\"); clicking the row selects the object and focuses its line width"
+      },
+      "entry": "问题 → 线条太细（选了规定最小线宽的期刊后）",
+      "e2e": [
+        {
+          "spec": "canvas-line-width-locate.spec.ts",
+          "title": "画布上的细箭头：问题清单出「线条太细」，点它选中箭头、焦点落到线宽"
         }
       ]
     },
@@ -1452,14 +1512,42 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "图内编辑里选中图中的文字，⌘C / 右键「复制为标注」，⌘V 在原文字右下得到同字号同字体的文字标注",
-        "en-US": "In figure editing, select text inside the figure, press Cmd/Ctrl+C or right-click Copy as annotation, then paste to get a text annotation matching size and font, offset to the lower right of the original"
+        "zh-CN": "图内编辑里选中图中的文字，⌘C 后在别处（画布、别的图）⌘V 或右键「粘贴为标注」，在原文字右下得到同字号同字体的文字标注",
+        "en-US": "In figure editing, select text inside the figure, press Cmd/Ctrl+C, then paste elsewhere (the canvas, another figure) or choose Paste as annotation to get a text annotation matching size and font, offset to the lower right of the original"
       },
-      "entry": "图内编辑：选中图里的文字后 ⌘C / 右键「复制为标注」，⌘V 粘贴",
+      "entry": "图内编辑：选中图里的文字后 ⌘C，退出图内编辑后 ⌘V，或右键「粘贴为标注」",
       "e2e": [
         {
           "spec": "copy-figure-text.spec.ts",
-          "title": "图内文字复制为标注：选中标题 ⌘C ⌘V → 多一个同字的文字标注，在原文字右下"
+          "title": "图内文字复制为标注：选中标题 ⌘C，退出图内编辑后 ⌘V → 多一个同字的文字标注，在原文字右下"
+        },
+        {
+          "spec": "copy-figure-text.spec.ts",
+          "title": "图内编辑里右键「粘贴为标注」：画布上点选标题 ⌘C 后，弹层「粘贴为标注」落成同字的文字标注，标题本身不变"
+        }
+      ]
+    },
+    {
+      "id": "canvas.in-figure-duplicate",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑里选中图中的文字，⌘C ⌘V 或 ⌘D（右键「创建副本」）在同一张图里得到一只图内副本，不退出图内编辑、新副本被选中，可继续改样式、一次撤销消失",
+        "en-US": "In figure editing, select text inside the figure and press Cmd/Ctrl+C then V, or Cmd/Ctrl+D (right-click Duplicate), to get a copy of it inside the same figure; you stay in figure editing, the copy is selected, can be restyled right away, and one undo removes it"
+      },
+      "entry": "图内编辑：选中图里的文字后 ⌘C ⌘V / ⌘D，或右键「创建副本」",
+      "e2e": [
+        {
+          "spec": "figure-duplicate.spec.ts",
+          "title": "图内副本：选中标题 ⌘C ⌘V → 仍在图内编辑、多一只副本并被选中；改字号后 ⌘Z 两次副本消失"
+        },
+        {
+          "spec": "figure-duplicate.spec.ts",
+          "title": "图内副本：⌘D 在图内编辑里 = 原地建副本（不复制整张图），同样可撤销"
+        },
+        {
+          "spec": "figure-duplicate.spec.ts",
+          "title": "画布上点选标题后 ⌘C ⌘V：属性页文字框的残留选区不接粘贴，标题文字不变、建出图内副本"
         }
       ]
     },
@@ -1664,6 +1752,74 @@
         {
           "spec": "fix-memory.spec.ts",
           "title": "记住修好的做法：设置里能看到每一条、逐条删、全部删除先确认、关掉开关后重新打开仍是关"
+        }
+      ]
+    },
+    {
+      "id": "canvas.svg-paste",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "粘贴一段 SVG 得到可编辑对象（而不是一张图片）",
+        "en-US": "Pasting SVG markup yields editable objects instead of a picture"
+      },
+      "entry": "画布 → ⌘V（剪贴板里是 SVG）",
+      "e2e": [
+        {
+          "spec": "vector-svg.spec.ts",
+          "title": "粘贴 SVG › 粘贴一段 SVG：落成两个可编辑对象（不是图片），点中红的那个属性栏里是它的红色；一次撤销全撤回"
+        }
+      ]
+    },
+    {
+      "id": "canvas.path-text",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字工具点在路径上打字，字沿路径排出来（路径文字）",
+        "en-US": "With the text tool, click a path and type: the text runs along the path (text on a path)"
+      },
+      "entry": "画布工具栏 → 文字（T）→ 点在路径上",
+      "e2e": [
+        {
+          "spec": "vector-path-text.spec.ts",
+          "title": "路径文字 › 文字工具点在斜线路径上打字：字沿路径斜着排出来；撤销后路径文字消失"
+        }
+      ]
+    },
+    {
+      "id": "canvas.pencil",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "铅笔（N）拖一笔，松手后拟合成光滑的路径",
+        "en-US": "The pencil (N) draws a stroke that is fitted to a smooth path on release"
+      },
+      "entry": "画布工具栏 → 铅笔（N，与钢笔同一格）",
+      "e2e": [
+        {
+          "spec": "vector-pencil.spec.ts",
+          "title": "铅笔 › N 铅笔拖一条正弦形的笔迹：松手得到一个光滑 path（三次贝塞尔、段数远少于采样点）；一次撤销撤回"
+        }
+      ]
+    },
+    {
+      "id": "layout.agent-merge",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "插件里的 Agent 往项目排版里加了标注、或改 / 删 / 重排了已有对象后，桌面回到前台时直接按字段并进画布（可撤销）；⌘S 撞上的冲突只是 Agent 的改动且桌面没碰过同一处时直接并进来再保存，不弹对话框",
+        "en-US": "After the agent adds annotations to a project layout through the plugin, or edits, deletes or restacks existing objects, the desktop merges the changes field by field into the open canvas when the window regains focus (undoable); if ⌘S hits a conflict that only consists of the agent's changes and the desktop did not touch the same thing, it merges and saves without a dialog"
+      },
+      "entry": "回到前台自动并入；⌘S 不弹对话框",
+      "e2e": [
+        {
+          "spec": "agent-merge.spec.ts",
+          "title": "Agent 往项目排版里加了标注：回到前台自动并进画布；⌘S 时直接并进来再保存，不弹对话框"
+        },
+        {
+          "spec": "agent-merge.spec.ts",
+          "title": "Agent 改 / 删了已有对象：回到前台按字段并进画布、一步撤销；桌面也改过别处时 ⌘S 直接并进来再保存，不弹对话框"
         }
       ]
     }

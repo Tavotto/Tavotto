@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import math
 import re
+from decimal import ROUND_HALF_UP, Decimal
 
 from .. import glyphplan
-from . import profiles as profiles_mod
+from . import interference as interference_mod, profiles as profiles_mod
 
 SPEC_DOC = """
 figure spec（两侧同源的规范化输入）：
@@ -49,7 +50,8 @@ figure spec（两侧同源的规范化输入）：
                "source_font_missing": {"family": str, "reason": str},  # 原图字体此刻用不了（缺席 = 能用 / 没有）
                "source_font_in_use": bool,  # 文字由原图字体（本机用户脸）排：批准字体的覆盖表不适用，字形缺失以导出的 glyph_missing 为准
                "rect_mm": [x,y,w,h], "hidden": bool}],
-  "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
+  "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool,
+               "stroke_pt": float}]   # 只有画得出描边的箭头 / 形状 / 路径才带（缺席 = 没有描边，ADR 0208）
 }
 """
 
@@ -456,19 +458,19 @@ def _advise_font(profile: dict, eff: float, sink: _Sink, ids: dict, detail_eff: 
         text = (
             f"{journal} 的参考记录列出 {body['value_pt']:g} pt（正文）、"
             f"{script['value_pt']:g} pt（上下标）；这些数值不一定是期刊规定的下限，"
-            "预检以正文数值比较，未区分文字类型"
+            "投稿前检查以正文数值比较，未区分文字类型"
         )
     elif body:
         key = "fontSizeAdvisedBody"
         text = (
             f"{journal} 的参考记录以 {body['value_pt']:g} pt 作为正文比较值；"
-            "该数值不一定是期刊规定的下限，预检未区分文字类型"
+            "该数值不一定是期刊规定的下限，投稿前检查未区分文字类型"
         )
     else:
         key = "fontSizeAdvisedScript"
         text = (
             f"{journal} 的参考记录以 {script['value_pt']:g} pt 作为上下标比较值；"
-            "该数值不一定是期刊规定的下限，预检未区分文字类型"
+            "该数值不一定是期刊规定的下限，投稿前检查未区分文字类型"
         )
     params = {
         "journal": journal,
@@ -706,6 +708,130 @@ def _check_log_axis_nonpositive(
                 gids=[gid],
                 detail={"axis": dim, "nonpositive": points, "errorbar_low_nonpositive": low},
                 worse=total,
+            )
+
+
+def _finite(value: object) -> float | None:
+    got = _num(value)
+    return got if got is not None and math.isfinite(got) else None
+
+
+#: `_axis_num` 的量级分档：第 n 档（`|v| >= edge`）保留 n 位小数，约 4 位有效数字；比最后一档还小的保留 16 位
+_AXIS_NUM_EDGES = (
+    1000,
+    100,
+    10,
+    1,
+    0.1,
+    0.01,
+    1e-3,
+    1e-4,
+    1e-5,
+    1e-6,
+    1e-7,
+    1e-8,
+    1e-9,
+    1e-10,
+    1e-11,
+    1e-12,
+)
+
+
+def _axis_num(value: float) -> str:
+    """轴上的数（柱的基线、轴范围的两端）写进文案的样子：约 4 位有效数字、去掉末尾的 0。
+
+    与 `preflight.ts` 的 `axisNum` 同源（golden 连 message params 一起比）：小数位数按量级分档取（不用 log10，
+    两种语言在 10 的整次幂上可能差一个 ulp），舍入是「对精确二进制值四舍五入、正好一半远离 0」——`Decimal` 的
+    `ROUND_HALF_UP` 就是 JS `toFixed` 的规则；`f"{v:.2f}"` 遇到正好一半时取偶，会与 JS 分叉。"""
+    a = abs(value)
+    if (
+        a >= 1e21
+    ):  # JS 的 toFixed 在这里改写指数形式；两侧都退回各自的默认写法（轴范围到不了这么大）
+        return f"{value:g}"
+    places = next((n for n, edge in enumerate(_AXIS_NUM_EDGES) if a >= edge), len(_AXIS_NUM_EDGES))
+    text = f"{Decimal(value).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP):f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
+def _check_bar_baseline_truncated(
+    manifest: dict, pid: str, hidden_legends: set[str], sink: _Sink
+) -> None:
+    """V-002：线性轴上柱的共同基线落在可见范围之外（柱底被截，柱长不再和数值成比例）。
+
+    事实读 axes 元素的 `bar_baseline`（产生者只有 `engine/manifest.bar_baseline`）：那一维 `status` 是 `ok`，
+    且同一元素 editable 里那一维的尺度**正是** `linear`、范围是两个有限数（`lo < hi`，按 min / max 判，反转的轴一样）
+    才判；缺范围 / 缺尺度 / log / symlog / logit / 其它尺度一律不判。基线落在闭区间 `[lo, hi]` 外（容差为跨度的
+    1e-9，只吃浮点噪声）就报。每个（axes, 维）一次命中，x 先于 y，那一维里截得最远的基线决定 detail；
+    `worse` 是截掉的距离占跨度的比例（不同轴之间可比）。与 `preflight.ts` 的 `checkBarBaselineTruncated` 同源。"""
+    for el in manifest.get("elements") or []:
+        if el.get("role") != "axes" or not _is_drawn(el, hidden_legends):
+            continue
+        facts = el.get("bar_baseline")
+        if not isinstance(facts, dict):
+            continue
+        gid = str(el.get("gid", ""))
+        for dim in ("x", "y"):
+            fact = facts.get(dim)
+            if not isinstance(fact, dict) or fact.get("status") != "ok":
+                continue
+            if _field(el, f"{dim}scale") != "linear":
+                continue
+            lim = _field(el, f"{dim}lim")
+            if not isinstance(lim, list) or len(lim) != 2:
+                continue
+            a, b = _finite(lim[0]), _finite(lim[1])
+            if a is None or b is None:
+                continue
+            lo, hi = min(a, b), max(a, b)
+            span = hi - lo
+            if not span > 0:
+                continue
+            eps = span * 1e-9
+            entries = fact.get("baselines")
+            if not isinstance(entries, list):
+                continue
+            worst: tuple[float, float, int] | None = None
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                base = _finite(entry.get("value"))
+                bars = _domain_count(entry.get("bars"))
+                if base is None or bars <= 0 or lo - eps <= base <= hi + eps:
+                    continue
+                dist = lo - base if base < lo else base - hi
+                if worst is None or dist > worst[0]:
+                    worst = (dist, base, bars)
+            if worst is None:
+                continue
+            dist, base, bars = worst
+            edge = lo if base < lo else hi
+            word = "纵轴" if dim == "y" else "横轴"
+            sink.add(
+                "bar-baseline-truncated",
+                f"柱子从 {_axis_num(base)} 画起，但{word}只显示 {_axis_num(lo)} 到 {_axis_num(hi)}，"
+                f"{_axis_num(base)} 不在图里，每根柱子都被切掉一截，"
+                f"{'高矮' if dim == 'y' else '长短'}看起来和数值不成比例了",
+                message=(
+                    f"barBaselineTruncated{dim.upper()}",
+                    {
+                        "baseline": _axis_num(base),
+                        "low": _axis_num(lo),
+                        "high": _axis_num(hi),
+                        "edge": _axis_num(edge),
+                    },
+                ),
+                object_ids=[pid],
+                gids=[gid],
+                detail={
+                    "axis": dim,
+                    "baseline": base,
+                    "lim_low": lo,
+                    "lim_high": hi,
+                    "bars": bars,
+                },
+                worse=dist / span,
             )
 
 
@@ -976,6 +1102,8 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
 
     # --- 数据与编码客观不一致（V-001）：数学上可判定，进 warn；不自动修（改 symlog / 删点是科学决策） ---
     _check_log_axis_nonpositive(manifest, pid, hidden_legends, sink)
+    # V-002 线性轴上柱的共同基线被截掉：同属这一档，同样不自动修（从 0 起还是改点图由作者定）
+    _check_bar_baseline_truncated(manifest, pid, hidden_legends, sink)
 
     # --- 数据语义：只给建议，绝不替用户裁决 ---
     for ax, roles in sorted(roles_by_axes.items()):
@@ -1103,6 +1231,36 @@ def _canvas_coverage() -> glyphplan.Coverage:
     if _COVERAGE is None:
         _COVERAGE = glyphplan.canvas_coverage()
     return _COVERAGE
+
+
+#: 画布上判线宽下限的对象类型（ADR 0208 §四 第 7 条：所有画布上的箭头 / 形状 / 路径都管，
+#: 包括用户自己画的）。严格同源对：`preflight.ts` 的 `CANVAS_STROKE_TYPES`。
+CANVAS_STROKE_TYPES = ("arrow", "shape", "path")
+
+
+def _check_canvas_strokes(spec: dict, profile: dict, sink: _Sink) -> None:
+    """画布对象的描边 < 期刊线宽下限（`min_line_width_pt`）→ `line-width-below-min`。
+
+    与数据线同一条检查（期刊的最小线宽不分是谁画的），严重级别与期刊抬级照旧；文案另一句。
+    画布对象的 `stroke_pt` 已是页面上的绝对 pt（拖图时标注的线宽已按比例写回），不再乘缩放。
+    `stroke_pt` 缺席 = 这个对象没有画得出的描边（关了描边 / 描边全透明），不判；等于下限不报。"""
+    min_lw = _num(profile.get("min_line_width_pt")) or 0.0
+    if min_lw <= 0:
+        return
+    for o in spec.get("objects") or []:
+        if o.get("hidden") or o.get("type") not in CANVAS_STROKE_TYPES:
+            continue
+        lw = _num(o.get("stroke_pt"))
+        if lw is None or lw <= 0 or lw >= min_lw - 1e-9:
+            continue
+        sink.add(
+            "line-width-below-min",
+            f"画布上的线条线宽 {lw:.2f}pt，规范要求至少 {min_lw:g}pt",
+            message=("canvasLineWidthBelowMin", {"effective": f"{lw:.2f}", "min": f"{min_lw:g}"}),
+            object_ids=[o.get("id", "")],
+            detail={"effective_pt": _r2(lw)},
+            worse=min_lw - lw,
+        )
 
 
 def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
@@ -1366,6 +1524,104 @@ def _check_panel_clipping(panel: dict, sink: _Sink) -> None:
         )
 
 
+#: 干涉检测（V-011）折进预检时，「确定」压住数据的图例永远排在「只是风险」前面：排名 = 命中数 + 这个数。
+#: 聚合项只留最糟那次的文案与 detail，不加这一档的话 3 个风险目标会压过 1 个确定目标，聚合项就说成「可能」。
+#: 与 `web/src/lib/interference.ts` 的 `CERTAIN_RANK` 同值（golden `interference-*` 看护）。
+INTERFERENCE_CERTAIN_RANK = 1_000_000
+
+
+def _check_panel_interference(panel: dict, profile: dict, sink: _Sink) -> None:
+    """V-011：真实渲染几何上的干涉（文字互相重叠 / 文字压到别的子图 / 图例压住数据）接进常规预检。
+
+    判据只有 `engine/interference.detect` 一份（MCP 与保留式规范化逐对用的也是它），这里只把它
+    逐对的结果折进 `_Sink`：
+
+    * `text-overlap`：两段文字都是主语（gids 两个）；排名 = 重叠面积。
+    * `text-over-axes`：主语是那段伸出去的文字，被压的子图写进 `detail.against`；排名 = 面积。
+    * `legend-over-data`：主语是图例，被压的数据在 `detail.targets`；「确定 / 风险」原样保留
+      （`detail.certain`、两种文案），排名让确定的恒大于风险。
+
+    文案不带 gid（问题行的主语已经是那个元素，界面不出现内部标识）；毫米数沿用 `detect` 自己
+    格式化好的那两个参数。与 `preflight.ts` 的 `checkPanelInterference` 逐条同源。
+    """
+    manifest = panel.get("manifest")
+    if not isinstance(manifest, dict):
+        return
+    pid = panel.get("id", "")
+    # 只把**会改变结果**的那几对交给 `_Sink`：带来新主语、让某个主语或这一面板更糟的。其余各对在 `_Sink`
+    # 里本来就是空操作（主语已在、排名不更大），跳过它们结论逐字不变——几十段文字压成一团时（每面板几百对）
+    # 每对一次 `add` 是这条检查的大头。与 `preflight.ts` 的 `checkPanelInterference` 同一规则。
+    seen: dict[tuple[str, str], float] = {}
+    top: dict[str, float] = {}
+
+    def changes(cid: str, subjects: list[str], worse: float) -> bool:
+        hit = False
+        for g in subjects:
+            prev = seen.get((cid, g))
+            if prev is None or worse > prev:
+                seen[(cid, g)] = worse
+                hit = True
+        if cid not in top or worse > top[cid]:
+            top[cid] = worse
+            hit = True
+        return hit
+
+    def keep(cid: str, a: str, b: str, area: float) -> bool:
+        # 文字重叠两段文字都是主语；压到别的子图只有那段文字（b 是被压的子图）
+        subjects = [a, b] if cid == interference_mod.CHECK_TEXT_OVERLAP else [a]
+        return changes(cid, subjects, area)
+
+    for it in interference_mod.detect(manifest, profile, panel_id=pid, keep=keep):
+        cid = it["id"]
+        gids = list(it.get("gids") or [])
+        detail = dict(it.get("detail") or {})
+        params = (it.get("message") or {}).get("params") or {}
+        if cid == interference_mod.CHECK_LEGEND_OVER_DATA:
+            rank = len(detail.get("targets") or []) + (
+                INTERFERENCE_CERTAIN_RANK if detail.get("certain") else 0
+            )
+            if not changes(cid, gids[:1], rank):
+                continue
+        else:
+            rank = _num_or(detail.get("overlap_mm2"), 0.0)
+        if cid == interference_mod.CHECK_TEXT_OVERLAP:
+            sink.add(
+                "text-overlap",
+                it["text"],
+                message=("interferenceTextOverlap", {"w": params.get("w"), "h": params.get("h")}),
+                object_ids=[pid],
+                gids=gids,
+                detail=detail,
+                worse=rank,
+            )
+        elif cid == interference_mod.CHECK_TEXT_OVER_AXES:
+            detail["against"] = gids[1] if len(gids) > 1 else ""
+            sink.add(
+                "text-over-axes",
+                it["text"],
+                message=("interferenceTextOverAxes", {"w": params.get("w"), "h": params.get("h")}),
+                object_ids=[pid],
+                gids=gids[:1],
+                detail=detail,
+                worse=rank,
+            )
+        elif cid == interference_mod.CHECK_LEGEND_OVER_DATA:
+            certain = bool(detail.get("certain"))
+            count = len(detail.get("targets") or [])
+            sink.add(
+                "legend-over-data",
+                it["text"],
+                message=(
+                    "interferenceLegendOverData" if certain else "interferenceLegendOverDataRisk",
+                    {"count": count},
+                ),
+                object_ids=[pid],
+                gids=gids[:1],
+                detail=detail,
+                worse=rank,
+            )
+
+
 def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     sink.add(
         "panel-text-not-verifiable",
@@ -1375,8 +1631,15 @@ def _check_missing_manifest(panel: dict, sink: _Sink) -> None:
     )
 
 
-def run(spec: dict, profile: dict) -> list[dict]:
-    """跑一遍预检，返回问题清单（顺序即报告顺序）。"""
+def run(spec: dict, profile: dict, *, with_interference: bool = False) -> list[dict]:
+    """跑一遍预检，返回问题清单（顺序即报告顺序）。
+
+    `with_interference=True`：把干涉检测（V-011）折进聚合清单——与画布 / 导出对话框的 TS 求值器
+    （`preflight.ts` 的 `runSpec`，那一侧恒开）同一份输出，golden 对拍按 True 生成。**默认关**：Python 这边的
+    生产调用方（保留式规范化 / 按规范修图的事务、改图验收、MCP 桥）都已经逐对调 `interference.detect`，
+    它们按 `(规则, gid)` 配对前后两份清单，聚合项混进来会把同一次碰撞报两遍、还会被当成新增的确定性干涉挡掉
+    事务；而**已经发出去的插件**的桥调的是不带参数的 `run()`（插件只设引擎下限），默认开着它们改不到。
+    """
     sink = _Sink(profile)
     _check_page(spec, profile, sink)
     for panel in spec.get("panels") or []:
@@ -1391,7 +1654,10 @@ def run(spec: dict, profile: dict) -> list[dict]:
             _check_panel_fonts(panel, profile, sink)
             _check_panel_axes(panel, profile, sink)
             _check_panel_clipping(panel, sink)
+            if with_interference:
+                _check_panel_interference(panel, profile, sink)
     _check_texts(spec, profile, sink)
+    _check_canvas_strokes(spec, profile, sink)
     _check_geometry(spec, sink)
     return sink.result()
 

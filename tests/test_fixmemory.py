@@ -508,3 +508,46 @@ def test_risk_seen_earlier_in_the_session_outlives_an_overwrite(store, box):
         "env_var_missing", ctx.fixes_made, secrets=ctx.fix_secrets, risky=ctx.fix_risky
     )
     assert "x7!" not in store.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("text", "home", "ci", "want"),
+    [
+        (r"c:\users\me\lab\data", r"C:\Users\Me", True, r"~\lab\data"),
+        ("C:/Users/Me/lab/data", r"C:\Users\Me", True, "~/lab/data"),
+        ("/users/me/lab", "/Users/me", True, "~/lab"),
+        ("/home/Me/lab", "/home/me", False, "/home/Me/lab"),  # 分大小写的文件系统上不是同一处
+        ("/home/me/lab", "/home/me", False, "~/lab"),
+        (
+            "/Users/meg/lab and /Users/me",
+            "/Users/me",
+            True,
+            "/Users/meg/lab and ~",
+        ),  # 前缀相同的别人家目录不换
+        ("path='/Users/me'", "/Users/me", True, "path='~'"),
+        ("C:/Users/Me2/data.csv", r"C:\Users\Me", True, "C:/Users/Me2/data.csv"),
+        (r"c:\users\Me2\data.csv", r"C:\Users\Me", True, r"c:\users\Me2\data.csv"),
+        ("/x/Users/me/data.csv", "/Users/me", False, "/x/Users/me/data.csv"),
+        ("--out=/Users/me/f.pdf", "/Users/me", False, "--out=~/f.pdf"),
+    ],
+)
+def test_home_is_written_as_tilde_however_it_is_spelled(text, home, ci, want):
+    assert fixmemory._home_to_tilde(text, home, case_insensitive=ci) == want
+
+
+def test_only_windows_is_treated_as_case_insensitive(monkeypatch):
+    monkeypatch.setattr(fixmemory.sys, "platform", "darwin")
+    assert fixmemory._home_to_tilde("/Users/me/d.csv", "/Users/Me") == "/Users/me/d.csv"
+    monkeypatch.setattr(fixmemory.sys, "platform", "win32")
+    assert fixmemory._home_to_tilde(r"c:\users\me\d.csv", r"C:\Users\Me") == r"~\d.csv"
+
+
+def test_a_fix_is_remembered_even_when_the_attempt_lost_the_starting_shape(store, box):
+    s = _session(box, outcome="fixed")
+    s.ctx.attempts = [
+        {"n": 1, "before": "", "after": "ok", "hint": "", "changes": ["set_run_arguments"]}
+    ]
+    s.ctx.first_shape = "script_needs_arguments"
+    fixsession._remember_fix(s)
+    (row,) = fixmemory.entries()
+    assert row["shape"] == "script_needs_arguments" and row["kind"] == "run_args"

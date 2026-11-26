@@ -284,8 +284,10 @@ class HttpModel:
             timeout = min(self.request_timeout, remaining)  # 单次请求也不越过总时限
             retry_after = None
             try:
+                # 只有带读取器的协议（siwc-responses 的 SSE）才多传 `reader`：三条原协议的调用形状逐字不变
+                extra = {"reader": req.reader} if req.reader is not None else {}
                 status, headers, data = _cancellable(
-                    lambda: self._post(req.url, req.headers, req.body, timeout=timeout),
+                    lambda: self._post(req.url, req.headers, req.body, timeout=timeout, **extra),
                     cancel,
                     deadline,
                 )
@@ -294,7 +296,20 @@ class HttpModel:
                     raise
                 last = exc
             else:
-                if 200 <= status < 300:
+                decode = getattr(self.wire, "decode", None)
+                if 200 <= status < 300 and decode is not None:
+                    # 自带解码的协议（siwc-responses：SSE 折叠成最终响应）。可重试的失败（流中断、额度暂时不可用）走下面同一套退避
+                    try:
+                        body = decode(data)
+                    except RunnerFailure as exc:
+                        if not exc.retryable:
+                            raise
+                        last = exc
+                    else:
+                        turn = self.wire.parse(body)
+                        self._succeeded_wire = self.wire.name
+                        return turn
+                elif 200 <= status < 300:
                     try:
                         body = json.loads(data.decode("utf-8"))
                     except (ValueError, UnicodeDecodeError):
@@ -307,23 +322,30 @@ class HttpModel:
                     self._succeeded_wire = self.wire.name
                     self._token_field = self._adjuster().token_field(req.body)
                     return turn
-                # 闭集自救：判据只看状态码与体里的闭集短语，体原文不外传（见 fallback.py）
-                if (
-                    not self._succeeded_wire
-                    and (
-                        protocol_mismatch(status, data)
-                        or store_rejected(self.wire.name, status, data)
-                    )
-                ) and (self._switch_wire()):
-                    req = build()
-                    continue
-                if self._adjuster().consider(status, data, req.body):
-                    req = build()
-                    continue
-                last = classify_status(status, data)
-                if not last.retryable:
-                    raise last
-                retry_after = _retry_after(headers)
+                elif (classify := getattr(self.wire, "classify", None)) is not None:
+                    # 自带错误码闭集的协议：不换协议、不降级字段（siwc-responses：不得静默切换计费方式），只归类 + 退避
+                    last = classify(status, data) or classify_status(status, data)
+                    if not last.retryable:
+                        raise last
+                    retry_after = _retry_after(headers)
+                else:
+                    # 闭集自救：判据只看状态码与体里的闭集短语，体原文不外传（见 fallback.py）
+                    if (
+                        not self._succeeded_wire
+                        and (
+                            protocol_mismatch(status, data)
+                            or store_rejected(self.wire.name, status, data)
+                        )
+                    ) and (self._switch_wire()):
+                        req = build()
+                        continue
+                    if self._adjuster().consider(status, data, req.body):
+                        req = build()
+                        continue
+                    last = classify_status(status, data)
+                    if not last.retryable:
+                        raise last
+                    retry_after = _retry_after(headers)
             if attempt + 1 < self.max_attempts:
                 delay = min(
                     retry_after if retry_after is not None else self.retry_base * (2**attempt), 30.0

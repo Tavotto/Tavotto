@@ -5,7 +5,7 @@
  *    （预设、期刊宽、facts 大方格、PyMuPDF/Codex 说明、profile id/版本、
  *    「打包项目」、「留档」这个词）；
  * 2. **输出范围**：默认跟工作流走、可切换、**不可用时说出原因而不是隐藏**；
- * 3. error 默认阻止导出，用户显式确认后才放行，且**确认要写进样式检查报告**；
+ * 3. error 默认阻止导出，用户显式确认后才放行，且**确认要写进投稿前检查报告**；
  * 4. **PPI 只在位图输出时出现**；文件名非法时就地报错并挡住导出。
  */
 import { act } from 'react'
@@ -126,6 +126,11 @@ const batchBuildLog: number[] = []
 let jobStatusSeq: string[] | null = null
 /** `/api/export/validate` 回包前先等多久（模拟 route 慢：冻结段每张最多等它 1.5 s） */
 let routeDelayMs = 0
+/**
+ * 非 null 时 validate 先等它再回：把「route 还没回来」变成**确定的事实**，而不是和 250 ms 防抖赛跑
+ * （本机渲染慢一点 route 就会先到，断言读到的已经是 route 之后的界面）。见 `holdRoute()`。
+ */
+let routeGate: Promise<void> | null = null
 let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = null
 /** `/api/runtime/status` 的回答（null = 走兜底）；`runtimeStatusGate` 非 null 时先等它再回（模拟 ensure() 往返） */
 let runtimeStatus: Record<string, unknown> | null = null
@@ -188,6 +193,7 @@ function stubFetch() {
       return new Response(JSON.stringify(runtimeStatus), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url.includes('/api/export/validate') && routeOf) {
+      if (routeGate) await routeGate
       if (routeDelayMs) await new Promise((r) => setTimeout(r, routeDelayMs))
       const req = JSON.parse(String(init?.body ?? '{}'))
       return new Response(JSON.stringify({ ok: true, conflicts: [], writable: true, route: routeOf(req) }), {
@@ -384,6 +390,7 @@ beforeEach(() => {
   jobStatus = 'done'
   jobStatusSeq = null
   routeDelayMs = 0
+  routeGate = null
   jobOutputs = null
   jobWarnings = []
   resetExportState()
@@ -467,11 +474,11 @@ describe('信息架构：删掉的东西不许回来', () => {
       'format',
       'checks',
     ])
-    expect(group('checks').textContent).toContain('样式检查报告')
+    expect(group('checks').textContent).toContain('投稿前检查报告')
     expect(group('checks').querySelector('[aria-label="导出后逐项复核成稿"]')).not.toBeNull()
     // 两个开关收进唯一一个默认折叠的「高级」（2026-10-31 UI 审计）；开关仍在「检查」组里、请求字段不变。
     // 严格核验已开 / 报告被规范强制时它默认展开，已生效的设置不会被藏起来
-    const adv = [...document.body.querySelectorAll('details')].filter((d) => d.textContent!.includes('样式检查报告'))
+    const adv = [...document.body.querySelectorAll('details')].filter((d) => d.textContent!.includes('投稿前检查报告'))
     expect(adv.map((d) => d.hasAttribute('data-export-advanced'))).toEqual([true])
     expect(group('checks').contains(adv[0])).toBe(true)
     // 输出组里导出之前就看得见文件落到哪；「更改…」直接弹选择文件夹（细节在 ExportLocationRow.test.tsx），不再跳设置页
@@ -748,7 +755,7 @@ describe('对话框开着时素材没了', () => {
 })
 
 describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () => {
-  it('有 error 时导出照样可点，没有确认勾选框也没有警告句；未处理的项自动写进样式检查报告', async () => {
+  it('有 error 时导出照样可点，没有确认勾选框也没有警告句；未处理的项自动写进投稿前检查报告', async () => {
     await setup(7.5) // 7.5pt = 撞绝对下限 → error
     expect(text()).toContain('要改')
 
@@ -766,7 +773,7 @@ describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () =
     const report = exportBodies[0].style_check_report as Record<string, unknown>
     // 有未处理项就**必须**留档：报告是「导出时未处理的项」唯一的落点，
     // 报告开关是个记住的偏好，用户可能早就关掉了
-    expect(report, '有未处理项必须生成样式检查报告').toBeTruthy()
+    expect(report, '有未处理项必须生成投稿前检查报告').toBeTruthy()
     expect((report.profile as Record<string, string>).profile_id).toBe('lab-publication-v1')
     expect(report.forced).toBe(true)
     expect(report.acknowledged).toContain('font-below-absolute-floor')
@@ -1231,7 +1238,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     expect(exportBodies[0].scope).toBe('original')
   })
 
-  it('样式检查报告：画布范围认画布页与 out-of-page；原图范围只认这张图的问题与图幅', async () => {
+  it('投稿前检查报告：画布范围认画布页与 out-of-page；原图范围只认这张图的问题与图幅', async () => {
     await offPage(7.5) // 7.5 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
     await reopen()
     await click(button('开始导出')!)
@@ -1424,7 +1431,25 @@ describe('来源读后端 route（#1209）', () => {
   })
   afterEach(() => { routeOf = null })
 
+  /**
+   * 挂住 `/api/export/validate` 的回包，返回放行函数。
+   *
+   * 「route 还没回来时的界面」只能这样测：route 在输入稳定 250 ms 后才发（`ExportDialog` 的防抖），
+   * 靠「setup 还没跑完 250 ms」是**和本机渲染速度赛跑**——同一棵树多几次渲染（例如预览按项目代际
+   * 重取图）就会越线，断言读到的是 route 之后的界面。挂住回包后「没有 route」是确定的事实，
+   * 放行之后再断言 route 的结论。
+   */
+  const holdRoute = () => {
+    let release!: () => void
+    routeGate = new Promise<void>((r) => { release = r })
+    return async () => {
+      routeGate = null
+      await act(async () => { release() })
+    }
+  }
+
   it('route 说这次会被重画：像素预览不再报源像素网格（即使前端旧判据会说照抄）', async () => {
+    const release = holdRoute()
     routeOf = (req) => ({
       scope: req.scope,
       formats: req.formats,
@@ -1432,11 +1457,13 @@ describe('来源读后端 route（#1209）', () => {
     })
     await setupRaster([])
     expect(text(), '还没拿到 route：旧判据（无编辑 = 照抄）').toContain('120 × 80')
+    await release()
     await settle()
     expect(text(), 'route 说重画，前端不再自己推算').not.toContain('120 × 80')
   })
 
   it('EPS 可不可用读 route.offers，不看前端素材表里有没有 script', async () => {
+    const release = holdRoute()
     routeOf = (req) => ({
       scope: req.scope,
       formats: req.formats,
@@ -1446,6 +1473,7 @@ describe('来源读后端 route（#1209）', () => {
     const epsDisabled = () =>
       document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
     expect(epsDisabled(), '还没拿到 route：旧判据').toBe('true')
+    await release()
     await settle()
     expect(epsDisabled(), 'route.offers.eps 可用').toBeNull()
   })
@@ -1455,6 +1483,7 @@ describe('来源读后端 route（#1209）', () => {
     const box = () => row()?.querySelector('input') as HTMLInputElement | null
 
     it('可不可用读 route.offers.script，不看前端素材表', async () => {
+      const release = holdRoute()
       routeOf = (req) => ({
         scope: req.scope,
         formats: req.formats,
@@ -1462,6 +1491,7 @@ describe('来源读后端 route（#1209）', () => {
       })
       await setupRaster([])
       expect(row()?.getAttribute('aria-disabled'), '还没拿到 route：退路看素材表').toBe('true')
+      await release()
       await settle()
       expect(row()?.getAttribute('aria-disabled'), 'route 说有').toBeNull()
     })
@@ -1511,9 +1541,12 @@ describe('来源读后端 route（#1209）', () => {
       document.body.querySelector('[data-export-format="eps"]')?.getAttribute('aria-disabled')
     await settle()
     expect(epsDisabled(), 'route 到了：可用').toBeNull()
+    // 重开后的那次 validate 挂住：不靠固定睡眠把回包压在断言之后（见 `holdRoute`）
+    const release = holdRoute()
     await act(async () => { useUiStore.getState().setExportOpen(false) })
     await act(async () => { useUiStore.getState().setExportOpen(true) })
     expect(epsDisabled(), '重开后、响应到达前：退路，而不是关着时的旧答案').toBe('true')
+    await release()
     await settle()
     expect(epsDisabled(), '新响应到达').toBeNull()
   })
@@ -1625,6 +1658,91 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     expect(badge()?.className).toContain('text-danger')
   })
 
+  // 成品实测字号（ADR 0203）：唯一带数的一项——失败时说出界面上显示的两个数；
+  // 通过、没规范（not_applicable）、量不全（unknown）都不画（核验只说失败，2026-11-06）
+  const sized = (verdict: string, textSize: Record<string, unknown> | undefined) => ({
+    ...manifest({ integrity: 'verified', size: 'verified', text_size: verdict }),
+    ...(textSize ? { text_size: textSize } : {}),
+  })
+
+  it('字号 failed：一句话说出最小的字和规范下限，不只报名字', async () => {
+    jobOutputs = [output(sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 5 }))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.dataset.inspection).toBe('failed')
+    expect(badge()?.textContent).toBe('成品里最小的文字是 4.9 pt，低于规范的 5 pt')
+  })
+
+  it('字号 failed 与别的项一起失败：同一行里两样都说', async () => {
+    jobOutputs = [
+      output({
+        ...sized('failed', { reason: 'below_min', min_pt: 4.9, floor_pt: 6 }),
+        checks: { integrity: 'verified', size: 'verified', dpi_tag: 'failed', text_size: 'failed' },
+      }),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：分辨率标签；成品里最小的文字是 4.9 pt，低于规范的 6 pt')
+  })
+
+  it('字号 failed 但老服务端没带读数：退回只报名字', async () => {
+    jobOutputs = [output(sized('failed', undefined))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：字号')
+  })
+
+  it.each([
+    ['verified', { reason: 'ok', min_pt: 7, floor_pt: 6 }],
+    ['not_applicable', { reason: 'no_threshold', min_pt: 4.9, floor_pt: null }],
+    ['unknown', { reason: 'unmeasured_runs', min_pt: 9, floor_pt: 6 }],
+  ] as const)('字号 %s（通过 / 没有规范 / 公式量不全）：都不画', async (verdict, ts) => {
+    jobOutputs = [output(sized(verdict, ts))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()).toBeNull()
+  })
+
+  it('缺字（glyphs failed）：红着说「缺字（显示成方块）」', async () => {
+    jobOutputs = [output(manifest({ integrity: 'verified', size: 'verified', glyphs: 'failed' }))]
+    await setup(9)
+    await click(button('开始导出')!)
+    await openResultDetail()
+    expect(badge()?.textContent).toBe('核验未通过：缺字（显示成方块）')
+  })
+
+  it('留意（T-004）：Type 3 与整张位图各说一句、点名字体与图；摘要行说一句；结果不算「干净」', async () => {
+    jobWarnings = []
+    jobOutputs = [
+      output({
+        ...manifest({ integrity: 'verified', size: 'verified' }),
+        advisories: [
+          { code: 'type3_fonts', fonts: ['DejaVuSans'], count: 1 },
+          { code: 'scripted_raster', panels: ['figs/plot.png'], count: 1 },
+          { code: 'from_a_newer_server', count: 1 },
+        ],
+      }),
+    ]
+    await setup(9)
+    await click(button('开始导出')!)
+    const result = document.body.querySelector('[data-export-result]')
+    expect(result, '有留意的结果必须留在对话框里').not.toBeNull()
+    expect(result?.textContent).toContain('1 个文件有需留意的地方，见详情')
+    await openResultDetail()
+    const lines = [...document.body.querySelectorAll<HTMLElement>('[data-inspection-advisory]')]
+    // 不认识的码不画（老前端 + 新服务端）
+    expect(lines.map((l) => l.dataset.inspectionAdvisory)).toEqual(['type3_fonts', 'scripted_raster'])
+    expect(lines[0].textContent).toContain('Type 3 字体（DejaVuSans）')
+    expect(lines[1].textContent).toContain('plot.png 是整张位图嵌进来的')
+    expect(lines[1].className).toContain('text-warn')
+    // 留意不是失败：没有红色的核验未通过
+    expect(document.body.querySelector('[data-inspection="failed"]')).toBeNull()
+  })
+
   it('SVG 的文字转成了轮廓（text_outlined）：回执摘要里说一句不能再当文字编辑；没转就不出现', async () => {
     const svg = (extra: Record<string, unknown>) => ({
       ...output(manifest({ integrity: 'verified', size: 'verified' })),
@@ -1683,7 +1801,7 @@ describe('检查摘要只给数量，完整清单在问题面板', () => {
   it('摘要里有计数与入口，不列第二套清单', async () => {
     // 80×40 的页面 + 同尺寸面板：只有 page-aspect 这一条 warn
     await setup(9, { w: 80, h: 40 }, 40)
-    expect(text()).toContain('1 项留意')
+    expect(text()).toContain('1 项需留意')
     expect(text()).not.toContain('页面比例')   // 明细归问题面板
     const open = button('在问题面板中查看')!
     await click(open)
@@ -2266,7 +2384,7 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     const imgs = [...document.body.querySelectorAll(`[data-canvas-thumb] [data-thumb-panel="${RT}"]`)]
     expect(imgs.length).toBeGreaterThan(0)
     for (const n of imgs) expect(n.getAttribute('href')).toBe('blob:state-rt')
-    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.anything())
+    expect(vi.mocked(fetchRuntimePreviewForState)).toHaveBeenCalledWith(RT, [], expect.any(AbortSignal), null)
   })
 })
 
@@ -2412,7 +2530,7 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
 
     await click(radios()[1])
     expect(text()).toMatch(/\d+ 项要改/)
-    expect(text()).toContain('1 项留意')
+    expect(text()).toContain('1 项需留意')
     expect(text()).toContain('查整个画布「')
     expect(errorHint(), '画布范围有阻断：计数芯片').toBeTruthy()
   })
@@ -2510,7 +2628,7 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
     const canvasErrors = useValidationStore.getState().issues.filter((i) => i.severity === 'error').length
     expect(canvasErrors, '前提：当前画布上有阻断项').toBeGreaterThan(0)
     expect(document.body.querySelector('[data-export-target]')!.textContent).toContain('Fig9')
-    expect(checkScope()).toBe('「Fig9」不在画布上，这次导出不做规范检查')
+    expect(checkScope()).toBe('「Fig9」不在画布上，这次导出不做投稿前检查')
     expect(document.body.querySelector('[data-export-check-ok]')).toBeNull()
     expect(text()).not.toMatch(/\d+ 项要改/)
     // 没查成：不拦导出、也没有警告句，仍记进报告的 checkFailed 档
@@ -2580,15 +2698,15 @@ describe('T33 · 检查区只有计数芯片与问题面板入口', () => {
     }, {})
     const chip = (tone: string) => document.body.querySelector<HTMLElement>(`[data-count-chip="${tone}"]`)
     expect(chip('danger')!.textContent).toBe(`${counts.error} 项要改`)
-    expect(chip('warn')!.textContent).toBe(`${counts.warn} 项留意`)
+    expect(chip('warn')!.textContent).toBe(`${counts.warn} 项需留意`)
     // 建议 / 无法核验只会出现在 quiet 档（有才出现），数字与检查结果一致
     for (const el of document.body.querySelectorAll<HTMLElement>('[data-count-chip="quiet"]')) {
       const n = Number(el.textContent!.match(/\d+/)![0])
       expect([counts.suggestion, counts.not_verifiable]).toContain(n)
     }
     expect(document.body.querySelectorAll('[data-count-chip="danger"]')).toHaveLength(1)
-    // 每颗芯片的档由它的名字决定：只有「项要改」是 danger、「项留意」是 warn，其余（建议 / 无法核验）一律 quiet
-    const toneOf: Record<string, string> = { 项要改: 'danger', 项留意: 'warn', 条建议: 'quiet', 项无法核验: 'quiet' }
+    // 每颗芯片的档由它的名字决定：只有「项要改」是 danger、「项需留意」是 warn，其余（建议 / 无法核验）一律 quiet
+    const toneOf: Record<string, string> = { 项要改: 'danger', 项需留意: 'warn', 条建议: 'quiet', 项无法核验: 'quiet' }
     const all = [...document.body.querySelectorAll<HTMLElement>('[data-count-chip]')]
     expect(all.length).toBeGreaterThanOrEqual(2)
     for (const el of all) {
@@ -2937,7 +3055,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     await mountDialogs()
     await openDialog()
     // 项目里只有这一张：切到原图就是它，清单不出现——对象头是唯一写着对象名与尺寸的地方
-    // 不在画布上 = 这次导出没有规范检查（#1228 P2）：灰色提示，不拦导出
+    // 不在画布上 = 这次导出没有投稿前检查（#1228 P2）：灰色提示，不拦导出
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(figureOptions(), '单图编辑没有缩略图条').toHaveLength(0)
     const header = document.body.querySelector('[data-export-target]')
@@ -4307,7 +4425,7 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
     for (const f of ['PNG', 'TIFF', 'SVG', 'EPS']) {
       if (formatBox(f).checked) await click(formatBox(f))
     }
-    await click(document.body.querySelector<HTMLInputElement>('[aria-label="生成样式检查报告"]')!)
+    await click(document.body.querySelector<HTMLInputElement>('[aria-label="生成投稿前检查报告"]')!)
     await start()
     await batchDone()
     expect(exportBodies).toHaveLength(1)

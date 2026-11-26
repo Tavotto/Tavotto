@@ -304,11 +304,11 @@ const STRIPPED_RESULT = {
 const calls = (page: Page) =>
   page.evaluate(() => (window as unknown as { __CALLS__: ToolCall[] }).__CALLS__)
 
-test('画布在真 iframe 里挂起来，并把规范 / 尺寸 / 预检摆出来', async ({ page }) => {
+test('画布在真 iframe 里挂起来，并把规范 / 尺寸 / 投稿前检查摆出来', async ({ page }) => {
   const frame = await boot(page)
   await expect(frame.getByText('lab-publication-v1 v1.0.0')).toBeVisible()
   await expect(frame.getByText('80.0 × 60.0 mm')).toBeVisible()
-  await expect(frame.getByRole('button', { name: /0 阻断 · 1 警告/ })).toBeVisible()
+  await expect(frame.getByRole('button', { name: /^1 项需留意$/ })).toBeVisible()
   // 引擎给的 SVG 真的进了画布（而不是一个连不上的 <img>）
   await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible()
   // 画布**不自己发起 open**：没有那次工具结果它就该等着，而不是编一张图出来
@@ -352,13 +352,13 @@ test('用鼠标拖图内标题 → tools/call 发全量 patches → 用响应更
   await expect(frame.getByRole('button', { name: '撤销' })).toBeEnabled()
 })
 
-test('预检与导出都走 tools/call，结果回到界面上', async ({ page }) => {
+test('投稿前检查与导出都走 tools/call，结果回到界面上', async ({ page }) => {
   const frame = await boot(page)
 
   // 按可访问名定位：按钮的名字是它的**文字内容**（title 只是补充说明），
-  // 拿 title 当 name 找不到它
-  await frame.getByRole('button', { name: /阻断/ }).click()
-  await expect(frame.getByText('预检通过')).toBeVisible({ timeout: 20_000 })
+  // 拿 title 当 name 找不到它；只写不为 0 的项，这份 fixture 是 1 条需留意
+  await frame.getByRole('button', { name: /^1 项需留意$/ }).click()
+  await expect(frame.getByText('投稿前检查通过')).toBeVisible({ timeout: 20_000 })
 
   await frame.getByRole('button', { name: /导出 PDF\+PNG/ }).click()
   await expect(frame.getByText('/tmp/out/FigE2E.pdf')).toBeVisible({ timeout: 20_000 })

@@ -23,6 +23,7 @@ stderr 直接丢弃（`DEVNULL`），临时目录（系统提示 / 输出文件�
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -102,7 +103,10 @@ class StructuredResult:
     elapsed_ms: int = 0
     cost_usd: float | None = None
     wire: str = ""
+    #: 最后实际用的型号（兜底换回用户型号时是用户型号）
     model: str = ""
+    #: True = 先用了「小型号」策略的型号、它这把 Key 用不了，又改用用户连接里原本的型号重试过（两次请求都计入 `requests` / 用量）
+    fell_back: bool = False
 
 
 # --------------------------------------------------------------------------- 失败归类
@@ -165,7 +169,9 @@ def parse_json_object(text: str) -> dict | None:
 REFRESH_NEEDS_S = 35.0
 
 
-def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str, str]:
+def resolve_connection(
+    budget_s: float | None = None, *, conn_id: str | None = None, model: str | None = None
+) -> tuple[dict | None, str, str]:
     """用户当前连着的、内置执行器能直接用的连接 → `(builtin_conn 形状 | None, 原因码, detail)`。
 
     「当前」= 连接视图里第一个可用的 Key / 账号登录连接（`ai_connections.first_key_connection`，旧版选中的接口排在前，与 AI 修复同一口径）。
@@ -180,7 +186,18 @@ def resolve_connection(budget_s: float | None = None) -> tuple[dict | None, str,
     budget = DEFAULT_LIMITS.timeout_s if budget_s is None else budget_s
     if ai_connections.builtin_forced() is False:
         return None, "no_connection", "builtin_disabled"
-    conn = ai_connections.first_key_connection(refresh=False)
+    if conn_id:
+        # 用户在输入框选的那一条（连接 id + 型号）：只认它，不顺延到别的连接
+        if conn_id in ai_connections.SUBSCRIPTIONS:
+            return find_cli_connection(cached_only=False, conn_id=conn_id, model=model)
+        rec = ai_providers.get(conn_id)
+        if rec is None:
+            return None, "no_connection", "connection_not_found"
+        conn = ai_providers.builtin_conn(rec, model)
+        if conn is None:
+            return None, "unsupported_connection", "not_builtin_usable"
+    else:
+        conn = ai_connections.first_key_connection(refresh=False)
     if conn is None:
         return find_cli_connection(cached_only=False)
     if budget >= REFRESH_NEEDS_S:
@@ -210,6 +227,11 @@ def _effort_kwargs(conn: dict, effort: str | None) -> dict:
     try:
         from . import ai_providers
 
+        if ai_providers.is_siwc_conn(conn):
+            # SIWC：型号自己在 /v1/models 里声明的档位（登录时缓存）；没声明的不发
+            return (
+                {"effort": effort} if effort in ai_providers.siwc_efforts(conn.get("model")) else {}
+            )
         rec = ai_providers.get(conn.get("provider_id"))
         if rec is None:
             return {}
@@ -240,6 +262,72 @@ def _cost(conn: dict, usage: Usage, reported: bool) -> float | None:
         cached=usage.cached_input_tokens,
         output=usage.output_tokens,
     )
+
+
+# --------------------------------------------------------------------------- 小型号 + 最低档策略（ADR 0178 2026-11-21）
+#: 「这个连接身份 + 小型号不可用」的记忆（进程内，到期自动忘）：别让每张表都先白撞一次 400 / 403。仿 `ai_data_roles._NEGATIVE`，只是时长更长。
+SMALL_UNAVAILABLE_TTL_S = 600.0
+_SMALL_BAD: dict[str, float] = {}
+_SMALL_LOCK = threading.Lock()
+#: 判定「这把 Key / 这个端点用不了小型号」的失败：型号不存在 / 不认这个参数（HTTP 400 / 404 / 422，在 `transport` 里，detail = `http_<状态>`）、
+#: 无权访问该型号（`auth` 里的 403）。401（密钥本身被拒）不算——换型号也一样被拒；timeout / quota / refused / invalid_output / over_budget 各有各的处理，不换型号。
+_SMALL_UNUSABLE = {
+    ("transport", "http_400"),
+    ("transport", "http_404"),
+    ("transport", "http_422"),
+    ("auth", "http_403"),
+}
+
+
+def _small_key(conn: dict, model: str) -> str:
+    # 密钥只以摘要进进程内的键（不落盘、不外传）：用户换了 Key 就是另一个身份
+    fp = hashlib.sha256(str(conn.get("api_key") or "").encode("utf-8")).hexdigest()[:16]
+    return f"{conn.get('base_url', '')}|{conn.get('provider_id', '')}|{fp}|{model.lower()}"
+
+
+def small_plan(conn: dict) -> dict | None:
+    """结构化调用想用的「小型号 + 最低档」→ `{"model", "effort"}`；不适用 = None（用连接原本的型号与强度）。
+
+    只在 `ai_catalog.json` 的 `structured_small` 登记过的「官方端点 + 协议」上有；条件还有：Key 连接（不是账号登录）、连接没自带 `effort`
+    （手动基准显式给了什么就用什么）、用户选的型号不已经是它、这个连接身份近期没被判过用不了它。"""
+    if is_cli_conn(conn) or conn.get("effort") or conn.get("auth") != "key":
+        return None  # 订阅登录（CLI）连接不适用：型号由 CLI 自己的连接决定
+    from . import ai_catalog
+
+    try:
+        row = ai_catalog.structured_small(
+            str(conn.get("base_url") or ""), str(conn.get("wire") or "")
+        )
+    except ai_catalog.CatalogError:  # 目录坏了 = 没有这条策略，不拖垮调用
+        return None
+    if row is None or str(conn.get("model") or "").strip().lower() == row["model"].lower():
+        return None
+    with _SMALL_LOCK:
+        if _SMALL_BAD.get(_small_key(conn, row["model"]), 0.0) > time.time():
+            return None
+    return row
+
+
+def effective_choice(conn: dict, effort: str | None = None) -> tuple[str, str]:
+    """这个连接上结构化调用实际会用的 `(型号, 强度)`——缓存键用（换型号 / 强度 = 不同的判断来源）。强度对原型号是「想要的档」（实发由目录核）。"""
+    plan = None if is_cli_conn(conn) else small_plan(conn)
+    if plan is not None:
+        return plan["model"], plan["effort"]
+    return str(conn.get("model") or ""), str(conn.get("effort") or effort or "")
+
+
+def mark_small_unusable(conn: dict, model: str) -> None:
+    with _SMALL_LOCK:
+        now = time.time()
+        for k, until in list(_SMALL_BAD.items()):
+            if until <= now:
+                _SMALL_BAD.pop(k, None)
+        _SMALL_BAD[_small_key(conn, model)] = now + SMALL_UNAVAILABLE_TTL_S
+
+
+def reset_small_for_tests() -> None:
+    with _SMALL_LOCK:
+        _SMALL_BAD.clear()
 
 
 # --------------------------------------------------------------------------- 订阅登录（CLI）连接
@@ -276,12 +364,15 @@ def cli_identity(conn: dict) -> str:
     return f"cli:{conn.get('agent', '')}|{conn.get('model', '')}"
 
 
-def find_cli_connection(*, cached_only: bool) -> tuple[dict | None, str, str]:
+def find_cli_connection(
+    *, cached_only: bool, conn_id: str | None = None, model: str | None = None
+) -> tuple[dict | None, str, str]:
     """订阅登录连接里第一个「可用且适配器支持无工具单轮」的 → `({"kind": "cli", "agent", "model", "conn_id"} | None, 原因码, detail)`。
 
     * 没有可用的订阅登录 = `no_connection`；有，但适配器都没覆写 `build_structured_command` / 解析不出型号 = `unsupported_connection`。
     * 型号 = 连接里已解析出的 `default_model`，没有就取它型号清单的第一项（适配器自己的目录顺序）；都没有 = 不支持（不写死型号名）。
-    * `cached_only`：只看已有的能力缓存，绝不探测（同步路径用）；缓存还没有 = `no_connection`。"""
+    * `cached_only`：只看已有的能力缓存，绝不探测（同步路径用）；缓存还没有 = `no_connection`。
+    * `conn_id` / `model`：用户在输入框选的那条订阅连接与型号——只认它（不是它 / 不可用 = `no_connection`，适配器不支持 = `unsupported_connection`），不顺延到别的连接。"""
     from . import ai_agents, ai_bridge, ai_connections
 
     try:
@@ -293,14 +384,16 @@ def find_cli_connection(*, cached_only: bool) -> tuple[dict | None, str, str]:
     saw_unsupported = False
     for c in caps.get("connections") or []:
         sub = ai_connections.SUBSCRIPTIONS.get(c.get("id"))
-        if sub is None or c.get("state") != "ready":
+        if sub is None or c.get("state") != "ready" or (conn_id and c.get("id") != conn_id):
             continue
         agent = ai_agents.get_agent(sub[0])
         if agent is None or not agent.supports_structured():
             saw_unsupported = True
             continue
-        model = str(c.get("default_model") or "").strip() or next(
-            (str(m) for m in (c.get("models") or []) if m), ""
+        model = (
+            str(model or "").strip()
+            or str(c.get("default_model") or "").strip()
+            or next((str(m) for m in (c.get("models") or []) if m), "")
         )
         if not model:
             saw_unsupported = True
@@ -397,6 +490,7 @@ def call_structured(
     post: Callable | None = None,
     max_requests: int | None = None,
     effort: str | None = None,
+    auto_small: bool = False,
     runner: Callable[[CliRun], CliProc] | None = None,
     schema: dict | None = None,
 ) -> StructuredResult:
@@ -409,6 +503,8 @@ def call_structured(
     * `max_requests`：实际 HTTP 请求数的硬上限（传输层数，含换协议 / 字段降级的恢复请求）；到顶不再发，回 `over_budget` / `requests`。
     * `effort`：想要的思考强度（`low` 等）。只有 `ai_providers.builtin_effort_args` 对「这个地址 + 这个型号」确认支持的才发（官方端点、目录核过的型号），
       其余（第三方网关、不认的型号、不支持的协议）一个字段都不发——不发对方不认的字段，也就不需要靠 400 再降级。
+    * `auto_small`：**调用方显式开**（默认关；只有实测过「小型号 + 最低档不改坏」的任务才开，目前只有 `ai_data_roles` 的读懂数据）。开了且连接在 `ai_catalog.json` 的 `structured_small` 登记过的官方端点上时，改用那里给的小型号 + 最低档（见 `small_plan`）；
+      这把 Key 用不了它（`_SMALL_UNUSABLE`）就记住一阵并改回用户原本的型号与强度再试一次（共用总时限与 `max_requests`）。其它连接一个字节都不变。
     * 重试：只在回复不是合法 JSON（含没有文字）时，最多 `limits.max_retries`（≤ 1）次；传输失败 / 拒答 / 鉴权失败都不重发。
     * 订阅登录（`conn` 是 `{"kind": "cli", …}`，或没给 `conn` 而用户只有订阅登录）走 `_call_cli`：`runner` 是注入的「跑进程」函数（只给测试用）；
       `schema` 是可选的 JSON Schema（给了才带 `--output-schema` / `--json-schema`；严格模式的 schema 要求在这条路径上**未实测**）。
@@ -417,7 +513,18 @@ def call_structured(
     t0 = time.monotonic()
     try:
         return _call(
-            system, user, validate, limits, conn, post, t0, max_requests, effort, runner, schema
+            system,
+            user,
+            validate,
+            limits,
+            conn,
+            post,
+            t0,
+            max_requests,
+            effort,
+            auto_small,
+            runner,
+            schema,
         )
     except Exception:  # noqa: BLE001 - 契约：永不抛；原因里不放异常消息（可能含提示词 / 地址）
         return StructuredResult(False, reason="transport", detail="internal", elapsed_ms=_ms(t0))
@@ -437,6 +544,7 @@ def _call(
     t0: float,
     max_requests: int | None,
     effort: str | None = None,
+    auto_small: bool = False,
     runner: Callable[[CliRun], CliProc] | None = None,
     schema: dict | None = None,
 ) -> StructuredResult:
@@ -452,40 +560,66 @@ def _call(
         return _call_cli(
             system, user, validate, limits, conn, t0, max_requests, effort, runner, schema
         )
-    from . import fixsession
+    from . import ai_providers, fixsession
+
+    if ai_providers.is_siwc_conn(conn) and not conn.get("api_key"):
+        # SIWC（与 Key 连接同一条路，ADR 0209 §七）：挑连接时不取令牌，这里现取。与账号登录同一个预算闸：剩余时限够一次刷新
+        # （`REFRESH_NEEDS_S`）才允许联网刷新；不够就只用够新的现有令牌，不等锁、不联网（Codex #2212）
+        from . import siwc_auth, siwc_login
+
+        remaining = limits.timeout_s - (time.monotonic() - t0)
+        try:
+            token = siwc_login.provider().access_token(
+                min_valid_s=max(int(remaining), 1) + 30,
+                allow_refresh=remaining >= REFRESH_NEEDS_S,
+            )
+        except siwc_auth.NeedsLogin:
+            return StructuredResult(
+                False, reason="no_connection", detail="needs_login", elapsed_ms=_ms(t0)
+            )
+        except siwc_auth.TokenUnavailable:
+            return StructuredResult(
+                False, reason="no_connection", detail="token_unavailable", elapsed_ms=_ms(t0)
+            )
+        conn = {**conn, "api_key": token}
 
     sent = [
         0
     ]  # 传输层的真实请求数（`HttpModel.complete` 在换协议 / 字段降级时一次尝试可发多个请求）
     inner = post if post is not None else post_json
 
-    def counted(url, headers, body, *, timeout, max_bytes=None):
+    def counted(url, headers, body, *, timeout, max_bytes=None, reader=None):
         if max_requests is not None and sent[0] >= max_requests:
             raise RunnerFailure("budget", "requests")
         sent[0] += 1
-        if max_bytes is None:
-            return inner(url, headers, body, timeout=timeout)
-        return inner(url, headers, body, timeout=timeout, max_bytes=max_bytes)
+        # 只把调用方真给了的可选参数往下传：三条原协议的调用形状逐字不变；`reader` 是 siwc-responses 的 SSE 读取器
+        extra = {k: v for k, v in (("max_bytes", max_bytes), ("reader", reader)) if v is not None}
+        return inner(url, headers, body, timeout=timeout, **extra)
 
-    kwargs: dict = {
-        "request_timeout": limits.timeout_s,
-        "max_attempts": 1,
-        "retry_base": 0.0,
-        "post": counted,
-        **_effort_kwargs(conn, effort),
-    }
-    model, _redactor = fixsession.build_model(conn, **kwargs)
     deadline = t0 + limits.timeout_s  # 总时限从调用开始算：解析连接（可能联网刷新令牌）也在里面
-    history = [Msg("user", user)]
     total = Usage()
     reported = True
     attempts = 0
-    max_attempts = 1 + limits.max_retries
+    costs: list[float | None] = []  # 每条路线（型号）各按自己的定价估一次再相加
     max_chars = (
         limits.max_output_tokens * 8
     )  # 一个 token 至多 8 个字符的宽松上界：防不守 max_tokens 的端点回一大坨
+    wire_name = ""
 
-    def usage_fields() -> dict:
+    def add(u: Usage | None, part: Usage) -> None:
+        nonlocal reported
+        if u is None:
+            return
+        for acc in (total, part):
+            acc.input_tokens += u.input_tokens
+            acc.output_tokens += u.output_tokens
+            acc.cached_input_tokens += u.cached_input_tokens
+        reported = reported and u.reported
+
+    def usage_fields(c: dict, fell_back: bool) -> dict:
+        cost: float | None = None
+        if reported and costs and all(x is not None for x in costs):
+            cost = sum(x for x in costs if x is not None)
         return {
             "attempts": attempts,
             "requests": sent[0],
@@ -494,59 +628,86 @@ def _call(
             "cached_input_tokens": total.cached_input_tokens,
             "usage_reported": reported,
             "elapsed_ms": _ms(t0),
-            "cost_usd": _cost(conn, total, reported),
-            "wire": model.wire.name,
-            "model": str(conn.get("model") or ""),
+            "cost_usd": cost,
+            "wire": wire_name,
+            "model": str(c.get("model") or ""),
+            "fell_back": fell_back,
         }
 
-    def add(u: Usage | None) -> None:
-        nonlocal reported
-        if u is None:
-            return
-        total.input_tokens += u.input_tokens
-        total.output_tokens += u.output_tokens
-        total.cached_input_tokens += u.cached_input_tokens
-        reported = reported and u.reported
+    def run_route(c: dict, ekw: dict, fell_back: bool) -> StructuredResult:
+        """一条路线（一个型号）：至多 `1 + max_retries` 次尝试，只在回复不是合法 JSON 时重发。"""
+        nonlocal attempts, wire_name
+        model, _redactor = fixsession.build_model(
+            c,
+            request_timeout=limits.timeout_s,
+            max_attempts=1,
+            retry_base=0.0,
+            post=counted,
+            **ekw,
+        )
+        wire_name = model.wire.name
+        part = Usage()
+        history = [Msg("user", user)]
+        n = 0
+        max_attempts = 1 + limits.max_retries
 
-    def fail(reason: str, detail: str) -> StructuredResult:
-        return StructuredResult(False, reason=reason, detail=detail, **usage_fields())
-
-    while attempts < max_attempts:
-        attempts += 1
-        try:
-            turn = model.complete(
-                system=system,
-                tools=[],
-                history=history,
-                max_output_tokens=limits.max_output_tokens,
-                cancel=threading.Event(),
-                deadline=deadline,
+        def fail(reason: str, detail: str) -> StructuredResult:
+            costs.append(_cost(c, part, reported))
+            return StructuredResult(
+                False, reason=reason, detail=detail, **usage_fields(c, fell_back)
             )
-        except RunnerFailure as exc:
-            add(exc.usage)
-            reason, detail = map_failure(exc)
-            return fail(reason, detail)
-        add(turn.usage)
-        if turn.stop == "max_tokens":
-            return fail("over_budget", "output")
-        if turn.stop == "tool_use":
-            return fail("invalid_output", "tool_call")
-        if len(turn.text) > max_chars:
-            return fail("over_budget", "output")
-        obj = parse_json_object(turn.text)
-        if obj is None:
-            if attempts < max_attempts:
-                history = [*history, Msg("assistant", turn=turn), Msg("user", RETRY_NOTICE)]
-                continue
-            return fail("invalid_output", "not_json")
-        try:
-            value = validate(obj)
-        except Exception:  # noqa: BLE001 - 校验函数说「不合格」的方式不限
-            return fail("invalid_output", "shape")
-        if not isinstance(value, dict):
-            return fail("invalid_output", "shape")
-        return StructuredResult(True, value=value, **usage_fields())
-    return fail("invalid_output", "not_json")  # 不可达（循环内必返回或继续）；兜底给闭集结局
+
+        while n < max_attempts:
+            n += 1
+            attempts += 1
+            try:
+                turn = model.complete(
+                    system=system,
+                    tools=[],
+                    history=history,
+                    max_output_tokens=limits.max_output_tokens,
+                    cancel=threading.Event(),
+                    deadline=deadline,
+                )
+            except RunnerFailure as exc:
+                add(exc.usage, part)
+                reason, detail = map_failure(exc)
+                return fail(reason, detail)
+            add(turn.usage, part)
+            if turn.stop == "max_tokens":
+                return fail("over_budget", "output")
+            if turn.stop == "tool_use":
+                return fail("invalid_output", "tool_call")
+            if len(turn.text) > max_chars:
+                return fail("over_budget", "output")
+            obj = parse_json_object(turn.text)
+            if obj is None:
+                if n < max_attempts:
+                    history = [*history, Msg("assistant", turn=turn), Msg("user", RETRY_NOTICE)]
+                    continue
+                return fail("invalid_output", "not_json")
+            try:
+                value = validate(obj)
+            except Exception:  # noqa: BLE001 - 校验函数说「不合格」的方式不限
+                return fail("invalid_output", "shape")
+            if not isinstance(value, dict):
+                return fail("invalid_output", "shape")
+            costs.append(_cost(c, part, reported))
+            return StructuredResult(True, value=value, **usage_fields(c, fell_back))
+        return fail("invalid_output", "not_json")  # 不可达（循环内必返回或继续）；兜底给闭集结局
+
+    plan = small_plan(conn) if auto_small else None
+    if plan is None:
+        return run_route(conn, _effort_kwargs(conn, effort), False)
+    small_conn = {**conn, "model": plan["model"], "effort": plan["effort"]}
+    res = run_route(small_conn, {"effort": plan["effort"]}, False)
+    if res.ok or (res.reason, res.detail) not in _SMALL_UNUSABLE:
+        return res
+    # 这把 Key / 这个端点用不了小型号：记住一阵，并在同一总时限与请求预算内改用用户连接里原本的型号与强度再来一次
+    mark_small_unusable(conn, plan["model"])
+    if time.monotonic() >= deadline or (max_requests is not None and sent[0] >= max_requests):
+        return res
+    return run_route(conn, _effort_kwargs(conn, effort), True)
 
 
 def _call_cli(

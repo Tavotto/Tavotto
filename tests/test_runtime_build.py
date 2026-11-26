@@ -1383,7 +1383,7 @@ def run_release_signing_gate(tmp_path):
             "PATH": os.environ.get("PATH", ""),
             "IS_RELEASE_BUILD": "1",
             "RUNNER_OS": "Windows",
-            "SIGNPATH_ENABLED_VAR": "true",
+            "CERTUM_SIGNING_ENABLED_VAR": "true",
             "TAURI_SIGNING_PRIVATE_KEY": "fixture-updater-key",
             "MACOS_CERTIFICATE": "fixture-certificate",
             "MACOS_SIGN_IDENTITY": "fixture-identity",
@@ -1410,8 +1410,8 @@ def run_release_signing_gate(tmp_path):
 
 @pytest.mark.parametrize("enabled", ["", "false", "TRUE"])
 def test_unsigned_windows_release_is_fail_closed(run_release_signing_gate, enabled):
-    """更新器密钥齐全时也必须因 SignPath 未使能独立失败，不能借 missing 块的 exit。"""
-    result, summary = run_release_signing_gate(SIGNPATH_ENABLED_VAR=enabled)
+    """更新器密钥齐全时也必须因 Certum 签名未使能独立失败，不能借 missing 块的 exit。"""
+    result, summary = run_release_signing_gate(CERTUM_SIGNING_ENABLED_VAR=enabled)
     assert result.returncode != 0, result.stdout + result.stderr
     assert "::error" in result.stdout
     assert "::warning" not in result.stdout
@@ -1425,7 +1425,7 @@ def test_unsigned_windows_release_is_fail_closed(run_release_signing_gate, enabl
 def test_unsigned_waiver_must_name_this_exact_tag(run_release_signing_gate, waiver, tag):
     """豁免只认点名的这一个 tag：空、旧版本号、读不到 RELEASE_TAG 都照样拦停。"""
     result, summary = run_release_signing_gate(
-        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG=waiver, RELEASE_TAG=tag
+        CERTUM_SIGNING_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG=waiver, RELEASE_TAG=tag
     )
     assert result.returncode != 0, result.stdout + result.stderr
     assert "已拦停" in summary
@@ -1433,7 +1433,7 @@ def test_unsigned_waiver_must_name_this_exact_tag(run_release_signing_gate, waiv
 
 def test_unsigned_waiver_for_this_tag_passes_with_warning(run_release_signing_gate):
     result, summary = run_release_signing_gate(
-        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0", RELEASE_TAG="v0.19.0"
+        CERTUM_SIGNING_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0", RELEASE_TAG="v0.19.0"
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "::warning" in result.stdout and "::error" not in result.stdout
@@ -1443,7 +1443,7 @@ def test_unsigned_waiver_for_this_tag_passes_with_warning(run_release_signing_ga
 def test_unsigned_waiver_does_not_relax_updater_key(run_release_signing_gate):
     """豁免只管 Authenticode：缺 minisign 更新包密钥照样失败。"""
     result, _ = run_release_signing_gate(
-        SIGNPATH_ENABLED_VAR="",
+        CERTUM_SIGNING_ENABLED_VAR="",
         WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0",
         RELEASE_TAG="v0.19.0",
         TAURI_SIGNING_PRIVATE_KEY="",
@@ -1457,7 +1457,7 @@ def test_non_release_signing_gate_allows_unsigned_trials(run_release_signing_gat
     result, summary = run_release_signing_gate(
         IS_RELEASE_BUILD="0",
         RUNNER_OS=platform,
-        SIGNPATH_ENABLED_VAR="",
+        CERTUM_SIGNING_ENABLED_VAR="",
         TAURI_SIGNING_PRIVATE_KEY="",
         MACOS_CERTIFICATE="",
         MACOS_SIGN_IDENTITY="",
@@ -1470,9 +1470,9 @@ def test_non_release_signing_gate_allows_unsigned_trials(run_release_signing_gat
 
 @pytest.mark.parametrize("platform", ["Windows", "macOS"])
 def test_release_signing_gate_accepts_complete_credentials(run_release_signing_gate, platform):
-    # macOS 不依赖 SignPath；Windows 的 true 只表示凭据门通过，最终签名仍另验。
+    # macOS 不依赖 Certum；Windows 的 true 只表示凭据门通过，最终签名仍另验。
     result, _ = run_release_signing_gate(
-        RUNNER_OS=platform, SIGNPATH_ENABLED_VAR="true" if platform == "Windows" else ""
+        RUNNER_OS=platform, CERTUM_SIGNING_ENABLED_VAR="true" if platform == "Windows" else ""
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -1504,7 +1504,7 @@ def test_late_unsigned_windows_gate_only_blocks_releases():
     step = matches[0]
     condition = re.search(r"(?m)^        if: (.+)$", step)
     assert condition and condition.group(1) == (
-        "runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'"
+        "runner.os == 'Windows' && vars.CERTUM_SIGNING_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'"
         " && vars.WINDOWS_UNSIGNED_WAIVER_TAG != env.RELEASE_TAG"
     )
     assert re.search(r"(?m)^        shell: pwsh$", step)

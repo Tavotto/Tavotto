@@ -101,12 +101,14 @@ HOLDOUT = DR.load_role_cases(DR.HOLDOUT_CASES_FILE)
 
 
 def test_holdout_cases_are_well_formed_and_do_not_overlap_the_main_set(tmp_path):
-    assert 22 <= len(HOLDOUT) <= 26
+    assert 22 <= len(HOLDOUT) <= 32
     for c in HOLDOUT:
         DR.check_case_shape(c, tmp_path)
     assert not {c["id"] for c in HOLDOUT} & {c["id"] for c in CASES}
     tiers = [c["tier"] for c in HOLDOUT]
-    assert tiers.count("plain") == tiers.count("hard") == len(HOLDOUT) // 2
+    # 2026-11-21 追加 6 条宽表（把列当分组）用例：5 条难例 + 1 条「不该触发」的反例（普通表、规则本来就对），两档都不少于 12 条
+    assert tiers.count("plain") >= 12 and tiers.count("hard") >= 12
+    assert len(tiers) == 30 and tiers.count("hard") == 17
     assert any(c.get("also_ok") for c in HOLDOUT)
     # 留出集的表不能与主集的某张表逐字相同（换皮 / 抄题）
     main_tables = {t for c in CASES for t in c["tables"].values()}
@@ -758,7 +760,12 @@ def test_only_propose_and_the_model_pair_reach_the_model_modules():
         for mod in ("ai_structured", "ai_data_model", "ai_data_roles"):
             if mod in imp and path.name not in (f"{mod}.py",):
                 users.setdefault(mod, []).append(path.name)
-    assert sorted(users["ai_structured"]) == ["ai_data_model.py", "ai_data_roles.py"]
+    # `changeplan.py`（ADR 0206 修订 2026-11-24）：修改方案走同一个无工具单轮入口，是第二个、也是目前唯一的非数据出图调用方
+    assert sorted(users["ai_structured"]) == [
+        "ai_data_model.py",
+        "ai_data_roles.py",
+        "changeplan.py",
+    ]
     assert sorted(users["ai_data_model"]) == ["ai_data_roles.py"]
     assert sorted(users["ai_data_roles"]) == ["ai_data_propose.py", "app.py"]
 
@@ -1069,16 +1076,18 @@ def candidates_of(tmp_path, case, answers):
     return resp
 
 
-def test_ho17_repeat_columns_without_an_x_axis_stay_a_known_product_limit(tmp_path):
-    """HO-17（rep1 / rep2 / rep3 一起看、没有横轴）要「把列当分组」的画法，尚未支持：没有有序横轴时分布 / 比较类配方只画第一列，
-    多列纵轴不采纳（当没给，计入 dropped），`roles.y` 与候选实际画的列一致。标准答案不改。"""
+def test_ho17_repeat_columns_without_an_x_axis_are_stacked_as_groups(tmp_path):
+    """HO-17（rep1 / rep2 / rep3 一起看、没有横轴）：模型判三列都是 `measure`、`x` 给 `none`，采纳为「把列当分组」（`FigureRecipe.stack`，宽表转长表）；
+    `roles.y` 就是这三列，与每个备选实际画的列一致（`item.values.y` / `stack`）。标准答案不改。"""
     case = HBY["HO-17"]
     run, _ = with_model(case, tmp_path)
-    assert run.model != case["expect_default"] and run.state == "ready"
-    assert run.payload["dropped"] >= 1
-    assert run.payload["answers"].get("y") != ["rep1", "rep2", "rep3"]
-    assert len(run.model["y"]) == 1
-    # 直接送数组也一样：规则当没给
+    assert run.model == case["expect_default"] and run.state == "ready"
+    assert run.payload["dropped"] == 0
+    assert run.payload["answers"]["y"] == ["rep1", "rep2", "rep3"]
+    resp = candidates_of(tmp_path, case, run.payload["answers"])
+    assert resp["roles"]["y"] == ["rep1", "rep2", "rep3"] and resp["roles"]["stack"] is True
+    assert all(i["values"]["y"] == resp["roles"]["y"] for i in resp["items"])
+    # 直接送数组（用户在右栏的将来写法）：没有横轴时同样是「列当分组」；没有这个数组（规则）逐字不变
     folder = DR.materialize(case, tmp_path / "proj")
     plain = P.propose(tmp_path / "proj", project="p", folder=folder, render="lazy")
     got = P.propose(
@@ -1088,8 +1097,8 @@ def test_ho17_repeat_columns_without_an_x_axis_stay_a_known_product_limit(tmp_pa
         render="lazy",
         answers={"y": ["rep1", "rep2", "rep3"]},
     )
-    assert got["roles"] == plain["roles"]
-    assert len(got["roles"]["y"]) == 1
+    assert got["roles"]["y"] == ["rep1", "rep2", "rep3"] and got["roles"]["stack"] is True
+    assert "stack" not in plain["roles"] and len(plain["roles"]["y"]) == 1
 
 
 MULTI_Y_WITH_X = "sample,dose,r1,r2,r3\n" + "".join(
@@ -1152,12 +1161,25 @@ def test_ho17_multi_y_is_dropped_when_the_columns_are_not_objectively_fine(tmp_p
         r = dict(roles, rep2="note") if name == "role vetoes" else roles
         run, _ = with_model(case, tmp_path, reach_answer(r, y=y))
         assert run.state == "ready" and run.model == rules, name
-    # 超过 3 列
+    # 超过 3 列：没有横轴时不再受「每列一条线」的 3 列限制——「把列当分组」可到 `STACK_MAX_COLUMNS`（8）列；超过 8 列才丢
     wide = "sample,a,b,c,d\nA1,1,2,3,4\nA2,2,3,4,5\nB1,3,4,5,6\nB2,4,5,6,7\n"
     c4 = case_with(case, wide)
     r4 = {"sample": "row_id", "a": "measure", "b": "measure", "c": "measure", "d": "measure"}
-    base = run_case(c4, tmp_path, conn=None).rules
     run, _ = with_model(c4, tmp_path, reach_answer(r4, y=["a", "b", "c", "d"]))
+    assert run.model["y"] == ["a", "b", "c", "d"] and run.model["x"] is None
+    nine = [f"c{i}" for i in range(9)]
+    big = (
+        "sample,"
+        + ",".join(nine)
+        + "\n"
+        + "".join(
+            f"S{r}," + ",".join(str(r + i * 0.5) for i in range(9)) + "\n" for r in range(1, 6)
+        )
+    )
+    c9 = case_with(case, big)
+    r9 = {"sample": "row_id", **{c: "measure" for c in nine}}
+    base = run_case(c9, tmp_path, conn=None).rules
+    run, _ = with_model(c9, tmp_path, reach_answer(r9, y=nine))
     assert run.model == base
     # 不同单位（双轴）不当一组纵轴
     units = "sample,a_mg,b_mm,c_mg\nA1,1,2,3\nA2,2,3,4\nB1,3,4,5\nB2,4,5,6\n"
@@ -1171,7 +1193,7 @@ def test_ho17_multi_y_is_dropped_when_the_columns_are_not_objectively_fine(tmp_p
 def test_a_list_valued_y_answer_is_parsed_but_garbage_is_a_clean_error(tmp_path):
     assert P.parse_answers({"y": ["a", "b"]}) == {"y": ["a", "b"]}
     assert P.parse_answers({"y": ["a"]}) == {"y": "a"}
-    for bad in ([], ["a", "b", "c", "d"], ["a", 1], ["a", None], {"a": 1}):
+    for bad in ([], [f"c{i}" for i in range(9)], ["a", 1], ["a", None], {"a": 1}):
         with pytest.raises(P.ProposeError):
             P.parse_answers({"y": bad})
     # 别的键仍只认字符串
@@ -1195,9 +1217,11 @@ def test_list_valued_y_that_is_not_usable_is_ignored_by_the_rules(tmp_path):
 def test_ho19_the_model_gives_the_x_axis_even_though_the_table_has_a_group(tmp_path):
     case = HBY["HO-19"]
     rules = run_case(case, tmp_path, conn=None).rules
-    assert rules["x"] is None
+    # 2026-11-24 起规则自己也认得出来：`sem` 是误差列、不进横轴候选，剩下的数值列只有 `day`（以前是 `day` / `sem` 两个候选、有分组列时不猜，x 为 None）
+    assert rules["x"] == "day"
     run, _ = with_model(case, tmp_path)
-    assert run.model == case["expect_default"] and run.payload["answers"]["x"] == "day"
+    # 模型与规则一致时建议里不重复带这一项（建议只装与规则不同的地方）
+    assert run.model == case["expect_default"] and "x" not in run.payload["answers"]
     candidates_of(tmp_path, case, run.payload["answers"])
 
 
@@ -1216,8 +1240,11 @@ def test_ho19_x_is_dropped_unless_it_is_time_or_ordered_and_a_real_candidate(tmp
         run, _ = with_model(
             case, tmp_path, reach_answer(r, y=["mean_length_mm"], group="strain", **pk)
         )
+        # 不合格的 x（含模型说的 `none`）被丢掉后回到规则的结果：规则现在认得出 `day`（`sem` 是误差列，不进横轴候选）
         assert (
-            run.state == "ready" and run.model["x"] is None and run.model["y"] == ["mean_length_mm"]
+            run.state == "ready"
+            and run.model["x"] == "day"
+            and run.model["y"] == ["mean_length_mm"]
         ), name
 
 
@@ -1516,3 +1543,102 @@ def test_two_cli_jobs_never_run_two_processes_at_once(tmp_path):
         time.sleep(0.02)
     assert [R.get("p", j["id"])["state"] for j in jobs] == ["ready", "ready"]
     assert runner.active[1] == 1 and len(runner.runs) == 2
+
+
+# --------------------------------------------------------------------------- 小型号 + 最低档策略（ADR 0178，2026-11-21）
+def _official_conn(model="gpt-6.2-sol"):
+    return {
+        "wire": "openai-responses",
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "sk-test-NOT-A-REAL-KEY",
+        "model": model,
+        "auth": "key",
+        "provider_id": "openai",
+    }
+
+
+def _no_header_case():
+    return next(c for c in CASES if not c.get("header"))
+
+
+def test_roles_call_uses_the_small_model_on_official_openai_and_records_it(tmp_path):
+    case = _no_header_case()
+    fresh()
+    t = DR.scripted(case, "openai-responses")
+    run = run_case(case, tmp_path, conn=_official_conn(), post=t)
+    assert run.state == "ready"
+    assert [c["body"]["model"] for c in t.calls] == ["gpt-6-luna"]
+    assert t.calls[0]["body"]["reasoning"] == {"effort": "none"}
+    assert run.usage["model"] == "gpt-6-luna" and "fell_back" not in run.usage
+
+
+def test_roles_call_falls_back_to_the_users_model_when_the_key_cannot_use_the_small_one(tmp_path):
+    case = _no_header_case()
+    fresh()
+    t = DR.scripted(case, "openai-responses")
+    t.script.insert(0, 404)  # 小型号：这把 Key 没有
+    run = run_case(case, tmp_path, conn=_official_conn(), post=t)
+    assert run.state == "ready"
+    assert [c["body"]["model"] for c in t.calls] == ["gpt-6-luna", "gpt-6.2-sol"]
+    assert (
+        run.usage["model"] == "gpt-6.2-sol"
+        and run.usage["fell_back"]
+        and run.usage["requests"] == 2
+    )
+
+
+def test_roles_cache_is_not_shared_between_the_small_model_and_the_users_model(tmp_path):
+    case = _no_header_case()
+    fresh()
+    run_case(case, tmp_path, conn=_official_conn(), post=DR.scripted(case, "openai-responses"))
+    # 同一数据换成「小型号用不了」之后的身份：缓存键不同，不会拿小型号的判断顶替
+    ai_structured.mark_small_unusable(_official_conn(), "gpt-6-luna")
+    R._JOBS.clear()
+    R._BY_KEY.clear()
+    t = DR.scripted(case, "openai-responses")
+    run = run_case(case, tmp_path, conn=_official_conn(), post=t)
+    assert run.state == "ready" and [c["body"]["model"] for c in t.calls] == ["gpt-6.2-sol"]
+
+
+def test_unsure_about_a_continuous_column_does_not_veto_the_x_axis_the_rules_chose(tmp_path):
+    """身高-体重：规则选身高当横轴。模型只说身高「看不出来」（other）并建议不要横轴：不采纳（连续取值的数值列）；
+    同样的 other 落在整数的样本量列上仍然否决（HO-22 那类）。"""
+    case = {
+        "id": "T-hw",
+        "tables": {
+            "t.csv": "height_cm,weight_kg\n"
+            + "".join(f"{150 + 1.7 * i:.1f},{50 + 2.1 * i:.1f}\n" for i in range(15))
+        },
+        "hint": None,
+    }
+    folder = DR.materialize(case, tmp_path / "proj")
+    entry = adf.profile_folder(tmp_path / "proj" / folder).tables[0]
+    values = adf.inspect_data_source(tmp_path / "proj" / folder / "t.csv", v2=True)
+    assert R.continuous_columns(values) == {"height_cm", "weight_kg"}
+
+    def picks(role):
+        shape = R.validate_roles_shape(
+            {
+                "columns": [
+                    {"name": "height_cm", "role": role},
+                    {"name": "weight_kg", "role": "measure"},
+                ],
+                "picks": {"y": ["weight_kg"], "x": "none", "group": "none"},
+            }
+        )
+        return R.interpret(entry, values, shape, None).picks
+
+    assert "x" not in picks("other")  # 拿不准不算否决
+    assert picks("row_id").get("x") == "none"  # 明确说是行号仍然否决
+
+    ints = {
+        "id": "T-n",
+        "tables": {
+            "t.csv": "mean_mass,n\n"
+            + "".join(f"{2.5 + 0.3 * i:.2f},{8 + i % 4}\n" for i in range(12))
+        },
+        "hint": None,
+    }
+    folder = DR.materialize(ints, tmp_path / "proj2")
+    values2 = adf.inspect_data_source(tmp_path / "proj2" / folder / "t.csv", v2=True)
+    assert "n" not in R.continuous_columns(values2)

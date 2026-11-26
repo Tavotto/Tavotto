@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「项目系统与多画布（前端侧）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`canvas/shapeTools.test.tsx`、`lib/starArc.golden.test.ts` + `tests/test_star_arc.py`、`lib/appearance.test.tsx`、`lib/appearance.golden.test.ts` + `tests/test_appearance.py`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`lib/pathGeom.golden.test.ts` + `tests/test_path_object.py`、`lib/convertToPath.test.tsx`、`lib/penTool.test.ts`、`lib/pathEdit.test.ts`、`canvas/penAndAnchors.test.tsx`、`canvas/shapeTools.test.tsx`、`lib/starArc.golden.test.ts` + `tests/test_star_arc.py`、`lib/appearance.test.tsx`、`lib/appearance.golden.test.ts` + `tests/test_appearance.py`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`、`lib/figureElementCopy.test.ts` + `tests/test_figure_copy_source_vectors.py`（图内副本 gid 判据同源对）、`lib/figureTextClipboard.test.tsx`、`store/figureDuplicate.test.tsx`、`e2e/figure-duplicate.spec.ts`、`e2e/copy-figure-text.spec.ts`
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：剪贴板主路径是原生 ClipboardEvent；类型切换一次 commit 不换 id；「适应画布」是模式；加图分层链 `addFigureToLayout` → `addPanelToCanvas` → `actions.addPanel`，权威在该细则
 
 <!-- agents-route
@@ -22,7 +22,16 @@ order: 210
   **图内编辑里选着元素时 ⌘C 复制的是元素**（`handleCopyEvent` → `buildElementClipPayload`，ADR 0163）：文字元素换算成与原文字页面上重合的
   `TextObject`（`lib/figureTextCopy.ts`，字号走 `pagePtLens`、几何只认权威 manifest）写进**同一份**对象负载，⌘V / 菜单粘贴走既有的
   `consumePayload` → `materializePaste`（同画布错开 `DUPLICATE_OFFSET_MM`，与 ⌘D 共用）；不能复制的元素（曲线、色块、刻度组）也消费这次复制、
-  只出顶栏胶囊「{元素名}还不能复制」。在图内编辑里粘贴后退出图内编辑、选中新标注。看护 `lib/figureTextClipboard.test.tsx`。
+  只出顶栏胶囊「{元素名}还不能复制」。看护 `lib/figureTextClipboard.test.tsx`。
+  **一份负载两种落法（ADR 0207，修订 0163 第 4、7 条）**：图内编辑里 ⌘C 写的负载在 `objects`（换算好的标注，0163 原样）之外，第一期能复制成图内副本的元素
+  （标题 / 轴标题 / `ax.text` · `annotate` 的文字 / `fig.text`，判据只有 `lib/figureElementCopy.isDuplicableElement`，与引擎 `_copy_source_supported` 严格同源）
+  再多一段 `elements: {docId, panelId, items: [{gid}]}`——只记 gid，落点与文字在粘贴那一刻按**当时的权威 manifest**现算；选中的有一个不能复制成副本（图例文字、刻度、3D、色条轴……）就整批不带 `elements`、只落成标注。
+  **分派只在 `consumePayload`**：负载带 `elements`、且此刻是同一份文档（`docId`）同一张图（`ui.elementPanelId === panelId`）的图内编辑 → `pasteIntoFigure` → `actions.duplicateFigureElements`
+  （图内副本的**唯一**创建点：一次 `setOverrides`、一条历史，写 `copy_of` 并把源上已有的样式类 override 抄给副本 gid；落点 = 源画出来的锚点向页面右下错开 `DUPLICATE_OFFSET_MM`，
+  错出图外收回；**不退出图内编辑**，新副本在下一份权威 manifest 里出现后被选中，`store/figureCopySelect`）；落在别处（画布、别的图、别的文档、旧负载）或 `pasteObjects({ asAnnotation: true })`
+  （右键「粘贴为标注」）→ 照旧 `materializePaste`，**含退出图内编辑**。权威 manifest 此刻不在：同图的粘贴出「还不能复制」并消费（不落成标注，免得无端退出图内编辑）。
+  **⌘D / 系统菜单「创建副本」**只有 `actions.duplicateSelection` 一个出口：图内编辑里选着图内元素 = 原地建图内副本（不能复制的元素只出胶囊，不放过去复制整张图），其余照旧 `duplicateSelected`。
+  副本上「隐藏」就是「删除副本」（`deleteFigureCopies`：摘掉 `copy_of` 与它 gid 上的全部修改），「恢复此元素修改」只清 `copy_of` 以外的（`restoreElementEdits`）。不开第三条创建路径。
 - **默认画布名只有一个生成器** `types/document.defaultCanvasName(n)`（「Figure N」，
   2026-09-06 审计 T05）：空文档的第一张、新建、教程项目全走它。此前空文档叫
   「Fig 1」、新建的叫「Fig 2」、教程里的叫「Figure 1」，三种写法混在一行标签里。
@@ -154,6 +163,22 @@ order: 210
   形状与倾斜对象换成路径），所以导出端不用改。⌘D 是「创建副本」，副本被挪 / 转过后再按就按同样的位移与角度差再复制（`actions.duplicateStep`）；
   ⌥⌘D 再次变换（`useKeyboard` 里排在 ⌘D 前面，⌘D 只认没按 ⌥ 的）。看护 `store/transformActions.test.tsx`、`lib/transform.golden.test.ts`、
   `canvas/primarySelection.test.tsx`、`tests/test_transform_vectors.py`。
+- **SVG 导入（2026-11-15，ADR 0189）**：解析**只在后端**，而且只经受限解析器 `svgcheck.parse_svg(tolerant=True)`（与静态 SVG 素材、
+  外部 RFC #1877 的场景解析同一个；不许另起 XML 解析器、不许放宽任何安全规则）——`rendercore/svgimport`，`/api/svg/import`；前端不许把不受信任的 SVG
+  挂进页面去量样式，导入的文字 / 名字只当文本显示。前端只做两件事：`lib/svgImport.looksLikeSvg`（粘贴的是不是 SVG 标记）与 `placeImported`（只收认识的对象、id 与组 id
+  整批换新、平移到落点）；写入 `store/svgImportActions`（`pasteSvgText` 一次 commit；`explodeSvgPanel` 原位替换静态 SVG 图，判据
+  `canExplodeSvg`，右键菜单与命令面板同一个）。`unsupported` 非空一律不拆：粘贴时先当 SVG 素材、再不行栅格化（`lib/svgRaster`，`<img>`
+  模式）、都不行由素材导入那条路说原因；拆图时图不动。拖进来的 SVG 文件不走这里（照旧是图）。看护 `store/svgImportActions.test.tsx`、
+  `lib/svgImport.golden.test.ts`、`tests/test_svgimport.py`。
+- **文字转轮廓 ⇧⌘O、复制为 SVG（2026-11-15，ADR 0189）**：字形与 SVG 都只在后端生成（`rendercore/textoutline`、
+  `/api/svg/copy` 用 `svgwriter`），前端不许用浏览器字体自己描字形、不许自己拼 SVG——那样与导出不是同一份字。前端只发导出载荷
+  （`toExportObjects`，裁剪不随载荷走：转出来的路径留在原组里照样被同一个蒙版裁）、落位（`store/textOutlineActions`：原位替换、
+  多条成一个新组、留在原组里，一次 commit）与写剪贴板（`store/svgCopyActions`：`ClipboardItem` 收 Promise，退到 `writeText`）。
+  判据 `canOutlineText` / `canCopyAsSvg` 右键菜单、命令面板、快捷键共用。看护 `store/textOutlineActions.test.tsx`、`tests/test_text_outline.py`。
+- **关键对象、阵列（2026-11-15，ADR 0185 M6）**：关键对象 = 多选里再点一下（`store/keyObject.trackKeyClick`，`ObjectView` 只在「点的对象已在
+  多选里」时挂上），落成「选区末位 + 排列参照 `primary`」——没有第二份状态，对齐 / 等宽等高 / 间距（`setSelectionSpacing`）都读这两样；轮廓粗
+  一档在 `OverlaySvg`。阵列的几何唯一出处 `lib/array`（网格步长 = 看得见的外接框 + 间距；环形圆心在选区中心正下方），写入
+  `transformActions.arraySelection`（组按单元补齐、每份一套新组 id、一次 commit）。看护 `store/arrangeExtras.test.tsx`、`lib/array.golden.test.ts`。
 - **不认识的对象类型原样保留（2026-11-14，ADR 0185 的前置）**：更新的构建会往文档里写本构建没有的 `type`
   （第一例是自由路径 `path`）。判据只有 `types/document.isKnownObject`（`KNOWN_OBJECT_TYPES` 闭集）。读盘、保存、
   换画布、复制画布都不碰它（文档层本来就不按类型过滤，别加）；画布上 `ObjectView` 只画虚线占位框
@@ -243,7 +268,7 @@ order: 210
   全部对象（`CanvasLayers` 不再有 `only`），所以选区里的东西都看得见，不再有「看不见的版面对象被误删 / 误取景」的前提。
   **全选**只有 `store/actions.selectAll` → `selectAllIds` 一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它），收看得见且没锁的对象；
   **删除**（`deleteSelected`）删选区；**粘贴**只在 `lib/clipboard.consumePayload`、**创建副本**只在 `store/actions.duplicateSelected`
-  落，单图编辑里照常——图 = 第二张 → 切多图排版，标注留在单图。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：
+  （图内编辑里选着图内元素时是 `duplicateFigureElements`，ADR 0207）落，单图编辑里照常——图 = 第二张 → 切多图排版，标注留在单图。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：
   舞台双击、⌘1 / 系统菜单、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——单图编辑里框「没隐藏对象的 `visualBounds` 并集」（图 ∪ 标注，
   含原点，`fitRectAnimated`；曾按「(0,0) 到右下角」取景，x/y 为负时图被裁，Codex #833），排版里框页面（`fitAnimated`）；首次挂载的瞬时
   适应与双击的「框外」判据（`lib/fitGuard`）读同一个框。载入 / 切项目 / 恢复 / 切画布之后的瞬时取景是 `fitStageNow`（同一个框）。

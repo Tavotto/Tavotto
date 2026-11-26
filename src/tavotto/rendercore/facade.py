@@ -439,7 +439,7 @@ class Canvas:
         if o.get("hidden"):
             return
         kind = o.get("type")
-        if kind not in ("panel", "text", "arrow", "shape", "path"):
+        if kind not in ("panel", "text", "arrow", "shape", "path", "pathText"):
             return
         if kind == "panel":
             self._resolver.paths[str(o.get("id", ""))] = Path(resolve_panel(o, dpi))

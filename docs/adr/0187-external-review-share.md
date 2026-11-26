@@ -96,7 +96,7 @@ verdict = { v, decision: "approved" | "changes", note, author, at }   // 每版�
 ### 七、客户端
 
 - `engine/reviewshare.py`：出站全走 `diagsend._send`（系统证书、不跟随重定向、响应有上限）；目的地钉死在 `REVIEW_HOSTS = {"review.tavotto.cn"}`，开发 / 验收用 `TAVOTTO_REVIEW_ENDPOINT`，设了但不合规则功能关闭、不回退内置线路。
-- `engine/reviewinbox.py`：本机分享记录（share_id、管理令牌、各版本缩略图、意见副本、已读游标），锁 + 原子写，到期 + 30 天后清理；**链接到期后作者仍能在应用里看到当时的意见副本**。
+- `engine/reviewinbox.py`：本机分享记录（share_id、管理令牌、各版本缩略图、意见副本、已读游标），锁（进程内 + 跨进程文件锁 `review/shares.lock`，ADR 0205 §四）+ 原子写，到期 + 30 天后清理；**链接到期后作者仍能在应用里看到当时的意见副本**。
 - `/api/review/*`（会话认证照旧）：`capability`、`quota`、`for`、`shares`、`share`、`update`、`changed`、`status`、`revoke`、`refresh`、`reply`、`resolve`、`read`、`unread`、版本快照。
 - **出图由前端给规格**：`share` / `update` 必带 `render` = 发给 `/api/export` 的那份请求里的 `original` 段（单图）或 `canvas` 段（排版）原样；排版的每个面板对象另带不透明 `object_id`（`^[A-Za-z0-9_-]{1,64}$`）。导出请求里对象的 `id` 是图的项目内路径，**不得出机**，所以元素键只用 `object_id`。缺 `render` 同步 422 `review_render_required`。
 - **元素键**：单图 = manifest gid；排版面板框 = `object_id`；面板内元素 = `<object_id>::<manifest gid>`。坐标基准：单图相对整张图，排版相对页面（快照 = 导出 `scope=canvas` 的页面图），版本记录带 `frame: "figure" | "page"`。

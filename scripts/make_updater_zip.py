@@ -13,7 +13,7 @@ default-features=false 对线上 v0.10.0 更新包 EXTRACT FAILED，重打成
 STORED 后 EXTRACT OK；macOS 走 tar.gz + flate2，不经这条路）。
 
 tauri-bundler 自己打的 nsis.zip 用的正是 STORED——它知道自己的更新器解不了
-deflate。我们必须重打（要装进 SignPath 签过名的最终安装包），重打就得遵守
+deflate。我们必须重打（要装进签过名的最终安装包），重打就得遵守
 同一个约定。exe 本来就是 NSIS 压过的，STORED 几乎不多占体积。
 
 更新器解包后在**顶层**找第一个 `.exe` 执行，所以条目名取 exe 的

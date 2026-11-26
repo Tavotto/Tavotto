@@ -111,6 +111,7 @@ import { displayedExactManifest } from '@/store/mountedSvgStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
+import { createPathText, pathSourceAt } from '@/store/pathTextActions'
 import { DRAW_COLOR_DEFAULT } from '@/lib/drawDefaults'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
@@ -160,6 +161,7 @@ import {
   type TextObject,
 } from '@/types/document'
 import { expandGroups, movableTargets, moveLabel, warnBlockedGroups } from '@/store/actions'
+import { dataSnapPoints, pathSnapPoints } from '@/lib/smartGuides'
 
 /** 历史标签描述符（与 store/actions.ts 同一命名空间） */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -177,7 +179,7 @@ const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
  * 而且换不回来（原始 tool 已经没了）。
  */
 /** 拖一下就落一个对象的工具（钢笔是多次点击的状态机，另走 `canvas/penController`） */
-export type DrawTool = Exclude<Tool, 'select' | 'pen' | 'eyedropper'>
+export type DrawTool = Exclude<Tool, 'select' | 'pen' | 'pencil' | 'eyedropper'>
 
 const drawnToolMsg = (tool: DrawTool): UiMessage =>
   tool === 'text' || tool === 'arrow'
@@ -288,6 +290,19 @@ export const candidatesFor = (exclude: Set<string>) => {
       const extra = elementSnapCandidates(o, manifest)
       cands.xs.push(...extra.xs)
       cands.ys.push(...extra.ys)
+      // 智能参考线（ADR 0185 M7）：图内的数据点（曲线顶点、散点中心）
+      for (const [x, y] of dataSnapPoints(o, manifest)) {
+        cands.xs.push(x)
+        cands.ys.push(y)
+      }
+    }
+    // 智能参考线：别的路径 / 形状 / 箭头的锚点与线段中点
+    for (const o of doc().objects) {
+      if (exclude.has(o.id)) continue
+      for (const [x, y] of pathSnapPoints(o)) {
+        cands.xs.push(x)
+        cands.ys.push(y)
+      }
     }
   }
   return cands
@@ -942,6 +957,15 @@ export function startDraw(e: ReactPointerEvent, tool: DrawTool) {
       // pointercancel：草稿丢掉，不落对象（工具也不该切回选择）
       if (fin.cancelled) return
 
+      // 文字工具点在一条路径 / 形状的轮廓上（不拖）= 在它上面放路径文字，起点就在点的地方（ADR 0190）
+      if (tool === 'text' && !moved) {
+        const onPath = pathSourceAt([start.x, start.y], snapTolMm(getTransform()))
+        if (onPath) {
+          useUiStore.getState().setTool('select')
+          createPathText(onPath.src, onPath.offset)
+          return
+        }
+      }
       const fallback = DEFAULT_DRAW[tool]
       const rect: Rect =
         moved && draft && draft.w > 0.5

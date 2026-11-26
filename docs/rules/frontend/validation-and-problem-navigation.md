@@ -12,6 +12,8 @@ order: 70
 必守要点: 摘要只由 `summaryFor()` 组装；定位只有 `focusObject()` 一处；失败 toast 挂主人，同项目同文件渲染成功才撤
 -->
 
+- 缩略图与 runtime 预览随项目代际及文档载入代次重新取图。整份恢复同一文档后，问题清单立即清空，再按恢复后的所有画布重算。
+
 完整版在 `docs/adr/0030-validation-and-problem-navigation.md`，改动前先读。
 **「这份项目有什么问题」只有一条链**：
 

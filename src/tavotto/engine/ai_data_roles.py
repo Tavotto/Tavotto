@@ -1,4 +1,4 @@
-"""「从数据到图」第 1 步：模型读懂每一列是什么（ADR 0178 修订 2026-11-19「读懂数据」，`ai.taf.enabled` 后面，无单独开关）。
+"""「从数据到图」第 1 步：模型读懂每一列是什么（ADR 0178 修订 2026-11-19「读懂数据」，`ai.taf.enabled` 后面；用户可在界面选用哪个 AI、或关掉——ADR 0178 修订 2026-11-25，选择与判据在 `ai_data_aichoice`）。
 
 **模型只给「列判断」，不出配方。** 判断被翻译成 `propose` 本来就接受的三种输入——`answers` 里的 `y` / `x` / `group`（`picks`）、`header_rows`、
 `answers.cells`——再由规则 `default_candidates` 生成配方、过 `validate_recipe` / `enforce_order`。闭集配方校验一步没绕过：模型改变的只是「规则在有歧义处
@@ -11,7 +11,8 @@
 * **四处「够得到」的采纳**（模型明确判断 + 列客观满足，否则丢该项回规则；谓词在 `ai_data_recipe`）：多列纵轴（`multi_y_ok`：2–3 个同单位数值列、非编号列、角色都是
   `measure`，`answers.y` 为数组）；有分组时的横轴（角色 `time` / `ordered_x`，且是规则的横轴候选）；编号样文字列当分组（角色 `group` 且 `id_group_ok`）；
   整数编码的数值列当分组（`knockout` 0 / 1：角色 `group` 且 `numcat_pick_ok`——非空值全是整数、2–6 个取值、有重复、不是编号样的列；规则从不自己把它当分组，
-  配方带 `numcat` 这条事实，见 ADR 0178）。
+  配方带 `numcat` 这条事实，见 ADR 0178）；把列当分组（宽表每列一个条件 / 一次重复：`picks.y` 给多列、没有有序横轴，`stack_ok`——2–8 个纯数值列、同单位、非编号；
+  配方带 `stack` 这条事实，转成长表后画分组比较 / 分布，见 ADR 0178）。
 * **表头行**：只在读表时 `status == "unsure"`（已有预览）且用户没指定表头行时问；答案必须是预览里的行号，按它重读要能读出合格的表，才采纳。
   **单位行不强制**（不动读表运行时，生成脚本的公共模块哈希不变）。
 * **用户的回答永远优先**：请求里已有 `answers.y / x / group / cells` 或 `header_rows` 时不起模型任务（用户已接管）。
@@ -41,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import (
+    ai_data_aichoice as choice_mod,
     ai_data_figure as adf,
     ai_data_model as model_mod,
     ai_data_recipe as recipe_mod,
@@ -110,7 +112,7 @@ def system_prompt() -> str:
         "- 已经汇总过的表里，均值旁边的 sd / sem / se / ci 这类列是 `error`，不是 `measure`，也不要放进 `picks.y`；"
         "样本量 `n` / `count` 这类列给 `other`。\n"
         "- 拿不准就给 `other`，不要猜。一列只能有一个角色。\n"
-        "- `picks` 是你建议的默认画法：`y` 是测量值的列名数组（最多 3 个，同单位才放多个），`x` 是横轴的列名，"
+        '- `picks` 是你建议的默认画法：`y` 是测量值的列名数组（同单位才放多个；有横轴时最多 3 个）。表里每一列是一个条件或一次重复、没有横轴也没有分组列时，把这几列都放进 `y`（最多 8 个），`x` 给 `"none"`。`x` 是横轴的列名，'
         '不该有有序横轴就给 `"none"`，`group` 是颜色 / 比较分组的列名，不该分组给 `"none"`。拿不准的角色给 `"unsure"`。'
         "`picks` 里的列必须与你给的 `columns` 角色一致。\n"
         "- `cells`：数值列里夹着少量文字格时（摘要里 `kind` 为 `mixed`），给处理规则。`mode`：`skip`（当缺失）、`extract`（取文字里的第一个数）、"
@@ -185,6 +187,16 @@ def column_stats(values: adf.DataSummary, name: str) -> dict:
         out["min"] = _num(min(nums))
         out["max"] = _num(max(nums))
     return out
+
+
+def continuous_columns(values: adf.DataSummary) -> frozenset[str]:
+    """客观上是连续量的数值列：有非整数取值，且不同取值多于 2 个。整数列（行号、样本量、重复序号）与常数 / 二值列不算。"""
+    out = set()
+    for name in values.columns:
+        st = column_stats(values, name)
+        if st and st.get("all_int") is False and st.get("n_unique", 0) > 2:
+            out.add(name)
+    return frozenset(out)
 
 
 # --------------------------------------------------------------------------- 请求
@@ -337,10 +349,15 @@ class Understanding:
     header_row: int | None = None
     #: 因不合格被丢掉的字段个数（角色 / 选择 / 规则 / 表头）
     dropped: int = 0
+    #: G-018：规则（含模型的选择）此刻选作横轴的那一列，模型判它是 `measure`（与纵轴是两个独立测量，不是有序自变量）→ 列名；否则 None。
+    #: 不是对下拉的改动（`picks` 不含它），`to_payload` 里是 `answers.x_measure`，`propose` 据此不出趋势类
+    x_measure: str | None = None
 
     def to_payload(self, table: str) -> dict:
         """给前端的「建议」：`answers`（可原样并进下一次 propose 的 `answers`）、`header_rows`、列角色标注、丢弃数。"""
         answers: dict = dict(self.picks)
+        if self.x_measure is not None:
+            answers["x_measure"] = self.x_measure
         if self.cells:
             answers["cells"] = {
                 c: {k: v for k, v in r.to_dict().items() if k != "column"}
@@ -355,7 +372,9 @@ class Understanding:
 
     @property
     def empty(self) -> bool:
-        return not (self.picks or self.cells or self.header_row is not None)
+        return not (
+            self.picks or self.cells or self.header_row is not None or self.x_measure is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -400,6 +419,7 @@ def derive(
         out.cells,
         judgement.header_row,
         out.dropped + judgement.header_dropped,
+        out.x_measure,
     )
 
 
@@ -461,8 +481,9 @@ def _valid_pick(
     if key == "y":
         cols = value if isinstance(value, list) else [value]
         if len(cols) > 1:
-            # 多列纵轴：客观条件在 `recipe_mod.multi_y_ok`（数值列、2–3 列、同单位、无编号列），再加模型自己的角色不能否决（每列只能是 `measure`）
-            if not recipe_mod.multi_y_ok(s, cols) or any(
+            # 多列纵轴：客观条件在 `recipe_mod.multi_y_ok`（有横轴、每列一条线：数值列、2–3 列、同单位、无编号列）或 `recipe_mod.stack_ok`（没有横轴、
+            # 把列当分组：纯数值列、2–`STACK_MAX_COLUMNS` 列、同单位、无编号列）；再加模型自己的角色不能否决（每列只能是 `measure`）。落地时两种用哪一种由有没有有序横轴定
+            if not (recipe_mod.multi_y_ok(s, cols) or recipe_mod.stack_ok(s, cols)) or any(
                 roles.get(c) not in (None, "measure") for c in cols
             ):
                 return None
@@ -525,14 +546,24 @@ def _default_group_is_replicate(
     )
 
 
-def _multi_y_without_x(entry, hint, loop: dict, key: str, valid: dict) -> bool:
-    """模型给的多列纵轴，配上（模型给的 / 规则默认的）横轴后没有有序横轴吗？是 = 不采纳：分布 / 比较类配方只画第一列。"""
+def _stack_contradicts(roles: dict[str, str], ys: list[str]) -> bool:
+    """模型自己把 `ys` 之外的某一列判成 `time` / `ordered_x`（有序横轴）：它同时又说没有横轴、要把几列当分组，自相矛盾——不采纳（保守，回规则结果）。"""
+    return any(r in ("time", "ordered_x") for c, r in roles.items() if c not in ys)
+
+
+def _multi_y_without_x(
+    entry, hint, loop: dict, key: str, valid: dict, roles: dict[str, str] | None = None
+) -> bool:
+    """模型给的多列纵轴，配上（模型给的 / 规则默认的）横轴后能用吗？**不能 = 不采纳**（返回 True）。能用有两种：有有序横轴（趋势类每列一条线）；
+    或没有横轴、且这几列客观上能「当分组」（`recipe_mod.stack_ok`，落成 `Roles.stack`；模型的角色里没有另一列是有序横轴）。其余情形分布 / 比较类配方只画第一列，不采纳。"""
     if key != "y" or not isinstance(valid[key], list):
         return False
     trial = {**loop, "y": valid["y"]}
     if "x" not in trial:
         trial["x"] = valid.get("x", "unsure")
     res = recipe_mod.resolve_roles(entry, hint, trial)
+    if isinstance(res, recipe_mod.Roles) and res.stack:
+        return _stack_contradicts(roles or {}, valid["y"])
     return not (isinstance(res, recipe_mod.Roles) and res.x_ord is not None)
 
 
@@ -542,12 +573,20 @@ def suggest(
     roles: dict[str, str],
     model_picks: dict,
     fixed: dict | None = None,
+    continuous: frozenset[str] = frozenset(),
 ) -> tuple[dict, int]:
     """规则此刻会怎么选 / 问什么，再决定采纳模型的哪几个选择 → `(要交给规则的 picks, 丢弃个数)`。**规则无歧义且没被明确否决的，保持规则结果。**
 
-    `fixed`：用户已经定的选择（永远优先，模型不碰）。"""
+    `fixed`：用户已经定的选择（永远优先，模型不碰）。`continuous`：客观上是连续量的数值列（`continuous_columns`）——模型对这种列
+    只说「看不出来」（`other`）不算否决规则选好的横轴。"""
     s = entry.summary
     dropped = 0
+
+    def vetoed(key: str, col: str) -> bool:
+        if key == "x" and roles.get(col) == "other" and col in continuous:
+            return False  # 拿不准 ≠ 否决：连续取值的数值列不会是行号 / 样本量 / 常数（RC-21：身高偶尔被判成 other）
+        return _vetoed(key, roles.get(col))
+
     valid: dict[str, str] = {}
     for key, raw in model_picks.items():
         v = _valid_pick(s, key, raw, roles)
@@ -558,6 +597,22 @@ def suggest(
         valid[key] = v
     loop: dict = dict(fixed or {})  # 喂给规则的（含占位的 unsure）
     emit: dict = {}
+    # 「把列当分组」：模型把几列都判成测量值、且说没有有序横轴（或没提横轴而这几列之外没有横轴候选）——规则即使已落定了别的默认（如宽表第一列当横轴）也采纳；
+    # 条件各一处实现（`stack_ok` / `_stack_roles`），不满足 = 不采纳、回规则结果
+    y_stack = valid.get("y")
+    if (
+        isinstance(y_stack, list)
+        and "y" not in loop
+        and "x" not in loop
+        and not _stack_contradicts(roles, y_stack)
+    ):
+        trial = recipe_mod.resolve_roles(
+            entry, hint, {**loop, "y": y_stack, "x": valid.get("x", "unsure")}
+        )
+        if isinstance(trial, recipe_mod.Roles) and trial.stack:
+            loop["y"] = emit["y"] = y_stack
+            if valid.get("x") == "none":
+                loop["x"] = emit["x"] = "none"
     for _round in range(len(_QUESTION_KEY) + 3):
         res = recipe_mod.resolve_roles(entry, hint, loop)
         if isinstance(res, str):
@@ -566,7 +621,7 @@ def suggest(
             key = _QUESTION_KEY.get(res.question_code)
             if key is None or key in loop:
                 break
-            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid, roles):
                 dropped += 1
                 valid.pop(key)  # 不采纳：当模型没给这一项，规则默认
             if key in valid and not (
@@ -609,10 +664,10 @@ def suggest(
                     loop[key] = emit[key] = pick
                     changed = True
                 continue
-            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid):
+            if key in valid and _multi_y_without_x(entry, hint, loop, key, valid, roles):
                 dropped += 1
                 valid.pop(key)
-            if _vetoed(key, roles.get(col)) and key in valid and valid[key] != col:
+            if vetoed(key, col) and key in valid and valid[key] != col:
                 # 规则已经落定了一个分组列，模型判它是「重复 / 批次编号」并建议干脆不分组：不采纳——按板号 / 批次分开画没有害处，
                 # 去掉分组却是把规则本来对的结果改差（HO-23：酶标板的板号）。换成另一个分组列、或判成备注 / 行号的照常采纳。
                 if key == "group" and valid[key] == "none" and roles.get(col) == "replicate_unit":
@@ -622,6 +677,29 @@ def suggest(
         if not changed:
             break
     return emit, dropped
+
+
+def _x_measure(
+    entry: adf.TableEntry, hint: str | None, roles: dict[str, str], picks: dict, fixed: dict | None
+) -> str | None:
+    """G-018：按规则此刻的结果（采纳 `picks` 之后；还要问的问题答「不确定」，与 lazy 的 `propose` 同一口径）选作有序横轴的那一列，模型判它是 `measure` → 列名。
+    **事实只来自模型已校验的列角色**（`valid_roles` 已保证 `measure` 只给得到数值列）。用户已定了横轴（`fixed.x`）= 用户的选择优先，不给；
+    没有横轴（规则落成没有 / 把列当分组）= None。模型判 `time` / `ordered_x` 或没给角色 = None（现状）。"""
+    if "x" in (fixed or {}):
+        return None
+    trial = {**(fixed or {}), **picks}
+    for _ in range(len(_QUESTION_KEY) + 1):
+        res = recipe_mod.resolve_roles(entry, hint, trial)
+        if isinstance(res, recipe_mod.NeedsChoice):
+            key = _QUESTION_KEY.get(res.question_code)
+            if key is None or key in trial:
+                return None
+            trial[key] = "unsure"
+            continue
+        if not isinstance(res, recipe_mod.Roles) or res.stack or res.x_ord is None:
+            return None
+        return res.x_ord if roles.get(res.x_ord) == "measure" else None
+    return None
 
 
 def interpret(
@@ -635,7 +713,9 @@ def interpret(
     """模型的列判断（已过形状校验）→ 逐字段降级后的 `Understanding`。"""
     s = entry.summary
     roles, dropped = valid_roles(s, shape)
-    picks, d2 = suggest(entry, hint, roles, shape.get("picks", {}), fixed)
+    picks, d2 = suggest(
+        entry, hint, roles, shape.get("picks", {}), fixed, continuous_columns(values)
+    )
     dropped += d2
     # 处理规则：只给最终会用到的、夹着文字的数值列；逐条判，一条不合格只丢这一条
     cells: dict[str, recipe_mod.CellRule] = {}
@@ -654,7 +734,9 @@ def interpret(
             continue
         cells[rule.column] = rule
     ordered = tuple((c, roles[c]) for c in s.columns if c in roles)
-    return Understanding(ordered, picks, cells, None, dropped)
+    return Understanding(
+        ordered, picks, cells, None, dropped, _x_measure(entry, hint, roles, picks, fixed)
+    )
 
 
 # --------------------------------------------------------------------------- 缓存
@@ -749,6 +831,8 @@ class Job:
     usage: dict = field(default_factory=dict)
     #: 单飞登记键（项目、缓存键、**完整提示**的摘要）。只在 pending 期间登记：完成后复用靠磁盘缓存 + 按当前提示重新派生
     flight: tuple = ()
+    #: 这个任务用的连接身份（`_identity`）：用户换了连接 / 关了之后，身份对不上的任务登记被清掉（`apply_choice`）
+    identity: str = ""
 
 
 _LOCK = threading.RLock()
@@ -776,6 +860,7 @@ def reset_for_tests() -> None:
         _JOBS.clear()
         _BY_KEY.clear()
         _NEGATIVE.clear()
+    ai_structured.reset_small_for_tests()
     _OVERRIDES.clear()
 
 
@@ -791,17 +876,26 @@ def _spend(n: int) -> None:
         b[0] = max(0, int(b[0]) - n)
 
 
+def _auto_small() -> bool:
+    return bool(_OVERRIDES.get("auto_small", True))
+
+
 def _identity(conn: dict) -> str:
+    """缓存键里的「判断来源」：CLI 连接 = CLI 种类 + 型号；Key 连接 = 连接 + **实际会用的型号与强度**
+    （小型号策略换了型号 / 强度 = 不同的判断来源；这个连接身份近期被判用不了小型号时按原型号算）。"""
     if ai_structured.is_cli_conn(conn):
-        return ai_structured.cli_identity(conn)  # CLI 种类 + 型号
-    return f"{conn.get('provider_id', '')}|{conn.get('model', '')}"
+        return ai_structured.cli_identity(conn)
+    model, effort = (
+        ai_structured.effective_choice(conn, EFFORT)
+        if _auto_small()
+        else (str(conn.get("model") or ""), str(conn.get("effort") or EFFORT))
+    )
+    return f"{conn.get('provider_id', '')}|{model}|{effort}"
 
 
-def _available_connection() -> dict | None:
-    """propose 时就要知道的：有没有能用的连接（不联网、不探测）——内置执行器能直接用的 Key 连接，其次是订阅登录里适配器支持无工具单轮的 CLI 连接
-    （只看已有的能力缓存，缓存还没有 = 没有）；都没有 = None → 响应里没有 `understanding` 键。"""
-    if "conn" in _OVERRIDES:
-        return _OVERRIDES["conn"]
+def _auto_connection() -> dict | None:
+    """`auto` 模式的挑法（逐字沿用）：内置执行器能直接用的 Key 连接，其次是订阅登录里适配器支持无工具单轮的 CLI 连接
+    （只看已有的能力缓存，缓存还没有 = 没有）；都没有 = None。"""
     try:
         from . import ai_connections
 
@@ -813,6 +907,63 @@ def _available_connection() -> dict | None:
         return ai_structured.find_cli_connection(cached_only=True)[0]
     except Exception:  # noqa: BLE001 - 探测失败 = 没有
         return None
+
+
+def _available_connection() -> dict | None:
+    """propose 时就要知道的：有没有能用的连接（不联网、不探测）。**用户的选择在这里生效**（`ai_data_aichoice.resolve`）：关了 = None；指定了某个连接 = 只用
+    那一个、此刻用不了就是 None（绝不换别家）；`auto` = `_auto_connection`。没有 = None → 响应里没有 `understanding` 键。"""
+    if "conn" in _OVERRIDES:
+        return _OVERRIDES["conn"]
+    try:
+        return choice_mod.resolve(_auto_connection)
+    except Exception:  # noqa: BLE001 - 探测失败 = 没有
+        return None
+
+
+def understanding_state() -> dict:
+    """界面要的那一个对象（`/api/ai/data-files` 与 `/api/ai/data-understanding` 共用）：
+    `{state: "on" | "off" | "none" | "unavailable", mode: "auto" | "off" | "connection", connection: 此刻实际会用的连接 id | null, chosen?: 用户指定的连接 id, options: [...]}`。
+    `off` = 用户关了；`unavailable` = 用户指定的那个此刻用不了；`none` = auto 且没有任何可用连接；`on` = 会用。只读配置与能力缓存：不联网、不刷新令牌。"""
+    mode, _cid = choice_mod.read_choice()
+    conn = _available_connection()
+    if mode == "off":
+        state = "off"
+    elif conn is not None:
+        state = "on"
+    else:
+        state = "unavailable" if mode == "connection" else "none"
+    return {
+        "state": state,
+        "mode": mode,
+        "connection": choice_mod.conn_id(conn),
+        # 用户指定的那个连接 id（只在 mode=connection 时有）：`unavailable` 时它不在 `connection`（没在用）、也可能不在 `options` 里，界面要靠它指认「你选的是哪一个」
+        **({"chosen": _cid} if mode == "connection" else {}),
+        "options": choice_mod.options(),
+    }
+
+
+def apply_choice(mode: str, connection: str | None = None) -> dict | None:
+    """写入用户的选择 → 新的 `understanding_state()`；`mode=connection` 的 id 不在**此刻**的可选清单里 = None（调用方回 400，什么都不写）。
+    写完后清掉「身份与新选择对不上」的任务登记（`_JOBS` / `_BY_KEY`，不分项目——选择是应用级的）：用旧连接判断出的建议 / 在途任务不再被轮询到
+    （轮询回 `off`），用同一个连接的任务不受影响。**已经发出去的那一次请求收不回**（后台线程在途，它的结果只会落进缓存，不会再被用）。"""
+    if mode not in choice_mod.MODES:
+        return None
+    if mode == "connection" and connection not in {o["id"] for o in choice_mod.options()}:
+        return None
+    choice_mod.write_choice(mode, connection)
+    keep = _identity(c) if (c := _available_connection()) is not None else None
+    with _LOCK:
+        for jid, job in list(_JOBS.items()):
+            if keep is None or job.identity != keep:
+                _JOBS.pop(jid, None)
+                _BY_KEY.pop(job.flight, None)
+    return understanding_state()
+
+
+def available() -> bool:
+    """「读懂数据」此刻有没有可用的连接——只读的布尔事实，给前端决定要不要提示「连接 AI」（不暴露连接内容）。
+    判据就是 `start()` 用的 `_available_connection()`：不联网、不刷新令牌（`first_key_connection(refresh=False)`）。"""
+    return _available_connection() is not None
 
 
 def _sweep(now: float) -> None:
@@ -895,7 +1046,7 @@ def start(
             eff = effective_table(entry, values, data_path, cached.header_row)
             if eff is not None:  # 缓存里的是模型的判断：按**当前**完整提示重新派生建议
                 hit = derive(eff[0], eff[1], cached, hint, fixed=fixed)
-        job = Job(secrets.token_hex(8), project, key, entry.path)
+        job = Job(secrets.token_hex(8), project, key, entry.path, identity=_identity(conn))
         if hit is not None:
             job.state, job.payload = "ready", _payload(hit, entry.path)
         _JOBS[job.id] = job
@@ -903,7 +1054,9 @@ def start(
         if hit is None:
             _BY_KEY[flight] = job.id
     if hit is None:
-        args = (job, entry, values, hint, data_path, dict(fixed or {}), conn)
+        # 用户指定了某个连接：把它显式交给后面的调用（不让 `call_structured` 自己再挑「第一个 Key 连接」）
+        pin = "conn" not in _OVERRIDES and choice_mod.read_choice()[0] == "connection"
+        args = (job, entry, values, hint, data_path, dict(fixed or {}), conn, pin)
         if _OVERRIDES.get("sync"):
             _run(*args)
         else:
@@ -924,10 +1077,18 @@ def _run(
     data_path: Path | None,
     fixed: dict,
     conn: dict | None = None,
+    pin: bool = False,
 ) -> None:
     """任务体。**永不抛**；结果写进 `job`（`ready` / `failed`），成功写缓存，失败记 60 s 负缓存。`conn` 是 `start` 挑中的连接（只有 CLI 连接才往下传）。"""
     try:
-        judged = judge(entry, values, hint, data_path=data_path, job=job, conn=conn)
+        if pin and conn is not None:
+            conn = choice_mod.refresh_key(
+                conn
+            )  # 只刷新被选中的这一条；刷不动（要重新登录）= 没有连接
+        if pin and conn is None:
+            judged: object = ("failed", "no_connection")
+        else:
+            judged = judge(entry, values, hint, data_path=data_path, job=job, conn=conn, pin=pin)
         if isinstance(judged, tuple) and judged and isinstance(judged[0], Judgement):
             outcome = derive(judged[1], judged[2], judged[0], hint, fixed=fixed)
             judgement: Judgement | None = judged[0]
@@ -962,7 +1123,10 @@ def _add_usage(job: Job | None, res: ai_structured.StructuredResult) -> None:
     u["usage_reported"] = u.get("usage_reported", True) and res.usage_reported
     if res.cost_usd is not None:
         u["cost_usd"] = u.get("cost_usd", 0.0) + res.cost_usd
-    u.setdefault("model", res.model)
+    if res.model:
+        u["model"] = res.model  # 实际用的那个（兜底换回用户型号时是后一个）；两次请求的用量都已累加
+    if res.fell_back:
+        u["fell_back"] = True
     u.setdefault("wire", res.wire)
 
 
@@ -992,14 +1156,19 @@ def judge(
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
     conn: dict | None = None,
+    pin: bool = False,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """订阅登录（CLI）连接同一时刻只许一个任务在跑（`ai_structured.cli_slot`）：先排队、拿到之后才开始计总时限——排队不吃预算。
     其余连接直接 `_judge`。"""
     if not ai_structured.is_cli_conn(_OVERRIDES.get("conn") or conn):
-        return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
+        return _judge(
+            entry, values, hint, data_path=data_path, job=job, call=call, conn=conn, pin=pin
+        )
     try:
         with ai_structured.cli_slot(ai_structured.CLI_QUEUE_MAX_S):
-            return _judge(entry, values, hint, data_path=data_path, job=job, call=call, conn=conn)
+            return _judge(
+                entry, values, hint, data_path=data_path, job=job, call=call, conn=conn, pin=pin
+            )
     except TimeoutError:
         return ("failed", "timeout")
 
@@ -1013,6 +1182,7 @@ def _judge(
     job: Job | None = None,
     call: Callable[..., ai_structured.StructuredResult] | None = None,
     conn: dict | None = None,
+    pin: bool = False,
 ) -> tuple[Judgement, adf.TableEntry, adf.DataSummary] | tuple[str, str]:
     """向模型要判断 → `(Judgement, 采纳表头之后的 entry, values)`，或 `("failed", 闭集原因)`。**永不抛**。总时限 `TIMEOUT_S`（表头那次与列角色那次共用）。
 
@@ -1022,10 +1192,15 @@ def _judge(
     t0 = time.monotonic()
     kw = {k: _OVERRIDES[k] for k in ("conn", "post", "runner") if k in _OVERRIDES}
     cli = ai_structured.is_cli_conn(kw.get("conn") or conn)
-    if cli and "conn" not in kw:
-        kw["conn"] = conn  # 缓存键用的就是这一条（含型号）：别让 `call_structured` 再挑一次
+    if (cli or pin) and "conn" not in kw:
+        kw["conn"] = (
+            conn  # 缓存键用的就是这一条（含型号）：别让 `call_structured` 再挑一次；用户指定了连接（`pin`）时 Key 连接同样显式传下去
+        )
     total = float(_OVERRIDES.get("timeout_s", ai_structured.CLI_TIMEOUT_S if cli else TIMEOUT_S))
     do_call = call or ai_structured.call_structured
+    # 小型号 + 最低档策略（ADR 0178 2026-11-21）：产品里恒开；手动基准可经覆盖关掉，好显式比较型号 / 强度。
+    # 只作用于 Key 连接：订阅登录（CLI）连接不传（`call_structured` 本来也会忽略）
+    kw["auto_small"] = _auto_small() and not cli
 
     def run_call(**ckw):
         left = _budget_left()

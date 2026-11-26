@@ -397,6 +397,9 @@ _ADDED_COLUMNS = {
     "rev": "INTEGER",
     # 用户附了几张参考图（ADR 0175）：只存张数，图片本身不进库。老行 / 没附图的行为 NULL
     "attachment_count": "INTEGER",
+    # 修改方案卡的脚本修改（ADR 0206 PR 6）：Agent 只在候选里改、没写用户脚本的会话。库里照记（审计），
+    # 但历史列表与对账接口（`list_sessions` / `changes_since`）不列它——它不是用户对话里的一轮。老行 NULL = 否
+    "plan_only": "INTEGER",
 }
 
 
@@ -565,6 +568,8 @@ def record_start(sess: dict, db_path: Path | None = None) -> tuple[bool, str]:
                 now_ms if owner_token is not None else None,
             ),
         )
+        if sess.get("plan_only"):
+            con.execute("UPDATE sessions SET plan_only=1 WHERE id=?", (sess["id"],))
         if sess.get("attachment_count"):
             con.execute(
                 "UPDATE sessions SET attachment_count=? WHERE id=?",
@@ -898,7 +903,7 @@ def list_sessions(
     db_path: Path | None = None,
 ) -> dict:
     """分页 + 搜索（prompt/target 子串）+ 状态筛选。返回 {total, sessions}。"""
-    where = ["project = ?"]
+    where = ["project = ?", "COALESCE(plan_only, 0) = 0"]  # 修改方案的候选会话不是对话里的一轮
     args: list = [project]
     if query:
         where.append("(prompt LIKE ? OR target LIKE ?)")
@@ -1023,7 +1028,7 @@ def changes_since(
         top = con.execute("SELECT rev FROM ai_rev_counter WHERE id = 1").fetchone()[0]
         rows = con.execute(
             f"SELECT {_CHANGE_COLUMNS} FROM sessions WHERE project=? AND rev > ? AND rev <= ? "
-            "ORDER BY rev LIMIT ?",
+            "AND COALESCE(plan_only, 0) = 0 ORDER BY rev LIMIT ?",
             (project, since, top, limit + 1),
         ).fetchall()
     more = len(rows) > limit

@@ -47,6 +47,29 @@ export interface ObjectBase {
    * x/y/w/h 始终是未旋转的包围盒。
    */
   rotationDeg?: number
+  /**
+   * Agent 加的标注锚在哪里（ADR 0208 §六）：后端 `engine/layoutannotate.py` 写入，Agent 不能直接写（字段表里是保留字段）。
+   * 前端现在只原样保留它（载入 / 保存 / 撤销都不动）；第 4 期据它判「这个标注可能已经没对准」并「重新对准」。
+   */
+  anchor?: AgentAnchor
+}
+
+/** 一条锚点：`role` 是元素的哪一端（from / to / at / left / right…），其余正好一个锚点种类（与场景描述同一套）。 */
+export interface AgentAnchorRole {
+  role: string
+  data?: { panel: string; axes?: string; x: number | string; y: number | string }
+  element?: { panel: string; gid: string; point?: string }
+  panel?: { id: string; point?: string }
+  item?: { name: string; point?: string }
+  offset_mm?: [number, number]
+  /** 脚本 `label=` 的摘要：脚本重跑、gid 重新编号后据它认回同一个元素 */
+  identity?: string
+}
+
+export interface AgentAnchor {
+  v: 1
+  by: 'agent'
+  anchors: AgentAnchorRole[]
 }
 
 /**
@@ -175,6 +198,24 @@ export interface FigureExecutionOwner {
 }
 
 /** Immutable, backend-verified Figure snapshot bound to one source execution and patch set. */
+/**
+ * SVG 计算图表的文档内状态（ADR 0182）。形状与 `types/chartModel.ts` 的
+ * ChartModel / ChartBinding 同源；这里按 id 引用而不复制判据。
+ */
+export interface PanelChartState {
+  model: import('./chartModel').ChartModel
+  binding: import('./chartModel').ChartBinding
+}
+
+/** 不可变 INPUT SVG 附件；字段与 engine/documents.CHART_SOURCE_KEYS 严格同源。 */
+export interface ChartSourceRef {
+  schema: 1
+  sourceId: string
+  bytesSha256: string
+  sizeBytes: number
+  sceneDigest: string
+}
+
 export interface FigureSnapshot {
   version: 1
   sourceId: string
@@ -183,6 +224,26 @@ export interface FigureSnapshot {
   snapshotId: string
   /** Backend-verified archived execution ownership; absent in older snapshots, never inferred. */
   executionOwner?: FigureExecutionOwner
+}
+
+/** Historical execution input; independent of the current full override list/output snapshot. */
+export interface FigureOrigin {
+  version: 1
+  snapshot: FigureSnapshot
+  patches: PanelOverride[]
+}
+
+/**
+ * native-manifest/2 计算框的持久记号：只存布局落位（`originPt` 是渲染外框
+ * `rect_pt` 在源 viewport pt 坐标里的左上角）与 profile，**不存第二份科学模型**——
+ * 模型与绑定仍只在 `PanelObject.chart`。形状判据的唯一出处是引擎
+ * `engine/chartframe.py`（前端消费方 `lib/chartFrame.ts`）；缺席 = 面板仍是
+ * native-manifest/1 的 source viewport 落位。旧前端读到会忽略。
+ */
+export interface PanelChartFrame {
+  version: 1
+  renderProfile: 'native-manifest/2'
+  originPt: [number, number]
 }
 
 export interface PanelObject extends ObjectBase {
@@ -204,6 +265,7 @@ export interface PanelObject extends ObjectBase {
   source?: RuntimePanelSource
   overrides: PanelOverride[]
   figureSnapshot?: FigureSnapshot
+  figureOrigin?: FigureOrigin
   /** Nonsemantic source/frame guard. Never changes the meaning of overrides. */
   artifactValidation?: ArtifactValidation
   /**
@@ -211,6 +273,25 @@ export interface PanelObject extends ObjectBase {
    * 旧前端读到它会忽略，把面板当未采用 PNG 显示原像素；老项目不会获得这个字段。
    */
   sourceBackedFigure?: SourceBackedFigure
+  /**
+   * 用户点了「用脚本重画」（T-005，ADR 0139 修订 2026-11-24）：零编辑也**显示重画**，不显示磁盘原像素——
+   * 画布与画布导出是同一份重画。只在来源驱动采用（`sourceBackedFigure`）旁边有意义；清采用时一并清掉。
+   * 旧前端读到会忽略——回到「零编辑显示原像素」（安全的降级）。
+   */
+  showsRedraw?: true
+  /**
+   * SVG 计算图表状态（ADR 0182，仅 fileKind === 'svg'）：显式绑定的声明式模型与绑定。
+   * 只存**语义真值**（模型 + 绑定）；组合后的 SVG 是派生物，按模型 rev 重算，不进文档。
+   * 旧前端读到它会忽略——面板退化为静态 SVG 预览，不丢数据。
+   */
+  chart?: PanelChartState
+  chartSource?: ChartSourceRef
+  /**
+   * native-manifest/2 计算框的布局落位（见 `PanelChartFrame`）：只持久
+   * origin/profile，科学语义仍只在 `chart`。旧前端读到会忽略——面板退化为
+   * /1 的 source viewport 预览，不丢数据。
+   */
+  chartFrame?: PanelChartFrame
   /**
    * 锁定的图内元素 gid：画布命中测试跳过它们，避免误选误拖。
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。
@@ -472,6 +553,12 @@ export interface PathNode {
 export interface PathSubpath {
   closed: boolean
   nodes: PathNode[]
+  /**
+   * 实时圆角的记录（ADR 0185 M7 方案 B）：`nodes` 照旧是圆过之后的几何（导出、旧版本都只读它），这里另记圆之前的尖角锚点
+   * （同一套框比例坐标）与每个尖角的半径（相对框的长边 `max(w, h)`，0 = 没圆）——再调圆角时从尖角重新圆一遍。
+   * **只经 `lib/liveCornerRecord.liveCornerRecord` 读**：记录与 `nodes` 对不上（别的操作改过几何）就当没有。
+   */
+  liveCorners?: { sharp: PathNode[]; radii: number[] }
 }
 
 /**
@@ -511,6 +598,37 @@ export interface PathObject extends ObjectBase {
   headEnd?: ArrowHeadType
   headSizeStart?: HeadSize
   headSizeEnd?: HeadSize
+}
+
+/**
+ * 路径文字（ADR 0190）：一行字沿一条路径排开。**路径是自带的一份**（`subpaths`，框比例坐标，
+ * 与 `PathObject` 同一套），不引用别的对象——原来那条线删了、挪了，字都还在原处；从一条路径 / 形状生成时与它成一个组（一起挪）。
+ * 字的落位只在后端（`rendercore/pathtext`：按弧长逐字落到路径上），画布照后端给的字形轮廓画。文字样式字段与 `TextObject` 同名同义。
+ * 旧构建不认识这个类型：显示占位、不让导出（`isKnownObject`），不会悄悄排成普通文字。
+ */
+export interface PathTextObject extends ObjectBase {
+  type: 'pathText'
+  text: string
+  sizePt: number
+  bold: boolean
+  italic?: boolean
+  color: string
+  fontFamily?: 'serif' | 'sans-serif' | 'monospace'
+  /** 字排在这条路径上（只用第一条画得出的子路径）；路径本身不画 */
+  subpaths: PathSubpath[]
+  /** 起点：路径全长的比例 0–1；缺省 0（不写） */
+  startOffset?: number
+  /** 字串以起点为准的对齐：start（缺省，不写）/ center / end */
+  textAlign?: 'center' | 'end'
+  /** 翻到路径另一侧（沿反方向走）；只写 true */
+  flip?: true
+  /**
+   * 离线（pt）：基线离开路径中心线多远，沿字的上方量；0 = 基线贴在线上，负 = 往线上压。没写 = 自动（线宽 / 2 + 0.2 em +
+   * 降部深度，字不碰线；只在后端算，`rendercore/pathtext.auto_offset_pt`）
+   */
+  baselineOffsetPt?: number
+  /** 生成时一起成组的那条线（只用来取它的描边宽度算自动离线；那条线没了 / 隐藏 / 没描边 = 0） */
+  lineId?: string
 }
 
 /** `readPath` 读出来的锚点：手柄缺省已补成锚点本身 */
@@ -622,14 +740,14 @@ export function lineEndpoints(o: { start?: EndPoint; end?: EndPoint }): {
 export const objectRotation = (o: CanvasObject): number =>
   o.type === 'panel' ? 0 : (o.rotationDeg ?? 0)
 
-export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject | PathObject
+export type CanvasObject = PanelObject | TextObject | ArrowObject | ShapeObject | PathObject | PathTextObject
 
 /**
  * 这个构建认得的对象类型（闭集）。更新的构建可能往文档里写进新类型（自由路径 `path` 是 ADR 0185 加进来的第一例）；
  * 本构建读到不认识的类型时**原样保留**（读盘、保存、换画布都不碰它），只画一个占位框，
  * 不让它被选中、移动、删除，也不让它在导出里静默消失（导出前拦下）。判据只有这一处。
  */
-export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape', 'path'])
+export const KNOWN_OBJECT_TYPES: ReadonlySet<string> = new Set(['panel', 'text', 'arrow', 'shape', 'path', 'pathText'])
 
 /** 本构建认得这个对象（否则是更新的构建写进来的，见 `KNOWN_OBJECT_TYPES`） */
 export const isKnownObject = (o: { type: string }): boolean => KNOWN_OBJECT_TYPES.has(o.type)
@@ -759,6 +877,35 @@ export interface StyleOwnedOverride {
   base?: unknown
 }
 
+/* ---------------------- 推荐配色的色键表（ADR 0210 §四） ---------------------- */
+
+/** 一组占的槽：数字 = 方案里第几个颜色；`neutral` = 方案的中性灰（对照组，用户确认后才设） */
+export type ColorSlot = number | 'neutral'
+
+export interface ColorKey {
+  /** 表内稳定 id（`k1`、`k2`…），只增不复用 */
+  key: string
+  slot: ColorSlot
+  /** 归入这一组的显式 label 身份（`l1:` + 16 位十六进制）；并入别的组时把对方的抄进来 */
+  identities: string[]
+}
+
+/** 配色写下的一条 override：此刻 override 的值仍是 `value` 才算配色的，否则就是用户手改过的 */
+export interface ColorKeyOwned {
+  panel: string
+  gid: string
+  prop: string
+  value: string
+}
+
+export interface ColorKeyTable {
+  version: 1
+  /** 当前方案的目录 id */
+  scheme: string
+  keys: ColorKey[]
+  owned: ColorKeyOwned[]
+}
+
 export interface FigureDocument {
   schema: 2
   name: string
@@ -777,6 +924,8 @@ export interface FigureDocument {
   framePadTight?: FramePadSide[]
   /** 一键排版的网格记忆（见 `QuickLayoutMemo`）；缺省 = 没排过或已清掉 */
   quickLayout?: QuickLayoutMemo
+  /** 推荐配色的色键表（ADR 0210）；缺省 = 这张画布没用过推荐配色，旧文档逐字不变 */
+  colorKeys?: ColorKeyTable
 }
 
 /**
@@ -815,18 +964,22 @@ export interface CanvasData {
   framePad?: FramePad
   framePadTight?: FramePadSide[]
   quickLayout?: QuickLayoutMemo
+  /** 每张画布各自的推荐配色色键表（ADR 0210）；缺省 = 没用过 */
+  colorKeys?: ColorKeyTable
 }
 
 /**
- * 本构建能写出来的 schema 版本。**比它更高的文档一律不打开**——旧构建对新
+ * 本构建能读写的最高版本。**比它更高的文档一律不打开**——旧构建对新
  * 字段的语义一无所知，「尽力打开」等于用旧规则重写用户的新数据。
  *
  * 严格同源：`src/tavotto/engine/documents.py` 的 `SCHEMA_CURRENT`。
  */
-export const SCHEMA_CURRENT = 3
+export const SCHEMA_CURRENT = 4
+/** 项目文档（一个项目多张画布）；schema 4 在同一结构上多出计算图表状态。 */
+export const SCHEMA_PROJECT = 3
 
 export interface ProjectDocument {
-  schema: typeof SCHEMA_CURRENT
+  schema: typeof SCHEMA_PROJECT | typeof SCHEMA_CURRENT
   project: { id: string; name: string }
   /** 数组序 = 画布显示顺序 */
   canvases: CanvasData[]
@@ -849,6 +1002,7 @@ export function canvasToDoc(c: CanvasData): FigureDocument {
     ...(c.framePad ? { framePad: c.framePad } : {}),
     ...(c.framePadTight?.length ? { framePadTight: c.framePadTight } : {}),
     ...(c.quickLayout ? { quickLayout: c.quickLayout } : {}),
+    ...(c.colorKeys ? { colorKeys: c.colorKeys } : {}),
   }
 }
 
@@ -865,6 +1019,7 @@ export function docToCanvas(doc: FigureDocument, id: string): CanvasData {
     ...(doc.framePad ? { framePad: doc.framePad } : {}),
     ...(doc.framePadTight?.length ? { framePadTight: doc.framePadTight } : {}),
     ...(doc.quickLayout ? { quickLayout: doc.quickLayout } : {}),
+    ...(doc.colorKeys ? { colorKeys: doc.colorKeys } : {}),
   }
 }
 
@@ -882,12 +1037,12 @@ function withFigureFrames(pd: ProjectDocument): ProjectDocument {
 
 /**
  * 读档统一入口：schema 2 迁移为单画布项目（内容逐字段搬运、不改值），
- * schema 3 原样校验通过。不认识的负载返回 null。
+ * schema 3 / 4 原样校验通过。不认识的负载返回 null。
  */
 export function migrateToProject(raw: unknown): ProjectDocument | null {
   const d = raw as Record<string, unknown> | null
   if (!d || typeof d !== 'object') return null
-  if (d.schema === 3 && Array.isArray(d.canvases) && d.canvases.length > 0) {
+  if ((d.schema === SCHEMA_PROJECT || d.schema === SCHEMA_CURRENT) && Array.isArray(d.canvases) && d.canvases.length > 0) {
     const pd = withFigureFrames(d as unknown as ProjectDocument)
     const active = pd.canvases.some((c) => c.id === pd.activeCanvasId)
     return active ? pd : { ...pd, activeCanvasId: pd.canvases[0].id }
@@ -896,7 +1051,7 @@ export function migrateToProject(raw: unknown): ProjectDocument | null {
     const legacy = d as unknown as FigureDocument
     const canvas = docToCanvas({ ...legacy, objects: migrateFigureFrames(legacy.objects) }, newId('c'))
     return {
-      schema: 3,
+      schema: SCHEMA_PROJECT,
       project: { id: newId('p'), name: canvas.name },
       canvases: [canvas],
       activeCanvasId: canvas.id,
@@ -1027,6 +1182,8 @@ export function objectLabel(o: CanvasObject): string {
       return t(`shape.${o.shape}`)
     case 'path':
       return t('objectType.path')
+    case 'pathText':
+      return o.text.trim().slice(0, 18) || t('objectType.pathText')
     default:
       // 更新的构建写进来的类型（`isKnownObject`）：不许回 undefined（图层树、版本差异会显示成空）
       return t('objectType.unknown')

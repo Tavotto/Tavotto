@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「出版规范 profile 与预检」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`tests/test_preflight_log_axis.py`、`tests/test_preflight_bar_baseline.py`、`tests/test_preflight_interference.py`、`tests/golden/interference_vectors.json`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`；推荐配色目录（ADR 0210）：`tests/test_palettes.py`；期刊库（ADR 0155）：`tests/test_journal_catalog.py`、`web/src/lib/journals.test.ts`、`tests/golden/journal_vectors.json`；旧期刊底标签的新输出替换：`tests/test_mcp_dpi_attribution.py`、`web/src/lib/profile.test.ts` 与 `tests/golden/profile_display_vectors.json`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 260
-改到: `profiles/publication.json`、`profiles/journals.json`、`engine/profiles.py`、`engine/journals.py`、`engine/journalremote.py`、`preflight.py`、`profilestore.py`
-主题: 出版规范 profile 与预检、内置期刊库 → `profiles-and-preflight.md`
+改到: `profiles/publication.json`、`profiles/journals.json`、`profiles/palettes*.json`、`engine/profiles.py`、`engine/journals.py`、`engine/journalremote.py`、`engine/palettes.py`、`preflight.py`、`profilestore.py`
+主题: 出版规范 profile 与预检、内置期刊库、推荐配色目录 → `profiles-and-preflight.md`
 必守要点: 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐；期刊 = 对 journal-base-v1 的覆盖 + 逐条出处，未规定不补
 -->
 
@@ -73,6 +73,54 @@ order: 260
   问题面板归 `lines`。求值器 `_check_log_axis_nonpositive` ↔ `preflight.ts` `checkLogAxisNonpositive`（计数口径
   `_domain_count` ↔ `domainCount`），golden `log-axis-*`；真 worker 看护 `tests/test_preflight_log_axis.py`，
   它重出的 `tests/golden/scale_domain_real.json` 由 `web/src/lib/preflight.logAxis.test.ts` 消费。
+- **`bar-baseline-truncated`（V-002，线性轴上柱的共同基线被截掉；与 V-001 同一行 1.0 豁免）**：事实是 axes 元素上的只读
+  `bar_baseline`，产生者只有 `engine/manifest.bar_baseline`（不进 `editable`、不进文档），只在**直角坐标轴**
+  （`ax.name == "rectilinear"`，twin / inset 都是；极坐标玫瑰图、3D 的 `bar` 不发）上有**可见**的 `BarContainer`
+  （`bar` / `barh` / `hist`）时出现；竖柱记 `y`、横柱（`orientation == "horizontal"`）记 `x`，说不出方向（手工构造的
+  容器没有 `orientation`）两维都写 `unavailable`。`baselines` 只收**有共同基线**的容器：所有可见柱的底（竖柱
+  `get_y()`、横柱 `get_x()`，即锚点——负值柱的底仍是 0）为有限值且精确相等；浮动柱 / 甘特图不收，堆叠柱的上层
+  （每根柱都正好叠在另一容器同位置那根的顶上，`_stacked_on_others`；「正好」的容差是这一组柱自身量级的 1e-9 倍，**没有绝对下限**——否则柱高 3e-10 的整组柱处处「相等」，最底层也被当成上层，Codex #2124）不收；**柱长那一维不经过该轴 `transData`**（`transform=ax.transAxes`、`get_xaxis_transform()` 上的竖柱；判据同 V-001 的 `contains_branch_seperately`，`_length_in_data`）的容器与轴范围无关，也不收，混合变换只要长度维是数据坐标就照常判；底相同的容器合并、柱数相加，数值不舍入。
+  **事实只有基线**：规则从同一元素 editable 的 `[xy]lim` / `[xy]scale` 读范围与尺度——检查器里改 `ylim` 不改事实、
+  只改结论；尺度必须**正是** `linear`（log / symlog / logit / asinh / 缺席一律不判，log 轴上的柱是 G-003 的事），
+  范围两个有限数且 `lo < hi`（按 min / max，反转的轴一样），基线落在闭区间 `[lo, hi]` 外（容差为跨度的 1e-9）才报；
+  差值柱（0 在范围内）自然不报。配额与 `FINGERPRINT_BUDGET` 同一个上限、**第三份计数器**（按柱数扣，超了写 `over_budget`
+  不扣）；`status` 不是 `ok` 一律不判。三张 severity 表都是 `warn`，`fix: none`（从 0 起还是改点图是作者的决定，MCP
+  手修提示只列两种改法），问题面板归 `lines`，定位到那一维的 `[xy]lim`。detail `{axis, baseline, lim_low, lim_high, bars}`，
+  `worse` 是截掉的距离占跨度的比例；message key 竖柱 `barBaselineTruncatedY`（纵轴）、横柱 `barBaselineTruncatedX`（横轴），
+  数字经 `_axis_num` ↔ `axisNum` 写成字符串（分档定小数位、对精确二进制值四舍五入远离 0——Python 用 `Decimal`
+  `ROUND_HALF_UP`，因为 `f"{v:.nf}"` 正好一半时取偶，会与 JS `toFixed` 分叉）。求值器 `_check_bar_baseline_truncated` ↔
+  `preflight.ts` `checkBarBaselineTruncated`，golden `bar-baseline-*`；真 worker 看护 `tests/test_preflight_bar_baseline.py`
+  （含仓库里其它含柱真脚本的防误报扫描），它重出的 `tests/golden/bar_baseline_real.json`（带那几个 editable 字段）由
+  `web/src/lib/preflight.barBaseline.test.ts` 消费。已知会报、规格未裁决的写法（维护者待定，不加特例）：inset 放大图、
+  断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器只有一根柱，天然有「共同基线」）。
+- **干涉检测接进常规预检（V-011，用户 2026-11-23 裁决；1.0 豁免并在 V-001 那一行）**：`text-overlap` / `text-over-axes` /
+  `legend-over-data` 的判据只有 `engine/interference.detect` 一份（MCP、保留式规范化、改图验收逐对用的也是它）。`preflight.run`
+  在矢量面板上经 `_check_panel_interference` 把逐对结果折进 `_Sink`：文字重叠两段文字都是主语（排名 = 面积）；压到别的子图的
+  主语是那段文字、被压的子图进 `detail.against`；图例压数据的主语是图例，「确定」（真折线相交，`detail.certain`）与「风险」（只有
+  包围盒）同一 id、同一档位、两种文案，排名 = 命中数 + `INTERFERENCE_CERTAIN_RANK`，确定恒压过风险。文案不带 gid（问题行的主语已经是
+  那个元素），毫米数沿用 `detect` 格式化好的参数。档位沿用 `publication.json` 原有登记（warn），`fix: none`、问题面板归 `layout`。
+  **前端是逐行移植**（`web/src/lib/interference.ts`，不是消费后端结果：画布的预检只在浏览器求值，事实——`bbox` / `clip_bbox` /
+  `geometry` / `visible` / `position`——manifest 里都已经有，不加协议字段、老后端与 playground 照样成立），数值格式化与取整走
+  `pyFixed` / `pyRound`（Python 的取偶规则；`toFixed` 在 1.25 这种恰好的半值上进位）。**已经逐对调 `detect` 的调用方不许再收到聚合项**
+  （同一次碰撞两把键、会被当成新增的确定性干涉挡掉事务）：所以 Python 侧 `preflight.run(…, with_interference=False)` **默认关**，
+  只有 golden 生成器与对拍用例显式开（TS 的 `runSpec` 恒开，两边对的是开着的那份输出）——已经发出去的插件的桥调的是不带参数的
+  `run()` 再逐对加 `detect`，插件只设引擎下限，默认开着会让它们在新引擎上重复报并挡掉规范化事务。`specfix.profile_issues` /
+  `figureverify._issue_keys` 显式写 `False`；MCP 桥另按 id 滤掉（`bridge._without_interference`，不传这个参数——插件要能配旧引擎）。整体隐藏的图例的条目不参与文字重叠
+  （`interference.hidden_legends`，与 `_hidden_legends` 同口径）。**斜排文字的复核只能否决**：布局框判为重叠、且一方是斜排
+  （`text_block.rotation` 不是 90° 的整数倍、无 `clip_bbox`）时，按 `text_block` 的有向矩形在四条边法线上再量一次，阈值仍是
+  `MIN_OVERLAP_MM`（轴对齐时退化成 dx / dy）；三角函数只产出布尔，detail / 文案不含它算出的数（跨平台末位差不进 golden），
+  向量离阈值远。golden：`tests/golden/interference_vectors.json`
+  （`scripts/gen_interference_vectors.py --write`，逐对，pytest 与 `web/src/lib/interference.test.ts` 各跑一遍）+
+  `preflight_vectors.json` 的 `interference-*`（聚合）；其余旧向量的占位几何改成零面积点（只量规范、不量版面），结论逐条不变。
+  真 worker 看护 `tests/test_preflight_interference.py`（FigureBench 防误报、`multi_panel` 的真碰撞、长标签 / 竖排 / `loc="best"` /
+  inset / 色条 / 隐藏图例）。误差棒 / 茎叶按真实几何（`pathgeom.series_group_geometry` 的成员并：点、误差线段、帽、茎）判，
+  `BBOX_BASIS_ROLES` 已清空（维护者 2026-11-23）；图像按包围盒判「确定」（`RECT_BASIS_ROLES`）。仍只标风险的：给不出 geometry 的元素、
+  单根柱。**图例一侧的取法**（与数据出图摆放共用，唯一实现 `interference.legend_cover_rects` ↔ `legendCoverRects`）：
+  框画出来且背景不透明用整块框；无框 / 背景全透明只用条目文字框（soft，只能说「可能」）与示意格（hard）各外扩 1 px；
+  图例与所在坐标区不相交一律不报。事实是 manifest 只读 `legend_cover`（产生者只有 `engine/manifest.legend_cover`，
+  `LEGEND_COVER_STATUSES` 闭集，单图例条目数上限同 `pathgeom.MAX_MARKERS`、整图与 geometry 同上限另一份计数器），
+  量不了退回整块框。已知误报来源：没有 `text_block`
+  的斜排文字仍按轴对齐的布局框判；`text-over-axes` 不做斜排复核。
 - 文档里存**绑定 + 绑定那一刻的规则全文快照**（`FigureDocument.profile`，可选，
   schema 仍是 2）：`{id, journal?, snapshot?, snapshotVersion?, follow?}`。ADR 0029
   之前这里只存 `{id, journal}`，于是改一次全局规范，上个月定稿的图会**悄悄换一套
@@ -116,7 +164,7 @@ order: 260
 - **远程目录（ADR 0155 §10，`engine/journalremote.py`；Ed25519 验签用 PyNaCl，只在验签函数里延后 import，用户 2026-11-05 拍板不手写加密）**：取用顺序 服务端（验签、校验通过）→ 本地缓存 → 内置种子。**索引**整份下载（签名信封，Ed25519 验签只认内置 `TRUSTED_KEYS`，`catalog_rev` 不得低于历史最高与种子）、**刊包**选中时按需下载（由签名索引里的 `sha256` + 字节数担保，不单独签），快照内容寻址。
   任何一步不过整次作废、缓存原样、界面不弹错；拼出的完整目录过 `journals.validate_catalog`，前端 `setCatalog` 再过 `loadCatalog`。设备令牌与缓存在 `data_dir()/journal-catalog/`，**app 与 Agent 宿主共用**（谁先到谁领，目录锁里先重读再签发）；请求只带刊 id、令牌、`rev`、`X-Tavotto-Client`，**绝无项目 / 路径 / 脚本**；只认 `TAVOTTO_NO_JOURNAL_SYNC=1`（`TAVOTTO_NO_TELEMETRY` 不代管）；两个入口 `tavotto.cn`（后端本体）与 `tavotto.com`（Vercel 薄反代，真实 IP 经共享密钥头才被后端采信；只缓存签名索引），先后用 `contactsend.region_is_cn` 同一判据。
   生产代码只信 `prod-1`，测试钥只在测试里注入（`test_production_code_does_not_trust_the_test_key`）。**Agent / MCP 读远程目录**：`bridge.list_journals`（种子 + 缓存索引，不计数、离线可用）与 `bridge.journal_selection`（先判冲突、再 `journalremote.agent_resolve`，本地没有才下载并计 1 次）；超限 / 离线 / 验签失败回 `AGENT_ERROR_CODES` 里的 `journal_quota_exceeded` / `journal_offline` / `journal_verification_failed`，不静默退回；测试进程硬关同步（`tests/conftest.py` 钉 `TAVOTTO_NO_JOURNAL_SYNC=1`）。看护：`tests/test_journal_agent_remote.py`、`tests/test_journal_remote.py`、`web/src/lib/journalCatalogSync.test.ts`；服务端 `services/journal_catalog/`（`tests/test_journal_catalog_service.py`）。
-- **v2 来源事实（ADR 0155 §12）**：`engine/journalfacts_contract.py` 是服务、客户端共用的唯一事实与索引校验；`services/journal_catalog/facts.py` 只转发。`engine/journalfacts_remote.py` 只读取验签索引、按需刊包与内容寻址快照，事务化独立缓存与回滚水位，共用 v1 设备令牌，禁止重定向；`tavotto_get_journal_facts` 分页只读、不发遥测。条件、阶段、禁止项与示例只作来源事实。**例外（ADR 0155 §14 修订，2026-11-17）：无条件的数值事实由 `engine/journalfacts_fold.py` 折成 v1 同形规则，前端 `lib/journalV2.ts` 按项叠到期刊绑定上（v2 优先），带条件的只进「需要你确认」；求值器与阈值不变（唯一新增判据：数据线线宽下限 `min_line_width_pt` / `line-width-below-min`，可选键、`journal-base-v1` 默认 0 = 不判，只判 `preflight.DATA_LINE_ROLES`——折线 / 线集 / 有可见描边的柱，按 线宽 × 面板缩放 比，等于不报；散点与填充的描边 manifest 分不出有无，不判；与 `preflight.ts` 的 `DATA_LINE_ROLES` / `isDataLine` 同源，golden `journal-min-line-width-*`，真渲染看护 `tests/test_preflight_min_line_width_real.py`），看护 `tests/test_journalfacts_fold.py` + `tests/golden/journal_v2_fold_vectors.json` + `web/src/lib/journalV2.test.ts`。** 无 v2 数据不能用 v1 / 种子冒充；旧版、既有项目快照照旧。详见 `services/journal_catalog/FACTS-V2.md`。
+- **v2 来源事实（ADR 0155 §12）**：`engine/journalfacts_contract.py` 是服务、客户端共用的唯一事实与索引校验；`services/journal_catalog/facts.py` 只转发。`engine/journalfacts_remote.py` 只读取验签索引、按需刊包与内容寻址快照，事务化独立缓存与回滚水位，共用 v1 设备令牌，禁止重定向；`tavotto_get_journal_facts` 分页只读、不发遥测。条件、阶段、禁止项与示例只作来源事实。**例外（ADR 0155 §14 修订，2026-11-17）：无条件的数值事实由 `engine/journalfacts_fold.py` 折成 v1 同形规则，前端 `lib/journalV2.ts` 按项叠到期刊绑定上（v2 优先），带条件的只进「需要你确认」；求值器与阈值不变（唯一新增判据：数据线线宽下限 `min_line_width_pt` / `line-width-below-min`，可选键、`journal-base-v1` 默认 0 = 不判，只判 `preflight.DATA_LINE_ROLES`——折线 / 线集 / 有可见描边的柱，按 线宽 × 面板缩放 比，等于不报；散点与填充的描边 manifest 分不出有无，不判；与 `preflight.ts` 的 `DATA_LINE_ROLES` / `isDataLine` 同源，golden `journal-min-line-width-*`，真渲染看护 `tests/test_preflight_min_line_width_real.py`）；**画布上的箭头 / 形状 / 路径也判（ADR 0208，2026-11-24「都管」）**：读 `objects[].stroke_pt`（页面绝对 pt、不乘缩放、缺席 = 没有描边不判），`CANVAS_STROKE_TYPES` / `_check_canvas_strokes` ↔ `preflight.ts` 同名 / `checkCanvasStrokes`，golden `canvas-line-width-*`，文案 `canvasLineWidthBelowMin`，看护 `tests/test_journalfacts_fold.py` + `tests/golden/journal_v2_fold_vectors.json` + `web/src/lib/journalV2.test.ts`。** 无 v2 数据不能用 v1 / 种子冒充；旧版、既有项目快照照旧。详见 `services/journal_catalog/FACTS-V2.md`。
 - **真实期刊数据严禁凭记忆写**：只收人工核对过、带原文摘录的条目；单元测试 / golden 向量只许用夹具期刊（`fx-*`，`example.invalid`）。
   项目快照（`FigureDocument.profile.snapshot`）机制原样适用，期刊库更新不会改已定稿项目的结论。
 
@@ -131,3 +179,12 @@ order: 260
 - `clip_bbox` 只给 `element-outside-figure` 用
 - 没登记的检查项兜底 warn
 - 磁盘更高版本只读不写
+
+## 推荐配色目录（ADR 0210）
+
+- 色值的唯一权威是 `profiles/palettes.json`（宽松许可）与 `profiles/palettes_copyleft.json`（GPL 的期刊风格色板）两份文件；
+  前端经 `@palettes` / `@palettesCopyleft` 别名整份 import，引擎经 `engine/palettes.py` 读。任一侧不另抄色值。
+- **GPL 的边界是文件**：宽松那份里出现 GPL 来源即红（`tests/test_palettes.py`）；闭源组件只许读宽松那份，
+  引擎侧显式 `catalog(include_copyleft=False)`；`TAVOTTO_NO_COPYLEFT_PALETTES=1` 时引擎与前端构建都不收 copyleft 那份。
+- 新增来源先在 `THIRD_PARTY_NOTICES.md` 加一节（网址、许可、要求的致谢 / 引用），再改 `scripts/dev/gen_palettes.py` 重新生成；
+  手改 JSON 不行——下次重新生成就丢。

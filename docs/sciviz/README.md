@@ -11,7 +11,7 @@
 | 文件 | 内容 | 权威性 |
 | --- | --- | --- |
 | [`sources.md`](sources.md) | 来源、版本、阅读覆盖、页码口径、版权口径 | 新来源先在这里登记才能被引 |
-| [`principles.md`](principles.md) | P1–P8：来源、适用范围、例外、工程意义、实现与验证方式 | 原则的唯一全文 |
+| [`principles.md`](principles.md) | P1–P9：来源、适用范围、例外、工程意义、实现与验证方式 | 原则的唯一全文 |
 | [`decision-framework.md`](decision-framework.md) | 数据抽象 → 任务 → derive → 编码 → 理由三档 | 数据出图与 Agent 选图的骨架 |
 | [`validation-spec.md`](validation-spec.md) | V-xxx 规则规格：检测逻辑、严重度、误报、测试 | 规则规格的唯一全文；判据实现仍以 `publication.json` + 两侧求值器为准 |
 | [`core-implications.md`](core-implications.md) | 对 Core 模型、编辑、跨语言、可复现的影响 | 架构方向，落地时另开 ADR |

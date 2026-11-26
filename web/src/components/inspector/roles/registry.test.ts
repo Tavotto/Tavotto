@@ -271,6 +271,15 @@ describe('engineLabel 的出口把 mathtext 换成可读文本（2026-09-14 审�
     }
   })
 
+  it('图内副本（ADR 0207）：「<源的名字> 的副本」按当前语言重组，源的名字照常翻译', () => {
+    setLocale('zh-CN')
+    expect(engineLabel('标题 “Sample 2” 的副本')).toBe(engineLabel('标题 “Sample 2”') + ' 的副本')
+    setLocale('en-US')
+    expect(engineLabel('标题 “Sample 2” 的副本')).toBe(engineLabel('标题 “Sample 2”') + ' (copy)')
+    expect(engineLabel('标题 “Sample 2” 的副本')).not.toContain('副本')
+    setLocale('zh-CN')
+  })
+
   it('不成对的 $ 与认不出的命令原样保留：宁可露出源码，不许改掉用户的字', () => {
     setLocale('zh-CN')
     expect(engineLabel('标题 “price $5”')).toContain('$5')

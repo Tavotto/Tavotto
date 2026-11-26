@@ -40,7 +40,7 @@ export function documentColorsOf(
         add(o.color)
         add(o.bg)
         add(o.borderColor)
-      } else if (o.type === 'arrow') add(o.color)
+      } else if (o.type === 'arrow' || o.type === 'pathText') add(o.color)
       else if (o.type === 'shape' || o.type === 'path') {
         add(o.color)
         add(o.fill)

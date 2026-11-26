@@ -1587,6 +1587,75 @@ def _id_name(name: str) -> bool:
     return any(w in name for w in _ID_CJK)
 
 
+#: 列名里「这是误差量」的词 → 它是哪一种（`unknown` = 是误差量、但名字没说是哪种）。判法见 `error_kind`
+_ERROR_WORDS = {
+    "sd": "sd",
+    "stdev": "sd",
+    "stddev": "sd",
+    "std": "sd",
+    "sem": "sem",
+    "stderr": "sem",
+    "se": "sem",
+    "err": "unknown",
+    "error": "unknown",
+    "ci": "ci",
+    "ci95": "ci",
+}
+#: 整个列名就是这一个词时，单凭名字就算（`sem` / `se` / `std` / `ci` 不在里面：扫描电镜、硒、标准品、别的缩写）
+_ERROR_ALONE = frozenset({"sd", "stdev", "stddev", "stderr", "err", "error"})
+_ERROR_CJK = (("标准差", "sd"), ("标准误", "sem"), ("置信区间", "ci"), ("误差", "unknown"))
+_MEAN_WORDS = frozenset({"mean", "avg", "average"})
+
+
+def _name_tokens(name: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", _CAMEL.sub(" ", name).lower()) if t]
+
+
+def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
+    """`error_kind` 的判法本体，另外带回「它修饰的是哪几列」：`(种类 | None, 搭档列)`。搭档列 = `others` 里让名字里的误差词成立的那些列
+    （去掉误差词后剩下的词与某一列去掉 `mean` / `avg` / `average` 之后的词相同；去掉后什么都不剩时是名字里带 `mean` / `avg` / `average` 的列），
+    可能为空（整个名字就是 `sd` / 中文词、而表里没有 `mean` 列）或多个（歧义）。**判「是不是误差列」的口径只有这一处**——误差列配对
+    （`ai_data_recipe.paired_error`）读同一个结果，不另写一份名字规则。"""
+    kind: str | None = None
+    for word, k in _ERROR_CJK:
+        if word in name:
+            kind = k
+            break
+    tokens = _name_tokens(name)
+    alone = len(tokens) == 1 and tokens[0] in _ERROR_ALONE
+    if kind is None and alone:
+        kind = _ERROR_WORDS[tokens[0]]
+    partners: list[str] = []
+    word_kind: str | None = None
+    for t in tokens:
+        if t in _ERROR_WORDS:
+            rest = [x for x in tokens if x != t]
+            for other in others:
+                ot = _name_tokens(other)
+                core = [x for x in ot if x not in _MEAN_WORDS]
+                if ((rest and core == rest) or (not rest and _MEAN_WORDS & set(ot))) and (
+                    other not in partners
+                ):
+                    partners.append(other)
+                    word_kind = word_kind or _ERROR_WORDS[t]
+    return (kind or word_kind), partners
+
+
+def error_kind(name: str, others: list[str]) -> str | None:
+    """这一列的名字是不是在说「我是误差量」（`sd` / `sem` / `ci` / `unknown`；不是 = None）。只看列名的**词**（驼峰与非字母数字处切开，
+    不做子串匹配：`residue`、`used`、`semester` 不算），宁可认不出、不可认错（认错 = 把一列真的测量值悄悄踢出候选）：
+
+    * 含中文词（标准差 / 标准误 / 置信区间 / 误差）→ 算；
+    * 整个名字就是一个词，且在 `sd` / `stdev` / `stddev` / `stderr` / `err` / `error` 里 → 算；
+    * 其它含误差词的名字（`mass_sd`、`SEM_depth`、单独的 `sem` / `se` / `std` / `ci`）→ 只有表里另有**它修饰的那一列**时才算：
+      去掉这个词后剩下的词与某一列去掉 `mean` / `avg` / `average` 之后的词相同（`mass_sd` ↔ `mass`、`response_sem` ↔ `mean_response`）；
+      去掉后什么都不剩时，要有一列的名字里带 `mean` / `avg` / `average`（`mean, sem`）。`SEM_depth_nm`（扫描电镜测的深度）、`Se`（硒）
+      没有这样的搭档，不算。
+
+    这只是名字上的线索：它让规则**不把这一列当测量值去画**，不替用户断定误差线的含义（名字只说 `err` 的记 `unknown`，绝不当成 SD）。"""
+    return error_match(name, others)[0]
+
+
 def _structure(
     header: list[str],
     rows: list[list[str]],
@@ -2009,6 +2078,20 @@ def apply_numcat(header, rows, cols):
             if kind == "numeric":
                 r[i] = NumCat(str(int(v)) if v.is_integer() else r[i].strip(), v)
     return out
+
+
+def apply_stack(header, rows, cols, value_name, cat_name):
+    """「把这几列当分组」读表后的转换（宽表 → 长表，只在内存里的副本上做，不碰文件）：返回 `([value_name, cat_name], 行)`——一列「值」、一列「类别」（= 原来的列名原文）。
+    **按列逐列**取（先 `cols[0]` 的全部、再 `cols[1]` 的……），所以类别的首次出现顺序恒等于 `cols` 的顺序，与哪一行先有值无关；只取数值格（空格子 / `nan` 不是观测，
+    那一格不产生行），值保留去首尾空白的原文（之后与别的路径一样由 `parse_cell` 解析）。其余列不进结果。**这是运行时函数**：父进程算期望值与生成的脚本调用同一份源码。"""
+    idx = {h: i for i, h in enumerate(header)}
+    out = []
+    for col in cols:
+        i = idx[col]
+        for r in rows:
+            if parse_cell(r[i])[0] == "numeric":
+                out.append([r[i].strip(), col])
+    return [value_name, cat_name], out
 
 
 # --------------------------------------------------------------------------- 列映射

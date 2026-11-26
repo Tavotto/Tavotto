@@ -7,6 +7,8 @@ import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
 import { fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, type AutosaveProbe } from '@/lib/api'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
+import { planSavedChartSources, type ChartSourceReceipt } from '@/lib/chartSourceReceipts'
+import { containsChartState } from '@/lib/documentFormat'
 import type { RestoreIssue } from '@/store/documentRestore'
 import {
   blocksDiskWrite,
@@ -36,11 +38,14 @@ import { remapGroupPath } from '@/lib/groupTree'
 import { defaultCanvasName, type CanvasData, type FigureDocument, type FigureExecutionOwner, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   SCHEMA_CURRENT,
+  SCHEMA_PROJECT,
   canvasToDoc,
   docToCanvas,
   emptyProject,
   migrateToProject,
 } from '@/types/document'
+import { remapLineIds } from '@/lib/pathText'
+import { pruneLiveCorners } from '@/lib/liveCornerRecord'
 
 enablePatches()
 
@@ -154,6 +159,8 @@ function produceStamped(
   const [stamped, more, moreInverse] = produceWithPatches(next, (d) => {
     stamp?.(d, base, next)
     clearChangedFigureSnapshots(d, base)
+    // 路径实时圆角的记录：几何改过、对不上就删（集中在这一处，ADR 0185 M7 方案 B）
+    pruneLiveCorners(d, base, next)
   })
   return [stamped, [...patches, ...more], [...moreInverse, ...inverse]]
 }
@@ -401,7 +408,7 @@ export function onBlockedWrite(fn: (() => void) | null): void {
 }
 
 /** 写入口的门：占位文档不许写。`notify` = 用户动作被拒，要说一句；派生写入静默 */
-function writesBlocked(notify = true): boolean {
+export function writesBlocked(notify = true): boolean {
   if (windowHold) {
     if (notify) windowBlockedNotifier?.()
     return true
@@ -623,6 +630,11 @@ interface DocumentState {
    * 用处：松手后按权威渲染的实测补正一次落点（图例整体缩放钉对角）。
    */
   amendLast: (entry: HistoryEntry, recipe: Recipe) => boolean
+  /**
+   * 把撤销栈顶上的 `count` 条并成一条（标签换成 `label`）：撤销一次退掉这一整段。只在没有事务开着时做；不够两条什么都不做。
+   * 用处：一次「编辑路径文字的路径」里拖了好几下锚点，整次编辑只记一步（ADR 0190）。
+   */
+  squashTop: (count: number, label: UiMessage) => boolean
 
   /* ---------------- 画布（Canvas）操作 ---------------- */
   /** 当前完整项目文档快照（激活画布从 doc 同步） */
@@ -669,6 +681,8 @@ interface DocumentState {
  * `reason` 只在「普通」取代一次未落定的恢复时用（默认 `explicit`）。
  */
 export interface SwitchOptions {
+  /** 时间线还原是对当前排版的编辑，不能借换文档清掉编辑权。 */
+  editCurrent?: boolean
   placeholder?: boolean
   restoreToken?: RestoreToken
   reason?: Exclude<RestoreReason, 'initial'>
@@ -845,6 +859,21 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return true
   },
 
+  squashTop: (count, label) => {
+    const state = get()
+    if (state.txn || count < 2 || count > state.past.length) return false
+    const top = state.past.slice(-count)
+    const merged: HistoryEntry = {
+      label,
+      patches: top.flatMap((e) => e.patches),
+      // 撤销按倒序退：后来的那条先退
+      inverse: [...top].reverse().flatMap((e) => e.inverse),
+      ...(top.some((e) => e.sizeBasis?.length) ? { sizeBasis: top.flatMap((e) => e.sizeBasis ?? []) } : {}),
+    }
+    set({ past: [...state.past.slice(0, -count), merged] })
+    return true
+  },
+
   beginTxn: (label) => {
     if (writesBlocked()) return
     // 上一个事务还开着 = 手势与离散操作混在了一起。诊断要看得见这件事：
@@ -998,8 +1027,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   buildProject: () => {
     const s = get()
-    return {
-      schema: 3,
+    const project: ProjectDocument = {
+      schema: SCHEMA_PROJECT,
       project: { id: s.projectMeta.id, name: s.projectMeta.name },
       canvases: s.canvases.map((c) =>
         c.id === s.activeCanvasId ? docToCanvas(s.doc, c.id) : c,
@@ -1008,6 +1037,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       createdAt: s.projectMeta.createdAt,
       updatedAt: Date.now(),
     }
+    // schema 按**拼好的正文内容**选：含 chart / chartSource 的文档才是 4。
+    return containsChartState(project) ? { ...project, schema: SCHEMA_CURRENT } : project
   },
 
   switchCanvas: (id) => {
@@ -1125,6 +1156,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       })
       return copy
     })
+    remapLineIds(objects, idMap)
     const layoutGroups = synced.layoutGroups
       ?.filter((g) => groupMap.has(g.id))
       .map((g) => ({
@@ -1194,6 +1226,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   switchDocument: async (next, nextId, confirmLoss, opts) => {
+    const loadSeq = get().loadSeq
+    const editBlocked = () => opts?.editCurrent && (writesBlocked() || get().documentId !== nextId || get().loadSeq !== loadSeq)
+    if (editBlocked()) return false
     const placeholder = opts?.placeholder === true
     const token = opts?.restoreToken
     if (!placeholder) {
@@ -1210,9 +1245,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (!isRestoreTokenCurrent(token)) return false
     } else if (!placeholder) {
       if (opts?.beforeInstall && !(await opts.beforeInstall())) return false
+      if (editBlocked()) return false
       // 显式意图取代未落定的恢复（门本来就开着时什么都不动）
       supersedeRestore(nextId, opts?.reason ?? 'explicit')
     }
+    if (editBlocked()) return false
     // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
     autosaveSuspendedFor = null
     // 编辑权属于「那份排版」：换到哪份都清（只读状态不跟着带过去）
@@ -1549,13 +1586,6 @@ function setDocNotice(notice: DocNotice | null): void {
 const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === id
 
 /**
- * 每份文档本会话**成功落盘**的次数（不看是不是当前文档）。手动保存据此回答「这次写成了
- * 没有」——看最终的实时 `saveState` 回答不了：写的途中又改过的话它照实是 dirty（与 #674
- * 的圆点同源），而 ⌘S 那一刻的内容其实已经在盘上了（Codex #679）。
- */
-const diskWrites = new Map<string, number>()
-
-/**
  * 写盘成功后：期间又编辑过就还是 dirty，没编辑过才是"存好了"。
  *
  * 两半，**判据不同**：
@@ -1566,10 +1596,12 @@ const diskWrites = new Map<string, number>()
 function afterWriteOk(
   id: string,
   savedAt: number,
-  meta?: { pj?: string | null; metadata?: PersistedMetadata; figureSnapshots?: Record<string, FigureSnapshot>; snapshotContext?: FigureSnapshotSaveContext },
+  meta?: { pj?: string | null; metadata?: PersistedMetadata; figureSnapshots?: Record<string, FigureSnapshot>; chartSources?: ChartSourceReceipt[]; snapshotContext?: FigureSnapshotSaveContext },
 ): void {
-  if (meta?.snapshotContext) mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
-  diskWrites.set(id, (diskWrites.get(id) ?? 0) + 1)
+  if (meta?.snapshotContext) {
+    mergeSavedChartSources(meta.snapshotContext, meta.chartSources)
+    mergeSavedFigureSnapshots(meta.snapshotContext, meta.figureSnapshots)
+  }
   const pj = meta?.pj ?? null
   for (const fn of [...persistedListeners]) {
     try {
@@ -1640,12 +1672,12 @@ const disk = createDiskWriter({
 })
 
 /** 立刻把当前项目文档写入自动保存（本机副本同步 + 磁盘异步）。 */
-export function flushAutosave(): FlushResult {
+export function flushAutosave(allowEmpty = false): FlushResult {
   // 性能探针（ADR 0075）：同步那一段在主线程上，落在拖动途中就是一次卡顿
-  return perfSpan('autosave.flush', flushAutosaveNow)
+  return perfSpan('autosave.flush', () => flushAutosaveNow(allowEmpty))
 }
 
-function flushAutosaveNow(): FlushResult {
+function flushAutosaveNow(allowEmpty: boolean): FlushResult {
   // 占位文档（恢复还没落定）一个字节都不写：它不是用户的文档，写了 last / 最近文档 / 本机副本就是假的
   if (isDocumentPlaceholder()) return 'skipped'
   const state = useDocumentStore.getState()
@@ -1653,7 +1685,8 @@ function flushAutosaveNow(): FlushResult {
   // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
   if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return 'skipped'
   const pd = state.buildProject()
-  if (!hasContent(pd)) {
+  // 只有尚未产生持久内容的新空白才免写；删除最后一个对象和失败的空正文重试仍须落盘。
+  if (!allowEmpty && !hasContent(pd) && !state.dirty && state.saveState === 'clean' && state.lastPersisted === null) {
     useDocumentStore.setState({ dirty: false, lastPersisted: null })
     return 'empty'
   }
@@ -1715,11 +1748,11 @@ export async function saveNow(): Promise<SaveState> {
 
 /**
  * 手动保存的两个答案：`state` 是写完之后**此刻**的保存状态（照实算：途中又改过就是
- * dirty）；`wrote` 是**按下那一刻的内容**写没写成——冲刷之后这份文档有没有一次成功落盘
+ * dirty）；`wrote` 是**按下那一刻的内容**写没写成——这次排队的代次是否成功落盘
  * （排队合并成更新的一份也算：盘上的内容只会比按下时更新），或者根本没有要写的（空文档）。
  * 「排版写成了」（时间线的「保存」点）跟 `wrote` 走，不跟 `state` 走（Codex #679）。
  */
-export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: boolean }> {
+export async function saveNowWithResult(allowEmpty = false): Promise<{ state: SaveState; wrote: boolean }> {
   // 恢复没落定时没有「要存的文档」：不举手动标志、不认领、不等写盘队列
   if (isDocumentPlaceholder()) {
     return { state: useDocumentStore.getState().saveState, wrote: false }
@@ -1727,10 +1760,11 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   // 手动保存是用户的动作：显式打开的别的项目的排版，存一下就归到这个项目（与真改一笔同一档）
   claimDocumentOnEdit()
   const id = useDocumentStore.getState().documentId
-  const before = diskWrites.get(id) ?? 0
+  const before = disk.writeVersion(id).scheduled
   cancelPendingAutosave()
   disk.markManual()
-  const result = flushAutosave()
+  const result = flushAutosave(allowEmpty)
+  const target = disk.writeVersion(id).scheduled
   if (result === 'empty') {
     disk.clearManual()
     setSaveState('clean')
@@ -1739,7 +1773,7 @@ export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: bo
   await disk.whenIdle()
   return {
     state: useDocumentStore.getState().saveState,
-    wrote: (diskWrites.get(id) ?? 0) > before,
+    wrote: target > before && disk.writeVersion(id).written >= target,
   }
 }
 
@@ -2205,12 +2239,29 @@ const editGenerationOf = (documentId: string) => editGeneration.get(documentId) 
 /**
  * 用户编辑之后：项目里那份落后了。编辑代次一律前进；绑定没有 / 已经是 dirty 就不再写。
  * **项目文件那根轴的唯一入口**——判「是不是用户编辑」的只有调用它的那两处，这里不再判第二遍。
+ *
+ * 恢复（`restoreLayoutVersion` 换整份项目）也是一次用户编辑：绑定标脏必须走这里。
+ * 只 `setProjectFile({...binding, dirty:true})` 不推进代次的话，写盘途中
+ * `projectFileSnapshot()` 看不见这次变化，回来的回执会把 dirty 重置成 false——
+ * 磁盘还是恢复前的内容，界面却说「已保存」。
  */
-function markProjectFileDirty(): void {
+export function markProjectFileDirty(): void {
   const s = useDocumentStore.getState()
   editGeneration.set(s.documentId, editGenerationOf(s.documentId) + 1)
+  // 分叉期间仍计用户编辑，供新副本与已写命名文件比较；原排版的持久绑定留在原状。
+  if (isAutosaveSuspendedFor(s.documentId)) return
   const b = s.projectFile
   if (b && !b.dirty) setProjectFile({ ...b, dirty: true })
+}
+
+/**
+ * 分叉没成、原排版接回自动保存时用：挂起期间用户确实改过（编辑代次已前进），项目文件里那份
+ * 就落后了，把**发起分叉那份**的绑定补标为待保存。按 documentId 取绑定——此刻可能已经切到
+ * 别的项目 / 排版，`markProjectFileDirty()` 只作用于当前文档；代次在编辑时已经推过，这里不再推。
+ */
+export function markProjectFileDirtyFor(documentId: string): void {
+  const binding = readProjectFile(documentId)
+  if (binding && !binding.dirty) setProjectFile({ ...binding, dirty: true }, documentId)
 }
 
 /**
@@ -2324,6 +2375,26 @@ export function captureFigureSnapshotSave(
     ownerGenerations: new Map(figureOwnerGenerations),
     receiptGeneration: figureReceiptGeneration,
   }
+}
+
+/** 只把服务端已落盘的来源引用合回当时送出的面板。 */
+export function mergeSavedChartSources(context: FigureSnapshotSaveContext, refs?: ChartSourceReceipt[]): void {
+  if (!refs?.length || writesBlocked(false)) return
+  const state = useDocumentStore.getState()
+  if ((projectOfDoc().id ?? currentProjectId()) !== context.pj) return
+  const scope = { pj: currentProjectId(), documentId: state.documentId, loadSeq: state.loadSeq }
+  const project = state.buildProject()
+  const plan = planSavedChartSources(context, project, scope, refs)
+  if (!plan.updates.length) return
+  const activeIndex = state.canvases.findIndex(canvas => canvas.id === state.activeCanvasId)
+  const canvases = produceWithPatches(project.canvases, draft => {
+    for (const { canvasIndex, objectIndex, source } of plan.updates) {
+      const panel = draft[canvasIndex].objects[objectIndex]
+      if (panel.type === 'panel') panel.chartSource = source
+    }
+  })[0]
+  const doc = activeIndex < 0 ? state.doc : { ...state.doc, objects: canvases[activeIndex].objects }
+  useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
 }
 
 /** Merge only the exact sent panel version; a late reply cannot reattach an old execution. */
@@ -2645,17 +2716,17 @@ export function startAutosave(): () => void {
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
     // 占位文档的变化不是编辑：写入口都看门，这里再守一道（绕过门的写入也不排队落盘）
     if (isDocumentPlaceholder()) return
-    if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return
     // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
     // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置
     // （字面含义就是"有改动还没写进自动保存"），落盘照排队，写盘失败照报。
     const derived = state.derivedSeq !== prev.derivedSeq
+    if (!derived) markProjectFileDirty()
+    if (isAutosaveSuspendedFor(state.documentId)) return
     if (!state.dirty) useDocumentStore.setState({ dirty: true })
     // 冲突未决时不覆盖状态：它要用户裁决，被一次编辑顶掉就等于替用户按了
     // 「算了」，而下一次防抖写盘又会去撞同一堵墙。编辑照常进本机副本。
     if (!derived && !blocksDiskWrite(state.saveState)) setSaveState('dirty')
     // 项目文件那根轴只跟用户编辑：派生同步不是用户做的事，圆点不该因它亮起
-    if (!derived) markProjectFileDirty()
     // 显式打开的别的项目的排版：真改了一笔才归到这个项目（派生同步不算）
     if (!derived) claimDocumentOnEdit()
     cancelPendingAutosave()

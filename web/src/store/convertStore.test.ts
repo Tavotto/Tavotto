@@ -149,6 +149,30 @@ describe('convertStore', () => {
     expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'failed', reason: 'agent_write_denied' })
   })
 
+  it('进行中：会话的 task.stage（任务清单走到哪一步 + 第几轮）落进条目、跟着换；终态后不再改', async () => {
+    vi.mocked(startConvert).mockResolvedValue({ session: 'steps', script: 'plot.py' })
+    const running = (stage: unknown) =>
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null, stage } } as never)
+    running({ step: 'read', round: 1 })
+    const pending = start()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(useConvertStore.getState().entries['plot.py']?.stage).toEqual({ step: 'read', round: 1 })
+    running({ step: 'write', round: 1 })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(useConvertStore.getState().entries['plot.py']?.stage).toEqual({ step: 'write', round: 1 })
+    running({ step: 'write', round: 2 })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(useConvertStore.getState().entries['plot.py']?.stage).toEqual({ step: 'write', round: 2 })
+    // 老后端没有 stage：回到 null（界面按第一步）
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false, task: { outcome: null } } as never)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    expect(useConvertStore.getState().entries['plot.py']?.stage ?? null).toBeNull()
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [] } } as never)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await pending
+    expect(useConvertStore.getState().entries['plot.py']?.phase).toBe('failed')
+  })
+
   it('未决请求 id 按项目分作用域：B 的同名脚本成功不会冲掉 A 的未决 id', async () => {
     vi.mocked(startConvert).mockRejectedValueOnce(new Error('network down'))
     await start()

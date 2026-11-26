@@ -90,6 +90,7 @@ from overrides import (
     _ARROWSTYLES,
     _FONT_PRESENT as _FONT_PRESENT,  # 测试要清的那张探测缓存（显式再导出）
     BBOX_DEFAULTS,
+    COPY_LABEL_SUFFIX,
     HATCHES,
     LINE_POINTS_MAX,
     FigState,
@@ -104,6 +105,7 @@ from overrides import (
     _linecoll_linestyle_name,
     _linestyle_name,
     _stroke_state,
+    _unit_scalar,
     alias_covers,
     alias_pure,
     annotation_arrow_display,
@@ -142,6 +144,7 @@ from overrides import (
     register_font_name_aliases,
     remember_axis_directions,
     scale_options,
+    set_element_registrar,
     set_original_reader,
     state_reverse_index,
     sync_font_caches,
@@ -300,7 +303,7 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
         _register(state, gid, ln, "line", nice or f"曲线 {nth('line')}", draggable=True)
 
     for i, t in enumerate(owner.texts):
-        if id(t) not in known:
+        if id(t) not in known and not getattr(t, "_mm_copy", None):
             register_text(f"{prefix}.texts_{i}", t)
     for i, leg in enumerate(getattr(owner, "legends", []) or []):
         if id(leg) not in known:
@@ -317,7 +320,8 @@ def _register_figure_level(state: FigState, owner, prefix: str, counts: dict[str
     # `fig.add_artist(...)` 不按类型改道（Axes 会把 Patch / Line2D 分进 patches / lines，Figure
     # 不会），所以这里什么都可能有：按族分派到与子图里同一套角色
     for j, art in enumerate(getattr(owner, "artists", []) or []):
-        if id(art) in known:
+        # 图内副本（ADR 0207）带着自己的 gid 由 `overrides._ensure_copy` 登记，不再以序号名登记一次
+        if id(art) in known or getattr(art, "_mm_copy", None):
             continue
         gid = f"{prefix}.artists_{j}"
         if isinstance(art, (AnchoredOffsetbox, AnnotationBbox)):
@@ -452,7 +456,9 @@ def _legend_proxy_names_safe(fig) -> dict[int, str]:
 def _relabel(registered: str, text: str) -> str:
     """把登记名里引号中的那段换成当前文字（前缀是角色名，原样保留）。"""
     head = registered.split("“", 1)[0]
-    return f"{head}“{_snippet(text)}”"
+    # 图内副本（ADR 0207）的登记名以「 的副本」收尾：换字时尾巴保留，元素树里才分得清源与副本
+    tail = COPY_LABEL_SUFFIX if registered.endswith(COPY_LABEL_SUFFIX) else ""
+    return f"{head}“{_snippet(text)}”{tail}"
 
 
 def _svg_group(art) -> None:
@@ -983,6 +989,9 @@ def instrument(state: FigState) -> None:
                     draggable=True,
                 )
         for j, t in enumerate(ax.texts):
+            # 图内副本（ADR 0207）：自己的 gid 在 `overrides._ensure_copy` 登记。序号照数（不因跳过而挪位）
+            if getattr(t, "_mm_copy", None):
+                continue
             if t.get_text():
                 _register(
                     state,
@@ -1630,8 +1639,42 @@ def _resolved_font_paths(families, file=None, props=None) -> list[tuple[str, int
 _CJK_CHAR = re.compile("[⺀-⻿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]")
 
 
-def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], list[str]]:
+def drawn_by_mathtext(t: Text) -> bool:
+    """这个 Text 有没有**哪一行**由 mathtext 排（matplotlib `Text._preprocess_math` 的同一个判据）。
+
+    matplotlib 逐行判（`Text._get_layout` 对每一行调 `_preprocess_math`）：一行里有成对的 `$`，
+    这**一行**就交给 mathtext——`$` **外面**的字也一样，而 mathtext 的正文部分只用一张脸
+    （`findfont(prop)`，族列表的第一环），没有逐字形回退链（ADR 0045 的中文尾巴在这里不起作用）；
+    别的行照常走回退链。哪一行是哪种由 `_math_lines` 逐行给出，这里只是「要不要逐行看」的总闸。
+    usetex 的文字是 TeX 排的，不在此列。
+    """
+    if t.get_usetex():
+        return False
+    parse_math = getattr(t, "get_parse_math", None)
+    if parse_math is not None and not parse_math():
+        return False
+    return any(math for _line, math in _math_lines(t.get_text()))
+
+
+def _math_lines(text: str) -> list[tuple[str, bool]]:
+    """按行切开，每行带「这一行是不是 mathtext 排的」（与 matplotlib 逐行的 `_preprocess_math` 同一判据）。
+
+    只在调用方已确认这段文字会解析数学（`drawn_by_mathtext` 为真）时，第二项才是 matplotlib 的真实行为；
+    `$…$` 跨行的串每一行都没有成对的 `$`，matplotlib 整段按普通文字排，这里也一样。"""
+    return [(line, bool(mcbook.is_math_text(line))) for line in text.split("\n")]
+
+
+def _glyph_scan(
+    text: str, families, file=None, *, mathtext: bool = False
+) -> tuple[list[str], list[str], list[str]]:
     """(画不出来的, 换了脸的非中日韩字符, 画了中日韩字符的那几张脸) —— 一次扫出来。
+
+    `mathtext`：这段文字会解析数学（`drawn_by_mathtext`）。matplotlib 逐行判，所以这里也逐行
+    （`_math_lines`）：只有带成对 `$` 的那几行由 mathtext 排，别的行照常走回退链。那几行里 `$` 外的字只由
+    正文第一张脸画，mathtext 自己的后备字体集（STIX / Computer Modern）没有中日韩字形，
+    回退链也不参与——**中日韩字符问的是第一张脸**，它没有就是方框（实测「浓度 ($\\mu$mol/L)」
+    导出成 `¤¤ (μmol/L)`），既进 `glyphs_missing`，也不报 `cjk_family`。非中日韩字符照旧
+    （mathtext 的 STIX 后备可能接得住，判不准就不改判）。
 
     `$…$` 里的片段跳过（那是 mathtext 字体集画的，见 `_MATH_SPAN`）。
     解析不出任何字体时三张单子都空：**判不了就不判**，不拿一个量错对象的
@@ -1656,7 +1699,10 @@ def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], l
     gone: dict[str, None] = {}
     subst: dict[str, None] = {}
     cjk_faces: dict[str, None] = {}
-    for ch in _MATH_SPAN.sub("", text):
+    lines = _math_lines(text) if mathtext else [(text, False)]
+    for ch, line_math in (
+        (ch, line_math) for line, line_math in lines for ch in _MATH_SPAN.sub("", line)
+    ):
         if ch.isspace() or ch in gone or ch in subst:
             continue
         if primary.get_char_index(ord(ch)):
@@ -1666,7 +1712,12 @@ def _glyph_scan(text: str, families, file=None) -> tuple[list[str], list[str], l
             if len(gone) < MAX_MISSING_GLYPHS:
                 gone[ch] = None
         elif _CJK_CHAR.match(ch):
-            cjk_faces.setdefault(str(face.family_name), None)
+            if line_math:
+                # mathtext 不走回退链：链尾那张中文脸画得出，也轮不到它画
+                if len(gone) < MAX_MISSING_GLYPHS:
+                    gone[ch] = None
+            else:
+                cjk_faces.setdefault(str(face.family_name), None)
         elif len(subst) < MAX_MISSING_GLYPHS:
             subst[ch] = None
     return list(gone), list(subst), list(cjk_faces)
@@ -1718,7 +1769,7 @@ def _face_source(path: str, face_index: int, ft) -> dict | None:
     }
 
 
-def face_sources(text: str, families, file=None, props=None) -> dict:
+def face_sources(text: str, families, file=None, props=None, *, mathtext: bool = False) -> dict:
     """这段文字实际由哪几张**文件级**的脸画：`face_src`（正文脸，族链解析到的第一张）与
     `cjk_src`（回退链上画了第一个中日韩字符的那张；正文脸自己画得出汉字时没有）。
 
@@ -1739,9 +1790,14 @@ def face_sources(text: str, families, file=None, props=None) -> dict:
     src = _face_source(*resolved[0])
     if src is not None:
         out["face_src"] = src
+    # mathtext 排的行不走回退链（见 `_glyph_scan`，逐行）：那几行里链尾的中文脸没画任何字；
+    # 只看普通文字的行，那里画了汉字的脸才是真身份
     if isinstance(text, str) and text.strip():
         primary, rest = resolved[0][2], resolved[1:]
-        for ch in _MATH_SPAN.sub("", text):
+        plain = "".join(
+            line for line, math in (_math_lines(text) if mathtext else [(text, False)]) if not math
+        )
+        for ch in _MATH_SPAN.sub("", plain):
             if not _CJK_CHAR.match(ch) or primary.get_char_index(ord(ch)):
                 continue
             hit = next((r for r in rest if r[2].get_char_index(ord(ch))), None)
@@ -5138,6 +5194,91 @@ def data_fingerprint(artist, budget: list[int]) -> dict | None:
 #: `scale_domain` 每一维的 `status` 闭集（V-001 `log-axis-nonpositive` 读它；不是 `ok` 一律不判）
 SCALE_DOMAIN_STATUSES = ("ok", "over_budget", "unavailable")
 
+#: V-011「图例一侧的取法」只读事实 `legend_cover` 的 `status` 闭集（与 `scale_domain` 同形）。
+LEGEND_COVER_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _legend_handle_cells(leg) -> list | None:
+    """图例每一格示意（handle）的 `DrawingArea`；读不出结构回 None（= 量不了）。
+
+    matplotlib 的排法（`Legend._init_legend_box`）：`_legend_handle_box` 是列的 HPacker，每列是条目的
+    VPacker，每个条目是 `[handlebox, textbox]`（`markerfirst=False` 时反过来）的 HPacker，handlebox 是
+    `DrawingArea`。私有属性，换版本读不出时如实说量不了，不猜。"""
+    from matplotlib.offsetbox import DrawingArea  # noqa: PLC0415
+
+    box = getattr(leg, "_legend_handle_box", None)
+    if box is None:
+        return None
+    cells = []
+    for col in box.get_children():
+        for row in col.get_children():
+            cells.extend(c for c in row.get_children() if isinstance(c, DrawingArea))
+    return cells
+
+
+def legend_cover(leg, renderer, W: float, H: float, dpi: float, budget: list[int]) -> dict:
+    """图例**真正挡住数据的东西**的只读事实（V-011「图例一侧的取法」；不进 `editable`、不进文档）。
+
+    `{"status": "ok", "opaque": bool, "face_alpha": a, "px_mm": p, "handles": [[x, y, w, h], …]}`：
+
+    * `opaque`：框画出来（`frameon`、框可见）且背景此刻的有效不透明度 `face_alpha > 0`。`face_alpha` 取
+      `frame.get_facecolor()` 的 alpha——matplotlib 的 `framealpha`（`Patch.set_alpha`）是**替换**颜色里的
+      alpha 而不是相乘，这就是画出来的那个数；`facecolor="none"` 时为 0。
+    * `handles`：每一格示意（色块 / 线段 / marker）的框，figure 分数、y 向下：`DrawingArea` 的格子并上格里每个
+      artist 的实际范围（大 marker 会伸出格子）。条目文字的框不在这里——它们本来就是 `legend_text` 元素的 `bbox`。
+    * `px_mm`：一个显示像素是多少 mm（`25.4 / dpi`），判据按它把条目框各外扩 1 px。
+
+    单个图例的条目数上限与 `pathgeom.MAX_MARKERS` 相同，整图累计记在调用方给的那份配额上（与 geometry 的
+    `pathgeom.TOTAL_BUDGET` 同一个上限、**另一份计数器**，同 V-001 的做法）；超了 `over_budget`，读不出
+    结构 `unavailable`——这两种都没有 `opaque` / `handles`，判据退回整块图例框（与没有这条事实时相同）。"""
+    try:
+        frame = leg.get_frame()
+        face_alpha = float(frame.get_facecolor()[3]) if frame.get_visible() else 0.0
+        opaque = bool(leg.get_frame_on()) and bool(frame.get_visible()) and face_alpha > 0
+        cells = _legend_handle_cells(leg)
+    except Exception:  # noqa: BLE001 —— 只读事实，量不了就如实说
+        return {"status": "unavailable"}
+    if cells is None:
+        return {"status": "unavailable"}
+    if len(cells) > pathgeom.MAX_MARKERS or len(cells) > budget[0]:
+        return {"status": "over_budget"}
+    budget[0] -= len(cells)
+    handles = []
+    for cell in cells:
+        try:
+            boxes = [cell.get_window_extent(renderer)]
+            for a in cell.get_children():
+                if a.get_visible():
+                    boxes.append(a.get_window_extent(renderer))
+        except Exception:  # noqa: BLE001
+            return {"status": "unavailable"}
+        good = [
+            b
+            for b in boxes
+            if all(math.isfinite(v) for v in (b.x0, b.y0, b.x1, b.y1)) and b.width >= 0
+        ]
+        if not good:
+            continue
+        x0 = min(b.x0 for b in good)
+        x1 = max(b.x1 for b in good)
+        y0 = min(b.y0 for b in good)
+        y1 = max(b.y1 for b in good)
+        handles.append(
+            [
+                round(x0 / W, 5),
+                round(1.0 - y1 / H, 5),
+                round((x1 - x0) / W, 5),
+                round((y1 - y0) / H, 5),
+            ]
+        )
+    return {
+        "status": "ok",
+        "opaque": opaque,
+        "face_alpha": round(face_alpha, 3),
+        "px_mm": round(25.4 / float(dpi), 5),
+        "handles": handles,
+    }
+
 
 def _scale_domain_sources(ax) -> list[tuple[str, object, object]]:
     """这根轴上**参与 V-001 计数**的可见元素：`(kind, 经过的变换, 数组)`。
@@ -5235,6 +5376,169 @@ def scale_domain(ax, budget: list[int]) -> dict | None:
         except Exception:  # noqa: BLE001
             out[dim] = {"status": "unavailable"}
     return out
+
+
+#: `bar_baseline` 每一维的 `status` 闭集（V-002 `bar-baseline-truncated` 读它；不是 `ok` 一律不判）
+BAR_BASELINE_STATUSES = ("ok", "over_budget", "unavailable")
+
+
+def _bar_rects(patches, horizontal: bool) -> list[tuple[float, float, float, float]]:
+    """一个柱容器里可见柱的 `(底, 顶, 位置中心, 柱宽)`，按柱长那一维取。
+
+    竖柱的底是 `get_y()`、横柱是 `get_x()`：`Rectangle` 存的是锚点 + 有符号的高 / 宽，负值柱
+    `bar(x, -3)` 的锚点仍是 0、高是 -3，所以「底」就是锚点，不是包围盒的下沿。"""
+    out = []
+    for p in patches:
+        if horizontal:
+            base, length = float(p.get_x()), float(p.get_width())
+            width = float(p.get_height())
+            center = float(p.get_y()) + width / 2.0
+        else:
+            base, length = float(p.get_y()), float(p.get_height())
+            width = float(p.get_width())
+            center = float(p.get_x()) + width / 2.0
+        out.append((base, base + length, center, abs(width)))
+    return out
+
+
+#: 堆叠判定「端点相等 / 同一位置」的相对容差：乘的是**这一组柱自己的数值量级**（`_BarTops`），没有绝对下限——
+#: 固定的绝对下限会让柱高 3e-10 的整组柱「处处相等」，把最底层也当成上层（Codex #2124）
+_STACK_REL_TOL = 1e-9
+
+
+def _scale_of(values) -> float:
+    """一组数的量级：有限值里最大的绝对值（全是 0 / 没有有限值时为 0，容差随之为 0，即精确相等）。"""
+    return max((abs(v) for v in values if math.isfinite(v)), default=0.0)
+
+
+class _BarTops:
+    """所有容器柱顶的索引：按位置中心排序，查「某个位置上有没有别的容器的柱顶正好在这个高度」只二分一次。
+
+    柱数受配额约束（`FINGERPRINT_BUDGET` 量级），逐对比较是平方级，每次 override 都要重量一次，所以必须是
+    O(n log n)。容差按这一维这一组柱的量级取相对比例：长度方向看所有底 / 顶，位置方向看所有中心与柱宽，
+    同一张图整体放大 1e9 倍结论不变。"""
+
+    def __init__(self, rects: list[list[tuple[float, float, float, float]]]) -> None:
+        import bisect  # noqa: PLC0415
+
+        self._bisect = bisect
+        flat = [r for rs in rects for r in rs]
+        self._len_tol = _STACK_REL_TOL * _scale_of(v for b, t, _c, _w in flat for v in (b, t))
+        self._pos_tol = _STACK_REL_TOL * max(
+            _scale_of(c for _b, _t, c, _w in flat), _scale_of(w for _b, _t, _c, w in flat)
+        )
+        entries = sorted(
+            (center, top, k)
+            for k, rs in enumerate(rects)
+            for _base, top, center, _w in rs
+            if math.isfinite(top) and math.isfinite(center)
+        )
+        self._centers = [e[0] for e in entries]
+        self._entries = entries
+
+    def has_top(self, center: float, height: float, skip: int) -> bool:
+        if not (math.isfinite(center) and math.isfinite(height)):
+            return False
+        i = self._bisect.bisect_left(self._centers, center - self._pos_tol)
+        while i < len(self._entries) and self._entries[i][0] <= center + self._pos_tol:
+            _c2, top2, k2 = self._entries[i]
+            if k2 != skip and abs(height - top2) <= self._len_tol:
+                return True
+            i += 1
+        return False
+
+
+def _stacked_on_others(rects, k: int, tops: _BarTops) -> bool:
+    """第 k 个容器的**每一根**柱都正好叠在另一个容器某根柱的顶上（同一位置）——堆叠柱的上层。
+
+    上层的底各不相同时本来就没有共同基线；这里兜的是「下层柱高全相同」时上层底恰好统一的那种，
+    它的「基线」是下层的顶，不是柱长的起点，不判。"""
+    return all(tops.has_top(center, base, k) for base, _top, center, _w in rects)
+
+
+def _length_in_data(patches, axis_index: int, data) -> bool:
+    """柱长那一维是否真的经过这根轴的 `transData`（V-001 同一判据 `contains_branch_seperately`）。
+
+    `bar(..., transform=ax.transAxes)` 或 `get_xaxis_transform()` 这种长度在轴坐标里的柱，与 `ylim` 无关，
+    截不掉；混合变换只要长度那一维是数据坐标就照常判（Codex #2124）。说不出来的当作不经过，不判。"""
+    try:
+        return all(p.get_transform().contains_branch_seperately(data)[axis_index] for p in patches)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def bar_baseline(ax, budget: list[int]) -> dict | None:
+    """线性轴上柱的共同基线的只读事实（V-002；不进 `editable`、不进文档，同 `scale_domain`）。
+
+    只在这根轴上有**可见**的 `BarContainer`（`bar` / `barh` / `hist`）时出现，按柱长那一维分：竖柱记 `y`、
+    横柱（`orientation == "horizontal"`）记 `x`：`{"y": {"status": "ok", "baselines": [{"value": 0.0, "bars": 2}]}}`。
+    `baselines` 只收**有共同基线**的容器——容器里所有可见柱的底（有限值）精确相等；浮动柱 / 甘特图（底各不相同）、
+    堆叠柱的上层（`_stacked_on_others`）不收。底相同的容器合并成一项、柱数相加，按首次出现排序；数值不舍入。
+
+    事实**只有基线**：轴范围与尺度由规则从同一个 axes 元素的 `xlim` / `ylim` / `xscale` / `yscale` 读，
+    所以在检查器里改 `ylim` 不改事实、只改结论。只判直角坐标轴（`ax.name == "rectilinear"`，twin / inset 都是）：
+    3D 的 `bar`、极坐标的玫瑰图也是 `BarContainer`，但「柱底」在那里不是同一个概念，不发。柱长那一维不经过
+    `transData` 的容器（`transform=ax.transAxes`、`get_xaxis_transform()` 上的竖柱）与轴范围无关，不收（`_length_in_data`）。
+
+    `budget` 与数据指纹同一个上限（`FINGERPRINT_BUDGET`），是**第三份**计数器（与指纹、`scale_domain` 各自独立）；
+    按柱数扣，超出写 `over_budget` 且不扣；说不出方向（手工构造的 `BarContainer` 没有 `orientation`）或量的时候
+    抛错写 `unavailable`，规则见到这两种一律不判。"""
+    try:
+        if getattr(ax, "name", "") != "rectilinear":
+            return None
+        containers = [c for c in ax.containers if isinstance(c, BarContainer)]
+    except Exception:  # noqa: BLE001 —— 自定义 Axes 什么都可能抛；量不了就不发
+        return None
+    groups: dict[str, list[list]] = {"x": [], "y": []}
+    unknown = False
+    try:
+        data = ax.transData
+        for c in containers:
+            patches = [p for p in c.patches if p.get_visible()]
+            if not patches:
+                continue
+            orient = getattr(c, "orientation", None)
+            if orient not in ("vertical", "horizontal"):
+                unknown = True
+                continue
+            dim = "y" if orient == "vertical" else "x"
+            # 柱长不在数据坐标里（transAxes / 轴坐标混合变换）：与这根轴的范围无关，这个容器不发基线
+            if _length_in_data(patches, 1 if dim == "y" else 0, data):
+                groups[dim].append(patches)
+    except Exception:  # noqa: BLE001
+        unknown = True
+    if unknown:
+        return {"x": {"status": "unavailable"}, "y": {"status": "unavailable"}}
+    out: dict[str, dict] = {}
+    for dim in ("x", "y"):
+        conts = groups[dim]
+        if not conts:
+            continue
+        size = sum(len(ps) for ps in conts)
+        if size > budget[0]:
+            out[dim] = {"status": "over_budget"}
+            continue
+        budget[0] -= size
+        try:
+            rects = [_bar_rects(ps, dim == "x") for ps in conts]
+            tops = _BarTops(rects) if len(rects) > 1 else None
+            baselines: list[dict] = []
+            for k, rs in enumerate(rects):
+                bases = [b for b, _t, _c, _w in rs]
+                if not all(math.isfinite(b) for b in bases) or any(b != bases[0] for b in bases):
+                    continue  # 浮动柱 / 甘特图 / 底里有 NaN：没有共同基线，不判
+                if tops is not None and _stacked_on_others(rs, k, tops):
+                    continue
+                value = bases[0] + 0.0  # -0.0 → 0.0
+                hit = next((e for e in baselines if e["value"] == value), None)
+                if hit is None:
+                    baselines.append({"value": value, "bars": len(rs)})
+                else:
+                    hit["bars"] += len(rs)
+            out[dim] = {"status": "ok", "baselines": baselines}
+        except Exception:  # noqa: BLE001
+            out[dim] = {"status": "unavailable"}
+    return out or None
 
 
 _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
@@ -5983,11 +6287,92 @@ def capture_preview_manifest(state: FigState, stem: str, *, vector_metrics: bool
                 state, stem, lambda _r: None, fig, renderer, min_hit, vector_metrics
             )
 
+    def measured_points(requests: list) -> list[dict]:
+        """数据点 → 这次预览里的位置（ADR 0208 §二）：与 `measured()` 同一个渲染器、同一个图幅坐标。"""
+        if not drawn:
+            raise RuntimeError("preview did not report its completed draw")
+        renderer, dpi = drawn[0]
+        with fig._cm_set(dpi=dpi), pathgeom.in_frame(fig, renderer):  # noqa: SLF001
+            return measure_data_points(state, requests)
+
+    measured.data_points = measured_points  # type: ignore[attr-defined]
     cid = fig.canvas.mpl_connect("draw_event", observe)
     try:
         yield measured
     finally:
         fig.canvas.mpl_disconnect(cid)
+
+
+def _in_scale_domain(scale: str, v: float) -> bool:
+    if not math.isfinite(v):
+        return False
+    if scale == "log":
+        return v > 0
+    if scale == "logit":
+        return 0 < v < 1
+    return True
+
+
+def _axis_value(axis, v) -> float | None:
+    """一个坐标值 → 这根轴的数值（换不了回 None）。**不许改动坐标轴**：分类轴的换算器碰到没画过的组名会把它
+    永久加进轴的单位映射（多出一个刻度、导出还原不回来，Codex #2197），所以字符串只在已有的映射里查。
+    数值照 `convert_units`（日期等），结果经 `_unit_scalar`（分类换算可能回单元素数组，NumPy 2.4 直接 float() 会报错）。"""
+    if isinstance(v, str):
+        mapping = getattr(getattr(axis, "units", None), "_mapping", None)
+        if not isinstance(mapping, dict) or v not in mapping:
+            return None
+        return float(mapping[v])
+    try:
+        return _unit_scalar(axis.convert_units(v))
+    except Exception:  # noqa: BLE001 — 单位换不过去就是换不了，不猜
+        return None
+
+
+def measure_data_points(state: FigState, requests: list) -> list[dict]:
+    """数据坐标 → 图幅分数（top-origin，与 manifest 的 `bbox` 同一套：显示像素 / `fig.bbox`）。
+
+    **以 matplotlib 为准**：用那根坐标轴自己的 `transData`，不按 `xlim / xscale` 在外面重算——
+    对数、symlog、日期、分类、翻转轴都由它自己负责。调用方必须已在测量上下文里（`in_frame`、
+    出图那次的 dpi；布局在那次 draw 里已经跑完）。逐点给结果：
+    `{"status": "ok", "xy": [x, y], "in_view": bool}` 或 `{"status": "unresolvable", "reason": …}`，
+    reason ∈ `not_axes`（gid 不是一根可换算的二维坐标轴，含 3D）/ `units`（值换不成这根轴的单位）/
+    `out_of_domain`（对数轴上 ≤ 0、logit 轴上不在 (0, 1) 里）/ `not_finite`（换出来不是有限数）。视野外的点照算，带 `in_view: false`。"""
+    fig = state.fig
+    w, h = float(fig.bbox.width), float(fig.bbox.height)
+    out: list[dict] = []
+    for req in requests:
+        ax = state.index.get(req["axes"])
+        if ax is None or not hasattr(ax, "transData") or getattr(ax, "name", "") == "3d":
+            out.append({"status": "unresolvable", "reason": "not_axes"})
+            continue
+        xv = _axis_value(ax.xaxis, req["x"])
+        yv = _axis_value(ax.yaxis, req["y"])
+        if xv is None or yv is None:
+            out.append({"status": "unresolvable", "reason": "units"})
+            continue
+        # 对数 / logit 轴的变换会把定义域外的值截成一个有限的远点（`nonpositive="clip"`），
+        # 换出来是有限数却毫无意义：按刻度类型先判定义域
+        if not (_in_scale_domain(ax.get_xscale(), xv) and _in_scale_domain(ax.get_yscale(), yv)):
+            out.append({"status": "unresolvable", "reason": "out_of_domain"})
+            continue
+        try:
+            dx, dy = (float(v) for v in ax.transData.transform((xv, yv)))
+        except Exception:  # noqa: BLE001
+            out.append({"status": "unresolvable", "reason": "not_finite"})
+            continue
+        if not (math.isfinite(dx) and math.isfinite(dy) and w > 0 and h > 0):
+            out.append({"status": "unresolvable", "reason": "not_finite"})
+            continue
+        x0, x1 = sorted(float(v) for v in ax.get_xlim())
+        y0, y1 = sorted(float(v) for v in ax.get_ylim())
+        out.append(
+            {
+                "status": "ok",
+                "xy": [dx / w, 1.0 - dy / h],
+                "in_view": x0 <= xv <= x1 and y0 <= yv <= y1,
+            }
+        )
+    return out
 
 
 def build_manifest(state: FigState, stem: str, *, timings: dict | None = None) -> dict:
@@ -6179,6 +6564,10 @@ def _measure_manifest(
     fingerprint_budget = [FINGERPRINT_BUDGET]
     #: V-001 的计数配额：与指纹同一个上限、另一份计数器（见 `scale_domain`）
     scale_domain_budget = [FINGERPRINT_BUDGET]
+    #: V-002 的计数配额：同一个上限、第三份计数器（见 `bar_baseline`）
+    bar_baseline_budget = [FINGERPRINT_BUDGET]
+    #: V-011 图例一侧的取法：条目数配额（与 geometry 同一个上限、另一份计数器，见 `legend_cover`）
+    legend_cover_budget = [pathgeom.TOTAL_BUDGET]
     for el in state.elements:
         artist = el["artist"]
         if not _owner_axis_drawn(el):
@@ -6225,6 +6614,9 @@ def _measure_manifest(
             if info is not None:
                 entry["legend_entry"] = info
         if el["role"] == "legend":
+            entry["legend_cover"] = legend_cover(
+                artist, renderer, W, H, fig.dpi, legend_cover_budget
+            )
             # 脚本的锚框这个模型摆不出来时**说得出为什么**（4 元组锚框 /
             # 非父容器变换，判据见 `overrides.legend_anchor_state`）。字段
             # 已经在 `_legend_fields` 里让出来了，这里补上那句理由——少一个
@@ -6267,6 +6659,11 @@ def _measure_manifest(
                 domain = scale_domain(artist, scale_domain_budget)
                 if domain:
                     entry["scale_domain"] = domain
+                # 柱的共同基线（V-002 `bar-baseline-truncated`）：只读事实，只在轴上有可见的柱时出现；
+                # 范围与尺度由规则从本元素的 editable 读。没有柱时键整个缺席，预检输出逐字节不变
+                baseline = bar_baseline(artist, bar_baseline_budget)
+                if baseline:
+                    entry["bar_baseline"] = baseline
             # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
             # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
             # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
@@ -6742,8 +7139,12 @@ def _measure_manifest(
                     font_file,
                 )
             )
+            by_mathtext = drawn_by_mathtext(live_text)
             gone, subst, cjk_faces = _glyph_scan(
-                live_text.get_text(), live_text.get_fontfamily() or [], font_file
+                live_text.get_text(),
+                live_text.get_fontfamily() or [],
+                font_file,
+                mathtext=by_mathtext,
             )
             if gone:
                 entry["glyphs_missing"] = gone
@@ -6763,6 +7164,7 @@ def _measure_manifest(
                         live_text.get_fontfamily() or [],
                         font_file,
                         live_text.get_fontproperties(),
+                        mathtext=by_mathtext,
                     )
                 )
             except Exception:  # noqa: BLE001 —— 身份是附加事实：采集失败只是少一个键，绝不拖垮 manifest
@@ -6850,3 +7252,5 @@ def _measure_manifest(
 
 # `overrides.apply` 采「脚本原样」时按这里的字段读法记下 `value_original`（见 `_field_values`）
 set_original_reader(_field_values)
+# 图内副本（ADR 0207）在 `overrides._ensure_copy` 里建出来，登记走同一个 `_register`
+set_element_registrar(_register)

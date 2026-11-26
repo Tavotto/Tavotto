@@ -91,6 +91,8 @@ function scaleLengths(o: CanvasObject, k: number): CanvasObject {
     case 'arrow':
     case 'path':
       return { ...o, strokePt: o.strokePt * k }
+    case 'pathText':
+      return { ...o, sizePt: o.sizePt * k }
     case 'shape':
       return {
         ...o,

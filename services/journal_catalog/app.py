@@ -15,6 +15,7 @@ def make_application(service: Service):
             "x-forwarded-for": environ.get("HTTP_X_FORWARDED_FOR"),
             "x-tavotto-proxy-secret": environ.get("HTTP_X_TAVOTTO_PROXY_SECRET"),
             "x-tavotto-client-ip": environ.get("HTTP_X_TAVOTTO_CLIENT_IP"),
+            "if-none-match": environ.get("HTTP_IF_NONE_MATCH"),
         }
         status, out_headers, body = service.handle(
             environ.get("REQUEST_METHOD", "GET"),

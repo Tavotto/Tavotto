@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_versions.py`、`test_layoutannotate.py`、`test_layout_timeline.py`、`test_document_persistence.py`、`test_package.py`、`test_ai_revert_atomic.py`、`test_project_layout_save.py`、`test_layout_session.py`、`test_layout_recovery_backend.py`、`test_layout_recovery_acceptance.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -103,13 +103,30 @@ order: 200
   `snapshots/` 的内容寻址 ID 覆盖完整来源 identity、执行回执身份及 generation、PDF/SVG 两份字节 hash与可选 owner；
   归档与 blob 读回均核完整性。新运行 `activate` 只撤销旧代 current lookup，**不删除不可变 archive**，
   历史文档的明确引用仍可在其授权条件下读到保存版本；archive 的保留不等于旧图获准冒充当前运行。
-  项目资产**没有 TTL，也不为新资产自动驱逐已有 archive**。容量先判再写，`MAX_SNAPSHOTS=256` 数的是
+  项目资产**没有 TTL，也不为新资产驱逐被引用的 archive**。容量先判再写，`MAX_SNAPSHOTS=256` 数的是
   current 与 archive 元数据**合计**（首次保存一个变体通常占两条），并非 256 个都可同时激活的变体；
-  总预算 512 MiB，相同内容的 blob 共用字节成本。满额只拒新增，已有归档及其引用的字节保持原样。
+  总预算 512 MiB，相同内容的 blob 共用字节成本。`svgstore.save` 满额只拒新增（`SnapshotBudgetExceeded`），
+  不动任何已有字节。**满额回收（2026-11-24 维护者裁决，一份用户反馈：同一次运行里每拖一次就多一个
+  current 变体，单变体 SVG 约 12 MB，三十来次编辑占满后该项目再也导不出 SVG）**：只有
+  `app._save_svg_snapshot` 在拒绝后调 `svgstore.reclaim`，再重试一次。回收单位是**变体**（current 条目
+  与它的 archive 共用 blob，一起删）；始终保留：任一已存文档 / 排版版本 / 自动保存 / 本次待写正文里
+  以子串出现其快照 ID 的（`app._svg_reference_corpus` 扫项目 `tavottofile/`、旧 `canvases/` 与数据目录
+  `layouts/`，不按键名解析，宁多留不误删；版本时间线里**自动检查点不算引用**（维护者同日裁决：每两分钟一条、
+  最多上百条，算的话长时间编辑大图会再占满；恢复很旧的自动检查点后导出 SVG 走一句话的重跑提示），命名 / 手动 /
+  时刻节点照算，读不懂的版本按原始字节算）、每个来源最新的一个、`RECLAIM_GRACE_SECONDS` 内新写的、
+  带输入捕获的 v2 记录。从最旧删到两项预算都回到一半以下；**扫不全（超限 / 读错 / 列不出目录）或删光候选
+  也放不下这一对，就一个都不删**，照旧报满；删到一半失败（如 Windows 共享冲突）如实报告已删的数量。
+  **扫描到删除持全部文档锁条带**（升序、跨进程，`app._all_document_locks`），与文档 / 版本 / 自动保存的提交互斥；
+  本线程正持文档锁（保存时冻结）就改由后台线程回收、这次照旧报满，下一次保存写进去。回收不出空间 5 分钟内不重扫。
+  只存在于前端内存、从没落盘的引用不受保护：被回收后导出 SVG 走普通的 `svg_snapshot_missing`。
   磁盘写入沿用锁、受限路径与 `atomicio`，只读项目副本也可核验不可变引用，不因读档创建写锁文件。
   自动捕获 / 保存 / 导出不暗中运行脚本。旧项目无明确引用时，执行源需当前进程已观察的回执，
   否则由用户明确再运行并接纳，不能借 current marker 或 preview metadata 猜旧配对仍是当前版本。
-  无 override 静态源的精确 hash 配对授权另见 `export-pipeline.md`；项目包打开仍只检视、不自动安装资产。
+  无明确引用的静态源仍按当前原件精确 hash 授权，见 `export-pipeline.md`；明确文档引用由
+  `load_document_snapshot`核原archive完整ref、source/patch、历史静态hash及实际当前remap指纹，
+  不要求一份当前原件同时等于所有历史版本。原`load_snapshot`的逐维精确查询不变。
+  原图、画布、保存和打包必须消费同一历史PDF/SVG配对；当前普通file资源仍独立核SHA，
+  不因历史渲染对存在而声称历史磁盘原件已恢复。项目包打开仍只检视、不自动安装资产。
   看护：`tests/test_svgstore.py`、`tests/test_export_svg.py`、`tests/test_export_request.py`、
   `web/src/store/figureSnapshot.test.ts`、`web/src/store/figureSnapshotInvalidation.test.ts`、
   `web/src/store/projectSave.test.ts`、`web/src/lib/autosave/diskWriter.test.ts`。
@@ -124,6 +141,42 @@ order: 200
   合并列出，重名以 tavottofile 为准；**素材扫描的 EXCLUDE_DIRS 必须含
   tavottofile**，否则导出成图会混进素材面板。autosave / styles 等
   跨项目或内部机制仍留在数据目录。
+- 项目文件绑定按项目和工作副本 id 定位。会话接口 `/api/layout-session/project-file/<doc_id>` 的 GET 与
+  POST `/reserve` 在同一槽位锁内读取磁盘修订。POST `/confirm` 在命名文件锁内经与 GET 共用的
+  `_layout_read_source()` 解析实际来源（规范位置 → 旧项目 `canvases/` → 数据目录），复核该文件修订。
+  读取与确认使用 `contained_path` 返回的实际路径。解析后超出对应项目根或数据根、或落在不同文档锁带
+  的候选按不存在处理；列表也跳过这些候选。票据中的保存目标仍是项目规范位置，提交时再核对仍有效的票据。
+  DELETE `/intent/<sequence>` 只取消相应的待确认意图。看护：`tests/test_layout_project_file_http.py`。
+- **单一存储：schema 4 与 schema 3 同一套目录 / 列表 / 版本历史（#1920 合同，ADR 0182 §3）**：
+  正文 `schema` 号是唯一区分——命名保存、自动保存槽位、版本时间线、项目包与「打开」列表
+  都不按格式分叉，没有 `documents/v4` 命名空间、没有第二套文档端点或会话域。schema 4 只表示
+  「这份项目里有计算图表」：没有图表状态时仍写 3（前端 `buildProject()` 按正文内容选号）。
+  `documents.validate_document` 按号分派——2 / 3 走原骨架判据，4 交给
+  `validate_chart_document`（来源附件身份在同一入口校验）；保存、自动保存、槽位探测、
+  恢复候选、版本节点与教程校验都调这一个入口，不另设判据；项目包按同一
+  `SUPPORTED_SCHEMAS` 集合准入，schema 4 的 `chartSource` 随包封存、
+  检视导入时按摘要装回目标项目的 `chart_sources/`。首次给既有文档加入计算图表是
+  **原地升级**：同一 documentId、同一文件 / 槽位 / 时间线，正文提交为 schema 4，既有历史节点保留；
+  升级前用整份项目时间线节点做备份（`takeProjectCheckpoint` 原语已就位），备份没落定不得继续写图表。
+  **接线状态**：把图表第一次写进正文的入口属于 7/9；接线前生产代码里没有这条「先备份再升级」的
+  执行路径。`tests/test_chart_document_upgrade.py` 只覆盖后端能强制的边界（同一时间线、来源冻结失败
+  不写正文），不冒充前端备份接线——不要把它读成那条行为已有看护。
+  版本节点正文按 schema 分派：
+  2 是单画布检查点，3 / 4 是整份项目；恢复整份项目节点换的是同一 documentId 的全部画布。
+  无项目时已有冻结附件经 `documentassets.load_source` 核验，并以完整场景节点索引经
+  `chartmodel.verify_scene` 核绑定后可直接保存，不起项目 worker。
+  命名排版按实际读到的目录选附件根；槽位恢复与读取按同一次读取的正文 revision 核 owner 新鲜度，
+  旧 owner 待核对时用本次请求的项目上下文，不让旧项目中的同摘要附件掩盖缺失。附件缺损在
+  恢复列表与启动恢复中保留 `chart_source_mismatch` 原因。包导入先校验正文，再逐面板核完整引用，
+  仅 blob 写入按摘要去重。损坏 ZIP 附件（含 CRC、DEFLATE、LZMA）进入缺失清单，`verified_chart_sources` 只列已核实引用。
+  看护：`tests/test_chart_document_upgrade.py`、`tests/test_package.py`。
+- **目录派生唯一权威 `engine/documentformat.py`，守卫收紧到每一级**：`named_dir` / `autosave_dir` /
+  `versions_dir` 是命名文档、自动保存槽位与版本时间线路径的唯一出处；调用方传
+  `project_layout_dir()`（项目 `tavottofile/`）或数据目录 `layouts/`，不得自己拼。schema 3 / 4
+  共用同一组派生（函数已无格式参数）。从权威根开始，根本身及每个自有子目录都过 `_directory`——
+  不是目录、`is_symlink()`、`resolve()` 与「父目录 + 名字」对不上（符号链接 / 目录联接，包括仍指向
+  同一项目内部的）一律 `layout_outside_project`；未打开项目时的 `layouts/_versions` 旧派生同样过
+  这道守卫，不再有绕过守卫的旧分支。读侧不建目录，只有 `create=True` 才逐级创建。
 - **文档类落盘只有一份实现：`engine/atomicio.py`（ADR 0023，2026-08-29 定版）**。
   tmp → flush → **fsync 文件** → `os.replace` → fsync 目录 → 失败清 tmp +
   抛 `AtomicWriteError(code, …)`；序列化走 `allow_nan=False`，
@@ -134,6 +187,11 @@ order: 200
   收纳目录里 Tavotto 自己的文件（现只有 `_styles.json`）由
   `RESERVED_DOCUMENT_FILENAMES` **枚举**——不要改成「`_` 开头」的前缀规则，
   画布名净化会把 `（图一）` 变成 `_图一_`，前缀规则会把用户的文档藏起来。
+- **排他目录发布**：`atomicio.publish_directory_if_absent`仅接同父不同名的真实自有目录，
+  拒symlink/reparse；调用方先受检复制并同步各文件/子目录，叶子再同步stage、复核源身份，
+  委托原排他rename，最后同步parent。默认文件发布调用/IO不变；POSIX目录不尝试硬链接，
+  不回退覆盖式rename。碰撞保原FileExistsError，真实故障沿AtomicWriteError；parent同步失败
+  可能已发布，调用方须依目录身份保留目标/回执，不能递归伪回滚。该叶子不复制或清理目录。
 - **读侧也有一道非有限数闸：`documents.loads_document()`**（2026-09-03，
   issue #222）。写侧挡住的只是**我们自己写出去的**那份；外部工具往
   `tavottofile/*.json` 写一个 `NaN` 之后，Python 的 `json.loads` 照读不误，而
@@ -151,6 +209,15 @@ order: 200
   `_document_lock(path)`（按落盘路径，自动保存 / 另存为 / 槽位清理共用，
   **不可重入**）。GET 交出 `X-Tavotto-Revision` 且不用 `send_file`
   （句柄会在 Windows 上挡住下一次 `os.replace`）。
+- **锁带与判据的唯一出处是 `engine/doclock.py`**（2026-11-25，ADR 0208 第 2 期）：`DocumentLock` / `lock_stripe` /
+  `REVISION_ABSENT` / `revision_conflict` 从 `app.py` 搬进引擎，`app.py` 的 `_DocumentLock` / `_lock_stripe` /
+  `_revision_conflict` / `REVISION_ABSENT` 只是别名（等锁上限仍读 `app.DOCUMENT_LOCK_TIMEOUT_S`）。插件的排版写入口
+  （`engine/layoutannotate.py`）与桌面保存是两个进程写同一个 `tavottofile/<名>.json`，**必须用同一把锁、同一个判据**，
+  不许在插件侧另写一份。Agent 写入（加标注 0208、编辑补丁 0212）写前留撤销副本（`state/agent-undo/`），撤销只在文件还是那次写下的那一份时恢复。
+  `GET /api/layouts/<名>/agent-additions?base_revision=` 只读：从基线到磁盘修订号的每一步都是 Agent 写入、画布以外与画布上
+  `objects` / `layoutGroups` 以外的键都没变时才回 `available: true`，并给每张画布的对象差（新加 / 改前改后 / 删前 / 两份 id 顺序 /
+  布局组前后；判据在 `layoutannotate.agent_additions`）。桌面拿它做**字段三方合并**（`web/src/lib/agentMerge.planAgentMerge`：
+  Agent 改过的字段桌面还是基线的值、删的对象桌面没改过、Agent 重排时桌面没重排、布局组桌面没动，才并），不自己判链。
 - **⌘S 写回项目里绑定的排版文件（ADR 0096，2026-09-26）**：同一个端点
   `POST /api/layouts/<name>?target=project`，**不加端点**。这一档必须开着项目
   （`current_ctx()`，否则 409 `no_project`——不许静默退回数据目录）；冲突判据、锁、
@@ -302,7 +369,7 @@ order: 200
     `status:"too_large"`；目录条目超过 20000 时只看了目录原序的前一部分，响应带 **`truncated: true`**（游标另带第一页的目录指纹，后面的页重算，对不上——翻页期间有槽位被保存 / 新建 / 删除，
     按 mtime 的顺序变了、某行可能被漏——也标 `truncated: true` 并照常返回这一页，之后每一页都保持）（`next_cursor` 为 null 也不等于列完了，
     调用方不得据此自动采用唯一候选或判定为空）；一页里被 scope 过滤掉的不返回，所以一页可能不满、`next_cursor` 仍非空——调用方循环翻页。
-    每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large, canvases, objects, owner:
+    每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large|chart_source_mismatch, canvases, objects, owner:
     this|unknown, evidence, runtime:[{script,figure}], panels:[…], sketch?}`（非 ok 的 `canvases`/`objects` 是 `null`，不冒充 0；
     `runtime`/`panels` 最多 5 个、绝对路径只留最后一段；`sketch` 复用时间线的 `_version_sketch`，不带 overrides / 脚本）。
     `scope=project` 只回 `this`（owners 可信记录 / 时间线 / 素材全在项目里），`scope=unknown` 只回 `unknown`（含待核对的归属）；
@@ -310,6 +377,27 @@ order: 200
     `/owner` 与这里都不为 runtime 面板作证，也不凭脚本同名 / fingerprint / mtime 自动归项目。一个坏文件只让自己
     `invalid`；不写任何东西、不回路径、不运行脚本。**恢复副本不加端点**：前端读源正文（带 revision）→ 用户确认时再读一次比对 →
     固定目标 id 走正常 `switchDocument` + 自动保存，源槽位与源归属不动。
+  - **项目自己的时间线作为恢复证据（ADR 0211 第一期，2026-11-25）**：`GET /api/layout-session/project-history`
+    列当前项目 `tavottofile/versions/*.vx` 里有内容的排版（`engine/projecthistory.py`：目录名过 `valid_doc_id`、不跟符号链接、
+    条目与读信封个数 / 字节有上界、索引只读不写），每项 `{doc_id, name, vid, ts, canvasId, schema, canvases, objects, mode, owner,
+    revision, node_newer}`，不回路径。只有空节点的 `.vx`（旧版每次加载留下的空 `open`）不进候选。`mode` 在槽位文档锁里判：
+    owners 记着别的项目且那条路径**确定不存在**（`FileNotFoundError` / `NotADirectoryError`；其余 `OSError` 当它还在）= 挪走
+    （`owner:"moved"`）；路径还在 = 复制（`copy`，新 docId，旧项目零改动）；待核对 / 会话状态 degraded / 槽位坏 / 挪走但槽位已不在 → `copy`；
+    其余有可恢复槽位 → `slot`，没有槽位 → `node`。先筛掉没有内容的 `.vx` 再截个数（≤ 200），没列全回 `truncated:true`。`node_newer`：槽位那张画布与节点内容不同、且节点 `ts` 晚于槽位正文的 `updatedAt`
+    （只算单画布节点）。`POST …/project-history/claim {doc_id, revision}` 在同一把槽位锁里重判，仍是 `slot` 且 revision
+    对得上才 `record_owner`（owners + owner_revisions），否则 409 `claim_refused`、零改动。`owner_conflict` 判据不变：认领之前
+    `PUT last` 仍按旧归属 409。空白排版（`_doc_objects` 为空）的 `open` 关键时刻 `POST /api/versions` 回 `skipped`、不建目录。
+    空白排版上 `close` 同样不写（`_MOMENTS_SKIPPED_WHEN_BLANK`）。`mode` / `owner` 闭集是严格同源对（见 `same-origin-pairs.md`）。
+    看护 `tests/test_project_history_restore.py`（含 `test_vocabulary_mirrors_are_literal`）。
+  - **本机设置随认领迁移（ADR 0211 第一期 5，`engine/projectmigrate.py`）**：认领时 owner 是 `moved`（旧路径确定不在）才迁；
+    复制不迁。改指表（`inputremap.migrate_rules`：`to` 在旧项目根内的换新根，项目外原样；`from` 是旧根内的绝对路径——脚本按 `__file__` 拼的——时另加一条 `from` 换根的（取新根的 `realpath`），原规则留着；新键下同一处的规则不覆盖）、
+    运行配置（`runconfig.migrate_store`：配置 / 默认 / 捕获史，**不搬 `launches` 启动记录**）、输入转录（`inputtranscript.migrate_store`）
+    各自幂等，新键下已有就不动；路径比对先 `realpath`（`/var` ↔ `/private/var`）再按卷归一大小写。运行许可 / 执行策略 / 记住的解释器
+    **不迁**（ADR 0021 §7.1，`NOT_MIGRATED_SETTINGS` 钉住）；渲染缓存与 baked_overrides 不迁（派生物）。一项失败只记日志、不让认领失败，
+    新项目设置里留 `moved_from` 待办，下次打开项目（`_open_project`）重试，全成才摘掉；旧键原样保留。改指表真变了时与用户指认同一套收尾
+    （`_stop_remap_dependent_work` + `input_remap_changed`）。**复制**（维护者 2026-11-26 拍板）：前端按复制另开新 docId 的那一刻调
+    `POST …/project-history/copied {doc_id}`，后端锁里重判仍是 `copy` 且 owner 是 `other`（旧路径还在）才 `projectmigrate.copy_remap`——
+    **只拷改指表**（同一套换根口径），运行配置 / 输入转录不跟，复制源一个字节不动，幂等。看护 `tests/test_project_move_migrate.py` + `web/e2e/project-move-remap.spec.ts`。
   - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
     清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。

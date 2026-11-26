@@ -15,11 +15,12 @@ import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import {
   DEBOUNCE_MS,
   MIN_GAP_MS,
+  markWorkspaceOpened,
   markWorkspaceOpenedAfter,
   startVersionCheckpoints,
 } from '@/hooks/useVersionCheckpoints'
 import { useTimelineStore } from '@/store/timelineStore'
-import { captureMoment, markMoment, momentWithDoc, takeCheckpoint } from './timelineCheckpoint'
+import { captureMoment, markMoment, momentWithDoc, takeCheckpoint, takeProjectCheckpoint } from './timelineCheckpoint'
 import { composeTimelineThumb } from './timelineThumb'
 import { groupTimeline } from './timelineGroups'
 
@@ -177,14 +178,33 @@ describe('关键时刻', () => {
       const { emitLayoutSaved } = await import('@/lib/layoutSaved')
       emitLayoutSaved('local', { moment: captureMoment() })
     }, 'save'],
-    ['打开', () => markMoment('open'), 'open'],
-    ['离开', () => markMoment('close'), 'close'],
   ] as const)('空画布上%s也打一个关键时刻（Codex #679）', async (_name, fire, moment) => {
     const stop = startVersionCheckpoints()
     expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
     await fire()
     await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toEqual([moment]))
     stop()
+  })
+
+  it('空白排版的「打开」「离开」不打点：不在用户项目里留只有空节点的 .vx（ADR 0211 第一期 4）', async () => {
+    const stop = startVersionCheckpoints()
+    try {
+      expect(useDocumentStore.getState().doc.objects).toHaveLength(0)
+      await markMoment('open')
+      await markWorkspaceOpened()
+      await markMoment('close')
+      expect(posts).toHaveLength(0)
+      // 「恢复前」这类别的时刻不动：空画布照打
+      await markMoment('before_restore')
+      await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toEqual(['before_restore']))
+      // 有内容的打开 / 离开照常打
+      edit('t1')
+      await markMoment('open')
+      await markMoment('close')
+      await vi.waitFor(() => expect(posts.map((p) => p.body.moment)).toEqual(['before_restore', 'open', 'close']))
+    } finally {
+      stop() // 失败时也摘掉时间线（否则它的 sink 漏进后面的用例）
+    }
   })
 
   it('对照：普通自动节点在空画布上仍然不拍', async () => {
@@ -503,6 +523,43 @@ describe('自动节点的间隔（2 分钟）', () => {
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 10)
     expect(posts.map((p) => p.body.moment ?? 'auto')).toEqual(['export'])
     stop()
+  })
+})
+
+describe('takeProjectCheckpoint：原地升级前的整份项目备份（7/9 的备份原语）', () => {
+  it('送到服务端的是 buildProject() 的整份项目（schema 3、不含 chart），不是当前画布', async () => {
+    edit('t1')
+    const second = useDocumentStore.getState().addCanvas('第二张')
+    edit('b1')
+    const first = useDocumentStore.getState().canvases.find((c) => c.id !== second)!
+    expect(first.objects.map((o) => o.id)).toEqual(['t1'])
+    expect(useDocumentStore.getState().activeCanvasId).toBe(second)
+
+    const res = await takeProjectCheckpoint({
+      auto: true,
+      name: '升级为计算图表前',
+      programName: true,
+      allowEmpty: true,
+    })
+    expect(res?.version?.id).toMatch(/^v\d+$/)
+    expect(posts).toHaveLength(1)
+    const sent = posts[0].body
+    expect(sent.doc).toMatchObject({ schema: 3, activeCanvasId: second })
+    expect((sent.doc as { canvases: unknown[] }).canvases).toHaveLength(2)
+    // 备份节点是**写 chart 之前**的正文：任何画布上都没有 chart / chartSource
+    expect(JSON.stringify(sent.doc)).not.toContain('"chart"')
+    // 时间线仍按当前画布分组 / 预览
+    expect(sent.canvasId).toBe(second)
+    expect(sent.canvasName).toBe('第二张')
+    // 程序起的名字不是命名节点
+    expect(sent.named).toBeUndefined()
+  })
+
+  it('服务端写不进去就抛：调用方不会在没备份的情况下继续动图表', async () => {
+    nextCreate = 'fail'
+    await expect(
+      takeProjectCheckpoint({ auto: true, name: '升级前', programName: true, allowEmpty: true }),
+    ).rejects.toThrow()
   })
 })
 

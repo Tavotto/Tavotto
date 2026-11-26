@@ -208,12 +208,12 @@
 - 为什么: 诊断包采集把只读属性当方法调，唯一覆盖它的用例用了手写替身、也写成方法，于是一直绿；这条分支在真实会话上从没跑通过，直到一份用户反馈的包里该项只剩 TypeError。评审看 diff 只看到「调用了一个存在的名字」。替身用 create_autospec / spec_set= 真类，或直接构造真类；前端替身同理按真实类型声明。
 - 证据: #2017
 
-### L-176 拦不可信代码或藏秘密的闸，被找到第一种绕过就换成默认拒绝，别再补一种写法
+### L-176 拦不可信输入、代码或藏秘密的闸，被找到第一种绕过就换成默认拒绝，别再补一种写法
 - 类: 别这样
-- 触发: src/tavotto/engine/fixtools/, src/tavotto/engine/agent_runner/redact.py, src/tavotto/engine/fixsession.py, src/tavotto/engine/diagdetail.py
-- Seen: 2026-11-21
-- 为什么: 小实验的进程内守卫先按前缀、再按精确匹配、再按规范化路径剔除 sys.path，四轮评审报 6 条 P1，最后改成启动时根本不让解释器看到 PYTHONPATH 才收敛（#2064）；本机记住修好的做法的凭据脱敏用正则、AST、凭据名黑名单、挑值去抹换了五种做法，轮轮被找到新漏法，换成正文不存、环境变量按白名单记值、碰过凭据整条不记才收敛（#2100）。写法永远认不完：默认不放、白名单放行、可疑整条丢，判不了按碰过算。
-- 证据: #2064, #2100
+- 触发: src/tavotto/engine/fixtools/, src/tavotto/engine/agent_runner/redact.py, src/tavotto/engine/fixsession.py, src/tavotto/engine/diagdetail.py, src/tavotto/rendercore/svgimport.py, src/tavotto/rendercore/svgcheck.py
+- Seen: 2026-11-21, 2026-11-22
+- 为什么: 小实验的进程内守卫先按前缀、再按精确匹配、再按规范化路径剔除 sys.path，四轮评审报 6 条 P1，最后改成启动时根本不让解释器看到 PYTHONPATH 才收敛（#2064）；本机记住修好的做法的凭据脱敏用正则、AST、凭据名黑名单、挑值去抹换了五种做法，轮轮被找到新漏法，换成正文不存、环境变量按白名单记值、碰过凭据整条不记才收敛（#2100）。外部 SVG 的耗时与锚点预算逐条路径补检查，11-22 两轮又找到 polyline、子路径起点、色标遍历等绕过的路径（#2034）。写法永远认不完：默认不放、白名单放行、可疑整条丢，判不了按碰过算。
+- 证据: #2064, #2100, #2034
 
 ### L-177 并发与进度用例用栅栏或事件摆出时序，别断言墙钟上限或靠后台线程采样
 - 类: 别这样

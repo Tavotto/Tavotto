@@ -46,12 +46,15 @@ def _force_utf8() -> None:
 
 
 def _el(gid: str, role: str, **props) -> dict:
+    # 占位几何是**零面积**的点：这些向量量的是规范（字号 / 线宽 / 页面…），不是版面。
+    # 预检接进干涉检测（V-011）之后，旧的同一个 0.2×0.2 占位框会让每两段文字都「重叠」；
+    # 要量干涉的向量（`interference-*`）显式给框。
     return {
         "gid": gid,
         "role": role,
         "label": gid,
         "draggable": False,
-        "bbox": [0.1, 0.1, 0.2, 0.2],
+        "bbox": [0.1, 0.1, 0.0, 0.0],
         "editable": [{"prop": k, "type": "number", "value": v} for k, v in props.items()],
     }
 
@@ -548,6 +551,60 @@ def cases() -> list[dict]:
     _el_with(m, "axes_0.lines_0", visible=False)
     out.append(_lw_case("journal-min-line-width-hidden-line-skipped", 2.0, m))
 
+    # 9j'. 画布上的箭头 / 形状 / 路径（ADR 0208 §四 第 7 条，「都管」）：同一条 `line-width-below-min`，
+    #      读 spec.objects 的 `stroke_pt`（页面绝对 pt，不乘缩放）；缺席 = 没有描边，不判；等于下限不报；
+    #      隐藏的不判；文字 / 面板不判。数据线够粗，只看画布对象。
+    def _canvas_lw_case(name: str, floor, objs: list[dict]) -> dict:
+        m = _clean_manifest()
+        _el_with(m, "axes_0.lines_0", linewidth=3.0)
+        _el_with(m, "axes_0.lines_1", linewidth=3.0)
+        base = _lw_case(name, floor, m)
+        base["spec"] = _spec([_panel("p1", manifest=m)], extra_objects=objs)
+        return base
+
+    def _obj(oid: str, typ: str, stroke_pt=None, hidden=False) -> dict:
+        o = {"id": oid, "type": typ, "rect_mm": [5.0, 5.0, 10.0, 6.0], "hidden": hidden}
+        if stroke_pt is not None:
+            o["stroke_pt"] = stroke_pt
+        return o
+
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-thin-objects-reported",
+            0.5,
+            [_obj("a1", "arrow", 0.25), _obj("s1", "shape", 0.4), _obj("q1", "path", 0.1)],
+        )
+    )
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-equal-hidden-nostroke-skipped",
+            0.5,
+            [
+                _obj("a1", "arrow", 0.5),  # 正好等于下限
+                _obj("s1", "shape", 0.2, hidden=True),  # 隐藏
+                _obj("s2", "shape"),  # 没有描边（字段缺席）
+                _obj("t1", "text", 0.1),  # 文字不在判的类型里
+            ],
+        )
+    )
+    out.append(
+        _canvas_lw_case(
+            "canvas-line-width-floor-not-set-no-report", None, [_obj("a1", "arrow", 0.1)]
+        )
+    )
+    out.append(  # 新建箭头 / 形状 / 钢笔路径的默认线宽都是 1 pt：常见期刊下限（0.25–0.5 pt）下不报
+        _canvas_lw_case(
+            "canvas-line-width-defaults-not-reported",
+            0.5,
+            [_obj("a1", "arrow", 1.0), _obj("s1", "shape", 1.0), _obj("q1", "path", 1.0)],
+        )
+    )
+    m = _clean_manifest()  # 数据线与画布对象都细：一条检查，最糟的那次（画布 0.1）决定文案与 detail
+    _el_with(m, "axes_0.lines_0", linewidth=0.3)
+    mixed = _lw_case("canvas-line-width-mixed-with-data-line", 0.5, m)
+    mixed["spec"] = _spec([_panel("p1", manifest=m)], extra_objects=[_obj("q1", "path", 0.1)])
+    out.append(mixed)
+
     # 9k. V-001 对数轴上有 ≤ 0 的值（`log-axis-nonpositive`）：事实只读 axes 元素的 `scale_domain`
     #     （`engine/manifest.scale_domain`）。那一维 `status == "ok"` 且两个计数之和 > 0 才报；
     #     超预算 / 量不了 / 缺 status / 计数不是非负整数一律不判。每个（axes, 维）一次命中，x 先于 y，
@@ -620,6 +677,198 @@ def cases() -> list[dict]:
         _log_case(
             "log-axis-nonpositive-journal-base",
             {"axes_0": {"y": _ok(2)}},
+            profile_id="journal-base-v1",
+        )
+    )
+
+    # 9l. V-002 线性轴上柱的共同基线被截掉（`bar-baseline-truncated`）：事实只读 axes 元素的 `bar_baseline`
+    #     （`engine/manifest.bar_baseline`，只有基线），范围与尺度从同一元素的 `[xy]lim` / `[xy]scale` 读。
+    #     那一维 `status == "ok"`、尺度**正是** linear、范围两个有限数且 lo < hi、基线落在闭区间外才报；
+    #     每个（axes, 维）一次命中，x 先于 y，截得最远的基线决定 detail，跨轴按「截掉的距离 / 跨度」比最糟。
+    #     message params 是 `_axis_num` ↔ `axisNum` 写出来的字符串，量级与正好一半的舍入在下面几条里各压一次
+    def _axes_el(gid: str, *, xlim=None, ylim=None, xscale=None, yscale=None) -> dict:
+        el = _el(gid, "axes")
+        for prop, value, typ in (
+            ("xlim", xlim, "pair"),
+            ("ylim", ylim, "pair"),
+            ("xscale", xscale, "enum"),
+            ("yscale", yscale, "enum"),
+        ):
+            if value is not None:
+                el["editable"].append({"prop": prop, "type": typ, "value": value})
+        return el
+
+    def _bar_case(name: str, axes: list[tuple[dict, dict]], *, profile_id="lab-publication-v1"):
+        m = _clean_manifest()
+        m["elements"] = [e for e in m["elements"] if e["gid"] != "axes_0"]
+        for el, facts in axes:
+            el["bar_baseline"] = facts
+            m["elements"].insert(0, el) if el["gid"] == "axes_0" else m["elements"].append(el)
+        return {"name": name, "profile_id": profile_id, "spec": _spec([_panel("p1", manifest=m)])}
+
+    def _bok(*entries) -> dict:
+        return {"status": "ok", "baselines": [{"value": v, "bars": n} for v, n in entries]}
+
+    def _vy(gid="axes_0", ylim=(4.0, 9.0), yscale="linear", **kw) -> dict:
+        return _axes_el(gid, ylim=list(ylim) if ylim is not None else None, yscale=yscale, **kw)
+
+    out.append(_bar_case("bar-baseline-cut-y", [(_vy(), {"y": _bok((0.0, 2))})]))
+    out.append(
+        _bar_case(
+            "bar-baseline-cut-x-barh",
+            [(_axes_el("axes_0", xlim=[4.0, 9.0], xscale="linear"), {"x": _bok((0.0, 3))})],
+        )
+    )
+    out.append(
+        _bar_case("bar-baseline-visible-no-report", [(_vy(ylim=(0.0, 8.4)), {"y": _bok((0.0, 2))})])
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-on-the-edge-no-report",
+            # 自动范围下 sticky edge 让下端恰好等于基线（闭区间）；统一的非 0 基线（指数柱 100）同理
+            [(_vy(ylim=(100.0, 150.0)), {"y": _bok((100.0, 4))})],
+        )
+    )
+    out.append(
+        _bar_case("bar-baseline-nonzero-cut", [(_vy(ylim=(120.0, 150.0)), {"y": _bok((100.0, 4))})])
+    )
+    out.append(
+        _bar_case("bar-baseline-inverted-lim", [(_vy(ylim=(9.0, 4.0)), {"y": _bok((0.0, 2))})])
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-above-the-top",
+            # 负值柱从 0 往下，范围却停在 -2：越过的是上端
+            [(_vy(ylim=(-9.0, -2.0)), {"y": _bok((0.0, 2))})],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-nonlinear-or-missing-scale-no-report",
+            [
+                (_vy("axes_0", yscale="log"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_1", yscale="symlog"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_2", yscale="logit"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_3", yscale="asinh"), {"y": _bok((0.0, 2))}),
+                (_vy("axes_4", yscale=None), {"y": _bok((0.0, 2))}),
+                (_vy("axes_5", ylim=None), {"y": _bok((0.0, 2))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-bad-lim-no-report",
+            [
+                (_vy("axes_0", ylim=(5.0, 5.0)), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_1", ylim=[4.0], yscale="linear"), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_2", ylim=[4.0, "9"], yscale="linear"), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_3", ylim=[True, 9.0], yscale="linear"), {"y": _bok((0.0, 2))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-not-measured-no-report",
+            [
+                (
+                    _vy("axes_0"),
+                    {"y": {"status": "over_budget", "baselines": [{"value": 0, "bars": 2}]}},
+                ),
+                (
+                    _vy("axes_1"),
+                    {"y": {"status": "unavailable", "baselines": [{"value": 0, "bars": 2}]}},
+                ),
+                (_vy("axes_2"), {"y": {"baselines": [{"value": 0, "bars": 2}]}}),
+                (_vy("axes_3"), {"y": [0, 2]}),
+                (_vy("axes_4"), []),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-bad-entries-no-report",
+            [
+                (_vy("axes_0"), {"y": {"status": "ok", "baselines": {"value": 0, "bars": 2}}}),
+                (
+                    _vy("axes_1"),
+                    {
+                        "y": {
+                            "status": "ok",
+                            "baselines": [
+                                {"value": "0", "bars": 2},
+                                {"value": True, "bars": 2},
+                                {"value": 0, "bars": 0},
+                                {"value": 0, "bars": 1.5},
+                                {"value": 0, "bars": True},
+                                {"bars": 2},
+                                [0, 2],
+                            ],
+                        }
+                    },
+                ),
+                (_vy("axes_2"), {"y": {"status": "ok", "baselines": []}}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-wrong-dim-no-report",
+            # 竖柱的事实只在 y：x 范围截不截与它无关
+            [
+                (
+                    _axes_el(
+                        "axes_0", xlim=[4.0, 9.0], xscale="linear", ylim=[0.0, 9.0], yscale="linear"
+                    ),
+                    {"y": _bok((0.0, 2))},
+                )
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-worst-wins",
+            [
+                # 同一维两个基线：截得最远的（0，离 120 有 120）决定 detail
+                (_vy("axes_0", ylim=(120.0, 200.0)), {"y": _bok((100.0, 1), (0.0, 3))}),
+                # 另一根轴截得比例更大（(9 - 0) / 1 = 9 倍跨度 vs 1.5 倍）：它决定整条的 detail
+                (_vy("axes_1", ylim=(9.0, 10.0)), {"y": _bok((0.0, 2))}),
+                (_axes_el("axes_2", xlim=[1.0, 2.0], xscale="linear"), {"x": _bok((0.0, 5))}),
+            ],
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-hidden-axes-no-report",
+            [(_axes_el("axes_0", ylim=[4.0, 9.0], yscale="linear"), {"y": _bok((0.0, 2))})],
+        )
+    )
+    out[-1]["spec"]["panels"][0]["manifest"]["elements"][0]["editable"].append(
+        {"prop": "visible", "type": "bool", "value": False}
+    )
+    for i, (lim, base) in enumerate(
+        (
+            ((123456.7, 1e7), 0.0),
+            ((1e-7, 3e-7), 0.0),
+            ((0.1 + 0.2, 0.9), 0.0),
+            ((1000.5, 2000.0), 12345.5),
+            ((2.0005, 3.0), 0.0),
+            ((-0.0000004, -0.0000001), 0.0),
+        )
+    ):
+        out.append(
+            _bar_case(f"bar-baseline-number-format-{i}", [(_vy(ylim=lim), {"y": _bok((base, 1))})])
+        )
+    out.append(
+        _bar_case(
+            "bar-baseline-free-form",
+            [(_vy(), {"y": _bok((0.0, 2))})],
+            profile_id="free-form-v1",
+        )
+    )
+    out.append(
+        _bar_case(
+            "bar-baseline-journal-base",
+            [(_vy(), {"y": _bok((0.0, 2))})],
             profile_id="journal-base-v1",
         )
     )
@@ -1193,12 +1442,94 @@ def cases() -> list[dict]:
             "spec": _spec([_panel("p1", manifest=m)]),
         }
     )
+
+    # 19. 干涉检测接进常规预检（V-011）：判据是 `engine/interference.detect`（逐对向量在
+    #     `tests/golden/interference_vectors.json`），这里看的是**折进 _Sink 之后**的聚合投影——
+    #     同一 id 的多对并成一条、最糟的一对决定文案与 detail；图例「确定」恒压过「风险」；
+    #     压到别的子图只把伸出去的文字当主语（被压的子图进 detail.against）。几何用二进制上精确的数。
+    def _box(gid: str, role: str, bbox: list, **props) -> dict:
+        el = _el(gid, role, **props)
+        el["bbox"] = bbox
+        return el
+
+    def _pos(el: dict, rect: list) -> dict:
+        el["editable"].append({"prop": "position", "type": "rect", "value": rect})
+        return el
+
+    def _geo(el: dict, *points) -> dict:
+        el["geometry"] = {
+            "kind": "polyline",
+            "paths": [{"points": [list(p) for p in points], "closed": False}],
+            "fill": False,
+            "stroke": True,
+        }
+        return el
+
+    def _icase(name: str, elements: list, *, profile_id: str = "lab-publication-v1", **kw) -> dict:
+        m = _clean_manifest()
+        m["elements"] += elements
+        return {
+            "name": name,
+            "profile_id": profile_id,
+            "spec": _spec([_panel("p1", manifest=m, **kw)]),
+        }
+
+    u = 1 / 512
+    three_texts = [
+        _box("axes_0.title", "title", [0.25, 0.25, 0.125, 0.0625]),
+        _box("axes_0.texts_0", "text", [0.25 + 0.125 - 8 * u, 0.25, 0.125, 0.0625]),
+        _box("axes_0.texts_1", "text", [0.25 + 0.25 - 16 * u, 0.25, 0.125, 0.0625]),
+    ]
+    out.append(_icase("interference-text-overlap-aggregates-pairs", three_texts))
+    out.append(
+        _icase(
+            "interference-text-over-axes-subject-is-the-text",
+            [
+                _pos(
+                    _box("axes_5", "axes", [0.125, 0.125, 0.25, 0.75]), [0.125, 0.125, 0.25, 0.75]
+                ),
+                _pos(_box("axes_6", "axes", [0.5, 0.125, 0.25, 0.75]), [0.5, 0.125, 0.25, 0.75]),
+                _box("axes_6.ylabel", "axis_label", [0.375 - 6 * u, 0.375, 8 * u, 0.125]),
+            ],
+        )
+    )
+    out.append(
+        _icase(
+            "interference-legend-certain-beats-risk",
+            [
+                _box("axes_7.legend", "legend", [0.5, 0.125, 0.25, 0.25]),
+                _geo(
+                    _box("axes_7.lines_0", "line", [0.125, 0.125, 0.75, 0.75]),
+                    (0.125, 0.875),
+                    (0.875, 0.125),
+                ),
+                _box("axes_8.legend", "legend", [0.5, 0.625, 0.25, 0.25]),
+                *(
+                    _box(f"axes_8.collections_{k}", "collection", [0.125, 0.5, 0.75, 0.5])
+                    for k in range(3)
+                ),
+            ],
+        )
+    )
+    out.append(
+        _icase(
+            "interference-legend-risk-only",
+            [
+                _box("axes_8.legend", "legend", [0.5, 0.625, 0.25, 0.25]),
+                _box("axes_8.collections_0", "collection", [0.125, 0.5, 0.75, 0.5]),
+            ],
+        )
+    )
+    out.append(_icase("interference-hidden-panel-skipped", three_texts, hidden=True))
+    out.append(_icase("interference-free-form", three_texts, profile_id="free-form-v1"))
+    out.append(_icase("interference-journal-base", three_texts, profile_id="journal-base-v1"))
     return out
 
 
 def evaluate(case: dict) -> list[dict]:
     profile = profiles.load(case.get("profile_id"), case.get("journal"))
-    issues = preflight.run(case["spec"], profile)
+    # 与 TS 的 runSpec 同一份输出：干涉检测（V-011）折进来（Python 生产调用方默认不折，见 `preflight.run`）
+    issues = preflight.run(case["spec"], profile, with_interference=True)
     # 比**判据**与**可翻译描述符**（message = key + params，issue #30：MCP 画布
     # 按 locale 渲染靠它），不比成文措辞：措辞是界面的事，两侧措辞各自演进。
     return [

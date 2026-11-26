@@ -13,7 +13,8 @@ import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
-import { CandidateGrid, useDrawingLine } from './CandidateGrid'
+import { CandidateStage, useDrawingLine } from './CandidateStage'
+import { useConnectAiWatch } from './useConnectAi'
 import { DataStrip } from './DataStrip'
 import { useReadProgress } from './useReadProgress'
 
@@ -68,6 +69,7 @@ function LargeReadLine({ lead }: { lead?: boolean }) {
 export function DataDraft() {
   const { t } = useTranslation('ai')
   const fm = useFormatMessage()
+  useConnectAiWatch() // 连接变化的观察（常驻宿主；重跑「读懂数据」不依赖右栏 / 抽屉是否开着）
   const open = useDataFigureStore((s) => s.draftOpen)
   const active = useDataFigureStore((s) => s.draftActive)
   const selected = useDataFigureStore((s) => s.selected)
@@ -97,6 +99,8 @@ export function DataDraft() {
   const reasons = useDataFigureStore((s) => s.nothingReasons)
   const error = useDataFigureStore((s) => s.error)
   const drawingId = useDataFigureStore((s) => s.drawingId)
+  const purpose = useDataFigureStore((s) => s.purpose)
+  const previewKey = useDataFigureStore((s) => s.previewKey)
   const problem = useDataFigureStore((s) => s.problem)
   const root = useRef<HTMLDivElement>(null)
   const st = useDataFigureStore.getState
@@ -254,11 +258,11 @@ export function DataDraft() {
         {large && phase === 'loading' ? (
           <LargeReadLine lead />
         ) : (
-          <p data-draft-lead className="mb-3.5 h-5 text-base text-ink-2" role="status">
-            {drawingId || waitingThumbs ? drawingLine : settled ? t('dataFigureV2.draft.pickLead') : t('dataFigureV2.working.drawing')}
+          <p data-draft-lead className="mb-1 h-5 text-base text-ink-2" role="status">
+            {drawingId || waitingThumbs ? drawingLine : settled ? '' : t('dataFigureV2.working.drawing')}
           </p>
         )}
-        <CandidateGrid items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} onPick={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
+        <CandidateStage purposeCode={purpose?.code ?? null} items={candidates} thumbs={thumbs} pending={pending} drawingId={drawingId} previewKey={previewKey} onPreview={(id) => st().selectPreview(id)} onCreate={(id) => void st().draw(id)} onThumb={(id, ok) => session && st().thumbSettled(session, id, ok)} />
       </>
     )
   }

@@ -330,6 +330,38 @@ def add_rule(root: str | os.PathLike, rule: dict) -> dict:
         return state(root)
 
 
+def migrate_rules(old_root: str | os.PathLike, new_root: str | os.PathLike, rebase) -> int:
+    """项目整夹挪走（ADR 0211 第一期 5）：把旧路径键下的改指表搬到新路径键下。
+
+    `rebase(rule) -> [rule, …]`：一条旧规则在新路径下要的那几条（由调用方给，判据在 `projectmigrate`）：`to` 落在旧项目根
+    之内的换成新根；`from` 是旧项目根之内的**绝对**路径（脚本用 `__file__` 拼的）时另加一条 `from` 换根的——
+    挪走后脚本要的就是新根下那一串；原规则留着（写死的绝对路径照旧能命中）。
+    新键下已有同一处（`_same_source`）的规则不覆盖：那是用户在新路径上新指认的，更新。**幂等**：再跑一遍
+    不会多出条目。回新加进来的条数；旧键原样保留（现有设置没有按项目清理的逻辑）。"""
+    with project_mutex(old_root):
+        old = _entries(old_root)
+    if not old:
+        return 0
+    with project_mutex(new_root):
+        kept = _entries(new_root)
+        added = []
+        for rule in old:
+            for moved in rebase({k: rule[k] for k in ("kind", "from", "to")}):
+                clean = figcapture.clean_remap_rules([moved])
+                if not clean:
+                    continue
+                entry = {**clean[0], "added_at": rule.get("added_at") or time.time()}
+                if any(_same_source(entry, r) for r in [*kept, *added]):
+                    continue
+                added.append(entry)
+        if not added:
+            return 0
+        rules = [*kept, *added][-figcapture.MAX_REMAP_RULES :]
+        config.set_project_settings(str(new_root), {SETTINGS_KEY: {"rules": rules}})
+        _bump(new_root)
+        return len(added)
+
+
 _PREFIX_REFERENCE_KEY = secrets.token_bytes(32)
 
 

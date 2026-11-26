@@ -57,15 +57,19 @@ const isTest = (path: string) => /\.test\.tsx?$/.test(path)
 const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/ui/icons/createIcon.tsx': 1, // 图标集本体：142 个图标都从这一个 <svg> 出来
   '/src/canvas/ShapeView.tsx': 1, // 画布形状本体
+  '/src/components/changePlan/PlotSketch.tsx': 2, // 修改方案生成中的坐标纸与「正在作图」小画（坐标轴 + 测量点 + 衰减振荡曲线，演的是「一张科研图正在被画」）
   '/src/components/hints/scenes.tsx': 2, // 提示动画里的迷你样本图（坐标轴 + 曲线，演的是「一张 matplotlib 图」被拖 / 被裁；另一张两条曲线的，演图内多选，ADR 0177）
   '/src/vendor/stageshow/cursor.tsx': 1, // 提示动画里的光标（圆点 / 箭头样式；vendored，ADR 0177）
   '/src/vendor/stageshow/cursors.tsx': 8, // 提示动画里的 macOS 光标图形（箭头 / 手 / 抓 / 四向缩放等 8 种；演的是鼠标本身，vendored）
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
   '/src/canvas/PathView.tsx': 1, // 画布自由路径本体（ADR 0185）
+  '/src/canvas/PathTextView.tsx': 1, // 画布路径文字本体（ADR 0190）：后端给的字形轮廓
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
   '/src/canvas/QuickLayoutGutters.tsx': 1, // 一键排版分隔线把手里的两枚细箭头（画布叠加层；两段路径各自张开，不走图标集的比例缩放，ADR 0199）
   '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
+  '/src/components/license/ProRailMark.tsx': 1, // Pro 已激活时左轨入口的钛色切面星（与铭牌同色的两阶切面，几何取自图标集的 FacetStar；没激活时就是那枚单色图标）
+  '/src/components/license/FoundingPlate.tsx': 1, // 创始会员铭牌上蚀刻的镜面银标志（品牌标的实物画法，正反面共用这一个组件，官网同款；不是图标）
   '/src/components/ui/Sketch.tsx': 1, // 空状态手帐线稿（54×42 的插图，不是图标；一个 <svg> 出 11 幅）
   '/src/components/ui/EdgeProgress.tsx': 1, // 沿对话框外框走的进度描边（画的是卡片外框本身，ADR 0187 §八）
   '/src/components/ui/Spinner.tsx': 1, // 全产品唯一的加载图形（底环 + 短弧，描边下限属于它，不走图标集的比例缩放）

@@ -105,6 +105,7 @@ import { Details, Summary } from './ui/Details'
 import { TextArea, TextInput } from './ui/Input'
 import { Menu, MenuItem } from './ui/Menu'
 import { ProgressBar } from './ui/ProgressBar'
+import { TaskChecklist } from './ui/TaskChecklist'
 import { Radio } from './ui/Radio'
 
 const pt = (key: string, values?: Record<string, unknown>) =>
@@ -1235,6 +1236,38 @@ function AllowUnsandboxedRetryButton({ script, onRetry }: { script: string; onRe
 }
 
 /** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
+/**
+ * 生成可编辑版本的任务清单（2026-11-25 用户拍板）：「读懂原脚本 → 写 Python 版本 → 运行校验」，走到哪一步、第几轮全听后端的
+ * `task.stage`（界面不判断）；还没有 = 读懂原脚本。「和原图对照」是生成好之后用户自己做的事，不进清单（由 ready 那张卡承担）。
+ */
+const CONVERT_STEPS = ['read', 'write', 'verify'] as const
+//: 文案键写成字面量：死键门禁按「源码里出现过这个串」判活
+const CONVERT_STEP_LABEL: Record<(typeof CONVERT_STEPS)[number], string> = {
+  read: 'convert.steps.read',
+  write: 'convert.steps.write',
+  verify: 'convert.steps.verify',
+}
+
+function ConvertSteps({ stage }: { stage: NonNullable<ConvertEntryStage> | null | undefined }) {
+  useTranslation('workspace')
+  const cur = Math.max(0, stage ? CONVERT_STEPS.indexOf(stage.step) : 0)
+  const round = stage?.round ?? 1
+  return (
+    <TaskChecklist
+      title={pt('convert.taskTitle')}
+      data-convert-steps
+      steps={CONVERT_STEPS.map((id, i) => ({
+        id,
+        label: pt(CONVERT_STEP_LABEL[id]),
+        state: i < cur ? 'done' : i === cur ? 'active' : 'pending',
+        meta: i === cur && round > 1 ? pt('convert.round', { n: round }) : undefined,
+      }))}
+    />
+  )
+}
+
+type ConvertEntryStage = NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>['stage']
+
 function convertFlow(
   c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
   p: Extract<PrepPrimary, { kind: 'convert' }>,
@@ -1262,7 +1295,7 @@ function convertFlow(
           : minutes >= 1
             ? pt('convert.runningElapsed', { minutes })
             : pt('convert.running'),
-        slot: <Progress />,
+        slot: <ConvertSteps stage={c.stage} />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
             {pt('btn.stop')}
@@ -1288,7 +1321,8 @@ function convertFlow(
           : c.card?.packages.length
             ? pt('convert.deps.resuming', { names: listJoin(c.card.packages) })
             : pt('convert.deps.continuing'),
-        slot: <Progress />,
+        // 装好依赖、接着校验：前两步已经做完
+        slot: <ConvertSteps stage={{ step: 'verify', round: c.stage?.round ?? 1 }} />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
             {pt('btn.stop')}
@@ -1958,8 +1992,10 @@ function WorkdirChoice({
 }
 
 /**
- * 自动换 Python 版本时卡片里的那一行进度（ADR 0114 修订 2026-10-23）：下载那一段说字节数并画一根确定的进度条，其余阶段
- * 一句话 + 不定态的条。完成后不留（主句已经换成出图的句子），「换成了 Python x」在详情里。
+ * 自动换 Python 版本时卡片里的进度（ADR 0114 修订 2026-10-23；2026-11-25 起是任务清单，与修复卡同一个 `ui/TaskChecklist`）：
+ * 标题行是这一刻那句话（下载那一段说字节数），下面列全这次要走的几步——要自备 Python 时「准备 Python → 创建运行环境 →
+ * 安装所需的包」，用机器上已有的 Python 时只有后两步；下载那步带「5 / 24 MB」胶囊。完成后不留（主句已经换成出图的句子），
+ * 「换成了 Python x」在详情里。
  */
 const PYTHON_CHANGE_STAGES = new Set([
   'downloading',
@@ -1973,23 +2009,70 @@ const PYTHON_CHANGE_STAGES = new Set([
   'waiting',
 ])
 
+type PyChangeStep = 'python' | 'env' | 'packages'
+//: 文案键写成字面量：errors.json 的死键门禁按「源码里出现过这个串」判活
+const PY_CHANGE_STEP_LABEL: Record<PyChangeStep, string> = {
+  python: 'engine.repairStage_python',
+  env: 'engine.repairStage_env',
+  packages: 'engine.repairStage_packages',
+}
+
+/**
+ * 阶段 → 第几步。`verifying` 两边都有（私有 Python 的校验在建环境之前、受管环境的校验在装包之后），单看这一条分不出来：
+ * 用这张卡已经走到过的最远一步消歧——走到过「创建运行环境」之后的校验属于装包，之前的属于准备 Python（卡片重挂时
+ * 记录丢了就按准备 Python 算：少说一步，不多勾一步）。`waiting` / `preparing` 不前进，停在已到的那步。
+ */
+function pyChangeStepIndex(stage: string, steps: PyChangeStep[], reached: number): number {
+  const at = (s: PyChangeStep) => steps.indexOf(s)
+  switch (stage) {
+    case 'downloading':
+    case 'extracting':
+    case 'launching':
+      return Math.max(0, at('python'))
+    case 'verifying':
+      // 没有「准备 Python」这一步（用已有的 Python）时只可能是装包后的校验
+      if (!steps.includes('python')) return at('packages')
+      return reached >= at('env') ? at('packages') : at('python')
+    case 'creating':
+      return at('env')
+    case 'installing':
+      return at('packages')
+    default:
+      return reached
+  }
+}
+
 function PythonChangeLine({ report }: { report: PreparationReport | null }) {
-  useTranslation('workspace')
+  useTranslation(['workspace', 'errors'])
+  // 走到过的最远一步只对**这一次**换版本有效：换了目标 / 基础（下一次换版本、或同一张卡上另一件事）就从头算
+  const reached = useRef<{ key: string; at: number }>({ key: '', at: 0 })
   const pc = report?.python_change
   if (!pc || pc.state !== 'running') return null
   const MB = 1048576
   const downloading = pc.stage === 'downloading' && pc.total > 0
-  const pct = downloading ? Math.min(100, Math.round((pc.done / pc.total) * 100)) : null
-  const text = downloading
-    ? pt('pythonChange.downloadBytes', { done: Math.round(pc.done / MB), total: Math.round(pc.total / MB) })
-    : pt(`pythonChange.stage.${PYTHON_CHANGE_STAGES.has(pc.stage) ? pc.stage : 'preparing'}`)
+  // 字节数只进胶囊，标题行说这一刻在干什么（不说两遍）
+  const text = pt(`pythonChange.stage.${PYTHON_CHANGE_STAGES.has(pc.stage) ? pc.stage : 'preparing'}`)
+  const steps: PyChangeStep[] = pc.base === 'private' ? ['python', 'env', 'packages'] : ['env', 'packages']
+  const key = `${pc.from}>${pc.to}:${pc.base}`
+  if (reached.current.key !== key) reached.current = { key, at: 0 }
+  const was = reached.current.at
+  const cur = Math.min(steps.length - 1, Math.max(was, pyChangeStepIndex(pc.stage, steps, was)))
+  reached.current = { key, at: cur }
+  const meta = downloading
+    ? translate('engine.repairDownloadBytes', { ns: 'errors', done: Math.round(pc.done / MB), total: Math.round(pc.total / MB) })
+    : undefined
   return (
-    <div className="flex flex-col gap-1.5" data-prep-python-change data-python-change-stage={pc.stage}>
-      <p className="text-sm tabular-nums text-ink-2" data-python-change-line>
-        {text}
-      </p>
-      <ProgressBar pct={pct} label={pt('progress')} data-prep-progress />
-    </div>
+    <TaskChecklist
+      title={text}
+      data-prep-python-change
+      data-python-change-stage={pc.stage}
+      steps={steps.map((id, i) => ({
+        id,
+        label: translate(PY_CHANGE_STEP_LABEL[id], { ns: 'errors' }),
+        state: i < cur ? 'done' : i === cur ? 'active' : 'pending',
+        meta: id === 'python' ? meta : undefined,
+      }))}
+    />
   )
 }
 

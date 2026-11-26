@@ -44,9 +44,11 @@ export const vendorName = (v: AiVendor): string => (v.label_key ? ag(v.label_key
 export const connectionErrorText = (c: AiConnection): string =>
   isCheckableError(c)
     ? probeReasonText(c.error_reason) // 地址跑不了对话：按探测原因说一句（没有原因就是通用一句）
-    : c.error && ['unauthorized', 'network', 'timeout'].includes(c.error)
-      ? cx(`err.${c.error}`)
-      : cx('error')
+    : c.error === 'plan_usage_disabled'
+      ? cx('err.planUsageDisabled') // SIWC：账号没允许 Tavotto 用订阅额度
+      : c.error && ['unauthorized', 'network', 'timeout'].includes(c.error)
+        ? cx(`err.${c.error}`)
+        : cx('error')
 
 /** 这家厂商的连接方式；没有 `methods`（老后端）就按旧的 `connect` 合成唯一一种 */
 export const methodsOf = (v: AiVendor): AiVendorMethod[] =>
@@ -67,8 +69,10 @@ export function methodName(m: AiVendorMethod): string {
       return cx('method.apiKey')
     case 'method.account':
       return cx('method.account')
+    case 'method.chatgptPlan':
+      return cx('method.subscription')
   }
-  return m.kind === 'key' ? cx('method.apiKey') : m.kind === 'login' ? cx('method.subscription') : cx('method.account')
+  return m.kind === 'key' ? cx('method.apiKey') : m.kind === 'login' || m.kind === 'siwc' ? cx('method.subscription') : cx('method.account')
 }
 
 /**
@@ -83,6 +87,7 @@ export function methodHint(v: AiVendor, m: AiVendorMethod): string {
     return cx('method.hintKey', { name })
   }
   if (m.kind === 'oauth') return cx('method.hintAccount', { name })
+  if (m.kind === 'siwc') return cx('method.hintChatgpt')
   if (m.agent === 'codex') return cx('method.hintChatgpt')
   if (m.agent === 'claude') return cx('method.hintClaude')
   return cx('method.hintLogin', { name })
@@ -112,7 +117,7 @@ export function connectionForMethod(
   } else {
     const sameKind = methodsOf(vendor).filter((m) => m.kind === 'key')
     own = connections.filter((c) => {
-      if (c.id.startsWith('sub:') || c.id.endsWith('-oauth')) return false
+      if (c.id.startsWith('sub:') || c.id.startsWith('siwc:') || c.id.endsWith('-oauth')) return false
       if (c.method) return c.method === method.id
       if (c.catalog_id && method.catalog_id) return c.catalog_id === method.catalog_id
       return sameKind.length === 1

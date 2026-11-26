@@ -18,8 +18,17 @@ import { isSourceFont } from './sourceFont'
 import { sourceFontState } from './sourceFontCache'
 import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
+import {
+  CERTAIN_RANK,
+  CHECK_LEGEND_OVER_DATA,
+  CHECK_TEXT_OVER_AXES,
+  CHECK_TEXT_OVERLAP,
+  detectInterference,
+} from './interference'
 import type { CanvasObject, FigureDocument, FramePad, PanelObject, TextObject } from '@/types/document'
-import { panelFullSize } from '@/types/document'
+import { panelFullSize, readPath, shapeStrokeOn } from '@/types/document'
+import { strokeOpacityOf } from './shapeGeometry'
+import { effectiveStrokeGradient } from './gradient'
 import type { Manifest, ManifestElement } from './api'
 
 /**
@@ -202,6 +211,8 @@ export interface PreflightSpec {
     type: string
     rect_mm: [number, number, number, number]
     hidden: boolean
+    /** 只有画得出描边的箭头 / 形状 / 路径才带（缺席 = 没有描边，ADR 0208）；页面上的绝对 pt */
+    stroke_pt?: number
   }[]
 }
 
@@ -228,6 +239,11 @@ class Sink {
   private profile: PublicationProfile
   /** 每条规则下按「对象 + 元素」去重的命中排名（与聚合项同一把尺子） */
   private hitWorst = new Map<string, number>()
+  /**
+   * 同一把键 → 它在 `occurrences` 里的下标。命中多的规则（干涉检测：几百段互相压着的刻度文字）
+   * 逐条 `findIndex` 会让一次检查变成命中数的平方；键与去重判据是同一个，所以只是换了查法。
+   */
+  private hitIndex = new Map<string, number>()
 
   constructor(profile: PublicationProfile) {
     this.profile = profile
@@ -303,11 +319,10 @@ class Sink {
       // 各写一份的话下一个字段只会被加进其中一条（`worse` 差点就是这样）
       const hit: PreflightOccurrence = { objectId: oid, gid, prop, message, detail }
       if (opts.worse != null) hit.worse = opts.worse
-      const idx = item.occurrences.findIndex(
-        (o) => o.objectId === oid && o.gid === gid && o.prop === prop,
-      )
-      if (idx < 0) {
+      const idx = this.hitIndex.get(key)
+      if (idx == null) {
         if (opts.worse != null) this.hitWorst.set(key, opts.worse)
+        this.hitIndex.set(key, item.occurrences.length)
         item.occurrences.push(hit)
         continue
       }
@@ -755,6 +770,89 @@ function checkLogAxisNonpositive(
   }
 }
 
+/**
+ * 轴上的数（柱的基线、轴范围的两端）写进文案的样子：约 4 位有效数字、去掉末尾的 0。
+ * 同源对：`engine/preflight.py` 的 `_axis_num`（golden 连 message params 一起比）。小数位数按量级分档取
+ * （不用 log10，两种语言在 10 的整次幂上可能差一个 ulp）；`toFixed` 对精确二进制值舍入、正好一半远离 0，
+ * Python 侧用 `Decimal` 的 `ROUND_HALF_UP` 照做。
+ */
+const AXIS_NUM_EDGES = [
+  1000, 100, 10, 1, 0.1, 0.01, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12,
+]
+export function axisNum(v: number): string {
+  const a = Math.abs(v)
+  if (a >= 1e21) return String(v) // toFixed 在这里改写指数形式；轴范围到不了这么大
+  const idx = AXIS_NUM_EDGES.findIndex((edge) => a >= edge)
+  let text = v.toFixed(idx < 0 ? AXIS_NUM_EDGES.length : idx)
+  if (text.includes('.')) text = text.replace(/0+$/, '').replace(/\.$/, '')
+  return text === '-0' ? '0' : text
+}
+
+/**
+ * V-002：线性轴上柱的共同基线落在可见范围之外（柱底被截，柱长不再和数值成比例）。事实读 axes 元素的
+ * `bar_baseline`（产生者只有 `engine/manifest.bar_baseline`）：那一维 `status` 是 `ok`，且同一元素 editable 里
+ * 那一维的尺度正是 `linear`、范围是两个有限数（`lo < hi`，按 min / max 判）才判；缺范围 / 缺尺度 / 其它尺度一律
+ * 不判。基线落在闭区间 `[lo, hi]` 外（容差为跨度的 1e-9）就报，每个（axes, 维）一次命中，x 先于 y，截得最远的
+ * 基线决定 detail，`worse` 是截掉的距离占跨度的比例。与 `engine/preflight.py` 的
+ * `_check_bar_baseline_truncated` 同源（golden `bar-baseline-*`）。
+ */
+function checkBarBaselineTruncated(
+  manifest: Manifest,
+  pid: string,
+  hidden: Set<string>,
+  sink: Sink,
+): void {
+  for (const el of manifest.elements ?? []) {
+    if (el.role !== 'axes' || !isDrawn(el, hidden)) continue
+    const facts = el.bar_baseline
+    if (!facts || typeof facts !== 'object' || Array.isArray(facts)) continue
+    for (const dim of ['x', 'y'] as const) {
+      const fact = facts[dim]
+      if (!fact || typeof fact !== 'object' || fact.status !== 'ok') continue
+      if (field(el, `${dim}scale`) !== 'linear') continue
+      const lim = field(el, `${dim}lim`)
+      if (!Array.isArray(lim) || lim.length !== 2) continue
+      const a = num(lim[0])
+      const b = num(lim[1])
+      if (a == null || b == null) continue
+      const lo = Math.min(a, b)
+      const hi = Math.max(a, b)
+      const span = hi - lo
+      if (!(span > 0)) continue
+      const eps = span * 1e-9
+      const entries = fact.baselines
+      if (!Array.isArray(entries)) continue
+      let worst: { dist: number; base: number; bars: number } | null = null
+      for (const entry of entries) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+        const base = num(entry.value)
+        const bars = domainCount(entry.bars)
+        if (base == null || bars <= 0 || (lo - eps <= base && base <= hi + eps)) continue
+        const dist = base < lo ? lo - base : base - hi
+        if (worst == null || dist > worst.dist) worst = { dist, base, bars }
+      }
+      if (worst == null) continue
+      const edge = worst.base < lo ? lo : hi
+      sink.add(
+        'bar-baseline-truncated',
+        pf(dim === 'y' ? 'barBaselineTruncatedY' : 'barBaselineTruncatedX', {
+          baseline: axisNum(worst.base),
+          low: axisNum(lo),
+          high: axisNum(hi),
+          edge: axisNum(edge),
+        }),
+        {
+          objectIds: [pid],
+          gids: [el.gid],
+          detail: { axis: dim, baseline: worst.base, lim_low: lo, lim_high: hi, bars: worst.bars },
+          worse: worst.dist / span,
+          prop: `${dim}lim`,
+        },
+      )
+    }
+  }
+}
+
 function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
   const manifest = panel.manifest
   if (!manifest) return
@@ -970,6 +1068,8 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
 
   // --- 数据与编码客观不一致（V-001）：数学上可判定，进 warn；不自动修（改 symlog / 删点是科学决策） ---
   checkLogAxisNonpositive(manifest, pid, hidden, sink)
+  // V-002 线性轴上柱的共同基线被截掉：同属这一档，同样不自动修（从 0 起还是改点图由作者定）
+  checkBarBaselineTruncated(manifest, pid, hidden, sink)
 
   // --- 数据语义：只给建议，绝不替用户裁决 ---
   for (const ax of [...rolesByAxes.keys()].sort()) {
@@ -1057,6 +1157,48 @@ function checkGeometry(spec: PreflightSpec, sink: Sink): void {
 
   const hidden = spec.objects.filter((o) => o.hidden).map((o) => o.id)
   if (hidden.length) sink.add('hidden', pf('hidden'), { objectIds: hidden })
+}
+
+/**
+ * 画布上判线宽下限的对象类型（ADR 0208 §四 第 7 条：所有画布上的箭头 / 形状 / 路径都管，包括用户自己画的）。
+ * 严格同源对：`engine/preflight.py` 的 `CANVAS_STROKE_TYPES`。
+ */
+export const CANVAS_STROKE_TYPES = ['arrow', 'shape', 'path']
+
+/**
+ * 画布对象的描边 < 期刊线宽下限（`min_line_width_pt`）→ `line-width-below-min`。与数据线同一条检查，
+ * 文案另一句；`stroke_pt` 已是页面上的绝对 pt，不乘缩放；缺席 = 没有描边，不判；等于下限不报。
+ * 严格同源对：`engine/preflight.py` `_check_canvas_strokes`。
+ */
+function checkCanvasStrokes(spec: PreflightSpec, profile: PublicationProfile, sink: Sink): void {
+  const minLw = num(profile.min_line_width_pt) ?? 0
+  if (minLw <= 0) return
+  for (const o of spec.objects) {
+    if (o.hidden || !CANVAS_STROKE_TYPES.includes(o.type)) continue
+    const lw = num(o.stroke_pt)
+    if (lw == null || lw <= 0 || lw >= minLw - 1e-9) continue
+    sink.add(
+      'line-width-below-min',
+      pf('canvasLineWidthBelowMin', { effective: lw.toFixed(2), min: g(minLw) }),
+      { objectIds: [o.id], detail: { effective_pt: r2(lw) }, worse: minLw - lw, prop: 'strokePt' },
+    )
+  }
+}
+
+/** 画布对象画得出的描边宽度（pt）；没有描边（关掉 / 全透明 / 不是能描边的类型）回 undefined */
+export function canvasStrokePt(o: CanvasObject): number | undefined {
+  let on: boolean
+  if (o.type === 'arrow') on = true
+  else if (o.type === 'shape') on = shapeStrokeOn(o)
+  else if (o.type === 'path') on = readPath(o).strokeOn
+  else return undefined
+  if (!on || strokeOpacityOf(o.strokeOpacity) === 0) return undefined
+  // 描边渐变的色标全透明：画出来也是全透明（`canvas/gradientPaint.usePaints` 同一份读法），不算有描边（Codex #2195）
+  if (o.type !== 'arrow') {
+    const g = effectiveStrokeGradient(o, on)
+    if (g && g.stops.every((st) => st.opacity === 0)) return undefined
+  }
+  return Number.isFinite(o.strokePt) && o.strokePt > 0 ? o.strokePt : undefined
 }
 
 function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink): void {
@@ -1262,6 +1404,87 @@ function checkPanelClipping(panel: PreflightPanelSpec, sink: Sink): void {
   }
 }
 
+/**
+ * V-011：真实渲染几何上的干涉接进常规预检。判据只有 `lib/interference.ts`（`engine/interference.py`
+ * 的逐行移植）；这里只把逐对结果折进 `Sink`，与 `engine/preflight.py::_check_panel_interference`
+ * 逐条同源（golden `interference-*`）：文字重叠两段文字都是主语；压到别的子图的主语是那段文字
+ * （被压的子图进 `detail.against`）；图例压数据的主语是图例，「确定」恒排在「风险」前面。
+ * 文案不带 gid——问题行的主语已经是那个元素。
+ */
+function checkPanelInterference(panel: PreflightPanelSpec, profile: PublicationProfile, sink: Sink): void {
+  const manifest = panel.manifest
+  if (!manifest) return
+  const pid = panel.id
+  // 只把**会改变结果**的那几对交给 Sink：带来新主语、让某个主语或这一面板更糟的。其余各对在 Sink 里本来就是
+  // 空操作（主语已在、排名不更大），跳过它们结论逐字不变——几十段文字压成一团时每对一次 add 是大头。
+  // 与 `engine/preflight.py::_check_panel_interference` 同一规则
+  const seen = new Map<string, Map<string, number>>()
+  const top = new Map<string, number>()
+  // 主语 g 的排名第一次出现或更糟 → 记下并回 true
+  const bump = (cid: string, g: string, worse: number): boolean => {
+    let mine = seen.get(cid)
+    if (!mine) seen.set(cid, (mine = new Map()))
+    const prev = mine.get(g)
+    if (prev != null && !(worse > prev)) return false
+    mine.set(g, worse)
+    return true
+  }
+  const bumpTop = (cid: string, worse: number): boolean => {
+    const t = top.get(cid)
+    if (t != null && !(worse > t)) return false
+    top.set(cid, worse)
+    return true
+  }
+  // 文字重叠两段文字都是主语；压到别的子图只有那段文字（b 是被压的子图）。三项都要记，不能短路
+  const keep = (cid: string, a: string, b: string, area: number): boolean => {
+    const ha = bump(cid, a, area)
+    const hb = cid === CHECK_TEXT_OVERLAP ? bump(cid, b, area) : false
+    const ht = bumpTop(cid, area)
+    return ha || hb || ht
+  }
+  for (const it of detectInterference(manifest, profile, pid, keep)) {
+    const certain = !!it.detail.certain
+    const count = Array.isArray(it.detail.targets) ? it.detail.targets.length : 0
+    const isLegend = it.id === CHECK_LEGEND_OVER_DATA
+    const rank = isLegend ? count + (certain ? CERTAIN_RANK : 0) : (num(it.detail.overlap_mm2) ?? 0)
+    // 文字两类已经在 detect 里经 keep 问过（再问一遍会因「不更大」被挡掉）；图例每个一条，这里问
+    if (isLegend) {
+      const hg = bump(it.id, it.gids[0], rank)
+      const ht = bumpTop(it.id, rank)
+      if (!hg && !ht) continue
+    }
+    const detail = { ...it.detail }
+    const { w, h } = it.message.params
+    if (it.id === CHECK_TEXT_OVERLAP) {
+      sink.add('text-overlap', pf('interferenceTextOverlap', { w, h }), {
+        objectIds: [pid],
+        gids: it.gids,
+        detail,
+        worse: rank,
+      })
+    } else if (it.id === CHECK_TEXT_OVER_AXES) {
+      detail.against = it.gids.length > 1 ? it.gids[1] : ''
+      sink.add('text-over-axes', pf('interferenceTextOverAxes', { w, h }), {
+        objectIds: [pid],
+        gids: it.gids.slice(0, 1),
+        detail,
+        worse: rank,
+      })
+    } else if (it.id === CHECK_LEGEND_OVER_DATA) {
+      sink.add(
+        'legend-over-data',
+        pf(certain ? 'interferenceLegendOverData' : 'interferenceLegendOverDataRisk', { count }),
+        {
+          objectIds: [pid],
+          gids: it.gids.slice(0, 1),
+          detail,
+          worse: rank,
+        },
+      )
+    }
+  }
+}
+
 function checkMissingManifest(panel: PreflightPanelSpec, sink: Sink): void {
   sink.add(
     'panel-text-not-verifiable',
@@ -1283,9 +1506,11 @@ export function runSpec(spec: PreflightSpec, profile: PublicationProfile): Prefl
       checkPanelFonts(panel, profile, sink)
       checkPanelAxes(panel, profile, sink)
       checkPanelClipping(panel, sink)
+      checkPanelInterference(panel, profile, sink)
     }
   }
   checkTexts(spec, profile, sink)
+  checkCanvasStrokes(spec, profile, sink)
   checkGeometry(spec, sink)
   return sink.result()
 }
@@ -1497,12 +1722,16 @@ export function buildSpec(
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),
-    objects: doc.objects.map((o) => ({
-      id: o.id,
-      type: o.type,
-      rect_mm: rect(o),
-      hidden: !!o.hidden,
-    })),
+    objects: doc.objects.map((o) => {
+      const strokePt = canvasStrokePt(o)
+      return {
+        id: o.id,
+        type: o.type,
+        rect_mm: rect(o),
+        hidden: !!o.hidden,
+        ...(strokePt != null ? { stroke_pt: strokePt } : {}),
+      }
+    }),
   }
 }
 

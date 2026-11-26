@@ -10,6 +10,7 @@ import {
   Lock,
   LockOpen,
   MoveUpRight,
+  PathText,
   Replace,
   Spline,
   Square,
@@ -19,6 +20,8 @@ import {
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
+import { isCopyGid } from '@/lib/figureElementCopy'
+import { overrideCounts } from '@/lib/overrideCounts'
 import { switchKindOf } from '@/lib/shapeSwitch'
 import { MOD } from '@/lib/utils'
 import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@/store/actions'
@@ -43,6 +46,7 @@ const TYPE_ICON = {
   arrow: MoveUpRight,
   shape: Square,
   path: Spline,
+  pathText: PathText,
 } as const
 
 /**
@@ -208,7 +212,7 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
   const modified = selGroup
     ? 0
     : el
-      ? panel.overrides.filter((o) => o.gid === el.gid).length
+      ? overrideCounts(panel.overrides, el.gid).element
       : panel.overrides.length
   const RoleIcon = roleIcon(el?.role ?? (selGroup ? 'group' : 'figure'))
   const name = crumbs.at(-1) ?? t('elementFallback')
@@ -246,7 +250,7 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
                 useUiStore.getState().setSelectedGid(null)
               }}
             >
-              {t('hideElement')}
+              {t(isCopyGid(el.gid) ? 'deleteCopy' : 'hideElement')}
             </MenuItem>
           </MoreMenu>
         ) : (

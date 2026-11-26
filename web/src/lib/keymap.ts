@@ -64,6 +64,9 @@ export const KEYMAP = {
   // 再次变换 ⌥⌘D（ADR 0185 M4 第二批）：⌥ 会改写 key，按 code 认；有上一次变换、有选区时才消费
   transformAgain: k(`${ALT}${MOD}D`, { code: 'KeyD', mod: true, shift: false, alt: true }),
   delete: k('Delete', { key: 'delete' }, { key: 'backspace' }),
+  // 路径文字的离线（字与线的间隙，ADR 0190）：选区全是路径文字时 ⌥⇧↑ / ⌥⇧↓ 每次 0.5 pt（Illustrator 调基线偏移同一组键）。
+  // ⌥↑ / ⌥↓ 已是细微调（0.1 mm），不占；排在 nudge 前面，`bindingFor` 才认得出它
+  pathTextGap: k(`${ALT}⇧↑ / ${ALT}⇧↓`, { key: 'arrowup', alt: true, shift: true }, { key: 'arrowdown', alt: true, shift: true }),
   nudge: k(
     '↑ ↓ ← →',
     { key: 'arrowup' },
@@ -96,6 +99,8 @@ export const KEYMAP = {
   // 自由路径（ADR 0185 M1，Illustrator 习惯）：P 钢笔；锚点编辑里 + / − 加删锚点、⇧C 转换锚点。
   // 直接选择 A 与既有的箭头工具 A 冲突，没有单键（双击路径 / Enter / 右键「编辑锚点」进入）
   toolPen: k('P', { key: 'p' }),
+  // 铅笔（ADR 0185 M8）：Illustrator 的 N
+  toolPencil: k('N', { key: 'n' }),
   addAnchor: k('+', { key: '+' }, { key: '=', shift: false }),
   deleteAnchor: k('−', { key: '-', shift: false }),
   convertAnchor: k('⇧C', { key: 'c', shift: true }),
@@ -110,6 +115,8 @@ export const KEYMAP = {
   ungroupObjects: k(`⇧${MOD}G`, { code: 'KeyG', mod: true, shift: true, alt: false }),
   makeClipMask: k(`${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: false }),
   releaseClipMask: k(`${ALT}${MOD}7`, { code: 'Digit7', mod: true, shift: false, alt: true }),
+  // 文字转轮廓 ⇧⌘O（Illustrator 的键位，ADR 0189）：选着文字时才消费。按 code 认
+  outlineText: k(`⇧${MOD}O`, { code: 'KeyO', mod: true, shift: true, alt: false }),
   // 形状生成器 ⇧M（Illustrator 的键位，ADR 0185 M3）：选着两个以上能参与的对象时才消费
   shapeBuilder: k('⇧M', { key: 'm', shift: true, mod: false, alt: false }),
   // 外观（Illustrator 习惯）：D 默认填色描边、⇧X 互换填色和描边、/ 无填充、I 吸管。选着能上色的标注时才消费（I 一直可用）

@@ -188,6 +188,7 @@ def _snapshot_project_files(proj: Path, source_ids: set[str]) -> set[str]:
                     "observation",
                     "fidelity",
                     "binding",
+                    "profile",
                 }, path
                 found_sources.add(identity["source_id"])
                 kwargs = dict(
@@ -259,7 +260,13 @@ def test_static_discovery_then_only_configured_run_has_no_argument_free_asset(pr
         # before any script execution. It is a candidate, not an argument-free capture.
         registered = json.loads((proj / registry.REGISTRY_NAME).read_text(encoding="utf-8"))
         assert registered["scripts"]["scaled.py"]["stems"] == ["result"]
-        assert set(registered["scripts"]["scaled.py"]) == {"entry", "cost", "notes", "stems"}
+        assert set(registered["scripts"]["scaled.py"]) == {
+            "entry",
+            "cost",
+            "notes",
+            "stems",
+            "sha256",
+        }
         assert not counter.exists()
         _, initial = app.call("/api/runtime/assets")
         assert len(initial["assets"]) == 1 and initial["assets"][0]["cached"] is False
