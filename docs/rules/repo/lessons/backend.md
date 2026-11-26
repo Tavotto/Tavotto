@@ -2,12 +2,7 @@
 
 > 格式与规矩见 `docs/rules/repo/lessons/README.md`。写入只走每日复盘，别直接改。
 
-### L-028 开发脚本造假项目前先 setdefault TAVOTTO_DATA_DIR
-- 类: 别这样
-- 触发: scripts/bench_document.py, scripts/bench_render.py
-- Seen: 2026-09-22
-- 为什么: 用 mkdtemp 建假项目后直接 open_project 的脚本没设数据目录，每跑一次往用户真实最近列表塞一条，还会让 worker.python 指向别会话的路径。pytest 本身有 conftest 隔离，脚本没有。
-- 证据: #497
+### L-028 开发脚本造假项目前先 setdefault TAVOTTO_DATA_DIR → docs/rules/backend/project-system.md
 
 ### L-048 用例的预期路径也要问解释器，不用 sysconfig 自算
 - 类: 别这样
@@ -23,19 +18,7 @@
 - 为什么: 字形分层判据是分步的，按语义写「primary 与 cjk 都没有」会让下标字符前后端判成不同层；只在极少码位上发作，测试全绿。要补专挑分歧输入的用例。
 - 证据: （迁移自维护者记录，无编号）
 
-### L-051 联调开发服务器别写用户真实数据目录的全局设置
-- 类: 别这样
-- 触发: run.sh, src/tavotto/engine/projectenv.py
-- Seen: 2026-09-21
-- 为什么: 复现时把测试 venv 写进真实 config 的全局解释器，次日正式 App 里装了包仍报缺依赖、安装未获确认。联调用独立数据目录或进程级环境变量，收工核对配置。
-- 证据: #469
-
-### L-052 子进程管道 EOF 先取退出状态再下「崩溃」结论
-- 类: 别这样
-- 触发: src/tavotto/engine/worker.py, src/tavotto/engine/workerd_client.py
-- Seen: 2026-09-20
-- 为什么: EOF 背后至少五种事实（正常退出、致命错误、C 扩展崩溃、DLL 加载失败、关了 stdout）；读到就 kill 等于先毁证据，还把退出说成「无响应」。日志为空要说出来。
-- 证据: #435
+### L-051 联调服务器与演示实例同时隔离数据目录和配置目录 → docs/rules/backend/project-system.md
 
 ### L-054 固定进度 id 上「异步起加轮询」读到的是上一次的终态
 - 类: 别这样
@@ -172,10 +155,10 @@
 
 ### L-156 按图分数换算位置的导出逻辑，夹具要带 bbox_inches="tight" 并覆盖每类挪位置的键
 - 类: 别这样
-- 触发: src/tavotto/engine/scriptadjust.py, tests/test_script_adjust*
-- Seen: 2026-11-11
-- 为什么: 导出 .py 的逐键普查夹具不带裁切框，tight 只测了改字号；块里按整张 figsize 换算、引擎按裁出来的那一页换算，挪过文字的图导出连续失败，靠一份用户反馈才暴露。引擎与块的坐标换算是同源对，改一边对拍另一边，有框、无框各跑一遍。
-- 证据: #1847
+- 触发: src/tavotto/engine/scriptadjust.py, tests/test_script_adjust*, tests/test_figure_copy_anchor*
+- Seen: 2026-11-11, 2026-11-25
+- 为什么: 导出 .py 的逐键普查夹具不带裁切框，tight 只测了改字号；块里按整张 figsize 换算、引擎按裁出来的那一页换算，挪过文字的图导出连续失败，靠一份用户反馈才暴露。引擎与块的坐标换算是同源对，改一边对拍另一边，有框、无框各跑一遍。11-25 图内复制的落点用请求位置、没换算 tight 输出框，评审报两条 P1。
+- 证据: #1847, #2163
 
 ### L-157 统计汇总的用例要有内部缺失位置与跨位置合并的总体
 - 类: 别这样
@@ -218,3 +201,10 @@
 - Seen: 2026-11-24
 - 为什么: 导出快照存储满额只断言「拒绝新增、旧字节不动」，同一次运行里每次编辑都算 current、永远不判旧，写满后 SVG 导出一直卡死，一份用户反馈才暴露；补回收时评审又报 3 条 P1：并发提交的新引用、目录枚举失败、迁移中断的旧版本文件，都让引用集合看似完整却漏项，会删掉仍被引用的快照。写满用例断言用户还能导出；扫描任一处失败、或与提交不互斥，就整轮不删。
 - 证据: #2166
+
+### L-181 矢量核对量画出来的面，「改前就有」的豁免带上位置并按补丁后状态重判
+- 类: 别这样
+- 触发: src/tavotto/engine/vectorcheck.py, src/tavotto/engine/vectoredit.py, src/tavotto/engine/vectorscene.py, tests/test_vectorcheck.py
+- Seen: 2026-11-25, 2026-11-26
+- 为什么: 求解只量箭头中心线、多行文字按一行高，旋转后不换算锚点、不看 Bézier 手柄，出页与遮挡都检不出；「改前就有」的降级只比检查项和对象、不比位置，从另一侧出页也被放过；锚点移走后仍沿用旧的遮挡余量。三个 PR 共六条 P1。夹具带线宽、箭头头、旋转、手柄与多行文字，豁免对比位置并在补丁落地后重算。
+- 证据: #2201, #2220, #2254

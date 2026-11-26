@@ -150,12 +150,7 @@
 - 为什么: 预解析把下一个 token 当路径找 conftest：路径已存在又无测试路径时 tests/conftest.py 没加载，rc 4 unrecognized arguments。第一次跑永远绿、第二次才红，CI 的新 RUNNER_TEMP 撞不上，只能静态合同钉。
 - 证据: 无编号）
 
-### L-107 新增或大改 e2e spec，入队前先加 full-ci 让 PR 跑一次 Linux e2e
-- 类: 照这样
-- 触发: web/e2e/, web/playwright.config.ts
-- Seen: 2026-10-21, 2026-11-04
-- 为什么: PR 上 posix-e2e 全是 skipped，合并队列才第一次在 Linux 真跑：示例图 bbox_inches=tight 在 Linux 比随附的 macOS PDF 宽 1.8 mm，用例比错对象，出队改重排一轮数小时。尺寸断言以引擎渲染回来的 manifest size_mm 为准。
-- 证据: #1223, #1736
+### L-107 新增或大改 e2e spec，入队前先加 full-ci 让 PR 跑一次 Linux e2e → docs/rules/frontend/verification.md
 
 ### L-108 改 scripts/ 或加 subprocess 用例后，本地跑三个仓库级扫描用例 → docs/rules/ci/gate-discipline.md
 
@@ -187,12 +182,7 @@
 - 为什么: pnpm 只写主版本号，补丁漂移后 webServer 进程树不随父进程退出，每个 run 跑完测试仍挂死 20 到 65 分钟。认「Cleaning up orphan processes」后有遗留进程。
 - 证据: #508
 
-### L-113 入队前验按队列次序累积 merge 出的树，不只是分支
-- 类: 照这样
-- 触发: *
-- Seen: 2026-08-27, 2026-11-22
-- 为什么: 并行 PR 的 hunk 原样插进重排后的文件，合并态可能不合规；两两验过不等于组合验过，新增文件也不在全仓格式化的覆盖集里。11-22 两个 PR 各给根 AGENTS.md 加一段，各自在体积棘轮上限内，叠加后超限，合并组三条后端分片红、被踢一次（#2105 与 #2084）。
-- 证据: #175, #177, #186, #2105
+### L-113 入队前验按队列次序累积 merge 出的树，不只是分支 → docs/rules/ci/gate-discipline.md
 
 ### L-114 合并组里裸 cancelled 先核 job 时长是否贴 timeout-minutes → docs/rules/ci/ci-lanes.md
 
@@ -217,12 +207,7 @@
 - 为什么: 端口未泄漏的判据在整个序列化 JSON 里搜五位数字，随机 native_id 偶然含相同片段，误红把无关导出 PR 踢出队列。断言公开字段集合与敏感字段缺席；若必须比内容，构造可区分的夹具，别让随机合法值决定结论。11-24 许可证用例断言创始编号 37 不在状态 JSON 里，签名时间戳恰含 37，三个无关 PR 被踢（#2164、#2165、#2182），#2177 改按字段比值。
 - 证据: #1790, #2164, #2177
 
-### L-159 平台故障残局：gate 卡住整轮 rerun，PR 无检查空提交，超时踢出按原 head 重排
-- 类: 照这样
-- 触发: .github/workflows/ci.yml, docs/ci/parallel-prs.md, docs/rules/ci/ci-lanes.md
-- Seen: 2026-11-12, 2026-11-21
-- 为什么: 一次 Actions 故障里，合并组单独 rerun 带 needs 的 gate job 直接 startup_failure；PR 上「no checks reported」是事件被吞，等不来；checks_timed_out 与 runner shutdown signal 踢出的 PR 自身 CI 绿、head 未变，按原 head 重排一次即过，同因再踢才查。照这三步把一批 14 个 PR 一夜合完。11-21 队列第 3 位的 CLA 判定报 budget_deferred（服务按合并前缀控预算）整组红，同理不改代码，等前序合入后按原 head 重排（#2064）。
-- 证据: #1857, #1864, #1866, #2064
+### L-159 平台故障残局：gate 卡住整轮 rerun，PR 无检查空提交，超时踢出按原 head 重排 → docs/rules/ci/ci-lanes.md
 
 ### L-179 golden 里由三角、开方算出的浮点先截位再写，新生成器在 Windows 腿跑一次
 - 类: 别这样
