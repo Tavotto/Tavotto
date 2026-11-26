@@ -30,6 +30,7 @@ async function openAndWait(page: Page, baseURL: string) {
   await waitForDocumentReady(page)
 }
 
+// SIGKILL 在 Windows 上由 Node 映射成 TerminateProcess：同样是不给优雅退出的强杀
 async function killHard(a: { proc: import('node:child_process').ChildProcess }) {
   a.proc.kill('SIGKILL')
   for (let i = 0; i < 60 && a.proc.exitCode === null && a.proc.signalCode === null; i++) {
