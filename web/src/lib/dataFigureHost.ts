@@ -14,6 +14,7 @@ import { panelOfScript, panelUntouchedNow } from '@/lib/dataFigureOriginLive'
 import { normScript } from '@/lib/dataFigureOrigin'
 import { enterElementEdit, replaceRuntimeFigure } from '@/store/actions'
 import { useSelectionStore } from '@/store/selectionStore'
+import { selectErrorBarWhenDrawn } from '@/store/figureSwitchSelect'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -87,6 +88,7 @@ configureFigureOriginHost({
     const same = () => still() && currentProjectId() === pj
     // 换的是用户此刻在编辑的那一块（激活画布上、画旧脚本的面板）；等脚本跑的这段时间里他换了画布 / 删了它 / 改了它，一律不换
     const canvasId = useDocumentStore.getState().activeCanvasId
+    const preferGid = useUiStore.getState().selectedGids[0] ?? null
     const target = panelOfScript(oldScript, useWorkspaceStore.getState().activePanelId)
     if (!target || !panelUntouchedNow(target, origin)) return null
     quietGuideCard()
@@ -104,6 +106,8 @@ configureFigureOriginHost({
     // 回到图内编辑（与「打开并运行」之后落在的状态一样）：选中这块面板
     useSelectionStore.getState().set([panel.id])
     enterElementEdit(panel.id)
+    // 新图的 manifest 到了就选回误差棒（属性页停在误差棒页，那一行显示新类型）
+    selectErrorBarWhenDrawn(panel.id, preferGid)
     return { fingerprint: desc.source_fingerprint }
   },
 })

@@ -3816,6 +3816,8 @@ export function replaceRuntimeFigure(panelId: string, desc: CapturedFigureDescri
   commit(hist('replaceAsset', { name: desc.stem }), (d) => {
     const o = d.objects.find((x) => x.id === panelId)
     if (o?.type !== 'panel') return
+    // 画布名还是旧图当初自动起的名字（`figureCanvasName` = 图名；用户没改过）：同一条历史里跟着改成新图名；改过名就不动
+    if (o.source?.stem && d.name === o.source.stem) d.name = desc.stem
     clearAdoption(o)
     o.fileId = desc.asset_id
     o.fileKind = 'runtime'

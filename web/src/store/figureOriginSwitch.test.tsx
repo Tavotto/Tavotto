@@ -25,6 +25,9 @@ import { addRuntimePanel } from '@/store/actions'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigureOriginStore } from '@/store/figureOriginStore'
+import { errorBarSelectPending, cancelErrorBarSelect } from '@/store/figureSwitchSelect'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useUiStore } from '@/store/uiStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore, type ScriptRunState } from '@/store/scriptRunStore'
 import { useTafFlagStore } from '@/store/tafFlagStore'
@@ -110,6 +113,8 @@ beforeEach(async () => {
   setCurrentProjectId('pa')
   useDataFigureStore.getState().clear()
   useFigureOriginStore.getState().clear()
+  cancelErrorBarSelect()
+  useRenderStore.getState().clear()
   useTafFlagStore.setState({ enabled: true })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_switch')
   addRuntimePanel(D1)
@@ -408,5 +413,87 @@ describe('换类型', () => {
     expect(s.phase).toBe('ready')
     expect(s.selected).toBe(snap.selected)
     expect(discard).not.toHaveBeenCalledWith('DRAFT', expect.anything())
+  })
+})
+
+const seedManifest = (p: PanelObject, gids: string[]) => {
+  const elements = gids.map((gid) => ({ gid, role: gid.includes('errorbar') ? 'errorbar' : 'axes', label: gid, bbox: [0, 0, 1, 1], editable: [], draggable: false }))
+  useRenderStore.getState().patch(renderKeyOf(p), {
+    fileId: p.fileId, rev: 1, manifest: { stem: 's', size_mm: [80, 60], elements } as never, svg: '<svg/>', status: 'ready', stale: false,
+    lastPatches: '[]', wantPatches: '[]',
+  })
+  useRenderStore.setState((s) => ({ latest: { ...s.latest, [p.fileId]: renderKeyOf(p) } }))
+}
+
+describe('换完之后选回误差棒（等新图的 manifest，不计时）', () => {
+  const setup = async () => {
+    register()
+    const id = panels()[0]!.id
+    useUiStore.setState({ elementPanelId: id, selectedGids: ['axes_0.errorbar_1'] })
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    return id
+  }
+
+  it('manifest 到了：优先同一个 gid', async () => {
+    const id = await setup()
+    expect(useUiStore.getState().elementPanelId).toBe(id)
+    expect(errorBarSelectPending()).toBe(true)
+    expect(useUiStore.getState().selectedGids).toEqual([])
+    seedManifest(panels()[0]!, ['axes_0', 'axes_0.errorbar_0', 'axes_0.errorbar_1'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.errorbar_1'])
+    expect(errorBarSelectPending()).toBe(false)
+  })
+
+  it('同一个 gid 没有：选第一个误差棒；一个都没有：不动', async () => {
+    await setup()
+    seedManifest(panels()[0]!, ['axes_0', 'axes_0.errorbar_7'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.errorbar_7'])
+  })
+
+  it('一个误差棒都没有：选区不动', async () => {
+    await setup()
+    seedManifest(panels()[0]!, ['axes_0'])
+    expect(useUiStore.getState().selectedGids).toEqual([])
+    expect(errorBarSelectPending()).toBe(false)
+  })
+
+  it('用户在等的时候自己点了别的元素 / 撤销了：取消，不抢选区、不报错', async () => {
+    await setup()
+    useUiStore.setState({ selectedGids: ['axes_0'] })
+    expect(errorBarSelectPending()).toBe(false)
+    seedManifest(panels()[0]!, ['axes_0', 'axes_0.errorbar_1'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0'])
+  })
+
+  it('等的时候撤销（面板换回旧图）：取消，不报错', async () => {
+    await setup()
+    expect(errorBarSelectPending()).toBe(true)
+    expect(() => useDocumentStore.getState().undo()).not.toThrow()
+    expect(errorBarSelectPending()).toBe(false)
+  })
+})
+
+describe('画布名跟着换', () => {
+  it('还是旧图当初自动起的名字：同一条历史里改成新图名；撤销一起回去', async () => {
+    register()
+    useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+      d.name = D1.stem
+    })
+    const past = useDocumentStore.getState().past.length
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    expect(doc().name).toBe(D2.stem)
+    expect(useDocumentStore.getState().past.length).toBe(past + 1)
+    useDocumentStore.getState().undo()
+    expect(doc().name).toBe(D1.stem)
+  })
+
+  it('用户改过名：不动', async () => {
+    register()
+    useDocumentStore.getState().commit({ key: 'x' } as never, (d) => {
+      d.name = '我的画布'
+    })
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    expect(panels()[0]!.fileId).toBe('runtime:a2')
+    expect(doc().name).toBe('我的画布')
   })
 })
