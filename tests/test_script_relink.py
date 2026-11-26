@@ -100,7 +100,9 @@ def test_register_records_and_refreshes_the_fingerprint(tmp_path):
     assert _entry(root, "plot.py")["sha256"] == _sha(edited)
 
 
-def test_fingerprint_stays_out_of_entries_and_bad_values_are_ignored(tmp_path):
+def test_fingerprint_round_trips_through_entries_and_bad_values_are_ignored(tmp_path):
+    """`entries()` 与磁盘条目同形：刷新拿「登记时写下的条目」和此刻的 `entries()` 比相等判 worker 是否仍有效，
+    少了 sha256 会让每次登记后的活 worker 被当成过期收掉；读回再写也不能丢指纹。"""
     reg = registry.Registry()
     reg.load_data(
         {
@@ -112,7 +114,8 @@ def test_fingerprint_stays_out_of_entries_and_bad_values_are_ignored(tmp_path):
     )
     assert reg.fingerprint_of("a.py") == _sha("x")
     assert reg.fingerprint_of("b.py") is None
-    assert all("sha256" not in e for e in reg.entries().values())
+    assert reg.entries()["a.py"]["sha256"] == _sha("x")
+    assert "sha256" not in reg.entries()["b.py"]
 
 
 def test_static_merge_does_not_write_just_to_refresh_a_fingerprint(tmp_path):

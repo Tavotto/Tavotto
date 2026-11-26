@@ -194,6 +194,8 @@ class Registry:
             }
             if valid_fingerprint(cfg.get(FINGERPRINT_KEY)):
                 fingerprints[script] = cfg[FINGERPRINT_KEY]
+                # 有才带：`entries()` 与磁盘上的条目同形（见下方 artifacts 那段），读回再写不丢指纹
+                cleaned[script][FINGERPRINT_KEY] = cfg[FINGERPRINT_KEY]
             aliases = clean_stem_aliases(cfg.get("stem_aliases"), stems)
             if aliases:
                 # 有才带（同 `artifacts`）：没有别名的条目与旧文件逐键相同
