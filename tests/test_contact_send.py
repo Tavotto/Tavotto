@@ -1501,3 +1501,137 @@ def test_distribution_maps_to_contact_contract(kind, wire):
     """服务端「联系作者」只收 desktop / pip / dev / other：pipx、源码安装以前整封 422。"""
     assert contactsend.contact_distribution(kind) == wire
     assert wire in ("desktop", "pip", "dev", "other")
+
+
+# --------------------------------------------------------------------------- 期刊线索（ADR 0213）
+def _jmeta(journal, **over):
+    return meta(**{"subject": "", "report_id": "", "journal": journal, **over})
+
+
+WRONG = {
+    "type": "wrong",
+    "journal_id": "nature",
+    "journal_label": "Nature",
+    "rule_key": "figure.min_line_width_pt",
+    "current": "0.5 pt",
+    "source_id": "src-1",
+    "catalog": {"v1": 19, "v2": 17},
+}
+
+
+def test_journal_header_goes_into_init_and_the_letter_is_saved_as_journal_kind(on):
+    contactsend.start(_jmeta({**WRONG, "url": "https://example.org/guide"}), [])
+    assert wait_for({"done", "failed"})["state"] == "done"
+    req = on.calls[0]["json"]
+    assert req["journal"] == {**WRONG, "url": "https://example.org/guide"}
+    assert req["subject"] == ""  # 主题由服务端生成
+    (rec,) = contactinbox._load_locked()["messages"]
+    assert rec["kind"] == "journal" and rec["report_id"] == ""
+    assert rec["subject"] == "期刊线索：Nature"
+    (pub,) = contactinbox.public_messages()
+    assert pub["kind"] == "journal"
+
+
+def test_journal_letter_without_any_words_is_still_valid(on):
+    contactsend.start(_jmeta(WRONG, body=""), [])
+    assert wait_for({"done", "failed"})["state"] == "done"
+
+
+def test_letters_without_journal_do_not_carry_the_field(on):
+    contactsend.start(meta(), [])
+    wait_for({"done"})
+    assert "journal" not in on.calls[0]["json"]
+
+
+def test_bad_optional_journal_fields_are_dropped_not_fatal(on):
+    dirty = {
+        **WRONG,
+        "journal_label": "a\nb",  # 多行
+        "current": "x" * 201,  # 超长
+        "rule_key": "bad key!",
+        "source_id": "../x",
+        "url": "http://example.org/",  # 非 https
+        "catalog": {"v1": 0, "v2": True},  # 越界 / 布尔
+        "extra": "nope",  # 契约之外的键
+    }
+    contactsend.start(_jmeta(dirty), [])
+    assert wait_for({"done", "failed"})["state"] == "done"
+    assert on.calls[0]["json"]["journal"] == {"type": "wrong", "journal_id": "nature"}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:pw@example.org/x",
+        "https://example.org/a b",
+        "https://example.org/\x07",
+        "https://" + "a" * 2000,
+        "ftp://example.org/",
+    ],
+)
+def test_journal_url_rules(on, url):
+    contactsend.start(_jmeta({**WRONG, "url": url}), [])
+    wait_for({"done"})
+    assert "url" not in on.calls[0]["json"]["journal"]
+
+
+@pytest.mark.parametrize(
+    "journal",
+    [
+        "wrong",  # 不是对象
+        {"type": "bogus", "journal_id": "nature"},
+        {"journal_id": "nature"},  # 缺 type
+        {"type": "wrong"},  # wrong 必须带 journal_id
+        {"type": "wrong", "journal_id": "Nature!"},  # journal_id 不合规 = 必填缺失
+        {"type": "editor", "journal_id": ""},
+        {"type": "missing"},  # missing 至少要 query / url / 附件之一
+        {"type": "missing", "url": "http://x.org"},  # 唯一的线索不合规被丢掉
+    ],
+)
+def test_bad_journal_type_or_missing_required_rejects_before_any_network(on, journal):
+    with pytest.raises(contactsend.ContactError) as e:
+        contactsend.start(_jmeta(journal), [])
+    assert (e.value.code, e.value.status) == ("journal_invalid", 422)
+    assert on.calls == []
+
+
+def test_missing_journal_accepts_query_or_attachment(on):
+    contactsend.start(_jmeta({"type": "missing", "query": "Foo Journal"}), [])
+    wait_for({"done"})
+    assert on.calls[0]["json"]["journal"] == {"type": "missing", "query": "Foo Journal"}
+    contactsend.dismiss()
+    contactsend.start(_jmeta({"type": "missing"}), [("a.png", PNG)])
+    assert wait_for({"done", "failed"})["state"] == "done"
+
+
+def test_journal_and_report_id_are_mutually_exclusive(on):
+    with pytest.raises(contactsend.ContactError) as e:
+        contactsend.start(_jmeta(WRONG, report_id="TVD-AAAA-BBBB-CCCC-DDDD"), [])
+    assert e.value.code == "journal_invalid"
+    assert on.calls == []
+
+
+def test_journal_header_is_part_of_the_idempotency_fingerprint():
+    a = contactsend.build_draft(_jmeta(WRONG), [])
+    b = contactsend.build_draft(_jmeta({**WRONG, "rule_key": "other.key"}), [])
+    c = contactsend.build_draft(_jmeta(WRONG), [])
+    assert a.fingerprint() != b.fingerprint()
+    assert a.fingerprint() == c.fingerprint()
+
+
+def test_old_server_422_is_a_client_error_and_the_draft_can_be_resent(on):
+    on.fail("init", 422, "bad_request")
+    contactsend.start(_jmeta(WRONG), [])
+    st = wait_for({"failed", "done"})
+    assert (st["state"], st["code"]) == ("failed", "client_error")
+    assert contactinbox.public_messages() == []  # 没送达，不进「我的来信」
+    contactsend.dismiss()
+    contactsend.start(_jmeta(WRONG), [])  # 草稿还在界面里：同样内容可以再发
+    assert wait_for({"done", "failed"})["state"] == "done"
+
+
+def test_capability_reports_journal_tips_unless_journal_sync_is_off(on, monkeypatch):
+    monkeypatch.delenv("TAVOTTO_NO_JOURNAL_SYNC", raising=False)  # conftest 给整个进程设了硬关
+    assert contactsend.capability()["journal_tips"] is True
+    monkeypatch.setenv("TAVOTTO_NO_JOURNAL_SYNC", "1")
+    assert contactsend.capability()["journal_tips"] is False

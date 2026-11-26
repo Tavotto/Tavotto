@@ -256,6 +256,8 @@ export function ContactDialog() {
   useTranslation('dialogs')
   const s = useContactStore()
   const { capability, draft, phase, view } = s
+  const tip = s.journalTip
+  const urlId = useId()
   const subjectId = useId()
   const bodyId = useId()
   const emailId = useId()
@@ -392,7 +394,7 @@ export function ContactDialog() {
     >
       <div className="flex flex-col gap-1.5">
         <label htmlFor={bodyId} className="type-section">
-          {cs('bodyLabel')}
+          {cs(tip ? 'journal.bodyLabel' : 'bodyLabel')}
         </label>
         <TextArea
           id={bodyId}
@@ -401,7 +403,7 @@ export function ContactDialog() {
           rows={6}
           maxRows={12}
           maxLength={bodyMax}
-          placeholder={cs('bodyPlaceholder')}
+          placeholder={cs(tip ? 'journal.bodyPlaceholder' : 'bodyPlaceholder')}
           disabled={!editable}
           onChange={(e) => s.setDraft({ body: e.target.value })}
           data-contact-text
@@ -413,6 +415,25 @@ export function ContactDialog() {
           </p>
         )}
       </div>
+
+      {tip && (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={urlId} className="type-section">
+            {cs('journal.urlLabel')}
+          </label>
+          <TextInput
+            id={urlId}
+            type="url"
+            inputMode="url"
+            value={draft.url}
+            maxLength={2000}
+            placeholder={cs('journal.urlPlaceholder')}
+            disabled={!editable}
+            onChange={(e) => s.setDraft({ url: e.target.value })}
+            data-contact-journal-url
+          />
+        </div>
+      )}
 
       <div className="flex flex-col gap-2" data-contact-attachments>
         {draft.files.length > 0 && (
@@ -458,7 +479,7 @@ export function ContactDialog() {
         />
       </div>
 
-      <FieldGroup>
+      {!tip && <FieldGroup>
         <div className="flex flex-col gap-1 px-3 py-2">
           <label className="flex items-start gap-2 text-sm text-ink">
             <Checkbox
@@ -549,10 +570,10 @@ export function ContactDialog() {
             </Details>
           )}
         </div>
-      </FieldGroup>
+      </FieldGroup>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-contact-secondary>
-      <div className="flex flex-col gap-1.5">
+      {!tip && <div className="flex flex-col gap-1.5">
         <label htmlFor={subjectId} className="type-section">
           {cs('subjectLabel')}
         </label>
@@ -565,7 +586,7 @@ export function ContactDialog() {
           onChange={(e) => s.setDraft({ subject: e.target.value })}
           data-contact-subject
         />
-      </div>
+      </div>}
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor={emailId} className="type-section">
@@ -633,9 +654,19 @@ export function ContactDialog() {
                   </span>
                 </>
               ) : (
-                <span className="font-mono text-xs text-ink" data-contact-letter-number>
-                  {cs('lettersNumber', { id: m.message_id })}
-                </span>
+                <>
+                  {m.kind === 'journal' && (
+                    <span
+                      className="shrink-0 whitespace-nowrap rounded-full bg-accent-subtle px-1.5 text-xs text-accent"
+                      data-contact-letter-kind="journal"
+                    >
+                      {cs('lettersJournalTag')}
+                    </span>
+                  )}
+                  <span className="font-mono text-xs text-ink" data-contact-letter-number>
+                    {cs('lettersNumber', { id: m.message_id })}
+                  </span>
+                </>
               )}
               <span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-1.5">
                 <span className="type-caption">{cs('lettersSentAt', { time: formatDateTime(m.sent_at * 1000) })}</span>
@@ -693,7 +724,17 @@ export function ContactDialog() {
       onOpenChange={(o) => s.setOpen(o)}
       title={view === 'letters' ? cs('letters') : cs('title')}
       size="md"
-      description={wecom ? <WeComEntry /> : undefined}
+      description={
+        tip ? (
+          <p className="type-caption" data-contact-journal-about>
+            {tip.type === 'missing'
+              ? cs('journal.aboutMissing', { query: tip.query ?? '' })
+              : cs('journal.about', { what: [tip.journalLabel, tip.ruleLabel].filter(Boolean).join(' · ') })}
+          </p>
+        ) : wecom ? (
+          <WeComEntry />
+        ) : undefined
+      }
       anchor="contact"
       blockDismiss={busy}
       onEscape={busy ? () => void s.cancel() : undefined}

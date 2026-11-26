@@ -498,6 +498,8 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 - **联系作者的本机上限（ADR 0145 第二期修订「评审后补的五个上限」）**：附图落盘配额每封 ≤100 MiB / 全部 ≤500 MiB（超了标 `skipped: "quota"`、不再请求）；信纸内联图片合计 ≤24 MiB（超出占位）；回信列表读取上限 `contactsend.REPLIES_MAX_BYTES` 按最坏线缆编码「50 条 ×（2 ×（256 KiB + 80000 B）+ 开销）」推出（依赖服务端每封 ≤50 条回信与去控制字符两条保证），超限 / 坏 JSON 标 `poll_error`（`too_large` / `bad_response`）而不是静默成功；轮次预算按**实际读到**的字节扣、单次读取 ≤ `min(10 MiB, 剩余)+1`；故障转移被换掉的线路的错误体也计入轮次预算（`_failover(…, spent)`）；附图目录删除失败不记队列，由每次加载 ≤20 个的有界扫尾（`_sweep_orphan_assets`）从磁盘重新发现。新增同类上限时别回到 `ignore_errors` / 静默 `return True`。
 - **遥测这次不加事件**（攒齐一次升同意版本）；本模块只借 `telemetry._platform/_arch/_distribution` 三个枚举探测函数，不调 `capture`。硬开关 `TAVOTTO_NO_CONTACT=1` 让入口消失（`GET /api/contact` → `{"enabled": false}`，其余 404）；测试进程由 conftest 硬关，生产主机被会话级探针兜底。
 
+- **期刊线索（ADR 0213 一期）**：`meta.journal`（`type` ∈ wrong / missing / editor + 可选目录字段）经 `contactsend.clean_journal` 本机先校验，形状与服务端 `/v1/messages/init` 的 `journal` 同一份契约：`type` 不合法、`wrong` / `editor` 缺合规 `journal_id`、`missing` 没有搜索词 / 链接 / 附件、或与 `report_id` 同带 → 整封 `ContactError("journal_invalid", 422)`；其余单个可选字段不合规就丢掉（契约之外的键也丢）。`journal` 进幂等指纹；与 `report_id` 互斥；用户可以不写正文。本机记录 `kind="journal"`（保存期同 `letter`，365 天；本机主题按界面语言生成「期刊线索：<刊名>」）。`capability()["journal_tips"]` = 没设 `TAVOTTO_NO_JOURNAL_SYNC`，前端入口与期刊库入口常量 `JOURNAL_CATALOG_UI`、联系作者可用三者同时满足才出现。旧服务端 422 走既有 `client_error`。
+
 ## 反馈包回信（ADR 0118 / 0145 修订 2026-11-02；`diagsend` ↔ `contactinbox`）
 
 - `diagsend._init` 在联系作者启用（`_contact_enabled()`，函数内延迟 import `contactsend`）时带 `want_reply: True`；旧服务端 `bad_request` 拒收 → 去字段、同 `client_request_id` 重发一次、本会话不再带（`reply_refused`，顺序在 `error_summary` 的保险之前）。`SendSession.want_reply` 参与 `client_request_id` 复用判定。

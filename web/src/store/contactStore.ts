@@ -19,11 +19,14 @@ import {
   sendContact,
   startDiagSend,
   type ContactCapability,
+  type ContactJournalHead,
   type ContactMessage,
   type ContactStatus,
   type DiagSendPrepared,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { journalCatalogUi } from '@/lib/journalUi'
+import { journalTipKey, type JournalTipContext } from '@/lib/journalTip'
 
 /**
  * 「联系作者」的前端状态（ADR 0145）：能力镜像、对话框开关、**草稿**、发送阶段、「我的来信」与未读数。
@@ -48,6 +51,8 @@ export interface ContactDraft {
   attachDiag: boolean
   /** 诊断包的三项额外内容（与「发送问题反馈」确认框同一组）：默认全不勾；取消「附上诊断信息」即清零，不跨草稿记忆 */
   diagOptions: DetailOptions
+  /** 期刊线索的「原文链接」（ADR 0213）；普通来信不用它 */
+  url: string
 }
 
 export interface ContactFailure {
@@ -70,6 +75,7 @@ export const EMPTY_DRAFT: ContactDraft = {
   files: [],
   attachDiag: false,
   diagOptions: NO_DETAIL_OPTIONS,
+  url: '',
 }
 /** 勾选变化后等多久才重新备包：连点几个框只备一次（同 DiagnosticsSendDialog） */
 const DIAG_REFRESH_MS = 300
@@ -129,11 +135,17 @@ interface ContactState {
   /** 通知轨胶囊：用户 × 掉时的未读数；未读数再增加才会重新出现 */
   capsuleDismissedAt: number
   rememberedEmail: string | null
+  /** 此刻这封信是不是「期刊线索」（ADR 0213）；是就带着上下文，窗里多一个原文链接框、少诊断与主题 */
+  journalTip: JournalTipContext | null
+  /** 开期刊线索前被收起的普通来信草稿，线索窗结束后还给用户 */
+  draftStash: ContactDraft | null
 
   load: () => Promise<void>
   /** 周期性刷新本机未读数；返回停止函数 */
   watch: () => () => void
   setOpen: (open: boolean, view?: ContactView) => void
+  /** 从出处卡 / 选择器进来：同一个窗，带上线索上下文 */
+  openJournalTip: (ctx: JournalTipContext) => void
   setView: (view: ContactView) => void
   setDraft: (patch: Partial<ContactDraft>) => void
   addFiles: (files: File[]) => void
@@ -195,6 +207,20 @@ export const useContactStore = create<ContactState>((set, get) => {
       if (isStalePrepare(e) || diagToken !== mine) return
       set({ diag: { state: 'failed', prepared: null } })
     }
+  }
+
+  /** 结束期刊线索窗：线索上下文清掉，收起的普通草稿还回来（没有就是空白草稿）。 */
+  const endJournalTip = () => {
+    const stash = get().draftStash
+    set({
+      journalTip: null,
+      draftStash: null,
+      draft: stash ?? { ...EMPTY_DRAFT, replyEmail: get().rememberedEmail ?? '' },
+      phase: 'edit',
+      failure: null,
+      status: null,
+      formError: null,
+    })
   }
 
   /** 轮询引擎发信状态直到终态；`mine` 变了（取消 / 重发 / 关闭）就停。 */
@@ -291,6 +317,8 @@ export const useContactStore = create<ContactState>((set, get) => {
     unread: 0,
     capsuleDismissedAt: 0,
     rememberedEmail: readRemembered(),
+    journalTip: null,
+    draftStash: null,
 
     load: async () => {
       try {
@@ -320,9 +348,34 @@ export const useContactStore = create<ContactState>((set, get) => {
         set({ open: false, formError: null, fileError: null, freshIds: [] })
         return
       }
+      // 从普通入口（顶栏按钮）打开：线索窗到此结束，普通草稿还给用户
+      if (get().journalTip && view !== 'letters') endJournalTip()
       set({ open: true, view: view ?? 'write', formError: null })
       if (view === 'letters') void get().loadMessages()
       if (get().draft.attachDiag && get().diag.state === 'off') void prepareDiag()
+    },
+
+    openJournalTip: (ctx) => {
+      const { phase, journalTip } = get()
+      if (phase === 'sending' || phase === 'cancelling' || phase === 'diag') {
+        set({ open: true, view: 'write' })
+        return
+      }
+      if (phase === 'done') get().reset()
+      if (!journalTip || journalTipKey(journalTip) !== journalTipKey(ctx)) {
+        const cur = get().draft
+        const blank = !cur.body.trim() && !cur.subject.trim() && cur.files.length === 0 && !cur.attachDiag
+        // 手上有写到一半的普通来信：先收起来，线索窗结束再还
+        if (!journalTip && !blank) set({ draftStash: cur })
+        if (get().draft.attachDiag) discardDiag()
+        set({
+          draft: { ...EMPTY_DRAFT, replyEmail: get().rememberedEmail ?? '' },
+          phase: 'edit',
+          failure: null,
+          status: null,
+        })
+      }
+      set({ journalTip: ctx, open: true, view: 'write', formError: null })
     },
 
     setView: (view) => {
@@ -377,15 +430,25 @@ export const useContactStore = create<ContactState>((set, get) => {
       if (phase === 'sending' || phase === 'cancelling' || phase === 'diag') return
       const body = draft.body.trim()
       const email = draft.replyEmail.trim()
-      if (!body) return set({ formError: 'bodyRequired' })
+      const tip = get().journalTip
+      let journal: ContactJournalHead | undefined
+      if (tip) {
+        // 用户不写任何话、只点发送也算有效线索；但「没有这本刊」至少要有搜索词、链接、附件之一
+        const url = normalizeTipUrl(draft.url)
+        if (url === null) return set({ formError: 'urlInvalid' })
+        if (tip.type === 'missing' && !tip.query && !url && draft.files.length === 0) {
+          return set({ formError: 'journalNeedsClue' })
+        }
+        journal = tipHead(tip, url)
+      } else if (!body) return set({ formError: 'bodyRequired' })
       if (body.length > (capability?.body_max ?? 5000)) return set({ formError: 'bodyTooLong' })
       if (draft.subject.trim().length > (capability?.subject_max ?? 120)) return set({ formError: 'subjectTooLong' })
       if (email && !validEmail(email)) return set({ formError: 'emailInvalid' })
       if (!email && get().rememberedEmail) get().forgetEmail() // 清空邮箱框再发 = 忘记已记住的邮箱
       const mine = ++runToken
-      set({ formError: null, failure: null, status: null, phase: draft.attachDiag ? 'diag' : 'sending' })
+      set({ formError: null, failure: null, status: null, phase: draft.attachDiag && !tip ? 'diag' : 'sending' })
       let reportId: string | undefined
-      if (draft.attachDiag) {
+      if (draft.attachDiag && !tip) {
         const id = await sendDiag(mine)
         if (runToken !== mine) return
         if (!id) {
@@ -400,10 +463,11 @@ export const useContactStore = create<ContactState>((set, get) => {
         await sendContact(
           {
             locale: currentLocale(),
-            subject: draft.subject.trim(),
+            subject: tip ? '' : draft.subject.trim(),
             body,
             reply_email: email,
             ...(reportId ? { report_id: reportId } : {}),
+            ...(journal ? { journal } : {}),
           },
           draft.files,
         )
@@ -467,8 +531,11 @@ export const useContactStore = create<ContactState>((set, get) => {
     reset: () => {
       runToken++
       discardDiag()
+      const stash = get().draftStash
       set({
-        draft: { ...EMPTY_DRAFT, replyEmail: get().rememberedEmail ?? '' },
+        journalTip: null,
+        draftStash: null,
+        draft: stash ?? { ...EMPTY_DRAFT, replyEmail: get().rememberedEmail ?? '' },
         phase: 'edit',
         status: null,
         failure: null,
@@ -529,6 +596,44 @@ export const useContactStore = create<ContactState>((set, get) => {
     dismissCapsule: () => set((s) => ({ capsuleDismissedAt: s.unread })),
   }
 })
+
+/**
+ * 「原文链接」框的内容 → 线缆上的 url。空 = 不带（`''`）；没写协议就补 `https://`；
+ * 只收 https、不带账号密码（引擎同一条规则再校验）；不合规返回 null（界面说一句，不静默丢掉用户写的东西）。
+ */
+export function normalizeTipUrl(raw: string): string | null {
+  const v = raw.trim()
+  if (!v) return ''
+  const full = /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`
+  if (!/^https:\/\//i.test(full) || /\s/.test(full) || full.length > 2000) return null
+  try {
+    const u = new URL(full)
+    if (u.username || u.password || !u.hostname.includes('.')) return null
+    return full
+  } catch {
+    return null
+  }
+}
+
+/** 上下文 + 链接 → 线缆上的 `journal` 头（只带有值的键） */
+export function tipHead(tip: JournalTipContext, url: string): ContactJournalHead {
+  return {
+    type: tip.type,
+    ...(tip.journalId ? { journal_id: tip.journalId } : {}),
+    ...(tip.journalLabel ? { journal_label: tip.journalLabel } : {}),
+    ...(tip.query ? { query: tip.query } : {}),
+    ...(tip.ruleKey ? { rule_key: tip.ruleKey } : {}),
+    ...(tip.current ? { current: tip.current } : {}),
+    ...(tip.sourceId ? { source_id: tip.sourceId } : {}),
+    ...(url ? { url } : {}),
+    ...(tip.catalog ? { catalog: tip.catalog } : {}),
+  }
+}
+
+/** 期刊线索入口此刻出不出现（ADR 0213 §五）：期刊库入口开着、「联系作者」可用、引擎说没关期刊联网。三处入口共用这一个判断。 */
+export function journalTipsAvailable(capability: ContactCapability | null): boolean {
+  return journalCatalogUi() && capability?.journal_tips === true
+}
 
 /** 「复制内容」的文本：主题（有就带）+ 正文，别的都不带。 */
 export function draftText(d: ContactDraft): string {

@@ -9,6 +9,8 @@ import { SnapshotThumb } from './SnapshotThumb'
 import { isV2Source, journalFactSnapshotUrl, v2StrengthNote } from '@/lib/journalV2'
 import { Popover } from '../ui/Popover'
 import type { JournalFieldSource } from '@/lib/journals'
+import { tipForSource } from '@/lib/journalTip'
+import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
 import {
   adviceSentence,
   cardConclusion,
@@ -107,7 +109,17 @@ function SourceCoverage({ source }: { source: JournalFieldSource }) {
 }
 
 /** 多条证据时给每个链接一个带来源序号的可访问名。 */
-function SourceLinks({ source, name }: { source: JournalFieldSource; name?: string }) {
+function SourceLinks({
+  source,
+  name,
+  report,
+}: {
+  source: JournalFieldSource
+  name?: string
+  /** 这一条的「这条不对」要带的刊与规则键；缺刊 id（旧调用）或入口没开就不画 */
+  report?: { journal: string; journalId?: string; path: string }
+}) {
+  const canReport = useContactStore((s) => journalTipsAvailable(s.capability))
   return (
     <div className="flex shrink-0 items-center gap-3 pb-0.5 text-sm">
       <a
@@ -132,6 +144,19 @@ function SourceLinks({ source, name }: { source: JournalFieldSource; name?: stri
         >
           {jt('card.archive')}
         </a>
+      )}
+      {canReport && report?.journalId && (
+        <button
+          type="button"
+          data-journal-report
+          title={jt('card.reportTitle')}
+          onClick={() =>
+            useContactStore.getState().openJournalTip(tipForSource(report.journal, report.journalId, report.path, source))
+          }
+          className="rounded-xs text-ink-3 outline-none hover:text-ink-2 hover:underline focus-visible:focus-ring"
+        >
+          {jt('card.report')}
+        </button>
       )}
     </div>
   )
@@ -188,7 +213,11 @@ export function SourceCardBody({
                 <SourceMeta source={source} />
                 <SourceCoverage source={source} />
               </div>
-              <SourceLinks source={source} name={`${jt('card.aria')} ${index + 1}/${entries.length}`} />
+              <SourceLinks
+                source={source}
+                name={`${jt('card.aria')} ${index + 1}/${entries.length}`}
+                report={{ journal, journalId, path }}
+              />
             </div>
           )}
         </div>
@@ -199,7 +228,7 @@ export function SourceCardBody({
           {!multi && <SourceMeta source={entries[0][1]} />}
           {!multi && <SourceCoverage source={entries[0][1]} />}
         </div>
-        {!multi && <SourceLinks source={entries[0][1]} />}
+        {!multi && <SourceLinks source={entries[0][1]} report={{ journal, journalId, path: entries[0][0] }} />}
       </div>
       {journalId &&
         entries.map(([path, source]) =>

@@ -1161,11 +1161,14 @@ export default interface Resources {
         "disabled": "「联系作者」已被关闭。",
         "emailInvalid": "回信邮箱的格式不对，请检查，或者留空。",
         "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
+        "journalNeedsClue": "请贴个网址，或附上文件。",
+        "journal_invalid": "这条线索的内容不对，请关掉窗口重新点一次。",
         "meta_invalid": "内容格式不对，请重新打开窗口再试。",
         "report_invalid": "诊断包编号不对，请取消勾选「附上诊断信息」后再试。",
         "send_in_progress": "上一封还在发送中。",
         "subjectTooLong": "主题太长了。",
-        "subject_too_long": "主题太长了。"
+        "subject_too_long": "主题太长了。",
+        "urlInvalid": "原文链接要以 https:// 开头。"
       },
       "failedTitle": "没有发送出去",
       "failure": {
@@ -1198,6 +1201,14 @@ export default interface Resources {
         "empty": "空文件不能作为附件。",
         "total": "附件合计不能超过 {{size}}。"
       },
+      "journal": {
+        "about": "关于 {{what}}",
+        "aboutMissing": "找不到的期刊 · {{query}}",
+        "bodyLabel": "补充一句（选填）",
+        "bodyPlaceholder": "比如编辑部退稿信里写的是什么。不写也可以。",
+        "urlLabel": "原文链接（选填）",
+        "urlPlaceholder": "https://"
+      },
       "letters": "我的来信",
       "lettersAttachments": "附件：{{names}}",
       "lettersCheck": "检查回信",
@@ -1206,6 +1217,7 @@ export default interface Resources {
       "lettersEmpty": "还没有写过信。发出的信会记在这里，作者的回信也会出现在这里。",
       "lettersExpand": "展开",
       "lettersForget": "从本机删除",
+      "lettersJournalTag": "期刊线索",
       "lettersNoNote": "没有附言",
       "lettersNumber": "编号 {{id}}",
       "lettersReportNumber": "报告编号 {{id}}",
@@ -1483,7 +1495,9 @@ export default interface Resources {
           "unknown": "来源范围和适用性未核实。"
         },
         "fromV2": "新版",
-        "open": "打开原网页"
+        "open": "打开原网页",
+        "report": "这条不对",
+        "reportTitle": "告诉作者这条和原文对不上，附上链接或截图就行。"
       },
       "cleared": "已不按期刊检查",
       "confirm": {
@@ -1564,6 +1578,7 @@ export default interface Resources {
       "needsNetwork": "这本期刊需要联网下载",
       "no": "否",
       "noJournal": "不按期刊",
+      "noJournalListed": "没有这本刊",
       "noLimit": "不限",
       "noMatch": "没有匹配的期刊",
       "none": "没有可选的期刊",

@@ -41,8 +41,8 @@ FILE_NAME = "contact_messages.json"
 SCHEMA_VERSION = 1
 RETENTION_DAYS = 365
 UNDELIVERED_KEEP_S = 2 * 3600
-#: 记录种类：普通来信 / 随反馈包开的关联来信
-KINDS = ("letter", "report")
+#: 记录种类：普通来信 / 随反馈包开的关联来信 / 期刊线索（ADR 0213，保存期同普通来信）
+KINDS = ("letter", "report", "journal")
 #: 反馈包的关联来信若一直没有回信，本机只留这么多天（服务端反馈包同期删除）
 REPORT_NO_REPLY_DAYS = 30
 #: 单封信最多缓存多少条回信 / 每条回信正文多长（服务端回信是作者手写的，不会大；这里只是防御性封顶）
@@ -186,7 +186,7 @@ def _normalize(rec: dict) -> dict:
     ids = {r["id"] for r in replies}
     read = [x for x in (rec.get("read") or []) if isinstance(x, str) and x in ids]
     state = rec.get("state")
-    kind = "report" if rec.get("kind") == "report" else "letter"
+    kind = rec.get("kind") if rec.get("kind") in KINDS else "letter"
     return {
         "message_id": rec["message_id"],
         "reply_token": rec["reply_token"],
