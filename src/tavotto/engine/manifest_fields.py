@@ -119,6 +119,43 @@ def axis_grid_fields(values: dict) -> list[dict]:
     ]
 
 
+AXIS_FRAME_SIDES = ("top", "right", "bottom", "left")
+
+
+def axis_frame_fields(values: dict) -> list[dict]:
+    """All-side and per-side edit affordances for a Cartesian frame."""
+    group = "网格与边框"
+    fields = [
+        {"prop": prop, "type": "bool", "value": bool(values[prop]), "group": group}
+        for prop in (f"spine_{side}" for side in AXIS_FRAME_SIDES)
+    ]
+    for prefix, section in [
+        ("spine", group),
+        *((f"spine_{side}", "边框（逐条）") for side in AXIS_FRAME_SIDES),
+    ]:
+        fields.extend(
+            (
+                {
+                    "prop": f"{prefix}_color",
+                    "type": "color",
+                    "value": values[f"{prefix}_color"],
+                    "group": section,
+                },
+                {
+                    "prop": f"{prefix}_linewidth",
+                    "type": "number",
+                    "value": round(float(values[f"{prefix}_linewidth"]), 2),
+                    "min": 0.1,
+                    "max": 10,
+                    "step": 0.1,
+                    "unit": "pt",
+                    "group": section,
+                },
+            )
+        )
+    return fields
+
+
 def errorbar_stroke_fields(color: str, width: float) -> list[dict]:
     """Stroke fields whose values are independent of the native cap geometry."""
     return [

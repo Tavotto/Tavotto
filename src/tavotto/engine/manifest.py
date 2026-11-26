@@ -88,6 +88,8 @@ from legendmodel import (
     legend_proxy_names,
 )
 from manifest_fields import (
+    AXIS_FRAME_SIDES,
+    axis_frame_fields,
     axis_grid_fields,
     axis_invert_field,
     axis_limits_field,
@@ -4457,71 +4459,24 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 "grid_alpha": _grid_prop(lambda g: g.get_alpha(), None)(ax) or 1.0,
             }
         ),
-        {
-            "prop": "spine_top",
-            "type": "bool",
-            "value": bool(ax.spines["top"].get_visible()) if "top" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_right",
-            "type": "bool",
-            "value": bool(ax.spines["right"].get_visible()) if "right" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_bottom",
-            "type": "bool",
-            "value": bool(ax.spines["bottom"].get_visible()) if "bottom" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_left",
-            "type": "bool",
-            "value": bool(ax.spines["left"].get_visible()) if "left" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        # 「全部」这一档：四条边（含色条轴的 outline）统一改
-        {
-            "prop": "spine_color",
-            "type": "color",
-            "value": to_hex(spine_all_color(ax)),
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_linewidth",
-            "type": "number",
-            "value": round(spine_all_width(ax), 2),
-            "min": 0.1,
-            "max": 10,
-            "step": 0.1,
-            "unit": "pt",
-            "group": "网格与边框",
-        },
-        # 逐条覆盖（只画左下两条粗边框是论文图的常见做法）。没表态的落回
-        # 「全部」，「全部」也没表态就用脚本原样——优先级见 apply_spine_model
-        *[
-            f
-            for side in ("top", "right", "bottom", "left")
-            for f in (
-                {
-                    "prop": f"spine_{side}_color",
-                    "type": "color",
-                    "value": to_hex(spine_side_color(ax, side)),
-                    "group": "边框（逐条）",
+        *axis_frame_fields(
+            {
+                "spine_color": to_hex(spine_all_color(ax)),
+                "spine_linewidth": spine_all_width(ax),
+                **{
+                    f"spine_{side}": ax.spines[side].get_visible() if side in ax.spines else True
+                    for side in AXIS_FRAME_SIDES
                 },
-                {
-                    "prop": f"spine_{side}_linewidth",
-                    "type": "number",
-                    "value": round(spine_side_width(ax, side), 2),
-                    "min": 0.1,
-                    "max": 10,
-                    "step": 0.1,
-                    "unit": "pt",
-                    "group": "边框（逐条）",
+                **{
+                    f"spine_{side}_color": to_hex(spine_side_color(ax, side))
+                    for side in AXIS_FRAME_SIDES
                 },
-            )
-        ],
+                **{
+                    f"spine_{side}_linewidth": spine_side_width(ax, side)
+                    for side in AXIS_FRAME_SIDES
+                },
+            }
+        ),
         {
             "prop": "facecolor",
             "type": "color",

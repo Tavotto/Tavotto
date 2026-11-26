@@ -86,8 +86,14 @@ AXIS_GRID = {
     "grid_linewidth": 0.85,
     "grid_alpha": 0.65,
 }
-R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log", "invert_x": True, **AXIS_GRID}
-MPL_AXIS_VIEW = {"xlim": [-0.25, 2.25], "ylim": [-0.3, 5.5], **AXIS_GRID}
+AXIS_FRAME = {
+    "spine_right": True,
+    "spine_left": False,
+    "spine_right_color": "#50278B",
+    "spine_right_linewidth": 2.1,
+}
+R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log", "invert_x": True, **AXIS_GRID, **AXIS_FRAME}
+MPL_AXIS_VIEW = {"xlim": [-0.25, 2.25], "ylim": [-0.3, 5.5], **AXIS_GRID, **AXIS_FRAME}
 
 
 def _series_patches(baseline, role, paint):
@@ -273,6 +279,16 @@ def _pdf_pixels(path):
         assert all(p["rect"].width < 0.01 and p["rect"].height > 10 for p in grid)
         assert all(p["stroke_opacity"] == pytest.approx(0.65, abs=0.01) for p in grid)
         assert all(p["dashes"] != "[] 0" for p in grid)
+        edge_color = tuple(n / 255 for n in bytes.fromhex(AXIS_FRAME["spine_right_color"][1:]))
+        edges = sorted(
+            (p for p in drawn if p["color"] == pytest.approx(edge_color, abs=0.003)),
+            key=lambda p: p["rect"].x0,
+        )
+        assert len(edges) == 2
+        assert edges[0]["rect"].x0 < page.rect.width / 2 < edges[1]["rect"].x0
+        assert all(p["rect"].width < 0.01 and p["rect"].height > 10 for p in edges)
+        assert edges[0]["width"] == pytest.approx(2.1, abs=0.02)
+        assert edges[1]["width"] == pytest.approx(2.1 * R_PANEL_SCALE, abs=0.02)
         for endpoint in (low, high):
             matches = [path for path in drawn if path["fill"] == pytest.approx(endpoint, abs=0.003)]
             assert any(path["rect"].width > 8 for path in matches), matches  # Guide strip

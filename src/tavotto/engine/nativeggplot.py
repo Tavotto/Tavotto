@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
 from .manifest_fields import (
+    axis_frame_fields,
     axis_grid_fields,
     axis_invert_field,
     axis_limits_field,
@@ -262,10 +263,13 @@ class GgplotTarget:
                 if field["prop"] in axes["edited"]:
                     field["value_original"] = source
                 fields.append(field)
-        if (grid := axes.get("grid")) is not None:
-            edited = grid["edited"] or {}
-            actual = axis_grid_fields(grid["original"] | edited)
-            original_values = {f["prop"]: f["value"] for f in axis_grid_fields(grid["original"])}
+        for name, field_factory in (("grid", axis_grid_fields), ("frame", axis_frame_fields)):
+            group = axes.get(name)
+            if group is None:
+                continue
+            edited = group["edited"] or {}
+            actual = field_factory(group.get("current", group["original"] | edited))
+            original_values = {f["prop"]: f["value"] for f in field_factory(group["original"])}
             for field in actual:
                 prop = field["prop"]
                 if prop in edited:

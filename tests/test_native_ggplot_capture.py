@@ -68,7 +68,7 @@ adapter <- new.env(parent = baseenv())
 adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
 native <- dirname(adapter_file)
 parts <- c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R",
-           "ggplot_ribbons.R", "ggplot_axes.R")
+           "ggplot_ribbons.R", "ggplot_axes.R", "ggplot_frame.R")
 for (part in parts) sys.source(file.path(native, part), envir = adapter)
 """
 
@@ -1114,6 +1114,56 @@ stopifnot(flat_axes$native_axes$current$x$mode == "log")
 """
 
 
+FRAME_PROBE = r"""
+if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+frame <- c(216, 144)
+plot <- ggplot2::ggplot(data.frame(x = c(1, 2, 4), y = c(2, 4, 3)), ggplot2::aes(x, y)) +
+  ggplot2::geom_line(colour = "#2021A7")
+state <- adapter$capture_ggplot(plot + ggplot2::theme_classic(), frame)
+target <- state$state$axes_target
+base <- adapter$ggplot_frame_value(target$frame, list())
+stopifnot(base$spine_bottom, base$spine_left, !base$spine_top, !base$spine_right)
+
+patch <- list(axes_0 = list(spine_top = TRUE, spine_left = FALSE, spine_color = "#708019",
+                            spine_bottom_linewidth = 2, spine_top_color = "#164623"))
+scene <- adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  adapter$ggplot_table_for(state$state, patch)$table
+})$value
+drawn <- scene$grobs[[target$slot]]
+top <- drawn$children[[grep("^panel.border", drawn$childrenOrder)]]$children[["tavotto.frame.top"]]
+bottom <- scene$grobs[[which(scene$layout$name == "axis-b")]]$children[[1L]]
+left <- scene$grobs[[which(scene$layout$name == "axis-l")]]$children[[1L]]
+stopifnot(identical(toupper(top$gp$col), "#164623FF"),
+          identical(toupper(bottom$gp$col), "#708019FF"),
+          isTRUE(all.equal(bottom$gp$lwd * 72 / 96, 2)),
+          inherits(left, "null"),
+          identical(adapter$render_ggplot(state$state), state$svg))
+with_grid <- patch
+with_grid$axes_0 <- c(with_grid$axes_0, list(grid_x = TRUE, grid_color = "#A51545",
+                                            xlim = c(1, 4), invert_x = TRUE))
+svg <- adapter$render_ggplot(state$state, with_grid)
+stopifnot(all(vapply(c("#708019", "#164623", "#A51545", "#2021A7"), grepl, logical(1L),
+                  x = svg, fixed = TRUE)),
+          identical(adapter$render_ggplot(state$state), state$svg))
+
+boxed <- adapter$capture_ggplot(plot + ggplot2::theme_bw(), frame)
+packed <- adapter$ggplot_frame_value(boxed$state$axes_target$frame, list())
+stopifnot(all(unlist(packed[c("spine_top", "spine_right", "spine_bottom", "spine_left")])))
+box_edit <- list(axes_0 = list(spine_right = FALSE, spine_top_color = "#203181", spine_linewidth = 2.1,
+                              spine_top_linewidth = 3.2))
+box <- Filter(function(e) e$gid == "axes_0", adapter$ggplot_manifest(boxed$state, "box", box_edit)$elements)[[1L]]
+stopifnot(box$native_axes$frame$current$spine_color == packed$spine_color,
+          box$native_axes$frame$current$spine_left_linewidth == 2.1,
+          box$native_axes$frame$current$spine_top_linewidth == 3.2,
+          !box$native_axes$frame$current$spine_right)
+for (bad in list(list(spine_top = 1), list(spine_left_linewidth = 0), list(spine_color = "bogus"))) {
+  stopifnot(inherits(try(adapter$render_ggplot(boxed$state, list(axes_0 = bad)), silent = TRUE), "try-error"))
+}
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -1158,6 +1208,10 @@ def test_range_and_grouped_line_edits_preserve_geometry_and_sync_the_legend(tmp_
 
 def test_axis_windows_and_transforms_reproject_captured_data_without_recalculating(tmp_path):
     _assert_r_probe(tmp_path, AXES_PROBE)
+
+
+def test_ggplot_frame_uses_native_borders_and_axis_strokes(tmp_path):
+    _assert_r_probe(tmp_path, FRAME_PROBE)
 
 
 def test_owned_r_uses_the_native_registry_transport_and_lease(tmp_path):
@@ -1228,8 +1282,8 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         manifest = baseline["manifest"]
         assert manifest["size_mm"] == pytest.approx([152.4, 101.6])
         elements = {element["gid"]: element for element in manifest["elements"]}
-        grid_fields = elements["axes_0"]["editable"]
-        assert {field["prop"] for field in grid_fields} == {
+        axes_props = {field["prop"] for field in elements["axes_0"]["editable"]}
+        assert {prop for prop in axes_props if prop.startswith("grid_")} == {
             "grid_x",
             "grid_y",
             "grid_color",

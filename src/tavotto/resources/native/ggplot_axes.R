@@ -198,6 +198,11 @@ ggplot_axes_element <- function(target, current, bbox, edits) {
               edited = as.list(names(edits)),
               grid = if (!is.null(target$grid)) {
                 list(original = target$grid$original, edited = edits[intersect(names(edits), ggplot_grid_keys)])
+              },
+              frame = if (!is.null(target$frame)) {
+                edit <- edits[intersect(names(edits), ggplot_frame_keys)]
+                list(original = ggplot_frame_value(target$frame, list()),
+                     current = ggplot_frame_value(target$frame, edit), edited = edit)
               })))
 }
 
@@ -237,11 +242,23 @@ ggplot_grid_keys <- c("grid_x", "grid_y", "grid_color", "grid_linestyle", "grid_
 ggplot_grid_cells <- c(grid_x = "panel.grid.major.x", grid_y = "panel.grid.major.y",
                        minor_x = "panel.grid.minor.x", minor_y = "panel.grid.minor.y")
 
-ggplot_grid_target <- function(built, table, target) {
+ggplot_cartesian_panel_slot <- function(built, table) {
   layout <- built$layout
   slot <- which(table$layout$name == "panel")
-  if (length(slot) != 1L || length(layout$panel_params) != 1L ||
-      !identical(class(layout$coord)[[1L]], "CoordCartesian")) return(target)
+  if (length(slot) == 1L && length(layout$panel_params) == 1L &&
+      identical(class(layout$coord)[[1L]], "CoordCartesian")) slot
+}
+
+ggplot_panel_decoration <- function(built, target, slot) {
+  if (!is.null(target)) return(target)
+  # Keep the identity of decoration-only targets already saved by grid editing.
+  list(slot = slot, axes = list(),
+       context = rlang::hash(list("grid", built$data, built$layout$coord$limits)))
+}
+
+ggplot_grid_target <- function(built, table, target) {
+  slot <- ggplot_cartesian_panel_slot(built, table)
+  if (is.null(slot)) return(target)
   theme <- built$plot$theme
   lines <- lapply(ggplot_grid_cells, ggplot2::calc_element, theme = theme)
   if (!all(vapply(lines, function(line) {
@@ -268,12 +285,7 @@ ggplot_grid_target <- function(built, table, target) {
   if (is.numeric(linetype) && linetype %in% 0:6) linetype <- native_types[[linetype + 1L]]
   name <- names(ggplot_line_types)[match(linetype, ggplot_line_types)]
   if (is.na(name)) name <- as.character(linetype)
-  if (is.null(target)) {
-    # Grid styles work with discrete/custom scales too. Bind them to this panel
-    # without offering a numerical range editor for its scales.
-    target <- list(slot = slot, axes = list(),
-                   context = rlang::hash(list("grid", built$data, layout$coord$limits)))
-  }
+  target <- ggplot_panel_decoration(built, target, slot)
   target$grid <- list(lines = lines, paints = paints, visible = visible, original = list(
     grid_x = visible[[1L]], grid_y = visible[[2L]], grid_color = pigment$rgb,
     grid_linestyle = name, grid_linewidth = line$linewidth * ggplot2::.pt * ggplot_lwd_pt,

@@ -868,6 +868,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     line_geometry <- measure_ggplot_lines(table, line_targets, frame_pt)
     line_targets <- line_targets[names(line_geometry)]
     axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
+    axes_target <- ggplot_frame_target(built, table, axes_target)
     axes_bbox <- measure_ggplot_axes(table, axes_target, frame_pt)
     rebuild_guides <- !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
       any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L)))
@@ -1064,8 +1065,10 @@ ggplot_table_for <- function(state, edits) {
   axes <- NULL
   axes_edits <- edits[[ggplot_axes_gid]]
   grid_edits <- axes_edits[intersect(names(axes_edits), ggplot_grid_keys)]
-  axis_changes <- ggplot_axis_edits(state$axes_target,
-                                  axes_edits[setdiff(names(axes_edits), names(grid_edits))])
+  frame_edits <- axes_edits[intersect(names(axes_edits), ggplot_frame_keys)]
+  if (length(frame_edits)) ggplot_validate_frame_edits(state$axes_target$frame, frame_edits)
+  axis_changes <- ggplot_axis_edits(
+    state$axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits)))])
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
   axis_sizes <- Filter(Negate(is.null), lapply(names(edits), function(gid) {
@@ -1157,6 +1160,9 @@ ggplot_table_for <- function(state, edits) {
     if (resize) {
       table <- resize_ggplot_title_cell(table, target, original)
     }
+  }
+  if (length(frame_edits)) {
+    table <- ggplot_frame_edit(table, state$axes_target$slot, state$axes_target$frame$fallback, frame_edits)
   }
   c(list(table = table, text = text_targets, legends = legend_targets, stops = stops, axes = axes),
     layer_targets)
