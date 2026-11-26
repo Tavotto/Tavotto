@@ -6,6 +6,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { Button } from '../ui/Button'
 import { EmptyLine } from '../ui/EmptyLine'
+import { SUBTLE_LINK_CLASS } from '../ui/subtleLink'
 import { Popover } from '../ui/Popover'
 import { SearchInput } from '../ui/SearchInput'
 import { listRowClass } from '../ui/listRow'
@@ -252,6 +253,8 @@ export function JournalPicker({
                     canTip
                       ? {
                           label: jt('noJournalListed'),
+                          title: jt('noJournalListedTitle'),
+                          className: SUBTLE_LINK_CLASS,
                           onClick: () => useContactStore.getState().openJournalTip(tipForMissing(query)),
                         }
                       : undefined

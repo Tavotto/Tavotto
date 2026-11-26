@@ -403,7 +403,7 @@ export function ContactDialog() {
           rows={6}
           maxRows={12}
           maxLength={bodyMax}
-          placeholder={cs(tip ? 'journal.bodyPlaceholder' : 'bodyPlaceholder')}
+          placeholder={cs(tip ? (tip.type === 'missing' ? 'journal.bodyPlaceholderMissing' : 'journal.bodyPlaceholder') : 'bodyPlaceholder')}
           disabled={!editable}
           onChange={(e) => s.setDraft({ body: e.target.value })}
           data-contact-text

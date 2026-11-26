@@ -12,7 +12,7 @@ export function EmptyLine({
   ...rest
 }: {
   children: ReactNode
-  action?: { label: string; onClick: () => void }
+  action?: { label: string; onClick: () => void; title?: string; className?: string }
   title?: string
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
@@ -24,7 +24,8 @@ export function EmptyLine({
           <button
             type="button"
             onClick={action.onClick}
-            className="-mx-1 rounded-sm px-1 text-ink-2 underline underline-offset-2 outline-none hover:text-ink focus-visible:focus-ring"
+            title={action.title}
+            className={action.className ?? '-mx-1 rounded-sm px-1 text-ink-2 underline underline-offset-2 outline-none hover:text-ink focus-visible:focus-ring'}
           >
             {action.label}
           </button>

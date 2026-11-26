@@ -8,6 +8,7 @@ import { Button, IconButton } from '../ui/Button'
 import { SnapshotThumb } from './SnapshotThumb'
 import { isV2Source, journalFactSnapshotUrl, v2StrengthNote } from '@/lib/journalV2'
 import { Popover } from '../ui/Popover'
+import { SUBTLE_LINK_CLASS } from '../ui/subtleLink'
 import type { JournalFieldSource } from '@/lib/journals'
 import { tipForSource } from '@/lib/journalTip'
 import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
@@ -153,7 +154,7 @@ function SourceLinks({
           onClick={() =>
             useContactStore.getState().openJournalTip(tipForSource(report.journal, report.journalId, report.path, source))
           }
-          className="rounded-xs text-ink-3 outline-none hover:text-ink-2 hover:underline focus-visible:focus-ring"
+          className={SUBTLE_LINK_CLASS}
         >
           {jt('card.report')}
         </button>

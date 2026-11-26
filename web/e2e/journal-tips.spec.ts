@@ -140,7 +140,7 @@ test(
       const empty = page.locator('[data-journal-empty]')
       await expect(empty).toContainText('没有匹配的期刊')
       await shoot(page, 'picker-empty')
-      await empty.getByRole('button', { name: '没有这本刊' }).click()
+      await empty.getByRole('button', { name: '告诉作者加上' }).click()
       await expect(dialog).toBeVisible()
       await expect(dialog.locator('[data-contact-journal-about]')).toContainText('zzzz no such journal')
       await shoot(page, 'dialog-missing')
