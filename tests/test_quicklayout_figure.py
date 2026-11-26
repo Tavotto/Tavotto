@@ -76,6 +76,19 @@ def stray_labels():
     fig.text(0.02, 0.95, "(a)"); fig.text(0.5, 0.95, "(c)")
     return fig
 
+def roomy_stray_axes():
+    # 轴里画的「A」「C」：不是从 a 起连续的序列，认不出 → 画布上加 (a)(b)，脚本的字不挪
+    fig = roomy()
+    for ax, t in zip(fig.axes, "AC"):
+        ax.text(-0.1, 1.04, t, transform=ax.transAxes)
+    return fig
+
+def roomy_stray_fig():
+    # 图级的一个孤零零「(b)」，正落在画布标签要放的地方：不许叠字 → 整份作废
+    fig = roomy()
+    fig.text(0.1, 0.78, "(b)")
+    return fig
+
 def roomy():
     # 两个轴、四周留足了地方：假求解器原样摆回去也能过验收（用来测事务的管线，不测求解）
     fig = plt.figure(figsize=(80 / 25.4, 50 / 25.4))
@@ -119,7 +132,7 @@ else:
         cold = render_of(globals()[name]())(out["panels"][0]["patches"])
         hot = {e["gid"]: e.get("bbox") for e in p.manifest["elements"]}
         same = all(hot.get(e["gid"]) == e.get("bbox") for e in cold["manifest"]["elements"])
-        print(json.dumps(jsonable({"ok": True, "out": out, "replay_same": same, "warnings": cold["warnings"]})))
+        print(json.dumps(jsonable({"ok": True, "out": out, "replay_same": same, "warnings": cold["warnings"], "manifest": p.manifest})))
     except ql.QuickLayoutError as e:
         print(json.dumps({"ok": False, "code": e.code}))
 """
@@ -205,9 +218,12 @@ def test_inset_and_locked_child_axes_follow_their_host(manifests):
 
 
 @needs_worker
-def test_labels_that_do_not_form_a_sequence_are_left_alone(manifests):
+def test_unreadable_labels_fall_back_to_canvas_labels_and_stay_put(manifests):
+    # 维护者 2026-11-26 定：认不出就照 §二 在画布上加；疑似标签原地不动，图级的当障碍物（不当共享轴标题去挪）
     a = quicklayoutfig.analyze(manifests["stray_labels"])
-    assert a.label_mode == "none" and not a.labels
+    assert a.label_mode == "canvas" and not a.labels
+    assert not a.shared
+    assert {g for g, _r in a.obstacles} == {"fig.texts_0", "fig.texts_1"}
 
 
 @needs_worker
@@ -389,3 +405,30 @@ def test_failed_checks_void_the_plan():
     # 假求解器原样摆回去：实例图的 B0 毛病一个都没修，验收不过 → 整份作废，不回方案
     got = _run("plan", IDENTITY_SOLVER, "sample")
     assert got["ok"] is False and got["code"] in ("not_converged", "figure_obstacle")
+
+
+@needs_worker
+def test_unreadable_axes_labels_get_canvas_labels_without_moving_or_overlapping():
+    got = _run("plan", IDENTITY_SOLVER, "roomy_stray_axes")
+    assert got["ok"], got
+    out = got["out"]
+    assert len(out["labels"]) == 2  # 画布上加了 (a)(b)
+    patches = out["panels"][0]["patches"]
+    assert not any(p["prop"] == "pos_frac" for p in patches)  # 脚本画的「A」「C」一个都没挪
+    # 新加的画布标签不压脚本的字（与验收同一口径：8 pt 标签框）
+    w, h = out["panels"][0]["box"][2:]
+    lw, lh = 8 * quicklayout.PT_MM * 0.6 * 3, 8 * quicklayout.PT_MM * 1.2
+    texts = [e for e in got["manifest"]["elements"] if e["gid"].endswith(".texts_0")]
+    assert len(texts) == 2
+    for lab in out["labels"]:
+        r = [lab["x"], lab["y"], lab["x"] + lw, lab["y"] + lh]
+        for e in texts:
+            x, y, bw, bh = e["bbox"]
+            t = [x * w, y * h, (x + bw) * w, (y + bh) * h]
+            assert not (r[0] < t[2] and t[0] < r[2] and r[1] < t[3] and t[1] < r[3])
+
+
+@needs_worker
+def test_canvas_label_landing_on_a_suspected_label_voids_the_plan():
+    got = _run("plan", IDENTITY_SOLVER, "roomy_stray_fig")
+    assert got == {"ok": False, "code": "figure_obstacle"}

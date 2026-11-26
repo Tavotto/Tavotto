@@ -183,10 +183,10 @@ describe('收集', () => {
     seed(panel('p1'))
     quickLayoutPlan.mockResolvedValue({ ok: false, code: 'pro_outdated' })
     expect(await runQuickLayout('double', 3)).toBe('failed')
-    expect(statusText()).toBe('需要更新 Pro 组件')
+    expect(statusText()).toBe('先更新一下 Pro')
     quickLayoutPlan.mockResolvedValue({ ok: false, code: 'figure_obstacle' })
     expect(await runQuickLayout('double', 3)).toBe('failed')
-    expect(statusText()).toBe('这张图里有放不开的元素')
+    expect(statusText()).toBe('有元素放不下，这次没排')
   })
 })
 
@@ -391,7 +391,7 @@ describe('应用', () => {
     expect(await runQuickLayout('single', 3)).toBe('applied')
     const sub = formatMessage(useUiStore.getState().statusSubline)
     expect(sub).toBe(
-      `这次排的是图里面的子图；已按「${currentSpec().label}」改了字号；还有几处字号没修到规范，可在「问题」里看`,
+      `这次排的是图内子图；已按「${currentSpec().label}」改了字号；有几处字号还不合规范，去「问题」看看`,
     )
     expect(texts().map((l) => l.text)).toEqual(['(a)', '(b)'])
     expect(s().doc.quickLayout).toBeUndefined()

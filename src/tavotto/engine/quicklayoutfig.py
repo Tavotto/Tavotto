@@ -133,8 +133,8 @@ class Analysis:
     labels: list[Label]
     #: 认不出归属的图级元素：原地不动（按图幅比例跟着走），排完与谁重叠就整份作废
     obstacles: list[tuple[str, list[float]]]
-    #: 「标签：脚本里有 / 没有 / 有但认不全」——认不全时既不挪、也不另加画布标签
-    label_mode: str  # move / canvas / none
+    #: 标签：认得出脚本画的就挪（move），否则在画布上加（canvas，维护者 2026-11-26 定）
+    label_mode: str  # move（挪脚本画的）/ canvas（在画布上加：图里没有或认不出）
     #: 各主轴属于哪组（组 = 一个子图标签管的那几个轴；没有标签时每个轴自成一组）
     group_of: dict[str, str] = field(default_factory=dict)
     #: 一张图里有锁定的主轴（子轴的落位归父级 locator 管）：不排
@@ -234,6 +234,37 @@ def _label_candidates(elements: list[dict], size) -> list[tuple[dict, int, Rect]
     return out
 
 
+def _assign_labels(cands: list[tuple[dict, int, Rect]], plots: dict[str, Rect]) -> list[Label]:
+    """认得出的脚本标签：字母从 a 起连续、至少两个，每个都在某个主轴的左上方、各管各的轴。任何一条不满足 = 空（认不出）。"""
+    letters = sorted(c[1] for c in cands)
+    if len(cands) < 2 or letters != list(range(len(cands))):
+        return []
+    out: list[Label] = []
+    for e, letter, r in cands:
+        # 归属：标签中心在它左上方的主轴里，离轴左上角最近的那个
+        cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
+        best = None
+        for gid, p in plots.items():
+            if cx <= (p[0] + p[2]) / 2 and cy <= (p[1] + p[3]) / 2:
+                d = math.hypot(p[0] - cx, p[1] - cy)
+                if best is None or d < best[0]:
+                    best = (d, gid)
+        if best is None:
+            return []
+        out.append(
+            Label(
+                gid=e["gid"],
+                rect=r,
+                anchor=(float(e["anchor"][0]), float(e["anchor"][1])),
+                letter=letter,
+                group=best[1],
+            )
+        )
+    if len({lab.group for lab in out}) != len(out):
+        return []  # 两个标签认到同一个轴
+    return out
+
+
 def analyze(manifest: dict) -> Analysis:
     size_raw = manifest.get("size_mm")
     if not (isinstance(size_raw, list) and len(size_raw) == 2 and _finite(*size_raw)):
@@ -250,22 +281,22 @@ def analyze(manifest: dict) -> Analysis:
         if e.get("role") == "axes" and not e.get("is_colorbar") and e["gid"] not in main_of
     }
 
-    # 子图标签：一个字母、可拖（pos_frac）；字母要从 a 起连续、不重复、至少两个，否则认不全（不挪也不加）
+    # 子图标签：一个字母、可拖（pos_frac）；字母从 a 起连续、不重复、至少两个，且每个都认得出管哪个轴，才挪它们。
+    # 认不出（或图里根本没有）就照 §二 的约定在画布上加（维护者 2026-11-26 定）；认不出的那些「疑似标签」原地不动，
+    # 图级的当障碍物（新加的画布标签与它们重叠 = 验收不过、整份作废），轴里的跟着它的轴走、计进那个轴的文字外沿
     cands = _label_candidates(elements, size)
-    letters = sorted(c[1] for c in cands)
-    if not cands:
-        label_mode = "canvas"
-    elif len(cands) >= 2 and letters == list(range(len(cands))):
-        label_mode = "move"
-    else:
-        label_mode = "none"
-    label_gids = {c[0]["gid"] for c in cands} if label_mode == "move" else set()
+    plots = {e["gid"]: _rect(e["bbox"], size) for e in main_els}
+    labels = _assign_labels(cands, plots)
+    label_mode = "move" if labels else "canvas"
+    label_gids = {lab.gid for lab in labels}
+    suspects = set() if labels else {c[0]["gid"] for c in cands}
 
     inks: dict[str, list[Rect]] = {
         g: [_rect(e["bbox"], size)] for g in main_gids for e in main_els if e["gid"] == g
     }
     cbar_inks: dict[str, list[Rect]] = {g: [_rect(e["bbox"], size)] for g, e in cbar_axes.items()}
     figure_level: list[dict] = []
+    suspect_obstacles: list[tuple[str, Rect]] = []
     for e in elements:
         gid = e["gid"]
         role = e.get("role")
@@ -274,7 +305,9 @@ def analyze(manifest: dict) -> Analysis:
             continue
         own = _owner(gid)
         if own is None:
-            if role in ("text", "legend") and gid.startswith("fig"):
+            if gid in suspects:
+                suspect_obstacles.append((gid, r))
+            elif role in ("text", "legend") and gid.startswith("fig"):
                 figure_level.append(e)
             continue
         if role not in INK_ROLES:
@@ -299,7 +332,7 @@ def analyze(manifest: dict) -> Analysis:
     by_gid = {m.gid: m for m in mains}
 
     colorbars: list[Colorbar] = []
-    obstacles: list[tuple[str, list[float]]] = []
+    obstacles: list[tuple[str, list[float]]] = list(suspect_obstacles)
     for e in elements:
         if e.get("role") != "colorbar":
             continue
@@ -322,34 +355,6 @@ def analyze(manifest: dict) -> Analysis:
             )
         )
     del inset_gids  # inset 跟着宿主的 position 走（落位归父级），不单独处理
-
-    labels: list[Label] = []
-    if label_mode == "move":
-        for e, letter, r in cands:
-            # 归属：标签中心在它左上方的主轴里，离轴左上角最近的那个
-            cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
-            best = None
-            for m in mains:
-                mx, my = (m.plot[0] + m.plot[2]) / 2, (m.plot[1] + m.plot[3]) / 2
-                if cx <= mx and cy <= my:
-                    d = math.hypot(m.plot[0] - cx, m.plot[1] - cy)
-                    if best is None or d < best[0]:
-                        best = (d, m.gid)
-            if best is None:
-                # 认不出它管哪个轴：整套标签都不挪（也不另加），免得挪错
-                label_mode, labels = "none", []
-                break
-            labels.append(
-                Label(
-                    gid=e["gid"],
-                    rect=r,
-                    anchor=(float(e["anchor"][0]), float(e["anchor"][1])),
-                    letter=letter,
-                    group=best[1],
-                )
-            )
-        if label_mode == "move" and len({lab.group for lab in labels}) != len(labels):
-            label_mode, labels = "none", []  # 两个标签认到同一个轴：认不全
 
     group_of: dict[str, str] = {m.gid: m.gid for m in mains}
     if labels:
