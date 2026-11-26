@@ -9,7 +9,7 @@ Codex + 本插件的技能: 写 figures/fig_removal_rate.py → 跑 → Fig1_rem
   ↓
 Codex 调 tavotto_open_figure: 在对话里开出一块交互画布
   ↓
-用户: 拖图例、改字号线宽、调刻度 → 跑出版规范预检 → 导出真矢量 PDF
+用户: 拖图例、改字号线宽、调刻度 → 跑投稿前检查 → 导出真矢量 PDF
   ↓（需要拼版、加标注、多图排版时）
 tavotto open: 交给 Tavotto 桌面窗口接着排
 ```
@@ -19,7 +19,7 @@ tavotto open: 交给 Tavotto 桌面窗口接着排
 | 层 | 是什么 | 负责什么 |
 | --- | --- | --- |
 | **技能** `skills/tavotto-figure/` | 一份约定 + 模板 | 教 Codex 写出「Tavotto 接得住」的脚本；数据、坐标、图形结构归代码 |
-| **MCP server** `mcp/` | 本地 stdio 进程 | 引擎会话、override、出版规范预检、真矢量导出。**没有 UI 的 host 里这九个工具就能走完整条流程** |
+| **MCP server** `mcp/` | 本地 stdio 进程 | 引擎会话、override、投稿前检查、真矢量导出。**没有 UI 的 host 里这九个工具就能走完整条流程** |
 | **MCP App 画布** `mcp/widget/canvas.html` | Codex 内嵌 iframe | 用鼠标改图。复用 Tavotto 前端**同一份**画布代码，不是另一套实现 |
 
 改动一律是 **override**（`gid + prop + value`），**你的 Python 源码一个字都不改**。

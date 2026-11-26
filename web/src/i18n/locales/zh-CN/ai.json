@@ -773,6 +773,19 @@
       "current": "当前：{{name}}",
       "chosen": "你选的模型"
     },
+    "purpose": {
+      "label": "目的",
+      "compare_groups": "比较各组",
+      "trend": "看趋势",
+      "relationship": "看关系",
+      "distribution": "看分布"
+    },
+    "whyNot": {
+      "summary_hides_spread": "柱和误差线通常只代表均值与离散程度，不显示每个观测值。",
+      "line_needs_order": "连线通常代表连续变化的量。",
+      "order_prefers_line": "横轴有顺序，连线更能看出走势。",
+      "answers_other_purpose": "你选的是「{{purpose}}」，这张回答的是另一个问题。"
+    },
     "redraw": {
       "from": "用 {{file}} 画的",
       "again": "换个画法",

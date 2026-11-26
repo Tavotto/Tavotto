@@ -5862,6 +5862,18 @@ export interface AiDataProposeItem {
   error_missing_for?: string[]
   /** 拟合线（有才有；界面暂不用） */
   fits?: unknown[]
+  /** 相对当前看图目的，为什么这张不是推荐（只给非推荐的、且有适用理由的）；`guidance` 是引用的准则编号，界面不显示 */
+  why_not?: { code: AiDataWhyNotCode; guidance: string[]; tier: string }
+}
+
+export type AiDataPurposeCode = 'compare_groups' | 'trend' | 'relationship' | 'distribution'
+export type AiDataWhyNotCode = 'summary_hides_spread' | 'line_needs_order' | 'order_prefers_line' | 'answers_other_purpose'
+
+/** 这批候选是按什么看图目的排的：`user` = 用户点的、`data` = 从数据推出的假设（界面不区分）；`options` 至少两个才给，否则是空数组 */
+export interface AiDataPurpose {
+  code: AiDataPurposeCode | null
+  source: 'user' | 'data'
+  options: AiDataPurposeCode[]
 }
 
 /** `unknown` = 现成的误差列没说明是哪一种（只出现在 `points_err` / `line_err`） */
@@ -5904,6 +5916,8 @@ export interface AiDataFigureStyle {
 /** 懒模式响应里的公共部分（`candidates` 与 `nothing` 都有） */
 export interface AiDataLazyInfo {
   render?: 'lazy'
+  /** 看图目的：只在这批有候选且有第一名所属的族时才有 */
+  purpose?: AiDataPurpose
   table?: string
   sheet?: string | null
   /** 文本表是实际用的物理行号，XLSX 为 null */

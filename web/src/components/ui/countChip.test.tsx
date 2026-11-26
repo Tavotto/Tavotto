@@ -29,13 +29,13 @@ it('圆点是唯一的颜色：danger / warn 的圆点染色，quiet 灰；字�
     root.render(
       <>
         <CountChip tone="danger" count={5} label="项要改" />
-        <CountChip tone="warn" count={4} label="项留意" />
+        <CountChip tone="warn" count={4} label="项需留意" />
         <CountChip tone="quiet" count={3} label="条建议" />
       </>,
     ),
   )
   const chips = [...host.querySelectorAll<HTMLElement>('[data-count-chip]')]
-  expect(chips.map((c) => c.textContent)).toEqual(['5 项要改', '4 项留意', '3 条建议'])
+  expect(chips.map((c) => c.textContent)).toEqual(['5 项要改', '4 项需留意', '3 条建议'])
   expect(chips.map((c) => c.querySelector('[aria-hidden]')!.className)).toEqual([
     expect.stringContaining('bg-danger'),
     expect.stringContaining('bg-warn'),

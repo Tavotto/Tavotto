@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { JournalPicker, type JournalPickTarget } from '@/components/journal/JournalPicker'
 import { Row } from '@/components/ui/Field'
@@ -77,6 +77,10 @@ export function DataPanel() {
   const previewKey = useDataFigureStore((s) => s.previewKey)
   const errorConfirmed = useDataFigureStore((s) => s.errorConfirmed)
   const designAsked = useDataFigureStore((s) => s.designAsked)
+  const purpose = useDataFigureStore((s) => s.purpose)
+  // 点选即显示所选：等新一批候选回来之前下拉先显示用户点的，回来（`purpose` 换成新响应）就以响应为准
+  const [pendingPurpose, setPendingPurpose] = useState<string | null>(null)
+  useEffect(() => setPendingPurpose(null), [purpose])
   const answers = useDataFigureStore((s) => s.answers)
   if (!selected) return null
   const ov = overviews[overviewKeyOf(selected, headerRows)]?.data ?? null
@@ -125,6 +129,9 @@ export function DataPanel() {
       </Row>
     </div>
   )
+  // 「目的」：选项与当前值都以响应为准（`source` 是 data 还是 user 这一行上不区分）；没有 / 选项不足两个 / code 为 null 不出这一行；
+  // 当前值万一不在选项里（后端不该这样）补进去，免得下拉显示一个选不到的值
+  const purposeOptions = purpose && purpose.code && purpose.options.length >= 2 ? (purpose.options.includes(purpose.code) ? purpose.options : [purpose.code, ...purpose.options]) : null
   const asOptions = (list: string[], none?: string) => [...(none ? [{ value: NONE, label: none }] : []), ...list.map((c) => ({ value: c, label: c }))]
   return (
     <div data-data-panel className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-2">
@@ -222,6 +229,23 @@ export function DataPanel() {
                   ariaLabel={t('dataFigureV2.panel.group')}
                   onChange={pick('group')}
                   options={asOptions(roles.options.group, t('dataFigureV2.panel.noGroup'))}
+                />
+              </Row>
+            </div>
+          )}
+          {purpose && purposeOptions && (
+            <div data-data-role="purpose" className="contents">
+              <Row label={rowLabel(t('dataFigureV2.purpose.label'))} labelWidth={LABEL_W}>
+                <Select
+                  value={pendingPurpose ?? purpose.code!}
+                  disabled={busy}
+                  ariaLabel={t('dataFigureV2.purpose.label')}
+                  onChange={(v) => {
+                    // 点的就是此刻显示的也算用户确认过的目的（`answers.purpose`），后端据此把「假设」变成「用户点的」
+                    setPendingPurpose(v)
+                    useDataFigureStore.getState().setConfirm('purpose', v)
+                  }}
+                  options={purposeOptions.map((c) => ({ value: c, label: t(`dataFigureV2.purpose.${c}`) }))}
                 />
               </Row>
             </div>

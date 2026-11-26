@@ -1087,7 +1087,7 @@ def test_curved_paths_are_checked_along_the_curve_not_just_their_anchors(project
             "id": "p_curve001",
             "type": "path",
             "x": 95,
-            "y": 10,
+            "y": 40,
             "w": 20,
             "h": 5,
             "strokePt": 0.5,
@@ -1105,7 +1105,8 @@ def test_curved_paths_are_checked_along_the_curve_not_just_their_anchors(project
     plan = ve.propose(
         project,
         "组图",
-        [{"op": "set", "id": "p_curve001", "set": {"strokePt": 0.75}}],
+        # 先放在页内、再挪上去：改之前就出页的算 `preexisting`，这条要的是「改后出页」被判出来
+        [{"op": "move", "id": "p_curve001", "by_mm": [0, -30]}],
         measure,
         base_revision=_base(project),
     )
@@ -1120,7 +1121,7 @@ def test_a_filled_path_covering_text_is_a_clash(project):
             "id": "p_blob0001",
             "type": "path",
             "x": 90,
-            "y": 2,
+            "y": 50,
             "w": 25,
             "h": 10,
             "strokePt": 0.5,
@@ -1138,7 +1139,7 @@ def test_a_filled_path_covering_text_is_a_clash(project):
     plan = ve.propose(
         project,
         "组图",
-        [{"op": "set", "id": "p_blob0001", "set": {"strokePt": 0.75}}],
+        [{"op": "move", "id": "p_blob0001", "by_mm": [0, -48]}],  # 挪上去盖住那段字
         measure,
         base_revision=_base(project),
     )
@@ -1163,3 +1164,292 @@ def test_rotating_a_filled_circle_does_not_count_its_bounding_box_corners(projec
         base_revision=_base(project),
     )
     assert plan["ok"], plan["failed"]
+
+
+# ------------------------------------------------------------------ 第 5 期：插件工具用到的场景选择器 / 布局组 / 局部图
+
+
+def _with_layout_groups(project, groups, member_of):
+    """给画布加布局组约束（`canvas.layoutGroups`），并把对象挂进组（直属成员 = `groupId`）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    c = doc["canvases"][0]
+    c["layoutGroups"] = groups
+    for o in c["objects"]:
+        if o["id"] in member_of:
+            o["groupId"] = member_of[o["id"]]
+    atomicio.write_json(_path(project), doc, indent=1)
+
+
+def _row(gid, order):
+    return {"id": gid, "kind": "row", "order": order, "gap": 4, "align": "start"}
+
+
+def _commit(project, ops):
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    assert plan["ok"], plan
+    out = ve.commit(
+        project,
+        "组图",
+        ops,
+        measure,
+        base_revision=plan["base_revision"],
+        echo_digest_seen=plan["echo_digest"],
+    )
+    assert out["written"]
+    return plan, json.loads(_path(project).read_text(encoding="utf-8"))["canvases"][0]
+
+
+def test_ungrouping_a_layout_group_drops_its_constraint_like_the_desktop(project):
+    """#2244：拆掉的组也是布局组、成员散了 → 约束一并去掉（照 `ungroupSelected`）；别的布局组不动。"""
+    _with_layout_groups(
+        project,
+        [_row("g_lay00001", ["a_user0001", "s_user0001"])],
+        {"a_user0001": "g_lay00001", "s_user0001": "g_lay00001"},
+    )
+    plan, c = _commit(project, [{"op": "ungroup", "group": "g_lay00001"}])
+    assert plan["layout_groups_dropped"] == ["g_lay00001"]
+    assert any("布局组 g_lay00001" in e for e in plan["echo"])  # 复述里说了，不悄悄改
+    assert "layoutGroups" not in c  # 空了就不写这个键（与前端落盘一致）
+
+
+def test_ungrouping_another_group_keeps_unrelated_layout_groups(project):
+    _with_layout_groups(
+        project,
+        [_row("g_lay00001", ["a_user0001", "s_user0001"])],
+        {"a_user0001": "g_lay00001", "s_user0001": "g_lay00001", "t_user0001": "g_other001"},
+    )
+    plan, c = _commit(project, [{"op": "ungroup", "group": "g_other001"}])
+    assert plan["layout_groups_dropped"] == []
+    assert [g["id"] for g in c["layoutGroups"]] == ["g_lay00001"]
+
+
+def test_deleting_a_member_drops_a_layout_group_left_with_one(project):
+    """#2244：删对象之后（`deleteSelected`）成员不足 2 个的布局组都去掉。"""
+    _with_layout_groups(
+        project,
+        [_row("g_lay00001", ["a_user0001", "s_user0001"])],
+        {"a_user0001": "g_lay00001", "s_user0001": "g_lay00001"},
+    )
+    plan, c = _commit(project, [{"op": "delete", "id": "a_user0001"}])
+    assert plan["layout_groups_dropped"] == ["g_lay00001"]
+    assert "layoutGroups" not in c
+
+
+def test_scene_lists_vector_objects_and_filters_with_select(project):
+    out = ve.read_scene(project, "组图", measure)
+    assert {o["id"] for o in out["vector_objects"]} == {"a_user0001", "t_user0001", "s_user0001"}
+    assert out["vector_objects_total"] == 3
+    only = ve.read_scene(project, "组图", measure, select={"types": ["arrow"]})
+    assert [o["id"] for o in only["vector_objects"]] == ["a_user0001"]
+
+
+def test_scene_select_takes_the_panel_short_ref_for_anchored_to(project):
+    """落盘锚点记的是子图对象 id；Agent 手里是场景短号 P1——两种写法都认。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    a = doc["canvases"][0]["objects"][1]
+    a["anchor"] = {"by": "agent", "anchors": [{"panel": {"id": "figures/fig1.pdf", "point": "e"}}]}
+    atomicio.write_json(_path(project), doc, indent=1)
+    for ref in ("P1", "figures/fig1.pdf"):
+        got = ve.read_scene(project, "组图", measure, select={"anchored_to": ref})
+        assert [o["id"] for o in got["vector_objects"]] == ["a_user0001"], ref
+
+
+@pytest.mark.parametrize(
+    "query,field",
+    [
+        ({"colour": "red"}, "select.colour"),
+        ({"types": ["panel"]}, "select.types"),
+        ({"within": [0, 0, 10]}, "select.within"),
+        ({"by_agent": "yes"}, "select.by_agent"),
+    ],
+)
+def test_a_bad_select_is_refused_not_read_as_select_all(project, query, field):
+    with pytest.raises(la.LayoutError) as e:
+        ve.read_scene(project, "组图", measure, select=query)
+    assert e.value.code == "bad_select" and e.value.detail == {"field": field}
+
+
+def test_edit_preview_frames_both_where_it_was_and_where_it_went(project, monkeypatch):
+    """局部图框住改前与改后的位置（删掉的按删前），画的是改后的整张画布。"""
+    seen = {}
+
+    def fake_preview(canvas, objects, pdfs, *, focus=None, **_kw):
+        seen.update(canvas=canvas, objects=objects, focus=focus)
+        return {"png": b"", "region_mm": [], "missing_panels": []}
+
+    monkeypatch.setattr(la, "preview", fake_preview)
+    canvas = _canvas(project)
+    ops = [
+        {"op": "move", "id": "a_user0001", "by_mm": [40, 0]},
+        {"op": "delete", "id": "t_user0001"},
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    ve.preview_edit(canvas, plan, {})
+    assert seen["objects"] == []
+    assert [o["id"] for o in seen["canvas"]["objects"]] == [o.get("id") for o in plan["objects"]]
+    xs = sorted(o["x"] for o in seen["focus"])
+    assert xs == [30, 70.0, 95]  # 箭头改前、改后，删掉的文字按删前
+
+
+def test_edit_preview_frames_the_visible_box_of_a_rotated_object(project, monkeypatch):
+    """转成竖的 20 × 5 mm 箭头：框要按转出来的外接框，不按原来的 x / y / w / h（Codex #2254）。"""
+    seen = {}
+    monkeypatch.setattr(
+        la, "preview", lambda canvas, objects, pdfs, *, focus=None, **_kw: seen.update(focus=focus)
+    )
+    canvas = _canvas(project)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "rotate", "id": "a_user0001", "deg": 90}],
+        measure,
+        base_revision=_base(project),
+    )
+    ve.preview_edit(canvas, plan, {})
+    after = seen["focus"][0]  # 改后的那个框：中心 (40, 7.5)，转 90° 后 5 宽 20 高
+    assert after["w"] == pytest.approx(5) and after["h"] == pytest.approx(20)
+    assert after["y"] == pytest.approx(-2.5)
+
+
+# ------------------------------------------------------------------ 核对：锚定端与改之前就有的问题
+
+
+def _annotated(project):
+    """先用 0208 加一支箭头（尖端锚在曲线 axes_0.lines_0 中点）+ 一段字，回箭头对象。"""
+    from test_layoutannotate import _items
+
+    base = _base(project)
+    plan = la.propose(project, "组图", _items(), measure, base_revision=base)
+    out = la.commit(
+        project, "组图", _items(), measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert out["written"], out
+    return _objs(project)[out["added"][0]]
+
+
+def test_restyling_the_agents_arrow_keeps_its_tip_allowance(project):
+    """Agent 加的箭头尖端本来就指着曲线（新加时按锚定端让出余量）：改个线宽不能被判成「遮了数据」。"""
+    arrow = _annotated(project)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": arrow["id"], "set": {"strokePt": 1.0}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert plan["ok"], plan["failed"]
+    assert not [
+        f for f in plan["facts"] if f["status"] == "preexisting"
+    ]  # 是锚定端让出的，不是靠「本来就这样」
+
+
+def test_a_problem_that_was_already_there_does_not_block_an_edit(project):
+    """用户手画的箭头本来就压着曲线：改颜色照样能写，这一处如实标 `preexisting`。"""
+    arrow = _annotated(project)
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    mine = {k: v for k, v in arrow.items() if k != "anchor"}
+    mine["id"] = "a_hand0001"
+    doc["canvases"][0]["objects"].append(mine)
+    atomicio.write_json(_path(project), doc, indent=1)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": "a_hand0001", "set": {"color": "#c0392b"}}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert plan["ok"], plan["failed"]
+    old = [f for f in plan["facts"] if f["status"] == "preexisting"]
+    assert [(f["check"], f["item"]) for f in old] == [("data", "a_hand0001")]
+
+
+def test_moving_an_arrow_onto_the_data_is_still_caught(project):
+    """改之前不压、改之后压了：照样挡（「本来就这样」只认改前就有的同一处）。"""
+    arrow = _annotated(project)
+    mine = _objs(project)["a_user0001"]
+    ops = [
+        {
+            "op": "move",
+            "id": "a_user0001",
+            "by_mm": [arrow["x"] - mine["x"], arrow["y"] - mine["y"]],
+        },
+        {"op": "set", "id": "a_user0001", "set": {"w": arrow["w"], "h": arrow["h"]}},
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    assert not plan["ok"] and [f["check"] for f in plan["failed"]] == ["data"]
+
+
+def test_moving_a_tip_onto_a_data_point_with_an_anchor_gets_the_allowance(project):
+    """`move` 用锚点把箭头尖对到曲线上：与新加时一样让出尖端余量。"""
+    arrow = _annotated(project)
+    to = next(a for a in arrow["anchor"]["anchors"] if a["role"] == "to")
+    ops = [
+        {"op": "move", "id": "a_user0001", "by_mm": [arrow["x"] - 30, arrow["y"] - 5]},
+        {"op": "set", "id": "a_user0001", "set": {"w": arrow["w"], "h": arrow["h"]}},
+        {
+            "op": "move",
+            "id": "a_user0001",
+            "to": {"anchor": {"element": {**to["element"], "panel": "P1"}}},
+            "attach": "to",
+        },
+    ]
+    plan = ve.propose(project, "组图", ops, measure, base_revision=_base(project))
+    assert plan["ok"], plan["failed"]
+
+
+def test_moving_an_already_off_page_text_off_the_other_side_is_caught(project):
+    """改前左边出页、挪完右边出页：不是「改之前就有的同一处」，照挡（Codex #2254）。"""
+    doc = json.loads(_path(project).read_text(encoding="utf-8"))
+    for o in doc["canvases"][0]["objects"]:
+        if o["id"] == "t_user0001":
+            o["x"] = -1
+    atomicio.write_json(_path(project), doc, indent=1)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "move", "id": "t_user0001", "by_mm": [115, 0]}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert not plan["ok"] and [f["check"] for f in plan["failed"]] == ["page"]
+
+
+def test_an_arrow_moved_off_its_anchor_loses_the_tip_allowance(project):
+    """Agent 的箭头整支挪开半毫米：尖端不在锚点上了，压着的就是那条曲线——落盘锚点已不成立，不再让余量（Codex #2254）。"""
+    arrow = _annotated(project)
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "move", "id": arrow["id"], "by_mm": [0, 0.5]}],
+        measure,
+        base_revision=_base(project),
+    )
+    assert not plan["ok"] and [f["check"] for f in plan["failed"]] == ["data"]
+
+
+def test_restyling_an_arrow_anchored_to_a_data_point_keeps_its_allowance(project):
+    """尖端锚在**数据点**上（要现量那个点才验得了锚点还成不成立）：改线宽照样过。"""
+    item = {
+        "kind": "arrow",
+        "name": "pt",
+        "from": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [30, 5]},
+        "to": {"anchor": {"data": {"panel": "P1", "axes": "axes_0", "x": 5, "y": 5}}},
+        "over_data": True,
+    }
+    base = _base(project)
+    plan = la.propose(project, "组图", [item], measure, base_revision=base)
+    out = la.commit(
+        project, "组图", [item], measure, base_revision=base, echo_digest_seen=plan["echo_digest"]
+    )
+    assert out["written"], out
+    aid = out["added"][0]
+    # 新加时的 over_data 不落盘：编辑时尖端压着那个点能过，靠的只是锚定端余量（拿掉 `_anchor_requests` 这条就红）
+    plan = ve.propose(
+        project,
+        "组图",
+        [{"op": "set", "id": aid, "set": {"strokePt": 1.0}}],
+        measure,
+        base_revision=_base(project),
+    )
+    data = [f for f in plan["facts"] if f["check"] == "data" and f["item"] == aid]
+    assert data and data[0]["status"] == "pass", data
