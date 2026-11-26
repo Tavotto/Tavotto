@@ -1487,7 +1487,7 @@ function RenderStatusBadge({ obj, approx = false, framePending = false, retained
               e.stopPropagation()
               void redrawWithScript(obj.id)
             }}
-            className="pointer-events-auto -my-0.5 rounded-full px-1.5 font-medium underline underline-offset-4 outline-none hover:opacity-80 focus-visible:focus-ring"
+            className="pointer-events-auto -my-0.5 rounded-full px-1.5 font-medium underline underline-offset-[3px] outline-none hover:opacity-80 focus-visible:focus-ring"
           >
             {badge('redraw')}
           </button>
