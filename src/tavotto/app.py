@@ -13,6 +13,7 @@ Tavotto — 论文多面板图可视化排版工具
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import contextvars
 import copy
@@ -150,6 +151,7 @@ from .engine import (
     managedenv as engine_managedenv,
     mathtypeset as engine_mathtypeset,
     msixmigrate as engine_msixmigrate,
+    nativeggplot_source as engine_nativeggplot_source,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
@@ -5626,7 +5628,7 @@ def _produce_edited_script(job, tmp_dir: Path):
     if worker is None:
         return fail("script_export_no_script")
     if engine_enginesession.is_native(worker):
-        return fail("script_export_native")
+        return _produce_edited_r_script(job, worker, stem, patches, tmp_dir)
     script_path = Path(worker.figures_dir) / worker.script_name
     if script_path.suffix.lower() != ".py":
         return fail("script_export_not_python")
@@ -5677,6 +5679,85 @@ def _produce_edited_script(job, tmp_dir: Path):
         format=key,
         tmp_path=target,
         script_report={"written": adjusted.written, "skipped": adjusted.skipped},
+    )
+
+
+def _edited_r_script_offer(original) -> dict | None:
+    """Resolve R source filenames from the registry, independently of client input."""
+    if original is None or not engine_runtimeasset.is_runtime_id(original.figure_id):
+        return None
+    info = _resolve_runtime_asset(original.figure_id)
+    if info is None or Path(info["script"]).suffix.lower() != ".r":
+        return None
+    root = str(require_project())
+    worker = engine_nativesession.REGISTRY.route_for(root, info["script"], info["stem"])
+    available = (
+        original.figure_origin is None
+        and worker is not None
+        and worker.spec is not None
+        and worker.ggplot_target is not None
+        and engine_nativeggplot_source.available()
+    )
+    return {
+        **(
+            {"how": "redraw"}
+            if available
+            else {
+                "how": "unavailable",
+                "reason": "script_export_r_source_unavailable",
+            }
+        ),
+        "suffix": engine_exportjob.R_SCRIPT_SUFFIX,
+    }
+
+
+def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
+    key = engine_exportjob.SCRIPT_KEY
+    if worker.ggplot_target is None:
+        return engine_exportjob.Produced(format=key, error_code="script_export_native")
+    if (
+        worker.spec is None
+        or job.script_suffix != engine_exportjob.R_SCRIPT_SUFFIX
+        or not job.script_name
+        or job.request.original.figure_origin is not None
+    ):
+        return engine_exportjob.Produced(
+            format=key, error_code="script_export_r_source_unavailable"
+        )
+    spec = worker.spec
+    script_path = Path(spec.project_root) / spec.target
+    try:
+        destination = job.export_dir / job.script_name
+        if destination.exists() and os.path.samefile(destination, script_path):
+            return engine_exportjob.Produced(format=key, error_code="script_export_same_file")
+        job.check_cancelled()
+        worker.ensure_built()
+        scope = {
+            "expected_execution_id": worker.execution_id,
+            "expected_snapshot_epoch": worker.snapshot_epoch,
+        }
+        hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
+        replay = engine_nativeggplot_source.replay(
+            spec, worker.ggplot_target, stem, patches, REPLAY_PIXEL_WIDTH
+        )
+        job.check_cancelled()
+        current = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
+        if (
+            hot["png"] != current["png"]
+            or _compare_manifests(hot["manifest"], replay.manifest)[0]
+            or base64.b64decode(hot["png"]) != replay.png
+        ):
+            return engine_exportjob.Produced(format=key, error_code="script_export_diverged")
+        target = tmp_dir / "edited-script.R"
+        target.write_bytes(replay.source.data)
+    except engine_scriptadjust.ScriptAdjustError as exc:
+        return engine_exportjob.Produced(format=key, error_code=exc.code)
+    except (engine_pool.WorkerError, OSError):
+        return engine_exportjob.Produced(format=key, error_code="script_export_run_failed")
+    return engine_exportjob.Produced(
+        format=key,
+        tmp_path=target,
+        script_report={"written": replay.source.written, "skipped": replay.source.skipped},
     )
 
 
@@ -5888,6 +5969,9 @@ def _prepare_export_job(spec: dict):
         job = engine_exportjob.prepare(
             spec, out_dir, project_id=getattr(_request_ctx(), "id", None)
         )
+        offer = _edited_r_script_offer(job.request.original) if job.request.include_script else None
+        if offer is not None:
+            job.script_suffix = offer["suffix"]
     except engine_exportreq.ExportRequestError as exc:
         return None, (
             jsonify({"error": exc.message, "code": exc.code, "params": exc.params}),
@@ -6324,21 +6408,30 @@ def api_export_validate():
     # Acknowledge recognized policies and current disk identities, not Figure admission.
     # Reuse export's authority without a worker, including untouched original copies.
     artifact_sources = _export_artifact_sources(req)
-    probe = engine_exportjob.ExportJob(id="probe", request=req, export_dir=out_dir)
+    offer = _edited_r_script_offer(req.original)
+    probe = engine_exportjob.ExportJob(
+        id="probe",
+        request=req,
+        export_dir=out_dir,
+        script_suffix=offer["suffix"] if offer else None,
+    )
     return jsonify(
         {
             "ok": True,
             **engine_exportjob.validate(probe),
-            **_export_route_field(req),
+            **_export_route_field(req, script_offer=offer),
             **({"artifact_sources": artifact_sources} if artifact_sources else {}),
         }
     )
 
 
-def _export_route_field(req) -> dict:
+def _export_route_field(req, *, script_offer: dict | None = None) -> dict:
     """route 是附加事实：算不出（比如没有打开项目就查注册表）就不给，validate 本身不因此失败；前端读不到按保守口径处理。"""
     try:
-        return {"route": _export_route(req)}
+        route = _export_route(req)
+        if script_offer is not None and req.original.figure_id in route["panels"]:
+            route["panels"][req.original.figure_id]["offers"]["script"] = script_offer
+        return {"route": route}
     except Exception:  # noqa: BLE001
         LOG.warning("export route 算不出，validate 不带 route", exc_info=True)
         return {}

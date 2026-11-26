@@ -22,6 +22,7 @@ from tavotto.engine import (
     execspec,
     figcapture,
     nativeggplot,
+    nativeggplot_source,
     nativesession,
     pool,
 )
@@ -38,9 +39,9 @@ def _rscript():
     return executable, explicit
 
 
-def test_connect_to_existing_r_and_release_its_console(tmp_path):
+def _rscript_with_capture_packages():
     rscript, explicit = _rscript()
-    dependency = subprocess.run(
+    dependencies = subprocess.run(
         [
             rscript,
             "--vanilla",
@@ -52,9 +53,199 @@ def test_connect_to_existing_r_and_release_its_console(tmp_path):
         check=False,
         timeout=45,
     )
-    if dependency.returncode == 77 and not explicit:
-        pytest.skip("R console dependencies are unavailable")
-    assert dependency.returncode == 0, dependency.stderr
+    if dependencies.returncode == 77 and not explicit:
+        pytest.skip("Native R capture dependencies are unavailable")
+    assert dependencies.returncode == 0, dependencies.stderr
+    return rscript
+
+
+def test_native_r_source_candidate_replays_successive_edits(tmp_path):
+    rscript = _rscript_with_capture_packages()
+    object_name = "signal 📈"
+    source = (
+        'd <- read.csv("data.csv")\r\n'
+        "`signal 📈` <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +\r\n"
+        '  ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input")  # Keep\r\n'
+        'ggplot2::ggsave("standalone.pdf", `signal 📈`, width = 4, height = 3)\r\n'
+    ).encode()
+    original = tmp_path / "original.R"
+    original.write_bytes(source)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "data.csv").write_text("x,y\n1,2\n2,6\n3,4\n", encoding="utf-8")
+    staged = stage / "original.R"
+    staged.write_bytes(source)
+    result = stage / "result.json"
+    request = stage / "request.json"
+    native = ADAPTER.parent
+
+    def run(operation, **extra):
+        request.write_text(
+            json.dumps(
+                {
+                    "operation": operation,
+                    "script": staged.as_posix(),
+                    "object": object_name,
+                    "result": result.as_posix(),
+                    **extra,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        proc = subprocess.run(
+            [rscript, "--vanilla", str(native / "ggplot_source_replay.R"), str(request)],
+            cwd=stage,
+            capture_output=True,
+            check=False,
+            timeout=_COLD_RENDER_TIMEOUT_SECONDS,
+        )
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(result.read_text(encoding="utf-8"))
+
+    anchor = run("anchor")
+    old = {"gid": "plot.title", "prop": "color", "value": "#572B82"}
+    first = nativeggplot_source.build(source, object_name, [old], anchor["line"], anchor["byte"])
+    assert first.written == 1 and not first.residual
+    staged.write_bytes(first.data)
+    assert run("anchor") == anchor
+    changes = [
+        {**old, "value": "#206A30"},
+        {"gid": "axis.x.bottom.title", "prop": "color", "value": "#892854"},
+    ]
+    untouched = {"gid": "plot.title", "prop": "rotation", "value": 15}
+    second = nativeggplot_source.build(
+        first.data, object_name, [*changes, untouched], anchor["line"], anchor["byte"]
+    )
+    assert second.written == 2 and second.residual == [untouched]
+    assert b"# Keep\r\n" in second.data and b"\n" not in second.data.replace(b"\r\n", b"")
+    staged.write_bytes(second.data)
+    run(
+        "replay",
+        adapter=ADAPTER.as_posix(),
+        bridge=(native / "ggplot_bridge.R").as_posix(),
+        palettes=(native.parent / "color_palettes.json").as_posix(),
+        frame_pt=[288, 216],
+        stem="signal",
+        pdf=(stage / "native.pdf").as_posix(),
+    )
+    for pdf in (stage / "standalone.pdf", stage / "native.pdf"):
+        colours = _pdf_text_colors(pdf)
+        assert colours["Signal"] == {0x206A30}
+        assert colours["Input"] == {0x892854}
+    assert original.read_bytes() == source
+
+
+def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
+    from tavotto import app as service, security
+
+    rscript = _rscript_with_capture_packages()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "local data"))
+    if not nativeggplot_source.available():
+        pytest.skip("Protected R source replay is unavailable")
+
+    root = tmp_path / "研究 项目"
+    graphs = root / "figure scripts"
+    graphs.mkdir(parents=True)
+    numbers = root / "numbers.csv"
+    numbers.write_text("x,y\n1,2\n2,4\n3,3\n", encoding="utf-8")
+    source = graphs / "Fig.R"
+    original = b"""protected <- Sys.getenv("TAVOTTO_R_REPLAY_PROTECTED_FILE")
+if (nzchar(protected)) {
+  attempted <- try(suppressWarnings(writeLines("must not land", protected)), silent = TRUE)
+  if (!inherits(attempted, "try-error")) stop("The protected file could be changed.")
+}
+d <- read.csv("../numbers.csv")
+p <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::geom_point() + ggplot2::labs(title = "Signal")
+ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
+"""
+    source.write_bytes(original)
+    submitted = graphs / "submitted.pdf"
+    nonce = "native-r-source-test"
+    auth = security.SessionState(nonce)
+    monkeypatch.setitem(service.app.config, "TESTING", True)
+    monkeypatch.setitem(service.app.config, "TAVOTTO_DESKTOP_MODE", True)
+    monkeypatch.setitem(service.app.config, security.STATE_KEY, auth)
+    client = service.app.test_client()
+    client.set_cookie(security.COOKIE_NAME, auth.redeem(nonce))
+    service.open_project(str(root))
+    worker = None
+    try:
+        launched = client.post(
+            "/api/native/ggplot2",
+            json={
+                "script": source.relative_to(root).as_posix(),
+                "object": "p",
+                "frame_pt": [288, 216],
+                "rscript": rscript,
+            },
+        )
+        assert launched.status_code == 202, launched.get_json()
+        sid = launched.json["session"]["session_id"]
+        worker = nativesession.REGISTRY.get(sid)
+        assert worker.wait_for_state({nativesession.BARRIER}, timeout=30) == nativesession.BARRIER
+        built = client.post(f"/api/native/sessions/{sid}/build")
+        assert built.status_code == 200, built.get_json()
+        (descriptor,) = built.json["descriptors"]
+        figure = descriptor["asset_id"]
+        original_pdf = submitted.read_bytes()
+        rendered = client.post("/api/engine/render", json={"id": figure, "patches": []})
+        assert rendered.status_code == 200, rendered.get_json()
+        title = next(
+            element
+            for element in rendered.json["manifest"]["elements"]
+            if element["gid"] == "plot.title"
+        )
+        patch = {
+            "gid": title["gid"],
+            "identity": title["identity"],
+            "prop": "color",
+            "value": "#572B82",
+        }
+        request = {
+            "filename": "Signal",
+            "scope": "original",
+            "formats": [],
+            "include_edited_script": True,
+            "original": {"figure_id": figure, "overrides": [patch]},
+        }
+        validated = client.post("/api/export/validate", json=request)
+        assert validated.status_code == 200 and validated.json.get("ok"), validated.json
+        assert validated.json["route"]["panels"][figure]["offers"]["script"] == {
+            "how": "redraw",
+            "suffix": "_edited.R",
+        }
+        protected = tmp_path / "keep-private"
+        protected.write_bytes(b"external file")
+        monkeypatch.setenv("TAVOTTO_R_REPLAY_PROTECTED_FILE", str(protected))
+        exported = client.post("/api/export", json=request)
+        assert exported.status_code == 200, exported.get_json()
+        (output,) = exported.json["outputs"]
+        assert output["name"] == "Signal_edited.R"
+        assert output["script_report"] == {"written": 1, "skipped": []}
+        edited = Path(exported.json["export_dir"]) / output["name"]
+        assert b'colour = "#572B82"' in edited.read_bytes()
+        assert protected.read_bytes() == b"external file"
+        assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
+        assert client.post("/api/export/validate", json=request).json["conflicts"] == [edited.name]
+
+        # Geometry changes caused by data on disk must not become an edited source export.
+        numbers.write_text("x,y\n1,2\n2,40\n3,3\n", encoding="utf-8")
+        mismatch = client.post("/api/export", json={**request, "filename": "Changed"})
+        assert mismatch.json["outputs"][0]["error"]["code"] == "script_export_diverged", (
+            mismatch.json
+        )
+        assert not (edited.parent / "Changed_edited.R").exists()
+        assert source.read_bytes() == original and submitted.read_bytes() == original_pdf
+    finally:
+        if worker is not None:
+            worker.cancel_owned()
+        service.reset_projects()
+
+
+def test_connect_to_existing_r_and_release_its_console(tmp_path):
+    rscript = _rscript_with_capture_packages()
     project = tmp_path / "R project"
     project.mkdir()
     (project / "source.R").write_text('stop("the desktop must not run this file")\n')

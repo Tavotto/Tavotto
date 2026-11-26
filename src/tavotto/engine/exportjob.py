@@ -79,6 +79,7 @@ ERROR_CODES = (
     # 修改后的 .py 的逐项失败（ADR 0171；由 app.py 填进 `Produced.error_code`）
     "script_export_diverged",
     "script_export_native",
+    "script_export_r_source_unavailable",
     "script_export_no_savefig",
     "script_export_no_script",
     "script_export_not_python",
@@ -278,6 +279,8 @@ class ExportJob:
     conflicts: list[str] = field(default_factory=list)
     #: 这次修改后的 .py 落到哪个文件名（ADR 0171）：`produce` 用它确认不会盖掉原脚本。
     script_name: str | None = None
+    #: Trusted source type, set by the project resolver before planning or reserving names.
+    script_suffix: str | None = None
     validation_summary: dict = field(default_factory=dict)
     report: Output | None = None
     #: 阶段轨迹（U09，ADR 0071）：prepare → source / compile / compose / raster（生产者按自己的步子记）→
@@ -474,6 +477,10 @@ def validate(job: ExportJob) -> dict:
         for f in req.formats
         if (job.export_dir / exportreq.output_name(req.filename, f)).exists()
     ]
+    if req.include_script:
+        script_name = f"{req.filename}{job.script_suffix or SCRIPT_SUFFIX}"
+        if (job.export_dir / script_name).exists():
+            existing.append(script_name)
     writable = True
     try:
         job.export_dir.mkdir(parents=True, exist_ok=True)
@@ -506,6 +513,7 @@ REPORT_SUFFIX = "_style-check.json"
 #: `app._produce_edited_script` 的同一文件判据。
 SCRIPT_KEY = "script"
 SCRIPT_SUFFIX = "_edited.py"
+R_SCRIPT_SUFFIX = "_edited.R"
 #: 附属产物：名字不是 `<基名>.<格式>` 的那几样。
 _SIDE_SUFFIX = {REPORT_KEY: REPORT_SUFFIX, SCRIPT_KEY: SCRIPT_SUFFIX}
 LEGACY_REPORT_SUFFIX = "_proof.json"
@@ -544,6 +552,9 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
     预留，把并发窗口关掉。
     """
     req = job.request
+    side_suffix = (
+        {**_SIDE_SUFFIX, SCRIPT_KEY: job.script_suffix} if job.script_suffix else _SIDE_SUFFIX
+    )
     keys = (
         list(req.formats)
         + ([SCRIPT_KEY] if req.include_script else [])
@@ -579,16 +590,16 @@ def _plan_names(job: ExportJob) -> dict[str, str]:
         return (job.export_dir / name).exists()
 
     def plain(key: str) -> str:
-        if key in _SIDE_SUFFIX:
-            return f"{req.filename}{_SIDE_SUFFIX[key]}"
+        if key in side_suffix:
+            return f"{req.filename}{side_suffix[key]}"
         return exportreq.output_name(req.filename, key)
 
     names: dict[str, str] = {}
     for key in keys:
         if req.overwrite == exportreq.OVERWRITE_RENAME:
             name = (
-                _dedupe_side(req.filename, _SIDE_SUFFIX[key], taken)
-                if key in _SIDE_SUFFIX
+                _dedupe_side(req.filename, side_suffix[key], taken)
+                if key in side_suffix
                 else exportreq.dedupe_name(req.filename, key, taken)
             )
         else:

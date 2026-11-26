@@ -113,7 +113,11 @@ def _sbpl_quote(path: str) -> str:
 
 
 def macos_profile(
-    scratch: str, extra_writable: Sequence[str] = (), hidden: Sequence[str] = ()
+    scratch: str,
+    extra_writable: Sequence[str] = (),
+    hidden: Sequence[str] = (),
+    *,
+    offline: bool = False,
 ) -> str:
     """加固的 sandbox-exec profile 文本。可写：命令自己的临时目录 + `extra_writable`（环境前缀、pip / conda 缓存）+ `/dev/null`；其余一切只读。
     `hidden`：凭据位置（`readscope.DENY_HOME_RELATIVE` 里实际存在的）——联网 + 任意命令 = 可以外传，所以连读都拒。"""
@@ -125,6 +129,11 @@ def macos_profile(
     hide = "".join(
         f"(deny file-read* (subpath {_sbpl_quote(os.path.realpath(h))}))" for h in hidden
     )
+    network = (
+        "(deny network*)"
+        if offline
+        else f"(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {socks}))"
+    )
     return (
         "(version 1)(allow default)"
         f"{hide}"
@@ -133,7 +142,7 @@ def macos_profile(
         "(deny appleevent-send)"
         f"(deny mach-lookup)(allow mach-lookup {lookups})"
         f"(deny process-exec {execs})"
-        f"(deny network-outbound (remote unix-socket))(allow network-outbound (remote unix-socket {socks}))"
+        f"{network}"
         "(deny signal)(allow signal (target self) (target children) (target same-sandbox))"
     )
 
@@ -157,6 +166,7 @@ def bwrap_args(
     readonly_rebind: Sequence[str] = (),
     hidden: Sequence[str] = (),
     var_run_is_dir: bool | None = None,
+    offline: bool = False,
 ) -> list[str]:
     """加固的 bwrap 前缀。`readonly_rebind`：`/tmp` 换空 tmpfs 之后要重新只读挂回来的路径（项目目录恰好在 /tmp 下时）。
     `var_run_is_dir`：`/var/run` 是不是独立目录（None = 现场看；常见情形是指向 /run 的链接，不用再盖一层）。"""
@@ -191,18 +201,20 @@ def bwrap_args(
         "--new-session",
         "--die-with-parent",
     ]
+    if offline:
+        args.append("--unshare-net")
     return args
 
 
 # --------------------------------------------------------------------------- 探测与前缀
-_PROBE: dict[tuple[str, str], bool] = {}
+_PROBE: dict[tuple[str, str, bool], bool] = {}
 
 
-def sandbox_kind() -> tuple[str, str] | None:
+def sandbox_kind(*, offline: bool = False) -> tuple[str, str] | None:
     """这台机器上可用的沙盒 `(名字, 工具路径)`，没有回 None（Windows 永远是 None；测试里 monkeypatch 它）。"""
     for kind in ("macos-sandbox-exec", "bwrap"):
         tool = trial._find_tool(kind)
-        if tool and _probe(kind, tool):
+        if tool and _probe(kind, tool, offline=offline):
             return kind, tool
     return None
 
@@ -214,15 +226,17 @@ def _args(
     extra: Sequence[str],
     rebind: Sequence[str],
     hidden: Sequence[str] = (),
+    *,
+    offline: bool = False,
 ) -> list[str]:
     if kind == "macos-sandbox-exec":
-        return [tool, "-p", macos_profile(scratch, extra, hidden)]
-    return bwrap_args(tool, scratch, extra, readonly_rebind=rebind, hidden=hidden)
+        return [tool, "-p", macos_profile(scratch, extra, hidden, offline=offline)]
+    return bwrap_args(tool, scratch, extra, readonly_rebind=rebind, hidden=hidden, offline=offline)
 
 
-def _probe(kind: str, tool: str) -> bool:
+def _probe(kind: str, tool: str, *, offline: bool = False) -> bool:
     """加固后的沙盒真能起，且里面能跑 Python（嵌套沙盒、用户命名空间被禁、`--unshare-pid` 被拒都会在这里现形）。同一个工具只探一次。"""
-    key = (kind, tool)
+    key = (kind, tool, offline)
     if key not in _PROBE:
         try:
             probe_dir = str(trial._make_trial_dir("cmd-probe"))
@@ -231,7 +245,7 @@ def _probe(kind: str, tool: str) -> bool:
             return False
         try:
             r = subprocess.run(  # noqa: S603 - 固定的系统沙盒命令
-                [*_args(kind, tool, probe_dir, (), ()), *trial.probe_command()],
+                [*_args(kind, tool, probe_dir, (), (), offline=offline), *trial.probe_command()],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=20,
@@ -253,6 +267,7 @@ def prefix(
     *,
     project: str | None = None,
     hidden: Sequence[str] = (),
+    offline: bool = False,
 ) -> list[str]:
     """命令前缀。`project`：项目根（bwrap 下若在 /tmp 里，`/tmp` 换空 tmpfs 会把它盖没，要只读挂回来）。"""
     rebind: list[str] = []
@@ -260,4 +275,4 @@ def prefix(
         real = os.path.realpath(project)
         if real == "/tmp" or real.startswith("/tmp/"):
             rebind.append(real)
-    return _args(kind, tool, str(scratch), extra_writable, rebind, hidden)
+    return _args(kind, tool, str(scratch), extra_writable, rebind, hidden, offline=offline)

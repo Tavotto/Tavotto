@@ -183,7 +183,7 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
  * 选项、不静默丢掉它**：禁用并说原因，发出去的请求里也不带它。
  */
-export type ScriptBlockReason = 'none' | 'canvas_scope' | 'no_script'
+export type ScriptBlockReason = 'none' | 'canvas_scope' | 'no_script' | 'native'
 
 /**
  * 修改后的 .py 这次给不给得出（ADR 0171）：只有单张图、且它有脚本。事实读后端的 `offers.script`；
@@ -194,7 +194,7 @@ export function scriptAvailability(
   scope: ExportScope,
   figureId: string | null,
   route?: ExportRoute | null,
-): { ok: boolean; reason: ScriptBlockReason } {
+): { ok: boolean; reason: ScriptBlockReason; suffix?: string } {
   if (scope !== 'original') return { ok: false, reason: 'canvas_scope' }
   if (!figureId) return { ok: false, reason: 'no_script' }
   const fromRoute = scriptFromRoute(route, scope, figureId)
@@ -253,6 +253,7 @@ export interface ExportRequestInput {
   includeReport?: boolean
   /** 同时导出修改后的 .py（ADR 0171）。只对单张图有意义；调用方已按 `scriptAvailability` 收窄 */
   includeScript?: boolean
+  scriptSuffix?: string
   pdfPanelBookmarks?: boolean
   pdfPanelLayers?: boolean
   pdfAnnotationLayer?: boolean
@@ -432,7 +433,7 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   const revision = snapshotRevision(request)
   request.document_revision = revision
   const names = formats.map((f) => `${filename}.${f}`)
-  if (request.include_edited_script) names.push(`${filename}_edited.py`) // 后端 `exportjob.SCRIPT_SUFFIX`
+  if (request.include_edited_script) names.push(`${filename}${input.scriptSuffix ?? '_edited.py'}`)
   const newerObjects = input.scope === 'canvas'
     ? newerObjectCount(input.doc.objects)
     : input.mergePages?.length ? 0 : newerObjectCount(input.annotations ?? [])

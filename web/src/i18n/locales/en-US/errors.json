@@ -210,6 +210,7 @@
     "no_figures_captured_silent": "The script finished without producing a figure or printing anything: no pyplot Figure was left open.",
     "script_export_diverged": "The re-run didn’t match this figure, so no .py was exported.",
     "script_export_native": "Not available for figures opened with Tavotto Run.",
+    "script_export_r_source_unavailable": "Protected source replay is unavailable for this R figure.",
     "script_export_no_savefig": "The script has no savefig or plt.show, so the edits have nowhere to apply.",
     "script_export_no_script": "This figure has no script.",
     "script_export_not_for_canvas": "Single figures only.",

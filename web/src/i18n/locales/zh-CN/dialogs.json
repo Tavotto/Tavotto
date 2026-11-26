@@ -195,8 +195,9 @@
     "scriptHint": "修改后的脚本，原脚本不动",
     "scriptSkipped": "未写入：{{items}}",
     "scriptUnavailable": {
-      "canvas_scope": "整版不能导出 .py，要选「每张图单独导出」",
-      "no_script": "这张图没有脚本"
+      "canvas_scope": "选择「每张图单独导出」即可导出修改后的脚本",
+      "no_script": "这张图没有脚本",
+      "native": "这张 R 图暂时无法在隔离环境中重放源码。"
     },
     "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
     "pdfPanelBookmarks": "为图面板添加 PDF 书签",

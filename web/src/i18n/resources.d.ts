@@ -1432,7 +1432,8 @@ export default interface Resources {
       "scriptHint": "修改后的脚本，原脚本不动",
       "scriptSkipped": "未写入：{{items}}",
       "scriptUnavailable": {
-        "canvas_scope": "整版不能导出 .py，要选「每张图单独导出」",
+        "canvas_scope": "选择「每张图单独导出」即可导出修改后的脚本",
+        "native": "这张 R 图暂时无法在隔离环境中重放源码。",
         "no_script": "这张图没有脚本"
       },
       "showInFolder": "在文件夹中显示",
@@ -4579,6 +4580,7 @@ export default interface Resources {
       "script_export_no_script": "这张图没有脚本。",
       "script_export_not_for_canvas": "需要单张图。",
       "script_export_not_python": "脚本不是 Python。",
+      "script_export_r_source_unavailable": "这张 R 图暂时无法在隔离环境中重放源码。",
       "script_export_run_failed": "重跑脚本出错，没有导出 .py。",
       "script_export_same_file": "导出的文件名和原脚本相同，换一个文件名。",
       "script_export_script_changed": "脚本刚改过，等图更新后再导出。",

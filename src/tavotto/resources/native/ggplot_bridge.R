@@ -1,5 +1,29 @@
 # Both an owned Rscript launch and a caller's current R console share the
 # same captured figure and authenticated command loop.
+ggplot_adapter <- function(path) {
+  if (!requireNamespace("ggplot2", quietly = TRUE) ||
+      !requireNamespace("svglite", quietly = TRUE)) {
+    stop("The selected R needs ggplot2 and svglite.")
+  }
+  adapter <- new.env(parent = baseenv())
+  sys.source(path, envir = adapter)
+  native <- dirname(path)
+  for (resource in c("ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R",
+                     "ggplot_ribbons.R", "ggplot_axes.R", "ggplot_frame.R")) {
+    sys.source(file.path(native, resource), envir = adapter)
+  }
+  adapter
+}
+
+ggplot_source_plot <- function(path, object_name, before_run = function() NULL) {
+  user <- new.env(parent = globalenv())
+  program <- parse(file = path, keep.source = TRUE, encoding = "UTF-8")
+  before_run()
+  eval(program, envir = user)
+  if (!exists(object_name, envir = user, inherits = FALSE)) stop("The named ggplot object is absent.")
+  get(object_name, envir = user, inherits = FALSE)
+}
+
 ggplot_serve <- function(spec, token, plot_for) {
   if (!is.character(token) || length(token) != 1L || !grepl("^[A-Za-z0-9_-]+$", token) ||
       !identical(spec$host, "127.0.0.1")) stop("Invalid native R connection.")
@@ -56,20 +80,9 @@ ggplot_serve <- function(spec, token, plot_for) {
     stop("Tavotto could not authenticate this R session.")
   }
 
-  adapter <- new.env(parent = baseenv())
   captured <- tryCatch({
-    if (!requireNamespace("ggplot2", quietly = TRUE) ||
-        !requireNamespace("svglite", quietly = TRUE)) {
-      stop("The selected R needs ggplot2 and svglite.")
-    }
-    sys.source(spec$adapter, envir = adapter)
+    adapter <- ggplot_adapter(spec$adapter)
     native <- dirname(spec$adapter)
-    sys.source(file.path(native, "ggplot_colour_scale.R"), envir = adapter)
-    sys.source(file.path(native, "ggplot_points.R"), envir = adapter)
-    sys.source(file.path(native, "ggplot_bars.R"), envir = adapter)
-    sys.source(file.path(native, "ggplot_ribbons.R"), envir = adapter)
-    sys.source(file.path(native, "ggplot_axes.R"), envir = adapter)
-    sys.source(file.path(native, "ggplot_frame.R"), envir = adapter)
     palettes <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
     probe <- file.path(spec$out_dir, "cairo-device-check.pdf")
     device <- adapter$open_ggplot_pdf(spec$frame_pt, probe)
@@ -120,6 +133,15 @@ ggplot_serve <- function(spec, token, plot_for) {
     if (request$cmd %in% c("terminate", "shutdown")) return(0L)
     envelope <- request[c("protocol_version", "request_id", "worker_generation",
                           "render_revision")]
+    if (identical(request$cmd, "preview_png_existing")) {
+      if (!identical(request$payload$expected_execution_id, spec$execution)) {
+        answer <- list(ok = FALSE, error = list(code = "svg_source_unavailable",
+                       message = "The R capture belongs to a different execution."))
+        send(c(envelope, list(execution_id = spec$execution), answer))
+        next
+      }
+      request$cmd <- "preview_png"
+    }
     answer <- tryCatch(
       switch(request$cmd,
         build = list(ok = TRUE, stems = stats::setNames(list(list()), spec$stem),
@@ -202,12 +224,7 @@ main <- function() {
                execution = args[[9L]], relative_script = args[[10L]], out_dir = args[[11L]],
                library = if (length(args) == 12L) args[[12L]])
   status <- ggplot_serve(spec, token, function(start_execution) {
-    user <- new.env(parent = globalenv())
-    program <- parse(file = args[[1L]], keep.source = TRUE, encoding = "UTF-8")
-    start_execution()
-    eval(program, envir = user)
-    if (!exists(args[[2L]], envir = user, inherits = FALSE)) stop("The named ggplot object is absent.")
-    get(args[[2L]], envir = user, inherits = FALSE)
+    ggplot_source_plot(args[[1L]], args[[2L]], start_execution)
   })
   if (status != 0L) quit(status = status)
 }

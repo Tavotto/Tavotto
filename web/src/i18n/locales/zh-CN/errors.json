@@ -210,6 +210,7 @@
     "no_figures_captured_silent": "脚本跑完了，却没有产生图，也没有输出：没有留下 pyplot Figure。",
     "script_export_diverged": "重跑结果和当前的图不一致，没有导出 .py。",
     "script_export_native": "Tavotto Run 打开的图不能导出 .py。",
+    "script_export_r_source_unavailable": "这张 R 图暂时无法在隔离环境中重放源码。",
     "script_export_no_savefig": "脚本没有 savefig 或 plt.show，修改无处生效。",
     "script_export_no_script": "这张图没有脚本。",
     "script_export_not_for_canvas": "需要单张图。",

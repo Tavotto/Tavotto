@@ -961,7 +961,7 @@ export function ExportDialog() {
   const script = useMemo(
     () =>
       !single && scope === "original"
-        ? { ok: true, reason: "none" as const }
+        ? { ok: true, reason: "none" as const, suffix: undefined }
         : scriptAvailability(scope, figureId, route),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [single, scope, figureId, assets, runtimeAssets, route],
@@ -985,6 +985,7 @@ export function ExportDialog() {
       background: transparent && transparentApplies ? "transparent" : "white",
       includeReport: reportOn,
       includeScript: withScript && script.ok,
+      scriptSuffix: script.suffix,
       pdfPanelBookmarks,
       pdfPanelLayers,
       pdfAnnotationLayer,
@@ -1339,6 +1340,7 @@ export function ExportDialog() {
       withReport,
       withScript,
       script.ok,
+      script.suffix,
       pdfPanelBookmarks,
       pdfPanelLayers,
       pdfAnnotationLayer,
@@ -2108,7 +2110,7 @@ export function ExportDialog() {
                     <FormatCheck
                       checked={withScript && script.ok}
                       onChange={() => setWithScript((v) => !v)}
-                      format="py"
+                      format={script.suffix?.endsWith(".R") ? "r" : "py"}
                       hint={script.ok ? ex("scriptHint") : ex(`scriptUnavailable.${script.reason}`)}
                       disabled={!script.ok}
                     />
@@ -3790,7 +3792,7 @@ function FormatCheck({
 }: {
   checked: boolean;
   onChange: () => void;
-  format: ExportFormat | "py";
+  format: ExportFormat | "py" | "r";
   hint: string;
   disabled?: boolean;
   /** 禁用原因那段可见文字的 id */

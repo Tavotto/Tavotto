@@ -67,7 +67,7 @@ export interface PanelRoute {
   embeds_disk_bitmap: boolean
   formats: Record<string, RouteFormat>
   /** EPS 给不给得出——不论用户勾没勾 */
-  offers?: { eps?: RouteFormat; script?: RouteFormat }
+  offers?: { eps?: RouteFormat; script?: RouteFormat & { suffix?: string } }
 }
 
 /** `/api/export/validate` 响应里的 `route`。缺它（旧后端 / 后端算不出 / 校验没回来）= 没有 route，见 `embedsDiskBitmap` 的退路 */
@@ -162,16 +162,24 @@ export function copiesSourceVerbatim(args: {
   return embedsDiskBitmap(args.panel, args.assets, 'original', args.formats, args.route)
 }
 
-/** 修改后的 .py 给不给得出（`offers.script`，ADR 0171）。取不到 = null，调用方走 `scriptAvailability` 的退路 */
+/** The script offer also supplies the suffix when it differs from the Python default. */
 export function scriptFromRoute(
   route: ExportRoute | null | undefined,
   scope: ExportRouteScope,
   id: string,
-): { ok: boolean; reason: 'none' | 'canvas_scope' | 'no_script' } | null {
+): {
+  ok: boolean
+  reason: 'none' | 'canvas_scope' | 'no_script' | 'native'
+  suffix?: string
+} | null {
   if (!route || route.scope !== scope) return null
   const offer = route.panels[id]?.offers?.script
   if (!offer) return null
-  if (offer.how !== 'unavailable') return { ok: true, reason: 'none' }
+  const suffix = offer.suffix ? { suffix: offer.suffix } : {}
+  if (offer.how !== 'unavailable') return { ok: true, reason: 'none', ...suffix }
+  if (offer.reason === 'script_export_r_source_unavailable') {
+    return { ok: false, reason: 'native', ...suffix }
+  }
   return { ok: false, reason: offer.reason === 'script_export_not_for_canvas' ? 'canvas_scope' : 'no_script' }
 }
 

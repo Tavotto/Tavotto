@@ -1,0 +1,36 @@
+# This child receives its paths from Tavotto. It runs in a disposable project
+# with filesystem protection around the original project and its inputs.
+args <- commandArgs(trailingOnly = TRUE)
+request <- jsonlite::fromJSON(args[[1L]], simplifyVector = FALSE)
+
+if (identical(request$operation, "anchor")) {
+  expressions <- parse(file = request$script, keep.source = TRUE, encoding = "UTF-8")
+  binding <- as.name(request$object)
+  definitions <- which(vapply(expressions, function(expression) {
+    is.call(expression) && length(expression) == 3L &&
+      (identical(expression[[1L]], as.name("<-")) || identical(expression[[1L]], as.name("="))) &&
+      identical(expression[[2L]], binding)
+  }, logical(1L)))
+  if (length(definitions) != 1L) stop("The selected plot needs one top-level assignment.")
+  end <- as.integer(attr(expressions, "srcref")[[definitions[[1L]]]])
+  jsonlite::write_json(list(line = end[[3L]], byte = end[[4L]]), request$result, auto_unbox = TRUE)
+} else if (identical(request$operation, "replay")) {
+  bridge <- new.env(parent = baseenv())
+  sys.source(request$bridge, envir = bridge)
+  adapter <- bridge$ggplot_adapter(request$adapter)
+  frame <- unlist(request$frame_pt, use.names = FALSE)
+  palettes <- jsonlite::fromJSON(request$palettes, simplifyVector = FALSE)
+  plot <- bridge$ggplot_source_plot(request$script, request$object)
+  captured <- adapter$capture_ggplot(plot, frame, palettes)
+  edits <- list()
+  for (patch in request$residual) edits[[patch$gid]][[patch$prop]] <- patch$value
+  measured <- NULL
+  if (!is.null(request$png)) {
+    measured <- adapter$preview_ggplot_png(captured$state, edits, request$png, request$width, TRUE)
+  }
+  if (!is.null(request$pdf)) adapter$export_ggplot_pdf(captured$state, edits, request$pdf)
+  jsonlite::write_json(adapter$ggplot_manifest(captured$state, request$stem, edits, measured), request$result,
+                       auto_unbox = TRUE, digits = NA, null = "null")
+} else {
+  stop("Invalid ggplot source replay.")
+}
