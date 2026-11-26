@@ -823,21 +823,140 @@ def test_pathfinder_bad_params(op, field):
     assert e["code"] == "bad_op" and e.get("field") == field
 
 
-def test_geometry_ops_take_only_unlocked_visible_paths():
-    shape = {**_t("s", 0, 0, 5), "type": "shape", "shape": "rect", "fill": "#fff", "strokePt": 1}
+def _rect(oid, x, y, w, h, **kw):
+    return {
+        "id": oid,
+        "type": "shape",
+        "shape": "rect",
+        "x": x,
+        "y": y,
+        "w": w,
+        "h": h,
+        "strokePt": 1,
+        "color": "#333333",
+        "fill": "#ffffff",
+        **kw,
+    }
+
+
+def _arrow(oid, **kw):
+    return {
+        "id": oid,
+        "type": "arrow",
+        "x": 10,
+        "y": 10,
+        "w": 30,
+        "h": 0.01,
+        "start": {"rx": 0, "ry": 0.5},
+        "end": {"rx": 1, "ry": 0.5},
+        "strokePt": 1,
+        "color": "#2f6fe0",
+        "head": "none",
+        **kw,
+    }
+
+
+def test_geometry_ops_take_only_unlocked_visible_operands():
+    line = {**_rect("ln", 0, 0, 10, 2), "shape": "line"}
     objs = [
         *_two_circles(),
-        shape,
+        line,
+        _arrow("ar"),
         _circle("lk", 5, 5, 3, locked=True),
         _circle("hd", 5, 5, 3, hidden=True),
+        _rect("s", 0, 0, 5, 5),
     ]
     two = lambda other: [{"op": "pathfinder", "ids": ["p_back", other], "mode": "unite"}]  # noqa: E731
-    assert _err(objs, two("s")) == {"code": "bad_op", "index": 0, "field": "needs_path"}
+    # 照前端 `isPathfinderOperand`：直线 / 大括号 / 弧线与箭头不进布尔与偏移
+    assert _err(objs, two("ln")) == {"code": "bad_op", "index": 0, "field": "needs_closed"}
+    assert _err(objs, two("ar"))["field"] == "needs_closed"
+    assert _err(objs, [{"op": "offset", "id": "ln", "delta_mm": 1}])["field"] == "needs_closed"
     assert _err(objs, two("lk"))["field"] == "locked"
     assert _err(objs, two("hd"))["field"] == "hidden"
     assert _err(objs, two("ghost"))["code"] == "unknown_object"
     assert _err([*objs, _t("tx", 0, 0, 1)], two("tx"))["code"] == "not_vector"
-    assert _err(objs, [{"op": "offset", "id": "s", "delta_mm": 1}])["field"] == "needs_path"
+    # 简化照前端 `simplifyPaths` 只收路径
+    assert _err(objs, [{"op": "simplify", "id": "s"}])["field"] == "needs_path"
+
+
+def test_pathfinder_takes_a_shape_and_the_result_is_a_path_with_its_id():
+    """矩形按「转为路径」那份几何参与运算；结果继承最上面那个原对象（矩形）的 id / 名字 / 样式，变成路径。"""
+    objs = [_circle("p_back", 20, 20, 10), _rect("r_top", 22, 12, 20, 16, name="框")]
+    r = _run(objs, [{"op": "pathfinder", "ids": ["p_back", "r_top"], "mode": "unite"}])
+    assert [o["id"] for o in r["objects"]] == ["r_top"]
+    out = r["objects"][0]
+    assert out["type"] == "path" and out["name"] == "框" and out["fill"] == "#ffffff"
+    inset = 0.5 * 25.4 / 72  # 矩形描边内侧对齐：路径在框里缩半个线宽
+    assert abs(out["x"] - 10) < 0.05 and abs(out["x"] + out["w"] - (42 - inset)) < 0.01
+    assert r["deleted"] == ["p_back"]
+    assert {"id": "r_top", "replaced": True} in r["changes"]
+    assert "（形状先转为路径）" in r["echo"][0]
+
+
+def test_offset_of_a_shape_leaves_the_shape_and_adds_a_path():
+    rect = _rect("r", 10, 10, 20, 10)
+    r = _run([rect], [{"op": "offset", "id": "r", "delta_mm": 1}])
+    assert r["objects"][0] == rect  # 原对象逐字不动（还是形状）
+    new = r["objects"][1]
+    assert new["type"] == "path" and new["fill"] == "#ffffff"
+    # 「转为路径」按描边内缩半个线宽，再往外扩 1 mm
+    inset = 0.5 * 25.4 / 72
+    assert abs(new["w"] - (20 - 2 * inset + 2)) < 0.05
+
+
+def test_outline_stroke_of_an_unfilled_shape_replaces_it_with_a_path():
+    rect = _rect("r", 10, 10, 20, 10, fill=None, name="框")
+    r = _run([rect], [{"op": "outline_stroke", "id": "r"}])
+    out = r["objects"][0]
+    assert out["id"] == "r" and out["type"] == "path" and out["name"] == "框"
+    assert out["fill"] == "#333333" and out["stroke"] is False
+    assert abs(out["w"] - 20) < 0.02  # 描边内侧对齐：外沿正好贴框
+    assert r["echo"][0].endswith("（先转为路径）：描边变成填充轮廓（同一个对象，id 不变）")
+
+
+def test_outline_stroke_of_a_filled_shape_keeps_it_as_a_path_with_stroke_off():
+    r = _run([_rect("r", 10, 10, 20, 10)], [{"op": "outline_stroke", "id": "r"}])
+    kept, ring = r["objects"]
+    assert kept["id"] == "r" and kept["type"] == "path" and kept["stroke"] is False
+    assert ring["fill"] == "#333333"
+    assert {"id": "r", "field": "type", "before": "shape", "after": "path"} in r["changes"]
+
+
+def test_outline_stroke_of_a_plain_arrow():
+    r = _run([_arrow("ar")], [{"op": "outline_stroke", "id": "ar"}])
+    out = r["objects"][0]
+    assert out["type"] == "path" and out["fill"] == "#2f6fe0" and out["subpaths"][0]["closed"]
+
+
+def test_convert_to_path_keeps_id_position_and_says_so():
+    rect = _rect("r", 10, 10, 20, 10, rotationDeg=20, name="框")
+    objs = [_t("a", 0, 0), rect, _arrow("ar", head="end")]
+    r = _run(objs, [{"op": "convert_to_path", "ids": ["r", "ar"]}])
+    assert [o["id"] for o in r["objects"]] == ["a", "r", "ar"]
+    by = _by(r)
+    assert by["r"]["type"] == "path" and by["r"]["rotationDeg"] == 20 and by["r"]["name"] == "框"
+    assert by["ar"]["headEnd"] == "triangle" and "head" not in by["ar"]
+    assert len(by["r"]["subpaths"][0]["nodes"]) == 4
+    assert r["echo"][0].startswith("转为路径 ") and "id 不变" in r["echo"][0]
+    assert {"id": "r", "field": "type", "before": "shape", "after": "path"} in r["changes"]
+    assert objs[1] == rect  # 输入不动
+
+
+@pytest.mark.parametrize(
+    "op,code,field",
+    [
+        ({"op": "convert_to_path", "ids": []}, "bad_op", "ids"),
+        ({"op": "convert_to_path", "ids": ["r", "r"]}, "bad_op", "ids"),
+        ({"op": "convert_to_path", "ids": ["p"]}, "bad_op", "not_convertible"),
+        ({"op": "convert_to_path", "ids": ["t"]}, "not_vector", "ids"),
+        ({"op": "convert_to_path", "ids": ["ghost"]}, "unknown_object", "ids"),
+        ({"op": "convert_to_path", "ids": ["r"], "x": 1}, "bad_op", None),
+    ],
+)
+def test_convert_to_path_bad_params(op, code, field):
+    objs = [_rect("r", 0, 0, 5, 5), _circle("p", 5, 5, 2), {**_t("t", 0, 0), "type": "panel"}]
+    e = _err(objs, [op])
+    assert (e["code"], e.get("field")) == (code, field)
 
 
 def test_offset_adds_one_new_path_right_above_and_leaves_the_original():

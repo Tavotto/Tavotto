@@ -17,8 +17,10 @@
   （等间距 / 按间距排）、`order`（前后层级）、`group` / `ungroup`（编组一层）、`rotate`（设绝对角度，绕框中心）。
 * 第 3 期「几何」（内核是前端同一份 vecops.wasm，经 `engine/vecops.py`；语义在 `engine/vectorgeom.py`，照 `lib/pathfinder.ts`）：
   `pathfinder`（`ids` + `mode`：合并 / 减去顶层 / 相交 / 排除重叠 / 分割 / 修边…）、`offset`（旁边多一个偏移后的新路径）、
-  `outline_stroke`（描边变成填充轮廓）、`simplify`（在容差内删多余锚点）。目前只收 `path`（形状要先有「转为路径」的 Python 版）；
+  `outline_stroke`（描边变成填充轮廓）、`simplify`（在容差内删多余锚点）。布尔 / 偏移收路径与封闭形状、轮廓化收路径 / 形状 /
+  箭头（形状按 `vectorgeom.to_path_object` 先换成路径，照前端 `pathfinder.asPath`），简化只收路径；
   内核不可用 = `kernel_unavailable`，其余操作照常。
+* `{"op": "convert_to_path", "ids": [...]}`：形状 / 箭头换成同 id 的路径（照前端 `actions.convertToPath`，画面逐点不动）。
 
 核对只看这次动到的对象（改后的样子），画布上没动的文字当障碍；用户早就接受的地方不重新报。
 """
@@ -698,20 +700,69 @@ def _mint(s: _State, i: int, tag: str, seed: list[str], n: int) -> str:
         k += 1
 
 
-def _operand(s: _State, i: int, oid: object, field: str) -> dict:
-    """几何操作的操作数：未锁定、未隐藏的 `path`（形状要先「转为路径」，Python 版还没有 → `needs_path`）。"""
+def _operand(s: _State, i: int, oid: object, field: str, accept: str = "path") -> dict:
+    """几何操作的操作数：未锁定、未隐藏的对象。`accept`：
+    `path` = 只收路径（简化，照前端 `simplifyPaths`）；`closed` = 路径或封闭形状（布尔 / 偏移，照 `isPathfinderOperand`：
+    直线 / 大括号 / 弧线与箭头不收 → `needs_closed`）；`stroke` = 路径、形状、箭头（轮廓化描边，照 `canOutlineStroke`）。
+    形状 / 箭头由调用方经 `vectorgeom.as_path` 按「转为路径」那份几何换成路径再算。"""
     if not isinstance(oid, str) or oid not in s.index or oid in s.deleted:
         raise EditError("unknown_object", i, field)
     o = s.out[s.index[oid]]
     if o.get("type") not in EDITABLE_TYPES or o.get("type") == "text":
         raise EditError("not_vector", i, field)
-    if o.get("type") != "path":
-        raise EditError("bad_op", i, "needs_path")
     if o.get("locked"):
         raise EditError("bad_op", i, "locked")
     if o.get("hidden"):
         raise EditError("bad_op", i, "hidden")
+    if accept == "path" and o.get("type") != "path":
+        raise EditError("bad_op", i, "needs_path")
+    if accept == "closed" and not vectorgeom.is_pathfinder_operand(o):
+        raise EditError("bad_op", i, "needs_closed")
     return o
+
+
+def _as_path(i: int, o: dict) -> dict:
+    p = vectorgeom.as_path(o)
+    if p is None:
+        raise EditError("bad_op", i, "degenerate")
+    return p
+
+
+def _converted_note(o: dict) -> str:
+    return "" if o.get("type") == "path" else "（先转为路径）"
+
+
+def _op_convert_to_path(s: _State, i: int, op: dict) -> None:
+    """`actions.convertToPath`：形状 / 箭头换成同 id 的路径（数组位置不动、画面逐点不动，几何照 `convertToPath.toPathObject`）。
+    已经是路径的、文字报错（不悄悄跳过）；锁定 / 隐藏的照前端也能转。"""
+    if set(op) - {"op", "ids"}:
+        raise EditError("bad_op", i)
+    ids = op.get("ids")
+    if (
+        not isinstance(ids, list)
+        or not ids
+        or not all(isinstance(v, str) for v in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise EditError("bad_op", i, "ids")
+    for oid in ids:
+        if oid not in s.index or oid in s.deleted:
+            raise EditError("unknown_object", i, "ids")
+        o = s.out[s.index[oid]]
+        if o.get("type") not in EDITABLE_TYPES:
+            raise EditError("not_vector", i, "ids")
+        if not vectorgeom.can_convert_to_path(o):
+            raise EditError("bad_op", i, "not_convertible")
+    for oid in ids:
+        o = s.out[s.index[oid]]
+        made = vectorgeom.to_path_object(o)
+        if made is None:
+            raise EditError("bad_op", i, "degenerate")
+        s.out[s.index[oid]] = made
+        s.touched.add(oid)
+        s.changes.append({"id": oid, "field": "type", "before": o.get("type"), "after": "path"})
+        n = sum(len(sp["nodes"]) for sp in made["subpaths"])
+        s.echo.append(f"转为路径 {_label(o)}：同一个对象（id 不变），{n} 个锚点")
 
 
 def _count_check(s: _State, i: int) -> None:
@@ -735,11 +786,13 @@ def _op_pathfinder(s: _State, i: int, op: dict) -> None:
     ):
         raise EditError("bad_op", i, "ids")
     for v in ids:
-        _operand(s, i, v, "ids")
+        _operand(s, i, v, "ids", "closed")
     if len(ids) < 2:
         raise EditError("bad_op", i, "ids")
     live = s.live()
-    src = [o for o in live if o.get("id") in set(ids)]  # 数组顺序（从后往前），与前端 `operands` 同
+    # 数组顺序（从后往前），与前端 `operands` 同；形状按「转为路径」那份几何换成路径（结果继承它的 id = 换成路径）
+    picked = [o for o in live if o.get("id") in set(ids)]
+    src = [_as_path(i, o) for o in picked]
     kernel = _kernel(i)
     seed = sorted(ids)
     plan = vectorgeom.run_pathfinder(kernel, mode, live, src, lambda n: _mint(s, i, "pf", seed, n))
@@ -761,9 +814,11 @@ def _op_pathfinder(s: _State, i: int, op: dict) -> None:
         s.touched.add(o["id"])
     s.set_order(new_live)
     _count_check(s, i)
+    shapes = any(o.get("type") != "path" for o in picked)
     s.echo.append(
-        f"{_MODE_WORDS[mode]} {len(src)} 个路径（{'、'.join(o['id'] for o in src)}）→ {len(plan['add'])} 个路径"
-        f"（{'、'.join(o['id'] for o in plan['add'])}）"
+        f"{_MODE_WORDS[mode]} {len(src)} 个{'对象' if shapes else '路径'}（{'、'.join(o['id'] for o in src)}）"
+        f"{'（形状先转为路径）' if shapes else ''}"
+        f"→ {len(plan['add'])} 个路径（{'、'.join(o['id'] for o in plan['add'])}）"
     )
 
 
@@ -779,7 +834,8 @@ def _op_offset(s: _State, i: int, op: dict) -> None:
     拐角跟原对象的拐角（给了 `join` 就用它，只影响这一次偏移的几何）。"""
     if set(op) - {"op", "id", "delta_mm", "join"}:
         raise EditError("bad_op", i)
-    o = _operand(s, i, op.get("id"), "id")
+    orig = _operand(s, i, op.get("id"), "id", "closed")
+    o = _as_path(i, orig)
     d = op.get("delta_mm")
     if not agentobjects._is_num(d) or not math.isfinite(d) or d == 0:  # noqa: SLF001
         raise EditError("bad_value", i, "delta_mm")
@@ -804,7 +860,9 @@ def _op_offset(s: _State, i: int, op: dict) -> None:
     s.changes.append({"id": nid, "added": True})
     _count_check(s, i)
     way = "往外" if d > 0 else "往里"
-    s.echo.append(f"偏移 {_label(o)}：{way} {abs(float(d)):.3g} mm → 新路径 {nid}（在它上面）")
+    s.echo.append(
+        f"偏移 {_label(orig)}：{way} {abs(float(d)):.3g} mm → 新路径 {nid}（在它上面；原对象不动）"
+    )
 
 
 def _op_outline_stroke(s: _State, i: int, op: dict) -> None:
@@ -812,9 +870,10 @@ def _op_outline_stroke(s: _State, i: int, op: dict) -> None:
     原对象没有填充：轮廓同 id 换掉它；有填充：原对象留下、关掉描边，轮廓作为新对象紧挨着放在它上面。"""
     if set(op) - {"op", "id"}:
         raise EditError("bad_op", i)
-    o = _operand(s, i, op.get("id"), "id")
-    if not vectorgeom.can_outline_stroke(o):
+    orig = _operand(s, i, op.get("id"), "id", "stroke")
+    if not vectorgeom.can_outline_stroke(orig):
         raise EditError("bad_op", i, "no_stroke")
+    o = _as_path(i, orig)
     why = vectorgeom.stroke_unsupported(o)
     if why:
         raise EditError("bad_op", i, f"stroke:{why}")
@@ -826,11 +885,16 @@ def _op_outline_stroke(s: _State, i: int, op: dict) -> None:
     replace, extra = res
     s.out[s.index[o["id"]]] = replace
     s.touched.add(o["id"])
+    note = _converted_note(orig)
+    if note and extra is not None:  # 有填充的形状：留下的那个已是转出来的路径
+        s.changes.append(
+            {"id": o["id"], "field": "type", "before": orig.get("type"), "after": "path"}
+        )
     if extra is None:
         s.changes.append(
             {"id": o["id"], "field": "subpaths", "before": "stroke", "after": "outline"}
         )
-        s.echo.append(f"轮廓化描边 {_label(o)}：描边变成填充轮廓（同一个对象，id 不变）")
+        s.echo.append(f"轮廓化描边 {_label(orig)}{note}：描边变成填充轮廓（同一个对象，id 不变）")
     else:
         s.changes.append(
             {"id": o["id"], "field": "stroke", "before": o.get("stroke"), "after": False}
@@ -838,7 +902,9 @@ def _op_outline_stroke(s: _State, i: int, op: dict) -> None:
         _insert_after(s, o["id"], extra)
         s.touched.add(nid)
         s.changes.append({"id": nid, "added": True})
-        s.echo.append(f"轮廓化描边 {_label(o)}：原对象关掉描边，轮廓作为新路径 {nid} 放在它上面")
+        s.echo.append(
+            f"轮廓化描边 {_label(orig)}{note}：原对象关掉描边，轮廓作为新路径 {nid} 放在它上面"
+        )
         _count_check(s, i)
 
 
@@ -876,6 +942,7 @@ _OPS = (
     "offset",
     "outline_stroke",
     "simplify",
+    "convert_to_path",
 )
 
 
@@ -894,8 +961,9 @@ def apply_ops(
     for i, op in enumerate(ops):
         if not isinstance(op, dict) or op.get("op") not in _OPS:
             raise EditError("bad_op", i)
-        if op["op"] in ("align", "distribute", "group", "ungroup", "pathfinder"):
+        if op["op"] in ("align", "distribute", "group", "ungroup", "pathfinder", "convert_to_path"):
             {
+                "convert_to_path": _op_convert_to_path,
                 "align": _op_align,
                 "distribute": _op_distribute,
                 "group": _op_group,
