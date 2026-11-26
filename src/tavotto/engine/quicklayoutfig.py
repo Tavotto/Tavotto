@@ -647,6 +647,7 @@ def check(
     gap: float,
     padding: float,
     canvas_labels: list[Rect] | None = None,
+    uniform_labels: bool = True,
 ) -> list[dict]:
     """ADR 0199 §十二 的验收（轴这一级），版式从**最终几何**认（`layout_of`），不信求解器的网格：
 
@@ -655,7 +656,8 @@ def check(
     * 同一行相邻两列（纵向有重叠的轴之间）、列内上下相邻两轴、上下相邻两行之间的文字外沿：≥ 图内间距 − 0.1 mm；
     * 一切文字外沿（含色条、共享轴标题、标签）到图框：≥ 留白 − 0.05 mm（图框 = 页边，图内排版时图铺满页宽）；
     * 主轴文字外沿、色条、共享文字、标签、障碍物两两不重叠；
-    * 挪过的子图标签：底边到各自那组轴文字外沿顶的距离一致，管打头那一列各轴的标签左边对齐。"""
+    * 挪过的子图标签：底边到各自那组轴文字外沿顶的距离一致，管打头那一列各轴的标签左边对齐
+      （`uniform_labels=False`：求解器为绕开障碍物让个别标签偏移不同时，只放宽这一条）。"""
     bad: list[dict] = []
     w, h = a.size
     rows = layout_of(a.mains)
@@ -700,7 +702,8 @@ def check(
     things += [(lab.gid, lab.rect) for lab in a.labels]
     things += [(f"canvas_label_{i}", r) for i, r in enumerate(canvas_labels or [])]
     obstacles = [(g, r) for g, r in a.obstacles]
-    for g, r in things + obstacles:
+    # 留白只量我们摆的东西；障碍物是脚本原样、原地不动的元素，贴边不归这里管（重叠照样判）
+    for g, r in things:
         edge = min(r[0], r[1], w - r[2], h - r[3])
         if edge < padding - EDGE_TOL_MM:
             bad.append({"metric": "edge", "ref": g, "mm": round(edge, 3)})
@@ -710,7 +713,7 @@ def check(
             if _overlaps(ra, rb):
                 metric = "obstacle" if (ga, ra) in obstacles or (gb, rb) in obstacles else "overlap"
                 bad.append({"metric": metric, "refs": [ga, gb]})
-    if a.labels:
+    if a.labels and uniform_labels:
         # 标签底边到它那组第一个轴文字外沿顶的距离全版一致；管着「打头的轴」的那几个标签左边对齐
         by = {m.gid: m for m in a.mains}
         dy = [lab.rect[3] - by[lab.group].ink[1] for lab in a.labels]

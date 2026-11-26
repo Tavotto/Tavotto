@@ -227,6 +227,8 @@ function noteLine(res: Extract<QuickLayoutResponse, { ok: true }>, specName: str
     const id = `${n.code}:${n.ref}`
     if (seen.has(id)) continue
     seen.add(id)
+    // 个别标签为绕开图里原地不动的元素偏移不同：维护者暂不要文案，只认这个码、不出一行
+    if (n.code === 'label_offset_varied') continue
     if (n.code === 'in_figure') {
       // 排在最前面：先说这次排的是图里面
       lines.unshift(translate('status.quickLayoutNoteInFigure', { ns: 'workspace' }))

@@ -432,3 +432,83 @@ def test_unreadable_axes_labels_get_canvas_labels_without_moving_or_overlapping(
 def test_canvas_label_landing_on_a_suspected_label_voids_the_plan():
     got = _run("plan", IDENTITY_SOLVER, "roomy_stray_fig")
     assert got == {"ok": False, "code": "figure_obstacle"}
+
+
+# ---------------------------------------------------------------------------
+# 障碍物：发给求解器、让它绕开（维护者 2026-11-26 定）
+# ---------------------------------------------------------------------------
+def _static_panel(manifest: dict) -> quicklayout.Panel:
+    return quicklayout.Panel(
+        key="k",
+        rel_id="s.py",
+        base=[],
+        box=[0, 0, 1, 1],
+        render=lambda _p: {"manifest": manifest, "warnings": []},
+    )
+
+
+@needs_worker
+def test_obstacles_go_to_the_solver_as_boxes_only(manifests, monkeypatch):
+    monkeypatch.setattr(quicklayout, "licensed", lambda: True)
+    seen: list[dict] = []
+
+    def solver(payload):
+        seen.append(payload)
+        return {"ops": [], "error": "page_too_small"}
+
+    with pytest.raises(quicklayout.QuickLayoutError):
+        quicklayout.plan_figure(
+            _static_panel(manifests["stray_labels"]),
+            page={"w": 210, "h": 297},
+            target="single",
+            profile={"widths_mm": {"single": 80.0}},
+            label_pt=8,
+            fix_spec=False,
+            solver=solver,
+        )
+    obs = seen[0]["obstacles"]
+    assert len(obs) == 2 and all(set(o) == {"ref", "bbox"} and len(o["bbox"]) == 4 for o in obs)
+    assert "(a)" not in json.dumps(seen[0]) and "fig.texts" not in json.dumps(seen[0])
+
+
+@needs_worker
+def test_solver_saying_it_cannot_fit_is_figure_obstacle(manifests, monkeypatch):
+    monkeypatch.setattr(quicklayout, "licensed", lambda: True)
+    with pytest.raises(quicklayout.QuickLayoutError) as exc:
+        quicklayout.plan_figure(
+            _static_panel(manifests["stray_labels"]),
+            page={"w": 210, "h": 297},
+            target="single",
+            profile={"widths_mm": {"single": 80.0}},
+            label_pt=8,
+            fix_spec=False,
+            solver=lambda _p: {"ops": [], "error": "figure_obstacle"},
+        )
+    assert exc.value.code == "figure_obstacle"
+
+
+@needs_worker
+def test_varied_label_offsets_relax_only_that_metric(manifests):
+    a = quicklayoutfig.analyze(manifests["sample"])
+    strict = {b["metric"] for b in quicklayoutfig.check(a, gap=1.5, padding=2.0)}
+    loose = {
+        b["metric"] for b in quicklayoutfig.check(a, gap=1.5, padding=2.0, uniform_labels=False)
+    }
+    assert "label_offset" in strict and strict - loose == {"label_offset"}
+
+
+def test_obstacles_are_not_held_to_the_page_margin_but_still_block():
+    m = quicklayoutfig.MainAxes(gid="h", plot=[10, 10, 50, 40], ink=[5, 5, 55, 45], equal=False)
+    a = quicklayoutfig.Analysis(
+        size=(80, 60),
+        mains=[m],
+        colorbars=[],
+        shared=[],
+        labels=[],
+        obstacles=[("fig.texts_0", [0.5, 0.5, 3, 3])],
+        label_mode="canvas",
+    )
+    metrics = {b["metric"] for b in quicklayoutfig.check(a, gap=1.5, padding=2.0)}
+    assert "edge" not in metrics  # 脚本原样贴边的字不归我们管
+    hit = quicklayoutfig.check(a, gap=1.5, padding=2.0, canvas_labels=[[1, 1, 4, 4]])
+    assert any(b["metric"] == "obstacle" for b in hit)  # 新加的标签压上去照样作废

@@ -748,6 +748,7 @@ def plan_figure(
     bad: list[dict] = []
     canvas_rects: list[list[float]] = []
     canvas_xy: list[list[float]] = []
+    varied = False
     lh = label_pt * PT_MM * 1.2
     lw = label_pt * PT_MM * 0.6 * 3
     for rnd in range(1, MAX_ROUNDS + 1):
@@ -774,10 +775,29 @@ def plan_figure(
                 ],
             },
             "axes": quicklayoutfig.solver_input(a, refs),
+            # 认不出归属的图级元素（含认不出的疑似标签）：只给外框比例与短号，不给文字（ADR 0198 §三）；
+            # 旧组件不认这个字段 = 不绕，结果照样由下面的验收判
+            "obstacles": [
+                {
+                    "ref": f"o{i + 1}",
+                    "bbox": [
+                        round(r[0] / w0, 6),
+                        round(r[1] / h0, 6),
+                        round((r[2] - r[0]) / w0, 6),
+                        round((r[3] - r[1]) / h0, 6),
+                    ],
+                }
+                for i, (_gid, r) in enumerate(a.obstacles)
+            ],
         }
         result = _ask_figure(solver, payload)
-        if result.get("error") == "page_too_small":
-            raise QuickLayoutError("page_too_small")
+        if result.get("error") in ("page_too_small", "figure_obstacle"):
+            raise QuickLayoutError(result["error"])
+        # 求解器说个别标签为了绕开障碍物偏移不同：只放宽「标签偏移一致」这一条，重叠照样判
+        varied = any(
+            isinstance(n, dict) and n.get("code") == "label_offset_varied"
+            for n in result.get("notes") or []
+        )
         plan_ops = _figure_ops(
             result.get("ops"),
             {v: k for k, v in refs.items()},
@@ -833,7 +853,11 @@ def plan_figure(
         canvas_xy = plan_ops["canvas"] if label_mode == "canvas" else []
         canvas_rects = [[x, y, x + lw, y + lh] for x, y in canvas_xy]
         bad = quicklayoutfig.check(
-            a, gap=float(gap_mm), padding=padding, canvas_labels=canvas_rects
+            a,
+            gap=float(gap_mm),
+            padding=padding,
+            canvas_labels=canvas_rects,
+            uniform_labels=not varied,
         )
         # 图铺满页宽：图幅宽 = 目标宽度（保持画布时 = 画布宽），不信求解器自己的
         if abs(a.size[0] - tw) > WIDTH_TOL_MM:
@@ -849,6 +873,8 @@ def plan_figure(
     panel.box = [0.0, 0.0, w, h]
     # 等比例轴（示意图、imshow）只参与排位、不计轴线对齐：图内排版里常见（实例里上面那排示意图），不另说
     notes = [{"code": "in_figure", "ref": panel.key}]
+    if varied:
+        notes.append({"code": "label_offset_varied", "ref": panel.key})
     if panel.specfix_ok is False:
         notes.append({"code": "spec_not_fixed", "ref": panel.key})
     return {

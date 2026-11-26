@@ -3971,8 +3971,11 @@ export interface QuickLayoutGrid {
   row_ratios: number[]
 }
 
-/** `in_figure`：这次排的是一张图里面的子图（ADR 0199 §十二） */
-export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed' | 'in_figure'
+/**
+ * `in_figure`：这次排的是一张图里面的子图（ADR 0199 §十二）；`label_offset_varied`：为绕开图里原地不动的元素，
+ * 个别标签的偏移与别的不同（暂不出文案）
+ */
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed' | 'in_figure' | 'label_offset_varied'
 
 /** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
 export type QuickLayoutSpecChange =
@@ -4015,7 +4018,7 @@ const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
   'pro_outdated',
   'figure_obstacle',
 ])
-const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed', 'in_figure'])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed', 'in_figure', 'label_offset_varied'])
 const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
   'font_family',
   'font_size',

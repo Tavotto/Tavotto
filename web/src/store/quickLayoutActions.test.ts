@@ -386,6 +386,8 @@ describe('应用', () => {
       notes: [
         { code: 'in_figure', ref: 'p1' },
         { code: 'spec_not_fixed', ref: 'p1' },
+        // 个别标签为绕开障碍物偏移不同：认这个码，但暂不出一行
+        { code: 'label_offset_varied', ref: 'p1' },
       ],
     })
     expect(await runQuickLayout('single', 3)).toBe('applied')
