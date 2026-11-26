@@ -2559,7 +2559,9 @@
     "zoomOut": "缩小",
     "zoomFit": "适配",
     "diffTitle": "与当前画布相比",
+    "quickNameHint": "起名后这版会一直留着，随时能找回。",
     "quickNameTitle": "给这一版起名字",
+    "quickSave": "保存",
     "scrubberLabel": "版本时间条：←/→ 逐个查看，回车打开"
   },
   "onboarding": {
