@@ -92,14 +92,14 @@ const flush = async () => act(async () => { await new Promise((r) => setTimeout(
 
 let root: Root
 let hostEl: HTMLDivElement
-async function mountRow(panel: PanelObject) {
+async function mountRow(panel: PanelObject, band = false) {
   hostEl = document.createElement('div')
   document.body.appendChild(hostEl)
   root = createRoot(hostEl)
   await act(async () => {
     root.render(
       <TooltipProvider>
-        <ErrorKindRow panel={panel} />
+        <ErrorKindRow panel={panel} band={band} />
       </TooltipProvider>,
     )
   })
@@ -417,7 +417,7 @@ describe('换类型', () => {
 })
 
 const seedManifest = (p: PanelObject, gids: string[]) => {
-  const elements = gids.map((gid) => ({ gid, role: gid.includes('errorbar') ? 'errorbar' : 'axes', label: gid, bbox: [0, 0, 1, 1], editable: [], draggable: false }))
+  const elements = gids.map((gid) => ({ gid, role: gid.includes('errorbar') ? 'errorbar' : gid.includes('fill') ? 'fill' : 'axes', label: gid, bbox: [0, 0, 1, 1], editable: [], draggable: false }))
   useRenderStore.getState().patch(renderKeyOf(p), {
     fileId: p.fileId, rev: 1, manifest: { stem: 's', size_mm: [80, 60], elements } as never, svg: '<svg/>', status: 'ready', stale: false,
     lastPatches: '[]', wantPatches: '[]',
@@ -495,5 +495,64 @@ describe('画布名跟着换', () => {
     await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
     expect(panels()[0]!.fileId).toBe('runtime:a2')
     expect(doc().name).toBe('我的画布')
+  })
+})
+
+
+describe('阴影带（趋势图的均值 ± 误差，`fill` 元素）', () => {
+  const bandOrigin = () => baseOrigin({ item: cand({ title_code: 'line_band' }) })
+  const bandPropose = () =>
+    propose.mockImplementation(async (body) => ({
+      kind: 'candidates', session: 'SW', dropped: [], render: 'lazy',
+      items: [cand({ id: 'k1', title_code: 'line_band', error: ((body.answers ?? {}) as { error?: 'sd' | 'sem' | 'ci95' }).error ?? 'sd' })],
+    }) as never)
+
+  it('登记时记下「画成带」；误差线的图不是带', () => {
+    expect(bandOrigin().band).toBe(true)
+    expect(baseOrigin().band).toBe(false)
+  })
+
+  it('点阴影带的页（band）：带的图出现；误差线的图不出现；误差棒页（不传 band）两种图都出现', async () => {
+    register(bandOrigin())
+    await mountRow(panels()[0]!, true)
+    expect(row()).not.toBeNull()
+    act(() => root.unmount())
+    hostEl.remove()
+    await mountRow(panels()[0]!, false)
+    expect(row()).not.toBeNull()
+    act(() => root.unmount())
+    hostEl.remove()
+    useFigureOriginStore.getState().clear()
+    register()
+    await mountRow(panels()[0]!, true)
+    expect(row()).toBeNull()
+  })
+
+  it('换类型：整张图换（多条带一起），换完选回同一条带；换之前选的 gid 没有就退到第一条带', async () => {
+    register(bandOrigin())
+    bandPropose()
+    useUiStore.setState({ elementPanelId: panels()[0]!.id, selectedGids: ['axes_0.fill_2'] })
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'ci95')
+    expect(panels()[0]!.fileId).toBe('runtime:a2')
+    expect(propose.mock.calls[0]![0]).toMatchObject({ answers: { error: 'ci95' } })
+    seedManifest(panels()[0]!, ['axes_0', 'axes_0.fill_0', 'axes_0.fill_2'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.fill_2'])
+  })
+
+  it('同一个 gid 没有：第一条带；误差线的图上的 fill 不被当成带', async () => {
+    register(bandOrigin())
+    bandPropose()
+    useUiStore.setState({ elementPanelId: panels()[0]!.id, selectedGids: ['axes_0.fill_9'] })
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    seedManifest(panels()[0]!, ['axes_0', 'axes_0.fill_0', 'axes_0.fill_2'])
+    expect(useUiStore.getState().selectedGids).toEqual(['axes_0.fill_0'])
+  })
+
+  it('不是带的图：fill 不选', async () => {
+    register()
+    useUiStore.setState({ elementPanelId: panels()[0]!.id, selectedGids: ['axes_0.fill_0'] })
+    await useFigureOriginStore.getState().switchKind(SCRIPT1, 'sem')
+    seedManifest(panels()[0]!, ['axes_0', 'axes_0.fill_0'])
+    expect(useUiStore.getState().selectedGids).toEqual([])
   })
 })

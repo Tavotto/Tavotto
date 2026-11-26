@@ -15,6 +15,7 @@ interface Pending {
   panelId: string
   fileId: string
   prefer: string | null
+  band: boolean
   selected: string[]
 }
 let pending: Pending | null = null
@@ -44,18 +45,19 @@ function evaluate(): void {
   }
   const exact = exactPanelManifest(render, panel)
   if (!exact) return // 还在画：下一次状态变化再验
-  const bars = exact.elements.filter((e) => e.role === 'errorbar')
-  const hit = bars.find((e) => e.gid === p.prefer) ?? bars[0]
+  // 同一个 gid 优先（误差棒或阴影带都认）；否则第一个误差棒；阴影带的图再退到第一条带
+  const of = (role: string) => exact.elements.filter((e) => e.role === role)
+  const hit = exact.elements.find((e) => e.gid === p.prefer && (e.role === 'errorbar' || (p.band && e.role === 'fill'))) ?? of('errorbar')[0] ?? (p.band ? of('fill')[0] : undefined)
   cancel()
   if (hit) ui.setSelectedGids([hit.gid])
 }
 
 /** 登记「新图画好后选回误差棒」；`prefer` = 换之前选着的那个 gid。再登记 = 换成新的 */
-export function selectErrorBarWhenDrawn(panelId: string, prefer: string | null): void {
+export function selectErrorBarWhenDrawn(panelId: string, prefer: string | null, band = false): void {
   cancel()
   const panel = useDocumentStore.getState().doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
   if (!panel) return
-  pending = { documentId: useDocumentStore.getState().documentId, panelId, fileId: panel.fileId, prefer, selected: [...useUiStore.getState().selectedGids] }
+  pending = { documentId: useDocumentStore.getState().documentId, panelId, fileId: panel.fileId, prefer, band, selected: [...useUiStore.getState().selectedGids] }
   const stop = [useRenderStore.subscribe(evaluate), useMountedPngStore.subscribe(evaluate), useDocumentStore.subscribe(evaluate), useUiStore.subscribe(evaluate)]
   unsubscribe = () => stop.forEach((f) => f())
   evaluate()

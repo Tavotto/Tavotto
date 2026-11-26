@@ -20,7 +20,7 @@ import { INSPECTOR_LABEL_W } from './layout'
  * 误差线是算出来的、单文件（登记时已判）；图没被改过（`lib/dataFigureOrigin.figureUntouched`——换图带不走手改）。
  * 换的过程中下拉立刻显示新值、转灰、禁用，状态槽里转圈；失败 / 被取代 / 换了项目静默回到原值（store 清掉 `switching`）。
  */
-export function ErrorKindRow({ panel }: { panel: PanelObject }) {
+export function ErrorKindRow({ panel, band = false }: { panel: PanelObject; band?: boolean }) {
   const { t } = useTranslation('ai')
   const enabled = useTafFlagStore((s) => s.enabled)
   const key = panel.script ? normScript(panel.script) : ''
@@ -30,7 +30,7 @@ export function ErrorKindRow({ panel }: { panel: PanelObject }) {
   const doc = useDocumentStore((s) => s.doc)
   const runtime = useRuntimeAssetStore((s) => s.assets?.find((a) => a.id === panel.fileId))
   const bakedCount = useAssetStore((s) => s.byId[panel.fileId]?.baked_overrides?.length ?? 0)
-  if (!enabled || !origin || !figureUntouched(doc, panel, origin, { runtime, bakedCount })) return null
+  if (!enabled || !origin || (band && !origin.band) || !figureUntouched(doc, panel, origin, { runtime, bakedCount })) return null
   const shown: ErrorKind = switching ? switching.kind : origin.kind
   return (
     <Row

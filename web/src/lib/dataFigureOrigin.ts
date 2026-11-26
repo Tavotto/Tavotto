@@ -43,6 +43,8 @@ export interface FigureOrigin {
   identity: string
   /** 此刻这张图的误差类型 */
   kind: ErrorKind
+  /** 误差画成阴影带（趋势的 `line_band`，图里是 `fill` 元素）而不是误差线；点阴影带时属性页才出这一行 */
+  band: boolean
   /** 这张图第一次放上画布时的来源指纹；还没见到它的面板时是 null（此时不给换） */
   fingerprint: string | null
   /** 画这张图时的项目（换项目即清，这里再记一份是防御） */
@@ -84,6 +86,7 @@ export function makeOrigin(args: {
     fontRange: args.fontRange ? { ...args.fontRange } : null,
     identity: candidateIdentity(args.item),
     kind,
+    band: /band/.test(args.item.title_code),
     fingerprint: null,
     pj: args.pj,
   }

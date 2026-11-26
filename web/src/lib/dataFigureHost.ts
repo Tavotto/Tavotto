@@ -107,7 +107,7 @@ configureFigureOriginHost({
     useSelectionStore.getState().set([panel.id])
     enterElementEdit(panel.id)
     // 新图的 manifest 到了就选回误差棒（属性页停在误差棒页，那一行显示新类型）
-    selectErrorBarWhenDrawn(panel.id, preferGid)
+    selectErrorBarWhenDrawn(panel.id, preferGid, origin.band)
     return { fingerprint: desc.source_fingerprint }
   },
 })

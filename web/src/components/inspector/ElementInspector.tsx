@@ -486,6 +486,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
+            /* 阴影带（趋势图的均值 ± 误差）：与误差棒页同一行「误差线」；组件自己判这张图是不是带 */
+            lead={element?.role === 'fill' ? <ErrorKindRow panel={panel} band /> : undefined}
             primaryExtra={
               patchSizeAvailable && exactManifest ? (
                 <PatchSizeControls key={element.gid} panel={panel} element={element} />
