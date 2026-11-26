@@ -198,7 +198,8 @@ if (nzchar(port)) {
 d <- read.csv("../numbers.csv")
 p <- ggplot2::ggplot(d, ggplot2::aes(x, y))
 p <- p + ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input") +
-  ggplot2::theme(axis.title.x.bottom = ggplot2::element_text(face = "italic"))
+  ggplot2::theme(axis.title.x.bottom = ggplot2::element_text(face = "italic"),
+                 axis.text.x.bottom = ggplot2::element_text(face = "italic"))
 ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
 """
     source.write_bytes(original)
@@ -239,6 +240,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
             ("plot.title", "color", "#572B82"),
             ("axis.x.bottom.ticks", "color", "#A64184"),
             ("axis.x.bottom.ticks", "fontsize", 12.5),
+            ("axis.x.bottom.ticks", "weight", "bold"),
             ("axis.x.bottom.title", "weight", "bold"),
             ("axis.x.bottom.title", "fontsize", 18.5),
         ]
@@ -285,11 +287,11 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         assert exported.status_code == 200, (exported.get_json(), "".join(problems))
         (output,) = exported.json["outputs"]
         assert output["name"] == "Signal_edited.R"
-        assert output["script_report"] == {"written": 5, "skipped": []}
+        assert output["script_report"] == {"written": 6, "skipped": []}
         edited = Path(exported.json["export_dir"]) / output["name"]
         assert b'colour = "#572B82"' in edited.read_bytes()
         assert (
-            b'axis.text.x.bottom = ggplot2::element_text(colour = "#A64184", size = 12.5)'
+            b'axis.text.x.bottom = ggplot2::element_text(colour = "#A64184", size = 12.5, face = "bold.italic")'
             in edited.read_bytes()
         )
         assert b'face = "bold.italic"' in edited.read_bytes()
@@ -308,7 +310,27 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         }
         tick_export = client.post("/api/export", json=tick_request)
         assert tick_export.status_code == 200, tick_export.get_json()
-        assert tick_export.json["outputs"][0]["script_report"] == {"written": 3, "skipped": []}
+        assert tick_export.json["outputs"][0]["script_report"] == {"written": 4, "skipped": []}
+
+        tick_face_only = [
+            patch
+            for patch in patches
+            if patch["gid"] == "axis.x.bottom.ticks" and patch["prop"] == "weight"
+        ]
+        tick_face = client.post(
+            "/api/engine/render", json={"id": figure, "patches": tick_face_only}
+        )
+        assert tick_face.status_code == 200, tick_face.json
+        tick = next(
+            element
+            for element in tick_face.json["manifest"]["elements"]
+            if element["gid"] == "axis.x.bottom.ticks"
+        )
+        fields = {field["prop"]: field for field in tick["editable"]}
+        assert (
+            fields["weight"]["value"] == "bold" and fields["weight"]["value_original"] == "normal"
+        )
+        assert fields["style"]["value"] == "italic"
 
         # Geometry changes caused by data on disk must not become an edited source export.
         numbers.write_text("x,y\n1,2\n2,40\n3,3\n", encoding="utf-8")
@@ -373,7 +395,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
             },
         )
         assert preview.status_code == 200, preview.json
-        assert preview.json["written"] == 5 and not preview.json["skipped"]
+        assert preview.json["written"] == 6 and not preview.json["skipped"]
         commit = "/api/script-edit/figure-style/commit"
         token = preview.json["token"]
         refused = client.post(commit, json={"token": token})

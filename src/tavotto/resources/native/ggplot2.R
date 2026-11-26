@@ -79,7 +79,7 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL, group_lab
                           maxColorValue = 255)
   font <- text$gp$font
   face <- NULL
-  if (is.null(group_label) && length(font) == 1L && font %in% 1:4) {
+  if ((is.null(group_label) || role == "ticks") && length(font) == 1L && font %in% 1:4) {
     face <- list(weight = if (font %in% c(2L, 4L)) "bold" else "normal",
                  style = if (font %in% c(3L, 4L)) "italic" else "normal")
   }
@@ -399,7 +399,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
   list(panel = panel, params = ggplot_format_guide(params, format, values))
 }
 
-ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_strokes, axis_changes,
+ggplot_guide_table <- function(state, edits, colour_edits, axis_text, guide_strokes, axis_changes,
                                grid_edits, title_theme) {
   built <- state$built
   plot <- built$plot
@@ -450,15 +450,13 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_sizes, guide_str
       guide_params[[index]] <- ggplot_format_guide(guide_params[[index]], edit$format, values)
     }
   }
-  for (gid in names(axis_sizes)) {
-    size <- axis_sizes[[gid]]
-    if (!is_positive_ggplot_number(size) || size < 3 || size > 200) {
-      stop("The native R tick font size must be between 3 and 200 points.")
-    }
+  for (gid in names(axis_text)) {
     index <- state$tick_targets[[gid]]$index
-    position <- strsplit(gid, ".", fixed = TRUE)[[1L]][2:3]
-    element <- paste(c("axis.text", position), collapse = ".")
-    patch <- do.call(ggplot2::theme, stats::setNames(list(ggplot2::element_text(size = size)), element))
+    style <- axis_text[[gid]]
+    patch <- do.call(ggplot2::theme, stats::setNames(
+      list(ggplot2::element_text(size = style$size, face = style$face)),
+      ggplot_axis_tick_theme_names[[gid]]
+    ))
     theme <- axis_params[[index]]$theme
     axis_params[[index]]$theme <- if (is.null(theme)) patch else theme + patch
   }
@@ -1083,6 +1081,9 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     tick_targets <- if (all(lengths(captured_layers$grobs) > 0L)) {
       ggplot_tick_targets(built, text_targets, colourbar_titles)
     }
+    for (gid in intersect(names(text_targets), names(ggplot_axis_tick_theme_names))) {
+      if (is.null(tick_targets[[gid]]$size)) text_targets[[gid]]$face <- NULL
+    }
     colour_scales <- list()
     if (all(lengths(captured_layers$grobs) > 0L)) {
       colour_scales <- ggplot_colour_scale_targets(
@@ -1163,6 +1164,7 @@ edit_ggplot_text <- function(table, slots, path, paint) {
 }
 
 ggplot_face_options <- list(weight = c("normal", "bold"), style = c("normal", "italic"))
+ggplot_element_faces <- c("plain", "bold", "italic", "bold.italic")
 ggplot_font_families <- c("sans-serif" = "sans", serif = "serif", monospace = "mono")
 
 ggplot_installed_title_fonts <- function() {
@@ -1237,6 +1239,29 @@ ggplot_text_paint <- function(target, edits) {
   list(paint = paint, face = face)
 }
 
+ggplot_axis_text_edits <- function(state, edits) {
+  result <- list()
+  for (gid in intersect(names(edits), names(ggplot_axis_tick_theme_names))) {
+    edit <- edits[[gid]]
+    face_props <- intersect(names(ggplot_face_options), names(edit))
+    size <- edit$fontsize
+    if (is.null(size) && !length(face_props)) next
+    target <- state$text_targets[[gid]]
+    if (is.null(state$tick_targets[[gid]]$size)) {
+      stop("The requested native R tick typography is unavailable.")
+    }
+    if (!is.null(size) && (!is_positive_ggplot_number(size) || size < 3 || size > 200)) {
+      stop("The native R tick font size must be between 3 and 200 points.")
+    }
+    face <- if (length(face_props)) {
+      styled <- ggplot_text_paint(target, edit[face_props])
+      ggplot_element_faces[[styled$paint$font]]
+    }
+    result[[gid]] <- list(size = size, face = face)
+  }
+  result
+}
+
 ggplot_title_theme <- function(targets, edits) {
   # Rebuild title layout through the same ggplot2 theme operation as an R script.
   # The guide table retains the built data and drawing work from the capture.
@@ -1248,7 +1273,7 @@ ggplot_title_theme <- function(targets, edits) {
     styled <- ggplot_text_paint(target, edit)
     face <- NULL
     if (!is.null(edit$weight) || !is.null(edit$style)) {
-      face <- c("plain", "bold", "italic", "bold.italic")[[styled$paint$font]]
+      face <- ggplot_element_faces[[styled$paint$font]]
     }
     result[[gid]] <- ggplot2::element_text(
       size = edit$fontsize, family = if (!is.null(edit$fontfamily)) styled$paint$fontfamily,
@@ -1310,21 +1335,19 @@ ggplot_table_for <- function(state, edits) {
     state$axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits)))])
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
-  axis_sizes <- Filter(Negate(is.null), lapply(names(edits), function(gid) {
-    if (!is.null(state$tick_targets[[gid]]$size)) edits[[gid]]$fontsize
-  }) |> stats::setNames(names(edits)))
+  axis_text <- ggplot_axis_text_edits(state, edits)
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
   title_edits <- ggplot_title_theme(text_targets, edits)
   title_theme <- stats::setNames(title_edits, unname(ggplot_title_theme_names[names(title_edits)]))
-  if (length(tick_edits) || length(colour_edits) || length(axis_sizes) || length(guide_strokes) ||
+  if (length(tick_edits) || length(colour_edits) || length(axis_text) || length(guide_strokes) ||
       length(axis_changes) || length(grid_edits) || length(title_edits)) {
     make_guides <- function() ggplot_guide_table(
-      state, tick_edits, colour_edits, axis_sizes, guide_strokes, axis_changes, grid_edits, title_theme
+      state, tick_edits, colour_edits, axis_text, guide_strokes, axis_changes, grid_edits, title_theme
     )
     # Recreate resized text on the same metrics device used by the initial
     # capture, then draw the resulting table on the requested output device.
-    guides <- if (length(title_edits) || length(axis_sizes)) {
+    guides <- if (length(title_edits) || length(axis_text)) {
       with_svg_frame(state$frame_pt, function(capture) make_guides())$value
     } else make_guides()
     table <- guides$table
@@ -1351,10 +1374,16 @@ ggplot_table_for <- function(state, edits) {
           (!changes_ticks && !identical(target$tick_labels, current$tick_labels))) {
         stop("The native R text layout changed while formatting.")
       }
-      size <- axis_sizes[[gid]]
+      typography <- axis_text[[gid]]
+      size <- typography$size
       if (!is.null(size) && !isTRUE(all.equal(size, current$paint$fontsize * ggplot_text_cex(current$paint)))) {
         stop("The native R axis guide did not apply the requested font size.")
       }
+      if (!is.null(typography$face) &&
+          !identical(ggplot_element_faces[[current$paint$font]], typography$face)) {
+        stop("The native R axis guide did not apply the requested font face.")
+      }
+      if (is.null(target$face)) current$face <- NULL
       target[names(current)] <- current
       text_targets[[gid]] <- target
     }
@@ -1523,6 +1552,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   legend_gids <- names(state$legend_targets)
   reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props) %in% names(edit)),
                       logical(1L))) ||
+    any(vapply(edits[intersect(names(edits), names(ggplot_axis_tick_theme_names))],
+               function(edit) any(names(edit) %in% names(ggplot_face_options)), logical(1L))) ||
     any(names(edits) %in% c(ggplot_axes_gid, legend_gids, names(state$colour_scales))) ||
     length(ggplot_guide_stroke_edits(state, edits)) > 0L
   line_edits <- any(names(edits) %in% names(state$line_targets))

@@ -1515,8 +1515,11 @@ function TickPage({
   // 「显示」管着整段：排在段首（二审 A6），关着时下面的行退到禁用那一档而不是消失——
   // 此前它排在最后，用户从上往下改完字体字号才发现整段是关的
   const labelSwitch = labelFields.find((f) => f.prop === 'visible')
-  const labels = labelSwitch ? [labelSwitch, ...labelFields.filter((f) => f !== labelSwitch)] : labelFields
+  const labels = labelFields.filter((f) => f !== labelSwitch)
   const labelsOn = labelSwitch ? currentValue(panel, element.gid, labelSwitch) !== false : true
+  const typography = hasTextStyleBar(element)
+    ? <TextStyleBar panel={panel} element={element} labelWidth={LABEL_W} />
+    : null
   const rows = (list: EditableField[]) =>
     list.length ? (
       <div className="flex flex-col gap-1.5">
@@ -1582,19 +1585,14 @@ function TickPage({
           />
         </div>
       )}
-      {labels.length > 0 && (
+      {(labelSwitch || labels.length > 0 || typography) && (
         <div className="flex flex-col gap-1.5" data-tick-section="labels">
           <GroupHead>{translate('tick.sectionLabels', { ns: 'inspector' })}</GroupHead>
-          {labelSwitch ? (
-            <>
-              {rows([labelSwitch])}
-              <div className={cn(!labelsOn && 'opacity-40')} data-tick-labels-body>
-                {rows(labels.slice(1))}
-              </div>
-            </>
-          ) : (
-            rows(labels)
-          )}
+          {labelSwitch && rows([labelSwitch])}
+          <div className={cn('flex flex-col gap-1.5', !labelsOn && 'opacity-40')} data-tick-labels-body>
+            {typography}
+            {rows(labels)}
+          </div>
         </div>
       )}
       {/* guard 挡掉的能力要说得出为什么——否则开关就是「消失了」（#76） */}

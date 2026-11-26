@@ -94,6 +94,7 @@ def build(
             )
         position = after
 
+    text_themes = {**themes, **(tick_themes or {})}
     face_of = {
         item["gid"]: {
             field["prop"]: field["value"]
@@ -101,7 +102,7 @@ def build(
             if field.get("prop") in ("weight", "style")
         }
         for item in (hot or {}).get("elements", ())
-        if item["gid"] in themes
+        if item["gid"] in text_themes
     }
     elements: dict[str, dict[str, str | float]] = {}
     written: set[tuple[str, str]] = set()
@@ -109,9 +110,7 @@ def build(
     skipped = []
     for patch in patches:
         gid, prop, value = patch["gid"], patch["prop"], patch["value"]
-        element = themes.get(gid)
-        if element is None and prop in ("color", "fontsize") and tick_themes is not None:
-            element = tick_themes.get(gid)
+        element = text_themes.get(gid)
         if element is not None:
             face_fields = face_of.get(gid, {})
             face = _FACES.get((face_fields.get("weight"), face_fields.get("style")))
