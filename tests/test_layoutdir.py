@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -385,6 +386,26 @@ def test_symlinked_directory_or_inner_file_is_refused(store, writer_on, tmp_path
         layoutdir.write(store, "b", _bytes(updatedAt=5))
     assert target.read_bytes() == _bytes()
     assert "b" not in [loc.stem for loc in layoutdir.list_layouts(store)]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="符号链接需要权限")
+@pytest.mark.parametrize("writer", [True, False])
+def test_linked_legacy_dir_is_refused_before_archiving(store, tmp_path, monkeypatch, writer):
+    """`legacy/` 是指向项目外的链接、旧版又覆盖了占位：明确覆盖时冲突留底不许顺着链接写到项目外（开关开关都一样）。"""
+    monkeypatch.setattr(layoutdir, "WRITER_ENABLED", True)
+    layoutdir.write(store, "a", _bytes(updatedAt=1))
+    monkeypatch.setattr(layoutdir, "WRITER_ENABLED", writer)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    legacy = store / "a.tavotto" / "legacy"
+    if legacy.exists():
+        shutil.rmtree(legacy)
+    legacy.symlink_to(outside, target_is_directory=True)
+    (store / "a.json").write_bytes(_bytes(updatedAt=99))
+    assert layoutdir.locate(store, "a").problem == layoutdir.PROBLEM_SYMLINK
+    with pytest.raises(layoutdir.LayoutDirError):
+        layoutdir.write(store, "a", _bytes(updatedAt=2))
+    assert list(outside.iterdir()) == [], "留底写穿了 legacy/ 链接"
 
 
 def test_newer_container_version_is_read_only(store, writer_on):
