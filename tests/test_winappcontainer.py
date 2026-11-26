@@ -1,6 +1,7 @@
 """The staged command stays suspended until the new process token is verified."""
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,6 +35,70 @@ def test_configures_no_capabilities_and_restricts_child_processes(monkeypatch):
         assert observed[winappcontainer._ALL_APPLICATION_PACKAGES_POLICY].value == 1
 
 
+@pytest.mark.parametrize("can_name_station", [True, False])
+def test_replay_desktop_has_its_own_access_and_lifetime(monkeypatch, can_name_station):
+    events = []
+    user = "S-1-5-21-100"
+    package = "S-1-15-2-200"
+
+    def descriptor(sddl, _version, out, _length):
+        assert sddl == f"D:P(A;;GA;;;SY)(A;;GA;;;{user})(A;;GA;;;{package})S:(ML;;NW;;;LW)"
+        out._obj.value = 5
+        return 1
+
+    def create_station(name, flags, _access, attributes):
+        events.append(("create", bool(name)))
+        assert flags == winappcontainer._CREATE_STATION_ONLY
+        assert not attributes._obj.bInheritHandle
+        assert attributes._obj.lpSecurityDescriptor == 5
+        return 20 if can_name_station or name is None else None
+
+    def create_desktop(name, _device, _mode, _flags, access, attributes):
+        assert name == "Default"
+        assert access & winappcontainer._DESKTOP_CREATE_WINDOW
+        assert not attributes._obj.bInheritHandle
+        assert attributes._obj.lpSecurityDescriptor == 5
+        events.append("create desktop")
+        return 30
+
+    desktop_api = SimpleNamespace(
+        GetProcessWindowStation=lambda: 10,
+        GetUserObjectInformationW=lambda *_: 0,
+        CreateWindowStationW=create_station,
+        SetProcessWindowStation=lambda handle: events.append(("switch", handle)) or 1,
+        CloseWindowStation=lambda handle: events.append(("close station", handle)),
+        CreateDesktopW=create_desktop,
+        CloseDesktop=lambda handle: events.append(("close desktop", handle)),
+    )
+    kernel = SimpleNamespace(LocalFree=lambda pointer: events.append(("free", pointer.value)))
+    security = SimpleNamespace(ConvertStringSecurityDescriptorToSecurityDescriptorW=descriptor)
+    monkeypatch.setattr(
+        winappcontainer.ctypes, "WinDLL", lambda *a, **k: desktop_api, raising=False
+    )
+    monkeypatch.setattr(winappcontainer.ctypes, "get_last_error", lambda: 5, raising=False)
+    monkeypatch.setattr(winappcontainer, "_current_user_sid", lambda *_: user)
+    monkeypatch.setattr(winappcontainer, "_station_name", lambda *_: "Service-station")
+
+    with winappcontainer._private_desktop(kernel, security, package) as desktop:
+        assert desktop.endswith(r"\Default")
+        if not can_name_station:
+            assert desktop == r"Service-station\Default"
+        assert events[-1] == ("switch", 10)
+        events.append("isolated command")
+
+    attempts = [("create", True)] if can_name_station else [("create", True), ("create", False)]
+    assert events == [
+        *attempts,
+        ("switch", 20),
+        "create desktop",
+        ("switch", 10),
+        "isolated command",
+        ("close desktop", 30),
+        ("close station", 20),
+        ("free", 5),
+    ]
+
+
 @pytest.mark.parametrize("isolated", [True, False])
 def test_create_and_suspend_before_verifying_the_appcontainer(tmp_path, monkeypatch, isolated):
     events = []
@@ -48,6 +113,7 @@ def test_create_and_suspend_before_verifying_the_appcontainer(tmp_path, monkeypa
             assert not inherits
             assert flags & winappcontainer._CREATE_SUSPENDED
             assert flags & winappcontainer.EXTENDED_STARTUPINFO_PRESENT
+            assert _args[-2]._obj.StartupInfo.lpDesktop == "TavottoReplay-test\\Default"
             output = _args[-1]._obj
             output.hProcess, output.hThread = 10, 11
             events.append("created")
@@ -83,7 +149,16 @@ def test_create_and_suspend_before_verifying_the_appcontainer(tmp_path, monkeypa
 
     monkeypatch.setattr(winappcontainer, "_start_attributes", attributes)
     monkeypatch.setattr(winappcontainer, "_verify_appcontainer", verify)
-    arguments = (Kernel(), object(), None, ["Rterm.exe"], tmp_path, {}, 1.0)
+    arguments = (
+        Kernel(),
+        object(),
+        None,
+        ["Rterm.exe"],
+        tmp_path,
+        {},
+        1.0,
+        "TavottoReplay-test\\Default",
+    )
     if isolated:
         assert winappcontainer._run(*arguments) == 0
     else:

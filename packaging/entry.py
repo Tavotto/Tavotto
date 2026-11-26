@@ -132,6 +132,12 @@ def main() -> None:
         from tavotto.rendercore import renderchild
 
         sys.exit(renderchild.child_main(sys.argv[2:]))
+    if sys.platform == "win32":
+        from tavotto.engine.fixtools import winappcontainer
+
+        if sys.argv[1:2] == [winappcontainer.CHILD_FLAG]:
+            _reopen_child_pipes()
+            sys.exit(winappcontainer.child_main())
     if sys.argv[1:2] == ["--ssl-selftest"]:
         # 构建后闸门（#1051）：冻结产物里 ssl / hashlib 的 OpenSSL 必须能加载。打出来的 exe 在 import 阶段就崩时，
         # 这条比整套冒烟更早、更直白地失败。
