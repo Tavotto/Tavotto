@@ -4181,6 +4181,8 @@ export interface ChangePlan {
   candidate_patches: ChangePlanPatch[]
   groups: ChangePlanGroup[]
   unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
+  /** 审阅来源的方案里后端存的意见原文（`{id, text}` 之外还有锚点）：「改脚本做剩下的」按它取，前端只传 id */
+  comments?: { id: string; text: string }[]
   /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */
   preview: { before: string; after: string }
 }
@@ -4214,8 +4216,12 @@ export interface CreateChangePlanBody {
   instruction?: string
   /** `source: 'assistant'`：用户选中的元素 gid（没有 = 整张图） */
   target?: string
-  /** `script`：脚本修改（只接助手来源，必须带 `connection`；ADR 0206 PR 6） */
+  /** `script`：脚本修改（必须带 `connection`；ADR 0206 PR 6）。审阅来源只接用户点「改脚本做剩下的」那条路：带 `from_plan` + `comment_ids`，不带意见文字 */
   mode?: 'script'
+  /** `source: 'review'` + `mode: 'script'`：来源（审阅）方案 id；意见原文后端取自这份存档 */
+  from_plan?: string
+  /** 同上：要转给脚本方案的意见 id（须在来源方案的 `unhandled` 里、原因 `needs_script`） */
+  comment_ids?: string[]
   client_request_id?: string
 }
 

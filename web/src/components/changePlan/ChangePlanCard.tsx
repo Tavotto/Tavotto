@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { canUndoApplied, declinedGroups, pendingConfirm, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { canUndoApplied, declinedGroups, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
@@ -154,7 +154,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 {cp('card.undo')}
               </Button>
             )}
-            {entry.from === 'assistant' && !entry.scriptStarted && !ask && (status === 'ready' || status === 'applied') && (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') && (
+            {!entry.scriptStarted && !ask && (status === 'ready' || status === 'applied') && (entry.from === 'assistant' ? (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') : reviewScriptIds(entry).length > 0) && (
               <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
                 {cp('card.runScript')}
               </Button>
@@ -192,7 +192,8 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
     else void store().regenerate(entry.key)
   }
   // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
-  const scriptWay = assistant && action !== 'script' && action !== 'restore'
+  // 审阅来源：没有一条能落成图内修改、但有「要改脚本」的意见时，同样给这条路（只由用户点，不自动续走）
+  const scriptWay = (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">

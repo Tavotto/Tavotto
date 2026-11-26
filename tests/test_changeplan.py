@@ -428,6 +428,7 @@ def test_every_input_comment_ends_up_in_a_group_or_in_unhandled():
         "candidate_patches",
         "groups",
         "unhandled",
+        "comments",
         "preview",
     }
     assert plan["groups"][0]["key"] == "g1" and plan["groups"][0]["atomic"] is False

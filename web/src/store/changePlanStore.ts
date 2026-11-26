@@ -60,6 +60,11 @@ export interface PlanRequest {
   target?: string
   /** `script`：脚本修改方案（ADR 0206 PR 6）；「重新生成」按同一份请求再来 */
   mode?: 'script'
+  /**
+   * 审阅来源的脚本方案（ADR 0206 修订 2026-11-26，用户点「改脚本做剩下的」才有）：只带来源方案 id 与要转的意见 id，
+   * 意见原文由后端取自存档、请求里不带文字
+   */
+  scriptFrom?: { plan_id: string; comment_ids: string[] }
   /** 卡上 / 气泡里显示的原话（发给后端的 `instruction` 可能带了「图内已改好的部分」交接说明；缺省 = `instruction`） */
   display?: string
 }
@@ -341,6 +346,17 @@ function revokeLayoutImages(e: PlanEntry | undefined): void {
   for (const u of [e.beforeSrc, e.afterSrc]) if (u?.startsWith('blob:')) URL.revokeObjectURL(u)
 }
 
+/**
+ * 审阅来源的卡上可以「改脚本做剩下的」的意见 id：没处理列表里原因是「要改脚本」、且后端方案里存着原文的那几条。
+ * 助手来源 / 一键排版 / 脚本方案卡没有（它们各有自己的路）。
+ */
+export function reviewScriptIds(e: Pick<PlanEntry, 'from' | 'kind' | 'plan'>): string[] {
+  const plan = e.plan
+  if (!plan || e.from === 'assistant' || e.kind === 'layout' || plan.kind === 'script') return []
+  const stored = new Set((plan.comments ?? []).map((c) => c.id))
+  return [...new Set(plan.unhandled.filter((u) => u.reason === 'needs_script' && u.comment_id && stored.has(u.comment_id)).map((u) => u.comment_id as string))]
+}
+
 /** 这份方案一处图内修改都没有、没处理的全是「要改脚本」（助手来源据此把整条指令交给改脚本那条路） */
 function allNeedScript(plan: ChangePlan): boolean {
   return plan.groups.length === 0 && plan.unhandled.length > 0 && plan.unhandled.every((u) => u.reason === 'needs_script')
@@ -456,6 +472,51 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     }
   }
 
+  /**
+   * 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了。
+   * 应用没成（图已改过 / 写不进）→ null（不续走，卡上说一句）；否则回「有无图内修改」与取此刻有效状态的函数。
+   */
+  const applyPendingFirst = (key: string, e: PlanEntry): { hasChanges: boolean; statusNow: () => PlanStatus } | null => {
+    const hasChanges = !!e.plan && e.plan.groups.some((g) => !e.unchecked[g.key] && g.changes.length > 0)
+    const statusNow = () => {
+      const cur = get().entries[key] ?? e
+      const p = panelOf(cur)
+      return effectiveStatus(cur, p?.overrides ?? null, p ? sourceOf(p) : null)
+    }
+    if (hasChanges) {
+      const st = statusNow()
+      if (st === 'stale') {
+        patch(key, { status: 'stale', notice: undefined })
+        return null
+      }
+      if (st === 'ready' && get().apply(key) !== 'applied') return null
+    }
+    return { hasChanges, statusNow }
+  }
+
+  /**
+   * 审阅来源的「改脚本做剩下的」（ADR 0206 修订 2026-11-26）：只由用户点按钮触发；请求只带来源方案 id + 要转的意见 id，
+   * 意见文字由后端取自存档的方案（外来文本不经前端再传一遍）。出一张新的脚本方案卡（`mode: 'script'`），挂在原卡后面。
+   */
+  const runReviewScript = async (key: string): Promise<boolean> => {
+    const e = get().entries[key]
+    const ids = e ? reviewScriptIds(e) : []
+    if (!e || !e.planId || !ids.length || e.scriptStarted) return false
+    const gate = e.panelId
+    if (pending.has(gate) || get().order.some((k) => get().entries[k]?.panelId === gate && get().entries[k]?.status === 'generating')) return false
+    pending.add(gate)
+    try {
+      if (!applyPendingFirst(key, e)) return false
+      const out = await start(e.panelId, { mode: 'script', scriptFrom: { plan_id: e.planId, comment_ids: ids } })
+      if (isFallthrough(out) || !out) return false
+      patch(out, { followsKey: key })
+      patch(key, { scriptStarted: true })
+      return true
+    } finally {
+      pending.delete(gate)
+    }
+  }
+
   const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false, onSettle?: () => void): Promise<string | null | Fallthrough> => {
     const ds = useDocumentStore.getState()
     const panel = ds.doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
@@ -464,7 +525,11 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const guard = captureProjectEpoch()
     // 只给了分享记录 id（后端取最新版本的未处理意见）：界面上的编号 / 称呼取审阅页签里同一份记录的未处理意见
     const detail = useReviewStore.getState().detail
-    const comments = req.comments ?? (req.share_id && detail?.share_id === req.share_id ? detail.comments.filter((c) => !c.resolved) : [])
+    const from = req.scriptFrom
+    const source = from ? Object.values(get().entries).find((x) => allPlanIds(x).includes(from.plan_id)) : undefined
+    const comments = from
+      ? (source?.comments ?? []).filter((c) => from.comment_ids.includes(c.id))
+      : (req.comments ?? (req.share_id && detail?.share_id === req.share_id ? detail.comments.filter((c) => !c.resolved) : []))
     const assistant = typeof req.instruction === 'string'
     const entry: PlanEntry = {
       key,
@@ -501,7 +566,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         patches: panel.overrides,
         ...(assistant
           ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}), ...(req.mode === 'script' ? { mode: 'script' as const } : {}) }
-          : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
+          : req.scriptFrom
+            ? { source: 'review' as const, mode: 'script' as const, from_plan: req.scriptFrom.plan_id, comment_ids: req.scriptFrom.comment_ids }
+            : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
         // 输入框选的那条连接与型号：结构化调用用同一条，不顺延到别的（审阅来源同理）
         ...currentRunSelection(),
         client_request_id: key,
@@ -567,6 +634,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
 
     runScript: async (key, opts) => {
       const e = get().entries[key]
+      // 审阅来源：只能由用户点按钮走到这里（没有任何自动续走），交给「审阅意见 → 脚本方案」
+      if (e && e.from !== 'assistant' && e.kind !== 'layout') return runReviewScript(key)
       const fb = e?.fallback
       if (!e || !fb || e.from !== 'assistant') return false
       // 发送那一刻的项目 / 文档 / 面板：途中换了就不替他发（换项目整表已清；换文档 / 画布 / 面板被删这里挡）
@@ -579,24 +648,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
       // 图内那部分就丢了。应用没成（图已改过 / 写不进）= 不续走，卡上说一句
       // 与卡片 / `apply()` 同一个有效状态（⌘Z 撤回过的「已应用」又是待确认，存着的 `e.status` 不算数）
-      const hasChanges = !!e.plan && e.plan.groups.some((g) => !e.unchecked[g.key] && g.changes.length > 0)
-      const statusNow = () => {
-        const cur = get().entries[key] ?? e
-        const p = panelOf(cur)
-        return effectiveStatus(cur, p?.overrides ?? null, p ? sourceOf(p) : null)
-      }
-      if (hasChanges) {
-        const st = statusNow()
-        if (st === 'stale') {
-          patch(key, { status: 'stale', notice: undefined })
-          return false
-        }
-        if (st === 'ready') {
-          const r = get().apply(key)
-          if (r !== 'applied') return false
-        }
-        panel = panelOf(e) ?? panel
-      }
+      const pre = applyPendingFirst(key, e)
+      if (!pre) return false
+      panel = panelOf(e) ?? panel
+      const { hasChanges, statusNow } = pre
       // 上下文按**实际**情况写：真正落在文档里的才写「已改好」
       const appliedNow = hasChanges && statusNow() === 'applied'
       // 图内已经改（或待用户应用）的部分，确定性地写进指令：Agent 不在脚本里重做它们（`lib/assistantScriptContext`）
