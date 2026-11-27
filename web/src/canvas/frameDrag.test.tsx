@@ -282,16 +282,24 @@ describe('拖边 = 改这一维的图幅：文字 pt 不变、对边不动，松
     expect(fig().x).toBeCloseTo(-53, 6)
   })
 
-  it('擦到边（吸附半径内）、Esc：什么都没发生', () => {
+  it('擦到边（屏幕吸附半径内）、Esc：什么都没发生；关吸附时一点点也算', () => {
     const d0 = undoDepth()
+    useUiStore.setState({ snapEnabled: true })
     startFigureEdge(down(0, 0), 'r', 'a')
-    fire('pointermove', dx(1), 0)
-    fire('pointerup', dx(1), 0)
+    fire('pointermove', 5, 0)
+    fire('pointerup', 5, 0)
+    expect(sizeOverride()).toBeUndefined()
     startFigureEdge(down(0, 0), 'r', 'a')
     fire('pointermove', dx(10), 0)
     fire('pointercancel', dx(10), 0)
     expect(sizeOverride()).toBeUndefined()
     expect(undoDepth()).toBe(d0)
+    // 下边没有栏宽吸附：关吸附后 5 px 也改图幅
+    useUiStore.setState({ snapEnabled: false })
+    startFigureEdge(down(0, 0), 'b', 'a')
+    fire('pointermove', 0, 5)
+    fire('pointerup', 0, 5)
+    expect((sizeOverride() as number[])[1]).toBeGreaterThan(55)
   })
 
   it('拖动中按下 ⌥ 切到留白、松开切回图幅；松手那一刻的 ⌥ 算数', () => {

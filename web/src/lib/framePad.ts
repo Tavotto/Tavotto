@@ -173,13 +173,13 @@ export interface CornerPlan {
   /** 面板新的左上角（页面 mm） */
   pos: { x: number; y: number }
   snap: PageColumn | null
-  /** 自由比例时吸成了正方形图幅 */
+  /** 自由比例时画布（导出页面）吸成了正方形 */
   square: boolean
 }
 
 /**
  * 拖画布的一个角 = 改图幅（ADR 0161）：默认等比，`free`（⌥，2026-11-27 起与排版同一个键）自由比例；对角不动；留白的 mm 不变。
- * 吸附在**导出宽 = 图幅宽 + 左右留白**上（离栏宽 ±2 mm），自由比例时高还吸「与宽等长」（正方形）；`noSnap`（⌘）都关。
+ * 吸附在**导出宽 = 图幅宽 + 左右留白**上（离栏宽 ±2 mm），自由比例时画布高还吸「与画布宽等长」（正方形）；`noSnap`（⌘）都关。
  * `limits` 是引擎给 `size_mm` 的界。
  * `dx` / `dy` 是指针位移（页面 mm，右 / 下为正）。
  */
@@ -230,9 +230,10 @@ export function planFigureCorner(opts: {
   let square = false
   if (free) {
     h = sizeMm[1] + (top ? -dy : dy) / k
-    if (!noSnap && Math.abs(h - w) < PAGE_EDGE_SNAP_MM) h = w
+    // 正方形量的是画布（导出页面 = 图幅 + 留白），不是图幅
+    if (!noSnap && Math.abs(h + padH - (w + padW)) < PAGE_EDGE_SNAP_MM) h = w + padW - padH
     h = limH(round2(h))
-    square = Math.abs(h - w) < 0.005
+    square = Math.abs(h + padH - (w + padW)) < 0.01
   } else {
     h = round2((sizeMm[1] * w) / sizeMm[0])
     // 等比：高被 minH 顶住时宽跟着抬（取更严的那个），宽高比不变
@@ -255,7 +256,7 @@ export interface EdgeResizePlan {
   /** 面板新的左上角（页面 mm） */
   pos: { x: number; y: number }
   snap: PageColumn | null
-  /** 吸成了正方形图幅 */
+  /** 画布（导出页面）吸成了正方形 */
   square: boolean
   /** 图幅真的变了（还在起手的吸附半径内 = false，松手什么都不做） */
   changed: boolean
@@ -264,8 +265,9 @@ export interface EdgeResizePlan {
 /**
  * 拖画布的一条边 = 改这一维的图幅（ADR 0161 修订 2026-11-27，与多图排版拖边同一条规则）：文字 pt 不变，对边不动，
  * 留白的 mm 不变（紧凑边随新内容边缘重算）。`deltaOut` 是指针**往外**的位移（导出 mm，往外为正）。
- * 停靠点：起手的图幅（擦到边不误改）、另一维等长（正方形）、左右边还有「导出宽 = 图幅宽 + 左右留白 = 栏宽」；
- * 离得最近、且在 `snapMm` 内的那一个吸过去，`noSnap`（⌘）只留起手那一个。
+ * 停靠点：起手的图幅（`startTolMm` 内不改，擦到边不误改；调用方按屏幕吸附半径给，关吸附时 0）、
+ * **画布**（= 导出页面：图幅 + 留白）两维等长（正方形）、左右边还有「导出宽 = 栏宽」；后两者离得最近、且在 `snapMm` 内的吸过去，
+ * `noSnap`（⌘）全关。
  */
 export function planFigureEdge(opts: {
   edge: PageEdge
@@ -277,36 +279,40 @@ export function planFigureEdge(opts: {
   noSnap: boolean
   columns: readonly PageColumn[]
   limits?: { min?: number; max?: number }
+  startTolMm?: number
   snapMm?: number
 }): EdgeResizePlan {
-  const { edge, box0, sizeMm, pad, k, deltaOut, noSnap, columns, limits, snapMm = PAGE_EDGE_SNAP_MM } = opts
+  const { edge, box0, sizeMm, pad, k, deltaOut, noSnap, columns, limits } = opts
+  const snapMm = noSnap ? 0 : (opts.snapMm ?? PAGE_EDGE_SNAP_MM)
+  const startTol = noSnap ? 0 : (opts.startTolMm ?? 0)
   const horizontal = edge === 'l' || edge === 'r'
   const axis = horizontal ? 0 : 1
   const dim0 = sizeMm[axis]
-  const other = sizeMm[1 - axis]
   const padW = pad.l + pad.r
   const padH = pad.t + pad.b
   const padDim = horizontal ? padW : padH
+  const padOther = horizontal ? padH : padW
+  const canvasOther = sizeMm[1 - axis] + padOther
   const round2 = (v: number) => Math.round(v * 100) / 100
   let v = dim0 + deltaOut
 
-  type Cand = { v: number; kind: 'start' | 'square' | 'col'; col?: PageColumn }
-  const cands: Cand[] = [{ v: dim0, kind: 'start' }]
-  if (!noSnap) {
-    cands.push({ v: other, kind: 'square' })
-    if (horizontal) for (const c of columns) cands.push({ v: c.w - padW, kind: 'col', col: c })
-  }
+  type Cand = { v: number; kind: 'square' | 'col'; col?: PageColumn }
   let best: Cand | null = null
-  for (const c of cands) {
-    const d = Math.abs(v - c.v)
-    if (d < snapMm && (!best || d < Math.abs(v - best.v))) best = c
+  if (Math.abs(v - dim0) < startTol) v = dim0
+  else {
+    const cands: Cand[] = [{ v: canvasOther - padDim, kind: 'square' }]
+    if (horizontal) for (const c of columns) cands.push({ v: c.w - padW, kind: 'col', col: c })
+    for (const c of cands) {
+      const d = Math.abs(v - c.v)
+      if (d < snapMm && (!best || d < Math.abs(v - best.v))) best = c
+    }
+    if (best) v = best.v
   }
-  if (best) v = best.v
   // 下限：引擎的界，且画布（图幅 + 两侧留白）这一维至少剩 FRAME_MIN_VISIBLE_MM
   const lo = Math.max(limits?.min ?? 1, FRAME_MIN_VISIBLE_MM - padDim)
-  const v0 = v
-  v = Math.min(limits?.max ?? Infinity, Math.max(lo, round2(v)))
-  const kept = Math.abs(v - round2(v0)) < 0.005 ? best : null
+  const v0 = round2(v)
+  v = Math.min(limits?.max ?? Infinity, Math.max(lo, v0))
+  const kept = Math.abs(v - v0) < 0.005 ? best : null
   const changed = Math.abs(v - dim0) >= 0.005
   const size: [number, number] = horizontal ? [v, sizeMm[1]] : [sizeMm[0], v]
   const bw = (size[0] + padW) * k
@@ -322,7 +328,7 @@ export function planFigureEdge(opts: {
     box,
     pos: { x: box.x + pad.l * k, y: box.y + pad.t * k },
     snap: kept?.kind === 'col' ? kept.col! : null,
-    square: changed && Math.abs(size[0] - size[1]) < 0.005,
+    square: changed && Math.abs(size[0] + padW - (size[1] + padH)) < 0.01,
     changed,
   }
 }

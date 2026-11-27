@@ -19,7 +19,8 @@ import { frameCornerDragStatus, frameEdgeResizeDragStatus, framePadDragStatus } 
 import { useInteractionStore } from '@/store/interactionStore'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
-import { getTransform, pxToMm, useViewportStore } from '@/store/viewportStore'
+import { useUiStore } from '@/store/uiStore'
+import { getTransform, pxToMm, snapTolMm, useViewportStore } from '@/store/viewportStore'
 import { holdPlaceholder } from './figureEdgeDrag'
 import { trackPointer } from './interactions'
 
@@ -88,6 +89,8 @@ export function startFigureEdge(e: ReactPointerEvent, edge: PageEdge, panelId: s
   let lastDy = 0
   let lastNoSnap = false
   let hasMove = false
+  /** 这次拖动写过留白（⌥ 那一路）：切回改图幅时才需要还原，免得每帧换一个新 `framePad` 对象 */
+  let padTouched = false
 
   const restorePad = (d: typeof d0) => {
     if (storedPad0) d.framePad = { ...storedPad0 }
@@ -118,9 +121,14 @@ export function startFigureEdge(e: ReactPointerEvent, edge: PageEdge, panelId: s
         noSnap,
         columns,
         limits: facts.limits,
+        // 起手死区跟排版拖边一样按屏幕吸附半径算（随缩放变），关吸附（设置或 ⌘）时没有
+        startTolMm: useUiStore.getState().snapEnabled ? snapTolMm(t0) / k : 0,
       })
       lastResize = plan
-      store.txnUpdate(restorePad)
+      if (padTouched) {
+        store.txnUpdate(restorePad)
+        padTouched = false
+      }
       if (now.kind !== 'figureedge') useInteractionStore.setState({ kind: 'figureedge' })
       const col = plan.snap ? columnLabel(specLabel, plan.snap) : null
       const key = `${plan.snap?.id ?? ''}|${plan.square}`
@@ -164,6 +172,7 @@ export function startFigureEdge(e: ReactPointerEvent, edge: PageEdge, panelId: s
         else delete d.framePadTight
       }
     })
+    padTouched = true
     const box = frameCanvasBox(box0, pad, k)
     const col = plan.snap ? columnLabel(specLabel, plan.snap) : null
     const rolls = (plan.snap?.id ?? null) !== prevSnap || plan.state !== prevState

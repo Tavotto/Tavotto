@@ -223,7 +223,8 @@ describe('planFigureEdge：拖边改这一维的图幅（ADR 0161 修订 2026-11
   })
 
   it('起手吸附半径内 changed = false；已是正方形的图不算「吸成正方形」', () => {
-    expect(planFigureEdge({ ...base, edge: 'r', deltaOut: 1.5 }).changed).toBe(false)
+    expect(planFigureEdge({ ...base, edge: 'r', deltaOut: 1.5, startTolMm: 2 }).changed).toBe(false)
+    expect(planFigureEdge({ ...base, edge: 'r', deltaOut: 1.5, startTolMm: 2, noSnap: true }).sizeMm).toEqual([81.5, 55])
     const sq = planFigureEdge({ ...base, sizeMm: [55, 55], box0: { x: 0, y: 0, w: 55, h: 55 }, edge: 'r', deltaOut: 1 })
     expect(sq.changed).toBe(false)
     expect(sq.square).toBe(false)
@@ -233,5 +234,11 @@ describe('planFigureEdge：拖边改这一维的图幅（ADR 0161 修订 2026-11
     const p = planFigureEdge({ ...base, edge: 'l', pad: { l: 3, t: 0, r: 2, b: 0 }, box0: { x: -3, y: 0, w: 85, h: 55 }, deltaOut: 10 })
     expect(p.box.x + p.box.w).toBeCloseTo(82, 6)
     expect(p.pos.x).toBeCloseTo(82 - 2 - 90, 6)
+  })
+
+  it('正方形量的是画布（导出页面 = 图幅 + 留白）', () => {
+    const p = planFigureEdge({ ...base, edge: 'r', pad: { l: 5, t: 0, r: 5, b: 0 }, box0: { x: -5, y: 0, w: 90, h: 55 }, deltaOut: -34 })
+    expect(p.sizeMm).toEqual([45, 55])
+    expect(p.square).toBe(true)
   })
 })
