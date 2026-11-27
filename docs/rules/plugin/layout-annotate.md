@@ -10,7 +10,7 @@
 sheet: codex-plugin/AGENTS.md
 order: 135
 改到: `tavotto_layout_*` 六个工具、`bridge.layout_*()`
-主题: 排版标注工具 → `layout-annotate.md`
+主题: 排版标注 → `layout-annotate.md`；建议待办 → `suggest-todos.md`
 必守要点: 只翻译；量子图与成品合成同一判定；写入带 echo_digest
 -->
 

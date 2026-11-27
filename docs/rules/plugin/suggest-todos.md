@@ -1,16 +1,8 @@
 # 建议待办工具（ADR 0214 第 3 期）
 
-> 2026-11-28 新写（第 3 期 3a：插件工具 + 宿主自己问用户），速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**。
+> 2026-11-28 新写（第 3 期 3a：插件工具 + 宿主自己问用户）。速查行与排版标注那行合并（`codex-plugin/AGENTS.md` 的「按改动路径找细则」表，由 `layout-annotate.md` 的 agents-route 生成，为守棘轮上限不单列一行）；这里是这一主题的**唯一全文**，改规则改这里，并同步那一行。
 > 看护用例：`tests/test_mcp_suggest.py`（出方案只算不写、逐条结果、只写勾着的、过期 / 别的会话拒绝、旧引擎不出现）、
 > `tests/test_changeplan*.py`（引擎流水线，桌面端点同一份）、`tests/test_mcp_server.py::test_tools_list_shape`、`tests/test_mcp_error_next.py`。
-
-<!-- agents-route
-sheet: codex-plugin/AGENTS.md
-order: 140
-改到: `tavotto_suggest_*`
-主题: 建议待办 → `suggest-todos.md`
-必守要点: 与桌面同一流水线
--->
 
 - **只翻译，同一条流水线**：宿主交进来的建议经 `changeplan.host_proposal` 变成与方案模型输出同形的提议，**原样交给 `validate_proposal`**
   （藏数据 / 未授权图幅 / 连续曲线逐点标记 / Unicode 上下标，与改图助手同一套守卫）；之后 `require_log_lower_limits` → `candidate_patches` →
