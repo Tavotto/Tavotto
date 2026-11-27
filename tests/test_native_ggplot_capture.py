@@ -525,7 +525,12 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         service.reset_projects()
 
 
-def test_native_r_coordinate_writeback_keeps_independent_edits_bound(tmp_path):
+@pytest.mark.parametrize(
+    "written_scale",
+    [None, "log", "linear"],
+    ids=["retain-statistical-scale", "write-log", "write-linear"],
+)
+def test_native_r_coordinate_writeback_keeps_independent_edits_bound(tmp_path, written_scale):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
@@ -542,7 +547,15 @@ plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
   ggplot2::labs(title = "Scope")
 ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
 """
+    if written_scale:
+        original = original.replace(
+            b'ggplot2::stat_summary(geom = "point", fun = mean)', b"ggplot2::geom_point()"
+        )
+    if written_scale == "linear":
+        original = original.replace(b'ggplot2::labs(title = "Scope")', b"ggplot2::scale_x_log10()")
     script.write_bytes(original)
+    requested_scale = written_scale or "log"
+    requested_limits = [-1, 64] if written_scale == "linear" else [1, 64]
 
     def axes(manifest):
         return {e["gid"]: e for e in manifest["elements"] if e["role"] == "axes"}
@@ -559,14 +572,12 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         before = _render(app, figure, [])
         target = axes(before["manifest"])["axes_2"]
         original_pdf = (project / "original.pdf").read_bytes()
+        edits = [("xlim", requested_limits), ("invert_x", True), ("xscale", requested_scale)]
+        if not written_scale:
+            edits.append(("invert_y", True))
         patches = [
             {"gid": target["gid"], "prop": prop, "value": value, "identity": target["identity"]}
-            for prop, value in (
-                ("xlim", [1, 64]),
-                ("invert_x", True),
-                ("xscale", "log"),
-                ("invert_y", True),
-            )
+            for prop, value in edits
         ]
         hot = _render(app, figure, patches)
         assert not hot["warnings"]
@@ -599,8 +610,10 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
             },
             timeout=120,
         )
-        assert preview["written"] == 2
-        assert [item["prop"] for item in preview["skipped"]] == ["xscale", "invert_y"]
+        assert preview["written"] == (3 if written_scale else 2)
+        assert [item["prop"] for item in preview["skipped"]] == (
+            [] if written_scale else ["xscale", "invert_y"]
+        )
         assert script.read_bytes() == original
         _, saved = app.call(
             "/api/script-edit/figure-style/commit",
@@ -614,10 +627,8 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         _, persisted = app.call(route)
         persisted_panel = persisted["canvases"][0]["objects"][0]
         residual = persisted_panel["overrides"]
-        assert [(patch["prop"], patch["value"]) for patch in residual] == [
-            ("xscale", "log"),
-            ("invert_y", True),
-        ]
+        expected_residual = [] if written_scale else [("xscale", "log"), ("invert_y", True)]
+        assert [(patch["prop"], patch["value"]) for patch in residual] == expected_residual
         assert all(patch["identity"] != target["identity"] for patch in residual)
 
         replay_root = tmp_path / "Fresh runtime"
@@ -627,8 +638,9 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
             rebuilt = _run_ggplot(fresh, script.name, rscript)
             bare = _render(fresh, rebuilt, [])
             standalone = values(axes(bare["manifest"]))
+            authored_scale = written_scale or "linear"
             assert all(
-                el["xlim"] == [1, 64] and el["invert_x"] and el["xscale"] == "linear"
+                el["xlim"] == requested_limits and el["invert_x"] and el["xscale"] == authored_scale
                 for el in standalone.values()
             )
             assert all(not el["invert_y"] for el in standalone.values())
@@ -637,8 +649,8 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
             assert rebound["svg"] == hot["svg"]
             after = values(axes(rebound["manifest"]))
             assert after["axes_1"]["invert_y"] is False
-            assert after["axes_2"]["invert_y"] is True
-            assert all(el["xscale"] == "log" for el in after.values())
+            assert after["axes_2"]["invert_y"] is (written_scale is None)
+            assert all(el["xscale"] == requested_scale for el in after.values())
 
         _, restored = app.call(
             "/api/script-backups/restore",
@@ -3245,6 +3257,169 @@ cat("Verified shared R colourbar state, title rename and clear, fonts, hide and 
 """
 
 
+MAPPED_BAR_GROUP_WIDTH_PROBE = r"""
+if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
+
+library(ggplot2)
+palettes <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector=FALSE)
+d <- expand.grid(group = c("Control", "Treatment"), facet = c("Early", "Late"), visit = c("A", "B", "C"))
+d <- d[!(d$group == "Control" & d$facet == "Late" & d$visit == "C"), ]
+d$n <- as.integer(d$visit) * as.integer(d$facet) + as.integer(d$group)
+p <- ggplot(d, aes(visit, n, fill = group)) +
+  geom_col(position = position_dodge2(preserve = "single"), colour = "#16161B", linewidth = .5) +
+  scale_fill_manual(values = c(Control = "#429FC5", Treatment = "#B15E4E")) +
+  facet_wrap(vars(facet)) + theme_bw()
+frame <- c(432, 306)
+baseline <- adapter$capture_ggplot(p, frame, palettes)
+state <- baseline$state
+gid <- "layer.1.panel.2.bars.group.1"
+parents <- c("layer.1.panel.1.bars", "layer.1.panel.2.bars")
+target <- state$bar_targets[[gid]]
+stopifnot(target$group$label == "Control", length(target$group$rows) == 2L,
+          target$span$width > .22, length(target$geometry$paths) == 0L)
+group_rows <- target$group$rows
+render_scene <- function(edits) {
+  adapter$with_svg_frame(frame, function(device) adapter$ggplot_table_for(state, edits))$value
+}
+rect <- function(table, gid) {
+  host <- state$bar_targets[[gid]]
+  adapter$ggplot_bar_rect(table$grobs[[host$slot]], host)
+}
+before <- lapply(parents, function(gid) rect(state$table, gid))
+patch <- stats::setNames(list(list(bar_width = .22)), gid)
+scene <- render_scene(patch)
+after <- lapply(parents, function(gid) rect(scene$table, gid))
+old <- before[[2L]]
+edited <- after[[2L]]
+centre <- function(r) as.numeric(r$x) + as.numeric(r$width) / 2
+rest <- setdiff(seq_along(old$x), group_rows)
+stopifnot(identical(before[[1L]], after[[1L]]),
+          isTRUE(all.equal(centre(old), centre(edited), tolerance = 1e-12)),
+          identical(old$height, edited$height), identical(old$y, edited$y), identical(old$gp, edited$gp),
+          identical(as.numeric(old$width)[rest], as.numeric(edited$width)[rest]),
+          all(as.numeric(edited$width)[group_rows] < as.numeric(old$width)[group_rows]))
+group_data <- function(applied) {
+  manifest <- adapter$ggplot_manifest(state, "bar-groups", applied)
+  Filter(function(el) el$gid == gid, manifest$elements)[[1L]]
+}
+selection <- group_data(patch)
+stopifnot(length(selection$geometry$paths) == 2L, selection$bar_series$current$bar_width == .22)
+broad <- stats::setNames(list(list(bar_width = .39)), parents[[2L]])
+stopifnot(group_data(broad)$bar_series$current$bar_width == .39,
+          group_data(c(patch, broad))$bar_series$current$bar_width == .22,
+          identical(adapter$render_ggplot(state, c(broad, patch)),
+                    adapter$render_ggplot(state, c(patch, broad))),
+          identical(adapter$render_ggplot(state), baseline$svg))
+p_ambiguous <- suppressMessages(p + scale_fill_manual(values = c(Control = "#429FC5", Treatment = "#429FC5")))
+same_colours <- adapter$capture_ggplot(p_ambiguous, frame, palettes)$state
+stopifnot(identical(same_colours$bar_targets[[gid]]$group$rows, group_rows),
+          length(same_colours$bar_targets[["layer.1.panel.2.bars.group.2"]]$group$rows) == 3L)
+cat("Verified category-specific geometry and bar width with unchanged centers, heights, colors, and sibling panel.\n")
+"""
+
+
+LOG_COLOUR_SCALE_PROBE = r"""
+if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
+
+library(ggplot2)
+catalog <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector=FALSE)
+d <- data.frame(x = 1:8, y = c(2, 3, 4, 2, 1, 2, 3, 4),
+                amount = c(1, 10, 100, 1000, NA, -1, 0, Inf), ref = 8:1)
+p <- ggplot(d, aes(x,y)) +
+  geom_point(aes(colour = amount), size = 3) +
+  geom_point(aes(x=x, y=y+.3, colour = amount), shape = 15) +
+  geom_tile(aes(x=x, y=0, fill=ref), width=.8, height=.35) +
+  scale_colour_gradient(name="Dose", transform="log10", na.value="#CCCCCC",
+                        guide=guide_colourbar(position="right")) +
+  scale_fill_gradient(name="Reference",guide=guide_colourbar(position="left")) +
+  theme_bw()
+captured <- suppressWarnings(adapter$capture_ggplot(p, c(432, 288), catalog))
+state <- captured$state
+gid <- "legend.right.1.colourbar"
+tick_gid <- paste0(gid, ".ticks")
+target <- state$colour_scales[[gid]]
+stopifnot(identical(target$limits, c(1, 1000)),
+          identical(target$members[["1"]]$colour, suppressWarnings(log10(d$amount))))
+test <- stats::setNames(list(list(vmin=10, vmax=100, cmap="plasma", orientation="horizontal", extend="both"),
+                            list(format="%.1f")), c(gid, tick_gid))
+fresh <- adapter$ggplot_remap_colour_scales(state,test[gid],state$built$plot$guides$params)
+oracle <- suppressMessages(p + continuous_scale(
+  aesthetics="colour", palette=adapter$ggplot_palette(catalog, "plasma"),
+  name="Dose", transform="log10", limits=c(10, 100), oob=scales::squish, na.value="#CCCCCC"
+))
+known <- suppressWarnings(ggplot_build(oracle))
+missing <- !is.finite(target$members[["1"]]$colour)
+stopifnot(identical(fresh$data[[1L]]$colour, known$data[[1L]]$colour),
+          identical(fresh$data[[2L]]$colour, known$data[[2L]]$colour),
+          sum(missing) == 4L,
+          identical(fresh$data[[1L]]$colour[missing], state$built$data[[1L]]$colour[missing]),
+          identical(fresh$data[[2L]]$colour[missing], state$built$data[[2L]]$colour[missing]),
+          identical(fresh$data[[3L]], state$built$data[[3L]]),
+          identical(fresh$data[[1L]]$x, state$built$data[[1L]]$x))
+svg <- adapter$render_ggplot(state,test)
+stopifnot(grepl(">10.0</text>", svg, fixed=TRUE), grepl(">100.0</text>", svg,fixed=TRUE),
+          identical(adapter$render_ggplot(state),captured$svg))
+shown <- adapter$ggplot_manifest(state,"test",test)
+item <- Filter(function(el) el$gid == gid, shown$elements)[[1L]]
+stopifnot(identical(item$color_scale$limits, as.list(c(10,100))))
+bad <- stats::setNames(list(list(vmin=0)), gid)
+stopifnot(inherits(try(adapter$render_ggplot(state,bad),silent=TRUE),"try-error"))
+cat("Verified logarithmic range in original units with stock ggplot2 color mapping, endpoints and missing values.\n")
+"""
+
+
+MAPPED_POINT_SHAPE_PROBE = r"""
+if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
+
+library(ggplot2)
+pal <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector=FALSE)
+d <- expand.grid(x=1:4, group=c("Control","Treatment"), panel=c("Early","Late"))
+d <- d[!(d$group=="Treatment" & d$panel=="Early"), ]
+d$y <- d$x + 3*as.integer(d$group)
+d$z <- seq_len(nrow(d))
+p <- ggplot(d, aes(x,y)) + geom_point(aes(shape=group,colour=z), size=3) +
+  scale_colour_gradient(name="Dose") + facet_wrap(vars(panel)) +
+  labs(shape="Group") + theme_bw()
+frame <- c(420, 285)
+before <- adapter$capture_ggplot(p, frame, pal)
+state <- before$state
+gid <- "layer.1.panel.2.scatter.group.1"
+peer <- "layer.1.panel.1.scatter.group.1"
+stopifnot(identical(state$point_targets[[gid]]$group$links, peer))
+changed <- stats::setNames(list(list(marker="s")), gid)
+other_side <- stats::setNames(list(list(marker="s")), peer)
+actual <- adapter$render_ggplot(state, changed)
+oracle <- adapter$capture_ggplot(p + scale_shape_manual(values=c(Control=15L,Treatment=17L)), frame, pal)
+stopifnot(!identical(actual,before$svg), identical(actual,oracle$svg),
+          identical(actual,adapter$render_ggplot(state,other_side)),
+          identical(before$svg,adapter$render_ggplot(state)))
+single <- function(bundle, name) Filter(function(el) el$gid==name,bundle$elements)[[1L]]
+manifest <- adapter$ggplot_manifest(state,"dots",changed)
+local <- single(manifest,gid)
+sibling <- single(manifest,peer)
+stopifnot(local$point_series$current$marker=="s", sibling$point_series$current$marker=="s",
+          !identical(local$bbox,sibling$bbox),
+          identical(local$alias_covers$marker$marker, as.list(peer)))
+colors <- stats::setNames(list(list(cmap="plasma",vmin=2,vmax=11)), "legend.right.1.colourbar")
+combined <- adapter$render_ggplot(state,c(changed,colors))
+stopifnot(!identical(actual,combined))
+conflict <- c(changed, stats::setNames(list(list(marker="D")), peer))
+stopifnot(inherits(try(adapter$render_ggplot(state,conflict),silent=TRUE), "try-error"))
+
+clipped_data <- d
+clipped_data$x[clipped_data$panel == "Early"] <- clipped_data$x[clipped_data$panel == "Early"] + 10
+with_clipping <- (p %+% clipped_data) + coord_cartesian(xlim = c(0.5, 4.5), expand = FALSE)
+clipped <- adapter$capture_ggplot(with_clipping, frame, pal)$state
+stopifnot(identical(clipped$point_targets[[peer]]$bbox, as.list(c(-1, -1, 0, 0))))
+revealed <- adapter$render_ggplot(clipped, c(changed, list(axes_2 = list(xlim = c(0.5, 14.5)))))
+expected <- adapter$capture_ggplot(suppressMessages(with_clipping +
+  coord_cartesian(xlim = c(0.5, 14.5), expand = FALSE) +
+  scale_shape_manual(values = c(Control = 15L, Treatment = 17L))), frame, pal)
+stopifnot(identical(revealed, expected$svg))
+cat("Verified grouped scatter markers and keys on both facets match authored R exactly, with stable local hit bounds and shared alias state.\n")
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -3269,6 +3444,18 @@ def test_faceted_tick_locators_are_shared_and_appearance_is_local(tmp_path):
 
 def test_native_colorbar_appearance_keeps_other_guides_and_mappings(tmp_path):
     _assert_r_probe(tmp_path, COLOURBAR_APPEARANCE_PROBE)
+
+
+def test_mapped_bar_group_edits_keep_dodged_centers_and_sibling_panels(tmp_path):
+    _assert_r_probe(tmp_path, MAPPED_BAR_GROUP_WIDTH_PROBE)
+
+
+def test_log_colourbar_ranges_match_native_mapping_in_data_units(tmp_path):
+    _assert_r_probe(tmp_path, LOG_COLOUR_SCALE_PROBE)
+
+
+def test_mapped_point_groups_update_one_shape_key_across_facets(tmp_path):
+    _assert_r_probe(tmp_path, MAPPED_POINT_SHAPE_PROBE)
 
 
 def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):

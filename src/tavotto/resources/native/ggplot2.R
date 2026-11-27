@@ -218,7 +218,7 @@ ggplot_numeric_key <- function(key, target, values = key$.value) {
   NULL
 }
 
-ggplot_colourbar_key_values <- function(params) {
+ggplot_colourbar_key_values <- function(params, scale) {
   # GuideColourbar stores tick positions in bar coordinates after training.
   # Recover scale values from the same endpoints. The caller also checks the
   # result against every actually drawn label before exposing the editor.
@@ -234,7 +234,10 @@ ggplot_colourbar_key_values <- function(params) {
     inset <- 0.5 / params$nbin
   }
   endpoints <- range[c(1L, length(range))]
-  endpoints[[1L]] + (params$key$.value - inset) / (1 - 2 * inset) * diff(endpoints)
+  values <- endpoints[[1L]] + (params$key$.value - inset) / (1 - 2 * inset) * diff(endpoints)
+  if (!is.null(scale)) {
+    tryCatch(scale$get_transformation()$inverse(values), error = function(error) NULL)
+  }
 }
 
 ggplot_axis_spacing <- function(built, panel, params, values) {
@@ -343,7 +346,8 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
       index <- match(target$legend_title, unname(colourbar_titles))
       key <- names(colourbar_titles)[[index]]
       params <- built$plot$guides$params[[key]]
-      values <- ggplot_numeric_key(params$key, target, ggplot_colourbar_key_values(params))
+      scale <- if (length(params$aesthetic) == 1L) built$plot$scales$get_scales(params$aesthetic)
+      values <- ggplot_numeric_key(params$key, target, ggplot_colourbar_key_values(params, scale))
       if (!is.null(values)) {
         result[[gid]] <- list(kind = "colourbar", index = key, values = values)
       }
@@ -658,7 +662,7 @@ ggplot_reflow_facet_guides <- function(table, layout, theme, text_targets, tick_
 }
 
 ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-                               grid_edits, theme_edits, aspect, side_edits, facet_changes) {
+                               grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits) {
   built <- state$built
   plot <- built$plot
   axes_target <- state$axes_targets[[ggplot_axes_gid]]
@@ -667,6 +671,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   guide_params <- plot$guides$params
   remapped <- if (length(colour_edits)) ggplot_remap_colour_scales(state, colour_edits, guide_params)
   if (!is.null(remapped)) guide_params <- remapped$guides
+  guide_params <- ggplot_style_point_keys(guide_params, state$point_targets, point_edits)
   if (!is.null(remapped)) built$data <- remapped$data
   if (length(axis_changes)) built <- ggplot_project_axes(built, axes_target, axis_changes)
   if (length(facet_changes)) built <- ggplot_project_facet_axes(built, state$facet_axis_groups, facet_changes)
@@ -674,7 +679,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   layout <- ggplot_clone(built$layout)
   if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, axes_target, aspect)
   panels <- layout$panel_params
-  for (gid in ggplot_line_edit_order(names(guide_strokes), state$line_targets)) {
+  for (gid in ggplot_series_edit_order(names(guide_strokes), state$line_targets)) {
     target <- state$line_targets[[gid]]
     style <- ggplot_line_style(target, guide_strokes[[gid]])
     for (index in target$guide_keys) {
@@ -1170,7 +1175,7 @@ ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, fa
   result
 }
 
-ggplot_line_edit_order <- function(gids, targets) {
+ggplot_series_edit_order <- function(gids, targets) {
   narrow <- vapply(gids, function(gid) !is.null(targets[[gid]]$group), logical(1L))
   c(gids[!narrow], gids[narrow])
 }
@@ -1544,13 +1549,14 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     line_targets <- line_targets[names(line_geometry)]
     axes_bbox <- measure_ggplot_axes(table, axes_targets, frame_pt)
     has_sized_title <- any(vapply(text_targets, function(text) !is.null(text$title_dimension), logical(1L)))
+    point_targets <- ggplot_point_targets(built, panels, captured_layers$grobs, colour_capture$maps)
     rebuild_guides <- has_sized_title || length(axes_targets) || length(tick_targets) || length(colour_scales) ||
-      any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L)))
-    point_targets <- ggplot_point_targets(built, panels, captured_layers$grobs)
+      any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L))) ||
+      any(vapply(point_targets, function(points) !is.null(points$group), logical(1L)))
     point_boxes <- measure_ggplot_points(table, point_targets, frame_pt)
     point_targets <- point_targets[names(point_boxes)]
     for (gid in names(point_targets)) point_targets[[gid]]$bbox <- point_boxes[[gid]]
-    bar_targets <- ggplot_bar_targets(built, panels, captured_layers$grobs)
+    bar_targets <- ggplot_bar_targets(built, panels, captured_layers$grobs, colour_capture$maps)
     bar_geometry <- measure_ggplot_bars(table, bar_targets, frame_pt)
     bar_targets <- bar_targets[names(bar_geometry)]
     ribbon_targets <- ggplot_ribbon_targets(built, panels, captured_layers$grobs)
@@ -1860,6 +1866,7 @@ ggplot_guide_stroke_edits <- function(state, edits) {
 }
 
 ggplot_table_for <- function(state, edits) {
+  edits <- ggplot_expand_point_groups(state, edits)
   table <- state$table
   layout <- state$built$layout
   text_targets <- state$text_targets
@@ -1886,13 +1893,15 @@ ggplot_table_for <- function(state, edits) {
   axis_styles <- ggplot_axis_style_edits(state, edits)
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
+  point_groups <- Filter(function(target) !is.null(target$group), state$point_targets)
+  point_edits <- edits[intersect(names(edits), names(point_groups))]
   title_edits <- ggplot_title_theme(text_targets, edits)
   theme_edits <- stats::setNames(title_edits, unname(ggplot_title_theme_names[names(title_edits)]))
   if (!is.null(axes_edits$facecolor)) {
     theme_edits$panel.background <- ggplot_background_style(axes_target$background, axes_edits$facecolor)
   }
   if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
-      length(axis_changes) || length(facet_changes) || length(grid_edits) || length(theme_edits) ||
+      length(point_edits) || length(axis_changes) || length(facet_changes) || length(grid_edits) || length(theme_edits) ||
       !is.null(aspect) || length(side_edits)) {
     # A source writeback can move typography into the plot theme while
     # coordinate and guide edits stay in the document. Both scenes must
@@ -1900,7 +1909,7 @@ ggplot_table_for <- function(state, edits) {
     guides <- with_svg_frame(state$frame_pt, function(capture) {
       ggplot_guide_table(
         state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-        grid_edits, theme_edits, aspect, side_edits, facet_changes
+        grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits
       )
     })$value
     table <- guides$table
@@ -1961,7 +1970,8 @@ ggplot_table_for <- function(state, edits) {
       })
     }
   }
-  for (gid in ggplot_line_edit_order(names(edits), layer_targets$line_targets)) {
+  ordered <- ggplot_series_edit_order(names(edits), c(layer_targets$line_targets, layer_targets$bar_targets))
+  for (gid in ordered) {
     if (gid == ggplot_axes_gid || !is.null(colour_edits[[gid]]) || gid %in% names(title_edits)) next
     facet <- state$axes_targets[[gid]]
     if (!is.null(facet)) {
@@ -2116,6 +2126,7 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
 }
 
 ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
+  edits <- ggplot_expand_point_groups(state, edits)
   # A resized title can move the entire plot. Re-measure even targets whose
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)

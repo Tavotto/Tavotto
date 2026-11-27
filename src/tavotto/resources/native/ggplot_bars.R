@@ -82,7 +82,46 @@ ggplot_bar_target <- function(layout, draw, fixed) {
   )
 }
 
-ggplot_bar_targets <- function(built, panels, layer_grobs) {
+# Build category membership from the scale's observed input. Different
+# levels are allowed to use identical colours and still own separate bars.
+ggplot_bar_fill_groups <- function(built, mapped, maps, index) {
+  if (!"fill" %in% mapped) return(NULL)
+  scale <- built$plot$scales$get_scales("fill")
+  if (is.null(scale) || !isTRUE(scale$is_discrete())) return(NULL)
+  observed <- ggplot_aligned_colour_capture(built, maps, index)
+  values <- observed$input$fill
+  data <- built$data[[index]]
+  if (!length(values) || !identical(observed$output$fill, data$fill)) return(NULL)
+  keys <- scale$get_breaks()
+  labels <- scale$get_labels(keys)
+  if (!is.character(labels) || anyNA(labels) || anyDuplicated(labels) ||
+      anyDuplicated(keys) || length(keys) != length(labels)) return(NULL)
+  membership <- split(match(values, keys), data$PANEL)
+  list(keys = keys, labels = labels, membership = membership)
+}
+
+ggplot_bar_group_targets <- function(target, groups, parent_gid) {
+  if (is.null(groups) || is.null(target$span) || !isTRUE(target$span$uniform)) return(list())
+  membership <- groups$membership[[as.character(target$panel_id)]]
+  if (length(membership) != target$count) return(list())
+  indices <- split(seq_len(target$count), membership)
+  if (length(indices) < 2L) return(list())
+  result <- list()
+  prop <- target$span$prop
+  for (index in as.integer(names(indices))) {
+    part <- target
+    rows <- indices[[as.character(index)]]
+    part$group <- list(rows = rows, label = groups$labels[[index]], parent = parent_gid)
+    part$span$centre <- target$span$centre[rows]
+    part$span$rows <- rows
+    part$values <- target$values[prop]
+    part$context <- rlang::hash(list(target$context, groups$keys[[index]], rows))
+    result[[paste0(parent_gid, ".group.", index)]] <- part
+  }
+  result
+}
+
+ggplot_bar_targets <- function(built, panels, layer_grobs, maps) {
   if (is.null(panels)) return(list())
   layout <- built$layout
   remaining_paths <- 500L
@@ -92,6 +131,7 @@ ggplot_bar_targets <- function(built, panels, layer_grobs) {
     kind <- class(layer$geom)[[1L]]
     if (!kind %in% c("GeomBar", "GeomCol")) next
     mapped <- ggplot_styled_layer_mapping(layer)
+    groups <- ggplot_bar_fill_groups(built, mapped, maps, index)
     fixed <- !is.null(mapped) && !ggplot_layer_has_legend_key(built, layer, mapped) &&
       !length(intersect(mapped, c("fill", "colour", "alpha", "size", "linewidth", "linetype")))
     for (draw in ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])) {
@@ -106,6 +146,14 @@ ggplot_bar_targets <- function(built, panels, layer_grobs) {
       target$precise <- target$count <= remaining_paths
       if (target$precise) remaining_paths <- remaining_paths - target$count
       targets[[gid]] <- target
+      subgroups <- ggplot_bar_group_targets(target, groups, gid)
+      for (part_gid in names(subgroups)) {
+        part <- subgroups[[part_gid]]
+        part_count <- length(part$group$rows)
+        part$precise <- part_count <= remaining_paths
+        if (part$precise) remaining_paths <- remaining_paths - part_count
+        targets[[part_gid]] <- part
+      }
     }
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
@@ -161,8 +209,9 @@ ggplot_edit_bar_span <- function(rect, span, width, panel, coord) {
   if (any(!is.finite(origin) | !is.finite(dimension) | dimension == 0)) {
     stop("The native R bar width cannot be represented in the current view.")
   }
-  rect[[span$axis]] <- grid::unit(origin, "native")
-  rect[[span$dimension]] <- grid::unit(dimension, "native")
+  rows <- span$rows %||% seq_along(origin)
+  rect[[span$axis]][rows] <- grid::unit(origin, "native")
+  rect[[span$dimension]][rows] <- grid::unit(dimension, "native")
   rect
 }
 
@@ -186,6 +235,18 @@ ggplot_edit_bars <- function(table, target, edit, layout) {
   panel$children[[target$child]] <- rect
   table$grobs[[target$slot]] <- panel
   table
+}
+
+ggplot_bar_group_rect <- function(rect, target) {
+  rows <- target$group$rows
+  if (is.null(rows)) return(rect)
+  for (field in c("x", "y", "width", "height")) rect[[field]] <- rect[[field]][rows]
+  for (field in names(rect$gp)) {
+    if (length(rect$gp[[field]]) > 1L) {
+      rect$gp[[field]] <- rep_len(rect$gp[[field]], target$count)[rows]
+    }
+  }
+  rect
 }
 
 ggplot_bar_geometry <- function(rect, target, frame_pt, retain_clipped = FALSE) {
@@ -260,7 +321,7 @@ measure_ggplot_bars <- function(table, targets, frame_pt, retain_clipped = FALSE
     if (is.null(viewport)) next
     result[[gid]] <- tryCatch({
       grid::downViewport(viewport, strict = TRUE)
-      measured <- ggplot_bar_geometry(rect, target, frame_pt, retain_clipped)
+      measured <- ggplot_bar_geometry(ggplot_bar_group_rect(rect, target), target, frame_pt, retain_clipped)
       if (!is.null(measured$geometry)) measured$geometry$paint_order <- match(rect$name, panel$childrenOrder)
       measured
     }, error = function(error) NULL, finally = grid::upViewport(0))
@@ -275,9 +336,15 @@ ggplot_bar_elements <- function(state, edits, measured) {
     if (is.null(geometry)) stop("The native R bar series could not be measured.")
     edit <- edits[[gid]]
     label <- ggplot_layer_label("\u67f1\u5f62\u7cfb\u5217", target)
+    effective <- edit
+    if (!is.null(target$group)) {
+      label <- paste(label, target$group$label, sep = " \u00b7 ")
+      inherited <- edits[[target$group$parent]][names(target$values)]
+      effective <- utils::modifyList(Filter(Negate(is.null), inherited) %||% list(), edit %||% list())
+    }
     c(list(gid = gid, role = "bar_series", label = label,
            draggable = FALSE, editable = list(), bar_series = list(
-             context = target$context, current = ggplot_bar_values(target, edit),
+             context = target$context, current = ggplot_bar_values(target, effective),
              original = target$values, edited = as.list(names(edit))
            )), geometry)
   })

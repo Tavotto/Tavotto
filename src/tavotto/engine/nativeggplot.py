@@ -311,6 +311,8 @@ class GgplotTarget:
                     eligibility[f"{axis}lim"] = scope
                 if scope["direction"]:
                     eligibility[f"invert_{axis}"] = scope
+                if scope.get("scale"):
+                    eligibility[f"{axis}scale"] = scope
             if (inverted := current["inverted"]) is not None:
                 candidates.append((axis_invert_field(axis, inverted), original["inverted"]))
             links = (axes.get("links") or {}).get(axis)

@@ -139,7 +139,10 @@ ggplot_axes_target <- function(built, table) {
   if (coord$reverse != "none") context <- c(context, list(coord$reverse))
   # Fixed Cartesian plots originally only offered grid and frame controls.
   if (!is.null(coord$ratio)) context <- ggplot_decoration_context(built)
-  source_groups <- lapply(axes, function(axis) ggplot_source_axis_group("1", 1L, kinds, coord$reverse))
+  write_scale <- ggplot_source_scale_layers(built, kinds)
+  source_groups <- lapply(axes, function(axis) {
+    ggplot_source_axis_group("1", 1L, kinds, coord$reverse, write_scale)
+  })
   list(slot = slot, axes = axes, reverse = coord$reverse, source_groups = source_groups,
        source_anchor = rlang::hash(list(kinds, built$data)),
        context = rlang::hash(context))
@@ -765,12 +768,20 @@ ggplot_project_facet_axes <- function(built, groups, changes) {
   built
 }
 
-ggplot_source_axis_group <- function(group, total, kinds, reverse) {
+ggplot_source_scale_layers <- function(built, kinds) {
+  if (!length(kinds) || !all(kinds %in% c("GeomPoint", "GeomLine", "GeomPath"))) return(FALSE)
+  all(vapply(built$plot$layers, function(layer) {
+    identical(class(layer$stat)[[1L]], "StatIdentity") &&
+      identical(class(layer$position)[[1L]], "PositionIdentity")
+  }, logical(1L)))
+}
+
+ggplot_source_axis_group <- function(group, total, kinds, reverse, write_scale) {
   raster <- "GeomRaster" %in% kinds
   # ggplot2's stock raster grob still needs Tavotto's matrix reflection when
   # reversing coordinates. Do not claim plain R can redraw that view.
   list(group = group, total = total, range = !raster || identical(reverse, "none"),
-       direction = !raster)
+       direction = !raster, scale = write_scale)
 }
 
 ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
@@ -787,6 +798,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
     length(unique(cells[[paste0("SCALE_", toupper(axis))]]))
   }) |> stats::setNames(ggplot_axis_names)
   kinds <- ggplot_axis_layers(built$plot$layers)
+  write_scale <- ggplot_source_scale_layers(built, kinds)
   source_anchor <- if (any(lengths(axis_groups) > 0L)) rlang::hash(list(kinds, built$data, cells))
   context <- rlang::hash(ggplot_decoration_context(built))
   targets <- lapply(seq_along(ids), function(i) {
@@ -803,7 +815,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
       if (is.null(group)) next
       target$axes[[axis]] <- group$spec
       target$groups[[axis]] <- group_id
-      target$source_groups[[axis]] <- ggplot_source_axis_group(group_id, totals[[axis]], kinds, target$reverse)
+      target$source_groups[[axis]] <- ggplot_source_axis_group(group_id, totals[[axis]], kinds, target$reverse, write_scale)
     }
     if (!is.null(ggplot_facet_grill(table$grobs[[slot]]))) {
       target <- ggplot_grid_target(built, table, target, slot)

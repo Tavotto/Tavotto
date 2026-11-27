@@ -8,7 +8,7 @@ ggplot_observe_colour_maps <- function(plot, capture) {
     scales <- ggplot2::ggproto_parent(original, self)$non_position_scales(...)
     ggplot_clone(scales, map_df = function(self, df, ...) {
       mapped <- ggplot2::ggproto_parent(scales, self)$map_df(df, ...)
-      channels <- intersect(c("colour", "fill"), names(df))
+      channels <- intersect(c("colour", "fill", "shape"), names(df))
       row_keys <- intersect(c("PANEL", "group", "x", "y", "xmin", "xmax", "ymin", "ymax"), names(df))
       capture$maps[[length(capture$maps) + 1L]] <- list(
         input = df[channels], output = mapped[channels], rows = df[row_keys]
@@ -19,11 +19,22 @@ ggplot_observe_colour_maps <- function(plot, capture) {
   plot
 }
 
+ggplot_aligned_colour_capture <- function(built, maps, index) {
+  if (length(maps) != length(built$data)) return(NULL)
+  observed <- maps[[index]]
+  data <- built$data[[index]]
+  if (identical(observed$rows, data[names(observed$rows)])) observed
+}
+
 ggplot_colour_members <- function(built, maps, channels) {
   if (length(maps) != length(built$data) || !length(maps)) return(NULL)
   members <- list()
   for (i in seq_along(maps)) {
-    observed <- maps[[i]]
+    observed <- ggplot_aligned_colour_capture(built, maps, i)
+    if (is.null(observed)) {
+      if (length(intersect(channels, names(maps[[i]]$input)))) return(NULL)
+      next
+    }
     data <- built$data[[i]]
     values <- observed$input[intersect(channels, names(observed$input))]
     if (!length(values) || !nrow(values)) next
@@ -31,7 +42,6 @@ ggplot_colour_members <- function(built, maps, channels) {
     # These stock drawing methods consume final data directly. We can redraw
     # them without invoking a stat, aesthetic expression or custom draw hook.
     if (!class(layer$geom)[[1L]] %in% c("GeomPoint", "GeomTile", "GeomRect", "GeomRaster") ||
-        !identical(observed$rows, data[names(observed$rows)]) ||
         any(vapply(layer$computed_mapping, function(mapping) {
           any(all.names(rlang::get_expr(mapping)) %in% c("after_scale", "stage"))
         }, logical(1L)))) return(NULL)
@@ -195,9 +205,9 @@ ggplot_colour_scale_mappings <- function(built, table, text_targets, titles, map
     if (length(aesthetic) != 1L || !aesthetic %in% c("colour", "fill")) next
     scale <- built$plot$scales$get_scales(aesthetic)
     if (!identical(class(scale)[[1L]], "ScaleContinuous") ||
-        !identical(scale$get_transformation()$name, "identity") ||
+        !scale$get_transformation()$name %in% c("identity", "log-10") ||
         !all(scale$aesthetics %in% c("colour", "fill"))) next
-    limits <- scale$get_limits()
+    limits <- scale$get_transformation()$inverse(scale$get_limits())
     if (length(limits) != 2L || !all(is.finite(limits)) || !is_positive_ggplot_number(diff(limits))) next
     # ggplot2 names the guide decorations `colour` even for a fill scale.
     samples <- params$decor$colour
@@ -351,6 +361,7 @@ ggplot_palette <- function(catalog, name) {
   colors <- paste0("#", substring(packed, starts, starts + 5L))
   function(x) {
     index <- pmax(1, pmin(floor(x * size) + 1, size))
+    index[!is.finite(x)] <- NA_integer_
     colors[index]
   }
 }
@@ -445,6 +456,9 @@ ggplot_colour_scale_state <- function(target, edit, catalog) {
       limits[[i]] <- value
     }
     if (!is_positive_ggplot_number(diff(limits))) stop("The lower colour limit must be below the upper limit.")
+    if (identical(target$scale$get_transformation()$name, "log-10") && limits[[1L]] <= 0) {
+      stop("A logarithmic native R colour scale needs positive colour limits.")
+    }
   }
   name <- edit$cmap
   if (!is.null(name) && (!is.character(name) || length(name) != 1L ||
@@ -486,7 +500,7 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
     scale <- target$scale
     scale <- ggplot_clone(scale)
     if (selection$range_changed) {
-      scale$limits <- selection$limits
+      scale$limits <- scale$get_transformation()$transform(selection$limits)
       scale$breaks <- ggplot2::waiver()
       # Extrema use endpoint colors, like the standard Tavotto color scale.
       # Preserve missing values and the source scale's NA color.
@@ -504,7 +518,7 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
         tick_gid <- descriptor$ticks
         guide_ticks <- c(guide_ticks, tick_gid)
         labels <- list(tick_labels = as.list(params$key$.label))
-        ticks[[tick_gid]] <- ggplot_numeric_key(params$key, labels, ggplot_colourbar_key_values(params))
+        ticks[[tick_gid]] <- ggplot_numeric_key(params$key, labels, ggplot_colourbar_key_values(params, scale))
       }
       if (identical(key, target$index)) {
         colours <- params$decor$colour

@@ -59,7 +59,11 @@ class _RetryWithoutFontFamily(Exception):
         self.original = original
 
 
-def _coordinate_value(element: dict, prop: str, value) -> list | bool | None:
+def _coordinate_value(
+    element: dict, prop: str, value, planned_scale: str | None
+) -> list | bool | str | None:
+    if prop in ("xscale", "yscale"):
+        return value if isinstance(value, str) and value in ("linear", "log") else None
     if prop in ("invert_x", "invert_y"):
         return value if type(value) is bool else None
     if prop not in ("xlim", "ylim") or not isinstance(value, list) or len(value) != 2:
@@ -70,14 +74,16 @@ def _coordinate_value(element: dict, prop: str, value) -> list | bool | None:
     if not lower < upper:
         return None
     scale = next(f for f in element["editable"] if f["prop"] == f"{prop[0]}scale")
-    authored = scale.get("value_original", scale["value"])
-    if (authored == "log" and lower <= 0) or (authored == "logit" and not (0 < lower < upper < 1)):
+    replay_scale = planned_scale or scale.get("value_original", scale["value"])
+    if (replay_scale == "log" and lower <= 0) or (
+        replay_scale == "logit" and not (0 < lower < upper < 1)
+    ):
         return None
     return value
 
 
 def _native_coordinate_writes(
-    axes: dict[str, dict], patches: list[dict]
+    axes: dict[str, dict], patches: list[dict], *, write_scales: bool = True
 ) -> tuple[dict, set[tuple[str, str]]]:
     """A stock coord_cartesian change affects every native scale group on its axis."""
     candidates = defaultdict(list)
@@ -85,15 +91,23 @@ def _native_coordinate_writes(
         gid, prop = patch["gid"], patch["prop"]
         element = axes.get(gid, {})
         scope = element.get("source_props", {}).get(prop)
-        if scope and (value := _coordinate_value(element, prop, patch["value"])) is not None:
-            candidates[prop].append((gid, scope, value))
+        if scope:
+            candidates[prop].append((gid, scope, patch["value"]))
     coordinates = {}
     written = set()
-    for prop, values in candidates.items():
+    scale_props = ("xscale", "yscale") if write_scales else ()
+    for prop in (*scale_props, "xlim", "ylim", "invert_x", "invert_y"):
+        values = candidates.get(prop)
+        if not values:
+            continue
         _, scope, value = values[0]
         groups = {item[1]["group"] for item in values}
+        planned_scale = coordinates.get(f"{prop[0]}scale") if prop.endswith("lim") else None
         if len(groups) != scope["total"] or any(
-            other["total"] != scope["total"] or requested != value for _, other, requested in values
+            other["total"] != scope["total"]
+            or (validated := _coordinate_value(axes[gid], prop, requested, planned_scale)) is None
+            or validated != value
+            for gid, other, requested in values
         ):
             continue
         coordinates[prop] = value
@@ -103,6 +117,27 @@ def _native_coordinate_writes(
 
 def _r_coordinate_block(name: str, coordinates: dict) -> str:
     edits = []
+    transforms = {
+        "linear": "scales::transform_identity()",
+        "log": "scales::transform_log10()",
+    }
+    if any(prop in coordinates for prop in ("xscale", "yscale")):
+        edits.append("  plot$scales <- plot$scales$clone()")
+    for axis in ("x", "y"):
+        if (mode := coordinates.get(f"{axis}scale")) is not None:
+            transform = transforms[mode]
+            edits.extend(
+                (
+                    f'  scale <- plot$scales$get_scales("{axis}")',
+                    "  if (is.null(scale)) {",
+                    f"    scale <- ggplot2::scale_{axis}_continuous(transform = {transform})",
+                    "  } else {",
+                    "    scale <- scale$clone()",
+                    f"    scale$trans <- {transform}",
+                    "  }",
+                    "  suppressMessages(plot$scales$add(scale))",
+                )
+            )
     for axis, sides in (("x", '"left", "right"'), ("y", '"bottom", "top"')):
         if (limits := coordinates.get(f"{axis}lim")) is not None:
             pair = ", ".join(json.dumps(v, allow_nan=False) for v in limits)
@@ -228,7 +263,8 @@ def build(
     }
     elements: dict[str, dict[str, str | float]] = {}
     axes = {e["gid"]: e for e in (hot or {}).get("elements", ()) if e["role"] == "axes"}
-    coordinates, written = _native_coordinate_writes(axes, patches)
+    coordinates, coordinate_writes = _native_coordinate_writes(axes, patches)
+    written = coordinate_writes.copy()
     residual = []
     skipped = []
     for patch in patches:
@@ -275,6 +311,17 @@ def build(
             continue
         residual.append(patch)
         skipped.append({"gid": gid, "prop": prop, "reason": "unsupported"})
+    # Scale edits change the native baseline position data. Until residual
+    # edits can bind against that new baseline, leave the scale in the layout
+    # whenever an unrelated override still needs to replay.
+    if residual and any(prop in coordinates for prop in ("xscale", "yscale")):
+        coordinates, fallback_writes = _native_coordinate_writes(axes, patches, write_scales=False)
+        written.difference_update(coordinate_writes - fallback_writes)
+        residual = [patch for patch in patches if (patch["gid"], patch["prop"]) not in written]
+        skipped = [
+            {"gid": patch["gid"], "prop": patch["prop"], "reason": "unsupported"}
+            for patch in residual
+        ]
     if not elements and not coordinates:
         return AdjustedRSource(data, 0, residual, skipped)
 
