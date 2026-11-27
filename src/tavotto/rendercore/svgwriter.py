@@ -30,7 +30,7 @@ from xml.etree import ElementTree as ET
 
 from . import ir, placement, raster, rasterio
 from .hbshaper import HbFaceProvider, require
-from .svgcheck import SVGError, parse_svg
+from .svgcheck import SVGError, name_char, name_start, parse_svg
 from .svgfonts import family_list
 
 SVG = "http://www.w3.org/2000/svg"
@@ -139,6 +139,28 @@ def _isolate(root: ET.Element, prefix: str, scope: str) -> None:
     isolate_svg(root, prefix=prefix, scope=scope)
 
 
+def xml_id(label: str) -> str | None:
+    """对象 / 组的名字 → SVG 的 `id`（ADR 0208 §七之三 第 2 条）；没有名字 = None。
+
+    合法的 XML 名字字符原样保留（中文可以）；空格换 `_`（Illustrator 显示回空格）；其余不能进 `id` 的字符
+    写成 `_x<十六进制码点>_`（Illustrator 自己导出 SVG 用的写法，读回来是原字符）；以数字 / `.` / `-` 开头的前面
+    加 `_`；`tavotto-` 开头的也加 `_`，不与写入器自己生成的 `tavotto-clip-3` 之类撞车。唯一性由写入器加序号。"""
+    out: list[str] = []
+    for ch in label.strip():
+        if ch == " ":
+            out.append("_")
+        elif name_char(ch):
+            out.append(ch)
+        else:
+            out.append(f"_x{ord(ch):X}_")
+    name = "".join(out)
+    if not name:
+        return None
+    if not name_start(name[0]) or name.startswith("tavotto-"):
+        name = "_" + name
+    return name
+
+
 class SvgWriter:
     def __init__(
         self,
@@ -162,6 +184,8 @@ class SvgWriter:
         self.imported_text_svgs = imported_text_svgs or {}
         self.facts = WriteFacts(page=(page.width_pt, page.height_pt), text_policy=text_policy)
         self._counter = 0
+        self._ids: set[str] = set()
+        self._group_clips: dict[tuple, str] = {}
         self._faces: dict = {}
         self._font_facts: dict[str, dict] = {}
         self._glyph_sets: dict = {}
@@ -184,6 +208,18 @@ class SvgWriter:
     def _name(self, prefix: str) -> str:
         self._counter += 1
         return f"tavotto-{prefix}-{self._counter}"
+
+    def _id(self, label: str) -> dict[str, str]:
+        """名字 → `{"id": …}`（唯一；重名加序号）；没有名字 = 空字典。"""
+        base = xml_id(label) if label else None
+        if base is None:
+            return {}
+        name, n = base, 1
+        while name in self._ids:
+            n += 1
+            name = f"{base}_{n}"
+        self._ids.add(name)
+        return {"id": name}
 
     def _check(self, operation: str, object_id: str) -> None:
         cap = ir.CAPABILITIES["svg"][operation]
@@ -230,6 +266,16 @@ class SvgWriter:
         _element(clip, "path", d=_path(segments), **{"clip-rule": rule})
         parent.set("clip-path", f"url(#{name})")
 
+    def _shared_clip(self, parent: ET.Element, clip: ir.Path) -> None:
+        """文档里的剪切组（ADR 0208 §七之三 第 3 条）：同一个轮廓只写一个 `<clipPath>`，组的 `<g>` 引用它。"""
+        key = (clip.segments, clip.fill_rule)
+        name = self._group_clips.get(key)
+        if name is None:
+            self._clip(parent, clip.segments, clip.fill_rule)
+            self._group_clips[key] = parent.get("clip-path", "")[5:-1]
+        else:
+            parent.set("clip-path", f"url(#{name})")
+
     def _placed(self, parent: ET.Element, node, source: placement.Rect):
         pl = placement.place(
             source,
@@ -264,7 +310,7 @@ class SvgWriter:
             )
         return res, data
 
-    def _emit(self, node: ir.Node, parent: ET.Element) -> None:
+    def _emit(self, node: ir.Node, parent: ET.Element, label: str = "") -> None:
         for operation in ir.operations_of(node):
             if operation == "imported_page":
                 # This operation is data-dependent: opaque PDF remains unsupported;
@@ -272,35 +318,99 @@ class SvgWriter:
                 continue
             self._check(operation, node.object_id)
         if isinstance(node, ir.Path):
-            self._paint_path(node, parent)
+            self._paint_path(node, parent, label)
         elif isinstance(node, ir.Group):
-            self.facts.groups += 1
-            self.facts.transparency_groups += int(node.opacity < 1)
-            group = _element(
-                parent, "g", transform=_matrix(node.transform), opacity=_num(node.opacity)
-            )
+            self._group(node, parent, label)
+        elif isinstance(node, ir.ShapedText):
+            self._text(node, parent, label)
+        elif isinstance(node, ir.Image):
+            self._image(node, parent, label)
+        elif isinstance(node, ir.ImportedPage):
+            self._imported(node, parent, label)
+
+    def _group(self, node: ir.Group, parent: ET.Element, label: str) -> None:
+        self.facts.groups += 1
+        self.facts.transparency_groups += int(node.opacity < 1)
+        name = node.label or label
+        if node.semantic:
+            # 文档里的组：只归类，不带变换 / 不透明度；剪切组的蒙版挂在自己身上（只写一次）
+            group = _element(parent, "g", **self._id(name))
             if node.clip is not None:
-                if isinstance(node.clip, ir.ClipUnion):
-                    name = self._name("clip")
-                    clip = _element(self.defs, "clipPath", id=name, clipPathUnits="userSpaceOnUse")
-                    for path in node.clip.paths:
-                        _element(
-                            clip, "path", d=_path(path.segments), **{"clip-rule": path.fill_rule}
-                        )
-                    group.set("clip-path", f"url(#{name})")
-                else:
-                    self._clip(group, node.clip.segments, node.clip.fill_rule)
+                self._shared_clip(group, node.clip)
             for child in node.children:
                 self._emit(child, group)
-        elif isinstance(node, ir.ShapedText):
-            self._text(node, parent)
-        elif isinstance(node, ir.Image):
-            self._image(node, parent)
-        elif isinstance(node, ir.ImportedPage):
-            self._imported(node, parent)
+            return
+        plain = node.transform == ir.IDENTITY and node.opacity == 1.0 and node.clip is None
+        if plain and (not name or len(node.children) == 1):
+            # 没有作用的包装：不写 `<g>`；有名字时名字交给唯一的那个孩子
+            for child in node.children:
+                self._emit(child, parent, name)
+            return
+        if (
+            name
+            and len(node.children) == 1
+            and isinstance(node.children[0], ir.Path)
+            and node.clip is None
+        ):
+            # 一个对象 = 一个路径：名字、变换、不透明度都落在这条路径自己身上（不套一层无意义的组）
+            for operation in ir.operations_of(node.children[0]):
+                self._check(operation, node.children[0].object_id)
+            self._paint_path(
+                node.children[0],
+                parent,
+                name,
+                transform=_matrix(node.transform),
+                opacity=_num(node.opacity),
+            )
+            return
+        if (
+            len(node.children) == 1
+            and isinstance(node.children[0], ir.ShapedText)
+            and node.clip is None
+            and node.opacity == 1.0
+        ):
+            # 一个文字对象 = 一个 `<text>`（旋转并进它自己的变换）；几段（上下标 / 字体回退）= 一个以对象名命名的组，
+            # 变换与填充都落在这个组上（不再多套一层）
+            text = node.children[0]
+            for operation in ir.operations_of(text):
+                self._check(operation, text.object_id)
+            if self._single_text(text) is not None:
+                self._text(text, parent, name, post=node.transform)
+            else:
+                self._text(text, parent, name, group_attrs={"transform": _matrix(node.transform)})
+            return
+        group = _element(
+            parent,
+            "g",
+            **self._id(name),
+            transform=_matrix(node.transform),
+            opacity=_num(node.opacity),
+        )
+        if node.clip is not None:
+            if isinstance(node.clip, ir.ClipUnion):
+                clip_name = self._name("clip")
+                clip = _element(self.defs, "clipPath", id=clip_name, clipPathUnits="userSpaceOnUse")
+                for path in node.clip.paths:
+                    _element(clip, "path", d=_path(path.segments), **{"clip-rule": path.fill_rule})
+                group.set("clip-path", f"url(#{clip_name})")
+            else:
+                self._clip(group, node.clip.segments, node.clip.fill_rule)
+        for child in node.children:
+            self._emit(child, group)
 
-    def _paint_path(self, node: ir.Path, parent: ET.Element) -> None:
+    def _paint_path(
+        self,
+        node: ir.Path,
+        parent: ET.Element,
+        label: str = "",
+        *,
+        transform: str | None = None,
+        opacity: str | None = None,
+    ) -> None:
         attrs = {
+            **self._id(label),
+            **({"transform": transform} if transform is not None else {}),
+            **({"opacity": opacity} if opacity is not None else {}),
             "d": _path(node.segments),
             "fill": "none",
             "stroke": "none",
@@ -387,10 +497,36 @@ class SvgWriter:
         self._glyphs[(key, gid)] = name
         return name
 
-    def _text(self, node: ir.ShapedText, parent: ET.Element) -> None:
-        group = _element(
-            parent, "g", fill=_color(node.paint.rgb), **{"fill-opacity": _num(node.paint.alpha)}
-        )
+    def _single_text(self, node: ir.ShapedText) -> tuple[ir.GlyphRun, tuple] | None:
+        """一段只有一个可写成 `<text>` 的 run：就是一个 `<text>`（自带填充与名字），不再套 `<g fill>`
+        ——Illustrator 里是一个文字框，不是「组里一个文字框」（ADR 0208 §七之三 第 5 条）。"""
+        if len(node.runs) != 1 or node.runs[0].invisible or self.text_policy != TEXT_POLICY_TEXT:
+            return None
+        layout = self._text_layout(node.runs[0])
+        return None if layout is None else (node.runs[0], layout)
+
+    def _text(
+        self,
+        node: ir.ShapedText,
+        parent: ET.Element,
+        label: str = "",
+        group_attrs: Mapping[str, str] | None = None,
+        post: ir.Matrix | None = None,
+    ) -> None:
+        paint = {
+            "fill": _color(node.paint.rgb),
+            "fill-opacity": _num(node.paint.alpha),
+        }
+        single = self._single_text(node)
+        if single is not None and not group_attrs:
+            run, layout = single
+            self._text_element(
+                parent, node, run, node.x, layout, {**self._id(label), **paint}, post
+            )
+            self.facts.text_runs += 1
+            self.facts.text_objects += 1
+            return
+        group = _element(parent, "g", **self._id(label), **(group_attrs or {}), **paint)
         pen_x = node.x
         for run in node.runs:
             layout = (
@@ -483,6 +619,8 @@ class SvgWriter:
         run: ir.GlyphRun,
         pen_x: float,
         layout: tuple[str, float, list[float] | None],
+        extra: Mapping[str, str] | None = None,
+        post: ir.Matrix | None = None,
     ) -> None:
         content, x0, ys = layout
         face = self._face(run.font)
@@ -490,8 +628,13 @@ class SvgWriter:
         self._font_facts[run.font]["as_text"] = True
         family = face.record.info.family_name or resource.postscript_name
         attrs = {
+            **(extra or {}),
             # y is flipped once more so the glyph-up text frame sits inside the page's y-down flip.
-            "transform": _matrix((1, 0, 0, -1, pen_x, node.y + run.rise)),
+            "transform": _matrix(
+                ir.compose((1, 0, 0, -1, pen_x, node.y + run.rise), post)
+                if post is not None and post != ir.IDENTITY
+                else (1, 0, 0, -1, pen_x, node.y + run.rise)
+            ),
             "x": _num(x0),
             "font-family": family_list(family, resource.family),
             "font-size": _num(run.size),
@@ -508,7 +651,7 @@ class SvgWriter:
         element = _element(group, "text", **attrs)
         element.text = content
 
-    def _image(self, node: ir.Image, parent: ET.Element) -> None:
+    def _image(self, node: ir.Image, parent: ET.Element, label: str = "") -> None:
         res, data = self._source_bytes(node)
         if node.resource not in self._images:
             try:
@@ -562,6 +705,7 @@ class SvgWriter:
             )
         name, facts = self._images[node.resource]
         group, pl = self._placed(parent, node, (0, 0, 1, 1))
+        group.attrib.update(self._id(label))
         _element(group, "use", transform="matrix(1 0 0 -1 0 1)", **{f"{{{XLINK}}}href": "#" + name})
         self.facts.images.append(
             {
@@ -573,7 +717,7 @@ class SvgWriter:
             }
         )
 
-    def _imported(self, node: ir.ImportedPage, parent: ET.Element) -> None:
+    def _imported(self, node: ir.ImportedPage, parent: ET.Element, label: str = "") -> None:
         res, _ = self._source_bytes(node)
         data = self.imported_svgs.get(node.resource)
         if data is None or res.svg_sha256 is None or node.page_index != 0:
@@ -603,7 +747,7 @@ class SvgWriter:
 
                         data, size = svgasset.inspect_bytes(data)
                         self._static_svg_sizes[node.resource] = (size["w_pt"], size["h_pt"])
-                    root = parse_svg(data)
+                    root = parse_svg(data, unicode_ids=True)
                 for element in root.iter():
                     if not element.tag.startswith("{"):
                         element.tag = f"{{{SVG}}}{element.tag}"
@@ -670,6 +814,7 @@ class SvgWriter:
             root.set("overflow", "hidden")
         else:
             group, pl = self._placed(parent, node, (0, 0, width, height))
+        group.attrib.update(self._id(label))
         scope = self._name("source")
         wrapper = _element(group, "g", id=scope, transform=f"matrix(1 0 0 -1 0 {_num(height)})")
         _isolate(root, scope + "-", scope)
@@ -710,7 +855,7 @@ class SvgWriter:
             self._emit(node, canvas)
         data = ET.tostring(self.root, encoding="utf-8", xml_declaration=True)
         try:
-            parse_svg(data)
+            parse_svg(data, unicode_ids=True)
         except SVGError as exc:
             raise WriterError("source_unreadable", str(exc), {"why": exc.code}) from exc
         Path(out).write_bytes(data)

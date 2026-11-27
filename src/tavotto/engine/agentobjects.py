@@ -497,6 +497,38 @@ def _fill_opacity(e: dict, o: dict) -> None:
         e["fill_opacity"] = fo
 
 
+def _group_path_of(o: dict) -> list[str]:
+    """对象的组链（外 → 内）：照 `web/src/lib/groupTree.groupPathOf`（链与 groupId 对不上就只认 `[groupId]`）。"""
+    g = o.get("groupId")
+    if not g:
+        return []
+    p = o.get("groupPath")
+    if (
+        isinstance(p, list)
+        and len(p) >= 2
+        and p[-1] == g
+        and all(isinstance(v, str) and v for v in p)
+        and len(set(p)) == len(p)
+    ):
+        return list(p)
+    return [g]
+
+
 def to_export_objects(objs: list[dict]) -> list[dict]:
-    """顺序即 z 序；隐藏的不发（Agent 的对象不会是隐藏的，但与前端同一条契约）。"""
-    return [to_export_object(o) for o in objs if not o.get("hidden")]
+    """顺序即 z 序；隐藏的不发（Agent 的对象不会是隐藏的，但与前端同一条契约）。
+
+    名字与组链（ADR 0208 §七之三，只给 SVG）与前端 `toExportObjects` 同一条：有名字发 `name`，在组里发 `group_path`
+    （组 id 链）；都没有 = 一个键都不多。"""
+    out = []
+    for o in objs:
+        if o.get("hidden"):
+            continue
+        e = to_export_object(o)
+        name = o.get("name")
+        if isinstance(name, str) and name.strip():
+            e["name"] = name
+        path = _group_path_of(o)
+        if path:
+            e["group_path"] = path
+        out.append(e)
+    return out

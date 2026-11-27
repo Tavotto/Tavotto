@@ -116,6 +116,15 @@ order: 330
   `text_policy=outlines` 保留为 `write_svg(..., text_policy="outlines")` 的内部退路：字形由批准脸的 fontTools 轮廓按已有
   gid / advance / offset / rise 落笔，不重新 shaping、不找系统字体。两种策略都不伪称字体嵌入（`embedded=false`）。零宽 PDF hairline 无等价 SVG
   表达时结构化拒绝。图片经既有解码与预算，PNG / JPEG 内嵌、TIFF 转 PNG，保原像素网格与 straight alpha。
+  **给 Illustrator 精修（ADR 0208 §七之三，2026-11-27）**：画布载荷带 `name` / `group_path`（组 id 链）/ `group_names`（可选）与剪切蒙版的 `group`，
+  `plan.compile_page` 在 `CompiledPage.svg_page` 里另攒一页——文档的组 = `Group(semantic=True)`（只归类，不放变换 / 不透明度；剪切组的蒙版挂在组上、
+  同一轮廓只写一个 `<clipPath>`）、对象名 = `Group.label`；**只有 `write_svg(rp.svg_page or rp.page)` 读它**，PDF / EPS / 位图一律用 `page`
+  （蒙版照旧逐对象复制，逐字节不变；没有组也没有名字时 `svg_page` 是 None）。`svgwriter.xml_id` 是名字 → `id` 的唯一出处（合法名原样含中文、空格 → `_`、
+  不合法字符 → `_xHHHH_`、数字 / `.` / `-` 开头与 `tavotto-` 开头前补 `_`、整份文档唯一加序号）。没有作用的包装组（恒等变换、不透明度 1、无蒙版、无名字）不写；
+  一个文字对象 = 一个 `<text>`（填充、名字、旋转都在它自己身上），有上下标 / 字体回退的几段 = 一个以对象名命名的组。`svgfonts.family_list` 第一个族写真实字体
+  （Liberation Serif / Sans / Mono → Times New Roman / Arial / Courier New，批准族名紧随其后；中文按 `sys.platform` 写系统字体）。
+  **导出的 `id` 可以是中文**：只有我们自己写出的产物过 `svgcheck.parse_svg(…, unicode_ids=True)`（写入器封口、`inspector.observe_svg`、`artifactinspect.svg_vector`），导入与 worker 输出仍严格。
+  看护：`tests/test_svg_export_groups.py`（共享样本 `tests/golden/svg_export_groups.json`，前端 `lib/svgExportGroups.golden.test.ts` 用真实 `toExportObjects` 写）。
   ImportedPage 的 SVG 能力是**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
   写入器再次核 canonical 源与 companion 的字节 hash；只有第一张源页，opaque PDF 明确拒绝、不解析成猜测的路径、
   不自动栅格。导入 SVG 的 viewBox 归一到源可见框后复用 `placement.place()`，crop / rotation / flip 顺序不另写一份。

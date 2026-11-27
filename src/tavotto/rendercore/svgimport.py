@@ -1435,7 +1435,11 @@ def _parse(svg_text: str, deadline: float = math.inf):
     if not re.search(rb"<svg[\s>]", data[:65536]):
         raise SvgImportError("not_svg", "没有 <svg> 元素")
     try:
-        return svgcheck.parse_svg(data, budget=IMPORT_BUDGET, tolerant=True, deadline=deadline)
+        # `unicode_ids`：Tavotto 自己导出的 SVG 把对象 / 组的名字原样写进 `id`（中文也行，ADR 0208 §七之三），
+        # 导回来不能被拒；id 只是个不被任何引用指到的标记，其余安全规则一条不放
+        return svgcheck.parse_svg(
+            data, budget=IMPORT_BUDGET, tolerant=True, deadline=deadline, unicode_ids=True
+        )
     except svgcheck.SVGError as exc:
         if exc.code == "svg_timeout":
             raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒") from exc

@@ -245,6 +245,14 @@ SVG 导入后在 Tavotto 里是原生的 `path` / `text`（不是图片），**�
 6. **参数带不过去，形状带得过去**：图元的生成参数（§七之二）是 Tavotto 自己的东西；带过去的是干净路径与分组。要改参数就在 Tavotto 里改完再导出。
 7. 导出对话框里要不要点明「给 Illustrator 精修选 SVG」、怎么说，截图稿过 agy 再定。
 
+**实现记录（第 5a 期，2026-11-27，第 1–5 条）**：载荷加 `name` / `group_path` / `group_names`（可选）与蒙版的 `group`；`plan.compile_page` 另攒只给 SVG 用的 `svg_page`
+（文档组 = `ir.Group(semantic=True)`，PDF / EPS / 位图仍用旧页、逐字节不变）；`svgwriter.xml_id` 写名字（合法名含中文原样、空格 `_`、不合法字符 `_xHHHH_`、重名序号）；
+剪切组蒙版挂在组上只写一次；一个文字对象一个 `<text>`；第一个字体族写真实字体（中文按平台）。落地时定下的几处细节：
+- 组成员在 z 序里不连续时拆成几段 `<g>`（绘制顺序不挪），与图层树把它们并成一个组的显示不同；
+- 文档里的组目前**没有名字**（只有对象有 `name`）：载荷接 `group_names`，但文档模型与 Agent 的 `_mint` 还没存它，组的 `<g>` 暂不写 `id`；
+- 导出的 `id` 可以是中文，所以我们自己写出的产物过 `svgcheck.parse_svg(unicode_ids=True)`，导入边界仍只认 ASCII id；
+- 中文系统字体名（macOS `Heiti SC` / `Songti SC`，Windows `Microsoft YaHei` / `SimSun`）与 `_xHHHH_` 写法 Illustrator 里能否对上**未实测**，探针结果出来前不当结论。
+
 **验收**：
 
 - 自动：导出的 SVG 的 `<g>` 树与文档的组树一致、名字一个不少、剪切组里蒙版只出现一次、`font-family` 第一项在映射表里；没有组也没有文字的文档导出逐字节不变。
