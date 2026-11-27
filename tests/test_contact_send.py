@@ -316,7 +316,13 @@ def test_send_roundtrip_with_attachments_matches_the_contract(on, caplog):
     assert req["locale"] == "zh-CN" and req["body"] == CANARY_BODY
     assert req["subject"] == CANARY_SUBJECT and req["reply_email"] == CANARY_MAIL
     assert req["report_id"] == "TVD-AAAA-BBBB-CCCC-DDDD"
-    assert req["route"] in ("cn", "global") and req["os"] and req["arch"] and req["distribution"]
+    assert req["route"] in ("cn", "global") and req["os"] and req["arch"]
+    assert req["distribution"] in (
+        "desktop",
+        "pip",
+        "dev",
+        "other",
+    )  # 契约闭集（源码检出跑测试时是 source → dev）
     assert [(a["name"], a["size"]) for a in req["attachments"]] == [
         ("shot.png", len(PNG)),
         ("note.pdf", len(b"%PDF-1.4 hello")),
@@ -1478,3 +1484,20 @@ def test_failover_error_bodies_of_the_preferred_route_are_charged_to_the_round_b
     spent = 10_000_000 - seen[0].bytes_left
     ok_bytes = len(PNG) + len(JPG) + len(GIF)
     assert spent >= 3 * 60000 + ok_bytes  # 错误体也计入，不只是最终响应
+
+
+@pytest.mark.parametrize(
+    "kind,wire",
+    [
+        ("desktop", "desktop"),
+        ("pip", "pip"),
+        ("pipx", "pip"),
+        ("source", "dev"),
+        ("unknown", "other"),
+        ("conda", "other"),
+    ],
+)
+def test_distribution_maps_to_contact_contract(kind, wire):
+    """服务端「联系作者」只收 desktop / pip / dev / other：pipx、源码安装以前整封 422。"""
+    assert contactsend.contact_distribution(kind) == wire
+    assert wire in ("desktop", "pip", "dev", "other")
