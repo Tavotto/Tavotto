@@ -357,7 +357,12 @@ def replay(
                 os.pathsep.join((target.library, env_library)) if env_library else target.library
             )
         if windows:
-            environment.update(TMPDIR=str(r_temp), TEMP=str(r_temp), TMP=str(r_temp))
+            # R rejects whitespace in its session temp path when no short NTFS
+            # name exists. The relative path resolves in the isolated cwd.
+            absolute_temp = str(r_temp)
+            environment.update(TEMP=absolute_temp, TMP=absolute_temp)
+            if not any(char.isspace() for char in absolute_temp):
+                environment["TMPDIR"] = absolute_temp
             try:
                 executable = _stage_windows_runtime(spec.interpreter, scratch, environment)
                 bundle = scratch / "tavotto-native"
