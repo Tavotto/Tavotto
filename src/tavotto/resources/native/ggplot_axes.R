@@ -139,7 +139,9 @@ ggplot_axes_target <- function(built, table) {
   if (coord$reverse != "none") context <- c(context, list(coord$reverse))
   # Fixed Cartesian plots originally only offered grid and frame controls.
   if (!is.null(coord$ratio)) context <- ggplot_decoration_context(built)
-  list(slot = slot, axes = axes, reverse = coord$reverse,
+  source_groups <- lapply(axes, function(axis) ggplot_source_axis_group("1", 1L, kinds, coord$reverse))
+  list(slot = slot, axes = axes, reverse = coord$reverse, source_groups = source_groups,
+       source_anchor = rlang::hash(list(kinds, built$data)),
        context = rlang::hash(context))
 }
 
@@ -307,6 +309,8 @@ ggplot_axes_element <- function(gid, target, current, bbox, edits, changes) {
                 ggplot_axis_change_props(axis)[names(changes[[axis]])]
               }), use.names = FALSE)))),
               links = lapply(target$links, as.list),
+              source_groups = target$source_groups,
+              source_anchor = target$source_anchor,
               aspect = if (!is.null(target$aspect)) {
                 list(original = target$aspect, current = edits$aspect %||% target$aspect)
               },
@@ -757,6 +761,14 @@ ggplot_project_facet_axes <- function(built, groups, changes) {
   built
 }
 
+ggplot_source_axis_group <- function(group, total, kinds, reverse) {
+  raster <- "GeomRaster" %in% kinds
+  # ggplot2's stock raster grob still needs Tavotto's matrix reflection when
+  # reversing coordinates. Do not claim plain R can redraw that view.
+  list(group = group, total = total, range = !raster || identical(reverse, "none"),
+       direction = !raster)
+}
+
 ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
   if (is.null(panels) || panels$single || !identical(as.list(built$layout$coord)$render_bg,
                                                     as.list(ggplot2::CoordCartesian)$render_bg)) return(list())
@@ -767,6 +779,11 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
   slots <- match(paste("panel", cells$COL, cells$ROW, sep = "-"), table$layout$name)
   if (anyNA(slots) || anyDuplicated(slots) ||
       !identical(sort(ids), seq_along(built$layout$panel_params))) return(list())
+  totals <- lapply(ggplot_axis_names, function(axis) {
+    length(unique(cells[[paste0("SCALE_", toupper(axis))]]))
+  }) |> stats::setNames(ggplot_axis_names)
+  kinds <- ggplot_axis_layers(built$plot$layers)
+  source_anchor <- if (any(lengths(axis_groups) > 0L)) rlang::hash(list(kinds, built$data, cells))
   context <- rlang::hash(ggplot_decoration_context(built))
   targets <- lapply(seq_along(ids), function(i) {
     slot <- slots[[i]]
@@ -774,6 +791,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
     facet <- lapply(cells[i, panels$facets, drop = FALSE], as.character)
     target <- list(slot = slot, panel = ids[[i]], facet = unlist(facet, use.names = FALSE),
                    context = rlang::hash(list(context, facet)))
+    if (!is.null(source_anchor)) target$source_anchor <- rlang::hash(list(source_anchor, facet))
     target$reverse <- built$layout$coord$reverse
     for (axis in names(axis_groups)) {
       group_id <- as.character(cells[[paste0("SCALE_", toupper(axis))]][[i]])
@@ -781,6 +799,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
       if (is.null(group)) next
       target$axes[[axis]] <- group$spec
       target$groups[[axis]] <- group_id
+      target$source_groups[[axis]] <- ggplot_source_axis_group(group_id, totals[[axis]], kinds, target$reverse)
     }
     if (!is.null(ggplot_facet_grill(table$grobs[[slot]]))) {
       target <- ggplot_grid_target(built, table, target, slot)

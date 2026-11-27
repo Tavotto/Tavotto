@@ -23,6 +23,7 @@ from tavotto.engine import (
     envlease,
     execspec,
     figcapture,
+    layoutannotate,
     nativeggplot,
     nativeggplot_source,
     nativesession,
@@ -522,6 +523,137 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         if worker is not None:
             worker.cancel_owned()
         service.reset_projects()
+
+
+def test_native_r_coordinate_writeback_keeps_independent_edits_bound(tmp_path):
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Coordinate project"
+    project.mkdir()
+    script = project / "View.R"
+    original = b"""\
+d <- expand.grid(x = c(1, 8, 64), panel = c("Early", "Late"))
+d$y <- 3 + log2(d$x) + 7 * as.integer(d$panel)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::stat_summary(geom = "point", fun = mean) +
+  ggplot2::facet_wrap(ggplot2::vars(panel), scales = "free_y") +
+  ggplot2::coord_cartesian(ylim = c(1, 30), expand = c(top = FALSE)) +
+  ggplot2::labs(title = "Scope")
+ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
+"""
+    script.write_bytes(original)
+
+    def axes(manifest):
+        return {e["gid"]: e for e in manifest["elements"] if e["role"] == "axes"}
+
+    def values(targets):
+        return {
+            gid: {field["prop"]: field["value"] for field in elem["editable"]}
+            for gid, elem in targets.items()
+        }
+
+    route = "/api/layouts/Coordinate_view"
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        before = _render(app, figure, [])
+        target = axes(before["manifest"])["axes_2"]
+        original_pdf = (project / "original.pdf").read_bytes()
+        patches = [
+            {"gid": target["gid"], "prop": prop, "value": value, "identity": target["identity"]}
+            for prop, value in (
+                ("xlim", [1, 64]),
+                ("invert_x", True),
+                ("xscale", "log"),
+                ("invert_y", True),
+            )
+        ]
+        hot = _render(app, figure, patches)
+        assert not hot["warnings"]
+        w, h = before["manifest"]["size_mm"]
+        panel = {**_panel("r", figure, 5, patches, native_width=w), "h": h, "nativeH": h}
+        doc = {
+            "schema": 3,
+            "project": {"id": "source-coordinate", "name": "Coordinate view"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": w + 10, "h": h + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(f"{route}?target=project", doc)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Coordinate_view")
+        _, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert preview["written"] == 2
+        assert [item["prop"] for item in preview["skipped"]] == ["xscale", "invert_y"]
+        assert script.read_bytes() == original
+        _, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert saved["ok"]
+        assert (project / "original.pdf").read_bytes() == original_pdf
+        reauthored = script.read_bytes()
+        assert reauthored != original
+        _, persisted = app.call(route)
+        persisted_panel = persisted["canvases"][0]["objects"][0]
+        residual = persisted_panel["overrides"]
+        assert [(patch["prop"], patch["value"]) for patch in residual] == [
+            ("xscale", "log"),
+            ("invert_y", True),
+        ]
+        assert all(patch["identity"] != target["identity"] for patch in residual)
+
+        replay_root = tmp_path / "Fresh runtime"
+        replay_root.mkdir()
+        (replay_root / script.name).write_bytes(reauthored)
+        with sidecar_app(replay_root, tmp_path / "fresh") as fresh:
+            rebuilt = _run_ggplot(fresh, script.name, rscript)
+            bare = _render(fresh, rebuilt, [])
+            standalone = values(axes(bare["manifest"]))
+            assert all(
+                el["xlim"] == [1, 64] and el["invert_x"] and el["xscale"] == "linear"
+                for el in standalone.values()
+            )
+            assert all(not el["invert_y"] for el in standalone.values())
+            rebound = _render(fresh, rebuilt, residual)
+            assert not rebound["warnings"]
+            assert rebound["svg"] == hot["svg"]
+            after = values(axes(rebound["manifest"]))
+            assert after["axes_1"]["invert_y"] is False
+            assert after["axes_2"]["invert_y"] is True
+            assert all(el["xscale"] == "log" for el in after.values())
+
+        _, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "mode": "full",
+                "expected_sha256": saved["script_revision"],
+            },
+            timeout=120,
+        )
+        assert restored["ok"]
+        assert script.read_bytes() == original
+        assert (project / "original.pdf").read_bytes() == original_pdf
+        _, previous = app.call(route)
+        assert previous["canvases"][0]["objects"][0]["overrides"] == patches
 
 
 def test_connect_to_existing_r_and_release_its_console(tmp_path):
@@ -2592,6 +2724,14 @@ coords <- function(reverse) ggplot2::coord_cartesian(xlim = c(0, 8), ylim = c(0,
                                                      expand = FALSE, reverse = reverse)
 frame <- c(576, 360)
 captured <- adapter$capture_ggplot(plot + coords("none"), frame)
+source_scope <- function(state) {
+  axes <- Filter(function(element) element$gid == "axes_0",
+                 adapter$ggplot_manifest(state, "raster")$elements)[[1L]]$native_axes
+  axes$source_groups
+}
+native_scope <- source_scope(captured$state)
+stopifnot(native_scope$x$range, native_scope$y$range,
+          !native_scope$x$direction, !native_scope$y$direction)
 for (mode in c("none", "x", "y", "xy")) {
   changes <- if (mode != "none") list(axes_0 = list(invert_x = grepl("x", mode),
                                                    invert_y = grepl("y", mode))) else list()
@@ -2599,6 +2739,7 @@ for (mode in c("none", "x", "y", "xy")) {
   stopifnot(file.info(paste0(mode, ".png"))$size > 0)
 }
 authored <- adapter$capture_ggplot(plot + coords("xy"), frame)
+stopifnot(!source_scope(authored$state)$x$range, !source_scope(authored$state)$y$range)
 adapter$preview_ggplot_png(authored$state, list(), "authored.png", 800, TRUE)
 adapter$preview_ggplot_png(authored$state, list(axes_0 = list(invert_x = FALSE, invert_y = FALSE)),
                            "normalised.png", 800, TRUE)

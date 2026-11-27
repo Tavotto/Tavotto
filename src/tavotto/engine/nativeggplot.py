@@ -301,6 +301,13 @@ class GgplotTarget:
                 axis, current["mode"], original["options"], strict_options=True
             )
             candidates = [(limits, original["range"]), (scale, original["mode"])]
+            scope = (axes.get("source_groups") or {}).get(axis)
+            if scope:
+                eligibility = element.setdefault("source_props", {})
+                if scope["range"]:
+                    eligibility[f"{axis}lim"] = scope
+                if scope["direction"]:
+                    eligibility[f"invert_{axis}"] = scope
             if (inverted := current["inverted"]) is not None:
                 candidates.append((axis_invert_field(axis, inverted), original["inverted"]))
             links = (axes.get("links") or {}).get(axis)
@@ -340,6 +347,8 @@ class GgplotTarget:
             fields.append(field)
         element["editable"] = fields
         element["identity"] = _AXES_IDENTITY_PREFIX + axes["context"]
+        if anchor := axes.get("source_anchor"):
+            element["coordinate_source_anchor"] = anchor
 
     @staticmethod
     def annotate_errorbar_series(element: dict, series: dict) -> None:

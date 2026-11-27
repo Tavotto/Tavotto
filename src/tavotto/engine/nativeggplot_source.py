@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -10,9 +11,10 @@ import signal
 import stat
 import subprocess
 import tempfile
+from collections import defaultdict
 from collections.abc import Callable
 from contextlib import ExitStack, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import config, execspec, executionfact, nativeggplot, projectenv, runtime, scriptadjust
@@ -33,6 +35,7 @@ class AdjustedRSource:
     written: int
     residual: list[dict]
     skipped: list[dict]
+    view_written: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,113 @@ class _RetryWithoutFontFamily(Exception):
     def __init__(self, original: bytes) -> None:
         super().__init__("The source did not run with the selected concrete fonts.")
         self.original = original
+
+
+def _coordinate_value(element: dict, prop: str, value) -> list | bool | None:
+    if prop in ("invert_x", "invert_y"):
+        return value if type(value) is bool else None
+    if prop not in ("xlim", "ylim") or not isinstance(value, list) or len(value) != 2:
+        return None
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in value):
+        return None
+    lower, upper = value
+    if not lower < upper:
+        return None
+    scale = next(f for f in element["editable"] if f["prop"] == f"{prop[0]}scale")
+    authored = scale.get("value_original", scale["value"])
+    if (authored == "log" and lower <= 0) or (authored == "logit" and not (0 < lower < upper < 1)):
+        return None
+    return value
+
+
+def _native_coordinate_writes(
+    axes: dict[str, dict], patches: list[dict]
+) -> tuple[dict, set[tuple[str, str]]]:
+    """A stock coord_cartesian change affects every native scale group on its axis."""
+    candidates = defaultdict(list)
+    for patch in patches:
+        gid, prop = patch["gid"], patch["prop"]
+        element = axes.get(gid, {})
+        scope = element.get("source_props", {}).get(prop)
+        if scope and (value := _coordinate_value(element, prop, patch["value"])) is not None:
+            candidates[prop].append((gid, scope, value))
+    coordinates = {}
+    written = set()
+    for prop, values in candidates.items():
+        _, scope, value = values[0]
+        groups = {item[1]["group"] for item in values}
+        if len(groups) != scope["total"] or any(
+            other["total"] != scope["total"] or requested != value for _, other, requested in values
+        ):
+            continue
+        coordinates[prop] = value
+        written.update((gid, prop) for gid, _, _ in values)
+    return coordinates, written
+
+
+def _r_coordinate_block(name: str, coordinates: dict) -> str:
+    edits = []
+    for axis, sides in (("x", '"left", "right"'), ("y", '"bottom", "top"')):
+        if (limits := coordinates.get(f"{axis}lim")) is not None:
+            pair = ", ".join(json.dumps(v, allow_nan=False) for v in limits)
+            edits.extend((f"  limits${axis} <- c({pair})", f"  expand[c({sides})] <- FALSE"))
+        if (invert := coordinates.get(f"invert_{axis}")) is not None:
+            edits.append(f'  reversed["{axis}"] <- {"TRUE" if invert else "FALSE"}')
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            "  coord <- plot$coordinates",
+            '  if (!identical(class(coord)[[1L]], "CoordCartesian")) stop("Tavotto coordinates need coord_cartesian().")',
+            '  expand <- stats::setNames(coord$setup_params(list())$expand, c("top", "right", "bottom", "left"))',
+            "  limits <- coord$limits",
+            '  reversed <- c(x = grepl("x", coord$reverse, fixed = TRUE), y = grepl("y", coord$reverse, fixed = TRUE))',
+            *edits,
+            '  direction <- paste(names(reversed)[reversed], collapse = "")',
+            '  if (!nzchar(direction)) direction <- "none"',
+            "  plot$coordinates <- ggplot2::ggproto(",
+            "    NULL, coord, limits = limits, expand = expand, reverse = direction",
+            "  )",
+            "  plot",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
+def _rebind_coordinate_residual(
+    source: AdjustedRSource, hot: dict | None, cold: dict
+) -> AdjustedRSource:
+    if not source.view_written or not hot:
+        return source
+    bound = {e["gid"]: e for e in hot["elements"]}
+    targets = {e["gid"]: e for e in cold["elements"]}
+    residual = []
+    for patch in source.residual:
+        prior, current = bound.get(patch["gid"]), targets.get(patch["gid"])
+        identity = patch.get("identity")
+        if identity is not None and current and identity != current["identity"]:
+            if (
+                not prior
+                or prior["identity"] != identity
+                or not _same_coordinate_target(prior, current, bound, targets)
+            ):
+                raise scriptadjust.ScriptAdjustError(
+                    "script_export_diverged", "A retained R edit no longer matches its target."
+                )
+            patch = {**patch, "identity": current["identity"]}
+        residual.append(patch)
+    return replace(source, residual=residual)
+
+
+def _same_coordinate_target(prior: dict, current: dict, before: dict, after: dict) -> bool:
+    if prior["role"] != current["role"]:
+        return False
+    if prior["role"] == "ticks":
+        host = prior.get("tick_host")
+        if not host or host != current.get("tick_host"):
+            return False
+        prior, current = before.get(host["axes_gid"], {}), after.get(host["axes_gid"], {})
+    anchor = prior.get("coordinate_source_anchor")
+    return anchor is not None and anchor == current.get("coordinate_source_anchor")
 
 
 def build(
@@ -117,11 +227,14 @@ def build(
         if item["gid"] in text_themes
     }
     elements: dict[str, dict[str, str | float]] = {}
-    written: set[tuple[str, str]] = set()
+    axes = {e["gid"]: e for e in (hot or {}).get("elements", ()) if e["role"] == "axes"}
+    coordinates, written = _native_coordinate_writes(axes, patches)
     residual = []
     skipped = []
     for patch in patches:
         gid, prop, value = patch["gid"], patch["prop"], patch["value"]
+        if (gid, prop) in written:
+            continue
         element = text_themes.get(gid)
         if element is not None:
             fields = text_fields.get(gid, {})
@@ -162,7 +275,7 @@ def build(
             continue
         residual.append(patch)
         skipped.append({"gid": gid, "prop": prop, "reason": "unsupported"})
-    if not elements:
+    if not elements and not coordinates:
         return AdjustedRSource(data, 0, residual, skipped)
 
     name = json.dumps(object_name, ensure_ascii=False)
@@ -174,17 +287,21 @@ def build(
         + ")"
         for element, fields in elements.items()
     )
-    block = (
-        f"\n{scriptadjust.BEGIN}\n"
-        f"base::assign({name}, base::get({name}, inherits = FALSE) + ggplot2::theme(\n"
-        f"{options}\n))\n{scriptadjust.END}\n"
-    )
+    statements = []
+    if coordinates:
+        statements.append(_r_coordinate_block(name, coordinates))
+    if elements:
+        statements.append(
+            f"base::assign({name}, base::get({name}, inherits = FALSE) + ggplot2::theme(\n"
+            f"{options}\n))"
+        )
+    block = "\n".join(("", scriptadjust.BEGIN, *statements, scriptadjust.END, ""))
     newline = b"\r\n" if lines[end_line - 1].endswith(b"\r\n") else b"\n"
     prefix = b"".join(lines[:position])
     if not prefix.endswith(newline):
         prefix += newline
     result = prefix + block.encode().replace(b"\n", newline) + b"".join(lines[position:])
-    return AdjustedRSource(result, len(written), residual, skipped)
+    return AdjustedRSource(result, len(written), residual, skipped, bool(coordinates))
 
 
 def _run(command: list[str], cwd: Path, environment: dict[str, str]) -> None:
@@ -551,6 +668,7 @@ def _replay(
             raise
         manifest = json.loads(result.read_text(encoding="utf-8"))
         target.annotate_manifest(manifest)
+        adjusted = _rebind_coordinate_residual(adjusted, hot, manifest)
         if script.read_bytes() != original:
             raise scriptadjust.ScriptAdjustError(
                 "script_export_script_changed", "The R source changed during replay."
