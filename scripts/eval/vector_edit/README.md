@@ -86,3 +86,15 @@ A 组（桌面改图助手，真模型）首轮因缺密钥**未跑**。维护�
 
 `after-content-fix/` 跑到一半时代码又改了一处（失败结果不再镜像、审阅意见工具跳过），以 `after-both-fixes/`（最终代码）为准。
 `ctrl-vague` 是模型问题：含糊指令不问用户直接动手。
+
+## 判据收紧后的重判（Codex 对 #2330 的三条意见）
+
+首轮 / 修复后重跑的判分用的判据有三处太松，数字按下面的原因**作废**，已按新判据重判（`harness.py rejudge B|B2`，不重跑 agent，读运行后留下的排版文件）：
+1. 「删掉无关对象不判失败」：原来被删的对象不进「没点名的对象保持不变」检查，`order-front` 删到只剩目标也算过。现在每题先核**原来的对象都还在**
+   （`originals_kept`），只有题目明确要删 / 替换的（`may_remove`：`delete-note` 的 `t_note`、`merge-circles` 的两个圆）可以不在。
+2. 「`add-bracket` 只判与那条带相交」：1×1 mm 的椭圆也过。现在 `new_bracket` 要求新增一条开口四点折线（两腿朝向子图）、横向覆盖子图宽度（两头各容差 6 mm）、高 ≤ 12 mm、在子图上沿之上。
+3. 「没跑完的 B 运行也能记成功」：opencode 超时 / 报错时画布没动，对照题会被记成功，`classify_b` 也先看 success。现在只有完整跑完（没超时、没 agent 报错）才可能成功，
+   `classify_b` 先判超时 / 报错；新的运行里超时 / 报错**不落结果**（打印 `INCOMPLETE`，可重跑），要留档加 `--keep-incomplete`。
+
+重判结果：已有四份结果的成败**都没变**（B 1/4、B2 18/21、after-content-fix 19/21、after-both-fixes 20/21），因为这几次运行里没有人靠删无关对象、
+画小椭圆或没跑完过关；首轮 B 里 3 个超时仍记为失败（那是 `--keep-incomplete` 之前留下的档）。单测 `test_vector_edit_eval_corpus.py` 加了对应的正反例。

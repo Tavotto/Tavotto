@@ -309,7 +309,7 @@ def build() -> list[dict]:
             "加括号",
             "在子图 P1 的上方加一个括号，横着括住子图的整个宽度（从子图左上角到右上角）。",
             [],
-            [{"t": "new_near", "types": ["path", "shape"], "rect": [10, 8, 80, 14]}],
+            [{"t": "new_bracket", "rect": [10, 20, 80, 60]}],
             {
                 "kind": "items",
                 "items": [
@@ -494,6 +494,7 @@ def build() -> list[dict]:
             ops({"op": "pathfinder", "ids": ["c_back", "c_front"], "mode": "unite"}),
             selection=["c_back", "c_front"],
             may_change=["c_back", "c_front"],
+            may_remove=["c_back", "c_front"],
             may_add=True,
             needs_kernel=True,
         )
@@ -544,6 +545,7 @@ def build() -> list[dict]:
             [{"t": "deleted", "ids": ["t_note"]}, {"t": "present", "ids": ["t_keep", "a_keep"]}],
             ops({"op": "delete", "id": "t_note"}),
             may_change=[],
+            may_remove=["t_note"],
         )
     )
     t.append(

@@ -242,16 +242,12 @@
    },
    "predicate": [
     {
-     "t": "new_near",
-     "types": [
-      "path",
-      "shape"
-     ],
+     "t": "new_bracket",
      "rect": [
       10,
-      8,
+      20,
       80,
-      14
+      60
      ]
     }
    ],
@@ -1174,6 +1170,10 @@
     "c_back",
     "c_front"
    ],
+   "may_remove": [
+    "c_back",
+    "c_front"
+   ],
    "may_add": true,
    "needs_kernel": true
   },
@@ -1489,7 +1489,10 @@
      }
     ]
    },
-   "may_change": []
+   "may_change": [],
+   "may_remove": [
+    "t_note"
+   ]
   },
   {
    "id": "order-front",

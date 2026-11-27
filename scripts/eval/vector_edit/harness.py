@@ -163,13 +163,19 @@ def classify_a(rec: dict, task: dict) -> str:
     return "用错操作或值不对（判据未过）"
 
 
+def b_completed(rec: dict) -> bool:
+    """agent 完整跑完：没超时、没有 agent 报错。没跑完的运行不能给任何题记成功（对照题「画布没动」尤其会被白送）。"""
+    return not rec.get("timed_out") and not rec.get("agent_errors")
+
+
 def classify_b(rec: dict, task: dict) -> str:
-    if rec.get("success"):
-        return "none"
+    # 先看是否跑完，再看成败：超时 / 报错的运行不会因为画布碰巧没动或判据碰巧过而变成「成功」
     if rec.get("timed_out"):
         return "超时"
     if rec.get("agent_errors"):
         return "模型/运行报错"
+    if rec.get("success"):
+        return "none"
     traj = rec.get("trajectory") or []
     names = [t["tool"] for t in traj]
     layout_calls = [n for n in names if "tavotto_layout" in n]
@@ -597,7 +603,8 @@ def run_b_task(corpus: dict, task: dict, rep: int, timeout: int, cond: str = "B"
         project / "tavottofile" / f"{LAYOUT}.json"
     ).read_bytes() != before_bytes
     got = predicates.evaluate(task, before, after)
-    rec["success"], rec["predicate_detail"] = got["ok"], got["checks"]
+    rec["completed"] = b_completed(rec)
+    rec["success"], rec["predicate_detail"] = got["ok"] and rec["completed"], got["checks"]
     rec["tool_calls"] = len(rec["trajectory"])
     rec["stuck"] = classify_b(rec, task)
     return rec
@@ -630,6 +637,10 @@ def cmd_run_b(args) -> None:
         if any("usage limit" in e or "go-limit" in e for e in errs):
             print(task["id"], rep, "额度用完，停", flush=True)
             stop.set()
+            return
+        if not rec["completed"] and not args.keep_incomplete:
+            # 超时 / agent 报错：不是「这题没做成」的证据（可能只是慢、断连），不落结果，重跑即可；要留档用 --keep-incomplete
+            print(task["id"], rep, "INCOMPLETE（不记结果，可重跑）", rec["stuck"], flush=True)
             return
         append(cond, rec)
         print(
@@ -684,6 +695,30 @@ def _done(cond: str) -> set:
     return out
 
 
+def cmd_rejudge(args) -> None:
+    """判据改了：不重跑 agent，按运行后留在 `EVAL_SCRATCH/<组>-<题>-<rep>/project` 的排版文件重新判分，原地改写 `<组>.jsonl`。"""
+    corpus = load_corpus()
+    tasks = {t["id"]: t for t in corpus["tasks"]}
+    path = RESULTS / f"{args.cond}.jsonl"
+    out, missing = [], []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        rec = json.loads(line)
+        task = tasks[rec["id"]]
+        proj = SCRATCH / f"{args.cond}-{rec['id']}-{rec['rep']}" / "project"
+        if not (proj / "tavottofile").is_dir():
+            missing.append(rec["id"])
+            out.append(line)
+            continue
+        got = predicates.evaluate(task, task["canvas"]["objects"], read_layout_objects(proj))
+        rec["completed"] = b_completed(rec)
+        rec["rejudged"] = True
+        rec["success"], rec["predicate_detail"] = got["ok"] and rec["completed"], got["checks"]
+        rec["stuck"] = classify_b(rec, task)
+        out.append(scrub(json.dumps(rec, ensure_ascii=False)))
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    print(f"重判 {len(out) - len(missing)} 行；找不到运行目录没重判：{missing or '无'}")
+
+
 def cmd_list(args) -> None:
     for t in load_corpus()["tasks"]:
         print(f"{t['id']:24} {t['kind']:8} {t['family']:12} {t['instruction']}")
@@ -698,7 +733,12 @@ def main() -> None:
     r.add_argument("--only", nargs="*")
     r.add_argument("--reps", type=int, default=1)
     r.add_argument("--timeout", type=int, default=600)
+    r.add_argument(
+        "--keep-incomplete", action="store_true", help="B 组：超时 / agent 报错的运行也记成失败结果"
+    )
     r.add_argument("--jobs", type=int, default=1, help="B 组并发数")
+    rj = sub.add_parser("rejudge")
+    rj.add_argument("cond", choices=["B", "B2"])
     sub.add_parser("report")
     a = ap.parse_args()
     RESULTS.mkdir(parents=True, exist_ok=True)
@@ -709,6 +749,8 @@ def main() -> None:
         return
     if a.cmd == "list":
         cmd_list(a)
+    elif a.cmd == "rejudge":
+        cmd_rejudge(a)
     elif a.cond in ("B", "B2"):
         cmd_run_b(a)
     else:

@@ -280,6 +280,36 @@ def p_new_box_covers(spec: dict, before: list[dict], after: list[dict]) -> Resul
     )
 
 
+def p_new_bracket(spec: dict, before: list[dict], after: list[dict]) -> Result:
+    """新增一个括号：开口的四点折线（两条腿朝向子图、中间一横），横向覆盖子图宽度（两头各最多少 `slack` mm）、
+    高度不超过 `max_h` mm、整体在子图上沿之上（底边不低于子图上沿 + `sink`）。1×1 mm 的小椭圆、别处的线都不算。"""
+    x, y, w, h = spec["rect"]
+    slack, max_h, sink = spec.get("slack", 6.0), spec.get("max_h", 12.0), spec.get("sink", 2.0)
+    new = [o for o in _new_objects(before, after) if o.get("type") == "path"]
+
+    def is_bracket(o: dict) -> bool:
+        subs = o.get("subpaths") or []
+        if len(subs) != 1 or subs[0].get("closed"):
+            return False
+        pts = [n.get("p") for n in subs[0].get("nodes") or []]
+        if len(pts) != 4 or not all(isinstance(p, list) and len(p) == 2 for p in pts):
+            return False
+        (ax, ay), (bx, by), (cx, cy), (dx, dy) = pts
+        legs_down = (
+            ay > by + 0.5 and dy > cy + 0.5 and _close(ay, dy, 0.05) and _close(by, cy, 0.05)
+        )
+        sides = _close(ax, bx, 0.05) and _close(cx, dx, 0.05) and cx > ax + 0.5
+        covers = o["x"] <= x + slack and o["x"] + o["w"] >= x + w - slack
+        small = 0 < o["h"] <= max_h and o["y"] + o["h"] <= y + sink
+        return legs_down and sides and covers and small
+
+    hit = [o for o in new if is_bracket(o)]
+    return (
+        bool(hit),
+        f"新增路径 {[(o['id'], [round(o[k], 1) for k in 'xywh']) for o in new]}（要一个括号：四点开口折线、横跨 {w} mm 子图宽度 ±{slack}、高 ≤ {max_h}、在子图上沿之上）",
+    )
+
+
 def p_new_near(spec: dict, before: list[dict], after: list[dict]) -> Result:
     """新增对象（类型之一）的外框与矩形 [x, y, w, h] 相交（括号这类：落在子图旁边的某一带里）。"""
     x, y, w, h = spec["rect"]
@@ -321,6 +351,7 @@ PREDICATES: dict[str, Callable[[dict, list[dict], list[dict]], Result]] = {
     "new_box_around": p_new_box_around,
     "new_box_covers": p_new_box_covers,
     "new_near": p_new_near,
+    "new_bracket": p_new_bracket,
     "unchanged": p_unchanged,
 }
 
@@ -328,7 +359,7 @@ PREDICATES: dict[str, Callable[[dict, list[dict], list[dict]], Result]] = {
 def evaluate(task: dict, before: list[dict], after: list[dict]) -> dict:
     """→ `{"ok": 全部通过, "checks": [{"t", "ok", "detail"}…]}`。
 
-    隐含两条：没点名的对象（`may_change` 之外的、原来就有的）与原来深相等；除非 `may_add`，不许多出对象。"""
+    隐含三条：原来的对象都还在（除非题目明确要删 / 替换，`may_remove`）；没点名的对象（`may_change` 之外的、原来就有的）与原来深相等；除非 `may_add`，不许多出对象。"""
     before = copy.deepcopy(before)
     after = copy.deepcopy(after)
     checks: list[dict] = []
@@ -338,6 +369,15 @@ def evaluate(task: dict, before: list[dict], after: list[dict]) -> dict:
     if "unchanged" not in {s["t"] for s in task["predicate"]}:
         may = set(task.get("may_change", []))
         a = _by_id(after)
+        # 原来的对象都得还在：只有题目明确要删 / 替换的（`may_remove`）可以不在——删掉无关对象不能蒙混过关
+        lost = [
+            o["id"]
+            for o in before
+            if o["id"] not in a and o["id"] not in set(task.get("may_remove", []))
+        ]
+        checks.append(
+            {"t": "originals_kept", "ok": not lost, "detail": f"不该没的对象没了：{lost or '无'}"}
+        )
         moved = [o["id"] for o in before if o["id"] not in may and o["id"] in a and a[o["id"]] != o]
         checks.append(
             {"t": "others_unchanged", "ok": not moved, "detail": f"没点名却被改的：{moved or '无'}"}
