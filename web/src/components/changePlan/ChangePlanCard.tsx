@@ -11,7 +11,7 @@ import { StatusPill } from '../ui/StatusPill'
 import { TaskChecklist } from '../ui/TaskChecklist'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { formatAxisLimit } from '@/lib/logPower'
-import { cp, effectiveStatus, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
+import { cp, effectiveStatus, vectorCannotApply, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
 import { GraphPaper, PlotSketch, type PlotStage } from './PlotSketch'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
@@ -191,10 +191,15 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                     {cp('card.view')}
                   </Button>
                 )}
-                <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} disabled={entry.scriptBusy} data-change-plan-apply>
+                <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} disabled={entry.scriptBusy || vectorCannotApply(entry)} data-change-plan-apply>
                   {cp('card.applyNow')}
                 </Button>
               </>
+            )}
+            {status === 'ready' && entry.vector?.failed && (
+              <Button variant="ghost" className="-ml-1" onClick={() => entry.vector?.recompute?.(true)} data-change-plan-vector-retry>
+                {cp('card.retry')}
+              </Button>
             )}
             {canUndo && (
               <Button variant="ghost" className="-ml-3" onClick={() => void store().undo(entry.key)} data-change-plan-undo>

@@ -14,6 +14,7 @@ import { cp, whoOf, type GroupView, type UnhandledView } from './changePlanModel
  */
 export function ChangeList({
   heading,
+  muted = false,
   groups,
   unhandled,
   unchecked,
@@ -23,6 +24,8 @@ export function ChangeList({
 }: {
   /** 清单头的整句（一键排版的卡用它说「排版 · N 张图」）；缺省 = 「改动 · N 处」 */
   heading?: string
+  /** 清单头淡一级（矢量编辑方案重算失败期间：它说的还是上次算出的旧摘要） */
+  muted?: boolean
   groups: GroupView[]
   unhandled: UnhandledView[]
   unchecked: Record<string, boolean>
@@ -34,7 +37,7 @@ export function ChangeList({
   const total = groups.filter((g) => !unchecked[g.key]).reduce((a, g) => a + g.boxes.length, 0)
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-change-plan-list>
-      <p className="shrink-0 px-4 pb-1.5 pt-4 type-meta">{heading ?? cp('dialog.changes', { count: total })}</p>
+      <p className={cn('shrink-0 px-4 pb-1.5 pt-4 type-meta transition-opacity duration-fast', muted && 'opacity-50')}>{heading ?? cp('dialog.changes', { count: total })}</p>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
         {/* 续改的版本：「按批注改的」置顶，用一条轻分隔线与按意见改的隔开 */}
         {groups.some((g) => g.fromNote) && (
@@ -118,12 +121,12 @@ function GroupRow({
             <Check size={ICON_SIZE.xs} />
           </span>
         ) : (
-          <Checkbox checked={checked} onChange={() => onToggle(g.key)} aria-label={g.summary} className="mt-0.5 size-[15px] [&>input:checked]:border-ink-2 [&>input:checked]:bg-ink-2" />
+          <Checkbox checked={checked} onChange={() => onToggle(g.key)} aria-label={g.summary} className={cn('mt-0.5 size-[15px] [&>input:checked]:border-ink-2 [&>input:checked]:bg-ink-2', g.note && 'opacity-60')} />
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className={cn('text-sm', checked ? 'text-ink' : 'text-ink-3')}>{g.summary}</span>
           {g.lines?.map((l, i) => (
-            <span key={i} data-change-line className="type-meta flex flex-wrap items-center gap-x-1.5">
+            <span key={i} data-change-line className={cn('type-meta flex flex-wrap items-center gap-x-1.5', !checked && 'opacity-50')}>
               <span>{l.label}</span>
               {l.after && (
                 <>
@@ -134,6 +137,11 @@ function GroupRow({
               )}
             </span>
           ))}
+          {g.note && (
+            <span data-change-note className="type-meta opacity-70">
+              {g.note}
+            </span>
+          )}
           {g.metaText !== '' && (
             <span className="type-meta">
               {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}

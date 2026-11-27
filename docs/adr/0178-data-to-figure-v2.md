@@ -638,6 +638,17 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 5. **顺带核实审计的几条**：①合画时 `candidate_facts` 的 `gone` / `row_at` 只按本地行号索引，A 文件第 3 行无效会把 B 文件第 3 行也排掉——**复现并修**（行身份改为「来自哪一份 + 行号」，抽成 `_skipped_split`）；②同一行多个 y 都是文字时 `unplotted_rows` 每个 y 记一条、被当成行数——**复现并修**（每行只记一条，与该函数注释「每行只记一个原因」一致；调用方 `app.py` 的 `count`、`ai_data_task` 的 `goal.rows_plotted`（只看 `unplotted_unmet` 是否非 0）与 `observed.total` 都把条数当行数，没有谁依赖逐格条目；`unplotted_unmet` 在那一行上仍是 1，用例锁住）；③某个 y 的文字把同行另一个 y 排除——**复现**（旧 `candidate_facts` 对 `a` 有 6 个有效值的表写 `drawn: 5`，因为同行 `b` 是文字、`gone` 排掉了整行），新统计按每个 y 各自判，用例锁住。
 6. **没做**：不给分组 / 分面覆盖统计（`group_cells`、每组范围）；不给可展开的明细表；不改 `unplotted_rows` 里「某个 y 是文字就把这格记为没画」的口径（这是诊断合同，`goal.rows_plotted` 依赖它）；不动 `error_missing_for`（算出来的误差线）与指纹核验。
 
+## 修订（2026-11-27）：表头第一格是空的也能读（`ai_data_figure.fill_header`）
+
+**起因**：pandas `df.to_csv()` 默认把行索引写成第一列、表头留空（`,id,diet,pulse,…`），R `write.csv`、Excel 的 A1 也常是空的；此前读表只要表头里有一格空就整张报 `data_header_invalid`，用户直接卡住。
+
+**做法**（最窄）：
+
+1. **只放宽第一列**：表头第一格的名字是空（去空白后）且有两列以上时，叫 **`col1`**——与 `xvg_text` 缺名列同一个叫法（`col<N>`，N 从 1 数），ASCII、不带任何一种语言的词。别处的空名字、重复名字（含补名后与已有的 `col1` 撞名）**仍是 `data_header_invalid`**：这样「标题行 `实验一,,,`」之类不可能是表头的行不会被当成表头（猜表头行与 `header_rows` 重试靠这个码判断「这一行不是表头」，不放宽）；整行都没有名字的行读表时就是全空记录、被丢掉，剩不出表头。
+2. **一份实现**：占位由运行时函数 `fill_header` 算，进 `RUNTIME_FUNCTIONS`（公共模块内嵌同一份源码）；`iter_table`（文本小表 / 大表流式 / 显式表头行，也是脚本里 `table_from_text` / `read_delimited` 的读法）、`read_xlsx`（脚本）与父进程的 `_summarize` / `_scan_summary`（XLSX 与老入口）都调它，所以父进程与脚本读出的是同一张表头；`fill_header` 幂等。
+3. **公共模块换名**：公共模块按内容寻址（`tavotto_plot_<sha256 前 8 位>.py`），加了函数名字就变；老脚本继续 import 它们当时那一份，不受影响（它们读过的表本来就不含空表头）。没有写死的哈希 / 期望指纹要更新。
+4. **没做**：不放宽重名；不放宽非第一列的空名字；不改猜表头行与 `unsure` 的判据（候选表头里第一格空的行仍是「猜的」→ `unsure`，只是现在能读出表）；不改界面文案；`chartdata`（预检读表）本来就把任何空名叫 `col<N>`，不动。
+
 ## 修订（2026-11-27）：行号列默认不当轴；大表默认备选全被拒时的退路（`ai_data_figure.row_index_columns`、`ai_data_recipe._resolve_roles_raw` / `_large_fallback_x`）
 
 **问题**（24 份公开数据集、不连 AI 的 lazy 路径实测）：①Rdatasets 的表第一列是 `rownames`（1..n 的行号），10 份表的默认横轴都是它，画出来是「数值随行号变化」，没有科学意义；连 AI 时「读懂数据」会把它判成 `row_id` 并让规则避开，没连 AI 的用户没有这一层。②`nyc_flights_large.csv`（33.6 万行）默认答案是 `nothing / all_candidates_rejected`：规则按文字列分组出比较 / 分布，大表只放行 `LARGE_MARKS`（趋势的线 / 点、关系的点），五个候选全被 `mark_not_allowed`（`large:jitter` / `box` / `violin` / `ecdf` / `bar`）拒掉，能画的散点 / 折线因为没选横轴没生成。
