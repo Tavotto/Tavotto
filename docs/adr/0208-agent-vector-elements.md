@@ -513,3 +513,26 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
 - **3b（高档）**：桌面引擎现量（`Measure`、缓存、两次量 + 指纹、超时退外框、`phase`「正在量图」）；碰引擎池与 worker 会话，要在 Windows Lab 看一遍。
 - **3c（先出截图）**：前端——快照带量的输入键、入口放开与「改在画布上加」转交、改动清单里新增项的写法、`unhandled` 里「需要你确认」（次级按钮「按我说的加」）与「没量到」两行灰字、基线核对加子图项。
 - **3d**：评测——`scripts/eval/vector_edit/` 的加对象题在 A 组从「期望进 unhandled」改成按判据判，补 `add` 的标准答案，3a / 3b 各跑一次。
+
+### 3b 实现（2026-11-28）：桌面实测
+
+- **在哪里量**：后台线程里，`with bound_project(ctx)` 之下（`_change_plan_thread` 同一个做法）直接取桌面引擎会话——不必在请求线程里先量。`app._vector_measure_panel`：
+  冻结快照 / runtime 素材 / 没有 `fileId` 的快照不量，其余 `_engine_worker(fileId, safe_only=True)`（native 会话不碰）+ `export(stem, overrides, 私有临时目录/m.pdf, "pdf", 600, data_points=…)`，
+  回与插件同形的 `{draw_manifest, data_points}`。输入只有子图的 `fileId` 与 `overrides`（**快照里没存盘的覆盖项**，所以量的就是用户眼前的图）。
+- **缓存与时限**（`engine/vectormeasure.py`，纯标准库）：缓存键 = 项目、`fileId`、覆盖项哈希、脚本修订、**项目文件指纹**、数据点请求；进程内、64 条、30 分钟、不落盘。每张图 20 s、一次方案总共 60 s；
+  `export` 不能中途取消，所以每次量交给临时线程、只等到时限，超时的结果丢弃。失败一律落成稳定码退到外框：
+  `composed_from_snapshot` / `runtime_panel` / `no_script` / `native_session` / `memory_snapshot`（快照没带量的输入）/ `export_failed` / `bad_overrides` / `too_many_overrides` / `measure_timeout` / `measure_budget` / `measure_failed`。
+- **两次量 + 指纹**：出提示前量一遍（无数据点请求）→ `vectorplan.measure_scene`（`build_scene` 的瘦身版：去掉 `annotations`，每张子图元素最多 40 个〔刻度文字先让位〕、空白区最多 6 块）放进 `<scene>`；
+  补丁出来后干跑与出方案时对有数据锚点的子图带着数据点请求再量（缓存命中就不再导出）。`scene_fingerprint`（子图落位 + 这次导出绘制的 manifest）前后不一致 = `change_plan_figure_changed`，方案作废。
+- **结果多两项**：`unmeasured: {子图短号: 码}`（3c 显示一行说明）与 `scene_fingerprint`；任务阶段多一个 `measure`（「正在量图」）。补丁模式（逐条勾选重算）同样量，子图带 `fileId` 才量，命中缓存时不导出。
+- 提示：`<scene>` 里 `panels[ref].measured` 说明哪张子图可以用 `data` / `element` 锚点（`scene.panels[].axes[].gid`、`elements[].gid` 就是锚点要写的 gid）。
+- 前端还没把 `fileId` / `overrides` / 不可量标记放进快照（3c）；旧快照走 `memory_snapshot`，行为与 3a 相同。
+- **数据文件变了、脚本没变**（维护者 2026-11-28 定的正确性要求；2026-11-28 再改：不碰画布的热会话）：项目里没有「这张图读了哪些文件」的通用清单
+  （`inputs_read` 只在转换沙盒里有，声明的输入只覆盖用户声明过的），所以缓存键里放整个项目的有界指纹（`ai_figure_edit.project_fingerprint`：大小 + mtime + 小文件内容哈希；
+  超出文件数上限 / 读不了 = 不缓存）。**量本身用一次性 worker**（`pool.one_shot`，不进池、目录独立、用完即毁——写回前的干净重放是同一个先例）：每个方案对每个脚本冷起一条、
+  读此刻的数据，一个方案里（出提示前 / 干跑 / 出方案）复用，项目文件指纹变了（模型答题期间数据变了）就换新的，`vectormeasure.close` 收掉。
+  **为什么不再让热会话过期重建**：数据变了热会话不会过期，要量到新数据只能 `pool.invalidate`，而它会杀掉在飞的画布渲染——
+  真浏览器里「量完画布弹『渲染进程退出了：SIGKILL』」，`test_measuring_never_kills_a_canvas_render_in_flight` 钉着这一条（画布一直在渲染时触发量图，渲染一次不失败、会话还是原来那条）。
+  代价：每个方案对每张图（缓存未命中时）冷跑一次脚本；脚本很重（超过每图 20 s）就退外框。
+- 指纹每一轮量（`vectormeasure.new_pass`）重新取，**不跨模型调用沿用**；前后场景指纹不一致 = `change_plan_figure_changed`（Codex #2344）。
+- 量子图的临时导出目录用受检的删除（先短重试，仍失败记日志并登记、下一次量的开头再试），不用 `ignore_errors`（`src/tavotto/AGENTS.md`）。

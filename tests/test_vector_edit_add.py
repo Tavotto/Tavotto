@@ -12,7 +12,10 @@ import copy
 import pytest
 
 from tavotto.engine import vectoredit as ve, vectorplan as vp
-from test_layoutannotate import _doc
+from test_layoutannotate import (
+    _doc,
+    measure as stub_measure,
+)  # stub：数据 (x, y) ∈ [0, 10]² 按坐标轴框线性换算
 from test_vectoredit import MINE
 
 
@@ -206,6 +209,81 @@ def test_prompt_snapshot_lists_the_panel_frames():
     assert "add" in ve.OPS_DOC and "provenance" in ve.OPS_DOC
 
 
+# ------------------------------------------------------------------ 3b：量过的子图上，数据 / 元素锚点可用
+
+
+PEAK = {
+    "kind": "arrow",
+    "name": "peak",
+    "from": {"anchor": {"panel": {"id": "P1", "point": "ne"}}, "offset_mm": [8, -6]},
+    "to": {"anchor": {"data": {"panel": "P1", "axes": "axes_0", "x": 5, "y": 5}}},
+}
+
+
+def _unavailable(code):
+    from tavotto.engine import layoutannotate as la
+
+    def measure(panel, requests):
+        raise la.PanelUnavailable(code)
+
+    return measure
+
+
+def test_a_measured_panel_takes_data_and_element_anchors():
+    res = ve.propose_memory(_canvas(), [_add(PEAK)], measure=stub_measure)
+    assert res["ok"] or res["errors"] == [{"code": "checks_failed"}], res["errors"]
+    new = next(o for o in res["changed"] if o.get("type") == "arrow")
+    assert new["anchor"]["anchors"][1]["data"]["panel"]  # 数据锚点落了盘（子图换成子图对象 id）
+    el = {
+        "kind": "text",
+        "name": "lab",
+        "text": "Treatment",
+        "at": {"anchor": {"element": {"panel": "P1", "gid": "axes_0.lines_0", "point": "ne"}}},
+    }
+    assert ve.propose_memory(_canvas(), [_add(el)], measure=stub_measure)["changes"]
+    assert res["scene_fingerprint"]
+
+
+def test_an_unmeasurable_panel_falls_back_to_the_frame_with_its_reason():
+    res = ve.propose_memory(_canvas(), [_add(PEAK)], measure=_unavailable("measure_timeout"))
+    assert res["errors"][0]["code"] == "needs_measurement"
+    assert res["unmeasured"] == {"P1": "measure_timeout"}
+    ok = ve.propose_memory(_canvas(), [_add(FRAME)], measure=_unavailable("composed_from_snapshot"))
+    assert ok["ok"] and ok["unmeasured"] == {"P1": "composed_from_snapshot"}  # 外框照样能框
+
+
+def test_the_prompt_carries_the_measured_scene_and_says_which_panels_are_not():
+    measured = vp.measure_scene(_canvas(), stub_measure)
+    assert measured["fingerprint"] and "annotations" not in measured["scene"]
+    _s, user = vp.build_prompt("指一下峰", _canvas(), [], max_chars=48_000, measured=measured)
+    import json as _json
+
+    scene = _json.loads(user.split("<scene>\n", 1)[1].split("\n</scene>", 1)[0])
+    assert scene["panels"]["P1"]["measured"] is True
+    assert scene["scene"]["panels"][0]["axes"][0]["gid"] == "axes_0"
+    bad = vp.measure_scene(_canvas(), _unavailable("runtime_panel"))
+    _s, user = vp.build_prompt("指一下峰", _canvas(), [], max_chars=48_000, measured=bad)
+    scene = _json.loads(user.split("<scene>\n", 1)[1].split("\n</scene>", 1)[0])
+    assert scene["panels"]["P1"] == {
+        "box_mm": scene["panels"]["P1"]["box_mm"],
+        "measured": False,
+        "unmeasured": "runtime_panel",
+    }
+
+
+def test_the_dry_run_measures_once_with_the_add_items_data_requests():
+    seen = []
+
+    def spy(panel, requests):
+        seen.append(requests)
+        return stub_measure(panel, requests)
+
+    out = vp.validate_ops({"ops": [_add(PEAK)]}, _canvas(), None, spy)
+    assert [o["op"] for o in out["ops"]] == ["add"] and not out["unhandled"]
+    assert seen == [[{"axes": "axes_0", "x": 5, "y": 5}]]
+    assert out["unmeasured"] == {} and out["scene_fingerprint"]
+
+
 def test_an_added_object_names_the_panels_it_was_placed_against():
     """判据的主语：`changes[].depends_on` 量的是**新对象的位置依据**（锚点 / 贴合的子图对象 id），不是它自己；
     没锚在任何子图上的新对象没有这个键。"""
@@ -241,3 +319,10 @@ def test_stat_text_check_is_linear_on_long_whitespace_and_keeps_its_meaning():
         assert vsc.is_stat_text(text) is True, repr(text[:12])
     for text in ("peak", "n", "a * b", "ns data"):
         assert vsc.is_stat_text(text) is False, text
+
+
+def test_a_data_anchored_object_depends_on_its_measured_panel():
+    """3b：量过的子图上的数据 / 元素锚点对象，同样把所在子图写进 `depends_on`（子图挪了 / 覆盖项变了 = 图改过了）。"""
+    res = ve.propose_memory(_canvas(), [_add(PEAK)], measure=stub_measure)
+    added = next(c for c in res["changes"] if c.get("added"))
+    assert added["depends_on"] == [ve.panel_refs(_canvas())["P1"]]

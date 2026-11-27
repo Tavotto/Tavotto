@@ -202,6 +202,7 @@ from .engine import (
     texdiag as engine_texdiag,
     tutorial as engine_tutorial,
     updater as engine_updater,
+    vectormeasure as engine_vectormeasure,
     vectorplan as engine_vectorplan,
     versionstore as engine_versionstore,
     workdir as engine_workdir,
@@ -13265,6 +13266,232 @@ def api_change_plans_layout_preview():
 _VECTOR_EDIT_FIGURE = "__vector_edit__"
 
 
+#: 删不掉的量子图导出目录（Windows 上 PDF 被别的进程占着）：留给下一次量的开头再试，不吞
+_VECTOR_MEASURE_LEFTOVERS: set[Path] = set()
+_VECTOR_MEASURE_LEFTOVERS_LOCK = threading.Lock()
+
+
+def _vector_measure_discard(path: Path) -> bool:
+    """删一个一次性导出目录：先短重试（文件锁常常很快放开），仍删不掉就**记日志并登记留给下一次**，不用 `ignore_errors`（`src/tavotto/AGENTS.md`）。→ 是否删掉了。"""
+    for attempt in range(3):
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if attempt < 2:
+                time.sleep(0.15)
+    LOG.warning("量子图的导出目录没删掉，留给下一次清理：%s", path.name, exc_info=True)
+    with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+        _VECTOR_MEASURE_LEFTOVERS.add(path)
+    return False
+
+
+def _vector_measure_sweep() -> None:
+    with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+        left = list(_VECTOR_MEASURE_LEFTOVERS)
+    for path in left:
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            LOG.warning("量子图的导出目录仍没删掉：%s", path.name)
+            continue
+        with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+            _VECTOR_MEASURE_LEFTOVERS.discard(path)
+
+
+class _VectorFresh:
+    """一次方案里量子图用的**一次性 worker**（`pool.one_shot`：不进池、目录独立、用完即毁）。
+
+    **为什么不用池里的热会话**（用户画布正在用它）：热会话吃的是哪份输入我们不知道（数据文件变了它不会过期），要保证量到新数据就得让它过期重建——
+    `pool.invalidate` 会把在飞的画布渲染杀掉（「渲染进程退出了：SIGKILL」，实测）。一次性 worker 每次是新进程、读此刻的数据，
+    不碰池、不碰画布的会话，也就不用猜热会话的状态。写回前的干净重放（`_write_back`）是同一个先例。
+    一次方案里同一个脚本复用一条（量出提示前 / 干跑 / 出方案共用）；项目文件指纹变了（模型答题期间数据变了）就换一条新的。`close()` 全部收掉。"""
+
+    def __init__(self) -> None:
+        self._held: dict[str, tuple[str | None, object, str]] = {}
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def worker_for(self, fid: str, digest: str | None):
+        stem, info = _disk_panel_rel(fid)
+        script, entry = (info or {}).get("script"), (info or {}).get("entry")
+        if not script or not entry:
+            raise engine_layoutannotate.PanelUnavailable("no_script")
+        root = str(require_project())
+        with self._lock:
+            if self._closed:
+                raise engine_layoutannotate.PanelUnavailable("measure_failed")
+            held = self._held.get(script)
+            if held is not None and held[0] == digest:
+                return held[1], stem
+            if held is not None:
+                engine_pool.discard(held[1])  # 数据变了：旧的那条吃的是旧数据
+                self._held.pop(script, None)
+            peek = engine_pool.peek(
+                script, root, run=_disk_panel_run(script)
+            )  # 只读：借热会话答过的 input()
+            run = _disk_panel_run(script)
+            worker = engine_pool.one_shot(
+                script,
+                root,
+                entry,
+                script_inputs=getattr(peek, "last_build_script_inputs", None) or [],
+                **({"run": run} if run is not None else {}),
+            )
+            self._held[script] = (digest, worker, stem)
+            return worker, stem
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            held, self._held = list(self._held.values()), {}
+        for _digest, worker, _stem in held:
+            engine_pool.discard(worker)  # 绝不抛
+
+
+_MEASURE_LOCAL = threading.local()
+
+
+def _vector_measure_panel(panel: dict, requests: list) -> dict:
+    """量一张子图（ADR 0208 第 ③ 期 3b）：用**一次性 worker**把这张图**带着快照里的覆盖项**现导出一次，回 `draw_manifest` + 数据点位置。
+
+    与插件 `bridge._layout_measure` 同一个判定与同一个返回形状：冻结快照 / 运行时素材 / 没有脚本的图量不了（只给外框）；
+    输入只有子图的 `fileId` 与 `overrides`——位置、缩放、裁剪只在坐标换算时用，与量无关。磁盘面板永远是 safe（native 会话是用户终端里的活进程，与它无关）。
+    导出写进私有临时目录、用完即删，不碰项目导出目录。要在 `bound_project` 之下调（后台线程没有请求上下文），
+    并且在 `_vector_measure_for` 的 `raw` 里调（那里把本次方案的一次性 worker 持有者放进线程局部）。"""
+    la = engine_layoutannotate
+    if panel.get("figureSnapshot") is not None or panel.get("figureOrigin") is not None:
+        raise la.PanelUnavailable("composed_from_snapshot")
+    if panel.get("source") is not None or panel.get("fileKind") == "runtime":
+        raise la.PanelUnavailable("runtime_panel")
+    fid = panel.get("fileId")
+    if not isinstance(fid, str) or not fid:
+        raise la.PanelUnavailable("memory_snapshot")  # 快照里没有量的输入（旧前端）：只有外框
+    overrides = panel.get("overrides") or []
+    if not isinstance(overrides, list) or not all(isinstance(o, dict) for o in overrides):
+        raise la.PanelUnavailable("bad_overrides")
+    fresh = getattr(_MEASURE_LOCAL, "fresh", None)
+    if fresh is None:
+        raise la.PanelUnavailable("measure_failed")
+    try:
+        worker, stem = fresh.worker_for(fid, getattr(_MEASURE_LOCAL, "digest", None))
+    except (NotFound, HTTPException):
+        raise la.PanelUnavailable("no_script") from None
+    except engine_pool.WorkerError:
+        raise la.PanelUnavailable("export_failed") from None
+    _vector_measure_sweep()  # 上一次没删掉的导出目录先再试一次
+    tmp = Path(tempfile.mkdtemp(prefix="vector-measure-", dir=_review_tmp_root()))
+    try:
+        resp = worker.export(
+            stem, overrides, str(tmp / "m.pdf"), "pdf", 600, data_points=list(requests)
+        )
+    except engine_pool.WorkerError:
+        raise la.PanelUnavailable("export_failed") from None
+    finally:
+        _vector_measure_discard(tmp)
+    return {
+        "draw_manifest": resp.get("draw_manifest"),
+        "data_points": resp.get("data_points") or [],
+    }
+
+
+def _vector_project_digest(root: str) -> str | None:
+    """项目文件的有界指纹（`ai_figure_edit.project_fingerprint`：大小 + mtime + 小文件内容哈希；`tavottofile/` 与 Python 环境目录不计）的摘要。
+
+    **为什么要它**：缓存键里只有脚本修订时，脚本没变、数据文件变了，旧的量会一直命中（最长 30 分钟），锚点指向旧峰。
+    项目里没有「这张图读了哪些文件」的清单（`inputs_read` 只在转换沙盒里有，声明的输入只覆盖用户声明过的），所以用整个项目的指纹——
+    宁可多重量，不可量错。超出文件数上限 / 读不了 = `None`：这次不缓存。"""
+    try:
+        fp = engine_ai_figure_edit.project_fingerprint(Path(root))
+    except OSError:
+        return None
+    if fp.get("status") != "ok":
+        return None
+    return hashlib.sha256(
+        json.dumps(fp["files"], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()[:24]
+
+
+def _vector_measure_script(panel: dict) -> str | None:
+    fid = panel.get("fileId")
+    if not isinstance(fid, str) or not fid:
+        return None
+    _stem, info = _disk_panel_rel(fid)
+    script = (info or {}).get("script")
+    return script if isinstance(script, str) and script else None
+
+
+def _vector_measure_key(root: str, panel: dict, requests: list, inputs: str | None) -> str | None:
+    """量的缓存键：项目、子图文件、覆盖项哈希、脚本修订、项目文件指纹、数据点请求。任何一样变了旧条目自然失效；取不到修订 / 指纹 = 不缓存。"""
+    script = _vector_measure_script(panel)
+    if not script or inputs is None:
+        return None
+    rev = engine_preparation._script_revision(root, script)  # noqa: SLF001
+    if not rev:
+        return None
+    return json.dumps(
+        [
+            root,
+            panel["fileId"],
+            engine_vectormeasure.overrides_digest(panel.get("overrides") or []),
+            rev,
+            inputs,
+            engine_vectormeasure.overrides_digest(requests),
+        ]
+    )
+
+
+def _vector_measure_for(ctx):
+    """一次方案用的 `measure`：桌面量法（一次性 worker）+ 进程内缓存 + 每图 20 s / 总共 60 s 的时限（超了退外框，码 `measure_timeout` / `measure_budget`）。
+
+    量用**一次性 worker**（`_VectorFresh`），不碰池里画布在用的热会话：数据文件变了热会话不会过期，让它过期要 `pool.invalidate`，
+    而那会杀掉在飞的画布渲染。项目文件指纹每一轮量（出提示前 / 干跑 / 出方案，`vectormeasure.new_pass`）重新取，不跨模型调用沿用：
+    指纹变了就换一条新的一次性 worker（读此刻的数据）。用完 `vectormeasure.close(measure)` 收掉。
+    代价：每个方案第一次对每张图要冷跑一次脚本（缓存命中不跑）；脚本很重（超过每图时限）就退外框。"""
+    root = str(ctx.path)
+    memo: list[str | None] = []
+    fresh = _VectorFresh()
+    lock = threading.Lock()
+
+    def inputs() -> str | None:
+        with lock:
+            if not memo:
+                memo.append(_vector_project_digest(root))
+            return memo[0]
+
+    def new_pass() -> None:
+        with lock:
+            memo.clear()
+
+    def raw(panel: dict, requests: list) -> dict:
+        with bound_project(ctx):  # 临时线程没有请求上下文
+            _MEASURE_LOCAL.fresh, _MEASURE_LOCAL.digest = fresh, inputs()
+            try:
+                return _vector_measure_panel(panel, requests)
+            finally:
+                _MEASURE_LOCAL.fresh = _MEASURE_LOCAL.digest = None
+
+    def key_of(panel: dict, requests: list) -> str | None:
+        with bound_project(ctx):
+            return _vector_measure_key(root, panel, requests, inputs())
+
+    measure = engine_vectormeasure.bounded(raw, key_of=key_of)
+    measure.new_pass = new_pass  # type: ignore[attr-defined]
+    measure.close = fresh.close  # type: ignore[attr-defined]
+    return measure
+
+
+def _has_measurable_panel(canvas: dict) -> bool:
+    return any(
+        isinstance(o, dict) and o.get("type") == "panel" and isinstance(o.get("fileId"), str)
+        for o in canvas.get("objects") or []
+    )
+
+
 @app.post("/api/vector-edit/plan")
 def api_vector_edit_plan():
     """出矢量编辑方案（**不写盘**）。两种请求：
@@ -13283,13 +13510,15 @@ def api_vector_edit_plan():
             raise engine_vectorplan.PlanInputError("mode")
         if "ops" in body:
             ops = engine_vectorplan.check_ops(body.get("ops"))
-            out = engine_vectorplan.plan(
-                canvas,
-                ops,
-                context=engine_vectorplan.plan_context(
-                    body.get("instruction_text"), body.get("confirmed")
-                ),
+            context = engine_vectorplan.plan_context(
+                body.get("instruction_text"), body.get("confirmed")
             )
+            # 子图带着量的输入（`fileId` / `overrides`）才量；量不了的退外框、码在 `unmeasured` 里
+            measure = _vector_measure_for(current_ctx()) if _has_measurable_panel(canvas) else None
+            try:
+                out = engine_vectorplan.plan(canvas, ops, context=context, measure=measure)
+            finally:
+                engine_vectormeasure.close(measure)  # 一次性 worker 收掉
             resp = jsonify(out)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -13314,7 +13543,7 @@ def api_vector_edit_plan():
     except engine_changeplan.PlanFailure as exc:
         return _change_plan_error(exc.code)
     if created:
-        task.phase = "model"
+        task.phase = "measure" if _has_measurable_panel(canvas) else "model"
         threading.Thread(
             target=_vector_edit_thread,
             args=(ctx, task, canvas, comments[0]["text"], selected, selection, body.get("locale")),
@@ -13329,30 +13558,48 @@ def api_vector_edit_plan():
 
 
 def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection, locale=None) -> None:
-    """后台线程：问模型 → 算方案 → 放进内存；任何结局都落成终态并放掉互斥。"""
+    """后台线程：量子图 → 问模型 → 算方案 → 放进内存；任何结局都落成终态并放掉互斥。
+
+    钉在发起请求的项目上（`bound_project`，与 `_change_plan_thread` 同一个做法）：量子图要取桌面引擎会话，后台线程没有请求上下文。"""
     code, detail = "", ""
+    measure = None
     try:
-        proposal = engine_changeplan.ask_vector_edits(
-            instruction, canvas, selected, selection, locale
-        )
-        task.phase = "plan"
-        ops, unhandled = proposal["ops"], proposal["unhandled"]
-        if ops:
-            result = engine_vectorplan.plan(
-                canvas, ops, context=engine_vectorplan.plan_context(instruction, None)
+        with bound_project(ctx):
+            measure = _vector_measure_for(ctx) if _has_measurable_panel(canvas) else None
+            measured = engine_vectorplan.measure_scene(canvas, measure) if measure else None
+            task.phase = "model"
+            proposal = engine_changeplan.ask_vector_edits(
+                instruction, canvas, selected, selection, locale, measure=measure, measured=measured
             )
-        else:
-            result = {
-                "ok": True,
-                "errors": [],
-                "objects": [],
-                "deleted": [],
-                "echo": [],
-                "changes": [],
-            }
-        result = {**result, "ops": ops, "unhandled": unhandled}
-        if not task.cancelled:
-            engine_vectorplan.keep_result(ctx.id, task.id, result)
+            task.phase = "plan"
+            ops, unhandled = proposal["ops"], proposal["unhandled"]
+            unmeasured = proposal.get("unmeasured") or {}
+            if ops:
+                engine_vectormeasure.new_pass(
+                    measure
+                )  # 干跑之后到出方案之间数据也可能变：重新取这一刻的输入状态
+                result = engine_vectorplan.plan(
+                    canvas,
+                    ops,
+                    context=engine_vectorplan.plan_context(instruction, None),
+                    measure=measure,
+                )
+                # 量与出方案之间图被改过（脚本重跑、子图覆盖项变了 → 新的 manifest）：方案作废，不落一份对不上的
+                seen = measured["fingerprint"] if measured else None
+                if seen and result.get("scene_fingerprint") not in (None, seen):
+                    raise engine_changeplan.PlanFailure("change_plan_figure_changed")
+            else:
+                result = {
+                    "ok": True,
+                    "errors": [],
+                    "objects": [],
+                    "deleted": [],
+                    "echo": [],
+                    "changes": [],
+                }
+            result = {**result, "ops": ops, "unhandled": unhandled, "unmeasured": unmeasured}
+            if not task.cancelled:
+                engine_vectorplan.keep_result(ctx.id, task.id, result)
     except engine_changeplan.PlanFailure as exc:
         code, detail = exc.code, exc.detail
         LOG.info("矢量编辑方案没有生成: %s %s", exc.code, exc.detail)
@@ -13360,6 +13607,7 @@ def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection, loc
         code = "change_plan_failed"
         LOG.exception("矢量编辑方案任务异常")
     finally:
+        engine_vectormeasure.close(measure)  # 一次性 worker 收掉（不碰画布的热会话）
         engine_changeplan.finish(task, code=code, detail=detail)
         if task.cancelled:
             engine_changeplan.forget_task(task)

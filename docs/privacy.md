@@ -724,8 +724,11 @@ the plan step has said so.
   which objects you had selected. To place new annotations (a frame, a panel label, a
   bracket, an arrow) the summary also lists where each figure sits on the canvas: its
   position and size, labelled "P1", "P2"… together with the figure's project-relative
-  file name; the figure's contents, axis labels
-  and data are not sent. Figure data, scripts and project files are not sent.
+  file name. For figures the app can re-draw on your computer (the same drawing step
+  used for export, with the edits you have not saved yet), the summary also carries the
+  figure's layout so an arrow can point at a curve's peak: each axis's range, and the
+  elements' roles, labels (curve names, axis titles, legend entries, tick labels), boxes
+  and the main colours. The figure's data values, scripts and project files are not sent.
   The plan is computed on your computer and written nowhere until you apply it.
 * **One-click layout.** The comparison pictures are drawn on your computer by the
   export engine; nothing about them is sent anywhere.
