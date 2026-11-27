@@ -17,11 +17,14 @@ import {
   type PanelObject,
 } from '@/types/document'
 import type { Manifest, PanelInfo } from '@/lib/api'
+import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import { panelScale } from '@/lib/preflight'
 import { startCropDrag, startResizeDrag } from '@/canvas/interactions'
 import { startLayoutAutoReflow } from '@/store/actions'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { useUiStore } from '@/store/uiStore'
+import chartVectors from '../../../tests/golden/chart_model_vectors.json'
+import type { PanelChartState } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -51,6 +54,37 @@ function panel(id: string, fileId: string, overrides: number): PanelObject {
 
 /** 记下每一次真正发出的渲染（fileId / patches / preview dpi） */
 let calls: { fileId: string; patches: unknown[]; dpi?: number }[] = []
+
+describe('计算图表同步目标', () => {
+  const chartPanel = (id: string, upper?: number): PanelObject => {
+    const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+    const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+    if (upper != null) chart.model.axes[0].xlim[1] = upper
+    return { ...panel(id, 'chart.svg', 0), script: null, fileKind: 'svg', chart }
+  }
+
+  it('无script/无patch的chart自动首渲染，同文件不同模型均入选', () => {
+    const a = chartPanel('a'), b = chartPanel('b', 50)
+    expect(renderTargets([a, b], null, {}).map(p => p.id)).toEqual(['a', 'b'])
+  })
+
+  it('同chart完整身份共用一次渲染，普通SVG仍不自动进入计算', () => {
+    const a = chartPanel('a'), b = { ...structuredClone(a), id: 'b' }
+    const plain = { ...a, id: 'plain', chart: undefined }
+    expect(renderTargets([a, b, plain], null, {}).map(p => p.id)).toEqual(['a'])
+  })
+
+  it('chart model变化且patches不变也排期，want完整身份占位避免循环', () => {
+    const a = chartPanel('a')
+    syncEngine([a], null)
+    expect(calls).toHaveLength(1)
+    syncEngine([a], null)
+    expect(calls).toHaveLength(1)
+    const changed = chartPanel('a', 50)
+    syncEngine([changed], null)
+    expect(calls).toHaveLength(2)
+  })
+})
 
 beforeEach(() => {
   calls = []
@@ -645,6 +679,131 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       // 回滚只还原事务记下的东西：以前 w 回到 40、nativeW 停在 50 → 0.8
       expect(panelScale(current())).toBeCloseTo(1, 6)
       expect([current().nativeW, current().nativeH]).toEqual([50, 30])
+      await unmount()
+    })
+  })
+
+  describe('/2 计算框：渲染回来的外框原点与图幅同一次收尾写入（N5 第 3 步）', () => {
+    const PT_MM = 25.4 / 72
+    const FRAME: ComputedRenderFrame = {
+      version: 1,
+      source: 'computed-svg',
+      source_viewport_pt: [100, 100],
+      rect_pt: [-21, -1, 122, 109],
+      edit_basis: 'source-viewport-pt',
+    }
+
+    /** /2 诞生形状：外框暂与 S viewport 重合（originPt 0,0），native 是 S 尺寸 */
+    const chartPanel = (id: string): PanelObject => {
+      const v = chartVectors.vectors.find(v => v.expect === 'ok')!
+      const chart = structuredClone({ model: v.model, binding: v.binding }) as unknown as PanelChartState
+      return {
+        ...panel(id, 'chart.svg', 0), script: null, fileKind: 'svg', chart,
+        nativeW: 100 * PT_MM, nativeH: 100 * PT_MM,
+        chartFrame: { version: 1, renderProfile: 'native-manifest/2', originPt: [0, 0] },
+      }
+    }
+
+    /** 摆面板、挂同步器、同一轮里喂「尺寸 + render_frame」（生产里是同一次回包） */
+    async function mountAndRender(
+      docId: string,
+      p: PanelObject,
+      size: [number, number],
+      withFrame: boolean,
+    ) {
+      globalThis.IS_REACT_ACT_ENVIRONMENT = true
+      await useDocumentStore.getState().switchDocument(emptyProject(), docId)
+      useDocumentStore.getState().commit(literal('准备'), (d) => {
+        d.objects = [structuredClone(p)]
+      })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+      const Probe = () => {
+        useEngineSync()
+        return null
+      }
+      await act(async () => {
+        root.render(createElement(Probe))
+      })
+      await act(async () => {
+        seedExactRender(p, { stem: 'Fig1', size_mm: size, elements: [] })
+        if (withFrame) useRenderStore.getState().patch(renderKeyOf(p), { renderFrame: { ...FRAME } })
+      })
+      return async () => {
+        await act(async () => {
+          root.unmount()
+        })
+        container.remove()
+      }
+    }
+
+    const current = () => useDocumentStore.getState().doc.objects[0] as PanelObject
+
+    it('尺寸与外框原点同一次写入：缩放比不变，originPt 跟这份渲染走', async () => {
+      const p = chartPanel('pf')
+      const unmount = await mountAndRender('d_frame_sync', p, [122 * PT_MM, 109 * PT_MM], true)
+      const o = current()
+      expect([o.nativeW, o.nativeH]).toEqual([122 * PT_MM, 109 * PT_MM])
+      expect(o.chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] })
+      expect(panelScale(o)).toBeCloseTo(panelScale(p), 6)
+      await unmount()
+    })
+
+    it('这版渲染没有外框声明（/1、老后端）：已采用的落位原样保留', async () => {
+      const p = { ...chartPanel('pf2'), chartFrame: { version: 1 as const, renderProfile: 'native-manifest/2' as const, originPt: [-21, -1] as [number, number] } }
+      const unmount = await mountAndRender('d_frame_keep', p, [100 * PT_MM, 100 * PT_MM], false)
+      expect(current().chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] })
+      expect([current().nativeW, current().nativeH]).toEqual([100 * PT_MM, 100 * PT_MM])
+      await unmount()
+    })
+
+    it('事务进行中收到 /2 渲染：nativeW/H 与 originPt 并进同一条收尾（同一条历史）', async () => {
+      const p = chartPanel('pf3')
+      const unmount = await mountAndRender('d_frame_txn', p, [100 * PT_MM, 100 * PT_MM], false)
+      await act(async () => {
+        useDocumentStore.getState().beginTxn(literal('缩放'))
+        useDocumentStore.getState().txnUpdate((d) => {
+          const o = d.objects[0] as PanelObject
+          o.w = 30
+          o.h = 22.5
+        })
+      })
+      // 手势还没松开，改了图幅与外框的 /2 渲染先回来了
+      await act(async () => {
+        seedExactRender(p, { stem: 'Fig1', size_mm: [122 * PT_MM, 109 * PT_MM], elements: [] })
+        useRenderStore.getState().patch(renderKeyOf(p), { renderFrame: { ...FRAME } })
+      })
+      await act(async () => {
+        useDocumentStore.getState().endTxn()
+      })
+      // 判据的主语是**这条历史**：收尾修正与事务本体并进同一组补丁——
+      // nativeW/H 与 chartFrame 一起进、一起退（分两次写 = 只进尺寸、originPt
+      // 落在历史之外，撤销/重做把这对拆开）
+      const entry = useDocumentStore.getState().past.at(-1)!
+      const paths = entry.patches.map((patch) => patch.path.join('.'))
+      expect(paths).toContain('objects.0.nativeW')
+      expect(paths).toContain('objects.0.nativeH')
+      expect(paths.some((path) => path.startsWith('objects.0.chartFrame'))).toBe(true)
+      const done = current()
+      expect([done.nativeW, done.nativeH]).toEqual([122 * PT_MM, 109 * PT_MM])
+      expect(done.chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] })
+      // 手势钉住的缩放比不被换框改写（30mm / S 原生 100pt）
+      expect(panelScale(done)).toBeCloseTo(30 / (100 * PT_MM), 9)
+      await act(async () => {
+        useDocumentStore.getState().undo()
+      })
+      // 撤销打回事务前；这份渲染仍是 exact，同步器随即 silent 补回——补回后
+      // originPt 与 nativeW/H 必须还是**同一版**（不许 native 回旧图幅、originPt
+      // 停在新框的半态）
+      const undone = current()
+      expect(undone.chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] })
+      expect([undone.nativeW, undone.nativeH]).toEqual([122 * PT_MM, 109 * PT_MM])
+      await act(async () => {
+        useDocumentStore.getState().redo()
+      })
+      expect([current().nativeW, current().nativeH]).toEqual([122 * PT_MM, 109 * PT_MM])
+      expect(current().chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] })
       await unmount()
     })
   })

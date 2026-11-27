@@ -9,7 +9,8 @@
  * 用例要的是「已经画好了」，就用这个；要的是「还没画好」，直接
  * `patch(key, { status: 'rendering', wantPatches })`，别给 manifest。
  */
-import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, renderSourceKey, renderRequestIdentity, useRenderStore } from '@/store/renderStore'
+import { figureOriginFor } from '@/lib/figureSnapshot'
 import type { Manifest } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 
@@ -19,9 +20,12 @@ export function seedExactRender(
   extra: { svg?: string; rev?: number } = {},
 ): void {
   const key = renderKeyOf(panel)
-  const variant = JSON.stringify(panel.overrides)
+  const origin = figureOriginFor(panel)
+  const source = renderSourceKey(panel)
+  const variant = renderRequestIdentity(panel.overrides, panel.chart, panel.chartSource, origin)
   useRenderStore.getState().patch(key, {
     fileId: panel.fileId,
+    ...(origin === undefined ? {} : { figureOrigin: structuredClone(origin) }),
     rev: extra.rev ?? 1,
     manifest,
     svg: extra.svg ?? '<svg/>',
@@ -32,7 +36,7 @@ export function seedExactRender(
     wantPatches: variant,
   })
   useRenderStore.setState((s) => ({
-    latest: { ...s.latest, [panel.fileId]: key },
-    recent: { ...s.recent, [panel.fileId]: [key, ...(s.recent[panel.fileId] ?? [])] },
+    latest: { ...s.latest, [source]: key },
+    recent: { ...s.recent, [source]: [key, ...(s.recent[source] ?? [])] },
   }))
 }

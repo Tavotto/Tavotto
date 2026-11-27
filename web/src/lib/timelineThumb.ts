@@ -1,4 +1,6 @@
 import { panelSrc } from '@/lib/api'
+import { TIMELINE_THUMB_PX, type PanelSource, type ThumbSources } from '@/lib/momentCapture'
+export type { PanelSource, ThumbSources } from '@/lib/momentCapture'
 import { contentBox, type ThumbBox } from '@/lib/versionThumbBox'
 import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
 import { useAssetStore } from '@/store/assetStore'
@@ -27,8 +29,8 @@ import { pathD, pathGeometry } from '@/lib/pathGeom'
 /**
  * 缩略图的长边（px）。只拍页面上有内容的那块（`contentBox`）——单图编辑没有「页面」，
  * 整页拍的话图常常只占一角；竖线条浮卡按 2× 屏约 400 px 显示，所以比列表行要的大。
+ * 定义在 `lib/momentCapture.ts`（时间线快照与缩略图合成共用同一个数）。
  */
-export const TIMELINE_THUMB_PX = 360
 /** 为了裁出内容区域先按整页画的那张画布，长边不超过它（内容极小、页面极大时降分辨率） */
 const TIMELINE_THUMB_PAGE_MAX_PX = 4096
 /** 后端单张上限（`VERSION_THUMB_MAX_BYTES` 256 KiB）留点余量：超了就缩一档再编 */
@@ -103,7 +105,11 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
  * SVG 解码失败或画成空白（Windows 的 WebKit 上量到过：同一份排版前一个节点有面板、下一个
  * 节点只剩文字，CI run 36510136403）时这一格就空着——而素材图明明就在。
  */
-type PanelSource = { svg?: string; url?: string } | null
+/**
+ * 一份图源：`svg` 是矢量正文，`url` 是可寻址的位图地址；`png` 是算好才回来的位图
+ * （历史 Figure / 归档快照那条路要发一次请求，不能在拍的当下同步取到）。
+ * 形状的出处是 `lib/momentCapture.ts`（`renderStore` 从那里拿同一份类型，环因此不成环）。
+ */
 
 function panelSource(o: PanelObject): PanelSource {
   const render = panelRender(useRenderStore.getState(), o)
@@ -138,8 +144,11 @@ async function loadFrom(
     URL.revokeObjectURL(url)
     return null
   }
-  if (!source.url) return null
-  const img = await loadImage(retry ? `${source.url}${source.url.includes('?') ? '&' : '?'}thumbRetry=1` : source.url)
+  // 算好才回来的位图（历史 Figure / 归档快照）优先：它就是那一版该有的样子。
+  // 重试参数只对可寻址的 url 有意义——`png` 是一次性 Promise，重发不出去
+  const url = source.png ? await source.png : source.url
+  if (!url) return null
+  const img = await loadImage(retry && !source.png ? `${url}${url.includes('?') ? '&' : '?'}thumbRetry=1` : url)
   return img ? { img } : null
 }
 
@@ -360,8 +369,6 @@ function encode(canvas: HTMLCanvasElement): Promise<TimelineThumb | null> {
 }
 
 /** 一份文档此刻的各面板图源（`panelSource` 的结果）；取不出来 = `null`（没有缩略图） */
-export type ThumbSources = ReadonlyMap<string, PanelSource> | null
-
 /**
  * 取各面板**此刻**的图源——只读 renderStore，同步、便宜。关键时刻在操作**发起**那一刻取
  * （`captureMoment`），完成时再合成：那时用户可能已经改了面板，现取的话缩略图画的是

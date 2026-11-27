@@ -29,6 +29,13 @@ beforeEach(() => {
 const node = (gid: string) => document.querySelector(`[id="${gid}"]`)!
 const ctx = { unitsPerPt: 1 }
 
+it('native target归属不扩大proxy适配器语义，普通单gid调用保留原行为', () => {
+  expect(adapterFor('errorbar', 'linewidth')).toBe('strokeWidth')
+  expect(adapterFor('errorbar', 'linewidth', { mapped: true, semanticGidPresent: true })).toBeNull()
+  expect(adapterFor('bar_series', 'facecolor', { mapped: true, semanticGidPresent: false })).toBeNull()
+  expect(adapterFor('bar_series', 'facecolor', { mapped: true, semanticGidPresent: true })).toBe('fill')
+})
+
 /**
  * CSSOM 会把颜色规范化（`#1f77b4` 读回来是 `rgb(31, 119, 180)`，浏览器与
  * jsdom 一致）。断言两边都过一遍同一台机器，写起来才还是人看得懂的十六进制。
@@ -445,6 +452,28 @@ describe('值不合法就什么都不改（据实回退，绝不假装预览成�
 /* --------------------------------- 单位 ----------------------------------- */
 
 describe('unitsPerPt：viewBox 与 matplotlib pt 的关系是算出来的，不是写死的', () => {
+  it('native wrapper只作用于具体target：pt线宽为1，普通root仍按旧比值', () => {
+    root.setAttribute('viewBox', '50 20 100 100')
+    const native = node('axes_0.lines_0')
+    native.parentElement!.setAttribute('data-tavotto-native-viewport-pt', '200 100')
+    const sizeMm = [200 * 25.4 / 72, 100 * 25.4 / 72]
+    expect(unitsPerPt(root, sizeMm, native)).toBe(1)
+    expect(unitsPerPt(root, sizeMm)).toBeCloseTo(0.5, 12)
+    const edits = applyStyleEdit(native, 'strokeWidth', 4, { unitsPerPt: unitsPerPt(root, sizeMm, native) })
+    expect(edits.length).toBeGreaterThan(0)
+    for (const edit of edits) expect(edit.el.style.strokeWidth).toBe('4')
+    restoreStyleEdits(edits)
+  })
+
+  it('坏marker不退回合法pt比值，strokeWidth不会写NaN或声称能预览', () => {
+    const native = node('axes_0.lines_0')
+    native.setAttribute('data-tavotto-native-viewport-pt', '200 NaN')
+    const ctx = { unitsPerPt: unitsPerPt(root, [101.6, 76.2], native) }
+    expect(ctx.unitsPerPt).toBeNaN()
+    expect(canStyleEditApply(native, 'strokeWidth', 4, ctx)).toBe(false)
+    expect(applyStyleEdit(native, 'strokeWidth', 4, ctx)).toEqual([])
+  })
+
   it('matplotlib 的 SVG viewBox 就是 pt，实测比值为 1', () => {
     // fixture 是 figsize=(4,3) 英寸 → 101.6×76.2 mm → viewBox 288×216
     expect(root.getAttribute('viewBox')).toBe('0 0 288 216')

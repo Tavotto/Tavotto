@@ -46,6 +46,8 @@ import {
 } from '@/types/document'
 import { remapLineIds } from '@/lib/pathText'
 import { pruneLiveCorners } from '@/lib/liveCornerRecord'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PreviewOwner } from '@/lib/previewOwner'
 
 enablePatches()
 
@@ -291,6 +293,35 @@ export function resetRestoreGateForTests(): void {
 
 /** 门等待的上限：`needs_user` 期间一直等用户，最长这么久（交接据此给终局） */
 export const DOCUMENT_READY_TIMEOUT_MS = 120_000
+
+/**
+ * 预览归属的捕获点：正文身份（项目 / 文档 / 载入代次）与恢复门代次一起冻结，
+ * 读回来的预览只有在同一个正文、同一道门下才准落进 store / 缓存。
+ *
+ * `refresh` 只在「正文没换、恢复门前进了一代」时续期；正文换了就返回原来那个（`still` 已为假），
+ * 旧正文不会被重新认领给新项目。
+ */
+export function captureDocumentPreviewOwner(): PreviewOwner {
+  const state = useDocumentStore.getState()
+  const pj = projectOfDoc().id
+  const project = captureProjectEpoch()
+  const sameDocument = () => {
+    const now = useDocumentStore.getState()
+    return project.still() && projectOfDoc().id === pj && now.documentId === state.documentId
+      && now.loadSeq === state.loadSeq
+  }
+  const atGate = (restoreGen: number): PreviewOwner => {
+    const owner: PreviewOwner = {
+      pj,
+      key: JSON.stringify([pj, project.generation, state.documentId, state.loadSeq, restoreGen]),
+      still: () => sameDocument() && gate.gen === restoreGen && !isDocumentPlaceholder(),
+      refresh: () => sameDocument() && !isDocumentPlaceholder() && gate.gen !== restoreGen
+        ? atGate(gate.gen) : owner,
+    }
+    return owner
+  }
+  return atGate(gate.gen)
+}
 
 /**
  * 等「`pj` 这个项目的文档」准备好。门 ready 且 pj 相同 → `'ready'`；被取代 / 切了项目 → `'superseded'`；

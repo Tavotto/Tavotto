@@ -16,6 +16,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { literal } from '@/i18n'
+import { seedExactRender } from '@/test/renderFixtures'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { runUndoRedo, useKeyboard } from '@/hooks/useKeyboard'
@@ -86,7 +87,7 @@ const livePanel = (): PanelObject => {
 }
 const down = (clientX = 0, clientY = 0) =>
   ({ clientX, clientY, button: 0, stopPropagation() {} }) as unknown as React.PointerEvent
-const fire = (type: 'pointermove' | 'pointerup', clientX: number, clientY: number) =>
+const fire = (type: 'pointermove' | 'pointerup' | 'pointercancel', clientX: number, clientY: number) =>
   window.dispatchEvent(new MouseEvent(type, { clientX, clientY, bubbles: true }))
 const esc = () =>
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
@@ -337,5 +338,160 @@ describe('STATE-07：拖动中改视图倍率', () => {
       0.4 + 60 / layout.width + 1 / (layout.width * 1.25) + 10 / layout.width,
       9,
     )
+  })
+})
+
+describe('同步中继续拖动：原生多DOM只暂存意图，正式落点等待已挂载权威', () => {
+  const ids = ['title.left', 'title.right']
+  const splitSvg = (revision = 1) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="50 20 100 100" width="200pt" height="100pt"
+    data-tavotto-svg-targets='${JSON.stringify({ [textEl.gid]: { transform: ids, style: ids } })}'>
+    <g data-tavotto-native-viewport-pt="200 100"><g id="title.left" transform="translate(1,2)"><path d="M0 0L10 0"/></g></g>
+    <rect id="unbound-decoration" x="70" y="20" width="20" height="20"/>
+    <g data-tavotto-native-viewport-pt="200 100"><g id="title.right" transform="scale(1)"><path d="M0 0L10 0"/></g></g>
+    <!-- revision ${revision} --></svg>`
+  const targetNodes = () => ids.map((id) => container.querySelector(`[id="${id}"]`)!)
+  const transforms = () => targetNodes().map((node) => node.getAttribute('transform'))
+  const hitRect = (left: number) => ({ left, right: left + 20, top: 20, bottom: 40 }) as DOMRect
+  const mockTargetRects = () => targetNodes().forEach((node, index) => {
+    vi.spyOn(node, 'getBoundingClientRect').mockReturnValue(hitRect(index ? 140 : 10))
+  })
+  const pendingDown = (x: number, y = 30) => {
+    const syncing = container.querySelector('[data-authority="syncing"]')
+    expect(syncing, '必须从真正显示同步中的产品命中层起手').not.toBeNull()
+    act(() => syncing!.dispatchEvent(new MouseEvent('pointerdown', { clientX: x, clientY: y, bubbles: true })))
+  }
+  const firstCommit = async (svg = splitSvg()) => {
+    seedExactRender(livePanel(), manifest, { svg, rev: 2 })
+    useUiStore.setState({ selectedGids: [textEl.gid] })
+    await show()
+    startElementDrag(down(), livePanel(), textEl, layout)
+    fire('pointermove', 20, 0)
+    flushPreviewFrame()
+    fire('pointerup', 20, 0)
+    await show()
+    return { overrides: structuredClone(livePanel().overrides), past: useDocumentStore.getState().past.length }
+  }
+  const authority = async (revision: number, nextManifest = manifest, svg = splitSvg(revision)) => {
+    await act(async () => { seedExactRender(livePanel(), nextManifest, { svg, rev: revision }) })
+    await show()
+  }
+  const anchor = () => livePanel().overrides.find((p) => p.prop === 'pos_frac')!.value as number[]
+
+  afterEach(() => { act(() => useUiStore.setState({ elementPanelId: null, selectedGids: [] })) })
+
+  it('没有主gid仍可在第二目标再次起拖，连续意图逐版权威到达才各自提交', async () => {
+    const first = await firstCommit()
+    expect(titleNode()).toBeNull()
+    mockTargetRects()
+    const originalAnchor = [...anchor()]
+    pendingDown(150)
+    expect(useInteractionStore.getState().kind).toBe('element')
+    fire('pointermove', 190, 30)
+    fire('pointerup', 190, 30)
+    pendingDown(20)
+    fire('pointermove', 20, 60)
+    fire('pointerup', 20, 60)
+    expect(livePanel().overrides, '两次后续拖动都不能借旧manifest落笔').toEqual(first.overrides)
+    expect(useDocumentStore.getState().past.length).toBe(first.past)
+    await authority(3)
+    expect(anchor()[0]).toBeCloseTo(originalAnchor[0] + 40 / layout.width, 8)
+    expect(anchor()[1]).toBeCloseTo(originalAnchor[1], 8)
+    expect(useDocumentStore.getState().past.length).toBe(first.past + 1)
+    await authority(4)
+    expect(anchor()[0]).toBeCloseTo(originalAnchor[0] + 40 / layout.width, 8)
+    expect(anchor()[1]).toBeCloseTo(originalAnchor[1] + 30 / layout.height, 8)
+    expect(useDocumentStore.getState().past.length).toBe(first.past + 2)
+  })
+
+  it('后续手势取消会还原全部目标，晚到权威不补写已经取消的意图', async () => {
+    const first = await firstCommit()
+    mockTargetRects()
+    const before = transforms()
+    pendingDown(150)
+    fire('pointermove', 190, 30)
+    fire('pointercancel', 190, 30)
+    expect(transforms()).toEqual(before)
+    expect(livePanel().overrides).toEqual(first.overrides)
+    await authority(3)
+    expect(livePanel().overrides).toEqual(first.overrides)
+    expect(useDocumentStore.getState().past.length).toBe(first.past)
+    expect(transforms()).toEqual(['translate(1,2)', 'scale(1)'])
+  })
+
+  it('按住期间权威换上真实新DOM时只重挂预览，松手才按新版权威提交一次', async () => {
+    const first = await firstCommit()
+    mockTargetRects()
+    pendingDown(150)
+    fire('pointermove', 190, 30)
+    await authority(3)
+    expect(livePanel().overrides).toEqual(first.overrides)
+    expect(useDocumentStore.getState().past.length).toBe(first.past)
+    fire('pointerup', 190, 30)
+    await show()
+    expect(anchor()[0]).toBeCloseTo((first.overrides[0].value as number[])[0] + 40 / layout.width, 8)
+    expect(useDocumentStore.getState().past.length).toBe(first.past + 1)
+    expect(transforms().every((tf) => tf?.startsWith(`translate(${40 / layout.width * 200},0)`))).toBe(true)
+  })
+
+  it('权威到达时科学元素已被移除，排队位移作废且新DOM零改动', async () => {
+    const first = await firstCommit()
+    mockTargetRects()
+    pendingDown(150)
+    fire('pointermove', 190, 30)
+    fire('pointerup', 190, 30)
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect id="replacement" transform="translate(7,9)"/></svg>'
+    await authority(3, { ...manifest, elements: manifest.elements.filter((el) => el.gid !== textEl.gid) }, svg)
+    expect(livePanel().overrides).toEqual(first.overrides)
+    expect(useDocumentStore.getState().past.length).toBe(first.past)
+    expect(container.querySelector('[id="replacement"]')!.getAttribute('transform')).toBe('translate(7,9)')
+    expect(useInteractionStore.getState().kind).toBe('none')
+  })
+
+  it('分散目标的空白和未绑定装饰不接受排队拖动，不能把union大框当成元素', async () => {
+    const first = await firstCommit()
+    mockTargetRects()
+    pendingDown(80)
+    expect(useInteractionStore.getState().kind).toBe('none')
+    fire('pointermove', 120, 30)
+    fire('pointerup', 120, 30)
+    expect(livePanel().overrides).toEqual(first.overrides)
+    expect(container.querySelector('[id="unbound-decoration"]')!.getAttribute('transform')).toBeNull()
+    await authority(3)
+    expect(useDocumentStore.getState().past.length).toBe(first.past)
+  })
+
+  it.each([
+    { name: '空目标', mutate: (svg: SVGSVGElement) => svg.setAttribute('data-tavotto-svg-targets', JSON.stringify({ [textEl.gid]: { transform: [], style: [] } })) },
+    { name: '坏镜像', mutate: (svg: SVGSVGElement) => svg.setAttribute('data-tavotto-svg-targets', '{') },
+    { name: '目标实际被删除', mutate: (svg: SVGSVGElement) => svg.querySelector('[id="title.left"]')!.remove() },
+  ])('$name不能起手，也不能由仍存在的旧主gid旁路', async ({ mutate }) => {
+    const first = await firstCommit()
+    mockTargetRects()
+    const svg = container.querySelector('[data-element-svg="p1"] svg') as SVGSVGElement
+    const oldMain = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    oldMain.id = textEl.gid
+    vi.spyOn(oldMain, 'getBoundingClientRect').mockReturnValue(hitRect(140))
+    svg.appendChild(oldMain)
+    mutate(svg)
+    pendingDown(150)
+    expect(useInteractionStore.getState().kind).toBe('none')
+    fire('pointermove', 190, 30)
+    fire('pointerup', 190, 30)
+    expect(livePanel().overrides).toEqual(first.overrides)
+    await authority(3)
+    expect(useDocumentStore.getState().past.length).toBe(first.past)
+  })
+
+  it('普通SVG没有镜像仍使用原单gid命中与等待权威的提交行为', async () => {
+    const first = await firstCommit(MATPLOTLIB_SVG)
+    vi.spyOn(titleNode()!, 'getBoundingClientRect').mockReturnValue(hitRect(140))
+    pendingDown(150)
+    expect(useInteractionStore.getState().kind).toBe('element')
+    fire('pointermove', 190, 30)
+    fire('pointerup', 190, 30)
+    expect(livePanel().overrides).toEqual(first.overrides)
+    await authority(3, manifest, `${MATPLOTLIB_SVG}<!-- authority -->`)
+    expect(anchor()[0]).toBeCloseTo((first.overrides[0].value as number[])[0] + 40 / layout.width, 8)
+    expect(useDocumentStore.getState().past.length).toBe(first.past + 1)
   })
 })

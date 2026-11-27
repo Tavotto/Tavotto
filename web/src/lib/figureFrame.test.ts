@@ -22,6 +22,7 @@ import {
   panelRotation,
   rotateVec,
   type CanvasObject,
+  type FigureSnapshot,
   type PanelObject,
 } from '@/types/document'
 
@@ -128,6 +129,51 @@ describe('迁移：升级前的面板', () => {
     expect(once.overrides.filter((o) => o.prop === 'frame')).toHaveLength(1)
     const again = migrateToProject(JSON.parse(JSON.stringify(pd)))!
     expect((again.canvases[0].objects[0] as PanelObject).overrides.filter((o) => o.prop === 'frame')).toHaveLength(1)
+  })
+})
+
+describe('图幅迁移后的 Figure 配对归属', () => {
+  const snapshotFor = (sourceId: string): FigureSnapshot => ({
+    version: 1,
+    sourceId,
+    patchHash: 'sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+    receiptId: `sha256:${'1'.repeat(64)}`,
+    snapshotId: '2'.repeat(64),
+  })
+  const oldPanel = (kind: 'runtime' | 'pdf', id = 'p1'): PanelObject => {
+    const fileId = kind === 'runtime' ? 'runtime:scripts/figure.py#result~rc_5e1b7ef044e4' : 'Fig1.pdf'
+    const value = panel({
+      id, fileId, fileKind: kind,
+      overrides: kind === 'runtime' ? [] : [{ gid: 'axes_0', prop: 'facecolor', value: '#eee' }],
+      figureSnapshot: snapshotFor(fileId),
+    })
+    delete value.figureFrame
+    return value
+  }
+
+  it.each([
+    ['仅补 marker 的无编辑 PDF', () => oldPanel('pdf'), []],
+    ['runtime 已有 FRAME', () => oldPanel('runtime'), [{ ...LEGACY_FRAME_OVERRIDE }]],
+    ['PDF 已有 FRAME', () => oldPanel('pdf'), [{ gid: 'axes_0', prop: 'facecolor', value: '#eee' }, { ...LEGACY_FRAME_OVERRIDE }]],
+  ] as const)('%s 保留原配对和 overrides 引用', (_label, makePanel, overrides) => {
+    const before = makePanel()
+    before.overrides = [...overrides]
+    const original = structuredClone(before)
+    const [after] = migrateFigureFrames([before]) as PanelObject[]
+    expect(after).not.toBe(before)
+    expect(after.figureFrame).toBe(FIGURE_FRAME_VERSION)
+    expect(after.figureSnapshot).toBe(before.figureSnapshot)
+    expect(after.overrides).toBe(before.overrides)
+    expect(before).toEqual(original)
+  })
+
+  it('已有 marker 的 runtime 不迁移，也不撤销其配对', () => {
+    const before = oldPanel('runtime')
+    before.figureFrame = FIGURE_FRAME_VERSION
+    const objects = [before]
+    expect(migrateFigureFrames(objects)).toBe(objects)
+    expect(before.figureSnapshot).toBeDefined()
+    expect(before.overrides).toEqual([])
   })
 })
 
