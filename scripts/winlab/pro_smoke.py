@@ -106,7 +106,14 @@ class _Fake(http.server.BaseHTTPRequestHandler):
 
 def _ps(command: str, timeout: float = 120) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            # zh-CN 默认代码页下证书主题的中文会按 GBK 输出；统一成 UTF-8 再读
+            "[Console]::OutputEncoding = [Text.Encoding]::UTF8; " + command,
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
