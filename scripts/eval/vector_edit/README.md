@@ -37,3 +37,32 @@ python scripts/eval/vector_edit/harness.py report
 
 B 组用 opencode 自己已登录的 OpenCode Go 凭据（`opencode auth`），harness 不读它。同一 (题, rep) 已有结果就跳过，可断点续跑；
 基础设施故障打印 `INFRA_ERROR` 不记结果；输出里有 `usage limit` / `go-limit` 就停。opencode 报错时退出码也可能是 0，`agent_errors` 里查 `Error:`。
+
+## 2026-11-27 基线（`results/2026-11-27-deepseek-flash/`，`deepseek-v4.1-flash`，Tavotto main d3b935210，每题 1 次）
+
+**A 组（桌面改图助手，真模型）没跑成**：环境里没有 `EVAL_A_API_KEY` / `OPENCODE_GO_API_KEY`，按规矩不去翻别的凭据。需维护者 `! export OPENCODE_GO_API_KEY=…` 后
+`harness.py run A`。A 的接线已用 `Aref`（题库标准答案走 `{canvas, ops}` 端点 → 落位 → 判据）验证通过 21/21，**这不是模型成绩**（`simulated: true`）。
+
+**B 组分两档**：
+- `B`：opencode 原样接 Tavotto MCP。**走不通**：排版工具把 `base_revision`、`echo_digest`、场景里的对象 id 只放进 `structuredContent`（server.py 头注释写明那是给 Codex 这类会把它交给模型的宿主），
+  而 opencode 只把 `content` 文本交给模型。agent 拿不到 `base_revision`，`edit_plan` 反复 `layout_changed` / 参数缺失，直到超时。只跑了 4 题（3 超时、对照题 `ctrl-vague` 没动画布算对），不再多烧额度。
+- `B2`：同 B，另经 `mcp_proxy.py` 把 `structuredContent` 也以文本附在工具结果后面（模拟「宿主把它给了模型」）。**这一档才反映工具面本身**。
+
+| 合计 | B2 | B（4 题） |
+|---|---|---|
+| 编辑题 | 12/13 | 0/2 |
+| 加对象题（0208 类） | 5/6 | 0/1 |
+| 对照题 | 1/2 | 1/1 |
+
+B2 平均 8.8 次工具调用、126 s、输入 token 3.5 万。失败三次：`distribute-h`（核对逼出与指令无关的改动）、`add-box`（外框没框住）、`ctrl-vague`（含糊指令照做了）。
+
+**判据口径的一次修订（如实记）**：加外框题原判据「外框与子图框各边差 ≤ 4 mm」过严（agent 留 2–3 mm 白边就判失败）。改成「框住子图、每边最多留白 6 mm」（`new_box_covers`），
+这两题 B2 重跑一次；原结果在 `results/.../superseded/B2-box-tol4.jsonl`（两次都失败）。重跑后 `add-box-and-title` 过、`add-box` 仍失败（外框顶边没盖住子图）。
+
+## 已知局限（如实）
+
+- 每题每组只跑 1 次；单次差异不要下结论。B2 的 21 题是同一份 agent 提示，不同题之间有随机性。
+- B 组 agent 没有 shell / 文件编辑权限，但能读项目目录与调 MCP；`tavotto_health` 的输出会带出源码树路径，agent 偶尔试着去读源码（`external_directory` 拒绝了绝大多数）。
+- B 组的「选区」是写在任务说明里的对象 id，不是 UI 里的选中态；A 组才有真选区。
+- A 组落位用 `apply_ops`，没有复现前端落位与方案卡勾选；`plan.ok`（核对）记在记录里但不参与判据——所以 A 组可能比桌面里「能点应用」的实际结果乐观（见下面 style 核对的发现）。
+- 子图是合成的、坐标轴矩形写死；真实数据点量得出来（`add-arrow-peak` B2 成功，箭头尖离闭式解 0.0 mm），但没覆盖量不了的子图。

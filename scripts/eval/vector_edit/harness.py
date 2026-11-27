@@ -7,7 +7,7 @@
   list               列题库
   run A              桌面改图助手：真 sidecar + 一条 OpenCode Go 连接，`POST /api/vector-edit/plan` 指令模式 → 轮询 → 落到画布 → 判
   run Aref           接线自检（**不叫模型**）：同一条链路，`{canvas, ops}` 模式，补丁用题库标准答案（记 `simulated: true`）
-  run B / B2         插件 agent：`opencode run --standalone` + Tavotto MCP（排版场景 / 编辑 / 标注工具），读项目里的排版文件判
+  run B / B2         插件 agent（B2 = 同 B，另把工具结果的 structuredContent 也以文本交给 agent，见 mcp_proxy.py）：`opencode run --standalone` + Tavotto MCP（排版场景 / 编辑 / 标注工具），读项目里的排版文件判
   report             汇总（`summarize.py`）
 
 环境变量：
@@ -375,13 +375,7 @@ PERMISSION = {
 PROMPT_B = """{instruction}
 
 这是一个 Tavotto 项目：目录 {project}（就是当前目录），排版名「{layout}」（第 1 页，画布 id {canvas}）。{selection}请在 Tavotto 里改这个排版，做完回复 DONE。"""
-#: B2 变体：模拟「宿主把工具的 structuredContent 也给了 agent」。opencode 只把 `content` 文本给模型，而 `tavotto_layout_scene`
-#: 的文本里没有 `base_revision`（只在 structuredContent 里），agent 拿不到它就过不了 edit_plan（见 README 的发现）；
-#: B2 把这个值直接写进任务说明，其余与 B 相同。
-PROMPT_B2_EXTRA = (
-    "（排版场景工具回的 base_revision 是 {rev}：出方案 / 写入时填它；排版没被别人改过它就不变。）"
-)
-PROMPT_B_REV = 2
+PROMPT_B_REV = 1
 
 
 def make_project(corpus: dict, task: dict, dest: Path) -> Path:
@@ -423,7 +417,7 @@ def read_layout_objects(project: Path) -> list[dict]:
     return la.open_layout(project, LAYOUT).doc["canvases"][0]["objects"]
 
 
-def mcp_config(wrapper_dir: Path, project: Path, work: Path) -> str:
+def mcp_config(wrapper_dir: Path, project: Path, work: Path, proxy: bool = False) -> str:
     wrapper_dir.mkdir(parents=True, exist_ok=True)
     sh = wrapper_dir / "mcp.sh"
     env = {
@@ -437,7 +431,11 @@ def mcp_config(wrapper_dir: Path, project: Path, work: Path) -> str:
         "TAVOTTO_NO_TELEMETRY": "1",
     }
     lines = ["#!/bin/sh"] + [f"export {k}='{v}'" for k, v in env.items()]
-    lines.append(f"exec '{PYTHON}' '{ROOT / 'codex-plugin' / 'mcp' / 'server.py'}'")
+    server = f"'{PYTHON}' '{ROOT / 'codex-plugin' / 'mcp' / 'server.py'}'"
+    if proxy:  # B2：把 structuredContent 也以文本交给宿主（见 mcp_proxy.py）
+        lines.append(f"exec '{PYTHON}' '{HERE / 'mcp_proxy.py'}' -- {server}")
+    else:
+        lines.append(f"exec {server}")
     sh.write_text("\n".join(lines) + "\n")
     sh.chmod(0o755)
     cfg = {
@@ -576,11 +574,9 @@ def run_b_task(corpus: dict, task: dict, rep: int, timeout: int, cond: str = "B"
         canvas=CANVAS_ID,
         selection=(f"我当前选中的对象 id：{'、'.join(sel)}。" if sel else ""),
     )
-    if cond == "B2":
-        from tavotto.engine import layoutannotate as la
-
-        prompt += PROMPT_B2_EXTRA.format(rev=la.open_layout(project, LAYOUT).revision)
-    cfg = mcp_config(SCRATCH / "_mcp" / f"{cond}-{task['id']}-{rep}", project, work)
+    cfg = mcp_config(
+        SCRATCH / "_mcp" / f"{cond}-{task['id']}-{rep}", project, work, proxy=cond == "B2"
+    )
     rec: dict = {
         "id": task["id"],
         "kind": task["kind"],

@@ -107,7 +107,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=os.environ.get("EVAL_RESULTS") or str(HERE / "results"))
     ap.add_argument("--examples", type=int, default=4)
-    a = ap.parse_args()
+    a = ap.parse_known_args()[0]
     data = load(Path(a.results))
     if not data:
         sys.exit("没有结果")

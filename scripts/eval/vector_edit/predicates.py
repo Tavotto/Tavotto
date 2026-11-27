@@ -263,6 +263,23 @@ def p_new_box_around(spec: dict, before: list[dict], after: list[dict]) -> Resul
     )
 
 
+def p_new_box_covers(spec: dict, before: list[dict], after: list[dict]) -> Result:
+    """新增一个形状 / 路径，把矩形 [x, y, w, h] 框在里面：每边最多少 `slack` mm（量化误差）、最多多 `pad` mm（留白）。"""
+    x, y, w, h = spec["rect"]
+    pad, slack = spec.get("pad", 6.0), spec.get("slack", 1.0)
+    new = [o for o in _new_objects(before, after) if o.get("type") in ("shape", "path")]
+
+    def ok_box(o: dict) -> bool:
+        gaps = (x - o["x"], y - o["y"], (o["x"] + o["w"]) - (x + w), (o["y"] + o["h"]) - (y + h))
+        return all(-slack <= g <= pad for g in gaps)
+
+    hit = [o for o in new if ok_box(o)]
+    return (
+        bool(hit),
+        f"新增形状 / 路径 {[(o['id'], [round(o[k], 1) for k in 'xywh']) for o in new]}（要框住 {spec['rect']}，每边留白 ≤ {pad} mm）",
+    )
+
+
 def p_new_near(spec: dict, before: list[dict], after: list[dict]) -> Result:
     """新增对象（类型之一）的外框与矩形 [x, y, w, h] 相交（括号这类：落在子图旁边的某一带里）。"""
     x, y, w, h = spec["rect"]
@@ -302,6 +319,7 @@ PREDICATES: dict[str, Callable[[dict, list[dict], list[dict]], Result]] = {
     "new_arrow_tip": p_new_arrow_tip,
     "new_text": p_new_text,
     "new_box_around": p_new_box_around,
+    "new_box_covers": p_new_box_covers,
     "new_near": p_new_near,
     "unchanged": p_unchanged,
 }

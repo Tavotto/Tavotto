@@ -184,14 +184,15 @@
    },
    "predicate": [
     {
-     "t": "new_box_around",
+     "t": "new_box_covers",
      "rect": [
       10,
       20,
       80,
       60
      ],
-     "tol": 4.0
+     "pad": 6.0,
+     "slack": 1.0
     }
    ],
    "reference": {
@@ -379,14 +380,15 @@
    },
    "predicate": [
     {
-     "t": "new_box_around",
+     "t": "new_box_covers",
      "rect": [
       10,
       20,
       80,
       60
      ],
-     "tol": 4.0
+     "pad": 6.0,
+     "slack": 1.0
     },
     {
      "t": "new_text",

@@ -283,7 +283,7 @@ def build() -> list[dict]:
             "加外框",
             "给子图 P1 加一个外框，细线框住整张子图。",
             [],
-            [{"t": "new_box_around", "rect": [10, 20, 80, 60], "tol": 4.0}],
+            [{"t": "new_box_covers", "rect": [10, 20, 80, 60], "pad": 6.0, "slack": 1.0}],
             {
                 "kind": "items",
                 "items": [
@@ -367,7 +367,7 @@ def build() -> list[dict]:
             "给子图 P1 加外框，并在子图正上方居中加一行文字 Kinetics。",
             [],
             [
-                {"t": "new_box_around", "rect": [10, 20, 80, 60], "tol": 4.0},
+                {"t": "new_box_covers", "rect": [10, 20, 80, 60], "pad": 6.0, "slack": 1.0},
                 {"t": "new_text", "text": "Kinetics", "near": [50, 16, 8]},
             ],
             {
