@@ -397,3 +397,65 @@ it('对比图取景：只画被改动的那一块（加留白），前后同一�
   expect(c.objects.find((o) => o.id === 't1')!.x).toBeCloseTo(10 - f.x)
   expect(previewFrame({ w: 30, h: 30 }, before, RESULT.objects!, RESULT)).toBeNull()
 })
+
+it('对比图渲染期间切走了画布：条目收掉，不留永远「生成中」的卡，也能再发指令', async () => {
+  let release!: (b: Blob) => void
+  previewPng.mockReset().mockReturnValue(new Promise<Blob>((r) => (release = r)))
+  getPlan.mockResolvedValue({ plan_id: 'vp1', state: 'ready', plan: RESULT })
+  const key = runVectorEdit('改', ['t1', 'a1'])!
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500) // 方案回来了，对比图还在画
+  })
+  expect(entryOf(key).status).toBe('generating')
+  const canvas = doc().activeCanvasId
+  act(() => useDocumentStore.setState({ activeCanvasId: 'other_canvas' }))
+  await act(async () => {
+    release(new Blob(['x'], { type: 'image/png' }))
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  expect(entryOf(key)).toBeUndefined()
+  act(() => useDocumentStore.setState({ activeCanvasId: canvas }))
+  previewPng.mockReset().mockResolvedValue(new Blob(['x'], { type: 'image/png' }))
+  expect(runVectorEdit('再来', ['t1'])).not.toBeNull() // 一次一份的锁没挂着
+})
+
+const ORDER_ONLY: VectorEditResult = {
+  ok: true,
+  errors: [],
+  objects: [],
+  deleted: [],
+  order: ['p1', 'a1', 's1', 't1'],
+  reordered: true,
+  echo: ['文字：移到最前'],
+  changes: [{ id: 't1', field: 'z', before: 1, after: 3, op: 0 }],
+  checks: [],
+  layout_groups: null,
+  ops: [{ op: 'order', id: 't1', to: 'front' }],
+  unhandled: [],
+}
+
+it('只改层级的方案：应用后是「已应用」，撤销回到待确认；基线带上顺序', async () => {
+  const key = await runToReady(ORDER_ONLY)
+  render(<Live k={key} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('ready')
+  const before = ids()
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(ids().filter((i) => i !== 'pt1')).toEqual(['p1', 'a1', 's1', 't1'])
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('applied')
+  act(() => doc().undo())
+  expect(ids()).toEqual(before)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('ready')
+})
+
+it('只改层级的方案：出发后用户自己调过这些对象的上下顺序 = 图改过了，不应用', async () => {
+  const key = await runToReady(ORDER_ONLY)
+  act(() =>
+    doc().commit(literal('调层级'), (d) => {
+      const i = d.objects.findIndex((o) => o.id === 'a1')
+      const [a] = d.objects.splice(i, 1)
+      d.objects.unshift(a)
+    }),
+  )
+  render(<Live k={key} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('stale')
+})

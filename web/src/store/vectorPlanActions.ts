@@ -190,6 +190,10 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   const live = () => still() && sameContext(ctx) && store().entries[key]?.status === 'generating'
   const patch = store().patchEntry
   const fail = (code: string) => patch(key, { status: 'failed', failure: { code } })
+  // 渲染对比图期间用户切走了画布 / 文档：这份方案属于别处，条目收掉（不收就是一张永远「生成中」的卡，一次一份的锁也一直挂着）；项目换了整表已清
+  const dropAbandoned = () => {
+    if (still() && store().entries[key]?.status === 'generating') store().dismiss(key)
+  }
   const prev = store().entries[key]?.vector
   if (!prev) return
   const handle = (extra: Partial<VectorHandle>): VectorHandle => ({ ...prev, result, ...extra })
@@ -242,6 +246,7 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   } catch {
     abort.abort()
     if (live()) fail('change_plan_render_failed')
+    else dropAbandoned()
     return
   } finally {
     clearTimeout(timer)
@@ -249,6 +254,7 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   if (!live()) {
     URL.revokeObjectURL(beforeSrc)
     URL.revokeObjectURL(afterSrc)
+    dropAbandoned()
     return
   }
   patch(key, { status: 'ready', plan: synthPlan(key, result, groups, beforeSrc, afterSrc), beforeSrc, afterSrc, vector: make({ groups }) })

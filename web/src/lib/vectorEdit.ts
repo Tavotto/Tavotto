@@ -78,13 +78,17 @@ export const sameJson = same
 
 /** 一份方案是不是真的有东西要改（空 ops / 全被丢掉 = 没有） */
 export function hasEdits(r: VectorEditResult): boolean {
-  return (r.objects?.length ?? 0) > 0 || (r.deleted?.length ?? 0) > 0
+  // 只改层级的方案（「移到最前」）被动对象的字段不变、改动记在 `order` / `reordered` 与 `changes` 里：也算有改动
+  return (r.objects?.length ?? 0) > 0 || (r.deleted?.length ?? 0) > 0 || !!r.reordered
 }
 
 /** 方案点名的对象 id：改后的（含新生成的）与被删的 */
 export function namedIds(r: VectorEditResult): string[] {
-  return [...new Set([...(r.objects ?? []).map((o) => o.id), ...(r.deleted ?? [])])]
+  return [...new Set([...(r.objects ?? []).map((o) => o.id), ...(r.deleted ?? []), ...(r.changes ?? []).map((c) => c.id)])]
 }
+
+/** 把 `ids` 里属于 `among` 的按原顺序取出来（对象顺序的比较只看双方都认得的那些，别处新加的对象不碍事） */
+const orderAmong = (ids: readonly string[], among: ReadonlySet<string>): string[] => ids.filter((id) => among.has(id))
 
 /**
  * 「快照 + 方案」→ 与并进 Agent 改动同形的差异。快照里没有的 id = 新生成的（`added`）；有的 = 改（`changed`）；`deleted` 取快照里的原样。
@@ -127,6 +131,13 @@ export function baselineHolds(snap: VectorSnapshot, r: VectorEditResult, current
     const curP = cur ? projectObject(cur) : null
     if (!curP || !same(curP, before)) return false
   }
+  // 方案改了层级时，出发时那些对象的上下顺序也得没被动过（否则落位的顺序合并会冲突）
+  if (r.reordered) {
+    const base = snap.canvas.objects.map((o) => o.id)
+    const have = new Set(current.map((o) => o.id))
+    const baseSet = new Set(base.filter((id) => have.has(id)))
+    if (!same(orderAmong(current.map((o) => o.id), new Set(base)), orderAmong(base, baseSet))) return false
+  }
   return true
 }
 
@@ -147,6 +158,13 @@ export function landedHolds(snap: VectorSnapshot, r: VectorEditResult, current: 
     for (const k of new Set([...Object.keys(before), ...Object.keys(a)])) {
       if (!same(before[k], a[k]) && !same(cur[k], a[k])) return false
     }
+  }
+  // 改了层级的方案：当前画布上这些对象的顺序与方案给的顺序一致才算写进去了
+  if (r.reordered && r.order) {
+    const want = new Set(r.order)
+    const cur = orderAmong(current.map((o) => o.id), want)
+    const exp = orderAmong(r.order, new Set(cur))
+    if (!same(cur, exp)) return false
   }
   return true
 }
