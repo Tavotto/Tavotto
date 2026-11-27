@@ -239,3 +239,33 @@ def test_a_table_that_never_had_a_row_number_keeps_its_lone_x_candidate(tmp_path
         and res.roles["y"] == ["yield"]
         and res.roles["group"] == "treatment"
     )
+
+
+def test_a_replicate_number_column_is_never_the_default_x(tmp_path):
+    """重复号 1..k 在每个处理里各出现一遍，取值结构就是 `block`；列名在说「我是重复号」时不当横轴，也不让真正的时间列因为「两列 block」失去资格。"""
+    rng = random.Random(3)
+    plain = [[v, r, round(rng.uniform(5, 9), 2)] for v in ("a", "b", "c") for r in range(1, 6)]
+    for name in ("rep", "Replicate", "重复"):
+        res = _roles(tmp_path, _csv(tmp_path, ["variety", name, "yield"], plain))
+        assert res.roles["x"] != name and res.roles["y"] == ["yield"]
+    # 同样的取值换一个不在闭集里的名字：结构线索照旧（反证——判据在名字上，不是别处变了）
+    res = _roles(tmp_path, _csv(tmp_path, ["variety", "day", "yield"], plain))
+    assert res.roles["x"] == "day"
+    timed = [
+        [t, g, r, round(t * 0.3 + rng.uniform(0, 1), 2)]
+        for g in ("ctrl", "drug")
+        for t in (0, 6, 12, 24, 48)
+        for r in (1, 2, 3)
+    ]
+    res = _roles(tmp_path, _csv(tmp_path, ["hour", "arm", "rep", "value"], timed))
+    assert res.roles["x"] == "hour" and res.roles["y"] == ["value"]
+
+
+def test_a_row_counter_that_restarts_in_every_group_is_not_the_default_x(tmp_path):
+    """`index` 在每个组里各自 1..k：名字像行号、取值是 `block`（整表 1..n 的那种由行号列判据管）。同样的取值叫 `day` 就是横轴。"""
+    rng = random.Random(5)
+    rows = [[g, i, round(rng.uniform(5, 9), 2)] for g in ("B", "O") for i in range(1, 11)]
+    res = _roles(tmp_path, _csv(tmp_path, ["sp", "index", "width"], rows))
+    assert res.roles["x"] != "index" and res.roles["y"] == ["width"]
+    res = _roles(tmp_path, _csv(tmp_path, ["sp", "day", "width"], rows))
+    assert res.roles["x"] == "day"

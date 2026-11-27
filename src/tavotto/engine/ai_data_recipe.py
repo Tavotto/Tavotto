@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -2246,10 +2247,39 @@ def error_kind_of(s: adf.DataSummary, err: str) -> str:
 _DESIGN_RANK = {"date": 0, "block": 1, "monotone_levels": 2, "levels": 3}
 
 
+#: 列名在说「我是第几次重复」（规范化后逐字相等的闭集）：重复号 1..k 在每个处理里各出现一遍，取值结构与「每个个体各自的时间点」一模一样，只看取值分不开
+_REPLICATE_NAMES = frozenset(
+    {
+        "rep",
+        "reps",
+        "repl",
+        "replicate",
+        "replicates",
+        "replication",
+        "重复",
+        "重复号",
+        "平行",
+        "平行样",
+    }
+)
+
+
+def _replicate_name(name: str) -> bool:
+    """列名像重复号（`_REPLICATE_NAMES`）。只用来**去掉**「像条件 / 顺序」的线索（这一列不当默认横轴），不凭它认任何角色。"""
+    return re.sub(r"[\s_.\-:]+", "", name.strip().lower()) in _REPLICATE_NAMES
+
+
+def _counter_col(s: adf.DataSummary, c: str) -> bool:
+    """这一列只是在数「第几次 / 第几行」，不是条件也不是测量：列名是重复号（`_replicate_name`），或列名像行号（`adf._row_index_name`）而取值在每组里各自从头数一遍
+    （取值结构是 `block`——整表从头数到尾的那种已由 `DataSummary.row_index` 管）。两种都要**列名**在闭集里；后一种还要取值结构对得上。"""
+    return _replicate_name(c) or (adf._row_index_name(c) and s.design.get(c) == "block")
+
+
 def _effective_design(s: adf.DataSummary) -> dict[str, str]:
     """这张表里真正当「像条件 / 顺序」用的线索（`DataSummary.design` 去掉打架的）。**线索打架或不明确时保持原行为**：`block` 有两列及以上
-    （几列都是「组内递增、组间重置」的斜坡，如一组重复列）时谁是时间分不开，`block` 不用；`levels` / `monotone_levels` 不受影响。"""
-    d = dict(s.design)
+    （几列都是「组内递增、组间重置」的斜坡，如一组重复列）时谁是时间分不开，`block` 不用；`levels` / `monotone_levels` 不受影响。
+    只是在计数的列（`_counter_col`：重复号、每组各自从头数的行号）先去掉：它不是条件，也不该让真正的时间列因为「两列 block」而失去资格。"""
+    d = {c: k for c, k in s.design.items() if not _counter_col(s, c)}
     blocks = [c for c, k in d.items() if k == "block"]
     if len(blocks) >= 2:
         d = {c: k for c, k in d.items() if k != "block"}
@@ -2320,6 +2350,10 @@ def _resolve_roles_raw(
         nums = [c for c in nums if c not in rowidx]
     else:
         rowidx = set()
+    # 只是在计数的列（`_counter_col`：重复号、每组各自从头数的行号）：同理默认不当 y / x（「随第几次重复变化」不是要看的关系）；点名了、或去掉后不剩数值列时不去；下拉里照旧列得出
+    reps = {c for c in nums if _counter_col(s, c) and c not in asked}
+    if reps and any(c not in reps for c in nums):
+        nums = [c for c in nums if c not in reps]
     errs = {c for c in error_columns(s) if c not in asked}
     if errs and any(c not in errs for c in nums):
         nums = [c for c in nums if c not in errs]
