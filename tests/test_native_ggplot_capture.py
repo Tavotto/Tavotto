@@ -167,18 +167,81 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "local data"))
     monkeypatch.setenv("TAVOTTO_LAYOUT_DIR_WRITER", "1")
     problems = []
+    replays = []
     replay = nativeggplot_source.replay
 
     def diagnose(*args, **kwargs):
         try:
-            return replay(*args, **kwargs)
+            result = replay(*args, **kwargs)
         except Exception as exc:
             problems.extend(traceback.format_exception(exc))
             if isinstance(exc.__cause__, winappcontainer.ReplayFailed):
                 print("Protected R diagnostic for the test fixture:", exc.__cause__.diagnostic)
             raise
+        replays.append(result)
+        return result
 
     monkeypatch.setattr(nativeggplot_source, "replay", diagnose)
+    if sys.platform == "win32":
+        verify = service._verified_r_source
+
+        def diagnose_verification(worker, *args, **kwargs):
+            observed = []
+            preview = worker.preview_png_snapshot
+
+            def observe(*params, **options):
+                snapshot = preview(*params, **options)
+                observed.append(snapshot)
+                return snapshot
+
+            with monkeypatch.context() as scoped:
+                scoped.setattr(worker, "preview_png_snapshot", observe)
+                try:
+                    return verify(worker, *args, **kwargs)
+                except service.engine_scriptadjust.ScriptAdjustError as exc:
+                    if exc.code == "script_export_diverged" and len(observed) == 2 and replays:
+                        from PIL import ImageChops
+
+                        hot, current = observed
+                        candidate = replays[-1]
+                        first_bytes = base64.b64decode(hot["png"])
+                        print("Stable live scene:", hot["png"] == current["png"])
+                        print("Replay same encoded bytes:", first_bytes == candidate.png)
+                        print(
+                            "Replay geometry:",
+                            service._compare_manifests(hot["manifest"], candidate.manifest),
+                        )
+                        with (
+                            Image.open(io.BytesIO(first_bytes)) as first,
+                            Image.open(io.BytesIO(candidate.png)) as second,
+                        ):
+                            print("Image dimensions:", first.size, second.size)
+                            print(
+                                "PNG modes and metadata:",
+                                first.mode,
+                                second.mode,
+                                first.info,
+                                second.info,
+                            )
+                            if first.size == second.size:
+                                delta = ImageChops.difference(
+                                    first.convert("RGBA"), second.convert("RGBA")
+                                )
+                                print(
+                                    "Changed pixel bounds and extrema:",
+                                    delta.getbbox(alpha_only=False),
+                                    delta.getextrema(),
+                                )
+                                print(
+                                    "Nonzero pixels per channel:",
+                                    [
+                                        delta.width * delta.height - row
+                                        for row in delta.histogram()[::256]
+                                    ],
+                                )
+                    raise
+
+        monkeypatch.setattr(service, "_verified_r_source", diagnose_verification)
 
     root = tmp_path / "研究 项目"
     graphs = root / "figure scripts"
