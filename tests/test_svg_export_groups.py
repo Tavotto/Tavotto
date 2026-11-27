@@ -291,29 +291,145 @@ def test_a_clip_group_pdf_still_clips_every_object_on_its_own(tmp_path, provider
     assert _pdf(a, tmp_path, provider, "a.pdf") == _pdf(b, tmp_path, provider, "b.pdf")
 
 
+def _ell(i, x, **kw):
+    return {**_rect(i, **kw), "shape": "ellipse", "x_mm": x, "fill": "#56B4E9"}
+
+
+def _arrow(i, **kw):
+    return {
+        **_box(10, 40, 40, 6),
+        "id": i,
+        "type": "arrow",
+        "start": {"rx": 0, "ry": 0.5},
+        "end": {"rx": 1, "ry": 0.5},
+        "stroke_pt": 1,
+        "color": "#000000",
+        "head": "end",
+        **kw,
+    }
+
+
+def _path(i, **kw):
+    return {
+        **_box(60, 40, 20, 20),
+        "id": i,
+        "type": "path",
+        "subpaths": [
+            {"closed": True, "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}, {"p": [0, 1]}]}
+        ],
+        "stroke_pt": 0.5,
+        "color": "#333333",
+        "fill": "#009E73",
+        **kw,
+    }
+
+
+def _clip_square(x, y, w, h):
+    return {
+        **_box(x, y, w, h),
+        "type": "path",
+        "subpaths": [
+            {"closed": True, "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}, {"p": [0, 1]}]}
+        ],
+    }
+
+
+#: 这两份夹具的 SVG 字节在**改动之前的树**上量过 sha256（只用旧载荷键；矢量几何不依赖字体与平台）。钉死它们 =
+#: 「没有组、没有名字、没有文字的文档，SVG 一个字节不变」（ADR 0208 §七之三 验收）。
+UNCHANGED_SVG = {
+    "plain": (
+        lambda: [
+            {**_rect("r1"), "x_mm": 10, "y_mm": 10, "w_mm": 30, "h_mm": 20},
+            {**_ell("e1", 50), "y_mm": 10, "w_mm": 20, "h_mm": 20, "rotation_deg": 20},
+            _arrow("a1"),
+            _path("p1", fill_opacity=0.5, x_mm=60, y_mm=40, w_mm=20, h_mm=20),
+        ],
+        "019e838b7cc657f761e3ae86795da7ad43d803b9b492f13647d8fe7da4514b49",
+    ),
+    "clipped_old": (
+        lambda: [
+            {**_rect("c1"), **_box(10, 10, 30, 20), "clip": [_clip_square(10, 10, 15, 10)]},
+            {
+                **_ell("c2", 30),
+                **_box(30, 10, 30, 20),
+                "clip": [_clip_square(10, 10, 40, 15), _clip_square(20, 10, 40, 10)],
+            },
+            {**_rect("free"), **_box(70, 10, 10, 10)},
+        ],
+        "328266e4572900641cd092d51e9f7202da6b6e25e06f33d3ee683502001d291e",
+    ),
+}
+
+
 @needs_rc
-def test_a_document_without_groups_names_or_text_writes_the_same_svg_as_before(tmp_path, provider):
-    """没有组、没有名字、没有文字：SVG 一个字节不多（基线 sha256 是改动前的树在同一份夹具上量的）。"""
-    objs = [
-        _rect("r1"),
-        {**_rect("e1", x_mm=50), "shape": "ellipse", "rotation_deg": 20},
-        {
-            **_box(10, 40, 40, 6),
-            "id": "a1",
-            "type": "arrow",
-            "start": {"rx": 0, "ry": 0.5},
-            "end": {"rx": 1, "ry": 0.5},
-            "stroke_pt": 1,
-            "color": "#000000",
-            "head": "end",
-        },
-    ]
-    path, _, compiled = _svg(tmp_path, objs, provider)
+@pytest.mark.parametrize("name", sorted(UNCHANGED_SVG))
+def test_a_document_without_groups_names_or_text_writes_the_same_svg_bytes_as_before(
+    name, tmp_path, provider
+):
+    build, want = UNCHANGED_SVG[name]
+    path, _, compiled = _svg(tmp_path, build(), provider, page=(100, 80))
     assert compiled.svg_page is None
-    text = path.read_text(encoding="utf-8")
-    assert "id=" not in text.replace("tavotto-", "")
-    # 每个对象恰好一层带变换的 `<g>`（框 → 页面），没有多余的包装
-    assert text.count("<g ") == 1 + 3 and "<g>" not in text
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == want
+
+
+@needs_rc
+def test_an_unnamed_object_with_several_parts_stays_one_group(tmp_path, provider):
+    """去掉的只是「没有作用、只套着一个孩子」的包装：没名字的多段对象（两行字、带底框 / 下划线的字、箭头）仍是一个组。"""
+    objs = [
+        _text("two", "L1\nL2", h_mm=20),
+        _text("boxed", "Boxed", bg="#EEEEEE", border_color="#000000", y_mm=60),
+        _text("under", "Under", underline=True, y_mm=75),
+    ]
+    _, root, _ = _svg(tmp_path, objs, provider)
+    top = list(_canvas(root))
+    # 三个对象各自一个组，没有被拆成画布根下互不相干的 `<text>` / `<path>`
+    assert [_local(e) for e in top] == ["g", "g", "g"]
+    assert len(top[0].findall("s:text", NS)) == 2
+    assert top[1].find("s:path", NS) is not None and top[1].find("s:text", NS) is not None
+    assert top[2].find("s:path", NS) is not None and top[2].find("s:text", NS) is not None
+
+
+@needs_rc
+def test_an_unnamed_path_text_stays_one_group(tmp_path, provider):
+    obj = {
+        **_box(10, 10, 60, 20),
+        "id": "pt",
+        "type": "pathText",
+        "text": "Along the curve",
+        "size_pt": 9,
+        "bold": False,
+        "italic": False,
+        "color": "#000000",
+        "subpaths": [{"closed": False, "nodes": [{"p": [0, 1], "out": [0.3, 0]}, {"p": [1, 0.2]}]}],
+    }
+    _, root, _ = _svg(tmp_path, [obj], provider)
+    top = list(_canvas(root))
+    assert len(top) == 1 and _local(top[0]) == "g"
+
+
+@needs_rc
+def test_a_rotated_single_run_text_lands_where_the_rotation_puts_it(tmp_path, provider):
+    """旋转并进 `<text>` 自己的 transform：文字原点 = 未旋转的基线起点绕框中心旋转（手算，不借写入器自己的矩阵）。"""
+    import math
+
+    unrotated = _text("t", "Receptor", **_box(20, 30, 40, 8))
+    rotated = {**unrotated, "rotation_deg": 30}
+    _, a, _ = _svg(tmp_path, [unrotated], provider, name="a.svg")
+    _, b, _ = _svg(tmp_path, [rotated], provider, name="b.svg")
+    (ta,) = a.iter(f"{{{SVG}}}text")
+    (tb,) = b.iter(f"{{{SVG}}}text")
+    ma = [float(v) for v in ta.get("transform")[7:-1].split()]
+    mb = [float(v) for v in tb.get("transform")[7:-1].split()]
+    # 页面里的字没转之前原点 (ox, oy)（y 向上 pt）；框中心 (cx, cy)；CSS 顺时针 30° = y 向上空间里 −30°
+    ox, oy = ma[4], ma[5]
+    cx = (20 + 40 / 2) * 72 / 25.4
+    cy = 90 * 72 / 25.4 - (30 + 8 / 2) * 72 / 25.4
+    th = math.radians(-30)
+    rx = cx + (ox - cx) * math.cos(th) - (oy - cy) * math.sin(th)
+    ry = cy + (ox - cx) * math.sin(th) + (oy - cy) * math.cos(th)
+    assert (mb[4], mb[5]) == pytest.approx((rx, ry), abs=1e-6)
+    # 线性部分 = 旋转 × 翻转（字形坐标 y 向下）
+    assert (mb[0], mb[1]) == pytest.approx((math.cos(th), math.sin(th)), abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +590,7 @@ def test_a_text_object_is_one_text_and_split_runs_share_a_named_group(tmp_path, 
 # ---------------------------------------------------------------------------
 @needs_rc
 def test_inspector_accepts_the_names_it_was_written_with(tmp_path, provider):
-    """导出的 SVG 经产物检视（`inspector.observe_svg`）、`svg_vector` 都认中文 id；导入口仍严格。"""
+    """导出的 SVG 经产物检视（`inspector.observe_svg`）、`svg_vector` 都认中文 id；`parse_svg` 的缺省仍严格。"""
     from tavotto.engine import artifactinspect
     from tavotto.rendercore import svgcheck
 
@@ -482,7 +598,7 @@ def test_inspector_accepts_the_names_it_was_written_with(tmp_path, provider):
     assert artifactinspect.svg_vector(path) is True
     svgcheck.parse_svg(path.read_bytes(), unicode_ids=True)
     with pytest.raises(svgcheck.SVGError, match="svg_invalid_id"):
-        svgcheck.parse_svg(path.read_bytes())  # 导入边界不放宽
+        svgcheck.parse_svg(path.read_bytes())  # 缺省不放宽：只有显式 `unicode_ids=True` 的口子才认
 
 
 def test_the_font_table_covers_every_approved_latin_family():
@@ -492,3 +608,36 @@ def test_the_font_table_covers_every_approved_latin_family():
         "Liberation Mono",
     }
     assert re.fullmatch(r"[A-Za-z ]+", " ".join(svgfonts.REAL_FIRST_FAMILY.values()))
+
+
+@needs_rc
+def test_unicode_ids_are_inert_markers_references_to_them_are_not_resolved(tmp_path):
+    """放宽的只是 `id` 属性自己：任何引用（`url(#…)` / `href="#…"` / CSS 选择器）仍只认 ASCII 名字，指向 Unicode id 的引用
+    结构化地失败（素材：`svg_external_resource` / `svg_unsafe_css`；导入：记进 `unsupported`），不抛未捕获异常、不静默当成有效引用。"""
+    from tavotto import svgasset
+    from tavotto.rendercore import svgimport
+
+    def wrap(body):
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            f'width="100" height="100" viewBox="0 0 100 100">{body}</svg>'
+        )
+
+    grad = (
+        '<defs><linearGradient id="渐变"><stop offset="0" stop-color="red"/>'
+        '<stop offset="1" stop-color="blue"/></linearGradient></defs>'
+    )
+    refs = {
+        "url": grad + '<rect width="50" height="50" fill="url(#渐变)"/>',
+        "href": '<defs><rect id="形" width="5" height="5"/></defs><use xlink:href="#形"/>',
+        "css": '<style>#形 {fill:red}</style><rect id="形" width="5" height="5"/>',
+    }
+    for body in refs.values():
+        with pytest.raises(svgasset.UnsupportedSVG):
+            svgasset.inspect_bytes(wrap(body).encode())
+        result = svgimport.import_svg(wrap(body))  # 不抛；被引用的东西不当成有效引用
+        assert result["unsupported"] or not result["objects"]
+    # 重复 id、带空格的 id 照旧被拒
+    for bad in ('<g id="甲"/><g id="甲"/>', '<g id="a b"/>'):
+        with pytest.raises(svgasset.UnsupportedSVG):
+            svgasset.inspect_bytes(wrap(bad).encode())

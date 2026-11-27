@@ -647,9 +647,9 @@ def parse_svg(
 ) -> ET.Element:
     """Parse a bounded safe static SVG, validating every local resource reference.
 
-    `unicode_ids`（只给**我们自己写出的产物**：SVG 导出把对象 / 组的名字原样写进 `id`，中文也行，ADR 0208 §七之三）：
-    `id` 属性另认 Unicode 的 XML 名字；这些 id 不会被任何引用指到（引用的语法仍只认 ASCII）。导入、worker 输出
-    一律不开，`面板` 之类仍是 `svg_invalid_id`。
+    `unicode_ids`（读**我们自己写出的 SVG** 的口子才传：SVG 导出把对象 / 组的名字原样写进 `id`，中文也行，ADR 0208 §七之三）：
+    `id` 属性另认 Unicode 的 XML 名字；这些 id 只是标记，任何引用的语法仍只认 ASCII（指向它的引用照旧失败）。缺省关：
+    其它调用方（worker 输出、场景解析）里 `面板` 之类仍是 `svg_invalid_id`。
 
     `tolerant`（外部 SVG 导入，ADR 0189）：先删掉公共 SVG DTD 声明（没有内部子集）、编辑器私有命名空间、metadata 与对画面没作用的
     CSS 声明，再做与严格模式**完全相同**的验证。实体、外链、脚本、事件属性、引用环、预算不放宽。"""

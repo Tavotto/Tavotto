@@ -341,8 +341,9 @@ class SvgWriter:
                 self._emit(child, group)
             return
         plain = node.transform == ir.IDENTITY and node.opacity == 1.0 and node.clip is None
-        if plain and (not name or len(node.children) == 1):
-            # 没有作用的包装：不写 `<g>`；有名字时名字交给唯一的那个孩子
+        if plain and len(node.children) == 1:
+            # 没有作用的包装：不写 `<g>`；有名字时名字交给唯一的那个孩子。孩子不止一个时一个对象仍是一个组
+            # （无名的两行文字、带底框 / 下划线 / 公式的文字、路径文字拆开了就不再是一个东西）
             for child in node.children:
                 self._emit(child, parent, name)
             return

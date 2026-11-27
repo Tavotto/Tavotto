@@ -123,7 +123,7 @@ order: 330
   不合法字符 → `_xHHHH_`、数字 / `.` / `-` 开头与 `tavotto-` 开头前补 `_`、整份文档唯一加序号）。没有作用的包装组（恒等变换、不透明度 1、无蒙版、无名字）不写；
   一个文字对象 = 一个 `<text>`（填充、名字、旋转都在它自己身上），有上下标 / 字体回退的几段 = 一个以对象名命名的组。`svgfonts.family_list` 第一个族写真实字体
   （Liberation Serif / Sans / Mono → Times New Roman / Arial / Courier New，批准族名紧随其后；中文按 `sys.platform` 写系统字体）。
-  **导出的 `id` 可以是中文**：只有我们自己写出的产物过 `svgcheck.parse_svg(…, unicode_ids=True)`（写入器封口、`inspector.observe_svg`、`artifactinspect.svg_vector`），导入与 worker 输出仍严格。
+  **导出的 `id` 可以是中文**：`svgcheck.parse_svg` 缺省仍只认 ASCII id（matplotlib 的 `set_gid` 照旧经 `repair_worker_ids` 改名），只有读我们自己写出的 SVG 的口子显式传 `unicode_ids=True`——写入器封口、`inspector.observe_svg`、`artifactinspect.svg_vector`，以及把它导回来 / 拖进来当素材的 `svgimport._parse`、`svgasset.inspect_bytes`、`svgir`。放宽的只是 `id` 属性本身：任何引用（`url(#…)` / `href` / CSS 选择器）仍只认 ASCII 名字，指向中文 id 的引用结构化失败（`tests/test_svg_export_groups.py::test_unicode_ids_are_inert_markers…`）。
   看护：`tests/test_svg_export_groups.py`（共享样本 `tests/golden/svg_export_groups.json`，前端 `lib/svgExportGroups.golden.test.ts` 用真实 `toExportObjects` 写）。
   ImportedPage 的 SVG 能力是**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
   写入器再次核 canonical 源与 companion 的字节 hash；只有第一张源页，opaque PDF 明确拒绝、不解析成猜测的路径、
