@@ -573,3 +573,25 @@ def test_the_model_step_asks_for_a_fresh_pass_before_the_dry_run():
         cp._structured = orig  # noqa: SLF001
     assert seen == ["pass"]
     del ai_structured
+
+
+def test_a_frozen_or_runtime_panel_never_hits_the_live_figures_cache(project):
+    """同一个 `fileId` 的活图量过、进了缓存之后，冻结图 / runtime 素材照样要判「量不了」，不能命中那条缓存冒充量过。"""
+    client, _root = project
+    live = client.post(
+        "/api/vector-edit/plan",
+        json={"canvas": _canvas(_panel()), "ops": [{"op": "add", "items": [PEAK_ARROW]}]},
+    ).get_json()
+    assert live["unmeasured"] == {} and live["objects"]
+    for bad, code in (
+        (_panel(figureSnapshot=True), "composed_from_snapshot"),
+        (_panel(figureOrigin=True), "composed_from_snapshot"),
+        (_panel(fileKind="runtime", source=True), "runtime_panel"),
+    ):
+        r = client.post(
+            "/api/vector-edit/plan",
+            json={"canvas": _canvas(bad), "ops": [{"op": "add", "items": [PEAK_ARROW]}]},
+        ).get_json()
+        assert r["errors"][0]["code"] == "needs_measurement" and r["unmeasured"] == {"P1": code}, (
+            code
+        )
