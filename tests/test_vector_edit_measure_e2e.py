@@ -280,7 +280,6 @@ def data_project(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", WORKER_PY)
     m.open_project(str(root))
     vectormeasure.CACHE.clear()
-    m._MEASURED_INPUTS.clear()  # noqa: SLF001
     try:
         yield m.app.test_client(), root
     finally:
@@ -351,12 +350,11 @@ def test_without_a_trustworthy_input_fingerprint_nothing_is_cached(data_project,
 # ------------------------------------------------------------------ Codex #2344：热会话吃的是哪份输入，我们不知道
 
 
-def test_the_first_measure_in_a_process_does_not_trust_a_session_built_before_the_data_changed(
+def test_a_hot_session_built_on_the_old_data_does_not_leak_into_the_measure(
     data_project,
 ):
     client, root = data_project
     _plan_tip(client)  # 把热会话建起来（吃的是旧数据）
-    m._MEASURED_INPUTS.clear()  # noqa: SLF001  新进程：没有上一次量的记录
     vectormeasure.CACHE.clear()
     (root / "data.csv").write_text("\n".join(["0.2", "1.5", "2.5", "3.0"]), encoding="utf-8")
     _run_script(root)
@@ -435,48 +433,63 @@ def test_an_export_dir_that_cannot_be_removed_is_logged_and_retried_next_time(
     assert not left.exists() and not m._VECTOR_MEASURE_LEFTOVERS  # noqa: SLF001
 
 
-def _spy_measure(monkeypatch, digests):
-    """`_vector_measure_for` 的壳：项目指纹按 `digests` 依次给，记下哪些脚本被让会话过期。"""
-    import itertools
+class _FakePool:
+    """`_VectorFresh` 用的池函数的替身：记下创建 / 收掉了几条一次性 worker，以及有没有碰池里的会话（`invalidate`）。"""
 
-    seq = itertools.chain(digests, itertools.repeat(digests[-1]))
-    invalidated = []
-    monkeypatch.setattr(m, "_vector_project_digest", lambda root: next(seq))
-    monkeypatch.setattr(m, "_vector_measure_script", lambda panel: "figm.py")
-    monkeypatch.setattr(m, "_vector_measure_key", lambda *a, **k: None)  # 不缓存：每次都真量
-    monkeypatch.setattr(m, "_disk_panel_run", lambda script: None)
-    monkeypatch.setattr(
-        m.engine_pool,
-        "invalidate",
-        lambda script, root, run, only_run=False: invalidated.append(script),
-    )
-    monkeypatch.setattr(
-        m, "_vector_measure_panel", lambda panel, requests: {"draw_manifest": {}, "data_points": []}
-    )
-    m._MEASURED_INPUTS.clear()  # noqa: SLF001
-    return m._vector_measure_for(m.current_ctx()), invalidated  # noqa: SLF001
+    def __init__(self, monkeypatch):
+        self.made, self.discarded, self.invalidated = [], [], []
+        monkeypatch.setattr(
+            m, "_disk_panel_rel", lambda fid: ("FigM", {"script": "figm.py", "entry": "main"})
+        )
+        monkeypatch.setattr(m, "_disk_panel_run", lambda script: None)
+        monkeypatch.setattr(m, "require_project", lambda: Path("/proj"))
+        monkeypatch.setattr(m.engine_pool, "peek", lambda *a, **k: None)
+        monkeypatch.setattr(m.engine_pool, "one_shot", self._one_shot)
+        monkeypatch.setattr(m.engine_pool, "discard", self.discarded.append)
+        monkeypatch.setattr(
+            m.engine_pool, "invalidate", lambda *a, **k: self.invalidated.append((a, k))
+        )
+
+    def _one_shot(self, script, root, entry, **kw):
+        w = object()
+        self.made.append(w)
+        return w
 
 
-def test_a_changed_fingerprint_expires_the_session_only_once_per_pass(project, monkeypatch):
-    client, _root = project
-    with m.bound_project(m.current_ctx()):
-        measure, invalidated = _spy_measure(monkeypatch, ["d1", "d2"])
-        panel = _panel()
-        measure(panel, [])  # 本进程第一次：没有记录 → 当「不知道会话吃的哪份」，先过期
-        assert invalidated == ["figm.py"]
-        measure(panel, [{"axes": "axes_0", "x": 1, "y": 1}])  # 同一轮、指纹没变：不再过期
-        assert invalidated == ["figm.py"]
-        measure.new_pass()  # 模型答题之后的新一轮：重新取指纹，d2 ≠ 记着的 d1
-        measure(panel, [{"axes": "axes_0", "x": 2, "y": 2}])
-        assert invalidated == ["figm.py", "figm.py"]
+def test_one_fresh_worker_per_script_is_reused_until_the_project_state_changes(monkeypatch):
+    fake = _FakePool(monkeypatch)
+    fresh = m._VectorFresh()  # noqa: SLF001
+    w1, _ = fresh.worker_for("FigM.pdf", "d1")
+    w2, _ = fresh.worker_for("FigM.pdf", "d1")  # 同一份项目状态：同一条
+    assert w1 is w2 and len(fake.made) == 1
+    w3, _ = fresh.worker_for("FigM.pdf", "d2")  # 模型答题期间数据变了：旧的收掉、换新的
+    assert w3 is not w1 and fake.discarded == [w1] and len(fake.made) == 2
+    fresh.close()
+    assert fake.discarded == [w1, w3]
+    assert fake.invalidated == []  # 从头到尾没碰池里（画布在用）的会话
+    with pytest.raises(m.engine_layoutannotate.PanelUnavailable):
+        fresh.worker_for("FigM.pdf", "d2")  # 收掉之后不再创建
+
+
+def test_an_unknown_fingerprint_keeps_one_fresh_worker_for_the_whole_plan(monkeypatch):
+    fake = _FakePool(monkeypatch)
+    fresh = m._VectorFresh()  # noqa: SLF001
+    a, _ = fresh.worker_for("FigM.pdf", None)
+    b, _ = fresh.worker_for("FigM.pdf", None)
+    assert a is b and len(fake.made) == 1
 
 
 def test_the_fingerprint_is_not_reused_across_passes_but_is_within_one(project, monkeypatch):
     client, _root = project
     taken = []
+    _FakePool(monkeypatch)
+    monkeypatch.setattr(m, "_vector_project_digest", lambda root: taken.append(1) or "d1")
+    monkeypatch.setattr(m, "_vector_measure_key", lambda *a, **k: None)
+    monkeypatch.setattr(
+        m, "_vector_measure_panel", lambda panel, requests: {"draw_manifest": {}, "data_points": []}
+    )
     with m.bound_project(m.current_ctx()):
-        measure, invalidated = _spy_measure(monkeypatch, ["d1", "d2", "d3"])
-        monkeypatch.setattr(m, "_vector_project_digest", lambda root: taken.append(1) or "d1")
+        measure = m._vector_measure_for(m.current_ctx())  # noqa: SLF001
         panel = _panel()
         measure(panel, [])
         measure(panel, [{"axes": "axes_0", "x": 1, "y": 1}])
@@ -484,17 +497,53 @@ def test_the_fingerprint_is_not_reused_across_passes_but_is_within_one(project, 
         measure.new_pass()
         measure(panel, [])
         assert len(taken) == 2  # 新一轮重新取
+        measure.close()
 
 
-def test_an_unknown_fingerprint_expires_once_per_plan_not_every_pass(project, monkeypatch):
-    client, _root = project
-    with m.bound_project(m.current_ctx()):
-        measure, invalidated = _spy_measure(monkeypatch, [None])
-        panel = _panel()
-        measure(panel, [])
-        measure.new_pass()
-        measure(panel, [{"axes": "axes_0", "x": 1, "y": 1}])
-        assert invalidated == ["figm.py"]  # 取不到指纹：保守地过期一次，之后各轮不再反复重建
+def test_measuring_never_kills_a_canvas_render_in_flight(data_project):
+    """用户画布在用的热会话不能被量图碰：画布一直在渲染时触发量图，那些渲染一次都不许失败，会话还是同一条。"""
+    import threading
+    import time
+
+    client, root = data_project
+    ctx = m.current_ctx()
+    errors, renders, stop = [], [0], threading.Event()
+    with m.bound_project(ctx):
+        hot, stem = m._engine_worker("FigM.pdf", safe_only=True)  # noqa: SLF001
+        hot.ensure_built()
+
+    def canvas():
+        with m.bound_project(ctx):
+            while not stop.is_set():
+                try:
+                    w, s = m._engine_worker("FigM.pdf", safe_only=True)  # noqa: SLF001
+                    out = Path(tempfile.mkdtemp()) / "c.pdf"
+                    value = [0.2 + 0.01 * (renders[0] % 5), 0.2, 0.6, 0.6]
+                    w.export(
+                        s,
+                        [{"gid": "axes_0", "prop": "position", "value": value}],
+                        str(out),
+                        "pdf",
+                        300,
+                    )
+                    renders[0] += 1
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(repr(exc)[:200])
+
+    thread = threading.Thread(target=canvas)
+    thread.start()
+    time.sleep(0.5)
+    (root / "data.csv").write_text("\n".join(["0.2", "1.5", "2.5", "3.0"]), encoding="utf-8")
+    _run_script(root)  # 数据也变了：量图要读到新的，而不是去动画布的会话
+    nx, ny = _marker_on_page(root)
+    tip = _plan_tip(client)
+    time.sleep(1.0)
+    stop.set()
+    thread.join()
+    assert renders[0] >= 5 and not errors, errors
+    assert abs(tip[0] - nx) <= 0.005 and abs(tip[1] - ny) <= 0.005
+    with m.bound_project(ctx):
+        assert m._engine_worker("FigM.pdf", safe_only=True)[0] is hot  # noqa: SLF001  还是原来那条
 
 
 def test_the_model_step_asks_for_a_fresh_pass_before_the_dry_run():

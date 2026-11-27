@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 import threading
 import time
 from collections import OrderedDict
@@ -31,6 +32,7 @@ CACHE_TTL_S = 30 * 60
 MAX_OVERRIDES = 2000
 
 Measure = Callable[[dict, list], dict]
+LOG = logging.getLogger(__name__)
 
 
 def overrides_digest(overrides: object) -> str:
@@ -131,3 +133,13 @@ def new_pass(measure: object) -> None:
     hook = getattr(measure, "new_pass", None)
     if callable(hook):
         hook()
+
+
+def close(measure: object) -> None:
+    """收掉这次方案量子图占用的一次性资源（没有这个钩子的 `measure` 什么都不做；绝不抛）。"""
+    hook = getattr(measure, "close", None)
+    if callable(hook):
+        try:
+            hook()
+        except Exception:  # noqa: BLE001 - 收尾失败不许盖掉方案本身的结果，但要留下线索
+            LOG.warning("量子图的一次性资源没收干净", exc_info=True)
