@@ -2,7 +2,7 @@ import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
-import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, pendingConfirm, scriptPassable, todoChecked, todoQueued, todosOf, type PlanEntry } from '@/store/changePlanStore'
 import { failedChecks, touchedCount } from '@/lib/vectorEdit'
 import type { ChangeLine } from '@/lib/vectorChanges'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
@@ -102,7 +102,8 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
       const before = new Map<string, ChangePlanBox>((g.boxes.before ?? []).map((b) => [b.gid, b]))
       return {
         key: g.key,
-        summary: clip(e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }),
+        // 建议待办卡：这一组标题是那条待办的一句话（不是整条指令）
+        summary: clip(todosOf(e).find((t) => t.group_key === g.key)?.label ?? e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }),
         reviewers: [],
         commentNumbers: [],
         fromNote: false,
@@ -348,4 +349,64 @@ export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'pla
 export function planUndecided(e: Pick<PlanEntry, 'from' | 'kind' | 'status' | 'plan' | 'revising' | 'request' | 'phase'>): boolean {
   // 整版 / 矢量编辑方案不在此列：用户选了对象再发的就是改图指令（没有「是不是聊天」要判，也没有落回普通对话的路），生成中就是一张卡
   return e.from === 'assistant' && !isCanvasPlan(e) && e.status === 'generating' && (!e.plan || allOutOfScope(e.plan)) && e.revising === undefined && e.request.mode !== 'script' && e.phase !== 'render_after' && e.phase !== 'agent'
+}
+
+/** 建议待办卡此刻走到哪一步（`SuggestionCard` 据此画）；全由方案条目与它续出的脚本方案卡派生，不另存状态 */
+export type TodoPhase = 'choose' | 'running' | 'asking' | 'done'
+
+/**
+ * - `choose`：可勾选（还没点 / 什么都没改成又回来了）；
+ * - `running`：脚本方案在生成、出好正在应用、或后面还有排着没开始的脚本待办；
+ * - `asking`：脚本方案改了画出来的数据，等用户回答；
+ * - `done`：至少有一类已经应用（图内那次 commit 还在、或有脚本已应用），且没有在做 / 排着的。
+ * `scripts`：已经开始做的脚本待办的方案卡（按开始顺序）；`figureApplied`：图内待办此刻是已应用（以文档为准，⌘Z 撤回后不算）。
+ */
+export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status'>, scripts: PlanEntry[], figureApplied: boolean): TodoPhase {
+  const run = e.todoRun
+  const cur = scripts.at(-1)
+  // 第一条脚本待办还在发出去的路上（还没有方案条目）才算在做；开始过、但那张脚本卡已经被收起 / 收掉了（条目不在了）= 没改，不算在做——
+  // 真机 2026-11-27：失败的脚本卡点「收起」后，已经落定的建议卡又转起圈来、再也停不下
+  if (run && run.script.length > 0 && run.scripts.length === 0) return 'running'
+  if (cur && cur.status !== 'applied') {
+    if (cur.status === 'generating') return 'running'
+    if (cur.status === 'ready' && pendingConfirm(cur)) return 'asking'
+    if (cur.status === 'ready' && !cur.notice) return 'running'
+  }
+  // 上一条应用了 / 答了「先不改」、后面还排着没跳过的：马上接着做下一条
+  // 上一条的卡被收起了（条目不在）= 没成，与 `advanceTodos` 一样停在这里，不再假装在做
+  if (run && cur && scriptPassable(cur) && todoQueued(e).length > 0) return 'running'
+  if (figureApplied || scripts.some((s) => s.status === 'applied')) return 'done'
+  return 'choose'
+}
+
+/** 已改了哪几项（待办 key）：图内那次 commit 还在的 + 已应用的脚本待办；没经「改这 N 项」直接在弹窗里应用的，按此刻勾着的图内待办算 */
+export function todosDone(e: PlanEntry, scripts: { todo: string; entry: PlanEntry }[], figureApplied: boolean): string[] {
+  const run = e.todoRun
+  const figure = figureApplied ? (run?.figure ?? todosOf(e).filter((t) => t.kind === 'figure' && todoChecked(e, t)).map((t) => t.key)) : []
+  return [...figure, ...scripts.filter((x) => x.entry.status === 'applied').map((x) => x.todo)]
+}
+
+/**
+ * 建议待办卡续出来的脚本方案卡，哪些还要单独画：只剩**越界**（Agent 动了别的文件——那张卡带「恢复到开始前的版本」与文件清单，是安全上的动作）。
+ * 其余没做成的（Agent 没改、检查没过、图已改过、没能写进脚本……）都并进建议卡，一条一句原因（维护者 2026-11-27「并进去吧」）。
+ */
+export function todoScriptCardShown(e: Pick<PlanEntry, 'todoOf' | 'status' | 'failure'>): boolean {
+  return !!e.todoOf && e.status === 'failed' && e.failure?.code === 'change_plan_script_overreach'
+}
+
+const REASON_MAX = 120
+/** 并进建议卡的那一句「为什么没做成」：Agent 自己说了话就用它（第一段、截短），否则用这张卡本来那句失败文案 */
+export function todoFailReason(e: Pick<PlanEntry, 'status' | 'failure' | 'notice'>): string {
+  const said = e.failure?.params?.agent_reply
+  if (typeof said === 'string' && said.trim()) {
+    // Agent 被要求第一句就说为什么；没照做时，优先取「原因：…」那段（真机：第一段常是「我读完了…先停下确认」这类过场话）
+    const paras = said.trim().split(/\n\s*\n/).map((x) => x.replace(/[*`_#>]/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean)
+    const why = paras.find((x) => /^(原因|因为|理由|Reason|Because)[:：\s]/i.test(x))
+    // 「原因：」「未做改动：」这类前缀卡上已经说了（「…」没做成：），去掉
+    const first = (why ?? paras[0] ?? '').replace(/^((原因|理由|Reason)[:：]\s*)?((未做改动|没有改动|未改动|没改|No change(s)? made)[:：，,。.]\s*)?/i, '')
+    return first.length > REASON_MAX ? `${first.slice(0, REASON_MAX - 1)}…` : first
+  }
+  if (e.status === 'stale') return cp('card.stale')
+  if (e.status === 'ready' && e.notice) return cp('card.applyFailed')
+  return failureText(e.failure?.code ?? 'change_plan_failed', e.failure?.params, true)
 }
