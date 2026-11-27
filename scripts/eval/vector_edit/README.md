@@ -46,7 +46,8 @@ B 组用 opencode 自己已登录的 OpenCode Go 凭据（`opencode auth`），h
 **B 组分两档**：
 - `B`：opencode 原样接 Tavotto MCP。**走不通**：排版工具把 `base_revision`、`echo_digest`、场景里的对象 id 只放进 `structuredContent`（server.py 头注释写明那是给 Codex 这类会把它交给模型的宿主），
   而 opencode 只把 `content` 文本交给模型。agent 拿不到 `base_revision`，`edit_plan` 反复 `layout_changed` / 参数缺失，直到超时。只跑了 4 题（3 超时、对照题 `ctrl-vague` 没动画布算对），不再多烧额度。
-- `B2`：同 B，另经 `mcp_proxy.py`（进程内包一层 `call_tool`，不起子进程）把 `structuredContent` 也以文本附在工具结果后面（模拟「宿主把它给了模型」）。**这一档才反映工具面本身**。
+- `B2`：同 B，另经一个转发层把 `structuredContent` 也以文本附在工具结果后面（模拟「宿主把它给了模型」），**这一档当时才反映工具面本身**。
+  内容文字修复（`fix/mcp-layout-content-text`）之后不再需要，**转发层（`mcp_proxy.py`）与 B2 的运行入口已删**；`B2.jsonl` 作为首轮数据留档，`harness.py rejudge B2` 仍能重判它。
 
 | 合计 | B2 | B（4 题） |
 |---|---|---|
@@ -77,7 +78,7 @@ A 组（桌面改图助手，真模型）首轮因缺密钥**未跑**。维护�
 
 首轮发现的产品问题已在两个分支上修了：`fix/mcp-layout-content-text`（工具结果的 `structuredContent` 精简副本也放进 `content` 文字）
 和 `fix/vectorcheck-style-box`（style 核对只报这次编辑引入的差异、框住子图的外框不再被子图文字拦、`box.fit` 写错给期望形态）。
-原样 B 组（**不加** `mcp_proxy.py` 转发）全 21 题重跑：
+原样 B 组（不加任何转发）全 21 题重跑：
 
 | 合计 | 首轮 B（4 题） | 首轮 B2（转发） | `after-content-fix/`（只修内容文字） | `after-both-fixes/`（两处都修） |
 |---|---|---|---|---|

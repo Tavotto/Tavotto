@@ -7,7 +7,7 @@
   list               列题库
   run A              桌面改图助手：真 sidecar + 一条 OpenCode Go 连接，`POST /api/vector-edit/plan` 指令模式 → 轮询 → 落到画布 → 判
   run Aref           接线自检（**不叫模型**）：同一条链路，`{canvas, ops}` 模式，补丁用题库标准答案（记 `simulated: true`）
-  run B / B2         插件 agent（B2 = 同 B，另把工具结果的 structuredContent 也以文本交给 agent，见 mcp_proxy.py）：`opencode run --standalone` + Tavotto MCP（排版场景 / 编辑 / 标注工具），读项目里的排版文件判
+  run B              插件 agent：`opencode run --standalone` + Tavotto MCP（排版场景 / 编辑 / 标注工具），读项目里的排版文件判
   report             汇总（`summarize.py`）
 
 环境变量：
@@ -426,7 +426,7 @@ def read_layout_objects(project: Path) -> list[dict]:
     return la.open_layout(project, LAYOUT).doc["canvases"][0]["objects"]
 
 
-def mcp_config(wrapper_dir: Path, project: Path, work: Path, proxy: bool = False) -> str:
+def mcp_config(wrapper_dir: Path, project: Path, work: Path) -> str:
     wrapper_dir.mkdir(parents=True, exist_ok=True)
     sh = wrapper_dir / "mcp.sh"
     env = {
@@ -441,10 +441,7 @@ def mcp_config(wrapper_dir: Path, project: Path, work: Path, proxy: bool = False
     }
     lines = ["#!/bin/sh"] + [f"export {k}='{v}'" for k, v in env.items()]
     server = f"'{PYTHON}' '{TREE / 'codex-plugin' / 'mcp' / 'server.py'}'"
-    if proxy:  # B2：把 structuredContent 也以文本交给宿主（见 mcp_proxy.py）
-        lines.append(f"exec '{PYTHON}' '{HERE / 'mcp_proxy.py'}' '{TREE / 'codex-plugin' / 'mcp'}'")
-    else:
-        lines.append(f"exec {server}")
+    lines.append(f"exec {server}")
     sh.write_text("\n".join(lines) + "\n")
     sh.chmod(0o755)
     cfg = {
@@ -557,9 +554,7 @@ def run_b_task(corpus: dict, task: dict, rep: int, timeout: int, cond: str = "B"
         canvas=CANVAS_ID,
         selection=(f"我当前选中的对象 id：{'、'.join(sel)}。" if sel else ""),
     )
-    cfg = mcp_config(
-        SCRATCH / "_mcp" / f"{cond}-{task['id']}-{rep}", project, work, proxy=cond == "B2"
-    )
+    cfg = mcp_config(SCRATCH / "_mcp" / f"{cond}-{task['id']}-{rep}", project, work)
     rec: dict = {
         "id": task["id"],
         "kind": task["kind"],
@@ -704,7 +699,7 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
     r = sub.add_parser("run")
-    r.add_argument("cond", choices=["A", "Aref", "B", "B2"])
+    r.add_argument("cond", choices=["A", "Aref", "B"])
     r.add_argument("--only", nargs="*")
     r.add_argument("--reps", type=int, default=1)
     r.add_argument("--timeout", type=int, default=600)
@@ -713,7 +708,7 @@ def main() -> None:
     )
     r.add_argument("--jobs", type=int, default=1, help="B 组并发数")
     rj = sub.add_parser("rejudge")
-    rj.add_argument("cond", choices=["B", "B2"])
+    rj.add_argument("cond", choices=["B", "B2"])  # B2 只留着重判已有结果
     sub.add_parser("report")
     a = ap.parse_args()
     RESULTS.mkdir(parents=True, exist_ok=True)
@@ -726,7 +721,7 @@ def main() -> None:
         cmd_list(a)
     elif a.cmd == "rejudge":
         cmd_rejudge(a)
-    elif a.cond in ("B", "B2"):
+    elif a.cond == "B":
         cmd_run_b(a)
     else:
         cmd_run_a(a, "instruction" if a.cond == "A" else "ops")
