@@ -191,8 +191,6 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
 sample <- c("Signal", "Input", "2.5")
 aliases <- c("sans", "sans", "serif")
 faces <- c("plain", "bold.italic", "plain")
-font_files <- systemfonts::match_fonts(aliases, italic = c(FALSE, TRUE, FALSE),
-                                     weight = c("normal", "bold", "normal"))
 widths <- function() {
   grid::grid.newpage()
   sizes <- mapply(function(text, family, face) {
@@ -202,18 +200,41 @@ widths <- function() {
   grDevices::dev.off()
   unname(sizes)
 }
-svglite::svglite(tempfile(fileext = ".svg"), width = 4, height = 3)
-svg <- widths()
-grDevices::png(tempfile(fileext = ".png"), width = 1000, height = 750, res = 250, type = "cairo")
-cairo <- widths()
+sample_fonts <- function() {
+  font_files <- systemfonts::match_fonts(aliases, italic = c(FALSE, TRUE, FALSE),
+                                       weight = c("normal", "bold", "normal"))
+  svglite::svglite(tempfile(fileext = ".svg"), width = 4, height = 3)
+  svg <- widths()
+  grDevices::png(tempfile(fileext = ".png"), width = 1000, height = 750, res = 250, type = "cairo")
+  cairo <- widths()
+  list(matches = basename(font_files$path), svg = svg, cairo = cairo)
+}
 registry <- tryCatch(length(utils::readRegistry("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts",
                                                 hive = "HLM", maxdepth = 1L)),
                      error = conditionMessage)
 arial <- file.path(Sys.getenv("SystemRoot"), "Fonts", "arial.ttf")
-report <- list(fonts = nrow(systemfonts::system_fonts()), matches = basename(font_files$path),
-               matches_readable = file.access(font_files$path, 4) == 0L, svg = svg, cairo = cairo,
+report <- list(fonts = nrow(systemfonts::system_fonts()), native = sample_fonts(),
                registry = registry, arial_readable = file.access(arial, 4) == 0L)
-jsonlite::write_json(report, commandArgs(trailingOnly = TRUE)[[1L]], auto_unbox = TRUE)
+args <- commandArgs(trailingOnly = TRUE)
+if (length(args) == 3L) {
+  dll <- dyn.load(args[[2L]])
+  fonts <- list.files(args[[3L]], full.names = TRUE)
+  systemfonts::add_fonts(fonts)
+  by_file <- getNativeSymbolInfo("probe_font_file", PACKAGE = dll)$address
+  by_memory <- getNativeSymbolInfo("probe_font_memory", PACKAGE = dll)$address
+  report$file <- lapply(fonts, function(path) {
+    wide <- c(iconv(path, to = "UTF-16LE", toRaw = TRUE)[[1L]], as.raw(c(0, 0)))
+    .C(by_file, wide, count = integer(1L), error = integer(1L))[c("count", "error")]
+  })
+  report$private_file <- sample_fonts()
+  report$memory <- lapply(fonts, function(path) {
+    bytes <- readBin(path, "raw", n = file.size(path))
+    .C(by_memory, bytes, as.integer(length(bytes)), count = integer(1L),
+       error = integer(1L))[c("count", "error")]
+  })
+  report$private_memory <- sample_fonts()
+}
+jsonlite::write_json(report, args[[1L]], auto_unbox = TRUE)
 """
         measure = tmp_path / "measure-r-fonts.R"
         measure.write_text(probe, encoding="utf-8")
@@ -230,12 +251,46 @@ jsonlite::write_json(report, commandArgs(trailingOnly = TRUE)[[1L]], auto_unbox 
             "Normal R fonts:",
             normal.read_text(encoding="utf-8") if normal.is_file() else baseline.stderr,
         )
+        helper = tmp_path / "probe-ggplot-fonts.dll"
+        helper_c = helper.with_suffix(".c")
+        helper_c.write_text(
+            r"""
+#include <windows.h>
+__declspec(dllexport) void probe_font_file(const wchar_t *path, int *count, int *error) {
+    SetLastError(0);
+    *count = AddFontResourceExW(path, FR_PRIVATE, NULL);
+    *error = *count ? 0 : GetLastError();
+}
+__declspec(dllexport) void probe_font_memory(void *bytes, int *size, int *count, int *error) {
+    DWORD installed = 0;
+    SetLastError(0);
+    HANDLE font = AddFontMemResourceEx(bytes, *size, NULL, &installed);
+    *count = (int) installed;
+    *error = font ? 0 : GetLastError();
+}
+""",
+            encoding="utf-8",
+        )
+        compiler = shutil.which("gcc") or r"C:\mingw64\bin\gcc.exe"
+        compiled = subprocess.run(
+            [compiler, "-shared", "-o", str(helper), str(helper_c), "-lgdi32"],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        assert compiled.returncode == 0, compiled.stderr
 
         @contextmanager
         def measure_restricted(root, environment):
             nonlocal measured
             inside = root / measure.name
             inside.write_text(probe, encoding="utf-8")
+            fonts = root / "font-probe"
+            fonts.mkdir()
+            system = Path(os.environ["SystemRoot"]) / "Fonts"
+            for name in ("arial", "arialbi", "times"):
+                shutil.copyfile(system / f"{name}.ttf", fonts / f"{name}.ttf")
+            copied = Path(shutil.copyfile(helper, root / helper.name))
             report = root / "restricted-r-fonts.json"
             with restrict(root, environment) as run:
 
@@ -255,6 +310,8 @@ jsonlite::write_json(report, commandArgs(trailingOnly = TRUE)[[1L]], auto_unbox 
                         f"--file={inside}",
                         "--args",
                         str(report),
+                        str(copied),
+                        str(fonts),
                     ]
                     try:
                         run(command, cwd, timeout=25)
