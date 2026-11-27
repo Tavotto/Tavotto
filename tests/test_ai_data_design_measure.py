@@ -18,7 +18,10 @@ from tavotto.engine import ai_data_figure as adf, ai_data_recipe as recipe_mod
 
 def _csv(tmp_path: Path, header: list[str], rows: list[list], name: str = "t.csv") -> Path:
     p = tmp_path / name
-    p.write_text("\n".join([",".join(header), *(",".join(map(str, r)) for r in rows)]) + "\n")
+    p.write_text(
+        "\n".join([",".join(header), *(",".join(map(str, r)) for r in rows)]) + "\n",
+        encoding="utf-8",
+    )
     return p
 
 
