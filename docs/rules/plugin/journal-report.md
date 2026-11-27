@@ -1,17 +1,10 @@
 # Agent 提交期刊线索：`tavotto_report_journal_issue`（ADR 0213 三期）
 
-> 2026-11-27 新增。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
+> 2026-11-27 新增。速查行与外部审阅那行合并（`codex-plugin/AGENTS.md` 的「按改动路径找细则」表，由 `review-share.md` 的 agents-route 生成，为守棘轮上限不单列一行）；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。线缆契约、入库流水线、回信见 ADR 0213；发信管线见 ADR 0145 与 `engine/contactsend.py`。
 > 看护用例：`tests/test_mcp_report_journal_issue.py`（零网络 / 两步确认 / 令牌绑内容 / 开关 / 参数 / 本机取值 / 遥测）、
 > `tests/test_mcp_error_next.py`（码登记）、`tests/test_mcp_usage.py`（走 `other` 桶）、`tests/test_mcp_resolver.py`（`NORMAL_TOOLS`）。
 
-<!-- agents-route
-sheet: codex-plugin/AGENTS.md
-order: 66
-改到: `tavotto_report_journal_issue`、`bridge.report_journal_issue()`
-主题: Agent 提交期刊线索 → `journal-report.md`
-必守要点: 未确认零网络；令牌绑内容；现值只取本机目录；不收数值；失败不重试
--->
 
 - **同一条通道，不写第二份**：发送走 `contactsend.start`（`kind=journal`），校验走 `contactsend.build_draft` → `clean_journal`；
   回信与「我的来信」与桌面「这条不对」同一份本机记录。桥只翻译，`contactsend` 是**可选引擎模块**（只经 `_optional_engine`）。
