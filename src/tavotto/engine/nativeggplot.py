@@ -20,6 +20,7 @@ from .manifest_fields import (
     axis_invert_field,
     axis_limits_field,
     axis_scale_field,
+    axis_tick_side_fields,
     bar_paint_fields,
     bar_width_field,
     errorbar_cap_fields,
@@ -273,7 +274,11 @@ class GgplotTarget:
             if "aspect" in axes["edited"]:
                 field["value_original"] = aspect["original"]
             fields.append(field)
-        for name, field_factory in (("grid", axis_grid_fields), ("frame", axis_frame_fields)):
+        for name, field_factory in (
+            ("tick_sides", axis_tick_side_fields),
+            ("grid", axis_grid_fields),
+            ("frame", axis_frame_fields),
+        ):
             group = axes.get(name)
             if group is None:
                 continue

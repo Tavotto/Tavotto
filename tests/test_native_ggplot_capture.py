@@ -2518,6 +2518,82 @@ stopifnot(is.null(fields(blank$state)$width), is.null(fields(blank$state)$length
 """
 
 
+TICK_SIDES_PROBE = r"""
+frame <- c(360, 260)
+data <- data.frame(x = 1:10, y = 1:10)
+base <- ggplot2::ggplot(data, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+  ggplot2::guides(x = ggplot2::guide_axis(minor.ticks = TRUE)) +
+  ggplot2::theme(axis.ticks.x.bottom = ggplot2::element_line(colour = "#336699"))
+fields <- function(state, edits = list()) {
+  items <- adapter$ggplot_manifest(state, "points", edits)$elements
+  axes <- Filter(function(element) element$role == "axes", items)[[1L]]$native_axes
+  axes$tick_sides
+}
+axis_parts <- function(state, edits = list()) adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  table <- adapter$ggplot_table_for(state, edits)$table
+  lapply(c(bottom = "b", top = "t", left = "l", right = "r"), function(letter) {
+    axis <- table$grobs[[which(table$layout$name == paste0("axis-", letter))]]$children[["axis"]]
+    is_polyline <- function(grob) inherits(grob, "polyline")
+    marks <- unlist(lapply(axis$grobs, function(grob) {
+      if (is_polyline(grob)) list(grob) else if (identical(grob$name, "ticks")) {
+        Filter(is_polyline, as.list(grob$children))
+      }
+    }), recursive = FALSE)
+    labels <- Filter(function(grob) inherits(grob, "titleGrob"), axis$grobs)
+    along <- if (letter %in% c("b", "t")) "x" else "y"
+    list(ticks = unname(lapply(marks, function(grob) unique(as.numeric(grob[[along]])))),
+         labels = unlist(lapply(labels, function(grob) grob$children[[1L]]$label), use.names = FALSE))
+  })
+})$value
+
+captured <- adapter$capture_ggplot(base, frame)
+state <- captured$state
+initial <- axis_parts(state)
+original <- fields(state)$original
+props <- c("ticks_bottom", "ticks_top", "ticks_left", "ticks_right")
+stopifnot(identical(unname(unlist(original[props])), c(TRUE, FALSE, TRUE, FALSE)))
+default <- list(axes_0 = list(ticks_top = TRUE, ticks_right = TRUE,
+                              ticks_bottom = FALSE, ticks_left = FALSE))
+mirrored <- axis_parts(state, default)
+stopifnot(identical(mirrored$top$ticks, initial$bottom$ticks), length(mirrored$top$ticks) == 2L,
+          identical(mirrored$right$ticks, initial$left$ticks), !length(mirrored$top$labels),
+          !length(mirrored$right$labels), !length(mirrored$bottom$ticks), !length(mirrored$left$ticks),
+          identical(mirrored$bottom$labels, initial$bottom$labels),
+          identical(mirrored$left$labels, initial$left$labels),
+          identical(fields(state, default)$edited, default$axes_0))
+
+projected <- default
+projected$axes_0$xlim <- c(1, 10)
+projected$axes_0$invert_x <- TRUE
+projected[["axis.x.bottom.ticks"]] <- list(major_mode = "fixed", major_values = c(1, 4, 7, 10))
+fixed <- axis_parts(state, projected)
+stopifnot(isTRUE(all.equal(fixed$top$ticks[[1L]], 1 - c(0, 3, 6, 9) / 9)),
+          identical(fixed$bottom$labels, c("1", "4", "7", "10")),
+          identical(adapter$render_ggplot(state), captured$svg),
+          identical(state$layers, adapter$capture_ggplot(base, frame)$state$layers))
+invalid <- list(axes_0 = list(ticks_top = "false"))
+stopifnot(inherits(try(adapter$render_ggplot(state, invalid), silent = TRUE), "try-error"))
+
+blank <- base + ggplot2::theme(axis.ticks.x.bottom = ggplot2::element_blank(),
+                               axis.minor.ticks.x.bottom = ggplot2::element_blank())
+blank_state <- adapter$capture_ggplot(blank, frame)$state
+stopifnot(!fields(blank_state)$original$ticks_bottom,
+          length(axis_parts(blank_state, list(axes_0 = list(ticks_bottom = TRUE)))$bottom$ticks) == 1L)
+secondary <- base + ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis())
+secondary_state <- adapter$capture_ggplot(secondary, frame)$state
+without <- axis_parts(secondary_state, list(axes_0 = list(ticks_top = FALSE)))
+stopifnot(fields(secondary_state)$original$ticks_top, !length(without$top$ticks),
+          identical(without$top$labels, axis_parts(secondary_state)$top$labels))
+
+unavailable <- base + ggplot2::guides(x = "none")
+no_guide <- adapter$capture_ggplot(unavailable, frame)$state
+unsupported <- list(axes_0 = list(ticks_top = TRUE))
+stopifnot(is.null(fields(no_guide)$original$ticks_bottom), is.null(fields(no_guide)$original$ticks_top),
+          inherits(try(adapter$render_ggplot(no_guide, unsupported), silent = TRUE), "try-error"))
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -2542,6 +2618,10 @@ def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):
 
 def test_ggplot_minor_tick_controls_use_native_positions_and_grid(tmp_path):
     _assert_r_probe(tmp_path, MINOR_TICK_PROBE)
+
+
+def test_ggplot_tick_side_switches_use_projected_strokes_without_duplicating_labels(tmp_path):
+    _assert_r_probe(tmp_path, TICK_SIDES_PROBE)
 
 
 def test_ggplot_faceted_point_edits_stay_on_the_selected_native_panel(tmp_path):

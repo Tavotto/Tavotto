@@ -96,6 +96,7 @@ from manifest_fields import (
     axis_invert_field,
     axis_limits_field,
     axis_scale_field,
+    axis_tick_side_fields,
     bar_paint_fields,
     bar_width_field,
     errorbar_cap_fields,
@@ -4389,30 +4390,14 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
         # 刻度线的四边开关（issue #92）：论文规范常要四边镜像刻度或全部关掉，
         # 而上/右两边没有刻度数字、在画布上点不到——入口放在子图元素上。
         # 方向（in/out/inout）在刻度组元素上，这里不重复（单一权威）。
-        {
-            "prop": "ticks_bottom",
-            "type": "bool",
-            "value": tick_side_visible(ax, "x", 1),
-            "group": "刻度线",
-        },
-        {
-            "prop": "ticks_top",
-            "type": "bool",
-            "value": tick_side_visible(ax, "x", 2),
-            "group": "刻度线",
-        },
-        {
-            "prop": "ticks_left",
-            "type": "bool",
-            "value": tick_side_visible(ax, "y", 1),
-            "group": "刻度线",
-        },
-        {
-            "prop": "ticks_right",
-            "type": "bool",
-            "value": tick_side_visible(ax, "y", 2),
-            "group": "刻度线",
-        },
+        *axis_tick_side_fields(
+            {
+                "ticks_bottom": tick_side_visible(ax, "x", 1),
+                "ticks_top": tick_side_visible(ax, "x", 2),
+                "ticks_left": tick_side_visible(ax, "y", 1),
+                "ticks_right": tick_side_visible(ax, "y", 2),
+            }
+        ),
         *axis_grid_fields(
             {
                 "grid_x": _grid_visible(ax, "x"),

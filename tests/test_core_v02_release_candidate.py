@@ -104,8 +104,22 @@ AXIS_FRAME = {
     "spine_right_color": "#50278B",
     "spine_right_linewidth": 2.1,
 }
-R_AXIS_VIEW = {"xlim": [1, 8], "xscale": "log", "invert_x": True, **AXIS_GRID, **AXIS_FRAME}
-MPL_AXIS_VIEW = {"xlim": [-0.25, 2.25], "ylim": [-0.3, 5.5], **AXIS_GRID, **AXIS_FRAME}
+AXIS_TICK_SIDES = {"ticks_top": True, "ticks_right": True, "ticks_bottom": True}
+R_AXIS_VIEW = {
+    "xlim": [1, 8],
+    "xscale": "log",
+    "invert_x": True,
+    **AXIS_GRID,
+    **AXIS_FRAME,
+    **AXIS_TICK_SIDES,
+}
+MPL_AXIS_VIEW = {
+    "xlim": [-0.25, 2.25],
+    "ylim": [-0.3, 5.5],
+    **AXIS_GRID,
+    **AXIS_FRAME,
+    **AXIS_TICK_SIDES,
+}
 
 
 def _series_patches(baseline, role, paint):
@@ -760,6 +774,12 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert edited_axes["identity"] == r_axes["identity"]
         view_fields = {f["prop"]: f["value"] for f in edited_axes["editable"]}
         assert {prop: view_fields[prop] for prop in R_AXIS_VIEW} == R_AXIS_VIEW
+        captured_sides = {
+            f["prop"]: f["value_original"]
+            for f in edited_axes["editable"]
+            if f["prop"] in AXIS_TICK_SIDES
+        }
+        assert captured_sides == {"ticks_top": False, "ticks_right": False, "ticks_bottom": False}
         invert_x = next(f for f in edited_axes["editable"] if f["prop"] == "invert_x")
         assert invert_x["value"] is True and invert_x["value_original"] is False
         with pytest.raises(HttpError):

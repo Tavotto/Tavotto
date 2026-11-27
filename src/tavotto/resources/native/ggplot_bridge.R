@@ -116,7 +116,8 @@ ggplot_serve <- function(spec, token, plot_for) {
           (!is.character(patch$value) && !is.numeric(patch$value) &&
            !(patch$prop %in% c("loc_frac", "xlim", "ylim", "major_values") && is.list(patch$value)) &&
            !(patch$prop %in% c("invert_x", "invert_y", "grid_x", "grid_y", "minor_visible", "visible",
-                               adapter$ggplot_frame_visibility) && is.logical(patch$value)))) {
+                               adapter$ggplot_frame_visibility, adapter$ggplot_tick_side_keys) &&
+             is.logical(patch$value)))) {
         stop("Invalid native R edit.")
       }
       edits[[patch$gid]][[patch$prop]] <- patch$value

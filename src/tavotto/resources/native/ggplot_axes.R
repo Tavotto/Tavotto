@@ -270,6 +270,10 @@ ggplot_axes_element <- function(target, current, bbox, edits) {
               grid = if (!is.null(target$grid)) {
                 list(original = target$grid$original, edited = edits[intersect(names(edits), ggplot_grid_keys)])
               },
+              tick_sides = if (length(target$tick_sides)) {
+                list(original = lapply(target$tick_sides, `[[`, "visible"),
+                     edited = edits[intersect(names(edits), ggplot_tick_side_keys)])
+              },
               background = if (!is.null(target$background)) {
                 list(original = target$background$original,
                      current = edits$facecolor %||% target$background$original)
@@ -398,6 +402,103 @@ ggplot_edit_minor_ticks <- function(panel, params, spacing, edit, coord) {
     }
   }
   list(panel = panel, params = params)
+}
+
+ggplot_tick_side_axes <- c(bottom = "x", top = "x", left = "y", right = "y")
+ggplot_tick_side_keys <- paste0("ticks_", names(ggplot_tick_side_axes))
+
+ggplot_mark_elements <- function(params, theme) {
+  guide <- ggplot2::GuideAxis
+  elements <- guide$setup_elements(guide$setup_params(params), guide$elements, theme)
+  elements[c("ticks", "minor", "major_length", "minor_length")]
+}
+
+ggplot_tick_side_target <- function(built, table, target) {
+  slot <- ggplot_cartesian_panel_slot(built, table)
+  if (is.null(slot)) return(target)
+  guides <- built$layout$panel_params[[1L]]$guides
+  positions <- vapply(guides$params, function(params) params$position %||% "", character(1L))
+  if (anyDuplicated(positions) || !all(names(ggplot_tick_side_axes) %in% positions)) return(target)
+  sides <- list()
+  for (side in names(ggplot_tick_side_axes)) {
+    axis <- ggplot_tick_side_axes[[side]]
+    index <- match(side, positions)
+    params <- guides$params[[index]]
+    suffix <- paste(axis, side, sep = ".")
+    if (identical(class(guides$guides[[index]])[[1L]], "GuideAxis") &&
+        identical(params$aesthetic, axis) &&
+        (is.null(params$theme_suffix) || identical(params$theme_suffix, suffix))) {
+      paint <- ggplot_mark_elements(params, built$plot$theme)
+      sides[[side]] <- list(index = index, visible = inherits(paint$ticks, "element_line"))
+    }
+  }
+  for (side in setdiff(names(ggplot_tick_side_axes), names(sides))) {
+    index <- match(side, positions)
+    if (!identical(class(guides$guides[[index]])[[1L]], "GuideNone")) next
+    axis <- ggplot_tick_side_axes[[side]]
+    opposite <- setdiff(names(ggplot_tick_side_axes)[ggplot_tick_side_axes == axis], side)
+    source <- sides[[opposite]]$index
+    if (is.null(source)) next
+    key <- guides$params[[source]]$key
+    cross <- setdiff(ggplot_axis_names, axis)
+    if (!is.data.frame(key) || !nrow(key) || !all(c(axis, cross) %in% names(key)) ||
+        length(unique(key[[cross]])) != 1L || !all(key[[cross]] %in% c(0, 1))) next
+    sides[[side]] <- list(index = index, visible = FALSE, mirror = source)
+  }
+  if (!length(sides)) return(target)
+  target <- ggplot_panel_decoration(built, target, slot)
+  target$tick_sides <- stats::setNames(sides, paste0("ticks_", names(sides)))
+  target
+}
+
+ggplot_apply_tick_sides <- function(sides, edit, guides, params, theme) {
+  source_params <- params
+  source_guides <- guides
+  for (prop in names(edit)) {
+    spec <- sides[[prop]]
+    value <- edit[[prop]]
+    if (is.null(spec) || !is.logical(value) || length(value) != 1L || is.na(value)) {
+      stop("The requested native R tick side is unavailable.")
+    }
+    side <- sub("^ticks_", "", prop)
+    axis <- ggplot_tick_side_axes[[side]]
+    suffix <- paste(axis, side, sep = ".")
+    mark_fields <- paste(c("axis.ticks", "axis.minor.ticks", "axis.ticks.length",
+                           "axis.minor.ticks.length"), suffix, sep = ".")
+    index <- spec$index
+    current <- params[[index]]
+    mirror <- spec$mirror
+    if (!is.null(mirror) && !value) next
+    ref <- if (is.null(mirror)) current else source_params[[mirror]]
+    paint <- ggplot_mark_elements(ref, theme)
+    if (!is.null(mirror)) {
+      # The primary guide has already been projected and edited. Reflect only
+      # its perpendicular coordinate so the other side shares the same marks.
+      current <- ref
+      current$position <- side
+      current$theme_suffix <- NULL
+      current$title <- NULL
+      cross <- setdiff(ggplot_axis_names, axis)
+      current$key[[cross]] <- 1 - current$key[[cross]]
+      guides[[index]] <- source_guides[[mirror]]
+    }
+    if (value && !inherits(paint$ticks, "element_line")) {
+      fallback <- ggplot_mark_elements(list(position = side), ggplot2::theme_grey())
+      paint$ticks <- fallback$ticks
+      paint$ticks$inherit.blank <- FALSE
+    }
+    marks <- if (value) paint else rep(list(ggplot2::element_blank()), 2L)
+    elements <- stats::setNames(marks, mark_fields[seq_along(marks)])
+    if (!is.null(mirror)) {
+      for (style in c("axis.title", "axis.text", "axis.line")) {
+        elements[[paste(style, suffix, sep = ".")]] <- ggplot2::element_blank()
+      }
+    }
+    patch <- do.call(ggplot2::theme, elements)
+    current$theme <- if (is.null(current$theme)) patch else current$theme + patch
+    params[[index]] <- current
+  }
+  list(guides = guides, params = params)
 }
 
 ggplot_grid_keys <- c("grid_x", "grid_y", "grid_color", "grid_linestyle", "grid_linewidth", "grid_alpha")

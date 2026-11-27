@@ -91,6 +91,14 @@ def axis_aspect_field(value: str) -> dict:
     return {"prop": "aspect", "type": "text", "value": value, "group": "数据范围"}
 
 
+def axis_tick_side_fields(values: dict) -> list[dict]:
+    return [
+        {"prop": prop, "type": "bool", "value": bool(values[prop]), "group": "刻度线"}
+        for prop in ("ticks_bottom", "ticks_top", "ticks_left", "ticks_right")
+        if prop in values
+    ]
+
+
 def axis_grid_fields(values: dict) -> list[dict]:
     """Major grid visibility by axis and strokes shared by both grid levels."""
     group = "网格与边框"
