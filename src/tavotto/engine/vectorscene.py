@@ -57,8 +57,10 @@ ERROR_CODES = (
 
 #: 统计标注的文字（ADR 0208 §四，维护者 2026-11-24 定）：只能来自用户的话或脚本 / 数据里的结果，
 #: 描述里要写 `"provenance": "user" | "data"`；没写的整批不落地，回 `needs_confirmation`。
+#: 只作用在 `is_stat_text` 压过空白的文字上（任意空白 → 单个空格、首尾无空白），所以空白一律写成 ` ?`（至多一个空格）：
+#: 与原来的 `\s*` 在压过的文字上等价，又没有可回溯的空白重复（CodeQL py/polynomial-redos）。
 _STAT_TEXT = re.compile(
-    r"^\s*(\*{1,4}|n\.?\s?s\.?|ns)\s*$|\bp\s*[<>=≤≥]|\bp\s*-?\s*value|\bn\s*=\s*\d",
+    r"^(\*{1,4}|n\.? ?s\.?|ns)$|\bp ?[<>=≤≥]|\bp ?-? ?value|\bn ?= ?\d",
     re.IGNORECASE,
 )
 PROVENANCES = ("user", "data")
@@ -66,7 +68,7 @@ PROVENANCES = ("user", "data")
 
 def is_stat_text(text: object) -> bool:
     """是不是统计标注文字。**先把任意空白压成单个空格再匹配**：`_STAT_TEXT` 里 `\\s*` 作用在用户 / 模型给的文字上，
-    成千上万个制表符会让回溯正则变成多项式时间；压过之后每处 `\\s*` 最多吃一个字符，匹配是线性的（语义不变——`\\s` 本来就把各种空白当一回事）。"""
+    成千上万个制表符会让回溯正则变成多项式时间；压过之后正则里的空白只写成 ` ?`，匹配是线性的（语义不变——原来的 `\\s` 本来就把各种空白当一回事）。"""
     return bool(_STAT_TEXT.search(" ".join(str(text).split())))
 
 
