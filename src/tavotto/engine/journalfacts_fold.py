@@ -180,5 +180,6 @@ def fold(bundle: dict) -> dict:
             continue
         fact, qualifier = items[0]
         rules[path] = _rule(fact, qualifier)
-        sources[_source_id(fact)] = _source(bundle, fact)
+        # `fact_id`：期刊线索（ADR 0213）用 `v2:<fact id>` 指认是哪条事实；`src` 的值（`v2:<来源>:<origin>`）不变
+        sources[_source_id(fact)] = {**_source(bundle, fact), "fact_id": fact["id"]}
     return {"rules": rules, "sources": sources, "confirm": confirm}

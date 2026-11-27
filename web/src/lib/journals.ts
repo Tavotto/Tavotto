@@ -202,6 +202,8 @@ export interface JournalSource {
   page?: number
   /** single_journal_sample 的出版社来源：只属于这一本期刊 */
   journal?: string
+  /** v2 折叠来源才有：bundle 里那条事实的 id（期刊线索发 `v2:<fact_id>`，ADR 0213） */
+  fact_id?: string
 }
 
 export interface JournalRule {
@@ -282,6 +284,8 @@ export interface JournalFieldSource {
   page: number | null
   retrieved: string
   archive_url: string
+  /** v2 折叠来源的事实 id；v1 没有 */
+  fact_id?: string
   /** 期刊改写了出版社的值时，出版社原条目；否则 null */
   overrides: Omit<JournalFieldSource, 'overrides'> | null
   /** v2 叠加时由这一项抬出来的检查项严重级别（用户没显式写过才抬）；去掉这一项时据此把抬的那一档撤掉 */
@@ -759,6 +763,7 @@ function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource,
     archive_url: src.archive_url ?? '',
   }
   if (rule.strength !== undefined) item.strength = rule.strength // 缺省不写：形状与旧绑定一致
+  if (src.fact_id !== undefined) item.fact_id = src.fact_id
   return item
 }
 

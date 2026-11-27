@@ -61,7 +61,8 @@ export function tipForSource(
     sourceHost: sourceHost(source.url).replace(/^www\./, ''),
     sourceDate: source.retrieved || undefined,
     sourceUrl: source.link || undefined,
-    sourceId: source.src, // v2 的 `v2:` 前缀原样发（契约正则允许）
+    // v2 折叠来源发 `v2:<事实 id>`（`src` 里有第二个冒号，过不了契约正则，也不是事实 id）；v1 照旧发 `src`
+    sourceId: source.fact_id ? `v2:${source.fact_id}` : source.src,
     catalog: catalogRevs(journalId),
   }
 }

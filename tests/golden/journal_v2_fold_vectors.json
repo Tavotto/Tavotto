@@ -54,6 +54,7 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
+      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -342,6 +343,7 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
+      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -394,6 +396,7 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
+      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -441,6 +444,7 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
+      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -759,6 +763,7 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
+      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"

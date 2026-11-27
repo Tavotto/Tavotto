@@ -243,3 +243,32 @@ def test_conflicting_font_lists_all_stay_available_for_confirmation():
     out = fold_mod.fold(bundle)
     assert out["rules"] == {} and out["sources"] == {}
     assert [r["value"] for r in out["confirm"]] == [["Helvetica"], ["Arial"]]
+
+
+def test_folded_source_carries_the_fact_id_and_src_is_unchanged():
+    """ADR 0213：期刊线索用 `v2:<fact id>`；`src` 的值（带第二个冒号）不能被改，别处拿它当身份键。"""
+    out = _case("dpi-min-folds")
+    ((sid, src),) = out["sources"].items()
+    assert out["rules"]["min_raster_dpi"]["src"] == sid and sid == "v2:s1:journal"
+    assert src["fact_id"] == "a"
+    cat = {
+        "schema": journals.SCHEMA,
+        "catalog_rev": 1,
+        "publishers": {"p": {"label": "P"}},
+        "journals": {
+            "j": {"label": "J", "publisher": "p", "sources": out["sources"], "rules": out["rules"]}
+        },
+    }
+    assert journals.journal_sources("j", cat)["min_raster_dpi"]["fact_id"] == "a"
+    from tavotto.engine import contactsend
+
+    head = contactsend.clean_journal(
+        {"type": "wrong", "journal_id": "j", "source_id": f"v2:{src['fact_id']}"},
+        has_attachments=False,
+    )
+    assert head["source_id"] == "v2:a"
+    # 对照：折叠出的 src 本身带第二个冒号，过不了线缆正则、会被丢掉（这就是不能发 src 的原因）
+    dropped = contactsend.clean_journal(
+        {"type": "wrong", "journal_id": "j", "source_id": sid}, has_attachments=False
+    )
+    assert "source_id" not in dropped
