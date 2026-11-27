@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -1236,6 +1237,16 @@ def candidate_patches(
     return keep, {"groups": groups, "unhandled": unhandled}
 
 
+def script_revision(root: str, script: str | None) -> str:
+    """这张图脚本此刻的修订（`fingerprint` 的第一段）：读不到 = "unknown"（两次都读不到，相等）。桌面端点与 Agent 插件同一份。"""
+    from . import preparation  # 延后导入：preparation 依赖面大，方案模块不在 import 时拖进来
+
+    try:
+        return preparation._script_revision(root, script) or ""
+    except Exception:  # noqa: BLE001 - 读不到修订 = 两次都读不到，相等
+        return "unknown"
+
+
 def fingerprint(script_revision: str, patches: object) -> str:
     """方案的基线指纹：脚本修订（现成的 `preparation._script_revision`）+ 规范化的 override 列表。同一份图同一份改动 = 同一个指纹。"""
     h = hashlib.sha256()
@@ -1359,6 +1370,83 @@ def apply_groups(base: list, groups: list[dict], keys: object) -> list[dict]:
         if g["key"] in chosen:
             out.extend(ch["patch"] for ch in g["changes"])
     return patchspec.canonicalize(out)
+
+
+#: 方案的前后两张图的宽（像素）：桌面端点与 Agent 插件同一份
+SNAPSHOT_WIDTH = 1600
+
+
+def snapshot_of(resp: object) -> tuple[bytes, dict]:
+    """worker `preview_png_snapshot` 的回包 → `(png 字节, manifest)`；坏了抛 `PlanFailure(change_plan_render_failed)`。"""
+    try:
+        png = base64.b64decode(resp["png"], validate=True)  # type: ignore[index]
+        manifest = resp["manifest"]  # type: ignore[index]
+    except (KeyError, TypeError, ValueError):
+        raise PlanFailure("change_plan_render_failed", "snapshot") from None
+    if not png or not isinstance(manifest, dict) or not isinstance(manifest.get("elements"), list):
+        raise PlanFailure("change_plan_render_failed", "snapshot")
+    return png, manifest
+
+
+def warned(resp: dict) -> set[str]:
+    """一次渲染回包里的 warning（可比较的字符串集合）：候选比 B0 多出来的 = 这份修改引入的。"""
+    return {json.dumps(w, sort_keys=True, default=str) for w in (resp.get("warnings") or [])}
+
+
+def realize(
+    proposal: dict,
+    cand: list,
+    *,
+    base: list,
+    start: list,
+    before_png: bytes,
+    start_png: bytes,
+    before_man: dict,
+    start_man: dict,
+    override: Callable[[list], dict],
+    snapshot: Callable[[list], tuple[bytes, dict]],
+    revised: bool = False,
+    on_render: Callable[[], None] | None = None,
+) -> tuple[list[dict], list[dict], bytes]:
+    """候选 override → 真正生效的组 / 未处理 / 修改后的图（桌面端点与 Agent 插件 `suggest_plan` 共用这一份，ADR 0214 第 3 期）。
+
+    `override(patches)` 在热 worker 上应用一份全量列表、回渲染回包（带 `warnings` / `manifest`）；`snapshot(patches)` 出 `(png, manifest)`。
+    候选比 B0 多出 warning → `PlanFailure(change_plan_render_failed)`；改完有元素新探出图幅时用 `make_room` 腾边距（提议里自己改了
+    `position` 的不替它改）。`revised`（续改）且候选与起点相同 = 不重渲染。第一次碰热 worker 前调 `on_render`（调用方据此记「要重放」）。"""
+    if change_count(proposal) == 0:
+        return [], proposal["unhandled"], before_png
+    if revised and cand == start:
+        groups, unhandled = effective_changes(before_man, start_man, proposal)
+        return attach_patches(groups, cand), unhandled, start_png
+    if on_render is not None:
+        on_render()
+    base_warned = warned(override(base))  # 基线：B0 自己本来就有的 warning
+    cand_resp = override(cand)
+    after_png, after_man = snapshot(cand)
+    if warned(cand_resp) - base_warned:
+        raise PlanFailure("change_plan_render_failed", "warning")
+    groups, unhandled = effective_changes(before_man, after_man, proposal)
+    groups = attach_patches(groups, cand)
+    # 改完有元素新探出图幅（对数轴刻度变宽把纵轴标题挤出去之类）：用现成的外边距重排腾地方，补出的 position 并进造成出界的那些组。
+    # 提议自己提了 position 的（用户的意思在排版上）不替它改；补不下 / 没进步 / 有新 warning = 照常出卡
+    if not any(
+        c["prop"] == "position" and not c.get("auto")
+        for g in proposal["groups"]
+        for c in g["changes"]
+    ):
+
+        def room_render(patches: list):
+            resp = override(patches)
+            return None if warned(resp) - base_warned else resp.get("manifest")
+
+        room = make_room(before_man, after_man, cand, base, room_render)
+        if room is not None:
+            cand = room.candidate
+            after_png, after_man = snapshot(cand)
+            groups, unhandled = effective_changes(before_man, after_man, proposal)
+            groups = attach_patches(groups, cand)
+            groups = attach_room(groups, room, before_man, after_man)
+    return groups, unhandled, after_png
 
 
 # --------------------------------------------------------------------------- 改完之后元素出图幅：自动腾边距（维护者 2026-11-26）
@@ -1629,6 +1717,90 @@ def add_todo_rows(prev: object, text: object, target: str) -> tuple[list[dict], 
     if n > MAX_TODOS:
         return None
     return [{"id": f"a{n}", "anchor": {"kind": "overall"}, "text": clean}], n
+
+
+#: Agent 插件交进来的建议（`tavotto_suggest_plan`，ADR 0214 第 3 期）：每条待办的修改条数上限与助手来源同一份
+MAX_HOST_USER_REQUEST_CHARS = 2_000
+
+
+def host_proposal(
+    todos: object, manifest: object, user_request: object = None
+) -> tuple[dict, list[dict]]:
+    """宿主 Agent（Codex / Claude Code）自己想好的建议 → 与方案模型同一份校验之后的提议 + 意见原文（ADR 0214 §五）。
+
+    `todos`：`[{label, why?, kind: figure|script, changes?: [{gid, prop, value}]}]`，1..`MAX_TODOS` 条，顺序 = 优先级。
+    第 i 条记作意见 `a{i}`；`figure` 待办的 `changes` 进同一 `comment_id` 的组，`script` 待办记一条 `needs_script`（不带修改：脚本由宿主
+    自己在用户确认后改）。之后**原样交给 `validate_proposal`**——藏数据的坐标范围、未授权的图幅、连续曲线逐点加标记、Unicode 上下标，
+    与改图助手同一套守卫，不另写一份。`user_request`（用户的原话，可省）顶替助手来源的指令判「用户提没提尺寸」；没给就用各条待办的标签。
+    整体不合格（不是列表 / 空 / 超条数）抛 `ValueError`；逐条不合格的照 `validate_proposal` 落进 `unhandled`。"""
+    if not isinstance(todos, list) or not todos or len(todos) > MAX_TODOS:
+        raise ValueError("todos")
+    obj: dict = {"intent": "todos", "todos": [], "groups": [], "unhandled": []}
+    for i, t in enumerate(todos, 1):
+        if not isinstance(t, dict):
+            raise ValueError("todos")
+        cid = f"a{i}"
+        item = {k: t[k] for k in ("label", "why", "kind") if k in t}
+        obj["todos"].append({"comment_id": cid, **item})
+        if t.get("kind") == "script":
+            obj["unhandled"].append({"comment_id": cid, "reason": "needs_script"})
+        else:
+            changes = t.get("changes")
+            obj["groups"].append(
+                {"comment_id": cid, "changes": changes if isinstance(changes, list) else []}
+            )
+    if isinstance(user_request, str) and user_request.strip():
+        instruction = _CONTROL.sub(" ", user_request)[:MAX_HOST_USER_REQUEST_CHARS]
+    else:
+        instruction = "\n".join(str(t.get("label") or "") for t in todos)
+    ids = {f"a{i}" for i in range(1, len(todos) + 1)}
+    proposal = validate_proposal(
+        obj,
+        manifest,
+        comment_ids=ids,
+        max_per_group=MAX_ASSISTANT_CHANGES_PER_GROUP,
+        advice=True,
+        intent_hint="todos",
+        instruction=instruction,
+    )
+    comments = with_todo_comments([], proposal.get("todos"))
+    return proposal, comments
+
+
+def host_todo_results(plan: dict, todos: list) -> list[dict]:
+    """交进来的每条建议落成了什么（按交进来的顺序）：`{index, key?, label, kind, ok, reason?}`。
+    `ok` = 卡上有这条待办（图内的组真的有效果 / 脚本待办记下了）；否则 `reason` 取它的未处理原因（没有就 `no_effect`）。"""
+    group_cid = {g["key"]: g["comment_id"] for g in plan.get("groups") or []}
+    by_cid: dict[str, dict] = {}
+    for t in plan.get("todos") or []:
+        cid = group_cid.get(t.get("group_key")) if t["kind"] == "figure" else t.get("comment_id")
+        if isinstance(cid, str):
+            by_cid[cid] = t
+    reasons: dict[str, str] = {}
+    for u in plan.get("unhandled") or []:
+        if u.get("reason") != "needs_script":
+            reasons.setdefault(u["comment_id"], u["reason"])
+    out: list[dict] = []
+    for i, raw in enumerate(todos, 1):
+        cid = f"a{i}"
+        t = by_cid.get(cid)
+        if t is not None:
+            out.append(
+                {"index": i, "key": t["key"], "label": t["label"], "kind": t["kind"], "ok": True}
+            )
+            continue
+        out.append(
+            {
+                "index": i,
+                "label": _clip(raw.get("label"), MAX_TODO_LABEL_CHARS)
+                if isinstance(raw.get("label"), str)
+                else "",
+                "kind": raw.get("kind") if raw.get("kind") in TODO_KINDS else "figure",
+                "ok": False,
+                "reason": reasons.get(cid, "no_effect"),
+            }
+        )
+    return out
 
 
 def build_plan(

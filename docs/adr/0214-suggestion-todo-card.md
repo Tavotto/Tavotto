@@ -120,3 +120,13 @@ plan += {
   `hides_data`（坐标范围会藏掉数据）、`size_locked`（用户没提尺寸却改图幅；改成规范栏宽算合规修正、放行）、`dense_curve`（连续曲线逐点加标记）；
   只改宽时按规范比例或原比例补高（用户自己给了尺寸的照他的）；文字里的 Unicode 上下标落图前换成 mathtext（字体缺字形会回退）。
 - 「为什么」与做什么各限一行能放下的字数；脚本待办交给脚本 Agent 的是待办自己那句话、不写条目编号、不编数值。
+
+## 修订 2026-11-28：第 3 期拆成两个 PR，插件工具先行
+
+- **3a（插件工具，宿主自己问用户）**：`tavotto_suggest_plan({session_id, todos, user_request?})` / `tavotto_suggest_apply({session_id, plan_id, keys})` /
+  `tavotto_suggest_status({session_id, plan_id})`。比 §五 多带 `session_id`：插件的图在 MCP 会话里，方案按会话认（别的会话拿不到）。
+  宿主的建议与方案模型的输出走**同一条流水线**：把桌面端点里「候选 → 生效的组 → 修改后的图」那段搬进引擎（`changeplan.realize`），
+  端点与插件都调它；守卫（`validate_proposal`）同一份，`user_request` 顶替助手来源的用户原话判「提没提尺寸」。
+  图内待办写进会话（B0 ⊕ 勾着的组），脚本待办原样交回宿主。出方案之后图变了（脚本修订或会话 override）拒绝写入。
+- **3b（Tavotto 窗口开着这张图时出同一张卡）**：方案已存进与桌面同一个方案目录（同一把项目 id）、带 `agent.session`，3b 让助手面板认出它、
+  用户在桌面勾选应用后由 `suggest_status` 告诉宿主。UI 先过 agy、给维护者看过再开 PR。

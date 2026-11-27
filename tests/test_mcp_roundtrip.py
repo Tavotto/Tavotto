@@ -796,3 +796,56 @@ def test_open_and_apply_latency_budget(client, project):
     assert not body["timings"].get("script_build_ms"), (
         "热 apply 重跑了脚本 build——稳定产物被重复渲染"
     )
+
+
+def test_suggest_plan_writes_nothing_and_apply_replays(client, project):
+    """建议待办（ADR 0214 第 3 期）：出方案在热 worker 上试渲染候选后放回会话那一份——之后热态 == 从零重放、patches 没变；
+    写入只写勾着的图内待办，之后仍然热态 == 重放。回给宿主的位图有界。"""
+    opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
+    sid = opened["session_id"]
+    title = _gid(opened["manifest"], "title")
+    before = client.tool("tavotto_session_state", {"session_id": sid})
+    raw = client.call(
+        "tools/call",
+        {
+            "name": "tavotto_suggest_plan",
+            "arguments": {
+                "session_id": sid,
+                "todos": [
+                    {
+                        "label": "标题字号放大",
+                        "kind": "figure",
+                        "changes": [{"gid": title, "prop": "fontsize", "value": 14.0}],
+                    },
+                    {"label": "加误差线（SD）", "kind": "script"},
+                ],
+            },
+        },
+    )["result"]
+    assert not raw.get("isError"), raw.get("structuredContent")
+    plan = raw["structuredContent"]
+    assert [r["ok"] for r in plan["results"]] == [True, True], json.dumps(
+        plan["results"], ensure_ascii=False
+    )
+    image = next(c for c in raw["content"] if c["type"] == "image")
+    assert len(image["data"]) < 400_000  # 900 px 宽的 PNG，进宿主上下文
+    after = client.tool("tavotto_session_state", {"session_id": sid})
+    assert after["patch_hash"] == before["patch_hash"]
+    verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
+    assert verdict["ok"], json.dumps(verdict["divergence"][:8], ensure_ascii=False)
+    done = client.tool(
+        "tavotto_suggest_apply",
+        {"session_id": sid, "plan_id": plan["plan_id"], "keys": [t["key"] for t in plan["todos"]]},
+    )
+    assert done["applied"] and done["script_todos"]
+    state = client.tool("tavotto_session_state", {"session_id": sid})
+    font = next(
+        f["value"]
+        for el in state["manifest"]["elements"]
+        if el["gid"] == title
+        for f in el["editable"]
+        if f["prop"] == "fontsize"
+    )
+    assert font == 14.0
+    verdict = client.tool("tavotto_verify_replay", {"session_id": sid})
+    assert verdict["ok"], json.dumps(verdict["divergence"][:8], ensure_ascii=False)
