@@ -17,9 +17,9 @@ order: 66
   回信与「我的来信」与桌面「这条不对」同一份本机记录。桥只翻译，`contactsend` 是**可选引擎模块**（只经 `_optional_engine`）。
 - **先问再发（照 ADR 0205 的 `explicit_confirm`）**：不带有效确认的调用**不联网**（不调 `start`、不碰 `diagsend._send`），回
   `status: needs_confirmation` / `code: journal_report_confirmation_required`（登记在 `usage._NEEDS_INPUT`）、`will_send`
-  （刊、规则键、目录现值、问题类型、链接、正文字数与前 200 字——显示的是 `clean_journal` 之后真会发出去的那份）、`confirm_token`
+  （刊、规则键、目录现值、问题类型、链接、正文字数与前 200 字——显示的是 `clean_journal` 之后真会发出去的那份）、`send_token`
   与 `next = ask_user(…, ["发送…", "先不发"])`。服务端自己绝不代填确认。
-- **令牌绑内容**：`confirm_token` = 净化后的头 + 正文的摘要。第二次调用必须同时带 `explicit_confirm=true` 与第一次给的令牌，对不上
+- **令牌绑内容**：`send_token` = 净化后的头 + 正文的摘要。第二次调用必须同时带 `explicit_confirm=true` 与第一次给的令牌，对不上
   （内容变了、没带令牌）一律回预览，对不上而带了旧令牌时加 `token_stale: true`。
 - **不收数值、不信任 Agent 的目录数据**：schema 里没有 value / current / catalog；`current`（目录里那一条的序列化值，≤200 字）、
   出处 id、v1 / v2 `catalog_rev` 都由工具读本机目录（`journalremote.load_cached`，不联网；v2 读 `journalfacts_remote.cached_bundle` 折叠结果）。

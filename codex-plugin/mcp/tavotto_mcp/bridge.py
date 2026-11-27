@@ -6240,7 +6240,7 @@ def review_resolve(session_id: str, *, comment_id: object, resolved: object = Tr
 # Agent 发现投稿须知和期刊目录不一致时，替用户提交一条 `kind=journal` 的线索：与界面上「这条不对」/「没有这本刊」
 # 同一条通道（`engine/contactsend.py` 的发送管线与 `clean_journal` 校验），不写第二份网络代码。
 # 两步确认照 ADR 0205：第一次零网络、只回「将要发送的内容」；第二次带 `explicit_confirm=true` 与第一次给的
-# `confirm_token`（内容摘要）才真正发送，内容变了令牌失效。**不收数值**：用户 / Agent 只给证据，不填值；
+# `send_token`（内容摘要）才真正发送，内容变了令牌失效。**不收数值**：用户 / Agent 只给证据，不填值；
 # `current` 与 `catalog` 版本都由本机目录取，不信任 Agent 传入。
 JOURNAL_REPORT_DISABLED = "journal_report_disabled"
 JOURNAL_REPORT_TYPES = ("wrong", "missing", "editor")
@@ -6393,11 +6393,11 @@ def report_journal_issue(
     body: object = None,
     query: object = None,
     explicit_confirm: bool = False,
-    confirm_token: object = None,
+    send_token: object = None,
 ) -> dict:
     """`tavotto_report_journal_issue`（ADR 0213 三期）：替用户提交一条期刊线索。
 
-    **不带有效 `explicit_confirm` + `confirm_token` 不联网**：只回「将要发送的内容」摘要与令牌（`needs_confirmation`）。
+    **不带有效 `explicit_confirm` + `send_token` 不联网**：只回「将要发送的内容」摘要与令牌（`needs_confirmation`）。
     带了才走 `contactsend.start`（与界面同一条流程、同一份「我的来信」记录），同步等到结束。"""
     global _JOURNAL_REPORT_PENDING
     cs, jm, remote = require_journal_report_engine()
@@ -6506,7 +6506,7 @@ def report_journal_issue(
         "ok": True,
         "status": "needs_confirmation",
         "code": "journal_report_confirmation_required",
-        "confirm_token": token,
+        "send_token": token,
         "will_send": {
             **{
                 k: shown[k]
@@ -6530,9 +6530,9 @@ def report_journal_issue(
         },
         "audience": "发给 Tavotto 作者（与应用里的「联系作者」同一通道）；不含项目、脚本、数据与路径。",
     }
-    if explicit_confirm and confirm_token and confirm_token != token:
+    if explicit_confirm and send_token and send_token != token:
         preview["token_stale"] = True  # 内容变了：用户同意的是上一份，要重新问
-    if not explicit_confirm or confirm_token != token:
+    if not explicit_confirm or send_token != token:
         return preview
 
     done = _JOURNAL_REPORT_SENT.get(token)
@@ -6566,7 +6566,7 @@ def report_journal_issue(
             break
         _journal_report_sleep(JOURNAL_REPORT_POLL_S)
     if st.get("state") in ("sending", "cancelling"):
-        return {"ok": True, "status": "in_progress", "confirm_token": token}
+        return {"ok": True, "status": "in_progress", "send_token": token}
     _JOURNAL_REPORT_PENDING = None
     cs.dismiss()
     if st.get("state") != "done":

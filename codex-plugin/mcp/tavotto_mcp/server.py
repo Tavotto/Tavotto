@@ -906,7 +906,7 @@ def _report_journal_issue_tool() -> dict:
             "type=wrong（目录某条不对）、missing（目录里没有这本刊）、editor（编辑部要求与目录不符，body 里贴编辑部原话）。"
             "只给证据（原文链接 url、问题描述 body），**不要给数值**；目录现值、出处与版本由本机目录取，rule_key / source_id 必须取自目录"
             "（tavotto_get_journal_facts / 出处卡），不要编。**永远先问用户**：第一次调用不带 explicit_confirm，只回将要发送的内容摘要、"
-            "confirm_token 与一个 ask_user 的 next，**不联网**；用户明确同意后，带 explicit_confirm=true 和同一个 confirm_token 再调一次才真正发送"
+            "send_token 与一个 ask_user 的 next，**不联网**；用户明确同意后，带 explicit_confirm=true 和同一个 send_token 再调一次才真正发送"
             "（内容改过令牌就失效，要重新问）。成功回编号；作者会核对出版社原文，结论回信到应用的「我的来信」。"
         ),
         "inputSchema": {
@@ -943,9 +943,9 @@ def _report_journal_issue_tool() -> dict:
                     "type": "boolean",
                     "description": "用户明确说「发送」后才置 true；服务端绝不代填，不带它只预览、不联网。",
                 },
-                "confirm_token": {
+                "send_token": {
                     "type": "string",
-                    "description": "第一次调用回包里的 confirm_token；与 explicit_confirm 一起带，内容变了就对不上。",
+                    "description": "第一次调用回包里的 send_token；与 explicit_confirm 一起带，内容变了就对不上。",
                 },
             },
             "required": ["type"],
@@ -2038,7 +2038,7 @@ def _call_report_journal_issue(args: dict) -> dict:
         body=args.get("body"),
         query=args.get("query"),
         explicit_confirm=bool(args.get("explicit_confirm")),
-        confirm_token=args.get("confirm_token"),
+        send_token=args.get("send_token"),
     )
     if out["status"] == "needs_confirmation":
         out["next"] = nextstep.journal_report_confirm(out, args)

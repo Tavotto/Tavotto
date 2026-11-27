@@ -127,7 +127,7 @@ def test_tool_is_listed_only_when_all_three_switches_are_on(env, monkeypatch):
 
 def test_disabled_call_refuses_with_a_stable_code_and_sends_nothing(env, monkeypatch):
     monkeypatch.setenv("TAVOTTO_NO_JOURNAL_SYNC", "1")
-    res = _call({**WRONG, "explicit_confirm": True, "confirm_token": "x"})
+    res = _call({**WRONG, "explicit_confirm": True, "send_token": "x"})
     assert res["isError"] is True and _body(res)["code"] == "journal_report_disabled"
     assert env.starts == [] and env.sent == []
 
@@ -156,7 +156,7 @@ def test_first_call_is_a_preview_with_zero_network_and_asks_the_user(env):
     assert w["issue"] == "wrong_value" and w["catalog"] == {"v1": env.catalog["catalog_rev"]}
     assert w["body_preview"].startswith("编辑部退稿信") and w["body_chars"] == len(WRONG["body"])
     assert out["next"]["action"] == "ask_user"
-    assert out["confirm_token"] in " ".join(out["next"]["options"])
+    assert out["send_token"] in " ".join(out["next"]["options"])
     assert "没有任何内容离开本机" in res["content"][0]["text"]
 
 
@@ -166,8 +166,8 @@ def test_confirm_flag_without_the_token_does_not_send(env):
 
 
 def test_confirmed_call_sends_once_with_the_local_head_and_returns_the_id(env):
-    token = _body(_call(WRONG))["confirm_token"]
-    res = _call({**WRONG, "explicit_confirm": True, "confirm_token": token})
+    token = _body(_call(WRONG))["send_token"]
+    res = _call({**WRONG, "explicit_confirm": True, "send_token": token})
     out = _body(res)
     assert out["status"] == "sent" and out["message_id"] == "TVM-ABCD"
     assert "回信" in out["note"] and "核对出版社原文" in out["note"]
@@ -177,21 +177,21 @@ def test_confirmed_call_sends_once_with_the_local_head_and_returns_the_id(env):
     assert head["catalog"] == {"v1": env.catalog["catalog_rev"]}
     assert env.starts[0]["body"] == WRONG["body"]
     # 同一份再确认一次：回放结论，不再发第二封
-    again = _body(_call({**WRONG, "explicit_confirm": True, "confirm_token": token}))
+    again = _body(_call({**WRONG, "explicit_confirm": True, "send_token": token}))
     assert again["already_sent"] is True and len(env.starts) == 1
 
 
 def test_changed_content_invalidates_the_token(env):
-    token = _body(_call(WRONG))["confirm_token"]
+    token = _body(_call(WRONG))["send_token"]
     out = _body(
-        _call({**WRONG, "body": "换了一句话", "explicit_confirm": True, "confirm_token": token})
+        _call({**WRONG, "body": "换了一句话", "explicit_confirm": True, "send_token": token})
     )
     assert out["status"] == "needs_confirmation" and out["token_stale"] is True
-    assert out["confirm_token"] != token and env.starts == []
+    assert out["send_token"] != token and env.starts == []
 
 
 def test_failure_returns_the_contact_failure_code_without_retry(env):
-    token = _body(_call(WRONG))["confirm_token"]
+    token = _body(_call(WRONG))["send_token"]
     env.start_orig = env.start
 
     def fail_start(meta, files):
@@ -206,7 +206,7 @@ def test_failure_returns_the_contact_failure_code_without_retry(env):
 
     contactsend.start = fail_start  # monkeypatch 的 teardown 会还原 env 里装的那个
     try:
-        res = _call({**WRONG, "explicit_confirm": True, "confirm_token": token})
+        res = _call({**WRONG, "explicit_confirm": True, "send_token": token})
     finally:
         contactsend.start = env.start_orig
     body = _body(res)
@@ -222,11 +222,11 @@ def test_failure_returns_the_contact_failure_code_without_retry(env):
 def test_slow_send_returns_in_progress_and_the_retry_does_not_resend(env, monkeypatch):
     monkeypatch.setattr(bridge, "JOURNAL_REPORT_WAIT_S", -1.0)
     env.finish_after = 1
-    token = _body(_call(WRONG))["confirm_token"]
-    first = _body(_call({**WRONG, "explicit_confirm": True, "confirm_token": token}))
+    token = _body(_call(WRONG))["send_token"]
+    first = _body(_call({**WRONG, "explicit_confirm": True, "send_token": token}))
     assert first["status"] == "in_progress" and len(env.starts) == 1
     monkeypatch.setattr(bridge, "JOURNAL_REPORT_WAIT_S", 5.0)
-    second = _body(_call({**WRONG, "explicit_confirm": True, "confirm_token": token}))
+    second = _body(_call({**WRONG, "explicit_confirm": True, "send_token": token}))
     assert second["status"] == "sent" and len(env.starts) == 1
 
 

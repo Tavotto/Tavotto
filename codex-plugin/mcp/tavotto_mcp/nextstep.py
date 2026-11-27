@@ -556,14 +556,14 @@ def share_review_confirm(out: dict, args: dict) -> dict:
 
 
 def journal_report_confirm(out: dict, args: dict) -> dict:
-    """`tavotto_report_journal_issue` 不带确认时的 `next`：问用户；同意后才带 `explicit_confirm=true` 与同一个 `confirm_token` 再调。"""
+    """`tavotto_report_journal_issue` 不带确认时的 `next`：问用户；同意后才带 `explicit_confirm=true` 与同一个 `send_token` 再调。"""
     w = out.get("will_send") or {}
     what = w.get("journal_label") or w.get("query") or "这本刊"
     return ask_user(
         f"要把「{what}」的期刊线索发给 Tavotto 作者吗？只发上面列的内容，不含你的项目、脚本和数据；作者核对后会回信。",
         [
             "发送（之后调 tavotto_report_journal_issue，同样的参数，"
-            f"explicit_confirm=true，confirm_token={out.get('confirm_token')}）",
+            f"explicit_confirm=true，send_token={out.get('send_token')}）",
             "先不发",
         ],
     )

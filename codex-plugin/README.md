@@ -298,7 +298,7 @@ PDF/SVG/EPS 是真矢量（EPS 不支持透明度），PNG/TIFF 按给定 dpi �
 与应用里「这条不对」「没有这本刊」同一条「联系作者」通道（回信进应用的「我的来信」）。`type` 取 `wrong`（目录某条不对：`journal_id` + `rule_key`，
 可带 `issue`）/ `missing`（目录里没有这本刊：`query` 或 `url`）/ `editor`（编辑部要求与目录不符：`journal_id` + `body` 里贴原话）。
 只给证据（`url` 原文链接、`body` 描述），**不收数值**；目录现值、出处与目录版本由本机目录取。**永远先问用户**：第一次调用不联网，只回将要发送的内容、
-`confirm_token` 与一句 `ask_user`；用户明确同意后带 `explicit_confirm: true` 和同一个 `confirm_token` 再调一次（内容改过令牌就失效）。
+`send_token` 与一句 `ask_user`；用户明确同意后带 `explicit_confirm: true` 和同一个 `send_token` 再调一次（内容改过令牌就失效）。
 成功回编号（TVM-…），作者核对出版社原文后回信；失败回「联系作者」的失败码，不重试。需要期刊库、「联系作者」开着，且没有
 `TAVOTTO_NO_CONTACT=1` / `TAVOTTO_NO_JOURNAL_SYNC=1`，否则工具不出现。
 
