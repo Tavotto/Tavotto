@@ -13305,14 +13305,40 @@ def _vector_measure_panel(panel: dict, requests: list) -> dict:
     }
 
 
-def _vector_measure_key(root: str, panel: dict, requests: list) -> str | None:
-    """量的缓存键：项目、子图文件、覆盖项哈希、脚本修订、数据点请求。脚本改了修订就变，旧条目自然失效；取不到修订 = 不缓存。"""
+#: 每个（项目，脚本）最近一次量的时候项目文件的指纹：与这次对不上 = 脚本读的数据可能变了而热会话还是旧的，量之前先让这张图的会话过期重建
+_MEASURED_INPUTS: dict[tuple[str, str], str] = {}
+
+
+def _vector_project_digest(root: str) -> str | None:
+    """项目文件的有界指纹（`ai_figure_edit.project_fingerprint`：大小 + mtime + 小文件内容哈希；`tavottofile/` 与 Python 环境目录不计）的摘要。
+
+    **为什么要它**：缓存键里只有脚本修订时，脚本没变、数据文件变了，旧的量会一直命中（最长 30 分钟），锚点指向旧峰。
+    项目里没有「这张图读了哪些文件」的清单（`inputs_read` 只在转换沙盒里有，声明的输入只覆盖用户声明过的），所以用整个项目的指纹——
+    宁可多重量，不可量错。超出文件数上限 / 读不了 = `None`：这次不缓存、也不据此让会话过期。"""
+    try:
+        fp = engine_ai_figure_edit.project_fingerprint(Path(root))
+    except OSError:
+        return None
+    if fp.get("status") != "ok":
+        return None
+    return hashlib.sha256(
+        json.dumps(fp["files"], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()[:24]
+
+
+def _vector_measure_script(panel: dict) -> str | None:
     fid = panel.get("fileId")
     if not isinstance(fid, str) or not fid:
         return None
     _stem, info = _disk_panel_rel(fid)
     script = (info or {}).get("script")
-    if not script:
+    return script if isinstance(script, str) and script else None
+
+
+def _vector_measure_key(root: str, panel: dict, requests: list, inputs: str | None) -> str | None:
+    """量的缓存键：项目、子图文件、覆盖项哈希、脚本修订、项目文件指纹、数据点请求。任何一样变了旧条目自然失效；取不到修订 / 指纹 = 不缓存。"""
+    script = _vector_measure_script(panel)
+    if not script or inputs is None:
         return None
     rev = engine_preparation._script_revision(root, script)  # noqa: SLF001
     if not rev:
@@ -13320,25 +13346,45 @@ def _vector_measure_key(root: str, panel: dict, requests: list) -> str | None:
     return json.dumps(
         [
             root,
-            fid,
+            panel["fileId"],
             engine_vectormeasure.overrides_digest(panel.get("overrides") or []),
             rev,
+            inputs,
             engine_vectormeasure.overrides_digest(requests),
         ]
     )
 
 
 def _vector_measure_for(ctx):
-    """一次方案用的 `measure`：桌面量法 + 进程内缓存 + 每图 20 s / 总共 60 s 的时限（超了退外框，码 `measure_timeout` / `measure_budget`）。"""
+    """一次方案用的 `measure`：桌面量法 + 进程内缓存 + 每图 20 s / 总共 60 s 的时限（超了退外框，码 `measure_timeout` / `measure_budget`）。
+
+    项目文件指纹每次方案只算一次（懒算、各子图共用）。指纹与上一次量这张图的时候不同，量之前先 `pool.invalidate` 这张图的 safe 会话
+    （与「重新构建」同一个原语：只让会话过期，不在这里跑脚本；下一次导出惰性冷 build），否则热会话里还是旧数据，锚点会指向旧峰。"""
     root = str(ctx.path)
+    memo: list[str | None] = []
+    memo_lock = threading.Lock()
+
+    def inputs() -> str | None:
+        with memo_lock:
+            if not memo:
+                memo.append(_vector_project_digest(root))
+            return memo[0]
 
     def raw(panel: dict, requests: list) -> dict:
         with bound_project(ctx):  # 临时线程没有请求上下文
-            return _vector_measure_panel(panel, requests)
+            digest, script = inputs(), _vector_measure_script(panel)
+            if digest is not None and script:
+                prev = _MEASURED_INPUTS.get((root, script))
+                if prev is not None and prev != digest:
+                    engine_pool.invalidate(script, root, _disk_panel_run(script), only_run=True)
+            out = _vector_measure_panel(panel, requests)
+            if digest is not None and script:
+                _MEASURED_INPUTS[(root, script)] = digest
+            return out
 
     def key_of(panel: dict, requests: list) -> str | None:
         with bound_project(ctx):
-            return _vector_measure_key(root, panel, requests)
+            return _vector_measure_key(root, panel, requests, inputs())
 
     return engine_vectormeasure.bounded(raw, key_of=key_of)
 

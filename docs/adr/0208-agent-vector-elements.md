@@ -519,7 +519,7 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
 - **在哪里量**：后台线程里，`with bound_project(ctx)` 之下（`_change_plan_thread` 同一个做法）直接取桌面引擎会话——不必在请求线程里先量。`app._vector_measure_panel`：
   冻结快照 / runtime 素材 / 没有 `fileId` 的快照不量，其余 `_engine_worker(fileId, safe_only=True)`（native 会话不碰）+ `export(stem, overrides, 私有临时目录/m.pdf, "pdf", 600, data_points=…)`，
   回与插件同形的 `{draw_manifest, data_points}`。输入只有子图的 `fileId` 与 `overrides`（**快照里没存盘的覆盖项**，所以量的就是用户眼前的图）。
-- **缓存与时限**（`engine/vectormeasure.py`，纯标准库）：缓存键 = 项目、`fileId`、覆盖项哈希、脚本修订、数据点请求；进程内、64 条、30 分钟、不落盘。每张图 20 s、一次方案总共 60 s；
+- **缓存与时限**（`engine/vectormeasure.py`，纯标准库）：缓存键 = 项目、`fileId`、覆盖项哈希、脚本修订、**项目文件指纹**、数据点请求；进程内、64 条、30 分钟、不落盘。每张图 20 s、一次方案总共 60 s；
   `export` 不能中途取消，所以每次量交给临时线程、只等到时限，超时的结果丢弃。失败一律落成稳定码退到外框：
   `composed_from_snapshot` / `runtime_panel` / `no_script` / `native_session` / `memory_snapshot`（快照没带量的输入）/ `export_failed` / `bad_overrides` / `too_many_overrides` / `measure_timeout` / `measure_budget` / `measure_failed`。
 - **两次量 + 指纹**：出提示前量一遍（无数据点请求）→ `vectorplan.measure_scene`（`build_scene` 的瘦身版：去掉 `annotations`，每张子图元素最多 40 个〔刻度文字先让位〕、空白区最多 6 块）放进 `<scene>`；
@@ -527,3 +527,8 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
 - **结果多两项**：`unmeasured: {子图短号: 码}`（3c 显示一行说明）与 `scene_fingerprint`；任务阶段多一个 `measure`（「正在量图」）。补丁模式（逐条勾选重算）同样量，子图带 `fileId` 才量，命中缓存时不导出。
 - 提示：`<scene>` 里 `panels[ref].measured` 说明哪张子图可以用 `data` / `element` 锚点（`scene.panels[].axes[].gid`、`elements[].gid` 就是锚点要写的 gid）。
 - 前端还没把 `fileId` / `overrides` / 不可量标记放进快照（3c）；旧快照走 `memory_snapshot`，行为与 3a 相同。
+- **数据文件变了、脚本没变**（维护者 2026-11-28 定的正确性要求）：项目里没有「这张图读了哪些文件」的通用清单（`inputs_read` 只在转换沙盒里有，声明的输入只覆盖用户声明过的），
+  所以键里放整个项目的有界指纹（`ai_figure_edit.project_fingerprint`：大小 + mtime + 小文件内容哈希；一次方案只算一次；超出文件数上限 / 读不了 = 不缓存）。
+  另外，桌面今天只有**脚本**变了才让热会话过期（`project_watch`），数据变了热会话还是旧图——光换缓存键，重量一次拿到的还是旧数据（实测差 29 mm）。
+  所以每个（项目，脚本）记着最近一次量时的指纹，对不上就先 `pool.invalidate(…, only_run=True)`（与「重新构建」同一个原语，只让会话过期、不在这里跑脚本）再量，锚点才跟着新数据走。
+  代价：项目里任何文件变过（不只数据）都会让这张图的 safe 会话重建一次（冷 build 一次脚本，之后照常）；用户画布上那张图下一次渲染同样是冷的。

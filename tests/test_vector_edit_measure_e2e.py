@@ -215,3 +215,134 @@ def test_the_second_plan_does_not_export_again(project, monkeypatch):
     assert first >= 1
     client.post("/api/vector-edit/plan", json=body)  # 逐条勾选后重算：命中缓存
     assert n["i"] == first
+
+
+# ------------------------------------------------------------------ 数据文件变了、脚本没变：量要跟着新数据走
+
+DATA_SCRIPT = '''\
+"""读 data.csv 的曲线（y 轴自动缩放）+ 固定在数据坐标 (10, 1.0) 的纯红点：数据变了，这个点在页面上的位置跟着变。"""
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+
+
+def main():
+    y = np.loadtxt(HERE / "data.csv")
+    fig = plt.figure(figsize=(80 / 25.4, 60 / 25.4))
+    ax = fig.add_axes([0.15, 0.15, 0.8, 0.75])
+    ax.plot(np.linspace(0, 10, len(y)), y, lw=1.0, color="0.5")
+    ax.plot([10.0], [1.0], "o", ms=3, mec="none", mfc=(1, 0, 0), zorder=10)
+    fig.savefig(HERE / "FigM.pdf")
+
+
+if __name__ == "__main__":
+    main()
+'''
+MARKER_ARROW = {
+    "kind": "arrow",
+    "name": "to_marker",
+    "from": {
+        "anchor": {"data": {"panel": "P1", "axes": "axes_0", "x": 10.0, "y": 1.0}},
+        "offset_mm": [-12, -10],
+    },
+    "to": {"anchor": {"data": {"panel": "P1", "axes": "axes_0", "x": 10.0, "y": 1.0}}},
+}
+
+
+def _run_script(root: Path) -> None:
+    proc = subprocess.run(
+        [WORKER_PY, str(root / "figm.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=root,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+
+
+@pytest.fixture
+def data_project(tmp_path, monkeypatch):
+    m.reset_projects()
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "figm.py").write_text(DATA_SCRIPT, encoding="utf-8")
+    (root / "data.csv").write_text("\n".join(["0.2", "0.5", "0.8", "1.0"]), encoding="utf-8")
+    (root / "tavotto_registry.json").write_text(json.dumps(REGISTRY), encoding="utf-8")
+    _run_script(root)
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", WORKER_PY)
+    m.open_project(str(root))
+    vectormeasure.CACHE.clear()
+    m._MEASURED_INPUTS.clear()  # noqa: SLF001
+    try:
+        yield m.app.test_client(), root
+    finally:
+        pool.shutdown_all(figures_dir=str(root), wait=True)
+        m.reset_projects()
+        project_watch.stop()
+
+
+def _plan_tip(client):
+    body = {"canvas": _canvas(_panel()), "ops": [{"op": "add", "items": [MARKER_ARROW]}]}
+    r = client.post("/api/vector-edit/plan", json=body).get_json()
+    assert r["unmeasured"] == {} and r["objects"], r
+    return _tip(next(o for o in r["objects"] if o["type"] == "arrow"))
+
+
+def _marker_on_page(root: Path):
+    cx, cy = red_marker_center_mm(root / "FigM.pdf")
+    return 10.0 + cx, 20.0 + cy
+
+
+def test_changing_the_data_file_re_measures_and_the_anchor_follows_the_new_data(data_project):
+    client, root = data_project
+    first = _plan_tip(client)
+    ex, ey = _marker_on_page(root)
+    assert abs(first[0] - ex) <= 0.005 and abs(first[1] - ey) <= 0.005
+    # 脚本没动，数据变了（y 轴范围跟着变）；用户重跑脚本后磁盘上的图是新的
+    (root / "data.csv").write_text("\n".join(["0.2", "1.5", "2.5", "3.0"]), encoding="utf-8")
+    _run_script(root)
+    nx, ny = _marker_on_page(root)
+    assert abs(ny - ey) > 1.0  # 对照：红点确实挪了
+    second = _plan_tip(client)
+    assert abs(second[0] - nx) <= 0.005 and abs(second[1] - ny) <= 0.005, (second, (nx, ny))
+
+
+def test_an_unchanged_project_keeps_hitting_the_cache(data_project, monkeypatch):
+    client, _root = data_project
+    n = {"i": 0}
+    real = m._vector_measure_panel  # noqa: SLF001
+
+    def counting(panel, requests):
+        n["i"] += 1
+        return real(panel, requests)
+
+    monkeypatch.setattr(m, "_vector_measure_panel", counting)
+    _plan_tip(client)
+    first = n["i"]
+    _plan_tip(client)
+    assert first >= 1 and n["i"] == first
+
+
+def test_without_a_trustworthy_input_fingerprint_nothing_is_cached(data_project, monkeypatch):
+    client, _root = data_project
+    monkeypatch.setattr(m, "_vector_project_digest", lambda root: None)  # 项目太大 / 读不了
+    n = {"i": 0}
+    real = m._vector_measure_panel  # noqa: SLF001
+
+    def counting(panel, requests):
+        n["i"] += 1
+        return real(panel, requests)
+
+    monkeypatch.setattr(m, "_vector_measure_panel", counting)
+    _plan_tip(client)
+    first = n["i"]
+    _plan_tip(client)
+    assert n["i"] == 2 * first  # 拿不到输入指纹的图不缓存
