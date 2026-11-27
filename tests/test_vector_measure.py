@@ -67,6 +67,7 @@ def test_a_slow_panel_times_out_to_the_frame_without_blocking_the_rest():
     assert e.value.code == "measure_timeout" and time.monotonic() - t0 < 2
     assert m({**PANEL, "fileId": "fast.pdf"}, []) == OK  # 别的图不受影响
     gate.set()
+    vm.close(m)
 
 
 def test_the_total_budget_runs_out():

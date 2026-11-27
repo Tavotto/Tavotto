@@ -185,8 +185,11 @@ def test_a_slow_measure_times_out_to_the_frame(project, monkeypatch):
     import functools
     import time
 
+    import threading
+
     client, _root = project
-    monkeypatch.setattr(m, "_vector_measure_panel", lambda panel, requests: time.sleep(3))
+    release = threading.Event()  # 可唤醒的等待：用例结束就放走在飞的那条 worker，不留到会话末尾
+    monkeypatch.setattr(m, "_vector_measure_panel", lambda panel, requests: release.wait(3))
     monkeypatch.setattr(
         m.engine_vectormeasure, "bounded", functools.partial(vectormeasure.bounded, per_panel_s=0.3)
     )
@@ -195,8 +198,14 @@ def test_a_slow_measure_times_out_to_the_frame(project, monkeypatch):
         "/api/vector-edit/plan",
         json={"canvas": _canvas(_panel()), "ops": [{"op": "add", "items": [FRAME]}]},
     ).get_json()
+    release.set()
     assert time.monotonic() - t0 < 2.5
     assert r["ok"] is True and r["unmeasured"] == {"P1": "measure_timeout"}
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and any(
+        t.name.startswith("vector-measure") and t.is_alive() for t in threading.enumerate()
+    ):
+        time.sleep(0.01)
 
 
 def test_the_second_plan_does_not_export_again(project, monkeypatch):
