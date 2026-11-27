@@ -14,15 +14,19 @@ with PALETTE_CATALOG_PATH.open(encoding="utf-8") as source:
     CMAPS = list(json.load(source)["palettes"])
 
 
+COLORBAR_ORIENTATIONS = ("vertical", "horizontal")
+COLORBAR_EXTENSIONS = ("neither", "both", "min", "max")
+
+
 def colorbar_layout_fields(orientation, extend):
     """Guide layout is independent of the data-to-color mapping."""
     fields = []
     for prop, value, options in (
-        ("orientation", orientation, ["vertical", "horizontal"]),
-        ("extend", extend, ["neither", "both", "min", "max"]),
+        ("orientation", orientation, COLORBAR_ORIENTATIONS),
+        ("extend", extend, COLORBAR_EXTENSIONS),
     ):
         if value is not None:
-            fields.append({"prop": prop, "type": "enum", "value": value, "options": options})
+            fields.append({"prop": prop, "type": "enum", "value": value, "options": list(options)})
     return fields
 
 

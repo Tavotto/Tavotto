@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import config, execspec, executionfact, nativeggplot, projectenv, runtime, scriptadjust
-from .colorscale import CMAPS, PALETTE_CATALOG_PATH
+from .colorscale import CMAPS, COLORBAR_EXTENSIONS, COLORBAR_ORIENTATIONS, PALETTE_CATALOG_PATH
 from .fixtools import cmdsandbox, trial, winappcontainer
 
 _R_AXIS_TRANSFORMS = {
@@ -403,9 +403,7 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
         )
     decorate = ()
     if sources:
-        for resource in ("ggplot_layer_geometry.R", *sorted(sources)):
-            text = nativeggplot.GGPLOT_BRIDGE.with_name(resource).read_text(encoding="utf-8")
-            shared.extend(f"  {line}" if line else "" for line in text.splitlines())
+        shared.extend(_r_helpers("ggplot_objects.R", "ggplot_layer_geometry.R", *sorted(sources)))
         decorate = (
             "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust, lookup)",
         )
@@ -576,15 +574,71 @@ def _native_tick_label_writes(
     return recipes, written
 
 
-def _r_tick_labels_block(name: str, recipes: list[str]) -> str:
-    implementation = nativeggplot.GGPLOT_BRIDGE.with_name("ggplot_tick_source.R")
+def _r_helpers(*resources: str) -> list[str]:
+    return [
+        f"  {line}" if line else ""
+        for resource in resources
+        for line in nativeggplot.GGPLOT_BRIDGE.with_name(resource)
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+
+
+def _native_colourbar_layout_writes(
+    hot: dict | None, patches: list[dict]
+) -> tuple[list[str], set[tuple[str, str]]]:
+    valid = {"orientation": COLORBAR_ORIENTATIONS, "extend": COLORBAR_EXTENSIONS}
+    edits = defaultdict(dict)
+    for patch in patches:
+        if patch["prop"] in valid:
+            edits[patch["gid"]][patch["prop"]] = patch["value"]
+    recipes = []
+    written = set()
+    for element in (hot or {}).get("elements", ()):
+        gid = element["gid"]
+        plan = element.get("source_colourbar_layout")
+        if element["role"] != "colorbar" or not plan or edits[gid] != plan["edited"]:
+            continue
+        scope = plan["scope"]
+        aesthetics, position, title = (scope[key] for key in ("aesthetics", "position", "title"))
+        if not aesthetics or any(aesthetic not in ("colour", "fill") for aesthetic in aesthetics):
+            continue
+        if position not in (None, "top", "bottom", "left", "right", "inside"):
+            continue
+        if title is not None and (not isinstance(title, str) or _r_literal(title) is None):
+            continue
+        if not edits[gid] or any(value not in valid[prop] for prop, value in edits[gid].items()):
+            continue
+        channels = "list(" + ", ".join(_r_literal(aesthetic) for aesthetic in aesthetics) + ")"
+        target = (
+            f"list(aesthetics = {channels}, position = {_r_literal(position) if position else 'NULL'}, "
+            f"title = {_r_literal(title) if title is not None else 'NULL'})"
+        )
+        fields = ", ".join(f"{prop} = {_r_literal(value)}" for prop, value in edits[gid].items())
+        recipes.append(f"list(scope = {target}, {fields})")
+        written.update((gid, prop) for prop in edits[gid])
+    return recipes, written
+
+
+def _r_colourbar_layout_block(name: str, recipes: list[str]) -> str:
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
-            *(
-                f"  {line}" if line else ""
-                for line in implementation.read_text(encoding="utf-8").splitlines()
-            ),
+            *_r_helpers("ggplot_objects.R", "ggplot_colourbar_layout.R"),
+            "  ggplot_with_colourbar_layout(plot, list(",
+            ",\n".join(f"    {recipe}" for recipe in recipes),
+            "  ))",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
+def _r_tick_labels_block(name: str, recipes: list[str]) -> str:
+    helpers = _r_helpers("ggplot_objects.R", "ggplot_tick_source.R")
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *helpers,
             "  ggplot_with_tick_labels(plot, list(",
             ",\n".join(f"    {recipe}" for recipe in recipes),
             "  ))",
@@ -766,7 +820,10 @@ def build(
     source_layers, layer_writes = _native_layer_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
     tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
-    written = coordinate_writes | theme_writes | layer_writes | colour_writes | tick_writes
+    bar_layouts, bar_writes = _native_colourbar_layout_writes(hot, patches)
+    written = (
+        coordinate_writes | theme_writes | layer_writes | colour_writes | tick_writes | bar_writes
+    )
     residual = []
     skipped = []
     for patch in patches:
@@ -836,7 +893,13 @@ def build(
             for patch in residual
         ]
     if not (
-        elements or coordinates or theme_options or source_layers or colour_scales or tick_labels
+        elements
+        or coordinates
+        or theme_options
+        or source_layers
+        or colour_scales
+        or tick_labels
+        or bar_layouts
     ):
         return AdjustedRSource(data, 0, residual, skipped)
 
@@ -863,6 +926,8 @@ def build(
         statements.append(_r_colour_mapping_block(name, colour_scales))
     if tick_labels:
         statements.append(_r_tick_labels_block(name, tick_labels))
+    if bar_layouts:
+        statements.append(_r_colourbar_layout_block(name, bar_layouts))
     if options:
         args = ",\n".join(options)
         statements.append(
@@ -876,7 +941,12 @@ def build(
         prefix += newline
     result = prefix + block.encode().replace(b"\n", newline) + b"".join(lines[position:])
     return AdjustedRSource(
-        result, len(written), residual, skipped, bool(coordinates), bool(colour_scales)
+        result,
+        len(written),
+        residual,
+        skipped,
+        bool(coordinates),
+        bool(colour_scales or bar_layouts),
     )
 
 

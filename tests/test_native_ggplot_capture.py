@@ -5974,3 +5974,162 @@ grDevices::dev.off()
         )
         assert status == 200 and restored["ok"]
         assert script.read_bytes() == (authored if faceted else original)
+
+
+@pytest.mark.parametrize("change_mapping", [False, True], ids=["layout", "with-range"])
+def test_native_r_colourbar_layout_writes_selected_guides_and_replays(
+    tmp_path, monkeypatch, change_mapping
+):
+    import test_core_v02_release_candidate as release
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    frame = (420, 280)
+    monkeypatch.setattr(release, "R_FRAME_PT", frame)
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Colourbar layout"
+    project.mkdir()
+    script = project / "Guides.R"
+    original = f"""\
+d <- expand.grid(x = 1:5, y = 1:3)
+d$colour <- d$x^2 + d$y
+d$fill <- d$x + d$y^2
+d$category <- factor(ifelse(d$y == 1L, "Early", "Late"))
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::geom_tile(ggplot2::aes(fill = fill)) +
+  ggplot2::geom_point(ggplot2::aes(colour = colour, shape = category), size = 3) +
+  ggplot2::scale_fill_gradient(name = "Primary") +
+  ggplot2::scale_colour_gradient(name = "Secondary") +
+  ggplot2::guides(fill = ggplot2::guide_colourbar(position = "bottom", reverse = TRUE),
+                  colour = ggplot2::guide_colourbar(position = "right")) +
+  ggplot2::theme_bw() + ggplot2::theme(legend.frame = ggplot2::element_rect(colour = "#804080"))
+svglite::svglite("standalone.svg", {frame[0]}/72, {frame[1]}/72)
+print(plot)
+grDevices::dev.off()
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Colourbar_layout"
+
+    def settings(scene):
+        return {
+            e["gid"]: {f["prop"]: f["value"] for f in e["editable"]}
+            for e in scene["manifest"]["elements"]
+            if e["role"] == "colorbar"
+        }
+
+    def arrow_shapes(svg):
+        return sorted(
+            node.get("points")
+            for node in ElementTree.fromstring(svg).iter("{http://www.w3.org/2000/svg}polygon")
+            if len((node.get("points") or "").split()) == 3
+        )
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        original_vector = (project / "standalone.svg").read_text(encoding="utf-8")
+        controls = {
+            e["label"]: e for e in baseline["manifest"]["elements"] if e["role"] == "colorbar"
+        }
+        assert set(controls) == {"Primary", "Secondary"}
+        edits = (
+            ("Primary", "orientation", "vertical"),
+            ("Primary", "extend", "max"),
+            ("Secondary", "orientation", "horizontal"),
+            ("Secondary", "extend", "both"),
+        )
+        if change_mapping:
+            edits += (("Primary", "vmin", 4), ("Primary", "vmax", 11))
+        patches = [
+            {
+                "gid": controls[label]["gid"],
+                "identity": controls[label]["identity"],
+                "prop": prop,
+                "value": value,
+            }
+            for label, prop, value in edits
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        expected = settings(hot)
+        for label, prop, value in edits:
+            assert expected[controls[label]["gid"]][prop] == value
+        width, height = baseline["manifest"]["size_mm"]
+        panel = {
+            **_panel("r", figure, 5, patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        document = {
+            "schema": 3,
+            "project": {"id": "r-colourbar-layout", "name": "Colourbar layout"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [panel],
+                    "guides": [],
+                },
+            ],
+        }
+        assert app.call(f"{route}?target=project", document)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Colourbar_layout")
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200 and preview["written"] == len(patches) and not preview["skipped"], (
+            preview
+        )
+        assert script.read_bytes() == original
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"], saved
+        assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
+
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    standalone = (project / "standalone.svg").read_text(encoding="utf-8")
+    # The app groups legend vectors in SVG, so compare after reopening through
+    # its normal adapter and check triangle count in the independently drawn file.
+    assert len(arrow_shapes(standalone)) == len(arrow_shapes(original_vector)) + 3
+    with sidecar_app(project, tmp_path / "fresh") as app:
+        fresh = _run_ggplot(app, script.name, rscript)
+        rebuilt = _render(app, fresh, [])
+        assert rebuilt["warnings"] == []
+        assert rebuilt["svg"] == hot["svg"]
+        assert settings(rebuilt) == expected
+        guide = next(
+            el for el in rebuilt["manifest"]["elements"] if el["gid"] == controls["Primary"]["gid"]
+        )
+        remove_extension = {
+            "gid": guide["gid"],
+            "identity": guide["identity"],
+            "prop": "extend",
+            "value": "neither",
+        }
+        drawn = _render(app, fresh, [remove_extension])
+        assert drawn["warnings"] == []
+        assert settings(drawn)[guide["gid"]]["extend"] == "neither"
+        assert _render(app, fresh, [])["svg"] == rebuilt["svg"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == original

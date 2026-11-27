@@ -25,11 +25,6 @@ ggplot_tick_members <- function(panel, index, prefix) {
        labels = key$.label[rendered])
 }
 
-ggplot_clone <- function(parent, ...) {
-  force(parent)
-  ggplot2::ggproto(NULL, parent, ...)
-}
-
 ggplot_relabel_tick_members <- function(panels, scopes, edits) {
   originals <- list()
   hidden <- character()

@@ -1,6 +1,3 @@
-# One grid stroke conversion for native edits and generated R code.
-ggplot_lwd_pt <- 72 / 96
-
 ggplot_errorbar_caps <- function(line, flipped) {
   line <- if (is.null(line$tavotto_cap_base)) line else line$tavotto_cap_base
   runs <- rle(line$id)
