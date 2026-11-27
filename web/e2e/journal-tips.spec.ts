@@ -197,3 +197,77 @@ test('「联系作者」被硬关时（fixtures 默认）：出处卡与选择�
   await expect(page.locator('[data-journal-card] [data-journal-open]')).toBeVisible()
   await expect(page.locator('[data-journal-report]')).toHaveCount(0)
 })
+
+test(
+  '「需要你确认」底部的「编辑部要求改图」打开编辑部形态的反馈窗，只有原话、截图 / PDF 与回信邮箱',
+  { tag: '@feature:journal.tips' },
+  async ({ app, page }) => {
+    test.setTimeout(240_000)
+    const src = { url: 'https://example.invalid/v2/guide', kind: 'html', retrieved: '2026-11-15', coverage: 'journal_specific' }
+    // 引擎没联网时取不到 v2：把「折叠结果」接口换成一份带条件的夹具，界面本身（需要你确认组）走真代码
+    await page.route('**/api/journal-facts/preflight', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          catalog_rev: 2,
+          rules: {},
+          sources: {},
+          confirm: [
+            { id: 'c1', subject: 'min_line_width', relation: 'gte', value: 2, unit: 'pt', condition: '', quote: 'Lines should be at least 2 pt wide', strength: 'recommended', stage: 'unknown', source: src },
+            { id: 'c2', subject: 'width', relation: 'gte', value: 4, unit: 'in', condition: 'One column width figures', quote: 'One column width figures at least 4 in', strength: 'recommended', stage: 'unknown', source: src },
+          ],
+        }),
+      }),
+    )
+    const a = await app({
+      env: {
+        TAVOTTO_NO_CONTACT: '0',
+        TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+        TAVOTTO_NO_JOURNAL_SYNC: '0',
+        TAVOTTO_JOURNAL_CATALOG_URL: 'http://127.0.0.1:9/', // 非 https：引擎不联网
+      },
+    })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(a.baseURL)
+    await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+    await openSpec(page)
+    await page.locator('[data-journal-picker]').click()
+    await page.locator('[data-journal-search]').fill('fixture beta')
+    await page.locator('[data-journal-option="fx-beta"]').click()
+    // 关掉选择器与设置窗（各吃一次 Esc），再进左栏「问题」
+    const scrim = page.locator('[data-dialog-scrim][data-state="open"]')
+    for (let i = 0; i < 4 && (await scrim.count()) > 0; i++) {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(300)
+    }
+    await expect(scrim).toHaveCount(0)
+    await page.locator('[data-rail="problems"]').click()
+
+    const toggle = page.locator('[data-confirm-group-toggle]')
+    await expect(toggle).toBeVisible({ timeout: 30_000 })
+    await toggle.click()
+    const tip = page.locator('[data-confirm-editor-tip]')
+    await expect(tip).toBeVisible({ timeout: 10_000 })
+    await expect(tip).toHaveText('编辑部要求改图？告诉作者')
+    // 最后一行：在最后一条要求之后
+    const [rb, tb] = [(await page.locator('[data-confirm-row]').last().boundingBox())!, (await tip.boundingBox())!]
+    expect(tb.y).toBeGreaterThan(rb.y)
+    await shoot(page, 'editor-entry')
+
+    await tip.click({ timeout: 10_000 })
+    const dialog = page.locator('[data-dialog="journal-tip"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('编辑部要求改图')
+    await expect(dialog.locator('[data-journal-tip-about]')).toHaveText('Fixture Beta')
+    await expect(dialog.locator('[data-contact-text]')).toHaveAttribute('placeholder', /只用来核对官网，不会公开/)
+    await expect(dialog.locator('[data-contact-pick]')).toBeVisible()
+    await expect(dialog.locator('[data-contact-email]')).toHaveAttribute('placeholder', '核实后回信到这里')
+    await expect(dialog.locator('[data-journal-tip-entry]')).toHaveCount(0)
+    await expect(dialog.locator('[data-testid="journal-tip-issue"]')).toHaveCount(0)
+    await expect(dialog.locator('[data-contact-journal-url]')).toHaveCount(0)
+    await expect(dialog.locator('[data-contact-send]')).toHaveText('提交反馈')
+    await shoot(page, 'editor')
+  },
+)

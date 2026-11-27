@@ -49,6 +49,8 @@ import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { emptyProject } from '@/types/document'
 import { JournalPicker } from './JournalPicker'
 import { SourceButton } from './SourceButton'
+import { ConfirmGroup } from '@/components/left/ProblemTreeRows'
+import type { V2ConfirmRow } from '@/lib/journalV2'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -434,5 +436,93 @@ describe('Codex #2310', () => {
     for (const part of ['Nature', '位图分辨率', '300 dpi', label('issue.updated'), '官网现在写 600 dpi']) {
       expect(wrong).toContain(part)
     }
+  })
+})
+
+describe('「需要你确认」底部的「编辑部要求改图」入口', () => {
+  const SRC = { url: 'https://example.invalid/guide', kind: 'html' as const, retrieved: '2026-11-15', coverage: 'journal_specific' as const }
+  const ROWS: V2ConfirmRow[] = [
+    { id: 'c1', subject: 'min_line_width', relation: 'gte', value: 2, unit: 'pt', condition: '', quote: 'Lines at least 2 pt', strength: 'recommended', stage: 'unknown', source: SRC },
+    { id: 'c2', subject: 'width', relation: 'gte', value: 4, unit: 'in', condition: 'One column', quote: 'One column at least 4 in', strength: 'recommended', stage: 'unknown', source: SRC },
+  ]
+  const jt = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
+  const openGroup = async () => {
+    await mount(
+      <ul>
+        <ConfirmGroup rows={ROWS} depth={0} journalId="fx-alpha" journal="Fixture Press" />
+      </ul>,
+    )
+    await click(q('[data-confirm-group-toggle]'))
+  }
+
+  it('展开后在最后一行，文字链接，文案照界面原文；点开是编辑部形态的窗', async () => {
+    await openGroup()
+    const items = [...document.body.querySelectorAll('[data-confirm-group] ul > li')]
+    expect(items).toHaveLength(ROWS.length + 1)
+    const link = items[items.length - 1].querySelector('[data-confirm-editor-tip]')!
+    expect(link.textContent).toBe(t('journal.confirm.editorTip', { ns: 'dialogs' }))
+    expect(link.textContent).toBe('编辑部要求改图？告诉作者')
+    await click(link)
+    await waitTip()
+    const d = q('[data-dialog="journal-tip"]')!
+    expect(d.textContent).toContain(jt('title.editor'))
+    expect(q('[data-journal-tip-about]')!.textContent).toBe('Fixture Press')
+    // 只有：原话、截图 / PDF、回信邮箱
+    expect(q('[data-contact-text]')!.getAttribute('placeholder')).toBe(jt('editorQuotePlaceholder'))
+    expect(d.textContent).toContain(jt('editorQuoteLabel'))
+    expect(q('[data-contact-pick]')!.textContent).toBe(jt('attach'))
+    expect((q('[data-contact-email]') as HTMLInputElement).placeholder).toBe(jt('editorEmail'))
+    expect(q('[data-journal-tip-entry]')).toBeNull()
+    expect(q('[data-testid="journal-tip-issue"]')).toBeNull()
+    expect(q('[data-contact-journal-url]')).toBeNull()
+    expect(q('[data-journal-tip-name]')).toBeNull()
+    expect(q('[data-contact-send]')!.textContent).toBe(jt('submit'))
+    expect(q('[data-contact-dismiss]')!.textContent).toBe(jt('cancel'))
+  })
+
+  it('门槛不满足就不出现：联系作者没开 / 引擎关了期刊联网 / 期刊入口常量关', async () => {
+    for (const cap of [null, { ...CAP, journal_tips: false }, { ...CAP, journal_tips: undefined }]) {
+      setCap(cap)
+      await openGroup()
+      expect(q('[data-confirm-row]')).not.toBeNull()
+      expect(q('[data-confirm-editor-tip]')).toBeNull()
+      await act(async () => root.render(<div />))
+    }
+    setCap(CAP)
+    uiOn.value = false
+    await openGroup()
+    expect(q('[data-confirm-editor-tip]')).toBeNull()
+  })
+
+  it('发出去的 journal 头只有 type / journal_id / journal_label / catalog，没有 issue / 链接 / 规则键；正文可空', async () => {
+    await openGroup()
+    await click(q('[data-confirm-editor-tip]'))
+    await waitTip()
+    await click(q('[data-contact-send]'))
+    expect(sendContact).toHaveBeenCalledTimes(1)
+    const [meta] = vi.mocked(sendContact).mock.calls[0]
+    expect(Object.keys(meta.journal!).sort()).toEqual(['catalog', 'journal_id', 'journal_label', 'type'])
+    expect(meta.journal).toMatchObject({ type: 'editor', journal_id: 'fx-alpha', journal_label: 'Fixture Press' })
+    expect(meta.body).toBe('')
+  })
+
+  it('填了原话随正文发出；复制内容有刊名与原话，不为空', async () => {
+    await openGroup()
+    await click(q('[data-confirm-editor-tip]'))
+    await waitTip()
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'Please redraw at 600 dpi.')
+    await click(q('[data-contact-send]'))
+    expect(vi.mocked(sendContact).mock.calls[0][0].body).toBe('Please redraw at 600 dpi.')
+    const label = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
+    const text = journalTipText(
+      { type: 'editor', journalId: 'fx-alpha', journalLabel: 'Fixture Press' },
+      { ...EMPTY_DRAFT },
+      label,
+    )
+    expect(text).toContain('Fixture Press')
+    expect(text).toContain(label('title.editor'))
+    expect(
+      journalTipText({ type: 'editor', journalId: 'fx-alpha' }, { ...EMPTY_DRAFT, body: 'Please redraw' }, label),
+    ).toContain('Please redraw')
   })
 })

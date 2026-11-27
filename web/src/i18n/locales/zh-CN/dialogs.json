@@ -2828,6 +2828,7 @@
     "confirm": {
       "title": "需要你确认（{{count}}）",
       "condition": "原文条件：{{text}}",
+      "editorTip": "编辑部要求改图？告诉作者",
       "aria": "需要你确认的要求"
     },
     "field": {
@@ -2892,7 +2893,8 @@
   "journalTip": {
     "title": {
       "wrong": "期刊规范反馈",
-      "missing": "申请收录期刊"
+      "missing": "申请收录期刊",
+      "editor": "编辑部要求改图"
     },
     "entryTitle": "反馈条目",
     "rowRule": "条目",
@@ -2919,7 +2921,10 @@
     "descLabel": "问题描述（选填）",
     "submitMissing": "提交申请",
     "emailWrong": "核实后回信到这里",
-    "emailMissing": "收录后回信到这里"
+    "emailMissing": "收录后回信到这里",
+    "editorQuoteLabel": "编辑部的原话（选填）",
+    "editorQuotePlaceholder": "贴编辑部邮件里的原话，只用来核对官网，不会公开",
+    "editorEmail": "核实后回信到这里"
   },
   "packageInstall": {
     "entry": "安装项目包到新目录…",

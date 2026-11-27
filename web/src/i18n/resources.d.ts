@@ -1604,6 +1604,7 @@ export default interface Resources {
       "confirm": {
         "aria": "需要你确认的要求",
         "condition": "原文条件：{{text}}",
+        "editorTip": "编辑部要求改图？告诉作者",
         "title": "需要你确认（{{count}}）"
       },
       "current": "按「{{name}}」检查",
@@ -1711,6 +1712,9 @@ export default interface Resources {
       "attach": "添加截图 / PDF",
       "cancel": "取消",
       "descLabel": "问题描述（选填）",
+      "editorEmail": "核实后回信到这里",
+      "editorQuoteLabel": "编辑部的原话（选填）",
+      "editorQuotePlaceholder": "贴编辑部邮件里的原话，只用来核对官网，不会公开",
       "emailMissing": "收录后回信到这里",
       "emailWrong": "核实后回信到这里",
       "entryTitle": "反馈条目",
@@ -1732,6 +1736,7 @@ export default interface Resources {
       "submit": "提交反馈",
       "submitMissing": "提交申请",
       "title": {
+        "editor": "编辑部要求改图",
         "missing": "申请收录期刊",
         "wrong": "期刊规范反馈"
       },
