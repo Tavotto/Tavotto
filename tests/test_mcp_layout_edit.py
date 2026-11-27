@@ -7,7 +7,10 @@ import json
 
 import pytest
 
-from test_mcp_layout_annotate import _layout
+from test_mcp_layout_annotate import (
+    _layout,
+    _legacy_layout_file_form,  # noqa: F401 — 夹具：钉旧 <名>.json 形态（ADR 0211 第二期 PR 3）
+)
 from test_mcp_roundtrip import _worker_python, client, project  # noqa: F401 — 夹具
 
 pytestmark = pytest.mark.skipif(_worker_python() is None, reason="没有可用的 worker Python")
