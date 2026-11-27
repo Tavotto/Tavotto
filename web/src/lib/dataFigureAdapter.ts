@@ -25,6 +25,17 @@ export function candidateIdentity(c: Pick<AiDataProposeItem, 'title_code' | 'var
   return JSON.stringify([c.title_code, v?.kind ?? null, v?.kind === 'split' ? v.column : null])
 }
 
+/**
+ * 两张候选**画的是不是同一张图**：同一画法身份之外，配方（族 / 横纵轴 / 分组 / 分面 / 个体 / 各层）与误差线（种类、来源、用哪几列）也逐项相同。
+ * 会话过期 / 数据变了、刷新候选后静默接着画只许在这一条成立时：身份相同但列或分组换了（数据变了以后规则改选了别的列、
+ * 合画成对的一边被剔除后另一边落到同一个身份上）就是另一张图，要回到候选让用户看过新的再点。只比数据之外的配方，
+ * 数值跟着数据变本来就是脚本的事（脚本每次都现读数据）。
+ */
+export function sameDrawing(a: AiDataProposeItem, b: AiDataProposeItem): boolean {
+  const of = (c: AiDataProposeItem) => JSON.stringify([candidateIdentity(c), c.values, c.error ?? null, c.error_source ?? null, c.error_column ?? null, c.error_columns ?? null])
+  return of(a) === of(b)
+}
+
 /** 响应里的候选 → 界面用的候选（地址钉在发起那一刻的项目上；就绪状态在 store 里按张记） */
 export function candidatesFromResponse(items: AiDataProposeItem[], pj: string | null): Candidate[] {
   return items.map((it) => ({ ...it, thumb: aiDataThumbnailUrl(it.thumbnail_url, pj) }))

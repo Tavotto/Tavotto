@@ -261,6 +261,61 @@ def test_colorbar_keeps_its_mm_offset_and_thickness():
     assert axes["c"] == [72, 5, 74, 55]
 
 
+def _grid_with_shared_titles() -> quicklayoutfig.Analysis:
+    """2×2 网格（mm，y 向下）+ 横跨全部四个轴的总标题与 supylabel。"""
+    mains = []
+    for gid, (x, y) in {"a": (12, 12), "b": (46, 12), "c": (12, 46), "d": (46, 46)}.items():
+        mains.append(
+            quicklayoutfig.MainAxes(
+                gid=gid,
+                plot=[x, y, x + 30, y + 26],
+                ink=[x - 6, y - 1, x + 30, y + 31],
+                equal=False,
+            )
+        )
+    sup = quicklayoutfig.SharedText(
+        gid="fig.texts_0", rect=[30, 2, 60, 6], anchor=(0.5, 0.02), covers=list("abcd"), side="top"
+    )
+    sy = quicklayoutfig.SharedText(
+        gid="fig.texts_1", rect=[1, 25, 4, 60], anchor=(0.02, 0.5), covers=list("abcd"), side="left"
+    )
+    return quicklayoutfig.Analysis(
+        size=(86, 80),
+        mains=mains,
+        colorbars=[],
+        shared=[sup, sy],
+        labels=[],
+        obstacles=[],
+        label_mode="canvas",
+    )
+
+
+def test_shared_titles_only_take_room_beside_the_outermost_row_and_column():
+    # 总标题只算进最上面一行、supylabel 只算进最左一列：否则 2×2 的下一行也空出一条总标题的高度
+    a = _grid_with_shared_titles()
+    by = {m.gid: m for m in a.mains}
+    for gid in "cd":
+        assert quicklayoutfig.deco_ink(a, by[gid])[1] == by[gid].ink[1]
+    for gid in "bd":
+        assert quicklayoutfig.deco_ink(a, by[gid])[0] == by[gid].ink[0]
+    assert quicklayoutfig.deco_ink(a, by["a"])[1] < by["a"].ink[1]
+    assert quicklayoutfig.deco_ink(a, by["c"])[0] < by["c"].ink[0]
+
+
+def test_the_suptitle_sits_above_the_label_band():
+    # 居中的总标题横跨两列，与右边那列的子图标签同在一条带里就会压上：摞在标签带上面
+    a = _grid_with_shared_titles()
+    by = {m.gid: m for m in a.mains}
+    band = 4.0
+    top = quicklayoutfig.deco_ink(a, by["a"], band)[1]
+    assert top <= by["a"].ink[1] - band - quicklayoutfig.SHARED_PAD_MM - 4.0 + 1e-9
+    new_plot = {m.gid: list(m.plot) for m in a.mains}
+    _, texts = quicklayoutfig.follow(a, new_plot, band)
+    r = dict(texts)["fig.texts_0"]
+    assert r[3] <= min(m.ink[1] for m in a.mains) - band - quicklayoutfig.SHARED_PAD_MM + 1e-9
+    assert abs(r[1] - top) < 1e-9  # 给求解器的外沿与跟着走的落位一致
+
+
 def test_anchor_moves_with_the_box_not_onto_it():
     # 锚点在外框左上角右下方 (1, 2) mm：挪外框之后锚点照样在新框的 (1, 2) mm 处
     got = quicklayoutfig.anchor_for(
