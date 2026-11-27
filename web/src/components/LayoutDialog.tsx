@@ -21,7 +21,8 @@ import {
 import { normalizeLayout, tooNewSchema } from '@/lib/migrate'
 import { cn } from '@/lib/utils'
 import { openLayoutDocument } from '@/store/actions'
-import { captureFigureSnapshotSave, mergeSavedChartSources, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
+import { activeProjectFile, captureFigureSnapshotSave, mergeSavedChartSources, mergeSavedFigureSnapshots, projectFileSnapshot, getWindowHold, saveNow, setProjectFile, suspendAutosaveFor, useDocumentStore } from '@/store/documentStore'
+import { projectWriteEnabled } from '@/lib/autosaveProject'
 import { installFork, resumeAutosaveAfterFork } from '@/store/documentFork'
 import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveContext'
@@ -285,6 +286,9 @@ export function LayoutDialog() {
     const ctx = captureSaveContext()
     const pj = ctx.pj
     try {
+      // 重开**当前文档绑定的同一个项目文件**：切换文档时旧文档会冲刷一次写进项目，那一笔会推进这个文件的修订号。
+      // 先等它写完再读，读到的才是最新的修订号当基线；否则基线是冲刷之前的旧值，下一次自动保存撞上「别处有改动」的假冲突
+      if (projectWriteEnabled() && activeProjectFile()?.name === target) await saveNow()
       const { doc, revision, file } = await fetchLayout(target)
       // 来自更新的 Tavotto（schema 比本构建认得的新）：**不打开、不记基线**，挂「来自更新的 Tavotto」
       // 横条（桌面主按钮「检查更新」）。必须在 normalizeLayout 之前判：它认不出的形状会落成一份

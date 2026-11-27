@@ -48,6 +48,13 @@ def writer_on(monkeypatch):
     monkeypatch.setattr(layoutdir, "WRITER_ENABLED", True)
 
 
+@pytest.fixture
+def writer_off(monkeypatch):
+    """PR 3 起开关默认开；对拍改造前行为的用例显式关掉（`TAVOTTO_LAYOUT_DIR_WRITER=0` 的应急回退同一档）。"""
+    monkeypatch.setattr(layoutdir, "WRITER_ENABLED", False)
+    monkeypatch.delenv(layoutdir.WRITER_ENV, raising=False)
+
+
 def _snapshot(root: Path) -> dict:
     """整棵树的 (相对路径 → 字节 + mtime_ns)：用来证明「读不写」。"""
     out = {}
@@ -145,8 +152,8 @@ def test_round_trip_creates_dir_manifest_and_placeholder(store, writer_on):
     assert sorted(p.name for p in store.iterdir()) == ["图一.json", "图一.tavotto"], "留下了暂存物"
 
 
-def test_writer_off_is_byte_identical_to_the_legacy_write(store):
-    assert layoutdir.WRITER_ENABLED is False
+def test_writer_off_is_byte_identical_to_the_legacy_write(store, writer_off):
+    assert layoutdir.writer_enabled() is False
     rev = layoutdir.write(store, "a", _bytes())
     assert rev == _rev(_bytes())
     assert [p.name for p in store.iterdir()] == ["a.json"]
@@ -169,7 +176,14 @@ def test_writer_off_still_writes_into_an_existing_directory_layout(store, monkey
     assert (store / "a.json").read_bytes() == layoutdir.placeholder_bytes("a"), "占位被正文盖了"
 
 
-def test_env_switch_enables_writer(store, monkeypatch):
+def test_default_is_on_and_env_switch_both_ways(store, monkeypatch):
+    monkeypatch.delenv(layoutdir.WRITER_ENV, raising=False)
+    assert layoutdir.WRITER_ENABLED is True and layoutdir.writer_enabled() is True
+    monkeypatch.setenv(layoutdir.WRITER_ENV, "0")  # 应急回退
+    assert layoutdir.writer_enabled() is False
+    layoutdir.write(store, "off", _bytes())
+    assert [p.name for p in store.iterdir()] == ["off.json"]
+    monkeypatch.setattr(layoutdir, "WRITER_ENABLED", False)
     monkeypatch.setenv(layoutdir.WRITER_ENV, "1")
     layoutdir.write(store, "a", _bytes())
     assert (store / "a.tavotto").is_dir()
@@ -452,7 +466,7 @@ def test_http_round_trip_with_writer_on(env, writer_on):
     assert json.loads((store / "排版一.tavotto" / "layout.json").read_bytes())["updatedAt"] == 2
 
 
-def test_http_writer_off_matches_the_pre_change_behaviour(env):
+def test_http_writer_off_matches_the_pre_change_behaviour(env, writer_off):
     client, project, h = env
     r = _save(client, h, "排版一", base_revision=m.REVISION_ABSENT)
     assert r.status_code == 200

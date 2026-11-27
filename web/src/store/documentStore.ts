@@ -570,6 +570,12 @@ interface DocumentState {
    */
   projectConflict: { docId: string; base: string } | null
   /**
+   * 写进项目连着失败（后端判 `busy` / `failed` / `refused`，两次以上）的文档（PR 3）：本机槽位存着，但项目里那份没写成——
+   * 不能再说「已保存」。顶栏落到现有的「保存失败」档（带重试 = 再存一次）；下一次写成就清。单次瞬时失败（Windows 杀毒软件占着
+   * 文件，后端已退避重试）不闪红。
+   */
+  projectWriteFailedDoc: string | null
+  /**
    * 「整体换文档」的代次，每次载入 +1（磁盘恢复 / 载入布局 / 切项目）。
    *
    * 自动保存的订阅靠它把**载入**与**编辑**区分开。两者都会换掉 `doc` 与
@@ -799,6 +805,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   restoreMetaIssue: null,
   projectReadOnlyDoc: null,
   projectConflict: null,
+  projectWriteFailedDoc: null,
   loadSeq: 0,
   derivedSeq: 0,
   snapshotSeq: 0,
@@ -1707,6 +1714,9 @@ const disk = createDiskWriter({
 
 /** 冲突裁决悬而未决的文档 → 当时的基线（绑定的修订号，没有 = ''）：基线没变就不再带着它去撞 */
 const projectConflictBase = new Map<string, string>()
+/** 每份文档写进项目连着失败了几次（成功 / 只读 / 冲突清零；`skipped` 不算） */
+const projectWriteFailures = new Map<string, number>()
+const PROJECT_FAILURES_BEFORE_ERROR = 2
 let projectQuietTimer: number | undefined
 let projectMaxTimer: number | undefined
 
@@ -1746,7 +1756,29 @@ function projectWriteSpecFor(id: string, pj: string | null): ProjectWriteSpec | 
   return binding ? { name: binding.name, ...(binding.revision ? { base: binding.revision } : {}) } : {}
 }
 
+/** 写进项目撞上的外部修改此刻还悬着吗（顶栏胶囊与 ⌘S 共用这一个判据）：绑定的基线没动 = 还没裁决 */
+export function isProjectConflictActive(
+  s: { projectConflict: { docId: string; base: string } | null; documentId: string; projectFile: ProjectFileBinding | null },
+): boolean {
+  return s.projectConflict?.docId === s.documentId && (s.projectFile?.revision ?? '') === s.projectConflict.base
+}
+
 function afterProjectLayout(id: string, pj: string | null, result: ProjectLayoutResult, gen?: number): void {
+  if (result.state === 'busy' || result.state === 'failed' || result.state === 'refused') {
+    const n = (projectWriteFailures.get(id) ?? 0) + 1
+    projectWriteFailures.set(id, n)
+    // 项目里那份已经落后（绑定还在、且有没写进去的编辑）：不能再说「已保存」，不等第二次；
+    // 还没有绑定（从没写成过）时才容忍单次瞬时失败（顶栏本来就说「已存在本机」，没有谎）
+    const lagging = readProjectFile(id)?.dirty === true
+    if ((n >= PROJECT_FAILURES_BEFORE_ERROR || lagging) && useDocumentStore.getState().projectWriteFailedDoc !== id) {
+      useDocumentStore.setState({ projectWriteFailedDoc: id })
+    }
+    return
+  }
+  if (result.state !== 'skipped') {
+    projectWriteFailures.delete(id)
+    if (useDocumentStore.getState().projectWriteFailedDoc === id) useDocumentStore.setState({ projectWriteFailedDoc: null })
+  }
   if (result.state === 'saved') {
     const current = readProjectFile(id)
     // 写的途中被另存为改绑到了别的文件：新绑定是用户更晚的决定，这次的回执只属于旧文件

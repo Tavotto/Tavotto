@@ -99,6 +99,16 @@ fn is_foreign_script(p: &Path) -> bool {
             .is_some_and(|e| matches!(e, "R" | "r" | "m"))
 }
 
+/// 项目里的排版目录（ADR 0211 第二期：`tavottofile/<名>.tavotto/`）：名字以 `.tavotto` 结尾的**文件夹**。
+/// 它不是项目、也不是项目包（项目包是同名后缀的 ZIP 文件）——当成项目打开会把 `tavottofile/` 里面的东西当图库。
+/// 与前端 `web/src/lib/canvasFileIntake.ts::layoutFolderNames` 同一条规则（后缀不分大小写）。
+fn is_layout_dir(p: &Path) -> bool {
+    p.is_dir()
+        && p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("tavotto"))
+}
+
 /// 一次放下 → 分派结果；一个能用的路径都没有时 `None`（什么都不发）。
 pub fn classify(paths: &[PathBuf]) -> Option<DropTarget> {
     let real: Vec<PathBuf> = paths
@@ -135,7 +145,7 @@ pub fn classify(paths: &[PathBuf]) -> Option<DropTarget> {
             ignored,
         });
     }
-    if let Some(dir) = real.iter().find(|p| p.is_dir()) {
+    if let Some(dir) = real.iter().find(|p| p.is_dir() && !is_layout_dir(p)) {
         return Some(DropTarget::Folder {
             folder: display_path(dir)?,
             name: name_of(dir),
@@ -584,5 +594,23 @@ mod tests {
             v,
             serde_json::json!({"kind": "folder", "folder": "/x", "name": "x", "ignored": 2})
         );
+    }
+
+    #[test]
+    fn a_layout_directory_is_not_opened_as_a_project() {
+        let d = scratch("layoutdir");
+        let layout = d.join("figure_1.TAVOTTO");
+        fs::create_dir(&layout).unwrap();
+        match classify(std::slice::from_ref(&layout)).unwrap() {
+            DropTarget::Unsupported { name } => assert_eq!(name, "figure_1.TAVOTTO"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+        // 同批里有真文件夹：打开真文件夹，不是排版目录
+        let proj = d.join("proj");
+        fs::create_dir(&proj).unwrap();
+        match classify(&[layout, proj.clone()]).unwrap() {
+            DropTarget::Folder { folder, .. } => assert_eq!(folder, display_path(&proj).unwrap()),
+            other => panic!("expected Folder, got {other:?}"),
+        }
     }
 }

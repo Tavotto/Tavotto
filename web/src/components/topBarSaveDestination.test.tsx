@@ -1,6 +1,10 @@
 /**
  * 顶栏说清「存到哪」（ADR 0096）：保存状态的 tooltip 写明去向，绑定的项目文件落后
  * 时排版名旁边亮一颗圆点。
+ *
+ * 2026-11-27（ADR 0211 第二期 PR 3）起分两档：后端开着「自动保存写进项目」（`autosave_into_project: true`，默认）= **始终保存**，
+ * 状态里没有「未存进项目」、没有空心环，⌘S 是起名字；后端关了它（应急回退，`project.autosave_into_project` 缺省 / false）
+ * 且开着项目时，仍是改造前的几句——下面凡 `project: { open: true, id }` 不带开关的用例钉的是这一档。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -82,7 +86,7 @@ describe('保存去向', () => {
     await render()
     expect(label().dataset.saveDestination).toBe('local')
     expect(saveText().textContent).toContain('已存在本机')
-    expect(label().title).toContain('没有打开项目')
+    expect(label().title).toContain('给这一版起名字')
     expect(dot()).toBeNull()
   })
 
@@ -127,6 +131,50 @@ describe('保存去向', () => {
     await render()
     expect(label().dataset.saveDestination).toBe('local')
     expect(dot()).toBeNull()
+  })
+})
+
+describe('始终保存：状态里没有「未存进项目」（PR 3）', () => {
+  const on = (id = 'p1') => useProjectStore.setState({ project: { open: true, id, autosave_into_project: true, writable: true } })
+  const button = () => host.querySelector<HTMLButtonElement>('[data-save-button]')!
+
+  it('开着项目、还没写成过项目文件：说「已存在本机」，不说「未存进项目」；tooltip 说 ⌘S 起名字', async () => {
+    setCurrentProjectId('p1')
+    on()
+    await render()
+    expect(saveText().textContent).toMatch(/^已存在本机/)
+    expect(label().title).toContain('给这一版起名字')
+    expect(label().title).not.toContain('存进项目')
+  })
+
+  it('绑定了：落定永远是「已保存到项目」，途中编辑不再变「未存进项目」、没有空心环；芯片可点（= 起名字）', async () => {
+    setCurrentProjectId('p1')
+    on()
+    setProjectFile({ projectId: 'p1', name: 'A', file: 'tavottofile/A.json', revision: 'r', dirty: false })
+    await render()
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('改'), (d) => {
+        d.objects[0].x = 5
+      })
+    })
+    expect(saveText().textContent).not.toBe('未存进项目')
+    expect(dot()).toBeNull()
+    expect(label().title).toContain('给这一版起名字')
+    expect(button().getAttribute('aria-disabled')).toBeNull()
+    await act(async () => button().click())
+    expect(runManualSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('写进项目连着失败：落到现有的「保存失败」档（带重试）；写成就恢复', async () => {
+    setCurrentProjectId('p1')
+    on()
+    await render()
+    await act(async () => useDocumentStore.setState({ projectWriteFailedDoc: 'd_topbar' }))
+    const pill = host.querySelector<HTMLElement>('[data-doc-status-pill="save_error"]')
+    expect(pill?.textContent).toBe('保存失败')
+    await act(async () => useDocumentStore.setState({ projectWriteFailedDoc: null }))
+    expect(host.querySelector('[data-doc-status-pill]')).toBeNull()
+    expect(saveText().textContent).toMatch(/^已存在本机/)
   })
 })
 

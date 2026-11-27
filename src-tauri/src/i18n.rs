@@ -165,7 +165,7 @@ const ZH: ShellText = ShellText {
         env!("TAVOTTO_PRODUCT_NAME"),
         " — 远程实例（127.0.0.1:{port}）"
     ),
-    file_save: "保存排版",
+    file_save: "给这一版起名字…",
     file_save_layout: "另存为新排版…",
     file_export: "导出…",
     file_close_window: "关闭窗口",
@@ -244,7 +244,7 @@ const EN: ShellText = ShellText {
         env!("TAVOTTO_PRODUCT_NAME"),
         " — Remote Instance (127.0.0.1:{port})"
     ),
-    file_save: "Save Layout",
+    file_save: "Name This Version…",
     file_save_layout: "Save Layout As…",
     file_export: "Export…",
     file_close_window: "Close Window",

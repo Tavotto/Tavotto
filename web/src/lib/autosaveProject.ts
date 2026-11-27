@@ -15,13 +15,22 @@ export const PROJECT_QUIET_MS = 5000
 export const PROJECT_MAX_MS = 30000
 
 let enabled = false
+let flagOn = false
 
-/** projectStore 在项目状态变化时调：后端开着开关、且这个项目可写 */
-export function setProjectWriteCapability(on: boolean): void {
+/**
+ * projectStore 在项目状态变化时调：`on` = 后端开着开关、且这个项目可写（才带 `project_write`）；
+ * `flag` = 后端开着开关本身（`autosave_into_project`，与项目是否可写无关）——⌘S 的含义与顶栏保存状态据它切
+ * （PR 3：开着 = 「始终保存」，⌘S 给这一版起名字；关着 = 应急回退，行为同改造前）。
+ */
+export function setProjectWriteCapability(on: boolean, flag = on): void {
   enabled = on
+  flagOn = flag
 }
 
 export const projectWriteEnabled = (): boolean => enabled
+
+/** 后端开着「自动保存写进项目」（只读文件夹里也是 true：那时本机存、界面说只读） */
+export const alwaysSavedEnabled = (): boolean => flagOn
 
 /** 随 `project_write` 发给后端的描述：绑定的文件名与基线修订号；都没有 = 还没起过名 */
 export interface ProjectWriteSpec {

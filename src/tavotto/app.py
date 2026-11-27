@@ -21413,6 +21413,17 @@ def api_autosave_put(doc_id):
     )
 
 
+def _same_layout_content(a: dict, b: dict) -> bool:
+    """两份排版除了编辑时刻 `updatedAt` 之外逐字段相同（经 JSON 往返：与落盘的表示一致）。"""
+    strip = lambda d: {k: v for k, v in d.items() if k != "updatedAt"}  # noqa: E731
+    try:
+        return json.loads(json.dumps(strip(a), sort_keys=True)) == json.loads(
+            json.dumps(strip(b), sort_keys=True)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dict | None:
     """自动保存把工作副本写进项目的 `tavottofile/<名>.tavotto/layout.json`（ADR 0211 第二期 PR 2；写入端开关后面）。
 
@@ -21483,6 +21494,20 @@ def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dic
                         "name": stem,
                         "revision": current,
                         "summary": document_summary(located.read_path),
+                    }
+            if current is not None and located.read_path is not None:
+                # 内容没变（只有编辑时刻 `updatedAt` 在动：手动保存 / 离开页面 / 切文档的冲刷都会重发同一份）：不重写——
+                # 同步盘与 git 不该为没有变化的排版看到文件在动；修订号也就不被无谓地推进（否则刚读到修订号的另一处会撞上假冲突）
+                try:
+                    on_disk = engine_documents.loads_document(located.read_path.read_bytes())
+                except (OSError, ValueError):
+                    on_disk = None
+                if isinstance(on_disk, dict) and _same_layout_content(on_disk, body):
+                    return {
+                        "state": "saved",
+                        "name": stem,
+                        "file": target.relative_to(ctx.path).as_posix(),
+                        "revision": current,
                     }
             _named_layout_dir(ctx, create=True)
             revision = engine_layoutdir.write_retrying(store, stem, body, doc_id=doc_id)

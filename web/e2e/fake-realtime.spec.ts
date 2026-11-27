@@ -198,6 +198,22 @@ function netLog(page: Page) {
 }
 
 /** 某元素 override 在一份 JSON 文本里出现了几条（渲染请求体 / 自动保存体通用） */
+/** 提交体里有没有任何一条改到这个 gid 的 override（不限属性） */
+function touchesGid(json: string, gid: string): boolean {
+  let hit = false
+  const walk = (v: unknown) => {
+    if (hit) return
+    if (Array.isArray(v)) v.forEach(walk)
+    else if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      if (o.gid === gid && 'prop' in o) hit = true
+      else Object.values(o).forEach(walk)
+    }
+  }
+  walk(JSON.parse(json))
+  return hit
+}
+
 function overridesOf(json: string, gid: string, prop: string): unknown[] {
   const found: unknown[] = []
   const walk = (v: unknown) => {
@@ -331,7 +347,12 @@ test('STATE-02 取消入口：pointercancel / lostpointercapture 还原 DOM 且�
     expect(g!.transform, `${kind}：DOM 必须还原到 matplotlib 的原样`).toBe(t.transform)
     expect(Math.hypot(g!.x - t.x, g!.y - t.y), `${kind}：元素应当回到原位`).toBeLessThan(0.5)
     expect(net.log.renders, `${kind}：不该发渲染`).toHaveLength(0)
-    expect(net.log.autosaves, `${kind}：不该提交文档`).toHaveLength(0)
+    // 排版始终自动存进项目（ADR 0211 第二期）：空闲 5 s 的项目写入可能恰在这段等待里落下，
+    // 但它存的是没动过的文档——取消的拖动不许进任何一次提交
+    expect(
+      net.log.autosaves.filter((body) => touchesGid(body, t.id)),
+      `${kind}：不该提交文档（取消的拖动不许落进任何一次保存）`,
+    ).toHaveLength(0)
   }
 
   // 取消之后紧接着正常拖一次：一次定稿、一条 override

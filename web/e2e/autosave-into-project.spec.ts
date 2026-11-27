@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 import { addSecondFigure, expect, freePort, test, waitForDocumentReady } from './fixtures'
 
 /**
- * ADR 0211 第二期 PR 2：自动保存把工作副本写进项目（开关 `TAVOTTO_LAYOUT_DIR_WRITER=1`）。
+ * ADR 0211 第二期 PR 2：自动保存把工作副本写进项目（PR 3 起默认开；应急回退 `TAVOTTO_LAYOUT_DIR_WRITER=0`）。
  *
  * 真后端、真页面、真文件系统。**不按任何键**：双击素材卡放一张图 → 停下 → 杀进程（SIGKILL，不给优雅退出的机会）→ 重开，
  * 最后一次编辑在项目的 `tavottofile/<名>.tavotto/layout.json` 里，重开就是它；再换一份全新的本机数据目录 + 空 localStorage
@@ -46,7 +46,8 @@ test('不按任何键：编辑自动写进项目的 layout.json，杀进程重�
     cpSync(path.join(import.meta.dirname, '..', '..', 'examples', 'figures'), project, { recursive: true })
     const dataA = path.join(root, 'dataA')
     mkdirSync(dataA, { recursive: true })
-    const base = { TAVOTTO_LAYOUT_DIR_WRITER: '1', TAVOTTO_CONFIG_DIR: path.join(root, 'config') }
+    // 写入端现在默认开（PR 3），不再带 TAVOTTO_LAYOUT_DIR_WRITER
+    const base = { TAVOTTO_CONFIG_DIR: path.join(root, 'config') }
     const port = await freePort()
 
     // ---- 1. 编辑、停下，不按任何键 ----
@@ -100,7 +101,29 @@ test('不按任何键：编辑自动写进项目的 layout.json，杀进程重�
     expect(docId, '沿用清单里记的 docId').toBe(manifest.doc_id)
     // 没有另起一个目录
     expect(layoutDirs(project)).toEqual([dir])
+
+    // ---- 4. 删空排版：已有的工作副本必须收到空文档（Codex #2277 P1），再换全新本机数据重开，删掉的对象不会被找回 ----
+    await tabF.locator('[data-canvas-stage] [data-object-id]').first().click()
+    await tabF.keyboard.press('ControlOrMeta+a')
+    await tabF.keyboard.press('Delete')
+    await expect(tabF.locator('[data-object-id]')).toHaveCount(0)
+    await expect.poll(() => objectCount(project, dir), { timeout: 30_000 }).toBe(0)
     await fresh.close()
+    await killHard(a3)
+    const dataC = path.join(root, 'dataC')
+    mkdirSync(dataC, { recursive: true })
+    const fresh2 = await browser.newContext()
+    expect((await fresh2.storageState()).origins).toEqual([])
+    const a4 = await app({ figures: project, env: { ...base, TAVOTTO_DATA_DIR: dataC }, port })
+    started.push(a4)
+    const tabE = await fresh2.newPage()
+    await openAndWait(tabE, a4.baseURL)
+    // 等项目历史的恢复落定：此刻要么是空画布（工作副本就是空的），要么是被找回的旧内容——不许是后者
+    await tabE.waitForTimeout(3000)
+    await expect(tabE.locator('[data-object-id]'), '删空之后重开，不能把删掉的对象找回来').toHaveCount(0)
+    expect(objectCount(project, dir)).toBe(0)
+    expect(layoutDirs(project)).toEqual([dir])
+    await fresh2.close()
   } finally {
     for (const a of started) await a.stop().catch(() => undefined)
     try {
