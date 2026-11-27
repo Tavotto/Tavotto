@@ -30,15 +30,25 @@ concurrency:
 
 jobs:
   real-r:
-    name: Real R (${{ matrix.os }})
+    name: Real R (${{ matrix.os }}${{ matrix.suffix }})
     runs-on: ${{ matrix.os }}
-    # Intel may build Python dependencies from source. On Windows the 60-case
-    # suite took 28 minutes in pytest before adding more protected source replays.
+    # Intel may build dependencies from source. Windows reached 50 minutes
+    # after 55 passing tests. The layer and raster writebacks alone took
+    # about 28 minutes. Run those and their complement in parallel there.
     timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-26-intel]
+        include:
+          - os: windows-latest
+            suffix: ", layer and raster writeback"
+            suite: layers
+          - os: windows-latest
+            suffix: ", figure workflow"
+            suite: figures
+          - os: macos-26-intel
+            suffix: ""
+            suite: all
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -77,6 +87,8 @@ jobs:
           key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: Verify native R edits, document restore, and mixed portable export
         shell: bash
+        env:
+          NATIVE_R_SUITE: ${{ matrix.suite }}
         run: |
           python -m pip install -e ".[dev,worker]"
           python scripts/fetch_fonts.py
@@ -84,5 +96,12 @@ jobs:
           TAVOTTO_TEST_RSCRIPT="$(python -c 'import shutil; print(shutil.which("Rscript") or "")')"
           test -n "$TAVOTTO_TEST_RSCRIPT"
           export TAVOTTO_TEST_RSCRIPT
-          python -m pytest -o addopts= -v --durations=10 --junitxml=native-r.xml tests/test_native_ggplot_capture.py tests/test_core_v02_release_candidate.py
+          layer_replays="test_native_r_fixed_layer_styles or test_native_r_raster_writeback"
+          case "$NATIVE_R_SUITE" in
+            layers) selector="$layer_replays" ;;
+            figures) selector="not ($layer_replays)" ;;
+            all) selector="" ;;
+            *) exit 1 ;;
+          esac
+          python -m pytest -o addopts= -v -k "$selector" --durations=10 --junitxml=native-r.xml tests/test_native_ggplot_capture.py tests/test_core_v02_release_candidate.py
           python -c 'import xml.etree.ElementTree as E; suites = E.parse("native-r.xml").findall("testsuite"); assert suites and sum(int(s.attrib["tests"]) for s in suites) > 0 and all(s.attrib["skipped"] == "0" for s in suites)'
