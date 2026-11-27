@@ -32,8 +32,9 @@ jobs:
   real-r:
     name: Real R (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Intel runners can build Python dependencies from source before the real R checks.
-    timeout-minutes: ${{ matrix.os == 'macos-26-intel' && 50 || 35 }}
+    # Intel may build Python dependencies from source. On Windows the 60-case
+    # suite took 28 minutes in pytest before adding more protected source replays.
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
