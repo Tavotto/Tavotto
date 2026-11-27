@@ -34,6 +34,7 @@ export function Handoffs({ flat, view, track, now, replay = false, running }: Pr
       lines.push({ key: `${node.span.id}:back`, d: `M${xe - r} ${yc}Q${xe} ${yc} ${xe} ${yc - r}V${yp}`, dot: [xe, yp], lane: node.lane })
     }
   }
+  if (!lines.length) return null
   return (
     <svg
       aria-hidden
