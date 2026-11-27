@@ -4570,7 +4570,7 @@ export interface VectorEditResult {
   order?: string[]
   reordered?: boolean
   echo?: string[]
-  changes?: { id: string; field?: string; before?: unknown; after?: unknown; deleted?: boolean; added?: boolean; replaced?: boolean }[]
+  changes?: { id: string; field?: string; before?: unknown; after?: unknown; deleted?: boolean; added?: boolean; replaced?: boolean; op?: number }[]
   checks?: { check: string; status: string; item?: string }[]
   layout_groups?: LayoutGroup[] | null
   ops?: unknown[]
@@ -4601,6 +4601,20 @@ export async function createVectorEditPlan(body: VectorEditBody & Record<string,
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as { plan_id: string; state: string; phase?: string }
+}
+
+/** 补丁模式（同一份内存快照 + 一份 ops，**同步**回方案）：方案卡里取消勾选某几步后，用剩下的 ops 重算（ADR 0212 第 6c 期） */
+export async function planVectorEditOps(canvas: VectorEditBody['canvas'], ops: unknown[], signal?: AbortSignal): Promise<VectorEditResult> {
+  const out = await changePlanFetch('/api/vector-edit/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canvas, ops }),
+    signal,
+  })
+  if (typeof out.ok !== 'boolean' || !Array.isArray(out.errors)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as VectorEditResult
 }
 
 export type VectorEditView =

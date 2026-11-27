@@ -110,6 +110,16 @@ export interface VectorHandle extends LayoutHandle {
   result?: VectorEditResult
   /** 按对象分组、翻成界面语言的改动清单（`lib/vectorChanges`）；空 = 退回显示后端的复述原文 */
   groups?: ChangeGroup[]
+  /** 模型给的全部补丁（第 6c 期：卡片按步勾选，取消某几步后用剩下的重算） */
+  ops?: unknown[]
+  /** 取消勾选后正在重算：「应用」先不可点、对比图跟着更新 */
+  busy?: boolean
+  /** 因依赖了没勾的那步而自动取消的步（组 key）：清单行下面写一句原因 */
+  blocked?: Record<string, true>
+  /** 勾选变了：用勾上的步重新算方案（防抖由实现自己管，旧的结果作废） */
+  recompute?: (force?: boolean) => void
+  /** 上一次按勾选重算没成：「应用」不可点（旧方案里有用户已经勾掉的步），界面给一句灰字和「重试」 */
+  failed?: boolean
   /** 方案点名的对象此刻还是不是出发时那样（= 待确认；撤回之后也是；不是又不是已应用 = 「图改过了」） */
   holds: () => boolean
   /** 方案已经写进文档的样子还在不在（= 已应用；按对象状态判，不按历史条目——之后的回写会换掉那一条历史） */
@@ -811,11 +821,14 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       set({ dialogKey: key })
     },
     closeDialog: () => set({ dialogKey: null }),
-    toggleGroup: (key, groupKey) =>
+    toggleGroup: (key, groupKey) => {
       set((s) => {
         const e = s.entries[key]
         return e ? { entries: { ...s.entries, [key]: { ...e, unchecked: { ...e.unchecked, [groupKey]: !e.unchecked[groupKey] } } } } : {}
-      }),
+      })
+      // 矢量编辑方案：取消 / 勾回某一步，按勾上的步重新算（对象、对比图、核对都跟着变）
+      get().entries[key]?.vector?.recompute?.()
+    },
 
     answerConfirm: (key, groupKey, answer) => {
       const e = get().entries[key]

@@ -48,6 +48,7 @@ from .ai_data_figure import (
     apply_stack,
     date_number,
     delimited_records,
+    fill_header,
     iter_records,
     iter_table,
     parse_cell,
@@ -105,7 +106,7 @@ def read_xlsx(path, sheet):
     """XLSX 一张表 → `(表头, 数据行)`：读法就是内嵌的 `XlsxBook`（与 Tavotto 的 `xlsxread` 同一份源码）。"""
     with XlsxBook(path) as book:  # noqa: F821 - 由内嵌的 xlsxread 源码提供
         table = [r for r in book.read(sheet) if any(c.strip() for c in r)]
-    return [h.strip() for h in table[0]], table[1:]
+    return fill_header([h.strip() for h in table[0]]), table[1:]
 
 
 def group_key(label):
@@ -1231,6 +1232,7 @@ RUNTIME_FUNCTIONS = (
     resolve_header,
     xvg_label,
     xvg_text,
+    fill_header,
     iter_table,
     table_from_text,
     read_delimited,

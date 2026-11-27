@@ -24,11 +24,13 @@ import { emptyProject, type CanvasObject } from '@/types/document'
 const createPlan = vi.fn()
 const getPlan = vi.fn()
 const previewPng = vi.fn()
+const planOps = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   createVectorEditPlan: (...a: unknown[]) => createPlan(...a),
   getVectorEditPlan: (...a: unknown[]) => getPlan(...a),
   fetchLayoutPreviewPng: (...a: unknown[]) => previewPng(...a),
+  planVectorEditOps: (...a: unknown[]) => planOps(...a),
 }))
 // 导出管线对最小的测试对象不挑：这里只要一个确定的分段，不测它
 vi.mock('@/lib/exportRequest', async (importOriginal) => ({
@@ -80,16 +82,16 @@ const RESULT: VectorEditResult = {
   reordered: false,
   echo: ['标题文字：字号 8 → 12 pt', '红箭头：线宽 0.5 → 0.75 pt', '方框：删除'],
   changes: [
-    { id: 't1', field: 'sizePt', before: 8, after: 12 },
-    { id: 'a1', field: 'strokePt', before: 0.5, after: 0.75 },
-    { id: 'a1', field: 'color', before: '#cc0000', after: '#00aa00' },
-    { id: 'a1', field: 'x', before: 30, after: 31 },
-    { id: 'a1', field: 'w', before: 20, after: 21 },
-    { id: 's1', deleted: true },
+    { id: 't1', field: 'sizePt', before: 8, after: 12, op: 1 },
+    { id: 'a1', field: 'strokePt', before: 0.5, after: 0.75, op: 0 },
+    { id: 'a1', field: 'color', before: '#cc0000', after: '#00aa00', op: 0 },
+    { id: 'a1', field: 'x', before: 30, after: 31, op: 0 },
+    { id: 'a1', field: 'w', before: 20, after: 21, op: 0 },
+    { id: 's1', deleted: true, op: 2 },
   ],
   checks: [],
   layout_groups: null,
-  ops: [],
+  ops: [{ op: 'set', id: 'a1' }, { op: 'set', id: 't1' }, { op: 'delete', id: 's1' }],
   unhandled: [{ reason: '改图里曲线的颜色要改脚本' }],
 }
 
@@ -101,7 +103,7 @@ function Live({ k }: { k: string }) {
   return e ? <ChangePlanCard entry={e} /> : null
 }
 const render = (el: React.ReactNode) => act(() => root.render(<TooltipProvider>{el}</TooltipProvider>))
-const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.body.querySelector<T>(sel)
 const qa = (sel: string) => [...document.body.querySelectorAll<HTMLElement>(sel)]
 const doc = () => useDocumentStore.getState()
 const ids = () => doc().doc.objects.map((o) => o.id)
@@ -125,6 +127,7 @@ beforeEach(async () => {
   root = createRoot(host)
   createPlan.mockReset().mockResolvedValue({ plan_id: 'vp1', state: 'running' })
   getPlan.mockReset()
+  planOps.mockReset()
   previewPng.mockReset().mockResolvedValue(new Blob(['x'], { type: 'image/png' }))
   connectAi.mockReset()
   useChangePlanStore.setState({ entries: {}, order: [], dialogKey: null })
@@ -213,17 +216,16 @@ it('出卡：一句话说清改了几个对象、另有几条没改；清单逐�
   act(() => useChangePlanStore.getState().openDialog(key))
   const rows = qa('[data-change-group]')
   // 按对象分组、翻成界面语言：对象叫法 = 类型 +「名字」，字段叫属性面板的名字，数值带单位，不出现 id 与内部键名，也不是后端的复述原文
-  expect(rows.map((r) => r.querySelector('span.text-sm')!.textContent)).toEqual(['文字「标题」', '箭头', '删除形状'])
+  expect(rows.map((r) => r.querySelector('span.text-sm')!.textContent)).toEqual(['箭头', '文字「标题」', '删除形状'])
   const lines = (i: number) => [...rows[i].querySelectorAll('[data-change-line]')].map((l) => l.textContent)
-  expect(lines(0)).toEqual(['字号8 pt→12 pt'])
-    expect(lines(1)).toContain('线宽0.5 pt→0.75 pt')
-  expect(lines(1)).toContain('位置和大小')
-  expect(rows[1].querySelectorAll('span[style*="background-color"]')).toHaveLength(2) // 颜色带色块
+  expect(lines(1)).toEqual(['字号8 pt→12 pt'])
+    expect(lines(0)).toContain('线宽0.5 pt→0.75 pt')
+  expect(lines(0)).toContain('位置和大小')
+  expect(rows[0].querySelectorAll('span[style*="background-color"]')).toHaveLength(2) // 颜色带色块
   const all = rows.map((r) => r.textContent).join('')
   for (const raw of ['strokePt', 'sizePt', 'a1', 't1', 's1']) expect(all).not.toContain(raw)
-  expect(rows[2].title).toContain('方框')
-  // 整批要或不要：清单里没有勾选框
-  expect(q('[data-change-plan-list] input[type="checkbox"]')).toBeNull()
+  // 一行一步，每行能勾选（第 6c 期）
+  expect(qa('[data-change-plan-list] input[type="checkbox"]')).toHaveLength(3)
   const un = q('[data-change-plan-unhandled]')!
   expect(un.textContent).toContain('改图里曲线的颜色要改脚本')
 })
@@ -398,6 +400,111 @@ it('对比图取景：只画被改动的那一块（加留白），前后同一�
   expect(previewFrame({ w: 30, h: 30 }, before, RESULT.objects!, RESULT)).toBeNull()
 })
 
+
+// ---------------------------------------------------------------- 第 6c 期：按步勾选，取消后用剩下的步重算
+/** 子集方案：只含 t1 / a1 / s1 里留下的那几步的结果（桩：真后端的子集重算由 `tests/test_vector_edit_plan.py` 看护） */
+const subset = (keep: { a?: boolean; t?: boolean; s?: boolean }): VectorEditResult => ({
+  ...RESULT,
+  objects: [...(keep.t ? [obj({ ...T1, sizePt: 12 })] : []), ...(keep.a ? [obj({ ...A1, strokePt: 0.75 })] : [])],
+  deleted: keep.s ? ['s1'] : [],
+  echo: [],
+  changes: [],
+})
+const boxes = () => qa('[data-change-group] input[type="checkbox"]') as HTMLInputElement[]
+const openDialog = async (key: string) => {
+  render(
+    <>
+      <Live k={key} />
+      <ChangePlanDialog />
+    </>,
+  )
+  act(() => useChangePlanStore.getState().openDialog(key))
+}
+const settleRecompute = async () => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50)
+  })
+}
+
+it('清单一行一步，每行有勾选框；全勾着时「应用」可点', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  expect(boxes()).toHaveLength(3)
+  expect(boxes().every((b) => b.checked)).toBe(true)
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+})
+
+it('勾掉一步：用剩下的步重算，重算期间「应用」不可点；应用只写勾上的', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  let done!: (r: VectorEditResult) => void
+  planOps.mockReturnValueOnce(new Promise<VectorEditResult>((r) => (done = r)))
+  act(() => boxes()[1].click()) // 取消「字号」那一步
+  expect(planOps).toHaveBeenCalledTimes(1)
+  expect((planOps.mock.calls[0][1] as { id: string }[]).map((o) => o.id)).toEqual(['a1', 's1'])
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(true) // 重算中
+  await act(async () => done(subset({ a: true, s: true })))
+  await settleRecompute()
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+  expect(previewPng.mock.calls.length).toBeGreaterThanOrEqual(3) // 出发时两张 + 重算后「修改后」一张
+  const pastBefore = doc().past.length
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(doc().past.length).toBe(pastBefore + 1) // 仍是一次提交
+  const o = (id: string) => doc().doc.objects.find((x) => x.id === id) as unknown as Record<string, number> | undefined
+  expect(o('t1')!.sizePt).toBe(8) // 没勾的那步没写
+  expect(o('a1')!.strokePt).toBe(0.75)
+  expect(o('s1')).toBeUndefined()
+  act(() => doc().undo())
+  expect(o('t1')!.sizePt).toBe(8)
+  expect(o('s1')).toBeDefined() // ⌘Z 一步回到出发时
+})
+
+it('后面的步依赖被取消的那步而失败：映回原步号自动取消，清单里写一句原因，不会应用一份坏补丁', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  // 取消第 0 步后，剩下 [1, 2]：后端说子集里第 1 条（= 原来的第 2 步）找不到对象；去掉它再算 [1]
+  planOps
+    .mockResolvedValueOnce({ ok: false, errors: [{ code: 'unknown_object', index: 1 }] })
+    .mockResolvedValueOnce(subset({ t: true }))
+  act(() => boxes()[0].click())
+  await settleRecompute()
+  expect(planOps).toHaveBeenCalledTimes(2)
+  expect((planOps.mock.calls[0][1] as { id: string }[]).map((o) => o.id)).toEqual(['t1', 's1'])
+  expect((planOps.mock.calls[1][1] as { id: string }[]).map((o) => o.id)).toEqual(['t1'])
+  expect(boxes().map((b) => b.checked)).toEqual([false, true, false]) // 第 2 步自动取消
+  expect(qa('[data-change-note]').map((n) => n.textContent)).toEqual(['依赖前一步，已一起取消'])
+  act(() => void useChangePlanStore.getState().apply(key))
+  const o = (id: string) => doc().doc.objects.find((x) => x.id === id) as unknown as Record<string, number> | undefined
+  expect(o('t1')!.sizePt).toBe(12)
+  expect(o('a1')!.strokePt).toBe(0.5)
+  expect(o('s1')).toBeDefined()
+})
+
+it('全部取消：不再请求、「应用」不可点（弹窗与卡片）；勾回来又能应用', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  planOps.mockResolvedValue(subset({}))
+  for (let i = 0; i < 3; i++) {
+    act(() => boxes()[i].click())
+    await settleRecompute()
+  }
+  expect(boxes().every((b) => !b.checked)).toBe(true)
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(true)
+  const before = JSON.stringify(doc().doc.objects)
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(JSON.stringify(doc().doc.objects)).toBe(before)
+  planOps.mockResolvedValue(subset({ a: true }))
+  act(() => boxes()[0].click())
+  await settleRecompute()
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+})
+
+it('老后端的变更没有 op：清单不能勾选（整批要或不要）', async () => {
+  const key = await runToReady({ ...RESULT, changes: RESULT.changes!.map((c) => ({ ...c, op: undefined })) })
+  await openDialog(key)
+  expect(boxes()).toHaveLength(0)
+})
+
 it('对比图渲染期间切走了画布：条目收掉，不留永远「生成中」的卡，也能再发指令', async () => {
   let release!: (b: Blob) => void
   previewPng.mockReset().mockReturnValue(new Promise<Blob>((r) => (release = r)))
@@ -458,4 +565,129 @@ it('只改层级的方案：出发后用户自己调过这些对象的上下顺�
   )
   render(<Live k={key} />)
   expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('stale')
+})
+
+it('重算失败：「应用」不可点（旧方案里有用户勾掉的步），给一句话和「重试」；重试成功后恢复且只写勾上的', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  planOps.mockRejectedValueOnce(new Error('down'))
+  act(() => boxes()[1].click())
+  await settleRecompute()
+  expect(q('[data-change-plan-vector-failed]')!.textContent).toContain('没能更新')
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(true)
+  const before = JSON.stringify(doc().doc.objects)
+  let out = ''
+  act(() => {
+    out = useChangePlanStore.getState().apply(key) // 即使绕过按钮也不写
+  })
+  expect(out).toBe('failed')
+  expect(JSON.stringify(doc().doc.objects)).toBe(before)
+  planOps.mockResolvedValueOnce(subset({ a: true, s: true }))
+  act(() => q<HTMLButtonElement>('[data-change-plan-vector-retry]')!.click())
+  await settleRecompute()
+  expect(q('[data-change-plan-vector-failed]')).toBeNull()
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+  act(() => void useChangePlanStore.getState().apply(key))
+  const o = (id: string) => doc().doc.objects.find((x) => x.id === id) as unknown as Record<string, number> | undefined
+  expect(o('t1')!.sizePt).toBe(8)
+  expect(o('a1')!.strokePt).toBe(0.75)
+})
+
+it('重算失败后勾回上一次算成功的状态：不再请求，恢复可应用', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  planOps.mockRejectedValueOnce(new Error('down'))
+  act(() => boxes()[1].click())
+  await settleRecompute()
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(true)
+  const calls = planOps.mock.calls.length
+  act(() => boxes()[1].click()) // 勾回原状
+  await settleRecompute()
+  expect(planOps.mock.calls.length).toBe(calls)
+  expect(q('[data-change-plan-vector-failed]')).toBeNull()
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+})
+
+it('非样式字段各有准确的叫法：编组 / 取消编组、锁定、隐藏、名字，真没见过的键才落到「样式」', async () => {
+  const { changeGroups } = await import('@/lib/vectorChanges')
+  const snap = snapshotOf(doc().doc, 'c1')
+  const lines = (changes: NonNullable<VectorEditResult['changes']>) => changeGroups(snap, { ...RESULT, changes }).map((g) => g.lines.map((l) => l.label))
+  expect(lines([{ id: 't1', field: 'groupId', before: undefined, after: 'g1', op: 0 }, { id: 't1', field: 'groupPath', before: undefined, after: ['g1'], op: 0 }])).toEqual([['编组']])
+  expect(lines([{ id: 't1', field: 'groupId', before: 'g1', after: undefined, op: 0 }, { id: 't1', field: 'groupPath', before: ['g1'], after: undefined, op: 0 }])).toEqual([['取消编组']])
+  expect(lines([{ id: 't1', field: 'locked', before: false, after: true, op: 0 }, { id: 't1', field: 'hidden', before: false, after: true, op: 0 }, { id: 't1', field: 'name', before: 'a', after: 'b', op: 0 }])).toEqual([['锁定', '隐藏', '名字']])
+  expect(lines([{ id: 'a1', field: 'headEnd', before: 'none', after: 'arrow', op: 0 }, { id: 'a1', field: 'someFutureKey', before: 1, after: 2, op: 0 }])).toEqual([['终点端型', '样式']])
+})
+
+it('勾掉一步、子集算完而对比图还在画时又勾回来：手里的方案恢复成整份（勾选、方案、对比图一起换），应用写的是全量', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  planOps.mockResolvedValueOnce(subset({ a: true, s: true }))
+  let release!: (b: Blob) => void
+  previewPng.mockReset().mockReturnValueOnce(new Promise<Blob>((r) => (release = r)))
+  act(() => boxes()[1].click()) // 勾掉「字号」
+  await settleRecompute() // 子集算完了，对比图还没画好
+  act(() => boxes()[1].click()) // 勾回来
+  await settleRecompute()
+  expect(boxes().every((b) => b.checked)).toBe(true)
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+  await act(async () => {
+    release(new Blob(['x'], { type: 'image/png' })) // 迟到的子集对比图不能再改任何东西
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  act(() => void useChangePlanStore.getState().apply(key))
+  const o = (id: string) => doc().doc.objects.find((x) => x.id === id) as unknown as Record<string, number> | undefined
+  expect(o('t1')!.sizePt).toBe(12) // 勾选和显示都是全量，应用也是全量
+  expect(o('a1')!.strokePt).toBe(0.75)
+  expect(o('s1')).toBeUndefined()
+})
+
+it('同一时序但迟到的子集对比图画失败：也不能把用户勾回的那步再取消，应用写的仍是全量', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  planOps.mockResolvedValueOnce(subset({ a: true, s: true }))
+  let fail!: (e: unknown) => void
+  previewPng.mockReset().mockReturnValueOnce(new Promise<Blob>((_, r) => (fail = r)))
+  act(() => boxes()[1].click()) // 勾掉「字号」
+  await settleRecompute() // 子集算完了，对比图还没画好
+  act(() => boxes()[1].click()) // 勾回来
+  await settleRecompute()
+  await act(async () => {
+    fail(new Error('preview failed')) // 迟到的子集对比图失败了，也不能改任何东西
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  expect(boxes().every((b) => b.checked)).toBe(true)
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+  act(() => void useChangePlanStore.getState().apply(key))
+  const o = (id: string) => doc().doc.objects.find((x) => x.id === id) as unknown as Record<string, number> | undefined
+  expect(o('t1')!.sizePt).toBe(12)
+  expect(o('a1')!.strokePt).toBe(0.75)
+  expect(o('s1')).toBeUndefined()
+})
+
+it('部分勾选只发有改动行的步：原方案里没产生改动的步（同值再设一次）不会在用户取消了前一次之后生效', async () => {
+  const same: VectorEditResult = {
+    ...RESULT,
+    objects: [obj({ ...T1, sizePt: 12, color: '#ff0000' })],
+    deleted: [],
+    echo: [],
+    changes: [
+      { id: 't1', field: 'sizePt', before: 8, after: 12, op: 0 },
+      { id: 't1', field: 'color', before: '#000000', after: '#ff0000', op: 2 },
+    ],
+    ops: [{ op: 'set', id: 't1', set: { sizePt: 12 } }, { op: 'set', id: 't1', set: { sizePt: 12 } }, { op: 'set', id: 't1', set: { color: '#ff0000' } }],
+  }
+  const key = await runToReady(same)
+  await openDialog(key)
+  expect(boxes()).toHaveLength(2) // 第 1 步没有改动行
+  planOps.mockResolvedValueOnce({ ...same, objects: [obj({ ...T1, color: '#ff0000' })], changes: [] })
+  act(() => boxes()[0].click()) // 取消「字号」
+  await settleRecompute()
+  expect((planOps.mock.calls[0][1] as { set: object }[]).map((o) => o.set)).toEqual([{ color: '#ff0000' }]) // 没把第二次 sizePt 带进去
+  act(() => void useChangePlanStore.getState().apply(key))
+  const t = doc().doc.objects.find((x) => x.id === 't1') as unknown as Record<string, unknown>
+  expect(t.sizePt).toBe(8)
+  expect(t.color).toBe('#ff0000')
+  // 全勾时发的是原始全量
+  act(() => doc().undo())
+  planOps.mockClear()
 })

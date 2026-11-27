@@ -855,6 +855,10 @@
       "replaced": "{{subject}}换成了新的",
       "on": "开",
       "off": "关",
+      "lineOf": "{{subject}}：{{label}}",
+      "blocked": "依赖前一步，已一起取消",
+      "group": "编组",
+      "ungroup": "取消编组",
       "none": "无",
       "style": "样式",
       "z": "层级",
@@ -865,7 +869,10 @@
         "strokePt": "线宽", "sizePt": "字号", "color": "颜色", "fill": "填充", "bg": "底色", "borderColor": "边框颜色", "borderPt": "边框粗细",
         "bold": "粗体", "italic": "斜体", "underline": "下划线", "text": "文字", "align": "对齐", "fontFamily": "字体", "lineHeight": "行距",
         "strokeOpacity": "描边不透明度", "fillOpacity": "填充不透明度", "dash": "虚线", "cornerRadius": "圆角", "locked": "锁定", "hidden": "隐藏",
-        "name": "名称", "stroke": "描边", "lineCap": "线端", "lineJoin": "拐角", "padding": "内边距"
+        "subpaths": "路径形状", "anchor": "锚定位置", "layoutPinned": "固定位置", "start": "起点", "end": "终点", "shape": "形状种类", "sides": "边数", "starRatio": "星形比例",
+        "headStart": "起点端型", "headEnd": "终点端型", "headSizeStart": "起点端型大小", "headSizeEnd": "终点端型大小", "fillGradient": "填充渐变", "strokeGradient": "描边渐变",
+        "fillRule": "填充规则", "strokeAlign": "描边对齐", "dashPattern": "虚线", "miterLimit": "尖角限制", "interpretation": "文字解读", "textFormat": "文字格式", "clipMask": "剪切蒙版", "clipOff": "剪切蒙版",
+        "name": "名字", "stroke": "描边", "lineCap": "线端", "lineJoin": "拐角", "padding": "内边距"
       }
     },
     "reviewNote": {
@@ -1002,6 +1009,7 @@
       "stageScript": "脚本改动",
       "scriptMeta": "脚本改动 · +{{added}} −{{removed}}",
       "scriptBackupNote": "点应用才会写入，写入前先备份",
+      "vectorRecomputeFailed": "没能更新，可以重试",
       "vectorHeading_other": "改动 · {{count}} 个对象",
       "vectorN_other": "改了 {{count}} 个对象",
       "vectorChecks_other": "有 {{count}} 处核对没过，应用前看看对比图"

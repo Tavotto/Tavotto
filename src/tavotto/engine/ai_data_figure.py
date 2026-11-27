@@ -464,6 +464,16 @@ def xvg_text(text):
     return "\n".join(out)
 
 
+def fill_header(header):
+    """表头里**第一列**的名字是空的（pandas `to_csv()` 把行索引写成第一列、表头留空；R `write.csv`、Excel 的 A1 同理）→ 把它叫 `col1`，
+    与 `xvg_text` 的缺名列同一个叫法（`col<N>`，N 从 1 数）。**只放宽第一列**：其余位置的空名字、重复名字（含与 `col1` 撞名）原样留着，
+    由调用方照旧判 `data_header_invalid`——说明读到的不是表头行（标题行 `实验一,,,`），不替用户猜。返回新列表。**运行时函数**。"""
+    out = list(header)
+    if len(out) >= 2 and not out[0].strip():
+        out[0] = "col1"
+    return out
+
+
 def iter_table(lines, delimiter, header_row=None, units_row=False):
     """`(表头, 数据行迭代器)`；迭代器逐条产出 `(物理行号, 单元格列表)`。读法与 `table_from_text` 完全一样（这就是它的实现）：
     `header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。给了行号：从该行起（第一条起始行号 ≥ 它的记录）
@@ -483,7 +493,7 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
     if units_row:
         next(rest, None)
     if header_row is None:
-        return [h.strip() for h in first_cells], rest
+        return fill_header([h.strip() for h in first_cells]), rest
     # 列数以表头之后第一条非 `#` 记录为准（没有就取紧跟的第一条）；探测时读过的记录接回去，不丢
     held = []
     probe = None
@@ -494,11 +504,13 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
             break
     if probe is None and held:
         probe = held[0][1]
-    header = resolve_header(
-        first_cells,
-        first_raw or "",
-        delimiter,
-        len(probe) if probe is not None else len(first_cells),
+    header = fill_header(
+        resolve_header(
+            first_cells,
+            first_raw or "",
+            delimiter,
+            len(probe) if probe is not None else len(first_cells),
+        )
     )
 
     def body():
@@ -1111,7 +1123,7 @@ def _scan_summary(
 ) -> DataSummary:
     """大表的一遍扫描：`_summarize` 的流式版（同样的列统计、同样的错误码），行不进内存。结构线索用有界集合（`_Facts`）。
     除受控摘要外留下精确的整表统计（行数、每列有限数值的个数 / 最小 / 最大）与前 `LARGE_PREVIEW_ROWS` 行。"""
-    header = [h.strip() for h in header_cells]
+    header = fill_header([h.strip() for h in header_cells])
     if len(header) > MAX_COLUMNS:
         raise DataSourceError("data_too_wide", str(len(header)))
     if any(not h for h in header) or len(set(header)) != len(header):
@@ -1498,7 +1510,7 @@ def _summarize(
     table = [r for r in table if any(c.strip() for c in r)]  # 纯空行不算数据行
     if not table:
         raise DataSourceError("data_empty")
-    header = [h.strip() for h in table[0]]
+    header = fill_header([h.strip() for h in table[0]])
     if len(header) > MAX_COLUMNS:
         raise DataSourceError("data_too_wide", str(len(header)))
     if any(not h for h in header) or len(set(header)) != len(header):
