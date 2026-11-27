@@ -106,6 +106,33 @@ def test_prompt_escapes_canvas_text_and_names_the_boundaries():
     assert len(s) + len(u) <= 20_000
 
 
+def _scene_of(user):
+    return json.loads(user.split("<scene>\n", 1)[1].split("\n</scene>", 1)[0])
+
+
+def test_prompt_carries_current_styles_so_relative_edits_have_a_base():
+    a = _t("ta", 1, 1, sizePt=8, color="#ff0000")
+    b = _t("tb", 1, 1, sizePt=12, color="#0000ff")
+    _, ua = vp.build_prompt("字号翻倍", _canvas([a]), ["ta"], max_chars=48_000)
+    _, ub = vp.build_prompt("字号翻倍", _canvas([b]), ["ta"], max_chars=48_000)
+    assert ua != ub
+    obj = next(o for o in _scene_of(ua)["vector_objects"] if o["id"] == "ta")
+    assert obj["style"]["sizePt"] == 8 and obj["style"]["color"] == "#ff0000"
+    assert "text" not in obj["style"]
+
+
+def test_selected_objects_beyond_the_cap_stay_in_the_prompt_and_survive_trimming():
+    n = ve.VECTOR_OBJECTS_SHOWN + 20
+    many = _canvas([_t(f"t{i}", 1, 1, text="x" * 200) for i in range(n)])
+    last = f"t{n - 1}"
+    _, u = vp.build_prompt("挪一下选中的", many, [last], max_chars=48_000)
+    ids = [o["id"] for o in _scene_of(u)["vector_objects"]]
+    assert ids[0] == last
+    # 预算紧到只剩选中的那个，它也不被丢
+    s, u2 = vp.build_prompt("挪一下选中的", many, [last], max_chars=1)
+    assert [o["id"] for o in _scene_of(u2)["vector_objects"]] == [last]
+
+
 # ------------------------------------------------------------------ 校验（模型的补丁）
 
 

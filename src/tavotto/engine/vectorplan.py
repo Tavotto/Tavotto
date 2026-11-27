@@ -82,8 +82,16 @@ def check_selection(selection: object, canvas: dict) -> list[str]:
 
 def snapshot(canvas: dict, selection: list[str] | None = None) -> dict:
     """模型看到的场景：`vectoredit.memory_scene` + 选区。与 `read_scene` 的 `vector_objects` 逐键同形。"""
+    sel = list(selection or [])
     scene = ve.memory_scene(canvas)
-    return {**scene, "selection": list(selection or [])}
+    if sel:
+        # 选中的对象一定在快照里、排在最前：整表有上限，选中的可能排在上限之外（Codex #2303）
+        picked = ve.memory_scene(canvas, {"ids": sel})["vector_objects"]
+        have = {o["id"] for o in picked}
+        scene["vector_objects"] = picked + [
+            o for o in scene["vector_objects"] if o["id"] not in have
+        ]
+    return {**scene, "selection": sel}
 
 
 def system_prompt() -> str:
@@ -94,7 +102,7 @@ def system_prompt() -> str:
         "## 输入\n"
         "- `<instruction>`：用户的原话。\n"
         "- `<scene>`：画布快照（JSON）：`page`（页面毫米尺寸）、`panels_by_ref`（子图短号 → 子图对象 id）、"
-        "`vector_objects`（每个对象的 `id`、`type`、`name`、`text`、毫米框 `box_mm`、锁定 / 隐藏 / 所在组；路径另带 `subpaths` 与 `anchors`）、"
+        "`vector_objects`（每个对象的 `id`、`type`、`name`、`text`、毫米框 `box_mm`、锁定 / 隐藏 / 所在组、`style`（字号、线宽、颜色、填充等当前值，「加倍 / 加粗」照它算目标值）；路径另带 `subpaths` 与 `anchors`）、"
         "`selection`（用户此刻选中的对象 id，指令多半说的就是它们；为空 = 没选）。\n\n"
         "## 补丁怎么写\n"
         f"{ve.OPS_DOC}\n\n"
@@ -125,7 +133,10 @@ def build_prompt(
     """→ `(system, user)`。快照太长时从对象表尾丢（`vector_objects_total` 如实写总数，模型看得出被截了）。"""
     system = system_prompt()
     scene = snapshot(canvas, selection)
-    shown = list(scene["vector_objects"])
+    sel = set(scene["selection"])
+    keep = [o for o in scene["vector_objects"] if o["id"] in sel]
+    rest = [o for o in scene["vector_objects"] if o["id"] not in sel]
+    shown = keep + rest
     while True:
         view = {**scene, "vector_objects": shown}
         user = "\n".join(
@@ -139,9 +150,11 @@ def build_prompt(
                 "</scene>",
             ]
         )
-        if len(system) + len(user) <= max_chars or not shown:
+        if len(system) + len(user) <= max_chars or not rest:
             return system, user
-        shown = shown[: len(shown) * 3 // 4]
+        # 只从没选中的那部分尾上丢：选中的是指令的对象，丢了就改不了（Codex #2303）
+        rest = rest[: len(rest) * 3 // 4]
+        shown = keep + rest
 
 
 # ------------------------------------------------------------------ 校验

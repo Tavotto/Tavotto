@@ -123,6 +123,19 @@ def _box(o: dict) -> list[float]:
     return [float(o.get("x", 0)), float(o.get("y", 0)), float(o.get("w", 0)), float(o.get("h", 0))]
 
 
+#: 简述里带出当前值的字段种类：字号、线宽、颜色、填充、虚线、端型这类「改成多少」要看的现值；
+#: 文字另有 `text`，几何在 `box_mm` / 锚点里，渐变与端点体积大不列
+_STYLE_KINDS = {"number", "int", "bool", "color", "color_or_null", "enum", "dash_pattern"}
+
+
+def _style(o: dict) -> dict:
+    """对象此刻的样式值（只列对象上有的键）：模型要「字号翻倍」「把红箭头加粗」就得看得到现值（Codex #2303）。"""
+    spec = agentobjects.table()["types"].get(o.get("type"), {})
+    return {
+        k: o[k] for k, f in spec.items() if k in o and k != "text" and f.get("kind") in _STYLE_KINDS
+    }
+
+
 def _brief(o: dict) -> dict:
     out = {
         "id": o.get("id"),
@@ -134,6 +147,7 @@ def _brief(o: dict) -> dict:
         "locked": bool(o.get("locked")),
         "hidden": bool(o.get("hidden")),
         "group": (o.get("groupPath") or ([o["groupId"]] if o.get("groupId") else None)),
+        "style": _style(o),
     }
     if o.get("type") == "path":
         # 路径：每条子路径的闭合与锚点数（锚点地址 `{sp, i}` 的范围）；逐点清单由 `read_scene` 在预算内另附
