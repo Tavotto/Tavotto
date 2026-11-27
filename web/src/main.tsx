@@ -29,10 +29,6 @@ document.documentElement.lang = currentLocale()
 // 跑到这里时浏览器可能已经画过一帧）；这里是对账——以 uiStore 读出的偏好为准再落一次。
 // 下面那个不经 React 的「会话建立失败」页也读同一套 CSS 变量（宪法第二十八节）
 applyTheme(useUiStore.getState().theme)
-// 仅开发用：`?changePlanPreview=1` 往真实应用的审阅页签灌一份假分享与几条意见，预览「交给 Agent 修改」（正式构建里 DEV 恒为假，整支摇树掉）
-if (import.meta.env.DEV && new URLSearchParams(location.search).has('changePlanPreview')) {
-  void import('./dev/changePlanPreview/inject').then((m) => m.installChangePlanPreview())
-}
 // 输入方式：指针操作之后程序化挪焦点不画键盘焦点环（`lib/inputModality`、index.css）
 installInputModality()
 
