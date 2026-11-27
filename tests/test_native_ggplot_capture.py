@@ -923,6 +923,16 @@ stopifnot(before$rotation$value == 0, after$rotation$value == -40,
           after$weight$value == "bold", is.null(before$format),
           identical(adapter$render_ggplot(category_state$state, rotation), native$svg),
           identical(adapter$render_ggplot(category_state$state, list()), category_state$svg))
+if ("monospace" %in% before$fontfamily$options) {
+  font_edit <- setNames(list(list(fontfamily = "monospace")), bottom)
+  started <- category_state$state$text_targets[[bottom]]
+  updated <- adapter$ggplot_table_for(category_state$state, font_edit)$text
+  font <- fields(adapter$ggplot_manifest(category_state$state, "category", font_edit), bottom)$fontfamily
+  stopifnot(identical(updated[[bottom]]$paint$fontfamily, started$font_families[["monospace"]]),
+            identical(updated[[bottom]]$tick_labels, started$tick_labels),
+            identical(updated[[left]]$paint$fontfamily, category_state$state$text_targets[[left]]$paint$fontfamily),
+            identical(font$value, "monospace"), identical(font$value_original, before$fontfamily$value))
+}
 fixed_angle <- axis_capture(category + ggplot2::guides(x = ggplot2::guide_axis(angle = 30)))
 stopifnot(is.null(fields(adapter$ggplot_manifest(fixed_angle$state, "category"), bottom)$rotation))
 

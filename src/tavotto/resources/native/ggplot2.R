@@ -457,7 +457,8 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_text, guide_stro
     index <- state$tick_targets[[gid]]$index
     style <- axis_text[[gid]]
     patch <- do.call(ggplot2::theme, stats::setNames(
-      list(ggplot2::element_text(size = style$size, face = style$face, angle = style$rotation)),
+      list(ggplot2::element_text(size = style$size, face = style$face, angle = style$rotation,
+                                 family = style$family)),
       ggplot_axis_tick_theme_names[[gid]]
     ))
     theme <- axis_params[[index]]$theme
@@ -639,7 +640,7 @@ ggplot_bbox <- function(lower, upper, frame_pt) {
 
 ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
   targets <- list()
-  families <- ggplot_installed_title_fonts()
+  families <- ggplot_installed_text_fonts()
   for (gid in names(ggplot_text_slots)) {
     slot <- which(table$layout$name == ggplot_text_slots[[gid]])
     if (length(slot) != 1L) next
@@ -650,12 +651,15 @@ ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
         is_positive_ggplot_number(target$paint$fontsize) &&
         is_positive_ggplot_number(ggplot_text_cex(target$paint))) {
       target$title_dimension <- if (startsWith(gid, "axis.y.")) "width" else "height"
-      target$title_fonts <- families
+      target$font_families <- families
     }
     targets[[gid]] <- target
   }
-  targets <- c(targets, ggplot_legend_targets(table, colourbar_titles), ggplot_facet_labels(table),
-               ggplot_axis_ticks(table))
+  ticks <- lapply(ggplot_axis_ticks(table), function(target) {
+    target$font_families <- families
+    target
+  })
+  targets <- c(targets, ggplot_legend_targets(table, colourbar_titles), ggplot_facet_labels(table), ticks)
   measure_ggplot_targets(targets, frame_pt)
 }
 
@@ -1085,7 +1089,10 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       ggplot_tick_targets(built, text_targets, colourbar_titles)
     }
     for (gid in intersect(names(text_targets), names(ggplot_axis_tick_theme_names))) {
-      if (is.null(tick_targets[[gid]]$size)) text_targets[[gid]]$face <- NULL
+      if (is.null(tick_targets[[gid]]$size)) {
+        text_targets[[gid]]$face <- NULL
+        text_targets[[gid]]$font_families <- NULL
+      }
     }
     colour_scales <- list()
     if (all(lengths(captured_layers$grobs) > 0L)) {
@@ -1170,7 +1177,7 @@ ggplot_face_options <- list(weight = c("normal", "bold"), style = c("normal", "i
 ggplot_element_faces <- c("plain", "bold", "italic", "bold.italic")
 ggplot_font_families <- c("sans-serif" = "sans", serif = "serif", monospace = "mono")
 
-ggplot_installed_title_fonts <- function() {
+ggplot_installed_text_fonts <- function() {
   fonts <- tryCatch(
     systemfonts::font_info(family = unname(ggplot_font_families)),
     error = function(error) NULL
@@ -1183,8 +1190,8 @@ ggplot_installed_title_fonts <- function() {
   stats::setNames(fonts$family[valid], names(ggplot_font_families)[valid])
 }
 
-ggplot_title_family <- function(target) {
-  if (!length(target$title_fonts)) return(NULL)
+ggplot_text_family <- function(target) {
+  if (!length(target$font_families)) return(NULL)
   family <- target$paint$fontfamily
   if (is.null(family) || identical(family, "")) return("sans-serif")
   if (!is.character(family) || length(family) != 1L || is.na(family)) return(NULL)
@@ -1201,7 +1208,7 @@ ggplot_text_cex <- function(paint) {
 }
 
 ggplot_text_edit <- function(edit, tick) {
-  guide_props <- c(ggplot_tick_props, if (!is.null(tick$size)) "fontsize",
+  guide_props <- c(ggplot_tick_props, if (!is.null(tick$size)) c("fontsize", "fontfamily"),
                    if (!is.null(tick$rotation)) "rotation")
   edit[setdiff(names(edit), guide_props)]
 }
@@ -1209,7 +1216,7 @@ ggplot_text_edit <- function(edit, tick) {
 ggplot_text_paint <- function(target, edits) {
   paint <- target$paint
   face <- target$face
-  family <- ggplot_title_family(target)
+  family <- ggplot_text_family(target)
   for (prop in names(edits)) {
     value <- edits[[prop]]
     if (prop == "fontsize") {
@@ -1227,8 +1234,8 @@ ggplot_text_paint <- function(target, edits) {
       }
       paint$col <- value
     } else if (prop == "fontfamily" && !is.null(family) &&
-               value %in% c(family, names(target$title_fonts))) {
-      if (value != family) paint$fontfamily <- target$title_fonts[[value]]
+               value %in% c(family, names(target$font_families))) {
+      if (value != family) paint$fontfamily <- target$font_families[[value]]
     } else if (!is.null(face[[prop]]) && value %in% ggplot_face_options[[prop]]) {
       face[[prop]] <- value
     } else {
@@ -1248,12 +1255,13 @@ ggplot_axis_text_edits <- function(state, edits) {
   for (gid in intersect(names(edits), names(ggplot_axis_tick_theme_names))) {
     edit <- edits[[gid]]
     face_props <- intersect(names(ggplot_face_options), names(edit))
+    font_props <- c(face_props, intersect("fontfamily", names(edit)))
     size <- edit$fontsize
     rotation <- edit$rotation
-    if (is.null(size) && !length(face_props) && is.null(rotation)) next
+    if (is.null(size) && !length(font_props) && is.null(rotation)) next
     target <- state$text_targets[[gid]]
     tick <- state$tick_targets[[gid]]
-    if ((length(face_props) || !is.null(size)) && is.null(tick$size)) {
+    if ((length(font_props) || !is.null(size)) && is.null(tick$size)) {
       stop("The requested native R tick typography is unavailable.")
     }
     if (!is.null(rotation) &&
@@ -1264,11 +1272,10 @@ ggplot_axis_text_edits <- function(state, edits) {
     if (!is.null(size) && (!is_positive_ggplot_number(size) || size < 3 || size > 200)) {
       stop("The native R tick font size must be between 3 and 200 points.")
     }
-    face <- if (length(face_props)) {
-      styled <- ggplot_text_paint(target, edit[face_props])
-      ggplot_element_faces[[styled$paint$font]]
-    }
-    result[[gid]] <- list(size = size, face = face, rotation = rotation)
+    styled <- if (length(font_props)) ggplot_text_paint(target, edit[font_props])
+    face <- if (length(face_props)) ggplot_element_faces[[styled$paint$font]]
+    family <- if (!is.null(edit$fontfamily)) styled$paint$fontfamily
+    result[[gid]] <- list(size = size, face = face, rotation = rotation, family = family)
   }
   result
 }
@@ -1396,6 +1403,9 @@ ggplot_table_for <- function(state, edits) {
       }
       if (!is.null(typography$rotation) && !isTRUE(all.equal(current$rotation, typography$rotation))) {
         stop("The native R axis guide did not apply the requested label rotation.")
+      }
+      if (!is.null(typography$family) && !identical(current$paint$fontfamily, typography$family)) {
+        stop("The native R axis guide did not apply the requested font family.")
       }
       if (is.null(target$face)) current$face <- NULL
       target[names(current)] <- current
@@ -1665,12 +1675,12 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (!is.null(patch[[prop]])) field$value_original <- target$face[[prop]]
       editable[[length(editable) + 1L]] <- field
     }
-    family_original <- ggplot_title_family(target)
+    family_original <- ggplot_text_family(target)
     if (!is.null(family_original)) {
-      requested <- patch$fontfamily
+      requested <- edit$fontfamily
       family <- list(prop = "fontfamily", type = "enum",
                      value = if (is.null(requested)) family_original else requested,
-                     options = as.list(unique(c(family_original, names(target$title_fonts)))),
+                     options = as.list(unique(c(family_original, names(target$font_families)))),
                      strict_options = TRUE)
       if (!is.null(requested)) family$value_original <- family_original
       editable[[length(editable) + 1L]] <- family
