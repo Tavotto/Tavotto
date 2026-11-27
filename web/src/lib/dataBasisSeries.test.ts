@@ -19,7 +19,7 @@ const sentences = (c: C) => {
 }
 
 describe('多个 y：按系列数', () => {
-  it('数量相同且覆盖相同：各含 n 个有效值', () => {
+  it('数量相同且覆盖相同：各有 n 个数据点', () => {
     expect(sentences({ title_code: 'line_points', series_facts: sf([[6], [6]]) })).toEqual([{ key: 'seriesEqual', values: { k: 2, n: 6 } }])
   })
   it('数量不同（至多 3 个系列）：逐个列出，保持系列顺序', () => {

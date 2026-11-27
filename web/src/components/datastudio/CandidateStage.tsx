@@ -107,12 +107,12 @@ export function CandidateStage({
 }) {
   const { t, i18n } = useTranslation('ai')
   const known = (c: string) => KNOWN_CANDIDATES.includes(c)
-  // 依据里的一句：多个误差列各加引号直接相连（引号写法随语言，在 `basis.colQuote`）；多个系列的数量用 `basis.countJoin` 相连
+  // 依据里的一句：多个误差列各加引号（写法随语言，在 `basis.colQuote`），两列用「和」（`basis.colAnd`）、更多用顿号（`basis.colJoin`）相连；多个系列的数量用 `basis.countJoin` 相连
   const sentenceText = (b: BasisSentence) =>
     t(
       `dataFigureV2.basis.${b.key}`,
       Array.isArray(b.values.columns)
-        ? { columns: b.values.columns.map((c) => t('dataFigureV2.basis.colQuote', { column: c })).join(/^zh/i.test(i18n.language) ? '' : ', ') }
+        ? { columns: b.values.columns.map((c) => t('dataFigureV2.basis.colQuote', { column: c })).join(t(b.values.columns.length === 2 ? 'dataFigureV2.basis.colAnd' : 'dataFigureV2.basis.colJoin')) }
         : Array.isArray(b.values.counts)
           ? { ...b.values, counts: b.values.counts.join(t('dataFigureV2.basis.countJoin')) }
           : b.values,
@@ -192,7 +192,11 @@ export function CandidateStage({
               text: [
                 // 旧的多 y 响应没有数可写：主句是空的，不留空段
                 basis.main.length ? basis.main.map(sentenceText).join(t('dataFigureV2.basis.then')) : null,
-                ...[basis.errGap, basis.errColumn, basis.skipped, basis.errMissing].map((b) => b && sentenceText(b)),
+                // 缺误差值的位置数跟在「误差线取自哪几列」后面（先说来源、再说缺几处）；没有那半句时单独成句
+                basis.errColumn && basis.errGap
+                  ? t('dataFigureV2.basis.errGapTail', { text: sentenceText(basis.errColumn), count: Number(basis.errGap.values.count) })
+                  : (basis.errColumn ?? basis.errGap) && sentenceText((basis.errColumn ?? basis.errGap)!),
+                ...[basis.skipped, basis.errMissing].map((b) => b && sentenceText(b)),
               ].filter((x) => x != null).join(t('dataFigureV2.basis.join')),
             })}
           </p>

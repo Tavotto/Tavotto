@@ -89,25 +89,29 @@ describe('多个 y 的依据句', () => {
     ],
     ...o,
   })
-  it('数量相同：各含 6 个有效值；误差线取自「a_sd」「b_sd」列（各自带「」、直接相连）', async () => {
-    expect(await show({ series_facts: sf([6, 6]) })).toBe('依据：2 个系列，各含 6 个有效值；误差线取自「a_sd」「b_sd」列。')
+  it('数量相同：各有 6 个数据点；误差线取自「a_sd」和「b_sd」列（各自带「」，两列用「和」相连）', async () => {
+    expect(await show({ series_facts: sf([6, 6]) })).toBe('依据：2 个系列，各有 6 个数据点；误差线取自「a_sd」和「b_sd」列。')
   })
-  it('数量不同：分别含 4、5 个有效值；有缺误差的再接「；1 处缺少误差值」', async () => {
-    expect(await show({ series_facts: sf([4, 5], {}, [0, 1]) })).toBe('依据：2 个系列，分别含 4、5 个有效值；1 处缺少误差值；误差线取自「a_sd」「b_sd」列。')
+  it('数量不同：分别有 4、5 个数据点；缺误差的位置数跟在误差列后面「，其中 1 处缺失」', async () => {
+    expect(await show({ series_facts: sf([4, 5], {}, [0, 1]) })).toBe('依据：2 个系列，分别有 4、5 个数据点；误差线取自「a_sd」和「b_sd」列，其中 1 处缺失。')
   })
   it('其余句式（中文）：覆盖位置不同、超过 3 个系列用范围', async () => {
-    expect(await show({ series_facts: sf([2, 2], { rows_any: 4, rows_all: 0 }) })).toBe('依据：2 个系列，各含 2 个有效值；有效数据覆盖位置不同；误差线取自「a_sd」「b_sd」列。')
+    expect(await show({ series_facts: sf([2, 2], { rows_any: 4, rows_all: 0 }) })).toBe('依据：2 个系列，各有 2 个数据点；有效数据覆盖位置不同；误差线取自「a_sd」和「b_sd」列。')
   })
   it('其余句式（中文）：超过 3 个系列且数量不同', async () => {
     const series = [116, 120, 118, 117, 119].map((n, i) => ({ y: `y${i}`, n, x_values: n }))
-    expect(await show({ title_code: 'line_points', error: undefined, error_source: undefined, error_columns: undefined, series_facts: { rows: 120, eligible_rows: 120, rows_any: 120, rows_all: 116, series } })).toBe('依据：5 个系列，各含 116–120 个有效值。')
+    expect(await show({ title_code: 'line_points', error: undefined, error_source: undefined, error_columns: undefined, series_facts: { rows: 120, eligible_rows: 120, rows_any: 120, rows_all: 116, series } })).toBe('依据：5 个系列，各有 116–120 个数据点。')
   })
   it('英文界面的各句式', async () => {
     await act(() => i18n.changeLanguage('en-US'))
-    expect(await show({ series_facts: sf([4, 5], {}, [0, 1]) })).toBe('Basis: 2 series, with 4 / 5 valid values respectively; 1 place is missing an error value; error bars from the “a_sd”, “b_sd” columns.')
+    expect(await show({ series_facts: sf([4, 5], {}, [0, 1]) })).toBe('Basis: 2 series, with 4 / 5 data points respectively; error bars from the “a_sd” and “b_sd” columns, missing at 1 place.')
+  })
+  it('三个误差列：用顿号相连（两列才用「和」）', async () => {
+    const three = [...cols(['sd', 'sd']), { y: 'c_mean', column: 'c_sd', kind: 'sd', stated: true }]
+    expect(await show({ facts: facts(), error_columns: three })).toBe('依据：误差线取自「a_sd」、「b_sd」、「c_sd」列。')
   })
   it('旧响应（多个 y 没有 series_facts）：不写数字，绝不拿旧的第一列数字顶替；误差线取自哪几列照旧', async () => {
-    expect(await show({ facts: facts() })).toBe('依据：误差线取自「a_sd」「b_sd」列。')
+    expect(await show({ facts: facts() })).toBe('依据：误差线取自「a_sd」和「b_sd」列。')
   })
 })
 

@@ -1,4 +1,4 @@
-/** 依据句：`bar_err`（每行一根柱）与多个 y 各配各的误差列（「a_sd」「b_sd」）。 */
+/** 依据句：`bar_err`（每行一根柱）与多个 y 各配各的误差列（「a_sd」和「b_sd」）。 */
 import { describe, expect, it } from 'vitest'
 import { basisOf } from './dataBasis'
 

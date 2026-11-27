@@ -8,8 +8,8 @@
  *  - 没画的行：只有缺值 / 只有不是数 / 两种都有；旧响应没有拆开的两个数时按总数「另有 N 行未计入」；0 行没有这一句
  *  - 现成的误差列（`points_err` / `line_err`）：主句「按 N 行绘制，每行一个点」，再接「误差线取自「列名」列」
  *  - 算出来的误差线 / 带有位置只有 1 个数值：句末再接「N 处只有 1 个数值，算不出误差线（带）」（只有一处时点名：「「C」只有 1 个数值，算不出误差线」）；位置标签在 `missingFor`（整句的 title 提示里列出）
- *  - 多个 y（`series_facts`，每条线各自的数）：「N 个系列，各含 n 个有效值」/「分别含 a、b 个有效值」（超过 3 个系列用范围「各含 min–max 个有效值」）；
- *    数量相同但有效的行不是同一批再接「；有效数据覆盖位置不同」；现成误差列里有中心值却缺误差的再接「；N 处缺少误差值」。
+ *  - 多个 y（`series_facts`，每条线各自的数）：「N 个系列，各有 n 个数据点」/「分别有 a、b 个数据点」（超过 3 个系列用范围「各有 min–max 个数据点」）；
+ *    数量相同但有效的行不是同一批再接「；有效数据覆盖位置不同」；现成误差列里有中心值却缺误差的，跟在「误差线取自…列」后面「，其中 N 处缺失」（界面拼；没有那半句时单独写「N 处缺少误差值」）。
  *    **绝不拿 `facts`（旧响应里是第一条线的数）顶替**：多个 y 却没有 `series_facts` 的旧响应不写数字那半句，误差线取自哪几列那半句照旧
  *  - 没有 `facts`、也不是多个 y = 不显示（null）
  */
@@ -119,7 +119,7 @@ function errGapOf(sf: AiDataSeriesFacts): BasisSentence | null {
   return count > 0 ? { key: 'errGap', values: { count } } : null
 }
 
-/** 误差线取自哪些列：多个 y 各配各的时写成「a_sd」「b_sd」（逐列事实在 `error_columns`），单个 y 是 `error_column` */
+/** 误差线取自哪些列：多个 y 各配各的时写成「a_sd」和「b_sd」（逐列事实在 `error_columns`），单个 y 是 `error_column` */
 function errColumnOf(c: { error_column?: string; error_columns?: { column: string }[] }): BasisSentence | null {
   if (c.error_columns && c.error_columns.length > 1) return { key: 'errColumns', values: { columns: c.error_columns.map((x) => x.column) } }
   const one = c.error_column ?? c.error_columns?.[0]?.column
