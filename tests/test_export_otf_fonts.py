@@ -289,9 +289,13 @@ def test_without_the_boundary_fix_the_written_back_original_carries_cff(project,
     assert man["checks"]["fonts_embedded"] == inspector.FAILED, man["checks"]
 
 
-def test_repair_leaves_a_file_without_a_pdf_header_byte_for_byte(tmp_path):
-    """不是 PDF 的文件（假 worker 的半成品、截断的输出）不碰：一个字节不动，交给检查器报。"""
+@pytest.mark.parametrize(
+    "junk_bytes", [b"NEW-pdf", b"%PDF-1.4\n"], ids=["no-header", "header-but-unparseable"]
+)
+def test_repair_leaves_a_file_it_cannot_parse_byte_for_byte(tmp_path, junk_bytes):
+    """不是 PDF、或有文件头却解析不了的文件（假 worker 的半成品、截断的输出）不碰也不抛：
+    一个字节不动，交给检查器报——抛出来写回就成了 500（`test_windows_regressions` 的锁文件用例）。"""
     junk = tmp_path / "x.pdf"
-    junk.write_bytes(b"NEW-pdf")
+    junk.write_bytes(junk_bytes)
     assert pdfwriter.repair_cff_in_truetype_slots(junk) == 0
-    assert junk.read_bytes() == b"NEW-pdf"
+    assert junk.read_bytes() == junk_bytes
