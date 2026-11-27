@@ -323,6 +323,40 @@ def test_v2_source_uses_the_cached_bundle_and_its_catalog_rev(env, monkeypatch):
     assert w["catalog"] == {"v1": env.catalog["catalog_rev"], "v2": 42}
 
 
+def test_v2_only_journal_is_known_from_the_local_v2_cache(env, monkeypatch):
+    """Codex #2332：只在 v2 里的刊不在 v1 目录；本机 v2 缓存里有它就认（刊名取 bundle），都没有才 journal_unknown。"""
+    from tavotto.engine import journalfacts_fold as fold, journalfacts_remote as facts
+
+    bundles = {"v2-only": (7, {"journal": {"label": "V2 Only Letters"}})}
+    monkeypatch.setattr(facts, "cached_bundle", lambda jid: bundles.get(jid))
+    monkeypatch.setattr(
+        fold,
+        "fold",
+        lambda b: {
+            "rules": {
+                "min_raster_dpi": {
+                    "value": 300,
+                    "qualifier": "min",
+                    "src": "v2:g:journal",
+                    "fact_id": "f-1",
+                }
+            },
+            "sources": {"v2:g:journal": {}},
+            "confirm": [],
+        },
+    )
+    e = _body(_call({"type": "editor", "journal_id": "v2-only", "body": "编辑部要 600 dpi"}))
+    assert e["will_send"]["journal_label"] == "V2 Only Letters"
+    w = _body(
+        _call({"type": "wrong", "journal_id": "v2-only", "rule_key": "min_raster_dpi", "body": "x"})
+    )
+    assert w["will_send"]["source_id"] == "v2:f-1" and w["will_send"]["catalog"]["v2"] == 7
+    assert (
+        _body(_call({"type": "editor", "journal_id": "nowhere", "body": "x"}))["code"]
+        == "journal_unknown"
+    )
+
+
 def test_missing_and_editor_shapes_are_accepted(env):
     m = _body(_call({"type": "missing", "query": "Journal of Nothing", "url": URL}))
     assert m["will_send"]["query"] == "Journal of Nothing" and "journal_id" not in m["will_send"]

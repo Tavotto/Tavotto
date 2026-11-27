@@ -6465,6 +6465,16 @@ def report_journal_issue(
         except engine_profiles.ProfileError:
             label = None
         if label is None:
+            # 只在 v2 里的刊（`tavotto_get_journal_facts` 取到的）不在 v1 目录：再看本机 v2 缓存（只读、不联网；Codex #2332）
+            facts = _optional_engine("journalfacts_remote")
+            got = (
+                facts.cached_bundle(jid)
+                if facts is not None and hasattr(facts, "cached_bundle")
+                else None
+            )
+            if got is not None:
+                label = ((got[1].get("journal") or {}).get("label") or "").strip() or None
+        if label is None:
             raise BridgeError(
                 "目录里没有这本刊（journal_id）；先用 tavotto_list_journals 取 id。",
                 code="journal_unknown",
