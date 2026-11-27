@@ -6167,6 +6167,8 @@ export interface AiDataLazyInfo {
   purpose?: AiDataPurpose
   table?: string
   sheet?: string | null
+  /** 这次读的数据文件原始字节的 sha256（单份；合画没有；旧后端没有）：图的来历据它判「数据变没变」 */
+  data_sha256?: string
   /** 文本表是实际用的物理行号，XLSX 为 null */
   header_row?: number | null
   /** 合画：每份文件一项（后端合同 `sources`）：显示名 `label`（文件名去扩展名）与各自实际用的表头行 / 单位行 */
@@ -6280,6 +6282,10 @@ export const aiDataFigureCommit = (
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     pj,
   )
+
+/** 一份数据文件此刻原始字节的 sha256（`null` = 文件不在 / 读不了 / 太大，不是错误）：核对图的来历里的数据变没变 */
+export const aiDataFigureDigest = (table: string, pj?: string | null) =>
+  jsonFetch<{ sha256: string | null }>(`/api/ai/data-figure/data-digest?table=${encodeURIComponent(table)}`, {}, pj)
 
 export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
   jsonFetch<{ ok: boolean }>(

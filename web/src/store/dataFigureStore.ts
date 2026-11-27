@@ -233,6 +233,8 @@ interface DataFigureStore {
   previewKey: string | null
   /** 响应说用户点选过误差类型（`answers.error` 被后端认了）；没有 = 误差线画的是哪一种还没确认 */
   errorConfirmed: boolean
+  /** 这批候选读的数据文件原始字节的 sha256（合画 / 旧后端没有 = null） */
+  dataSha256: string | null
   /** 这批候选按什么看图目的排的（响应的 `purpose`）；右栏「目的」一行显示它的 `code`，没有 / `code` 为 null / 选项不足两个 = 不出这一行 */
   purpose: AiDataPurpose | null
   /** 「是不是同一对象重复测量」这个问题出现过（`defaults` 里有 `pick_design`）：确认之后后端不再问，但那一行要留着（可再改），所以只增不减，直到换文件 */
@@ -336,6 +338,8 @@ const initial = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  /** 这批候选读的数据文件原始字节的 sha256（响应的 `data_sha256`；合画 / 旧后端没有 = null）：画成后记进图的来历 */
+  dataSha256: null as string | null,
   purpose: null as AiDataPurpose | null,
   designAsked: false,
   // 草稿自己的规范绑定只在 `initial`：换文件 / 关标签（`idleDraft`）不清它，项目代际（`clear()`）与重新进入（`enter()`）才清
@@ -365,6 +369,7 @@ const idleDraft = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  dataSha256: null as string | null,
   purpose: null as AiDataPurpose | null,
   designAsked: false,
   figureStyle: null as AiDataFigureStyle | null,
@@ -397,7 +402,7 @@ export const setKeepClock = (f: () => number): void => {
   keepClock = f
 }
 
-const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'purpose', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
+const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'dataSha256', 'purpose', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
 type KeepSnap = Pick<typeof initial, (typeof KEEP_FIELDS)[number]>
 interface Kept {
   key: string
@@ -787,6 +792,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       figureStyle: res.figure_style ?? null,
       specFallback: res.spec_fallback === true,
       errorConfirmed: res.error_confirmed === true,
+      dataSha256: res.data_sha256 ?? null,
       purpose: res.purpose && res.purpose.code ? res.purpose : null,
       designAsked: get().designAsked || (res.defaults ?? []).some((d) => d.question_code === 'pick_design'),
     }
@@ -965,6 +971,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       answers: get().answers,
       spec: binding ? (host.resolveSpec?.(binding) ?? null) : null,
       fontRange: fontRangeOf(binding),
+      dataSha256: get().dataSha256,
       pj: currentProjectId(),
     })
     if (origin) useFigureOriginStore.getState().register(origin)

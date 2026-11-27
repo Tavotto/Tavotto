@@ -57,7 +57,7 @@ order: 200
   按钮禁用并说明原因——判据是换算出的 crop 过不过 `cropInBounds`（与 `rendercore/ir._crop` 同源对），
   越界的 crop 会让 RenderCore 拒掉整份排版（#688）。
 - 文档模型可选字段（schema 仍为 2，旧文档兼容）：
-  `PanelObject.lockedGids / flipH / flipV`、`ObjectBase.layoutPinned`、
+  `PanelObject.lockedGids / flipH / flipV`、`PanelObject.dataOrigin`（「从数据到图」画出的图是怎么画出来的：点误差线换 SD / SEM / 95% CI 用，ADR 0178 修订第 9–10 条；只存项目相对 POSIX 路径、严格读 `readPanelOrigin`、不进导出 / 分享审阅 / 诊断）、`ObjectBase.layoutPinned`、
   `PageSetup.userSized`（用户明确设过画布尺寸：属性栏宽高 / 预设 / 方向、拖页边；一键排版自己写页面不置，ADR 0199）、
   `FigureDocument.quickLayout`（一键排版记下的网格：行列、每张图的格子、比例、排好时的框；框被用户动过即失效，拖分隔线只在有效时出现，ADR 0199）、
   `FigureDocument.colorKeys`（推荐配色的色键表：方案 id、键 → 槽、配色写下的 override；只存 label 的身份摘要不存原文，槽一旦分配不动，`canvasToDoc` / `docToCanvas` 随画布带着，ADR 0210）、

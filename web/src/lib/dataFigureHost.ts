@@ -11,7 +11,8 @@ import { configureDataBatchHost } from '@/store/dataBatchStore'
 import { configureDataFigureHost, reserveBackendSession } from '@/store/dataFigureStore'
 import { configureFigureOriginHost, useFigureOriginStore } from '@/store/figureOriginStore'
 import { panelIfScript, panelUntouchedNow } from '@/lib/dataFigureOriginLive'
-import { normScript } from '@/lib/dataFigureOrigin'
+import { normScript, readPanelOrigin, toPanelOrigin } from '@/lib/dataFigureOrigin'
+import { writePanelDataOrigin } from '@/store/panelDataOrigin'
 import { enterElementEdit, replaceRuntimeFigure } from '@/store/actions'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -84,52 +85,76 @@ const quietGuideCard = () => {
 configureFigureOriginHost({
   reserveSession: reserveBackendSession,
   notify: (message) => useUiStore.getState().setStatus(message, 'info'),
-  replaceFigure: async ({ panelId, oldScript, newScript, origin, still }) => {
+  originOf: (panelId) => {
+    const o = useDocumentStore.getState().doc.objects.find((x) => x.id === panelId)
+    const panel = o?.type === 'panel' ? o : null
+    const origin = panel ? readPanelOrigin(panel) : null
+    return panel && origin && panelUntouchedNow(panel, origin) ? origin : null
+  },
+  replaceFigure: async ({ panelId, newScript, origin, kind, still }) => {
     const pj = currentProjectId()
     const same = () => still() && currentProjectId() === pj
-    // 换的只是发起切换的那一块面板（属性页那一行传来的 id；同一张图复制出几份时不按脚本另找）；
+    // 换的只是发起切换的那一块面板（属性页那一行传来的 id；同一张图复制出几块时不按脚本另找）；
     // 等脚本跑的这段时间里他换了画布 / 删了它 / 它不再画旧脚本 / 改了它，一律不换
     const canvasId = useDocumentStore.getState().activeCanvasId
     const preferGid = useUiStore.getState().selectedGids[0] ?? null
-    const target = panelIfScript(panelId, oldScript)
-    if (!target || !panelUntouchedNow(target, origin)) return null
     quietGuideCard()
     await refreshProjectNow().catch(() => undefined)
-    if (!same()) return null
+    if (!same()) return false
     await useScriptRunStore.getState().run(newScript)
-    if (!same()) return null
+    if (!same()) return false
     const run = useScriptRunStore.getState().byScript[newScript]
     const desc = run?.phase === 'captured_one' ? run.descriptors[0] : undefined
-    if (!desc || normScript(desc.script) !== normScript(newScript)) return null
+    if (!desc || normScript(desc.script) !== normScript(newScript)) return false
     // 换图是离散动作：先结束进行中的手势（拖动 / 缩放 / 属性页连续编辑），再复核、再提交，换图才是独立的一条历史
     // （否则 commit 会并进手势事务、一次撤销连移动一起退）。结束手势可能再改文档，所以复核放在它之后
-    const placed = runDiscreteAction('app', null, (): { fingerprint: string } | null => {
-      const panel = panelIfScript(panelId, oldScript)
-      if (!panel || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return null
-      if (!replaceRuntimeFigure(panel.id, desc)) return null
+    const placed = runDiscreteAction('app', null, (): boolean => {
+      const panel = panelIfScript(panelId, origin.script)
+      if (!panel || useDocumentStore.getState().activeCanvasId !== canvasId || !panelUntouchedNow(panel, origin)) return false
+      const next = toPanelOrigin({ ...origin, script: normScript(newScript), kind }, desc.source_fingerprint)
+      if (!replaceRuntimeFigure(panel.id, desc, next)) return false
       // 回到图内编辑（与「打开并运行」之后落在的状态一样）：选中这块面板
       useSelectionStore.getState().set([panel.id])
       enterElementEdit(panel.id)
-      // 新图的 manifest 到了就选回误差棒（属性页停在误差棒页，那一行显示新类型）
+      // 新图的 manifest 到了就选回误差棒 / 阴影带（属性页停在那一页，那一行显示新类型）
       selectErrorBarWhenDrawn(panel.id, preferGid, origin.band)
-      return { fingerprint: desc.source_fingerprint }
+      return true
     })
-    return placed ?? null
+    return placed === true
   },
 })
 
-// 面板第一次出现在文档里：记下它的来源指纹（之后「脚本是否被改过」都对着它比）。只在有还没记到指纹的来历时才扫文档
-const bindOriginFingerprints = () => {
-  const reg = useFigureOriginStore.getState()
-  const need = new Set(reg.unbound())
-  if (!need.size) return
+// 面板第一次出现在文档里：把登记的来历写到它身上（随项目文档落盘；`script` 对得上、带着来源指纹的 runtime 面板才认）。
+// 只在有待认领的来历时才扫文档。路径不是项目相对 / 摘要不合格的来历 `toPanelOrigin` 回 null：不落盘，直接丢掉
+let scannedDoc: unknown = null
+let scannedCanvases: unknown = null
+let scannedOrigins: unknown = null
+const claimPendingOrigins = () => {
+  const store = useFigureOriginStore.getState()
+  const pending = store.pending
+  const claimed = store.claimed
+  if (!Object.keys(pending).length && !Object.keys(claimed).length) return
   const s = useDocumentStore.getState()
+  // 对象表与两张来历表都没换过 = 上次已经扫过，不再扫（文档 store 每次拖动都会通知）
+  if (s.doc.objects === scannedDoc && s.canvases === scannedCanvases && store.pending === scannedOrigins) return
+  scannedDoc = s.doc.objects
+  scannedCanvases = s.canvases
+  scannedOrigins = store.pending
   const objects = [...s.doc.objects, ...s.canvases.filter((c) => c.id !== s.activeCanvasId).flatMap((c) => c.objects)]
   for (const o of objects) {
-    if (o.type !== 'panel' || o.fileKind !== 'runtime' || !o.script || !o.source?.fingerprint) continue
+    if (o.type !== 'panel' || o.fileKind !== 'runtime' || !o.script || !o.source?.fingerprint || o.dataOrigin) continue
     const key = normScript(o.script)
-    if (need.has(key)) reg.bindFingerprint(key, o.source.fingerprint)
+    const origin = pending[key]
+    if (origin) {
+      const stored = toPanelOrigin(origin, o.source.fingerprint)
+      if (stored && writePanelDataOrigin(o.id, stored)) store.markClaimed(key, o.source.fingerprint, stored)
+      store.release(key)
+      continue
+    }
+    // 新建图那一步被撤销再重做：面板照历史里「还没有来历」的样子回来——同一个脚本、同一个来源指纹，就把写过的那份补回去
+    const again = claimed[key]
+    if (again && again.fingerprint === o.source.fingerprint) writePanelDataOrigin(o.id, again.origin)
   }
 }
-useDocumentStore.subscribe(bindOriginFingerprints)
-useFigureOriginStore.subscribe(bindOriginFingerprints)
+useDocumentStore.subscribe(claimPendingOrigins)
+useFigureOriginStore.subscribe(claimPendingOrigins)

@@ -191,6 +191,27 @@ export interface RuntimePanelSource {
   runConfig?: string
 }
 
+/**
+ * `PanelObject.dataOrigin` 的存储形状（`version: 1`）。`file.path` 只能是项目相对的 POSIX 路径（登记时判，读出来再判一次）；
+ * `dataSha256` = 画这张图时读的数据文件原始字节的 sha256，重开后据它判「数据变没变」；`fingerprint` = 这张图来源脚本的指纹（含脚本内容 sha256）。
+ */
+export interface PanelDataOrigin {
+  version: 1
+  script: string
+  file: { path: string; sheet: string | null }
+  headerRow: number | null
+  answers: Record<string, unknown>
+  spec: Record<string, unknown> | null
+  fontRange: { min_pt?: number; max_pt?: number } | null
+  /** 候选身份（`candidateIdentity`，不含误差类型） */
+  identity: string
+  kind: 'sd' | 'sem' | 'ci95'
+  /** 误差画成阴影带（趋势的 `line_band`）而不是误差线 */
+  band: boolean
+  fingerprint: string
+  dataSha256: string
+}
+
 /** Exact script/configuration ownership, derived and verified only by the backend. */
 export interface FigureExecutionOwner {
   script: string
@@ -297,6 +318,12 @@ export interface PanelObject extends ObjectBase {
    * 只影响交互，不影响渲染与导出；元素树里仍可选中（用于解锁）。
    */
   lockedGids?: string[]
+  /**
+   * 「从数据到图」画出的这张图是怎么画出来的（只给误差线是 Tavotto 算出来的图：点误差线 / 阴影带时换 SD / SEM / 95% CI 用，ADR 0178）。
+   * 可选字段，schema 不升；旧构建读到会忽略（图照常可用）。**只放在用户自己的项目文档里**：不进遥测、诊断包、分享审阅与导出请求（逐条有测试钉住）。
+   * 形状与读法的唯一出处 `lib/dataFigureOrigin.readPanelOrigin`（版本不认识 / 形状不对 / 路径不是项目相对 = 当没有）。
+   */
+  dataOrigin?: PanelDataOrigin
   crop?: CropRect
   /**
    * 90° 步进旋转。**x/y/w/h 永远是旋转后的页面落位包围盒**，
