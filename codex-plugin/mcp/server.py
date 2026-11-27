@@ -1391,6 +1391,9 @@ NORMAL_TOOLS = (
     "tavotto_layout_annotate_undo",
     "tavotto_layout_edit_plan",
     "tavotto_layout_edit_apply",
+    "tavotto_suggest_plan",
+    "tavotto_suggest_apply",
+    "tavotto_suggest_status",
 )
 
 
