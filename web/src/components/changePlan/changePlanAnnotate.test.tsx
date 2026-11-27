@@ -430,3 +430,112 @@ it('脚本方案卡（高级版用户）：没有「对比 / 批注」切换、�
   expect(qa('[role="radiogroup"]').some((g) => g.textContent?.includes('批注'))).toBe(false)
   expect(q('[data-change-plan-script-meta]')).not.toBeNull()
 })
+
+// ---- 卡片上的批注入口（ADR 0206 §五修订 2026-11-27）：待确认的铅笔钮 / 已应用的「再改一版」 ----
+const putCard = (e: PlanEntry) => act(() => useChangePlanStore.setState({ entries: { [e.key]: e }, order: [e.key], dialogKey: null }))
+const renderBoth = () =>
+  act(() =>
+    root.render(
+      <TooltipProvider>
+        <ChangePlanCard entry={useChangePlanStore.getState().entries.a} />
+        <ChangePlanDialog />
+      </TooltipProvider>,
+    ),
+  )
+/** 把图改成方案那一版并记下这次 commit：卡片 = 已应用且能撤销 */
+const appliedEntry = (over: Partial<PlanEntry> = {}) => {
+  const candidate = plan('p1', 1).candidate_patches
+  act(() =>
+    useDocumentStore.getState().commit(literal('应用'), (d) => {
+      ;(d.objects.find((x) => x.id === 'p1') as PanelObject).overrides = candidate
+    }),
+  )
+  return entry({ status: 'applied', appliedPatches: candidate, appliedEntry: useDocumentStore.getState().past.at(-1), ...over })
+}
+
+it('卡片入口：高级版待确认卡点铅笔钮 → 弹窗直接以批注模式打开；不传 view 的「查看」仍先看对比', () => {
+  status(PRO)
+  putCard(entry())
+  renderBoth()
+  const mark = q('[data-change-plan-mark]')!
+  expect(mark.getAttribute('aria-label')).toBe('在改好的图上标几处，再改一版')
+  expect(mark.textContent).toBe('')
+  expect(q('[data-change-plan-dialog]')).toBeNull()
+  act(() => mark.click())
+  expect(view()).toBe('annotate')
+  act(() => useChangePlanStore.getState().closeDialog())
+  act(() => q('[data-change-plan-view]')!.click())
+  expect(view()).toBe('compare')
+})
+
+it('卡片入口：免费用户铅笔钮带锁，点了不开弹窗', () => {
+  status(FREE)
+  putCard(entry())
+  renderBoth()
+  const lock = q('[data-premium-lock]')
+  expect(lock).not.toBeNull()
+  act(() => lock!.click())
+  expect(q('[data-change-plan-dialog]')).toBeNull()
+  expect(useChangePlanStore.getState().dialogKey).toBeNull()
+})
+
+it('卡片入口：授权入口没上线时不画铅笔钮', () => {
+  status({ enabled: false })
+  putCard(entry())
+  renderBoth()
+  expect(q('[data-change-plan-mark]')).toBeNull()
+  expect(q('[data-premium-lock]')).toBeNull()
+})
+
+it('卡片入口：一键排版卡与脚本卡都没有铅笔钮 / 「再改一版」', () => {
+  status(PRO)
+  putCard(layoutEntry())
+  renderBoth()
+  expect(q('[data-change-plan-mark]')).toBeNull()
+  expect(q('[data-change-plan-revise-again]')).toBeNull()
+  putCard(scriptEntry())
+  renderBoth()
+  expect(q('[data-change-plan-mark]')).toBeNull()
+})
+
+it('「再改一版」：已应用可撤销的卡点了 → 调 undo，撤回成功后弹窗以批注模式打开', () => {
+  status(PRO)
+  const undo = vi.fn(() => {
+    useDocumentStore.getState().undo()
+    return true
+  })
+  const e = appliedEntry()
+  putCard(e)
+  act(() => useChangePlanStore.setState({ undo }))
+  renderBoth()
+  const btn = q('[data-change-plan-revise-again]')!
+  expect(btn.textContent).toBe('再改一版')
+  expect(btn.getAttribute('title')).toBe('撤回这次修改，在改好的图上标几处再改一版')
+  act(() => btn.click())
+  expect(undo).toHaveBeenCalledWith('a')
+  expect(view()).toBe('annotate')
+})
+
+it('「再改一版」：撤回失败不开弹窗；免费用户带锁不撤回；不可撤销时不出现', () => {
+  status(PRO)
+  const undo = vi.fn(() => false)
+  putCard(appliedEntry())
+  act(() => useChangePlanStore.setState({ undo }))
+  renderBoth()
+  act(() => q('[data-change-plan-revise-again]')!.click())
+  expect(undo).toHaveBeenCalledTimes(1)
+  expect(q('[data-change-plan-dialog]')).toBeNull()
+
+  status(FREE)
+  renderBoth()
+  act(() => q('[data-premium-lock]')!.click())
+  expect(undo).toHaveBeenCalledTimes(1)
+  expect(q('[data-change-plan-dialog]')).toBeNull()
+
+  // 栈顶不是应用那次 commit：没有「撤销」，也就没有「再改一版」
+  status(PRO)
+  putCard({ ...useChangePlanStore.getState().entries.a, appliedEntry: undefined })
+  renderBoth()
+  expect(q('[data-change-plan-undo]')).toBeNull()
+  expect(q('[data-change-plan-revise-again]')).toBeNull()
+})

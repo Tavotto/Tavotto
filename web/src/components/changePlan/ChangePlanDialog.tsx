@@ -52,7 +52,8 @@ export function ChangePlanDialog() {
   useEffect(() => {
     setActiveId(null)
     setEditing(null)
-    setView('compare')
+    // 卡片上的批注入口带来初始视图（取一次就清）：免费用户 `annotating` 本来就不成立，不会进
+    setView(key ? (useChangePlanStore.getState().consumeDialogView() ?? 'compare') : 'compare')
     setStage('figure')
   }, [key, planId])
   // 第一次打开（高级版）：「写批注」上方出一次轻提示，点任意处或 5 秒后消失，本机记住

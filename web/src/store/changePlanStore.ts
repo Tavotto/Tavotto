@@ -308,6 +308,8 @@ interface ChangePlanState {
   order: string[]
   /** 弹窗里正在看的那一份 */
   dialogKey: string | null
+  /** 打开弹窗时指定的初始视图（卡片上的批注入口）；弹窗读到后清掉，不传 = 照旧先看对比 */
+  dialogView: 'compare' | 'annotate' | null
 
   /** 为某张图发起一次方案；同一张图同一批意见的在途 / 待确认方案直接聚焦（返回它的键） */
   requestFromReview: (panelId: string, req: PlanRequest) => Promise<string | null>
@@ -327,8 +329,10 @@ interface ChangePlanState {
   regenerate: (key: string) => Promise<string | null>
   /** 一键排版出的整版方案（`quickLayoutActions` 调）：条目已带方案与两张预览图的 blob 地址，直接是待确认 */
   addLayoutEntry: (e: PlanEntry) => void
-  openDialog: (key: string) => void
+  openDialog: (key: string, opts?: { view?: 'compare' | 'annotate' }) => void
   closeDialog: () => void
+  /** 弹窗取走初始视图（取一次就清，之后换版本回到对比） */
+  consumeDialogView: () => 'compare' | 'annotate' | null
   toggleGroup: (key: string, groupKey: string) => void
   /**
    * 回答方案里的一个确认（对数轴下限）：`yes` = 一起改，照方案应用；`no` = 不改，这一组整组不要（按「前端重算」口径取消勾选、
@@ -664,6 +668,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     entries: {},
     order: [],
     dialogKey: null,
+    dialogView: null,
 
     requestFromReview: async (panelId, req) => {
       const same = (e: PlanEntry) =>
@@ -815,12 +820,17 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     },
 
     // 还有没回答的确认（对数轴下限）就不让看 / 应用：先问清楚，免得出一张坍掉的图
-    openDialog: (key) => {
+    openDialog: (key, opts) => {
       const e = get().entries[key]
       if (e && pendingConfirm(e)) return
-      set({ dialogKey: key })
+      set({ dialogKey: key, dialogView: opts?.view ?? null })
     },
-    closeDialog: () => set({ dialogKey: null }),
+    closeDialog: () => set({ dialogKey: null, dialogView: null }),
+    consumeDialogView: () => {
+      const v = get().dialogView
+      if (v) set({ dialogView: null })
+      return v
+    },
     toggleGroup: (key, groupKey) => {
       set((s) => {
         const e = s.entries[key]

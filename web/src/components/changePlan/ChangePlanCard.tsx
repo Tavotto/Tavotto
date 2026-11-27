@@ -4,14 +4,15 @@ import { DATA_DECLINED, canUndoApplied, declinedGroups, isCanvasPlan, pendingCon
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
-import { Button } from '../ui/Button'
-import { Check, RefreshCw } from '../ui/icons'
+import { Button, IconButton } from '../ui/Button'
+import { Check, Pencil, RefreshCw } from '../ui/icons'
+import { PremiumLock } from '../license/PremiumLock'
 import { ICON_SIZE } from '../ui/Icon'
 import { StatusPill } from '../ui/StatusPill'
 import { TaskChecklist } from '../ui/TaskChecklist'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { formatAxisLimit } from '@/lib/logPower'
-import { cp, effectiveStatus, vectorCannotApply, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
+import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, useChangePlanAccess, vectorCannotApply, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
 import { GraphPaper, PlotSketch, type PlotStage } from './PlotSketch'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
@@ -46,6 +47,9 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const dataAsk = ask?.confirm?.kind === 'script_data_changed'
   const askHook = dataAsk ? 'data-change-plan-confirm-data' : 'data-change-plan-confirm-log'
   const selection = useSelectionPreview(entry, status === 'ready' && declined)
+  // 批注重改的入口（高级版，ADR 0206 §五）：只在审阅 / 助手的图内修改卡上；授权入口没上线整个不画，免费用户带锁点了不进入
+  const access = useChangePlanAccess()
+  const reviseEntry = access.visible && canRevise(entry)
 
   if (status === 'failed') return <FailedCard entry={entry} />
   // 助手来源，整条指令都要改脚本：这里只留一行灰字，接着由改脚本那一轮自己说话
@@ -194,6 +198,13 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} disabled={entry.scriptBusy || vectorCannotApply(entry)} data-change-plan-apply>
                   {cp('card.applyNow')}
                 </Button>
+                {reviseEntry && !!entry.afterSrc && (
+                  <ReviseLock>
+                    <IconButton variant="ghost" label={cp('card.markRevise')} onClick={() => store().openDialog(entry.key, { view: 'annotate' })} data-change-plan-mark>
+                      <Pencil size={ICON_SIZE.sm} aria-hidden />
+                    </IconButton>
+                  </ReviseLock>
+                )}
               </>
             )}
             {status === 'ready' && entry.vector?.failed && (
@@ -205,6 +216,21 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
               <Button variant="ghost" className="-ml-3" onClick={() => void store().undo(entry.key)} data-change-plan-undo>
                 {cp('card.undo')}
               </Button>
+            )}
+            {canUndo && reviseEntry && (
+              <ReviseLock>
+                <Button
+                  variant="ghost"
+                  title={cp('card.reviseAgainTip')}
+                  onClick={() => {
+                    // 只撤这一次应用；撤回成功才进批注（失败沿用「没有替你撤回」那句灰字）
+                    if (store().undo(entry.key)) store().openDialog(entry.key, { view: 'annotate' })
+                  }}
+                  data-change-plan-revise-again
+                >
+                  {cp('card.reviseAgain')}
+                </Button>
+              </ReviseLock>
             )}
             {!entry.scriptStarted && !ask && (status === 'ready' || status === 'applied') && (entry.from === 'assistant' ? (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') : reviewScriptIds(entry).length > 0) && (
               <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
@@ -221,6 +247,23 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
         )}
       </div>
     </Card>
+  )
+}
+
+/** 批注入口的锁：高级版原样；免费用户置灰、悬停一句话、点一下去授权行（不进入、不撤回）。授权入口没上线时调用方不画 */
+function ReviseLock({ children }: { children: React.ReactElement }) {
+  const { pro } = useChangePlanAccess()
+  if (pro) return children
+  const tip = (
+    <>
+      {cp('dialog.lockTip')}
+      <span className="mt-2 block text-ink">{cp('dialog.lockLearn')}</span>
+    </>
+  )
+  return (
+    <PremiumLock feature={CHANGE_PLAN_FEATURE} side="top" arrow soft tip={tip}>
+      {children}
+    </PremiumLock>
   )
 }
 
