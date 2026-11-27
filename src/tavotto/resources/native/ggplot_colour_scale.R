@@ -26,6 +26,24 @@ ggplot_aligned_colour_capture <- function(built, maps, index) {
   if (identical(observed$rows, data[names(observed$rows)])) observed
 }
 
+# Build category membership from the scale's observed input. Different
+# levels still own separate elements when their visual styles coincide.
+ggplot_discrete_layer_groups <- function(built, mapped, maps, index, aesthetic) {
+  if (!aesthetic %in% mapped) return(NULL)
+  scale <- built$plot$scales$get_scales(aesthetic)
+  if (is.null(scale) || !isTRUE(scale$is_discrete())) return(NULL)
+  observed <- ggplot_aligned_colour_capture(built, maps, index)
+  values <- observed$input[[aesthetic]]
+  data <- built$data[[index]]
+  if (!length(values) || !identical(observed$output[[aesthetic]], data[[aesthetic]])) return(NULL)
+  keys <- scale$get_breaks()
+  labels <- scale$get_labels(keys)
+  if (!is.character(labels) || anyNA(labels) || anyDuplicated(labels) ||
+      anyDuplicated(keys) || length(keys) != length(labels)) return(NULL)
+  membership <- split(match(values, keys), data$PANEL)
+  list(keys = keys, labels = labels, membership = membership)
+}
+
 ggplot_colour_members <- function(built, maps, channels) {
   if (length(maps) != length(built$data) || !length(maps)) return(NULL)
   members <- list()

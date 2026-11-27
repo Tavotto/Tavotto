@@ -82,24 +82,6 @@ ggplot_bar_target <- function(layout, draw, fixed) {
   )
 }
 
-# Build category membership from the scale's observed input. Different
-# levels are allowed to use identical colours and still own separate bars.
-ggplot_bar_fill_groups <- function(built, mapped, maps, index) {
-  if (!"fill" %in% mapped) return(NULL)
-  scale <- built$plot$scales$get_scales("fill")
-  if (is.null(scale) || !isTRUE(scale$is_discrete())) return(NULL)
-  observed <- ggplot_aligned_colour_capture(built, maps, index)
-  values <- observed$input$fill
-  data <- built$data[[index]]
-  if (!length(values) || !identical(observed$output$fill, data$fill)) return(NULL)
-  keys <- scale$get_breaks()
-  labels <- scale$get_labels(keys)
-  if (!is.character(labels) || anyNA(labels) || anyDuplicated(labels) ||
-      anyDuplicated(keys) || length(keys) != length(labels)) return(NULL)
-  membership <- split(match(values, keys), data$PANEL)
-  list(keys = keys, labels = labels, membership = membership)
-}
-
 ggplot_bar_group_targets <- function(target, groups, parent_gid) {
   if (is.null(groups) || is.null(target$span) || !isTRUE(target$span$uniform)) return(list())
   membership <- groups$membership[[as.character(target$panel_id)]]
@@ -131,7 +113,7 @@ ggplot_bar_targets <- function(built, panels, layer_grobs, maps) {
     kind <- class(layer$geom)[[1L]]
     if (!kind %in% c("GeomBar", "GeomCol")) next
     mapped <- ggplot_styled_layer_mapping(layer)
-    groups <- ggplot_bar_fill_groups(built, mapped, maps, index)
+    groups <- ggplot_discrete_layer_groups(built, mapped, maps, index, "fill")
     fixed <- !is.null(mapped) && !ggplot_layer_has_legend_key(built, layer, mapped) &&
       !length(intersect(mapped, c("fill", "colour", "alpha", "size", "linewidth", "linetype")))
     for (draw in ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])) {

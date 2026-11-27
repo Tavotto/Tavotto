@@ -233,7 +233,7 @@ class GgplotTarget:
             ribbon = element.pop("ribbon", None)
             if ribbon is not None:
                 current = ribbon["current"]
-                fields = [fill_color_field(current["facecolor"])]
+                fields = [fill_color_field(current["facecolor"])] if "facecolor" in current else []
                 if "alpha" in current:
                     fields.append(opacity_field(current["alpha"]))
                 for field in fields:
@@ -358,7 +358,11 @@ class GgplotTarget:
     @staticmethod
     def annotate_errorbar_series(element: dict, series: dict) -> None:
         def stroke(values: dict) -> list[dict]:
-            fields = errorbar_stroke_fields(values.get("color"), values["linewidth"])
+            fields = (
+                errorbar_stroke_fields(values.get("color"), values["linewidth"])
+                if "linewidth" in values
+                else []
+            )
             if "capsize" in values:
                 fields.extend(errorbar_cap_fields(values["capsize"], values["cap_thickness"]))
             if "alpha" in values:

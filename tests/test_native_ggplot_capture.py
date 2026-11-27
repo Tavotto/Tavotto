@@ -527,8 +527,8 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
 
 @pytest.mark.parametrize(
     "written_scale",
-    [None, "log", "linear"],
-    ids=["retain-statistical-scale", "write-log", "write-linear"],
+    [None, "log", "linear", "logit"],
+    ids=["retain-statistical-scale", "write-log", "write-linear", "write-logit"],
 )
 def test_native_r_coordinate_writeback_keeps_independent_edits_bound(tmp_path, written_scale):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
@@ -553,9 +553,11 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         )
     if written_scale == "linear":
         original = original.replace(b'ggplot2::labs(title = "Scope")', b"ggplot2::scale_x_log10()")
+    if written_scale == "logit":
+        original = original.replace(b"c(1, 8, 64)", b"c(.125, .25, .75)")
     script.write_bytes(original)
     requested_scale = written_scale or "log"
-    requested_limits = [-1, 64] if written_scale == "linear" else [1, 64]
+    requested_limits = {"linear": [-1, 64], "logit": [0.05, 0.95]}.get(written_scale, [1, 64])
 
     def axes(manifest):
         return {e["gid"]: e for e in manifest["elements"] if e["role"] == "axes"}
@@ -3420,6 +3422,138 @@ cat("Verified grouped scatter markers and keys on both facets match authored R e
 """
 
 
+MAPPED_ERRORBAR_CAPS_PROBE = r"""
+if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
+library(ggplot2)
+pal <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
+data <- expand.grid(x=1:3, treatment=c("A","B"), facet=c("Early","Late"))
+data <- data[!(data$facet=="Early" & data$treatment=="B"), ]
+data$y <- 2+data$x + as.integer(data$treatment)
+p <- ggplot(data, aes(x, y, colour = treatment)) +
+    geom_errorbar(aes(ymin=y-.5,ymax=y+.5),position=position_dodge(width=.5),width=.24) +
+    geom_point() + facet_wrap(vars(facet)) + theme_bw()
+capture <- new.env(parent=emptyenv())
+built <- ggplot_build(adapter$ggplot_observe_colour_maps(p,capture))
+params <- built$plot$guides$params[[1L]]
+keys <- params$decor
+stopifnot(identical(as.list(GeomErrorbar)$draw_key, draw_key_path),
+          setequal(names(keys),c("geom_errorbar","geom_point")),
+          identical(capture$maps[[1L]]$input$colour,data$treatment),
+          identical(capture$maps[[1L]]$rows,built$data[[1L]][names(capture$maps[[1L]]$rows)]))
+frame <- c(432, 300)
+keys <- c("layer.1.panel.1.errorbar.group.1", "layer.1.panel.2.errorbar.group.1",
+          "layer.1.panel.2.errorbar.group.2")
+style <- setNames(list(list(capsize = 0), list(capsize = 8, cap_thickness = 2)), keys[-1L])
+get_element <- function(view, key) Filter(function(e) e$gid == key, view$elements)[[1L]]
+guides <- function(table) {
+  slots <- which(startsWith(table$layout$name, "guide-box"))
+  value <- lapply(table$grobs[slots], function(grob) {
+    if (inherits(grob, "zeroGrob")) return(NULL)
+    adapter$with_svg_frame(frame, function(device) grid::grid.draw(grob))$svg
+  })
+  unname(Filter(Negate(is.null), value))
+}
+verify <- function(plot, axis, patches = list()) {
+  captured <- adapter$capture_ggplot(plot, frame, pal)
+  state <- captured$state
+  targets <- state$line_targets
+  stopifnot(identical(names(targets), keys), identical(targets[[keys[[2L]]]]$cap_rows, 1:3),
+            identical(targets[[keys[[3L]]]]$cap_rows, 4:6))
+  original <- adapter$ggplot_manifest(state, "mapped errorbars", patches)
+  edited <- adapter$ggplot_manifest(state, "mapped errorbars", c(patches, style))
+  early <- get_element(original, keys[[1L]])
+  initial <- lapply(keys[-1L], function(key) get_element(original, key))
+  changed <- lapply(keys[-1L], function(key) get_element(edited, key))
+  stopifnot(identical(early, get_element(edited, keys[[1L]])),
+            identical(changed[[1L]]$geometry$paths, initial[[1L]]$geometry$paths[c(2L, 5L, 8L)]),
+            identical(changed[[2L]]$geometry$paths[c(2L, 5L, 8L)], initial[[2L]]$geometry$paths[c(2L, 5L, 8L)]),
+            identical(changed[[1L]]$errorbar_series$current$capsize, 0),
+            identical(changed[[2L]]$errorbar_series$current[names(style[[2L]])], style[[2L]]))
+  caps <- changed[[2L]]$geometry$paths[-c(2L, 5L, 8L)]
+  lengths <- vapply(caps, function(path) abs(diff(vapply(path$points, `[[`, numeric(1L), axis))) * frame[[axis]], numeric(1L))
+  stopifnot(all(abs(lengths - 8) < 1e-10))
+  base_scene <- adapter$with_svg_frame(frame, function(device) adapter$ggplot_table_for(state, patches))$value
+  scene <- adapter$with_svg_frame(frame, function(device) adapter$ggplot_table_for(state, c(patches, style)))$value
+  t0 <- base_scene$line_targets[[keys[[2L]]]]
+  t <- scene$line_targets[[keys[[2L]]]]
+  initial_line <- base_scene$table$grobs[[t0$slot]]$children[[t0$child]]
+  line <- scene$table$grobs[[t$slot]]$children[[t$child]]
+  expected <- c(rep(1L, 3), rep(3L, 3))
+  stopifnot(identical(line$tavotto_cap_rows, rep(rep(1:6, expected), each = 2L)),
+            identical(line$gp$col, rep(initial_line$gp$col, expected)),
+            sum(abs(line$gp$lwd * adapter$ggplot_lwd_pt - 2) < 1e-10) == 6L,
+            length(guides(scene$table)) == 1L, identical(guides(base_scene$table), guides(scene$table)),
+            identical(adapter$render_ggplot(state), captured$svg))
+  invalid <- setNames(list(list(linewidth = 2)), keys[[2L]])
+  stopifnot(inherits(try(adapter$render_ggplot(state, invalid), silent = TRUE), "try-error"))
+}
+verify(p, 1L)
+verify(p, 1L, list(axes_2 = list(invert_x = TRUE)))
+h <- ggplot(data, aes(y, x, colour = treatment)) +
+    geom_errorbar(aes(xmin=y-.5,xmax=y+.5),position=position_dodge(width=.5),width=.24) +
+    geom_point() + facet_wrap(vars(facet)) + theme_bw()
+verify(h, 2L)
+identical_palette <- scale_colour_manual(values = c(A = "#25466A", B = "#25466A"))
+verify(p + identical_palette, 1L)
+cat("Category endcaps preserve uncertainty, sibling panels and shared legend keys.\n")
+"""
+
+
+MAPPED_RIBBON_GROUP_PROBE = r"""
+if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
+library(ggplot2)
+pal <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
+data <- expand.grid(x=1:4, treatment=c("A","B"), facet=c("Early","Late"))
+data <- data[!(data$facet=="Early" & data$treatment=="B"), ]
+data$y <- data$x + as.integer(data$treatment)
+p <- ggplot(data,aes(x,y,fill=treatment)) +
+  geom_ribbon(aes(ymin=y-.25,ymax=y+.25)) +
+  facet_wrap(vars(facet)) + scale_fill_manual(values=c(A="#245780",B="#245780"))
+frame <- c(432,300)
+keys <- paste0('layer.1.panel.',c(1,2,2),'.ribbon.group.',c(1,1,2))
+style <- setNames(list(list(alpha=.4)),keys[[3L]])
+by_gid <- function(state,gid) Filter(function(e) e$gid == gid, state$elements)[[1L]]
+guide_art <- function(table) {
+  indices <- which(startsWith(table$layout$name,'guide-box'))
+  nodes <- Filter(function(g) !inherits(g,'zeroGrob'),table$grobs[indices])
+  lapply(nodes,function(node) adapter$with_svg_frame(frame,function(dev) grid::grid.draw(node))$svg)
+}
+verify <- function(p, views=list()) {
+  captured <- adapter$capture_ggplot(p,frame,pal)
+  state <- captured$state
+  stopifnot(identical(names(state$ribbon_targets), keys))
+  stopifnot(identical(lapply(state$ribbon_targets, function(t) t$group$label) |> unname(),list('A','A','B')))
+  base <- adapter$ggplot_manifest(state,'band',views)
+  applied <- adapter$ggplot_manifest(state,'band',c(views,style))
+  for (gid in keys[-3L]) stopifnot(identical(by_gid(base,gid),by_gid(applied,gid)))
+  before <- by_gid(base,keys[[3L]])
+  after <- by_gid(applied,keys[[3L]])
+  stopifnot(identical(before$geometry$paths,after$geometry$paths),
+            identical(after$ribbon$current,list(alpha=.4)),
+            isTRUE(all.equal(as.numeric(after$ribbon$original$alpha), 1)) && is.null(after$ribbon$original$facecolor))
+  scene0 <- adapter$with_svg_frame(frame,function(dev) adapter$ggplot_table_for(state,views))$value
+  scene1 <- adapter$with_svg_frame(frame,function(dev) adapter$ggplot_table_for(state,c(views,style)))$value
+  target <- scene1$ribbon_targets[[keys[[3L]]]]
+  grob <- scene1$table$grobs[[target$slot]]$children[[target$child]]
+  fills <- Filter(function(g) inherits(g,'polygon'),adapter$ggplot_ribbon_leaves(grob))
+  stopifnot(identical(vapply(fills,function(g) g$gp$fill,character(1L)),c('#245780FF','#24578066')),
+            length(guide_art(scene0$table)) == 1L, identical(guide_art(scene0$table),guide_art(scene1$table)),
+            identical(adapter$render_ggplot(state),captured$svg))
+}
+verify(p)
+verify(p,list(axes_2=list(invert_x=TRUE)))
+h <- ggplot(data,aes(y,x,fill=treatment)) +
+  geom_ribbon(aes(xmin=y-.25,xmax=y+.25),orientation='y') +
+  facet_wrap(vars(facet)) + scale_fill_manual(values=c(A="#245780",B="#245780"))
+verify(h)
+p2 <- ggplot(data,aes(x,y,fill=treatment)) +
+  geom_ribbon(aes(ymin=y-.25,ymax=y+.25),colour='red') +
+  facet_wrap(vars(facet)) + scale_fill_manual(values=c(A="#245780",B="#245780"))
+stopifnot(length(adapter$capture_ggplot(p2,frame,pal)$state$ribbon_targets) == 0L)
+cat('Mapped category ribbon opacity preserves both path and guide, including same-color categories and reversed axes.\n')
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -3488,6 +3622,14 @@ def test_ggplot_colour_scale_replays_all_mapped_layers_with_the_same_guide(tmp_p
 
 def test_ggplot_bar_paint_preserves_counts_positions_and_siblings(tmp_path):
     _assert_r_probe(tmp_path, BAR_PROBE)
+
+
+def test_mapped_ribbon_opacity_keeps_other_groups_and_guides(tmp_path):
+    _assert_r_probe(tmp_path, MAPPED_RIBBON_GROUP_PROBE)
+
+
+def test_mapped_errorbar_caps_keep_stems_and_shared_legend_keys(tmp_path):
+    _assert_r_probe(tmp_path, MAPPED_ERRORBAR_CAPS_PROBE)
 
 
 def test_ggplot_errorbar_stroke_and_title_family_preserve_native_data(tmp_path):

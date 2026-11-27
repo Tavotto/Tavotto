@@ -20,6 +20,11 @@ from pathlib import Path
 from . import config, execspec, executionfact, nativeggplot, projectenv, runtime, scriptadjust
 from .fixtools import cmdsandbox, trial, winappcontainer
 
+_R_AXIS_TRANSFORMS = {
+    "linear": "scales::transform_identity()",
+    "log": "scales::transform_log10()",
+    "logit": "scales::transform_logit()",
+}
 _RGB = re.compile(r"#[0-9a-fA-F]{6}\Z")
 _FACES = {
     ("normal", "normal"): "plain",
@@ -63,7 +68,7 @@ def _coordinate_value(
     element: dict, prop: str, value, planned_scale: str | None
 ) -> list | bool | str | None:
     if prop in ("xscale", "yscale"):
-        return value if isinstance(value, str) and value in ("linear", "log") else None
+        return value if isinstance(value, str) and value in _R_AXIS_TRANSFORMS else None
     if prop in ("invert_x", "invert_y"):
         return value if type(value) is bool else None
     if prop not in ("xlim", "ylim") or not isinstance(value, list) or len(value) != 2:
@@ -117,15 +122,11 @@ def _native_coordinate_writes(
 
 def _r_coordinate_block(name: str, coordinates: dict) -> str:
     edits = []
-    transforms = {
-        "linear": "scales::transform_identity()",
-        "log": "scales::transform_log10()",
-    }
     if any(prop in coordinates for prop in ("xscale", "yscale")):
         edits.append("  plot$scales <- plot$scales$clone()")
     for axis in ("x", "y"):
         if (mode := coordinates.get(f"{axis}scale")) is not None:
-            transform = transforms[mode]
+            transform = _R_AXIS_TRANSFORMS[mode]
             edits.extend(
                 (
                     f'  scale <- plot$scales$get_scales("{axis}")',
