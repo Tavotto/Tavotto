@@ -6814,6 +6814,19 @@ def _chart_source_entries(document: dict) -> list[dict]:
     return [entries[digest] for digest in sorted(entries)]
 
 
+def _project_package_output(stem: str) -> Path:
+    """Publish a package under its configured export directory and exact name."""
+    export_dir = project_export_dir().resolve()
+    suffix = f"{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
+    name = f"{engine_exportreq.legacy_stem(stem)}_{suffix}"
+    approved = engine_projectenv.contained_path(export_dir, name)
+    if approved is None or Path(approved) != export_dir / name:
+        raise engine_documents.DocumentError(
+            "package_destination_invalid", "项目包导出位置与配置不符", 409
+        )
+    return Path(approved)
+
+
 @app.post("/api/package")
 def api_package():
     """把布局打成可复现项目包（zip）：布局 + 引用素材 + 源脚本 + 清单。
@@ -6883,7 +6896,10 @@ def api_package():
         in (engine_documents.SCHEMA_PROJECT, engine_documents.SCHEMA_CHART_PROJECT)
         else doc.get("name")
     )
-    stem = re.sub(r"[^\w\-一-鿿]+", "_", body.get("stem") or default_stem or "package")
+    raw_stem = body.get("stem") or default_stem or "package"
+    if not isinstance(raw_stem, str):
+        raise engine_documents.DocumentError("invalid_document", "无效的项目包名称")
+    out = _project_package_output(raw_stem)
 
     panel_ids = sorted(
         {o.get("fileId") for o in _doc_objects(doc) if o.get("type") == "panel" and o.get("fileId")}
@@ -6928,14 +6944,6 @@ def api_package():
         # 旧读取端不认识这个键会原样忽略（package/open 本来就不校验 kind）
         "runtime_assets": runtime_assets,
     }
-    out_dir = project_export_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # 包是 .tavotto 单文件扩展（zip 容器）。**写出端只有这一个名字**——改名到
-    # Tavotto 时旧扩展降级的做法被否掉了（见 engine/brand.py 的干净断裂说明）。
-    # 读取端（api_package_open）不校验 kind、也不看扩展名，只认 zip 里的结构，
-    # 所以更早的包实际上仍打得开——那是**不校验的副作用，不是我们许下的承诺**。
-    name = f"{stem}_{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
-    out = out_dir / name
     from .engine import documentpackage, packagebudget
 
     snapshot_warnings = _freeze_document_svg_sources(doc)
@@ -6980,11 +6988,11 @@ def api_package():
                     archive.writestr(member, source)
                 else:
                     archive.write(source, member)
-    LOG.info("项目包: %s（%d 素材, %d 脚本）", name, len(assets), len(scripts))
+    LOG.info("项目包: %s（%d 素材, %d 脚本）", out.name, len(assets), len(scripts))
     return jsonify(
         {
-            "name": name,
-            "url": f"/exports/{name}",
+            "name": out.name,
+            "url": f"/exports/{out.name}",
             "assets": len(assets),
             "missing": missing_now,
         }
@@ -7010,7 +7018,7 @@ def _api_chart_package(body):
     raw_stem = body.get("stem") or (doc.get("project") or {}).get("name") or "package"
     if not isinstance(raw_stem, str):
         raise engine_documents.DocumentError("invalid_document", "无效的项目包名称")
-    stem = re.sub(r"[^\w\-一-鿿]+", "_", raw_stem) or "package"
+    out = _project_package_output(raw_stem)
     # 只封存正文指定的修订。接收方安装时再对计算图表进行验证。
     objects = _doc_objects(doc)
     ordinary_ids = {
@@ -7121,8 +7129,6 @@ def _api_chart_package(body):
         }
         if warnings:
             metadata["svg_snapshot_warnings"] = warnings
-        out_dir = project_export_dir()
-        name = f"{stem}_{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
         try:
             if scripts or capture_facts is not None:
                 source_uses = []
@@ -7173,7 +7179,7 @@ def _api_chart_package(body):
                 metadata["execution"] = collected.execution
                 execution_coverage = collected.execution["coverage"]
             result = chartpackage.write_chart_package(
-                out_dir / name,
+                out,
                 doc,
                 project_layout_dir(current_ctx()),
                 budget_factory=packagebudget.portable_output_budget,
@@ -7185,8 +7191,8 @@ def _api_chart_package(body):
             return jsonify({"error": exc.detail, "code": exc.code, "params": exc.params}), 422
     return jsonify(
         {
-            "name": name,
-            "url": f"/exports/{name}",
+            "name": out.name,
+            "url": f"/exports/{out.name}",
             "assets": asset_count,
             "missing": sorted(missing),
             "document_format": documentpackage.CHART_PACKAGE_FORMAT,

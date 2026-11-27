@@ -232,6 +232,7 @@
     "open_project_failed": "Can’t open this project: {{reason}}",
     "package_file_missing": "No file was uploaded",
     "package_invalid": "Not a valid project package: {{reason}}",
+    "package_destination_invalid": "The package destination does not match the project’s export folder. Check the project’s export settings.",
     "package_source_outside_project": "The project package references a resource outside the project folder.",
     "package_schema_unsupported": "The layout inside this project package uses an unsupported format",
     "figure_snapshot_unavailable": "A referenced Figure snapshot or its original could not be verified. No package was created. Restore the missing resource or regenerate the figure.",

@@ -4480,6 +4480,7 @@ export default interface Resources {
       "oauth_unavailable": "这个服务暂不支持账号登录。",
       "open_project_failed": "无法打开该项目：{{reason}}",
       "output_folder_read_only": "因为 {{product}} 没有该文件夹的写入权限，因此某些输出文件未生成。",
+      "package_destination_invalid": "项目包导出位置与配置不符。请检查项目的导出目录。",
       "package_file_missing": "缺少上传文件",
       "package_invalid": "不是有效的项目包：{{reason}}",
       "package_schema_too_new": "这个项目包由新版本的 Tavotto 创建（格式 v{{schema}}），请升级后再打开",

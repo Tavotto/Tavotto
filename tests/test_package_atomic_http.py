@@ -147,6 +147,32 @@ def frozen_second(monkeypatch):
     monkeypatch.setattr(time, "strftime", lambda pattern, *_args: original(pattern, instant))
 
 
+@pytest.mark.parametrize("portable", [False, True])
+def test_package_destination_does_not_follow_a_file_alias(env, monkeypatch, portable):
+    client, root, output = env
+    frozen_second(monkeypatch)
+    monkeypatch.setattr(m.secrets, "token_hex", lambda size: "ab" * size)
+    original = root / "Existing data.txt"
+    original.write_bytes(b"original bytes")
+    output.mkdir(parents=True, exist_ok=True)
+    name = f"report_{time.strftime('%m%d_%H%M%S')}_{'ab' * 4}{brand.PACKAGE_EXT}"
+    alias = output / name
+    try:
+        alias.symlink_to(original)
+    except OSError:
+        pytest.skip("the test filesystem cannot create a file symlink")
+
+    body = {"doc": document(sources=("F.svg",)), "stem": "report"}
+    if portable:
+        body["canvas_id"] = "c1"
+    response = client.post("/api/package", json=body)
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "package_destination_invalid"
+    assert original.read_bytes() == b"original bytes"
+    assert alias.is_symlink()
+    assert list(output.iterdir()) == [alias]
+
+
 @pytest.mark.parametrize("schema", [2, 3])
 def test_legacy_raw_document_response_and_all_canvas_resources_survive(env, schema):
     client, root, output = env
