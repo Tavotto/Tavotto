@@ -1002,6 +1002,11 @@ def test_both_system_prompts_tell_the_model_a_half_script_comment_goes_whole_to_
         assert "整条" in text and "needs_script" in text and "一半" in text
 
 
+def test_assistant_system_prompt_says_chat_and_questions_are_out_of_scope():
+    text = cp.system_prompt("assistant")
+    assert "聊天、提问、要解释或建议" in text and "out_of_scope" in text
+
+
 # --------------------------------------------------------------------------- 改后元素出图幅：自动腾边距（维护者 2026-11-26）
 def _room_manifests():
     """改前一切安好；改后纵轴标题探出左边（刻度文字变宽把它挤出去）。→ `(before, after)`。"""

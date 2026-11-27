@@ -249,6 +249,7 @@
     "reverted": "已回滚，脚本已恢复到修改前。",
     "revertedStatus": "已回滚助手的修改，正在重建图表…",
     "running": "正在修改脚本…",
+    "answering": "正在回答…",
     "taskFailedChanged": "已改，但核对没通过",
     "taskPartial": "已改，部分检查没能完成",
     "taskRejected": "修改没通过写回前检查，项目未改动",
@@ -737,7 +738,15 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
-      "rowsErrLines": "按 {{drawn}} 行绘制，每条线每行一个点",
+      "seriesEqual": "{{k}} 个系列，各有 {{n}} 个数据点",
+      "seriesApart": "{{k}} 个系列，各有 {{n}} 个数据点；有效数据覆盖位置不同",
+      "seriesEach": "{{k}} 个系列，分别有 {{counts}} 个数据点",
+      "seriesRange": "{{k}} 个系列，各有 {{min}}–{{max}} 个数据点",
+      "errGap_other": "{{count}} 处缺少误差值",
+      "errGapTail_other": "{{text}}，其中 {{count}} 处缺失",
+      "colAnd": "和",
+      "colJoin": "、",
+      "countJoin": "、",
       "rowsBar": "按 {{drawn}} 行绘制，每行一根柱",
       "errColumns": "误差线取自{{columns}}列",
       "colQuote": "「{{column}}」",
@@ -883,6 +892,7 @@
       "summaryNotes": "按 {{notes}}又改了 {{places}}",
       "revising": "正在按批注重改…",
       "generatingAssistant": "正在按你的话修改…",
+      "thinking": "想一想…",
       "steps": {
         "before": "读取这张图",
         "model": "想怎么改",

@@ -2,7 +2,7 @@ import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
-import { DATA_DECLINED, POLL_TIMEOUT, declinedGroups, isCanvasPlan, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, type PlanEntry } from '@/store/changePlanStore'
 import { failedChecks, touchedCount } from '@/lib/vectorEdit'
 import type { ChangeLine } from '@/lib/vectorChanges'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
@@ -332,4 +332,12 @@ export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'pla
   const at = e.phase === 'render_after' ? 2 : e.phase === 'model' || e.phase === 'agent' ? 1 : 0
   const ids = ['before', script ? 'agent' : 'model', 'after'] as const
   return ids.map((id, i) => ({ id, label: cp(`card.steps.${id}`), state: i < at ? 'done' : i === at ? 'active' : 'pending' }))
+}
+
+/**
+ * 助手来源、还没弄清这句话是要改图还是只是聊天 / 提问的那一小会儿（模型还没回话）：不出「修改方案」卡，只一行思考小球。
+ * 是聊天就直接交给普通对话，不会先闪一张卡再消失（用户 2026-11-27）——方案回来、正在交给普通对话的那一下（整条 out_of_scope）也还是这一行；要改图的，方案一回来卡就出（停在「画出修改后的图」那一步）。
+ */
+export function planUndecided(e: Pick<PlanEntry, 'from' | 'kind' | 'status' | 'plan' | 'revising' | 'request' | 'phase'>): boolean {
+  return e.from === 'assistant' && e.kind !== 'layout' && e.status === 'generating' && (!e.plan || allOutOfScope(e.plan)) && e.revising === undefined && e.request.mode !== 'script' && e.phase !== 'render_after' && e.phase !== 'agent'
 }

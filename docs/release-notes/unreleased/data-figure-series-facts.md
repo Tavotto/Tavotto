@@ -1,0 +1,3 @@
+## Data to figure: the basis line counts each series separately
+
+In the experimental, off-by-default data-to-figure page, a figure with several measured columns (for example `a_mean, b_mean`, with or without their own error columns) no longer describes every line with the first column's row count. The line under the preview now says how many data points each series has ("2 series, with 4 / 5 data points respectively"), notes when the valid data cover different positions, and counts the points that have a value but no error value. Merged files that share a row number are no longer mistaken for each other, and a row with several non-numeric cells is counted once among the rows left out.
