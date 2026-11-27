@@ -1997,11 +1997,25 @@ def mixed_cells_question(
 
 
 @dataclass(frozen=True)
+class CandidateVariant:
+    """合画里成对的两种画法的标记：`split` = 按文件上色、再按文件内的那一列（`column`）拆开；`by_file` = 只按文件比较。
+    长在候选自己身上（不旁挂在 `id(配方)` 上，#2179）：`replace(cand, recipe=…)` 换配方时标记自然跟着走。"""
+
+    kind: str
+    column: str | None = None
+
+    def to_dict(self) -> dict:
+        return {"kind": self.kind, **({"column": self.column} if self.kind == "split" else {})}
+
+
+@dataclass(frozen=True)
 class Candidate:
-    """一个备选：配方（已过 `validate_recipe`）+ 标题 / 理由文案码（`CANDIDATE_CODES`）。排在第一的就是推荐。"""
+    """一个备选：配方（已过 `validate_recipe`）+ 标题 / 理由文案码（`CANDIDATE_CODES`）。排在第一的就是推荐。
+    `variant` 只在合画成对出现时有（见 `CandidateVariant`），其余一律 None。"""
 
     code: str
     recipe: FigureRecipe
+    variant: CandidateVariant | None = None
 
 
 @dataclass(frozen=True)
