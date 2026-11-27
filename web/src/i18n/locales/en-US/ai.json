@@ -840,6 +840,27 @@
     }
   },
   "changePlan": {
+    "vector": {
+      "kind": { "text": "Text", "arrow": "Arrow", "shape": "Shape", "path": "Path", "object": "Object" },
+      "named": "{{kind}} “{{name}}”",
+      "deleted": "Delete {{subject}}",
+      "added": "Add {{subject}}",
+      "replaced": "{{subject}} replaced by a new one",
+      "on": "on",
+      "off": "off",
+      "none": "none",
+      "style": "Style",
+      "z": "Stacking order",
+      "toPath": "Converted to a path",
+      "nodes": "Anchors {{from}} → {{to}}",
+      "geom": { "pos": "Position", "size": "Size", "rot": "Rotation" },
+      "field": {
+        "strokePt": "Line width", "sizePt": "Font size", "color": "Color", "fill": "Fill", "bg": "Background", "borderColor": "Border color", "borderPt": "Border width",
+        "bold": "Bold", "italic": "Italic", "underline": "Underline", "text": "Text", "align": "Align", "fontFamily": "Font", "lineHeight": "Line spacing",
+        "strokeOpacity": "Stroke opacity", "fillOpacity": "Fill opacity", "dash": "Dash", "cornerRadius": "Corner radius", "locked": "Lock", "hidden": "Hide",
+        "name": "Name", "stroke": "Stroke", "lineCap": "Line cap", "lineJoin": "Corner", "padding": "Padding"
+      }
+    },
     "reviewNote": {
       "title_one": "Comments · {{count}}",
       "title_other": "Comments · {{count}}",

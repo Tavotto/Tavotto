@@ -4455,7 +4455,7 @@ export interface VectorEditResult {
   order?: string[]
   reordered?: boolean
   echo?: string[]
-  changes?: { id: string; field: string; before?: unknown; after?: unknown }[]
+  changes?: { id: string; field?: string; before?: unknown; after?: unknown; deleted?: boolean; added?: boolean; replaced?: boolean }[]
   checks?: { check: string; status: string; item?: string }[]
   layout_groups?: LayoutGroup[] | null
   ops?: unknown[]
@@ -4469,6 +4469,8 @@ export interface VectorEditBody {
   connection?: string
   model?: string
   effort?: string
+  /** 界面语言：模型写的没能照做的原因跟着它走 */
+  locale?: string
   client_request_id: string
 }
 

@@ -13126,7 +13126,7 @@ def api_vector_edit_plan():
       `{ok, errors, objects, deleted, order, echo, changes, checks, echo_digest, …}`；补丁不合格 `ok: false` + `errors: [{code, index?, field?}]`
       （码见 `vectoredit.ERROR_CODES`，整批没动）。内核不可用 = `kernel_unavailable`，其余操作照常。
     * `{canvas, instruction, selection?, connection?, model?, effort?, client_request_id?}`：先问模型出补丁再算 → 202 `{plan_id, state: "running"}`，
-      用 `GET /api/vector-edit/plan/<plan_id>` 轮询（模型连接与 `/api/change-plans` 助手出卡同一条路）。`selection` 是选中的对象 id 列表。"""
+      用 `GET /api/vector-edit/plan/<plan_id>` 轮询（模型连接与 `/api/change-plans` 助手出卡同一条路）。`selection` 是选中的对象 id 列表；`locale`（可缺省）是界面语言，模型写的 `unhandled.reason` 跟着它走。"""
     body = request.get_json(force=True, silent=True)
     if not isinstance(body, dict):
         return _change_plan_error("invalid_change_plan")
@@ -13164,7 +13164,7 @@ def api_vector_edit_plan():
         task.phase = "model"
         threading.Thread(
             target=_vector_edit_thread,
-            args=(ctx, task, canvas, comments[0]["text"], selected, selection),
+            args=(ctx, task, canvas, comments[0]["text"], selected, selection, body.get("locale")),
             name=f"vector-edit-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -13175,11 +13175,13 @@ def api_vector_edit_plan():
     return resp
 
 
-def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection) -> None:
+def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection, locale=None) -> None:
     """后台线程：问模型 → 算方案 → 放进内存；任何结局都落成终态并放掉互斥。"""
     code, detail = "", ""
     try:
-        proposal = engine_changeplan.ask_vector_edits(instruction, canvas, selected, selection)
+        proposal = engine_changeplan.ask_vector_edits(
+            instruction, canvas, selected, selection, locale
+        )
         task.phase = "plan"
         ops, unhandled = proposal["ops"], proposal["unhandled"]
         if ops:

@@ -203,6 +203,58 @@ export default interface Resources {
           "out_of_range": "值超出范围，这次没动",
           "unknown_object": "找不到对应的对象，这次没动"
         }
+      },
+      "vector": {
+        "added": "新增{{subject}}",
+        "deleted": "删除{{subject}}",
+        "field": {
+          "align": "对齐",
+          "bg": "底色",
+          "bold": "粗体",
+          "borderColor": "边框颜色",
+          "borderPt": "边框粗细",
+          "color": "颜色",
+          "cornerRadius": "圆角",
+          "dash": "虚线",
+          "fill": "填充",
+          "fillOpacity": "填充不透明度",
+          "fontFamily": "字体",
+          "hidden": "隐藏",
+          "italic": "斜体",
+          "lineCap": "线端",
+          "lineHeight": "行距",
+          "lineJoin": "拐角",
+          "locked": "锁定",
+          "name": "名称",
+          "padding": "内边距",
+          "sizePt": "字号",
+          "stroke": "描边",
+          "strokeOpacity": "描边不透明度",
+          "strokePt": "线宽",
+          "text": "文字",
+          "underline": "下划线"
+        },
+        "geom": {
+          "pos": "位置",
+          "rot": "旋转",
+          "size": "大小"
+        },
+        "kind": {
+          "arrow": "箭头",
+          "object": "对象",
+          "path": "路径",
+          "shape": "形状",
+          "text": "文字"
+        },
+        "named": "{{kind}}「{{name}}」",
+        "nodes": "锚点 {{from}} → {{to}} 个",
+        "none": "无",
+        "off": "关",
+        "on": "开",
+        "replaced": "{{subject}}换成了新的",
+        "style": "样式",
+        "toPath": "转为路径",
+        "z": "层级"
       }
     },
     "chip": {

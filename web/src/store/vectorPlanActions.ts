@@ -15,8 +15,9 @@ import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { engineTransport } from '@/lib/engineTransport'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId } from '@/lib/session'
+import { changeGroups, type ChangeGroup } from '@/lib/vectorChanges'
 import { baselineHolds, hasEdits, landedHolds, landVector, sameJson, snapshotOf, touchedCount, vectorSelectionOf, type VectorSnapshot } from '@/lib/vectorEdit'
-import { msg, t as translate } from '@/i18n'
+import { currentLocale, msg, t as translate } from '@/i18n'
 import { currentRunSelection, newRequestId, useAiStore } from './aiStore'
 import { POLL_TIMEOUT, useChangePlanStore, type PlanEntry, type VectorHandle } from './changePlanStore'
 import { useDocumentStore } from './documentStore'
@@ -141,6 +142,7 @@ async function drive(key: string, ctx: Ctx, snap: VectorSnapshot, sel: string[],
       canvas: snap.canvas as never,
       instruction: text,
       selection: sel,
+      locale: currentLocale(),
       ...currentRunSelection(),
       client_request_id: key,
     })
@@ -216,8 +218,9 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
     })
     return h
   }
+  const groups = changeGroups(snap, result)
   if (!merged) {
-    patch(key, { status: 'ready', plan: synthPlan(key, result, '', ''), vector: make() })
+    patch(key, { status: 'ready', plan: synthPlan(key, result, groups, '', ''), vector: make({ groups }) })
     return
   }
 
@@ -246,13 +249,13 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
     URL.revokeObjectURL(afterSrc)
     return
   }
-  patch(key, { status: 'ready', plan: synthPlan(key, result, beforeSrc, afterSrc), beforeSrc, afterSrc, vector: make() })
+  patch(key, { status: 'ready', plan: synthPlan(key, result, groups, beforeSrc, afterSrc), beforeSrc, afterSrc, vector: make({ groups }) })
 }
 
 /** 卡与弹窗吃的方案外形：每条复述一组（整批要或不要，不画勾选）；框都不要（复述与对象没有一一对应） */
-function synthPlan(id: string, r: VectorEditResult, before: string, after: string): ChangePlan {
+function synthPlan(id: string, r: VectorEditResult, groups: ChangeGroup[], before: string, after: string): ChangePlan {
   const echo = (r.echo ?? []).filter((x) => typeof x === 'string' && x.trim())
-  const lines = echo.length ? echo : [translate('changePlan.dialog.vectorN', { ns: 'ai', count: touchedCount(r) })]
+  const lines = groups.length ? groups.map((g) => g.subject) : echo.length ? echo : [translate('changePlan.dialog.vectorN', { ns: 'ai', count: touchedCount(r) })]
   return {
     id,
     version: 1,
@@ -260,7 +263,7 @@ function synthPlan(id: string, r: VectorEditResult, before: string, after: strin
     base: { target: '', fingerprint: '' },
     base_patches: [],
     candidate_patches: [],
-    groups: lines.map((label, i) => ({ key: `e${i}`, label: String(label), atomic: true, changes: [], boxes: { after: [] } })),
+    groups: lines.map((label, i) => ({ key: groups[i]?.key ?? `e${i}`, label: String(label), atomic: true, changes: [], boxes: { after: [] } })),
     unhandled: [],
     preview: { before, after },
   }

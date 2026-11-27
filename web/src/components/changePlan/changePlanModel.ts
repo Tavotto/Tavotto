@@ -4,6 +4,7 @@ import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
 import { DATA_DECLINED, POLL_TIMEOUT, declinedGroups, isCanvasPlan, type PlanEntry } from '@/store/changePlanStore'
 import { failedChecks, touchedCount } from '@/lib/vectorEdit'
+import type { ChangeLine } from '@/lib/vectorChanges'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
 import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
@@ -33,6 +34,10 @@ export interface GroupView {
   metaText?: string
   /** 整批要或不要的一行（矢量编辑方案里每条复述）：不画勾选框，应用 / 放弃是整份的 */
   fixed?: boolean
+  /** 这一行下面的字段改动（矢量编辑方案，已翻成界面语言） */
+  lines?: ChangeLine[]
+  /** 悬停说明（矢量编辑方案：后端的复述原文，排查用） */
+  detail?: string
   key: string
   /** 这一处改了什么：对应那条意见的原话（截短过的），没有就说「第 N 条意见」 */
   summary: string
@@ -73,7 +78,7 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
   const numberOf = (id?: string) => commentNumber(e, id)
   {
     // 矢量编辑方案：一条复述一行（后端的话原样，不画勾选与画面框），补丁的操作有先后、不能只要其中几条
-    if (e.kind === 'vector') return { key: g.key, summary: g.label, reviewers: [], commentNumbers: [], fromNote: false, fixed: true, metaText: '', boxes: [] }
+    if (e.kind === 'vector') return { key: g.key, summary: g.label, reviewers: [], commentNumbers: [], fromNote: false, fixed: true, metaText: '', boxes: [], lines: e.vector?.groups?.find((x) => x.key === g.key)?.lines, detail: e.vector?.result?.echo?.join('\n') }
     if (e.kind === 'layout') {
       return {
         key: g.key,

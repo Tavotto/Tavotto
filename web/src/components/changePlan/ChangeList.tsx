@@ -73,6 +73,16 @@ export function ChangeList({
   )
 }
 
+/** 一个值：颜色带小色块 */
+function Val({ v }: { v: { text: string; color?: string } }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-ink-2">
+      {v.color && <span aria-hidden className="size-2.5 rounded-sm inset-ring inset-ring-border" style={{ backgroundColor: v.color }} />}
+      {v.text}
+    </span>
+  )
+}
+
 function GroupRow({
   g,
   checked,
@@ -91,7 +101,7 @@ function GroupRow({
   return (
     <li>
       <label
-        title={g.fixed ? undefined : cp('dialog.checkTip')}
+        title={g.fixed ? g.detail : cp('dialog.checkTip')}
         data-change-group={g.key}
         data-active={active || undefined}
         onPointerEnter={() => onActive(g.key)}
@@ -112,6 +122,18 @@ function GroupRow({
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className={cn('text-sm', checked ? 'text-ink' : 'text-ink-3')}>{g.summary}</span>
+          {g.lines?.map((l, i) => (
+            <span key={i} data-change-line className="type-meta flex flex-wrap items-center gap-x-1.5">
+              <span>{l.label}</span>
+              {l.after && (
+                <>
+                  {l.before && <Val v={l.before} />}
+                  {l.before && <span aria-hidden>→</span>}
+                  <Val v={l.after} />
+                </>
+              )}
+            </span>
+          ))}
           {g.metaText !== '' && (
             <span className="type-meta">
               {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}

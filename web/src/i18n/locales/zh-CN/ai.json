@@ -831,6 +831,27 @@
     }
   },
   "changePlan": {
+    "vector": {
+      "kind": { "text": "文字", "arrow": "箭头", "shape": "形状", "path": "路径", "object": "对象" },
+      "named": "{{kind}}「{{name}}」",
+      "deleted": "删除{{subject}}",
+      "added": "新增{{subject}}",
+      "replaced": "{{subject}}换成了新的",
+      "on": "开",
+      "off": "关",
+      "none": "无",
+      "style": "样式",
+      "z": "层级",
+      "toPath": "转为路径",
+      "nodes": "锚点 {{from}} → {{to}} 个",
+      "geom": { "pos": "位置", "size": "大小", "rot": "旋转" },
+      "field": {
+        "strokePt": "线宽", "sizePt": "字号", "color": "颜色", "fill": "填充", "bg": "底色", "borderColor": "边框颜色", "borderPt": "边框粗细",
+        "bold": "粗体", "italic": "斜体", "underline": "下划线", "text": "文字", "align": "对齐", "fontFamily": "字体", "lineHeight": "行距",
+        "strokeOpacity": "描边不透明度", "fillOpacity": "填充不透明度", "dash": "虚线", "cornerRadius": "圆角", "locked": "锁定", "hidden": "隐藏",
+        "name": "名称", "stroke": "描边", "lineCap": "线端", "lineJoin": "拐角", "padding": "内边距"
+      }
+    },
     "reviewNote": {
       "title_other": "审阅意见 · {{count}} 条",
       "open": "看意见 ›"

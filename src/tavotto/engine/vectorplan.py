@@ -94,7 +94,19 @@ def snapshot(canvas: dict, selection: list[str] | None = None) -> dict:
     return {**scene, "selection": sel}
 
 
-def system_prompt() -> str:
+#: 界面语言 → 模型写 `unhandled.reason` 用的语言名（只认这几个，其余当中文；前端的界面语言就这两种）
+REASON_LANGUAGES = {"zh-CN": "简体中文", "en-US": "English"}
+
+
+def reason_language(locale: object) -> str:
+    return (
+        REASON_LANGUAGES.get(locale, REASON_LANGUAGES["zh-CN"])
+        if isinstance(locale, str)
+        else "简体中文"
+    )
+
+
+def system_prompt(locale: str | None = None) -> str:
     return (
         "你在帮一个科研绘图工具的「改图助手」把用户的一条改图指令落成「画布上已有矢量对象的修改补丁」。"
         "你只能改 `<scene>` 里 `vector_objects` 列出的矢量对象（文字 / 箭头 / 形状 / 路径，含用户手画的）；"
@@ -119,6 +131,7 @@ def system_prompt() -> str:
         "- 只输出一个 JSON 对象，不要 Markdown 围栏、不要解释文字：\n"
         '  `{"ops": [操作, …], "unhandled": [{"reason": "一句话原因"}]}`\n'
         "- 能做的操作放 `ops`，其余放 `unhandled`；两个都可以是空列表。\n"
+        f"- `unhandled` 的 `reason` 用 {reason_language(locale)} 写一句话。\n"
     )
 
 
@@ -128,10 +141,15 @@ def _dumps(obj: object) -> str:
 
 
 def build_prompt(
-    instruction: str, canvas: dict, selection: list[str] | None, *, max_chars: int
+    instruction: str,
+    canvas: dict,
+    selection: list[str] | None,
+    *,
+    max_chars: int,
+    locale: str | None = None,
 ) -> tuple[str, str]:
     """→ `(system, user)`。快照太长时从对象表尾丢（`vector_objects_total` 如实写总数，模型看得出被截了）。"""
-    system = system_prompt()
+    system = system_prompt(locale)
     scene = snapshot(canvas, selection)
     sel = set(scene["selection"])
     keep = [o for o in scene["vector_objects"] if o["id"] in sel]

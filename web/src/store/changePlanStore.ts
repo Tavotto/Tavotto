@@ -20,6 +20,7 @@ import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { applyGroups, canonicalPatches, effectiveStatus, samePatches, toOverrides, type PlanSource } from '@/lib/changePlanApply'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { writeChangePlanCache } from '@/lib/changePlanSwitch'
+import type { ChangeGroup } from '@/lib/vectorChanges'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
@@ -107,6 +108,8 @@ export interface LayoutHandle {
 export interface VectorHandle extends LayoutHandle {
   /** 后端回的方案（复述 / 对象 / 核对 / 没能照做的）；生成中 / 失败时还没有 */
   result?: VectorEditResult
+  /** 按对象分组、翻成界面语言的改动清单（`lib/vectorChanges`）；空 = 退回显示后端的复述原文 */
+  groups?: ChangeGroup[]
   /** 方案点名的对象此刻还是不是出发时那样（= 待确认；撤回之后也是；不是又不是已应用 = 「图改过了」） */
   holds: () => boolean
   /** 方案已经写进文档的样子还在不在（= 已应用；按对象状态判，不按历史条目——之后的回写会换掉那一条历史） */

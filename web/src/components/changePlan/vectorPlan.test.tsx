@@ -79,7 +79,14 @@ const RESULT: VectorEditResult = {
   order: ['p1', 't1', 'a1'],
   reordered: false,
   echo: ['标题文字：字号 8 → 12 pt', '红箭头：线宽 0.5 → 0.75 pt', '方框：删除'],
-  changes: [],
+  changes: [
+    { id: 't1', field: 'sizePt', before: 8, after: 12 },
+    { id: 'a1', field: 'strokePt', before: 0.5, after: 0.75 },
+    { id: 'a1', field: 'color', before: '#cc0000', after: '#00aa00' },
+    { id: 'a1', field: 'x', before: 30, after: 31 },
+    { id: 'a1', field: 'w', before: 20, after: 21 },
+    { id: 's1', deleted: true },
+  ],
   checks: [],
   layout_groups: null,
   ops: [],
@@ -205,11 +212,32 @@ it('出卡：一句话说清改了几个对象、另有几条没改；清单逐�
   expect(card.textContent).toContain('改了 3 个对象，另有 1 条没改')
   act(() => useChangePlanStore.getState().openDialog(key))
   const rows = qa('[data-change-group]')
-  expect(rows.map((r) => r.textContent)).toEqual(RESULT.echo)
+  // 按对象分组、翻成界面语言：对象叫法 = 类型 +「名字」，字段叫属性面板的名字，数值带单位，不出现 id 与内部键名，也不是后端的复述原文
+  expect(rows.map((r) => r.querySelector('span.text-sm')!.textContent)).toEqual(['文字「标题」', '箭头', '删除形状'])
+  const lines = (i: number) => [...rows[i].querySelectorAll('[data-change-line]')].map((l) => l.textContent)
+  expect(lines(0)).toEqual(['字号8 pt→12 pt'])
+    expect(lines(1)).toContain('线宽0.5 pt→0.75 pt')
+  expect(lines(1)).toContain('位置和大小')
+  expect(rows[1].querySelectorAll('span[style*="background-color"]')).toHaveLength(2) // 颜色带色块
+  const all = rows.map((r) => r.textContent).join('')
+  for (const raw of ['strokePt', 'sizePt', 'a1', 't1', 's1']) expect(all).not.toContain(raw)
+  expect(rows[2].title).toContain('方框')
   // 整批要或不要：清单里没有勾选框
   expect(q('[data-change-plan-list] input[type="checkbox"]')).toBeNull()
   const un = q('[data-change-plan-unhandled]')!
   expect(un.textContent).toContain('改图里曲线的颜色要改脚本')
+})
+
+it('老后端没有结构化改动：清单退回显示复述原文', async () => {
+  const key = await runToReady({ ...RESULT, changes: [] })
+  render(
+    <>
+      <Live k={key} />
+      <ChangePlanDialog />
+    </>,
+  )
+  act(() => useChangePlanStore.getState().openDialog(key))
+  expect(qa('[data-change-group]').map((r) => r.textContent)).toEqual(RESULT.echo)
 })
 
 it('应用 = 一次提交，⌘Z 一步撤回；撤回后卡片又是待确认', async () => {
