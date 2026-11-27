@@ -111,3 +111,7 @@ IR 的嵌套上限是 16 层）、全部路径锚点（20 万）、每段文字�
   机器负载约 100 时最多比 5 秒晚约 3 秒。#2034 评审里同类超线性写法已修过十余处，各有具名用例（`tests/test_svgimport_security.py`
   里 `*_is_linear*` / `*_deadline*` 一组）。**重议条件**：导入或复制为 SVG 的路径上再报一处超线性写法，就不再补检查，改走现有 worker
   （先例：ADR 0182 的 `chartprocess`）用进程超时兜底，并修订本节。
+
+## 修订（2026-11-27，维护者拍板：`id` 属性认 Unicode 的 XML 名字）
+
+ADR 0208 第 5 期导出把对象名写进 SVG 的 `id`（Illustrator 显示成图层名），名字可以是中文。为了让自家导出的 SVG 导得回来，`svgcheck.parse_svg` 的 `id` 属性接受 Unicode 的 XML 名字（`unicode_ids`，写入器封口、产物检视、`svgimport`、`svgasset`、`svgir` 打开）——**作用于所有导入，不只自家产物**。放宽的只有 `id` 属性本身：引用语法（`url(#…)`、`href`、CSS 选择器）仍只认 ASCII，指向中文 id 的引用结构化失败，所以中文 id 不能被任何东西引用；DTD、实体、脚本、事件、外链、预算一条不动。维护者 2026-11-27 在「接受 / 导入时丢掉非 ASCII id / 导出不写中文 id」三者里选了接受。
