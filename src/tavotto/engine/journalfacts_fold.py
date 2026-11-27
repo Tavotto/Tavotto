@@ -179,6 +179,8 @@ def fold(bundle: dict) -> dict:
                     confirm.append(_confirm_item(bundle, fact))
             continue
         fact, qualifier = items[0]
-        rules[path] = _rule(fact, qualifier)
+        # `fact_id` 挂在**规则**上：同一来源 + origin 下的多条事实（如分辨率与线宽）共用一个来源条目，
+        # 挂在来源上会被后一条覆盖（Codex #2331）。期刊线索（ADR 0213）用 `v2:<fact id>` 指认是哪条事实
+        rules[path] = {**_rule(fact, qualifier), "fact_id": fact["id"]}
         sources[_source_id(fact)] = _source(bundle, fact)
     return {"rules": rules, "sources": sources, "confirm": confirm}
