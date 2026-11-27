@@ -685,3 +685,280 @@ def test_x_labels_of_missing_error_bars_show_the_time_when_there_is_one():
         == "2026-03-01 08:00:30"
     )
     assert P._x_text(2.5, False) == "2.5"
+
+
+# =========================================================================== 5. 整列带 % 的数值、分号 / 制表符文件里整列一致的小数逗号
+PERCENT = "成分,占比\nSiO2,52.3%\nAl2O3,18.1%\nFe2O3,9.4%\nCaO,8.8%\nMgO,6.2%\n其它,5.2%\n"
+
+
+def values_of(summary, col):
+    """摘要里某一列每一格 `parse_cell` 的结果（类别, 值）。"""
+    i = summary.columns.index(col)
+    return [adf.parse_cell(r[i]) for r in summary.rows]
+
+
+def test_a_column_that_is_all_percent_reads_as_numbers_without_dividing(tmp_path):
+    s = adf.inspect_data_source(write(tmp_path, PERCENT), None, v2=True)
+    assert s.per_column["占比"].kind == "numeric" and s.per_column["成分"].kind == "text"
+    assert [v for _c, v in values_of(s, "占比")] == [52.3, 18.1, 9.4, 8.8, 6.2, 5.2]
+    assert s.rows[0] == ["SiO2", "52.3%"]  # 原文照旧，只是认成了数
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [
+        ["52.3%", "18.1", "9.4%"],  # 有一格不带 %
+        ["52.3%", "18.1%", "多"],  # 有一格是文字
+        ["52.3%", "%", "9.4%"],  # 只有 %
+        ["0.52", "0.18", "0.09"],  # 没有 % 的小数
+    ],
+)
+def test_a_column_that_is_not_consistently_percent_stays_text_or_numeric_as_before(tmp_path, cells):
+    text = "k,v\n" + "".join(f"{'abcdef'[i]},{c}\n" for i, c in enumerate(cells))
+    s = adf.inspect_data_source(write(tmp_path, text), None, v2=True)
+    kinds = [c for c, _ in values_of(s, "v")]
+    if cells[0] == "0.52":
+        assert kinds == ["numeric"] * 3
+    else:
+        assert "text" in kinds and not any(isinstance(r[1], adf.NumberCell) for r in s.rows)
+
+
+def test_percent_with_sign_and_space_and_blank_cells(tmp_path):
+    s = adf.inspect_data_source(
+        write(tmp_path, "k,v\na,-5.5 %\nb,\nc,+3%\nd,100%\n"), None, v2=True
+    )
+    nums = [(c, v) for c, v in values_of(s, "v")]
+    assert nums[0] == ("numeric", -5.5) and nums[1][0] == "empty"
+    assert nums[2] == ("numeric", 3.0) and nums[3] == ("numeric", 100.0)
+
+
+def test_number_cell_keeps_its_tag_through_strip_and_copies():
+    import copy
+    import pickle
+
+    c = adf.NumberCell("52.3%", 52.3)
+    assert adf.parse_cell(c) == ("numeric", 52.3) and adf.parse_cell(c.strip()) == ("numeric", 52.3)
+    assert adf.parse_cell("52.3%") == ("text", None)  # 单格看不出来：裸的 `52.3%` 仍是文字
+    for d in (copy.copy(c), copy.deepcopy(c), pickle.loads(pickle.dumps(c))):
+        assert adf.parse_cell(d) == ("numeric", 52.3) and str(d) == "52.3%"
+
+
+def test_percent_script_runtime_reads_the_same_table(tmp_path, monkeypatch):
+    mod = runtime(tmp_path, monkeypatch)
+    p = write(tmp_path, PERCENT)
+    parent = adf.inspect_data_source(p, None, v2=True)
+    header, rows = mod.read_delimited(p, ",")
+    assert header == parent.columns and rows == [list(r) for r in parent.rows]
+    assert [mod.parse_cell(r[1]) for r in rows] == values_of(parent, "占比")
+
+
+def _same_columns(small, large):
+    """小表整份读与大表流式读的摘要：每列的类型与计数、数值范围（`large.stats`）一致。"""
+    assert large.summary.large is not None
+    assert large.summary.columns == small.summary.columns
+    for name in small.summary.columns:
+        assert large.summary.per_column[name].to_dict() == small.summary.per_column[name].to_dict()
+
+
+def test_percent_streaming_reader_reads_the_same_columns_as_the_whole_file_reader(
+    tmp_path, monkeypatch
+):
+    """大表是流式读，看不到整列：先预扫一遍定出整列判定（与小表同一个 `ColumnTagger`），再按它逐行读——读出同一张表。"""
+    p = write(tmp_path, PERCENT)
+    small = adf.read_text_table(p)
+    large = read_large(p, monkeypatch)
+    _same_columns(small, large)
+    assert large.summary.per_column["占比"].kind == "numeric"
+    assert large.summary.col_tags == {1: True}
+    st = large.summary.large.stats["占比"]
+    assert (st.lo, st.hi, st.numeric) == (5.2, 52.3, 6)
+
+
+def test_large_scan_agrees_when_a_later_row_breaks_the_percent_column(tmp_path, monkeypatch):
+    """开头几行都带 `%`、后面有一行不带：预扫的第二遍要发现它——整列不认，与小表一致（也验证开头筛选不会漏掉后面的反例）。"""
+    rows = "".join(f"r{i},{i}%\n" for i in range(12)) + "last,0.5\n"
+    p = write(tmp_path, "k,v\n" + rows)
+    monkeypatch.setattr(adf, "TAG_HEAD_ROWS", 4)
+    small = adf.read_text_table(p)
+    large = read_large(p, monkeypatch)
+    assert small.summary.per_column["v"].kind == "mixed"
+    _same_columns(small, large)
+    assert large.summary.col_tags == {}
+
+
+def test_large_scan_skips_the_second_pass_when_no_column_can_qualify(tmp_path, monkeypatch):
+    p = write(tmp_path, "k,v\n" + "".join(f"r{i},{i}.5\n" for i in range(30)))
+    calls = []
+    real = adf.ColumnTagger.feed
+    monkeypatch.setattr(
+        adf.ColumnTagger, "feed", lambda self, cells: (calls.append(1), real(self, cells))[1]
+    )
+    monkeypatch.setattr(adf, "TAG_HEAD_ROWS", 5)
+    large = read_large(p, monkeypatch)
+    assert large.summary.col_tags == {} and len(calls) == 5  # 只看了开头几行
+
+
+EURO = "Zeit;Temperatur;Druck\n0,0;20,07;1013,0\n0,5;21,63;1012,2\n1,0;23,21;1011,4\n1,5;24,02;1010,9\n"
+
+
+def test_a_semicolon_file_with_decimal_commas_reads_as_numbers(tmp_path):
+    s = adf.inspect_data_source(write(tmp_path, EURO), None, v2=True)
+    assert [s.per_column[c].kind for c in s.columns] == ["numeric"] * 3
+    assert [v for _c, v in values_of(s, "Zeit")] == [0.0, 0.5, 1.0, 1.5]
+    assert [v for _c, v in values_of(s, "Druck")] == [1013.0, 1012.2, 1011.4, 1010.9]
+    assert s.rows[1] == ["0,5", "21,63", "1012,2"]  # 原文照旧
+
+
+def test_decimal_commas_in_a_tab_separated_file_read_too(tmp_path):
+    p = write(tmp_path, EURO.replace(";", "\t"), "t.tsv")
+    s = adf.inspect_data_source(p, None, v2=True)
+    assert [s.per_column[c].kind for c in s.columns] == ["numeric"] * 3
+    assert values_of(s, "Temperatur")[1] == ("numeric", 21.63)
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        # 有一格长得像千分位（`1,234`）：分不清是 1.234 还是 1234 → 整列不认（分号文件里仍是文字，不猜）
+        ("a.csv", "k;v\na;1,5\nb;1,234\nc;2,25\n"),
+        ("b.csv", "k;v\na;1,234\nb;5,678\nc;2,345\n"),
+        # 有一格不是数
+        ("c.csv", "k;v\na;1,5\nb;n/a\nc;2,25\n"),
+        # 整列没有一个逗号
+        ("d.csv", "k;v\na;1\nb;2\nc;3\n"),
+        # 逗号是别的东西（两个逗号）
+        ("e.csv", "k;v\na;1,5,6\nb;2,25\nc;3,5\n"),
+    ],
+)
+def test_semicolon_columns_with_a_thousands_lookalike_or_other_text_stay_as_before(
+    tmp_path, name, text
+):
+    s = adf.inspect_data_source(write(tmp_path, text, name), None, v2=True)
+    assert not any(isinstance(r[1], adf.NumberCell) for r in s.rows)
+    if name == "d.csv":
+        assert s.per_column["v"].kind == "numeric"
+    else:
+        assert s.per_column["v"].kind in ("text", "mixed")
+
+
+def test_tab_file_with_a_thousands_lookalike_still_reads_thousands(tmp_path):
+    """制表符文件里 `1,000` 此前按千分位读成 1000：同一列里有这样的格子，整列不按小数逗号改读。"""
+    s = adf.inspect_data_source(
+        write(tmp_path, "k\tv\na\t1,000\nb\t2,500\nc\t3,250\n", "t.tsv"), None, v2=True
+    )
+    assert [v for _c, v in values_of(s, "v")] == [1000.0, 2500.0, 3250.0]
+
+
+def test_decimal_commas_are_never_read_in_comma_or_space_separated_files(tmp_path):
+    quoted = adf.inspect_data_source(
+        write(tmp_path, 'k,v\na,"1,5"\nb,"2,25"\nc,"3,5"\n'), None, v2=True
+    )
+    assert quoted.per_column["v"].kind == "text"
+    ws = adf.inspect_data_source(
+        write(tmp_path, "k  v\na  1,5\nb  2,25\nc  3,5\n", "t.dat"), None, v2=True
+    )
+    assert ws.per_column["v"].kind == "text"
+
+
+def test_decimal_comma_script_runtime_reads_the_same_table(tmp_path, monkeypatch):
+    mod = runtime(tmp_path, monkeypatch)
+    p = write(tmp_path, EURO)
+    parent = adf.inspect_data_source(p, None, v2=True)
+    header, rows = mod.read_delimited(p, ";")
+    assert header == parent.columns and rows == [list(r) for r in parent.rows]
+    assert [mod.parse_cell(r[2]) for r in rows] == values_of(parent, "Druck")
+
+
+def test_percent_and_decimal_comma_files_get_candidates_and_scripts_that_run(project, tmp_path):
+    root = tmp_path / "proj"
+    (root / "data").mkdir(parents=True)
+    (root / "data" / "euro.csv").write_text(EURO, encoding="utf-8")
+    resp = P.propose(root, project="p", folder="data", render="lazy", understand=False)
+    assert resp["kind"] == "candidates", resp
+    rec = next((i for i in resp["items"] if i.get("recommended")), resp["items"][0])
+    assert rec["values"]["x"] == "Zeit" and set(rec["values"]["y"]) <= {"Temperatur", "Druck"}
+
+
+def test_decimal_comma_generated_script_runs_and_draws(tmp_path):
+    import subprocess
+
+    folder = tmp_path / "f"
+    folder.mkdir()
+    (folder / "euro.csv").write_text(EURO, encoding="utf-8")
+    (entry,) = adf.profile_folder(folder).tables
+    recipe = R.FigureRecipe.from_dict(
+        {
+            "table": "euro.csv",
+            "family": "trend",
+            "layers": [{"mark": "line"}],
+            "y": ["Temperatur"],
+            "why": "说明",
+            "x": "Zeit",
+        }
+    )
+    rendered = tpl.render_recipe_script(entry, recipe, data_rel="euro.csv", stem="euro")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "euro.csv").write_text(EURO, encoding="utf-8")
+    (work / "euro.py").write_text(rendered.script, encoding="utf-8")
+    (work / rendered.runtime_name).write_bytes(rendered.runtime)
+    out = subprocess.run(
+        [sys.executable, "euro.py"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={"MPLBACKEND": "Agg", "PATH": "", "HOME": str(tmp_path)},
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert (work / "euro.pdf").exists()
+
+
+def test_a_decimal_comma_column_may_also_hold_whole_numbers(tmp_path):
+    s = adf.inspect_data_source(write(tmp_path, "k;v\na;0\nb;1,5\nc;2\nd;2,25\n"), None, v2=True)
+    assert [v for _c, v in values_of(s, "v")] == [0.0, 1.5, 2.0, 2.25]
+
+
+def test_decimal_comma_streaming_reader_reads_the_same_columns_as_the_whole_file_reader(
+    tmp_path, monkeypatch
+):
+    p = write(tmp_path, EURO)
+    small = adf.read_text_table(p)
+    large = read_large(p, monkeypatch)
+    _same_columns(small, large)
+    assert large.summary.col_tags == {0: False, 1: False, 2: False}
+    # 像千分位的整列、逗号分隔的文件：大表同样不认
+    for name, text in (("a.csv", "k;v\na;1,5\nb;1,234\n"), ("b.csv", 'k,v\na,"1,5"\nb,"2,25"\n')):
+        q = write(tmp_path, text, name)
+        assert read_large(q, monkeypatch).summary.col_tags == {}
+
+
+def test_large_reduce_with_column_tags_reads_the_same_rows_in_parent_and_script(
+    tmp_path, monkeypatch
+):
+    """大表缩减：父进程（`large_reduce`）与脚本里的 `read_reduced`（`tags=` 字面量）读同一个文件，缩减结果逐项一致。"""
+    mod = runtime(tmp_path, monkeypatch)
+    text = "t;v\n" + "".join(
+        f"{i * 0.5:.1f};{20 + (i * 7) % 13},{i % 10}\n".replace(".", ",", 1) for i in range(300)
+    )
+    p = write(tmp_path, text)
+    monkeypatch.setattr(adf, "SMALL_ROWS", 100)
+    values = adf.inspect_data_source(p, None, v2=True, allow_large=True)
+    assert values.large is not None and values.col_tags == {0: False, 1: False}
+    assert values.per_column["v"].kind == "numeric"
+    recipe = R.FigureRecipe.from_dict(
+        {
+            "table": "t.csv",
+            "family": "trend",
+            "layers": [{"mark": "line"}],
+            "y": ["v"],
+            "why": "说明",
+            "x": "t",
+        }
+    )
+    expr = tpl._large_reader_expr(adf.TableEntry("t.csv", None, False, values))
+    assert expr.endswith("REDUCE, tags={0: False, 1: False})")
+    rows, _info = tpl.large_reduce(values, recipe)
+    spec = tpl.large_spec(values, recipe)
+    header, srows = mod.read_reduced(p, ";", None, False, "utf-8", spec, tags={0: False, 1: False})
+    assert header == ["t", "v"] and srows == rows and rows

@@ -112,6 +112,22 @@ class SemicolonCell(str):
     **运行时类**（与 `parse_cell` 一起进公共模块）。"""
 
 
+class NumberCell(str):
+    """整列写法一致才认的数值格（`tag_columns` 打的标记）：内容是原文（`52.3%`、`1,5`），`number` 是它的数值；`parse_cell` 见到它直接给 `numeric`。
+    `strip` 返回自己——取数处都写 `cell.strip()`，标记要留住。**运行时类**（与 `parse_cell` 一起进公共模块）。"""
+
+    def __new__(cls, text, number):
+        obj = super().__new__(cls, text)
+        obj.number = number
+        return obj
+
+    def __getnewargs__(self):
+        return (str(self), self.number)
+
+    def strip(self, chars=None):
+        return self
+
+
 def parse_cell(s: str) -> tuple[str, float | None]:
     """`(类别, 值)`：`empty` / `nan`（缺失，值为 NaN）、`numeric`（有限浮点）、`text`（不是数，值为 None）。
 
@@ -121,7 +137,11 @@ def parse_cell(s: str) -> tuple[str, float | None]:
     三位小数的欧式写法（`1,234` = 1.234）与千分位无法区分：**分号分隔的表**里带逗号的格子（`SemicolonCell`）一律不按千分位认、
     也不猜成小数，整格是文字（于是该列是「混了文字」或「没有数值」，由用户决定）；逗号 / 制表 / 空白分隔的表按千分位读。
     同一列里出现过不符合千分位写法的逗号数（`1,5`）时，那一列本来就是混列、先问用户，`1,234` 不会被悄悄认成数。
+    **整列判定**（`ColumnTagger` / `tag_columns`；大表先预扫一遍定出同一个判定）：整列每一格都带 `%`（`52.3%`）、或分号 / 制表符分隔的表里整列一致用逗号当小数点（`1,5`）时，
+    那一列的格子被打上 `NumberCell`，这里直接认成数（`52.3%` → 52.3，不除以 100；`1,5` → 1.5）；单格看不出来，所以 `parse_cell` 自己仍不认裸的 `52.3%` / `1,5`。
     **这是运行时函数**：父进程与生成的脚本共用同一份源码；v1 的摘要走 `legacy_parse_cell`（不认千分位，v1 逐字不变）。"""
+    if isinstance(s, NumberCell):
+        return "numeric", s.number
     t = s.strip()
     if not t:
         return "empty", math.nan
@@ -307,6 +327,9 @@ class DataSummary:
     units_row: bool = False
     #: 读法的一部分：这张表没有表头行，列名是 `col1`…、第一行是数据（嗅探认出来的；`header_line` 是第一条数据行的物理行号）。脚本照抄；False = 读法不变
     no_header: bool = False
+    #: 大表读法的一部分：整列判定（`ColumnTagger.tags()`：`{列下标: 真 = 整列带 % / 假 = 小数逗号}`）。小表是读完整份再判（`tag_columns`），大表先预扫一遍定下它、
+    #: 再按它逐行读；脚本照抄。空 = 没有这样的列（读法不变）
+    col_tags: dict = field(default_factory=dict)
     #: 文本表格实际用的编码（`TEXT_ENCODINGS`；父进程定下、脚本照抄 codec 名，不自己探测）；XLSX / v1 是 None
     encoding: str | None = None
     #: 合画（几份列名相同的表拼成一张）时与 `rows` 逐项对应的「这一行来自哪一份」（该份的分组值）；单份 = 空。`row_numbers` 是各份自己的文件行号
@@ -538,12 +561,25 @@ def _trim_tail(header, body):
     return header[:keep], ((n, cut_tail(c, keep, total)) for n, c in body)
 
 
-def iter_table(lines, delimiter, header_row=None, units_row=False, no_header=False):
+def _tagged(body, tags):
+    """数据行迭代器按 `tags` 逐行 `apply_tags`；没有 `tags` 原样返回。**运行时函数**。"""
+    if not tags:
+        return body
+    return ((n, apply_tags(c, tags)) for n, c in body)
+
+
+def _tagged_table(result, tags):
+    """`(表头, 数据行迭代器)` 的数据行套 `_tagged`。**运行时函数**。"""
+    header, body = result
+    return header, _tagged(body, tags)
+
+
+def iter_table(lines, delimiter, header_row=None, units_row=False, no_header=False, tags=None):
     """`(表头, 数据行迭代器)`；迭代器逐条产出 `(物理行号, 单元格列表)`。读法与 `table_from_text` 完全一样（这就是它的实现）：
     `header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。给了行号：从该行起（第一条起始行号 ≥ 它的记录）
     是表头，之前的行都是说明、不读；表头之后以 `#` 开头**且列数与表头不同**的行是注释、丢掉（列数相同的 `#` 行是数据）。`units_row` 真：表头之后的
     第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；切掉后数据行的物理行号不变）。`no_header` 真：这张表没有表头行（嗅探认出来才由调用方给：第一条记录整行都是数值、
-    下面也是数值），列名叫 `col1`、`col2`…（与 `xvg_text` / `fill_header` 同一个叫法），第一条记录（从 `header_row` 起算）是数据；表头之后的 `#` 行规则同显式表头行。没有任何记录 → `([], 空迭代器)`。
+    下面也是数值），列名叫 `col1`、`col2`…（与 `xvg_text` / `fill_header` 同一个叫法），第一条记录（从 `header_row` 起算）是数据；表头之后的 `#` 行规则同显式表头行。`tags`（`ColumnTagger.tags()`，大表预扫出来的整列判定）给了就逐行 `apply_tags`。没有任何记录 → `([], 空迭代器)`。
     **流式、运行时函数**：父进程与生成的脚本读出来的必然是同一张表；大文件一遍扫过，内存只与表头和（显式表头行时）开头的注释行有关。"""
     records = iter_records(lines, delimiter)
     if header_row is not None:
@@ -567,9 +603,9 @@ def iter_table(lines, delimiter, header_row=None, units_row=False, no_header=Fal
                 if len(c) == width or not c[0].lstrip().startswith("#"):
                     yield n, c
 
-        return ["col" + str(k + 1) for k in range(width)], data()
+        return ["col" + str(k + 1) for k in range(width)], _tagged(data(), tags)
     if header_row is None:
-        return _trim_tail(fill_header([h.strip() for h in first_cells]), rest)
+        return _tagged_table(_trim_tail(fill_header([h.strip() for h in first_cells]), rest), tags)
     # 列数以表头之后第一条非 `#` 记录为准（没有就取紧跟的第一条）；探测时读过的记录接回去，不丢
     held = []
     probe = None
@@ -594,16 +630,80 @@ def iter_table(lines, delimiter, header_row=None, units_row=False, no_header=Fal
             if len(c) == len(header) or not c[0].lstrip().startswith("#"):
                 yield n, c
 
-    return _trim_tail(header, body())
+    return _tagged_table(_trim_tail(header, body()), tags)
+
+
+class ColumnTagger:
+    """整列判定的累加器（`tag_columns` 与大表的预扫描**共用这一个实现**，小表整份读与大表流式读由此得到同一个判定）：逐行 `feed`，最后 `tags()` 给出
+    `{列下标: 真 = 百分号 / 假 = 小数逗号}`。判据（列级，整列每个非空格都要符合，有一格不符整列照旧）：
+    * **百分号**：每格都是 `数字%`（`52.3%`，允许正负号、小数、`%` 前的空白）→ 数值是 `%` 前面的数（**不除以 100**）；
+    * **小数逗号**：只在分隔符是分号 / 制表符时；每格都是 `数字` 或 `数字,数字`、至少一格带逗号、且**没有任何一格长得像千分位**（`1,234`：首组 1–3 位不以 0 开头、
+      其后每组恰好 3 位）→ 逗号是小数点（`1,5` → 1.5）。有一格像千分位就分不清是 1.234 还是 1234，整列照旧（分号文件里是文字，制表符文件里按千分位认）；逗号分隔、空白分隔的表里绝不这样读。
+    **运行时类**。"""
+
+    def __init__(self, width, delimiter):
+        self.pct = [True] * width
+        self.dec = [delimiter in (";", "\t")] * width
+        self.comma = [False] * width
+        self.seen = [False] * width
+
+    def feed(self, cells):
+        for j, cell in enumerate(cells[: len(self.seen)]):
+            t = cell.strip()
+            if not t:
+                continue
+            self.seen[j] = True
+            if self.pct[j] and not re.fullmatch(r"[-+]?[0-9]+(?:\.[0-9]+)?\s*%", t):
+                self.pct[j] = False
+            if self.dec[j]:
+                if not re.fullmatch(r"[-+]?[0-9]+(?:,[0-9]+)?", t) or re.fullmatch(
+                    r"[-+]?[1-9][0-9]{0,2}(?:,[0-9]{3})+", t
+                ):
+                    self.dec[j] = False
+                elif "," in t:
+                    self.comma[j] = True
+
+    def tags(self):
+        out = {}
+        for j, seen in enumerate(self.seen):
+            if not seen:
+                continue
+            if self.pct[j]:
+                out[j] = True
+            elif self.dec[j] and self.comma[j]:
+                out[j] = False
+        return out
+
+
+def apply_tags(cells, tags):
+    """一行的格子按 `tags`（`ColumnTagger.tags()`）把判定为数值的列换成 `NumberCell`（原文 + 数值），别的格原样；没有 `tags` 原样返回。**运行时函数**。"""
+    if not tags:
+        return cells
+    out = list(cells)
+    for j, percent in tags.items():
+        if j < len(out) and out[j].strip():
+            t = out[j].strip()
+            out[j] = NumberCell(t, float(t[:-1]) if percent else float(t.replace(",", ".")))
+    return out
+
+
+def tag_columns(header, rows, delimiter):
+    """整份读的文本表里「整列写法一致」才认的两种数值（判据见 `ColumnTagger`）：整列符合的每格换成 `NumberCell`，别的列原样；返回新的行列表
+    （没有符合的列时就是传进来的那个）。只改内存里的副本，不碰文件。大表（流式）由 `read_text_table` 先预扫一遍定出同一个 `tags`、读表时按它逐行 `apply_tags`。**运行时函数**。"""
+    tagger = ColumnTagger(len(header), delimiter)
+    for r in rows:
+        tagger.feed(r)
+    tags = tagger.tags()
+    return [apply_tags(r, tags) for r in rows] if tags else rows
 
 
 def table_from_text(text, delimiter, header_row=None, units_row=False, no_header=False):
-    """`(表头, 数据行, 数据行的物理行号)`：`iter_table` 的整份文本版（同一份读法，见它的文档）。**运行时函数**。"""
+    """`(表头, 数据行, 数据行的物理行号)`：`iter_table` 的整份文本版（同一份读法，见它的文档），多一步整列判定 `tag_columns`（整列带 `%` / 整列小数逗号）。**运行时函数**。"""
     header, body = iter_table(
         io.StringIO(text, newline=""), delimiter, header_row, units_row, no_header
     )
     pairs = list(body)
-    return header, [c for _, c in pairs], [n for n, _ in pairs]
+    return header, tag_columns(header, [c for _, c in pairs], delimiter), [n for n, _ in pairs]
 
 
 # --- 嗅探（只在父进程）
@@ -1058,6 +1158,8 @@ def _read_small_text_table(
             table = list(csv.reader(io.StringIO(text, newline=""), delimiter=delim))
         except csv.Error:
             return _unreadable("data_malformed")
+        if table:  # 整列判定与脚本里的 `table_from_text` 同一个（`tag_columns`）
+            table = [table[0], *tag_columns(table[0], table[1:], delim)]
         try:
             summ = _summarize(
                 table,
@@ -1255,6 +1357,7 @@ def _scan_summary(
     path: str | None = None,
     pos=None,
     no_header: bool = False,
+    col_tags: dict | None = None,
 ) -> DataSummary:
     """大表的一遍扫描：`_summarize` 的流式版（同样的列统计、同样的错误码），行不进内存。结构线索用有界集合（`_Facts`）。
     除受控摘要外留下精确的整表统计（行数、每列有限数值的个数 / 最小 / 最大）与前 `LARGE_PREVIEW_ROWS` 行。"""
@@ -1380,6 +1483,7 @@ def _scan_summary(
         encoding=encoding,
         units_row=units_row,
         no_header=no_header,
+        col_tags=dict(col_tags or {}),
         large=LargeInfo(count, stats, preview, pnums, path),
     )
 
@@ -1390,6 +1494,32 @@ def _old_reader_stream(fh, delimiter):
     for n, row in enumerate(reader, start=1):
         if any(c.strip() for c in row):
             yield n, row
+
+
+#: 大表整列判定的预扫：先只看开头这么多行，没有哪一列还可能符合就不再读第二遍（绝大多数大表没有带 `%` / 小数逗号的列）
+TAG_HEAD_ROWS = 2000
+
+
+def _large_tags(p, codec, delim, script_header, units, no_header, size) -> dict:
+    """大表的整列判定 `{列下标: 真 = 百分号 / 假 = 小数逗号}`（判据与小表整份读的 `tag_columns` 是同一个 `ColumnTagger`）：开头 `TAG_HEAD_ROWS` 行里
+    没有任何一列还可能符合就是空；否则再整份读一遍（流式，可取消）定下来。表头读不出来 / 尾部没有名字的列有数据等错误这里不管，留给紧接着的扫描按原样报。"""
+    try:
+        with io.TextIOWrapper(p.open("rb"), encoding=codec, newline="") as fh:
+            header, body = iter_table(fh, delim, script_header, units, no_header)
+            if not header:
+                return {}
+            tagger = ColumnTagger(len(header), delim)
+            for _n, cells in itertools.islice(body, TAG_HEAD_ROWS):
+                tagger.feed(cells)
+            if not tagger.tags():
+                return {}
+            for count, (_n, cells) in enumerate(body, start=1):
+                tagger.feed(cells)
+                if not count & 0xFFFF:
+                    progress.tick("scan", fh.buffer.tell(), size)
+            return tagger.tags()
+    except NamelessTailData:
+        return {}
 
 
 def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> TextTable:
@@ -1455,14 +1585,17 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
                         units_row=False, path=str(p), pos=fh.buffer.tell,
                     )  # fmt: skip
             else:
-                head_cells, body = iter_table(fh, delim, script_header, units, no_header)
+                col_tags = _large_tags(p, codec, delim, script_header, units, no_header, size)
+                head_cells, body = iter_table(
+                    fh, delim, script_header, units, no_header, col_tags or None
+                )
                 if head_cells:
                     ncols = len(head_cells)
                     summ = _scan_summary(
                         head_cells, body, path_name=p.name, sha256=sha, size=size, parse=parse_cell,
                         delimiter=delim, header_row=script_header, header_line=line,
                         encoding=encoding, units_row=units, no_header=no_header, path=str(p),
-                        pos=fh.buffer.tell,
+                        pos=fh.buffer.tell, col_tags=col_tags,
                     )  # fmt: skip
     except csv.Error:
         return _unreadable("data_malformed")

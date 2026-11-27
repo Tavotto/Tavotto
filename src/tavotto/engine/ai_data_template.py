@@ -41,13 +41,18 @@ from dataclasses import dataclass, replace
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
 from .ai_data_figure import (
+    ColumnTagger,
     NamelessTailData,
+    NumberCell,
     NumCat,
     SemicolonCell,
+    _tagged,
+    _tagged_table,
     _trim_tail,
     apply_cells,
     apply_numcat,
     apply_stack,
+    apply_tags,
     cut_tail,
     date_number,
     delimited_records,
@@ -60,6 +65,7 @@ from .ai_data_figure import (
     parse_when,
     resolve_header,
     table_from_text,
+    tag_columns,
     xvg_label,
     xvg_text,
 )
@@ -997,12 +1003,12 @@ def tick_rows(body, raw, progress):
 
 
 def reduce_file(
-    path, delimiter, header_row, units_row, codec, spec, progress=None, no_header=False
+    path, delimiter, header_row, units_row, codec, spec, progress=None, no_header=False, tags=None
 ):
     """大表文件 → `(表头, 缩减后的行, 信息)`：流式读（`iter_table`，读法与小表同一份）+ 按 `spec["kind"]` 缩减。`codec` 是 Python 的 codec 名
     （由父进程按文件定下、以字面量写进脚本，脚本不探测）。`progress`：可选的 `f(已读字节)`，父进程用它报进度并在取消时抛异常。"""
     with open(path, "rb") as raw, io.TextIOWrapper(raw, encoding=codec, newline="") as fh:
-        header, body = iter_table(fh, delimiter, header_row, units_row, no_header)
+        header, body = iter_table(fh, delimiter, header_row, units_row, no_header, tags)
         if progress is not None:
             body = tick_rows(body, raw, progress)
         if spec["kind"] == "trend":
@@ -1014,9 +1020,11 @@ def reduce_file(
     return header, rows, info
 
 
-def read_reduced(path, delimiter, header_row, units_row, codec, spec, no_header=False):
+def read_reduced(path, delimiter, header_row, units_row, codec, spec, no_header=False, tags=None):
     """生成的脚本在大表上读表的那一句：`(表头, 缩减后的行)`；之后与小表同一份画图代码。"""
-    return reduce_file(path, delimiter, header_row, units_row, codec, spec, no_header=no_header)[:2]
+    return reduce_file(
+        path, delimiter, header_row, units_row, codec, spec, no_header=no_header, tags=tags
+    )[:2]
 
 
 def pick_fonts(latin, cjk):
@@ -1240,6 +1248,9 @@ def fit_fonts(fig, floor=None, step=0.5):
 
 RUNTIME_FUNCTIONS = (
     SemicolonCell,
+    NumberCell,
+    ColumnTagger,
+    apply_tags,
     NumCat,
     parse_cell,
     parse_date,
@@ -1255,7 +1266,10 @@ RUNTIME_FUNCTIONS = (
     nameless_tail,
     cut_tail,
     _trim_tail,
+    _tagged,
+    _tagged_table,
     iter_table,
+    tag_columns,
     table_from_text,
     read_delimited,
     read_xlsx,
@@ -2554,7 +2568,9 @@ def _large_reader_expr(entry) -> str:
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     codec = adf.large_codec(s.encoding)
-    tail = ", no_header=True" if s.no_header else ""
+    tail = (", no_header=True" if s.no_header else "") + (
+        f", tags={s.col_tags!r}" if s.col_tags else ""
+    )
     return f"read_reduced(DATA, {delim!r}, {s.header_row!r}, {bool(s.units_row)!r}, {codec!r}, REDUCE{tail})"
 
 
@@ -2577,7 +2593,12 @@ def gap_audit(values: adf.DataSummary, spec: dict, ords) -> int:
         io.TextIOWrapper(raw, encoding=adf.large_codec(values.encoding), newline="") as fh,
     ):
         _h, body = adf.iter_table(
-            fh, values.delimiter or ",", values.header_row, values.units_row, values.no_header
+            fh,
+            values.delimiter or ",",
+            values.header_row,
+            values.units_row,
+            values.no_header,
+            values.col_tags or None,
         )
         for n, (_ln, r) in enumerate(body, start=1):
             if spec["date"]:
@@ -2628,6 +2649,7 @@ def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tu
             if adf.progress.active()
             else None,
             no_header=values.no_header,
+            tags=values.col_tags or None,
         )
         hit = (rows, info)
         with _REDUCE_LOCK:
