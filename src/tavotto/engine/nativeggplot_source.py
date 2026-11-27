@@ -10,6 +10,7 @@ import signal
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,16 @@ class ReplayedRSource:
     svg: bytes | None = None
 
 
+class _SourceProgramFailed(scriptadjust.ScriptAdjustError):
+    """The isolated interpreter exited unsuccessfully."""
+
+
+class _RetryWithoutFontFamily(Exception):
+    def __init__(self, original: bytes) -> None:
+        super().__init__("The source did not run with the selected concrete fonts.")
+        self.original = original
+
+
 def build(
     data: bytes,
     object_name: str,
@@ -55,6 +66,7 @@ def build(
     themes: dict[str, str],
     hot: dict | None = None,
     tick_themes: dict[str, str] | None = None,
+    write_font_family: bool = True,
 ) -> AdjustedRSource:
     """Insert the generated R block after the binding located by R's parser."""
     if b"\0" in data:
@@ -95,11 +107,11 @@ def build(
         position = after
 
     text_themes = {**themes, **(tick_themes or {})}
-    face_of = {
+    text_fields = {
         item["gid"]: {
-            field["prop"]: field["value"]
+            field["prop"]: field
             for field in item.get("editable", ())
-            if field.get("prop") in ("weight", "style")
+            if field.get("prop") in ("weight", "style", "fontfamily")
         }
         for item in (hot or {}).get("elements", ())
         if item["gid"] in text_themes
@@ -112,12 +124,25 @@ def build(
         gid, prop, value = patch["gid"], patch["prop"], patch["value"]
         element = text_themes.get(gid)
         if element is not None:
-            face_fields = face_of.get(gid, {})
-            face = _FACES.get((face_fields.get("weight"), face_fields.get("style")))
+            fields = text_fields.get(gid, {})
+            weight = fields.get("weight", {}).get("value")
+            style = fields.get("style", {}).get("value")
+            face = _FACES.get((weight, style))
+            family = fields.get("fontfamily", {})
+            resolved = family.get("resolved_family")
             if prop == "color" and isinstance(value, str) and _RGB.fullmatch(value):
                 elements.setdefault(element, {})["colour"] = value
             elif prop == "fontsize" and type(value) in (int, float) and 3 <= value <= 200:
                 elements.setdefault(element, {})["size"] = value
+            elif (
+                prop == "fontfamily"
+                and write_font_family
+                and isinstance(resolved, str)
+                and resolved
+                and "\0" not in resolved
+                and family.get("value") == value
+            ):
+                elements.setdefault(element, {})["family"] = resolved
             elif (
                 prop == "rotation"
                 and tick_themes is not None
@@ -127,7 +152,7 @@ def build(
             ):
                 elements.setdefault(element, {})["angle"] = value
             elif (
-                prop in ("weight", "style") and face is not None and face_fields.get(prop) == value
+                prop in ("weight", "style") and face is not None and fields[prop]["value"] == value
             ):
                 elements.setdefault(element, {})["face"] = face
             else:
@@ -143,7 +168,9 @@ def build(
     name = json.dumps(object_name, ensure_ascii=False)
     options = ",\n".join(
         f"    {element} = ggplot2::element_text("
-        + ", ".join(f"{key} = {json.dumps(value)}" for key, value in fields.items())
+        + ", ".join(
+            f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in fields.items()
+        )
         + ")"
         for element, fields in elements.items()
     )
@@ -181,7 +208,7 @@ def _run(command: list[str], cwd: Path, environment: dict[str, str]) -> None:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
         if status:
-            raise scriptadjust.ScriptAdjustError(
+            raise _SourceProgramFailed(
                 "script_export_run_failed", "The selected plot could not be replayed from R source."
             )
 
@@ -330,8 +357,42 @@ def replay(
     hot: dict | None = None,
     vectors: bool = False,
     fonts: list[str] | None = None,
+    check_cancelled: Callable[[], None] | None = None,
 ) -> ReplayedRSource:
     """Run the candidate in a protected copy using the recorded native interpreter."""
+    try:
+        return _replay(spec, target, stem, patches, width, hot=hot, vectors=vectors, fonts=fonts)
+    except _RetryWithoutFontFamily as exc:
+        # The source's own PDF device can reject a name supported by Tavotto's
+        # devices. Keep the font edits in the document and replay from a fresh
+        # copy so the original program still runs and the pixel gate still applies.
+        if check_cancelled is not None:
+            check_cancelled()
+        return _replay(
+            spec,
+            target,
+            stem,
+            patches,
+            width,
+            hot=hot,
+            vectors=vectors,
+            fonts=fonts,
+            original_for_retry=exc.original,
+        )
+
+
+def _replay(
+    spec: execspec.ExecutionSpec,
+    target: nativeggplot.GgplotTarget,
+    stem: str,
+    patches: list[dict],
+    width: int,
+    *,
+    hot: dict | None,
+    vectors: bool,
+    fonts: list[str] | None,
+    original_for_retry: bytes | None = None,
+) -> ReplayedRSource:
     windows = os.name == "nt"
     sandbox = None if windows else cmdsandbox.sandbox_kind(offline=True)
     if not (winappcontainer.available() if windows else sandbox is not None):
@@ -344,6 +405,10 @@ def replay(
         raise scriptadjust.ScriptAdjustError("script_export_no_script", "The R source disappeared.")
     script = Path(source_path)
     original = script.read_bytes()
+    if original_for_retry is not None and original != original_for_retry:
+        raise scriptadjust.ScriptAdjustError(
+            "script_export_script_changed", "The R source changed before replay."
+        )
     pending = config.data_path("cache", "ggplot-source")
     pending.mkdir(parents=True, exist_ok=True)
     if pending.resolve().is_relative_to(project):
@@ -423,9 +488,7 @@ def replay(
                 try:
                     execute(command, cwd, timeout=120)
                 except winappcontainer.ReplayFailed as exc:
-                    raise scriptadjust.ScriptAdjustError(
-                        "script_export_run_failed", str(exc)
-                    ) from exc
+                    raise _SourceProgramFailed("script_export_run_failed", str(exc)) from exc
                 except winappcontainer.Unavailable as exc:
                     raise scriptadjust.ScriptAdjustError(
                         "script_export_r_source_unavailable",
@@ -457,6 +520,7 @@ def replay(
             themes=anchor["themes"],
             hot=hot,
             tick_themes=anchor["tick_themes"],
+            write_font_family=original_for_retry is None,
         )
         staged.write_bytes(adjusted.data)
         replay_request = {
@@ -476,7 +540,15 @@ def replay(
             replay_request.update(fonts=staged_fonts, svg=svg.as_posix())
         request.write_text(json.dumps(replay_request), encoding="utf-8")
         execution_id = executionfact.new_id()
-        run_stage()
+        try:
+            run_stage()
+        except _SourceProgramFailed as exc:
+            if any(
+                patch["prop"] == "fontfamily" and patch not in adjusted.residual
+                for patch in patches
+            ):
+                raise _RetryWithoutFontFamily(original) from exc
+            raise
         manifest = json.loads(result.read_text(encoding="utf-8"))
         target.annotate_manifest(manifest)
         if script.read_bytes() != original:

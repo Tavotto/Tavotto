@@ -5800,6 +5800,7 @@ def _verified_r_source(worker, stem, patches, *, check_cancelled=None, archive=N
         REPLAY_PIXEL_WIDTH,
         hot=hot["manifest"],
         vectors=archive is not None,
+        check_cancelled=check_cancelled,
     )
     if check_cancelled is not None:
         check_cancelled()
@@ -5827,6 +5828,7 @@ def _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, ar
         REPLAY_PIXEL_WIDTH,
         hot=reference["manifest"],
         fonts=reference["fonts"],
+        check_cancelled=check_cancelled,
     )
     if check_cancelled is not None:
         check_cancelled()

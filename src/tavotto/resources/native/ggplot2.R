@@ -1848,7 +1848,10 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
                      value = if (is.null(requested)) family_original else requested,
                      options = as.list(unique(c(family_original, names(target$font_families)))),
                      strict_options = TRUE)
-      if (!is.null(requested)) family$value_original <- family_original
+      if (!is.null(requested)) {
+        family$value_original <- family_original
+        if (requested != family_original) family$resolved_family <- target$font_families[[requested]]
+      }
       editable[[length(editable) + 1L]] <- family
     }
     if (!is.null(target$title_dimension) || !is.null(tick$size)) {
