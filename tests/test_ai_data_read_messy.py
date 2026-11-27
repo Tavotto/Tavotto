@@ -341,3 +341,181 @@ def test_propose_offers_candidates_for_the_plate_reader_workbook(project, tmp_pa
     make_xlsx(root / "data" / "plate.xlsx", {"Sheet1": PLATE})
     resp = P.propose(root, project="p", folder="data", render="lazy", understand=False)
     assert resp["kind"] == "candidates" and resp["items"], resp
+
+
+# =========================================================================== 3. 第一行整行都是数值 = 没有表头
+XRD = "".join(f"{10 + 0.05 * i:.2f}  {100 + (i * 7) % 40}\n" for i in range(30))
+XRD_ROWS = [[f"{10 + 0.05 * i:.2f}", str(100 + (i * 7) % 40)] for i in range(30)]
+
+
+def test_an_all_numeric_first_row_means_no_header(tmp_path):
+    t = adf.read_text_table(write(tmp_path, XRD, "xrd.txt"))
+    assert t.status == "unsure"  # 仍是「猜的」：与此前没有表头的兜底同一个把握
+    assert t.summary.columns == ["col1", "col2"] and t.summary.no_header
+    assert t.summary.rows == XRD_ROWS  # 第一行是数据，一行没丢
+    assert t.summary.row_numbers == list(range(1, 31))  # 物理行号照旧
+    assert t.header_line == 1 and t.rows == 30
+
+
+def test_no_header_after_comment_lines_keeps_physical_line_numbers(tmp_path):
+    p = write(
+        tmp_path,
+        "# scan 7 of sample A\n# step is 0.05 deg\n10.00  116\n10.05  101\n10.10  114\n",
+        "x.dat",
+    )
+    t = adf.read_text_table(p)
+    assert t.summary.columns == ["col1", "col2"] and t.summary.no_header
+    assert t.summary.row_numbers == [3, 4, 5] and t.header_line == 3
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "columns"),
+    [
+        # 表头本来就是数字、第一列是文字的宽表：第一格是文字，不是「整行数值」
+        (
+            "wide.csv",
+            "sample,2019,2020,2021\nA,1,2,3\nB,4,5,6\nC,7,8,9\n",
+            ["sample", "2019", "2020", "2021"],
+        ),
+        (
+            "wide.txt",
+            "sample  2019  2020  2021\nA  1  2  3\nB  4  5  6\nC  7  8  9\n",
+            ["sample", "2019", "2020", "2021"],
+        ),
+        # 第一格是文字、下面全是数（`id` 列是数字编号）
+        ("ids.csv", "id,2019,2020\n1,5,6\n2,7,8\n3,9,10\n", ["id", "2019", "2020"]),
+        # 第一行有一格是空的 / 是文字
+        ("gap.csv", "1,,3\n4,5,6\n7,8,9\n", None),
+        ("word.csv", "1,x,3\n4,5,6\n7,8,9\n", None),
+        # 下面的行里有文字：不是一张纯数字的表
+        ("mixed.txt", "1  2\n3  four\n5  6\n7  8\n", None),
+        # 有表头的老样子
+        ("named.txt", "x  y\n1  2\n3  4\n5  6\n", ["x", "y"]),
+    ],
+)
+def test_tables_with_a_header_are_not_turned_into_headerless(tmp_path, name, text, columns):
+    t = adf.read_text_table(write(tmp_path, text, name))
+    assert not (t.summary and t.summary.no_header)
+    if columns is not None:
+        assert t.summary.columns == columns
+
+
+def test_the_numeric_header_over_numeric_data_limit_is_pinned(tmp_path):
+    """分不开的情形：表头是纯数字（年份）、下面也全是数。按没有表头读（第一行是数据），嗅探仍标「猜的」——用户在预览里看得到这一行。"""
+    t = adf.read_text_table(
+        write(tmp_path, "2019  2020  2021\n1  2  3\n4  5  6\n7  8  9\n", "y.txt")
+    )
+    assert t.status == "unsure" and t.summary.columns == ["col1", "col2", "col3"]
+    assert t.summary.rows[0] == ["2019", "2020", "2021"]
+
+
+def test_no_header_streaming_reader_reads_the_same_table(tmp_path, monkeypatch):
+    p = write(tmp_path, XRD, "xrd.txt")
+    small = adf.read_text_table(p)
+    large = read_large(p, monkeypatch)
+    assert large.status == small.status == "unsure"
+    assert large.summary.columns == small.summary.columns == ["col1", "col2"]
+    assert large.summary.row_count == 30 and large.summary.no_header
+    assert large.summary.large.preview[0] == XRD_ROWS[0]  # 第一行在前几行预览里
+
+
+def test_no_header_script_reader_reads_the_same_table(tmp_path, monkeypatch):
+    mod = runtime(tmp_path, monkeypatch)
+    p = write(tmp_path, XRD, "xrd.txt")
+    parent = adf.inspect_data_source(p, None, v2=True)
+    entry = adf.TableEntry("xrd.txt", None, False, parent)
+    expr = tpl._reader_expr(entry, False)
+    assert expr == "read_delimited(DATA, 'ws', 1, False, True)"
+    header, rows = eval(expr, {**vars(mod), "DATA": p})  # noqa: S307 - 生成脚本里的那一句
+    assert header == parent.columns and rows == [list(r) for r in parent.rows]
+    # 常态的脚本逐字不变
+    named = adf.inspect_data_source(write(tmp_path, "x  y\n1  2\n3  4\n", "n.txt"), None, v2=True)
+    assert "True" not in tpl._reader_expr(adf.TableEntry("n.txt", None, False, named), False)
+
+
+def test_no_header_summary_round_trips_through_its_header_line(tmp_path):
+    """摘要的 `header_line` 会被出图 / 合画 / 提交那几处当 `header_row` 传回来重读：读出的必须是同一张表；用户另指一行就按他指的读。"""
+    p = write(tmp_path, XRD, "xrd.txt")
+    first = adf.inspect_data_source(p, None, v2=True)
+    again = adf.inspect_data_source(p, None, v2=True, header_row=first.header_line)
+    assert (again.columns, again.rows, again.no_header) == (first.columns, first.rows, True)
+    other = adf.inspect_data_source(p, None, v2=True, header_row=2)
+    assert not other.no_header and other.columns == XRD_ROWS[1] and len(other.rows) == 28
+
+
+def test_no_header_generated_script_runs_and_draws(tmp_path):
+    import subprocess
+
+    folder = tmp_path / "f"
+    folder.mkdir()
+    (folder / "xrd.txt").write_text(XRD, encoding="utf-8")
+    profile = adf.profile_folder(folder)
+    (entry,) = profile.tables
+    recipe = R.FigureRecipe.from_dict(
+        {
+            "table": "xrd.txt",
+            "family": "trend",
+            "layers": [{"mark": "line"}],
+            "y": ["col2"],
+            "why": "说明",
+            "x": "col1",
+        }
+    )
+    rendered = tpl.render_recipe_script(entry, recipe, data_rel="xrd.txt", stem="xrd")
+    assert "read_delimited(DATA, 'ws', 1, False, True)" in rendered.script
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "xrd.txt").write_text(XRD, encoding="utf-8")
+    (work / "xrd.py").write_text(rendered.script, encoding="utf-8")
+    (work / rendered.runtime_name).write_bytes(rendered.runtime)
+    out = subprocess.run(
+        [sys.executable, "xrd.py"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={"MPLBACKEND": "Agg", "PATH": "", "HOME": str(tmp_path)},
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert (work / "xrd.pdf").exists()
+
+
+def test_propose_offers_a_line_for_the_headerless_xrd_scan(project, tmp_path):
+    root = tmp_path / "proj"
+    (root / "data").mkdir(parents=True)
+    (root / "data" / "xrd.txt").write_text(XRD, encoding="utf-8")
+    resp = P.propose(root, project="p", folder="data", render="lazy", understand=False)
+    assert resp["kind"] == "candidates" and resp["items"], resp
+    rec = (
+        next(i for i in resp["items"] if i.get("recommended"))
+        if any(i.get("recommended") for i in resp["items"])
+        else resp["items"][0]
+    )
+    assert rec["values"]["x"] == "col1" and rec["values"]["y"] == ["col2"]
+
+
+def test_no_header_large_reduce_reads_the_same_rows_in_parent_and_script(tmp_path, monkeypatch):
+    """大表缩减那一遍：父进程（`large_reduce`）与脚本里的 `read_reduced` 读同一个没有表头行的文件，缩减结果逐项一致。"""
+    mod = runtime(tmp_path, monkeypatch)
+    text = "".join(f"{i * 0.05:.2f}  {100 + (i * 7) % 40}\n" for i in range(400))
+    p = write(tmp_path, text, "big.txt")
+    monkeypatch.setattr(adf, "SMALL_ROWS", 100)
+    values = adf.inspect_data_source(p, None, v2=True, allow_large=True)
+    assert values.large is not None and values.no_header and values.columns == ["col1", "col2"]
+    assert values.row_count == 400  # 第一行也算
+    recipe = R.FigureRecipe.from_dict(
+        {
+            "table": "big.txt",
+            "family": "trend",
+            "layers": [{"mark": "line"}],
+            "y": ["col2"],
+            "why": "说明",
+            "x": "col1",
+        }
+    )
+    expr = tpl._large_reader_expr(adf.TableEntry("big.txt", None, False, values))
+    assert expr == "read_reduced(DATA, 'ws', 1, False, 'utf-8', REDUCE, no_header=True)"
+    rows, _info = tpl.large_reduce(values, recipe)
+    spec = tpl.large_spec(values, recipe)
+    header, srows = mod.read_reduced(p, "ws", 1, False, "utf-8", spec, no_header=True)
+    assert header == ["col1", "col2"] and srows == rows

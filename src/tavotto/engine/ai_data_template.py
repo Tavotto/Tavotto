@@ -96,13 +96,13 @@ class LargeRuleError(ValueError):
 _ISO_DATE_PREAMBLE = 'import datetime as _dt\n_ISO_DATE = re.compile(r"\\d{4}-\\d{2}-\\d{2}")\n_EPOCH = _dt.date(1970, 1, 1)\n'
 
 
-def read_delimited(path, delimiter, header_row=None, units_row=False):
+def read_delimited(path, delimiter, header_row=None, units_row=False, no_header=False):
     """文本表格 → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；
     `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行；`units_row` 真 = 表头后紧跟的单位行不是数据、切掉
     （读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
     with open(path, newline="", encoding="utf-8-sig") as fh:
         text = fh.read()
-    header, rows, _lines = table_from_text(text, delimiter, header_row, units_row)
+    header, rows, _lines = table_from_text(text, delimiter, header_row, units_row, no_header)
     return header, rows
 
 
@@ -995,11 +995,13 @@ def tick_rows(body, raw, progress):
         yield item
 
 
-def reduce_file(path, delimiter, header_row, units_row, codec, spec, progress=None):
+def reduce_file(
+    path, delimiter, header_row, units_row, codec, spec, progress=None, no_header=False
+):
     """大表文件 → `(表头, 缩减后的行, 信息)`：流式读（`iter_table`，读法与小表同一份）+ 按 `spec["kind"]` 缩减。`codec` 是 Python 的 codec 名
     （由父进程按文件定下、以字面量写进脚本，脚本不探测）。`progress`：可选的 `f(已读字节)`，父进程用它报进度并在取消时抛异常。"""
     with open(path, "rb") as raw, io.TextIOWrapper(raw, encoding=codec, newline="") as fh:
-        header, body = iter_table(fh, delimiter, header_row, units_row)
+        header, body = iter_table(fh, delimiter, header_row, units_row, no_header)
         if progress is not None:
             body = tick_rows(body, raw, progress)
         if spec["kind"] == "trend":
@@ -1011,9 +1013,9 @@ def reduce_file(path, delimiter, header_row, units_row, codec, spec, progress=No
     return header, rows, info
 
 
-def read_reduced(path, delimiter, header_row, units_row, codec, spec):
+def read_reduced(path, delimiter, header_row, units_row, codec, spec, no_header=False):
     """生成的脚本在大表上读表的那一句：`(表头, 缩减后的行)`；之后与小表同一份画图代码。"""
-    return reduce_file(path, delimiter, header_row, units_row, codec, spec)[:2]
+    return reduce_file(path, delimiter, header_row, units_row, codec, spec, no_header=no_header)[:2]
 
 
 def pick_fonts(latin, cjk):
@@ -2341,6 +2343,8 @@ def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
     if s.units_row:  # 只在嗅探到单位行时多写这一项：其余脚本逐字不变
         args = [*args[:1], repr(s.header_row), "True"]
+    if s.no_header:  # 同上：只在嗅探到没有表头行时才多写
+        args = [args[0], repr(s.header_row), "False", "True"]
     codec = adf.script_codec(s.encoding)
     if entry.path.lower().endswith(adf.XVG_SUFFIXES):
         # `.xvg`：列名在 `@` 指令里，先经运行时函数 `xvg_text` 改写成带表头行的制表符文本（父进程读表是同一个函数），再按嗅探出的读法读
@@ -2548,9 +2552,8 @@ def _large_reader_expr(entry) -> str:
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     codec = adf.large_codec(s.encoding)
-    return (
-        f"read_reduced(DATA, {delim!r}, {s.header_row!r}, {bool(s.units_row)!r}, {codec!r}, REDUCE)"
-    )
+    tail = ", no_header=True" if s.no_header else ""
+    return f"read_reduced(DATA, {delim!r}, {s.header_row!r}, {bool(s.units_row)!r}, {codec!r}, REDUCE{tail})"
 
 
 _REDUCE_CACHE: dict = {}
@@ -2571,7 +2574,9 @@ def gap_audit(values: adf.DataSummary, spec: dict, ords) -> int:
         open(values.large.path, "rb") as raw,
         io.TextIOWrapper(raw, encoding=adf.large_codec(values.encoding), newline="") as fh,
     ):
-        _h, body = adf.iter_table(fh, values.delimiter or ",", values.header_row, values.units_row)
+        _h, body = adf.iter_table(
+            fh, values.delimiter or ",", values.header_row, values.units_row, values.no_header
+        )
         for n, (_ln, r) in enumerate(body, start=1):
             if spec["date"]:
                 good = adf.parse_date(r[xi]) is not None
@@ -2620,6 +2625,7 @@ def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tu
             (lambda pos: adf.progress.tick("reduce", pos, total))
             if adf.progress.active()
             else None,
+            no_header=values.no_header,
         )
         hit = (rows, info)
         with _REDUCE_LOCK:

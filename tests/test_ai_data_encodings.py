@@ -227,8 +227,9 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 #: 2026-11-25 现成误差列的多个 y（每个 y 各配各的误差列）：`trend_data` 的 `err` 也可以是与 `ys` 等长的列名数组 → `tavotto_plot_b40c1579.py`；
 #: 2026-11-27 表头第一格为空时叫 `col1`：公共模块多了 `fill_header`（`iter_table` / `read_xlsx` 调用）→ `tavotto_plot_ee3e54e2.py`；
 #: 2026-11-27 表头末尾没有名字、整列都是空的列（Excel 另存 CSV 多出来的）丢掉：公共模块多了 `NamelessTailData` / `nameless_tail` / `cut_tail` / `_trim_tail`（`iter_table` / `read_xlsx` 调用） → `tavotto_plot_9d371be6.py`；
-#: 2026-11-27 XLSX 开头有标题行：`read_xlsx` 多一个可选的表头行号参数（只在真的跳过了行时写进脚本） → 这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_3923ef3f.py"
+#: 2026-11-27 XLSX 开头有标题行：`read_xlsx` 多一个可选的表头行号参数（只在真的跳过了行时写进脚本） → `tavotto_plot_3923ef3f.py`；
+#: 2026-11-27 没有表头行（第一行整行都是数值）：`iter_table` / `table_from_text` / `read_delimited` / `reduce_file` / `read_reduced` 多一个可选的 `no_header` 参数 → 这一个）
+PINNED_RUNTIME_NAME = "tavotto_plot_64a121df.py"
 
 
 # =========================================================================== 接口

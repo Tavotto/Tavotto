@@ -277,6 +277,8 @@ class DataSummary:
     header_line: int | None = None
     #: 读法的一部分：表头后紧跟的一行单位已被切掉（嗅探认出来的；只在读法与嗅探的表头行一致时才切）。脚本照抄；False = 读法不变
     units_row: bool = False
+    #: 读法的一部分：这张表没有表头行，列名是 `col1`…、第一行是数据（嗅探认出来的；`header_line` 是第一条数据行的物理行号）。脚本照抄；False = 读法不变
+    no_header: bool = False
     #: 文本表格实际用的编码（`TEXT_ENCODINGS`；父进程定下、脚本照抄 codec 名，不自己探测）；XLSX / v1 是 None
     encoding: str | None = None
     #: 合画（几份列名相同的表拼成一张）时与 `rows` 逐项对应的「这一行来自哪一份」（该份的分组值）；单份 = 空。`row_numbers` 是各份自己的文件行号
@@ -508,11 +510,12 @@ def _trim_tail(header, body):
     return header[:keep], ((n, cut_tail(c, keep, total)) for n, c in body)
 
 
-def iter_table(lines, delimiter, header_row=None, units_row=False):
+def iter_table(lines, delimiter, header_row=None, units_row=False, no_header=False):
     """`(表头, 数据行迭代器)`；迭代器逐条产出 `(物理行号, 单元格列表)`。读法与 `table_from_text` 完全一样（这就是它的实现）：
     `header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。给了行号：从该行起（第一条起始行号 ≥ 它的记录）
     是表头，之前的行都是说明、不读；表头之后以 `#` 开头**且列数与表头不同**的行是注释、丢掉（列数相同的 `#` 行是数据）。`units_row` 真：表头之后的
-    第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；切掉后数据行的物理行号不变）。没有任何记录 → `([], 空迭代器)`。
+    第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；切掉后数据行的物理行号不变）。`no_header` 真：这张表没有表头行（嗅探认出来才由调用方给：第一条记录整行都是数值、
+    下面也是数值），列名叫 `col1`、`col2`…（与 `xvg_text` / `fill_header` 同一个叫法），第一条记录（从 `header_row` 起算）是数据；表头之后的 `#` 行规则同显式表头行。没有任何记录 → `([], 空迭代器)`。
     **流式、运行时函数**：父进程与生成的脚本读出来的必然是同一张表；大文件一遍扫过，内存只与表头和（显式表头行时）开头的注释行有关。"""
     records = iter_records(lines, delimiter)
     if header_row is not None:
@@ -522,10 +525,21 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
         return [], iter(())
     first_line, first_cells, first_raw = first
     rest = ((n, c) for n, c, _raw in records)
+    if no_header:
+        rest = itertools.chain([(first_line, first_cells)], rest)  # 第一条记录也是数据
     if delimiter == ";":
         rest = ((n, [SemicolonCell(c) if "," in c else c for c in cells]) for n, cells in rest)
     if units_row:
         next(rest, None)
+    if no_header:
+        width = len(first_cells)
+
+        def data():
+            for n, c in rest:
+                if len(c) == width or not c[0].lstrip().startswith("#"):
+                    yield n, c
+
+        return ["col" + str(k + 1) for k in range(width)], data()
     if header_row is None:
         return _trim_tail(fill_header([h.strip() for h in first_cells]), rest)
     # 列数以表头之后第一条非 `#` 记录为准（没有就取紧跟的第一条）；探测时读过的记录接回去，不丢
@@ -555,9 +569,11 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
     return _trim_tail(header, body())
 
 
-def table_from_text(text, delimiter, header_row=None, units_row=False):
+def table_from_text(text, delimiter, header_row=None, units_row=False, no_header=False):
     """`(表头, 数据行, 数据行的物理行号)`：`iter_table` 的整份文本版（同一份读法，见它的文档）。**运行时函数**。"""
-    header, body = iter_table(io.StringIO(text, newline=""), delimiter, header_row, units_row)
+    header, body = iter_table(
+        io.StringIO(text, newline=""), delimiter, header_row, units_row, no_header
+    )
     pairs = list(body)
     return header, [c for _, c in pairs], [n for n, _ in pairs]
 
@@ -647,6 +663,8 @@ class TextLayout:
     sure: bool
     #: 表头行后面紧跟一行单位（`nm  a.u.`）、再往后才是数据：读表时把这一行切掉（不是数据，也不是第二个表头）
     units: bool = False
+    #: 这张表没有表头行（第一条记录整行都是数值、下面也是数值）：`header_line` 是第一条数据的物理行号，列名叫 `col1`…；读表时第一条记录算数据
+    no_header: bool = False
 
 
 @dataclass(frozen=True)
@@ -677,6 +695,16 @@ def _ragged_hint(sample: str) -> RaggedLayout | None:
         if best is None or key > best[0]:
             best = (key, RaggedLayout(d, same[0][0]))
     return best[1] if best else None
+
+
+def _headerless(block) -> bool:
+    """块的第一条记录**每一格都是数值**（`parse_cell` 判 `numeric`，空格 / NaN / 文字都不算）、而且紧随其后的记录（最多 50 条非 `#` 行，至少 1 条）里每个非空格子也是
+    数值 → 这张表没有表头行：第一行是数据（`10.00  116` 这种两列纯数字的仪器导出）。**只看整行**：表头本来就是数字、第一列却是文字的宽表（`year,2019,2020`）
+    第一格是文字，不算；数字表头压在整张纯数字的表上（`2019 2020 2021` 下面全是数）分不开，按没有表头读（嗅探仍标「猜的」，`unsure`）。"""
+    rows = [r for _n, r in block if not _is_hash(r)]
+    if len(rows) < 2 or any(parse_cell(c)[0] != "numeric" for c in rows[0]):
+        return False
+    return all(parse_cell(c)[0] in ("numeric", "nan") for r in rows[1:51] for c in r if c.strip())
 
 
 def _header_end(block, numeric) -> int:
@@ -780,6 +808,8 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
             hdr = resolve_header(prev[1], raw, d, width)
             if (_is_hash(prev[1]) or d == "ws") and len(hdr) == width and all(hdr):
                 return TextLayout(d, prev[0], True)
+        if _headerless(block):
+            return TextLayout(d, first_line, False, no_header=True)
         return TextLayout(d, first_line, False)
     return _ragged_hint(sample)
 
@@ -1027,12 +1057,14 @@ def _read_small_text_table(
         script_header = None
     # 单位行只在读的就是嗅探认出的那一行表头时才切：用户另指一行（`header_rows`）= 他在说「读法由我定」，不替他猜单位行
     units = bool(layout.units and line == layout.header_line)
+    # 没有表头行同理：只在读的就是嗅探认出的那一行时才成立（用户另指一行 = 读法由他定；摘要的 `header_line` 传回来重读时正是这一行，读出同一张表）
+    no_header = bool(layout.no_header and line == layout.header_line)
     tail_data = False
     try:
         header, rows, row_lines = (
             table_from_text(text, delim, script_header, True)
             if units
-            else table_from_text(text, delim, script_header)
+            else table_from_text(text, delim, script_header, False, no_header)
         )
     except csv.Error:
         return _unreadable("data_malformed")
@@ -1062,6 +1094,7 @@ def _read_small_text_table(
             header_line=line,
             encoding=encoding,
             units_row=units,
+            no_header=no_header,
         )
     except DataSourceError as exc:
         if guessed and exc.code == "data_header_invalid":
@@ -1193,6 +1226,7 @@ def _scan_summary(
     units_row: bool,
     path: str | None = None,
     pos=None,
+    no_header: bool = False,
 ) -> DataSummary:
     """大表的一遍扫描：`_summarize` 的流式版（同样的列统计、同样的错误码），行不进内存。结构线索用有界集合（`_Facts`）。
     除受控摘要外留下精确的整表统计（行数、每列有限数值的个数 / 最小 / 最大）与前 `LARGE_PREVIEW_ROWS` 行。"""
@@ -1317,6 +1351,7 @@ def _scan_summary(
         header_line=header_line,
         encoding=encoding,
         units_row=units_row,
+        no_header=no_header,
         large=LargeInfo(count, stats, preview, pnums, path),
     )
 
@@ -1374,6 +1409,7 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
     old_reader = layout.header_line == 0 and header_row is None
     line = 1 if old_reader else (header_row if header_row is not None else layout.header_line)
     units = bool(not old_reader and layout.units and line == layout.header_line)
+    no_header = bool(not old_reader and layout.no_header and line == layout.header_line)
     script_header = None if old_reader else line
     guessed = not old_reader and not layout.sure and header_row is None
     summ = None
@@ -1391,13 +1427,14 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
                         units_row=False, path=str(p), pos=fh.buffer.tell,
                     )  # fmt: skip
             else:
-                head_cells, body = iter_table(fh, delim, script_header, units)
+                head_cells, body = iter_table(fh, delim, script_header, units, no_header)
                 if head_cells:
                     ncols = len(head_cells)
                     summ = _scan_summary(
                         head_cells, body, path_name=p.name, sha256=sha, size=size, parse=parse_cell,
                         delimiter=delim, header_row=script_header, header_line=line,
-                        encoding=encoding, units_row=units, path=str(p), pos=fh.buffer.tell,
+                        encoding=encoding, units_row=units, no_header=no_header, path=str(p),
+                        pos=fh.buffer.tell,
                     )  # fmt: skip
     except csv.Error:
         return _unreadable("data_malformed")
@@ -1610,6 +1647,7 @@ def _summarize(
     header_line: int | None = None,
     encoding: str | None = None,
     units_row: bool = False,
+    no_header: bool = False,
 ) -> DataSummary:
     #: 单元格规则：默认 v1 的（不认千分位）；v2 传 `parse_cell`
     v2 = parse is not None
@@ -1684,6 +1722,7 @@ def _summarize(
         header_line=header_line,
         encoding=encoding,
         units_row=units_row,
+        no_header=no_header,
     )
 
 

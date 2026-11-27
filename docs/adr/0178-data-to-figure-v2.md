@@ -671,3 +671,16 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 3. **行号的往返**：`inspect_data_source(…, header_row=N)` 现在对 XLSX 生效（工作表里的行号，与文本表同一口径）：跳过 N 之前的行；N 落在空行上读它之后的第一条非空行；超出末尾 `data_header_row_invalid`。**真的跳过了行**才把真正的表头行号记进摘要（`header_row` = `header_line`），常态两者仍是 None；出图 / 合画 / 提交那几处把 `header_line` 当 `header_row` 传回来重读，读出同一张表。
 4. **脚本同源**：运行时函数 `read_xlsx(path, sheet, header_row=None)` 多一个可选参数，按 `xlsxread` 的行号跳过标题行；模板只在摘要记了行号时才把它写进 `read_xlsx(DATA, SHEET, 3)`（`_xlsx_reader_expr`，含合画每一份），其余脚本逐字不变。公共模块换名，`PINNED_RUNTIME_NAME` 追加一行。
 5. **没做**：XLSX 不切单位行（候选里有单位行就不猜）；不给 XLSX 做「没有表头」（第 3 项的纯数字表只管文本表）；不改界面、不加点行的入口；v1 的 XLSX 读法逐字不变（标题行在前仍是 `data_header_invalid`）。
+
+## 修订（2026-11-27）：读脏表之三——第一行整行都是数值 = 没有表头（`iter_table(no_header=)`）
+
+**起因**：仪器导出的两列纯数字、空白分隔的文件（XRD 扫描 `10.00  116`）没有表头行，此前把第一行数据当成列名（`10.00`、`116`），第一个数据点丢了、图的轴标签是两个数。
+
+**做法**：
+
+1. **判据**（`_headerless`，只在 `_detect` 里「没有表头候选、也没有块外的表头行」的最后一步用）：块的第一条记录**每一格都是数值**（`parse_cell` 判 `numeric`；空格、NaN、文字都不算），且紧随其后的记录（最多 50 条非 `#` 行、至少 1 条）里每个非空格子也是数值（数或 NaN）。只看整行：表头本来就是数字、第一列却是文字的宽表（`sample,2019,2020`）第一格是文字，不算——有反例用例。
+2. **读法**：嗅探结果 `TextLayout.no_header`（`header_line` 是第一条数据行的物理行号，仍标「猜的」→ `unsure`，与此前没有表头的兜底同一个把握）；读表时列名叫 `col1`、`col2`…（与 `xvg_text` / `fill_header` 同一个叫法），第一条记录算数据，物理行号照旧。`DataSummary.no_header` 记下它。
+3. **一份实现、各路同一判据**：运行时函数 `iter_table` / `table_from_text` / `read_delimited` / `reduce_file` / `read_reduced` 多一个可选参数 `no_header`（默认 False）；小表（`_read_small_text_table`）、大表（`_read_large_text_table` → `_scan_summary`）、脚本（`_reader_expr` / `_large_reader_expr`，只在摘要里 `no_header` 为真时才多写 `True` / `no_header=True`，其余脚本逐字不变）、大表缩减对账（`large_reduce`）都经它。公共模块换名，`PINNED_RUNTIME_NAME` 追加一行。
+4. **往返**：摘要的 `header_line` 被出图 / 合画 / 提交当 `header_row` 传回来重读时，只要它就是嗅探认出的那一行，仍按「没有表头」读（与单位行同一个先例）；读出同一张表。**用户另指一行**（比如点第 2 行）就按他指的读，那一行当列名。代价：用户明确点「第 1 行是表头」与往返传回的第 1 行分不开，后者赢——对这类整行都是数值的表，第 1 行当列名本来就不是想要的读法。
+5. **分不开的情形（已知）**：数字表头压在整张纯数字的表上（`2019 2020 2021` 下面全是数）按没有表头读，第一行成了数据；嗅探仍标「猜的」，用户在预览里看得到。
+6. **没做**：不给 XLSX 做没有表头（XLSX 的第 1 行读不成表头时只找标题行，见上一节）；不改界面文案（`header_row` 在响应里仍是第一条数据行的行号）；`xvg_text` 没有名字、不写表头行时「交给既有的没有表头流程」现在读成 `col1…`，不再把第一行数据当列名（`test_ai_data_xvg` 里对应一条断言随之改了）。
