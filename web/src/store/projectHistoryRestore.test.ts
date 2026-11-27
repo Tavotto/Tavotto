@@ -243,6 +243,57 @@ describe('只有项目里的节点（换电脑 / 换数据目录）', () => {
   })
 })
 
+describe('项目里的工作副本（ADR 0211 第二期 PR 2：自动保存写进项目）', () => {
+  /** 工作副本：比任何时间线节点都新（节点之后又改了一笔），换电脑后本机槽位与绑定都没了 */
+  const WORK_DOC = (() => {
+    const pd = slotDoc()
+    pd.updatedAt = 200
+    return pd
+  })()
+  const workRow = (over: Record<string, unknown> = {}) =>
+    row({
+      doc_id: 'd_work', vid: '', mode: 'node', owner: 'none',
+      work: { name: '排版一', revision: 'work-rev', ts: 200 }, ...over,
+    })
+
+  it('没有本机槽位：按清单 docId 指回工作副本（不读节点），同一个 docId、重新绑上项目文件，基线是读到的修订号', async () => {
+    be.state.layouts.set('排版一', { doc: WORK_DOC, revision: 'work-rev' })
+    be.state.history.set('p_new', [workRow()])
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(ds(app).documentId).toBe('d_work')
+    expect(objectIds(app)).toEqual(['t_node', 't_after'])
+    expect(be.state.calls).toContain('GET layout 排版一')
+    expect(be.state.calls.some((c) => c.startsWith('GET version'))).toBe(false)
+    expect(ds(app).projectFile).toMatchObject({ name: '排版一', file: 'tavottofile/排版一.json', revision: 'work-rev', dirty: false })
+    // 装好之后当场落盘（没有可撤销的一步）：等它写完，别漏进下一条用例的假后端
+    await vi.waitFor(() => expect(be.state.slots.has('d_work')).toBe(true))
+  })
+
+  it('复制（旧项目还在）：用工作副本内容、新 docId、不绑项目文件——两边互不影响', async () => {
+    be.state.layouts.set('排版一', { doc: WORK_DOC, revision: 'work-rev' })
+    be.state.history.set('p_new', [workRow({ mode: 'copy', owner: 'other' })])
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(ds(app).documentId).not.toBe('d_work')
+    expect(objectIds(app)).toEqual(['t_node', 't_after'])
+    expect(ds(app).projectFile).toBeNull()
+    await vi.waitFor(() => expect(be.state.slots.has(ds(app).documentId)).toBe(true))
+  })
+
+  it('读不到工作副本（503 / 网络）：不另开一份、给重试', async () => {
+    be.state.history.set('p_new', [workRow()]) // 假后端没有这份排版 → 404
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'unavailable', ref: { id: 'd_work' } })
+    expect(be.writes()).toEqual([])
+    // 好了之后重试：按工作副本装
+    be.state.layouts.set('排版一', { doc: WORK_DOC, revision: 'work-rev' })
+    expect(await app.restore.retryRestore()).toMatchObject({ kind: 'restored', id: 'd_work' })
+    await vi.waitFor(() => expect(be.state.slots.has('d_work')).toBe(true))
+  })
+})
+
 describe('复制（旧路径还在）', () => {
   it('当前项目用节点恢复出新 docId 的一份；旧项目的槽位、归属、last 一个字节不动', async () => {
     const slot = be.putSlot('d_copy', slotDoc(), 'p_old')

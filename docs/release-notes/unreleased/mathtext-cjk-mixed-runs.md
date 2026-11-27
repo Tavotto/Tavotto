@@ -1,0 +1,3 @@
+## Chinese next to a formula in the same label is drawn instead of shown as boxes
+
+When a label mixes Chinese with math, such as `浓度 ($\mu$mol/L)`, matplotlib hands the whole line to its math renderer, which has no Chinese fallback, so the Chinese came out as empty boxes whenever the label font was a Latin one. Tavotto now lays such a line out in runs: the Chinese is drawn with the Chinese fallback font and the formula is drawn by the math renderer exactly as before, on one baseline, in the canvas and in every export. Figures without such lines are unchanged byte for byte, and the script's own `savefig` still gets what it would get in a terminal.

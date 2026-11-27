@@ -26,7 +26,11 @@
     "adoptReconstructed": "Edit from the redrawn figure",
     "refreshReconstruction": "Update redraw comparison",
     "showRedraw": "Use the figure redrawn by its script",
-    "redrawn": "Now using the figure redrawn by its script, on the canvas and in exports. Undo to go back."
+    "redrawn": "Now using the figure redrawn by its script, on the canvas and in exports. Undo to go back.",
+    "showRedrawType3": "Use standard fonts",
+    "showRedrawMissing": "Fill in missing fonts",
+    "redrawnType3": "Now using standard fonts, on the canvas and in exports. Undo to go back.",
+    "redrawnMissing": "Fonts filled in, on the canvas and in exports. Undo to go back."
   },
   "backend": {
     "change_plan_busy": "A change plan is already being generated for this figure. Please wait.",
@@ -537,7 +541,8 @@
     "input_declaration_unavailable": "Input declarations cannot be read or saved right now. Please try again later.",
     "change_plan_script_no_change": "The agent didn’t change the script, so nothing is different.",
     "change_plan_script_check_failed": "The edited script didn’t pass the checks. Your script wasn’t changed. You can try again.",
-    "change_plan_script_data_changed": "This change would alter the data in the figure, so no plan was made. Your script wasn’t changed.",
+    "change_plan_script_figure_missing": "The edited script no longer draws the original figure, so no plan was made. Your script wasn’t changed.",
+    "change_plan_script_data_unconfirmed": "This plan changes the data in the figure and needs your confirmation first. Your script wasn’t changed.",
     "change_plan_script_no_preview": "The edited script can’t be previewed in a copy, so no plan was made. Your script wasn’t changed.",
     "change_plan_script_overreach": "The agent changed files in your project and no plan was made.",
     "change_plan_script_agent_failed": "The agent didn’t finish. Your script wasn’t changed. You can try again.",

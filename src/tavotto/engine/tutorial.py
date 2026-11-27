@@ -53,7 +53,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import atomicio, config, documents, layoutsession, registry
+from . import atomicio, config, documents, layoutdir, layoutsession, registry
 
 #: 包内资源目录（相对 `tavotto` 包根）。
 RESOURCE_PARTS = ("resources", "tutorial_project")
@@ -333,7 +333,11 @@ def saved_layouts(dest: Path, meta: dict) -> list[str] | None:
             return None
         for entry in entries:
             stem, ext = os.path.splitext(entry.name)
-            if ext != ".json" or stem == own or not documents.is_user_document_stem(stem):
+            # 目录形态的排版（ADR 0211 第二期）：`<名>.tavotto/`；占位 `<名>.json` 与它同名，集合去重
+            is_dir_form = ext == layoutdir.DIR_SUFFIX
+            if (ext != ".json" and not is_dir_form) or stem == own:
+                continue
+            if not documents.is_user_document_stem(stem):
                 continue
             try:
                 st = os.stat(entry.path)
@@ -341,7 +345,7 @@ def saved_layouts(dest: Path, meta: dict) -> list[str] | None:
                 continue  # 刚被删掉 / 断开的链接：重置也删不掉什么
             except OSError:
                 return None
-            if stat.S_ISREG(st.st_mode):
+            if stat.S_ISDIR(st.st_mode) if is_dir_form else stat.S_ISREG(st.st_mode):
                 names.add(stem)
     return sorted(names)
 

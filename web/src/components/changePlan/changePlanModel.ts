@@ -2,7 +2,7 @@ import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
-import { POLL_TIMEOUT, declinedGroups, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, POLL_TIMEOUT, declinedGroups, type PlanEntry } from '@/store/changePlanStore'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
 import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
@@ -196,7 +196,7 @@ export function failureAction(code: string, params?: Record<string, unknown>): F
     case 'change_plan_script_check_failed':
     case 'change_plan_script_no_change':
     case 'change_plan_script_agent_failed':
-    case 'change_plan_script_data_changed':
+    case 'change_plan_script_figure_missing':
     case 'change_plan_script_no_preview':
     case 'change_plan_script_overreach':
       return 'retry'
@@ -219,6 +219,8 @@ export function failureAction(code: string, params?: Record<string, unknown>): F
 export function failureText(code: string, params?: Record<string, unknown>, assistant = false): string {
   if (code === 'change_plan_empty') return cp(assistant ? 'card.emptyAssistant' : 'card.empty')
   if (code === 'change_plan_script_failed') return cp('card.scriptFailed')
+  // 前端本地码：数据会变的脚本方案，用户答了「先不改」
+  if (code === DATA_DECLINED) return cp('card.dataDeclined')
   // 外部 CLI 越界（R-03）：一句话说清脚本怎么样了（还原了 / 没替你还原 / 没动），文件名由卡片另列
   if (code === 'change_plan_script_overreach') {
     return cp(params?.target_changed === true ? 'card.overreachChanged' : 'card.overreachOthers')

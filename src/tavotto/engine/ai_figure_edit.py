@@ -29,6 +29,7 @@ from . import (
     ai_attachments,
     ai_prompt_pack,
     ai_tasks,
+    atomicio,
     config,
     discover,
     figureverify,
@@ -85,6 +86,13 @@ def is_python_env_dir(p: Path) -> bool:
         return False
 
 
+def _own_atomic_tmp(rel: str, exclude: frozenset[str]) -> bool:
+    """被排除的文件（Tavotto 自己写的注册表等）正在原子写时留下的临时文件：与目标同属排除——后台刷新改写注册表的
+    那一瞬被指纹扫到，否则会判成「项目被改动」（慢 Windows runner 上 `project.untouched` 偶发 failed）。"""
+    target = atomicio.tmp_target(rel)
+    return target is not None and target in exclude
+
+
 def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) -> dict:
     """原项目目录的有界文件指纹：`{"status": "ok", "files": {相对路径: [size, mtime_ns, sha256 | None, 链接目标?]}}`，
     超出文件数上限回 `{"status": "over_budget"}`。`exclude` 是 posix 相对路径。
@@ -127,7 +135,7 @@ def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) ->
                 continue  # 同步客户端 / 系统自己写的（闭集见 `syncnoise`）：不是校验运行改的
             p = Path(dirpath) / name
             rel = p.relative_to(root).as_posix()
-            if rel in exclude:
+            if rel in exclude or _own_atomic_tmp(rel, exclude):
                 continue
             if len(files) >= FINGERPRINT_MAX_FILES:
                 return {"status": "over_budget"}
@@ -1109,7 +1117,9 @@ def legend_label_suggestions(cand: object, outcome: str | None) -> list[dict]:
     return sorted(out, key=lambda s: (s["stem"], s["gid"]))[:LABEL_SUGGESTION_MAX]
 
 
-def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
+def agent_check(
+    cand: Candidate, run_validation, *, data_change_allowed: bool = False
+) -> tuple[bool, str]:
     """内置执行器改图任务里 `check` 工具的回调（Agent 在候选里改完自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
 
     **与产品提交前同一套**，不另写判据：
@@ -1179,9 +1189,18 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
         # 图例文字跟进：先记、再判数据——现在 label 改动会让数据检查失败（身份里带 label），记录不能依赖它通过
         record_label_findings(cand, baseline, after)
         bad = _data_lines(after, baseline)
-        if bad:
+        missing = [stem for stem, man in baseline.items() if man is not None and stem not in after]
+        if bad and (missing or not data_change_allowed):
             return False, "check failed: " + " ".join(bad)[:1400]
-        notes.append("data unchanged")
+        if bad:
+            # 修改方案卡的脚本修改（`plan_only`，ADR 0206 修订 2026-11-27）：画出来的数据变了不算不通过——卡片会先问用户
+            # 要不要这样改、服务端强制确认；这里只提醒模型别在用户没要求时动数据。图整张不再出仍不通过（上面）。
+            notes.append(
+                "the plotted data changed; before anything is applied the user will be asked to confirm it. "
+                "Keep the data change only if the user asked for it; otherwise restore the data"
+            )
+        else:
+            notes.append("data unchanged")
         text_note = ". " + text_changes_note(after, baseline)
     # A full successful check supersedes only evidence for the exact bytes it
     # validated. A later failed check or a different candidate cannot erase it.

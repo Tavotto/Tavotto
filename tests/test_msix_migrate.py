@@ -681,7 +681,11 @@ def _make_history(local: Path, value: int = 42) -> Path:
     return db
 
 
-def test_history_migrated_first_even_when_sync_budget_exhausted(world):
+def test_history_migrated_first_even_when_sync_budget_exhausted(world, monkeypatch):
+    # 历史库走独立的 CRITICAL_BUDGET_S（产品值 4 s 墙钟）。本用例要证明的是「主预算耗尽时历史库仍排在最前迁过去」，
+    # 不是「4 s 内迁完」：慢 Windows runner 上一次 sqlite backup 可以超过 4 s，于是被记成 deferred、目标库没建出来，
+    # 读的时候 connect 新建了空库 → no such table（11-26 #2266 合并组，backend-platforms (windows, 14)，用例耗时 4.9 s）。
+    monkeypatch.setattr(msixmigrate, "CRITICAL_BUDGET_S", 120.0)
     _r, local = world.pkg(PFN_A)
     _make_history(local)
     put(local / "origin" / "a.json")
@@ -845,3 +849,290 @@ def test_concurrent_consumers_wait_for_the_first_adoption_instead_of_creating_an
     con = sqlite3.connect(db)
     assert con.execute("select x from t").fetchall() == [(7,)]
     con.close()
+
+
+# ------------------------------------------------------------------ 待补旧历史（#2282）
+# 慢机器上同步迁移与消费者补迁都超时 → 消费者新建空库 → 下次迁移见目标已存在就跳过并写 complete → 旧历史永远回不来。
+# 修法：补迁没搬成时记「待补」，完成标记 / 重试上限都拦不住它，后台把旧库按主键合并回来（只补缺、新版本号、收尾未结束行）。
+def _legacy_history(local: Path, ids: list[str], *, running: str | None = None) -> Path:
+    """在旧安装位置建一个**真 schema** 的历史库：每个 id 一条已结束的会话 + 一条请求账本；`running` 那条留成运行中。"""
+    from tavotto.engine import ai_history
+
+    db = local / "cache" / "ai_history.sqlite3"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    for i, sid in enumerate(ids):
+        ai_history.record_start(
+            {
+                "id": sid,
+                "project": "p",
+                "provider": "codex",
+                "prompt": f"旧的 {sid}",
+                "client_request_id": f"r-{sid}",
+                "owner_pid": 999999,
+            },
+            db_path=db,
+        )
+        if sid != running:
+            con = sqlite3.connect(db)
+            con.execute(
+                "UPDATE sessions SET status='done', ended_ms=started_ms+1, started_ms=? WHERE id=?",
+                (1000 + i, sid),
+            )
+            con.commit()
+            con.close()
+    return db
+
+
+def _deferring(s, d, t, dl):
+    t.deferred += 1
+    return False
+
+
+def _strand_history_behind_an_empty_db(world, monkeypatch) -> Path:
+    """复现 #2282：两个阶段都超时，消费者新建了空库。回真实库路径。"""
+    from tavotto.engine import ai_history
+
+    db = world.data / "cache" / "ai_history.sqlite3"
+    monkeypatch.setattr(ai_history, "DB_PATH", db)
+    monkeypatch.setattr(
+        msixmigrate, "_kick_pending_merge", lambda: None
+    )  # 后台合并由各用例自己显式触发
+    real = msixmigrate._copy_sqlite
+    monkeypatch.setattr(msixmigrate, "_copy_sqlite", _deferring)
+    first = msixmigrate.run_once(budget_s=-1)
+    assert first["complete"] is False and not db.exists()
+    msixmigrate._SQLITE_CHECKED.clear()
+    ai_history.mark_interrupted_running()  # 补迁也超时 → 新建空库
+    assert db.exists()
+    monkeypatch.setattr(msixmigrate, "_copy_sqlite", real)
+    msixmigrate._SQLITE_CHECKED.clear()
+    return db
+
+
+def _session_ids(db: Path) -> list[str]:
+    con = sqlite3.connect(db)
+    try:
+        return sorted(r[0] for r in con.execute("SELECT id FROM sessions"))
+    finally:
+        con.close()
+
+
+def test_history_stranded_behind_an_empty_db_is_recorded_as_pending(world, monkeypatch):
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["a1", "a2"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    assert msixmigrate._read_pending() == {
+        "schema": 1,
+        "items": {"cache/ai_history.sqlite3": {"failures": 0}},
+    }
+    # 下一次同步迁移见目标已存在照旧跳过、写 complete——但「待补」不受它影响
+    assert msixmigrate.run_once()["complete"] is True
+    assert msixmigrate._read_pending() is not None
+
+
+def test_pending_history_is_merged_back_with_fresh_revs_and_the_new_sessions_kept(
+    world, monkeypatch
+):
+    """d2 第 2 点：补迁期间用户已经在新库里写了会话——合并后新旧两边都在、不重复。"""
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1", "old2", "old3"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    ai_history.record_start({"id": "new1", "project": "p", "provider": "codex", "prompt": "新的"})
+    con = sqlite3.connect(db)
+    rev_before = con.execute("SELECT rev FROM ai_rev_counter").fetchone()[0]
+    con.close()
+    assert msixmigrate.run_once()["complete"] is True  # 完成标记已写
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["new1", "old1", "old2", "old3"]
+    con = sqlite3.connect(db)
+    revs = dict(con.execute("SELECT id, rev FROM sessions"))
+    reqs = {r[0] for r in con.execute("SELECT client_request_id FROM ai_requests")}
+    con.close()
+    # 补回来的会话取新的版本号：都比合并前的计数器大、两两不同——`changes?since=` 的客户端才看得到它们
+    assert all(revs[s] > rev_before for s in ("old1", "old2", "old3"))
+    assert len({revs[s] for s in revs}) == len(revs)
+    assert {"r-old1", "r-old2", "r-old3"} <= reqs  # 幂等账本一并补回，旧请求不会被再执行一次
+    assert msixmigrate._read_pending() is None
+    # 再合并一次：没有待补，不重复
+    assert msixmigrate.merge_pending() is None
+    assert _session_ids(db) == ["new1", "old1", "old2", "old3"]
+
+
+def test_pending_survives_the_attempts_cap_and_merges_once_the_machine_keeps_up(world, monkeypatch):
+    """审阅意见 1：合并本身在慢机器上一直到点——超过 MAX_ATTEMPTS 次启动也不放弃，哪次跟上了哪次补回。"""
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    for _ in range(msixmigrate.MAX_ATTEMPTS + 2):
+        msixmigrate.run_once()
+        assert msixmigrate.merge_pending(budget_s=-1) == {"cache/ai_history.sqlite3": "deferred"}
+    assert (
+        msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 0
+    )  # 到点不计失败
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["old1"]
+
+
+def test_a_merge_interrupted_midway_rolls_back_and_the_next_run_completes(world, monkeypatch):
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1", "old2"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    real = ai_history._stamp
+    calls = []
+
+    def die_after_first(con, sid):
+        calls.append(sid)
+        real(con, sid)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("disk I/O error")  # 合并到一半出错
+
+    monkeypatch.setattr(ai_history, "_stamp", die_after_first)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "failed"}
+    assert _session_ids(db) == []  # 整体回滚：不留半合并
+    monkeypatch.setattr(ai_history, "_stamp", real)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["old1", "old2"]
+
+
+def test_a_legacy_session_left_running_is_closed_when_merged(world, monkeypatch):
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1", "stuck"], running="stuck")
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    con = sqlite3.connect(db)
+    status, ended = con.execute("SELECT status, ended_ms FROM sessions WHERE id='stuck'").fetchone()
+    con.close()
+    assert status == "interrupted" and ended is not None  # 属主是旧安装的进程，早就不在了
+
+
+def test_a_broken_legacy_db_is_given_up_after_the_failure_cap(world, monkeypatch):
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    from tavotto.engine import ai_history
+
+    monkeypatch.setattr(
+        ai_history,
+        "merge_legacy",
+        lambda *a: (_ for _ in ()).throw(sqlite3.DatabaseError("malformed")),
+    )
+    for _ in range(msixmigrate.PENDING_MAX_FAILURES - 1):
+        assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "failed"}
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "gave_up"}
+    assert msixmigrate._read_pending() is None
+
+
+def test_a_healthy_copy_never_brings_back_sessions_the_user_deleted(world, monkeypatch):
+    """反面：正常迁过来的用户删掉一条会话、之后再启动——没有「待补」，绝不从旧位置把它救回来。"""
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1", "old2"])
+    db = world.data / "cache" / "ai_history.sqlite3"
+    monkeypatch.setattr(ai_history, "DB_PATH", db)
+    assert msixmigrate.run_once()["complete"] is True
+    assert _session_ids(db) == ["old1", "old2"]
+    assert ai_history.delete("old1")
+    assert msixmigrate._read_pending() is None
+    msixmigrate.run_once()
+    msixmigrate.merge_pending()
+    assert _session_ids(db) == ["old2"]
+
+
+def test_run_once_starts_the_background_merge_even_after_complete(world, monkeypatch):
+    """端到端：真走后台线程。完成标记早已写下，下一次启动的 run_once 仍把待补的旧历史合并回来。"""
+    real_kick = msixmigrate._kick_pending_merge
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    assert msixmigrate.run_once()["complete"] is True
+    monkeypatch.setattr(msixmigrate, "_kick_pending_merge", real_kick)
+    assert msixmigrate.run_once() is None  # 完成标记：同步部分直接返回
+    msixmigrate._PENDING_THREAD.join(30)
+    assert _session_ids(db) == ["old1"]
+    assert msixmigrate._read_pending() is None
+
+
+def test_a_destination_held_locked_by_another_process_is_deferred_not_counted_as_failure(
+    world, monkeypatch
+):
+    """Codex #2283：另一个 Tavotto 进程占着新库写锁超过 busy_timeout——暂时的，不计失败、不会被当坏库放弃。"""
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    real = ai_history.merge_legacy
+    monkeypatch.setattr(
+        ai_history,
+        "merge_legacy",
+        lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")),
+    )
+    for _ in range(msixmigrate.PENDING_MAX_FAILURES + 2):
+        assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "deferred"}
+    assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 0
+    monkeypatch.setattr(ai_history, "merge_legacy", real)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["old1"]
+
+
+def test_lock_classification_works_without_the_311_sqlite_constants(monkeypatch):
+    """Codex #2283：3.10 的 sqlite3 没有 SQLITE_BUSY / SQLITE_LOCKED 常量、异常也没有 sqlite_errorcode——
+    判据不能依赖它们，否则 AttributeError 把真失败甩出处理器。"""
+    monkeypatch.delattr(sqlite3, "SQLITE_BUSY", raising=False)
+    monkeypatch.delattr(sqlite3, "SQLITE_LOCKED", raising=False)
+    assert msixmigrate._is_lock_contention(sqlite3.OperationalError("database is locked")) is True
+    assert msixmigrate._is_lock_contention(sqlite3.OperationalError("disk I/O error")) is False
+    busy_snapshot = sqlite3.OperationalError("x")
+    busy_snapshot.sqlite_errorcode = 517  # SQLITE_BUSY_SNAPSHOT：扩展码，低 8 位是 BUSY
+    assert msixmigrate._is_lock_contention(busy_snapshot) is True
+
+
+def test_a_permanent_operational_error_is_still_counted_as_a_failure(world, monkeypatch):
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    monkeypatch.delattr(sqlite3, "SQLITE_BUSY", raising=False)  # 3.10 的样子
+    monkeypatch.setattr(
+        ai_history,
+        "merge_legacy",
+        lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")),
+    )
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "failed"}
+    assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 1
+
+
+def test_no_registered_merger_yet_is_deferred_not_failed(world, monkeypatch):
+    """后台线程比 ai_history 的 import 先跑、截止前也没等到登记：当 deferred，不计失败。"""
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    monkeypatch.setattr(msixmigrate, "_SQLITE_MERGERS", {})
+    assert msixmigrate.merge_pending(budget_s=0.05) == {"cache/ai_history.sqlite3": "deferred"}
+    assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 0
+
+
+def test_a_process_without_ai_history_does_not_start_the_merge_or_hold_the_lock(world, monkeypatch):
+    """d2 #2283 复核：CLI 也调 run_once 但不 import ai_history。不能起线程拿着迁移锁干等登记、挡住随后桌面版的同步迁移。"""
+    real_kick = msixmigrate._kick_pending_merge
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    _strand_history_behind_an_empty_db(world, monkeypatch)
+    monkeypatch.setattr(msixmigrate, "_SQLITE_MERGERS", {})
+    monkeypatch.setattr(msixmigrate, "_PENDING_THREAD", None)
+    monkeypatch.setattr(msixmigrate, "_kick_pending_merge", real_kick)
+    msixmigrate.run_once()
+    assert msixmigrate._PENDING_THREAD is None  # 没起线程
+    fd = msixmigrate.layoutsession.acquire_file_lock(
+        msixmigrate.config.data_path(*msixmigrate.LOCK_REL), time.monotonic() + 0.2
+    )
+    assert fd is not None  # 迁移锁没被占
+    msixmigrate.layoutsession.release_file_lock(fd)
+    # 直接调用也不在等登记期间持锁：等不到就 deferred
+    assert msixmigrate.merge_pending(budget_s=0.05) == {"cache/ai_history.sqlite3": "deferred"}

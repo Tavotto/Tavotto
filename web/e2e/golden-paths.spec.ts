@@ -97,7 +97,7 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   await page.keyboard.press('Escape')
   await expect(page.locator('[data-context-bar]')).toHaveCount(0)
   // 文字工具按钮是开关（再点一次回到选择）：只在没按下时点，每次落点前都确认它是按下的
-  const textTool = page.getByRole('button', { name: '文字' })
+  const textTool = page.getByRole('button', { name: '文字', exact: true })
   const ensureTextTool = async () => {
     if ((await textTool.getAttribute('aria-pressed')) !== 'true') await textTool.click()
     await expect(textTool).toHaveAttribute('aria-pressed', 'true')

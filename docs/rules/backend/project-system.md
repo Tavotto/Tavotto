@@ -182,3 +182,9 @@ order: 220
   * **「能不能成为素材」只有 `app._asset_probe` 一份**，`scan_panels` 与本端点共用：落盘前在隐藏临时文件上验证（TIFF 先 `tiffprobe.check`），验证不过一个字节不留；落盘后再用 `iter_assets` 核一遍真在清单里，不在就撤回（`asset_import_not_visible`）。
   * **不覆盖**：同名同内容（sha256）复用；同名异内容改名 `名 (2).ext`；占用判据是「同层同基名（不分大小写、NFC）的任一素材扩展名」，因此也避开同 stem PDF / 位图互相让位。放最终名字用硬链接（目标存在内核拒绝），不支持硬链接退到持锁查一次再 `atomicio.publish_file`；落盘只经 `atomicio`。
   * 新增错误码必须在 `assetimport.ERRORS`（`ERROR_CODES` 被 `test_error_codes` 读）与两份 errors.json 同时出现。
+- **开发脚本、联调服务器与演示实例同时隔离数据目录和配置目录，别写用户真实设置（错题本 L-028 升级，2026-11-27；错题本 L-051 升级，2026-11-27）。**
+  `TAVOTTO_DATA_DIR` 只挪数据目录；AI 连接、全局解释器、最近列表在 `engine/config.py` 的配置目录里，要另设 `TAVOTTO_CONFIG_DIR`。
+  脚本里两个都 `os.environ.setdefault` 到临时目录再 import 应用；起预览或往里塞演示数据前先打印 `config.config_path()` 核落点，收工核对用户配置没变。
+  pytest 有 conftest 全局隔离，脚本、`run.sh` 起的服务和演示实例都没有。为什么：2026-09-21 复现时把测试 venv 写进真实配置的全局解释器，
+  次日正式 App 装了包仍报缺依赖（#469）；2026-09-22 造假项目的开发脚本没设数据目录，每跑一次往用户最近列表塞一条（#497）；
+  2026-11-25 界面演示只设了 `TAVOTTO_DATA_DIR`，塞的两条假 Key 落进用户真实配置。看护：只靠人记。

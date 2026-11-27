@@ -260,25 +260,52 @@ class _Hang(BaseHTTPRequestHandler):
         pass
 
 
+def _returns_while(call, still_hung: threading.Event, guard_s: float = 30.0):
+    """在子线程里调 `call`，要求它在网络仍挂着时就返回：服务器没放行（`still_hung` 未 set），而且客户端那次后台刷新
+    **还活着**（还在等网络）——只看服务器不够：客户端请求自带超时，超时一到刷新线程就结束了，等它的调用照样能在
+    服务器放行前返回（Codex #2293）。`guard_s` 只防挂死、不是性能预算。"""
+    box: dict = {}
+    t = threading.Thread(target=lambda: box.setdefault("out", call()), daemon=True)
+    t.start()
+    t.join(guard_s)
+    assert not t.is_alive(), "工具调用在等网络：挂死的服务器没放行它就不返回"
+    assert not still_hung.is_set()
+    assert updatenotice._thread is not None and updatenotice._thread.is_alive(), (
+        "调用返回时后台刷新已经结束——等于等完了网络才返回"
+    )
+    return box["out"]
+
+
 def test_hung_network_never_slows_tool_calls(cfg, monkeypatch):
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Hang)
+    # 不拿墙钟量「快」（11-26 #2283 合并组 backend-fast (3.13, 2)：0.86 s > 0.5 s）：服务器挂到测试放行为止，
+    # 工具调用必须在它**仍挂着**的时候返回——调用线程只读缓存、不等网络。计时只剩防挂死的上限。
+    entered, release = threading.Event(), threading.Event()
+
+    class Hang(_Hang):
+        def do_GET(self):  # noqa: N802
+            entered.set()
+            release.wait(60)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Hang)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         url = f"http://127.0.0.1:{srv.server_address[1]}/m.json"
         monkeypatch.setenv("TAVOTTO_UPDATE_URL", url)
         # 缓存过期（25 小时前）：必须触发后台刷新，而且调用线程不等它
         cfg(url=url, age=25 * 3600)
-        t0 = time.monotonic()
-        out = _health()
-        elapsed = time.monotonic() - t0
-        assert elapsed < 0.5, elapsed  # 网络挂死 4 秒；调用线程只读缓存
+        # 客户端请求的超时（TIMEOUT=1.5 s）也交给测试：后台刷新一直等到服务器放行，「刷新还活着」才是有效证据
+        mod = updatenotice._load()
+        orig = mod.fetch_with_mirror
+        monkeypatch.setattr(mod, "fetch_with_mirror", lambda u, timeout=None: orig(u, 60.0))
+        out = _returns_while(_health, release)
         assert out["update"]["latest_version"] == "99.0.0"  # 过期缓存照样能提醒
         assert updatenotice._thread is not None  # 后台线程确实起了
         assert updatenotice._thread.daemon is True
-        t1 = time.monotonic()
-        _export if False else _health()
-        assert time.monotonic() - t1 < 0.5
+        # 后台那次请求确实打到了挂死的服务器、此刻还挂着；这时再调一次，照样不等
+        assert entered.wait(30), "后台刷新没有发出请求"
+        _returns_while(_health, release)
     finally:
+        release.set()
         srv.shutdown()
 
 

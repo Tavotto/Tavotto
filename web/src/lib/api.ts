@@ -4,6 +4,7 @@ import { figureSnapshotPreviewIdentity, sameFigureSnapshotReference } from './fi
 import { figureOriginIdentity, sameFigureOrigin, validFigureOrigin, validFigureSnapshot } from './figureSnapshot'
 import type { ProjectFileAxis, ProjectFileEdit, ProjectFileRead, ProjectFileRecovery, ProjectFileReservation, ProjectFileResult, ProjectFileView } from './projectFileSession'
 import type { ReadGradient } from './gradient'
+import type { ProjectLayoutResult, ProjectWriteSpec } from './autosaveProject'
 import { classifyArtifactFailure } from '@/lib/artifactReason'
 import type { RenderPurpose } from '@/lib/renderPurpose'
 import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type ArtifactRequestFields } from '@/lib/artifactValidation'
@@ -451,6 +452,22 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 export const fetchPanelStem = (id: string) =>
   jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
 
+/**
+ * PDF 原件的字体事实（后端 `artifactinspect.original_font_facts`，ADR 0139 修订 2026-11-24 补充）：
+ * 只读文件、不执行脚本。`readable: false` = 读不出，不能据此说它有问题。
+ */
+export interface PanelFontFacts {
+  id: string
+  readable: boolean
+  /** 文字画成了 Type 3 字体（matplotlib 的默认 `pdf.fonttype=3`）：在别的软件里常常选不中、换不了字 */
+  type3: boolean
+  /** 有字形落到了占位字（LastResort / `.notdef`）：原件里那几个字是方框 */
+  missing_glyphs: boolean
+}
+
+export const fetchPanelFontFacts = (id: string, pj?: string | null) =>
+  jsonFetch<PanelFontFacts>(`/api/panel-font-facts?id=${encodeURIComponent(id)}`, undefined, pj)
+
 /** 精确磁盘 id 的只读事实；不授予执行、几何编辑或发布资格。 */
 export interface PanelSourceFacts {
   id: string
@@ -637,6 +654,8 @@ export interface ProjectStatus {
    * 「旧位置只读兼容」与「未打开项目退回数据目录」这两条分支。
    */
   document_dir?: string
+  /** 自动保存是否把工作副本写进项目（后端开关，ADR 0211 第二期）；缺 = 旧后端 / 关着 */
+  autosave_into_project?: boolean
   /** 打开动作附带：注册表是静态扫描草稿 / stem 归属冲突列表 */
   drafted?: boolean
   conflicts?: string[]
@@ -1124,6 +1143,8 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
+  /** 带了 `project_write` 且后端开着开关时：这次写进项目的结局 */
+  project_layout?: ProjectLayoutResult
   project_file?: ProjectFileResult
   chart_sources?: ChartSourceReceipt[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
@@ -1152,8 +1173,10 @@ export const putAutosave = (
   baseRevision?: string,
   pj?: string | null,
   opts?: { projectFileEdit: ProjectFileEdit; projectFileRecovery?: ProjectFileRecovery },
+  projectWrite?: ProjectWriteSpec,
 ) => {
   const q = new URLSearchParams()
+  if (projectWrite) q.set('project_write', JSON.stringify({ name: projectWrite.name ?? null, base: projectWrite.base ?? null }))
   if (base !== undefined) q.set('base', String(base))
   if (baseRevision !== undefined) q.set('base_revision', baseRevision)
   if (opts) q.set('project_file_edit', JSON.stringify(opts.projectFileEdit))
@@ -1674,6 +1697,11 @@ export interface ProjectHistoryItem {
   revision: string | null
   /** `mode=slot` 且节点比槽位新、内容不同（只算单画布节点） */
   node_newer: boolean
+  /**
+   * 项目里这份排版的**工作副本**（目录形态，清单记着这个 docId；ADR 0211 第二期）：比最近的时间线节点新。
+   * 没有本机槽位（`mode` 是 `node` / `copy`）时按它装，不按节点；`vid` 为空 = 还没有任何时间线节点。
+   */
+  work?: { name: string; revision: string; ts: number }
 }
 
 /**
@@ -1685,7 +1713,7 @@ export const HISTORY_OWNERS = ['this', 'none', 'moved', 'other', 'unknown'] as c
 
 function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
   const r = raw as Record<string, unknown> | null
-  if (!r || typeof r !== 'object' || typeof r.doc_id !== 'string' || typeof r.vid !== 'string') return null
+  if (!r || typeof r !== 'object' || typeof r.doc_id !== 'string' || typeof r.vid !== 'string') return null // `vid` 可为空串（只有工作副本）
   const mode = HISTORY_MODES.find((m) => m === r.mode)
   const owner = HISTORY_OWNERS.find((o) => o === r.owner)
   if (!mode || !owner) return null
@@ -1703,7 +1731,14 @@ function parseHistoryItem(raw: unknown): ProjectHistoryItem | null {
     owner,
     revision: typeof r.revision === 'string' ? r.revision : null,
     node_newer: r.node_newer === true,
+    ...(parseHistoryWork(r.work) ? { work: parseHistoryWork(r.work) as NonNullable<ProjectHistoryItem['work']> } : {}),
   }
+}
+
+function parseHistoryWork(raw: unknown): ProjectHistoryItem['work'] | null {
+  const w = raw as Record<string, unknown> | null
+  if (!w || typeof w !== 'object' || typeof w.name !== 'string' || typeof w.revision !== 'string') return null
+  return { name: w.name, revision: w.revision, ts: typeof w.ts === 'number' && Number.isFinite(w.ts) ? w.ts : 0 }
 }
 
 /** 列项目内时间线候选。`'unsupported'` = 旧后端没有这个端点；`'unavailable'` = 此刻问不到。 */
@@ -4045,6 +4080,10 @@ export type QuickLayoutFailureCode =
   | 'not_converged'
   | 'render_failed'
   | 'page_too_small'
+  /** 图内排版：组件太旧、不认图内排版的命令（ADR 0199 §十二） */
+  | 'pro_outdated'
+  /** 图内排版：图里有认不出归属、又挡路的元素 */
+  | 'figure_obstacle'
 
 /** 求解器回的网格：行列数、每张图（画布对象 id）在哪一格、行 / 列相对权重 */
 export interface QuickLayoutGrid {
@@ -4055,7 +4094,11 @@ export interface QuickLayoutGrid {
   row_ratios: number[]
 }
 
-export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed'
+/**
+ * `in_figure`：这次排的是一张图里面的子图（ADR 0199 §十二）；`label_offset_varied`：为绕开图里原地不动的元素，
+ * 个别标签的偏移与别的不同（暂不出文案）
+ */
+export type QuickLayoutNoteCode = 'equal_aspect' | 'spec_not_fixed' | 'in_figure' | 'label_offset_varied'
 
 /** 按规范改过哪几类（封闭集合；关着开关或没改动 = 空） */
 export type QuickLayoutSpecChange =
@@ -4076,9 +4119,11 @@ export type QuickLayoutResponse =
       spec_changes: QuickLayoutSpecChange[]
       /** 页面收紧到「内容外框 + 页边距」：一键排版的结果就是最终那张图（ADR 0199 §五） */
       page: { w: number; h: number }
-      /** 网格（拖分隔线重排用）；后端说不出 = null */
+      /** 网格（拖分隔线重排用）；后端说不出 = null（图内排版没有网格） */
       grid: QuickLayoutGrid | null
       replay_required: boolean
+      /** `figure` = 图内排版（只有一张可排的图、图里有好几个坐标轴）；多图排版不带 */
+      mode?: 'figure'
     }
   | { ok: false; code: QuickLayoutFailureCode; replay_required?: boolean }
 
@@ -4093,8 +4138,10 @@ const QUICK_LAYOUT_FAILURES: ReadonlySet<string> = new Set([
   'not_converged',
   'render_failed',
   'page_too_small',
+  'pro_outdated',
+  'figure_obstacle',
 ])
-const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed'])
+const QUICK_LAYOUT_NOTES: ReadonlySet<string> = new Set(['equal_aspect', 'spec_not_fixed', 'in_figure', 'label_offset_varied'])
 const QUICK_LAYOUT_SPEC_CHANGES: ReadonlySet<string> = new Set([
   'font_family',
   'font_size',
@@ -4134,6 +4181,7 @@ function isQuickLayoutResponse(body: Record<string, unknown>): boolean {
   if (body.ok === false) return isStr(body.code) && QUICK_LAYOUT_FAILURES.has(body.code)
   return (
     body.ok === true &&
+    (body.mode === undefined || body.mode === 'figure') &&
     isQuickLayoutGrid(body.grid) &&
     Array.isArray(body.panels) &&
     body.panels.every(
@@ -4263,8 +4311,21 @@ export interface ChangePlanGroup {
    * 这一组要先问用户：把一根轴改成对数，但它的下限 ≤ 0，方案里已经带上了一条把下限改成正数的改动（`to`）。
    * 卡片问「一起改吗」，回答前不给「查看 / 应用」；`from` 是改前的下限。
    */
-  confirm?: { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number }
+  confirm?: ChangePlanConfirm
 }
+
+/**
+ * 脚本方案候选的数据指纹变了（用户要的改动本身会改数据，如换算单位）：脚本组上挂这个，卡片先问「确定要这样改吗」，
+ * 应用时 `applyChangePlanScript` 要带显式确认，后端没带就拒（ADR 0206 修订 2026-11-27）。
+ * `items` 是受影响的数据元素（至多 8 个，`reason`：数据不同 / 元素没了 / 名字对调），`total` 是真实个数；不含任何提示句。
+ */
+export interface ScriptDataChangedConfirm {
+  kind: 'script_data_changed'
+  items: { stem: string; gid: string; reason: 'data_changed' | 'subject_removed' | 'label_swapped' }[]
+  total: number
+}
+
+export type ChangePlanConfirm = { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number } | ScriptDataChangedConfirm
 
 export interface ChangePlan {
   id: string
@@ -4418,8 +4479,14 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
 }
 
 /** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */
-export async function applyChangePlanScript(planId: string): Promise<{ backup: string; after_sha256: string }> {
-  const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/apply-script`, { method: 'POST' })
+export async function applyChangePlanScript(planId: string, opts?: { confirmDataChange?: boolean }): Promise<{ backup: string; after_sha256: string }> {
+  // 数据会变的方案（`group.confirm.kind === 'script_data_changed'`）要带用户点过「就这样改」的确认；后端没带就拒（`change_plan_script_data_unconfirmed`）
+  const out = await changePlanFetch(
+    `/api/change-plans/${encodeURIComponent(planId)}/apply-script`,
+    opts?.confirmDataChange
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm_data_change: true }) }
+      : { method: 'POST' },
+  )
   const applied = out.applied as { backup?: unknown; after_sha256?: unknown } | undefined
   if (!applied || !isStr(applied.backup) || !isStr(applied.after_sha256)) {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
@@ -6005,6 +6072,8 @@ export interface AiDataLazyInfo {
   purpose?: AiDataPurpose
   table?: string
   sheet?: string | null
+  /** 这次读的数据文件原始字节的 sha256（单份；合画没有；旧后端没有）：图的来历据它判「数据变没变」 */
+  data_sha256?: string
   /** 文本表是实际用的物理行号，XLSX 为 null */
   header_row?: number | null
   /** 合画：每份文件一项（后端合同 `sources`）：显示名 `label`（文件名去扩展名）与各自实际用的表头行 / 单位行 */
@@ -6080,6 +6149,8 @@ export interface AiDataProposeBody {
   spec?: Record<string, unknown>
   /** 期刊自己规定的字号上下限（pt，只放规定了的那一端；都没规定 / 没有期刊绑定就不带这个键） */
   font_range?: { min_pt?: number; max_pt?: number }
+  /** `false` = 不起「读懂数据」的后台任务（不是用户在看数据的重出用，如点选误差线换类型：免得悄悄多发一次模型出站）；候选不变。不给 = 照旧 */
+  understand?: boolean
 }
 
 export const aiDataFigurePropose = (body: AiDataProposeBody, pj?: string | null, signal?: AbortSignal) =>
@@ -6116,6 +6187,10 @@ export const aiDataFigureCommit = (
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     pj,
   )
+
+/** 一份数据文件此刻原始字节的 sha256（`null` = 文件不在 / 读不了 / 太大，不是错误）：核对图的来历里的数据变没变 */
+export const aiDataFigureDigest = (table: string, pj?: string | null) =>
+  jsonFetch<{ sha256: string | null }>(`/api/ai/data-figure/data-digest?table=${encodeURIComponent(table)}`, {}, pj)
 
 export const aiDataFigureDiscard = (session: string, pj?: string | null) =>
   jsonFetch<{ ok: boolean }>(

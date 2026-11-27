@@ -28,6 +28,8 @@ import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixed
 import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { SUGGEST_KEYS, diffSuggestion, suggestionFrom, type Suggestion, type SuggestionDiff } from '@/lib/dataUnderstanding'
 import { fontRangeOf, sameDraftBinding } from '@/lib/dataFigureSpec'
+import { makeOrigin } from '@/lib/dataFigureOrigin'
+import { useFigureOriginStore } from '@/store/figureOriginStore'
 import type { DocumentProfile } from '@/types/document'
 import { msg, type UiMessage } from '@/i18n'
 
@@ -231,6 +233,8 @@ interface DataFigureStore {
   previewKey: string | null
   /** 响应说用户点选过误差类型（`answers.error` 被后端认了）；没有 = 误差线画的是哪一种还没确认 */
   errorConfirmed: boolean
+  /** 这批候选读的数据文件原始字节的 sha256（合画 / 旧后端没有 = null） */
+  dataSha256: string | null
   /** 这批候选按什么看图目的排的（响应的 `purpose`）；右栏「目的」一行显示它的 `code`，没有 / `code` 为 null / 选项不足两个 = 不出这一行 */
   purpose: AiDataPurpose | null
   /** 「是不是同一对象重复测量」这个问题出现过（`defaults` 里有 `pick_design`）：确认之后后端不再问，但那一行要留着（可再改），所以只增不减，直到换文件 */
@@ -334,6 +338,8 @@ const initial = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  /** 这批候选读的数据文件原始字节的 sha256（响应的 `data_sha256`；合画 / 旧后端没有 = null）：画成后记进图的来历 */
+  dataSha256: null as string | null,
   purpose: null as AiDataPurpose | null,
   designAsked: false,
   // 草稿自己的规范绑定只在 `initial`：换文件 / 关标签（`idleDraft`）不清它，项目代际（`clear()`）与重新进入（`enter()`）才清
@@ -363,6 +369,7 @@ const idleDraft = {
   readRid: null as string | null,
   previewKey: null as string | null,
   errorConfirmed: false,
+  dataSha256: null as string | null,
   purpose: null as AiDataPurpose | null,
   designAsked: false,
   figureStyle: null as AiDataFigureStyle | null,
@@ -395,7 +402,7 @@ export const setKeepClock = (f: () => number): void => {
   keepClock = f
 }
 
-const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'purpose', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
+const KEEP_FIELDS = ['answers', 'mixed', 'roles', 'headerRowUsed', 'unitsRow', 'thumbs', 'phase', 'session', 'candidates', 'nothingReasons', 'previewKey', 'errorConfirmed', 'dataSha256', 'purpose', 'designAsked', 'figureStyle', 'specFallback', 'suggestion', 'autoPicks', 'sources'] as const
 type KeepSnap = Pick<typeof initial, (typeof KEEP_FIELDS)[number]>
 interface Kept {
   key: string
@@ -785,6 +792,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       figureStyle: res.figure_style ?? null,
       specFallback: res.spec_fallback === true,
       errorConfirmed: res.error_confirmed === true,
+      dataSha256: res.data_sha256 ?? null,
       purpose: res.purpose && res.purpose.code ? res.purpose : null,
       designAsked: get().designAsked || (res.defaults ?? []).some((d) => d.question_code === 'pick_design'),
     }
@@ -944,6 +952,31 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
     }, 20000)
   }
 
+  /**
+   * 画成了：把「这张图是怎么画出来的」交给 `figureOriginStore`（点选误差线时换 SD / SEM / 95% CI 用）。要在 `goEditor` 清掉会话与候选**之前**取：
+   * 候选在 `get().candidates` 里按 id 找（重试那条路传进来的 `items` 是空的）；单文件、误差线是算出来的才登记（`makeOrigin` 判）。
+   */
+  function noteOrigin(script: string, sessionId: string, itemId: string): void {
+    const sel = get().selected
+    if (!sel || get().session !== sessionId) return
+    const item = get().candidates.find((c) => c.id === itemId)
+    if (!item) return
+    const binding = get().specBinding
+    const origin = makeOrigin({
+      script,
+      item,
+      file: sel,
+      grouped: !!get().group,
+      headerRow: get().headerRows[sel.path] ?? null,
+      answers: get().answers,
+      spec: binding ? (host.resolveSpec?.(binding) ?? null) : null,
+      fontRange: fontRangeOf(binding),
+      dataSha256: get().dataSha256,
+      pj: currentProjectId(),
+    })
+    if (origin) useFigureOriginStore.getState().register(origin)
+  }
+
   /** 没成 / 要说话的结局：把临时标签翻出来（出图期间用户可能已经把它收起了） */
   const showOutcome = (patch: Partial<typeof initial>) => set({ draftOpen: true, draftActive: true, drawingId: null, ...patch })
 
@@ -996,6 +1029,7 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       const notes = notesOf(res)
       if (notes.check === 'unverifiable') host.notify(msg('dataFigureV2.result.unverifiable', undefined, 'ai'))
       else if (notes.check) host.notify(msg('dataFigureV2.result.unknown', undefined, 'ai'))
+      noteOrigin(res.script, sessionId, itemId)
       await goEditor(res.script)
     } catch (e) {
       if (!still()) return
@@ -1447,10 +1481,24 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
       filesDirty = false
       commitRid = null
       overviewSeq.clear()
+      useFigureOriginStore.getState().clear()
       set({ ...initial })
     },
   }
 })
+
+/**
+ * 「点选误差线换类型」（`figureOriginStore`）要多开一个后端候选会话：当前草稿 1 个 + 留存最多 `KEEP_MAX` 个 + 它这个 = 7，
+ * 超过后端的 `MAX_SESSIONS`（6）就会悄悄删最老的——可能正是用户开着的草稿。所以先把留存的丢到只剩 `KEEP_MAX - 1` 个（最旧的先丢、同时放弃它的后端会话；
+ * 留存本来就只是「切回来不用重读」的缓存，丢了之后切回去静默重出）。当前草稿的状态一个字不动。
+ */
+export function reserveBackendSession(): void {
+  while (kept.length > KEEP_MAX - 1) {
+    const e = kept[0]!
+    kept = kept.slice(1)
+    if (e.snap.session) void aiDataFigureDiscard(e.snap.session, e.pj).catch(() => undefined)
+  }
+}
 
 // 「数据」临时标签激活 = 画布被盖住：同步给画布动作的让位判据（`store/canvasCover`），键盘 / 系统菜单 / 剪贴板 / 顶栏撤销都读它
 useDataFigureStore.subscribe((s, prev) => {

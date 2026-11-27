@@ -87,6 +87,27 @@
 | `pathfinder` | `ids`、`mode`（`unite minus_front minus_back intersect exclude divide trim merge crop`） |
 | `offset` / `outline_stroke` / `simplify` | `id` + `delta_mm`、`join` / 无 / `tolerance_pt` |
 | `convert_to_path` | `ids`（形状 / 箭头 → 同 id 的路径，画面不动） |
+| `move_anchors` | `id`、`anchors`（`[{sp, i}]`）、`by_mm: [dx, dy]`（页面上的位移，旋转过的路径服务端换算）；锚点连同两侧手柄一起动 |
+| `move_handle` | `id`、`anchor`（`{sp, i}`）、`which`（`in` / `out`）、`to_mm: [x, y]`（页面上的点）、`break_smooth`（缺省 false：平滑点另一侧手柄保持共线；true：只动这一侧、锚点变尖角） |
+| `add_anchors` | `id` + `anchors`（在每个锚点**后面那一段**的中点加）；都不给 = 每一段的中点；或 `at: {sp, seg, t}`（第 sp 条子路径第 seg 段、0 < t < 1 处）。曲线一点不变 |
+| `delete_anchors` / `average_anchors` | `id`、`anchors`（平均要 ≥ 2 个）。删到闭合子路径不足 3 个会变开放；子路径不足 2 个整条去掉；删光 = 路径一起删 |
+| `convert_anchors` | `id`、`anchors`、`to`（`smooth` / `corner`；缺省 = 桌面的「切换」：选中的全是平滑点 → 尖角，否则 → 平滑） |
+| `cut_path` | `id`、`anchors`：在这些锚点处断开；相邻两个都选 = 剪掉它们之间那段。第一段留原对象，其余各成新路径（样式照搬、没有名字、紧挨着往上放，复述里写新 id） |
+| `join_paths` | `id` + `anchors: [甲, 乙]`（同一对象里两个**端点**：同一条子路径的两端 = 闭合，两条子路径的端点 = 连成一条）；或 `ids: [甲, 乙]`（两个路径对象取最近的一对开放端点合成一个，**留最后一个**的 id 与样式、删另一个）。两端重合合成一个锚点，否则补直线 |
+| `reverse_path` | `id`：起点 / 终点互换，端型字段不跟着换 |
+| `make_compound` / `release_compound` | `ids`（≥ 2，子路径并进最靠后的那个、奇偶填充）/ `id`（≥ 2 条子路径拆成各自的对象，第一条留原 id） |
+
+**路径锚点的写法**（只收 `path`；形状先 `convert_to_path`）：
+
+- 场景里每个路径带 `subpaths: [{sp, closed, count}]`，锚点不多时还带 `anchors: [{sp, i, at_mm, smooth, in_mm?, out_mm?}]`
+  （页面毫米坐标、已按旋转换算）。锚点太多的路径只有计数，清单有上限（每个路径 60、整次 400；`select: {ids: [...]}` 点名读时放宽到 200），
+  回包里的 `anchors_note` 会说。**不要自己猜锚点下标**：没清单就先点名读，或让用户在桌面里处理。
+- 锚点地址 `{sp, i}` 指的是**这一条操作执行时**的状态：同一批里前面的加 / 删 / 剪 / 连会让后面的下标变。每条复述末尾写着「现为
+  sp0 闭合 8 个；sp1 开放 3 个」，加锚点还列出新锚点的地址；一批里要连着改，就照这个往下数，或分两批（先出方案、写入，再读场景）。
+- 位移与手柄目标是**页面上的坐标**（不是对象内的比例）；服务端按对象的旋转换算，包围盒随曲线实际范围重算，画面上没点名的锚点不动。
+- 错误：`bad_value` 的 `field` 是 `anchors`（写法不对）/ `anchors:unknown`（地址不存在）/ `anchors:duplicate`（重复）/
+  `anchors:not_end`（`join_paths` 点的不是端点）/ `at`、`at:unknown`；`bad_op` 的 `field` 是 `no_open_ends`（两个对象都没有开放端点）、
+  `not_compound`（释放的不是复合路径）、`empty_result`；`out_of_range` 的 `field` 是 `x y w h subpaths nodes`（改完超出范围）。
 
 - **能改用户手画的**，但每次都复述、都能一步撤销；复述逐条是「谁：字段 前 → 后」，原话念给用户。
 - 桌面正开着这份排版时会按字段自动并进去（一步可撤销）；用户在桌面里也改了同一处（同一对象的同一字段，或改了你删的）才会在保存时让用户选。

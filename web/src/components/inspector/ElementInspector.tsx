@@ -119,6 +119,7 @@ import { Notice } from '../ui/Notice'
 import { ColorField, NumberField, TextInput } from '../ui/Input'
 import { RichTextField } from '../ui/RichTextField'
 import { Select } from '../ui/Select'
+import { ErrorKindRow } from './ErrorKindRow'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { useFieldGesture } from './elementWrite'
@@ -495,6 +496,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             element={element}
             warnings={render?.warnings ?? []}
             buckets={buckets}
+            /* 阴影带（趋势图的均值 ± 误差）：与误差棒页同一行「误差线」；组件自己判这张图是不是带 */
+            lead={element?.role === 'fill' ? <ErrorKindRow panel={panel} band /> : undefined}
             primaryExtra={
               patchSizeAvailable && exactManifest ? (
                 <PatchSizeControls key={element.gid} panel={panel} element={element} />
@@ -1022,6 +1025,7 @@ function ErrorBarPage({
         element={element}
         warnings={warnings}
         buckets={buckets}
+        lead={<ErrorKindRow panel={panel} />}
         primaryExtra={
           <div className="flex justify-center" data-errorbar-figure>
             <ErrorBarDiagram active={active} />
@@ -1089,6 +1093,7 @@ function FieldList({
   warnings,
   buckets,
   primaryExtra,
+  lead,
 }: {
   panel: PanelObject
   element: ManifestElement
@@ -1096,6 +1101,8 @@ function FieldList({
   buckets: { primary: PresentedField[]; more: PresentedField[]; folds: PresentedFold[] }
   /** 首屏里的复合控件（四边状态图等），排在 primary 行之后、「更多」之前 */
   primaryExtra?: ReactNode
+  /** 排在 primary 行之前的一行（误差棒页的「误差线」类型）；组件自己不渲染时不占位 */
+  lead?: ReactNode
 }) {
   // 文字元素的字号/加粗/字形/颜色/背景/描边/排版全部收进工具条，
   // 平铺列表要把它们让出来——同一个属性出两套控件是最坏的那种冗余
@@ -1181,6 +1188,7 @@ function FieldList({
   )
   return (
     <>
+      {lead}
       {rows(headPrimary, groupHeads)}
       {bar && (
         <div className={cn(headPrimary.length > 0 && 'mt-1.5')}>

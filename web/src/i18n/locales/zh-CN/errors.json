@@ -26,7 +26,11 @@
     "adoptReconstructed": "以重画为基础编辑",
     "refreshReconstruction": "更新重画对照",
     "showRedraw": "改用脚本重画的图",
-    "redrawn": "已改用脚本重画的图，画布和导出都是这一份。不想要可以撤销。"
+    "redrawn": "已改用脚本重画的图，画布和导出都是这一份。不想要可以撤销。",
+    "showRedrawType3": "改用标准字体",
+    "showRedrawMissing": "补齐字体",
+    "redrawnType3": "已改用标准字体，画布和导出都是这一份。不想要可以撤销。",
+    "redrawnMissing": "已补齐字体，画布和导出都是这一份。不想要可以撤销。"
   },
   "backend": {
     "change_plan_busy": "这张图正在生成修改方案，请稍等。",
@@ -537,7 +541,8 @@
     "input_declaration_unavailable": "暂时无法读取或保存输入声明，请稍后重试。",
     "change_plan_script_no_change": "Agent 没有改动脚本，你的脚本没有变化。",
     "change_plan_script_check_failed": "改后的脚本没能通过检查，你的脚本没有被改动。可以再试一次。",
-    "change_plan_script_data_changed": "这次改动会让图里的数据变化，所以没有给出方案，你的脚本没有被改动。",
+    "change_plan_script_figure_missing": "改后的脚本不再画出原来的图，所以没有给出方案，你的脚本没有被改动。",
+    "change_plan_script_data_unconfirmed": "这份方案会改变图里的数据，需要你先确认，你的脚本没有被改动。",
     "change_plan_script_no_preview": "改后的脚本没法在副本里预览，所以没有给出方案，你的脚本没有被改动。",
     "change_plan_script_overreach": "Agent 越界改了项目里的文件，没有给出方案。",
     "change_plan_script_agent_failed": "Agent 没有跑完，你的脚本没有被改动。可以再试一次。",

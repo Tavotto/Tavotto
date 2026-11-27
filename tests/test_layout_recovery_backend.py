@@ -998,6 +998,10 @@ def test_lock_order_has_no_deadlock_under_mixed_load(client, tmp_path, monkeypat
     """自动保存 / DELETE / PUT last / 清理 / GET 同时打同一批槽位：全部在限时内结束（文档锁 → 会话锁）。"""
     a = _project(client, tmp_path, "a", default=True)
     monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 2)
+    # 本用例证明的是锁顺序不死锁，不是「5 s 内拿到锁」。4 个线程猛打同一批槽位，慢 Windows runner 的 fsync 下
+    # 等会话锁可以超过产品值 LOCK_TIMEOUT_S=5，于是回 503 session_unavailable 被当成错误收集
+    # （11-26 #2283 合并组 backend-platforms (windows, 8)；同 #2243）。放宽后真死锁仍卡过下面的 join(30)、照样红。
+    monkeypatch.setattr(layoutsession, "LOCK_TIMEOUT_S", 120.0)
     stop = time.monotonic() + 3
     errors: list[str] = []
 

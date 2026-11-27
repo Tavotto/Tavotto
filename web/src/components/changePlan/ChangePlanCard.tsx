@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { canUndoApplied, declinedGroups, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, canUndoApplied, declinedGroups, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
@@ -43,6 +43,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   // 对数轴下限：还没回答就先问，不给「查看 / 应用」；答了「不改」的组不进方案，卡面按剩下的组出图
   const ask = status === 'ready' ? pendingConfirm(entry) : undefined
   const declined = declinedGroups(entry).length > 0
+  const dataAsk = ask?.confirm?.kind === 'script_data_changed'
+  const askHook = dataAsk ? 'data-change-plan-confirm-data' : 'data-change-plan-confirm-log'
   const selection = useSelectionPreview(entry, status === 'ready' && declined)
 
   if (status === 'failed') return <FailedCard entry={entry} />
@@ -148,9 +150,11 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 ? cp('card.discarded')
                 : status === 'stale'
                   ? cp('card.stale')
-                  : ask?.confirm
-                    ? cp(`card.logLimitAsk`, { axis: cp(ask.confirm.axis === 'x' ? 'card.axisX' : 'card.axisY'), to: formatAxisLimit(ask.confirm.to, true) })
-                    : summaryLine(entry)}
+                  : ask?.confirm?.kind === 'script_data_changed'
+                    ? cp('card.dataChangedAsk')
+                    : ask?.confirm?.kind === 'log_lower_limit'
+                      ? cp(`card.logLimitAsk`, { axis: cp(ask.confirm.axis === 'x' ? 'card.axisX' : 'card.axisY'), to: formatAxisLimit(ask.confirm.to, true) })
+                      : summaryLine(entry)}
           </p>
         )}
         {entry.notice && <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>{cp(entry.notice === 'apply_failed' ? (script ? 'card.applyFailedScript' : 'card.applyFailed') : script ? 'card.undoFailedScript' : 'card.undoFailed')}</p>}
@@ -169,11 +173,11 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
           <div className="flex items-center gap-2 pt-0.5">
             {ask && (
               <>
-                <Button variant={primary} size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'yes')} data-change-plan-confirm-log="yes">
-                  {cp('card.logLimitYes')}
+                <Button variant={primary} size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'yes')} {...{ [askHook]: 'yes' }}>
+                  {cp(dataAsk ? 'card.dataChangedYes' : 'card.logLimitYes')}
                 </Button>
-                <Button variant="secondary" size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'no')} data-change-plan-confirm-log="no">
-                  {cp('card.logLimitNo')}
+                <Button variant="secondary" size="md" className={btn} onClick={() => store().answerConfirm(entry.key, ask.key, 'no')} {...{ [askHook]: 'no' }}>
+                  {cp(dataAsk ? 'card.dataChangedNo' : 'card.logLimitNo')}
                 </Button>
               </>
             )}
@@ -231,7 +235,7 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
   }
   // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
   // 审阅来源：没有一条能落成图内修改、但有「要改脚本」的意见时，同样给这条路（只由用户点，不自动续走）
-  const scriptWay = (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
+  const scriptWay = code !== DATA_DECLINED && (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">

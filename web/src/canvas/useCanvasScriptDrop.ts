@@ -20,6 +20,7 @@ import { backendErrorMsg } from '@/lib/api'
 import {
   feedbackAction,
   importAndPlace,
+  layoutFolderNames,
   planIntake,
   reportImageResult,
   reportProblems,
@@ -301,7 +302,11 @@ export function useCanvasScriptDrop() {
   /** 画布的 DOM drop */
   return (dt: DropData, place: CanvasDropPlace) => {
     if (useProjectStore.getState().switching) return
-    const files = Array.from(dt.files) as File[]
+    // 名为 `*.tavotto` 的**文件夹**是项目里的排版目录，不是项目包：不去导入，说一句放不进来（`layoutFolderNames`）
+    const folders = layoutFolderNames(dt.items)
+    const files = (Array.from(dt.files) as File[]).filter((f) => !folders.has(f.name))
+    for (const name of folders) say('unsupportedType', { name }, 'error', feedbackAction())
+    if (folders.size > 0 && files.length === 0) return
     // 没有文件（只有 file:// 链接）：按路径走脚本那一条（与以前一样）
     if (files.length === 0) {
       dropScript(dt, place, 0)

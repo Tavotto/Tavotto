@@ -335,7 +335,15 @@ manifest 带 `modified_after_save: true` + `save_moment_unavailable: <闭集原�
 撤销回到原像素。旧前端读到会忽略——回到「零编辑显示原像素」，安全的降级。确认绑定的仍是 `reconstructionSha256` 那一份（§六）：
 重画摘要变了照旧回到对照。
 
-**没做**：PDF 原件里的 Type 3 / 缺字判定要读原件（route 是纯函数、不读文件），角标暂只认位图原件；导出端的核验已经会
-把 Type 3 与缺字报出来（摸底 T-004）。
+**PDF 原件（补充）**：有脚本、零编辑的 PDF 原件本来就是矢量，问题只在字体——matplotlib 默认 `pdf.fonttype=3` 存的文字在
+别的软件里常常选不中、换不了字；中文落到 LastResort / `.notdef` 的是方框。route 是纯函数、不读文件，所以判定另走一条
+**只读**接口：`GET /api/panel-font-facts?id=`（`engine/artifactinspect.original_font_facts`，用 `rendercore.inspector.observe_pdf`
+的 `fonts_used`，按路径 + 大小 + mtime 记忆，不执行脚本；读不出 = `readable: false`，不说有问题）。前端在用户**单选**这张图时才问
+一次（`store/pdfFontFacts`，切项目清空；打开项目 / 扫描时不问），用了 Type 3 或有缺字才给同一个「用脚本重画」按钮（缺字压过
+Type 3）。点了提交一条 `figure.frame = "savefig"`（`lib/scriptedBitmaps.REDRAW_FRAME_OVERRIDE`）：按脚本自己存盘的图幅出图
+（ADR 0098），与磁盘 PDF 同一个框、版面不动；它本身不改任何东西，只让面板「有图内修改」，画布（`figureFrameMigration.renderedByEngine`）
+与导出（`exportroute.wants_execution`）都改走引擎重画——不需要位图那套采用与对照（原件是矢量，没有像素可比）。撤销 / 重置即回原件。
+导出对话框的「导出前重画」**不**自动处理 PDF 原件：那要在导出途中读每份原件，而重画结果没有可对照的基准。
 
-看护：`web/src/store/redrawWithScript.test.ts`、`web/src/store/bitmapRedrawPrep.test.ts`、`web/src/canvas/panelRedrawBadge.test.tsx`。
+看护：`web/src/store/redrawWithScript.test.ts`、`web/src/store/bitmapRedrawPrep.test.ts`、`web/src/canvas/panelRedrawBadge.test.tsx`、
+`web/src/store/redrawPdfOriginal.test.ts`、`tests/test_original_font_facts.py`。

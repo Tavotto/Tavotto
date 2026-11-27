@@ -421,7 +421,7 @@ interval / trajectories / dose_response / profile）。批次 2 / 3 在本 PR �
 
 **决定**：
 
-1. `propose` 多一个可选的 `spec`：前端按画布绑定解析好的出版规范（`lib/specBinding.resolveDocumentSpec`，期刊覆盖已并入、快照优先那套取舍只在前端一处）。后端过 `profiles.validate_spec` 后只取模板要的数字，**不在 `ai_data_*` 里重做合并**。不带 = 默认规范，样式、脚本、响应逐字不变。
+1. `propose` 多一个可选的 `spec`：前端按画布绑定解析好的出版规范（`lib/specBinding.resolveDocumentSpec`，期刊覆盖已并入、快照优先那套取舍只在前端一处）。后端过 `profiles.validate_spec` 后只取模板要的数字，**不在 `ai_data_*` 里重做合并**。不带 = 默认规范，样式、脚本、响应逐字不变。 **判据不是画法（2026-11-27 更正）**：`axis_policy.enclosed_spines` 为 False 只表示这份规范不要求四周边框（期刊底、自由排版），模板只在它为 True 时才取；False 时沿用具名默认（四周边框）——此前一选期刊就把上、右边框去掉，是把「不要求」读成了「去掉」。
 2. **栏宽**：`widths_mm.single / double` 有就用；缺的那档按规范的唯一读法 `profiles.derive_page_columns` 取（最窄一档当单栏、最宽一档当双栏，只有一档就两处都用它）；一档都没规定才落到具名默认 `_STYLE_DEFAULTS`——期刊没写就是没写（ADR 0155 §2），不拿别家规范的数字补。
 3. **字号**（同日用户再定，原话：「出图的时候，首要条件就是字号符合期刊的规定的字号范围，然后再在不干涉的情况下，选用字号范围内的最大值，同时还要保证相同对象的字号大小一致」）：
    * 请求另带 `font_range: {min_pt?, max_pt?}`——**期刊自己规定的**上下限（前端 `journalStyleTargets`，按 `journalSources` 认，不把中性底的兜底数字当成期刊的规定）。
@@ -610,6 +610,22 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 
 **还没做**：创建图之后换误差线类型（调研结论：取自现成误差列的误差线换种类不改变图上任何像素，因为图里不写脚注；换个画法本来就是重出一份新脚本）；多个 y 的分组比较；类别有顺序时按顺序 / 按值排序。
 
+
+## 修订（2026-11-26，用户决定）：点选算出来的误差线，在属性页换 SD / SEM / 95% CI（`web/src/store/figureOriginStore.ts`、`lib/dataFigureOrigin.ts`、`components/inspector/ErrorKindRow.tsx`）
+
+上一条里「创建图之后换误差线类型」做了其中**算出来的**那一半（`error_source === 'computed'`：均值 ± SD / SEM / 95% CI；取自现成误差列的类型由数据决定，不换）。后端不改。
+
+1. **入口**：误差棒属性页（`ErrorBarPage`）最上面多一行「误差线 [SD ▾]」，三项沿用数据页右栏的 `dataFigureV2.confirm.option.*`，不新增文案。出现条件缺一不显示：实验开关开着；这块面板是本次会话里用数据页画的（`figureOriginStore` 记着它的来历）；误差线是算出来的、单文件（合画不记）；**图没被改过**。
+2. **来历**：数据页提交成功、进编辑器之前（`dataFigureStore.noteOrigin`，要赶在 `goEditor` 清候选之前）按**脚本路径**登记：表、表头行、当时的 `answers`、已解析规范与字号范围、候选身份（`candidateIdentity`，不含误差类型）、当前类型。不持久化、换项目即清（`clear()` 带着清）、最多 8 份。面板第一次出现在文档里时（宿主订阅文档）再记下它的来源指纹。
+3. **「没被改过」不是「overrides 为空」**（`figureUntouched`）：写回脚本（ADR 0094）会把写进脚本的 override 从文档里清零；绑定样式的画布上新图会被自动对齐、overrides 一开始就不空。判据按图上看得见的东西列：每条 override 都得是样式写的、且仍是样式写下的值（`ownedLive`）；素材没有写回基线；面板记的来源指纹、素材清单里的指纹都与登记时一致（指纹含脚本内容的 sha256），素材状态是 `fresh`。位置 / 缩放 / 裁剪 / 旋转不算改过（与 `replacePanelAsset` 同一口径）。拿不准一律不给换。换图前（等脚本跑完之后）再核一遍。
+4. **换图**：不借 `dataFigureStore.propose()`（它会改写开着的草稿）。直接 `propose`（`answers.error` 换成点选的）→ 用候选身份认回同一种画法（找不到 / 新一批里不是算出来的这种误差就不换）→ `commit` 成**新脚本**（旧脚本留在项目里不删）→ 放弃这个会话；整条在数据页提交共用的串行锁里。会话名额：后端同时至多 6 个，换类型多开一个之前先把「按表记住」的留存丢到只剩 `KEEP_MAX - 1` 个（`reserveBackendSession`，最旧的先丢、同时放弃它的会话），开着的草稿不动。
+5. **原位换**：宿主（`lib/dataFigureHost.ts`）刷新项目 → `scriptRunStore.run(新脚本)` → 在**同一块面板**上 `actions.replaceRuntimeFigure`：保留面板 id（选区 / 组 / 锚在它上的标注）、外框、层级、裁剪、旋转，只换图源，overrides 清空，**一条可撤销的历史**（标签复用「替换素材为 …」，撤销回到旧图）。换完选中它并回到图内编辑。新脚本也登记自己的来历（可以再换回去）；旧脚本的来历留着（撤销之后那一行仍在）。
+6. **失败一律静默**：认不回画法、提交没成、运行没出图、换了项目、等的时候图被改了 / 面板没了，都回到原图、不弹错误块（下拉在换的过程中立即显示新值、转灰禁用、状态槽转圈，回退即回原值）。提交之后才放弃时新脚本已落盘、留在项目里，旧图不变。
+7. **阴影带也能换**（同日补）：趋势图的「均值线 + 阴影带」（候选 `line_band`，`error_source: computed`）里，带是 manifest 的 `fill` role（gid `axes_0.fill_N`，多组时每组一条、换的是整张图）。点中带时属性页（通用 `FieldList`）最上面出同一行「误差线」（`ErrorKindRow` 的 `band` 形态，同一组 i18n 键、不新增文案）。登记时记 `band`（候选 `title_code` 含 `band`）：点带的页只在带的图上出；误差棒页两种图都出；线 / 散点点中不出。换完选回同一个 gid，没有就第一个误差棒，带的图再退到第一条带（`figureSwitchSelect`，订阅渲染态、不计时）。画布名还是旧图当初自动起的名字（`doc.name === 旧 source.stem`）就在同一次 commit 里跟着改成新图名，用户改过名不动。
+8. **换类型的重出不起「读懂数据」**：后端 `propose` 新增可选请求参数 `understand`（布尔；`false` = 不起 `ai_data_roles` 后台任务，响应没有 `understanding` 键、候选逐字不变；不给 / `true` = 与从前逐字相同；非布尔 400 `propose_input_invalid`；进幂等键）。换类型那次重出不是用户在看数据，不该悄悄多发一次模型出站，前端一律带 `understand: false`。看护 `tests/test_ai_data_no_understanding.py`。
+9. **只换发起的那一块面板，换图前先结束手势**（Codex #2275 两条 P1）：同一张图可以在画布上复制成几块，所以目标不能按脚本去找（来历现在随面板走，复制出来的每一块各带自己的一份，见第 10 条）（排版模式没有激活面板，会退回第一块匹配的，悄悄换错）。属性页那一行把**自己那块面板的 id** 一路传进 `switchKind(panelId, kind)` → 宿主 `replaceFigure({ panelId, … })` → `replaceRuntimeFigure`；宿主只认这个 id（还在、仍画旧脚本、没被改过，任一不成立静默放弃；换完另一块的来历不动）。`switching` 也带 `panelId`，转圈与 `aria-busy` 只出现在发起的那一块；换完另一块仍指向旧脚本、来历仍在，可以各自独立再换。换图是离散动作：等脚本跑的时候用户可能已按下拖动 / 缩放，`commit` 会并进那次手势事务（一次撤销连移动一起退）。所以提交前经 `runDiscreteAction('app', null, …)` 先结束进行中的手势，**在收手势之后**再复核（面板、脚本、画布、没被改过）再提交，换图永远是独立的一条历史。看护 `figureOriginSwitch.test.tsx`。
+10. **来历落在面板上，关掉项目再打开仍能换**：`PanelObject.dataOrigin`（可选字段，schema 不升，旧构建忽略、图照常；复制面板、`.tavotto` 项目包带着它）。内容是表（**只存项目相对的 POSIX 路径**；数据在项目文件夹外的不登记，写盘前和读出来各判一次，`lib/dataFigureOrigin.isProjectRelativePosix`）、表头行、answers、已解析规范与字号范围、候选身份、当前类型、`band`、来源指纹、画图时数据文件的 `dataSha256`。写入有两处：面板第一次出现在文档里时宿主把内存里待认领的来历写上去（`applyDerivedUpdate`，不进撤销历史，与 `panelSourceSync` 同档）；换图那一步在 `actions.replaceRuntimeFigure` 的同一次 commit 里写新来历（撤销一起回到旧图的那份）。第一处写不进撤销历史，所以新建图那一步被撤销再重做时，面板是照历史里「还没有来历」的样子回来的：宿主把写过的那份留在内存里（`figureOriginStore.claimed`，按脚本路径、连同当时的来源指纹，最多 8 份、换项目即清），同一个脚本、同一个来源指纹的面板再出现就补回去，否则这一行会永久消失、还会把没有来历的面板存进项目（`figureOriginRedo.test.ts`）。读一律经 `readPanelOrigin`，**严格**：版本不是 1、形状不对、路径不是项目相对、摘要不是 64 位十六进制 = 当没有。**不外流**：只在用户自己的项目文档里；导出请求（`toExportObject` 的面板分支是显式字段表）、分享审阅的元素表（`reviewshare.layout_elements` 按字段拉取）、前端诊断快照与后端诊断包（白名单拉取）都不带，各有用例钉住（`web/src/store/figureOriginPersist.test.tsx`、`tests/test_data_origin_no_leak.py`）；唯一的例外是用户在发送诊断包时自己勾选的「损坏会话」，那是原始排版文档，与 overrides、脚本路径同一暴露面。
+11. **数据变没变，只看内容摘要**（不是大小、也不是素材的 `fresh`：后者与来源指纹都不覆盖输入数据，`runtimeasset.stale_status` 明写「数据依赖不追踪」）。后端两处小改：`propose` 的 lazy 响应多回 `data_sha256`（这次读的那份数据文件原始字节的 sha256，单份才有；合画没有）；新端点 `GET /api/ai/data-figure/data-digest?table=`（实验开关后面、会话认证、只读；路径经 `normalize_rel` + `contained_path`；文件不在 / 不是普通文件 / 出界 / 超 512 MiB / 读不了回 `{sha256: null}`，不是错误）。属性页那一行出现前去核一次（`figureOriginStore.checkData`）：摘要与来历里的一致才出；不一致、`null`、请求失败、**还没核对完**都不出，全程静默。换类型时 `propose` 回的 `data_sha256` 与来历里的不同、或旧后端没回，不提交、不换（同样大小改了内容也认得出）。
 
 ## 修订（2026-11-27）：多个 y 的「依据」按每条线数（`ai_data_propose.series_facts`、`web/src/lib/dataBasis.ts`）
 

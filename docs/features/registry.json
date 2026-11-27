@@ -914,6 +914,10 @@
         {
           "spec": "project-history-restore.spec.ts",
           "title": "空白项目连续加载 3 次、回主页再回来一次：项目里不出现只有空「打开」「离开」节点的 .vx"
+        },
+        {
+          "spec": "autosave-into-project.spec.ts",
+          "title": "不按任何键：编辑自动写进项目的 layout.json，杀进程重开就是它；换空的本机存储也能从工作副本找回"
         }
       ],
       "desktop_manual": [
