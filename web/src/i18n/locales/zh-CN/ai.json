@@ -193,6 +193,9 @@
     "notReceivedTitle": "这条指令未能送达",
     "openAiSettings": "打开改图助手设置",
     "placeholder": "例如：把图例移到左上角",
+    "vectorPlaceholder_other": "想怎么改选中的 {{count}} 个对象？",
+    "vectorEmptyTitle_other": "选中了 {{count}} 个对象",
+    "vectorEmptyHint": "说说想怎么改，比如「线宽统一成 0.75 pt」",
     "draftLoading": "正在载入草稿…",
     "placeholderNoPanel": "先选中一张可编辑的图",
     "probing": "正在查找本机 CLI…",
@@ -837,6 +840,27 @@
     }
   },
   "changePlan": {
+    "vector": {
+      "kind": { "text": "文字", "arrow": "箭头", "shape": "形状", "path": "路径", "object": "对象" },
+      "named": "{{kind}}「{{name}}」",
+      "deleted": "删除{{subject}}",
+      "added": "新增{{subject}}",
+      "replaced": "{{subject}}换成了新的",
+      "on": "开",
+      "off": "关",
+      "none": "无",
+      "style": "样式",
+      "z": "层级",
+      "toPath": "转为路径",
+      "nodes": "锚点 {{from}} → {{to}} 个",
+      "geom": { "pos": "位置", "size": "大小", "rot": "旋转" },
+      "field": {
+        "strokePt": "线宽", "sizePt": "字号", "color": "颜色", "fill": "填充", "bg": "底色", "borderColor": "边框颜色", "borderPt": "边框粗细",
+        "bold": "粗体", "italic": "斜体", "underline": "下划线", "text": "文字", "align": "对齐", "fontFamily": "字体", "lineHeight": "行距",
+        "strokeOpacity": "描边不透明度", "fillOpacity": "填充不透明度", "dash": "虚线", "cornerRadius": "圆角", "locked": "锁定", "hidden": "隐藏",
+        "name": "名称", "stroke": "描边", "lineCap": "线端", "lineJoin": "拐角", "padding": "内边距"
+      }
+    },
     "reviewNote": {
       "title_other": "审阅意见 · {{count}} 条",
       "open": "看意见 ›"
@@ -908,7 +932,13 @@
       "overreachChanged": "生成期间你的脚本被改过（可能是你保存的，也可能是 Agent 直接改的），没有自动还原。改前后的版本都已备份。",
       "restoreScript": "恢复到开始前的版本",
       "keepCurrent": "保留现在的版本",
-      "restoreFailed": "脚本又被改过了，没有恢复"
+      "restoreFailed": "脚本又被改过了，没有恢复",
+      "summaryVector_other": "改了 {{count}} 个对象",
+      "summaryVectorRest_other": "改了 {{count}} 个对象，另有 {{rest}} 条没改",
+      "summaryVectorChecks_other": "改了 {{count}} 个对象，{{fails}} 处核对没过",
+      "appliedVector_other": "已应用 · 改了 {{count}} 个对象",
+      "generatingVector": "正在改选中的对象…",
+      "vectorKernel": "这台电脑上缺一个组件，合并、偏移、轮廓化这类改动做不了，图没有改动"
     },
     "dialog": {
       "title": "修改方案",
@@ -964,7 +994,10 @@
       "stageFigure": "对比图",
       "stageScript": "脚本改动",
       "scriptMeta": "脚本改动 · +{{added}} −{{removed}}",
-      "scriptBackupNote": "点应用才会写入，写入前先备份"
+      "scriptBackupNote": "点应用才会写入，写入前先备份",
+      "vectorHeading_other": "改动 · {{count}} 个对象",
+      "vectorN_other": "改了 {{count}} 个对象",
+      "vectorChecks_other": "有 {{count}} 处核对没过，应用前看看对比图"
     },
     "unhandled": {
       "needs_script": "要改脚本，这次没动",
@@ -981,7 +1014,18 @@
       "not_addressed": "这条没有处理到",
       "merged_log": "范围并进了改对数轴那一条",
       "unclearAssistant": "指令不够具体，这次没动",
-      "log_limit_declined": "对数轴下限没改，这次没动"
+      "log_limit_declined": "对数轴下限没改，这次没动",
+      "vector": {
+        "bad_op": "这一条的写法不对，这次没动",
+        "unknown_object": "找不到对应的对象，这次没动",
+        "not_vector": "这个不是能直接改的对象，这次没动",
+        "bad_field": "这类对象没有这一项，这次没动",
+        "bad_value": "给出的值不可用，这次没动",
+        "out_of_range": "值超出范围，这次没动",
+        "duplicate_target": "同一个对象被改了两次，这次没动",
+        "kernel_unavailable": "这台电脑上缺一个组件，这类改动做不了，这次没动",
+        "too_many_steps": "一次最多改 {{max}} 步，其余 {{count}} 步这次没动"
+      }
     },
     "draft": {
       "thisOne": "这一处",

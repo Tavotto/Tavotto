@@ -6,6 +6,7 @@ export default interface Resources {
         "appliedAssistant": "已应用 · 改了 {{places}}",
         "appliedLayout_other": "已应用 · {{count}} 张图重新排了版",
         "appliedScript": "已应用 · 脚本已修改",
+        "appliedVector_other": "已应用 · 改了 {{count}} 个对象",
         "applied_other": "已应用 · {{count}} 条意见已处理",
         "applyFailed": "没能应用，图没有改动",
         "applyFailedScript": "没能应用，脚本没有改动",
@@ -25,6 +26,7 @@ export default interface Resources {
         "emptyAssistant": "这条没法直接改图，图没有改动",
         "generatingAny": "正在按意见修改…",
         "generatingAssistant": "正在按你的话修改…",
+        "generatingVector": "正在改选中的对象…",
         "generating_other": "正在按 {{count}} 条意见修改…",
         "handoff": "这条要改脚本，交给 Agent 改。",
         "holdBefore": "按住看修改前",
@@ -61,6 +63,9 @@ export default interface Resources {
         "summaryNotes": "按 {{notes}}又改了 {{places}}",
         "summaryOther": "按 {{done}}改了 {{places}}，{{rest}} 条没法直接改",
         "summaryScript": "改了脚本：+{{added}} −{{removed}}，应用前不会动你的脚本",
+        "summaryVectorChecks_other": "改了 {{count}} 个对象，{{fails}} 处核对没过",
+        "summaryVectorRest_other": "改了 {{count}} 个对象，另有 {{rest}} 条没改",
+        "summaryVector_other": "改了 {{count}} 个对象",
         "summary_other": "按 {{done}}改了 {{places}}，{{count}} 条要改脚本",
         "thinking": "想一想…",
         "thumbAlt": "修改后的图",
@@ -68,6 +73,7 @@ export default interface Resources {
         "undo": "撤销",
         "undoFailed": "图在应用之后又改过，没有替你撤回",
         "undoFailedScript": "脚本在应用之后又改过，没有替你撤销",
+        "vectorKernel": "这台电脑上缺一个组件，合并、偏移、轮廓化这类改动做不了，图没有改动",
         "version": "第 {{n}} 版",
         "view": "查看"
       },
@@ -123,6 +129,9 @@ export default interface Resources {
         "stageScript": "脚本改动",
         "title": "修改方案",
         "toggle": "切换",
+        "vectorChecks_other": "有 {{count}} 处核对没过，应用前看看对比图",
+        "vectorHeading_other": "改动 · {{count}} 个对象",
+        "vectorN_other": "改了 {{count}} 个对象",
         "versionLabel": "方案版本",
         "versionN": "第 {{n}} 版",
         "writeNote": "写批注"
@@ -184,7 +193,70 @@ export default interface Resources {
         "over_limit": "改动太多，这条没动",
         "unclear": "意见不够具体，这次没动",
         "unclearAssistant": "指令不够具体，这次没动",
-        "unknown_element": "找不到对应的元素，这次没动"
+        "unknown_element": "找不到对应的元素，这次没动",
+        "vector": {
+          "bad_field": "这类对象没有这一项，这次没动",
+          "bad_op": "这一条的写法不对，这次没动",
+          "bad_value": "给出的值不可用，这次没动",
+          "duplicate_target": "同一个对象被改了两次，这次没动",
+          "kernel_unavailable": "这台电脑上缺一个组件，这类改动做不了，这次没动",
+          "not_vector": "这个不是能直接改的对象，这次没动",
+          "out_of_range": "值超出范围，这次没动",
+          "too_many_steps": "一次最多改 {{max}} 步，其余 {{count}} 步这次没动",
+          "unknown_object": "找不到对应的对象，这次没动"
+        }
+      },
+      "vector": {
+        "added": "新增{{subject}}",
+        "deleted": "删除{{subject}}",
+        "field": {
+          "align": "对齐",
+          "bg": "底色",
+          "bold": "粗体",
+          "borderColor": "边框颜色",
+          "borderPt": "边框粗细",
+          "color": "颜色",
+          "cornerRadius": "圆角",
+          "dash": "虚线",
+          "fill": "填充",
+          "fillOpacity": "填充不透明度",
+          "fontFamily": "字体",
+          "hidden": "隐藏",
+          "italic": "斜体",
+          "lineCap": "线端",
+          "lineHeight": "行距",
+          "lineJoin": "拐角",
+          "locked": "锁定",
+          "name": "名称",
+          "padding": "内边距",
+          "sizePt": "字号",
+          "stroke": "描边",
+          "strokeOpacity": "描边不透明度",
+          "strokePt": "线宽",
+          "text": "文字",
+          "underline": "下划线"
+        },
+        "geom": {
+          "pos": "位置",
+          "rot": "旋转",
+          "size": "大小"
+        },
+        "kind": {
+          "arrow": "箭头",
+          "object": "对象",
+          "path": "路径",
+          "shape": "形状",
+          "text": "文字"
+        },
+        "named": "{{kind}}「{{name}}」",
+        "nodes": "锚点 {{from}} → {{to}} 个",
+        "none": "无",
+        "off": "关",
+        "on": "开",
+        "replaced": "{{subject}}换成了新的",
+        "style": "样式",
+        "toPath": "转为路径",
+        "z": "层级"
       }
     },
     "chip": {
@@ -730,7 +802,10 @@ export default interface Resources {
       "taskHistory": "任务历史",
       "unconfirmedBody": "这条指令可能已经在执行，先查询结果。",
       "unconfirmedGoneBody": "发起这条指令的图已不在画布上，仍可查询结果。",
-      "unconfirmedTitle": "已发出，尚未收到确认"
+      "unconfirmedTitle": "已发出，尚未收到确认",
+      "vectorEmptyHint": "说说想怎么改，比如「线宽统一成 0.75 pt」",
+      "vectorEmptyTitle_other": "选中了 {{count}} 个对象",
+      "vectorPlaceholder_other": "想怎么改选中的 {{count}} 个对象？"
     },
     "process": {
       "thought": "已思考 {{duration}}",

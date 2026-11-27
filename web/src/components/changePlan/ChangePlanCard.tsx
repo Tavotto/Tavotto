@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { DATA_DECLINED, canUndoApplied, declinedGroups, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, canUndoApplied, declinedGroups, isCanvasPlan, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
@@ -71,13 +71,13 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const canUndo = status === 'applied' && (script ? !!plan?.applied && !entry.scriptBusy : !!panel && canUndoApplied(entry, panel.overrides))
   // 分量：待处理（生成中 / 待确认 / 图已改过）是完整卡面 + 微投影；已应用沉到次级卡面；已放弃再降一档、预览区收矮
   const pending = generating || status === 'ready' || status === 'stale'
-  const busyText = entry.revising !== undefined ? cp('card.revising') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')
+  const busyText = entry.revising !== undefined ? cp('card.revising') : entry.kind === 'vector' ? cp('card.generatingVector') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')
   // 生成中的三步清单（一键排版的整版卡没有阶段，照旧一句话）
   const steps = generating ? planSteps(entry) : null
   // 有三步清单的卡（生成中 / 刚出好待确认）正文区同高
   const activeStep = steps?.find((x) => x.state === 'active')?.id
   const plotStage: PlotStage = activeStep === 'before' ? 'read' : activeStep === 'after' ? 'draw' : 'think'
-  const freshFlow = !!steps || (status === 'ready' && entry.kind !== 'layout')
+  const freshFlow = !!steps || (status === 'ready' && !isCanvasPlan(entry))
 
   return (
     <Card
@@ -143,6 +143,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 ? cp('card.appliedScript')
                 : entry.kind === 'layout'
                 ? cp('card.appliedLayout', { count: entry.layout?.count ?? 0 })
+                : entry.kind === 'vector'
+                  ? cp('card.appliedVector', { count: entry.vector?.count ?? 0 })
                 : entry.from === 'assistant'
                   ? cp('card.appliedAssistant', { places: placesPhrase(planTally(entry).places) })
                   : cp('card.applied', { count: handled })
@@ -183,9 +185,12 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
             )}
             {status === 'ready' && !ask && (
               <>
-                <Button variant={primary} size="md" className={btn} onClick={() => store().openDialog(entry.key)} data-change-plan-view>
-                  {cp('card.view')}
-                </Button>
+                {/* 对比图没出来（整版预览失败）时没有可看的：只留「直接应用」 */}
+                {!!entry.afterSrc && (
+                  <Button variant={primary} size="md" className={btn} onClick={() => store().openDialog(entry.key)} data-change-plan-view>
+                    {cp('card.view')}
+                  </Button>
+                )}
                 <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} disabled={entry.scriptBusy} data-change-plan-apply>
                   {cp('card.applyNow')}
                 </Button>
@@ -235,7 +240,7 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
   }
   // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
   // 审阅来源：没有一条能落成图内修改、但有「要改脚本」的意见时，同样给这条路（只由用户点，不自动续走）
-  const scriptWay = code !== DATA_DECLINED && (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
+  const scriptWay = code !== DATA_DECLINED && entry.kind !== 'vector' && (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">
@@ -256,7 +261,7 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
             {un.map((u) => (
               <li key={u.id} className="flex flex-col" data-change-plan-unhandled={u.id}>
                 <span className="truncate text-sm text-ink-3">{u.text}</span>
-                <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>
+                {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
               </li>
             ))}
           </ul>

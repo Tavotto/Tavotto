@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { isCanvasPlan, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { IconSlot } from '@/components/ui/Icon'
 import { ThinkingOrb } from '@/components/ui/ThinkingOrb'
@@ -23,14 +23,14 @@ export function usePanelPlanEntries(panelId: string | undefined): PlanEntry[] {
     () =>
       order
         .map((k) => entries[k])
-        .filter((e) => e && (e.kind === 'layout' ? e.documentId === documentId && e.loadSeq === loadSeq && e.canvasId === canvasId : !!panelId && e.panelId === panelId)),
+        .filter((e) => e && (isCanvasPlan(e) ? e.documentId === documentId && e.loadSeq === loadSeq && e.canvasId === canvasId : !!panelId && e.panelId === panelId)),
     [order, entries, panelId, documentId, loadSeq, canvasId],
   )
 }
 
 /** 最新一张**待确认**的方案卡（它的「查看」实心，旧的降次级） */
 export function useLatestReadyKey(mine: PlanEntry[], panelId: string): string | undefined {
-  const panel = usePlanPanel(mine.find((e) => e.kind !== 'layout') ?? { panelId, documentId: '', loadSeq: 0, canvasId: '' })
+  const panel = usePlanPanel(mine.find((e) => !isCanvasPlan(e)) ?? { panelId, documentId: '', loadSeq: 0, canvasId: '' })
   const source = usePlanSource(panel)
   useDocumentStore((s) => s.past.at(-1))
   useDocumentStore((s) => s.future.at(-1))

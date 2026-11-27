@@ -101,8 +101,8 @@ export function sameSource(a: PlanSource, b: PlanSource): boolean {
 /** 卡片 / 弹窗 / 应用判据共用的状态来源（`PlanEntry` 的结构子集，免得 lib 反过来依赖 store） */
 export interface PlanStatusInput {
   status: 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff'
-  /** 'layout' = 一键排版的整版方案：不挂在某张图上，基线由应用那一刻的 `layout.apply` 自己核 */
-  kind?: 'figure' | 'layout'
+  /** 'layout' = 一键排版的整版方案、'vector' = 改图助手改画布矢量对象的方案：不挂在某张图上，基线由应用那一刻的 handle 自己核 */
+  kind?: 'figure' | 'layout' | 'vector'
   plan?: { base_patches: readonly unknown[]; base?: { target: string }; kind?: 'script' }
   appliedPatches?: readonly unknown[]
   /** 应用那一次 commit 的历史条目（一键排版卡用它从文档历史派生状态） */
@@ -124,6 +124,8 @@ export function effectiveStatus(
   history?: { past: readonly unknown[]; future: readonly unknown[] },
 ): PlanStatusInput['status'] {
   if ((e.status !== 'ready' && e.status !== 'applied') || !e.plan) return e.status
+  // 矢量编辑方案按对象状态判（`changePlanModel.effectiveStatus`，历史条目会被之后的回写换掉）：这里原样
+  if (e.kind === 'vector') return e.status
   if (e.kind === 'layout') {
     // 与审阅卡一样以文档为准：应用那次 commit 还在历史里 = 已应用；⌘Z 撤回了（在重做栈里）= 又是待确认，可再查看 / 应用；
     // 两处都不在（撤回后又改了别的）= 图已改过。从没应用过的待确认卡由 `layout.apply` 应用那一刻自己核基线
