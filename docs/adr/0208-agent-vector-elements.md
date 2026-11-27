@@ -249,8 +249,8 @@ SVG 导入后在 Tavotto 里是原生的 `path` / `text`（不是图片），**�
 （文档组 = `ir.Group(semantic=True)`，PDF / EPS / 位图仍用旧页、逐字节不变）；`svgwriter.xml_id` 写名字（合法名含中文原样、空格 `_`、不合法字符 `_xHHHH_`、重名序号）；
 剪切组蒙版挂在组上只写一次；一个文字对象一个 `<text>`；第一个字体族写真实字体（中文按平台）。落地时定下的几处细节：
 - 组成员在 z 序里不连续时拆成几段 `<g>`（绘制顺序不挪），与图层树把它们并成一个组的显示不同；
-- 文档里的组目前**没有名字**（只有对象有 `name`）：载荷接 `group_names`，但文档模型与 Agent 的 `_mint` 还没存它，组的 `<g>` 暂不写 `id`；
-- 导出的 `id` 可以是中文，所以读我们自己写出的 SVG 的口子（写入器封口、产物检视、`svgimport`、`svgasset`、`svgir`）显式用 `svgcheck.parse_svg(unicode_ids=True)`，缺省仍只认 ASCII id；放宽的只是 `id` 属性本身，指向中文 id 的引用仍结构化失败（0189「安全规则一条不放」的口径：DTD / 实体 / 脚本 / 事件 / 外链 / 预算一字未动，**这一处是否接受要维护者点头，不接受就撤回 `svgimport` / `svgasset` / `svgir` 三处传参**）；
+- 文档里的组目前**没有名字**（只有对象有 `name`）：载荷接 `group_names`，但文档模型与 Agent 的 `_mint` 还没存它，组的 `<g>` 暂不写 `id`。组名：本期导出侧已支持，文档模型里组尚无名字，留待机理图前单独一期；
+- 导出的 `id` 可以是中文，所以 `svgcheck.parse_svg` 加了默认关的 `unicode_ids`，下列口子显式打开：写入器封口、产物检视、`svgimport`、`svgasset`、`svgir`。**注意：`svgimport` / `svgasset` 也读用户从外面拿来的任何 SVG，所以这次放宽实际作用于所有导入，不只自家产物**。放宽的只是 `id` 属性本身，指向中文 id 的引用仍结构化失败，DTD / 实体 / 脚本 / 事件 / 外链 / 预算一字未动。**待维护者定**（0189「安全规则一条不放」）；不接受就撤回 `svgimport` / `svgasset` / `svgir` 三处传参，代价是自家导出的中文 id SVG 导不回来。（ADR 0189 修订草稿：「id 属性认 Unicode 的 XML 名字；引用语法不变」。）
 - 中文系统字体名（macOS `Heiti SC` / `Songti SC`，Windows `Microsoft YaHei` / `SimSun`）与 `_xHHHH_` 写法 Illustrator 里能否对上**未实测**，探针结果出来前不当结论。
 
 **验收**：
