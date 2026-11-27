@@ -29,7 +29,7 @@ ggplot_bar_target <- function(layout, draw, fixed) {
   visible_alpha <- visible_alpha[visible_alpha > 0]
   if (!length(visible_alpha)) return(NULL)
   span <- ggplot_bar_span(layout, draw$panel_id, draw$rows, rect, names(ggplot_axis_modes))
-  size <- if (is.null(span)) list() else stats::setNames(list(span$width), span$prop)
+  size <- if (is.null(span$width)) list() else stats::setNames(list(span$width), span$prop)
   fields <- if (fixed && !is.null(face) && !is.null(edge)) {
     c(list(
       facecolor = face$rgb,
@@ -37,8 +37,8 @@ ggplot_bar_target <- function(layout, draw, fixed) {
       linewidth = if (outline) width
     ), size, list(alpha = if (length(visible_alpha) == 1L) visible_alpha))
   } else if (isTRUE(span$uniform)) size
-  if (!length(fields)) return(NULL)
   fields <- Filter(Negate(is.null), fields)
+  if (!length(fields) && is.null(span)) return(NULL)
   list(
     slot = draw$slot, child = draw$child, panel_id = draw$panel_id, facet = draw$facet, count = count,
     face = face, edge = edge, outline = outline, values = fields, span = span,
@@ -47,7 +47,7 @@ ggplot_bar_target <- function(layout, draw, fixed) {
 }
 
 ggplot_bar_group_targets <- function(target, groups, parent_gid) {
-  if (is.null(groups) || is.null(target$span) || !isTRUE(target$span$uniform)) return(list())
+  if (is.null(groups) || is.null(target$span)) return(list())
   membership <- groups$membership[[as.character(target$panel_id)]]
   if (length(membership) != target$count) return(list())
   indices <- split(seq_len(target$count), membership)
@@ -57,10 +57,13 @@ ggplot_bar_group_targets <- function(target, groups, parent_gid) {
   for (index in as.integer(names(indices))) {
     part <- target
     rows <- indices[[as.character(index)]]
-    part$group <- list(rows = rows, label = groups$labels[[index]], parent = parent_gid)
+    width <- ggplot_common_bar_width(target$span$widths[rows])
+    if (is.null(width)) next
+    part$group <- list(rows = rows, label = groups$labels[[index]], parent = parent_gid,
+                       value = as.character(groups$keys[[index]]))
     part$span$centre <- target$span$centre[rows]
     part$span$rows <- rows
-    part$values <- target$values[prop]
+    part$values <- stats::setNames(list(width), prop)
     part$context <- rlang::hash(list(target$context, groups$keys[[index]], rows))
     result[[paste0(parent_gid, ".group.", index)]] <- part
   }
@@ -89,10 +92,11 @@ ggplot_bar_targets <- function(built, panels, layer_grobs, maps) {
       if (!panels$single) context <- c(context, list(draw$facet))
       target$index <- index
       target$context <- rlang::hash(context)
+      subgroups <- ggplot_bar_group_targets(target, groups, gid)
+      if (!length(target$values) && !length(subgroups)) next
       target$precise <- target$count <= remaining_paths
       if (target$precise) remaining_paths <- remaining_paths - target$count
       targets[[gid]] <- target
-      subgroups <- ggplot_bar_group_targets(target, groups, gid)
       for (part_gid in names(subgroups)) {
         part <- subgroups[[part_gid]]
         part_count <- length(part$group$rows)
@@ -250,7 +254,16 @@ measure_ggplot_bars <- function(table, targets, frame_pt, retain_clipped = FALSE
 
 ggplot_bar_source_plan <- function(state, target, edit, edits) {
   paint <- c("facecolor", "edgecolor", "alpha", "linewidth")
-  if (!length(edit) || !is.null(target$group) || !all(names(edit) %in% c(paint, target$span$prop))) return(NULL)
+  if (!length(edit) || !all(names(edit) %in% c(paint, target$span$prop))) return(NULL)
+  if (!is.null(target$group)) {
+    changed <- state$bar_targets[intersect(names(state$bar_targets), names(edits))]
+    if (!identical(names(edit), target$span$prop) || any(vapply(changed, function(other) {
+      identical(other$index, target$index) && is.null(other$group)
+    }, logical(1L)))) return(NULL)
+    geometry <- list(kind = "bars", facet = target$facet, values = edit,
+                     category = list(value = target$group$value))
+    return(ggplot_fixed_layer_source(state, target, edit, NULL, geometry))
+  }
   if (ggplot_layer_has_group_edits(state$bar_targets, target$index, edits)) return(NULL)
   values <- ggplot_bar_values(target, edit)
   aesthetics <- edit[intersect("alpha", names(edit))]

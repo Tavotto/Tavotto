@@ -384,6 +384,8 @@ class GgplotTarget:
     @staticmethod
     def annotate_bar_series(element: dict, series: dict) -> None:
         def bar_fields(values: dict) -> list[dict]:
+            if not values:
+                return []
             fields = bar_paint_fields(values)
             if "bar_width" in values:
                 fields.append(bar_width_field(values["bar_width"]))

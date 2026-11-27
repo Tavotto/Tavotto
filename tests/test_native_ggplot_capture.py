@@ -1243,9 +1243,13 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         "bar-col-missing-facet",
         "bar-count",
         "bar-dodged-horizontal",
+        "bar-mapped-facets",
+        "bar-mapped-horizontal",
         "interval-facets",
         "interval-local",
         "interval-horizontal",
+        "interval-mapped-facets",
+        "interval-mapped-single",
         "bar-interval-stack",
     ],
 )
@@ -1267,7 +1271,17 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
     curve = scope.startswith(("line-", "path-"))
     bars = scope.startswith("bar-")
     interval = scope.startswith("interval-")
-    faceted = scope not in ("single", "path-single", "line-legend", "line-legend-local")
+    mapped_interval = scope.startswith("interval-mapped-")
+    mapped_bars = scope.startswith("bar-mapped-")
+    mapped_geometry = mapped_interval or mapped_bars
+    horizontal_bars = scope in ("bar-dodged-horizontal", "bar-mapped-horizontal")
+    faceted = scope not in (
+        "single",
+        "path-single",
+        "line-legend",
+        "line-legend-local",
+        "interval-mapped-single",
+    )
     if faceted:
         original = original.replace(
             b'ggplot2::labs(title = "Point evidence")',
@@ -1317,6 +1331,22 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                 b'geom_col(width = .8, position = "dodge2", orientation = "y", colour = "#287F6E")'
             )
         original = original.replace(b'geom_point(size = 2, colour = "#287F6E")', geom)
+        if mapped_bars:
+            original = original.replace(
+                b"d$y <- 2 + d$x + as.integer(d$panel)",
+                b'd <- merge(d, data.frame(kind = c("First", "Second")))\n'
+                b"d$y <- 2 + d$x + as.integer(d$panel) + as.integer(factor(d$kind))",
+            )
+            aesthetics = (
+                b"aes(y, factor(x), fill = kind)" if horizontal_bars else b"aes(x, y, fill = kind)"
+            )
+            original = original.replace(b"aes(x, y, colour = x)", aesthetics)
+            orientation = b', orientation = "y"' if horizontal_bars else b""
+            original = original.replace(
+                geom,
+                b'geom_col(width = .8, position = "dodge2"' + orientation + b") + "
+                b'ggplot2::scale_fill_manual(values = c("#287F6E", "#287F6E"))',
+            )
         if scope == "bar-interval-stack":
             original = original.replace(
                 geom,
@@ -1324,7 +1354,19 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                 b'width=.35, colour="#6F1735", linewidth=.7)',
             )
     if interval:
-        if scope == "interval-horizontal":
+        if mapped_interval:
+            original = original.replace(
+                b"d$y <- 2 + d$x + as.integer(d$panel)",
+                b'd <- merge(d, data.frame(kind = c("First", "Second")))\n'
+                b"d$y <- 2 + d$x + as.integer(d$panel) + as.integer(factor(d$kind))",
+            )
+            original = original.replace(b"aes(x, y, colour = x)", b"aes(x, y, colour = kind)")
+            geom = (
+                b"geom_errorbar(ggplot2::aes(ymin = y - .3, ymax = y + .4), "
+                b"width = .35, position = ggplot2::position_dodge(.6)) + "
+                b'ggplot2::scale_colour_manual(values = c("#287F6E", "#287F6E"))'
+            )
+        elif scope == "interval-horizontal":
             original = original.replace(b"aes(x, y, colour = x)", b"aes(y, x)")
             geom = (
                 b"geom_errorbar(ggplot2::aes(xmin = y - .3, xmax = y + .4), "
@@ -1347,9 +1389,17 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         targets = [
             gid
             for gid, element in elements.items()
-            if element["role"] == role and ".group." not in gid
+            if element["role"] == role and ((".group." in gid) == mapped_geometry)
         ]
-        assert len(targets) == (4 if scope == "two-layers" else 2 if faceted else 1)
+        assert len(targets) == (
+            4 if scope == "two-layers" else (2 if faceted else 1) * (2 if mapped_geometry else 1)
+        )
+        if mapped_geometry:
+            targets = targets[-2:]
+            assert [elements[gid]["label"].split(" · ")[-1] for gid in targets] == [
+                "First",
+                "Second",
+            ]
         if scope in (
             "one-facet",
             "line-one-facet",
@@ -1370,8 +1420,12 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                 "alpha": 0.65,
                 "bar_width": 0.41,
             }
-            if scope == "bar-dodged-horizontal":
+            if horizontal_bars:
                 edits = {"bar_thickness": 0.25}
+            elif mapped_bars:
+                edits = {"bar_width": 0.25}
+        elif mapped_interval:
+            edits = {"capsize": 8, "cap_thickness": 2.1}
         elif interval:
             edits = {
                 "linewidth": 1.35,
@@ -1393,9 +1447,9 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             for gid in targets
             for prop, value in edits.items()
         ]
-        if scope == "bar-dodged-horizontal":
+        if scope == "bar-dodged-horizontal" or mapped_bars:
             patches[0]["value"] = 0.32
-        if scope == "interval-horizontal":
+        if scope == "interval-horizontal" or mapped_interval:
             next(patch for patch in patches if patch["prop"] == "capsize")["value"] = 0
         if scope == "different-facets":
             next(patch for patch in patches if patch["prop"] == "size")["value"] = 81
@@ -1490,6 +1544,8 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         authored = source.read_bytes()
         if scope == "bar-col-missing-facet":
             assert b'facet = list("panel" = NA_character_)' in authored
+        if mapped_geometry:
+            assert b'category = "First"' in authored and b'category = "Second"' in authored
         assert (b"plot$layers[[1L]]" in authored) == (not expected_residual or bars or interval)
         assert (b"plot$layers[[2L]]" in authored) == (
             scope in ("two-layers", "mixed-layers", "bar-interval-stack")
@@ -1506,12 +1562,12 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             assert replayed["warnings"] == []
             assert replayed["svg"] == hot["svg"]
             if bars:
-                size_prop = "bar_thickness" if scope == "bar-dodged-horizontal" else "bar_width"
+                size_prop = "bar_thickness" if horizontal_bars else "bar_width"
                 after_elements = {e["gid"]: e for e in replayed["manifest"]["elements"]}
                 expected_widths = {
                     gid: next(f["value"] for f in element["editable"] if f["prop"] == size_prop)
                     for gid, element in elements.items()
-                    if element["role"] == role and ".group." not in gid
+                    if element["role"] == role and ((".group." in gid) == mapped_bars)
                 }
                 expected_widths.update(
                     (patch["gid"], patch["value"])

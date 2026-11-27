@@ -1,33 +1,47 @@
-# Apply the same draw-time recipe to the named facet in a standalone R script.
-ggplot_facet_geometry <- function(recipes, row) {
-  for (recipe in recipes) {
+# Apply the same draw-time recipe to named facets or categories in standalone R.
+ggplot_facet_geometry <- function(recipes, row, categories) {
+  local <- Filter(function(recipe) {
     facet <- recipe$facet
-    if (!length(facet) ||
-        (all(names(facet) %in% names(row)) && identical(lapply(row[names(facet)], as.character), facet))) {
-      return(recipe$values)
+    !length(facet) || (all(names(facet) %in% names(row)) &&
+      identical(lapply(row[names(facet)], as.character), facet))
+  }, recipes)
+  if (!length(local)) return(NULL)
+  if (is.null(categories)) return(local[[1L]]$values)
+  values <- list()
+  for (recipe in local) {
+    key <- recipe$category
+    rows <- if (is.na(key)) which(is.na(categories)) else which(categories == key)
+    if (!length(rows)) next
+    for (property in names(recipe$values)) {
+      if (is.null(values[[property]])) values[[property]] <- rep(NA_real_, length(categories))
+      values[[property]][rows] <- recipe$values[[property]]
     }
   }
-  NULL
+  if (length(values)) values
 }
 
-ggplot_set_layer_geometry <- function(layer, recipes, apply) {
+ggplot_set_layer_geometry <- function(layer, recipes, apply, lookup = NULL) {
   force(layer)
   force(recipes)
   force(apply)
+  force(lookup)
   ggplot2::ggproto(NULL, layer, draw_geom = function(self, data, layout) {
     members <- ggplot2::ggproto_parent(layer, self)$draw_geom(data, layout)
     if (!nrow(data) || all(vapply(members, function(g) inherits(g, "zeroGrob"), logical(1L)))) {
       return(members)
     }
-    groups <- if (is.null(names(members))) list(data) else split(data, data$PANEL)
+    categories <- if (!is.null(lookup)) lookup(data)
+    positions <- seq_len(nrow(data))
+    groups <- if (is.null(names(members))) list(positions) else split(positions, data$PANEL)
     if (length(groups) != length(members) || !identical(names(groups), names(members))) {
       stop("Tavotto could not match the R layer facets.")
     }
-    Map(function(grob, rows) {
+    Map(function(grob, positions) {
       if (inherits(grob, "zeroGrob")) return(grob)
+      rows <- data[positions, , drop = FALSE]
       panel_id <- as.integer(as.character(rows$PANEL[[1L]]))
       cell <- layout$layout[as.integer(as.character(layout$layout$PANEL)) == panel_id, , drop = FALSE]
-      values <- ggplot_facet_geometry(recipes, cell)
+      values <- ggplot_facet_geometry(recipes, cell, categories[positions])
       if (is.null(values)) return(grob)
       apply(grob, rows, layout, panel_id, values)
     }, members, groups)

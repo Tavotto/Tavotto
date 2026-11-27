@@ -245,6 +245,15 @@ def _native_layer_geometry(source: dict) -> dict | None:
         )
     ):
         return None
+    if "category" in recipe:
+        category = recipe["category"]
+        if (
+            not isinstance(category, dict)
+            or set(category) != {"value"}
+            or not (category["value"] is None or isinstance(category["value"], str))
+            or not _r_literal(category["value"])
+        ):
+            return None
     for prop, value in values.items():
         if (
             type(value) not in (float, int)
@@ -311,21 +320,28 @@ def _native_layer_writes(
         geometries = {gid: p["geometry"] for gid, p in panels.items() if p["geometry"]}
         recipes = []
         kind = None
+        categorical = False
         if geometries:
             first = next(iter(geometries.values()))
             kind = first["kind"]
-            if len(geometries) == plan["panels"] and all(
-                g["values"] == first["values"] for g in geometries.values()
-            ):
-                recipes = [{"facet": None, "values": first["values"]}]
-            elif all(g["facet"] for g in geometries.values()):
+            selections = {"category" in recipe for recipe in geometries.values()}
+            if selections == {True}:
+                categorical = True
                 recipes = list(geometries.values())
+            elif selections == {False}:
+                if len(geometries) == plan["panels"] and all(
+                    g["values"] == first["values"] for g in geometries.values()
+                ):
+                    recipes = [{"facet": None, "values": first["values"]}]
+                elif all(g["facet"] for g in geometries.values()):
+                    recipes = list(geometries.values())
         if aesthetics or recipes:
             plans[index] = {
                 "geom": plan["geom"],
                 "aesthetics": aesthetics,
                 "kind": kind,
                 "recipes": recipes,
+                "categorical": categorical,
             }
             if recipes:
                 written.update((gid, prop) for gid, g in geometries.items() for prop in g["values"])
@@ -350,7 +366,12 @@ def _r_geometry_recipes(recipes: list[dict]) -> str:
         values = ", ".join(
             f"{prop} = {_r_literal(value)}" for prop, value in recipe["values"].items()
         )
-        entries.append(f"list(facet = {facet}, values = list({values}))")
+        category = (
+            f", category = {_r_literal(recipe['category']['value'])}"
+            if "category" in recipe
+            else ""
+        )
+        entries.append(f"list(facet = {facet}, values = list({values}){category})")
     return "list(" + ", ".join(entries) + ")"
 
 
@@ -358,6 +379,7 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     edits = []
     shared = []
     sources = set()
+    observe = any(plan["categorical"] for plan in layers.values())
     for index, plan in sorted(layers.items()):
         values = plan["aesthetics"]
         kind = json.dumps(plan["geom"])
@@ -368,21 +390,32 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
             _, resource, adjust = _GEOMETRY_IMPLEMENTATIONS[plan["kind"]]
             sources.add(resource)
             geometry = f", {_r_geometry_recipes(recipes)}, {adjust}"
+            if plan["categorical"]:
+                channel = "fill" if plan["kind"] == "bars" else "colour"
+                geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'
         edits.append(f"  {slot} <- styled_layer({slot}, {kind}, list({params}){geometry})")
+    observe_plot = ()
+    if observe:
+        sources.add("ggplot_aesthetic_observation.R")
+        observe_plot = (
+            "  capture <- new.env(parent = emptyenv())",
+            "  plot <- ggplot_observe_colour_maps(plot, capture)",
+        )
     decorate = ()
     if sources:
         for resource in ("ggplot_layer_geometry.R", *sorted(sources)):
             text = nativeggplot.GGPLOT_BRIDGE.with_name(resource).read_text(encoding="utf-8")
             shared.extend(f"  {line}" if line else "" for line in text.splitlines())
         decorate = (
-            "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust)",
+            "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust, lookup)",
         )
     # ggproto resolves its parent lazily. Each call must bind its own layer.
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
             *shared,
-            "  styled_layer <- function(layer, kind, values, recipes = NULL, adjust = NULL) {",
+            *observe_plot,
+            "  styled_layer <- function(layer, kind, values, recipes = NULL, adjust = NULL, lookup = NULL) {",
             '    if (!identical(class(layer$geom)[[1L]], kind)) stop("Tavotto style layer changed.")',
             "    aesthetics <- utils::modifyList(layer$aes_params, values)",
             "    force(layer)",

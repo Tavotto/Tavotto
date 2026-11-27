@@ -1234,6 +1234,7 @@ ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, ma
                               if (is_positive_ggplot_number(stored)) stored
                             },
                             cap_label = groups$labels[[key]], clip = identical(layout$coord$clip, "on"),
+                            category = list(value = as.character(groups$keys[[key]])),
                             context = context)
     }
   }
@@ -1512,7 +1513,12 @@ ggplot_line_source_plan <- function(state, target, patch, edits) {
 }
 
 ggplot_errorbar_source_plan <- function(state, target, patch) {
-  if (!length(patch) || !is.null(target$cap_rows)) return(NULL)
+  if (!length(patch)) return(NULL)
+  if (!is.null(target$cap_rows)) {
+    if (!all(names(patch) %in% c("capsize", "cap_thickness"))) return(NULL)
+    geometry <- list(kind = "caps", facet = target$facet, values = patch, category = target$category)
+    return(ggplot_fixed_layer_source(state, target, patch, NULL, geometry))
+  }
   style <- ggplot_line_style(target, patch)
   aesthetics <- patch[intersect("alpha", names(patch))]
   if (!is.null(style$lwd)) aesthetics$linewidth <- style$lwd / ggplot2::.pt

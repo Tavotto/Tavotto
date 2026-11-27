@@ -8,7 +8,8 @@ ggplot_adapter <- function(path) {
   adapter <- new.env(parent = baseenv())
   sys.source(path, envir = adapter)
   native <- dirname(path)
-  for (resource in c("ggplot_colour_mapping.R", "ggplot_colour_scale.R", "ggplot_points.R",
+  for (resource in c("ggplot_aesthetic_observation.R", "ggplot_colour_mapping.R", "ggplot_colour_scale.R",
+                     "ggplot_points.R",
                      "ggplot_bar_geometry.R", "ggplot_interval_geometry.R", "ggplot_bars.R",
                      "ggplot_ribbons.R", "ggplot_raster_geometry.R", "ggplot_axes.R", "ggplot_frame.R")) {
     sys.source(file.path(native, resource), envir = adapter)
