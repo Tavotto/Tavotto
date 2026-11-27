@@ -228,6 +228,30 @@ ggplot_axis_key_values <- function(panel, params) {
   transform$inverse(key$.value)
 }
 
+ggplot_mark_fields <- list(
+  length = c(min = 0, max = 20, step = 0.5),
+  width = c(min = 0.1, max = 10, step = 0.1)
+)
+ggplot_axis_mark_props <- c(names(ggplot_mark_fields), paste0("minor_", names(ggplot_mark_fields)))
+
+ggplot_axis_marks <- function(guide, params, theme, spacing) {
+  resolved <- guide$setup_elements(guide$setup_params(params), guide$elements, theme)
+  describe <- function(line, length_unit) {
+    if (!inherits(line, "element_line") || !is_positive_ggplot_number(line$linewidth) ||
+        !grid::is.unit(length_unit) || length(length_unit) != 1L ||
+        !grid::unitType(length_unit) %in% c("inches", "cm", "mm", "points", "bigpts", "picas")) {
+      return(NULL)
+    }
+    size <- grid::convertUnit(length_unit, "bigpts", valueOnly = TRUE)
+    if (!is.finite(size)) return(NULL)
+    list(line = line, size = size, length = abs(size),
+         width = line$linewidth * ggplot2::.pt * ggplot_lwd_pt)
+  }
+  list(major = describe(resolved$ticks, resolved$major_length),
+       minor = describe(resolved$minor, resolved$minor_length),
+       minor_editable = isTRUE(params$minor.ticks) || !is.null(spacing$minor))
+}
+
 ggplot_tick_targets <- function(built, targets, colourbar_titles) {
   result <- list()
   for (gid in names(targets)) {
@@ -249,9 +273,14 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
         }
         size <- target$paint$fontsize * ggplot_text_cex(target$paint)
         angle_from_theme <- is.null(params$angle) || inherits(params$angle, "waiver")
+        spacing <- if (!is.null(values)) ggplot_axis_spacing(built, panel, params, values)
+        suffix <- substring(gid, 6L, nchar(gid) - 6L)
+        marks <- if (identical(class(built$layout$coord)[[1L]], "CoordCartesian") &&
+                     (is.null(params$theme_suffix) || identical(params$theme_suffix, suffix))) {
+          ggplot_axis_marks(guides$guides[[matches]], params, built$plot$theme, spacing)
+        }
         result[[gid]] <- list(
-          kind = "axis", index = matches, values = values,
-          spacing = if (!is.null(values)) ggplot_axis_spacing(built, panel, params, values),
+          kind = "axis", index = matches, values = values, spacing = spacing, marks = marks,
           size = if (is_positive_ggplot_number(size)) size,
           rotation = if (angle_from_theme) target$rotation
         )
@@ -402,7 +431,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
   list(panel = panel, params = ggplot_format_guide(params, format, values))
 }
 
-ggplot_guide_table <- function(state, edits, colour_edits, axis_text, guide_strokes, axis_changes,
+ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
                                grid_edits, title_theme) {
   built <- state$built
   plot <- built$plot
@@ -453,14 +482,17 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_text, guide_stro
       guide_params[[index]] <- ggplot_format_guide(guide_params[[index]], edit$format, values)
     }
   }
-  for (gid in names(axis_text)) {
+  for (gid in names(axis_styles)) {
     index <- state$tick_targets[[gid]]$index
-    style <- axis_text[[gid]]
-    patch <- do.call(ggplot2::theme, stats::setNames(
-      list(ggplot2::element_text(size = style$size, face = style$face, angle = style$rotation,
-                                 family = style$family)),
-      ggplot_axis_tick_theme_names[[gid]]
-    ))
+    style <- axis_styles[[gid]]
+    text <- style[c("size", "face", "rotation", "family")]
+    elements <- style$marks
+    if (any(!vapply(text, is.null, logical(1L)))) {
+      elements[[ggplot_axis_tick_theme_names[[gid]]]] <- ggplot2::element_text(
+        size = style$size, face = style$face, angle = style$rotation, family = style$family
+      )
+    }
+    patch <- do.call(ggplot2::theme, elements)
     theme <- axis_params[[index]]$theme
     axis_params[[index]]$theme <- if (is.null(theme)) patch else theme + patch
   }
@@ -1208,7 +1240,8 @@ ggplot_text_cex <- function(paint) {
 }
 
 ggplot_text_edit <- function(edit, tick) {
-  guide_props <- c(ggplot_tick_props, if (!is.null(tick$size)) c("fontsize", "fontfamily"),
+  guide_props <- c(ggplot_tick_props, if (identical(tick$kind, "axis")) ggplot_axis_mark_props,
+                   if (!is.null(tick$size)) c("fontsize", "fontfamily"),
                    if (!is.null(tick$rotation)) "rotation")
   edit[setdiff(names(edit), guide_props)]
 }
@@ -1250,7 +1283,48 @@ ggplot_text_paint <- function(target, edits) {
   list(paint = paint, face = face)
 }
 
-ggplot_axis_text_edits <- function(state, edits) {
+ggplot_axis_mark_theme <- function(gid, marks, edit) {
+  changes <- list()
+  for (prop in intersect(ggplot_axis_mark_props, names(edit))) {
+    minor <- startsWith(prop, "minor_")
+    style <- sub("^minor_", "", prop)
+    mark <- if (minor && isTRUE(marks$minor_editable)) marks$minor else if (!minor) marks$major
+    limits <- ggplot_mark_fields[[style]]
+    value <- edit[[prop]]
+    if (is.null(mark) || !is.numeric(value) || length(value) != 1L || !is.finite(value) ||
+        value < limits[["min"]] || value > limits[["max"]]) {
+      stop("The requested native R tick mark style is unavailable.")
+    }
+    changes[[prop]] <- value
+  }
+  if (!length(changes)) return(list())
+  suffix <- substring(gid, 6L, nchar(gid) - 6L)
+  elements <- list()
+  for (style in names(ggplot_mark_fields)) {
+    major <- changes[[style]]
+    minor <- changes[[paste0("minor_", style)]]
+    for (kind in c("major", "minor")) {
+      mark <- marks[[kind]]
+      if (is.null(mark)) next
+      # The minor mark can inherit both its linewidth and a relative length
+      # from the major mark. Freeze the original resolved value independently.
+      value <- if (kind == "major") major else if (!is.null(minor)) minor else if (!is.null(major)) mark[[style]]
+      if (is.null(value)) next
+      name <- paste0(if (kind == "major") "axis.ticks" else "axis.minor.ticks",
+                     if (style == "length") ".length", ".", suffix)
+      if (style == "length") {
+        elements[[name]] <- grid::unit(if (mark$size < 0) -value else value, "bigpts")
+      } else {
+        line <- mark$line
+        line$linewidth <- value / (ggplot2::.pt * ggplot_lwd_pt)
+        elements[[name]] <- line
+      }
+    }
+  }
+  elements
+}
+
+ggplot_axis_style_edits <- function(state, edits) {
   result <- list()
   for (gid in intersect(names(edits), names(ggplot_axis_tick_theme_names))) {
     edit <- edits[[gid]]
@@ -1258,9 +1332,10 @@ ggplot_axis_text_edits <- function(state, edits) {
     font_props <- c(face_props, intersect("fontfamily", names(edit)))
     size <- edit$fontsize
     rotation <- edit$rotation
-    if (is.null(size) && !length(font_props) && is.null(rotation)) next
     target <- state$text_targets[[gid]]
     tick <- state$tick_targets[[gid]]
+    marks <- ggplot_axis_mark_theme(gid, tick$marks, edit)
+    if (is.null(size) && !length(font_props) && is.null(rotation) && !length(marks)) next
     if ((length(font_props) || !is.null(size)) && is.null(tick$size)) {
       stop("The requested native R tick typography is unavailable.")
     }
@@ -1275,7 +1350,7 @@ ggplot_axis_text_edits <- function(state, edits) {
     styled <- if (length(font_props)) ggplot_text_paint(target, edit[font_props])
     face <- if (length(face_props)) ggplot_element_faces[[styled$paint$font]]
     family <- if (!is.null(edit$fontfamily)) styled$paint$fontfamily
-    result[[gid]] <- list(size = size, face = face, rotation = rotation, family = family)
+    result[[gid]] <- list(size = size, face = face, rotation = rotation, family = family, marks = marks)
   }
   result
 }
@@ -1353,19 +1428,19 @@ ggplot_table_for <- function(state, edits) {
     state$axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits)))])
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
-  axis_text <- ggplot_axis_text_edits(state, edits)
+  axis_styles <- ggplot_axis_style_edits(state, edits)
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
   title_edits <- ggplot_title_theme(text_targets, edits)
   title_theme <- stats::setNames(title_edits, unname(ggplot_title_theme_names[names(title_edits)]))
-  if (length(tick_edits) || length(colour_edits) || length(axis_text) || length(guide_strokes) ||
+  if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
       length(axis_changes) || length(grid_edits) || length(title_edits)) {
     make_guides <- function() ggplot_guide_table(
-      state, tick_edits, colour_edits, axis_text, guide_strokes, axis_changes, grid_edits, title_theme
+      state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes, grid_edits, title_theme
     )
     # Recreate resized text on the same metrics device used by the initial
     # capture, then draw the resulting table on the requested output device.
-    guides <- if (length(title_edits) || length(axis_text)) {
+    guides <- if (length(title_edits) || length(axis_styles)) {
       with_svg_frame(state$frame_pt, function(capture) make_guides())$value
     } else make_guides()
     table <- guides$table
@@ -1392,7 +1467,7 @@ ggplot_table_for <- function(state, edits) {
           (!changes_ticks && !identical(target$tick_labels, current$tick_labels))) {
         stop("The native R text layout changed while formatting.")
       }
-      typography <- axis_text[[gid]]
+      typography <- axis_styles[[gid]]
       size <- typography$size
       if (!is.null(size) && !isTRUE(all.equal(size, current$paint$fontsize * ggplot_text_cex(current$paint)))) {
         stop("The native R axis guide did not apply the requested font size.")
@@ -1574,7 +1649,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # A resized title can move the entire plot. Re-measure even targets whose
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)
-  reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props) %in% names(edit)),
+  reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
+                                                ggplot_axis_mark_props) %in% names(edit)),
                       logical(1L))) ||
     any(vapply(edits[intersect(names(edits), names(ggplot_axis_tick_theme_names))],
                function(edit) any(names(edit) %in% c("rotation", names(ggplot_face_options))), logical(1L))) ||
@@ -1634,6 +1710,18 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     face <- painted$face
     bbox <- if (is.null(measured$text[[gid]])) target$bbox else measured$text[[gid]]$bbox
     editable <- list(list(prop = "color", type = "color", value = color))
+    for (kind in c("major", "minor")) {
+      mark <- tick$marks[[kind]]
+      if (is.null(mark) || (kind == "minor" && !isTRUE(tick$marks$minor_editable))) next
+      for (style in names(ggplot_mark_fields)) {
+        prop <- if (kind == "major") style else paste0("minor_", style)
+        field <- c(list(prop = prop, type = "number", unit = "pt"),
+                   as.list(ggplot_mark_fields[[style]]))
+        field$value <- if (is.null(edit[[prop]])) round(mark[[style]], 2) else edit[[prop]]
+        if (!is.null(edit[[prop]])) field$value_original <- round(mark[[style]], 2)
+        editable[[length(editable) + 1L]] <- field
+      }
+    }
     if (!is.null(tick$values)) {
       field <- list(prop = "format", type = "enum", value = if (is.null(edit$format)) "auto" else edit$format,
                     options = as.list(ggplot_number_formats), strict_options = TRUE)

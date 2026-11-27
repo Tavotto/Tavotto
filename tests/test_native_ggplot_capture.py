@@ -2487,6 +2487,40 @@ native_log <- adapter$capture_ggplot(log_plot + native, frame)
 auto <- stats::setNames(list(list(minor_visible = TRUE)), gid)
 stopifnot(identical(adapter$render_ggplot(log_state, auto), native_log$svg),
           identical(fields(log_state)$minor_mode$options, list("auto")))
+
+# The four shared stroke controls use physical points, including native
+# inward ticks. Compare edited marks with an independently authored R theme.
+stroke_plot <- base + ggplot2::theme(axis.ticks.length.x.bottom = grid::unit(-4, "bigpts"),
+                                    axis.ticks.x.bottom = ggplot2::element_line(linewidth = .8)) +
+  native
+strokes <- adapter$capture_ggplot(stroke_plot, frame)
+before <- fields(strokes$state)
+stopifnot(before$length$value == 4, before$minor_length$value == 3)
+stroke_patch <- stats::setNames(list(list(length = 8, width = 2, minor_width = 1.4)), gid)
+unit_width <- ggplot2::.pt * adapter$ggplot_lwd_pt
+authored_marks <- stroke_plot + ggplot2::theme(
+  axis.ticks.length.x.bottom = grid::unit(-8, "bigpts"),
+  axis.ticks.x.bottom = ggplot2::element_line(linewidth = 2 / unit_width),
+  axis.minor.ticks.length.x.bottom = grid::unit(-3, "bigpts"),
+  axis.minor.ticks.x.bottom = ggplot2::element_line(linewidth = 1.4 / unit_width)
+)
+edited_marks <- adapter$render_ggplot(strokes$state, stroke_patch)
+after <- fields(strokes$state, stroke_patch)
+stopifnot(identical(edited_marks, adapter$capture_ggplot(authored_marks, frame)$svg),
+          after$length$value == 8, after$length$value_original == 4,
+          after$width$value == 2, after$minor_width$value == 1.4,
+          identical(after$minor_length, before$minor_length),
+          identical(adapter$render_ggplot(strokes$state), strokes$svg))
+minor_only <- stats::setNames(list(list(minor_length = 0)), gid)
+native_minor <- stroke_plot +
+  ggplot2::theme(axis.minor.ticks.length.x.bottom = grid::unit(0, "bigpts"))
+stopifnot(identical(adapter$render_ggplot(strokes$state, minor_only),
+                    adapter$capture_ggplot(native_minor, frame)$svg))
+invalid <- stats::setNames(list(list(width = -1)), gid)
+stopifnot(inherits(try(adapter$render_ggplot(strokes$state, invalid), silent = TRUE), "try-error"))
+blank <- adapter$capture_ggplot(base +
+  ggplot2::theme(axis.ticks.x.bottom = ggplot2::element_blank()), frame)
+stopifnot(is.null(fields(blank$state)$width), is.null(fields(blank$state)$length))
 """
 
 
