@@ -45,7 +45,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了、大图 / 多图打开、改过脚本之后刷新 | `references/compatibility.md`（能改 / 必须回代码改） |
 | 往组图排版上加标注、改已有的箭头 / 文字 / 形状 | `references/layout-annotate.md` |
-| 用户要你挑毛病后「按你的建议改」，或要求很笼统（「改好看一点」） | `references/suggest-todos.md`（先回答；建议列成待办、用户勾好再改） |
+| 「按你的建议改」或很笼统的修改要求 | `references/suggest-todos.md` |
 
 普通画图任务只读前一行；故障与交接文档**用到才读**。
 

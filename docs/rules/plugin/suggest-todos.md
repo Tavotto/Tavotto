@@ -7,9 +7,9 @@
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 140
-改到: `tavotto_suggest_plan` / `_apply` / `_status`、`bridge.suggest_*()`、`changeplan.host_proposal` / `realize`
-主题: 建议待办工具 → `suggest-todos.md`
-必守要点: 只翻译、与桌面同一条流水线；出方案不写会话；只写用户勾的；出方案后图变了就拒
+改到: `tavotto_suggest_*`
+主题: 建议待办 → `suggest-todos.md`
+必守要点: 与桌面同一流水线
 -->
 
 - **只翻译，同一条流水线**：宿主交进来的建议经 `changeplan.host_proposal` 变成与方案模型输出同形的提议，**原样交给 `validate_proposal`**
