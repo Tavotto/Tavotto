@@ -54,7 +54,7 @@ order: 90
 - **批准字体只缓存下载归档（2026-10-02）**：原先按「约 12 MiB、不值得扩大枚举」每腿重下；
   #782、精确 main nightly、#784 在测试前反复遇到官方 Liberation 归档 GET 504 后，重新裁定这项可靠性成本。
   CI 只新增 **11 个** `actions/cache` step（10 个原字体消费者 + `cache-seed`），nightly 的 `windows-install`
-  新增 1 个。`Native ggplot2` 的 `real-r` 矩阵复用同一归档键与校验步骤。
+  新增 1 个。`Native ggplot2`、`Foundation U06 rendercore`、`Private Python targets` 和性能验证也复用同一归档键与校验步骤。
   路径严格为 `build/fonts-cache/*.tar.gz`：当前唯一归档 2,385,008 bytes；`.part`、解包后的
   字体 / 许可证、可执行代码、构建产物一概不缓存，Noto 原始文件仍按原来源每次下载。ADR 0060、URL、
   allowlist、许可证、下载器、重试 / 超时与 safe extraction 均不改；这仍是 CI02 第一类「下载 bytes」。

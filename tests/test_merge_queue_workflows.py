@@ -2333,9 +2333,11 @@ class TestBuildReuseAndCaches:
     CACHING_WORKFLOWS = {
         "ci.yml",
         "desktop-tauri.yml",
+        "foundation-u06-rendercore.yml",
         "native-ggplot.yml",
         "nightly.yml",
         "performance-agent.yml",
+        "private-python-targets.yml",
         "release.yml",
     }
 
@@ -3816,9 +3818,16 @@ class TestApprovedFontArchiveCaches:
     def test_font_caches_have_exact_keys_paths_and_no_skip_on_hit(self):
         ci_fonts = TestBuildReuseAndCaches.FONT_JOBS
         assert ci_fonts == set(TestApprovedFontsAndRetirementScan.FONTS_BEFORE) | {"cache-seed"}
-        nightly = (WF / "nightly.yml").read_text(encoding="utf-8")
-        native_r = (WF / "native-ggplot.yml").read_text(encoding="utf-8")
-        for text, jobs in ((CI, ci_fonts), (nightly, {"windows-install"}), (native_r, {"real-r"})):
+        consumers = [
+            ("ci.yml", ci_fonts, "python"),
+            ("nightly.yml", {"windows-install"}, "python"),
+            ("native-ggplot.yml", {"real-r"}, "python"),
+            ("foundation-u06-rendercore.yml", {"rendercore"}, '"$RC_PY"'),
+            ("performance-agent.yml", {"browser-interaction"}, "python"),
+            ("private-python-targets.yml", {"targets"}, "python"),
+        ]
+        for workflow, jobs, interpreter in consumers:
+            text = (WF / workflow).read_text(encoding="utf-8")
             caches = [
                 (job, step)
                 for job, step in _uses_steps("actions/cache", text)
@@ -3844,8 +3853,9 @@ class TestApprovedFontArchiveCaches:
                 fetch = fetches[0]
                 assert steps.index(step) < steps.index(fetch)
                 assert _if_of_step(fetch) == expected_if
-                assert re.search(r"python scripts/fetch_fonts\.py(?:\s*&&|\s*\n)", fetch)
-                assert "python scripts/fetch_fonts.py --check" in fetch
+                command = f"{interpreter} scripts/fetch_fonts.py"
+                assert re.search(re.escape(command) + r"(?:\s*&&|\s*\n)", fetch)
+                assert f"{command} --check" in fetch
                 assert "cache-hit" not in fetch and "continue-on-error" not in fetch
 
     def test_font_seed_runs_once_per_consumer_os_after_python_setup(self):
