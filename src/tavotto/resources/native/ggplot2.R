@@ -233,6 +233,7 @@ ggplot_mark_fields <- list(
   width = c(min = 0.1, max = 10, step = 0.1)
 )
 ggplot_axis_mark_props <- c(names(ggplot_mark_fields), paste0("minor_", names(ggplot_mark_fields)))
+ggplot_axis_tick_directions <- c("out", "in", "inout")
 
 ggplot_axis_marks <- function(guide, params, theme, spacing) {
   resolved <- guide$setup_elements(guide$setup_params(params), guide$elements, theme)
@@ -247,8 +248,16 @@ ggplot_axis_marks <- function(guide, params, theme, spacing) {
     list(line = line, size = size, length = abs(size),
          width = line$linewidth * ggplot2::.pt * ggplot_lwd_pt)
   }
-  list(major = describe(resolved$ticks, resolved$major_length),
-       minor = describe(resolved$minor, resolved$minor_length),
+  major <- describe(resolved$ticks, resolved$major_length)
+  minor <- describe(resolved$minor, resolved$minor_length)
+  # An authored guide can draw the two tiers on different sides. Its
+  # mixed setting has no single direction in the shared editor.
+  direction <- if (!is.null(major) && !inherits(major$line$arrow, "arrow") &&
+                   (!isTRUE(params$minor.ticks) || is.null(minor) ||
+                    (!inherits(minor$line$arrow, "arrow") && (minor$size < 0) == (major$size < 0)))) {
+    if (major$size < 0) "in" else "out"
+  }
+  list(major = major, minor = minor, direction = direction,
        minor_editable = isTRUE(params$minor.ticks) || !is.null(spacing$minor))
 }
 
@@ -454,7 +463,10 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
       guide_params[[index]]$decor[[target$key_name]]$data <- key
     }
   }
-  if (length(panels) == 1L) axis_params <- panels[[1L]]$guides$params
+  if (length(panels) == 1L) {
+    axis_params <- panels[[1L]]$guides$params
+    axis_guides <- panels[[1L]]$guides$guides
+  }
   hidden_ticks <- character()
   for (gid in names(edits)) {
     target <- state$tick_targets[[gid]]
@@ -495,9 +507,10 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     patch <- do.call(ggplot2::theme, elements)
     theme <- axis_params[[index]]$theme
     axis_params[[index]]$theme <- if (is.null(theme)) patch else theme + patch
+    if (identical(style$direction, "inout")) axis_guides[[index]] <- ggplot_centered_axis_guide()
   }
   if (length(panels) == 1L) {
-    panels[[1L]]$guides <- ggplot_clone(panels[[1L]]$guides, params = axis_params)
+    panels[[1L]]$guides <- ggplot_clone(panels[[1L]]$guides, params = axis_params, guides = axis_guides)
     layout$panel_params <- panels
   }
   plot$guides <- ggplot_colourbar_guides(
@@ -1240,7 +1253,7 @@ ggplot_text_cex <- function(paint) {
 }
 
 ggplot_text_edit <- function(edit, tick) {
-  guide_props <- c(ggplot_tick_props, if (identical(tick$kind, "axis")) ggplot_axis_mark_props,
+  guide_props <- c(ggplot_tick_props, if (identical(tick$kind, "axis")) c(ggplot_axis_mark_props, "direction"),
                    if (!is.null(tick$size)) c("fontsize", "fontfamily"),
                    if (!is.null(tick$rotation)) "rotation")
   edit[setdiff(names(edit), guide_props)]
@@ -1297,7 +1310,13 @@ ggplot_axis_mark_theme <- function(gid, marks, edit) {
     }
     changes[[prop]] <- value
   }
-  if (!length(changes)) return(list())
+  direction <- edit$direction
+  if (!is.null(direction) &&
+      (is.null(marks$direction) || !is.character(direction) || length(direction) != 1L ||
+       !direction %in% ggplot_axis_tick_directions)) {
+    stop("The requested native R tick direction is unavailable.")
+  }
+  if (!length(changes) && is.null(direction)) return(list())
   suffix <- substring(gid, 6L, nchar(gid) - 6L)
   elements <- list()
   for (style in names(ggplot_mark_fields)) {
@@ -1309,11 +1328,15 @@ ggplot_axis_mark_theme <- function(gid, marks, edit) {
       # The minor mark can inherit both its linewidth and a relative length
       # from the major mark. Freeze the original resolved value independently.
       value <- if (kind == "major") major else if (!is.null(minor)) minor else if (!is.null(major)) mark[[style]]
+      if (style == "length" && !is.null(direction) && is.null(value)) value <- mark$length
       if (is.null(value)) next
       name <- paste0(if (kind == "major") "axis.ticks" else "axis.minor.ticks",
                      if (style == "length") ".length", ".", suffix)
       if (style == "length") {
-        elements[[name]] <- grid::unit(if (mark$size < 0) -value else value, "bigpts")
+        multiplier <- if (identical(direction, "inout")) 0.5 else if (
+          identical(direction, "in") || (is.null(direction) && mark$size < 0)
+        ) -1 else 1
+        elements[[name]] <- grid::unit(value * multiplier, "bigpts")
       } else {
         line <- mark$line
         line$linewidth <- value / (ggplot2::.pt * ggplot_lwd_pt)
@@ -1322,6 +1345,32 @@ ggplot_axis_mark_theme <- function(gid, marks, edit) {
     }
   }
   elements
+}
+
+ggplot_centered_axis_guide <- function() {
+  ggplot2::ggproto(NULL, ggplot2::GuideAxis,
+    build_ticks = function(key, elements, params, position = params$opposite) {
+      mark <- ggplot2::GuideAxis$build_ticks(key, elements, params, position)
+      across <- if (position %in% c("top", "bottom")) "y" else "x"
+      center <- function(stroke) {
+        if (inherits(stroke, "zeroGrob")) return(stroke)
+        values <- stroke[[across]]
+        count <- length(stroke$id.lengths)
+        if (!inherits(stroke, "polyline") || !count || length(values) != count * 2L ||
+            any(stroke$id.lengths != 2L)) {
+          stop("The native R axis did not draw the expected tick strokes.")
+        }
+        indices <- seq_len(count) * 2L
+        values[indices] <- 2 * values[indices] - values[indices - 1L]
+        stroke[[across]] <- values
+        stroke
+      }
+      if (inherits(mark, "gTree")) {
+        mark$children <- do.call(grid::gList, lapply(mark$children, center))
+      } else mark <- center(mark)
+      mark
+    }
+  )
 }
 
 ggplot_axis_style_edits <- function(state, edits) {
@@ -1350,7 +1399,8 @@ ggplot_axis_style_edits <- function(state, edits) {
     styled <- if (length(font_props)) ggplot_text_paint(target, edit[font_props])
     face <- if (length(face_props)) ggplot_element_faces[[styled$paint$font]]
     family <- if (!is.null(edit$fontfamily)) styled$paint$fontfamily
-    result[[gid]] <- list(size = size, face = face, rotation = rotation, family = family, marks = marks)
+    result[[gid]] <- list(size = size, face = face, rotation = rotation, family = family,
+                          marks = marks, direction = edit$direction)
   }
   result
 }
@@ -1650,7 +1700,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)
   reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
-                                                ggplot_axis_mark_props) %in% names(edit)),
+                                                ggplot_axis_mark_props, "direction") %in% names(edit)),
                       logical(1L))) ||
     any(vapply(edits[intersect(names(edits), names(ggplot_axis_tick_theme_names))],
                function(edit) any(names(edit) %in% c("rotation", names(ggplot_face_options))), logical(1L))) ||
@@ -1710,6 +1760,12 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     face <- painted$face
     bbox <- if (is.null(measured$text[[gid]])) target$bbox else measured$text[[gid]]$bbox
     editable <- list(list(prop = "color", type = "color", value = color))
+    if (!is.null(tick$marks$direction)) {
+      field <- list(prop = "direction", type = "enum", options = as.list(ggplot_axis_tick_directions),
+                    strict_options = TRUE, value = edit$direction %||% tick$marks$direction)
+      if (!is.null(edit$direction)) field$value_original <- tick$marks$direction
+      editable[[length(editable) + 1L]] <- field
+    }
     for (kind in c("major", "minor")) {
       mark <- tick$marks[[kind]]
       if (is.null(mark) || (kind == "minor" && !isTRUE(tick$marks$minor_editable))) next

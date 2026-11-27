@@ -2411,6 +2411,28 @@ native_minor <- stroke_plot +
   ggplot2::theme(axis.minor.ticks.length.x.bottom = grid::unit(0, "bigpts"))
 stopifnot(identical(adapter$render_ggplot(strokes$state, minor_only),
                     adapter$capture_ggplot(native_minor, frame)$svg))
+out <- stats::setNames(list(list(direction = "out")), gid)
+native_out <- stroke_plot + ggplot2::theme(
+  axis.ticks.length.x.bottom = grid::unit(4, "bigpts"),
+  axis.minor.ticks.length.x.bottom = grid::unit(3, "bigpts"))
+stopifnot(before$direction$value == "in",
+          identical(adapter$render_ggplot(strokes$state, out), adapter$capture_ggplot(native_out, frame)$svg))
+both <- stats::setNames(list(list(direction = "inout", length = 6, minor_length = 4)), gid)
+centered <- adapter$with_svg_frame(frame, function(capture) {
+  grid::grid.newpage()
+  table <- adapter$ggplot_table_for(strokes$state, both)$table
+  axis <- table$grobs[[which(table$layout$name == "axis-b")]]$children[["axis"]]
+  lapply(axis$grobs[[1L]]$children, function(mark) {
+    point <- function(i) grid::convertUnit(mark$y[i], "bigpts", valueOnly = TRUE)
+    c(point(1L) - point(2L), 0.5 * (point(1L) + point(2L)) -
+        grid::convertUnit(grid::unit(1, "npc"), "bigpts", valueOnly = TRUE))
+  })
+})$value
+stopifnot(length(centered) == 2L,
+          isTRUE(all.equal(unname(centered[[1L]]), c(-6, 0))),
+          isTRUE(all.equal(unname(centered[[2L]]), c(-4, 0))),
+          fields(strokes$state, both)$direction$value == "inout",
+          identical(adapter$render_ggplot(strokes$state), strokes$svg))
 invalid <- stats::setNames(list(list(width = -1)), gid)
 stopifnot(inherits(try(adapter$render_ggplot(strokes$state, invalid), silent = TRUE), "try-error"))
 blank <- adapter$capture_ggplot(base +
