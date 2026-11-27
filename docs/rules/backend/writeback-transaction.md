@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「诊断与排障」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_write_back.py`、`test_worker_roundtrip.py` 末节、`web` 的 `WriteBackDialog.test.tsx`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_write_back.py`、`test_worker_roundtrip.py` 末节、`web` 的 `WriteBackDialog.test.tsx`、`tests/test_export_otf_fonts.py` / `test_export_cjk_cff_fonts.py` 的写回用例（staging 换字体程序）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -73,6 +73,10 @@ order: 300
     **409**，响应是 worker 错误体原样（`code` / `traceback` / `module`，前端
     按 code 出文案）外加 `stage: "verify"`——commit 段不调 worker，走到这里
     原件必然零改动（QA 2026-09-24 SCI-04-B1；以前回 500）。
+  * **verify 全过之后、commit 之前**：staging 的 PDF 过一遍 `artifactinspect.normalize_worker_pdf`——与导出同一道
+    生产者边界：matplotlib 的 Type 42 把 CFF 字体（`.otf`、苹方 / 冬青黑体 / Noto Sans CJK 这类字体集）写进
+    TrueType 槽（`FontFile2` 里是 `OTTO`），刻进原件前换成同字形序号的真 TrueType。不换的话原件在 MuPDF 一类
+    阅读器里画错字、文字层读不回。放在 409 的分支之后：失败出口不碰 staging。
   * **commit**：备份 → 落盘 → 逐个 `tmp.replace(target)`。备份与替换**两轮不许
     交错**（QA 2026-09-24 SCI-05-B1：「备份一个、换一个」时第二个目标备份撞上
     磁盘满，PDF 已换、PNG 未换、`.updating` 残留、500）。备份目录**每次写回独占**
