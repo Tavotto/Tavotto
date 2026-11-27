@@ -2862,6 +2862,7 @@
     "confirm": {
       "title": "Needs your check ({{count}})",
       "condition": "Condition in the source: {{text}}",
+      "editorTip": "Report a journal guideline issue",
       "aria": "Requirements to check yourself"
     },
     "field": {
@@ -2953,7 +2954,12 @@
     "descLabel": "What’s wrong (optional)",
     "submitMissing": "Submit request",
     "emailWrong": "We’ll reply here once checked",
-    "emailMissing": "We’ll reply here once it’s added"
+    "emailMissing": "We’ll reply here once it’s added",
+    "editorQuoteLabel": "What’s wrong, or the editor’s wording",
+    "editorQuotePlaceholder": "Which rule is wrong or missing, or paste the editor’s email; only used to check the website, never made public",
+    "editorAbout": "{{journal}}",
+    "editorTag": "Journal guideline issue",
+    "editorEmail": "We will reply here once checked"
   },
   "packageInstall": {
     "entry": "Install project package to a new folder…",

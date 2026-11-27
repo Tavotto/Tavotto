@@ -111,6 +111,9 @@ order: 60
   排在后面的老引用请求认出它，一个字节不写，回 `session_dead` + `extra["evicted"]`（不解释退出码），
   `app._engine_attempt` 只对这一种重新取会话重试一次。用户取消（`force_kill`）/ 超时 / 看门狗 / 失效重建 / 切项目 / 整体关停
   都不置、不重试——重试会把用户刚停掉的脚本又跑起来；真崩溃同样不重试。看护 `tests/test_pool_lru_lease.py`。
+  **忙的会话同样不收**：租约在第一条请求开始就清零，之后 build 跑几秒、build → override 两条请求之间会话都是「最久未用」候选——
+  4 张图同时冷启动、上限 3 时被收掉的恰是正在 build 的那条，重取又淘汰别的，重试用完用户就见到报错。`pool.hold(worker)`
+  计数（`request` / workerd `_call` 与 `app._engine_attempt` 整次尝试都握着），`_is_leased` 一并看它；忙时上限是软的，忙完下次取会话再收。
 - **管道 EOF 先问死因，再说话（#435）**。EOF 之后两条控制面都先给子进程
   `EXIT_GRACE`（1.5 秒，Python 与 Rust 同一个数——两侧各自钉在 `tests/golden/exit_grace_ms.txt`，
   不拿正则扫对方的源码，没有解析器就分不清注释 / 字符串 / 原始字符串）自己退出，拿到退出状态才 kill

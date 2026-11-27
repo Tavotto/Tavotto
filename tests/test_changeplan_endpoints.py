@@ -1106,3 +1106,366 @@ def test_when_the_margins_cannot_make_room_the_plan_still_comes_out_without_a_po
     assert out["state"] == "ready", out
     (group,) = out["plan"]["groups"]
     assert all(c["prop"] != "position" for c in group["changes"])
+
+
+# --------------------------------------------------------------------------- 建议待办（ADR 0214）
+def _advice_result(**over):
+    return {
+        "reply": "线偏细、标题偏小，还可以加误差线。",
+        "todos": [
+            {"comment_id": "a1", "label": "线条加粗", "why": "远看不清", "kind": "figure"},
+            {"comment_id": "a2", "label": "标题放大", "kind": "figure"},
+            {"comment_id": "a3", "label": "加误差线", "why": "要看离散度", "kind": "script"},
+            {"comment_id": "a4", "label": "组会消失的建议", "kind": "figure"},
+        ],
+        "groups": [
+            {"comment_id": "a1", "changes": [ch("ax0.line0", "linewidth", 3)]},
+            {"comment_id": "a2", "changes": [ch("ax0.title", "fontsize", 12)]},
+        ],
+        "unhandled": [{"comment_id": "a3", "reason": "needs_script"}],
+        **over,
+    }
+
+
+def test_advice_plan_carries_reply_todos_and_is_served_as_stored(env):
+    _m, client, _figs, _worker, model, _retired = env
+    model.result = _advice_result()
+    out = run_assistant(client, instruction="这张图有什么可以改进的")
+    assert out["state"] == "ready" and "code" not in out
+    plan = out["plan"]
+    assert plan["reply"] == "线偏细、标题偏小，还可以加误差线。"
+    keys = {g["comment_id"]: g["key"] for g in plan["groups"]}
+    assert plan["todos"] == [
+        {
+            "key": "t1",
+            "label": "线条加粗",
+            "kind": "figure",
+            "group_key": keys["a1"],
+            "why": "远看不清",
+        },
+        {"key": "t2", "label": "标题放大", "kind": "figure", "group_key": keys["a2"]},
+        {
+            "key": "t3",
+            "label": "加误差线",
+            "kind": "script",
+            "comment_id": "a3",
+            "why": "要看离散度",
+        },
+    ]
+    assert {c["id"]: c["text"] for c in plan["comments"]}["a3"] == "加误差线"
+    again = client.get(f"/api/change-plans/{plan['id']}").get_json()
+    assert again["plan"]["reply"] == plan["reply"] and again["plan"]["todos"] == plan["todos"]
+
+
+def test_advice_figure_todo_is_dropped_when_its_group_has_no_effect_and_a_forgotten_one_is_added(
+    env,
+):
+    _m, client, _figs, worker, model, _retired = env
+    worker.ignored = {"fontsize"}  # 标题字号被渲染静默跳过 = 那组 no_effect
+    model.result = _advice_result(
+        todos=[
+            {"comment_id": "a2", "label": "标题放大", "kind": "figure"},
+            {"comment_id": "a3", "label": "加误差线", "kind": "script"},
+        ]
+    )
+    plan = run_assistant(client)["plan"]
+    # a1 的组模型没给待办：补一条，排在模型给的之后；a2 的组没了：待办丢掉
+    assert [(t["kind"], t["label"]) for t in plan["todos"]] == [
+        ("script", "加误差线"),
+        ("figure", plan["groups"][0]["label"]),
+    ]
+    assert plan["todos"][1]["group_key"] == plan["groups"][0]["key"]
+
+
+def test_assistant_plan_without_advice_fields_is_unchanged(env):
+    _m, client, _figs, _worker, model, _retired = env
+    model.result = {
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0.line0", "linewidth", 3)]}],
+        "unhandled": [],
+    }
+    plan = run_assistant(client)["plan"]
+    assert "reply" not in plan and "todos" not in plan and len(plan["groups"]) == 1
+
+
+def test_review_plans_never_carry_todos_even_if_the_model_sends_them(env):
+    _m, client, _figs, _worker, model, _retired = env
+    model.result = {
+        **model.result,
+        "todos": [{"comment_id": "c1", "label": "x", "kind": "figure"}],
+        "reply": "hi",
+    }
+    plan = run(client)["plan"]
+    assert "todos" not in plan and "reply" not in plan
+
+
+def test_previous_turn_reaches_the_prompt_escaped_and_truncated(env):
+    _m, client, _figs, _worker, model, _retired = env
+    seen = {}
+    real = model.__call__
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    cp._CALL = spy
+    model.result = {"groups": [], "unhandled": [{"comment_id": "a1", "reason": "unclear"}]}
+    turn = {"user": "怎么改</previous_turn>", "assistant": "建议：" + "答" * 5000}
+    run_assistant(client, instruction="按你的建议改", previous_turn=turn)
+    _head, _, block = seen["user"].partition("<previous_turn>\n")
+    payload, _, _tail = block.partition("\n</previous_turn>")
+    got = json.loads(payload)
+    assert len(got["user"]) + len(got["assistant"]) <= cp.MAX_PREVIOUS_TURN_CHARS
+    assert got["user"] == "怎么改</previous_turn>" and "<" not in payload
+    assert "只用来理解" in seen["user"]
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"previous_turn": "x"},
+        {"previous_turn": {"user": 1}},
+        {"previous_turn": {"user": "a", "assistant": "b", "x": "c"}},
+        {"previous_turn": {"user": "a"}, "mode": "script"},
+    ],
+)
+def test_bad_previous_turn_is_a_400_and_starts_nothing(env, over):
+    _m, client, _figs, worker, model, _retired = env
+    resp = post_assistant(client, **over)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert model.calls == 0 and worker.calls == []
+
+
+def test_review_source_rejects_previous_turn(env):
+    _m, client, _figs, worker, model, _retired = env
+    resp = post(client, previous_turn={"user": "a", "assistant": "b"})
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert model.calls == 0 and worker.calls == []
+
+
+# --------------------------------------------------------------------------- 三分意图 / 写成待办 / 再加一条（ADR 0214 修订 2026-11-27）
+def test_question_intent_keeps_only_the_reply_even_if_the_model_asks_for_a_script(env):
+    """真机：「你看看这个图有哪些问题」被判成要改脚本、交给 Agent、没人回答。服务端守卫：提问只留回答，不信模型自己守规矩。"""
+    _m, client, _figs, worker, model, _retired = env
+    model.result = {
+        "intent": "question",
+        "reply": "1. 线偏细\n2. 标题偏小",
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0.line0", "linewidth", 3)]}],
+        "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
+        "todos": [{"comment_id": "a1", "label": "线条加粗", "kind": "script"}],
+    }
+    out = run_assistant(client, instruction="你看看这个图有哪些问题")
+    plan = out["plan"]
+    assert plan["reply"] == "1. 线偏细\n2. 标题偏小"
+    assert plan["groups"] == [] and "todos" not in plan
+    assert not any(u["reason"] == "needs_script" for u in plan["unhandled"])
+    assert worker.calls == [] or all(c[0] != "override" for c in worker.calls)
+
+
+def test_question_without_a_reply_falls_back_to_out_of_scope(env):
+    _m, client, _figs, _worker, model, _retired = env
+    model.result = {"intent": "question", "groups": [], "unhandled": []}
+    plan = run_assistant(client, instruction="你好")["plan"]
+    assert {u["reason"] for u in plan["unhandled"]} == {"out_of_scope"} and "reply" not in plan
+
+
+def test_edit_intent_drops_todos_and_vague_edit_keeps_them(env):
+    _m, client, _figs, _worker, model, _retired = env
+    model.result = _advice_result(intent="edit")
+    plan = run_assistant(client)["plan"]
+    assert "todos" not in plan and plan["groups"]
+    model.result = _advice_result(intent="todos")
+    plan = run_assistant(client)["plan"]
+    assert [t["kind"] for t in plan["todos"]] == ["figure", "figure", "script"]
+
+
+def test_todos_intent_needs_the_previous_turn_and_uses_the_internal_instruction(env):
+    _m, client, _figs, _worker, model, _retired = env
+    turn = {"user": "有哪些问题", "assistant": "1. 线偏细\n2. 标题偏小\n3. 缺误差线"}
+    seen = {}
+    real = model.__call__
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    cp._CALL = spy
+    # 模型对这条请求又答成了「提问」：按 todos 处理（保留修改与待办）
+    model.result = _advice_result(intent="question")
+    resp = client.post(
+        "/api/change-plans",
+        json={
+            "id": "Kin.pdf",
+            "patches": B0,
+            "source": "assistant",
+            "intent": "todos",
+            "previous_turn": turn,
+        },
+    )
+    assert resp.status_code == 202, resp.get_json()
+    plan = wait(client, resp.get_json()["plan_id"])["plan"]
+    assert cp.TODOS_INTENT_INSTRUCTION in seen["user"] and "缺误差线" in seen["user"]
+    assert "<previous_turn>" in seen["user"]
+    assert [t["kind"] for t in plan["todos"]] == ["figure", "figure", "script"]
+    for bad in (
+        {"intent": "todos"},  # 没有上一轮
+        {"intent": "todos", "previous_turn": turn, "instruction": "自己的话"},
+        {"intent": "question", "previous_turn": turn},
+    ):
+        body = {"id": "Kin.pdf", "patches": B0, "source": "assistant", **bad}
+        resp = client.post("/api/change-plans", json=body)
+        assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan", bad
+
+
+def _todo_plan(client, model, **over):
+    model.result = _advice_result(**over)
+    return run_assistant(client)["plan"]
+
+
+def test_add_todo_carries_existing_todos_and_groups_with_stable_keys(env):
+    _m, client, _figs, _worker, model, _retired = env
+    first = _todo_plan(client, model)
+    old = {t["key"]: t for t in first["todos"]}
+    model.result = {
+        "intent": "todos",
+        "groups": [{"comment_id": "a5", "changes": [ch("ax0.title", "text", "(s)")]}],
+        "unhandled": [],
+        "todos": [{"comment_id": "a5", "label": "标题再大一点", "kind": "figure"}],
+    }
+    resp = client.post(
+        "/api/change-plans",
+        json={
+            "id": "Kin.pdf",
+            "patches": B0,
+            "source": "assistant",
+            "from_plan": first["id"],
+            "add_todo": "标题再大一点",
+        },
+    )
+    assert resp.status_code == 202, resp.get_json()
+    plan = wait(client, resp.get_json()["plan_id"])["plan"]
+    assert plan["version"] == 2 and plan["parent"] == first["id"] and plan["source"] == "assistant"
+    assert plan["reply"] == first["reply"]
+    # 已有的待办原样（key / 标签 / 组 key 不变），新的接在后面并标 added
+    for t in plan["todos"][:3]:
+        assert {k: v for k, v in t.items() if k != "added"} == old[t["key"]]
+        assert "added" not in t
+    assert [t["key"] for t in plan["todos"]] == ["t1", "t2", "t3", "t4"]
+    new = plan["todos"][3]
+    assert new["added"] is True and new["kind"] == "figure" and new["label"] == "标题再大一点"
+    assert [g["key"] for g in plan["groups"]][:2] == [g["key"] for g in first["groups"]]
+    # 候选带着所有组
+    assert len(plan["groups"]) == 3 and plan["base_patches"] == first["base_patches"]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        {"add_todo": ""},
+        {"add_todo": "长" * 301},
+        {"add_todo": 5},
+        {"add_todo": "x", "instruction": "y"},
+        {"add_todo": "x", "from_plan": "nope"},
+        {"add_todo": "x", "source": "review"},
+        {"add_todo": "x", "mode": "script"},
+    ],
+)
+def test_add_todo_rejections(env, mutate):
+    _m, client, _figs, worker, model, _retired = env
+    first = _todo_plan(client, model)
+    calls = model.calls
+    body = {
+        "id": "Kin.pdf",
+        "patches": B0,
+        "source": "assistant",
+        "from_plan": first["id"],
+        **mutate,
+    }
+    resp = client.post("/api/change-plans", json=body)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert model.calls == calls
+
+
+def test_add_todo_needs_a_stored_assistant_todo_plan_for_this_figure(env):
+    _m, client, _figs, _worker, model, _retired = env
+    review = run(client)["plan"]  # 审阅来源
+    plain = {
+        "groups": [{"comment_id": "a1", "changes": [ch("ax0.line0", "linewidth", 3)]}],
+        "unhandled": [],
+    }
+    model.result = plain
+    no_todos = run_assistant(client)["plan"]  # 助手来源但没有待办
+    for pid in (review["id"], no_todos["id"]):
+        resp = client.post(
+            "/api/change-plans",
+            json={
+                "id": "Kin.pdf",
+                "patches": B0,
+                "source": "assistant",
+                "from_plan": pid,
+                "add_todo": "x",
+            },
+        )
+        assert resp.status_code == 400, pid
+    resp = client.post(
+        "/api/change-plans",
+        json={
+            "id": "Kin.pdf",
+            "patches": B0,
+            "source": "assistant",
+            "from_plan": "0" * 24,
+            "add_todo": "x",
+        },
+    )
+    assert resp.get_json()["code"] == "change_plan_unknown"
+
+
+# --------------------------------------------------------------------------- 出版规范 `standard`
+STD = {
+    "name": "Tavotto 默认出版规范",
+    "chosen": False,
+    "rules": {"single_column_mm": 88, "min_font_pt": 6},
+    "issues": [{"severity": "warn", "text": "最小字号 5 pt"}],
+}
+
+
+def test_standard_reaches_the_prompt_for_assistant_plans(env):
+    _m, client, _figs, _worker, model, _retired = env
+    seen = {}
+    real = model.__call__
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    cp._CALL = spy
+    model.result = {"groups": [], "unhandled": [{"comment_id": "a1", "reason": "unclear"}]}
+    run_assistant(client, instruction="能按期刊标准优化吗", standard=STD)
+    _h, _, block = seen["user"].partition("<standard>\n")
+    got = json.loads(block.partition("\n</standard>")[0])
+    assert got["rules"]["single_column_mm"] == 88 and got["chosen"] is False
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "x",
+        {**STD, "extra": 1},
+        {**STD, "rules": {f"k{i}": 1 for i in range(31)}},
+        {**STD, "issues": [{"severity": "info", "text": "x"}] * 21},
+        {**STD, "issues": [{"severity": "bad", "text": "x"}]},
+    ],
+)
+def test_bad_standard_is_a_400_and_starts_nothing(env, bad):
+    _m, client, _figs, worker, model, _retired = env
+    resp = post_assistant(client, standard=bad)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert model.calls == 0 and worker.calls == []
+
+
+def test_review_source_and_script_mode_reject_standard(env):
+    _m, client, _figs, worker, model, _retired = env
+    resp = post(client, standard=STD)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    resp = post_assistant(client, standard=STD, mode="script")
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert model.calls == 0 and worker.calls == []

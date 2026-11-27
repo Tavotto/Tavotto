@@ -694,6 +694,7 @@ _LAYOUT_ITEMS = {
         "位置一律写锚点 {anchor: {data|element|panel|item: …}, offset_mm?}——"
         "data = {panel, axes, x, y}（数据坐标，引擎从这次导出实测）、element = {panel, gid, point}（场景里的元素）、"
         "panel = {id, point}（子图框的方位点 nw/n/ne/w/center/e/sw/s/se）、item = {name, point}（本批里另一个元素）。"
+        "box 例：{kind: box, name: frame, fit: [{panel: {id: P1}}], padding_mm: 1.5}（fit 是目标列表，每个目标是单键对象）。"
         "显著性星号 / n.s. / p 值 / n 必须写 provenance: user（用户说的）或 data（数据里算出来的），否则整批要用户确认。"
         "全文见 tavotto_guide section=layout-annotate。"
     ),
@@ -2112,7 +2113,15 @@ def _call_layout_plan(args: dict) -> dict:
     pv = out.pop("preview", None)
     lines = [e["text"] for e in out.get("echo") or []]
     if out.get("errors") and not out.get("echo"):
-        lines.insert(0, "方案没出来：" + "、".join(str(e.get("code")) for e in out["errors"]))
+        lines.insert(
+            0,
+            "方案没出来："
+            + "、".join(
+                str(e.get("code"))
+                + (f"（{e['item']}：{e['detail']}）" if e.get("item") and e.get("detail") else "")
+                for e in out["errors"]
+            ),
+        )
     elif out.get("failed"):
         lines.insert(
             0,
@@ -3241,6 +3250,89 @@ def _prepend_rerun_note(name: str, args: dict, result: dict) -> None:
     content[0]["text"] = _rerun_note(sid, rerun) + "\n" + content[0]["text"]
 
 
+#: 把 `structuredContent` 的精简副本也放进 `content`（MCP 规范：带 structuredContent 的工具也要在 content 里给出同样的信息）。
+#: 只给 `content` 的宿主（opencode 一类）拿不到 `base_revision` / `echo_digest` / 对象 id / `errors` 就走不通下一步（评测
+#: `scripts/eval/vector_edit/` 实测：编辑 / 标注工具原样接 opencode 全部超时）。体积有上限，大字段（SVG、manifest、位图）一律不进。
+#: 跳过的工具：画布两条有自己的回执预算（文字里已带会话把手）；审阅意见的 `content` 本身就是按预算写好的摘要（见 `_review_feedback_lines`）。
+#: 失败结果也不镜像：`code` 只进 `structuredContent` 是有意的（`content` 是念给用户听的，见 `call_tool` 的失败分支），
+#: 失败文字里已有下一步（`next` / 原因）。
+MIRROR_SKIP_TOOLS = ("tavotto_open_figure", "tavotto_apply_overrides", "tavotto_review_feedback")
+MIRROR_MAX_CHARS = 16000
+MIRROR_BIG_KEYS = frozenset(
+    {"svg", "manifest", "preview_png_base64", "preview_png_manifest", "png_base64", "traceback"}
+)
+MIRROR_STR_CHARS = 400
+MIRROR_LIST_ITEMS = 40
+MIRROR_LABEL = "structuredContent（机器可读，下一步要用的值在这里）: "
+
+
+def _mirror_shrink(v: object, depth: int = 0, list_items: int = MIRROR_LIST_ITEMS) -> object:
+    if isinstance(v, dict):
+        if depth >= 7:
+            return "…"
+        return {
+            k: _mirror_shrink(x, depth + 1, list_items)
+            for k, x in v.items()
+            if k not in MIRROR_BIG_KEYS
+        }
+    if isinstance(v, list):
+        out = [_mirror_shrink(x, depth + 1, list_items) for x in v[:list_items]]
+        if len(v) > list_items:
+            out.append(f"…（还有 {len(v) - list_items} 项）")
+        return out
+    if isinstance(v, str) and len(v) > MIRROR_STR_CHARS:
+        return v[:MIRROR_STR_CHARS] + "…"
+    return v
+
+
+def _mirror_text(body: dict) -> str:
+    """精简副本的文字：先按默认上限缩，超了逐步少列、最后只留小字段（键永远在，大字段标 `elided`）。"""
+    for items in (MIRROR_LIST_ITEMS, 15, 5):
+        text = json.dumps(_mirror_shrink(body, 0, items), ensure_ascii=False, separators=(",", ":"))
+        if len(text) <= MIRROR_MAX_CHARS:
+            return text
+    small, elided = {}, []
+    for k, v in body.items():
+        t = json.dumps(_mirror_shrink(v, 1, 5), ensure_ascii=False, separators=(",", ":"))
+        if len(t) <= 600 and k not in MIRROR_BIG_KEYS:
+            small[k] = _mirror_shrink(v, 1, 5)
+        else:
+            elided.append(k)
+    small["elided"] = elided
+    return json.dumps(small, ensure_ascii=False, separators=(",", ":"))[:MIRROR_MAX_CHARS]
+
+
+def _content_already_has(content: object, body: dict) -> bool:
+    """`content` 里有没有一个文字块本身就是整份 `body` 的 JSON（解析后相等）。"""
+    for block in content if isinstance(content, list) else ():
+        text = block.get("text") if isinstance(block, dict) else None
+        if not isinstance(text, str) or not text.lstrip().startswith("{"):
+            continue
+        try:
+            if json.loads(text) == body:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _mirror_structured(name: str, result: dict) -> dict:
+    """结果带 `structuredContent` 就在 `content` 末尾追加一个只给助手看的文字块（原有文字块一字不动）。"""
+    body = result.get("structuredContent")
+    if name in MIRROR_SKIP_TOOLS or not isinstance(body, dict) or not body:
+        return result
+    if _content_already_has(result.get("content"), body):
+        # 原有文字已经是整份 structuredContent（如期刊事实分页）：再加一份只会重复，还会撑破它自己的体积预算
+        return result
+    block = {
+        "type": "text",
+        "text": MIRROR_LABEL + _mirror_text(body),
+        "annotations": {"audience": ["assistant"]},
+    }
+    result["content"] = [*(result.get("content") or []), block]
+    return result
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -3335,7 +3427,7 @@ def call_tool(name: str, args: dict) -> dict:
             # 配置路径可以任意长；摘要保留 available / code，避免把手本身越过预算。
             body["elided"]["fields"].append("canvas_ui.reason")
         fit_inline_budget(result, APPLY_SUMMARY_BUDGET_BYTES)
-    return result
+    return _mirror_structured(name, result)
 
 
 def _answered_without_a_person(result: dict, answered_in: float) -> bool:

@@ -11131,10 +11131,14 @@ def _engine_attempt(
 
     for attempt in range(2):
         try:
+            # 整次尝试里握着会话：LRU 淘汰不收它（build → override 两条请求之间也不是「闲置」）
             with (
-                _relay_build_progress(worker, progress_pj, rel_id)
-                if progress_pj is not None
-                else contextlib.nullcontext()
+                engine_pool.hold(worker),
+                (
+                    _relay_build_progress(worker, progress_pj, rel_id)
+                    if progress_pj is not None
+                    else contextlib.nullcontext()
+                ),
             ):
                 _admit_artifact(worker, stem, artifact_source)
                 result = action(worker, stem)
@@ -12263,11 +12267,61 @@ def api_change_plans_create():
     if engine_patchspec.canonicalize_with_diagnostics(base)[1]:
         return jsonify({"error": "patches 含无效条目", "code": "invalid_patches"}), 400
     script_mode = body.get("mode") == "script"
-    if source == "assistant":
+    previous_turn = None
+    plan_intent = None
+    add_prev, add_start = None, None
+    plan_standard = None
+    if source == "assistant" and not script_mode:
+        # 出版规范 + 预检结论（只给助手来源的图内方案；形状不对 / 超限 = 400）
+        try:
+            plan_standard = engine_changeplan.clean_standard(body.get("standard"))
+        except ValueError:
+            return _change_plan_error("invalid_change_plan")
+    # 上一轮对话（ADR 0214 §二）、意图、再加一条都只给助手来源的图内方案用；审阅来源 / 脚本方案带它们一律拒绝
+    if any(k in body for k in ("previous_turn", "intent", "add_todo", "standard")) and (
+        source != "assistant" or script_mode
+    ):
+        return _change_plan_error("invalid_change_plan")
+    if source == "assistant" and "add_todo" in body:
+        # 待办卡上「再加一条」（ADR 0214 §三）：来源方案 id + 这一句话；除此之外不带任何东西
+        if any(
+            k in body
+            for k in (
+                "comments",
+                "share_id",
+                "comment_ids",
+                "instruction",
+                "intent",
+                "previous_turn",
+            )
+        ):
+            return _change_plan_error("invalid_change_plan")
+        from_plan = body.get("from_plan")
+        if not isinstance(from_plan, str) or engine_changeplan.PLAN_ID.match(from_plan) is None:
+            return _change_plan_error("invalid_change_plan")
+        add_prev = engine_changeplan.load(current_ctx().id, from_plan)
+        if add_prev is None:
+            return _change_plan_error("change_plan_unknown")
+        added = engine_changeplan.add_todo_rows(add_prev, body.get("add_todo"), rel_id)
+        if added is None:
+            return _change_plan_error("invalid_change_plan")
+        comments, add_start = added
+    elif source == "assistant":
         # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录 / 来源方案
         if any(k in body for k in ("comments", "share_id", "from_plan", "comment_ids")):
             return _change_plan_error("invalid_change_plan")
-        comments = engine_changeplan.assistant_comments(body.get("instruction"), body.get("target"))
+        try:
+            previous_turn = engine_changeplan.clean_previous_turn(body.get("previous_turn"))
+        except ValueError:
+            return _change_plan_error("invalid_change_plan")
+        instruction = body.get("instruction")
+        if "intent" in body:
+            # 「把这些建议写成待办」（意图 todos）：必须带上一轮、不带用户的话（用内部固定的那句）
+            if body["intent"] != "todos" or previous_turn is None or "instruction" in body:
+                return _change_plan_error("invalid_change_plan")
+            plan_intent = "todos"
+            instruction = engine_changeplan.TODOS_INTENT_INSTRUCTION
+        comments = engine_changeplan.assistant_comments(instruction, body.get("target"))
     elif script_mode:
         # 审阅方案卡上用户点「改脚本做剩下的」（ADR 0206 修订 2026-11-26）：只认「来源方案 id + 意见 id」，
         # 意见原文取自后端存档的那份方案，请求里再带任何意见文字 / 指令 / 分享记录一律拒绝
@@ -12280,7 +12334,16 @@ def api_change_plans_create():
         if prev is None:
             return _change_plan_error("change_plan_unknown")
         rows = engine_changeplan.review_script_rows(prev, body.get("comment_ids"), rel_id)
-        comments = engine_changeplan.review_script_comments(rows) if rows else None
+        comments = (
+            engine_changeplan.review_script_comments(
+                rows,
+                engine_changeplan.figure_todo_labels(prev)
+                if prev.get("source") == "assistant"
+                else None,
+            )
+            if rows
+            else None
+        )
     else:
         if any(k in body for k in ("from_plan", "comment_ids")):
             return _change_plan_error("invalid_change_plan")
@@ -12325,7 +12388,20 @@ def api_change_plans_create():
             args=(
                 (ctx, task, rel_id, list(base), comments, selection, body.get("target"), source)
                 if script_mode
-                else (ctx, task, rel_id, list(base), comments, source, None, selection)
+                else (
+                    ctx,
+                    task,
+                    rel_id,
+                    list(base),
+                    comments,
+                    source,
+                    add_prev,
+                    selection,
+                    previous_turn,
+                    plan_intent,
+                    add_start,
+                    plan_standard,
+                )
             ),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
@@ -12406,14 +12482,35 @@ def api_change_plans_revise(plan_id: str):
 
 
 def _change_plan_thread(
-    ctx, task, rel_id, base, comments, source="review", prev=None, selection=None
+    ctx,
+    task,
+    rel_id,
+    base,
+    comments,
+    source="review",
+    prev=None,
+    selection=None,
+    previous_turn=None,
+    intent=None,
+    add_start=None,
+    standard=None,
 ) -> None:
     """后台线程：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail = "", ""
     try:
         with bound_project(ctx):
             plan, before_png, after_png = _change_plan_compute(
-                task, rel_id, base, comments, source, prev, selection
+                task,
+                rel_id,
+                base,
+                comments,
+                source,
+                prev,
+                selection,
+                previous_turn,
+                intent,
+                add_start,
+                standard,
             )
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png)
     except engine_changeplan.PlanFailure as exc:
@@ -12576,7 +12673,11 @@ def _change_plan_script_compute(
             str(outcome.get("error") or ""),
         )
     if not new_bytes or new_bytes == outcome["base_bytes"]:
-        raise ec.PlanFailure("change_plan_script_no_change")
+        # Agent 没改脚本但回了话：话带回卡上显示（ADR 0214 §一 兜底），不只说「Agent 没有改动脚本」
+        said = ec._clip_text(outcome.get("reply") or "", ec.MAX_AGENT_REPLY_CHARS)
+        raise ec.PlanFailure(
+            "change_plan_script_no_change", "", {"agent_reply": said} if said else None
+        )
     if len(new_bytes) > ec.SCRIPT_MAX_BYTES:
         raise ec.PlanFailure("change_plan_too_large")
     task.phase = "render_after"
@@ -12820,6 +12921,10 @@ def _change_plan_compute(
     source: str = "review",
     prev: dict | None = None,
     selection: dict | None = None,
+    previous_turn: dict | None = None,
+    intent: str | None = None,
+    add_start: int | None = None,
+    standard: dict | None = None,
 ):
     """渲染 B0 → 问模型 → 候选渲染 → 现算有效改动 → 方案。→ `(plan, before_png, after_png)`；失败抛 `PlanFailure`。
 
@@ -12833,6 +12938,9 @@ def _change_plan_compute(
     起点 = 上一版的 `candidate_patches`，模型看**上一版之后**的元素表（状态中立的 `snapshot`，不碰热态）+ 上一版改动摘要，
     候选 = 上一版候选 ⊕ 批注的改动；卡上的改动仍相对 B0 现算（上一版没被批注改掉的组原样带上），批注出的组标 `origin: "note"`。"""
     ec = engine_changeplan
+    adding = (
+        add_start is not None and prev is not None
+    )  # 待办卡上「再加一条」：沿用续改的骨架，新条目并进同一张卡
     try:
         worker, stem = _engine_worker(rel_id, safe_only=True)
     except NativeWorkerRefused:
@@ -12884,16 +12992,25 @@ def _change_plan_compute(
         else:
             start = prev["candidate_patches"]
             start_png, start_man = snapshot(start)
-            previous = ec.previous_summary(prev)
+            previous = None if adding else ec.previous_summary(prev)
         task.phase = "model"
         # 续改用审阅那份提示（它带续改说明）；助手来源的首版用助手提示
         proposal = ec.ask_model(
             comments,
             start_man,
-            "review" if prev is not None else source,
+            source if adding else ("review" if prev is not None else source),
             previous,
             selection,
+            previous_turn if prev is None else None,
+            "todos" if adding else intent,
+            add_start if adding else None,
+            standard if prev is None or adding else None,
         )
+        # 建议待办（ADR 0214）：回答与待办意图不经下面的候选 / 有效改动流水线（它们只重建组与未处理），单独留着给 `build_plan`；
+        # 每条建议自己的意见 id（`a2`..）在意见里补一条原文，组标签与存档的意见都靠它
+        reply, todos = proposal.get("reply"), proposal.get("todos")
+        if todos:
+            comments = ec.with_todo_comments(comments, todos)
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         # 改成对数轴而下限 ≤ 0：候选里一并把下限改成正数（卡片再问用户要不要），免得出一张坍掉的图
@@ -12961,6 +13078,33 @@ def _change_plan_compute(
             unhandled=unhandled,
             base_patches=base,
             source=source,
+            reply=reply,
+            todos=todos,
+        )
+    elif adding:
+        # 再加一条：已有的待办 / 组原样带着（key 不变），新条目从下一个编号起、标「新加」；回答沿用上一版的
+        old_raw, old_keys = ec.prev_todos_raw(prev)
+        new_ids = {c["id"] for c in comments}
+        live = {g["comment_id"] for g in groups}
+        unhandled = [u for u in unhandled if u["comment_id"] in new_ids] + [
+            u
+            for u in prev["unhandled"]
+            if u["comment_id"] not in live and u["comment_id"] not in new_ids
+        ]
+        plan = ec.build_plan(
+            plan_id=task.id,
+            target=rel_id,
+            base_fingerprint=prev["base"]["fingerprint"],
+            comments=[*(prev.get("comments") or []), *comments],
+            groups=groups,
+            unhandled=unhandled,
+            base_patches=base,
+            version=prev["version"] + 1,
+            source=prev["source"],
+            parent=prev["id"],
+            reply=prev.get("reply"),
+            todos=[*old_raw, *(todos or [])],
+            todo_keys=old_keys,
         )
     else:
         # 上一版没被批注改掉的审阅意见（组与未处理）带着走；组的标签取上一版的（批注组取批注文字）
@@ -12988,7 +13132,7 @@ def _change_plan_compute(
             parent=prev["id"],
             note_ids=note_ids,
         )
-    if prev is not None:
+    if prev is not None and not adding:
         # 续改的版本：上一版存着的审阅意见原文带着走（再加这一版用户自己写的批注），「改脚本做剩下的」仍按存档取
         plan["comments"] = [
             *(prev.get("comments") or []),
@@ -13125,7 +13269,7 @@ _VECTOR_EDIT_FIGURE = "__vector_edit__"
 def api_vector_edit_plan():
     """出矢量编辑方案（**不写盘**）。两种请求：
 
-    * `{canvas, ops}`：照补丁直接算（`vectoredit.apply_ops` + 只核被动到的对象）→ 200
+    * `{canvas, ops, instruction_text?, confirmed?}`：照补丁直接算（`vectoredit.apply_ops` + 只核被动到的对象）→ 200
       `{ok, errors, objects, deleted, order, echo, changes, checks, echo_digest, …}`；补丁不合格 `ok: false` + `errors: [{code, index?, field?}]`
       （码见 `vectoredit.ERROR_CODES`，整批没动）。内核不可用 = `kernel_unavailable`，其余操作照常。
     * `{canvas, instruction, selection?, connection?, model?, effort?, client_request_id?}`：先问模型出补丁再算 → 202 `{plan_id, state: "running"}`，
@@ -13139,7 +13283,13 @@ def api_vector_edit_plan():
             raise engine_vectorplan.PlanInputError("mode")
         if "ops" in body:
             ops = engine_vectorplan.check_ops(body.get("ops"))
-            out = engine_vectorplan.plan(canvas, ops)
+            out = engine_vectorplan.plan(
+                canvas,
+                ops,
+                context=engine_vectorplan.plan_context(
+                    body.get("instruction_text"), body.get("confirmed")
+                ),
+            )
             resp = jsonify(out)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -13188,7 +13338,9 @@ def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection, loc
         task.phase = "plan"
         ops, unhandled = proposal["ops"], proposal["unhandled"]
         if ops:
-            result = engine_vectorplan.plan(canvas, ops)
+            result = engine_vectorplan.plan(
+                canvas, ops, context=engine_vectorplan.plan_context(instruction, None)
+            )
         else:
             result = {
                 "ok": True,

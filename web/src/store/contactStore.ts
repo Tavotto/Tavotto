@@ -443,9 +443,10 @@ export const useContactStore = create<ContactState>((set, get) => {
       let journal: ContactJournalHead | undefined
       if (tip) {
         // 用户不写任何话、只点发送也算有效线索；但「没有这本刊」至少要有搜索词、链接、附件之一
-        const url = normalizeTipUrl(draft.url)
+        const url = tip.type === 'editor' ? '' : normalizeTipUrl(draft.url)
         if (url === null) return set({ formError: 'urlInvalid' })
         const query = draft.query.trim()
+        if (tip.type === 'editor' && !body && draft.files.length === 0) return
         if (tip.type === 'missing' && !query && !url && draft.files.length === 0) {
           return set({ formError: 'journalNeedsClue' })
         }
@@ -669,6 +670,8 @@ export function journalTipText(
     lines.push(label('title.missing'))
     const name = d.query.trim()
     if (name) lines.push(`${label('nameLabel')}: ${name}`)
+  } else if (tip.type === 'editor') {
+    lines.push([label('title.wrong'), tip.journalLabel, label('editorTag')].filter(Boolean).join(' · '))
   } else {
     lines.push([label('title.wrong'), tip.journalLabel].filter(Boolean).join(' · '))
     if (tip.ruleLabel) lines.push(`${label('rowRule')}: ${tip.ruleLabel}`)

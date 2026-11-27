@@ -197,3 +197,78 @@ test('「联系作者」被硬关时（fixtures 默认）：出处卡与选择�
   await expect(page.locator('[data-journal-card] [data-journal-open]')).toBeVisible()
   await expect(page.locator('[data-journal-report]')).toHaveCount(0)
 })
+
+test(
+  '问题页底部常驻「反馈期刊规范问题」入口，打开通用反馈窗：问题描述或编辑部原话、截图 / PDF 与回信邮箱',
+  { tag: '@feature:journal.tips' },
+  async ({ app, page }) => {
+    test.setTimeout(240_000)
+    // 这本刊没有任何待确认项：证明入口不依赖「需要你确认」组
+    await page.route('**/api/journal-facts/preflight', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ catalog_rev: 2, rules: {}, sources: {}, confirm: [] }),
+      }),
+    )
+    const a = await app({
+      env: {
+        TAVOTTO_NO_CONTACT: '0',
+        TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+        TAVOTTO_NO_JOURNAL_SYNC: '0',
+        TAVOTTO_JOURNAL_CATALOG_URL: 'http://127.0.0.1:9/', // 非 https：引擎不联网
+      },
+    })
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(a.baseURL)
+    await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+    // 还没绑期刊：问题页没有这个入口
+    await page.locator('[data-rail="problems"]').click()
+    await expect(page.locator('[data-editor-tip]')).toHaveCount(0)
+    await openSpec(page)
+    await page.locator('[data-journal-picker]').click()
+    await page.locator('[data-journal-search]').fill('fixture beta')
+    await page.locator('[data-journal-option="fx-beta"]').click()
+    // 关掉选择器与设置窗（各吃一次 Esc），回到左栏「问题」
+    const scrim = page.locator('[data-dialog-scrim][data-state="open"]')
+    for (let i = 0; i < 4 && (await scrim.count()) > 0; i++) {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(300)
+    }
+    await expect(scrim).toHaveCount(0)
+    if (!(await page.locator('[data-issues-journal]').isVisible())) await page.locator('[data-rail="problems"]').click()
+    await expect(page.locator('[data-issues-journal]')).toBeVisible()
+
+    await expect(page.locator('[data-confirm-group]')).toHaveCount(0)
+    const tip = page.locator('[data-editor-tip]')
+    await expect(tip).toBeVisible({ timeout: 30_000 })
+    await expect(tip).toHaveText('反馈期刊规范问题')
+    // 固定在面板底部：在顶部「期刊」行之下、整个在视口里，且是面板里最靠下的内容
+    const [tb, jb] = [(await tip.boundingBox())!, (await page.locator('[data-issues-journal]').boundingBox())!]
+    expect(tb.y).toBeGreaterThan(jb.y + jb.height)
+    expect(tb.y + tb.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+    await page.mouse.move(720, 300) // 指针与焦点都挪开：别让左栏「设置」图标的提示条入镜
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await page.waitForTimeout(400)
+    await shoot(page, 'editor-entry')
+
+    await tip.click({ timeout: 10_000 })
+    const dialog = page.locator('[data-dialog="journal-tip"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText('期刊规范反馈')
+    await expect(dialog.locator('[data-journal-tip-about]')).toHaveText('Fixture Beta')
+    await expect(dialog.locator('[data-contact-text]')).toHaveAttribute('placeholder', /仅用于核对官网，不会公开/)
+    await expect(dialog.locator('[data-contact-pick]')).toBeVisible()
+    await expect(dialog.locator('[data-contact-email]')).toHaveAttribute('placeholder', '核实后回信到这里')
+    await expect(dialog.locator('[data-journal-tip-entry]')).toHaveCount(0)
+    await expect(dialog.locator('[data-testid="journal-tip-issue"]')).toHaveCount(0)
+    await expect(dialog.locator('[data-contact-journal-url]')).toHaveCount(0)
+    await expect(dialog.locator('[data-contact-send]')).toHaveText('提交反馈')
+    await expect(dialog.locator('[data-contact-send]')).toBeDisabled()
+    await dialog.locator('[data-contact-text]').fill('请把图改成 600 dpi')
+    await expect(dialog.locator('[data-contact-send]')).toBeEnabled()
+    await dialog.locator('[data-contact-text]').fill('')
+    await shoot(page, 'editor')
+  },
+)
