@@ -37,7 +37,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 情况 | 读 |
 | --- | --- |
 | 写任何画图脚本之前 | `references/figure-contract.md`（契约详解 + 模板）、`references/publication-style.md`（默认值 / 克制 / 组图 / 开工三问细则 / 按期刊） |
-| 决定画什么图、汇总怎么表达、用户问「这样画对不对」 | `references/visualization-guidance.md`（科学图形准则：错误 / 统计 / 感知 / 待确认 / 作者偏好，按编号引用） |
+| 决定画什么图、汇总怎么表达、用户问「这样画对不对」 | `references/visualization-guidance.md`（科学图形准则，按编号引用） |
 | 工具缺失、引擎不可用、要装/升级/provision、工作区授权 | `references/first-run-and-recovery.md` |
 | 宿主不是 Codex（Cursor / Claude / VS Code / Trae / Antigravity / DSH / WorkBuddy / ZCode …）的安装、重载、能力差异 | `references/other-hosts.md` |
 | 用户已有一张图，要改宽度 / 字体 / 最小字号而不重画 | `references/normalize-existing.md` |
@@ -45,7 +45,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了、大图 / 多图打开、改过脚本之后刷新 | `references/compatibility.md`（能改 / 必须回代码改） |
 | 往组图排版上加标注、改已有的箭头 / 文字 / 形状 | `references/layout-annotate.md` |
-| 「按你的建议改」或很笼统的修改要求 | `references/suggest-todos.md` |
+| 「按你的建议改」 | `references/suggest-todos.md` |
 
 普通画图任务只读前一行；故障与交接文档**用到才读**。
 
