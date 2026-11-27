@@ -966,6 +966,47 @@ def test_staged_package_must_match_its_pinned_hash(tmp_path):
     assert A.package_path(lab, "a.exe") == (d / "a.exe", None)
 
 
+def test_pro_smoke_takes_only_a_pro_zip_name():
+    t = A.TASKS["pro-smoke"]
+    good = "tavotto-pro-0.2.0-t5-windows-x64.zip"
+    assert A.validate_test_args(t, [], None, "direct", good) is None
+    assert "requires --package" in A.validate_test_args(t, [], None, "direct")
+    assert "does not accept --from" in A.validate_test_args(t, [], None, "direct", good, good)
+    for bad in (
+        "a.exe",
+        "tavotto-pro-0.2.0-macos-arm64.zip",
+        "tavotto-pro-..-windows-x64.zip",
+        "x/tavotto-pro-1-windows-x64.zip",
+        "tavotto-pro-1-windows-x64.zip;calc",
+    ):
+        assert A.validate_test_args(t, [], None, "direct", bad), bad
+    # 安装包任务仍然只认 .exe
+    assert A.validate_test_args(A.TASKS["installer"], [], None, "direct", good)
+
+
+def test_pro_smoke_needs_the_staged_companions(tmp_path):
+    import hashlib
+
+    lab = A.Lab(tmp_path)
+    d = lab.cache / "packages"
+    d.mkdir(parents=True)
+    name = "tavotto-pro-0.2.0-t5-windows-x64.zip"
+    (d / name).write_bytes(b"PK zip")
+    (d / f"{name}.sha256").write_text(hashlib.sha256(b"PK zip").hexdigest())
+    got = A.run_pro_smoke_task(lab, tmp_path / "run", {}, name)
+    assert got["result"] == "environment_unavailable"
+    assert f"{name}.release.json" in got["summary"]
+    assert all(n in got["summary"] for n in A.PRO_SMOKE_COMPANIONS)
+
+
+def test_pro_smoke_driver_keeps_secrets_out_of_its_result():
+    src = (WINLAB / "pro_smoke.py").read_text(encoding="utf-8")
+    # 令牌 / 设备种子只写进数据目录；结果文件里只有检查项与公开事实
+    assert 'lic["token_file"]' in src and 'lic["device_seed"]' in src
+    result_block = src[src.index('    return {\n        "result": overall') :]
+    assert "lic" not in result_block.split("def main")[0]
+
+
 def test_installer_check_is_ascii_and_mirrors_the_nightly_checks():
     ps = (WINLAB / "installer-check.ps1").read_bytes()
     assert all(b < 128 for b in ps)
