@@ -1,4 +1,4 @@
-import type { Manifest } from './api'
+import type { Manifest, ManifestElement } from './api'
 import { effectiveOverrideIndex } from './effectiveOverride'
 
 /**
@@ -22,6 +22,34 @@ type Key = { readonly gid: string; readonly prop: string }
 
 const keyOf = (k: Key) => `${k.gid}\u0000${k.prop}`
 
+function reciprocalPeers(byGid: ReadonlyMap<string, ManifestElement>, { gid, prop }: Key): string[] {
+  const peers = [gid]
+  const seen = new Set(peers)
+  const links = (id: string) => {
+    const element = byGid.get(id)
+    return element?.alias_pure?.includes(prop) ? element.alias_covers?.[prop]?.[prop] : undefined
+  }
+  // Reciprocal pure links to the same property denote one value shared by a
+  // group. Follow the links through its owner as well as its immediate peers.
+  for (const member of peers) {
+    for (const peer of links(member) ?? []) {
+      if (seen.has(peer) || !links(peer)?.includes(member)) continue
+      seen.add(peer)
+      peers.push(peer)
+    }
+  }
+  return peers
+}
+
+export function sharedOverrideAddresses(
+  manifest: Pick<Manifest, 'elements'> | null | undefined,
+  targets: readonly Key[],
+): Key[] {
+  if (!manifest) return [...targets]
+  const byGid = new Map(manifest.elements.map((element) => [element.gid, element]))
+  return targets.flatMap((target) => reciprocalPeers(byGid, target).map((gid) => ({ gid, prop: target.prop })))
+}
+
 /** 这一批 patch 要连带清掉的 (gid, prop)；没有可清的就是空数组。`manifest` 缺失 / 旧引擎没发字段 = 空 */
 export function aliasClearPlan(
   overrides: readonly Key[],
@@ -39,6 +67,7 @@ export function aliasClearPlan(
   // 广播端 → 窄端
   const byGid = new Map(manifest.elements.map((e) => [e.gid, e]))
   for (const p of patches) {
+    for (const gid of reciprocalPeers(byGid, p)) clear(gid, p.prop)
     const narrow = byGid.get(p.gid)?.alias_covers?.[p.prop]
     if (!narrow) continue
     for (const [nprop, gids] of Object.entries(narrow)) for (const g of gids) clear(g, nprop)

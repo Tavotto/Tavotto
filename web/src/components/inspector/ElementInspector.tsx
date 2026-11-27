@@ -56,6 +56,7 @@ import {
 import {
   applyTickSidePlan,
   resolveArtifactBackground,
+  readPanelOverride,
   clearOverride,
   clearOverrides,
   detachLegendEntry,
@@ -1364,7 +1365,7 @@ function AxesRangeCard({
   const scale = AXES_SCALE_PROPS.map(fieldOf).filter((f): f is EditableField => !!f)
   const invert = AXES_INVERT_PROPS.filter((p) => !!fieldOf(p))
   const aspect = fieldOf('aspect')
-  const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
+  const overridden = (p: string) => !!readPanelOverride(panel, element.gid, p)
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
   useLocateReveal(
@@ -2173,7 +2174,7 @@ function isLogRange(prop: string, element: ManifestElement, panel: PanelObject):
 
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
   if (panel.chartFrame && usesFigureFrame({ gid, prop: field.prop })) return field.value
-  const ov = effectiveOverride(panel.overrides, gid, field.prop)
+  const ov = readPanelOverride(panel, gid, field.prop)
   return ov ? (field.prop === 'fontfamily' ? figurePrimaryValue(ov.value, field.value) : ov.value) : field.value
 }
 
@@ -2265,9 +2266,7 @@ function FieldRow({
    */
   const ownedProps: readonly string[] =
     kind === 'legend-position' ? LEGEND_PLACEMENT_PROPS : [field.prop]
-  const overridden = ownedProps.some((prop) =>
-    panel.overrides.some((o) => o.gid === element.gid && o.prop === prop),
-  )
+  const overridden = ownedProps.some((prop) => !!readPanelOverride(panel, element.gid, prop))
   /** 恢复到脚本：这个控件拥有的**全部** override 进同一次修改（一条历史、一次渲染） */
   const resettable = !(element.gid === 'figure' && field.prop === 'transparent' &&
     backgroundOriginal !== undefined && value === backgroundOriginal)

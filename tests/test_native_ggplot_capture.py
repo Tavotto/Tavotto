@@ -2037,6 +2037,17 @@ stopifnot(sum(styled & startsWith(red, "<polyline ")) == 3L,
 fresh <- adapter$capture_ggplot(plot, frame)$state
 stopifnot(identical(adapter$render_ggplot(fresh, change), rendered),
           identical(element(adapter$ggplot_manifest(fresh, "plot", change), gids[[2L]]), target))
+projected <- c(change, list(axes_2 = list(xscale = "log")))
+projected_scene <- adapter$ggplot_manifest(state, "plot", projected)
+projected_line <- element(projected_scene, gids[[2L]])
+red <- lines(adapter$render_ggplot(state, projected), "#A53658")
+styled <- grepl("stroke-width: 3.00", red, fixed = TRUE) & grepl("stroke-dasharray:", red, fixed = TRUE)
+stopifnot(length(projected_line$geometry$paths) == 3L,
+          !identical(projected_line$geometry$paths, target$geometry$paths),
+          identical(projected_line$line_context, target$line_context),
+          sum(styled & startsWith(red, "<polyline ")) == 3L,
+          sum(styled & startsWith(red, "<line ")) == 1L,
+          calls == 2L)
 jsonlite::write_json(scene, "faceted-curve.json", auto_unbox = TRUE, null = "null", digits = NA)
 """
 
@@ -2119,9 +2130,102 @@ for (case in fixtures) {
 }
 front <- adapter$capture_ggplot(plot + wrap + ggplot2::theme(panel.ontop = TRUE), frame)$state
 stopifnot(is.null(front$axes_targets$axes_3$background), length(front$axes_targets$axes_3$grid) > 0L)
-stopifnot(inherits(try(adapter$render_ggplot(state, list(axes_3 = list(xlim = c(1, 3)))),
+stopifnot(inherits(try(adapter$render_ggplot(state, list(axes_3 = list(xlim = c(3, 1)))),
                        silent = TRUE), "try-error"))
 jsonlite::write_json(scene, "faceted-axes.json", auto_unbox = TRUE, null = "null", digits = NA)
+"""
+
+
+FACET_COORDINATES_PROBE = r"""
+if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+grDevices::pdf(file = NULL)
+calls <- 0L
+summarize <- function(y) { calls <<- calls + 1L; mean(y) }
+data <- expand.grid(x = rep(c(1, 10, 100), each = 2), row = c("A", "B"), col = c("X", "Y", "Z"))
+data$y <- log10(data$x) + as.integer(data$row) * 10 + rep(c(-1, 1), nrow(data) / 2)
+plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::stat_summary(geom = "point", fun = summarize) + ggplot2::geom_line() +
+  ggplot2::theme_bw() + ggplot2::labs(x = "Dose", y = "Response")
+frame <- c(420, 288)
+element <- function(scene, gid) Filter(function(e) e$gid == gid, scene$elements)[[1L]]
+grid <- ggplot2::facet_grid(ggplot2::vars(row), ggplot2::vars(col), scales = "free")
+capture <- adapter$capture_ggplot(plot + grid, frame)
+state <- capture$state
+counted <- calls
+data_before <- state$built$data
+baseline <- adapter$ggplot_manifest(state, "dose")
+edits <- list(axes_2 = list(xscale = "log", xlim = c(1, 100), grid_x = FALSE),
+              axes_4 = list(ylim = c(19, 23), invert_y = TRUE),
+              layer.2.panel.5.line = list(color = "#125A90", linewidth = 2.4))
+rendered <- adapter$ggplot_manifest(state, "dose", edits)
+scene <- adapter$ggplot_table_for(state, edits)
+for (id in seq_along(state$built$layout$panel_params)) {
+  gid <- paste0("axes_", id)
+  x_changed <- id %in% c(2L, 5L)
+  y_changed <- id %in% 4:6
+  target <- state$axes_targets[[gid]]
+  axes <- element(rendered, gid)$native_axes
+  previous <- element(baseline, gid)$native_axes
+  stopifnot(identical(axes$context, previous$context),
+            identical(axes$current$x$mode, if (x_changed) "log" else "linear"),
+            identical(axes$current$x$range, if (x_changed) list(1, 100) else previous$current$x$range),
+            identical(axes$current$y$range, if (y_changed) list(19, 23) else previous$current$y$range),
+            identical(axes$current$y$inverted, y_changed))
+  get_points <- function(table) {
+    panel <- table$grobs[[target$slot]]
+    panel$children[[which(startsWith(panel$childrenOrder, "geom_point."))]]
+  }
+  points <- get_points(scene$table)
+  original <- get_points(state$table)
+  stopifnot(isTRUE(all.equal(as.numeric(points$x), if (x_changed) c(0, .5, 1) else as.numeric(original$x))),
+            isTRUE(all.equal(as.numeric(points$y), if (y_changed) c(.75, .5, .25) else as.numeric(original$y))))
+}
+stopifnot(identical(element(rendered, "axes_5")$native_axes$edited, list("xscale", "xlim", "ylim", "invert_y")),
+          identical(element(rendered, "axes_2")$native_axes$links$x, list("axes_5")),
+          identical(element(rendered, "axes_4")$native_axes$links$y, list("axes_5", "axes_6")),
+          identical(element(rendered, "axes_6")$native_axes$links$y, list("axes_4")))
+invalid <- try(adapter$ggplot_table_for(state, c(edits, list(axes_5 = list(xscale = "linear")))), silent = TRUE)
+stopifnot(inherits(invalid, "try-error"), grepl("conflicting values", as.character(invalid), fixed = TRUE))
+svg <- adapter$render_ggplot(state, edits)
+png <- adapter$preview_ggplot_png(state, edits, "facets.png", 840, TRUE)
+stopifnot(isTRUE(all.equal(element(rendered, "axes_5")$bbox, png$axes_bbox$axes_5, tolerance = .02)),
+          grepl("#125A90", svg, fixed = TRUE), identical(adapter$render_ggplot(state), capture$svg),
+          identical(state$built$data, data_before), calls == counted)
+replayed <- adapter$capture_ggplot(plot + grid, frame)$state
+stopifnot(identical(adapter$render_ggplot(replayed, edits), svg))
+single_group <- list(axes_2 = list(xlim = c(1, 100), invert_x = TRUE))
+for (fixed in c(TRUE, FALSE)) {
+  wrap <- ggplot2::facet_wrap(ggplot2::vars(row, col), ncol = 3,
+                             scales = if (fixed) "fixed" else "free")
+  source <- adapter$capture_ggplot(plot + wrap, frame)$state
+  views <- adapter$ggplot_table_for(source, single_group)$axes
+  reversed <- names(Filter(function(panel) isTRUE(panel$x$inverted), views))
+  stopifnot(identical(reversed, if (fixed) paste0("axes_", 1:6) else "axes_2"))
+}
+jsonlite::write_json(rendered, "coordinates.json", auto_unbox = TRUE, null = "null", digits = NA)
+
+cells <- expand.grid(x = 1:3, y = 1:2, facet = c("A", "B"))
+cells$fill <- rep(c("#D60000", "#059355", "#183ED0", "#6A1692", "#EA5303", "#6EE7D7"), 2)
+raster <- ggplot2::ggplot(cells, ggplot2::aes(x, y, fill = fill)) +
+  ggplot2::geom_raster(hjust = .25, vjust = .75) + ggplot2::scale_fill_identity() +
+  ggplot2::facet_wrap(ggplot2::vars(facet), scales = "free") +
+  ggplot2::coord_cartesian(xlim = c(0, 8), ylim = c(0, 5), expand = FALSE)
+source <- adapter$capture_ggplot(raster, frame)$state
+flipped <- adapter$ggplot_table_for(source, list(axes_2 = list(invert_x = TRUE, invert_y = TRUE)))
+get_raster <- function(table, id) {
+  panel <- table$grobs[[source$axes_targets[[id]]$slot]]
+  panel$children[[which(vapply(panel$children, inherits, logical(1L), "rastergrob"))]]
+}
+a <- get_raster(source$table, 1L)
+b <- get_raster(flipped$table, 1L)
+c <- get_raster(source$table, 2L)
+d <- get_raster(flipped$table, 2L)
+stopifnot(identical(a$raster, b$raster), identical(a$x, b$x), identical(a$y, b$y),
+          identical(as.matrix(d$raster), as.matrix(c$raster)[2:1, 3:1]),
+          isTRUE(all.equal(as.numeric(c$x) + as.numeric(d$x), 1)),
+          isTRUE(all.equal(as.numeric(c$y) + as.numeric(d$y), 1)))
+grDevices::dev.off()
 """
 
 
@@ -2905,6 +3009,20 @@ def test_faceted_curve_group_updates_one_key_and_respects_each_panel_clip(tmp_pa
 
 def test_axis_windows_and_transforms_reproject_captured_data_without_recalculating(tmp_path):
     _assert_r_probe(tmp_path, AXES_PROBE)
+
+
+def test_faceted_coordinates_reproject_axes_and_raster_by_native_scale_group(tmp_path):
+    _assert_r_probe(tmp_path, FACET_COORDINATES_PROBE)
+    scene = json.loads((tmp_path / "coordinates.json").read_text(encoding="utf-8"))
+    nativeggplot.GgplotTarget.annotate_manifest(scene)
+    by_gid = {e["gid"]: e for e in scene["elements"]}
+    assert by_gid["axes_2"]["alias_covers"]["xlim"] == {"xlim": ["axes_5"]}
+    assert by_gid["axes_5"]["alias_covers"]["invert_y"] == {"invert_y": ["axes_4"]}
+    fields = {field["prop"]: field for field in by_gid["axes_5"]["editable"]}
+    assert fields["xscale"]["value"] == "log"
+    assert fields["xscale"]["value_original"] == "linear"
+    assert fields["invert_y"]["value"] is True
+    assert fields["invert_y"]["value_original"] is False
 
 
 def test_faceted_axes_edit_only_the_target_panel_grid_background_and_border(tmp_path):

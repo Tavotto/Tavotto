@@ -4,6 +4,11 @@ ggplot_axes_gid <- "axes_0"
 ggplot_axis_modes <- c(identity = "linear", "log-10" = "log",
                        "tavotto-symlog" = "symlog", "prob-logis" = "logit")
 ggplot_axis_names <- c("x", "y")
+ggplot_axis_props <- c("xlim", "ylim", "xscale", "yscale", "invert_x", "invert_y")
+ggplot_axis_change_props <- function(axis) {
+  stats::setNames(c(paste0(axis, "lim"), paste0(axis, "scale"), paste0("invert_", axis)),
+                  c("range", "mode", "inverted"))
+}
 
 ggplot_transform_symlog <- function() {
   # Match the Matplotlib symlog preset used by the shared scale control.
@@ -55,58 +60,74 @@ ggplot_axis_layers <- function(layers) {
   }, character(1L))
 }
 
+ggplot_cartesian_axis_views <- function(coord) {
+  identical(class(coord)[[1L]], "CoordCartesian") &&
+    length(coord$reverse) == 1L && coord$reverse %in% c("none", "x", "y", "xy") &&
+    (is.null(coord$ratio) || is_positive_ggplot_number(coord$ratio)) &&
+    identical(coord$clip, "on")
+}
+
+ggplot_stock_axis_guides <- function(panel) {
+  all(vapply(panel$guides$guides, function(guide) {
+    class(guide)[[1L]] %in% c("GuideAxis", "GuideNone")
+  }, logical(1L))) && !any(vapply(ggplot_axis_names, function(axis) {
+    scale <- panel[[axis]]$scale
+    (!is.null(scale$secondary.axis) && !inherits(scale$secondary.axis, "waiver")) ||
+      any(vapply(list(scale$breaks, scale$labels, scale$minor_breaks, scale$limits),
+                 is.function, logical(1L)))
+  }, logical(1L)))
+}
+
+ggplot_axis_spec <- function(built, panel, kinds, axis, rows = vector("list", length(built$data))) {
+  coord <- built$layout$coord
+  scale <- panel[[axis]]$scale
+  if (!identical(class(scale)[[1L]], "ScaleContinuousPosition") ||
+      !inherits(scale$secondary.axis, "waiver") || !is.null(scale$limits) ||
+      !inherits(scale$labels, "waiver") || !inherits(scale$breaks, "waiver") ||
+      (!is.null(scale$minor_breaks) && !inherits(scale$minor_breaks, "waiver"))) return(NULL)
+  trans <- scale$get_transformation()
+  mode <- unname(ggplot_axis_modes[trans$name])
+  if (length(mode) != 1L || is.na(mode)) return(NULL)
+  range <- ggplot_axis_pair(trans$inverse(panel[[paste0(axis, ".range")]]))
+  trained <- trans$inverse(scale$get_limits())
+  if (length(trained) != 2L || any(!is.finite(trained)) || !is.finite(diff(trained)) ||
+      diff(trained) < 0) trained <- NULL
+  if (is.null(range)) return(NULL)
+  columns <- lapply(built$data, function(data) intersect(names(data), scale$aesthetics))
+  coords <- Map(function(data, cols, indices) {
+    values <- data[cols]
+    if (!is.null(indices)) values <- lapply(values, `[`, indices)
+    unlist(values, use.names = FALSE)
+  }, built$data, columns, rows)
+  if (!all(vapply(coords, function(v) is.null(v) || (is.numeric(v) && !is.object(v)), logical(1L)))) {
+    return(NULL)
+  }
+  native <- lapply(coords, function(v) if (length(v)) trans$inverse(v))
+  has_infinite <- any(vapply(coords, function(v) any(is.infinite(v)), logical(1L)))
+  positive <- !is.null(trained) && all(trained > 0) &&
+    all(vapply(native, function(v) all(v[!is.na(v)] > 0 & is.finite(v[!is.na(v)])), logical(1L))) &&
+    all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] > 0)
+  can_switch <- !is.null(trained) && !has_infinite && !"GeomRaster" %in% kinds
+  probability <- positive && all(trained < 1) &&
+    all(vapply(native, function(v) all(v[!is.na(v)] < 1), logical(1L))) &&
+    all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] < 1)
+  options <- if (!can_switch) mode else c(
+    "linear", if (mode == "log" || positive) "log", "symlog", if (mode == "logit" || probability) "logit")
+  list(mode = mode, range = range, trained = trained, columns = columns, options = options)
+}
+
 ggplot_axes_target <- function(built, table) {
   layout <- built$layout
   coord <- layout$coord
   slot <- which(table$layout$name == "panel")
   if (length(slot) != 1L || length(layout$panel_params) != 1L ||
-      !identical(class(coord)[[1L]], "CoordCartesian") ||
-      length(coord$reverse) != 1L || !coord$reverse %in% c("none", "x", "y", "xy") ||
-      (!is.null(coord$ratio) && !is_positive_ggplot_number(coord$ratio)) ||
-      !identical(coord$clip, "on")) return(NULL)
+      !ggplot_cartesian_axis_views(coord)) return(NULL)
   kinds <- ggplot_axis_layers(built$plot$layers)
   if (!length(kinds) || anyNA(kinds)) return(NULL)
   panel <- layout$panel_params[[1L]]
-  if (!all(vapply(panel$guides$guides, function(guide) {
-    class(guide)[[1L]] %in% c("GuideAxis", "GuideNone")
-  }, logical(1L))) || any(vapply(ggplot_axis_names, function(axis) {
-    scale <- panel[[axis]]$scale
-    (!is.null(scale$secondary.axis) && !inherits(scale$secondary.axis, "waiver")) ||
-      any(vapply(list(scale$breaks, scale$labels, scale$minor_breaks, scale$limits),
-                 is.function, logical(1L)))
-  }, logical(1L)))) return(NULL)
-  axes <- lapply(ggplot_axis_names, function(axis) {
-    scale <- panel[[axis]]$scale
-    if (!identical(class(scale)[[1L]], "ScaleContinuousPosition") ||
-        !inherits(scale$secondary.axis, "waiver") || !is.null(scale$limits) ||
-        !inherits(scale$labels, "waiver") || !inherits(scale$breaks, "waiver") ||
-        (!is.null(scale$minor_breaks) && !inherits(scale$minor_breaks, "waiver"))) return(NULL)
-    trans <- scale$get_transformation()
-    mode <- unname(ggplot_axis_modes[trans$name])
-    if (length(mode) != 1L || is.na(mode)) return(NULL)
-    range <- ggplot_axis_pair(trans$inverse(panel[[paste0(axis, ".range")]]))
-    trained <- trans$inverse(scale$get_limits())
-    if (length(trained) != 2L || any(!is.finite(trained)) || !is.finite(diff(trained)) ||
-        diff(trained) < 0) trained <- NULL
-    if (is.null(range)) return(NULL)
-    columns <- lapply(built$data, function(data) intersect(names(data), scale$aesthetics))
-    coords <- Map(function(data, cols) unlist(data[cols], use.names = FALSE), built$data, columns)
-    if (!all(vapply(coords, function(v) is.null(v) || (is.numeric(v) && !is.object(v)), logical(1L)))) {
-      return(NULL)
-    }
-    native <- lapply(coords, function(v) if (length(v)) trans$inverse(v))
-    has_infinite <- any(vapply(coords, function(v) any(is.infinite(v)), logical(1L)))
-    positive <- !is.null(trained) && all(trained > 0) &&
-      all(vapply(native, function(v) all(v[!is.na(v)] > 0 & is.finite(v[!is.na(v)])), logical(1L))) &&
-      all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] > 0)
-    can_switch <- !is.null(trained) && !has_infinite && !"GeomRaster" %in% kinds
-    probability <- positive && all(trained < 1) &&
-      all(vapply(native, function(v) all(v[!is.na(v)] < 1), logical(1L))) &&
-      all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] < 1)
-    options <- if (!can_switch) mode else c(
-      "linear", if (mode == "log" || positive) "log", "symlog", if (mode == "logit" || probability) "logit")
-    list(mode = mode, range = range, trained = trained, columns = columns, options = options)
-  }) |> stats::setNames(ggplot_axis_names) |> Filter(f = Negate(is.null))
+  if (!ggplot_stock_axis_guides(panel)) return(NULL)
+  axes <- lapply(ggplot_axis_names, function(axis) ggplot_axis_spec(built, panel, kinds, axis)) |>
+    stats::setNames(ggplot_axis_names) |> Filter(f = Negate(is.null))
   if (!length(axes)) return(NULL)
   # Preserve the saved identities of plots captured before direction was editable.
   identity_axes <- lapply(axes, function(axis) {
@@ -187,6 +208,40 @@ ggplot_axis_edits <- function(target, edits) {
   changes
 }
 
+ggplot_axis_expand_sides <- function(axis) if (axis == "x") c(4L, 2L) else c(3L, 1L)
+
+ggplot_project_axis_scale <- function(scale, spec, change) {
+  mode <- change$mode %||% spec$mode
+  range <- change$range
+  if (mode == "log" && !is.null(range) && any(range <= 0)) {
+    stop("Native R logarithmic axis limits must be strictly positive.")
+  }
+  if (mode == "logit" && !is.null(range) && any(range <= 0 | range >= 1)) {
+    stop("Native R logit axis limits must be strictly between zero and one.")
+  }
+  convert <- NULL
+  if (mode != spec$mode) {
+    previous <- scale$get_transformation()
+    trans <- switch(mode, linear = scales::transform_identity(), log = scales::transform_log10(),
+                    symlog = ggplot_transform_symlog(), logit = scales::transform_logit())
+    trained <- trans$transform(spec$trained)
+    if (any(!is.finite(trained))) stop("The native R scale has no finite transformed range.")
+    scale <- scale$clone()
+    scale$trans <- trans
+    scale$train(trained)
+    convert <- function(values) trans$transform(previous$inverse(values))
+  }
+  if (!is.null(range) && is.null(ggplot_axis_pair(scale$transform(range)))) {
+    stop("The native R axis has no finite transformed view.")
+  }
+  list(scale = scale, convert = convert)
+}
+
+ggplot_convert_axis_data <- function(data, columns, rows, convert) {
+  for (field in columns) data[[field]][rows] <- convert(data[[field]][rows])
+  data
+}
+
 ggplot_project_axes <- function(built, target, changes) {
   layout <- ggplot_clone(built$layout)
   limits <- layout$coord$limits
@@ -197,37 +252,17 @@ ggplot_project_axes <- function(built, target, changes) {
     spec <- target$axes[[axis]]
     change <- changes[[axis]]
     if (!is.null(change$inverted)) inverted[[axis]] <- change$inverted
-    mode <- if (is.null(change$mode)) spec$mode else change$mode
-    range <- change$range
-    if (mode == "log" && !is.null(range) && any(range <= 0)) {
-      stop("Native R logarithmic axis limits must be strictly positive.")
-    }
-    if (mode == "logit" && !is.null(range) && any(range <= 0 | range >= 1)) {
-      stop("Native R logit axis limits must be strictly between zero and one.")
-    }
     name <- paste0("panel_scales_", axis)
-    scale <- layout[[name]][[1L]]
-    if (mode != spec$mode) {
-      previous <- scale$get_transformation()
-      trans <- switch(mode, linear = scales::transform_identity(), log = scales::transform_log10(),
-                      symlog = ggplot_transform_symlog(), logit = scales::transform_logit())
-      trained <- trans$transform(spec$trained)
-      if (any(!is.finite(trained))) stop("The native R scale has no finite transformed range.")
-      scale <- scale$clone()
-      scale$trans <- trans
-      scale$train(trained)
-      layout[[name]] <- list(scale)
+    projected <- ggplot_project_axis_scale(layout[[name]][[1L]], spec, change)
+    if (!is.null(projected$convert)) {
+      layout[[name]] <- list(projected$scale)
       built$data <- Map(function(data, columns) {
-        for (field in columns) data[[field]] <- trans$transform(previous$inverse(data[[field]]))
-        data
+        ggplot_convert_axis_data(data, columns, seq_len(nrow(data)), projected$convert)
       }, built$data, spec$columns)
     }
-    if (!is.null(range)) {
-      if (is.null(ggplot_axis_pair(layout[[name]][[1L]]$transform(range)))) {
-        stop("The native R axis has no finite transformed view.")
-      }
-      limits[[axis]] <- range
-      expand[if (axis == "x") c(4L, 2L) else c(3L, 1L)] <- FALSE
+    if (!is.null(change$range)) {
+      limits[[axis]] <- change$range
+      expand[ggplot_axis_expand_sides(axis)] <- FALSE
     }
   }
   reverse <- paste(ggplot_axis_names[inverted], collapse = "")
@@ -256,7 +291,7 @@ measure_ggplot_axes <- function(table, targets, frame_pt) {
   lapply(targets, function(target) ggplot_axes_bbox(table, target$slot, frame_pt))
 }
 
-ggplot_axes_element <- function(gid, target, current, bbox, edits) {
+ggplot_axes_element <- function(gid, target, current, bbox, edits, changes) {
   original <- lapply(names(target$axes), function(axis) {
     spec <- target$axes[[axis]]
     list(mode = spec$mode, range = as.list(spec$range), options = as.list(spec$options),
@@ -268,7 +303,10 @@ ggplot_axes_element <- function(gid, target, current, bbox, edits) {
   list(gid = gid, role = "axes", label = label, bbox = bbox,
             draggable = FALSE, editable = list(), native_axes = list(
               context = target$context, current = current, original = original,
-              edited = as.list(names(edits)),
+              edited = as.list(unique(c(names(edits), unlist(lapply(names(changes), function(axis) {
+                ggplot_axis_change_props(axis)[names(changes[[axis]])]
+              }), use.names = FALSE)))),
+              links = lapply(target$links, as.list),
               aspect = if (!is.null(target$aspect)) {
                 list(original = target$aspect, current = edits$aspect %||% target$aspect)
               },
@@ -290,22 +328,29 @@ ggplot_axes_element <- function(gid, target, current, bbox, edits) {
               }))
 }
 
-ggplot_rebind_layer_targets <- function(table, targets, grobs) {
-  lapply(targets, function(target) {
-    panel <- table$grobs[[target$slot]]
-    layer <- grobs[[target$index]]
-    if (length(layer) != 1L) stop("The native R layer changed while adjusting the axes.")
-    name <- layer[[1L]]$name
-    child <- which(panel$childrenOrder == name)
+ggplot_rebind_layer_targets <- function(table, targets, before, old_grobs, new_grobs) {
+  rebind <- function(target) {
+    old <- old_grobs[[target$index]]
+    new <- new_grobs[[target$index]]
+    previous <- before$grobs[[target$slot]]$childrenOrder
+    old_name <- if (is.character(target$child)) target$child else previous[[target$child]]
+    index <- match(old_name, vapply(old, function(grob) grob$name %||% "", character(1L)))
+    if (is.na(index) || length(old) != length(new) || !identical(names(old), names(new))) {
+      stop("The native R layer changed while adjusting the axes.")
+    }
+    name <- new[[index]]$name
+    child <- which(table$grobs[[target$slot]]$childrenOrder == name)
     if (length(child) != 1L) stop("The native R layer could not be found after adjusting the axes.")
     if (is.character(target$child)) target$child <- name else target$child <- child
     if (!is.null(target$grob_name)) target$grob_name <- name
+    if (length(target$parts)) target$parts <- lapply(target$parts, rebind)
     target
-  })
+  }
+  lapply(targets, rebind)
 }
 
 ggplot_axes_values <- function(layout, target, changes) {
-  panel <- layout$panel_params[[1L]]
+  panel <- layout$panel_params[[target$panel %||% 1L]]
   lapply(names(target$axes), function(axis) {
     trans <- panel[[axis]]$scale$get_transformation()
     range <- ggplot_axis_pair(trans$inverse(panel[[paste0(axis, ".range")]]))
@@ -317,8 +362,14 @@ ggplot_axes_values <- function(layout, target, changes) {
       }
       range <- requested
     }
-    list(mode = ggplot_axis_modes[[trans$name]], range = as.list(range),
-         inverted = ggplot_inverted(panel$reverse, axis))
+    mode <- ggplot_axis_modes[[trans$name]]
+    inverted <- ggplot_inverted(panel$reverse, axis)
+    change <- changes[[axis]]
+    if ((!is.null(change$mode) && !identical(change$mode, mode)) ||
+        (!is.null(change$inverted) && !identical(change$inverted, inverted))) {
+      stop("The native R axis did not apply the requested scale or direction.")
+    }
+    list(mode = mode, range = as.list(range), inverted = inverted)
   }) |> stats::setNames(names(target$axes))
 }
 
@@ -610,7 +661,103 @@ ggplot_facet_grill <- function(panel) {
   if (length(child) == 1L && inherits(panel$children[[child]], "gTree")) child
 }
 
-ggplot_faceted_axes_targets <- function(built, table, panels) {
+ggplot_facet_axis_groups <- function(built, cells) {
+  layout <- built$layout
+  kinds <- ggplot_axis_layers(built$plot$layers)
+  if (!ggplot_cartesian_axis_views(layout$coord) || !length(kinds) || anyNA(kinds) ||
+      !all(vapply(layout$panel_params, ggplot_stock_axis_guides, logical(1L)))) return(list())
+  ids <- as.character(cells$PANEL)
+  result <- lapply(ggplot_axis_names, function(axis) {
+    scales <- cells[[paste0("SCALE_", toupper(axis))]]
+    panel_groups <- split(as.integer(ids), scales)
+    scale_by_panel <- stats::setNames(scales, ids)
+    layer_groups <- lapply(built$data, function(data) {
+      split(seq_len(nrow(data)), scale_by_panel[as.character(data$PANEL)])
+    })
+    groups <- lapply(names(panel_groups), function(key) {
+      panels <- panel_groups[[key]]
+      panel <- layout$panel_params[[panels[[1L]]]]
+      rows <- lapply(layer_groups, function(groups) groups[[key]] %||% integer())
+      spec <- ggplot_axis_spec(built, panel, kinds, axis, rows)
+      if (is.null(spec)) return(NULL)
+      list(spec = spec, panels = panels, rows = rows)
+    })
+    stats::setNames(groups, names(panel_groups)) |> Filter(f = Negate(is.null))
+  })
+  stats::setNames(result, ggplot_axis_names)
+}
+
+ggplot_facet_axis_edits <- function(targets, edits) {
+  groups <- list()
+  for (gid in intersect(names(edits), setdiff(names(targets), ggplot_axes_gid))) {
+    target <- targets[[gid]]
+    changes <- ggplot_axis_edits(target, edits[[gid]][intersect(names(edits[[gid]]), ggplot_axis_props)])
+    for (axis in names(changes)) {
+      id <- target$groups[[axis]]
+      current <- groups[[axis]][[id]]
+      for (field in names(changes[[axis]])) {
+        value <- changes[[axis]][[field]]
+        if (!is.null(current[[field]]) && !identical(current[[field]], value)) {
+          stop("Shared native R axes cannot take conflicting values.")
+        }
+        current[[field]] <- value
+      }
+      groups[[axis]][[id]] <- current
+    }
+  }
+  groups
+}
+
+ggplot_facet_axis_changes <- function(target, changes) {
+  groups <- target$groups
+  lapply(names(groups), function(axis) changes[[axis]][[groups[[axis]]]]) |>
+    stats::setNames(names(groups)) |> Filter(f = Negate(is.null))
+}
+
+ggplot_project_facet_axes <- function(built, groups, changes) {
+  layout <- ggplot_clone(built$layout)
+  original <- layout$coord
+  changed_scales <- list()
+  for (axis in names(changes)) {
+    field <- paste0("panel_scales_", axis)
+    for (id in names(changes[[axis]])) {
+      group <- groups[[axis]][[id]]
+      index <- as.integer(id)
+      revised <- ggplot_project_axis_scale(layout[[field]][[index]], group$spec, changes[[axis]][[id]])
+      layout[[field]][[index]] <- revised$scale
+      changed_scales[[axis]][[id]] <- revised$scale
+      if (!is.null(revised$convert)) {
+        built$data <- Map(function(data, columns, rows) {
+          ggplot_convert_axis_data(data, columns, rows, revised$convert)
+        }, built$data, group$spec$columns, group$rows)
+      }
+    }
+  }
+  layout$coord <- ggplot_clone(original, setup_panel_params = function(scale_x, scale_y, params = list()) {
+    scales <- list(x = scale_x, y = scale_y)
+    limits <- original$limits
+    inverted <- vapply(ggplot_axis_names, function(axis) ggplot_inverted(original$reverse, axis), logical(1L))
+    for (axis in names(changes)) {
+      id <- names(Filter(function(scale) identical(scale, scales[[axis]]), changed_scales[[axis]]))
+      if (!length(id)) next
+      edit <- changes[[axis]][[id]]
+      if (!is.null(edit$range)) {
+        limits[[axis]] <- edit$range
+        params$expand[ggplot_axis_expand_sides(axis)] <- FALSE
+      }
+      if (!is.null(edit$inverted)) inverted[[axis]] <- edit$inverted
+    }
+    reverse <- paste(ggplot_axis_names[inverted], collapse = "")
+    coord <- ggplot_clone(original, limits = limits, reverse = if (nzchar(reverse)) reverse else "none")
+    coord$setup_panel_params(scale_x, scale_y, params)
+  })
+  layout$setup_panel_params()
+  layout$setup_panel_guides(built$plot$guides, built$plot$layers)
+  built$layout <- layout
+  built
+}
+
+ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
   if (is.null(panels) || panels$single || !identical(as.list(built$layout$coord)$render_bg,
                                                     as.list(ggplot2::CoordCartesian)$render_bg)) return(list())
   cells <- panels$cells
@@ -627,6 +774,14 @@ ggplot_faceted_axes_targets <- function(built, table, panels) {
     facet <- lapply(cells[i, panels$facets, drop = FALSE], as.character)
     target <- list(slot = slot, panel = ids[[i]], facet = unlist(facet, use.names = FALSE),
                    context = rlang::hash(list(context, facet)))
+    target$reverse <- built$layout$coord$reverse
+    for (axis in names(axis_groups)) {
+      group_id <- as.character(cells[[paste0("SCALE_", toupper(axis))]][[i]])
+      group <- axis_groups[[axis]][[group_id]]
+      if (is.null(group)) next
+      target$axes[[axis]] <- group$spec
+      target$groups[[axis]] <- group_id
+    }
     if (!is.null(ggplot_facet_grill(table$grobs[[slot]]))) {
       target <- ggplot_grid_target(built, table, target, slot)
       # With panel.ontop the grill is drawn over the data. An opaque fill
@@ -636,10 +791,19 @@ ggplot_faceted_axes_targets <- function(built, table, panels) {
       }
     }
     target <- ggplot_frame_target(built, table, target, slot, panel_only = TRUE)
-    if (!all(vapply(target[c("grid", "background", "frame")], is.null, logical(1L)))) target
+    if (!all(vapply(target[c("axes", "grid", "background", "frame")], is.null, logical(1L)))) target
   })
-  targets <- stats::setNames(targets, paste0("axes_", ids))
-  Filter(Negate(is.null), targets)
+  targets <- stats::setNames(targets, paste0("axes_", ids)) |> Filter(f = Negate(is.null))
+  for (axis in names(axis_groups)) {
+    for (group in axis_groups[[axis]]) {
+      peers <- intersect(paste0("axes_", group$panels), names(targets))
+      if (length(peers) < 2L) next
+      # A star keeps the alias manifest linear in the number of facet panels.
+      targets[[peers[[1L]]]]$links[[axis]] <- peers[-1L]
+      for (gid in peers[-1L]) targets[[gid]]$links[[axis]] <- peers[[1L]]
+    }
+  }
+  targets
 }
 
 ggplot_edit_facet_axes <- function(table, layout, theme, target, edit) {

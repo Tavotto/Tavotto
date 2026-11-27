@@ -303,9 +303,14 @@ class GgplotTarget:
             candidates = [(limits, original["range"]), (scale, original["mode"])]
             if (inverted := current["inverted"]) is not None:
                 candidates.append((axis_invert_field(axis, inverted), original["inverted"]))
+            links = (axes.get("links") or {}).get(axis)
             for field, source in candidates:
-                if field["prop"] in axes["edited"]:
+                prop = field["prop"]
+                if prop in axes["edited"]:
                     field["value_original"] = source
+                if links:
+                    element.setdefault("alias_covers", {})[prop] = {prop: links}
+                    element.setdefault("alias_pure", []).append(prop)
                 fields.append(field)
         if (aspect := axes.get("aspect")) is not None:
             field = axis_aspect_field(aspect["current"])

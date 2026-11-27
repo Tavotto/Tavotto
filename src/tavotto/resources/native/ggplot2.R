@@ -441,7 +441,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
 }
 
 ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-                               grid_edits, theme_edits, aspect, side_edits) {
+                               grid_edits, theme_edits, aspect, side_edits, facet_changes) {
   built <- state$built
   plot <- built$plot
   axes_target <- state$axes_targets[[ggplot_axes_gid]]
@@ -452,6 +452,8 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   if (!is.null(remapped)) guide_params <- remapped$guides
   if (!is.null(remapped)) built$data <- remapped$data
   if (length(axis_changes)) built <- ggplot_project_axes(built, axes_target, axis_changes)
+  if (length(facet_changes)) built <- ggplot_project_facet_axes(built, state$facet_axis_groups, facet_changes)
+  redraw <- length(axis_changes) || length(facet_changes)
   layout <- ggplot_clone(built$layout)
   if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, axes_target, aspect)
   panels <- layout$panel_params
@@ -537,9 +539,9 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions, remapped$outlines
   )
   captured <- new.env(parent = emptyenv())
-  if (length(axis_changes)) captured$grobs <- vector("list", length(plot$layers))
+  if (redraw) captured$grobs <- vector("list", length(plot$layers))
   plot$layers <- Map(function(layer, grobs, index) {
-    if (length(axis_changes)) {
+    if (redraw) {
       ggplot_watch_layer(ggplot_mirror_raster_layer(layer, layout$coord), index, captured)
     } else if (index %in% remapped$changed) {
       ggplot_mirror_raster_layer(layer, layout$coord)
@@ -547,7 +549,11 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   }, plot$layers, state$layer_grobs, seq_along(plot$layers))
   built$layout <- layout
   built$plot <- plot
-  axes <- if (length(axis_changes)) ggplot_axes_values(layout, axes_target, axis_changes)
+  axes <- if (redraw) lapply(names(state$axes_targets), function(gid) {
+    target <- state$axes_targets[[gid]]
+    changes <- if (gid == ggplot_axes_gid) axis_changes else ggplot_facet_axis_changes(target, facet_changes)
+    if (length(changes)) ggplot_axes_values(layout, target, changes)
+  }) |> stats::setNames(names(state$axes_targets))
   tick_values <- lapply(Filter(function(tick) !is.null(tick$spacing), state$tick_targets), function(tick) {
     ggplot_axis_key_values(panels[[1L]], axis_params[[tick$index]])
   })
@@ -1303,9 +1309,10 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     axes_target <- ggplot_background_target(built, table, axes_target)
     axes_target <- ggplot_aspect_target(built, table, axes_target)
     axes_target <- ggplot_tick_side_target(built, table, axes_target)
-    axes_targets <- if (is.null(axes_target)) ggplot_faceted_axes_targets(built, table, panels) else {
-      stats::setNames(list(axes_target), ggplot_axes_gid)
-    }
+    facet_axis_groups <- if (!is.null(panels) && !panels$single) ggplot_facet_axis_groups(built, panels$cells)
+    axes_targets <- if (is.null(axes_target)) {
+      ggplot_faceted_axes_targets(built, table, panels, facet_axis_groups)
+    } else stats::setNames(list(axes_target), ggplot_axes_gid)
     axes_bbox <- measure_ggplot_axes(table, axes_targets, frame_pt)
     has_sized_title <- any(vapply(text_targets, function(text) !is.null(text$title_dimension), logical(1L)))
     rebuild_guides <- has_sized_title || length(axes_targets) || length(tick_targets) || length(colour_scales) ||
@@ -1333,6 +1340,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       built = if (rebuild_guides) built,
       layer_grobs = if (rebuild_guides) captured_layers$grobs,
       axes_targets = axes_targets,
+      facet_axis_groups = facet_axis_groups,
       axes_bbox = axes_bbox,
       line_targets = line_targets,
       line_geometry = line_geometry,
@@ -1642,6 +1650,7 @@ ggplot_table_for <- function(state, edits) {
   axis_changes <- ggplot_axis_edits(
     axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits),
                                                             names(side_edits), "facecolor", "aspect"))])
+  facet_changes <- ggplot_facet_axis_edits(state$axes_targets, edits)
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
   axis_styles <- ggplot_axis_style_edits(state, edits)
@@ -1653,9 +1662,11 @@ ggplot_table_for <- function(state, edits) {
     theme_edits$panel.background <- ggplot_background_style(axes_target$background, axes_edits$facecolor)
   }
   if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
-      length(axis_changes) || length(grid_edits) || length(theme_edits) || !is.null(aspect) || length(side_edits)) {
+      length(axis_changes) || length(facet_changes) || length(grid_edits) || length(theme_edits) ||
+      !is.null(aspect) || length(side_edits)) {
     make_guides <- function() ggplot_guide_table(
-      state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes, grid_edits, theme_edits, aspect, side_edits
+      state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes,
+      grid_edits, theme_edits, aspect, side_edits, facet_changes
     )
     # Recreate resized text on the same metrics device used by the initial
     # capture, then draw the resulting table on the requested output device.
@@ -1713,9 +1724,9 @@ ggplot_table_for <- function(state, edits) {
         table$name, ggplot_cell_name(table$layout[slot, ]), viewport$name
       )
     }
-    if (length(axis_changes)) {
+    if (length(axis_changes) || length(facet_changes)) {
       layer_targets <- lapply(layer_targets, function(targets) {
-        ggplot_rebind_layer_targets(table, targets, guides$layer_grobs)
+        ggplot_rebind_layer_targets(table, targets, state$table, state$layer_grobs, guides$layer_grobs)
       })
     }
   }
@@ -1723,7 +1734,10 @@ ggplot_table_for <- function(state, edits) {
     if (gid == ggplot_axes_gid || !is.null(colour_edits[[gid]]) || gid %in% names(title_edits)) next
     facet <- state$axes_targets[[gid]]
     if (!is.null(facet)) {
-      table <- ggplot_edit_facet_axes(table, layout, state$built$plot$theme, facet, edits[[gid]])
+      decorations <- edits[[gid]][setdiff(names(edits[[gid]]), ggplot_axis_props)]
+      if (length(decorations)) {
+        table <- ggplot_edit_facet_axes(table, layout, state$built$plot$theme, facet, decorations)
+      }
       next
     }
     line <- layer_targets$line_targets[[gid]]
@@ -1873,13 +1887,14 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # A resized title can move the entire plot. Re-measure even targets whose
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)
+  facet_changes <- ggplot_facet_axis_edits(state$axes_targets, edits)
   reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
                                                 ggplot_axis_mark_props, "direction", "visible") %in% names(edit)),
                       logical(1L))) ||
     any(vapply(edits[intersect(names(edits), names(ggplot_axis_tick_theme_names))],
                function(edit) any(names(edit) %in% c("rotation", names(ggplot_face_options))), logical(1L))) ||
     any(names(edits) %in% c(ggplot_axes_gid, legend_gids, names(state$colour_scales))) ||
-    length(ggplot_guide_stroke_edits(state, edits)) > 0L
+    length(facet_changes) > 0L || length(ggplot_guide_stroke_edits(state, edits)) > 0L
   line_edits <- any(names(edits) %in% names(state$line_targets))
   point_edits <- any(names(edits) %in% names(state$point_targets))
   bar_edits <- any(names(edits) %in% names(state$bar_targets))
@@ -2096,8 +2111,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   }
   axes_bbox <- if (is.null(measured$axes_bbox)) state$axes_bbox else measured$axes_bbox
   axes <- lapply(names(state$axes_targets), function(gid) {
-    current <- if (gid == ggplot_axes_gid) measured$axes
-    ggplot_axes_element(gid, state$axes_targets[[gid]], current, axes_bbox[[gid]], edits[[gid]])
+    target <- state$axes_targets[[gid]]
+    ggplot_axes_element(gid, target, measured$axes[[gid]], axes_bbox[[gid]], edits[[gid]],
+                        ggplot_facet_axis_changes(target, facet_changes))
   })
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
        elements = c(axes, legends, elements, lines,

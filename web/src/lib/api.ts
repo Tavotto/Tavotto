@@ -3585,7 +3585,8 @@ export interface ManifestElement {
   /**
    * `alias_covers` 里**纯别名**的广播 prop（引擎 `overrides.ALIAS_PURE`，逐个读过 setter 才进）：广播端没有任何
    * 窄端存不下的额外状态，两个地址可互换。只有这些才能在写窄端时反向删掉广播端那条 override；图例整体字号
-   * （还改 `Legend._fontsize` 并重建布局）等不纯的不在其中，窄端写入不许动它们。可选。
+   * （还改 `Legend._fontsize` 并重建布局）等不纯的不在其中，窄端写入不许动它们。
+   * 同一 prop 的双向纯别名表示同一个共享值（例如分面的共享轴），读、写和重置都沿双向关系查找成员。可选。
    */
   alias_pure?: string[]
   /**

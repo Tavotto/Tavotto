@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { Manifest, ManifestElement } from '@/lib/api'
-import { setOverride, setOverrides } from '@/store/actions'
+import { clearOverride, readPanelOverride, setOverride, setOverrides } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { seedExactRender } from '@/test/renderFixtures'
@@ -214,4 +214,31 @@ describe('批量写入与退化', () => {
     setOverride('p1', LEG, 'title_fontsize', 11, true)
     expect(ov()).toHaveLength(2)
   })
+})
+
+
+it('shares one range across reciprocal axes, including reading, replacing, resetting and undo from another facet', async () => {
+  const axis = (gid: string, peers: string[]) => el(gid, {
+    role: 'axes', alias_covers: { xlim: { xlim: peers } }, alias_pure: ['xlim'],
+  })
+  const manifest = { elements: [
+    axis('axes_1', ['axes_2', 'axes_3']), axis('axes_2', ['axes_1']), axis('axes_3', ['axes_1']),
+    el('axes_4', { role: 'axes' }),
+  ] } as Manifest
+  const start = [{ gid: 'axes_2', prop: 'xlim', value: [1, 10] }, { gid: 'axes_4', prop: 'xlim', value: [3, 9] }]
+  const read = (gid: string) => readPanelOverride(useDocumentStore.getState().doc.objects[0] as PanelObject, gid, 'xlim')?.value
+  await seed(start, manifest)
+  expect(read('axes_3')).toEqual([1, 10])
+
+  setOverride('p1', 'axes_3', 'xlim', [1, 100], true)
+  expect(ov()).toEqual([start[1], { gid: 'axes_3', prop: 'xlim', value: [1, 100] }])
+  expect(read('axes_2')).toEqual([1, 100])
+
+  clearOverride('p1', 'axes_2', 'xlim')
+  expect(ov()).toEqual([start[1]])
+  expect(read('axes_2')).toBeUndefined()
+  useDocumentStore.getState().undo()
+  expect(read('axes_2')).toEqual([1, 100])
+  useDocumentStore.getState().undo()
+  expect(ov()).toEqual(start)
 })

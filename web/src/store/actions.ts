@@ -108,7 +108,7 @@ import { alwaysSavedEnabled } from '@/lib/autosaveProject'
 import { captureSaveContext, reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
 import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './saveFailureActions'
 import { useInteractionStore } from './interactionStore'
-import { aliasClearPlan } from '@/lib/aliasOverrides'
+import { aliasClearPlan, sharedOverrideAddresses } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
 import { computedFrameAuthority, exactPanelManifest, exactPanelRender, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
@@ -1796,7 +1796,8 @@ export function clearOverrides(
   finishActiveGesture()
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
-  const hit = targets.filter((t) =>
+  const manifest = structuralPanelManifest(useRenderStore.getState(), panel)
+  const hit = sharedOverrideAddresses(manifest, targets).filter((t) =>
     !(isAdoptedPanel(panel) && t.gid === 'figure' && t.prop === 'frame') &&
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
@@ -2159,6 +2160,16 @@ export function setColormapOverrides(
  */
 function pendingAliasClears(panel: PanelObject, patches: { gid: string; prop: string }[]) {
   return aliasClearPlan(panel.overrides, structuralPanelManifest(useRenderStore.getState(), panel), patches)
+}
+
+export function readPanelOverride(panel: PanelObject, gid: string, prop: string) {
+  const local = effectiveOverride(panel.overrides, gid, prop)
+  if (local || !panel.overrides.some((override) => override.prop === prop)) return local
+  const manifest = structuralPanelManifest(useRenderStore.getState(), panel)
+  const addresses = sharedOverrideAddresses(manifest, [{ gid, prop }])
+  return panel.overrides.findLast((override) =>
+    override.prop === prop && addresses.some((address) => address.gid === override.gid),
+  )
 }
 
 function upsertOverrides(
