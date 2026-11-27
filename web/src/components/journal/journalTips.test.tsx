@@ -455,8 +455,7 @@ describe('问题页底部的「编辑部要求改图」入口', () => {
     await openPanel()
     expect(q('[data-confirm-group]')).toBeNull()
     const link = q('[data-editor-tip]')!
-    expect(link.textContent).toBe('编辑部要求改图？告诉我们')
-    expect(link.textContent).toContain('？') // 全角问号
+    expect(link.textContent).toBe('反馈期刊规范问题')
     expect(link.tagName).toBe('BUTTON')
     // 在整棵树之后、面板的最后一个子节点里
     const panel = link.closest('[data-editor-tip]')!.parentElement!.parentElement!

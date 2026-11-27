@@ -912,7 +912,7 @@ function CursorBar({ view, onStep }: { view: ReturnType<typeof cursorView>; onSt
 }
 
 /**
- * 「编辑部要求改图？告诉我们」：固定在问题页最底部（不随树滚动、不随分组折叠或有没有待确认项出没）。
+ * 「反馈期刊规范问题」（打开编辑部原话形态的线索表单）：固定在问题页最底部（不随树滚动、不随分组折叠或有没有待确认项出没）。
  * 门槛：当前排版绑了期刊，且期刊线索入口可用（期刊入口常量 + 联系作者 + 引擎没关期刊联网）。
  */
 function EditorTipLink(): ReactNode {

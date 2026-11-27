@@ -1604,7 +1604,7 @@ export default interface Resources {
       "confirm": {
         "aria": "需要你确认的要求",
         "condition": "原文条件：{{text}}",
-        "editorTip": "编辑部要求改图？告诉我们",
+        "editorTip": "反馈期刊规范问题",
         "title": "需要你确认（{{count}}）"
       },
       "current": "按「{{name}}」检查",

@@ -2862,7 +2862,7 @@
     "confirm": {
       "title": "Needs your check ({{count}})",
       "condition": "Condition in the source: {{text}}",
-      "editorTip": "Editor asked for changes? Tell us",
+      "editorTip": "Report a journal guideline issue",
       "aria": "Requirements to check yourself"
     },
     "field": {

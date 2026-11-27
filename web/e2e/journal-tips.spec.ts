@@ -243,7 +243,7 @@ test(
     await expect(page.locator('[data-confirm-group]')).toHaveCount(0)
     const tip = page.locator('[data-editor-tip]')
     await expect(tip).toBeVisible({ timeout: 30_000 })
-    await expect(tip).toHaveText('编辑部要求改图？告诉我们')
+    await expect(tip).toHaveText('反馈期刊规范问题')
     // 固定在面板底部：在顶部「期刊」行之下、整个在视口里，且是面板里最靠下的内容
     const [tb, jb] = [(await tip.boundingBox())!, (await page.locator('[data-issues-journal]').boundingBox())!]
     expect(tb.y).toBeGreaterThan(jb.y + jb.height)
