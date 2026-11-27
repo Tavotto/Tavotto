@@ -68,12 +68,12 @@ async function drag(page: Page, x: number, y: number, dx: number, dy: number, mo
 }
 
 /**
- * 单图编辑里改图幅 = 拖画布的角（ADR 0161；边改的是画布留白）。⇧ = 自由比例：只把图拉宽、高不变，
- * 与此前「拖右边改图幅」的效果一致（这几条用例要的正是宽高比变了的那次重排）。
+ * 单图编辑里只把图拉宽、高不变 = 拖画布的右边（ADR 0161 修订 2026-11-27：边改这一维的图幅，⌥ + 边才是留白）。
+ * 这几条用例要的正是宽高比变了的那次重排。
  */
 async function widenFigure(page: Page, dx: number) {
-  const corner = (await page.locator('[data-figure-corner="br"]').boundingBox())!
-  await drag(page, corner.x + corner.width / 2, corner.y + corner.height / 2, dx, 0, 'Shift')
+  const edge = (await page.locator('[data-figure-edge="r"]').boundingBox())!
+  await drag(page, edge.x + edge.width / 2, edge.y + edge.height * 0.15, dx, 0)
 }
 
 /**
