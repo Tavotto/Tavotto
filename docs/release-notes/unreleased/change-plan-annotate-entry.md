@@ -1,0 +1,3 @@
+## Premium: annotate straight from the change-plan card, even after applying
+
+A change-plan card now has an **Annotate** button next to **Apply now**: it opens the comparison directly in note mode, so you can mark what still isn't right without hunting for it. After you apply a plan, **Revise again** next to **Undo** does the same on the applied result — your figure stays as it is while you write notes, and the applied change is only rolled back when you press **Redo with notes** (if you just look and close, nothing changes). Hovering a curve or other shape in the comparison now traces the shape itself instead of a large box, so it is clear which line you are pointing at. Free users see the buttons with a lock.
