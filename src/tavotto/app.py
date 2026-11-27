@@ -14457,13 +14457,11 @@ class _VectorFresh:
 _MEASURE_LOCAL = threading.local()
 
 
-def _vector_measure_panel(panel: dict, requests: list) -> dict:
-    """量一张子图（ADR 0208 第 ③ 期 3b）：用**一次性 worker**把这张图**带着快照里的覆盖项**现导出一次，回 `draw_manifest` + 数据点位置。
+def _vector_measure_precheck(panel: dict) -> tuple[str, list]:
+    """量得了这张子图吗（只看快照里的标记，不碰引擎）→ `(fileId, 覆盖项)`；量不了抛 `PanelUnavailable(码)`。
 
-    与插件 `bridge._layout_measure` 同一个判定与同一个返回形状：冻结快照 / 运行时素材 / 没有脚本的图量不了（只给外框）；
-    输入只有子图的 `fileId` 与 `overrides`——位置、缩放、裁剪只在坐标换算时用，与量无关。磁盘面板永远是 safe（native 会话是用户终端里的活进程，与它无关）。
-    导出写进私有临时目录、用完即删，不碰项目导出目录。要在 `bound_project` 之下调（后台线程没有请求上下文），
-    并且在 `_vector_measure_for` 的 `raw` 里调（那里把本次方案的一次性 worker 持有者放进线程局部）。"""
+    **缓存键之前就要判**（`_vector_measure_key` 先调它）：冻结图 / runtime 素材与同一个 `fileId` 的活图缓存键相同，
+    先查缓存会让冻结图命中活图的量、冒充量过。"""
     la = engine_layoutannotate
     if panel.get("figureSnapshot") is not None or panel.get("figureOrigin") is not None:
         raise la.PanelUnavailable("composed_from_snapshot")
@@ -14475,6 +14473,18 @@ def _vector_measure_panel(panel: dict, requests: list) -> dict:
     overrides = panel.get("overrides") or []
     if not isinstance(overrides, list) or not all(isinstance(o, dict) for o in overrides):
         raise la.PanelUnavailable("bad_overrides")
+    return fid, overrides
+
+
+def _vector_measure_panel(panel: dict, requests: list) -> dict:
+    """量一张子图（ADR 0208 第 ③ 期 3b）：用**一次性 worker**把这张图**带着快照里的覆盖项**现导出一次，回 `draw_manifest` + 数据点位置。
+
+    与插件 `bridge._layout_measure` 同一个判定与同一个返回形状：冻结快照 / 运行时素材 / 没有脚本的图量不了（只给外框）；
+    输入只有子图的 `fileId` 与 `overrides`——位置、缩放、裁剪只在坐标换算时用，与量无关。磁盘面板永远是 safe（native 会话是用户终端里的活进程，与它无关）。
+    导出写进私有临时目录、用完即删，不碰项目导出目录。要在 `bound_project` 之下调（后台线程没有请求上下文），
+    并且在 `_vector_measure_for` 的 `raw` 里调（那里把本次方案的一次性 worker 持有者放进线程局部）。"""
+    la = engine_layoutannotate
+    fid, overrides = _vector_measure_precheck(panel)
     fresh = getattr(_MEASURE_LOCAL, "fresh", None)
     if fresh is None:
         raise la.PanelUnavailable("measure_failed")
@@ -14528,6 +14538,7 @@ def _vector_measure_script(panel: dict) -> str | None:
 
 def _vector_measure_key(root: str, panel: dict, requests: list, inputs: str | None) -> str | None:
     """量的缓存键：项目、子图文件、覆盖项哈希、脚本修订、项目文件指纹、数据点请求。任何一样变了旧条目自然失效；取不到修订 / 指纹 = 不缓存。"""
+    _vector_measure_precheck(panel)  # 量不了的（冻结 / runtime / 没有量的输入）不许命中别人的缓存
     script = _vector_measure_script(panel)
     if not script or inputs is None:
         return None
