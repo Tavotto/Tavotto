@@ -213,44 +213,44 @@ registry <- tryCatch(length(utils::readRegistry("SOFTWARE\\Microsoft\\Windows NT
                                                 hive = "HLM", maxdepth = 1L)),
                      error = conditionMessage)
 arial <- file.path(Sys.getenv("SystemRoot"), "Fonts", "arial.ttf")
-report <- list(fonts = nrow(systemfonts::system_fonts()), registry = registry,
-               arial_readable = file.access(arial, 4) == 0L)
+report <- list(fonts = nrow(systemfonts::system_fonts()), native = sample_fonts(),
+               registry = registry, arial_readable = file.access(arial, 4) == 0L)
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) == 4L) {
+if (length(args) == 3L) {
   dll <- dyn.load(args[[2L]])
-  mode <- args[[4L]]
+  fonts <- list.files(args[[3L]], full.names = TRUE)
+  systemfonts::add_fonts(fonts)
   by_file <- getNativeSymbolInfo("probe_font_file", PACKAGE = dll)$address
   by_memory <- getNativeSymbolInfo("probe_font_memory", PACKAGE = dll)$address
-  wide <- function(text) c(iconv(text, to = "UTF-16LE", toRaw = TRUE)[[1L]], as.raw(c(0, 0)))
-  if (mode != "none") {
-    fonts <- list.files(args[[3L]], full.names = TRUE)
-    systemfonts::add_fonts(fonts)
-    report$registered <- lapply(fonts, function(path) {
-      if (mode == "file") {
-        .C(by_file, wide(path), count = integer(1L), error = integer(1L))[c("count", "error")]
-      } else {
-        bytes <- readBin(path, "raw", n = file.size(path))
-        .C(by_memory, bytes, as.integer(length(bytes)), count = integer(1L),
-           error = integer(1L))[c("count", "error")]
-      }
-    })
-  }
-  # Query the native mapper after registration and before creating a graphics device.
-  face <- getNativeSymbolInfo("probe_font_face", PACKAGE = dll)$address
-  report$gdi <- lapply(c("Arial", "Times New Roman"), function(name) {
-    result <- .C(face, wide(name), mapped = raw(128), width = integer(1L), error = integer(1L))
-    values <- result$mapped
-    close <- which(values[seq(1L, length(values), 2L)] == as.raw(0))[[1L]] - 1L
-    list(face = rawToChar(values[seq_len(close) * 2L - 1L]),
-         width = result$width, error = result$error)
+  report$file <- lapply(fonts, function(path) {
+    wide <- c(iconv(path, to = "UTF-16LE", toRaw = TRUE)[[1L]], as.raw(c(0, 0)))
+    .C(by_file, wide, count = integer(1L), error = integer(1L))[c("count", "error")]
   })
+  report$private_file <- sample_fonts()
+  report$memory <- lapply(fonts, function(path) {
+    bytes <- readBin(path, "raw", n = file.size(path))
+    .C(by_memory, bytes, as.integer(length(bytes)), count = integer(1L),
+       error = integer(1L))[c("count", "error")]
+  })
+  report$private_memory <- sample_fonts()
 }
-report$graphics <- sample_fonts()
 jsonlite::write_json(report, args[[1L]], auto_unbox = TRUE)
 """
         measure = tmp_path / "measure-r-fonts.R"
         measure.write_text(probe, encoding="utf-8")
         normal = tmp_path / "normal-r-fonts.json"
+        baseline = subprocess.run(
+            [rscript, "--vanilla", str(measure), str(normal)],
+            cwd=tmp_path,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        print(
+            "Normal R fonts:",
+            normal.read_text(encoding="utf-8") if normal.is_file() else baseline.stderr,
+        )
         helper = tmp_path / "probe-ggplot-fonts.dll"
         helper_c = helper.with_suffix(".c")
         helper_c.write_text(
@@ -268,24 +268,6 @@ __declspec(dllexport) void probe_font_memory(void *bytes, int *size, int *count,
     *count = (int) installed;
     *error = font ? 0 : GetLastError();
 }
-__declspec(dllexport) void probe_font_face(const wchar_t *want, wchar_t *name, int *width, int *error) {
-    HDC dc = CreateCompatibleDC(NULL);
-    LOGFONTW descriptor = {0};
-    descriptor.lfHeight = -16;
-    descriptor.lfCharSet = DEFAULT_CHARSET;
-    lstrcpynW(descriptor.lfFaceName, want, LF_FACESIZE);
-    HFONT font = CreateFontIndirectW(&descriptor);
-    HGDIOBJ old = SelectObject(dc, font);
-    SIZE size = {0};
-    SetLastError(0);
-    GetTextFaceW(dc, 64, name);
-    GetTextExtentPoint32W(dc, L"Signal", 6, &size);
-    *width = size.cx;
-    *error = GetLastError();
-    SelectObject(dc, old);
-    DeleteObject(font);
-    DeleteDC(dc);
-}
 """,
             encoding="utf-8",
         )
@@ -297,18 +279,6 @@ __declspec(dllexport) void probe_font_face(const wchar_t *want, wchar_t *name, i
             timeout=30,
         )
         assert compiled.returncode == 0, compiled.stderr
-        baseline = subprocess.run(
-            [rscript, "--vanilla", str(measure), str(normal), str(helper), str(tmp_path), "none"],
-            cwd=tmp_path,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-            timeout=30,
-        )
-        print(
-            "Normal R fonts:",
-            normal.read_text(encoding="utf-8") if normal.is_file() else baseline.stderr,
-        )
 
         @contextmanager
         def measure_restricted(root, environment):
@@ -333,23 +303,21 @@ __declspec(dllexport) void probe_font_face(const wchar_t *want, wchar_t *name, i
                     if request.get("operation") != "replay":
                         return
                     measured = True
-                    for mode in ("file", "memory"):
-                        command = [
-                            argv[0],
-                            "--vanilla",
-                            "--slave",
-                            f"--file={inside}",
-                            "--args",
-                            str(report),
-                            str(copied),
-                            str(fonts),
-                            mode,
-                        ]
-                        try:
-                            run(command, cwd, timeout=25)
-                            print(f"Isolated R fonts ({mode}):", report.read_text(encoding="utf-8"))
-                        except winappcontainer.ReplayFailed as exc:
-                            print("Isolated R font diagnostic failed:", exc.diagnostic)
+                    command = [
+                        argv[0],
+                        "--vanilla",
+                        "--slave",
+                        f"--file={inside}",
+                        "--args",
+                        str(report),
+                        str(copied),
+                        str(fonts),
+                    ]
+                    try:
+                        run(command, cwd, timeout=25)
+                        print("Isolated R fonts:", report.read_text(encoding="utf-8"))
+                    except winappcontainer.ReplayFailed as exc:
+                        print("Isolated R font diagnostic failed:", exc.diagnostic)
 
                 yield execute
 
