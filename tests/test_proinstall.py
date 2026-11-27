@@ -314,8 +314,13 @@ def test_platform_key(monkeypatch, system, machine, want):
     assert proinstall.platform_key() == want
 
 
-def test_production_release_keys_empty():
-    assert proinstall.RELEASE_KEYS == {}  # 发布密钥由维护者本人生成后再加（ADR 0198 §五）
+def test_production_release_keys_are_well_formed_and_never_the_test_kid():
+    # 正式发布公钥（ADR 0198 §五）：kid 都在 `pro-` 命名空间、每把都是 32 字节；测试 kid 永不进正式表
+    assert proinstall.RELEASE_KEYS, "正式版要内置发布公钥"
+    assert proinstall.TEST_KID not in proinstall.RELEASE_KEYS
+    for kid, pub in proinstall.RELEASE_KEYS.items():
+        assert kid.startswith(proinstall.KID_PREFIX)
+        assert len(base64.b64decode(pub, validate=True)) == 32
 
 
 # ---------------------------------------------------------------------------
