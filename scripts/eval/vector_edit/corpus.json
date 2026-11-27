@@ -1,0 +1,2063 @@
+{
+ "version": 1,
+ "page": {
+  "w": 180,
+  "h": 90
+ },
+ "figure_script": "\"\"\"合成子图：两条曲线 + 图例（评测用，坐标轴矩形与范围写死）。\"\"\"\nfrom pathlib import Path\n\nimport matplotlib\n\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\nimport numpy as np\n\nOUT = Path(__file__).resolve().parent\n\n\ndef main():\n    x = np.linspace(0, 10, 12)\n    y1 = 1 - np.exp(-x / 3)\n    y2 = 1 - np.exp(-x / 6)\n    fig = plt.figure(figsize=(80 / 25.4, 60 / 25.4))\n    ax = fig.add_axes([0.15, 0.15, 0.8, 0.75])\n    ax.plot(x, y1, marker=\"o\", ms=3, lw=1.0, label=\"Sample A\")\n    ax.plot(x, y2, ls=\"--\", marker=\"s\", ms=3, lw=1.0, label=\"Sample B\")\n    ax.set_xlim(0, 10)\n    ax.set_ylim(0, 1.1)\n    ax.set_xlabel(\"Time (min)\")\n    ax.set_ylabel(\"Conversion (-)\")\n    ax.legend(loc=\"lower right\", frameon=False)\n    fig.savefig(OUT / \"FigM.pdf\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+ "registry": {
+  "scripts": {
+   "figm.py": {
+    "entry": "main",
+    "cost": "light",
+    "stems": [
+     "FigM"
+    ]
+   }
+  }
+ },
+ "layout_name": "组图",
+ "peak_mm": [
+  86.0,
+  37.818
+ ],
+ "tasks": [
+  {
+   "id": "add-arrow-peak",
+   "kind": "add",
+   "family": "加箭头",
+   "instruction": "在子图 P1 里 Sample B 那条曲线最右端的数据点上加一支箭头，箭头尖对准那个点。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "new_arrow_tip",
+     "xy": [
+      86.0,
+      37.818
+     ],
+     "r": 3.0
+    }
+   ],
+   "reference": {
+    "kind": "items",
+    "items": [
+     {
+      "kind": "arrow",
+      "name": "to_peak",
+      "from": {
+       "anchor": {
+        "panel": {
+         "id": "P1",
+         "point": "e"
+        }
+       },
+       "offset_mm": [
+        18,
+        -12
+       ]
+      },
+      "to": {
+       "anchor": {
+        "data": {
+         "panel": "P1",
+         "axes": "axes_0",
+         "x": 10,
+         "y": 0.8111
+        }
+       }
+      }
+     }
+    ]
+   },
+   "may_add": true,
+   "a_note": "A 组按设计不能新增对象（系统提示写明），应进 unhandled、画布不动"
+  },
+  {
+   "id": "add-label-a",
+   "kind": "add",
+   "family": "加标注",
+   "instruction": "在子图 P1 的左上角外侧加一个文字标注 (a)，字号 8 pt。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "new_text",
+     "text": "(a)",
+     "near": [
+      12,
+      16,
+      8
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "items",
+    "items": [
+     {
+      "kind": "text",
+      "name": "tag_a",
+      "text": "(a)",
+      "sizePt": 8,
+      "at": {
+       "anchor": {
+        "panel": {
+         "id": "P1",
+         "point": "nw"
+        }
+       },
+       "offset_mm": [
+        2,
+        -3
+       ]
+      },
+      "attach": "sw"
+     }
+    ]
+   },
+   "may_add": true,
+   "a_note": "A 组按设计不能新增对象（系统提示写明），应进 unhandled、画布不动"
+  },
+  {
+   "id": "add-box",
+   "kind": "add",
+   "family": "加外框",
+   "instruction": "给子图 P1 加一个外框，细线框住整张子图。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "new_box_around",
+     "rect": [
+      10,
+      20,
+      80,
+      60
+     ],
+     "tol": 4.0
+    }
+   ],
+   "reference": {
+    "kind": "items",
+    "items": [
+     {
+      "kind": "box",
+      "name": "frame",
+      "fit": [
+       {
+        "panel": {
+         "id": "P1"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "may_add": true,
+   "a_note": "A 组按设计不能新增对象（系统提示写明），应进 unhandled、画布不动"
+  },
+  {
+   "id": "add-bracket",
+   "kind": "add",
+   "family": "加括号",
+   "instruction": "在子图 P1 的上方加一个括号，横着括住子图的整个宽度（从子图左上角到右上角）。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "new_near",
+     "types": [
+      "path",
+      "shape"
+     ],
+     "rect": [
+      10,
+      8,
+      80,
+      14
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "items",
+    "items": [
+     {
+      "kind": "bracket",
+      "name": "br",
+      "between": [
+       {
+        "anchor": {
+         "panel": {
+          "id": "P1",
+          "point": "nw"
+         }
+        }
+       },
+       {
+        "anchor": {
+         "panel": {
+          "id": "P1",
+          "point": "ne"
+         }
+        }
+       }
+      ],
+      "side": "above"
+     }
+    ]
+   },
+   "may_add": true,
+   "a_note": "A 组按设计不能新增对象（系统提示写明），应进 unhandled、画布不动"
+  },
+  {
+   "id": "add-text-at-peak",
+   "kind": "add",
+   "family": "加标注",
+   "instruction": "在 Sample B 曲线最右端的数据点旁边加一行文字 plateau。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "new_text",
+     "text": "plateau",
+     "near": [
+      86.0,
+      37.818,
+      12
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "items",
+    "items": [
+     {
+      "kind": "text",
+      "name": "plateau",
+      "text": "plateau",
+      "sizePt": 8,
+      "at": {
+       "anchor": {
+        "data": {
+         "panel": "P1",
+         "axes": "axes_0",
+         "x": 10,
+         "y": 0.8111
+        }
+       },
+       "offset_mm": [
+        0,
+        -4
+       ]
+      },
+      "attach": "s"
+     }
+    ]
+   },
+   "may_add": true,
+   "a_note": "A 组按设计不能新增对象（系统提示写明），应进 unhandled、画布不动"
+  },
+  {
+   "id": "add-box-and-title",
+   "kind": "add",
+   "family": "加外框+标题",
+   "instruction": "给子图 P1 加外框，并在子图正上方居中加一行文字 Kinetics。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "new_box_around",
+     "rect": [
+      10,
+      20,
+      80,
+      60
+     ],
+     "tol": 4.0
+    },
+    {
+     "t": "new_text",
+     "text": "Kinetics",
+     "near": [
+      50,
+      16,
+      8
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "items",
+    "items": [
+     {
+      "kind": "box",
+      "name": "frame",
+      "fit": [
+       {
+        "panel": {
+         "id": "P1"
+        }
+       }
+      ]
+     },
+     {
+      "kind": "text",
+      "name": "title",
+      "text": "Kinetics",
+      "sizePt": 8,
+      "at": {
+       "anchor": {
+        "panel": {
+         "id": "P1",
+         "point": "n"
+        }
+       },
+       "offset_mm": [
+        0,
+        -2
+       ]
+      },
+      "attach": "s"
+     }
+    ]
+   },
+   "may_add": true,
+   "a_note": "A 组按设计不能新增对象（系统提示写明），应进 unhandled、画布不动"
+  },
+  {
+   "id": "align-left-and-width",
+   "kind": "edit",
+   "family": "对齐+线宽",
+   "instruction": "把右边这三支箭头（箭头一、二、三）左边对齐，线宽都改成 0.75 pt。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "a1",
+      "type": "arrow",
+      "x": 100,
+      "y": 10,
+      "w": 20.0,
+      "h": 4.0,
+      "start": {
+       "rx": 0,
+       "ry": 0.5
+      },
+      "end": {
+       "rx": 1,
+       "ry": 0.5
+      },
+      "color": "#000000",
+      "strokePt": 0.5,
+      "head": "end",
+      "name": "箭头一"
+     },
+     {
+      "id": "a2",
+      "type": "arrow",
+      "x": 108,
+      "y": 30,
+      "w": 20.0,
+      "h": 4.0,
+      "start": {
+       "rx": 0,
+       "ry": 0.5
+      },
+      "end": {
+       "rx": 1,
+       "ry": 0.5
+      },
+      "color": "#000000",
+      "strokePt": 0.5,
+      "head": "end",
+      "name": "箭头二"
+     },
+     {
+      "id": "a3",
+      "type": "arrow",
+      "x": 114,
+      "y": 50,
+      "w": 20.0,
+      "h": 4.0,
+      "start": {
+       "rx": 0,
+       "ry": 0.5
+      },
+      "end": {
+       "rx": 1,
+       "ry": 0.5
+      },
+      "color": "#000000",
+      "strokePt": 0.5,
+      "head": "end",
+      "name": "箭头三"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "same",
+     "ids": [
+      "a1",
+      "a2",
+      "a3"
+     ],
+     "field": "x",
+     "tol": 0.3
+    },
+    {
+     "t": "field_all",
+     "ids": [
+      "a1",
+      "a2",
+      "a3"
+     ],
+     "field": "strokePt",
+     "eq": 0.75
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "align",
+      "ids": [
+       "a1",
+       "a2",
+       "a3"
+      ],
+      "mode": "left"
+     },
+     {
+      "op": "set",
+      "id": "a1",
+      "set": {
+       "strokePt": 0.75
+      }
+     },
+     {
+      "op": "set",
+      "id": "a2",
+      "set": {
+       "strokePt": 0.75
+      }
+     },
+     {
+      "op": "set",
+      "id": "a3",
+      "set": {
+       "strokePt": 0.75
+      }
+     }
+    ]
+   },
+   "selection": [
+    "a1",
+    "a2",
+    "a3"
+   ],
+   "may_change": [
+    "a1",
+    "a2",
+    "a3"
+   ]
+  },
+  {
+   "id": "distribute-h",
+   "kind": "edit",
+   "family": "等距分布",
+   "instruction": "把顶部这四个字母（A、B、C、D）水平方向等间距排开，两头的不动。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "t1",
+      "type": "text",
+      "x": 100,
+      "y": 10,
+      "w": 12.0,
+      "h": 4.0,
+      "text": "A",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "文字 A"
+     },
+     {
+      "id": "t2",
+      "type": "text",
+      "x": 115,
+      "y": 10,
+      "w": 12.0,
+      "h": 4.0,
+      "text": "B",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "文字 B"
+     },
+     {
+      "id": "t3",
+      "type": "text",
+      "x": 140,
+      "y": 10,
+      "w": 12.0,
+      "h": 4.0,
+      "text": "C",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "文字 C"
+     },
+     {
+      "id": "t4",
+      "type": "text",
+      "x": 160,
+      "y": 10,
+      "w": 12.0,
+      "h": 4.0,
+      "text": "D",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "文字 D"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "gaps_equal",
+     "ids": [
+      "t1",
+      "t2",
+      "t3",
+      "t4"
+     ],
+     "tol": 0.1
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "distribute",
+      "ids": [
+       "t1",
+       "t2",
+       "t3",
+       "t4"
+      ],
+      "axis": "h"
+     }
+    ]
+   },
+   "selection": [
+    "t1",
+    "t2",
+    "t3",
+    "t4"
+   ],
+   "may_change": [
+    "t2",
+    "t3"
+   ]
+  },
+  {
+   "id": "unify-color",
+   "kind": "edit",
+   "family": "统一颜色",
+   "instruction": "把右边三条线（线一、线二、线三）的颜色统一成红色 #cc0000。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "l1",
+      "type": "path",
+      "x": 100,
+      "y": 30,
+      "w": 20,
+      "h": 10,
+      "subpaths": [
+       {
+        "closed": false,
+        "nodes": [
+         {
+          "p": [
+           0.0,
+           0.0
+          ]
+         },
+         {
+          "p": [
+           1.0,
+           1.0
+          ]
+         }
+        ]
+       }
+      ],
+      "strokePt": 2,
+      "color": "#0000ff",
+      "fill": null,
+      "name": "线一"
+     },
+     {
+      "id": "l2",
+      "type": "path",
+      "x": 100,
+      "y": 45,
+      "w": 20,
+      "h": 10,
+      "subpaths": [
+       {
+        "closed": false,
+        "nodes": [
+         {
+          "p": [
+           0.0,
+           0.0
+          ]
+         },
+         {
+          "p": [
+           1.0,
+           1.0
+          ]
+         }
+        ]
+       }
+      ],
+      "strokePt": 2,
+      "color": "#00aa00",
+      "fill": null,
+      "name": "线二"
+     },
+     {
+      "id": "l3",
+      "type": "path",
+      "x": 100,
+      "y": 60,
+      "w": 20,
+      "h": 10,
+      "subpaths": [
+       {
+        "closed": false,
+        "nodes": [
+         {
+          "p": [
+           0.0,
+           0.0
+          ]
+         },
+         {
+          "p": [
+           1.0,
+           1.0
+          ]
+         }
+        ]
+       }
+      ],
+      "strokePt": 2,
+      "color": "#aa00aa",
+      "fill": null,
+      "name": "线三"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "field_all",
+     "ids": [
+      "l1",
+      "l2",
+      "l3"
+     ],
+     "field": "color",
+     "eq": "#cc0000"
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "set",
+      "id": "l1",
+      "set": {
+       "color": "#cc0000"
+      }
+     },
+     {
+      "op": "set",
+      "id": "l2",
+      "set": {
+       "color": "#cc0000"
+      }
+     },
+     {
+      "op": "set",
+      "id": "l3",
+      "set": {
+       "color": "#cc0000"
+      }
+     }
+    ]
+   },
+   "selection": [
+    "l1",
+    "l2",
+    "l3"
+   ],
+   "may_change": [
+    "l1",
+    "l2",
+    "l3"
+   ]
+  },
+  {
+   "id": "font-double",
+   "kind": "edit",
+   "family": "相对改字号",
+   "instruction": "把选中的这行文字字号放大一倍。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "t_cap",
+      "type": "text",
+      "x": 100,
+      "y": 10,
+      "w": 30,
+      "h": 4.0,
+      "text": "Result",
+      "sizePt": 7,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "说明文字"
+     },
+     {
+      "id": "t_other",
+      "type": "text",
+      "x": 100,
+      "y": 30,
+      "w": 12.0,
+      "h": 4.0,
+      "text": "keep",
+      "sizePt": 7,
+      "bold": false,
+      "align": "left",
+      "color": "#000000"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "ratio",
+     "id": "t_cap",
+     "field": "sizePt",
+     "ratio": 2
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "set",
+      "id": "t_cap",
+      "set": {
+       "sizePt": 14
+      }
+     }
+    ]
+   },
+   "selection": [
+    "t_cap"
+   ],
+   "may_change": [
+    "t_cap"
+   ]
+  },
+  {
+   "id": "merge-circles",
+   "kind": "edit",
+   "family": "合并",
+   "instruction": "把右边两个相交的圆合并成一个整体轮廓（一条封闭路径）。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "c_back",
+      "type": "path",
+      "x": 100,
+      "y": 30,
+      "w": 20,
+      "h": 20,
+      "subpaths": [
+       {
+        "closed": true,
+        "nodes": [
+         {
+          "p": [
+           1,
+           0.5
+          ],
+          "in": [
+           1.0,
+           0.22385
+          ],
+          "out": [
+           1.0,
+           0.77615
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0.5,
+           1
+          ],
+          "in": [
+           0.77615,
+           1.0
+          ],
+          "out": [
+           0.22385,
+           1.0
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0,
+           0.5
+          ],
+          "in": [
+           0.0,
+           0.77615
+          ],
+          "out": [
+           0.0,
+           0.22385
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0.5,
+           0
+          ],
+          "in": [
+           0.22385,
+           0.0
+          ],
+          "out": [
+           0.77615,
+           0.0
+          ],
+          "smooth": true
+         }
+        ]
+       }
+      ],
+      "strokePt": 1,
+      "color": "#112233",
+      "fill": "#ff0000",
+      "name": "圆 后"
+     },
+     {
+      "id": "c_front",
+      "type": "path",
+      "x": 108,
+      "y": 30,
+      "w": 20,
+      "h": 20,
+      "subpaths": [
+       {
+        "closed": true,
+        "nodes": [
+         {
+          "p": [
+           1,
+           0.5
+          ],
+          "in": [
+           1.0,
+           0.22385
+          ],
+          "out": [
+           1.0,
+           0.77615
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0.5,
+           1
+          ],
+          "in": [
+           0.77615,
+           1.0
+          ],
+          "out": [
+           0.22385,
+           1.0
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0,
+           0.5
+          ],
+          "in": [
+           0.0,
+           0.77615
+          ],
+          "out": [
+           0.0,
+           0.22385
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0.5,
+           0
+          ],
+          "in": [
+           0.22385,
+           0.0
+          ],
+          "out": [
+           0.77615,
+           0.0
+          ],
+          "smooth": true
+         }
+        ]
+       }
+      ],
+      "strokePt": 1,
+      "color": "#112233",
+      "fill": "#00aa00",
+      "name": "圆 前"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "replaced_by_closed_path",
+     "ids": [
+      "c_back",
+      "c_front"
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "pathfinder",
+      "ids": [
+       "c_back",
+       "c_front"
+      ],
+      "mode": "unite"
+     }
+    ]
+   },
+   "selection": [
+    "c_back",
+    "c_front"
+   ],
+   "may_change": [
+    "c_back",
+    "c_front"
+   ],
+   "may_add": true,
+   "needs_kernel": true
+  },
+  {
+   "id": "offset-out",
+   "kind": "edit",
+   "family": "偏移",
+   "instruction": "给选中的这个圆向外做一个 2 mm 的偏移轮廓（原来的保留）。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "c_one",
+      "type": "path",
+      "x": 110,
+      "y": 35,
+      "w": 20,
+      "h": 20,
+      "subpaths": [
+       {
+        "closed": true,
+        "nodes": [
+         {
+          "p": [
+           1,
+           0.5
+          ],
+          "in": [
+           1.0,
+           0.22385
+          ],
+          "out": [
+           1.0,
+           0.77615
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0.5,
+           1
+          ],
+          "in": [
+           0.77615,
+           1.0
+          ],
+          "out": [
+           0.22385,
+           1.0
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0,
+           0.5
+          ],
+          "in": [
+           0.0,
+           0.77615
+          ],
+          "out": [
+           0.0,
+           0.22385
+          ],
+          "smooth": true
+         },
+         {
+          "p": [
+           0.5,
+           0
+          ],
+          "in": [
+           0.22385,
+           0.0
+          ],
+          "out": [
+           0.77615,
+           0.0
+          ],
+          "smooth": true
+         }
+        ]
+       }
+      ],
+      "strokePt": 1,
+      "color": "#112233",
+      "fill": "#ff0000",
+      "name": "圆"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "present",
+     "ids": [
+      "c_one"
+     ]
+    },
+    {
+     "t": "new_path_grown",
+     "id": "c_one",
+     "by": 4.0,
+     "tol": 0.4
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "offset",
+      "id": "c_one",
+      "delta_mm": 2
+     }
+    ]
+   },
+   "selection": [
+    "c_one"
+   ],
+   "may_add": true,
+   "needs_kernel": true
+  },
+  {
+   "id": "outline-stroke",
+   "kind": "edit",
+   "family": "轮廓化",
+   "instruction": "把这条粗线的描边轮廓化，变成填充的形状。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "l_thick",
+      "type": "path",
+      "x": 100,
+      "y": 40,
+      "w": 30,
+      "h": 10,
+      "subpaths": [
+       {
+        "closed": false,
+        "nodes": [
+         {
+          "p": [
+           0.0,
+           0.0
+          ]
+         },
+         {
+          "p": [
+           1.0,
+           1.0
+          ]
+         }
+        ]
+       }
+      ],
+      "strokePt": 3,
+      "color": "#334455",
+      "fill": null,
+      "name": "粗线"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "outlined",
+     "id": "l_thick"
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "outline_stroke",
+      "id": "l_thick"
+     }
+    ]
+   },
+   "selection": [
+    "l_thick"
+   ],
+   "may_change": [
+    "l_thick"
+   ],
+   "may_add": true,
+   "needs_kernel": true
+  },
+  {
+   "id": "delete-note",
+   "kind": "edit",
+   "family": "删除",
+   "instruction": "把「临时备注」那行文字删掉，别的都别动。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "t_note",
+      "type": "text",
+      "x": 100,
+      "y": 10,
+      "w": 20,
+      "h": 4.0,
+      "text": "临时备注",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "备注"
+     },
+     {
+      "id": "t_keep",
+      "type": "text",
+      "x": 100,
+      "y": 30,
+      "w": 20,
+      "h": 4.0,
+      "text": "Result",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000"
+     },
+     {
+      "id": "a_keep",
+      "type": "arrow",
+      "x": 100,
+      "y": 50,
+      "w": 20.0,
+      "h": 4.0,
+      "start": {
+       "rx": 0,
+       "ry": 0.5
+      },
+      "end": {
+       "rx": 1,
+       "ry": 0.5
+      },
+      "color": "#000000",
+      "strokePt": 0.5,
+      "head": "end"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "deleted",
+     "ids": [
+      "t_note"
+     ]
+    },
+    {
+     "t": "present",
+     "ids": [
+      "t_keep",
+      "a_keep"
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "delete",
+      "id": "t_note"
+     }
+    ]
+   },
+   "may_change": []
+  },
+  {
+   "id": "order-front",
+   "kind": "edit",
+   "family": "层级",
+   "instruction": "把那个绿色的方块移到最前面，别被别的东西盖住。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "s_green",
+      "type": "shape",
+      "x": 105,
+      "y": 30,
+      "w": 12.0,
+      "h": 8.0,
+      "shape": "rect",
+      "color": "#00aa00",
+      "fill": "#00aa00",
+      "strokePt": 0.75,
+      "name": "绿色方块"
+     },
+     {
+      "id": "s_red",
+      "type": "shape",
+      "x": 110,
+      "y": 33,
+      "w": 12.0,
+      "h": 8.0,
+      "shape": "rect",
+      "color": "#aa0000",
+      "fill": "#aa0000",
+      "strokePt": 0.75,
+      "name": "红色方块"
+     },
+     {
+      "id": "s_blue",
+      "type": "shape",
+      "x": 115,
+      "y": 36,
+      "w": 12.0,
+      "h": 8.0,
+      "shape": "rect",
+      "color": "#0000aa",
+      "fill": "#0000aa",
+      "strokePt": 0.75,
+      "name": "蓝色方块"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "front",
+     "id": "s_green"
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "order",
+      "id": "s_green",
+      "to": "front"
+     }
+    ]
+   },
+   "may_change": [
+    "s_green",
+    "s_red",
+    "s_blue"
+   ]
+  },
+  {
+   "id": "group-two",
+   "kind": "edit",
+   "family": "编组",
+   "instruction": "把方框和它旁边的文字「Control」编成一组，别的不要动。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "r_box",
+      "type": "shape",
+      "x": 100,
+      "y": 30,
+      "w": 14,
+      "h": 8,
+      "shape": "rect",
+      "color": "#000000",
+      "fill": null,
+      "strokePt": 0.75,
+      "name": "方框"
+     },
+     {
+      "id": "t_label",
+      "type": "text",
+      "x": 118,
+      "y": 32,
+      "w": 18,
+      "h": 4.0,
+      "text": "Control",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "标签"
+     },
+     {
+      "id": "t_far",
+      "type": "text",
+      "x": 100,
+      "y": 60,
+      "w": 14,
+      "h": 4.0,
+      "text": "other",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "grouped",
+     "ids": [
+      "r_box",
+      "t_label"
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "group",
+      "ids": [
+       "r_box",
+       "t_label"
+      ]
+     }
+    ]
+   },
+   "may_change": [
+    "r_box",
+    "t_label"
+   ]
+  },
+  {
+   "id": "move-below-panel",
+   "kind": "edit",
+   "family": "挪位置",
+   "instruction": "把选中的这行说明文字挪到子图 P1 的正下方，水平居中，紧贴子图下沿。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "t_cap2",
+      "type": "text",
+      "x": 120,
+      "y": 10,
+      "w": 30,
+      "h": 4,
+      "text": "Fig. 1 Kinetics",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "图注"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "center_x",
+     "id": "t_cap2",
+     "eq": 50.0,
+     "tol": 1.5
+    },
+    {
+     "t": "top_between",
+     "id": "t_cap2",
+     "between": [
+      79.0,
+      86.0
+     ]
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "move",
+      "id": "t_cap2",
+      "to": {
+       "anchor": {
+        "panel": {
+         "id": "P1",
+         "point": "s"
+        }
+       },
+       "offset_mm": [
+        0,
+        1
+       ]
+      },
+      "attach": "n"
+     }
+    ]
+   },
+   "selection": [
+    "t_cap2"
+   ],
+   "may_change": [
+    "t_cap2"
+   ]
+  },
+  {
+   "id": "rotate-arrow",
+   "kind": "edit",
+   "family": "旋转",
+   "instruction": "把选中的这支箭头顺时针转 45 度。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "a_rot",
+      "type": "arrow",
+      "x": 110,
+      "y": 40,
+      "w": 24,
+      "h": 4,
+      "start": {
+       "rx": 0,
+       "ry": 0.5
+      },
+      "end": {
+       "rx": 1,
+       "ry": 0.5
+      },
+      "color": "#000000",
+      "strokePt": 0.5,
+      "head": "end",
+      "name": "箭头"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "field",
+     "id": "a_rot",
+     "field": "rotationDeg",
+     "eq": 45,
+     "tol": 0.2
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "rotate",
+      "id": "a_rot",
+      "deg": 45
+     }
+    ]
+   },
+   "selection": [
+    "a_rot"
+   ],
+   "may_change": [
+    "a_rot"
+   ]
+  },
+  {
+   "id": "text-and-color",
+   "kind": "edit",
+   "family": "改文字+颜色",
+   "instruction": "把标题文字「Group A」改成「Group B」，并把它的颜色改成蓝色 #0000cc。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "t_title",
+      "type": "text",
+      "x": 100,
+      "y": 10,
+      "w": 24,
+      "h": 4.0,
+      "text": "Group A",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "标题"
+     },
+     {
+      "id": "t_side",
+      "type": "text",
+      "x": 100,
+      "y": 30,
+      "w": 14,
+      "h": 4.0,
+      "text": "side",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "field",
+     "id": "t_title",
+     "field": "text",
+     "eq": "Group B"
+    },
+    {
+     "t": "field",
+     "id": "t_title",
+     "field": "color",
+     "eq": "#0000cc"
+    }
+   ],
+   "reference": {
+    "kind": "ops",
+    "ops": [
+     {
+      "op": "set",
+      "id": "t_title",
+      "set": {
+       "text": "Group B",
+       "color": "#0000cc"
+      }
+     }
+    ]
+   },
+   "may_change": [
+    "t_title"
+   ]
+  },
+  {
+   "id": "ctrl-curve-color",
+   "kind": "control",
+   "family": "数据曲线",
+   "instruction": "把子图里 Sample B 那条曲线的颜色改成红色。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "t_side",
+      "type": "text",
+      "x": 100,
+      "y": 10,
+      "w": 14,
+      "h": 4.0,
+      "text": "side",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "unchanged"
+    }
+   ],
+   "reference": {
+    "kind": "none"
+   },
+   "wrong_ops": [
+    {
+     "op": "set",
+     "id": "t_side",
+     "set": {
+      "color": "#ff0000"
+     }
+    }
+   ],
+   "note": "曲线是脚本画的数据元素，不在画布矢量对象里改：应进 unhandled、画布不动（B 组可走 apply_overrides，但不写进排版）"
+  },
+  {
+   "id": "ctrl-vague",
+   "kind": "control",
+   "family": "含糊指令",
+   "instruction": "把那个东西弄好看一点。",
+   "canvas": {
+    "page": {
+     "w": 180,
+     "h": 90
+    },
+    "objects": [
+     {
+      "id": "o_panel001",
+      "type": "panel",
+      "x": 10.0,
+      "y": 20.0,
+      "w": 80.0,
+      "h": 60.0,
+      "fileId": "FigM.pdf",
+      "fileKind": "pdf",
+      "nativeW": 80,
+      "nativeH": 60,
+      "overrides": []
+     },
+     {
+      "id": "t_one",
+      "type": "text",
+      "x": 100,
+      "y": 10,
+      "w": 10,
+      "h": 4.0,
+      "text": "A",
+      "sizePt": 8,
+      "bold": false,
+      "align": "left",
+      "color": "#000000",
+      "name": "文字甲"
+     },
+     {
+      "id": "a_one",
+      "type": "arrow",
+      "x": 100,
+      "y": 30,
+      "w": 20.0,
+      "h": 4.0,
+      "start": {
+       "rx": 0,
+       "ry": 0.5
+      },
+      "end": {
+       "rx": 1,
+       "ry": 0.5
+      },
+      "color": "#000000",
+      "strokePt": 0.5,
+      "head": "end",
+      "name": "箭头"
+     },
+     {
+      "id": "s_one",
+      "type": "shape",
+      "x": 100,
+      "y": 50,
+      "w": 12.0,
+      "h": 8.0,
+      "shape": "rect",
+      "color": "#000000",
+      "fill": null,
+      "strokePt": 0.75,
+      "name": "方块"
+     }
+    ]
+   },
+   "predicate": [
+    {
+     "t": "unchanged"
+    }
+   ],
+   "reference": {
+    "kind": "none"
+   },
+   "wrong_ops": [
+    {
+     "op": "set",
+     "id": "t_one",
+     "set": {
+      "sizePt": 12
+     }
+    }
+   ],
+   "note": "没有选区、指的是哪个东西不明：应进 unhandled（或问用户）、画布不动"
+  }
+ ]
+}
