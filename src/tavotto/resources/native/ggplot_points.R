@@ -17,25 +17,51 @@ ggplot_point_fields <- function(points, data, mapped) {
   ggplot_point_style_fields(points, data$alpha, mapped, seq_len(nrow(data)))
 }
 
+ggplot_point_paint_channels <- function(pch) {
+  if (length(pch) && all(pch %in% 21:25)) return(c(facecolor = "fill", edgecolor = "col"))
+  if (length(pch) && all(pch %in% 15:20)) return(c(facecolor = "col"))
+  character()
+}
+
 ggplot_point_style_fields <- function(points, alpha, mapped, indices) {
   select <- function(values) {
     if (length(values) <= 1L) values else values[(indices - 1L) %% length(values) + 1L]
   }
   base_size <- unique(round(select(points$gp$fontsize) - select(points$gp$lwd), 9))
-  marker <- ggplot_point_marker(unique(select(points$pch)))
-  alpha <- unique(select(alpha))
-  if (length(alpha) == 1L && is.na(alpha)) {
-    # Inherit the opacity of the pigments drawn in this series.
-    pigments <- unique(c(select(points$gp$col), select(points$gp$fill)))
-    pigments <- pigments[!is.na(pigments)]
-    alpha <- unique(grDevices::col2rgb(pigments, alpha = TRUE)[4L, ]) / 255
+  shape <- unique(select(points$pch))
+  marker <- ggplot_point_marker(shape)
+  channels <- ggplot_point_paint_channels(shape)
+  paint <- list()
+  for (prop in names(channels)) {
+    channel <- channels[[prop]]
+    aesthetic <- if (channel == "fill") "fill" else "colour"
+    if (!aesthetic %in% mapped) {
+      pigment <- ggplot_uniform_pigment(select(points$gp[[channel]]))
+      paint[[prop]] <- pigment$rgb
+    }
   }
-  Filter(Negate(is.null), list(
+  stroke <- unique(select(points$gp$lwd)) * ggplot_lwd_pt
+  if ("edgecolor" %in% names(channels) && !"stroke" %in% mapped &&
+      length(stroke) == 1L && is.finite(stroke) && stroke >= 0) paint$linewidth <- stroke
+  alpha <- unique(select(alpha))
+  used <- if (length(channels)) unname(channels) else c("col", "fill")
+  pigments <- lapply(used, function(channel) select(points$gp[[channel]]))
+  if (!all(vapply(pigments, function(values) {
+    is.null(values) || is.character(values) || (is.logical(values) && all(is.na(values)))
+  }, logical(1L)))) {
+    alpha <- NULL
+  } else if (length(alpha) == 1L && is.na(alpha)) {
+    # Inherit the opacity of the pigments actually drawn in this series.
+    pigments <- unique(unlist(pigments, use.names = FALSE))
+    pigments <- pigments[!is.na(pigments)]
+    if (length(pigments)) alpha <- unique(grDevices::col2rgb(pigments, alpha = TRUE)[4L, ]) / 255
+  }
+  c(Filter(Negate(is.null), list(
     size = if (!"size" %in% mapped && is_positive_ggplot_number(base_size)) base_size^2,
     marker = if (!"shape" %in% mapped) marker,
     alpha = if (!"alpha" %in% mapped && is.numeric(alpha) && length(alpha) == 1L &&
                 is.finite(alpha) && alpha >= 0 && alpha <= 1) alpha
-  ))
+  )), paint)
 }
 
 ggplot_point_group_guide <- function(built, layer, mapped, members) {
@@ -163,6 +189,12 @@ ggplot_style_point_keys <- function(guide_params, targets, edits) {
       params$key$shape[[key]] <- shape
       data$shape[[key]] <- shape
     }
+    for (prop in intersect(names(patch), c("facecolor", "edgecolor"))) {
+      channel <- ggplot_point_paint_channels(data$shape[[key]])[[prop]]
+      field <- if (channel == "fill") "fill" else "colour"
+      original <- ggplot_uniform_pigment(data[[field]][[key]])
+      data[[field]][[key]] <- ggplot_edit_pigment(patch[[prop]], original, patch$alpha, data$alpha[[key]])
+    }
     if (!is.null(patch$size)) data$size[[key]] <- sqrt(patch$size) / ggplot2::.pt
     if (!is.null(patch$alpha)) data$alpha[[key]] <- patch$alpha
     params$decor$geom_point$data <- data
@@ -229,6 +261,10 @@ ggplot_point_values <- function(target, edit) {
     value <- edit[[prop]]
     valid <- prop %in% names(values) && switch(prop,
       size = is_positive_ggplot_number(value) && value >= 1 && value <= 400,
+      facecolor = , edgecolor = is.character(value) && length(value) == 1L &&
+        !is.na(value) && (value == "none" || grepl("^#[0-9A-Fa-f]{6}$", value)),
+      linewidth = is.numeric(value) && length(value) == 1L && is.finite(value) &&
+        value >= 0 && value <= 8,
       marker = is.character(value) && length(value) == 1L &&
         value %in% c("original", names(ggplot_point_markers)),
       alpha = is.numeric(value) && length(value) == 1L && is.finite(value) &&
@@ -252,20 +288,34 @@ ggplot_edit_points <- function(table, target, edit) {
     current[rows] <- value
     current
   }
-  if (!is.null(edit$size)) {
-    stroke <- points$gp$lwd
-    if (!is.null(rows)) stroke <- rep_len(stroke, target$count)[rows]
-    points$gp$fontsize <- patch(points$gp$fontsize, sqrt(values$size) + stroke)
+  select <- function(value) if (is.null(rows)) value else rep_len(value, target$count)[rows]
+  if (!is.null(edit$size) || !is.null(edit$linewidth)) {
+    stroke <- select(points$gp$lwd)
+    size <- select(points$gp$fontsize) - stroke
+    if (!is.null(edit$size)) size <- sqrt(values$size)
+    if (!is.null(edit$linewidth)) {
+      stroke <- values$linewidth / ggplot_lwd_pt
+      points$gp$lwd <- patch(points$gp$lwd, stroke)
+    }
+    points$gp$fontsize <- patch(points$gp$fontsize, size + stroke)
+  }
+  channels <- ggplot_point_paint_channels(unique(select(points$pch)))
+  for (prop in intersect(names(edit), names(channels))) {
+    channel <- channels[[prop]]
+    value <- points$gp[[channel]]
+    original <- ggplot_uniform_pigment(select(value))
+    pigment <- ggplot_edit_pigment(values[[prop]], original, edit$alpha, target$values$alpha)
+    points$gp[[channel]] <- patch(value, pigment)
   }
   if (!is.null(edit$marker) && values$marker != "original") {
     points$pch <- patch(points$pch, ggplot_point_markers[[values$marker]])
   }
   if (!is.null(edit$alpha)) {
-    for (field in c("col", "fill")) {
+    fields <- if (length(channels)) unname(channels) else c("col", "fill")
+    for (field in fields) {
       pigment <- points$gp[[field]]
       if (!length(pigment)) next
-      selected <- if (is.null(rows)) pigment else rep_len(pigment, target$count)[rows]
-      points$gp[[field]] <- patch(pigment, scales::alpha(selected, values$alpha))
+      points$gp[[field]] <- patch(pigment, scales::alpha(select(pigment), values$alpha))
     }
   }
   panel$children[[target$child]] <- points

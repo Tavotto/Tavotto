@@ -46,6 +46,25 @@ def point_size_field(value: float) -> dict:
     }
 
 
+def collection_stroke_fields(color: str | None, width: float | None) -> list[dict]:
+    fields = []
+    if color is not None:
+        fields.append({"prop": "edgecolor", "type": "color", "value": color})
+    if width is not None:
+        fields.append(
+            {
+                "prop": "linewidth",
+                "type": "number",
+                "value": round(float(width), 2),
+                "min": 0,
+                "max": 8,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return fields
+
+
 def opacity_field(value: float) -> dict:
     return {"prop": "alpha", "type": "number", "value": value, "min": 0, "max": 1, "step": 0.05}
 

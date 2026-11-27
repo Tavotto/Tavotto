@@ -23,6 +23,7 @@ from .manifest_fields import (
     axis_tick_side_fields,
     bar_paint_fields,
     bar_width_field,
+    collection_stroke_fields,
     errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
@@ -427,6 +428,9 @@ class GgplotTarget:
                     strict_options=True,
                 )
             )
+        if "facecolor" in current:
+            fields.append(fill_color_field(current["facecolor"]))
+        fields += collection_stroke_fields(current.get("edgecolor"), current.get("linewidth"))
         if "alpha" in current:
             fields.append(opacity_field(current["alpha"]))
         for field in fields:

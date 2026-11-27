@@ -3518,6 +3518,69 @@ cat("Verified logarithmic range in original units with stock ggplot2 color mappi
 """
 
 
+POINT_PAINT_PROBE = r"""
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
+library(ggplot2)
+pal <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
+frame <- c(440, 260)
+d <- expand.grid(x = 1:4, facet = c("Early", "Late"))
+d$y <- sqrt(d$x)
+late <- d$facet == "Late"
+p <- ggplot(d, aes(x, y)) + facet_wrap(vars(facet)) + theme_bw()
+stock <- p + geom_point(shape = 21, fill = "#AE745B", colour = "#244A5A", size = 3, stroke = 1)
+initial <- adapter$capture_ggplot(stock, frame, pal)
+state <- initial$state
+gid <- "layer.1.panel.2.scatter"
+early <- "layer.1.panel.1.scatter"
+stroke <- 2.1 / adapter$ggplot_lwd_pt * 2 / ggplot2::.stroke
+size <- 121
+group <- state$point_targets[[gid]]
+stopifnot(identical(group$values$facecolor, "#AE745B"),
+          identical(group$values$edgecolor, "#244A5A"),
+          length(group$values$linewidth) == 1L, group$values$linewidth > 0, group$values$alpha == 1)
+stamp <- list(facecolor = "#4C845E", edgecolor = "#452E78", linewidth = 2.1, size = size, alpha = .45)
+edits <- setNames(list(stamp), gid)
+authored <- p + geom_point(shape = 21, fill = ifelse(late, stamp$facecolor, "#AE745B"),
+                           colour = ifelse(late, stamp$edgecolor, "#244A5A"),
+                           stroke = ifelse(late, stroke, 1),
+                           size = ifelse(late, sqrt(size) / ggplot2::.pt, 3),
+                           alpha = ifelse(late, stamp$alpha, NA_real_))
+result <- adapter$render_ggplot(state, edits)
+stopifnot(identical(result, adapter$capture_ggplot(authored, frame, pal)$svg),
+          identical(adapter$render_ggplot(state), initial$svg))
+get_element <- function(manifest, gid) Filter(function(e) e$gid == gid, manifest$elements)[[1L]]
+old <- adapter$ggplot_manifest(state, "dots")
+new <- adapter$ggplot_manifest(state, "dots", edits)
+stopifnot(identical(get_element(old, early), get_element(new, early)),
+          identical(get_element(new, gid)$point_series$current[names(stamp)], stamp))
+no_fill <- setNames(list(list(facecolor = "none", linewidth = 0)), gid)
+hidden <- p + geom_point(shape = 21, size = 3, fill = ifelse(late, NA, "#AE745B"),
+                         colour = "#244A5A", stroke = ifelse(late, 0, 1))
+stopifnot(identical(adapter$render_ggplot(state, no_fill), adapter$capture_ggplot(hidden, frame, pal)$svg))
+bad <- setNames(list(list(linewidth = -1)), gid)
+stopifnot(inherits(try(adapter$render_ggplot(state, bad), silent = TRUE), "try-error"))
+
+varying <- p + geom_point(aes(fill = x), shape = 21, colour = "black", stroke = 1)
+mapped <- adapter$capture_ggplot(varying, frame, pal)$state$point_targets[[gid]]$values
+stopifnot(!"facecolor" %in% names(mapped), all(c("edgecolor", "linewidth") %in% names(mapped)))
+mapped_stroke <- p + geom_point(aes(stroke = x), shape = 21, colour = "black")
+stroke_fields <- adapter$capture_ggplot(mapped_stroke, frame, pal)$state$point_targets[[gid]]$values
+stopifnot(!"linewidth" %in% names(stroke_fields), "edgecolor" %in% names(stroke_fields))
+solid <- p + geom_point(aes(shape = factor(x %% 2)), colour = "#87AB34")
+groups <- adapter$capture_ggplot(solid, frame, pal)
+group_gid <- "layer.1.panel.2.scatter.group.1"
+styles <- groups$state$point_targets[[group_gid]]$values
+stopifnot(identical(styles$facecolor, "#87AB34"), !"edgecolor" %in% names(styles),
+          !"linewidth" %in% names(styles))
+paint <- "#9C1343"
+expected <- p + geom_point(aes(shape = factor(x %% 2)), colour = ifelse(d$x %% 2 == 0, paint, "#87AB34")) +
+  guides(shape = guide_legend(override.aes = list(colour = c(paint, "#87AB34"))))
+stopifnot(identical(adapter$render_ggplot(groups$state, setNames(list(list(facecolor = paint)), group_gid)),
+                    adapter$capture_ggplot(expected, frame, pal)$svg))
+"""
+
+
 MAPPED_POINT_SHAPE_PROBE = r"""
 if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
 
@@ -3863,6 +3926,10 @@ def test_mapped_bar_group_edits_keep_dodged_centers_and_sibling_panels(tmp_path)
 
 def test_log_colourbar_ranges_match_native_mapping_in_data_units(tmp_path):
     _assert_r_probe(tmp_path, LOG_COLOUR_SCALE_PROBE)
+
+
+def test_native_scatter_paint_preserves_mapped_pigments_and_uses_point_units(tmp_path):
+    _assert_r_probe(tmp_path, POINT_PAINT_PROBE)
 
 
 def test_mapped_point_groups_update_one_style_key_across_facets(tmp_path):

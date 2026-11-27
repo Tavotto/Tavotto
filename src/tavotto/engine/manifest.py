@@ -105,6 +105,7 @@ from manifest_fields import (
     axis_tick_side_fields,
     bar_paint_fields,
     bar_width_field,
+    collection_stroke_fields,
     errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
@@ -2782,22 +2783,10 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
         # 描边：`TriMesh` 连边都不画（`draw_gouraud_triangles` 只接顶点颜色），
         # 判据 `overrides.honours_stroke`
         *(
-            [
-                {
-                    "prop": "edgecolor",
-                    "type": "color",
-                    "value": to_hex(ec[0]) if len(ec) else "#000000",
-                },
-                {
-                    "prop": "linewidth",
-                    "type": "number",
-                    "value": round(float(lw[0]), 2) if len(lw) else 0.0,
-                    "min": 0,
-                    "max": 8,
-                    "step": 0.1,
-                    "unit": "pt",
-                },
-            ]
+            collection_stroke_fields(
+                to_hex(ec[0]) if len(ec) else "#000000",
+                lw[0] if len(lw) else 0.0,
+            )
             if "stroke" in caps
             else []
         ),
