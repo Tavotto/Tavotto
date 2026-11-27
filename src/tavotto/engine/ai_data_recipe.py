@@ -2276,6 +2276,13 @@ def _resolve_roles_raw(
     # 用户在话里按词点名的列（`hint`）同样算「自己点了」：`plot stderr` 要画的就是 stderr 那一列
     asked |= set(adf._mentioned(hint, cols)) if hint else set()
     nums_all = list(nums)  # 下拉里仍然列得出误差列：用户自己点它是允许的
+    # 行号列（`s.row_index`：名字像行号、取值恰是从 0 / 1 起逐行 +1）：「随行号变化」没有科学意义，默认不当 y / x；用户自己点了它、或去掉后一个数值列都不剩时不去。
+    # 它不是 `id_like`（不进 `ids`、不影响重复测量的提问），也不挡下拉：`options` 里仍列得出，用户可以自己选
+    rowidx = {c for c in s.row_index if c not in asked}
+    if rowidx and any(c not in rowidx for c in nums):
+        nums = [c for c in nums if c not in rowidx]
+    else:
+        rowidx = set()
     errs = {c for c in error_columns(s) if c not in asked}
     if errs and any(c not in errs for c in nums):
         nums = [c for c in nums if c not in errs]
@@ -2287,7 +2294,7 @@ def _resolve_roles_raw(
         nums = [c for c in nums if c not in sizes]
     else:
         sizes = set()
-    errs_and_sizes = errs | sizes
+    errs_and_sizes = errs | sizes | rowidx
     dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
     cats = [c for c in cols if c in s.groups and c not in ids]
     cats_all = list(cats)
@@ -3001,6 +3008,23 @@ def default_candidates(
     items = tuple(Candidate(by_recipe[id(r)], r) for r in res.kept)
     dropped += list(res.dropped)
     if not items:
+        fallback_x = _large_fallback_x(s, values, roles, picks, tuple(dropped))
+        if fallback_x is not None:
+            # 大表退路：规则默认出的备选全被「大表不支持」拒掉（分组比较 / 分布没有流式画法）——用一个确定的横轴重算一次，让趋势 / 关系图（大表能画的两类）
+            # 顶上。重算走的是同一条流水（同样的 `validate_recipe` + `enforce_order`，`picks.x` 与用户点名同一条路），所以 `roles` 如实反映实际用的横轴；
+            # 重算仍没有备选（或要先问文字格）就当没这回事，返回原来的结果
+            again = default_candidates(
+                profile,
+                table=table,
+                sheet=sheet,
+                confirmed=confirmed,
+                hint=hint,
+                values=values,
+                picks={**picks, "x": fallback_x},
+                cells=cells,
+            )
+            if isinstance(again, Candidates) and again.items:
+                return again
         return Candidates(
             entry.path,
             entry.sheet,
@@ -3011,6 +3035,50 @@ def default_candidates(
             role_info,
         )
     return Candidates(entry.path, entry.sheet, items, tuple(dropped), (), eff, role_info)
+
+
+def _large_fallback_x(
+    s: adf.DataSummary,
+    values: adf.DataSummary | None,
+    roles: _Roles,
+    picks: dict,
+    dropped: tuple[Dropped, ...],
+) -> str | None:
+    """大表退路用哪一列当横轴（None = 不走退路）。**只在同时满足时**：大表；用户 / 模型没有对横轴表过态（`picks` 里没有 `x`——哪怕是 `none` 也尊重）；规则
+    默认没有有序横轴、不是「把列当分组」；这次出过备选，而且**每一条**被拒的原因都是「大表不支持」（`mark_not_allowed` 且 `detail` 以 `large` 开头）——
+    只要有一条是别的原因（别的规则也拒了它），就不是「大表限制」造成的空手，不动。
+
+    列的挑法（确定性、保守）：不是纵轴 / 分组 / 编号列 / 行号列 / 误差列 / 样本量列；纯日期列优先（有序横轴，折线才有意义），否则纯数值列（`kind == "numeric"`，
+    夹着文字的不要）；数值列取整表最小值 < 最大值的（常数列没有信息，如 `year` 全是 2013）里最左的。"""
+    big = values if values is not None and values.large is not None else s
+    if big.large is None or "x" in picks or roles.x_ord is not None or roles.stack:
+        return None
+    if not dropped or any(
+        p.code != "mark_not_allowed" or not p.detail.startswith("large")
+        for d in dropped
+        for p in d.problems
+    ):
+        return None
+    skip = {
+        *roles.ys,
+        *roles.cats,
+        *s.id_like,
+        *s.row_index,
+        *error_columns(s),
+        *sample_size_columns(s),
+    }
+    stats = big.large.stats
+    pool = [c for c in s.columns if c not in skip]
+    dates = [c for c in pool if s.per_column[c].kind == "date"]
+    nums = [
+        c
+        for c in pool
+        if s.per_column[c].kind == "numeric"
+        and c in stats
+        and stats[c].lo is not None
+        and stats[c].lo < stats[c].hi
+    ]
+    return (dates + nums or [None])[0]
 
 
 __all__ = [

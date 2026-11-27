@@ -133,7 +133,8 @@ def test_the_rules_alone_get_most_of_the_new_cases_wrong_and_the_controls_right(
     controls = [c["id"] for c in CASES if c.get("control")]
     assert all(hits[i] for i in controls)
     wrong = [i for i, ok in hits.items() if not ok]
-    assert len(wrong) >= 15  # 这批用例就是规则会出错的
+    # 这批用例就是规则会出错的。2026-11-27 行号列判据（ADR 0178）让 RC-12（`idx` 流水号）规则也对了：规则答错的由 15 条变 14 条，下限随之 15 → 14（不是放宽判据，是少了一条真的答对了的）
+    assert len(wrong) >= 14
 
 
 def test_recorded_answers_fix_the_defaults_and_never_break_a_correct_one(tmp_path):

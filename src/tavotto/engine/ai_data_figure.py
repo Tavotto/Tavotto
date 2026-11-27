@@ -265,6 +265,9 @@ class DataSummary:
     #: `FigureRecipe.numcat` 时才按类别用；不进 `to_dict`（对外响应与历史库逐字不变）。大表与合画是空的（这两条路暂不支持）。
     numcat: dict[str, int] = field(default_factory=dict)
     id_like: list[str] = field(default_factory=list)
+    #: 行号列（`row_index_columns` / `_row_index_name`）：名字在小闭集里、且非空取值恰是从 0 或 1 起逐行 +1 的整数。**不是 `id_like`**（个体编号可以重复、
+    #: 会触发「同一对象重复测量吗」；行号每行一个，不可能是个体）。规则默认不拿它当横轴 / 纵轴，用户仍可在下拉里自己选；不进 `to_dict`（对外响应逐字不变）。
+    row_index: list[str] = field(default_factory=list)
     repeats: bool | None = None
     row_count: int | None = None
     #: 与 `rows` 逐项对应的文件行号（人看到的行号，表头算第 1 行；空行被丢掉所以不是下标 + 2）；空 = 不知道，按下标 + 2
@@ -1128,6 +1131,7 @@ def _scan_summary(
     id_n = dict.fromkeys(id_cols, 0)
     id_nonint = dict.fromkeys(id_cols, False)
     id_over: set[int] = set()
+    seq = {j: _SeqTrack() for j, h in enumerate(header) if _row_index_name(h)}
     first_set: set[str] = set()
     first_ok = True
     count = 0
@@ -1171,6 +1175,9 @@ def _scan_summary(
                 s.empty += 1
             else:
                 s.nan += 1
+        for j, tr in seq.items():
+            if tr.ok:
+                tr.feed(*parse(r[j]))
         if first_ok:
             lab = r[0].strip()
             if lab in first_set or len(first_set) >= STRUCTURE_SET_CAP:
@@ -1225,6 +1232,11 @@ def _scan_summary(
         layout=layout,
         groups=groups,
         id_like=id_like,
+        row_index=[
+            h
+            for j, h in enumerate(header)
+            if j in seq and seq[j].holds() and seq[j].n == count and h not in id_like
+        ],
         repeats=repeats,
         row_count=count,
         delimiter=delimiter,
@@ -1542,6 +1554,7 @@ def _summarize(
         groups=groups,
         numcat=numcat_levels(header, rows, per, id_like) if parse is parse_cell else {},
         id_like=id_like,
+        row_index=row_index_columns(header, rows, parse, id_like),
         repeats=repeats,
         row_count=None if keep_rows else len(rows),
         row_numbers=list(row_numbers[1:]) if row_numbers and keep_rows else [],
@@ -1585,6 +1598,89 @@ def _id_name(name: str) -> bool:
     if len(tokens) == 2 and tokens[0] in _ID_WORDS and tokens[1] in _ID_SUFFIX_WORDS:
         return True
     return any(w in name for w in _ID_CJK)
+
+
+#: 行号列的列名闭集（`_row_index_name` 规范化之后：小写、去掉空白 / `_` / `.` / `-` / `:`）：R 的 `rownames`、pandas 的 `Unnamed: 0`、`index`、`No.`、`序号`……
+#: `id` / `*_id` 另有 `_id_name`（个体编号线索）管，这里不重复收；只凭名字不够，见 `row_index_columns`。
+_ROW_INDEX_NAMES = frozenset(
+    {
+        "rownames",
+        "rowname",
+        "rowid",
+        "rownumber",
+        "rownum",
+        "rowno",
+        "row",
+        "index",
+        "idx",
+        "no",
+        "sn",
+        "#",
+        "序号",
+        "行号",
+    }
+)
+_UNNAMED_INDEX = re.compile(r"unnamed:\s*0(\.\d+)?")
+
+
+def _row_index_name(name: str) -> bool:
+    """列名像行号：规范化后在 `_ROW_INDEX_NAMES` 里，或是 pandas 存出来的 `Unnamed: 0`（`.1` 后缀也算）。"""
+    low = name.strip().lower()
+    if _UNNAMED_INDEX.fullmatch(low):
+        return True
+    return re.sub(r"[\s_.\-:]+", "", low) in _ROW_INDEX_NAMES
+
+
+#: 行号列至少要这么多行才认（两三行的 1, 2 太容易是真的取值）
+ROW_INDEX_MIN_ROWS = 3
+
+
+class _SeqTrack:
+    """逐行核「从 0 或 1 起、逐行恰好 +1 的整数」：小表与大表扫描共用的唯一实现（`row_index_columns` 与 `_scan_summary` 各喂一遍）。"""
+
+    __slots__ = ("n", "ok", "start")
+
+    def __init__(self) -> None:
+        self.n = 0
+        self.ok = True
+        self.start = 0.0
+
+    def feed(self, cls: str, v: float) -> None:
+        if not self.ok:
+            return
+        if cls != "numeric" or not float(v).is_integer():
+            self.ok = False
+            return
+        if self.n == 0:
+            if v not in (0, 1):
+                self.ok = False
+                return
+            self.start = v
+        elif v != self.start + self.n:
+            self.ok = False
+            return
+        self.n += 1
+
+    def holds(self) -> bool:
+        return self.ok and self.n >= ROW_INDEX_MIN_ROWS
+
+
+def row_index_columns(header, rows, parse, id_like) -> list[str]:
+    """行号列（保守，**两条同时满足**）：① 列名是 `_row_index_name`；② 每一行（一格不缺、没有文字 / nan）都是整数，第一行是 0 或 1、之后逐行恰好 +1（不是 `id_like` 列，
+    至少 `ROW_INDEX_MIN_ROWS` 行）。只凭取值不认：一列 1..n 也可能是真的「第几天」；只凭名字也不认：`index` 可能是别的量。"""
+    out: list[str] = []
+    for j, h in enumerate(header):
+        if h in id_like or not _row_index_name(h):
+            continue
+        tr = _SeqTrack()
+        for r in rows:
+            cls, v = parse(r[j])
+            tr.feed(cls, v)
+            if not tr.ok:
+                break
+        if tr.holds() and tr.n == len(rows):
+            out.append(h)
+    return out
 
 
 #: 列名里「这是误差量」的词 → 它是哪一种（`unknown` = 是误差量、但名字没说是哪种）。判法见 `error_kind`
