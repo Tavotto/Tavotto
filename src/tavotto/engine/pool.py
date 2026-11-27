@@ -199,6 +199,31 @@ def current_purpose() -> str:
 #: 有界：取了会话却始终不发请求的调用方（只读属性、中途出错）不能让会话永远淘汰不掉。
 ACQUIRE_LEASE = 30.0
 
+
+#: 会话**正被某个调用方使用**的计数（`hold()`）：>0 的会话不被 LRU 淘汰，与租约同一道门（`_is_leased`）。
+#: 租约只盖「取到会话 → 第一条请求拿到锁」；第一条请求一开始租约就清零，之后一次渲染里的
+#: build → override 两条请求之间、以及 build 跑了好几秒的这段，会话都是「最久未用」的 LRU 候选——
+#: 4 张图同时冷启动、上限为 3 时，淘汰线程收掉的恰是正在 build 的那条，调用方被迫重取会话，重取又淘汰别的，
+#: 一圈下来重试用完，用户看到「会话刚被收掉」（上限因此是软的：忙的会话不算，忙完下一次取会话再收）。
+_holds_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def hold(worker):
+    """调用方在这个上下文里使用 `worker`：期间它不会被 LRU 淘汰。对没有这个属性槽的替身静默无效。"""
+    try:
+        with _holds_lock:
+            worker._holds = getattr(worker, "_holds", 0) + 1
+    except AttributeError:
+        yield
+        return
+    try:
+        yield
+    finally:
+        with _holds_lock:
+            worker._holds = max(0, getattr(worker, "_holds", 1) - 1)
+
+
 # ---- 引擎缓存治理（对照 app.prune_render_cache / prune_backups） ------------
 #: cache/engine/ 全部会话目录的总预算。比渲染缓存的 500MB 宽：这里躺着
 #: 600dpi 的导出件与预览 SVG，一个会话就顶得上一堆缩略图。
@@ -3466,6 +3491,8 @@ class EngineWorker:
     _background_only = False
     #: `acquire` 刚交出去、调用方还没发第一条请求时有效的租约截止（`time.monotonic()`）；见 `ACQUIRE_LEASE`。
     _lease_until = 0.0
+    #: 正握着这条会话在用的调用方数（`hold()`）；>0 时 LRU 淘汰跳过它。
+    _holds = 0
     #: 脚本 `input()` 怎么答（ADR 0099 §五）：None = 池会话（记住的答案 / 问界面 / 立即报错）；
     #: `inputbroker.ReplayAnswers` = 写回的一次性重放，只按热态用过的答案严格重放。
     script_input_policy = None
@@ -3800,7 +3827,7 @@ class EngineWorker:
     def request(
         self, obj: dict, timeout: float | None = None, *, input_declaration: dict | None = None
     ) -> dict:
-        with _ExecutionWatch(self, obj.get("cmd")) as watch:
+        with hold(self), _ExecutionWatch(self, obj.get("cmd")) as watch:
             if watch.key is not None:
                 obj = {**obj, "execution_watch": watch.key}
             return self._request_observed(obj, timeout, watch, input_declaration=input_declaration)
@@ -3847,8 +3874,7 @@ class EngineWorker:
                 # （优雅关停的退出码恒为 0，曾被读成「渲染进程自己以退出码 0 结束了」）。
                 # 带 `extra["evicted"]`，调用方重新取会话再来一次是安全的（什么都没执行过）。
                 err = WorkerError(
-                    "这条渲染会话刚被收掉（同时存活的会话超出上限），"
-                    "这一步还没有执行；重新取会话再来一次即可。",
+                    "同时在画的图太多，这张还没开始画，再试一次就好。",
                     "",
                     code="session_dead",
                 )
@@ -4704,7 +4730,7 @@ class WorkerdWorker:
         idle_timeout: float | None = None,
         input_declaration: dict | None = None,
     ) -> dict:
-        with _ExecutionWatch(self, op) as watch:
+        with hold(self), _ExecutionWatch(self, op) as watch:
             if watch.key is not None:
                 payload = {**(payload or {}), "execution_watch": watch.key}
             return self._call_observed(
@@ -6146,8 +6172,10 @@ _last_acquired = threading.local()
 
 
 def _is_leased(worker) -> bool:
-    """调用方刚取到这条会话、还没发第一条请求（`ACQUIRE_LEASE` 内）：LRU 淘汰先放过它。"""
-    return getattr(worker, "_lease_until", 0.0) > time.monotonic()
+    """调用方刚取到这条会话、还没发第一条请求（`ACQUIRE_LEASE` 内），或正握着它在用（`hold()`）：LRU 淘汰先放过它。"""
+    return (
+        getattr(worker, "_holds", 0) > 0 or getattr(worker, "_lease_until", 0.0) > time.monotonic()
+    )
 
 
 def _is_fence_holder(worker) -> bool:

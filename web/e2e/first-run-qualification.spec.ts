@@ -396,7 +396,8 @@ test(
     await page.getByRole('button', { name: /^(文档|排版)：/ }).click()
     await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
     const openDialog = page.getByRole('dialog')
-    await openDialog.getByRole('button', { name: new RegExp(layoutStored) }).click()
+    // 认排版行自己的 data-layout-row：恢复行（data-recover-row，ADR 0211）的名字里也带排版名，按角色 + 名字正则会撞两个
+    await openDialog.locator(`button[data-layout-row=${JSON.stringify(layoutStored)}]`).click()
     await expect(openDialog).toBeHidden()
     await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
     // 图是渲染出来的（不是 DOM 文字）。重开后画布先用缓存预览（磁盘自动保存 + 烘焙过的编辑），这时脚本还没被重放；
