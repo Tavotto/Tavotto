@@ -67,10 +67,13 @@ const hasPath = (el: ManifestElement | null): boolean => !!el?.geometry && geomP
  * 画成框用户认不出点中的是哪条线（两条交叉曲线的框一模一样）。只描边、不着色；`clip` 是引擎给的子图裁剪框。
  * SVG 盖满整个画框（滑动对比里 PickLayer 只占分隔线右侧，按 `left` 往回伸），坐标就是图的分数坐标。
  */
+const VB = 1000
+
 function HoverPath({ el, left }: { el: ManifestElement; left: number }) {
   const geom = el.geometry
   if (!geom) return null
-  const d = geomPathD(geom, ([x, y]) => ({ x, y }))
+  // `geomPathD` 把坐标保留两位小数（它原本吃屏幕像素）：在 0–1000 的坐标系里画，精度 0.001%，小标记也不塌成一点
+  const d = geomPathD(geom, ([x, y]) => ({ x: x * VB, y: y * VB }))
   if (!d) return null
   const c = geom.clip
   const clipId = `cp-hover-clip-${el.gid.replace(/[^A-Za-z0-9_-]/g, '_')}`
@@ -81,12 +84,12 @@ function HoverPath({ el, left }: { el: ManifestElement; left: number }) {
       data-change-plan-hover-path={el.gid}
       className="pointer-events-none absolute inset-y-0 h-full overflow-visible"
       style={{ left: `${-left / k}%`, width: `${100 / k}%` }}
-      viewBox="0 0 1 1"
+      viewBox={`0 0 ${VB} ${VB}`}
       preserveAspectRatio="none"
     >
       {c && (
         <clipPath id={clipId}>
-          <rect x={c[0]} y={c[1]} width={c[2]} height={c[3]} />
+          <rect x={c[0] * VB} y={c[1] * VB} width={c[2] * VB} height={c[3] * VB} />
         </clipPath>
       )}
       <path

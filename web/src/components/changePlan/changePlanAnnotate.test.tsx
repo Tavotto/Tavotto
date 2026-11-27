@@ -247,7 +247,9 @@ it('批注模式：曲线悬停沿真实路径描边（不画大半是空白的�
     // 正落在线上（0.5, 0.5）
     fire('pointermove', 500, 250)
     expect(q('[data-change-plan-hover-path="ax.lines_0"]')).not.toBeNull()
-    expect(q('[data-change-plan-hover-path="ax.lines_0"] path')!.getAttribute('d')).toContain('M')
+    // 坐标不量化到 1%：分数坐标乘到 0–1000 再交给 geomPathD（它保留两位小数）
+    expect(q('[data-change-plan-hover-path="ax.lines_0"] path')!.getAttribute('d')).toContain('M100.00,900.00')
+    expect(q('[data-change-plan-hover-path="ax.lines_0"]')!.getAttribute('viewBox')).toBe('0 0 1000 1000')
     // 曲线不画着色的包围盒
     expect(q('[data-change-plan-hover="ax.lines_0"]')!.className).not.toContain('bg-sel')
     // 包围盒里离线很远的空白处（右下角）不命中这条线
