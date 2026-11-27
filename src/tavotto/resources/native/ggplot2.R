@@ -352,8 +352,13 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
     }
   }
   members <- list()
+  cells <- built$layout$layout
   for (gid in names(result)) {
     tick <- result[[gid]]
+    if (!is.null(tick$spacing) &&
+        length(unique(cells[[paste0("SCALE_", toupper(tick$axis))]])) == 1L) {
+      result[[gid]]$locator_axis <- tick$axis
+    }
     axes <- axes_targets[[tick$axes_gid %||% ggplot_axes_gid]]
     group <- if (length(tick$axis) == 1L) axes$groups[[tick$axis]]
     if (is.null(group) || is.null(tick$values)) next
@@ -369,10 +374,22 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
   result
 }
 
-ggplot_number_formats <- c("auto", "%.0f", "%.1f", "%.2f", "%.3f", "%g", "sci")
 ggplot_major_tick_props <- c("major_mode", "major_step", "major_values")
 ggplot_minor_tick_props <- c("minor_visible", "minor_mode", "minor_step", "minor_format")
-ggplot_tick_props <- c("format", ggplot_major_tick_props, ggplot_minor_tick_props)
+ggplot_locator_props <- c("format", ggplot_major_tick_props)
+ggplot_tick_props <- c(ggplot_locator_props, ggplot_minor_tick_props)
+
+ggplot_authored_locator_edits <- function(state, edits) {
+  for (axis in names(state$authored_locators)) {
+    gids <- names(Filter(function(tick) identical(tick$locator_axis, axis), state$tick_targets))
+    if (!length(gids)) stop("The R source locator no longer matches the rendered axis.")
+    supplied <- unique(unlist(lapply(edits[gids], names), use.names = FALSE))
+    stored <- state$authored_locators[[axis]]
+    gid <- gids[[1L]]
+    edits[[gid]] <- c(stored[setdiff(names(stored), supplied)], edits[[gid]])
+  }
+  edits
+}
 
 ggplot_format_guide <- function(params, format, values) {
   if (!is.character(format) || length(format) != 1L || !format %in% ggplot_number_formats) {
@@ -387,10 +404,6 @@ ggplot_format_guide <- function(params, format, values) {
   params
 }
 
-
-ggplot_number_labels <- function(format, values) {
-  sprintf(if (format == "sci") "%.2e" else format, values)
-}
 
 ggplot_format_minor_labels <- function(panel, params, format) {
   if (is.null(format)) return(params)
@@ -438,40 +451,8 @@ ggplot_frozen_layer <- function(layer, grobs) {
   ggplot2::ggproto(NULL, layer, draw_geom = function(data, layout) grobs)
 }
 
-ggplot_uniform_breaks <- function(range, step, kind = "major") {
-  # Use the same zero-based origin as a standard multiple locator. Limit the
-  # generated break count before allocating anything on the rendering path.
-  bounds <- range / step
-  rounding <- 4 * .Machine$double.eps * abs(bounds)
-  first <- ceiling(bounds[[1L]] - rounding[[1L]])
-  last <- floor(bounds[[2L]] + rounding[[2L]])
-  count <- last - first + 1
-  if (!is.finite(count) || count < 1 || count > 100 ||
-      any(abs(c(first, last)) >= 2^52)) {
-    stop(paste0("The native R ", kind, " tick interval must produce between 1 and 100 visible ticks."))
-  }
-  seq.int(first, last) * step
-}
-
-ggplot_major_tick_mode <- function(edit) {
-  if (!is.null(edit$major_mode)) return(edit$major_mode)
-  if (!is.null(edit$major_values)) return("fixed")
-  if (!is.null(edit$major_step)) return("step")
-  "auto"
-}
-
 ggplot_major_tick_modes <- function(spacing) {
   c("auto", if (!is.null(spacing$step)) "step", "fixed")
-}
-
-ggplot_fixed_tick_values <- function(value) {
-  if (is.list(value) && is.null(names(value)) && all(vapply(value, function(x) {
-    is.numeric(x) && length(x) == 1L
-  }, logical(1L)))) value <- if (length(value)) unlist(value, use.names = FALSE) else numeric()
-  if (!is.numeric(value) || !is.null(dim(value)) || any(!is.finite(value))) {
-    stop("The native R fixed ticks must be a list of finite numbers.")
-  }
-  unname(value)
 }
 
 ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected = FALSE) {
@@ -498,9 +479,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
     } else if (supplied) {
       # Crop ticks to the visible view without expanding or retraining the axis.
       # Compare in scale coordinates so the guide and grid share the same marks.
-      if (identical(transform$name, "log-10")) fixed <- fixed[fixed > 0]
-      if (identical(transform$name, "prob-logis")) fixed <- fixed[fixed > 0 & fixed < 1]
-      values <- sort(unique(fixed))
+      values <- ggplot_usable_fixed_ticks(fixed, transform$name)
       breaks <- transform$transform(values)
       visible <- breaks >= transformed_range[[1L]] & breaks <= transformed_range[[2L]]
       values <- values[visible]
@@ -1605,6 +1584,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   if (!inherits(plot, "ggplot")) stop("The selected object is not a ggplot.")
   authored_ticks <- plot$facet$tavotto_tick_recipes
   if (length(authored_ticks)) plot$facet <- plot$facet$tavotto_tick_base
+  locator_source <- ggplot_tick_locator_baseline(plot)
+  plot <- locator_source$plot
   measured <- with_svg_frame(frame_pt, function(capture) {
     colour_capture <- new.env(parent = emptyenv())
     if (!is.null(palettes)) plot <- ggplot_observe_colour_maps(plot, colour_capture)
@@ -1681,6 +1662,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       tick_member_scopes = member_scopes,
       tick_members = tick_members,
       authored_tick_recipes = authored_ticks,
+      authored_locators = locator_source$locators,
       colour_scales = colour_scales,
       palettes = palettes,
       built = if (rebuild_guides) built,
@@ -1984,6 +1966,7 @@ ggplot_guide_point_edits <- function(state, edits) {
 }
 
 ggplot_table_for <- function(state, edits) {
+  edits <- ggplot_authored_locator_edits(state, edits)
   edits <- ggplot_expand_point_groups(state, edits)
   table <- state$table
   layout <- state$built$layout
@@ -2265,6 +2248,8 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
 }
 
 ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
+  requested <- edits
+  edits <- ggplot_authored_locator_edits(state, edits)
   edits <- ggplot_expand_point_groups(state, edits)
   # A resized title can move the entire plot. Re-measure even targets whose
   # own paint was left alone so the hit regions follow the rendered layout.
@@ -2331,13 +2316,17 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     }
   }
   facet_ticks <- ggplot_facet_tick_edits(state, edits)
+  requested_facets <- ggplot_facet_tick_edits(state, requested)
   colour_anchors <- ggplot_colour_source_anchors(state$colour_scales)
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
     edit <- edits[[gid]]
     tick <- state$tick_targets[[gid]]
+    authored <- state$authored_locators[[tick$locator_axis %||% ""]]
+    input <- requested[[gid]]
     if (!is.null(tick$scope)) {
       edit <- utils::modifyList(edit %||% list(), facet_ticks[[tick$scope]] %||% list())
+      input <- utils::modifyList(input %||% list(), requested_facets[[tick$scope]] %||% list())
     }
     patch <- ggplot_text_edit(edit, tick)
     guide_color <- if (endsWith(gid, ".colourbar.ticks")) {
@@ -2376,7 +2365,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     if (!is.null(tick$values)) {
       field <- list(prop = "format", type = "enum", value = if (is.null(edit$format)) "auto" else edit$format,
                     options = as.list(ggplot_number_formats), strict_options = TRUE)
-      if (!is.null(edit$format)) field$value_original <- "auto"
+      if (!is.null(input$format)) field$value_original <- authored$format %||% "auto"
       editable[[length(editable) + 1L]] <- field
       if (!is.null(tick$spacing)) {
         mode <- ggplot_major_tick_mode(edit)
@@ -2384,20 +2373,22 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         mode_field <- list(prop = "major_mode", type = "enum", value = mode,
                            options = as.list(ggplot_major_tick_modes(tick$spacing)),
                            strict_options = TRUE)
-        if (!is.null(edit$major_mode)) mode_field$value_original <- "auto"
+        if (!is.null(input$major_mode)) mode_field$value_original <- ggplot_major_tick_mode(authored)
         editable[[length(editable) + 1L]] <- mode_field
         if (!is.null(default_step)) {
           step_field <- list(prop = "major_step", type = "number",
                              value = if (is.null(edit$major_step)) default_step else edit$major_step,
                              min = 0, step = default_step / 10)
-          if (!is.null(edit$major_step)) step_field$value_original <- default_step
+          if (!is.null(input$major_step)) step_field$value_original <- authored$major_step %||% default_step
           editable[[length(editable) + 1L]] <- step_field
         }
         values <- measured$tick_values[[gid]]
         if (is.null(values)) values <- tick$values
         if (mode == "fixed" && length(edit$major_values)) values <- ggplot_fixed_tick_values(edit$major_values)
         fixed_field <- list(prop = "major_values", type = "number_list", value = as.list(values))
-        if (!is.null(edit$major_values)) fixed_field$value_original <- as.list(tick$values)
+        if (!is.null(input$major_values)) {
+          fixed_field$value_original <- as.list(authored$major_values %||% tick$values)
+        }
         editable[[length(editable) + 1L]] <- fixed_field
         editable <- c(editable, ggplot_minor_tick_fields(tick$spacing$minor, edit))
       }
@@ -2447,6 +2438,14 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       gid = gid, role = target$role, label = current_label,
       bbox = as.list(bbox), draggable = FALSE, editable = editable
     )
+    locator_input <- input[intersect(names(input), ggplot_locator_props)]
+    if (!is.null(tick$locator_axis) && length(locator_input)) {
+      style <- edit[intersect(names(edit), ggplot_locator_props)]
+      if (identical(ggplot_major_tick_mode(style), "step")) {
+        style$major_step <- style$major_step %||% tick$spacing$step
+      }
+      element$source_tick_locator <- list(axis = tick$locator_axis, style = style)
+    }
     if (!is.null(target$text_slot) && !is.null(edit$text)) {
       element$title_text_baseline <- target$label
       element$source_title_text <- list(slot = target$text_slot, text = current_label)

@@ -6287,3 +6287,137 @@ grDevices::dev.off()
             timeout=120,
         )
         assert status == 200 and restored["ok"] and script.read_bytes() == original
+
+
+@pytest.mark.parametrize("faceted", [False, True], ids=["linear-step", "shared-log-breaks"])
+def test_native_r_major_locators_restore_from_standalone_source(tmp_path, faceted):
+    from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Native locator"
+    project.mkdir()
+    script = project / "Measured.R"
+    scale = (
+        '+ ggplot2::scale_x_log10() + ggplot2::facet_wrap(~sample, axes = "all")' if faceted else ""
+    )
+    original = f"""\
+d <- expand.grid(x = c(1, 2, 4, 8, 16, 24), sample = c("Below", "Above"))
+d$y <- d$x / 2 + as.integer(d$sample)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, group = sample)) + ggplot2::geom_line() +
+  ggplot2::theme_bw() {scale}
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Major_locator"
+    first_change = (
+        {"major_mode": "fixed", "major_values": [2, 4, 8, 11, 16, 25], "format": "%.1f"}
+        if faceted
+        else {"major_mode": "step", "major_step": 3.5, "format": "%.1f"}
+    )
+
+    def marks(svg):
+        return [
+            (node.text, node.get("x"), node.get("y"))
+            for node in ElementTree.fromstring(svg).iter("{http://www.w3.org/2000/svg}text")
+        ]
+
+    def axis_fields(rendered):
+        return [
+            element
+            for element in rendered["manifest"]["elements"]
+            if element["role"] == "ticks" and element["gid"].startswith("axis.x.bottom.ticks")
+        ]
+
+    def save(app, figure, baseline, change):
+        target = axis_fields(baseline)[0]
+        patches = [
+            {"gid": target["gid"], "identity": target["identity"], "prop": prop, "value": value}
+            for prop, value in change.items()
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        assert _render(app, figure, [])["svg"] == baseline["svg"]
+        width, height = hot["manifest"]["size_mm"]
+        panel = {
+            **_panel("r", figure, 5, patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        doc = {
+            "schema": 3,
+            "project": {"id": "major-locator", "name": "Major locator"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(f"{route}?target=project", doc)[1]["ok"]
+        saved = layoutannotate.open_layout(project, "Major_locator")
+        before = script.read_bytes()
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": saved.name,
+                "revision": saved.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200 and preview["written"] == len(patches) and preview["skipped"] == [], (
+            preview
+        )
+        assert script.read_bytes() == before
+        status, committed = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and committed["ok"], committed
+        assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert marks((project / "standalone.svg").read_text(encoding="utf-8")) == marks(hot["svg"])
+        return hot, committed
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        initial = _render(app, figure, [])
+        edited, _ = save(app, figure, initial, first_change)
+        assert initial["svg"] != edited["svg"]
+        values = [key for key, _, _ in marks(edited["svg"])]
+        if faceted:
+            assert values.count("11.0") == 2 and values.count("25.0") == 2
+        else:
+            assert "3.5" in values and "17.5" in values
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        replayed = _render(app, figure, [])
+        assert replayed["svg"] == edited["svg"]
+        fields = [
+            {field["prop"]: field["value"] for field in target["editable"]}
+            for target in axis_fields(replayed)
+        ]
+        assert len(fields) == (2 if faceted else 1)
+        assert all({key: style[key] for key in first_change} == first_change for style in fields)
+        reset, committed = save(app, figure, replayed, {"major_mode": "auto", "format": "auto"})
+        assert reset["svg"] == initial["svg"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": committed["backup_id"],
+                "expected_sha256": committed["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == authored

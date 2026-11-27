@@ -519,6 +519,72 @@ def _r_colour_mapping_block(name: str, scales: dict[tuple[str, ...], dict]) -> s
     )
 
 
+def _r_tick_locator_style(style: dict) -> str | None:
+    fields = []
+    for prop, value in sorted(style.items()):
+        if prop == "major_values" and isinstance(value, list):
+            if any(type(item) not in (int, float) or not math.isfinite(item) for item in value):
+                return None
+            literal = (
+                f"c({', '.join(_r_literal(item) for item in value)})" if value else "numeric()"
+            )
+        elif prop == "major_step" and type(value) in (int, float) and value > 0:
+            literal = _r_literal(value)
+        elif prop == "major_mode" and value in ("auto", "step", "fixed"):
+            literal = _r_literal(value)
+        elif prop == "format" and isinstance(value, str):
+            literal = _r_literal(value)
+        else:
+            return None
+        if literal is None:
+            return None
+        fields.append(f"{prop} = {literal}")
+    return f"list({', '.join(fields)})" if fields else None
+
+
+def _native_tick_locator_writes(
+    hot: dict | None, patches: list[dict]
+) -> tuple[dict[str, str], set[tuple[str, str]]]:
+    targets = {
+        e["gid"]: e["source_tick_locator"]
+        for e in (hot or {}).get("elements", ())
+        if e["role"] == "ticks" and e.get("source_tick_locator")
+    }
+    candidates = defaultdict(set)
+    bindings = defaultdict(set)
+    for patch in patches:
+        gid, prop = patch["gid"], patch["prop"]
+        target = targets.get(gid)
+        if target is None or target["axis"] not in ("x", "y"):
+            continue
+        style = target["style"]
+        if prop not in style or style[prop] != patch["value"]:
+            continue
+        recipe = _r_tick_locator_style(style)
+        if recipe is not None:
+            axis = target["axis"]
+            candidates[axis].add(recipe)
+            bindings[axis].add((gid, prop))
+    recipes = {
+        axis: next(iter(choices)) for axis, choices in candidates.items() if len(choices) == 1
+    }
+    return recipes, {binding for axis in recipes for binding in bindings[axis]}
+
+
+def _r_tick_locator_block(name: str, recipes: dict[str, str]) -> str:
+    fields = ",\n".join(f"    {axis} = {recipe}" for axis, recipe in recipes.items())
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers("ggplot_objects.R", "ggplot_tick_locators.R"),
+            "  ggplot_with_tick_locators(plot, list(",
+            fields,
+            "  ))",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
 def _native_tick_label_writes(
     hot: dict | None, patches: list[dict]
 ) -> tuple[list[str], set[tuple[str, str]]]:
@@ -860,13 +926,14 @@ def build(
     source_layers, layer_writes = _native_layer_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
     tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
+    locators, locator_writes = _native_tick_locator_writes(hot, patches)
     bar_layouts, bar_writes = _native_colourbar_layout_writes(hot, patches)
     titles = _native_title_text_writes(hot, patches)
     title_writes = {(gid, "text") for gid in titles}
     written = (
         coordinate_writes | theme_writes | layer_writes | colour_writes | tick_writes | bar_writes
     )
-    written.update(title_writes)
+    written.update(title_writes | locator_writes)
     residual = []
     skipped = []
     for patch in patches:
@@ -946,6 +1013,7 @@ def build(
         or source_layers
         or colour_scales
         or tick_labels
+        or locators
         or bar_layouts
         or titles
     ):
@@ -972,6 +1040,8 @@ def build(
         statements.append(_r_layer_block(name, source_layers))
     if colour_scales:
         statements.append(_r_colour_mapping_block(name, colour_scales))
+    if locators:
+        statements.append(_r_tick_locator_block(name, locators))
     if tick_labels:
         statements.append(_r_tick_labels_block(name, tick_labels))
     if bar_layouts:
