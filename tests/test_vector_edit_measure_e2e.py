@@ -346,3 +346,181 @@ def test_without_a_trustworthy_input_fingerprint_nothing_is_cached(data_project,
     first = n["i"]
     _plan_tip(client)
     assert n["i"] == 2 * first  # 拿不到输入指纹的图不缓存
+
+
+# ------------------------------------------------------------------ Codex #2344：热会话吃的是哪份输入，我们不知道
+
+
+def test_the_first_measure_in_a_process_does_not_trust_a_session_built_before_the_data_changed(
+    data_project,
+):
+    client, root = data_project
+    _plan_tip(client)  # 把热会话建起来（吃的是旧数据）
+    m._MEASURED_INPUTS.clear()  # noqa: SLF001  新进程：没有上一次量的记录
+    vectormeasure.CACHE.clear()
+    (root / "data.csv").write_text("\n".join(["0.2", "1.5", "2.5", "3.0"]), encoding="utf-8")
+    _run_script(root)
+    nx, ny = _marker_on_page(root)
+    tip = _plan_tip(client)  # 第一次请求标注：不能复用旧会话
+    assert abs(tip[0] - nx) <= 0.005 and abs(tip[1] - ny) <= 0.005, (tip, (nx, ny))
+
+
+def test_data_changed_while_the_model_was_thinking_voids_the_plan(data_project, monkeypatch):
+    from tavotto.engine import ai_structured, changeplan as cp
+
+    client, root = data_project
+    monkeypatch.setattr(cp, "_PRECHECK", lambda cid=None: (True, ""))
+    monkeypatch.setattr(cp, "_RESOLVE", lambda budget=None, **kw: ({"kind": "fake"}, "", ""))
+    monkeypatch.setattr(cp, "_TASKS", {})
+    monkeypatch.setattr(cp, "_BY_FIGURE", {})
+    monkeypatch.setattr(cp, "_BY_RID", {})
+
+    def model(**kw):
+        # 答题期间用户改了数据并重跑了脚本
+        (root / "data.csv").write_text("\n".join(["0.2", "1.5", "2.5", "3.0"]), encoding="utf-8")
+        _run_script(root)
+        value = kw["validate"]({"ops": [{"op": "add", "items": [MARKER_ARROW]}], "unhandled": []})
+        return ai_structured.StructuredResult(True, value=value)
+
+    monkeypatch.setattr(cp, "_CALL", model)
+    start = client.post(
+        "/api/vector-edit/plan", json={"canvas": _canvas(_panel()), "instruction": "箭头指向红点"}
+    ).get_json()
+    import time
+
+    end = time.time() + 120
+    while time.time() < end:
+        body = client.get(f"/api/vector-edit/plan/{start['plan_id']}").get_json()
+        if body["state"] != "running":
+            break
+        time.sleep(0.1)
+    assert body["state"] == "failed" and body["code"] == "change_plan_figure_changed", body
+
+
+def test_each_pass_takes_the_project_state_again():
+    calls = []
+
+    def fake(panel, requests):
+        return {"draw_manifest": {}, "data_points": []}
+
+    fake.new_pass = lambda: calls.append(1)  # type: ignore[attr-defined]
+    vectormeasure.new_pass(fake)
+    vectormeasure.new_pass(lambda panel, requests: None)  # 没有钩子的假函数：什么都不做
+    assert calls == [1]
+
+
+def test_an_export_dir_that_cannot_be_removed_is_logged_and_retried_next_time(
+    tmp_path, monkeypatch, caplog
+):
+    import logging
+    import shutil
+
+    left = tmp_path / "vector-measure-x"
+    left.mkdir()
+    (left / "m.pdf").write_bytes(b"%PDF")
+    m._VECTOR_MEASURE_LEFTOVERS.clear()  # noqa: SLF001
+    monkeypatch.setattr(m.time, "sleep", lambda s: None)
+    real = shutil.rmtree
+
+    def locked(path, *a, **k):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(m.shutil, "rmtree", locked)
+    with caplog.at_level(logging.WARNING):
+        assert m._vector_measure_discard(left) is False  # noqa: SLF001
+    assert "没删掉" in caplog.text and left in m._VECTOR_MEASURE_LEFTOVERS  # noqa: SLF001
+    assert left.exists()  # 没有假装删掉了
+    monkeypatch.setattr(m.shutil, "rmtree", real)
+    m._vector_measure_sweep()  # noqa: SLF001  下一次量的开头再试
+    assert not left.exists() and not m._VECTOR_MEASURE_LEFTOVERS  # noqa: SLF001
+
+
+def _spy_measure(monkeypatch, digests):
+    """`_vector_measure_for` 的壳：项目指纹按 `digests` 依次给，记下哪些脚本被让会话过期。"""
+    import itertools
+
+    seq = itertools.chain(digests, itertools.repeat(digests[-1]))
+    invalidated = []
+    monkeypatch.setattr(m, "_vector_project_digest", lambda root: next(seq))
+    monkeypatch.setattr(m, "_vector_measure_script", lambda panel: "figm.py")
+    monkeypatch.setattr(m, "_vector_measure_key", lambda *a, **k: None)  # 不缓存：每次都真量
+    monkeypatch.setattr(m, "_disk_panel_run", lambda script: None)
+    monkeypatch.setattr(
+        m.engine_pool,
+        "invalidate",
+        lambda script, root, run, only_run=False: invalidated.append(script),
+    )
+    monkeypatch.setattr(
+        m, "_vector_measure_panel", lambda panel, requests: {"draw_manifest": {}, "data_points": []}
+    )
+    m._MEASURED_INPUTS.clear()  # noqa: SLF001
+    return m._vector_measure_for(m.current_ctx()), invalidated  # noqa: SLF001
+
+
+def test_a_changed_fingerprint_expires_the_session_only_once_per_pass(project, monkeypatch):
+    client, _root = project
+    with m.bound_project(m.current_ctx()):
+        measure, invalidated = _spy_measure(monkeypatch, ["d1", "d2"])
+        panel = _panel()
+        measure(panel, [])  # 本进程第一次：没有记录 → 当「不知道会话吃的哪份」，先过期
+        assert invalidated == ["figm.py"]
+        measure(panel, [{"axes": "axes_0", "x": 1, "y": 1}])  # 同一轮、指纹没变：不再过期
+        assert invalidated == ["figm.py"]
+        measure.new_pass()  # 模型答题之后的新一轮：重新取指纹，d2 ≠ 记着的 d1
+        measure(panel, [{"axes": "axes_0", "x": 2, "y": 2}])
+        assert invalidated == ["figm.py", "figm.py"]
+
+
+def test_the_fingerprint_is_not_reused_across_passes_but_is_within_one(project, monkeypatch):
+    client, _root = project
+    taken = []
+    with m.bound_project(m.current_ctx()):
+        measure, invalidated = _spy_measure(monkeypatch, ["d1", "d2", "d3"])
+        monkeypatch.setattr(m, "_vector_project_digest", lambda root: taken.append(1) or "d1")
+        panel = _panel()
+        measure(panel, [])
+        measure(panel, [{"axes": "axes_0", "x": 1, "y": 1}])
+        assert len(taken) == 1  # 一轮之内各子图 / 各次共用一次指纹
+        measure.new_pass()
+        measure(panel, [])
+        assert len(taken) == 2  # 新一轮重新取
+
+
+def test_an_unknown_fingerprint_expires_once_per_plan_not_every_pass(project, monkeypatch):
+    client, _root = project
+    with m.bound_project(m.current_ctx()):
+        measure, invalidated = _spy_measure(monkeypatch, [None])
+        panel = _panel()
+        measure(panel, [])
+        measure.new_pass()
+        measure(panel, [{"axes": "axes_0", "x": 1, "y": 1}])
+        assert invalidated == ["figm.py"]  # 取不到指纹：保守地过期一次，之后各轮不再反复重建
+
+
+def test_the_model_step_asks_for_a_fresh_pass_before_the_dry_run():
+    from tavotto.engine import ai_structured, changeplan as cp
+
+    seen = []
+
+    def measure(panel, requests):
+        raise AssertionError("不该真量")
+
+    measure.new_pass = lambda: seen.append("pass")  # type: ignore[attr-defined]
+    orig = cp._structured  # noqa: SLF001
+    try:
+        cp._structured = lambda system, user, validate, selection, **kw: validate(  # noqa: SLF001
+            {"ops": [], "unhandled": []}
+        )
+        cp.ask_vector_edits(
+            "x",
+            {"id": "c", "page": {"w": 10, "h": 10}, "objects": []},
+            [],
+            None,
+            None,
+            measure=measure,
+            measured={"scene": {}, "unmeasured": {}, "fingerprint": "f"},
+        )
+    finally:
+        cp._structured = orig  # noqa: SLF001
+    assert seen == ["pass"]
+    del ai_structured

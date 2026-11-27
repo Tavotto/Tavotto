@@ -13262,6 +13262,43 @@ def api_change_plans_layout_preview():
 _VECTOR_EDIT_FIGURE = "__vector_edit__"
 
 
+#: 删不掉的量子图导出目录（Windows 上 PDF 被别的进程占着）：留给下一次量的开头再试，不吞
+_VECTOR_MEASURE_LEFTOVERS: set[Path] = set()
+_VECTOR_MEASURE_LEFTOVERS_LOCK = threading.Lock()
+
+
+def _vector_measure_discard(path: Path) -> bool:
+    """删一个一次性导出目录：先短重试（文件锁常常很快放开），仍删不掉就**记日志并登记留给下一次**，不用 `ignore_errors`（`src/tavotto/AGENTS.md`）。→ 是否删掉了。"""
+    for attempt in range(3):
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if attempt < 2:
+                time.sleep(0.15)
+    LOG.warning("量子图的导出目录没删掉，留给下一次清理：%s", path.name, exc_info=True)
+    with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+        _VECTOR_MEASURE_LEFTOVERS.add(path)
+    return False
+
+
+def _vector_measure_sweep() -> None:
+    with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+        left = list(_VECTOR_MEASURE_LEFTOVERS)
+    for path in left:
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            LOG.warning("量子图的导出目录仍没删掉：%s", path.name)
+            continue
+        with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+            _VECTOR_MEASURE_LEFTOVERS.discard(path)
+
+
 def _vector_measure_panel(panel: dict, requests: list) -> dict:
     """量一张子图（ADR 0208 第 ③ 期 3b）：用桌面引擎会话把这张图**带着快照里的覆盖项**现导出一次，回 `draw_manifest` + 数据点位置。
 
@@ -13285,6 +13322,7 @@ def _vector_measure_panel(panel: dict, requests: list) -> dict:
         raise la.PanelUnavailable("native_session") from None
     except HTTPException:
         raise la.PanelUnavailable("no_script") from None
+    _vector_measure_sweep()  # 上一次没删掉的导出目录先再试一次
     tmp = Path(tempfile.mkdtemp(prefix="vector-measure-", dir=_review_tmp_root()))
     try:
         _w, _s, resp = _engine_attempt(
@@ -13298,7 +13336,7 @@ def _vector_measure_panel(panel: dict, requests: list) -> dict:
     except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError):
         raise la.PanelUnavailable("export_failed") from None
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _vector_measure_discard(tmp)
     return {
         "draw_manifest": resp.get("draw_manifest"),
         "data_points": resp.get("data_points") or [],
@@ -13358,35 +13396,58 @@ def _vector_measure_key(root: str, panel: dict, requests: list, inputs: str | No
 def _vector_measure_for(ctx):
     """一次方案用的 `measure`：桌面量法 + 进程内缓存 + 每图 20 s / 总共 60 s 的时限（超了退外框，码 `measure_timeout` / `measure_budget`）。
 
-    项目文件指纹每次方案只算一次（懒算、各子图共用）。指纹与上一次量这张图的时候不同，量之前先 `pool.invalidate` 这张图的 safe 会话
-    （与「重新构建」同一个原语：只让会话过期，不在这里跑脚本；下一次导出惰性冷 build），否则热会话里还是旧数据，锚点会指向旧峰。"""
+    **热会话吃的是哪份输入，我们不知道**（池里没记会话 build 时的项目状态；数据文件变了热会话不会过期，只有脚本变了才过期）。所以：
+    项目文件指纹每一轮量（出提示前 / 干跑 / 出方案，`vectormeasure.new_pass`）重新取一次，**不跨模型调用沿用**；
+    这张图没有上一次量的记录（本进程第一次）、或记录与这一刻的指纹不同、或指纹取不到——一律当「不知道会话吃的是哪份」，
+    先 `pool.invalidate(…, only_run=True)`（与「重新构建」同一个原语：只让会话过期、不在这里跑脚本）再量；同一轮里每个脚本只重建一次。
+    代价：本进程第一次对某张图加标注要冷 build 一次脚本。指纹取不到的（超出文件数上限）不缓存，一次方案内只重建一次。"""
     root = str(ctx.path)
     memo: list[str | None] = []
-    memo_lock = threading.Lock()
+    rebuilt: set[str] = set()
+    rebuilt_unknown: set[str] = set()
+    lock = threading.Lock()
 
     def inputs() -> str | None:
-        with memo_lock:
+        with lock:
             if not memo:
                 memo.append(_vector_project_digest(root))
             return memo[0]
 
+    def new_pass() -> None:
+        with lock:
+            memo.clear()
+            rebuilt.clear()
+
     def raw(panel: dict, requests: list) -> dict:
         with bound_project(ctx):  # 临时线程没有请求上下文
             digest, script = inputs(), _vector_measure_script(panel)
-            if digest is not None and script:
+            if script:
                 prev = _MEASURED_INPUTS.get((root, script))
-                if prev is not None and prev != digest:
+                with lock:
+                    stale = (
+                        script not in rebuilt_unknown
+                        if digest is None
+                        else (prev != digest and script not in rebuilt)
+                    )
+                    if stale:
+                        (rebuilt_unknown if digest is None else rebuilt).add(script)
+                if stale:
                     engine_pool.invalidate(script, root, _disk_panel_run(script), only_run=True)
             out = _vector_measure_panel(panel, requests)
-            if digest is not None and script:
-                _MEASURED_INPUTS[(root, script)] = digest
+            if script:
+                if digest is not None:
+                    _MEASURED_INPUTS[(root, script)] = digest
+                else:
+                    _MEASURED_INPUTS.pop((root, script), None)
             return out
 
     def key_of(panel: dict, requests: list) -> str | None:
         with bound_project(ctx):
             return _vector_measure_key(root, panel, requests, inputs())
 
-    return engine_vectormeasure.bounded(raw, key_of=key_of)
+    measure = engine_vectormeasure.bounded(raw, key_of=key_of)
+    measure.new_pass = new_pass  # type: ignore[attr-defined]
+    return measure
 
 
 def _has_measurable_panel(canvas: dict) -> bool:
@@ -13480,6 +13541,9 @@ def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection, loc
             ops, unhandled = proposal["ops"], proposal["unhandled"]
             unmeasured = proposal.get("unmeasured") or {}
             if ops:
+                engine_vectormeasure.new_pass(
+                    measure
+                )  # 干跑之后到出方案之间数据也可能变：重新取这一刻的输入状态
                 result = engine_vectorplan.plan(
                     canvas,
                     ops,

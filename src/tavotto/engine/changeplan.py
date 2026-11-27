@@ -46,6 +46,7 @@ from . import (
     normalize,
     patchspec,
     reviewinbox,
+    vectormeasure,
     vectorplan,
 )
 from .ai_tasks import FAILED
@@ -2221,6 +2222,11 @@ def ask_model(
     return proposal
 
 
+def _validate_vector_ops(obj: dict, canvas: dict, instruction: str, measure) -> dict:
+    vectormeasure.new_pass(measure)  # 模型答题期间数据可能变了：干跑重新取输入状态，不沿用答题前的
+    return vectorplan.validate_ops(obj, canvas, instruction, measure)
+
+
 def ask_vector_edits(
     instruction: str,
     canvas: dict,
@@ -2246,7 +2252,7 @@ def ask_vector_edits(
     out = _structured(
         system,
         user,
-        lambda obj: vectorplan.validate_ops(obj, canvas, instruction, measure),
+        lambda obj: _validate_vector_ops(obj, canvas, instruction, measure),
         selection,
         max_output_tokens=VECTOR_MAX_OUTPUT_TOKENS,
     )

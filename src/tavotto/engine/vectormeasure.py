@@ -123,3 +123,11 @@ def bounded(
         return out
 
     return measure
+
+
+def new_pass(measure: object) -> None:
+    """一轮量（出提示前 / 干跑 / 出方案）开始：让 `measure` 重新取这一刻的输入状态（项目文件指纹）。没有这个钩子的 `measure`（测试里的假函数）什么都不做。
+    **不跨模型调用沿用**：模型答题要几秒到几十秒，期间数据可能变了。"""
+    hook = getattr(measure, "new_pass", None)
+    if callable(hook):
+        hook()
