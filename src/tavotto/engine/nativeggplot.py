@@ -439,6 +439,8 @@ class GgplotTarget:
                 field["value_original"] = "original" if prop == "marker" else original[prop]
         element["editable"] = fields
         element["identity"] = _POINT_SERIES_IDENTITY_PREFIX + series["context"]
+        if series.get("source") is not None:
+            element["source_point"] = series["source"]
 
     @staticmethod
     def annotate_color_scale(element: dict, scale: dict) -> None:

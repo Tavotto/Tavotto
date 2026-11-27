@@ -367,6 +367,31 @@ measure_ggplot_points <- function(table, targets, frame_pt, retain_clipped = FAL
   result
 }
 
+ggplot_point_source_plan <- function(state, target, edit) {
+  if (!is.null(target$group) || !length(edit)) return(NULL)
+  layer <- state$built$plot$layers[[target$index]]
+  if (!identical(as.list(layer$geom)$draw_panel, as.list(ggplot2::GeomPoint)$draw_panel)) return(NULL)
+  panels <- sum(!vapply(state$layer_grobs[[target$index]], inherits, logical(1L), "zeroGrob"))
+  if (!panels) return(NULL)
+  points <- ggplot_point_grob(state$table$grobs[[target$slot]], target)
+  channels <- ggplot_point_paint_channels(unique(points$pch))
+  supported <- c("size", "alpha", "linewidth", names(channels))
+  if (!identical(edit$marker, "original")) supported <- c(supported, "marker")
+  if (!all(names(edit) %in% supported)) return(NULL)
+  native <- list()
+  if (!is.null(edit$size)) native$size <- sqrt(edit$size) / ggplot2::.pt
+  if (!is.null(edit$alpha)) native$alpha <- edit$alpha
+  if (!is.null(edit$marker)) native$shape <- ggplot_point_markers[[edit$marker]]
+  if (!is.null(edit$linewidth)) native$stroke <- edit$linewidth / ggplot_lwd_pt * 2 / ggplot2::.stroke
+  for (prop in intersect(names(edit), names(channels))) {
+    channel <- channels[[prop]]
+    original <- ggplot_uniform_pigment(points$gp[[channel]])
+    field <- if (channel == "fill") "fill" else "colour"
+    native[[field]] <- ggplot_edit_pigment(edit[[prop]], original, edit$alpha, target$values$alpha)
+  }
+  list(layer = target$index, panels = panels, edited = edit, aesthetics = native)
+}
+
 ggplot_point_elements <- function(state, edits, measured) {
   lapply(names(state$point_targets), function(gid) {
     target <- state$point_targets[[gid]]
@@ -384,6 +409,7 @@ ggplot_point_elements <- function(state, edits, measured) {
     c(list(gid = gid, role = "scatter", label = label,
          bbox = bbox, draggable = FALSE, editable = list(),
          point_series = list(context = target$context, current = ggplot_point_values(target, edit),
+                             source = ggplot_point_source_plan(state, target, edit),
                              original = target$values, markers = as.list(names(ggplot_point_markers)),
                              edited = as.list(names(edit)))), alias)
   })

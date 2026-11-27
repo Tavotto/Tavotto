@@ -954,6 +954,133 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         assert (project / "original.pdf").read_bytes() == original_pdf
 
 
+@pytest.mark.parametrize(
+    "scope", ["single", "all-facets", "one-facet", "different-facets", "paint-facets"]
+)
+def test_native_r_point_styles_write_back_only_when_shared_by_the_layer(tmp_path, scope):
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Point project"
+    project.mkdir()
+    source = project / "Point.R"
+    original = b"""\
+d <- expand.grid(x = 1:4, panel = c("Reference", "Trial"))
+d$y <- 2 + d$x + as.integer(d$panel)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, colour = x)) +
+    ggplot2::geom_point(size = 2, colour = "#287F6E") + ggplot2::theme_bw() +
+    ggplot2::labs(title = "Point evidence")
+ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices::cairo_pdf)
+"""
+    if scope != "single":
+        original = original.replace(
+            b'ggplot2::labs(title = "Point evidence")',
+            b'ggplot2::labs(title = "Point evidence") + ggplot2::facet_wrap(ggplot2::vars(panel))',
+        )
+    if scope == "paint-facets":
+        original = original.replace(
+            b'geom_point(size = 2, colour = "#287F6E")',
+            b'geom_point(size = 2, shape = 21, fill = "#E3A45280", colour = "#287F6E")',
+        )
+    source.write_bytes(original)
+    route = "/api/layouts/Point_style"
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, source.name, rscript)
+        before = _render(app, figure, [])
+        original_pdf = (project / "original.pdf").read_bytes()
+        elements = {element["gid"]: element for element in before["manifest"]["elements"]}
+        targets = [gid for gid, element in elements.items() if element["role"] == "scatter"]
+        assert len(targets) == (1 if scope == "single" else 2)
+        if scope == "one-facet":
+            targets = targets[-1:]
+        edits = (
+            {"size": 110, "facecolor": "none", "edgecolor": "#1E2F80", "linewidth": 2.2}
+            if scope == "paint-facets"
+            else {"size": 100, "marker": "s", "alpha": 0.45}
+        )
+        patches = [
+            {"gid": gid, "prop": prop, "value": value, "identity": elements[gid]["identity"]}
+            for gid in targets
+            for prop, value in edits.items()
+        ]
+        if scope == "different-facets":
+            next(patch for patch in patches if patch["prop"] == "size")["value"] = 81
+        title = {
+            "gid": "plot.title",
+            "prop": "color",
+            "value": "#543380",
+            "identity": elements["plot.title"]["identity"],
+        }
+        hot = _render(app, figure, [*patches, title])
+        assert not hot["warnings"]
+        w, h = hot["manifest"]["size_mm"]
+        panel = {**_panel("r", figure, 5, [*patches, title], native_width=w), "h": h, "nativeH": h}
+        doc = {
+            "schema": 3,
+            "project": {"id": "point-source", "name": "Point style"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": w + 10, "h": h + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(f"{route}?target=project", doc)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Point_style")
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200, preview
+        expected_residual = patches if scope in ("one-facet", "different-facets") else []
+        assert preview["written"] == len(patches) + 1 - len(expected_residual)
+        assert len(preview["skipped"]) == len(expected_residual)
+        assert source.read_bytes() == original
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"], saved
+        assert (project / "original.pdf").read_bytes() == original_pdf
+        authored = source.read_bytes()
+        assert (b"plot$layers[[1L]]" in authored) == (not expected_residual)
+        _, persisted = app.call(route)
+        retained = persisted["canvases"][0]["objects"][0]["overrides"]
+        assert retained == expected_residual
+        fresh_project = tmp_path / "fresh-project"
+        fresh_project.mkdir()
+        (fresh_project / source.name).write_bytes(authored)
+        with sidecar_app(fresh_project, tmp_path / "fresh") as fresh:
+            rebuilt = _run_ggplot(fresh, source.name, rscript)
+            replayed = _render(fresh, rebuilt, retained)
+            assert replayed["warnings"] == []
+            assert replayed["svg"] == hot["svg"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"], restored
+        assert source.read_bytes() == original
+        assert (project / "original.pdf").read_bytes() == original_pdf
+
+
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "src" / "tavotto" / "resources" / "native" / "ggplot2.R"
 SUBTITLE = "plot.subtitle"
