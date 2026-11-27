@@ -709,27 +709,20 @@ _LAYOUT_SELECT = {
     ),
 }
 
-_LAYOUT_OPS = {
-    "type": "array",
-    "description": (
-        "补丁：一列操作，按顺序执行，服务端重算（不收算好的坐标）。每条 {op, …}："
-        "set {id, set: {字段: 值}}（描边、填充、线宽 strokePt、颜色、字号、文字、x/y/w/h、rotationDeg、name、locked、hidden）；"
-        "move {id, by_mm: [dx, dy]} 或 {id, to: 位置（同标注的锚点写法）, attach: 方位点 | from | to}；delete {id}；"
-        'align {ids, mode: left/hcenter/right/top/vcenter/bottom, to?: "selection" | "page" | {key: id} | {panel: P1}}；'
-        "distribute {ids, axis: h/v, gap_mm?}；order {id, to: front/back/forward/backward}；group {ids, name?}；"
-        "ungroup {group}；rotate {id, deg}；pathfinder {ids, mode: unite/minus_front/minus_back/intersect/exclude/divide/"
-        "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}；"
-        "convert_to_path {ids}（形状 / 箭头换成同 id 的路径）。布尔 / 偏移收路径与封闭形状，轮廓化另收直线 / 箭头，简化只收 path。"
-        "路径锚点（只收 path，锚点地址 {sp, i} 取场景 vector_objects[].anchors，含义是这条操作执行时的状态）："
-        "move_anchors {id, anchors, by_mm}；move_handle {id, anchor, which: in/out, to_mm, break_smooth?}；"
-        "add_anchors {id, anchors?} 或 {id, at: {sp, seg, t}}；delete_anchors / average_anchors {id, anchors}；"
-        "convert_anchors {id, anchors, to?: smooth/corner}；cut_path {id, anchors}；"
-        "join_paths {id, anchors: [端点, 端点]} 或 {ids: [甲, 乙]}（留最后一个）；reverse_path {id}；"
-        "make_compound {ids}；release_compound {id}。"
-        "id 取 tavotto_layout_scene 的 vector_objects。全文见 tavotto_guide section=layout-annotate。"
-    ),
-    "items": {"type": "object"},
-}
+#: 补丁词汇的说明只有一份：引擎的 `vectoredit.OPS_DOC`（桌面改图助手的系统提示也从它取）。旧引擎没有这个常量时给一句指路，
+#: 不在这里另抄一份。
+_LAYOUT_OPS_FALLBACK = "补丁：一列操作，按顺序执行，服务端重算（不收算好的坐标）；每种操作的写法见 tavotto_guide section=layout-annotate。"
+
+
+def _layout_ops_schema() -> dict:
+    ve = bridge._optional_engine("vectoredit")  # noqa: SLF001
+    doc = getattr(ve, "OPS_DOC", None) or _LAYOUT_OPS_FALLBACK
+    return {
+        "type": "array",
+        "description": doc
+        + "id 取 tavotto_layout_scene 的 vector_objects。全文见 tavotto_guide section=layout-annotate。",
+        "items": {"type": "object"},
+    }
 
 
 def _layout_props(*extra: tuple[str, dict]) -> dict:
@@ -842,7 +835,7 @@ def _layout_edit_tools() -> list[dict]:
         "base_revision",
         {"type": "string", "description": "tavotto_layout_scene 回的 base_revision。"},
     )
-    ops = ("ops", _LAYOUT_OPS)
+    ops = ("ops", _layout_ops_schema())
     return [
         {
             "name": "tavotto_layout_edit_plan",
@@ -2173,27 +2166,20 @@ def _layout_ops(args: dict) -> list:
     return ops
 
 
-#: 编辑方案没出来时，给 Agent 的一句（码是 `engine/vectoredit.ERROR_CODES`；index / field 在 errors 里）
-_EDIT_ERROR_WORDS = {
-    "bad_op": "这条操作的写法不对",
-    "unknown_object": "点名的对象 / 组不在这张画布上（id 取 tavotto_layout_scene 的 vector_objects）",
-    "not_vector": "点名的不是矢量对象（子图、图片不在这里改）",
-    "bad_field": "这一类对象没有这个字段",
-    "bad_value": "值的类型或写法不对",
-    "out_of_range": "值超出允许范围",
-    "duplicate_target": "同一个对象在一条操作里点了两次",
-    "kernel_unavailable": "这台机器上的几何内核没装上：布尔 / 偏移 / 轮廓化 / 简化用不了，其余操作照常；告诉用户可在桌面里做这一步",
-}
+def _edit_error_words() -> dict:
+    """编辑方案没出来时给 Agent 的一句：码与用语只有一份，在引擎的 `vectoredit.ERROR_WORDS`（旧引擎没有 → 只报码）。"""
+    return getattr(bridge._optional_engine("vectoredit"), "ERROR_WORDS", {})  # noqa: SLF001
 
 
 def _edit_error_lines(errors: list) -> list[str]:
+    words = _edit_error_words()
     out = []
     for e in errors:
         code = str(e.get("code"))
         where = (f"第 {e['index'] + 1} 条" if isinstance(e.get("index"), int) else "") + (
             f"（{e['field']}）" if e.get("field") else ""
         )
-        out.append(f"{where}{_EDIT_ERROR_WORDS.get(code, code)}：{code}")
+        out.append(f"{where}{words.get(code, code)}：{code}")
     return out
 
 

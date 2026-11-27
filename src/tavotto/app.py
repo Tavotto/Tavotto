@@ -202,6 +202,7 @@ from .engine import (
     texdiag as engine_texdiag,
     tutorial as engine_tutorial,
     updater as engine_updater,
+    vectorplan as engine_vectorplan,
     versionstore as engine_versionstore,
     workdir as engine_workdir,
     writetripwire as engine_writetripwire,
@@ -13107,6 +13108,129 @@ def api_change_plans_layout_preview():
         LOG.warning("整版预览渲染失败", exc_info=True)
         return _change_plan_error("change_plan_render_failed")
     resp = Response(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---- 改图助手改画布矢量对象（ADR 0212 第 6a 期，**只算不写、不读盘**）------------------------------------
+# 后端读不到桌面内存里的文档：前端把画布（文档形态）连同补丁 / 指令发来，这里只算方案回去；写回是前端自己的一次提交。
+# 与 `/api/change-plans` 一样在全局会话认证之内（没有旁路）。逻辑在 `engine/vectorplan.py` / `engine/vectoredit.py`。
+_VECTOR_EDIT_FIGURE = "__vector_edit__"
+
+
+@app.post("/api/vector-edit/plan")
+def api_vector_edit_plan():
+    """出矢量编辑方案（**不写盘**）。两种请求：
+
+    * `{canvas, ops}`：照补丁直接算（`vectoredit.apply_ops` + 只核被动到的对象）→ 200
+      `{ok, errors, objects, deleted, order, echo, changes, checks, echo_digest, …}`；补丁不合格 `ok: false` + `errors: [{code, index?, field?}]`
+      （码见 `vectoredit.ERROR_CODES`，整批没动）。内核不可用 = `kernel_unavailable`，其余操作照常。
+    * `{canvas, instruction, selection?, connection?, model?, effort?, client_request_id?}`：先问模型出补丁再算 → 202 `{plan_id, state: "running"}`，
+      用 `GET /api/vector-edit/plan/<plan_id>` 轮询（模型连接与 `/api/change-plans` 助手出卡同一条路）。`selection` 是选中的对象 id 列表。"""
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return _change_plan_error("invalid_change_plan")
+    try:
+        canvas = engine_vectorplan.check_canvas(body.get("canvas"))
+        if ("ops" in body) == ("instruction" in body):
+            raise engine_vectorplan.PlanInputError("mode")
+        if "ops" in body:
+            ops = engine_vectorplan.check_ops(body.get("ops"))
+            out = engine_vectorplan.plan(canvas, ops)
+            resp = jsonify(out)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        comments = engine_changeplan.assistant_comments(body.get("instruction"), None)
+        if comments is None:
+            raise engine_vectorplan.PlanInputError("instruction")
+        selected = engine_vectorplan.check_selection(body.get("selection"), canvas)
+    except engine_vectorplan.PlanInputError:
+        return _change_plan_error("invalid_change_plan")
+    rid = body.get("client_request_id")
+    if rid is not None and not (isinstance(rid, str) and engine_changeplan.REQUEST_ID.match(rid)):
+        return _change_plan_error("invalid_change_plan")
+    selection = engine_changeplan.clean_selection(body)
+    if selection is None:
+        return _change_plan_error("invalid_change_plan")
+    failure = engine_changeplan.connection_failure(selection)
+    if failure is not None:
+        return _change_plan_error(failure)
+    ctx = current_ctx()
+    try:
+        task, created = engine_changeplan.begin(ctx.id, _VECTOR_EDIT_FIGURE, rid)
+    except engine_changeplan.PlanFailure as exc:
+        return _change_plan_error(exc.code)
+    if created:
+        task.phase = "model"
+        threading.Thread(
+            target=_vector_edit_thread,
+            args=(ctx, task, canvas, comments[0]["text"], selected, selection),
+            name=f"vector-edit-{task.id[:8]}",
+            daemon=True,
+        ).start()
+    state = "running" if created else task.state
+    resp = jsonify({"plan_id": task.id, "state": state, "phase": task.phase})
+    resp.status_code = 202 if state == "running" else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection) -> None:
+    """后台线程：问模型 → 算方案 → 放进内存；任何结局都落成终态并放掉互斥。"""
+    code, detail = "", ""
+    try:
+        proposal = engine_changeplan.ask_vector_edits(instruction, canvas, selected, selection)
+        task.phase = "plan"
+        ops, unhandled = proposal["ops"], proposal["unhandled"]
+        if ops:
+            result = engine_vectorplan.plan(canvas, ops)
+        else:
+            result = {
+                "ok": True,
+                "errors": [],
+                "objects": [],
+                "deleted": [],
+                "echo": [],
+                "changes": [],
+            }
+        result = {**result, "ops": ops, "unhandled": unhandled}
+        if not task.cancelled:
+            engine_vectorplan.keep_result(ctx.id, task.id, result)
+    except engine_changeplan.PlanFailure as exc:
+        code, detail = exc.code, exc.detail
+        LOG.info("矢量编辑方案没有生成: %s %s", exc.code, exc.detail)
+    except BaseException:  # noqa: BLE001 - 线程里不许丢结局
+        code = "change_plan_failed"
+        LOG.exception("矢量编辑方案任务异常")
+    finally:
+        engine_changeplan.finish(task, code=code, detail=detail)
+        if task.cancelled:
+            engine_changeplan.forget_task(task)
+
+
+@app.get("/api/vector-edit/plan/<plan_id>")
+def api_vector_edit_plan_get(plan_id: str):
+    """轮询指令模式的方案：`running`（带阶段）/ `failed`（稳定 code）/ `ready`（方案 + 模型给的 `ops` 与 `unhandled`）。"""
+    project = current_ctx().id
+    if engine_changeplan.PLAN_ID.match(plan_id) is None:
+        return _change_plan_error("change_plan_unknown")
+    task = engine_changeplan.task_of(project, plan_id)
+    if task is not None and task.state == "running":
+        out: dict = {"plan_id": plan_id, "state": "running", "phase": task.phase}
+    elif task is not None and task.state == "failed":
+        out = {
+            "plan_id": plan_id,
+            "state": "failed",
+            "code": task.code,
+            "error": engine_changeplan.MESSAGES.get(task.code, task.code),
+            "detail": task.detail,
+        }
+    else:
+        result = engine_vectorplan.load_result(project, plan_id)
+        if result is None:
+            return _change_plan_error("change_plan_unknown")
+        out = {"plan_id": plan_id, "state": "ready", "plan": result}
+    resp = jsonify(out)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
