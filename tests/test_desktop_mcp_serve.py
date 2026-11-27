@@ -481,3 +481,54 @@ def test_installed_wheel_runs_tavotto_mcp_over_clean_stdio_without_the_source_tr
     assert {t["name"] for t in by_id[2]["result"]["tools"]} == set(mcp_server.HANDLERS)
     # wheel 里没有画布产物：工具不挂 `_meta.ui`（如实降级，不让宿主对着白框等）
     assert not any("_meta" in t for t in by_id[2]["result"]["tools"])
+
+
+def _spec_optional_engine_hidden() -> list[str]:
+    """跑 tavotto.spec 里那个 `_optional_engine_modules()`（AST 取出函数体单独执行，不跑整份 spec）"""
+    spec = ROOT / "packaging" / "tavotto.spec"
+    tree = ast.parse(spec.read_text(encoding="utf-8"))
+    fn = next(
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "_optional_engine_modules"
+    )
+    ns: dict = {"ROOT": ROOT}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(spec), "exec"), ns)  # noqa: S102
+    return ns["_optional_engine_modules"]()
+
+
+def test_frozen_build_collects_every_optional_engine_module():
+    """桥按名字取的可选引擎模块，PyInstaller 看不见——spec 必须把**桥里那张表的每一个**收进 hiddenimports
+    （#2247：1.0.0 演练包漏了 vectoredit，桌面版里 Agent 改已有矢量对象整组用不了）。主语：spec 实际算出来的名单。"""
+    from tavotto_mcp import bridge
+
+    starred = {
+        e.value.id
+        for e in _analysis_hiddenimports(ROOT / "packaging" / "tavotto.spec")
+        if isinstance(e, ast.Starred) and isinstance(e.value, ast.Name)
+    }
+    assert "OPTIONAL_ENGINE_HIDDEN" in starred
+    assert _spec_optional_engine_hidden() == [
+        f"tavotto.engine.{m}" for m in bridge.OPTIONAL_ENGINE_MODULES
+    ]
+    # 名单里的每个模块都真实存在（拼错一个，冻结产物里照样缺）
+    for name in bridge.OPTIONAL_ENGINE_MODULES:
+        assert (ROOT / "src" / "tavotto" / "engine" / (name.replace(".", "/") + ".py")).is_file(), (
+            name
+        )
+
+
+def test_health_reports_missing_optional_engine_modules_and_the_kernel(monkeypatch):
+    """`tavotto_health` 报缺的可选引擎模块；`probe_kernel` 报矢量内核——冻结产物的冒烟据此拦（smoke_app.check_frozen_mcp）"""
+    from tavotto_mcp import bridge
+
+    out = mcp_server._call_health({"probe_kernel": True})["structuredContent"]
+    assert out["engine_optional_missing"] == []  # 源码树里一个不缺
+    assert out["vector_kernel"] == {"available": bridge.vector_kernel_available()}
+    real = bridge._optional_engine
+    monkeypatch.setattr(
+        bridge, "_optional_engine", lambda n: None if n == "vectoredit" else real(n)
+    )
+    out = mcp_server._call_health({})["structuredContent"]
+    assert out["engine_optional_missing"] == ["vectoredit"]
+    assert "vector_kernel" not in out  # 不探测就不编译 wasm（健康检查要便宜）

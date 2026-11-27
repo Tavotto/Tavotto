@@ -443,7 +443,7 @@ def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
             "jsonrpc": "2.0",
             "id": 3,
             "method": "tools/call",
-            "params": {"name": "tavotto_health", "arguments": {}},
+            "params": {"name": "tavotto_health", "arguments": {"probe_kernel": True}},
         },
         {
             "jsonrpc": "2.0",
@@ -484,6 +484,17 @@ def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
             f"::error::tavotto-cli mcp 不可用（退出码 {proc.returncode}，缺工具 {missing}，"
             f"health={json.dumps(health, ensure_ascii=False)[:300]}）: {proc.stderr.strip()[-600:]}"
         )
+    sc = health_data(health)
+    missing_engine = sc.get("engine_optional_missing")
+    if missing_engine:
+        # 冻结产物里引擎与插件同一版：可选引擎模块缺一个就是 tavotto.spec 漏收（桥按名字 import，静态分析看不见；#2247）
+        raise SystemExit(f"::error::tavotto-cli mcp 缺可选引擎模块（打包漏收）: {missing_engine}")
+    kernel = (sc.get("vector_kernel") or {}).get("available")
+    if kernel is not True:
+        # 矢量几何内核（vecops.wasm 经 wasmtime）：冻结产物要收 wasm 与 wasmtime 原生库，缺了 Agent 的布尔等四个操作回 kernel_unavailable
+        raise SystemExit(
+            f"::error::tavotto-cli mcp 的矢量几何内核加载不了: {sc.get('vector_kernel')}"
+        )
     canvas = health_canvas(health)
     if not canvas.get("available"):
         # 画布随包（tavotto.spec 收进 widget/）：缺了宿主里就没有内嵌画布，工具照常——正因为不报错才要在这里拦
@@ -516,18 +527,25 @@ def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
             f"{(sk.stdout + sk.stderr)[:300]}"
         )
     print("· tavotto-cli skill-script prefs --json 通过")
-    print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常，画布和技能随包")
+    print(
+        f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常，可选引擎模块齐、矢量内核可用，画布和技能随包"
+    )
 
 
-def health_canvas(result: dict) -> dict:
-    """`tavotto_health` 的 tools/call 结果里的 `canvas` 一节（结构化内容优先，退回第一段文本里的 JSON）。"""
+def health_data(result: dict) -> dict:
+    """`tavotto_health` 的 tools/call 结果（结构化内容优先，退回第一段文本里的 JSON）。"""
     data = result.get("structuredContent")
     if not isinstance(data, dict):
         try:
             data = json.loads((result.get("content") or [{}])[0].get("text") or "{}")
         except (ValueError, AttributeError, IndexError):
             data = {}
-    canvas = data.get("canvas") if isinstance(data, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def health_canvas(result: dict) -> dict:
+    """`tavotto_health` 的 tools/call 结果里的 `canvas` 一节。"""
+    canvas = health_data(result).get("canvas")
     return canvas if isinstance(canvas, dict) else {}
 
 
