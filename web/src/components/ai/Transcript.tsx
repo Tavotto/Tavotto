@@ -98,7 +98,7 @@ function ModelUnavailableAction({
 function statusText(s: AiSession): string {
   if (s.task?.task_type === DATA_FIGURE_TASK) return dataFigureStatusText(s)
   if (s.status === 'running' && s.stalledS != null) return ai('session.stalled', { seconds: s.stalledS })
-  if (s.status === 'running') return ai(s.task?.phase === 'correcting' ? 'session.correcting' : 'session.running')
+  if (s.status === 'running') return ai(s.task?.phase === 'correcting' ? 'session.correcting' : s.chat && !s.chatEdited && s.stage?.step !== 'edit' ? 'session.answering' : 'session.running')
   // 带任务结局时只翻译 `task.outcome`（检查本身在后端）；其余组合与无 task 一律走原逻辑。
   // completed + 没改动（Agent 判定不必改，后端 `test_unchanged_copy_commits_nothing`）**有意**落到 `doneNoChange`：
   // 「已完成，脚本没有变化」就是这个结局的准确翻译；没写回就没有渲染层核对，说「数据核对一致」反而是假话
@@ -126,6 +126,8 @@ const EDIT_STEPS = ['read', 'edit', 'verify'] as const
 export function editSteps(s: AiSession): TaskStep[] | null {
   const ok = s.status === 'done' && s.changed && !!s.stage
   if (s.status !== 'running' && !ok) return null
+  // 聊天 / 提问落回来的一轮：真动了脚本（走到「改脚本」）才画清单，只是回答就不出一张一闪而过的清单
+  if (s.chat && !ok && !s.chatEdited && s.stage?.step !== 'edit') return null
   const at = ok ? EDIT_STEPS.length : EDIT_STEPS.indexOf(s.stage?.step ?? 'read')
   const round = s.stage?.round ?? 1
   return EDIT_STEPS.map((id, i) => ({

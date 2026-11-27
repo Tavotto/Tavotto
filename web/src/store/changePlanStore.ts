@@ -695,6 +695,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
             overrides: panel.overrides,
             canvas: fb.canvas,
             script: fb.script,
+            chat: true,
           })
         } catch {
           patch(key, { status: 'failed', failure: { code: 'change_plan_script_failed' } })

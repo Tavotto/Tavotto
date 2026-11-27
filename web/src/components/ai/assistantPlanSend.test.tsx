@@ -130,7 +130,7 @@ const sendText = async (text: string) => {
 }
 
 describe('发送路由', () => {
-  it('默认（开关开）：走方案路径——带原话与图，不起改脚本会话；原话出现在对话里；卡片在生成；生成中草稿与输入框先留着（刷新不丢）', async () => {
+  it('默认（开关开）：走方案路径——带原话与图，不起改脚本会话；原话出现在对话里；模型回话前只一行「想一想…」不画方案卡（聊天不闪卡）；生成中草稿与输入框先留着（刷新不丢）', async () => {
     await sendText('把线条加粗')
     expect(aiRun).not.toHaveBeenCalled()
     expect(createChangePlan).toHaveBeenCalledOnce()
@@ -138,7 +138,8 @@ describe('发送路由', () => {
     expect(input().value).toBe('把线条加粗')
     expect(be.draft('pa', 'Fig1.pdf')).toBe('把线条加粗')
     expect(q('[data-change-plan-user]')?.textContent).toBe('把线条加粗')
-    expect(q('[data-change-plan-card="generating"]')).toBeTruthy()
+    expect(q('[data-change-plan-thinking]')).toBeTruthy()
+    expect(q('[data-change-plan-card]')).toBeNull()
   })
 
   it('方案出来（落定）：这时才清输入框与后端草稿', async () => {

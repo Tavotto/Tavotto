@@ -330,7 +330,7 @@ describe('聊天 / 提问（整条都是 out_of_scope）', () => {
     const key = (await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation }, settled)) as string
     await tick()
     expect(start).toHaveBeenCalledOnce()
-    expect(start.mock.calls[0][0]).toMatchObject({ prompt: FALLBACK.prompt, fileId: 'f_p1', panelId: 'p1', script: 'fig.py' })
+    expect(start.mock.calls[0][0]).toMatchObject({ prompt: FALLBACK.prompt, fileId: 'f_p1', panelId: 'p1', script: 'fig.py', chat: true })
     expect(createChangePlan.mock.calls.filter(([b]) => (b as { mode?: string }).mode === 'script')).toHaveLength(0)
     expect(cps().entries[key]).toBeUndefined()
     expect(cps().order).not.toContain(key)
