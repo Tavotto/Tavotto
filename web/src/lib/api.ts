@@ -4367,6 +4367,8 @@ export type ChangePlanUnhandledReason =
   | 'no_effect'
   | 'not_addressed'
   | 'merged_log'
+  | 'hides_data'
+  | 'size_locked' | 'dense_curve'
   /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
   | 'log_limit_declined'
 
@@ -4439,9 +4441,28 @@ export interface ScriptDataChangedConfirm {
 
 export type ChangePlanConfirm = { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number } | ScriptDataChangedConfirm
 
+/** 建议待办（ADR 0214）：卡上的一行；顺序 = 模型给的优先级 */
+export interface ChangePlanTodo {
+  key: string
+  /** 一句话「做什么」（≤ 60 字） */
+  label: string
+  /** 一个短分句「为什么」（≤ 40 字） */
+  why?: string
+  /** `figure` = 图内修改（`group_key` 指 `groups` 里的那一组）；`script` = 要改脚本（`comment_id` 指 `unhandled` 里 `needs_script` 的那条） */
+  kind: 'figure' | 'script'
+  group_key?: string
+  comment_id?: string
+  /** 「再加一条」新加的（直到下一次改完）：行尾标「新加」 */
+  added?: boolean
+}
+
 export interface ChangePlan {
   id: string
   version: number
+  /** 助手来源给建议时的一到三句话回答（≤ 600 字）；没有 = 普通方案 */
+  reply?: string
+  /** 助手把建议列成的待办；没有 = 普通方案（与以前一样只看 `groups` / `unhandled`） */
+  todos?: ChangePlanTodo[]
   /** 批注重改的版本才有：它是从哪一版续改来的（每一版是自己的方案，各有 `id` 与两张图） */
   parent?: string
   source: ChangePlanSource
@@ -4493,11 +4514,29 @@ export interface CreateChangePlanBody {
   target?: string
   /** `script`：脚本修改（必须带 `connection`；ADR 0206 PR 6）。审阅来源只接用户点「改脚本做剩下的」那条路：带 `from_plan` + `comment_ids`，不带意见文字 */
   mode?: 'script'
-  /** `source: 'review'` + `mode: 'script'`：来源（审阅）方案 id；意见原文后端取自这份存档 */
+  /** `source: 'review'` + `mode: 'script'`：来源（审阅 / 助手建议待办）方案 id；意见原文后端取自这份存档 */
   from_plan?: string
   /** 同上：要转给脚本方案的意见 id（须在来源方案的 `unhandled` 里、原因 `needs_script`） */
   comment_ids?: string[]
+  /** `source: 'assistant'`：回答下方「把这些建议写成待办」——不带 `instruction`，必须带 `previous_turn`（ADR 0214） */
+  intent?: 'todos'
+  /** `source: 'assistant'` + `from_plan`：待办卡上「再加一条」的那句话（≤ 300 字）；新一版并进同一张卡 */
+  add_todo?: string
+  /** `source: 'assistant'` 的图内方案：本图对话的上一轮（ADR 0214 §二；只用来理解指代，后端再截断）。脚本方案不带 */
+  previous_turn?: { user: string; assistant: string }
+  /** `source: 'assistant'`：这份排版当前的出版标准（选了期刊 = 期刊名）、关键规则与「问题」里的发现；审阅来源不带 */
+  standard?: ChangePlanStandard
   client_request_id?: string
+}
+
+/** 助手来源方案请求里的出版标准（后端上限：名 ≤ 80、规则 ≤ 30 键、问题 ≤ 20 条 × ≤ 200 字） */
+export interface ChangePlanStandard {
+  name: string
+  /** true = 用户选过期刊（`journal_id` 在）；false = 只是默认 / 通用规范 */
+  chosen: boolean
+  journal_id?: string | null
+  rules: Record<string, number | string | string[]>
+  issues: { severity: 'error' | 'warn' | 'info'; text: string }[]
 }
 
 async function changePlanFetch(path: string, init?: RequestInit): Promise<Record<string, unknown>> {

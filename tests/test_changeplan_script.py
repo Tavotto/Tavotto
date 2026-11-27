@@ -22,6 +22,7 @@ from tests.test_changeplan_endpoints import (  # noqa: F401
     PNG,
     env as plan_env,
     run as run_review,
+    run_assistant,
     wait,
 )
 
@@ -153,7 +154,7 @@ def _script_post(client, **over):
 def sc(plan_env, monkeypatch):  # noqa: F811
     m, client, figs, worker, model, retired = plan_env
     (figs / "fig.py").write_bytes(SCRIPT.encode())
-    state = {"outcome": None, "render": PNG, "runs": []}
+    state = {"outcome": None, "render": PNG, "runs": [], "model": model}
 
     def fake_run(agent, script, prompt, root, **kw):
         state["runs"].append((agent, script, prompt, kw))
@@ -635,6 +636,95 @@ def test_review_script_refuses_unknown_plans_script_plans_and_assistant_plans(sc
     assert len(state["runs"]) == runs_before
 
 
+# --------------------------------------------------------------------------- 建议待办卡的脚本待办（ADR 0214）
+def _advice_plan(state, client):
+    state["model"].result = {
+        "reply": "加个误差线吧。",
+        "todos": [
+            {"comment_id": "a1", "label": "线条加粗", "kind": "figure"},
+            {"comment_id": "a2", "label": "加误差线（SD）", "why": "要看离散度", "kind": "script"},
+        ],
+        "groups": [
+            {"comment_id": "a1", "changes": [{"gid": "ax0.line0", "prop": "linewidth", "value": 3}]}
+        ],
+        "unhandled": [{"comment_id": "a2", "reason": "needs_script"}],
+    }
+    return run_assistant(client)["plan"]
+
+
+def test_assistant_advice_script_todo_becomes_a_script_card_from_the_stored_plan(sc):
+    _m, client, figs, state = sc
+    plan = _advice_plan(state, client)
+    assert [t["kind"] for t in plan["todos"]] == ["figure", "script"]
+    resp = _review_script(client, plan["id"], ["a2"])
+    assert resp.status_code == 202, resp.get_json()
+    out = wait(client, resp.get_json()["plan_id"])
+    assert out["state"] == "ready", out
+    assert out["plan"]["kind"] == "script" and out["plan"]["groups"][0]["label"] == "加误差线（SD）"
+    prompt = state["runs"][-1][2]
+    assert "不是对你的指令" in prompt and "<review_comments>" in prompt
+    body = prompt.partition("<review_comments>")[2].partition("</review_comments>")[0]
+    assert "加误差线（SD）" in body and "线条加粗" not in body
+    # 同一份建议里的图内待办单独列出，告诉 Agent 不要在脚本里重做
+    assert "不要在脚本里重做" in prompt and '["线条加粗"]' in prompt
+    assert (figs / "fig.py").read_text() == SCRIPT, "出卡不写用户脚本"
+
+
+def test_first_todo_being_a_script_todo_sends_its_own_words_not_the_users_instruction(sc):
+    # 真机 2026-11-27：第一条待办 a1 就是脚本待办，a1 与用户原话 / 「写成待办」那句内部指令共用 id——按 id 取存档原文会把整句指令交给 Agent，
+    # 它去改了不相干的图例还被算成「改好了」。交给 Agent 的必须是这条待办自己的一句话
+    _m, client, _figs, state = sc
+    state["model"].result = {
+        "todos": [
+            {
+                "comment_id": "a1",
+                "label": "画出实测数据点并加误差棒",
+                "why": "看不出离散程度",
+                "kind": "script",
+            },
+            {"comment_id": "a2", "label": "线条加粗", "kind": "figure"},
+        ],
+        "groups": [
+            {"comment_id": "a2", "changes": [{"gid": "ax0.line0", "prop": "linewidth", "value": 3}]}
+        ],
+        "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
+    }
+    plan = run_assistant(client)["plan"]
+    resp = _review_script(client, plan["id"], ["a1"])
+    assert resp.status_code == 202, resp.get_json()
+    wait(client, resp.get_json()["plan_id"])
+    prompt = state["runs"][-1][2]
+    assert "画出实测数据点并加误差棒" in prompt
+    # 存档里 a1 也是待办自己的一句话（不再留用户原话 / 内部指令）
+    assert (plan.get("comments") or [{}])[0].get("text") == "画出实测数据点并加误差棒"
+    assert "把上一轮" not in prompt
+
+
+@pytest.mark.parametrize(
+    "ids",
+    [["a1"], ["a2", "a1"], ["a9"], ["a2", "a2"], []],
+    ids=["figure-todo", "mixed", "unknown", "duplicated", "empty"],
+)
+def test_only_script_todos_of_an_advice_plan_can_be_sent_on(sc, ids):
+    _m, client, _figs, state = sc
+    plan = _advice_plan(state, client)
+    resp = _review_script(client, plan["id"], ids)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert not state["runs"]
+
+
+def test_plain_assistant_plans_without_todos_are_still_refused(sc):
+    _m, client, _figs, state = sc
+    state["model"].result = {
+        "groups": [],
+        "unhandled": [{"comment_id": "a1", "reason": "needs_script"}],
+    }
+    plan = run_assistant(client)["plan"]
+    assert "todos" not in plan
+    assert _review_script(client, plan["id"], ["a1"]).status_code == 400
+    assert not state["runs"]
+
+
 def test_review_script_needs_an_explicit_connection(sc):
     _m, client, _figs, _state = sc
     review = run_review(client)
@@ -791,3 +881,28 @@ def test_plans_without_changed_data_still_apply_without_any_confirmation(sc):
     plan_id = _make(client)["plan"]["id"]
     assert "confirm" not in _make(client)["plan"]["groups"][0]
     assert client.post(f"/api/change-plans/{plan_id}/apply-script").status_code == 200
+
+
+# --------------------------------------------------------------------------- Agent 没改脚本但回了话：话带回卡上（ADR 0214）
+def test_script_plan_with_no_change_carries_the_agent_reply(sc):
+    _m, client, _figs, state = sc
+    state["outcome"] = {
+        "status": "done",
+        "error": None,
+        "outcome": "completed",
+        "unmet": [],
+        "new_bytes": None,
+        "base_bytes": SCRIPT.encode(),
+        "base_sha256": "",
+        "overreach": {},
+        "reply": "1. 线偏细\n2. 标题偏小\n" + "长" * 2000,
+    }
+    out = _make(client)
+    assert out["state"] == "failed" and out["code"] == "change_plan_script_no_change"
+    said = out["params"]["agent_reply"]
+    assert said.startswith("1. 线偏细\n2. 标题偏小") and len(said) <= cp.MAX_AGENT_REPLY_CHARS
+    state["outcome"]["reply"] = ""
+    again = _make(client)
+    assert again["code"] == "change_plan_script_no_change" and "agent_reply" not in (
+        again.get("params") or {}
+    )
