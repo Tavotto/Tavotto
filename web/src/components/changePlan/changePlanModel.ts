@@ -36,6 +36,8 @@ export interface GroupView {
   fixed?: boolean
   /** 这一行下面的字段改动（矢量编辑方案，已翻成界面语言） */
   lines?: ChangeLine[]
+  /** 这一行下面的一句灰字（矢量编辑方案：因依赖了没勾的步而自动取消） */
+  note?: string
   /** 悬停说明（矢量编辑方案：后端的复述原文，排查用） */
   detail?: string
   key: string
@@ -78,7 +80,7 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
   const numberOf = (id?: string) => commentNumber(e, id)
   {
     // 矢量编辑方案：一条复述一行（后端的话原样，不画勾选与画面框），补丁的操作有先后、不能只要其中几条
-    if (e.kind === 'vector') return { key: g.key, summary: g.label, reviewers: [], commentNumbers: [], fromNote: false, fixed: true, metaText: '', boxes: [], lines: e.vector?.groups?.find((x) => x.key === g.key)?.lines, detail: e.vector?.result?.echo?.join('\n') }
+    if (e.kind === 'vector') return { key: g.key, summary: g.label, reviewers: [], commentNumbers: [], fromNote: false, fixed: !e.vector?.ops, metaText: '', boxes: [], note: e.vector?.blocked?.[g.key] ? cp('vector.blocked') : undefined, lines: e.vector?.groups?.find((x) => x.key === g.key)?.lines, detail: e.vector?.result?.echo?.join('\n') }
     if (e.kind === 'layout') {
       return {
         key: g.key,
@@ -192,6 +194,7 @@ export function summaryLine(e: PlanEntry): string {
   if (e.kind === 'layout') return cp('card.summaryLayout', { count: e.layout?.count ?? 0 })
   if (e.kind === 'vector' && e.vector?.result) {
     const count = touchedCount(e.vector.result)
+    if (e.vector.failed) return cp('dialog.vectorRecomputeFailed')
     const fails = failedChecks(e.vector.result)
     const rest = e.vector.result.unhandled?.length ?? 0
     if (fails > 0) return cp('card.summaryVectorChecks', { count, fails })
@@ -214,6 +217,10 @@ export const scriptInfo = (e: Pick<PlanEntry, 'plan'>) => e.plan?.groups.find((g
 
 /** 脚本修改方案（一张卡只含一类：不是图内修改） */
 export const isScriptPlan = (e: Pick<PlanEntry, 'plan'>): boolean => e.plan?.kind === 'script'
+
+/** 矢量编辑方案此刻不能应用：正在按勾选重算，或一步都没勾 */
+export const vectorCannotApply = (e: Pick<PlanEntry, 'kind' | 'vector' | 'plan' | 'unchecked'>): boolean =>
+  e.kind === 'vector' && (!!e.vector?.busy || !!e.vector?.failed || (e.plan?.groups ?? []).every((g) => e.unchecked[g.key]))
 
 /** 失败之后用户能走的下一步（每个稳定码一个，绝不留死胡同） */
 export type FailureAction = 'connect' | 'retry' | 'regenerate' | 'dismiss' | 'script' | 'restore'
