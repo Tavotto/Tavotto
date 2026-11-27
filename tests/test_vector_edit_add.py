@@ -204,3 +204,12 @@ def test_prompt_snapshot_lists_the_panel_frames():
     snap = vp.snapshot(_canvas(), [])
     assert snap["panels"]["P1"]["measured"] is False and len(snap["panels"]["P1"]["box_mm"]) == 4
     assert "add" in ve.OPS_DOC and "provenance" in ve.OPS_DOC
+
+
+def test_an_added_object_names_the_panels_it_was_placed_against():
+    """判据的主语：`changes[].depends_on` 量的是**新对象的位置依据**（锚点 / 贴合的子图对象 id），不是它自己；
+    没锚在任何子图上的新对象没有这个键。"""
+    panel_id = ve.panel_refs(_canvas())["P1"]
+    for item in (TAG, BRACKET, ARROW, CONNECTOR, FRAME):
+        added = next(c for c in _plan([_add(item)])["changes"] if c.get("added"))
+        assert added["depends_on"] == [panel_id], item["name"]

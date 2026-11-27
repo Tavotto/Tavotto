@@ -1536,12 +1536,16 @@ def _op_add(s: _State, i: int, op: dict) -> None:
     for it in items:
         if not isinstance(it, dict):
             raise EditError("bad_item", i, "items")
+    #: 每个条目依赖的子图（短号，P1…）：新对象的位置是按这些子图此刻的位置算出来的，方案里要回给前端核「出方案后子图没被挪过」
+    dep_panels: dict[str, set[str]] = {}
     for it in items:
         name = str(it.get("name"))
         anchors = list(vectorscene._anchors_of(it))  # noqa: SLF001
         for t in it.get("fit") if isinstance(it.get("fit"), list) else []:
             if isinstance(t, dict) and "element" in t:
                 anchors.append({"element": t["element"]})
+            elif isinstance(t, dict) and isinstance(t.get("panel"), dict):
+                anchors.append({"panel": t["panel"]})  # 贴着整张子图的框：同样依赖这张子图的位置
         for a in anchors:
             kind = next(iter(a), None) if isinstance(a, dict) else None
             spec = a.get(kind) if kind else None
@@ -1550,6 +1554,13 @@ def _op_add(s: _State, i: int, op: dict) -> None:
                 if kind in ("data", "element") and isinstance(spec, dict)
                 else None
             )
+            dep = (
+                pid
+                if pid
+                else (spec.get("id") if kind == "panel" and isinstance(spec, dict) else None)
+            )
+            if isinstance(dep, str):
+                dep_panels.setdefault(name, set()).add(dep)
             if kind in ("data", "element") and not (
                 isinstance(pid, str) and (s.panels.get(pid) or {}).get("draw_manifest")
             ):
@@ -1585,7 +1596,19 @@ def _op_add(s: _State, i: int, op: dict) -> None:
         s.out.append(new)
         s.reindex()
         s.touched.add(nid)
-        s.changes.append({"id": nid, "added": True})
+        deps = sorted(
+            {
+                real
+                for pid in dep_panels.get(
+                    local, set().union(*dep_panels.values()) if dep_panels else set()
+                )
+                if (real := refs.get(pid))
+            }
+        )
+        change: dict = {"id": nid, "added": True}
+        if deps:
+            change["depends_on"] = deps  # 新对象依赖的子图对象 id：它们被动过 = 这份方案对不上了
+        s.changes.append(change)
     for line in la.describe(items, solved, s.panels):
         s.echo.append(f"新增 {line['text']}")
     for st in solved.get("statistical") or []:
