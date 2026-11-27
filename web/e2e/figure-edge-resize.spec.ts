@@ -2,7 +2,8 @@ import { addSecondFigure, expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
- * 单图编辑拖画布（ADR 0161）：边 = 留白（图不动、画纸变大），角 = 等比改图幅（松手重新出图）。
+ * 单图编辑拖画布（ADR 0161，修订 2026-11-27）：边 = 这一维的图幅（松手重新出图、对边不动），⌥ + 边 = 留白（图不动、画纸变大），
+ * 角 = 等比改图幅（松手重新出图）。
  *
  * 只放 jsdom 量不到的：真浏览器里命中区 / 角柄按不按得到、**屏幕上量到的**画纸与图框、对角是否纹丝不动、
  * 胶囊在拖动中是否显示读数、撤销一步是否回到原样。逻辑在 `canvas/frameDrag.test.tsx` 与 `lib/framePad.test.ts`。
@@ -41,21 +42,30 @@ const paperBox = (page: Page) => page.locator('[data-fast-edit-paper]').bounding
 /** 图本身（面板对象）的屏幕框 */
 const figureBox = (page: Page) => page.locator('[data-object-id]').first().boundingBox({ timeout: 1000 }).catch(() => null)
 
-async function dragHandle(page: Page, sel: string, dx: number, dy: number, onMid?: () => Promise<void>) {
+async function dragHandle(
+  page: Page,
+  sel: string,
+  dx: number,
+  dy: number,
+  onMid?: () => Promise<void>,
+  modifier?: 'Alt',
+) {
   const eb = (await page.locator(sel).boundingBox())!
   // 上 / 下边取靠左 15% 处按下：舞台底部居中的通知条（教程提示 / 构建中）会压在下边中段
   const horizontalStrip = sel.includes('"t"') || sel.includes('"b"')
   const x = horizontalStrip ? eb.x + eb.width * 0.15 : eb.x + eb.width / 2
   const y = eb.y + eb.height / 2
   await page.mouse.move(x, y)
+  if (modifier) await page.keyboard.down(modifier)
   await page.mouse.down()
   await page.mouse.move(x + dx, y + dy, { steps: 6 })
   if (onMid) await onMid()
   await page.mouse.up()
+  if (modifier) await page.keyboard.up(modifier)
 }
 
 test(
-  '单图编辑拖右边往外：画纸变宽、图纹丝不动，拖动中胶囊说「扩充画布」，撤销一步回到原样',
+  '单图编辑按住 ⌥ 拖右边往外：画纸变宽、图纹丝不动，拖动中胶囊说「扩充画布」，撤销一步回到原样',
   { tag: '@feature:canvas.single-figure-edge-resize' },
   async ({ app, page }) => {
     const a = await app()
@@ -68,7 +78,7 @@ test(
       await expect(page.locator('[data-figure-dims]')).toHaveCount(1)
       const mid = (await paperBox(page))!
       expect(mid.width).toBeGreaterThan(p0.width + 40)
-    })
+    }, 'Alt')
     await expect(page.locator('[data-drag-status]')).toHaveCount(0)
     const p1 = (await paperBox(page))!
     const f1 = (await figureBox(page))!
@@ -82,6 +92,29 @@ test(
     await page.keyboard.press('ControlOrMeta+z')
     await expect.poll(async () => Math.abs(((await paperBox(page))?.width ?? 1e9) - p0.width), { timeout: 10_000 }).toBeLessThan(1.5)
     await expect(page.locator('[data-page-outside-mask]')).toHaveCount(0)
+  },
+)
+
+test(
+  '单图编辑拖右边（不按键）：只改宽、高不变，松手重新出图后左边不动，图与画纸同框',
+  { tag: '@feature:canvas.single-figure-edge-resize' },
+  async ({ app, page }) => {
+    const a = await app()
+    await toFastEdit(page, a.baseURL)
+    const p0 = (await paperBox(page))!
+    await dragHandle(page, '[data-figure-edge="r"]', 60, 0, async () => {
+      await expect(page.locator('[data-drag-status]')).toBeVisible()
+      await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
+      const mid = (await paperBox(page))!
+      expect(Math.abs(mid.width - p0.width)).toBeLessThan(1)
+    })
+    await expect.poll(async () => (await paperBox(page))?.width ?? 0, { timeout: 30_000 }).toBeGreaterThan(p0.width + 40)
+    const p1 = (await paperBox(page))!
+    expect(Math.abs(p1.x - p0.x)).toBeLessThan(1.5)
+    expect(Math.abs(p1.height - p0.height)).toBeLessThan(1.5)
+    await expect(page.locator('[data-page-outside-mask]')).toHaveCount(0)
+    const f1 = (await figureBox(page))!
+    expect(Math.abs(f1.width - p1.width)).toBeLessThan(2)
   },
 )
 

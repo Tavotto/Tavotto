@@ -12,7 +12,7 @@ import { UNIT_GAP } from '@/lib/units'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { cn } from '@/lib/utils'
 import { frameCanvasOf, type FrameCorner } from '@/lib/framePad'
-import { startFigureCornerResize, startFramePadEdge } from './frameDrag'
+import { startFigureCornerResize, startFigureEdge } from './frameDrag'
 import { startPageEdgeResize } from './pageEdgeDrag'
 import { DIM_INSET, dimSpan } from './pageEdgeReadout'
 
@@ -69,7 +69,7 @@ export function PageEdgeHandles() {
 
 /**
  * 单图编辑里拖这张图的四条边改图幅：同一套命中区与尺寸标注（`EdgeStrips` / `EdgeDimensions`），框是画布上那张图。
- * 手势在 `frameDrag`：边 = 画布留白（`startFramePadEdge`）、角 = 等比改图幅（`startFigureCornerResize`，ADR 0161）。挂载条件由 `CanvasStage` 管（`mode === 'fast_edit'`）；
+ * 手势在 `frameDrag`：边 = 这一维的图幅、⌥ + 边 = 画布留白（`startFigureEdge`）、角 = 等比改图幅（`startFigureCornerResize`，ADR 0161 修订 2026-11-27）。挂载条件由 `CanvasStage` 管（`mode === 'fast_edit'`）；
  * 精确 manifest 缺席（或面板被裁过 / 旋转过）时整组不挂（`figureFrameFacts`）；图被隐藏 / 锁定、非选择工具、裁剪中、别的拖动占着时让位；**图内编辑里照常可用**（单图编辑打开图默认就在图内编辑里），
  * 命中区压进图里只有 `FIGURE_HIT_IN` px（其余在图外），免得盖住贴着图框的轴标题 / 刻度。
  */
@@ -139,7 +139,7 @@ export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
         idle={idle}
         active={active}
         lead={FIGURE_HIT_IN}
-        onStart={(e, edge) => startFramePadEdge(e, edge, o.id)}
+        onStart={(e, edge) => startFigureEdge(e, edge, o.id)}
       />
       <CornerGrips box={box} idle={idle} onStart={(e, c) => startFigureCornerResize(e, c, o.id)} />
       {pv && preview && (
@@ -191,7 +191,7 @@ const CORNER_PX = 7
 const CORNER_HIT_PX = 16
 
 /**
- * 单图画布的四个角柄（ADR 0161：拖角 = 等比改图幅，⇧ 自由比例，⌥ 关栏宽吸附）。屏幕空间，`box` 是画布框（px）。
+ * 单图画布的四个角柄（ADR 0161：拖角 = 等比改图幅，⌥ 自由比例，⇧ 强制等比，⌘ 关吸附）。屏幕空间，`box` 是画布框（px）。
  * 平时就显示（与选区缩放手柄同一种画法），让「角能拖」看得见；让位规则与边的命中区相同。
  */
 function CornerGrips({
