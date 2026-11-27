@@ -21,6 +21,7 @@ import { useJournalV2Store } from '@/store/journalV2Store'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useUiStore } from '@/store/uiStore'
+import { useJournalPickerRequest } from '@/store/journalPickerRequest'
 import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
 import { tipForMissing } from '@/lib/journalTip'
 
@@ -89,6 +90,12 @@ export function JournalPicker({
   const sameOrigin = (o: string) => originOf() === o
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  // 外部请求展开（助手回答里的「选期刊」）：只有问题页签那一行（带锚点、写当前文档）接
+  const openRequested = useJournalPickerRequest((s) => s.pending)
+  useEffect(() => {
+    if (!openRequested || target || anchor !== 'data-issues-journal-picker' || disabled) return
+    if (useJournalPickerRequest.getState().consume()) setOpen(true)
+  }, [openRequested, target, anchor, disabled])
   const canTip = useContactStore((s) => journalTipsAvailable(s.capability))
   const [pending, setPending] = useState<{ seq: number; label: string } | null>(null)
   const v2Index = useJournalV2Store((s) => s.index)

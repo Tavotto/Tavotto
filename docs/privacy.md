@@ -679,6 +679,11 @@ figure changes when you press *Apply*.
   points at), the table of elements as they look after the previous version, and
   a short list of what the previous version changed, to the same AI connection.
   The notes themselves are never uploaded to the review service.
+* **Suggestions in the figure assistant.** When you ask the assistant for suggestions
+  and then say "do what you suggested", the previous assistant answer and your
+  previous message in that figure's conversation (together at most 2,000
+  characters) are sent to the AI connection you chose, so the follow-up can be
+  understood; nothing earlier is sent.
 * **Comments that need a script change (only when you press the button).** If a
   comment can only be done by editing the script, the plan card offers *Edit the
   script for the rest*. Only when you press it, the text of those comments (still

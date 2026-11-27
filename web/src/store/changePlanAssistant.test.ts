@@ -117,6 +117,20 @@ describe('发起', () => {
     expect(e).toMatchObject({ from: 'assistant', status: 'generating', instruction: FALLBACK.prompt })
   })
 
+  it('助手来源带 standard（名字 / chosen / rules / issues）；审阅来源不带', async () => {
+    await cps().requestFromAssistant('p1', { instruction: '符合投稿要求吗' }, FALLBACK)
+    const std = createChangePlan.mock.calls[0][0].standard
+    expect(std).toMatchObject({ chosen: false, issues: [] })
+    expect(typeof std.name).toBe('string')
+    expect(Object.keys(std.rules).length).toBeGreaterThan(0)
+    cps().clear()
+    createChangePlan.mockClear()
+    await cps().requestFromReview('p1', { comments: [{ id: 'c1', text: 'x' }] as never })
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(createChangePlan.mock.calls[0][0].source).toBe('review')
+    expect('standard' in createChangePlan.mock.calls[0][0]).toBe(false)
+  })
+
   it('整张图范围（没有选中元素）不带 target', async () => {
     await cps().requestFromAssistant('p1', { instruction: '全部字号改 10' }, FALLBACK)
     expect('target' in createChangePlan.mock.calls[0][0]).toBe(false)
