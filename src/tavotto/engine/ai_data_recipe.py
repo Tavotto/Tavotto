@@ -2354,6 +2354,8 @@ def _resolve_roles_raw(
     reps = {c for c in nums if _counter_col(s, c) and c not in asked}
     if reps and any(c not in reps for c in nums):
         nums = [c for c in nums if c not in reps]
+    else:
+        reps = set()
     errs = {c for c in error_columns(s) if c not in asked}
     if errs and any(c not in errs for c in nums):
         nums = [c for c in nums if c not in errs]
@@ -2365,7 +2367,7 @@ def _resolve_roles_raw(
         nums = [c for c in nums if c not in sizes]
     else:
         sizes = set()
-    errs_and_sizes = errs | sizes | rowidx
+    errs_and_sizes = errs | sizes | rowidx | reps  # 默认不当轴、但下拉里仍列得出的列
     dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
     cats = [c for c in cols if c in s.groups and c not in ids]
     cats_all = list(cats)
@@ -3160,6 +3162,7 @@ def _large_fallback_x(
         *roles.cats,
         *s.id_like,
         *s.row_index,
+        *(c for c in s.columns if _counter_col(s, c)),  # 重复号列同样不是退路的横轴
         *error_columns(s),
         *sample_size_columns(s),
     }
