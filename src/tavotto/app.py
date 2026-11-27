@@ -12195,7 +12195,7 @@ _CHANGE_PLAN_STATUS = {
     "change_plan_script_data_unconfirmed": 400,
 }
 #: 方案里两张图的宽度（`RENDER_BUCKETS` 里的一档）
-_CHANGE_PLAN_WIDTH = 1600
+_CHANGE_PLAN_WIDTH = engine_changeplan.SNAPSHOT_WIDTH
 
 
 def _change_plan_params(code: str) -> dict:
@@ -12901,16 +12901,7 @@ def api_change_plans_restore_script():
 
 
 def _change_plan_snapshot(resp) -> tuple[bytes, dict]:
-    import base64
-
-    try:
-        png = base64.b64decode(resp["png"], validate=True)
-        manifest = resp["manifest"]
-    except (KeyError, TypeError, ValueError):
-        raise engine_changeplan.PlanFailure("change_plan_render_failed", "snapshot") from None
-    if not png or not isinstance(manifest, dict) or not isinstance(manifest.get("elements"), list):
-        raise engine_changeplan.PlanFailure("change_plan_render_failed", "snapshot")
-    return png, manifest
+    return engine_changeplan.snapshot_of(resp)
 
 
 def _change_plan_compute(
@@ -12951,15 +12942,7 @@ def _change_plan_compute(
     root = str(require_project())
 
     def revision() -> str:
-        try:
-            return (
-                engine_preparation._script_revision(
-                    root, getattr(state["worker"], "script_name", None)
-                )
-                or ""
-            )
-        except Exception:  # noqa: BLE001 - 读不到修订 = 两次都读不到，相等
-            return "unknown"
+        return ec.script_revision(root, getattr(state["worker"], "script_name", None))
 
     def call(action):
         _require_route_unchanged(rel_id)
@@ -12976,9 +12959,6 @@ def _change_plan_compute(
 
     def override(patches: list) -> dict:
         return call(lambda w, s: w.override(s, patches, None))
-
-    def warned(resp: dict) -> set[str]:
-        return {json.dumps(w, sort_keys=True, default=str) for w in (resp.get("warnings") or [])}
 
     touched = False  # 对热 worker 做过 override
     try:
@@ -13021,41 +13001,26 @@ def _change_plan_compute(
                 "groups": ec.carried_groups(prev, proposal) + proposal["groups"],
                 "unhandled": proposal["unhandled"],
             }
-        if ec.change_count(proposal) == 0:
-            groups, unhandled, after_png = [], proposal["unhandled"], before_png
-        elif prev is not None and cand == start:
-            after_png = start_png
-            groups, unhandled = ec.effective_changes(before_man, start_man, proposal)
-            groups = ec.attach_patches(groups, cand)
-        else:
+
+        def on_render() -> None:
+            nonlocal touched
             task.phase = "render_after"
             touched = True
-            base_warned = warned(override(base))  # 基线：B0 自己本来就有的 warning
-            cand_resp = override(cand)
-            after_png, after_man = snapshot(cand)
-            if warned(cand_resp) - base_warned:
-                raise ec.PlanFailure("change_plan_render_failed", "warning")
-            groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
-            groups = ec.attach_patches(groups, cand)
-            # 改完有元素新探出图幅（对数轴刻度变宽把纵轴标题挤出去之类）：用现成的外边距重排腾地方，补出的 position 并进造成出界的那些组。
-            # 模型自己提了 position 的（用户的意思在排版上）不替它改；补不下 / 没进步 / 有新 warning = 照常出卡
-            if not any(
-                c["prop"] == "position" and not c.get("auto")
-                for g in proposal["groups"]
-                for c in g["changes"]
-            ):
 
-                def room_render(patches: list):
-                    resp = override(patches)
-                    return None if warned(resp) - base_warned else resp.get("manifest")
-
-                room = ec.make_room(before_man, after_man, cand, base, room_render)
-                if room is not None:
-                    cand = room.candidate
-                    after_png, after_man = snapshot(cand)
-                    groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
-                    groups = ec.attach_patches(groups, cand)
-                    groups = ec.attach_room(groups, room, before_man, after_man)
+        groups, unhandled, after_png = ec.realize(
+            proposal,
+            cand,
+            base=base,
+            start=start,
+            before_png=before_png,
+            start_png=start_png,
+            before_man=before_man,
+            start_man=start_man,
+            override=override,
+            snapshot=snapshot,
+            revised=prev is not None,
+            on_render=on_render,
+        )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         _require_route_unchanged(rel_id)

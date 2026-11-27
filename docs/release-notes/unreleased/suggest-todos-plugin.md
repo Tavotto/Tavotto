@@ -1,0 +1,3 @@
+## Codex and Claude Code can turn their suggestions into a to-do list you approve
+
+When you ask Codex or Claude Code (with the Tavotto plugin) to improve a figure, it can now hand its suggestions to Tavotto as a list of to-dos. Tavotto checks each one with the same rules the built-in assistant uses — it won't hide data, resize the figure unless you asked, or put markers on every point of a smooth curve — draws what the figure would look like, and tells the agent which suggestions didn't make it and why. The agent then asks you which ones to make; only the ones you pick are applied, and changes that need the script edited are left for the agent to do next.

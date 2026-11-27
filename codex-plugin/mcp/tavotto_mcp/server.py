@@ -674,6 +674,8 @@ def _tools() -> list[dict]:
         tools.extend(_layout_annotate_tools())
     if bridge.layout_edit_available():
         tools.extend(_layout_edit_tools())
+    if bridge.suggest_available():
+        tools.extend(_suggest_tools())
     return tools
 
 
@@ -879,6 +881,99 @@ def _layout_edit_tools() -> list[dict]:
                     ),
                 ),
                 "required": ["project_path", "layout", "ops", "base_revision", "echo_digest"],
+                "additionalProperties": False,
+            },
+        },
+    ]
+
+
+def _suggest_tools() -> list[dict]:
+    """建议待办（ADR 0214 第 3 期）：宿主自己想好的建议 → 可勾选的待办方案（候选渲染、同一套守卫）→ 用户勾好后写入。"""
+    sid = {"type": "string", "description": "tavotto_open_figure 回的 session_id。"}
+    pid = {"type": "string", "description": "tavotto_suggest_plan 回的 plan_id。"}
+    change = {
+        "type": "object",
+        "properties": {
+            "gid": {"type": "string", "description": "manifest 里元素的 gid。"},
+            "prop": {"type": "string", "description": "该元素 editable 里的属性名。"},
+            "value": {"description": "新值，类型与 tavotto_apply_overrides 的 value 相同。"},
+        },
+        "required": ["gid", "prop", "value"],
+        "additionalProperties": False,
+    }
+    todo = {
+        "type": "object",
+        "properties": {
+            "label": {
+                "type": "string",
+                "description": "一句话说做什么（读图的人看得懂，不写参数名），如「纵轴标题加单位 (min)」。",
+            },
+            "why": {"type": "string", "description": "一个短分句说为什么，可省。"},
+            "kind": {
+                "type": "string",
+                "enum": ["figure", "script"],
+                "description": "figure = 用 changes 在图内改；script = 要改脚本 / 数据（不带 changes，用户确认后由你自己改脚本）。",
+            },
+            "changes": {"type": "array", "items": change, "description": "figure 待办的图内修改。"},
+        },
+        "required": ["label", "kind"],
+        "additionalProperties": False,
+    }
+    return [
+        {
+            "name": "tavotto_suggest_plan",
+            "title": "把建议列成待办（不写入）",
+            "description": (
+                "用户要你看看图有什么能改进、或说「按你的建议改」时用：把你的建议交进来，每条一个待办（做什么 / 为什么 / 图内还是要改脚本）。"
+                "不写会话：后端与 Tavotto 改图助手同一套校验与守卫（藏数据的坐标范围、未授权改图幅、连续曲线逐点加标记会被拦下）、"
+                "把勾满时的修改后图画出来，逐条回 results（ok / reason）。**把 todos 逐条列给用户、问要改哪几条**，"
+                "再用 tavotto_suggest_apply 写入；用户没点头不要写。results 里 ok=false 的告诉用户原因，不要偷偷换个改法。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": sid,
+                    "todos": {"type": "array", "items": todo, "minItems": 1, "maxItems": 12},
+                    "user_request": {
+                        "type": "string",
+                        "description": "用户这次的原话（可省）。判断用户有没有要求改尺寸用它；没给就按各条待办的 label 判。",
+                    },
+                },
+                "required": ["session_id", "todos"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_suggest_apply",
+            "title": "按用户勾的待办写入",
+            "description": (
+                "用户确认要改的那几条（tavotto_suggest_plan 回的 todos[].key）：图内待办一次写进会话；"
+                "script 待办原样回在 script_todos 里，由你接着改脚本（改完 .py 下一次调用会按新脚本重跑同一个会话）。"
+                "出方案之后图又被改过会拒绝（suggest_plan_stale），重新出方案。写完把改了哪几条告诉用户。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": sid,
+                    "plan_id": pid,
+                    "keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "用户要改的待办 key。",
+                    },
+                },
+                "required": ["session_id", "plan_id", "keys"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_suggest_status",
+            "title": "查建议方案的状态",
+            "description": "只读：一份建议方案的待办、是否已应用（用了哪几条、谁应用的）、出方案之后图有没有被改过（stale）。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"session_id": sid, "plan_id": pid},
+                "required": ["session_id", "plan_id"],
                 "additionalProperties": False,
             },
         },
@@ -2295,6 +2390,67 @@ def _edit_error_lines(errors: list) -> list[str]:
     return out
 
 
+_SUGGEST_REASONS = {
+    "hides_data": "会藏掉数据（坐标范围比数据窄）",
+    "size_locked": "用户没要求改尺寸",
+    "dense_curve": "连续曲线逐点加标记会糊成一串",
+    "unknown_element": "图里没有这个元素",
+    "not_editable": "这个属性在图内改不了",
+    "bad_value": "值不合法",
+    "conflict": "和前面的待办改同一处",
+    "over_limit": "改动太多",
+    "no_effect": "改了也看不出变化",
+    "not_applied": "这条修改写不进去",
+}
+
+
+def _call_suggest_plan(args: dict) -> dict:
+    out = bridge.suggest_plan(
+        str(args.get("session_id") or ""), args.get("todos"), user_request=args.get("user_request")
+    )
+    pv = out.pop("preview")
+    lines = ["建议待办（先逐条问用户要改哪几条，再 tavotto_suggest_apply）："]
+    for t in out["todos"]:
+        tag = "要改脚本" if t["kind"] == "script" else "图内"
+        lines.append(
+            f"- [{t['key']}] {t['label']}"
+            + (f"——{t['why']}" if t.get("why") else "")
+            + f"（{tag}）"
+        )
+    bad = [r for r in out["results"] if not r["ok"]]
+    if bad:
+        lines.append("没列进待办（照实告诉用户）：")
+        lines.extend(
+            f"- 第 {r['index']} 条「{r['label']}」：{_SUGGEST_REASONS.get(r['reason'], r['reason'])}"
+            for r in bad
+        )
+    content = _text(*lines)
+    content.append({"type": "image", "data": pv["png_base64"], "mimeType": "image/png"})
+    out["preview"] = {k: v for k, v in pv.items() if k != "png_base64"}
+    return {"content": content, "structuredContent": out}
+
+
+def _call_suggest_apply(args: dict) -> dict:
+    out = bridge.suggest_apply(
+        str(args.get("session_id") or ""), args.get("plan_id"), args.get("keys")
+    )
+    lines = [f"已在图内改好：{'、'.join(out['applied'])}" if out["applied"] else "图内没有要改的。"]
+    if out["script_todos"]:
+        lines.append(
+            "下面这些要改脚本，接着由你改（改前告诉用户）："
+            + "、".join(f"[{t['key']}] {t['label']}" for t in out["script_todos"])
+        )
+    return {"content": _text(*lines), "structuredContent": out}
+
+
+def _call_suggest_status(args: dict) -> dict:
+    out = bridge.suggest_status(str(args.get("session_id") or ""), args.get("plan_id"))
+    head = {"applied": "已应用", "proposed": "还没应用"}[out["state"]]
+    if out["stale"]:
+        head += "；出方案之后图又被改过，要用就重新出方案"
+    return {"content": _text(head), "structuredContent": out}
+
+
 def _call_layout_edit_plan(args: dict) -> dict:
     bridge.require_layout_edit()
     project, layout, canvas_id = _layout_args(args)
@@ -3184,6 +3340,11 @@ HANDLERS = {
     "tavotto_layout_annotate_undo": _call_layout_undo,
     "tavotto_layout_edit_plan": _call_layout_edit_plan,
     "tavotto_layout_edit_apply": _call_layout_edit_apply,
+    # 建议待办（ADR 0214 第 3 期）：引擎没有这条流程时不出现、调用回 `suggest_unavailable`；
+    # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
+    "tavotto_suggest_plan": _call_suggest_plan,
+    "tavotto_suggest_apply": _call_suggest_apply,
+    "tavotto_suggest_status": _call_suggest_status,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）

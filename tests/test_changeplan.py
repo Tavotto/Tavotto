@@ -1697,6 +1697,25 @@ def test_guard_drops_size_changes_unless_the_user_asked_for_size():
     assert {"hides_data", "size_locked"} <= set(cp.UNHANDLED_REASONS)
 
 
+def test_host_suggestions_go_through_the_same_guards():
+    """Agent 插件交进来的建议（ADR 0214 第 3 期）：同一份 `validate_proposal`；用户原话顶替助手来源的指令判「提没提尺寸」。"""
+    fig = _facts_fig()
+    todos = [
+        {"label": "放大一点", "kind": "figure", "changes": [ch("figure", "size_mm", [120.0, 85.0])]},
+        {"label": "加误差线", "why": "三次重复", "kind": "script"},
+    ]
+    out, comments = cp.host_proposal(todos, fig, "图例压住曲线了")
+    assert out["groups"] == []
+    assert {"comment_id": "a1", "reason": "size_locked"} in out["unhandled"]
+    assert {"comment_id": "a2", "reason": "needs_script"} in out["unhandled"]
+    assert [c["id"] for c in comments] == ["a1", "a2"]
+    asked, _ = cp.host_proposal(todos, fig, "把图宽改成 120 mm")
+    assert asked["groups"][0]["changes"] == [ch("figure", "size_mm", [120.0, 85.0])]
+    for bad in ([], "x", [1], [{"label": "a", "kind": "figure"}] * (cp.MAX_TODOS + 1)):
+        with pytest.raises(ValueError):
+            cp.host_proposal(bad, fig)
+
+
 # --------------------------------------------------------------------------- 出版规范块 / 图内优先 / 脚本待办不重做图内的
 def _std(**over):
     return {

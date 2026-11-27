@@ -407,6 +407,13 @@ BUILDERS: dict[str, Callable[[Ctx], dict | None]] = {
 
 #: 显式的「没有可行下一步」：每项一句理由（为什么 Agent 手里没有可抄的动作）。
 NO_NEXT: dict[str, str] = {
+    # 建议待办（ADR 0214 第 3 期）
+    "bad_todos": "todos 写法不对（要 1..12 条 {label, why?, kind, changes?}），照工具说明改了再出方案。",
+    "bad_todo_keys": "keys 要取 tavotto_suggest_plan 回的 todos[].key，回包 known 里列着这份方案的全部 key。",
+    "suggest_plan_unknown": "方案不是这个会话的、过期或被清掉了，重新调 tavotto_suggest_plan 出一份。",
+    "suggest_plan_stale": "出方案之后图被改过，重新调 tavotto_suggest_plan，按此刻的图出一份再问用户。",
+    "suggest_plan_applied": "这份方案已经应用过，要再改就重新出一份方案。",
+    "suggest_unavailable": "装着的 Tavotto 还没有建议待办能力，要用户升级后新开会话。",
     # 排版标注（ADR 0208 第 2 期）
     "bad_item": "排版标注描述写法不对，error 指出了是哪一项哪个字段，照 layout-annotate 说明改。",
     "layout_annotate_unavailable": "装着的 Tavotto 还没有排版标注能力，要用户升级后新开会话。",

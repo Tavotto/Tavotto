@@ -153,6 +153,7 @@ WRITE_OUTSIDE_ROOTS = "write_outside_roots"
 #: `tests/test_mcp_compat.py` 钉住：可选集与必需集不相交、桥里取可选模块只有这一个入口。
 OPTIONAL_ENGINE_MODULES = (
     "capabilities",
+    "changeplan",
     "contactsend",
     "envadvice",
     "envlease",
@@ -6921,3 +6922,233 @@ def layout_edit_commit(
         raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
     out["opened_sessions"] = opened
     return out
+
+
+# ------------------------ 建议待办（ADR 0214 第 3 期） ------------------------
+#: 引擎里这条流程要用到的 API：缺任何一个 = 旧引擎，三个工具不出现
+SUGGEST_ENGINE_API = (
+    "host_proposal",
+    "host_todo_results",
+    "require_log_lower_limits",
+    "candidate_patches",
+    "realize",
+    "snapshot_of",
+    "build_plan",
+    "apply_groups",
+    "fingerprint",
+    "script_revision",
+    "new_plan_id",
+    "save",
+    "load",
+    "mark_applied",
+)
+
+
+def suggest_available() -> bool:
+    cp = _optional_engine("changeplan")
+    return cp is not None and all(hasattr(cp, n) for n in SUGGEST_ENGINE_API)
+
+
+def _require_suggest():
+    cp = _optional_engine("changeplan") if suggest_available() else None
+    if cp is None:
+        raise BridgeError(
+            "这个 Tavotto 版本还不能把建议列成待办；升级 Tavotto 后新开会话再试。",
+            code="suggest_unavailable",
+        )
+    return cp
+
+
+def _suggest_load(cp, session: Session, plan_id: object) -> dict:
+    """本会话的建议方案；别的会话 / 别的图 / 过期 / 不存在一律同一个 `suggest_plan_unknown`。"""
+    plan = None
+    if isinstance(plan_id, str) and cp.PLAN_ID.match(plan_id):
+        plan = cp.load(project_id(session.project), plan_id)
+    if (
+        not isinstance(plan, dict)
+        or (plan.get("agent") or {}).get("session") != session.id
+        or (plan.get("base") or {}).get("target") != session.stem
+    ):
+        raise BridgeError(
+            "没有这份建议方案（不是这个会话的、已过期或已被清掉）；重新调 tavotto_suggest_plan。",
+            code="suggest_plan_unknown",
+        )
+    return plan
+
+
+def _suggest_fresh(cp, session: Session, plan: dict) -> bool:
+    """出方案之后这张图没被改过：脚本修订与会话此刻的 override 都还是出方案那一刻的。"""
+    rev = cp.script_revision(session.project, session.script)
+    return cp.fingerprint(rev, session.patches) == plan["base"]["fingerprint"]
+
+
+def _suggest_view(plan: dict) -> list[dict]:
+    """方案里的待办（给宿主看的投影）：`{key, label, why?, kind}`。"""
+    return [
+        {k: t[k] for k in ("key", "label", "why", "kind") if k in t}
+        for t in plan.get("todos") or []
+    ]
+
+
+def suggest_plan(session_id: str, todos: object, *, user_request: object = None) -> dict:
+    """宿主 Agent 的建议 → 一份可勾选的待办方案（只算不写：会话的 override 不变）。
+
+    与桌面改图助手同一条流水线（`changeplan.host_proposal` → `candidate_patches` → `realize` → `build_plan`）：同一份校验与守卫、
+    候选渲染、warning / 出界检查。方案落在与桌面同一个方案目录里（项目 id 同一把尺），回 `{plan_id, todos, results, preview}`；
+    `results` 逐条说交进来的建议落成了什么（`ok` / `reason`），`preview` 是勾满时的修改后图（PNG base64）。"""
+    cp = _require_suggest()
+    session = get_session(session_id)
+    try:
+        proposal, comments = cp.host_proposal(todos, session.manifest, user_request)
+    except ValueError:
+        raise BridgeError(
+            f"todos 要是 1..{cp.MAX_TODOS} 条 {{label, why?, kind, changes?}} 的列表。",
+            code="bad_todos",
+        ) from None
+    base = list(session.patches)
+    worker = session.acquire()
+
+    def snapshot(patches: list):
+        return cp.snapshot_of(worker.preview_png_snapshot(session.stem, patches, cp.SNAPSHOT_WIDTH))
+
+    def override(patches: list) -> dict:
+        return worker.override(session.stem, patches, None)
+
+    touched = False
+
+    def on_render() -> None:
+        nonlocal touched
+        touched = True
+
+    rev0 = cp.script_revision(session.project, session.script)
+    try:
+        before_png, before_man = snapshot(base)
+        reply, raw = proposal.get("reply"), proposal.get("todos")
+        proposal = cp.require_log_lower_limits(proposal, before_man)
+        cand, proposal = cp.candidate_patches(base, proposal, before_man)
+        groups, unhandled, after_png = cp.realize(
+            proposal,
+            cand,
+            base=base,
+            start=base,
+            before_png=before_png,
+            start_png=before_png,
+            before_man=before_man,
+            start_man=before_man,
+            override=override,
+            snapshot=snapshot,
+            on_render=on_render,
+        )
+    except cp.PlanFailure as exc:
+        raise BridgeError(
+            "建议的修改渲染不出来（或带出了新的 warning），整份方案没出；换个改法再试。",
+            code=exc.code,
+        ) from None
+    except engine_pool.WorkerError as exc:
+        raise _bridge_error_from_worker(
+            exc, project=session.project, script=session.script, default_code="render_failed"
+        ) from exc
+    finally:
+        if touched:  # 候选试渲染动过热 worker：放回会话此刻那份，下一次 apply / 导出照旧
+            try:
+                worker.override(session.stem, session.patches, None)
+            except engine_pool.WorkerError as exc:
+                # 放不回去也不坏事：会话的 patches 没动，下一次 apply / 导出都发全量列表、worker 照它重来
+                sys.stderr.write(
+                    f"tavotto-mcp: 会话 {session.id} 建议方案试渲染后没能放回 override：{exc}\n"
+                )
+    if cp.script_revision(session.project, session.script) != rev0:
+        raise BridgeError(
+            "出方案期间脚本被改了；重新调 tavotto_suggest_plan。", code="suggest_plan_stale"
+        )
+    plan = cp.build_plan(
+        plan_id=cp.new_plan_id(),
+        target=session.stem,
+        base_fingerprint=cp.fingerprint(rev0, base),
+        comments=comments,
+        groups=groups,
+        unhandled=unhandled,
+        base_patches=base,
+        source="assistant",
+        reply=reply,
+        todos=raw,
+    )
+    plan["agent"] = {"session": session.id}
+    try:
+        cp.save(project_id(session.project), plan, before_png, after_png)
+    except cp.PlanFailure as exc:
+        raise BridgeError("建议方案没能存下来；再试一次。", code=exc.code) from None
+    return {
+        "ok": True,
+        "plan_id": plan["id"],
+        "session_id": session.id,
+        "todos": _suggest_view(plan),
+        "results": cp.host_todo_results(plan, todos),
+        "preview": {
+            "png_base64": base64.b64encode(after_png).decode("ascii"),
+            "width": cp.SNAPSHOT_WIDTH,
+        },
+    }
+
+
+def suggest_apply(session_id: str, plan_id: object, keys: object) -> dict:
+    """用户勾好的待办 → 图内的那些一次写进会话（全量列表 = B0 ⊕ 勾着的组）；脚本待办原样交回宿主去改。
+
+    出方案之后图被改过（脚本 / override）就拒绝（`suggest_plan_stale`），不在别的底子上套旧的修改。用户已经逐条确认过，按
+    `user_authorized` 应用（会解除规范化合同，回包如实带 `contract_released`）。"""
+    cp = _require_suggest()
+    session = get_session(session_id)
+    plan = _suggest_load(cp, session, plan_id)
+    by_key = {t["key"]: t for t in plan.get("todos") or []}
+    if (
+        not isinstance(keys, list)
+        or not all(isinstance(k, str) for k in keys)
+        or any(k not in by_key for k in keys)
+    ):
+        raise BridgeError(
+            "keys 要是这份方案里待办的 key 列表（tavotto_suggest_plan 回的 todos[].key）。",
+            code="bad_todo_keys",
+            known=sorted(by_key),
+        )
+    if plan.get("applied"):
+        raise BridgeError(
+            "这份建议方案已经应用过；要再改，重新出一份。", code="suggest_plan_applied"
+        )
+    if not _suggest_fresh(cp, session, plan):
+        raise BridgeError(
+            "出方案之后这张图又被改过（脚本或图内修改）；重新调 tavotto_suggest_plan。",
+            code="suggest_plan_stale",
+        )
+    chosen = [by_key[k] for k in dict.fromkeys(keys)]
+    groups = [t["group_key"] for t in chosen if t["kind"] == "figure"]
+    scripts = [{"key": t["key"], "label": t["label"]} for t in chosen if t["kind"] == "script"]
+    out: dict = {"ok": True, "plan_id": plan["id"], "applied": [], "script_todos": scripts}
+    if groups:
+        patches = cp.apply_groups(plan["base_patches"], plan["groups"], set(groups))
+        res = apply_overrides(session.id, patches, user_authorized=True)
+        out["applied"] = [t["key"] for t in chosen if t["kind"] == "figure"]
+        out["contract_released"] = bool(res.get("contract_released"))
+        out["patch_hash"] = session.patch_hash()
+    cp.mark_applied(
+        project_id(session.project),
+        plan["id"],
+        {"by": "agent", "keys": [t["key"] for t in chosen], "at": time.time()},
+    )
+    return out
+
+
+def suggest_status(session_id: str, plan_id: object) -> dict:
+    """一份建议方案此刻的状态：待办、用了哪些（谁点的）、图有没有在出方案之后被改过。只读。"""
+    cp = _require_suggest()
+    session = get_session(session_id)
+    plan = _suggest_load(cp, session, plan_id)
+    applied = plan.get("applied") if isinstance(plan.get("applied"), dict) else None
+    return {
+        "ok": True,
+        "plan_id": plan["id"],
+        "todos": _suggest_view(plan),
+        "state": "applied" if applied else "proposed",
+        "chosen": list(applied.get("keys") or []) if applied else [],
+        "by": applied.get("by") if applied else None,
+        "stale": not applied and not _suggest_fresh(cp, session, plan),
+    }

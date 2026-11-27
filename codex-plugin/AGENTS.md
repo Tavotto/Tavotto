@@ -46,6 +46,7 @@ ADR，再动手。看护用例在细则头部。下表是生成的：改细则�
 | `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()` | 批量打开与会话账本 → `sessions-and-batch-open.md` | 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；渲染成功后才登记 |
 | `web/src/lib/engineTransport.ts`、`mcp/widget/canvas.html`、`scripts/build_mcp_widget.py`、画布 CSP | 内嵌画布 → `embedded-canvas.md` | 画布 = Tavotto 前端同一份代码、唯一改动是 `engineTransport` 的可选覆盖；产物不进 git；不用「开浏览器」冒充 |
 | `tavotto_layout_*` 六个工具、`bridge.layout_*()` | 排版标注工具 → `layout-annotate.md` | 只翻译；量子图与成品合成同一判定；写入带 echo_digest |
+| `tavotto_suggest_plan` / `_apply` / `_status`、`bridge.suggest_*()`、`changeplan.host_proposal` / `realize` | 建议待办工具 → `suggest-todos.md` | 只翻译、与桌面同一条流水线；出方案不写会话；只写用户勾的；出方案后图变了就拒 |
 <!-- END GENERATED: agents-routes -->
 
 ## 验证
