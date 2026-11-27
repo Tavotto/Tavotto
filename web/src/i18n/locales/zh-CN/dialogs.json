@@ -2844,6 +2844,7 @@
     "confirm": {
       "title": "需要你确认（{{count}}）",
       "condition": "原文条件：{{text}}",
+      "editorTip": "反馈期刊规范问题",
       "aria": "需要你确认的要求"
     },
     "field": {
@@ -2935,7 +2936,12 @@
     "descLabel": "问题描述（选填）",
     "submitMissing": "提交申请",
     "emailWrong": "核实后回信到这里",
-    "emailMissing": "收录后回信到这里"
+    "emailMissing": "收录后回信到这里",
+    "editorQuoteLabel": "问题描述或编辑部原话",
+    "editorQuotePlaceholder": "哪条规范不对、缺了什么，或粘贴编辑部邮件原话；仅用于核对官网，不会公开",
+    "editorAbout": "{{journal}}",
+    "editorTag": "反馈期刊规范问题",
+    "editorEmail": "核实后回信到这里"
   },
   "packageInstall": {
     "frozenPanels": "项目包保留了这些图的已确认画面。要继续图内编辑，请在本机运行原脚本。",
