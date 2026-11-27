@@ -519,3 +519,169 @@ def test_no_header_large_reduce_reads_the_same_rows_in_parent_and_script(tmp_pat
     spec = tpl.large_spec(values, recipe)
     header, srows = mod.read_reduced(p, "ws", 1, False, "utf-8", spec, no_header=True)
     assert header == ["col1", "col2"] and srows == rows
+
+
+# =========================================================================== 4. 日期的写法
+WHEN_YES = [
+    ("2026-03-01", (2026, 3, 1)),
+    ("2026-03-01 08:00", (2026, 3, 1, 8, 0, 0)),
+    ("2026-03-01T08:00", (2026, 3, 1, 8, 0, 0)),
+    ("2026-03-01T08:00:30", (2026, 3, 1, 8, 0, 30)),
+    ("2026-03-01 23:59:59", (2026, 3, 1, 23, 59, 59)),
+    ("2026/3/1", (2026, 3, 1)),
+    ("2026/03/01", (2026, 3, 1)),
+    ("2026年3月1日", (2026, 3, 1)),
+    ("2026年12月31日", (2026, 12, 31)),
+    ("  2026年3月1日  ", (2026, 3, 1)),
+]
+WHEN_NO = [
+    "03/04/2026",  # 分不清日月：不猜
+    "3/4/26",
+    "04-03-2026",
+    "2026-3-1",  # 横杠写法仍要求两位（与 `parse_date` 一致）
+    "2026-02-30",  # 不存在的日子
+    "2026/13/01",
+    "2026-03-01 25:00",
+    "2026-03-01T08:00Z",  # 时区后缀不认
+    "2026-03-01T08:00+08:00",
+    "2026-03-01 08",
+    "2026年3月",
+    "2026年3月1",
+    "20260301",
+    "March 1, 2026",
+    "08:00",
+    "",
+]
+
+
+@pytest.mark.parametrize(("text", "parts"), WHEN_YES)
+def test_parse_when_reads_year_first_dates_with_optional_time(text, parts):
+    import datetime as dt
+
+    got = adf.parse_when(text)
+    want = dt.datetime(*parts) if len(parts) == 6 else dt.date(*parts)
+    assert got == want and type(got) is type(want)
+
+
+@pytest.mark.parametrize("text", WHEN_NO)
+def test_parse_when_does_not_guess_ambiguous_or_invalid_dates(text):
+    assert adf.parse_when(text) is None
+
+
+def test_the_v1_date_rule_is_unchanged():
+    """v1 逐字不变：`parse_date` 只认 ISO 日期；v1 的摘要里新写法的列仍是文字。"""
+    for text in ("2026年3月1日", "2026/3/1", "2026-03-01 08:00", "2026-03-01T08:00"):
+        assert adf.parse_date(text) is None
+    table = [["d", "v"], ["2026年3月1日", "1"], ["2026年3月2日", "2"]]
+    v1 = adf._summarize(table, path_name="t", sha256="0", size=1)
+    v2 = adf._summarize(table, path_name="t", sha256="0", size=1, parse=adf.parse_cell)
+    assert v1.per_column["d"].kind == "text" and v1.per_column["d"].dates == 0
+    assert v2.per_column["d"].kind == "date" and v2.per_column["d"].dates == 2
+
+
+def test_a_time_of_day_is_a_fraction_of_a_day_so_same_day_rows_stay_apart(tmp_path, monkeypatch):
+    mod = runtime(tmp_path, monkeypatch)
+    base = adf.date_number(adf.parse_when("2026-03-01"))
+    assert adf.date_number(adf.parse_when("2026-03-01 12:00")) == base + 0.5
+    assert adf.date_number(adf.parse_when("2026-03-01 06:00:00")) == base + 0.25
+    assert adf.date_number(adf.parse_when("2026年3月1日")) == adf.date_number(
+        adf.parse_when("2026/03/01")
+    )
+    # 同一天三个不同时刻 = 三个不同的横坐标，不会被当成同一个 x 的重复测量
+    rows = [["2026-03-01 08:00", "1"], ["2026-03-01 14:00", "2"], ["2026-03-01 20:00", "3"]]
+    series = mod.trend_data(["t", "v"], rows, "t", ["v"], None, None, None, True)["series"]
+    ((xs, vals),) = series.values()
+    assert len(set(xs)) == 3 and vals == [1.0, 2.0, 3.0]
+    # 父进程与脚本（公共模块）是同一个函数
+    for text, _ in WHEN_YES:
+        assert mod.parse_when(text) == adf.parse_when(text)
+    for text in WHEN_NO:
+        assert mod.parse_when(text) is None
+    assert mod.date_number(mod.parse_when("2026-03-01 12:00")) == base + 0.5
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "col"),
+    [
+        ("cn.csv", "日期,销量\n2026年1月1日,105\n2026年2月1日,116\n2026年3月1日,126\n", "日期"),
+        ("slash.csv", "d,v\n2026/1/1,1\n2026/2/1,2\n2026/3/1,3\n", "d"),
+        (
+            "iso.csv",
+            "timestamp,t\n2026-03-01 08:00,11.5\n2026-03-02 08:00,11.8\n2026-03-03T08:00,14.5\n",
+            "timestamp",
+        ),
+    ],
+)
+def test_new_date_writings_make_the_column_a_date_column(tmp_path, name, text, col):
+    s = adf.inspect_data_source(write(tmp_path, text, name), None, v2=True)
+    assert s.per_column[col].kind == "date"
+
+
+def test_a_column_with_an_ambiguous_date_among_good_ones_stays_text(tmp_path):
+    p = write(tmp_path, "d,v\n2026/3/1,1\n03/04/2026,2\n2026/3/3,3\n", "mix.csv")
+    s = adf.inspect_data_source(p, None, v2=True)
+    assert s.per_column["d"].kind == "text" and s.per_column["d"].dates == 2
+
+
+def test_date_column_with_times_is_drawn_as_a_line_in_order(project, tmp_path):
+    root = tmp_path / "proj"
+    (root / "data").mkdir(parents=True)
+    text = "timestamp,temperature\n" + "".join(
+        f"2026-03-0{1 + i // 3} {8 + 6 * (i % 3):02d}:00,{11 + i * 0.3:.1f}\n" for i in range(9)
+    )
+    (root / "data" / "t.csv").write_text(text, encoding="utf-8")
+    resp = P.propose(root, project="p", folder="data", render="lazy", understand=False)
+    assert resp["kind"] == "candidates", resp
+    rec = next((i for i in resp["items"] if i.get("recommended")), resp["items"][0])
+    assert rec["values"]["x"] == "timestamp" and rec["title_code"] == "line_points"
+
+
+def test_date_column_script_runs_and_draws_with_times_and_cn_dates(tmp_path):
+    import subprocess
+
+    folder = tmp_path / "f"
+    folder.mkdir()
+    text = "timestamp,temperature\n" + "".join(
+        f"2026-03-0{1 + i // 3} {8 + 6 * (i % 3):02d}:00,{11 + i * 0.3:.1f}\n" for i in range(9)
+    )
+    (folder / "t.csv").write_text(text, encoding="utf-8")
+    profile = adf.profile_folder(folder)
+    (entry,) = profile.tables
+    recipe = R.FigureRecipe.from_dict(
+        {
+            "table": "t.csv",
+            "family": "trend",
+            "layers": [{"mark": "line"}],
+            "y": ["temperature"],
+            "why": "说明",
+            "x": "timestamp",
+        }
+    )
+    rendered = tpl.render_recipe_script(entry, recipe, data_rel="t.csv", stem="t")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "t.csv").write_text(text, encoding="utf-8")
+    (work / "t.py").write_text(rendered.script, encoding="utf-8")
+    (work / rendered.runtime_name).write_bytes(rendered.runtime)
+    out = subprocess.run(
+        [sys.executable, "t.py"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={"MPLBACKEND": "Agg", "PATH": "", "HOME": str(tmp_path)},
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert (work / "t.pdf").exists()
+
+
+def test_x_labels_of_missing_error_bars_show_the_time_when_there_is_one():
+    assert P._x_text(adf.date_number(adf.parse_when("2026-03-01")), True) == "2026-03-01"
+    assert (
+        P._x_text(adf.date_number(adf.parse_when("2026-03-01 08:00")), True) == "2026-03-01 08:00"
+    )
+    assert (
+        P._x_text(adf.date_number(adf.parse_when("2026-03-01T08:00:30")), True)
+        == "2026-03-01 08:00:30"
+    )
+    assert P._x_text(2.5, False) == "2.5"

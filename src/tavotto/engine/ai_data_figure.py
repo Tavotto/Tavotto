@@ -159,6 +159,7 @@ def legacy_parse_cell(s: str) -> tuple[str, float | None]:
 
 
 def parse_date(s: str) -> _dt.date | None:
+    """v1 的日期规则：只认 ISO `YYYY-MM-DD`（v1 的摘要、期望数据与它自己的脚本是一套，**逐字不变**）；v2 用 `parse_when`。"""
     t = s.strip()
     if not _ISO_DATE.fullmatch(t):
         return None
@@ -168,11 +169,38 @@ def parse_date(s: str) -> _dt.date | None:
         return None
 
 
+def parse_when(s):
+    """v2 的日期 / 日期时刻：认三种**年份在最前、不会分不清日月**的写法，别的一律不是日期（`03/04/2026` 是 3 月 4 日还是 4 月 3 日分不清，不猜）：
+    ISO `2026-03-01`，可带时刻（`T` 或一个空格分隔，`HH:MM` 或 `HH:MM:SS`，如 `2026-03-01 08:00`、`2026-03-01T08:00:30`）；`2026/3/1`（月、日可以只写一位）；
+    `2026年3月1日`。只有日期 → `datetime.date`（与 `parse_date` 对 ISO 日期的结果一样）；带时刻 → `datetime.datetime`（无时区；`Z` / `+08:00` 之类的时区后缀不认）。
+    不合法（`2026-02-30`、`25:00`）→ None。**运行时函数**；`date_number` 把它们折成自 1970-01-01 起的天数（带时刻的是小数天）。"""
+    t = s.strip()
+    m = re.fullmatch(
+        r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?)?", t
+    )
+    if m is None:
+        m = re.fullmatch(r"([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})()()()", t) or re.fullmatch(
+            r"([0-9]{4})年([0-9]{1,2})月([0-9]{1,2})日()()()", t
+        )
+    if m is None:
+        return None
+    y, mo, d, hh, mi, ss = m.groups()
+    try:
+        if hh:
+            return _dt.datetime(int(y), int(mo), int(d), int(hh), int(mi), int(ss or 0))
+        return _dt.date(int(y), int(mo), int(d))
+    except ValueError:
+        return None
+
+
 #: 日期数值 = 自 1970-01-01 起的天数；生成的日期脚本会把 matplotlib 的纪元固定成它（见 `_EPOCH_SETUP`）
 _EPOCH = _dt.date(1970, 1, 1)
 
 
-def date_number(d: _dt.date) -> float:
+def date_number(d) -> float:
+    """日期 → 自 1970-01-01 起的天数；带时刻（`datetime`）的折成小数天（同一天不同时刻是不同的横坐标，不会被当成重复的 x）。**运行时函数**。"""
+    if isinstance(d, _dt.datetime):
+        return float((d.date() - _EPOCH).days) + (d.hour * 3600 + d.minute * 60 + d.second) / 86400
     return float((d - _EPOCH).days)
 
 
@@ -1279,7 +1307,7 @@ def _scan_summary(
                     st.hi = v
             elif cls == "text":
                 s.text_count += 1
-                if parse_date(cell) is not None:
+                if parse_when(cell) is not None:
                     s.dates += 1
                 if len(s.text) < TEXT_SAMPLES:
                     s.text.append(cell.strip())
@@ -1652,6 +1680,7 @@ def _summarize(
     #: 单元格规则：默认 v1 的（不认千分位）；v2 传 `parse_cell`
     v2 = parse is not None
     parse = parse or legacy_parse_cell
+    date_of = parse_when if v2 else parse_date  # v1 的日期规则逐字不变（只认 ISO 日期）
     numbered = (
         list(zip(row_numbers, table)) if row_numbers and len(row_numbers) == len(table) else None
     )
@@ -1692,7 +1721,7 @@ def _summarize(
             cls, _ = parse(cell)
             if cls == "text":
                 s.text_count += 1
-                if parse_date(cell) is not None:
+                if date_of(cell) is not None:
                     s.dates += 1
                 if len(s.text) < TEXT_SAMPLES:
                     s.text.append(cell.strip())

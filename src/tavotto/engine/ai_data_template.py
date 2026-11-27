@@ -57,6 +57,7 @@ from .ai_data_figure import (
     nameless_tail,
     parse_cell,
     parse_date,
+    parse_when,
     resolve_header,
     table_from_text,
     xvg_label,
@@ -435,7 +436,7 @@ def trend_data(header, rows, x, ys, group, facet, unit, x_is_date, err=None):
     panels, groups, series, epoints = [], [], {}, {}
     for r in rows:
         if x_is_date:
-            dv = parse_date(r[xi])
+            dv = parse_when(r[xi])
             xv = date_number(dv) if dv is not None else None
         else:
             kind, v = parse_cell(r[xi])
@@ -772,7 +773,7 @@ def reduce_trend(header, body, spec):
                 elif v > s[2]:
                     s[2] = v
         if x_is_date:
-            dv = parse_date(r[xi])
+            dv = parse_when(r[xi])
             xv = date_number(dv) if dv is not None else None
         else:
             kind, v = parse_cell(r[xi])
@@ -1242,6 +1243,7 @@ RUNTIME_FUNCTIONS = (
     NumCat,
     parse_cell,
     parse_date,
+    parse_when,
     date_number,
     iter_records,
     delimited_records,
@@ -2579,7 +2581,7 @@ def gap_audit(values: adf.DataSummary, spec: dict, ords) -> int:
         )
         for n, (_ln, r) in enumerate(body, start=1):
             if spec["date"]:
-                good = adf.parse_date(r[xi]) is not None
+                good = adf.parse_when(r[xi]) is not None
             else:
                 good = adf.parse_cell(r[xi])[0] == "numeric"
             key = tuple(r[k].strip() for k in kis)
