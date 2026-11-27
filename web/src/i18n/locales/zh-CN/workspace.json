@@ -199,7 +199,10 @@
     "openInspector": "全部属性",
     "selectedCount_other": "已选 {{count}} 个",
     "sizeMenu": "尺寸",
-    "textMenu": "文字"
+    "textMenu": "文字",
+    "frameEdgeDetail": "文字 pt 不变 · 按住 {{alt}} 改留白",
+    "frameSquare": "{{base}} · 正方形",
+    "frameCornerUniformDetail": "文字 pt 不变 · 按住 {{alt}} 自由比例"
   },
   "unexpectedError": {
     "text": "Tavotto 遇到了意外状况",

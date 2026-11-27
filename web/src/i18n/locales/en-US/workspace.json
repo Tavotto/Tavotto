@@ -211,7 +211,10 @@
     "selectedCount_one": "{{count}} selected",
     "selectedCount_other": "{{count}} selected",
     "sizeMenu": "Size",
-    "textMenu": "Text"
+    "textMenu": "Text",
+    "frameEdgeDetail": "text keeps its pt size · hold {{alt}} for margins",
+    "frameSquare": "{{base}} · square",
+    "frameCornerUniformDetail": "text keeps its pt size · hold {{alt}} for free ratio"
   },
   "unexpectedError": {
     "text": "Tavotto ran into an unexpected issue",

@@ -101,9 +101,10 @@ export interface PadEdgePlan {
 }
 
 /**
- * 拖画布的一条边（ADR 0161）。`deltaOut` 是指针**往外**的位移（导出 mm，往外为正）。
+ * 按住 ⌥ 拖画布的一条边 = 改留白（ADR 0161；2026-11-27 起不按 ⌥ 是改图幅，见 `planFigureEdge`）。`deltaOut` 是指针**往外**的位移（导出 mm，往外为正）。
  * 停靠点：图边（0）、内容边缘（`-inset`）、左右边还有「画布宽 = 栏宽」；离得最近、且在 `snapMm` 内的那一个吸过去。
- * 越过内容边缘往里：没按 ⌥（`allowCrop`）停在内容边缘（`blocked`）；按了才放行（`crop`）。没有内容边缘事实时不拦。
+ * 越过内容边缘往里：`allowCrop` 为假时停在内容边缘（`blocked`），为真才放行（`crop`）；没有内容边缘事实时不拦。
+ * 手势里进到这里本来就按着 ⌥（「要裁」），所以恒放行——与排版 ⌥ 拖边裁剪同一个道理（修订 2026-11-09）。
  */
 export function planPadEdge(opts: {
   edge: PageEdge
@@ -172,11 +173,14 @@ export interface CornerPlan {
   /** 面板新的左上角（页面 mm） */
   pos: { x: number; y: number }
   snap: PageColumn | null
+  /** 自由比例时吸成了正方形图幅 */
+  square: boolean
 }
 
 /**
- * 拖画布的一个角 = 改图幅（ADR 0161）：默认等比，`free`（⇧）自由比例；对角不动；留白的 mm 不变。
- * 吸附在**导出宽 = 图幅宽 + 左右留白**上（离栏宽 ±2 mm，`noSnap`（⌥）关）。`limits` 是引擎给 `size_mm` 的界。
+ * 拖画布的一个角 = 改图幅（ADR 0161）：默认等比，`free`（⌥，2026-11-27 起与排版同一个键）自由比例；对角不动；留白的 mm 不变。
+ * 吸附在**导出宽 = 图幅宽 + 左右留白**上（离栏宽 ±2 mm），自由比例时高还吸「与宽等长」（正方形）；`noSnap`（⌘）都关。
+ * `limits` 是引擎给 `size_mm` 的界。
  * `dx` / `dy` 是指针位移（页面 mm，右 / 下为正）。
  */
 export function planFigureCorner(opts: {
@@ -223,8 +227,13 @@ export function planFigureCorner(opts: {
   const limH = (v: number) => lim(Math.max(minH, v))
   w = limW(round2(w))
   let h: number
-  if (free) h = limH(round2(sizeMm[1] + (top ? -dy : dy) / k))
-  else {
+  let square = false
+  if (free) {
+    h = sizeMm[1] + (top ? -dy : dy) / k
+    if (!noSnap && Math.abs(h - w) < PAGE_EDGE_SNAP_MM) h = w
+    h = limH(round2(h))
+    square = Math.abs(h - w) < 0.005
+  } else {
     h = round2((sizeMm[1] * w) / sizeMm[0])
     // 等比：高被 minH 顶住时宽跟着抬（取更严的那个），宽高比不变
     if (h < minH || h < (limits?.min ?? 1)) {
@@ -236,7 +245,86 @@ export function planFigureCorner(opts: {
   const bw = (w + padW) * k
   const bh = (h + padH) * k
   const box = { x: left ? ax - bw : ax, y: top ? ay - bh : ay, w: bw, h: bh }
-  return { sizeMm: [w, h], box, pos: { x: box.x + pad.l * k, y: box.y + pad.t * k }, snap }
+  return { sizeMm: [w, h], box, pos: { x: box.x + pad.l * k, y: box.y + pad.t * k }, snap, square }
+}
+
+export interface EdgeResizePlan {
+  sizeMm: [number, number]
+  /** 新的画布框（页面 mm）：被拖边的对边不动 */
+  box: { x: number; y: number; w: number; h: number }
+  /** 面板新的左上角（页面 mm） */
+  pos: { x: number; y: number }
+  snap: PageColumn | null
+  /** 吸成了正方形图幅 */
+  square: boolean
+  /** 图幅真的变了（还在起手的吸附半径内 = false，松手什么都不做） */
+  changed: boolean
+}
+
+/**
+ * 拖画布的一条边 = 改这一维的图幅（ADR 0161 修订 2026-11-27，与多图排版拖边同一条规则）：文字 pt 不变，对边不动，
+ * 留白的 mm 不变（紧凑边随新内容边缘重算）。`deltaOut` 是指针**往外**的位移（导出 mm，往外为正）。
+ * 停靠点：起手的图幅（擦到边不误改）、另一维等长（正方形）、左右边还有「导出宽 = 图幅宽 + 左右留白 = 栏宽」；
+ * 离得最近、且在 `snapMm` 内的那一个吸过去，`noSnap`（⌘）只留起手那一个。
+ */
+export function planFigureEdge(opts: {
+  edge: PageEdge
+  box0: { x: number; y: number; w: number; h: number }
+  sizeMm: readonly [number, number]
+  pad: FramePad
+  k: number
+  deltaOut: number
+  noSnap: boolean
+  columns: readonly PageColumn[]
+  limits?: { min?: number; max?: number }
+  snapMm?: number
+}): EdgeResizePlan {
+  const { edge, box0, sizeMm, pad, k, deltaOut, noSnap, columns, limits, snapMm = PAGE_EDGE_SNAP_MM } = opts
+  const horizontal = edge === 'l' || edge === 'r'
+  const axis = horizontal ? 0 : 1
+  const dim0 = sizeMm[axis]
+  const other = sizeMm[1 - axis]
+  const padW = pad.l + pad.r
+  const padH = pad.t + pad.b
+  const padDim = horizontal ? padW : padH
+  const round2 = (v: number) => Math.round(v * 100) / 100
+  let v = dim0 + deltaOut
+
+  type Cand = { v: number; kind: 'start' | 'square' | 'col'; col?: PageColumn }
+  const cands: Cand[] = [{ v: dim0, kind: 'start' }]
+  if (!noSnap) {
+    cands.push({ v: other, kind: 'square' })
+    if (horizontal) for (const c of columns) cands.push({ v: c.w - padW, kind: 'col', col: c })
+  }
+  let best: Cand | null = null
+  for (const c of cands) {
+    const d = Math.abs(v - c.v)
+    if (d < snapMm && (!best || d < Math.abs(v - best.v))) best = c
+  }
+  if (best) v = best.v
+  // 下限：引擎的界，且画布（图幅 + 两侧留白）这一维至少剩 FRAME_MIN_VISIBLE_MM
+  const lo = Math.max(limits?.min ?? 1, FRAME_MIN_VISIBLE_MM - padDim)
+  const v0 = v
+  v = Math.min(limits?.max ?? Infinity, Math.max(lo, round2(v)))
+  const kept = Math.abs(v - round2(v0)) < 0.005 ? best : null
+  const changed = Math.abs(v - dim0) >= 0.005
+  const size: [number, number] = horizontal ? [v, sizeMm[1]] : [sizeMm[0], v]
+  const bw = (size[0] + padW) * k
+  const bh = (size[1] + padH) * k
+  const box = {
+    x: edge === 'l' ? box0.x + box0.w - bw : box0.x,
+    y: edge === 't' ? box0.y + box0.h - bh : box0.y,
+    w: bw,
+    h: bh,
+  }
+  return {
+    sizeMm: size,
+    box,
+    pos: { x: box.x + pad.l * k, y: box.y + pad.t * k },
+    snap: kept?.kind === 'col' ? kept.col! : null,
+    square: changed && Math.abs(size[0] - size[1]) < 0.005,
+    changed,
+  }
 }
 
 /** 「贴合内容」：四边都落在紧凑停靠点上 */
