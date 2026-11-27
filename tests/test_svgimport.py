@@ -677,3 +677,62 @@ def test_pattern_element_alone_is_fine_only_a_pattern_fill_is_unsupported():
     assert unused["unsupported"] == {} and len(unused["objects"]) == 1
     used = imp(pat + '<rect width="10" height="10" fill="url(#p)"/>')
     assert used["unsupported"] == {"pattern": 1}
+
+
+# ------------------------------------------------------------------ 标记图形「看起来」的样子（Codex P1）
+LINE_M = '<path d="M5 5 L50 5" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        '<path d="M0,0 L4,2 L0,4 z" display="none"/>',
+        '<path d="M0,0 L4,2 L0,4 z" opacity="0"/>',
+        '<path d="M0,0 L4,2 L0,4 z" fill-opacity="0"/>',
+        '<path d="M0,0 L4,2 L0,4 z" visibility="hidden"/>',
+        '<path d="M0,0 L4,2 L0,4" fill="none" stroke="#000" stroke-opacity="0"/>',
+        '<path d="M0,0 L4,2 L0,4 z" style="opacity:0"/>',
+    ],
+)
+def test_invisible_marker_shape_gives_no_head(inner):
+    r = imp(_marker(inner) + LINE_M)
+    assert r["unsupported"] == {} and heads(r["objects"][0]) == {}
+
+
+def test_invisible_through_marker_element_or_inherited_paint():
+    assert heads(imp(_marker(TRI, opacity="0") + LINE_M)["objects"][0]) == {}
+    assert heads(imp(_marker(TRI, visibility="hidden") + LINE_M)["objects"][0]) == {}
+    assert heads(imp(_marker(TRI, **{"fill-opacity": "0"}) + LINE_M)["objects"][0]) == {}
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        '<path d="M0,0 L4,2 L0,4 z" opacity="0.5"/>',
+        '<path d="M0,0 L4,2 L0,4 z" fill-opacity="0.5"/>',
+        '<path d="M0,0 L4,2 L0,4 z" fill="rgba(0,0,0,0.5)"/>',
+        '<path d="M0,0 L4,2 L0,4" fill="none" stroke="#000" stroke-opacity="0.5"/>',
+        '<path d="M0,0 L4,2 L0,4 z" clip-path="url(#c)"/>',
+        '<path d="M0,0 L4,2 L0,4 z" paint-order="stroke"/>',
+    ],
+)
+def test_partly_transparent_or_clipped_marker_shape_stays_unsupported(inner):
+    defs = '<defs><clipPath id="c"><rect width="2" height="4"/></clipPath></defs>'
+    assert imp(defs + _marker(inner) + LINE_M)["unsupported"] == {"marker": 1}
+
+
+def test_partly_transparent_marker_element_stays_unsupported():
+    assert imp(_marker(TRI, opacity="0.5") + LINE_M)["unsupported"] == {"marker": 1}
+
+
+def test_context_fill_and_context_stroke_use_their_own_paint():
+    red_black = (
+        '<path d="M5 5 L50 5" fill="red" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    )
+    r = imp(_marker('<path d="M0,0 L4,2 L0,4 z" fill="context-fill"/>') + red_black)
+    assert r["unsupported"] == {"marker": 1}  # 头是红的、线是黑的：端型只能是线色
+    r = imp(_marker('<path d="M0,0 L4,2 L0,4 z" fill="context-stroke"/>') + red_black)
+    assert r["unsupported"] == {} and heads(r["objects"][0]) == {"headEnd": "triangle"}
+    same = '<path d="M5 5 L50 5" fill="#000" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    r = imp(_marker('<path d="M0,0 L4,2 L0,4 z" fill="context-fill"/>') + same)
+    assert r["unsupported"] == {} and heads(r["objects"][0]) == {"headEnd": "triangle"}

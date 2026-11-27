@@ -732,6 +732,7 @@ class _Ctx:
     stops_cache: dict[str, list[dict]] = field(default_factory=dict)
     #: 原因码 → 一句建议（每个码只留第一条；有就随结果回去，没有就没有这个键）
     hints: dict[str, str] = field(default_factory=dict)
+    parents: dict = field(default_factory=dict)
 
     def note(self, code: str, hint: str | None = None) -> None:
         self.notes[code] = self.notes.get(code, 0) + 1
@@ -1581,27 +1582,75 @@ def _straight_end(nodes: list[dict], end: bool) -> bool:
     return _same_pt(nodes[0]["out"], nodes[0]["p"]) and _same_pt(nodes[1]["in"], nodes[1]["p"])
 
 
-def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str):
+def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: str | None):
     """标记里那一个图形 → `(kind, tip, dir, length)`（标记自己的坐标）或 `None`。
 
     kind = triangle / open / dot；`tip` 是尖（圆点 = 圆心）；`dir` 是 底边中点 → 尖 的弧度（圆点 = None）；
     `length` = 帽长（圆点 = 直径）。"""
     if child.get("transform"):
         return None
-    mst = _computed(child, _computed(mel, {}, ctx), ctx)
+    # 标记图形「看起来」的样子要先算准（继承 + 祖先）：不可见就是没有头（与原图一致），部分透明 / 裁剪 / 蒙版 / 描边顺序头表达不了
+    chain = []
+    el = child
+    while el is not None and len(chain) < 128:
+        chain.append(el)
+        el = ctx.parents.get(el)
+    chain.reverse()
+    mst: dict = {}
+    opacity = 1.0
+    hidden = False
+    for i, e in enumerate(chain):
+        mst = _computed(e, mst, ctx)
+        if mst.get("display") == "none":
+            if e is child:
+                hidden = True
+            else:
+                return None  # marker / 祖先上的 display:none：规范对 marker 另有说法，保守不换
+        try:
+            opacity *= float(mst.get("opacity", "1") or 1)
+        except ValueError:
+            return None
+        if e in (child, mel) and (
+            any((mst.get(k) or "none") != "none" for k in ("clip-path", "mask", "filter"))
+            or (e.get("paint-order") or "normal") != "normal"
+        ):
+            return None
+    if hidden or mst.get("visibility") in ("hidden", "collapse") or opacity <= 0:
+        return "hidden"
+    if opacity < 1:
+        return None
     cur = mst.get("color", "black")
 
-    def paint(v: str | None) -> str | None:
-        v = (v or "").strip()
-        if v in ("context-stroke", "context-fill"):
-            return stroke_hex
-        if _url_id(v):
-            return "?"
-        c = parse_color(v, cur)
-        return c[0] if c else None
+    def eff_opacity(key: str) -> float | None:
+        try:
+            return float(mst.get(key, "1") or 1)
+        except ValueError:
+            return None
 
-    fill = paint(mst.get("fill", "black"))
-    stroke = paint(mst.get("stroke", "none"))
+    def paint(v: str | None, op_key: str) -> str | None:
+        v = (v or "").strip()
+        op = eff_opacity(op_key)
+        if op is None or not 0 <= op <= 1:
+            return "?"
+        if v == "context-stroke":
+            c = stroke_hex
+        elif v == "context-fill":
+            c = fill_hex
+        elif _url_id(v):
+            c = "?"
+        else:
+            parsed = parse_color(v, cur)
+            c = parsed[0] if parsed else None
+            if parsed and parsed[1] < 1:
+                c = "?"  # 颜色自带 alpha：端型没有部分透明
+        if c is None or op == 0:
+            return None  # 不画
+        return c if op == 1 else "?"
+
+    fill = paint(mst.get("fill", "black"), "fill-opacity")
+    stroke = paint(mst.get("stroke", "none"), "stroke-opacity")
+    if fill is None and stroke is None:
+        return "hidden"
     if tag == "circle":
         r = _length(child.get("r"))
         if r <= 0 or fill != stroke_hex or stroke not in (None, stroke_hex):
@@ -1657,7 +1706,13 @@ def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str):
 
 
 def _marker_end_head(
-    ref: str, at_end: bool, nodes: list[dict], sw_user: float, stroke_hex: str, ctx: _Ctx
+    ref: str,
+    at_end: bool,
+    nodes: list[dict],
+    sw_user: float,
+    stroke_hex: str,
+    fill_hex: str | None,
+    ctx: _Ctx,
 ):
     """一端的标记 → `(端型, 档位, 端点沿线外移的距离（用户单位）)`；换不了回 `None`"""
     mid = _url_id(ref)
@@ -1686,7 +1741,9 @@ def _marker_end_head(
             return None
         scale = min(mw / vb[2], mh / vb[3])
     total = scale * (sw_user if units == "strokeWidth" else 1.0)
-    shape = _marker_shape(child, _local(child.tag), mel, ctx, stroke_hex)
+    shape = _marker_shape(child, _local(child.tag), mel, ctx, stroke_hex, fill_hex)
+    if shape == "hidden":
+        return "hidden"
     if shape is None or total <= 0:
         return None
     kind, tip, tdir, length_c = shape
@@ -1745,12 +1802,16 @@ def _markers(tag: str, st: dict, geom: list[dict] | None, ctx: _Ctx) -> dict:
         ctx.note("marker", _MARKER_HINT)
         return {}
     nodes = geom[0]["nodes"]
+    fc = parse_color(st.get("fill", "black"), st.get("color", "black"))
+    fill_hex = "?" if _url_id(st.get("fill")) else (fc[0] if fc and fc[1] == 1 else None)
     fields: dict = {}
     moves: list[tuple[bool, float]] = []
     for at_end, ref in ((False, start), (True, end)):
         if not ref:
             continue
-        got = _marker_end_head(ref, at_end, nodes, sw_user, stroke_c[0], ctx)
+        got = _marker_end_head(ref, at_end, nodes, sw_user, stroke_c[0], fill_hex, ctx)
+        if got == "hidden":
+            continue  # 标记图形不可见：原图里这一端就没有头
         if got is None:
             ctx.note("marker", _MARKER_HINT)
             return {}
@@ -1922,12 +1983,15 @@ def import_svg(svg_text: str) -> dict:
     except _Rejected as rej:
         return {"objects": [], "size_mm": [0.0, 0.0], "unsupported": {rej.code: 1}}
     ids = {}
+    parents: dict = {}
     css = []
     for tick, el in enumerate(root.iter()):
         if not tick & 0xFF and time.monotonic() > deadline:
             raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
         if not isinstance(el.tag, str):
             continue
+        for c in el:
+            parents[c] = el
         if el.get("id"):
             ids.setdefault(el.get("id"), el)
         if _local(el.tag) == "style" and el.text:
@@ -1937,7 +2001,7 @@ def import_svg(svg_text: str) -> dict:
     for c in css:
         rules += parse_css(c, notes, len(rules), deadline)
     rules.sort(key=lambda r: (r.spec, r.order))  # 一次排好，级联时按序取用
-    ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=deadline)
+    ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=deadline, parents=parents)
     # 视口：width / height（缺省按 viewBox，单位 px = 1/96 in）；viewBox 等比放进视口（preserveAspectRatio 缺省 xMidYMid meet）
     vb = _nums(root.get("viewBox") or "")
     vbw, vbh = (vb[2], vb[3]) if len(vb) == 4 and vb[2] > 0 and vb[3] > 0 else (None, None)
