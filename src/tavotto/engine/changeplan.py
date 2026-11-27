@@ -2227,19 +2227,30 @@ def ask_vector_edits(
     selected: list[str] | None = None,
     selection: dict | None = None,
     locale: str | None = None,
+    measure=None,
+    measured: dict | None = None,
 ) -> dict:
-    """改图助手改画布矢量对象（ADR 0212 第 6 期）：问一次模型 → `{ops, unhandled}`（ops 已逐条过 `apply_ops` 干跑，
-    不合格的进 `unhandled`）；失败抛 `PlanFailure(稳定码)`。`canvas` 是前端给的内存画布，不读盘。"""
+    """改图助手改 / 加画布矢量对象（ADR 0212 第 6 期、0208 第 ③ 期）：问一次模型 → `{ops, unhandled, unmeasured, scene_fingerprint}`
+    （ops 已逐条过 `apply_ops` 干跑，不合格的进 `unhandled`）；失败抛 `PlanFailure(稳定码)`。`canvas` 是前端给的内存画布，不读盘。
+    `measure`（桌面量子图的函数，带缓存与时限）给了就先量一遍子图、把量过的场景放进提示，让模型能把标注锚在数据点 / 图内元素上。"""
+    if measured is None and measure is not None:
+        measured = vectorplan.measure_scene(canvas, measure)
     system, user = vectorplan.build_prompt(
-        instruction, canvas, selected, max_chars=MODEL_MAX_INPUT_CHARS, locale=locale
+        instruction,
+        canvas,
+        selected,
+        max_chars=MODEL_MAX_INPUT_CHARS,
+        locale=locale,
+        measured=measured,
     )
-    return _structured(
+    out = _structured(
         system,
         user,
-        lambda obj: vectorplan.validate_ops(obj, canvas, instruction),
+        lambda obj: vectorplan.validate_ops(obj, canvas, instruction, measure),
         selection,
         max_output_tokens=VECTOR_MAX_OUTPUT_TOKENS,
     )
+    return out
 
 
 # --------------------------------------------------------------------------- 任务登记（进程内）

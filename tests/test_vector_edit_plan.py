@@ -213,7 +213,8 @@ def test_wrong_overall_shape_raises_so_call_structured_treats_it_as_invalid(obj)
 
 def test_empty_ops_is_a_valid_answer_when_the_model_says_it_cannot():
     out = vp.validate_ops({"ops": [], "unhandled": [{"reason": "要改脚本"}]}, _canvas())
-    assert out == {"ops": [], "unhandled": [{"reason": "要改脚本"}]}
+    assert out["ops"] == [] and out["unhandled"] == [{"reason": "要改脚本"}]
+    assert out["unmeasured"] == {"P1": "memory_snapshot"}  # 快照里没有量的输入：只有外框
 
 
 # ------------------------------------------------------------------ 方案
@@ -612,3 +613,135 @@ def test_instruction_mode_checks_stars_against_the_instruction(env):
         ).get_json()["plan_id"],
     )
     assert len(body["plan"]["ops"]) == 2 and not body["plan"]["unhandled"]
+
+
+# ------------------------------------------------------------------ 新增标注 3b：端点按快照里的量的输入量子图
+
+_PEAK = {
+    "kind": "arrow",
+    "name": "peak",
+    "from": {"anchor": {"panel": {"id": "P1", "point": "ne"}}, "offset_mm": [8, -6]},
+    "to": {"anchor": {"data": {"panel": "P1", "axes": "axes_0", "x": 5, "y": 5}}},
+}
+
+
+def _fake_measure(m, monkeypatch, *, fail=None):
+    """把桌面的量法换成 `test_layoutannotate.measure`（同形状）；`fail` = 量不了的码。记下每次被量的子图与请求。"""
+    from tavotto.engine import layoutannotate as la, vectormeasure as vm
+    from test_layoutannotate import measure as stub
+
+    calls = []
+
+    def fake(panel, requests):
+        calls.append((panel.get("fileId"), panel.get("overrides"), list(requests)))
+        if fail:
+            raise la.PanelUnavailable(fail)
+        return stub(panel, requests)
+
+    monkeypatch.setattr(m, "_vector_measure_panel", fake)
+    vm.CACHE.clear()
+    return calls
+
+
+def test_ops_mode_measures_the_panel_so_a_data_anchor_resolves(env, monkeypatch):
+    m, client, *_ = env
+    calls = _fake_measure(m, monkeypatch)
+    canvas = _canvas()
+    next(o for o in canvas["objects"] if o["type"] == "panel")["overrides"] = [
+        {"gid": "g", "prop": "x", "value": 1}
+    ]
+    r = client.post(
+        "/api/vector-edit/plan", json={"canvas": canvas, "ops": [{"op": "add", "items": [_PEAK]}]}
+    ).get_json()
+    assert r["errors"] in ([], [{"code": "checks_failed"}]) and r["objects"], r
+    assert r["unmeasured"] == {} and r["scene_fingerprint"]
+    # 覆盖项（快照里改过、还没存盘的）原样交给量法；带着数据点请求量过
+    assert calls and calls[0][1] == [{"gid": "g", "prop": "x", "value": 1}]
+    assert any(c[2] == [{"axes": "axes_0", "x": 5, "y": 5}] for c in calls)
+
+
+def test_ops_mode_falls_back_to_the_frame_when_the_panel_cannot_be_measured(env, monkeypatch):
+    m, client, *_ = env
+    _fake_measure(m, monkeypatch, fail="composed_from_snapshot")
+    r = client.post(
+        "/api/vector-edit/plan",
+        json={
+            "canvas": _canvas(),
+            "ops": [
+                {
+                    "op": "add",
+                    "items": [
+                        _PEAK,
+                    ],
+                }
+            ],
+        },
+    ).get_json()
+    assert r["ok"] is False and r["errors"][0]["code"] == "needs_measurement"
+    assert r["unmeasured"] == {"P1": "composed_from_snapshot"}
+    frame = client.post(
+        "/api/vector-edit/plan",
+        json={"canvas": _canvas(), "ops": [{"op": "add", "items": [_FRAME]}]},
+    ).get_json()
+    assert frame["ok"] is True and frame["unmeasured"] == {"P1": "composed_from_snapshot"}
+
+
+def test_instruction_mode_shows_the_model_the_measured_scene_and_reports_unmeasured(
+    env, monkeypatch
+):
+    m, client, _proj, model, _tmp = env
+    _fake_measure(m, monkeypatch)
+    model.result = {"ops": [{"op": "add", "items": [_PEAK]}], "unhandled": []}
+    start = client.post(
+        "/api/vector-edit/plan", json={"canvas": _canvas(), "instruction": "箭头指向峰"}
+    ).get_json()
+    assert start["phase"] == "measure"  # 画布上有可量的子图：第一阶段是「正在量图」
+    plan = _poll(client, start["plan_id"])["plan"]
+    assert [o["op"] for o in plan["ops"]] == ["add"] and plan["unmeasured"] == {}
+    assert plan["objects"] and not plan["unhandled"]
+    user = model.calls[-1]["user"] if "user" in model.calls[-1] else str(model.calls[-1])
+    assert "axes_0" in user and '"measured":true' in user  # 模型看到了量过的轴 / 元素
+
+
+def test_instruction_mode_with_an_unmeasurable_panel_still_plans_and_says_why(env, monkeypatch):
+    m, client, _proj, model, _tmp = env
+    _fake_measure(m, monkeypatch, fail="measure_timeout")
+    model.result = {
+        "ops": [{"op": "add", "items": [_FRAME]}, {"op": "add", "items": [_PEAK]}],
+        "unhandled": [],
+    }
+    plan = _poll(
+        client,
+        client.post(
+            "/api/vector-edit/plan", json={"canvas": _canvas(), "instruction": "加外框并指向峰"}
+        ).get_json()["plan_id"],
+    )["plan"]
+    assert [o["op"] for o in plan["ops"]] == ["add"] and plan["ok"]
+    assert plan["unhandled"][0]["code"] == "needs_measurement"
+    assert plan["unmeasured"] == {"P1": "measure_timeout"}
+
+
+def test_a_figure_changed_between_measuring_and_planning_voids_the_plan(env, monkeypatch):
+    m, client, _proj, model, _tmp = env
+    from tavotto.engine import vectormeasure as vm
+    from test_layoutannotate import measure as stub
+
+    vm.CACHE.clear()
+    n = {"i": 0}
+
+    def drifting(panel, requests):
+        n["i"] += 1
+        out = stub(panel, requests)
+        if n["i"] > 1:  # 第一次（出提示前）之后量到的图不一样了
+            out["draw_manifest"] = {**out["draw_manifest"], "size_mm": [81, 40]}
+        return out
+
+    monkeypatch.setattr(m, "_vector_measure_panel", drifting)
+    model.result = {"ops": [{"op": "add", "items": [_PEAK]}], "unhandled": []}
+    body = _poll(
+        client,
+        client.post(
+            "/api/vector-edit/plan", json={"canvas": _canvas(), "instruction": "指向峰"}
+        ).get_json()["plan_id"],
+    )
+    assert body["state"] == "failed" and body["code"] == "change_plan_figure_changed"

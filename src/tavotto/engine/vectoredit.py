@@ -2053,6 +2053,8 @@ def _plan(canvas: dict, ops: object, measure, profile, context: dict | None = No
         "failed": failed,
         "unverified": [f for f in facts if f["status"] == "unknown"],
         "unmeasured": unmeasured,
+        # 量过的子图的场景指纹（子图落位 + 这次导出绘制的 manifest）：桌面线程拿它核「量与出方案之间图没被改」
+        "scene_fingerprint": vectorscene.scene_fingerprint(panels, la._page(canvas)),  # noqa: SLF001
         "errors": [{"code": "checks_failed"}] if failed else [],
     }
 
@@ -2081,11 +2083,16 @@ def unmeasured_panel(panel: dict, requests: list) -> dict:  # noqa: ARG001
 
 
 def propose_memory(
-    canvas: dict, ops: object, *, profile: dict | None = None, context: dict | None = None
+    canvas: dict,
+    ops: object,
+    *,
+    profile: dict | None = None,
+    context: dict | None = None,
+    measure=None,
 ) -> dict:
     """**不读盘、不写盘**：对一份内存里的画布（前端给的文档形态）算方案——`propose` 的同一个 `_plan`，只是子图量不了（只有外框）。
     桌面改图助手（ADR 0212 第 6 期）用；回的形状与 `propose` 相同（没有 `base_revision`：基线核对由前端按对象指纹做）。"""
-    return _plan(canvas, ops, unmeasured_panel, profile, context)
+    return _plan(canvas, ops, measure or unmeasured_panel, profile, context)
 
 
 def commit(
