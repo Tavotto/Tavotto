@@ -999,12 +999,57 @@ def test_pro_smoke_needs_the_staged_companions(tmp_path):
     assert all(n in got["summary"] for n in A.PRO_SMOKE_COMPANIONS)
 
 
-def test_pro_smoke_driver_keeps_secrets_out_of_its_result():
-    src = (WINLAB / "pro_smoke.py").read_text(encoding="utf-8")
-    # 令牌 / 设备种子只写进数据目录；结果文件里只有检查项与公开事实
-    assert 'lic["token_file"]' in src and 'lic["device_seed"]' in src
-    result_block = src[src.index('    return {\n        "result": overall') :]
-    assert "lic" not in result_block.split("def main")[0]
+def test_pro_smoke_driver_keeps_secrets_out_of_its_result(tmp_path):
+    """真跑一遍驱动（子进程，假包 / 假授权），带标记的令牌与设备种子不得出现在结果文件与 stdout 里。"""
+    import base64
+    import subprocess
+    import sys
+
+    staged = tmp_path / "packages"
+    staged.mkdir()
+    name = "tavotto-pro-0.0.1-windows-x64.zip"
+    (staged / name).write_bytes(b"PK not a real zip")
+    payload = base64.b64encode(
+        json.dumps({"pro_version": "0.0.1", "platform": "windows-x64"}).encode()
+    )
+    (staged / f"{name}.release.json").write_text(
+        json.dumps({"payload": payload.decode(), "sig": "AAAA", "kid": "pro-test"})
+    )
+    token_marker = "TOKENMARKERzq9" * 4
+    seed = b"SEEDMARK" * 4
+    (staged / "pro-test-license.json").write_text(
+        json.dumps(
+            {
+                "token_file": {
+                    "v": 1,
+                    "token": {"payload": token_marker, "sig": token_marker, "kid": "test-2026-11"},
+                    "state": "ok",
+                },
+                "device_seed": base64.b64encode(seed).decode(),
+            }
+        )
+    )
+    (staged / "pro-test-release.pub").write_text(base64.b64encode(b"\0" * 32).decode())
+    out = tmp_path / "out.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WINLAB / "pro_smoke.py"),
+            "--package",
+            str(staged / name),
+            "--work",
+            str(tmp_path / "work"),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    text = out.read_text(encoding="utf-8") + proc.stdout
+    assert json.loads(out.read_text(encoding="utf-8"))["result"] != "passed"
+    for marker in (token_marker[:20], base64.b64encode(seed).decode()[:20], "SEEDMARK"):
+        assert marker not in text
 
 
 def test_installer_check_is_ascii_and_mirrors_the_nightly_checks():
