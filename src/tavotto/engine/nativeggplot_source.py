@@ -245,17 +245,16 @@ def _r_point_block(name: str, layers: dict[int, dict]) -> str:
     for index, values in sorted(layers.items()):
         slot = f"plot$layers[[{index}L]]"
         params = ", ".join(f"{key} = {_r_literal(value)}" for key, value in values.items())
-        edits.extend(
-            (
-                f"  layer <- {slot}",
-                '  if (!identical(class(layer$geom)[[1L]], "GeomPoint")) stop("Tavotto style needs geom_point().")',
-                f"  values <- utils::modifyList(layer$aes_params, list({params}))",
-                f"  {slot} <- ggplot2::ggproto(NULL, layer, aes_params = values)",
-            )
-        )
+        edits.append(f"  {slot} <- styled_layer({slot}, list({params}))")
+    # ggproto resolves its parent lazily. Each call must bind its own layer.
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
+            "  styled_layer <- function(layer, values) {",
+            '    if (!identical(class(layer$geom)[[1L]], "GeomPoint")) stop("Tavotto style needs geom_point().")',
+            "    aesthetics <- utils::modifyList(layer$aes_params, values)",
+            "    ggplot2::ggproto(NULL, layer, aes_params = aesthetics)",
+            "  }",
             *edits,
             "  plot",
             f"}})(base::get({name}, inherits = FALSE)))",

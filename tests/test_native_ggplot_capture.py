@@ -955,7 +955,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
 
 
 @pytest.mark.parametrize(
-    "scope", ["single", "all-facets", "one-facet", "different-facets", "paint-facets"]
+    "scope", ["single", "all-facets", "one-facet", "different-facets", "paint-facets", "two-layers"]
 )
 def test_native_r_point_styles_write_back_only_when_shared_by_the_layer(tmp_path, scope):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
@@ -982,6 +982,13 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             b'geom_point(size = 2, colour = "#287F6E")',
             b'geom_point(size = 2, shape = 21, fill = "#E3A45280", colour = "#287F6E")',
         )
+    if scope == "two-layers":
+        original = original.replace(
+            b'ggplot2::geom_point(size = 2, colour = "#287F6E")',
+            b'ggplot2::geom_point(size = 2, colour = "#287F6E") +\n'
+            b"    ggplot2::geom_point(data = function(d) transform(d, x = x + .3), "
+            b'shape = 21, fill = "#E3A452", colour = "#723551", size = 3)',
+        )
     source.write_bytes(original)
     route = "/api/layouts/Point_style"
     with sidecar_app(project, tmp_path / "warm") as app:
@@ -990,7 +997,8 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         original_pdf = (project / "original.pdf").read_bytes()
         elements = {element["gid"]: element for element in before["manifest"]["elements"]}
         targets = [gid for gid, element in elements.items() if element["role"] == "scatter"]
-        assert len(targets) == (1 if scope == "single" else 2)
+        expected_targets = {"single": 1, "two-layers": 4}.get(scope, 2)
+        assert len(targets) == expected_targets
         if scope == "one-facet":
             targets = targets[-1:]
         edits = (
@@ -998,6 +1006,8 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             if scope == "paint-facets"
             else {"size": 100, "marker": "s", "alpha": 0.45}
         )
+        if scope == "two-layers":
+            edits = {"size": 100, "alpha": 0.45}
         patches = [
             {"gid": gid, "prop": prop, "value": value, "identity": elements[gid]["identity"]}
             for gid in targets
@@ -1056,6 +1066,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         assert (project / "original.pdf").read_bytes() == original_pdf
         authored = source.read_bytes()
         assert (b"plot$layers[[1L]]" in authored) == (not expected_residual)
+        assert (b"plot$layers[[2L]]" in authored) == (scope == "two-layers")
         _, persisted = app.call(route)
         retained = persisted["canvases"][0]["objects"][0]["overrides"]
         assert retained == expected_residual
