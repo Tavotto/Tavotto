@@ -725,10 +725,75 @@ def _merge_legacy_tables(con: sqlite3.Connection) -> int:
     return imported
 
 
+def _ro_uri(path: Path) -> str:
+    return f"{path.resolve().as_uri()}?mode=ro"
+
+
+def count_legacy_gap(legacy: Path, db_path: Path | None, deadline: float) -> dict[str, int]:
+    """旧库 `legacy` 有多少会话 / 请求账本，其中多少在 `db_path`（None = 新库还没建）里没有。两边都只读打开，不写、不建文件。
+
+    「没有」按主键数（会话 id；账本 project + client_request_id）。到点抛 `TimeoutError`。
+    """
+    con = sqlite3.connect(_ro_uri(legacy), uri=True, timeout=1.0)
+    try:
+        con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+        try:
+            if db_path is not None:
+                con.execute("ATTACH DATABASE ? AS cur", (_ro_uri(db_path),))
+            theirs = {
+                r[0] for r in con.execute("SELECT name FROM main.sqlite_master WHERE type='table'")
+            }
+            mine = (
+                {r[0] for r in con.execute("SELECT name FROM cur.sqlite_master WHERE type='table'")}
+                if db_path is not None
+                else set()
+            )
+            out = {
+                "legacy_sessions": 0,
+                "missing_sessions": 0,
+                "legacy_requests": 0,
+                "missing_requests": 0,
+            }
+            if "sessions" in theirs:
+                out["legacy_sessions"] = con.execute(
+                    "SELECT COUNT(*) FROM main.sessions"
+                ).fetchone()[0]
+                out["missing_sessions"] = (
+                    con.execute(
+                        "SELECT COUNT(*) FROM main.sessions WHERE id NOT IN (SELECT id FROM cur.sessions)"
+                    ).fetchone()[0]
+                    if "sessions" in mine
+                    else out["legacy_sessions"]
+                )
+            if "ai_requests" in theirs:
+                out["legacy_requests"] = con.execute(
+                    "SELECT COUNT(*) FROM main.ai_requests"
+                ).fetchone()[0]
+                out["missing_requests"] = (
+                    con.execute(
+                        "SELECT COUNT(*) FROM main.ai_requests AS o WHERE NOT EXISTS (SELECT 1 FROM cur.ai_requests AS n "
+                        "WHERE n.project = o.project AND n.client_request_id = o.client_request_id)"
+                    ).fetchone()[0]
+                    if "ai_requests" in mine
+                    else out["legacy_requests"]
+                )
+            return out
+        except sqlite3.OperationalError as e:
+            if time.monotonic() > deadline:
+                raise TimeoutError("legacy history count ran out of time") from e
+            raise
+    finally:
+        con.close()
+
+
 # 登记给 MSIX 迁移的「待补旧历史」合并（它不能反过来 import 本模块：会成环）。经 lambda 在调用时取全局名，测试 monkeypatch 才生效。
 msixmigrate.register_sqlite_merger(
     "cache/ai_history.sqlite3",
     lambda snapshot, target, deadline: merge_legacy(snapshot, target, deadline),
+)
+msixmigrate.register_sqlite_gap_counter(
+    "cache/ai_history.sqlite3",
+    lambda legacy, target, deadline: count_legacy_gap(legacy, target, deadline),
 )
 
 

@@ -1136,3 +1136,133 @@ def test_a_process_without_ai_history_does_not_start_the_merge_or_hold_the_lock(
     msixmigrate.layoutsession.release_file_lock(fd)
     # 直接调用也不在等登记期间持锁：等不到就 deferred
     assert msixmigrate.merge_pending(budget_s=0.05) == {"cache/ai_history.sqlite3": "deferred"}
+
+
+# ------------------------------------------------------------------ 诊断包：旧库比新库多几条（#2282 补救 A）
+def _digest_dir(d: Path) -> dict[str, str]:
+    import hashlib
+
+    return {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(d.iterdir())
+        if p.is_file()
+    }
+
+
+def test_legacy_gap_counts_what_the_real_history_is_missing(world, monkeypatch):
+    from tavotto.engine import ai_history
+
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["a1", "a2", "a3"])
+    real = _legacy_history(world.data, ["a1", "n1"])  # 新库：留着 a1，另有一条新会话
+    monkeypatch.setattr(ai_history, "DB_PATH", real)
+    facts = msixmigrate.legacy_gap_facts()
+    assert facts == {
+        "state": "ok",
+        "dbs": {
+            "cache/ai_history.sqlite3": [
+                {
+                    "state": "ok",
+                    "legacy_sessions": 3,
+                    "missing_sessions": 2,
+                    "legacy_requests": 3,
+                    "missing_requests": 2,
+                }
+            ]
+        },
+    }
+    blob = json.dumps(facts)
+    assert PFN_A not in blob and str(world.data) not in blob and str(world.localappdata) not in blob
+
+
+def test_legacy_gap_reads_both_dbs_without_changing_them(world):
+    _r, local = world.pkg(PFN_A)
+    legacy = _legacy_history(local, ["a1", "a2"])
+    real = _legacy_history(world.data, ["a1"])
+    before = (_digest_dir(legacy.parent), _digest_dir(real.parent))
+    msixmigrate.legacy_gap_facts()
+    assert (_digest_dir(legacy.parent), _digest_dir(real.parent)) == before
+
+
+def test_legacy_gap_without_a_real_db_counts_everything_and_creates_nothing(world):
+    _r, local = world.pkg(PFN_A)
+    _legacy_history(local, ["a1", "a2"])
+    [row] = msixmigrate.legacy_gap_facts()["dbs"]["cache/ai_history.sqlite3"]
+    assert row["missing_sessions"] == 2 and row["missing_requests"] == 2
+    assert not (world.data / "cache" / "ai_history.sqlite3").exists()
+
+
+def test_legacy_gap_lists_each_old_package_newest_first(world):
+    _ra, local_a = world.pkg(PFN_A, age=0)
+    _rb, local_b = world.pkg(PFN_B, age=100)
+    _legacy_history(local_a, ["a1"])
+    _legacy_history(local_b, ["b1", "b2"])
+    world.settle()
+    _legacy_history(world.data, ["a1"])
+    rows = msixmigrate.legacy_gap_facts()["dbs"]["cache/ai_history.sqlite3"]
+    assert [r["missing_sessions"] for r in rows] == [0, 2]
+
+
+def test_packages_without_a_history_db_do_not_crowd_out_the_one_that_has_it(world):
+    for i in range(msixmigrate.LEGACY_GAP_MAX_SOURCES):
+        _r, local = world.pkg(f"Pkg.Settings{i}_x", age=i)
+        put(local / "origin" / "a.json")  # 只有设置，没有历史库
+    _r, old = world.pkg(PFN_B, age=1000)
+    _legacy_history(old, ["b1", "b2"])
+    world.settle()
+    rows = msixmigrate.legacy_gap_facts()["dbs"]["cache/ai_history.sqlite3"]
+    assert [r["missing_sessions"] for r in rows] == [2]
+
+
+def test_legacy_gap_out_of_time_or_broken_is_a_closed_state(world):
+    _ra, local_a = world.pkg(PFN_A, age=0)
+    _rb, local_b = world.pkg(PFN_B, age=100)
+    _legacy_history(local_a, ["a1"])
+    put(local_b / "cache" / "ai_history.sqlite3", "not a database")
+    world.settle()
+    assert [
+        r["state"] for r in msixmigrate.legacy_gap_facts()["dbs"]["cache/ai_history.sqlite3"]
+    ] == [
+        "ok",
+        "error",
+    ]
+    assert [
+        r for r in msixmigrate.legacy_gap_facts(budget_s=-1)["dbs"]["cache/ai_history.sqlite3"]
+    ][0] == {"state": "timeout"}
+
+
+def test_legacy_gap_off_windows_says_so(world, monkeypatch):
+    monkeypatch.setattr(msixmigrate, "_is_windows", lambda: False)
+    assert msixmigrate.legacy_gap_facts() == {"state": "not_windows"}
+
+
+def test_report_json_carries_the_legacy_history_gap(world, monkeypatch):
+    from tavotto.engine import diagnostics
+
+    facts = {"state": "ok", "dbs": {"cache/ai_history.sqlite3": []}}
+    monkeypatch.setattr(msixmigrate, "legacy_gap_facts", lambda: facts)
+    report = diagnostics.build_report()
+    assert report["system"]["msix_legacy_history"] == facts
+
+
+def test_building_a_report_registers_the_history_counter():
+    """诊断包进程不一定先 import 过 ai_history：diagnostics 自己 import 它，计数才一定登记上。"""
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    code = (
+        "from tavotto.engine import diagnostics, msixmigrate; "
+        "print('cache/ai_history.sqlite3' in msixmigrate._SQLITE_GAP_COUNTERS)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        timeout=120,
+    )
+    assert out.stdout.strip() == "True"

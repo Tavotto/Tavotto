@@ -713,6 +713,49 @@ def _merger_for(rel: str, deadline: float):
         return _SQLITE_MERGERS.get(rel)
 
 
+# 诊断包：旧包私有区的库比真实目录那份多出多少行（#2282 已中招用户的补救 A）。同样由拥有 schema 的模块登记。
+#: `count(legacy, target_or_None, deadline) -> dict[str, int]`，只读两边、只回非负整数，到点抛 `TimeoutError`。
+_SQLITE_GAP_COUNTERS: dict = {}
+LEGACY_GAP_BUDGET_S = 3.0  # 诊断包里所有库、所有旧包加起来的上限：只数不搬，报告不能被它拖住
+LEGACY_GAP_MAX_SOURCES = 4
+
+
+def register_sqlite_gap_counter(rel: str, count) -> None:
+    _SQLITE_GAP_COUNTERS[rel] = count
+
+
+def legacy_gap_facts(budget_s: float = LEGACY_GAP_BUDGET_S) -> dict:
+    """每个登记过的库、每个还留着它的旧包（mtime 新→旧）各一项：`state` 闭集 ok / timeout / error，ok 时带计数。
+
+    不带路径与包族名；不写任何东西（两边都只读打开）。数出来的「缺」也可能是用户在新库里自己删掉的——
+    这是给人看的事实，不据此自动补。非 Windows 回 `{"state": "not_windows"}`。
+    """
+    if not _is_windows():
+        return {"state": "not_windows"}
+    deadline = time.monotonic() + budget_s
+    dbs: dict[str, list[dict]] = {}
+    for rel, count in sorted(_SQLITE_GAP_COUNTERS.items()):
+        parts = tuple(rel.split("/"))
+        target = config.data_path(*parts)
+        rows: list[dict] = []
+        # 先筛「真有这个库」的旧包再截前几个：只有设置、没有历史库的新包不能把留着历史的老包挤出去（Codex #2311）
+        srcs = [local.joinpath(*parts) for _roaming, local in sources() if local is not None]
+        srcs = [p for p in srcs if p.is_file() and not p.is_symlink()][:LEGACY_GAP_MAX_SOURCES]
+        for src in srcs:
+            if time.monotonic() > deadline:  # 库很小时 SQLite 根本不会调进度回调：到点先在这里截住
+                rows.append({"state": "timeout"})
+                continue
+            try:
+                got = count(src, target if target.is_file() else None, deadline)
+                rows.append({"state": "ok", **{k: _count(v) for k, v in got.items()}})
+            except TimeoutError:
+                rows.append({"state": "timeout"})
+            except (OSError, sqlite3.Error, ValueError):
+                rows.append({"state": "error"})
+        dbs[rel] = rows
+    return {"state": "ok", "dbs": dbs}
+
+
 _PENDING_THREAD: threading.Thread | None = None
 _PENDING_THREAD_LOCK = threading.Lock()
 
