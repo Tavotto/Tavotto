@@ -759,6 +759,12 @@ def plan_figure(
         lab_refs = {lab.gid: f"l{i + 1}" for i, lab in enumerate(a.labels)}
         groups = {g: i for i, g in enumerate(dict.fromkeys(a.group_of[m.gid] for m in a.mains))}
         w0, h0 = a.size
+        # 子图标签那条带（总标题要摞在它上面）：画布上加的按字号算，挪脚本里的按最高那个
+        band = quicklayoutfig.LABEL_PAD_MM + (
+            lh
+            if label_mode == "canvas"
+            else max((lab.rect[3] - lab.rect[1] for lab in a.labels), default=0.0)
+        )
         payload = {
             "round": rnd,
             "figure": {"size_mm": [round(w0, 4), round(h0, 4)]},
@@ -777,7 +783,7 @@ def plan_figure(
                     for lab in a.labels
                 ],
             },
-            "axes": quicklayoutfig.solver_input(a, refs),
+            "axes": quicklayoutfig.solver_input(a, refs, band),
             # 认不出归属的图级元素（含认不出的疑似标签）：只给外框比例与短号，不给文字（ADR 0198 §三）；
             # 旧组件不认这个字段 = 不绕，结果照样由下面的验收判
             "obstacles": [
@@ -826,7 +832,7 @@ def plan_figure(
             gid: [x * nw, y * nh, (x + w) * nw, (y + h) * nh]
             for gid, (x, y, w, h) in plan_ops["pos"].items()
         }
-        follow_axes, follow_texts = quicklayoutfig.follow(a, new_plot)
+        follow_axes, follow_texts = quicklayoutfig.follow(a, new_plot, band)
         # 拖过的 inset（有 position 覆盖，locator 已脱开）不会自己跟宿主走：按宿主的同一仿射写新 position；
         # 没拖过的由 locator 跟着宿主走，不写（写了反而把 locator 脱开）
         by_main = {m.gid: m for m in a.mains}

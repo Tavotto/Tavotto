@@ -1345,16 +1345,22 @@ def _recipe_key(rec: recipe_mod.FigureRecipe) -> str:
     return json.dumps({k: v for k, v in rec.to_dict().items() if k != "why"}, sort_keys=True)
 
 
+def _split_column(rec: recipe_mod.FigureRecipe, splittable: tuple[str, ...]) -> str:
+    """「按某列再分开」那一张实际用来拆的列：配方里（分面 / 分组 / 横轴）真用到的那个可拆分列；都没用到才退回第一个。"""
+    used = [c for c in (rec.facet, rec.group, rec.x) if c]
+    return next((c for c in used if c in splittable), splittable[0])
+
+
 def _with_file_only_variants(
     res, merged, values, confirmed, hint, picks, rules
-) -> tuple[recipe_mod.Candidates, dict[int, dict]]:
+) -> recipe_mod.Candidates:
     """合画且文件里**原本就有**在文件内取多个值的分组列（`MergeSpec.splittable`）：除了现状的画法（按文件上色、再按那一列拆开 / 分面），
     再给一份**只按文件比较**的（把那些列当不存在重新出一遍备选）。两份各自走完整的 `default_candidates`（同一套校验与排序），这里只负责并起来：
     现状的顺序不变（推荐仍是它的第一张），每张后面紧跟它只按文件比较的那一张；两种画法画出来一样的（配方除 `why` 外逐项相同）只留一张、不加标记。
-    返回 `(并好的 Candidates, {id(配方): 标记})`。"""
+    成对的两张各自带上 `Candidate.variant`；返回并好的 `Candidates`。"""
     if any(c.recipe.err is not None for c in res.items):
         # 已汇总的表（每个位置一行 + 现成误差列）：「只按文件比较」会对各组的汇总值再算一次均值 ± 误差 / 分布（G-053），不给这一对
-        return res, {}
+        return res
     keep = {k: n for k, n in merged.summary.groups.items() if k not in merged.merge.splittable}
     entry_b = replace(merged, summary=replace(merged.summary, groups=keep))
     res_b = recipe_mod.default_candidates(
@@ -1368,26 +1374,26 @@ def _with_file_only_variants(
         cells=rules,
     )
     if not isinstance(res_b, recipe_mod.Candidates) or not res_b.items:
-        return res, {}
+        return res
     seen = {_recipe_key(c.recipe) for c in res.items}
     only_b = [c for c in res_b.items if _recipe_key(c.recipe) not in seen]
     by_code = {c.code: c for c in only_b}
-    column = merged.merge.splittable[0]
+    splittable = merged.merge.splittable
     out: list[recipe_mod.Candidate] = []
-    marks: dict[int, dict] = {}
     used: set[str] = set()
     for cand in res.items:
-        out.append(cand)
         twin = by_code.get(cand.code)
-        if twin is not None:
-            marks[id(cand.recipe)] = {"kind": "split", "column": column}
-            marks[id(twin.recipe)] = {"kind": "by_file"}
-            out.append(twin)
-            used.add(cand.code)
+        if twin is None:
+            out.append(cand)
+            continue
+        split = recipe_mod.CandidateVariant("split", _split_column(cand.recipe, splittable))
+        out.append(replace(cand, variant=split))
+        out.append(replace(twin, variant=recipe_mod.CandidateVariant("by_file")))
+        used.add(cand.code)
     out += [
         c for c in only_b if c.code not in used
     ]  # 只有「只按文件」才画得出来的（现状那一边被剔除了）排在最后
-    return replace(res, items=tuple(out)), marks
+    return replace(res, items=tuple(out))
 
 
 def _read_merged(
@@ -1701,7 +1707,6 @@ def propose(
     ):
         # 懒模式迭代用尽仍没落定（防御）：不出 ask，当「没有可画的」
         return remember({"kind": "nothing", "reasons": ["no_renderable_family"], "dropped": []})
-    variants: dict[int, dict] = {}
     if (
         merged is not None
         and file_group is not None
@@ -1709,17 +1714,12 @@ def propose(
         and "group" not in ans
         and res.items
     ):
-        res, variants = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
+        res = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
 
     if ans.get("error") in ERROR_SUMMARY and res.items:
         # 用户点选了误差线 / 误差带画哪一种：换掉每个备选里「均值 ± 某种误差」的层（其余不动）
-        swapped = []
-        for c in res.items:
-            new = with_error_summary(c.recipe, ans["error"])
-            if new is not c.recipe and id(c.recipe) in variants:
-                # 合画里成对候选的标记是按配方对象记的：换了配方要把标记带过去，否则两张成对的图分不清是哪一张
-                variants[id(new)] = variants.pop(id(c.recipe))
-            swapped.append(replace(c, recipe=new))
+        # 合画成对的标记长在候选上（`Candidate.variant`），`replace` 换配方时跟着走
+        swapped = [replace(c, recipe=with_error_summary(c.recipe, ans["error"])) for c in res.items]
         res = replace(res, items=tuple(swapped))
 
     # 看图目的：只重排（纯排列，不新增 / 不复活备选）；没点 `answers.purpose` 时是恒等，只多响应里的 `purpose` 一项
@@ -1836,7 +1836,7 @@ def propose(
             cell_stats(values, cand.recipe) or None,
             reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
-            variant=variants.get(id(cand.recipe)),
+            variant=cand.variant.to_dict() if cand.variant is not None else None,
             why_not=(
                 None
                 if purpose is None or not order
