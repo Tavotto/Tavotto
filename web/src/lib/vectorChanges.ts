@@ -21,6 +21,8 @@ export interface ChangeLine {
 }
 export interface ChangeGroup {
   key: string
+  /** 第几步操作（补丁里的下标，0 起）；老后端没有 = 不能按步勾选 */
+  op?: number
   /** 一行整句（新增 / 删除）或对象叫法（改字段） */
   subject: string
   lines: ChangeLine[]
@@ -34,10 +36,18 @@ const UNIT: Record<string, string> = { strokePt: 'pt', sizePt: 'pt', borderPt: '
 const FIELDS = new Set([
   'strokePt', 'sizePt', 'color', 'fill', 'bg', 'borderColor', 'borderPt', 'bold', 'italic', 'underline', 'text', 'align', 'fontFamily', 'lineHeight',
   'strokeOpacity', 'fillOpacity', 'dash', 'cornerRadius', 'locked', 'hidden', 'name', 'stroke', 'lineCap', 'lineJoin', 'padding',
+  // 非样式 / 少见的字段也各有准确的叫法（落到「样式」兜底的只剩真没见过的键）
+  'subpaths', 'anchor', 'layoutPinned', 'start', 'end', 'shape', 'sides', 'starRatio', 'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd',
+  'fillGradient', 'strokeGradient', 'fillRule', 'strokeAlign', 'dashPattern', 'miterLimit', 'interpretation', 'textFormat', 'clipMask', 'clipOff',
 ])
+/** 编组相关的键：写「编组」，值变成没有 = 「取消编组」 */
+const GROUP_FIELDS = new Set(['groupId', 'groupPath'])
+/** 值很长 / 是结构的字段：只说改了它，不列前后值 */
+const NO_VALUE = new Set(['subpaths', 'anchor', 'start', 'end', 'fillGradient', 'strokeGradient', 'dashPattern', 'layoutPinned', 'clipMask', 'clipOff'])
 const GEOM: Record<string, 'pos' | 'size' | 'rot'> = { x: 'pos', y: 'pos', w: 'size', h: 'size', rotationDeg: 'rot' }
 const KINDS = ['text', 'arrow', 'shape', 'path']
 
+const isEmpty = (v: unknown) => v === null || v === undefined || (Array.isArray(v) && v.length === 0)
 const round = (n: number) => String(Math.round(n * 100) / 100)
 const clip = (s: string, n = 12) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
@@ -76,12 +86,26 @@ export function objectNamer(snap: VectorSnapshot, result: VectorEditResult): (id
   return (id) => final.get(id) ?? base(id)
 }
 
-/** 按对象分组的改动清单；没有结构化改动（老后端）就返回空，调用方退回显示复述原文 */
+/** 按步骤（后端 `changes[].op`）分组的改动清单：一行 = 一步操作，行内按对象和字段；没有 `op`（老后端）时每个对象一行、不能勾选 */
 export function changeGroups(snap: VectorSnapshot, result: VectorEditResult): ChangeGroup[] {
+  const changes = result.changes ?? []
   const name = objectNamer(snap, result)
+  const stepped = changes.length > 0 && changes.every((c) => typeof c.op === 'number')
+  if (!stepped) return objectGroups(name, changes).map((g, i) => ({ ...g, key: `o${i}` }))
+  const ops = [...new Set(changes.map((c) => c.op as number))].sort((a, b) => a - b)
+  return ops.map((op) => {
+    const per = objectGroups(name, changes.filter((c) => c.op === op))
+    if (per.length === 1) return { ...per[0], key: `op${op}`, op }
+    // 一步动了好几个对象：一行写全部对象，字段行前面带上是谁的
+    const lines = per.flatMap((g) => g.lines.map((l) => ({ ...l, label: vt('lineOf', { subject: g.subject, label: l.label }) })))
+    return { key: `op${op}`, op, subject: listJoin(per.map((g) => g.subject)), lines }
+  })
+}
+
+function objectGroups(name: (id: string) => string, changes: NonNullable<VectorEditResult['changes']>): ChangeGroup[] {
   const order: string[] = []
   const byId = new Map<string, { whole?: 'deleted' | 'added' | 'replaced'; fields: Map<string, { before: unknown; after: unknown }> }>()
-  for (const c of result.changes ?? []) {
+  for (const c of changes) {
     let e = byId.get(c.id)
     if (!e) {
       e = { fields: new Map() }
@@ -113,6 +137,10 @@ export function changeGroups(snap: VectorSnapshot, result: VectorEditResult): Ch
       } else if (field === 'nodes') lines.push({ label: vt('nodes', { from: round(Number(before)), to: round(Number(after)) }) })
       else if (field === 'z') lines.push({ label: vt('z') })
       else if (field === 'type' && after === 'path') lines.push({ label: vt('toPath') })
+      else if (GROUP_FIELDS.has(field)) {
+        const label = vt(isEmpty(after) ? 'ungroup' : 'group')
+        if (!lines.some((l) => l.label === label)) lines.push({ label })
+      } else if (NO_VALUE.has(field)) lines.push({ label: vt(`field.${field}`) })
       else if (FIELDS.has(field)) lines.push({ label: vt(`field.${field}`), before: value(field, before), after: value(field, after) })
       else if (!lines.some((l) => l.label === vt('style'))) lines.push({ label: vt('style') })
     }

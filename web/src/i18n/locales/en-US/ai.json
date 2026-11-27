@@ -868,6 +868,10 @@
       "replaced": "{{subject}} replaced by a new one",
       "on": "on",
       "off": "off",
+      "lineOf": "{{subject}}: {{label}}",
+      "blocked": "Depends on the previous step, unchecked with it",
+      "group": "Grouped",
+      "ungroup": "Ungrouped",
       "none": "none",
       "style": "Style",
       "z": "Stacking order",
@@ -878,6 +882,9 @@
         "strokePt": "Line width", "sizePt": "Font size", "color": "Color", "fill": "Fill", "bg": "Background", "borderColor": "Border color", "borderPt": "Border width",
         "bold": "Bold", "italic": "Italic", "underline": "Underline", "text": "Text", "align": "Align", "fontFamily": "Font", "lineHeight": "Line spacing",
         "strokeOpacity": "Stroke opacity", "fillOpacity": "Fill opacity", "dash": "Dash", "cornerRadius": "Corner radius", "locked": "Lock", "hidden": "Hide",
+        "subpaths": "Path shape", "anchor": "Anchoring", "layoutPinned": "Pinned position", "start": "Start point", "end": "End point", "shape": "Shape type", "sides": "Sides", "starRatio": "Star ratio",
+        "headStart": "Start arrowhead", "headEnd": "End arrowhead", "headSizeStart": "Start arrowhead size", "headSizeEnd": "End arrowhead size", "fillGradient": "Fill gradient", "strokeGradient": "Stroke gradient",
+        "fillRule": "Fill rule", "strokeAlign": "Stroke alignment", "dashPattern": "Dash pattern", "miterLimit": "Miter limit", "interpretation": "Text interpretation", "textFormat": "Text format", "clipMask": "Clipping mask", "clipOff": "Clipping mask",
         "name": "Name", "stroke": "Stroke", "lineCap": "Line cap", "lineJoin": "Corner", "padding": "Padding"
       }
     },
@@ -1034,6 +1041,7 @@
       "stageScript": "Script changes",
       "scriptMeta": "Script changes · +{{added}} −{{removed}}",
       "scriptBackupNote": "Written only when you apply, backed up first",
+      "vectorRecomputeFailed": "Couldn’t update. You can try again",
       "vectorHeading_one": "Changes · {{count}} object",
       "vectorHeading_other": "Changes · {{count}} objects",
       "vectorN_one": "{{count}} object changed",

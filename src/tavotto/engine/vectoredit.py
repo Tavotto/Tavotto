@@ -1505,7 +1505,7 @@ def apply_ops(
     objects: list[dict], ops: object, panels: dict | None = None, page: dict | None = None
 ) -> dict:
     """在一份对象列表的副本上跑补丁 → `{"objects": 改后的全部对象, "changed": [改后对象], "deleted": [id],
-    "echo": [每条一句], "changes": [{id, field, before, after}], "order": [改后 id 顺序], "reordered": 顺序变了没有}`；
+    "echo": [每条一句], "changes": [{id, field, before, after, op}], "order": [改后 id 顺序], "reordered": 顺序变了没有}`；
     有错抛 `EditError`（整批不动）。`page` = `{"w", "h"}`，`align` 对齐到页面用。"""
     if not isinstance(ops, list) or not ops:
         raise EditError("bad_op")
@@ -1513,7 +1513,18 @@ def apply_ops(
     budgets = s.budgets
     touched, changes, echo, deleted = s.touched, s.changes, s.echo, s.deleted
     ctx = vectorscene._Ctx(panels or {})  # noqa: SLF001 — 锚点解析与 0208 同一个
+    tagged = 0
+
+    def tag(op_index: int) -> None:
+        # 每条 change 记下它是第几步操作产生的（0 起）：桌面方案卡按步勾选，取消某几步后用剩下的 ops 重算
+        nonlocal tagged
+        for c in changes[tagged:]:
+            c["op"] = op_index
+        tagged = len(changes)
+
     for i, op in enumerate(ops):
+        if i:
+            tag(i - 1)
         if not isinstance(op, dict) or op.get("op") not in _OPS:
             raise EditError("bad_op", i)
         if (
@@ -1607,6 +1618,7 @@ def apply_ops(
         o["x"], o["y"] = nx, ny
         touched.add(oid)
         echo.append(f"{label}：{how}")
+    tag(len(ops) - 1)
     kept = [o for o in s.out if not (isinstance(o, dict) and o.get("id") in deleted)]
     changed = [o for o in kept if isinstance(o, dict) and o.get("id") in touched]
     first = [o.get("id") for o in objects if isinstance(o, dict) and o.get("id") not in deleted]

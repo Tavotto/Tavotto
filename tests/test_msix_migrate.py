@@ -63,6 +63,12 @@ class World:
 
 @pytest.fixture
 def world(tmp_path, monkeypatch) -> World:
+    # 同一进程里更早的用例跑过 AI 任务的话，`ai_bridge` 的属主心跳线程还挂着，每个 tick 用**全局** `ai_history.DB_PATH`
+    # 开库（库不存在就新建）。本文件的用例会把 DB_PATH 指到自己的临时目录，再断言「此刻还没有库」——心跳恰好落在
+    # 中间就凭空建出库来（11-27 合并组 Windows 第 14 片，#2283 那条打断回滚用例）。停掉它：`run()` 会按需重起。
+    bridge = sys.modules.get("tavotto.engine.ai_bridge")
+    if bridge is not None:
+        bridge.stop_owner_loop()
     return World(tmp_path, monkeypatch)
 
 

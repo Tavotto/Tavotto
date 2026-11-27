@@ -586,6 +586,23 @@ cancelled, closed or failed send is never resumed on its own.
   copy in a sandboxed frame that cannot run scripts or connect anywhere, and its
   images are read from disk. Clicking a link in a reply opens it in your default
   browser, as any link would.
+* **Journal tips.** The *Looks wrong* link on a journal source card and the
+  *Not listed?* link in the journal picker open this same window and send a
+  journal tip. Besides the usual letter contents above, a tip carries only
+  catalog data and what you typed: the journal's catalog ID and name, the rule
+  and its catalog value that the card shows, the source ID, the catalog
+  revision numbers, the text in the picker's search box (at most 120
+  characters) when the journal was not found, and the source link you pasted
+  (`https://` only). Nothing from your project is added. You cannot enter values:
+  the maintainers look the source up themselves and a tip never edits the
+  catalog on its own. Attachments you add (a PDF or screenshot of the
+  journal's instructions) are used only to check the source, are not
+  published or passed on, and are deleted 90 days after the tip is closed;
+  the letter itself and its structured fields are kept like any other letter
+  (365 days). A tip is not linked to the device token the journal catalog uses
+  (replies come back through the letter's own reply token), so the catalog's
+  read records and your tips cannot be joined. The links do not appear with
+  `TAVOTTO_NO_CONTACT=1` or `TAVOTTO_NO_JOURNAL_SYNC=1`.
 * **No email program is involved.** The app never opens your mail program and
   contains no mail links; if sending fails it only offers *Copy content* and
   *Copy address* (`feedback@tavotto.com`) so you can decide how to send it.

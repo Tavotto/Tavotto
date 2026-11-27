@@ -132,6 +132,7 @@ export default interface Resources {
         "vectorChecks_other": "有 {{count}} 处核对没过，应用前看看对比图",
         "vectorHeading_other": "改动 · {{count}} 个对象",
         "vectorN_other": "改了 {{count}} 个对象",
+        "vectorRecomputeFailed": "没能更新，可以重试",
         "versionLabel": "方案版本",
         "versionN": "第 {{n}} 版",
         "writeNote": "写批注"
@@ -208,32 +209,55 @@ export default interface Resources {
       },
       "vector": {
         "added": "新增{{subject}}",
+        "blocked": "依赖前一步，已一起取消",
         "deleted": "删除{{subject}}",
         "field": {
           "align": "对齐",
+          "anchor": "锚定位置",
           "bg": "底色",
           "bold": "粗体",
           "borderColor": "边框颜色",
           "borderPt": "边框粗细",
+          "clipMask": "剪切蒙版",
+          "clipOff": "剪切蒙版",
           "color": "颜色",
           "cornerRadius": "圆角",
           "dash": "虚线",
+          "dashPattern": "虚线",
+          "end": "终点",
           "fill": "填充",
+          "fillGradient": "填充渐变",
           "fillOpacity": "填充不透明度",
+          "fillRule": "填充规则",
           "fontFamily": "字体",
+          "headEnd": "终点端型",
+          "headSizeEnd": "终点端型大小",
+          "headSizeStart": "起点端型大小",
+          "headStart": "起点端型",
           "hidden": "隐藏",
+          "interpretation": "文字解读",
           "italic": "斜体",
+          "layoutPinned": "固定位置",
           "lineCap": "线端",
           "lineHeight": "行距",
           "lineJoin": "拐角",
           "locked": "锁定",
-          "name": "名称",
+          "miterLimit": "尖角限制",
+          "name": "名字",
           "padding": "内边距",
+          "shape": "形状种类",
+          "sides": "边数",
           "sizePt": "字号",
+          "starRatio": "星形比例",
+          "start": "起点",
           "stroke": "描边",
+          "strokeAlign": "描边对齐",
+          "strokeGradient": "描边渐变",
           "strokeOpacity": "描边不透明度",
           "strokePt": "线宽",
+          "subpaths": "路径形状",
           "text": "文字",
+          "textFormat": "文字格式",
           "underline": "下划线"
         },
         "geom": {
@@ -241,6 +265,7 @@ export default interface Resources {
           "rot": "旋转",
           "size": "大小"
         },
+        "group": "编组",
         "kind": {
           "arrow": "箭头",
           "object": "对象",
@@ -248,6 +273,7 @@ export default interface Resources {
           "shape": "形状",
           "text": "文字"
         },
+        "lineOf": "{{subject}}：{{label}}",
         "named": "{{kind}}「{{name}}」",
         "nodes": "锚点 {{from}} → {{to}} 个",
         "none": "无",
@@ -256,6 +282,7 @@ export default interface Resources {
         "replaced": "{{subject}}换成了新的",
         "style": "样式",
         "toPath": "转为路径",
+        "ungroup": "取消编组",
         "z": "层级"
       }
     },
@@ -1243,11 +1270,14 @@ export default interface Resources {
         "disabled": "「联系作者」已被关闭。",
         "emailInvalid": "回信邮箱的格式不对，请检查，或者留空。",
         "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
+        "journalNeedsClue": "请贴个网址，或附上文件。",
+        "journal_invalid": "这条线索的内容不对，请关掉窗口重新点一次。",
         "meta_invalid": "内容格式不对，请重新打开窗口再试。",
         "report_invalid": "诊断包编号不对，请取消勾选「附上诊断信息」后再试。",
         "send_in_progress": "上一封还在发送中。",
         "subjectTooLong": "主题太长了。",
-        "subject_too_long": "主题太长了。"
+        "subject_too_long": "主题太长了。",
+        "urlInvalid": "链接要以 https:// 开头。"
       },
       "failedTitle": "没有发送出去",
       "failure": {
@@ -1288,6 +1318,7 @@ export default interface Resources {
       "lettersEmpty": "还没有写过信。发出的信会记在这里，作者的回信也会出现在这里。",
       "lettersExpand": "展开",
       "lettersForget": "从本机删除",
+      "lettersJournalTag": "期刊线索",
       "lettersNoNote": "没有附言",
       "lettersNumber": "编号 {{id}}",
       "lettersReportNumber": "报告编号 {{id}}",
@@ -1565,7 +1596,9 @@ export default interface Resources {
           "unknown": "来源范围和适用性未核实。"
         },
         "fromV2": "新版",
-        "open": "打开原网页"
+        "open": "打开原网页",
+        "report": "这条不对",
+        "reportTitle": "发来官网链接或截图，我们来核对"
       },
       "cleared": "已不按期刊检查",
       "confirm": {
@@ -1646,6 +1679,8 @@ export default interface Resources {
       "needsNetwork": "这本期刊需要联网下载",
       "no": "否",
       "noJournal": "不按期刊",
+      "noJournalListed": "告诉作者加上",
+      "noJournalListedTitle": "把刊名或投稿须知发来，我们来补上",
       "noLimit": "不限",
       "noMatch": "没有匹配的期刊",
       "none": "没有可选的期刊",
@@ -1671,6 +1706,38 @@ export default interface Resources {
       "unspecified": "当前快照未记录",
       "v2Updated": "「{{name}}」有新的期刊要求，已按它检查",
       "yes": "是"
+    },
+    "journalTip": {
+      "attach": "添加截图 / PDF",
+      "cancel": "取消",
+      "descLabel": "问题描述（选填）",
+      "emailMissing": "收录后回信到这里",
+      "emailWrong": "核实后回信到这里",
+      "entryTitle": "反馈条目",
+      "guideLabel": "投稿须知链接（选填）",
+      "issue": {
+        "link_broken": "出处打不开",
+        "other": "其他",
+        "updated": "期刊已更新",
+        "wrong_value": "数值不对"
+      },
+      "issueLabel": "问题",
+      "nameLabel": "期刊名称",
+      "noteLabel": "补充说明（选填）",
+      "quoteLabel": "期刊原文（选填）",
+      "quotePlaceholder": "粘贴官网或编辑部邮件里的原话",
+      "rowCurrent": "目录现值",
+      "rowRule": "条目",
+      "rowSource": "当前出处",
+      "submit": "提交反馈",
+      "submitMissing": "提交申请",
+      "title": {
+        "missing": "申请收录期刊",
+        "wrong": "期刊规范反馈"
+      },
+      "urlLabel": "出处链接（选填）",
+      "urlLabelNew": "新的出处链接（选填）",
+      "urlPlaceholder": "https://…"
     },
     "layout": {
       "computationalFormat": "计算图表",

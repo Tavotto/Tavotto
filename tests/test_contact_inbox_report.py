@@ -97,3 +97,23 @@ def test_a_report_with_a_reply_lives_365_days(clock):
 
 def test_no_records_means_no_poll_targets():
     assert contactinbox.pollable() == []
+
+
+def test_journal_kind_round_trips_without_report_id_and_keeps_letter_retention(clock):
+    assert contactinbox.add(MID, TOKEN, "cn", delivered=True, kind="journal", subject="期刊线索：X")
+    (pub,) = contactinbox.public_messages()
+    assert pub["kind"] == "journal" and pub["report_id"] == ""
+    # 没有回信也不像 report 那样 30 天就删：同 letter 留 365 天
+    clock[0] += 31 * DAY
+    assert len(contactinbox.public_messages()) == 1
+    clock[0] += 340 * DAY
+    assert contactinbox.public_messages() == []
+
+
+def test_journal_kind_survives_a_reload_from_disk():
+    contactinbox.path().parent.mkdir(parents=True, exist_ok=True)
+    rec = {"message_id": MID, "reply_token": TOKEN, "route": "cn", "sent_at": 1, "delivered": True}
+    contactinbox.path().write_text(
+        json.dumps({"version": 1, "messages": [{**rec, "kind": "journal"}]}), encoding="utf-8"
+    )
+    assert contactinbox._load_locked()["messages"][0]["kind"] == "journal"

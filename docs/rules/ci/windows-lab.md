@@ -79,6 +79,16 @@ Defender 实时防护开、`LongPathsEnabled=0` 的默认系统，以及真实 A
 - WebView2 调试端口（127.0.0.1:9222）由 HKLM 策略为 `Tavotto.exe` / `Tavotto beta.exe` 常开——与 nightly 同一条
   策略，只是在专用机上不每次删。msedgedriver 按本机 WebView2 版本从微软下载点取，核 Authenticode 与版本号。
 
+## 高级版组件冒烟（`pro-smoke`）
+- 对象是私有仓库 Tavotto/pro 发布的 **Windows 组件 zip**（ADR 0198），只收 `tavotto-pro-<版本>-windows-x64.zip` 形状的名字。
+  Mac 端把 zip、`<zip>.sha256`、签好的清单 `<zip>.release.json`、测试授权 `pro-test-license.json`（测试服务端签的令牌信封 +
+  设备种子）与测试发布公钥 `pro-test-release.pub` 经管理员 scp 送进 `cache\packages\`；只送**测试通道**的包与授权。
+- 驱动 `scripts/winlab/pro_smoke.py` 走产品自己的 `proinstall` / `prohost` / `license`：授权服务与下载点是本进程里的
+  回环假服务（开发端点，不联网），数据目录在 run 目录里且带中文与空格；判据是安装成功且第二次 `current`、`hello` 与清单一致、
+  要授权的命令放行到负载校验（`bad_request`；回 `license` 即失败）、exe 的 Authenticode 为 Valid、Defender 扫安装目录无检出
+  （扫描器不在 / 非 0/2 退出码记 `environment_unavailable`，不算通过）。
+- 令牌与设备种子只写进本次数据目录，**不进 report、日志与 PR**；不在 MSIX 包身份下运行（见任务的 `unverified`）。
+
 ## 资源与清理
 
 - 同一时刻只有一个任务（`state\job.lock`，持有者进程已不在才回收）。

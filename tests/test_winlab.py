@@ -966,6 +966,94 @@ def test_staged_package_must_match_its_pinned_hash(tmp_path):
     assert A.package_path(lab, "a.exe") == (d / "a.exe", None)
 
 
+def test_pro_smoke_takes_only_a_pro_zip_name():
+    t = A.TASKS["pro-smoke"]
+    good = "tavotto-pro-0.2.0-t5-windows-x64.zip"
+    assert A.validate_test_args(t, [], None, "direct", good) is None
+    assert "requires --package" in A.validate_test_args(t, [], None, "direct")
+    assert "does not accept --from" in A.validate_test_args(t, [], None, "direct", good, good)
+    for bad in (
+        "a.exe",
+        "tavotto-pro-0.2.0-macos-arm64.zip",
+        "tavotto-pro-..-windows-x64.zip",
+        "x/tavotto-pro-1-windows-x64.zip",
+        "tavotto-pro-1-windows-x64.zip;calc",
+    ):
+        assert A.validate_test_args(t, [], None, "direct", bad), bad
+    # 安装包任务仍然只认 .exe
+    assert A.validate_test_args(A.TASKS["installer"], [], None, "direct", good)
+
+
+def test_pro_smoke_needs_the_staged_companions(tmp_path):
+    import hashlib
+
+    lab = A.Lab(tmp_path)
+    d = lab.cache / "packages"
+    d.mkdir(parents=True)
+    name = "tavotto-pro-0.2.0-t5-windows-x64.zip"
+    (d / name).write_bytes(b"PK zip")
+    (d / f"{name}.sha256").write_text(hashlib.sha256(b"PK zip").hexdigest())
+    got = A.run_pro_smoke_task(lab, tmp_path / "run", {}, name)
+    assert got["result"] == "environment_unavailable"
+    assert f"{name}.release.json" in got["summary"]
+    assert all(n in got["summary"] for n in A.PRO_SMOKE_COMPANIONS)
+
+
+def test_pro_smoke_driver_keeps_secrets_out_of_its_result(tmp_path):
+    """真跑一遍驱动（子进程，假包 / 假授权），带标记的令牌与设备种子不得出现在结果文件与 stdout 里。"""
+    import base64
+    import subprocess
+    import sys
+
+    staged = tmp_path / "packages"
+    staged.mkdir()
+    name = "tavotto-pro-0.0.1-windows-x64.zip"
+    (staged / name).write_bytes(b"PK not a real zip")
+    payload = base64.b64encode(
+        json.dumps({"pro_version": "0.0.1", "platform": "windows-x64"}).encode()
+    )
+    (staged / f"{name}.release.json").write_text(
+        json.dumps({"payload": payload.decode(), "sig": "AAAA", "kid": "pro-test"})
+    )
+    token_marker = "TOKENMARKERzq9" * 4
+    seed = b"SEEDMARK" * 4
+    (staged / "pro-test-license.json").write_text(
+        json.dumps(
+            {
+                "token_file": {
+                    "v": 1,
+                    "token": {"payload": token_marker, "sig": token_marker, "kid": "test-2026-11"},
+                    "state": "ok",
+                },
+                "device_seed": base64.b64encode(seed).decode(),
+            }
+        )
+    )
+    (staged / "pro-test-release.pub").write_text(base64.b64encode(b"\0" * 32).decode())
+    out = tmp_path / "out.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(WINLAB / "pro_smoke.py"),
+            "--package",
+            str(staged / name),
+            "--work",
+            str(tmp_path / "work"),
+            "--out",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    text = out.read_text(encoding="utf-8") + proc.stdout
+    assert json.loads(out.read_text(encoding="utf-8"))["result"] != "passed"
+    for marker in (token_marker[:20], base64.b64encode(seed).decode()[:20], "SEEDMARK"):
+        assert marker not in text
+
+
 def test_installer_check_is_ascii_and_mirrors_the_nightly_checks():
     ps = (WINLAB / "installer-check.ps1").read_bytes()
     assert all(b < 128 for b in ps)
