@@ -5988,8 +5988,6 @@ export interface AiDataProposeItem {
   facts?: AiDataFacts
   /** 多个 y 的趋势图每条线各自的数（有它时没有 `facts`；单个 y / 大表 / 把列当分组时没有这一项）；旧响应没有 */
   series_facts?: AiDataSeriesFacts
-  /** 后端实际用的列角色（只取 `y` 判断是不是多个 y） */
-  values?: { y?: string[] }
   /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
   error?: AiDataErrorKind
   /** 误差线从哪来：`column` = 表里现成的误差列（`error_column` 是列名），`computed` = 用重复值算的 */

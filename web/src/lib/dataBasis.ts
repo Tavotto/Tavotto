@@ -46,7 +46,8 @@ export function basisOf(c: {
   title_code: string
   facts?: AiDataFacts | null
   series_facts?: AiDataSeriesFacts | null
-  values?: { y?: string[] } | null
+  /** 这张图的配方：只取 `y` 判断是不是多个 y（形状不对就当没有） */
+  values?: Record<string, unknown> | null
   unplotted?: { count: number } | null
   error_column?: string
   error_columns?: { column: string }[]
@@ -55,7 +56,7 @@ export function basisOf(c: {
   const sf = c.series_facts
   // 多个 y 的趋势图：有 `series_facts`、或趋势画法配方的 y 不止一列、或各配各的误差列（不能只看 `error_columns`：普通折线也可以多个 y）。
   // 别的族的多列纵轴（区间 / 构成 / 把列当分组……）不在此列，照旧按 `facts` 写；旧响应的多 y 趋势图有 `facts`（第一条线的数）而没有 `series_facts`
-  const multi = !!sf || ((TREND.includes(c.title_code) || c.title_code === 'line_err') && ((c.values?.y?.length ?? 0) > 1 || (c.error_columns?.length ?? 0) > 1))
+  const multi = !!sf || ((TREND.includes(c.title_code) || c.title_code === 'line_err') && ((Array.isArray(c.values?.y) ? c.values.y.length : 0) > 1 || (c.error_columns?.length ?? 0) > 1))
   const f = multi ? null : c.facts
   if (!f && !(sf || (multi && c.facts))) return null
   const viaColumn = ERR_COLUMN.includes(c.title_code)
