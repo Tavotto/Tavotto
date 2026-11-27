@@ -42,6 +42,9 @@ _BANDS = (
     "    for c in ax.collections:\n"
     "        if c.get_label().startswith('band'):\n"
     "            for p in c.get_paths():\n"
+    "                if len(p.vertices):\n"
+    "                    xs = [float(v[0]) for v in p.vertices]\n"
+    "                    result.setdefault('spans', []).append([min(xs), max(xs)])\n"
     "                for x, y in p.vertices:\n"
     "                    k = str(round(float(x), 6))\n"
     "                    lo, hi = result.get(k, [float('inf'), float('-inf')])\n"
@@ -81,7 +84,11 @@ def test_the_band_on_the_figure_is_the_hand_computed_interval(tmp_path, summary)
             lo,
             hi,
         )
-    # x=3 只有 1 个值：没有误差带，带在这里断开（不许把 x=2 与 x=4 连起来，也不许画成 0 宽）
+    # x=3 只有 1 个值：没有误差带，带在这里断开（不许把 x=2 与 x=4 连起来，也不许画成 0 宽）。
+    # 逐条路径看 x 跨度：只按 x 汇总上下界会丢掉连接关系，跨过 x=3 的闭合多边形不必在 x=3 有顶点（Codex #2308）
+    spans = got.pop("spans")
+    assert all(not (lo < 3 < hi) for lo, hi in spans), spans
+    assert any(hi <= 3 for _, hi in spans) and any(lo >= 3 for lo, _ in spans), spans
     assert "3.0" not in got, got
 
 
