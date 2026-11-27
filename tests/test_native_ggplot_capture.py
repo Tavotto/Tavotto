@@ -2193,6 +2193,30 @@ stopifnot(box$native_axes$frame$current$spine_color == packed$spine_color,
 for (bad in list(list(spine_top = 1), list(spine_left_linewidth = 0), list(spine_color = "bogus"))) {
   stopifnot(inherits(try(adapter$render_ggplot(boxed$state, list(axes_0 = bad)), silent = TRUE), "try-error"))
 }
+
+theme <- ggplot2::theme_minimal() +
+  ggplot2::theme(plot.background = ggplot2::element_rect(fill = "#DADCEE", colour = NA))
+blank <- adapter$capture_ggplot(plot + theme, frame)
+background <- function(state, changes = list()) {
+  axes <- Filter(function(e) e$gid == "axes_0", adapter$ggplot_manifest(state, "box", changes)$elements)
+  axes[[1L]]$native_axes$background
+}
+fill <- function(value) list(axes_0 = list(facecolor = value))
+theme_fill <- function(value, border = NA, size = NULL) ggplot2::theme(
+  panel.background = ggplot2::element_rect(fill = value, colour = border, linewidth = size))
+coloured <- adapter$capture_ggplot(plot + theme + theme_fill("#CED9A3"), frame)
+changed <- adapter$render_ggplot(blank$state, fill("#CED9A3"))
+stopifnot(identical(changed, coloured$svg),
+          identical(background(blank$state, fill("#CED9A3")), list(original = "none", current = "#CED9A3")),
+          grepl("fill: #DADCEE", changed, fixed = TRUE),
+          identical(adapter$render_ggplot(blank$state), blank$svg))
+authored <- plot + theme + theme_fill("#CED9A3", "#283159", .7)
+painted <- adapter$capture_ggplot(authored, frame)
+cleared <- adapter$render_ggplot(painted$state, fill("none"))
+expected <- adapter$capture_ggplot(authored + theme_fill(NA, "#283159", .7), frame)
+stopifnot(identical(cleared, expected$svg), grepl("stroke: #283159", cleared, fixed = TRUE),
+          identical(background(painted$state, fill("none")), list(original = "#CED9A3", current = "none")),
+          inherits(try(adapter$render_ggplot(painted$state, fill("invalid")), silent = TRUE), "try-error"))
 """
 
 
@@ -2661,6 +2685,33 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
             "grid_linewidth",
             "grid_alpha",
         }
+        axes = elements["axes_0"]
+        original_fill = next(field for field in axes["editable"] if field["prop"] == "facecolor")
+        background = session.override(
+            stem,
+            [
+                {
+                    "gid": axes["gid"],
+                    "identity": axes["identity"],
+                    "prop": "facecolor",
+                    "value": "#C0DDFA",
+                }
+            ],
+            inline_svg=True,
+        )
+        painted_axes = next(
+            e for e in background["manifest"]["elements"] if e["gid"] == axes["gid"]
+        )
+        painted_fill = next(
+            field for field in painted_axes["editable"] if field["prop"] == "facecolor"
+        )
+        assert painted_fill == {
+            **original_fill,
+            "value": "#C0DDFA",
+            "value_original": original_fill["value"],
+        }
+        assert "fill: #C0DDFA" in background["svg"]
+        assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
         scatter = elements["layer.1.scatter"]
         assert scatter["role"] == "scatter" and scatter["identity"].startswith("r6:")
         assert {field["prop"] for field in scatter["editable"]} == {"size", "marker", "alpha"}

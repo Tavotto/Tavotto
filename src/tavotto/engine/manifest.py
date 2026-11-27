@@ -88,6 +88,7 @@ from legendmodel import (
 )
 from manifest_fields import (
     AXIS_FRAME_SIDES,
+    axis_facecolor_field,
     axis_frame_fields,
     axis_grid_fields,
     axis_invert_field,
@@ -4442,12 +4443,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 },
             }
         ),
-        {
-            "prop": "facecolor",
-            "type": "color",
-            "value": to_hex(ax.get_facecolor()),
-            "group": "网格与边框",
-        },
+        axis_facecolor_field(to_hex(ax.get_facecolor())),
     ]
     return [f for f in fields if _axes_prop_drawn(ax, f["prop"])]
 

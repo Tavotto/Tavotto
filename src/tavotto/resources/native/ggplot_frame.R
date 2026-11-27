@@ -166,3 +166,28 @@ ggplot_validate_frame_edits <- function(frame, edit) {
     if (!valid) stop("Invalid native R frame style.")
   }
 }
+
+ggplot_background_target <- function(built, table, target) {
+  slot <- ggplot_cartesian_panel_slot(built, table)
+  if (is.null(slot)) return(target)
+  style <- ggplot2::calc_element("panel.background", built$plot$theme)
+  if (inherits(style, "element_blank")) {
+    style <- ggplot2::element_rect(fill = NA, colour = NA, inherit.blank = FALSE)
+  }
+  if (!identical(class(style), class(ggplot2::element_rect()))) return(target)
+  fill <- ggplot_uniform_pigment(style$fill)
+  if (is.null(fill)) return(target)
+  target <- ggplot_panel_decoration(built, target, slot)
+  target$background <- list(style = style, original = fill$rgb)
+  target
+}
+
+ggplot_background_style <- function(background, value) {
+  if (is.null(background) || !is.character(value) || length(value) != 1L || is.na(value) ||
+      (value != "none" && !grepl("^#[0-9A-Fa-f]{6}$", value))) {
+    stop("Invalid native R panel background color.")
+  }
+  style <- background$style
+  style$fill <- if (value == "none") NA_character_ else value
+  style
+}

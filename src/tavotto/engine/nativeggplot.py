@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
 from .manifest_fields import (
+    axis_facecolor_field,
     axis_frame_fields,
     axis_grid_fields,
     axis_invert_field,
@@ -278,6 +279,11 @@ class GgplotTarget:
                 if prop in edited:
                     field["value_original"] = original_values[prop]
                 fields.append(field)
+        if (background := axes.get("background")) is not None:
+            field = axis_facecolor_field(background["current"])
+            if "facecolor" in axes["edited"]:
+                field["value_original"] = background["original"]
+            fields.append(field)
         element["editable"] = fields
         element["identity"] = _AXES_IDENTITY_PREFIX + axes["context"]
 

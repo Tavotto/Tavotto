@@ -228,6 +228,10 @@ ggplot_axes_element <- function(target, current, bbox, edits) {
               grid = if (!is.null(target$grid)) {
                 list(original = target$grid$original, edited = edits[intersect(names(edits), ggplot_grid_keys)])
               },
+              background = if (!is.null(target$background)) {
+                list(original = target$background$original,
+                     current = edits$facecolor %||% target$background$original)
+              },
               frame = if (!is.null(target$frame)) {
                 edit <- edits[intersect(names(edits), ggplot_frame_keys)]
                 list(original = ggplot_frame_value(target$frame, list()),

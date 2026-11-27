@@ -54,6 +54,10 @@ def fill_color_field(color: str) -> dict:
     return {"prop": "facecolor", "type": "color", "value": color}
 
 
+def axis_facecolor_field(color: str) -> dict:
+    return {**fill_color_field(color), "group": "网格与边框"}
+
+
 def axis_limits_field(axis: str, limits) -> dict:
     return {
         "prop": f"{axis}lim",
