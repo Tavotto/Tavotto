@@ -6325,11 +6325,8 @@ def _journal_report_rule(jm, cat: dict, jid: str, rule_key: str, source_id: str 
             try:
                 folded = fold.fold(cached[1])
                 v2_rule = folded["rules"].get(rule_key)
-                fact_id = (
-                    (folded["sources"].get(v2_rule["src"]) or {}).get("fact_id")
-                    if v2_rule
-                    else None
-                )
+                # fact_id 挂在规则上（同一来源的多条事实共用来源条目，挂来源上会互相覆盖）
+                fact_id = v2_rule.get("fact_id") if v2_rule else None
                 # 线缆上 v2 的出处 id 是 `v2:<事实 id>`（与界面同一规则）；没有事实 id 就当没有 v2
                 v2_sid = f"v2:{fact_id}" if isinstance(fact_id, str) and fact_id else None
                 if v2_sid is None:

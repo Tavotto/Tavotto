@@ -23,7 +23,7 @@ order: 66
   （内容变了、没带令牌）一律回预览，对不上而带了旧令牌时加 `token_stale: true`。
 - **不收数值、不信任 Agent 的目录数据**：schema 里没有 value / current / catalog；`current`（目录里那一条的序列化值，≤200 字）、
   出处 id、v1 / v2 `catalog_rev` 都由工具读本机目录（`journalremote.load_cached`，不联网；v2 读 `journalfacts_remote.cached_bundle` 折叠结果）。
-  `wrong` 的 `rule_key` 必须在本机目录里存在，否则回 `journal_rule_unknown` + `known_rule_keys`；`source_id` 要与目录对得上；v2 折叠规则的出处 id 是 `v2:<事实 id>`（`journalfacts_fold` 的 `sources[…].fact_id`，与界面「这条不对」同一规则，**不是**带第二个冒号的折叠 `src`）。
+  `wrong` 的 `rule_key` 必须在本机目录里存在，否则回 `journal_rule_unknown` + `known_rule_keys`；`source_id` 要与目录对得上；v2 折叠规则的出处 id 是 `v2:<事实 id>`（`journalfacts_fold` 的 `rules[…].fact_id`——挂在规则上，同一来源的多条事实各有各的，与界面「这条不对」同一规则，**不是**带第二个冒号的折叠 `src`）。
 - **参数按类型收**：wrong = journal_id + rule_key（+ source_id / issue / url / body）；missing = query / url（至少一个）+ body；
   editor = journal_id + body（编辑部原话）+ url。issue 只随 wrong；别的组合回 `bad_arguments`。Agent 给的 url 不合规（非 https、含账号、过长）
   要明说，不静默少发。

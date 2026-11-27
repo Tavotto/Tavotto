@@ -298,9 +298,10 @@ def test_v2_source_uses_the_cached_bundle_and_its_catalog_rev(env, monkeypatch):
                     "value": 0.25,
                     "qualifier": "min",
                     "src": "v2:src1:journal",
+                    "fact_id": "fact-9",  # 挂在规则上（与 journalfacts_fold 一致）
                 }
             },
-            "sources": {"v2:src1:journal": {"fact_id": "fact-9"}},
+            "sources": {"v2:src1:journal": {}},
             "confirm": [],
         },
     )
