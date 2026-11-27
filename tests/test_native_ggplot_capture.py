@@ -2610,6 +2610,7 @@ stopifnot(identical(unname(unlist(original[props])), c(TRUE, FALSE, TRUE, FALSE)
 default <- list(axes_0 = list(ticks_top = TRUE, ticks_right = TRUE,
                               ticks_bottom = FALSE, ticks_left = FALSE))
 mirrored <- axis_parts(state, default)
+if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L), quietly = TRUE))) quit(status = 77L)
 stopifnot(identical(mirrored$top$ticks, initial$bottom$ticks), length(mirrored$top$ticks) == 2L,
           identical(mirrored$right$ticks, initial$left$ticks), !length(mirrored$top$labels),
           !length(mirrored$right$labels), !length(mirrored$bottom$ticks), !length(mirrored$left$ticks),
