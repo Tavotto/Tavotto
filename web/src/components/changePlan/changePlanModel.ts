@@ -339,5 +339,6 @@ export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'pla
  * 是聊天就直接交给普通对话，不会先闪一张卡再消失（用户 2026-11-27）——方案回来、正在交给普通对话的那一下（整条 out_of_scope）也还是这一行；要改图的，方案一回来卡就出（停在「画出修改后的图」那一步）。
  */
 export function planUndecided(e: Pick<PlanEntry, 'from' | 'kind' | 'status' | 'plan' | 'revising' | 'request' | 'phase'>): boolean {
-  return e.from === 'assistant' && e.kind !== 'layout' && e.status === 'generating' && (!e.plan || allOutOfScope(e.plan)) && e.revising === undefined && e.request.mode !== 'script' && e.phase !== 'render_after' && e.phase !== 'agent'
+  // 整版 / 矢量编辑方案不在此列：用户选了对象再发的就是改图指令（没有「是不是聊天」要判，也没有落回普通对话的路），生成中就是一张卡
+  return e.from === 'assistant' && !isCanvasPlan(e) && e.status === 'generating' && (!e.plan || allOutOfScope(e.plan)) && e.revising === undefined && e.request.mode !== 'script' && e.phase !== 'render_after' && e.phase !== 'agent'
 }
