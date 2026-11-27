@@ -196,27 +196,29 @@ def _native_theme_writes(
     return options, written
 
 
-def _point_aesthetic_value(key: str, value) -> bool:
+def _layer_aesthetic_value(key: str, value) -> bool:
     if key in ("colour", "fill"):
         return value is None or (isinstance(value, str) and _RGBA.fullmatch(value) is not None)
+    if key == "linetype":
+        return isinstance(value, str) and value in {"solid", "dashed", "dotted", "dotdash"}
     return (
-        key in ("size", "shape", "alpha", "stroke")
+        key in ("size", "shape", "alpha", "stroke", "linewidth")
         and type(value) in (int, float)
         and math.isfinite(value)
     )
 
 
-def _native_point_writes(
+def _native_layer_writes(
     hot: dict | None, patches: list[dict]
 ) -> tuple[dict[int, dict], set[tuple[str, str]]]:
-    """A fixed geom_point aesthetic belongs to the layer in every facet."""
+    """A fixed native aesthetic belongs to the layer in each rendered facet."""
     edits = defaultdict(dict)
     for patch in patches:
         edits[patch["gid"]][patch["prop"]] = patch["value"]
     layers = defaultdict(dict)
     for element in (hot or {}).get("elements", ()):
         gid = element["gid"]
-        source = element.get("source_point")
+        source = element.get("source_layer")
         if not source or edits.get(gid) != source["edited"]:
             continue
         index, count, aesthetics = source["layer"], source["panels"], source["aesthetics"]
@@ -225,8 +227,9 @@ def _native_point_writes(
             and index >= 1
             and type(count) is int
             and count >= 1
+            and source["geom"] in ("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar")
             and aesthetics
-            and all(_point_aesthetic_value(k, v) for k, v in aesthetics.items())
+            and all(_layer_aesthetic_value(k, v) for k, v in aesthetics.items())
         ):
             layers[index][gid] = source
     plans = {}
@@ -235,23 +238,25 @@ def _native_point_writes(
         plan = next(iter(panels.values()))
         if len(panels) != plan["panels"] or any(p != plan for p in panels.values()):
             continue
-        plans[index] = plan["aesthetics"]
+        plans[index] = plan
         written.update((gid, prop) for gid in panels for prop in edits[gid])
     return plans, written
 
 
-def _r_point_block(name: str, layers: dict[int, dict]) -> str:
+def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     edits = []
-    for index, values in sorted(layers.items()):
+    for index, plan in sorted(layers.items()):
+        values = plan["aesthetics"]
+        kind = json.dumps(plan["geom"])
         slot = f"plot$layers[[{index}L]]"
         params = ", ".join(f"{key} = {_r_literal(value)}" for key, value in values.items())
-        edits.append(f"  {slot} <- styled_layer({slot}, list({params}))")
+        edits.append(f"  {slot} <- styled_layer({slot}, {kind}, list({params}))")
     # ggproto resolves its parent lazily. Each call must bind its own layer.
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
-            "  styled_layer <- function(layer, values) {",
-            '    if (!identical(class(layer$geom)[[1L]], "GeomPoint")) stop("Tavotto style needs geom_point().")',
+            "  styled_layer <- function(layer, kind, values) {",
+            '    if (!identical(class(layer$geom)[[1L]], kind)) stop("Tavotto style layer changed.")',
             "    aesthetics <- utils::modifyList(layer$aes_params, values)",
             "    ggplot2::ggproto(NULL, layer, aes_params = aesthetics)",
             "  }",
@@ -408,8 +413,8 @@ def build(
     axes = {e["gid"]: e for e in (hot or {}).get("elements", ()) if e["role"] == "axes"}
     coordinates, coordinate_writes = _native_coordinate_writes(axes, patches)
     theme_options, theme_writes = _native_theme_writes(axes, patches)
-    point_layers, point_writes = _native_point_writes(hot, patches)
-    written = coordinate_writes | theme_writes | point_writes
+    source_layers, layer_writes = _native_layer_writes(hot, patches)
+    written = coordinate_writes | theme_writes | layer_writes
     residual = []
     skipped = []
     for patch in patches:
@@ -467,7 +472,7 @@ def build(
             {"gid": patch["gid"], "prop": patch["prop"], "reason": "unsupported"}
             for patch in residual
         ]
-    if not elements and not coordinates and not theme_options and not point_layers:
+    if not elements and not coordinates and not theme_options and not source_layers:
         return AdjustedRSource(data, 0, residual, skipped)
 
     name = json.dumps(object_name, ensure_ascii=False)
@@ -483,8 +488,8 @@ def build(
     statements = []
     if coordinates:
         statements.append(_r_coordinate_block(name, coordinates))
-    if point_layers:
-        statements.append(_r_point_block(name, point_layers))
+    if source_layers:
+        statements.append(_r_layer_block(name, source_layers))
     if options:
         args = ",\n".join(options)
         statements.append(

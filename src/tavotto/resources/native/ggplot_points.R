@@ -2,6 +2,10 @@
 # aesthetic belongs to the data scale, even if its current values coincide.
 ggplot_point_markers <- c("o" = 19L, "s" = 15L, "^" = 17L, "D" = 18L)
 
+ggplot_point_aesthetic_size <- function(area) sqrt(area) / ggplot2::.pt
+
+ggplot_point_aesthetic_stroke <- function(width) width / ggplot_lwd_pt * 2 / ggplot2::.stroke
+
 ggplot_point_marker <- function(pch) {
   if (length(pch) != 1L || !is.numeric(pch) || !is.finite(pch)) return(NULL)
   if (pch == 16L) pch <- 19L
@@ -64,8 +68,8 @@ ggplot_point_style_fields <- function(points, alpha, mapped, indices) {
   )), paint)
 }
 
-ggplot_point_group_guide <- function(built, layer, mapped, members) {
-  if (!"shape" %in% mapped || !identical(layer$show.legend, NA) ||
+ggplot_point_group_guide <- function(built, layer, mapped, maps, index) {
+  if (!identical(layer$show.legend, NA) ||
       !identical(as.list(layer$geom)$draw_key, ggplot2::draw_key_point)) return(NULL)
   guides <- built$plot$guides
   keys <- names(guides$params)[vapply(guides$params, function(p) length(intersect(p$aesthetic, mapped)) > 0L,
@@ -76,28 +80,40 @@ ggplot_point_group_guide <- function(built, layer, mapped, members) {
   params <- guides$params[[keys]]
   key <- params$key
   decor <- params$decor$geom_point
-  scale <- built$plot$scales$get_scales("shape")
+  aesthetics <- params$aesthetic
+  overrides <- names(params$override.aes)
   point_layers <- vapply(built$plot$layers, function(other) {
     identical(class(other$geom)[[1L]], "GeomPoint")
   }, logical(1L))
-  if (sum(point_layers) != 1L || is.null(scale) || !isTRUE(scale$is_discrete()) ||
-      !identical(params$aesthetic, "shape") || !"shape" %in% names(key) ||
+  if (sum(point_layers) != 1L || !length(aesthetics) ||
+      !all(aesthetics %in% intersect(mapped, c("shape", "colour", "fill"))) ||
       !identical(class(guide)[[1L]], "GuideLegend") || !is.function(decor$draw_key) ||
-      "shape" %in% names(params$override.aes) || anyNA(key$.value) || anyDuplicated(key$.value) ||
+      any(aesthetics %in% overrides) || anyNA(key$.value) || anyDuplicated(key$.value) ||
       !is.character(key$.label) || anyNA(key$.label) || anyDuplicated(key$.label) ||
       !is.logical(decor$data$.draw) || anyNA(decor$data$.draw) ||
       length(decor$data$.draw) != nrow(key) ||
-      !isTRUE(all.equal(as.numeric(decor$data$shape), as.numeric(key$shape)))) return(NULL)
-  # A guide override or mapped aesthetic owns its own presentation. Only
-  # link fixed styles that the actual stock key draws like the group.
-  mapped <- union(mapped, names(params$override.aes))
+      !all(vapply(aesthetics, function(channel) {
+        channel %in% names(key) &&
+          identical(as.character(decor$data[[channel]]), as.character(key[[channel]]))
+      }, logical(1L)))) return(NULL)
+  # Bind the guide key back to the observed values, even when two levels
+  # deliberately use the same shape or pigment.
+  memberships <- lapply(aesthetics, function(aesthetic) {
+    groups <- ggplot_discrete_layer_groups(built, mapped, maps, index, aesthetic)
+    if (is.null(groups)) return(NULL)
+    rows <- match(groups$keys, key$.value)
+    lapply(groups$membership, function(panel) rows[panel])
+  })
+  membership <- memberships[[1L]]
+  if (is.null(membership) || !all(vapply(memberships, identical, logical(1L), membership))) return(NULL)
+  # A guide override or a separate data scale still owns its presentation.
+  mapped <- union(setdiff(mapped, intersect(aesthetics, "shape")), overrides)
   styles <- lapply(seq_len(nrow(key)), function(index) {
     data <- decor$data[index, , drop = FALSE]
     ggplot_point_style_fields(ggplot2::draw_key_point(data, list(), 1), data$alpha, mapped, 1L)
   })
-  membership <- split(match(members$values, key$.value), members$panel)
   list(index = keys[[1L]], key = key, draw = decor$data$.draw,
-       membership = membership, mapped = mapped, styles = styles)
+       membership = membership, mapped = mapped, styles = styles, aesthetics = aesthetics)
 }
 
 ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide) {
@@ -119,20 +135,19 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
     groups <- split(seq_len(count), membership)
     suffix <- if (panels$single) "" else paste0(".panel.", id)
     for (key in as.integer(names(groups))) {
-      marker <- ggplot_point_marker(guide$key$shape[[key]])
-      if (is.null(marker) || !guide$draw[[key]]) next
+      if (!guide$draw[[key]]) next
       part <- groups[[as.character(key)]]
-      if (!all(points$pch[part] == guide$key$shape[[key]])) return(list())
       styles <- ggplot_point_style_fields(points, rows$alpha, guide$mapped, part)
       key_style <- guide$styles[[key]]
       matches <- vapply(names(styles), function(prop) {
         isTRUE(all.equal(styles[[prop]], key_style[[prop]], tolerance = 1e-12))
       }, logical(1L))
-      context <- rlang::hash(list("GeomPoint", rows, draw$facet, guide$key$.value[[key]], part))
+      context <- list("GeomPoint", rows, draw$facet, guide$key$.value[[key]], part)
+      if (!identical(guide$aesthetics, "shape")) context <- c(context, list(guide$aesthetics))
       result[[paste0("layer.", layer_index, suffix, ".scatter.group.", key)]] <- list(
         slot = draw$slot, child = draw$child, index = layer_index, count = count, facet = draw$facet,
-        values = c(list(marker = marker), styles[matches]),
-        clip = identical(layout$coord$clip, "on"), context = context,
+        values = styles[matches],
+        clip = identical(layout$coord$clip, "on"), context = rlang::hash(context),
         group = list(rows = part, guide = guide$index, key = key, label = guide$key$.label[[key]])
       )
     }
@@ -145,7 +160,7 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
     result[[peers[[1L]]]]$group$links <- peers[-1L]
     for (gid in peers[-1L]) result[[gid]]$group$links <- peers[[1L]]
   }
-  result
+  Filter(function(target) length(target$values) > 0L, result)
 }
 
 ggplot_expand_point_groups <- function(state, edits) {
@@ -186,7 +201,7 @@ ggplot_style_point_keys <- function(guide_params, targets, edits) {
     data <- params$decor$geom_point$data
     if (!is.null(patch$marker) && patch$marker != "original") {
       shape <- ggplot_point_markers[[patch$marker]]
-      params$key$shape[[key]] <- shape
+      if ("shape" %in% names(params$key)) params$key$shape[[key]] <- shape
       data$shape[[key]] <- shape
     }
     for (prop in intersect(names(patch), c("facecolor", "edgecolor"))) {
@@ -195,7 +210,10 @@ ggplot_style_point_keys <- function(guide_params, targets, edits) {
       original <- ggplot_uniform_pigment(data[[field]][[key]])
       data[[field]][[key]] <- ggplot_edit_pigment(patch[[prop]], original, patch$alpha, data$alpha[[key]])
     }
-    if (!is.null(patch$size)) data$size[[key]] <- sqrt(patch$size) / ggplot2::.pt
+    if (!is.null(patch$size)) data$size[[key]] <- ggplot_point_aesthetic_size(patch$size)
+    if (!is.null(patch$linewidth)) {
+      data$stroke[[key]] <- ggplot_point_aesthetic_stroke(patch$linewidth)
+    }
     if (!is.null(patch$alpha)) data$alpha[[key]] <- patch$alpha
     params$decor$geom_point$data <- data
     guide_params[[group$guide]] <- params
@@ -215,11 +233,8 @@ ggplot_point_targets <- function(built, panels, layer_grobs, maps) {
     data <- built$data[[index]]
     drawn <- ggplot_panel_draws(panels, layer_grobs[[index]], data)
     if (ggplot_layer_has_legend_key(built, layer, mapped)) {
-      capture <- ggplot_aligned_colour_capture(built, maps, index)
-      values <- capture$input$shape
-      if (length(values) == nrow(data) && identical(capture$output$shape, data$shape) &&
-          length(drawn) == sum(!vapply(layer_grobs[[index]], inherits, logical(1L), "zeroGrob"))) {
-        guide <- ggplot_point_group_guide(built, layer, mapped, list(values = values, panel = data$PANEL))
+      if (length(drawn) == sum(!vapply(layer_grobs[[index]], inherits, logical(1L), "zeroGrob"))) {
+        guide <- ggplot_point_group_guide(built, layer, mapped, maps, index)
         targets <- c(targets, ggplot_point_group_targets(built, panels, drawn, index, guide))
       }
       next
@@ -369,27 +384,23 @@ measure_ggplot_points <- function(table, targets, frame_pt, retain_clipped = FAL
 
 ggplot_point_source_plan <- function(state, target, edit) {
   if (!is.null(target$group) || !length(edit)) return(NULL)
-  layer <- state$built$plot$layers[[target$index]]
-  if (!identical(as.list(layer$geom)$draw_panel, as.list(ggplot2::GeomPoint)$draw_panel)) return(NULL)
-  panels <- sum(!vapply(state$layer_grobs[[target$index]], inherits, logical(1L), "zeroGrob"))
-  if (!panels) return(NULL)
   points <- ggplot_point_grob(state$table$grobs[[target$slot]], target)
   channels <- ggplot_point_paint_channels(unique(points$pch))
   supported <- c("size", "alpha", "linewidth", names(channels))
   if (!identical(edit$marker, "original")) supported <- c(supported, "marker")
   if (!all(names(edit) %in% supported)) return(NULL)
   native <- list()
-  if (!is.null(edit$size)) native$size <- sqrt(edit$size) / ggplot2::.pt
+  if (!is.null(edit$size)) native$size <- ggplot_point_aesthetic_size(edit$size)
   if (!is.null(edit$alpha)) native$alpha <- edit$alpha
   if (!is.null(edit$marker)) native$shape <- ggplot_point_markers[[edit$marker]]
-  if (!is.null(edit$linewidth)) native$stroke <- edit$linewidth / ggplot_lwd_pt * 2 / ggplot2::.stroke
+  if (!is.null(edit$linewidth)) native$stroke <- ggplot_point_aesthetic_stroke(edit$linewidth)
   for (prop in intersect(names(edit), names(channels))) {
     channel <- channels[[prop]]
     original <- ggplot_uniform_pigment(points$gp[[channel]])
     field <- if (channel == "fill") "fill" else "colour"
     native[[field]] <- ggplot_edit_pigment(edit[[prop]], original, edit$alpha, target$values$alpha)
   }
-  list(layer = target$index, panels = panels, edited = edit, aesthetics = native)
+  ggplot_fixed_layer_source(state, target, edit, native)
 }
 
 ggplot_point_elements <- function(state, edits, measured) {

@@ -1540,6 +1540,36 @@ ggplot_paths_bbox <- function(paths, pad = c(0, 0)) {
   c(x[[1L]] - pad[[1L]], y[[1L]] - pad[[2L]], diff(x) + 2 * pad[[1L]], diff(y) + 2 * pad[[2L]])
 }
 
+# Binding a fixed aesthetic to an authored layer needs stock native drawing
+# and the set of panels that actually draw that layer.
+ggplot_fixed_layer_source <- function(state, target, edit, aesthetics) {
+  layer <- state$built$plot$layers[[target$index]]
+  kind <- class(layer$geom)[[1L]]
+  if (!kind %in% c("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar")) return(NULL)
+  stock <- getExportedValue("ggplot2", kind)
+  if (!identical(as.list(layer$geom)$draw_panel, as.list(stock)$draw_panel)) return(NULL)
+  panels <- sum(!vapply(state$layer_grobs[[target$index]], inherits, logical(1L), "zeroGrob"))
+  if (panels) list(layer = target$index, geom = kind, panels = panels, edited = edit, aesthetics = aesthetics)
+}
+
+ggplot_layer_has_group_edits <- function(targets, index, edits) {
+  changed <- targets[intersect(names(targets), names(edits))]
+  any(vapply(changed, function(target) {
+    identical(target$index, index) && !is.null(target$group)
+  }, logical(1L)))
+}
+
+ggplot_line_source_plan <- function(state, target, patch, edits) {
+  if (!length(patch) || !is.null(target$group)) return(NULL)
+  if (ggplot_layer_has_group_edits(state$line_targets, target$index, edits)) return(NULL)
+  style <- ggplot_line_style(target, patch)
+  aesthetics <- list()
+  if (!is.null(style$lwd)) aesthetics$linewidth <- style$lwd / ggplot2::.pt
+  if (!is.null(style$lty)) aesthetics$linetype <- style$lty
+  if (!is.null(style$col)) aesthetics$colour <- style$col
+  ggplot_fixed_layer_source(state, target, patch, aesthetics)
+}
+
 ggplot_line_style <- function(target, patch) {
   change <- list()
   max_width <- if (target$interval) 5 else 20
@@ -2251,7 +2281,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     }, logical(1L))) ||
     any(names(edits) %in% c(ggplot_axes_gid, legend_gids, names(state$colour_scales))) ||
     length(facet_changes) > 0L || length(ggplot_guide_stroke_edits(state, edits)) > 0L ||
-    any(vapply(ggplot_guide_point_edits(state, edits), function(edit) !is.null(edit$size), logical(1L)))
+    any(vapply(ggplot_guide_point_edits(state, edits), function(edit) {
+      any(c("size", "linewidth") %in% names(edit))
+    }, logical(1L)))
   line_edits <- any(names(edits) %in% names(state$line_targets))
   point_edits <- any(names(edits) %in% names(state$point_targets))
   bar_edits <- any(names(edits) %in% names(state$bar_targets))
@@ -2476,9 +2508,10 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     }
     label <- ggplot_layer_label("\u66f2\u7ebf", target)
     if (!is.null(target$group)) label <- paste(label, target$group$label, sep = " \u00b7 ")
-    c(list(gid = gid, role = "line", label = label,
-           draggable = FALSE, editable = editable, line_context = target$context),
-      geometry)
+    element <- c(list(gid = gid, role = "line", label = label,
+                      draggable = FALSE, editable = editable, line_context = target$context), geometry)
+    element$source_layer <- ggplot_line_source_plan(state, target, patch, edits)
+    element
   })
   colour_scales <- if (length(state$colour_scales)) {
     ggplot_colour_scale_elements(state, edits, measured$colour_scales, measured$scale_stops)

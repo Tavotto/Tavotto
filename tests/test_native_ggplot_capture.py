@@ -955,9 +955,26 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
 
 
 @pytest.mark.parametrize(
-    "scope", ["single", "all-facets", "one-facet", "different-facets", "paint-facets", "two-layers"]
+    "scope",
+    [
+        "single",
+        "all-facets",
+        "one-facet",
+        "different-facets",
+        "paint-facets",
+        "line-all-facets",
+        "line-one-facet",
+        "path-single",
+        "line-legend",
+        "line-legend-local",
+        "two-layers",
+        "mixed-layers",
+        "bar-col",
+        "bar-col-one-facet",
+        "bar-count",
+    ],
 )
-def test_native_r_point_styles_write_back_only_when_shared_by_the_layer(tmp_path, scope):
+def test_native_r_fixed_layer_styles_write_back_only_when_shared_by_the_layer(tmp_path, scope):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
@@ -972,7 +989,10 @@ plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, colour = x)) +
     ggplot2::labs(title = "Point evidence")
 ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices::cairo_pdf)
 """
-    if scope != "single":
+    curve = scope.startswith(("line-", "path-"))
+    bars = scope.startswith("bar-")
+    faceted = scope not in ("single", "path-single", "line-legend", "line-legend-local")
+    if faceted:
         original = original.replace(
             b'ggplot2::labs(title = "Point evidence")',
             b'ggplot2::labs(title = "Point evidence") + ggplot2::facet_wrap(ggplot2::vars(panel))',
@@ -982,13 +1002,30 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             b'geom_point(size = 2, colour = "#287F6E")',
             b'geom_point(size = 2, shape = 21, fill = "#E3A45280", colour = "#287F6E")',
         )
-    if scope == "two-layers":
-        original = original.replace(
-            b'ggplot2::geom_point(size = 2, colour = "#287F6E")',
-            b'ggplot2::geom_point(size = 2, colour = "#287F6E") +\n'
-            b"    ggplot2::geom_point(data = function(d) transform(d, x = x + .3), "
-            b'shape = 21, fill = "#E3A452", colour = "#723551", size = 3)',
+    if curve:
+        geom = (
+            b'geom_path(linewidth = .8, colour = "#287F6E99")'
+            if scope == "path-single"
+            else b'geom_line(linewidth = .8, colour = "#287F6E99")'
         )
+        if scope.startswith("line-legend"):
+            geom = b"geom_line(ggplot2::aes(colour = panel), linewidth = .8)"
+        original = original.replace(b'geom_point(size = 2, colour = "#287F6E")', geom)
+    if scope in ("two-layers", "mixed-layers"):
+        first = b'ggplot2::geom_point(size = 2, colour = "#287F6E")'
+        second = (
+            b"ggplot2::geom_point(data = function(d) transform(d, x = x + .3), "
+            b'shape = 21, fill = "#E3A452", colour = "#723551", size = 3)'
+            if scope == "two-layers"
+            else b'ggplot2::geom_line(colour = "#287F6E80", linewidth = .8)'
+        )
+        original = original.replace(first, first + b" +\n    " + second)
+    if bars:
+        geom = b'geom_col(width = .6, fill = "#D59162", colour = "#287F6E", linewidth = .8)'
+        if scope == "bar-count":
+            original = original.replace(b"aes(x, y, colour = x)", b"aes(x)")
+            geom = b'geom_bar(width = .6, fill = "#D59162", colour = "#287F6E", linewidth = .8)'
+        original = original.replace(b'geom_point(size = 2, colour = "#287F6E")', geom)
     source.write_bytes(original)
     route = "/api/layouts/Point_style"
     with sidecar_app(project, tmp_path / "warm") as app:
@@ -996,16 +1033,32 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         before = _render(app, figure, [])
         original_pdf = (project / "original.pdf").read_bytes()
         elements = {element["gid"]: element for element in before["manifest"]["elements"]}
-        targets = [gid for gid, element in elements.items() if element["role"] == "scatter"]
-        expected_targets = {"single": 1, "two-layers": 4}.get(scope, 2)
-        assert len(targets) == expected_targets
-        if scope == "one-facet":
+        role = "line" if curve else "bar_series" if bars else "scatter"
+        targets = [
+            gid
+            for gid, element in elements.items()
+            if element["role"] == role and ".group." not in gid
+        ]
+        assert len(targets) == (4 if scope == "two-layers" else 2 if faceted else 1)
+        if scope in ("one-facet", "line-one-facet", "bar-col-one-facet"):
             targets = targets[-1:]
-        edits = (
-            {"size": 110, "facecolor": "none", "edgecolor": "#1E2F80", "linewidth": 2.2}
-            if scope == "paint-facets"
-            else {"size": 100, "marker": "s", "alpha": 0.45}
-        )
+        if curve:
+            edits = {"linewidth": 1.8, "linestyle": "--"}
+            if not scope.startswith("line-legend"):
+                edits["color"] = "#613C88"
+        elif bars:
+            edits = {
+                "facecolor": "#835275",
+                "edgecolor": "#174466",
+                "linewidth": 2.2,
+                "alpha": 0.65,
+            }
+        else:
+            edits = (
+                {"size": 110, "facecolor": "none", "edgecolor": "#1E2F80", "linewidth": 2.2}
+                if scope == "paint-facets"
+                else {"size": 100, "marker": "s", "alpha": 0.45}
+            )
         if scope == "two-layers":
             edits = {"size": 100, "alpha": 0.45}
         patches = [
@@ -1015,6 +1068,23 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         ]
         if scope == "different-facets":
             next(patch for patch in patches if patch["prop"] == "size")["value"] = 81
+        if scope == "mixed-layers":
+            patches += [
+                {"gid": gid, "prop": prop, "value": value, "identity": el["identity"]}
+                for gid, el in elements.items()
+                if el["role"] == "line"
+                for prop, value in {"linewidth": 1.8, "linestyle": "--", "color": "#613C88"}.items()
+            ]
+        if scope == "line-legend-local":
+            group = next(element for gid, element in elements.items() if ".line.group." in gid)
+            patches.append(
+                {
+                    "gid": group["gid"],
+                    "prop": "linewidth",
+                    "value": 2.1,
+                    "identity": group["identity"],
+                }
+            )
         title = {
             "gid": "plot.title",
             "prop": "color",
@@ -1053,7 +1123,14 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             timeout=120,
         )
         assert status == 200, preview
-        expected_residual = patches if scope in ("one-facet", "different-facets") else []
+        local = scope in (
+            "one-facet",
+            "different-facets",
+            "line-one-facet",
+            "line-legend-local",
+            "bar-col-one-facet",
+        )
+        expected_residual = patches if local else []
         assert preview["written"] == len(patches) + 1 - len(expected_residual)
         assert len(preview["skipped"]) == len(expected_residual)
         assert source.read_bytes() == original
@@ -1066,7 +1143,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         assert (project / "original.pdf").read_bytes() == original_pdf
         authored = source.read_bytes()
         assert (b"plot$layers[[1L]]" in authored) == (not expected_residual)
-        assert (b"plot$layers[[2L]]" in authored) == (scope == "two-layers")
+        assert (b"plot$layers[[2L]]" in authored) == (scope in ("two-layers", "mixed-layers"))
         _, persisted = app.call(route)
         retained = persisted["canvases"][0]["objects"][0]["overrides"]
         assert retained == expected_residual
@@ -3810,6 +3887,78 @@ cat("Verified grouped scatter styles and keys on both facets against authored R,
 """
 
 
+POINT_LEGEND_CLASSES_PROBE = r"""
+library(ggplot2)
+pal <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
+d <- expand.grid(x = 1:3, category = c("A", "B"), panel = c("Early", "Late"))
+d <- d[!(d$category == "B" & d$panel == "Early"), ]
+d$y <- d$x * 2 + as.integer(d$category)
+d$other <- factor(ifelse(d$x %% 2, "A", "B"))
+chosen <- d$category == "A"
+paint <- c(A = "#285777", B = "#285777")
+frame <- c(420, 285)
+base <- ggplot(d, aes(x, y)) + facet_wrap(vars(panel)) + theme_bw()
+late <- "layer.1.panel.2.scatter.group.1"
+early <- "layer.1.panel.1.scatter.group.1"
+other <- "layer.1.panel.2.scatter.group.2"
+size <- 196
+size_mm <- sqrt(size) / ggplot2::.pt
+alpha <- 0.6
+lookup <- function(manifest, gid) Filter(function(e) e$gid == gid, manifest$elements)[[1L]]
+verify <- function(plot, authored, edit) {
+  capture <- adapter$capture_ggplot(plot, frame, pal)
+  state <- capture$state
+  stopifnot(identical(names(state$point_targets), c(early, late, other)),
+            identical(state$point_targets[[late]]$group$label, "A"),
+            all(names(edit) %in% names(state$point_targets[[late]]$values)))
+  patches <- setNames(list(edit), late)
+  actual <- adapter$render_ggplot(state, patches)
+  native <- adapter$capture_ggplot(authored, frame, pal)
+  stopifnot(identical(actual, native$svg), !identical(actual, capture$svg),
+            identical(adapter$render_ggplot(state), capture$svg))
+  manifest <- adapter$ggplot_manifest(state, "points", patches)
+  for (gid in c(early, late)) {
+    selected <- lookup(manifest, gid)
+    stopifnot(identical(selected$point_series$current[names(edit)], edit))
+  }
+  stopifnot(identical(lookup(manifest, other)$point_series$current, state$point_targets[[other]]$values))
+  invisible(state)
+}
+colour <- scale_colour_manual(name = "Category", values = paint)
+dots <- base + geom_point(aes(colour = category), shape = 19, size = 3) + colour
+expected <- base + geom_point(aes(colour = category), shape = ifelse(chosen, 15L, 19L),
+                             size = ifelse(chosen, size_mm, 3), alpha = ifelse(chosen, alpha, NA_real_)) +
+  colour + guides(colour = guide_legend(override.aes = list(shape = c(15L, 19L), size = c(size_mm, 3),
+                                                            alpha = c(alpha, NA_real_))))
+points <- verify(dots, expected, list(size = size, marker = "s", alpha = alpha))
+stopifnot(!"facecolor" %in% names(points$point_targets[[late]]$values))
+
+fill <- scale_fill_manual(name = "Category", values = paint)
+ring <- base + geom_point(aes(fill = category), shape = 21, colour = "#355072", stroke = 1) + fill
+stroke <- 2.1 / adapter$ggplot_lwd_pt * 2 / ggplot2::.stroke
+expected_ring <- base + geom_point(aes(fill = category), shape = 21, colour = "#355072",
+                                  stroke = ifelse(chosen, stroke, 1)) +
+  fill + guides(fill = guide_legend(override.aes = list(stroke = c(stroke, 1))))
+rings <- verify(ring, expected_ring, list(linewidth = 2.1))
+stopifnot(!"facecolor" %in% names(rings$point_targets[[late]]$values),
+          "edgecolor" %in% names(rings$point_targets[[late]]$values))
+
+shape <- scale_shape_manual(name = "Category", values = c(A = 19L, B = 17L))
+both <- base + geom_point(aes(colour = category, shape = category), size = 3) + colour + shape
+expected_both <- base + geom_point(aes(colour = category, shape = category), size = ifelse(chosen, size_mm, 3)) +
+  colour + scale_shape_manual(name = "Category", values = c(A = 15L, B = 17L)) +
+  guides(colour = guide_legend(override.aes = list(size = c(size_mm, 3))))
+verify(both, expected_both, list(size = size, marker = "s"))
+
+mismatch <- base + geom_point(aes(colour = category, shape = other), size = 3) + colour + shape
+stopifnot(!length(adapter$capture_ggplot(mismatch, frame, pal)$state$point_targets))
+override <- dots + guides(colour = guide_legend(override.aes = list(shape = 21)))
+override_state <- adapter$capture_ggplot(override, frame, pal)$state
+stopifnot("size" %in% names(override_state$point_targets[[late]]$values),
+          !"marker" %in% names(override_state$point_targets[[late]]$values))
+"""
+
+
 MAPPED_ERRORBAR_CAPS_PROBE = r"""
 if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
 library(ggplot2)
@@ -4064,6 +4213,10 @@ def test_mapped_bar_group_edits_keep_dodged_centers_and_sibling_panels(tmp_path)
 
 def test_log_colourbar_ranges_match_native_mapping_in_data_units(tmp_path):
     _assert_r_probe(tmp_path, LOG_COLOUR_SCALE_PROBE)
+
+
+def test_native_scatter_groups_follow_discrete_colour_fill_and_combined_guides(tmp_path):
+    _assert_r_probe(tmp_path, POINT_LEGEND_CLASSES_PROBE)
 
 
 def test_native_scatter_paint_preserves_mapped_pigments_and_uses_point_units(tmp_path):

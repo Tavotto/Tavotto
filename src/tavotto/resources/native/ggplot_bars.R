@@ -311,6 +311,22 @@ measure_ggplot_bars <- function(table, targets, frame_pt, retain_clipped = FALSE
   result
 }
 
+ggplot_bar_source_plan <- function(state, target, edit, edits) {
+  paint <- c("facecolor", "edgecolor", "alpha", "linewidth")
+  if (!length(edit) || !is.null(target$group) || !all(names(edit) %in% paint)) return(NULL)
+  if (ggplot_layer_has_group_edits(state$bar_targets, target$index, edits)) return(NULL)
+  values <- ggplot_bar_values(target, edit)
+  aesthetics <- edit[intersect("alpha", names(edit))]
+  if (!is.null(edit$facecolor)) {
+    aesthetics$fill <- ggplot_edit_pigment(values$facecolor, target$face, edit$alpha, target$values$alpha)
+  }
+  if (!is.null(edit$edgecolor)) {
+    aesthetics$colour <- ggplot_edit_pigment(values$edgecolor, target$edge, edit$alpha, target$values$alpha)
+  }
+  if (!is.null(edit$linewidth)) aesthetics$linewidth <- edit$linewidth / (ggplot_lwd_pt * ggplot2::.pt)
+  ggplot_fixed_layer_source(state, target, edit, aesthetics)
+}
+
 ggplot_bar_elements <- function(state, edits, measured) {
   lapply(names(state$bar_targets), function(gid) {
     target <- state$bar_targets[[gid]]
@@ -324,10 +340,12 @@ ggplot_bar_elements <- function(state, edits, measured) {
       inherited <- edits[[target$group$parent]][names(target$values)]
       effective <- utils::modifyList(Filter(Negate(is.null), inherited) %||% list(), edit %||% list())
     }
-    c(list(gid = gid, role = "bar_series", label = label,
-           draggable = FALSE, editable = list(), bar_series = list(
-             context = target$context, current = ggplot_bar_values(target, effective),
-             original = target$values, edited = as.list(names(edit))
-           )), geometry)
+    element <- c(list(gid = gid, role = "bar_series", label = label,
+                      draggable = FALSE, editable = list(), bar_series = list(
+                        context = target$context, current = ggplot_bar_values(target, effective),
+                        original = target$values, edited = as.list(names(edit))
+                      )), geometry)
+    element$source_layer <- ggplot_bar_source_plan(state, target, edit, edits)
+    element
   })
 }
