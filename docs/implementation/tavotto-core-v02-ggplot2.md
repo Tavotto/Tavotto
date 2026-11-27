@@ -32,6 +32,8 @@ R 运行时须安装 ggplot2、svglite 和 jsonlite，并能打开 Cairo PDF 图
 
 普通直角坐标轴的刻度线可按侧调整长度和线宽，主刻度和次刻度分别设置，单位为 pt。属性栏也能让刻度线朝内、朝外或跨在轴线上。跨轴的刻度线各有一半在轴线两侧，保留设定的总长度。各项独立保存，刻度位置和颜色沿用原图。
 
+可在刻度组的「显示」开关隐藏该侧的刻度文字。刻度线仍会绘制，恢复显示后可继续使用已经设置的字号、字体和数字格式。
+
 在普通单面板图中选中子图，可在与 Matplotlib 相同的属性栏设置 X／Y 最小值和最大值，并在线性轴和以 10 为底的对数轴之间切换。端点始终按原数据单位从小到大输入。X／Y 轴可各自反转，并与范围、对数轴和固定刻度搭配。脚本用 `coord_cartesian(reverse = ...)` 设置的方向也可切换。对于支持的 `geom_raster()` 图，反转会同时调整色块次序和整张栅格在绘图区的位置，保持颜色与数据坐标对应。改范围只裁剪显示窗口。切换轴类型会重新投影已计算的位置与区间，并重建刻度，保留本次 R 运行得到的统计和分组结果。对数切换要求该轴上参与绘制的位置为正数，包括误差棒的端点和柱形的基线。原脚本中的范围过滤、次轴和自定义位置尺度沿用其原始设置。 [ggplot2 显示范围](https://ggplot2.tidyverse.org/reference/coord_cartesian.html) · [ggplot2 连续位置尺度](https://ggplot2.tidyverse.org/reference/scale_continuous.html)
 
 同一属性栏也提供对称对数与对数几率。对称对数采用 Matplotlib 的默认尺度，在零附近使用线性刻度，可显示正数、零和负数。对数几率使用 R 的原生概率变换，要求图层位置和手动输入的范围端点都严格在 0 与 1 之间。两种尺度都保留 R 已算出的图层位置，可叠加轴反转和固定主刻度。 [Matplotlib 尺度定义](https://matplotlib.org/stable/api/scale_api.html) · [R 概率尺度](https://scales.r-lib.org/reference/transform_probability.html)

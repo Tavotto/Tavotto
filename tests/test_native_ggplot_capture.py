@@ -2468,6 +2468,17 @@ stopifnot(length(centered) == 2L,
           isTRUE(all.equal(unname(centered[[2L]]), c(-4, 0))),
           fields(strokes$state, both)$direction$value == "inout",
           identical(adapter$render_ggplot(strokes$state), strokes$svg))
+hidden <- stats::setNames(list(list(visible = FALSE)), gid)
+native_hidden <- adapter$capture_ggplot(
+  stroke_plot + ggplot2::theme(axis.text.x.bottom = ggplot2::element_blank()), frame)
+manifest_hidden <- adapter$ggplot_manifest(strokes$state, "points", hidden)$elements
+hidden_axis <- Filter(function(element) element$gid == gid, manifest_hidden)[[1L]]
+stopifnot(!fields(strokes$state, hidden)$visible$value,
+          fields(strokes$state, hidden)$visible$value_original,
+          identical(unlist(hidden_axis$bbox), c(-1, -1, 0, 0)),
+          identical(adapter$render_ggplot(strokes$state, hidden), native_hidden$svg),
+          identical(adapter$render_ggplot(strokes$state,
+            stats::setNames(list(list(visible = TRUE)), gid)), strokes$svg))
 invalid <- stats::setNames(list(list(width = -1)), gid)
 stopifnot(inherits(try(adapter$render_ggplot(strokes$state, invalid), silent = TRUE), "try-error"))
 blank <- adapter$capture_ggplot(base +

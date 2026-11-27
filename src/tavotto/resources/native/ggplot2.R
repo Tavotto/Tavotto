@@ -499,7 +499,10 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     style <- axis_styles[[gid]]
     text <- style[c("size", "face", "rotation", "family")]
     elements <- style$marks
-    if (any(!vapply(text, is.null, logical(1L)))) {
+    if (identical(style$visible, FALSE)) {
+      elements[[ggplot_axis_tick_theme_names[[gid]]]] <- ggplot2::element_blank()
+      hidden_ticks <- c(hidden_ticks, gid)
+    } else if (any(!vapply(text, is.null, logical(1L)))) {
       elements[[ggplot_axis_tick_theme_names[[gid]]]] <- ggplot2::element_text(
         size = style$size, face = style$face, angle = style$rotation, family = style$family
       )
@@ -1254,7 +1257,8 @@ ggplot_text_cex <- function(paint) {
 }
 
 ggplot_text_edit <- function(edit, tick) {
-  guide_props <- c(ggplot_tick_props, if (identical(tick$kind, "axis")) c(ggplot_axis_mark_props, "direction"),
+  guide_props <- c(ggplot_tick_props,
+                   if (identical(tick$kind, "axis")) c(ggplot_axis_mark_props, "direction", "visible"),
                    if (!is.null(tick$size)) c("fontsize", "fontfamily"),
                    if (!is.null(tick$rotation)) "rotation")
   edit[setdiff(names(edit), guide_props)]
@@ -1382,10 +1386,16 @@ ggplot_axis_style_edits <- function(state, edits) {
     font_props <- c(face_props, intersect("fontfamily", names(edit)))
     size <- edit$fontsize
     rotation <- edit$rotation
+    visible <- edit$visible
     target <- state$text_targets[[gid]]
     tick <- state$tick_targets[[gid]]
     marks <- ggplot_axis_mark_theme(gid, tick$marks, edit)
-    if (is.null(size) && !length(font_props) && is.null(rotation) && !length(marks)) next
+    if (is.null(size) && !length(font_props) && is.null(rotation) && !length(marks) &&
+        is.null(visible)) next
+    if (!is.null(visible) &&
+        (!identical(tick$kind, "axis") || !is.logical(visible) || length(visible) != 1L || is.na(visible))) {
+      stop("The requested native R tick label visibility is unavailable.")
+    }
     if ((length(font_props) || !is.null(size)) && is.null(tick$size)) {
       stop("The requested native R tick typography is unavailable.")
     }
@@ -1401,7 +1411,7 @@ ggplot_axis_style_edits <- function(state, edits) {
     face <- if (length(face_props)) ggplot_element_faces[[styled$paint$font]]
     family <- if (!is.null(edit$fontfamily)) styled$paint$fontfamily
     result[[gid]] <- list(size = size, face = face, rotation = rotation, family = family,
-                          marks = marks, direction = edit$direction)
+                          marks = marks, direction = edit$direction, visible = visible)
   }
   result
 }
@@ -1704,7 +1714,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)
   reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
-                                                ggplot_axis_mark_props, "direction") %in% names(edit)),
+                                                ggplot_axis_mark_props, "direction", "visible") %in% names(edit)),
                       logical(1L))) ||
     any(vapply(edits[intersect(names(edits), names(ggplot_axis_tick_theme_names))],
                function(edit) any(names(edit) %in% c("rotation", names(ggplot_face_options))), logical(1L))) ||
@@ -1764,6 +1774,11 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     face <- painted$face
     bbox <- if (is.null(measured$text[[gid]])) target$bbox else measured$text[[gid]]$bbox
     editable <- list(list(prop = "color", type = "color", value = color))
+    if (identical(tick$kind, "axis")) {
+      field <- list(prop = "visible", type = "bool", value = edit$visible %||% TRUE)
+      if (!is.null(edit$visible)) field$value_original <- TRUE
+      editable[[length(editable) + 1L]] <- field
+    }
     if (!is.null(tick$marks$direction)) {
       field <- list(prop = "direction", type = "enum", options = as.list(ggplot_axis_tick_directions),
                     strict_options = TRUE, value = edit$direction %||% tick$marks$direction)
