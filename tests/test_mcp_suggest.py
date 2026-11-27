@@ -216,3 +216,19 @@ def test_sessions_running_in_real_python_are_not_probed(project, worker):
         bridge.get_session(sid).native = None
     assert res["isError"] and _body(res)["code"] == "suggest_native_unsupported"
     assert not [c for c in worker.calls if c[0] == "snapshot"]
+
+
+def test_script_edited_outside_the_session_is_rerun_before_planning(project, worker):
+    """宿主改了 .py 再出方案：先按新脚本重跑同一个会话（`@_synced`，与 apply / preflight 同一入口），方案描述的是新脚本的图。"""
+    sid = _open(project)
+    (project / "fig1.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    out = _body(_plan(sid, TODOS[:1]))
+    assert out["script_rerun"]["reason"] == bridge.SCRIPT_RERUN_REASON
+    # 重跑之后的方案是当下的：直接能写
+    done = _body(
+        _call(
+            "tavotto_suggest_apply",
+            {"session_id": sid, "plan_id": out["plan_id"], "keys": [out["todos"][0]["key"]]},
+        )
+    )
+    assert done["applied"] == [out["todos"][0]["key"]]

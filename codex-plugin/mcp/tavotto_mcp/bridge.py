@@ -6994,6 +6994,7 @@ def _suggest_view(plan: dict) -> list[dict]:
     ]
 
 
+@_synced
 def suggest_plan(session_id: str, todos: object, *, user_request: object = None) -> dict:
     """宿主 Agent 的建议 → 一份可勾选的待办方案（只算不写：会话的 override 不变）。
 
@@ -7104,6 +7105,7 @@ def suggest_plan(session_id: str, todos: object, *, user_request: object = None)
     }
 
 
+@_synced
 def suggest_apply(
     session_id: str, plan_id: object, keys: object, *, user_authorized: bool = False
 ) -> dict:
@@ -7152,6 +7154,7 @@ def suggest_apply(
     return out
 
 
+@_synced
 def suggest_status(session_id: str, plan_id: object) -> dict:
     """一份建议方案此刻的状态：待办、用了哪些（谁点的）、图有没有在出方案之后被改过。只读。"""
     cp = _require_suggest()
