@@ -129,7 +129,10 @@ order: 310
   `complete`、下次接着补；跨进程锁 `state/msix-migration.lock`。**旧历史待补**（#2282）：消费者 `adopt_sqlite` 没搬成（超时 / 锁被占 / 出错）、迁移源里却有这个库时，调用方随即会新建空库——记 `state/msix-history-pending.json`；完成标记与 `MAX_ATTEMPTS` 都拦不住它，`run_once` 起后台线程 `merge_pending`（120 s，到点整体回滚、不计失败；真失败计次，满 5 次放弃）把旧库快照按主键只补缺合并回来（只合 `sessions` 与 `ai_requests`；补回的会话取新 `rev`、未结束行收尾成 interrupted）。**没有待补就绝不合并**：会话与账本都会被用户删 / 按保留期清，「旧库有、新库没有」分不清是空库顶替还是用户删的。诊断包 `system.msix_data_migration`（闭集 `state` + 数字，不带路径与包族名，
   bundle schema 13）；`system.msix_legacy_history`（bundle schema 17，`msixmigrate.legacy_gap_facts`）给已中招的人：
   每个旧包一项、只读两边数「旧库有、真实目录没有」的会话与账本条数（3 s 总预算，闭集 ok / timeout / error）——
-  数出来的缺也可能是用户自己删的，所以只报事实、不据此自动补；计数由拥有 schema 的 `ai_history` 登记（同合并器，免成环）。看护 `tests/test_msix_migrate.py`、`tests/test_windows_regressions.py`。
+  数出来的缺也可能是用户自己删的，所以只报事实、不据此自动补；计数由拥有 schema 的 `ai_history` 登记（同合并器，免成环）。**手动找回**（#2282 补救 B，11-27 用户拍板）：任务历史底部一行（`LegacyHistoryLine`；`GET /api/ai/history/legacy` 回本项目旧库有、
+  真实库没有的会话数——所有旧包取并集，数不出来回 0、整行不出现），点「找回」原地确认后 `POST /api/ai/history/legacy/restore` →
+  `msixmigrate.restore_legacy`：不看「待补」标记，和后台合并走同一条路（快照 + 登记的合并器、一个事务、补回的取新 rev），
+  拿不到迁移锁 / 超时回 deferred 让用户再试；做完清掉同一库的「待补」。与自动路径唯一的区别：用户在新库删掉的也会回来——确认句写明，是用户点头的。看护 `tests/test_msix_migrate.py`、`tests/test_windows_regressions.py`。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；
