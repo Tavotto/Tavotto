@@ -21,6 +21,8 @@
                                        换后端实现时这条闭集要跟着新后端画得出
                                        什么走，不能照抄——它是一句能力承诺。
   compare_png(a, b)                 → 两张 PNG 的像素差异指标（写回像素门）
+  compare_svg_preview_pixels(a, b, width, directory)
+                                    → 比较两份 SVG 经同一后端绘制的透明像素
   compare_png_extent(a, b)          → 两张 PNG 的逐字节差异范围（差异像素数 / 比例 / 包围框，
                                        无底噪无阈值；来源驱动采用 ADR 0139 的对照用）
   compose(page_w_mm, page_h_mm, transparent=False)
