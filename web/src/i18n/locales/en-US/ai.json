@@ -250,6 +250,7 @@
     "reverted": "Reverted. The script is back to its previous state.",
     "revertedStatus": "Reverted the assistant’s change. Rebuilding the figure…",
     "running": "Editing the script…",
+    "answering": "Answering…",
     "taskFailedChanged": "Edited, but the checks didn’t pass",
     "taskPartial": "Edited; some checks couldn’t be completed",
     "taskRejected": "The edit didn’t pass the pre-write checks; your project is unchanged",
@@ -870,6 +871,7 @@
       "summaryNotes": "Changed {{places}} more from {{notes}}",
       "revising": "Redoing with your notes…",
       "generatingAssistant": "Working on your request…",
+      "thinking": "Thinking…",
       "steps": {
         "before": "Read the figure",
         "model": "Work out the changes",

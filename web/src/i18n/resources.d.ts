@@ -62,6 +62,7 @@ export default interface Resources {
         "summaryOther": "按 {{done}}改了 {{places}}，{{rest}} 条没法直接改",
         "summaryScript": "改了脚本：+{{added}} −{{removed}}，应用前不会动你的脚本",
         "summary_other": "按 {{done}}改了 {{places}}，{{count}} 条要改脚本",
+        "thinking": "想一想…",
         "thumbAlt": "修改后的图",
         "title": "修改方案",
         "undo": "撤销",
@@ -733,6 +734,7 @@ export default interface Resources {
       "figure": "整张图"
     },
     "session": {
+      "answering": "正在回答…",
       "correcting": "上一版没通过写回前检查，正在自动修正…",
       "dataFigureDone": "已新建脚本 {{script}}",
       "dataFigureFailedWritten": "已生成 {{script}}，但核对没通过",
