@@ -784,12 +784,23 @@ class _Translator:
         # Use computed inheritance, including the instantiated <use> parent,
         # rather than walking a referenced text definition's original parents.
         preserve = st.get(XML_SPACE) == "preserve"
+        requested_length = el.get("textLength")
+        length_transform = ir.IDENTITY
+        if requested_length is not None:
+            if el.get("lengthAdjust") != "spacingAndGlyphs" or len(el) or el.get("rotate"):
+                raise SVGIRError("svgir_unsupported_element", "textLength/lengthAdjust")
+            requested_length = self._len(requested_length, st=st)
+            if requested_length < 0:
+                raise SVGIRError("svgir_invalid", "negative textLength")
+            if requested_length == 0:
+                return []
 
         def collect(ch, style, owners=(), angle=0.0, keep=preserve):
             if style.get("display") == "none":
                 return
-            if "textLength" in ch.attrib or "lengthAdjust" in ch.attrib:
-                # 显式文字长度会改写字距/字形宽度；现有 shaping 不应用它，拒绝而非静默。
+            if ("textLength" in ch.attrib or "lengthAdjust" in ch.attrib) and (
+                ch is not el or requested_length is None
+            ):
                 raise SVGIRError("svgir_unsupported_element", "textLength/lengthAdjust")
             styles[ch] = style
             owners = (*owners, ch)
@@ -934,7 +945,13 @@ class _Translator:
                 target = {"start": left, "middle": (left + right) / 2, "end": right}.get(anchor)
                 if target is None:
                     raise SVGIRError("svgir_invalid", "invalid text anchor")
-                shift = chunk[0].x - target
+                anchor_x = chunk[0].x
+                shift = anchor_x - target
+                if requested_length is not None and right > left:
+                    factor = requested_length / (right - left)
+                    # Scale glyphs and their advances as one run, about the
+                    # anchored baseline. The element's rotation is applied later.
+                    length_transform = (factor, 0.0, 0.0, 1.0, anchor_x * (1 - factor), 0.0)
                 for item in chunk:
                     item.x += shift
                 glyphs.extend(chunk)
@@ -1039,7 +1056,10 @@ class _Translator:
                 i = stop
             return result
 
-        return groups(placements)
+        result = groups(placements)
+        if result and length_transform != ir.IDENTITY:
+            return [ir.Group(tuple(result), transform=length_transform)]
+        return result
 
     def _image(self, el, st):
         match = _DATA_URI_RE.fullmatch(el.get("href") or el.get(XLINK_HREF, ""))

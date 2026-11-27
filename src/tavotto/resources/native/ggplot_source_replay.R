@@ -27,6 +27,7 @@ if (identical(request$operation, "anchor")) {
     request$result, auto_unbox = TRUE
   )
 } else if (identical(request$operation, "replay")) {
+  if (length(request$fonts)) systemfonts::add_fonts(unlist(request$fonts, use.names = FALSE))
   frame <- unlist(request$frame_pt, use.names = FALSE)
   palettes <- jsonlite::fromJSON(request$palettes, simplifyVector = FALSE)
   plot <- bridge$ggplot_source_plot(request$script, request$object)

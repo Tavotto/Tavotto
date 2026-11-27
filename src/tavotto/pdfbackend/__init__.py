@@ -214,6 +214,10 @@ def compare_png_extent(baseline, candidate):
     return _impl().compare_png_extent(baseline, candidate)
 
 
+def compare_svg_preview_pixels(baseline, candidate, width, directory):
+    return _impl().compare_svg_preview_pixels(baseline, candidate, width, directory)
+
+
 def compose(page_w_mm, page_h_mm, transparent=False):
     return _impl().compose(page_w_mm, page_h_mm, transparent)
 
@@ -274,6 +278,7 @@ __all__ = [
     "COVERAGE_MAX_CP",
     "annotate_asset",
     "compare_png",
+    "compare_svg_preview_pixels",
     "compose",
     "concat_pdf",
     "coverage_ranges",

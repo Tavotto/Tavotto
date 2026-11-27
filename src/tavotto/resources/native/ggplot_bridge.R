@@ -133,14 +133,14 @@ ggplot_serve <- function(spec, token, plot_for) {
     if (request$cmd %in% c("terminate", "shutdown")) return(0L)
     envelope <- request[c("protocol_version", "request_id", "worker_generation",
                           "render_revision")]
-    if (identical(request$cmd, "preview_png_existing")) {
+    if (request$cmd %in% c("preview_png_existing", "render_existing")) {
       if (!identical(request$payload$expected_execution_id, spec$execution)) {
         answer <- list(ok = FALSE, error = list(code = "svg_source_unavailable",
                        message = "The R capture belongs to a different execution."))
         send(c(envelope, list(execution_id = spec$execution), answer))
         next
       }
-      request$cmd <- "preview_png"
+      request$cmd <- sub("_existing$", "", request$cmd)
     }
     answer <- tryCatch(
       switch(request$cmd,
@@ -150,8 +150,12 @@ ggplot_serve <- function(spec, token, plot_for) {
                      ggplot2 = as.character(utils::packageVersion("ggplot2"))),
         render = {
           edits <- edits_from(request)
-          list(ok = TRUE, svg = adapter$render_ggplot(captured$state, edits),
-               manifest = adapter$ggplot_manifest(captured$state, spec$stem, edits))
+          result <- list(ok = TRUE, svg = adapter$render_ggplot(captured$state, edits),
+                         manifest = adapter$ggplot_manifest(captured$state, spec$stem, edits))
+          if (isTRUE(request$payload$include_fonts)) {
+            result$fonts <- as.list(unique(systemfonts::system_fonts()$path))
+          }
+          result
         },
         preview_png = {
           edits <- edits_from(request)

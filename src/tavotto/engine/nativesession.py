@@ -1352,20 +1352,44 @@ class NativeSession:
         expected_execution_id: str | None = None,
         expected_snapshot_epoch: int | None = None,
     ) -> dict:
-        with self._figure_lock:
-            payload = {
+        return self._preview_snapshot(
+            stem,
+            {
                 "cmd": "preview_png",
-                "stem": stem,
                 "patches": patches,
                 "width": int(width_px),
                 "with_manifest": True,
-            }
+            },
+            expected_execution_id,
+            expected_snapshot_epoch,
+        )
+
+    def preview_svg_snapshot(
+        self,
+        stem: str,
+        patches: list,
+        *,
+        include_fonts: bool = False,
+        expected_execution_id: str,
+        expected_snapshot_epoch: int,
+    ) -> dict:
+        """Read the protected-writeback reference without changing the live overrides."""
+        return self._preview_snapshot(
+            stem,
+            {"cmd": "render", "patches": patches, "include_fonts": include_fonts},
+            expected_execution_id,
+            expected_snapshot_epoch,
+        )
+
+    def _preview_snapshot(self, stem, payload, expected_execution_id, expected_snapshot_epoch):
+        with self._figure_lock:
+            payload["stem"] = stem
             existing = self._guard_existing_request(
                 payload, expected_execution_id, expected_snapshot_epoch
             )
             self._require_consistent(stem)
             if self.ggplot_target is not None:
-                self.ggplot_target.validate_edit_targets(self, patches)
+                self.ggplot_target.validate_edit_targets(self, payload["patches"])
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )

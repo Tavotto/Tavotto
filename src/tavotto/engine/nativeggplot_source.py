@@ -39,7 +39,7 @@ class ReplayedRSource:
     source: AdjustedRSource
     original_bytes: bytes
     manifest: dict
-    png: bytes
+    png: bytes | None
     execution_id: str
     pdf: bytes | None = None
     svg: bytes | None = None
@@ -297,6 +297,29 @@ def _stage_windows_runtime(interpreter: str, scratch: Path, environment: dict[st
     return executable
 
 
+def _stage_windows_fonts(paths: list[str], scratch: Path) -> list[str]:
+    from ..rendercore.userfonts import FONT_SUFFIXES, MAX_FONT_BYTES, system_font_dirs
+
+    roots = tuple(path.absolute() for path in system_font_dirs())
+    copied = []
+    for path in dict.fromkeys(paths):
+        source = Path(path)
+        if source.suffix.lower() not in FONT_SUFFIXES or not any(
+            source.is_relative_to(root) for root in roots
+        ):
+            continue
+        source = source.resolve(strict=True)
+        if not any(source.is_relative_to(root) for root in roots) or not source.is_file():
+            continue
+        if source.stat().st_size > MAX_FONT_BYTES:
+            continue
+        destination = scratch / "fonts" / str(len(copied)) / source.name
+        destination.parent.mkdir(parents=True)
+        shutil.copyfile(source, destination)
+        copied.append(destination.as_posix())
+    return copied
+
+
 def replay(
     spec: execspec.ExecutionSpec,
     target: nativeggplot.GgplotTarget,
@@ -306,6 +329,7 @@ def replay(
     *,
     hot: dict | None = None,
     vectors: bool = False,
+    fonts: list[str] | None = None,
 ) -> ReplayedRSource:
     """Run the candidate in a protected copy using the recorded native interpreter."""
     windows = os.name == "nt"
@@ -356,6 +380,7 @@ def replay(
         r_temp = scratch / "r-tmp"
         r_temp.mkdir()
         environment["TMPDIR"] = os.path.relpath(r_temp, cwd)
+        staged_fonts = []
         if target.library:
             env_library = environment.get("R_LIBS_USER")
             environment["R_LIBS_USER"] = (
@@ -377,6 +402,8 @@ def replay(
                 profile = scratch / "r-runtime" / "library" / "base" / "R" / "Rprofile"
                 compatibility = (bundle / "ggplot_windows_profile.R").read_bytes()
                 profile.write_bytes(compatibility + b"\n" + profile.read_bytes())
+                if fonts is not None:
+                    staged_fonts = _stage_windows_fonts(fonts, scratch)
                 execute = resources.enter_context(winappcontainer.offline(scratch, environment))
             except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
                 raise scriptadjust.ScriptAdjustError(
@@ -438,11 +465,15 @@ def replay(
             "palettes": palettes.as_posix(),
             "frame_pt": target.frame_pt,
             "stem": stem,
-            "png": png.as_posix(),
             "width": width,
             "residual": adjusted.residual,
-            **({"pdf": pdf.as_posix(), "svg": svg.as_posix()} if vectors else {}),
         }
+        if fonts is None:
+            replay_request["png"] = png.as_posix()
+            if vectors:
+                replay_request.update(pdf=pdf.as_posix(), svg=svg.as_posix())
+        else:
+            replay_request.update(fonts=staged_fonts, svg=svg.as_posix())
         request.write_text(json.dumps(replay_request), encoding="utf-8")
         execution_id = executionfact.new_id()
         run_stage()
@@ -456,10 +487,10 @@ def replay(
             adjusted,
             original,
             manifest,
-            png.read_bytes(),
+            png.read_bytes() if fonts is None else None,
             execution_id,
             pdf.read_bytes() if vectors else None,
             nativeggplot._write_ggplot_svg(svg, svg.read_text(encoding="utf-8"))
-            if vectors
+            if vectors or fonts is not None
             else None,
         )

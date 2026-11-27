@@ -64,6 +64,7 @@ __all__ = [
     "Canvas",
     "annotate_asset",
     "compare_png",
+    "compare_svg_preview_pixels",
     "compose",
     "coverage_ranges",
     "hex2rgb",
@@ -388,6 +389,27 @@ def compare_png_extent(baseline: Path, candidate: Path) -> dict:
     if size_a != size_b:
         return {"ok": False, "reason": "size_mismatch"}
     return {"ok": True, **pixelmetrics.diff_extent(a, b, size_a)}
+
+
+def compare_svg_preview_pixels(
+    baseline: bytes, candidate: bytes, width: int, directory: Path
+) -> bool:
+    """Render both verified native SVG scenes through the same portable PNG path."""
+    from .. import svgasset
+    from . import pdfwriter, svgir
+
+    previews = []
+    faces = provider()
+    for name, source in (("reference", baseline), ("candidate", candidate)):
+        svg, size = svgasset.inspect_bytes(source)
+        files: dict[str, bytes] = {}
+        page, _ = svgir.svg_to_ir(svg, size["w_pt"], size["h_pt"], faces, files=files)
+        pdf = directory / f"{name}.pdf"
+        png = directory / f"{name}.png"
+        pdfwriter.write_pdf(page, pdf, faces, files)
+        render_preview_png(pdf, width, png)
+        previews.append(_rgba_of(png))
+    return previews[0] == previews[1]
 
 
 # ---------------------------------------------------------------------------

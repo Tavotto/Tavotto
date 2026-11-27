@@ -152,6 +152,7 @@ from .engine import (
     managedenv as engine_managedenv,
     mathtypeset as engine_mathtypeset,
     msixmigrate as engine_msixmigrate,
+    nativeggplot as engine_nativeggplot,
     nativeggplot_source as engine_nativeggplot_source,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
@@ -5779,7 +5780,7 @@ def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
     )
 
 
-def _verified_r_source(worker, stem, patches, *, check_cancelled=None, vectors=False):
+def _verified_r_source(worker, stem, patches, *, check_cancelled=None, archive=None):
     """Measure the exact live capture and the independent protected replay."""
     if check_cancelled is not None:
         check_cancelled()
@@ -5788,6 +5789,8 @@ def _verified_r_source(worker, stem, patches, *, check_cancelled=None, vectors=F
         "expected_execution_id": worker.execution_id,
         "expected_snapshot_epoch": worker.snapshot_epoch,
     }
+    if os.name == "nt":
+        return _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, archive)
     hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
     replay = engine_nativeggplot_source.replay(
         worker.spec,
@@ -5796,7 +5799,7 @@ def _verified_r_source(worker, stem, patches, *, check_cancelled=None, vectors=F
         patches,
         REPLAY_PIXEL_WIDTH,
         hot=hot["manifest"],
-        vectors=vectors,
+        vectors=archive is not None,
     )
     if check_cancelled is not None:
         check_cancelled()
@@ -5810,6 +5813,53 @@ def _verified_r_source(worker, stem, patches, *, check_cancelled=None, vectors=F
             "script_export_diverged", "The adjusted R source rendered a different figure."
         )
     return replay
+
+
+def _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, archive):
+    from dataclasses import replace
+
+    reference = worker.preview_svg_snapshot(stem, patches, include_fonts=True, **scope)
+    replay = engine_nativeggplot_source.replay(
+        worker.spec,
+        worker.ggplot_target,
+        stem,
+        patches,
+        REPLAY_PIXEL_WIDTH,
+        hot=reference["manifest"],
+        fonts=reference["fonts"],
+    )
+    if check_cancelled is not None:
+        check_cancelled()
+    current = worker.preview_svg_snapshot(stem, patches, **scope)
+    mismatch = engine_scriptadjust.ScriptAdjustError(
+        "script_export_diverged", "The adjusted R source rendered a different figure."
+    )
+    if (
+        replay.svg is None
+        or reference["svg"] != current["svg"]
+        or _compare_manifests(reference["manifest"], replay.manifest)[0]
+    ):
+        raise mismatch
+    with tempfile.TemporaryDirectory(dir=engine_config.data_dir()) as temporary:
+        directory = Path(temporary)
+        try:
+            svg = engine_nativeggplot._write_ggplot_svg(
+                directory / "reference.svg", reference["svg"]
+            )
+            matches = pdfbackend.compare_svg_preview_pixels(
+                svg, replay.svg, REPLAY_PIXEL_WIDTH, directory
+            )
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise mismatch from exc
+    if not matches or svg != replay.svg:
+        raise mismatch
+    if archive is not None and archive["svg"] != svg:
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_diverged", "The saved PDF companion belongs to a different R scene."
+        )
+    # The saved pair belongs to the same measured scene and still carries the
+    # PDF's exact native fonts from the authorized live session.
+    return replay if archive is None else replace(replay, pdf=archive["pdf"])
 
 
 def _style_check_report(spec: dict):
@@ -17320,11 +17370,11 @@ def _r_style_target(ctx, selection):
         or existing["receipt"]["receipt_id"] != _execution_receipt(worker, spec.target).receipt_id
     ):
         raise engine_scriptstyle.Conflict("Save the current R figure before previewing the script.")
-    return layout, panel, worker, stem, path, patches
+    return layout, panel, worker, stem, path, patches, existing
 
 
 def _r_style_archive(ctx, worker, source, replay):
-    """Publish the two vector renderings of the replay that passed the gates."""
+    """Publish the vector representations proven by the protected replay."""
     from .engine import svgstore
 
     spec = worker.spec
@@ -17392,7 +17442,7 @@ def api_script_style_preview():
         binding = _script_edit_binding()
         if not isinstance(body, dict):
             raise engine_scriptstyle.Conflict("Select a figure in a saved layout.")
-        layout, panel, worker, stem, path, patches = _r_style_target(ctx, body)
+        layout, panel, worker, stem, path, patches, _ = _r_style_target(ctx, body)
         replay = _verified_r_source(worker, stem, patches)
         if not replay.source.written:
             raise engine_scriptstyle.Conflict(
@@ -17457,14 +17507,14 @@ def api_script_style_commit():
         if item["project"] != ctx.id:
             raise engine_scriptstyle.Conflict("The preview belongs to another project.")
         selection = item["selection"]
-        layout, panel, worker, stem, _, patches = _r_style_target(ctx, selection)
+        layout, panel, worker, stem, _, patches, archive = _r_style_target(ctx, selection)
         if (
             panel["fileId"] != item["source"]
             or worker.spec.target != item["script"]
             or worker.execution_id != item["execution"]
         ):
             raise engine_scriptstyle.Conflict("The captured R figure changed after preview.")
-        replay = _verified_r_source(worker, stem, patches, vectors=True)
+        replay = _verified_r_source(worker, stem, patches, archive=archive)
         if (
             engine_scriptbackup.sha256(replay.original_bytes) != item["before"]
             or engine_scriptbackup.sha256(replay.source.data) != item["after"]
