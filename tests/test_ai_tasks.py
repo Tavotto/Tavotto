@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -844,18 +845,25 @@ def test_cancel_during_a_correction_never_commits(corr, db):
 
     def block(run):
         started.set()
-        release.wait(5)
+        # 一直停在修正里，直到用例取消完放行；120 s 只防挂死（到点放过去，下面的断言会红）
+        release.wait(120)
 
     ex = CorrectingExecutor(on_correct=block)
     out: list[dict] = []
-    t = threading.Thread(target=lambda: out.append(_run(_corr_env(), ex, db)))
+    t = threading.Thread(target=lambda: out.append(_run(_corr_env(), ex, db)), daemon=True)
     t.start()
-    assert started.wait(5)
+    # 等「真的进了修正」：Windows runner 上走到这一步要 6–12 s（同文件别的修正用例实测），旧写法只等 5 s 就红。
+    # 线程提前结束（没进修正就出结果 / 抛错）也立刻停下来报，不白等满上限
+    deadline = time.monotonic() + 120
+    while not started.wait(0.05):
+        assert t.is_alive(), f"任务没进修正就结束了：{out}"
+        assert time.monotonic() < deadline, "120 s 还没进修正"
     (task_id,) = list(ai_tasks._RUNNING)
     assert ai_history.get(task_id, db_path=db)["phase"] == "correcting"
     assert ai_tasks.cancel(task_id) is True
     release.set()
-    t.join(10)
+    t.join(120)
+    assert not t.is_alive()
     assert out[0]["outcome"] == "cancelled" and ex.committed == [] and len(ex.discarded) == 1
 
 
