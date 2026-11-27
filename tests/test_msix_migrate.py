@@ -1203,6 +1203,17 @@ def test_legacy_gap_lists_each_old_package_newest_first(world):
     assert [r["missing_sessions"] for r in rows] == [0, 2]
 
 
+def test_packages_without_a_history_db_do_not_crowd_out_the_one_that_has_it(world):
+    for i in range(msixmigrate.LEGACY_GAP_MAX_SOURCES):
+        _r, local = world.pkg(f"Pkg.Settings{i}_x", age=i)
+        put(local / "origin" / "a.json")  # 只有设置，没有历史库
+    _r, old = world.pkg(PFN_B, age=1000)
+    _legacy_history(old, ["b1", "b2"])
+    world.settle()
+    rows = msixmigrate.legacy_gap_facts()["dbs"]["cache/ai_history.sqlite3"]
+    assert [r["missing_sessions"] for r in rows] == [2]
+
+
 def test_legacy_gap_out_of_time_or_broken_is_a_closed_state(world):
     _ra, local_a = world.pkg(PFN_A, age=0)
     _rb, local_b = world.pkg(PFN_B, age=100)

@@ -738,10 +738,10 @@ def legacy_gap_facts(budget_s: float = LEGACY_GAP_BUDGET_S) -> dict:
         parts = tuple(rel.split("/"))
         target = config.data_path(*parts)
         rows: list[dict] = []
-        for _roaming, local in sources()[:LEGACY_GAP_MAX_SOURCES]:
-            src = local.joinpath(*parts) if local is not None else None
-            if src is None or not src.is_file() or src.is_symlink():
-                continue
+        # 先筛「真有这个库」的旧包再截前几个：只有设置、没有历史库的新包不能把留着历史的老包挤出去（Codex #2311）
+        srcs = [local.joinpath(*parts) for _roaming, local in sources() if local is not None]
+        srcs = [p for p in srcs if p.is_file() and not p.is_symlink()][:LEGACY_GAP_MAX_SOURCES]
+        for src in srcs:
             if time.monotonic() > deadline:  # 库很小时 SQLite 根本不会调进度回调：到点先在这里截住
                 rows.append({"state": "timeout"})
                 continue
