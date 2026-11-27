@@ -196,6 +196,11 @@
     "notReceivedTitle": "This request didn’t go through",
     "openAiSettings": "Open Figure assistant settings",
     "placeholder": "e.g. move the legend to the upper left",
+    "vectorPlaceholder_one": "How should the selected object change?",
+    "vectorPlaceholder_other": "How should the {{count}} selected objects change?",
+    "vectorEmptyTitle_one": "{{count}} object selected",
+    "vectorEmptyTitle_other": "{{count}} objects selected",
+    "vectorEmptyHint": "Say what to change, e.g. “make the line width 0.75 pt”",
     "draftLoading": "Loading draft…",
     "placeholderNoPanel": "Select an editable figure first",
     "probing": "Detecting local CLIs…",
@@ -914,7 +919,17 @@
       "overreachChanged": "Your script changed while this was running (you may have saved it, or the agent edited it directly). It wasn’t restored automatically. Both versions are backed up.",
       "restoreScript": "Restore the version from before",
       "keepCurrent": "Keep the current version",
-      "restoreFailed": "The script changed again, so it wasn’t restored"
+      "restoreFailed": "The script changed again, so it wasn’t restored",
+      "summaryVector_one": "{{count}} object changed",
+      "summaryVector_other": "{{count}} objects changed",
+      "summaryVectorRest_one": "{{count}} object changed, {{rest}} not changed",
+      "summaryVectorRest_other": "{{count}} objects changed, {{rest}} not changed",
+      "summaryVectorChecks_one": "{{count}} object changed, {{fails}} checks not passed",
+      "summaryVectorChecks_other": "{{count}} objects changed, {{fails}} checks not passed",
+      "appliedVector_one": "Applied · {{count}} object changed",
+      "appliedVector_other": "Applied · {{count}} objects changed",
+      "generatingVector": "Changing the selected objects…",
+      "vectorKernel": "This step needs the geometry kernel, which isn’t available on this computer. Nothing was changed"
     },
     "dialog": {
       "title": "Change plan",
@@ -976,7 +991,13 @@
       "stageFigure": "Compare",
       "stageScript": "Script changes",
       "scriptMeta": "Script changes · +{{added}} −{{removed}}",
-      "scriptBackupNote": "Written only when you apply, backed up first"
+      "scriptBackupNote": "Written only when you apply, backed up first",
+      "vectorHeading_one": "Changes · {{count}} object",
+      "vectorHeading_other": "Changes · {{count}} objects",
+      "vectorN_one": "{{count}} object changed",
+      "vectorN_other": "{{count}} objects changed",
+      "vectorChecks_one": "{{count}} check didn’t pass, take a look at the comparison before applying",
+      "vectorChecks_other": "{{count}} checks didn’t pass, take a look at the comparison before applying"
     },
     "unhandled": {
       "needs_script": "Needs a script change; left alone this time",
@@ -993,7 +1014,17 @@
       "not_addressed": "This one wasn't handled",
       "merged_log": "Its range was folded into the log-axis change",
       "unclearAssistant": "The request wasn't specific enough, so nothing changed",
-      "log_limit_declined": "Log axis limit left as it was; this one wasn't changed"
+      "log_limit_declined": "Log axis limit left as it was; this one wasn't changed",
+      "vector": {
+        "bad_op": "This one wasn’t written correctly, so nothing changed",
+        "unknown_object": "Couldn’t find that object, so nothing changed",
+        "not_vector": "That isn’t an object that can be edited here, so nothing changed",
+        "bad_field": "This kind of object doesn’t have that setting, so nothing changed",
+        "bad_value": "The value can’t be used, so nothing changed",
+        "out_of_range": "The value is out of range, so nothing changed",
+        "duplicate_target": "The same object was changed twice, so nothing changed",
+        "kernel_unavailable": "This step needs the geometry kernel, which isn’t available on this computer, so nothing changed"
+      }
     },
     "draft": {
       "thisOne": "this item",

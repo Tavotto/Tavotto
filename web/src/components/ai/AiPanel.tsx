@@ -72,7 +72,9 @@ import { Turn } from './Transcript'
 import { ChangePlanDialog } from '../changePlan/ChangePlanDialog'
 import { ChangePlanTurn, useLatestReadyKey, usePanelPlanEntries } from '../changePlan/ChangePlanTranscript'
 import { useHasChangePlans } from '../changePlan/usePlanFigure'
-import { assistantUsesPlan } from '@/lib/assistantPlanRoute'
+import { assistantUsesPlan, MAX_ASSISTANT_INSTRUCTION } from '@/lib/assistantPlanRoute'
+import { vectorSelectionOf } from '@/lib/vectorEdit'
+import { runVectorEdit } from '@/store/vectorPlanActions'
 import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { deleteAiDraftIf } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
@@ -391,6 +393,12 @@ function AssistantPanelBody() {
       )
     : undefined
   const docObjects = useDocumentStore((s) => s.doc.objects)
+  // 画布矢量对象（文字 / 箭头 / 形状 / 路径）：没有目标图、选区里有它们时，助手改的就是它们（ADR 0212 第 6 期）。
+  // 有目标图（含图内编辑中）的指令照旧；开关关着 / 内嵌画布没有后端事务，这条路不开
+  const selectedIds = useSelectionStore((s) => s.ids)
+  const vectorSel = useMemo(() => (panel ? [] : vectorSelectionOf(docObjects, selectedIds)), [panel, docObjects, selectedIds])
+  const vmode = vectorSel.length > 0 && changePlanEnabled(caps) && !engineTransport()
+  const [vprompt, setVprompt] = useState('')
   // 发起这条请求的图已不在画布上（删了 / 换了图）：仍要显示、仍能查询结果，只是说明一句来源不在了
   const sourceGone =
     !!submission && !docObjects.some((o) => o.type === 'panel' && (o as PanelObject).fileId === submission.fileId)
@@ -522,12 +530,22 @@ function AssistantPanelBody() {
     inputRef.current?.focus()
   }
 
+  /** 矢量编辑入口（没有目标图、选区里有矢量对象）的发送：不进脚本提交账本与草稿，卡片自己管失败与重来 */
+  const sendVector = () => {
+    const text = vprompt.trim()
+    if (!text || noAgent || planBusy || text.length > MAX_ASSISTANT_INSTRUCTION) return
+    jumpToBottom()
+    // 卡片立刻出现在对话里（生成中），输入框随即清空；失败有失败卡与下一步，不丢这句话
+    if (runVectorEdit(text, vectorSel)) setVprompt('')
+  }
+
   /**
    * 发一条：默认发输入框里的；「重新发送」传入那一轮的原话（不动输入框里正在写的草稿）。
    * 「重试」再带上**那一次的目标**（`pinned`）：失败之后用户可能已经选了别的元素 / 换了范围，
    * 重试必须改原来那处，不能悄悄改到此刻选中的东西上（Codex #827 P1）
    */
   const send = async (req: SendRequest = { source: 'composer' }) => {
+    if (!panel && vmode) return sendVector()
     const source = req.source
     const pinned = req.pinned
     const text = (req.source === 'history' ? req.text : prompt).trim()
@@ -803,7 +821,18 @@ function AssistantPanelBody() {
           className="h-full overflow-y-auto px-3 pt-2"
           style={{ paddingBottom: 'calc(var(--composer-h, 0px) + 8px)' }}
         >
-          {!panel && dataTurns.length === 0 && !hasPlans ? (
+          {vmode && turns.length === 0 && !hasPlans ? (
+            <div data-ai-empty="vector" className="flex min-h-full flex-col items-center justify-center pb-4">
+              <div className="w-full">
+                <EmptyState
+                  art="pencil"
+                  figure={<ThinkingOrb form="searching" size="hero" tone="settled" />}
+                  title={ai('panel.vectorEmptyTitle', { count: vectorSel.length })}
+                  hint={ai('panel.vectorEmptyHint')}
+                />
+              </div>
+            </div>
+          ) : !panel && dataTurns.length === 0 && !hasPlans ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
             <NoPanelState />
           ) : turns.length > 0 || hasPlans ? (
@@ -1076,20 +1105,21 @@ function AssistantPanelBody() {
               'relative grid grid-cols-[minmax(0,1fr)_auto] border border-transparent bg-glass text-ink shadow-composer backdrop-blur-lg',
               'transition-[border-color] duration-fast focus-within:border-border-strong',
               "min-h-24 gap-y-2 rounded-panel pb-2 pl-3.5 pr-2 pt-2.5 [grid-template-areas:'content_content'_'start_end']",
-              (!panel || noAgent) && 'opacity-40',
+              ((!panel && !vmode) || noAgent) && 'opacity-40',
             )}
           >
             <textarea
               ref={inputRef}
               data-ai-input
-              value={prompt}
+              value={vmode ? vprompt : prompt}
               rows={1}
-              disabled={!panel || noAgent}
-              readOnly={draftLoading}
-              placeholder={panel ? (draftLoading ? ai('panel.draftLoading') : ai('panel.placeholder')) : undefined}
+              disabled={(!panel && !vmode) || noAgent}
+              readOnly={!vmode && draftLoading}
+              placeholder={vmode ? ai('panel.vectorPlaceholder', { count: vectorSel.length }) : panel ? (draftLoading ? ai('panel.draftLoading') : ai('panel.placeholder')) : undefined}
               aria-label={ai('panel.inputAria')}
               onChange={(e) => {
-                if (!draftLoading) setPrompt(e.target.value) // 草稿还没载入：输入框只读，程序化的变更也不收（两层）
+                if (vmode) setVprompt(e.target.value)
+                else if (!draftLoading) setPrompt(e.target.value) // 草稿还没载入：输入框只读，程序化的变更也不收（两层）
               }}
               onPaste={(e) => {
                 // 粘贴截图 / 复制的文件：当附件收；粘的是文字就照常（不拦）
@@ -1130,7 +1160,9 @@ function AssistantPanelBody() {
                   // 运行中时按钮是「中止」：未确认的提交 / 账本恢复状态 / 指令超限都不该把中止也禁掉（任务就在跑，用户要能停它）
                   // `noAgent`（最后一个可用 agent 被停用 / 可执行文件消失）只影响「发送」：任务还在跑时「中止」是唯一的停止入口，不能被它禁掉
                   disabled={
-                    !panel ||
+                    vmode
+                      ? noAgent || planBusy || !vprompt.trim() || vprompt.length > MAX_ASSISTANT_INSTRUCTION
+                      : !panel ||
                     (runningHere
                       ? false
                       : noAgent || !!submission || finishingHere || planBusy || !prompt.trim() || ledgerState !== 'ok' || tooLarge)
