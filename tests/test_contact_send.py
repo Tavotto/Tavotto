@@ -1615,6 +1615,27 @@ def test_bad_journal_type_or_missing_required_rejects_before_any_network(on, jou
     assert on.calls == []
 
 
+def test_editor_journal_accepts_empty_body_and_drops_stray_fields(on):
+    contactsend.start(
+        _jmeta(
+            {
+                "type": "editor",
+                "journal_id": "nature",
+                "journal_label": "Nature",
+                "catalog": {"v1": 3},
+            }
+        ),
+        [],
+    )
+    wait_for({"done"})
+    assert on.calls[0]["json"]["journal"] == {
+        "type": "editor",
+        "journal_id": "nature",
+        "journal_label": "Nature",
+        "catalog": {"v1": 3},
+    }
+
+
 def test_missing_journal_accepts_query_or_attachment(on):
     contactsend.start(_jmeta({"type": "missing", "query": "Foo Journal"}), [])
     wait_for({"done"})

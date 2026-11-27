@@ -65,6 +65,7 @@ export function JournalTipDialog() {
   if (!capability || !tip) return null
 
   const missing = tip.type === 'missing'
+  const editor = tip.type === 'editor'
   const bodyMax = capability.body_max ?? 5000
   const source = [tip.sourceHost, tip.sourceDate].filter(Boolean).join(' · ')
   // 字段随「问题」联动：只换标签 / placeholder，已填内容不清
@@ -82,7 +83,30 @@ export function JournalTipDialog() {
       }}
       {...dropHandlers}
     >
-      {missing ? (
+      {editor ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={bodyId} className="type-section">
+              {jt('editorQuoteLabel')}
+            </label>
+            <TextArea
+              id={bodyId}
+              aria-label={jt('editorQuoteLabel')}
+              value={draft.body}
+              rows={4}
+              maxRows={10}
+              maxLength={bodyMax}
+              placeholder={jt('editorQuotePlaceholder')}
+              disabled={!editable}
+              onChange={(e) => s.setDraft({ body: e.target.value })}
+              data-contact-text
+              className="px-3 py-2"
+            />
+          </div>
+          <AttachmentField editable={editable} dragging={dragging} pickLabel={jt('attach')} />
+        </div>
+      ) : null}
+      {editor ? null : missing ? (
         <div className="flex flex-col gap-1.5">
           <label htmlFor={nameId} className="type-section">
             {jt('nameLabel')}
@@ -157,7 +181,7 @@ export function JournalTipDialog() {
         </div>
       ) : null}
 
-      {missing ? (
+      {editor ? null : missing ? (
         <div className="flex flex-col gap-2">
         <div className="flex flex-col gap-1.5">
           <label htmlFor={bodyId} className="type-section">
@@ -200,7 +224,7 @@ export function JournalTipDialog() {
       </div>
       )}
 
-      {!missing && (
+      {!missing && !editor && (
         <div className="flex flex-col gap-2">
           <div className="flex flex-col gap-1.5">
             <label htmlFor={urlId} className="type-section">
@@ -233,7 +257,7 @@ export function JournalTipDialog() {
           autoComplete="email"
           value={draft.replyEmail}
           maxLength={capability.email_max ?? 254}
-          placeholder={jt(missing ? 'emailMissing' : 'emailWrong')}
+          placeholder={jt(editor ? 'editorEmail' : missing ? 'emailMissing' : 'emailWrong')}
           disabled={!editable}
           onChange={(e) => s.setDraft({ replyEmail: e.target.value })}
           onBlur={() => {
@@ -255,12 +279,12 @@ export function JournalTipDialog() {
     <Dialog
       open={s.open}
       onOpenChange={(o) => s.setOpen(o)}
-      title={jt(`title.${tip.type}`)}
+      title={jt(`title.${missing ? 'missing' : 'wrong'}`)}
       size="md"
       description={
         !missing && tip.journalLabel ? (
           <p className="type-caption" data-journal-tip-about>
-            {tip.journalLabel}
+            {editor ? jt('editorAbout', { journal: tip.journalLabel }) : tip.journalLabel}
           </p>
         ) : undefined
       }
@@ -290,7 +314,7 @@ export function JournalTipDialog() {
               {cs('done')}
             </Button>
           ) : (
-            <Button variant="primary" size="lg" loading={busy} disabled={busy} onClick={() => void s.send()} data-contact-send>
+            <Button variant="primary" size="lg" loading={busy} disabled={busy || (editor && !draft.body.trim() && draft.files.length === 0)} onClick={() => void s.send()} data-contact-send>
               {phase === 'failed' ? cs('retry') : jt(missing ? 'submitMissing' : 'submit')}
             </Button>
           ),
