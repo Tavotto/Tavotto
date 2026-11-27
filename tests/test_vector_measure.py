@@ -67,6 +67,7 @@ def test_a_slow_panel_times_out_to_the_frame_without_blocking_the_rest():
     assert e.value.code == "measure_timeout" and time.monotonic() - t0 < 2
     assert m({**PANEL, "fileId": "fast.pdf"}, []) == OK  # 别的图不受影响
     gate.set()
+    vm.close(m)
 
 
 def test_the_total_budget_runs_out():
@@ -118,3 +119,25 @@ def test_absurd_overrides_are_refused_before_any_export():
     with pytest.raises(la.PanelUnavailable) as e:
         m({**PANEL, "overrides": [{}] * (vm.MAX_OVERRIDES + 1)}, [])
     assert e.value.code == "too_many_overrides"
+
+
+def _measure_threads():
+    return [
+        t for t in threading.enumerate() if t.name.startswith("vector-measure") and t.is_alive()
+    ]
+
+
+def test_close_stops_the_pool_workers_so_no_non_daemon_thread_outlives_the_plan():
+    """`bounded` 起的线程池 worker 是非 daemon 线程；不 `close` 就一直活到池被 GC，
+    pytest 会话末尾的 conftest 线程门禁据此判红（CI 上「摘要全绿、退出码 1」）。"""
+    before = set(_measure_threads())
+    m = _bounded(lambda p, r: OK)
+    m(PANEL, [])
+    mine = [t for t in _measure_threads() if t not in before]
+    assert mine, "测试前提：量过一次后池里有 worker"
+    vm.close(m)
+    deadline = time.monotonic() + 5
+    while any(t.is_alive() for t in mine) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not any(t.is_alive() for t in mine)
+    vm.close(m)  # 重复收不抛
