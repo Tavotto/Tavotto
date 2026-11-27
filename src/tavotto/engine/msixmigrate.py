@@ -765,11 +765,13 @@ def legacy_sqlite_paths(rel: str) -> list[Path]:
     return [p for p in out if p.is_file() and not p.is_symlink()]
 
 
-def restore_legacy(rel: str, budget_s: float = PENDING_MERGE_BUDGET_S) -> str:
+def restore_legacy(rel: str, project: str, budget_s: float = PENDING_MERGE_BUDGET_S) -> str:
     """用户手动「找回之前的任务」（#2282 补救 B）：不看「待补」标记，把旧库里真实库没有的行按主键补回来。
 
     与后台待补合并同一条路（快照 → 登记的合并器，一个事务、到点整体回滚），所以补回的会话取新 rev、
     未结束的收尾。和自动路径的区别只有一条：用户在新库里删掉的、旧库还有的**也会回来**——这是用户点头的。
+    **只补 `project` 这一个项目的行**（确认句里的条数只算这个项目；别的项目里用户删掉的不能顺手带回来，Codex #2317）。
+    真实库还不存在时走整库只补缺复制（同后台路径）：那时没有任何东西被删过，不存在「把删掉的带回来」。
     回闭集 done / deferred（超时、锁被占、合并器未登记，可再试）/ failed / not_eligible。
     """
     if not _eligible():
@@ -784,12 +786,8 @@ def restore_legacy(rel: str, budget_s: float = PENDING_MERGE_BUDGET_S) -> str:
     if fd is None:
         return "deferred"
     try:
-        outcome = _merge_pending_item(tuple(rel.split("/")), deadline)
-        if outcome == "done":
-            data = _read_pending()
-            if data is not None and data["items"].pop(rel, None) is not None:
-                _write_pending(data)
-        return outcome
+        # 只补了一个项目：别的项目的「待补」照旧留给后台合并，不清标记
+        return _merge_pending_item(tuple(rel.split("/")), deadline, project=project)
     finally:
         layoutsession.release_file_lock(fd)
 
@@ -866,7 +864,7 @@ def _merge_pending(budget_s: float) -> dict | None:
         layoutsession.release_file_lock(fd)
 
 
-def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
+def _merge_pending_item(parts: tuple[str, ...], deadline: float, project: str | None = None) -> str:
     target = config.data_path(*parts)
     srcs = [local.joinpath(*parts) for _r, local in sources() if local is not None]
     srcs = [p for p in srcs if p.is_file() and not p.is_symlink()]
@@ -892,7 +890,10 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
                 with contextlib.suppress(OSError):
                     snap.unlink(missing_ok=True)
                 shutil.copy2(src, snap)
-            merge(snap, target, deadline)
+            if project is None:
+                merge(snap, target, deadline)
+            else:
+                merge(snap, target, deadline, project=project)
         except (_Deadline, TimeoutError):
             return "deferred"
         except sqlite3.OperationalError as e:

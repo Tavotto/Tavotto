@@ -20647,9 +20647,9 @@ def api_ai_history_legacy():
 
 @app.post("/api/ai/history/legacy/restore")
 def api_ai_history_legacy_restore():
-    """用户点「找回」：把旧库里真实库没有的会话补回来（删掉过的也会回来，界面先确认过）。回闭集 `outcome` 与剩几条。"""
+    """用户点「找回」：把旧库里**这个项目**真实库没有的会话补回来（删掉过的也会回来，界面先确认过；别的项目不动）。回闭集 `outcome` 与剩几条。"""
     project = str(require_project().resolve())
-    outcome = engine_ai_history.restore_legacy()
+    outcome = engine_ai_history.restore_legacy(project)
     return jsonify({"outcome": outcome, "missing": engine_ai_history.legacy_missing_count(project)})
 
 

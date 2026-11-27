@@ -1342,7 +1342,7 @@ def test_restore_brings_back_what_is_missing_including_what_was_deleted(world, r
     con.close()
     head_before = max(r for (r,) in sqlite3.connect(real_db).execute("SELECT rev FROM sessions"))
     assert ai_history.legacy_missing_count("/p") == 3
-    assert ai_history.restore_legacy() == "done"
+    assert ai_history.restore_legacy("/p") == "done"
     assert _session_ids(real_db) == ["new", "s1", "s2", "s3"]
     revs = dict(sqlite3.connect(real_db).execute("SELECT id, rev FROM sessions"))
     assert all(revs[s] > head_before for s in ("s1", "s2", "s3")), (
@@ -1350,17 +1350,36 @@ def test_restore_brings_back_what_is_missing_including_what_was_deleted(world, r
     )
     assert ai_history.legacy_missing_count("/p") == 0
     assert (
-        ai_history.restore_legacy() == "done" and len(_session_ids(real_db)) == 4
+        ai_history.restore_legacy("/p") == "done" and len(_session_ids(real_db)) == 4
     )  # 再点一次不重复
 
 
-def test_restore_clears_a_pending_marker_for_the_same_db(world, monkeypatch):
+def test_restore_touches_only_the_confirmed_project(world, real_db):
+    """确认句只算当前项目：在 /p 点找回，不能把 /q 的旧任务（含用户在 /q 删掉的）也带回来（Codex #2317）。"""
+    from tavotto.engine import ai_history
+
+    _r, a = world.pkg(PFN_A)
+    _history_for(a / "cache" / "ai_history.sqlite3", "/p", ["p1"])
+    _history_for(a / "cache" / "ai_history.sqlite3", "/q", ["q1"])
+    _history_for(
+        real_db, "/q", ["kept"]
+    )  # 能打开任务历史，真实库就已经在了；q1 当作用户在 /q 里删掉的
+    assert ai_history.legacy_missing_count("/p") == 1
+    assert ai_history.restore_legacy("/p") == "done"
+    assert _session_ids(real_db) == ["kept", "p1"]
+    reqs = sorted(
+        r for (r,) in sqlite3.connect(real_db).execute("SELECT client_request_id FROM ai_requests")
+    )
+    assert reqs == ["r-kept", "r-p1"]
+    assert ai_history.legacy_missing_count("/q") == 1
+
+
+def test_a_project_restore_leaves_the_pending_merge_for_the_rest(world, monkeypatch):
     _r, local = world.pkg(PFN_A)
-    _legacy_history(local, ["a1"])
+    _legacy_history(local, ["a1"])  # 项目 "p"
     _strand_history_behind_an_empty_db(world, monkeypatch)
-    assert msixmigrate._read_pending() is not None
-    assert msixmigrate.restore_legacy("cache/ai_history.sqlite3") == "done"
-    assert msixmigrate._read_pending() is None
+    assert msixmigrate.restore_legacy("cache/ai_history.sqlite3", "p") == "done"
+    assert msixmigrate._read_pending() is not None, "只补了一个项目：别的项目还等后台合并"
 
 
 def test_restore_is_refused_off_windows_and_waits_out_a_held_lock(world, real_db, monkeypatch):
@@ -1370,11 +1389,13 @@ def test_restore_is_refused_off_windows_and_waits_out_a_held_lock(world, real_db
         config.data_path(*msixmigrate.LOCK_REL), time.monotonic() + 5
     )
     try:
-        assert msixmigrate.restore_legacy("cache/ai_history.sqlite3", budget_s=0.2) == "deferred"
+        assert (
+            msixmigrate.restore_legacy("cache/ai_history.sqlite3", "/p", budget_s=0.2) == "deferred"
+        )
     finally:
         layoutsession.release_file_lock(fd)
     monkeypatch.setattr(msixmigrate, "_is_windows", lambda: False)
-    assert msixmigrate.restore_legacy("cache/ai_history.sqlite3") == "not_eligible"
+    assert msixmigrate.restore_legacy("cache/ai_history.sqlite3", "/p") == "not_eligible"
 
 
 def test_history_legacy_endpoints_count_and_restore_for_the_open_project(world, real_db, tmp_path):
