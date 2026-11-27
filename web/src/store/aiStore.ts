@@ -108,6 +108,10 @@ export interface AiSession {
   /** 用户附的文件：本页发起的会话有明细（图片带缩略图 data URL，只在页面内存里）；接回 / 历史里只剩个数 `attachmentCount`（ADR 0175） */
   attachments?: AttachmentView[]
   attachmentCount?: number
+  /** 改图助手判成聊天 / 提问后落回来的这一轮（ADR 0206 修订 2026-11-27）：没真动脚本之前不画「读脚本 → 改脚本 → 出图核对」清单，状态行说「正在回答…」 */
+  chat?: boolean
+  /** `chat` 这一轮真走到过「改脚本」（`ai.stage` 到过 edit）：Agent 进程一退出后端就把清单推到「出图核对」，没改过脚本也一样，只看当前那一步分不清 */
+  chatEdited?: boolean
   /** 会话结束（done / failed / timeout / cancelled）的时刻：状态行的总耗时与最后一步的耗时以它收尾 */
   finishedAt?: number
   /**
@@ -169,6 +173,8 @@ export interface AiSubmission {
   phase: SubmissionPhase
   /** 随这条指令附的参考图（后端暂存 id + 缩略图）；同 rid 重发时原样再带，不附图时没有这个字段 */
   attachments?: SentAttachment[]
+  /** 见 `AiSession.chat` */
+  chat?: boolean
 }
 
 /** 早于 HTTP 响应到达的 SSE 事件，等会话建好再按序回放 */
@@ -271,6 +277,8 @@ interface AiState {
     draftStamp?: number | null
     /** 用户附的参考图（已上传暂存，ADR 0175）；不附图时不传 */
     attachments?: SentAttachment[]
+    /** 改图助手判成聊天 / 提问后落回来的（见 `AiSession.chat`）；只管界面怎么画，发给后端的照旧 */
+    chat?: boolean
   }) => Promise<SubmitOutcome>
   /**
    * 把后端此刻仍在跑的会话接回来（只读占位），并把本地还当它在跑、后端却已结束的会话收尾
@@ -685,7 +693,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   submissions: {},
 
-  start: async ({ project, generation, prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null, attachments }) => {
+  start: async ({ project, generation, prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null, attachments, chat }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
     if (!canDispatch(get())) throw new Error('no-usable-agent')
     if (get().generation !== generation) throw new ProjectChangedError()
@@ -716,6 +724,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       overrides,
       phase: 'sending',
       ...(attachments?.length ? { attachments } : {}),
+      ...(chat ? { chat: true } : {}),
     }
     set((s) => ({ submissions: { ...s.submissions, [rid]: sub } }))
     // spawn 之前先把账本写进后端（原文 + 目标）：刷新 / 崩溃 / 换端口之后还认得「这条发出过」
@@ -926,7 +935,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   setStage: (sid, stage) => {
-    set((s) => ({ sessions: s.sessions.map((x) => (x.id === sid && !x.finalized ? { ...x, stage } : x)) }))
+    set((s) => ({ sessions: s.sessions.map((x) => (x.id === sid && !x.finalized ? { ...x, stage, ...(x.chat && stage.step === 'edit' ? { chatEdited: true } : {}) } : x)) }))
   },
 
   setStalled: (sid, idleS) => {
@@ -1761,6 +1770,7 @@ function accept(
     ...(sub.attachments?.length
       ? { attachments: sub.attachments.map(({ kind, name, ext, thumb }) => ({ kind, name, ext, thumb })), attachmentCount: sub.attachments.length }
       : {}),
+    ...(sub.chat ? { chat: true } : {}),
     entries: (detail?.transcript ?? []).map((e) => ({ kind: e.kind as AiDeltaKind, text: e.text })),
     status: toStatus(status),
     changed: how.kind === 'queried' ? !!(how.changed || detail?.changed) : false,
@@ -1790,6 +1800,7 @@ function accept(
                 scope: session.scope,
                 target: session.target,
                 prompt: session.prompt,
+                ...(session.chat ? { chat: true } : {}),
                 ...(session.attachments ? { attachments: session.attachments, attachmentCount: session.attachmentCount } : {}),
                 restored: false,
                 entries: settled && detail?.transcript?.length

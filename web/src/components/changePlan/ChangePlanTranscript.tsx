@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
 import { useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { IconSlot } from '@/components/ui/Icon'
+import { ThinkingOrb } from '@/components/ui/ThinkingOrb'
 import { AssistantNoteBubble } from './AssistantNoteBubble'
 import { ChangePlanCard } from './ChangePlanCard'
-import { effectiveStatus } from './changePlanModel'
+import { cp, effectiveStatus, planUndecided } from './changePlanModel'
 import { ReviewNoteCard } from './ReviewNoteCard'
 import { usePlanPanel, usePlanSource } from './usePlanFigure'
 
@@ -47,7 +49,23 @@ export function ChangePlanTurn({ entry, latest }: { entry: PlanEntry; latest: bo
   return (
     <div className="flex flex-col gap-(--item-gap)" data-change-plan-turn={entry.key}>
       {entry.from === 'assistant' ? entry.status !== 'handoff' && !prevShowsBubble && <AssistantNoteBubble entry={entry} /> : !(entry.followsKey && prevExists) && <ReviewNoteCard entry={entry} />}
-      <ChangePlanCard entry={entry} latest={latest} />
+      {planUndecided(entry) ? (
+        <p className="flex items-center gap-1 text-sm text-ink-3" data-change-plan-thinking>
+          <IconSlot className="mr-1">
+            <ThinkingOrb form="connecting" />
+          </IconSlot>
+          <span className="text-shimmer" role="status">
+            {cp('card.thinking')}
+          </span>
+        </p>
+      ) : entry.from === 'assistant' ? (
+        // 从思考那一行长出来：与对话新一轮同一个落位动效（agy 审 2026-11-27：别硬切成一张大卡）
+        <div className="animate-settle-in">
+          <ChangePlanCard entry={entry} latest={latest} />
+        </div>
+      ) : (
+        <ChangePlanCard entry={entry} latest={latest} />
+      )}
     </div>
   )
 }

@@ -27,10 +27,23 @@ WEB_SRC = ROOT / "web"
 DIST = WEB_SRC / "dist"
 TARGET = ROOT / "src" / "tavotto" / "web"
 
+# Node 默认堆上限按机器内存算：macOS CI runner（7 GB）上约 2 GB，`pnpm build`（tsc -b + vite）
+# 已经顶到——11-26、11-27 合并组 macos-app-smoke 两次 `JavaScript heap out of memory`（2026 MB）。
+# 固定给 4 GB：比 runner 内存小得多，本机与 Windows 也够；调用方自己给了上限就不动。
+NODE_HEAP_MB = 4096
 
-def run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:
+
+def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(os.environ if base is None else base)
+    opts = env.get("NODE_OPTIONS", "")
+    if not re.search(r"(?:^|\s)--max[-_]old[-_]space[-_]size(?:=|\s)", opts):
+        env["NODE_OPTIONS"] = f"{opts} --max-old-space-size={NODE_HEAP_MB}".strip()
+    return env
+
+
+def run(cmd: list[str]) -> None:
     print("$", " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=WEB_SRC, check=True, env=env)
+    subprocess.run(cmd, cwd=WEB_SRC, check=True, env=build_env())
 
 
 def main() -> int:
@@ -45,13 +58,7 @@ def main() -> int:
     # build），挂在这儿就不会有哪条发布链绕过去。漏翻的表现是界面上一串
     # `project.actions.create`——那种东西一旦发出去，用户装的就是它。
     run([pnpm, "i18n:check"])
-    # Node 22 的默认堆在 macOS 托管打包机上约 2 GiB，完整 tsc -b 已超过它。
-    # 只给打包编译留余量，调用方已经给的堆大小和其他 Node 设置照常使用。
-    env = dict(os.environ)
-    options = env.get("NODE_OPTIONS", "")
-    if not re.search(r"(?:^|\s)--max[-_]old[-_]space[-_]size(?:=|\s)", options):
-        env["NODE_OPTIONS"] = f"{options} --max-old-space-size=4096".strip()
-    run([pnpm, "build"], env=env)
+    run([pnpm, "build"])
 
     if not (DIST / "index.html").is_file():
         print(f"构建没产出 {DIST}/index.html", file=sys.stderr)

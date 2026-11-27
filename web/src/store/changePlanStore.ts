@@ -376,6 +376,14 @@ function allNeedScript(plan: ChangePlan): boolean {
   return plan.groups.length === 0 && plan.unhandled.length > 0 && plan.unhandled.every((u) => u.reason === 'needs_script')
 }
 
+/**
+ * 这份方案一处图内修改都没有、没处理的全是「不是改图的要求」（聊天 / 提问 / 要解释，ADR 0206 修订 2026-11-27）：
+ * 助手来源据此不出卡，把用户那句话原样交给普通助手对话（`runScript` 的聊天分支）。混合情形（有能改的、或还有别的原因）照旧出卡。
+ */
+export function allOutOfScope(plan: ChangePlan): boolean {
+  return plan.kind !== 'script' && plan.groups.length === 0 && plan.unhandled.length > 0 && plan.unhandled.every((u) => u.reason === 'out_of_scope')
+}
+
 /** 这张图此刻的图源身份（磁盘素材带修订；runtime 面板没有稳定修订，只认文件 + 脚本） */
 export function sourceOf(panel: PanelObject, mtime = useAssetStore.getState().byId[panel.fileId]?.mtime): PlanSource {
   return { fileId: panel.fileId, script: panel.script ?? null, ...(panel.fileKind !== 'runtime' && mtime !== undefined ? { mtime } : {}) }
@@ -470,6 +478,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return
       }
       // 助手来源：整条指令都要改脚本（没有一处图内修改、没有别的原因）= 不算失败，接着走现有的改脚本路径
+      // 助手来源：整条都不是改图的要求（聊天 / 提问）= 不出卡，悄悄交给普通助手对话（不走脚本方案、不加交接句）
+      if (e.from === 'assistant' && view.code === 'change_plan_empty' && allOutOfScope(plan)) {
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        patch(key, { plan })
+        void get().runScript(key)
+        return
+      }
       if (e.from === 'assistant' && view.code === 'change_plan_empty' && allNeedScript(plan)) {
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         patch(key, { plan })
@@ -663,6 +678,38 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (!panel || panel.fileId !== fb.fileId || ai.generation !== fb.generation) {
         fail(key, 'change_plan_script_failed')
         return false
+      }
+      // 聊天 / 提问（整条都是 out_of_scope）：没有图内修改要先应用、不再试脚本方案，原话直接交给普通助手对话；发出去了就把这张卡撤掉
+      if (e.plan && allOutOfScope(e.plan)) {
+        try {
+          await ai.start({
+            project: fb.project,
+            generation: fb.generation,
+            prompt: fb.prompt,
+            fileId: fb.fileId,
+            panelId: fb.panelId,
+            gid: fb.gid,
+            label: fb.label,
+            scope: fb.scope,
+            target: fb.target,
+            overrides: panel.overrides,
+            canvas: fb.canvas,
+            script: fb.script,
+            chat: true,
+          })
+        } catch {
+          patch(key, { status: 'failed', failure: { code: 'change_plan_script_failed' } })
+          return false
+        }
+        // 卡一撤，订阅就看不到「落定」了：输入框里那条指令与后端草稿在这里放掉
+        const settle = get().entries[key]?.onSettle
+        drop(key)
+        try {
+          settle?.()
+        } catch {
+          /* 清草稿失败不影响对话 */
+        }
+        return true
       }
       // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
       // 图内那部分就丢了。应用没成（图已改过 / 写不进）= 不续走，卡上说一句

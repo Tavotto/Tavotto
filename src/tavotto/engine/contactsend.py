@@ -711,6 +711,21 @@ def _flow(sess: Session, targets: list[diagsend.Target]) -> None:
     _complete(sess, targets)
 
 
+#: 遥测的安装方式（desktop / pipx / pip / source / unknown）→「联系作者」契约的闭集（desktop / pip / dev / other）。
+#: 与服务端给关联来信做的映射（diagnostics-api `_LINKED_DISTRIBUTION`）同一张表；不映射时 pipx / 源码安装发信一律 422。
+_CONTACT_DISTRIBUTION = {
+    "desktop": "desktop",
+    "pip": "pip",
+    "pipx": "pip",
+    "source": "dev",
+    "unknown": "other",
+}
+
+
+def contact_distribution(kind: str) -> str:
+    return _CONTACT_DISTRIBUTION.get(kind, "other")
+
+
 def _init_body(sess: Session, draft: Draft, route: str) -> dict:
     body: dict = {
         "client_message_id": sess.client_message_id,
@@ -718,7 +733,7 @@ def _init_body(sess: Session, draft: Draft, route: str) -> dict:
         "app_version": _version(),
         "os": telemetry._platform(),
         "arch": telemetry._arch(),
-        "distribution": telemetry._distribution(),
+        "distribution": contact_distribution(telemetry._distribution()),
         "route": route,
         "subject": draft.subject,
         "body": draft.body,

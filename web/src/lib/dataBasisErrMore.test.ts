@@ -1,4 +1,4 @@
-/** 依据句：`bar_err`（每行一根柱）与多个 y 各配各的误差列（「a_sd」「b_sd」）。 */
+/** 依据句：`bar_err`（每行一根柱）与多个 y 各配各的误差列（「a_sd」和「b_sd」）。 */
 import { describe, expect, it } from 'vitest'
 import { basisOf } from './dataBasis'
 
@@ -21,17 +21,26 @@ describe('多个 y 各配各的误差列', () => {
     const b = basisOf({ title_code: 'line_err', facts: facts(), error_columns: [{ column: 'a_sd' }, { column: 'b_sd' }] })!
     expect(b.errColumn).toEqual({ key: 'errColumns', values: { columns: ['a_sd', 'b_sd'] } })
   })
-  it('主句换成「每条线每行一个点」（两项以上）；一项 / 单 y 仍是「每行一个点」；bar_err 仍是「每行一根柱」', () => {
+  it('多个 y 的主句换成按系列数的句子（`series_facts`）；一项 / 单 y 仍是「每行一个点」；bar_err 仍是「每行一根柱」', () => {
     const two = [{ column: 'a_sd' }, { column: 'b_sd' }]
-    expect(basisOf({ title_code: 'line_err', facts: facts(), error_columns: two })!.main).toEqual([{ key: 'rowsErrLines', values: { drawn: 12 } }])
+    const sf = { rows: 6, eligible_rows: 6, rows_any: 6, rows_all: 6, series: [{ y: 'a', n: 6, x_values: 6 }, { y: 'b', n: 6, x_values: 6 }] }
+    expect(basisOf({ title_code: 'line_err', facts: facts(), series_facts: sf, error_columns: two })!.main).toEqual([{ key: 'seriesEqual', values: { k: 2, n: 6 } }])
     expect(basisOf({ title_code: 'line_err', facts: facts(), error_columns: [{ column: 'a_sd' }] })!.main[0]!.key).toBe('rowsErr')
     expect(basisOf({ title_code: 'line_err', facts: facts(), error_column: 'e' })!.main[0]!.key).toBe('rowsErr')
-    expect(basisOf({ title_code: 'bar_err', facts: facts(), error_columns: two })!.main[0]!.key).toBe('rowsBar')
+    expect(basisOf({ title_code: 'bar_err', facts: facts(), error_column: 'e' })!.main[0]!.key).toBe('rowsBar')
+  })
+  it('旧响应：多个误差列却没有 series_facts——不拿旧的第一列数字顶替，只剩「误差线取自…」那半句', () => {
+    const two = [{ column: 'a_sd' }, { column: 'b_sd' }]
+    const b = basisOf({ title_code: 'line_err', facts: facts(), error_columns: two })!
+    expect(b.main).toEqual([])
+    expect(b.errColumn).toEqual({ key: 'errColumns', values: { columns: ['a_sd', 'b_sd'] } })
   })
   it('只有一项 error_columns：按单列写', () => {
     expect(basisOf({ title_code: 'line_err', facts: facts(), error_columns: [{ column: 'a_sd' }] })!.errColumn).toEqual({ key: 'errColumn', values: { column: 'a_sd' } })
   })
-  it('不是现成误差列的画法：不写', () => {
-    expect(basisOf({ title_code: 'line_band', facts: facts(), error_columns: [{ column: 'a' }, { column: 'b' }] })!.errColumn).toBeNull()
+  it('不是现成误差列的画法：不写「取自…」；旧响应没有别的可写，整句不显示', () => {
+    expect(basisOf({ title_code: 'line_band', facts: facts(), error_columns: [{ column: 'a' }, { column: 'b' }] })).toBeNull()
+    const sf = { rows: 6, eligible_rows: 6, rows_any: 6, rows_all: 6, series: [{ y: 'a', n: 6, x_values: 6 }, { y: 'b', n: 6, x_values: 6 }] }
+    expect(basisOf({ title_code: 'line_band', series_facts: sf, error_columns: [{ column: 'a' }, { column: 'b' }] })!.errColumn).toBeNull()
   })
 })

@@ -6097,6 +6097,8 @@ export interface AiDataProposeItem {
   variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
   /** 这张图是按什么数出来的（「依据」那句话的素材）：表里的行数、画进去的行数、组数、每组观测数范围、不同横轴取值个数；大表 / 把列当分组时没有这一项 */
   facts?: AiDataFacts
+  /** 多个 y 的趋势图每条线各自的数（有它时没有 `facts`；单个 y / 大表 / 把列当分组时没有这一项）；旧响应没有 */
+  series_facts?: AiDataSeriesFacts
   /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
   error?: AiDataErrorKind
   /** 误差线从哪来：`column` = 表里现成的误差列（`error_column` 是列名），`computed` = 用重复值算的 */
@@ -6138,6 +6140,18 @@ export interface AiDataFacts {
   /** 没画的行里因缺值没画的行数 / 因那一格不是数没画的行数（两者之和 = `unplotted.count`）；旧响应没有 */
   skipped_missing?: number
   skipped_other?: number
+}
+
+/** 多个 y 的趋势图每条线各自按什么数画的（`series_facts`）：`rows_any` = 至少一条线有值的行数，`rows_all` = 每条线都有值的行数；`series` 与配方的 y 同序，
+ *  `err_drawn` / `err_missing` 只有配了现成误差列才有（有中心值且误差可画 / 有中心值但缺误差的个数） */
+export interface AiDataSeriesFacts {
+  rows: number
+  eligible_rows: number
+  rows_any: number
+  rows_all: number
+  skipped_missing?: number
+  skipped_other?: number
+  series: { y: string; n: number; x_values: number; err_drawn?: number; err_missing?: number }[]
 }
 
 /** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
