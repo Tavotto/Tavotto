@@ -405,10 +405,9 @@ def compare_svg_preview_pixels(
         files: dict[str, bytes] = {}
         page, _ = svgir.svg_to_ir(svg, size["w_pt"], size["h_pt"], faces, files=files)
         pdf = directory / f"{name}.pdf"
-        png = directory / f"{name}.png"
         pdfwriter.write_pdf(page, pdf, faces, files)
-        render_preview_png(pdf, width, png)
-        previews.append(_rgba_of(png))
+        rendered = host().render(pdf, width_px=width, transparent=True)
+        previews.append((rendered.width, rendered.height, rendered.channels, rendered.packed()))
     return previews[0] == previews[1]
 
 

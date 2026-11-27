@@ -179,6 +179,17 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
             raise
 
     monkeypatch.setattr(nativeggplot_source, "replay", diagnose)
+    verify = service._verified_r_source
+
+    def diagnose_verification(*args, **kwargs):
+        try:
+            return verify(*args, **kwargs)
+        except service.engine_scriptadjust.ScriptAdjustError as exc:
+            if exc.code == "script_export_diverged":
+                problems.extend(traceback.format_exception(exc))
+            raise
+
+    monkeypatch.setattr(service, "_verified_r_source", diagnose_verification)
 
     root = tmp_path / "研究 项目"
     graphs = root / "figure scripts"
@@ -2610,6 +2621,18 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         assert not registry.bind_assets(session)
         assert registry.route_for(str(tmp_path), descriptor.script, stem) is session
         assert session.svg_path(stem).read_text(encoding="utf-8") == baseline["svg"]
+        revision = session.rev
+        proof = session.preview_svg_snapshot(
+            stem,
+            [],
+            include_fonts=True,
+            expected_execution_id=session.execution_id,
+            expected_snapshot_epoch=session.snapshot_epoch,
+        )
+        assert proof["fonts"] and all(isinstance(font, str) for font in proof["fonts"])
+        assert proof["manifest"] == baseline["manifest"]
+        canonical = nativeggplot._write_ggplot_svg(tmp_path / "proof.svg", proof["svg"])
+        assert canonical == baseline["svg"].encode() and revision == session.rev
         manifest = baseline["manifest"]
         assert manifest["size_mm"] == pytest.approx([152.4, 101.6])
         elements = {element["gid"]: element for element in manifest["elements"]}
