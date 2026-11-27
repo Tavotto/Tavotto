@@ -42,7 +42,9 @@ for _stream in (sys.stdout, sys.stderr):
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(ROOT / "src"))
+#: 被测的 Tavotto 源码树（缺省 = 本仓库）；评测另一个 worktree 上的修复时设 `EVAL_TREE=<路径>`，MCP 与 sidecar 用它的 src / 插件
+TREE = Path(os.environ.get("EVAL_TREE") or ROOT).resolve()
+sys.path.insert(0, str(TREE / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(HERE))
 
@@ -60,7 +62,7 @@ LAYOUT = "组图"
 CANVAS_ID = "c_main0001"
 SIDECAR_ENV = {
     "TAVOTTO_USER_ENV_DISCOVERY": "0",
-    "PYTHONPATH": str(ROOT / "src"),
+    "PYTHONPATH": str(TREE / "src"),
     "OPENCODE_GO_API_KEY": "",
     "EVAL_A_API_KEY": "",
 }
@@ -426,12 +428,12 @@ def mcp_config(wrapper_dir: Path, project: Path, work: Path, proxy: bool = False
         "TAVOTTO_CONFIG_DIR": str(work / "config"),
         "HOME": str(work / "home"),
         "TAVOTTO_USER_ENV_DISCOVERY": "0",
-        "PYTHONPATH": str(ROOT / "src"),
+        "PYTHONPATH": str(TREE / "src"),
         "TAVOTTO_NO_UPDATE_CHECK": "1",
         "TAVOTTO_NO_TELEMETRY": "1",
     }
     lines = ["#!/bin/sh"] + [f"export {k}='{v}'" for k, v in env.items()]
-    server = f"'{PYTHON}' '{ROOT / 'codex-plugin' / 'mcp' / 'server.py'}'"
+    server = f"'{PYTHON}' '{TREE / 'codex-plugin' / 'mcp' / 'server.py'}'"
     if proxy:  # B2：把 structuredContent 也以文本交给宿主（见 mcp_proxy.py）
         lines.append(f"exec '{PYTHON}' '{HERE / 'mcp_proxy.py'}' -- {server}")
     else:
@@ -653,6 +655,7 @@ def scrub(text: str) -> str:
         ("<SCRATCH>", SCRATCH),
         ("<RUNS>", RUNS),
         ("<REPO>", ROOT),
+        ("<TREE>", TREE),
         ("<PYTHON_BIN>", Path(PYTHON).parent),
         ("<HOME>", Path.home()),
     ):

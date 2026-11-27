@@ -66,3 +66,23 @@ B2 平均 8.8 次工具调用、126 s、输入 token 3.5 万。失败三次：`d
 - B 组的「选区」是写在任务说明里的对象 id，不是 UI 里的选中态；A 组才有真选区。
 - A 组落位用 `apply_ops`，没有复现前端落位与方案卡勾选；`plan.ok`（核对）记在记录里但不参与判据——所以 A 组可能比桌面里「能点应用」的实际结果乐观（见下面 style 核对的发现）。
 - 子图是合成的、坐标轴矩形写死；真实数据点量得出来（`add-arrow-peak` B2 成功，箭头尖离闭式解 0.0 mm），但没覆盖量不了的子图。
+
+## A 组需要维护者给密钥后补跑
+
+A 组（桌面改图助手，真模型）首轮因缺密钥**未跑**。维护者 `! export OPENCODE_GO_API_KEY=…`（或 `EVAL_A_API_KEY`）后：
+`EVAL_RESULTS=…/results/<日期-模型> python scripts/eval/vector_edit/harness.py run A`。读结果时留意 `plan_ok`（核对）：判据按 `apply_ops` 落位，
+不看核对，所以 A 可能比桌面里「能点应用」的实际结果乐观。
+
+## 修复后的重跑（`EVAL_TREE=<被测 worktree>`：MCP / sidecar 用那棵树的源码）
+
+首轮发现的产品问题已在两个分支上修了：`fix/mcp-layout-content-text`（工具结果的 `structuredContent` 精简副本也放进 `content` 文字）
+和 `fix/vectorcheck-style-box`（style 核对只报这次编辑引入的差异、框住子图的外框不再被子图文字拦、`box.fit` 写错给期望形态）。
+原样 B 组（**不加** `mcp_proxy.py` 转发）全 21 题重跑：
+
+| 合计 | 首轮 B（4 题） | 首轮 B2（转发） | `after-content-fix/`（只修内容文字） | `after-both-fixes/`（两处都修） |
+|---|---|---|---|---|
+| 全部 | 0/4 | 17/21 | 19/21 | 20/21 |
+| 失败 | 3 超时 | distribute-h、add-box、ctrl-vague、（add-box-and-title 旧判据） | distribute-h（核对逼改字体）、ctrl-vague | ctrl-vague |
+
+`after-content-fix/` 跑到一半时代码又改了一处（失败结果不再镜像、审阅意见工具跳过），以 `after-both-fixes/`（最终代码）为准。
+`ctrl-vague` 是模型问题：含糊指令不问用户直接动手。
