@@ -339,6 +339,9 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
         nextAfter = cur()?.afterSrc ?? beforeSrc
       }
     }
+    // 成功与失败两条路在这里汇合：发布任何状态前再核一次是不是最新的那次重算——
+    // 过期的（预览失败的那条也算）不能撤销用户更新的勾选、也不能清掉更新那次的 busy（Codex #2321）
+    if (!mine()) return
     // 方案、对比图、勾选一起发布（到这里才换，中途被新的勾选打断的不会留下半份）
     st.busy = false
     st.failed = false

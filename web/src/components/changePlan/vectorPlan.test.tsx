@@ -641,6 +641,29 @@ it('勾掉一步、子集算完而对比图还在画时又勾回来：手里的�
   expect(o('s1')).toBeUndefined()
 })
 
+it('同一时序但迟到的子集对比图画失败：也不能把用户勾回的那步再取消，应用写的仍是全量', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  planOps.mockResolvedValueOnce(subset({ a: true, s: true }))
+  let fail!: (e: unknown) => void
+  previewPng.mockReset().mockReturnValueOnce(new Promise<Blob>((_, r) => (fail = r)))
+  act(() => boxes()[1].click()) // 勾掉「字号」
+  await settleRecompute() // 子集算完了，对比图还没画好
+  act(() => boxes()[1].click()) // 勾回来
+  await settleRecompute()
+  await act(async () => {
+    fail(new Error('preview failed')) // 迟到的子集对比图失败了，也不能改任何东西
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  expect(boxes().every((b) => b.checked)).toBe(true)
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+  act(() => void useChangePlanStore.getState().apply(key))
+  const o = (id: string) => doc().doc.objects.find((x) => x.id === id) as unknown as Record<string, number> | undefined
+  expect(o('t1')!.sizePt).toBe(12)
+  expect(o('a1')!.strokePt).toBe(0.75)
+  expect(o('s1')).toBeUndefined()
+})
+
 it('部分勾选只发有改动行的步：原方案里没产生改动的步（同值再设一次）不会在用户取消了前一次之后生效', async () => {
   const same: VectorEditResult = {
     ...RESULT,
