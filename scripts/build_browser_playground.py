@@ -63,6 +63,7 @@ ENGINE_FILES = [
     "legendmodel.py",
     "manifest.py",
     "manifest_fields.py",
+    "mixedtext.py",
     "overrides.py",
     "patchspec.py",
     "pathgeom.py",
