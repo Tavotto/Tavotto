@@ -207,7 +207,12 @@ sample_fonts <- function() {
   svg <- widths()
   grDevices::png(tempfile(fileext = ".png"), width = 1000, height = 750, res = 250, type = "cairo")
   cairo <- widths()
-  list(matches = basename(font_files$path), svg = svg, cairo = cairo)
+  bitmap <- tryCatch({
+    grDevices::png(tempfile(fileext = ".png"), width = 1000, height = 750, res = 250,
+                   type = "windows", bg = "transparent")
+    widths()
+  }, error = conditionMessage)
+  list(matches = basename(font_files$path), svg = svg, cairo = cairo, windows = bitmap)
 }
 registry <- tryCatch(length(utils::readRegistry("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts",
                                                 hive = "HLM", maxdepth = 1L)),
@@ -309,6 +314,7 @@ __declspec(dllexport) void probe_font_face(const wchar_t *want, wchar_t *name, i
             "Normal R fonts:",
             normal.read_text(encoding="utf-8") if normal.is_file() else baseline.stderr,
         )
+        vector_replays = []
 
         @contextmanager
         def measure_restricted(root, environment):
@@ -351,6 +357,46 @@ __declspec(dllexport) void probe_font_face(const wchar_t *want, wchar_t *name, i
                         except winappcontainer.ReplayFailed as exc:
                             print("Isolated R font diagnostic failed:", exc.diagnostic)
 
+                    driver = Path(next(entry[7:] for entry in argv if entry.startswith("--file=")))
+                    with_fonts = root / "vector-replay-probe.R"
+                    with_fonts.write_bytes(
+                        b'systemfonts::add_fonts(list.files(file.path(Sys.getenv("TAVOTTO_R_REPLAY_ROOT"),'
+                        b' "font-probe"), full.names = TRUE))\n' + driver.read_bytes()
+                    )
+                    vector_request = root / "vector-request-probe.json"
+                    vector_result = root / "vector-result-probe.json"
+                    vector_file = root / "vector-result-probe.svg"
+                    vector_request.write_text(
+                        json.dumps(
+                            {
+                                **request,
+                                "png": None,
+                                "pdf": None,
+                                "result": vector_result.as_posix(),
+                                "svg": vector_file.as_posix(),
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    try:
+                        run(
+                            [
+                                argv[0],
+                                "--vanilla",
+                                "--slave",
+                                f"--file={with_fonts}",
+                                "--args",
+                                str(vector_request),
+                            ],
+                            cwd,
+                            timeout=25,
+                        )
+                        raw = vector_file.read_text(encoding="utf-8")
+                        svg = nativeggplot._write_ggplot_svg(vector_file, raw)
+                        vector_replays.append((svg, json.loads(vector_result.read_bytes())))
+                    except winappcontainer.ReplayFailed as exc:
+                        print("Isolated R vector diagnostic failed:", exc.diagnostic)
+
                 yield execute
 
         measured = False
@@ -382,6 +428,24 @@ __declspec(dllexport) void probe_font_face(const wchar_t *want, wchar_t *name, i
                             "Replay geometry:",
                             service._compare_manifests(hot["manifest"], candidate.manifest),
                         )
+                        if vector_replays:
+                            svg, manifest = vector_replays[-1]
+                            vector_hot = worker.override(args[0], args[1], inline_svg=True)
+                            current_vector = vector_hot["svg"].encode("utf-8")
+                            print("SVG with staged fonts matches:", current_vector == svg)
+                            print(
+                                "SVG geometry with staged fonts:",
+                                service._compare_manifests(vector_hot["manifest"], manifest),
+                            )
+                            if current_vector != svg:
+                                import difflib
+
+                                changes = difflib.unified_diff(
+                                    current_vector.decode("utf-8").splitlines(),
+                                    svg.decode("utf-8").splitlines(),
+                                    n=0,
+                                )
+                                print("First SVG differences:", "\n".join(list(changes)[:44]))
                         with (
                             Image.open(io.BytesIO(first_bytes)) as first,
                             Image.open(io.BytesIO(candidate.png)) as second,
