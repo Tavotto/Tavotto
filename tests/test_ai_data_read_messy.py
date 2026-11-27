@@ -24,9 +24,11 @@ import pytest
 from tavotto.engine import (
     ai_data_figure as adf,
     ai_data_propose as P,
+    ai_data_recipe as R,
     ai_data_template as tpl,
 )
 from tavotto.engine.agent_runner import wires
+from tests.test_ai_data_profile import make_xlsx
 from tests.test_ai_data_propose import project  # noqa: F401
 
 
@@ -184,5 +186,158 @@ def test_propose_offers_candidates_for_the_trailing_column_export(project, tmp_p
     root = tmp_path / "proj"
     (root / "data").mkdir(parents=True)
     (root / "data" / "t.csv").write_text(TRAILING, encoding="utf-8")
+    resp = P.propose(root, project="p", folder="data", render="lazy", understand=False)
+    assert resp["kind"] == "candidates" and resp["items"], resp
+
+
+# =========================================================================== 2. XLSX 开头有标题行
+#: 第 1 行只有 A1 有字（标题）、第 2 行空、第 3 行才是列名（酶标仪导出）
+PLATE = [
+    ["酶标仪导出 2026-11-20 OD600", None, None, None],
+    [],
+    ["时间 (min)", "对照", "低剂量", "高剂量"],
+    [0, 0.058, 0.052, 0.044],
+    [30, 0.188, 0.145, 0.104],
+    [60, 0.298, 0.228, 0.145],
+    [90, 0.41, 0.31, 0.2],
+]
+PLATE_COLS = ["时间 (min)", "对照", "低剂量", "高剂量"]
+
+
+def test_xlsx_with_a_title_row_reads_the_names_below_it(tmp_path):
+    p = make_xlsx(tmp_path / "plate.xlsx", {"Sheet1": PLATE})
+    s = adf.inspect_data_source(p, "Sheet1", v2=True)
+    assert s.columns == PLATE_COLS and len(s.rows) == 4
+    assert s.header_row == s.header_line == 3  # 工作表里的行号
+    assert s.row_numbers == [4, 5, 6, 7]
+
+
+def test_xlsx_title_row_summary_round_trips_through_its_header_line(tmp_path):
+    """摘要的 `header_line` 会被出图 / 合画 / 提交那几处当 `header_row` 传回来重读：读出的必须是同一张表。"""
+    p = make_xlsx(tmp_path / "plate.xlsx", {"Sheet1": PLATE})
+    first = adf.inspect_data_source(p, "Sheet1", v2=True)
+    again = adf.inspect_data_source(p, "Sheet1", v2=True, header_row=first.header_line)
+    assert again.columns == first.columns and again.rows == first.rows
+    assert again.header_row == first.header_row == 3
+    # 指定的行号落在空行上：读的是它之后的第一条非空行，记下的是真正的表头行
+    blank = adf.inspect_data_source(p, "Sheet1", v2=True, header_row=2)
+    assert blank.columns == PLATE_COLS and blank.header_row == 3
+
+
+def test_xlsx_explicit_header_row_past_the_end_is_the_header_row_error(tmp_path):
+    p = make_xlsx(tmp_path / "plate.xlsx", {"Sheet1": PLATE})
+    with pytest.raises(adf.DataSourceError) as exc:
+        adf.inspect_data_source(p, "Sheet1", v2=True, header_row=99)
+    assert exc.value.code == "data_header_row_invalid"
+
+
+def test_xlsx_normal_tables_are_untouched(tmp_path):
+    """第一行读得成表头的表：不猜、不记行号（`header_row` / `header_line` 仍是 None，生成的脚本与此前逐字相同）。"""
+    rows = [["time", "a", "b"], [0, 1, 2], [1, 3, 4], [2, 5, 6]]
+    p = make_xlsx(tmp_path / "t.xlsx", {"S": rows})
+    s = adf.inspect_data_source(p, "S", v2=True)
+    assert s.columns == ["time", "a", "b"] and s.header_row is None and s.header_line is None
+    # 第一行就是表头、行号指定为 1：也不记（没有真的跳过行）
+    again = adf.inspect_data_source(p, "S", v2=True, header_row=1)
+    assert again.header_row is None and again.rows == s.rows
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        # 标题行后面直接是数据，没有列名行：猜不出来，仍是原来的错
+        [["酶标仪导出", None, None], [0, 1, 2], [1, 3, 4], [2, 5, 6]],
+        # 全是文字、没有数值列
+        [["标题", None], ["a", "b"], ["c", "d"]],
+    ],
+    ids=["title-then-data", "no-numeric-block"],
+)
+def test_xlsx_without_a_findable_header_is_still_invalid(tmp_path, rows):
+    p = make_xlsx(tmp_path / "t.xlsx", {"S": rows})
+    with pytest.raises(adf.DataSourceError) as exc:
+        adf.inspect_data_source(p, "S", v2=True)
+    assert exc.value.code == "data_header_invalid"
+
+
+def test_xlsx_v1_reader_is_unchanged(tmp_path):
+    """v1（`v2=False`）逐字不变：标题行在前的表仍是 `data_header_invalid`。"""
+    p = make_xlsx(tmp_path / "plate.xlsx", {"Sheet1": PLATE})
+    with pytest.raises(adf.DataSourceError) as exc:
+        adf.inspect_data_source(p, "Sheet1")
+    assert exc.value.code == "data_header_invalid"
+
+
+def test_xlsx_title_row_uses_the_same_criterion_as_text_tables(tmp_path):
+    """同一套判据：文本表里同样的「标题 + 空行 + 列名 + 数据」读出的表头行是同一行、同一张表。"""
+    text = "酶标仪导出 2026-11-20 OD600,,,\n\n时间 (min),对照,低剂量,高剂量\n0,0.058,0.052,0.044\n30,0.188,0.145,0.104\n60,0.298,0.228,0.145\n90,0.41,0.31,0.2\n"
+    t = adf.read_text_table(write(tmp_path, text))
+    x = adf.inspect_data_source(make_xlsx(tmp_path / "plate.xlsx", {"S": PLATE}), "S", v2=True)
+    assert (
+        t.status == "unsure"
+    )  # 文本表里这是「猜的」：与 XLSX 的 `xlsx_header_guess` 同一个 `_pick_header`
+    assert t.summary.columns == x.columns == PLATE_COLS
+    assert t.summary.header_line == x.header_line == 3
+
+
+def test_xlsx_title_row_script_reads_the_same_table_and_draws(tmp_path, monkeypatch):
+    mod = runtime(tmp_path, monkeypatch)
+    p = make_xlsx(tmp_path / "plate.xlsx", {"Sheet1": PLATE})
+    parent = adf.inspect_data_source(p, "Sheet1", v2=True)
+    header, rows = mod.read_xlsx(p, "Sheet1", parent.header_row)
+    assert header == parent.columns and rows == [list(r) for r in parent.rows]
+    # 默认读法（不给行号）仍从第一条非空行读起：标题行读不成表头，脚本里不猜（行号由 Tavotto 写进脚本）
+    with pytest.raises(mod.NamelessTailData):
+        mod.read_xlsx(p, "Sheet1")
+
+
+def test_xlsx_title_row_generated_script_carries_the_row_and_runs(tmp_path, monkeypatch):
+    import subprocess
+
+    folder = tmp_path / "f"
+    folder.mkdir()
+    make_xlsx(folder / "plate.xlsx", {"Sheet1": PLATE})
+    make_xlsx(folder / "plain.xlsx", {"S": [["time", "a"], [0, 1], [1, 3], [2, 5], [3, 6]]})
+    profile = adf.profile_folder(folder)
+    work = tmp_path / "work"
+    work.mkdir()
+    for table, sheet, ys, x in (
+        ("plate.xlsx", "Sheet1", ["对照", "低剂量"], "时间 (min)"),
+        ("plain.xlsx", "S", ["a"], "time"),
+    ):
+        (entry,) = [t for t in profile.tables if t.path == table and t.sheet == sheet]
+        recipe = R.FigureRecipe.from_dict(
+            {
+                "table": table,
+                "family": "trend",
+                "layers": [{"mark": "line"}],
+                "y": ys,
+                "why": "说明",
+                "x": x,
+                "sheet": sheet,
+            }
+        )
+        stem = table.split(".")[0]
+        rendered = tpl.render_recipe_script(entry, recipe, data_rel=table, stem=stem)
+        (work / table).write_bytes((folder / table).read_bytes())
+        (work / f"{stem}.py").write_text(rendered.script, encoding="utf-8")
+        (work / rendered.runtime_name).write_bytes(rendered.runtime)
+        want = "read_xlsx(DATA, SHEET, 3)" if stem == "plate" else "read_xlsx(DATA, SHEET)"
+        assert want in rendered.script
+        out = subprocess.run(
+            [sys.executable, f"{stem}.py"],
+            cwd=work,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env={"MPLBACKEND": "Agg", "PATH": "", "HOME": str(tmp_path)},
+        )
+        assert out.returncode == 0, out.stderr[-2000:]
+        assert (work / f"{stem}.pdf").exists()
+
+
+def test_propose_offers_candidates_for_the_plate_reader_workbook(project, tmp_path):
+    root = tmp_path / "proj"
+    (root / "data").mkdir(parents=True)
+    make_xlsx(root / "data" / "plate.xlsx", {"Sheet1": PLATE})
     resp = P.propose(root, project="p", folder="data", render="lazy", understand=False)
     assert resp["kind"] == "candidates" and resp["items"], resp

@@ -106,10 +106,17 @@ def read_delimited(path, delimiter, header_row=None, units_row=False):
     return header, rows
 
 
-def read_xlsx(path, sheet):
-    """XLSX 一张表 → `(表头, 数据行)`：读法就是内嵌的 `XlsxBook`（与 Tavotto 的 `xlsxread` 同一份源码）。"""
+def read_xlsx(path, sheet, header_row=None):
+    """XLSX 一张表 → `(表头, 数据行)`：读法就是内嵌的 `XlsxBook`（与 Tavotto 的 `xlsxread` 同一份源码）。`header_row`（工作表里的行号，1 起）不给 =
+    第一条非空行是表头，给了 = 跳过它之前的行（标题行）；Tavotto 只在真的跳过了行时才把它写进脚本。"""
     with XlsxBook(path) as book:  # noqa: F821 - 由内嵌的 xlsxread 源码提供
-        table = [r for r in book.read(sheet) if any(c.strip() for c in r)]
+        cells = book.read(sheet)
+        numbers = book.row_numbers  # 与 `cells` 逐项对应的工作表行号（全空行已丢掉）
+    table = [
+        r
+        for n, r in zip(numbers, cells)
+        if any(c.strip() for c in r) and (header_row is None or n >= header_row)
+    ]
     header, body = _trim_tail(
         fill_header([h.strip() for h in table[0]]), ((0, r) for r in table[1:])
     )
@@ -1907,7 +1914,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"PALETTE = {list(PALETTE)!r}",
     ]
     if is_xlsx:
-        reader = "read_xlsx(DATA, SHEET)"
+        reader = _xlsx_reader_expr(entry, "DATA", "SHEET")
     else:
         reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
@@ -2065,7 +2072,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"LINESTYLES = {list(LINESTYLES)!r}",
     ]
     if is_xlsx:
-        reader = "read_xlsx(DATA, SHEET)"
+        reader = _xlsx_reader_expr(entry, "DATA", "SHEET")
     elif large:
         reader = _large_reader_expr(entry)
     else:
@@ -2314,6 +2321,12 @@ def _merged_reader_expr(merge) -> str:
     )
 
 
+def _xlsx_reader_expr(entry, data: str, sheet: str) -> str:
+    """XLSX 读表那一句：摘要记了「跳过标题行、表头在第几行」才多写这一项，其余（常态）与此前逐字相同。"""
+    row = entry.summary.header_row
+    return f"read_xlsx({data}, {sheet})" if row is None else f"read_xlsx({data}, {sheet}, {row!r})"
+
+
 def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET") -> str:
     """脚本里读表那一句。文本表格的读法（编码 + 分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
     脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
@@ -2322,7 +2335,7 @@ def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET")
     if merge is not None:
         return _merged_reader_expr(merge)
     if is_xlsx:
-        return f"read_xlsx({data}, {sheet})"
+        return _xlsx_reader_expr(entry, data, sheet)
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])

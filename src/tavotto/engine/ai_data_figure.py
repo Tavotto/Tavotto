@@ -679,6 +679,48 @@ def _ragged_hint(sample: str) -> RaggedLayout | None:
     return best[1] if best else None
 
 
+def _header_end(block, numeric) -> int:
+    """块里第一条「有数值列的格子是数」的记录的下标 = 它之前有几条记录是表头候选（0 条：没有候选，表头在块外或没有表头）；没有数值列时按 1（只有第一条）。"""
+    if not numeric:
+        return 1
+    return next(
+        (i for i, (_n, r) in enumerate(block) if any(_numlike(r[j]) for j in numeric)),
+        0,
+    )
+
+
+def _pick_header(d: str, block, width: int, k: int) -> TextLayout:
+    """块里前 `k`（≥ 1）条记录是表头候选：挑哪一条是列名。**文本表（`_detect`）与 XLSX（`xlsx_header_guess`）共用这一个判据**。"""
+    cands = [r for r in block[:k] if not _is_hash(r[1])] or block[:k]  # 与表头同列数的 `#` 行是注释
+    # 默认取第一条像名字的（老读法）。例外：候选里有**单位行**（`nm  a.u.`）时，列名是紧挨在它前面的那一行——更前面同列数的说明行
+    # （`operator: lab`）也「像名字」，不能因它排在前面被选中。没有单位行时不往后挪：`group,value` 后面紧跟一条夹着文字标记的观测
+    # （`control,<0.1`）也「像名字」，那是数据不是表头。
+    u = next((i for i, r in enumerate(cands) if _is_units_row(r[1], width)), None)
+    if u is not None and u >= 1 and _name_like(cands[u - 1][1]):
+        pick = cands[u - 1]
+    else:
+        pick = next((r for r in cands if _name_like(r[1])), cands[0])
+    return TextLayout(d, pick[0], len(cands) == 1, _units_follow(block, pick, k, width))
+
+
+def xlsx_header_guess(table: list[list[str]], numbers: list[int]) -> int | None:
+    """XLSX 的表头行是哪一行（工作表行号）——**只在第一条非空行读不成表头时**才问（`_summarize_book`）：开头有标题行（`酶标仪导出 2026-11-20`）、
+    列名在后面几行。判据与文本表是同一个（`_block` / `_numeric_columns` / `_header_end` / `_pick_header`；XLSX 的每一行已经是切好的格子，所以没有分隔符那一层）。
+    给不出（没有成块的数据、没有候选、猜的就是第一行、表头后紧跟单位行——XLSX 不切单位行）= None，调用方照旧报原来的错。"""
+    recs = [(n, list(r)) for n, r in zip(numbers, table) if any(c.strip() for c in r)]
+    blk = _block(recs)
+    if blk is None:
+        return None
+    width, block, _plain = blk
+    k = _header_end(block, _numeric_columns(block, width))
+    if k < 1:
+        return None
+    layout = _pick_header("xlsx", block, width, k)
+    if layout.units or layout.header_line == recs[0][0]:
+        return None
+    return layout.header_line
+
+
 def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
     """从内容定读法；不是表（没有成列的数据）→ None；像表但有列数不符的行 → `RaggedLayout`。
 
@@ -728,25 +770,9 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
             first = next(r for r in recs if not _is_hash(r[1]) and len(r[1]) == width)
             return RaggedLayout(d, first[0])
         # 表头候选
-        k = 1
-        if numeric:
-            k = next(
-                (i for i, (_n, r) in enumerate(block) if any(_numlike(r[j]) for j in numeric)),
-                0,
-            )
+        k = _header_end(block, numeric)
         if k >= 1:
-            cands = [r for r in block[:k] if not _is_hash(r[1])] or block[
-                :k
-            ]  # 与表头同列数的 `#` 行是注释
-            # 默认取第一条像名字的（老读法）。例外：候选里有**单位行**（`nm  a.u.`）时，列名是紧挨在它前面的那一行——更前面同列数的说明行
-            # （`operator: lab`）也「像名字」，不能因它排在前面被选中。没有单位行时不往后挪：`group,value` 后面紧跟一条夹着文字标记的观测
-            # （`control,<0.1`）也「像名字」，那是数据不是表头。
-            u = next((i for i, r in enumerate(cands) if _is_units_row(r[1], width)), None)
-            if u is not None and u >= 1 and _name_like(cands[u - 1][1]):
-                pick = cands[u - 1]
-            else:
-                pick = next((r for r in cands if _name_like(r[1])), cands[0])
-            return TextLayout(d, pick[0], len(cands) == 1, _units_follow(block, pick, k, width))
+            return _pick_header(d, block, width, k)
         first_line = block[0][0]
         prev = next((r for r in reversed(recs) if r[0] < first_line), None)
         if prev is not None:
@@ -1480,8 +1506,8 @@ def inspect_data_source(
 
     `allow_large`：认大表（`read_text_table` 的流式读，摘要不带行数据，见 `DataSummary.large`）的调用方才传；不传时大表抛 `data_too_large`。
     `v2=True`（数据出图 v2 的读法，v1 不传）：文本格式走 `read_text_table`（嗅探分隔符、跳过说明行、找表头行，`.txt` / `.dat` / `.asc` 也认；
-    `header_row` 是调用方指定的表头物理行号；编码认 UTF-8 / UTF-8 BOM / 有 BOM 的 UTF-16 / GB18030，见 `decode_text`），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法不变，
-    只是同样认千分位的文字格。"""
+    `header_row` 是调用方指定的表头物理行号；编码认 UTF-8 / UTF-8 BOM / 有 BOM 的 UTF-16 / GB18030，见 `decode_text`），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法：`header_row`（工作表行号）给了就跳过它之前的行，没给时第一条非空行读不成表头才找标题行后面的列名行（`_summarize_book`）；
+    同样认千分位的文字格。"""
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix in LEGACY_EXCEL_SUFFIXES:
@@ -1489,7 +1515,12 @@ def inspect_data_source(
     if suffix in XLSX_SUFFIXES:
         try:
             with xlsxread.XlsxBook(p) as book:
-                return _summarize_book(book, sheet, parse=parse_cell if v2 else None)
+                return _summarize_book(
+                    book,
+                    sheet,
+                    parse=parse_cell if v2 else None,
+                    header_row=header_row if v2 else None,
+                )
         except xlsxread.XlsxError as exc:
             raise _from_xlsx_error(exc) from None
     if v2:
@@ -1511,20 +1542,57 @@ def inspect_data_source(
 
 
 def _summarize_book(
-    book: xlsxread.XlsxBook, sheet: str | int | None, *, keep_rows: bool = True, parse=None
+    book: xlsxread.XlsxBook,
+    sheet: str | int | None,
+    *,
+    keep_rows: bool = True,
+    parse=None,
+    header_row: int | None = None,
 ) -> DataSummary:
+    """XLSX 一张表的摘要。`header_row`（工作表里的行号，与文本表同一口径）给了 = 它之前的行是说明、不读。v2（`parse` 给了）且没指定行时：第一条非空行
+    读不成表头（`data_header_invalid`）就用 `xlsx_header_guess` 找标题行后面的列名行（与文本表猜表头行同一套判据）；读不成就仍报原来的错。
+    **真的跳过了行**才把行号记进摘要（`header_row` / `header_line`），其余（常态）两者都是 None，生成的脚本与此前逐字相同。v1（`parse` 没给）逐字不变。"""
     info = book.resolve(sheet)
     table = book.read(info.index)
-    return _summarize(
-        table,
-        row_numbers=list(getattr(book, "row_numbers", [])),
-        path_name=book.name,
-        sha256=book.raw_sha256,
-        size=book.size,
-        sheet=info.name,
-        keep_rows=keep_rows,
-        parse=parse,
-    )
+    numbers = list(getattr(book, "row_numbers", []))
+    v2 = parse is not None
+
+    def one(rows, nums, hrow):
+        return _summarize(
+            rows,
+            row_numbers=nums,
+            path_name=book.name,
+            sha256=book.raw_sha256,
+            size=book.size,
+            sheet=info.name,
+            keep_rows=keep_rows,
+            parse=parse,
+            header_row=hrow,
+            header_line=hrow,
+        )
+
+    def skip(first: int):
+        pairs = [(n, r) for n, r in zip(numbers, table) if n >= first]
+        return [r for _, r in pairs], [n for n, _ in pairs]
+
+    if v2 and header_row is not None and len(numbers) == len(table):
+        rows, nums = skip(header_row)
+        if not rows:
+            raise DataSourceError("data_header_row_invalid")
+        return one(rows, nums, nums[0] if len(rows) < len(table) else None)
+    try:
+        return one(table, numbers, None)
+    except DataSourceError as exc:
+        if not v2 or exc.code != "data_header_invalid" or len(numbers) != len(table):
+            raise
+        guess = xlsx_header_guess(table, numbers)
+        if guess is None:
+            raise
+        rows, nums = skip(guess)
+        try:
+            return one(rows, nums, nums[0])
+        except DataSourceError:
+            raise exc from None
 
 
 def _summarize(

@@ -659,3 +659,15 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 2. **一份实现、各条读表路径同一判据**：运行时函数 `nameless_tail`（数几列）与 `cut_tail`（逐行裁剪并核对）、`_trim_tail`（表头 + 行迭代器）、异常类 `NamelessTailData`（运行时类）。`iter_table`（小表 / 大表流式 / 显式表头行，也是脚本里 `table_from_text` / `read_delimited` / `reduce_file` 的读法）、`_scan_summary`（老读法的大表）、`_summarize`（老读法的小表与 XLSX，**只在 v2**，v1 逐字不变）与脚本的 `read_xlsx` 都调它。流式读看不到整列，所以在逐行核对里发现尾部列有数据时抛 `NamelessTailData`，父进程换成 `data_header_invalid`（小表在 `_read_small_text_table`、大表在 `_scan_summary`，同一个码、同样走「猜的表头 → `unsure`」那条分支）；脚本里它不会出现（读的是父进程已经读过、核过 sha256 的同一个文件）。
 3. **公共模块换名**：加了运行时函数，`tavotto_plot_<sha8>.py` 的名字换成新的；`PINNED_RUNTIME_NAME` 追加一行；老脚本继续 import 它们当时那一份。
 4. **没做**：XLSX 不用另处理（`xlsxread.read` 只补齐到最右一个非空格，不会读出整列为空的尾部列）；不丢中间的空名字列；不改猜表头行与 `unsure` 的判据；不改界面文案。
+
+## 修订（2026-11-27）：读脏表之二——XLSX 开头有标题行也能读（`ai_data_figure.xlsx_header_guess`）
+
+**起因**：酶标仪等导出的 XLSX，第 1 行只有 A1 有一句标题（`酶标仪导出 2026-11-20 OD600`）、第 2 行空、第 3 行才是列名，此前整张表报 `data_header_invalid`。文本表早有「猜表头行」（`_detect` → `header_rows` / `unsure`），XLSX 没走到：`inspect_data_source` 对 XLSX 直接 `_summarize_book`，把第一条非空行当表头，根本不进 `_detect`，也不认 `header_row`。
+
+**做法**：
+
+1. **同一套判据，不另写一套**：把 `_detect` 里「表头候选」那一段原样抽成 `_header_end`（第一条有数值的记录之前是候选）与 `_pick_header`（候选里挑第一条像名字的、单位行例外），文本表与 XLSX 共用。XLSX 的每一行已经是切好的格子，所以只喂「工作表行号 + 格子」给 `_block` / `_numeric_columns` / `_header_end` / `_pick_header`，没有分隔符那一层。文本表的结果逐字不变（既有用例全过）。
+2. **只在原读法读不成时才猜**：XLSX 没有「猜的 → 让用户点一行」的界面（`header_rows` 的点行只给文本表），所以不拿猜测改写现在读得对的表：v2 读 XLSX 时，第一条非空行读不成表头（`data_header_invalid`，与文本表「猜的表头读不出合格的表」同一个信号）才调 `xlsx_header_guess`；猜不出（没有成块的数据 / 没有候选 / 猜的还是第一行 / 候选里有单位行）或猜的行也读不成，仍报原来的错。读得对的表（常态）一个字节都不变。
+3. **行号的往返**：`inspect_data_source(…, header_row=N)` 现在对 XLSX 生效（工作表里的行号，与文本表同一口径）：跳过 N 之前的行；N 落在空行上读它之后的第一条非空行；超出末尾 `data_header_row_invalid`。**真的跳过了行**才把真正的表头行号记进摘要（`header_row` = `header_line`），常态两者仍是 None；出图 / 合画 / 提交那几处把 `header_line` 当 `header_row` 传回来重读，读出同一张表。
+4. **脚本同源**：运行时函数 `read_xlsx(path, sheet, header_row=None)` 多一个可选参数，按 `xlsxread` 的行号跳过标题行；模板只在摘要记了行号时才把它写进 `read_xlsx(DATA, SHEET, 3)`（`_xlsx_reader_expr`，含合画每一份），其余脚本逐字不变。公共模块换名，`PINNED_RUNTIME_NAME` 追加一行。
+5. **没做**：XLSX 不切单位行（候选里有单位行就不猜）；不给 XLSX 做「没有表头」（第 3 项的纯数字表只管文本表）；不改界面、不加点行的入口；v1 的 XLSX 读法逐字不变（标题行在前仍是 `data_header_invalid`）。
