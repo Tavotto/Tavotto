@@ -81,8 +81,8 @@ A 组（桌面改图助手，真模型）首轮因缺密钥**未跑**。维护�
 
 | 合计 | 首轮 B（4 题） | 首轮 B2（转发） | `after-content-fix/`（只修内容文字） | `after-both-fixes/`（两处都修） |
 |---|---|---|---|---|
-| 全部 | 0/4 | 17/21 | 19/21 | 20/21 |
-| 失败 | 3 超时 | distribute-h、add-box、ctrl-vague、（add-box-and-title 旧判据） | distribute-h（核对逼改字体）、ctrl-vague | ctrl-vague |
+| 全部 | 0/4 | 18/21 | 19/21 | 20/21 |
+| 失败 | 3 超时 | distribute-h、add-box、ctrl-vague | distribute-h（核对逼改字体）、ctrl-vague | ctrl-vague |
 
 `after-content-fix/` 跑到一半时代码又改了一处（失败结果不再镜像、审阅意见工具跳过），以 `after-both-fixes/`（最终代码）为准。
 `ctrl-vague` 是模型问题：含糊指令不问用户直接动手。
