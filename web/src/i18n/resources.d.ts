@@ -1604,6 +1604,7 @@ export default interface Resources {
       "confirm": {
         "aria": "需要你确认的要求",
         "condition": "原文条件：{{text}}",
+        "editorTip": "反馈期刊规范问题",
         "title": "需要你确认（{{count}}）"
       },
       "current": "按「{{name}}」检查",
@@ -1711,6 +1712,11 @@ export default interface Resources {
       "attach": "添加截图 / PDF",
       "cancel": "取消",
       "descLabel": "问题描述（选填）",
+      "editorAbout": "{{journal}}",
+      "editorEmail": "核实后回信到这里",
+      "editorQuoteLabel": "问题描述或编辑部原话",
+      "editorQuotePlaceholder": "哪条规范不对、缺了什么，或粘贴编辑部邮件原话；仅用于核对官网，不会公开",
+      "editorTag": "反馈期刊规范问题",
       "emailMissing": "收录后回信到这里",
       "emailWrong": "核实后回信到这里",
       "entryTitle": "反馈条目",
