@@ -403,6 +403,9 @@ class NativeSession:
         #: 桌面拥有的会话的**不可变启动身份**（`execspec.ExecutionSpec`，owner=desktop）。含 argv / env 原文，
         #: 所以是私有的：不进 `public_state()` / `diagnostics()`，回执只取它的公开投影。终端拥有的为 None。
         self.spec = None
+        # A console supplies settings for a separate protected replay. They
+        # neither describe the console launch nor transfer process ownership.
+        self.ggplot_console_replay: execspec.ExecutionSpec | None = None
         #: 桌面拥有的会话：这次运行的运行配置引用 / 回执关联键（公开，不含参数值）
         self.run_config = str(meta.get("run_config") or "")
         self.launch_id = str(meta.get("launch_id") or "")
@@ -943,6 +946,12 @@ class NativeSession:
                     },
                 )
         self._release_lease()
+
+    @property
+    def ggplot_source_spec(self) -> execspec.ExecutionSpec | None:
+        if self.ggplot_target is not None:
+            return self.spec or self.ggplot_console_replay
+        return None
 
     def cancel_owned(self) -> dict:
         """结束**桌面拥有的**脚本进程（含它的进程组 / Job）。终端拥有的会话拒绝（`NATIVE_PROCESS_NOT_OWNED`）。

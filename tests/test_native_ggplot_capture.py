@@ -6421,3 +6421,193 @@ grDevices::dev.off()
             timeout=120,
         )
         assert status == 200 and restored["ok"] and script.read_bytes() == authored
+
+
+@pytest.mark.parametrize("modified", [False, True], ids=["reproduces", "hidden-difference"])
+def test_borrowed_r_source_writes_only_a_reproduced_console_scene(tmp_path, modified):
+    from support.foundation_app import HttpError
+    from test_core_v02_release_candidate import _panel, _render
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "R project"
+    project.mkdir()
+    data_root = project / "Data and analysis"
+    data_root.mkdir()
+    (data_root / "observations.csv").write_text("x,y\n1,2\n2,4\n3,3\n", encoding="utf-8")
+    source = data_root / "source.R"
+    original = b"""\
+data <- utils::read.csv("observations.csv")
+plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::geom_point() + ggplot2::labs(title = "Field observations") +
+  ggplot2::theme(plot.title = ggplot2::element_text(colour = "#102030"))
+svglite::svglite("standalone.svg", 320/72, 240/72)
+print(plot)
+grDevices::dev.off()
+"""
+    source.write_bytes(original)
+    console_program = tmp_path / "start-console.R"
+    console_program.write_text(
+        """
+sys.source("source.R", envir = .GlobalEnv)
+if (commandArgs(trailingOnly = TRUE)[[1L]] == "different") {
+  plot <- plot + ggplot2::theme(plot.title = ggplot2::element_text(colour = "#8090A0"))
+}
+grDevices::pdf("console-device.pdf")
+device <- grDevices::dev.cur()
+before <- list(cwd = getwd(), libraries = .libPaths(), colour = plot$theme$plot.title$colour)
+cat(Sys.getpid(), file = "console-ready")
+input <- file("stdin", open = "r")
+eval(parse(text = readLines(input, n = 1L)), envir = .GlobalEnv)
+stopifnot(identical(device, grDevices::dev.cur()),
+          identical(getwd(), before$cwd), identical(.libPaths(), before$libraries),
+          identical(plot$theme$plot.title$colour, before$colour))
+cat(Sys.getpid(), file = "console-resumed")
+stopifnot(identical(readLines(input, n = 1L), "close test"))
+grDevices::dev.off(device)
+close(input)
+""",
+        encoding="utf-8",
+    )
+    ready = data_root / "console-ready"
+    resumed = data_root / "console-resumed"
+    relative = source.relative_to(project).as_posix()
+    layout_route = "/api/layouts/Console_source"
+
+    with (
+        sidecar_app(project, tmp_path / "desktop") as app,
+        subprocess.Popen(
+            [rscript, "--vanilla", str(console_program), "different" if modified else "original"],
+            cwd=data_root,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        ) as console,
+    ):
+        try:
+            deadline = time.monotonic() + _COLD_RENDER_TIMEOUT_SECONDS
+            while not ready.is_file() or not ready.stat().st_size:
+                assert console.poll() is None and time.monotonic() < deadline
+                time.sleep(0.05)
+            pid = int(ready.read_text())
+            status, offer = app.call(
+                "/api/native/ggplot2/invitation",
+                {"script": relative, "object": "plot", "frame_pt": [320, 240]},
+            )
+            assert status == 201, offer
+            console.stdin.write(offer["command"] + "\n")
+            console.stdin.flush()
+            while True:
+                _, result = app.call("/api/native/sessions")
+                sessions = result["sessions"]
+                if sessions and sessions[0]["state"] in {"barrier", "ended", "failed"}:
+                    break
+                assert console.poll() is None and time.monotonic() < deadline, sessions
+                time.sleep(0.05)
+            (session,) = sessions
+            assert session["state"] == "barrier" and session["owner"] == "terminal", session
+            assert session["process_pid"] == pid
+            control = f"/api/native/sessions/{session['session_id']}"
+            _, result = app.call(control + "/build", {}, timeout=_COLD_RENDER_TIMEOUT_SECONDS)
+            (descriptor,) = result["descriptors"]
+            asset = descriptor["asset_id"]
+            initial = _render(app, asset, [])
+            target = next(e for e in initial["manifest"]["elements"] if e["gid"] == "plot.title")
+            patches = [
+                {
+                    "gid": target["gid"],
+                    "identity": target["identity"],
+                    "prop": "color",
+                    "value": "#C46210",
+                }
+            ]
+            hot = _render(app, asset, patches)
+            assert hot["warnings"] == [] and "#C46210" in hot["svg"]
+            width, height = initial["manifest"]["size_mm"]
+            panel = {
+                **_panel("r", asset, 5, patches, native_width=width),
+                "h": height,
+                "nativeH": height,
+            }
+            doc = {
+                "schema": 3,
+                "project": {"id": "console-source", "name": "Console source"},
+                "activeCanvasId": "main",
+                "canvases": [
+                    {
+                        "id": "main",
+                        "name": "Main",
+                        "schema": 2,
+                        "page": {"w": width + 10, "h": height + 10},
+                        "objects": [panel],
+                        "guides": [],
+                    }
+                ],
+            }
+            assert app.call(layout_route + "?target=project", doc)[1]["ok"]
+            saved = layoutannotate.open_layout(project, "Console_source")
+
+            def preview_source():
+                return app.call(
+                    "/api/script-edit/figure-style/preview",
+                    {
+                        "layout": saved.name,
+                        "revision": saved.revision,
+                        "canvas_id": "main",
+                        "panel_id": "r",
+                    },
+                    timeout=120,
+                )
+
+            if modified:
+                with pytest.raises(HttpError) as rejected:
+                    preview_source()
+                assert rejected.value.status == 409
+                assert rejected.value.body["code"] == "script_export_diverged"
+                assert "token" not in rejected.value.body and not resumed.exists()
+                assert source.read_bytes() == original
+                assert (
+                    layoutannotate.open_layout(project, "Console_source").revision == saved.revision
+                )
+                assert _render(app, asset, [])["svg"] == initial["svg"]
+                app.call(control + "/continue", {})
+            else:
+                status, preview = preview_source()
+                assert source.read_bytes() == original
+                assert status == 200 and preview["written"] == 1, preview
+                status, committed = app.call(
+                    "/api/script-edit/figure-style/commit",
+                    {"token": preview["token"], "confirmed": True},
+                    timeout=120,
+                )
+                assert status == 200 and committed["ok"], committed
+                assert source.read_bytes() != original
+                saved_panel = app.call(layout_route)[1]["canvases"][0]["objects"][0]
+                assert saved_panel["overrides"] == [] and saved_panel["figureSnapshot"]
+            deadline = time.monotonic() + 45
+            while not resumed.is_file() or not resumed.stat().st_size:
+                assert console.poll() is None and time.monotonic() < deadline
+                time.sleep(0.05)
+            assert int(resumed.read_text()) == pid and console.poll() is None
+            stdout, stderr = console.communicate("close test\n", timeout=30)
+            assert console.returncode == 0, stdout + stderr
+        finally:
+            if console.poll() is None:
+                console.terminate()
+                console.wait(timeout=15)
+
+    if not modified:
+        subprocess.run([rscript, "--vanilla", source.name], check=True, cwd=data_root, timeout=45)
+        standalone = (data_root / "standalone.svg").read_text(encoding="utf-8")
+        assert "#C46210" in standalone and "#102030" not in standalone
+        source.rename(data_root / "source.R.moved")
+        with sidecar_app(project, tmp_path / "cold") as app:
+            old = app.call(layout_route)[1]["canvases"][0]["objects"][0]
+            assert old == saved_panel
+            code, archived = app.call(
+                "/api/figure-preview",
+                {"id": asset, "patches": [], "figure_snapshot": old["figureSnapshot"]},
+                timeout=120,
+            )
+            assert code == 200 and "#C46210" in archived["svg"], archived

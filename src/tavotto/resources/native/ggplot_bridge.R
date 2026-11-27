@@ -40,10 +40,15 @@ ggplot_serve <- function(spec, token, plot_for) {
   }
   if (spec$console) {
     rscript <- file.path(R.home("bin"), if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript")
-    send_raw(jsonlite::toJSON(
-      list(bridge_hello = 1L, protocol_version = 1L, token = token, pid = Sys.getpid(),
-           interpreter = normalizePath(rscript, winslash = "/", mustWork = TRUE)),
-      auto_unbox = TRUE))
+    hello <- list(bridge_hello = 1L, protocol_version = 1L, token = token, pid = Sys.getpid(),
+                  interpreter = normalizePath(rscript, winslash = "/", mustWork = TRUE))
+    replay <- c(hello, list(cwd = getwd(), libraries = as.list(.libPaths())))
+    message <- jsonlite::toJSON(replay, auto_unbox = TRUE)
+    if (nchar(message, type = "bytes") >= (spec$hello_limit %||% 0L)) {
+      message <- jsonlite::toJSON(hello, auto_unbox = TRUE)
+    }
+    send_raw(message)
+    rm(hello, replay, message)
   } else {
     send_raw(sprintf('{"bridge_hello":1,"protocol_version":1,"token":"%s","pid":%d}', token, Sys.getpid()))
   }

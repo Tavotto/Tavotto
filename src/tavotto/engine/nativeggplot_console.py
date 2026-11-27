@@ -10,7 +10,16 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-from . import config, envlease, execspec, nativeggplot, nativerelay, nativesession, runcodes
+from . import (
+    config,
+    envlease,
+    execspec,
+    nativeggplot,
+    nativerelay,
+    nativesession,
+    projectenv,
+    runcodes,
+)
 
 _INVITATION_SECONDS = 180
 _LOG = logging.getLogger(__name__)
@@ -56,6 +65,7 @@ def invite(
             "token": relay.child_token,
             "spec": {
                 "console": True,
+                "hello_limit": nativerelay._HELLO_MAX,  # noqa: SLF001
                 "host": relay.host,
                 "port": relay.child_port,
                 "adapter": (bridge.parent / "ggplot2.R").as_posix(),
@@ -85,6 +95,35 @@ def invite(
             offer.unlink(missing_ok=True)
         registry.end_start(ticket)
         raise
+
+
+def _replay_spec(project_root: str, script: str, interpreter: str, hello: dict):
+    working_dir, libraries = hello.get("cwd"), hello.get("libraries")
+    if (
+        not isinstance(working_dir, str)
+        or not Path(working_dir).is_absolute()
+        or not isinstance(libraries, list)
+        or not libraries
+        or not all(isinstance(path, str) and os.pathsep not in path for path in libraries)
+    ):
+        return None
+    try:
+        cwd = projectenv.contained_path(project_root, working_dir)
+        source = projectenv.contained_path(project_root, script)
+        if cwd is None or source is None or not Path(cwd).is_dir():
+            return None
+        directories = [Path(path) for path in libraries]
+        if not all(path.is_absolute() and path.is_dir() for path in directories):
+            return None
+        return execspec.desktop_native_spec(
+            source,
+            interpreter=interpreter,
+            cwd=cwd,
+            project_root=project_root,
+            env={"R_LIBS": "", "R_LIBS_SITE": "", "R_LIBS_USER": os.pathsep.join(libraries)},
+        )
+    except (OSError, ValueError):
+        return None
 
 
 def _accept(registry, ticket, relay, offer, project_root, script, target) -> None:
@@ -124,6 +163,7 @@ def _accept(registry, ticket, relay, offer, project_root, script, target) -> Non
             },
             ggplot_target=target,
         )
+        session.ggplot_console_replay = _replay_spec(project_root, script, interpreter, hello)
         transport = nativesession.NativeTransport(
             sock,
             on_event=session._on_frame,  # noqa: SLF001

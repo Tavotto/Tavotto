@@ -5732,8 +5732,7 @@ def _edited_r_script_offer(original) -> dict | None:
     available = (
         original.figure_origin is None
         and worker is not None
-        and worker.spec is not None
-        and worker.ggplot_target is not None
+        and worker.ggplot_source_spec is not None
         and engine_nativeggplot_source.available()
     )
     return {
@@ -5754,7 +5753,7 @@ def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
     if worker.ggplot_target is None:
         return engine_exportjob.Produced(format=key, error_code="script_export_native")
     if (
-        worker.spec is None
+        worker.ggplot_source_spec is None
         or job.script_suffix != engine_exportjob.R_SCRIPT_SUFFIX
         or not job.script_name
         or job.request.original.figure_origin is not None
@@ -5762,7 +5761,7 @@ def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
         return engine_exportjob.Produced(
             format=key, error_code="script_export_r_source_unavailable"
         )
-    spec = worker.spec
+    spec = worker.ggplot_source_spec
     script_path = Path(spec.project_root) / spec.target
     try:
         destination = job.export_dir / job.script_name
@@ -5787,15 +5786,39 @@ def _verified_r_source(worker, stem, patches, *, check_cancelled=None, archive=N
     if check_cancelled is not None:
         check_cancelled()
     worker.ensure_built()
+    epoch = worker.snapshot_epoch
+    borrowed = worker.ggplot_console_replay is not None
     scope = {
         "expected_execution_id": worker.execution_id,
-        "expected_snapshot_epoch": worker.snapshot_epoch,
+        # The borrowed object has an authenticated one-shot capture and a
+        # barrier, without an execution fact claiming to have run the file.
+        "expected_snapshot_epoch": None if borrowed else epoch,
     }
+    baseline = None
+    if borrowed:
+        # A selected file is a candidate source for a borrowed object. Verify
+        # the unedited scene too, even if the requested style hides a mismatch.
+        baseline = _verify_r_source_render(worker, stem, [], scope, check_cancelled)
+    replay = _verify_r_source_render(worker, stem, patches, scope, check_cancelled, archive)
+    if worker.snapshot_epoch != epoch:
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_diverged", "The captured R figure changed during verification."
+        )
+    if baseline is not None and baseline.original_bytes != replay.original_bytes:
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_script_changed", "The R source changed during verification."
+        )
+    return replay
+
+
+def _verify_r_source_render(worker, stem, patches, scope, check_cancelled, archive=None):
+    if check_cancelled is not None:
+        check_cancelled()
     if os.name == "nt":
         return _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, archive)
     hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
     replay = engine_nativeggplot_source.replay(
-        worker.spec,
+        worker.ggplot_source_spec,
         worker.ggplot_target,
         stem,
         patches,
@@ -5823,7 +5846,7 @@ def _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, ar
 
     reference = worker.preview_svg_snapshot(stem, patches, include_fonts=True, **scope)
     replay = engine_nativeggplot_source.replay(
-        worker.spec,
+        worker.ggplot_source_spec,
         worker.ggplot_target,
         stem,
         patches,
@@ -17860,10 +17883,9 @@ def _r_style_target(ctx, selection):
     if not engine_runtimeasset.is_runtime_id(source):
         raise engine_scriptstyle.Conflict("Run the project's R script and save this figure first.")
     worker, stem = _engine_worker(source, existing_only=True)
-    spec = getattr(worker, "spec", None)
+    spec = getattr(worker, "ggplot_source_spec", None)
     if (
         not engine_enginesession.is_native(worker)
-        or worker.ggplot_target is None
         or spec is None
         or not engine_nativeggplot_source.available()
     ):
@@ -17890,7 +17912,7 @@ def _r_style_archive(ctx, worker, source, replay):
     """Publish the vector representations proven by the protected replay."""
     from .engine import svgstore
 
-    spec = worker.spec
+    spec = worker.ggplot_source_spec
     receipt = engine_receipt.ExecutionReceipt(
         profile=engine_execspec.PROFILE_NATIVE,
         control_plane=engine_receipt.CONTROL_PLANE_NATIVE,
@@ -17919,7 +17941,11 @@ def _r_style_archive(ctx, worker, source, replay):
             svg=replay.svg,
             artifact=artifact.to_payload(),
             receipt=receipt.to_payload(),
-            execution_owner=engine_svgexecution.owner(spec.target, worker.run_config or None),
+            execution_owner=(
+                engine_svgexecution.owner(spec.target, worker.run_config or None)
+                if worker.owned is not None
+                else None
+            ),
             remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
             storage_root=_svg_storage_root(ctx.path),
             archive_only=True,
@@ -17977,12 +18003,14 @@ def api_script_style_preview():
         selection={key: body[key] for key in ("layout", "revision", "canvas_id", "panel_id")},
         working_doc_id=body.get("working_doc_id"),
         source=panel["fileId"],
-        script=worker.spec.target,
+        script=worker.ggplot_source_spec.target,
         before=before,
         after=after,
+        session=worker.session_id,
+        epoch=worker.snapshot_epoch,
         execution=worker.execution_id,
     )
-    slug = engine_scriptbackup.slug_of(worker.spec.target)
+    slug = engine_scriptbackup.slug_of(worker.ggplot_source_spec.target)
     store = _script_store(ctx)
     diff = difflib.unified_diff(
         replay.original_bytes.decode("utf-8").splitlines(),
@@ -18023,7 +18051,9 @@ def api_script_style_commit():
         layout, panel, worker, stem, _, patches, archive = _r_style_target(ctx, selection)
         if (
             panel["fileId"] != item["source"]
-            or worker.spec.target != item["script"]
+            or worker.ggplot_source_spec.target != item["script"]
+            or worker.session_id != item["session"]
+            or worker.snapshot_epoch != item["epoch"]
             or worker.execution_id != item["execution"]
         ):
             raise engine_scriptstyle.Conflict("The captured R figure changed after preview.")
@@ -18045,7 +18075,11 @@ def api_script_style_commit():
         def require_current(path, script):
             _require_script_idle(path, script)
             current = engine_nativesession.REGISTRY.route_for(str(ctx.path), script, stem)
-            if current is not worker or current.execution_id != item["execution"]:
+            if (
+                current is not worker
+                or current.snapshot_epoch != item["epoch"]
+                or current.execution_id != item["execution"]
+            ):
                 raise engine_scriptstyle.Conflict("The live R session changed after verification.")
 
         result = engine_scriptstyle.commit(
@@ -18079,7 +18113,10 @@ def api_script_style_commit():
     ) as exc:
         return _style_change_error(exc)
     _admit_r_writeback_archive(ctx, panel["figureSnapshot"], observed_execution)
-    worker.cancel_owned()
+    if worker.owned is None:
+        worker.shutdown()
+    else:
+        worker.cancel_owned()
     _after_script_edit(ctx, item["script"])
     return jsonify(
         {
