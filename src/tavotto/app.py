@@ -14405,7 +14405,7 @@ _VECTOR_EDIT_FIGURE = "__vector_edit__"
 def api_vector_edit_plan():
     """出矢量编辑方案（**不写盘**）。两种请求：
 
-    * `{canvas, ops}`：照补丁直接算（`vectoredit.apply_ops` + 只核被动到的对象）→ 200
+    * `{canvas, ops, instruction_text?, confirmed?}`：照补丁直接算（`vectoredit.apply_ops` + 只核被动到的对象）→ 200
       `{ok, errors, objects, deleted, order, echo, changes, checks, echo_digest, …}`；补丁不合格 `ok: false` + `errors: [{code, index?, field?}]`
       （码见 `vectoredit.ERROR_CODES`，整批没动）。内核不可用 = `kernel_unavailable`，其余操作照常。
     * `{canvas, instruction, selection?, connection?, model?, effort?, client_request_id?}`：先问模型出补丁再算 → 202 `{plan_id, state: "running"}`，
@@ -14419,7 +14419,13 @@ def api_vector_edit_plan():
             raise engine_vectorplan.PlanInputError("mode")
         if "ops" in body:
             ops = engine_vectorplan.check_ops(body.get("ops"))
-            out = engine_vectorplan.plan(canvas, ops)
+            out = engine_vectorplan.plan(
+                canvas,
+                ops,
+                context=engine_vectorplan.plan_context(
+                    body.get("instruction_text"), body.get("confirmed")
+                ),
+            )
             resp = jsonify(out)
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -14468,7 +14474,9 @@ def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection, loc
         task.phase = "plan"
         ops, unhandled = proposal["ops"], proposal["unhandled"]
         if ops:
-            result = engine_vectorplan.plan(canvas, ops)
+            result = engine_vectorplan.plan(
+                canvas, ops, context=engine_vectorplan.plan_context(instruction, None)
+            )
         else:
             result = {
                 "ok": True,

@@ -270,8 +270,8 @@ SVG 导入后在 Tavotto 里是原生的 `path` / `text`（不是图片），**�
 
 **决定**（维护者 2026-11-24 选 A）：精修走 SVG；在此之上给装了 Illustrator 的用户一个省事的入口——
 
-- **A（选定）**：导出对话框 / 机理图的右键菜单里「在 Illustrator 中打开」：导出 SVG 后直接用本机 Illustrator 打开，用户在 Illustrator 里按需存成 `.ai`。
-  只调系统的「用某个应用打开文件」，不驱动 Illustrator 的脚本；没装 Illustrator 时不出现这一项。
+- **A（原选定，2026-11-28 改为不做）**：~~导出对话框 / 机理图的右键菜单里「在 Illustrator 中打开」~~。维护者 2026-11-28：精修只靠 SVG 导出（§七之三），
+  不做这个入口；导出对话框那个位置另有用途。第 5 期里这一项取消，其余（marker / tspan、SVG 保留组与名字、真实字体族）不受影响。
 - B（未选）：「导出为 .ai（需要本机装有 Illustrator）」：在后台用 Illustrator 的脚本接口把 SVG 另存为 `.ai`。要驱动第三方应用、要处理 Illustrator 的版本 / 授权 / 弹窗，
   失败面大，不推荐首期做。
 
@@ -294,8 +294,8 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
 - 引擎一个模块（拟 `engine/vectorplace.py`）：场景构建、求解、核对、对象校验；数据锚点查询在 worker 协议上加一条只读命令。
 - **插件**：两个工具——`tavotto_layout_scene`（读）与 `tavotto_place_vectors`（缺省 `dry_run: true` 只出方案与预览，确认后用方案号落地）。
   插件今天没有「排版」概念：两个工具多一个 `layout` 参数（项目里的排版名）。工具描述写明「位置用锚点说，不写毫米」。
-- **改图助手**：不是 MCP，是闭集工具的子进程（0147）。新开一套任务工具集 `layout_annotate`（`scene` / `place` / `check`），经与 `check` 同样的回调 IPC 调宿主里的引擎；
-  它没有写文件工具，方案只交回宿主进 0206 的卡。
+- **改图助手**：~~新开一套任务工具集 `layout_annotate`，经回调 IPC 调宿主引擎~~——**已被 0212 第 6 期修订取代，第 ③ 期沿用那条路**（2026-11-28，见文末修订）：
+  不加工具；前端发内存快照 → 一次无工具结构化调用出补丁（补丁词汇新增 `add`）→ `/api/vector-edit/plan` 求解 + 核对、只算不写 → 0206 的方案卡。
 
 ### 九、验收
 
@@ -460,3 +460,56 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
 3. **`filter` 与 `pattern` 分开测的结论**：整段拒绝的是 **`filter`**——`<filter>` 元素本身是受限解析器的非静态元素，出现就拒（原因码 `unsupported_element`），
    用不用都一样；**`pattern` 元素单独出现不拒**，只有被 `fill` / `stroke` 引用时才记 `pattern`（也是整段当图片）。两者都不放宽：滤镜是非静态元素，属于 0189 的安全边界；
    图案填充要另做平铺，不在这一期。
+
+## 修订（2026-11-28，第 ③ 期：改图助手新加标注）
+
+**状态：生效（维护者 2026-11-28「全都按推荐」）。** 取代 §八 里改图助手那一条，并调整 §七之四 的 A；分期里第 3 期按下面拆成 3a–3d。
+
+### 路线：沿用 0212 第 6 期，不加工具集
+
+§八 原写「改图助手新开一套 `layout_annotate` 工具集」。0212 第 6 期修订（2026-11-27）已改成「前端内存快照 → 一次无工具结构化调用出补丁 → 后端算方案、不写盘 → 方案卡」，
+0206「内置执行器工具不新增」不变。第 ③ 期照这条路走：
+
+- **新增放在补丁词汇里**：操作 `add {items: [条目…]}`，条目就是 §三 的场景描述闭集（`vectorscene.ITEMS_DOC` 是它的一份说明，`vectoredit.OPS_DOC` 引用它，
+  插件 `tavotto_layout_edit_plan` 的 `ops` 说明因此同步带上 `add`）。一个 `add` 是一步，彼此用 `item` 锚点引用的条目必须在同一个 `add` 里。
+  新对象的 id 按（条目名、类型）确定地铸（`_mint`，下标固定为 0）：取消勾选别的步骤后用剩下的 ops 重算，新对象 id 不变；`changes` 记 `{id, added: true, op}`，
+  0212 的逐条勾选（6c）、前端 `diffOf` / `planAgentMerge` / 改动清单的「新增」行都直接生效。
+- **求解与核对不造第二套**：`add` 调的就是 §三 的 `vectorscene.solve`、`agentobjects.validate_new_objects`、`layoutannotate.describe` / `_persisted_anchor`（新对象照样带 `anchor`），
+  核对走 0212 §四（只核新增与被动到的对象）。插件那边的 `tavotto_layout_annotate_*`（带场景指纹、`echo_digest`、宿主确认统计标注）保持原样，是无头路径；
+  `add` 是助手与「按补丁改」共用的路径，两者的求解是同一份代码。
+- 子图量不了怎么办见下面「量几何」。
+
+### 维护者拍板（2026-11-28，对设计草案「全都按推荐」）
+
+1. **量几何：先外框、后实测。** 3a 只用子图外框（快照里子图对象的位置）求解：`panel` 方位点、`box` 框住子图、`bracket` 取子图两个角、`text` 放在子图角 / 边上；
+   `data` / `element` 锚点（箭头指向峰）要这张图量过，3a 一律回 `needs_measurement`（进 `unhandled` 并写一句人话）。3b 再做桌面引擎现量（子图 `fileId` + `overrides` 经桌面引擎
+   `export(data_points)`，进程内缓存，出提示前量一次、出补丁后只对有数据锚点的子图再量一次，场景指纹不一致 = `scene_stale`）。
+2. **量不了退外框。** 冻结快照、没有脚本的图、runtime 素材、量失败或超时（拟每张图 20 秒、总共 60 秒）都静默退到「只有外框」，卡上一行灰字说明，不弹窗、不让用户选。
+3. **`add` 作为补丁操作**，不另开新增字段：一张卡、一套逐条勾选与撤销。
+4. **选了子图时**：先出图内修改卡；图内卡把「要在画布上加标注」的意见放进 `unhandled` 并给一颗「改在画布上加」按钮，用户点了才出矢量卡（与 #2261 审阅卡「要改脚本」同一个做法）。（3c）
+5. **统计标注（星号 / n.s. / p 值 / n）**：模型写 `provenance: "user"` 时，后端要在**用户原话**里核到这段文字才收（空白与大小写不敏感），或被请求里的 `confirmed`
+   点名（用户在卡上点了「按我说的加」后前端重发；模型输出里的 `confirmed` 一概不看）；核不到整步进 `needs_confirmation`（该步进 `unhandled`，其余步照常出方案）。
+   **本期不收 `provenance: "data"`**（助手没有数据上下文），回 `provenance_data`，同样进「需要你确认」。
+6. **收费 / 豁免**：沿用 §十二 第 2 条（给组图加矢量元素免费）与 §1.0 豁免，不另开。
+
+另：隐私只在 `docs/privacy.md` 补一句（快照里多了子图的位置、大小与项目内文件名，用来把标注锚在子图外框上；图的内容、轴标签与数据不发）。
+
+### §七之四 的 A：不做「在 Illustrator 中打开」
+
+维护者 2026-11-28：精修只靠 SVG 导出，不做这个入口，导出对话框那个位置另有用途。§七之四 的「决定」一节已据此改写；第 5 期的其余内容不变。
+
+### 3a 实现里与上文写法不同 / 新增的地方
+
+- 错误码：`vectoredit.ERROR_CODES` 并入求解器的码（`bad_item` / `duplicate_name` / `unknown_ref` / `anchor_unresolvable` / `panel_transformed` / `bad_point`）与三条本期的：
+  `needs_measurement`、`needs_confirmation`、`provenance_data`；`ERROR_WORDS` 同步（插件与助手共用一份用语）。`field` 放条目名。
+- `apply_ops` 多一个仅关键字参数 `context`（`{"instruction": 用户原话 | None, "confirmed": [条目名]}`）。**没给 = 插件路径**，统计标注仍照 §四 的旧口径（只核写没写来源、列进 `statistical` 交宿主确认）；
+  桌面端点给了：`POST /api/vector-edit/plan` 指令模式用请求里的指令，补丁模式读可选的 `instruction_text`（重算时带回用户原话）与 `confirmed`。
+- 提示的快照多一项 `panels`（子图短号 → 画布毫米外框 `box_mm`，`measured: false`），系统提示去掉「不能新增对象」。
+- `needs_measurement` 只在子图**没量过**（没有 `draw_manifest`）时回：插件的 `tavotto_layout_edit_plan` 里子图是量过的，`add` 的数据 / 元素锚点照常可用（`_needs_panels` 把 `add` 条目的数据点请求交给量子图的那一步）。
+
+### 分期
+
+- **3a（本 PR，中档）**：本修订 + `add` 操作（只用子图外框）+ 统计标注来源核对 + 提示 / 快照 + `docs/privacy.md` 一句；纯后端，内存快照测试。
+- **3b（高档）**：桌面引擎现量（`Measure`、缓存、两次量 + 指纹、超时退外框、`phase`「正在量图」）；碰引擎池与 worker 会话，要在 Windows Lab 看一遍。
+- **3c（先出截图）**：前端——快照带量的输入键、入口放开与「改在画布上加」转交、改动清单里新增项的写法、`unhandled` 里「需要你确认」（次级按钮「按我说的加」）与「没量到」两行灰字、基线核对加子图项。
+- **3d**：评测——`scripts/eval/vector_edit/` 的加对象题在 A 组从「期望进 unhandled」改成按判据判，补 `add` 的标准答案，3a / 3b 各跑一次。

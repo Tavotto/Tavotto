@@ -4609,7 +4609,7 @@ export interface VectorEditResult {
   order?: string[]
   reordered?: boolean
   echo?: string[]
-  changes?: { id: string; field?: string; before?: unknown; after?: unknown; deleted?: boolean; added?: boolean; replaced?: boolean; op?: number }[]
+  changes?: { id: string; field?: string; before?: unknown; after?: unknown; deleted?: boolean; added?: boolean; replaced?: boolean; op?: number; depends_on?: string[] }[]
   checks?: { check: string; status: string; item?: string }[]
   layout_groups?: LayoutGroup[] | null
   ops?: unknown[]
@@ -4643,11 +4643,20 @@ export async function createVectorEditPlan(body: VectorEditBody & Record<string,
 }
 
 /** 补丁模式（同一份内存快照 + 一份 ops，**同步**回方案）：方案卡里取消勾选某几步后，用剩下的 ops 重算（ADR 0212 第 6c 期） */
-export async function planVectorEditOps(canvas: VectorEditBody['canvas'], ops: unknown[], signal?: AbortSignal): Promise<VectorEditResult> {
+/**
+ * `context` = 出发时那份：用户原话（`instruction_text`）与用户在卡上点过「按我说的加」的条目名（`confirmed`）。统计标注（星号 / n.s. / p 值）的来源核对要它们，
+ * 重算不带的话原本按原话收下的标注会变成 `needs_confirmation` 被自动取消。
+ */
+export async function planVectorEditOps(
+  canvas: VectorEditBody['canvas'],
+  ops: unknown[],
+  context?: { instruction_text?: string; confirmed?: string[] },
+  signal?: AbortSignal,
+): Promise<VectorEditResult> {
   const out = await changePlanFetch('/api/vector-edit/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ canvas, ops }),
+    body: JSON.stringify({ canvas, ops, ...(context?.instruction_text ? { instruction_text: context.instruction_text } : {}), ...(context?.confirmed?.length ? { confirmed: context.confirmed } : {}) }),
     signal,
   })
   if (typeof out.ok !== 'boolean' || !Array.isArray(out.errors)) {

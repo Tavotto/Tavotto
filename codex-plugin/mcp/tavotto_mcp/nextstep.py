@@ -402,6 +402,7 @@ BUILDERS: dict[str, Callable[[Ctx], dict | None]] = {
     "review_network": _review_retry("网络没通：原样重试一次，仍不行就告诉用户检查网络。"),
     "review_server": _review_retry("服务端或本机记录出错：稍等后原样重试一次。"),
     "review_in_progress": _review_retry("另一次分享还在进行：稍等后原样重试。"),
+    "journal_report_in_progress": _review_retry("另一次期刊线索还在发送：稍等后原样重试。"),
 }
 
 #: 显式的「没有可行下一步」：每项一句理由（为什么 Agent 手里没有可抄的动作）。
@@ -443,6 +444,10 @@ NO_NEXT: dict[str, str] = {
     "requires_authorization": "规范化需要用户授权（Agent 不能替用户授权），见 recovery。",
     # 外部审阅分享（ADR 0205）
     "review_share_disabled": "外部审阅被用户或安装关掉了，不是 Agent 能改的。",
+    # 提交期刊线索（ADR 0213 三期）：失败不重试、不改写内容（失败码闭集在 failure 里，retryable 说明用户能不能再点一次）
+    "journal_report_disabled": "期刊线索入口被用户或安装关掉了，不是 Agent 能改的。",
+    "journal_report_failed": "发送失败：不自动重试、不改写内容，如实告诉用户，再发由用户定。",
+    "journal_rule_unknown": "键对不上本机目录：从回包 known_rule_keys 里选，不要自己编。",
     "review_too_large": "画面压缩后仍超过上传上限，重试也不会变。",
     "review_render_failed": "这张图出图失败，原因在 error；回脚本修好再发。",
     "review_client_error": "客户端或签名出错，重试也不会变，请用户在桌面里试。",
@@ -545,6 +550,20 @@ def share_review_confirm(out: dict, args: dict) -> dict:
         question,
         [
             f"发送（之后调 tavotto_share_review，{sid_part}同样的 title / note / update，explicit_confirm=true）",
+            "先不发",
+        ],
+    )
+
+
+def journal_report_confirm(out: dict, args: dict) -> dict:
+    """`tavotto_report_journal_issue` 不带确认时的 `next`：问用户；同意后才带 `explicit_confirm=true` 与同一个 `send_token` 再调。"""
+    w = out.get("will_send") or {}
+    what = w.get("journal_label") or w.get("query") or "这本刊"
+    return ask_user(
+        f"要把「{what}」的期刊线索发给 Tavotto 作者吗？只发上面列的内容，不含你的项目、脚本和数据；作者核对后会回信。",
+        [
+            "发送（之后调 tavotto_report_journal_issue，同样的参数，"
+            f"explicit_confirm=true，send_token={out.get('send_token')}）",
             "先不发",
         ],
     )
