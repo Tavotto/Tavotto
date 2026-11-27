@@ -199,25 +199,16 @@ test('「联系作者」被硬关时（fixtures 默认）：出处卡与选择�
 })
 
 test(
-  '「需要你确认」底部的「编辑部要求改图」打开编辑部形态的反馈窗，只有原话、截图 / PDF 与回信邮箱',
+  '问题页底部常驻「编辑部要求改图」入口，打开编辑部形态的反馈窗，只有原话、截图 / PDF 与回信邮箱',
   { tag: '@feature:journal.tips' },
   async ({ app, page }) => {
     test.setTimeout(240_000)
-    const src = { url: 'https://example.invalid/v2/guide', kind: 'html', retrieved: '2026-11-15', coverage: 'journal_specific' }
-    // 引擎没联网时取不到 v2：把「折叠结果」接口换成一份带条件的夹具，界面本身（需要你确认组）走真代码
+    // 这本刊没有任何待确认项：证明入口不依赖「需要你确认」组
     await page.route('**/api/journal-facts/preflight', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          catalog_rev: 2,
-          rules: {},
-          sources: {},
-          confirm: [
-            { id: 'c1', subject: 'min_line_width', relation: 'gte', value: 2, unit: 'pt', condition: '', quote: 'Lines should be at least 2 pt wide', strength: 'recommended', stage: 'unknown', source: src },
-            { id: 'c2', subject: 'width', relation: 'gte', value: 4, unit: 'in', condition: 'One column width figures', quote: 'One column width figures at least 4 in', strength: 'recommended', stage: 'unknown', source: src },
-          ],
-        }),
+        body: JSON.stringify({ catalog_rev: 2, rules: {}, sources: {}, confirm: [] }),
       }),
     )
     const a = await app({
@@ -232,28 +223,34 @@ test(
     await page.goto(a.baseURL)
     await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
     await waitForDocumentReady(page)
+    // 还没绑期刊：问题页没有这个入口
+    await page.locator('[data-rail="problems"]').click()
+    await expect(page.locator('[data-editor-tip]')).toHaveCount(0)
     await openSpec(page)
     await page.locator('[data-journal-picker]').click()
     await page.locator('[data-journal-search]').fill('fixture beta')
     await page.locator('[data-journal-option="fx-beta"]').click()
-    // 关掉选择器与设置窗（各吃一次 Esc），再进左栏「问题」
+    // 关掉选择器与设置窗（各吃一次 Esc），回到左栏「问题」
     const scrim = page.locator('[data-dialog-scrim][data-state="open"]')
     for (let i = 0; i < 4 && (await scrim.count()) > 0; i++) {
       await page.keyboard.press('Escape')
       await page.waitForTimeout(300)
     }
     await expect(scrim).toHaveCount(0)
-    await page.locator('[data-rail="problems"]').click()
+    if (!(await page.locator('[data-issues-journal]').isVisible())) await page.locator('[data-rail="problems"]').click()
+    await expect(page.locator('[data-issues-journal]')).toBeVisible()
 
-    const toggle = page.locator('[data-confirm-group-toggle]')
-    await expect(toggle).toBeVisible({ timeout: 30_000 })
-    await toggle.click()
-    const tip = page.locator('[data-confirm-editor-tip]')
-    await expect(tip).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('[data-confirm-group]')).toHaveCount(0)
+    const tip = page.locator('[data-editor-tip]')
+    await expect(tip).toBeVisible({ timeout: 30_000 })
     await expect(tip).toHaveText('编辑部要求改图？告诉我们')
-    // 最后一行：在最后一条要求之后
-    const [rb, tb] = [(await page.locator('[data-confirm-row]').last().boundingBox())!, (await tip.boundingBox())!]
-    expect(tb.y).toBeGreaterThan(rb.y)
+    // 固定在面板底部：在顶部「期刊」行之下、整个在视口里，且是面板里最靠下的内容
+    const [tb, jb] = [(await tip.boundingBox())!, (await page.locator('[data-issues-journal]').boundingBox())!]
+    expect(tb.y).toBeGreaterThan(jb.y + jb.height)
+    expect(tb.y + tb.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+    await page.mouse.move(720, 300) // 指针与焦点都挪开：别让左栏「设置」图标的提示条入镜
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    await page.waitForTimeout(400)
     await shoot(page, 'editor-entry')
 
     await tip.click({ timeout: 10_000 })

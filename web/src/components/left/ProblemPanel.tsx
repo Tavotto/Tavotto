@@ -69,6 +69,9 @@ import { runBatchFix, useBatchable } from './IssueFixButton'
 import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
 import { ConfirmEntry, GroupNode } from './ProblemTreeRows'
+import { SUBTLE_LINK_CLASS } from '../ui/subtleLink'
+import { tipForEditor } from '@/lib/journalTip'
+import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
 import { useScopedProblems } from './useProblemScope'
 import { JperProblemStageNotice } from './JperProblemStageNotice'
 import { LeukosProblemScopeNotice } from './LeukosProblemScopeNotice'
@@ -529,6 +532,7 @@ export function ProblemPanel() {
 
       {open && cursor && groups.length > 0 && <CursorBar view={cursorAt} onStep={step} />}
       <ReadinessLink />
+      <EditorTipLink />
     </div>
   )
 }
@@ -903,6 +907,28 @@ function CursorBar({ view, onStep }: { view: ReturnType<typeof cursorView>; onSt
       >
         <X size={ICON_SIZE.sm} />
       </IconButton>
+    </div>
+  )
+}
+
+/**
+ * 「编辑部要求改图？告诉我们」：固定在问题页最底部（不随树滚动、不随分组折叠或有没有待确认项出没）。
+ * 门槛：当前排版绑了期刊，且期刊线索入口可用（期刊入口常量 + 联系作者 + 引擎没关期刊联网）。
+ */
+function EditorTipLink(): ReactNode {
+  const ref = useDocumentStore((s) => s.doc.profile?.journalRef)
+  const canTip = useContactStore((s) => journalTipsAvailable(s.capability))
+  if (!ref || !canTip) return null
+  return (
+    <div className="shrink-0 px-3 pb-3 pt-1.5 text-xs">
+      <button
+        type="button"
+        data-editor-tip
+        onClick={() => useContactStore.getState().openJournalTip(tipForEditor(ref.id, ref.label))}
+        className={SUBTLE_LINK_CLASS}
+      >
+        {translate('journal.confirm.editorTip', { ns: 'dialogs' })}
+      </button>
     </div>
   )
 }

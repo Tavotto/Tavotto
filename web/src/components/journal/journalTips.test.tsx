@@ -49,8 +49,9 @@ import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { emptyProject } from '@/types/document'
 import { JournalPicker } from './JournalPicker'
 import { SourceButton } from './SourceButton'
+import { ProblemPanel } from '@/components/left/ProblemPanel'
 import { ConfirmGroup } from '@/components/left/ProblemTreeRows'
-import type { V2ConfirmRow } from '@/lib/journalV2'
+import { selectJournal } from '@/store/actions'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -439,35 +440,32 @@ describe('Codex #2310', () => {
   })
 })
 
-describe('「需要你确认」底部的「编辑部要求改图」入口', () => {
-  const SRC = { url: 'https://example.invalid/guide', kind: 'html' as const, retrieved: '2026-11-15', coverage: 'journal_specific' as const }
-  const ROWS: V2ConfirmRow[] = [
-    { id: 'c1', subject: 'min_line_width', relation: 'gte', value: 2, unit: 'pt', condition: '', quote: 'Lines at least 2 pt', strength: 'recommended', stage: 'unknown', source: SRC },
-    { id: 'c2', subject: 'width', relation: 'gte', value: 4, unit: 'in', condition: 'One column', quote: 'One column at least 4 in', strength: 'recommended', stage: 'unknown', source: SRC },
-  ]
+describe('问题页底部的「编辑部要求改图」入口', () => {
   const jt = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
-  const openGroup = async () => {
+  const openPanel = async () => {
+    selectJournal('fx-alpha')
     await mount(
-      <ul>
-        <ConfirmGroup rows={ROWS} depth={0} journalId="fx-alpha" journal="Fixture Press" />
-      </ul>,
+      <div style={{ display: 'flex', height: 600, flexDirection: 'column' }}>
+        <ProblemPanel />
+      </div>,
     )
-    await click(q('[data-confirm-group-toggle]'))
   }
 
-  it('展开后在最后一行，文字链接，文案照界面原文；点开是编辑部形态的窗', async () => {
-    await openGroup()
-    const items = [...document.body.querySelectorAll('[data-confirm-group] ul > li')]
-    expect(items).toHaveLength(ROWS.length + 1)
-    const link = items[items.length - 1].querySelector('[data-confirm-editor-tip]')!
-    expect(link.textContent).toBe(t('journal.confirm.editorTip', { ns: 'dialogs' }))
+  it('常驻在面板最底部（没有「需要你确认」组时也在），文案照界面原文；点开是编辑部形态的窗', async () => {
+    await openPanel()
+    expect(q('[data-confirm-group]')).toBeNull()
+    const link = q('[data-editor-tip]')!
     expect(link.textContent).toBe('编辑部要求改图？告诉我们')
     expect(link.textContent).toContain('？') // 全角问号
+    expect(link.tagName).toBe('BUTTON')
+    // 在整棵树之后、面板的最后一个子节点里
+    const panel = link.closest('[data-editor-tip]')!.parentElement!.parentElement!
+    expect(panel.lastElementChild).toBe(link.parentElement)
     await click(link)
     await waitTip()
     const d = q('[data-dialog="journal-tip"]')!
     expect(d.textContent).toContain(jt('title.wrong'))
-    expect(q('[data-journal-tip-about]')!.textContent).toBe('Fixture Press · 编辑部要求改图')
+    expect(q('[data-journal-tip-about]')!.textContent).toMatch(/ · 编辑部要求改图$/)
     // 只有：原话、截图 / PDF、回信邮箱
     expect(q('[data-contact-text]')!.getAttribute('placeholder')).toBe(jt('editorQuotePlaceholder'))
     expect(d.textContent).toContain(jt('editorQuoteLabel'))
@@ -481,36 +479,53 @@ describe('「需要你确认」底部的「编辑部要求改图」入口', () =
     expect(q('[data-contact-dismiss]')!.textContent).toBe(jt('cancel'))
   })
 
-  it('门槛不满足就不出现：联系作者没开 / 引擎关了期刊联网 / 期刊入口常量关', async () => {
+  it('「需要你确认」组里不再有这个入口', async () => {
+    const SRC = { url: 'https://example.invalid/g', kind: 'html' as const, retrieved: '2026-11-15', coverage: 'journal_specific' as const }
+    await mount(
+      <ul>
+        <ConfirmGroup
+          rows={[{ id: 'c1', subject: 'min_line_width', relation: 'gte', value: 2, unit: 'pt', condition: '', quote: 'q', strength: 'recommended', stage: 'unknown', source: SRC }]}
+          depth={0}
+          journalId="fx-alpha"
+          journal="Fixture Alpha"
+        />
+      </ul>,
+    )
+    await click(q('[data-confirm-group-toggle]'))
+    expect(q('[data-confirm-row]')).not.toBeNull()
+    expect(q('[data-editor-tip]')).toBeNull()
+  })
+
+  it('门槛不满足就不出现：没绑期刊 / 联系作者没开 / 引擎关了期刊联网 / 期刊入口常量关', async () => {
+    await mount(<ProblemPanel />) // 没绑期刊
+    expect(q('[data-editor-tip]')).toBeNull()
     for (const cap of [null, { ...CAP, journal_tips: false }, { ...CAP, journal_tips: undefined }]) {
       setCap(cap)
-      await openGroup()
-      expect(q('[data-confirm-row]')).not.toBeNull()
-      expect(q('[data-confirm-editor-tip]')).toBeNull()
-      await act(async () => root.render(<div />))
+      await openPanel()
+      expect(q('[data-editor-tip]')).toBeNull()
     }
     setCap(CAP)
     uiOn.value = false
-    await openGroup()
-    expect(q('[data-confirm-editor-tip]')).toBeNull()
+    await openPanel()
+    expect(q('[data-editor-tip]')).toBeNull()
   })
 
   it('发出去的 journal 头只有 type / journal_id / journal_label / catalog，没有 issue / 链接 / 规则键；正文可空', async () => {
-    await openGroup()
-    await click(q('[data-confirm-editor-tip]'))
+    await openPanel()
+    await click(q('[data-editor-tip]'))
     await waitTip()
     await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'Please redraw.')
     await click(q('[data-contact-send]'))
     expect(sendContact).toHaveBeenCalledTimes(1)
     const [meta] = vi.mocked(sendContact).mock.calls[0]
     expect(Object.keys(meta.journal!).sort()).toEqual(['catalog', 'journal_id', 'journal_label', 'type'])
-    expect(meta.journal).toMatchObject({ type: 'editor', journal_id: 'fx-alpha', journal_label: 'Fixture Press' })
+    expect(meta.journal).toMatchObject({ type: 'editor', journal_id: 'fx-alpha', journal_label: 'Fixture Alpha' })
     expect(meta.body).toBe('Please redraw.')
   })
 
   it('原话和附件都空时「提交反馈」禁用，store 的 send 也不发；写了原话或加了附件就可发', async () => {
-    await openGroup()
-    await click(q('[data-confirm-editor-tip]'))
+    await openPanel()
+    await click(q('[data-editor-tip]'))
     await waitTip()
     const send = () => q('[data-contact-send]') as HTMLButtonElement
     expect(send().disabled).toBe(true)
@@ -527,8 +542,8 @@ describe('「需要你确认」底部的「编辑部要求改图」入口', () =
   })
 
   it('填了原话随正文发出；复制内容有刊名与原话，不为空', async () => {
-    await openGroup()
-    await click(q('[data-confirm-editor-tip]'))
+    await openPanel()
+    await click(q('[data-editor-tip]'))
     await waitTip()
     await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'Please redraw at 600 dpi.')
     await click(q('[data-contact-send]'))

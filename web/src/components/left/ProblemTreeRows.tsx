@@ -30,9 +30,6 @@ import { dpiSourceMatches, fieldLabel, sourcesForCheck, valueText } from '@/lib/
 import { confirmEntries, v2StrengthNote, type V2ConfirmRow } from '@/lib/journalV2'
 import { useJournalV2Store } from '@/store/journalV2Store'
 import { journalCatalogUi } from '@/lib/journalUi'
-import { tipForEditor } from '@/lib/journalTip'
-import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
-import { SUBTLE_LINK_CLASS } from '../ui/subtleLink'
 
 /** 组头的 6px 等级记号：要改 / 留意 = 带色实心圆，建议 / 无法核验 = 灰色空心方块——形状也说出等级（与导出检查的计数芯片同一语言） */
 const isHollow = (s: Severity) => s === 'suggestion' || s === 'not_verifiable'
@@ -469,7 +466,6 @@ export function ConfirmGroup({
   journal: string
 }) {
   const [open, setOpen] = useState(false)
-  const canTip = useContactStore((s) => journalTipsAvailable(s.capability))
   return (
     <li data-confirm-group>
       <button
@@ -519,22 +515,6 @@ export function ConfirmGroup({
               </li>
             )
           })}
-          {canTip && (
-            <li>
-              <button
-                type="button"
-                data-confirm-editor-tip
-                onClick={() => useContactStore.getState().openJournalTip(tipForEditor(journalId, journal))}
-                style={treeIndent(depth + 1)}
-                className={cn(listRowClass({ size: 'sm' }), 'w-[calc(100%-0.5rem)] text-left')}
-              >
-                <TreeChevron />
-                <span className={cn(SUBTLE_LINK_CLASS, 'min-w-0 truncate')}>
-                  {translate('journal.confirm.editorTip', { ns: 'dialogs' })}
-                </span>
-              </button>
-            </li>
-          )}
         </ul>
       )}
     </li>
