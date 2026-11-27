@@ -9,7 +9,19 @@ import pytest
 
 from tavotto.engine import atomicio, layoutannotate as la, vectoredit as ve
 from test_layoutannotate import _doc, measure
-from test_vectoredit import MINE, _base, _by, _circle, _err, _line, _path, _run, _t, _two_circles
+from test_vectoredit import (
+    MINE,
+    _base,
+    _by,
+    _circle,
+    _err,
+    _legacy_layout_file_form,  # noqa: F401 — 夹具：钉旧 <名>.json 形态（ADR 0211 第二期 PR 3）
+    _line,
+    _path,
+    _run,
+    _t,
+    _two_circles,
+)
 
 
 def A(sp, i):
