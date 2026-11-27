@@ -92,8 +92,10 @@ test('中文回退字体：编辑、撤销、保存、重开和导出', { tag: '
   const response = await page.waitForResponse((r) => autosavePanelEvidence(r, saveTarget) !== null, { timeout: 60_000 })
   const evidence = autosavePanelEvidence(response, saveTarget)!
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-layout-save]')).toBeVisible()
+  // ⌘S 先把没写的编辑冲刷进项目、再弹「给这一版起名字」小框（ADR 0211 第二期）
+  await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
   await page.keyboard.press('Escape')
+  await expect(page.locator('[data-timeline-quick-name-input]')).toHaveCount(0)
   const stored = await page.evaluate(() => Object.fromEntries(Object.entries(localStorage).filter(([k]) => k.startsWith('tavotto'))))
   await a.stop()
   const saved = JSON.parse(readFileSync(path.join(env.TAVOTTO_DATA_DIR, 'layouts', '_autosave', `${evidence.docId}.json`), 'utf8'))

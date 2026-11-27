@@ -331,7 +331,12 @@ test('STATE-02 取消入口：pointercancel / lostpointercapture 还原 DOM 且�
     expect(g!.transform, `${kind}：DOM 必须还原到 matplotlib 的原样`).toBe(t.transform)
     expect(Math.hypot(g!.x - t.x, g!.y - t.y), `${kind}：元素应当回到原位`).toBeLessThan(0.5)
     expect(net.log.renders, `${kind}：不该发渲染`).toHaveLength(0)
-    expect(net.log.autosaves, `${kind}：不该提交文档`).toHaveLength(0)
+    // 排版始终自动存进项目（ADR 0211 第二期）：空闲 5 s 的项目写入可能恰在这段等待里落下，
+    // 但它存的是没动过的文档——取消的拖动不许进任何一次提交
+    expect(
+      net.log.autosaves.filter((body) => overridesOf(body, t.id, 'pos_frac').length > 0),
+      `${kind}：不该提交文档（取消的拖动不许落进任何一次保存）`,
+    ).toHaveLength(0)
   }
 
   // 取消之后紧接着正常拖一次：一次定稿、一条 override
