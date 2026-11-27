@@ -6317,19 +6317,29 @@ def _journal_report_rule(jm, cat: dict, jid: str, rule_key: str, source_id: str 
         v1 = jm.journal_sources(jid, cat).get(rule_key)
     except engine_profiles.ProfileError:
         v1 = None
-    v2_rule, v2_rev = None, None
+    v2_rule, v2_rev, v2_sid = None, None, None
     facts, fold = _optional_engine("journalfacts_remote"), _optional_engine("journalfacts_fold")
     if facts is not None and fold is not None and hasattr(facts, "cached_bundle"):
         cached = facts.cached_bundle(jid)
         if cached is not None:
             try:
-                v2_rule = fold.fold(cached[1])["rules"].get(rule_key)
+                folded = fold.fold(cached[1])
+                v2_rule = folded["rules"].get(rule_key)
+                fact_id = (
+                    (folded["sources"].get(v2_rule["src"]) or {}).get("fact_id")
+                    if v2_rule
+                    else None
+                )
+                # 线缆上 v2 的出处 id 是 `v2:<事实 id>`（与界面同一规则）；没有事实 id 就当没有 v2
+                v2_sid = f"v2:{fact_id}" if isinstance(fact_id, str) and fact_id else None
+                if v2_sid is None:
+                    v2_rule = None
             except Exception:  # noqa: BLE001 — 缓存里的刊包折不出来就当没有 v2，不拿它冒充
                 v2_rule = None
             v2_rev = cached[0] if v2_rule is not None else None
     chosen, rev_key, rev = None, "v1", None
     if source_id and source_id.startswith("v2:"):
-        chosen = v2_rule if v2_rule is not None and v2_rule.get("src") == source_id else None
+        chosen = v2_rule if v2_rule is not None and v2_sid == source_id else None
     elif source_id:
         chosen = v1 if v1 is not None and v1.get("src") == source_id else None
     else:
@@ -6347,7 +6357,7 @@ def _journal_report_rule(jm, cat: dict, jid: str, rule_key: str, source_id: str 
     if chosen is v2_rule:
         rev_key, rev = "v2", v2_rev
     return {
-        "source_id": chosen.get("src"),
+        "source_id": v2_sid if chosen is v2_rule else chosen.get("src"),
         "current": _journal_current_text(chosen),
         "rev_key": rev_key,
         "v2_rev": rev,
@@ -6486,8 +6496,7 @@ def report_journal_issue(
     except cs.ContactError as exc:
         raise BridgeError(f"这条线索格式不对（{exc.code}）。", code="bad_arguments") from exc
     # clean_journal 对单个不合规的可选字段是「丢掉」；Agent 给的 url / query 不合规要明说，不静默少发。
-    # source_id 只是「选哪一条」的选择器（已对过本机目录）：v2 折叠出的 `v2:<来源>:<origin>` 带第二个冒号，
-    # 过不了线缆契约的正则时 clean_journal 会丢掉它——这时靠 journal_id + rule_key 定位，不拿它拦 Agent
+    # source_id 是「选哪一条」的选择器（已对过本机目录）；v2 发的是 `v2:<事实 id>`，能过线缆正则
     for key in ("url", "query", "rule_key"):
         if key in head and (draft.journal or {}).get(key) != head[key]:
             raise BridgeError(

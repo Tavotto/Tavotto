@@ -300,7 +300,7 @@ def test_v2_source_uses_the_cached_bundle_and_its_catalog_rev(env, monkeypatch):
                     "src": "v2:src1:journal",
                 }
             },
-            "sources": {},
+            "sources": {"v2:src1:journal": {"fact_id": "fact-9"}},
             "confirm": [],
         },
     )
@@ -308,12 +308,17 @@ def test_v2_source_uses_the_cached_bundle_and_its_catalog_rev(env, monkeypatch):
         "type": "wrong",
         "journal_id": "fx-alpha",
         "rule_key": "min_line_width_pt",
-        "source_id": "v2:src1:journal",
+        "source_id": "v2:fact-9",
         "body": "原文写 0.5 pt",
     }
     w = _body(_call(args))["will_send"]
-    # 线缆正则不收 `v2:<来源>:<origin>` 里的第二个冒号：source_id 只当选择器，发出去的头里没有它
-    assert w["current"] == "≥ 0.25" and "source_id" not in w
+    # 线缆上 v2 出处 id 是 `v2:<事实 id>`（与界面同一规则），不是带第二个冒号的折叠 src
+    assert w["current"] == "≥ 0.25" and w["source_id"] == "v2:fact-9"
+    # 不给 source_id 时取同一条
+    del args["source_id"]
+    assert _body(_call(args))["will_send"]["source_id"] == "v2:fact-9"
+    args["source_id"] = "v2:src1:journal"  # 旧写法（折叠 src）对不上
+    assert _body(_call(args))["code"] == "journal_rule_unknown"
     assert w["catalog"] == {"v1": env.catalog["catalog_rev"], "v2": 42}
 
 
