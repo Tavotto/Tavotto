@@ -122,6 +122,7 @@ def test_facts_for_a_trend_count_series_and_x_values(project):
     assert item["facts"] == {
         "rows": 18,
         "drawn": 18,
+        "values": 18,
         "groups": 2,
         "n_min": 9,
         "n_max": 9,
@@ -184,3 +185,29 @@ def test_facts_count_only_the_points_that_are_really_drawn_on_a_scatter(project)
     f = item["facts"]
     assert f["drawn"] == 10 and item["unplotted"]["count"] == 2
     assert f["drawn"] + f["skipped_missing"] + f["skipped_other"] == f["rows"] == 12
+
+
+def test_facts_with_two_y_columns_count_every_column_not_only_the_first(project):
+    """宽表两列纵轴各一条线：依据数的是两列各自画进去的值，与列序无关（以前只看第一列，A 有空格时把 8 行全画的图说成「按 4 个数值」）。
+    独立手算：x=1..8；A 在偶数 x 空（4 个值），B 每行都有（8 个值）→ 8 行都画了、共 12 个值、横轴 8 个取值。"""
+    _, client, figs, _ = project
+    rows = [["x", "A", "B"]] + [[t, "" if t % 2 == 0 else 1.0 + t, 5.0 + t] for t in range(1, 9)]
+    put(figs, "data/v.csv", rows)
+    swapped = [["x", "B", "A"]] + [[r[0], r[2], r[1]] for r in rows[1:]]
+    put(figs, "data/w.csv", swapped)
+    got = []
+    for table, ys in (("v.csv", ["A", "B"]), ("w.csv", ["B", "A"]), ("v.csv", ["B", "A"])):
+        out = propose(client, table=table, render="lazy", answers={"x": "x", "y": ys}).get_json()
+        item = next(i for i in out["items"] if i["values"]["family"] == "trend")
+        assert item["values"]["y"] == ys
+        f = item["facts"]
+        got.append((f["rows"], f["drawn"], f["values"], f["x_values"]))
+        assert item["unplotted"]["count"] == 0
+    assert got == [(8, 8, 12, 8)] * 3, got
+
+
+def test_facts_values_equal_drawn_for_a_single_y(project):
+    _, client, figs, _ = project
+    put(figs, "data/g.csv", GROUPS + [["A", ""]])
+    item = by_code(propose(client, render="lazy").get_json())["points_mean"]
+    assert item["facts"]["values"] == item["facts"]["drawn"] == 18

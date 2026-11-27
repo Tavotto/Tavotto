@@ -25,6 +25,11 @@ describe('basisOf：主句', () => {
     }
   })
 
+  it('多个纵轴：「N 个数值」用 values（各列之和），不是画进去的行数；旧响应没有 values 退回 drawn', () => {
+    expect(basisOf({ title_code: 'line_points', facts: facts({ drawn: 8, values: 12, x_values: 8 }) })!.main).toEqual([{ key: 'xOnly', values: { drawn: 12, x: 8 } }])
+    expect(basisOf({ title_code: 'line_points', facts: facts({ drawn: 8, x_values: 8 }) })!.main).toEqual([{ key: 'xOnly', values: { drawn: 8, x: 8 } }])
+    expect(basisOf({ title_code: 'hist', facts: facts({ drawn: 8, values: 12 }) })!.main).toEqual([{ key: 'plain', values: { drawn: 12 } }])
+  })
   it('非趋势画法即使有 x_values 也不写横轴取值', () => {
     expect(mainKeys({ title_code: 'points_mean', facts: facts({ groups: 2, n_min: 18, n_max: 18, x_values: 6 }) })).toEqual(['groupsEqual'])
   })

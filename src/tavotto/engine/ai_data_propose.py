@@ -686,7 +686,7 @@ def error_missing_for(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) 
 
 def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict | None:
     """这张图是按什么数出来的——给界面那句「依据」用的**数**（只有数与列名，文案在前端按封闭句式拼）：
-    `{rows: 表里的行数, drawn: 画进去的行数, groups: 组数 | None, n_min / n_max: 每组（每个类别 × 分组 × 分面格子）的观测数范围 | None,
+    `{rows: 表里的行数, drawn: 画进去的行数, values: 画进去的数值个数（多个纵轴时是各列之和）, groups: 组数 | None, n_min / n_max: 每组（每个类别 × 分组 × 分面格子）的数值个数范围 | None,
     x_values: 不同横轴取值的个数 | None, skipped_missing: 因为缺值（某一格是空的 / NaN）没画的行数, skipped_other: 因为那一格不是数（文字）没画的行数}`。
     两个 skipped 加起来就是 `unplotted_rows` 的总数。大表不逐行数（None）；把列当分组的也先不给。"""
     if values.large is not None or recipe.stack:
@@ -695,17 +695,25 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
     # （横轴不是值、分组 / 分面 / 个体空、纵轴空……），剩下的行里纵轴是数的才是一个画出来的值（折线的纵轴空格是断开，不算画进去）
     applied = recipe_mod.with_cells_applied(values, recipe) if recipe.cells else values
     idx = {c: i for i, c in enumerate(values.columns)}
-    y = recipe.y[0]
     skipped = unplotted_rows(values, recipe)
     gone = {item["row"] for item in skipped}
+    # 多个纵轴（宽表每列一条线）：一行里**每一列**纵轴各自是一个值，哪一列缺了只少那条线上的那个点——
+    # 不能只看第一列（换个列序依据就变了）。一行至少有一列是数 = 画进去的一行；每行画了几个值另记
+    ys = [idx[c] for c in recipe.y]
+
+    def numbers(r) -> int:
+        return sum(1 for i in ys if adf.parse_cell(r[i])[0] == "numeric")
+
     usable = [
-        r
+        (r, k)
         for n, r in enumerate(applied.rows)
-        if values.row_number(n) not in gone and adf.parse_cell(r[idx[y]])[0] == "numeric"
+        if values.row_number(n) not in gone and (k := numbers(r)) > 0
     ]
     out: dict = {
         "rows": len(values.rows),
         "drawn": len(usable),
+        # 画进去的数值个数：单个纵轴时与 `drawn` 相同；多个纵轴时是各列有效值之和（「按 N 个数值绘制」用它）
+        "values": sum(k for _r, k in usable),
         "groups": None,
         "n_min": None,
         "n_max": None,
@@ -727,15 +735,15 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
         by = [recipe.x, *by]
     if by:
         cells: dict[tuple, int] = {}
-        for r in usable:
+        for r, k in usable:
             key = tuple(r[idx[c]].strip() for c in by)
-            cells[key] = cells.get(key, 0) + 1
+            cells[key] = cells.get(key, 0) + k
         if cells:
             out["groups"] = len(cells)
             out["n_min"], out["n_max"] = min(cells.values()), max(cells.values())
     if recipe.family in ("trend", "relationship") and recipe.x:
         out["x_values"] = len(
-            {r[idx[recipe.x]].strip() for r in usable if r[idx[recipe.x]].strip()}
+            {r[idx[recipe.x]].strip() for r, _k in usable if r[idx[recipe.x]].strip()}
         )
     return out
 

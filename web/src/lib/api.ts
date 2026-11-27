@@ -6019,7 +6019,10 @@ export type AiDataErrorKind = 'sd' | 'sem' | 'ci95' | 'unknown'
 
 export interface AiDataFacts {
   rows: number
+  /** 画进去的行数（一行至少有一列纵轴是数） */
   drawn: number
+  /** 画进去的数值个数：单个纵轴时等于 `drawn`；多个纵轴（宽表每列一条线）时是各列有效值之和；旧响应没有 */
+  values?: number
   groups: number | null
   n_min: number | null
   n_max: number | null

@@ -65,9 +65,10 @@ export function basisOf(c: {
     )
     if (trend && f.x_values != null) main.push({ key: 'xAlso', values: { x: f.x_values } })
   } else if (trend && f.x_values != null) {
-    main.push({ key: 'xOnly', values: { drawn: f.drawn, x: f.x_values } })
+    // 「N 个数值」：多个纵轴时一行有几列就是几个值（`values`）；旧响应没有这个键，退回行数
+    main.push({ key: 'xOnly', values: { drawn: f.values ?? f.drawn, x: f.x_values } })
   } else {
-    main.push({ key: 'plain', values: { drawn: f.drawn } })
+    main.push({ key: 'plain', values: { drawn: f.values ?? f.drawn } })
   }
   const missingFor = c.error_missing_for ?? []
   return {
