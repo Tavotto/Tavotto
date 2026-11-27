@@ -27,6 +27,20 @@ ggplot_tick_member_scopes <- function(built, axes, targets, panels = NULL) {
   scopes
 }
 
+ggplot_anchor_authored_ticks <- function(state, layout) {
+  # Source-authored locators can introduce breaks absent from the plain scale.
+  # Capture those keys from the first actual rendering without re-running R data.
+  scopes <- state$tick_member_scopes
+  for (gid in names(scopes)) {
+    locator <- state$tick_targets[[gid]]$locator_scope
+    scope <- scopes[[gid]]
+    if (is.null(locator) || !(locator %in% names(state$authored_locators)) || !length(scope$source_members)) next
+    members <- ggplot_tick_members(layout$panel_params[[scope$panel]], scope$index, scope$prefix)
+    scopes[[gid]]$source_members <- members$gids[members$major]
+  }
+  scopes
+}
+
 ggplot_tick_member_edits <- function(scopes, edits) {
   result <- list()
   for (gid in names(scopes)) {

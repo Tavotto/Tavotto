@@ -99,3 +99,33 @@ ggplot_tick_locator_baseline <- function(plot) {
   }
   list(plot = plot, locators = saved)
 }
+
+ggplot_facet_locator_group <- function(cells, recipe) {
+  owner <- recipe$facet
+  if (!length(owner) || !all(names(owner) %in% names(cells))) return(NULL)
+  match <- which(vapply(seq_len(nrow(cells)), function(row) {
+    identical(lapply(cells[row, names(owner), drop = FALSE], as.character), owner)
+  }, logical(1L)))
+  if (length(match) == 1L) cells[[paste0("SCALE_", toupper(recipe$axis))]][[match]]
+}
+
+ggplot_facet_tick_locators <- function(facet, recipes) {
+  force(facet)
+  force(recipes)
+  ggplot_clone(facet, init_scales = function(self, layout, x_scale = NULL, y_scale = NULL,
+                                           params = list()) {
+    result <- ggplot2::ggproto_parent(facet, self)$init_scales(layout, x_scale, y_scale, params)
+    for (recipe in recipes) {
+      axis <- recipe$axis
+      group <- ggplot_facet_locator_group(layout, recipe)
+      if (length(result[[axis]]) && !is.null(group)) {
+        result[[axis]][[group]] <- ggplot_apply_tick_locator(result[[axis]][[group]], recipe$style)
+      }
+    }
+    result
+  })
+}
+
+ggplot_with_facet_locators <- function(plot, recipes) {
+  ggplot_facet_adjust(plot, "locators", recipes, ggplot_facet_tick_locators)
+}

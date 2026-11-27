@@ -544,7 +544,7 @@ def _r_tick_locator_style(style: dict) -> str | None:
 
 def _native_tick_locator_writes(
     hot: dict | None, patches: list[dict]
-) -> tuple[dict[str, str], set[tuple[str, str]]]:
+) -> tuple[dict[tuple[str, str], str], set[tuple[str, str]]]:
     targets = {
         e["gid"]: e["source_tick_locator"]
         for e in (hot or {}).get("elements", ())
@@ -561,27 +561,66 @@ def _native_tick_locator_writes(
         if prop not in style or style[prop] != patch["value"]:
             continue
         recipe = _r_tick_locator_style(style)
-        if recipe is not None:
-            axis = target["axis"]
-            candidates[axis].add(recipe)
-            bindings[axis].add((gid, prop))
-    recipes = {
-        axis: next(iter(choices)) for axis, choices in candidates.items() if len(choices) == 1
-    }
-    return recipes, {binding for axis in recipes for binding in bindings[axis]}
+        facet = _r_facet_selector(target.get("facet"))
+        if recipe is not None and facet is not None:
+            key = (target["axis"], facet)
+            candidates[key].add(recipe)
+            bindings[key].add((gid, prop))
+    recipes = {key: next(iter(choices)) for key, choices in candidates.items() if len(choices) == 1}
+    return recipes, {binding for key in recipes for binding in bindings[key]}
 
 
-def _r_tick_locator_block(name: str, recipes: dict[str, str]) -> str:
-    fields = ",\n".join(f"    {axis} = {recipe}" for axis, recipe in recipes.items())
+def _r_tick_locator_block(name: str, recipes: dict[tuple[str, str], str]) -> str:
+    global_axes = []
+    facet_axes = []
+    for (axis, facet), recipe in recipes.items():
+        if facet == "NULL":
+            global_axes.append(f"    {axis} = {recipe}")
+        else:
+            facet_axes.append(
+                f"    list(axis = {_r_literal(axis)}, facet = {facet}, style = {recipe})"
+            )
+    statements = []
+    if global_axes:
+        statements.extend(
+            ["  plot <- ggplot_with_tick_locators(plot, list(", ",\n".join(global_axes), "  ))"]
+        )
+    if facet_axes:
+        statements.extend(
+            ["  plot <- ggplot_with_facet_locators(plot, list(", ",\n".join(facet_axes), "  ))"]
+        )
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
             *_r_helpers("ggplot_objects.R", "ggplot_tick_locators.R"),
-            "  ggplot_with_tick_locators(plot, list(",
-            fields,
-            "  ))",
+            *statements,
+            "  plot",
             f"}})(base::get({name}, inherits = FALSE)))",
         ]
+    )
+
+
+def _r_facet_selector(facet) -> str | None:
+    if facet is None:
+        return "NULL"
+    if (
+        not isinstance(facet, dict)
+        or not facet
+        or not all(
+            isinstance(name, str)
+            and name
+            and _r_literal(name) is not None
+            and (category is None or isinstance(category, str) and _r_literal(category) is not None)
+            for name, category in facet.items()
+        )
+    ):
+        return None
+    return (
+        "list("
+        + ", ".join(
+            f"{_r_literal(name)} = {_r_literal(category)}" for name, category in facet.items()
+        )
+        + ")"
     )
 
 
@@ -607,32 +646,9 @@ def _native_tick_label_writes(
             continue
         if not all(isinstance(item, str) and _r_literal(item) is not None for item in (key, value)):
             continue
-        owner = "NULL"
-        if facet is not None:
-            if (
-                not isinstance(facet, dict)
-                or not facet
-                or not all(
-                    isinstance(name, str)
-                    and name
-                    and _r_literal(name) is not None
-                    and (
-                        category is None
-                        or isinstance(category, str)
-                        and _r_literal(category) is not None
-                    )
-                    for name, category in facet.items()
-                )
-            ):
-                continue
-            owner = (
-                "list("
-                + ", ".join(
-                    f"{_r_literal(name)} = {_r_literal(category)}"
-                    for name, category in facet.items()
-                )
-                + ")"
-            )
+        owner = _r_facet_selector(facet)
+        if owner is None:
+            continue
         recipes.append(
             f"list(position = {_r_literal(position)}, facet = {owner}, "
             f"key = {_r_literal(key)}, text = {_r_literal(value)})"

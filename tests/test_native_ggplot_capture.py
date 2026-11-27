@@ -6289,19 +6289,26 @@ grDevices::dev.off()
         assert status == 200 and restored["ok"] and script.read_bytes() == original
 
 
-@pytest.mark.parametrize("faceted", [False, True], ids=["linear-step", "shared-log-breaks"])
-def test_native_r_major_locators_restore_from_standalone_source(tmp_path, faceted):
+@pytest.mark.parametrize("scope", ["linear-step", "shared-log-breaks", "free-log-breaks"])
+def test_native_r_major_locators_restore_from_standalone_source(tmp_path, scope):
     from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
     project = tmp_path / "Native locator"
     project.mkdir()
     script = project / "Measured.R"
+    faceted = scope != "linear-step"
+    free = scope == "free-log-breaks"
+    dimension = "free_x" if free else "fixed"
     scale = (
-        '+ ggplot2::scale_x_log10() + ggplot2::facet_wrap(~sample, axes = "all")' if faceted else ""
+        f'+ ggplot2::scale_x_log10() + ggplot2::facet_wrap(~sample, scales = "{dimension}", axes = "all")'
+        if faceted
+        else ""
     )
+    bind_x = 'd$x <- d$x * ifelse(d$sample == "Above", 1, 3)' if free else ""
     original = f"""\
 d <- expand.grid(x = c(1, 2, 4, 8, 16, 24), sample = c("Below", "Above"))
+{bind_x}
 d$y <- d$x / 2 + as.integer(d$sample)
 plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, group = sample)) + ggplot2::geom_line() +
   ggplot2::theme_bw() {scale}
@@ -6330,8 +6337,9 @@ grDevices::dev.off()
             if element["role"] == "ticks" and element["gid"].startswith("axis.x.bottom.ticks")
         ]
 
-    def save(app, figure, baseline, change):
-        target = axis_fields(baseline)[0]
+    def save(app, figure, baseline, change, target=None):
+        if target is None:
+            target = axis_fields(baseline)[0]
         patches = [
             {"gid": target["gid"], "identity": target["identity"], "prop": prop, "value": value}
             for prop, value in change.items()
@@ -6395,7 +6403,8 @@ grDevices::dev.off()
         assert initial["svg"] != edited["svg"]
         values = [key for key, _, _ in marks(edited["svg"])]
         if faceted:
-            assert values.count("11.0") == 2 and values.count("25.0") == 2
+            assert values.count("11.0") == (1 if free else 2)
+            assert values.count("25.0") == (1 if free else 2)
         else:
             assert "3.5" in values and "17.5" in values
     authored = script.read_bytes()
@@ -6408,7 +6417,34 @@ grDevices::dev.off()
             for target in axis_fields(replayed)
         ]
         assert len(fields) == (2 if faceted else 1)
-        assert all({key: style[key] for key in first_change} == first_change for style in fields)
+        assert {key: fields[0][key] for key in first_change} == first_change
+        if free:
+            assert fields[1]["major_mode"] == "auto" and fields[1]["format"] == "auto"
+        elif faceted:
+            assert {key: fields[1][key] for key in first_change} == first_change
+        if free:
+            member = next(
+                element
+                for element in replayed["manifest"]["elements"]
+                if element["role"] == "ticklabel"
+                and element["parent_gid"] == axis_fields(replayed)[0]["gid"]
+                and element["label"] == "11.0"
+            )
+            renamed, label_write = save(app, figure, replayed, {"text": "Selected break"}, member)
+            assert sum(text == "Selected break" for text, _, _ in marks(renamed["svg"])) == 1
+            status, restored = app.call(
+                "/api/script-backups/restore",
+                {
+                    "backup_id": label_write["backup_id"],
+                    "expected_sha256": label_write["script_revision"],
+                    "mode": "full",
+                },
+                timeout=120,
+            )
+            assert status == 200 and restored["ok"] and script.read_bytes() == authored
+            figure = _run_ggplot(app, script.name, rscript)
+            replayed = _render(app, figure, [])
+            assert replayed["svg"] == edited["svg"]
         reset, committed = save(app, figure, replayed, {"major_mode": "auto", "format": "auto"})
         assert reset["svg"] == initial["svg"]
         status, restored = app.call(

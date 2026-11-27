@@ -128,17 +128,10 @@ ggplot_apply_authored_facet_axes <- function(table, cells, panels, coord, theme,
   ggplot_resize_drawn_axis_tracks(table, rows, cols)
 }
 
-ggplot_with_tick_labels <- function(plot, recipes) {
-  facet <- plot$facet
-  previous <- facet$tavotto_tick_recipes
-  if (length(previous)) {
-    recipes <- c(previous, recipes)
-    facet <- facet$tavotto_tick_base
-  }
+ggplot_facet_tick_labels <- function(facet, recipes) {
   force(facet)
   force(recipes)
-  plot$facet <- ggplot2::ggproto(NULL, facet, tavotto_tick_base = facet,
-    tavotto_tick_recipes = recipes, draw_panels = function(self, panels, layout, x_scales,
+  ggplot2::ggproto(NULL, facet, draw_panels = function(self, panels, layout, x_scales,
                                                            y_scales, ranges, coord, data,
                                                            theme, params) {
       parent <- ggplot2::ggproto_parent(facet, self)
@@ -151,7 +144,10 @@ ggplot_with_tick_labels <- function(plot, recipes) {
       ggplot_apply_authored_facet_axes(original, layout, changed$panels, coord, theme,
                                      selection$scopes[names(selection$edits)])
     })
-  plot
+}
+
+ggplot_with_tick_labels <- function(plot, recipes) {
+  ggplot_facet_adjust(plot, "tick_labels", recipes, ggplot_facet_tick_labels)
 }
 
 ggplot_tick_facet_owner <- function(cell, panels, position) {

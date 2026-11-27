@@ -302,7 +302,7 @@ ggplot_axis_is_secondary <- function(panel, params) {
     !is.null(panel[[axis]]$position) && !identical(params$position, panel[[axis]]$position)
 }
 
-ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) {
+ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets, panels) {
   result <- list()
   for (gid in names(targets)) {
     target <- targets[[gid]]
@@ -355,9 +355,18 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
   cells <- built$layout$layout
   for (gid in names(result)) {
     tick <- result[[gid]]
-    if (!is.null(tick$spacing) &&
-        length(unique(cells[[paste0("SCALE_", toupper(tick$axis))]])) == 1L) {
-      result[[gid]]$locator_axis <- tick$axis
+    if (!is.null(tick$spacing)) {
+      groups <- cells[[paste0("SCALE_", toupper(tick$axis))]]
+      native_group <- groups[as.integer(cells$PANEL) == tick$panel]
+      if (length(native_group) == 1L && !is.na(native_group) &&
+          (length(unique(groups)) == 1L || length(panels$facets))) {
+        result[[gid]]$locator_axis <- tick$axis
+        result[[gid]]$locator_scope <- paste(tick$axis, native_group, sep = "/")
+        if (length(unique(groups)) > 1L) {
+          owner <- which(groups == native_group)[[1L]]
+          result[[gid]]$locator_facet <- lapply(cells[owner, panels$facets, drop = FALSE], as.character)
+        }
+      }
     }
     axes <- axes_targets[[tick$axes_gid %||% ggplot_axes_gid]]
     group <- if (length(tick$axis) == 1L) axes$groups[[tick$axis]]
@@ -379,12 +388,29 @@ ggplot_minor_tick_props <- c("minor_visible", "minor_mode", "minor_step", "minor
 ggplot_locator_props <- c("format", ggplot_major_tick_props)
 ggplot_tick_props <- c(ggplot_locator_props, ggplot_minor_tick_props)
 
+ggplot_captured_locators <- function(targets, cells, global, faceted) {
+  result <- list()
+  for (target in targets) {
+    scope <- target$locator_scope
+    if (!is.null(scope) && !is.null(global[[target$locator_axis]])) {
+      result[[scope]] <- global[[target$locator_axis]]
+    }
+  }
+  for (recipe in faceted) {
+    group <- ggplot_facet_locator_group(cells, recipe)
+    if (is.null(group)) next
+    scope <- paste(recipe$axis, group, sep = "/")
+    result[[scope]] <- utils::modifyList(result[[scope]] %||% list(), recipe$style)
+  }
+  result
+}
+
 ggplot_authored_locator_edits <- function(state, edits) {
-  for (axis in names(state$authored_locators)) {
-    gids <- names(Filter(function(tick) identical(tick$locator_axis, axis), state$tick_targets))
+  for (scope in names(state$authored_locators)) {
+    gids <- names(Filter(function(tick) identical(tick$locator_scope, scope), state$tick_targets))
     if (!length(gids)) stop("The R source locator no longer matches the rendered axis.")
     supplied <- unique(unlist(lapply(edits[gids], names), use.names = FALSE))
-    stored <- state$authored_locators[[axis]]
+    stored <- state$authored_locators[[scope]]
     gid <- gids[[1L]]
     edits[[gid]] <- c(stored[setdiff(names(stored), supplied)], edits[[gid]])
   }
@@ -1639,8 +1665,11 @@ ggplot_edit_line <- function(table, target, patch) {
 
 capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   if (!inherits(plot, "ggplot")) stop("The selected object is not a ggplot.")
-  authored_ticks <- plot$facet$tavotto_tick_recipes
-  if (length(authored_ticks)) plot$facet <- plot$facet$tavotto_tick_base
+  facet_source <- plot$facet$tavotto_facet_adjustments
+  if (length(facet_source)) plot$facet <- plot$facet$tavotto_facet_base
+  legacy_ticks <- plot$facet$tavotto_tick_recipes
+  if (length(legacy_ticks)) plot$facet <- plot$facet$tavotto_tick_base
+  authored_ticks <- c(legacy_ticks, facet_source$tick_labels$recipes)
   locator_source <- ggplot_tick_locator_baseline(plot)
   plot <- locator_source$plot
   measured <- with_svg_frame(frame_pt, function(capture) {
@@ -1671,7 +1700,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     colourbar_titles <- ggplot_colourbar_titles(built)
     text_targets <- ggplot_text_targets(table, frame_pt, colourbar_titles, axes_targets, built$layout$coord)
     tick_targets <- if (all(lengths(captured_layers$grobs) > 0L)) {
-      ggplot_tick_targets(built, text_targets, colourbar_titles, axes_targets)
+      ggplot_tick_targets(built, text_targets, colourbar_titles, axes_targets, panels)
     }
     for (gid in names(Filter(function(text) text$role == "ticks", text_targets))) {
       if (is.null(tick_targets[[gid]]$size)) {
@@ -1719,7 +1748,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       tick_member_scopes = member_scopes,
       tick_members = tick_members,
       authored_tick_recipes = authored_ticks,
-      authored_locators = locator_source$locators,
+      authored_locators = ggplot_captured_locators(tick_targets, built$layout$layout,
+                                                  locator_source$locators, facet_source$locators$recipes),
       colour_scales = colour_scales,
       palettes = palettes,
       built = if (rebuild_guides) built,
@@ -1744,11 +1774,13 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   # Measure on the same device type and frame as the final draw. Use a fresh
   # device for the artifact so viewport inspection does not add SVG nodes.
   state <- c(list(frame_pt = frame_pt), measured$value)
-  svg <- tryCatch(render_ggplot(state), tavotto_legend_svg = function(error) NULL)
+  observed <- if (length(state$authored_locators)) new.env(parent = emptyenv())
+  svg <- tryCatch(render_ggplot(state, observed = observed), tavotto_legend_svg = function(error) NULL)
   if (is.null(svg)) {
     state$legend_targets <- list()
-    svg <- render_ggplot(state)
+    svg <- render_ggplot(state, observed = observed)
   }
+  if (!is.null(observed)) state$tick_member_scopes <- ggplot_anchor_authored_ticks(state, observed$layout)
   list(state = state, svg = svg)
 }
 
@@ -2212,11 +2244,13 @@ ggplot_record_legend <- function(capture, marked, gid) {
   if (length(match)) marked[[gid]] <- match[[2L]]
 }
 
-render_ggplot <- function(state, edits = list()) {
+render_ggplot <- function(state, edits = list(), observed = NULL) {
   marked <- new.env(parent = emptyenv())
   svg <- with_svg_frame(state$frame_pt, function(capture) {
     grid::grid.newpage()
-    table <- ggplot_table_for(state, edits)$table
+    scene <- ggplot_table_for(state, edits)
+    if (!is.null(observed)) observed$layout <- scene$layout
+    table <- scene$table
     for (gid in names(state$legend_targets)) {
       slot <- state$legend_targets[[gid]]$slot
       record <- grid::recordGrob(record_legend(capture, marked, gid), list(
@@ -2379,7 +2413,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     target <- state$text_targets[[gid]]
     edit <- edits[[gid]]
     tick <- state$tick_targets[[gid]]
-    authored <- state$authored_locators[[tick$locator_axis %||% ""]]
+    authored <- state$authored_locators[[tick$locator_scope %||% ""]]
     input <- requested[[gid]]
     if (!is.null(tick$scope)) {
       edit <- utils::modifyList(edit %||% list(), facet_ticks[[tick$scope]] %||% list())
@@ -2501,7 +2535,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (identical(ggplot_major_tick_mode(style), "step")) {
         style$major_step <- style$major_step %||% tick$spacing$step
       }
-      element$source_tick_locator <- list(axis = tick$locator_axis, style = style)
+      element$source_tick_locator <- list(axis = tick$locator_axis, facet = tick$locator_facet, style = style)
     }
     if (!is.null(target$text_slot) && !is.null(edit$text)) {
       element$title_text_baseline <- target$label
