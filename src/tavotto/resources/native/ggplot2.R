@@ -1314,7 +1314,10 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
       width <- unique(line$gp$lwd)
       if (!is_positive_ggplot_number(width)) next
       rgba <- tryCatch(grDevices::col2rgb(unique(line$gp$col), alpha = TRUE), error = function(error) NULL)
-      if (is.null(rgba) || !ncol(rgba) || any(rgba[4L, ] == 0L)) next
+      if (is.null(rgba) || !ncol(rgba)) next
+      fixed_colour <- !"colour" %in% mapping && !length(guide_keys) && ncol(rgba) == 1L
+      opacity_editable <- !interval && fixed_colour && !"alpha" %in% mapping
+      if (any(rgba[4L, ] == 0L) && !opacity_editable) next
       lty <- unique(line$gp$lty)
       if (is.numeric(lty) && length(lty) == 1L && lty %in% 1:4) {
         lty <- unname(ggplot_line_types[[lty]])
@@ -1341,9 +1344,8 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
         guide_keys = guide_keys, key_name = key_name,
         clip = identical(built$layout$coord$clip, "on"),
         width = width * ggplot_lwd_pt, style = style,
-        color = if (!"colour" %in% mapping && !length(guide_keys) && ncol(rgba) == 1L) {
-          grDevices::rgb(rgba[1L], rgba[2L], rgba[3L], maxColorValue = 255)
-        },
+        color = if (fixed_colour) grDevices::rgb(rgba[1L], rgba[2L], rgba[3L], maxColorValue = 255),
+        opacity_editable = opacity_editable,
         alpha = if (!interval || (!"alpha" %in% mapping && length(unique(rgba[4L, ])) == 1L)) rgba[4L, 1L]
       )
       if (shared_guide) {
@@ -1509,7 +1511,7 @@ ggplot_line_source_plan <- function(state, target, patch, edits) {
   if (!length(patch) || !is.null(target$group)) return(NULL)
   if (ggplot_layer_has_group_edits(state$line_targets, target$index, edits)) return(NULL)
   style <- ggplot_line_style(target, patch)
-  aesthetics <- list()
+  aesthetics <- patch[intersect("alpha", names(patch))]
   if (!is.null(style$lwd)) aesthetics$linewidth <- style$lwd / ggplot2::.pt
   if (!is.null(style$lty)) aesthetics$linetype <- style$lty
   if (!is.null(style$col)) aesthetics$colour <- style$col
@@ -1545,8 +1547,9 @@ ggplot_line_style <- function(target, patch) {
     } else if (prop == "color" && !is.null(target$color) && is.character(value) &&
                length(value) == 1L && !is.na(value) && grepl("^#[0-9A-Fa-f]{6}$", value)) {
       change$col <- scales::alpha(value, target$alpha / 255)
-    } else if (target$interval && !is.null(target$alpha) && prop == "alpha" && is.numeric(value) &&
-               length(value) == 1L && is.finite(value) && value >= 0 && value <= 1) {
+    } else if ((target$interval || isTRUE(target$opacity_editable)) && !is.null(target$alpha) &&
+               prop == "alpha" && is.numeric(value) && length(value) == 1L &&
+               is.finite(value) && value >= 0 && value <= 1) {
       next
     } else if (!is.null(target$caps) && is.numeric(value) && length(value) == 1L &&
                is.finite(value) &&
@@ -2522,6 +2525,13 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
                     value = if (is.null(patch$color)) target$color else patch$color)
       if (!is.null(patch$color)) color$value_original <- target$color
       editable <- c(editable, list(color))
+    }
+    if (isTRUE(target$opacity_editable)) {
+      original <- target$alpha / 255
+      alpha <- list(prop = "alpha", type = "number", value = patch$alpha %||% original,
+                    min = 0, max = 1, step = 0.05)
+      if (!is.null(patch$alpha)) alpha$value_original <- original
+      editable <- c(editable, list(alpha))
     }
     label <- ggplot_layer_label("\u66f2\u7ebf", target)
     if (!is.null(target$group)) label <- paste(label, target$group$label, sep = " \u00b7 ")

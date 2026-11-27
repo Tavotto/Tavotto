@@ -1521,6 +1521,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             edits = {"linewidth": 1.8, "linestyle": "--"}
             if not scope.startswith("line-legend"):
                 edits["color"] = "#613C88"
+                edits["alpha"] = 0 if scope == "path-single" else 0.35
         elif bars:
             edits = {
                 "facecolor": "#835275",
@@ -1690,6 +1691,13 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                         if f["prop"] == size_prop
                     )
                     assert measured == pytest.approx(width)
+            if "alpha" in edits and curve:
+                for gid in targets:
+                    line = next(e for e in replayed["manifest"]["elements"] if e["gid"] == gid)
+                    value = next(f["value"] for f in line["editable"] if f["prop"] == "alpha")
+                    expected = edits["alpha"] if local else round(255 * edits["alpha"]) / 255
+                    assert value == pytest.approx(expected)
+                    assert line["geometry"]["stroke"] is (expected > 0)
             if interval:
                 after_elements = {e["gid"]: e for e in replayed["manifest"]["elements"]}
                 for patch in patches:
