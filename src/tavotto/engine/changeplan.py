@@ -1555,11 +1555,12 @@ def ask_vector_edits(
     canvas: dict,
     selected: list[str] | None = None,
     selection: dict | None = None,
+    locale: str | None = None,
 ) -> dict:
     """改图助手改画布矢量对象（ADR 0212 第 6 期）：问一次模型 → `{ops, unhandled}`（ops 已逐条过 `apply_ops` 干跑，
     不合格的进 `unhandled`）；失败抛 `PlanFailure(稳定码)`。`canvas` 是前端给的内存画布，不读盘。"""
     system, user = vectorplan.build_prompt(
-        instruction, canvas, selected, max_chars=MODEL_MAX_INPUT_CHARS
+        instruction, canvas, selected, max_chars=MODEL_MAX_INPUT_CHARS, locale=locale
     )
     return _structured(
         system,

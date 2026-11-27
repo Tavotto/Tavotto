@@ -584,7 +584,8 @@ test('首次渲染在水平翻转按下与松开间完成：控件不挪动，�
       return { tag: el.tagName, x: r.x, y: r.y, w: r.width, h: r.height }
     }),
   )
-  await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(1)
+  // 回包还被扣着：画布上仍不是精确渲染（属性页不再出进度字，2026-11-27）
+  await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(0)
   const beforeControls = await controls()
   const box = (await flip.boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -593,8 +594,6 @@ test('首次渲染在水平翻转按下与松开间完成：控件不挪动，�
   try {
     await held!.continue()
     await expect(page.locator('[data-canvas-stage] [data-display="exact"]')).toHaveCount(1, { timeout: 60_000 })
-    // SSE 的 building[fileId] 与 HTTP 渲染响应分开抵达；两者都落定才真的撤下提示。
-    await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(0)
     // React 的派生尺寸与提示一并落地后再松手，量实际按钮 / 输入框位置，不量 class。
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     afterControls = await controls()
@@ -623,7 +622,6 @@ test('同一 SVG、同一几何只差水平翻转：节点缩略图是左右镜�
   await placeFigureAndBack(page)
   const display = await only(page.locator('[data-canvas-stage] [data-display]'))
   await expect(display).toHaveAttribute('data-display', 'exact', { timeout: 60_000 })
-  await expect(page.locator('[data-panel-engine-progress]:visible')).toHaveCount(0)
   await settleInspectorMotion(page)
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   // 素材 PDF 与本机重建 SVG 的字体 / tight 图幅可能不同。先完成原生尺寸同步，
@@ -846,21 +844,22 @@ for (const locale of ['zh-CN', 'en-US']) {
         }
         measurements.push({ state, geometry })
       }
-      await check('warm', ['building'])
+      // 构建中 / 冷启动不在属性页出字（进度由画布角标与元素树说，2026-11-27）；「脚本已更新」构建中也不出
+      await check('warm', [])
       await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
-      await check('cold', ['cold'])
+      await check('cold', [])
       await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: false, cost: 'light' })
-      await check('warm again', ['building'])
+      await check('warm again', [])
       await releaseRender(0)
       await expectExact()
       await emit('render.done', { id: 'Fig1_kinetics.pdf' })
       await check('ready', [])
       await emit('panel.file_changed', { stems: ['Fig1_kinetics'], reason: 'watcher' })
       await expect.poll(() => held.length).toBe(2)
-      // 引擎状态一行只说一件事（2026-10-07 §9.2）：构建中优先，「脚本已变」等这一轮构建结束
-      await check('stale while rebuilding', ['building'])
+      // 「脚本已变」等这一轮构建结束（构建正在把它刷新掉）
+      await check('stale while rebuilding', [])
       await emit('render.started', { id: 'Fig1_kinetics.pdf', cold: true, cost: 'light' })
-      await check('cold and stale', ['cold'])
+      await check('cold and stale', [])
       await releaseRender(1)
       await expectExact()
       await emit('render.done', { id: 'Fig1_kinetics.pdf' })

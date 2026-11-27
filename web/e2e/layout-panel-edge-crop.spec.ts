@@ -99,7 +99,7 @@ test(
     const b0 = (await first.boundingBox())!
     await dragHandle(page, 'e', 80, 0, async () => {
       await expect(page.locator('[data-drag-status]')).toContainText('改图幅')
-      await expect(page.locator('[data-drag-status]')).toContainText('文字 pt 不变')
+      await expect(page.locator('[data-drag-status]')).toContainText('字号不变')
       await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
       if (process.env.TAVOTTO_E2E_SHOT) await page.screenshot({ path: `${process.env.TAVOTTO_E2E_SHOT}/during.png` })
       // 拖动中不动文档：面板还是原来的宽

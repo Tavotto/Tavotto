@@ -188,7 +188,7 @@
     "frameCanvasSize": "canvas {{w}} × {{h}} mm",
     "frameCornerUniform": "Resize figure proportionally · width {{from}} → {{to}} mm",
     "frameCornerFree": "Resize figure · {{fw}} × {{fh}} → {{tw}} × {{th}} mm",
-    "frameCornerDetail": "text keeps its pt size, re-renders on release",
+    "frameCornerDetail": "text size unchanged, re-renders on release",
     "frameWithCol": "{{base}} · snapped to {{col}}",
     "frameFigureStaysSize": "figure stays put · {{size}}",
     "layoutFitContent": "Fit content",
@@ -211,7 +211,10 @@
     "selectedCount_one": "{{count}} selected",
     "selectedCount_other": "{{count}} selected",
     "sizeMenu": "Size",
-    "textMenu": "Text"
+    "textMenu": "Text",
+    "frameEdgeDetail": "text size unchanged · hold {{alt}} for margins",
+    "frameSquare": "{{base}} · square",
+    "frameCornerUniformDetail": "text size unchanged · hold {{alt}} for free ratio"
   },
   "unexpectedError": {
     "text": "Tavotto ran into an unexpected issue",

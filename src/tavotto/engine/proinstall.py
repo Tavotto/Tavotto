@@ -6,7 +6,7 @@
 
 * **没有令牌 / `license.has` 对任何功能键都不成立 / 这个平台没有组件 = 一次网络都不发**（ADR 0198 §五）。
 * **信任根是发布签名，不是服务端**：清单用独立的发布密钥（kid 前缀 `pro-`）签名，公钥内置在 `RELEASE_KEYS`；服务端被攻破也推不了恶意包。
-  **正式版 `RELEASE_KEYS` 现在是空表**（发布密钥由维护者本人生成后再加）→ 正式安装里验不过任何清单。测试发布公钥只在开发 / 验收模式
+  正式版 `RELEASE_KEYS` 里是 2026-11 生成的发布公钥（kid `pro-2026-11`，私钥只在私有仓库发布任务的受保护环境与维护者本机）。测试发布公钥只在开发 / 验收模式
   （设了合规的 `TAVOTTO_LICENSE_ENDPOINT`，与 `license._public_key` 同一判据）经 `TAVOTTO_PRO_TEST_RELEASE_PUBKEY` 认，且只认 kid `pro-test`。
 * **下载地址钉死**：https、主机 ∈ `PRO_DOWNLOAD_HOSTS`、路径以 `/pro/` 起；开发模式（授权端点是回环开发端点）额外认 127.0.0.1 / localhost 的 http。
   出站经 `diagsend.stream_get`（平台证书校验、不跟随重定向、超时、字节上限 = 清单 `size`）。
@@ -49,8 +49,11 @@ ENV_TEST_RELEASE_PUBKEY = "TAVOTTO_PRO_TEST_RELEASE_PUBKEY"
 #: 测试发布密钥在 `pro-` 命名空间里的唯一 kid（只在开发 / 验收模式认）。
 TEST_KID = "pro-test"
 KID_PREFIX = "pro-"
-#: 发布公钥表 `kid -> base64(32 字节公钥)`。**正式版留空**：发布密钥由维护者本人生成后再加（ADR 0198 §五）。
-RELEASE_KEYS: dict[str, str] = {}
+#: 发布公钥表 `kid -> base64(32 字节公钥)`（ADR 0198 §五）。轮换：新 kid 先进这张表随应用发出去，铺开后私有仓库才改用新私钥签；
+#: 旧 kid 留到不再有人需要装它签的版本。测试发布公钥（kid `pro-test`）**不进**这张表。
+RELEASE_KEYS: dict[str, str] = {
+    "pro-2026-11": "ScMv0RrvGvX2VezCRoF08rHXOjQidtkvn5AYim8wlH4=",
+}
 
 PLATFORMS = frozenset({"macos-arm64", "macos-x86_64", "windows-x64"})
 #: 下载主机白名单（ADR 0198 §五）；路径必须以 `/pro/` 开头。

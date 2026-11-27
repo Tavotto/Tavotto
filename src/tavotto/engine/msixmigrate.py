@@ -713,6 +713,85 @@ def _merger_for(rel: str, deadline: float):
         return _SQLITE_MERGERS.get(rel)
 
 
+# 诊断包：旧包私有区的库比真实目录那份多出多少行（#2282 已中招用户的补救 A）。同样由拥有 schema 的模块登记。
+#: `count(legacy, target_or_None, deadline) -> dict[str, int]`，只读两边、只回非负整数，到点抛 `TimeoutError`。
+_SQLITE_GAP_COUNTERS: dict = {}
+LEGACY_GAP_BUDGET_S = 3.0  # 诊断包里所有库、所有旧包加起来的上限：只数不搬，报告不能被它拖住
+LEGACY_GAP_MAX_SOURCES = 4
+
+
+def register_sqlite_gap_counter(rel: str, count) -> None:
+    _SQLITE_GAP_COUNTERS[rel] = count
+
+
+def legacy_gap_facts(budget_s: float = LEGACY_GAP_BUDGET_S) -> dict:
+    """每个登记过的库、每个还留着它的旧包（mtime 新→旧）各一项：`state` 闭集 ok / timeout / error，ok 时带计数。
+
+    不带路径与包族名；不写任何东西（两边都只读打开）。数出来的「缺」也可能是用户在新库里自己删掉的——
+    这是给人看的事实，不据此自动补。非 Windows 回 `{"state": "not_windows"}`。
+    """
+    if not _is_windows():
+        return {"state": "not_windows"}
+    deadline = time.monotonic() + budget_s
+    dbs: dict[str, list[dict]] = {}
+    for rel, count in sorted(_SQLITE_GAP_COUNTERS.items()):
+        parts = tuple(rel.split("/"))
+        target = config.data_path(*parts)
+        rows: list[dict] = []
+        # 先筛「真有这个库」的旧包再截前几个：只有设置、没有历史库的新包不能把留着历史的老包挤出去（Codex #2311）
+        srcs = [local.joinpath(*parts) for _roaming, local in sources() if local is not None]
+        srcs = [p for p in srcs if p.is_file() and not p.is_symlink()][:LEGACY_GAP_MAX_SOURCES]
+        for src in srcs:
+            if time.monotonic() > deadline:  # 库很小时 SQLite 根本不会调进度回调：到点先在这里截住
+                rows.append({"state": "timeout"})
+                continue
+            try:
+                got = count(src, target if target.is_file() else None, deadline)
+                rows.append({"state": "ok", **{k: _count(v) for k, v in got.items()}})
+            except TimeoutError:
+                rows.append({"state": "timeout"})
+            except (OSError, sqlite3.Error, ValueError):
+                rows.append({"state": "error"})
+        dbs[rel] = rows
+    return {"state": "ok", "dbs": dbs}
+
+
+def legacy_sqlite_paths(rel: str) -> list[Path]:
+    """`rel` 在各旧包私有区里的那份（mtime 新→旧）；不合资格（非 Windows / 带包身份）回空。只给只读计数与手动找回用。"""
+    if not _eligible():
+        return []
+    parts = tuple(rel.split("/"))
+    out = [local.joinpath(*parts) for _r, local in sources() if local is not None]
+    return [p for p in out if p.is_file() and not p.is_symlink()]
+
+
+def restore_legacy(rel: str, project: str, budget_s: float = PENDING_MERGE_BUDGET_S) -> str:
+    """用户手动「找回之前的任务」（#2282 补救 B）：不看「待补」标记，把旧库里真实库没有的行按主键补回来。
+
+    与后台待补合并同一条路（快照 → 登记的合并器，一个事务、到点整体回滚），所以补回的会话取新 rev、
+    未结束的收尾。和自动路径的区别只有一条：用户在新库里删掉的、旧库还有的**也会回来**——这是用户点头的。
+    **只补 `project` 这一个项目的行**（确认句里的条数只算这个项目；别的项目里用户删掉的不能顺手带回来，Codex #2317）。
+    真实库还不存在时走整库只补缺复制（同后台路径）：那时没有任何东西被删过，不存在「把删掉的带回来」。
+    回闭集 done / deferred（超时、锁被占、合并器未登记，可再试）/ failed / not_eligible。
+    """
+    if not _eligible():
+        return "not_eligible"
+    deadline = time.monotonic() + budget_s
+    if rel not in SQLITE_ITEMS or _merger_for(rel, deadline) is None:
+        return "deferred"
+    try:
+        fd = layoutsession.acquire_file_lock(config.data_path(*LOCK_REL), deadline)
+    except layoutsession.SessionStateUnavailable:
+        return "deferred"  # 别的进程正在迁移 / 合并：等不到就让用户稍后再点，不报失败
+    if fd is None:
+        return "deferred"
+    try:
+        # 只补了一个项目：别的项目的「待补」照旧留给后台合并，不清标记
+        return _merge_pending_item(tuple(rel.split("/")), deadline, project=project)
+    finally:
+        layoutsession.release_file_lock(fd)
+
+
 _PENDING_THREAD: threading.Thread | None = None
 _PENDING_THREAD_LOCK = threading.Lock()
 
@@ -785,7 +864,7 @@ def _merge_pending(budget_s: float) -> dict | None:
         layoutsession.release_file_lock(fd)
 
 
-def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
+def _merge_pending_item(parts: tuple[str, ...], deadline: float, project: str | None = None) -> str:
     target = config.data_path(*parts)
     srcs = [local.joinpath(*parts) for _r, local in sources() if local is not None]
     srcs = [p for p in srcs if p.is_file() and not p.is_symlink()]
@@ -811,7 +890,10 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float) -> str:
                 with contextlib.suppress(OSError):
                     snap.unlink(missing_ok=True)
                 shutil.copy2(src, snap)
-            merge(snap, target, deadline)
+            if project is None:
+                merge(snap, target, deadline)
+            else:
+                merge(snap, target, deadline, project=project)
         except (_Deadline, TimeoutError):
             return "deferred"
         except sqlite3.OperationalError as e:

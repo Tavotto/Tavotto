@@ -12,6 +12,7 @@ import {
   type ChangePlan,
   type ChangePlanGroup,
   type ChangePlanPatch,
+  type VectorEditResult,
   type ReviewAnchor,
   type ReviewComment,
 } from '@/lib/api'
@@ -19,6 +20,7 @@ import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { applyGroups, canonicalPatches, effectiveStatus, samePatches, toOverrides, type PlanSource } from '@/lib/changePlanApply'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { writeChangePlanCache } from '@/lib/changePlanSwitch'
+import type { ChangeGroup } from '@/lib/vectorChanges'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
@@ -100,6 +102,21 @@ export interface LayoutHandle {
 }
 
 /**
+ * 改图助手改画布矢量对象的方案（ADR 0212 第 6 期，`kind: 'vector'`）：后端算好的方案原样存着（前端不重算），
+ * 「应用」与「重新生成」由 `vectorPlanActions` 交进来（同一键排版的 `LayoutHandle`，store 不 import 它免得成环）。
+ */
+export interface VectorHandle extends LayoutHandle {
+  /** 后端回的方案（复述 / 对象 / 核对 / 没能照做的）；生成中 / 失败时还没有 */
+  result?: VectorEditResult
+  /** 按对象分组、翻成界面语言的改动清单（`lib/vectorChanges`）；空 = 退回显示后端的复述原文 */
+  groups?: ChangeGroup[]
+  /** 方案点名的对象此刻还是不是出发时那样（= 待确认；撤回之后也是；不是又不是已应用 = 「图改过了」） */
+  holds: () => boolean
+  /** 方案已经写进文档的样子还在不在（= 已应用；按对象状态判，不按历史条目——之后的回写会换掉那一条历史） */
+  landed: () => boolean
+}
+
+/**
  * 助手来源的「改脚本」后路（现有改脚本路径，`aiStore.start`）所需的发送快照：发送那一刻固定下来，
  * 之后不读此刻的面板选择 / 草稿（轮询期间用户可能已经换了元素 / 范围）。
  */
@@ -149,10 +166,15 @@ export interface PlanEntry {
   key: string
   /** 方案从哪来：审阅意见（默认）/ 改图助手里的一条指令 / 一键排版 */
   from?: 'review' | 'assistant' | 'quick_layout'
-  /** `layout` = 一键排版的整版方案（不挂在某张图上，`panelId` 为空）；缺省 = 一张图的方案 */
-  kind?: 'figure' | 'layout'
+  /**
+   * `layout` = 一键排版的整版方案（不挂在某张图上，`panelId` 为空）；`vector` = 改图助手改画布矢量对象的方案（同样不挂在某张图上，
+   * 一张卡只含一类，ADR 0206）；缺省 = 一张图的方案
+   */
+  kind?: 'figure' | 'layout' | 'vector'
   /** 一键排版方案的落地与重来（由 `quickLayoutActions` 交进来；store 不 import 它，免得成环） */
   layout?: LayoutHandle
+  /** 矢量编辑方案（`kind: 'vector'`）的内容与落地 / 重来 */
+  vector?: VectorHandle
   /** 助手来源：用户的原话（对话里的用户气泡；改动清单里这一组的标题） */
   instruction?: string
   /** 助手来源的改脚本后路（见 `ScriptFallback`） */
@@ -354,9 +376,15 @@ export function setChangePlanLabeler(fn: (raw: string) => string): void {
   labeler = fn
 }
 
-/** 一键排版方案的两张预览图是 blob 地址（本机内存里的 PNG）：条目没了就放掉 */
+/** 整版 / 画布级的方案（不挂在某张图上）：一键排版与矢量编辑；它们的落地与重来由各自的 handle 管 */
+export const isCanvasPlan = (e: Pick<PlanEntry, 'kind'> | undefined): boolean => e?.kind === 'layout' || e?.kind === 'vector'
+
+/** 整版 / 画布级方案的落地与重来 */
+export const canvasHandleOf = (e: Pick<PlanEntry, 'kind' | 'layout' | 'vector'>): LayoutHandle | undefined => (e.kind === 'vector' ? e.vector : e.layout)
+
+/** 整版方案的两张预览图是 blob 地址（本机内存里的 PNG）：条目没了就放掉 */
 function revokeLayoutImages(e: PlanEntry | undefined): void {
-  if (e?.kind !== 'layout') return
+  if (!isCanvasPlan(e) || !e) return
   for (const u of [e.beforeSrc, e.afterSrc]) if (u?.startsWith('blob:')) URL.revokeObjectURL(u)
 }
 
@@ -366,7 +394,7 @@ function revokeLayoutImages(e: PlanEntry | undefined): void {
  */
 export function reviewScriptIds(e: Pick<PlanEntry, 'from' | 'kind' | 'plan'>): string[] {
   const plan = e.plan
-  if (!plan || e.from === 'assistant' || e.kind === 'layout' || plan.kind === 'script') return []
+  if (!plan || e.from === 'assistant' || isCanvasPlan(e) || plan.kind === 'script') return []
   const stored = new Set((plan.comments ?? []).map((c) => c.id))
   return [...new Set(plan.unhandled.filter((u) => u.reason === 'needs_script' && u.comment_id && stored.has(u.comment_id)).map((u) => u.comment_id as string))]
 }
@@ -669,7 +697,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     runScript: async (key, opts) => {
       const e = get().entries[key]
       // 审阅来源：只能由用户点按钮走到这里（没有任何自动续走），交给「审阅意见 → 脚本方案」
-      if (e && e.from !== 'assistant' && e.kind !== 'layout') return runReviewScript(key)
+      if (e && e.from !== 'assistant' && !isCanvasPlan(e)) return runReviewScript(key)
       const fb = e?.fallback
       if (!e || !fb || e.from !== 'assistant') return false
       // 发送那一刻的项目 / 文档 / 面板：途中换了就不替他发（换项目整表已清；换文档 / 画布 / 面板被删这里挡）
@@ -763,9 +791,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     regenerate: async (key) => {
       const e = get().entries[key]
       if (!e) return null
-      if (e.kind === 'layout') {
+      if (isCanvasPlan(e)) {
         drop(key)
-        e.layout?.regenerate()
+        canvasHandleOf(e)?.regenerate()
         return null
       }
       const ids = allPlanIds(e)
@@ -811,16 +839,17 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return 'nothing'
       }
       // 一键排版：落地就是现有的那一次 commit（核对「图还是出发时那样」也在里面）；对不上 = 「图已改过」，不写
-      if (e.kind === 'layout') {
+      if (isCanvasPlan(e)) {
         const h = useDocumentStore.getState()
-        // ⌘Z 撤回过的「已应用」又是待确认：可以再应用（派生状态见 `effectiveStatus`）
-        const st = effectiveStatus(e, null, null, { past: h.past, future: h.future })
+        // ⌘Z 撤回过的「已应用」又是待确认：可以再应用（派生状态见 `effectiveStatus`；矢量编辑按对象状态判，不按历史条目）
+        const st = e.kind === 'vector' ? (e.vector?.holds() ? 'ready' : 'stale') : effectiveStatus(e, null, null, { past: h.past, future: h.future })
         if (st === 'stale') {
           patch(key, { status: 'stale', notice: undefined })
           return 'stale'
         }
-        if (st !== 'ready' || !e.layout) return 'failed'
-        const r = e.layout.apply()
+        const handle = canvasHandleOf(e)
+        if (st !== 'ready' || !handle) return 'failed'
+        const r = handle.apply()
         if (r === 'applied') {
           patch(key, { status: 'applied', appliedEntry: useDocumentStore.getState().past.at(-1), notice: undefined })
           set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
@@ -957,7 +986,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const e = get().entries[key]
       if (!e) return
       // 一键排版的方案没有后端那一份，也没有「已放弃」的卡可留：直接收掉（再排一次只要几秒）
-      if (e.kind === 'layout') return drop(key)
+      if (isCanvasPlan(e)) return drop(key)
       patch(key, { status: 'discarded' })
       set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
       // 后端那几份（各版）可以收了；卡上的图仍是已经取到的地址，过期也只是图不显示，卡片文字不变

@@ -13,6 +13,7 @@ import { DiffView } from '../ai/DiffView'
 import { ChangeList, NoteList } from './ChangeList'
 import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, isScriptPlan, markNoteHintSeen, noteHintSeen, scriptInfo, unhandledViews, useChangePlanAccess } from './changePlanModel'
 import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
+import { failedChecks } from '@/lib/vectorEdit'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
 type View = 'compare' | 'annotate'
@@ -310,6 +311,11 @@ export function ChangePlanDialog() {
                   {cp('dialog.previewStale')}
                 </p>
               )}
+              {entry.vector?.result && failedChecks(entry.vector.result) > 0 && (
+                <p className="shrink-0 px-4 pt-3 type-meta" data-change-plan-vector-checks>
+                  {cp('dialog.vectorChecks', { count: failedChecks(entry.vector.result) })}
+                </p>
+              )}
               {script && info ? (
                 <div className="flex flex-col gap-1 px-4 pt-4" data-change-plan-script-meta>
                   <p className="type-meta">{cp('dialog.scriptMeta', { added: info.added, removed: info.removed })}</p>
@@ -318,7 +324,7 @@ export function ChangePlanDialog() {
                 </div>
               ) : (
                 <ChangeList
-                  heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : undefined}
+                  heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : entry.kind === 'vector' ? cp('dialog.vectorHeading', { count: entry.vector?.count ?? 0 }) : undefined}
                   groups={groups}
                   unhandled={unhandledViews(entry)}
                   unchecked={entry.unchecked}

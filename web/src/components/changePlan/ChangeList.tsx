@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 import { ReviewMark } from '../review/ReviewMark'
 import { Button, IconButton } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
-import { Pencil, X } from '../ui/icons'
+import { Check, Pencil, X } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { cp, whoOf, type GroupView, type UnhandledView } from './changePlanModel'
 
@@ -56,13 +56,13 @@ export function ChangeList({
         {unhandled.length > 0 && (
           <ul className="mt-2 flex flex-col gap-0.5 border-t border-border pt-2">
             {unhandled.map((u) => (
-              <li key={u.id} data-change-plan-unhandled={u.id} title={u.reason} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
+              <li key={u.id} data-change-plan-unhandled={u.id} title={u.reason || u.text} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
                 <span aria-hidden className="flex h-5 w-[15px] shrink-0 items-center justify-center">
                   <span className="h-px w-2 bg-ink-faint" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="truncate text-sm text-ink-3">{u.text}</span>
-                  <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>
+                  {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
                 </div>
               </li>
             ))}
@@ -70,6 +70,16 @@ export function ChangeList({
         )}
       </div>
     </div>
+  )
+}
+
+/** 一个值：颜色带小色块 */
+function Val({ v }: { v: { text: string; color?: string } }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-ink-2">
+      {v.color && <span aria-hidden className="size-2.5 rounded-sm inset-ring inset-ring-ink/25" style={{ backgroundColor: v.color }} />}
+      {v.text}
+    </span>
   )
 }
 
@@ -91,7 +101,7 @@ function GroupRow({
   return (
     <li>
       <label
-        title={cp('dialog.checkTip')}
+        title={g.fixed ? g.detail : cp('dialog.checkTip')}
         data-change-group={g.key}
         data-active={active || undefined}
         onPointerEnter={() => onActive(g.key)}
@@ -103,13 +113,33 @@ function GroupRow({
           active ? 'bg-selected' : 'hover:bg-surface-hover',
         )}
       >
-        <Checkbox checked={checked} onChange={() => onToggle(g.key)} aria-label={g.summary} className="mt-0.5 size-[15px] [&>input:checked]:border-ink-2 [&>input:checked]:bg-ink-2" />
+        {g.fixed ? (
+          <span aria-hidden className="mt-0.5 flex size-[15px] shrink-0 items-center justify-center text-ink-3">
+            <Check size={ICON_SIZE.xs} />
+          </span>
+        ) : (
+          <Checkbox checked={checked} onChange={() => onToggle(g.key)} aria-label={g.summary} className="mt-0.5 size-[15px] [&>input:checked]:border-ink-2 [&>input:checked]:bg-ink-2" />
+        )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className={cn('text-sm', checked ? 'text-ink' : 'text-ink-3')}>{g.summary}</span>
-          <span className="type-meta">
-            {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}
-            {g.room ? ` · ${cp('dialog.roomNote')}` : ''}
-          </span>
+          {g.lines?.map((l, i) => (
+            <span key={i} data-change-line className="type-meta flex flex-wrap items-center gap-x-1.5">
+              <span>{l.label}</span>
+              {l.after && (
+                <>
+                  {l.before && <Val v={l.before} />}
+                  {l.before && <span aria-hidden>→</span>}
+                  <Val v={l.after} />
+                </>
+              )}
+            </span>
+          ))}
+          {g.metaText !== '' && (
+            <span className="type-meta">
+              {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}
+              {g.room ? ` · ${cp('dialog.roomNote')}` : ''}
+            </span>
+          )}
         </span>
       </label>
     </li>

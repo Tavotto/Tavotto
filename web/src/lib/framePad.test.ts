@@ -6,6 +6,7 @@ import {
   inkInsetMm,
   isZeroPad,
   planFigureCorner,
+  planFigureEdge,
   planPadEdge,
   ZERO_PAD,
 } from './framePad'
@@ -201,5 +202,43 @@ describe('planFigureCorner', () => {
   it('⇧ 自由比例：宽高各自跟指针', () => {
     const p = planFigureCorner({ ...common, corner: 'br', dx: 10, dy: -20, free: true, noSnap: true })
     expect(p.sizeMm).toEqual([90, 40])
+  })
+})
+
+describe('planFigureEdge：拖边改这一维的图幅（ADR 0161 修订 2026-11-27）', () => {
+  const base = {
+    box0: { x: 0, y: 0, w: 80, h: 55 },
+    sizeMm: [80, 55] as const,
+    pad: ZERO_PAD,
+    k: 1,
+    noSnap: false,
+    columns: [] as PageColumn[],
+  }
+
+  it('钳到引擎上下限；画布至少剩 5 mm', () => {
+    expect(planFigureEdge({ ...base, edge: 'r', deltaOut: 500, limits: { min: 20, max: 400 } }).sizeMm).toEqual([400, 55])
+    expect(planFigureEdge({ ...base, edge: 'r', deltaOut: -500, limits: { min: 20, max: 400 } }).sizeMm).toEqual([20, 55])
+    const padded = planFigureEdge({ ...base, edge: 'b', pad: { l: 0, t: -10, r: 0, b: -10 }, deltaOut: -500 })
+    expect(padded.sizeMm[1]).toBe(25)
+  })
+
+  it('起手吸附半径内 changed = false；已是正方形的图不算「吸成正方形」', () => {
+    expect(planFigureEdge({ ...base, edge: 'r', deltaOut: 1.5, startTolMm: 2 }).changed).toBe(false)
+    expect(planFigureEdge({ ...base, edge: 'r', deltaOut: 1.5, startTolMm: 2, noSnap: true }).sizeMm).toEqual([81.5, 55])
+    const sq = planFigureEdge({ ...base, sizeMm: [55, 55], box0: { x: 0, y: 0, w: 55, h: 55 }, edge: 'r', deltaOut: 1 })
+    expect(sq.changed).toBe(false)
+    expect(sq.square).toBe(false)
+  })
+
+  it('拖左边 / 上边：对边（画布右 / 下边）不动', () => {
+    const p = planFigureEdge({ ...base, edge: 'l', pad: { l: 3, t: 0, r: 2, b: 0 }, box0: { x: -3, y: 0, w: 85, h: 55 }, deltaOut: 10 })
+    expect(p.box.x + p.box.w).toBeCloseTo(82, 6)
+    expect(p.pos.x).toBeCloseTo(82 - 2 - 90, 6)
+  })
+
+  it('正方形量的是画布（导出页面 = 图幅 + 留白）', () => {
+    const p = planFigureEdge({ ...base, edge: 'r', pad: { l: 5, t: 0, r: 5, b: 0 }, box0: { x: -5, y: 0, w: 90, h: 55 }, deltaOut: -34 })
+    expect(p.sizeMm).toEqual([45, 55])
+    expect(p.square).toBe(true)
   })
 })
