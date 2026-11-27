@@ -46,7 +46,7 @@ function value(field: string, v: unknown): ChangeValue {
   if (typeof v === 'boolean') return { text: vt(v ? 'on' : 'off') }
   if (typeof v === 'number') return { text: `${round(v)}${UNIT[field] ? ` ${UNIT[field]}` : ''}` }
   if (typeof v === 'string') {
-    if (/^#[0-9a-f]{3,8}$/i.test(v)) return { text: v.toLowerCase(), color: v }
+    if (/^#[0-9a-f]{3,8}$/i.test(v)) return { text: v.toUpperCase(), color: v }
     return { text: field === 'text' || field === 'name' ? `「${clip(v, 16)}」` : v }
   }
   return { text: vt('style') }

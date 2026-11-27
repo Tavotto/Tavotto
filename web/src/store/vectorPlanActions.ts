@@ -16,7 +16,7 @@ import { engineTransport } from '@/lib/engineTransport'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId } from '@/lib/session'
 import { changeGroups, type ChangeGroup } from '@/lib/vectorChanges'
-import { baselineHolds, hasEdits, landedHolds, landVector, sameJson, snapshotOf, touchedCount, vectorSelectionOf, type VectorSnapshot } from '@/lib/vectorEdit'
+import { cropToFrame, previewFrame, baselineHolds, hasEdits, landedHolds, landVector, sameJson, snapshotOf, touchedCount, vectorSelectionOf, type VectorSnapshot } from '@/lib/vectorEdit'
 import { currentLocale, msg, t as translate } from '@/i18n'
 import { currentRunSelection, newRequestId, useAiStore } from './aiStore'
 import { POLL_TIMEOUT, useChangePlanStore, type PlanEntry, type VectorHandle } from './changePlanStore'
@@ -226,14 +226,16 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
 
   const pageW = doc.page.w
   const pageH = doc.page.h
+  // 取景：对比图与卡片缩略图只画被改动的那一块（加留白），一眼看见改了什么
+  const frame = previewFrame(doc.page, doc.objects, merged.objects, result)
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), VECTOR_PREVIEW_TIMEOUT_MS)
   let beforeSrc = ''
   let afterSrc = ''
   try {
     const [b, a] = await Promise.all([
-      fetchLayoutPreviewPng(canvasSegmentOf({ page: doc.page, objects: doc.objects }), abort.signal),
-      fetchLayoutPreviewPng(canvasSegmentOf({ page: { ...doc.page, w: pageW, h: pageH }, objects: merged.objects }), abort.signal),
+      fetchLayoutPreviewPng(canvasSegmentOf(cropToFrame({ page: doc.page, objects: doc.objects }, frame)), abort.signal),
+      fetchLayoutPreviewPng(canvasSegmentOf(cropToFrame({ page: { ...doc.page, w: pageW, h: pageH }, objects: merged.objects }, frame)), abort.signal),
     ])
     beforeSrc = URL.createObjectURL(b)
     afterSrc = URL.createObjectURL(a)

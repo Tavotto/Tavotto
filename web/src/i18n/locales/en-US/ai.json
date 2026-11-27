@@ -950,7 +950,7 @@
       "appliedVector_one": "Applied · {{count}} object changed",
       "appliedVector_other": "Applied · {{count}} objects changed",
       "generatingVector": "Changing the selected objects…",
-      "vectorKernel": "This step needs the geometry kernel, which isn’t available on this computer. Nothing was changed"
+      "vectorKernel": "This computer is missing a component, so merging, offsetting and outlining can’t be done here. Nothing was changed"
     },
     "dialog": {
       "title": "Change plan",
@@ -1044,7 +1044,7 @@
         "bad_value": "The value can’t be used, so nothing changed",
         "out_of_range": "The value is out of range, so nothing changed",
         "duplicate_target": "The same object was changed twice, so nothing changed",
-        "kernel_unavailable": "This step needs the geometry kernel, which isn’t available on this computer, so nothing changed",
+        "kernel_unavailable": "This computer is missing a component, so this kind of change can’t be done here. Nothing was changed",
         "too_many_steps": "At most {{max}} steps per plan; the other {{count}} were left unchanged"
       }
     },

@@ -77,7 +77,7 @@ export function ChangeList({
 function Val({ v }: { v: { text: string; color?: string } }) {
   return (
     <span className="inline-flex items-center gap-1 text-ink-2">
-      {v.color && <span aria-hidden className="size-2.5 rounded-sm inset-ring inset-ring-border" style={{ backgroundColor: v.color }} />}
+      {v.color && <span aria-hidden className="size-2.5 rounded-sm inset-ring inset-ring-ink/25" style={{ backgroundColor: v.color }} />}
       {v.text}
     </span>
   )

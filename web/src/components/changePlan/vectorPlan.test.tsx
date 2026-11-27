@@ -329,7 +329,7 @@ it('几何内核没装好：一条都做不了时卡上一句人话，图没有�
   const card = q('[data-change-plan-card]')!
   expect(card.dataset.changePlanCard).toBe('failed')
   expect(card.dataset.changePlanCode).toBe('vector_kernel_unavailable')
-  expect(card.textContent).toContain('几何内核')
+  expect(card.textContent).toContain('缺一个组件')
   expect(card.textContent).not.toContain('这台机器上的几何内核没装上') // 后端那句是写给模型的，不上界面
 })
 
@@ -382,4 +382,18 @@ it('对比图出不来：失败卡 + 重试，不让用户没看过就应用', a
   render(<Live k={key} />)
   expect(q('[data-change-plan-card]')!.dataset.changePlanCode).toBe('change_plan_render_failed')
   expect(q('[data-change-plan-apply]')).toBeNull()
+})
+
+it('对比图取景：只画被改动的那一块（加留白），前后同一个框；改动占大半页就用整页', async () => {
+  const { previewFrame, cropToFrame } = await import('@/lib/vectorEdit')
+  const page = { w: 180, h: 100 }
+  const before = doc().doc.objects
+  const f = previewFrame(page, before, RESULT.objects!, RESULT)!
+  expect(f).not.toBeNull()
+  expect(f.x).toBeGreaterThanOrEqual(0)
+  expect(f.w).toBeLessThan(page.w)
+  const c = cropToFrame({ page, objects: before }, f)
+  expect(c.page).toEqual({ w: f.w, h: f.h })
+  expect(c.objects.find((o) => o.id === 't1')!.x).toBeCloseTo(10 - f.x)
+  expect(previewFrame({ w: 30, h: 30 }, before, RESULT.objects!, RESULT)).toBeNull()
 })

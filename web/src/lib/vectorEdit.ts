@@ -157,6 +157,37 @@ export function landVector(snap: VectorSnapshot, r: VectorEditResult, doc: Pick<
   return planAgentMerge(doc.objects, doc.layoutGroups, diffOf(snap, r))
 }
 
+/**
+ * 对比图的取景：被动到的对象（改前 ∪ 改后的框）加一圈留白，整张画布上只占一小块时才裁（占大半就用整页，裁了也看不出差别）。
+ * 前后两张用同一个框；返回 null = 用整页。框用未旋转的包围盒，留白够大，旋转的对象也不会被切。
+ */
+export function previewFrame(
+  page: { w: number; h: number },
+  before: readonly CanvasObject[],
+  after: readonly CanvasObject[],
+  r: VectorEditResult,
+): { x: number; y: number; w: number; h: number } | null {
+  const named = new Set(namedIds(r))
+  const boxes = [...before, ...after].filter((o) => named.has(o.id)).map((o) => [o.x, o.y, o.x + o.w, o.y + o.h] as const)
+  if (!boxes.length) return null
+  const x0 = Math.min(...boxes.map((b) => b[0]))
+  const y0 = Math.min(...boxes.map((b) => b[1]))
+  const x1 = Math.max(...boxes.map((b) => b[2]))
+  const y1 = Math.max(...boxes.map((b) => b[3]))
+  const pad = Math.max(8, 0.3 * Math.max(x1 - x0, y1 - y0))
+  const x = Math.max(0, x0 - pad)
+  const y = Math.max(0, y0 - pad)
+  const w = Math.min(page.w, x1 + pad) - x
+  const h = Math.min(page.h, y1 + pad) - y
+  return w * h > 0.6 * page.w * page.h ? null : { x, y, w, h }
+}
+
+/** 把一份画布挪到取景框的原点、页面缩成取景框大小：整版预览只画框里的那一块（对象原样，不改文档） */
+export function cropToFrame<T extends { page: { w: number; h: number }; objects: CanvasObject[] }>(doc: T, f: { x: number; y: number; w: number; h: number } | null): T {
+  if (!f) return doc
+  return { ...doc, page: { ...doc.page, w: f.w, h: f.h }, objects: doc.objects.map((o) => ({ ...o, x: o.x - f.x, y: o.y - f.y })) }
+}
+
 /** 方案里没过核对的条数（`checks` 里 `status === 'fail'`） */
 export function failedChecks(r: VectorEditResult): number {
   return (r.checks ?? []).filter((c) => c.status === 'fail').length

@@ -928,7 +928,7 @@
       "summaryVectorChecks_other": "改了 {{count}} 个对象，{{fails}} 处核对没过",
       "appliedVector_other": "已应用 · 改了 {{count}} 个对象",
       "generatingVector": "正在改选中的对象…",
-      "vectorKernel": "这一步要用几何内核，这台电脑上没装好，图没有改动"
+      "vectorKernel": "这台电脑上缺一个组件，合并、偏移、轮廓化这类改动做不了，图没有改动"
     },
     "dialog": {
       "title": "修改方案",
@@ -1013,7 +1013,7 @@
         "bad_value": "给出的值不可用，这次没动",
         "out_of_range": "值超出范围，这次没动",
         "duplicate_target": "同一个对象被改了两次，这次没动",
-        "kernel_unavailable": "这一步要用几何内核，这台电脑上没装好，这次没动",
+        "kernel_unavailable": "这台电脑上缺一个组件，这类改动做不了，这次没动",
         "too_many_steps": "一次最多改 {{max}} 步，其余 {{count}} 步这次没动"
       }
     },

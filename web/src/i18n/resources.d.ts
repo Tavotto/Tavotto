@@ -72,7 +72,7 @@ export default interface Resources {
         "undo": "撤销",
         "undoFailed": "图在应用之后又改过，没有替你撤回",
         "undoFailedScript": "脚本在应用之后又改过，没有替你撤销",
-        "vectorKernel": "这一步要用几何内核，这台电脑上没装好，图没有改动",
+        "vectorKernel": "这台电脑上缺一个组件，合并、偏移、轮廓化这类改动做不了，图没有改动",
         "version": "第 {{n}} 版",
         "view": "查看"
       },
@@ -198,7 +198,7 @@ export default interface Resources {
           "bad_op": "这一条的写法不对，这次没动",
           "bad_value": "给出的值不可用，这次没动",
           "duplicate_target": "同一个对象被改了两次，这次没动",
-          "kernel_unavailable": "这一步要用几何内核，这台电脑上没装好，这次没动",
+          "kernel_unavailable": "这台电脑上缺一个组件，这类改动做不了，这次没动",
           "not_vector": "这个不是能直接改的对象，这次没动",
           "out_of_range": "值超出范围，这次没动",
           "too_many_steps": "一次最多改 {{max}} 步，其余 {{count}} 步这次没动",
