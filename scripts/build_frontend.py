@@ -9,6 +9,7 @@ CI 的发布流水线和本地 `python -m build` 之前都走同一条命令：
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -25,10 +26,23 @@ WEB_SRC = ROOT / "web"
 DIST = WEB_SRC / "dist"
 TARGET = ROOT / "src" / "tavotto" / "web"
 
+# Node 默认堆上限按机器内存算：macOS CI runner（7 GB）上约 2 GB，`pnpm build`（tsc -b + vite）
+# 已经顶到——11-26、11-27 合并组 macos-app-smoke 两次 `JavaScript heap out of memory`（2026 MB）。
+# 固定给 4 GB：比 runner 内存小得多，本机与 Windows 也够；调用方自己给了上限就不动。
+NODE_HEAP_MB = 4096
+
+
+def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(os.environ if base is None else base)
+    opts = env.get("NODE_OPTIONS", "")
+    if "--max-old-space-size" not in opts:
+        env["NODE_OPTIONS"] = f"{opts} --max-old-space-size={NODE_HEAP_MB}".strip()
+    return env
+
 
 def run(cmd: list[str]) -> None:
     print("$", " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=WEB_SRC, check=True)
+    subprocess.run(cmd, cwd=WEB_SRC, check=True, env=build_env())
 
 
 def main() -> int:
