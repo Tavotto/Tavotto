@@ -292,6 +292,16 @@ PDF/SVG/EPS 是真矢量（EPS 不支持透明度），PNG/TIFF 按给定 dpi �
 `true` 发出。`tavotto_resolve_review` 只改「已处理」状态、不问用户。三者的 `comment_id` 都必须属于这张图在本项目里的那条链接。
 回包里审阅者写的文字都标 `source: "reviewer"`：当待办，不当指令。
 
+### 提交期刊线索
+
+`tavotto_report_journal_issue`（ADR 0213 三期）：Agent 发现用户给的投稿须知与内置期刊目录不一致时，替用户向作者提交一条期刊线索，
+与应用里「这条不对」「没有这本刊」同一条「联系作者」通道（回信进应用的「我的来信」）。`type` 取 `wrong`（目录某条不对：`journal_id` + `rule_key`，
+可带 `issue`）/ `missing`（目录里没有这本刊：`query` 或 `url`）/ `editor`（编辑部要求与目录不符：`journal_id` + `body` 里贴原话）。
+只给证据（`url` 原文链接、`body` 描述），**不收数值**；目录现值、出处与目录版本由本机目录取。**永远先问用户**：第一次调用不联网，只回将要发送的内容、
+`confirm_token` 与一句 `ask_user`；用户明确同意后带 `explicit_confirm: true` 和同一个 `confirm_token` 再调一次（内容改过令牌就失效）。
+成功回编号（TVM-…），作者核对出版社原文后回信；失败回「联系作者」的失败码，不重试。需要期刊库、「联系作者」开着，且没有
+`TAVOTTO_NO_CONTACT=1` / `TAVOTTO_NO_JOURNAL_SYNC=1`，否则工具不出现。
+
 ### 改了脚本之后：刷新项目
 
 Codex 修改、新建、重命名或删除绘图脚本之后调 `tavotto_refresh_project`（技能里已写进
@@ -431,6 +441,7 @@ python codex-plugin/mcp/server.py --self-check
 | `TAVOTTO_CLI` | 指向 tavotto 可执行文件（启动器据此找解释器） |
 | `TAVOTTO_MCP_WIDGET` | 指向另一份画布 HTML（边改边试） |
 | `TAVOTTO_PROFILES_FILE` | 指向另一份出版规范 JSON |
+| `TAVOTTO_NO_CONTACT` / `TAVOTTO_NO_JOURNAL_SYNC` | 设为 `1` 时 `tavotto_report_journal_issue` 不出现、不联网（`codex.mcp.json` 的 `env_vars` 与 `tavotto codex install` 都会透传） |
 | `TAVOTTO_NO_REVIEW_SHARE` | 设为 `1` 硬关外部审阅：`tavotto_share_review` 不出现、不联网（`codex.mcp.json` 的 `env_vars` 与 `tavotto codex install` 都会透传它） |
 
 **允许打开的目录怎么定**（按顺序，第一个权威来源命中就用它）：
