@@ -63,6 +63,20 @@ _STAT_TEXT = re.compile(
 )
 PROVENANCES = ("user", "data")
 
+#: 条目词汇的一份说明（给模型 / Agent 看的，**只此一处**）：`vectoredit.OPS_DOC` 的 `add` 从这里取。位置一律写锚点、不写毫米。
+ITEMS_DOC = (
+    "条目 {kind, name, …}：kind ∈ arrow {from, to, head?} / text {text, at, attach?, sizePt?} / "
+    "bracket {between: [位置, 位置], side?: above|below} / box {fit: [目标…], padding_mm?}（框住子图）/ "
+    "connector {from, to, route?} / shape {shape, at, size_mm}；name 是本批内的局部名字。"
+    "位置 = {anchor: …, offset_mm?}；anchor 只认 panel = {panel: {id: P1, point: nw|n|ne|w|center|e|sw|s|se}}、"
+    "item = {item: {name, point}}（本批里先声明的条目）；data / element 锚点（锚在数据点 / 图内元素上）要这张图量过才能用，没量过会被拒。"
+    "box 的 fit 是目标列表，每个目标是单键对象，如 [{panel: {id: P1}}]。"
+    "显著性星号 / n.s. / p 值 / n 的文字必须写 provenance: user，且这段文字必须原样出现在用户的话里，否则不收。"
+    "例：外框 {kind: box, name: frame, fit: [{panel: {id: P1}}]}；"
+    '子图标注 {kind: text, name: tag, text: "(a)", at: {anchor: {panel: {id: P1, point: nw}}, offset_mm: [2, -3]}, attach: sw}；'
+    "括号 {kind: bracket, name: br, between: [{anchor: {panel: {id: P1, point: nw}}}, {anchor: {panel: {id: P1, point: ne}}}], side: above}。"
+)
+
 
 class SceneError(Exception):
     def __init__(self, code: str, item: str | None = None, detail: str | None = None):
