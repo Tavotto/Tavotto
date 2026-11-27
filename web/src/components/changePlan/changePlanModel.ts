@@ -151,14 +151,14 @@ function unhandledViewsOf(e: PlanEntry): UnhandledView[] {
 export const unhandledReason = (r: ChangePlanUnhandledReason): string => cp(`unhandled.${r}`)
 
 /** 后端 `vectoredit.ERROR_CODES` 的闭集：每个码一句人话（后端那句是写给模型 / Agent 看的，不上界面） */
-const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'bad_value', 'out_of_range', 'duplicate_target', 'kernel_unavailable'] as const
+const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'bad_value', 'out_of_range', 'duplicate_target', 'kernel_unavailable', 'too_many_steps'] as const
 
 /** 矢量编辑方案里没能照做的几条：带码的按码翻成人话，没码的是模型自己写的一句原因，照显示 */
 function vectorUnhandledViews(e: PlanEntry): UnhandledView[] {
   // 一行一句原因（没有「谁说的」那一层，也不重复整条指令）
   return (e.vector?.result?.unhandled ?? []).map((u, i) => ({
     id: `u${i}`,
-    text: (VECTOR_CODES as readonly string[]).includes(u.code ?? '') ? cp(`unhandled.vector.${u.code}`) : clip(u.reason, 80) || cp('unhandled.vector.bad_op'),
+    text: (VECTOR_CODES as readonly string[]).includes(u.code ?? '') ? cp(`unhandled.vector.${u.code}`, { count: u.count ?? 0, max: u.max ?? 0 }) : clip(u.reason, 80) || cp('unhandled.vector.bad_op'),
     reviewer: '',
     reason: '',
   }))

@@ -221,7 +221,10 @@ def validate_ops(obj: object, canvas: dict) -> dict:
     if len(ops) > MAX_MODEL_OPS:
         unhandled.append(
             {
-                "reason": f"一次最多改 {MAX_MODEL_OPS} 步，后面的 {len(ops) - MAX_MODEL_OPS} 步没有收下"
+                "code": "too_many_steps",
+                "count": len(ops) - MAX_MODEL_OPS,
+                "max": MAX_MODEL_OPS,
+                "reason": f"一次最多改 {MAX_MODEL_OPS} 步，后面的 {len(ops) - MAX_MODEL_OPS} 步没有收下",
             }
         )
     for u in raw_unhandled[:MAX_UNHANDLED]:

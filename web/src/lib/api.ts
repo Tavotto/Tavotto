@@ -4443,6 +4443,9 @@ export async function fetchLayoutPreviewPng(
 export interface VectorEditUnhandled {
   reason: string
   code?: string
+  /** `too_many_steps`：没收下的步数与上限 */
+  count?: number
+  max?: number
 }
 
 /** `/api/vector-edit/plan` 回的方案（`engine/vectorplan.plan` + 指令模式多出的 `ops` / `unhandled`）；全部是后端算好的，前端只翻译与落位 */

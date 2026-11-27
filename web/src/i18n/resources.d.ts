@@ -201,6 +201,7 @@ export default interface Resources {
           "kernel_unavailable": "这一步要用几何内核，这台电脑上没装好，这次没动",
           "not_vector": "这个不是能直接改的对象，这次没动",
           "out_of_range": "值超出范围，这次没动",
+          "too_many_steps": "一次最多改 {{max}} 步，其余 {{count}} 步这次没动",
           "unknown_object": "找不到对应的对象，这次没动"
         }
       },

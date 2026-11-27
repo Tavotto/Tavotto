@@ -1044,7 +1044,8 @@
         "bad_value": "The value can’t be used, so nothing changed",
         "out_of_range": "The value is out of range, so nothing changed",
         "duplicate_target": "The same object was changed twice, so nothing changed",
-        "kernel_unavailable": "This step needs the geometry kernel, which isn’t available on this computer, so nothing changed"
+        "kernel_unavailable": "This step needs the geometry kernel, which isn’t available on this computer, so nothing changed",
+        "too_many_steps": "At most {{max}} steps per plan; the other {{count}} were left unchanged"
       }
     },
     "draft": {

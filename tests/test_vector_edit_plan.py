@@ -191,7 +191,10 @@ def test_the_model_cannot_name_more_ops_than_the_cap():
     ops = [{"op": "move", "id": "t_user0001", "by_mm": [0.1, 0]}] * (vp.MAX_MODEL_OPS + 3)
     out = vp.validate_ops({"ops": ops, "unhandled": []}, canvas)
     assert len(out["ops"]) == vp.MAX_MODEL_OPS
-    assert "没有收下" in out["unhandled"][-1]["reason"]
+    last = out["unhandled"][-1]
+    assert "没有收下" in last["reason"]
+    # 带码，界面按码翻成界面语言（不显示后端中文）
+    assert (last["code"], last["count"], last["max"]) == ("too_many_steps", 3, vp.MAX_MODEL_OPS)
 
 
 @pytest.mark.parametrize(

@@ -1013,7 +1013,8 @@
         "bad_value": "给出的值不可用，这次没动",
         "out_of_range": "值超出范围，这次没动",
         "duplicate_target": "同一个对象被改了两次，这次没动",
-        "kernel_unavailable": "这一步要用几何内核，这台电脑上没装好，这次没动"
+        "kernel_unavailable": "这一步要用几何内核，这台电脑上没装好，这次没动",
+        "too_many_steps": "一次最多改 {{max}} 步，其余 {{count}} 步这次没动"
       }
     },
     "draft": {
