@@ -617,3 +617,54 @@ it('非样式字段各有准确的叫法：编组 / 取消编组、锁定、隐�
   expect(lines([{ id: 't1', field: 'locked', before: false, after: true, op: 0 }, { id: 't1', field: 'hidden', before: false, after: true, op: 0 }, { id: 't1', field: 'name', before: 'a', after: 'b', op: 0 }])).toEqual([['锁定', '隐藏', '名字']])
   expect(lines([{ id: 'a1', field: 'headEnd', before: 'none', after: 'arrow', op: 0 }, { id: 'a1', field: 'someFutureKey', before: 1, after: 2, op: 0 }])).toEqual([['终点端型', '样式']])
 })
+
+it('勾掉一步、子集算完而对比图还在画时又勾回来：手里的方案恢复成整份（勾选、方案、对比图一起换），应用写的是全量', async () => {
+  const key = await runToReady()
+  await openDialog(key)
+  planOps.mockResolvedValueOnce(subset({ a: true, s: true }))
+  let release!: (b: Blob) => void
+  previewPng.mockReset().mockReturnValueOnce(new Promise<Blob>((r) => (release = r)))
+  act(() => boxes()[1].click()) // 勾掉「字号」
+  await settleRecompute() // 子集算完了，对比图还没画好
+  act(() => boxes()[1].click()) // 勾回来
+  await settleRecompute()
+  expect(boxes().every((b) => b.checked)).toBe(true)
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+  await act(async () => {
+    release(new Blob(['x'], { type: 'image/png' })) // 迟到的子集对比图不能再改任何东西
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  act(() => void useChangePlanStore.getState().apply(key))
+  const o = (id: string) => doc().doc.objects.find((x) => x.id === id) as unknown as Record<string, number> | undefined
+  expect(o('t1')!.sizePt).toBe(12) // 勾选和显示都是全量，应用也是全量
+  expect(o('a1')!.strokePt).toBe(0.75)
+  expect(o('s1')).toBeUndefined()
+})
+
+it('部分勾选只发有改动行的步：原方案里没产生改动的步（同值再设一次）不会在用户取消了前一次之后生效', async () => {
+  const same: VectorEditResult = {
+    ...RESULT,
+    objects: [obj({ ...T1, sizePt: 12, color: '#ff0000' })],
+    deleted: [],
+    echo: [],
+    changes: [
+      { id: 't1', field: 'sizePt', before: 8, after: 12, op: 0 },
+      { id: 't1', field: 'color', before: '#000000', after: '#ff0000', op: 2 },
+    ],
+    ops: [{ op: 'set', id: 't1', set: { sizePt: 12 } }, { op: 'set', id: 't1', set: { sizePt: 12 } }, { op: 'set', id: 't1', set: { color: '#ff0000' } }],
+  }
+  const key = await runToReady(same)
+  await openDialog(key)
+  expect(boxes()).toHaveLength(2) // 第 1 步没有改动行
+  planOps.mockResolvedValueOnce({ ...same, objects: [obj({ ...T1, color: '#ff0000' })], changes: [] })
+  act(() => boxes()[0].click()) // 取消「字号」
+  await settleRecompute()
+  expect((planOps.mock.calls[0][1] as { set: object }[]).map((o) => o.set)).toEqual([{ color: '#ff0000' }]) // 没把第二次 sizePt 带进去
+  act(() => void useChangePlanStore.getState().apply(key))
+  const t = doc().doc.objects.find((x) => x.id === 't1') as unknown as Record<string, unknown>
+  expect(t.sizePt).toBe(8)
+  expect(t.color).toBe('#ff0000')
+  // 全勾时发的是原始全量
+  act(() => doc().undo())
+  planOps.mockClear()
+})
