@@ -1793,6 +1793,10 @@ def _check_items(objs: list[dict], ops: object, panels: dict) -> list[dict]:
     return list(by.values())
 
 
+#: 改了这些字段才重新核「字体族与图一致」：字体族本身、文字内容（`vectorcheck` 的 style 核对只看字体族，文字内容是随手再确认一次）
+STYLE_FIELDS = frozenset({"fontFamily", "text"})
+
+
 def _plan(canvas: dict, ops: object, measure, profile) -> dict:
     # 子图总要量：改后的对象要核「不遮数据」；锚点挪动另要数据点
     panels, _refs, unmeasured = la.measure_panels(
@@ -1856,6 +1860,15 @@ def _plan(canvas: dict, ops: object, measure, profile) -> dict:
             was = {_fact_key(f) for f in run(olds) if f["status"] == "fail"} if olds else set()
             for f in got:
                 if f["status"] == "fail" and _fact_key(f) in was:
+                    f = {**f, "status": "preexisting"}
+                elif (
+                    f["status"] == "fail"
+                    and f.get("check") == "style"
+                    and f.get("item") in before_by
+                    and not fields.get(f.get("item"), set()) & STYLE_FIELDS
+                ):
+                    # 字体族核对只报这次编辑引入的差异：没动字体族 / 文字的已有对象，挪位置、改线宽、改层级都不该
+                    # 因为它本来的字体族与图不一致而被拦（「用户早就接受的」，ADR 0212 §四）
                     f = {**f, "status": "preexisting"}
                 facts.append(f)
     failed = [f for f in facts if f["status"] == "fail"]

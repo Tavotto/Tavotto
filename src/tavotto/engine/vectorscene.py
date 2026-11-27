@@ -178,6 +178,11 @@ def _anchors_of(it: object) -> list:
     return found
 
 
+#: 没写 `fontFamily` 的画布文字按它渲染：与前端 `web/src/lib/typography.ts` 的 `CANVAS_TEXT_DEFAULT_FAMILY` 同一个值（同源对，
+#: `tests/test_vector_edit_style_check.py` 逐字核对），核对 / 求解里不再各处手写 "serif"。
+CANVAS_TEXT_DEFAULT_FAMILY = "serif"
+
+
 def family_class(name: object) -> str:
     """图里的字体名 → 画布文字的三类族（`TextObject.fontFamily`）：含 mono → 等宽；含 serif 且不含 sans → 衬线；其余无衬线。"""
     n = str(name or "").lower()
@@ -523,13 +528,20 @@ def _connector(it: dict, ctx: _Ctx, name: str) -> tuple[dict, list[dict]]:
     return obj, _node_records(name, pts, refs)
 
 
+#: `box` 的 `fit` 写错时 `bad_item` 的 detail：把期望形态直接给出来（插件工具与桌面助手把它原样念给模型）
+FIT_FORM = (
+    'fit 应是目标列表，每个目标是单键对象，如 [{"panel": {"id": "P1"}}]；'
+    '也可写 {"element": {"panel": "P1", "gid": …}} 或 {"item": {"name": …}}'
+)
+
+
 def _target_box(target: object, ctx: _Ctx, name: str) -> tuple[float, float, float, float]:
     """「框住」的一个目标 → 画布外接框（x0, y0, x1, y1）。"""
     if not isinstance(target, dict) or len(target) != 1:
-        raise SceneError("bad_item", name, "fit")
+        raise SceneError("bad_item", name, FIT_FORM)
     kind, spec = next(iter(target.items()))
     if not isinstance(spec, dict):
-        raise SceneError("bad_item", name, "fit")
+        raise SceneError("bad_item", name, FIT_FORM)
     if kind == "panel":
         pn = _panel_of(ctx, spec.get("id"), name)["panel"]
         return (pn["x"], pn["y"], pn["x"] + pn["w"], pn["y"] + pn["h"])
@@ -543,13 +555,13 @@ def _target_box(target: object, ctx: _Ctx, name: str) -> tuple[float, float, flo
         if box is None:
             raise SceneError("unknown_ref", name, "item")
         return (box[0], box[1], box[0] + box[2], box[1] + box[3])
-    raise SceneError("bad_item", name, "fit")
+    raise SceneError("bad_item", name, FIT_FORM)
 
 
 def _box(it: dict, ctx: _Ctx, name: str) -> tuple[dict, dict]:
     targets = it.get("fit")
     if not isinstance(targets, list) or not targets:
-        raise SceneError("bad_item", name, "fit")
+        raise SceneError("bad_item", name, FIT_FORM)
     boxes = [_target_box(t, ctx, name) for t in targets]
     pad = _num_arg(it, "padding_mm", 1.5, name)
     x0 = min(b[0] for b in boxes) - pad

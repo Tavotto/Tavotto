@@ -694,6 +694,7 @@ _LAYOUT_ITEMS = {
         "位置一律写锚点 {anchor: {data|element|panel|item: …}, offset_mm?}——"
         "data = {panel, axes, x, y}（数据坐标，引擎从这次导出实测）、element = {panel, gid, point}（场景里的元素）、"
         "panel = {id, point}（子图框的方位点 nw/n/ne/w/center/e/sw/s/se）、item = {name, point}（本批里另一个元素）。"
+        "box 例：{kind: box, name: frame, fit: [{panel: {id: P1}}], padding_mm: 1.5}（fit 是目标列表，每个目标是单键对象）。"
         "显著性星号 / n.s. / p 值 / n 必须写 provenance: user（用户说的）或 data（数据里算出来的），否则整批要用户确认。"
         "全文见 tavotto_guide section=layout-annotate。"
     ),
@@ -2112,7 +2113,15 @@ def _call_layout_plan(args: dict) -> dict:
     pv = out.pop("preview", None)
     lines = [e["text"] for e in out.get("echo") or []]
     if out.get("errors") and not out.get("echo"):
-        lines.insert(0, "方案没出来：" + "、".join(str(e.get("code")) for e in out["errors"]))
+        lines.insert(
+            0,
+            "方案没出来："
+            + "、".join(
+                str(e.get("code"))
+                + (f"（{e['item']}：{e['detail']}）" if e.get("item") and e.get("detail") else "")
+                for e in out["errors"]
+            ),
+        )
     elif out.get("failed"):
         lines.insert(
             0,
