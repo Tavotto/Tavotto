@@ -67,6 +67,8 @@ if IS_WINDOWS:
     _k32.CloseHandle.argtypes = [wintypes.HANDLE]
     _k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
     _k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    _k32.GetProcessTimes.argtypes = [wintypes.HANDLE, *[ctypes.POINTER(ctypes.c_uint64)] * 4]
+    _k32.GetProcessTimes.restype = wintypes.BOOL
     for _name in ("Process32FirstW", "Process32NextW"):
         getattr(_k32, _name).argtypes = [wintypes.HANDLE, wintypes.LPVOID]
         getattr(_k32, _name).restype = wintypes.BOOL
@@ -170,41 +172,96 @@ def terminate_pid(pid: int) -> bool:
 
 
 # --------------------------------------------------------------------------- 进程快照
-def _snapshot_children() -> dict[int, list[int]]:
-    """{父 pid: [子 pid…]}。快照失败返回空表——调用方退化成只结束根进程。"""
-    kids: dict[int, list[int]] = {}
+def _snapshot() -> list[tuple[int, int]]:
+    """[(pid, 父 pid)…]。快照失败返回空表——调用方退化成只结束根进程。"""
+    rows: list[tuple[int, int]] = []
     snap = _k32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
     if not snap or snap == ctypes.c_void_p(-1).value:
-        return kids
+        return rows
     try:
         entry = _ProcessEntry()
         entry.dwSize = ctypes.sizeof(entry)
         ok = _k32.Process32FirstW(snap, ctypes.byref(entry))
         while ok:
-            kids.setdefault(entry.th32ParentProcessID, []).append(entry.th32ProcessID)
+            rows.append((entry.th32ProcessID, entry.th32ParentProcessID))
             ok = _k32.Process32NextW(snap, ctypes.byref(entry))
     finally:
         _k32.CloseHandle(snap)
-    return kids
+    return rows
 
 
-def descendants(pid: int) -> list[int]:
-    """`pid` 的全部后代，**叶子在前**（先杀叶子，父进程就没有机会再起新的）。"""
-    if not IS_WINDOWS:
-        return []
-    kids = _snapshot_children()
+def _create_time(pid: int) -> int | None:
+    """进程的创建时刻（FILETIME 原值）；打不开 / 已退出返回 None。"""
+    handle = _k32.OpenProcess(_PROCESS_QUERY_LIMITED, False, pid)
+    if not handle:
+        return None
+    try:
+        t = [ctypes.c_uint64() for _ in range(4)]
+        if not _k32.GetProcessTimes(handle, *(ctypes.byref(x) for x in t)):
+            return None
+        return t[0].value
+    finally:
+        _k32.CloseHandle(handle)
+
+
+def _is_child(child: int, parent: int, ctime) -> bool:
+    """快照里「父 pid = parent」只是个号：父进程早退出、号被复用时，这条边指向的是一个**比孩子还年轻**的
+    陌生进程。真父子的孩子一定不早于父亲创建——比不出来（任一方打不开）就不认，宁可少杀。"""
+    c, p = ctime(child), ctime(parent)
+    return c is not None and p is not None and c >= p
+
+
+def _lineage(pid: int, parent_of: dict[int, int], ctime) -> set[int]:
+    """`pid` 自己和它（按创建时刻核实过的）全部祖先。"""
+    out = {pid}
+    cur = pid
+    while (par := parent_of.get(cur)) is not None and par not in out and _is_child(cur, par, ctime):
+        out.add(par)
+        cur = par
+    return out
+
+
+def _tree(root: int, rows: list[tuple[int, int]], ctime, protected: set[int]) -> list[int]:
+    """`root` 的后代，**叶子在前**（先杀叶子，父进程就没有机会再起新的）。
+
+    两道护栏（11-27 合并组 Windows：杀「后代」时把 pytest 自己一起结束了，exit 1、没有任何输出）：
+    - 每条父子边都按创建时刻核实（`_is_child`）：pid 复用造出的假边不认；
+    - `protected`（调用者自己和它的祖先）永远不进名单。
+    """
+    kids: dict[int, list[int]] = {}
+    for pid, ppid in rows:
+        kids.setdefault(ppid, []).append(pid)
     order: list[int] = []
-    seen = {pid}
-    stack = [pid]
+    seen = {root}
+    stack = [root]
     while stack:
         cur = stack.pop()
         for child in kids.get(cur, ()):
-            if child not in seen:  # pid 复用会让父子表出环
-                seen.add(child)
-                order.append(child)
-                stack.append(child)
+            if child in seen or child in protected:  # pid 复用会让父子表出环
+                continue
+            if not _is_child(child, cur, ctime):
+                continue
+            seen.add(child)
+            order.append(child)
+            stack.append(child)
     order.reverse()
     return order
+
+
+def descendants(pid: int) -> list[int]:
+    """`pid` 的全部后代，叶子在前；不含调用者自己与它的祖先。"""
+    if not IS_WINDOWS:
+        return []
+    rows = _snapshot()
+    cache: dict[int, int | None] = {}
+
+    def ctime(p: int) -> int | None:
+        if p not in cache:
+            cache[p] = _create_time(p)
+        return cache[p]
+
+    protected = _lineage(os.getpid(), dict(rows), ctime)
+    return _tree(pid, rows, ctime, protected)
 
 
 # --------------------------------------------------------------------------- Job Object
