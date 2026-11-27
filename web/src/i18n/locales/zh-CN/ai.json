@@ -106,7 +106,14 @@
       "endpoint": "API 接口",
       "cli": "本机 CLI"
     },
-    "viewDiff": "查看差异"
+    "viewDiff": "查看差异",
+    "legacyLine_other": "还有 {{count}} 条之前的任务没带过来",
+    "legacyRestore": "找回",
+    "legacyConfirm_other": "找回这 {{count}} 条？删过的也会回来",
+    "legacyCancel": "取消",
+    "legacyBusy": "正在找回…",
+    "legacyFailed": "这次没找回来，稍后再试",
+    "legacyRetry": "再试"
   },
   "markdown": {
     "image": "[图片：{{alt}}]",

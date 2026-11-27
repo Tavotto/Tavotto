@@ -756,6 +756,44 @@ def legacy_gap_facts(budget_s: float = LEGACY_GAP_BUDGET_S) -> dict:
     return {"state": "ok", "dbs": dbs}
 
 
+def legacy_sqlite_paths(rel: str) -> list[Path]:
+    """`rel` 在各旧包私有区里的那份（mtime 新→旧）；不合资格（非 Windows / 带包身份）回空。只给只读计数与手动找回用。"""
+    if not _eligible():
+        return []
+    parts = tuple(rel.split("/"))
+    out = [local.joinpath(*parts) for _r, local in sources() if local is not None]
+    return [p for p in out if p.is_file() and not p.is_symlink()]
+
+
+def restore_legacy(rel: str, budget_s: float = PENDING_MERGE_BUDGET_S) -> str:
+    """用户手动「找回之前的任务」（#2282 补救 B）：不看「待补」标记，把旧库里真实库没有的行按主键补回来。
+
+    与后台待补合并同一条路（快照 → 登记的合并器，一个事务、到点整体回滚），所以补回的会话取新 rev、
+    未结束的收尾。和自动路径的区别只有一条：用户在新库里删掉的、旧库还有的**也会回来**——这是用户点头的。
+    回闭集 done / deferred（超时、锁被占、合并器未登记，可再试）/ failed / not_eligible。
+    """
+    if not _eligible():
+        return "not_eligible"
+    deadline = time.monotonic() + budget_s
+    if rel not in SQLITE_ITEMS or _merger_for(rel, deadline) is None:
+        return "deferred"
+    try:
+        fd = layoutsession.acquire_file_lock(config.data_path(*LOCK_REL), deadline)
+    except layoutsession.SessionStateUnavailable:
+        return "deferred"  # 别的进程正在迁移 / 合并：等不到就让用户稍后再点，不报失败
+    if fd is None:
+        return "deferred"
+    try:
+        outcome = _merge_pending_item(tuple(rel.split("/")), deadline)
+        if outcome == "done":
+            data = _read_pending()
+            if data is not None and data["items"].pop(rel, None) is not None:
+                _write_pending(data)
+        return outcome
+    finally:
+        layoutsession.release_file_lock(fd)
+
+
 _PENDING_THREAD: threading.Thread | None = None
 _PENDING_THREAD_LOCK = threading.Lock()
 

@@ -786,6 +786,56 @@ def count_legacy_gap(legacy: Path, db_path: Path | None, deadline: float) -> dic
         con.close()
 
 
+LEGACY_REL = "cache/ai_history.sqlite3"
+
+
+def legacy_missing_count(project: str, db_path: Path | None = None, budget_s: float = 2.0) -> int:
+    """这个项目在旧安装位置（MSIX 包私有区）有、真实库里没有的会话条数——所有旧包取并集，和「找回」能补回的一致。
+
+    给任务历史底部那一行（#2282 补救 B）。只读两边；到点、坏库、没有旧库都回 0：数不出来就不出那一行，不报错。
+    """
+    paths = msixmigrate.legacy_sqlite_paths(LEGACY_REL)
+    if not paths:
+        return 0
+    target = db_path or DB_PATH
+    deadline = time.monotonic() + budget_s
+    have: set[str] = set()
+    if target.is_file():
+        try:
+            con = sqlite3.connect(_ro_uri(target), uri=True, timeout=1.0)
+            try:
+                have = {
+                    r[0]
+                    for r in con.execute("SELECT id FROM sessions WHERE project = ?", (project,))
+                }
+            finally:
+                con.close()
+        except sqlite3.Error:
+            return 0
+    missing: set[str] = set()
+    for legacy in paths:
+        if time.monotonic() > deadline:
+            break
+        try:
+            con = sqlite3.connect(_ro_uri(legacy), uri=True, timeout=1.0)
+            try:
+                con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+                missing |= {
+                    r[0]
+                    for r in con.execute("SELECT id FROM sessions WHERE project = ?", (project,))
+                } - have
+            finally:
+                con.close()
+        except (sqlite3.Error, OSError):
+            continue
+    return len(missing)
+
+
+def restore_legacy() -> str:
+    """把旧安装位置里的历史补回真实库（用户在任务历史里点「找回」）。见 `msixmigrate.restore_legacy`。"""
+    return msixmigrate.restore_legacy(LEGACY_REL)
+
+
 # 登记给 MSIX 迁移的「待补旧历史」合并（它不能反过来 import 本模块：会成环）。经 lambda 在调用时取全局名，测试 monkeypatch 才生效。
 msixmigrate.register_sqlite_merger(
     "cache/ai_history.sqlite3",

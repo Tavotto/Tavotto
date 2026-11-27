@@ -108,7 +108,16 @@
       "endpoint": "API endpoint",
       "cli": "Local CLI"
     },
-    "viewDiff": "View changes"
+    "viewDiff": "View changes",
+    "legacyLine_one": "{{count}} earlier task didn't come over",
+    "legacyLine_other": "{{count}} earlier tasks didn't come over",
+    "legacyRestore": "Bring back",
+    "legacyConfirm_one": "Bring it back? It returns even if you deleted it",
+    "legacyConfirm_other": "Bring back all {{count}}? Deleted ones come back too",
+    "legacyCancel": "Cancel",
+    "legacyBusy": "Bringing back…",
+    "legacyFailed": "Couldn't bring them back. Try again later",
+    "legacyRetry": "Try again"
   },
   "markdown": {
     "image": "[image: {{alt}}]",

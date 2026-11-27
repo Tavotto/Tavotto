@@ -20633,6 +20633,26 @@ def api_ai_history():
     return resp
 
 
+@app.get("/api/ai/history/legacy")
+def api_ai_history_legacy():
+    """之前装在 MSIX 包私有区时的历史里，这个项目还有几条没带过来（#2282 补救 B；任务历史底部那一行）。
+
+    只读、有上限；非 Windows / 没有旧库 / 数不出来都回 0——那一行就不出现。
+    """
+    project = str(require_project().resolve())
+    resp = jsonify({"missing": engine_ai_history.legacy_missing_count(project)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/history/legacy/restore")
+def api_ai_history_legacy_restore():
+    """用户点「找回」：把旧库里真实库没有的会话补回来（删掉过的也会回来，界面先确认过）。回闭集 `outcome` 与剩几条。"""
+    project = str(require_project().resolve())
+    outcome = engine_ai_history.restore_legacy()
+    return jsonify({"outcome": outcome, "missing": engine_ai_history.legacy_missing_count(project)})
+
+
 @app.delete("/api/ai/history/<sid>")
 def api_ai_history_delete(sid):
     return jsonify({"ok": engine_ai_history.delete(sid)})

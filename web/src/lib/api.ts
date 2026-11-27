@@ -5567,6 +5567,18 @@ export const fetchAiHistory = (
   )
 }
 
+/** 之前装在 MSIX 包私有区时的历史里，这个项目还有几条没带过来（#2282 补救 B）。非 Windows / 没有旧库都是 0 */
+export const fetchAiHistoryLegacy = (pj: string | null) =>
+  jsonFetch<{ missing: number }>('/api/ai/history/legacy', undefined, pj)
+
+/** 用户点「找回」：把旧库里真实库没有的任务补回来。`outcome` 闭集 done / deferred / failed / not_eligible */
+export const restoreAiHistoryLegacy = (pj: string | null) =>
+  jsonFetch<{ outcome: 'done' | 'deferred' | 'failed' | 'not_eligible'; missing: number }>(
+    '/api/ai/history/legacy/restore',
+    { method: 'POST' },
+    pj,
+  )
+
 export const deleteAiHistory = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(
     `/api/ai/history/${encodeURIComponent(sid)}`,
