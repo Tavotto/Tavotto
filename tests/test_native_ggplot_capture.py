@@ -6611,3 +6611,45 @@ close(input)
                 timeout=120,
             )
             assert code == 200 and "#C46210" in archived["svg"], archived
+
+
+def test_mapped_curve_visibility_and_opacity_follow_data_even_with_same_colour(tmp_path):
+    _assert_r_probe(
+        tmp_path,
+        r"""
+pal <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
+d <- expand.grid(x = 1:5, treatment = c("Control", "Sample"), facet = c("Early", "Later"))
+d$trace <- as.integer(factor(d$treatment)) * d$x
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, trace, colour = treatment)) +
+  ggplot2::geom_line() + ggplot2::geom_point() +
+  ggplot2::scale_colour_manual(values = c(Control = "#445566", Sample = "#445566")) +
+  ggplot2::facet_wrap(~facet)
+image <- adapter$capture_ggplot(plot, c(420, 224), pal)
+state <- image$state
+control_gid <- "layer.1.line.group.1"
+sample_gid <- "layer.1.line.group.2"
+initial <- adapter$ggplot_manifest(state, "figure")
+target <- function(manifest, gid) Filter(function(e) e$gid == gid, manifest$elements)[[1L]]
+fields <- function(target) stats::setNames(lapply(target$editable, `[[`, "value"),
+                                          vapply(target$editable, `[[`, character(1L), "prop"))
+control <- target(initial, control_gid)
+sample <- target(initial, sample_gid)
+stopifnot(length(control$geometry$paths) == 2L, length(sample$geometry$paths) == 2L,
+          !identical(control$geometry$paths, sample$geometry$paths),
+          isTRUE(fields(sample)$visible), fields(sample)$alpha == 1)
+faded <- stats::setNames(list(list(alpha = .4)), sample_gid)
+hidden <- stats::setNames(list(list(visible = FALSE, alpha = .4)), sample_gid)
+a <- adapter$ggplot_manifest(state, "figure", faded)
+b <- adapter$ggplot_manifest(state, "figure", hidden)
+stopifnot(identical(control, target(a, control_gid)), identical(control, target(b, control_gid)),
+          fields(target(a, sample_gid))$alpha == .4, isTRUE(target(a, sample_gid)$geometry$stroke),
+          isFALSE(fields(target(b, sample_gid))$visible),
+          isFALSE(target(b, sample_gid)$geometry$stroke),
+          identical(sample$geometry$paths, target(b, sample_gid)$geometry$paths))
+svg <- adapter$render_ggplot(state, faded)
+masked <- adapter$render_ggplot(state, hidden)
+stopifnot(length(gregexpr("stroke-opacity: 0.40", svg, fixed = TRUE)[[1L]]) == 3L,
+          length(gregexpr("stroke-opacity: 0.40", masked, fixed = TRUE)[[1L]]) == 1L,
+          identical(adapter$render_ggplot(state), image$svg))
+""",
+    )
