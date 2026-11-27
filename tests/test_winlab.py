@@ -1044,6 +1044,8 @@ def test_pro_smoke_driver_keeps_secrets_out_of_its_result(tmp_path):
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
     )
     text = out.read_text(encoding="utf-8") + proc.stdout
