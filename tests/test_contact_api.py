@@ -287,3 +287,11 @@ def test_reply_doc_endpoint_is_session_gated():
     """会话认证是全局 before_request（ADR 0008）：这条新路由必须在 url_map 里，由 test_browser_auth 的枚举兜住。"""
     rules = {r.rule for r in m.app.url_map.iter_rules()}
     assert "/api/contact/replies/<mid>/<rid>/doc" in rules
+
+
+def test_journal_tips_follow_the_journal_sync_opt_out(on, client, monkeypatch):
+    """期刊线索入口（ADR 0213 §五）：用户关了期刊联网（TAVOTTO_NO_JOURNAL_SYNC）就不出现。"""
+    monkeypatch.delenv("TAVOTTO_NO_JOURNAL_SYNC", raising=False)  # conftest 给整个进程设了硬关
+    assert client.get("/api/contact").get_json()["journal_tips"] is True
+    monkeypatch.setenv("TAVOTTO_NO_JOURNAL_SYNC", "1")
+    assert client.get("/api/contact").get_json()["journal_tips"] is False

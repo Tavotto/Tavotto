@@ -46,7 +46,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 
-from . import brand, contactinbox, diagsend, journalremote, logsafe, telemetry
+from . import brand, contactinbox, diagsend, logsafe, telemetry
 from .netregion import ENV_REGION, region_is_cn  # noqa: F401 - 判据读法的唯一出处（`netregion`）
 
 LOG = logging.getLogger("tavotto.contactsend")
@@ -233,8 +233,12 @@ def enabled() -> bool:
     return bool(resolve_targets())
 
 
-def capability() -> dict:
-    """给界面的能力说明与未读数（本机判断，**不联网**，不含线路地址）。"""
+def capability(*, journal_tips: bool = False) -> dict:
+    """给界面的能力说明与未读数（本机判断，**不联网**，不含线路地址）。
+
+    `journal_tips`：期刊线索入口开不开（ADR 0213 §五：「联系作者」可用且用户没关期刊联网）。由调用方（`app.py`）
+    按 `journalremote.disabled()` 传进来——本模块不 import journalremote：后者的线路先后要借本模块的「大陆环境」判据，
+    两边互相 import 就成环（`tests/test_import_architecture.py`）。"""
     if not enabled():
         return {"enabled": False}
     return {
@@ -247,8 +251,7 @@ def capability() -> dict:
         "max_total_bytes": MAX_TOTAL_BYTES,
         "unread": contactinbox.unread_count(),
         "retention_days": contactinbox.RETENTION_DAYS,
-        # 期刊线索入口（ADR 0213 §五）：「联系作者」可用，且用户没关期刊联网（TAVOTTO_NO_JOURNAL_SYNC）
-        "journal_tips": not journalremote.disabled(),
+        "journal_tips": journal_tips,
     }
 
 

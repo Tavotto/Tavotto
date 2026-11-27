@@ -1650,11 +1650,11 @@ def test_old_server_422_is_a_client_error_and_the_draft_can_be_resent(on):
     assert wait_for({"done", "failed"})["state"] == "done"
 
 
-def test_capability_reports_journal_tips_unless_journal_sync_is_off(on, monkeypatch):
-    monkeypatch.delenv("TAVOTTO_NO_JOURNAL_SYNC", raising=False)  # conftest 给整个进程设了硬关
-    assert contactsend.capability()["journal_tips"] is True
-    monkeypatch.setenv("TAVOTTO_NO_JOURNAL_SYNC", "1")
-    assert contactsend.capability()["journal_tips"] is False
+def test_capability_passes_journal_tips_through_and_defaults_off(on):
+    assert contactsend.capability(journal_tips=True)["journal_tips"] is True
+    assert (
+        contactsend.capability()["journal_tips"] is False
+    )  # 调用方没说 = 不开（旧调用方不会意外打开入口）
 
 
 def test_journal_source_id_keeps_the_v2_prefix_and_rejects_other_colons(on):
