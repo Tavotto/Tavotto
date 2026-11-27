@@ -747,3 +747,49 @@ def test_open_arrow_marker_needs_the_same_stroke_width_as_the_line():
     # 用户单位：标记里线宽 1.05 与线宽 1 差 5%，仍算等宽
     near = imp(_marker(arrow.format(w=1.05), markerUnits="userSpaceOnUse") + LINE_M)
     assert near["unsupported"] == {}
+
+
+# ------------------------------------------------------------------ 允许名单（Codex 第三轮）
+def test_context_fill_with_a_translucent_reference_fill_is_unsupported_not_dropped():
+    # 引用路径的 fill 带 alpha：头在原图里是半透明可见的，端型表达不了 → 当图片，不能静默丢头
+    line = '<path d="M5 5 L50 5" fill="{f}" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    m = _marker('<path d="M0,0 L4,2 L0,4 z" fill="context-fill"/>')
+    assert imp(m + line.format(f="rgba(0,0,0,0.5)"))["unsupported"] == {"marker": 1}
+    # alpha 恰为 0：确定没画 → 没有头
+    r = imp(m + line.format(f="rgba(0,0,0,0)"))
+    assert r["unsupported"] == {} and heads(r["objects"][0]) == {}
+    # context-stroke 引用到半透明的线
+    m2 = _marker('<path d="M0,0 L4,2 L0,4 z" fill="context-stroke"/>')
+    t = '<path d="M5 5 L50 5" stroke="rgba(0,0,0,0.5)" stroke-width="1" marker-end="url(#m)"/>'
+    assert imp(m2 + t)["unsupported"] == {"marker": 1}
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        'style="paint-order:stroke"',
+        'class="po"',
+        'style="vector-effect:non-scaling-stroke"',
+        'style="shape-rendering:crispEdges"',
+        'style="stroke-dasharray:1 1"',
+        'stroke-linejoin="round" style="stroke-dashoffset:2"',
+        'fill-rule="evenodd"',
+        'fill="mystery-color"',
+    ],
+)
+def test_marker_shape_with_any_other_visual_property_is_unsupported(where):
+    css = "<style>.po{paint-order:stroke}</style>"
+    r = imp(css + _marker(f'<path d="M0,0 L4,2 L0,4 z" {where}/>') + LINE_M)
+    assert r["unsupported"] == {"marker": 1}, where
+
+
+def test_marker_ancestor_or_marker_with_unknown_property_is_unsupported():
+    css = "<style>marker{paint-order:stroke}</style>"
+    assert imp(css + _marker(TRI) + LINE_M)["unsupported"] == {"marker": 1}
+    r = imp(_marker(TRI, style="paint-order:stroke") + LINE_M)
+    assert r["unsupported"] == {"marker": 1}
+
+
+def test_filled_marker_shape_with_a_stroke_is_unsupported():
+    r = imp(_marker('<path d="M0,0 L4,2 L0,4 z" stroke="#000" stroke-width="2"/>') + LINE_M)
+    assert r["unsupported"] == {"marker": 1}

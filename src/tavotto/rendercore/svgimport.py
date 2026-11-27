@@ -259,7 +259,16 @@ STYLE_PROPS = (
     INHERITED
     | {"opacity", "display", "clip-path", "mask", "filter", "stop-color", "stop-opacity"}
     | {"marker-start", "marker-mid", "marker-end", "marker"}
-    | {"baseline-shift", "vertical-align"}  # 上下标（只 tspan 用；不继承，不在 INHERITED 里）
+    | {"baseline-shift", "vertical-align"}
+    | {
+        "paint-order",
+        "vector-effect",
+        "mix-blend-mode",
+        "isolation",
+        "shape-rendering",
+        "transform",
+        "stroke-dashoffset",
+    }  # 只给标记判定用  # 上下标（只 tspan 用；不继承，不在 INHERITED 里）
 )
 _SIMPLE_SEL = re.compile(r"^([a-zA-Z][\w-]*)?((?:[.#][\w-]+)*)$")
 
@@ -1582,14 +1591,77 @@ def _straight_end(nodes: list[dict], end: bool) -> bool:
     return _same_pt(nodes[0]["out"], nodes[0]["p"]) and _same_pt(nodes[1]["in"], nodes[1]["p"])
 
 
-def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: str | None):
-    """标记里那一个图形 → `(kind, tip, dir, length)`（标记自己的坐标）或 `None`。
+#: 标记图形能换成端型的**允许名单**（取计算值：表现属性 / 内联 style / CSS 类都算）。名单之外的任何影响外观的属性出现非默认值，
+#: 或取值读不懂，一律不换（宁可整段当图片，也不静默改样子 / 丢头）。
+_MARKER_PLAIN_PROPS = frozenset(
+    {
+        "fill", "stroke", "stroke-width", "stroke-linejoin", "stroke-linecap", "color",  # 颜色与线宽另有检查
+        "font-family", "font-size", "font-weight", "font-style", "text-anchor",  # 形状用不到
+        "stop-color", "stop-opacity", "baseline-shift", "vertical-align",
+    }
+)  # fmt: skip
+#: 只许等于默认值的属性（字符串比较，小写去空白；数值型另走 `_MARKER_UNITY`）
+_MARKER_DEFAULT_ONLY = {
+    "fill-rule": {"nonzero"}, "stroke-dasharray": {"none"}, "stroke-miterlimit": {"4"},
+    "stroke-dashoffset": {"0", "0px"}, "clip-path": {"none"}, "mask": {"none"}, "filter": {"none"},
+    "marker": {"none"}, "marker-start": {"none"}, "marker-mid": {"none"}, "marker-end": {"none"},
+    "paint-order": {"normal"}, "vector-effect": {"none"}, "mix-blend-mode": {"normal"},
+    "isolation": {"auto"}, "shape-rendering": {"auto"}, "transform": {"none"},
+}  # fmt: skip
+_MARKER_UNITY = ("opacity", "fill-opacity", "stroke-opacity")
+_KNOWN_PAINT = re.compile(r"(?:#[0-9a-f]{3,8}|rgba?\(.*\))\Z")
+
+
+def _known_paint(v: str) -> bool:
+    v = v.strip().lower()
+    return (
+        v in _NAMED
+        or v in ("none", "transparent", "currentcolor", "context-fill", "context-stroke")
+        or bool(_KNOWN_PAINT.match(v))
+        or bool(_url_id(v))
+    )
+
+
+def _marker_paint(
+    v: str | None, op: float, cur: str, ctx_fill: str | None, ctx_stroke: str | None
+) -> str | None:
+    """一个 paint → `#rrggbb` / `None`（确定没画：none、alpha 恰为 0）/ `"?"`（画了但端型表达不了：渐变、0<alpha<1、读不懂）"""
+    v = (v or "").strip()
+    if not _known_paint(v) or not 0 <= op <= 1:
+        return "?"
+    if v == "context-fill":
+        c = ctx_fill
+    elif v == "context-stroke":
+        c = ctx_stroke
+    elif _url_id(v):
+        return "?"
+    else:
+        parsed = parse_color(v, cur)
+        if parsed is None:
+            c = None
+        elif parsed[1] == 0:
+            c = None
+        elif parsed[1] < 1:
+            return "?"
+        else:
+            c = parsed[0]
+    if c is None or c == "?":
+        return c
+    if op == 0:
+        return None
+    return c if op == 1 else "?"
+
+
+def _marker_shape(
+    child, tag: str, mel, ctx: _Ctx, stroke_hex: str, ctx_fill: str | None, ctx_stroke: str | None
+):
+    """标记里那一个图形 → `(kind, tip, dir, length, 线宽)`（标记自己的坐标）、`"hidden"`（确定不可见：原图里就没有头）或 `None`（换不了）。
 
     kind = triangle / open / dot；`tip` 是尖（圆点 = 圆心）；`dir` 是 底边中点 → 尖 的弧度（圆点 = None）；
-    `length` = 帽长（圆点 = 直径）；最后一项是开口箭头自己的线宽（标记单位，别的端型 0）。"""
-    if child.get("transform"):
-        return None
-    # 标记图形「看起来」的样子要先算准（继承 + 祖先）：不可见就是没有头（与原图一致），部分透明 / 裁剪 / 蒙版 / 描边顺序头表达不了
+    `length` = 帽长（圆点 = 直径）；最后一项是开口箭头自己的线宽（标记单位，别的端型 0）。
+
+    **允许名单**：图形、`<marker>` 及其祖先上每个影响外观的属性（取计算值）都得在 `_MARKER_PLAIN_PROPS` 里、或等于默认值，
+    不透明度只能是 1；否则 `None`。只有「确定」不可见（自身 display:none / visibility:hidden / opacity 0 / paint 为 none 或 alpha 恰为 0）才回 `"hidden"`。"""
     chain = []
     el = child
     while el is not None and len(chain) < 128:
@@ -1597,63 +1669,64 @@ def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: st
         el = ctx.parents.get(el)
     chain.reverse()
     mst: dict = {}
-    opacity = 1.0
-    hidden = False
-    for i, e in enumerate(chain):
+    certain_hidden = False
+    for e in chain:
         mst = _computed(e, mst, ctx)
-        if mst.get("display") == "none":
-            if e is child:
-                hidden = True
-            else:
-                return None  # marker / 祖先上的 display:none：规范对 marker 另有说法，保守不换
-        try:
-            opacity *= float(mst.get("opacity", "1") or 1)
-        except ValueError:
-            return None
-        if e in (child, mel) and (
-            any((mst.get(k) or "none") != "none" for k in ("clip-path", "mask", "filter"))
-            or (e.get("paint-order") or "normal") != "normal"
-        ):
-            return None
-    if hidden or mst.get("visibility") in ("hidden", "collapse") or opacity <= 0:
-        return "hidden"
-    if opacity < 1:
+        own_style = e in (child, mel)
+        for k, v in mst.items():
+            if k in _MARKER_PLAIN_PROPS:
+                continue
+            val = (v or "").strip().lower()
+            if k == "display":
+                if val == "none":
+                    if e is child:
+                        certain_hidden = True
+                    else:
+                        return (
+                            None  # marker / 祖先上的 display:none：规范对 marker 另有说法，保守不换
+                        )
+                elif val not in ("inline", "block", ""):
+                    return None
+            elif k == "visibility":
+                if val in ("hidden", "collapse"):
+                    certain_hidden = True
+                elif val not in ("visible", ""):
+                    return None
+            elif k in _MARKER_UNITY:
+                try:
+                    f = float(val or 1)
+                except ValueError:
+                    return None
+                if f == 0 and k == "opacity":
+                    certain_hidden = True
+                elif f != 1 and k == "opacity":
+                    return None
+                # fill-opacity / stroke-opacity 在 paint 里按每个 paint 单独判
+            elif k == "transform" and not own_style:
+                continue  # 祖先的 transform 不作用于标记内容
+            elif val not in _MARKER_DEFAULT_ONLY.get(k, ()):
+                return None  # 名单之外的属性：非默认值，或者根本不认识
+    if child.get("transform") or mel.get("transform"):
         return None
+    if certain_hidden:
+        return "hidden"
     cur = mst.get("color", "black")
 
-    def eff_opacity(key: str) -> float | None:
+    def op_of(key: str) -> float:
         try:
             return float(mst.get(key, "1") or 1)
         except ValueError:
-            return None
+            return -1.0
 
-    def paint(v: str | None, op_key: str) -> str | None:
-        v = (v or "").strip()
-        op = eff_opacity(op_key)
-        if op is None or not 0 <= op <= 1:
-            return "?"
-        if v == "context-stroke":
-            c = stroke_hex
-        elif v == "context-fill":
-            c = fill_hex
-        elif _url_id(v):
-            c = "?"
-        else:
-            parsed = parse_color(v, cur)
-            c = parsed[0] if parsed else None
-            if parsed and parsed[1] < 1:
-                c = "?"  # 颜色自带 alpha：端型没有部分透明
-        if c is None or op == 0:
-            return None  # 不画
-        return c if op == 1 else "?"
-
-    fill = paint(mst.get("fill", "black"), "fill-opacity")
-    stroke = paint(mst.get("stroke", "none"), "stroke-opacity")
+    fill = _marker_paint(mst.get("fill", "black"), op_of("fill-opacity"), cur, ctx_fill, ctx_stroke)
+    stroke = _marker_paint(
+        mst.get("stroke", "none"), op_of("stroke-opacity"), cur, ctx_fill, ctx_stroke
+    )
     if fill is None and stroke is None:
         return "hidden"
     if tag == "circle":
         r = _length(child.get("r"))
-        if r <= 0 or fill != stroke_hex or stroke not in (None, stroke_hex):
+        if r <= 0 or fill != stroke_hex or stroke is not None:
             return None
         c = (_length(child.get("cx")), _length(child.get("cy")))
         return "dot", c, None, 2 * r, 0.0
@@ -1670,8 +1743,8 @@ def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: st
         return None
     filled = fill is not None
     if filled:
-        if fill != stroke_hex or stroke not in (None, stroke_hex):
-            return None
+        if fill != stroke_hex or stroke is not None:
+            return None  # 实心图形带描边（哪怕同色）会比填充大一圈
     else:
         if stroke != stroke_hex or subs[0]["closed"]:
             return None  # 颜色不同；或描边的闭合三角（空心三角）：端型里没有
@@ -1717,7 +1790,8 @@ def _marker_end_head(
     nodes: list[dict],
     sw_user: float,
     stroke_hex: str,
-    fill_hex: str | None,
+    ctx_fill: str | None,
+    ctx_stroke: str | None,
     ctx: _Ctx,
 ):
     """一端的标记 → `(端型, 档位, 端点沿线外移的距离（用户单位）)`；换不了回 `None`"""
@@ -1747,7 +1821,7 @@ def _marker_end_head(
             return None
         scale = min(mw / vb[2], mh / vb[3])
     total = scale * (sw_user if units == "strokeWidth" else 1.0)
-    shape = _marker_shape(child, _local(child.tag), mel, ctx, stroke_hex, fill_hex)
+    shape = _marker_shape(child, _local(child.tag), mel, ctx, stroke_hex, ctx_fill, ctx_stroke)
     if shape == "hidden":
         return "hidden"
     if shape is None or total <= 0:
@@ -1810,14 +1884,24 @@ def _markers(tag: str, st: dict, geom: list[dict] | None, ctx: _Ctx) -> dict:
         ctx.note("marker", _MARKER_HINT)
         return {}
     nodes = geom[0]["nodes"]
-    fc = parse_color(st.get("fill", "black"), st.get("color", "black"))
-    fill_hex = "?" if _url_id(st.get("fill")) else (fc[0] if fc and fc[1] == 1 else None)
+    cur = st.get("color", "black")
+
+    def ref_paint(key: str, default: str, op_key: str) -> str | None:
+        """引用元素自己的 paint（`context-fill` / `context-stroke` 取它）：None = 没画，`"?"` = 渐变 / 部分透明 / 读不懂"""
+        try:
+            op = float(st.get(op_key, "1") or 1)
+        except ValueError:
+            return "?"
+        return _marker_paint(st.get(key, default), op, cur, None, None)
+
+    ctx_fill = ref_paint("fill", "black", "fill-opacity")
+    ctx_stroke = ref_paint("stroke", "none", "stroke-opacity")
     fields: dict = {}
     moves: list[tuple[bool, float]] = []
     for at_end, ref in ((False, start), (True, end)):
         if not ref:
             continue
-        got = _marker_end_head(ref, at_end, nodes, sw_user, stroke_c[0], fill_hex, ctx)
+        got = _marker_end_head(ref, at_end, nodes, sw_user, stroke_c[0], ctx_fill, ctx_stroke, ctx)
         if got == "hidden":
             continue  # 标记图形不可见：原图里这一端就没有头
         if got is None:
