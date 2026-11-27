@@ -4551,6 +4551,74 @@ export async function fetchLayoutPreviewPng(
   return res.blob()
 }
 
+/** 改图助手改画布矢量对象（ADR 0212 第 6 期）：一条补丁没能照做的原因（`code` 是后端 `vectoredit.ERROR_CODES` 的闭集；模型自己写的只有 `reason`） */
+export interface VectorEditUnhandled {
+  reason: string
+  code?: string
+  /** `too_many_steps`：没收下的步数与上限 */
+  count?: number
+  max?: number
+}
+
+/** `/api/vector-edit/plan` 回的方案（`engine/vectorplan.plan` + 指令模式多出的 `ops` / `unhandled`）；全部是后端算好的，前端只翻译与落位 */
+export interface VectorEditResult {
+  ok: boolean
+  errors: { code: string; index?: number; field?: string }[]
+  /** 改后被动到的对象（含新生成的）；补丁不合格（`ok: false` 且有 `errors`）时没有 */
+  objects?: CanvasObject[]
+  deleted?: string[]
+  order?: string[]
+  reordered?: boolean
+  echo?: string[]
+  changes?: { id: string; field?: string; before?: unknown; after?: unknown; deleted?: boolean; added?: boolean; replaced?: boolean }[]
+  checks?: { check: string; status: string; item?: string }[]
+  layout_groups?: LayoutGroup[] | null
+  ops?: unknown[]
+  unhandled?: VectorEditUnhandled[]
+}
+
+export interface VectorEditBody {
+  canvas: { id: string; page: unknown; objects: unknown[]; layoutGroups?: unknown[] }
+  instruction: string
+  selection: string[]
+  connection?: string
+  model?: string
+  effort?: string
+  /** 界面语言：模型写的没能照做的原因跟着它走 */
+  locale?: string
+  client_request_id: string
+}
+
+/** 出矢量编辑方案（指令模式，**不写盘**）：立刻回任务；失败（没连 AI / 同时只能一份 / 请求形状不对）抛带稳定 code 的 `EngineError`。 */
+export async function createVectorEditPlan(body: VectorEditBody & Record<string, unknown>, signal?: AbortSignal): Promise<{ plan_id: string; state: string; phase?: string }> {
+  const out = await changePlanFetch('/api/vector-edit/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as { plan_id: string; state: string; phase?: string }
+}
+
+export type VectorEditView =
+  | { plan_id: string; state: 'running'; phase?: string }
+  | { plan_id: string; state: 'failed'; code: string; error?: string; detail?: string }
+  | { plan_id: string; state: 'ready'; plan: VectorEditResult }
+
+export async function getVectorEditPlan(planId: string, signal?: AbortSignal): Promise<VectorEditView> {
+  const out = await changePlanFetch(`/api/vector-edit/plan/${encodeURIComponent(planId)}`, { signal })
+  if (
+    !isStr(out.plan_id) ||
+    (out.state === 'ready' ? !isRec(out.plan) : out.state !== 'running' && !(out.state === 'failed' && isStr(out.code)))
+  ) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as VectorEditView
+}
+
 /** 批注重改的一条批注（高级版 `change-plan-rerun`）：锚点与审阅意见同形，元素锚带画面框 */
 export interface ChangePlanNoteBody {
   id: string
@@ -5678,6 +5746,18 @@ export const fetchAiHistory = (
     pj,
   )
 }
+
+/** 之前装在 MSIX 包私有区时的历史里，这个项目还有几条没带过来（#2282 补救 B）。非 Windows / 没有旧库都是 0 */
+export const fetchAiHistoryLegacy = (pj: string | null) =>
+  jsonFetch<{ missing: number }>('/api/ai/history/legacy', undefined, pj)
+
+/** 用户点「找回」：把旧库里真实库没有的任务补回来。`outcome` 闭集 done / deferred / failed / not_eligible */
+export const restoreAiHistoryLegacy = (pj: string | null) =>
+  jsonFetch<{ outcome: 'done' | 'deferred' | 'failed' | 'not_eligible'; missing: number }>(
+    '/api/ai/history/legacy/restore',
+    { method: 'POST' },
+    pj,
+  )
 
 export const deleteAiHistory = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(

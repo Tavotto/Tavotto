@@ -7,7 +7,7 @@ import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
 import { applyGroups, toOverrides, type PlanSource } from '@/lib/changePlanApply'
 import { enginePreviewPngSnapshot, type Manifest } from '@/lib/api'
-import { useChangePlanStore, sourceOf, type PlanEntry } from '@/store/changePlanStore'
+import { useChangePlanStore, sourceOf, isCanvasPlan, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import type { PanelObject } from '@/types/document'
@@ -69,7 +69,7 @@ export function useHasChangePlans(panelId: string | undefined): boolean {
       const e = s.entries[k]
       if (!e) return false
       // 一键排版的整版方案不挂在某张图上：当前文档 / 画布上有就算（没选图也要看得到）
-      if (e.kind === 'layout') return e.documentId === documentId && e.loadSeq === loadSeq && e.canvasId === canvasId
+      if (isCanvasPlan(e)) return e.documentId === documentId && e.loadSeq === loadSeq && e.canvasId === canvasId
       return !!panelId && e.panelId === panelId
     }),
   )

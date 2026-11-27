@@ -653,7 +653,7 @@ def update_status(sid: str, status: str, db_path: Path | None = None) -> None:
 LEGACY_MERGE_TABLES = ("sessions", "ai_requests")
 
 
-def merge_legacy(snapshot: Path, db_path: Path, deadline: float) -> int:
+def merge_legacy(snapshot: Path, db_path: Path, deadline: float, project: str | None = None) -> int:
     """把旧库快照 `snapshot`（调用方用备份接口取的一致副本，**不是**旧库本身）里新库没有的行按主键补进 `db_path`。
 
     - 只补缺（`INSERT OR IGNORE`），按两边列的交集插：旧库可能是老 schema，少的列走新库默认值；
@@ -670,7 +670,7 @@ def merge_legacy(snapshot: Path, db_path: Path, deadline: float) -> int:
         try:
             con.execute("BEGIN IMMEDIATE")
             try:
-                imported = _merge_legacy_tables(con)
+                imported = _merge_legacy_tables(con, project)
             except BaseException:
                 con.execute("ROLLBACK")
                 raise
@@ -688,7 +688,7 @@ def merge_legacy(snapshot: Path, db_path: Path, deadline: float) -> int:
         con.close()
 
 
-def _merge_legacy_tables(con: sqlite3.Connection) -> int:
+def _merge_legacy_tables(con: sqlite3.Connection, project: str | None = None) -> int:
     legacy = {r[0] for r in con.execute("SELECT name FROM legacy.sqlite_master WHERE type='table'")}
 
     def shared_cols(table: str, skip: tuple[str, ...] = ()) -> str:
@@ -699,15 +699,21 @@ def _merge_legacy_tables(con: sqlite3.Connection) -> int:
     imported = 0
     if "sessions" in legacy:
         cols = shared_cols("sessions", skip=("rev",))
+        # `project` 给了就只补这个项目（手动找回）；None = 整库（后台待补合并）
+        only = " AND project = ?" if project is not None else ""
+        args = (project,) if project is not None else ()
         new_ids = [
             r[0]
             for r in con.execute(
-                "SELECT id FROM legacy.sessions WHERE id NOT IN (SELECT id FROM main.sessions) ORDER BY started_ms"
+                "SELECT id FROM legacy.sessions WHERE id NOT IN (SELECT id FROM main.sessions)"
+                f"{only} ORDER BY started_ms",
+                args,
             )
         ]
         con.execute(
             f"INSERT OR IGNORE INTO main.sessions ({cols}) SELECT {cols} FROM legacy.sessions "
-            "WHERE id NOT IN (SELECT id FROM main.sessions)"
+            f"WHERE id NOT IN (SELECT id FROM main.sessions){only}",
+            args,
         )
         for sid in new_ids:
             con.execute(
@@ -721,6 +727,8 @@ def _merge_legacy_tables(con: sqlite3.Connection) -> int:
         cols = shared_cols("ai_requests")
         con.execute(
             f"INSERT OR IGNORE INTO main.ai_requests ({cols}) SELECT {cols} FROM legacy.ai_requests"
+            + (" WHERE project = ?" if project is not None else ""),
+            (project,) if project is not None else (),
         )
     return imported
 
@@ -786,10 +794,62 @@ def count_legacy_gap(legacy: Path, db_path: Path | None, deadline: float) -> dic
         con.close()
 
 
+LEGACY_REL = "cache/ai_history.sqlite3"
+
+
+def legacy_missing_count(project: str, db_path: Path | None = None, budget_s: float = 2.0) -> int:
+    """这个项目在旧安装位置（MSIX 包私有区）有、真实库里没有的会话条数——所有旧包取并集，和「找回」能补回的一致。
+
+    给任务历史底部那一行（#2282 补救 B）。只读两边；到点、坏库、没有旧库都回 0：数不出来就不出那一行，不报错。
+    """
+    paths = msixmigrate.legacy_sqlite_paths(LEGACY_REL)
+    if not paths:
+        return 0
+    target = db_path or DB_PATH
+    deadline = time.monotonic() + budget_s
+    have: set[str] = set()
+    if target.is_file():
+        try:
+            con = sqlite3.connect(_ro_uri(target), uri=True, timeout=1.0)
+            try:
+                have = {
+                    r[0]
+                    for r in con.execute("SELECT id FROM sessions WHERE project = ?", (project,))
+                }
+            finally:
+                con.close()
+        except sqlite3.Error:
+            return 0
+    missing: set[str] = set()
+    for legacy in paths:
+        if time.monotonic() > deadline:
+            break
+        try:
+            con = sqlite3.connect(_ro_uri(legacy), uri=True, timeout=1.0)
+            try:
+                con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+                missing |= {
+                    r[0]
+                    for r in con.execute("SELECT id FROM sessions WHERE project = ?", (project,))
+                } - have
+            finally:
+                con.close()
+        except (sqlite3.Error, OSError):
+            continue
+    return len(missing)
+
+
+def restore_legacy(project: str) -> str:
+    """把旧安装位置里**这个项目**的历史补回真实库（用户在任务历史里点「找回」）。见 `msixmigrate.restore_legacy`。"""
+    return msixmigrate.restore_legacy(LEGACY_REL, project)
+
+
 # 登记给 MSIX 迁移的「待补旧历史」合并（它不能反过来 import 本模块：会成环）。经 lambda 在调用时取全局名，测试 monkeypatch 才生效。
 msixmigrate.register_sqlite_merger(
     "cache/ai_history.sqlite3",
-    lambda snapshot, target, deadline: merge_legacy(snapshot, target, deadline),
+    lambda snapshot, target, deadline, project=None: merge_legacy(
+        snapshot, target, deadline, project
+    ),
 )
 msixmigrate.register_sqlite_gap_counter(
     "cache/ai_history.sqlite3",

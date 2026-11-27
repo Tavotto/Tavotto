@@ -697,9 +697,9 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const render = usePanelRender(panel)
   const editing = useUiStore((s) => s.elementPanelId === panel.id)
-  // 冷启动是文件级事实（SSE 写在 building 表里），渲染中是本变体的状态
-  const engineProgress = useRenderProgress(panel.fileId, render?.status === 'rendering', pn('building'))
-  const { active: building, cold } = engineProgress
+  // 构建中不说「脚本已更新」：这次构建正在把它刷新掉（进度本身由画布角标与元素树说，这里不重复）
+  const { active: building } = useRenderProgress(panel.fileId, render?.status === 'rendering', pn('building'))
+  const staleShown = !!render?.stale && !(building && !editing)
   // 图源脚本缺失时重建必然失败：此时说「脚本已更新」是错的，改说找不到脚本（短句，只说文件名，QA-WIN-48）
   const cap = useAssetStore((s) => s.byId[panel.fileId]?.capability)
   const sourceMissing = cap?.status === 'source_missing' || render?.code === 'script_not_found'
@@ -713,14 +713,6 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
   // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
   // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
   const overrides = overrideCounts(panel.overrides, null).figure
-  /** 三条提示各自此刻的文案（可见时 title 与正文同源；不可见的也要写真实译文，保住换行足迹） */
-  const engineMessageText = (kind: 'cold' | 'building' | 'stale') =>
-    kind === 'stale'
-      ? staleText
-      : building && (kind === 'cold' ? cold : !cold) && !editing
-        ? engineProgress.text
-        : pn(kind === 'cold' ? 'coldBuilding' : 'building')
-
   return (
     <Section className="pb-4">
       <div className="flex items-center gap-1.5">
@@ -765,41 +757,22 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
         )}
       </div>
 
-      {/* 引擎状态是**一行**（2026-10-07 设计审计 §9.2：此前常驻两行隐形占位，约 42px）：冷启动 / 构建中 /
-          脚本已变三条叠在同一格里，同一时刻只显示一条（构建中优先——它正在把「脚本已变」刷新掉），
-          隐藏只改可见性：足迹常驻、按最长那条译文定高，首次渲染在 pointerdown / up 之间完成时
-          不会把翻转 / 数值框等控件上移（原生 click 随之丢失） */}
-      {/* 足迹为 0（2026-10-16）：三条提示叠在按钮下方、浮在节的下内边距里，不再给「改图里的内容」按钮下面留一条
-          常驻的死空白（原先 mt-1.5 + 20px ≈ 26px）；仍然只改可见性、不插拔节点，所以首次渲染完成时控件不挪位 */}
-      {/* 一行、超出截断（完整文案在 title）：窄栏 / 英文 / 更长的构建时长文案折成两行会盖到下一节（Codex #1110 P2）。
-          这一节的下内边距放到 16，那一行（2 + 12）整个落在它里面，不越过下一节的顶边 */}
+      {/* 「脚本已更新 / 找不到脚本」一行（2026-11-27：构建中 / 冷启动的进度不再在这里重复——画布上的角标与左栏元素树
+          已经在说，用户嫌按钮下面闪出一行小字难看）。足迹为 0：浮在节的下内边距里，只改可见性、不插拔节点，
+          渲染回包时不把下方控件挪位；一行、超出截断（完整文案在 title，Codex #1110 P2） */}
       <div data-panel-engine-status className="relative grid h-0 grid-cols-[minmax(0,1fr)]">
-        {(['cold', 'building', 'stale'] as const).map((kind) => {
-          const progress = !editing && building
-          const shown = kind === 'stale' ? !!render?.stale && !progress : progress && (kind === 'cold' ? cold : !cold)
-          return (
-            <p
-              key={kind}
-              data-panel-engine-message={kind}
-              data-panel-engine-progress={kind === 'stale' ? undefined : true}
-              data-render-progress={shown && kind !== 'stale' ? engineProgress.phase : undefined}
-              aria-hidden={!shown}
-              title={shown ? engineMessageText(kind) : undefined}
-              className={cn(
-                'col-start-1 row-start-1 mt-0.5 block h-3 truncate text-xs leading-3',
-                'text-ink-2',
-                !shown && 'invisible',
-              )}
-            >
-              {kind === 'stale' ? (
-                staleText
-              ) : (
-                // 「进行中」的字是 text-shimmer（宪法第七节的加载方言之一），不配呼吸点
-                <span className="text-shimmer">{engineMessageText(kind)}</span>
-              )}
-            </p>
-          )
-        })}
+        <p
+          data-panel-engine-message="stale"
+          aria-hidden={!staleShown}
+          title={staleShown ? staleText : undefined}
+          className={cn(
+            'col-start-1 row-start-1 mt-0.5 block h-3 truncate text-xs leading-3',
+            'text-ink-2',
+            !staleShown && 'invisible',
+          )}
+        >
+          {staleText}
+        </p>
       </div>
     </Section>
   )

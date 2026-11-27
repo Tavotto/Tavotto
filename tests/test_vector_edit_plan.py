@@ -191,7 +191,10 @@ def test_the_model_cannot_name_more_ops_than_the_cap():
     ops = [{"op": "move", "id": "t_user0001", "by_mm": [0.1, 0]}] * (vp.MAX_MODEL_OPS + 3)
     out = vp.validate_ops({"ops": ops, "unhandled": []}, canvas)
     assert len(out["ops"]) == vp.MAX_MODEL_OPS
-    assert "没有收下" in out["unhandled"][-1]["reason"]
+    last = out["unhandled"][-1]
+    assert "没有收下" in last["reason"]
+    # 带码，界面按码翻成界面语言（不显示后端中文）
+    assert (last["code"], last["count"], last["max"]) == ("too_many_steps", 3, vp.MAX_MODEL_OPS)
 
 
 @pytest.mark.parametrize(
@@ -412,6 +415,29 @@ def test_instruction_mode_runs_the_model_then_plans_without_writing(env, monkeyp
     assert ve.OPS_DOC in call["system"]
     assert _tree(proj) == snap
     assert not list((tmp / "data").rglob("*")) if (tmp / "data").exists() else True
+
+
+def test_unhandled_reason_language_follows_the_ui_locale(env):
+    """判据的主语：模型**看到的系统提示**里要求的 reason 语言（假模型记下的调用），不是界面显示。"""
+    _m, client, _proj, model, _tmp = env
+    for locale, word in (
+        ("en-US", "English"),
+        ("zh-CN", "简体中文"),
+        (None, "简体中文"),
+        ("xx", "简体中文"),
+    ):
+        model.calls.clear()
+        body = {"canvas": _canvas(), "instruction": "放大", "selection": ["t_user0001"]}
+        if locale is not None:
+            body["locale"] = locale
+        r = client.post("/api/vector-edit/plan", json=body)
+        assert r.status_code == 202, locale
+        _poll(client, r.get_json()["plan_id"])
+        system = model.calls[0]["system"]
+        assert f"`reason` 用 {word} 写一句话" in system, locale
+        # 另一种语言的名字不能出现在要求里
+        other = "English" if word != "English" else "简体中文"
+        assert f"`reason` 用 {other} 写一句话" not in system, locale
 
 
 def test_instruction_mode_with_nothing_doable_returns_an_empty_ready_plan(env):

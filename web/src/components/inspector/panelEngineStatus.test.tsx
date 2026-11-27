@@ -57,16 +57,16 @@ const visible = () => messages().filter((el) => el.getAttribute('aria-hidden') !
 
 describe('引擎状态提示保留布局足迹', () => {
   for (const locale of ['zh-CN', 'en-US']) {
-    it(`${locale}：冷启动 / 构建 / stale / ready 只换可见内容，不插拔提示与下方按钮`, async () => {
+    it(`${locale}：构建中不在这里出字（进度由画布角标 / 元素树说）；stale 只换可见性，不插拔提示与下方按钮`, async () => {
       await act(async () => { await i18n.changeLanguage(locale) })
       const original = messages()
-      expect(original).toHaveLength(3)
+      expect(original).toHaveLength(1)
       const controls = [...host.querySelectorAll('button, input')]
       for (const [building, stale, expected] of [
-        ['cold', false, ['cold']], ['warm', false, ['building']], [false, false, []],
+        ['cold', false, []], ['warm', false, []], [false, false, []],
         [false, true, ['stale']],
-        // 一行只说一件事：构建中优先（它正在把「脚本已变」刷新掉）
-        ['cold', true, ['cold']], [false, false, []],
+        // 构建中不说「脚本已更新」：这次构建正在把它刷新掉
+        ['cold', true, []], [false, false, []],
       ] as const) {
         await state(building, stale)
         expect(messages()).toHaveLength(original.length)
@@ -77,7 +77,7 @@ describe('引擎状态提示保留布局足迹', () => {
         expect(visible().map((el) => el.dataset.panelEngineMessage)).toEqual(expected)
         for (const el of messages()) {
           expect(el.classList.contains('invisible')).toBe(el.getAttribute('aria-hidden') === 'true')
-          expect(el.textContent?.trim()).not.toBe('') // 隐藏也保留真实译文的换行足迹
+          expect(el.textContent?.trim()).not.toBe('') // 隐藏也保留真实译文的足迹
         }
       }
     })

@@ -151,6 +151,6 @@ describe('「改图里的内容」下面没有死空白', () => {
     const status = host.querySelector<HTMLElement>('[data-panel-engine-status]')!
     expect(status.className).toMatch(/(^|\s)h-0(\s|$)/)
     expect(status.className).not.toMatch(/\bmt-/)
-    expect(status.querySelectorAll('[data-panel-engine-message]')).toHaveLength(3)
+    expect(status.querySelectorAll('[data-panel-engine-message]')).toHaveLength(1)
   })
 })
