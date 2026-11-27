@@ -240,11 +240,9 @@ ggplot_project_axes <- function(built, target, changes) {
   built
 }
 
-measure_ggplot_axes <- function(table, target, frame_pt) {
-  if (is.null(target)) return(NULL)
+ggplot_axes_bbox <- function(table, slot, frame_pt) {
   on.exit(grid::upViewport(0), add = TRUE)
-  grid::grid.force()
-  grid::downViewport(ggplot_cell_name(table$layout[target$slot, ]), strict = FALSE)
+  grid::downViewport(ggplot_cell_name(table$layout[slot, ]), strict = FALSE)
   bbox <- ggplot_panel_clip(frame_pt)
   if (!all(is.finite(unlist(bbox))) || any(unlist(bbox)[3:4] <= 0)) {
     stop("The native R plotting area could not be measured.")
@@ -252,15 +250,22 @@ measure_ggplot_axes <- function(table, target, frame_pt) {
   bbox
 }
 
-ggplot_axes_element <- function(target, current, bbox, edits) {
-  if (is.null(target)) return(list())
+measure_ggplot_axes <- function(table, targets, frame_pt) {
+  if (!length(targets)) return(list())
+  grid::grid.force()
+  lapply(targets, function(target) ggplot_axes_bbox(table, target$slot, frame_pt))
+}
+
+ggplot_axes_element <- function(gid, target, current, bbox, edits) {
   original <- lapply(names(target$axes), function(axis) {
     spec <- target$axes[[axis]]
     list(mode = spec$mode, range = as.list(spec$range), options = as.list(spec$options),
          inverted = ggplot_inverted(target$reverse, axis))
   }) |> stats::setNames(names(target$axes))
   if (is.null(current)) current <- original
-  list(list(gid = ggplot_axes_gid, role = "axes", label = "\u5b50\u56fe", bbox = bbox,
+  label <- "\u5b50\u56fe"
+  if (length(target$facet)) label <- paste(label, paste(target$facet, collapse = " / "), sep = " \u00b7 ")
+  list(gid = gid, role = "axes", label = label, bbox = bbox,
             draggable = FALSE, editable = list(), native_axes = list(
               context = target$context, current = current, original = original,
               edited = as.list(names(edits)),
@@ -282,7 +287,7 @@ ggplot_axes_element <- function(target, current, bbox, edits) {
                 edit <- edits[intersect(names(edits), ggplot_frame_keys)]
                 list(original = ggplot_frame_value(target$frame, list()),
                      current = ggplot_frame_value(target$frame, edit), edited = edit)
-              })))
+              }))
 }
 
 ggplot_rebind_layer_targets <- function(table, targets, grobs) {
@@ -522,8 +527,7 @@ ggplot_panel_decoration <- function(built, target, slot) {
   list(slot = slot, axes = list(), context = rlang::hash(ggplot_decoration_context(built)))
 }
 
-ggplot_grid_target <- function(built, table, target) {
-  slot <- ggplot_cartesian_panel_slot(built, table)
+ggplot_grid_target <- function(built, table, target, slot = ggplot_cartesian_panel_slot(built, table)) {
   if (is.null(slot)) return(target)
   theme <- built$plot$theme
   lines <- lapply(ggplot_grid_cells, ggplot2::calc_element, theme = theme)
@@ -599,6 +603,69 @@ ggplot_grid_theme <- function(theme, grid, edit) {
     replacements[[ggplot_grid_cells[[i]]]] <- line
   }
   theme + do.call(ggplot2::theme, replacements)
+}
+
+ggplot_facet_grill <- function(panel) {
+  child <- which(startsWith(panel$childrenOrder, "grill."))
+  if (length(child) == 1L && inherits(panel$children[[child]], "gTree")) child
+}
+
+ggplot_faceted_axes_targets <- function(built, table, panels) {
+  if (is.null(panels) || panels$single || !identical(as.list(built$layout$coord)$render_bg,
+                                                    as.list(ggplot2::CoordCartesian)$render_bg)) return(list())
+  cells <- panels$cells
+  ids <- as.integer(as.character(cells$PANEL))
+  # The stock facets name gtable panels by physical column and row. Their
+  # order in the gtable can differ from the order of native PANEL ids.
+  slots <- match(paste("panel", cells$COL, cells$ROW, sep = "-"), table$layout$name)
+  if (anyNA(slots) || anyDuplicated(slots) ||
+      !identical(sort(ids), seq_along(built$layout$panel_params))) return(list())
+  context <- rlang::hash(ggplot_decoration_context(built))
+  targets <- lapply(seq_along(ids), function(i) {
+    slot <- slots[[i]]
+    if (!inherits(table$grobs[[slot]], "gTree")) return(NULL)
+    facet <- lapply(cells[i, panels$facets, drop = FALSE], as.character)
+    target <- list(slot = slot, panel = ids[[i]], facet = unlist(facet, use.names = FALSE),
+                   context = rlang::hash(list(context, facet)))
+    if (!is.null(ggplot_facet_grill(table$grobs[[slot]]))) {
+      target <- ggplot_grid_target(built, table, target, slot)
+      # With panel.ontop the grill is drawn over the data. An opaque fill
+      # on that grill would cover the marks instead of painting behind them.
+      if (!isTRUE(built$plot$theme$panel.ontop)) {
+        target <- ggplot_background_target(built, table, target, slot)
+      }
+    }
+    target <- ggplot_frame_target(built, table, target, slot, panel_only = TRUE)
+    if (!all(vapply(target[c("grid", "background", "frame")], is.null, logical(1L)))) target
+  })
+  targets <- stats::setNames(targets, paste0("axes_", ids))
+  Filter(Negate(is.null), targets)
+}
+
+ggplot_edit_facet_axes <- function(table, layout, theme, target, edit) {
+  if (!all(names(edit) %in% c(ggplot_grid_keys, ggplot_frame_keys, "facecolor"))) {
+    stop("The requested native R facet axis edit is unavailable.")
+  }
+  grid <- edit[intersect(names(edit), ggplot_grid_keys)]
+  if (length(grid) || !is.null(edit$facecolor)) {
+    if (length(grid)) theme <- ggplot_grid_theme(theme, target$grid, grid)
+    if (!is.null(edit$facecolor)) {
+      theme <- theme + ggplot2::theme(panel.background = ggplot_background_style(target$background, edit$facecolor))
+    }
+    panel <- table$grobs[[target$slot]]
+    child <- ggplot_facet_grill(panel)
+    if (is.null(child)) stop("The native R facet grid no longer matches its captured layout.")
+    grill <- layout$coord$render_bg(layout$panel_params[[target$panel]], theme)
+    grill$name <- panel$childrenOrder[[child]]
+    panel$children[[child]] <- grill
+    table$grobs[[target$slot]] <- panel
+  }
+  frame <- edit[intersect(names(edit), ggplot_frame_keys)]
+  if (length(frame)) {
+    ggplot_validate_frame_edits(target$frame, frame)
+    table <- ggplot_frame_edit(table, target$slot, target$frame$fallback, frame, panel_only = TRUE)
+  }
+  table
 }
 
 ggplot_mirror_raster_layer <- function(layer, coord) {

@@ -11,7 +11,7 @@ ggplot_frame_paint <- function(grob) {
   list(rgb = pigment$rgb, alpha = pigment$alpha, pt = width * ggplot_lwd_pt)
 }
 
-ggplot_frame_sources <- function(table, slot) {
+ggplot_frame_sources <- function(table, slot, panel_only = FALSE) {
   panel <- table$grobs[[slot]]
   border_index <- which(startsWith(panel$childrenOrder, "panel.border"))
   if (length(border_index) != 1L) return(NULL)
@@ -24,8 +24,14 @@ ggplot_frame_sources <- function(table, slot) {
                                   c(.5, .5, 1, 1))
     if (!centered || !is.null(border$vp) || !identical(border$just, "centre") ||
         !is.null(border$hjust) || !is.null(border$vjust) || is.null(ggplot_frame_paint(border))) return(NULL)
+    if (panel_only && !is.null(border$gp$fill) && !identical(ggplot_uniform_pigment(border$gp$fill)$alpha, 0)) {
+      return(NULL)
+    }
   } else if (!inherits(border, "zeroGrob")) return(NULL)
+  # A facet can share its outer axis with other panels. A panel-border
+  # change owns only the rectangle inside this cell.
   axes <- lapply(ggplot_frame_sides, function(cell) {
+    if (panel_only) return(list())
     row <- which(table$layout$name == cell)
     if (length(row) != 1L) return(NULL)
     axis <- table$grobs[[row]]
@@ -37,7 +43,7 @@ ggplot_frame_sources <- function(table, slot) {
     if (!inherits(line, "polyline") || !is.null(line$arrow) || is.null(ggplot_frame_paint(line))) return(NULL)
     list(row = row, line = line)
   })
-  if (any(lengths(axes) == 0L)) return(NULL)
+  if (!panel_only && any(lengths(axes) == 0L)) return(NULL)
   list(index = border_index, border = border, axes = axes)
 }
 
@@ -73,8 +79,8 @@ ggplot_frame_set_paint <- function(grob, style) {
   grob
 }
 
-ggplot_frame_edit <- function(table, slot, fallback, edit) {
-  sources <- ggplot_frame_sources(table, slot)
+ggplot_frame_edit <- function(table, slot, fallback, edit, panel_only = FALSE) {
+  sources <- ggplot_frame_sources(table, slot, panel_only)
   if (is.null(sources)) stop("The native R frame no longer matches its captured layout.")
   styles <- ggplot_frame_model(sources, fallback, edit)
   panel <- table$grobs[[slot]]
@@ -117,10 +123,10 @@ ggplot_frame_colors <- c("spine_color", paste0(ggplot_frame_visibility, "_color"
 ggplot_frame_widths <- c("spine_linewidth", paste0(ggplot_frame_visibility, "_linewidth"))
 ggplot_frame_keys <- c(ggplot_frame_visibility, ggplot_frame_colors, ggplot_frame_widths)
 
-ggplot_frame_target <- function(built, table, target) {
-  slot <- ggplot_cartesian_panel_slot(built, table)
+ggplot_frame_target <- function(built, table, target, slot = ggplot_cartesian_panel_slot(built, table),
+                                panel_only = FALSE) {
   if (is.null(slot)) return(target)
-  sources <- ggplot_frame_sources(table, slot)
+  sources <- ggplot_frame_sources(table, slot, panel_only)
   if (is.null(sources)) return(target)
   line <- ggplot2::calc_element("line", built$plot$theme)
   if (!identical(class(line), class(ggplot2::element_line()))) return(target)
@@ -167,8 +173,7 @@ ggplot_validate_frame_edits <- function(frame, edit) {
   }
 }
 
-ggplot_background_target <- function(built, table, target) {
-  slot <- ggplot_cartesian_panel_slot(built, table)
+ggplot_background_target <- function(built, table, target, slot = ggplot_cartesian_panel_slot(built, table)) {
   if (is.null(slot)) return(target)
   style <- ggplot2::calc_element("panel.background", built$plot$theme)
   if (inherits(style, "element_blank")) {

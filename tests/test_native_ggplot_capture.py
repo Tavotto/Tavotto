@@ -2037,7 +2037,91 @@ stopifnot(sum(styled & startsWith(red, "<polyline ")) == 3L,
 fresh <- adapter$capture_ggplot(plot, frame)$state
 stopifnot(identical(adapter$render_ggplot(fresh, change), rendered),
           identical(element(adapter$ggplot_manifest(fresh, "plot", change), gids[[2L]]), target))
-jsonlite::write_json(scene, "faceted-curve.json", auto_unbox = TRUE, digits = NA)
+jsonlite::write_json(scene, "faceted-curve.json", auto_unbox = TRUE, null = "null", digits = NA)
+"""
+
+
+FACET_AXES_PROBE = r"""
+if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+values <- expand.grid(x = rep(1:4, each = 2), row = c("A", "B"), column = c("X", "Y", "Z"))
+values$y <- values$x * as.integer(values$column) + 10 * as.integer(values$row)
+calls <- 0L
+counted_mean <- function(y) { calls <<- calls + 1L; mean(y) }
+plot <- ggplot2::ggplot(values, ggplot2::aes(x, y)) +
+  ggplot2::stat_summary(fun = counted_mean, geom = "point") +
+  ggplot2::theme_bw() + ggplot2::labs(title = "Panel grid")
+wrap <- ggplot2::facet_wrap(ggplot2::vars(row, column), ncol = 3, scales = "free_y", dir = "v")
+grid <- ggplot2::facet_grid(ggplot2::vars(row), ggplot2::vars(column), scales = "free")
+element <- function(scene, gid) Filter(function(e) e$gid == gid, scene$elements)[[1L]]
+child <- function(parent, prefix) {
+  found <- which(startsWith(parent$childrenOrder, prefix))
+  if (length(found) == 1L) parent$children[[found]]
+}
+frame <- c(420, 262)
+edit <- list(axes_3 = list(grid_x = FALSE, grid_color = "#9B2762", grid_alpha = .6,
+                           grid_linewidth = 1.7, grid_linestyle = "--", facecolor = "#ECD5A8",
+                           spine_left = FALSE, spine_color = "#692044", spine_right_color = "#098756",
+                           spine_top_linewidth = 3))
+fixtures <- list(list(facet = wrap, cell = "panel-2-1"), list(facet = grid, cell = "panel-3-1"))
+for (case in fixtures) {
+  captured <- adapter$capture_ggplot(plot + case$facet, frame)
+  state <- captured$state
+  counted <- calls
+  original_data <- state$built$data
+  original_ranges <- state$panel_ranges
+  base <- state$table
+  edited <- adapter$ggplot_table_for(state, edit)$table
+  slot <- match(case$cell, base$layout$name)
+  stopifnot(identical(names(state$axes_targets), paste0("axes_", 1:6)),
+            state$axes_targets$axes_3$slot == slot,
+            identical(base$grobs[-slot], edited$grobs[-slot]))
+  old <- base$grobs[[slot]]
+  panel <- edited$grobs[[slot]]
+  untouched <- !grepl("^(grill|panel.border)\\.", old$childrenOrder)
+  stopifnot(identical(old$children[untouched], panel$children[untouched]))
+  y_before <- child(child(old, "grill."), "panel.grid.major.y")
+  grill <- child(panel, "grill.")
+  y_after <- child(grill, "panel.grid.major.y")
+  x_after <- child(grill, "panel.grid.major.x")
+  stopifnot(identical(y_before$x, y_after$x), identical(y_before$y, y_after$y),
+            identical(y_after$gp$col, "#9B276299"),
+            isTRUE(all.equal(y_after$gp$lwd * adapter$ggplot_lwd_pt, 1.7)),
+            is.null(x_after) || inherits(x_after, "zeroGrob"),
+            identical(child(grill, "panel.background")$gp$fill, "#ECD5A8"))
+  border <- child(panel, "panel.border.")
+  stopifnot(is.null(child(border, "tavotto.frame.left")),
+            identical(grDevices::col2rgb(child(border, "tavotto.frame.right")$gp$col, alpha = TRUE),
+                      grDevices::col2rgb("#098756", alpha = TRUE)),
+            isTRUE(all.equal(child(border, "tavotto.frame.top")$gp$lwd * adapter$ggplot_lwd_pt, 3)))
+  original <- adapter$ggplot_manifest(state, "plot")
+  scene <- adapter$ggplot_manifest(state, "plot", edit)
+  selected <- element(scene, "axes_3")
+  stopifnot(endsWith(selected$label, "A / Z"),
+            identical(selected$bbox, element(original, "axes_3")$bbox),
+            identical(element(original, "axes_2"), element(scene, "axes_2")),
+            identical(selected$native_axes$context, element(original, "axes_3")$native_axes$context))
+  svg <- adapter$render_ggplot(state, edit)
+  stopifnot(grepl("#9B2762", svg, fixed = TRUE), grepl("#ECD5A8", svg, fixed = TRUE),
+            identical(adapter$render_ggplot(state), captured$svg),
+            identical(adapter$render_ggplot(state, edit), svg),
+            identical(state$built$data, original_data), identical(state$panel_ranges, original_ranges),
+            calls == counted)
+  reflow <- c(edit, list(plot.title = list(fontsize = 28)))
+  moved <- adapter$ggplot_manifest(state, "plot", reflow)
+  stopifnot(!identical(element(moved, "axes_3")$bbox, selected$bbox))
+  png <- adapter$preview_ggplot_png(state, reflow, "facets.png", 840, TRUE)
+  png_scene <- adapter$ggplot_manifest(state, "plot", reflow, png)
+  stopifnot(isTRUE(all.equal(element(png_scene, "axes_3")$bbox, element(moved, "axes_3")$bbox,
+                            tolerance = .02)), calls == counted)
+  fresh <- adapter$capture_ggplot(plot + case$facet, frame)$state
+  stopifnot(identical(adapter$render_ggplot(fresh, edit), svg))
+}
+front <- adapter$capture_ggplot(plot + wrap + ggplot2::theme(panel.ontop = TRUE), frame)$state
+stopifnot(is.null(front$axes_targets$axes_3$background), length(front$axes_targets$axes_3$grid) > 0L)
+stopifnot(inherits(try(adapter$render_ggplot(state, list(axes_3 = list(xlim = c(1, 3)))),
+                       silent = TRUE), "try-error"))
+jsonlite::write_json(scene, "faceted-axes.json", auto_unbox = TRUE, null = "null", digits = NA)
 """
 
 
@@ -2211,7 +2295,7 @@ for (bad in list(list(grid_x = 1), list(grid_alpha = 1.1), list(grid_linestyle =
 categorical_plot <- ggplot2::ggplot(data.frame(x = c("A", "B"), y = c(2, 4)), ggplot2::aes(x, y)) +
   ggplot2::geom_col() + ggplot2::theme_minimal() + ggplot2::theme(panel.grid = ggplot2::element_blank())
 categorical <- adapter$capture_ggplot(categorical_plot, frame)
-grid_spec <- categorical$state$axes_target$grid$original
+grid_spec <- categorical$state$axes_targets$axes_0$grid$original
 stopifnot(!grid_spec$grid_x, !grid_spec$grid_y)
 activate <- list(axes_0 = list(grid_x = TRUE, grid_color = "#016CA5"))
 stopifnot(length(device_grobs(categorical$state, activate, "x")) == 1L,
@@ -2254,15 +2338,15 @@ stopifnot(identical(raster_crop$current$x$range, list(1, 3)))
 
 with_zero <- plot + ggplot2::geom_hline(yintercept = 0)
 zero_state <- adapter$capture_ggplot(with_zero, frame)$state
-stopifnot(identical(zero_state$axes_target$axes$y$options, c("linear", "symlog")),
-          identical(zero_state$axes_target$axes$x$options, c("linear", "log", "symlog")))
+stopifnot(identical(zero_state$axes_targets$axes_0$axes$y$options, c("linear", "symlog")),
+          identical(zero_state$axes_targets$axes_0$axes$x$options, c("linear", "log", "symlog")))
 invalid <- list(list(xlim = c(10, 2)), list(xlim = list("1", "10")),
                 list(xscale = "log", xlim = c(0, 100)), list(yscale = "log"))
 for (change in invalid) {
   stopifnot(inherits(try(adapter$render_ggplot(zero_state, list(axes_0 = change)), silent = TRUE), "try-error"))
 }
 secondary <- plot + ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis())
-stopifnot(!length(adapter$capture_ggplot(secondary, frame)$state$axes_target$axes))
+stopifnot(!length(adapter$capture_ggplot(secondary, frame)$state$axes_targets$axes_0$axes))
 constant <- ggplot2::ggplot(data.frame(x = c(10, 10), y = c(2, 3)), ggplot2::aes(x, y)) +
   ggplot2::geom_point()
 flat <- adapter$capture_ggplot(constant, frame)$state
@@ -2278,7 +2362,7 @@ frame <- c(216, 144)
 plot <- ggplot2::ggplot(data.frame(x = c(1, 2, 4), y = c(2, 4, 3)), ggplot2::aes(x, y)) +
   ggplot2::geom_line(colour = "#2021A7")
 state <- adapter$capture_ggplot(plot + ggplot2::theme_classic(), frame)
-target <- state$state$axes_target
+target <- state$state$axes_targets$axes_0
 base <- adapter$ggplot_frame_value(target$frame, list())
 stopifnot(base$spine_bottom, base$spine_left, !base$spine_top, !base$spine_right)
 
@@ -2306,7 +2390,7 @@ stopifnot(all(vapply(c("#708019", "#164623", "#A51545", "#2021A7"), grepl, logic
           identical(adapter$render_ggplot(state$state), state$svg))
 
 boxed <- adapter$capture_ggplot(plot + ggplot2::theme_bw(), frame)
-packed <- adapter$ggplot_frame_value(boxed$state$axes_target$frame, list())
+packed <- adapter$ggplot_frame_value(boxed$state$axes_targets$axes_0$frame, list())
 stopifnot(all(unlist(packed[c("spine_top", "spine_right", "spine_bottom", "spine_left")])))
 box_edit <- list(axes_0 = list(spine_right = FALSE, spine_top_color = "#203181", spine_linewidth = 2.1,
                               spine_top_linewidth = 3.2))
@@ -2821,6 +2905,22 @@ def test_faceted_curve_group_updates_one_key_and_respects_each_panel_clip(tmp_pa
 
 def test_axis_windows_and_transforms_reproject_captured_data_without_recalculating(tmp_path):
     _assert_r_probe(tmp_path, AXES_PROBE)
+
+
+def test_faceted_axes_edit_only_the_target_panel_grid_background_and_border(tmp_path):
+    _assert_r_probe(tmp_path, FACET_AXES_PROBE)
+    scene = json.loads((tmp_path / "faceted-axes.json").read_text(encoding="utf-8"))
+    nativeggplot.GgplotTarget.annotate_manifest(scene)
+    axes = {item["gid"]: item for item in scene["elements"] if item["role"] == "axes"}
+    assert len(axes) == 6
+    assert len({item["identity"] for item in axes.values()}) == 6
+    first = {field["prop"]: field for field in axes["axes_2"]["editable"]}
+    selected = {field["prop"]: field for field in axes["axes_3"]["editable"]}
+    assert selected["grid_x"]["value"] is False
+    assert selected["grid_x"]["value_original"] is first["grid_x"]["value"] is True
+    assert selected["spine_right_color"]["value"] == "#098756"
+    assert selected["facecolor"]["value"] == "#ECD5A8"
+    assert first["facecolor"]["value"] != selected["facecolor"]["value"]
 
 
 ASPECT_PROBE = r"""

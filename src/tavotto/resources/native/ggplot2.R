@@ -444,15 +444,16 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
                                grid_edits, theme_edits, aspect, side_edits) {
   built <- state$built
   plot <- built$plot
-  if (length(grid_edits)) plot$theme <- ggplot_grid_theme(plot$theme, state$axes_target$grid, grid_edits)
+  axes_target <- state$axes_targets[[ggplot_axes_gid]]
+  if (length(grid_edits)) plot$theme <- ggplot_grid_theme(plot$theme, axes_target$grid, grid_edits)
   if (length(theme_edits)) plot$theme <- plot$theme + do.call(ggplot2::theme, theme_edits)
   guide_params <- plot$guides$params
   remapped <- if (length(colour_edits)) ggplot_remap_colour_scales(state, colour_edits, guide_params)
   if (!is.null(remapped)) guide_params <- remapped$guides
   if (!is.null(remapped)) built$data <- remapped$data
-  if (length(axis_changes)) built <- ggplot_project_axes(built, state$axes_target, axis_changes)
+  if (length(axis_changes)) built <- ggplot_project_axes(built, axes_target, axis_changes)
   layout <- ggplot_clone(built$layout)
-  if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, state$axes_target, aspect)
+  if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, axes_target, aspect)
   panels <- layout$panel_params
   for (gid in ggplot_line_edit_order(names(guide_strokes), state$line_targets)) {
     target <- state$line_targets[[gid]]
@@ -524,7 +525,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   }
   if (length(panels) == 1L) {
     if (length(side_edits)) {
-      sides <- ggplot_apply_tick_sides(state$axes_target$tick_sides, side_edits, axis_guides,
+      sides <- ggplot_apply_tick_sides(axes_target$tick_sides, side_edits, axis_guides,
                                        axis_params, plot$theme)
       axis_params <- sides$params
       axis_guides <- sides$guides
@@ -546,7 +547,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   }, plot$layers, state$layer_grobs, seq_along(plot$layers))
   built$layout <- layout
   built$plot <- plot
-  axes <- if (length(axis_changes)) ggplot_axes_values(layout, state$axes_target, axis_changes)
+  axes <- if (length(axis_changes)) ggplot_axes_values(layout, axes_target, axis_changes)
   tick_values <- lapply(Filter(function(tick) !is.null(tick$spacing), state$tick_targets), function(tick) {
     ggplot_axis_key_values(panels[[1L]], axis_params[[tick$index]])
   })
@@ -1302,9 +1303,12 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     axes_target <- ggplot_background_target(built, table, axes_target)
     axes_target <- ggplot_aspect_target(built, table, axes_target)
     axes_target <- ggplot_tick_side_target(built, table, axes_target)
-    axes_bbox <- measure_ggplot_axes(table, axes_target, frame_pt)
+    axes_targets <- if (is.null(axes_target)) ggplot_faceted_axes_targets(built, table, panels) else {
+      stats::setNames(list(axes_target), ggplot_axes_gid)
+    }
+    axes_bbox <- measure_ggplot_axes(table, axes_targets, frame_pt)
     has_sized_title <- any(vapply(text_targets, function(text) !is.null(text$title_dimension), logical(1L)))
-    rebuild_guides <- has_sized_title || !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
+    rebuild_guides <- has_sized_title || length(axes_targets) || length(tick_targets) || length(colour_scales) ||
       any(vapply(line_targets, function(line) length(line$guide_keys) > 0L, logical(1L)))
     point_targets <- ggplot_point_targets(built, panels, captured_layers$grobs)
     point_boxes <- measure_ggplot_points(table, point_targets, frame_pt)
@@ -1328,7 +1332,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       palettes = palettes,
       built = if (rebuild_guides) built,
       layer_grobs = if (rebuild_guides) captured_layers$grobs,
-      axes_target = axes_target,
+      axes_targets = axes_targets,
       axes_bbox = axes_bbox,
       line_targets = line_targets,
       line_geometry = line_geometry,
@@ -1625,17 +1629,18 @@ ggplot_table_for <- function(state, edits) {
   stops <- NULL
   axes <- NULL
   tick_values <- NULL
+  axes_target <- state$axes_targets[[ggplot_axes_gid]]
   axes_edits <- edits[[ggplot_axes_gid]]
   aspect <- axes_edits[["aspect"]]
   grid_edits <- axes_edits[intersect(names(axes_edits), ggplot_grid_keys)]
   frame_edits <- axes_edits[intersect(names(axes_edits), ggplot_frame_keys)]
   side_edits <- axes_edits[intersect(names(axes_edits), ggplot_tick_side_keys)]
-  if (length(side_edits) && !all(names(side_edits) %in% names(state$axes_target$tick_sides))) {
+  if (length(side_edits) && !all(names(side_edits) %in% names(axes_target$tick_sides))) {
     stop("The requested native R tick side is unavailable.")
   }
-  if (length(frame_edits)) ggplot_validate_frame_edits(state$axes_target$frame, frame_edits)
+  if (length(frame_edits)) ggplot_validate_frame_edits(axes_target$frame, frame_edits)
   axis_changes <- ggplot_axis_edits(
-    state$axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits),
+    axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits),
                                                             names(side_edits), "facecolor", "aspect"))])
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
@@ -1645,7 +1650,7 @@ ggplot_table_for <- function(state, edits) {
   title_edits <- ggplot_title_theme(text_targets, edits)
   theme_edits <- stats::setNames(title_edits, unname(ggplot_title_theme_names[names(title_edits)]))
   if (!is.null(axes_edits$facecolor)) {
-    theme_edits$panel.background <- ggplot_background_style(state$axes_target$background, axes_edits$facecolor)
+    theme_edits$panel.background <- ggplot_background_style(axes_target$background, axes_edits$facecolor)
   }
   if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
       length(axis_changes) || length(grid_edits) || length(theme_edits) || !is.null(aspect) || length(side_edits)) {
@@ -1716,6 +1721,11 @@ ggplot_table_for <- function(state, edits) {
   }
   for (gid in ggplot_line_edit_order(names(edits), layer_targets$line_targets)) {
     if (gid == ggplot_axes_gid || !is.null(colour_edits[[gid]]) || gid %in% names(title_edits)) next
+    facet <- state$axes_targets[[gid]]
+    if (!is.null(facet)) {
+      table <- ggplot_edit_facet_axes(table, layout, state$built$plot$theme, facet, edits[[gid]])
+      next
+    }
     line <- layer_targets$line_targets[[gid]]
     if (!is.null(line)) {
       table <- ggplot_edit_line(table, line, edits[[gid]])
@@ -1753,7 +1763,7 @@ ggplot_table_for <- function(state, edits) {
     table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
   }
   if (length(frame_edits)) {
-    table <- ggplot_frame_edit(table, state$axes_target$slot, state$axes_target$frame$fallback, frame_edits)
+    table <- ggplot_frame_edit(table, axes_target$slot, axes_target$frame$fallback, frame_edits)
   }
   c(list(table = table, text = text_targets, legends = legend_targets, stops = stops, axes = axes,
          tick_values = tick_values),
@@ -1845,7 +1855,7 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
     return(list(text = measure_ggplot_targets(scene$text, frame_pt),
                 legends = measure_ggplot_legends(scene$legends, frame_pt),
                 axes = scene$axes,
-                axes_bbox = measure_ggplot_axes(scene$table, state$axes_target, frame_pt),
+                axes_bbox = measure_ggplot_axes(scene$table, state$axes_targets, frame_pt),
                 colour_scales = if (length(state$colour_scales)) {
                   measure_ggplot_colour_scales(scene$table, state$colour_scales, frame_pt)
                 },
@@ -1891,7 +1901,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       list(text = measure_ggplot_targets(scene$text[geometry_gids], state$frame_pt),
            legends = if (reflow) measure_ggplot_legends(scene$legends, state$frame_pt),
            axes = scene$axes,
-           axes_bbox = if (reflow) measure_ggplot_axes(scene$table, state$axes_target, state$frame_pt),
+           axes_bbox = if (reflow) measure_ggplot_axes(scene$table, state$axes_targets, state$frame_pt),
            colour_scales = if (reflow && length(state$colour_scales)) {
              measure_ggplot_colour_scales(scene$table, state$colour_scales, state$frame_pt)
            },
@@ -2016,7 +2026,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     )
     if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
     if (!is.null(target$tick_labels)) element$tick_labels <- target$tick_labels
-    if (identical(tick$kind, "axis") && !is.null(state$axes_target)) {
+    if (identical(tick$kind, "axis") && ggplot_axes_gid %in% names(state$axes_targets)) {
       params <- state$built$layout$panel_params[[1L]]$guides$params[[tick$index]]
       if (length(params$aesthetic) == 1L && params$aesthetic %in% c("x", "y")) {
         element$tick_host <- list(axes_gid = ggplot_axes_gid, axis = params$aesthetic)
@@ -2085,7 +2095,10 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     ggplot_colour_scale_elements(state, edits, measured$colour_scales, measured$scale_stops)
   }
   axes_bbox <- if (is.null(measured$axes_bbox)) state$axes_bbox else measured$axes_bbox
-  axes <- ggplot_axes_element(state$axes_target, measured$axes, axes_bbox, edits[[ggplot_axes_gid]])
+  axes <- lapply(names(state$axes_targets), function(gid) {
+    current <- if (gid == ggplot_axes_gid) measured$axes
+    ggplot_axes_element(gid, state$axes_targets[[gid]], current, axes_bbox[[gid]], edits[[gid]])
+  })
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
        elements = c(axes, legends, elements, lines,
                     ggplot_point_elements(state, edits, measured$points),
