@@ -973,6 +973,8 @@ def stack_view(s: adf.DataSummary, cols) -> adf.DataSummary:
         layout="long",
         groups={cname: len(cols)},
         numcat={},
+        design={},
+        row_index=[],
         id_like=[],
         repeats=None,
         row_count=None if s.rows else n,
@@ -2240,6 +2242,30 @@ def error_kind_of(s: adf.DataSummary, err: str) -> str:
     return ERR_KIND_OF_NAME.get(kind or "", "unknown")
 
 
+#: 默认横轴的偏好次序（越小越先）：日期 > 块内严格递增、块间重置 > 整列按行不减 > 少量重复水平
+_DESIGN_RANK = {"date": 0, "block": 1, "monotone": 2, "levels": 3}
+
+
+def _levels_code(s: adf.DataSummary, c: str) -> bool:
+    """两三个水平的整数编码列（`DataSummary.numcat` 且取值结构是 `levels`）：是类别编码（Diet 1–4、group 1 / 2），不是默认横轴。"""
+    return c in s.numcat and s.design.get(c) == "levels"
+
+
+def numeric_like_date(s: adf.DataSummary, c: str) -> bool:
+    """日期列或「像条件 / 顺序」的数值列（`DataSummary.design`）。"""
+    return s.per_column[c].kind == "date" or c in s.design
+
+
+def _design_rank(s: adf.DataSummary, c: str) -> int | None:
+    """这一列作默认横轴的偏好等级；不像条件 / 顺序（`DataSummary.design` 里没有，也不是日期）或是整数编码的类别列 = None。**只看取值结构，不看列名。**"""
+    if s.per_column[c].kind == "date":
+        return _DESIGN_RANK["date"]
+    kind = s.design.get(c)
+    if kind is None or _levels_code(s, c):
+        return None
+    return _DESIGN_RANK[kind]
+
+
 def _resolve_roles_raw(
     entry: adf.TableEntry, hint: str | None, picks: dict
 ) -> _Roles | NeedsChoice | str:
@@ -2312,6 +2338,10 @@ def _resolve_roles_raw(
         return "value_column_mixed" if mixed else "no_numeric_column"
     named = adf._mentioned(hint, cols) if hint else []
     wide_x = cols[0] if s.layout == "wide" and cols[0] in (nums + dates) else None
+    # 默认纵轴只从「像测量」的列里挑（`DataSummary.design` 里没有、也不是整数编码的类别列）；一个都没有就保持现有行为。只影响**默认**：用户 / 模型点名、下拉选项都不变
+    ynums = [c for c in nums if c not in s.design and c not in s.numcat]
+    if not ynums:
+        ynums = nums
     # --- y
     ys: list[str]
     p = picks.get("y")
@@ -2328,13 +2358,21 @@ def _resolve_roles_raw(
     elif p in nums:
         ys = [p]
     elif p == "unsure":
-        ys = [nums[-1]]
+        ys = [ynums[-1]]
     elif named_y:
         ys = [named_y[0]]
     elif len(nums) == 1:
         ys = [nums[0]]
-    elif wide_x is not None and 2 <= len([c for c in nums if c != wide_x]) <= 3 and not cats:
+    elif (
+        wide_x is not None
+        and 2 <= len([c for c in nums if c != wide_x]) <= 3
+        and not cats
+        # 别的列是「块内递增、块间重置」的时间（个体 × 时间）：不是「第一列当横轴、其余都是系列」
+        and not any(s.design.get(c) == "block" for c in nums if c != wide_x)
+    ):
         ys = [c for c in nums if c != wide_x]
+    elif len(ynums) == 1 and ynums != nums:
+        ys = [ynums[0]]  # 其余数值列都像条件 / 顺序 / 类别编码：唯一像测量的那一列就是纵轴，不问
     else:
         return NeedsChoice("pick_value", _col_options("y", nums, s), _unsure("y"))
     # --- 分组列（`picks.group == "none"`：用户明确不要分组，不走下面的挑选与提问）
@@ -2366,18 +2404,30 @@ def _resolve_roles_raw(
         for c in dates + nums
         if c not in ys and (s.per_column[c].kind == "date" or numeric_like(s.per_column[c]))
     ]
+    dx = sorted(
+        (c for c in xs if _design_rank(s, c) is not None),
+        key=lambda c: (_design_rank(s, c), xs.index(c)),
+    )
     x_ord: str | None = None
     px = picks.get("x")
     named_x = [c for c in named if c in xs]
     if px == "none":  # 用户明确不要有序横轴：不出 trend / relationship，也不问
         pass
     elif len(xs) == 1:
-        x_ord = xs[0]
+        c = xs[0]
+        # 唯一的候选：像条件 / 顺序就是横轴；整数编码的类别列（两三个组）不是横轴；像测量、而表里有分组列时也不是（走比较 / 分布）；其余照旧
+        if c in dx or px == c or c in named_x:  # 用户 / 模型 / 话里点名了它：照点名
+            x_ord = c
+        elif not (_levels_code(s, c) or (cats and not numeric_like_date(s, c))):
+            x_ord = c
     elif len(xs) > 1:
         if px in xs:
             x_ord = px
         elif named_x:
             x_ord = named_x[0]
+        elif dx:
+            # 只从像条件 / 顺序的列里挑：日期 > 块内递增块间重置 > 整列单调 > 少量重复水平，再按最左（宽表的第一列若也像条件，自然在里面）
+            x_ord = dx[0]
         elif wide_x in xs:
             x_ord = wide_x
         elif not cats:

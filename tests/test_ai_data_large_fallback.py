@@ -79,13 +79,12 @@ def test_a_large_table_whose_defaults_are_all_large_rejected_still_gets_a_chart(
     )
 
 
-def test_the_same_shape_as_a_small_table_is_unchanged(tmp_path):
-    """小表：规则默认的比较 / 分布备选原样，没有横轴，不走退路。"""
+def test_the_same_shape_as_a_small_table_never_takes_the_fallback(tmp_path):
+    """小表：没有任何「大表不支持」的拒绝，退路不出场（候选来自同一条规则流水）。"""
     p = _write(tmp_path, FLIGHTS, _flights())
     _prof, _vals, res = _candidates(tmp_path, p, large=False)
-    assert res.roles["x"] is None
-    assert res.items[0].code == "points_mean"
-    assert {c.recipe.family for c in res.items} >= {"comparison"}
+    assert res.items
+    assert not any(p_.detail.startswith("large") for d in res.dropped for p_ in d.problems)
 
 
 def test_a_user_choice_about_the_x_axis_blocks_the_fallback(tmp_path, monkeypatch):
