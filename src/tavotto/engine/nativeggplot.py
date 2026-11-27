@@ -375,7 +375,7 @@ class GgplotTarget:
 
     @staticmethod
     def annotate_color_scale(element: dict, scale: dict) -> None:
-        from .colorscale import colorbar_layout_fields
+        from .colorscale import colorbar_layout_fields, colorbar_outline_fields
 
         fields = colorbar_layout_fields(scale["orientation"], scale["extend"])
         for field in fields:
@@ -384,6 +384,16 @@ class GgplotTarget:
                 field["value_original"] = scale["layout_original"][field["prop"]]
         if scale["limits"] is not None:
             fields.extend(GgplotTarget.color_mapping_fields(scale))
+        if (outline := scale.get("outline")) is not None:
+            original = outline["original"]
+            edited = outline["edited"] or {}
+            values = original | edited
+            for field in colorbar_outline_fields(
+                values["outline_visible"], values["outline_width"]
+            ):
+                if (prop := field["prop"]) in edited:
+                    field["value_original"] = original[prop]
+                fields.append(field)
         element["editable"] = fields
         element["colorbar_reversed"] = scale["reversed"]
         element["identity"] = _COLOR_SCALE_IDENTITY_PREFIX + scale["context"]

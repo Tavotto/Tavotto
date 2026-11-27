@@ -1431,12 +1431,15 @@ descending <- plot + ggplot2::scale_colour_gradient(
   name = "Exposure", transform = "reverse",
   guide = ggplot2::guide_colourbar(position = "right", display = "rectangles"))
 desc_state <- adapter$capture_ggplot(descending, c(432, 288), palettes)$state
-desc_edit <- stats::setNames(list(list(orientation = "horizontal", extend = "min")), gid)
+desc_edit <- stats::setNames(list(list(orientation = "horizontal", extend = "min", outline_visible = TRUE)), gid)
 desc_guide <- guide_for(desc_state, scene_for(desc_state, desc_edit)$table, gid)
 desc_cells <- desc_guide$layout$name
 desc_tip <- which(desc_cells == paste0(adapter$ggplot_colourbar_tip_prefix, "min"))
+desc_frame <- desc_guide$grobs[[which(desc_cells == "frame")]]
 stopifnot(element_for(desc_state, desc_edit)$color_scale$reversed,
-          desc_guide$layout$l[[desc_tip]] == desc_guide$layout$r[desc_cells == "bar"] + 1L)
+          desc_guide$layout$l[[desc_tip]] == desc_guide$layout$r[desc_cells == "bar"] + 1L,
+          isTRUE(all.equal(as.numeric(desc_frame$x), c(0, 20/21, 1, 20/21, 0))),
+          identical(as.numeric(desc_frame$y), c(0, 0, .5, 1, 1)))
 orientation_cases <- expand.grid(direction = c("horizontal", "vertical"),
                                  display = c("rectangles", "raster", "gradient"))
 for (j in seq_len(nrow(orientation_cases))) {
@@ -1472,6 +1475,57 @@ for (j in seq_len(nrow(orientation_cases))) {
 after_captures <- computations
 stopifnot(identical(adapter$render_ggplot(state), captured$svg),
           identical(adapter$render_ggplot(state, combined), combined_svg), computations == after_captures)
+
+# The frame follows the whole colour strip, including the actual extension
+# cells. Its paint must not change the mapping or a second guide on the page.
+outline_for <- function(guide) guide$grobs[[which(guide$layout$name == "frame")]]
+stock <- ggplot2::theme(legend.frame = ggplot2::element_rect(colour = "#6D4221", linewidth = 1.3))
+framed <- adapter$capture_ggplot(plot + stock, c(432, 288), palettes)
+original <- framed$state
+frame_edit <- stats::setNames(list(list(outline_width = 2.25)), gid)
+actual <- scene_for(original, frame_edit)$table
+guide <- guide_for(original, actual, gid)
+frame <- outline_for(guide)
+stopifnot(inherits(frame, "rect"), frame$gp$col == "#6D4221", frame$gp$lwd == 3,
+          identical(outline_for(guide_for(original, actual, other))$gp,
+                    outline_for(guide_for(original, original$table, other))$gp))
+plain <- ggplot2::ggplot(data, ggplot2::aes(x, y, colour = z)) + ggplot2::geom_point() +
+  ggplot2::scale_colour_gradient(name = "Exposure", guide = ggplot2::guide_colourbar(position = "right"))
+native_width <- ggplot2::theme(legend.frame = ggplot2::element_rect(
+  colour = "#6D4221", linewidth = 2.25 / (ggplot2::.pt * 72 / 96)))
+plain_state <- adapter$capture_ggplot(plain + stock, c(432, 288), palettes)$state
+native_svg <- adapter$capture_ggplot(plain + native_width, c(432, 288), palettes)$svg
+stopifnot(identical(adapter$render_ggplot(plain_state, frame_edit), native_svg))
+
+for (direction in c("horizontal", "vertical")) {
+  extra <- stats::setNames(list(list(orientation = direction, extend = "both", outline_width = 2.25)), gid)
+  scene <- scene_for(original, extra)
+  guide <- guide_for(original, scene$table, gid)
+  frame <- outline_for(guide)
+  axis <- if (direction == "horizontal") "x" else "y"
+  cross <- if (direction == "horizontal") "y" else "x"
+  stopifnot(inherits(frame, "polygon"), frame$gp$lwd == 3, is.na(frame$gp$fill),
+            identical(as.numeric(frame[[cross]]), c(.5, 0, 0, .5, 1, 1)),
+            isTRUE(all.equal(as.numeric(frame[[axis]]), c(0, 1/22, 21/22, 1, 21/22, 1/22))))
+  visible <- element_for(original, extra)$color_scale$outline
+  stopifnot(visible$original$outline_visible, visible$edited$outline_width == 2.25)
+  extra[[gid]]$outline_visible <- FALSE
+  hidden <- scene_for(original, extra)$table
+  hidden_guide <- guide_for(original, hidden, gid)
+  stopifnot(inherits(outline_for(hidden_guide), "zeroGrob"),
+            identical(guide$grobs[[which(guide$layout$name == "bar")]]$gp,
+                      hidden_guide$grobs[[which(hidden_guide$layout$name == "bar")]]$gp))
+}
+make_visible <- stats::setNames(list(list(outline_visible = TRUE, outline_width = 2.25)), gid)
+ink <- outline_for(guide_for(state, scene_for(state, make_visible)$table, gid))
+description <- element_for(state, make_visible)$color_scale$outline
+stopifnot(inherits(ink, "rect"), !description$original$outline_visible,
+          description$edited$outline_visible, identical(adapter$render_ggplot(original), framed$svg),
+          identical(adapter$render_ggplot(state), captured$svg))
+for (bad in list(list(outline_width = -1), list(outline_visible = "yes"))) {
+  stopifnot(inherits(try(adapter$render_ggplot(state, stats::setNames(list(bad), gid)),
+                        silent = TRUE), "try-error"))
+}
 """
 
 

@@ -26,6 +26,21 @@ def colorbar_layout_fields(orientation, extend):
     return fields
 
 
+def colorbar_outline_fields(visible, width):
+    return [
+        {"prop": "outline_visible", "type": "bool", "value": bool(visible)},
+        {
+            "prop": "outline_width",
+            "type": "number",
+            "value": round(float(width), 2),
+            "min": 0,
+            "max": 10,
+            "step": 0.1,
+            "unit": "pt",
+        },
+    ]
+
+
 def color_scale_fields(vmin, vmax, cmap_field, *, precision=4):
     """Project and inspector properties for a continuous data-to-color scale."""
     span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0

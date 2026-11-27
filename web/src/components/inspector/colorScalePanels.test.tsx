@@ -230,6 +230,29 @@ afterEach(async () => {
 /* ------------------------------ 共用的那份色阶 ----------------------------- */
 
 describe('色阶共用关系（审计 T22 / T23）', () => {
+  it.each(['axes_1.colorbar', 'legend.right.1.colourbar'])('色条在更多属性中编辑自己的外框（%s）', async (gid) => {
+    const base = colorbarEl()
+    const cb = {
+      ...base,
+      gid,
+      editable: [
+        ...base.editable,
+        f('outline_visible', 'bool', false),
+        f('outline_width', 'number', 1.2, { min: 0, max: 10, step: 0.1, unit: 'pt' }),
+      ],
+    }
+    await mount(gid, { manifest: manifestOf(cb) })
+    await click(host.querySelector('[data-fold="more"] > button'))
+    const toggle = rowOf('outline_visible')?.querySelector('[role="switch"]')
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    await click(toggle)
+    expect(overrideOf(gid, 'outline_visible')).toBe(true)
+    const width = input('outline_width')
+    expect(width?.value).toBe('1.2')
+    await typeInto(width!, '2.4')
+    expect(overrideOf(gid, 'outline_width')).toBe(2.4)
+  })
+
   it.each([true, false])('未声明布局宿主时给出明确关联写法（有颜色对家：%s）', async (mappable) => {
     const cb = { ...colorbarEl({ mappable }), owner_status: 'undeclared' as const }
     await mount(cb.gid, { manifest: manifestOf(cb) })

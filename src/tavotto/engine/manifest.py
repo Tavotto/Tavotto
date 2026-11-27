@@ -71,7 +71,7 @@ from colorbarmodel import (
     scale_gids,
     scale_siblings,
 )
-from colorscale import CMAPS, color_scale_fields, colorbar_layout_fields
+from colorscale import CMAPS, color_scale_fields, colorbar_layout_fields, colorbar_outline_fields
 from legendmodel import (
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
@@ -3583,22 +3583,7 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
             "value": to_hex(_cb_tick_color(p)),
             "group": "刻度",
         },
-        {
-            "prop": "outline_visible",
-            "type": "bool",
-            "value": bool(cb.outline.get_visible()),
-            "group": "高级",
-        },
-        {
-            "prop": "outline_width",
-            "type": "number",
-            "value": round(float(cb.outline.get_linewidth()), 2),
-            "min": 0,
-            "max": 10,
-            "step": 0.1,
-            "unit": "pt",
-            "group": "高级",
-        },
+        *colorbar_outline_fields(cb.outline.get_visible(), cb.outline.get_linewidth()),
         {"prop": "visible", "type": "bool", "value": bool(cb.ax.get_visible())},
     ]
 

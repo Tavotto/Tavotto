@@ -83,6 +83,8 @@ R_COLOR_SCALE = {
     "cmap": "plasma",
     "orientation": "horizontal",
     "extend": "both",
+    "outline_visible": True,
+    "outline_width": 1.75,
 }
 R_COLOR_SCALE_GID = "legend.left.1.colourbar"
 BAR_PAINT = {"facecolor": "#E25832", "edgecolor": "#663399", "linewidth": 2.2, "alpha": 0.75}

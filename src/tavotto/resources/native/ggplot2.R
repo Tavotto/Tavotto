@@ -524,7 +524,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     layout$panel_params <- panels
   }
   plot$guides <- ggplot_colourbar_guides(
-    ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions
+    ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions, remapped$outlines
   )
   captured <- new.env(parent = emptyenv())
   if (length(axis_changes)) captured$grobs <- vector("list", length(plot$layers))
