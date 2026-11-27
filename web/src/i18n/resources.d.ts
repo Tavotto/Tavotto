@@ -1201,15 +1201,6 @@ export default interface Resources {
         "empty": "空文件不能作为附件。",
         "total": "附件合计不能超过 {{size}}。"
       },
-      "journal": {
-        "about": "关于 {{what}}",
-        "aboutMissing": "想加的期刊 · {{query}}",
-        "bodyLabel": "补充一句（选填）",
-        "bodyPlaceholder": "比如官网现在怎么写的，或编辑部邮件里的原话。直接点发送也可以。",
-        "bodyPlaceholderMissing": "比如期刊全称、出版社。直接点发送也可以。",
-        "urlLabel": "投稿须知链接（选填）",
-        "urlPlaceholder": "贴上期刊官网或投稿须知网址"
-      },
       "letters": "我的来信",
       "lettersAttachments": "附件：{{names}}",
       "lettersCheck": "检查回信",
@@ -1606,6 +1597,33 @@ export default interface Resources {
       "unspecified": "当前快照未记录",
       "v2Updated": "「{{name}}」有新的期刊要求，已按它检查",
       "yes": "是"
+    },
+    "journalTip": {
+      "attach": "添加截图 / PDF",
+      "cancel": "取消",
+      "entryTitle": "反馈条目",
+      "guideLabel": "投稿须知链接（选填）",
+      "issue": {
+        "link_broken": "出处打不开",
+        "other": "其他",
+        "updated": "期刊已更新",
+        "wrong_value": "数值不对"
+      },
+      "issueLabel": "问题",
+      "nameLabel": "期刊名称",
+      "noteLabel": "补充说明（选填）",
+      "quoteLabel": "期刊原文（选填）",
+      "quotePlaceholder": "粘贴官网或编辑部邮件里的原话",
+      "rowCurrent": "目录现值",
+      "rowRule": "条目",
+      "rowSource": "当前出处",
+      "submit": "提交反馈",
+      "title": {
+        "missing": "申请收录期刊",
+        "wrong": "期刊规范反馈"
+      },
+      "urlLabel": "出处链接（选填）",
+      "urlPlaceholder": "https://…"
     },
     "layout": {
       "computationalFormat": "计算图表",

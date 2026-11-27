@@ -26,7 +26,7 @@ import {
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { journalCatalogUi } from '@/lib/journalUi'
-import { journalTipKey, type JournalTipContext } from '@/lib/journalTip'
+import { journalTipKey, type JournalIssue, type JournalTipContext } from '@/lib/journalTip'
 
 /**
  * 「联系作者」的前端状态（ADR 0145）：能力镜像、对话框开关、**草稿**、发送阶段、「我的来信」与未读数。
@@ -53,6 +53,10 @@ export interface ContactDraft {
   diagOptions: DetailOptions
   /** 期刊线索的「原文链接」（ADR 0213）；普通来信不用它 */
   url: string
+  /** 期刊反馈窗的「问题」分段；空 = 没选，不发 */
+  issue: JournalIssue | ''
+  /** 「申请收录期刊」的期刊名称（预填搜索词，可改） */
+  query: string
 }
 
 export interface ContactFailure {
@@ -76,6 +80,8 @@ export const EMPTY_DRAFT: ContactDraft = {
   attachDiag: false,
   diagOptions: NO_DETAIL_OPTIONS,
   url: '',
+  issue: '',
+  query: '',
 }
 /** 勾选变化后等多久才重新备包：连点几个框只备一次（同 DiagnosticsSendDialog） */
 const DIAG_REFRESH_MS = 300
@@ -369,7 +375,7 @@ export const useContactStore = create<ContactState>((set, get) => {
         if (!journalTip && !blank) set({ draftStash: cur })
         if (get().draft.attachDiag) discardDiag()
         set({
-          draft: { ...EMPTY_DRAFT, replyEmail: get().rememberedEmail ?? '' },
+          draft: { ...EMPTY_DRAFT, replyEmail: get().rememberedEmail ?? '', query: ctx.query ?? '' },
           phase: 'edit',
           failure: null,
           status: null,
@@ -436,10 +442,11 @@ export const useContactStore = create<ContactState>((set, get) => {
         // 用户不写任何话、只点发送也算有效线索；但「没有这本刊」至少要有搜索词、链接、附件之一
         const url = normalizeTipUrl(draft.url)
         if (url === null) return set({ formError: 'urlInvalid' })
-        if (tip.type === 'missing' && !tip.query && !url && draft.files.length === 0) {
+        const query = draft.query.trim()
+        if (tip.type === 'missing' && !query && !url && draft.files.length === 0) {
           return set({ formError: 'journalNeedsClue' })
         }
-        journal = tipHead(tip, url)
+        journal = tipHead(tip, url, { issue: draft.issue, query })
       } else if (!body) return set({ formError: 'bodyRequired' })
       if (body.length > (capability?.body_max ?? 5000)) return set({ formError: 'bodyTooLong' })
       if (draft.subject.trim().length > (capability?.subject_max ?? 120)) return set({ formError: 'subjectTooLong' })
@@ -616,12 +623,18 @@ export function normalizeTipUrl(raw: string): string | null {
 }
 
 /** 上下文 + 链接 → 线缆上的 `journal` 头（只带有值的键） */
-export function tipHead(tip: JournalTipContext, url: string): ContactJournalHead {
+export function tipHead(
+  tip: JournalTipContext,
+  url: string,
+  edited?: { issue?: JournalIssue | ''; query?: string },
+): ContactJournalHead {
+  const query = (edited?.query ?? tip.query ?? '').slice(0, 120)
   return {
     type: tip.type,
+    ...(tip.type === 'wrong' && edited?.issue ? { issue: edited.issue } : {}),
     ...(tip.journalId ? { journal_id: tip.journalId } : {}),
     ...(tip.journalLabel ? { journal_label: tip.journalLabel } : {}),
-    ...(tip.query ? { query: tip.query } : {}),
+    ...(tip.type === 'missing' && query ? { query } : {}),
     ...(tip.ruleKey ? { rule_key: tip.ruleKey } : {}),
     ...(tip.current ? { current: tip.current } : {}),
     ...(tip.sourceId ? { source_id: tip.sourceId } : {}),

@@ -7,8 +7,8 @@ import { expect, test, waitForDocumentReady } from './fixtures'
 /**
  * 期刊线索入口（ADR 0213 一期，`docs/features/registry.json` 的 `journal.tips`）：真浏览器 + 真引擎。
  *
- *   1. 出处卡底栏与「打开原网页」同一行多一个文字链接「这条不对」；点开是「联系作者」同一个窗，标题下一行灰字写明哪本刊哪一条，
- *      多一个「原文链接」框，没有主题框和诊断包；点发送之前零连接，点发送才出现第一条连接（对端不是 TLS 服务，所以以网络类错误失败：
+ *   1. 出处卡底栏与「打开原网页」同一行多一个文字链接「这条不对」；点开是专用的「期刊规范反馈」窗，灰字写明刊名、条目 / 目录现值 / 当前出处三行，
+ *      有「问题」分段和「出处链接」框，没有主题框、诊断包和「我的来信」；点发送之前零连接，点发送才出现第一条连接（对端不是 TLS 服务，所以以网络类错误失败：
  *      失败有人话、草稿（含链接）还在）；
  *   2. 选择器搜不到那一行句尾多一个「没有这本刊」，点开带着搜索词；
  *   3. 入口只在三个开关都满足时出现：`TAVOTTO_NO_CONTACT=1`（fixtures 默认）的引擎上，卡与选择器都没有这个链接。
@@ -62,7 +62,7 @@ async function openSpec(page: Page) {
 }
 
 test(
-  '期刊线索：出处卡「这条不对」与选择器「没有这本刊」打开同一个联系作者窗，点发送前零连接',
+  '期刊线索：出处卡「这条不对」与选择器「没有这本刊」打开专用的期刊反馈窗，点发送前零连接',
   { tag: '@feature:journal.tips' },
   async ({ app, page }) => {
     test.setTimeout(240_000)
@@ -112,16 +112,23 @@ test(
       expect(box.x + box.width).toBeLessThanOrEqual(vp.width)
       await shoot(page, 'source-card')
 
-      // ── 点开：同一个「联系作者」窗，灰字写明哪本刊哪一条 ──────────────────
+      // ── 点开：专用的「期刊规范反馈」窗，灰字刊名 + 条目三行 ────────────────
       await report.click()
-      const dialog = page.locator('[data-dialog="contact"]')
+      const dialog = page.locator('[data-dialog="journal-tip"]')
       await expect(dialog).toBeVisible()
-      await expect(dialog.locator('[data-contact-journal-about]')).toContainText('Fixture Beta')
-      await expect(dialog.locator('[data-contact-journal-about]')).toContainText('位图分辨率')
+      await expect(dialog).toContainText('期刊规范反馈')
+      await expect(dialog.locator('[data-journal-tip-about]')).toHaveText('Fixture Beta')
+      await expect(dialog.locator('[data-journal-tip-row="rule"]')).toContainText('位图分辨率')
+      await expect(dialog.locator('[data-journal-tip-row="current"]')).toBeVisible()
+      await expect(dialog.locator('[data-journal-tip-row="source"]')).toContainText('·')
       await expect(dialog.locator('[data-contact-journal-url]')).toBeVisible()
       await expect(dialog.locator('[data-contact-subject]')).toHaveCount(0)
       await expect(dialog.locator('[data-contact-diag]')).toHaveCount(0)
+      await expect(dialog.locator('[data-contact-switch-view]')).toHaveCount(0)
       expect(connections).toBe(0)
+      // 选一个问题类型、填上期刊原文
+      await dialog.getByRole('radio', { name: '期刊已更新' }).click({ timeout: 10_000 })
+      await dialog.locator('[data-contact-text]').fill('Figures should be supplied at a minimum of 300 dpi.')
       await shoot(page, 'dialog-wrong')
 
       // 链接没写协议会补 https；点发送才出现第一条连接；失败时草稿（含链接）还在
@@ -142,7 +149,10 @@ test(
       await shoot(page, 'picker-empty')
       await empty.getByRole('button', { name: '告诉作者加上' }).click()
       await expect(dialog).toBeVisible()
-      await expect(dialog.locator('[data-contact-journal-about]')).toContainText('zzzz no such journal')
+      await expect(dialog).toContainText('申请收录期刊')
+      await expect(dialog.locator('[data-journal-tip-name]')).toHaveValue('zzzz no such journal')
+      await dialog.locator('[data-journal-tip-name]').fill('Journal of Fixture Studies')
+      await dialog.locator('[data-contact-journal-url]').fill('https://example.org/guide')
       await shoot(page, 'dialog-missing')
       await dialog.locator('[data-contact-dismiss]').click()
 
@@ -155,10 +165,11 @@ test(
       }
       await expect(scrim).toHaveCount(0)
       await page.locator('[data-contact-button="topbar"]').click()
-      await expect(dialog).toBeVisible()
-      await expect(dialog.locator('[data-contact-text]')).toHaveAttribute('placeholder', /遇到的问题、想要的功能/)
-      await expect(dialog.locator('[data-contact-journal-url]')).toHaveCount(0)
-      await expect(dialog.locator('[data-contact-journal-about]')).toHaveCount(0)
+      const plain = page.locator('[data-dialog="contact"]')
+      await expect(plain).toBeVisible()
+      await expect(dialog).toHaveCount(0)
+      await expect(plain.locator('[data-contact-text]')).toHaveAttribute('placeholder', /遇到的问题、想要的功能/)
+      await expect(plain.locator('[data-contact-journal-url]')).toHaveCount(0)
       await shoot(page, 'contact-plain')
     } finally {
       sink.close()

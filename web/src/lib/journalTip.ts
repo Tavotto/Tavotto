@@ -1,7 +1,11 @@
-import { fieldLabel, valueText } from '@/lib/journalPick'
+import { fieldLabel, sourceHost, valueText } from '@/lib/journalPick'
 import type { JournalFieldSource } from '@/lib/journals'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useJournalV2Store } from '@/store/journalV2Store'
+
+/** 「问题」分段的取值（线缆 `journal.issue`，只在 type=wrong 时发） */
+export const JOURNAL_ISSUES = ['wrong_value', 'updated', 'link_broken', 'other'] as const
+export type JournalIssue = (typeof JOURNAL_ISSUES)[number]
 
 /**
  * 「期刊线索」的上下文（ADR 0213）：用户从出处卡点「这条不对」、或在选择器里点「没有这本刊」时带进「联系作者」窗的那一份。
@@ -16,8 +20,11 @@ export interface JournalTipContext {
   ruleKey?: string
   /** 规则的界面名（「线宽下限」），只给灰字用，不发给服务端 */
   ruleLabel?: string
-  /** 目录里这一条的序列化值，只给服务端看（≤200 字，引擎再校验一次） */
+  /** 目录里这一条的序列化值（≤200 字，引擎再校验一次）；反馈窗的「目录现值」也显示它 */
   current?: string
+  /** 出处主机名与抓取日期，只给反馈窗的「当前出处」一行看，不发给服务端 */
+  sourceHost?: string
+  sourceDate?: string
   sourceId?: string
   /** 选择器搜索框里的字（≤120 字） */
   query?: string
@@ -49,6 +56,8 @@ export function tipForSource(
     ruleKey: path,
     ruleLabel: fieldLabel(path),
     current: valueText(path, source).slice(0, 200),
+    sourceHost: sourceHost(source.url).replace(/^www\./, ''),
+    sourceDate: source.retrieved || undefined,
     sourceId: source.src, // v2 的 `v2:` 前缀原样发（契约正则允许）
     catalog: catalogRevs(journalId),
   }

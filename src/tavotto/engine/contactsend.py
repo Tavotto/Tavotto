@@ -353,6 +353,8 @@ class Draft:
 # 期刊线索（ADR 0213）：结构化头在本机先校验，形状与服务端 `/v1/messages/init` 的 `journal` 同一份契约
 # ---------------------------------------------------------------------------
 JOURNAL_TYPES = ("wrong", "missing", "editor")
+#: 「问题」分段的闭集（只在 type=wrong 时发）
+JOURNAL_ISSUES = ("wrong_value", "updated", "link_broken", "other")
 JOURNAL_LABEL_MAX = 200
 JOURNAL_QUERY_MAX = 120
 JOURNAL_CURRENT_MAX = 200
@@ -404,6 +406,11 @@ def clean_journal(raw: object, *, has_attachments: bool) -> dict | None:
     if kind not in JOURNAL_TYPES:
         raise ContactError("journal_invalid", 422)
     out: dict = {"type": kind}
+    if "issue" in raw:
+        issue = raw["issue"]
+        if kind != "wrong" or issue not in JOURNAL_ISSUES:
+            raise ContactError("journal_invalid", 422)
+        out["issue"] = issue
     jid = raw.get("journal_id")
     if isinstance(jid, str) and _JOURNAL_ID.match(jid):
         out["journal_id"] = jid

@@ -96,10 +96,11 @@ const click = async (el: Element | null) => {
   })
 }
 const q = (sel: string) => document.body.querySelector(sel)
-const typeInto = async (el: HTMLInputElement | null, value: string) => {
+const typeInto = async (el: HTMLInputElement | HTMLTextAreaElement | null, value: string) => {
   expect(el).not.toBeNull()
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, value)
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+    Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, value)
     el!.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
@@ -152,18 +153,54 @@ const openCard = async () => {
 }
 
 describe('出处卡「这条不对」', () => {
-  it('和「打开原网页」同一行的文字链接；点开是同一个联系作者窗，标题下一行灰字写明哪本刊哪一条', async () => {
+  it('和「打开原网页」同一行的文字链接；点开是专用的「期刊规范反馈」窗：灰字刊名、条目 / 现值 / 出处三行', async () => {
     await openCard()
     const link = q('[data-journal-report]')!
     expect(link.tagName).toBe('BUTTON')
     expect(link.textContent).toBe(t('journal.card.report', { ns: 'dialogs' }))
     expect(link.parentElement).toBe(q('[data-journal-open]')!.parentElement)
     await click(link)
-    expect(q('[data-dialog="contact"]')).not.toBeNull()
-    expect(q('[data-contact-journal-about]')!.textContent).toMatch(/^关于 Fixture Press · /)
+    expect(q('[data-dialog="journal-tip"]')).not.toBeNull()
+    expect(q('[data-dialog="contact"]')).toBeNull() // 不是「联系作者」窗
+    expect(q('[data-dialog="journal-tip"]')!.textContent).toContain(t('journalTip.title.wrong', { ns: 'dialogs' }))
+    expect(q('[data-journal-tip-about]')!.textContent).toBe('Fixture Press')
+    expect(q('[data-journal-tip-row="rule"]')).not.toBeNull()
+    expect(q('[data-journal-tip-row="current"]')).not.toBeNull()
+    const src = q('[data-journal-tip-row="source"] dd')!.textContent!
+    expect(src).toMatch(/·/) // 主机名 · 抓取日期
     expect(q('[data-contact-journal-url]')).not.toBeNull()
-    expect(q('[data-contact-subject]')).toBeNull() // 主题由服务端生成
-    expect(q('[data-contact-diag]')).toBeNull() // 与诊断包互斥
+    expect(q('[data-contact-subject]')).toBeNull() // 没有主题框
+    expect(q('[data-contact-diag]')).toBeNull() // 没有诊断信息
+    expect(q('[data-contact-switch-view]')).toBeNull() // 没有「我的来信」
+    expect(q('[data-contact-wecom-line]')).toBeNull()
+    expect(q('[data-contact-pick]')!.textContent).toBe(t('journalTip.attach', { ns: 'dialogs' }))
+    expect(q('[data-contact-send]')!.textContent).toBe(t('journalTip.submit', { ns: 'dialogs' }))
+  })
+
+  it('「问题」分段四项、默认不选；选了随信带 issue；原文进正文', async () => {
+    await openCard()
+    await click(q('[data-journal-report]'))
+    const radios = [...document.body.querySelectorAll('[data-testid="journal-tip-issue"] [role="radio"]')]
+    expect(radios.map((r) => r.textContent)).toEqual(
+      ['wrong_value', 'updated', 'link_broken', 'other'].map((k) => t(`journalTip.issue.${k}`, { ns: 'dialogs' })),
+    )
+    expect(radios.some((r) => r.getAttribute('aria-checked') === 'true')).toBe(false)
+    const again = [...document.body.querySelectorAll('[data-testid="journal-tip-issue"] [role="radio"]')]
+    await click(again[1])
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, '官网现在写 0.25 pt')
+    await click(q('[data-contact-send]'))
+    const [meta] = vi.mocked(sendContact).mock.calls[0]
+    expect(meta.journal?.issue).toBe('updated')
+    expect(meta.body).toBe('官网现在写 0.25 pt')
+  })
+
+  it('普通「联系作者」窗没有任何期刊字段', async () => {
+    await mount(<div />)
+    await act(async () => useContactStore.getState().setOpen(true))
+    expect(q('[data-dialog="contact"]')).not.toBeNull()
+    expect(q('[data-dialog="journal-tip"]')).toBeNull()
+    expect(q('[data-contact-journal-url]')).toBeNull()
+    expect(q('[data-contact-subject]')).not.toBeNull()
   })
 
   it('三个开关缺一就不出现：联系作者关着 / 引擎说期刊联网被关 / 旧引擎不带 journal_tips', async () => {
@@ -200,6 +237,7 @@ describe('出处卡「这条不对」', () => {
     })
     expect(meta.journal?.current).toBeTruthy()
     expect(meta.journal?.url).toBeUndefined()
+    expect(meta.journal?.issue).toBeUndefined() // 不选就不带
   })
 
   it('原文链接：没写协议补 https；http 不收，原样提示、不发', async () => {
@@ -245,11 +283,30 @@ describe('选择器「没有这本刊」', () => {
     const link = empty.querySelector('button')!
     expect(link.textContent).toBe(t('journal.noJournalListed', { ns: 'dialogs' }))
     await click(link)
-    expect(q('[data-contact-journal-about]')!.textContent).toContain('zzzz-no-such')
+    expect(q('[data-dialog="journal-tip"]')!.textContent).toContain(t('journalTip.title.missing', { ns: 'dialogs' }))
+    expect(q('[data-journal-tip-about]')).toBeNull() // 申请收录没有灰字
+    expect((q('[data-journal-tip-name]') as HTMLInputElement).value).toBe('zzzz-no-such')
+    expect(q('[data-journal-tip-entry]')).toBeNull() // 也没有「问题」分段
     await click(q('[data-contact-send]'))
     const [meta] = vi.mocked(sendContact).mock.calls[0]
     expect(meta.journal).toMatchObject({ type: 'missing', query: 'zzzz-no-such' })
     expect(meta.journal?.journal_id).toBeUndefined()
+    expect(meta.journal?.issue).toBeUndefined()
+  })
+
+  it('期刊名称可以改：发出去的是改后的字；清空又没链接没附件就不发', async () => {
+    await mount(<JournalPicker />)
+    await act(async () => useContactStore.getState().openJournalTip({ type: 'missing', query: 'zzzz' }))
+    await typeInto(q('[data-journal-tip-name]') as HTMLInputElement, 'Journal of Fixtures')
+    await click(q('[data-contact-send]'))
+    expect(vi.mocked(sendContact).mock.calls[0][0].journal?.query).toBe('Journal of Fixtures')
+    vi.mocked(sendContact).mockClear()
+    await act(async () => useContactStore.getState().reset())
+    await act(async () => useContactStore.getState().openJournalTip({ type: 'missing', query: 'zzzz' }))
+    await typeInto(q('[data-journal-tip-name]') as HTMLInputElement, '')
+    await click(q('[data-contact-send]'))
+    expect(sendContact).not.toHaveBeenCalled()
+    expect(q('[data-contact-form-error="journalNeedsClue"]')).not.toBeNull()
   })
 
   it('开关不满足时只剩原来那一句，没有链接', async () => {

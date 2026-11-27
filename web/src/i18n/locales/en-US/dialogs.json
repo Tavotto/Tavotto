@@ -21,15 +21,6 @@
       "count": "Up to {{max}} attachments.",
       "total": "Attachments can't exceed {{size}} in total."
     },
-    "journal": {
-      "about": "About {{what}}",
-      "aboutMissing": "Journal to add · {{query}}",
-      "bodyLabel": "Anything to add (optional)",
-      "bodyPlaceholder": "For example, what the website says now, or the editor’s own words. You can also just hit Send.",
-      "bodyPlaceholderMissing": "For example, the full journal name and publisher. You can also just hit Send.",
-      "urlLabel": "Link to author guidelines (optional)",
-      "urlPlaceholder": "Paste the journal’s website or guidelines URL"
-    },
     "diagLabel": "Attach diagnostic info",
     "diagHint": "Logs may contain text your script printed. The bundle also includes managed-environment Python package names and versions, but not your script or data files.",
     "diagHintExtras": "Logs may contain text your script printed. The bundle also includes managed-environment Python package names and versions, plus what you tick below.",
@@ -2931,6 +2922,33 @@
       "info_text_height_mm": "Text height",
       "info_panel_label": "Panel label"
     }
+  },
+  "journalTip": {
+    "title": {
+      "wrong": "Journal guideline feedback",
+      "missing": "Request a journal"
+    },
+    "entryTitle": "Feedback item",
+    "rowRule": "Item",
+    "rowCurrent": "Catalog value",
+    "rowSource": "Current source",
+    "issueLabel": "Problem",
+    "issue": {
+      "wrong_value": "Wrong value",
+      "updated": "Journal updated",
+      "link_broken": "Source won’t open",
+      "other": "Other"
+    },
+    "quoteLabel": "Journal’s wording (optional)",
+    "quotePlaceholder": "Paste the wording from the website or an editor’s email",
+    "urlLabel": "Source link (optional)",
+    "urlPlaceholder": "https://…",
+    "nameLabel": "Journal name",
+    "guideLabel": "Author guidelines link (optional)",
+    "noteLabel": "Notes (optional)",
+    "attach": "Add screenshot / PDF",
+    "submit": "Submit feedback",
+    "cancel": "Cancel"
   },
   "packageInstall": {
     "entry": "Install project package to a new folder…",

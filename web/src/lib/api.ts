@@ -8816,6 +8816,8 @@ export interface ContactSendMeta {
 /** 与服务端 `/v1/messages/init` 的 `journal` 同形；字段都由引擎按契约校验，不合规的可选字段被丢掉 */
 export interface ContactJournalHead {
   type: 'wrong' | 'missing' | 'editor'
+  /** 「问题」分段；只在 type=wrong 时发 */
+  issue?: 'wrong_value' | 'updated' | 'link_broken' | 'other'
   journal_id?: string
   journal_label?: string
   query?: string

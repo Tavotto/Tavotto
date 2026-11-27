@@ -1541,6 +1541,13 @@ def test_journal_header_goes_into_init_and_the_letter_is_saved_as_journal_kind(o
     assert pub["kind"] == "journal"
 
 
+@pytest.mark.parametrize("issue", ["wrong_value", "updated", "link_broken", "other"])
+def test_journal_issue_goes_into_init_for_wrong(on, issue):
+    contactsend.start(_jmeta({**WRONG, "issue": issue}), [])
+    assert wait_for({"done", "failed"})["state"] == "done"
+    assert on.calls[0]["json"]["journal"]["issue"] == issue
+
+
 def test_journal_letter_without_any_words_is_still_valid(on):
     contactsend.start(_jmeta(WRONG, body=""), [])
     assert wait_for({"done", "failed"})["state"] == "done"
@@ -1595,6 +1602,10 @@ def test_journal_url_rules(on, url):
         {"type": "editor", "journal_id": ""},
         {"type": "missing"},  # missing 至少要 query / url / 附件之一
         {"type": "missing", "url": "http://x.org"},  # 唯一的线索不合规被丢掉
+        {**WRONG, "issue": "bogus"},  # issue 闭集之外
+        {**WRONG, "issue": None},
+        {"type": "missing", "query": "Foo", "issue": "other"},  # 只有 wrong 能带 issue
+        {"type": "editor", "journal_id": "nature", "issue": "other"},
     ],
 )
 def test_bad_journal_type_or_missing_required_rejects_before_any_network(on, journal):

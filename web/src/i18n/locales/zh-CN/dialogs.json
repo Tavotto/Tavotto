@@ -21,15 +21,6 @@
       "count": "最多 {{max}} 个附件。",
       "total": "附件合计不能超过 {{size}}。"
     },
-    "journal": {
-      "about": "关于 {{what}}",
-      "aboutMissing": "想加的期刊 · {{query}}",
-      "bodyLabel": "补充一句（选填）",
-      "bodyPlaceholder": "比如官网现在怎么写的，或编辑部邮件里的原话。直接点发送也可以。",
-      "bodyPlaceholderMissing": "比如期刊全称、出版社。直接点发送也可以。",
-      "urlLabel": "投稿须知链接（选填）",
-      "urlPlaceholder": "贴上期刊官网或投稿须知网址"
-    },
     "diagLabel": "附上诊断信息",
     "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
     "diagHintExtras": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；另附下面勾选的内容。",
@@ -2897,6 +2888,33 @@
       "info_text_height_mm": "文字高度",
       "info_panel_label": "子图标签"
     }
+  },
+  "journalTip": {
+    "title": {
+      "wrong": "期刊规范反馈",
+      "missing": "申请收录期刊"
+    },
+    "entryTitle": "反馈条目",
+    "rowRule": "条目",
+    "rowCurrent": "目录现值",
+    "rowSource": "当前出处",
+    "issueLabel": "问题",
+    "issue": {
+      "wrong_value": "数值不对",
+      "updated": "期刊已更新",
+      "link_broken": "出处打不开",
+      "other": "其他"
+    },
+    "quoteLabel": "期刊原文（选填）",
+    "quotePlaceholder": "粘贴官网或编辑部邮件里的原话",
+    "urlLabel": "出处链接（选填）",
+    "urlPlaceholder": "https://…",
+    "nameLabel": "期刊名称",
+    "guideLabel": "投稿须知链接（选填）",
+    "noteLabel": "补充说明（选填）",
+    "attach": "添加截图 / PDF",
+    "submit": "提交反馈",
+    "cancel": "取消"
   },
   "packageInstall": {
     "entry": "安装项目包到新目录…",
