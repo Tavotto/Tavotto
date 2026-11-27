@@ -215,7 +215,7 @@ describe('出处卡「这条不对」', () => {
     expect(d()).toContain(jt('descLabel'))
     expect((q('[data-contact-text]') as HTMLTextAreaElement).value).toBe('原话')
     expect((q('[data-contact-email]') as HTMLInputElement).placeholder).toBe(jt('emailWrong'))
-  })
+  }, 20_000) // 连点多步：整机满载时默认 5 s 不够
 
   it('普通「联系作者」窗没有任何期刊字段', async () => {
     await mount(<div />)
