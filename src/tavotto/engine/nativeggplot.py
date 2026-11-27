@@ -44,6 +44,43 @@ _RIBBON_IDENTITY_PREFIX = "r9:"
 _AXES_IDENTITY_PREFIX = "r10:"
 
 
+def _clip_facet_curve(element: dict, size_mm: list[float]) -> None:
+    """Project panel-local clips onto the shared figure's visible paths."""
+    geometry = element.get("geometry")
+    if geometry is None:
+        return
+    paths = geometry["paths"]
+    if not any("clip" in path for path in paths):
+        return
+
+    from ..rendercore.geometry import clip_polyline
+
+    visible = []
+    for path in paths:
+        points = [tuple(point) for point in path["points"]]
+        clip = path.get("clip")
+        if clip is None:
+            runs = [points]
+        else:
+            x, y, w, h = clip
+            runs = clip_polyline(points, (x, y, x + w, y + h))
+        visible.extend({"points": run, "closed": False} for run in runs)
+    geometry["paths"] = visible
+    if not visible:
+        element["bbox"] = [0.0, 0.0, 0.0, 0.0]
+        return
+
+    xs, ys = zip(*(point for path in visible for point in path["points"]), strict=True)
+    width_mm = geometry["stroke_pt"] * 25.4 / 72
+    px, py = (width_mm / (2 * side) for side in size_mm)
+    element["bbox"] = [
+        min(xs) - px,
+        min(ys) - py,
+        max(xs) - min(xs) + 2 * px,
+        max(ys) - min(ys) + 2 * py,
+    ]
+
+
 def _write_ggplot_svg(path: Path, raw: str) -> bytes:
     from ..rendercore import svgcheck
     from . import artifactinspect
@@ -224,6 +261,7 @@ class GgplotTarget:
                 continue
             line_context = element.pop("line_context", None)
             if line_context is not None:
+                _clip_facet_curve(element, manifest["size_mm"])
                 element["identity"] = _LINE_IDENTITY_PREFIX + line_context
                 continue
             legend_context = element.pop("legend_context", None)

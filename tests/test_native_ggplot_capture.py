@@ -1986,6 +1986,59 @@ for (edit in list(setNames(list(list(color = "#115500")), line_id),
 """
 
 
+FACET_GROUPED_LINE_PROBE = r"""
+if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+d <- expand.grid(x = 1:5, group = c("Control", "Treated"), facet = c("Early", "Middle", "Late"))
+d <- d[!(d$group == "Control" & d$facet == "Late"), ]
+d$y <- as.integer(d$facet) * d$x + as.integer(d$group)
+calls <- 0L
+observed <- function(data) { calls <<- calls + 1L; data }
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, colour = group)) +
+  ggplot2::geom_line(data = observed, linewidth = .7) + ggplot2::geom_point() +
+  ggplot2::facet_wrap(ggplot2::vars(facet), scales = "free_y") +
+  ggplot2::coord_cartesian(xlim = c(1.5, 4.5), expand = FALSE) +
+  ggplot2::scale_colour_manual(values = c(Control = "#2369A3", Treated = "#A53658"))
+frame <- c(420, 224)
+captured <- adapter$capture_ggplot(plot, frame)
+state <- captured$state
+untouched <- state$built$data
+stopifnot(calls == 1L)
+gids <- paste0("layer.1.line.group.", 1:2)
+stopifnot(identical(names(state$line_targets), gids),
+          identical(unname(lengths(lapply(state$line_targets, `[[`, "parts"))), c(2L, 3L)))
+change <- stats::setNames(list(list(linewidth = 3, linestyle = ":")), gids[[2L]])
+element <- function(all, gid) Filter(function(e) e$gid == gid, all$elements)[[1L]]
+baseline <- adapter$ggplot_manifest(state, "plot")
+scene <- adapter$ggplot_manifest(state, "plot", change)
+target <- element(scene, gids[[2L]])
+original <- element(baseline, gids[[2L]])
+stopifnot(length(target$geometry$paths) == 3L, endsWith(target$label, "Treated"),
+          identical(target$geometry$paths, original$geometry$paths),
+          identical(target$line_context, original$line_context),
+          identical(element(scene, gids[[1L]]), element(baseline, gids[[1L]])))
+rendered <- adapter$render_ggplot(state, change)
+lines <- function(svg, colour) {
+  rows <- strsplit(svg, "\n", fixed = TRUE)[[1L]]
+  rows[(startsWith(rows, "<polyline ") | startsWith(rows, "<line ") | startsWith(rows, "<circle ")) &
+       grepl(paste0("stroke: ", colour), rows, fixed = TRUE)]
+}
+red <- lines(rendered, "#A53658")
+styled <- grepl("stroke-width: 3.00", red, fixed = TRUE) & grepl("stroke-dasharray:", red, fixed = TRUE)
+stopifnot(sum(styled & startsWith(red, "<polyline ")) == 3L,
+          sum(styled & startsWith(red, "<line ")) == 1L,
+          identical(red[startsWith(red, "<circle ")],
+                    Filter(function(row) startsWith(row, "<circle "), lines(captured$svg, "#A53658"))),
+          identical(lines(rendered, "#2369A3"), lines(captured$svg, "#2369A3")),
+          identical(adapter$render_ggplot(state), captured$svg),
+          identical(state$built$data, untouched), calls == 1L)
+fresh <- adapter$capture_ggplot(plot, frame)$state
+stopifnot(identical(adapter$render_ggplot(fresh, change), rendered),
+          identical(element(adapter$ggplot_manifest(fresh, "plot", change), gids[[2L]]), target))
+jsonlite::write_json(scene, "faceted-curve.json", auto_unbox = TRUE, digits = NA)
+"""
+
+
 AXES_PROBE = r"""
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
@@ -2742,6 +2795,26 @@ def test_ggplot_errorbar_stroke_and_title_family_preserve_native_data(tmp_path):
 
 def test_range_and_grouped_line_edits_preserve_geometry_and_sync_the_legend(tmp_path):
     _assert_r_probe(tmp_path, RANGE_AND_GROUPED_LINE_PROBE)
+
+
+def test_faceted_curve_group_updates_one_key_and_respects_each_panel_clip(tmp_path):
+    _assert_r_probe(tmp_path, FACET_GROUPED_LINE_PROBE)
+    scene = json.loads((tmp_path / "faceted-curve.json").read_text(encoding="utf-8"))
+    group = next(e for e in scene["elements"] if e["gid"] == "layer.1.line.group.2")
+    source = group["geometry"]["paths"]
+    nativeggplot.GgplotTarget.annotate_manifest(scene)
+    actual = group["geometry"]["paths"]
+    assert group["identity"].startswith("r4:")
+    assert len(actual) == len(source) == 3
+    assert len({tuple(path["clip"]) for path in source}) == 3
+    for raw, visible in zip(source, actual, strict=True):
+        left, top, width, height = raw["clip"]
+        right, bottom = left + width, top + height
+        assert raw["points"][0][0] < left < right < raw["points"][-1][0]
+        assert visible["points"][0][0] == pytest.approx(left)
+        assert visible["points"][-1][0] == pytest.approx(right)
+        assert all(top <= y <= bottom for _, y in visible["points"])
+        assert "clip" not in visible
 
 
 def test_axis_windows_and_transforms_reproject_captured_data_without_recalculating(tmp_path):

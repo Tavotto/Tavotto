@@ -890,14 +890,18 @@ ggplot_line_rgb <- function(colours) {
   unname(grDevices::rgb(channels[1L, ], channels[2L, ], channels[3L, ], maxColorValue = 255))
 }
 
-ggplot_line_group_slots <- function(line, colour) {
+ggplot_line_group_paint <- function(line) {
   ids <- unique(line$id)
   colours <- ggplot_line_rgb(line$gp$col)
-  if (length(ids) < 2L || length(colours) != length(ids)) return(integer())
-  which(colours == colour)
+  if (length(colours) == length(ids)) colours
 }
 
-ggplot_line_group_targets <- function(built, layer, line, target, parent_gid) {
+ggplot_line_group_slots <- function(line, colour) {
+  which(ggplot_line_group_paint(line) == colour)
+}
+
+ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, faceted) {
+  target <- parts[[1L]]
   if (length(target$guide_keys) != 1L || is.na(ggplot_axis_layers(list(layer)))) return(list())
   scale <- built$plot$scales$get_scales("colour")
   if (is.null(scale) || !isTRUE(scale$is_discrete())) return(list())
@@ -906,19 +910,25 @@ ggplot_line_group_targets <- function(built, layer, line, target, parent_gid) {
   key <- params$key
   labels <- key$.label
   colours <- ggplot_line_rgb(key$colour)
-  painted <- ggplot_line_rgb(line$gp$col)
   draws <- params$decor[[target$key_name]]$data$.draw
   if (!is.character(labels) || anyNA(labels) || anyDuplicated(labels) ||
       length(colours) < 2L || anyDuplicated(colours) || length(labels) != length(colours) ||
-      length(painted) != length(unique(line$id)) || !is.logical(draws) || anyNA(draws) ||
+      any(lengths(paint) == 0L) || !is.logical(draws) || anyNA(draws) ||
       length(draws) != length(colours)) return(list())
-  visible <- draws & colours %in% painted
-  if (sum(visible) < 2L) return(list())
+  visible <- draws & colours %in% unlist(paint, use.names = FALSE)
+  if (!faceted && sum(visible) < 2L) return(list())
   result <- list()
   for (index in which(visible)) {
     group <- target
     group$group <- list(parent = parent_gid, index = index, label = labels[[index]], colour = colours[[index]])
-    group$context <- rlang::hash(list(target$context, key$.value[[index]], group$group$colour))
+    context <- target$context
+    if (faceted) {
+      members <- vapply(paint, function(colours) group$group$colour %in% colours, logical(1L))
+      group$parts <- parts[members]
+      group$facet <- NULL
+      context <- lapply(group$parts, `[[`, "context")
+    }
+    group$context <- rlang::hash(list(context, key$.value[[index]], group$group$colour))
     result[[paste0(parent_gid, ".group.", index)]] <- group
   }
   result
@@ -1010,10 +1020,11 @@ ggplot_line_targets <- function(built, panels, layer_grobs) {
       if (is.null(guide_keys)) next
     }
     if (length(intersect(mapping, c("size", "linewidth", "linetype")))) next
-    # One shared legend guide cannot represent different stroke styles for
-    # the same series in two facets.
-    if (!panels$single && length(guide_keys)) next
-    for (draw in ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])) {
+    shared_guide <- !panels$single && length(guide_keys) > 0L
+    parts <- list()
+    paints <- list()
+    drawn <- ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])
+    for (draw in drawn) {
       line <- draw$grob
       suffix <- if (panels$single) "" else paste0(".panel.", draw$panel_id)
       if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
@@ -1040,7 +1051,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs) {
         }))
       }
       context <- rlang::hash(facts)
-      targets[[gid]] <- list(
+      target <- list(
         slot = draw$slot, child = line$name, index = index, context = context, interval = interval,
         facet = draw$facet,
         caps = if (interval) ggplot_errorbar_caps(line, draw$rows$flipped_aes),
@@ -1052,9 +1063,25 @@ ggplot_line_targets <- function(built, panels, layer_grobs) {
         },
         alpha = if (!interval || (!"alpha" %in% mapping && length(unique(rgba[4L, ])) == 1L)) rgba[4L, 1L]
       )
-      if (panels$single && !interval) {
-        targets <- c(targets, ggplot_line_group_targets(built, layer, line, targets[[gid]], gid))
+      if (shared_guide) {
+        parts <- c(parts, list(target))
+        paints <- c(paints, list(ggplot_line_group_paint(line)))
+      } else {
+        targets[[gid]] <- target
+        if (panels$single && !interval) {
+          targets <- c(targets, ggplot_line_group_targets(
+            built, layer, list(target), list(ggplot_line_group_paint(line)), gid, faceted = FALSE
+          ))
+        }
       }
+    }
+    # A shared key means one edit owns the category in every rendered panel.
+    # Never register it with only a subset of the native layer's drawings.
+    if (shared_guide && length(parts) && length(parts) == sum(!vapply(
+      layer_grobs[[index]], inherits, logical(1L), "zeroGrob"
+    ))) {
+      gid <- paste0("layer.", index, ".line")
+      targets <- c(targets, ggplot_line_group_targets(built, layer, parts, paints, gid, faceted = TRUE))
     }
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
@@ -1084,6 +1111,44 @@ ggplot_panel_clip <- function(frame_pt) {
   as.list(ggplot_bbox(low, high, frame_pt))
 }
 
+measure_ggplot_line <- function(table, target, group, drawn, frame_pt) {
+  path <- c(table$name, ggplot_cell_name(table$layout[target$slot, ]),
+            table$grobs[[target$slot]]$name)
+  viewport <- ggplot_drawn_panel_viewport(drawn, table, target$slot, target$child)
+  if (is.null(viewport)) return(NULL)
+  tryCatch({
+    grid::downViewport(viewport, strict = TRUE)
+    line <- grid::grid.get(do.call(grid::gPath, as.list(c(path, target$child))), strict = TRUE)
+    widths <- line$gp$lwd
+    colours <- line$gp$col
+    points <- seq_along(line$x)
+    if (!is.null(group)) {
+      slots <- ggplot_line_group_slots(line, group$colour)
+      ids <- unique(line$id)
+      if (!length(slots)) stop("The native R curve group changed.")
+      points <- which(line$id %in% ids[slots])
+      widths <- rep_len(widths, length(ids))[slots]
+      colours <- colours[slots]
+    }
+    width <- max(widths) * ggplot_lwd_pt
+    paths <- ggplot_device_paths(line$x[points], line$y[points], line$id[points], FALSE, frame_pt)
+    if (!length(paths) || !is_positive_ggplot_number(width)) stop("Invalid native R stroke geometry.")
+    visible <- any(grDevices::col2rgb(colours, alpha = TRUE)[4L, ] > 0)
+    geometry <- list(kind = if (target$interval || length(paths) != 1L) "multi_path" else "polyline",
+                     paths = paths, fill = FALSE, stroke = visible, stroke_pt = width,
+                     paint_order = match(line$name, table$grobs[[target$slot]]$childrenOrder))
+    if (target$clip) geometry$clip <- ggplot_panel_clip(frame_pt)
+    pad <- width / (2 * frame_pt)
+    bbox <- ggplot_paths_bbox(paths, pad)
+    capsize <- if (!is.null(target$caps)) {
+      span <- ggplot_cap_span(line, target$caps)
+      abs(grid::convertUnit(span, "inches", axisFrom = target$caps$axis,
+                            typeFrom = "dimension", valueOnly = TRUE)) * 72
+    }
+    list(bbox = as.list(bbox), geometry = geometry, capsize = capsize)
+  }, error = function(error) NULL, finally = grid::upViewport(0))
+}
+
 measure_ggplot_lines <- function(table, targets, frame_pt) {
   if (!length(targets)) return(targets)
   drawn <- tryCatch({
@@ -1094,43 +1159,27 @@ measure_ggplot_lines <- function(table, targets, frame_pt) {
   result <- list()
   for (gid in names(targets)) {
     target <- targets[[gid]]
-    path <- c(table$name, ggplot_cell_name(table$layout[target$slot, ]),
-              table$grobs[[target$slot]]$name)
-    row <- which(drawn$name == target$child & drawn$gPath == paste(path, collapse = "::"))
-    if (length(row) != 1L) next
-    viewport <- strsplit(drawn$vpPath[[row]], "::", fixed = TRUE)[[1L]]
-    if (length(viewport) < 2L || viewport[[1L]] != "ROOT") next
-    geometry <- tryCatch({
-      grid::downViewport(do.call(grid::vpPath, as.list(viewport[-1L])), strict = TRUE)
-      line <- grid::grid.get(do.call(grid::gPath, as.list(c(path, target$child))), strict = TRUE)
-      group <- target$group
-      widths <- line$gp$lwd
-      points <- seq_along(line$x)
-      if (!is.null(group)) {
-        slots <- ggplot_line_group_slots(line, group$colour)
-        ids <- unique(line$id)
-        if (!length(slots)) stop("The native R curve group changed.")
-        points <- which(line$id %in% ids[slots])
-        widths <- rep_len(widths, length(ids))[slots]
-      }
-      width <- max(widths) * ggplot_lwd_pt
-      paths <- ggplot_device_paths(line$x[points], line$y[points], line$id[points], FALSE, frame_pt)
-      if (!length(paths) || !is_positive_ggplot_number(width)) stop("Invalid native R stroke geometry.")
-      visible <- any(grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ] > 0)
-      geometry <- list(kind = if (target$interval || length(paths) != 1L) "multi_path" else "polyline",
-                       paths = paths, fill = FALSE, stroke = visible, stroke_pt = width,
-                       paint_order = match(line$name, table$grobs[[target$slot]]$childrenOrder))
-      if (target$clip) geometry$clip <- ggplot_panel_clip(frame_pt)
-      pad <- width / (2 * frame_pt)
-      bbox <- ggplot_paths_bbox(paths, pad)
-      capsize <- if (!is.null(target$caps)) {
-        span <- ggplot_cap_span(line, target$caps)
-        abs(grid::convertUnit(span, "inches", axisFrom = target$caps$axis,
-                              typeFrom = "dimension", valueOnly = TRUE)) * 72
-      }
-      list(bbox = as.list(bbox), geometry = geometry, capsize = capsize)
-    }, error = function(error) NULL, finally = grid::upViewport(0))
-    result[[gid]] <- geometry
+    parts <- target$parts
+    if (is.null(parts)) {
+      result[[gid]] <- measure_ggplot_line(table, target, target$group, drawn, frame_pt)
+      next
+    }
+    measured <- lapply(parts, function(part) measure_ggplot_line(table, part, target$group, drawn, frame_pt))
+    if (any(lengths(measured) == 0L)) next
+    geometries <- lapply(measured, `[[`, "geometry")
+    width <- max(vapply(geometries, `[[`, numeric(1L), "stroke_pt"))
+    visible <- any(vapply(geometries, `[[`, logical(1L), "stroke"))
+    paths <- unlist(lapply(geometries, function(geometry) {
+      lapply(geometry$paths, function(path) {
+        path$clip <- geometry$clip
+        path
+      })
+    }), recursive = FALSE)
+    orders <- unique(vapply(geometries, `[[`, numeric(1L), "paint_order"))
+    geometry <- list(kind = "multi_path", paths = paths, fill = FALSE, stroke = visible, stroke_pt = width)
+    if (length(orders) == 1L) geometry$paint_order <- orders[[1L]]
+    result[[gid]] <- list(bbox = as.list(ggplot_paths_bbox(paths, width / (2 * frame_pt))),
+                          geometry = geometry)
   }
   result
 }
@@ -1173,14 +1222,13 @@ ggplot_line_style <- function(target, patch) {
   change
 }
 
-ggplot_edit_line <- function(table, target, patch) {
+ggplot_edit_line_part <- function(table, target, group, patch, change) {
   panel <- table$grobs[[target$slot]]
   line <- panel$children[[target$child]]
-  change <- ggplot_line_style(target, patch)
-  if (is.null(target$group)) {
+  if (is.null(group)) {
     line$gp[names(change)] <- change
   } else {
-    slots <- ggplot_line_group_slots(line, target$group$colour)
+    slots <- ggplot_line_group_slots(line, group$colour)
     if (!length(slots)) stop("The native R curve group changed.")
     for (property in names(change)) {
       stroke <- rep_len(line$gp[[property]], length(unique(line$id)))
@@ -1197,6 +1245,14 @@ ggplot_edit_line <- function(table, target, patch) {
   }
   panel$children[[target$child]] <- line
   table$grobs[[target$slot]] <- panel
+  table
+}
+
+ggplot_edit_line <- function(table, target, patch) {
+  change <- ggplot_line_style(target, patch)
+  for (part in target$parts %||% list(target)) {
+    table <- ggplot_edit_line_part(table, part, target$group, patch, change)
+  }
   table
 }
 
