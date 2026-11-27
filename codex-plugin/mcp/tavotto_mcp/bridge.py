@@ -167,6 +167,7 @@ OPTIONAL_ENGINE_MODULES = (
     "runconfig",
     "scriptargs",
     "specfix",
+    "vecops",
     "vectoredit",
 )
 
@@ -538,6 +539,20 @@ def journal_selection(
         return journals.select_for_agent(journal_id, profile_id, journal, catalog)
     except engine_profiles.ProfileError as exc:  # JournalCatalogError 是它的子类
         raise BridgeError(str(exc), code=getattr(exc, "code", "unknown_profile")) from exc
+
+
+def optional_engine_missing() -> list[str]:
+    """登记过的可选引擎模块里，这个引擎 import 不进来的那些。旧引擎上缺几个是正常的（相应工具退回旧行为）；
+    **冻结产物**里引擎与插件同一版，缺任何一个都是打包漏收（PyInstaller 看不见按名字的 import），
+    `scripts/smoke_app.py --exe` 据此拦下（#2247）。"""
+    return [name for name in OPTIONAL_ENGINE_MODULES if _optional_engine(name) is None]
+
+
+def vector_kernel_available() -> bool | None:
+    """矢量几何内核（vecops.wasm 经 wasmtime，ADR 0212）这台机器上能不能加载；引擎没有 `vecops` 模块 = None。
+    会真的编译一次 wasm（进程内缓存，约 0.1 s），只在显式探测时调。"""
+    vecops = _optional_engine("vecops")
+    return None if vecops is None else bool(vecops.available())
 
 
 def engine_features() -> list[str]:

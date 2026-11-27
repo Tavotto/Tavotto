@@ -390,6 +390,7 @@ _ENGINE_MODULES = (
     "tickmodel",
     "colorbarmodel",
     "legendmodel",
+    "mixedtext",
     "overrides",
     "manifest",
     "previewbudget",
@@ -2307,6 +2308,10 @@ class Worker(wireproto.V1Handler):
         self._input_channel = channel
         scriptinput.install(channel)
 
+        # 公式与中文混排的分段排包装（`mixedtext`）此刻只装不武装：武装要等脚本跑完、采 baseline 时（figsession）。
+        # 必须在下面冻结之前装——晚装的包装不是 matplotlib 自己的函数，同一 worker 重试时会被判成脚本 patch 了
+        # matplotlib（`matplotlib_patched`），存盘那一刻的还原就丢了
+        _PKG.mixedtext.install()
         # 可信方法面指纹：用户代码（含 paper_style）跑之前、Tavotto 自己的 patch 都装完之后拍一次（进程内只拍一次）
         figcapture.freeze_trusted_surface()
         capture_threads = set(threading.enumerate())

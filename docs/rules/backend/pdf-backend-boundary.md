@@ -116,6 +116,13 @@ order: 70
   的主语是它而不是正文族名。`TAVOTTO_CJK_FALLBACK=0` 关掉尾巴——测试用它造
   「没有中文字体」的世界（`test_glyph_coverage_figure.py`），不是产品设置。
   看护 `tests/test_cjk_figure_text.py`。
+- **公式与汉字同一行（ADR 0045 §7）**：一行有成对 `$` 时 mathtext 整行接手、`$` 外的
+  汉字没有回退。Tavotto 接手渲染的时段里 `engine/mixedtext.py` 在渲染器的量字 / 画字
+  入口把这种行切成段（外来汉字走普通文字、`$…$` 段原样 mathtext、共一条基线）。
+  `arm()` / `disarm()` 与尾巴同一条纪律（worker 采 baseline 前武装；native 只在屏障内）；
+  图幅与脚本 savefig 的 tight 布局在 `mixedtext.suspended()` 里按不切的度量算。
+  **新增量字 / 画字的渲染器类时把它加进 `mixedtext.install()`**。看护
+  `tests/test_mixed_math_cjk_runs.py`。
 - 为什么在意：PDF 库是可替换的实现细节，收敛成契约层之后换后端只需新写一个实现模块，
   上层零改动——U10 就是这么把 PyMuPDF 换成 RenderCore 的（`app.py` 一行契约调用没改）。
   **别在 app.py 或别处直接 import pikepdf / pypdfium2 / uharfbuzz**——那会把这条边界废掉；

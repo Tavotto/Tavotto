@@ -83,6 +83,7 @@ from matplotlib.ticker import ScalarFormatter
 
 import figcapture
 import manifest as manifest_mod
+import mixedtext
 import overrides as overrides_mod
 import pathgeom
 import preview_hybrid
@@ -1467,7 +1468,9 @@ class LiveFigureSession:
                 if self.artifact_source is not None
                 else (lambda f, *a, **k: f.savefig(*a, **k))
             )
-            error = pathgeom.establish_frame(fig, call, extra, save)
+            # 图幅量的是原件那一刻的样子：公式与中文混排的分段排不参与（`mixedtext.suspended`）
+            with mixedtext.suspended():
+                error = pathgeom.establish_frame(fig, call, extra, save)
         if error is not None and self.artifact_source is not None:
             raise ArtifactSourceUnavailable("source_mismatch")
         if error is not None:
@@ -1505,9 +1508,14 @@ class LiveFigureSession:
         ]
         first_error: BaseException | None = None
         if suppressed_savefig:
-            pathgeom.stabilize_captured_tight_layouts(
-                dict(fresh), self.savefig_calls, self.passthrough_figures, ordered_axes=ordered_axes
-            )
+            # 公式与中文混排的分段排（`mixedtext`）不参与：这里重放的是脚本 savefig 那一刻的布局
+            with mixedtext.suspended():
+                pathgeom.stabilize_captured_tight_layouts(
+                    dict(fresh),
+                    self.savefig_calls,
+                    self.passthrough_figures,
+                    ordered_axes=ordered_axes,
+                )
         if fresh:
             # 字体回退尾巴（ADR 0045）：**脚本跑完之后、采 baseline 之前**给图上
             # 已有的每一段文字补上 DejaVu Sans + 本机中日韩脸（逐 Text 那一步
@@ -1533,6 +1541,10 @@ class LiveFigureSession:
                 self._isolate(stem, None, exc)
                 continue
             framed.append((stem, fig))
+        if framed:
+            # 从采 baseline 起由 Tavotto 渲染：`$…$` 外正文脸画不出的中日韩字分段交给回退链（ADR 0045 §7）。
+            # 放在 FigState 之前，baseline、预览、导出、写回重放走同一条路
+            mixedtext.arm()
         try:
             for stem, fig in framed:
                 state = None
