@@ -2927,8 +2927,7 @@
   "journalTip": {
     "title": {
       "wrong": "Journal guideline feedback",
-      "missing": "Request a journal",
-      "editor": "Editor requested changes"
+      "missing": "Request a journal"
     },
     "entryTitle": "Feedback item",
     "rowRule": "Item",
@@ -2956,8 +2955,10 @@
     "submitMissing": "Submit request",
     "emailWrong": "We’ll reply here once checked",
     "emailMissing": "We’ll reply here once it’s added",
-    "editorQuoteLabel": "What the editor said (optional)",
-    "editorQuotePlaceholder": "Paste the editor’s wording; it is only used to check the website and is never made public",
+    "editorQuoteLabel": "Editor’s wording",
+    "editorQuotePlaceholder": "Paste the editor’s email wording; it is only used to check the website and is never made public",
+    "editorAbout": "{{journal}} · Editor requested changes",
+    "editorTag": "Editor requested changes",
     "editorEmail": "We will reply here once checked"
   },
   "packageInstall": {

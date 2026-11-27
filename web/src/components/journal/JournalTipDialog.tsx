@@ -279,12 +279,12 @@ export function JournalTipDialog() {
     <Dialog
       open={s.open}
       onOpenChange={(o) => s.setOpen(o)}
-      title={jt(`title.${tip.type}`)}
+      title={jt(`title.${missing ? 'missing' : 'wrong'}`)}
       size="md"
       description={
         !missing && tip.journalLabel ? (
           <p className="type-caption" data-journal-tip-about>
-            {tip.journalLabel}
+            {editor ? jt('editorAbout', { journal: tip.journalLabel }) : tip.journalLabel}
           </p>
         ) : undefined
       }
@@ -314,7 +314,7 @@ export function JournalTipDialog() {
               {cs('done')}
             </Button>
           ) : (
-            <Button variant="primary" size="lg" loading={busy} disabled={busy} onClick={() => void s.send()} data-contact-send>
+            <Button variant="primary" size="lg" loading={busy} disabled={busy || (editor && !draft.body.trim() && draft.files.length === 0)} onClick={() => void s.send()} data-contact-send>
               {phase === 'failed' ? cs('retry') : jt(missing ? 'submitMissing' : 'submit')}
             </Button>
           ),

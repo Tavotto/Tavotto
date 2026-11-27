@@ -446,6 +446,7 @@ export const useContactStore = create<ContactState>((set, get) => {
         const url = tip.type === 'editor' ? '' : normalizeTipUrl(draft.url)
         if (url === null) return set({ formError: 'urlInvalid' })
         const query = draft.query.trim()
+        if (tip.type === 'editor' && !body && draft.files.length === 0) return
         if (tip.type === 'missing' && !query && !url && draft.files.length === 0) {
           return set({ formError: 'journalNeedsClue' })
         }
@@ -670,7 +671,7 @@ export function journalTipText(
     const name = d.query.trim()
     if (name) lines.push(`${label('nameLabel')}: ${name}`)
   } else if (tip.type === 'editor') {
-    lines.push([label('title.editor'), tip.journalLabel].filter(Boolean).join(' · '))
+    lines.push([label('title.wrong'), tip.journalLabel, label('editorTag')].filter(Boolean).join(' · '))
   } else {
     lines.push([label('title.wrong'), tip.journalLabel].filter(Boolean).join(' · '))
     if (tip.ruleLabel) lines.push(`${label('rowRule')}: ${tip.ruleLabel}`)

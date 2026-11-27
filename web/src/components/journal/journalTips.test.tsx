@@ -461,12 +461,13 @@ describe('「需要你确认」底部的「编辑部要求改图」入口', () =
     expect(items).toHaveLength(ROWS.length + 1)
     const link = items[items.length - 1].querySelector('[data-confirm-editor-tip]')!
     expect(link.textContent).toBe(t('journal.confirm.editorTip', { ns: 'dialogs' }))
-    expect(link.textContent).toBe('编辑部要求改图？告诉作者')
+    expect(link.textContent).toBe('编辑部要求改图？告诉我们')
+    expect(link.textContent).toContain('？') // 全角问号
     await click(link)
     await waitTip()
     const d = q('[data-dialog="journal-tip"]')!
-    expect(d.textContent).toContain(jt('title.editor'))
-    expect(q('[data-journal-tip-about]')!.textContent).toBe('Fixture Press')
+    expect(d.textContent).toContain(jt('title.wrong'))
+    expect(q('[data-journal-tip-about]')!.textContent).toBe('Fixture Press · 编辑部要求改图')
     // 只有：原话、截图 / PDF、回信邮箱
     expect(q('[data-contact-text]')!.getAttribute('placeholder')).toBe(jt('editorQuotePlaceholder'))
     expect(d.textContent).toContain(jt('editorQuoteLabel'))
@@ -498,12 +499,31 @@ describe('「需要你确认」底部的「编辑部要求改图」入口', () =
     await openGroup()
     await click(q('[data-confirm-editor-tip]'))
     await waitTip()
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'Please redraw.')
     await click(q('[data-contact-send]'))
     expect(sendContact).toHaveBeenCalledTimes(1)
     const [meta] = vi.mocked(sendContact).mock.calls[0]
     expect(Object.keys(meta.journal!).sort()).toEqual(['catalog', 'journal_id', 'journal_label', 'type'])
     expect(meta.journal).toMatchObject({ type: 'editor', journal_id: 'fx-alpha', journal_label: 'Fixture Press' })
-    expect(meta.body).toBe('')
+    expect(meta.body).toBe('Please redraw.')
+  })
+
+  it('原话和附件都空时「提交反馈」禁用，store 的 send 也不发；写了原话或加了附件就可发', async () => {
+    await openGroup()
+    await click(q('[data-confirm-editor-tip]'))
+    await waitTip()
+    const send = () => q('[data-contact-send]') as HTMLButtonElement
+    expect(send().disabled).toBe(true)
+    await act(async () => useContactStore.getState().send())
+    expect(sendContact).not.toHaveBeenCalled()
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, '  ')
+    expect(send().disabled).toBe(true)
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'x')
+    expect(send().disabled).toBe(false)
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, '')
+    expect(send().disabled).toBe(true)
+    await act(async () => useContactStore.getState().addFiles([new File(['x'], 'a.png', { type: 'image/png' })]))
+    expect(send().disabled).toBe(false)
   })
 
   it('填了原话随正文发出；复制内容有刊名与原话，不为空', async () => {
@@ -520,7 +540,7 @@ describe('「需要你确认」底部的「编辑部要求改图」入口', () =
       label,
     )
     expect(text).toContain('Fixture Press')
-    expect(text).toContain(label('title.editor'))
+    expect(text).toContain(label('editorTag'))
     expect(
       journalTipText({ type: 'editor', journalId: 'fx-alpha' }, { ...EMPTY_DRAFT, body: 'Please redraw' }, label),
     ).toContain('Please redraw')
