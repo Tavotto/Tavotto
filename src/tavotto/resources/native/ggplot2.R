@@ -454,13 +454,22 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   layout <- ggplot_clone(built$layout)
   if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, state$axes_target, aspect)
   panels <- layout$panel_params
-  for (gid in names(guide_strokes)) {
+  for (gid in ggplot_line_edit_order(names(guide_strokes), state$line_targets)) {
     target <- state$line_targets[[gid]]
     style <- ggplot_line_style(target, guide_strokes[[gid]])
     for (index in target$guide_keys) {
       key <- guide_params[[index]]$decor[[target$key_name]]$data
-      if (!is.null(style$lwd)) key$linewidth <- style$lwd / ggplot2::.pt
-      if (!is.null(style$lty)) key$linetype <- style$lty
+      if (is.null(target$group)) {
+        if (!is.null(style$lwd)) key$linewidth <- style$lwd / ggplot2::.pt
+        if (!is.null(style$lty)) key$linetype <- style$lty
+      } else {
+        row <- target$group$index
+        if (!is.null(style$lwd)) key$linewidth[[row]] <- style$lwd / ggplot2::.pt
+        if (!is.null(style$lty)) {
+          if (is.numeric(key$linetype)) key$linetype <- unname(ggplot_line_types[key$linetype])
+          key$linetype[[row]] <- style$lty
+        }
+      }
       guide_params[[index]]$decor[[target$key_name]]$data <- key
     }
   }
@@ -874,6 +883,52 @@ ggplot_line_guide_keys <- function(built, layer, key_name, mapped) {
   indices
 }
 
+ggplot_line_rgb <- function(colours) {
+  if (!is.character(colours) || anyNA(colours)) return(NULL)
+  channels <- tryCatch(grDevices::col2rgb(colours), error = function(error) NULL)
+  if (is.null(channels)) return(NULL)
+  unname(grDevices::rgb(channels[1L, ], channels[2L, ], channels[3L, ], maxColorValue = 255))
+}
+
+ggplot_line_group_slots <- function(line, colour) {
+  ids <- unique(line$id)
+  colours <- ggplot_line_rgb(line$gp$col)
+  if (length(ids) < 2L || length(colours) != length(ids)) return(integer())
+  which(colours == colour)
+}
+
+ggplot_line_group_targets <- function(built, layer, line, target, parent_gid) {
+  if (length(target$guide_keys) != 1L || is.na(ggplot_axis_layers(list(layer)))) return(list())
+  scale <- built$plot$scales$get_scales("colour")
+  if (is.null(scale) || !isTRUE(scale$is_discrete())) return(list())
+  params <- built$plot$guides$params[[target$guide_keys]]
+  if (!identical(params$aesthetic, "colour")) return(list())
+  key <- params$key
+  labels <- key$.label
+  colours <- ggplot_line_rgb(key$colour)
+  painted <- ggplot_line_rgb(line$gp$col)
+  draws <- params$decor[[target$key_name]]$data$.draw
+  if (!is.character(labels) || anyNA(labels) || anyDuplicated(labels) ||
+      length(colours) < 2L || anyDuplicated(colours) || length(labels) != length(colours) ||
+      length(painted) != length(unique(line$id)) || !is.logical(draws) || anyNA(draws) ||
+      length(draws) != length(colours)) return(list())
+  visible <- draws & colours %in% painted
+  if (sum(visible) < 2L) return(list())
+  result <- list()
+  for (index in which(visible)) {
+    group <- target
+    group$group <- list(parent = parent_gid, index = index, label = labels[[index]], colour = colours[[index]])
+    group$context <- rlang::hash(list(target$context, key$.value[[index]], group$group$colour))
+    result[[paste0(parent_gid, ".group.", index)]] <- group
+  }
+  result
+}
+
+ggplot_line_edit_order <- function(gids, targets) {
+  narrow <- vapply(gids, function(gid) !is.null(targets[[gid]]$group), logical(1L))
+  c(gids[!narrow], gids[narrow])
+}
+
 ggplot_errorbar_caps <- function(line, flipped) {
   runs <- rle(line$id)
   if (length(unique(flipped)) != 1L || !is.logical(flipped) || anyNA(flipped) ||
@@ -997,6 +1052,9 @@ ggplot_line_targets <- function(built, panels, layer_grobs) {
         },
         alpha = if (!interval || (!"alpha" %in% mapping && length(unique(rgba[4L, ])) == 1L)) rgba[4L, 1L]
       )
+      if (panels$single && !interval) {
+        targets <- c(targets, ggplot_line_group_targets(built, layer, line, targets[[gid]], gid))
+      }
     }
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
@@ -1045,8 +1103,18 @@ measure_ggplot_lines <- function(table, targets, frame_pt) {
     geometry <- tryCatch({
       grid::downViewport(do.call(grid::vpPath, as.list(viewport[-1L])), strict = TRUE)
       line <- grid::grid.get(do.call(grid::gPath, as.list(c(path, target$child))), strict = TRUE)
-      width <- max(line$gp$lwd) * ggplot_lwd_pt
-      paths <- ggplot_device_paths(line$x, line$y, line$id, FALSE, frame_pt)
+      group <- target$group
+      widths <- line$gp$lwd
+      points <- seq_along(line$x)
+      if (!is.null(group)) {
+        slots <- ggplot_line_group_slots(line, group$colour)
+        ids <- unique(line$id)
+        if (!length(slots)) stop("The native R curve group changed.")
+        points <- which(line$id %in% ids[slots])
+        widths <- rep_len(widths, length(ids))[slots]
+      }
+      width <- max(widths) * ggplot_lwd_pt
+      paths <- ggplot_device_paths(line$x[points], line$y[points], line$id[points], FALSE, frame_pt)
       if (!length(paths) || !is_positive_ggplot_number(width)) stop("Invalid native R stroke geometry.")
       visible <- any(grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ] > 0)
       geometry <- list(kind = if (target$interval || length(paths) != 1L) "multi_path" else "polyline",
@@ -1109,7 +1177,18 @@ ggplot_edit_line <- function(table, target, patch) {
   panel <- table$grobs[[target$slot]]
   line <- panel$children[[target$child]]
   change <- ggplot_line_style(target, patch)
-  line$gp[names(change)] <- change
+  if (is.null(target$group)) {
+    line$gp[names(change)] <- change
+  } else {
+    slots <- ggplot_line_group_slots(line, target$group$colour)
+    if (!length(slots)) stop("The native R curve group changed.")
+    for (property in names(change)) {
+      stroke <- rep_len(line$gp[[property]], length(unique(line$id)))
+      if (property == "lty" && is.numeric(stroke)) stroke <- unname(ggplot_line_types[stroke])
+      stroke[slots] <- change[[property]]
+      line$gp[[property]] <- stroke
+    }
+  }
   if (!is.null(patch$alpha)) line$gp$col <- scales::alpha(line$gp$col, patch$alpha)
   if (!is.null(patch$capsize) || !is.null(patch$cap_thickness)) {
     caps <- ggplot_errorbar_caps(line, target$caps$axis == "y")
@@ -1579,7 +1658,7 @@ ggplot_table_for <- function(state, edits) {
       })
     }
   }
-  for (gid in names(edits)) {
+  for (gid in ggplot_line_edit_order(names(edits), layer_targets$line_targets)) {
     if (gid == ggplot_axes_gid || !is.null(colour_edits[[gid]]) || gid %in% names(title_edits)) next
     line <- layer_targets$line_targets[[gid]]
     if (!is.null(line)) {
@@ -1925,11 +2004,12 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
                       context = target$context, current = current,
                       original = original, edited = as.list(names(patch)))), geometry))
     }
-    width <- list(prop = "linewidth", type = "number", value = geometry$geometry$stroke_pt,
+    effective <- if (is.null(target$group)) patch else c(patch, edits[[target$group$parent]])
+    width <- list(prop = "linewidth", type = "number", value = effective$linewidth %||% target$width,
                   min = 0.1, max = 20, step = 0.1, unit = "pt")
     if (!is.null(patch$linewidth)) width$value_original <- target$width
     style <- list(prop = "linestyle", type = "enum",
-                  value = if (is.null(patch$linestyle)) target$style else patch$linestyle,
+                  value = effective$linestyle %||% target$style,
                   options = as.list(names(ggplot_line_types)), strict_options = TRUE)
     if (!is.null(patch$linestyle)) style$value_original <- target$style
     editable <- list(width, style)
@@ -1939,7 +2019,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (!is.null(patch$color)) color$value_original <- target$color
       editable <- c(editable, list(color))
     }
-    c(list(gid = gid, role = "line", label = ggplot_layer_label("\u66f2\u7ebf", target),
+    label <- ggplot_layer_label("\u66f2\u7ebf", target)
+    if (!is.null(target$group)) label <- paste(label, target$group$label, sep = " \u00b7 ")
+    c(list(gid = gid, role = "line", label = label,
            draggable = FALSE, editable = editable, line_context = target$context),
       geometry)
   })

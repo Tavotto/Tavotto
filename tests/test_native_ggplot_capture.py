@@ -1903,6 +1903,43 @@ stopifnot(sum(grepl("fill: #695DB2; fill-opacity: 0.60", rows, fixed = TRUE)) ==
           element(actual, range_id)$geometry$paint_order < element(actual, line_id)$geometry$paint_order,
           identical(adapter$render_ggplot(state), captured$svg),
           identical(adapter$render_ggplot(state, patches), svg), calls == 1L)
+groups <- paste0(line_id, ".group.", 1:2)
+control <- element(baseline, groups[[1L]])
+treated <- element(baseline, groups[[2L]])
+stopifnot(endsWith(control$label, "Control"), endsWith(treated$label, "Treated"),
+          identical(control$geometry$paths, initial_line$geometry$paths[1:2]),
+          identical(treated$geometry$paths, initial_line$geometry$paths[3L]))
+limited <- stats::setNames(list(list(linewidth = 3, linestyle = ":")), groups[[2L]])
+edited <- adapter$render_ggplot(state, limited)
+strokes <- strsplit(edited, "\n", fixed = TRUE)[[1L]]
+picked <- grepl("stroke: #A53658", strokes, fixed = TRUE) &
+  (startsWith(strokes, "<polyline ") | startsWith(strokes, "<line "))
+other <- grepl("stroke: #2369A3", strokes, fixed = TRUE) &
+  (startsWith(strokes, "<polyline ") | startsWith(strokes, "<line "))
+stopifnot(sum(picked) == 2L, any(other),
+          all(grepl("stroke-width: 3.00", strokes[picked], fixed = TRUE)),
+          all(grepl("stroke-dasharray:", strokes[picked], fixed = TRUE)),
+          !any(grepl("stroke-width: 3.00", strokes[other], fixed = TRUE)))
+stacked <- c(limited, patches[c(line_id)])
+paint <- adapter$ggplot_manifest(state, "plot", stacked)
+read <- function(gid, prop) Filter(function(field) field$prop == prop, element(paint, gid)$editable)[[1L]]$value
+stopifnot(read(line_id, "linewidth") == 2.5, read(groups[[1L]], "linewidth") == 2.5,
+          read(groups[[2L]], "linewidth") == 3, read(groups[[1L]], "linestyle") == "--",
+          read(groups[[2L]], "linestyle") == ":",
+          identical(adapter$render_ggplot(state, stacked), adapter$render_ggplot(state, rev(stacked))),
+          identical(element(paint, groups[[2L]])$geometry$paths, treated$geometry$paths),
+          identical(adapter$render_ggplot(state), captured$svg), calls == 1L)
+projected <- c(limited, list(axes_0 = list(xlim = c(1, 5), xscale = "log", invert_x = TRUE)))
+projected_manifest <- adapter$ggplot_manifest(state, "plot", projected)
+selected <- element(projected_manifest, groups[[2L]])
+host <- element(projected_manifest, "axes_0")$bbox
+positions <- vapply(selected$geometry$paths[[1L]]$points, `[[`, numeric(1L), 1L)
+expected <- host[[1L]] + host[[3L]] * (1 - log10(1:5) / log10(5))
+stopifnot(isTRUE(all.equal(positions, expected)), identical(selected$line_context, treated$line_context),
+          calls == 1L)
+alias <- ggplot2::scale_colour_manual(values = c(Control = "#2369A3", Treated = "#2369A3"))
+alias_targets <- adapter$capture_ggplot(base + line + alias, frame)$state$line_targets
+stopifnot(identical(names(alias_targets), "layer.1.line"))
 covered <- adapter$capture_ggplot(base + line + band + palette, frame)$state
 covered_manifest <- adapter$ggplot_manifest(covered, "plot")
 stopifnot(element(covered_manifest, "layer.1.line")$geometry$paint_order <
@@ -2573,6 +2610,7 @@ stopifnot(is.null(fields(blank$state)$width), is.null(fields(blank$state)$length
 
 
 TICK_SIDES_PROBE = r"""
+if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L), quietly = TRUE))) quit(status = 77L)
 frame <- c(360, 260)
 data <- data.frame(x = 1:10, y = 1:10)
 base <- ggplot2::ggplot(data, ggplot2::aes(x, y)) + ggplot2::geom_point() +
@@ -2610,7 +2648,6 @@ stopifnot(identical(unname(unlist(original[props])), c(TRUE, FALSE, TRUE, FALSE)
 default <- list(axes_0 = list(ticks_top = TRUE, ticks_right = TRUE,
                               ticks_bottom = FALSE, ticks_left = FALSE))
 mirrored <- axis_parts(state, default)
-if (!all(vapply(c("ggplot2", "svglite"), requireNamespace, logical(1L), quietly = TRUE))) quit(status = 77L)
 stopifnot(identical(mirrored$top$ticks, initial$bottom$ticks), length(mirrored$top$ticks) == 2L,
           identical(mirrored$right$ticks, initial$left$ticks), !length(mirrored$top$labels),
           !length(mirrored$right$labels), !length(mirrored$bottom$ticks), !length(mirrored$left$ticks),
