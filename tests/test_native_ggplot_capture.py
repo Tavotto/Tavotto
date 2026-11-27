@@ -824,6 +824,9 @@ def _pdf_text_colors(path):
 
 
 R_PROBE_SETUP = r"""
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
+
 adapter <- new.env(parent = baseenv())
 adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
 native <- dirname(adapter_file)
@@ -3181,6 +3184,8 @@ cat("Verified numerical minor labels on both facets, with local typography, mark
 
 
 COLOURBAR_APPEARANCE_PROBE = r"""
+if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
+
 library(ggplot2)
 palette <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector=FALSE)
 d <- data.frame(x=1:8, y=c(4,5,4,5,2,4,6,8), z=1:8, group=rep(c("A","B"),4L))
@@ -3253,7 +3258,7 @@ def _assert_r_probe(tmp_path, program):
         timeout=_COLD_RENDER_TIMEOUT_SECONDS,
     )
     if result.returncode == 77 and not explicit_rscript:
-        pytest.skip("Rscript does not have ggplot2 and svglite")
+        pytest.skip("Rscript does not have the required native capture packages")
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / "Rplots.pdf").exists()
 
