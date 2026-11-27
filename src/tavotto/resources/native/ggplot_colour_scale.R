@@ -550,6 +550,7 @@ ggplot_colour_source_anchors <- function(targets) {
 }
 
 ggplot_colour_scale_elements <- function(state, edits, measured, stops, anchors) {
+  guide_order <- ggplot_native_guide_order(state$built$plot$guides)
   lapply(names(state$colour_scales), function(gid) {
     target <- state$colour_scales[[gid]]
     selection <- ggplot_colour_scale_state(target, edits[[gid]], state$palettes)
@@ -592,6 +593,7 @@ ggplot_colour_scale_elements <- function(state, edits, measured, stops, anchors)
         aesthetics = as.list(target$scale$aesthetics),
         limits = if (selection$range_changed) as.list(selection$limits),
         palette = selection$cmap,
+        guide_order = if (length(guide_order) > 1L) as.list(guide_order),
         edited = edits[[gid]][intersect(names(edits[[gid]]), c(writes, "cmap"))]
       )
     }

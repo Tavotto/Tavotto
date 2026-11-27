@@ -812,6 +812,110 @@ plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, fill = colour)) +
         assert script.read_bytes() == original
 
 
+@pytest.mark.parametrize("write_category", [False, True], ids=["scale-only", "with-bar-width"])
+def test_native_r_scale_writes_preserve_automatic_order_of_other_guides(tmp_path, write_category):
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Two guides"
+    project.mkdir()
+    script = project / "Both.R"
+    original = b"""\
+d <- expand.grid(x = 1:4, kind = c("One", "Two"), facet = c("A", "B"))
+d$y <- 2 + as.integer(d$kind) + d$x
+d$dose <- as.integer(d$kind) * d$x
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::geom_col(ggplot2::aes(fill = kind), position = "dodge", width = .65, alpha = .5) +
+  ggplot2::geom_point(ggplot2::aes(colour = dose), size = 3) +
+  ggplot2::scale_fill_manual(values = c("#77546A", "#77546A")) +
+  ggplot2::scale_colour_gradient(name = "Dose", low = "#3099DC", high = "#975600") +
+  ggplot2::facet_wrap(~facet) + ggplot2::theme_bw()
+ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices::cairo_pdf)
+"""
+    script.write_bytes(original)
+    route = "/api/layouts/Two_guides"
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        elements = baseline["manifest"]["elements"]
+        (scale,) = [element for element in elements if element["role"] == "colorbar"]
+        groups = [e for e in elements if e["role"] == "bar_series" and ".group." in e["gid"]]
+        assert len(groups) == 4
+        edits = [(scale, "vmin", 2), (scale, "vmax", 7), (scale, "cmap", "plasma")]
+        if write_category:
+            edits.append((groups[-2], "bar_width", 0.44))
+        patches = [
+            {"gid": el["gid"], "identity": el["identity"], "prop": prop, "value": value}
+            for el, prop, value in edits
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        width, height = baseline["manifest"]["size_mm"]
+        panel = {
+            **_panel("r", figure, 5, patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        document = {
+            "schema": 3,
+            "project": {"id": "two-guides", "name": "Two guides"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [panel],
+                    "guides": [],
+                },
+            ],
+        }
+        assert app.call(f"{route}?target=project", document)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Two_guides")
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200 and preview["written"] == len(patches) and preview["skipped"] == [], (
+            preview
+        )
+        assert script.read_bytes() == original
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"], saved
+        authored = script.read_bytes()
+        assert b"ggplot_preserve_guide_order" in authored
+        assert (b'category = "One"' in authored) is write_category
+
+        independent = tmp_path / "Independent R"
+        independent.mkdir()
+        (independent / script.name).write_bytes(authored)
+        with sidecar_app(independent, tmp_path / "replay") as fresh:
+            rebuilt = _run_ggplot(fresh, script.name, rscript)
+            actual = _render(fresh, rebuilt, [])
+            assert actual["warnings"] == [] and actual["svg"] == hot["svg"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == original
+
+
 @pytest.mark.parametrize("retain_tick_format", [False, True], ids=["write", "retain-format"])
 def test_native_r_colour_mapping_writeback_recreates_data_and_guides(tmp_path, retain_tick_format):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot

@@ -446,6 +446,14 @@ def _native_colour_mapping_writes(
             continue
         aesthetics = tuple(source["aesthetics"])
         limits, palette = source["limits"], source["palette"]
+        order = source.get("guide_order")
+        if order is not None and (
+            not isinstance(order, list)
+            or len(order) < 2
+            or not all(isinstance(key, str) and key and _r_literal(key) for key in order)
+            or len(set(order)) != len(order)
+        ):
+            continue
         if not aesthetics or len(set(aesthetics)) != len(aesthetics):
             continue
         if not set(aesthetics) <= {"colour", "fill"} or aesthetics in plans:
@@ -465,10 +473,17 @@ def _native_colour_mapping_writes(
 
 def _r_colour_mapping_block(name: str, scales: dict[tuple[str, ...], dict]) -> str:
     catalog = json.loads(PALETTE_CATALOG_PATH.read_text(encoding="utf-8"))["palettes"]
-    implementation = nativeggplot.GGPLOT_BRIDGE.with_name("ggplot_colour_mapping.R").read_text(
-        encoding="utf-8"
-    )
+    resources = ["ggplot_colour_mapping.R"]
     edits = []
+    order = next(iter(scales.values())).get("guide_order")
+    if order is not None:
+        resources.append("ggplot_guide_order.R")
+        keys = ", ".join(_r_literal(key) for key in order)
+        edits.append(f"  plot <- ggplot_preserve_guide_order(plot, c({keys}))")
+    implementation = "\n".join(
+        nativeggplot.GGPLOT_BRIDGE.with_name(resource).read_text(encoding="utf-8")
+        for resource in resources
+    )
     for aesthetics, plan in scales.items():
         channels = "c(" + ", ".join(json.dumps(aesthetic) for aesthetic in aesthetics) + ")"
         limits = plan["limits"]
