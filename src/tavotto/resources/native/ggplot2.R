@@ -113,7 +113,6 @@ ggplot_axis_ticks <- function(table, axes_targets) {
   for (base in rownames(ggplot_axis_tick_fields)) {
     side <- ggplot_axis_tick_fields[base, ]
     position <- strsplit(base, ".", fixed = TRUE)[[1L]][[3L]]
-    dimension <- substring(base, 6L, 6L)
     slots <- if (length(facets)) which(startsWith(table$layout$name, paste0(side[[1L]], "-"))) else {
       which(table$layout$name == side[[1L]])
     }
@@ -121,8 +120,8 @@ ggplot_axis_ticks <- function(table, axes_targets) {
       panel_gid <- if (length(facets)) ggplot_tick_facet_owner(table$layout[slot, ], cells, position) else {
         ggplot_axes_gid
       }
-      if (is.null(panel_gid) ||
-          (length(facets) && is.null(facets[[panel_gid]]$groups[[dimension]]))) next
+      # Visible labels can be styled even on facet axes with a fixed or discrete scale.
+      if (is.null(panel_gid)) next
       axis <- table$grobs[[slot]]$children[["axis"]]
       if (!inherits(axis, "gtable")) next
       labels <- which(vapply(axis$grobs, inherits, logical(1L), "titleGrob"))
@@ -315,9 +314,11 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
       if (length(matches) == 1L && identical(class(guides$guides[[matches]])[[1L]], "GuideAxis")) {
         params <- guides$params[[matches]]
         key <- ggplot_major_axis_key(params$key)
-        secondary <- target$axes_gid != ggplot_axes_gid && ggplot_axis_is_secondary(panel, params)
-        values <- if (!secondary) ggplot_numeric_key(key, target)
-        if (!secondary && is.null(values) && identical(params$aesthetic, substr(gid, 6L, 6L)) &&
+        numeric <- target$axes_gid == ggplot_axes_gid ||
+          (!is.null(axes_targets[[target$axes_gid]]$groups[[params$aesthetic]]) &&
+           !ggplot_axis_is_secondary(panel, params))
+        values <- if (numeric) ggplot_numeric_key(key, target)
+        if (numeric && is.null(values) && identical(params$aesthetic, substr(gid, 6L, 6L)) &&
             isTRUE(panel[[params$aesthetic]]$scale$get_transformation()$name %in%
                    setdiff(names(ggplot_axis_modes), "identity"))) {
           values <- ggplot_numeric_key(key, target, ggplot_axis_key_values(panel, params))
@@ -332,7 +333,7 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
         }
         result[[gid]] <- list(
           kind = "axis", index = matches, panel = target$panel, position = position,
-          axes_gid = target$axes_gid, axis = params$aesthetic, values = if (target$axes_gid == ggplot_axes_gid || length(axes_targets[[target$axes_gid]]$groups[[params$aesthetic]])) values,
+          axes_gid = target$axes_gid, axis = params$aesthetic, values = values,
           spacing = spacing, marks = marks,
           size = if (is_positive_ggplot_number(size)) size,
           rotation = if (angle_from_theme) target$rotation

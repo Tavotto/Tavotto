@@ -5842,22 +5842,27 @@ plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
         assert after["warnings"] == [] and after["svg"] == projected["svg"]
 
 
-@pytest.mark.parametrize("faceted", [False, True], ids=["single", "facet-wrap"])
-def test_native_r_tick_text_writeback_uses_the_actual_side_and_facet(tmp_path, faceted):
+@pytest.mark.parametrize("scope", ["single", "continuous-facets", "categorical-facets"])
+def test_native_r_tick_text_writeback_uses_the_actual_side_and_facet(tmp_path, scope):
     from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
     project = tmp_path / "Tick writeback"
     project.mkdir()
     script = project / "Tick marks.R"
+    faceted = scope != "single"
     guide = (
         'ggplot2::facet_wrap(~sample, axes = "all")'
         if faceted
         else "ggplot2::scale_x_continuous(breaks = c(1, 4, 8, 16), sec.axis = ggplot2::dup_axis())"
     )
+    category = (
+        "d$x <- factor(d$x, levels = c(1, 4, 8, 16))" if scope == "categorical-facets" else ""
+    )
     original = f"""\
 d <- expand.grid(x = c(1, 4, 8, 16), sample = c("Early", "Later"))
 d$y <- d$x / 2
+{category}
 plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
   {guide} +
   ggplot2::theme_bw() + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 20))
@@ -5944,6 +5949,11 @@ grDevices::dev.off()
         ]
         assert len(same_text) == (2 if faceted else 1)
         target = same_text[-1]
+        if scope == "categorical-facets":
+            parent = next(
+                el for el in baseline["manifest"]["elements"] if el["gid"] == target["parent_gid"]
+            )
+            assert all(f["prop"] != "major_mode" for f in parent["editable"])
         value = 'Selected "mark"'
         expected, saved = save_label(app, figure, baseline, target, value)
 
