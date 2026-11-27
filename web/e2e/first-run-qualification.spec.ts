@@ -41,9 +41,13 @@ const PROJECT_NAME = '我的 项目'
 const SCRIPT = 'tools/spectrum.py'
 const ARGV = ['--scale', '1.5', '--label', '峰 值 A']
 const NEW_TITLE = 'T11 已编辑'
-const LAYOUT = 'T11 首跑'
+const LAYOUT = 'T11 首跑' // 命名节点的名字（排版文件的目录名取自排版名，不是它）
+/** 项目里排版目录（`tavottofile/*.tavotto`） */
+const storedLayoutDirs = (project: string): string[] => {
+  const store = path.join(project, 'tavottofile')
+  return existsSync(store) ? readdirSync(store).filter((n) => n.endsWith('.tavotto')) : []
+}
 /** 产品把排版名里的空格规整成下划线（文件名、列表里的名字都是它） */
-const LAYOUT_STORED = LAYOUT.replace(/ /g, '_')
 
 
 interface ExecRecord {
@@ -151,7 +155,7 @@ function listFiles(root: string): string[] {
 const sameDir = (a: string, b: string) => realpathSync.native(a) === realpathSync.native(b)
 
 test(
-  '真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → 存进项目 → 重开冷重放 → 导出',
+  '真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → ⌘S 起名字（工作副本已在项目里） → 重开冷重放 → 导出',
   { tag: '@feature:assets.run-script-figure' },
   async ({ app, page }) => {
   test.setTimeout(600_000)
@@ -341,16 +345,19 @@ test(
       .toBe(true)
     expect(execs(project)).toHaveLength(1) // 编辑是热态渲染，不重跑脚本
 
-    // ---- ⌘S 存进项目：画布上只有这一张图（单图编辑，不需要回排版），命名「T11 首跑」
+    // ---- ⌘S 给这一版起名字（ADR 0211 第二期 PR 3）：先把没写的编辑冲刷写进项目（排版始终自动存进项目，目录用排版名），
+    // 再弹命名小框；画布上只有这一张图（单图编辑，不需要回排版）
     await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
     await page.keyboard.press('ControlOrMeta+s')
-    const dialog = page.getByRole('dialog', { name: '存进项目' })
-    await expect(dialog).toBeVisible()
-    await dialog.locator('#layout-save-name').fill(LAYOUT)
-    await dialog.getByRole('button', { name: '存进项目' }).click()
-    await expect(dialog).toBeHidden()
-    const layoutFile = path.join(project, 'tavottofile', `${LAYOUT_STORED}.json`)
-    await expect(page.locator('[data-save-destination]')).toHaveAttribute('title', new RegExp(`tavottofile/${LAYOUT_STORED}\\.json`))
+    const quick = page.locator('[data-timeline-quick-name-input]')
+    await expect(quick).toBeFocused()
+    await expect.poll(() => storedLayoutDirs(project).length).toBe(1)
+    const layoutStored = storedLayoutDirs(project)[0].replace(/\.tavotto$/, '')
+    const layoutFile = path.join(project, 'tavottofile', `${layoutStored}.tavotto`, 'layout.json')
+    await quick.fill(LAYOUT)
+    await quick.press('Enter')
+    await expect(quick).toHaveCount(0)
+    await expect(page.locator('[data-save-destination]')).toHaveAttribute('title', new RegExp(`tavottofile/${layoutStored}\\.json`))
     await expect.poll(() => existsSync(layoutFile)).toBe(true)
     interface SavedPanel {
       type: string
@@ -389,7 +396,7 @@ test(
     await page.getByRole('button', { name: /^(文档|排版)：/ }).click()
     await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
     const openDialog = page.getByRole('dialog')
-    await openDialog.getByRole('button', { name: new RegExp(LAYOUT_STORED) }).click()
+    await openDialog.getByRole('button', { name: new RegExp(layoutStored) }).click()
     await expect(openDialog).toBeHidden()
     await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
     // 图是渲染出来的（不是 DOM 文字）。重开后画布先用缓存预览（磁盘自动保存 + 烘焙过的编辑），这时脚本还没被重放；

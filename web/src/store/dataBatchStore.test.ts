@@ -903,4 +903,40 @@ describe('会话过期后按身份找回原来点的那张（Codex 第三轮 P1�
     await flush()
     expect(commit.mock.calls.map((c) => c[0].id)).toEqual(['o1', 'n1'])
   })
+
+  // 身份相同不等于同一张图：数据变了以后规则可能改选了别的列 / 分组，静默接着画就是用户没见过的另一张（#2179 后续）
+  const drawn = (id: string, group: string, rec = false) => ({
+    ...item(id, rec),
+    values: { table: 'a', sheet: null, family: 'trend', x: 't', y: ['v'], group, facet: null, unit: null, layers: [{ mark: 'line', summary: 'mean' }] },
+  })
+  const single = (old: ReturnType<typeof drawn>[]) =>
+    useDataFigureStore.setState({ selected: ref('a'), group: null, phase: 'ready', session: 'OLD', candidates: old.map((c) => ({ ...c, thumb: '/t' })), thumbs: Object.fromEntries(old.map((c) => [c.id, 'ready' as const])), draftOpen: true, draftActive: true })
+
+  it('数据变了、同一画法但分组列换了 → 不自动提交，主图停在这个画法上让用户看新的', async () => {
+    single([drawn('o0', 'batch', true)])
+    commit.mockRejectedValueOnce(apiError(409, 'propose_data_changed'))
+    propose.mockResolvedValueOnce({ kind: 'candidates', session: 'NEW', dropped: [], render: 'lazy', items: [drawn('n0', 'file', true)] } as AiDataProposeResponse)
+    await f().draw('o0')
+    await flush()
+    expect(commit).toHaveBeenCalledTimes(1)
+    expect(f()).toMatchObject({ phase: 'ready', drawingId: null, session: 'NEW' })
+  })
+
+  it('数据变了、配方逐项相同 → 照旧静默接着画（只是数值变了，脚本本来就现读数据）', async () => {
+    single([drawn('o0', 'batch', true)])
+    commit.mockRejectedValueOnce(apiError(409, 'propose_data_changed')).mockResolvedValueOnce(ok())
+    propose.mockResolvedValueOnce({ kind: 'candidates', session: 'NEW', dropped: [], render: 'lazy', items: [drawn('n0', 'batch', true)] } as AiDataProposeResponse)
+    await f().draw('o0')
+    await flush()
+    expect(commit.mock.calls.map((c) => c[0].id)).toEqual(['o0', 'n0'])
+  })
+
+  it('误差线种类不同也不算同一张', async () => {
+    single([{ ...drawn('o0', 'batch', true), error: 'sd' } as ReturnType<typeof drawn>])
+    commit.mockRejectedValueOnce(apiError(409, 'propose_session_expired'))
+    propose.mockResolvedValueOnce({ kind: 'candidates', session: 'NEW', dropped: [], render: 'lazy', items: [{ ...drawn('n0', 'batch', true), error: 'sem' }] } as AiDataProposeResponse)
+    await f().draw('o0')
+    await flush()
+    expect(commit).toHaveBeenCalledTimes(1)
+  })
 })

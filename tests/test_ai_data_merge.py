@@ -966,3 +966,54 @@ def replace_label(src, label):
 def test_the_collide_code_is_a_registered_propose_error():
     assert "tables_labels_collide" in P.ERROR_CODES
     P.ProposeError("tables_labels_collide")
+
+
+def test_the_paired_mark_lives_on_the_candidate_and_survives_replace():
+    """成对的标记长在候选自己身上（#2179）：`replace` 换配方（误差类型、看图目的重排……）标记照旧，不靠 `id(配方)` 旁挂、也不用手动挪。"""
+    from dataclasses import replace
+
+    from tavotto.engine import ai_data_recipe as recipe_mod
+
+    split = recipe_mod.CandidateVariant("split", "batch")
+    assert split.to_dict() == {"kind": "split", "column": "batch"}
+    assert recipe_mod.CandidateVariant("by_file").to_dict() == {"kind": "by_file"}
+    cand = recipe_mod.Candidate("trend_mean", object(), split)  # type: ignore[arg-type]
+    again = replace(replace(cand, recipe=object()), recipe=object())
+    assert again.variant is split
+
+
+def test_the_split_mark_names_the_column_the_figure_really_splits_by():
+    """文件里有两列都在文件内有多个取值时，「按某列再分开」的列名取配方真用到的那一列，不是 `splittable` 的第一个。"""
+    from types import SimpleNamespace
+
+    from tavotto.engine.ai_data_propose import _split_column
+
+    rec = SimpleNamespace(facet="condition", group="file", x="time")
+    assert _split_column(rec, ("batch", "condition")) == "condition"
+    rec = SimpleNamespace(facet=None, group="batch", x="time")
+    assert _split_column(rec, ("condition", "batch")) == "batch"
+    rec = SimpleNamespace(facet=None, group="file", x="time")
+    assert _split_column(rec, ("batch",)) == "batch"  # 配方里一个都没用到：退回第一个（与之前一样）
+
+
+def test_paired_marks_survive_both_the_error_swap_and_a_purpose_reorder(project):
+    """误差类型换配方 + 看图目的重排同时发生：每张成对候选的标记仍对得上它自己的配方（按文件拆的那张配方里有 batch，只按文件的没有）。"""
+    _, client, figs, _ = project
+    rows = _arms(lambda i, k: "p" if k % 2 == 0 else "q")
+    for i, n in enumerate(("a", "b")):
+        put(figs, f"data/{n}.csv", rows(i))
+    tables = [{"path": "a.csv"}, {"path": "b.csv"}]
+    base = propose(client, tables=tables, render="lazy", answers={"y": "resp_mV"}).get_json()
+    cur = (base.get("purpose") or {}).get("code")
+    purposes = [p for p in (base.get("purpose") or {}).get("options", []) if p != cur]
+    answers = {"y": "resp_mV", "error": "sem", **({"purpose": purposes[-1]} if purposes else {})}
+    out = propose(client, tables=tables, render="lazy", answers=answers).get_json()
+    assert out["kind"] == "candidates", out
+    marked = [it for it in out["items"] if it.get("variant")]
+    assert {it["variant"]["kind"] for it in marked} == {"split", "by_file"}, out["items"]
+    for it in marked:
+        v = it["values"]
+        used = {v["group"], v["facet"], v["x"]}
+        assert ("batch" in used) == (it["variant"]["kind"] == "split"), it
+    ids = [(it["title_code"], json.dumps(it.get("variant"), sort_keys=True)) for it in out["items"]]
+    assert len(ids) == len(set(ids)), "成对的两张身份必须分得清"

@@ -1,90 +1,90 @@
 /**
- * ⌘S 存完（本机那一档）发「排版写成了」（ADR 0101 §7）：跟**这次写没写成**走（`wrote`），
- * 不跟写完之后的实时状态走——写的途中又改过，状态照实是 dirty，按下那一刻的内容却已经在盘上
- * （Codex #679）。没写成（失败 / 冲突）不发。
+ * ⌘S（ADR 0211 第二期 PR 3：**给这一版起名字**）与「排版写成了」事件（ADR 0101 §7）的关系。
  *
- * 时间线的「保存」点挂在这个事件上而不是 `runManualSave` 里——#674 的「存进项目」
- * 分支提前 return，直接挂在函数末尾的打点在那条路上永远不执行。
+ * 改造前 ⌘S 存完（本机那一档）发 `local`，时间线据它打「保存」点。现在工作副本始终自动存着，⌘S 留的是**命名节点**
+ * （名字用户自己起，存的时候时间线自己记点），所以 ⌘S 不再发这个事件——发了会在命名节点之外多打一个无名的「保存」点。
+ * 这里钉：
+ *  - 本机那一份写完（saved / clean / 途中又改过的 dirty）→ 打开命名小框，**不**发 `local`；
+ *  - 写没成（冲突 / 失败）→ 不开小框（话先说完），也不发事件；
+ *  - 开小框之前先 `saveNow`（把没写的编辑冲刷写完）。
+ * 应急回退（后端关了「写进项目」、却开着项目）的 ⌘S 仍是改造前那条路，由 `projectSave.test.ts` 钉着。
  */
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const saveNowImpl = vi.fn()
 vi.mock('@/store/documentStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/documentStore')>()),
   saveNowWithResult: () => saveNowImpl(),
 }))
-/** 旧写法的替身：只给最终状态时，写成与否按「是不是存好了」推 */
-const saveNow = {
-  mockResolvedValueOnce: (state: string) =>
-    saveNowImpl.mockResolvedValueOnce({ state, wrote: state === 'saved' || state === 'clean' }),
-  mockImplementationOnce: (fn: () => Promise<string>) =>
-    saveNowImpl.mockImplementationOnce(async () => {
-      const state = await fn()
-      return { state, wrote: state === 'saved' || state === 'clean' }
-    }),
-}
 
 import { onLayoutSaved } from '@/lib/layoutSaved'
-import { currentTimelineCtx } from '@/lib/timelineContext'
 import { runManualSave } from '@/store/actions'
 import { useTimelineStore } from '@/store/timelineStore'
 
 let off: (() => void) | null = null
+beforeEach(() => useTimelineStore.getState().setNamingOpen(false))
 afterEach(() => off?.())
 
-describe('runManualSave → emitLayoutSaved', () => {
-  it.each([
-    ['saved', ['local']],
-    ['clean', ['local']],
-    ['conflict', []],
-    ['save_error', []],
-  ])('saveNow 回 %s → 事件 %j', async (state, expected) => {
-    saveNow.mockResolvedValueOnce(state)
-    const seen: string[] = []
-    off = onLayoutSaved((via) => seen.push(via))
-    await runManualSave()
-    expect(seen).toEqual(expected)
-  })
+const naming = () => useTimelineStore.getState().namingOpen
 
+describe('runManualSave（⌘S）→ 命名小框', () => {
   it.each([
-    [{ state: 'dirty', wrote: true }, ['local']],
-    [{ state: 'saved', wrote: false }, []],
-  ])('跟「写没写成」走，不跟最终状态走：%j → 事件 %j', async (result, expected) => {
+    [{ state: 'saved', wrote: true }, true],
+    [{ state: 'clean', wrote: true }, true],
+    [{ state: 'dirty', wrote: true }, true], // 写的途中又改过：按下那一刻的内容已经在盘上，照样可以起名
+    [{ state: 'conflict', wrote: false }, false],
+    [{ state: 'save_error', wrote: false }, false],
+  ])('saveNow 回 %j → 小框开着：%s；从不发 local 事件', async (result, opens) => {
     saveNowImpl.mockResolvedValueOnce(result)
     const seen: string[] = []
     off = onLayoutSaved((via) => seen.push(via))
     await runManualSave()
-    expect(seen).toEqual(expected)
+    expect(naming()).toBe(opens)
+    expect(seen).toEqual([])
   })
 
-  it('事件带的是**发起保存那一刻**的上下文：存的途中换了项目 / 排版，事件说的仍是被存的那一份', async () => {
-    const before = currentTimelineCtx()
-    saveNow.mockImplementationOnce(async () => {
-      useTimelineStore.getState().clear() // await 期间换了项目（代际 +1）
-      return 'saved'
-    })
-    const ctxs: string[] = []
-    off = onLayoutSaved((_via, { moment }) => ctxs.push(moment.ctx))
-    await runManualSave()
-    expect(ctxs).toEqual([before])
-    expect(currentTimelineCtx()).not.toBe(before)
+  it('先冲刷写完、再开小框：saveNow 还没落定时小框不开', async () => {
+    let release: (v: { state: string; wrote: boolean }) => void = () => {}
+    saveNowImpl.mockImplementationOnce(() => new Promise((res) => (release = res)))
+    const pending = runManualSave()
+    await Promise.resolve()
+    expect(naming()).toBe(false)
+    release({ state: 'saved', wrote: true })
+    await pending
+    expect(naming()).toBe(true)
   })
 
-  it('本机保存途中接着改：事件带的快照是按下 ⌘S 那一刻（序列化出去的那一份）', async () => {
-    const { useDocumentStore } = await import('@/store/documentStore')
-    const { literal } = await import('@/i18n')
-    const pressed = useDocumentStore.getState().doc
-    saveNow.mockImplementationOnce(async () => {
-      useDocumentStore.getState().commit(literal('保存途中加字'), (d) => {
-        d.guides.push({ axis: 'x', pos: 3 })
-      })
-      return 'saved'
+  it('这一刻的冲刷第一次把工作副本写进项目、建立了绑定：不算「切走了」，照样开小框（不比绑定的文件）', async () => {
+    const { setCurrentProjectId } = await import('@/lib/session')
+    const { setProjectFile, useDocumentStore } = await import('@/store/documentStore')
+    const { setProjectWriteCapability } = await import('@/lib/autosaveProject')
+    const { useUiStore } = await import('@/store/uiStore')
+    setCurrentProjectId('pj-n')
+    setProjectWriteCapability(true)
+    useUiStore.getState().setStatus(null as never)
+    saveNowImpl.mockImplementationOnce(async () => {
+      setProjectFile({ projectId: 'pj-n', name: 'a', file: 'tavottofile/a.json', revision: 'r', dirty: false }, useDocumentStore.getState().documentId)
+      return { state: 'saved', wrote: true }
     })
-    const docs: unknown[] = []
-    off = onLayoutSaved((_via, { moment }) => docs.push(moment.identity.doc))
     await runManualSave()
-    expect(docs).toEqual([pressed])
-    expect(docs[0]).toBe(pressed)
-    expect(useDocumentStore.getState().doc).not.toBe(pressed)
+    expect(naming()).toBe(true)
+    expect(useUiStore.getState().statusTone).not.toBe('error')
+    setProjectWriteCapability(false)
+    setProjectFile(null)
+    setCurrentProjectId(null)
+  })
+
+  it('存的途中换了项目 / 排版：不对此刻开着的那份开小框（话说完，不替用户给别的排版起名）', async () => {
+    const { setCurrentProjectId } = await import('@/lib/session')
+    setCurrentProjectId('pj-x')
+    saveNowImpl.mockImplementationOnce(async () => {
+      useTimelineStore.getState().clear()
+      setCurrentProjectId('pj-y')
+      return { state: 'saved', wrote: true }
+    })
+    // 有项目 + 开关没开 = 应急回退那条路（改造前的行为，另有用例）；这里只验证「换了项目不会开小框」
+    await runManualSave()
+    expect(naming()).toBe(false)
+    setCurrentProjectId(null)
   })
 })

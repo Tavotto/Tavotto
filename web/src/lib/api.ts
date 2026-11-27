@@ -6035,6 +6035,8 @@ export interface AiDataProposeItem {
   title_code: string
   why_code: string
   recommended: boolean
+  /** 这张图的配方（族 / 横纵轴 / 分组 / 分面 / 个体 / 各层）：后端总是给；界面只拿它判「刷新后是不是同一张图」（`sameDrawing`），不解读里面的字段 */
+  values?: Record<string, unknown>
   coverage?: Record<string, unknown>
   unplotted: { count: number; code: string | null }
   /** 大表（超过 5 MiB / 10 万行的文本表）才有：整表 `rows` 行，这张图实际画的是缩减后的 `kept` 行；小表没有这一项 */

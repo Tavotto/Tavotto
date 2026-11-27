@@ -1613,3 +1613,13 @@ def test_make_compound_takes_a_closed_shape_like_the_desktop():
     line = {**_rect("ln", 0, 0, 10, 2), "shape": "line"}
     e = _err([*objs, line], [{"op": "make_compound", "ids": ["r", "ln"]}])
     assert e["field"] == "needs_closed"
+
+
+@pytest.fixture(autouse=True)
+def _legacy_layout_file_form(monkeypatch):
+    """ADR 0211 第二期 PR 3 起「排版写成目录形态」默认开；这份用例钉的是改造前 `tavottofile/<名>.json` 的形态与语义，
+    显式关开关来跑（与 `TAVOTTO_LAYOUT_DIR_WRITER=0` 应急回退同一档；环境变量也让子进程一并关）。目录形态的对应用例在 `tests/test_layoutdir.py`。"""
+    from tavotto.engine import layoutdir
+
+    monkeypatch.setattr(layoutdir, "WRITER_ENABLED", False)
+    monkeypatch.setenv(layoutdir.WRITER_ENV, "0")

@@ -134,10 +134,10 @@ function QuickBox() {
             className="min-w-0 flex-1"
           />
           <Button type="submit" variant="primary" size="sm" loading={busy} disabled={!name.trim()} data-timeline-quick-name-save>
-            {t('versions.save')}
+            {t('versions.quickSave')}
           </Button>
         </div>
-        <p className="text-xs text-ink-3">{t('versions.nameHint')}</p>
+        <p className="text-xs text-ink-3">{t('versions.quickNameHint')}</p>
         {error && (
           <p role="alert" className="text-xs leading-relaxed text-danger">
             {error}

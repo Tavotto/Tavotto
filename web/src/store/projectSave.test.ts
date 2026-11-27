@@ -20,6 +20,8 @@ import {
   startAutosave,
   useDocumentStore,
 } from './documentStore'
+import { setProjectWriteCapability } from '@/lib/autosaveProject'
+import { useTimelineStore } from './timelineStore'
 import { useUiStore } from './uiStore'
 import { onLayoutSaved, type LayoutSavedVia } from '@/lib/layoutSaved'
 import { currentTimelineCtx } from '@/lib/timelineContext'
@@ -119,6 +121,7 @@ beforeEach(async () => {
   forgetLayoutRevisions()
   setCurrentProjectId('pjA')
   useUiStore.setState({ layoutOpen: false, layoutConflict: null, layoutName: null, status: null })
+  useTimelineStore.getState().setNamingOpen(false)
   await s().switchDocument(emptyProject(), 'd_save')
   stopAutosave = startAutosave()
 })
@@ -232,11 +235,9 @@ describe('写成了就发「排版写成了」（时间线的「保存」点，A
     expect(docs).toEqual([sent])
   })
 
-  it('没开项目、本机写的途中接着改：照样发 local（内容是按下 ⌘S 那一刻的），状态照实是 dirty', async () => {
+  it('没开项目、本机写的途中接着改：⌘S 是起名字——不发 local，写完照样开命名小框，状态照实是 dirty', async () => {
     setCurrentProjectId(null)
     edit('t1')
-    const docs: string[][] = []
-    const offDocs = onLayoutSaved((_via, { moment }) => docs.push(moment.identity.doc.objects.map((o) => o.id)))
     let open!: () => void
     autosaveGate = new Promise<void>((r) => (open = r))
     const saving = runManualSave()
@@ -245,9 +246,8 @@ describe('写成了就发「排版写成了」（时间线的「保存」点，A
     autosaveGate = null
     open()
     await saving
-    offDocs()
-    expect(seen.map(([via]) => via)).toEqual(['local'])
-    expect(docs).toEqual([['t1']])
+    expect(seen).toEqual([])
+    expect(useTimelineStore.getState().namingOpen).toBe(true)
     expect(s().saveState).toBe('dirty')
   })
 
@@ -278,7 +278,7 @@ describe('写成了就发「排版写成了」（时间线的「保存」点，A
   })
 })
 
-describe('开着项目、还没有项目文件', () => {
+describe('（应急回退：后端关了「写进项目」）开着项目、还没有项目文件', () => {
   it('第一次 ⌘S 弹「存进项目」命名框，不写任何项目文件', async () => {
     edit('t1')
     await runManualSave()
@@ -303,13 +303,48 @@ describe('开着项目、还没有项目文件', () => {
 })
 
 describe('没开项目', () => {
-  it('只存本机，提示说「存在本机」，不弹框', async () => {
+  it('⌘S = 给这一版起名字：本机照存、打开命名小框，不弹「存进项目」', async () => {
     setCurrentProjectId(null)
     edit('t1')
     await runManualSave()
     expect(requests).toHaveLength(0)
+    expect(autosave.has('d_save')).toBe(true)
     expect(useUiStore.getState().layoutOpen).toBe(false)
-    expect(statusText()).toContain('本机')
+    expect(useTimelineStore.getState().namingOpen).toBe(true)
+  })
+})
+
+describe('始终保存（后端开着「自动保存写进项目」）：⌘S 给这一版起名字（ADR 0211 第二期 PR 3）', () => {
+  beforeEach(() => setProjectWriteCapability(true))
+  afterEach(() => setProjectWriteCapability(false))
+
+  it('开着项目、还没有项目文件：不再弹「存进项目」，不写项目文件，开命名小框；本机槽位照存', async () => {
+    edit('t1')
+    await runManualSave()
+    expect(requests).toHaveLength(0)
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+    expect(useTimelineStore.getState().namingOpen).toBe(true)
+    expect(autosave.has('d_save')).toBe(true)
+  })
+
+  it('绑定了项目文件：⌘S 也不再「写回那个文件」（工作副本由自动保存写）；开命名小框', async () => {
+    bind({ revision: 'r0' })
+    edit('t1')
+    await runManualSave()
+    expect(requests).toHaveLength(0)
+    expect(useTimelineStore.getState().namingOpen).toBe(true)
+  })
+
+  it('写进项目撞上外部修改还悬着：⌘S 进冲突岔口（写回绑定文件拿 409），不开命名小框', async () => {
+    projectFiles.set('排版一', '{"theirs":1}')
+    bind({ revision: 'stale' })
+    useDocumentStore.setState({ projectConflict: { docId: 'd_save', base: 'stale' } })
+    edit('t1')
+    await runManualSave()
+    expect(useUiStore.getState().layoutOpen).toBe(true)
+    expect(useUiStore.getState().layoutConflict).toMatchObject({ name: '排版一' })
+    expect(useTimelineStore.getState().namingOpen).toBe(false)
+    useDocumentStore.setState({ projectConflict: null })
   })
 })
 
