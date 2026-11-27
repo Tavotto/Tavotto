@@ -1,39 +1,3 @@
-# The rectangle grob holds the computed stack/dodge arrangement. Recover bar
-# centres in data units and check both ends against what the native geom drew.
-ggplot_bar_span <- function(layout, panel_id, data, rect) {
-  flipped <- unique(data$flipped_aes)
-  if (length(flipped) != 1L || is.na(flipped) ||
-      !identical(as.list(layout$coord)$transform, as.list(ggplot2::CoordCartesian)$transform)) {
-    return(NULL)
-  }
-  axis <- if (flipped) "y" else "x"
-  ends <- paste0(axis, c("min", "max"))
-  origin_key <- ends[[if (flipped) 2L else 1L]]
-  if (!all(ends %in% names(data))) return(NULL)
-  panel <- layout$panel_params[[panel_id]]
-  project <- layout$coord$transform(data[ends], panel)
-  lower <- as.numeric(data[[ends[[1L]]]])
-  upper <- as.numeric(data[[ends[[2L]]]])
-  origin <- project[[origin_key]]
-  dimension <- if (flipped) "height" else "width"
-  if (!isTRUE(all.equal(as.numeric(origin), as.numeric(rect[[axis]]), tolerance = 1e-12)) ||
-      !isTRUE(all.equal(as.numeric(project[[ends[[2L]]]] - project[[ends[[1L]]]]),
-                        as.numeric(rect[[dimension]]), tolerance = 1e-12))) return(NULL)
-  if (!isTRUE(panel[[axis]]$scale_is_discrete)) {
-    transform <- panel[[axis]]$scale$get_transformation()
-    if (!transform$name %in% names(ggplot_axis_modes)) return(NULL)
-    lower <- transform$inverse(lower)
-    upper <- transform$inverse(upper)
-  }
-  width <- upper - lower
-  centre <- lower + width / 2
-  if (any(!is.finite(width) | width <= 0 | !is.finite(centre))) return(NULL)
-  list(centre = centre, width = width[[1L]], axis = axis, ends = ends, origin_key = origin_key,
-       dimension = dimension, coord = layout$coord, panel = panel,
-       prop = if (flipped) "bar_thickness" else "bar_width",
-       uniform = all(abs(width - width[[1L]]) <= sqrt(.Machine$double.eps) * width[[1L]]))
-}
-
 # A mapped palette may vary the RGB values while every rectangle has the
 # same opacity. Keep the actual palette and use that opacity for hit testing.
 ggplot_bar_opacity <- function(colour) {
@@ -64,7 +28,7 @@ ggplot_bar_target <- function(layout, draw, fixed) {
   visible_alpha <- unique(c(fill_alpha, stroke_alpha[outline && width > 0]))
   visible_alpha <- visible_alpha[visible_alpha > 0]
   if (!length(visible_alpha)) return(NULL)
-  span <- ggplot_bar_span(layout, draw$panel_id, draw$rows, rect)
+  span <- ggplot_bar_span(layout, draw$panel_id, draw$rows, rect, names(ggplot_axis_modes))
   size <- if (is.null(span)) list() else stats::setNames(list(span$width), span$prop)
   fields <- if (fixed && !is.null(face) && !is.null(edge)) {
     c(list(
@@ -168,33 +132,6 @@ ggplot_bar_values <- function(target, edit) {
     values[[prop]] <- value
   }
   values
-}
-
-ggplot_edit_bar_span <- function(rect, span, width, panel, coord) {
-  lower <- span$centre - width / 2
-  upper <- span$centre + width / 2
-  if (!isTRUE(panel[[span$axis]]$scale_is_discrete)) {
-    transform <- panel[[span$axis]]$scale$get_transformation()
-    if (identical(transform$name, "log-10") && any(lower <= 0)) {
-      stop("The native R bar width would cross zero on a logarithmic axis.")
-    }
-    lower <- transform$transform(lower)
-    upper <- transform$transform(upper)
-  }
-  if (any(!is.finite(lower) | !is.finite(upper) | upper <= lower)) {
-    stop("The native R bar width cannot be represented at the captured positions.")
-  }
-  ends <- stats::setNames(data.frame(lower, upper), span$ends)
-  projected <- coord$transform(ends, panel)
-  origin <- as.numeric(projected[[span$origin_key]])
-  dimension <- as.numeric(projected[[span$ends[[2L]]]] - projected[[span$ends[[1L]]]])
-  if (any(!is.finite(origin) | !is.finite(dimension) | dimension == 0)) {
-    stop("The native R bar width cannot be represented in the current view.")
-  }
-  rows <- span$rows %||% seq_along(origin)
-  rect[[span$axis]][rows] <- grid::unit(origin, "native")
-  rect[[span$dimension]][rows] <- grid::unit(dimension, "native")
-  rect
 }
 
 ggplot_edit_bars <- function(table, target, edit, layout) {
@@ -313,7 +250,7 @@ measure_ggplot_bars <- function(table, targets, frame_pt, retain_clipped = FALSE
 
 ggplot_bar_source_plan <- function(state, target, edit, edits) {
   paint <- c("facecolor", "edgecolor", "alpha", "linewidth")
-  if (!length(edit) || !is.null(target$group) || !all(names(edit) %in% paint)) return(NULL)
+  if (!length(edit) || !is.null(target$group) || !all(names(edit) %in% c(paint, target$span$prop))) return(NULL)
   if (ggplot_layer_has_group_edits(state$bar_targets, target$index, edits)) return(NULL)
   values <- ggplot_bar_values(target, edit)
   aesthetics <- edit[intersect("alpha", names(edit))]
@@ -324,7 +261,10 @@ ggplot_bar_source_plan <- function(state, target, edit, edits) {
     aesthetics$colour <- ggplot_edit_pigment(values$edgecolor, target$edge, edit$alpha, target$values$alpha)
   }
   if (!is.null(edit$linewidth)) aesthetics$linewidth <- edit$linewidth / (ggplot_lwd_pt * ggplot2::.pt)
-  ggplot_fixed_layer_source(state, target, edit, aesthetics)
+  prop <- target$span$prop %||% "bar_width"
+  width <- edit[intersect(prop, names(edit))]
+  geometry <- if (length(width)) list(kind = "bars", facet = target$facet, values = width)
+  ggplot_fixed_layer_source(state, target, edit, aesthetics, geometry)
 }
 
 ggplot_bar_elements <- function(state, edits, measured) {

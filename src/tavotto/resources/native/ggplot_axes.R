@@ -53,9 +53,7 @@ ggplot_axis_layers <- function(layers) {
   vapply(layers, function(layer) {
     kind <- class(layer$geom)[[1L]]
     if (!kind %in% kinds) return(NA_character_)
-    base <- getExportedValue("ggplot2", kind)
-    methods <- c("draw_layer", "draw_panel", "draw_group", "handle_na")
-    if (!identical(as.list(layer$geom)[methods], as.list(base)[methods])) return(NA_character_)
+    if (!ggplot_stock_geom(layer$geom, kind)) return(NA_character_)
     kind
   }, character(1L))
 }
@@ -196,7 +194,7 @@ ggplot_axes_target <- function(built, table) {
   if (!is.null(coord$ratio) || secondary) context <- ggplot_decoration_context(built)
   write_scale <- ggplot_source_scale_layers(built, kinds)
   source_groups <- lapply(axes, function(axis) {
-    ggplot_source_axis_group("1", 1L, kinds, coord$reverse, write_scale)
+    ggplot_source_axis_group("1", 1L, kinds, write_scale)
   })
   list(slot = slot, axes = axes, reverse = coord$reverse, source_groups = source_groups,
        source_anchor = rlang::hash(list(kinds, built$data)),
@@ -881,12 +879,9 @@ ggplot_source_scale_layers <- function(built, kinds) {
   }, logical(1L)))
 }
 
-ggplot_source_axis_group <- function(group, total, kinds, reverse, write_scale) {
-  raster <- "GeomRaster" %in% kinds
-  # ggplot2's stock raster grob still needs Tavotto's matrix reflection when
-  # reversing coordinates. Do not claim plain R can redraw that view.
-  list(group = group, total = total, range = !raster || identical(reverse, "none"),
-       direction = !raster, scale = write_scale)
+ggplot_source_axis_group <- function(group, total, kinds, write_scale) {
+  list(group = group, total = total, range = TRUE, direction = TRUE,
+       scale = write_scale, raster = "GeomRaster" %in% kinds)
 }
 
 ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
@@ -921,7 +916,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
       if (is.null(group)) next
       target$axes[[axis]] <- group$spec
       target$groups[[axis]] <- group_id
-      target$source_groups[[axis]] <- ggplot_source_axis_group(group_id, totals[[axis]], kinds, target$reverse, write_scale)
+      target$source_groups[[axis]] <- ggplot_source_axis_group(group_id, totals[[axis]], kinds, write_scale)
     }
     if (!is.null(ggplot_facet_grill(table$grobs[[slot]]))) {
       target <- ggplot_grid_target(built, table, target, slot)
@@ -971,36 +966,4 @@ ggplot_edit_facet_axes <- function(table, layout, theme, target, edit) {
     table <- ggplot_frame_edit(table, target$slot, target$frame$fallback, frame, panel_only = TRUE)
   }
   table
-}
-
-ggplot_mirror_raster_layer <- function(layer, coord) {
-  if (!identical(class(coord)[[1L]], "CoordCartesian") || !identical(class(layer$geom)[[1L]], "GeomRaster") ||
-      !identical(ggplot_axis_layers(list(layer)), "GeomRaster")) return(layer)
-  geom <- layer$geom
-  mirrored <- ggplot_clone(geom, draw_panel = function(data, panel_params, coord, ...) {
-    reverse <- panel_params$reverse
-    # Raster's native matrix is indexed before the coordinate transform. Render
-    # with the same view in forward order, then reflect both the raster and its placement.
-    panel_params$reverse <- "none"
-    grob <- geom$draw_panel(data, panel_params, coord, ...)
-    if (identical(reverse, "none") || inherits(grob, "zeroGrob")) return(grob)
-    if (!inherits(grob, "rastergrob") || !identical(grob$just, "centre") ||
-        !is.null(grob$vp) || !is.null(grob$hjust) || !is.null(grob$vjust) ||
-        !identical(grid::unitType(grob$x), "native") || !identical(grid::unitType(grob$y), "native")) {
-      stop("The native R raster no longer has a reversible placement.")
-    }
-    rows <- seq_len(nrow(grob$raster))
-    columns <- seq_len(ncol(grob$raster))
-    if (ggplot_inverted(reverse, "x")) {
-      columns <- rev(columns)
-      grob$x <- grid::unit(1 - as.numeric(grob$x), "native")
-    }
-    if (ggplot_inverted(reverse, "y")) {
-      rows <- rev(rows)
-      grob$y <- grid::unit(1 - as.numeric(grob$y), "native")
-    }
-    grob$raster <- grDevices::as.raster(grob$raster[rows, columns, drop = FALSE])
-    grob
-  })
-  ggplot_clone(layer, geom = mirrored)
 }

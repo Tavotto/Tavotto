@@ -1001,7 +1001,6 @@ measure_ggplot_targets <- function(targets, frame_pt) {
 }
 
 ggplot_line_types <- c("-" = "solid", "--" = "dashed", ":" = "dotted", "-." = "dotdash")
-ggplot_lwd_pt <- 72 / 96
 
 ggplot_uniform_pigment <- function(colour) {
   if (is.logical(colour) && length(colour) && all(is.na(colour))) {
@@ -1189,75 +1188,6 @@ ggplot_series_edit_order <- function(gids, targets) {
   c(gids[!narrow], gids[narrow])
 }
 
-ggplot_errorbar_caps <- function(line, flipped) {
-  runs <- rle(line$id)
-  if (length(unique(flipped)) != 1L || !is.logical(flipped) || anyNA(flipped) ||
-      any(runs$lengths != 8L) || anyDuplicated(runs$values)) return(NULL)
-  points <- matrix(seq_along(line$id), nrow = 8L)
-  horizontal <- isTRUE(flipped[[1L]])
-  along <- as.numeric(if (horizontal) line$y else line$x)
-  across <- as.numeric(if (horizontal) line$x else line$y)
-  ends <- points[c(1L, 2L, 4L, 5L, 7L, 8L), , drop = FALSE]
-  separators <- points[c(3L, 6L), , drop = FALSE]
-  if (!all(is.finite(along[ends]) & is.finite(across[ends])) ||
-      !all(is.na(along[separators]) & is.na(across[separators])) ||
-      !all(along[points[4L, ]] == along[points[5L, ]]) ||
-      !all(across[points[1L, ]] == across[points[4L, ]] &
-           across[points[2L, ]] == across[points[4L, ]] &
-           across[points[7L, ]] == across[points[5L, ]] &
-           across[points[8L, ]] == across[points[5L, ]])) return(NULL)
-  list(points = points, axis = if (horizontal) "y" else "x")
-}
-
-ggplot_cap_span <- function(line, caps, row = 1L) {
-  if (!is.null(line$tavotto_cap_spans)) return(line$tavotto_cap_spans[row])
-  positions <- line[[caps$axis]]
-  positions[caps$points[2L, row]] - positions[caps$points[1L, row]]
-}
-
-ggplot_edit_errorbar_caps <- function(line, caps, length_pt, width_pt) {
-  points <- caps$points
-  count <- ncol(points)
-  length_pt <- rep_len(length_pt %||% NA_real_, count)
-  width_pt <- rep_len(width_pt %||% NA_real_, count)
-  resized <- which(!is.na(length_pt))
-  spans <- ggplot_cap_span(line, caps, seq_len(count))
-  if (length(resized)) {
-    spans[resized] <- grid::unit(length_pt[resized] / 72, "inches")
-    positions <- line[[caps$axis]]
-    centre <- positions[points[c(4L, 4L, 5L, 5L), resized, drop = FALSE]]
-    offsets <- rep(c(-1, 1), 2L) * rep(length_pt[resized], each = 4L) / 144
-    positions[points[c(1L, 2L, 7L, 8L), resized, drop = FALSE]] <- centre + grid::unit(offsets, "inches")
-    line[[caps$axis]] <- positions
-  }
-  line$tavotto_cap_spans <- spans
-  hidden <- !is.na(length_pt) & length_pt == 0
-  if (any(hidden) || any(!is.na(width_pt))) {
-    segments <- matrix(points[c(1L, 2L, 4L, 5L, 7L, 8L), , drop = FALSE], nrow = 2L)
-    rows <- rep(seq_len(count), each = 3L)
-    is_cap <- rep(c(TRUE, FALSE, TRUE), count)
-    visible <- !hidden[rows] | !is_cap
-    indices <- segments[, visible, drop = FALSE]
-    line$x <- line$x[indices]
-    line$y <- line$y[indices]
-    line$id <- rep(seq_len(ncol(indices)), each = 2L)
-    line$tavotto_cap_rows <- rep(rows[visible], each = 2L)
-    for (key in names(line$gp)) {
-      value <- line$gp[[key]]
-      if (length(value) != 1L) {
-        line$gp[[key]] <- rep_len(value, count)[rows[visible]]
-      }
-    }
-    thickened <- is_cap[visible] & !is.na(width_pt[rows[visible]])
-    if (any(thickened)) {
-      stroke <- rep_len(line$gp$lwd, ncol(indices))
-      stroke[thickened] <- width_pt[rows[visible][thickened]] / ggplot_lwd_pt
-      line$gp$lwd <- stroke
-    }
-  }
-  line
-}
-
 ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, mapping, layer) {
   if (!identical(as.list(layer$geom)$draw_key, ggplot2::draw_key_path)) return(list())
   guides <- built$plot$guides
@@ -1272,7 +1202,8 @@ ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, ma
   layout <- built$layout
   result <- list()
   for (draw in draws) {
-    line <- draw$grob
+    final <- draw$grob
+    line <- final$tavotto_cap_base %||% final
     rows <- draw$rows
     if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
         is.null(line$id) || length(line$id) > 4096L || anyNA(line$id)) next
@@ -1298,6 +1229,10 @@ ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, ma
       gid <- paste0("layer.", index, suffix, ".errorbar.group.", key)
       result[[gid]] <- list(slot = draw$slot, child = line$name, index = index, interval = TRUE,
                             facet = draw$facet, caps = caps, cap_rows = selected, width = width,
+                            cap_width = if (!is.null(final$tavotto_cap_style)) {
+                              stored <- unique(final$tavotto_cap_style$width[selected])
+                              if (is_positive_ggplot_number(stored)) stored
+                            },
                             cap_label = groups$labels[[key]], clip = identical(layout$coord$clip, "on"),
                             context = context)
     }
@@ -1363,7 +1298,8 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
     paints <- list()
     drawn <- ggplot_panel_draws(panels, layer_grobs[[index]], built$data[[index]])
     for (draw in drawn) {
-      line <- draw$grob
+      final <- draw$grob
+      line <- final$tavotto_cap_base %||% final
       suffix <- if (panels$single) "" else paste0(".panel.", draw$panel_id)
       if (!inherits(line, "polyline") || !is.null(line$arrow) || !is.null(line$vp) ||
           length(line$x) < 2L || length(line$x) > 4096L ||
@@ -1393,6 +1329,10 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
         slot = draw$slot, child = line$name, index = index, context = context, interval = interval,
         facet = draw$facet,
         caps = if (interval) ggplot_errorbar_caps(line, draw$rows$flipped_aes),
+        cap_width = if (!is.null(final$tavotto_cap_style)) {
+          stored <- unique(final$tavotto_cap_style$width)
+          if (is_positive_ggplot_number(stored)) stored
+        },
         guide_keys = guide_keys, key_name = key_name,
         clip = identical(built$layout$coord$clip, "on"),
         width = width * ggplot_lwd_pt, style = style,
@@ -1542,14 +1482,15 @@ ggplot_paths_bbox <- function(paths, pad = c(0, 0)) {
 
 # Binding a fixed aesthetic to an authored layer needs stock native drawing
 # and the set of panels that actually draw that layer.
-ggplot_fixed_layer_source <- function(state, target, edit, aesthetics) {
+ggplot_fixed_layer_source <- function(state, target, edit, aesthetics, geometry = NULL) {
   layer <- state$built$plot$layers[[target$index]]
   kind <- class(layer$geom)[[1L]]
-  if (!kind %in% c("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar")) return(NULL)
+  if (!kind %in% c("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar", "GeomErrorbar", "GeomErrorbarh")) return(NULL)
   stock <- getExportedValue("ggplot2", kind)
   if (!identical(as.list(layer$geom)$draw_panel, as.list(stock)$draw_panel)) return(NULL)
   panels <- sum(!vapply(state$layer_grobs[[target$index]], inherits, logical(1L), "zeroGrob"))
-  if (panels) list(layer = target$index, geom = kind, panels = panels, edited = edit, aesthetics = aesthetics)
+  if (panels) list(layer = target$index, geom = kind, panels = panels, edited = edit,
+                   aesthetics = aesthetics, geometry = geometry)
 }
 
 ggplot_layer_has_group_edits <- function(targets, index, edits) {
@@ -1568,6 +1509,17 @@ ggplot_line_source_plan <- function(state, target, patch, edits) {
   if (!is.null(style$lty)) aesthetics$linetype <- style$lty
   if (!is.null(style$col)) aesthetics$colour <- style$col
   ggplot_fixed_layer_source(state, target, patch, aesthetics)
+}
+
+ggplot_errorbar_source_plan <- function(state, target, patch) {
+  if (!length(patch) || !is.null(target$cap_rows)) return(NULL)
+  style <- ggplot_line_style(target, patch)
+  aesthetics <- patch[intersect("alpha", names(patch))]
+  if (!is.null(style$lwd)) aesthetics$linewidth <- style$lwd / ggplot2::.pt
+  if (!is.null(style$col)) aesthetics$colour <- style$col
+  caps <- patch[intersect(names(patch), c("capsize", "cap_thickness"))]
+  geometry <- if (length(caps)) list(kind = "caps", facet = target$facet, values = caps)
+  ggplot_fixed_layer_source(state, target, patch, aesthetics, geometry)
 }
 
 ggplot_line_style <- function(target, patch) {
@@ -1601,6 +1553,8 @@ ggplot_line_style <- function(target, patch) {
 ggplot_edit_line_part <- function(table, target, group, patch, change) {
   panel <- table$grobs[[target$slot]]
   line <- panel$children[[target$child]]
+  authored <- line$tavotto_cap_style
+  line <- line$tavotto_cap_base %||% line
   if (is.null(group)) {
     line$gp[names(change)] <- change
   } else {
@@ -1614,10 +1568,12 @@ ggplot_edit_line_part <- function(table, target, group, patch, change) {
     }
   }
   if (!is.null(patch$alpha)) line$gp$col <- scales::alpha(line$gp$col, patch$alpha)
-  if (!is.null(patch$capsize) || !is.null(patch$cap_thickness)) {
+  if (!is.null(authored) || !is.null(patch$capsize) || !is.null(patch$cap_thickness)) {
     caps <- ggplot_errorbar_caps(line, target$caps$axis == "y")
     if (is.null(caps)) stop("The native R error bar caps changed.")
-    line <- ggplot_edit_errorbar_caps(line, caps, patch$capsize, patch$cap_thickness)
+    length <- patch$capsize %||% authored$length
+    width <- patch$cap_thickness %||% authored$width
+    line <- ggplot_edit_errorbar_caps(line, caps, length, width)
   }
   panel$children[[target$child]] <- line
   table$grobs[[target$slot]] <- panel
@@ -2479,19 +2435,21 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       current <- original
       if (!is.null(target$caps)) {
         original$capsize <- state$line_geometry[[gid]]$capsize
-        original$cap_thickness <- target$width
+        original$cap_thickness <- target$cap_width %||% target$width
         current$capsize <- geometry$capsize
-        current$cap_thickness <- if (is.null(patch$linewidth)) target$width else patch$linewidth
+        current$cap_thickness <- target$cap_width %||% patch$linewidth %||% target$width
       }
       current[names(patch)] <- patch
       geometry$capsize <- NULL
       label <- ggplot_layer_label("\u8bef\u5dee\u68d2", target)
       if (!is.null(target$cap_label)) label <- paste(label, target$cap_label, sep = " \u00b7 ")
-      return(c(list(gid = gid, role = "errorbar",
+      element <- c(list(gid = gid, role = "errorbar",
                     label = label, draggable = FALSE,
                     editable = list(), errorbar_series = list(
                       context = target$context, current = current,
-                      original = original, edited = as.list(names(patch)))), geometry))
+                      original = original, edited = as.list(names(patch)))), geometry)
+      element$source_layer <- ggplot_errorbar_source_plan(state, target, patch)
+      return(element)
     }
     effective <- if (is.null(target$group)) patch else c(patch, edits[[target$group$parent]])
     width <- list(prop = "linewidth", type = "number", value = effective$linewidth %||% target$width,

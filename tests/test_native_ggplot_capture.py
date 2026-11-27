@@ -670,6 +670,148 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         assert previous["canvases"][0]["objects"][0]["overrides"] == patches
 
 
+@pytest.mark.parametrize("scope", ["single", "facets", "existing", "empty"])
+def test_native_r_raster_writeback_draws_the_same_cells_in_standalone_r(tmp_path, scope):
+    from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Raster project"
+    project.mkdir()
+    script = project / "Raster.R"
+    original = b"""\
+d <- expand.grid(x = 1:3, y = 1:2, sample = c("Early", "Late"))
+d$x <- d$x + ifelse(d$sample == "Early", 0, 3)
+d$colour <- rep(c("#D60000", "#059355", "#183ED0", "#6A1692", "#EA5303", "#6EE7D7"), 2)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, fill = colour)) +
+  ggplot2::geom_raster(hjust = .25, vjust = .75) + ggplot2::scale_fill_identity() +
+  ggplot2::geom_point(colour = "#40272A") + ggplot2::theme_bw() +
+  ggplot2::coord_cartesian(xlim = c(0, 10), ylim = c(0, 4), expand = FALSE)
+"""
+    if scope == "single":
+        original = original.replace(b"ggplot(d,", b'ggplot(subset(d, sample == "Early"),')
+    else:
+        original = original.replace(
+            b"ggplot2::theme_bw()", b"ggplot2::theme_bw() + ggplot2::facet_wrap(~sample)"
+        )
+    if scope == "existing":
+        original = original.replace(b"expand = FALSE)", b'expand = FALSE, reverse = "xy")')
+    if scope == "empty":
+        original = original.replace(
+            b"ggplot2::geom_point(colour",
+            b"ggplot2::geom_raster(data = function(d) d[FALSE, ]) + ggplot2::geom_point(colour",
+        )
+    original += (
+        f'svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)\n'
+        "print(plot)\ngrDevices::dev.off()\n"
+    ).encode()
+    script.write_bytes(original)
+
+    def rasters(svg):
+        return [
+            node.attrib
+            for node in ElementTree.fromstring(svg).iter("{http://www.w3.org/2000/svg}image")
+        ]
+
+    route = "/api/layouts/Raster_view"
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        before = _render(app, figure, [])
+        axes = next(el for el in before["manifest"]["elements"] if el["role"] == "axes")
+        patches = [
+            {"gid": axes["gid"], "identity": axes["identity"], "prop": prop, "value": value}
+            for prop, value in (("xlim", [0.0, 8.0]), ("invert_x", scope != "existing"))
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        images = rasters(hot["svg"])
+        assert len(images) == (1 if scope == "single" else 2)
+        assert images != rasters(before["svg"])
+        width, height = before["manifest"]["size_mm"]
+        panel = {
+            **_panel("r", figure, 5, patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        doc = {
+            "schema": 3,
+            "project": {"id": "r-raster-source", "name": "Raster view"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [panel],
+                    "guides": [],
+                },
+            ],
+        }
+        assert app.call(f"{route}?target=project", doc)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Raster_view")
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200 and preview["written"] == 2 and preview["skipped"] == [], preview
+        assert script.read_bytes() == original
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"], saved
+        _, persisted = app.call(route)
+        assert persisted["canvases"][0]["objects"][0]["overrides"] == []
+        authored = script.read_bytes()
+        assert b"TavottoRasterReflection" in authored
+        fresh_project = tmp_path / "Fresh raster project"
+        fresh_project.mkdir()
+        (fresh_project / script.name).write_bytes(authored)
+
+        # Exercise ordinary R directly, so the editor's automatic reflection cannot
+        # mask a generated script that points one of the colour cells at the wrong data.
+        subprocess.run(
+            [rscript, "--vanilla", script.name], check=True, cwd=fresh_project, timeout=45
+        )
+        assert rasters((fresh_project / "standalone.svg").read_text(encoding="utf-8")) == images
+
+        with sidecar_app(fresh_project, tmp_path / "fresh") as fresh:
+            rebuilt = _run_ggplot(fresh, script.name, rscript)
+            replayed = _render(fresh, rebuilt, [])
+            assert replayed["warnings"] == []
+            assert replayed["svg"] == hot["svg"]
+
+            def x_tick_controls(manifest):
+                return {
+                    e["gid"]
+                    for e in manifest["elements"]
+                    if e["role"] == "ticks"
+                    and e["gid"].startswith("axis.x.bottom.ticks")
+                    and any(field["prop"] == "major_mode" for field in e["editable"])
+                }
+
+            assert x_tick_controls(before["manifest"])
+            assert x_tick_controls(replayed["manifest"]) == x_tick_controls(before["manifest"])
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"], restored
+        assert script.read_bytes() == original
+
+
 @pytest.mark.parametrize("retain_tick_format", [False, True], ids=["write", "retain-format"])
 def test_native_r_colour_mapping_writeback_recreates_data_and_guides(tmp_path, retain_tick_format):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
@@ -1098,7 +1240,13 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         "mixed-layers",
         "bar-col",
         "bar-col-one-facet",
+        "bar-col-missing-facet",
         "bar-count",
+        "bar-dodged-horizontal",
+        "interval-facets",
+        "interval-local",
+        "interval-horizontal",
+        "bar-interval-stack",
     ],
 )
 def test_native_r_fixed_layer_styles_write_back_only_when_shared_by_the_layer(tmp_path, scope):
@@ -1118,12 +1266,16 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
 """
     curve = scope.startswith(("line-", "path-"))
     bars = scope.startswith("bar-")
+    interval = scope.startswith("interval-")
     faceted = scope not in ("single", "path-single", "line-legend", "line-legend-local")
     if faceted:
         original = original.replace(
             b'ggplot2::labs(title = "Point evidence")',
             b'ggplot2::labs(title = "Point evidence") + ggplot2::facet_wrap(ggplot2::vars(panel))',
         )
+    if scope == "bar-col-missing-facet":
+        original = original.replace(b'"Reference", "Trial"', b'"Reference", NA_character_')
+        original = original.replace(b"as.integer(d$panel)", b"2L")
     if scope == "paint-facets":
         original = original.replace(
             b'geom_point(size = 2, colour = "#287F6E")',
@@ -1152,6 +1304,37 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         if scope == "bar-count":
             original = original.replace(b"aes(x, y, colour = x)", b"aes(x)")
             geom = b'geom_bar(width = .6, fill = "#D59162", colour = "#287F6E", linewidth = .8)'
+        if scope == "bar-dodged-horizontal":
+            original = original.replace(
+                b"aes(x, y, colour = x)", b"aes(y, factor(x), fill = panel)"
+            )
+            original = original.replace(
+                b"d$y <- 2 + d$x + as.integer(d$panel)",
+                b'd <- merge(d, data.frame(kind = c("A", "B")))\n'
+                b"d$y <- 2 + d$x + as.integer(factor(d$panel)) + as.integer(factor(d$kind))",
+            ).replace(b"fill = panel", b"fill = kind")
+            geom = (
+                b'geom_col(width = .8, position = "dodge2", orientation = "y", colour = "#287F6E")'
+            )
+        original = original.replace(b'geom_point(size = 2, colour = "#287F6E")', geom)
+        if scope == "bar-interval-stack":
+            original = original.replace(
+                geom,
+                geom + b" +\n    ggplot2::geom_errorbar(ggplot2::aes(ymin=y-.3, ymax=y+.4), "
+                b'width=.35, colour="#6F1735", linewidth=.7)',
+            )
+    if interval:
+        if scope == "interval-horizontal":
+            original = original.replace(b"aes(x, y, colour = x)", b"aes(y, x)")
+            geom = (
+                b"geom_errorbar(ggplot2::aes(xmin = y - .3, xmax = y + .4), "
+                b'width = .35, linewidth = .8, colour = "#287F6E", orientation = "y")'
+            )
+        else:
+            geom = (
+                b"geom_errorbar(ggplot2::aes(ymin = y - .3, ymax = y + .4), "
+                b'width = .35, linewidth = .8, colour = "#287F6E")'
+            )
         original = original.replace(b'geom_point(size = 2, colour = "#287F6E")', geom)
     source.write_bytes(original)
     route = "/api/layouts/Point_style"
@@ -1160,14 +1343,20 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         before = _render(app, figure, [])
         original_pdf = (project / "original.pdf").read_bytes()
         elements = {element["gid"]: element for element in before["manifest"]["elements"]}
-        role = "line" if curve else "bar_series" if bars else "scatter"
+        role = "errorbar" if interval else "line" if curve else "bar_series" if bars else "scatter"
         targets = [
             gid
             for gid, element in elements.items()
             if element["role"] == role and ".group." not in gid
         ]
         assert len(targets) == (4 if scope == "two-layers" else 2 if faceted else 1)
-        if scope in ("one-facet", "line-one-facet", "bar-col-one-facet"):
+        if scope in (
+            "one-facet",
+            "line-one-facet",
+            "bar-col-one-facet",
+            "bar-col-missing-facet",
+            "interval-local",
+        ):
             targets = targets[-1:]
         if curve:
             edits = {"linewidth": 1.8, "linestyle": "--"}
@@ -1179,6 +1368,17 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                 "edgecolor": "#174466",
                 "linewidth": 2.2,
                 "alpha": 0.65,
+                "bar_width": 0.41,
+            }
+            if scope == "bar-dodged-horizontal":
+                edits = {"bar_thickness": 0.25}
+        elif interval:
+            edits = {
+                "linewidth": 1.35,
+                "color": "#513C88",
+                "alpha": 0.65,
+                "capsize": 8,
+                "cap_thickness": 2.1,
             }
         else:
             edits = (
@@ -1193,6 +1393,10 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             for gid in targets
             for prop, value in edits.items()
         ]
+        if scope == "bar-dodged-horizontal":
+            patches[0]["value"] = 0.32
+        if scope == "interval-horizontal":
+            next(patch for patch in patches if patch["prop"] == "capsize")["value"] = 0
         if scope == "different-facets":
             next(patch for patch in patches if patch["prop"] == "size")["value"] = 81
         if scope == "mixed-layers":
@@ -1202,6 +1406,13 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                 if el["role"] == "line"
                 for prop, value in {"linewidth": 1.8, "linestyle": "--", "color": "#613C88"}.items()
             ]
+        if scope == "bar-interval-stack":
+            patches.extend(
+                {"gid": gid, "prop": prop, "value": value, "identity": element["identity"]}
+                for gid, element in elements.items()
+                if element["role"] == "errorbar"
+                for prop, value in {"capsize": 8, "cap_thickness": 2.1}.items()
+            )
         if scope == "line-legend-local":
             group = next(element for gid, element in elements.items() if ".line.group." in gid)
             patches.append(
@@ -1256,8 +1467,16 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             "line-one-facet",
             "line-legend-local",
             "bar-col-one-facet",
+            "bar-col-missing-facet",
+            "interval-local",
         )
         expected_residual = patches if local else []
+        if scope in ("bar-col-one-facet", "bar-col-missing-facet"):
+            expected_residual = [patch for patch in patches if patch["prop"] != "bar_width"]
+        if scope == "interval-local":
+            expected_residual = [
+                patch for patch in patches if patch["prop"] not in {"capsize", "cap_thickness"}
+            ]
         assert preview["written"] == len(patches) + 1 - len(expected_residual)
         assert len(preview["skipped"]) == len(expected_residual)
         assert source.read_bytes() == original
@@ -1269,8 +1488,12 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         assert status == 200 and saved["ok"], saved
         assert (project / "original.pdf").read_bytes() == original_pdf
         authored = source.read_bytes()
-        assert (b"plot$layers[[1L]]" in authored) == (not expected_residual)
-        assert (b"plot$layers[[2L]]" in authored) == (scope in ("two-layers", "mixed-layers"))
+        if scope == "bar-col-missing-facet":
+            assert b'facet = list("panel" = NA_character_)' in authored
+        assert (b"plot$layers[[1L]]" in authored) == (not expected_residual or bars or interval)
+        assert (b"plot$layers[[2L]]" in authored) == (
+            scope in ("two-layers", "mixed-layers", "bar-interval-stack")
+        )
         _, persisted = app.call(route)
         retained = persisted["canvases"][0]["objects"][0]["overrides"]
         assert retained == expected_residual
@@ -1282,6 +1505,40 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             replayed = _render(fresh, rebuilt, retained)
             assert replayed["warnings"] == []
             assert replayed["svg"] == hot["svg"]
+            if bars:
+                size_prop = "bar_thickness" if scope == "bar-dodged-horizontal" else "bar_width"
+                after_elements = {e["gid"]: e for e in replayed["manifest"]["elements"]}
+                expected_widths = {
+                    gid: next(f["value"] for f in element["editable"] if f["prop"] == size_prop)
+                    for gid, element in elements.items()
+                    if element["role"] == role and ".group." not in gid
+                }
+                expected_widths.update(
+                    (patch["gid"], patch["value"])
+                    for patch in patches
+                    if patch["prop"] == size_prop
+                )
+                for gid, width in expected_widths.items():
+                    measured = next(
+                        f["value"]
+                        for f in after_elements[gid]["editable"]
+                        if f["prop"] == size_prop
+                    )
+                    assert measured == pytest.approx(width)
+            if interval:
+                after_elements = {e["gid"]: e for e in replayed["manifest"]["elements"]}
+                for patch in patches:
+                    gid, prop = patch["gid"], patch["prop"]
+                    measured = next(
+                        f["value"] for f in after_elements[gid]["editable"] if f["prop"] == prop
+                    )
+                    expected = patch["value"]
+                    if prop == "alpha" and patch not in expected_residual:
+                        # grid stores the authored stroke's opacity as one byte.
+                        expected = round(255 * expected) / 255
+                    assert measured == (
+                        pytest.approx(expected) if type(expected) in (int, float) else expected
+                    )
         status, restored = app.call(
             "/api/script-backups/restore",
             {
@@ -1327,12 +1584,11 @@ R_PROBE_SETUP = r"""
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
 
-adapter <- new.env(parent = baseenv())
 adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
 native <- dirname(adapter_file)
-parts <- c("ggplot2.R", "ggplot_colour_mapping.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R",
-           "ggplot_ribbons.R", "ggplot_axes.R", "ggplot_frame.R")
-for (part in parts) sys.source(file.path(native, part), envir = adapter)
+bridge <- new.env(parent = baseenv())
+sys.source(file.path(native, "ggplot_bridge.R"), envir = bridge)
+adapter <- bridge$ggplot_adapter(adapter_file)
 """
 
 
@@ -3271,7 +3527,8 @@ source_scope <- function(state) {
 }
 native_scope <- source_scope(captured$state)
 stopifnot(native_scope$x$range, native_scope$y$range,
-          !native_scope$x$direction, !native_scope$y$direction)
+          native_scope$x$direction, native_scope$y$direction,
+          native_scope$x$raster, native_scope$y$raster)
 for (mode in c("none", "x", "y", "xy")) {
   changes <- if (mode != "none") list(axes_0 = list(invert_x = grepl("x", mode),
                                                    invert_y = grepl("y", mode))) else list()
@@ -3279,7 +3536,7 @@ for (mode in c("none", "x", "y", "xy")) {
   stopifnot(file.info(paste0(mode, ".png"))$size > 0)
 }
 authored <- adapter$capture_ggplot(plot + coords("xy"), frame)
-stopifnot(!source_scope(authored$state)$x$range, !source_scope(authored$state)$y$range)
+stopifnot(source_scope(authored$state)$x$range, source_scope(authored$state)$y$range)
 adapter$preview_ggplot_png(authored$state, list(), "authored.png", 800, TRUE)
 adapter$preview_ggplot_png(authored$state, list(axes_0 = list(invert_x = FALSE, invert_y = FALSE)),
                            "normalised.png", 800, TRUE)

@@ -210,10 +210,62 @@ def _layer_aesthetic_value(key: str, value) -> bool:
     )
 
 
+_GEOMETRY_IMPLEMENTATIONS = {
+    "bars": (
+        ("GeomBar", "GeomCol"),
+        "ggplot_bar_geometry.R",
+        "ggplot_apply_bar_width",
+    ),
+    "caps": (
+        ("GeomErrorbar", "GeomErrorbarh"),
+        "ggplot_interval_geometry.R",
+        "ggplot_apply_errorbar_caps",
+    ),
+}
+_GEOMETRY_PROPS = {"bar_width", "bar_thickness", "capsize", "cap_thickness"}
+
+
+def _native_layer_geometry(source: dict) -> dict | None:
+    recipe = source.get("geometry")
+    if not isinstance(recipe, dict) or recipe.get("kind") not in _GEOMETRY_IMPLEMENTATIONS:
+        return None
+    kind, values, facet = recipe["kind"], recipe["values"], recipe["facet"]
+    native_kinds = _GEOMETRY_IMPLEMENTATIONS[kind][0]
+    if source["geom"] not in native_kinds or not isinstance(values, dict) or not values:
+        return None
+    if facet is not None and (
+        not isinstance(facet, dict)
+        or not facet
+        or not all(
+            isinstance(k, str)
+            and _r_literal(k)
+            and (v is None or isinstance(v, str))
+            and _r_literal(v)
+            for k, v in facet.items()
+        )
+    ):
+        return None
+    for prop, value in values.items():
+        if (
+            type(value) not in (float, int)
+            or not math.isfinite(value)
+            or source["edited"].get(prop) != value
+        ):
+            return None
+        if kind == "bars":
+            if prop not in {"bar_width", "bar_thickness"} or len(values) != 1 or value <= 0:
+                return None
+        elif not (
+            prop == "capsize" and 0 <= value <= 15 or prop == "cap_thickness" and 0.1 <= value <= 5
+        ):
+            return None
+    return recipe
+
+
 def _native_layer_writes(
     hot: dict | None, patches: list[dict]
 ) -> tuple[dict[int, dict], set[tuple[str, str]]]:
-    """A fixed native aesthetic belongs to the layer in each rendered facet."""
+    """Fixed paint follows the entire layer. Draw-time geometry can follow a named facet."""
     edits = defaultdict(dict)
     for patch in patches:
         edits[patch["gid"]][patch["prop"]] = patch["value"]
@@ -223,44 +275,120 @@ def _native_layer_writes(
         source = element.get("source_layer")
         if not source or edits.get(gid) != source["edited"]:
             continue
-        index, count, aesthetics = source["layer"], source["panels"], source["aesthetics"]
+        index, count = source["layer"], source["panels"]
+        aesthetics = source["aesthetics"] or {}
+        geometry = _native_layer_geometry(source)
+        kinds = (
+            "GeomPoint",
+            "GeomLine",
+            "GeomPath",
+            "GeomCol",
+            "GeomBar",
+            "GeomErrorbar",
+            "GeomErrorbarh",
+        )
         if (
             type(index) is int
             and index >= 1
             and type(count) is int
             and count >= 1
-            and source["geom"] in ("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar")
-            and aesthetics
+            and source["geom"] in kinds
+            and (aesthetics or geometry)
             and all(_layer_aesthetic_value(k, v) for k, v in aesthetics.items())
         ):
-            layers[index][gid] = source
+            layers[index][gid] = {**source, "aesthetics": aesthetics, "geometry": geometry}
     plans = {}
     written = set()
     for index, panels in layers.items():
         plan = next(iter(panels.values()))
-        if len(panels) != plan["panels"] or any(p != plan for p in panels.values()):
+        if any((p["geom"], p["panels"]) != (plan["geom"], plan["panels"]) for p in panels.values()):
             continue
-        plans[index] = plan
-        written.update((gid, prop) for gid in panels for prop in edits[gid])
+        aesthetics = plan["aesthetics"]
+        if len(panels) != plan["panels"] or any(
+            p["aesthetics"] != aesthetics for p in panels.values()
+        ):
+            aesthetics = {}
+        geometries = {gid: p["geometry"] for gid, p in panels.items() if p["geometry"]}
+        recipes = []
+        kind = None
+        if geometries:
+            first = next(iter(geometries.values()))
+            kind = first["kind"]
+            if len(geometries) == plan["panels"] and all(
+                g["values"] == first["values"] for g in geometries.values()
+            ):
+                recipes = [{"facet": None, "values": first["values"]}]
+            elif all(g["facet"] for g in geometries.values()):
+                recipes = list(geometries.values())
+        if aesthetics or recipes:
+            plans[index] = {
+                "geom": plan["geom"],
+                "aesthetics": aesthetics,
+                "kind": kind,
+                "recipes": recipes,
+            }
+            if recipes:
+                written.update((gid, prop) for gid, g in geometries.items() for prop in g["values"])
+            if aesthetics:
+                written.update(
+                    (gid, prop) for gid in panels for prop in edits[gid].keys() - _GEOMETRY_PROPS
+                )
     return plans, written
+
+
+def _r_geometry_recipes(recipes: list[dict]) -> str:
+    entries = []
+    for recipe in recipes:
+        fields = recipe["facet"]
+        facet = (
+            "list("
+            + ", ".join(f"{_r_literal(k)} = {_r_literal(v)}" for k, v in fields.items())
+            + ")"
+            if fields
+            else "NULL"
+        )
+        values = ", ".join(
+            f"{prop} = {_r_literal(value)}" for prop, value in recipe["values"].items()
+        )
+        entries.append(f"list(facet = {facet}, values = list({values}))")
+    return "list(" + ", ".join(entries) + ")"
 
 
 def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     edits = []
+    shared = []
+    sources = set()
     for index, plan in sorted(layers.items()):
         values = plan["aesthetics"]
         kind = json.dumps(plan["geom"])
         slot = f"plot$layers[[{index}L]]"
         params = ", ".join(f"{key} = {_r_literal(value)}" for key, value in values.items())
-        edits.append(f"  {slot} <- styled_layer({slot}, {kind}, list({params}))")
+        geometry = ""
+        if recipes := plan["recipes"]:
+            _, resource, adjust = _GEOMETRY_IMPLEMENTATIONS[plan["kind"]]
+            sources.add(resource)
+            geometry = f", {_r_geometry_recipes(recipes)}, {adjust}"
+        edits.append(f"  {slot} <- styled_layer({slot}, {kind}, list({params}){geometry})")
+    decorate = ()
+    if sources:
+        for resource in ("ggplot_layer_geometry.R", *sorted(sources)):
+            text = nativeggplot.GGPLOT_BRIDGE.with_name(resource).read_text(encoding="utf-8")
+            shared.extend(f"  {line}" if line else "" for line in text.splitlines())
+        decorate = (
+            "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust)",
+        )
     # ggproto resolves its parent lazily. Each call must bind its own layer.
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
-            "  styled_layer <- function(layer, kind, values) {",
+            *shared,
+            "  styled_layer <- function(layer, kind, values, recipes = NULL, adjust = NULL) {",
             '    if (!identical(class(layer$geom)[[1L]], kind)) stop("Tavotto style layer changed.")',
             "    aesthetics <- utils::modifyList(layer$aes_params, values)",
-            "    ggplot2::ggproto(NULL, layer, aes_params = aesthetics)",
+            "    force(layer)",
+            *decorate,
+            "    source_layer <- layer",
+            "    ggplot2::ggproto(NULL, source_layer, aes_params = aesthetics)",
             "  }",
             *edits,
             "  plot",
@@ -344,8 +472,18 @@ def _r_colour_mapping_block(name: str, scales: dict[tuple[str, ...], dict]) -> s
     )
 
 
-def _r_coordinate_block(name: str, coordinates: dict) -> str:
+def _r_coordinate_block(name: str, coordinates: dict, *, mirror_raster: bool) -> str:
     edits = []
+    helpers = []
+    draw = []
+    if mirror_raster:
+        path = nativeggplot.GGPLOT_BRIDGE.with_name("ggplot_raster_geometry.R")
+        helpers = [
+            f"  {line}" if line else "" for line in path.read_text(encoding="utf-8").splitlines()
+        ]
+        draw = [
+            "  plot$layers <- lapply(plot$layers, ggplot_mirror_raster_layer, coord = plot$coordinates)",
+        ]
     if any(prop in coordinates for prop in ("xscale", "yscale")):
         edits.append("  plot$scales <- plot$scales$clone()")
     for axis in ("x", "y"):
@@ -372,6 +510,7 @@ def _r_coordinate_block(name: str, coordinates: dict) -> str:
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
+            *helpers,
             "  coord <- plot$coordinates",
             '  if (!identical(class(coord)[[1L]], "CoordCartesian")) stop("Tavotto coordinates need coord_cartesian().")',
             '  expand <- stats::setNames(coord$setup_params(list())$expand, c("top", "right", "bottom", "left"))',
@@ -383,6 +522,7 @@ def _r_coordinate_block(name: str, coordinates: dict) -> str:
             "  plot$coordinates <- ggplot2::ggproto(",
             "    NULL, coord, limits = limits, expand = expand, reverse = direction",
             "  )",
+            *draw,
             "  plot",
             f"}})(base::get({name}, inherits = FALSE)))",
         ]
@@ -588,7 +728,11 @@ def build(
     options.extend(theme_options)
     statements = []
     if coordinates:
-        statements.append(_r_coordinate_block(name, coordinates))
+        mirror_raster = any(
+            prop in coordinates and axes[gid]["source_props"][prop].get("raster") is True
+            for gid, prop in coordinate_writes
+        )
+        statements.append(_r_coordinate_block(name, coordinates, mirror_raster=mirror_raster))
     if source_layers:
         statements.append(_r_layer_block(name, source_layers))
     if colour_scales:
