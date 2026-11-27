@@ -35,6 +35,7 @@ export default interface Resources {
         "logLimitNo": "先不改",
         "logLimitYes": "一起改",
         "markRevise": "在改好的图上标几处，再改一版",
+        "markReviseLabel": "批注",
         "notesN_other": "{{count}} 条批注",
         "overreachChanged": "生成期间你的脚本被改过（可能是你保存的，也可能是 Agent 直接改的），没有自动还原。改前后的版本都已备份。",
         "overreachMore": "{{files}} 等 {{count}} 个",

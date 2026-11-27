@@ -904,6 +904,7 @@
       "applyNow": "Apply now",
       "undo": "Undo",
       "markRevise": "Mark spots on the result and revise",
+      "markReviseLabel": "Annotate",
       "reviseAgain": "Revise again",
       "reviseAgainTip": "Undo this change, then mark spots on the result and revise",
       "discarded": "Discarded this version",

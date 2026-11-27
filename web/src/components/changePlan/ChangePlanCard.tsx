@@ -4,8 +4,8 @@ import { DATA_DECLINED, canUndoApplied, declinedGroups, isCanvasPlan, pendingCon
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
-import { Button, IconButton } from '../ui/Button'
-import { Check, Pencil, RefreshCw } from '../ui/icons'
+import { Button } from '../ui/Button'
+import { Check, Lock, Pencil, RefreshCw } from '../ui/icons'
 import { PremiumLock } from '../license/PremiumLock'
 import { ICON_SIZE } from '../ui/Icon'
 import { StatusPill } from '../ui/StatusPill'
@@ -41,6 +41,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const store = useChangePlanStore.getState
   const primary = latest ? 'primary' : 'secondary'
   const btn = 'rounded-full'
+  // 批注入口：与弹窗「写批注」同一套（铅笔 + 两个字的细描边胶囊），比「直接应用」轻一级，不抢主按钮
+  const reviseBtn = 'rounded-full inset-ring inset-ring-border'
   // 对数轴下限：还没回答就先问，不给「查看 / 应用」；答了「不改」的组不进方案，卡面按剩下的组出图
   const ask = status === 'ready' ? pendingConfirm(entry) : undefined
   const declined = declinedGroups(entry).length > 0
@@ -200,9 +202,10 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 </Button>
                 {reviseEntry && !!entry.afterSrc && (
                   <ReviseLock>
-                    <IconButton variant="ghost" label={cp('card.markRevise')} onClick={() => store().openDialog(entry.key, { view: 'annotate' })} data-change-plan-mark>
-                      <Pencil size={ICON_SIZE.sm} aria-hidden />
-                    </IconButton>
+                    <Button variant="ghost" size="md" className={reviseBtn} title={cp('card.markRevise')} onClick={() => store().openDialog(entry.key, { view: 'annotate' })} data-change-plan-mark>
+                      <ReviseIcon pro={access.pro} />
+                      {cp('card.markReviseLabel')}
+                    </Button>
                   </ReviseLock>
                 )}
               </>
@@ -221,6 +224,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
               <ReviseLock>
                 <Button
                   variant="ghost"
+                  size="md"
+                  className={reviseBtn}
                   title={cp('card.reviseAgainTip')}
                   onClick={() => {
                     // 只撤这一次应用；撤回成功才进批注（失败沿用「没有替你撤回」那句灰字）
@@ -228,6 +233,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                   }}
                   data-change-plan-revise-again
                 >
+                  <ReviseIcon pro={access.pro} />
                   {cp('card.reviseAgain')}
                 </Button>
               </ReviseLock>
@@ -248,6 +254,11 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
       </div>
     </Card>
   )
+}
+
+/** 批注入口的图标：高级版是铅笔；免费用户换成锁（与弹窗「对比 / 批注」切换上的锁一致），一眼看出是高级功能 */
+function ReviseIcon({ pro }: { pro: boolean }) {
+  return pro ? <Pencil size={ICON_SIZE.sm} aria-hidden /> : <Lock size={ICON_SIZE.sm} aria-hidden className="text-ink-2" />
 }
 
 /** 批注入口的锁：高级版原样；免费用户置灰、悬停一句话、点一下去授权行（不进入、不撤回）。授权入口没上线时调用方不画 */

@@ -458,8 +458,8 @@ it('卡片入口：高级版待确认卡点铅笔钮 → 弹窗直接以批注�
   putCard(entry())
   renderBoth()
   const mark = q('[data-change-plan-mark]')!
-  expect(mark.getAttribute('aria-label')).toBe('在改好的图上标几处，再改一版')
-  expect(mark.textContent).toBe('')
+  expect(mark.getAttribute('title')).toBe('在改好的图上标几处，再改一版')
+  expect(mark.textContent).toBe('批注')
   expect(q('[data-change-plan-dialog]')).toBeNull()
   act(() => mark.click())
   expect(view()).toBe('annotate')

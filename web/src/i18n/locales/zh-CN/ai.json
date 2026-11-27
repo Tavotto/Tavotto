@@ -889,6 +889,7 @@
       "applyNow": "直接应用",
       "undo": "撤销",
       "markRevise": "在改好的图上标几处，再改一版",
+      "markReviseLabel": "批注",
       "reviseAgain": "再改一版",
       "reviseAgainTip": "撤回这次修改，在改好的图上标几处再改一版",
       "discarded": "已放弃这一版",
