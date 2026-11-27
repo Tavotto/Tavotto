@@ -3293,10 +3293,27 @@ def _mirror_text(body: dict) -> str:
     return json.dumps(small, ensure_ascii=False, separators=(",", ":"))[:MIRROR_MAX_CHARS]
 
 
+def _content_already_has(content: object, body: dict) -> bool:
+    """`content` 里有没有一个文字块本身就是整份 `body` 的 JSON（解析后相等）。"""
+    for block in content if isinstance(content, list) else ():
+        text = block.get("text") if isinstance(block, dict) else None
+        if not isinstance(text, str) or not text.lstrip().startswith("{"):
+            continue
+        try:
+            if json.loads(text) == body:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _mirror_structured(name: str, result: dict) -> dict:
     """结果带 `structuredContent` 就在 `content` 末尾追加一个只给助手看的文字块（原有文字块一字不动）。"""
     body = result.get("structuredContent")
     if name in MIRROR_SKIP_TOOLS or not isinstance(body, dict) or not body:
+        return result
+    if _content_already_has(result.get("content"), body):
+        # 原有文字已经是整份 structuredContent（如期刊事实分页）：再加一份只会重复，还会撑破它自己的体积预算
         return result
     block = {
         "type": "text",

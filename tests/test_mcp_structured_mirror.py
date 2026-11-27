@@ -98,3 +98,17 @@ def test_images_stay_out_of_the_text_and_text_is_capped():
 def test_a_result_without_structured_content_is_untouched():
     result = {"content": [{"type": "text", "text": "x"}]}
     assert server._mirror_structured("tavotto_health", dict(result)) == result  # noqa: SLF001
+
+
+def test_no_second_copy_when_content_already_is_the_structured_json():
+    """原有文字块已经就是整份 structuredContent（如期刊事实分页）：不再追加副本——既重复又会撑破它自己的体积预算。"""
+    body = {"catalog_rev": 8, "facts": [{"id": "f", "quote": "字体中文"}]}
+    result = {
+        "content": [{"type": "text", "text": json.dumps(body, ensure_ascii=False)}],
+        "structuredContent": body,
+    }
+    out = server._mirror_structured("tavotto_get_journal_facts", dict(result))
+    assert out["content"] == result["content"]
+    # 文字块不是整份（只是一句话）时照常追加
+    other = {"content": [{"type": "text", "text": "已完成"}], "structuredContent": body}
+    assert len(server._mirror_structured("tavotto_layout_scene", dict(other))["content"]) == 2
