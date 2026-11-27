@@ -15,7 +15,7 @@ import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { engineTransport } from '@/lib/engineTransport'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId } from '@/lib/session'
-import { baselineHolds, hasEdits, landVector, sameJson, snapshotOf, touchedCount, vectorSelectionOf, type VectorSnapshot } from '@/lib/vectorEdit'
+import { baselineHolds, hasEdits, landedHolds, landVector, sameJson, snapshotOf, touchedCount, vectorSelectionOf, type VectorSnapshot } from '@/lib/vectorEdit'
 import { msg, t as translate } from '@/i18n'
 import { currentRunSelection, newRequestId, useAiStore } from './aiStore'
 import { POLL_TIMEOUT, useChangePlanStore, type PlanEntry, type VectorHandle } from './changePlanStore'
@@ -64,6 +64,15 @@ export function canRunVectorEdit(selection: readonly string[]): boolean {
   return vectorSelectionOf(useDocumentStore.getState().doc.objects, selection).length > 0
 }
 
+/**
+ * 「让助手页签留着」的一次性意图（`hooks/useSelectionRouting.holdAssistantTabForNextSelection`）：那个模块反过来 import 一堆 store，
+ * 静态 import 会成环——由助手面板（`AiPanel`）在模块加载时交进来，没交（单测）= 什么都不做。
+ */
+let holdAssistantTab: (() => void) | null = null
+export function setVectorAssistantHold(fn: () => void): void {
+  holdAssistantTab = fn
+}
+
 const hist = (count: number) => msg('history.applyChangePlan', { count }, 'workspace')
 
 /**
@@ -110,6 +119,7 @@ export function runVectorEdit(instruction: string, selection: readonly string[])
         void runVectorEdit(text, keep.length ? keep : useSelectionStore.getState().ids)
       },
       holds: () => true,
+      landed: () => false,
     },
   }
   store().addLayoutEntry(entry)
@@ -200,6 +210,7 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
       count,
       holds: () => sameContext(ctx) && baselineHolds(snap, result, useDocumentStore.getState().doc.objects),
       regenerate: prev.regenerate,
+      landed: () => sameContext(ctx) && landedHolds(snap, result, useDocumentStore.getState().doc.objects),
       apply: () => applyVector(snap, result, ctx, count),
       ...extra,
     })
@@ -263,6 +274,10 @@ function applyVector(snap: VectorSnapshot, result: VectorEditResult, ctx: Ctx, c
   if (s.txn) return 'failed'
   const merged = landVector(snap, result, s.doc)
   if (!merged) return 'stale'
+  // 删掉的对象会退出选区，选区一变右栏就按选区切到「属性」，卡片上的「已应用」看不见了——这一次让右栏留在助手页签
+  // （要在 commit 之前：文档一变选区就被清理，那时再留已经晚了）
+  const picked = new Set(useSelectionStore.getState().ids)
+  if ((result.deleted ?? []).some((id) => picked.has(id))) holdAssistantTab?.()
   s.commit(hist(count), (d) => {
     d.objects = structuredClone(merged.objects)
     if (merged.layoutGroups) d.layoutGroups = structuredClone(merged.layoutGroups)

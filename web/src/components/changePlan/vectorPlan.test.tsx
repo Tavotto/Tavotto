@@ -229,6 +229,25 @@ it('应用 = 一次提交，⌘Z 一步撤回；撤回后卡片又是待确认',
   expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('ready')
 })
 
+it('应用之后别的写入把那条历史换成合并后的新条目（文字量好尺寸的回写）：卡片仍是「已应用」，撤销仍一步回到出发时', async () => {
+  const key = await runToReady()
+  render(<Live k={key} />)
+  const before = JSON.stringify(doc().doc.objects)
+  act(() => void useChangePlanStore.getState().apply(key))
+  // 与 `measuredWriteback` 同一做法：`amendLast` 把改动并进栈顶那一条，条目换成新对象
+  const top = doc().past.at(-1)!
+  act(() => {
+    doc().amendLast(top, (d) => {
+      ;(d.objects.find((o) => o.id === 't1') as unknown as { w: number }).w = 25
+    })
+  })
+  expect(doc().past.at(-1)).not.toBe(top)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('applied')
+  act(() => doc().undo())
+  expect(JSON.stringify(doc().doc.objects)).toBe(before)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('ready')
+})
+
 it('应用前点名的对象被改过：卡片是「图改过了」，应用不写任何东西', async () => {
   const key = await runToReady()
   act(() =>

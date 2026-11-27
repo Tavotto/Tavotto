@@ -10,10 +10,15 @@ import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/cha
 import { useDocumentStore } from '@/store/documentStore'
 
 /** 卡片此刻的状态（`lib/changePlanApply.effectiveStatus`）；整版 / 矢量编辑卡另按文档历史派生，矢量编辑卡待确认时点名的对象变了 = 图已改过 */
-export function effectiveStatus(e: Parameters<typeof effectiveStatusOf>[0] & { vector?: { holds: () => boolean } }, current: readonly unknown[] | null, source?: PlanSource | null) {
+export function effectiveStatus(e: Parameters<typeof effectiveStatusOf>[0] & { vector?: { holds: () => boolean; landed: () => boolean; result?: unknown } }, current: readonly unknown[] | null, source?: PlanSource | null) {
+  // 矢量编辑卡按**对象状态**派生：点名的对象还是出发时那样 = 待确认（含撤回之后）；方案写进去的样子还在 = 已应用；都不是 = 图改过了。
+  // 不认历史条目：应用之后文字量好尺寸的回写会把那一条历史换成合并后的新条目
+  if (e.kind === 'vector' && (e.status === 'ready' || e.status === 'applied') && e.plan && e.vector?.result) {
+    if (e.vector.holds()) return 'ready'
+    return e.status === 'applied' && e.vector.landed() ? 'applied' : 'stale'
+  }
   const h = useDocumentStore.getState()
-  const st = effectiveStatusOf(e, current, source, e.kind === 'layout' || e.kind === 'vector' ? { past: h.past, future: h.future } : undefined)
-  return e.kind === 'vector' && st === 'ready' && e.vector && !e.vector.holds() ? 'stale' : st
+  return effectiveStatusOf(e, current, source, e.kind === 'layout' ? { past: h.past, future: h.future } : undefined)
 }
 
 /** 修改方案的文案助手：命名空间 + 前缀固定在这一处，调用点只写最后一段 */
@@ -145,12 +150,12 @@ const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'ba
 
 /** 矢量编辑方案里没能照做的几条：带码的按码翻成人话，没码的是模型自己写的一句原因，照显示 */
 function vectorUnhandledViews(e: PlanEntry): UnhandledView[] {
-  const text = clip(e.instruction ?? '')
+  // 一行一句原因（没有「谁说的」那一层，也不重复整条指令）
   return (e.vector?.result?.unhandled ?? []).map((u, i) => ({
     id: `u${i}`,
-    text,
+    text: (VECTOR_CODES as readonly string[]).includes(u.code ?? '') ? cp(`unhandled.vector.${u.code}`) : clip(u.reason, 80) || cp('unhandled.vector.bad_op'),
     reviewer: '',
-    reason: (VECTOR_CODES as readonly string[]).includes(u.code ?? '') ? cp(`unhandled.vector.${u.code}`) : clip(u.reason, 80) || cp('unhandled.vector.bad_op'),
+    reason: '',
   }))
 }
 

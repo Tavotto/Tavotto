@@ -107,8 +107,10 @@ export interface LayoutHandle {
 export interface VectorHandle extends LayoutHandle {
   /** 后端回的方案（复述 / 对象 / 核对 / 没能照做的）；生成中 / 失败时还没有 */
   result?: VectorEditResult
-  /** 方案点名的对象此刻还是不是出发时那样（未应用时据此派生「图改过了」） */
+  /** 方案点名的对象此刻还是不是出发时那样（= 待确认；撤回之后也是；不是又不是已应用 = 「图改过了」） */
   holds: () => boolean
+  /** 方案已经写进文档的样子还在不在（= 已应用；按对象状态判，不按历史条目——之后的回写会换掉那一条历史） */
+  landed: () => boolean
 }
 
 /**
@@ -789,8 +791,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // 一键排版：落地就是现有的那一次 commit（核对「图还是出发时那样」也在里面）；对不上 = 「图已改过」，不写
       if (isCanvasPlan(e)) {
         const h = useDocumentStore.getState()
-        // ⌘Z 撤回过的「已应用」又是待确认：可以再应用（派生状态见 `effectiveStatus`）
-        const st = effectiveStatus(e, null, null, { past: h.past, future: h.future })
+        // ⌘Z 撤回过的「已应用」又是待确认：可以再应用（派生状态见 `effectiveStatus`；矢量编辑按对象状态判，不按历史条目）
+        const st = e.kind === 'vector' ? (e.vector?.holds() ? 'ready' : 'stale') : effectiveStatus(e, null, null, { past: h.past, future: h.future })
         if (st === 'stale') {
           patch(key, { status: 'stale', notice: undefined })
           return 'stale'

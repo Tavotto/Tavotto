@@ -130,6 +130,27 @@ export function baselineHolds(snap: VectorSnapshot, r: VectorEditResult, current
   return true
 }
 
+/**
+ * 方案已经写进文档的样子（「已应用」的判据，**按对象状态、不按历史条目**）：被删的不在了、新生成的在、改过的对象上被补丁动过的那几个字段是方案给的值。
+ * 不看历史条目是因为应用之后别的写入（文字量好尺寸后的回写）会把那一条历史换成合并后的新条目，认引用就认丢了；
+ * 只看补丁动过的字段，回写的 w / h 不影响。
+ */
+export function landedHolds(snap: VectorSnapshot, r: VectorEditResult, current: readonly CanvasObject[]): boolean {
+  const now = new Map(current.map((o) => [o.id, o as unknown as Record<string, unknown>]))
+  if ((r.deleted ?? []).some((id) => now.has(id))) return false
+  for (const after of r.objects ?? []) {
+    const cur = now.get(after.id)
+    if (!cur) return false
+    const before = snap.byId.get(after.id) as unknown as Record<string, unknown> | undefined
+    if (!before) continue // 新生成的：在就算（它的尺寸可能被量过回写）
+    const a = after as unknown as Record<string, unknown>
+    for (const k of new Set([...Object.keys(before), ...Object.keys(a)])) {
+      if (!same(before[k], a[k]) && !same(cur[k], a[k])) return false
+    }
+  }
+  return true
+}
+
 /** 此刻的文档上落这份方案：基线对得上才算，落位交给 `planAgentMerge`；null = 对不上（图改过了） */
 export function landVector(snap: VectorSnapshot, r: VectorEditResult, doc: Pick<FigureDocument, 'objects' | 'layoutGroups'>): MergedCanvas | null {
   if (!baselineHolds(snap, r, doc.objects)) return null

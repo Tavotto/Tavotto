@@ -261,7 +261,7 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
             {un.map((u) => (
               <li key={u.id} className="flex flex-col" data-change-plan-unhandled={u.id}>
                 <span className="truncate text-sm text-ink-3">{u.text}</span>
-                <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>
+                {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
               </li>
             ))}
           </ul>

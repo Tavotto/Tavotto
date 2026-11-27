@@ -74,7 +74,7 @@ import { ChangePlanTurn, useLatestReadyKey, usePanelPlanEntries } from '../chang
 import { useHasChangePlans } from '../changePlan/usePlanFigure'
 import { assistantUsesPlan, MAX_ASSISTANT_INSTRUCTION } from '@/lib/assistantPlanRoute'
 import { vectorSelectionOf } from '@/lib/vectorEdit'
-import { runVectorEdit } from '@/store/vectorPlanActions'
+import { runVectorEdit, setVectorAssistantHold } from '@/store/vectorPlanActions'
 import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { deleteAiDraftIf } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
@@ -287,6 +287,9 @@ function useAgentChoice() {
   const effortIndex = Math.max(0, effortList.indexOf(effort))
   return { caps, usable, conns, activeConn, active, cur, model, effortList, effortIndex }
 }
+
+// 矢量编辑方案应用后选区会变（删了的对象退出选区）：让右栏停在助手页签，卡片上的「已应用」看得见
+setVectorAssistantHold(holdAssistantTabForNextSelection)
 
 /**
  * 以 aiStore 的项目代际为 key 重挂：切项目时草稿、错误提示、打开着的历史视图这些组件内状态

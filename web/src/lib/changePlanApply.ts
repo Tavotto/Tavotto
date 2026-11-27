@@ -124,7 +124,9 @@ export function effectiveStatus(
   history?: { past: readonly unknown[]; future: readonly unknown[] },
 ): PlanStatusInput['status'] {
   if ((e.status !== 'ready' && e.status !== 'applied') || !e.plan) return e.status
-  if (e.kind === 'layout' || e.kind === 'vector') {
+  // 矢量编辑方案按对象状态判（`changePlanModel.effectiveStatus`，历史条目会被之后的回写换掉）：这里原样
+  if (e.kind === 'vector') return e.status
+  if (e.kind === 'layout') {
     // 与审阅卡一样以文档为准：应用那次 commit 还在历史里 = 已应用；⌘Z 撤回了（在重做栈里）= 又是待确认，可再查看 / 应用；
     // 两处都不在（撤回后又改了别的）= 图已改过。从没应用过的待确认卡由 `layout.apply` 应用那一刻自己核基线
     if (!history || !e.appliedEntry) return e.status

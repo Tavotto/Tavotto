@@ -56,13 +56,13 @@ export function ChangeList({
         {unhandled.length > 0 && (
           <ul className="mt-2 flex flex-col gap-0.5 border-t border-border pt-2">
             {unhandled.map((u) => (
-              <li key={u.id} data-change-plan-unhandled={u.id} title={u.reason} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
+              <li key={u.id} data-change-plan-unhandled={u.id} title={u.reason || u.text} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
                 <span aria-hidden className="flex h-5 w-[15px] shrink-0 items-center justify-center">
                   <span className="h-px w-2 bg-ink-faint" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span className="truncate text-sm text-ink-3">{u.text}</span>
-                  <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>
+                  {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
                 </div>
               </li>
             ))}
