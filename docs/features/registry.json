@@ -1192,6 +1192,22 @@
       ]
     },
     {
+      "id": "journal.tips",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "期刊线索：出处卡上点「这条不对」、选择器里搜不到时点「没有这本刊」，在同一个「联系作者」窗里附上原文链接或截图发给作者，回信在「我的来信」",
+        "en-US": "Journal tips: tap \"Looks wrong\" on a source card, or \"Not listed?\" when the journal picker finds nothing, and send the maker a source link or screenshot from the same Contact window; replies arrive in My letters"
+      },
+      "entry": "设置 → 期刊规范 → 期刊 → 出处卡 / 选择器",
+      "e2e": [
+        {
+          "spec": "journal-tips.spec.ts",
+          "title": "期刊线索：出处卡「这条不对」与选择器「没有这本刊」打开专用的期刊反馈窗，点发送前零连接"
+        }
+      ]
+    },
+    {
       "id": "preflight.canvas-line-width",
       "status": "active",
       "platform": "both",
