@@ -798,6 +798,20 @@ def test_large_scan_skips_the_second_pass_when_no_column_can_qualify(tmp_path, m
     assert large.summary.col_tags == {} and len(calls) == 5  # 只看了开头几行
 
 
+def test_large_scan_does_not_stop_early_while_a_column_can_still_qualify(tmp_path, monkeypatch):
+    """开头几行全是整数的小数逗号列、开头几行是空格的百分号列：预扫不能凭「开头没有符合的」就收工，否则大表读成文字而小表读成数值（Codex #2346 P2）。"""
+    monkeypatch.setattr(adf, "TAG_HEAD_ROWS", 5)
+    body = "".join(f"r{i}\t{i}\t\n" for i in range(1, 11)) + "".join(
+        f"r{i}\t{i},5\t{i}%\n" for i in range(11, 31)
+    )
+    p = write(tmp_path, "k\tv\tp\n" + body, name="late.tsv")
+    small = adf.read_text_table(p)
+    large = read_large(p, monkeypatch)
+    assert large.summary.col_tags == {1: False, 2: True}
+    assert large.summary.per_column["v"].kind == small.summary.per_column["v"].kind == "numeric"
+    assert large.summary.per_column["p"].kind == small.summary.per_column["p"].kind == "numeric"
+
+
 EURO = "Zeit;Temperatur;Druck\n0,0;20,07;1013,0\n0,5;21,63;1012,2\n1,0;23,21;1011,4\n1,5;24,02;1010,9\n"
 
 

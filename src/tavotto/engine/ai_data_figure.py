@@ -1526,7 +1526,9 @@ def _large_tags(p, codec, delim, script_header, units, no_header, size) -> dict:
             tagger = ColumnTagger(len(header), delim)
             for _n, cells in itertools.islice(body, TAG_HEAD_ROWS):
                 tagger.feed(cells)
-            if not tagger.tags():
+            # 「开头没有符合的列」不等于「后面不会有」：小数逗号列可以以整数开头（`1`、`2`……到第 2001 行才出现 `1,5`），百分号列可以以空格开头。
+            # 只有每一列都已经被开头的某一格否掉（既不可能整列带 %，也不可能整列小数逗号）才省掉第二遍（Codex #2346 P2）
+            if not (any(tagger.pct) or any(tagger.dec)):
                 return {}
             for count, (_n, cells) in enumerate(body, start=1):
                 tagger.feed(cells)
