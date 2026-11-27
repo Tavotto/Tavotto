@@ -145,6 +145,21 @@ test(
       await expect(dialog.locator('[data-contact-journal-about]')).toContainText('zzzz no such journal')
       await shoot(page, 'dialog-missing')
       await dialog.locator('[data-contact-dismiss]').click()
+
+      // ── 普通「联系作者」：不带线索，提示语仍是原来的，没有原文链接框 ───────
+      // 关掉选择器与期刊规范窗（各吃一次 Esc），直到没有遮罩
+      const scrim = page.locator('[data-dialog-scrim][data-state="open"]')
+      for (let i = 0; i < 4 && (await scrim.count()) > 0; i++) {
+        await page.keyboard.press('Escape')
+        await page.waitForTimeout(300)
+      }
+      await expect(scrim).toHaveCount(0)
+      await page.locator('[data-contact-button="topbar"]').click()
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('[data-contact-text]')).toHaveAttribute('placeholder', /遇到的问题、想要的功能/)
+      await expect(dialog.locator('[data-contact-journal-url]')).toHaveCount(0)
+      await expect(dialog.locator('[data-contact-journal-about]')).toHaveCount(0)
+      await shoot(page, 'contact-plain')
     } finally {
       sink.close()
     }

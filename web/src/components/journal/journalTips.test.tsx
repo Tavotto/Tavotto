@@ -285,7 +285,8 @@ describe('我的来信', () => {
     vi.mocked(fetchContactMessages).mockResolvedValue({ messages: [m], unread: 0 })
     await mount(<div />)
     await act(async () => useContactStore.getState().setOpen(true, 'letters'))
-    expect(q('[data-contact-letter-kind="journal"]')!.textContent).toBe('期刊线索')
+    // 来信列表异步拉取：满载时一轮 act 未必刷到，等它出现
+    await vi.waitFor(() => expect(q('[data-contact-letter-kind="journal"]')?.textContent).toBe('期刊线索'))
   })
 })
 
