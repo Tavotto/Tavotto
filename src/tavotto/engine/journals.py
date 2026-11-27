@@ -842,8 +842,8 @@ def _field_source(eff: dict, path: str) -> dict:
     }
     if "strength" in rule:  # 缺省不写：旧绑定与旧客户端的形状不变
         item["strength"] = rule["strength"]
-    if "fact_id" in src:  # v2 折叠来源才有（ADR 0213：期刊线索的 `v2:<fact id>`）；v1 不写
-        item["fact_id"] = src["fact_id"]
+    if "fact_id" in rule:  # v2 折叠规则才有（ADR 0213：期刊线索的 `v2:<fact id>`）；v1 不写
+        item["fact_id"] = rule["fact_id"]
     return item
 
 

@@ -202,11 +202,11 @@ export interface JournalSource {
   page?: number
   /** single_journal_sample 的出版社来源：只属于这一本期刊 */
   journal?: string
-  /** v2 折叠来源才有：bundle 里那条事实的 id（期刊线索发 `v2:<fact_id>`，ADR 0213） */
-  fact_id?: string
 }
 
 export interface JournalRule {
+  /** v2 折叠规则才有：bundle 里那条事实的 id（期刊线索发 `v2:<fact_id>`，ADR 0213）。挂在规则上，不挂在共用的来源上 */
+  fact_id?: string
   value?: unknown
   value_alt?: unknown
   src: string
@@ -763,7 +763,7 @@ function fieldSource(eff: EffectiveRule, path: string): Omit<JournalFieldSource,
     archive_url: src.archive_url ?? '',
   }
   if (rule.strength !== undefined) item.strength = rule.strength // 缺省不写：形状与旧绑定一致
-  if (src.fact_id !== undefined) item.fact_id = src.fact_id
+  if (rule.fact_id !== undefined) item.fact_id = rule.fact_id
   return item
 }
 

@@ -37,6 +37,7 @@
     "rules": {
      "min_raster_dpi": {
       "anchor": "#:~:text=Quote",
+      "fact_id": "a",
       "mark": "Quote",
       "qualifier": "min",
       "quote": "Quote a",
@@ -54,7 +55,6 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
-      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -332,6 +332,7 @@
     "confirm": [],
     "rules": {
      "min_raster_dpi": {
+      "fact_id": "a",
       "qualifier": "min",
       "quote": "Quote a",
       "src": "v2:s1:journal",
@@ -343,7 +344,6 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
-      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -382,6 +382,7 @@
     "confirm": [],
     "rules": {
      "font_family.latin_accepted": {
+      "fact_id": "a",
       "qualifier": "exact",
       "quote": "Quote a",
       "src": "v2:s1:journal",
@@ -396,7 +397,6 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
-      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -433,6 +433,7 @@
     "confirm": [],
     "rules": {
      "min_line_width_pt": {
+      "fact_id": "a",
       "qualifier": "min",
       "quote": "Quote a",
       "src": "v2:s1:journal",
@@ -444,7 +445,6 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
-      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
@@ -752,6 +752,7 @@
     "confirm": [],
     "rules": {
      "min_raster_dpi": {
+      "fact_id": "a",
       "qualifier": "min",
       "quote": "Quote a",
       "src": "v2:s1:journal",
@@ -763,7 +764,6 @@
     "sources": {
      "v2:s1:journal": {
       "coverage": "journal_specific",
-      "fact_id": "a",
       "kind": "html",
       "retrieved": "2026-11-15",
       "url": "https://example.invalid/guide"
