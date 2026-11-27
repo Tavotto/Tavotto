@@ -265,7 +265,7 @@ class DataSummary:
     #: `FigureRecipe.numcat` 时才按类别用；不进 `to_dict`（对外响应与历史库逐字不变）。大表与合画是空的（这两条路暂不支持）。
     numcat: dict[str, int] = field(default_factory=dict)
     id_like: list[str] = field(default_factory=list)
-    #: 数值列取值结构的「像条件 / 顺序」线索（`design_kinds`）：列名 → `block`（连续块内按行不减、块间重置：重复测量里的时间）/ `monotone`（整列按行不减）/
+    #: 数值列取值结构的「像条件 / 顺序」线索（`design_kinds`）：列名 → `block`（连续块内按行不减、块间重置：重复测量里的时间）/ `monotone_levels`（少量取值且按行排好序）/
     #: `levels`（2–`DESIGN_MAX_LEVELS` 个取值、每个都重复出现：剂量）。没有的列是「像测量」。只看小表 v2 的行数据；大表 / 合画 / v1 是空（保持现有行为）；不进 `to_dict`。
     design: dict[str, str] = field(default_factory=dict)
     #: 行号列（`row_index_columns` / `_row_index_name`）：名字在小闭集里、且非空取值恰是从 0 或 1 起逐行 +1 的整数。**不是 `id_like`**（个体编号可以重复、
@@ -2178,28 +2178,32 @@ def _same_start(blocks: list[list[float]]) -> bool:
 
 
 def design_kind(values: list[float]) -> str | None:
-    """一列数值（按行序、全部有限）的取值结构 → `block` / `monotone` / `levels` / None（像测量）。**只看取值，不看列名**；按这个顺序判。
-    只认**递增**（不认递减：按剂量排好序的表里，随剂量下降的响应值是递减的单调列，与递减的横轴分不开；递减的横轴如波数从大到小，规则不替用户断言，仍可由用户 / 模型点名）：
+    """一列数值（按行序、全部有限）的取值结构 → `block` / `monotone_levels` / `levels` / None（像测量）。**只看取值，不看列名**：
 
     * `block`：把整列按「下降处」切成块（相邻两行后一个更小就另起一块，所以块内按行不减、允许同一个取值重复几行）：至少 2 块、够长的块（`DESIGN_BLOCK_MIN_LEN` 行以上）里的行占整列
       `DESIGN_BLOCK_LONG_SHARE` 以上、每个够长的块至少 `DESIGN_BLOCK_MIN_DISTINCT` 个不同取值、**同一个起点值**的块占够长的块的 `DESIGN_BLOCK_SAME_START` 以上
       （个体各自从时间 0 开始；测量值随时间增长，起点各不相同）、整列不同取值个数 < 行数（块与块之间取值重复出现——各个个体的同一套时间点）。
-    * `monotone`：整列按行不减，且至少 3 个不同取值（常数列、两水平的列不算）。
-    * `levels`：不同取值 2–`DESIGN_MAX_LEVELS` 个、平均每个取值至少对应 `DESIGN_LEVEL_AVG_REPEATS` 行、每个取值至少出现 `DESIGN_LEVEL_MIN_REPEATS` 次（几个剂量 / 时间点各做若干次）。"""
+    * `levels`：不同取值 2–`DESIGN_MAX_LEVELS` 个、平均每个取值至少对应 `DESIGN_LEVEL_AVG_REPEATS` 行、每个取值至少出现 `DESIGN_LEVEL_MIN_REPEATS` 次（几个剂量 / 时间点各做若干次）。
+    * `monotone_levels`：满足 `levels` 且整列按行不减（按组排好序的编号 / 剂量）。
+
+    **没有「整列单调就是条件」这一条**（2026-11-27 撤掉）：递增的测量值（累积量、按产率排过序的读数）与真正的递增横轴、递减的真横轴（红外波数）与随剂量下降的响应，
+    单列上结构相同、分不开，宁可不判。"""
     n = len(values)
     if n < 2 * DESIGN_BLOCK_MIN_LEN:
         return None
-    kind = _ordered_kind(values)
-    if kind is not None:
-        return kind
     distinct = set(values)
+    levels_ok = False
     if 2 <= len(distinct) <= DESIGN_MAX_LEVELS and len(distinct) * DESIGN_LEVEL_AVG_REPEATS <= n:
         counts: dict[float, int] = {}
         for v in values:
             counts[v] = counts.get(v, 0) + 1
-        if min(counts.values()) >= DESIGN_LEVEL_MIN_REPEATS:
-            return "levels"
-    return None
+        levels_ok = min(counts.values()) >= DESIGN_LEVEL_MIN_REPEATS
+    kind = _ordered_kind(values)
+    if kind == "block":
+        return kind
+    if kind == "monotone" and levels_ok:
+        return "monotone_levels"  # 按组排好序的编号 / 剂量（每个取值连着出现好几行）
+    return "levels" if levels_ok else None
 
 
 def _ordered_kind(values: list[float]) -> str | None:

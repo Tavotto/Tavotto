@@ -2243,25 +2243,36 @@ def error_kind_of(s: adf.DataSummary, err: str) -> str:
 
 
 #: 默认横轴的偏好次序（越小越先）：日期 > 块内严格递增、块间重置 > 整列按行不减 > 少量重复水平
-_DESIGN_RANK = {"date": 0, "block": 1, "monotone": 2, "levels": 3}
+_DESIGN_RANK = {"date": 0, "block": 1, "monotone_levels": 2, "levels": 3}
 
 
-def _levels_code(s: adf.DataSummary, c: str) -> bool:
-    """两三个水平的整数编码列（`DataSummary.numcat` 且取值结构是 `levels`）：是类别编码（Diet 1–4、group 1 / 2），不是默认横轴。"""
-    return c in s.numcat and s.design.get(c) == "levels"
+def _effective_design(s: adf.DataSummary) -> dict[str, str]:
+    """这张表里真正当「像条件 / 顺序」用的线索（`DataSummary.design` 去掉打架的）。**线索打架或不明确时保持原行为**：`block` 有两列及以上
+    （几列都是「组内递增、组间重置」的斜坡，如一组重复列）时谁是时间分不开，`block` 不用；`levels` / `monotone_levels` 不受影响。"""
+    d = dict(s.design)
+    blocks = [c for c, k in d.items() if k == "block"]
+    if len(blocks) >= 2:
+        d = {c: k for c, k in d.items() if k != "block"}
+    return d
 
 
-def numeric_like_date(s: adf.DataSummary, c: str) -> bool:
-    """日期列或「像条件 / 顺序」的数值列（`DataSummary.design`）。"""
-    return s.per_column[c].kind == "date" or c in s.design
+def _levels_code(s: adf.DataSummary, c: str, dz: dict[str, str]) -> bool:
+    """两个水平的整数编码列（`DataSummary.numcat` 里恰两个取值、取值结构是无序的 `levels`）：是二分类编码（敲除 0 / 1、group 1 / 2），不是默认横轴。
+    三个以上水平（温度 4 / 25 / 37、剂量 1 / 2 / 3）当横轴当分组都说得通，保持原行为。"""
+    return s.numcat.get(c) == 2 and dz.get(c) == "levels"
 
 
-def _design_rank(s: adf.DataSummary, c: str) -> int | None:
+def numeric_like_date(s: adf.DataSummary, c: str, dz: dict[str, str]) -> bool:
+    """日期列或「像条件 / 顺序」的数值列（`dz` = `_effective_design`）。"""
+    return s.per_column[c].kind == "date" or c in dz
+
+
+def _design_rank(s: adf.DataSummary, c: str, dz: dict[str, str]) -> int | None:
     """这一列作默认横轴的偏好等级；不像条件 / 顺序（`DataSummary.design` 里没有，也不是日期）或是整数编码的类别列 = None。**只看取值结构，不看列名。**"""
     if s.per_column[c].kind == "date":
         return _DESIGN_RANK["date"]
-    kind = s.design.get(c)
-    if kind is None or _levels_code(s, c):
+    kind = dz.get(c)
+    if kind is None or _levels_code(s, c, dz):
         return None
     return _DESIGN_RANK[kind]
 
@@ -2339,7 +2350,8 @@ def _resolve_roles_raw(
     named = adf._mentioned(hint, cols) if hint else []
     wide_x = cols[0] if s.layout == "wide" and cols[0] in (nums + dates) else None
     # 默认纵轴只从「像测量」的列里挑（`DataSummary.design` 里没有、也不是整数编码的类别列）；一个都没有就保持现有行为。只影响**默认**：用户 / 模型点名、下拉选项都不变
-    ynums = [c for c in nums if c not in s.design and c not in s.numcat]
+    dz = _effective_design(s)
+    ynums = [c for c in nums if c not in dz]
     if not ynums:
         ynums = nums
     # --- y
@@ -2368,7 +2380,7 @@ def _resolve_roles_raw(
         and 2 <= len([c for c in nums if c != wide_x]) <= 3
         and not cats
         # 别的列是「块内递增、块间重置」的时间（个体 × 时间）：不是「第一列当横轴、其余都是系列」
-        and not any(s.design.get(c) == "block" for c in nums if c != wide_x)
+        and not any(dz.get(c) == "block" for c in nums if c != wide_x)
     ):
         ys = [c for c in nums if c != wide_x]
     elif len(ynums) == 1 and ynums != nums:
@@ -2405,8 +2417,8 @@ def _resolve_roles_raw(
         if c not in ys and (s.per_column[c].kind == "date" or numeric_like(s.per_column[c]))
     ]
     dx = sorted(
-        (c for c in xs if _design_rank(s, c) is not None),
-        key=lambda c: (_design_rank(s, c), xs.index(c)),
+        (c for c in xs if _design_rank(s, c, dz) is not None),
+        key=lambda c: (_design_rank(s, c, dz), xs.index(c)),
     )
     x_ord: str | None = None
     px = picks.get("x")
@@ -2415,10 +2427,10 @@ def _resolve_roles_raw(
         pass
     elif len(xs) == 1:
         c = xs[0]
-        # 唯一的候选：像条件 / 顺序就是横轴；整数编码的类别列（两三个组）不是横轴；像测量、而表里有分组列时也不是（走比较 / 分布）；其余照旧
+        # 唯一的候选：像条件 / 顺序就是横轴；二分类编码列不是横轴；去掉行号列之后才只剩它、像测量、而表里有分组列时也不是（去掉行号之前本来有歧义、没有横轴，走比较 / 分布；一开始就只有它的表照旧）；其余照旧
         if c in dx or px == c or c in named_x:  # 用户 / 模型 / 话里点名了它：照点名
             x_ord = c
-        elif not (_levels_code(s, c) or (cats and not numeric_like_date(s, c))):
+        elif not (_levels_code(s, c, dz) or (cats and rowidx and not numeric_like_date(s, c, dz))):
             x_ord = c
     elif len(xs) > 1:
         if px in xs:
@@ -2426,7 +2438,7 @@ def _resolve_roles_raw(
         elif named_x:
             x_ord = named_x[0]
         elif dx:
-            # 只从像条件 / 顺序的列里挑：日期 > 块内递增块间重置 > 整列单调 > 少量重复水平，再按最左（宽表的第一列若也像条件，自然在里面）
+            # 只从像条件 / 顺序的列里挑：日期 > 块内递增块间重置 > 按组排好序的少量取值 > 无序的少量重复水平，再按最左（宽表的第一列若也像条件，自然在里面）
             x_ord = dx[0]
         elif wide_x in xs:
             x_ord = wide_x

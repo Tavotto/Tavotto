@@ -57,11 +57,13 @@ def test_block_allows_replicates_at_each_time_point_and_a_few_short_blocks():
     assert adf.design_kind(ragged) == "block"
 
 
-def test_monotone_column_and_two_level_sorted_column():
-    assert adf.design_kind(list(range(1, 21))) == "monotone"
-    assert (
-        adf.design_kind([1] * 10 + [2] * 10) == "levels"
-    )  # 只有两个取值：不算整列单调，按少量水平
+def test_a_plain_monotone_column_is_not_a_condition_but_a_sorted_few_level_column_is():
+    """整列单调本身不当条件（递增的测量值与递增的横轴、递减的横轴与下降的响应分不开）；取值少、各连着出现好几行的排序列是 `monotone_levels`。"""
+    assert adf.design_kind(list(range(1, 21))) is None
+    assert adf.design_kind([float(x * x) for x in range(1, 21)]) is None  # 累积量 / 排序过的读数
+    assert adf.design_kind([float(20 - x) for x in range(20)]) is None  # 递减的横轴：也不判
+    assert adf.design_kind([0.5] * 6 + [1.0] * 6 + [2.0] * 6) == "monotone_levels"
+    assert adf.design_kind([1] * 10 + [2] * 10) == "levels"  # 只有两个取值：按少量水平
     assert adf.design_kind([5.0] * 20) is None  # 常数
 
 
@@ -151,20 +153,25 @@ def _repeated_measures(n_subj: int = 6):
     return ["unit", "dose_mg", "time", "conc"], rows
 
 
-def test_block_beats_monotone_beats_levels_and_the_rest_is_leftmost(tmp_path):
+def test_block_beats_sorted_levels_and_the_rest_is_leftmost(tmp_path):
     h, rows = _repeated_measures()
     p = _csv(tmp_path, h, rows)
     s = adf.inspect_data_source(p, None, v2=True)
-    assert s.design["time"] == "block" and s.design["unit"] == "monotone"
+    assert s.design["time"] == "block" and s.design["unit"] == "monotone_levels"
     res = _roles(tmp_path, p)
     # `unit`（整列单调）在 `time`（块内递增）之前，但块优先；纵轴取像测量的最后一列
     assert res.roles["x"] == "time" and res.roles["y"] == ["conc"]
 
 
-def test_a_lone_measurement_like_candidate_is_not_x_when_there_is_a_group(tmp_path):
+def test_a_lone_measurement_like_candidate_left_by_dropping_the_row_number_is_not_x_when_there_is_a_group(
+    tmp_path,
+):
     rng = random.Random(5)
-    rows = [[g, round(rng.uniform(40, 80), 1), round(rng.uniform(40, 80), 1)] for g in "abc" * 8]
-    res = _roles(tmp_path, _csv(tmp_path, ["grp", "pre", "post"], rows))
+    rows = [
+        [i + 1, g, round(rng.uniform(40, 80), 1), round(rng.uniform(40, 80), 1)]
+        for i, g in enumerate("abc" * 8)
+    ]
+    res = _roles(tmp_path, _csv(tmp_path, ["rownames", "grp", "pre", "post"], rows))
     assert res.roles["x"] is None and res.roles["group"] == "grp" and res.roles["y"] == ["post"]
     assert {c.recipe.family for c in res.items} <= {"comparison", "distribution"}
 
@@ -185,7 +192,50 @@ def test_integer_coded_few_level_columns_are_not_the_default_y_nor_x(tmp_path):
 
 
 def test_when_every_numeric_column_looks_like_a_condition_the_old_behaviour_stays(tmp_path):
-    rows = [[i + 1, [0.5, 1.0, 2.0][i % 3]] for i in range(24)]
-    res = _roles(tmp_path, _csv(tmp_path, ["step", "dose"], rows))
+    rows = [[[10.0, 20.0][i % 2], [0.5, 1.0, 2.0][i % 3]] for i in range(24)]
+    res = _roles(tmp_path, _csv(tmp_path, ["temp", "dose"], rows))
     assert res.items  # 不报错、不空手
     assert res.roles["y"] == ["dose"]  # 没有像测量的列：回到「最后一个数值列」
+
+
+def test_two_block_like_columns_do_not_decide_the_axis(tmp_path):
+    """几列都是「组内递增、组间重置」的斜坡：谁是时间分不开，`block` 不用，回到原来的位置规则。"""
+    rows = []
+    for g in "ab":
+        rows += [[g, 5 + i * 0.1, 5.5 + i * 0.1, 6 + i * 0.1] for i in range(5)]
+    p = _csv(tmp_path, ["strain", "rep1", "rep2", "rep3"], rows)
+    s = adf.inspect_data_source(p, None, v2=True)
+    assert [c for c, k in s.design.items() if k == "block"] == ["rep1", "rep2", "rep3"]
+    assert recipe_mod._effective_design(s) == {}
+    res = _roles(tmp_path, p)
+    assert res.roles["x"] is None and res.roles["y"] == ["rep3"]
+
+
+def test_a_sorted_by_response_table_is_left_to_the_old_rule(tmp_path):
+    """按产率排过序的表：递增的测量值不是条件（没有「整列单调」这条线索）。"""
+    rows = [["t1", 20 + 7 * (i % 3), 40 + 3 * i + (i % 2)] for i in range(18)]
+    rows.sort(key=lambda r: r[2])
+    p = _csv(tmp_path, ["treatment", "temp", "yield"], [[r[0], r[1], r[2]] for r in rows])
+    res = _roles(tmp_path, p)
+    assert res.roles["y"] == ["yield"]
+
+
+def test_only_a_two_level_code_is_kept_off_the_default_x(tmp_path):
+    rng = random.Random(9)
+    two = [[round(rng.uniform(1, 9), 2), 1 + i % 2] for i in range(24)]
+    assert _roles(tmp_path, _csv(tmp_path, ["v", "code"], two)).roles["x"] is None
+    three = [[round(rng.uniform(1, 9), 2), [4, 25, 37][i % 3]] for i in range(24)]
+    res = _roles(tmp_path, _csv(tmp_path, ["v", "temp"], three, "u.csv"))
+    assert res.roles["x"] == "temp" and res.roles["y"] == ["v"]
+
+
+def test_a_table_that_never_had_a_row_number_keeps_its_lone_x_candidate(tmp_path):
+    """一开始就只有一个横轴候选（没有行号可去）：保持原行为——有分组也照旧当横轴（温度对产率、按处理分组）。"""
+    rng = random.Random(10)
+    rows = [[g, round(rng.uniform(30, 60), 1), round(rng.uniform(40, 90), 1)] for g in "ab" * 12]
+    res = _roles(tmp_path, _csv(tmp_path, ["treatment", "temp", "yield"], rows))
+    assert (
+        res.roles["x"] == "temp"
+        and res.roles["y"] == ["yield"]
+        and res.roles["group"] == "treatment"
+    )
