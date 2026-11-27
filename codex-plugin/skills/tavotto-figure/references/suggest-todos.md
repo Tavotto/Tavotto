@@ -24,7 +24,8 @@
 
 ## 守卫与拒绝
 
-- 与 Tavotto 改图助手同一套服务端守卫：坐标范围比数据窄（`hides_data`）、用户没要求却改图幅（`size_locked`，改成期刊栏宽除外）、
+- 与 Tavotto 改图助手同一套服务端守卫：坐标范围比数据窄（`hides_data`）、用户没要求却改图幅（`size_locked`）、
   连续曲线（> 40 点）逐点加标记（`dense_curve`）都会被拦下；Unicode 上下标（⁻¹、₂）会自动换成 mathtext。
+- 勾满时带出新的渲染 warning：整份方案不出（`change_plan_render_failed`），不指出是哪一条——拆小几条再交。
 - 出方案之后图被改过（脚本或图内修改）：`suggest_apply` 回 `suggest_plan_stale`，重新出方案再问用户。
 - 方案只认出它的那个会话；关了会话、过了 6 小时、或别的会话拿来用都是 `suggest_plan_unknown`。

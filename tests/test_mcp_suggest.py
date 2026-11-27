@@ -204,3 +204,15 @@ def test_malformed_todos_are_refused(project, worker, todos):
     sid = _open(project)
     res = _call("tavotto_suggest_plan", {"session_id": sid, "todos": todos})
     assert res["isError"] and _body(res)["code"] == "bad_todos"
+
+
+def test_sessions_running_in_real_python_are_not_probed(project, worker):
+    """与桌面 `safe_only` 同一处置：真实 Python 进程里的图不拿来试渲染候选。"""
+    sid = _open(project)
+    bridge.get_session(sid).native = object()
+    try:
+        res = _call("tavotto_suggest_plan", {"session_id": sid, "todos": TODOS[:1]})
+    finally:
+        bridge.get_session(sid).native = None
+    assert res["isError"] and _body(res)["code"] == "suggest_native_unsupported"
+    assert not [c for c in worker.calls if c[0] == "snapshot"]

@@ -413,6 +413,7 @@ NO_NEXT: dict[str, str] = {
     "suggest_plan_unknown": "方案不是这个会话的、过期或被清掉了，重新调 tavotto_suggest_plan 出一份。",
     "suggest_plan_stale": "出方案之后图被改过，重新调 tavotto_suggest_plan，按此刻的图出一份再问用户。",
     "suggest_plan_applied": "这份方案已经应用过，要再改就重新出一份方案。",
+    "suggest_native_unsupported": "这张图跑在真实 Python 里，不能先试渲染建议；逐条问过用户后直接 tavotto_apply_overrides。",
     "suggest_unavailable": "装着的 Tavotto 还没有建议待办能力，要用户升级后新开会话。",
     # 排版标注（ADR 0208 第 2 期）
     "bad_item": "排版标注描述写法不对，error 指出了是哪一项哪个字段，照 layout-annotate 说明改。",

@@ -926,7 +926,7 @@ def _suggest_tools() -> list[dict]:
             "description": (
                 "用户要你看看图有什么能改进、或说「按你的建议改」时用：把你的建议交进来，每条一个待办（做什么 / 为什么 / 图内还是要改脚本）。"
                 "不写会话：后端与 Tavotto 改图助手同一套校验与守卫（藏数据的坐标范围、未授权改图幅、连续曲线逐点加标记会被拦下）、"
-                "把勾满时的修改后图画出来，逐条回 results（ok / reason）。**把 todos 逐条列给用户、问要改哪几条**，"
+                "把勾满时的修改后图画出来，逐条回 results（ok / reason）；勾满后带出新 warning 时整份方案不出（change_plan_render_failed），拆小再交。**把 todos 逐条列给用户、问要改哪几条**，"
                 "再用 tavotto_suggest_apply 写入；用户没点头不要写。results 里 ok=false 的告诉用户原因，不要偷偷换个改法。"
             ),
             "inputSchema": {
@@ -960,6 +960,10 @@ def _suggest_tools() -> list[dict]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "用户要改的待办 key。",
+                    },
+                    "user_authorized": {
+                        "type": "boolean",
+                        "description": "会话已按修改约定规范化过时才需要：用户明确同意改动超出约定（同 tavotto_apply_overrides）。",
                     },
                 },
                 "required": ["session_id", "plan_id", "keys"],
@@ -2432,7 +2436,10 @@ def _call_suggest_plan(args: dict) -> dict:
 
 def _call_suggest_apply(args: dict) -> dict:
     out = bridge.suggest_apply(
-        str(args.get("session_id") or ""), args.get("plan_id"), args.get("keys")
+        str(args.get("session_id") or ""),
+        args.get("plan_id"),
+        args.get("keys"),
+        user_authorized=args.get("user_authorized") is True,
     )
     lines = [f"已在图内改好：{'、'.join(out['applied'])}" if out["applied"] else "图内没有要改的。"]
     if out["script_todos"]:

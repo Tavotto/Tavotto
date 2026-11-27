@@ -6944,6 +6944,10 @@ SUGGEST_ENGINE_API = (
 )
 
 
+#: 方案前后两张图的宽（像素）：要随工具结果进宿主上下文，比桌面那份（`changeplan.SNAPSHOT_WIDTH`）小
+SUGGEST_SNAPSHOT_WIDTH = 900
+
+
 def suggest_available() -> bool:
     cp = _optional_engine("changeplan")
     return cp is not None and all(hasattr(cp, n) for n in SUGGEST_ENGINE_API)
@@ -7005,11 +7009,20 @@ def suggest_plan(session_id: str, todos: object, *, user_request: object = None)
             f"todos 要是 1..{cp.MAX_TODOS} 条 {{label, why?, kind, changes?}} 的列表。",
             code="bad_todos",
         ) from None
+    if session.native is not None:
+        # 与桌面同一处置（`safe_only=True`）：真实 Python 进程里的图不拿来试渲染候选
+        raise BridgeError(
+            "这张图在真实 Python 里运行（safe 渲染被它自己的守卫拦下），不能先试渲染建议；"
+            "请直接用 tavotto_apply_overrides 改，改前逐条问用户。",
+            code="suggest_native_unsupported",
+        )
     base = list(session.patches)
     worker = session.acquire()
 
     def snapshot(patches: list):
-        return cp.snapshot_of(worker.preview_png_snapshot(session.stem, patches, cp.SNAPSHOT_WIDTH))
+        return cp.snapshot_of(
+            worker.preview_png_snapshot(session.stem, patches, SUGGEST_SNAPSHOT_WIDTH)
+        )
 
     def override(patches: list) -> dict:
         return worker.override(session.stem, patches, None)
@@ -7091,11 +7104,13 @@ def suggest_plan(session_id: str, todos: object, *, user_request: object = None)
     }
 
 
-def suggest_apply(session_id: str, plan_id: object, keys: object) -> dict:
+def suggest_apply(
+    session_id: str, plan_id: object, keys: object, *, user_authorized: bool = False
+) -> dict:
     """用户勾好的待办 → 图内的那些一次写进会话（全量列表 = B0 ⊕ 勾着的组）；脚本待办原样交回宿主去改。
 
-    出方案之后图被改过（脚本 / override）就拒绝（`suggest_plan_stale`），不在别的底子上套旧的修改。用户已经逐条确认过，按
-    `user_authorized` 应用（会解除规范化合同，回包如实带 `contract_released`）。"""
+    出方案之后图被改过（脚本 / override）就拒绝（`suggest_plan_stale`），不在别的底子上套旧的修改。会话上有规范化合同时
+    与 `apply_overrides` 同一条规矩：没带 `user_authorized`（用户明确提出了新要求的声明）就回 `requires_authorization`、什么都不改。"""
     cp = _require_suggest()
     session = get_session(session_id)
     plan = _suggest_load(cp, session, plan_id)
@@ -7125,7 +7140,7 @@ def suggest_apply(session_id: str, plan_id: object, keys: object) -> dict:
     out: dict = {"ok": True, "plan_id": plan["id"], "applied": [], "script_todos": scripts}
     if groups:
         patches = cp.apply_groups(plan["base_patches"], plan["groups"], set(groups))
-        res = apply_overrides(session.id, patches, user_authorized=True)
+        res = apply_overrides(session.id, patches, user_authorized=user_authorized)
         out["applied"] = [t["key"] for t in chosen if t["kind"] == "figure"]
         out["contract_released"] = bool(res.get("contract_released"))
         out["patch_hash"] = session.patch_hash()

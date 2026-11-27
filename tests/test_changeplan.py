@@ -1701,7 +1701,11 @@ def test_host_suggestions_go_through_the_same_guards():
     """Agent 插件交进来的建议（ADR 0214 第 3 期）：同一份 `validate_proposal`；用户原话顶替助手来源的指令判「提没提尺寸」。"""
     fig = _facts_fig()
     todos = [
-        {"label": "放大一点", "kind": "figure", "changes": [ch("figure", "size_mm", [120.0, 85.0])]},
+        {
+            "label": "放大一点",
+            "kind": "figure",
+            "changes": [ch("figure", "size_mm", [120.0, 85.0])],
+        },
         {"label": "加误差线", "why": "三次重复", "kind": "script"},
     ]
     out, comments = cp.host_proposal(todos, fig, "图例压住曲线了")

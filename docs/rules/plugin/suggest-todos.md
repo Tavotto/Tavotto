@@ -17,9 +17,11 @@ order: 140
   `realize`（候选渲染、新 warning 拒、出界腾边距）→ `build_plan`，与桌面 `/api/change-plans` 是同一份代码（`app.py` 也调 `realize`）。
   桥里不许再写一份校验或流水线。
 - **出方案不写会话**：候选在会话的热 worker 上试渲染（`Session.acquire()`，唯一 worker 入口不变），结束后把会话此刻的 override 放回去；
-  `session.patches` 不动。方案存进与桌面同一个方案目录（`changeplan.save`，项目 id 同一把尺 `bridge.project_id`），带 `agent.session`。
-- **只写用户勾的**：`suggest_apply` 写 `apply_groups(B0, 组, 勾着的图内待办)` 这份全量列表（经 `apply_overrides(user_authorized=True)`：
-  用户已经逐条确认）；脚本待办不在这里改，原样回 `script_todos`，宿主改脚本。一份方案只应用一次（`suggest_plan_applied`）。
+  `session.patches` 不动。跑在真实 Python 里的会话（`session.native`）不试渲染（`suggest_native_unsupported`，与桌面 `safe_only` 同一处置）。
+  回给宿主的图宽 `SUGGEST_SNAPSHOT_WIDTH`（900 px，要进宿主上下文）。方案存进与桌面同一个方案目录（`changeplan.save`，项目 id 同一把尺 `bridge.project_id`），带 `agent.session`；
+  与桌面的方案一起受 `changeplan.sweep` 管（6 小时过期、每项目最多 12 份）。
+- **只写用户勾的**：`suggest_apply` 写 `apply_groups(B0, 组, 勾着的图内待办)` 这份全量列表，经 `apply_overrides`——规范化合同照旧：
+  `user_authorized` 由宿主显式带（与 `tavotto_apply_overrides` 同一个声明），不在桥里替它写死；脚本待办不在这里改，原样回 `script_todos`，宿主改脚本。一份方案只应用一次（`suggest_plan_applied`）。
 - **出方案之后图变了就拒**：`fingerprint(script_revision, session.patches)` 对不上出方案时的基线 → `suggest_plan_stale`，不在别的底子上套旧修改。
   方案只认出它的会话与图（`suggest_plan_unknown`，别的会话 / 过期 / 坏 id 同一个码）。
 - **新错误码都要有下一步**：登记在 `nextstep.NO_NEXT`（`tests/test_mcp_error_next.py` 钉住）。三个工具同 0208 / 0212 的处置**不进** `usage.TOOLS`
