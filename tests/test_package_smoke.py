@@ -768,3 +768,65 @@ def test_isolated_command_hands_its_job_to_terminate_so_no_snapshot_guessing(tmp
         timeout=30,
     )
     assert seen["job"] is sentinel
+
+
+def test_windows_terminate_kills_the_job_before_judging_when_the_root_already_exited(
+    tmp_path, monkeypatch
+):
+    """直接子进程已退、后代还在 Job 里：`terminate()` 要先结束 Job 再看「整棵树不存在」，
+    不能白等 GROUP_GONE_WAIT_S 后报 group_gone=False（Codex #2320）。POSIX 上用假 Job 验调用顺序；
+    真 Job 的行为见下面那条只在 Windows 上跑的用例。"""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+    import package_smoke as ps
+
+    class FakeJob:
+        alive = 1
+
+        def kill(self):
+            self.alive = 0
+            return True
+
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    proc.tavotto_job = FakeJob()
+
+    def fake_kill_tree(p):
+        return "job" if p.tavotto_job.kill() else None
+
+    monkeypatch.setattr(ps.os, "name", "nt")
+    monkeypatch.setattr(ps.proctree, "kill_tree", fake_kill_tree)
+    monkeypatch.setattr(ps.proctree, "tree_gone", lambda p, timeout: p.tavotto_job.alive == 0)
+    info = ps.terminate(proc)
+    assert info["group_gone"] is True
+    assert info["how"] == "already-exited+job"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Job Object 只在 Windows 上有")
+def test_windows_isolated_command_reaps_a_grandchild_left_behind_by_an_exited_root(tmp_path):
+    """真机：子进程起一个睡 60 s 的孙进程后立刻退出。孙进程在 Job 里，清理后它必须不存在，
+    且判据 `group_gone` 为真（不是等满上限后的 False）。"""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+    import package_smoke as ps
+    import proctree
+
+    pid_file = tmp_path / "grandchild.pid"
+    code = (
+        "import subprocess, sys; "
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        f"open({str(pid_file)!r}, 'w').write(str(p.pid))"
+    )
+    result = ps.run_isolated_command(
+        [sys.executable, "-c", code],
+        env=dict(os.environ),
+        cwd=tmp_path,
+        evidence=tmp_path,
+        timeout=60,
+    )
+    grandchild = int(pid_file.read_text())
+    assert result["timed_out"] is False and result["exit_code"] == 0
+    assert result["cleanup"]["group_gone"] is True, result
+    assert not proctree.is_alive(grandchild)

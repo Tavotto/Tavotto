@@ -397,6 +397,11 @@ def terminate(proc: subprocess.Popen) -> dict:
             else:
                 _killpg(proc.pid, _SIGKILL)
             proc.wait()
+    elif os.name == "nt" and getattr(proc, "tavotto_job", None) is not None:
+        # 直接子进程已经退了，它起的后代还可能在 Job 里：先结束 Job 再判「整棵树不存在」，
+        # 否则下面那一眼会白等满 GROUP_GONE_WAIT_S 然后报 group_gone=False（Codex #2320）
+        if proctree.kill_tree(proc) == "job":
+            info["how"] = "already-exited+job"
     info["returncode"] = proc.returncode
     if os.name == "nt":
         # 判据是整棵树**不存在**（Job 里 ActiveProcesses == 0），不是 taskkill 退出码为 0
