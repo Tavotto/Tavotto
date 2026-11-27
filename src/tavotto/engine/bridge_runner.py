@@ -116,6 +116,7 @@ _PHASE2 = (
     "tickmodel",
     "colorbarmodel",
     "legendmodel",
+    "mixedtext",
     "overrides",
     "manifest",
     "previewbudget",
@@ -1369,6 +1370,8 @@ class BridgeRun:
         # 每个屏障重新判一次 rcParams 的回退尾巴：脚本在两个屏障之间可能开了 usetex（撤回尾巴）
         # 或关了它（补回）。幂等，只动我们自己追加的那一份
         overrides.ensure_rcparams_fallback(list(self.session.capture.values()))
+        # 分段排（`mixedtext`）离开上一个屏障时撤了，这里补回；`instrument_all()` 有新图时也会补，幂等
+        _PKG.mixedtext.arm()
         for stem, state in list(self.session.states.items()):
             if stem not in self._known_stems:
                 # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
@@ -1450,6 +1453,8 @@ class BridgeRun:
             # 字体回退尾巴（ADR 0045）也是我们注入的状态：放行前撤回，脚本接着跑时 rcParams 是它自己
             # 的值；下一个屏障 `rebase()` 按当时有没有 TeX 文字重新判定。没放行成（owed）就留着
             overrides.restore_rcparams_fallback()
+            # 公式与中文混排的分段排同理：只在屏障内生效，脚本接着 savefig 存的是它自己会得到的样子
+            _PKG.mixedtext.disarm()
         return owed
 
     def resume_editing(self) -> None:
@@ -1457,6 +1462,7 @@ class BridgeRun:
         overrides = _PKG.overrides
         # 放行被拒前 `release_barrier` 可能已撤回尾巴：回到编辑态补回（有 TeX 文字则照旧不补）
         overrides.ensure_rcparams_fallback(list(self.session.capture.values()))
+        _PKG.mixedtext.arm()  # 放行被拒前已撤下：回到编辑态补回（见 `release_barrier`）
         for stem, state in self.session.states.items():
             try:
                 overrides.apply(state, self.saved_patches.get(stem) or [])
