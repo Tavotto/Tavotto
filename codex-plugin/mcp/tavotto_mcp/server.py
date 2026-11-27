@@ -664,6 +664,8 @@ def _tools() -> list[dict]:
         )
     if bridge.journal_catalog_enabled():
         _add_journal_catalog_tools(tools, by_name)
+    if bridge.journal_report_available():
+        tools.append(_report_journal_issue_tool())
     if bridge.review_share_available():
         tools.append(_share_review_tool())
     if bridge.review_feedback_available():
@@ -892,6 +894,64 @@ JOURNAL_ID_TOOLS = (
     "tavotto_preflight",
     "tavotto_export",
 )
+
+
+def _report_journal_issue_tool() -> dict:
+    """`tavotto_report_journal_issue`（ADR 0213 三期）：期刊库开关、「联系作者」与期刊联网都开着才出现。"""
+    return {
+        "name": "tavotto_report_journal_issue",
+        "title": "提交期刊线索（先问用户）",
+        "description": (
+            "投稿须知（用户给的编辑部要求 / 期刊网页）和内置期刊目录不一致时，替用户向 Tavotto 作者提交一条**期刊线索**："
+            "type=wrong（目录某条不对）、missing（目录里没有这本刊）、editor（编辑部要求与目录不符，body 里贴编辑部原话）。"
+            "只给证据（原文链接 url、问题描述 body），**不要给数值**；目录现值、出处与版本由本机目录取，rule_key / source_id 必须取自目录"
+            "（tavotto_get_journal_facts / 出处卡），不要编。**永远先问用户**：第一次调用不带 explicit_confirm，只回将要发送的内容摘要、"
+            "send_token 与一个 ask_user 的 next，**不联网**；用户明确同意后，带 explicit_confirm=true 和同一个 send_token 再调一次才真正发送"
+            "（内容改过令牌就失效，要重新问）。成功回编号；作者会核对出版社原文，结论回信到应用的「我的来信」。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": list(bridge.JOURNAL_REPORT_TYPES)},
+                "journal_id": {
+                    "type": "string",
+                    "description": "目录里的期刊 id（wrong / editor 必填；先 tavotto_list_journals）。",
+                },
+                "rule_key": {
+                    "type": "string",
+                    "description": "wrong 必填：目录里那一条规则的键（如 min_line_width_pt），只能取自目录。",
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "wrong 可选：目录里那一条的出处 id（v2 来源带 `v2:` 前缀原样给）；不给就取本机目录当前那条。",
+                },
+                "issue": {
+                    "type": "string",
+                    "enum": list(bridge.JOURNAL_REPORT_ISSUES),
+                    "description": "只随 wrong：wrong_value 数值不对 / updated 期刊已更新 / link_broken 出处打不开 / other。",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "出版社原文链接（https，≤2000 字，不含空白与账号）。",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "问题描述 / 原文摘录 / 编辑部原话（editor 必填）；只写证据，不写要改成的数值。",
+                },
+                "query": {"type": "string", "description": "missing：期刊名（≤120 字）。"},
+                "explicit_confirm": {
+                    "type": "boolean",
+                    "description": "用户明确说「发送」后才置 true；服务端绝不代填，不带它只预览、不联网。",
+                },
+                "send_token": {
+                    "type": "string",
+                    "description": "第一次调用回包里的 send_token；与 explicit_confirm 一起带，内容变了就对不上。",
+                },
+            },
+            "required": ["type"],
+            "additionalProperties": False,
+        },
+    }
 
 
 def _share_review_tool() -> dict:
@@ -1964,6 +2024,49 @@ def _call_share_review(args: dict) -> dict:
     if previews.get("preview"):
         content.append({"type": "image", "data": previews["preview"], "mimeType": "image/png"})
     return {"content": content, "structuredContent": out}
+
+
+def _call_report_journal_issue(args: dict) -> dict:
+    bridge.require_journal_report_engine()
+    out = bridge.report_journal_issue(
+        type=args.get("type"),
+        journal_id=args.get("journal_id"),
+        rule_key=args.get("rule_key"),
+        source_id=args.get("source_id"),
+        issue=args.get("issue"),
+        url=args.get("url"),
+        body=args.get("body"),
+        query=args.get("query"),
+        explicit_confirm=bool(args.get("explicit_confirm")),
+        send_token=args.get("send_token"),
+    )
+    if out["status"] == "needs_confirmation":
+        out["next"] = nextstep.journal_report_confirm(out, args)
+        w = out["will_send"]
+        lines = [
+            "还没发送。将要提交的期刊线索：",
+            "；".join(
+                f"{k}={w[k]}"
+                for k in ("type", "journal_label", "rule_key", "current", "issue", "url", "query")
+                if k in w
+            ),
+            f"正文（{w['body_chars']} 字）：{w['body_preview']}"
+            if w["body_chars"]
+            else "没有正文。",
+            out["audience"] + "没有任何内容离开本机；请先问用户是否发送。",
+        ]
+        if out.get("token_stale"):
+            lines.insert(0, "内容和上次确认的不一样了：令牌已失效，要重新问用户。")
+    elif out["status"] == "in_progress":
+        out["next"] = nextstep.tool_step(
+            "tavotto_report_journal_issue",
+            args,
+            "还在发送：稍后用同样的参数再调一次取结果，不会重复发。",
+        )
+        lines = ["还在发送，稍后用同样的参数再调一次取结果（不会重复发）。"]
+    else:
+        lines = [f"已提交（编号 {out['message_id']}）。{out['note']}"]
+    return {"content": _text(*lines), "structuredContent": out}
 
 
 def _review_feedback_lines(out: dict) -> list[str]:
@@ -3066,6 +3169,9 @@ HANDLERS = {
     # 外部审阅分享（ADR 0205）：受 `reviewshare.enabled()` 管（硬关 / 旧引擎 = 不出现、调用回 `review_share_disabled`）；
     # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
     "tavotto_share_review": _call_share_review,
+    # 提交期刊线索（ADR 0213 三期）：期刊库开关 + 「联系作者」 + 期刊联网都开着才出现，关着调用回 `journal_report_disabled`；
+    # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
+    "tavotto_report_journal_issue": _call_report_journal_issue,
     # 二期（读意见 / 回复 / 标记已处理）：同一个开关、同样不进 `usage.TOOLS`
     "tavotto_review_feedback": _call_review_feedback,
     "tavotto_reply_review": _call_reply_review,
