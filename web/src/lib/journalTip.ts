@@ -13,7 +13,7 @@ export type JournalIssue = (typeof JOURNAL_ISSUES)[number]
  * 用户不填数值——能填的只有一句话、原文链接和附件。线缆形状见 `lib/api.ts` 的 `ContactJournalHead`。
  */
 export interface JournalTipContext {
-  type: 'wrong' | 'missing'
+  type: 'wrong' | 'missing' | 'editor'
   journalId?: string
   /** 目录里的刊名（出处卡的主语），给灰字与主题用 */
   journalLabel?: string
@@ -69,4 +69,9 @@ export function tipForSource(
 /** 选择器搜不到时的线索上下文。 */
 export function tipForMissing(query: string): JournalTipContext {
   return { type: 'missing', query: query.trim().slice(0, 120), catalog: catalogRevs(undefined) }
+}
+
+/** 问题页底部「反馈期刊规范问题」的线索上下文（线缆 type=editor）：只带刊（id + 刊名）与目录版本；用户写的问题描述或编辑部原话是正文，不进目录。 */
+export function tipForEditor(journalId: string, journalLabel: string): JournalTipContext {
+  return { type: 'editor', journalId, journalLabel, catalog: catalogRevs(journalId) }
 }
