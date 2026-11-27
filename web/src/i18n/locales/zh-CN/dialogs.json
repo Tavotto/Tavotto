@@ -2921,10 +2921,10 @@
     "submitMissing": "提交申请",
     "emailWrong": "核实后回信到这里",
     "emailMissing": "收录后回信到这里",
-    "editorQuoteLabel": "编辑部原话",
-    "editorQuotePlaceholder": "粘贴编辑部邮件原话，仅用于核对官网，不会公开",
-    "editorAbout": "{{journal}} · 编辑部要求改图",
-    "editorTag": "编辑部要求改图",
+    "editorQuoteLabel": "问题描述或编辑部原话",
+    "editorQuotePlaceholder": "哪条规范不对、缺了什么，或粘贴编辑部邮件原话；仅用于核对官网，不会公开",
+    "editorAbout": "{{journal}}",
+    "editorTag": "反馈期刊规范问题",
     "editorEmail": "核实后回信到这里"
   },
   "packageInstall": {

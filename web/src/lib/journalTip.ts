@@ -71,7 +71,7 @@ export function tipForMissing(query: string): JournalTipContext {
   return { type: 'missing', query: query.trim().slice(0, 120), catalog: catalogRevs(undefined) }
 }
 
-/** 「编辑部要求改图」的线索上下文：只带刊（id + 刊名）与目录版本；编辑部原话是用户填的正文，不进目录。 */
+/** 问题页底部「反馈期刊规范问题」的线索上下文（线缆 type=editor）：只带刊（id + 刊名）与目录版本；用户写的问题描述或编辑部原话是正文，不进目录。 */
 export function tipForEditor(journalId: string, journalLabel: string): JournalTipContext {
   return { type: 'editor', journalId, journalLabel, catalog: catalogRevs(journalId) }
 }

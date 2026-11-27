@@ -440,7 +440,7 @@ describe('Codex #2310', () => {
   })
 })
 
-describe('问题页底部的「编辑部要求改图」入口', () => {
+describe('问题页底部的「反馈期刊规范问题」入口', () => {
   const jt = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
   const openPanel = async () => {
     selectJournal('fx-alpha')
@@ -464,7 +464,7 @@ describe('问题页底部的「编辑部要求改图」入口', () => {
     await waitTip()
     const d = q('[data-dialog="journal-tip"]')!
     expect(d.textContent).toContain(jt('title.wrong'))
-    expect(q('[data-journal-tip-about]')!.textContent).toMatch(/ · 编辑部要求改图$/)
+    expect(q('[data-journal-tip-about]')!.textContent).toBe('Fixture Alpha') // 只写刊名
     // 只有：原话、截图 / PDF、回信邮箱
     expect(q('[data-contact-text]')!.getAttribute('placeholder')).toBe(jt('editorQuotePlaceholder'))
     expect(d.textContent).toContain(jt('editorQuoteLabel'))

@@ -199,7 +199,7 @@ test('「联系作者」被硬关时（fixtures 默认）：出处卡与选择�
 })
 
 test(
-  '问题页底部常驻「编辑部要求改图」入口，打开编辑部形态的反馈窗，只有原话、截图 / PDF 与回信邮箱',
+  '问题页底部常驻「反馈期刊规范问题」入口，打开通用反馈窗：问题描述或编辑部原话、截图 / PDF 与回信邮箱',
   { tag: '@feature:journal.tips' },
   async ({ app, page }) => {
     test.setTimeout(240_000)
@@ -257,7 +257,7 @@ test(
     const dialog = page.locator('[data-dialog="journal-tip"]')
     await expect(dialog).toBeVisible()
     await expect(dialog).toContainText('期刊规范反馈')
-    await expect(dialog.locator('[data-journal-tip-about]')).toHaveText('Fixture Beta · 编辑部要求改图')
+    await expect(dialog.locator('[data-journal-tip-about]')).toHaveText('Fixture Beta')
     await expect(dialog.locator('[data-contact-text]')).toHaveAttribute('placeholder', /仅用于核对官网，不会公开/)
     await expect(dialog.locator('[data-contact-pick]')).toBeVisible()
     await expect(dialog.locator('[data-contact-email]')).toHaveAttribute('placeholder', '核实后回信到这里')

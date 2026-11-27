@@ -2955,10 +2955,10 @@
     "submitMissing": "Submit request",
     "emailWrong": "We’ll reply here once checked",
     "emailMissing": "We’ll reply here once it’s added",
-    "editorQuoteLabel": "Editor’s wording",
-    "editorQuotePlaceholder": "Paste the editor’s email wording; it is only used to check the website and is never made public",
-    "editorAbout": "{{journal}} · Editor requested changes",
-    "editorTag": "Editor requested changes",
+    "editorQuoteLabel": "What’s wrong, or the editor’s wording",
+    "editorQuotePlaceholder": "Which rule is wrong or missing, or paste the editor’s email; only used to check the website, never made public",
+    "editorAbout": "{{journal}}",
+    "editorTag": "Journal guideline issue",
     "editorEmail": "We will reply here once checked"
   },
   "packageInstall": {
