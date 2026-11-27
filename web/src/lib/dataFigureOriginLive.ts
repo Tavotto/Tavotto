@@ -15,7 +15,7 @@ export function panelUntouchedNow(panel: PanelObject, origin: FigureOrigin): boo
   return figureUntouched(useDocumentStore.getState().doc, panel, origin, { runtime: rt, bakedCount })
 }
 
-/** 激活画布里 id 为 `panelId`、且此刻画的是 `script` 的面板；不是 / 不见了 = null（只认发起切换的那一块，不按脚本另找） */
+/** 激活画布里 id 为 `panelId`、且此刻画的是 `script` 的 runtime 面板；不是 / 不见了 = null（只认发起切换的那一块，不按脚本另找） */
 export function panelIfScript(panelId: string, script: string): PanelObject | null {
   const key = normScript(script)
   const o = useDocumentStore.getState().doc.objects.find((x) => x.id === panelId)
