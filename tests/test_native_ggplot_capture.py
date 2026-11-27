@@ -183,7 +183,89 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
 
     monkeypatch.setattr(nativeggplot_source, "replay", diagnose)
     if sys.platform == "win32":
+        from contextlib import contextmanager
+
         verify = service._verified_r_source
+        restrict = winappcontainer.offline
+        probe = r"""
+sample <- c("Signal", "Input", "2.5")
+aliases <- c("sans", "sans", "serif")
+faces <- c("plain", "bold.italic", "plain")
+font_files <- systemfonts::match_fonts(aliases, italic = c(FALSE, TRUE, FALSE),
+                                     weight = c("normal", "bold", "normal"))
+widths <- function() {
+  grid::grid.newpage()
+  sizes <- mapply(function(text, family, face) {
+    mark <- grid::textGrob(text, gp = grid::gpar(fontfamily = family, fontface = face, fontsize = 16))
+    grid::convertWidth(grid::grobWidth(mark), "bigpts", valueOnly = TRUE)
+  }, sample, aliases, faces, USE.NAMES = FALSE)
+  grDevices::dev.off()
+  unname(sizes)
+}
+svglite::svglite(tempfile(fileext = ".svg"), width = 4, height = 3)
+svg <- widths()
+grDevices::png(tempfile(fileext = ".png"), width = 1000, height = 750, res = 250, type = "cairo")
+cairo <- widths()
+registry <- tryCatch(length(utils::readRegistry("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts",
+                                                hive = "HLM", maxdepth = 1L)),
+                     error = conditionMessage)
+arial <- file.path(Sys.getenv("SystemRoot"), "Fonts", "arial.ttf")
+report <- list(fonts = nrow(systemfonts::system_fonts()), matches = basename(font_files$path),
+               matches_readable = file.access(font_files$path, 4) == 0L, svg = svg, cairo = cairo,
+               registry = registry, arial_readable = file.access(arial, 4) == 0L)
+jsonlite::write_json(report, commandArgs(trailingOnly = TRUE)[[1L]], auto_unbox = TRUE)
+"""
+        measure = tmp_path / "measure-r-fonts.R"
+        measure.write_text(probe, encoding="utf-8")
+        normal = tmp_path / "normal-r-fonts.json"
+        baseline = subprocess.run(
+            [rscript, "--vanilla", str(measure), str(normal)],
+            cwd=tmp_path,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        print(
+            "Normal R fonts:",
+            normal.read_text(encoding="utf-8") if normal.is_file() else baseline.stderr,
+        )
+
+        @contextmanager
+        def measure_restricted(root, environment):
+            nonlocal measured
+            inside = root / measure.name
+            inside.write_text(probe, encoding="utf-8")
+            report = root / "restricted-r-fonts.json"
+            with restrict(root, environment) as run:
+
+                def execute(argv, cwd, *, timeout):
+                    nonlocal measured
+                    run(argv, cwd, timeout=timeout)
+                    if measured:
+                        return
+                    request = json.loads(Path(argv[-1]).read_text(encoding="utf-8"))
+                    if request.get("operation") != "replay":
+                        return
+                    measured = True
+                    command = [
+                        argv[0],
+                        "--vanilla",
+                        "--slave",
+                        f"--file={inside}",
+                        "--args",
+                        str(report),
+                    ]
+                    try:
+                        run(command, cwd, timeout=25)
+                        print("Isolated R fonts:", report.read_text(encoding="utf-8"))
+                    except winappcontainer.ReplayFailed as exc:
+                        print("Isolated R font diagnostic failed:", exc.diagnostic)
+
+                yield execute
+
+        measured = False
+        monkeypatch.setattr(winappcontainer, "offline", measure_restricted)
 
         def diagnose_verification(worker, *args, **kwargs):
             observed = []
