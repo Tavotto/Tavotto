@@ -95,24 +95,28 @@ test(
   },
 )
 
-test('单图编辑拖右边（不按键）：只改宽、高不变，松手重新出图后左边不动，图与画纸同框', async ({ app, page }) => {
-  const a = await app()
-  await toFastEdit(page, a.baseURL)
-  const p0 = (await paperBox(page))!
-  await dragHandle(page, '[data-figure-edge="r"]', 60, 0, async () => {
-    await expect(page.locator('[data-drag-status]')).toBeVisible()
-    await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
-    const mid = (await paperBox(page))!
-    expect(Math.abs(mid.width - p0.width)).toBeLessThan(1)
-  })
-  await expect.poll(async () => (await paperBox(page))?.width ?? 0, { timeout: 30_000 }).toBeGreaterThan(p0.width + 40)
-  const p1 = (await paperBox(page))!
-  expect(Math.abs(p1.x - p0.x)).toBeLessThan(1.5)
-  expect(Math.abs(p1.height - p0.height)).toBeLessThan(1.5)
-  await expect(page.locator('[data-page-outside-mask]')).toHaveCount(0)
-  const f1 = (await figureBox(page))!
-  expect(Math.abs(f1.width - p1.width)).toBeLessThan(2)
-})
+test(
+  '单图编辑拖右边（不按键）：只改宽、高不变，松手重新出图后左边不动，图与画纸同框',
+  { tag: '@feature:canvas.single-figure-edge-resize' },
+  async ({ app, page }) => {
+    const a = await app()
+    await toFastEdit(page, a.baseURL)
+    const p0 = (await paperBox(page))!
+    await dragHandle(page, '[data-figure-edge="r"]', 60, 0, async () => {
+      await expect(page.locator('[data-drag-status]')).toBeVisible()
+      await expect(page.locator('[data-figure-preview]')).toHaveCount(1)
+      const mid = (await paperBox(page))!
+      expect(Math.abs(mid.width - p0.width)).toBeLessThan(1)
+    })
+    await expect.poll(async () => (await paperBox(page))?.width ?? 0, { timeout: 30_000 }).toBeGreaterThan(p0.width + 40)
+    const p1 = (await paperBox(page))!
+    expect(Math.abs(p1.x - p0.x)).toBeLessThan(1.5)
+    expect(Math.abs(p1.height - p0.height)).toBeLessThan(1.5)
+    await expect(page.locator('[data-page-outside-mask]')).toHaveCount(0)
+    const f1 = (await figureBox(page))!
+    expect(Math.abs(f1.width - p1.width)).toBeLessThan(2)
+  },
+)
 
 test('单图编辑拖右下角：等比改图幅，松手重新出图后左上角不动、宽高同比变大', async ({ app, page }) => {
   const a = await app()
