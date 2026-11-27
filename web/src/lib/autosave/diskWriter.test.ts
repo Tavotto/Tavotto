@@ -532,3 +532,59 @@ it('retains each queued snapshot context and returns the complete backend map, i
   expect(h.written[0].snapshotContext).toBe(first)
   expect(h.written[1].snapshotContext).toBe(second)
 })
+
+
+describe('写进项目的标记（ADR 0211 第二期 PR 2）', () => {
+  /** 一个只记 put 参数个数与描述的最小端口 */
+  function mini() {
+    const calls: unknown[][] = []
+    const results: string[] = []
+    let gate: (() => void) | null = null
+    const ports = {
+      api: {
+        put: (...args: unknown[]) => {
+          calls.push(args)
+          const body = { saved_at: 1, revision: 'r', project_layout: { state: 'saved' as const, name: 'a', file: 'tavottofile/a.json', revision: 'x' } }
+          return gate ? new Promise((res) => { const g = gate; gate = () => { g?.(); res(body) } }) : Promise.resolve(body)
+        },
+        fetch: async () => null,
+        fetchSummary: async () => null,
+      },
+      isCurrent: () => true,
+      onSaving: () => {},
+      onWritten: () => {},
+      onFailed: () => {},
+      writeBlocked: () => false,
+      dropLocalCopy: () => {},
+      outcome: () => {},
+      projectSpec: () => ({ name: 'a', base: 'b' }),
+      onProjectLayout: (_id: string, _pj: string | null, r: { state: string }) => results.push(r.state),
+    } as unknown as DiskWriterPorts
+    return { calls, results, ports, hold: () => { gate = () => {} }, release: () => gate?.() }
+  }
+
+  it('没标 project：PUT 的调用形状逐字不变（五个参数），也不回调项目结局', async () => {
+    const h = mini()
+    const w = createDiskWriter(h.ports)
+    w.schedule('d', doc(1), 'pj')
+    await tick()
+    expect(h.calls[0]).toHaveLength(5)
+    expect(h.results).toEqual(['saved']) // 后端回了就转交；是否发请求由 project 标记决定
+  })
+
+  it('标了 project：带上 spec；排队合并时「要写项目」取并集，不被后来的 1 s 本机那笔吞掉', async () => {
+    const h = mini()
+    h.hold()
+    const w = createDiskWriter(h.ports)
+    w.schedule('d', doc(1), 'pj', undefined, false) // 在途
+    await tick()
+    w.schedule('d', doc(2), 'pj', undefined, true) // 排队：要写项目
+    w.schedule('d', doc(3), 'pj', undefined, false) // 合并成最新一份：仍要写项目
+    h.release()
+    await tick()
+    await tick()
+    expect(h.calls).toHaveLength(2)
+    expect(h.calls[0]).toHaveLength(5)
+    expect(h.calls[1][5]).toEqual({ name: 'a', base: 'b' })
+  })
+})

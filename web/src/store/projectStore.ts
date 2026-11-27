@@ -1,3 +1,4 @@
+import { setProjectWriteCapability } from '@/lib/autosaveProject'
 import { create } from 'zustand'
 import { emitActivity } from '@/lib/activity'
 import { newId } from '@/lib/id'
@@ -80,6 +81,7 @@ import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { usePngAdmissionMemory } from '@/store/pngAdmissionMemory'
+import { usePdfFontFacts } from '@/store/pdfFontFacts'
 import { useSourceBackedReview } from '@/store/sourceBackedReview'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
@@ -306,6 +308,8 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   // 「当前项目关过哪一版」这个投影。
   // PNG 采用被拒的会话记忆属于旧项目：不清的话，B 项目里同名 fileId 会被误判成「已被拒过」
   usePngAdmissionMemory.getState().clear()
+  // PDF 原件的字体事实同理：B 项目里同名同 mtime 的文件不是同一份
+  usePdfFontFacts.getState().clear()
   // 开着的「对照确认」属于旧项目：按取消收掉（什么都不写）
   useSourceBackedReview.getState().clear()
   useProjectReadinessStore.getState().clear()
@@ -758,3 +762,12 @@ useDocumentStore.subscribe((s, prev) => {
 
 // 某份文档的正文真的写盘成功了（不看是不是当前文档、pj 是排队那一刻的）：补记「上次开着的」可以重试了
 onDocumentPersisted((docId, pj) => notifyDocumentPersisted(docId, pj))
+
+// 自动保存写进项目（ADR 0211 第二期 PR 2）：后端开着开关、且这个项目可写时，前端才带 `project_write` 起节奏计时。
+// 关着 = 恒为 false，前端行为与改造前一字不差
+useProjectStore.subscribe((s, prev) => {
+  if (s.project === prev.project) return
+  setProjectWriteCapability(
+    !!s.project?.open && s.project.autosave_into_project === true && s.project.writable !== false,
+  )
+})

@@ -647,6 +647,91 @@ def update_status(sid: str, status: str, db_path: Path | None = None) -> None:
             _stamp(con, sid)
 
 
+#: 补回旧历史（`merge_legacy`）只合并这两张表：会话是用户的历史；`ai_requests` 是「这条请求执行过」的幂等账本，
+#: 漏了它，旧请求在新库里查不到、可能被再执行一次。草稿 / 待确认是短命状态（30 天就清），补回来反而会把用户
+#: 在新库里清掉的草稿救活，所以不碰；`ai_rev_counter` 用新库自己的。
+LEGACY_MERGE_TABLES = ("sessions", "ai_requests")
+
+
+def merge_legacy(snapshot: Path, db_path: Path, deadline: float) -> int:
+    """把旧库快照 `snapshot`（调用方用备份接口取的一致副本，**不是**旧库本身）里新库没有的行按主键补进 `db_path`。
+
+    - 只补缺（`INSERT OR IGNORE`），按两边列的交集插：旧库可能是老 schema，少的列走新库默认值；
+    - 补进来的会话**重新取版本号**（`ai_rev_counter` 自增），否则 `changes?since=` 的客户端水位已经越过旧 rev、永远看不到它们；
+    - 补进来的未结束行（`OPEN_SESSION_SQL`）当场收尾成 interrupted / 补 `ended_ms`：属主是旧安装的进程，早就不在了；
+    - 整个合并一个 `BEGIN IMMEDIATE` 事务，中途到点（进度回调）或出错就整体回滚，下次再来——不会留下半合并的库。
+    到点抛 `TimeoutError`；回补进来的会话数。
+    """
+    con = _connect(db_path)
+    con.isolation_level = None
+    try:
+        con.execute("ATTACH DATABASE ? AS legacy", (str(snapshot),))  # ATTACH 不能在事务里
+        con.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+        try:
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                imported = _merge_legacy_tables(con)
+            except BaseException:
+                con.execute("ROLLBACK")
+                raise
+            con.execute("COMMIT")
+        except sqlite3.OperationalError as e:
+            if time.monotonic() > deadline:
+                raise TimeoutError("legacy history merge ran out of time") from e
+            raise
+        finally:
+            con.set_progress_handler(None, 0)
+        return imported
+    finally:
+        with contextlib.suppress(sqlite3.Error):
+            con.execute("DETACH DATABASE legacy")
+        con.close()
+
+
+def _merge_legacy_tables(con: sqlite3.Connection) -> int:
+    legacy = {r[0] for r in con.execute("SELECT name FROM legacy.sqlite_master WHERE type='table'")}
+
+    def shared_cols(table: str, skip: tuple[str, ...] = ()) -> str:
+        mine = [r[1] for r in con.execute(f"PRAGMA main.table_info({table})")]
+        theirs = {r[1] for r in con.execute(f"PRAGMA legacy.table_info({table})")}
+        return ", ".join(f'"{c}"' for c in mine if c in theirs and c not in skip)
+
+    imported = 0
+    if "sessions" in legacy:
+        cols = shared_cols("sessions", skip=("rev",))
+        new_ids = [
+            r[0]
+            for r in con.execute(
+                "SELECT id FROM legacy.sessions WHERE id NOT IN (SELECT id FROM main.sessions) ORDER BY started_ms"
+            )
+        ]
+        con.execute(
+            f"INSERT OR IGNORE INTO main.sessions ({cols}) SELECT {cols} FROM legacy.sessions "
+            "WHERE id NOT IN (SELECT id FROM main.sessions)"
+        )
+        for sid in new_ids:
+            con.execute(
+                f"UPDATE main.sessions SET status = CASE WHEN status = 'running' THEN 'interrupted' ELSE status END, "
+                f"ended_ms = COALESCE(ended_ms, started_ms) WHERE id = ? AND {OPEN_SESSION_SQL}",
+                (sid,),
+            )
+            _stamp(con, sid)
+        imported = len(new_ids)
+    if "ai_requests" in legacy:
+        cols = shared_cols("ai_requests")
+        con.execute(
+            f"INSERT OR IGNORE INTO main.ai_requests ({cols}) SELECT {cols} FROM legacy.ai_requests"
+        )
+    return imported
+
+
+# 登记给 MSIX 迁移的「待补旧历史」合并（它不能反过来 import 本模块：会成环）。经 lambda 在调用时取全局名，测试 monkeypatch 才生效。
+msixmigrate.register_sqlite_merger(
+    "cache/ai_history.sqlite3",
+    lambda snapshot, target, deadline: merge_legacy(snapshot, target, deadline),
+)
+
+
 def mark_interrupted_running(db_path: Path | None = None) -> int:
     """启动时调用：上个进程留下的「还没结束」的会话收尾。**只动属主已死的**（`owner_alive`）：共用同一数据目录的
     另一个服务进程里仍在跑的会话不能被这次启动动掉（否则它的脚本被当成空闲、再被另一个进程改写）。

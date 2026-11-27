@@ -340,6 +340,35 @@ def get_session(project: str, session_id: str, *, touch: bool = True) -> Session
         return sess
 
 
+#: `data_digest` 愿意读的最大文件（字节）：超过就不算（回 None = 前端当「核对不了」）
+DIGEST_MAX_BYTES = 512 * 1024 * 1024
+
+
+def data_digest(root: Path, table: str | None) -> str | None:
+    """项目里这份数据文件**原始字节**的 sha256（与 `propose` 响应的 `data_sha256` 同一口径：CSV / TSV / 文本表 / XLSX 都是整个文件的字节）。
+
+    给「图的来历」核对数据变没变用：路径只认项目相对路径（`normalize_rel` + `contained_path`，不跟出项目），不是普通文件 / 读不了 / 超过
+    `DIGEST_MAX_BYTES` 一律回 None（不是错误：前端当「核对不了」，不出那一行）。只读、不碰缓存、不起任何后台任务。"""
+    try:
+        rel = normalize_rel(table)
+    except ValueError:
+        return None
+    real = projectenv.contained_path(root, rel) if rel else None
+    if real is None:
+        return None
+    try:
+        p = Path(real)
+        if not p.is_file() or p.stat().st_size > DIGEST_MAX_BYTES:
+            return None
+        h = hashlib.sha256()
+        with p.open("rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
 def get_item(project: str, session_id: str, item_id: str) -> tuple[Session, Item]:
     sess = get_session(project, session_id)
     if not isinstance(item_id, str) or not _ID.fullmatch(item_id) or item_id not in sess.items:
@@ -1398,6 +1427,7 @@ def propose(
     tables=None,
     spec=None,
     font_range=None,
+    understand=None,
 ) -> dict:
     """出备选。返回三选一：`{"kind": "ask", question_code, options, unsure}` / `{"kind": "candidates", session, items, dropped}` /
     `{"kind": "nothing", reasons}`。数据读不了（文件夹不存在 / 不在项目内）抛 `DataSourceError`（app 转 400 + 稳定码）。
@@ -1417,12 +1447,18 @@ def propose(
     `spec`（可选）：前端按画布绑定解析好的出版规范（期刊覆盖已并入；快照优先那套取舍在前端 `resolveDocumentSpec`，这里不重做）。
     过 `profiles.validate_spec` 后只取模板要的数字（`tpl.style_from_profile`）；不给 = 默认规范，响应逐字不变。规范不合法**不让出图失败**：
     退回默认规范，响应带 `spec_fallback: true`。规范有效时响应带 `figure_style`（实际用的栏宽、起始字号，以及接受了的期刊字号范围 `font_min_pt` / `font_max_pt`）。
-    `font_range`（可选，`{min_pt?, max_pt?}`，随 `spec` 一起才有意义）：期刊自己规定的字号上下限，读法见 `tpl.style_from_profile`。规范进幂等键：换了期刊必须重新出图。只在本机用，不进给模型的内容。"""
+    `font_range`（可选，`{min_pt?, max_pt?}`，随 `spec` 一起才有意义）：期刊自己规定的字号上下限，读法见 `tpl.style_from_profile`。规范进幂等键：换了期刊必须重新出图。只在本机用，不进给模型的内容。
+
+    `understand`（可选，布尔）：给 `False` = **不起「读懂数据」的后台任务**（响应里没有 `understanding` 键，不会有一次模型出站）；候选逐字不变。
+    不给 / `True` = 与从前逐字相同。给「点选误差线换类型」这类**不是用户在看数据**的重出用：那一次没人在等模型的判断，不该悄悄多发一次。
+    非布尔 = `propose_input_invalid`。进幂等键（有无 `understanding` 键是响应的一部分）。"""
     sweep()
     progress.check()
     if render is not None and render not in RENDER_MODES:
         raise ProposeError("propose_input_invalid", "render")
     auto = render == "lazy"
+    if understand is not None and not isinstance(understand, bool):
+        raise ProposeError("propose_input_invalid", "understand")
     folder = _text(folder, "folder", 1024)
     hint = _text(hint, "hint", _HINT_MAX)
     table = _text(table, "table")
@@ -1442,6 +1478,8 @@ def propose(
         digest_parts.append("lazy")
     if tabs is not None:
         digest_parts.append(["tables", tabs])
+    if understand is False:
+        digest_parts.append("no_understanding")
     if spec_digest is not None:
         digest_parts.append(["spec", spec_digest])
     digest = hashlib.sha256(
@@ -1627,6 +1665,8 @@ def propose(
             "table": merged.merge.sources[0].path if merged is not None else chosen.path,
             "sheet": chosen.sheet,
             "header_row": values.header_line,
+            # 这次读的那份数据文件的原始字节 sha256（单份；合画没有）：前端把它记进图的来历，之后「数据变了没有」只看它（`data_digest` 同一口径）
+            **({"data_sha256": values.sha256} if merged is None else {}),
             "units_row": values.units_row,  # 表头后紧跟的单位行已被切掉（它是 `header_row + 1` 行）；没有 = False
             "roles": res.roles,
             "defaults": defaults,
@@ -1777,7 +1817,7 @@ def propose(
         **({"figure_style": figure_style(style)} if style is not None else {}),
         **basics(),
     }
-    if auto and not hrows and not user_took_over:
+    if auto and understand is not False and not hrows and not user_took_over:
         # 第 1 步「读懂数据」：有可用的 Key 连接才起后台任务、响应里才多这一个键；没有时响应与从前逐字相同
         und = roles_mod.start(
             project=project,

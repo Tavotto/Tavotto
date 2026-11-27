@@ -17,7 +17,8 @@ import {
 } from '@/lib/quickLayoutPrefs'
 import { useDocumentStore } from '@/store/documentStore'
 import { licenseVisible, useLicenseStore } from '@/store/licenseStore'
-import { runQuickLayout, useQuickLayoutStore } from '@/store/quickLayoutActions'
+import { inFigureScope, runQuickLayout, useQuickLayoutStore } from '@/store/quickLayoutActions'
+import { useSelectionStore } from '@/store/selectionStore'
 import { PremiumLock } from './license/PremiumLock'
 import { Button } from './ui/Button'
 import { Menu, MenuCheckItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
@@ -47,7 +48,13 @@ export function QuickLayoutButton({
   const busy = useQuickLayoutStore((s) => s.busy)
   const [prefs, setPrefs] = useState<QuickLayoutPrefs>(readQuickLayoutPrefs)
   const userSized = useDocumentStore((s) => s.doc.page.userSized)
+  const doc = useDocumentStore((s) => s.doc)
+  // 选区变了范围也变（选中 ≥ 2 张图排选中的）：订阅它好让置灰跟着变
+  useSelectionStore((s) => s.ids)
   if (!licenseVisible(status)) return null
+
+  // 范围里只有一张可排的图 = 图内排版：排的是图里的坐标轴，「排列」的列数不适用，置灰（ADR 0199 §十二）
+  const inFigure = inFigureScope(doc)
 
   // 保持画布大小时页宽就是画布的宽度：「宽度」三档不起作用，置灰
   const keeping = resolveCanvasMode(prefs.canvas, userSized) === 'keep'
@@ -99,7 +106,12 @@ export function QuickLayoutButton({
             onValueChange={(v) => update({ ...prefs, columns: (v === 'auto' ? null : Number(v)) as QuickLayoutColumns })}
           >
             {QUICK_LAYOUT_COLUMNS.map((n) => (
-              <MenuRadioItem key={n ?? 'auto'} value={n === null ? 'auto' : String(n)} data-quick-layout-columns={n ?? 'auto'}>
+              <MenuRadioItem
+                key={n ?? 'auto'}
+                value={n === null ? 'auto' : String(n)}
+                disabled={inFigure}
+                data-quick-layout-columns={n ?? 'auto'}
+              >
                 {t(`quickLayout.columns.${n ?? 'auto'}`)}
               </MenuRadioItem>
             ))}

@@ -124,7 +124,7 @@ datas = [
 # 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
 # 不靠人记得回来改这一行。
 for name in ("worker.py", "executionfact.py", "inputdeclaration.py", "manifest.py", "overrides.py", "patchspec.py",
-             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py", "cmddiag.py",
+             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "mixedtext.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py", "cmddiag.py",
              "previewbudget.py", "preview_complexity.py", "preview_hybrid.py",
              "bridge_runner.py", "bridgeboot.py", "mathtext_child.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
@@ -317,6 +317,25 @@ if "tavotto_mcp.server" not in MCP_SERVER_MODULES:
     raise SystemExit("codex-plugin/mcp/tavotto_mcp 没被收进来——`tavotto-cli mcp` 会报 mcp_server_not_bundled")
 print(f"[tavotto.spec] MCP 服务端子模块: {', '.join(MCP_SERVER_MODULES)}")
 
+
+# 插件桥按名字取的「可选引擎模块」（`tavotto_mcp/bridge.py` 的 `OPTIONAL_ENGINE_MODULES`，经 `importlib.import_module`）：
+# 静态分析看不见这条边，没有别处静态 import 的就不会进 PYZ——1.0.0 演练包里 `vectoredit` 就是这么漏的，桌面版
+# 「接入 AI 编辑器」里 Agent 改已有矢量对象整组用不了（#2247）。名单**从桥里那张表读**（AST，不 import 桥），不在这里抄第二份。
+def _optional_engine_modules() -> list[str]:
+    import ast as _ast
+
+    tree = _ast.parse((ROOT / "codex-plugin" / "mcp" / "tavotto_mcp" / "bridge.py").read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, _ast.Assign) and any(
+            getattr(t, "id", None) == "OPTIONAL_ENGINE_MODULES" for t in node.targets
+        ):
+            return [f"tavotto.engine.{e.value}" for e in node.value.elts]
+    raise SystemExit("tavotto_mcp/bridge.py 里找不到 OPTIONAL_ENGINE_MODULES——可选引擎模块会漏进不了冻结包")
+
+
+OPTIONAL_ENGINE_HIDDEN = _optional_engine_modules()
+print(f"[tavotto.spec] 可选引擎模块（hiddenimports）: {', '.join(OPTIONAL_ENGINE_HIDDEN)}")
+
 # 画布（MCP App UI，`codex-plugin/mcp/widget/canvas.html`）：服务端按 `tavotto_mcp/widget.py` 的默认路径
 # `<tavotto_mcp 的上一级>/widget/canvas.html` 找它，冻结后那一级就是 _MEIPASS，所以落点是 `widget/`。它是构建物、
 # **不进版本库**（ADR 0043：进库会让每个改 web/src 的 PR 都带一份、并行 PR 必撞），这里只收打包前现建的那一份，
@@ -368,6 +387,8 @@ a = Analysis(
         "tavotto.engine.journalfacts_remote", "tavotto.engine.journalfacts_contract",
         # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）
         *MCP_SERVER_MODULES,
+        # 插件桥按名字取的可选引擎模块（见上；名单取自 bridge.OPTIONAL_ENGINE_MODULES）
+        *OPTIONAL_ENGINE_HIDDEN,
     ],
     hookspath=[],
     # 第一个执行（自定义钩子先于 PyInstaller 自带的）：Windows 上未处理的异常不弹英文报错框，写日志后直接退出（TVD-MHQJ）

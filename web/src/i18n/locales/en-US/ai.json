@@ -777,6 +777,7 @@
       "join": ", ",
       "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
       "error": "Error bars",
+      "errorBand": "Error band",
       "design": "Repeated measures",
       "option": {
         "sd": "Standard deviation (SD)",
@@ -892,6 +893,10 @@
       "logLimitAsk": "A log axis can't start at or below 0. Also change the {{axis}} lower limit to {{to}}?",
       "logLimitYes": "Change both",
       "logLimitNo": "Not now",
+      "dataChangedAsk": "This change alters the data the figure plots. Go ahead?",
+      "dataChangedYes": "Go ahead",
+      "dataChangedNo": "Not now",
+      "dataDeclined": "The data was left as it was, and the script wasn’t changed.",
       "axisX": "x",
       "axisY": "y",
       "placesN_one": "{{count}} place",

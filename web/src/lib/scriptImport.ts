@@ -119,6 +119,8 @@ export interface DropData {
   types: readonly string[]
   getData(format: string): string
   files: ArrayLike<{ name: string }>
+  /** 真实的 `DataTransfer.items`（用例的假数据可以不给）：认出被拖进来的是文件夹 */
+  items?: ArrayLike<{ kind: string; webkitGetAsEntry?: () => { isDirectory: boolean; name: string } | null }>
 }
 
 /** 一次放下 → 怎么处理。只看第一个文件：一次导入一个脚本，多放的不猜用户要哪个 */

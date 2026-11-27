@@ -19,19 +19,19 @@ GOLDEN = Path(__file__).parent / "golden" / "convert_to_path_vectors.json"
 CASES = json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]
 
 
-def _close(a: object, b: object, where: str = "") -> None:
+def _close(a: object, b: object, where: str = "", tol: float = 1e-6) -> None:
     if isinstance(a, bool) or isinstance(b, bool) or isinstance(a, str) or a is None:
         assert a == b, where
     elif isinstance(a, (int, float)):
-        assert isinstance(b, (int, float)) and math.isclose(a, b, abs_tol=1e-6), (where, a, b)
+        assert isinstance(b, (int, float)) and math.isclose(a, b, abs_tol=tol), (where, a, b)
     elif isinstance(a, list):
         assert isinstance(b, list) and len(a) == len(b), where
         for k, (x, y) in enumerate(zip(a, b)):
-            _close(x, y, f"{where}[{k}]")
+            _close(x, y, f"{where}[{k}]", tol)
     elif isinstance(a, dict):
         assert isinstance(b, dict) and set(a) == set(b), (where, sorted(set(a) ^ set(b)))
         for k in a:
-            _close(a[k], b[k], f"{where}.{k}")
+            _close(a[k], b[k], f"{where}.{k}", tol)
     else:  # pragma: no cover
         raise AssertionError((where, a, b))
 

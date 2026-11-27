@@ -1,7 +1,7 @@
 # 排版标注与矢量编辑工具（ADR 0208 第 2 期、ADR 0212 第 5 期）
 
 > 2026-11-25 新写（ADR 0208 第 2 期 ②），速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**。
-> 2026-11-26 补上改已有矢量对象的两个工具（ADR 0212 第 5 期 ①）。
+> 2026-11-26 补上改已有矢量对象的两个工具（ADR 0212 第 5 期 ①）；同日补路径锚点逐点编辑（第 4 期，细则在 `references/layout-annotate.md`）。
 > 看护用例：`tests/test_mcp_layout_annotate.py`（真 stdio + 真 worker：读场景 → 方案 → 写入 → 撤销、快照子图不量、摘要不对拒写）、
 > `tests/test_mcp_layout_edit.py`（同上，编辑补丁）、`tests/test_layoutannotate.py` / `tests/test_vectoredit.py`（引擎层）、
 > `tests/test_mcp_server.py::test_tools_list_shape`。
@@ -30,6 +30,8 @@ order: 135
   方案回包**不带**改后的整张对象表（`objects`），只带动到的；局部图（`vectoredit.preview_edit`）画改后的整张画布、框住改前与改后的位置。
   撤销与标注共用 `tavotto_layout_annotate_undo`（同一份按文件留存）。拆组 / 删除后成员不足的布局组约束在写入层去掉并写进复述（#2244）。
   几何内核没装上时四个几何操作回 `kernel_unavailable`，工具文案说明其余操作照常。
+  路径锚点操作（`move_anchors` … `release_compound`）不用内核；锚点地址 `{sp, i}` 取场景 `vector_objects[].anchors`（有上限，超出只给 `subpaths` 计数），
+  含义是**该条操作执行时**的状态，复述末尾的「现为」是后续地址的依据；桥与 server 不翻译、不校验地址（校验在 `vectoredit`）。
   核对的锚定端（尖端余量）取对象上落盘的 0208 锚点与本批 `move` 的锚点，**只认补丁跑完仍成立的**（端点离锚点解出的位置
   ≤ 锚点残差限；数据锚点为此现量）。只改了颜色 / 名字 / 锁定这类不改占地的字段（`vectoredit.PAINT_ONLY`）时，改之前就失败的
   同一项标 `preexisting`、不挡写入、照实说；挪了、改了形就按改后完整核对。

@@ -1043,20 +1043,31 @@ def test_outline_stroke_with_fill_turns_the_stroke_off_and_adds_the_outline_abov
 
 
 @pytest.mark.parametrize(
-    "extra,field",
+    "extra",
     [
-        ({"dash": "dashed"}, "stroke:dash"),
-        ({"dashPattern": [3, 2]}, "stroke:dash"),
-        ({"headEnd": "triangle"}, "stroke:head"),
-        ({"strokeAlign": "inside"}, "stroke:strokeAlign"),
-        ({"stroke": False}, "no_stroke"),
+        {"dash": "dashed", "lineCap": "butt"},
+        {"dashPattern": [3, 2]},
+        {"headEnd": "triangle"},
+        {"strokeAlign": "inside"},
+        {"strokeAlign": "outside", "dash": "dotted"},
     ],
 )
-def test_outline_stroke_says_what_it_cannot_do_yet(extra, field):
-    assert (
-        _err([_circle("c", 10, 10, 5, **extra)], [{"op": "outline_stroke", "id": "c"}])["field"]
-        == field
-    )
+def test_outline_stroke_handles_dashes_heads_and_alignment(extra):
+    """虚线 / 端型 / 内外对齐照前端 `lib/outlineStroke` 摆几何再拓宽（逐数对拍在 `tests/test_vector_outline.py`）"""
+    base = _line("ln", [(0, 0), (30, 10)], **extra) if "headEnd" in extra else None
+    obj = base or _circle("c", 10, 10, 5, fill=None, **extra)
+    r = _run([obj], [{"op": "outline_stroke", "id": obj["id"]}])
+    out = r["objects"][0]
+    assert out["id"] == obj["id"] and out["stroke"] is False and out["fill"] == obj["color"]
+    # 线型字段去掉（照前端 `outlineStrokes`）；端型 / 对齐字段前端也留着——描边关了它们就不画
+    assert not {"dash", "dashPattern", "lineCap"} & set(out)
+    if extra.get("dash") == "dashed" or "dashPattern" in extra:
+        assert len(out["subpaths"]) > 3  # 切成一段段
+
+
+def test_outline_stroke_without_a_stroke_says_so():
+    e = _err([_circle("c", 10, 10, 5, stroke=False)], [{"op": "outline_stroke", "id": "c"}])
+    assert e["field"] == "no_stroke"
 
 
 def test_simplify_drops_redundant_anchors_in_place_and_says_so_when_nothing_to_drop():
@@ -1590,3 +1601,15 @@ def test_restyling_an_arrow_anchored_to_a_data_point_keeps_its_allowance(project
     )
     data = [f for f in plan["facts"] if f["check"] == "data" and f["item"] == aid]
     assert data and data[0]["status"] == "pass", data
+
+
+def test_make_compound_takes_a_closed_shape_like_the_desktop():
+    """前端 `makeCompound` 走 `operands`：封闭形状先转为路径；直线照样不收"""
+    objs = [_rect("r", 0, 0, 30, 30), _circle("c", 15, 15, 5)]
+    r = _run(objs, [{"op": "make_compound", "ids": ["r", "c"]}])
+    assert [o["id"] for o in r["objects"]] == ["r"]
+    out = r["objects"][0]
+    assert out["type"] == "path" and out["fillRule"] == "evenodd" and len(out["subpaths"]) == 2
+    line = {**_rect("ln", 0, 0, 10, 2), "shape": "line"}
+    e = _err([*objs, line], [{"op": "make_compound", "ids": ["r", "ln"]}])
+    assert e["field"] == "needs_closed"
