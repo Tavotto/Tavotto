@@ -183,9 +183,8 @@ def test_an_unmeasurable_panel_falls_back_to_the_frame_with_a_reason(project):
 
 def test_a_slow_measure_times_out_to_the_frame(project, monkeypatch):
     import functools
-    import time
-
     import threading
+    import time
 
     client, _root = project
     release = threading.Event()  # 可唤醒的等待：用例结束就放走在飞的那条 worker，不留到会话末尾
