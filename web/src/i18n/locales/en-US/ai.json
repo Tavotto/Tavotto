@@ -742,7 +742,17 @@
       "fontMax": "≤ {{max}} pt text"
     },
     "basis": {
-      "rowsErrLines": "drawn from {{drawn}} rows, one point per row for each line",
+      "seriesEqual": "{{k}} series, {{n}} data points each",
+      "seriesApart": "{{k}} series, {{n}} data points each; the valid data cover different positions",
+      "seriesEach": "{{k}} series, with {{counts}} data points respectively",
+      "seriesRange": "{{k}} series, {{min}}–{{max}} data points each",
+      "errGap_one": "{{count}} place is missing an error value",
+      "errGap_other": "{{count}} places are missing an error value",
+      "errGapTail_one": "{{text}}, missing at {{count}} place",
+      "errGapTail_other": "{{text}}, missing at {{count}} places",
+      "colAnd": " and ",
+      "colJoin": ", ",
+      "countJoin": " / ",
       "rowsBar": "drawn from {{drawn}} rows, one bar per row",
       "errColumns": "error bars from the {{columns}} columns",
       "colQuote": "“{{column}}”",
