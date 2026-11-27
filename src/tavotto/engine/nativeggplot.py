@@ -43,6 +43,12 @@ _BAR_SERIES_IDENTITY_PREFIX = "r7:"
 _ERRORBAR_IDENTITY_PREFIX = "r8:"
 _RIBBON_IDENTITY_PREFIX = "r9:"
 _AXES_IDENTITY_PREFIX = "r10:"
+_TICK_LABEL_IDENTITY_PREFIX = "r11:"
+
+
+def _tick_label_identity(gid: str, context: str) -> str:
+    digest = hashlib.sha256(f"{context}:{gid}".encode("ascii")).hexdigest()
+    return _TICK_LABEL_IDENTITY_PREFIX + digest[:16]
 
 
 def _clip_facet_curve(element: dict, size_mm: list[float]) -> None:
@@ -227,6 +233,11 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            if element["role"] == "ticklabel":
+                element["identity"] = _tick_label_identity(
+                    element["gid"], element.pop("tick_member_context")
+                )
+                continue
             axes = element.pop("native_axes", None)
             if axes is not None:
                 GgplotTarget.annotate_axes(element, axes)
@@ -535,12 +546,25 @@ class GgplotTarget:
 
         elements = (session.last_build or {}).get("manifest", {}).get("elements", [])
         identities = {element["gid"]: element["identity"] for element in elements}
+        tick_scopes = {
+            prefix: e["tick_member_context"]
+            for e in elements
+            if (prefix := e.get("tick_member_prefix"))
+        }
         for patch in patches:
             if not isinstance(patch, dict):
                 continue
             identity = patch.get("identity")
             gid = patch.get("gid")
             expected = identities.get(gid) if isinstance(gid, str) else None
+            context = tick_scopes.get(gid[:-32]) if isinstance(gid, str) else None
+            if context is not None:
+                key = gid[-32:]
+                if not all(
+                    c in "0123456789abcdef" for c in key
+                ) or identity != _tick_label_identity(gid, context):
+                    raise pool.WorkerError("The native R tick label changed. Select it again.")
+                continue
             if expected is not None and expected.startswith(_LEGEND_IDENTITY_PREFIX):
                 if identity != expected:
                     raise pool.WorkerError("The native R legend changed. Select it again.")

@@ -1,6 +1,7 @@
 import { Dialog } from '../ui/Dialog'
 import { GradientStopsField, gradientPayload, readGradientWithFact } from './controls/GradientStopsField'
 import { EmptyState } from '../ui/EmptyState'
+import { structuralParent } from './roles/hierarchy'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -636,8 +637,8 @@ function relatedGids(
   // 单个刻度文字 → 整条轴的刻度（审计 B51）：这一页改的只是这一个刻度的文字，
   // 字号 / 朝向 / 间距那些整条轴的事在刻度组页；入口就写成「编辑整条 X 轴刻度」
   if (target.role === 'ticklabel') {
-    const m = target.gid.match(/^(.*)\.([xyz])ticklabels_\d+$/)
-    if (m) push(find(`${m[1]}.${m[2]}ticks`), undefined, (label) => el('relatedTicksAll', { label }))
+    const parent = structuralParent(manifest)(target.gid)
+    if (parent) push(find(parent), undefined, (label) => el('relatedTicksAll', { label }))
   }
   if (target.role === 'axes' || target.role === 'axes3d') {
     push(find(`${target.gid}.xticks`))

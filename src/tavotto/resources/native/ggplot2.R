@@ -49,7 +49,8 @@ ggplot_cell_name <- function(cell) {
   paste0(cell$name, ".", paste(c(cell$t, cell$r, cell$b, cell$l), collapse = "-"))
 }
 
-ggplot_text_target <- function(table, slots, role, title_child = NULL, group_label = NULL) {
+ggplot_text_target <- function(table, slots, role, title_child = NULL, group_label = NULL,
+                               allow_empty = FALSE) {
   path <- character()
   for (slot in slots) {
     if (is.character(slot)) {
@@ -75,7 +76,7 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL, group_lab
     if (!is.character(label) || length(label) != 1L || is.na(label) || !nzchar(label)) return(NULL)
   } else {
     if ((!is.character(label) && !is.numeric(label)) || !length(label) ||
-        anyNA(label) || any(!nzchar(label)) || isTRUE(text$check.overlap)) return(NULL)
+        anyNA(label) || (!allow_empty && any(!nzchar(label))) || isTRUE(text$check.overlap)) return(NULL)
   }
   # Resolve R color names (such as grey42) for the canvas color picker.
   rgb <- tryCatch(grDevices::col2rgb(text$gp$col, alpha = TRUE),
@@ -142,18 +143,6 @@ ggplot_axis_ticks <- function(table, axes_targets) {
     }
   }
   targets[setdiff(names(targets), duplicate)]
-}
-
-ggplot_tick_facet_owner <- function(cell, panels, position) {
-  across <- if (position %in% c("top", "bottom")) c("l", "r") else c("t", "b")
-  same <- panels[[across[[1L]]]] == cell[[across[[1L]]]] &
-    panels[[across[[2L]]]] == cell[[across[[2L]]]]
-  gap <- switch(position, bottom = cell$t - panels$b, top = panels$t - cell$b,
-                left = panels$l - cell$r, right = cell$l - panels$r)
-  matching <- which(same & gap > 0L)
-  if (!length(matching)) return(NULL)
-  nearest <- matching[gap[matching] == min(gap[matching])]
-  if (length(nearest) == 1L) rownames(panels)[nearest]
 }
 
 ggplot_legend_entries <- function(table, slots, guide, prefix, title) {
@@ -447,11 +436,6 @@ ggplot_frozen_layer <- function(layer, grobs) {
   ggplot2::ggproto(NULL, layer, draw_geom = function(data, layout) grobs)
 }
 
-ggplot_clone <- function(parent, ...) {
-  force(parent)
-  ggplot2::ggproto(NULL, parent, ...)
-}
-
 ggplot_uniform_breaks <- function(range, step, kind = "major") {
   # Use the same zero-based origin as a standard multiple locator. Limit the
   # generated break count before allocating anything on the rendering path.
@@ -656,22 +640,11 @@ ggplot_reflow_facet_guides <- function(table, layout, theme, text_targets, tick_
     table$grobs[[slot]] <- draw(view, theme)[[position]]
     if (horizontal) rows <- c(rows, cell$t) else cols <- c(cols, cell$l)
   }
-  # ggplot2 reserves one track for all guides at this position. Keep its
-  # widest or tallest guide as the track's allocation after local edits.
-  axes <- grepl("^axis-[btlr]-", table$layout$name)
-  for (row in unique(rows)) {
-    slots <- axes & table$layout$t == row & table$layout$b == row
-    table$heights[row] <- do.call(grid::unit.pmax, lapply(table$grobs[slots], grid::grobHeight))
-  }
-  for (col in unique(cols)) {
-    slots <- axes & table$layout$l == col & table$layout$r == col
-    table$widths[col] <- do.call(grid::unit.pmax, lapply(table$grobs[slots], grid::grobWidth))
-  }
-  table
+  ggplot_resize_drawn_axis_tracks(table, rows, cols)
 }
 
 ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-                               grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits) {
+                               grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits) {
   built <- state$built
   plot <- built$plot
   axes_target <- state$axes_targets[[ggplot_axes_gid]]
@@ -766,7 +739,12 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   facet_ticks <- ggplot_facet_tick_layout(
     state, panels, ggplot_facet_tick_edits(state, edits), layout$coord, facet_changes
   )
-  layout$panel_params <- facet_ticks$panels
+  source <- ggplot_source_tick_edits(facet_ticks$panels, layout$layout,
+                                     state$authored_tick_recipes, state$tick_member_scopes)
+  default_labels <- ggplot_relabel_tick_members(facet_ticks$panels, source$scopes, source$edits)
+  relabelled <- ggplot_relabel_tick_members(default_labels$panels, state$tick_member_scopes, member_edits)
+  changed_labels <- union(names(source$edits), names(member_edits))
+  layout$panel_params <- relabelled$panels
   plot$guides <- ggplot_colourbar_guides(
     ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions, remapped$outlines
   )
@@ -792,6 +770,11 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   })
   tick_values <- c(tick_values, facet_ticks$values)
   table <- ggplot2::ggplot_gtable(built)
+  if (!single) {
+    for (gid in setdiff(changed_labels, names(axis_styles))) {
+      axis_styles[[gid]] <- list(marks = list())
+    }
+  }
   if (!single && length(axis_styles)) {
     table <- ggplot_reflow_facet_guides(table, layout, plot$theme, state$text_targets,
                                        state$tick_targets, axis_styles)
@@ -801,8 +784,12 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
                                use.names = FALSE)
   list(table = table, layout = layout, stops = remapped$stops,
        guide_ticks = remapped$guide_ticks, axes = axes, layer_grobs = captured$grobs,
-       tick_values = tick_values, hidden_ticks = c(hidden_ticks, facet_ticks$hidden, hidden_colour_text),
-       changed_ticks = facet_ticks$changed, title_changes = remapped$title_changes)
+       tick_values = tick_values,
+       hidden_ticks = c(hidden_ticks, facet_ticks$hidden, hidden_colour_text,
+                        setdiff(default_labels$hidden, names(member_edits)), relabelled$hidden),
+       changed_ticks = union(facet_ticks$changed, changed_labels), member_groups = changed_labels,
+       label_originals = utils::modifyList(default_labels$originals, relabelled$originals),
+       title_changes = remapped$title_changes)
 }
 
 ggplot_colourbar_ticks <- function(table, slots, guide, prefix, title) {
@@ -932,15 +919,23 @@ ggplot_facet_labels <- function(table) {
   targets[!(duplicated(keys) | duplicated(keys, fromLast = TRUE))]
 }
 
-measure_ggplot_text <- function(drawn, target, frame_pt) {
+ggplot_drawn_text <- function(drawn, target) {
   row <- which(drawn$name == target$child & drawn$gPath == target$parent_path)
   if (length(row) != 1L) return(NULL)
   # Nested guides can insert viewports that are not part of their grob paths.
   viewport <- strsplit(drawn$vpPath[[row]], "::", fixed = TRUE)[[1L]]
   if (length(viewport) < 2L || viewport[[1L]] != "ROOT") return(NULL)
-  on.exit(grid::upViewport(0))
   grid::downViewport(do.call(grid::vpPath, as.list(viewport[-1L])), strict = TRUE)
-  text <- grid::grid.get(grid::gPath(target$parent_path, target$child), strict = TRUE)
+  grid::grid.get(grid::gPath(target$parent_path, target$child), strict = TRUE)
+}
+
+measure_ggplot_text <- function(drawn, target, frame_pt) {
+  on.exit(grid::upViewport(0))
+  text <- ggplot_drawn_text(drawn, target)
+  if (!is.null(text)) ggplot_text_grob_bounds(text, frame_pt)
+}
+
+ggplot_text_grob_bounds <- function(text, frame_pt) {
   lower <- grid::deviceLoc(grid::grobX(text, 180), grid::grobY(text, 270), valueOnly = TRUE)
   upper <- grid::deviceLoc(grid::grobX(text, 0), grid::grobY(text, 90), valueOnly = TRUE)
   ggplot_bbox(lower, upper, frame_pt)
@@ -1596,6 +1591,8 @@ ggplot_edit_line <- function(table, target, patch) {
 
 capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   if (!inherits(plot, "ggplot")) stop("The selected object is not a ggplot.")
+  authored_ticks <- plot$facet$tavotto_tick_recipes
+  if (length(authored_ticks)) plot$facet <- plot$facet$tavotto_tick_base
   measured <- with_svg_frame(frame_pt, function(capture) {
     colour_capture <- new.env(parent = emptyenv())
     if (!is.null(palettes)) plot <- ggplot_observe_colour_maps(plot, colour_capture)
@@ -1632,6 +1629,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
         text_targets[[gid]]$font_families <- NULL
       }
     }
+    member_scopes <- ggplot_tick_member_scopes(built, tick_targets, text_targets, panels)
+    tick_members <- ggplot_measure_tick_members(built$layout, text_targets, member_scopes, frame_pt)
     colour_scales <- list()
     if (all(lengths(captured_layers$grobs) > 0L)) {
       colour_scales <- ggplot_colour_scale_targets(
@@ -1667,6 +1666,9 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       table = table,
       text_targets = text_targets,
       tick_targets = tick_targets,
+      tick_member_scopes = member_scopes,
+      tick_members = tick_members,
+      authored_tick_recipes = authored_ticks,
       colour_scales = colour_scales,
       palettes = palettes,
       built = if (rebuild_guides) built,
@@ -1977,6 +1979,7 @@ ggplot_table_for <- function(state, edits) {
   stops <- NULL
   axes <- NULL
   tick_values <- NULL
+  label_originals <- NULL
   axes_target <- state$axes_targets[[ggplot_axes_gid]]
   axes_edits <- edits[[ggplot_axes_gid]]
   aspect <- axes_edits[["aspect"]]
@@ -1994,6 +1997,7 @@ ggplot_table_for <- function(state, edits) {
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
   axis_styles <- ggplot_axis_style_edits(state, edits)
+  member_edits <- ggplot_tick_member_edits(state$tick_member_scopes, edits)
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
   point_edits <- ggplot_guide_point_edits(state, edits)
@@ -2004,14 +2008,14 @@ ggplot_table_for <- function(state, edits) {
   }
   if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
       length(point_edits) || length(axis_changes) || length(facet_changes) || length(grid_edits) || length(theme_edits) ||
-      !is.null(aspect) || length(side_edits)) {
+      !is.null(aspect) || length(side_edits) || length(member_edits) || length(state$authored_tick_recipes)) {
     # A source writeback can move typography into the plot theme while
     # coordinate and guide edits stay in the document. Both scenes must
     # rebuild their guides on the same metrics device as the initial capture.
     guides <- with_svg_frame(state$frame_pt, function(capture) {
       ggplot_guide_table(
         state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-        grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits
+        grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits
       )
     })$value
     table <- guides$table
@@ -2019,6 +2023,7 @@ ggplot_table_for <- function(state, edits) {
     stops <- guides$stops
     axes <- guides$axes
     tick_values <- guides$tick_values
+    label_originals <- guides$label_originals
     if (!identical(table$layout$name, state$table$layout$name)) {
       stop("The native R guide layout changed while formatting.")
     }
@@ -2031,7 +2036,8 @@ ggplot_table_for <- function(state, edits) {
         next
       }
       group <- if (!is.null(target$tick_labels)) target$label
-      current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group)
+      current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group,
+                                    allow_empty = gid %in% guides$member_groups)
       changes_ticks <- !is.null(tick_edits[[gid]]) || gid %in% c(guides$guide_ticks, guides$changed_ticks) ||
         (target$role == "ticks" && substr(gid, 6L, 6L) %in% names(axis_changes))
       label <- guides$title_changes[[gid]] %||% target$label
@@ -2072,7 +2078,9 @@ ggplot_table_for <- function(state, edits) {
       })
     }
   }
-  ordered <- ggplot_series_edit_order(names(edits), c(layer_targets$line_targets, layer_targets$bar_targets))
+  member_ids <- unlist(lapply(member_edits, names), use.names = FALSE)
+  ordered <- ggplot_series_edit_order(setdiff(names(edits), member_ids),
+                                      c(layer_targets$line_targets, layer_targets$bar_targets))
   for (gid in ordered) {
     if (gid == ggplot_axes_gid || !is.null(colour_edits[[gid]]) || gid %in% names(title_edits)) next
     facet <- state$axes_targets[[gid]]
@@ -2123,8 +2131,9 @@ ggplot_table_for <- function(state, edits) {
   if (length(frame_edits)) {
     table <- ggplot_frame_edit(table, axes_target$slot, axes_target$frame$fallback, frame_edits)
   }
-  c(list(table = table, text = text_targets, legends = legend_targets, stops = stops, axes = axes,
-         tick_values = tick_values),
+  c(list(table = table, layout = layout, text = text_targets, legends = legend_targets,
+         stops = stops, axes = axes,
+         tick_values = tick_values, label_originals = label_originals),
     layer_targets)
 }
 
@@ -2212,6 +2221,8 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
     # Measure the actual raster canvas, including any pixel rounding.
     frame_pt <- grDevices::dev.size("in") * 72
     return(list(text = measure_ggplot_targets(scene$text, frame_pt),
+                tick_members = ggplot_measure_tick_members(
+                  scene$layout, scene$text, state$tick_member_scopes, frame_pt, scene$label_originals),
                 legends = measure_ggplot_legends(scene$legends, frame_pt),
                 axes = scene$axes,
                 axes_bbox = measure_ggplot_axes(scene$table, state$axes_targets, frame_pt),
@@ -2234,7 +2245,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   # own paint was left alone so the hit regions follow the rendered layout.
   legend_gids <- names(state$legend_targets)
   facet_changes <- ggplot_facet_axis_edits(state$axes_targets, edits)
-  reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
+  reflow <- length(state$authored_tick_recipes) > 0L ||
+    length(ggplot_tick_member_edits(state$tick_member_scopes, edits)) > 0L ||
+    any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
                                                 ggplot_axis_mark_props, "direction", "visible") %in% names(edit)),
                       logical(1L))) ||
     any(vapply(names(edits), function(gid) {
@@ -2265,6 +2278,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       scene <- ggplot_table_for(state, edits)
       grid::grid.draw(scene$table)
       list(text = measure_ggplot_targets(scene$text[geometry_gids], state$frame_pt),
+           tick_members = if (reflow) ggplot_measure_tick_members(
+             scene$layout, scene$text, state$tick_member_scopes, state$frame_pt, scene$label_originals),
            legends = if (reflow) measure_ggplot_legends(scene$legends, state$frame_pt),
            axes = scene$axes,
            axes_bbox = if (reflow) measure_ggplot_axes(scene$table, state$axes_targets, state$frame_pt),
@@ -2414,6 +2429,9 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         stats::setNames(list(as.list(tick$links)), prop)
       }), common)
     }
+    scope <- state$tick_member_scopes[[gid]]
+    element$tick_member_prefix <- scope$prefix
+    element$tick_member_context <- scope$context
     element$colour_source_anchor <- colour_anchors[[gid]]
     if (target$role == "legend_text") {
       host <- sub("^(legend\\.[^.]+)\\..*$", "\\1", gid)
@@ -2489,7 +2507,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
                         ggplot_facet_axis_changes(target, facet_changes))
   })
   list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
-       elements = c(axes, legends, elements, lines,
+       elements = c(axes, legends, elements,
+                    unname(measured$tick_members %||% state$tick_members), lines,
                     ggplot_point_elements(state, edits, measured$points),
                     ggplot_bar_elements(state, edits, measured$bars),
                     ggplot_ribbon_elements(state, edits, measured$ribbons), colour_scales))

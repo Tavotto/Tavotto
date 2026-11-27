@@ -520,6 +520,79 @@ def _r_colour_mapping_block(name: str, scales: dict[tuple[str, ...], dict]) -> s
     )
 
 
+def _native_tick_label_writes(
+    hot: dict | None, patches: list[dict]
+) -> tuple[list[str], set[tuple[str, str]]]:
+    targets = {
+        element["gid"]: element["source_tick_label"]
+        for element in (hot or {}).get("elements", ())
+        if element["role"] == "ticklabel" and element.get("source_tick_label")
+    }
+    recipes = []
+    written = set()
+    for patch in patches:
+        gid = patch["gid"]
+        plan = targets.get(gid)
+        if patch["prop"] != "text" or not plan or patch["value"] != plan["text"]:
+            continue
+        position, facet, key, value = (
+            plan[field] for field in ("position", "facet", "key", "text")
+        )
+        if position not in ("top", "bottom", "left", "right"):
+            continue
+        if not all(isinstance(item, str) and _r_literal(item) is not None for item in (key, value)):
+            continue
+        owner = "NULL"
+        if facet is not None:
+            if (
+                not isinstance(facet, dict)
+                or not facet
+                or not all(
+                    isinstance(name, str)
+                    and name
+                    and _r_literal(name) is not None
+                    and (
+                        category is None
+                        or isinstance(category, str)
+                        and _r_literal(category) is not None
+                    )
+                    for name, category in facet.items()
+                )
+            ):
+                continue
+            owner = (
+                "list("
+                + ", ".join(
+                    f"{_r_literal(name)} = {_r_literal(category)}"
+                    for name, category in facet.items()
+                )
+                + ")"
+            )
+        recipes.append(
+            f"list(position = {_r_literal(position)}, facet = {owner}, "
+            f"key = {_r_literal(key)}, text = {_r_literal(value)})"
+        )
+        written.add((gid, "text"))
+    return recipes, written
+
+
+def _r_tick_labels_block(name: str, recipes: list[str]) -> str:
+    implementation = nativeggplot.GGPLOT_BRIDGE.with_name("ggplot_tick_source.R")
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *(
+                f"  {line}" if line else ""
+                for line in implementation.read_text(encoding="utf-8").splitlines()
+            ),
+            "  ggplot_with_tick_labels(plot, list(",
+            ",\n".join(f"    {recipe}" for recipe in recipes),
+            "  ))",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
 def _r_coordinate_block(name: str, coordinates: dict, *, mirror_raster: bool) -> str:
     edits = []
     helpers = []
@@ -692,7 +765,8 @@ def build(
     theme_options, theme_writes = _native_theme_writes(axes, patches)
     source_layers, layer_writes = _native_layer_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
-    written = coordinate_writes | theme_writes | layer_writes | colour_writes
+    tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
+    written = coordinate_writes | theme_writes | layer_writes | colour_writes | tick_writes
     residual = []
     skipped = []
     for patch in patches:
@@ -761,7 +835,9 @@ def build(
             {"gid": patch["gid"], "prop": patch["prop"], "reason": "unsupported"}
             for patch in residual
         ]
-    if not (elements or coordinates or theme_options or source_layers or colour_scales):
+    if not (
+        elements or coordinates or theme_options or source_layers or colour_scales or tick_labels
+    ):
         return AdjustedRSource(data, 0, residual, skipped)
 
     name = json.dumps(object_name, ensure_ascii=False)
@@ -785,6 +861,8 @@ def build(
         statements.append(_r_layer_block(name, source_layers))
     if colour_scales:
         statements.append(_r_colour_mapping_block(name, colour_scales))
+    if tick_labels:
+        statements.append(_r_tick_labels_block(name, tick_labels))
     if options:
         args = ",\n".join(options)
         statements.append(

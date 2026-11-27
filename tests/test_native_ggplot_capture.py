@@ -5742,3 +5742,235 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = drv)) +
         if session is not None:
             session.cancel_owned()
         service.reset_projects()
+
+
+def test_native_r_tick_text_follows_a_new_break_through_projection_and_replay(tmp_path):
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Native tick labels"
+    project.mkdir()
+    source = project / "View.R"
+    source.write_text(
+        """
+d <- data.frame(x = c(1, 2, 4, 8, 16), y = c(1, 4, 8, 16, 32))
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+  ggplot2::theme_bw() + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 26))
+""",
+        encoding="utf-8",
+    )
+    group = "axis.x.bottom.ticks"
+
+    def lookup(view, gid):
+        return next(e for e in view["manifest"]["elements"] if e["gid"] == gid)
+
+    def labels(view):
+        return [e for e in view["manifest"]["elements"] if e.get("parent_gid") == group]
+
+    def patch(element, prop, value):
+        return {
+            "gid": element["gid"],
+            "identity": element["identity"],
+            "prop": prop,
+            "value": value,
+        }
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, source.name, rscript)
+        original = _render(app, figure, [])
+        initial = [e["label"] for e in labels(original)]
+        assert initial == ["4", "8", "12", "16"]
+        axis = lookup(original, "axes_0")
+        scope = lookup(original, group)
+        fixed = [
+            patch(scope, "major_mode", "fixed"),
+            patch(scope, "major_values", [2, 4, 8, 11, 16]),
+        ]
+        newly_visible = _render(app, figure, fixed)
+        target = next(e for e in labels(newly_visible) if e["label"] == "11")
+        assert target["role"] == "ticklabel"
+        assert target["bbox"][2] > 0 and target["bbox"][3] > 0
+        edited = patch(target, "text", "Selected mark")
+        hot = _render(app, figure, [*fixed, edited])
+        assert hot["warnings"] == []
+        assert [e["label"] for e in labels(hot)] == ["2", "4", "8", "Selected mark", "16"]
+        assert lookup(hot, target["gid"])["editable"] == [
+            {"prop": "text", "type": "text", "value": "Selected mark", "value_original": "11"}
+        ]
+        assert hot["svg"].count(">Selected mark</text>") == 1
+        assert _render(app, figure, fixed)["svg"] == newly_visible["svg"]
+        log_patches = [*fixed, edited, patch(axis, "xscale", "log")]
+        projected = _render(app, figure, log_patches)
+        assert projected["warnings"] == []
+        assert lookup(projected, target["gid"])["label"] == "Selected mark"
+        crop = _render(app, figure, [*log_patches, patch(axis, "xlim", [1, 6])])
+        assert crop["warnings"] == [] and target["gid"] not in {e["gid"] for e in labels(crop)}
+        assert _render(app, figure, log_patches)["svg"] == projected["svg"]
+
+        blank = _render(app, figure, [*fixed, patch(target, "text", "")])
+        assert lookup(blank, target["gid"])["bbox"] == [-1, -1, 0, 0]
+        width, height = original["manifest"]["size_mm"]
+        panel = {
+            **_panel("r", figure, 5, log_patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        route = "/api/layouts/Individual_ticks"
+        document = {
+            "schema": 3,
+            "project": {"id": "native-tick-members", "name": "Individual ticks"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(f"{route}?target=project", document)[1]["ok"]
+
+    with sidecar_app(project, tmp_path / "cold") as app:
+        replay = _run_ggplot(app, source.name, rscript)
+        _, saved = app.call("/api/layouts/Individual_ticks")
+        persisted = saved["canvases"][0]["objects"][0]["overrides"]
+        assert persisted == log_patches
+        after = _render(app, replay, persisted)
+        assert after["warnings"] == [] and after["svg"] == projected["svg"]
+
+
+@pytest.mark.parametrize("faceted", [False, True], ids=["single", "facet-wrap"])
+def test_native_r_tick_text_writeback_uses_the_actual_side_and_facet(tmp_path, faceted):
+    from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Tick writeback"
+    project.mkdir()
+    script = project / "Tick marks.R"
+    guide = (
+        'ggplot2::facet_wrap(~sample, axes = "all")'
+        if faceted
+        else "ggplot2::scale_x_continuous(breaks = c(1, 4, 8, 16), sec.axis = ggplot2::dup_axis())"
+    )
+    original = f"""\
+d <- expand.grid(x = c(1, 4, 8, 16), sample = c("Early", "Later"))
+d$y <- d$x / 2
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+  {guide} +
+  ggplot2::theme_bw() + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 20))
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Tick_writeback"
+
+    def x_labels(response, text):
+        return [
+            (node.text, node.get("x"), node.get("y"), node.get("transform"))
+            for node in ElementTree.fromstring(response).iter("{http://www.w3.org/2000/svg}text")
+            if node.text in text
+        ]
+
+    def save_label(app, figure, baseline, target, value):
+        patches = [
+            {"gid": target["gid"], "identity": target["identity"], "prop": "text", "value": value}
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        peers = [
+            element
+            for element in hot["manifest"]["elements"]
+            if element["role"] == "ticklabel" and element["label"] == value
+        ]
+        assert [element["gid"] for element in peers] == [target["gid"]]
+        width, height = baseline["manifest"]["size_mm"]
+        panel = {
+            **_panel("r", figure, 5, patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        document = {
+            "schema": 3,
+            "project": {"id": "r-tick-writeback", "name": "Tick writeback"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [panel],
+                    "guides": [],
+                },
+            ],
+        }
+        assert app.call(f"{route}?target=project", document)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Tick_writeback")
+        before = script.read_bytes()
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200 and preview["written"] == 1 and preview["skipped"] == [], preview
+        assert script.read_bytes() == before
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"], saved
+        assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
+        return hot, saved
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        same_text = [
+            el
+            for el in baseline["manifest"]["elements"]
+            if el["role"] == "ticklabel"
+            and el["label"] == "8"
+            and el["parent_gid"].startswith("axis.x.bottom")
+        ]
+        assert len(same_text) == (2 if faceted else 1)
+        target = same_text[-1]
+        value = 'Selected "mark"'
+        expected, saved = save_label(app, figure, baseline, target, value)
+
+    authored = script.read_bytes()
+    assert b"ggplot_with_tick_labels" in authored
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    actual = (project / "standalone.svg").read_text(encoding="utf-8")
+    assert x_labels(actual, {"8", value}) == x_labels(expected["svg"], {"8", value})
+    with sidecar_app(project, tmp_path / "cold") as app:
+        rebuilt = _run_ggplot(app, script.name, rscript)
+        replay = _render(app, rebuilt, [])
+        assert replay["warnings"] == [] and replay["svg"] == expected["svg"]
+        current = next(el for el in replay["manifest"]["elements"] if el["gid"] == target["gid"])
+        assert current["label"] == value and current["identity"] == target["identity"]
+        if faceted:
+            final, saved = save_label(app, rebuilt, replay, current, "Final mark")
+            subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+            actual = (project / "standalone.svg").read_text(encoding="utf-8")
+            assert x_labels(actual, {value, "Final mark"}) == x_labels(final["svg"], {"Final mark"})
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"]
+        assert script.read_bytes() == (authored if faceted else original)
