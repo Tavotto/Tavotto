@@ -217,6 +217,21 @@ def _bracket_case(**over):
 def test_bracket_predicate_wants_a_real_bracket_over_the_panel_width():
     t, before, after = _bracket_case()
     assert predicates.evaluate(t, before, after)["ok"]
+    # 节点顺序反过来（between 按 ne→nw 传）：画出来一样，同样算括号
+    t, before, after = _bracket_case(
+        subpaths=[
+            {
+                "closed": False,
+                "nodes": [
+                    {"p": [1.0, 1.0]},
+                    {"p": [1.0, 0.0]},
+                    {"p": [0.0, 0.0]},
+                    {"p": [0.0, 1.0]},
+                ],
+            }
+        ]
+    )
+    assert predicates.evaluate(t, before, after)["ok"]
     bad = {
         "tiny ellipse": {
             "type": "shape",

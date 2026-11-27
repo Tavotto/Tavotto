@@ -298,7 +298,8 @@ def p_new_bracket(spec: dict, before: list[dict], after: list[dict]) -> Result:
         legs_down = (
             ay > by + 0.5 and dy > cy + 0.5 and _close(ay, dy, 0.05) and _close(by, cy, 0.05)
         )
-        sides = _close(ax, bx, 0.05) and _close(cx, dx, 0.05) and cx > ax + 0.5
+        # 节点顺序 nw→ne 或 ne→nw 画出来一样：只看两条腿各在一端、横向跨度够宽（不管先后）
+        sides = _close(ax, bx, 0.05) and _close(cx, dx, 0.05) and abs(cx - ax) > 0.5
         covers = o["x"] <= x + slack and o["x"] + o["w"] >= x + w - slack
         small = 0 < o["h"] <= max_h and o["y"] + o["h"] <= y + sink
         return legs_down and sides and covers and small
