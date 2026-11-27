@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import execspec, executionfact, figcapture, projectenv, runcodes
 from .manifest_fields import (
+    axis_aspect_field,
     axis_facecolor_field,
     axis_frame_fields,
     axis_grid_fields,
@@ -267,6 +268,11 @@ class GgplotTarget:
                 if field["prop"] in axes["edited"]:
                     field["value_original"] = source
                 fields.append(field)
+        if (aspect := axes.get("aspect")) is not None:
+            field = axis_aspect_field(aspect["current"])
+            if "aspect" in axes["edited"]:
+                field["value_original"] = aspect["original"]
+            fields.append(field)
         for name, field_factory in (("grid", axis_grid_fields), ("frame", axis_frame_fields)):
             group = axes.get(name)
             if group is None:

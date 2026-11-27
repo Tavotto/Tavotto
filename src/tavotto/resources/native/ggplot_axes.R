@@ -62,7 +62,8 @@ ggplot_axes_target <- function(built, table) {
   if (length(slot) != 1L || length(layout$panel_params) != 1L ||
       !identical(class(coord)[[1L]], "CoordCartesian") ||
       length(coord$reverse) != 1L || !coord$reverse %in% c("none", "x", "y", "xy") ||
-      !is.null(coord$ratio) || !identical(coord$clip, "on")) return(NULL)
+      (!is.null(coord$ratio) && !is_positive_ggplot_number(coord$ratio)) ||
+      !identical(coord$clip, "on")) return(NULL)
   kinds <- ggplot_axis_layers(built$plot$layers)
   if (!length(kinds) || anyNA(kinds)) return(NULL)
   panel <- layout$panel_params[[1L]]
@@ -115,8 +116,46 @@ ggplot_axes_target <- function(built, table) {
   })
   context <- list(kinds, built$data, identity_axes, coord$limits)
   if (coord$reverse != "none") context <- c(context, list(coord$reverse))
+  # Fixed Cartesian plots originally only offered grid and frame controls.
+  if (!is.null(coord$ratio)) context <- ggplot_decoration_context(built)
   list(slot = slot, axes = axes, reverse = coord$reverse,
        context = rlang::hash(context))
+}
+
+ggplot_aspect_target <- function(built, table, target) {
+  slot <- ggplot_cartesian_panel_slot(built, table)
+  theme <- built$plot$theme
+  layout <- built$layout
+  if (is.null(slot) || !identical(class(layout$facet)[[1L]], "FacetNull") ||
+      !"ratio" %in% names(formals(ggplot2::coord_cartesian)) ||
+      any(lengths(theme[c("aspect.ratio", "panel.widths", "panel.heights")]) > 0L)) return(target)
+  panel <- layout$panel_params[[1L]]
+  if (!is_positive_ggplot_number(diff(panel$x.range)) ||
+      !is_positive_ggplot_number(diff(panel$y.range))) return(target)
+  ratio <- layout$coord$ratio
+  if (!is.null(ratio) && !is_positive_ggplot_number(layout$coord$aspect(panel))) return(target)
+  target <- ggplot_panel_decoration(built, target, slot)
+  target$aspect <- if (is.null(ratio)) "auto" else as.character(ratio)
+  target
+}
+
+ggplot_edit_aspect <- function(layout, target, value) {
+  if (is.null(target$aspect)) stop("The native R axis aspect is unavailable.")
+  if (!is.character(value) || length(value) != 1L || is.na(value)) {
+    stop("The native R axis aspect must be auto, equal, or a positive number.")
+  }
+  if (value == "auto") {
+    ratio <- NULL
+  } else {
+    ratio <- if (value == "equal") 1 else suppressWarnings(as.numeric(value))
+    if (!is_positive_ggplot_number(ratio)) stop("The native R axis aspect must be positive and finite.")
+  }
+  coord <- ggplot_clone(layout$coord, ratio = ratio)
+  if (!is.null(ratio) && !is_positive_ggplot_number(coord$aspect(layout$panel_params[[1L]]))) {
+    stop("The native R axis aspect cannot be represented at the requested ranges.")
+  }
+  layout$coord <- coord
+  layout
 }
 
 ggplot_axis_edits <- function(target, edits) {
@@ -225,6 +264,9 @@ ggplot_axes_element <- function(target, current, bbox, edits) {
             draggable = FALSE, editable = list(), native_axes = list(
               context = target$context, current = current, original = original,
               edited = as.list(names(edits)),
+              aspect = if (!is.null(target$aspect)) {
+                list(original = target$aspect, current = edits$aspect %||% target$aspect)
+              },
               grid = if (!is.null(target$grid)) {
                 list(original = target$grid$original, edited = edits[intersect(names(edits), ggplot_grid_keys)])
               },
@@ -369,11 +411,14 @@ ggplot_cartesian_panel_slot <- function(built, table) {
       identical(class(layout$coord)[[1L]], "CoordCartesian")) slot
 }
 
+ggplot_decoration_context <- function(built) {
+  # Keep the identity of decoration-only targets already saved by grid editing.
+  list("grid", built$data, built$layout$coord$limits)
+}
+
 ggplot_panel_decoration <- function(built, target, slot) {
   if (!is.null(target)) return(target)
-  # Keep the identity of decoration-only targets already saved by grid editing.
-  list(slot = slot, axes = list(),
-       context = rlang::hash(list("grid", built$data, built$layout$coord$limits)))
+  list(slot = slot, axes = list(), context = rlang::hash(ggplot_decoration_context(built)))
 }
 
 ggplot_grid_target <- function(built, table, target) {

@@ -2545,6 +2545,72 @@ def test_axis_windows_and_transforms_reproject_captured_data_without_recalculati
     _assert_r_probe(tmp_path, AXES_PROBE)
 
 
+ASPECT_PROBE = r"""
+if (!requireNamespace("ggplot2", quietly = TRUE) ||
+    !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
+frame <- c(360, 324)
+values <- data.frame(x = c(1, 2, 4), y = c(1, 2, 3))
+calls <- 0L
+summarize <- function(y) { calls <<- calls + 1L; mean(y) }
+plot <- ggplot2::ggplot(values, ggplot2::aes(x, y)) +
+  ggplot2::stat_summary(fun = summarize, geom = "line") + ggplot2::geom_point()
+capture <- function(plot) adapter$capture_ggplot(plot, frame)
+axes <- function(captured, edit = list()) {
+  m <- adapter$ggplot_manifest(captured$state, "ratio", list(axes_0 = edit))
+  Filter(function(e) identical(e$gid, "axes_0"), m$elements)[[1L]]
+}
+physical_ratio <- function(element) {
+  box <- unlist(element$bbox, use.names = FALSE)
+  box[[4L]] * frame[[2L]] / (box[[3L]] * frame[[1L]])
+}
+patch <- function(edit) list(axes_0 = edit)
+render <- function(captured, edit) adapter$render_ggplot(captured$state, patch(edit))
+auto <- capture(plot)
+before <- axes(auto)
+data <- auto$state$layers
+equal <- axes(auto, list(aspect = "equal"))
+ratio <- axes(auto, list(aspect = "0.5"))
+stopifnot(calls == 3L, identical(auto$state$layers, data),
+          identical(equal$native_axes$aspect, list(original = "auto", current = "equal")),
+          identical(ratio$native_axes$aspect, list(original = "auto", current = "0.5")),
+          identical(before$native_axes$context, equal$native_axes$context),
+          isTRUE(all.equal(physical_ratio(equal), 2 / 3)),
+          isTRUE(all.equal(physical_ratio(ratio), 1 / 3)),
+          !isTRUE(all.equal(physical_ratio(before), physical_ratio(equal))))
+equal_svg <- render(auto, list(aspect = "equal"))
+stopifnot(identical(render(auto, list()), auto$svg),
+          identical(render(auto, list(aspect = "equal")), equal_svg), calls == 3L)
+
+fixed <- capture(plot + ggplot2::coord_fixed(.5))
+old_identity <- rlang::hash(list("grid", fixed$state$layers, fixed$state$built$layout$coord$limits))
+stopifnot(identical(ratio$bbox, axes(fixed)$bbox), identical(render(auto, list(aspect = "0.5")), fixed$svg),
+          identical(axes(fixed)$native_axes$context, old_identity),
+          identical(axes(fixed)$native_axes$aspect$original, "0.5"),
+          identical(render(fixed, list(aspect = "auto")), auto$svg),
+          identical(render(fixed, list()), fixed$svg), calls == 6L)
+combined <- list(aspect = "equal", xlim = c(1, 10), xscale = "log", ylim = c(1, 3), invert_x = TRUE)
+combined_axes <- axes(fixed, combined)
+stopifnot(combined_axes$native_axes$current$x$inverted,
+          combined_axes$native_axes$current$x$mode == "log",
+          isTRUE(all.equal(physical_ratio(combined_axes), 2)), calls == 6L)
+
+hard_layout <- capture(plot + ggplot2::theme(aspect.ratio = .75))
+stopifnot(is.null(axes(hard_layout)$native_axes$aspect),
+          identical(render(hard_layout, list()), hard_layout$svg),
+          inherits(try(render(hard_layout, list(aspect = "auto")), silent = TRUE), "try-error"))
+for (invalid in list("0", "Inf", "-1", "fixed", "1e309", 2, TRUE)) {
+  stopifnot(inherits(try(render(auto, list(aspect = invalid)), silent = TRUE), "try-error"))
+}
+overflow <- combined
+overflow$aspect <- "1e308"
+stopifnot(inherits(try(render(fixed, overflow), silent = TRUE), "try-error"))
+"""
+
+
+def test_ggplot_cartesian_aspect_matches_native_coordinates_without_refitting(tmp_path):
+    _assert_r_probe(tmp_path, ASPECT_PROBE)
+
+
 def test_ggplot_frame_uses_native_borders_and_axis_strokes(tmp_path):
     _assert_r_probe(tmp_path, FRAME_PROBE)
 

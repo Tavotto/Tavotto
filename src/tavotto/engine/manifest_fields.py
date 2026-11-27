@@ -87,6 +87,10 @@ def axis_invert_field(axis: str, inverted: bool) -> dict:
     }
 
 
+def axis_aspect_field(value: str) -> dict:
+    return {"prop": "aspect", "type": "text", "value": value, "group": "数据范围"}
+
+
 def axis_grid_fields(values: dict) -> list[dict]:
     """Major grid visibility by axis and strokes shared by both grid levels."""
     group = "网格与边框"

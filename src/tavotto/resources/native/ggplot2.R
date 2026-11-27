@@ -441,7 +441,7 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
 }
 
 ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-                               grid_edits, theme_edits) {
+                               grid_edits, theme_edits, aspect) {
   built <- state$built
   plot <- built$plot
   if (length(grid_edits)) plot$theme <- ggplot_grid_theme(plot$theme, state$axes_target$grid, grid_edits)
@@ -452,6 +452,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   if (!is.null(remapped)) built$data <- remapped$data
   if (length(axis_changes)) built <- ggplot_project_axes(built, state$axes_target, axis_changes)
   layout <- ggplot_clone(built$layout)
+  if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, state$axes_target, aspect)
   panels <- layout$panel_params
   for (gid in names(guide_strokes)) {
     target <- state$line_targets[[gid]]
@@ -1158,6 +1159,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
     axes_target <- ggplot_frame_target(built, table, axes_target)
     axes_target <- ggplot_background_target(built, table, axes_target)
+    axes_target <- ggplot_aspect_target(built, table, axes_target)
     axes_bbox <- measure_ggplot_axes(table, axes_target, frame_pt)
     has_sized_title <- any(vapply(text_targets, function(text) !is.null(text$title_dimension), logical(1L)))
     rebuild_guides <- has_sized_title || !is.null(axes_target) || length(tick_targets) || length(colour_scales) ||
@@ -1482,11 +1484,12 @@ ggplot_table_for <- function(state, edits) {
   axes <- NULL
   tick_values <- NULL
   axes_edits <- edits[[ggplot_axes_gid]]
+  aspect <- axes_edits[["aspect"]]
   grid_edits <- axes_edits[intersect(names(axes_edits), ggplot_grid_keys)]
   frame_edits <- axes_edits[intersect(names(axes_edits), ggplot_frame_keys)]
   if (length(frame_edits)) ggplot_validate_frame_edits(state$axes_target$frame, frame_edits)
   axis_changes <- ggplot_axis_edits(
-    state$axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits), "facecolor"))])
+    state$axes_target, axes_edits[setdiff(names(axes_edits), c(names(grid_edits), names(frame_edits), "facecolor", "aspect"))])
   layer_targets <- state[c("line_targets", "point_targets", "bar_targets", "ribbon_targets")]
   tick_edits <- Filter(length, lapply(edits, function(edit) edit[intersect(names(edit), ggplot_tick_props)]))
   axis_styles <- ggplot_axis_style_edits(state, edits)
@@ -1498,9 +1501,9 @@ ggplot_table_for <- function(state, edits) {
     theme_edits$panel.background <- ggplot_background_style(state$axes_target$background, axes_edits$facecolor)
   }
   if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
-      length(axis_changes) || length(grid_edits) || length(theme_edits)) {
+      length(axis_changes) || length(grid_edits) || length(theme_edits) || !is.null(aspect)) {
     make_guides <- function() ggplot_guide_table(
-      state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes, grid_edits, theme_edits
+      state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes, grid_edits, theme_edits, aspect
     )
     # Recreate resized text on the same metrics device used by the initial
     # capture, then draw the resulting table on the requested output device.

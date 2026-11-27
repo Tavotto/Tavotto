@@ -89,6 +89,7 @@ from legendmodel import (
 )
 from manifest_fields import (
     AXIS_FRAME_SIDES,
+    axis_aspect_field,
     axis_facecolor_field,
     axis_frame_fields,
     axis_grid_fields,
@@ -4382,12 +4383,7 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
                 ),
                 axis_invert_field("x", ax.xaxis_inverted()),
                 axis_invert_field("y", ax.yaxis_inverted()),
-                {
-                    "prop": "aspect",
-                    "type": "text",
-                    "value": aspect_text(ax),
-                    "group": "数据范围",
-                },
+                axis_aspect_field(aspect_text(ax)),
             ]
         ),
         # 刻度线的四边开关（issue #92）：论文规范常要四边镜像刻度或全部关掉，
