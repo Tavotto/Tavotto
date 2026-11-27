@@ -438,3 +438,25 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
      只试一次，并完再撞上冲突（别处也改过）就照旧打开冲突对话框。磁盘上有别的改动时一切照旧（覆盖 / 另存）。
    （初版做过胶囊「并进来」与对话框「合并并保存」，过了 agy 两轮评审；维护者看过后改成不提示，两处都删掉了。）
 4. 「通知走哪条路」（§五 缺口）：桌面轮询自己的后端，后端读插件写下的撤销留存（同一个数据目录）；插件不需要知道桌面开没开。
+
+## 修订（2026-11-27，第 5 期：`svgimport` 的线端标记与 tspan）
+
+对应 §一 末段与「实证」表里 `svgimport` 的两项缺口；`rendercore/svgimport.py`，0189 的安全边界一条不动（解析仍只经 `parse_svg(tolerant=True)`，
+新代码只读几何与样式、不联网、不读盘；标记引用只在本文件的 id 表里找，引用环由受限解析器先拒）。
+
+1. **简单标记 → 路径的端型**。`marker-start / marker-end`（含 CSS 类里的写法）引用的 `<marker>` 只要满足全部条件，就写成路径的
+   `headStart / headEnd`（`triangle` / `open` / `dot`）与 `headSizeStart / End`（small / medium / large）：标记里只有一个图形（实心等腰三角、
+   三点开口折线、圆）；颜色与线一致（含 `context-stroke`）；`orient` 为 `auto` / `auto-start-reverse` / 固定角度，且尖的朝向与路径端点的离开方向相差 ≤ 15°
+   （所以 `orient="auto"` 的三角放在 `marker-start` 上不换——它朝线里面）；尺寸 = 图形长度 × viewBox 缩放 × （`markerUnits=strokeWidth` 时再乘线宽），
+   与中档帽长（4 × 线宽，圆点按直径 3.4 × 线宽）的比落在 0.5–2.5 才取最近的一档（对数距离），超出就不换。尖不在端点上（参考点在底边中点 / 圆心）时，
+   末段是直线就把端点沿线挪到尖上，末段是曲线就不换。路径是单段开放的 `path / line / polyline`。
+   其余——多个图形、曲线图形、渐变、颜色不同、四边形与不等腰三角、闭合路径、`marker-mid`（有中间顶点时）、组 / `use` 上继承的标记、线没有描边——
+   照旧记 `marker`、整段当图片，并在结果里多一个 `hints: {marker: "…改用 arrow…"}`（只在有建议时才有这个键）。
+2. **tspan 的上下标与局部粗斜**。文字对象本来就有局部样式的表示：`textFormat: "latex"` 时 `text` 按 LaTeX 子集读（0152：`\textbf{}` `\textit{}`
+   `\textsuperscript{}` `\textsubscript{}`），所以不加字段、不动前端。上下标的认法：`baseline-shift` / `vertical-align` 的 `super` / `sub` / 长度，或 tspan 的单值 `dy`
+   （累计，到下一个 `dy` 复位为止；`em` / `%` 按正文字号）配小字号（≤ 正文 0.85 倍）；偏移 ≥ 0.15 倍正文字号才算，> 1 倍就不是上下标。
+   偏了但字号没缩小、`dy` 没复位、多值 `dy`、`dx`、`rotate`、逐字定位等仍记 `text_layout`，**不抹平成错文字**。整段都粗 / 都斜的仍用对象自己的 `bold / italic`。
+   Unicode 上下标（`Ca²⁺`）本来就逐字保留。顺带：文字里字面的 `^ _ \` 在旧标记里会被读成上下标 / 转义，所以含它们的导入文字也走 LaTeX 子集的转义写法。
+3. **`filter` 与 `pattern` 分开测的结论**：整段拒绝的是 **`filter`**——`<filter>` 元素本身是受限解析器的非静态元素，出现就拒（原因码 `unsupported_element`），
+   用不用都一样；**`pattern` 元素单独出现不拒**，只有被 `fill` / `stroke` 引用时才记 `pattern`（也是整段当图片）。两者都不放宽：滤镜是非静态元素，属于 0189 的安全边界；
+   图案填充要另做平铺，不在这一期。

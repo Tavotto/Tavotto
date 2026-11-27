@@ -4,8 +4,10 @@
 2. 几何：单位与 viewBox 换算、变换矩阵烤进锚点、弧换三次贝塞尔（中点落在圆上）、二次曲线精确升三次、S / T 反射、标志位紧写；
 3. 样式：CSS 类 / id / 标签选择器按优先级、style 属性最高、继承、currentColor、渐变（userSpaceOnUse / 比例）、虚线换 pt；
 4. 结构：组（两个以上子对象才成组）、use / defs / symbol、clipPath → 剪切组的蒙版（ADR 0191）；
-5. 文字：字号、粗体、对齐、旋转；做不准的 dx / textPath / 斜切文字 → 不支持；
-6. 兜底：图片 / 蒙版 / 图案 / 标记 / 复杂选择器 / 非静态元素记不支持；编辑器命名空间与无作用 CSS 放行；接口。攻击样例在 `test_svgimport_security.py`。
+5. 文字：字号、粗体、对齐、旋转；做不准的 dx / textPath / 斜切文字 → 不支持；tspan 的上下标（baseline-shift / dy 配小字号）与局部粗斜
+   保留成文字对象的 LaTeX 子集（ADR 0208 第 5 期）；
+6. 线端标记：简单三角 / 开口箭头 / 圆点的 `marker-start / marker-end` → 路径的 `headStart / headEnd`（ADR 0208 第 5 期），别的仍不支持；
+7. 兜底：图片 / 蒙版 / 图案 / 复杂标记 / 复杂选择器 / 非静态元素记不支持；编辑器命名空间与无作用 CSS 放行；接口。攻击样例在 `test_svgimport_security.py`。
 """
 
 from __future__ import annotations
@@ -330,3 +332,348 @@ def test_endpoint(tmp_path):
         "error": "not_svg",
     }
     assert client.post("/api/svg/import", json={}).status_code == 400
+
+
+# ------------------------------------------------------------------ 线端标记 → 端型（ADR 0208 第 5 期）
+def _marker(inner: str, **attrs) -> str:
+    a = {
+        "id": "m",
+        "markerWidth": "4",
+        "markerHeight": "4",
+        "refX": "4",
+        "refY": "2",
+        "orient": "auto",
+    }
+    a.update(attrs)
+    return (
+        "<defs><marker "
+        + " ".join(f'{k}="{v}"' for k, v in a.items())
+        + f">{inner}</marker></defs>"
+    )
+
+
+TRI = '<path d="M0,0 L4,2 L0,4 z"/>'
+HEADS = ("headStart", "headEnd", "headSizeStart", "headSizeEnd")
+
+
+def heads(o: dict) -> dict:
+    return {k: o[k] for k in HEADS if k in o}
+
+
+def test_marker_end_triangle_path_with_orient_auto():
+    r = imp(
+        _marker(TRI) + '<path d="M5 5 L50 5" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    )
+    (o,) = r["objects"]
+    assert r["unsupported"] == {} and "hints" not in r
+    assert heads(o) == {"headEnd": "triangle"}  # 帽长 4 = 4 × 线宽 → 中档，不写档位
+
+
+def test_marker_end_polygon_content_and_diagonal_line():
+    r = imp(
+        _marker('<polygon points="0,0 4,2 0,4"/>')
+        + '<line x1="5" y1="5" x2="50" y2="50" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    )
+    assert r["unsupported"] == {}
+    assert heads(r["objects"][0]) == {"headEnd": "triangle"}
+
+
+def test_marker_units_stroke_width_scales_with_the_line_and_picks_the_size():
+    # markerUnits 缺省 = strokeWidth：线越粗帽越大；帽长 = 4 × 标记单位 × 线宽 → 与线宽无关，档位由 markerWidth 决定
+    body = '<path d="M5 5 L50 5" stroke="#000" stroke-width="{w}" marker-end="url(#m)"/>'
+    small = imp(
+        _marker(TRI, markerWidth="3", markerHeight="3", viewBox="0 0 4 4") + body.format(w=2)
+    )
+    assert heads(small["objects"][0]) == {
+        "headEnd": "triangle",
+        "headSizeEnd": "small",
+    }  # 3/4 × 4 = 3 倍线宽
+    big = imp(_marker(TRI, markerWidth="6", markerHeight="6", viewBox="0 0 4 4") + body.format(w=2))
+    assert heads(big["objects"][0]) == {
+        "headEnd": "triangle",
+        "headSizeEnd": "large",
+    }  # 6 倍线宽 → 1.5 倍
+
+
+def test_marker_units_user_space_on_use_ignores_the_line_width():
+    body = '<path d="M5 5 L50 5" stroke="#000" stroke-width="{w}" marker-end="url(#m)"/>'
+    m = _marker(
+        TRI, markerUnits="userSpaceOnUse", viewBox="0 0 4 4", markerWidth="8", markerHeight="8"
+    )
+    assert heads(imp(m + body.format(w=2))["objects"][0]) == {
+        "headEnd": "triangle"
+    }  # 8 = 4 × 2，中档
+    assert heads(imp(m + body.format(w=1))["objects"][0]) == {
+        "headEnd": "triangle",
+        "headSizeEnd": "large",
+    }
+
+
+def test_marker_size_outside_the_three_steps_is_unsupported():
+    m = _marker(
+        TRI, markerUnits="userSpaceOnUse", viewBox="0 0 4 4", markerWidth="40", markerHeight="40"
+    )
+    r = imp(m + '<path d="M5 5 L50 5" stroke="#000" stroke-width="1" marker-end="url(#m)"/>')
+    assert r["unsupported"] == {"marker": 1}
+
+
+def test_marker_start_needs_the_tip_to_point_away_from_the_line():
+    line = '<path d="M5 5 L50 5" stroke="#000" stroke-width="1" marker-start="url(#m)"/>'
+    # orient=auto：标记的 +x 沿线前进，起点的尖朝线里面 → 不是起点箭头
+    assert imp(_marker(TRI) + line)["unsupported"] == {"marker": 1}
+    # auto-start-reverse：起点反向，尖朝外
+    r = imp(_marker(TRI, orient="auto-start-reverse") + line)
+    assert r["unsupported"] == {} and heads(r["objects"][0]) == {"headStart": "triangle"}
+    # 尖朝 -x 的三角 + orient=auto 同样朝外
+    r = imp(_marker('<path d="M4,0 L0,2 L4,4 z"/>', refX="0") + line)
+    assert r["unsupported"] == {} and heads(r["objects"][0]) == {"headStart": "triangle"}
+
+
+def test_marker_on_both_ends():
+    r = imp(
+        _marker(TRI, orient="auto-start-reverse")
+        + '<path d="M5 5 L50 5" stroke="#000" stroke-width="1" marker-start="url(#m)" marker-end="url(#m)"/>'
+    )
+    assert heads(r["objects"][0]) == {"headStart": "triangle", "headEnd": "triangle"}
+
+
+def test_marker_via_css_class_and_the_shorthand_is_not_accepted_by_the_parser():
+    r = imp(
+        "<style>.a{marker-start:url(#m);marker-end:url(#m)}</style>"
+        + _marker(TRI, orient="auto-start-reverse")
+        + '<path class="a" d="M5 5 L50 5" stroke="#000" stroke-width="1"/>'
+    )
+    assert r["unsupported"] == {}
+    assert heads(r["objects"][0]) == {"headStart": "triangle", "headEnd": "triangle"}
+    # 简写 `marker:` 过不了受限解析器的 CSS 白名单（svgcheck），整段拒绝；安全边界不动
+    short = imp(
+        "<style>.a{marker:url(#m)}</style>"
+        + _marker(TRI)
+        + '<path class="a" d="M5 5 L50 5" stroke="#000"/>'
+    )
+    assert short["objects"] == [] and short["unsupported"]
+
+
+def test_marker_open_arrow_and_dot():
+    line = '<path d="M5 5 L50 5" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    r = imp(_marker('<path d="M0,0 L4,2 L0,4" fill="none" stroke="#000"/>') + line)
+    assert heads(r["objects"][0]) == {"headEnd": "open"}
+    r = imp(
+        _marker('<circle cx="1.7" cy="1.7" r="1.7"/>', refX="1.7", refY="1.7", orient="0") + line
+    )
+    assert r["unsupported"] == {} and r["objects"][0]["headEnd"] == "dot"
+
+
+def test_marker_tip_off_the_endpoint_moves_the_endpoint_to_the_tip():
+    # refX=0：参考点在底边中点、尖在前面 4 个单位 → 路径末端要往前挪 4，尖才落在 SVG 里尖的位置
+    ref_at_tip = imp(
+        _marker(TRI) + '<path d="M0 5 L40 5" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    )
+    ref_at_base = imp(
+        _marker(TRI, refX="0")
+        + '<path d="M0 5 L36 5" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    )
+    a, b = ref_at_tip["objects"][0], ref_at_base["objects"][0]
+    assert b["w"] == pytest.approx(a["w"]) and heads(a) == heads(b) == {"headEnd": "triangle"}
+
+
+@pytest.mark.parametrize(
+    "marker,line",
+    [
+        # 颜色与线不同：端型总是线色
+        (_marker('<path d="M0,0 L4,2 L0,4 z" fill="#f00"/>'), 'stroke="#000"'),
+        # 渐变 / 多个图形 / 曲线 / 四边形 / 不等腰
+        (_marker('<path d="M0,0 L4,2 L0,4 z"/><circle r="1"/>'), 'stroke="#000"'),
+        (_marker('<path d="M0,0 C2,0 4,1 4,2 L0,4 z"/>'), 'stroke="#000"'),
+        (_marker('<path d="M0,0 L4,0 L4,4 L0,4 z"/>'), 'stroke="#000"'),
+        (_marker('<path d="M0,0 L9,0 L0,4 z"/>'), 'stroke="#000"'),
+        # 固定角度的朝向、与线不一致
+        (_marker(TRI, orient="90"), 'stroke="#000"'),
+        # 标记里的图形套了一层组
+        (_marker('<g><path d="M0,0 L4,2 L0,4 z"/></g>'), 'stroke="#000"'),
+    ],
+)
+def test_complex_markers_stay_unsupported_with_a_hint(marker, line):
+    r = imp(marker + f'<path d="M5 5 L50 5" {line} stroke-width="1" marker-end="url(#m)"/>')
+    assert r["unsupported"] == {"marker": 1}
+    assert "arrow" in r["hints"]["marker"]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '<path d="M5 5 L50 5 L50 30" stroke="#000" marker-mid="url(#m)"/>',  # marker-mid
+        '<path d="M5 5 L50 5 L50 30 z" stroke="#000" marker-end="url(#m)"/>',  # 闭合路径：起点终点是同一个顶点
+        '<g marker-end="url(#m)"><path d="M5 5 L50 5" stroke="#000"/></g>',  # 组上的（继承）
+        '<rect width="10" height="10" stroke="#000" marker-end="url(#m)"/>',  # rect 本来就没有标记
+        '<path d="M5 5 L50 5" stroke="none" fill="none" marker-end="url(#m)"/>',  # 线没有描边：端型没有颜色可借
+    ],
+)
+def test_marker_in_unsupported_places_stays_unsupported(line):
+    assert imp(_marker(TRI) + line)["unsupported"] == {"marker": 1}
+
+
+def test_marker_pointing_at_a_missing_id_is_rejected_by_the_parser():
+    r = imp('<path d="M5 5 L50 5" stroke="#000" marker-end="url(#nope)"/>')
+    assert r["unsupported"] == {"external_ref": 1}
+
+
+def test_marker_with_a_curved_last_segment_and_tip_offset_is_unsupported():
+    # 尖不在端点上又要移端点，但末段是曲线：移不了
+    r = imp(
+        _marker(TRI, refX="0")
+        + '<path d="M5 5 C20 5 30 20 50 20" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    )
+    assert r["unsupported"] == {"marker": 1}
+    # 尖在端点上：曲线末段也能换（切线取手柄方向）
+    r = imp(
+        _marker(TRI)
+        + '<path d="M5 5 C20 5 30 20 50 20" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
+    )
+    assert r["unsupported"] == {} and heads(r["objects"][0]) == {"headEnd": "triangle"}
+
+
+# ------------------------------------------------------------------ tspan 的上下标与局部粗斜（ADR 0208 第 5 期）
+def one_text(body: str) -> dict:
+    r = imp(body)
+    assert r["unsupported"] == {}, r["unsupported"]
+    (t,) = r["objects"]
+    return t
+
+
+def runs_of(t: dict):
+    from tavotto import richtext
+
+    return [
+        (r.text, r.script, r.bold, r.italic)
+        for r in richtext.parse_runs(t["text"], t.get("textFormat"))
+    ]
+
+
+def test_tspan_baseline_shift_super_keeps_the_superscript():
+    t = one_text(
+        '<text x="5" y="20" font-size="12">Ca<tspan baseline-shift="super" font-size="8">2+</tspan> ok</text>'
+    )
+    assert t["textFormat"] == "latex" and t["text"] == "Ca\\textsuperscript{2+} ok"
+    assert runs_of(t) == [
+        ("Ca", "", False, False),
+        ("2+", "sup", False, False),
+        (" ok", "", False, False),
+    ]
+
+
+def test_tspan_baseline_shift_keyword_alone_and_subscript():
+    t = one_text('<text x="5" y="20" font-size="12">H<tspan baseline-shift="sub">2</tspan>O</text>')
+    assert runs_of(t) == [
+        ("H", "", False, False),
+        ("2", "sub", False, False),
+        ("O", "", False, False),
+    ]
+
+
+def test_tspan_baseline_shift_length_from_css_class():
+    t = one_text(
+        "<style>.s{baseline-shift:4px;font-size:8px}</style>"
+        '<text x="5" y="20" font-size="12">m<tspan class="s">2</tspan></text>'
+    )
+    assert runs_of(t)[1] == ("2", "sup", False, False)
+
+
+def test_tspan_dy_with_small_font_is_a_script_until_dy_is_reset():
+    t = one_text(
+        '<text x="5" y="20" font-size="12">Ca<tspan dy="-4" font-size="8">2+</tspan><tspan dy="4" font-size="12"> ion</tspan></text>'
+    )
+    assert runs_of(t) == [
+        ("Ca", "", False, False),
+        ("2+", "sup", False, False),
+        (" ion", "", False, False),
+    ]
+    t = one_text(
+        '<text x="5" y="20" font-size="12">x<tspan dy="0.3em" font-size="70%">i</tspan></text>'
+    )
+    assert runs_of(t)[1] == ("i", "sub", False, False)  # dy 向下 = 下标；em / % 按正文字号
+
+
+def test_tspan_script_never_flattens_into_plain_digits():
+    for body in (
+        '<text x="5" y="20" font-size="12">Ca<tspan baseline-shift="super" font-size="8">2+</tspan></text>',
+        '<text x="5" y="20" font-size="12">Ca<tspan dy="-4" font-size="8">2+</tspan></text>',
+    ):
+        assert one_text(body)["text"] != "Ca2+"
+
+
+def test_tspan_shift_that_is_not_a_script_is_unsupported_not_flattened():
+    for body in (
+        '<text x="5" y="20" font-size="12">x<tspan dy="-4">2</tspan></text>',  # 偏了但字号没缩小
+        '<text x="5" y="20" font-size="12">Ca<tspan dy="-4" font-size="8">2+</tspan> ion</text>',  # dy 没复位，后面的字还在抬高
+        '<text x="5" y="20"><tspan dy="1 2">ab</tspan></text>',  # 逐字 dy
+        '<text x="5" y="20" font-size="12">x<tspan baseline-shift="middle">2</tspan></text>',
+        '<text x="5" y="20" font-size="12">x<tspan x="9" dy="-4" font-size="8">2</tspan></text>',  # 新起一段又带 dy
+    ):
+        assert imp(body)["unsupported"] == {"text_layout": 1}, body
+
+
+def test_tspan_local_bold_and_italic():
+    t = one_text(
+        '<text x="5" y="20" font-size="12">a <tspan font-weight="bold">b</tspan> <tspan font-style="italic">c</tspan></text>'
+    )
+    assert t["bold"] is False and t["italic"] is False
+    assert runs_of(t) == [
+        ("a ", "", False, False),
+        ("b", "", True, False),
+        (" ", "", False, False),
+        ("c", "", False, True),
+    ]
+
+
+def test_tspan_whole_text_bold_stays_on_the_object_and_script_still_kept():
+    t = one_text(
+        '<text x="5" y="20" font-size="12" font-weight="bold">E<tspan baseline-shift="super" font-size="8">2</tspan></text>'
+    )
+    assert t["bold"] is True
+    assert runs_of(t) == [("E", "", False, False), ("2", "sup", False, False)]
+
+
+def test_tspan_nested_bold_and_script():
+    t = one_text(
+        '<text x="5" y="20" font-size="12">a<tspan font-weight="bold">b<tspan baseline-shift="super" font-size="8">c</tspan>d</tspan></text>'
+    )
+    assert runs_of(t) == [
+        ("a", "", False, False),
+        ("b", "", True, False),
+        ("c", "sup", True, False),
+        ("d", "", True, False),
+    ]
+
+
+def test_unicode_superscripts_are_kept_as_text():
+    t = one_text('<text x="5" y="20">Ca²⁺ 10⁻³</text>')
+    assert t["text"] == "Ca²⁺ 10⁻³" and "textFormat" not in t
+
+
+def test_literal_markup_characters_in_imported_text_are_escaped():
+    # `_{on}` 在旧标记里是下标：字面的下划线花括号要走 LaTeX 子集的转义，显示出来仍是 k_{on}
+    t = one_text('<text x="5" y="20">k_{on} a\\b</text>')
+    assert t["textFormat"] == "latex" and runs_of(t) == [("k_{on} a\\b", "", False, False)]
+
+
+def test_plain_text_objects_are_unchanged():
+    t = one_text('<text x="5" y="20">Hello <tspan>world</tspan></text>')
+    assert t["text"] == "Hello world" and "textFormat" not in t
+
+
+# ------------------------------------------------------------------ filter 与 pattern 分开测（ADR 0208 修订）
+def test_filter_element_alone_rejects_the_whole_svg_even_when_unused():
+    # `<filter>` 是受限解析器的非静态元素：只要出现就整段拒绝（原因码 unsupported_element），不用也拒
+    r = imp(
+        '<defs><filter id="f"><feGaussianBlur stdDeviation="2"/></filter></defs><rect width="10" height="10"/>'
+    )
+    assert r["objects"] == [] and r["unsupported"] == {"unsupported_element": 1}
+
+
+def test_pattern_element_alone_is_fine_only_a_pattern_fill_is_unsupported():
+    pat = '<defs><pattern id="p" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="2" height="2"/></pattern></defs>'
+    unused = imp(pat + '<rect width="10" height="10" fill="#f00"/>')
+    assert unused["unsupported"] == {} and len(unused["objects"]) == 1
+    used = imp(pat + '<rect width="10" height="10" fill="url(#p)"/>')
+    assert used["unsupported"] == {"pattern": 1}
