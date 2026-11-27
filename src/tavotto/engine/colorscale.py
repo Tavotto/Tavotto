@@ -41,6 +41,27 @@ def colorbar_outline_fields(visible, width):
     ]
 
 
+def colorbar_tick_fields(size, color):
+    """Shared presentation of continuous colorbar tick typography."""
+    fields = []
+    if size is not None:
+        fields.append(
+            {
+                "prop": "tick_fontsize",
+                "type": "number",
+                "value": round(float(size), 2),
+                "min": 3,
+                "max": 200,
+                "step": 0.5,
+                "unit": "pt",
+                "group": "刻度",
+            }
+        )
+    if color is not None:
+        fields.append({"prop": "tick_color", "type": "color", "value": color, "group": "刻度"})
+    return fields
+
+
 def color_scale_fields(vmin, vmax, cmap_field, *, precision=4):
     """Project and inspector properties for a continuous data-to-color scale."""
     span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0

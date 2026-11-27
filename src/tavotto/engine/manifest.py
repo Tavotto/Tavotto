@@ -71,7 +71,13 @@ from colorbarmodel import (
     scale_gids,
     scale_siblings,
 )
-from colorscale import CMAPS, color_scale_fields, colorbar_layout_fields, colorbar_outline_fields
+from colorscale import (
+    CMAPS,
+    color_scale_fields,
+    colorbar_layout_fields,
+    colorbar_outline_fields,
+    colorbar_tick_fields,
+)
 from legendmodel import (
     _LEGEND_HANDLE_MARKER_OPTS,
     _LEGEND_LOCS,
@@ -3567,22 +3573,7 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
             if colorbar_mapping_is_live(cb)
             else []
         ),
-        {
-            "prop": "tick_fontsize",
-            "type": "number",
-            "value": round(_cb_tick_fontsize(p), 2),
-            "min": 3,
-            "max": 200,
-            "step": 0.5,
-            "unit": "pt",
-            "group": "刻度",
-        },
-        {
-            "prop": "tick_color",
-            "type": "color",
-            "value": to_hex(_cb_tick_color(p)),
-            "group": "刻度",
-        },
+        *colorbar_tick_fields(_cb_tick_fontsize(p), to_hex(_cb_tick_color(p))),
         *colorbar_outline_fields(cb.outline.get_visible(), cb.outline.get_linewidth()),
         {"prop": "visible", "type": "bool", "value": bool(cb.ax.get_visible())},
     ]

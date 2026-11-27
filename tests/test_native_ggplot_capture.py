@@ -3117,6 +3117,129 @@ stopifnot(is.null(fields(no_guide)$original$ticks_bottom), is.null(fields(no_gui
 """
 
 
+FACET_TICK_APPEARANCE_PROBE = r"""
+d <- expand.grid(x=c(1,5,10), area=c("A","B"), col=c("X","Y","Z"))
+d$y <- as.integer(d$area) * 8 + d$x
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+  ggplot2::facet_grid(ggplot2::vars(area), ggplot2::vars(col), scales = "free", axes="all") +
+  ggplot2::scale_x_continuous(guide=ggplot2::guide_axis(minor.ticks=TRUE)) +
+  ggplot2::theme_bw(base_size=8)
+frame <- c(432, 315)
+capture <- adapter$capture_ggplot(plot, frame)
+state <- capture$state
+gid <- "axis.x.bottom.ticks.axes_5"
+peer <- "axis.x.bottom.ticks.axes_2"
+axis_gid <- "axes_5"
+changes <- stats::setNames(list(list(
+  major_mode = "fixed", major_values = list(1,5,10), format = "%.2f", minor_visible = TRUE, minor_mode = "step",
+  minor_step = 2, minor_format = "%.1f",
+  fontsize = 18, color="#800080", weight = "bold", style = "italic", rotation = 20,
+  direction = "inout", length = 7, width = 1.1, minor_length = 3, minor_width = 0.6
+), list(xlim = c(1,10), invert_x = TRUE)), c(gid, axis_gid))
+fields <- function(manifest,gid) {
+  entry <- Filter(function(element) identical(element$gid,gid), manifest$elements)[[1L]]
+  stats::setNames(lapply(entry$editable, `[[`, "value"), vapply(entry$editable,`[[`,character(1L),"prop"))
+}
+marks <- function(scene, gid) {
+  row <- state$text_targets[[gid]]$slots[[1L]]
+  grob <- scene$table$grobs[[row]]$children[["axis"]]
+  slot <- which(vapply(grob$grobs, function(g) g$name == "ticks", logical(1)))
+  lapply(unname(grob$grobs[[slot]]$children), function(g) {
+    list(x = as.numeric(g$x), y = grid::convertY(g$y, "bigpts", valueOnly=TRUE), pg = g$gp)
+  })
+}
+expected_labels <- as.list(c("1.00","5.00","10.00","2.0","4.0","6.0","8.0"))
+hot <- adapter$ggplot_manifest(state, "probe", changes)
+chosen <- fields(hot,gid)
+also <- fields(hot,peer)
+stopifnot(chosen$fontsize == 18, chosen$rotation == 20,
+          chosen$weight == "bold", chosen$style == "italic", chosen$direction == "inout",
+          also$fontsize == 6.4, also$rotation == 0,
+          chosen$format == "%.2f", also$format == "%.2f",
+          chosen$minor_format == "%.1f", also$minor_format == "%.1f")
+rendered <- adapter$with_svg_frame(frame, function(device) {
+  scene <- adapter$ggplot_table_for(state, changes)
+  stopifnot(identical(scene$text[[gid]]$tick_labels, expected_labels),
+            identical(scene$text[[peer]]$tick_labels, expected_labels),
+            scene$text[[gid]]$paint$fontsize == 18, scene$text[[peer]]$paint$fontsize == 6.4)
+  first <- marks(scene, gid)
+  second <- marks(scene, peer)
+  stopifnot(length(first) == 2L, length(second) == 2L,
+            isTRUE(all.equal(first[[1L]]$x, second[[1L]]$x)),
+            isTRUE(all.equal(diff(range(first[[1L]]$y)), 7)), isTRUE(all.equal(diff(range(first[[2L]]$y)), 3)),
+            first[[1L]]$pg$lwd > second[[1L]]$pg$lwd, first[[2L]]$pg$lwd != second[[2L]]$pg$lwd)
+  scene
+})$value
+after <- adapter$render_ggplot(state, changes)
+stopifnot(!identical(capture$svg, after), identical(capture$svg, adapter$render_ggplot(state)))
+hidden <- changes
+hidden[[gid]]$visible <- FALSE
+invisible_ticks <- adapter$ggplot_manifest(state, "probe", hidden)
+stopifnot(!fields(invisible_ticks,gid)$visible, fields(invisible_ticks,peer)$visible)
+cat("Verified numerical minor labels on both facets, with local typography, mark direction and sizes, visibility and exact undo.\n")
+"""
+
+
+COLOURBAR_APPEARANCE_PROBE = r"""
+library(ggplot2)
+palette <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector=FALSE)
+d <- data.frame(x=1:8, y=c(4,5,4,5,2,4,6,8), z=1:8, group=rep(c("A","B"),4L))
+plot <- ggplot(d,aes(x,y)) + geom_point(aes(colour=z,shape=group),size=3) +
+  geom_tile(data=d,aes(x=x,y=0,fill=z),width=.8,height=.6) +
+  scale_colour_gradient(name="Continuous", breaks=c(1,4,8), low="#303080",high="#FA9520",
+                        guide=guide_colourbar(order=1)) +
+  scale_fill_gradient(name="Reference", breaks=c(1,6,8),low="#112244",high="#50EEDD",
+                      guide=guide_colourbar(order=2)) +
+  scale_shape_discrete(name="Category", guide=guide_legend(order=3)) + theme_bw(base_size=8)
+capture <- adapter$capture_ggplot(plot, c(420,300), palette)
+state <- capture$state
+elements <- state$colour_scales
+target_gid <- names(Filter(function(target) target$title == "Continuous",elements))[[1L]]
+target <- elements[[target_gid]]
+target_index <- target$index
+edits <- stats::setNames(list(list(orientation="horizontal",extend="both",vmin=2,vmax=7,cmap="plasma")),target_gid)
+
+patch <- edits
+patch[[target_gid]]$label <- "Measured signal"
+patch[[target_gid]]$tick_fontsize <- 17
+patch[[target_gid]]$tick_color <- "#782280"
+fields <- function(scene, gid) {
+  element <- Filter(function(x) identical(x$gid, gid), scene$elements)[[1L]]
+  element$color_scale$appearance
+}
+style <- adapter$ggplot_manifest(state, "appearance", patch)
+selected <- fields(style, target_gid)
+other_gid <- names(Filter(function(target) target$title == "Reference",elements))[[1L]]
+other <- fields(style, other_gid)
+stopifnot(selected$current$label == "Measured signal", selected$original$label == "Continuous",
+          selected$current$tick_fontsize == 17, selected$current$tick_color == "#782280",
+          identical(other$current, other$original))
+image <- function(updates) paste(adapter$render_ggplot(state,updates),collapse="\n")
+styled <- image(patch)
+stopifnot(grepl("Measured signal",styled,fixed=TRUE),
+          grepl("font-size: 17.00px;fill: #782280",styled,fixed=TRUE))
+hidden <- patch
+hidden[[target_gid]]$visible <- FALSE
+invisible_svg <- image(hidden)
+stopifnot(!grepl("Measured signal", invisible_svg, fixed=TRUE),
+          grepl(">Reference</text>",invisible_svg,fixed=TRUE),
+          grepl(">Category</text>",invisible_svg,fixed=TRUE),
+          !fields(adapter$ggplot_manifest(state,"appearance",hidden),target_gid)$current$visible)
+stopifnot(identical(image(list()),paste(capture$svg,collapse="\n")))
+renamed <- patch
+renamed[[target_gid]]$label <- ""
+empty_svg <- image(renamed)
+stopifnot(!grepl("Measured signal",empty_svg,fixed=TRUE),
+          !grepl(">Continuous</text>",empty_svg,fixed=TRUE))
+narrow <- patch
+narrow[[paste0(target_gid,".ticks")]] <- list(color = "#223344")
+modified <- fields(adapter$ggplot_manifest(state,"appearance",narrow),target_gid)
+stopifnot(modified$current$tick_color == "#223344",
+          grepl("font-size: 17.00px;fill: #223344",image(narrow),fixed=TRUE))
+cat("Verified shared R colourbar state, title rename and clear, fonts, hide and explicit undo through the adapter.\n")
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -3133,6 +3256,14 @@ def _assert_r_probe(tmp_path, program):
         pytest.skip("Rscript does not have ggplot2 and svglite")
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / "Rplots.pdf").exists()
+
+
+def test_faceted_tick_locators_are_shared_and_appearance_is_local(tmp_path):
+    _assert_r_probe(tmp_path, FACET_TICK_APPEARANCE_PROBE)
+
+
+def test_native_colorbar_appearance_keeps_other_guides_and_mappings(tmp_path):
+    _assert_r_probe(tmp_path, COLOURBAR_APPEARANCE_PROBE)
 
 
 def test_ggplot_title_colors_keep_the_built_layers_and_replay(tmp_path):

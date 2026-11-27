@@ -100,24 +100,60 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL, group_lab
        paint = text$gp, color = color, face = face, rotation = rotation, role = role)
 }
 
-ggplot_axis_ticks <- function(table) {
-  # A panel can repeat guides within a facet. Start with the four unique outer
-  # cells of a single-panel plot, even when a cell contains a secondary axis.
-  if (length(which(grepl("^panel(-[0-9]+-[0-9]+)?$", table$layout$name))) != 1L) return(list())
+
+ggplot_axis_ticks <- function(table, axes_targets) {
   targets <- list()
-  for (gid in rownames(ggplot_axis_tick_fields)) {
-    side <- ggplot_axis_tick_fields[gid, ]
-    slot <- which(table$layout$name == side[[1L]])
-    if (length(slot) != 1L) next
-    axis <- table$grobs[[slot]]$children[["axis"]]
-    if (!inherits(axis, "gtable")) next
-    labels <- which(vapply(axis$grobs, inherits, logical(1L), "titleGrob"))
-    if (length(labels) != 1L) next
-    label <- paste0(side[[2L]], "\u8f74\u523b\u5ea6\u6587\u5b57")
-    targets[[gid]] <- ggplot_text_target(table, list(slot, "axis", labels), "ticks",
-                                         group_label = label)
+  duplicate <- character()
+  facets <- Filter(function(target) !is.null(target$panel), axes_targets)
+  if (!length(facets) && sum(grepl("^panel(-[0-9]+-[0-9]+)?$", table$layout$name)) != 1L) return(list())
+  panel_slots <- vapply(facets, `[[`, integer(1L), "slot")
+  cells <- table$layout[panel_slots, ]
+  rownames(cells) <- names(facets)
+  for (base in rownames(ggplot_axis_tick_fields)) {
+    side <- ggplot_axis_tick_fields[base, ]
+    position <- strsplit(base, ".", fixed = TRUE)[[1L]][[3L]]
+    dimension <- substring(base, 6L, 6L)
+    slots <- if (length(facets)) which(startsWith(table$layout$name, paste0(side[[1L]], "-"))) else {
+      which(table$layout$name == side[[1L]])
+    }
+    for (slot in slots) {
+      panel_gid <- if (length(facets)) ggplot_tick_facet_owner(table$layout[slot, ], cells, position) else {
+        ggplot_axes_gid
+      }
+      if (is.null(panel_gid) ||
+          (length(facets) && is.null(facets[[panel_gid]]$groups[[dimension]]))) next
+      axis <- table$grobs[[slot]]$children[["axis"]]
+      if (!inherits(axis, "gtable")) next
+      labels <- which(vapply(axis$grobs, inherits, logical(1L), "titleGrob"))
+      if (length(labels) != 1L) next
+      label <- paste0(side[[2L]], "\u8f74\u523b\u5ea6\u6587\u5b57")
+      target <- ggplot_text_target(table, list(slot, "axis", labels), "ticks", group_label = label)
+      if (is.null(target)) next
+      gid <- if (length(facets)) paste0(base, ".", panel_gid) else base
+      if (!is.null(targets[[gid]])) duplicate <- c(duplicate, gid)
+      target$panel <- facets[[panel_gid]]$panel %||% 1L
+      target$axes_gid <- panel_gid
+      target$position <- position
+      target$axis_base <- base
+      if (length(facets)) {
+        target$label <- paste(target$label, paste(facets[[panel_gid]]$facet, collapse = " / "), sep = " \u00b7 ")
+      }
+      targets[[gid]] <- target
+    }
   }
-  targets
+  targets[setdiff(names(targets), duplicate)]
+}
+
+ggplot_tick_facet_owner <- function(cell, panels, position) {
+  across <- if (position %in% c("top", "bottom")) c("l", "r") else c("t", "b")
+  same <- panels[[across[[1L]]]] == cell[[across[[1L]]]] &
+    panels[[across[[2L]]]] == cell[[across[[2L]]]]
+  gap <- switch(position, bottom = cell$t - panels$b, top = panels$t - cell$b,
+                left = panels$l - cell$r, right = cell$l - panels$r)
+  matching <- which(same & gap > 0L)
+  if (!length(matching)) return(NULL)
+  nearest <- matching[gap[matching] == min(gap[matching])]
+  if (length(nearest) == 1L) rownames(panels)[nearest]
 }
 
 ggplot_legend_entries <- function(table, slots, guide, prefix, title) {
@@ -268,14 +304,14 @@ ggplot_axis_marks <- function(guide, params, theme, spacing) {
        minor_editable = isTRUE(params$minor.ticks) || !is.null(spacing$minor))
 }
 
-ggplot_tick_targets <- function(built, targets, colourbar_titles) {
+ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) {
   result <- list()
   for (gid in names(targets)) {
     target <- targets[[gid]]
     if (is.null(target$tick_labels)) next
-    if (target$role == "ticks" && length(built$layout$panel_params) == 1L) {
-      position <- strsplit(gid, ".", fixed = TRUE)[[1L]][[3L]]
-      panel <- built$layout$panel_params[[1L]]
+    if (target$role == "ticks") {
+      position <- target$position
+      panel <- built$layout$panel_params[[target$panel]]
       guides <- panel$guides
       matches <- which(vapply(guides$params, function(p) identical(p$position, position), logical(1L)))
       if (length(matches) == 1L && identical(class(guides$guides[[matches]])[[1L]], "GuideAxis")) {
@@ -290,13 +326,15 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
         size <- target$paint$fontsize * ggplot_text_cex(target$paint)
         angle_from_theme <- is.null(params$angle) || inherits(params$angle, "waiver")
         spacing <- if (!is.null(values)) ggplot_axis_spacing(built, panel, params, values)
-        suffix <- substring(gid, 6L, nchar(gid) - 6L)
+        suffix <- substring(target$axis_base, 6L, nchar(target$axis_base) - 6L)
         marks <- if (identical(class(built$layout$coord)[[1L]], "CoordCartesian") &&
                      (is.null(params$theme_suffix) || identical(params$theme_suffix, suffix))) {
           ggplot_axis_marks(guides$guides[[matches]], params, built$plot$theme, spacing)
         }
         result[[gid]] <- list(
-          kind = "axis", index = matches, values = values, spacing = spacing, marks = marks,
+          kind = "axis", index = matches, panel = target$panel, position = position,
+          axes_gid = target$axes_gid, axis = params$aesthetic, values = if (target$axes_gid == ggplot_axes_gid || length(axes_targets[[target$axes_gid]]$groups[[params$aesthetic]])) values,
+          spacing = spacing, marks = marks,
           size = if (is_positive_ggplot_number(size)) size,
           rotation = if (angle_from_theme) target$rotation
         )
@@ -311,12 +349,27 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles) {
       }
     }
   }
+  members <- list()
+  for (gid in names(result)) {
+    tick <- result[[gid]]
+    axes <- axes_targets[[tick$axes_gid %||% ggplot_axes_gid]]
+    group <- if (length(tick$axis) == 1L) axes$groups[[tick$axis]]
+    if (is.null(group) || is.null(tick$values)) next
+    scope <- paste(tick$axis, group, sep = "/")
+    result[[gid]]$scope <- scope
+    members[[scope]] <- c(members[[scope]], gid)
+  }
+  for (peers in members) {
+    if (length(peers) < 2L) next
+    result[[peers[[1L]]]]$links <- peers[-1L]
+    for (gid in peers[-1L]) result[[gid]]$links <- peers[[1L]]
+  }
   result
 }
 
 ggplot_number_formats <- c("auto", "%.0f", "%.1f", "%.2f", "%.3f", "%g", "sci")
 ggplot_major_tick_props <- c("major_mode", "major_step", "major_values")
-ggplot_minor_tick_props <- c("minor_visible", "minor_mode", "minor_step")
+ggplot_minor_tick_props <- c("minor_visible", "minor_mode", "minor_step", "minor_format")
 ggplot_tick_props <- c("format", ggplot_major_tick_props, ggplot_minor_tick_props)
 
 ggplot_format_guide <- function(params, format, values) {
@@ -324,16 +377,48 @@ ggplot_format_guide <- function(params, format, values) {
     stop("Invalid native R tick number format.")
   }
   if (format != "auto") {
-    labels <- if (format == "sci") {
-      sprintf("%.2e", values)
-    } else {
-      sprintf(format, values)
-    }
+    labels <- ggplot_number_labels(format, values)
     if (".type" %in% names(params$key)) {
       params$key$.label[params$key$.type == "major"] <- labels
     } else params$key$.label <- labels
   }
   params
+}
+
+
+ggplot_number_labels <- function(format, values) {
+  sprintf(if (format == "sci") "%.2e" else format, values)
+}
+
+ggplot_format_minor_labels <- function(panel, params, format) {
+  if (is.null(format)) return(params)
+  if (!is.character(format) || length(format) != 1L || !format %in% c("none", ggplot_number_formats)) {
+    stop("Invalid native R minor tick number format.")
+  }
+  if (format == "none" || !isTRUE(params$minor.ticks) || !length(params$key$.type)) {
+    return(params)
+  }
+  minor <- params$key$.type == "minor"
+  if (!any(minor)) return(params)
+  scale <- panel[[params$aesthetic]]$scale
+  breaks <- params$key$.value[minor]
+  labels <- if (format == "auto") scale$get_labels(breaks) else {
+    ggplot_number_labels(format, scale$get_transformation()$inverse(breaks))
+  }
+  params$key$.label[minor] <- as.character(labels)
+  params$tavotto_minor_labels <- TRUE
+  params
+}
+
+ggplot_guide_with_minor_labels <- function(guide, params) {
+  if (!isTRUE(params$tavotto_minor_labels)) return(guide)
+  if (inherits(guide, "TavottoMinorLabelAxis")) return(guide)
+  ggplot2::ggproto("TavottoMinorLabelAxis", guide, build_labels = function(key, elements, params) {
+    # Draw the same guide, with all of its labels. The native tick builder
+    # continues to see the original key and uses separate styles per tier.
+    key$.type <- NULL
+    guide$build_labels(key, elements, params)
+  })
 }
 
 ggplot_watch_layer <- function(layer, index, captured) {
@@ -444,7 +529,132 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
     panel <- revised$panel
     params <- revised$params
   }
+  params <- ggplot_format_minor_labels(panel, params, edit$minor_format)
   list(panel = panel, params = ggplot_format_guide(params, format, values))
+}
+
+
+
+ggplot_facet_tick_edits <- function(state, edits) {
+  groups <- list()
+  for (gid in names(edits)) {
+    target <- state$tick_targets[[gid]]
+    if (is.null(target$scope)) next
+    fields <- edits[[gid]][intersect(names(edits[[gid]]), ggplot_tick_props)]
+    current <- groups[[target$scope]]
+    for (prop in names(fields)) {
+      if (!is.null(current[[prop]]) && !identical(current[[prop]], fields[[prop]])) {
+        stop("Shared native R locators cannot take conflicting values.")
+      }
+      current[[prop]] <- fields[[prop]]
+    }
+    groups[[target$scope]] <- current
+  }
+  groups
+}
+
+ggplot_facet_tick_layout <- function(state, panels, edits, coord, axis_changes) {
+  values <- list()
+  changed <- hidden <- character()
+  tick_targets <- Filter(function(tick) identical(tick$kind, "axis") && tick$axes_gid != ggplot_axes_gid,
+                         state$tick_targets)
+  if (!length(tick_targets)) return(list(panels = panels))
+  owners <- vapply(tick_targets, function(tick) paste(tick$axes_gid, tick$position, sep = "/"), character(1L))
+  gids <- as.list(stats::setNames(names(owners), owners))
+  for (axes_gid in names(state$axes_targets)) {
+    axes <- state$axes_targets[[axes_gid]]
+    if (is.null(axes$panel)) next
+    panel <- panels[[axes$panel]]
+    guides <- panel$guides
+    params <- guides$params
+    original <- state$built$layout$panel_params[[axes$panel]]
+    for (index in seq_along(params)) {
+      param <- params[[index]]
+      axis <- param$aesthetic
+      if (length(axis) != 1L || !axis %in% ggplot_axis_names) next
+      gid <- gids[[paste(axes_gid, param$position, sep = "/")]]
+      group <- axes$groups[[axis]]
+      projected <- !is.null(group) && length(axis_changes[[axis]][[group]]) > 0L
+      patch <- if (!is.null(group)) edits[[paste(axis, group, sep = "/")]]
+      if (!is.null(patch)) {
+        target <- if (!is.null(gid)) tick_targets[[gid]] else {
+          initial <- original$guides$params[[index]]
+          baseline <- ggplot_axis_key_values(original, initial)
+          list(values = baseline, spacing = ggplot_axis_spacing(state$built, original, initial, baseline))
+        }
+        result <- ggplot_edit_axis_guide(panel, param, target, patch, coord, projected)
+        panel <- result$panel
+        params[[index]] <- result$params
+      }
+      if (!is.null(gid) && (projected || length(patch))) {
+        changed <- c(changed, gid)
+        values[[gid]] <- ggplot_axis_key_values(panel, params[[index]])
+        if (!length(values[[gid]])) hidden <- c(hidden, gid)
+      }
+    }
+    panel$guides <- ggplot_clone(guides, params = params,
+                                guides = Map(ggplot_guide_with_minor_labels, guides$guides, params))
+    panels[[axes$panel]] <- panel
+  }
+  list(panels = panels, values = values, changed = changed, hidden = hidden)
+}
+
+
+ggplot_style_axis_guide <- function(guide, params, gid, style) {
+  name <- ggplot_axis_tick_theme_names[[gid]]
+  elements <- style$marks
+  if (identical(style$visible, FALSE)) {
+    elements[[name]] <- ggplot2::element_blank()
+  } else if (any(lengths(style[c("size", "face", "rotation", "family")]) > 0L)) {
+    elements[[name]] <- ggplot2::element_text(
+      size = style$size, face = style$face, angle = style$rotation, family = style$family
+    )
+  }
+  patch <- do.call(ggplot2::theme, elements)
+  params$theme <- if (is.null(params$theme)) patch else params$theme + patch
+  if (identical(style$direction, "inout")) guide <- ggplot_centered_axis_guide()
+  list(guide = ggplot_guide_with_minor_labels(guide, params), params = params)
+}
+
+ggplot_reflow_facet_guides <- function(table, layout, theme, text_targets, tick_targets, styles) {
+  rows <- cols <- integer()
+  for (gid in names(styles)) {
+    text <- text_targets[[gid]]
+    tick <- tick_targets[[gid]]
+    slot <- text$slots[[1L]]
+    position <- tick$position
+    cell <- table$layout[slot, ]
+    horizontal <- position %in% c("top", "bottom")
+    if ((horizontal && cell$t != cell$b) || (!horizontal && cell$l != cell$r)) {
+      stop("The native R facet guide no longer occupies its captured layout track.")
+    }
+    view <- layout$panel_params[[tick$panel]]
+    guides <- view$guides
+    index <- which(vapply(guides$params, function(p) identical(p$position, position), logical(1L)))
+    if (length(index) != 1L) stop("The native R facet guide has changed.")
+    styled <- ggplot_style_axis_guide(guides$guides[[index]], guides$params[[index]], text$axis_base,
+                                      styles[[gid]])
+    guide_list <- guides$guides
+    params <- guides$params
+    guide_list[[index]] <- styled$guide
+    params[[index]] <- styled$params
+    view$guides <- ggplot_clone(guides, guides = guide_list, params = params)
+    draw <- if (horizontal) layout$coord$render_axis_h else layout$coord$render_axis_v
+    table$grobs[[slot]] <- draw(view, theme)[[position]]
+    if (horizontal) rows <- c(rows, cell$t) else cols <- c(cols, cell$l)
+  }
+  # ggplot2 reserves one track for all guides at this position. Keep its
+  # widest or tallest guide as the track's allocation after local edits.
+  axes <- grepl("^axis-[btlr]-", table$layout$name)
+  for (row in unique(rows)) {
+    slots <- axes & table$layout$t == row & table$layout$b == row
+    table$heights[row] <- do.call(grid::unit.pmax, lapply(table$grobs[slots], grid::grobHeight))
+  }
+  for (col in unique(cols)) {
+    slots <- axes & table$layout$l == col & table$layout$r == col
+    table$widths[col] <- do.call(grid::unit.pmax, lapply(table$grobs[slots], grid::grobWidth))
+  }
+  table
 }
 
 ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
@@ -494,6 +704,10 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     index <- target$index
     edit <- edits[[gid]]
     if (target$kind == "axis") {
+      if (target$axes_gid != ggplot_axes_gid) {
+        if (is.null(target$scope)) stop("The native R facet tick group is unavailable.")
+        next
+      }
       params <- axis_params[[index]]
       edited <- ggplot_edit_axis_guide(panels[[1L]], params, target, edit, layout$coord,
                                       projected = params$aesthetic %in% names(axis_changes))
@@ -514,24 +728,16 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
       guide_params[[index]] <- ggplot_format_guide(guide_params[[index]], edit$format, values)
     }
   }
-  for (gid in names(axis_styles)) {
+  single <- length(panels) == 1L
+  for (gid in if (single) names(axis_styles) else character()) {
     index <- state$tick_targets[[gid]]$index
     style <- axis_styles[[gid]]
-    text <- style[c("size", "face", "rotation", "family")]
-    elements <- style$marks
-    if (identical(style$visible, FALSE)) {
-      elements[[ggplot_axis_tick_theme_names[[gid]]]] <- ggplot2::element_blank()
-      hidden_ticks <- c(hidden_ticks, gid)
-    } else if (any(!vapply(text, is.null, logical(1L)))) {
-      elements[[ggplot_axis_tick_theme_names[[gid]]]] <- ggplot2::element_text(
-        size = style$size, face = style$face, angle = style$rotation, family = style$family
-      )
-    }
-    patch <- do.call(ggplot2::theme, elements)
-    theme <- axis_params[[index]]$theme
-    axis_params[[index]]$theme <- if (is.null(theme)) patch else theme + patch
-    if (identical(style$direction, "inout")) axis_guides[[index]] <- ggplot_centered_axis_guide()
+    styled <- ggplot_style_axis_guide(axis_guides[[index]], axis_params[[index]],
+                                      state$text_targets[[gid]]$axis_base, style)
+    axis_params[[index]] <- styled$params
+    axis_guides[[index]] <- styled$guide
   }
+  hidden_ticks <- union(hidden_ticks, names(Filter(function(style) identical(style$visible, FALSE), axis_styles)))
   if (length(panels) == 1L) {
     if (length(side_edits)) {
       sides <- ggplot_apply_tick_sides(axes_target$tick_sides, side_edits, axis_guides,
@@ -539,9 +745,14 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
       axis_params <- sides$params
       axis_guides <- sides$guides
     }
+    axis_guides <- Map(ggplot_guide_with_minor_labels, axis_guides, axis_params)
     panels[[1L]]$guides <- ggplot_clone(panels[[1L]]$guides, params = axis_params, guides = axis_guides)
     layout$panel_params <- panels
   }
+  facet_ticks <- ggplot_facet_tick_layout(
+    state, panels, ggplot_facet_tick_edits(state, edits), layout$coord, facet_changes
+  )
+  layout$panel_params <- facet_ticks$panels
   plot$guides <- ggplot_colourbar_guides(
     ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions, remapped$outlines
   )
@@ -561,12 +772,23 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     changes <- if (gid == ggplot_axes_gid) axis_changes else ggplot_facet_axis_changes(target, facet_changes)
     if (length(changes)) ggplot_axes_values(layout, target, changes)
   }) |> stats::setNames(names(state$axes_targets))
-  tick_values <- lapply(Filter(function(tick) !is.null(tick$spacing), state$tick_targets), function(tick) {
+  tick_values <- lapply(Filter(function(tick) !is.null(tick$spacing) && tick$axes_gid == ggplot_axes_gid,
+                              state$tick_targets), function(tick) {
     ggplot_axis_key_values(panels[[1L]], axis_params[[tick$index]])
   })
-  list(table = ggplot2::ggplot_gtable(built), layout = layout, stops = remapped$stops,
+  tick_values <- c(tick_values, facet_ticks$values)
+  table <- ggplot2::ggplot_gtable(built)
+  if (!single && length(axis_styles)) {
+    table <- ggplot_reflow_facet_guides(table, layout, plot$theme, state$text_targets,
+                                       state$tick_targets, axis_styles)
+  }
+  table <- ggplot_hide_colourbars(table, remapped$hidden)
+  hidden_colour_text <- unlist(lapply(remapped$hidden, function(target) c(target$title_gid, target$ticks_gid)),
+                               use.names = FALSE)
+  list(table = table, layout = layout, stops = remapped$stops,
        guide_ticks = remapped$guide_ticks, axes = axes, layer_grobs = captured$grobs,
-       tick_values = tick_values, hidden_ticks = hidden_ticks)
+       tick_values = tick_values, hidden_ticks = c(hidden_ticks, facet_ticks$hidden, hidden_colour_text),
+       changed_ticks = facet_ticks$changed, title_changes = remapped$title_changes)
 }
 
 ggplot_colourbar_ticks <- function(table, slots, guide, prefix, title) {
@@ -716,7 +938,7 @@ ggplot_bbox <- function(lower, upper, frame_pt) {
     (upper$x - lower$x) / frame_in[[1L]], (upper$y - lower$y) / frame_in[[2L]])
 }
 
-ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
+ggplot_text_targets <- function(table, frame_pt, colourbar_titles, axes_targets) {
   targets <- list()
   families <- ggplot_installed_text_fonts()
   for (gid in names(ggplot_text_slots)) {
@@ -733,7 +955,7 @@ ggplot_text_targets <- function(table, frame_pt, colourbar_titles) {
     }
     targets[[gid]] <- target
   }
-  ticks <- lapply(ggplot_axis_ticks(table), function(target) {
+  ticks <- lapply(ggplot_axis_ticks(table, axes_targets), function(target) {
     target$font_families <- families
     target
   })
@@ -1287,12 +1509,22 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     table <- ggplot2::ggplot_gtable(layout_input)
     grid::grid.newpage()
     grid::grid.draw(table)
+    panels <- ggplot_cartesian_panels(table, built$layout)
+    axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
+    axes_target <- ggplot_frame_target(built, table, axes_target)
+    axes_target <- ggplot_background_target(built, table, axes_target)
+    axes_target <- ggplot_aspect_target(built, table, axes_target)
+    axes_target <- ggplot_tick_side_target(built, table, axes_target)
+    facet_axis_groups <- if (!is.null(panels) && !panels$single) ggplot_facet_axis_groups(built, panels$cells)
+    axes_targets <- if (is.null(axes_target)) {
+      ggplot_faceted_axes_targets(built, table, panels, facet_axis_groups)
+    } else stats::setNames(list(axes_target), ggplot_axes_gid)
     colourbar_titles <- ggplot_colourbar_titles(built)
-    text_targets <- ggplot_text_targets(table, frame_pt, colourbar_titles)
+    text_targets <- ggplot_text_targets(table, frame_pt, colourbar_titles, axes_targets)
     tick_targets <- if (all(lengths(captured_layers$grobs) > 0L)) {
-      ggplot_tick_targets(built, text_targets, colourbar_titles)
+      ggplot_tick_targets(built, text_targets, colourbar_titles, axes_targets)
     }
-    for (gid in intersect(names(text_targets), names(ggplot_axis_tick_theme_names))) {
+    for (gid in names(Filter(function(text) text$role == "ticks", text_targets))) {
       if (is.null(tick_targets[[gid]]$size)) {
         text_targets[[gid]]$face <- NULL
         text_targets[[gid]]$font_families <- NULL
@@ -1307,19 +1539,9 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       colour_scales <- colour_scales[names(bounds)]
       for (gid in names(colour_scales)) colour_scales[[gid]]$bbox <- bounds[[gid]]
     }
-    panels <- ggplot_cartesian_panels(table, built$layout)
     line_targets <- ggplot_line_targets(built, panels, captured_layers$grobs)
     line_geometry <- measure_ggplot_lines(table, line_targets, frame_pt)
     line_targets <- line_targets[names(line_geometry)]
-    axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
-    axes_target <- ggplot_frame_target(built, table, axes_target)
-    axes_target <- ggplot_background_target(built, table, axes_target)
-    axes_target <- ggplot_aspect_target(built, table, axes_target)
-    axes_target <- ggplot_tick_side_target(built, table, axes_target)
-    facet_axis_groups <- if (!is.null(panels) && !panels$single) ggplot_facet_axis_groups(built, panels$cells)
-    axes_targets <- if (is.null(axes_target)) {
-      ggplot_faceted_axes_targets(built, table, panels, facet_axis_groups)
-    } else stats::setNames(list(axes_target), ggplot_axes_gid)
     axes_bbox <- measure_ggplot_axes(table, axes_targets, frame_pt)
     has_sized_title <- any(vapply(text_targets, function(text) !is.null(text$title_dimension), logical(1L)))
     rebuild_guides <- has_sized_title || length(axes_targets) || length(tick_targets) || length(colour_scales) ||
@@ -1543,7 +1765,8 @@ ggplot_centered_axis_guide <- function() {
 
 ggplot_axis_style_edits <- function(state, edits) {
   result <- list()
-  for (gid in intersect(names(edits), names(ggplot_axis_tick_theme_names))) {
+  axis_ticks <- Filter(function(tick) identical(tick$kind, "axis"), state$tick_targets)
+  for (gid in intersect(names(edits), names(axis_ticks))) {
     edit <- edits[[gid]]
     face_props <- intersect(names(ggplot_face_options), names(edit))
     font_props <- c(face_props, intersect("fontfamily", names(edit)))
@@ -1552,7 +1775,7 @@ ggplot_axis_style_edits <- function(state, edits) {
     visible <- edit$visible
     target <- state$text_targets[[gid]]
     tick <- state$tick_targets[[gid]]
-    marks <- ggplot_axis_mark_theme(gid, tick$marks, edit)
+    marks <- ggplot_axis_mark_theme(target$axis_base, tick$marks, edit)
     if (is.null(size) && !length(font_props) && is.null(rotation) && !length(marks) &&
         is.null(visible)) next
     if (!is.null(visible) &&
@@ -1698,9 +1921,10 @@ ggplot_table_for <- function(state, edits) {
       }
       group <- if (!is.null(target$tick_labels)) target$label
       current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group)
-      changes_ticks <- !is.null(tick_edits[[gid]]) || gid %in% guides$guide_ticks ||
+      changes_ticks <- !is.null(tick_edits[[gid]]) || gid %in% c(guides$guide_ticks, guides$changed_ticks) ||
         (target$role == "ticks" && substr(gid, 6L, 6L) %in% names(axis_changes))
-      if (is.null(current) || !identical(target$label, current$label) ||
+      label <- guides$title_changes[[gid]] %||% target$label
+      if (is.null(current) || !identical(label, current$label) ||
           (!changes_ticks && !identical(target$tick_labels, current$tick_labels))) {
         stop("The native R text layout changed while formatting.")
       }
@@ -1899,8 +2123,10 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   reflow <- any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
                                                 ggplot_axis_mark_props, "direction", "visible") %in% names(edit)),
                       logical(1L))) ||
-    any(vapply(edits[intersect(names(edits), names(ggplot_axis_tick_theme_names))],
-               function(edit) any(names(edit) %in% c("rotation", names(ggplot_face_options))), logical(1L))) ||
+    any(vapply(names(edits), function(gid) {
+      identical(state$tick_targets[[gid]]$kind, "axis") &&
+        any(names(edits[[gid]]) %in% c("rotation", names(ggplot_face_options)))
+    }, logical(1L))) ||
     any(names(edits) %in% c(ggplot_axes_gid, legend_gids, names(state$colour_scales))) ||
     length(facet_changes) > 0L || length(ggplot_guide_stroke_edits(state, edits)) > 0L
   line_edits <- any(names(edits) %in% names(state$line_targets))
@@ -1947,16 +2173,25 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       stop("The edited native R text could not be measured.")
     }
   }
+  facet_ticks <- ggplot_facet_tick_edits(state, edits)
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
     edit <- edits[[gid]]
     tick <- state$tick_targets[[gid]]
+    if (!is.null(tick$scope)) {
+      edit <- utils::modifyList(edit %||% list(), facet_ticks[[tick$scope]] %||% list())
+    }
     patch <- ggplot_text_edit(edit, tick)
-    color <- if (is.null(patch$color)) target$color else patch$color
+    guide_color <- if (endsWith(gid, ".colourbar.ticks")) {
+      edits[[sub("\\.ticks$", "", gid)]]$tick_color
+    }
+    color <- patch$color %||% guide_color %||% target$color
     painted <- ggplot_text_paint(target, patch)
     face <- painted$face
     bbox <- if (is.null(measured$text[[gid]])) target$bbox else measured$text[[gid]]$bbox
-    editable <- list(list(prop = "color", type = "color", value = color))
+    color_field <- list(prop = "color", type = "color", value = color)
+    if (!is.null(guide_color)) color_field$value_original <- target$color
+    editable <- list(color_field)
     if (identical(tick$kind, "axis")) {
       field <- list(prop = "visible", type = "bool", value = edit$visible %||% TRUE)
       if (!is.null(edit$visible)) field$value_original <- TRUE
@@ -2049,11 +2284,17 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     )
     if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
     if (!is.null(target$tick_labels)) element$tick_labels <- target$tick_labels
-    if (identical(tick$kind, "axis") && ggplot_axes_gid %in% names(state$axes_targets)) {
-      params <- state$built$layout$panel_params[[1L]]$guides$params[[tick$index]]
-      if (length(params$aesthetic) == 1L && params$aesthetic %in% c("x", "y")) {
-        element$tick_host <- list(axes_gid = ggplot_axes_gid, axis = params$aesthetic)
-      }
+    if (identical(tick$kind, "axis") && tick$axes_gid %in% names(state$axes_targets) &&
+        length(tick$axis) == 1L && tick$axis %in% ggplot_axis_names) {
+      element$tick_host <- list(axes_gid = tick$axes_gid, axis = tick$axis)
+      if (!is.null(tick$scope)) element$tick_context <- state$axes_targets[[tick$axes_gid]]$context
+    }
+    if (length(tick$links)) {
+      common <- intersect(ggplot_tick_props, vapply(editable, `[[`, character(1L), "prop"))
+      element$alias_pure <- as.list(common)
+      element$alias_covers <- stats::setNames(lapply(common, function(prop) {
+        stats::setNames(list(as.list(tick$links)), prop)
+      }), common)
     }
     if (target$role == "legend_text") {
       host <- sub("^(legend\\.[^.]+)\\..*$", "\\1", gid)

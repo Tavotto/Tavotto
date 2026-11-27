@@ -825,7 +825,12 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert edited_scale["bbox"][2] * R_FRAME_PT[0] > edited_scale["bbox"][3] * R_FRAME_PT[1]
         assert {
             field["prop"]: field["value"] for field in edited_scale["editable"]
-        } == R_COLOR_SCALE
+        } == R_COLOR_SCALE | {
+            "label": "City mileage",
+            "tick_color": "#000000",
+            "tick_fontsize": 8.8,
+            "visible": True,
+        }
         _, mpl_bar_patches = _series_patches(mpl_baseline, "bar_series", BAR_PAINT)
         r_bars, r_bar_patches = _series_patches(with_minor, "bar_series", BAR_PAINT)
         mpl_errors, mpl_error_patches = _series_patches(mpl_baseline, "errorbar", ERRORBAR_PAINT)

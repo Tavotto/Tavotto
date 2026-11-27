@@ -410,6 +410,10 @@ ggplot_minor_tick_fields <- function(defaults, edit) {
     list(prop = "minor_mode", type = "enum", value = edit$minor_mode %||% "auto",
          options = as.list(options), strict_options = TRUE)
   )
+  format <- list(prop = "minor_format", type = "enum", value = edit$minor_format %||% "none",
+                 options = as.list(c("none", ggplot_number_formats)), strict_options = TRUE)
+  if (!is.null(edit$minor_format)) format$value_original <- "none"
+  fields[[length(fields) + 1L]] <- format
   if (!is.null(edit$minor_visible)) fields[[1L]]$value_original <- defaults$visible
   if (!is.null(edit$minor_mode)) fields[[2L]]$value_original <- "auto"
   if (!is.null(defaults$step)) {

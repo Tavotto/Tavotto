@@ -274,12 +274,15 @@ class GgplotTarget:
                 continue
             legend_title = element.pop("legend_title", None)
             tick_labels = element.pop("tick_labels", None)
+            tick_context = element.pop("tick_context", None)
             if legend_title is not None or tick_labels is not None:
                 # Use the owning guide or the observed labels as part of the target identity.
                 context = [element["gid"]]
                 if legend_title is not None:
                     context.append(legend_title)
                 context.append(tick_labels if tick_labels is not None else element["label"])
+                if tick_context is not None:
+                    context.append(tick_context)
                 element["identity"] = (
                     _CONTEXTUAL_TEXT_IDENTITY_PREFIX
                     + hashlib.sha256(json.dumps(context).encode("utf-8")).hexdigest()[:16]
@@ -427,7 +430,11 @@ class GgplotTarget:
 
     @staticmethod
     def annotate_color_scale(element: dict, scale: dict) -> None:
-        from .colorscale import colorbar_layout_fields, colorbar_outline_fields
+        from .colorscale import (
+            colorbar_layout_fields,
+            colorbar_outline_fields,
+            colorbar_tick_fields,
+        )
 
         fields = colorbar_layout_fields(scale["orientation"], scale["extend"])
         for field in fields:
@@ -446,6 +453,22 @@ class GgplotTarget:
                 if (prop := field["prop"]) in edited:
                     field["value_original"] = original[prop]
                 fields.append(field)
+        if (appearance := scale.get("appearance")) and (current := appearance["current"]):
+            old = appearance["original"]
+            additional = colorbar_tick_fields(
+                current.get("tick_fontsize"), current.get("tick_color")
+            )
+            for prop, type_ in (("label", "text"), ("visible", "bool")):
+                if prop in current:
+                    additional.append({"prop": prop, "type": type_, "value": current[prop]})
+            for field in additional:
+                prop = field["prop"]
+                if old[prop] != field["value"]:
+                    field["value_original"] = old[prop]
+            fields.extend(additional)
+            if "tick_color" in current and (ticks_gid := appearance.get("ticks_gid")):
+                element["alias_covers"] = {"tick_color": {"color": [ticks_gid]}}
+                element["alias_pure"] = ["tick_color"]
         element["editable"] = fields
         element["colorbar_reversed"] = scale["reversed"]
         element["identity"] = _COLOR_SCALE_IDENTITY_PREFIX + scale["context"]

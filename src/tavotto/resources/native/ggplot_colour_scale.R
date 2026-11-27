@@ -267,8 +267,31 @@ ggplot_colour_scale_targets <- function(built, table, text_targets, titles, maps
       mapping <- list(index = meta$index, title = label, host = item$host, slots = item$slots,
                       context = context)
     }
+    appearance <- list(visible = TRUE)
+    title_gid <- paste0(prefix, ".title")
+    ticks_gid <- paste0(gid, ".ticks")
+    title <- text_targets[[title_gid]]
+    ticks <- text_targets[[ticks_gid]]
+    if (!is.null(title)) {
+      appearance$label <- title$label
+    } else if (is.null(params$title) || inherits(params$title, "waiver") ||
+               identical(params$title, "")) {
+      appearance$label <- ""
+      title_gid <- NULL
+    }
+    if (is.null(ticks)) {
+      local <- ggplot_colourbar_ticks(table, item$slots, item$guide, prefix, label)
+      ticks <- local[[ticks_gid]]
+      ticks_gid <- NULL
+    }
+    if (!is.null(ticks)) {
+      appearance$tick_color <- ticks$color
+      size <- ticks$paint$fontsize * ggplot_text_cex(ticks$paint)
+      if (is_positive_ggplot_number(size)) appearance$tick_fontsize <- round(size, 2L)
+    }
     targets[[gid]] <- c(mapping, list(orientation = meta$orientation, can_extend = meta$can_extend,
-                                    reversed = meta$reversed, outline = meta$outline))
+                                    reversed = meta$reversed, outline = meta$outline,
+                                    appearance = appearance, title_gid = title_gid, ticks_gid = ticks_gid))
   }
   for (gid in setdiff(names(mappings), names(targets))) {
     targets[[gid]] <- c(mappings[[gid]], list(can_extend = FALSE))
@@ -332,8 +355,61 @@ ggplot_palette <- function(catalog, name) {
   }
 }
 
+
+ggplot_colourbar_appearance <- function(target, edit) {
+  appearance <- edit[intersect(names(edit), c("label", "tick_color", "tick_fontsize", "visible"))]
+  if (!all(names(appearance) %in% names(target$appearance))) {
+    stop("The requested native R colourbar appearance is unavailable.")
+  }
+  valid <- vapply(names(appearance), function(prop) {
+    value <- appearance[[prop]]
+    switch(prop,
+      label = is.character(value) && length(value) == 1L && !is.na(value),
+      tick_color = is.character(value) && length(value) == 1L && !is.na(value) &&
+        grepl("^#[0-9A-Fa-f]{6}$", value),
+      tick_fontsize = is_positive_ggplot_number(value) && value >= 3 && value <= 200,
+      visible = is.logical(value) && length(value) == 1L && !is.na(value)
+    )
+  }, logical(1L))
+  if (!all(valid)) stop("Invalid native R colourbar appearance.")
+  appearance
+}
+
+ggplot_style_colourbar <- function(params, edit) {
+  if (!is.null(edit$label)) params$title <- if (nzchar(edit$label)) edit$label else " "
+  if (!is.null(edit$tick_fontsize) || !is.null(edit$tick_color)) {
+    text <- ggplot2::element_text(size = edit$tick_fontsize, colour = edit$tick_color)
+    patch <- ggplot2::theme(legend.text = text)
+    params$theme <- if (is.null(params$theme)) patch else params$theme + patch
+  }
+  params
+}
+
+ggplot_hide_colourbars <- function(table, targets) {
+  slots <- unique(vapply(targets, function(target) target$slots[[1L]], integer(1L)))
+  blank <- function(grob) grid::nullGrob(name = grob$name)
+  for (slot in slots) {
+    box <- table$grobs[[slot]]
+    guides <- Filter(function(target) target$slots[[1L]] == slot, targets)
+    indices <- vapply(guides, function(target) target$slots[[2L]], integer(1L))
+    for (index in indices) {
+      guide <- box$grobs[[index]]
+      guide$grobs <- lapply(guide$grobs, blank)
+      box$grobs[[index]] <- guide
+    }
+    all_guides <- which(box$layout$name == "guides")
+    if (setequal(indices, all_guides)) {
+      remainder <- setdiff(seq_along(box$grobs), indices)
+      box$grobs[remainder] <- lapply(box$grobs[remainder], blank)
+    }
+    table$grobs[[slot]] <- box
+  }
+  table
+}
+
 ggplot_colour_scale_state <- function(target, edit, catalog) {
-  if (!all(names(edit) %in% c("vmin", "vmax", "cmap", "orientation", "extend", ggplot_colourbar_outline_keys))) {
+  if (!all(names(edit) %in% c("vmin", "vmax", "cmap", "orientation", "extend", ggplot_colourbar_outline_keys,
+                           "label", "tick_fontsize", "tick_color", "visible"))) {
     stop("Invalid native R colour scale edit.")
   }
   original_extend <- if (target$can_extend) "neither"
@@ -374,7 +450,8 @@ ggplot_colour_scale_state <- function(target, edit, catalog) {
   if (!is.null(name) && (!is.character(name) || length(name) != 1L ||
                         !name %in% names(catalog$palettes))) stop("Unknown Tavotto palette.")
   list(limits = limits, cmap = name, range_changed = !identical(limits, target$limits),
-       orientation = orientation, extend = extend, original_extend = original_extend, outline = outline)
+       orientation = orientation, extend = extend, original_extend = original_extend, outline = outline,
+       appearance = ggplot_colourbar_appearance(target, edit))
 }
 
 ggplot_remap_colour_scales <- function(state, edits, guide_params) {
@@ -386,6 +463,9 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
   directions <- list()
   extensions <- list()
   outlines <- list()
+  appearances <- list()
+  names_changed <- list()
+  hidden <- list()
   guide_ticks <- character()
   for (gid in names(edits)) {
     target <- state$colour_scales[[gid]]
@@ -397,6 +477,11 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
       extensions[[target$index]] <- selection$extend
     }
     if (length(selection$outline)) outlines[[target$index]] <- selection$outline
+    if (length(selection$appearance)) appearances[[target$index]] <- selection$appearance
+    if (!is.null(target$title_gid) && !is.null(selection$appearance$label)) {
+      names_changed[[target$title_gid]] <- if (nzchar(selection$appearance$label)) selection$appearance$label else " "
+    }
+    if (identical(selection$appearance$visible, FALSE)) hidden[[gid]] <- target
     if (!selection$range_changed && is.null(selection$cmap)) next
     scale <- target$scale
     scale <- ggplot_clone(scale)
@@ -434,15 +519,24 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
     }
   }
   for (key in names(directions)) guide_params[[key]]$direction <- directions[[key]]
+  for (key in names(appearances)) guide_params[[key]] <- ggplot_style_colourbar(guide_params[[key]], appearances[[key]])
   list(data = data, changed = unique(changed), guides = guide_params, ticks = ticks,
-       guide_ticks = guide_ticks, stops = stops, extensions = extensions, outlines = outlines)
+       guide_ticks = guide_ticks, stops = stops, extensions = extensions, outlines = outlines,
+       title_changes = names_changed, hidden = hidden)
 }
 
 ggplot_colour_scale_elements <- function(state, edits, measured, stops) {
   lapply(names(state$colour_scales), function(gid) {
     target <- state$colour_scales[[gid]]
     selection <- ggplot_colour_scale_state(target, edits[[gid]], state$palettes)
-    bbox <- if (is.null(measured)) target$bbox else measured[[gid]]
+    appearance <- utils::modifyList(target$appearance %||% list(), selection$appearance %||% list())
+    narrow_color <- if (!is.null(target$ticks_gid)) edits[[target$ticks_gid]]$color
+    if (!is.null(narrow_color) && "tick_color" %in% names(appearance)) {
+      appearance$tick_color <- narrow_color
+    }
+    bbox <- if (identical(appearance$visible, FALSE)) c(-1, -1, 0, 0) else {
+      if (is.null(measured)) target$bbox else measured[[gid]]
+    }
     if (is.null(bbox)) stop("The native R colour bar could not be measured.")
     source <- target$stops
     current <- if (is.null(stops[[gid]])) source else stops[[gid]]
@@ -460,6 +554,7 @@ ggplot_colour_scale_elements <- function(state, edits, measured, stops) {
            reversed = isTRUE(target$reversed),
            layout_edited = as.list(intersect(names(edits[[gid]]), c("orientation", "extend"))),
            layout_original = list(orientation = target$orientation, extend = selection$original_extend),
+           appearance = list(original = target$appearance, current = appearance, ticks_gid = target$ticks_gid),
            outline = if (!is.null(target$outline)) {
              original <- target$outline
              original$outline_width <- round(original$outline_width, 2L)
