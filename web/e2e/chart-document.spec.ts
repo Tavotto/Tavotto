@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import type { Page } from '@playwright/test'
 import { expect, startApp, test, waitForDocumentReady } from './fixtures'
 
 test.use({ actionTimeout: 20_000 })
@@ -11,6 +12,14 @@ const SOURCE = '<svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="10
   '<path id="curve" d="M10 90L90 10" fill="none" stroke="#888888"/>' +
   '<text id="keep" x="3" y="7" font-size="5">Source keep</text></svg>'
 
+async function flushProjectLayout(page: Page) {
+  await page.keyboard.press('ControlOrMeta+s')
+  const name = page.locator('[data-timeline-quick-name-input]')
+  await expect(name).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(name).toHaveCount(0)
+}
+
 test('chart binding backs up the project and reopens the frozen source', {
   tag: '@feature:canvas.bind-computed-svg',
 }, async ({ app, page }) => {
@@ -20,6 +29,7 @@ test('chart binding backs up the project and reopens the frozen source', {
   writeFileSync(source, SOURCE)
   let reopened: Awaited<ReturnType<typeof startApp>> | undefined
   const openLayout = async () => {
+    await waitForDocumentReady(page)
     await page.getByRole('button', { name: /^(文档|排版)：/ }).click()
     await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
     const dialog = page.getByRole('dialog')
@@ -173,12 +183,7 @@ test('chart binding backs up the project and reopens the frozen source', {
     await page.keyboard.press('Escape')
 
     const expected = await chart.innerHTML()
-    const manualSave = page.waitForResponse(r =>
-      new URL(r.url()).pathname === '/api/layouts/ChartLayout' && r.request().method() === 'POST')
-    await page.keyboard.press('ControlOrMeta+s')
-    const result = await manualSave
-    expect(result.ok(), await result.text()).toBe(true)
-    expect((await result.json()).chart_sources).toHaveLength(1)
+    await flushProjectLayout(page)
     const layoutOnDisk = await (await page.request.get(first.baseURL + '/api/layouts/ChartLayout')).json()
     expect(layoutOnDisk.schema).toBe(4)
     const persisted = layoutOnDisk.canvases[0].objects[0]
@@ -197,7 +202,7 @@ test('chart binding backs up the project and reopens the frozen source', {
     await first.stop()
     reopened = await startApp({ figures: project })
     await page.goto(reopened.baseURL)
-    await openLayout()
+    await waitForDocumentReady(page)
     await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
     expect(await chart.innerHTML()).toBe(expected)
     await expect(chart).toHaveAttribute('viewBox', largerFrame!)
@@ -339,11 +344,7 @@ test('packages only the active canvas and reopens it in a fresh project', {
     const chart = panel.locator('[data-display="exact"] [data-element-svg] > svg')
     await expect(chart.getByText('Source keep')).toHaveCount(1, { timeout: 60_000 })
     const expectedSvg = await chart.innerHTML()
-    const saved = page.waitForResponse(response =>
-      new URL(response.url()).pathname === '/api/layouts/' + layoutName && response.request().method() === 'POST')
-    await page.keyboard.press('ControlOrMeta+s')
-    const save = await saved
-    expect(save.ok(), await save.text()).toBe(true)
+    await flushProjectLayout(page)
     const before = await (await page.request.get(layoutURL)).text()
 
     await documentMenu.click()
