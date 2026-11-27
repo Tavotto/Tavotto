@@ -83,15 +83,35 @@ def test_bad_token_is_rejected_and_the_real_child_still_gets_through(
     认证失败就关掉监听等于把 DoS 送出去：本机任何进程抢先连一下，
     用户的 `tavotto run` 就永远起不来。所以拒绝之后必须继续 accept。
     """
+    # 冒充一个拿错 token 的本机进程抢先连上去。**在 listen() 返回的那一刻、同步地**连上并发出
+    # 握手：此时子进程还没 Popen，内核把这条连接排在 accept 队列第一位——「冒充者先到」是
+    # 确定的，不靠线程调度去和子进程赛跑（旧写法在 `_accept` 里起线程连，慢 runner 上子进程
+    # 先连上时冒充者永远等不到回复，近两周合并组里两天各红过一次）。回复是 `_accept` 发的，
+    # 只能在后台线程里读。
     ports: list = []
+    rejected: dict = {}
+    impostors: list = []
     real_listen = socket.socket.listen
+
+    def read_reply(bad: socket.socket) -> None:
+        try:
+            with bad:
+                rejected["reply"] = bad.makefile("r", encoding="utf-8").readline()
+        except OSError as exc:  # pragma: no cover - 只在真出问题时走到
+            rejected["reply"] = f'{{"error":{str(exc)!r}}}'
 
     def spy_listen(self, backlog=0):
         out = real_listen(self, backlog)
         try:
             ports.append(self.getsockname()[1])
         except OSError:
-            pass
+            return out
+        if not impostors:
+            bad = socket.create_connection(("127.0.0.1", ports[-1]), timeout=20)
+            bad.sendall(b'{"bridge_hello":1,"token":"wrong-token","pid":0}\n')
+            t = threading.Thread(target=read_reply, args=(bad,), daemon=True)
+            t.start()
+            impostors.append(t)
         return out
 
     monkeypatch.setattr(socket.socket, "listen", spy_listen)
@@ -99,39 +119,15 @@ def test_bad_token_is_rejected_and_the_real_child_still_gets_through(
     write(proj / "fig.py", SHOW_ONLY)
     spec = bridge.spec_for(str(proj / "fig.py"), interpreter=user_python, cwd=str(proj))
     sess = bridge.BridgeSession(spec, out_dir=tmp_path / "out")
-
-    rejected = {}
-
-    real_accept = bridge.BridgeSession._accept
-
-    def wrapped(self, listener, token):
-        # 冒充一个拿错 token 的本机进程抢先连上去。**必须在后台线程里做**：
-        # 回复是 `_accept` 里发出来的，而它这会儿还没跑起来——同步等回复
-        # 只会等到自己超时（第一版就是这样红的）。
-        port = listener.getsockname()[1]
-
-        def impostor():
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=20) as bad:
-                    bad.sendall(b'{"bridge_hello":1,"token":"wrong-token","pid":0}\n')
-                    rejected["reply"] = bad.makefile("r", encoding="utf-8").readline()
-            except OSError as exc:  # pragma: no cover - 只在真出问题时走到
-                rejected["reply"] = f'{{"error":{str(exc)!r}}}'
-
-        t = threading.Thread(target=impostor, daemon=True)
-        t.start()
-        try:
-            return real_accept(self, listener, token)
-        finally:
-            t.join(timeout=20)
-
-    monkeypatch.setattr(bridge.BridgeSession, "_accept", wrapped)
     try:
         hello = sess.start()
         ev = sess.wait_event("barrier")
         sess.resume()
     finally:
         sess.close()
+        for t in impostors:
+            t.join(timeout=20)
+    assert impostors, "用例前提：冒充者确实连上了"
     assert json.loads(rejected["reply"]) == {"ok": False, "code": "bad_token"}
     assert hello.get("protocol_version") == 1
     assert "token" not in hello, "握手帧里的 token 不许留在任何可能被打日志的结构里"
