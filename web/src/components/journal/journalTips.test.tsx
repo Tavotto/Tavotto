@@ -96,6 +96,8 @@ const click = async (el: Element | null) => {
   })
 }
 const q = (sel: string) => document.body.querySelector(sel)
+/** 点开入口后反馈窗异步挂载（CI 慢机上一轮 act 未必刷到）：等窗出现再往下点 */
+const waitTip = () => vi.waitFor(() => expect(q('[data-dialog="journal-tip"]')).not.toBeNull())
 const typeInto = async (el: HTMLInputElement | HTMLTextAreaElement | null, value: string) => {
   expect(el).not.toBeNull()
   await act(async () => {
@@ -160,6 +162,7 @@ describe('出处卡「这条不对」', () => {
     expect(link.textContent).toBe(t('journal.card.report', { ns: 'dialogs' }))
     expect(link.parentElement).toBe(q('[data-journal-open]')!.parentElement)
     await click(link)
+    await waitTip()
     expect(q('[data-dialog="journal-tip"]')).not.toBeNull()
     expect(q('[data-dialog="contact"]')).toBeNull() // 不是「联系作者」窗
     expect(q('[data-dialog="journal-tip"]')!.textContent).toContain(t('journalTip.title.wrong', { ns: 'dialogs' }))
@@ -180,6 +183,7 @@ describe('出处卡「这条不对」', () => {
   it('「问题」分段四项、默认不选；选了随信带 issue；原文进正文', async () => {
     await openCard()
     await click(q('[data-journal-report]'))
+    await waitTip()
     const radios = [...document.body.querySelectorAll('[data-testid="journal-tip-issue"] [role="radio"]')]
     expect(radios.map((r) => r.textContent)).toEqual(
       ['wrong_value', 'updated', 'link_broken', 'other'].map((k) => t(`journalTip.issue.${k}`, { ns: 'dialogs' })),
@@ -197,6 +201,7 @@ describe('出处卡「这条不对」', () => {
   it('字段随「问题」联动：只换标签，已填内容不清；出处主机名是外链', async () => {
     await openCard()
     await click(q('[data-journal-report]'))
+    await waitTip()
     const d = () => q('[data-dialog="journal-tip"]')!.textContent!
     const jt = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
     expect(d()).toContain(jt('quoteLabel'))
@@ -245,6 +250,7 @@ describe('出处卡「这条不对」', () => {
   it('什么都不写直接发送：带着刊 id / 规则键 / 当前值 / 出处 id / 目录版本，不带主题与诊断编号', async () => {
     await openCard()
     await click(q('[data-journal-report]'))
+    await waitTip()
     await click(q('[data-contact-send]'))
     expect(sendContact).toHaveBeenCalledTimes(1)
     const [meta] = vi.mocked(sendContact).mock.calls[0]
@@ -266,6 +272,7 @@ describe('出处卡「这条不对」', () => {
   it('原文链接：没写协议补 https；http 不收，原样提示、不发', async () => {
     await openCard()
     await click(q('[data-journal-report]'))
+    await waitTip()
     await typeInto(q('[data-contact-journal-url]') as HTMLInputElement, 'example.org/guide')
     await click(q('[data-contact-send]'))
     expect(vi.mocked(sendContact).mock.calls[0][0].journal?.url).toBe('https://example.org/guide')
@@ -284,6 +291,7 @@ describe('出处卡「这条不对」', () => {
     useContactStore.setState({ draft: { ...EMPTY_DRAFT, body: '普通来信写了一半' } })
     await openCard()
     await click(q('[data-journal-report]'))
+    await waitTip()
     expect((q('[data-contact-text]') as HTMLTextAreaElement).value).toBe('')
     await act(async () => useContactStore.getState().setOpen(false))
     await act(async () => useContactStore.getState().setOpen(true))
@@ -306,6 +314,7 @@ describe('选择器「没有这本刊」', () => {
     const link = empty.querySelector('button')!
     expect(link.textContent).toBe(t('journal.noJournalListed', { ns: 'dialogs' }))
     await click(link)
+    await waitTip()
     expect(q('[data-dialog="journal-tip"]')!.textContent).toContain(t('journalTip.title.missing', { ns: 'dialogs' }))
     expect(q('[data-journal-tip-about]')).toBeNull() // 申请收录没有灰字
     expect((q('[data-journal-tip-name]') as HTMLInputElement).value).toBe('zzzz-no-such')
