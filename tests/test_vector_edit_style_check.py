@@ -90,7 +90,7 @@ def test_changing_the_family_or_text_is_still_checked():
 # ------------------------------------------------------------------ 外框豁免
 
 
-def _frame_check(frame_box, tmp_path=None):
+def _frame_check(frame_box, **over):
     """一个只有描边的外框 + 子图自己的文字（贴着子图下沿）：返回 text 核对。"""
     x, y, w, h = frame_box
     obj = {
@@ -104,6 +104,7 @@ def _frame_check(frame_box, tmp_path=None):
         "color": "#000000",
         "fill": None,
         "strokePt": 0.5,
+        **over,
     }
     canvas = _canvas(obj)
     panels, _r, _u = la.measure_panels(canvas, None, lambda p, r: _measure_panel_text())
@@ -127,6 +128,15 @@ def _measure_panel_text():
     manifest["elements"].append(
         {"gid": "axes_0.xlabel", "role": "axis_label", "bbox": [0.4, 0.93, 0.2, 0.07], "label": "x"}
     )
+    # 子图左下角上的标签（大一点：椭圆轮廓在角上要穿过它）
+    manifest["elements"].append(
+        {
+            "gid": "axes_0.corner",
+            "role": "axis_label",
+            "bbox": [0.0, 0.75, 0.25, 0.25],
+            "label": "c",
+        }
+    )
     return {"draw_manifest": manifest, "data_points": []}
 
 
@@ -140,6 +150,27 @@ def test_a_frame_that_cuts_through_the_panel_text_still_fails():
     px, py, pw, ph = PANEL["x"], PANEL["y"], PANEL["w"], PANEL["h"]
     got = _frame_check((px - 0.5, py - 0.5, pw + 1.0, ph - 1.5))  # 下沿收进子图里、没把子图框全
     assert got and got[0]["status"] == "fail", got
+
+
+def _enclosing():
+    px, py, pw, ph = PANEL["x"], PANEL["y"], PANEL["w"], PANEL["h"]
+    return (px - 0.02, py - 0.02, pw + 0.04, ph + 0.04)
+
+
+def test_an_ellipse_with_the_panels_bounding_box_is_not_a_frame():
+    got = _frame_check(_enclosing(), shape="ellipse")
+    assert got and got[0]["status"] == "fail", got  # 轮廓穿过子图内部、压到角上的标签
+
+
+def test_a_rotated_rectangle_is_not_a_frame():
+    got = _frame_check(_enclosing(), rotationDeg=3)
+    assert got and got[0]["status"] == "fail", got
+
+
+def test_an_axis_aligned_rectangle_still_is_a_frame_but_not_a_round_one():
+    assert _frame_check(_enclosing())[0]["status"] == "waived"
+    assert _frame_check(_enclosing(), cornerRadius=0.5)[0]["status"] == "waived"
+    assert _frame_check(_enclosing(), cornerRadius=6)[0]["status"] == "fail"
 
 
 # ------------------------------------------------------------------ box fit 的错误提示

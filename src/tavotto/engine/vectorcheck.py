@@ -32,6 +32,8 @@ TIP_ALLOWANCE_MM = 1.5
 MIN_OVERLAP_MM = interference.MIN_OVERLAP_MM
 #: 沿箭头杆取样的步长
 SAMPLE_STEP_MM = 0.2
+#: 「框住子图」的外框允许的最大圆角（mm）：再圆，四角会切进子图角上的标签
+FRAME_MAX_CORNER_MM = 1.0
 JOURNAL_CHECKS = ("font-too-small", "font-below-absolute-floor", "line-width-below-min")
 
 
@@ -485,7 +487,15 @@ def check(
 
     def framed_panels(name: str) -> set[str]:
         e = by_name[name]
-        if e["type"] != "shape" or e.get("fill"):
+        # 只给**轴对齐、没旋转的矩形**（圆角 ≤ FRAME_MAX_CORNER_MM）：它的描边路径就是外接框的四条边，「完全在子图外接框之外
+        # 或与之重合」靠外接框包住子图就够了。椭圆 / 多边形 / 路径 / 旋转过的，轮廓会穿过子图内部压到标签，照旧核。
+        if (
+            e["type"] != "shape"
+            or e.get("fill")
+            or e.get("shape") != "rect"
+            or e.get("rotation_deg")
+            or float(e.get("corner_radius_mm") or 0.0) > FRAME_MAX_CORNER_MM
+        ):
             return set()
         x0, y0, x1, y1 = _box(e)
         return {
