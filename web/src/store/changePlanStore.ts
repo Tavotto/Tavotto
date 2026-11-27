@@ -1019,9 +1019,18 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     revise: async (key) => {
       const e = get().entries[key]
       const notes = e ? notesOf(e) : []
-      if (!e || !e.planId || e.status !== 'ready') return 'failed'
+      if (!e || !e.planId || (e.status !== 'ready' && e.status !== 'applied')) return 'failed'
       if (e.revising !== undefined) return 'busy'
       if (!notes.length) return 'nothing'
+      if (e.status === 'applied') {
+        // 已应用的卡批注重改：先只撤这一次应用（与 `undo` 同一判据），撤不回就什么都不动、不发请求
+        const panel = panelOf(e)
+        if (!panel || !canUndoApplied(e, panel.overrides) || !get().undo(key)) {
+          patch(key, { reviseError: { code: REVISE_UNDO_BLOCKED }, ...(get().entries[key]?.notice === 'undo_failed' ? { notice: undefined } : {}) })
+          return 'failed'
+        }
+        patch(key, { status: 'ready' })
+      }
       const guard = captureProjectEpoch()
       patch(key, { revising: '', phase: undefined, reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
       try {
@@ -1086,6 +1095,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     },
   }
 })
+
+/** 已应用的卡批注重改时撤不回这一次应用（本地码，弹窗里一句灰字） */
+export const REVISE_UNDO_BLOCKED = 'revise_undo_blocked'
 
 /** 这份已应用的方案此刻还能一步撤回：图还是我们写的那份，且历史栈顶还是那次 commit */
 export function canUndoApplied(e: Pick<PlanEntry, 'appliedPatches' | 'appliedEntry'>, current: readonly unknown[]): boolean {

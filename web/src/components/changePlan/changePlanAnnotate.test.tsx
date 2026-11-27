@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { ChangePlan, LicenseStatus, Manifest } from '@/lib/api'
-import { useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { setChangePlanUndoRunner, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useLicenseStore } from '@/store/licenseStore'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -15,9 +15,13 @@ import { emptyProject, type PanelObject } from '@/types/document'
 vi.mock('@/hooks/useVariantPng', () => ({ useVariantPng: () => ({ url: null, loading: false, approximate: false }), variantNeedsRender: () => false }))
 vi.mock('@/hooks/useRuntimePreview', () => ({ useRuntimePreview: () => ({ url: null, exact: false }) }))
 const previewSnapshot = vi.fn()
+const reviseApi = vi.fn()
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   enginePreviewPngSnapshot: (...a: unknown[]) => previewSnapshot(...a),
+  reviseChangePlan: (...a: unknown[]) => reviseApi(...a),
+  // 重改轮询永远在途：这里只看「发请求之前」的事
+  getChangePlan: () => new Promise(() => {}),
 }))
 
 import { TooltipProvider } from '../ui/Tooltip'
@@ -87,6 +91,9 @@ const status = (s: LicenseStatus) => act(() => useLicenseStore.setState({ status
 const PRO: LicenseStatus = { enabled: true, licensed: true, state: 'active', features: ['change-plan-rerun'], exp: null, email_hint: 'a***@x.com', needs_refresh: false }
 const FREE: LicenseStatus = { ...PRO, licensed: false, features: [] }
 
+const realActions = { revise: useChangePlanStore.getState().revise, undo: useChangePlanStore.getState().undo }
+// 真应用里由 `useKeyboard` 交进来的「撤销」：测试里直接用文档的 undo
+setChangePlanUndoRunner(() => useDocumentStore.getState().undo())
 let host: HTMLDivElement
 let root: Root
 const render = () => act(() => root.render(<TooltipProvider><ChangePlanDialog /></TooltipProvider>))
@@ -106,8 +113,9 @@ beforeEach(async () => {
   document.body.appendChild(host)
   root = createRoot(host)
   previewSnapshot.mockReset().mockReturnValue(new Promise(() => {}))
+  reviseApi.mockReset().mockResolvedValue({ plan_id: 'p2' })
   clearHint()
-  useChangePlanStore.setState({ entries: {}, order: [], dialogKey: null })
+  useChangePlanStore.setState({ ...realActions, entries: {}, order: [], dialogKey: null })
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_change_plan_annotate')
   useDocumentStore.getState().commit(literal('放入'), (d) => {
     d.objects.push({ id: 'p1', type: 'panel', x: 0, y: 0, w: 80, h: 60, fileId: 'f_p1', fileKind: 'pdf', nativeW: 80, nativeH: 60, script: 'fig.py', overrides: BASE } as PanelObject)
@@ -534,38 +542,89 @@ it('卡片入口：一键排版卡与脚本卡都没有铅笔钮 / 「再改一�
   expect(q('[data-change-plan-mark]')).toBeNull()
 })
 
-it('「再改一版」：已应用可撤销的卡点了 → 调 undo，撤回成功后弹窗以批注模式打开', () => {
+const overridesNow = () => (useDocumentStore.getState().doc.objects.find((x) => x.id === 'p1') as PanelObject).overrides
+const CANDIDATE = [{ gid: 'ax.title', prop: 'fontsize', value: 14 }]
+const noteIt = () => act(() => useChangePlanStore.getState().saveNote('a', { id: 'n1', anchor: { kind: 'overall' }, label: '整体', text: '整体再小一点' }))
+
+it('「再改一版」：已应用可撤销的卡点了 → 只开批注弹窗，不撤回，文档仍是已应用', () => {
   status(PRO)
-  const undo = vi.fn(() => {
-    useDocumentStore.getState().undo()
-    return true
-  })
-  const e = appliedEntry()
-  putCard(e)
+  const undo = vi.fn(() => true)
+  putCard(appliedEntry())
   act(() => useChangePlanStore.setState({ undo }))
   renderBoth()
   const btn = q('[data-change-plan-revise-again]')!
   expect(btn.textContent).toBe('再改一版')
-  expect(btn.getAttribute('title')).toBe('撤回这次修改，在改好的图上标几处再改一版')
+  expect(btn.getAttribute('title')).toBe('在改好的图上标几处，再改一版')
   act(() => btn.click())
-  expect(undo).toHaveBeenCalledWith('a')
   expect(view()).toBe('annotate')
+  expect(undo).not.toHaveBeenCalled()
+  expect(overridesNow()).toEqual(CANDIDATE)
 })
 
-it('「再改一版」：撤回失败不开弹窗；免费用户带锁不撤回；不可撤销时不出现', () => {
+it('已应用条目的弹窗：没有「应用」「放弃」，只有「按批注重改」；关弹窗什么都不发生', () => {
   status(PRO)
-  const undo = vi.fn(() => false)
+  const undo = vi.fn(() => true)
   putCard(appliedEntry())
   act(() => useChangePlanStore.setState({ undo }))
   renderBoth()
   act(() => q('[data-change-plan-revise-again]')!.click())
-  expect(undo).toHaveBeenCalledTimes(1)
+  expect(q('[data-change-plan-confirm]')).toBeNull()
+  expect(q('[data-change-plan-discard]')).toBeNull()
+  expect(q('[data-change-plan-rerun]')!.hasAttribute('disabled')).toBe(true)
+  noteIt()
+  expect(q('[data-change-plan-rerun]')!.textContent).toContain('按批注重改 · 1')
+  expect(q('[data-change-plan-rerun]')!.dataset.variant).toBe('primary')
+  act(() => useChangePlanStore.getState().closeDialog())
   expect(q('[data-change-plan-dialog]')).toBeNull()
+  expect(undo).not.toHaveBeenCalled()
+  expect(reviseApi).not.toHaveBeenCalled()
+  expect(overridesNow()).toEqual(CANDIDATE)
+  expect(useChangePlanStore.getState().entries.a.status).toBe('applied')
+})
 
+it('已应用条目写批注、点「按批注重改」：先撤回这一次应用（文档回到改前），再发重改请求', async () => {
+  status(PRO)
+  putCard(appliedEntry())
+  renderBoth()
+  act(() => q('[data-change-plan-revise-again]')!.click())
+  noteIt()
+  await act(async () => {
+    q('[data-change-plan-rerun]')!.click()
+  })
+  expect(overridesNow()).toEqual(BASE)
+  expect(reviseApi).toHaveBeenCalledTimes(1)
+  expect(reviseApi.mock.calls[0][0]).toBe('p1')
+})
+
+it('已应用但撤不回（之后又改过图）：点「按批注重改」不发请求、文档不变、弹窗一句灰字', async () => {
+  status(PRO)
+  putCard(appliedEntry())
+  renderBoth()
+  act(() => q('[data-change-plan-revise-again]')!.click())
+  noteIt()
+  // 之后又在同一张图上记了一次历史（override 不变）：栈顶已不是那次应用
+  act(() => useDocumentStore.getState().commit(literal('别的修改'), (d) => {
+      d.objects[0].x = 3
+    }))
+  const before = overridesNow()
+  await act(async () => {
+    q('[data-change-plan-rerun]')!.click()
+  })
+  expect(reviseApi).not.toHaveBeenCalled()
+  expect(overridesNow()).toEqual(before)
+  expect(overridesNow()).toEqual(CANDIDATE)
+  expect(q('[data-change-plan-dialog]')!.textContent).toContain('没法替你撤回')
+  expect(useChangePlanStore.getState().entries.a.status).toBe('applied')
+})
+
+it('「再改一版」：免费用户带锁不进入、不撤回；不可撤销时不出现', () => {
   status(FREE)
+  const undo = vi.fn(() => true)
+  putCard(appliedEntry())
+  act(() => useChangePlanStore.setState({ undo }))
   renderBoth()
   act(() => q('[data-premium-lock]')!.click())
-  expect(undo).toHaveBeenCalledTimes(1)
+  expect(undo).not.toHaveBeenCalled()
   expect(q('[data-change-plan-dialog]')).toBeNull()
 
   // 栈顶不是应用那次 commit：没有「撤销」，也就没有「再改一版」

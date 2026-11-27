@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MAX_NOTE_CHARS, notesOf, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
+import { MAX_NOTE_CHARS, notesOf, REVISE_UNDO_BLOCKED, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
 import { PremiumLock } from '../license/PremiumLock'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from '../ui/Button'
@@ -73,16 +73,18 @@ export function ChangePlanDialog() {
       window.removeEventListener('pointerdown', done, { capture: true })
     }
   }, [shown, pro, view])
-  const annotating = pro && view === 'annotate'
-  const manifest = usePlanManifest(entry, pro && (armed || annotating))
-  const store = useChangePlanStore.getState
-  const plan = entry?.plan
   // 弹窗开着时图被改了：基线对不上，不让点「应用」（卡片也已转「图已改过」）
   const source = usePlanSource(panel)
   useDocumentStore((s) => s.past.at(-1))
   useDocumentStore((s) => s.future.at(-1))
   const status = entry ? effectiveStatus(entry, panel?.overrides ?? null, source) : 'stale'
-  const open = !!entry && !!plan && !!entry.beforeSrc && !!entry.afterSrc && status === 'ready'
+  // 已应用的条目（从卡片「再改一版」进来）只有批注一个视图：图保持已应用，关弹窗什么都不发生
+  const appliedView = status === 'applied' && pro
+  const annotating = pro && (view === 'annotate' || appliedView)
+  const manifest = usePlanManifest(entry, pro && (armed || annotating))
+  const store = useChangePlanStore.getState
+  const plan = entry?.plan
+  const open = !!entry && !!plan && !!entry.beforeSrc && !!entry.afterSrc && (status === 'ready' || appliedView)
   // 「修改后」跟着勾选的组合走：与「应用」写入的是同一份
   const preview = useSelectionPreview(entry, open)
   if (!entry || !plan || !entry.beforeSrc || !entry.afterSrc) return null
@@ -108,7 +110,9 @@ export function ChangePlanDialog() {
   const reviseError = entry.reviseError
     ? entry.reviseError.code === 'not_licensed'
       ? cp('dialog.reviseNotLicensed')
-      : failureText(entry.reviseError.code, entry.reviseError.params)
+      : entry.reviseError.code === REVISE_UNDO_BLOCKED
+        ? cp('dialog.reviseUndoBlocked')
+        : failureText(entry.reviseError.code, entry.reviseError.params)
     : undefined
   const edit = (n: PlanNote) => setEditing({ id: n.id, target: { anchor: n.anchor, label: n.label } })
   const saveNote = (id: string | undefined, target: NoteTarget, text: string) =>
@@ -127,6 +131,20 @@ export function ChangePlanDialog() {
       {cp('dialog.lockTip')}
       <span className="mt-2 block text-ink">{cp('dialog.lockLearn')}</span>
     </>
+  )
+  const rerunBtn = (
+    <Button
+      variant={notes.length === 0 ? 'secondary' : 'primary'}
+      size="lg"
+      data-change-plan-rerun
+      loading={revising}
+      loadingLabel={cp('dialog.rerunning')}
+      disabled={notes.length === 0}
+      title={notes.length === 0 ? cp('dialog.rerunNeedNote') : undefined}
+      onClick={() => void store().revise(entry.key)}
+    >
+      {notes.length === 0 ? cp('dialog.rerun') : cp('dialog.annotateRerun', { count: notes.length })}
+    </Button>
   )
   const applyBtn = (
     <Button
@@ -155,7 +173,7 @@ export function ChangePlanDialog() {
       height="min(860px, 90vh)"
       anchor="change-plan"
       headerEnd={
-        visible ? (
+        visible && !appliedView ? (
           <Segmented<View>
             value={annotating ? 'annotate' : 'compare'}
             onChange={setView}
@@ -182,25 +200,14 @@ export function ChangePlanDialog() {
         ) : undefined
       }
       footer={{
-        start: (
+        start: appliedView ? undefined : (
           <Button variant="ghost" size="lg" className="-ml-3.5" onClick={() => store().discard(entry.key)} data-change-plan-discard>
             {cp('dialog.discard')}
           </Button>
         ),
         // 右侧两个位置在两个模式间连续：左边是「写批注」（对比）/「按批注重改 · N」（批注），右边是「应用」；每屏只有一颗主按钮
-        secondary: annotating ? (
-          <Button
-            variant={notes.length === 0 ? 'secondary' : 'primary'}
-            size="lg"
-            data-change-plan-rerun
-            loading={revising}
-            loadingLabel={cp('dialog.rerunning')}
-            disabled={notes.length === 0}
-            title={notes.length === 0 ? cp('dialog.rerunNeedNote') : undefined}
-            onClick={() => void store().revise(entry.key)}
-          >
-            {notes.length === 0 ? cp('dialog.rerun') : cp('dialog.annotateRerun', { count: notes.length })}
-          </Button>
+        secondary: appliedView ? undefined : annotating ? (
+          rerunBtn
         ) : visible ? (
           <span className="relative inline-flex">
             {hint && (
@@ -220,7 +227,8 @@ export function ChangePlanDialog() {
             </PremiumLock>
           </span>
         ) : undefined,
-        primary: applyBtn,
+        // 已应用的条目没有「应用」：右侧只剩「按批注重改」这一颗
+        primary: appliedView ? rerunBtn : applyBtn,
       }}
     >
       <div className="flex min-h-0 flex-1" data-change-plan-dialog data-change-plan-dialog-view={annotating ? 'annotate' : 'compare'} data-change-plan-version={current}>

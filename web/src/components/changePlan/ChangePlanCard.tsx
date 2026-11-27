@@ -227,10 +227,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                   size="md"
                   className={reviseBtn}
                   title={cp('card.reviseAgainTip')}
-                  onClick={() => {
-                    // 只撤这一次应用；撤回成功才进批注（失败沿用「没有替你撤回」那句灰字）
-                    if (store().undo(entry.key)) store().openDialog(entry.key, { view: 'annotate' })
-                  }}
+                  // 只打开批注，不撤回：画布保持已应用的样子；点「按批注重改」时才（在能撤回的前提下）撤回这一次
+                  onClick={() => store().openDialog(entry.key, { view: 'annotate' })}
                   data-change-plan-revise-again
                 >
                   <ReviseIcon pro={access.pro} />
