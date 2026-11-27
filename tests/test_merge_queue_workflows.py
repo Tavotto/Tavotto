@@ -2333,6 +2333,7 @@ class TestBuildReuseAndCaches:
     CACHING_WORKFLOWS = {
         "ci.yml",
         "desktop-tauri.yml",
+        "native-ggplot.yml",
         "nightly.yml",
         "performance-agent.yml",
         "release.yml",
@@ -3816,7 +3817,8 @@ class TestApprovedFontArchiveCaches:
         ci_fonts = TestBuildReuseAndCaches.FONT_JOBS
         assert ci_fonts == set(TestApprovedFontsAndRetirementScan.FONTS_BEFORE) | {"cache-seed"}
         nightly = (WF / "nightly.yml").read_text(encoding="utf-8")
-        for text, jobs in ((CI, ci_fonts), (nightly, {"windows-install"})):
+        native_r = (WF / "native-ggplot.yml").read_text(encoding="utf-8")
+        for text, jobs in ((CI, ci_fonts), (nightly, {"windows-install"}), (native_r, {"real-r"})):
             caches = [
                 (job, step)
                 for job, step in _uses_steps("actions/cache", text)
