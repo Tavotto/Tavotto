@@ -28,6 +28,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import vectors from '../../../../tests/golden/journal_vectors.json'
 import {
   dismissContact,
+  fetchContactCapability,
   fetchContactMessages,
   fetchContactStatus,
   markContactRead,
@@ -132,6 +133,7 @@ beforeEach(async () => {
   vi.mocked(markContactRead).mockResolvedValue({ unread: 0 })
   vi.mocked(sendContact).mockResolvedValue({ state: 'sending', gen: 1 })
   vi.mocked(fetchContactStatus).mockResolvedValue(DONE)
+  vi.mocked(fetchContactCapability).mockResolvedValue(CAP)
   useJournalCatalogStore.setState({ catalog: loadCatalog(vectors.catalog) })
   setCap(CAP)
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_journal_tips')
@@ -140,6 +142,9 @@ beforeEach(async () => {
   root = createRoot(host)
 })
 afterEach(async () => {
+  // 停掉本条用例发出的轮询（runToken++）：否则它会在后面的用例里落定、调 load() 把 capability 清成 null，
+  // 线索窗随之不渲染——CI 慢机上恰好落在「什么都不写直接发送」那条（#2310 两次红）
+  useContactStore.getState().reset()
   await act(async () => root.unmount())
   host.remove()
   document.body.innerHTML = ''
