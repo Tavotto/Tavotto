@@ -442,7 +442,7 @@ def mcp_config(wrapper_dir: Path, project: Path, work: Path, proxy: bool = False
     lines = ["#!/bin/sh"] + [f"export {k}='{v}'" for k, v in env.items()]
     server = f"'{PYTHON}' '{TREE / 'codex-plugin' / 'mcp' / 'server.py'}'"
     if proxy:  # B2：把 structuredContent 也以文本交给宿主（见 mcp_proxy.py）
-        lines.append(f"exec '{PYTHON}' '{HERE / 'mcp_proxy.py'}' -- {server}")
+        lines.append(f"exec '{PYTHON}' '{HERE / 'mcp_proxy.py'}' '{TREE / 'codex-plugin' / 'mcp'}'")
     else:
         lines.append(f"exec {server}")
     sh.write_text("\n".join(lines) + "\n")

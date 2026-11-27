@@ -1,20 +1,18 @@
-"""评测用的 stdio MCP 代理：把工具结果里的 `structuredContent` 也以文本块附在 `content` 后面再交给宿主。
+"""评测用的 MCP server 入口：照常跑插件的 MCP server，只在进程内把工具结果的 `structuredContent` 也以文本块附在 `content` 后面。
 
-为什么要有它：插件的排版工具把 `base_revision`、`echo_digest`、场景里的对象 id 等**只放进 `structuredContent`**（server.py 头注释：
-给 Codex 这类会把它交给模型的宿主）。opencode 只把 `content` 文本交给模型，agent 拿不到这几个值，`edit_plan → edit_apply` 走不通。
-B2 组用这个代理模拟「宿主把 structuredContent 一并给了模型」，其余与 B 相同。
+为什么要有它：插件的排版工具（修复前）把 `base_revision`、`echo_digest`、场景里的对象 id 等**只放进 `structuredContent`**
+（给 Codex 这类会把它交给模型的宿主），opencode 只把 `content` 文本交给模型，agent 拿不到这几个值，`edit_plan → edit_apply` 走不通。
+B2 组用它模拟「宿主把 structuredContent 一并给了模型」，其余与 B 相同。**对已经带这个修复的源码树用它会重复附一份**，B2 只对修复前的树有意义。
 
-    python mcp_proxy.py -- <真正的 MCP server 命令…>
+    python mcp_proxy.py <插件 mcp 目录（含 tavotto_mcp 包）>
 
-按行转发 JSON-RPC（stdio 传输是换行分隔）；只改带 `result.structuredContent` 的响应。
+进程内包一层 `server.call_tool`，**不起子进程、没有管道要排空**；stdio 的收发仍是 server 自己的。
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
-import threading
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -25,45 +23,25 @@ if hasattr(sys.stdin, "reconfigure"):
 CAP = 24000
 
 
-def augment(line: str) -> str:
-    try:
-        msg = json.loads(line)
-    except ValueError:
-        return line
-    res = msg.get("result") if isinstance(msg, dict) else None
-    if isinstance(res, dict) and isinstance(res.get("structuredContent"), dict):
-        body = json.dumps(res["structuredContent"], ensure_ascii=False, separators=(",", ":"))
-        note = "" if len(body) <= CAP else f"…（已截断，共 {len(body)} 字符）"
-        res.setdefault("content", []).append(
-            {"type": "text", "text": "structuredContent: " + body[:CAP] + note}
+def augment(result: dict) -> dict:
+    body = result.get("structuredContent") if isinstance(result, dict) else None
+    if isinstance(body, dict):
+        text = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+        note = "" if len(text) <= CAP else f"…（已截断，共 {len(text)} 字符）"
+        result.setdefault("content", []).append(
+            {"type": "text", "text": "structuredContent: " + text[:CAP] + note}
         )
-        return json.dumps(msg, ensure_ascii=False)
-    return line
+    return result
 
 
-def main() -> None:
-    cmd = sys.argv[sys.argv.index("--") + 1 :]
-    child = subprocess.Popen(  # noqa: S603
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=sys.stderr,
-        text=True,
-        encoding="utf-8",
-    )
+def main() -> int:
+    sys.path.insert(0, sys.argv[1])
+    from tavotto_mcp import server
 
-    def pump_in() -> None:
-        for line in sys.stdin:
-            child.stdin.write(line)
-            child.stdin.flush()
-        child.stdin.close()
-
-    threading.Thread(target=pump_in, daemon=True).start()
-    for line in child.stdout:
-        sys.stdout.write(augment(line.rstrip("\n")) + "\n")
-        sys.stdout.flush()
-    child.wait()
+    real = server.call_tool
+    server.call_tool = lambda name, args: augment(real(name, args))
+    return int(server.main() or 0)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
