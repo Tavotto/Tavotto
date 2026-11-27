@@ -695,6 +695,12 @@ the plan step has said so.
   figure's elements as above (labels, editable properties with their current values,
   positions). Scripts, data, project files, paths and computer details are not sent
   in this step. Instructions with attached reference images skip the plan step.
+* **Editing drawn objects on the canvas.** When the assistant edits the text, arrows,
+  shapes and paths drawn on the canvas (not the figures inside it), it sends the AI
+  connection you chose a summary of those objects on the canvas: their text, positions,
+  sizes and styles, and the anchor points of paths, together with your instruction and
+  which objects you had selected. Figure data, scripts and project files are not sent.
+  The plan is computed on your computer and written nowhere until you apply it.
 * **One-click layout.** The comparison pictures are drawn on your computer by the
   export engine; nothing about them is sent anywhere.
 * **Turning it off.** Settings → Assistant → Advanced → *Show a change plan before

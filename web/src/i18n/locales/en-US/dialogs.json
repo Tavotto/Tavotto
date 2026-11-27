@@ -607,8 +607,8 @@
         "label": "Show / hide rulers"
       },
       "save-document": {
-        "keywords": "save layout write disk",
-        "label": "Save layout"
+        "keywords": "save layout write disk name version milestone",
+        "label": "Name this version…"
       },
       "save-layout": {
         "keywords": "save as layout copy canvas file",
@@ -2609,7 +2609,9 @@
     "zoomOut": "Zoom out",
     "zoomFit": "Fit",
     "diffTitle": "Compared with the current canvas",
-    "quickNameTitle": "Save this moment as a named point",
+    "quickNameHint": "Named versions are kept, so you can always come back to them.",
+    "quickNameTitle": "Name this version",
+    "quickSave": "Save",
     "scrubberLabel": "Version strip: ←/→ to step through, Enter to open"
   },
   "onboarding": {

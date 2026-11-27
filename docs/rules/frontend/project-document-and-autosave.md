@@ -420,7 +420,7 @@ order: 200
 （`lib/readOnlyPromptMemory`）。界面不判权限，事实只认后端的 `writable`；教程项目不问。
 看护：`components/ReadOnlyProjectPrompt.test.tsx`。
 
-## 自动保存写进项目（ADR 0211 第二期 PR 2；后端开关 `layoutdir.WRITER_ENABLED` 后面，默认关）
+## 自动保存写进项目（ADR 0211 第二期；PR 3 起默认开，应急回退 `TAVOTTO_LAYOUT_DIR_WRITER=0`）
 
 - **开关的权威在后端**：`GET /api/project` 的 `autosave_into_project`；`projectStore` 订阅它写进 `lib/autosaveProject.setProjectWriteCapability`。
   关着时前端**一个字节的行为都不变**：不带 `project_write`、不起定时器、`putAutosave` 的调用形状逐字不变（几份用例钉着精确参数）。
@@ -436,3 +436,12 @@ order: 200
   Windows 的瞬时拒绝（`EACCES` / 共享冲突）后端退避重试、判 `busy`，**不是只读**。
 - **找回**：`/api/layout-session/project-history` 的候选带 `work`（目录形态的工作副本，按清单 `doc_id` 对上）；没有本机槽位时 `installFromWorkingCopy`
   按它装、同一个 docId、重新绑定；复制场景新 docId、不绑。
+
+### ⌘S = 给这一版起名字；顶栏状态（PR 3）
+
+- `actions.runManualSave()` 是 ⌘S / 菜单 `menu-save` / 命令面板 `save-document` / 顶栏芯片点击的**同一个入口**：后端开着「写进项目」、或没开项目（playground、内嵌画布、纯本机）→
+  `runNameVersion`（`saveNowWithResult` 冲刷写完 → 打开 `NamedNodeQuickBox`，与 ⌥⌘S 同一个小框）；只有**开着项目却被后端关了开关**（应急回退）才走 `runLegacyManualSave`（改造前：写回绑定文件 / 弹「存进项目」）。
+  没写成不开小框：本机槽位冲突 / 写失败按 `reportSaveTrouble` 说话；写进项目撞上的外部修改还悬着（`isProjectConflictActive`）→ `writeBoundProjectFile` 进冲突岔口。⌘S 不再发 `layout-saved:local`（命名节点自己是时间线的点）。
+- **保存芯片只有这几种状态**（开关开着）：已保存（写进项目 = 「已保存到项目」，本机 =「已存在本机」）/ 保存中 / 「这个文件夹只读 · 修改存在本机」 / 「别处有改动」（`projectConflict`，点它 = ⌘S 进岔口）/ 「保存失败」（含**写进项目连着两次 `busy` / `failed` / `refused`**：`projectWriteFailedDoc`，
+  落到现有的 `save_error` 档，重试 = 再存一次；单次瞬时失败不闪红）。没有「未存进项目」、文档名旁没有空心环（`legacySaveUi` / `alwaysSavedUi` 只在应急回退时保留旧几句）。
+- 原生拖放：`src-tauri/src/drop_paths.rs::is_layout_dir`（名字以 `.tavotto` 结尾的**文件夹**）不当项目打开，回 `Unsupported`；与前端 `layoutFolderNames` 同一条规则。

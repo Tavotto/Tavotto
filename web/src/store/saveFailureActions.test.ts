@@ -12,6 +12,7 @@ import { forgetLayoutRevisions } from '@/lib/layoutRevision'
 import { restoreLayoutVersion, runManualSave } from './actions'
 import { saveNow, setProjectFile, startAutosave, useDocumentStore } from './documentStore'
 import { reportAutosaveFailure } from './saveFailureActions'
+import { useTimelineStore } from './timelineStore'
 import { useUiStore } from './uiStore'
 
 const text = (id: string): TextObject => ({
@@ -236,8 +237,8 @@ describe('⌘S 保存', () => {
     ui().statusAction!.run()
     await new Promise((r) => setTimeout(r, 80))
     expect(ids(autosave.get('d_fail'))).toEqual(['t1'])
-    expect(statusText()).toContain('已保存在本机')
-    expect(ui().statusTone).toBe('done')
+    // ⌘S = 给这一版起名字（ADR 0211 第二期 PR 3）：重试存好了就接着开命名小框
+    expect(useTimelineStore.getState().namingOpen).toBe(true)
   })
 
   it('撞上冲突：提示带「重新加载」，点下去取回磁盘那版', async () => {

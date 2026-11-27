@@ -416,6 +416,74 @@ describe('存进项目与绑定', () => {
     })
   })
 
+  it('重开当前文档绑定的同一个项目文件：先等旧文档的冲刷写完，再读修订号当基线（不撞假冲突）', async () => {
+    const { setProjectWriteCapability } = await import('@/lib/autosaveProject')
+    const { literal } = await import('@/i18n')
+    setProjectWriteCapability(true)
+    const order: string[] = []
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        order.push('put-start')
+        await gate
+        order.push('put-done')
+        return new Response('{"ok":true,"saved_at":1,"revision":"r1"}')
+      }
+      return new Response('{}', { status: 404 })
+    }) as typeof fetch
+    mockFetch.mockImplementation(async () => {
+      order.push('fetchLayout')
+      return { doc: LAYOUT, revision: 'rev-after-flush', file: 'tavottofile/Fig 1.json' }
+    })
+    try {
+      setProjectFile({ projectId: 'p1', name: 'Fig 1', file: 'tavottofile/Fig 1.json', revision: 'rev-old', dirty: false })
+      useDocumentStore.getState().commit(literal('改'), (d) => {
+        d.guides.push({ axis: 'x', pos: 3 })
+      })
+      await open(['Fig 1'], 'load')
+      await act(async () => {
+        loadRow()!.click()
+        await new Promise((r) => setTimeout(r, 20))
+      })
+      expect(order.length, '冲刷已经开始').toBeGreaterThan(0)
+      expect(order, '冲刷还没写完，不能先读修订号').not.toContain('fetchLayout')
+      await act(async () => {
+        release()
+      })
+      await vi.waitFor(() => expect(order).toContain('fetchLayout'))
+      // 读修订号之前，旧文档的冲刷（排在前面的那几笔）已经全部写完；之后另起的写（切换文档的冲刷）不算
+      const before = order.slice(0, order.indexOf('fetchLayout'))
+      expect(before.filter((x) => x === 'put-start').length).toBe(before.filter((x) => x === 'put-done').length)
+      expect(before).toContain('put-done')
+      expect(useDocumentStore.getState().projectFile?.revision).toBe('rev-after-flush')
+    } finally {
+      globalThis.fetch = realFetch
+      setProjectWriteCapability(false)
+    }
+  })
+
+  it('打开的是别的项目文件：不等冲刷，直接读（不多等一轮）', async () => {
+    const { setProjectWriteCapability } = await import('@/lib/autosaveProject')
+    setProjectWriteCapability(true)
+    const order: string[] = []
+    mockFetch.mockImplementation(async () => {
+      order.push('fetchLayout')
+      return { doc: LAYOUT, revision: 'r', file: 'tavottofile/Other.json' }
+    })
+    try {
+      setProjectFile({ projectId: 'p1', name: 'Fig 1', file: 'tavottofile/Fig 1.json', revision: 'rev-old', dirty: false })
+      await open(['Other'], 'load')
+      await act(async () => {
+        loadRow()!.click()
+      })
+      expect(order).toEqual(['fetchLayout'])
+    } finally {
+      setProjectWriteCapability(false)
+    }
+  })
+
   it('⌘S 写回撞上外部修改：带着冲突打开，「仍然覆盖」拿 409 的 hash、仍写进项目', async () => {
     useUiStore.getState().setLayoutOpen(true, 'saveToProject', {
       name: '我的排版',

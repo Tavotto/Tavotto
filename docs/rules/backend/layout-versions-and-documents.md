@@ -235,7 +235,7 @@ order: 200
   `layout_read_only`，磁盘满照旧 atomicio 的通用映射。响应带 `name` / `file`（相对项目根），
   GET 开着项目时带 `X-Tavotto-Layout-File`（⌘S 会写到哪，百分号编码）——界面原样说，不自己拼。
   **自动保存仍只写数据目录的槽位**，不写项目文件。
-- **排版的目录形态（ADR 0211 第二期，`engine/layoutdir.py` 是唯一出处；写入端默认关）**：`tavottofile/<名>.tavotto/layout.json`
+- **排版的目录形态（ADR 0211 第二期，`engine/layoutdir.py` 是唯一出处；写入端默认开）**：`tavottofile/<名>.tavotto/layout.json`
   是当前权威正文，旁边的 `<名>.json` 是**占位**（`{"schema": PLACEHOLDER_SCHEMA, "tavotto_layout_dir": "<名>.tavotto"}`，旧版据 schema 判
   「来自更新的 Tavotto」）。目录里还有 `package_manifest.json`（容器版本、工作副本 docId、`layout_revision` 提示、占位与留底修订号；
   第三期 `.tavotto` 容器骨架）与 `legacy/`（迁移留底、覆盖时两边都留）。规则：
@@ -248,7 +248,7 @@ order: 200
   **最后**原子地换占位 → 再做这次保存；中断后两边正文逐字节相同（PENDING / DIR），下一次写入续完。「真 `<名>.json` + 目录」
   按清单里的留底修订号分：相等 = 迁移中断（PENDING），不等 = 旧版覆盖了占位（CONFLICT，当外部修改：读给外来的 `<名>.json`、409 的
   `revision` 与明确覆盖的基线是同一份；覆盖时外来的与被取代的 `layout.json` 都留进 `legacy/`）。⑤ 打开 / 列出 / 读取一个字节都不写。
-  ⑥ 开关 `layoutdir.WRITER_ENABLED`（或环境变量 `TAVOTTO_LAYOUT_DIR_WRITER=1`）只管**创建与迁移**；已是目录形态的排版无论开关都写进目录。
+  ⑥ 开关 `layoutdir.WRITER_ENABLED`（**PR 3 起默认 True**；环境变量 `TAVOTTO_LAYOUT_DIR_WRITER=0` 应急关、`=1` 强制开）只管**创建与迁移**；已是目录形态的排版无论开关都写进目录。要对拍改造前行为的用例显式关开关。
   ⑦ 守卫：`<名>.tavotto` 目录 / `layout.json` / 清单是链接 → 400 `layout_outside_project`；目录名只差大小写 / Unicode 形式 → 409
   `layout_name_collision`；清单容器版本比本构建新 → 只读（409 `layout_dir_too_new`）；Windows 保留名 / 末尾点或空格 / 超长 / 同名普通文件占着
   目录名 → 退回 `<名>.json`。留底的只读位只在 POSIX 设（Windows 上只读属性会让整夹删除失败）。

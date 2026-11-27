@@ -939,7 +939,8 @@ describe('命名与改名', () => {
       expect($('[data-timeline-panel]')).toBeNull()
       const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
       expect(document.activeElement).toBe(input)
-      expect($('[data-timeline-quick-name]')?.textContent).toContain('不会被自动清理')
+      expect($('[data-timeline-quick-name]')?.textContent).toContain('起名后这版会一直留着，随时能找回。')
+      expect($('[data-timeline-quick-name-save]')?.textContent).toBe('保存')
       await typeName('投稿前')
       await act(async () => {
         input.form!.requestSubmit()

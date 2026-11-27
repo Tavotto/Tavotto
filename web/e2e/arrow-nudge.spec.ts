@@ -166,9 +166,9 @@ test('画布里选中图内图例按 → N 次：图例挪 N 步、面板不动�
   await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
   await page.keyboard.press('Control+s')
-  // Manual save opens this dialog only after its local disk queue drains.
-  // A fixed delay can reload while an older autosave is still in flight.
-  await expect(page.getByRole('dialog', { name: '存进项目' })).toBeVisible({ timeout: 60_000 })
+  // ⌘S 先冲刷自动保存（本机写盘队列排空后才弹「给这一版起名字」小框）：
+  // 定时等待可能在旧的自动保存还在途中就重载。
+  await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused({ timeout: 60_000 })
   await page.reload()
   await expect(page.locator('[data-object-id]')).toHaveCount(1, { timeout: 30_000 })
   await page.waitForTimeout(1500)

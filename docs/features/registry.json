@@ -72,7 +72,7 @@
         },
         {
           "spec": "first-run-qualification.spec.ts",
-          "title": "真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → 存进项目 → 重开冷重放 → 导出"
+          "title": "真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → ⌘S 起名字（工作副本已在项目里） → 重开冷重放 → 导出"
         }
       ],
       "desktop_manual": [
@@ -938,8 +938,8 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "自动保存：刷新 / 重启后回到最后一次编辑",
-        "en-US": "Autosave: reload / restart returns to the last edit"
+        "zh-CN": "自动保存：刷新 / 重启后回到最后一次编辑；排版不按任何键也存进项目文件夹，挪走或复制文件夹都带着走",
+        "en-US": "Autosave: reload / restart returns to the last edit; the layout is saved into the project folder without any key press and travels with the folder when it is moved or copied"
       },
       "entry": "自动（无入口）",
       "e2e": [
@@ -970,6 +970,33 @@
       ],
       "desktop_manual": [
         "改一处之后 ⌘Q 退出桌面应用再打开：回到同一个项目，改动还在"
+      ]
+    },
+    {
+      "id": "file.name-version",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "⌘S 给这一版起名字：先把没写的编辑存进项目，再弹就地命名小框；时间线里出现命名节点（永不自动清理）",
+        "en-US": "⌘S names this version: it first writes any pending edits into the project, then opens an inline naming box; a named point appears in the timeline and is never cleaned up automatically"
+      },
+      "entry": "⌘S / ⌥⌘S / 文件菜单与命令面板「给这一版起名字…」",
+      "e2e": [
+        {
+          "spec": "save-to-project.spec.ts",
+          "title": "⌘S 给这一版起名字：先冲刷写进项目、再命名；时间线里有命名节点；刷新后从项目里打开一致"
+        },
+        {
+          "spec": "save-to-project.spec.ts",
+          "title": "画布文字仍在编辑时按 ⌘S，先提交文字、冲刷写进项目，再弹命名小框"
+        },
+        {
+          "spec": "save-to-project.spec.ts",
+          "title": "文字工具提示关闭时 Escape 提交，再 ⌘S 命名：项目里是第二版"
+        }
+      ],
+      "desktop_manual": [
+        "文件菜单里「给这一版起名字…」（⌘S）：就地弹出命名小框，不再弹「存进项目」对话框；菜单文案是新的"
       ]
     },
     {

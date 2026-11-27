@@ -30,7 +30,7 @@
     "nudge": "微移选中对象或图内元素：0.5 mm / 5 mm / 0.1 mm（页面上的距离）；连按算一步撤销",
     "palette": "命令面板",
     "pan": "平移画布",
-    "saveDocument": "保存排版",
+    "saveDocument": "给这一版起名字（排版始终自动保存）",
     "saveLayout": "另存为新排版",
     "script": "上标 / 下标（属性面板文字框内）",
     "selectAll": "全选",

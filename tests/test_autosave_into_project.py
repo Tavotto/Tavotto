@@ -56,6 +56,13 @@ def writer_on(monkeypatch):
     monkeypatch.setattr(layoutdir, "WRITER_ENABLED", True)
 
 
+@pytest.fixture
+def writer_off(monkeypatch):
+    """PR 3 起开关默认开；对拍改造前行为的用例显式关掉（`TAVOTTO_LAYOUT_DIR_WRITER=0` 同一档）。"""
+    monkeypatch.setattr(layoutdir, "WRITER_ENABLED", False)
+    monkeypatch.delenv(layoutdir.WRITER_ENV, raising=False)
+
+
 def _put(client, h, doc_id, doc=None, spec=None, **extra):
     qs = dict(extra)
     if spec is not None:
@@ -67,7 +74,7 @@ def _slot(doc_id):
     return m._autosave_path(doc_id)
 
 
-def test_writer_off_ignores_project_write_and_matches_old_response(env):
+def test_writer_off_ignores_project_write_and_matches_old_response(env, writer_off):
     client, project, h = env
     r = _put(client, h, "d1", spec={})
     assert r.status_code == 200
@@ -75,6 +82,17 @@ def test_writer_off_ignores_project_write_and_matches_old_response(env):
     assert _slot("d1").is_file()
     assert [p.name for p in (project / "tavottofile").iterdir() if p.name != "export"] == []
     assert client.get("/api/project", headers=h).get_json().get("autosave_into_project") is False
+
+
+def test_default_is_on_and_the_env_switch_is_the_emergency_off(env, monkeypatch):
+    client, project, h = env
+    monkeypatch.delenv(layoutdir.WRITER_ENV, raising=False)
+    assert client.get("/api/project", headers=h).get_json()["autosave_into_project"] is True
+    assert _put(client, h, "d1", spec={}).get_json()["project_layout"]["state"] == "saved"
+    monkeypatch.setenv(layoutdir.WRITER_ENV, "0")
+    assert client.get("/api/project", headers=h).get_json()["autosave_into_project"] is False
+    off = _put(client, h, "d2", spec={})
+    assert "project_layout" not in off.get_json()
 
 
 def test_writer_on_status_advertises_it(env, writer_on):
@@ -112,7 +130,7 @@ def test_followup_write_uses_the_binding_and_updates_in_place(env, writer_on):
         client,
         h,
         "d1",
-        doc=_doc(updated=2),
+        doc=_doc(objects=(OBJ, {**OBJ, "id": "r2"}), updated=2),
         spec={"name": first["name"], "base": first["revision"]},
         base_revision=m.engine_atomicio.existing_revision(_slot("d1")),
     )
@@ -121,6 +139,24 @@ def test_followup_write_uses_the_binding_and_updates_in_place(env, writer_on):
     layout = project / "tavottofile" / "排版一.tavotto" / "layout.json"
     assert json.loads(layout.read_bytes())["updatedAt"] == 2
     assert sorted(p.name for p in (project / "tavottofile").glob("*.tavotto")) == ["排版一.tavotto"]
+
+
+def test_unchanged_content_is_not_rewritten_but_a_real_change_is(env, writer_on):
+    """手动保存 / 离开页面 / 切文档的冲刷会重发同一份、只有 `updatedAt` 在动：不重写（同步盘 / git 不该看到文件在动，
+    修订号也不被无谓推进）；内容真变了才写。"""
+    client, project, h = env
+    first = _put(client, h, "d1", spec={}).get_json()["project_layout"]
+    layout = project / "tavottofile" / "排版一.tavotto" / "layout.json"
+    before = layout.stat().st_mtime_ns
+    spec = {"name": first["name"], "base": first["revision"]}
+    same = _put(client, h, "d1", doc=_doc(updated=99), spec=spec).get_json()["project_layout"]
+    assert same["state"] == "saved" and same["revision"] == first["revision"]
+    assert layout.stat().st_mtime_ns == before, "没有变化也重写了"
+    changed = _put(
+        client, h, "d1", doc=_doc(objects=(OBJ, {**OBJ, "id": "r2"}), updated=100), spec=spec
+    )
+    out = changed.get_json()["project_layout"]
+    assert out["state"] == "saved" and out["revision"] != first["revision"]
 
 
 def test_emptying_an_existing_working_copy_is_written_and_not_resurrected(env, writer_on):

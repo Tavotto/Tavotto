@@ -767,7 +767,6 @@ onDocumentPersisted((docId, pj) => notifyDocumentPersisted(docId, pj))
 // 关着 = 恒为 false，前端行为与改造前一字不差
 useProjectStore.subscribe((s, prev) => {
   if (s.project === prev.project) return
-  setProjectWriteCapability(
-    !!s.project?.open && s.project.autosave_into_project === true && s.project.writable !== false,
-  )
+  const flag = !!s.project?.open && s.project.autosave_into_project === true
+  setProjectWriteCapability(flag && s.project?.writable !== false, flag)
 })
