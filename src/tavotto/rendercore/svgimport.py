@@ -1586,7 +1586,7 @@ def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: st
     """标记里那一个图形 → `(kind, tip, dir, length)`（标记自己的坐标）或 `None`。
 
     kind = triangle / open / dot；`tip` 是尖（圆点 = 圆心）；`dir` 是 底边中点 → 尖 的弧度（圆点 = None）；
-    `length` = 帽长（圆点 = 直径）。"""
+    `length` = 帽长（圆点 = 直径）；最后一项是开口箭头自己的线宽（标记单位，别的端型 0）。"""
     if child.get("transform"):
         return None
     # 标记图形「看起来」的样子要先算准（继承 + 祖先）：不可见就是没有头（与原图一致），部分透明 / 裁剪 / 蒙版 / 描边顺序头表达不了
@@ -1656,7 +1656,7 @@ def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: st
         if r <= 0 or fill != stroke_hex or stroke not in (None, stroke_hex):
             return None
         c = (_length(child.get("cx")), _length(child.get("cy")))
-        return "dot", c, None, 2 * r
+        return "dot", c, None, 2 * r, 0.0
     subs = _geometry(child, tag, ctx)
     if not subs or len(subs) != 1:
         return None
@@ -1692,7 +1692,7 @@ def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: st
                 best = (a, ang, ang, ln)
         if best is None:
             return None
-        return "triangle", best[0], best[1], best[3]
+        return "triangle", best[0], best[1], best[3], 0.0
     # 开口箭头：三个点依次是 翼、尖、翼
     a, v, b = pts
     d1, d2 = math.dist(v, a), math.dist(v, b)
@@ -1702,7 +1702,13 @@ def _marker_shape(child, tag: str, mel, ctx: _Ctx, stroke_hex: str, fill_hex: st
     ln = math.dist(mid, v)
     if ln <= 0:
         return None
-    return "open", v, math.atan2(v[1] - mid[1], v[0] - mid[0]), ln
+    return (
+        "open",
+        v,
+        math.atan2(v[1] - mid[1], v[0] - mid[0]),
+        ln,
+        _length(mst.get("stroke-width", "1"), 1.0, 1.0),
+    )
 
 
 def _marker_end_head(
@@ -1746,7 +1752,9 @@ def _marker_end_head(
         return "hidden"
     if shape is None or total <= 0:
         return None
-    kind, tip, tdir, length_c = shape
+    kind, tip, tdir, length_c, mark_sw = shape
+    if kind == "open" and abs(mark_sw * total - sw_user) > 0.1 * sw_user:
+        return None  # 开口箭头是描边画的：端型的线宽总是线宽，与线不等宽就会变样
     tan = _tangent(nodes, at_end)
     if tan is None:
         return None

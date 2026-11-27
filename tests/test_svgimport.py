@@ -736,3 +736,14 @@ def test_context_fill_and_context_stroke_use_their_own_paint():
     same = '<path d="M5 5 L50 5" fill="#000" stroke="#000" stroke-width="1" marker-end="url(#m)"/>'
     r = imp(_marker('<path d="M0,0 L4,2 L0,4 z" fill="context-fill"/>') + same)
     assert r["unsupported"] == {} and heads(r["objects"][0]) == {"headEnd": "triangle"}
+
+
+def test_open_arrow_marker_needs_the_same_stroke_width_as_the_line():
+    arrow = '<path d="M0,0 L4,2 L0,4" fill="none" stroke="#000" stroke-width="{w}"/>'
+    ok = imp(_marker(arrow.format(w=1)) + LINE_M)  # markerUnits=strokeWidth：1 × 线宽 1 = 等宽
+    assert ok["unsupported"] == {} and heads(ok["objects"][0]) == {"headEnd": "open"}
+    thick = imp(_marker(arrow.format(w=2)) + LINE_M)
+    assert thick["unsupported"] == {"marker": 1}
+    # 用户单位：标记里线宽 1.05 与线宽 1 差 5%，仍算等宽
+    near = imp(_marker(arrow.format(w=1.05), markerUnits="userSpaceOnUse") + LINE_M)
+    assert near["unsupported"] == {}
