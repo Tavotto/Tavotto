@@ -17,7 +17,7 @@ from __future__ import annotations
 import contextlib
 import re
 import threading
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import matplotlib as mpl
 import matplotlib.ticker as mticker
@@ -587,6 +587,71 @@ def invalidate_tick_cfg(ax: Axes, which: str) -> None:
     cfg["orig_major_formatter"] = axis.get_major_formatter()
     cfg["orig_minor_locator"] = axis.get_minor_locator()
     cfg["orig_minor_formatter"] = axis.get_minor_formatter()
+
+
+class AxisScaleBaseline(NamedTuple):
+    scale: mpl.scale.ScaleBase
+    tickers: tuple[tuple[mticker.Locator, mticker.Formatter, bool, bool], ...]
+    limits: tuple[float, float]
+    autoscale: bool
+
+
+def capture_axis_scale(ax: Axes, which: str) -> None:
+    invalidate_tick_cfg(ax, which)
+    if which not in ("x", "y"):
+        return
+    cfg = tick_cfg(ax, which)
+    axis = _axis_of(ax, which)
+    tickers = tuple(
+        (t.locator, t.formatter, t._locator_is_default, t._formatter_is_default)  # noqa: SLF001
+        for t in (axis.major, axis.minor)
+    )
+    cfg["script_scale"] = AxisScaleBaseline(
+        axis._scale,  # noqa: SLF001
+        tickers,
+        getattr(ax, f"get_{which}lim")(),
+        getattr(ax, f"get_autoscale{which}_on")(),
+    )
+
+
+def axis_scale_original(ax: Axes, which: str) -> AxisScaleBaseline:
+    cfg = tick_cfg(ax, which)
+    if "script_scale" not in cfg:
+        capture_axis_scale(ax, which)
+    return cfg["script_scale"]
+
+
+def shared_scale_axes(ax: Axes, which: str) -> list[Axes]:
+    return getattr(ax, f"get_shared_{which}_axes")().get_siblings(ax)
+
+
+def set_axis_scale(ax: Axes, which: str, value: str) -> None:
+    siblings = shared_scale_axes(ax, which)
+    for member in siblings:
+        axis_scale_original(member, which)
+    getattr(ax, f"set_{which}scale")(value)
+    for member in siblings:
+        invalidate_tick_cfg(member, which)
+
+
+def restore_axis_scale(ax: Axes, which: str, original: AxisScaleBaseline) -> None:
+    getattr(ax, f"set_{which}scale")(original.scale)
+    axis = _axis_of(ax, which)
+    # Reinstall the actual objects, keeping their original shared-axis binding.
+    # set_scale installs defaults and discards authored locators and formatters.
+    for ticker, (locator, formatter, default_loc, default_fmt) in zip(
+        (axis.major, axis.minor), original.tickers
+    ):
+        ticker.locator = locator
+        ticker.formatter = formatter
+        ticker._locator_is_default = default_loc  # noqa: SLF001
+        ticker._formatter_is_default = default_fmt  # noqa: SLF001
+    # Matplotlib autoscale can use a different locator during set_scale.
+    # Put back the captured view and mode before replaying surviving patches.
+    for member in shared_scale_axes(ax, which):
+        baseline = axis_scale_original(member, which)
+        getattr(member, f"set_{which}lim")(*baseline.limits, emit=False, auto=baseline.autoscale)
+        invalidate_tick_cfg(member, which)
 
 
 def _minor_auto_locator(axis):

@@ -56,6 +56,17 @@ def main():
     fig, ax = plt.subplots(figsize=(4, 3))
     ax.plot([1, 2, 3], [2, 50, 104])
     fig.savefig("Auto.pdf")
+
+    # An empty fixed locator on a shared axis and a configured log scale,
+    # both authored in the script before the worker applies overrides.
+    fig, (upper, lower) = plt.subplots(2, sharex=True, figsize=(4, 4))
+    upper.plot([1, 2, 5], [-6, 3, 16])
+    lower.plot([1, 3, 5], [2, 3, 5])
+    lower.set_xticks([])
+    upper.set_yscale("symlog", linthresh=3.5, base=2)
+    upper.set_ylim(-8, 20)
+    upper.set_yticks([-8, -4, 0, 4, 16], labels=["-8", "-4", "zero", "four", "sixteen"])
+    fig.savefig("Authored.pdf")
 """
 
 STEMS = ("Cat", "Vio", "Auto")
@@ -138,3 +149,37 @@ def test_undo_keeps_an_inversion_that_is_still_applied(hot, stem):
     assert got[0] > got[1], "翻转还在"
     assert sorted(got) == pytest.approx(sorted([lo, hi]), abs=1e-12)
     _man(hot, stem)
+
+
+def test_scale_undo_restores_authored_tickers_and_scale_configuration(hot, figs):
+    stem = "Authored"
+    baseline = _man(hot, stem)
+    starting = hot.preview_png(stem, [], 480, "scale-original").read_bytes()
+    assert not any(g.endswith("xticks") for g in baseline)
+    horizontal = {"gid": "axes_0", "prop": "xscale", "value": "log"}
+    vertical = {"gid": "axes_0", "prop": "yscale", "value": "linear"}
+    _man(hot, stem, [horizontal, vertical])
+    assert (
+        hot.preview_png(stem, [horizontal, vertical], 480, "scale-edited").read_bytes() != starting
+    )
+    undone = _man(hot, stem)
+    assert _boxes(undone) == _boxes(baseline)
+    assert not any(g.endswith("xticks") for g in undone)
+    assert hot.preview_png(stem, [], 480, "scale-undone").read_bytes() == starting
+
+    sibling = {"gid": "axes_1", "prop": "xscale", "value": "symlog"}
+    _man(hot, stem, [horizontal, sibling])
+    after = _man(hot, stem, [sibling])
+    fresh = pool.one_shot(SCRIPT_NAME, str(figs), "main")
+    try:
+        want = _man(fresh, stem, [sibling])
+        assert _lim(after["axes_0"], "xscale") == "symlog"
+        assert _boxes(after) == _boxes(want)
+        assert (
+            hot.preview_png(stem, [sibling], 480, "sibling").read_bytes()
+            == fresh.preview_png(stem, [sibling], 480, "sibling").read_bytes()
+        )
+    finally:
+        pool.discard(fresh)
+    _man(hot, stem)
+    assert hot.preview_png(stem, [], 480, "scale-final").read_bytes() == starting

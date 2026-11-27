@@ -186,8 +186,8 @@ from tickmodel import (
     TickSet,
     _minor_tick_prop,
     _tick0,
+    capture_axis_scale,
     drawn_tick_label_entries,
-    tick_cfg,
     tick_format_name,
     tick_major_mode,
     tick_major_step,
@@ -1252,8 +1252,8 @@ def instrument(state: FigState) -> None:
             if getattr(ax, f"{which}axis", None) is None:
                 continue
             # 刻度模型的「脚本原样」在这里采：build 之后、任何 override 之前，
-            # 采到的才是脚本自己那套 locator/formatter（见 overrides.tick_cfg）
-            tick_cfg(ax, which)
+            # 采到的才是脚本自己那套尺度和 locator/formatter
+            capture_axis_scale(ax, which)
             # **无条件登记**刻度组：此刻没有刻度不代表以后没有——色条方向一翻，
             # 长短轴互换，原来空着的那条轴就成了带刻度的那条。build_manifest 会
             # 把当下真的没有刻度的组丢掉，所以多登记一个不会在界面上多出东西
