@@ -159,11 +159,14 @@ def run(package: Path, work: Path) -> dict:
     from tavotto.engine import license as L, prohost as H, proinstall as P  # noqa: E402
 
     payload = json.loads(base64.b64decode(envelope["payload"]))
+    # 只经 status() 读：license.has 只许登记的功能模块调用（tests/test_license_callsites.py）
+    st = L.status()
+    feats = sorted(st.get("features") or [])
     _check(
         checks,
-        "license_has",
-        L.has("quick-layout"),
-        features=sorted(k for k in L.FEATURES if L.has(k)),
+        "license_status",
+        bool(st.get("licensed")) and "quick-layout" in feats,
+        features=feats,
     )
 
     t0 = time.monotonic()
