@@ -112,6 +112,22 @@ class SemicolonCell(str):
     **运行时类**（与 `parse_cell` 一起进公共模块）。"""
 
 
+class NumberCell(str):
+    """整列写法一致才认的数值格（`tag_columns` 打的标记）：内容是原文（`52.3%`、`1,5`），`number` 是它的数值；`parse_cell` 见到它直接给 `numeric`。
+    `strip` 返回自己——取数处都写 `cell.strip()`，标记要留住。**运行时类**（与 `parse_cell` 一起进公共模块）。"""
+
+    def __new__(cls, text, number):
+        obj = super().__new__(cls, text)
+        obj.number = number
+        return obj
+
+    def __getnewargs__(self):
+        return (str(self), self.number)
+
+    def strip(self, chars=None):
+        return self
+
+
 def parse_cell(s: str) -> tuple[str, float | None]:
     """`(类别, 值)`：`empty` / `nan`（缺失，值为 NaN）、`numeric`（有限浮点）、`text`（不是数，值为 None）。
 
@@ -121,7 +137,11 @@ def parse_cell(s: str) -> tuple[str, float | None]:
     三位小数的欧式写法（`1,234` = 1.234）与千分位无法区分：**分号分隔的表**里带逗号的格子（`SemicolonCell`）一律不按千分位认、
     也不猜成小数，整格是文字（于是该列是「混了文字」或「没有数值」，由用户决定）；逗号 / 制表 / 空白分隔的表按千分位读。
     同一列里出现过不符合千分位写法的逗号数（`1,5`）时，那一列本来就是混列、先问用户，`1,234` 不会被悄悄认成数。
+    **整列判定**（`ColumnTagger` / `tag_columns`；大表先预扫一遍定出同一个判定）：整列每一格都带 `%`（`52.3%`）、或分号 / 制表符分隔的表里整列一致用逗号当小数点（`1,5`）时，
+    那一列的格子被打上 `NumberCell`，这里直接认成数（`52.3%` → 52.3，不除以 100；`1,5` → 1.5）；单格看不出来，所以 `parse_cell` 自己仍不认裸的 `52.3%` / `1,5`。
     **这是运行时函数**：父进程与生成的脚本共用同一份源码；v1 的摘要走 `legacy_parse_cell`（不认千分位，v1 逐字不变）。"""
+    if isinstance(s, NumberCell):
+        return "numeric", s.number
     t = s.strip()
     if not t:
         return "empty", math.nan
@@ -159,6 +179,7 @@ def legacy_parse_cell(s: str) -> tuple[str, float | None]:
 
 
 def parse_date(s: str) -> _dt.date | None:
+    """v1 的日期规则：只认 ISO `YYYY-MM-DD`（v1 的摘要、期望数据与它自己的脚本是一套，**逐字不变**）；v2 用 `parse_when`。"""
     t = s.strip()
     if not _ISO_DATE.fullmatch(t):
         return None
@@ -168,11 +189,38 @@ def parse_date(s: str) -> _dt.date | None:
         return None
 
 
+def parse_when(s):
+    """v2 的日期 / 日期时刻：认三种**年份在最前、不会分不清日月**的写法，别的一律不是日期（`03/04/2026` 是 3 月 4 日还是 4 月 3 日分不清，不猜）：
+    ISO `2026-03-01`，可带时刻（`T` 或一个空格分隔，`HH:MM` 或 `HH:MM:SS`，如 `2026-03-01 08:00`、`2026-03-01T08:00:30`）；`2026/3/1`（月、日可以只写一位）；
+    `2026年3月1日`。只有日期 → `datetime.date`（与 `parse_date` 对 ISO 日期的结果一样）；带时刻 → `datetime.datetime`（无时区；`Z` / `+08:00` 之类的时区后缀不认）。
+    不合法（`2026-02-30`、`25:00`）→ None。**运行时函数**；`date_number` 把它们折成自 1970-01-01 起的天数（带时刻的是小数天）。"""
+    t = s.strip()
+    m = re.fullmatch(
+        r"([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?)?", t
+    )
+    if m is None:
+        m = re.fullmatch(r"([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})()()()", t) or re.fullmatch(
+            r"([0-9]{4})年([0-9]{1,2})月([0-9]{1,2})日()()()", t
+        )
+    if m is None:
+        return None
+    y, mo, d, hh, mi, ss = m.groups()
+    try:
+        if hh:
+            return _dt.datetime(int(y), int(mo), int(d), int(hh), int(mi), int(ss or 0))
+        return _dt.date(int(y), int(mo), int(d))
+    except ValueError:
+        return None
+
+
 #: 日期数值 = 自 1970-01-01 起的天数；生成的日期脚本会把 matplotlib 的纪元固定成它（见 `_EPOCH_SETUP`）
 _EPOCH = _dt.date(1970, 1, 1)
 
 
-def date_number(d: _dt.date) -> float:
+def date_number(d) -> float:
+    """日期 → 自 1970-01-01 起的天数；带时刻（`datetime`）的折成小数天（同一天不同时刻是不同的横坐标，不会被当成重复的 x）。**运行时函数**。"""
+    if isinstance(d, _dt.datetime):
+        return float((d.date() - _EPOCH).days) + (d.hour * 3600 + d.minute * 60 + d.second) / 86400
     return float((d - _EPOCH).days)
 
 
@@ -283,6 +331,11 @@ class DataSummary:
     header_line: int | None = None
     #: 读法的一部分：表头后紧跟的一行单位已被切掉（嗅探认出来的；只在读法与嗅探的表头行一致时才切）。脚本照抄；False = 读法不变
     units_row: bool = False
+    #: 读法的一部分：这张表没有表头行，列名是 `col1`…、第一行是数据（嗅探认出来的；`header_line` 是第一条数据行的物理行号）。脚本照抄；False = 读法不变
+    no_header: bool = False
+    #: 大表读法的一部分：整列判定（`ColumnTagger.tags()`：`{列下标: 真 = 整列带 % / 假 = 小数逗号}`）。小表是读完整份再判（`tag_columns`），大表先预扫一遍定下它、
+    #: 再按它逐行读；脚本照抄。空 = 没有这样的列（读法不变）
+    col_tags: dict = field(default_factory=dict)
     #: 文本表格实际用的编码（`TEXT_ENCODINGS`；父进程定下、脚本照抄 codec 名，不自己探测）；XLSX / v1 是 None
     encoding: str | None = None
     #: 合画（几份列名相同的表拼成一张）时与 `rows` 逐项对应的「这一行来自哪一份」（该份的分组值）；单份 = 空。`row_numbers` 是各份自己的文件行号
@@ -480,11 +533,59 @@ def fill_header(header):
     return out
 
 
-def iter_table(lines, delimiter, header_row=None, units_row=False):
+class NamelessTailData(ValueError):
+    """表头末尾「没有名字」的列里有数据（`cut_tail` 抛）：那一列不是 Excel 另存时多出来的空列，读表的调用方一律按 `data_header_invalid` 处理。
+    **运行时类**（与 `cut_tail` 一起进公共模块；生成的脚本里它只会在父进程已核过的表上不出现）。"""
+
+
+def nameless_tail(header):
+    """表头末尾**连续**名字为空的列有几个（至少留一列）。Excel / WPS 另存 CSV 时常在每行末尾多出几个空格子（`a,b,c,,`），表头里它们也是空名字。
+    只数尾部：中间的空名字（`a,,c`）不算，仍是 `data_header_invalid`。**运行时函数**。"""
+    k = 0
+    while k < len(header) - 1 and not header[-1 - k].strip():
+        k += 1
+    return k
+
+
+def cut_tail(cells, keep, total):
+    """一行数据去掉表头里没有名字的尾部列：只保留前 `keep` 格。这一行的宽度不是表头原来的宽度 `total`、或被去掉的格子里有一格不是空的，就抛
+    `NamelessTailData`——前者不是「每行末尾都多了几个空格子」的表，后者是名字空、整列却有数据；两种都与此前一样按 `data_header_invalid`
+    处理（表头里有空名字时，表头判定先于行宽判定），不替用户丢数据、也不改报错的先后。**运行时函数**：整份读（`iter_table` / `_summarize` /
+    `read_xlsx`）与流式读是同一个判据。"""
+    if len(cells) != total or any(c.strip() for c in cells[keep:]):
+        raise NamelessTailData("data_header_invalid")
+    return cells[:keep]
+
+
+def _trim_tail(header, body):
+    """`(表头, 数据行迭代器)` → 去掉表头末尾没有名字的列（`nameless_tail`）与各行对应的格子（`cut_tail`）；没有这样的列原样返回。**运行时函数**。"""
+    k = nameless_tail(header)
+    if not k:
+        return header, body
+    total = len(header)
+    keep = total - k
+    return header[:keep], ((n, cut_tail(c, keep, total)) for n, c in body)
+
+
+def _tagged(body, tags):
+    """数据行迭代器按 `tags` 逐行 `apply_tags`；没有 `tags` 原样返回。**运行时函数**。"""
+    if not tags:
+        return body
+    return ((n, apply_tags(c, tags)) for n, c in body)
+
+
+def _tagged_table(result, tags):
+    """`(表头, 数据行迭代器)` 的数据行套 `_tagged`。**运行时函数**。"""
+    header, body = result
+    return header, _tagged(body, tags)
+
+
+def iter_table(lines, delimiter, header_row=None, units_row=False, no_header=False, tags=None):
     """`(表头, 数据行迭代器)`；迭代器逐条产出 `(物理行号, 单元格列表)`。读法与 `table_from_text` 完全一样（这就是它的实现）：
     `header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。给了行号：从该行起（第一条起始行号 ≥ 它的记录）
     是表头，之前的行都是说明、不读；表头之后以 `#` 开头**且列数与表头不同**的行是注释、丢掉（列数相同的 `#` 行是数据）。`units_row` 真：表头之后的
-    第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；切掉后数据行的物理行号不变）。没有任何记录 → `([], 空迭代器)`。
+    第一条记录是单位行，不是数据，切掉（嗅探认出来才由调用方给；切掉后数据行的物理行号不变）。`no_header` 真：这张表没有表头行（嗅探认出来才由调用方给：第一条记录整行都是数值、
+    下面也是数值），列名叫 `col1`、`col2`…（与 `xvg_text` / `fill_header` 同一个叫法），第一条记录（从 `header_row` 起算）是数据；表头之后的 `#` 行规则同显式表头行。`tags`（`ColumnTagger.tags()`，大表预扫出来的整列判定）给了就逐行 `apply_tags`。没有任何记录 → `([], 空迭代器)`。
     **流式、运行时函数**：父进程与生成的脚本读出来的必然是同一张表；大文件一遍扫过，内存只与表头和（显式表头行时）开头的注释行有关。"""
     records = iter_records(lines, delimiter)
     if header_row is not None:
@@ -494,12 +595,23 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
         return [], iter(())
     first_line, first_cells, first_raw = first
     rest = ((n, c) for n, c, _raw in records)
+    if no_header:
+        rest = itertools.chain([(first_line, first_cells)], rest)  # 第一条记录也是数据
     if delimiter == ";":
         rest = ((n, [SemicolonCell(c) if "," in c else c for c in cells]) for n, cells in rest)
     if units_row:
         next(rest, None)
+    if no_header:
+        width = len(first_cells)
+
+        def data():
+            for n, c in rest:
+                if len(c) == width or not c[0].lstrip().startswith("#"):
+                    yield n, c
+
+        return ["col" + str(k + 1) for k in range(width)], _tagged(data(), tags)
     if header_row is None:
-        return fill_header([h.strip() for h in first_cells]), rest
+        return _tagged_table(_trim_tail(fill_header([h.strip() for h in first_cells]), rest), tags)
     # 列数以表头之后第一条非 `#` 记录为准（没有就取紧跟的第一条）；探测时读过的记录接回去，不丢
     held = []
     probe = None
@@ -524,14 +636,80 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
             if len(c) == len(header) or not c[0].lstrip().startswith("#"):
                 yield n, c
 
-    return header, body()
+    return _tagged_table(_trim_tail(header, body()), tags)
 
 
-def table_from_text(text, delimiter, header_row=None, units_row=False):
-    """`(表头, 数据行, 数据行的物理行号)`：`iter_table` 的整份文本版（同一份读法，见它的文档）。**运行时函数**。"""
-    header, body = iter_table(io.StringIO(text, newline=""), delimiter, header_row, units_row)
+class ColumnTagger:
+    """整列判定的累加器（`tag_columns` 与大表的预扫描**共用这一个实现**，小表整份读与大表流式读由此得到同一个判定）：逐行 `feed`，最后 `tags()` 给出
+    `{列下标: 真 = 百分号 / 假 = 小数逗号}`。判据（列级，整列每个非空格都要符合，有一格不符整列照旧）：
+    * **百分号**：每格都是 `数字%`（`52.3%`，允许正负号、小数、`%` 前的空白）→ 数值是 `%` 前面的数（**不除以 100**）；
+    * **小数逗号**：只在分隔符是分号 / 制表符时；每格都是 `数字` 或 `数字,数字`、至少一格带逗号、且**没有任何一格长得像千分位**（`1,234`：首组 1–3 位不以 0 开头、
+      其后每组恰好 3 位）→ 逗号是小数点（`1,5` → 1.5）。有一格像千分位就分不清是 1.234 还是 1234，整列照旧（分号文件里是文字，制表符文件里按千分位认）；逗号分隔、空白分隔的表里绝不这样读。
+    **运行时类**。"""
+
+    def __init__(self, width, delimiter):
+        self.pct = [True] * width
+        self.dec = [delimiter in (";", "\t")] * width
+        self.comma = [False] * width
+        self.seen = [False] * width
+
+    def feed(self, cells):
+        for j, cell in enumerate(cells[: len(self.seen)]):
+            t = cell.strip()
+            if not t:
+                continue
+            self.seen[j] = True
+            if self.pct[j] and not re.fullmatch(r"[-+]?[0-9]+(?:\.[0-9]+)?\s*%", t):
+                self.pct[j] = False
+            if self.dec[j]:
+                if not re.fullmatch(r"[-+]?[0-9]+(?:,[0-9]+)?", t) or re.fullmatch(
+                    r"[-+]?[1-9][0-9]{0,2}(?:,[0-9]{3})+", t
+                ):
+                    self.dec[j] = False
+                elif "," in t:
+                    self.comma[j] = True
+
+    def tags(self):
+        out = {}
+        for j, seen in enumerate(self.seen):
+            if not seen:
+                continue
+            if self.pct[j]:
+                out[j] = True
+            elif self.dec[j] and self.comma[j]:
+                out[j] = False
+        return out
+
+
+def apply_tags(cells, tags):
+    """一行的格子按 `tags`（`ColumnTagger.tags()`）把判定为数值的列换成 `NumberCell`（原文 + 数值），别的格原样；没有 `tags` 原样返回。**运行时函数**。"""
+    if not tags:
+        return cells
+    out = list(cells)
+    for j, percent in tags.items():
+        if j < len(out) and out[j].strip():
+            t = out[j].strip()
+            out[j] = NumberCell(t, float(t[:-1]) if percent else float(t.replace(",", ".")))
+    return out
+
+
+def tag_columns(header, rows, delimiter):
+    """整份读的文本表里「整列写法一致」才认的两种数值（判据见 `ColumnTagger`）：整列符合的每格换成 `NumberCell`，别的列原样；返回新的行列表
+    （没有符合的列时就是传进来的那个）。只改内存里的副本，不碰文件。大表（流式）由 `read_text_table` 先预扫一遍定出同一个 `tags`、读表时按它逐行 `apply_tags`。**运行时函数**。"""
+    tagger = ColumnTagger(len(header), delimiter)
+    for r in rows:
+        tagger.feed(r)
+    tags = tagger.tags()
+    return [apply_tags(r, tags) for r in rows] if tags else rows
+
+
+def table_from_text(text, delimiter, header_row=None, units_row=False, no_header=False):
+    """`(表头, 数据行, 数据行的物理行号)`：`iter_table` 的整份文本版（同一份读法，见它的文档），多一步整列判定 `tag_columns`（整列带 `%` / 整列小数逗号）。**运行时函数**。"""
+    header, body = iter_table(
+        io.StringIO(text, newline=""), delimiter, header_row, units_row, no_header
+    )
     pairs = list(body)
-    return header, [c for _, c in pairs], [n for n, _ in pairs]
+    return header, tag_columns(header, [c for _, c in pairs], delimiter), [n for n, _ in pairs]
 
 
 # --- 嗅探（只在父进程）
@@ -619,6 +797,8 @@ class TextLayout:
     sure: bool
     #: 表头行后面紧跟一行单位（`nm  a.u.`）、再往后才是数据：读表时把这一行切掉（不是数据，也不是第二个表头）
     units: bool = False
+    #: 这张表没有表头行（第一条记录整行都是数值、下面也是数值）：`header_line` 是第一条数据的物理行号，列名叫 `col1`…；读表时第一条记录算数据
+    no_header: bool = False
 
 
 @dataclass(frozen=True)
@@ -649,6 +829,58 @@ def _ragged_hint(sample: str) -> RaggedLayout | None:
         if best is None or key > best[0]:
             best = (key, RaggedLayout(d, same[0][0]))
     return best[1] if best else None
+
+
+def _headerless(block) -> bool:
+    """块的第一条记录**每一格都是数值**（`parse_cell` 判 `numeric`，空格 / NaN / 文字都不算）、而且紧随其后的记录（最多 50 条非 `#` 行，至少 1 条）里每个非空格子也是
+    数值 → 这张表没有表头行：第一行是数据（`10.00  116` 这种两列纯数字的仪器导出）。**只看整行**：表头本来就是数字、第一列却是文字的宽表（`year,2019,2020`）
+    第一格是文字，不算；数字表头压在整张纯数字的表上（`2019 2020 2021` 下面全是数）分不开，按没有表头读（嗅探仍标「猜的」，`unsure`）。"""
+    rows = [r for _n, r in block if not _is_hash(r)]
+    if len(rows) < 2 or any(parse_cell(c)[0] != "numeric" for c in rows[0]):
+        return False
+    return all(parse_cell(c)[0] in ("numeric", "nan") for r in rows[1:51] for c in r if c.strip())
+
+
+def _header_end(block, numeric) -> int:
+    """块里第一条「有数值列的格子是数」的记录的下标 = 它之前有几条记录是表头候选（0 条：没有候选，表头在块外或没有表头）；没有数值列时按 1（只有第一条）。"""
+    if not numeric:
+        return 1
+    return next(
+        (i for i, (_n, r) in enumerate(block) if any(_numlike(r[j]) for j in numeric)),
+        0,
+    )
+
+
+def _pick_header(d: str, block, width: int, k: int) -> TextLayout:
+    """块里前 `k`（≥ 1）条记录是表头候选：挑哪一条是列名。**文本表（`_detect`）与 XLSX（`xlsx_header_guess`）共用这一个判据**。"""
+    cands = [r for r in block[:k] if not _is_hash(r[1])] or block[:k]  # 与表头同列数的 `#` 行是注释
+    # 默认取第一条像名字的（老读法）。例外：候选里有**单位行**（`nm  a.u.`）时，列名是紧挨在它前面的那一行——更前面同列数的说明行
+    # （`operator: lab`）也「像名字」，不能因它排在前面被选中。没有单位行时不往后挪：`group,value` 后面紧跟一条夹着文字标记的观测
+    # （`control,<0.1`）也「像名字」，那是数据不是表头。
+    u = next((i for i, r in enumerate(cands) if _is_units_row(r[1], width)), None)
+    if u is not None and u >= 1 and _name_like(cands[u - 1][1]):
+        pick = cands[u - 1]
+    else:
+        pick = next((r for r in cands if _name_like(r[1])), cands[0])
+    return TextLayout(d, pick[0], len(cands) == 1, _units_follow(block, pick, k, width))
+
+
+def xlsx_header_guess(table: list[list[str]], numbers: list[int]) -> int | None:
+    """XLSX 的表头行是哪一行（工作表行号）——**只在第一条非空行读不成表头时**才问（`_summarize_book`）：开头有标题行（`酶标仪导出 2026-11-20`）、
+    列名在后面几行。判据与文本表是同一个（`_block` / `_numeric_columns` / `_header_end` / `_pick_header`；XLSX 的每一行已经是切好的格子，所以没有分隔符那一层）。
+    给不出（没有成块的数据、没有候选、猜的就是第一行、表头后紧跟单位行——XLSX 不切单位行）= None，调用方照旧报原来的错。"""
+    recs = [(n, list(r)) for n, r in zip(numbers, table) if any(c.strip() for c in r)]
+    blk = _block(recs)
+    if blk is None:
+        return None
+    width, block, _plain = blk
+    k = _header_end(block, _numeric_columns(block, width))
+    if k < 1:
+        return None
+    layout = _pick_header("xlsx", block, width, k)
+    if layout.units or layout.header_line == recs[0][0]:
+        return None
+    return layout.header_line
 
 
 def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
@@ -700,25 +932,9 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
             first = next(r for r in recs if not _is_hash(r[1]) and len(r[1]) == width)
             return RaggedLayout(d, first[0])
         # 表头候选
-        k = 1
-        if numeric:
-            k = next(
-                (i for i, (_n, r) in enumerate(block) if any(_numlike(r[j]) for j in numeric)),
-                0,
-            )
+        k = _header_end(block, numeric)
         if k >= 1:
-            cands = [r for r in block[:k] if not _is_hash(r[1])] or block[
-                :k
-            ]  # 与表头同列数的 `#` 行是注释
-            # 默认取第一条像名字的（老读法）。例外：候选里有**单位行**（`nm  a.u.`）时，列名是紧挨在它前面的那一行——更前面同列数的说明行
-            # （`operator: lab`）也「像名字」，不能因它排在前面被选中。没有单位行时不往后挪：`group,value` 后面紧跟一条夹着文字标记的观测
-            # （`control,<0.1`）也「像名字」，那是数据不是表头。
-            u = next((i for i, r in enumerate(cands) if _is_units_row(r[1], width)), None)
-            if u is not None and u >= 1 and _name_like(cands[u - 1][1]):
-                pick = cands[u - 1]
-            else:
-                pick = next((r for r in cands if _name_like(r[1])), cands[0])
-            return TextLayout(d, pick[0], len(cands) == 1, _units_follow(block, pick, k, width))
+            return _pick_header(d, block, width, k)
         first_line = block[0][0]
         prev = next((r for r in reversed(recs) if r[0] < first_line), None)
         if prev is not None:
@@ -726,6 +942,8 @@ def _detect(text: str, suffix: str) -> TextLayout | RaggedLayout | None:
             hdr = resolve_header(prev[1], raw, d, width)
             if (_is_hash(prev[1]) or d == "ws") and len(hdr) == width and all(hdr):
                 return TextLayout(d, prev[0], True)
+        if _headerless(block):
+            return TextLayout(d, first_line, False, no_header=True)
         return TextLayout(d, first_line, False)
     return _ragged_hint(sample)
 
@@ -946,6 +1164,8 @@ def _read_small_text_table(
             table = list(csv.reader(io.StringIO(text, newline=""), delimiter=delim))
         except csv.Error:
             return _unreadable("data_malformed")
+        if table:  # 整列判定与脚本里的 `table_from_text` 同一个（`tag_columns`）
+            table = [table[0], *tag_columns(table[0], table[1:], delim)]
         try:
             summ = _summarize(
                 table,
@@ -973,15 +1193,20 @@ def _read_small_text_table(
         script_header = None
     # 单位行只在读的就是嗅探认出的那一行表头时才切：用户另指一行（`header_rows`）= 他在说「读法由我定」，不替他猜单位行
     units = bool(layout.units and line == layout.header_line)
+    # 没有表头行同理：只在读的就是嗅探认出的那一行时才成立（用户另指一行 = 读法由他定；摘要的 `header_line` 传回来重读时正是这一行，读出同一张表）
+    no_header = bool(layout.no_header and line == layout.header_line)
+    tail_data = False
     try:
         header, rows, row_lines = (
             table_from_text(text, delim, script_header, True)
             if units
-            else table_from_text(text, delim, script_header)
+            else table_from_text(text, delim, script_header, False, no_header)
         )
     except csv.Error:
         return _unreadable("data_malformed")
-    if not header:
+    except NamelessTailData:  # 表头末尾没有名字的列里有数据：与名字空的列一样是 `data_header_invalid`（下面 `_summarize` 前统一处理）
+        header, rows, row_lines, tail_data = [], [], [], True
+    if not header and not tail_data:
         if header_row is not None:
             return _tt(
                 "unreadable", code="data_header_row_invalid", delimiter=delim,
@@ -990,6 +1215,8 @@ def _read_small_text_table(
         return _unreadable("data_empty")
     guessed = not layout.sure and header_row is None
     try:
+        if tail_data:
+            raise DataSourceError("data_header_invalid")
         summ = _summarize(
             [header, *rows],
             path_name=p.name,
@@ -1003,6 +1230,7 @@ def _read_small_text_table(
             header_line=line,
             encoding=encoding,
             units_row=units,
+            no_header=no_header,
         )
     except DataSourceError as exc:
         if guessed and exc.code == "data_header_invalid":
@@ -1111,6 +1339,14 @@ def _head_text(p: Path, codec: str) -> str:
     return text[: cut + 1] if cut > 0 and len(raw) >= LARGE_HEAD_BYTES else text
 
 
+def _header_invalid_on_tail(body):
+    """把流式读里 `cut_tail` 抛的 `NamelessTailData` 换成 `DataSourceError("data_header_invalid")`（逐行透传，其余原样）。"""
+    try:
+        yield from body
+    except NamelessTailData:
+        raise DataSourceError("data_header_invalid") from None
+
+
 def _scan_summary(
     header_cells,
     body,
@@ -1126,10 +1362,12 @@ def _scan_summary(
     units_row: bool,
     path: str | None = None,
     pos=None,
+    no_header: bool = False,
+    col_tags: dict | None = None,
 ) -> DataSummary:
     """大表的一遍扫描：`_summarize` 的流式版（同样的列统计、同样的错误码），行不进内存。结构线索用有界集合（`_Facts`）。
     除受控摘要外留下精确的整表统计（行数、每列有限数值的个数 / 最小 / 最大）与前 `LARGE_PREVIEW_ROWS` 行。"""
-    header = fill_header([h.strip() for h in header_cells])
+    header, body = _trim_tail(fill_header([h.strip() for h in header_cells]), body)
     if len(header) > MAX_COLUMNS:
         raise DataSourceError("data_too_wide", str(len(header)))
     if any(not h for h in header) or len(set(header)) != len(header):
@@ -1152,7 +1390,7 @@ def _scan_summary(
     count = 0
     preview: list[list[str]] = []
     pnums: list[int] = []
-    for n, r in body:
+    for n, r in _header_invalid_on_tail(body):
         if len(r) != ncols:
             raise DataSourceError("data_ragged")
         count += 1
@@ -1179,7 +1417,7 @@ def _scan_summary(
                     st.hi = v
             elif cls == "text":
                 s.text_count += 1
-                if parse_date(cell) is not None:
+                if parse_when(cell) is not None:
                     s.dates += 1
                 if len(s.text) < TEXT_SAMPLES:
                     s.text.append(cell.strip())
@@ -1259,6 +1497,8 @@ def _scan_summary(
         header_line=header_line,
         encoding=encoding,
         units_row=units_row,
+        no_header=no_header,
+        col_tags=dict(col_tags or {}),
         large=LargeInfo(count, stats, preview, pnums, path),
     )
 
@@ -1269,6 +1509,34 @@ def _old_reader_stream(fh, delimiter):
     for n, row in enumerate(reader, start=1):
         if any(c.strip() for c in row):
             yield n, row
+
+
+#: 大表整列判定的预扫：先只看开头这么多行，没有哪一列还可能符合就不再读第二遍（绝大多数大表没有带 `%` / 小数逗号的列）
+TAG_HEAD_ROWS = 2000
+
+
+def _large_tags(p, codec, delim, script_header, units, no_header, size) -> dict:
+    """大表的整列判定 `{列下标: 真 = 百分号 / 假 = 小数逗号}`（判据与小表整份读的 `tag_columns` 是同一个 `ColumnTagger`）：开头 `TAG_HEAD_ROWS` 行里
+    没有任何一列还可能符合就是空；否则再整份读一遍（流式，可取消）定下来。表头读不出来 / 尾部没有名字的列有数据等错误这里不管，留给紧接着的扫描按原样报。"""
+    try:
+        with io.TextIOWrapper(p.open("rb"), encoding=codec, newline="") as fh:
+            header, body = iter_table(fh, delim, script_header, units, no_header)
+            if not header:
+                return {}
+            tagger = ColumnTagger(len(header), delim)
+            for _n, cells in itertools.islice(body, TAG_HEAD_ROWS):
+                tagger.feed(cells)
+            # 「开头没有符合的列」不等于「后面不会有」：小数逗号列可以以整数开头（`1`、`2`……到第 2001 行才出现 `1,5`），百分号列可以以空格开头。
+            # 只有每一列都已经被开头的某一格否掉（既不可能整列带 %，也不可能整列小数逗号）才省掉第二遍（Codex #2346 P2）
+            if not (any(tagger.pct) or any(tagger.dec)):
+                return {}
+            for count, (_n, cells) in enumerate(body, start=1):
+                tagger.feed(cells)
+                if not count & 0xFFFF:
+                    progress.tick("scan", fh.buffer.tell(), size)
+            return tagger.tags()
+    except NamelessTailData:
+        return {}
 
 
 def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> TextTable:
@@ -1316,6 +1584,7 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
     old_reader = layout.header_line == 0 and header_row is None
     line = 1 if old_reader else (header_row if header_row is not None else layout.header_line)
     units = bool(not old_reader and layout.units and line == layout.header_line)
+    no_header = bool(not old_reader and layout.no_header and line == layout.header_line)
     script_header = None if old_reader else line
     guessed = not old_reader and not layout.sure and header_row is None
     summ = None
@@ -1333,13 +1602,17 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
                         units_row=False, path=str(p), pos=fh.buffer.tell,
                     )  # fmt: skip
             else:
-                head_cells, body = iter_table(fh, delim, script_header, units)
+                col_tags = _large_tags(p, codec, delim, script_header, units, no_header, size)
+                head_cells, body = iter_table(
+                    fh, delim, script_header, units, no_header, col_tags or None
+                )
                 if head_cells:
                     ncols = len(head_cells)
                     summ = _scan_summary(
                         head_cells, body, path_name=p.name, sha256=sha, size=size, parse=parse_cell,
                         delimiter=delim, header_row=script_header, header_line=line,
-                        encoding=encoding, units_row=units, path=str(p), pos=fh.buffer.tell,
+                        encoding=encoding, units_row=units, no_header=no_header, path=str(p),
+                        pos=fh.buffer.tell, col_tags=col_tags,
                     )  # fmt: skip
     except csv.Error:
         return _unreadable("data_malformed")
@@ -1448,8 +1721,8 @@ def inspect_data_source(
 
     `allow_large`：认大表（`read_text_table` 的流式读，摘要不带行数据，见 `DataSummary.large`）的调用方才传；不传时大表抛 `data_too_large`。
     `v2=True`（数据出图 v2 的读法，v1 不传）：文本格式走 `read_text_table`（嗅探分隔符、跳过说明行、找表头行，`.txt` / `.dat` / `.asc` 也认；
-    `header_row` 是调用方指定的表头物理行号；编码认 UTF-8 / UTF-8 BOM / 有 BOM 的 UTF-16 / GB18030，见 `decode_text`），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法不变，
-    只是同样认千分位的文字格。"""
+    `header_row` 是调用方指定的表头物理行号；编码认 UTF-8 / UTF-8 BOM / 有 BOM 的 UTF-16 / GB18030，见 `decode_text`），单元格规则认千分位（`1,000`）；读不了抛 `DataSourceError`（稳定码）。XLSX 的读法：`header_row`（工作表行号）给了就跳过它之前的行，没给时第一条非空行读不成表头才找标题行后面的列名行（`_summarize_book`）；
+    同样认千分位的文字格。"""
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix in LEGACY_EXCEL_SUFFIXES:
@@ -1457,7 +1730,12 @@ def inspect_data_source(
     if suffix in XLSX_SUFFIXES:
         try:
             with xlsxread.XlsxBook(p) as book:
-                return _summarize_book(book, sheet, parse=parse_cell if v2 else None)
+                return _summarize_book(
+                    book,
+                    sheet,
+                    parse=parse_cell if v2 else None,
+                    header_row=header_row if v2 else None,
+                )
         except xlsxread.XlsxError as exc:
             raise _from_xlsx_error(exc) from None
     if v2:
@@ -1479,20 +1757,57 @@ def inspect_data_source(
 
 
 def _summarize_book(
-    book: xlsxread.XlsxBook, sheet: str | int | None, *, keep_rows: bool = True, parse=None
+    book: xlsxread.XlsxBook,
+    sheet: str | int | None,
+    *,
+    keep_rows: bool = True,
+    parse=None,
+    header_row: int | None = None,
 ) -> DataSummary:
+    """XLSX 一张表的摘要。`header_row`（工作表里的行号，与文本表同一口径）给了 = 它之前的行是说明、不读。v2（`parse` 给了）且没指定行时：第一条非空行
+    读不成表头（`data_header_invalid`）就用 `xlsx_header_guess` 找标题行后面的列名行（与文本表猜表头行同一套判据）；读不成就仍报原来的错。
+    **真的跳过了行**才把行号记进摘要（`header_row` / `header_line`），其余（常态）两者都是 None，生成的脚本与此前逐字相同。v1（`parse` 没给）逐字不变。"""
     info = book.resolve(sheet)
     table = book.read(info.index)
-    return _summarize(
-        table,
-        row_numbers=list(getattr(book, "row_numbers", [])),
-        path_name=book.name,
-        sha256=book.raw_sha256,
-        size=book.size,
-        sheet=info.name,
-        keep_rows=keep_rows,
-        parse=parse,
-    )
+    numbers = list(getattr(book, "row_numbers", []))
+    v2 = parse is not None
+
+    def one(rows, nums, hrow):
+        return _summarize(
+            rows,
+            row_numbers=nums,
+            path_name=book.name,
+            sha256=book.raw_sha256,
+            size=book.size,
+            sheet=info.name,
+            keep_rows=keep_rows,
+            parse=parse,
+            header_row=hrow,
+            header_line=hrow,
+        )
+
+    def skip(first: int):
+        pairs = [(n, r) for n, r in zip(numbers, table) if n >= first]
+        return [r for _, r in pairs], [n for n, _ in pairs]
+
+    if v2 and header_row is not None and len(numbers) == len(table):
+        rows, nums = skip(header_row)
+        if not rows:
+            raise DataSourceError("data_header_row_invalid")
+        return one(rows, nums, nums[0] if len(rows) < len(table) else None)
+    try:
+        return one(table, numbers, None)
+    except DataSourceError as exc:
+        if not v2 or exc.code != "data_header_invalid" or len(numbers) != len(table):
+            raise
+        guess = xlsx_header_guess(table, numbers)
+        if guess is None:
+            raise
+        rows, nums = skip(guess)
+        try:
+            return one(rows, nums, nums[0])
+        except DataSourceError:
+            raise exc from None
 
 
 def _summarize(
@@ -1510,9 +1825,12 @@ def _summarize(
     header_line: int | None = None,
     encoding: str | None = None,
     units_row: bool = False,
+    no_header: bool = False,
 ) -> DataSummary:
     #: 单元格规则：默认 v1 的（不认千分位）；v2 传 `parse_cell`
+    v2 = parse is not None
     parse = parse or legacy_parse_cell
+    date_of = parse_when if v2 else parse_date  # v1 的日期规则逐字不变（只认 ISO 日期）
     numbered = (
         list(zip(row_numbers, table)) if row_numbers and len(row_numbers) == len(table) else None
     )
@@ -1526,11 +1844,17 @@ def _summarize(
     if not table:
         raise DataSourceError("data_empty")
     header = fill_header([h.strip() for h in table[0]])
+    rows = table[1:]
+    if v2:  # v1 逐字不变：尾部没有名字的空列只在 v2 的读法里丢
+        try:
+            header, body = _trim_tail(header, ((0, r) for r in rows))
+            rows = [r for _, r in body]
+        except NamelessTailData:
+            raise DataSourceError("data_header_invalid") from None
     if len(header) > MAX_COLUMNS:
         raise DataSourceError("data_too_wide", str(len(header)))
     if any(not h for h in header) or len(set(header)) != len(header):
         raise DataSourceError("data_header_invalid")
-    rows = table[1:]
     if len(rows) > SMALL_ROWS:
         raise DataSourceError("data_too_long", str(len(rows)))
     if not rows:
@@ -1547,7 +1871,7 @@ def _summarize(
             cls, _ = parse(cell)
             if cls == "text":
                 s.text_count += 1
-                if parse_date(cell) is not None:
+                if date_of(cell) is not None:
                     s.dates += 1
                 if len(s.text) < TEXT_SAMPLES:
                     s.text.append(cell.strip())
@@ -1580,6 +1904,7 @@ def _summarize(
         header_line=header_line,
         encoding=encoding,
         units_row=units_row,
+        no_header=no_header,
     )
 
 
