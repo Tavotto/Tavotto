@@ -224,8 +224,9 @@ def test_the_common_module_did_not_change_so_its_hash_and_name_stay_put():
 #: 2026-11-23 按期刊字号范围出图：公共模块多了 `fit_fonts` / `place_legends` / `build_legend` / `legend_hits_data`（图例图内放不下挪到图外；文字互相干涉时同一类一起退字号）→ `tavotto_plot_e44d5b65.py`；
 #: 2026-11-24 没画的行要有计数（G-055）：大表缩减那一遍多记两个数（`key_empty` / `y_invalid`）→ `tavotto_plot_5b98475c.py`；
 #: 同日误差线取自现成的误差列（`FigureRecipe.err`）：`comparison_data` / `trend_data` 多一个可选的 `err` 参数，公共模块多了 `comparison_error_points` / `trend_error_points` → `tavotto_plot_3212ec84.py`；
-#: 2026-11-25 现成误差列的多个 y（每个 y 各配各的误差列）：`trend_data` 的 `err` 也可以是与 `ys` 等长的列名数组 → 这一个）
-PINNED_RUNTIME_NAME = "tavotto_plot_b40c1579.py"
+#: 2026-11-25 现成误差列的多个 y（每个 y 各配各的误差列）：`trend_data` 的 `err` 也可以是与 `ys` 等长的列名数组 → `tavotto_plot_b40c1579.py`；
+#: 2026-11-27 表头第一格为空时叫 `col1`：公共模块多了 `fill_header`（`iter_table` / `read_xlsx` 调用）→ 这一个）
+PINNED_RUNTIME_NAME = "tavotto_plot_ee3e54e2.py"
 
 
 # =========================================================================== 接口
