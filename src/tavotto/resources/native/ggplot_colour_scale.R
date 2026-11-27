@@ -192,6 +192,26 @@ ggplot_capture_colourbar <- function(guide, key, inverse, extend, outline) {
   })
 }
 
+ggplot_colourbar_scale <- function(scales, aesthetics) {
+  if (!length(aesthetics) || !all(aesthetics %in% c("colour", "fill"))) return(NULL)
+  scale <- scales$get_scales(aesthetics[[1L]])
+  if (all(vapply(aesthetics, function(channel) {
+    identical(scale, scales$get_scales(channel))
+  }, logical(1L)))) scale
+}
+
+ggplot_train_colourbar <- function(guide, params, scale, aesthetics) {
+  trained <- guide$train(params = params, scale = scale, aesthetic = aesthetics[[1L]])
+  if (is.null(trained)) return(NULL)
+  for (channel in aesthetics[-1L]) {
+    next_params <- guide$train(params = params, scale = scale, aesthetic = channel)
+    if (is.null(next_params) || !identical(trained$hash, next_params$hash)) return(NULL)
+    merged <- guide$merge(trained, guide, next_params)
+    trained <- merged$params
+  }
+  trained
+}
+
 ggplot_colourbar_guides <- function(guides, scales, extensions = NULL, outlines = NULL) {
   actual <- guides$guides
   for (key in names(actual)) {
@@ -199,8 +219,7 @@ ggplot_colourbar_guides <- function(guides, scales, extensions = NULL, outlines 
     if (identical(class(guide)[[1L]], "GuideColourbar") &&
         identical(as.list(guide)$assemble_drawing, as.list(ggplot2::GuideColourbar)$assemble_drawing)) {
       aesthetic <- guides$params[[key]]$aesthetic
-      if (length(aesthetic) != 1L) next
-      scale <- scales$get_scales(aesthetic)
+      scale <- ggplot_colourbar_scale(scales, aesthetic)
       if (is.null(scale)) next
       actual[[key]] <- ggplot_capture_colourbar(
         guide, key, scale$get_transformation()$inverse, extensions[[key]], outlines[[key]]
@@ -220,9 +239,8 @@ ggplot_colour_scale_mappings <- function(built, table, text_targets, titles, map
     key <- names(titles)[[index]]
     params <- built$plot$guides$params[[key]]
     aesthetic <- params$aesthetic
-    if (length(aesthetic) != 1L || !aesthetic %in% c("colour", "fill")) next
-    scale <- built$plot$scales$get_scales(aesthetic)
-    if (!identical(class(scale)[[1L]], "ScaleContinuous") ||
+    scale <- ggplot_colourbar_scale(built$plot$scales, aesthetic)
+    if (is.null(scale) || !identical(class(scale)[[1L]], "ScaleContinuous") ||
         !scale$get_transformation()$name %in% c("identity", "log-10") ||
         !all(scale$aesthetics %in% c("colour", "fill"))) next
     limits <- scale$get_transformation()$inverse(scale$get_limits())
@@ -261,7 +279,8 @@ ggplot_colour_scale_mappings <- function(built, table, text_targets, titles, map
     for (index in names(associated)) {
       guide <- guide_set$guides[[index]]
       aesthetic <- associated[[index]]$aesthetic
-      if (!identical(class(guide)[[1L]], "GuideColourbar") || length(aesthetic) != 1L) break
+      if (!identical(class(guide)[[1L]], "GuideColourbar") ||
+          !identical(ggplot_colourbar_scale(built$plot$scales, aesthetic), target$scale)) break
       alias <- names(guide_keys)[match(index, guide_keys)]
       descriptors[[index]] <- list(aesthetic = aesthetic,
                                     ticks = if (!is.na(alias)) paste0(alias, ".ticks"))
@@ -370,20 +389,6 @@ measure_ggplot_colour_scales <- function(table, targets, frame_pt) {
   }
   result
 }
-
-ggplot_palette <- function(catalog, name) {
-  packed <- catalog$palettes[[name]]
-  size <- catalog$size
-  if (is.null(packed)) stop("Unknown Tavotto palette.")
-  starts <- seq.int(1L, nchar(packed), by = 6L)
-  colors <- paste0("#", substring(packed, starts, starts + 5L))
-  function(x) {
-    index <- pmax(1, pmin(floor(x * size) + 1, size))
-    index[!is.finite(x)] <- NA_integer_
-    colors[index]
-  }
-}
-
 
 ggplot_colourbar_appearance <- function(target, edit) {
   appearance <- edit[intersect(names(edit), c("label", "tick_color", "tick_fontsize", "visible"))]
@@ -515,21 +520,14 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
     }
     if (identical(selection$appearance$visible, FALSE)) hidden[[gid]] <- target
     if (!selection$range_changed && is.null(selection$cmap)) next
-    scale <- target$scale
-    scale <- ggplot_clone(scale)
-    if (selection$range_changed) {
-      scale$limits <- scale$get_transformation()$transform(selection$limits)
-      scale$breaks <- ggplot2::waiver()
-      # Extrema use endpoint colors, like the standard Tavotto color scale.
-      # Preserve missing values and the source scale's NA color.
-      scale$oob <- scales::squish
-    }
-    if (!is.null(selection$cmap)) scale$palette <- ggplot_palette(state$palettes, selection$cmap)
+    packed <- if (!is.null(selection$cmap)) state$palettes$palettes[[selection$cmap]]
+    scale <- ggplot_set_colour_mapping(
+      ggplot_clone(target$scale), if (selection$range_changed) selection$limits, packed
+    )
     for (key in names(target$guides)) {
       guide <- built$plot$guides$guides[[key]]
       descriptor <- target$guides[[key]]
-      params <- guide$train(params = guide_params[[key]], scale = scale,
-                            aesthetic = descriptor$aesthetic)
+      params <- ggplot_train_colourbar(guide, guide_params[[key]], scale, descriptor$aesthetic)
       if (is.null(params)) stop("The native R colour bar could not be drawn for this range.")
       guide_params[[key]] <- params
       if (!is.null(descriptor$ticks)) {
@@ -557,7 +555,25 @@ ggplot_remap_colour_scales <- function(state, edits, guide_params) {
        title_changes = names_changed, hidden = hidden)
 }
 
-ggplot_colour_scale_elements <- function(state, edits, measured, stops) {
+ggplot_colour_source_anchors <- function(targets) {
+  anchors <- list()
+  for (gid in names(targets)) {
+    target <- targets[[gid]]
+    if (!length(target$guides)) next
+    for (guide in target$guides) {
+      if (is.null(guide$ticks)) next
+      bar <- sub("\\.ticks$", "", guide$ticks)
+      anchor <- rlang::hash(list(
+        bar, targets[[bar]]$title, sort(guide$aesthetic), target$scale$aesthetics, target$members
+      ))
+      anchors[[bar]] <- anchor
+      anchors[[guide$ticks]] <- anchor
+    }
+  }
+  anchors
+}
+
+ggplot_colour_scale_elements <- function(state, edits, measured, stops, anchors) {
   lapply(names(state$colour_scales), function(gid) {
     target <- state$colour_scales[[gid]]
     selection <- ggplot_colour_scale_state(target, edits[[gid]], state$palettes)
@@ -593,6 +609,16 @@ ggplot_colour_scale_elements <- function(state, edits, measured, stops) {
              list(original = original, edited = selection$outline)
            }
          ))
+    element$colour_source_anchor <- anchors[[gid]]
+    if (selection$range_changed || !is.null(selection$cmap)) {
+      writes <- if (selection$range_changed) c("vmin", "vmax") else character()
+      element$source_colour_mapping <- list(
+        aesthetics = as.list(target$scale$aesthetics),
+        limits = if (selection$range_changed) as.list(selection$limits),
+        palette = selection$cmap,
+        edited = edits[[gid]][intersect(names(edits[[gid]]), c(writes, "cmap"))]
+      )
+    }
     if (target$host %in% names(state$legend_targets)) element$drag_host <- target$host
     element
   })

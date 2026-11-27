@@ -670,6 +670,133 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         assert previous["canvases"][0]["objects"][0]["overrides"] == patches
 
 
+@pytest.mark.parametrize("retain_tick_format", [False, True], ids=["write", "retain-format"])
+def test_native_r_colour_mapping_writeback_recreates_data_and_guides(tmp_path, retain_tick_format):
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Colour project"
+    project.mkdir()
+    script = project / "Colour.R"
+    original = b"""\
+d <- expand.grid(x = 1:7, y = 1:2)
+d$value <- c(1, 2, 8, 16, 64, 128, NA)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::geom_tile(ggplot2::aes(fill = value)) +
+  ggplot2::geom_point(ggplot2::aes(colour = value), size = 4) +
+  ggplot2::scale_fill_gradient(transform = "log10", na.value = "#CC8844") +
+  ggplot2::guides(
+    colour = ggplot2::guide_colourbar(title = "Exposure", position = "right"),
+    fill = ggplot2::guide_colourbar(title = "Ground", position = "left")
+  ) + ggplot2::labs(title = "Colours")
+ggplot2::ggsave("original.pdf", plot, width = 5, height = 3)
+"""
+    script.write_bytes(original)
+    route = "/api/layouts/Colour_map"
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        before = _render(app, figure, [])
+        original_pdf = (project / "original.pdf").read_bytes()
+        elements = {element["gid"]: element for element in before["manifest"]["elements"]}
+        edits = [
+            ("legend.right.1.colourbar", "vmin", 2),
+            ("legend.right.1.colourbar", "vmax", 64),
+            ("legend.right.1.colourbar", "cmap", "plasma"),
+            ("legend.left.1.colourbar", "vmin", 2),
+            ("legend.left.1.colourbar", "vmax", 64),
+            ("legend.left.1.colourbar", "cmap", "viridis"),
+        ]
+        if retain_tick_format:
+            edits.append(("legend.left.1.colourbar.ticks", "format", "%.2f"))
+        edits.append(("plot.title", "color", "#543380"))
+        patches = [
+            {"gid": gid, "prop": prop, "value": value, "identity": elements[gid]["identity"]}
+            for gid, prop, value in edits
+        ]
+        hot = _render(app, figure, patches)
+        assert not hot["warnings"]
+        assert before["svg"] != hot["svg"]
+        for color in ("#0D0887", "#F0F921", "#440154", "#FDE725", "#CC8844"):
+            assert color in hot["svg"]
+        w, h = hot["manifest"]["size_mm"]
+        panel = {**_panel("r", figure, 5, patches, native_width=w), "h": h, "nativeH": h}
+        doc = {
+            "schema": 3,
+            "project": {"id": "colour-source", "name": "Colour map"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": w + 10, "h": h + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(f"{route}?target=project", doc)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Colour_map")
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200, preview
+        expected_residual = patches[-2:-1] if retain_tick_format else []
+        assert preview["written"] == len(patches) - len(expected_residual)
+        assert len(preview["skipped"]) == len(expected_residual)
+        assert script.read_bytes() == original
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"], saved
+        assert (project / "original.pdf").read_bytes() == original_pdf
+        authored = script.read_bytes()
+        assert authored != original
+        _, persisted = app.call(route)
+        residual = persisted["canvases"][0]["objects"][0]["overrides"]
+        assert [
+            {key: value for key, value in patch.items() if key != "identity"} for patch in residual
+        ] == [
+            {key: value for key, value in patch.items() if key != "identity"}
+            for patch in expected_residual
+        ]
+        if retain_tick_format:
+            assert residual[0]["identity"] != expected_residual[0]["identity"]
+
+        replay_root = tmp_path / "Fresh runtime"
+        replay_root.mkdir()
+        (replay_root / script.name).write_bytes(authored)
+        with sidecar_app(replay_root, tmp_path / "fresh") as fresh:
+            rebuilt = _run_ggplot(fresh, script.name, rscript)
+            cold = _render(fresh, rebuilt, residual)
+            assert not cold["warnings"]
+            assert cold["svg"] == hot["svg"]
+
+        _, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "mode": "full",
+                "expected_sha256": saved["script_revision"],
+            },
+            timeout=120,
+        )
+        assert restored["ok"]
+        assert script.read_bytes() == original
+        assert (project / "original.pdf").read_bytes() == original_pdf
+        _, previous = app.call(route)
+        assert previous["canvases"][0]["objects"][0]["overrides"] == patches
+
+
 def test_connect_to_existing_r_and_release_its_console(tmp_path):
     rscript = _rscript_with_capture_packages()
     project = tmp_path / "R project"
@@ -1203,7 +1330,7 @@ if (!requireNamespace("ggplot2", quietly = TRUE) ||
 adapter <- new.env(parent = baseenv())
 adapter_file <- commandArgs(trailingOnly = TRUE)[[1L]]
 native <- dirname(adapter_file)
-parts <- c("ggplot2.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R",
+parts <- c("ggplot2.R", "ggplot_colour_mapping.R", "ggplot_colour_scale.R", "ggplot_points.R", "ggplot_bars.R",
            "ggplot_ribbons.R", "ggplot_axes.R", "ggplot_frame.R")
 for (part in parts) sys.source(file.path(native, part), envir = adapter)
 """
@@ -1896,6 +2023,39 @@ stopifnot(identical(paired_result$data[[1L]]$colour, expected),
 stopifnot(identical(paired_result$extensions[[paired$colour_scales[[independent]]$index]], "min"),
           identical(paired_result$guides[[paired$colour_scales[[independent]]$index]]$direction, "horizontal"))
 stopifnot(length(adapter$render_ggplot(paired, paired_edits)) == 1L)
+
+# ggplot2 also merges identically titled guides into one guide with multiple
+# channels. The shared scale must recolor both channels and the single guide.
+merged_plot <- ggplot2::ggplot(data, ggplot2::aes(x, y, colour = z, fill = z)) +
+  ggplot2::geom_point(shape = 21) +
+  ggplot2::scale_colour_gradient(aesthetics = c("colour", "fill"), name = "Both")
+merged <- adapter$capture_ggplot(merged_plot, c(432, 288), palettes)
+stopifnot(identical(names(merged$state$colour_scales), gid),
+          identical(merged$state$colour_scales[[gid]]$aesthetic, c("colour", "fill")))
+merged_result <- adapter$ggplot_remap_colour_scales(
+  merged$state, edits[gid], merged$state$built$plot$guides$params
+)
+stopifnot(identical(merged_result$data[[1L]]$colour, expected),
+          identical(merged_result$data[[1L]]$fill, expected),
+          length(merged_result$guides) == 1L,
+          identical(merged_result$guides[[1L]]$aesthetic, c("colour", "fill")))
+merged_scale <- ggplot2::scale_colour_gradient(
+  aesthetics = c("colour", "fill"), name = "Both", limits = c(1, 5), oob = scales::squish
+)
+merged_scale$palette <- adapter$ggplot_palette(palettes$palettes$viridis)
+authored <- adapter$capture_ggplot(suppressMessages(merged_plot + merged_scale),
+                                   c(432, 288), palettes)
+stopifnot(identical(adapter$render_ggplot(merged$state, edits[gid]), authored$svg),
+          identical(adapter$render_ggplot(merged$state), merged$svg))
+
+# Separate source scales can happen to merge their guides before an edit.
+# A single writable mapping would silently claim they share one scale.
+separate <- ggplot2::ggplot(data, ggplot2::aes(x, y, colour = z, fill = z)) +
+  ggplot2::geom_point(shape = 21) +
+  ggplot2::scale_colour_gradient(name = "Both") + ggplot2::scale_fill_gradient(name = "Both")
+separate <- adapter$capture_ggplot(separate, c(432, 288), palettes)$state
+stopifnot(length(separate$built$plot$guides$params) == 1L,
+          !length(separate$colour_scales))
 
 scene_for <- function(state, overrides) adapter$with_svg_frame(state$frame_pt, function(capture) {
   adapter$ggplot_table_for(state, overrides)
@@ -3709,7 +3869,7 @@ test <- stats::setNames(list(list(vmin=10, vmax=100, cmap="plasma", orientation=
                             list(format="%.1f")), c(gid, tick_gid))
 fresh <- adapter$ggplot_remap_colour_scales(state,test[gid],state$built$plot$guides$params)
 oracle <- suppressMessages(p + continuous_scale(
-  aesthetics="colour", palette=adapter$ggplot_palette(catalog, "plasma"),
+  aesthetics="colour", palette=adapter$ggplot_palette(catalog$palettes$plasma),
   name="Dose", transform="log10", limits=c(10, 100), oob=scales::squish, na.value="#CCCCCC"
 ))
 known <- suppressWarnings(ggplot_build(oracle))

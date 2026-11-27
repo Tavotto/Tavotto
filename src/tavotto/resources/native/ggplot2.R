@@ -353,7 +353,7 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
       index <- match(target$legend_title, unname(colourbar_titles))
       key <- names(colourbar_titles)[[index]]
       params <- built$plot$guides$params[[key]]
-      scale <- if (length(params$aesthetic) == 1L) built$plot$scales$get_scales(params$aesthetic)
+      scale <- ggplot_colourbar_scale(built$plot$scales, params$aesthetic)
       values <- ggplot_numeric_key(params$key, target, ggplot_colourbar_key_values(params, scale))
       if (!is.null(values)) {
         result[[gid]] <- list(kind = "colourbar", index = key, values = values)
@@ -2329,6 +2329,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     }
   }
   facet_ticks <- ggplot_facet_tick_edits(state, edits)
+  colour_anchors <- ggplot_colour_source_anchors(state$colour_scales)
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
     edit <- edits[[gid]]
@@ -2451,6 +2452,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         stats::setNames(list(as.list(tick$links)), prop)
       }), common)
     }
+    element$colour_source_anchor <- colour_anchors[[gid]]
     if (target$role == "legend_text") {
       host <- sub("^(legend\\.[^.]+)\\..*$", "\\1", gid)
       if (host %in% legend_gids) element$drag_host <- host
@@ -2514,7 +2516,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     element
   })
   colour_scales <- if (length(state$colour_scales)) {
-    ggplot_colour_scale_elements(state, edits, measured$colour_scales, measured$scale_stops)
+    ggplot_colour_scale_elements(state, edits, measured$colour_scales, measured$scale_stops, colour_anchors)
   }
   axes_bbox <- if (is.null(measured$axes_bbox)) state$axes_bbox else measured$axes_bbox
   axes <- lapply(names(state$axes_targets), function(gid) {

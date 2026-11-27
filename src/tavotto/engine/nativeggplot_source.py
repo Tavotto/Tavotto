@@ -18,6 +18,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import config, execspec, executionfact, nativeggplot, projectenv, runtime, scriptadjust
+from .colorscale import CMAPS, PALETTE_CATALOG_PATH
 from .fixtools import cmdsandbox, trial, winappcontainer
 
 _R_AXIS_TRANSFORMS = {
@@ -56,6 +57,7 @@ class AdjustedRSource:
     residual: list[dict]
     skipped: list[dict]
     view_written: bool = False
+    colour_written: bool = False
 
 
 @dataclass(frozen=True)
@@ -267,6 +269,81 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     )
 
 
+def _native_colour_mapping_writes(
+    hot: dict | None, patches: list[dict]
+) -> tuple[dict[tuple[str, ...], dict], set[tuple[str, str]]]:
+    edits = defaultdict(dict)
+    for patch in patches:
+        if patch["prop"] in {"vmin", "vmax", "cmap"}:
+            edits[patch["gid"]][patch["prop"]] = patch["value"]
+    plans = {}
+    written = set()
+    for element in (hot or {}).get("elements", ()):
+        gid = element["gid"]
+        source = element.get("source_colour_mapping")
+        if not source or not edits.get(gid) or edits[gid] != source["edited"]:
+            continue
+        aesthetics = tuple(source["aesthetics"])
+        limits, palette = source["limits"], source["palette"]
+        if not aesthetics or len(set(aesthetics)) != len(aesthetics):
+            continue
+        if not set(aesthetics) <= {"colour", "fill"} or aesthetics in plans:
+            continue
+        if limits is not None and (
+            len(limits) != 2
+            or not all(type(value) in (int, float) and math.isfinite(value) for value in limits)
+            or limits[0] >= limits[1]
+        ):
+            continue
+        if palette is not None and palette not in CMAPS:
+            continue
+        plans[aesthetics] = source
+        written.update((gid, prop) for prop in edits[gid])
+    return plans, written
+
+
+def _r_colour_mapping_block(name: str, scales: dict[tuple[str, ...], dict]) -> str:
+    catalog = json.loads(PALETTE_CATALOG_PATH.read_text(encoding="utf-8"))["palettes"]
+    implementation = nativeggplot.GGPLOT_BRIDGE.with_name("ggplot_colour_mapping.R").read_text(
+        encoding="utf-8"
+    )
+    edits = []
+    for aesthetics, plan in scales.items():
+        channels = "c(" + ", ".join(json.dumps(aesthetic) for aesthetic in aesthetics) + ")"
+        limits = plan["limits"]
+        bounds = "NULL" if limits is None else "c(" + ", ".join(map(str, limits)) + ")"
+        palette = plan["palette"]
+        packed = "NULL"
+        if palette is not None:
+            rgb = catalog[palette]
+            chunks = [json.dumps(rgb[start : start + 72]) for start in range(0, len(rgb), 72)]
+            packed = "paste0(\n    " + ",\n    ".join(chunks) + "\n  )"
+        edits.append(f"  plot <- adjust_scale(plot, {channels}, {bounds}, {packed})")
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *(f"  {line}" if line else "" for line in implementation.splitlines()),
+            "  adjust_scale <- function(plot, aesthetics, limits, packed) {",
+            "    channel <- aesthetics[[1L]]",
+            "    scale <- plot$scales$get_scales(channel)",
+            "    if (is.null(scale)) {",
+            '      scale <- if (channel == "colour") ggplot2::scale_colour_continuous() else',
+            "        ggplot2::scale_fill_continuous()",
+            "    }",
+            '    if (!identical(class(scale)[[1L]], "ScaleContinuous") ||',
+            "        !setequal(scale$aesthetics, aesthetics)) {",
+            '      stop("Tavotto colour scale changed.")',
+            "    }",
+            "    scale <- ggplot_set_colour_mapping(scale$clone(), limits, packed)",
+            "    suppressMessages(plot + scale)",
+            "  }",
+            *edits,
+            "  plot",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
 def _r_coordinate_block(name: str, coordinates: dict) -> str:
     edits = []
     if any(prop in coordinates for prop in ("xscale", "yscale")):
@@ -312,10 +389,8 @@ def _r_coordinate_block(name: str, coordinates: dict) -> str:
     )
 
 
-def _rebind_coordinate_residual(
-    source: AdjustedRSource, hot: dict | None, cold: dict
-) -> AdjustedRSource:
-    if not source.view_written or not hot:
+def _rebind_residual(source: AdjustedRSource, hot: dict | None, cold: dict) -> AdjustedRSource:
+    if not (source.view_written or source.colour_written) or not hot:
         return source
     bound = {e["gid"]: e for e in hot["elements"]}
     targets = {e["gid"]: e for e in cold["elements"]}
@@ -327,7 +402,12 @@ def _rebind_coordinate_residual(
             if (
                 not prior
                 or prior["identity"] != identity
-                or not _same_coordinate_target(prior, current, bound, targets)
+                or not (
+                    source.view_written
+                    and _same_coordinate_target(prior, current, bound, targets)
+                    or source.colour_written
+                    and _same_colour_target(prior, current)
+                )
             ):
                 raise scriptadjust.ScriptAdjustError(
                     "script_export_diverged", "A retained R edit no longer matches its target."
@@ -335,6 +415,15 @@ def _rebind_coordinate_residual(
             patch = {**patch, "identity": current["identity"]}
         residual.append(patch)
     return replace(source, residual=residual)
+
+
+def _same_colour_target(prior: dict, current: dict) -> bool:
+    anchor = prior.get("colour_source_anchor")
+    return bool(
+        anchor
+        and prior["role"] == current["role"]
+        and anchor == current.get("colour_source_anchor")
+    )
 
 
 def _same_coordinate_target(prior: dict, current: dict, before: dict, after: dict) -> bool:
@@ -414,7 +503,8 @@ def build(
     coordinates, coordinate_writes = _native_coordinate_writes(axes, patches)
     theme_options, theme_writes = _native_theme_writes(axes, patches)
     source_layers, layer_writes = _native_layer_writes(hot, patches)
-    written = coordinate_writes | theme_writes | layer_writes
+    colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
+    written = coordinate_writes | theme_writes | layer_writes | colour_writes
     residual = []
     skipped = []
     for patch in patches:
@@ -464,15 +554,26 @@ def build(
     # Scale edits change the native baseline position data. Until residual
     # edits can bind against that new baseline, leave the scale in the layout
     # whenever an unrelated override still needs to replay.
-    if residual and any(prop in coordinates for prop in ("xscale", "yscale")):
-        coordinates, fallback_writes = _native_coordinate_writes(axes, patches, write_scales=False)
-        written.difference_update(coordinate_writes - fallback_writes)
+    if residual:
+        if any(prop in coordinates for prop in ("xscale", "yscale")):
+            coordinates, fallback_writes = _native_coordinate_writes(
+                axes, patches, write_scales=False
+            )
+            written.difference_update(coordinate_writes - fallback_writes)
+        # A change of mapping updates guide identities. Carry along the guide
+        # edits whose same scale and channel association can be checked on replay.
+        anchored = {
+            e["gid"] for e in (hot or {}).get("elements", ()) if e.get("colour_source_anchor")
+        }
+        if any(p["gid"] not in anchored for p in residual):
+            colour_scales = {}
+            written.difference_update(colour_writes)
         residual = [patch for patch in patches if (patch["gid"], patch["prop"]) not in written]
         skipped = [
             {"gid": patch["gid"], "prop": patch["prop"], "reason": "unsupported"}
             for patch in residual
         ]
-    if not elements and not coordinates and not theme_options and not source_layers:
+    if not (elements or coordinates or theme_options or source_layers or colour_scales):
         return AdjustedRSource(data, 0, residual, skipped)
 
     name = json.dumps(object_name, ensure_ascii=False)
@@ -490,6 +591,8 @@ def build(
         statements.append(_r_coordinate_block(name, coordinates))
     if source_layers:
         statements.append(_r_layer_block(name, source_layers))
+    if colour_scales:
+        statements.append(_r_colour_mapping_block(name, colour_scales))
     if options:
         args = ",\n".join(options)
         statements.append(
@@ -502,7 +605,9 @@ def build(
     if not prefix.endswith(newline):
         prefix += newline
     result = prefix + block.encode().replace(b"\n", newline) + b"".join(lines[position:])
-    return AdjustedRSource(result, len(written), residual, skipped, bool(coordinates))
+    return AdjustedRSource(
+        result, len(written), residual, skipped, bool(coordinates), bool(colour_scales)
+    )
 
 
 def _run(command: list[str], cwd: Path, environment: dict[str, str]) -> None:
@@ -869,7 +974,7 @@ def _replay(
             raise
         manifest = json.loads(result.read_text(encoding="utf-8"))
         target.annotate_manifest(manifest)
-        adjusted = _rebind_coordinate_residual(adjusted, hot, manifest)
+        adjusted = _rebind_residual(adjusted, hot, manifest)
         if script.read_bytes() != original:
             raise scriptadjust.ScriptAdjustError(
                 "script_export_script_changed", "The R source changed during replay."
