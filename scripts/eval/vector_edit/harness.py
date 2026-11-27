@@ -49,6 +49,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(HERE))
 
 import predicates  # noqa: E402
+from opencode_runner import run_agent  # noqa: E402
 
 CORPUS_JSON = HERE / "corpus.json"
 RESULTS = Path(os.environ.get("EVAL_RESULTS") or (HERE / "results"))
@@ -533,36 +534,10 @@ def run_opencode(cwd: Path, prompt: str, timeout: int, config: str, log: Path) -
     }
     for v in A_KEY_VARS:
         env.pop(v, None)
-    t0 = time.time()
-    timed_out = False
-    proc = None
-    with log.open("w", encoding="utf-8") as fh:
-        try:
-            proc = subprocess.Popen(  # noqa: S603
-                ["opencode", "run", "--standalone", "-m", MODEL, "--format", "json", prompt],
-                cwd=cwd,
-                env=env,
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-                text=True,
-                stdin=subprocess.DEVNULL,  # 新会话里读继承来的终端会被挂起：明确不给 stdin
-                start_new_session=True,
-            )
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            import signal
-
-            try:  # 只结束自己起的这个进程组
-                os.killpg(proc.pid, signal.SIGTERM)
-                proc.wait(timeout=15)
-            except Exception:  # noqa: BLE001
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except Exception:  # noqa: BLE001
-                    pass
+    argv = ["opencode", "run", "--standalone", "-m", MODEL, "--format", "json", prompt]
+    timed_out, wall_s = run_agent(cwd, argv, env, timeout, log)
     text = log.read_text(encoding="utf-8", errors="replace")
-    return {**parse_opencode(text), "wall_s": round(time.time() - t0, 1), "timed_out": timed_out}
+    return {**parse_opencode(text), "wall_s": wall_s, "timed_out": timed_out}
 
 
 def run_b_task(corpus: dict, task: dict, rep: int, timeout: int, cond: str = "B") -> dict:
