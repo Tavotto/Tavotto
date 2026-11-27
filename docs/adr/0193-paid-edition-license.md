@@ -21,7 +21,7 @@ Tavotto 要有收入来抵持续的开销（模型调用、CloudBase、CDN），
 
 ### 一、付费只能拦新功能（不变量）
 
-- 权益是一个**闭集的功能键**：本 ADR 登记 `hosted-ai`（内置 AI 额度）和 `review-plus`（外部审阅加量）两个键；2026-11-20 加 `quick-layout`（一键排版，[ADR 0199](0199-quick-layout.md)，闭源组件经 [ADR 0198](0198-closed-source-pro-extension.md) 分发）；2026-11-24 加 `change-plan-rerun`（修改方案卡的批注重改，[ADR 0206](0206-change-plan-card.md) §五，纯本地逻辑、不涉闭源组件，调用点 `engine/changeplan.py`）。具体内容由各自的 ADR 定。以后加键要改本节。
+- 权益是一个**闭集的功能键**：本 ADR 登记 `hosted-ai`（内置 AI 额度）和 `review-plus`（外部审阅加量）两个键；2026-11-20 加 `quick-layout`（一键排版，[ADR 0199](0199-quick-layout.md)，闭源组件经 [ADR 0198](0198-closed-source-pro-extension.md) 分发）；2026-11-24 加 `change-plan-rerun`（修改方案卡的批注重改，[ADR 0206](0206-change-plan-card.md) §五，纯本地逻辑、不涉闭源组件，调用点 `engine/changeplan.py`）。2026-11-27 加 `submission-pack`（投稿核对：跨画布一步核对、统一命名进投稿文件夹、带原文截图的核对报告，[ADR 0216](0216-submission-check.md)）。具体内容由各自的 ADR 定。以后加键要改本节。
 - **凡随任何一个正式版免费发布过的能力，代码里都不许出现权益判断**（不绑版本号：以后免费发布的能力同样一经发布即锁定）。外部审阅的免费额度（每台设备每天新建 1 个链接、更新不限、30 天顺延，ADR 0187 §三）随 0.21.3 发布即锁定，只能上调。
 - 期刊库全量免费，不进权益（维护者 2026-11-18：按期刊收费等于随机筛用户）。以后的权益只能按「用得多 / 要省事」切，不能按「覆盖了谁」切。
 - 看护：引擎里只有 `license.has(feature)` 一个入口；一个测试列出所有调用点，调用点只许出现在登记过的新功能模块里。

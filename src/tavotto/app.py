@@ -11132,10 +11132,14 @@ def _engine_attempt(
 
     for attempt in range(2):
         try:
+            # 整次尝试里握着会话：LRU 淘汰不收它（build → override 两条请求之间也不是「闲置」）
             with (
-                _relay_build_progress(worker, progress_pj, rel_id)
-                if progress_pj is not None
-                else contextlib.nullcontext()
+                engine_pool.hold(worker),
+                (
+                    _relay_build_progress(worker, progress_pj, rel_id)
+                    if progress_pj is not None
+                    else contextlib.nullcontext()
+                ),
             ):
                 _admit_artifact(worker, stem, artifact_source)
                 result = action(worker, stem)

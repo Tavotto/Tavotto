@@ -265,6 +265,12 @@ class DataSummary:
     #: `FigureRecipe.numcat` 时才按类别用；不进 `to_dict`（对外响应与历史库逐字不变）。大表与合画是空的（这两条路暂不支持）。
     numcat: dict[str, int] = field(default_factory=dict)
     id_like: list[str] = field(default_factory=list)
+    #: 数值列取值结构的「像条件 / 顺序」线索（`design_kinds`）：列名 → `block`（连续块内按行不减、块间重置：重复测量里的时间）/ `monotone_levels`（少量取值且按行排好序）/
+    #: `levels`（2–`DESIGN_MAX_LEVELS` 个取值、每个都重复出现：剂量）。没有的列是「像测量」。只看小表 v2 的行数据；大表 / 合画 / v1 是空（保持现有行为）；不进 `to_dict`。
+    design: dict[str, str] = field(default_factory=dict)
+    #: 行号列（`row_index_columns` / `_row_index_name`）：名字在小闭集里、且非空取值恰是从 0 或 1 起逐行 +1 的整数。**不是 `id_like`**（个体编号可以重复、
+    #: 会触发「同一对象重复测量吗」；行号每行一个，不可能是个体）。规则默认不拿它当横轴 / 纵轴，用户仍可在下拉里自己选；不进 `to_dict`（对外响应逐字不变）。
+    row_index: list[str] = field(default_factory=list)
     repeats: bool | None = None
     row_count: int | None = None
     #: 与 `rows` 逐项对应的文件行号（人看到的行号，表头算第 1 行；空行被丢掉所以不是下标 + 2）；空 = 不知道，按下标 + 2
@@ -1140,6 +1146,7 @@ def _scan_summary(
     id_n = dict.fromkeys(id_cols, 0)
     id_nonint = dict.fromkeys(id_cols, False)
     id_over: set[int] = set()
+    seq = {j: _SeqTrack() for j, h in enumerate(header) if _row_index_name(h)}
     first_set: set[str] = set()
     first_ok = True
     count = 0
@@ -1183,6 +1190,9 @@ def _scan_summary(
                 s.empty += 1
             else:
                 s.nan += 1
+        for j, tr in seq.items():
+            if tr.ok:
+                tr.feed(*parse(r[j]))
         if first_ok:
             lab = r[0].strip()
             if lab in first_set or len(first_set) >= STRUCTURE_SET_CAP:
@@ -1237,6 +1247,11 @@ def _scan_summary(
         layout=layout,
         groups=groups,
         id_like=id_like,
+        row_index=[
+            h
+            for j, h in enumerate(header)
+            if j in seq and seq[j].holds() and seq[j].n == count and h not in id_like
+        ],
         repeats=repeats,
         row_count=count,
         delimiter=delimiter,
@@ -1542,6 +1557,7 @@ def _summarize(
             else:
                 setattr(s, cls, getattr(s, cls) + 1)
     layout, groups, id_like, repeats = _structure(header, rows, per, levels, parse)
+    row_index = row_index_columns(header, rows, parse, id_like)
     return DataSummary(
         path_name=path_name,
         sha256=sha256,
@@ -1554,6 +1570,8 @@ def _summarize(
         groups=groups,
         numcat=numcat_levels(header, rows, per, id_like) if parse is parse_cell else {},
         id_like=id_like,
+        row_index=row_index,
+        design=design_kinds(header, rows, per, id_like, row_index) if parse is parse_cell else {},
         repeats=repeats,
         row_count=None if keep_rows else len(rows),
         row_numbers=list(row_numbers[1:]) if row_numbers and keep_rows else [],
@@ -1597,6 +1615,89 @@ def _id_name(name: str) -> bool:
     if len(tokens) == 2 and tokens[0] in _ID_WORDS and tokens[1] in _ID_SUFFIX_WORDS:
         return True
     return any(w in name for w in _ID_CJK)
+
+
+#: 行号列的列名闭集（`_row_index_name` 规范化之后：小写、去掉空白 / `_` / `.` / `-` / `:`）：R 的 `rownames`、pandas 的 `Unnamed: 0`、`index`、`No.`、`序号`……
+#: `id` / `*_id` 另有 `_id_name`（个体编号线索）管，这里不重复收；只凭名字不够，见 `row_index_columns`。
+_ROW_INDEX_NAMES = frozenset(
+    {
+        "rownames",
+        "rowname",
+        "rowid",
+        "rownumber",
+        "rownum",
+        "rowno",
+        "row",
+        "index",
+        "idx",
+        "no",
+        "sn",
+        "#",
+        "序号",
+        "行号",
+    }
+)
+_UNNAMED_INDEX = re.compile(r"unnamed:\s*0(\.\d+)?")
+
+
+def _row_index_name(name: str) -> bool:
+    """列名像行号：规范化后在 `_ROW_INDEX_NAMES` 里，或是 pandas 存出来的 `Unnamed: 0`（`.1` 后缀也算）。"""
+    low = name.strip().lower()
+    if _UNNAMED_INDEX.fullmatch(low):
+        return True
+    return re.sub(r"[\s_.\-:]+", "", low) in _ROW_INDEX_NAMES
+
+
+#: 行号列至少要这么多行才认（两三行的 1, 2 太容易是真的取值）
+ROW_INDEX_MIN_ROWS = 3
+
+
+class _SeqTrack:
+    """逐行核「从 0 或 1 起、逐行恰好 +1 的整数」：小表与大表扫描共用的唯一实现（`row_index_columns` 与 `_scan_summary` 各喂一遍）。"""
+
+    __slots__ = ("n", "ok", "start")
+
+    def __init__(self) -> None:
+        self.n = 0
+        self.ok = True
+        self.start = 0.0
+
+    def feed(self, cls: str, v: float) -> None:
+        if not self.ok:
+            return
+        if cls != "numeric" or not float(v).is_integer():
+            self.ok = False
+            return
+        if self.n == 0:
+            if v not in (0, 1):
+                self.ok = False
+                return
+            self.start = v
+        elif v != self.start + self.n:
+            self.ok = False
+            return
+        self.n += 1
+
+    def holds(self) -> bool:
+        return self.ok and self.n >= ROW_INDEX_MIN_ROWS
+
+
+def row_index_columns(header, rows, parse, id_like) -> list[str]:
+    """行号列（保守，**两条同时满足**）：① 列名是 `_row_index_name`；② 每一行（一格不缺、没有文字 / nan）都是整数，第一行是 0 或 1、之后逐行恰好 +1（不是 `id_like` 列，
+    至少 `ROW_INDEX_MIN_ROWS` 行）。只凭取值不认：一列 1..n 也可能是真的「第几天」；只凭名字也不认：`index` 可能是别的量。"""
+    out: list[str] = []
+    for j, h in enumerate(header):
+        if h in id_like or not _row_index_name(h):
+            continue
+        tr = _SeqTrack()
+        for r in rows:
+            cls, v = parse(r[j])
+            tr.feed(cls, v)
+            if not tr.ok:
+                break
+        if tr.holds() and tr.n == len(rows):
+            out.append(h)
+    return out
 
 
 #: 列名里「这是误差量」的词 → 它是哪一种（`unknown` = 是误差量、但名字没说是哪种）。判法见 `error_kind`
@@ -2061,6 +2162,99 @@ def numcat_levels(header, rows, per, id_like) -> dict[str, int]:
             n += 1
         if ok and 2 <= len(seen) <= NUMCAT_MAX_LEVELS and n > len(seen):
             out[h] = len(seen)
+    return out
+
+
+# --------------------------------------------------------------------------- 数值列：像条件 / 顺序，还是像测量
+#: `levels`：不同取值个数的上限（剂量 / 时间点这样落在离散网格上的取值；再多更像测量值）、每个取值至少出现几次，以及平均每个取值至少对应几行
+#: （`取值数 * DESIGN_LEVEL_AVG_REPEATS <= 行数`：连续测量值偶尔有重复，不会每个取值都反复出现）
+DESIGN_MAX_LEVELS = 50
+DESIGN_LEVEL_MIN_REPEATS = 2
+DESIGN_LEVEL_AVG_REPEATS = 4
+#: 缺格（空 / `nan`）占整列的比例超过它就不判（与 `numeric_like` 的文字格阈值同一个数）
+DESIGN_MAX_MISSING = 0.2
+#: `block`：够长的块（至少这么多行）里的行要占整列的这个比例以上；短块在随机数据里到处都是，个别个体少测一两次（ChickWeight 里有的小鸡只有 2 行）不该让整列失格
+DESIGN_BLOCK_MIN_LEN = 3
+DESIGN_BLOCK_LONG_SHARE = 0.9
+#: `block`：够长的块里至少这么多个不同取值（块内按行不减；同一个时间点可以有几个重复测量）
+DESIGN_BLOCK_MIN_DISTINCT = 3
+#: `block`：够长的块里，从同一个值起头的块要占这个比例以上（每个个体都从时间 0 起；一个测量值（体重）逐个体随时间增长，起点各不相同）
+DESIGN_BLOCK_SAME_START = 0.8
+
+
+def _same_start(blocks: list[list[float]]) -> bool:
+    starts: dict[float, int] = {}
+    for b in blocks:
+        starts[b[0]] = starts.get(b[0], 0) + 1
+    return max(starts.values()) >= DESIGN_BLOCK_SAME_START * len(blocks)
+
+
+def design_kind(values: list[float]) -> str | None:
+    """一列数值（按行序、全部有限）的取值结构 → `block` / `monotone_levels` / `levels` / None（像测量）。**只看取值，不看列名**：
+
+    * `block`：把整列按「下降处」切成块（相邻两行后一个更小就另起一块，所以块内按行不减、允许同一个取值重复几行）：至少 2 块、够长的块（`DESIGN_BLOCK_MIN_LEN` 行以上）里的行占整列
+      `DESIGN_BLOCK_LONG_SHARE` 以上、每个够长的块至少 `DESIGN_BLOCK_MIN_DISTINCT` 个不同取值、**同一个起点值**的块占够长的块的 `DESIGN_BLOCK_SAME_START` 以上
+      （个体各自从时间 0 开始；测量值随时间增长，起点各不相同）、整列不同取值个数 < 行数（块与块之间取值重复出现——各个个体的同一套时间点）。
+    * `levels`：不同取值 2–`DESIGN_MAX_LEVELS` 个、平均每个取值至少对应 `DESIGN_LEVEL_AVG_REPEATS` 行、每个取值至少出现 `DESIGN_LEVEL_MIN_REPEATS` 次（几个剂量 / 时间点各做若干次）。
+    * `monotone_levels`：满足 `levels` 且整列按行不减（按组排好序的编号 / 剂量）。
+
+    **没有「整列单调就是条件」这一条**（2026-11-27 撤掉）：递增的测量值（累积量、按产率排过序的读数）与真正的递增横轴、递减的真横轴（红外波数）与随剂量下降的响应，
+    单列上结构相同、分不开，宁可不判。"""
+    n = len(values)
+    if n < 2 * DESIGN_BLOCK_MIN_LEN:
+        return None
+    distinct = set(values)
+    levels_ok = False
+    if 2 <= len(distinct) <= DESIGN_MAX_LEVELS and len(distinct) * DESIGN_LEVEL_AVG_REPEATS <= n:
+        counts: dict[float, int] = {}
+        for v in values:
+            counts[v] = counts.get(v, 0) + 1
+        levels_ok = min(counts.values()) >= DESIGN_LEVEL_MIN_REPEATS
+    kind = _ordered_kind(values)
+    if kind == "block":
+        return kind
+    if kind == "monotone" and levels_ok:
+        return "monotone_levels"  # 按组排好序的编号 / 剂量（每个取值连着出现好几行）
+    return "levels" if levels_ok else None
+
+
+def _ordered_kind(values: list[float]) -> str | None:
+    """`design_kind` 里「按行递增」的两种（`block` / `monotone`）。"""
+    n = len(values)
+    distinct = set(values)
+    cuts = [i for i in range(1, n) if values[i] < values[i - 1]]
+    if not cuts:
+        return "monotone" if len(distinct) >= 3 else None
+    edges = [0, *cuts, n]
+    blocks = [values[a:b] for a, b in zip(edges, edges[1:], strict=False)]
+    long_blocks = [b for b in blocks if len(b) >= DESIGN_BLOCK_MIN_LEN]
+    if (
+        len(blocks) >= 2
+        and len(distinct) < n
+        and sum(len(b) for b in long_blocks) >= DESIGN_BLOCK_LONG_SHARE * n
+        and all(len(set(b)) >= DESIGN_BLOCK_MIN_DISTINCT for b in long_blocks)
+        and _same_start(long_blocks)
+    ):
+        return "block"
+    return None
+
+
+def design_kinds(header, rows, per, id_like, row_index) -> dict[str, str]:
+    """每个「纯数值、不是编号 / 行号」的列的 `design_kind`（只收有结果的）。缺格 / `nan` 不参与（缺的那几行跳过，按剩下的行序判），缺得多（超过 `DESIGN_MAX_MISSING`）的列不判
+    ——横轴上缺一格不该让整列失去「像条件」的资格（那一行本来就画不了）。只用小表 v2 的行数据；没有行数据得到空。"""
+    out: dict[str, str] = {}
+    if not rows:
+        return out
+    for j, h in enumerate(header):
+        s = per[h]
+        if s.kind != "numeric" or h in id_like or h in row_index:
+            continue
+        if (s.empty + s.nan) > DESIGN_MAX_MISSING * len(rows):
+            continue
+        vals = [v for kind, v in (parse_cell(r[j]) for r in rows) if kind == "numeric"]
+        k = design_kind(vals)
+        if k is not None:
+            out[h] = k
     return out
 
 

@@ -321,7 +321,7 @@ test('legend, font and figure size survive saving and reopening', async ({ app, 
   await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
   const open = page.getByRole('dialog')
   // 排版目录以画布名起（默认「新排版」）；「拖动同步回归」是时间线上的命名版本，不是排版名
-  await open.getByRole('button', { name: /^新排版/ }).click()
+  await open.locator('button[data-layout-row="新排版"]').click()
   await expect(open).toBeHidden()
   // SVG can also be displayed outside figure editing; the hit layer is the
   // actual indicator that the reopened panel is ready for in-figure editing.
