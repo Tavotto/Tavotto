@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { useUiStore } from '@/store/uiStore'
+import { useValidationStore } from '@/store/validationStore'
 import { msg } from '@/i18n'
 import { builtinCatalog } from '@/lib/specBinding'
 import type { ValidationIssue } from '@/lib/validation'
-import { buildStandard, standardIssues, standardRules, STANDARD_MAX_ISSUES, STANDARD_MAX_ISSUE_TEXT, STANDARD_MAX_RULES } from './changePlanStandard'
+import { buildStandard, currentStandard, standardIssues, standardRules, STANDARD_MAX_ISSUES, STANDARD_MAX_ISSUE_TEXT, STANDARD_MAX_RULES } from './changePlanStandard'
 import { loadProfile } from './profile'
 
 const catalog = builtinCatalog()
@@ -66,5 +68,24 @@ describe('不交给模型的 Tavotto 自身状态', () => {
     const out = standardIssues([mk('unapplied-override', '还有 59 条图内修改没应用'), mk('stale-render', '渲染没跟上'), mk('font-min', '字号太小')])
     expect(out).toHaveLength(1)
     expect(out[0].text).toContain('字号太小')
+  })
+})
+
+describe('currentStandard 的问题只取这张图的', () => {
+  it('「问题」页签选了整份 / 整块画布：别的图的问题也不交给模型（Codex #2340）', () => {
+    const mk = (objectId: string, text: string) => ({ severity: 'warn', message: msg(text), ruleCode: 'font-min', objectRef: { objectId, canvasId: 'c1' } }) as unknown as ValidationIssue
+    const prevIssues = useValidationStore.getState().issues
+    const prevScope = useUiStore.getState().problemScope
+    try {
+      useValidationStore.setState({ issues: [mk('p1', '这张图字号太小'), mk('p2', '别的图分辨率不够')] })
+      for (const scope of ['document', 'canvas', null] as const) {
+        useUiStore.setState({ problemScope: scope })
+        expect(currentStandard('p1').issues.map((i) => i.text)).toEqual(['这张图字号太小'])
+      }
+      expect(currentStandard(null).issues).toEqual([])
+    } finally {
+      useValidationStore.setState({ issues: prevIssues })
+      useUiStore.setState({ problemScope: prevScope })
+    }
   })
 })

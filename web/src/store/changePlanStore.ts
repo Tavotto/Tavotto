@@ -773,7 +773,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
               ...(req.intent === 'todos' ? { intent: 'todos' as const } : { instruction: req.instruction }),
               ...(req.target ? { target: req.target } : {}),
               ...(req.mode === 'script' ? { mode: 'script' as const } : req.previousTurn ? { previous_turn: req.previousTurn } : {}),
-              standard: currentStandard(panelId),
+              // 出版标准只给方案模型；脚本方案（mode: script）后端不收这一项
+              ...(req.mode === 'script' ? {} : { standard: currentStandard(panelId) }),
             }
           : req.scriptFrom
             ? { source: 'review' as const, mode: 'script' as const, from_plan: req.scriptFrom.plan_id, comment_ids: req.scriptFrom.comment_ids }
@@ -829,6 +830,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (run) patch(key, { todoRun: { ...run, starting: false, scripts: [...run.scripts, { todo: todo.key, key: out }] } })
     } finally {
       pending.delete(gate)
+      // 放掉闸门本身不发通知：方案一发就失败（如 change_plan_busy）时，那次通知里闸门还关着，排着的下一条要在这里接着推
+      advanceTodoRuns()
     }
   }
 

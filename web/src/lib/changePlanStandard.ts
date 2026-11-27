@@ -7,14 +7,13 @@
  */
 import { formatMessage } from '@/i18n'
 import type { ChangePlanStandard } from '@/lib/api'
-import { effectiveScope, issuesInScope } from '@/lib/problemList'
+import { issuesInScope } from '@/lib/problemList'
 import type { PublicationProfile } from '@/lib/profile'
 import { profileOutputName } from '@/lib/profileText'
 import { resolveDocumentSpec, type SpecBinding, type SpecCatalogEntry } from '@/lib/specBinding'
 import type { ValidationIssue } from '@/lib/validation'
 import { useDocumentStore } from '@/store/documentStore'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
-import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 
 export const STANDARD_MAX_NAME = 80
@@ -111,11 +110,11 @@ export function buildStandard(
   }
 }
 
-/** 此刻这块面板的 `standard`：绑定读当前文档，问题按「问题」页签对这张图的范围裁 */
+/** 此刻这块面板的 `standard`：绑定读当前文档，问题只取这张图自己的 */
 export function currentStandard(panelId: string | null | undefined): ChangePlanStandard {
   const ds = useDocumentStore.getState()
   const all = useValidationStore.getState().issues
-  const scope = effectiveScope(useUiStore.getState().problemScope, panelId ?? null)
-  const scoped = issuesInScope(all, scope, panelId ?? null, ds.activeCanvasId)
+  // 只取这张图自己的问题，不跟「问题」页签选的范围走：别的图的问题不能当成这张图的事实交给模型
+  const scoped = panelId ? issuesInScope(all, 'figure', panelId) : []
   return buildStandard(ds.doc.profile, toCatalog(useProfileStore.getState().specs), scoped)
 }

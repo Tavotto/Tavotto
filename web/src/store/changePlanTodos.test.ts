@@ -343,6 +343,32 @@ describe('两条脚本待办之间又发了一句（图正忙）', () => {
   })
 })
 
+describe('脚本方案一发就被拒（如 change_plan_busy）', () => {
+  it('后面排着的脚本待办照样接着做，不卡在「在做」（Codex #2340）', async () => {
+    const two = advice({
+      todos: [...advice().todos!, { key: 't4', label: '换算成秒', kind: 'script', comment_id: 'a4' }],
+      unhandled: [{ comment_id: 'a3', reason: 'needs_script' }, { comment_id: 'a4', reason: 'needs_script' }],
+    })
+    const key = await toCard(two)
+    cps().toggleTodo(key, 't1')
+    cps().toggleTodo(key, 't2') // 只剩脚本 t3、t4
+    let n = 0
+    createChangePlan.mockImplementation(async (body: { mode?: string }) => {
+      if (body.mode !== 'script') return { plan_id: 'p1', state: 'running' }
+      n += 1
+      if (n === 1) throw new EngineError('busy', '', 'change_plan_busy', '')
+      return { plan_id: 'p2', state: 'running' }
+    })
+    scriptView = ready(scriptPlan({ base_patches: BASE }))
+    await cps().applyTodos(key)
+    await tick()
+    await tick(0)
+    const bodies = createChangePlan.mock.calls.map(([b]) => b as { mode?: string; comment_ids?: string[] }).filter((b) => b.mode === 'script')
+    expect(bodies.map((b) => b.comment_ids)).toEqual([['a3'], ['a4']])
+    expect(cps().entries[key].todoRun?.scripts.map((x) => x.todo)).toEqual(['t3', 't4'])
+  })
+})
+
 describe('撤销', () => {
   it('图内 commit 与脚本一起撤回，卡回到可勾选（勾选保留）', async () => {
     const key = await toCard()
