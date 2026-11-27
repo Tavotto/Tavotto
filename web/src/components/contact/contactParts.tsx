@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
-import { draftText, useContactStore, type ContactFailure } from '@/store/contactStore'
+import { draftText, journalTipText, useContactStore, type ContactFailure } from '@/store/contactStore'
 import { Button, IconButton } from '../ui/Button'
 import { dropZoneClass } from '../ui/dropZone'
 import { Notice } from '../ui/Notice'
@@ -270,7 +270,11 @@ export function useContactStatusNode() {
           </span>
           {/* 没有邮件协议链接、也不唤起邮件程序：只给「复制内容 / 复制地址」，由用户自己决定怎么发 */}
           <span className="flex flex-wrap items-center gap-1.5" data-contact-fallback>
-            <CopyAction text={() => draftText(draft)} label={cs('copyContent')} toastKey="contentCopied" />
+            <CopyAction
+              text={() => (s.journalTip ? journalTipText(s.journalTip, draft, (k) => translate(`journalTip.${k}`, { ns: 'dialogs' })) : draftText(draft))}
+              label={cs('copyContent')}
+              toastKey="contentCopied"
+            />
             <CopyAction text={recipient} label={cs('copyAddress')} toastKey="addressCopied" toastValues={{ address: recipient }} />
           </span>
         </span>

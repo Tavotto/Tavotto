@@ -39,7 +39,7 @@ import {
 import { FEEDBACK_EMAIL } from '@/lib/brand'
 import { setLocale, t } from '@/i18n'
 import { journalSources, loadCatalog } from '@/lib/journals'
-import { normalizeTipUrl } from '@/store/contactStore'
+import { journalTipText, normalizeTipUrl } from '@/store/contactStore'
 import { ContactHost } from '@/components/contact/ContactHost'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EMPTY_DRAFT, useContactStore } from '@/store/contactStore'
@@ -394,5 +394,40 @@ describe('原文链接的整理', () => {
     ['localhost', null],
   ])('%s -> %s', (raw, out) => {
     expect(normalizeTipUrl(raw)).toBe(out)
+  })
+})
+
+
+describe('Codex #2310', () => {
+  it('线索窗关掉后点未读回信（我的来信）：出来的是来信页，不是又弹出线索窗', async () => {
+    await mount(<div />)
+    await act(async () =>
+      useContactStore.getState().openJournalTip({ type: 'wrong', journalId: 'fx-alpha', journalLabel: 'Fixture Press' }),
+    )
+    await waitTip()
+    await act(async () => useContactStore.getState().setOpen(false))
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    expect(useContactStore.getState().journalTip).toBeNull()
+    await vi.waitFor(() => expect(q('[data-dialog="contact"]')).not.toBeNull())
+    expect(q('[data-dialog="journal-tip"]')).toBeNull()
+  })
+
+  it('发送失败时「复制内容」带上线索：只有期刊名称和链接也不是空的', () => {
+    const label = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
+    const missing = journalTipText(
+      { type: 'missing', query: 'zzzz' },
+      { ...EMPTY_DRAFT, query: 'Journal of Foo', url: 'https://foo.example/guide' },
+      label,
+    )
+    expect(missing).toContain('Journal of Foo')
+    expect(missing).toContain('https://foo.example/guide')
+    const wrong = journalTipText(
+      { type: 'wrong', journalId: 'nature', journalLabel: 'Nature', ruleLabel: '位图分辨率', current: '300 dpi' },
+      { ...EMPTY_DRAFT, issue: 'updated', body: '官网现在写 600 dpi' },
+      label,
+    )
+    for (const part of ['Nature', '位图分辨率', '300 dpi', label('issue.updated'), '官网现在写 600 dpi']) {
+      expect(wrong).toContain(part)
+    }
   })
 })

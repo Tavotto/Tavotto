@@ -354,8 +354,11 @@ export const useContactStore = create<ContactState>((set, get) => {
         set({ open: false, formError: null, fileError: null, freshIds: [] })
         return
       }
-      // 从普通入口（顶栏按钮）打开：线索窗到此结束，普通草稿还给用户
-      if (get().journalTip && view !== 'letters') endJournalTip()
+      // 从普通入口（顶栏按钮、未读回信胶囊）打开：线索窗到此结束，普通草稿还给用户。「我的来信」也一样——
+      // 线索窗是单独的窗、没有来信页，留着线索上下文会把它重新弹出来，而来信页照样把回信标成已读（Codex #2310）。
+      // 只有线索正在发送时不动它（发送中的状态归线索窗）
+      const busy = ['sending', 'cancelling', 'diag'].includes(get().phase)
+      if (get().journalTip && !busy) endJournalTip()
       set({ open: true, view: view ?? 'write', formError: null })
       if (view === 'letters') void get().loadMessages()
       if (get().draft.attachDiag && get().diag.state === 'off') void prepareDiag()
@@ -652,4 +655,29 @@ export function journalTipsAvailable(capability: ContactCapability | null): bool
 export function draftText(d: ContactDraft): string {
   const subject = d.subject.trim()
   return `${subject ? `${subject}\n\n` : ''}${d.body.trim()}`
+}
+
+/** 期刊线索发送失败时「复制内容」的文本：线索窗没有主题、正文可空，只复制 `draftText` 会是空的（Codex #2310）。
+ *  带上刊名 / 条目 / 目录现值 / 问题类型或期刊名称、正文、链接；`label(key)` 取 `journalTip.*` 的界面文案。 */
+export function journalTipText(
+  tip: JournalTipContext,
+  d: ContactDraft,
+  label: (key: string) => string,
+): string {
+  const lines: string[] = []
+  if (tip.type === 'missing') {
+    lines.push(label('title.missing'))
+    const name = d.query.trim()
+    if (name) lines.push(`${label('nameLabel')}: ${name}`)
+  } else {
+    lines.push([label('title.wrong'), tip.journalLabel].filter(Boolean).join(' · '))
+    if (tip.ruleLabel) lines.push(`${label('rowRule')}: ${tip.ruleLabel}`)
+    if (tip.current) lines.push(`${label('rowCurrent')}: ${tip.current}`)
+    if (d.issue) lines.push(`${label('issueLabel')}: ${label(`issue.${d.issue}`)}`)
+  }
+  const body = d.body.trim()
+  if (body) lines.push('', body)
+  const url = d.url.trim()
+  if (url) lines.push('', url)
+  return lines.join('\n')
 }
