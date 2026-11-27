@@ -690,8 +690,12 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
         evidence=tmp_path,
         timeout=30,
     )
-    assert events == ["spawn-in-job", "terminate", "job-kill"]
-    assert result["cleanup"]["how"] == "already-exited"
+    # 直接子进程已退：Windows 上 terminate() 里先结束一次 Job（再判整棵树），收尾再结束一次；POSIX 只有收尾那次
+    assert events[:2] == ["spawn-in-job", "terminate"]
+    assert events[2:] == (["job-kill", "job-kill"] if os.name == "nt" else ["job-kill"])
+    assert result["cleanup"]["how"] == (
+        "already-exited+job" if os.name == "nt" else "already-exited"
+    )
     assert result["cleanup"]["job_killed"] is True
 
 
