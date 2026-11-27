@@ -1,5 +1,6 @@
 import { useContactStore } from '@/store/contactStore'
 import { TooltipProvider } from '../ui/Tooltip'
+import { JournalTipDialog } from '../journal/JournalTipDialog'
 import { ContactDialog } from './ContactDialog'
 
 /**
@@ -13,6 +14,7 @@ export function ContactHost() {
   return (
     <TooltipProvider>
       <ContactDialog />
+      <JournalTipDialog />
     </TooltipProvider>
   )
 }

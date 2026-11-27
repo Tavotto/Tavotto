@@ -1,0 +1,3 @@
+## Tell us when a journal rule is wrong or a journal is missing
+
+On a journal requirement's source card, "Looks wrong" opens a short feedback form: it shows the entry, the value in the catalog and where it came from, and lets you pick what's wrong (wrong value, journal updated, source won’t open, other), paste the journal's wording or a link, and attach a screenshot or PDF. When the journal picker finds nothing, "Tell the maker to add it" opens the same form for requesting a journal. We check every tip against the publisher's own pages before changing the catalog, and reply if you leave an email. Nothing is sent until you press Submit feedback or Submit request.

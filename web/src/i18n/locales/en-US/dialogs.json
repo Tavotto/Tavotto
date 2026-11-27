@@ -73,6 +73,9 @@
       "body_too_long": "The message is too long.",
       "subject_too_long": "The subject is too long.",
       "email_invalid": "That email address doesn't look right. Check it, or leave it empty.",
+      "urlInvalid": "The link has to start with https://.",
+      "journalNeedsClue": "Paste a link or attach a file.",
+      "journal_invalid": "Something is off with this tip. Close the window and try again.",
       "report_invalid": "The diagnostics number is invalid. Untick Attach diagnostic info and try again.",
       "attachments_limit": "Too many attachments.",
       "attachments_too_large": "The attachments are too large together.",
@@ -119,6 +122,7 @@
     "lettersChecking": "Checking...",
     "lettersNumber": "Message {{id}}",
     "lettersReportTag": "Report",
+    "lettersJournalTag": "Journal tip",
     "lettersReportNumber": "Report ID {{id}}",
     "lettersNoNote": "No note",
     "lettersSentAt": "Sent {{time}}",
@@ -2826,6 +2830,8 @@
     "listAria": "Journals",
     "none": "No journals available",
     "noMatch": "No matching journal",
+    "noJournalListed": "Tell the maker to add it",
+    "noJournalListedTitle": "Send the journal name or its author guidelines and we will add it",
     "current": "Checking against {{name}}",
     "requirements": "Journal requirements",
     "panelHistoricalNotice": "This saved historical source concerns guidance after acceptance in principle. Current requirements are unverified; check the journal guidelines.",
@@ -2864,6 +2870,8 @@
       },
       "open": "Open original page",
       "archive": "Archive",
+      "report": "Looks wrong",
+      "reportTitle": "Send a link or screenshot of the website and we will check it",
       "fromV2": "Newer",
       "aria": "Source"
     },
@@ -2930,6 +2938,38 @@
       "info_text_height_mm": "Text height",
       "info_panel_label": "Panel label"
     }
+  },
+  "journalTip": {
+    "title": {
+      "wrong": "Journal guideline feedback",
+      "missing": "Request a journal"
+    },
+    "entryTitle": "Feedback item",
+    "rowRule": "Item",
+    "rowCurrent": "Catalog value",
+    "rowSource": "Current source",
+    "issueLabel": "Problem",
+    "issue": {
+      "wrong_value": "Wrong value",
+      "updated": "Journal updated",
+      "link_broken": "Source won’t open",
+      "other": "Other"
+    },
+    "quoteLabel": "Journal’s wording (optional)",
+    "quotePlaceholder": "Paste the wording from the website or an editor’s email",
+    "urlLabel": "Source link (optional)",
+    "urlPlaceholder": "https://…",
+    "nameLabel": "Journal name",
+    "guideLabel": "Author guidelines link (optional)",
+    "noteLabel": "Notes (optional)",
+    "attach": "Add screenshot / PDF",
+    "submit": "Submit feedback",
+    "cancel": "Cancel",
+    "urlLabelNew": "New source link (optional)",
+    "descLabel": "What’s wrong (optional)",
+    "submitMissing": "Submit request",
+    "emailWrong": "We’ll reply here once checked",
+    "emailMissing": "We’ll reply here once it’s added"
   },
   "packageInstall": {
     "frozenPanels": "The package preserves the confirmed artwork for these figures. Run their original scripts on this machine to edit figure elements.",

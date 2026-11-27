@@ -73,6 +73,9 @@
       "body_too_long": "内容太长了。",
       "subject_too_long": "主题太长了。",
       "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
+      "urlInvalid": "链接要以 https:// 开头。",
+      "journalNeedsClue": "请贴个网址，或附上文件。",
+      "journal_invalid": "这条线索的内容不对，请关掉窗口重新点一次。",
       "report_invalid": "诊断包编号不对，请取消勾选「附上诊断信息」后再试。",
       "attachments_limit": "附件太多了。",
       "attachments_too_large": "附件合计太大了。",
@@ -119,6 +122,7 @@
     "lettersChecking": "正在检查…",
     "lettersNumber": "编号 {{id}}",
     "lettersReportTag": "问题反馈",
+    "lettersJournalTag": "期刊线索",
     "lettersReportNumber": "报告编号 {{id}}",
     "lettersNoNote": "没有附言",
     "lettersSentAt": "{{time}} 发出",
@@ -2792,6 +2796,8 @@
     "listAria": "期刊列表",
     "none": "没有可选的期刊",
     "noMatch": "没有匹配的期刊",
+    "noJournalListed": "告诉作者加上",
+    "noJournalListedTitle": "把刊名或投稿须知发来，我们来补上",
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
     "panelHistoricalNotice": "这是已保存的历史来源，涉及原则接收后的建议；现行要求未知，请核对期刊指南。",
@@ -2830,6 +2836,8 @@
       },
       "open": "打开原网页",
       "archive": "存档",
+      "report": "这条不对",
+      "reportTitle": "发来官网链接或截图，我们来核对",
       "fromV2": "新版",
       "aria": "出处"
     },
@@ -2896,6 +2904,38 @@
       "info_text_height_mm": "文字高度",
       "info_panel_label": "子图标签"
     }
+  },
+  "journalTip": {
+    "title": {
+      "wrong": "期刊规范反馈",
+      "missing": "申请收录期刊"
+    },
+    "entryTitle": "反馈条目",
+    "rowRule": "条目",
+    "rowCurrent": "目录现值",
+    "rowSource": "当前出处",
+    "issueLabel": "问题",
+    "issue": {
+      "wrong_value": "数值不对",
+      "updated": "期刊已更新",
+      "link_broken": "出处打不开",
+      "other": "其他"
+    },
+    "quoteLabel": "期刊原文（选填）",
+    "quotePlaceholder": "粘贴官网或编辑部邮件里的原话",
+    "urlLabel": "出处链接（选填）",
+    "urlPlaceholder": "https://…",
+    "nameLabel": "期刊名称",
+    "guideLabel": "投稿须知链接（选填）",
+    "noteLabel": "补充说明（选填）",
+    "attach": "添加截图 / PDF",
+    "submit": "提交反馈",
+    "cancel": "取消",
+    "urlLabelNew": "新的出处链接（选填）",
+    "descLabel": "问题描述（选填）",
+    "submitMissing": "提交申请",
+    "emailWrong": "核实后回信到这里",
+    "emailMissing": "收录后回信到这里"
   },
   "packageInstall": {
     "frozenPanels": "项目包保留了这些图的已确认画面。要继续图内编辑，请在本机运行原脚本。",

@@ -8983,6 +8983,8 @@ export interface ContactCapability {
   /** 未读回信数（本机记录，不联网） */
   unread?: number
   retention_days?: number
+  /** 期刊线索入口可用（ADR 0213）：「联系作者」开着且没设 `TAVOTTO_NO_JOURNAL_SYNC`；旧引擎不带 = 不出现 */
+  journal_tips?: boolean
 }
 
 export type ContactSendState = 'idle' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled'
@@ -9020,7 +9022,7 @@ export interface ContactMessage {
   sent_at: number
   route: 'cn' | 'global'
   /** `report` = 发送「问题反馈」时随报告开的关联来信（带 `report_id`）；旧引擎不带 = 普通来信 */
-  kind?: 'letter' | 'report'
+  kind?: 'letter' | 'report' | 'journal'
   report_id?: string
   state: 'new' | 'replied' | 'closed'
   unread: number
@@ -9040,6 +9042,23 @@ export interface ContactSendMeta {
   reply_email: string
   /** 已送达的诊断包编号（TVD-…）；没附诊断就不带 */
   report_id?: string
+  /** 期刊线索的结构化头（ADR 0213）；与 `report_id` 互斥，引擎在本机再校验一次 */
+  journal?: ContactJournalHead
+}
+
+/** 与服务端 `/v1/messages/init` 的 `journal` 同形；字段都由引擎按契约校验，不合规的可选字段被丢掉 */
+export interface ContactJournalHead {
+  type: 'wrong' | 'missing' | 'editor'
+  /** 「问题」分段；只在 type=wrong 时发 */
+  issue?: 'wrong_value' | 'updated' | 'link_broken' | 'other'
+  journal_id?: string
+  journal_label?: string
+  query?: string
+  rule_key?: string
+  current?: string
+  source_id?: string
+  url?: string
+  catalog?: { v1?: number; v2?: number }
 }
 
 export const fetchContactCapability = () => jsonFetch<ContactCapability>('/api/contact')
