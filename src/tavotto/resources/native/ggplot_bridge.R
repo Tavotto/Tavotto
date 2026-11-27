@@ -85,8 +85,9 @@ ggplot_serve <- function(spec, token, plot_for) {
     native <- dirname(spec$adapter)
     palettes <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
     probe <- file.path(spec$out_dir, "cairo-device-check.pdf")
+    previous <- grDevices::dev.cur()
     device <- adapter$open_ggplot_pdf(spec$frame_pt, probe)
-    grDevices::dev.off(which = device)
+    adapter$close_ggplot_device(device, previous)
     unlink(probe)
     start_execution <- function() {
       send(list(bridge_event = "execution_started", execution_id = spec$execution,

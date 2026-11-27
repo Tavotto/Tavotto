@@ -2229,6 +2229,53 @@ grDevices::dev.off()
 """
 
 
+AXIS_WRITEBACK_METRICS_PROBE = r"""
+if (!all(vapply(c("ggplot2", "svglite", "jsonlite"), requireNamespace, logical(1L),
+                quietly = TRUE))) quit(status = 77L)
+grDevices::pdf(file = NULL, width = 7, height = 5)
+grDevices::pdf(file = NULL, width = 5, height = 3)
+original_devices <- grDevices::dev.list()
+current_device <- grDevices::dev.cur()
+data <- expand.grid(x = 1:3, facet = c("Left", "Right"))
+data$y <- c(2, 4, 3, 6, 4, 8)
+plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::geom_point() + ggplot2::labs(title = "Signal", x = "Input")
+frame <- c(288, 216)
+png <- function(state, edits, file) {
+  measured <- adapter$preview_ggplot_png(state, edits, file, 960, TRUE)
+  stopifnot(length(measured$axes_bbox) > 0L, file.info(file)$size > 0,
+            identical(grDevices::dev.list(), original_devices),
+            identical(grDevices::dev.cur(), current_device))
+  list(axes = measured$axes_bbox, bytes = readBin(file, "raw", n = file.info(file)$size))
+}
+for (faceted in c(FALSE, TRUE)) {
+  original <- if (faceted) plot + ggplot2::facet_wrap(ggplot2::vars(facet), scales = "free_y") else plot
+  gid <- if (faceted) "axes_2" else "axes_0"
+  before <- adapter$capture_ggplot(original, frame)$state
+  residual <- stats::setNames(list(list(xscale = "log", xlim = c(.9, 3.5), invert_y = TRUE)), gid)
+  style <- list(plot.title = list(fontfamily = "serif", color = "#572B82", fontsize = 19.5),
+                axis.x.bottom.title = list(fontfamily = "monospace", color = "#A64184"))
+  hot <- png(before, c(residual, style), "hot.png")
+  family <- function(gid, name) before$text_targets[[gid]]$font_families[[name]]
+  baked <- original + ggplot2::theme(
+    plot.title = ggplot2::element_text(family = family("plot.title", "serif"),
+                                      colour = "#572B82", size = 19.5),
+    axis.title.x.bottom = ggplot2::element_text(
+      family = family("axis.x.bottom.title", "monospace"), colour = "#A64184"
+    )
+  )
+  reopened <- adapter$capture_ggplot(baked, frame)$state
+  cold <- png(reopened, residual, "cold.png")
+  baseline <- png(before, list(), "baseline.png")
+  stopifnot(!identical(hot$bytes, baseline$bytes), identical(hot$axes, cold$axes),
+            identical(hot$bytes, cold$bytes))
+  adapter$export_ggplot_pdf(reopened, residual, "cold.pdf")
+  stopifnot(file.info("cold.pdf")$size > 0, identical(grDevices::dev.cur(), current_device))
+}
+for (device in rev(original_devices)) grDevices::dev.off(which = device)
+"""
+
+
 AXES_PROBE = r"""
 if (!requireNamespace("ggplot2", quietly = TRUE) ||
     !requireNamespace("svglite", quietly = TRUE)) quit(status = 77L)
@@ -3009,6 +3056,10 @@ def test_faceted_curve_group_updates_one_key_and_respects_each_panel_clip(tmp_pa
 
 def test_axis_windows_and_transforms_reproject_captured_data_without_recalculating(tmp_path):
     _assert_r_probe(tmp_path, AXES_PROBE)
+
+
+def test_native_r_coordinate_overrides_keep_writeback_geometry_and_pixels(tmp_path):
+    _assert_r_probe(tmp_path, AXIS_WRITEBACK_METRICS_PROBE)
 
 
 def test_faceted_coordinates_reproject_axes_and_raster_by_native_scale_group(tmp_path):

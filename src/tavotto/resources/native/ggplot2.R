@@ -1,19 +1,26 @@
 # The adapter receives a plot from an already authorized R invocation. Building
 # the layout and applying edits are separate so a paint change never reruns a stat.
 
+close_ggplot_device <- function(device, previous) {
+  if (device %in% grDevices::dev.list()) grDevices::dev.off(which = device)
+  if (previous %in% grDevices::dev.list() && previous != grDevices::dev.cur()) {
+    grDevices::dev.set(previous)
+  }
+  invisible(NULL)
+}
+
 with_svg_frame <- function(frame_pt, draw) {
   if (!is.numeric(frame_pt) || length(frame_pt) != 2L ||
       any(!is.finite(frame_pt)) || any(frame_pt <= 0)) {
     stop("The SVG frame needs two positive dimensions in points.")
   }
+  previous <- grDevices::dev.cur()
   capture <- svglite::svgstring(width = frame_pt[[1L]] / 72,
                                height = frame_pt[[2L]] / 72)
   device <- grDevices::dev.cur()
-  on.exit({
-    if (device %in% grDevices::dev.list()) grDevices::dev.off(which = device)
-  })
+  on.exit(close_ggplot_device(device, previous))
   value <- draw(capture)
-  grDevices::dev.off(which = device)
+  close_ggplot_device(device, previous)
   list(value = value, svg = as.character(capture()))
 }
 
@@ -1664,15 +1671,15 @@ ggplot_table_for <- function(state, edits) {
   if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
       length(axis_changes) || length(facet_changes) || length(grid_edits) || length(theme_edits) ||
       !is.null(aspect) || length(side_edits)) {
-    make_guides <- function() ggplot_guide_table(
-      state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-      grid_edits, theme_edits, aspect, side_edits, facet_changes
-    )
-    # Recreate resized text on the same metrics device used by the initial
-    # capture, then draw the resulting table on the requested output device.
-    guides <- if (length(title_edits) || length(axis_styles)) {
-      with_svg_frame(state$frame_pt, function(capture) make_guides())$value
-    } else make_guides()
+    # A source writeback can move typography into the plot theme while
+    # coordinate and guide edits stay in the document. Both scenes must
+    # rebuild their guides on the same metrics device as the initial capture.
+    guides <- with_svg_frame(state$frame_pt, function(capture) {
+      ggplot_guide_table(
+        state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes,
+        grid_edits, theme_edits, aspect, side_edits, facet_changes
+      )
+    })$value
     table <- guides$table
     layout <- guides$layout
     stops <- guides$stops
@@ -1838,8 +1845,9 @@ open_ggplot_pdf <- function(frame_pt, path) {
 }
 
 export_ggplot_pdf <- function(state, edits, path) {
+  previous <- grDevices::dev.cur()
   device <- open_ggplot_pdf(state$frame_pt, path)
-  on.exit(grDevices::dev.off(which = device))
+  on.exit(close_ggplot_device(device, previous))
   grid::grid.newpage()
   table <- ggplot_table_for(state, edits)$table
   grid::grid.draw(table)
@@ -1859,7 +1867,7 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
                  res = width * 72 / state$frame_pt[[1L]])
   device <- grDevices::dev.cur()
   if (identical(device, before)) stop("The selected R could not open its PNG device.")
-  on.exit(grDevices::dev.off(which = device))
+  on.exit(close_ggplot_device(device, before))
   grid::grid.newpage()
   scene <- ggplot_table_for(state, edits)
   grid::grid.draw(scene$table)
