@@ -57,11 +57,34 @@ ERROR_CODES = (
 
 #: 统计标注的文字（ADR 0208 §四，维护者 2026-11-24 定）：只能来自用户的话或脚本 / 数据里的结果，
 #: 描述里要写 `"provenance": "user" | "data"`；没写的整批不落地，回 `needs_confirmation`。
+#: 只作用在 `is_stat_text` 压过空白的文字上（任意空白 → 单个空格、首尾无空白），所以空白一律写成 ` ?`（至多一个空格）：
+#: 与原来的 `\s*` 在压过的文字上等价，又没有可回溯的空白重复（CodeQL py/polynomial-redos）。
 _STAT_TEXT = re.compile(
-    r"^\s*(\*{1,4}|n\.?\s?s\.?|ns)\s*$|\bp\s*[<>=≤≥]|\bp\s*-?\s*value|\bn\s*=\s*\d",
+    r"^(\*{1,4}|n\.? ?s\.?|ns)$|\bp ?[<>=≤≥]|\bp ?-? ?value|\bn ?= ?\d",
     re.IGNORECASE,
 )
 PROVENANCES = ("user", "data")
+
+
+def is_stat_text(text: object) -> bool:
+    """是不是统计标注文字。**先把任意空白压成单个空格再匹配**：`_STAT_TEXT` 里 `\\s*` 作用在用户 / 模型给的文字上，
+    成千上万个制表符会让回溯正则变成多项式时间；压过之后正则里的空白只写成 ` ?`，匹配是线性的（语义不变——原来的 `\\s` 本来就把各种空白当一回事）。"""
+    return bool(_STAT_TEXT.search(" ".join(str(text).split())))
+
+
+#: 条目词汇的一份说明（给模型 / Agent 看的，**只此一处**）：`vectoredit.OPS_DOC` 的 `add` 从这里取。位置一律写锚点、不写毫米。
+ITEMS_DOC = (
+    "条目 {kind, name, …}：kind ∈ arrow {from, to, head?} / text {text, at, attach?, sizePt?} / "
+    "bracket {between: [位置, 位置], side?: above|below} / box {fit: [目标…], padding_mm?}（框住子图）/ "
+    "connector {from, to, route?} / shape {shape, at, size_mm}；name 是本批内的局部名字。"
+    "位置 = {anchor: …, offset_mm?}；anchor 只认 panel = {panel: {id: P1, point: nw|n|ne|w|center|e|sw|s|se}}、"
+    "item = {item: {name, point}}（本批里先声明的条目）；data / element 锚点（锚在数据点 / 图内元素上）要这张图量过才能用，没量过会被拒。"
+    "box 的 fit 是目标列表，每个目标是单键对象，如 [{panel: {id: P1}}]。"
+    "显著性星号 / n.s. / p 值 / n 的文字必须写 provenance: user，且这段文字必须原样出现在用户的话里，否则不收。"
+    "例：外框 {kind: box, name: frame, fit: [{panel: {id: P1}}]}；"
+    '子图标注 {kind: text, name: tag, text: "(a)", at: {anchor: {panel: {id: P1, point: nw}}, offset_mm: [2, -3]}, attach: sw}；'
+    "括号 {kind: bracket, name: br, between: [{anchor: {panel: {id: P1, point: nw}}}, {anchor: {panel: {id: P1, point: ne}}}], side: above}。"
+)
 
 
 class SceneError(Exception):
@@ -354,7 +377,7 @@ def _text(it: dict, ctx: _Ctx, name: str, faces) -> dict:
     text = it.get("text")
     if not isinstance(text, str) or not text:
         raise SceneError("bad_item", name, "text")
-    if _STAT_TEXT.search(text) and it.get("provenance") not in PROVENANCES:
+    if is_stat_text(text) and it.get("provenance") not in PROVENANCES:
         raise SceneError("needs_confirmation", name, "statistical_text")
     size = float(it.get("sizePt", 8))
     bold, italic = bool(it.get("bold", False)), bool(it.get("italic", False))
@@ -721,7 +744,7 @@ def solve(
     statistical = [
         {"item": it["name"], "provenance": it.get("provenance")}
         for it in items
-        if it.get("kind") == "text" and _STAT_TEXT.search(it.get("text", ""))
+        if it.get("kind") == "text" and is_stat_text(it.get("text", ""))
     ]
     return {
         "ok": True,

@@ -721,7 +721,11 @@ the plan step has said so.
   shapes and paths drawn on the canvas (not the figures inside it), it sends the AI
   connection you chose a summary of those objects on the canvas: their text, positions,
   sizes and styles, and the anchor points of paths, together with your instruction and
-  which objects you had selected. Figure data, scripts and project files are not sent.
+  which objects you had selected. To place new annotations (a frame, a panel label, a
+  bracket, an arrow) the summary also lists where each figure sits on the canvas: its
+  position and size, labelled "P1", "P2"… together with the figure's project-relative
+  file name; the figure's contents, axis labels
+  and data are not sent. Figure data, scripts and project files are not sent.
   The plan is computed on your computer and written nowhere until you apply it.
 * **One-click layout.** The comparison pictures are drawn on your computer by the
   export engine; nothing about them is sent anywhere.

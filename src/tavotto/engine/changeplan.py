@@ -2236,7 +2236,7 @@ def ask_vector_edits(
     return _structured(
         system,
         user,
-        lambda obj: vectorplan.validate_ops(obj, canvas),
+        lambda obj: vectorplan.validate_ops(obj, canvas, instruction),
         selection,
         max_output_tokens=VECTOR_MAX_OUTPUT_TOKENS,
     )
