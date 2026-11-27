@@ -160,6 +160,103 @@ def test_native_r_source_candidate_replays_successive_edits(tmp_path):
     assert original.read_bytes() == source
 
 
+def _windows_path_probe(launch, root, argv, cwd, environment, sid):
+    results = []
+
+    def run(name, command, working_dir):
+        try:
+            launch(root, command, working_dir, environment, 20, sid)
+        except winappcontainer.ReplayFailed as exc:
+            results.append(f"{name}\n{exc.diagnostic}")
+        except OSError as exc:
+            results.append(f"{name}: {exc}")
+
+    script = root / "probe-path.R"
+    script.write_text(
+        """
+paths <- c(getwd(), "..", R.home(), R.home("library"),
+           file.path(R.home("library"), "compiler"), Sys.getenv("R_LIBS_USER"))
+for (path in paths) {
+  message(path, " access=", file.access(path, 0), " dirs=", length(list.files(path)),
+          " metadata=", !is.na(file.info(path)$isdir))
+  message("  path=", tryCatch(normalizePath(path, mustWork = TRUE),
+                             error = conditionMessage))
+}
+quit(status = 42L, runLast = FALSE)
+""",
+        encoding="utf-8",
+    )
+    old_jit = environment.get("R_ENABLE_JIT")
+    environment["R_ENABLE_JIT"] = "0"
+    try:
+        run(
+            "R path probe",
+            [argv[0], "--vanilla", "--default-packages=NULL", f"--file={script}"],
+            cwd,
+        )
+    finally:
+        if old_jit is None:
+            environment.pop("R_ENABLE_JIT")
+        else:
+            environment["R_ENABLE_JIT"] = old_jit
+
+    compiler = shutil.which("gcc") or r"C:\mingw64\bin\gcc.exe"
+    if Path(compiler).is_file():
+        probe_c = root / "probe-path.c"
+        probe_exe = probe_c.with_suffix(".exe")
+        probe_c.write_text(
+            r"""
+#define _WIN32_WINNT 0x0A00
+#define UNICODE
+#include <windows.h>
+#include <stdio.h>
+static void probe(const wchar_t *path) {
+    wchar_t buffer[4096];
+    const DWORD queries[] = {0, 1, 2, 4, 8, 9, 10, 12};
+    wprintf(L"Path %ls\n", path);
+    HANDLE h = CreateFileW(path, 0, 7, NULL, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        wprintf(L"CreateFileW error %lu\n", GetLastError());
+    } else {
+        for (int i = 0; i < sizeof(queries) / sizeof(queries[0]); ++i) {
+            DWORD n = GetFinalPathNameByHandleW(h, buffer, 4096, queries[i]);
+            if (n == 0) wprintf(L"flag %lu error %lu\n", queries[i], GetLastError());
+            else wprintf(L"flag %lu OK %ls\n", queries[i], buffer);
+        }
+        CloseHandle(h);
+    }
+    DWORD n = GetLongPathNameW(path, buffer, 4096);
+    if (n == 0) wprintf(L"long error %lu\n", GetLastError());
+    else wprintf(L"long OK %ls\n", buffer);
+}
+int wmain(int argc, wchar_t **argv) {
+    for (int i = 1; i < argc; ++i) probe(argv[i]);
+    return 42;
+}
+""",
+            encoding="utf-8",
+        )
+        compiled = subprocess.run(
+            [compiler, "-municode", "-o", str(probe_exe), str(probe_c)],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        if compiled.returncode == 0:
+            package = Path(environment["R_HOME"]) / "library" / "compiler"
+            run(
+                "Win32 path probe",
+                [str(probe_exe), str(package), os.path.relpath(package, cwd), str(root)],
+                cwd,
+            )
+        else:
+            results.append(f"Native probe compilation failed: {compiled.stderr!r}")
+    else:
+        results.append("Native probe compiler was unavailable")
+    return "\n".join(results)
+
+
 def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
     from tavotto import app as service, security
 
@@ -179,6 +276,20 @@ def test_owned_r_source_export_checks_the_captured_scene(tmp_path, monkeypatch):
             raise
 
     monkeypatch.setattr(nativeggplot_source, "replay", diagnose)
+    if sys.platform == "win32":
+        launch = winappcontainer._isolated_desktop_command
+
+        def diagnose_paths(root, argv, cwd, environment, timeout, sid):
+            try:
+                launch(root, argv, cwd, environment, timeout, sid)
+            except winappcontainer.ReplayFailed:
+                try:
+                    print(_windows_path_probe(launch, root, argv, cwd, environment, sid))
+                except Exception as exc:
+                    problems.extend(traceback.format_exception(exc))
+                raise
+
+        monkeypatch.setattr(winappcontainer, "_isolated_desktop_command", diagnose_paths)
 
     root = tmp_path / "研究 项目"
     graphs = root / "figure scripts"
