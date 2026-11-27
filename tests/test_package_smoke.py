@@ -665,9 +665,11 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
             events.append("job-kill")
             return True
 
-    def fake_open(proc):
-        events.append("job-open")
-        return FakeJob()
+    def fake_spawn(command, **kwargs):
+        events.append("spawn-in-job")
+        proc = subprocess.Popen(command, **kwargs)
+        proc.tavotto_job = FakeJob()
+        return proc
 
     real_terminate = ps.terminate
 
@@ -676,7 +678,7 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
         return real_terminate(proc)
 
     monkeypatch.setattr(ps, "IS_WINDOWS", True)
-    monkeypatch.setattr(ps, "_open_kill_on_close_job", fake_open)
+    monkeypatch.setattr(ps, "_spawn_in_job", fake_spawn)
     monkeypatch.setattr(ps, "terminate", spy_terminate)
     result = ps.run_isolated_command(
         [sys.executable, "-c", "pass"],
@@ -685,7 +687,7 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
         evidence=tmp_path,
         timeout=30,
     )
-    assert events == ["job-open", "terminate", "job-kill"]
+    assert events == ["spawn-in-job", "terminate", "job-kill"]
     assert result["cleanup"]["how"] == "already-exited"
     assert result["cleanup"]["job_killed"] is True
 
@@ -723,3 +725,36 @@ def test_retry_after_lost_lease_uses_a_different_port_even_if_the_os_repeats_it(
     rc = PS.main(["--launch", "x {port}", "--workdir", str(tmp_path / "run")])
     assert rc == 0
     assert ports == [43445, 50001]
+
+
+def test_isolated_command_hands_its_job_to_terminate_so_no_snapshot_guessing(tmp_path, monkeypatch):
+    """Job 必须挂在 proc 上：`terminate()` → `proctree.kill_tree` 看得到它就只杀 Job 里的进程，
+    不再退回「按进程快照找后代」（11-27 Windows 合并组：那条路把 pytest 自己也结束了）。"""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+    import package_smoke as ps
+
+    seen = {}
+
+    def spy_terminate(proc):
+        seen["job"] = getattr(proc, "tavotto_job", "missing")
+        return {"how": "already-exited", "returncode": proc.wait(), "group_gone": True}
+
+    sentinel = object()
+
+    def fake_spawn(command, **kwargs):
+        proc = subprocess.Popen(command, **kwargs)
+        proc.tavotto_job = sentinel
+        return proc
+
+    monkeypatch.setattr(ps, "_spawn_in_job", fake_spawn)
+    monkeypatch.setattr(ps, "terminate", spy_terminate)
+    ps.run_isolated_command(
+        [sys.executable, "-c", "pass"],
+        env=dict(os.environ),
+        cwd=tmp_path,
+        evidence=tmp_path,
+        timeout=30,
+    )
+    assert seen["job"] is sentinel

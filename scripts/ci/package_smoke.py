@@ -414,13 +414,13 @@ def terminate(proc: subprocess.Popen) -> dict:
 IS_WINDOWS = os.name == "nt"
 
 
-def _open_kill_on_close_job(proc: subprocess.Popen):
-    """Windows：把进程放进 `proctree` 的 Job Object，返回带 `kill()` 的句柄；拿不到返回 None。
+def _spawn_in_job(command: list[str], **kwargs) -> subprocess.Popen:
+    """起进程；Windows 上一出生就在 `proctree` 的 KILL_ON_CLOSE Job 里（`proc.tavotto_job`，放不进去为 None）。
 
     直接子进程先退出时 `terminate()` 够不到它的后代；Job 的成员关系不随父进程退出而消失，
-    `TerminateJobObject` 杀的是整个 Job。
+    `TerminateJobObject` 杀的是整个 Job——而且**只**杀 Job 里的进程。
     """
-    return proctree.adopt(proc)
+    return proctree.spawn(command, **kwargs)
 
 
 def run_isolated_command(
@@ -435,7 +435,10 @@ def run_isolated_command(
         (evidence / "stdout.txt").open("w") as stdout,
         (evidence / "stderr.txt").open("w") as stderr,
     ):
-        proc = subprocess.Popen(
+        # Windows：挂起 → 进 Job → 恢复（`proctree.spawn`），Job 挂在 proc 上，`terminate()` 走 Job 只杀这棵树。
+        # 以前是先 Popen 再另开一个 Job、却没挂到 proc 上：`terminate()` 看不到 Job，退回按进程快照找「后代」，
+        # 11-27 合并组 Windows 第 6 片在这一步把 pytest 自己也结束了（exit 1、没有任何输出）。
+        proc = _spawn_in_job(
             command,
             env=env,
             cwd=cwd,
@@ -444,12 +447,7 @@ def run_isolated_command(
             stdin=subprocess.DEVNULL,
             start_new_session=os.name != "nt",
         )
-        job = None
-        if IS_WINDOWS:
-            try:
-                job = _open_kill_on_close_job(proc)
-            except (OSError, AttributeError, ValueError):
-                job = None  # fall back to terminate() alone; reported as job_killed=None
+        job = getattr(proc, "tavotto_job", None)
         timed_out = False
         try:
             proc.wait(timeout=timeout)
