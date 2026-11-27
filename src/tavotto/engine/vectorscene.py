@@ -63,6 +63,13 @@ _STAT_TEXT = re.compile(
 )
 PROVENANCES = ("user", "data")
 
+
+def is_stat_text(text: object) -> bool:
+    """是不是统计标注文字。**先把任意空白压成单个空格再匹配**：`_STAT_TEXT` 里 `\\s*` 作用在用户 / 模型给的文字上，
+    成千上万个制表符会让回溯正则变成多项式时间；压过之后每处 `\\s*` 最多吃一个字符，匹配是线性的（语义不变——`\\s` 本来就把各种空白当一回事）。"""
+    return bool(_STAT_TEXT.search(" ".join(str(text).split())))
+
+
 #: 条目词汇的一份说明（给模型 / Agent 看的，**只此一处**）：`vectoredit.OPS_DOC` 的 `add` 从这里取。位置一律写锚点、不写毫米。
 ITEMS_DOC = (
     "条目 {kind, name, …}：kind ∈ arrow {from, to, head?} / text {text, at, attach?, sizePt?} / "
@@ -368,7 +375,7 @@ def _text(it: dict, ctx: _Ctx, name: str, faces) -> dict:
     text = it.get("text")
     if not isinstance(text, str) or not text:
         raise SceneError("bad_item", name, "text")
-    if _STAT_TEXT.search(text) and it.get("provenance") not in PROVENANCES:
+    if is_stat_text(text) and it.get("provenance") not in PROVENANCES:
         raise SceneError("needs_confirmation", name, "statistical_text")
     size = float(it.get("sizePt", 8))
     bold, italic = bool(it.get("bold", False)), bool(it.get("italic", False))
@@ -735,7 +742,7 @@ def solve(
     statistical = [
         {"item": it["name"], "provenance": it.get("provenance")}
         for it in items
-        if it.get("kind") == "text" and _STAT_TEXT.search(it.get("text", ""))
+        if it.get("kind") == "text" and is_stat_text(it.get("text", ""))
     ]
     return {
         "ok": True,

@@ -1504,7 +1504,7 @@ def _stat_gate(s: _State, i: int, it: dict) -> None:
     没给 `context`（插件路径）：照 0208 的旧口径，`solve` 只核「写没写来源」，并把它们列进 `statistical` 交宿主给用户确认。
     给了 `context`（桌面改图助手，模型出的补丁）：`provenance: "data"` 不收（这里没有数据上下文）；`provenance: "user"` 要在用户**原话**里
     核到这段文字，或被请求里的 `confirmed` 点名（用户在卡上点了「按我说的加」）；其余一律 `needs_confirmation`。"""
-    if it.get("kind") != "text" or not vectorscene._STAT_TEXT.search(str(it.get("text", ""))):  # noqa: SLF001
+    if it.get("kind") != "text" or not vectorscene.is_stat_text(it.get("text", "")):
         return
     ctx = s.context
     if ctx is None:
