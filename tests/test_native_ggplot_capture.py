@@ -191,6 +191,12 @@ if (nzchar(protected)) {
   attempted <- try(suppressWarnings(writeLines("must not land", protected)), silent = TRUE)
   if (!inherits(attempted, "try-error")) stop("The protected file could be changed.")
 }
+if (nzchar(Sys.getenv("TAVOTTO_R_REPLAY_ROOT"))) {
+  inside <- normalizePath("../numbers.csv", winslash = "/", mustWork = TRUE)
+  stopifnot(file.exists(inside), endsWith(inside, "/project/numbers.csv"))
+  missing <- try(normalizePath("absent.csv", mustWork = TRUE), silent = TRUE)
+  stopifnot(inherits(missing, "try-error"))
+}
 port <- Sys.getenv("TAVOTTO_R_REPLAY_PROBE_PORT")
 if (nzchar(port)) {
   network <- try(suppressWarnings(socketConnection("127.0.0.1", as.integer(port),

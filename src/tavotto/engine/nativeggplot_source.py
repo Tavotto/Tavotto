@@ -231,6 +231,10 @@ def _stage_windows_runtime(interpreter: str, scratch: Path, environment: dict[st
 
     # Only the already selected R binary and base functions run here. No
     # user source or startup profiles are loaded during library discovery.
+    discovery_env = {key: value for key, value in environment.items() if key.upper() != "R_TESTS"}
+    discovery_env.update(
+        R_DEFAULT_PACKAGES="NULL", R_SCRIPT_DEFAULT_PACKAGES="NULL", R_ENABLE_JIT="0"
+    )
     listing = subprocess.run(  # noqa: S603 - the native session attested the selected interpreter
         [
             interpreter,
@@ -240,7 +244,7 @@ def _stage_windows_runtime(interpreter: str, scratch: Path, environment: dict[st
             "writeLines(enc2utf8(.libPaths()), useBytes = TRUE)",
         ],
         cwd=bin_dir,
-        env=environment,
+        env=discovery_env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -278,13 +282,14 @@ def _stage_windows_runtime(interpreter: str, scratch: Path, environment: dict[st
     home.mkdir()
     for key in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
         environment[key] = str(home)
-    for key in ("R_LIBS", "R_LIBS_SITE", "R_ENVIRON_USER", "R_PROFILE_USER"):
+    for key in ("R_LIBS", "R_LIBS_SITE", "R_ENVIRON_USER", "R_PROFILE_USER", "R_TESTS"):
         environment.pop(key, None)
     executable = staged / terminal.relative_to(root)
     environment.update(
         R_HOME=str(staged),
         R_USER=str(home),
         R_LIBS_USER=os.pathsep.join(libraries),
+        TAVOTTO_R_REPLAY_ROOT=str(scratch.resolve(strict=True)),
         PATH=os.pathsep.join(
             (str(executable.parent), str(Path(os.environ["SystemRoot"]) / "System32"))
         ),
@@ -366,11 +371,12 @@ def replay(
             try:
                 executable = _stage_windows_runtime(spec.interpreter, scratch, environment)
                 bundle = scratch / "tavotto-native"
-                bundle.mkdir()
-                bridge, driver, adapter, palettes = (
-                    Path(shutil.copyfile(path, bundle / path.name))
-                    for path in (bridge, driver, adapter, palettes)
-                )
+                shutil.copytree(bridge.parent, bundle)
+                bridge, driver, adapter = (bundle / path.name for path in (bridge, driver, adapter))
+                palettes = Path(shutil.copyfile(palettes, bundle / palettes.name))
+                profile = scratch / "r-runtime" / "library" / "base" / "R" / "Rprofile"
+                compatibility = (bundle / "ggplot_windows_profile.R").read_bytes()
+                profile.write_bytes(compatibility + b"\n" + profile.read_bytes())
                 execute = resources.enter_context(winappcontainer.offline(scratch, environment))
             except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
                 raise scriptadjust.ScriptAdjustError(
