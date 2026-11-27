@@ -8170,7 +8170,10 @@ def _contact_json(payload: dict, status: int = 200):
 @app.get("/api/contact")
 def api_contact_capability():
     """「联系作者」此刻可不可用 + 未读回信数（本机判断，**不联网**）。关闭时界面不画入口。"""
-    return _contact_json(engine_contactsend.capability())
+    # 期刊线索入口（ADR 0213 §五）：「联系作者」可用，且用户没关期刊联网（TAVOTTO_NO_JOURNAL_SYNC）
+    return _contact_json(
+        engine_contactsend.capability(journal_tips=not engine_journalremote.disabled())
+    )
 
 
 @app.get("/api/contact/status")
