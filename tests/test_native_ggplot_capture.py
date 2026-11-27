@@ -497,7 +497,9 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
         )
         assert closing.status_code == 200, closing.json
         assert closing.json["project_layout"]["state"] == "saved"
-        assert closing.json["project_layout"]["revision"] != applied.json["revision"]
+        # A close-time autosave of identical content keeps the project's revision.
+        assert closing.json["project_layout"]["revision"] == applied.json["revision"]
+        assert client.get(slot_url).json["updatedAt"] == invalidated_at
         restored = client.post(
             "/api/script-backups/restore",
             json={
