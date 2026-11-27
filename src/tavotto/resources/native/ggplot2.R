@@ -73,7 +73,8 @@ ggplot_text_target <- function(table, slots, role, title_child = NULL, group_lab
   if (!inherits(text, "text")) return(NULL)
   label <- text$label
   if (is.null(group_label)) {
-    if (!is.character(label) || length(label) != 1L || is.na(label) || !nzchar(label)) return(NULL)
+    if (!is.character(label) || length(label) != 1L || is.na(label) ||
+        (!allow_empty && !nzchar(label))) return(NULL)
   } else {
     if ((!is.character(label) && !is.numeric(label)) || !length(label) ||
         anyNA(label) || (!allow_empty && any(!nzchar(label))) || isTRUE(text$check.overlap)) return(NULL)
@@ -645,9 +646,9 @@ ggplot_reflow_facet_guides <- function(table, layout, theme, text_targets, tick_
 }
 
 ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-                               grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits) {
+                               grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits, titles) {
   built <- state$built
-  plot <- built$plot
+  plot <- ggplot_relabel_titles(built$plot, titles)
   axes_target <- state$axes_targets[[ggplot_axes_gid]]
   if (length(grid_edits)) plot$theme <- ggplot_grid_theme(plot$theme, axes_target$grid, grid_edits)
   if (length(theme_edits)) plot$theme <- plot$theme + do.call(ggplot2::theme, theme_edits)
@@ -660,6 +661,7 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
   if (length(facet_changes)) built <- ggplot_project_facet_axes(built, state$facet_axis_groups, facet_changes)
   redraw <- length(axis_changes) || length(facet_changes)
   layout <- ggplot_clone(built$layout)
+  layout$coord <- ggplot_relabel_coordinates(layout$coord, titles)
   if (!is.null(aspect)) layout <- ggplot_edit_aspect(layout, axes_target, aspect)
   panels <- layout$panel_params
   for (gid in ggplot_series_edit_order(names(guide_strokes), state$line_targets)) {
@@ -948,15 +950,21 @@ ggplot_bbox <- function(lower, upper, frame_pt) {
     (upper$x - lower$x) / frame_in[[1L]], (upper$y - lower$y) / frame_in[[2L]])
 }
 
-ggplot_text_targets <- function(table, frame_pt, colourbar_titles, axes_targets) {
+ggplot_text_targets <- function(table, frame_pt, colourbar_titles, axes_targets, coord) {
   targets <- list()
   families <- ggplot_installed_text_fonts()
   for (gid in names(ggplot_text_slots)) {
     slot <- which(table$layout$name == ggplot_text_slots[[gid]])
     if (length(slot) != 1L) next
     role <- if (gid == "plot.title") "title" else if (startsWith(gid, "axis.")) "axis_label" else "text"
-    target <- ggplot_text_target(table, slot, role)
+    editable_text <- inherits(table$grobs[[slot]], "titleGrob") &&
+      (role != "axis_label" || identical(class(coord)[[1L]], "CoordCartesian"))
+    target <- ggplot_text_target(table, slot, role, allow_empty = editable_text)
     if (is.null(target)) next
+    if (editable_text) {
+      target$text_slot <- ggplot_text_slots[[gid]]
+      target$hidden <- !nzchar(target$label)
+    }
     if (inherits(table$grobs[[slot]], "titleGrob") &&
         is_positive_ggplot_number(target$paint$fontsize) &&
         is_positive_ggplot_number(ggplot_text_cex(target$paint))) {
@@ -1620,7 +1628,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       ggplot_faceted_axes_targets(built, table, panels, facet_axis_groups)
     } else stats::setNames(list(axes_target), ggplot_axes_gid)
     colourbar_titles <- ggplot_colourbar_titles(built)
-    text_targets <- ggplot_text_targets(table, frame_pt, colourbar_titles, axes_targets)
+    text_targets <- ggplot_text_targets(table, frame_pt, colourbar_titles, axes_targets, built$layout$coord)
     tick_targets <- if (all(lengths(captured_layers$grobs) > 0L)) {
       ggplot_tick_targets(built, text_targets, colourbar_titles, axes_targets)
     }
@@ -1761,6 +1769,7 @@ ggplot_text_paint <- function(target, edits) {
   family <- ggplot_text_family(target)
   for (prop in names(edits)) {
     value <- edits[[prop]]
+    if (prop == "text" && !is.null(target$text_slot)) next
     if (prop == "fontsize") {
       if (is.null(target$title_dimension)) stop("The requested native R text style is unavailable.")
       if (!is_positive_ggplot_number(value)) stop("The native R font size must be a positive number.")
@@ -2002,6 +2011,16 @@ ggplot_table_for <- function(state, edits) {
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
   point_edits <- ggplot_guide_point_edits(state, edits)
+  titles <- list()
+  for (gid in intersect(names(edits), names(ggplot_text_slots))) {
+    value <- edits[[gid]]$text
+    if (is.null(value)) next
+    slot <- text_targets[[gid]]$text_slot
+    if (is.null(slot) || !is.character(value) || length(value) != 1L || is.na(value)) {
+      stop("The requested native R title text is unavailable.")
+    }
+    titles[[slot]] <- value
+  }
   title_edits <- ggplot_title_theme(text_targets, edits)
   theme_edits <- stats::setNames(title_edits, unname(ggplot_title_theme_names[names(title_edits)]))
   if (!is.null(axes_edits$facecolor)) {
@@ -2009,14 +2028,14 @@ ggplot_table_for <- function(state, edits) {
   }
   if (length(tick_edits) || length(colour_edits) || length(axis_styles) || length(guide_strokes) ||
       length(point_edits) || length(axis_changes) || length(facet_changes) || length(grid_edits) || length(theme_edits) ||
-      !is.null(aspect) || length(side_edits) || length(member_edits) || length(state$authored_tick_recipes)) {
+      !is.null(aspect) || length(side_edits) || length(member_edits) || length(titles) || length(state$authored_tick_recipes)) {
     # A source writeback can move typography into the plot theme while
     # coordinate and guide edits stay in the document. Both scenes must
     # rebuild their guides on the same metrics device as the initial capture.
     guides <- with_svg_frame(state$frame_pt, function(capture) {
       ggplot_guide_table(
         state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-        grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits
+        grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits, titles
       )
     })$value
     table <- guides$table
@@ -2038,10 +2057,11 @@ ggplot_table_for <- function(state, edits) {
       }
       group <- if (!is.null(target$tick_labels)) target$label
       current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group,
-                                    allow_empty = gid %in% guides$member_groups)
+                                    allow_empty = !is.null(target$text_slot) || gid %in% guides$member_groups)
       changes_ticks <- !is.null(tick_edits[[gid]]) || gid %in% c(guides$guide_ticks, guides$changed_ticks) ||
         (target$role == "ticks" && substr(gid, 6L, 6L) %in% names(axis_changes))
-      label <- guides$title_changes[[gid]] %||% target$label
+      label <- (if (!is.null(target$text_slot)) titles[[target$text_slot]]) %||%
+        guides$title_changes[[gid]] %||% target$label
       if (is.null(current) || !identical(label, current$label) ||
           (!changes_ticks && !identical(target$tick_labels, current$tick_labels))) {
         stop("The native R text layout changed while formatting.")
@@ -2062,6 +2082,7 @@ ggplot_table_for <- function(state, edits) {
         stop("The native R axis guide did not apply the requested font family.")
       }
       if (is.null(target$face)) current$face <- NULL
+      if (!is.null(target$text_slot)) current$hidden <- !nzchar(label)
       target[names(current)] <- current
       text_targets[[gid]] <- target
     }
@@ -2248,7 +2269,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   facet_changes <- ggplot_facet_axis_edits(state$axes_targets, edits)
   reflow <- length(state$authored_tick_recipes) > 0L ||
     length(ggplot_tick_member_edits(state$tick_member_scopes, edits)) > 0L ||
-    any(vapply(edits, function(edit) any(c("fontsize", "fontfamily", ggplot_tick_props,
+    any(vapply(edits, function(edit) any(c("text", "fontsize", "fontfamily", ggplot_tick_props,
                                                 ggplot_axis_mark_props, "direction", "visible") %in% names(edit)),
                       logical(1L))) ||
     any(vapply(names(edits), function(gid) {
@@ -2412,10 +2433,21 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       if (!is.null(edit$fontsize)) field$value_original <- value_original
       editable[[length(editable) + 1L]] <- field
     }
+    current_label <- target$label
+    if (!is.null(target$text_slot)) {
+      current_label <- edit$text %||% target$label
+      content <- list(prop = "text", type = "text", value = current_label)
+      if (!is.null(edit$text)) content$value_original <- target$label
+      editable <- c(editable, list(content))
+    }
     element <- list(
-      gid = gid, role = target$role, label = target$label,
+      gid = gid, role = target$role, label = current_label,
       bbox = as.list(bbox), draggable = FALSE, editable = editable
     )
+    if (!is.null(target$text_slot) && !is.null(edit$text)) {
+      element$title_text_baseline <- target$label
+      element$source_title_text <- list(slot = target$text_slot, text = current_label)
+    }
     if (!is.null(target$legend_title)) element$legend_title <- target$legend_title
     if (!is.null(target$tick_labels)) element$tick_labels <- target$tick_labels
     if (identical(tick$kind, "axis") && tick$axes_gid %in% names(state$axes_targets) &&

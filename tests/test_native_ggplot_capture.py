@@ -5147,6 +5147,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
             "style": "normal",
             "fontfamily": "sans-serif",
             "fontsize": 13.2,
+            "text": "Fuel economy",
         }
         top = elements["axis.x.top.title"]
         bottom = elements[X_BOTTOM]
@@ -5178,6 +5179,7 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
             "style": "italic",
             "fontfamily": "sans-serif",
             "fontsize": 19.25,
+            "text": "Engine displacement",
         }
         size_field = next(field for field in axis["editable"] if field["prop"] == "fontsize")
         assert size_field["value_original"] == 11
@@ -5236,11 +5238,12 @@ plot <- ggplot2::ggplot(ggplot2::mpg, ggplot2::aes(displ, hwy, colour = cty)) +
         assert moved_legend["anchor"] == pytest.approx([0.32, 0.8], abs=1e-7)
         assert moved_legend["identity"] == legend["identity"]
         assert session.override(stem, [], inline_svg=True)["svg"] == baseline["svg"]
-        for prop, value in (("text", "Unchanged"), ("weight", "semibold")):
-            with pytest.raises(pool.WorkerError, match="text style is unavailable"):
-                session.override(
-                    stem, [{"gid": "plot.title", "prop": prop, "value": value}], inline_svg=True
-                )
+        with pytest.raises(pool.WorkerError, match="text style is unavailable"):
+            session.override(
+                stem,
+                [{"gid": "plot.title", "prop": "weight", "value": "semibold"}],
+                inline_svg=True,
+            )
         with pytest.raises(pool.WorkerError, match="text is unavailable"):
             session.override(
                 stem,
@@ -6138,6 +6141,134 @@ grDevices::dev.off()
         assert drawn["warnings"] == []
         assert settings(drawn)[guide["gid"]]["extend"] == "neither"
         assert _render(app, fresh, [])["svg"] == rebuilt["svg"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == original
+
+
+def test_native_r_title_text_reflows_and_writes_the_displayed_axis_side(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Title text"
+    project.mkdir()
+    script = project / "Titles.R"
+    original = f"""\
+d <- data.frame(x = 1:6, y = exp(1:6/4), group = rep(c("First", "Second"), each = 3))
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+  ggplot2::scale_x_continuous(name = "Distance", sec.axis = ggplot2::sec_axis(~.*1000, name = "Other x")) +
+  ggplot2::scale_y_continuous(name = "Concentration", sec.axis = ggplot2::dup_axis(name = "Other y")) +
+  ggplot2::labs(title = "Before", subtitle = "Sub", caption = "By Team") +
+  ggplot2::facet_wrap(~group) + ggplot2::theme_bw()
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Title_text"
+    new_labels = {
+        "plot.title": 'Measured "orbit"',
+        "plot.subtitle": "First caption line\nContinues",
+        "plot.caption": "",
+        "axis.x.bottom.title": "Time (s)",
+        "axis.x.top.title": "Time (ms)",
+        "axis.y.right.title": "New reference",
+    }
+
+    def fields(response):
+        return {
+            el["gid"]: el
+            for el in response["manifest"]["elements"]
+            if el["gid"] in {*new_labels, "axis.y.left.title"}
+        }
+
+    def svg_labels(svg):
+        return [
+            node.text
+            for node in ElementTree.fromstring(svg).iter("{http://www.w3.org/2000/svg}text")
+        ]
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        before = _render(app, figure, [])
+        targets = fields(before)
+        changes = [(gid, "text", value) for gid, value in new_labels.items()]
+        changes.append(("axis.x.bottom.title", "fontsize", 13))
+        patches = [
+            {"gid": gid, "identity": targets[gid]["identity"], "prop": prop, "value": value}
+            for gid, prop, value in changes
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        actual = fields(hot)
+        for gid, value in new_labels.items():
+            assert (
+                actual[gid]["label"] == value
+                and actual[gid]["identity"] == targets[gid]["identity"]
+            )
+        assert actual["plot.caption"]["bbox"] == [-1, -1, 0, 0]
+        assert actual["axis.y.left.title"]["label"] == targets["axis.y.left.title"]["label"]
+        assert actual["plot.subtitle"]["bbox"][3] > targets["plot.subtitle"]["bbox"][3]
+        assert _render(app, figure, [])["svg"] == before["svg"]
+        width, height = before["manifest"]["size_mm"]
+        obj = {
+            **_panel("r", figure, 5, patches, native_width=width),
+            "h": height,
+            "nativeH": height,
+        }
+        document = {
+            "schema": 3,
+            "project": {"id": "r-title-text", "name": "Title text"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": width + 10, "h": height + 10},
+                    "objects": [obj],
+                    "guides": [],
+                },
+            ],
+        }
+        assert app.call(f"{route}?target=project", document)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Title_text")
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200 and preview["written"] == len(patches) and not preview["skipped"], (
+            preview
+        )
+        assert script.read_bytes() == original
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {"token": preview["token"], "confirmed": True},
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"]
+        assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    assert svg_labels((project / "standalone.svg").read_text(encoding="utf-8")) == svg_labels(
+        hot["svg"]
+    )
+    with sidecar_app(project, tmp_path / "cold") as app:
+        rebuilt = _run_ggplot(app, script.name, rscript)
+        replay = _render(app, rebuilt, [])
+        assert replay["warnings"] == [] and replay["svg"] == hot["svg"]
         status, restored = app.call(
             "/api/script-backups/restore",
             {

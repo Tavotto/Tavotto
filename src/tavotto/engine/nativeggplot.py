@@ -300,7 +300,7 @@ class GgplotTarget:
                     + hashlib.sha256(json.dumps(context).encode("utf-8")).hexdigest()[:16]
                 )
                 continue
-            label = element["label"].encode("utf-8")
+            label = element.pop("title_text_baseline", element["label"]).encode("utf-8")
             # Keep plot-title identities already stored in saved overrides.
             if element["gid"] != "plot.title":
                 label = element["gid"].encode("utf-8") + b"\0" + label

@@ -575,6 +575,46 @@ def _native_tick_label_writes(
     return recipes, written
 
 
+def _native_title_text_writes(hot: dict | None, patches: list[dict]) -> dict[str, tuple[str, str]]:
+    slots = {"title", "subtitle", "caption", "xlab-t", "xlab-b", "ylab-l", "ylab-r"}
+    targets = {
+        element["gid"]: element["source_title_text"]
+        for element in (hot or {}).get("elements", ())
+        if element.get("source_title_text")
+    }
+    recipes = {}
+    for patch in patches:
+        gid, value = patch["gid"], patch["value"]
+        plan = targets.get(gid)
+        if (
+            patch["prop"] == "text"
+            and plan
+            and plan["slot"] in slots
+            and isinstance(value, str)
+            and value == plan["text"]
+            and _r_literal(value) is not None
+        ):
+            recipes[gid] = (plan["slot"], value)
+    return recipes
+
+
+def _r_title_text_block(name: str, recipes: dict[str, tuple[str, str]]) -> str:
+    fields = ", ".join(
+        f"{_r_literal(slot)} = {_r_literal(value)}" for slot, value in recipes.values()
+    )
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers("ggplot_objects.R", "ggplot_title_text.R"),
+            f"  titles <- list({fields})",
+            "  plot <- ggplot_relabel_titles(plot, titles)",
+            "  plot$coordinates <- ggplot_relabel_coordinates(plot$coordinates, titles)",
+            "  plot",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
 def _r_helpers(*resources: str) -> list[str]:
     return [
         f"  {line}" if line else ""
@@ -821,9 +861,12 @@ def build(
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
     tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
     bar_layouts, bar_writes = _native_colourbar_layout_writes(hot, patches)
+    titles = _native_title_text_writes(hot, patches)
+    title_writes = {(gid, "text") for gid in titles}
     written = (
         coordinate_writes | theme_writes | layer_writes | colour_writes | tick_writes | bar_writes
     )
+    written.update(title_writes)
     residual = []
     skipped = []
     for patch in patches:
@@ -874,6 +917,10 @@ def build(
     # edits can bind against that new baseline, leave the scale in the layout
     # whenever an unrelated override still needs to replay.
     if residual:
+        for gid in {patch["gid"] for patch in residual} & titles.keys():
+            # Retained style must still belong to the title on its original binding.
+            del titles[gid]
+            written.discard((gid, "text"))
         if any(prop in coordinates for prop in ("xscale", "yscale")):
             coordinates, fallback_writes = _native_coordinate_writes(
                 axes, patches, write_scales=False
@@ -900,6 +947,7 @@ def build(
         or colour_scales
         or tick_labels
         or bar_layouts
+        or titles
     ):
         return AdjustedRSource(data, 0, residual, skipped)
 
@@ -928,6 +976,8 @@ def build(
         statements.append(_r_tick_labels_block(name, tick_labels))
     if bar_layouts:
         statements.append(_r_colourbar_layout_block(name, bar_layouts))
+    if titles:
+        statements.append(_r_title_text_block(name, titles))
     if options:
         args = ",\n".join(options)
         statements.append(
