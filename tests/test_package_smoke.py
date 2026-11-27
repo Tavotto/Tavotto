@@ -665,6 +665,9 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
             events.append("job-kill")
             return True
 
+        def active_count(self):  # Windows 上 terminate() 用它判整棵树已不存在
+            return 0
+
     def fake_spawn(command, **kwargs):
         events.append("spawn-in-job")
         proc = subprocess.Popen(command, **kwargs)
@@ -741,7 +744,14 @@ def test_isolated_command_hands_its_job_to_terminate_so_no_snapshot_guessing(tmp
         seen["job"] = getattr(proc, "tavotto_job", "missing")
         return {"how": "already-exited", "returncode": proc.wait(), "group_gone": True}
 
-    sentinel = object()
+    class Sentinel:
+        def kill(self):
+            return True
+
+        def active_count(self):
+            return 0
+
+    sentinel = Sentinel()
 
     def fake_spawn(command, **kwargs):
         proc = subprocess.Popen(command, **kwargs)
