@@ -3566,7 +3566,46 @@ expected <- adapter$capture_ggplot(suppressMessages(with_clipping +
   coord_cartesian(xlim = c(0.5, 14.5), expand = FALSE) +
   scale_shape_manual(values = c(Control = 15L, Treatment = 17L))), frame, pal)
 stopifnot(identical(revealed, expected$svg))
-cat("Verified grouped scatter markers and keys on both facets match authored R exactly, with stable local hit bounds and shared alias state.\n")
+# Author the same marker, size and opacity in ggplot2 and in its guide.
+# Compare the whole native SVG, including both facets, the untouched group and colorbar.
+new_size <- 324
+new_alpha <- .45
+new_size_mm <- sqrt(new_size) / ggplot2::.pt
+patch <- stats::setNames(list(list(marker = "s", size = new_size), list(alpha = new_alpha)), c(gid, peer))
+stopifnot(setequal(names(state$point_targets[[gid]]$values), c("marker", "size", "alpha")),
+          state$point_targets[[gid]]$values$alpha == 1)
+authored <- ggplot(d, aes(x, y)) +
+  geom_point(aes(shape = group, colour = z), size = ifelse(d$group == "Control", new_size_mm, 3),
+             alpha = ifelse(d$group == "Control", new_alpha, NA_real_)) +
+  scale_shape_manual(values = c(Control = 15L, Treatment = 17L)) +
+  scale_colour_gradient(name = "Dose") + facet_wrap(vars(panel)) +
+  labs(shape = "Group") + theme_bw() +
+  guides(shape = guide_legend(override.aes = list(size = c(new_size_mm, 3),
+                                                 alpha = c(new_alpha, NA_real_))))
+styled <- adapter$capture_ggplot(authored, frame, pal)
+stopifnot(identical(adapter$render_ggplot(state, patch), styled$svg),
+          identical(adapter$render_ggplot(state), before$svg))
+reported <- adapter$ggplot_manifest(state, "dots", patch)
+oracle_manifest <- adapter$ggplot_manifest(styled$state, "dots")
+stopifnot(identical(single(reported, "axes_2")$bbox, single(oracle_manifest, "axes_2")$bbox))
+for (target in c(gid, peer)) {
+  element <- single(reported, target)
+  stopifnot(identical(element$point_series$current[c("marker", "size", "alpha")],
+                      list(marker = "s", size = new_size, alpha = new_alpha)),
+            setequal(unlist(element$alias_pure), c("marker", "size", "alpha")))
+}
+size_conflict <- stats::setNames(list(list(size = 100), list(size = 36)), c(gid, peer))
+stopifnot(inherits(try(adapter$render_ggplot(state, size_conflict), silent = TRUE), "try-error"))
+override <- p + guides(shape = guide_legend(override.aes = list(size = 2, alpha = .8)))
+override_state <- adapter$capture_ggplot(override, frame, pal)$state
+stopifnot(identical(names(override_state$point_targets[[gid]]$values), "marker"))
+mapped <- ggplot(d, aes(x, y)) + geom_point(aes(shape = group, colour = z, size = z, alpha = z)) +
+  scale_colour_gradient(name = "Dose") + facet_wrap(vars(panel)) + labs(shape = "Group") +
+  guides(size = "none", alpha = "none")
+mapped_state <- adapter$capture_ggplot(mapped, frame, pal)$state
+stopifnot(identical(names(mapped_state$point_targets[[gid]]$values), "marker"),
+          inherits(try(adapter$render_ggplot(mapped_state, patch), silent = TRUE), "try-error"))
+cat("Verified grouped scatter styles and keys on both facets against authored R, including reflow and protected mappings.\n")
 """
 
 
@@ -3826,7 +3865,7 @@ def test_log_colourbar_ranges_match_native_mapping_in_data_units(tmp_path):
     _assert_r_probe(tmp_path, LOG_COLOUR_SCALE_PROBE)
 
 
-def test_mapped_point_groups_update_one_shape_key_across_facets(tmp_path):
+def test_mapped_point_groups_update_one_style_key_across_facets(tmp_path):
     _assert_r_probe(tmp_path, MAPPED_POINT_SHAPE_PROBE)
 
 

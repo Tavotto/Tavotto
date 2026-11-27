@@ -1970,6 +1970,12 @@ ggplot_guide_stroke_edits <- function(state, edits) {
                     logical(1L))]]
 }
 
+ggplot_guide_point_edits <- function(state, edits) {
+  gids <- intersect(names(edits), names(state$point_targets))
+  edits[gids[vapply(state$point_targets[gids], function(target) !is.null(target$group),
+                    logical(1L))]]
+}
+
 ggplot_table_for <- function(state, edits) {
   edits <- ggplot_expand_point_groups(state, edits)
   table <- state$table
@@ -1998,8 +2004,7 @@ ggplot_table_for <- function(state, edits) {
   axis_styles <- ggplot_axis_style_edits(state, edits)
   colour_edits <- edits[intersect(names(edits), names(state$colour_scales))]
   guide_strokes <- ggplot_guide_stroke_edits(state, edits)
-  point_groups <- Filter(function(target) !is.null(target$group), state$point_targets)
-  point_edits <- edits[intersect(names(edits), names(point_groups))]
+  point_edits <- ggplot_guide_point_edits(state, edits)
   title_edits <- ggplot_title_theme(text_targets, edits)
   theme_edits <- stats::setNames(title_edits, unname(ggplot_title_theme_names[names(title_edits)]))
   if (!is.null(axes_edits$facecolor)) {
@@ -2245,7 +2250,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         any(names(edits[[gid]]) %in% c("rotation", names(ggplot_face_options)))
     }, logical(1L))) ||
     any(names(edits) %in% c(ggplot_axes_gid, legend_gids, names(state$colour_scales))) ||
-    length(facet_changes) > 0L || length(ggplot_guide_stroke_edits(state, edits)) > 0L
+    length(facet_changes) > 0L || length(ggplot_guide_stroke_edits(state, edits)) > 0L ||
+    any(vapply(ggplot_guide_point_edits(state, edits), function(edit) !is.null(edit$size), logical(1L)))
   line_edits <- any(names(edits) %in% names(state$line_targets))
   point_edits <- any(names(edits) %in% names(state$point_targets))
   bar_edits <- any(names(edits) %in% names(state$bar_targets))

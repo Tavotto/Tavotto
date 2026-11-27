@@ -14,12 +14,19 @@ ggplot_point_fields <- function(points, data, mapped) {
       length(points$x) != nrow(data) || length(points$y) != nrow(data) ||
       !all(grid::unitType(points$x) == "native") || !all(grid::unitType(points$y) == "native") ||
       !all(is.finite(c(as.numeric(points$x), as.numeric(points$y))))) return(list())
-  base_size <- unique(round(points$gp$fontsize - points$gp$lwd, 9))
-  marker <- ggplot_point_marker(unique(points$pch))
-  alpha <- unique(data$alpha)
+  ggplot_point_style_fields(points, data$alpha, mapped, seq_len(nrow(data)))
+}
+
+ggplot_point_style_fields <- function(points, alpha, mapped, indices) {
+  select <- function(values) {
+    if (length(values) <= 1L) values else values[(indices - 1L) %% length(values) + 1L]
+  }
+  base_size <- unique(round(select(points$gp$fontsize) - select(points$gp$lwd), 9))
+  marker <- ggplot_point_marker(unique(select(points$pch)))
+  alpha <- unique(select(alpha))
   if (length(alpha) == 1L && is.na(alpha)) {
-    # Inherit the per-colour alpha unless every drawn pigment is opaque.
-    pigments <- unique(c(points$gp$col, points$gp$fill))
+    # Inherit the opacity of the pigments drawn in this series.
+    pigments <- unique(c(select(points$gp$col), select(points$gp$fill)))
     pigments <- pigments[!is.na(pigments)]
     alpha <- unique(grDevices::col2rgb(pigments, alpha = TRUE)[4L, ]) / 255
   }
@@ -55,8 +62,16 @@ ggplot_point_group_guide <- function(built, layer, mapped, members) {
       !is.logical(decor$data$.draw) || anyNA(decor$data$.draw) ||
       length(decor$data$.draw) != nrow(key) ||
       !isTRUE(all.equal(as.numeric(decor$data$shape), as.numeric(key$shape)))) return(NULL)
+  # A guide override or mapped aesthetic owns its own presentation. Only
+  # link fixed styles that the actual stock key draws like the group.
+  mapped <- union(mapped, names(params$override.aes))
+  styles <- lapply(seq_len(nrow(key)), function(index) {
+    data <- decor$data[index, , drop = FALSE]
+    ggplot_point_style_fields(ggplot2::draw_key_point(data, list(), 1), data$alpha, mapped, 1L)
+  })
   membership <- split(match(members$values, key$.value), members$panel)
-  list(index = keys[[1L]], key = key, draw = decor$data$.draw, membership = membership)
+  list(index = keys[[1L]], key = key, draw = decor$data$.draw,
+       membership = membership, mapped = mapped, styles = styles)
 }
 
 ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide) {
@@ -82,10 +97,16 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
       if (is.null(marker) || !guide$draw[[key]]) next
       part <- groups[[as.character(key)]]
       if (!all(points$pch[part] == guide$key$shape[[key]])) return(list())
+      styles <- ggplot_point_style_fields(points, rows$alpha, guide$mapped, part)
+      key_style <- guide$styles[[key]]
+      matches <- vapply(names(styles), function(prop) {
+        isTRUE(all.equal(styles[[prop]], key_style[[prop]], tolerance = 1e-12))
+      }, logical(1L))
       context <- rlang::hash(list("GeomPoint", rows, draw$facet, guide$key$.value[[key]], part))
       result[[paste0("layer.", layer_index, suffix, ".scatter.group.", key)]] <- list(
         slot = draw$slot, child = draw$child, index = layer_index, count = count, facet = draw$facet,
-        values = list(marker = marker), clip = identical(layout$coord$clip, "on"), context = context,
+        values = c(list(marker = marker), styles[matches]),
+        clip = identical(layout$coord$clip, "on"), context = context,
         group = list(rows = part, guide = guide$index, key = key, label = guide$key$.label[[key]])
       )
     }
@@ -93,6 +114,8 @@ ggplot_point_group_targets <- function(built, panels, draws, layer_index, guide)
   groups <- split(names(result), vapply(result, function(part) part$group$key, integer(1L)))
   for (peers in groups) {
     if (length(peers) < 2L) next
+    shared <- Reduce(intersect, lapply(result[peers], function(target) names(target$values)))
+    for (gid in peers) result[[gid]]$values <- result[[gid]]$values[shared]
     result[[peers[[1L]]]]$group$links <- peers[-1L]
     for (gid in peers[-1L]) result[[gid]]$group$links <- peers[[1L]]
   }
@@ -107,20 +130,22 @@ ggplot_expand_point_groups <- function(state, edits) {
     group <- target$group
     if (is.null(group)) next
     ggplot_point_values(target, edits[[gid]])
-    prop <- edits[[gid]]$marker
-    if (is.null(prop)) next
     key <- paste(group$guide, group$key, sep = "/")
-    if (!is.null(by_group[[key]]) && !identical(by_group[[key]], prop)) {
-      stop("A shared native R point marker cannot take conflicting values.")
+    for (prop in names(edits[[gid]])) {
+      value <- edits[[gid]][[prop]]
+      prior <- by_group[[key]][[prop]]
+      if (!is.null(prior) && !identical(prior, value)) {
+        stop("A shared native R point style cannot take conflicting values.")
+      }
+      by_group[[key]][[prop]] <- value
     }
-    by_group[[key]] <- prop
   }
   if (!length(by_group)) return(edits)
   for (gid in names(state$point_targets)) {
     group <- state$point_targets[[gid]]$group
     if (is.null(group)) next
-    prop <- by_group[[paste(group$guide, group$key, sep = "/")]]
-    if (!is.null(prop)) edits[[gid]]$marker <- prop
+    changes <- by_group[[paste(group$guide, group$key, sep = "/")]]
+    if (length(changes)) edits[[gid]] <- changes
   }
   edits
 }
@@ -128,13 +153,19 @@ ggplot_expand_point_groups <- function(state, edits) {
 ggplot_style_point_keys <- function(guide_params, targets, edits) {
   for (gid in intersect(names(edits), names(targets))) {
     group <- targets[[gid]]$group
-    marker <- edits[[gid]]$marker
-    if (is.null(group) || is.null(marker) || marker == "original") next
-    shape <- ggplot_point_markers[[marker]]
+    if (is.null(group)) next
+    patch <- edits[[gid]]
     key <- group$key
     params <- guide_params[[group$guide]]
-    params$key$shape[[key]] <- shape
-    params$decor$geom_point$data$shape[[key]] <- shape
+    data <- params$decor$geom_point$data
+    if (!is.null(patch$marker) && patch$marker != "original") {
+      shape <- ggplot_point_markers[[patch$marker]]
+      params$key$shape[[key]] <- shape
+      data$shape[[key]] <- shape
+    }
+    if (!is.null(patch$size)) data$size[[key]] <- sqrt(patch$size) / ggplot2::.pt
+    if (!is.null(patch$alpha)) data$alpha[[key]] <- patch$alpha
+    params$decor$geom_point$data <- data
     guide_params[[group$guide]] <- params
   }
   guide_params
@@ -214,19 +245,28 @@ ggplot_edit_points <- function(table, target, edit) {
   values <- ggplot_point_values(target, edit)
   panel <- table$grobs[[target$slot]]
   points <- ggplot_point_grob(panel, target)
-  if (!is.null(edit$size)) points$gp$fontsize <- sqrt(values$size) + points$gp$lwd
+  rows <- target$group$rows
+  patch <- function(current, value) {
+    if (is.null(rows)) return(value)
+    current <- rep_len(current, target$count)
+    current[rows] <- value
+    current
+  }
+  if (!is.null(edit$size)) {
+    stroke <- points$gp$lwd
+    if (!is.null(rows)) stroke <- rep_len(stroke, target$count)[rows]
+    points$gp$fontsize <- patch(points$gp$fontsize, sqrt(values$size) + stroke)
+  }
   if (!is.null(edit$marker) && values$marker != "original") {
-    marker <- ggplot_point_markers[[values$marker]]
-    if (is.null(target$group)) {
-      points$pch <- marker
-    } else {
-      points$pch <- rep_len(points$pch, target$count)
-      points$pch[target$group$rows] <- marker
-    }
+    points$pch <- patch(points$pch, ggplot_point_markers[[values$marker]])
   }
   if (!is.null(edit$alpha)) {
-    points$gp$col <- scales::alpha(points$gp$col, values$alpha)
-    points$gp$fill <- scales::alpha(points$gp$fill, values$alpha)
+    for (field in c("col", "fill")) {
+      pigment <- points$gp[[field]]
+      if (!length(pigment)) next
+      selected <- if (is.null(rows)) pigment else rep_len(pigment, target$count)[rows]
+      points$gp[[field]] <- patch(pigment, scales::alpha(selected, values$alpha))
+    }
   }
   panel$children[[target$child]] <- points
   table$grobs[[target$slot]] <- panel
@@ -286,10 +326,11 @@ ggplot_point_elements <- function(state, edits, measured) {
     label <- ggplot_layer_label("\u6563\u70b9", target)
     group <- target$group
     if (!is.null(group)) label <- paste(label, group$label, sep = " \u00b7 ")
-    alias <- if (length(group$links)) list(
-      alias_covers = list(marker = list(marker = as.list(group$links))),
-      alias_pure = list("marker")
-    )
+    alias <- if (length(group$links)) {
+      props <- names(target$values)
+      covers <- lapply(props, function(prop) stats::setNames(list(as.list(group$links)), prop))
+      list(alias_covers = stats::setNames(covers, props), alias_pure = as.list(props))
+    }
     c(list(gid = gid, role = "scatter", label = label,
          bbox = bbox, draggable = FALSE, editable = list(),
          point_series = list(context = target$context, current = ggplot_point_values(target, edit),
