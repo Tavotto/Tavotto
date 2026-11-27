@@ -24,6 +24,7 @@ from .fixtools import cmdsandbox, trial, winappcontainer
 _R_AXIS_TRANSFORMS = {
     "linear": "scales::transform_identity()",
     "log": "scales::transform_log10()",
+    "symlog": "ggplot_transform_symlog()",
     "logit": "scales::transform_logit()",
 }
 _R_THEME_RECT_CELLS = frozenset({"panel.background", "panel.border"})
@@ -649,13 +650,12 @@ def _r_tick_labels_block(name: str, recipes: list[str]) -> str:
 
 def _r_coordinate_block(name: str, coordinates: dict, *, mirror_raster: bool) -> str:
     edits = []
-    helpers = []
+    resources = []
+    if any(coordinates.get(prop) == "symlog" for prop in ("xscale", "yscale")):
+        resources.append("ggplot_transforms.R")
     draw = []
     if mirror_raster:
-        path = nativeggplot.GGPLOT_BRIDGE.with_name("ggplot_raster_geometry.R")
-        helpers = [
-            f"  {line}" if line else "" for line in path.read_text(encoding="utf-8").splitlines()
-        ]
+        resources.append("ggplot_raster_geometry.R")
         draw = [
             "  plot$layers <- lapply(plot$layers, ggplot_mirror_raster_layer, coord = plot$coordinates)",
         ]
@@ -685,7 +685,7 @@ def _r_coordinate_block(name: str, coordinates: dict, *, mirror_raster: bool) ->
     return "\n".join(
         [
             f"base::assign({name}, (function(plot) {{",
-            *helpers,
+            *_r_helpers(*resources),
             "  coord <- plot$coordinates",
             '  if (!identical(class(coord)[[1L]], "CoordCartesian")) stop("Tavotto coordinates need coord_cartesian().")',
             '  expand <- stats::setNames(coord$setup_params(list())$expand, c("top", "right", "bottom", "left"))',

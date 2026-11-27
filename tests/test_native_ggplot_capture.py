@@ -527,8 +527,8 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
 
 @pytest.mark.parametrize(
     "written_scale",
-    [None, "log", "linear", "logit"],
-    ids=["retain-statistical-scale", "write-log", "write-linear", "write-logit"],
+    [None, "log", "linear", "logit", "symlog"],
+    ids=["retain-statistical-scale", "write-log", "write-linear", "write-logit", "write-symlog"],
 )
 def test_native_r_coordinate_writeback_keeps_independent_edits_bound(tmp_path, written_scale):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
@@ -555,9 +555,14 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         original = original.replace(b'ggplot2::labs(title = "Scope")', b"ggplot2::scale_x_log10()")
     if written_scale == "logit":
         original = original.replace(b"c(1, 8, 64)", b"c(.125, .25, .75)")
+    if written_scale == "symlog":
+        original = original.replace(b"c(1, 8, 64)", b"c(-64, -8, 0, 8, 64)")
+        original = original.replace(b"log2(d$x)", b"log2(1 + abs(d$x))")
     script.write_bytes(original)
     requested_scale = written_scale or "log"
-    requested_limits = {"linear": [-1, 64], "logit": [0.05, 0.95]}.get(written_scale, [1, 64])
+    requested_limits = {"linear": [-1, 64], "logit": [0.05, 0.95], "symlog": [-64, 64]}.get(
+        written_scale, [1, 64]
+    )
 
     def axes(manifest):
         return {e["gid"]: e for e in manifest["elements"] if e["role"] == "axes"}

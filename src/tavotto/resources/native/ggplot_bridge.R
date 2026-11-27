@@ -12,7 +12,7 @@ ggplot_adapter <- function(path) {
                      "ggplot_colourbar_layout.R", "ggplot_colour_scale.R",
                      "ggplot_guide_order.R", "ggplot_points.R",
                      "ggplot_bar_geometry.R", "ggplot_interval_geometry.R", "ggplot_bars.R",
-                     "ggplot_ribbons.R", "ggplot_raster_geometry.R", "ggplot_axes.R", "ggplot_frame.R",
+                     "ggplot_ribbons.R", "ggplot_raster_geometry.R", "ggplot_transforms.R", "ggplot_axes.R", "ggplot_frame.R",
                      "ggplot_tick_source.R", "ggplot_tick_labels.R")) {
     sys.source(file.path(native, resource), envir = adapter)
   }
