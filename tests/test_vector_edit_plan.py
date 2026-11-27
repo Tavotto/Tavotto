@@ -214,6 +214,39 @@ def test_empty_ops_is_a_valid_answer_when_the_model_says_it_cannot():
 # ------------------------------------------------------------------ 方案
 
 
+def test_every_change_says_which_op_made_it_and_a_subset_of_ops_replans_cleanly():
+    """判据的主语：`changes[].op` 量的是**补丁里第几步**（0 起）；子集重算量的是只给剩下的 ops 后每条 change 的对象与字段，
+    以及依赖被去掉那步的错误带的是**子集里**的下标。"""
+    canvas = _canvas()
+    ops = [
+        {"op": "move", "id": "t_user0001", "by_mm": [3, 0]},
+        {"op": "set", "id": "a_user0001", "set": {"strokePt": 0.75}},
+        {"op": "set", "id": "t_user0001", "set": {"sizePt": 10}},
+    ]
+    full = vp.plan(canvas, ops)
+    assert [(c["id"], c["op"]) for c in full["changes"]] == [
+        ("t_user0001", 0),
+        ("t_user0001", 0),
+        ("a_user0001", 1),
+        ("t_user0001", 2),
+    ]
+    # 去掉第 0 步：剩下的两步照常算，op 按子集内的位置重新编号，位置没动
+    sub = vp.plan(canvas, [ops[1], ops[2]])
+    assert sub["ok"] is True
+    assert {(c["id"], c["field"]) for c in sub["changes"]} == {
+        ("a_user0001", "strokePt"),
+        ("t_user0001", "sizePt"),
+    }
+    assert [c["op"] for c in sub["changes"]] == [0, 1]
+    assert next(o for o in sub["objects"] if o["id"] == "t_user0001")["x"] == 95
+    # 后一步依赖前一步产生的东西（编组 → 拆组）：只留拆组 = 点名的组不存在，错误带子集里的下标
+    grouped = vp.plan(canvas, [{"op": "group", "ids": ["t_user0001", "a_user0001"]}])
+    gid = next(c["after"] for c in grouped["changes"] if c.get("field") == "groupId")
+    dep = vp.plan(canvas, [{"op": "ungroup", "group": gid}])
+    assert dep["ok"] is False and dep["errors"][0]["code"] == "unknown_object"
+    assert dep["errors"][0]["index"] == 0
+
+
 def test_plan_has_the_card_keys_and_does_not_touch_its_input():
     canvas = _canvas()
     before = copy.deepcopy(canvas)

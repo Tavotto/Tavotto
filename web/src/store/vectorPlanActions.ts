@@ -9,7 +9,7 @@
  * * **基线**：方案点名的对象与出发时不同 = 「图改过了」，不写；
  * * **每个 await 之后**核项目代际与文档 / 画布：对不上就丢掉，A 的方案绝不落进 B。
  */
-import { fetchLayoutPreviewPng, createVectorEditPlan, getVectorEditPlan, EngineError, type VectorEditResult, type ChangePlan } from '@/lib/api'
+import { fetchLayoutPreviewPng, createVectorEditPlan, getVectorEditPlan, EngineError, planVectorEditOps, type VectorEditResult, type ChangePlan } from '@/lib/api'
 import { canvasSegmentOf } from '@/lib/exportRequest'
 import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { engineTransport } from '@/lib/engineTransport'
@@ -17,6 +17,7 @@ import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId } from '@/lib/session'
 import { changeGroups, type ChangeGroup } from '@/lib/vectorChanges'
 import { cropToFrame, previewFrame, baselineHolds, hasEdits, landedHolds, landVector, sameJson, snapshotOf, touchedCount, vectorSelectionOf, type VectorSnapshot } from '@/lib/vectorEdit'
+import type { CanvasObject } from '@/types/document'
 import { currentLocale, msg, t as translate } from '@/i18n'
 import { currentRunSelection, newRequestId, useAiStore } from './aiStore'
 import { POLL_TIMEOUT, useChangePlanStore, type PlanEntry, type VectorHandle } from './changePlanStore'
@@ -209,29 +210,36 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   }
   const doc = useDocumentStore.getState().doc
   const merged = landVector(snap, result, doc)
-  const count = touchedCount(result)
-  // 生成期间点名的对象被改过：不出图，卡片按「图改过了」走（`holds()` 为假，派生状态是 stale）
-  const make = (extra: Partial<VectorHandle> = {}): VectorHandle => {
-    const h: VectorHandle = handle({
-      count,
-      holds: () => sameContext(ctx) && baselineHolds(snap, result, useDocumentStore.getState().doc.objects),
-      regenerate: prev.regenerate,
-      landed: () => sameContext(ctx) && landedHolds(snap, result, useDocumentStore.getState().doc.objects),
-      apply: () => applyVector(snap, result, ctx, count),
-      ...extra,
-    })
-    return h
-  }
   const groups = changeGroups(snap, result)
+  const allOps = Array.isArray(result.ops) ? result.ops : []
+  // 当前生效的方案（取消勾选后会换成用剩下的步重算出来的）：应用、基线核对、已应用判据都读它，不读最初那一份
+  // `pub` = 已经算好、已经发布的那一份方案（勾选 + 方案 + 对比图 + 对象数）：它们必须一起换——勾选变了、子集算完但对比图还在画时，
+  // 手里的方案仍是 `pub.result`；勾回 `pub.key` 的勾选，恢复的就是这一整份
+  const st = { result, seq: 0, busy: false, failed: false }
+  const pub: { key: string; result: VectorEditResult; afterSrc: string; blocked: Record<string, true> } = { key: '{}', result, afterSrc: '', blocked: {} }
+  const make = (extra: Partial<VectorHandle> = {}): VectorHandle => ({
+    ...prev,
+    result,
+    groups,
+    // 每一步都有对应的改动行才能按步勾选（老后端没有 `op`、或补丁与行对不上 = 整批要或不要）
+    ...(groups.length > 0 && groups.every((g) => g.op !== undefined) && allOps.length > 0 ? { ops: allOps } : {}),
+    count: touchedCount(result),
+    holds: () => sameContext(ctx) && baselineHolds(snap, st.result, useDocumentStore.getState().doc.objects),
+    regenerate: prev.regenerate,
+    landed: () => sameContext(ctx) && landedHolds(snap, st.result, useDocumentStore.getState().doc.objects),
+    apply: () => (st.busy || st.failed || !hasEdits(st.result) ? 'failed' : applyVector(snap, st.result, ctx, touchedCount(st.result))),
+    ...extra,
+  })
   if (!merged) {
-    patch(key, { status: 'ready', plan: synthPlan(key, result, groups, '', ''), vector: make({ groups }) })
+    patch(key, { status: 'ready', plan: synthPlan(key, result, groups, '', ''), vector: make() })
     return
   }
 
   const pageW = doc.page.w
   const pageH = doc.page.h
-  // 取景：对比图与卡片缩略图只画被改动的那一块（加留白），一眼看见改了什么
+  // 取景：对比图与卡片缩略图只画被改动的那一块（加留白），一眼看见改了什么；取消勾选重算后仍用这个框（改前那张不用重画）
   const frame = previewFrame(doc.page, doc.objects, merged.objects, result)
+  const segment = (objects: CanvasObject[]) => canvasSegmentOf(cropToFrame({ page: { ...doc.page, w: pageW, h: pageH }, objects }, frame))
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), VECTOR_PREVIEW_TIMEOUT_MS)
   let beforeSrc = ''
@@ -239,7 +247,7 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   try {
     const [b, a] = await Promise.all([
       fetchLayoutPreviewPng(canvasSegmentOf(cropToFrame({ page: doc.page, objects: doc.objects }, frame)), abort.signal),
-      fetchLayoutPreviewPng(canvasSegmentOf(cropToFrame({ page: { ...doc.page, w: pageW, h: pageH }, objects: merged.objects }, frame)), abort.signal),
+      fetchLayoutPreviewPng(segment(merged.objects), abort.signal),
     ])
     beforeSrc = URL.createObjectURL(b)
     afterSrc = URL.createObjectURL(a)
@@ -257,7 +265,98 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
     dropAbandoned()
     return
   }
-  patch(key, { status: 'ready', plan: synthPlan(key, result, groups, beforeSrc, afterSrc), beforeSrc, afterSrc, vector: make({ groups }) })
+
+  /** 勾选变了：用勾上的步重算（同一份内存快照、补丁模式）；后面依赖被取消那步而失败的，自动取消并记一句原因 */
+  const recompute = async (force = false) => {
+    const seq = ++st.seq
+    const cur = () => store().entries[key]
+    const e0 = cur()
+    if (!e0 || e0.status !== 'ready' || !allOps.length) return
+    // 勾回到上一次算成功的那个状态：手里的方案就是它的，不用再算（失败的标记也随之解除）
+    if (!force && JSON.stringify(Object.fromEntries(Object.entries(e0.unchecked).filter(([, v]) => v))) === pub.key) {
+      st.busy = false
+      st.failed = false
+      st.result = pub.result
+      patch(key, { afterSrc: pub.afterSrc, vector: { ...e0.vector!, result: pub.result, count: touchedCount(pub.result), busy: false, failed: false, blocked: pub.blocked } })
+      return
+    }
+    const mine = () => st.seq === seq && still() && sameContext(ctx) && !!cur()
+    const before = e0.vector?.blocked ?? {}
+    st.busy = true
+    patch(key, { vector: { ...e0.vector!, busy: true } })
+    const unchecked = { ...e0.unchecked }
+    const blocked: Record<string, true> = { ...before }
+    // 用户自己又勾回来的步，不再算「跟着取消」
+    for (const k of Object.keys(blocked)) if (!unchecked[k]) delete blocked[k]
+    const groupOf = (op: number) => groups.find((g) => g.op === op)
+    // 全勾 = 原始全量（效果与原方案相同）；部分勾选 = 只发有改动行的、且勾上的步——原方案里没产生改动的步（同值再设一次）
+    // 没有行、用户没法取消它，带进子集反而会在用户取消了前一次之后让它生效
+    const everyChecked = groups.every((g) => g.op === undefined || !unchecked[g.key])
+    let chosen = allOps.map((_, i) => i).filter((i) => (everyChecked ? true : !!groupOf(i) && !unchecked[groupOf(i)!.key]))
+    let res: VectorEditResult | null = null
+    try {
+      for (;;) {
+        if (!chosen.length) break
+        const r = await planVectorEditOps(snap.canvas, chosen.map((i) => allOps[i]))
+        if (!mine()) return
+        const bad = (r.errors ?? []).find((x) => typeof x.index === 'number' && x.code !== 'checks_failed')
+        if (r.ok || !bad || r.objects) {
+          res = r
+          break
+        }
+        // 错误的下标是子集里的第几步：映回原来的步号，那一步自动取消
+        const orig = chosen[bad.index as number]
+        const g = groupOf(orig)
+        if (g) {
+          unchecked[g.key] = true
+          blocked[g.key] = true
+        }
+        chosen.splice(bad.index as number, 1)
+        chosen = chosen.filter((i) => !!groupOf(i)) // 自动取消之后就是部分勾选了
+      }
+    } catch {
+      // 重算没成（网络 / 后端）：手里的方案是按旧勾选算的，不能再拿去应用（会把用户勾掉的步写进去）——
+      // 应用不可点，界面给一句话和「重试」；勾回上一次算成功的状态、或重试成功后恢复
+      if (mine()) {
+        st.busy = false
+        st.failed = true
+        patch(key, { vector: { ...cur()!.vector!, busy: false, failed: true } })
+      }
+      return
+    }
+    if (!mine()) return
+    const next: VectorEditResult = res ? { ...res, ops: chosen.map((i) => allOps[i]), unhandled: result.unhandled } : { ok: true, errors: [], objects: [], deleted: [], echo: [], changes: [], ops: [], unhandled: result.unhandled }
+    const now = useDocumentStore.getState().doc
+    const mergedNow = hasEdits(next) ? landVector(snap, next, now) : null
+    let nextAfter = beforeSrc
+    if (mergedNow) {
+      try {
+        const png = await fetchLayoutPreviewPng(segment(mergedNow.objects))
+        if (!mine()) return
+        nextAfter = URL.createObjectURL(png)
+      } catch {
+        // 对比图没更新出来：沿用旧的那张，应用以勾选为准（弹窗里另有一句说明）
+        nextAfter = cur()?.afterSrc ?? beforeSrc
+      }
+    }
+    // 成功与失败两条路在这里汇合：发布任何状态前再核一次是不是最新的那次重算——
+    // 过期的（预览失败的那条也算）不能撤销用户更新的勾选、也不能清掉更新那次的 busy（Codex #2321）
+    if (!mine()) return
+    // 方案、对比图、勾选一起发布（到这里才换，中途被新的勾选打断的不会留下半份）
+    st.busy = false
+    st.failed = false
+    st.result = next
+    pub.key = JSON.stringify(Object.fromEntries(Object.entries(unchecked).filter(([, v]) => v)))
+    pub.result = next
+    pub.afterSrc = nextAfter
+    pub.blocked = blocked
+    const e1 = cur()!
+    const old = e1.afterSrc
+    if (old && old !== nextAfter && old !== beforeSrc && old.startsWith('blob:')) URL.revokeObjectURL(old)
+    patch(key, { unchecked, afterSrc: nextAfter, vector: { ...e1.vector!, result: next, count: touchedCount(next), busy: false, failed: false, blocked } })
+  }
+  pub.afterSrc = afterSrc
+  patch(key, { status: 'ready', plan: synthPlan(key, result, groups, beforeSrc, afterSrc), beforeSrc, afterSrc, vector: make({ recompute: (force) => void recompute(force) }) })
 }
 
 /** 卡与弹窗吃的方案外形：每条复述一组（整批要或不要，不画勾选）；框都不要（复述与对象没有一一对应） */

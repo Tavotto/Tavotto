@@ -512,7 +512,7 @@ def test_order_front_back_forward_backward():
     assert r["reordered"] and r["order"] == list("bcda")
     # 动了位置的才算「改了」（核对只看它们）：a 从 0 到 3，b c d 各退一格但没被点名也算改了层级的矢量对象
     assert {c["id"] for c in r["changes"] if c["field"] == "z"} == {"a", "b", "c", "d"}
-    assert {"id": "a", "field": "z", "before": 0, "after": 3} in r["changes"]
+    assert {"id": "a", "field": "z", "before": 0, "after": 3, "op": 0} in r["changes"]
     assert not seq("front", "d")[1]["changes"] and not seq("front", "d")[1]["reordered"]
     # 组成员一起动：a b 同组，a 到最上层，b 跟着去，顺序不变
     objs = [
@@ -635,7 +635,9 @@ def test_rotate_sets_absolute_angle_normalized_around_the_centre():
     a = r["objects"][0]
     assert (a["x"], a["y"], a["w"], a["h"], a["rotationDeg"]) == (10, 5, 20, 4, 30)
     assert r["echo"][0].endswith("：转到 30°（原 0°）")
-    assert r["changes"] == [{"id": "a", "field": "rotationDeg", "before": None, "after": 30.0}]
+    assert r["changes"] == [
+        {"id": "a", "field": "rotationDeg", "before": None, "after": 30.0, "op": 0}
+    ]
     assert _run(objs, [{"op": "rotate", "id": "a", "deg": 270}])["objects"][0]["rotationDeg"] == -90
     assert (
         _run(objs, [{"op": "rotate", "id": "a", "deg": -180}])["objects"][0]["rotationDeg"] == 180
@@ -787,7 +789,7 @@ def test_pathfinder_divide_gives_each_original_its_id_once_and_mints_ids_determi
     assert ids == [o["id"] for o in b["objects"]]  # 方案与写入各算一遍：新 id 必须逐位一致
     new = next(i for i in ids if i not in ("p_back", "p_front"))
     assert re.fullmatch(r"p_[a-z0-9]{8}", new) and _by(a)[new].get("name") is None
-    assert [c for c in a["changes"] if c.get("added")] == [{"id": new, "added": True}]
+    assert [c for c in a["changes"] if c.get("added")] == [{"id": new, "added": True, "op": 0}]
     assert {c["id"] for c in a["changes"] if c.get("replaced")} == {"p_back", "p_front"}
 
 
@@ -889,7 +891,7 @@ def test_pathfinder_takes_a_shape_and_the_result_is_a_path_with_its_id():
     inset = 0.5 * 25.4 / 72  # 矩形描边内侧对齐：路径在框里缩半个线宽
     assert abs(out["x"] - 10) < 0.05 and abs(out["x"] + out["w"] - (42 - inset)) < 0.01
     assert r["deleted"] == ["p_back"]
-    assert {"id": "r_top", "replaced": True} in r["changes"]
+    assert {"id": "r_top", "replaced": True, "op": 0} in r["changes"]
     assert "（形状先转为路径）" in r["echo"][0]
 
 
@@ -919,7 +921,7 @@ def test_outline_stroke_of_a_filled_shape_keeps_it_as_a_path_with_stroke_off():
     kept, ring = r["objects"]
     assert kept["id"] == "r" and kept["type"] == "path" and kept["stroke"] is False
     assert ring["fill"] == "#333333"
-    assert {"id": "r", "field": "type", "before": "shape", "after": "path"} in r["changes"]
+    assert {"id": "r", "field": "type", "before": "shape", "after": "path", "op": 0} in r["changes"]
 
 
 def test_outline_stroke_of_a_plain_arrow():
@@ -938,7 +940,7 @@ def test_convert_to_path_keeps_id_position_and_says_so():
     assert by["ar"]["headEnd"] == "triangle" and "head" not in by["ar"]
     assert len(by["r"]["subpaths"][0]["nodes"]) == 4
     assert r["echo"][0].startswith("转为路径 ") and "id 不变" in r["echo"][0]
-    assert {"id": "r", "field": "type", "before": "shape", "after": "path"} in r["changes"]
+    assert {"id": "r", "field": "type", "before": "shape", "after": "path", "op": 0} in r["changes"]
     assert objs[1] == rect  # 输入不动
 
 
