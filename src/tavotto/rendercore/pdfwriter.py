@@ -1387,7 +1387,7 @@ def repair_cff_in_truetype_slots(path: Path) -> int:
             return 0
     try:
         pdf = pikepdf.open(str(path), allow_overwriting_input=True)
-    except pikepdf.PdfError:
+    except Exception:  # noqa: BLE001 —— 打不开就原样留着：PdfError 之外，Python 3.10 上的 pikepdf 对截断文件抛 ValueError
         return 0
     fixed = 0
     with pdf:
