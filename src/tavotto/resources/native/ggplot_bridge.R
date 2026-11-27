@@ -203,6 +203,12 @@ ggplot_serve <- function(spec, token, plot_for) {
           }
           list(ok = TRUE, path = payload$path, svg_companion = companion)
         },
+        capture_data_fingerprint = {
+          if (!isTRUE(spec$console) || !identical(request$stem, spec$stem)) {
+            stop("The current R object cannot supply capture data.")
+          }
+          list(ok = TRUE, data_fingerprint = adapter$ggplot_data_fingerprint(captured$state))
+        },
         continue = list(ok = TRUE, released = TRUE),
         list(ok = FALSE, error = list(code = "unknown_cmd", message = "Unsupported R operation."))
       ),

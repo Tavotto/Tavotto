@@ -5798,7 +5798,14 @@ def _verified_r_source(worker, stem, patches, *, check_cancelled=None, archive=N
     if borrowed:
         # A selected file is a candidate source for a borrowed object. Verify
         # the unedited scene too, even if the requested style hides a mismatch.
-        baseline = _verify_r_source_render(worker, stem, [], scope, check_cancelled)
+        data_fingerprint = worker.ggplot_capture_data_fingerprint(stem)
+        baseline = _verify_r_source_render(
+            worker, stem, [], scope, check_cancelled, include_data_fingerprint=True
+        )
+        if baseline.data_fingerprint != data_fingerprint:
+            raise engine_scriptadjust.ScriptAdjustError(
+                "script_export_diverged", "The selected R script produced different plot data."
+            )
     replay = _verify_r_source_render(worker, stem, patches, scope, check_cancelled, archive)
     if worker.snapshot_epoch != epoch:
         raise engine_scriptadjust.ScriptAdjustError(
@@ -5811,11 +5818,15 @@ def _verified_r_source(worker, stem, patches, *, check_cancelled=None, archive=N
     return replay
 
 
-def _verify_r_source_render(worker, stem, patches, scope, check_cancelled, archive=None):
+def _verify_r_source_render(
+    worker, stem, patches, scope, check_cancelled, archive=None, *, include_data_fingerprint=False
+):
     if check_cancelled is not None:
         check_cancelled()
     if os.name == "nt":
-        return _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, archive)
+        return _verified_windows_r_source(
+            worker, stem, patches, scope, check_cancelled, archive, include_data_fingerprint
+        )
     hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
     replay = engine_nativeggplot_source.replay(
         worker.ggplot_source_spec,
@@ -5826,6 +5837,7 @@ def _verify_r_source_render(worker, stem, patches, scope, check_cancelled, archi
         hot=hot["manifest"],
         vectors=archive is not None,
         check_cancelled=check_cancelled,
+        include_data_fingerprint=include_data_fingerprint,
     )
     if check_cancelled is not None:
         check_cancelled()
@@ -5841,7 +5853,9 @@ def _verify_r_source_render(worker, stem, patches, scope, check_cancelled, archi
     return replay
 
 
-def _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, archive):
+def _verified_windows_r_source(
+    worker, stem, patches, scope, check_cancelled, archive, include_data_fingerprint
+):
     from dataclasses import replace
 
     reference = worker.preview_svg_snapshot(stem, patches, include_fonts=True, **scope)
@@ -5854,6 +5868,7 @@ def _verified_windows_r_source(worker, stem, patches, scope, check_cancelled, ar
         hot=reference["manifest"],
         fonts=reference["fonts"],
         check_cancelled=check_cancelled,
+        include_data_fingerprint=include_data_fingerprint,
     )
     if check_cancelled is not None:
         check_cancelled()

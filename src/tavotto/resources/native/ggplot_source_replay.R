@@ -42,8 +42,11 @@ if (identical(request$operation, "anchor")) {
   if (!is.null(request$svg)) {
     writeLines(adapter$render_ggplot(captured$state, edits), request$svg, useBytes = TRUE)
   }
-  jsonlite::write_json(adapter$ggplot_manifest(captured$state, request$stem, edits, measured), request$result,
-                       auto_unbox = TRUE, digits = NA, null = "null")
+  manifest <- adapter$ggplot_manifest(captured$state, request$stem, edits, measured)
+  if (isTRUE(request$include_data_fingerprint)) {
+    manifest$data_fingerprint <- adapter$ggplot_data_fingerprint(captured$state)
+  }
+  jsonlite::write_json(manifest, request$result, auto_unbox = TRUE, digits = NA, null = "null")
 } else {
   stop("Invalid ggplot source replay.")
 }

@@ -1407,6 +1407,17 @@ class NativeSession:
             self._note_temporary(stem, resp)
             return resp
 
+    def ggplot_capture_data_fingerprint(self, stem: str) -> str:
+        with self._figure_lock:
+            self._require_consistent(stem)
+            response = self._request(
+                {"cmd": "capture_data_fingerprint", "stem": stem}, REQUEST_TIMEOUT
+            )
+        observed = response.get("data_fingerprint")
+        if not isinstance(observed, str) or not observed:
+            raise pool.WorkerError("The R capture did not supply its data fingerprint.")
+        return observed
+
     def svg_path(self, stem: str) -> Path:
         return Path(pool.figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
 

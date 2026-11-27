@@ -70,6 +70,7 @@ class ReplayedRSource:
     execution_id: str
     pdf: bytes | None = None
     svg: bytes | None = None
+    data_fingerprint: str | None = None
 
 
 class _SourceProgramFailed(scriptadjust.ScriptAdjustError):
@@ -1257,10 +1258,21 @@ def replay(
     vectors: bool = False,
     fonts: list[str] | None = None,
     check_cancelled: Callable[[], None] | None = None,
+    include_data_fingerprint: bool = False,
 ) -> ReplayedRSource:
     """Run the candidate in a protected copy using the recorded native interpreter."""
     try:
-        return _replay(spec, target, stem, patches, width, hot=hot, vectors=vectors, fonts=fonts)
+        return _replay(
+            spec,
+            target,
+            stem,
+            patches,
+            width,
+            hot=hot,
+            vectors=vectors,
+            fonts=fonts,
+            include_data_fingerprint=include_data_fingerprint,
+        )
     except _RetryWithoutFontFamily as exc:
         # The source's own PDF device can reject a name supported by Tavotto's
         # devices. Keep the font edits in the document and replay from a fresh
@@ -1276,6 +1288,7 @@ def replay(
             hot=hot,
             vectors=vectors,
             fonts=fonts,
+            include_data_fingerprint=include_data_fingerprint,
             original_for_retry=exc.original,
         )
 
@@ -1290,6 +1303,7 @@ def _replay(
     hot: dict | None,
     vectors: bool,
     fonts: list[str] | None,
+    include_data_fingerprint: bool,
     original_for_retry: bytes | None = None,
 ) -> ReplayedRSource:
     windows = os.name == "nt"
@@ -1430,6 +1444,7 @@ def _replay(
             "stem": stem,
             "width": width,
             "residual": adjusted.residual,
+            "include_data_fingerprint": include_data_fingerprint,
         }
         if fonts is None:
             replay_request["png"] = png.as_posix()
@@ -1449,6 +1464,7 @@ def _replay(
                 raise _RetryWithoutFontFamily(original) from exc
             raise
         manifest = json.loads(result.read_text(encoding="utf-8"))
+        data_fingerprint = manifest.pop("data_fingerprint", None)
         target.annotate_manifest(manifest)
         adjusted = _rebind_residual(adjusted, hot, manifest)
         if script.read_bytes() != original:
@@ -1465,4 +1481,5 @@ def _replay(
             nativeggplot._write_ggplot_svg(svg, svg.read_text(encoding="utf-8"))
             if vectors or fonts is not None
             else None,
+            data_fingerprint,
         )

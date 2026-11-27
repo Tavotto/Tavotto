@@ -2244,6 +2244,10 @@ ggplot_record_legend <- function(capture, marked, gid) {
   if (length(match)) marked[[gid]] <- match[[2L]]
 }
 
+ggplot_data_fingerprint <- function(state) {
+  rlang::hash(state$layers)
+}
+
 render_ggplot <- function(state, edits = list(), observed = NULL) {
   marked <- new.env(parent = emptyenv())
   svg <- with_svg_frame(state$frame_pt, function(capture) {

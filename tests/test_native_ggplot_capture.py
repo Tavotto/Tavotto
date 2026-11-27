@@ -6459,8 +6459,8 @@ grDevices::dev.off()
         assert status == 200 and restored["ok"] and script.read_bytes() == authored
 
 
-@pytest.mark.parametrize("modified", [False, True], ids=["reproduces", "hidden-difference"])
-def test_borrowed_r_source_writes_only_a_reproduced_console_scene(tmp_path, modified):
+@pytest.mark.parametrize("case", ["reproduces", "hidden-difference", "undrawn-data"])
+def test_borrowed_r_source_writes_only_a_reproduced_console_scene(tmp_path, case):
     from support.foundation_app import HttpError
     from test_core_v02_release_candidate import _panel, _render
 
@@ -6474,7 +6474,8 @@ def test_borrowed_r_source_writes_only_a_reproduced_console_scene(tmp_path, modi
     original = b"""\
 data <- utils::read.csv("observations.csv")
 plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
-  ggplot2::geom_point() + ggplot2::labs(title = "Field observations") +
+  ggplot2::geom_point() + ggplot2::geom_blank(data = data.frame(x=2,y=3)) +
+  ggplot2::labs(title = "Field observations") +
   ggplot2::theme(plot.title = ggplot2::element_text(colour = "#102030"))
 svglite::svglite("standalone.svg", 320/72, 240/72)
 print(plot)
@@ -6485,8 +6486,12 @@ grDevices::dev.off()
     console_program.write_text(
         """
 sys.source("source.R", envir = .GlobalEnv)
-if (commandArgs(trailingOnly = TRUE)[[1L]] == "different") {
+case <- commandArgs(trailingOnly = TRUE)[[1L]]
+if (case == "hidden-difference") {
   plot <- plot + ggplot2::theme(plot.title = ggplot2::element_text(colour = "#8090A0"))
+}
+if (case == "undrawn-data") {
+  plot$layers[[2L]] <- ggplot2::geom_blank(data = data.frame(x=2.5,y=3.25))
 }
 grDevices::pdf("console-device.pdf")
 device <- grDevices::dev.cur()
@@ -6512,7 +6517,7 @@ close(input)
     with (
         sidecar_app(project, tmp_path / "desktop") as app,
         subprocess.Popen(
-            [rscript, "--vanilla", str(console_program), "different" if modified else "original"],
+            [rscript, "--vanilla", str(console_program), case],
             cwd=data_root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -6596,11 +6601,13 @@ close(input)
                     timeout=120,
                 )
 
-            if modified:
+            if case != "reproduces":
                 with pytest.raises(HttpError) as rejected:
                     preview_source()
                 assert rejected.value.status == 409
                 assert rejected.value.body["code"] == "script_export_diverged"
+                if case == "undrawn-data":
+                    assert "different plot data" in rejected.value.body["error"]
                 assert "token" not in rejected.value.body and not resumed.exists()
                 assert source.read_bytes() == original
                 assert (
@@ -6633,7 +6640,7 @@ close(input)
                 console.terminate()
                 console.wait(timeout=15)
 
-    if not modified:
+    if case == "reproduces":
         subprocess.run([rscript, "--vanilla", source.name], check=True, cwd=data_root, timeout=45)
         standalone = (data_root / "standalone.svg").read_text(encoding="utf-8")
         assert "#C46210" in standalone and "#102030" not in standalone
