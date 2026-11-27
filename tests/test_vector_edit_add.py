@@ -282,3 +282,47 @@ def test_the_dry_run_measures_once_with_the_add_items_data_requests():
     assert [o["op"] for o in out["ops"]] == ["add"] and not out["unhandled"]
     assert seen == [[{"axes": "axes_0", "x": 5, "y": 5}]]
     assert out["unmeasured"] == {} and out["scene_fingerprint"]
+
+
+def test_an_added_object_names_the_panels_it_was_placed_against():
+    """判据的主语：`changes[].depends_on` 量的是**新对象的位置依据**（锚点 / 贴合的子图对象 id），不是它自己；
+    没锚在任何子图上的新对象没有这个键。"""
+    panel_id = ve.panel_refs(_canvas())["P1"]
+    for item in (TAG, BRACKET, ARROW, CONNECTOR, FRAME):
+        added = next(c for c in _plan([_add(item)])["changes"] if c.get("added"))
+        assert added["depends_on"] == [panel_id], item["name"]
+
+
+def test_stat_text_check_is_linear_on_long_whitespace_and_keeps_its_meaning():
+    """判据的主语：`is_stat_text` 的**墙钟时间**（用户 / 模型文字里成千上万个制表符不能拖慢）与**结果**（压空白不改语义）。"""
+    import time
+
+    from tavotto.engine import vectorscene as vsc
+
+    for evil in (
+        "p" + "\t" * 50_000 + "x",
+        "p\t" * 25_000 + "x",
+        " " * 100_000 + "x",
+        "n" + " " * 60_000 + "=x",
+    ):
+        t0 = time.perf_counter()
+        assert vsc.is_stat_text(evil) is False
+        assert time.perf_counter() - t0 < 1.0, evil[:8]
+    for text in (
+        "p" + "\t" * 5000 + "< 0.05",
+        "n\t=\t5",
+        "n. s.",
+        "  **  ",
+        "p -  value",
+        "P\n<\n.01",
+    ):
+        assert vsc.is_stat_text(text) is True, repr(text[:12])
+    for text in ("peak", "n", "a * b", "ns data"):
+        assert vsc.is_stat_text(text) is False, text
+
+
+def test_a_data_anchored_object_depends_on_its_measured_panel():
+    """3b：量过的子图上的数据 / 元素锚点对象，同样把所在子图写进 `depends_on`（子图挪了 / 覆盖项变了 = 图改过了）。"""
+    res = ve.propose_memory(_canvas(), [_add(PEAK)], measure=stub_measure)
+    added = next(c for c in res["changes"] if c.get("added"))
+    assert added["depends_on"] == [ve.panel_refs(_canvas())["P1"]]
