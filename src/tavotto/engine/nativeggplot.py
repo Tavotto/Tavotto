@@ -458,9 +458,10 @@ class GgplotTarget:
             additional = colorbar_tick_fields(
                 current.get("tick_fontsize"), current.get("tick_color")
             )
-            for prop, type_ in (("label", "text"), ("visible", "bool")):
-                if prop in current:
-                    additional.append({"prop": prop, "type": type_, "value": current[prop]})
+            if "label" in current:
+                additional.append({"prop": "label", "type": "text", "value": current["label"]})
+            if "visible" in current:
+                additional.append({"prop": "visible", "type": "bool", "value": current["visible"]})
             for field in additional:
                 prop = field["prop"]
                 if old[prop] != field["value"]:
