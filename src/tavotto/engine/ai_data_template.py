@@ -41,16 +41,20 @@ from dataclasses import dataclass, replace
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
 from .ai_data_figure import (
+    NamelessTailData,
     NumCat,
     SemicolonCell,
+    _trim_tail,
     apply_cells,
     apply_numcat,
     apply_stack,
+    cut_tail,
     date_number,
     delimited_records,
     fill_header,
     iter_records,
     iter_table,
+    nameless_tail,
     parse_cell,
     parse_date,
     resolve_header,
@@ -106,7 +110,10 @@ def read_xlsx(path, sheet):
     """XLSX 一张表 → `(表头, 数据行)`：读法就是内嵌的 `XlsxBook`（与 Tavotto 的 `xlsxread` 同一份源码）。"""
     with XlsxBook(path) as book:  # noqa: F821 - 由内嵌的 xlsxread 源码提供
         table = [r for r in book.read(sheet) if any(c.strip() for c in r)]
-    return fill_header([h.strip() for h in table[0]]), table[1:]
+    header, body = _trim_tail(
+        fill_header([h.strip() for h in table[0]]), ((0, r) for r in table[1:])
+    )
+    return header, [r for _, r in body]
 
 
 def group_key(label):
@@ -1233,6 +1240,10 @@ RUNTIME_FUNCTIONS = (
     xvg_label,
     xvg_text,
     fill_header,
+    NamelessTailData,
+    nameless_tail,
+    cut_tail,
+    _trim_tail,
     iter_table,
     table_from_text,
     read_delimited,

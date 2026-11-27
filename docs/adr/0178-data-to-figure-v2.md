@@ -648,3 +648,14 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 2. **一份实现**：占位由运行时函数 `fill_header` 算，进 `RUNTIME_FUNCTIONS`（公共模块内嵌同一份源码）；`iter_table`（文本小表 / 大表流式 / 显式表头行，也是脚本里 `table_from_text` / `read_delimited` 的读法）、`read_xlsx`（脚本）与父进程的 `_summarize` / `_scan_summary`（XLSX 与老入口）都调它，所以父进程与脚本读出的是同一张表头；`fill_header` 幂等。
 3. **公共模块换名**：公共模块按内容寻址（`tavotto_plot_<sha256 前 8 位>.py`），加了函数名字就变；老脚本继续 import 它们当时那一份，不受影响（它们读过的表本来就不含空表头）。没有写死的哈希 / 期望指纹要更新。
 4. **没做**：不放宽重名；不放宽非第一列的空名字；不改猜表头行与 `unsure` 的判据（候选表头里第一格空的行仍是「猜的」→ `unsure`，只是现在能读出表）；不改界面文案；`chartdata`（预检读表）本来就把任何空名叫 `col<N>`，不动。
+
+## 修订（2026-11-27）：读脏表之一——表头末尾没有名字、整列都是空的列丢掉（`ai_data_figure.nameless_tail` / `cut_tail`）
+
+**起因**：Excel / WPS 另存 CSV 常在每行末尾多出几个空格子（表头 `depth_m,temp_C,salinity,,`，数据行 `0,18.16,34.000,,`），此前整张表报 `data_header_invalid`，用户直接卡住。
+
+**做法**（最窄）：
+
+1. **判据**：表头末尾**连续**名字为空（去空白后）的列，且这些列在**每一行**里都是空格子 → 丢掉这几列。只丢尾部（至少留一列）；中间的空名字（`a,,c`）、名字空但有数据的尾部列仍是 `data_header_invalid`——前者像标题行、后者是列名缺失，都不替用户猜、不替用户丢数据。数据行的宽度不是表头原来的宽度时同样按 `data_header_invalid`（有空名字的表头，表头判定先于行宽判定，与此前的先后一致，不变成 `data_ragged`）。
+2. **一份实现、各条读表路径同一判据**：运行时函数 `nameless_tail`（数几列）与 `cut_tail`（逐行裁剪并核对）、`_trim_tail`（表头 + 行迭代器）、异常类 `NamelessTailData`（运行时类）。`iter_table`（小表 / 大表流式 / 显式表头行，也是脚本里 `table_from_text` / `read_delimited` / `reduce_file` 的读法）、`_scan_summary`（老读法的大表）、`_summarize`（老读法的小表与 XLSX，**只在 v2**，v1 逐字不变）与脚本的 `read_xlsx` 都调它。流式读看不到整列，所以在逐行核对里发现尾部列有数据时抛 `NamelessTailData`，父进程换成 `data_header_invalid`（小表在 `_read_small_text_table`、大表在 `_scan_summary`，同一个码、同样走「猜的表头 → `unsure`」那条分支）；脚本里它不会出现（读的是父进程已经读过、核过 sha256 的同一个文件）。
+3. **公共模块换名**：加了运行时函数，`tavotto_plot_<sha8>.py` 的名字换成新的；`PINNED_RUNTIME_NAME` 追加一行；老脚本继续 import 它们当时那一份。
+4. **没做**：XLSX 不用另处理（`xlsxread.read` 只补齐到最右一个非空格，不会读出整列为空的尾部列）；不丢中间的空名字列；不改猜表头行与 `unsure` 的判据；不改界面文案。

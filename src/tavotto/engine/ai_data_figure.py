@@ -474,6 +474,40 @@ def fill_header(header):
     return out
 
 
+class NamelessTailData(ValueError):
+    """表头末尾「没有名字」的列里有数据（`cut_tail` 抛）：那一列不是 Excel 另存时多出来的空列，读表的调用方一律按 `data_header_invalid` 处理。
+    **运行时类**（与 `cut_tail` 一起进公共模块；生成的脚本里它只会在父进程已核过的表上不出现）。"""
+
+
+def nameless_tail(header):
+    """表头末尾**连续**名字为空的列有几个（至少留一列）。Excel / WPS 另存 CSV 时常在每行末尾多出几个空格子（`a,b,c,,`），表头里它们也是空名字。
+    只数尾部：中间的空名字（`a,,c`）不算，仍是 `data_header_invalid`。**运行时函数**。"""
+    k = 0
+    while k < len(header) - 1 and not header[-1 - k].strip():
+        k += 1
+    return k
+
+
+def cut_tail(cells, keep, total):
+    """一行数据去掉表头里没有名字的尾部列：只保留前 `keep` 格。这一行的宽度不是表头原来的宽度 `total`、或被去掉的格子里有一格不是空的，就抛
+    `NamelessTailData`——前者不是「每行末尾都多了几个空格子」的表，后者是名字空、整列却有数据；两种都与此前一样按 `data_header_invalid`
+    处理（表头里有空名字时，表头判定先于行宽判定），不替用户丢数据、也不改报错的先后。**运行时函数**：整份读（`iter_table` / `_summarize` /
+    `read_xlsx`）与流式读是同一个判据。"""
+    if len(cells) != total or any(c.strip() for c in cells[keep:]):
+        raise NamelessTailData("data_header_invalid")
+    return cells[:keep]
+
+
+def _trim_tail(header, body):
+    """`(表头, 数据行迭代器)` → 去掉表头末尾没有名字的列（`nameless_tail`）与各行对应的格子（`cut_tail`）；没有这样的列原样返回。**运行时函数**。"""
+    k = nameless_tail(header)
+    if not k:
+        return header, body
+    total = len(header)
+    keep = total - k
+    return header[:keep], ((n, cut_tail(c, keep, total)) for n, c in body)
+
+
 def iter_table(lines, delimiter, header_row=None, units_row=False):
     """`(表头, 数据行迭代器)`；迭代器逐条产出 `(物理行号, 单元格列表)`。读法与 `table_from_text` 完全一样（这就是它的实现）：
     `header_row` 为 None：第一条非空记录是表头，其余都是数据（老读法，干净的 CSV / TSV 与它逐字相同）。给了行号：从该行起（第一条起始行号 ≥ 它的记录）
@@ -493,7 +527,7 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
     if units_row:
         next(rest, None)
     if header_row is None:
-        return fill_header([h.strip() for h in first_cells]), rest
+        return _trim_tail(fill_header([h.strip() for h in first_cells]), rest)
     # 列数以表头之后第一条非 `#` 记录为准（没有就取紧跟的第一条）；探测时读过的记录接回去，不丢
     held = []
     probe = None
@@ -518,7 +552,7 @@ def iter_table(lines, delimiter, header_row=None, units_row=False):
             if len(c) == len(header) or not c[0].lstrip().startswith("#"):
                 yield n, c
 
-    return header, body()
+    return _trim_tail(header, body())
 
 
 def table_from_text(text, delimiter, header_row=None, units_row=False):
@@ -967,6 +1001,7 @@ def _read_small_text_table(
         script_header = None
     # 单位行只在读的就是嗅探认出的那一行表头时才切：用户另指一行（`header_rows`）= 他在说「读法由我定」，不替他猜单位行
     units = bool(layout.units and line == layout.header_line)
+    tail_data = False
     try:
         header, rows, row_lines = (
             table_from_text(text, delim, script_header, True)
@@ -975,7 +1010,9 @@ def _read_small_text_table(
         )
     except csv.Error:
         return _unreadable("data_malformed")
-    if not header:
+    except NamelessTailData:  # 表头末尾没有名字的列里有数据：与名字空的列一样是 `data_header_invalid`（下面 `_summarize` 前统一处理）
+        header, rows, row_lines, tail_data = [], [], [], True
+    if not header and not tail_data:
         if header_row is not None:
             return _tt(
                 "unreadable", code="data_header_row_invalid", delimiter=delim,
@@ -984,6 +1021,8 @@ def _read_small_text_table(
         return _unreadable("data_empty")
     guessed = not layout.sure and header_row is None
     try:
+        if tail_data:
+            raise DataSourceError("data_header_invalid")
         summ = _summarize(
             [header, *rows],
             path_name=p.name,
@@ -1105,6 +1144,14 @@ def _head_text(p: Path, codec: str) -> str:
     return text[: cut + 1] if cut > 0 and len(raw) >= LARGE_HEAD_BYTES else text
 
 
+def _header_invalid_on_tail(body):
+    """把流式读里 `cut_tail` 抛的 `NamelessTailData` 换成 `DataSourceError("data_header_invalid")`（逐行透传，其余原样）。"""
+    try:
+        yield from body
+    except NamelessTailData:
+        raise DataSourceError("data_header_invalid") from None
+
+
 def _scan_summary(
     header_cells,
     body,
@@ -1123,7 +1170,7 @@ def _scan_summary(
 ) -> DataSummary:
     """大表的一遍扫描：`_summarize` 的流式版（同样的列统计、同样的错误码），行不进内存。结构线索用有界集合（`_Facts`）。
     除受控摘要外留下精确的整表统计（行数、每列有限数值的个数 / 最小 / 最大）与前 `LARGE_PREVIEW_ROWS` 行。"""
-    header = fill_header([h.strip() for h in header_cells])
+    header, body = _trim_tail(fill_header([h.strip() for h in header_cells]), body)
     if len(header) > MAX_COLUMNS:
         raise DataSourceError("data_too_wide", str(len(header)))
     if any(not h for h in header) or len(set(header)) != len(header):
@@ -1145,7 +1192,7 @@ def _scan_summary(
     count = 0
     preview: list[list[str]] = []
     pnums: list[int] = []
-    for n, r in body:
+    for n, r in _header_invalid_on_tail(body):
         if len(r) != ncols:
             raise DataSourceError("data_ragged")
         count += 1
@@ -1497,6 +1544,7 @@ def _summarize(
     units_row: bool = False,
 ) -> DataSummary:
     #: 单元格规则：默认 v1 的（不认千分位）；v2 传 `parse_cell`
+    v2 = parse is not None
     parse = parse or legacy_parse_cell
     numbered = (
         list(zip(row_numbers, table)) if row_numbers and len(row_numbers) == len(table) else None
@@ -1511,11 +1559,17 @@ def _summarize(
     if not table:
         raise DataSourceError("data_empty")
     header = fill_header([h.strip() for h in table[0]])
+    rows = table[1:]
+    if v2:  # v1 逐字不变：尾部没有名字的空列只在 v2 的读法里丢
+        try:
+            header, body = _trim_tail(header, ((0, r) for r in rows))
+            rows = [r for _, r in body]
+        except NamelessTailData:
+            raise DataSourceError("data_header_invalid") from None
     if len(header) > MAX_COLUMNS:
         raise DataSourceError("data_too_wide", str(len(header)))
     if any(not h for h in header) or len(set(header)) != len(header):
         raise DataSourceError("data_header_invalid")
-    rows = table[1:]
     if len(rows) > SMALL_ROWS:
         raise DataSourceError("data_too_long", str(len(rows)))
     if not rows:
