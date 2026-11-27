@@ -16,7 +16,7 @@ import type { CapturedFigureDescriptor, AiDataProposeItem, RuntimeAssetInfo } fr
 import { candidateIdentity } from '@/lib/dataFigureAdapter'
 import type { TableRef } from '@/lib/dataFigure'
 import { ownedLive } from '@/lib/styleOwned'
-import type { FigureDocument, PanelObject } from '@/types/document'
+import type { FigureDocument, PanelDataOrigin, PanelObject } from '@/types/document'
 
 /** 可换的三种误差类型（顺序 = 下拉里的顺序，选项文案沿用数据页右栏的 `dataFigureV2.confirm.option.*`） */
 export const ERROR_KINDS = ['sd', 'sem', 'ci95'] as const
@@ -47,8 +47,76 @@ export interface FigureOrigin {
   band: boolean
   /** 这张图第一次放上画布时的来源指纹；还没见到它的面板时是 null（此时不给换） */
   fingerprint: string | null
-  /** 画这张图时的项目（换项目即清，这里再记一份是防御） */
+  /** 画这张图时读的数据文件原始字节的 sha256（propose 响应的 `data_sha256`）：之后「数据变没变」只看它 */
+  dataSha256: string
+  /** 画这张图时的项目（换项目即清，这里再记一份是防御；不落盘） */
   pj: string | null
+}
+
+/**
+ * 项目相对的 POSIX 路径：不是绝对路径、没有盘符 / UNC、没有反斜杠、没有 `.` / `..` / 空段、没有控制字符。
+ * 落进文档的路径只许过这一道（数据在项目文件夹外的根本不会出现在数据页的清单里，这里是最后一道防线）。
+ */
+export function isProjectRelativePosix(p: unknown): p is string {
+  if (typeof p !== 'string' || !p || p.length > 1024) return false
+  if (p.startsWith('/') || p.includes('\\') || /^[A-Za-z]:/.test(p) || [...p].some((c) => c.charCodeAt(0) < 32)) return false
+  return p.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..')
+}
+
+const SHA256 = /^[0-9a-f]{64}$/
+
+/** 登记的来历 + 面板的来源指纹 → 要写进 `PanelObject.dataOrigin` 的那份；路径不是项目相对 / 缺摘要 = null（不落盘） */
+export function toPanelOrigin(o: FigureOrigin, fingerprint: string): PanelDataOrigin | null {
+  if (!isProjectRelativePosix(o.file.path) || !isProjectRelativePosix(o.script) || !SHA256.test(o.dataSha256) || !fingerprint) return null
+  return {
+    version: 1,
+    script: o.script,
+    file: { path: o.file.path, sheet: o.file.sheet },
+    headerRow: o.headerRow,
+    answers: structuredClone(o.answers),
+    spec: o.spec ? structuredClone(o.spec) : null,
+    fontRange: o.fontRange ? { ...o.fontRange } : null,
+    identity: o.identity,
+    kind: o.kind,
+    band: o.band,
+    fingerprint,
+    dataSha256: o.dataSha256,
+  }
+}
+
+/**
+ * 面板上的来历 → 用得上的 `FigureOrigin`；**严格**：版本不是 1、字段形状不对、路径不是项目相对、摘要不是 64 位十六进制 = null（当没有）。
+ * 文档是用户的文件，别的构建 / 手改都可能写出不合格的东西，这里不信它。
+ */
+export function readPanelOrigin(panel: Pick<PanelObject, 'dataOrigin'>): FigureOrigin | null {
+  const d = panel.dataOrigin as Partial<PanelDataOrigin> | undefined
+  if (!d || typeof d !== 'object' || d.version !== 1) return null
+  const file = d.file
+  if (
+    !isProjectRelativePosix(d.script) ||
+    !file || typeof file !== 'object' || !isProjectRelativePosix(file.path) || !(file.sheet === null || typeof file.sheet === 'string') ||
+    !(d.headerRow === null || (typeof d.headerRow === 'number' && Number.isInteger(d.headerRow))) ||
+    !d.answers || typeof d.answers !== 'object' || Array.isArray(d.answers) ||
+    !(d.spec === null || (typeof d.spec === 'object' && !Array.isArray(d.spec))) ||
+    !(d.fontRange === null || (typeof d.fontRange === 'object' && !Array.isArray(d.fontRange))) ||
+    typeof d.identity !== 'string' || !isErrorKind(d.kind) || typeof d.band !== 'boolean' ||
+    typeof d.fingerprint !== 'string' || !d.fingerprint || typeof d.dataSha256 !== 'string' || !SHA256.test(d.dataSha256)
+  )
+    return null
+  return {
+    script: d.script,
+    file: { path: file.path, sheet: file.sheet },
+    headerRow: d.headerRow,
+    answers: d.answers as Record<string, unknown>,
+    spec: d.spec as Record<string, unknown> | null,
+    fontRange: d.fontRange as { min_pt?: number; max_pt?: number } | null,
+    identity: d.identity,
+    kind: d.kind,
+    band: d.band,
+    fingerprint: d.fingerprint,
+    dataSha256: d.dataSha256,
+    pj: null,
+  }
 }
 
 /** 项目相对路径统一成正斜杠再比 */
@@ -72,9 +140,12 @@ export function makeOrigin(args: {
   answers: Record<string, unknown>
   spec: Record<string, unknown> | null
   fontRange: { min_pt?: number; max_pt?: number } | null
+  dataSha256: string | null | undefined
   pj: string | null
 }): FigureOrigin | null {
   if (args.grouped) return null
+  // 没有数据摘要（旧后端）/ 数据路径不是项目相对的：不登记（不落绝对路径，也没法核对数据变没变）
+  if (!args.dataSha256 || !isProjectRelativePosix(args.file.path)) return null
   const kind = switchableKind(args.item)
   if (!kind) return null
   return {
@@ -88,6 +159,7 @@ export function makeOrigin(args: {
     kind,
     band: /band/.test(args.item.title_code),
     fingerprint: null,
+    dataSha256: args.dataSha256,
     pj: args.pj,
   }
 }

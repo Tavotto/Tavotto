@@ -340,6 +340,35 @@ def get_session(project: str, session_id: str, *, touch: bool = True) -> Session
         return sess
 
 
+#: `data_digest` 愿意读的最大文件（字节）：超过就不算（回 None = 前端当「核对不了」）
+DIGEST_MAX_BYTES = 512 * 1024 * 1024
+
+
+def data_digest(root: Path, table: str | None) -> str | None:
+    """项目里这份数据文件**原始字节**的 sha256（与 `propose` 响应的 `data_sha256` 同一口径：CSV / TSV / 文本表 / XLSX 都是整个文件的字节）。
+
+    给「图的来历」核对数据变没变用：路径只认项目相对路径（`normalize_rel` + `contained_path`，不跟出项目），不是普通文件 / 读不了 / 超过
+    `DIGEST_MAX_BYTES` 一律回 None（不是错误：前端当「核对不了」，不出那一行）。只读、不碰缓存、不起任何后台任务。"""
+    try:
+        rel = normalize_rel(table)
+    except ValueError:
+        return None
+    real = projectenv.contained_path(root, rel) if rel else None
+    if real is None:
+        return None
+    try:
+        p = Path(real)
+        if not p.is_file() or p.stat().st_size > DIGEST_MAX_BYTES:
+            return None
+        h = hashlib.sha256()
+        with p.open("rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
 def get_item(project: str, session_id: str, item_id: str) -> tuple[Session, Item]:
     sess = get_session(project, session_id)
     if not isinstance(item_id, str) or not _ID.fullmatch(item_id) or item_id not in sess.items:
@@ -1636,6 +1665,8 @@ def propose(
             "table": merged.merge.sources[0].path if merged is not None else chosen.path,
             "sheet": chosen.sheet,
             "header_row": values.header_line,
+            # 这次读的那份数据文件的原始字节 sha256（单份；合画没有）：前端把它记进图的来历，之后「数据变了没有」只看它（`data_digest` 同一口径）
+            **({"data_sha256": values.sha256} if merged is None else {}),
             "units_row": values.units_row,  # 表头后紧跟的单位行已被切掉（它是 `header_row + 1` 行）；没有 = False
             "roles": res.roles,
             "defaults": defaults,
