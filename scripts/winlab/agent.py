@@ -303,6 +303,24 @@ TASKS: dict[str, Task] = {
             ),
         ),
         Task(
+            id="pro-smoke",
+            kind="pro-smoke",
+            summary="高级版组件（ADR 0198）Windows 真机冒烟：产品 proinstall 验签→下载→安装、prohost 拉起、要授权的命令、Authenticode、Defender",
+            timeout_s=1800,
+            accepts_package=True,
+            claim=(
+                "这个具体的组件包（测试通道、签好的清单）在 Lab（非管理员、zh-CN、Defender 实时防护开、数据目录带中文与空格）上："
+                "产品自己的安装代码装得上且第二次判 current；宿主拉得起组件、hello 与清单一致；组件自己读得到授权（要授权的命令放行到负载校验）；"
+                "exe 的 Authenticode 为 Valid；Defender 扫安装目录无检出"
+            ),
+            unverified=(
+                "授权服务与 CDN 是本机回环假服务（真服务端与 CDN 的那一段在 Mac 上另行端到端验过）",
+                "不在 MSIX 包身份下运行：桌面版启动时脱离包身份（#1574），包身份下（脱离失败 / 将来 MCP 侧直接调用）的执行位置未验",
+                "SSH 会话在 session 0，组件没有界面，不涉及真窗口",
+                "Server 2025 不是 Windows 10 / 11 客户端；SmartScreen 不在内（组件不经浏览器下载）",
+            ),
+        ),
+        Task(
             id="installer",
             kind="installer",
             summary="安装包验收：静默安装（可先装 --from 旧包再升级）、布局、壳→sidecar、内置 runtime 冒烟、覆盖安装、卸载",
@@ -516,11 +534,13 @@ TASKS: dict[str, Task] = {
 
 
 PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.exe$")
+#: 高级版组件包（pro-smoke）：私有仓库发布的 Windows zip，同样只认 cache\\packages\\ 里带 .sha256 的
+PRO_PACKAGE_RE = re.compile(r"^tavotto-pro-[0-9A-Za-z][0-9A-Za-z._+-]{0,31}-windows-x64\.zip$")
 
 
 def package_path(lab: Lab, name: str) -> tuple[Path | None, str | None]:
     """安装包只认 cache\\packages\\ 下名字合规、带 .sha256 且散列吻合的文件（Mac 端核过、经管理员送进来的）。"""
-    if not PACKAGE_NAME_RE.fullmatch(name):
+    if not (PACKAGE_NAME_RE.fullmatch(name) or PRO_PACKAGE_RE.fullmatch(name)):
         return None, f"bad package name {name!r}"
     p = lab.cache / "packages" / name
     want = lab.cache / "packages" / f"{name}.sha256"
@@ -548,8 +568,11 @@ def validate_test_args(
         return f"task {task.id} does not accept --package / --from"
     if task.accepts_package and not package:
         return f"task {task.id} requires --package"
+    if frm and task.kind == "pro-smoke":
+        return f"task {task.id} does not accept --from"
+    pattern = PRO_PACKAGE_RE if task.kind == "pro-smoke" else PACKAGE_NAME_RE
     for name in (package, frm):
-        if name and not PACKAGE_NAME_RE.fullmatch(name):
+        if name and not pattern.fullmatch(name):
             return f"bad package name {name!r}"
     allowed = TASKS["network"].networks if task.kind == "network" else task.networks
     if network not in allowed:
@@ -6309,6 +6332,58 @@ def run_env_matrix_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dic
     }
 
 
+# ----------------------------------------------------------------------------- 高级版组件冒烟
+#: pro-smoke 在 cache\\packages\\ 里另要的两个文件（Mac 端与组件包一起经管理员送进来）：测试授权与测试发布公钥
+PRO_SMOKE_COMPANIONS = ("pro-test-license.json", "pro-test-release.pub")
+
+
+def run_pro_smoke_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dict:
+    zip_path, err = package_path(lab, package)
+    if err:
+        return {"result": "environment_unavailable", "summary": err}
+    missing = [
+        n
+        for n in (f"{package}.release.json", *PRO_SMOKE_COMPANIONS)
+        if not (zip_path.parent / n).is_file()
+    ]
+    if missing:
+        return {"result": "environment_unavailable", "summary": f"not staged: {', '.join(missing)}"}
+    if not lab.venv_python().exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    out = run_dir / "evidence" / "pro-smoke.json"
+    argv = [
+        str(lab.venv_python()),
+        str(lab.repo / "scripts" / "winlab" / "pro_smoke.py"),
+        "--package",
+        str(zip_path),
+        "--work",
+        str(run_dir / "work"),
+        "--out",
+        str(out),
+    ]
+    step = _run_logged(argv, lab.repo, env, run_dir / "evidence" / "pro-smoke", 1500)
+    try:
+        got = json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {
+            "result": "error",
+            "summary": "pro_smoke.py wrote no result"
+            + (" (timed out)" if step.get("timed_out") else ""),
+            "step": step,
+        }
+    checks = got.get("checks") or []
+    return {
+        "result": got.get("result", "error"),
+        "summary": ", ".join(f"{c.get('check')}={c.get('result')}" for c in checks)
+        or got.get("summary", ""),
+        "pro_smoke": got,
+        "step": step,
+    }
+
+
 # ----------------------------------------------------------------------------- 脚本语料
 def corpus_venv(lab: Lab) -> Path:
     return lab.cache / "venvs" / "py313-corpus" / "Scripts" / "python.exe"
@@ -6567,6 +6642,8 @@ def _run_body(
         )
     if task.kind == "managed-cli":
         return run_managed_cli_task(lab, run_dir, env, (pkg or {}).get("mode") or "all")
+    if task.kind == "pro-smoke":
+        return run_pro_smoke_task(lab, run_dir, env, (pkg or {}).get("package", ""))
     if task.kind == "installer":
         return run_installer_task(
             lab, run_dir, env, (pkg or {}).get("package", ""), (pkg or {}).get("from")
