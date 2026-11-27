@@ -1601,6 +1601,9 @@ export default interface Resources {
     "journalTip": {
       "attach": "添加截图 / PDF",
       "cancel": "取消",
+      "descLabel": "问题描述（选填）",
+      "emailMissing": "收录后回信到这里",
+      "emailWrong": "核实后回信到这里",
       "entryTitle": "反馈条目",
       "guideLabel": "投稿须知链接（选填）",
       "issue": {
@@ -1618,11 +1621,13 @@ export default interface Resources {
       "rowRule": "条目",
       "rowSource": "当前出处",
       "submit": "提交反馈",
+      "submitMissing": "提交申请",
       "title": {
         "missing": "申请收录期刊",
         "wrong": "期刊规范反馈"
       },
       "urlLabel": "出处链接（选填）",
+      "urlLabelNew": "新的出处链接（选填）",
       "urlPlaceholder": "https://…"
     },
     "layout": {

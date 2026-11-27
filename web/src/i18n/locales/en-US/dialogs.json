@@ -2948,7 +2948,12 @@
     "noteLabel": "Notes (optional)",
     "attach": "Add screenshot / PDF",
     "submit": "Submit feedback",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "urlLabelNew": "New source link (optional)",
+    "descLabel": "What’s wrong (optional)",
+    "submitMissing": "Submit request",
+    "emailWrong": "We’ll reply here once checked",
+    "emailMissing": "We’ll reply here once it’s added"
   },
   "packageInstall": {
     "entry": "Install project package to a new folder…",

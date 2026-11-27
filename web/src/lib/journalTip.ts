@@ -25,6 +25,8 @@ export interface JournalTipContext {
   /** 出处主机名与抓取日期，只给反馈窗的「当前出处」一行看，不发给服务端 */
   sourceHost?: string
   sourceDate?: string
+  /** 出处原网页（出处卡「打开原网页」同一个地址），只给反馈窗里的主机名外链用，不发给服务端 */
+  sourceUrl?: string
   sourceId?: string
   /** 选择器搜索框里的字（≤120 字） */
   query?: string
@@ -58,6 +60,7 @@ export function tipForSource(
     current: valueText(path, source).slice(0, 200),
     sourceHost: sourceHost(source.url).replace(/^www\./, ''),
     sourceDate: source.retrieved || undefined,
+    sourceUrl: source.link || undefined,
     sourceId: source.src, // v2 的 `v2:` 前缀原样发（契约正则允许）
     catalog: catalogRevs(journalId),
   }

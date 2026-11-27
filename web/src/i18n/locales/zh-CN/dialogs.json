@@ -2914,7 +2914,12 @@
     "noteLabel": "补充说明（选填）",
     "attach": "添加截图 / PDF",
     "submit": "提交反馈",
-    "cancel": "取消"
+    "cancel": "取消",
+    "urlLabelNew": "新的出处链接（选填）",
+    "descLabel": "问题描述（选填）",
+    "submitMissing": "提交申请",
+    "emailWrong": "核实后回信到这里",
+    "emailMissing": "收录后回信到这里"
   },
   "packageInstall": {
     "entry": "安装项目包到新目录…",

@@ -194,6 +194,29 @@ describe('出处卡「这条不对」', () => {
     expect(meta.body).toBe('官网现在写 0.25 pt')
   })
 
+  it('字段随「问题」联动：只换标签，已填内容不清；出处主机名是外链', async () => {
+    await openCard()
+    await click(q('[data-journal-report]'))
+    const d = () => q('[data-dialog="journal-tip"]')!.textContent!
+    const jt = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
+    expect(d()).toContain(jt('quoteLabel'))
+    expect(d()).toContain(jt('urlLabel'))
+    const link = q('[data-journal-tip-source-link]') as HTMLAnchorElement
+    expect(link.target).toBe('_blank')
+    expect(link.href).toMatch(/^https?:/)
+    expect(q('[data-journal-tip-entry]')!.previousElementSibling).toBeNull() // 没有小标题
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, '原话')
+    const radios = () => [...document.body.querySelectorAll('[data-testid="journal-tip-issue"] [role="radio"]')]
+    await click(radios()[2])
+    expect(d()).toContain(jt('urlLabelNew'))
+    expect(d()).toContain(jt('noteLabel'))
+    expect(d()).not.toContain(jt('quoteLabel'))
+    await click(radios()[3])
+    expect(d()).toContain(jt('descLabel'))
+    expect((q('[data-contact-text]') as HTMLTextAreaElement).value).toBe('原话')
+    expect((q('[data-contact-email]') as HTMLInputElement).placeholder).toBe(jt('emailWrong'))
+  })
+
   it('普通「联系作者」窗没有任何期刊字段', async () => {
     await mount(<div />)
     await act(async () => useContactStore.getState().setOpen(true))
@@ -286,6 +309,8 @@ describe('选择器「没有这本刊」', () => {
     expect(q('[data-dialog="journal-tip"]')!.textContent).toContain(t('journalTip.title.missing', { ns: 'dialogs' }))
     expect(q('[data-journal-tip-about]')).toBeNull() // 申请收录没有灰字
     expect((q('[data-journal-tip-name]') as HTMLInputElement).value).toBe('zzzz-no-such')
+    expect(q('[data-contact-send]')!.textContent).toBe(t('journalTip.submitMissing', { ns: 'dialogs' }))
+    expect((q('[data-contact-email]') as HTMLInputElement).placeholder).toBe(t('journalTip.emailMissing', { ns: 'dialogs' }))
     expect(q('[data-journal-tip-entry]')).toBeNull() // 也没有「问题」分段
     await click(q('[data-contact-send]'))
     const [meta] = vi.mocked(sendContact).mock.calls[0]

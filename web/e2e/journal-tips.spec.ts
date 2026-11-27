@@ -121,6 +121,7 @@ test(
       await expect(dialog.locator('[data-journal-tip-row="rule"]')).toContainText('位图分辨率')
       await expect(dialog.locator('[data-journal-tip-row="current"]')).toBeVisible()
       await expect(dialog.locator('[data-journal-tip-row="source"]')).toContainText('·')
+      await expect(dialog.locator('[data-journal-tip-source-link]')).toHaveAttribute('target', '_blank')
       await expect(dialog.locator('[data-contact-journal-url]')).toBeVisible()
       await expect(dialog.locator('[data-contact-subject]')).toHaveCount(0)
       await expect(dialog.locator('[data-contact-diag]')).toHaveCount(0)

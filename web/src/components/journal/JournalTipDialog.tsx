@@ -1,10 +1,12 @@
-import { useId, useRef } from 'react'
+import { useId, useRef, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { JOURNAL_ISSUES } from '@/lib/journalTip'
 import { useContactStore, validEmail } from '@/store/contactStore'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { ICON_SIZE } from '../ui/Icon'
+import { ArrowUpRight } from '../ui/icons'
 import { TextArea, TextInput } from '../ui/Input'
 import { Segmented } from '../ui/Segmented'
 import {
@@ -20,12 +22,22 @@ const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journalTip.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /** 「反馈条目」里的一行：label 左 / 值右，样式同设置页「期刊要求」。 */
-function Row({ label, value, name }: { label: string; value: string; name: string }) {
+function Row({
+  label,
+  value,
+  name,
+  children,
+}: {
+  label: string
+  value?: string
+  name: string
+  children?: ReactNode
+}) {
   return (
     <div className="flex min-h-8 items-center gap-2 text-sm" data-journal-tip-row={name}>
-      <dt className="w-24 shrink-0 text-ink-2">{label}</dt>
-      <dd className="min-w-0 flex-1 truncate text-ink" title={value}>
-        {value}
+      <dt className="w-18 shrink-0 text-ink-2">{label}</dt>
+      <dd className="min-w-0 flex-1 truncate tabular-nums text-ink" title={value}>
+        {children ?? value}
       </dd>
     </div>
   )
@@ -55,6 +67,11 @@ export function JournalTipDialog() {
   const missing = tip.type === 'missing'
   const bodyMax = capability.body_max ?? 5000
   const source = [tip.sourceHost, tip.sourceDate].filter(Boolean).join(' · ')
+  // 字段随「问题」联动：只换标签 / placeholder，已填内容不清
+  const issue = draft.issue
+  const bodyLabel = missing ? 'noteLabel' : issue === 'link_broken' ? 'noteLabel' : issue === 'other' ? 'descLabel' : 'quoteLabel'
+  const urlLabel = issue === 'link_broken' ? 'urlLabelNew' : 'urlLabel'
+  const bodyPlaceholder = !missing && (issue === '' || issue === 'wrong_value' || issue === 'updated')
 
   const writeView = (
     <div
@@ -81,12 +98,29 @@ export function JournalTipDialog() {
         </div>
       ) : (
         <>
-          <section className="flex flex-col gap-1.5" aria-label={jt('entryTitle')}>
-            <h3 className="type-section">{jt('entryTitle')}</h3>
+          <section aria-label={jt('entryTitle')}>
             <dl className="flex flex-col divide-y divide-border border-y border-border" data-journal-tip-entry>
               {tip.ruleLabel && <Row name="rule" label={jt('rowRule')} value={tip.ruleLabel} />}
               {tip.current && <Row name="current" label={jt('rowCurrent')} value={tip.current} />}
-              {source && <Row name="source" label={jt('rowSource')} value={source} />}
+              {source && (
+                <Row name="source" label={jt('rowSource')} value={source}>
+                  {tip.sourceHost && tip.sourceUrl ? (
+                    <>
+                      <a
+                        href={tip.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        data-journal-tip-source-link
+                        className="inline-flex items-center gap-0.5 text-info-content hover:underline"
+                      >
+                        {tip.sourceHost}
+                        <ArrowUpRight size={ICON_SIZE.sm} aria-hidden />
+                      </a>
+                      {tip.sourceDate && <span className="text-ink-3"> · {tip.sourceDate}</span>}
+                    </>
+                  ) : undefined}
+                </Row>
+              )}
             </dl>
           </section>
           <div className="flex flex-col gap-1.5">
@@ -123,45 +157,70 @@ export function JournalTipDialog() {
         </div>
       ) : null}
 
+      {missing ? (
+        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={bodyId} className="type-section">
+            {jt(bodyLabel)}
+          </label>
+          <TextArea
+            id={bodyId}
+            aria-label={jt(bodyLabel)}
+            value={draft.body}
+            rows={missing ? 3 : 4}
+            maxRows={10}
+            maxLength={bodyMax}
+            placeholder={bodyPlaceholder ? jt('quotePlaceholder') : undefined}
+            disabled={!editable}
+            onChange={(e) => s.setDraft({ body: e.target.value })}
+            data-contact-text
+            className="px-3 py-2"
+          />
+        </div>
+          <AttachmentField editable={editable} dragging={dragging} pickLabel={jt('attach')} />
+        </div>
+      ) : (
       <div className="flex flex-col gap-1.5">
         <label htmlFor={bodyId} className="type-section">
-          {jt(missing ? 'noteLabel' : 'quoteLabel')}
+          {jt(bodyLabel)}
         </label>
         <TextArea
           id={bodyId}
-          aria-label={jt(missing ? 'noteLabel' : 'quoteLabel')}
+          aria-label={jt(bodyLabel)}
           value={draft.body}
           rows={missing ? 3 : 4}
           maxRows={10}
           maxLength={bodyMax}
-          placeholder={missing ? undefined : jt('quotePlaceholder')}
+          placeholder={bodyPlaceholder ? jt('quotePlaceholder') : undefined}
           disabled={!editable}
           onChange={(e) => s.setDraft({ body: e.target.value })}
           data-contact-text
           className="px-3 py-2"
         />
       </div>
-
-      {!missing && (
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={urlId} className="type-section">
-            {jt('urlLabel')}
-          </label>
-          <TextInput
-            id={urlId}
-            type="url"
-            inputMode="url"
-            value={draft.url}
-            maxLength={2000}
-            placeholder={jt('urlPlaceholder')}
-            disabled={!editable}
-            onChange={(e) => s.setDraft({ url: e.target.value })}
-            data-contact-journal-url
-          />
-        </div>
       )}
 
-      <AttachmentField editable={editable} dragging={dragging} pickLabel={jt('attach')} />
+      {!missing && (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={urlId} className="type-section">
+              {jt(urlLabel)}
+            </label>
+            <TextInput
+              id={urlId}
+              type="url"
+              inputMode="url"
+              value={draft.url}
+              maxLength={2000}
+              placeholder={jt('urlPlaceholder')}
+              disabled={!editable}
+              onChange={(e) => s.setDraft({ url: e.target.value })}
+              data-contact-journal-url
+            />
+          </div>
+          <AttachmentField editable={editable} dragging={dragging} pickLabel={jt('attach')} />
+        </div>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor={emailId} className="type-section">
@@ -174,7 +233,7 @@ export function JournalTipDialog() {
           autoComplete="email"
           value={draft.replyEmail}
           maxLength={capability.email_max ?? 254}
-          placeholder={cs('emailPlaceholder')}
+          placeholder={jt(missing ? 'emailMissing' : 'emailWrong')}
           disabled={!editable}
           onChange={(e) => s.setDraft({ replyEmail: e.target.value })}
           onBlur={() => {
@@ -232,7 +291,7 @@ export function JournalTipDialog() {
             </Button>
           ) : (
             <Button variant="primary" size="lg" loading={busy} disabled={busy} onClick={() => void s.send()} data-contact-send>
-              {phase === 'failed' ? cs('retry') : jt('submit')}
+              {phase === 'failed' ? cs('retry') : jt(missing ? 'submitMissing' : 'submit')}
             </Button>
           ),
       }}
