@@ -4,6 +4,7 @@ import { pickElementStack } from '@/canvas/interactions'
 import type { Manifest, ManifestElement, ReviewAnchor } from '@/lib/api'
 import type { PlanNote } from '@/store/changePlanStore'
 import { cn } from '@/lib/utils'
+import { geomPathD } from '@/lib/pathGeom'
 import { ReviewMark } from '../review/ReviewMark'
 import { ChevronRight, Pencil } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
@@ -59,6 +60,49 @@ const boxStyle = (b: PlanBox) => ({ left: pct(b[0]), top: pct(b[1]), width: pct(
  * `annotate`：点一下选元素、拖一下框一块（`onRegion`）；`quick`（对比模式）：高亮 + 一枚「写批注」小胶囊，点一下去批注。
  * `left`：只盖分隔线右侧的百分比（滑动对比里只有分隔线右边是「修改后」）。
  */
+const hasPath = (el: ManifestElement | null): boolean => !!el?.geometry && geomPathD(el.geometry, ([x, y]) => ({ x, y })) !== ''
+
+/**
+ * 悬停描示沿元素的**真实路径**（与画布 `OverlaySvg` 的 GeometryOutline 同一个道理）：曲线的包围盒里大半是空白，
+ * 画成框用户认不出点中的是哪条线（两条交叉曲线的框一模一样）。只描边、不着色；`clip` 是引擎给的子图裁剪框。
+ * SVG 盖满整个画框（滑动对比里 PickLayer 只占分隔线右侧，按 `left` 往回伸），坐标就是图的分数坐标。
+ */
+function HoverPath({ el, left }: { el: ManifestElement; left: number }) {
+  const geom = el.geometry
+  if (!geom) return null
+  const d = geomPathD(geom, ([x, y]) => ({ x, y }))
+  if (!d) return null
+  const c = geom.clip
+  const clipId = `cp-hover-clip-${el.gid.replace(/[^A-Za-z0-9_-]/g, '_')}`
+  const k = 1 - left / 100
+  return (
+    <svg
+      aria-hidden
+      data-change-plan-hover-path={el.gid}
+      className="pointer-events-none absolute inset-y-0 h-full overflow-visible"
+      style={{ left: `${-left / k}%`, width: `${100 / k}%` }}
+      viewBox="0 0 1 1"
+      preserveAspectRatio="none"
+    >
+      {c && (
+        <clipPath id={clipId}>
+          <rect x={c[0]} y={c[1]} width={c[2]} height={c[3]} />
+        </clipPath>
+      )}
+      <path
+        d={d}
+        clipPath={c ? `url(#${clipId})` : undefined}
+        fill="none"
+        stroke="var(--color-sel)"
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
 function PickLayer({
   manifest,
   mode,
@@ -137,11 +181,13 @@ function PickLayer({
         onPick(elementTarget(hover))
       }}
     >
+      {hover && !drag && <HoverPath el={hover} left={left} />}
       {hb && !drag && (
         <span
           aria-hidden
           data-change-plan-hover={hover?.gid}
-          className="pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60"
+          // 有真实路径的元素（曲线、多边形、填充…）沿路径描（`HoverPath`），这里只留透明的定位框给「写批注」小胶囊；没有路径的（文字等）照旧画框
+          className={cn('pointer-events-none absolute rounded-xs', !hasPath(hover) && 'bg-sel/6 inset-ring inset-ring-sel/60')}
           style={{ left: `${(hb[0] * 100 - left) / (1 - left / 100)}%`, top: pct(hb[1]), width: `${(hb[2] * 100) / (1 - left / 100)}%`, height: pct(hb[3]) }}
         >
           {mode === 'quick' && (

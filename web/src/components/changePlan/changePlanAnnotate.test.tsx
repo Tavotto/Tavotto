@@ -218,6 +218,42 @@ it('批注模式：悬停高亮、点一下元素打开该元素的批注框（�
   }
 })
 
+it('批注模式：曲线悬停沿真实路径描边（不画大半是空白的包围盒）；文字仍画框', async () => {
+  // 一条从左下到右上的折线（分数坐标、y 向下），包围盒占了大半张图
+  const line = {
+    gid: 'ax.lines_0', role: 'line', label: 'k = 0.1', bbox: [0.1, 0.1, 0.8, 0.8], editable: [],
+    geometry: { kind: 'polyline', fill: false, stroke: true, stroke_pt: 1.5, paint_order: 3, clip: [0.1, 0.1, 0.8, 0.8], paths: [{ closed: false, points: [[0.1, 0.9], [0.5, 0.5], [0.9, 0.1]] }] },
+  }
+  const manifest = { size_mm: [80, 60], elements: [line, { gid: 'ax.title', role: 'title', label: 'title', bbox: [0.4, 0.0, 0.2, 0.05], editable: [] }] } as unknown as Manifest
+  previewSnapshot.mockResolvedValue({ url: 'data:image/png;base64,AAA', manifest })
+  const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 1000, bottom: 500, width: 1000, height: 500, x: 0, y: 0, toJSON: () => ({}) })
+  try {
+    status(PRO)
+    // 元素表按方案 id 缓存：换一个 id，免得拿到上一条用例缓存的那份
+    put(entry({ planId: 'p_geom', plan: plan('p_geom', 1) }))
+    render()
+    act(() => q('[data-change-plan-write-note]')!.click())
+    await act(async () => void (await Promise.resolve()))
+    const layer = q('[data-change-plan-pick="annotate"]')!
+    const fire = (type: string, x: number, y: number) => act(() => void layer.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 })))
+    // 正落在线上（0.5, 0.5）
+    fire('pointermove', 500, 250)
+    expect(q('[data-change-plan-hover-path="ax.lines_0"]')).not.toBeNull()
+    expect(q('[data-change-plan-hover-path="ax.lines_0"] path')!.getAttribute('d')).toContain('M')
+    // 曲线不画着色的包围盒
+    expect(q('[data-change-plan-hover="ax.lines_0"]')!.className).not.toContain('bg-sel')
+    // 包围盒里离线很远的空白处（右下角）不命中这条线
+    fire('pointermove', 850, 420)
+    expect(q('[data-change-plan-hover-path="ax.lines_0"]')).toBeNull()
+    // 文字没有路径：仍画框
+    fire('pointermove', 500, 12)
+    expect(q('[data-change-plan-hover="ax.title"]')!.className).toContain('bg-sel')
+    expect(q('[data-change-plan-hover-path]')).toBeNull()
+  } finally {
+    rect.mockRestore()
+  }
+})
+
 it('首次提示：高级版第一次打开出现，点任意处消失并记住；再打开不出', () => {
   status(PRO)
   put(entry())
