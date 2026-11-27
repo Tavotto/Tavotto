@@ -24,7 +24,7 @@ import { setCanvasCovered } from '@/store/canvasCover'
 import { runExclusive } from '@/lib/dataCommitQueue'
 import { isCommitInProgress, pollCommit } from '@/lib/dataCommitPoll'
 import { currentProjectId } from '@/lib/session'
-import { candidateIdentity, candidatesFromResponse, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
+import { candidateIdentity, candidatesFromResponse, sameDrawing, headerRowFromResponse, mixedFromResponse, rolesFromResponse, sourcesFromResponse, unitsRowFromResponse, type Candidate, type GroupSource, type ColumnRoles, type MixedColumn, type ThumbState } from '@/lib/dataFigureAdapter'
 import { MERGE_FAILURE_CODES, fileRows, hasNumericColumn, isStaleProposeCode, sameTable, tableKey, type CellMode, type TableRef } from '@/lib/dataFigure'
 import { SUGGEST_KEYS, diffSuggestion, suggestionFrom, type Suggestion, type SuggestionDiff } from '@/lib/dataUnderstanding'
 import { fontRangeOf, sameDraftBinding } from '@/lib/dataFigureSpec'
@@ -1047,8 +1047,9 @@ export const useDataFigureStore = create<DataFigureStore>((set, get) => {
         await propose(cap.still, cap.pj)
         if (!cap.still()) return
         const sid = get().session
-        // 身份完全相同（画法 + 合并作图的 variant）才接着画；找不到就不自动提交，让用户看新的候选重选
-        const same = wanted ? get().candidates.find((i) => candidateIdentity(i) === candidateIdentity(wanted)) : undefined
+        // 画的是同一张图（画法身份 + 配方 + 误差线逐项相同，`sameDrawing`）才接着画；身份对得上但列 / 分组 / 误差换了，
+        // 或者找不到，都不自动提交——主图仍停在这个画法上（`previewKey` 没动），让用户看过新的再点
+        const same = wanted ? get().candidates.find((i) => sameDrawing(i, wanted)) : undefined
         if (sid && same) await commit(sid, get().candidates, same.id, true)
         return
       }
