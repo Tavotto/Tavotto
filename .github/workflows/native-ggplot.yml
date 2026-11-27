@@ -30,25 +30,20 @@ concurrency:
 
 jobs:
   real-r:
-    name: Real R (${{ matrix.os }}${{ matrix.suffix }})
+    name: Real R (${{ matrix.os }}, ${{ matrix.suite.name }})
     runs-on: ${{ matrix.os }}
-    # Intel may build dependencies from source. Windows reached 50 minutes
-    # after 55 passing tests. The layer and raster writebacks alone took
-    # about 28 minutes. Run those and their complement in parallel there.
+    # Layer and raster writebacks dominate the full serial run. On each OS,
+    # run them beside the complementary figure workflow within the same limit.
     timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            suffix: ", layer and raster writeback"
-            suite: layers
-          - os: windows-latest
-            suffix: ", figure workflow"
-            suite: figures
-          - os: macos-26-intel
-            suffix: ""
-            suite: all
+        os: [windows-latest, macos-26-intel]
+        suite:
+          - id: layers
+            name: layer and raster writeback
+          - id: figures
+            name: figure workflow
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -88,7 +83,7 @@ jobs:
       - name: Verify native R edits, document restore, and mixed portable export
         shell: bash
         env:
-          NATIVE_R_SUITE: ${{ matrix.suite }}
+          NATIVE_R_SUITE: ${{ matrix.suite.id }}
         run: |
           python -m pip install -e ".[dev,worker]"
           python scripts/fetch_fonts.py
@@ -100,7 +95,6 @@ jobs:
           case "$NATIVE_R_SUITE" in
             layers) selector="$layer_replays" ;;
             figures) selector="not ($layer_replays)" ;;
-            all) selector="" ;;
             *) exit 1 ;;
           esac
           python -m pytest -o addopts= -v -k "$selector" --durations=10 --junitxml=native-r.xml tests/test_native_ggplot_capture.py tests/test_core_v02_release_candidate.py
