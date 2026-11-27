@@ -427,7 +427,7 @@ const ORDER_ONLY: VectorEditResult = {
   order: ['p1', 'a1', 's1', 't1'],
   reordered: true,
   echo: ['文字：移到最前'],
-  changes: [{ id: 't1', field: 'z', before: 1, after: 3, op: 0 }],
+  changes: [{ id: 't1', field: 'z', before: 1, after: 3 }],
   checks: [],
   layout_groups: null,
   ops: [{ op: 'order', id: 't1', to: 'front' }],
