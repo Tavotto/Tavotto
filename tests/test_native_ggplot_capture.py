@@ -810,6 +810,150 @@ cat(Sys.getpid(), file = "console-resumed")
         assert "#572B82" in archived["svg"]
 
 
+@pytest.mark.parametrize("scope", ["single", "both-facets", "one-facet", "different-facets"])
+def test_native_r_panel_theme_writeback_matches_the_edited_scope(tmp_path, scope):
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Grid project"
+    project.mkdir()
+    source = project / "Grid.R"
+    original = b"""\
+d <- expand.grid(x = 1:4, panel = c("Reference", "Trial"))
+d$y <- 2 + d$x + as.integer(d$panel)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+    ggplot2::theme_bw() + ggplot2::theme(
+      panel.background = ggplot2::element_rect(fill = "#DEDAE9", colour = "#687C9CFF", linewidth = .4),
+      panel.border = ggplot2::element_rect(fill = NA, colour = "#3C6C9A80", linewidth = .6),
+      panel.grid.major.y = ggplot2::element_blank(),
+      panel.grid.minor.x = ggplot2::element_line(colour = "#54447860", linewidth = .15),
+      panel.grid.minor.y = ggplot2::element_blank()) + ggplot2::labs(title = "Grid evidence")
+ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices::cairo_pdf)
+"""
+    if scope != "single":
+        original = original.replace(
+            b'ggplot2::labs(title = "Grid evidence")',
+            b'ggplot2::labs(title = "Grid evidence") + ggplot2::facet_wrap(ggplot2::vars(panel), scales = "free_y")',
+        )
+    source.write_bytes(original)
+    grid_edits = {
+        "grid_x": False,
+        "grid_y": True,
+        "grid_color": "#552288",
+        "grid_alpha": 0.45,
+        "grid_linestyle": "--",
+        "grid_linewidth": 1.4,
+        "facecolor": "#E5E4F0",
+        "spine_color": "#386070",
+        "spine_linewidth": 1.6,
+    }
+    axes = {
+        "single": ["axes_0"],
+        "both-facets": ["axes_1", "axes_2"],
+        "different-facets": ["axes_1", "axes_2"],
+        "one-facet": ["axes_2"],
+    }[scope]
+    route = "/api/layouts/Grid_style"
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, source.name, rscript)
+        before = _render(app, figure, [])
+        original_pdf = (project / "original.pdf").read_bytes()
+        elements = {element["gid"]: element for element in before["manifest"]["elements"]}
+        patches = [
+            {"gid": gid, "prop": prop, "value": value, "identity": elements[gid]["identity"]}
+            for gid in axes
+            for prop, value in grid_edits.items()
+        ]
+        if scope == "different-facets":
+            left_grid = next(
+                p for p in patches if p["gid"] == "axes_1" and p["prop"] == "grid_color"
+            )
+            left_grid["value"] = "#442255"
+        patches.append(
+            {
+                "gid": "plot.title",
+                "prop": "color",
+                "value": "#543380",
+                "identity": elements["plot.title"]["identity"],
+            }
+        )
+        hot = _render(app, figure, patches)
+        assert not hot["warnings"]
+        w, h = hot["manifest"]["size_mm"]
+        panel = {**_panel("r", figure, 5, patches, native_width=w), "h": h, "nativeH": h}
+        doc = {
+            "schema": 3,
+            "project": {"id": "grid-source", "name": "Grid style"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": w + 10, "h": h + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(f"{route}?target=project", doc)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Grid_style")
+        status, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert status == 200, preview
+        expected_residual = []
+        if scope == "one-facet":
+            expected_residual = patches[:-1]
+        elif scope == "different-facets":
+            expected_residual = [patch for patch in patches if patch["prop"].startswith("grid_")]
+        assert preview["written"] == len(patches) - len(expected_residual)
+        assert len(preview["skipped"]) == len(expected_residual)
+        assert source.read_bytes() == original
+        status, saved = app.call(
+            "/api/script-edit/figure-style/commit",
+            {
+                "token": preview["token"],
+                "confirmed": True,
+            },
+            timeout=120,
+        )
+        assert status == 200 and saved["ok"], saved
+        assert (project / "original.pdf").read_bytes() == original_pdf
+        authored = source.read_bytes()
+        assert authored != original
+        _, persisted = app.call(route)
+        retained = persisted["canvases"][0]["objects"][0]["overrides"]
+        assert retained == expected_residual
+        fresh_project = tmp_path / "fresh-project"
+        fresh_project.mkdir()
+        (fresh_project / source.name).write_bytes(authored)
+        with sidecar_app(fresh_project, tmp_path / "fresh") as fresh:
+            rebuilt = _run_ggplot(fresh, source.name, rscript)
+            replayed = _render(fresh, rebuilt, retained)
+            assert replayed["warnings"] == []
+            assert replayed["svg"] == hot["svg"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"], restored
+        assert source.read_bytes() == original
+        assert (project / "original.pdf").read_bytes() == original_pdf
+
+
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "src" / "tavotto" / "resources" / "native" / "ggplot2.R"
 SUBTITLE = "plot.subtitle"
@@ -915,9 +1059,12 @@ colors <- setNames(as.list(c("#6C3799", "#8C3011", "#2370B1", "#2A7654",
 entries <- function(state) {
   state$text_targets[grepl("\\.entry\\.", names(state$text_targets))]
 }
+title_and_legend_names <- function(state) {
+  names(Filter(function(target) target$role != "ticks", state$text_targets))
+}
 stopifnot(summary_calls > 0L, length(baseline$state$layers) == 2L,
           length(baseline$state$panel_ranges) == 4L,
-          identical(setdiff(names(baseline$state$text_targets), names(entries(baseline$state))),
+          identical(setdiff(title_and_legend_names(baseline$state), names(entries(baseline$state))),
                     c(head(names(labels), -2L), names(facets))),
           length(entries(baseline$state)) == 7L,
           identical(baseline$state$text_targets[["legend.right.1.entry.3.2"]]$legend_title,
@@ -1007,7 +1154,7 @@ limited <- adapter$capture_ggplot(
   plot + ggplot2::labs(title = NULL, x = expression(alpha), colour = "Shared", shape = "Shared") +
     ggplot2::theme(axis.title.y.left = ggplot2::element_blank()),
   c(432, 288))
-stopifnot(identical(names(limited$state$text_targets),
+stopifnot(identical(title_and_legend_names(limited$state),
                     c("axis.x.top.title", "axis.y.right.title", names(facets))),
           length(grep(">Shared</text>", strsplit(limited$svg, "\n")[[1L]], fixed = TRUE)) == 2L)
 bad_target <- tryCatch(render_colors(limited$state, colors),
@@ -1019,7 +1166,7 @@ hidden <- adapter$capture_ggplot(plot + ggplot2::guides(
   colour = ggplot2::guide_legend(title = expression(mu)),
   shape = ggplot2::guide_legend(title = NULL)
 ), c(432, 288))
-stopifnot(identical(names(hidden$state$text_targets), c(head(names(labels), 5L), names(facets))))
+stopifnot(identical(title_and_legend_names(hidden$state), c(head(names(labels), 5L), names(facets))))
 
 secondary_plot <- plot +
   ggplot2::labs(subtitle = "Comparing drive configurations", caption = "Source: ggplot2 mpg") +
@@ -2646,7 +2793,8 @@ for (change in invalid) {
   stopifnot(inherits(try(adapter$render_ggplot(zero_state, list(axes_0 = change)), silent = TRUE), "try-error"))
 }
 secondary <- plot + ggplot2::scale_x_continuous(sec.axis = ggplot2::dup_axis())
-stopifnot(!length(adapter$capture_ggplot(secondary, frame)$state$axes_targets$axes_0$axes))
+secondary_view <- adapter$capture_ggplot(secondary, frame)$state$axes_targets$axes_0$axes
+stopifnot(identical(names(secondary_view), c("x", "y")))
 constant <- ggplot2::ggplot(data.frame(x = c(10, 10), y = c(2, 3)), ggplot2::aes(x, y)) +
   ggplot2::geom_point()
 flat <- adapter$capture_ggplot(constant, frame)$state
@@ -3554,6 +3702,92 @@ cat('Mapped category ribbon opacity preserves both path and guide, including sam
 """
 
 
+SECONDARY_AXIS_PROBE = r"""
+if (!requireNamespace("jsonlite", quietly = TRUE)) quit(status = 77L)
+library(ggplot2)
+pal <- jsonlite::fromJSON(file.path(dirname(native), "color_palettes.json"), simplifyVector = FALSE)
+frame <- c(324, 224)
+d <- data.frame(x=c(1,2,4,8), y=c(1,4,5,7))
+plain <- ggplot(d,aes(x,y)) + geom_point() + labs(title="Dual labels", y="Signal") + theme_bw()
+p <- plain + scale_x_continuous(sec.axis = dup_axis(name="Mirrored input"))
+seed <- adapter$capture_ggplot(p,frame,pal)
+keys <- names(seed$state$axes_targets)
+stopifnot(identical(seed$state$axes_targets[["axes_0"]]$context,
+                    rlang::hash(adapter$ggplot_decoration_context(seed$state$built))))
+stopifnot(identical(keys,"axes_0"), identical(names(seed$state$axes_targets[[keys[[1L]]]]$axes),c("x","y")))
+verify <- function(edit, source) {
+  actual <- adapter$render_ggplot(seed$state,list(axes_0=edit))
+  oracle <- adapter$capture_ggplot(source,frame,pal)
+  stopifnot(identical(actual,oracle$svg), identical(adapter$render_ggplot(seed$state),seed$svg))
+}
+verify(list(xlim=c(2,8)),p+coord_cartesian(xlim=c(2,8),expand=c(left=FALSE,right=FALSE)))
+verify(list(invert_x=TRUE),p+coord_cartesian(reverse='x'))
+verify(list(xscale='log'),plain+scale_x_log10(sec.axis=dup_axis(name='Mirrored input')))
+cat('Verified native duplicated secondary axis mirrors ranges, reversal and log scaling with exact SVG at rest.')
+
+d$panel <- c("Control", "Control", "Trial", "Trial")
+panels <- ggplot(d, aes(x, y)) + geom_point() + theme_bw() + facet_wrap(vars(panel), scales="free_y")
+plain_facet <- panels + scale_x_continuous(sec.axis=dup_axis(name="Source x"))
+faceted <- adapter$capture_ggplot(plain_facet, frame, pal)
+view <- list(axes_2=list(xlim=c(1,8), xscale="log", invert_x=TRUE))
+authored <- panels + scale_x_log10(sec.axis=dup_axis(name="Source x")) +
+  coord_cartesian(xlim=c(1,8), expand=c(left=FALSE,right=FALSE), reverse="x")
+actual <- adapter$render_ggplot(faceted$state, view)
+expected <- adapter$capture_ggplot(authored, frame, pal)$svg
+stopifnot(identical(actual, expected), identical(adapter$render_ggplot(faceted$state),faceted$svg))
+fixed <- dup_axis(name="Fixed x", breaks=c(1,8),labels=c("first","last"))
+ordinary <- plain + scale_x_continuous(sec.axis=fixed)
+before <- adapter$capture_ggplot(ordinary,frame,pal)
+actual <- adapter$render_ggplot(before$state,list(axes_0=list(xscale="log")))
+expected <- adapter$capture_ggplot(plain+scale_x_log10(sec.axis=dup_axis(name="Fixed x",breaks=c(1,8),labels=c("first","last"))),frame,pal)$svg
+stopifnot(identical(actual,expected),identical(adapter$render_ggplot(before$state),before$svg))
+cat(' A fixed mirrored tick list and shared facets replayed exactly.\n')
+auto <- plain + scale_x_continuous(n.breaks=6L, sec.axis=dup_axis(name="Auto x"))
+invisible(ggplot_build(auto))
+auto_capture <- adapter$capture_ggplot(auto, frame, pal)
+actual <- adapter$render_ggplot(auto_capture$state,list(axes_0=list(xscale="log")))
+expected <- adapter$capture_ggplot(plain+scale_x_log10(n.breaks=6L,sec.axis=dup_axis(name="Auto x")),frame,pal)$svg
+stopifnot(identical(actual, expected), identical(adapter$render_ggplot(auto_capture$state),auto_capture$svg))
+cat(' The stock n.breaks locator was also recalculated in the new mode.\n')
+transforms <- list(percent=function(x) 100*x, decreasing=function(x) 10-x, nonlinear=function(x) sqrt(x))
+for (name in names(transforms)) {
+  transform <- transforms[[name]]
+  author <- function(mode="linear", reverse="none") {
+    plain + scale_x_continuous(transform=mode, sec.axis=sec_axis(transform,name=name)) +
+      coord_cartesian(xlim=c(1,8), expand=c(left=FALSE,right=FALSE), reverse=reverse)
+  }
+  captured <- adapter$capture_ggplot(author("identity"),frame,pal)
+  edited <- adapter$render_ggplot(captured$state,list(axes_0=list(xscale="log",invert_x=TRUE)))
+  expected <- adapter$capture_ggplot(author("log10","x"),frame,pal)$svg
+  stopifnot(identical(edited,expected), identical(adapter$render_ggplot(captured$state),captured$svg))
+}
+
+squared <- adapter$capture_ggplot(plain + scale_x_continuous(sec.axis=sec_axis(~ .^2)), frame, pal)
+invalid <- try(adapter$render_ggplot(squared$state, list(axes_0=list(xlim=c(-4,8)))), silent=TRUE)
+stopifnot(inherits(invalid,"try-error"),
+          identical(conditionMessage(attr(invalid,"condition")),
+                    "The native R secondary axis must stay strictly monotonic across this range."),
+          identical(adapter$render_ggplot(squared$state),squared$svg))
+
+# Formatting the primary tick group must not replace the units of an
+# independently transformed upper guide, even in a shared facet group.
+units <- panels + scale_x_continuous(sec.axis=sec_axis(~ . * 10, name="Converted x"))
+state <- adapter$capture_ggplot(units,frame,pal)$state
+bottom <- names(Filter(function(target) target$position == "bottom", state$tick_targets))[[1L]]
+top <- names(Filter(function(target) target$position == "top", state$tick_targets))[[1L]]
+stopifnot(!is.null(state$tick_targets[[bottom]]$scope), is.null(state$tick_targets[[top]]$scope))
+formatted <- adapter$with_svg_frame(frame, function(device) {
+  adapter$ggplot_table_for(state, setNames(list(list(format="%.1f")), bottom))
+})$value
+original_top <- state$text_targets[[top]]
+updated_top <- formatted$text[[top]]
+stopifnot(identical(original_top$tick_labels, updated_top$tick_labels),
+          !identical(formatted$text[[bottom]]$tick_labels, state$text_targets[[bottom]]$tick_labels))
+
+cat("Stock secondary-axis conversions match authored R and reject a nonmonotonic view before rendering.\n")
+"""
+
+
 def _assert_r_probe(tmp_path, program):
     rscript, explicit_rscript = _rscript()
     driver = tmp_path / "probe.R"
@@ -3570,6 +3804,10 @@ def _assert_r_probe(tmp_path, program):
         pytest.skip("Rscript does not have the required native capture packages")
     assert result.returncode == 0, result.stdout + result.stderr
     assert not (tmp_path / "Rplots.pdf").exists()
+
+
+def test_ggplot_secondary_axes_follow_native_ranges_and_scales(tmp_path):
+    _assert_r_probe(tmp_path, SECONDARY_AXIS_PROBE)
 
 
 def test_faceted_tick_locators_are_shared_and_appearance_is_local(tmp_path):

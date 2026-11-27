@@ -137,9 +137,24 @@ ggplot_frame_target <- function(built, table, target, slot = ggplot_cartesian_pa
   preferred <- if (any(visible)) which(visible)[[1L]] else 1L
   base <- styles[[preferred]]$paint
   target <- ggplot_panel_decoration(built, target, slot)
-  target$frame <- list(fallback = fallback, styles = styles,
+  source_rect <- if (inherits(sources$border, "rect") &&
+      !any(vapply(sources$axes, function(axis) !is.null(axis$line), logical(1L)))) {
+    style <- ggplot2::calc_element("panel.border", built$plot$theme)
+    if (identical(class(style), class(ggplot2::element_rect()))) list(style = style, grob = sources$border)
+  }
+  target$frame <- list(fallback = fallback, styles = styles, source_rect = source_rect,
                        original = list(spine_color = base$rgb, spine_linewidth = base$pt))
   target
+}
+
+ggplot_frame_source_rect <- function(frame, edit) {
+  native <- frame$source_rect
+  if (is.null(native) || !all(names(edit) %in% c("spine_color", "spine_linewidth"))) return(NULL)
+  stroke <- ggplot_frame_set_paint(native$grob, ggplot_frame_side_patch(edit, "top"))
+  style <- native$style
+  if (!is.null(edit$spine_color)) style$colour <- stroke$gp$col
+  if (!is.null(edit$spine_linewidth)) style$linewidth <- stroke$gp$lwd / ggplot2::.pt
+  style
 }
 
 ggplot_frame_value <- function(frame, edit) {

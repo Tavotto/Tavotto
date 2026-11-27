@@ -67,12 +67,60 @@ ggplot_cartesian_axis_views <- function(coord) {
     identical(coord$clip, "on")
 }
 
+ggplot_stock_secondary_axis <- function(secondary) {
+  if (is.null(secondary) || inherits(secondary, "waiver")) return(TRUE)
+  if (!identical(class(secondary)[[1L]], "AxisSecondary")) return(FALSE)
+  native <- as.list(secondary)
+  stock <- as.list(ggplot2::dup_axis())
+  methods <- c("init", "break_info", "transform_range", "create_scale", "mono_test")
+  identical(native[methods], stock[methods]) && is.function(native$trans) && !is.function(native$labels)
+}
+
+ggplot_clone_secondary <- function(axis, breaks) {
+  if (identical(as.list(axis)$trans, base::identity)) return(ggplot_clone(axis, breaks = breaks))
+  ggplot_clone(axis, breaks = breaks, transform_range = function(self, range) {
+    # Validate the values actually used by the native guide, including the
+    # display window. Its stock monotonicity test only checks trained data.
+    values <- ggplot2::ggproto_parent(axis, self)$transform_range(range)
+    if (!is.numeric(values) || length(values) != length(range) || !all(is.finite(values))) {
+      stop("The native R secondary axis cannot describe this range.")
+    }
+    direction <- diff(values)
+    if (!(all(direction > 0) || all(direction < 0))) {
+      stop("The native R secondary axis must stay strictly monotonic across this range.")
+    }
+    values
+  })
+}
+
+ggplot_secondary_breaks <- function(scale) {
+  axis <- scale$secondary.axis
+  if (!inherits(axis, "AxisSecondary")) return(NULL)
+  native <- as.list(axis)$breaks
+  if (inherits(native, "derived") || inherits(native, "waiver") ||
+      identical(native, scale$get_transformation()$breaks)) return("automatic")
+  if (!is.function(native)) return("fixed")
+  # With n.breaks, ggplot2 wraps its locator with the requested count.
+  # Compare the native implementation and its referenced bindings so a
+  # user-defined locator is never mistaken for that generated callback.
+  probe <- ggplot2::dup_axis()
+  probe$init(scale)
+  expected <- as.list(probe)$breaks
+  if (is.function(expected) && identical(formals(expected), formals(native)) &&
+      identical(body(expected), body(native))) {
+    bindings <- intersect(all.names(body(expected), unique = TRUE), ls(environment(expected), all.names = TRUE))
+    if (length(bindings) && identical(mget(bindings, environment(expected), inherits = FALSE),
+        mget(bindings, environment(native), inherits = FALSE, ifnotfound = list(NULL)))) return("automatic")
+  }
+  "custom"
+}
+
 ggplot_stock_axis_guides <- function(panel) {
   all(vapply(panel$guides$guides, function(guide) {
     class(guide)[[1L]] %in% c("GuideAxis", "GuideNone")
   }, logical(1L))) && !any(vapply(ggplot_axis_names, function(axis) {
     scale <- panel[[axis]]$scale
-    (!is.null(scale$secondary.axis) && !inherits(scale$secondary.axis, "waiver")) ||
+    !ggplot_stock_secondary_axis(scale$secondary.axis) ||
       any(vapply(list(scale$breaks, scale$labels, scale$minor_breaks, scale$limits),
                  is.function, logical(1L)))
   }, logical(1L)))
@@ -82,7 +130,7 @@ ggplot_axis_spec <- function(built, panel, kinds, axis, rows = vector("list", le
   coord <- built$layout$coord
   scale <- panel[[axis]]$scale
   if (!identical(class(scale)[[1L]], "ScaleContinuousPosition") ||
-      !inherits(scale$secondary.axis, "waiver") || !is.null(scale$limits) ||
+      !ggplot_stock_secondary_axis(scale$secondary.axis) || !is.null(scale$limits) ||
       !inherits(scale$labels, "waiver") || !inherits(scale$breaks, "waiver") ||
       (!is.null(scale$minor_breaks) && !inherits(scale$minor_breaks, "waiver"))) return(NULL)
   trans <- scale$get_transformation()
@@ -107,13 +155,17 @@ ggplot_axis_spec <- function(built, panel, kinds, axis, rows = vector("list", le
   positive <- !is.null(trained) && all(trained > 0) &&
     all(vapply(native, function(v) all(v[!is.na(v)] > 0 & is.finite(v[!is.na(v)])), logical(1L))) &&
     all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] > 0)
-  can_switch <- !is.null(trained) && !has_infinite && !"GeomRaster" %in% kinds
+  secondary <- ggplot_secondary_breaks(scale)
+  can_switch <- !is.null(trained) && !has_infinite && !"GeomRaster" %in% kinds &&
+    !identical(secondary, "custom")
   probability <- positive && all(trained < 1) &&
     all(vapply(native, function(v) all(v[!is.na(v)] < 1), logical(1L))) &&
     all(is.na(coord$limits[[axis]]) | coord$limits[[axis]] < 1)
   options <- if (!can_switch) mode else c(
     "linear", if (mode == "log" || positive) "log", "symlog", if (mode == "logit" || probability) "logit")
-  list(mode = mode, range = range, trained = trained, columns = columns, options = options)
+  spec <- list(mode = mode, range = range, trained = trained, columns = columns, options = options)
+  if (!is.null(secondary)) spec$secondary_breaks <- secondary
+  spec
 }
 
 ggplot_axes_target <- function(built, table) {
@@ -138,7 +190,10 @@ ggplot_axes_target <- function(built, table) {
   context <- list(kinds, built$data, identity_axes, coord$limits)
   if (coord$reverse != "none") context <- c(context, list(coord$reverse))
   # Fixed Cartesian plots originally only offered grid and frame controls.
-  if (!is.null(coord$ratio)) context <- ggplot_decoration_context(built)
+  secondary <- any(vapply(ggplot_axis_names, function(axis) {
+    inherits(panel[[axis]]$scale$secondary.axis, "AxisSecondary")
+  }, logical(1L)))
+  if (!is.null(coord$ratio) || secondary) context <- ggplot_decoration_context(built)
   write_scale <- ggplot_source_scale_layers(built, kinds)
   source_groups <- lapply(axes, function(axis) {
     ggplot_source_axis_group("1", 1L, kinds, coord$reverse, write_scale)
@@ -236,6 +291,12 @@ ggplot_project_axis_scale <- function(scale, spec, change) {
     scale$train(trained)
     convert <- function(values) trans$transform(previous$inverse(values))
   }
+  secondary <- scale$secondary.axis
+  if (inherits(secondary, "AxisSecondary")) {
+    original <- spec$secondary_breaks
+    breaks <- if (!is.null(convert) && identical(original, "automatic")) ggplot2::derive() else as.list(secondary)$breaks
+    scale <- ggplot_clone(scale, secondary.axis = ggplot_clone_secondary(secondary, breaks))
+  }
   if (!is.null(range) && is.null(ggplot_axis_pair(scale$transform(range)))) {
     stop("The native R axis has no finite transformed view.")
   }
@@ -259,8 +320,8 @@ ggplot_project_axes <- function(built, target, changes) {
     if (!is.null(change$inverted)) inverted[[axis]] <- change$inverted
     name <- paste0("panel_scales_", axis)
     projected <- ggplot_project_axis_scale(layout[[name]][[1L]], spec, change)
+    layout[[name]] <- list(projected$scale)
     if (!is.null(projected$convert)) {
-      layout[[name]] <- list(projected$scale)
       built$data <- Map(function(data, columns) {
         ggplot_convert_axis_data(data, columns, seq_len(nrow(data)), projected$convert)
       }, built$data, spec$columns)
@@ -314,6 +375,7 @@ ggplot_axes_element <- function(gid, target, current, bbox, edits, changes) {
               links = lapply(target$links, as.list),
               source_groups = target$source_groups,
               source_anchor = target$source_anchor,
+              source_theme = ggplot_axes_source_theme(target, edits),
               aspect = if (!is.null(target$aspect)) {
                 list(original = target$aspect, current = edits$aspect %||% target$aspect)
               },
@@ -625,7 +687,7 @@ ggplot_grid_target <- function(built, table, target, slot = ggplot_cartesian_pan
   target
 }
 
-ggplot_grid_theme <- function(theme, grid, edit) {
+ggplot_grid_replacements <- function(grid, edit) {
   if (is.null(grid)) stop("The requested native R grid edit is unavailable.")
   for (prop in names(edit)) {
     value <- edit[[prop]]
@@ -664,7 +726,50 @@ ggplot_grid_theme <- function(theme, grid, edit) {
     line$inherit.blank <- FALSE
     replacements[[ggplot_grid_cells[[i]]]] <- line
   }
-  theme + do.call(ggplot2::theme, replacements)
+  replacements
+}
+
+ggplot_grid_theme <- function(theme, grid, edit) {
+  theme + do.call(ggplot2::theme, ggplot_grid_replacements(grid, edit))
+}
+
+ggplot_source_theme_elements <- function(elements, edits, count) {
+  if (!length(edits) || !length(elements)) return(NULL)
+  attrs <- c("colour", "linewidth", "linetype", "linejoin", "inherit.blank")
+  mapped <- lapply(elements, function(element) {
+    if (inherits(element, "element_blank")) return(list(kind = "element_blank", fields = NULL))
+    kind <- if (inherits(element, "element_line")) "element_line" else "element_rect"
+    if (kind == "element_line" && !is.null(element$arrow) && !identical(element$arrow, FALSE)) return(NULL)
+    keys <- c(attrs, if (kind == "element_line") c("lineend", "arrow", "arrow.fill") else "fill")
+    fields <- lapply(keys, function(key) S7::prop(element, key)) |> stats::setNames(keys)
+    fields <- Filter(Negate(is.null), fields)
+    if (any(vapply(fields[setdiff(names(fields), c("colour", "arrow.fill", "fill"))], anyNA, logical(1L)))) {
+      return(NULL)
+    }
+    list(kind = kind, fields = fields)
+  })
+  if (any(lengths(mapped) == 0L)) return(NULL)
+  list(total = count, edited = edits, elements = mapped)
+}
+
+ggplot_axes_source_theme <- function(target, edits) {
+  grid <- edits[intersect(names(edits), ggplot_grid_keys)]
+  frame <- edits[intersect(names(edits), ggplot_frame_keys)]
+  background <- edits[intersect(names(edits), "facecolor")]
+  count <- target$source_theme_count %||% 1L
+  themes <- list()
+  if (length(grid) && !is.null(target$grid)) {
+    themes$grid <- ggplot_source_theme_elements(ggplot_grid_replacements(target$grid, grid), grid, count)
+  }
+  if (length(background) && !is.null(target$background)) {
+    style <- ggplot_background_style(target$background, background$facecolor)
+    themes$background <- ggplot_source_theme_elements(list(panel.background = style), background, count)
+  }
+  if (length(frame)) {
+    rect <- ggplot_frame_source_rect(target$frame, frame)
+    if (!is.null(rect)) themes$frame <- ggplot_source_theme_elements(list(panel.border = rect), frame, count)
+  }
+  if (length(themes)) themes
 }
 
 ggplot_facet_grill <- function(panel) {
@@ -809,6 +914,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
                    context = rlang::hash(list(context, facet)))
     if (!is.null(source_anchor)) target$source_anchor <- rlang::hash(list(source_anchor, facet))
     target$reverse <- built$layout$coord$reverse
+    target$source_theme_count <- length(ids)
     for (axis in names(axis_groups)) {
       group_id <- as.character(cells[[paste0("SCALE_", toupper(axis))]][[i]])
       group <- axis_groups[[axis]][[group_id]]

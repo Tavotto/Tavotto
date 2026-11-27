@@ -350,6 +350,8 @@ class GgplotTarget:
             if "facecolor" in axes["edited"]:
                 field["value_original"] = background["original"]
             fields.append(field)
+        if source_theme := axes.get("source_theme"):
+            element["source_theme"] = source_theme
         element["editable"] = fields
         element["identity"] = _AXES_IDENTITY_PREFIX + axes["context"]
         if anchor := axes.get("source_anchor"):

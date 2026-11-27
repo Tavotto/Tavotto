@@ -25,6 +25,20 @@ _R_AXIS_TRANSFORMS = {
     "log": "scales::transform_log10()",
     "logit": "scales::transform_logit()",
 }
+_R_THEME_RECT_CELLS = frozenset({"panel.background", "panel.border"})
+_R_THEME_GRID_CELLS = frozenset(
+    {
+        "panel.grid.major.x",
+        "panel.grid.major.y",
+        "panel.grid.minor.x",
+        "panel.grid.minor.y",
+    }
+)
+_R_THEME_STROKE_FIELDS = frozenset({"colour", "linewidth", "linetype", "linejoin", "inherit.blank"})
+_R_THEME_FIELDS = {
+    "element_rect": _R_THEME_STROKE_FIELDS | {"fill"},
+    "element_line": _R_THEME_STROKE_FIELDS | {"lineend", "arrow", "arrow.fill"},
+}
 _RGB = re.compile(r"#[0-9a-fA-F]{6}\Z")
 _FACES = {
     ("normal", "normal"): "plain",
@@ -118,6 +132,67 @@ def _native_coordinate_writes(
         coordinates[prop] = value
         written.update((gid, prop) for gid, _, _ in values)
     return coordinates, written
+
+
+def _r_theme_literal(value) -> str | None:
+    if value is None:
+        return "NA_character_"
+    if type(value) is bool:
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, str) and "\0" not in value:
+        return json.dumps(value, ensure_ascii=False)
+    if type(value) in (int, float) and math.isfinite(value):
+        return json.dumps(value, allow_nan=False)
+    return None
+
+
+def _r_theme_options(elements: dict) -> list[str]:
+    options = []
+    for cell, element in elements.items():
+        kind, fields = element.get("kind"), element.get("fields")
+        if cell in _R_THEME_GRID_CELLS and kind == "element_blank" and fields is None:
+            options.append(f"    {cell} = ggplot2::element_blank()")
+            continue
+        cells = _R_THEME_RECT_CELLS if kind == "element_rect" else _R_THEME_GRID_CELLS
+        if (
+            cell not in cells
+            or kind not in _R_THEME_FIELDS
+            or not isinstance(fields, dict)
+            or not fields.keys() <= _R_THEME_FIELDS[kind]
+        ):
+            return []
+        values = {key: _r_theme_literal(value) for key, value in fields.items()}
+        if any(value is None for value in values.values()):
+            return []
+        args = ", ".join(f"{key} = {value}" for key, value in values.items())
+        options.append(f"    {cell} = ggplot2::{kind}({args})")
+    return options
+
+
+def _native_theme_writes(
+    axes: dict[str, dict], patches: list[dict]
+) -> tuple[list[str], set[tuple[str, str]]]:
+    """A plain R theme applies only when all rendered panels adopt the same style."""
+    edits = defaultdict(lambda: defaultdict(dict))
+    for patch in patches:
+        gid, prop = patch["gid"], patch["prop"]
+        for name, source in axes.get(gid, {}).get("source_theme", {}).items():
+            if prop in source["edited"]:
+                edits[name][gid][prop] = patch["value"]
+    options = []
+    written = set()
+    for name, panels in edits.items():
+        baseline = axes[next(iter(panels))]["source_theme"][name]
+        if baseline["total"] != len(panels) or any(
+            axes[gid]["source_theme"][name] != baseline or choices != baseline["edited"]
+            for gid, choices in panels.items()
+        ):
+            continue
+        values = _r_theme_options(baseline["elements"])
+        if values:
+            options.extend(values)
+            written.update((gid, prop) for gid, changes in panels.items() for prop in changes)
+    return options, written
 
 
 def _r_coordinate_block(name: str, coordinates: dict) -> str:
@@ -265,7 +340,8 @@ def build(
     elements: dict[str, dict[str, str | float]] = {}
     axes = {e["gid"]: e for e in (hot or {}).get("elements", ()) if e["role"] == "axes"}
     coordinates, coordinate_writes = _native_coordinate_writes(axes, patches)
-    written = coordinate_writes.copy()
+    theme_options, theme_writes = _native_theme_writes(axes, patches)
+    written = coordinate_writes | theme_writes
     residual = []
     skipped = []
     for patch in patches:
@@ -323,25 +399,27 @@ def build(
             {"gid": patch["gid"], "prop": patch["prop"], "reason": "unsupported"}
             for patch in residual
         ]
-    if not elements and not coordinates:
+    if not elements and not coordinates and not theme_options:
         return AdjustedRSource(data, 0, residual, skipped)
 
     name = json.dumps(object_name, ensure_ascii=False)
-    options = ",\n".join(
+    options = [
         f"    {element} = ggplot2::element_text("
         + ", ".join(
             f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in fields.items()
         )
         + ")"
         for element, fields in elements.items()
-    )
+    ]
+    options.extend(theme_options)
     statements = []
     if coordinates:
         statements.append(_r_coordinate_block(name, coordinates))
-    if elements:
+    if options:
+        args = ",\n".join(options)
         statements.append(
             f"base::assign({name}, base::get({name}, inherits = FALSE) + ggplot2::theme(\n"
-            f"{options}\n))"
+            f"{args}\n))"
         )
     block = "\n".join(("", scriptadjust.BEGIN, *statements, scriptadjust.END, ""))
     newline = b"\r\n" if lines[end_line - 1].endswith(b"\r\n") else b"\n"

@@ -307,6 +307,12 @@ ggplot_axis_marks <- function(guide, params, theme, spacing) {
        minor_editable = isTRUE(params$minor.ticks) || !is.null(spacing$minor))
 }
 
+ggplot_axis_is_secondary <- function(panel, params) {
+  axis <- params$aesthetic
+  length(axis) == 1L && axis %in% ggplot_axis_names &&
+    !is.null(panel[[axis]]$position) && !identical(params$position, panel[[axis]]$position)
+}
+
 ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) {
   result <- list()
   for (gid in names(targets)) {
@@ -320,8 +326,9 @@ ggplot_tick_targets <- function(built, targets, colourbar_titles, axes_targets) 
       if (length(matches) == 1L && identical(class(guides$guides[[matches]])[[1L]], "GuideAxis")) {
         params <- guides$params[[matches]]
         key <- ggplot_major_axis_key(params$key)
-        values <- ggplot_numeric_key(key, target)
-        if (is.null(values) && identical(params$aesthetic, substr(gid, 6L, 6L)) &&
+        secondary <- target$axes_gid != ggplot_axes_gid && ggplot_axis_is_secondary(panel, params)
+        values <- if (!secondary) ggplot_numeric_key(key, target)
+        if (!secondary && is.null(values) && identical(params$aesthetic, substr(gid, 6L, 6L)) &&
             isTRUE(panel[[params$aesthetic]]$scale$get_transformation()$name %in%
                    setdiff(names(ggplot_axis_modes), "identity"))) {
           values <- ggplot_numeric_key(key, target, ggplot_axis_key_values(panel, params))
@@ -579,7 +586,9 @@ ggplot_facet_tick_layout <- function(state, panels, edits, coord, axis_changes) 
       gid <- gids[[paste(axes_gid, param$position, sep = "/")]]
       group <- axes$groups[[axis]]
       projected <- !is.null(group) && length(axis_changes[[axis]][[group]]) > 0L
-      patch <- if (!is.null(group)) edits[[paste(axis, group, sep = "/")]]
+      patch <- if (!is.null(group) && !ggplot_axis_is_secondary(panel, param)) {
+        edits[[paste(axis, group, sep = "/")]]
+      }
       if (!is.null(patch)) {
         target <- if (!is.null(gid)) tick_targets[[gid]] else {
           initial <- original$guides$params[[index]]
