@@ -215,6 +215,7 @@ _CHECK_MODULES = (
     "ai_figure_edit.py",
     "ai_data_task.py",
     "ai_convert.py",
+    "ai_data_prepare.py",
     "figureverify.py",
     "ai_bridge.py",
 )

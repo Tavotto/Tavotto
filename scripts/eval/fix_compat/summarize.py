@@ -164,6 +164,60 @@ def memory_pairs(data: dict[str, list[dict]]) -> str:
     return "\n".join(lines)
 
 
+def cited_known_issue(rec: dict) -> bool:
+    """修复会话是否引用了已知问题（ADR 0221 §二）。
+
+    规则（结构化信号，不读自由文本）：轨迹里任何一行带非空 `known_issue`（harness 从审计结果的 `known_issue` 键搬来），
+    或结果码字段里出现 `known_issue` 字样。现在的产品还没有这个键（第 2 期才加），所以全是 False，不报错。"""
+    for t in rec.get("trajectory") or []:
+        if t.get("known_issue") or "known_issue" in str(t.get("result") or ""):
+            return True
+    return False
+
+
+def misjudged_user_fault(rec: dict) -> bool:
+    """是否把产品缺陷当成用户环境问题（近似规则，审计里拿不到模型的结论原文，所以只用结构化信号）：
+
+    1. 报产品问题却被工具退回：`prepare_diagnostics` 带 `issue`（审计里是 `<dict>`），结果码 `bad_arguments`
+       （缺字段，`product_reason` 为空是其中一种；审计只留长度不留内容，分不出是哪个字段）或 `not_a_product_defect`
+       （工具判这是用户侧能补的失败）；
+    2. 题库标了 `fault.product_defect`（产品缺陷形，如自检被守卫误拦）、这次又没修好、整条轨迹里没有一次成功的
+       `prepare_diagnostics`——模型按「用户环境问题」收尾了，产品缺陷没有报出去。
+    只对 A / M 组有意义（B 组没有审计行，恒 False）。"""
+    rows = [t for t in rec.get("trajectory") or [] if t.get("tool") == "prepare_diagnostics"]
+    for t in rows:
+        if "issue" in str(t.get("args") or "") and t.get("result") in (
+            "bad_arguments",
+            "not_a_product_defect",
+        ):
+            return True
+    if rec.get("product_defect") and not rec.get("success") and rec.get("cond") in ("A", "M"):
+        return not any(t.get("result") is True for t in rows)
+    return False
+
+
+def environment_family(data: dict[str, list[dict]]) -> str:
+    """环境家族（ADR 0221 §六）的两列：每题每组 `cited_known_issue` / `misjudged_user_fault` 的次数 / 运行数。"""
+    lines = [
+        "| 题 | 组 | 运行数 | 成功 | cited_known_issue | misjudged_user_fault |",
+        "|---|---|---|---|---|---|",
+    ]
+    n_rows = 0
+    for c in ("baseline", "A", "M", "B", "C"):
+        by_id: dict[str, list[dict]] = defaultdict(list)
+        for r in data.get(c, []):
+            if r.get("family") == "environment":
+                by_id[r["id"]].append(r)
+        for i, rs in sorted(by_id.items()):
+            n_rows += 1
+            lines.append(
+                f"| {i} | {c} | {len(rs)} | {sum(1 for r in rs if r['success'])} "
+                f"| {sum(cited_known_issue(r) for r in rs)}/{len(rs)} "
+                f"| {sum(misjudged_user_fault(r) for r in rs)}/{len(rs)} |"
+            )
+    return "\n".join(lines) if n_rows else "（没有环境家族的运行）"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=str(HERE / "results"))
@@ -181,6 +235,8 @@ def main() -> None:
     print(hint_follow(data))
     print()
     print(memory_pairs(data))
+    print()
+    print(environment_family(data))
 
 
 if __name__ == "__main__":

@@ -167,6 +167,63 @@ _STRUCTURE_NAMES = frozenset(
 )
 
 
+#: 守卫账本的闭集——与 `figcapture.BlockedFileOps` 的 `OPS` / 五个 `KIND_*` / `LEVELS` / `SIGNAL_VIAS` 同一张表
+#: （父进程侧不 import figcapture，`tests/test_selftest_failure_shape.py` 钉住相等）。
+_LEDGER_OPS = frozenset(
+    {
+        "Path.unlink",
+        "Path.write_text",
+        "os.remove",
+        "os.unlink",
+        "os.rmdir",
+        "os.rename",
+        "os.replace",
+        "shutil.rmtree",
+        "shutil.move",
+        "savefig",
+    }
+)
+_LEDGER_KINDS = frozenset({"rename", "delete", "delete_dir", "write", "savefig"})
+_LEDGER_LEVELS = frozenset({"deviated", "suspect", "none_observed"})
+_LEDGER_VIAS = frozenset({"stat", "probe_failed", "listing", "move_failed", "rename_src"})
+_LEDGER_MAX_ROWS = 16
+_LEDGER_MAX_COUNT = 9999
+
+
+def _ledger_count(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return min(value, _LEDGER_MAX_COUNT)
+    return None
+
+
+def _ledger_rows(value: object, first: tuple[str, frozenset], second: tuple[str, frozenset]):
+    """`[{<first>, <second>, count}]` 逐行重投影：两个字段都在闭集里、count 是非负整数才留；不认识的行整行丢。"""
+    rows = []
+    for row in value if isinstance(value, list) else []:
+        if not isinstance(row, dict):
+            continue
+        a, b, n = row.get(first[0]), row.get(second[0]), _ledger_count(row.get("count"))
+        if a in first[1] and b in second[1] and n is not None:
+            rows.append({first[0]: a, second[0]: b, "count": n})
+        if len(rows) >= _LEDGER_MAX_ROWS:
+            break
+    return rows
+
+
+def _selftest_fidelity(value: object) -> dict | None:
+    if not isinstance(value, dict) or value.get("level") not in _LEDGER_LEVELS:
+        return None
+    op_kind = (("op", _LEDGER_OPS), ("kind", _LEDGER_KINDS))
+    return {
+        "level": value["level"],
+        "blocked": _ledger_rows(value.get("blocked"), *op_kind),
+        "intercepted": _ledger_rows(value.get("intercepted"), *op_kind),
+        "signals": _ledger_rows(
+            value.get("signals"), ("kind", _LEDGER_KINDS), ("via", _LEDGER_VIAS)
+        ),
+    }
+
+
 def _selftest(value: object) -> dict | None:
     """worker 自检没过的闭集形状（TVD-JXMR）。读回的本地记录同样逐字段重投影，不认识的一律丢。"""
     if not isinstance(value, dict) or value.get("stage") not in _SELFTEST_STAGES:
@@ -192,6 +249,11 @@ def _selftest(value: object) -> dict | None:
         "engine_frame": frame
         if isinstance(frame, str) and _ENGINE_FRAME.fullmatch(frame)
         else None,
+        # 守卫拦下了哪类操作、账本三档摘要（schema 18，TVD-FTH9）：只有闭集枚举与计数，没有路径
+        "operations": _ledger_rows(
+            value.get("operations"), ("op", _LEDGER_OPS), ("kind", _LEDGER_KINDS)
+        ),
+        "fidelity": _selftest_fidelity(value.get("fidelity")),
     }
 
 
