@@ -776,14 +776,20 @@ def _lighten(hexcolor: object) -> str:
 
 
 def _core_object(g: _G, size: list, style: dict, path: list, out: Prepared, loc: str):
-    """疏水核心：一条沿膜中线、宽 = 两片尾端之间的极浅暖色底带，作为**单独一个对象**随膜落地（膜的组里、叠在磷脂下面）；
-    蛋白让位处同样断开（窗口 = 跨膜部分总宽）。没有描边。返回 `(对象, glyph 元数据)`；回包不带中线 / 半宽（旧组件）= None。"""
+    """疏水核心：一条沿膜中线、铺满上下两排头基圆心之间的极浅暖色底带，作为**单独一个对象**随膜落地（膜的组里、叠在磷脂下面）；
+    两端收在最外侧磷脂头的圆心处，蛋白让位处同样断开、贴杆（窗口 = 跨膜部分总宽）。没有描边。返回 `(对象, glyph 元数据)`；回包不带中线（旧组件）= None。"""
     info = (g.reply or {}).get("info") or {}
-    samples, hw, nat = (
-        info.get("midline"),
-        info.get("core_half_width_mm"),
-        info.get("natural_size_mm"),
-    )
+    samples, nat = info.get("midline"), info.get("natural_size_mm")
+    # 半宽 = 头部圆心离中线的距离 = 层厚倍数 × 头半径 / 2（膜的参数）；没有这两个参数（别的组件 / 旧清单）就退回回包里的 `core_half_width_mm`
+    p = g.params
+    if (
+        _finite(p.get("thickness_r"), p.get("head_radius_mm"))
+        and not isinstance(p.get("thickness_r"), bool)
+        and not isinstance(p.get("head_radius_mm"), bool)
+    ):
+        hw = p["thickness_r"] * p["head_radius_mm"] / 2
+    else:
+        hw = info.get("core_half_width_mm")
     if not samples or not hw or not nat:
         return None
     sx, sy = size[0] / nat[0], size[1] / nat[1]
@@ -791,17 +797,18 @@ def _core_object(g: _G, size: list, style: dict, path: list, out: Prepared, loc:
     total = acc[-1]
     if total <= 0:
         return None
+    inset = info.get("pitch_mm", 0.0) / 2  # 两端收在最外侧磷脂头的圆心处（约半个脂质间距）
     cuts = sorted(
         (it["at"] * total - it["width_mm"] / 2, it["at"] * total + it["width_mm"] / 2)
         for it in g.params.get("inserts") or []
     )
-    segs, cur = [], 0.0
+    segs, cur = [], inset
     for lo, hi in cuts:
-        if lo - cur > 0.05:
-            segs.append((cur, min(lo, total)))
+        if min(lo, total - inset) - cur > 0.05:
+            segs.append((cur, min(lo, total - inset)))
         cur = max(cur, hi)
-    if total - cur > 0.05:
-        segs.append((cur, total))
+    if total - inset - cur > 0.05:
+        segs.append((cur, total - inset))
     subs = []
     for a, b in segs:
         arcs = [a, *[s for s in acc if a < s < b], b]

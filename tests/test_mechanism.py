@@ -1166,6 +1166,20 @@ def _real_ask(log=None, curv=0.0, length=40.0):
                                 "max": 0.35,
                                 "default": 0.0,
                             },
+                            {
+                                "name": "thickness_r",
+                                "type": "number",
+                                "min": 4.0,
+                                "max": 6.0,
+                                "default": 6.0,
+                            },
+                            {
+                                "name": "head_radius_mm",
+                                "type": "number",
+                                "min": 0.4,
+                                "max": 1.5,
+                                "default": 0.8,
+                            },
                         ],
                     },
                     {
@@ -1310,10 +1324,15 @@ def test_a_membrane_lands_with_a_separate_hydrophobic_core_band_under_the_lipids
         prep.glyph_meta["mem__core"]["host_made"] is True
         and prep.glyph_meta["mem__core"]["array"] is True
     )
-    # 宽 = 两片尾端之间（2 × 0.48 mm）：每段多边形的上下边相距 0.96 mm
+    # 宽 = 上下两排头基圆心之间（层厚 6 r × 头半径 0.8 = 4.8 mm）：每段多边形的上下边相距 4.8 mm，衬在尾巴后面
     seg = core["subpaths"][0]["nodes"]
     half = len(seg) // 2
-    assert abs(abs(seg[half - 1]["p"][1] - seg[half]["p"][1]) * core["h"] - 0.96) < 1e-3
+    assert abs(abs(seg[half - 1]["p"][1] - seg[half]["p"][1]) * core["h"] - 4.8) < 1e-3
+    # 两端收在最外侧磷脂头的圆心处（半个脂质间距 1.7 / 2 = 0.85 mm 内），不探出膜端
+    xs = [n["p"][0] * core["w"] for sp in core["subpaths"] for n in sp["nodes"]]
+    assert min(xs) == pytest.approx(0.85, abs=1e-3) and max(xs) == pytest.approx(
+        50.0 - 0.85, abs=1e-3
+    )
     # 让位处同样断开：三个蛋白 = 四段
     assert len(core["subpaths"]) == 4
     objs = [{**o, "glyph": prep.glyph_meta[o["id"]]} for o in prep.objects]
@@ -1337,13 +1356,13 @@ def test_core_band_is_one_unbroken_segment_without_embedded_proteins_and_can_be_
         )
 
 
-def test_old_components_without_the_core_info_just_get_no_band(lic):
+def test_old_components_without_a_midline_just_get_no_band(lic):
     base = _real_ask()
 
     def old(cmd, payload):
         r = base(cmd, payload)
         if cmd == "mechanism.glyph" and payload["kind"] == "membrane":
-            r["info"].pop("core_half_width_mm")
+            r["info"].pop("midline")
         return r
 
     prep = mechanism.prepare(
