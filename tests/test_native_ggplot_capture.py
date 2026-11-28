@@ -3946,6 +3946,24 @@ stopifnot(isTRUE(all.equal(stepped_log$ticks[[1L]], 1 - log10(seq(2, 10, by = 2)
           isTRUE(all.equal(stepped_log$ticks[[2L]], expected_log)),
           isTRUE(all.equal(stepped_log$grid, expected_log)))
 
+# Separately computed decimal intervals can reach the same physical mark.
+overlap_plot <- base +
+  ggplot2::geom_point(data = data.frame(x = c(.12, 1.02), y = c(4, 6))) +
+  ggplot2::coord_cartesian(xlim = c(.12, 1.02), expand = FALSE)
+overlap <- adapter$capture_ggplot(overlap_plot, frame)$state
+intervals <- stats::setNames(list(list(major_mode = "step", major_step = .3,
+    minor_mode = "step", minor_step = .1, minor_visible = TRUE,
+    format = "%.2f", minor_format = "%.2f")), gid)
+deduped <- positions(overlap, intervals)
+expected_minor <- (c(.2, .4, .5, .7, .8, 1) - .12) / .9
+stopifnot(isTRUE(all.equal(deduped$ticks[[2L]], expected_minor)),
+          isTRUE(all.equal(deduped$grid, expected_minor)),
+          !anyDuplicated(deduped$labels))
+intervals[[gid]]$minor_visible <- FALSE
+hidden <- positions(overlap, intervals)
+stopifnot(!axis_ink(adapter$render_ggplot(overlap, intervals), "#3366AA"),
+          isTRUE(all.equal(hidden$grid, expected_minor)))
+
 # The four shared stroke controls use physical points, including native
 # inward ticks. Compare edited marks with an independently authored R theme.
 stroke_plot <- base + ggplot2::theme(axis.ticks.length.x.bottom = grid::unit(-4, "bigpts"),

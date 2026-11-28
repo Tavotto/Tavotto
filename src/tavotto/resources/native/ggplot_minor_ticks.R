@@ -59,7 +59,13 @@ ggplot_edit_minor_ticks <- function(panel, params, spacing, edit, coord) {
     limits <- sort(trans$inverse(view$continuous_range))
     values <- ggplot_uniform_breaks(limits, step, "minor")
     breaks <- trans$transform(ggplot_usable_fixed_ticks(values, trans$name))
-    panel[[axis]] <- view <- ggplot_clone(view, minor_breaks = breaks)
+    # Match Matplotlib's tolerance in the projected view. The grid and guide
+    # both use this list, even when the minor tick marks are hidden.
+    tolerance <- diff(range(view$continuous_range)) * 1e-5
+    overlaps <- vapply(breaks, function(value) {
+      any(abs(major$.value - value) <= tolerance, na.rm = TRUE)
+    }, logical(1L))
+    panel[[axis]] <- view <- ggplot_clone(view, minor_breaks = breaks[!overlaps])
   }
   params$minor.ticks <- visible
   params$key <- major
