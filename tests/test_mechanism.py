@@ -1601,3 +1601,18 @@ def test_local_stretch_near_45_degrees_uses_the_tangent_at_the_insertion_point(l
     assert ins["width_mm"] * k_local == pytest.approx(tm_w, rel=0.03)
     k_avg = _m.sqrt((sx) ** 2 + (sy) ** 2) / 1.0  # 粗略的平均量级，仅用来说明两者不同
     assert abs(ins["width_mm"] * k_avg - tm_w) > 0.05 * tm_w
+
+
+def test_the_naming_table_has_a_word_for_every_first_batch_kind_in_both_languages():
+    """第一批配方图元（pro 仓库 `recipes_batch1.py`）的显示名：缺了就退回 kind 本身（英文字母的名字出现在图层树里）。"""
+    table = json.loads(
+        (
+            Path(__file__).resolve().parent.parent / "src/tavotto/profiles/mechanism_names.json"
+        ).read_text("utf-8")
+    )["glyphs"]
+    kinds = (
+        "gpcr ion_channel transporter receptor_single integrin ligand kinase g_protein antibody enzyme phosphate "
+        "dna_helix mrna nucleus mitochondrion vesicle er cell membrane receptor_rtk"
+    ).split()
+    for k in kinds:
+        assert table[k]["zh"] and table[k]["en"], k

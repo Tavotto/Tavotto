@@ -24,7 +24,17 @@
     "dna_helix": { "zh": "DNA 双链", "en": "DNA duplex" },
     "filament": { "zh": "细胞骨架丝", "en": "Cytoskeletal filament" },
     "antibody": { "zh": "抗体", "en": "Antibody" },
-    "protein_blob": { "zh": "蛋白团块", "en": "Protein" }
+    "protein_blob": { "zh": "蛋白团块", "en": "Protein" },
+    "transporter": { "zh": "转运体", "en": "Transporter" },
+    "receptor_single": { "zh": "单次跨膜受体", "en": "Single-pass receptor" },
+    "integrin": { "zh": "整合素", "en": "Integrin" },
+    "ligand": { "zh": "配体", "en": "Ligand" },
+    "kinase": { "zh": "激酶", "en": "Kinase" },
+    "g_protein": { "zh": "G 蛋白", "en": "G protein" },
+    "enzyme": { "zh": "酶", "en": "Enzyme" },
+    "phosphate": { "zh": "磷酸基团", "en": "Phosphate group" },
+    "mrna": { "zh": "mRNA", "en": "mRNA" },
+    "cell": { "zh": "细胞", "en": "Cell" }
   },
   "locales": ["zh", "en"],
   "separator": " · "
