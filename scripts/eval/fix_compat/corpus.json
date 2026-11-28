@@ -163,5 +163,114 @@
    "code": "script_needs_input",
    "tool": "write_launcher"
   }
+ },
+ "env-selftest-blocked": {
+  "family": "environment",
+  "title": "装包成功但受管环境自检被写入守卫拦了自己的输出（TVD-FTH9 形；dependency_worker_selftest_failed / safe_file_operation_blocked）",
+  "script": "fig.py",
+  "files": {
+   "fig.py": "import csv\nimport tavfx_ok\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\nwith open(\"counts.csv\") as f:\n    rows = list(csv.DictReader(f))\nfig, ax = plt.subplots(figsize=(4, 3))\nax.bar([r[\"group\"] for r in rows], [float(r[\"n\"]) for r in rows])\nax.set_ylabel(\"count\")\n",
+   "counts.csv": "group,n\nA,3\nB,5\nC,2\n"
+  },
+  "fault": {
+   "name": "selftest_blocked",
+   "dev_fault": "selftest_blocked",
+   "wheels": [
+    {
+     "dist": "tavfx-ok",
+     "import": "tavfx_ok",
+     "version": "1.0",
+     "tag": "py3-none-any",
+     "init": "VALUE = 1\n"
+    }
+   ],
+   "expect": {
+    "stage": "install",
+    "code": "dependency_worker_selftest_failed"
+   },
+   "product_defect": true
+  }
+ },
+ "env-wheel-python-mismatch": {
+  "family": "environment",
+  "title": "包只有别的 Python 小版本的 wheel，受管环境装不上（phreeqpython 1.6.2 只有 cp312 形；只装 wheel）",
+  "script": "fig.py",
+  "files": {
+   "fig.py": "import csv\nimport tavfx_oldpy\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\nwith open(\"counts.csv\") as f:\n    rows = list(csv.DictReader(f))\nfig, ax = plt.subplots(figsize=(4, 3))\nax.bar([r[\"group\"] for r in rows], [float(r[\"n\"]) for r in rows])\nax.set_ylabel(\"count\")\n",
+   "counts.csv": "group,n\nA,3\nB,5\nC,2\n"
+  },
+  "fault": {
+   "name": "wheel_python_mismatch",
+   "wheels": [
+    {
+     "dist": "tavfx-oldpy",
+     "import": "tavfx_oldpy",
+     "version": "1.6.2",
+     "tag": "other_cp",
+     "init": "VALUE = 1\n"
+    }
+   ],
+   "expect": {
+    "stage": "install",
+    "code": "dependency_not_found"
+   }
+  }
+ },
+ "env-import-dll-fail": {
+  "family": "environment",
+  "title": "包装得上，import 时抛 ImportError(\"DLL load failed\")；旧版本 1.9 是好的",
+  "script": "fig.py",
+  "files": {
+   "fig.py": "import csv\nimport tavfx_dll\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\nwith open(\"counts.csv\") as f:\n    rows = list(csv.DictReader(f))\nfig, ax = plt.subplots(figsize=(4, 3))\nax.bar([r[\"group\"] for r in rows], [float(r[\"n\"]) for r in rows])\nax.set_ylabel(\"count\")\n",
+   "counts.csv": "group,n\nA,3\nB,5\nC,2\n"
+  },
+  "fault": {
+   "name": "import_dll_fail",
+   "wheels": [
+    {
+     "dist": "tavfx-dll",
+     "import": "tavfx_dll",
+     "version": "2.0",
+     "tag": "py3-none-any",
+     "init": "raise ImportError(\"DLL load failed while importing _tavfx_native: The specified module could not be found.\")\n"
+    },
+    {
+     "dist": "tavfx-dll",
+     "import": "tavfx_dll",
+     "version": "1.9",
+     "tag": "py3-none-any",
+     "init": "VALUE = 1\n"
+    }
+   ],
+   "expect": {
+    "stage": "install",
+    "code": "dependency_import_still_failed"
+   }
+  }
+ },
+ "env-permission-denied": {
+  "family": "environment",
+  "title": "包 import 时往一个不可写的缓存目录建文件夹，PermissionError（HZ0A 形；模拟：不依赖本机真改权限，设 TAVFX_CACHE 指到可写目录即好）",
+  "script": "fig.py",
+  "files": {
+   "fig.py": "import csv\nimport tavfx_perm\nimport matplotlib\nmatplotlib.use(\"Agg\")\nimport matplotlib.pyplot as plt\n\nwith open(\"counts.csv\") as f:\n    rows = list(csv.DictReader(f))\nfig, ax = plt.subplots(figsize=(4, 3))\nax.bar([r[\"group\"] for r in rows], [float(r[\"n\"]) for r in rows])\nax.set_ylabel(\"count\")\n",
+   "counts.csv": "group,n\nA,3\nB,5\nC,2\n"
+  },
+  "fault": {
+   "name": "permission_denied",
+   "wheels": [
+    {
+     "dist": "tavfx-perm",
+     "import": "tavfx_perm",
+     "version": "1.0",
+     "tag": "py3-none-any",
+     "init": "import os\n\n_cache = os.environ.get(\"TAVFX_CACHE\")\nif not _cache:\n    raise PermissionError(13, \"Permission denied\", \"/tavfx-locked/cache\")\nos.makedirs(_cache, exist_ok=True)\n"
+    }
+   ],
+   "expect": {
+    "stage": "install",
+    "code": "dependency_import_still_failed"
+   }
+  }
  }
 }
