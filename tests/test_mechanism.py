@@ -525,13 +525,25 @@ def test_group_tree_and_naming_rules():
     )
 
 
-def test_path_quality_is_listed_unknown_until_it_is_wired():
-    """6.A 的 `engine/pathquality` 没合入时 = `pathquality_missing`；合入（本分支合并了 main）但还没逐个路径接上时 = `not_wired`。两种都如实列 unknown。"""
-    out = mechcheck.check([_path("p", [RING_OUT])], require_names=False)
-    assert [u["detail"]["reason"] for u in out["unknown"]] in (
-        ["pathquality_missing"],
-        ["not_wired"],
-    )
+def test_path_quality_is_wired_to_the_free_path_checker():
+    """自由路径（不带 `glyph`）过 6.A 的 `pathquality`：干净的不报，重合锚点 fail、锚点爆炸 fail。"""
+    clean = mechcheck.check([_path("p", [RING_OUT])], require_names=False)
+    assert not [f for f in clean["failed"] if f["check"] == "path_quality"] and not clean["unknown"]
+    dup = {
+        "closed": True,
+        "nodes": [*RING_OUT["nodes"], dict(RING_OUT["nodes"][0])],
+    }  # 最后一个锚点是第一个的复本
+    bad = mechcheck.check([_path("q", [dup])], require_names=False)
+    pq = [f for f in bad["failed"] if f["check"] == "path_quality"]
+    assert pq and pq[0]["item"] == "q"  # 点名对象
+    assert pq[0]["detail"]["issues"] and "simplify" in pq[0]["detail"]["next"]
+    # 带 glyph 的图元路径不核（由参数重生成）
+    g = {"kind": "k", "version": 1, "params": {}, "hash": mechcheck.glyph_hash([dup])}
+    assert not [
+        f
+        for f in mechcheck.check([_path("r", [dup], glyph=g)], require_names=False)["failed"]
+        if f["check"] == "path_quality"
+    ]
 
 
 def test_a_blob_that_looks_like_a_rect_is_refused_at_add_time(licensed):
@@ -953,3 +965,128 @@ def test_membrane_inserts_param_is_validated(lic):
 def test_reply_info_is_a_closed_set(info):
     with pytest.raises(mechanism.MechanismError):
         mechanism._check_info(info, "x")  # noqa: SLF001
+
+
+# ---------------------------------------------------------------- Agent 现写的配方（随条目发，替代 kind）
+AGENT_RECIPE = {
+    "recipe_format": 1,
+    "kind": "bulb",
+    "versions": [1],
+    "params": [
+        {"name": "radius", "type": "number", "min": 1.0, "max": 4.0, "default": 2.0},
+        {"name": "flag", "type": "bool", "default": True},
+    ],
+    "steps": [{"let": {"r": "params.radius"}}],
+    "emit": ["a"],
+}
+
+
+def _recipe_ask(log, bad=None):
+    tri = [
+        {"p": [0.1, 0.0]},
+        {"p": [0.9, 0.1]},
+        {"p": [1.0, 0.6]},
+        {"p": [0.5, 1.0]},
+        {"p": [0.0, 0.5]},
+    ]
+
+    def ask(cmd, payload):
+        log.append((cmd, copy.deepcopy(payload)))
+        if cmd == "mechanism.catalog":
+            return {"kinds": []}
+        if bad:
+            raise mechanism.prohost.ProUnavailable("bad_request", bad)
+        return {
+            "version": payload["version"],
+            "subpaths": [{"closed": True, "nodes": tri}],
+            "ports": {},
+            "info": {"natural_size_mm": [5, 6]},
+        }
+
+    return ask
+
+
+def _rit(**kw):
+    return {
+        "kind": "glyph",
+        "name": "bulb1",
+        "recipe": copy.deepcopy(AGENT_RECIPE),
+        "at_mm": [1, 2],
+        **kw,
+    }
+
+
+def test_a_recipe_item_sends_the_recipe_instead_of_a_kind_and_records_it_with_a_hash(lic):
+    log = []
+    prep = mechanism.prepare([_rit(params={"radius": 3.0})], ask=_recipe_ask(log))
+    call = next(p for c, p in log if c == "mechanism.glyph")
+    assert "kind" not in call and call["recipe"] == AGENT_RECIPE
+    assert (
+        call["params"] == {"radius": 3.0, "flag": True} and call["version"] == 1
+    )  # 参数按配方自己的规格补默认值
+    meta = prep.glyph_meta["bulb1"]
+    assert meta["recipe"] == AGENT_RECIPE and meta["recipe_format"] == 1 and meta["kind"] == "bulb"
+    assert (
+        meta["recipe_hash"] == mechcheck.recipe_hash(AGENT_RECIPE)
+        and len(meta["recipe_hash"]) == 16
+    )
+    (obj,) = prep.objects
+    assert (obj["w"], obj["h"]) == (5, 6)  # 外框取回包里的自然尺寸
+    # 元数据过可编辑性核对；配方全文被改了（hash 对不上）= 不过
+    ok = {**obj, "glyph": meta}
+    assert not mechcheck.check([ok], catalog={}, require_names=False)["failed"]
+    tampered = {**ok, "glyph": {**meta, "recipe": {**AGENT_RECIPE, "steps": []}}}
+    assert ("glyph_meta", "recipe_hash_mismatch") in {
+        (f["check"], f["detail"]["reason"])
+        for f in mechcheck.check([tampered], catalog={}, require_names=False)["failed"]
+    }
+
+
+def test_recipe_hash_covers_the_whole_text_and_ignores_key_order():
+    a = mechcheck.recipe_hash(AGENT_RECIPE)
+    assert a == mechcheck.recipe_hash(dict(reversed(list(AGENT_RECIPE.items()))))
+    assert a != mechcheck.recipe_hash({**AGENT_RECIPE, "emit": ["b"]})
+
+
+def test_bad_recipe_items_are_refused_by_the_host_before_asking(lic):
+    big = {**AGENT_RECIPE, "style_hint": {"zh": "x" * 17000}}
+    for item in (
+        {**_rit(), "glyph": "membrane"},  # 二选一
+        {k: v for k, v in _rit().items() if k != "recipe"},  # 两个都没有
+        _rit(recipe={**AGENT_RECIPE, "recipe_format": 2}),
+        _rit(recipe={k: v for k, v in AGENT_RECIPE.items() if k != "recipe_format"}),
+        _rit(recipe=big),
+        _rit(recipe="x"),
+        _rit(recipe={**AGENT_RECIPE, "versions": []}),
+        _rit(recipe={**AGENT_RECIPE, "params": "x"}),
+        _rit(params={"radius": 9}),  # 超出配方自己规格里的范围
+        _rit(params={"nope": 1}),
+        _rit(version=2),
+    ):
+        log = []
+        with pytest.raises(mechanism.MechanismError) as e:
+            mechanism.prepare([item], ask=_recipe_ask(log))
+        assert e.value.code in ("bad_item", "unsupported_version"), item
+        assert not [c for c, _p in log if c == "mechanism.glyph"]  # 没问组件
+
+
+def test_a_component_bad_request_becomes_a_named_bad_item_not_a_missing_component(lic):
+    with pytest.raises(mechanism.MechanismError) as e:
+        mechanism.prepare([_rit()], ask=_recipe_ask([], bad="constraint ecd_icd_height_ratio"))
+    assert (
+        e.value.code == "bad_item"
+        and "bulb1" in e.value.field
+        and "constraint ecd_icd_height_ratio" in e.value.field
+    )
+
+    # 内置图元的参数 / 约束不合格也一样点名（`membrane` 的请求被组件回了 bad_request）
+    base = _embed_ask([])
+
+    def refuse(cmd, payload):
+        if cmd == "mechanism.glyph":
+            raise mechanism.prohost.ProUnavailable("bad_request", "param curvature")
+        return base(cmd, payload)
+
+    with pytest.raises(mechanism.MechanismError) as e2:
+        mechanism.prepare([MEM], ask=refuse)
+    assert e2.value.code == "bad_item" and "mem: param curvature" == e2.value.field

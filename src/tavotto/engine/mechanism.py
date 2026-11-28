@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 from dataclasses import dataclass, field
 from typing import Callable
@@ -40,6 +41,7 @@ LEARN_MORE = {"zh": "了解高级版", "en": "Learn about Premium"}
 _FRAME_KEYS = {"kind", "name", "title", "at_mm", "size_mm", "fill"}
 _GLYPH_KEYS = {
     "embed",
+    "recipe",
     "kind",
     "name",
     "glyph",
@@ -60,7 +62,8 @@ ITEMS_DOC = (
     "机理图条目（示意图框 frame 免费；glyph / graph 是高级版 `mechanism-diagram`，没有授权时含它们的整批回 pro_required、一条也不写）："
     "frame {name, title?, at_mm: [x, y], size_mm: [w, h], fill?}（示意图框：一个带名字的组 + 一个外框形状；一个 add 最多一个）；"
     "glyph {name, glyph: 图元种类, at_mm, size_mm?, params?, version?, identity?, frame?, block?, style?: {color, strokePt, fill}}"
-    "（语义图元，落成一个可编辑路径；glyph 字段由引擎写、不收；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
+    "（语义图元，落成一个可编辑路径；glyph 字段由引擎写、不收；也可不写 glyph 而写 recipe: {…配方 JSON，recipe_format: 1…}（现写的图元配方，不含代码，"
+    "由组件校验并执行，约束不满足回 bad_item 并点名）；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
     "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）：引擎把跨膜段中点对齐膜中线、"
     "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
@@ -123,12 +126,16 @@ def _pair(v: object, positive: bool = False) -> list[float] | None:
 
 
 # ------------------------------------------------------------------ 组件调用
-def _call(ask: Ask | None, cmd: str, payload: dict) -> dict:
+def _call(ask: Ask | None, cmd: str, payload: dict, name: str | None = None) -> dict:
     try:
         if ask is not None:
             return ask(cmd, payload)
         return prohost.call(cmd, payload, feature=FEATURE)
     except prohost.ProUnavailable as exc:
+        if exc.code == "bad_request" and name is not None:
+            # 组件认定这个条目的参数 / 配方不合格（越界、约束不满足、配方写错）：点名条目与原话（组件的话只有「constraint 名 / param 名」这类定位信息）
+            detail = str(exc).split(": ", 1)[1][:120] if ": " in str(exc) else ""
+            raise MechanismError("bad_item", f"{name}: {detail}" if detail else name) from None
         # 旧组件不认这条命令：折成「需要更新高级版组件」（ADR 0199 §十二 同口径），不改文档
         raise MechanismError(
             "pro_outdated" if exc.code == "unsupported" else "unavailable"
@@ -452,16 +459,71 @@ class _G:
     embed: dict | None
     reply: dict | None = None
     pose: dict | None = None
+    recipe: dict | None = None  # Agent 现写的配方（随条目发，替代 kind）
+
+
+MAX_RECIPE_BYTES = 16384
+RECIPE_FORMAT = 1
+
+
+def _recipe_hash(recipe: dict) -> str:
+    return mechcheck.recipe_hash(recipe)
+
+
+def _recipe_spec(recipe: object, name: str) -> tuple[str, dict]:
+    """Agent 现写的配方：宿主只做浅校验（形状 / 大小 / 格式版本 / 参数规格长什么样），表达式与部件由组件解释并校验；返回 `(显示用的 kind, 规格)`。"""
+    if (
+        not isinstance(recipe, dict)
+        or recipe.get("recipe_format") != RECIPE_FORMAT
+        or isinstance(recipe.get("recipe_format"), bool)
+    ):
+        raise MechanismError("bad_item", name)
+    try:
+        if (
+            len(json.dumps(recipe, ensure_ascii=False, separators=(",", ":")).encode())
+            > MAX_RECIPE_BYTES
+        ):
+            raise MechanismError("bad_item", name)
+    except (TypeError, ValueError):
+        raise MechanismError("bad_item", name) from None
+    versions = recipe.get("versions", [1])
+    if not (
+        isinstance(versions, list)
+        and versions
+        and all(isinstance(v, int) and not isinstance(v, bool) and v >= 1 for v in versions)
+    ):
+        raise MechanismError("bad_item", name)
+    plist = recipe.get("params")
+    if not isinstance(plist, list) or any(
+        not isinstance(p, dict) or not isinstance(p.get("name"), str) for p in plist
+    ):
+        raise MechanismError("bad_item", name)
+    kind = (
+        recipe.get("kind") if isinstance(recipe.get("kind"), str) and recipe["kind"] else "custom"
+    )
+    spec = {
+        "versions": sorted(set(versions)),
+        "latest": max(versions),
+        "params": {p["name"]: p for p in plist},
+        "default_size_mm": [10.0, 10.0],  # 组件不看它（几何与它无关）；对象的外框取回包里的自然尺寸
+    }
+    return kind[:40], spec
 
 
 def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: str | None) -> _G:
     name = it["name"]
     if set(it) - _GLYPH_KEYS:
         raise MechanismError("bad_item", name)
-    kind = it.get("glyph")
-    spec = (out.catalog or {}).get(kind) if isinstance(kind, str) else None
-    if spec is None:
-        raise MechanismError("bad_item", name)
+    recipe = it.get("recipe")
+    if (it.get("glyph") is None) == (recipe is None):
+        raise MechanismError("bad_item", name)  # 内置图元（glyph）与现写配方（recipe）二选一
+    if recipe is not None:
+        kind, spec = _recipe_spec(recipe, name)
+    else:
+        kind = it.get("glyph")
+        spec = (out.catalog or {}).get(kind) if isinstance(kind, str) else None
+        if spec is None:
+            raise MechanismError("bad_item", name)
     embed = it.get("embed")
     if embed is not None:
         if (
@@ -504,22 +566,24 @@ def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: s
         raise MechanismError("bad_item", name)
     return _G(
         it, name, kind, spec, version, params, set(it.get("params") or {}), at, size, style,
-        frame, block.strip() if block else None, identity, embed,
+        frame, block.strip() if block else None, identity, embed, recipe=recipe,
     )  # fmt: skip
 
 
 def _request(g: _G, ask: Ask | None) -> dict:
     """问组件要几何（sidecar 只收数字与结构：不发名字、身份、块名）。尺寸只给（缺省取清单里的缺省尺寸，几何本身与它无关）。"""
+    ident = {"recipe": g.recipe} if g.recipe is not None else {"kind": g.kind}
     reply = _check_reply(
         _call(
             ask,
             CMD_GLYPH,
             {
-                "kind": g.kind,
+                **ident,
                 "version": g.version,
                 "params": g.params,
                 "size_mm": g.size or g.spec["default_size_mm"],
             },
+            g.name,
         ),
         g.name,
     )
@@ -698,6 +762,11 @@ def _emit(g: _G, out: Prepared, loc: str) -> None:
         "version": g.version,
         "hash": mechcheck.glyph_hash(reply["subpaths"]),
     }
+    if g.recipe is not None:
+        # 配方全文进元数据：读时比 `recipe_hash`（覆盖配方全文），`hash` 仍是生成几何的摘要（手改形状 = 脱钩）
+        meta["recipe"] = g.recipe
+        meta["recipe_format"] = RECIPE_FORMAT
+        meta["recipe_hash"] = _recipe_hash(g.recipe)
     if reply["array"]:
         meta["array"] = True
     out.glyph_meta[g.name] = meta

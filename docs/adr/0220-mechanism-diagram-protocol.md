@@ -78,6 +78,12 @@ Agent / 改图助手 ─ add 条目 (kind: frame | glyph | graph) ─▶ 开源 
 - **命名端口**：图元回若干端口（`{名: [rx, ry]}`，如受体的「配体结合位点」），用于箭头贴端口。第一版只保证**创建时对齐**；重生成后箭头是否跟着走依赖 0208 §六 的持久化锚点，
   **重生成后可能需要点一次「重新对准」**（维护者拍板接受该范围）。
 - **脂质双层**：每个叶片一个**阵列对象**（`glyph.array: true`，对 `one_object` 核对放行），不把几十个脂质拆成几十个对象；备选是极简膜（两条线 + 圆点，对象数 3，无例外）。
+- **图元 = 配方（维护者 2026-11-28 定，实现在 pro 仓库 `tavotto_pro/recipe.py`）**：图元几何由**配方**描述——纯 JSON：`params`（参数规格）、`constraints`（参数约束，不满足 = `bad_request` 并点名哪一条）、
+  `steps`（`let` 派生量 / 带 `id` 的部件调用）、`emit` / `mirror` / `result`、`ports`、`info`；部件库是闭集（`chain`、`stadium`、`teardrop`、`lipid_array`〔暂保持原生部件〕），
+  几何查询函数也是闭集（`anchor` / `curve_point` / `xs` / `ys`），每个部件只提供声明过的锚点。表达式不用 `eval`：`ast` 解析后整棵树静态白名单核一遍，限长 / 节点数 / 深度 / 数值范围。
+  **两条路并存**：内置图元按 `kind` 在 sidecar 里登记取用；Agent 现写的配方走条目的 `recipe` 字段（替代 `glyph`，宿主只做浅校验：形状 / ≤ 16 KB / `recipe_format`，组件解释并校验），
+  配方预览沿用修改方案卡的预览（失败即拦，不另做缩略图沙盒）。`glyph` 元数据多 `recipe`（全文）、`recipe_format`（配方格式版本，与图元自己的 `version` 分开）、`recipe_hash`（覆盖配方全文，读时比对）；
+  `hash` 仍是生成几何的摘要（手改形状 = 脱钩）。
 - **嵌入膜（6.C 续，维护者 2026-11-28：组合要有正常的排列）**：跨膜蛋白条目带 `embed: {membrane: <同批膜条目 name>, at?: 0–1}`，位置由宿主算，不许再给 `at_mm`。
   回包可带只有数字的 `info`（闭集：`natural_size_mm`、`thickness_mm`、`pitch_mm`、`tm_width_mm`、`tm_length_mm`、`tm_mid_mm`〔框内毫米、y 向下〕、`midline`〔≤ 65 个 `[x, y, nx, ny]`，朝外单位法线〕）。
   宿主分三步：① 先问膜（不带让位），读 `thickness_mm` / `midline` / `pitch_mm`；② 再问蛋白，其 `membrane_mm`（跨膜段长）取膜厚并夹进规格范围；
