@@ -10,6 +10,7 @@ from pathlib import Path
 from ..agent_runner.wires import ToolResult
 from . import hints
 from .base import FixContext, err, home_relative, ok, shadow_note
+from .knownissue import known_issue_of, known_issue_text  # noqa: F401 — 公开名留在 runreport
 
 REPORT_MAX_CHARS = 8000
 
@@ -243,6 +244,10 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     ai_edit = _ai_edit_fact(report.get("ai_edit"))
     if ai_edit:
         picked["recent_ai_edit"] = ai_edit
+    known = known_issue_of(ctx, hints.report_error(report)[0])
+    if known is not None:
+        # 已知问题放最前（与 hint 同理：报告被截断时它不跟着丢）
+        picked = {"known_issue": known, **picked}
     if isinstance(error, dict):
         picked["error"] = {
             k: _precis(error[k]) for k in ("code", "message", "module", "params") if error.get(k)
