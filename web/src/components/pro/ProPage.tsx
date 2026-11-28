@@ -27,7 +27,8 @@ const NEAR_END = 0.8
 /**
  * Pro 页（维护者 2026-11-24）：一页三块。
  *   1. 创始会员的铭牌（只有创始会员有）；
- *   2. 通行证：第一行是原来设置里那一行（输入激活码 / 购买 / 续费 / 解绑 / 找回），下面补类型、剩余天数、设备名额
+ *   2. 通行证：第一行是原来设置里那一行（输入激活码 / 购买 / 续费 / 解绑 / 找回；还没激活时打开这页就直接展开激活码格子，
+ *      左轨 Pro 与设置里的「Pro 与激活」都落到这里，维护者 2026-11-28），下面补类型、剩余天数、设备名额
  *      （服务端没给就不显示这一行，不臆造）；
  *   3. 用量：内置 AI 一根细进度条（只显示比例，不显示 token 与钱），外部审阅一行字。
  * 未激活时用量两行都写「激活后可用」、不画空进度条；过期写「已到期」。入口没开（`PRODUCTION_LIVE = False`）时整页不存在。
@@ -91,6 +92,7 @@ export function ProPage() {
         title={state === 'none' ? undefined : ps('pass')}
         label={tierName ?? (state === 'none' ? ps('pass') : undefined)}
         renewable={active}
+        autoEnter
         extra={rows.length ? rows : undefined}
       />
       {state === 'none' || state === 'revoked' || state === 'lapsed' ? (

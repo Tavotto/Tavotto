@@ -11804,6 +11804,11 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     hint = engine_pool.workdir_hint_of_build(worker)
     if hint is not None:
         out["workdir_hint"] = hint
+    # 脚本写已有文件被系统拒绝（别的程序占着 / 只读），这一笔改写进了本次运行的覆盖层：图照常出，界面一枚胶囊说清楚
+    # 这次没写进去（项目相对路径，只给本机界面；没有就不加这个字段）
+    locked = engine_pool.locked_writes_of_build(worker)
+    if locked:
+        out["locked_writes"] = locked
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
         out["svg"] = resp["svg"]
@@ -14828,6 +14833,13 @@ def _write_source_files(
         if diffs:
             _log_replay_divergence(stem, diffs)
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
+        # 与导出同一道生产者边界：matplotlib 把 CFF 字体（.otf、苹方 / 冬青黑体 / 思源这类 CJK 字体集）
+        # 写进 TrueType 槽，刻进原件前换成真 TrueType（摸底 T-003）——不换的话用户自己的原图在 MuPDF
+        # 一类阅读器里画错字、文字层读不回，检查器也报 `font_program_mismatch`。放在 verify 全过之后：
+        # 409 的分支不碰 staging；标注已画进 PDF，这里只换字体程序，PNG 不受影响
+        for target, tmp in tmps:
+            if target.suffix.lower() == ".pdf":
+                engine_artifactinspect.normalize_worker_pdf(tmp)
     except BaseException:
         _discard_updating(tmps)
         raise
