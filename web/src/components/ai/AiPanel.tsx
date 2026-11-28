@@ -76,7 +76,6 @@ import { assistantUsesPlan, MAX_ASSISTANT_INSTRUCTION } from '@/lib/assistantPla
 import { vectorSelectionOf } from '@/lib/vectorEdit'
 import { runVectorEdit, setVectorAssistantHold } from '@/store/vectorPlanActions'
 import { changePlanEnabled } from '@/lib/changePlanSwitch'
-import { deleteAiDraftIf } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { isFallthrough, useChangePlanStore } from '@/store/changePlanStore'
 import { DataFigureForm } from './DataFigureForm'
@@ -644,13 +643,6 @@ function AssistantPanelBody() {
             canvas: useDocumentStore.getState().activeCanvasId,
             script: panel.script ?? null,
           },
-          // 方案一落定才放掉输入框里的指令与后端草稿：生成中刷新页面，指令还在输入框里
-          source === 'composer' && snap.stamp !== null
-            ? () => {
-                void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
-                clearIfUnchanged(snap.seq, { project: pinnedProject, fileId: panel.fileId })
-              }
-            : undefined,
         )
         if (projectMoved()) return
         if (!isFallthrough(planned)) {

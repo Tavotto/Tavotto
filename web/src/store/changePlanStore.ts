@@ -189,11 +189,6 @@ export interface PlanEntry {
   instruction?: string
   /** 助手来源的改脚本后路（见 `ScriptFallback`） */
   fallback?: ScriptFallback
-  /**
-   * 助手来源：方案一落定（出卡 / 失败 / 交给改脚本）就调一次、随即清掉——输入框里的指令与后端草稿留到这一刻才删，
-   * 方案生成中刷新页面指令还在输入框里，不会丢。
-   */
-  onSettle?: () => void
   /** 助手来源：已经把这条指令交给改脚本那条路了（卡上不再给「改脚本做剩下的」；全是要改脚本时卡只剩一行灰字） */
   scriptStarted?: boolean
   pj: string | null
@@ -248,7 +243,7 @@ export interface PlanEntry {
   /** 脚本修改方案：应用 / 撤销在途（防连点） */
   scriptBusy?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
-  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed'
+  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed' | 'revise_stale'
   /** 应用后由这张卡标成「已处理」的意见 id（撤销时只还原这几条） */
   resolvedIds?: string[]
   /** 标已处理 / 还原没成：审阅页签上一句灰字 + 重试（不自动再试，免得失败时反复打后端） */
@@ -321,7 +316,6 @@ interface ChangePlanState {
     panelId: string,
     req: { instruction: string; target?: string },
     fallback: ScriptFallback,
-    onSettle?: () => void,
   ) => Promise<string | null | Fallthrough>
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
   runScript: (key: string, opts?: { legacyOnly?: boolean }) => Promise<boolean>
@@ -458,6 +452,20 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     if (p) requestRender(p, true)
   }
 
+  /**
+   * 「再改一版」的新版到手时撤回上一版的应用：与 `undo` 同一判据（还是我们写的那份、历史栈顶还是那次 commit），
+   * 另外用户正拖到一半（文档事务开着）也不撤——撤回会先收掉那一笔手势、再撤掉的就是它了。撤回了 / 本来就已撤回 = true。
+   */
+  const undoForRevise = (key: string): boolean => {
+    const e = get().entries[key]
+    const panel = e ? panelOf(e) : null
+    if (!e || !panel || !e.plan) return false
+    // 等的这段时间里用户自己点了「撤销」：图已经回到改前，没有要撤的
+    if (samePatches(panel.overrides, e.plan.base_patches)) return true
+    if (useDocumentStore.getState().txn || !canUndoApplied(e, panel.overrides)) return false
+    return get().undo(key)
+  }
+
   const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' = 'create') => {
     const t0 = Date.now()
     let errors = 0
@@ -511,10 +519,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         else {
           // 新一版入列并切过去；各版的勾选各记各的，批注随这次重改清空
           // 重改期间新写 / 改过的批注是用户的新工作：只清掉仍与提交时一致的那些
+          // 已应用的卡（「再改一版」）：新版到手这一刻才撤回上一版的应用；撤不回（期间又改过这张图）就不动文档，
+          // 新版照样入列，卡片按文档派生成「原图改过了」，另说一句
+          const stale = e.status === 'applied' && !undoForRevise(key)
           const e0 = get().entries[key] ?? e
           const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
           const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {} }
-          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: stale ? 'revise_stale' : undefined, ...(e.status === 'applied' ? { status: 'ready' as const, appliedPartial: undefined, appliedSrc: undefined } : {}) })
         }
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
@@ -592,7 +603,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     }
   }
 
-  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false, onSettle?: () => void): Promise<string | null | Fallthrough> => {
+  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false): Promise<string | null | Fallthrough> => {
     const ds = useDocumentStore.getState()
     const panel = ds.doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
     if (!panel) return null
@@ -608,7 +619,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const assistant = typeof req.instruction === 'string'
     const entry: PlanEntry = {
       key,
-      ...(assistant ? { from: 'assistant' as const, instruction: req.display ?? req.instruction, fallback, onSettle } : {}),
+      ...(assistant ? { from: 'assistant' as const, instruction: req.display ?? req.instruction, fallback } : {}),
       pj: guard.pj,
       panelId,
       fileId: panel.fileId,
@@ -692,18 +703,18 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
     },
 
-    requestFromAssistant: async (panelId, req, fallback, onSettle) => {
+    requestFromAssistant: async (panelId, req, fallback) => {
       // 同一时刻只发一份（与审阅来源共用这把门）；同一张图已有在途方案时不再起第二份
       const busy = get().order.some((k) => get().entries[k]?.panelId === panelId && get().entries[k]?.status === 'generating')
       if (busy || pending.has(panelId)) return null
       pending.add(panelId)
       try {
-        const out = await start(panelId, req, fallback, false, onSettle)
+        const out = await start(panelId, req, fallback, false)
         if (!isFallthrough(out)) return out
         // 连接本身用不了：脚本方案同样要模型，走不通——直接落回旧路径，不发注定失败的脚本方案请求
         if (CONNECTION_UNUSABLE_CODES.has(out.code)) return out
         // 图内方案这条路不适用：先试脚本方案（Agent 在副本里改、看过再应用）；它也不适用才落回现有的直接改脚本（调用方发）
-        return await start(panelId, { instruction: req.instruction, ...(req.target ? { target: req.target } : {}), mode: 'script' }, fallback, false, onSettle)
+        return await start(panelId, { instruction: req.instruction, ...(req.target ? { target: req.target } : {}), mode: 'script' }, fallback, false)
       } finally {
         pending.delete(panelId)
       }
@@ -744,14 +755,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
           patch(key, { status: 'failed', failure: { code: 'change_plan_script_failed' } })
           return false
         }
-        // 卡一撤，订阅就看不到「落定」了：输入框里那条指令与后端草稿在这里放掉
-        const settle = get().entries[key]?.onSettle
         drop(key)
-        try {
-          settle?.()
-        } catch {
-          /* 清草稿失败不影响对话 */
-        }
         return true
       }
       // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
@@ -1023,13 +1027,13 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (e.revising !== undefined) return 'busy'
       if (!notes.length) return 'nothing'
       if (e.status === 'applied') {
-        // 已应用的卡批注重改：先只撤这一次应用（与 `undo` 同一判据），撤不回就什么都不动、不发请求
+        // 已应用的卡批注重改：此刻就撤不回（之后又改过这张图）= 不发请求、什么都不动，免得白等一版。
+        // 撤得回也**先不撤**：图保持已应用，新版拿到时才撤回这一次（`poll` 的 revise 分支），没拿到就什么都不丢
         const panel = panelOf(e)
-        if (!panel || !canUndoApplied(e, panel.overrides) || !get().undo(key)) {
-          patch(key, { reviseError: { code: REVISE_UNDO_BLOCKED }, ...(get().entries[key]?.notice === 'undo_failed' ? { notice: undefined } : {}) })
+        if (!panel || !canUndoApplied(e, panel.overrides)) {
+          patch(key, { reviseError: { code: REVISE_UNDO_BLOCKED } })
           return 'failed'
         }
-        patch(key, { status: 'ready' })
       }
       const guard = captureProjectEpoch()
       patch(key, { revising: '', phase: undefined, reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
@@ -1134,19 +1138,4 @@ onCurrentProjectChange(() => {
 useAiStore.subscribe((s, prev) => {
   const v = s.caps?.change_plan_enabled
   if (typeof v === 'boolean' && v !== prev.caps?.change_plan_enabled) writeChangePlanCache(v)
-})
-
-// 助手来源的方案一落定（不再是「生成中」），把输入框里那条指令与后端草稿放掉（`PlanEntry.onSettle`）
-useChangePlanStore.subscribe((s) => {
-  for (const e of Object.values(s.entries)) {
-    if (e.onSettle && e.status !== 'generating') {
-      const fn = e.onSettle
-      useChangePlanStore.setState((cur) => (cur.entries[e.key] ? { entries: { ...cur.entries, [e.key]: { ...cur.entries[e.key], onSettle: undefined } } } : {}))
-      try {
-        fn()
-      } catch {
-        /* 清草稿失败不影响方案 */
-      }
-    }
-  }
 })
