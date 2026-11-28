@@ -19,6 +19,9 @@ import { cp, effectiveStatus, todoFailReason, todoPhase, todoScriptCardShown, to
 import { FigureThumb } from './FigureThumb'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
+/** Agent 来源的卡出自哪个宿主（缺省 = 插件） */
+const hostOf = (e: PlanEntry): 'codex' | 'claude_code' | 'other' => (e.agent?.host === 'codex' || e.agent?.host === 'claude_code' ? e.agent.host : 'other')
+
 /** 与修改方案卡同一个画框的最宽比例（再宽的图上下留纸，卡不再变矮） */
 const MAX_THUMB_ASPECT = 2
 /** 缩略图画面最高（px）：清单才是这张卡的主角，图只作参照 */
@@ -200,8 +203,12 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
   // 落定：收成一行（点它展开已改的几项，只读）；没改的几项一行灰字，与第一行的字对齐（不可点——再改请重新说一句）
   if (phase === 'done') {
     // 没做成的那几条在下面各有一句原因，这里不再重复列
-    const undone = todos.filter((t) => !done.includes(t.key) && !failNotes.some((n) => n.key === t.key)).map((t) => t.label)
+    const undone = todos.filter((t) => !done.includes(t.key) && !failNotes.some((n) => n.key === t.key) && !entry.agent?.handed?.includes(t.key)).map((t) => t.label)
     const landed = todos.filter((t) => done.includes(t.key))
+    // Agent 来源：勾着的脚本待办没在这里做、交回了 Agent；只交回、窗口里一项没改时，这一句就是标题
+    const handed = entry.agent?.handed?.length ?? 0
+    // 窗口里改的被 ⌘Z 撤了、也没有交回 Agent 的：后端已记了这次应用，这张卡没有什么可说的了
+    if (entry.agent && done.length === 0 && handed === 0) return null
     const canUndo = (figureApplied && !!panel && canUndoApplied(entry, panel.overrides)) || scriptEntries.some((x) => x.status === 'applied')
     return (
       <Card appearance="subtle" padding="sm" data-change-plan-card="suggestion-done" data-change-plan-suggestion>
@@ -216,7 +223,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             >
               <Check size={ICON_SIZE.sm} className="shrink-0 text-ok" />
               <span className="min-w-0 text-sm text-ink-2" data-suggestion-done>
-                {cp('todo.done', { count: done.length })}
+                {done.length === 0 && handed > 0 ? cp(`todo.handedHost.${hostOf(entry)}`, { count: handed }) : cp('todo.done', { count: done.length })}
               </span>
               <ChevronDown size={ICON_SIZE.xs} aria-hidden className={cn('shrink-0 text-ink-3 transition-transform group-hover:text-ink-2 motion-reduce:transition-none', !listOpen && '-rotate-90')} />
             </button>
@@ -230,6 +237,11 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
                 ))}
               </ul>
             )}
+            {done.length > 0 && handed > 0 && (
+              <p className="pb-0.5 pl-[22px] text-xs text-ink-3" data-suggestion-handed>
+                {cp(`todo.handedHost.${hostOf(entry)}`, { count: handed })}
+              </p>
+            )}
             {undone.length > 0 && (
               <p className="pb-0.5 pl-[22px] text-xs text-ink-3" data-suggestion-skipped>
                 {cp('todo.skipped', { items: listJoin(undone) })}
@@ -238,7 +250,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             {failLines('pb-0.5 pl-[22px] text-xs text-ink-3 text-pretty')}
             {entry.notice && (
               <p className="pb-0.5 pl-[22px] text-xs text-ink-3" data-change-plan-notice={entry.notice}>
-                {cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
+                {entry.notice === 'agent_settled' ? cp(`todo.agentSettled.${hostOf(entry)}`) : cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
               </p>
             )}
           </div>
@@ -272,7 +284,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
   const rowLocked = (t: ChangePlanTodo) => (busy && rowState(t) === 'queued' ? false : frozen)
   const adding = entry.adding !== undefined
   const ordered = [...todos.filter((t) => t.kind !== 'script'), ...todos.filter((t) => t.kind === 'script')]
-  const canAdd = !frozen && !adding && status === 'ready' && !entry.todoRun && todos.length < MAX_TODOS
+  const canAdd = !entry.agent && !frozen && !adding && status === 'ready' && !entry.todoRun && todos.length < MAX_TODOS
   const doneNow = on.filter((t) => rowState(t) === 'done').length
 
   return (
@@ -283,6 +295,16 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
           <span className="type-meta tabular-nums" data-suggestion-count>
             {cp('todo.count', { count: todos.length })}
           </span>
+          {entry.agent && (
+            <>
+              <span className="-mx-0.5 text-ink-faint" aria-hidden>
+                ·
+              </span>
+              <span className="type-meta" data-suggestion-from-agent>
+                {cp(`todo.fromHost.${hostOf(entry)}`)}
+              </span>
+            </>
+          )}
         </span>
         {groups.length > 0 && !stale && (
           <Button variant="ghost" size="sm" className="text-xs text-ink-3 hover:text-ink" onClick={() => store().openDialog(entry.key)} data-change-plan-view>
@@ -305,8 +327,8 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             return (
               <Fragment key={t.key}>
                 {t.kind === 'script' && ordered[i - 1]?.kind !== 'script' && (
-                  <li className="type-meta mt-1.5 flex h-6 items-end border-t border-border pb-0.5" title={cp('todo.scriptTip')} data-suggestion-script-section>
-                    {cp('todo.scriptTag')}
+                  <li className="type-meta mt-1.5 flex h-6 items-end border-t border-border pb-0.5" title={entry.agent ? cp(`todo.agentScriptTip.${hostOf(entry)}`) : cp('todo.scriptTip')} data-suggestion-script-section>
+                    {entry.agent ? cp(`todo.agentScriptTag.${hostOf(entry)}`) : cp('todo.scriptTag')}
                   </li>
                 )}
                 <li>
@@ -338,7 +360,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
         )}
         {entry.notice && (
           <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>
-            {cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
+            {entry.notice === 'agent_settled' ? cp(`todo.agentSettled.${hostOf(entry)}`) : cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
           </p>
         )}
         {/* 底部一行与按钮同高：执行中换成一句话，卡片底边不跳 */}
@@ -346,9 +368,15 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
           {stale ? (
             <>
               <span className="text-sm text-ink-3">{cp('card.stale')}</span>
-              <Button variant="secondary" size="md" className="rounded-full" onClick={() => void store().regenerate(entry.key)} data-change-plan-regenerate>
-                {cp('card.regenerate')}
-              </Button>
+              {entry.agent ? (
+                <Button variant="secondary" size="md" className="rounded-full" onClick={() => store().dismiss(entry.key)} data-suggestion-dismiss>
+                  {cp('card.dismiss')}
+                </Button>
+              ) : (
+                <Button variant="secondary" size="md" className="rounded-full" onClick={() => void store().regenerate(entry.key)} data-change-plan-regenerate>
+                  {cp('card.regenerate')}
+                </Button>
+              )}
             </>
           ) : dataAsk && scriptEntry ? (
             <>
@@ -389,6 +417,11 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
               <Button variant={latest ? 'primary' : 'secondary'} size="md" className="rounded-full" disabled={count === 0} onClick={() => void store().applyTodos(entry.key)} data-suggestion-apply>
                 {count === 0 ? cp('todo.none') : cp('todo.apply', { count })}
               </Button>
+              {entry.agent && (
+                <Button variant="ghost" size="md" className="-mr-2.5 ml-auto rounded-full text-ink-3 hover:text-ink" onClick={() => store().dismiss(entry.key)} data-suggestion-dismiss>
+                  {cp('todo.notNow')}
+                </Button>
+              )}
             </>
           )}
         </div>

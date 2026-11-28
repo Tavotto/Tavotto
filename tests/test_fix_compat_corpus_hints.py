@@ -17,7 +17,10 @@ import pytest
 from tavotto.engine.fixtools import REGISTRY, hints
 
 EVAL = Path(__file__).resolve().parents[1] / "scripts" / "eval" / "fix_compat"
-CORPUS = json.loads((EVAL / "corpus.json").read_text(encoding="utf-8"))
+_ALL = json.loads((EVAL / "corpus.json").read_text(encoding="utf-8"))
+#: 环境故障家族（ADR 0221 §六）的「未修前」不是一次准备会话的结局，而是一键安装的稳定错误码（`fault.expect`），
+#: 且要联网建受管环境，不在 baseline.jsonl 的口径里——它们由 test_dev_fault_injection.py 看护
+CORPUS = {cid: case for cid, case in _ALL.items() if case.get("family") != "environment"}
 CASES = {cid: case["hint"] for cid, case in CORPUS.items() if "hint" in case}
 
 
