@@ -10,6 +10,9 @@
  * - 加：id 不撞内存里已有的；按 Agent 那份顺序插在它前面那个对象之后；
  * - 顺序：Agent 重排过时，桌面这边基线里那些对象的相对顺序没动过；桌面新建的对象跟着它在桌面里的前一个；
  * - 布局组：Agent 改过时，桌面这边还是基线那份。
+ * - 子图的 `overrides`（图内修改，ADR 0217 §四）：按 `(gid, prop)` 逐条三方合并，且**冲突时桌面赢、不挡并入**——
+ *   Agent 改的那一条桌面从基线起没动过就换成 Agent 的；桌面也改了同一条就留桌面的（记进 `overrideConflicts`），
+ *   其余照并；下一次自动保存把桌面的结果写回排版（Agent 输掉的那次写入就此被盖过）。子图的其它字段仍是上面的「碰过就不并」。
  *
  * 只在 Agent 的改动**全在当前画布**上时才并：撤销栈只管当前画布，跨画布的合并撤不干净，宁可不提供。
  */
@@ -100,6 +103,51 @@ function weave(base: string[], extra: string[], ref: string[]): string[] {
 export interface MergedCanvas {
   objects: CanvasObject[]
   layoutGroups: LayoutGroup[] | null
+  /** 子图 `overrides` 里两边都改了、留下桌面那份的条：`panel` 是子图 id，`keys` 是 `gid|prop` */
+  overrideConflicts: { panel: string; keys: string[] }[]
+}
+
+type Ovr = { gid: string; prop: string; value?: unknown; identity?: string }
+const ovrKey = (o: Ovr): string => `${o.gid}\u0000${o.prop}`
+
+function isOvrList(v: unknown): v is Ovr[] {
+  return Array.isArray(v) && v.every((o) => !!o && typeof o === 'object' && typeof (o as Ovr).gid === 'string' && typeof (o as Ovr).prop === 'string')
+}
+
+/**
+ * 子图 `overrides` 的逐条三方合并：基线 `base` / Agent `theirs` / 桌面 `mine`（均为全量列表）。
+ * Agent 动过的键（新增 / 改值 / 去掉）：桌面从基线起没动 → 取 Agent 的；桌面也动了 → 留桌面的并记冲突；Agent 没碰的键原样留桌面的。
+ * 桌面的顺序为底，Agent 新增的追加在后；`identity` 跟着被留下的那条走。
+ */
+function mergeOverrides(base: Ovr[], theirs: Ovr[], mine: Ovr[]): { list: Ovr[]; conflicts: string[] } {
+  const b = new Map(base.map((o) => [ovrKey(o), o]))
+  const t = new Map(theirs.map((o) => [ovrKey(o), o]))
+  const m = new Map(mine.map((o) => [ovrKey(o), o]))
+  const conflicts: string[] = []
+  const take = new Map<string, Ovr | null>() // null = 去掉
+  for (const k of new Set([...b.keys(), ...t.keys()])) {
+    const bo = b.get(k)
+    const to = t.get(k)
+    if (bo && to && same(bo, to)) continue // Agent 没动这一条
+    const mo = m.get(k)
+    if (same(mo, to)) continue // 桌面已经是 Agent 要的样子
+    if (!same(mo, bo)) {
+      conflicts.push(k.replace('\u0000', '|'))
+      continue // 桌面也动过：桌面赢
+    }
+    take.set(k, to ? structuredClone(to) : null)
+  }
+  const list: Ovr[] = []
+  for (const o of mine) {
+    const k = ovrKey(o)
+    if (!take.has(k)) list.push(o)
+    else if (take.get(k)) list.push(take.get(k)!)
+  }
+  for (const o of theirs) {
+    const k = ovrKey(o)
+    if (take.get(k) && !m.has(k)) list.push(take.get(k)!)
+  }
+  return { list, conflicts }
 }
 
 /**
@@ -113,6 +161,7 @@ export function planAgentMerge(
 ): MergedCanvas | null {
   const mem = new Map(objects.map((o) => [o.id, o]))
   const next = new Map<string, CanvasObject>()
+  const overrideConflicts: MergedCanvas['overrideConflicts'] = []
   for (const a of diff.added) {
     if (mem.has(a.id) || next.has(a.id)) return null
     next.set(a.id, structuredClone(a))
@@ -131,8 +180,16 @@ export function planAgentMerge(
     const a = after as unknown as Record<string, unknown>
     const mine = m as unknown as Record<string, unknown>
     const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].filter((k) => !same(b[k], a[k]))
-    if (keys.some((k) => !same(mine[k], b[k]))) return null // 同一字段两边都改了
     const patched: Record<string, unknown> = { ...structuredClone(mine) }
+    // 子图的图内修改按条合并、冲突桌面赢（ADR 0217 §四）；三份都不是合法列表就当普通字段（碰过就不并）
+    const at = keys.indexOf('overrides')
+    if (at >= 0 && m.type === 'panel' && isOvrList(b.overrides ?? []) && isOvrList(a.overrides ?? []) && isOvrList(mine.overrides ?? [])) {
+      const got = mergeOverrides((b.overrides ?? []) as Ovr[], (a.overrides ?? []) as Ovr[], (mine.overrides ?? []) as Ovr[])
+      patched.overrides = structuredClone(got.list)
+      if (got.conflicts.length) overrideConflicts.push({ panel: after.id, keys: got.conflicts })
+      keys.splice(at, 1)
+    }
+    if (keys.some((k) => !same(mine[k], b[k]))) return null // 同一字段两边都改了
     for (const k of keys) {
       if (a[k] === undefined) delete patched[k]
       else patched[k] = structuredClone(a[k])
@@ -160,7 +217,7 @@ export function planAgentMerge(
     groups = groupsOf(diff.layout_groups.after)
     groups = groups ? structuredClone(groups) : null
   }
-  return { objects: order.map((id) => next.get(id) ?? mem.get(id)!), layoutGroups: groups }
+  return { objects: order.map((id) => next.get(id) ?? mem.get(id)!), layoutGroups: groups, overrideConflicts }
 }
 
 /** 当前绑定的项目排版有没有可并的 Agent 改动；没有绑定 / 不只是 Agent 写的 / 不在当前画布 / 桌面碰过 → null */
