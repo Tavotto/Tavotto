@@ -1,0 +1,3 @@
+## Agents can embed receptors and other membrane proteins into a membrane
+
+When an agent draws a membrane with receptors or other transmembrane proteins, it now places them into the membrane for you: the membrane makes way where each protein crosses it, proteins are spaced evenly by their actual width, and on a curved membrane each one is rotated to follow the membrane's normal. A shaded hydrophobic-core band runs between the two lipid layers, and it breaks where a protein passes through. Everything stays grouped and named, so you can still select and edit each piece. These shapes are part of Premium.
