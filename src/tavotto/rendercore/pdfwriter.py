@@ -1488,14 +1488,22 @@ def cff_program_as_truetype(data: bytes) -> bytes | None:
 def repair_cff_in_truetype_slots(path: Path) -> int:
     """把 PDF 里「`FontFile2` 装着 `OTTO` 字体程序」的字体就地改成真 TrueType 程序；回修了几个。
 
-    只在**可信的生产者边界**用（worker 刚写出的导出 PDF，`engine/artifactinspect.normalize_worker_pdf`）：
+    只在**可信的生产者边界**用（worker 刚写出的导出 / 写回 staging PDF，`engine/artifactinspect.normalize_worker_pdf`）：
     用户磁盘上的原件不在这里改，原样交付、由检查器如实报出（`inspector` 的 `font_program_mismatch`）。
-    一个都没修时文件一个字节不动。"""
+    一个都没修时文件一个字节不动；不是 PDF（文件头前 1 KiB 里没有 `%PDF-`）或解析不了的坏 PDF 也不动、
+    不抛——这一步只换字体程序，坏文件交给检查器如实报，不能让写回因此变成 500。"""
     import pikepdf
 
     path = Path(path)
+    with path.open("rb") as fh:
+        if b"%PDF-" not in fh.read(1024):
+            return 0
+    try:
+        pdf = pikepdf.open(str(path), allow_overwriting_input=True)
+    except Exception:  # noqa: BLE001 —— 打不开就原样留着：PdfError 之外，Python 3.10 上的 pikepdf 对截断文件抛 ValueError
+        return 0
     fixed = 0
-    with pikepdf.open(str(path), allow_overwriting_input=True) as pdf:
+    with pdf:
         seen: set = set()
         for obj in pdf.objects:
             if not isinstance(obj, pikepdf.Dictionary) or obj.get("/Type") != "/FontDescriptor":

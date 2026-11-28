@@ -73,7 +73,9 @@ def normalize_worker_svg(path: Path, expected: dict | None = None) -> None:
 def normalize_worker_pdf(path: Path) -> int:
     """worker 刚写出的导出 PDF：把 matplotlib 塞进 TrueType 槽的 CFF 字体程序换成真 TrueType（摸底 T-003，
     `rendercore.pdfwriter.repair_cff_in_truetype_slots`）；回修了几个字体。与 `normalize_worker_svg` 同一条边界：
-    只改可信 worker 的产物，在字节被冻结 / 检查之前；用户磁盘上的原件不经这里，由检查器如实报。"""
+    只改可信 worker 的产物，在字节被冻结 / 检查之前；用户磁盘上的原件不经这里，由检查器如实报。
+    调用点两处：导出（`app._serialize_figure_with_worker`）与写回的 staging（`app._write_source_files`，
+    一次性 worker 现画、替换原件之前）——写回刻进原件的也是 worker 产物，同一道边界。"""
     from ..rendercore import pdfwriter
 
     return pdfwriter.repair_cff_in_truetype_slots(Path(path))
