@@ -405,3 +405,73 @@ def test_width_is_not_adjustable_when_the_canvas_holds_other_objects_or_is_scale
     c = _canvas(box=[0, 0, 178, 120], page={"w": 178, "h": 120})  # 89 mm 的图放大一倍显示
     sc.run([c], journal_id="nature", profile=PROFILE, solver=seen)
     assert seen.seen["payload"]["canvases"][0]["width_adjustable"] is False
+
+
+def test_partial_fix_keeps_the_change_but_the_row_stays_in_confirm():
+    """两处轴标题都是 9 pt，组件只给横轴一条操作：横轴改到 7 pt 并保留，但纵轴仍 9 pt——这一项不算已修复。"""
+    from test_submissioncheck_plan import _text
+
+    m = _manifest()
+    m["elements"] = [e for e in m["elements"] if e["gid"] != "axes_0.ticks"]
+    m["elements"][3] = _text("axes_0.xlabel", "xlabel", 9, "Time")
+    m["elements"].insert(4, _text("axes_0.ylabel", "ylabel", 9, "Signal"))
+    c = _canvas(m)
+
+    def make(payload):
+        fmax = _row_ref(payload, "font_size_max", 7)
+        (xlabel,) = [t["ref"] for t in payload["canvases"][0]["texts"] if t["role"] == "xlabel"]
+        return {
+            "requirements": [
+                {
+                    "ref": fmax,
+                    "state": "fixable",
+                    "per_canvas": [{"canvas": "c1", "state": "fixable", "ops": ["o1"]}],
+                }
+            ],
+            "ops": [
+                {"ref": "o1", "op": "text.size", "canvas": "c1", "texts": [xlabel], "size_pt": 7}
+            ],
+        }
+
+    out = sc.run(
+        [c],
+        journal_id="nature",
+        profile=PROFILE,
+        accept=["v1:max_font_size_pt"],
+        solver=_solver_with(make),
+    )
+    patches = out["canvases"][0]["figures"][0]["patches"]
+    assert {p["gid"] for p in patches if p["prop"] == "fontsize"} == {"axes_0.xlabel"}  # 改了的保留
+    by_id = {r["id"]: r for r in out["requirements"]}
+    assert by_id["v1:max_font_size_pt"]["state"] == "confirm"
+    assert by_id["v1:max_font_size_pt"]["per_canvas"] == [{"canvas": "L1", "state": "confirm"}]
+
+
+def test_read_only_canvas_text_over_the_limit_keeps_the_row_in_confirm():
+    c = _canvas()
+    c.canvas_texts = [{"size_pt": 10, "panel_label": False}]  # 画布上手加的文字框：改不了
+
+    def make(payload):
+        fmax = _row_ref(payload, "font_size_max", 7)
+        texts = payload["canvases"][0]["texts"]
+        body = [t["ref"] for t in texts if t["editable"] and not t["panel_label"]]
+        return {
+            "requirements": [
+                {
+                    "ref": fmax,
+                    "state": "fixable",
+                    "per_canvas": [{"canvas": "c1", "state": "fixable", "ops": ["o1"]}],
+                }
+            ],
+            "ops": [{"ref": "o1", "op": "text.size", "canvas": "c1", "texts": body, "size_pt": 7}],
+        }
+
+    out = sc.run(
+        [c],
+        journal_id="nature",
+        profile=PROFILE,
+        accept=["v1:max_font_size_pt"],
+        solver=_solver_with(make),
+    )
+    by_id = {r["id"]: r for r in out["requirements"]}
+    assert by_id["v1:max_font_size_pt"]["state"] == "confirm"

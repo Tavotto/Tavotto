@@ -842,16 +842,29 @@ def _apply_text(
     return done
 
 
+def _applicable(row: dict, t: dict) -> bool:
+    """这条要求管不管这段文字：正文字号上限、写明「其余文字」的字号要求都不管分图标签；分图标签那条只管分图标签。"""
+    role = (row["conditions"] or {}).get("text_role")
+    if role == "panel_label":
+        return t["panel_label"]
+    if role == "other_text" or row["check"] == "font_size_max":
+        return not t["panel_label"]
+    return True
+
+
 def _remeasure_ok(op: dict, row: dict, c: Canvas, gids: dict[Figure, set[str]]) -> bool:
-    """落完之后对真实渲染重新量（按 gid，不按短号）：这条要求在这块画布上满足了没有。"""
+    """落完之后对真实渲染重新量：**这块画布上这条要求管的全部文字**都满足才算（不只看改过的那几处，
+    也算上改不了的画布级文字）。改了的照样保留；还有不满足的，这条在这块画布上留在「需要你确认」。"""
     if op["op"] == "canvas.width":
         return satisfied(row, float(c.page["w"]))
     key = "family" if op["op"] == "text.family" else "size_pt"
-    got = []
-    for fig, wanted in gids.items():
-        texts, refs, _ = measure_figure(fig.manifest or {}, fig.scale, "z")
-        got += [t[key] for t in texts if refs[t["ref"]] in wanted]
-    return bool(got) and all(satisfied(row, v) for v in got)
+    texts: list[dict] = []
+    for fig in c.figures:
+        got, _, _ = measure_figure(fig.manifest or {}, fig.scale, "z")
+        texts += got
+    texts += canvas_texts(c.canvas_texts, "z")
+    values = [t[key] for t in texts if _applicable(row, t)]
+    return bool(values) and all(satisfied(row, v) for v in values)
 
 
 def _rule_of(row: dict) -> str | None:
