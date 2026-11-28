@@ -1083,3 +1083,14 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **对数轴下限 / 整条交给脚本（ADR 0206 修订 2026-11-26）**：`changeplan.require_log_lower_limits` 在候选之前把「改成对数轴而下限 ≤ 0」的组补上正数下限（`suggest_log_lower`：上限 / 100 取 10 的幂）并标 `confirm`，候选带着它渲染；`effective_changes` 只在下限那条真生效时保留 `confirm`；`validate_proposal` 把既有图内修改又 `needs_script` 的意见只留 `needs_script`。改后新增 / 加重出图幅的元素由 `changeplan.make_room`（复用 `normalize.adapt_margins`）腾边距，补出的 `position` 经 `attach_room` 以 `auto: "room"` 并进造成出界的组（取消该组边距一起不应用）。看护 `tests/test_changeplan.py`、`test_changeplan_endpoints.py`、`test_changeplan_real.py`。
 - **整版预览**：`POST /api/change-plans/layout-preview`（`{canvas: {page_w_mm, page_h_mm, objects}}` → PNG）只给一键排版卡出图，经 `_export_png_bytes`（与外部审阅出排版图共用）；不写导出目录、不登记、不提交。
 - **矢量编辑方案（ADR 0212 第 6a 期，草案实现）**：`POST /api/vector-edit/plan` + `GET /api/vector-edit/plan/<id>`，只算不写、**不读盘**（后端读不到桌面内存里的文档，输入是前端给的画布 `{canvas}`；写回是前端自己的一次提交）。两种请求：`{canvas, ops}` 同步回方案（`vectorplan.plan` → `vectoredit.propose_memory`，即读盘那条 `propose` 的同一个 `_plan`，子图量不了只给外框）；`{canvas, instruction, selection?, connection?…}` 回 202，后台线程里 `changeplan.ask_vector_edits`（与 `ask_model` 共用 `_structured`：同一条连接解析、同一组稳定码，不新增执行器工具、不新增调用 `ai_structured` 的模块）问一次无工具结构化调用，输出 `{ops, unhandled}`，**每条操作连同前面收下的先过 `vectoredit.apply_ops` 干跑**，不合格的整条进 `unhandled`（`{reason, code?, op?}`）不拖垮整次；结果只放进程内存（`vectorplan.keep_result`，TTL + 条数上限）。补丁词汇说明与错误用语只有一份（`vectoredit.OPS_DOC` / `ERROR_WORDS`，插件 `tavotto_layout_edit_*` 与助手系统提示共用；加操作改这里与 `apply_ops`）。坏补丁 = 200 + `ok:false` + `errors:[{code, index?, field?}]`（码见 `vectoredit.ERROR_CODES`），请求形状不对 = 400 `invalid_change_plan`。会话认证走全局 guard。看护 `tests/test_vector_edit_plan.py`。
+
+
+## 数据准备（`data_prepare`，ADR 0215 第一期·后端内核，2026-11-27，无调用点）
+
+- **文件**：`engine/ai_data_prepare.py`（候选、`PrepareAdapter` / `PrepareExecutor`、契约核对 `Checker`、`candidate_table`、`adopt`）、`engine/agent_runner/prepare_tools.py`（工具集，导入即登记进 `TOOLSETS`）。
+  `trial.run_python` 多两个参数：`read_allow`（进程内读白名单）与 `tamper`（闭集 `full` 默认 = 实验现状 / `stdlib` 数据准备用：只收窄 `namedtuple` 的 `__defaults__` 赋值与试跑目录内的文件夹打开，gc 与 `__code__` 照拦；没有全关，见模块说明「防篡改的收窄」）；`trial.scratch_dir` 是公开的专用试跑目录。
+- **工具**：`list_dir` / `read_file` / `sample_file`（`source/<标签>` 只读窗口，单次 ≤32 KiB、累计 ≤384 KiB）、`create_file` / `append_file` / `edit_file`（只写 `prepare.py`，复用 `ConvertSession`）、
+  `run_python`（≤6 次，`sample_bytes` 只给输入前缀）、`check` / `finish`（共享 ≤3 次）。`run_python` / `check` 是父进程回调（`RunEnvelope.hooks`，`PrepareHooks`）；**没有 hooks 的运行启动即 `internal/no_hooks`、零模型请求**。第一期不动 IPC，接桥那一期把两个回调映射到泛化的 IPC。
+- **写入面**：任务契约 `allowed_writes=[]`、`writes_user_files=False`，`run_task` 的放行条件不动；失败 / 取消 / 超限候选与试跑目录都删；`adopt` 之前项目文件夹逐字节不变。
+- **发给模型的内容**：见 `prepare_tools` 模块说明的逐项清单（改它要同步 ADR 0215 与隐私文字）。
+- **盲区**：读白名单与断网的进程内钩子靠防篡改三条守着（`stdlib` 收窄版），C 层 / ctypes（导入不拦）绕得过、Windows 只有这一层且未验证；取消只在两次运行之间生效；输入的 sha256 只在第一次 `check` 算一次，之后比文件身份。

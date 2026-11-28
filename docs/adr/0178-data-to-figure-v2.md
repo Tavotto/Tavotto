@@ -637,3 +637,12 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 4. **旧响应降级**：多个 y 却没有 `series_facts`（留存草稿）不写数字那半句，绝不拿 `facts` 顶替；「误差线取自哪几列」与没画的行那一句照旧；没有任何可写的就不显示整行。不加任何新控件（没有展开、明细表、tooltip）。
 5. **顺带核实审计的几条**：①合画时 `candidate_facts` 的 `gone` / `row_at` 只按本地行号索引，A 文件第 3 行无效会把 B 文件第 3 行也排掉——**复现并修**（行身份改为「来自哪一份 + 行号」，抽成 `_skipped_split`）；②同一行多个 y 都是文字时 `unplotted_rows` 每个 y 记一条、被当成行数——**复现并修**（每行只记一条，与该函数注释「每行只记一个原因」一致；调用方 `app.py` 的 `count`、`ai_data_task` 的 `goal.rows_plotted`（只看 `unplotted_unmet` 是否非 0）与 `observed.total` 都把条数当行数，没有谁依赖逐格条目；`unplotted_unmet` 在那一行上仍是 1，用例锁住）；③某个 y 的文字把同行另一个 y 排除——**复现**（旧 `candidate_facts` 对 `a` 有 6 个有效值的表写 `drawn: 5`，因为同行 `b` 是文字、`gone` 排掉了整行），新统计按每个 y 各自判，用例锁住。
 6. **没做**：不给分组 / 分面覆盖统计（`group_cells`、每组范围）；不给可展开的明细表；不改 `unplotted_rows` 里「某个 y 是文字就把这格记为没画」的口径（这是诊断合同，`goal.rows_plotted` 依赖它）；不动 `error_missing_for`（算出来的误差线）与指纹核验。
+
+
+## 实现（ADR 0215 第一期·后端内核，2026-11-27）
+
+「读取与整理可以由模型写，画图脚本仍出自模板」落在 `engine/ai_data_prepare.py` + `engine/agent_runner/prepare_tools.py`（内置循环的第三套工具集 `data_prepare`）：
+模型只写**一个**准备脚本 `prepare.py`（`python prepare.py <输入> <输出.csv>`，stdout 末行报 `rows_in / rows_out / dropped`），由父进程在受保护的试跑子进程里跑
+（写入绊线 + 禁起进程 + 系统沙盒 + 断网 + 进程内读白名单）并核契约（恰好一张 UTF-8 CSV、现有读表读得出且≥1 列数值、行数与报告一致、不同 `PYTHONHASHSEED` 下两次输出字节相同）。
+候选在 `cache/ai_prepare/<sid>/`，`candidate_table(sid)` 在 ready 后交出整理好的表（给「采用之前」出备选图用，本期不接 `ai_data_propose`）；`adopt` 才把脚本与表**新建**进
+`<数据文件夹>/tavotto_figures/`（只经 `scriptlock.create_script`，表开头 `#` 行是来源证明）。准备这一段「算得对不对」不核，只给来源证明（0215 第一节 B 档）。
