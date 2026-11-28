@@ -301,6 +301,9 @@ def _merge(v1: list[dict], bundle: dict | None) -> list[dict]:
     * v1 判过（preflight）或只给建议（advice）的行一律保留——v2 的栏宽、字号今天不折，预检仍按 v1 判；
       v2 里数值相同的那条并进去（条件取 v2 的、出处多记一份），不再单列；
     * v1 只是展示（confirm）的行：同一检查项 v2 有就让给 v2。
+
+    **会就地改 `v1` 里的行**（并进 v2 时补 `conditions` / `also`）：调用方每次都传新造的行（`requirements()`），
+    以后要复用同一份 v1 行先 `copy.deepcopy`。
     """
     if bundle is None:
         return v1
@@ -392,3 +395,292 @@ def sidecar_rows(rows: list[dict]) -> list[dict]:
             item["has_condition_text"] = True
         out.append(item)
     return out
+
+
+# --------------------------------------------------------------------------- 量值、给组件的请求、校验（ADR 0216 §九）
+class SubmissionCheckError(Exception):
+    """这次没法一键改：`code` 给前端选一句话（`not_licensed` / `unavailable` / `invalid_plan` …）。
+    组件给的结果一条不对就整份作废（所有要求退回 confirm，文档不动）。"""
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code, self.detail = code, detail
+
+
+STATES = ("pass", "choose", "fixable", "confirm", "not_applicable")
+OPS = ("canvas.width", "text.size", "text.family")
+MIN_PT, MAX_PT = 1.0, 200.0
+MAX_WIDTH_MM = 2000.0
+
+
+def _label_letter(text: object) -> bool:
+    from .quicklayoutfig import LABEL_RE
+
+    return isinstance(text, str) and LABEL_RE.match(text.strip()) is not None
+
+
+def measure_figure(
+    manifest: dict, scale: float, prefix: str
+) -> tuple[list[dict], dict[str, str], bool]:
+    """一张图里画出来的文字：`(texts, ref → gid, 分图标签是否都认出了归属)`。
+
+    `size_pt` 是读者在页面上量到的字号（脚本字号 × 缩放）。分图标签用一键排版同一套识别
+    （`quicklayoutfig.analyze`，一个字母、从 a 起连续、每个都认得出管哪个轴）；看着像标签（单个字母）
+    却没认出来的，算「认不出」——这块画布上那条字号上限只能 confirm（ADR 0216 §九）。
+    """
+    from . import preflight, quicklayoutfig
+
+    try:
+        labels = {lab.gid for lab in quicklayoutfig.analyze(manifest).labels}
+    except ValueError:
+        labels = set()
+    hidden = preflight._hidden_legends(manifest)
+    texts: list[dict] = []
+    refs: dict[str, str] = {}
+    known = True
+    for i, (el, size) in enumerate(preflight._iter_font_elements(manifest, hidden), 1):
+        gid = str(el.get("gid") or "")
+        if not gid:
+            continue
+        is_label = gid in labels
+        if not is_label and _label_letter(preflight._field(el, "text")):
+            known = False
+        ref = f"{prefix}t{i}"
+        refs[ref] = gid
+        family = preflight._field(el, "fontfamily")
+        texts.append(
+            {
+                "ref": ref,
+                "role": str(el.get("role") or "text"),
+                "size_pt": round(size * scale, 3),
+                "family": family if isinstance(family, str) else None,
+                "panel_label": is_label,
+                "editable": True,
+            }
+        )
+    return texts, refs, known
+
+
+def canvas_texts(raw: object, prefix: str) -> list[dict]:
+    """前端送来的画布级文字（排版文档里的子图标签、文字框）：只量不改（`editable = false`）。"""
+    out: list[dict] = []
+    for i, t in enumerate(raw if isinstance(raw, list) else [], 1):
+        if not isinstance(t, dict) or not _number(t.get("size_pt")):
+            continue
+        out.append(
+            {
+                "ref": f"{prefix}k{i}",
+                "role": "canvas-text",
+                "size_pt": float(t["size_pt"]),
+                "family": t.get("family") if isinstance(t.get("family"), str) else None,
+                "panel_label": t.get("panel_label") is True,
+                "editable": False,
+            }
+        )
+    return out
+
+
+def validate_result(result: object, payload: dict) -> dict:
+    """组件结果的逐条校验（ADR 0216 §九）。任何一条不过抛 `invalid_plan`，不做部分采用。
+
+    形状不对（集合类型错、ref 不是字符串……）同样是 `invalid_plan`，不让 `TypeError` 之类漏出去。"""
+    try:
+        return _validate_result(result, payload)
+    except SubmissionCheckError:
+        raise
+    except (TypeError, KeyError, AttributeError, ValueError) as exc:
+        raise SubmissionCheckError("invalid_plan", f"shape: {exc}") from exc
+
+
+def _strs(value: object) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        raise SubmissionCheckError("invalid_plan", "expected a list of refs")
+    return value
+
+
+def _validate_result(result: object, payload: dict) -> dict:
+    if not isinstance(result, dict):
+        raise SubmissionCheckError("invalid_plan", "result")
+    rows = {r["ref"]: r for r in payload["requirements"]}
+    canvases = {c["ref"]: c for c in payload["canvases"]}
+    texts = {t["ref"]: (c["ref"], t) for c in payload["canvases"] for t in c["texts"]}
+    ops: dict[str, dict] = {}
+    raw_ops, raw_reqs = result.get("ops", []), result.get("requirements", [])
+    if not isinstance(raw_ops, list) or not isinstance(raw_reqs, list):
+        raise SubmissionCheckError("invalid_plan", "ops / requirements")
+    for op in raw_ops:
+        if (
+            not isinstance(op, dict)
+            or op.get("op") not in OPS
+            or not isinstance(op.get("ref"), str)
+        ):
+            raise SubmissionCheckError("invalid_plan", "op")
+        if op["ref"] in ops or op.get("canvas") not in canvases:
+            raise SubmissionCheckError("invalid_plan", "op ref / canvas")
+        canvas = canvases[op["canvas"]]
+        if op["op"] == "canvas.width":
+            w = op.get("width_mm")
+            if not canvas.get("width_adjustable") or not _number(w) or not 0 < w <= MAX_WIDTH_MM:
+                raise SubmissionCheckError("invalid_plan", "canvas.width")
+        else:
+            refs = _strs(op.get("texts"))
+            if not refs:
+                raise SubmissionCheckError("invalid_plan", "texts")
+            for ref in refs:
+                owner = texts.get(ref)
+                if owner is None or owner[0] != canvas["ref"] or not owner[1]["editable"]:
+                    raise SubmissionCheckError("invalid_plan", "text ref")
+            if op["op"] == "text.size":
+                size = op.get("size_pt")
+                if not _number(size) or not MIN_PT <= size <= MAX_PT:
+                    raise SubmissionCheckError("invalid_plan", "size_pt")
+            elif not isinstance(op.get("family"), str) or not op["family"].strip():
+                raise SubmissionCheckError("invalid_plan", "family")
+        ops[op["ref"]] = op
+    states: dict[str, dict] = {}
+    for item in raw_reqs:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("ref"), str)
+            or item["ref"] not in rows
+            or item["ref"] in states
+        ):
+            raise SubmissionCheckError("invalid_plan", "requirement ref")
+        row = rows[item["ref"]]
+        if item.get("state") not in STATES:
+            raise SubmissionCheckError("invalid_plan", "state")
+        per = item.get("per_canvas") or []
+        if not isinstance(per, list):
+            raise SubmissionCheckError("invalid_plan", "per_canvas")
+        for pc in per:
+            if (
+                not isinstance(pc, dict)
+                or not isinstance(pc.get("canvas"), str)
+                or pc["canvas"] not in canvases
+            ):
+                raise SubmissionCheckError("invalid_plan", "per_canvas ref")
+            if pc.get("state") not in STATES:
+                raise SubmissionCheckError("invalid_plan", "per_canvas state")
+            for oref in _strs(pc.get("ops", [])):
+                op = ops.get(oref)
+                if op is None or op["canvas"] != pc["canvas"]:
+                    raise SubmissionCheckError("invalid_plan", "per_canvas op")
+                _check_op_against_row(op, row, texts)
+        if row["check"] == "font_size_max":
+            for pc in per:
+                if pc["state"] == "fixable" and not canvases[pc["canvas"]].get(
+                    "panel_labels_known"
+                ):
+                    raise SubmissionCheckError(
+                        "invalid_plan", "max size on a canvas with unknown labels"
+                    )
+        if (
+            "pass" in {item["state"], *(pc["state"] for pc in per)}
+            and row["source_state"] != "preflight"
+        ):
+            raise SubmissionCheckError("invalid_plan", "pass on a row the engine did not judge")
+        states[item["ref"]] = item
+    return {"requirements": states, "ops": ops}
+
+
+def _check_op_against_row(op: dict, row: dict, texts: dict) -> None:
+    """操作必须对得上它所属的那条要求：字体在名单里；字号上限不碰分图标签（这本刊另有分图标签要求时）。"""
+    if op["op"] == "text.family":
+        if row["check"] != "font_family" or op["family"] not in (row["value"] or []):
+            raise SubmissionCheckError("invalid_plan", "family not in the list")
+    if op["op"] == "text.size":
+        if row["check"] not in ("font_size_min", "font_size_max"):
+            raise SubmissionCheckError("invalid_plan", "text.size on a non-size row")
+        if row["conditions"].get("text_role") == "other_text" or row["check"] == "font_size_max":
+            if any(texts[r][1]["panel_label"] for r in op["texts"]):
+                raise SubmissionCheckError("invalid_plan", "panel label in a body-text op")
+    if op["op"] == "canvas.width" and row["check"] != "width_final":
+        raise SubmissionCheckError("invalid_plan", "canvas.width on a non-width row")
+
+
+def chosen_ops(checked: dict, rows: list[dict], accept: list[str]) -> list[dict]:
+    """这次要落的操作：判过（preflight）的行自动落；别的行只有用户点过（`accept` 里有它的稳定 id 或别名）才落。
+    同一个操作被几条要求引用只落一次。图宽先落（字号要按新的缩放算）。"""
+    wanted = set(accept)
+    by_ref = {r["ref"]: r for r in rows}
+    picked: dict[str, dict] = {}
+    for ref, item in checked["requirements"].items():
+        row = by_ref[ref]
+        if row["source_state"] != "preflight" and not ({row["id"], *row["aliases"]} & wanted):
+            continue
+        accepted = bool({row["id"], *row["aliases"]} & wanted)
+        for pc in item.get("per_canvas") or []:
+            # 判过的行只自动落「能改」的；「要你选」（如栏宽二选一）只在用户点了那一条之后才落（ADR 0216 §五）
+            ok_states = ("fixable", "choose") if accepted else ("fixable",)
+            if pc.get("state") not in ok_states:
+                continue
+            for oref in pc.get("ops") or []:
+                picked.setdefault(oref, {**checked["ops"][oref], "row": ref})
+    order = {"canvas.width": 0, "text.size": 1, "text.family": 2}
+    return sorted(picked.values(), key=lambda o: (order[o["op"]], o["ref"]))
+
+
+def specfix_request(
+    op: dict, row: dict, refs: dict[str, str], profile: dict
+) -> tuple[dict, list[dict]]:
+    """把一条字号 / 字体操作翻成免费 specfix 事务的输入：`(这次用的规范, only)`（ADR 0216 §九）。
+    只修 `texts` 对应的 gid；目标值写进这次事务的规范，层级、回滚、真实渲染裁决都照单图修正走。"""
+    prof = copy.deepcopy(profile)
+    gids = [refs[r] for r in op["texts"] if r in refs]
+    if op["op"] == "text.family":
+        fam = dict(prof.get("font_family") or {})
+        fam["latin"], fam["latin_accepted"] = op["family"], [op["family"]]
+        prof["font_family"] = fam
+        rule = "font-family-substituted"
+    elif row["check"] == "font_size_max":
+        prof["max_font_size_pt"] = float(op["size_pt"])
+        rule = "font-too-large"
+    else:
+        target = float(op["size_pt"])
+        prof["min_effective_font_size_pt"] = target
+        floor = prof.get("absolute_min_font_size_pt")
+        if _number(floor) and floor > target:
+            prof["absolute_min_font_size_pt"] = target
+        rule = "font-too-small"
+    sev = dict(prof.get("severity") or {})
+    sev[rule] = "warn"
+    prof["severity"] = sev
+    # 低于绝对下限的字报的是 `font-below-absolute-floor`，不是 `font-too-small`：抬字号时两条都点名，否则修不到它
+    rules = [rule, "font-below-absolute-floor"] if rule == "font-too-small" else [rule]
+    return prof, [{"rule": r, "gid": g} for g in gids for r in rules]
+
+
+def satisfied(row: dict, value: float | str | None) -> bool:
+    """重新量到的值满足这条要求没有（不信组件给的数，ADR 0216 §九）。"""
+    target = row["value"]
+    if row["check"] == "font_family":
+        return isinstance(value, str) and value.lower() in {str(x).lower() for x in target}
+    if not _number(value):
+        return False
+    tol = 0.05
+    if row["relation"] == "lte":
+        return value <= target + tol
+    if row["relation"] == "gte":
+        return value >= target - tol
+    if row["relation"] == "eq":
+        return abs(value - target) <= (0.5 if row["check"] == "width_final" else tol)
+    if row["relation"] == "interval" and isinstance(target, dict):
+        return target["lower"] - tol <= value <= target["upper"] + tol
+    return False
+
+
+CMD = "submission_check.plan"
+
+
+def ask(payload: dict, *, solver=None) -> dict:
+    """问闭源组件、校验结果。`solver` 给测试注入；缺省经 `prohost.call`（调用方已判过 `licensed()`）。
+    组件不在、版本旧、超时、崩溃一律 `unavailable`；结果不合契约一律 `invalid_plan`。"""
+    from . import prohost
+
+    try:
+        result = (
+            solver(payload) if solver is not None else prohost.call(CMD, payload, feature=FEATURE)
+        )
+    except prohost.ProUnavailable as exc:
+        raise SubmissionCheckError("unavailable", exc.code) from exc
+    return validate_result(result, payload)
