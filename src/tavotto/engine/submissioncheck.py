@@ -307,6 +307,9 @@ def _merge(v1: list[dict], bundle: dict | None) -> list[dict]:
     * v1 判过（preflight）或只给建议（advice）的行一律保留——v2 的栏宽、字号今天不折，预检仍按 v1 判；
       v2 里数值相同的那条并进去（条件取 v2 的、出处多记一份），不再单列；
     * v1 只是展示（confirm）的行：同一检查项 v2 有就让给 v2。
+
+    **会就地改 `v1` 里的行**（并进 v2 时补 `conditions` / `also`）：调用方每次都传新造的行（`requirements()`），
+    以后要复用同一份 v1 行先 `copy.deepcopy`。
     """
     if bundle is None:
         return v1
