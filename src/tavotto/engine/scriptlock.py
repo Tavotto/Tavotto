@@ -23,6 +23,8 @@
   **新建**兄弟脚本；锁序固定：原脚本在外、目标兄弟脚本在内，两步之间别处的编辑被锁挡住。
 * `ai_convert._adopt_locked`（`adopt` 的锁内部分）：逐个候选名持**目标兄弟脚本**的锁 `create_script`
   （`<名>.py` / `<名>_2.py` …，已存在换下一个号，永不覆盖）。
+* `ai_data_prepare.adopt`（数据准备，ADR 0215）：用户采用后，项目锁（`inputremap.project_mutex`）内逐个持**目标文件**的锁（准备脚本、整理好的表），
+  都只经 `create_script` **新建**（已存在即失败，永不覆盖；任一件失败就回滚本次已建的）。表不是脚本，但与脚本同一个「只新建、持锁」的写入口。
 * `snapshots.restore_script`（AI 修复工具箱，ADR 0149 §七）：AI 修复的动作事后核对发现原脚本被改了，持这份脚本的锁、`write_script` 把**执行前读到的原字节**写回；从不写新内容。
 * `scriptbackup.backup_only`（修改方案，ADR 0206 二期）：只做两处备份、不替换原件（生成期间脚本被改过时，把「此刻」与「起跑快照」都存下，由用户决定）。
 * `app.api_change_plans_apply_script`（同上）：锁内核脚本仍是生成方案时那一版 → `scriptbackup.replace` 写入候选字节。
