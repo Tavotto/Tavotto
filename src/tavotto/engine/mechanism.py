@@ -193,6 +193,15 @@ def load_catalog(ask: Ask | None = None) -> dict:
             entry["ports"] = list(ports)
         if isinstance(spec.get("embeddable"), bool):
             entry["embeddable"] = spec["embeddable"]
+        kw = spec.get("keywords")
+        if isinstance(kw, dict) and set(kw) == {"zh", "en"}:
+            clean = {
+                lang: [w for w in kw[lang] if isinstance(w, str) and 0 < len(w) <= 40][:12]
+                for lang in ("zh", "en")
+                if isinstance(kw[lang], list)
+            }
+            if set(clean) == {"zh", "en"}:
+                entry["keywords"] = clean
         out[spec["kind"]] = entry
     return out
 
@@ -201,7 +210,7 @@ def load_catalog(ask: Ask | None = None) -> dict:
 _PARAM_VIEW_KEYS = ("name", "type", "min", "max", "default", "unit", "values", "integer", "label")
 
 
-def catalog_view(family: object = None, ask: Ask | None = None) -> dict:
+def catalog_view(family: object = None, ask: Ask | None = None, search: object = None) -> dict:
     """Agent 读的图元清单（只读、**免费、不判权益**——清单本来就是免费命令）：每个图元的名字（中英）、家族、能不能嵌膜、端口名、
     默认尺寸、参数规格。组件不在 / 太旧 → `{ok: False, code: "pro_unavailable"}`（不是错误：免费的示意图框与箭头 / 文字仍可用）。
     `family` 给了就只列这个家族（不认识的家族回 `bad_family` 并列出认得的）。"""
@@ -228,6 +237,7 @@ def catalog_view(family: object = None, ask: Ask | None = None) -> dict:
                 "family": spec.get("family", "other"),
                 "embeddable": bool(spec.get("embeddable", "membrane_mm" in spec["params"])),
                 "ports": spec.get("ports", []),
+                "keywords": spec.get("keywords", {"zh": [], "en": []}),
                 "versions": spec["versions"],
                 "default_size_mm": spec["default_size_mm"],
                 "params": [
@@ -241,6 +251,23 @@ def catalog_view(family: object = None, ask: Ask | None = None) -> dict:
         if not isinstance(family, str) or family not in families:
             return {"ok": False, "code": "bad_family", "families": families}
         kinds = [k for k in kinds if k["family"] == family]
+    if isinstance(search, str) and search.strip():
+        q = (
+            search.strip().lower()
+        )  # 按 kind、中英名、关键词子串找（不分大小写）；用户说的生物学名词直接丢进来
+        kinds = [
+            k
+            for k in kinds
+            if any(
+                q in str(w).lower()
+                for w in (
+                    k["kind"],
+                    *k["name"].values(),
+                    *k["keywords"]["zh"],
+                    *k["keywords"]["en"],
+                )
+            )
+        ]
     return {"ok": True, "families": families, "count": len(kinds), "kinds": kinds}
 
 

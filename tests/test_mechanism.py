@@ -2005,3 +2005,57 @@ def test_the_plugin_reference_tells_the_agent_to_read_the_catalog_first():
         / "codex-plugin/skills/tavotto-figure/references/mechanism-diagram.md"
     ).read_text("utf-8")
     assert "tavotto_mechanism_catalog" in md
+
+
+def test_catalog_view_passes_the_keywords_through_and_searches_by_them(lic):
+    cat = _real_catalog()
+    ask = lambda cmd, payload: cat  # noqa: E731
+    out = mechanism.catalog_view(ask=ask)
+    by = {k["kind"]: k for k in out["kinds"]}
+    assert all(
+        set(k["keywords"]) == {"zh", "en"} and k["keywords"]["zh"] and k["keywords"]["en"]
+        for k in out["kinds"]
+    )
+    assert "EGFR" in by["receptor_rtk"]["keywords"]["zh"]
+    # 用户的说法 → 图元：中文、英文、缩写、kind 本身、不分大小写
+    for term, kind in (
+        ("EGFR", "receptor_rtk"), ("钙离子", "ion"), ("Na+/K+ pump", "transporter"), ("tlr", "receptor_single"),
+        ("线粒体", "mitochondrion"), ("rough er", "er"), ("microtubule", "microtubule"),
+    ):  # fmt: skip
+        got = [k["kind"] for k in mechanism.catalog_view(ask=ask, search=term)["kinds"]]
+        assert kind in got, (term, got)
+    assert mechanism.catalog_view(ask=ask, search="zzzz-not-a-thing")["kinds"] == []
+    both = mechanism.catalog_view("organelle", ask=ask, search="体")  # 家族与搜索可叠加
+    assert both["kinds"] and {k["family"] for k in both["kinds"]} == {"organelle"}
+
+
+def test_the_plugin_reference_has_a_cheat_sheet_row_for_every_kind_with_its_terms():
+    cat = _real_catalog()
+    md = (
+        Path(__file__).resolve().parent.parent
+        / "codex-plugin/skills/tavotto-figure/references/mechanism-diagram.md"
+    ).read_text("utf-8")
+    rows = {
+        m.group(2): m.group(1)
+        for m in __import__("re").finditer(
+            r"^\| ([^|]+) \| `([a-z_]+)` \| ", md, __import__("re").M
+        )
+    }
+    assert set(rows) == {k["kind"] for k in cat["kinds"]}  # 一个图元一行
+    for k in cat["kinds"]:
+        terms = [t for t in rows[k["kind"]].split("、") if t]
+        assert 2 <= len(terms) <= 4, (k["kind"], terms)
+        assert set(terms) <= set(k["keywords"]["zh"]), k[
+            "kind"
+        ]  # 速查表的名词都是 catalog 关键词（同一份出处）
+
+
+def test_the_plugin_catalog_tool_searches_and_says_so_when_nothing_matches(monkeypatch):
+    from tavotto_mcp import server
+
+    cat = _real_catalog()
+    monkeypatch.setattr(prohost, "call", lambda cmd, payload, feature=None: cat)
+    hit = server.call_tool("tavotto_mechanism_catalog", {"search": "钙离子"})
+    assert [k["kind"] for k in hit["structuredContent"]["kinds"]] == ["ion"]
+    none = server.call_tool("tavotto_mechanism_catalog", {"search": "qqq"})
+    assert none["structuredContent"]["kinds"] == [] and "没有对得上" in none["content"][0]["text"]

@@ -19,6 +19,54 @@
 清单回 `pro_unavailable` = 高级版组件没装好或太旧：照实说，示意图框 / 箭头 / 文字这些免费条目照常可画。
 只有 `embeddable: true` 的图元能写 `embed`；其余图元用 `at_mm` 摆在示意图框里。
 
+## 生物学名词 → 图元速查
+
+用户的说法先在这张表里找；表里没有的名词用 `tavotto_mechanism_catalog` 的 `search` 搜（每个图元带中英关键词 / 同义词）。**推荐参数**是第一次就能画出像样图的取值，不写就取缺省；
+超范围的参数会回 `bad_item` 并点名范围。嵌膜的图元写 `embed`，其余用 `at_mm` 摆。
+
+| 用户说的名词 | `glyph`（kind） | 推荐参数 |
+| --- | --- | --- |
+| 细胞膜、质膜、磷脂双层、脂双层 | `membrane` | `length_mm` 40–58（放几个受体就加长）；要弯成细胞表面 `curvature` 0.2 |
+| GPCR、G 蛋白偶联受体、肾上腺素受体、视紫红质 | `gpcr` | 嵌膜；占宽约 6 mm，膜至少 30；`tails: false` 去掉 N / C 端尾 |
+| 整合素、黏附受体 | `integrin` | 嵌膜；`leg_len` 6，`splay_deg` 20（激活态张大到 35） |
+| 离子通道、钾通道、钠通道、钙通道 | `ion_channel` | 嵌膜；`is_open` 开 / 关，`per_side` 2–3；它是阵列对象 |
+| EGFR、受体酪氨酸激酶、胰岛素受体、生长因子受体 | `receptor_rtk` | 嵌膜；`dimer: true` 画二聚体，`false` 画单体（要画「二聚化」这一步用两个单体） |
+| TLR、细胞因子受体、TCR、单次跨膜受体 | `receptor_single` | 嵌膜；默认即可，`ecd_height_mm` 调胞外域高度 |
+| 转运体、Na⁺/K⁺ 泵、葡萄糖转运体、载体蛋白 | `transporter` | 嵌膜；`outward` 朝外 / 朝内开放，`substrate` 显示底物（Na⁺/K⁺ 泵画两个，方向相反） |
+| 抗体、IgG、免疫球蛋白 | `antibody` | `height_mm` 12；`arm_deg` 40 |
+| 酶、蛋白酶、催化酶 | `enzyme` | `size_mm` 8；`pocket_depth` 0.35；底物放在端口 `pocket` |
+| G 蛋白、Gαβγ、异源三聚体 G 蛋白 | `g_protein` | `scale` 1；贴在 GPCR 胞内侧，用端口 `receptor_site` |
+| 钙离子、Ca²⁺、Na⁺、K⁺ | `ion` | `charge`: `plus` / `plus2`（Ca²⁺）/ `minus` / `minus2`；`radius_mm` 1.1 |
+| 激酶、Src、PKA、MAPK | `kinase` | `size_mm` 6–8；ATP 位在端口 `atp_site` |
+| 配体、EGF、激素、神经递质 | `ligand` | `shape: blob`（默认）/ `wedge` / `diamond` / `square`，`radius_mm` 1.5–2.5；要结合尾 `tail: true` |
+| 磷酸基团、磷酸化、P | `phosphate` | `radius_mm` 0.8；「P」文字由你放在端口 `label` 旁 |
+| 小分子、药物、抑制剂、苯环 | `small_molecule` | `size_mm` 4；`aromatic`、`substituent` 可关 |
+| 泛素、Ub、泛素化 | `ubiquitin` | `units` 1 是单泛素，4 是多聚链；`tail: true`（单个时必须带尾） |
+| 蛋白复合体、复合物、受体复合物 | `complex` | `subunits` 3–8，`size_mm` 6 |
+| 蛋白酶体、26S 蛋白酶体 | `proteasome` | `height_mm` 16；`caps: true` 带 19S 帽（26S） |
+| 核糖体、翻译机器 | `ribosome` | `size_mm` 9 |
+| 转录因子、TF、p53 | `transcription_factor` | `dna_length_mm` 18；`tf_size_mm` 4.5 |
+| 染色体、染色单体、姐妹染色单体 | `chromosome` | `length_mm` 24；`spread_deg` 16 |
+| DNA、双螺旋、基因、启动子 | `dna_helix` | `turns` 3；`length_mm` 30 |
+| mRNA、信使 RNA、转录本 | `mrna` | `length_mm` 40；`cap`、`polya` 可关 |
+| 核小体、组蛋白、染色质 | `nucleosome` | `core_r_mm` 4 |
+| 中心体、中心粒 | `centrosome` | `size_mm` 10；`nine_fold` 显示端面九点 |
+| 内质网、ER、粗面内质网 | `er` | `radius_mm` 12；`sheets` 3；`ribosomes: true` 画粗面内质网；它是阵列对象 |
+| 高尔基体、高尔基复合体 | `golgi` | `width_mm` 18；`cisternae` 4；它是阵列对象 |
+| 脂滴、脂质小滴 | `lipid_droplet` | `size_mm` 10；它是阵列对象 |
+| 溶酶体、自噬溶酶体 | `lysosome` | `size_mm` 8；`enzymes` 6 |
+| 线粒体、嵴、能量工厂 | `mitochondrion` | `size_mm` 22；`cristae` 5 |
+| 细胞核、核膜、核孔 | `nucleus` | `size_mm` 24；`pores` 8 |
+| 囊泡、分泌小泡、内体 | `vesicle` | `size_mm` 6；`cargo` 显示货点；它是阵列对象 |
+| 肌动蛋白丝、微丝、F-actin | `actin_filament` | `length_mm` 24；`turns` 3 |
+| 微管、微管蛋白 | `microtubule` | `length_mm` 30；`subunits` 14；它是阵列对象 |
+| 细菌、大肠杆菌、鞭毛 | `bacterium` | `length_mm` 24，`width_mm` 8（长要比宽大 3 以上）；`flagellum` 鞭毛 |
+| 衣壳、无包膜病毒、噬菌体头部 | `capsid` | `size_mm` 10 |
+| 细胞、细胞轮廓 | `cell` | `width_mm` 36，`height_mm` 24；`membrane_line` 带细胞膜内线 |
+| 突触、神经递质释放 | `synapse` | `width_mm` 20；`vesicles` 4；`receptors` 受体点；它是阵列对象 |
+| 紧密连接、上皮屏障、claudin | `tight_junction` | `height_mm` 20；`strands` 3 |
+| 病毒、包膜病毒、HIV、冠状病毒 | `virus` | `size_mm` 14；`spikes` 12；`capsid: false` 去内部衣壳 |
+
 ## 一个 `add` 里写什么
 
 同一个 `add` 最多 24 条（含机理图条目时）。互相引用的条目必须写在**同一个** `add` 里。顺序：框 → 膜 → 受体 → 免费条目。

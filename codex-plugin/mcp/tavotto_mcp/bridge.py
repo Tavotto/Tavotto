@@ -7728,7 +7728,7 @@ def suggest_apply(
     return out
 
 
-def mechanism_catalog(family: object = None) -> dict:
+def mechanism_catalog(family: object = None, search: object = None) -> dict:
     """机理图图元清单（只读、免费，`engine/mechanism.catalog_view`）：旧引擎没有这个模块 → 说清要升级。"""
     m = _optional_engine("mechanism")
     if m is None or not hasattr(m, "catalog_view"):
@@ -7736,7 +7736,7 @@ def mechanism_catalog(family: object = None) -> dict:
             "这个 Tavotto 版本还不能画机理图；升级 Tavotto 后新开会话再试。",
             code="layout_annotate_unavailable",
         )
-    return m.catalog_view(family)
+    return m.catalog_view(family, search=search)
 
 
 @_synced

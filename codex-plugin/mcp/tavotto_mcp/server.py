@@ -993,7 +993,8 @@ def _suggest_tools() -> list[dict]:
                 "只读、免费：列出能画的机理图图元（膜、受体、离子通道、细胞核、DNA、抗体……）——每个图元的 kind、中英名、家族、"
                 "能不能嵌进膜、端口名、默认尺寸和参数规格（范围 / 缺省 / 枚举）。要往排版里加机理图条目（tavotto_layout_edit_plan 的 add）"
                 "之前先读它，不要凭记忆写图元种类和参数。family 可按家族筛（membrane / membrane_protein / soluble_molecule / "
-                "molecular_machine / nucleic_acid / organelle / cytoskeleton / cell_structure）。高级版组件没装好时回 "
+                "molecular_machine / nucleic_acid / organelle / cytoskeleton / cell_structure），或用 search 按用户说的名词找"
+                "（每个图元带中英关键词 / 同义词，如 EGFR、钙离子）。高级版组件没装好时回 "
                 "pro_unavailable（不是错误；免费的示意图框 / 箭头 / 文字照常可用）。"
             ),
             "inputSchema": {
@@ -1002,7 +1003,11 @@ def _suggest_tools() -> list[dict]:
                     "family": {
                         "type": "string",
                         "description": "只列这个家族；不写 = 全部。",
-                    }
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "按用户说的名词找图元（kind、中英名、关键词的子串，不分大小写），如 EGFR、钙离子、Na+/K+ 泵。",
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -2498,7 +2503,7 @@ def _call_suggest_status(args: dict) -> dict:
 
 
 def _call_mechanism_catalog(args: dict) -> dict:
-    out = bridge.mechanism_catalog(args.get("family"))
+    out = bridge.mechanism_catalog(args.get("family"), args.get("search"))
     if not out.get("ok"):
         if out.get("code") == "bad_family":
             return {
@@ -2506,6 +2511,13 @@ def _call_mechanism_catalog(args: dict) -> dict:
                 "structuredContent": out,
             }
         return {"content": _text(out["message"]), "structuredContent": out}
+    if not out["kinds"]:
+        return {
+            "content": _text(
+                "清单里没有对得上的图元：换个说法再搜，或不带 search 看全部；确实没有就老实告诉用户现在没有这个图元。"
+            ),
+            "structuredContent": out,
+        }
     lines = [f"能画的机理图图元 {out['count']} 个（家族：{'、'.join(out['families'])}）："]
     for k in out["kinds"]:
         tail = "，能嵌膜" if k["embeddable"] else ""
