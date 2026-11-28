@@ -68,8 +68,10 @@ ggplot_bar_group_targets <- function(target, groups, parent_gid, rect, allow_alp
     part$span$centre <- target$span$centre[rows]
     part$span$rows <- rows
     part$values <- stats::setNames(list(width), prop)
+    selected <- ggplot_bar_group_rect(rect, part)
+    pigment <- ggplot_uniform_pigment(selected$gp$fill)
+    if (!is.null(pigment)) part$values$facecolor <- pigment$rgb
     if (allow_alpha) {
-      selected <- ggplot_bar_group_rect(rect, part)
       opacity <- ggplot_bar_visible_alphas(selected, target$outline && any(selected$gp$lwd > 0))
       if (length(opacity) == 1L) part$values$alpha <- opacity
     }
@@ -165,8 +167,10 @@ ggplot_edit_bars <- function(table, target, edit, layout) {
     if (!is.null(values$edgecolor) && (!is.null(edit$edgecolor) || !is.null(edit$alpha))) {
       rect$gp$col <- ggplot_edit_pigment(values$edgecolor, target$edge, edit$alpha, target$values$alpha)
     }
-  } else if (!is.null(edit$alpha)) {
-    rect <- ggplot_edit_bar_alpha(rect, target$group$rows, edit$alpha)
+  } else {
+    rows <- target$group$rows
+    if (!is.null(edit$facecolor)) rect <- ggplot_edit_bar_fill(rect, rows, edit$facecolor)
+    if (!is.null(edit$alpha)) rect <- ggplot_edit_bar_alpha(rect, rows, edit$alpha)
   }
   panel$children[[target$child]] <- rect
   table$grobs[[target$slot]] <- panel
@@ -275,7 +279,7 @@ ggplot_bar_source_plan <- function(state, target, edit, edits) {
   if (!length(edit) || !all(names(edit) %in% c(paint, target$span$prop))) return(NULL)
   if (!is.null(target$group)) {
     changed <- state$bar_targets[intersect(names(state$bar_targets), names(edits))]
-    if (!all(names(edit) %in% c(target$span$prop, "alpha")) || any(vapply(changed, function(other) {
+    if (!all(names(edit) %in% c(target$span$prop, "alpha", "facecolor")) || any(vapply(changed, function(other) {
       identical(other$index, target$index) && is.null(other$group)
     }, logical(1L)))) return(NULL)
     geometry <- list(kind = "bars", facet = target$facet, values = edit,

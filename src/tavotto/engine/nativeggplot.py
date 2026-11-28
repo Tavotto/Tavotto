@@ -234,6 +234,9 @@ class GgplotTarget:
     @staticmethod
     def annotate_manifest(manifest: dict) -> None:
         for element in manifest["elements"]:
+            if label := element.pop("data_label_context", None):
+                element["identity"] = "r12:" + label
+                continue
             if element["role"] == "ticklabel":
                 element["identity"] = _tick_label_identity(
                     element["gid"], element.pop("tick_member_context")

@@ -98,16 +98,37 @@ ggplot_edit_bar_alpha <- function(rect, rows, alpha) {
   rect
 }
 
+ggplot_edit_bar_fill <- function(rect, rows, value) {
+  colours <- rep_len(rect$gp$fill, length(rect$x))
+  original <- colours[rows]
+  opacity <- grDevices::col2rgb(original, alpha = TRUE)[4L, ] / 255
+  missing <- is.na(original)
+  if (any(missing)) {
+    borders <- rep_len(rect$gp$col, length(rect$x))[rows][missing]
+    fallback <- grDevices::col2rgb(borders, alpha = TRUE)[4L, ] / 255
+    opacity[missing] <- ifelse(fallback > 0, fallback, 1)
+  }
+  value[value == "none"] <- NA_character_
+  colours[rows] <- scales::alpha(value, opacity)
+  rect$gp$fill <- colours
+  attr(rect, "tavotto_bar_alpha") <- TRUE
+  rect
+}
+
 ggplot_apply_bar_geometry <- function(rect, rows, layout, panel_id, values) {
   span <- ggplot_bar_span(layout, panel_id, rows, rect)
   if (is.null(span)) stop("Tavotto could not match the original R bar geometry.")
+  if (!is.null(values$facecolor)) {
+    selected <- which(!is.na(values$facecolor))
+    rect <- ggplot_edit_bar_fill(rect, selected, values$facecolor[selected])
+  }
   if (!is.null(values$alpha)) {
     selected <- which(!is.na(values$alpha))
     rect <- ggplot_edit_bar_alpha(rect, selected, values$alpha[selected])
   }
   width <- values[[span$prop]]
   if (is.null(width)) {
-    if (length(setdiff(names(values), "alpha"))) stop("Tavotto could not match the original R bar direction.")
+    if (length(setdiff(names(values), c("alpha", "facecolor")))) stop("Tavotto could not match the original R bar direction.")
     return(rect)
   }
   width <- rep_len(width, length(span$centre))

@@ -18,6 +18,28 @@ ggplot_colourbar_endpoints <- function(params, inverse) {
   stats::setNames(c(1L, length(values))[order(native)], c("min", "max"))
 }
 
+ggplot_stock_colourbar_kind <- function(guide) {
+  kind <- class(guide)[[1L]]
+  if (kind %in% c("GuideColourbar", "GuideColoursteps")) kind
+}
+
+ggplot_binned_colourbar_edges <- function(params, scale) {
+  if (!inherits(scale, "ScaleBinned")) return(NULL)
+  decor <- params$decor
+  centres <- (decor$min + decor$max) / 2
+  if (length(centres) < 2L || any(!is.finite(centres)) || anyDuplicated(centres) ||
+      !is.character(decor$colour) || anyNA(decor$colour)) return(NULL)
+  positions <- order(centres)
+  edge <- c(1L, length(centres))
+  values <- scale$get_transformation()$inverse(sort(scale$get_limits()))
+  if (length(values) != 2L || any(!is.finite(values)) || values[[1L]] == values[[2L]]) return(NULL)
+  # The guide's reversed coordinates and the scale's transformed direction
+  # are independent. Find the actual native colour at each displayed end.
+  values <- values[if (positions[[1L]] == 1L) c(1L, 2L) else c(2L, 1L)]
+  list(colours = decor$colour[positions],
+       endpoints = stats::setNames(edge[order(values)], c("min", "max")))
+}
+
 ggplot_extend_colourbar <- function(table, params, extend, endpoints) {
   slot <- which(table$layout$name == "bar")
   if (length(slot) != 1L || is.null(endpoints)) stop("The native R colourbar has no drawable endpoints.")
@@ -93,16 +115,24 @@ ggplot_draw_colourbar_frame <- function(table, slot, original, edit, horizontal)
   table
 }
 
-ggplot_capture_colourbar <- function(guide, key, inverse, extend, outline) {
+ggplot_capture_colourbar <- function(guide, key, scale, extend, outline) {
   force(guide)
   force(key)
-  force(inverse)
+  force(scale)
   force(extend)
   force(outline)
   ggplot_clone(guide, tavotto_colourbar_base = guide, tavotto_colourbar_extend = extend,
     assemble_drawing = function(self, grobs, layout, sizes, params, elems) {
     table <- guide$assemble_drawing(grobs, layout, sizes, params, elems)
-    endpoints <- ggplot_colourbar_endpoints(params, inverse)
+    steps <- if (identical(ggplot_stock_colourbar_kind(guide), "GuideColoursteps")) {
+      ggplot_binned_colourbar_edges(params, scale)
+    }
+    endpoints <- if (is.null(steps)) {
+      ggplot_colourbar_endpoints(params, scale$get_transformation()$inverse)
+    } else {
+      params$decor$colour <- steps$colours
+      steps$endpoints
+    }
     frame <- which(table$layout$name == "frame")
     original <- if (length(frame) == 1L) ggplot_colourbar_frame(table$grobs[[frame]])
     tips <- !is.null(extend) && extend != "neither"
@@ -136,13 +166,13 @@ ggplot_colourbar_guides <- function(guides, scales, extensions = NULL, outlines 
       if (is.null(extend)) extend <- guide$tavotto_colourbar_extend
       guide <- guide$tavotto_colourbar_base
     }
-    if (identical(class(guide)[[1L]], "GuideColourbar") &&
+    if (!is.null(ggplot_stock_colourbar_kind(guide)) &&
         identical(as.list(guide)$assemble_drawing, as.list(ggplot2::GuideColourbar)$assemble_drawing)) {
       aesthetic <- guides$params[[key]]$aesthetic
       scale <- ggplot_colourbar_scale(scales, aesthetic)
       if (is.null(scale)) next
       actual[[key]] <- ggplot_capture_colourbar(
-        guide, key, scale$get_transformation()$inverse, extend, outlines[[key]]
+        guide, key, scale, extend, outlines[[key]]
       )
     }
   }
@@ -150,11 +180,13 @@ ggplot_colourbar_guides <- function(guides, scales, extensions = NULL, outlines 
 }
 
 ggplot_colourbar_source_scope <- function(guide, params) {
-  if (!identical(class(guide)[[1L]], "GuideColourbar") || !length(params$aesthetic) ||
+  kind <- ggplot_stock_colourbar_kind(guide)
+  if (is.null(kind) || !length(params$aesthetic) ||
       !all(params$aesthetic %in% c("colour", "fill"))) return(NULL)
   title <- params$title
   if (!is.null(title) && (!is.character(title) || length(title) != 1L || is.na(title))) return(NULL)
-  list(aesthetics = as.list(sort(params$aesthetic)), position = params$position, title = title)
+  list(aesthetics = as.list(sort(params$aesthetic)), position = params$position, title = title,
+       kind = kind)
 }
 
 ggplot_with_colourbar_layout <- function(plot, recipes) {

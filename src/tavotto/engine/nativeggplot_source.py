@@ -498,6 +498,10 @@ def _native_layer_geometry(source: dict) -> dict | None:
     for prop, value in values.items():
         if source["edited"].get(prop) != value:
             return None
+        if kind == "bars" and "category" in recipe and prop == "facecolor":
+            if not isinstance(value, str) or (value != "none" and _RGB.fullmatch(value) is None):
+                return None
+            continue
         if kind == "caps" and "category" in recipe and prop == "color":
             if not isinstance(value, str) or _RGB.fullmatch(value) is None:
                 return None
@@ -1069,6 +1073,9 @@ def _native_colourbar_layout_writes(
             continue
         scope = plan["scope"]
         aesthetics, position, title = (scope[key] for key in ("aesthetics", "position", "title"))
+        kind = scope.get("kind")
+        if kind not in ("GuideColourbar", "GuideColoursteps"):
+            continue
         if not aesthetics or any(aesthetic not in ("colour", "fill") for aesthetic in aesthetics):
             continue
         if position not in (None, "top", "bottom", "left", "right", "inside"):
@@ -1080,12 +1087,90 @@ def _native_colourbar_layout_writes(
         channels = "list(" + ", ".join(_r_literal(aesthetic) for aesthetic in aesthetics) + ")"
         target = (
             f"list(aesthetics = {channels}, position = {_r_literal(position) if position else 'NULL'}, "
-            f"title = {_r_literal(title) if title is not None else 'NULL'})"
+            f"title = {_r_literal(title) if title is not None else 'NULL'}, kind = {_r_literal(kind)})"
         )
         fields = ", ".join(f"{prop} = {_r_literal(value)}" for prop, value in edits[gid].items())
         recipes.append(f"list(scope = {target}, {fields})")
         written.update((gid, prop) for prop in edits[gid])
     return recipes, written
+
+
+def _native_data_label_writes(
+    hot: dict | None, patches: list[dict]
+) -> tuple[dict[tuple[int, str], dict[str, list[str]]], set[tuple[str, str]]]:
+    edits = defaultdict(dict)
+    for patch in patches:
+        edits[patch["gid"]][patch["prop"]] = patch["value"]
+    layers = defaultdict(lambda: defaultdict(list))
+    written = set()
+    for element in (hot or {}).get("elements", ()):
+        gid = element["gid"]
+        plan = element.get("source_data_label")
+        if not plan or plan["edited"] != edits.get(gid):
+            continue
+        layer = plan["layer"]
+        facet = _r_facet_selector(plan["facet"])
+        owner = plan["owner"]
+        kind = plan.get("kind")
+        if (
+            type(layer) is not int
+            or layer < 1
+            or facet is None
+            or kind not in ("GeomText", "GeomLabel")
+        ):
+            continue
+        if not isinstance(owner["label"], str) or any(
+            type(owner[key]) not in (int, float) or not math.isfinite(owner[key])
+            for key in ("x", "y")
+        ):
+            continue
+        key = {field: _r_literal(owner[field]) for field in ("label", "x", "y")}
+        paint = plan["paint"] or {}
+        if not isinstance(paint, dict) or not paint.keys() <= {
+            "col",
+            "fontsize",
+            "fontfamily",
+            "font",
+        }:
+            continue
+        values = {field: _r_literal(value) for field, value in paint.items()}
+        text = plan["text"]
+        if any(value is None for value in [*key.values(), *values.values()]) or (
+            text is not None and (not isinstance(text, str) or _r_literal(text) is None)
+        ):
+            continue
+        anchor = ", ".join(f"{field} = {literal}" for field, literal in key.items())
+        glyphs = ", ".join(f"{field} = {literal}" for field, literal in values.items())
+        label = "" if text is None else f", text = {_r_literal(text)}"
+        layers[layer, kind][facet].append(
+            f"list(owner = list({anchor}), paint = list({glyphs}){label})"
+        )
+        written.update((gid, prop) for prop in edits[gid])
+    return layers, written
+
+
+def _r_data_label_block(name: str, layers: dict[tuple[int, str], dict[str, list[str]]]) -> str:
+    edits = []
+    for (layer, kind), groups in layers.items():
+        recipes = [
+            f"list(facet = {facet}, values = list({', '.join(values)}))"
+            for facet, values in groups.items()
+        ]
+        slot = f"plot$layers[[{layer}L]]"
+        edits.append(
+            f"  {slot} <- ggplot_with_data_labels({slot}, list({', '.join(recipes)}), {_r_literal(kind)})"
+        )
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers(
+                "ggplot_objects.R", "ggplot_layer_geometry.R", "ggplot_data_label_source.R"
+            ),
+            *edits,
+            "  plot",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
 
 
 def _native_layer_order_writes(
@@ -1439,6 +1524,7 @@ def build(
     frames, frame_writes = _native_frame_writes(axes, patches, theme_writes)
     source_layers, layer_writes = _native_layer_writes(hot, patches)
     layer_order, order_writes = _native_layer_order_writes(hot, patches)
+    data_labels, data_label_writes = _native_data_label_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
     tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
     locators, locator_writes = _native_tick_locator_writes(hot, patches)
@@ -1455,6 +1541,7 @@ def build(
         | panel_writes
         | layer_writes
         | order_writes
+        | data_label_writes
         | colour_writes
         | tick_writes
         | bar_writes
@@ -1547,6 +1634,7 @@ def build(
         or panel_themes
         or source_layers
         or layer_order
+        or data_labels
         or colour_scales
         or tick_labels
         or locators
@@ -1584,6 +1672,8 @@ def build(
         statements.append(_r_layer_block(name, source_layers))
     if layer_order:
         statements.append(_r_layer_order_block(name, layer_order))
+    if data_labels:
+        statements.append(_r_data_label_block(name, data_labels))
     if colour_scales:
         statements.append(_r_colour_mapping_block(name, colour_scales))
     if locators:

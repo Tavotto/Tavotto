@@ -12,6 +12,7 @@ on:
       - "src/tavotto/resources/color_palettes.json"
       - "scripts/fetch_fonts.py"
       - "tests/test_native_ggplot_capture.py"
+      - "tests/test_native_ggplot_details.py"
       - "tests/test_core_v02_release_candidate.py"
       - "tests/support/foundation_app.py"
       - "pyproject.toml"
@@ -48,6 +49,8 @@ jobs:
             name: panel and guide source writeback
           - id: figures
             name: figure workflow
+          - id: details
+            name: label, bar and binned guide writeback
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -99,12 +102,14 @@ jobs:
           layer_replays="test_native_r_fixed_layer_styles or test_native_r_raster_writeback"
           scoped_replays="test_native_r_independent_facet_views or test_native_r_individual_frame_sides or test_native_r_facet_ or test_native_r_mapped_ or test_native_r_hidden_grid_paint or test_native_r_fixed_ribbon or test_native_r_legend_anchors"
           source_replays="test_native_r_ or test_borrowed_r_source"
+          files=(tests/test_native_ggplot_capture.py tests/test_core_v02_release_candidate.py)
           case "$NATIVE_R_SUITE" in
             layers) selector="$layer_replays" ;;
             scoped) selector="not ($layer_replays) and ($scoped_replays)" ;;
             source) selector="not ($layer_replays or $scoped_replays) and ($source_replays)" ;;
             figures) selector="not ($layer_replays or $source_replays or $scoped_replays)" ;;
+            details) selector=""; files=(tests/test_native_ggplot_details.py) ;;
             *) exit 1 ;;
           esac
-          python -m pytest -o addopts= -v -k "$selector" --durations=10 --junitxml=native-r.xml tests/test_native_ggplot_capture.py tests/test_core_v02_release_candidate.py
+          python -m pytest -o addopts= -v -k "$selector" --durations=10 --junitxml=native-r.xml "${files[@]}"
           python -c 'import xml.etree.ElementTree as E; suites = E.parse("native-r.xml").findall("testsuite"); assert suites and sum(int(s.attrib["tests"]) for s in suites) > 0 and all(s.attrib["skipped"] == "0" for s in suites)'

@@ -727,12 +727,13 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions, remapped$outlines
   )
   captured <- new.env(parent = emptyenv())
-  if (redraw || capture_order) captured$grobs <- vector("list", length(plot$layers))
+  capture_layers <- redraw || capture_order || length(state$data_label_ids) > 0L
+  if (capture_layers) captured$grobs <- vector("list", length(plot$layers))
   plot$layers <- Map(function(layer, grobs, index) {
     layer <- if (redraw || index %in% remapped$changed) {
       ggplot_mirror_raster_layer(layer, layout$coord)
     } else ggplot_frozen_layer(layer, grobs)
-    if (redraw || capture_order) ggplot_watch_layer(layer, index, captured) else layer
+    if (capture_layers) ggplot_watch_layer(layer, index, captured) else layer
   }, plot$layers, state$layer_grobs, seq_along(plot$layers))
   built$layout <- layout
   built$plot <- plot
@@ -757,10 +758,15 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
                                        state$tick_targets, axis_styles)
   }
   table <- ggplot_hide_colourbars(table, remapped$hidden)
+  labels <- if (length(state$data_label_ids)) {
+    ggplot_data_text_scene(table, layout, ggplot_cartesian_panels(table, layout), captured$grobs, built$data, plot$layers)
+  }
+  if (!is.null(labels)) table <- labels$table
   hidden_colour_text <- unlist(lapply(remapped$hidden, function(target) c(target$title_gid, target$ticks_gid)),
                                use.names = FALSE)
   list(table = table, layout = layout, stops = remapped$stops,
        guide_ticks = remapped$guide_ticks, axes = axes, layer_grobs = captured$grobs,
+       label_targets = labels$targets,
        tick_values = tick_values,
        hidden_ticks = c(hidden_ticks, facet_ticks$hidden, hidden_colour_text,
                         setdiff(default_labels$hidden, names(member_edits)), relabelled$hidden),
@@ -955,14 +961,20 @@ ggplot_text_targets <- function(table, frame_pt, colourbar_titles, axes_targets,
   measure_ggplot_targets(targets, frame_pt)
 }
 
-measure_ggplot_targets <- function(targets, frame_pt) {
+measure_ggplot_targets <- function(targets, frame_pt, table = NULL) {
   if (!length(targets)) return(targets)
   drawn <- tryCatch({
     grid::grid.force()
     grid::grid.ls(viewports = TRUE, print = FALSE)
   }, error = function(error) NULL)
   if (is.null(drawn)) return(list())
+  labels <- Filter(function(target) isTRUE(target$data_label), targets)
+  measured_labels <- if (length(labels)) ggplot_measure_data_labels(table, drawn, labels, frame_pt)
   for (gid in names(targets)) {
+    if (isTRUE(targets[[gid]]$data_label)) {
+      targets[[gid]] <- measured_labels[[gid]]
+      next
+    }
     if (isTRUE(targets[[gid]]$hidden)) {
       targets[[gid]]$bbox <- c(-1, -1, 0, 0)
       next
@@ -1773,9 +1785,11 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       ggplot_watch_layer(ggplot_mirror_raster_layer(layer, built$layout$coord), i, captured_layers)
     }, layers, seq_along(layers))
     table <- ggplot2::ggplot_gtable(layout_input)
+    panels <- ggplot_cartesian_panels(table, built$layout)
+    labels <- ggplot_data_text_scene(table, built$layout, panels, captured_layers$grobs, built$data, built$plot$layers)
+    table <- labels$table
     grid::grid.newpage()
     grid::grid.draw(table)
-    panels <- ggplot_cartesian_panels(table, built$layout)
     axes_target <- ggplot_grid_target(built, table, ggplot_axes_target(built, table))
     axes_target <- ggplot_frame_target(built, table, axes_target)
     axes_target <- ggplot_background_target(built, table, axes_target)
@@ -1786,7 +1800,10 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       ggplot_faceted_axes_targets(built, table, panels, facet_axis_groups)
     } else stats::setNames(list(axes_target), ggplot_axes_gid)
     colourbar_titles <- ggplot_colourbar_titles(built)
-    text_targets <- ggplot_text_targets(table, frame_pt, colourbar_titles, axes_targets, built$layout$coord)
+    text_targets <- c(
+      ggplot_text_targets(table, frame_pt, colourbar_titles, axes_targets, built$layout$coord),
+      measure_ggplot_targets(labels$targets, frame_pt, table)
+    )
     tick_targets <- if (all(lengths(captured_layers$grobs) > 0L)) {
       ggplot_tick_targets(built, text_targets, colourbar_titles, axes_targets, panels)
     }
@@ -1836,6 +1853,7 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     list(
       table = table,
       text_targets = text_targets,
+      data_label_ids = intersect(names(labels$targets), names(text_targets)),
       tick_targets = tick_targets,
       tick_member_scopes = member_scopes,
       tick_members = tick_members,
@@ -1882,13 +1900,16 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   list(state = state, svg = svg)
 }
 
-edit_ggplot_text <- function(table, slots, path, paint) {
-  if (!length(slots)) return(grid::editGrob(table, path, gp = paint, strict = TRUE))
+edit_ggplot_text <- function(table, slots, path, paint, label = NULL) {
+  if (!length(slots)) {
+    if (!is.null(label)) return(grid::editGrob(table, path, gp = paint, label = label, strict = TRUE))
+    return(grid::editGrob(table, path, gp = paint, strict = TRUE))
+  }
   slot <- slots[[1L]]
   if (is.character(slot)) {
-    table$children[[slot]] <- edit_ggplot_text(table$children[[slot]], slots[-1L], path, paint)
+    table$children[[slot]] <- edit_ggplot_text(table$children[[slot]], slots[-1L], path, paint, label)
   } else {
-    table$grobs[[slot]] <- edit_ggplot_text(table$grobs[[slot]], slots[-1L], path, paint)
+    table$grobs[[slot]] <- edit_ggplot_text(table$grobs[[slot]], slots[-1L], path, paint, label)
   }
   table
 }
@@ -1937,9 +1958,14 @@ ggplot_text_paint <- function(target, edits) {
   family <- ggplot_text_family(target)
   for (prop in names(edits)) {
     value <- edits[[prop]]
-    if (prop == "text" && !is.null(target$text_slot)) next
+    if (prop == "text") {
+      if (!is.null(target$text_slot)) next
+      if (isTRUE(target$data_label) && is.character(value) && length(value) == 1L && !is.na(value)) next
+    }
     if (prop == "fontsize") {
-      if (is.null(target$title_dimension)) stop("The requested native R text style is unavailable.")
+      if (is.null(target$title_dimension) && !isTRUE(target$font_size_editable)) {
+        stop("The requested native R text style is unavailable.")
+      }
       if (!is_positive_ggplot_number(value)) stop("The native R font size must be a positive number.")
       paint$fontsize <- value / ggplot_text_cex(paint)
       next
@@ -1951,7 +1977,9 @@ ggplot_text_paint <- function(target, edits) {
       if (!grepl("^#[0-9A-Fa-f]{6}$", value)) {
         stop("The native R text color must be an RGB hex color.")
       }
-      paint$col <- value
+      paint$col <- if (isTRUE(target$data_label) && nchar(target$color) == 9L) {
+        paste0(value, substr(target$color, 8L, 9L))
+      } else value
     } else if (prop == "fontfamily" && !is.null(family) &&
                value %in% c(family, names(target$font_families))) {
       if (value != family) paint$fontfamily <- target$font_families[[value]]
@@ -2217,6 +2245,15 @@ ggplot_table_for <- function(state, edits) {
         text_targets[[gid]]$hidden <- TRUE
         next
       }
+      if (isTRUE(target$data_label)) {
+        current <- guides$label_targets[[gid]]
+        if (is.null(current) || !identical(target$label, current$label)) {
+          stop("The native R data label no longer matches its layer row.")
+        }
+        current$data_label_context <- target$data_label_context
+        text_targets[[gid]] <- current
+        next
+      }
       group <- if (!is.null(target$tick_labels)) target$label
       current <- ggplot_text_target(table, target$slots, target$role, target$title_child, group,
                                     allow_empty = !is.null(target$text_slot) || gid %in% guides$member_groups)
@@ -2309,8 +2346,14 @@ ggplot_table_for <- function(state, edits) {
     patch <- ggplot_text_edit(edits[[gid]], state$tick_targets[[gid]])
     if (!length(patch)) next
     paint <- ggplot_text_paint(target, patch)$paint
-    if (isTRUE(target$hidden)) next
-    table <- edit_ggplot_text(table, target$slots, target$edit_path, paint)
+    if (isTRUE(target$hidden) && !isTRUE(target$data_label)) next
+    label <- if (isTRUE(target$data_label)) patch$text
+    if (is.null(target$boxed)) {
+      table <- edit_ggplot_text(table, target$slots, target$edit_path, paint, label)
+      if (!is.null(label)) text_targets[[gid]]$hidden <- !nzchar(label)
+    } else {
+      table <- ggplot_edit_boxed_label(table, target, paint, label)
+    }
   }
   table <- ggplot_errorbar_group_edits(table, layer_targets$line_targets, edits)
   if (length(frame_edits)) {
@@ -2416,7 +2459,7 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
   if (with_manifest) {
     # Measure the actual raster canvas, including any pixel rounding.
     frame_pt <- grDevices::dev.size("in") * 72
-    return(list(text = measure_ggplot_targets(scene$text, frame_pt),
+    return(list(text = measure_ggplot_targets(scene$text, frame_pt, scene$table),
                 tick_members = ggplot_measure_tick_members(
                   scene$layout, scene$text, state$tick_member_scopes, frame_pt, scene$label_originals),
                 legends = measure_ggplot_legends(scene$legends, frame_pt),
@@ -2479,7 +2522,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       grid::grid.newpage()
       scene <- ggplot_table_for(state, requested)
       grid::grid.draw(scene$table)
-      list(text = measure_ggplot_targets(scene$text[geometry_gids], state$frame_pt),
+      list(text = measure_ggplot_targets(scene$text[geometry_gids], state$frame_pt, scene$table),
            tick_members = if (reflow) ggplot_measure_tick_members(
              scene$layout, scene$text, state$tick_member_scopes, state$frame_pt, scene$label_originals),
            legends = if (reflow) measure_ggplot_legends(scene$legends, state$frame_pt),
@@ -2513,6 +2556,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   colour_anchors <- ggplot_colour_source_anchors(state$colour_scales)
   elements <- lapply(names(state$text_targets), function(gid) {
     target <- state$text_targets[[gid]]
+    if (isTRUE(target$data_label) && !is.null(measured$text[[gid]])) target <- measured$text[[gid]]
     edit <- edits[[gid]]
     tick <- state$tick_targets[[gid]]
     authored <- state$authored_locators[[tick$locator_scope %||% ""]]
@@ -2611,7 +2655,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       }
       editable[[length(editable) + 1L]] <- family
     }
-    if (!is.null(target$title_dimension) || !is.null(tick$size)) {
+    if (!is.null(target$title_dimension) || isTRUE(target$font_size_editable) || !is.null(tick$size)) {
       native_size <- if (is.null(tick$size)) target$paint$fontsize * ggplot_text_cex(target$paint) else tick$size
       value_original <- round(native_size, 2)
       fontsize <- if (is.null(edit$fontsize)) value_original else round(edit$fontsize, 2)
@@ -2621,7 +2665,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       editable[[length(editable) + 1L]] <- field
     }
     current_label <- target$label
-    if (!is.null(target$text_slot)) {
+    if (!is.null(target$text_slot) || isTRUE(target$data_label)) {
       current_label <- edit$text %||% target$label
       content <- list(prop = "text", type = "text", value = current_label)
       if (!is.null(edit$text)) content$value_original <- target$label
@@ -2631,6 +2675,16 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       gid = gid, role = target$role, label = current_label,
       bbox = as.list(bbox), draggable = FALSE, editable = editable
     )
+    if (isTRUE(target$data_label)) {
+      element$data_label_context <- target$data_label_context
+      if (length(patch) && !is.null(target$source)) {
+        native <- c(color = "col", fontsize = "fontsize", fontfamily = "fontfamily", weight = "font", style = "font")
+        paint <- unique(unname(native[intersect(names(patch), names(native))]))
+        element$source_data_label <- c(target$source, list(
+          edited = patch, text = patch$text, paint = unclass(painted$paint)[paint]
+        ))
+      }
+    }
     locator_input <- input[intersect(names(input), ggplot_locator_props)]
     if (!is.null(tick$locator_axis) && length(locator_input)) {
       style <- edit[intersect(names(edit), ggplot_locator_props)]
