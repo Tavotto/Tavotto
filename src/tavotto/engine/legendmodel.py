@@ -1513,10 +1513,29 @@ def _handle_read(h, prop: str):
     raise KeyError(prop)
 
 
+def _line_set_color(h: Line2D, v) -> None:
+    """示意线改色：显式设过、且与此刻线色相同的标记填充 / 描边跟着改；本来就不同的（白芯、'none'、另一种色）不动。
+    以「此刻线色」为准所以撤销（新色 → 旧色）对称；'auto' 的本来就跟线走，不钉死。"""
+    old = h.get_color()
+    follow = []
+    for name in ("markerfacecolor", "markeredgecolor"):
+        raw = getattr(h, f"_{name}", None)
+        if raw is None or (isinstance(raw, str) and raw.lower() in ("auto", "none")):
+            continue
+        try:
+            if mcolors.same_color(raw, old):
+                follow.append(name)
+        except (ValueError, TypeError):
+            continue
+    h.set_color(v)
+    for name in follow:
+        getattr(h, f"set_{name}")(v)
+
+
 def _handle_write(h, prop: str, v) -> None:
     if isinstance(h, Line2D):
         {
-            "handle_color": lambda: h.set_color(v),
+            "handle_color": lambda: _line_set_color(h, v),
             "handle_linestyle": lambda: h.set_linestyle(v),
             "handle_linewidth": lambda: h.set_linewidth(float(v)),
             "handle_marker": lambda: h.set_marker(v),

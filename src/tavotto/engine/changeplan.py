@@ -374,6 +374,11 @@ def _fields(el: dict) -> dict[str, dict]:
     }
 
 
+def _has_visible_marker(value: object) -> bool:
+    """曲线 `marker` 字段的当前值是不是一个看得见的标记（`""` / `"none"` / `" "` / None 之外）。"""
+    return isinstance(value, str) and value.strip().lower() not in ("", "none")
+
+
 def _hidden(el: dict) -> bool:
     vis = _fields(el).get("visible")
     return bool(vis) and vis.get("value") is False
@@ -982,6 +987,8 @@ def validate_proposal(
         if item not in unhandled:
             unhandled.append(item)
 
+    dense_blocked: set[str] = set()  # `marker` 被 dense_curve 拦下的曲线 gid
+
     for g in obj.get("groups", [])[:MAX_GROUPS]:
         if not isinstance(g, dict) or not known(g.get("comment_id")):
             continue
@@ -1022,8 +1029,10 @@ def validate_proposal(
                 and isinstance(value, str)
                 and value.strip().lower() not in ("", "none", " ")
                 and facts_mod.is_dense_line(el)
+                and not _has_visible_marker(field_.get("value"))
             ):
                 reject(cid, "dense_curve")
+                dense_blocked.add(gid)
                 continue
             if (
                 prop in ("xlim", "ylim")
@@ -1044,6 +1053,21 @@ def validate_proposal(
                 groups[cid] = []
                 order.append(cid)
             groups[cid].append({"gid": gid, "prop": prop, "value": value})
+    if dense_blocked:
+        # 曲线的标记没改成，绑定到这条曲线的图例项示意标记也不改——否则图例与曲线对不上（真机 2026-11-28）
+        for cid in list(groups):
+            kept = []
+            for ch in groups[cid]:
+                entry = (by_gid.get(ch["gid"]) or {}).get("legend_entry") or {}
+                if ch["prop"] == "handle_marker" and entry.get("source_gid") in dense_blocked:
+                    reject(cid, "dense_curve")
+                else:
+                    kept.append(ch)
+            if kept:
+                groups[cid] = kept
+            else:
+                del groups[cid]
+                order.remove(cid)
     for u in raw_unhandled[:MAX_COMMENTS]:
         if isinstance(u, dict) and known(u.get("comment_id")):
             reason = u.get("reason")

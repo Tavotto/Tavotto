@@ -1965,6 +1965,66 @@ def test_dense_curves_get_no_markers_and_facts_say_so():
     assert cp.validate_proposal(raw, m)["groups"]
 
 
+def _dense_marker_manifest(current):
+    from copy import deepcopy
+
+    m = deepcopy(BASE)
+    els = m["elements"] if isinstance(m, dict) else m
+    line = next(e for e in els if e["gid"] == "ax0.line0")
+    line["role"] = "line"
+    line["data_fingerprint"] = {"status": "ok", "parts": {"xy": {"shape": [200, 2]}}}
+    line.setdefault("editable", []).append(
+        {"prop": "marker", "type": "enum", "value": current, "options": ["None", "o", "s", "^"]}
+    )
+    els.append(
+        {
+            "gid": "ax0.legend.texts_0",
+            "role": "legend_entry",
+            "legend_entry": {"source_gid": "ax0.line0"},
+            "editable": [{"prop": "handle_marker", "type": "enum", "value": current}],
+        }
+    )
+    return m
+
+
+def test_dense_curve_with_visible_marker_may_change_shape():
+    m = _dense_marker_manifest("s")
+    raw = {
+        "groups": [
+            {
+                "comment_id": "c1",
+                "changes": [
+                    ch("ax0.line0", "marker", "^"),
+                    ch("ax0.legend.texts_0", "handle_marker", "^"),
+                ],
+            }
+        ],
+        "unhandled": [],
+    }
+    out = cp.validate_proposal(raw, m)
+    assert [c["prop"] for c in out["groups"][0]["changes"]] == ["marker", "handle_marker"]
+    assert out["unhandled"] == []
+
+
+def test_dense_curve_without_marker_still_blocked_and_legend_marker_follows():
+    m = _dense_marker_manifest("None")
+    raw = {
+        "groups": [
+            {
+                "comment_id": "c1",
+                "changes": [
+                    ch("ax0.line0", "marker", "^"),
+                    ch("ax0.legend.texts_0", "handle_marker", "^"),
+                ],
+            },
+        ],
+        "unhandled": [],
+    }
+    out = cp.validate_proposal(raw, m)
+    assert out["groups"] == []
+    assert out["unhandled"] == [{"comment_id": "c1", "reason": "dense_curve"}]
+
+
 def test_decorative_patch_is_not_data_but_bars_are():
     # 真机：绘图区外画上去的矩形（role patch，没有数据指纹）被算进数据范围 → 「数据到 86.8 min」→ 建议横轴放宽到 90
     from tavotto.engine import figure_facts as ff
