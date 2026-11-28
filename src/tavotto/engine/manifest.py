@@ -55,7 +55,6 @@ import mixedtext
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
 from colorbarmodel import (
-    _CB_EXTENDS,
     ColorbarProxy,
     _cb_axis,
     _cb_tick_color,
@@ -71,6 +70,13 @@ from colorbarmodel import (
     scale_colorbars,
     scale_gids,
     scale_siblings,
+)
+from colorscale import (
+    CMAPS,
+    color_scale_fields,
+    colorbar_layout_fields,
+    colorbar_outline_fields,
+    colorbar_tick_fields,
 )
 from legendmodel import (
     _LEGEND_HANDLE_MARKER_OPTS,
@@ -89,6 +95,29 @@ from legendmodel import (
     legend_proxy_names,
     legend_style_mismatch,
     legend_verified_gid,
+)
+from manifest_fields import (
+    AXIS_FRAME_SIDES,
+    axis_aspect_field,
+    axis_facecolor_field,
+    axis_frame_fields,
+    axis_grid_fields,
+    axis_invert_field,
+    axis_limits_field,
+    axis_scale_field,
+    axis_tick_side_fields,
+    bar_paint_fields,
+    bar_width_field,
+    collection_stroke_fields,
+    errorbar_cap_fields,
+    errorbar_stroke_fields,
+    fill_color_field,
+    hatch_paint_fields,
+    hatch_pattern_field,
+    layer_order_field,
+    marker_field as _marker_field,
+    opacity_field,
+    point_size_field,
 )
 from overrides import (
     _ARROWSTYLES,
@@ -126,6 +155,7 @@ from overrides import (
     color_mapping_is_live,
     colorbar_mapping_is_live,
     entry_face_index,
+    errorbar_linewidth_members,
     fallback_tail,
     font_display_names,
     font_face_index,
@@ -169,8 +199,8 @@ from tickmodel import (
     TickSet,
     _minor_tick_prop,
     _tick0,
+    capture_axis_scale,
     drawn_tick_label_entries,
-    tick_cfg,
     tick_format_name,
     tick_major_mode,
     tick_major_step,
@@ -182,23 +212,6 @@ from tickmodel import (
     tick_side_visible,
     ticklabel_memo,
 )
-
-CMAPS = [
-    "viridis",
-    "plasma",
-    "inferno",
-    "magma",
-    "cividis",
-    "Greys",
-    "gray",
-    "hot",
-    "afmhot",
-    "coolwarm",
-    "RdBu_r",
-    "seismic",
-    "jet",
-    "turbo",
-]
 
 _SKIP_LABELS = ("_child", "_nolegend_")
 
@@ -1252,8 +1265,8 @@ def instrument(state: FigState) -> None:
             if getattr(ax, f"{which}axis", None) is None:
                 continue
             # 刻度模型的「脚本原样」在这里采：build 之后、任何 override 之前，
-            # 采到的才是脚本自己那套 locator/formatter（见 overrides.tick_cfg）
-            tick_cfg(ax, which)
+            # 采到的才是脚本自己那套尺度和 locator/formatter
+            capture_axis_scale(ax, which)
             # **无条件登记**刻度组：此刻没有刻度不代表以后没有——色条方向一翻，
             # 长短轴互换，原来空着的那条轴就成了带刻度的那条。build_manifest 会
             # 把当下真的没有刻度的组丢掉，所以多登记一个不会在界面上多出东西
@@ -1512,16 +1525,7 @@ def _alpha_field(artist) -> list[dict]:
     a = getattr(artist, "get_alpha", lambda: None)()
     if a is not None and hasattr(a, "shape") and getattr(a, "ndim", 0) > 0:
         return []
-    return [
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if a is None else round(float(a), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        }
-    ]
+    return [opacity_field(1.0 if a is None else round(float(a), 2))]
 
 
 #: 三个通用族。**无条件保留**——它们由 rcParams 的族列表解析，运行时一定有
@@ -2288,15 +2292,7 @@ def _text_fields(t) -> list[dict]:
             "step": 0.05,
             "group": "排版",
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(t.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排版",
-        },
+        layer_order_field(round(float(t.get_zorder()), 1), group="排版"),
         {"prop": "bbox_visible", "type": "bool", "value": bb["visible"], "group": "背景"},
         {"prop": "bbox_facecolor", "type": "color", "value": bb["face"], "group": "背景"},
         {
@@ -2554,36 +2550,6 @@ def _marker_original(state: FigState, gid: str, prop: str, to_shape) -> dict | N
         return None
 
 
-def _marker_field(
-    prop: str,
-    value: str,
-    options: list[str],
-    shape: dict | None,
-    original: dict | None = None,
-    **extra,
-) -> dict:
-    """marker 这一族 enum 字段的唯一构造处（曲线 / 散点 / 茎叶 / 图例示意）。
-
-    `marker_current` 是**只读事实**，不是 override 的落点：`value` 说的是
-    「用户选中的是哪个取值」，它说的是「图上此刻画的是什么形状」。有
-    override 时它自然就是 override 之后的形状——manifest 本来就是渲染态。
-
-    `marker_original` 是同一套五档结构的第二个只读事实：**override 之前**
-    那个形状。**没有 override 时它整个不出现**——缺席的含义就是「与
-    `marker_current` 相同」，前端不用再判一次「改没改过」。
-
-    引擎说不出形状时**这两个键都整个不出现**：「不知道」与「这个对象没有
-    标记」（`{"kind": "none"}`）是两个不同的答案，合并进同一档的话老引擎发来
-    的清单会被读成「图上没有标记」。
-    """
-    field = {"prop": prop, "type": "enum", "value": value, "options": options, **extra}
-    if shape is not None:
-        field["marker_current"] = shape
-    if original is not None:
-        field["marker_original"] = original
-    return field
-
-
 def _line_fields(ln, state: FigState, gid: str) -> list[dict]:
     lab = str(ln.get_label())
     marker = str(ln.get_marker())
@@ -2646,15 +2612,7 @@ def _line_fields(ln, state: FigState, gid: str) -> list[dict]:
             "value": to_hex(ln.get_markeredgecolor()),
             "group": "线条与标记",
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(ln.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(ln.get_zorder()), 1)),
     ]
 
 
@@ -2794,26 +2752,10 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
             )
         else:
             fc = collection_face_rgba(coll)
-            fields.append(
-                {
-                    "prop": "facecolor",
-                    "type": "color",
-                    "value": to_hex(fc[0]) if len(fc) else "#000000",
-                }
-            )
+            fields.append(fill_color_field(to_hex(fc[0]) if len(fc) else "#000000"))
     if "sizes" in caps:
         sizes = collection_sizes(coll)
-        fields.append(
-            {
-                "prop": "size",
-                "type": "number",
-                "value": round(float(np.mean(sizes)), 1) if len(sizes) else 20.0,
-                "min": 1,
-                "max": 400,
-                "step": 1,
-                "unit": "pt²",
-            }
-        )
+        fields.append(point_size_field(round(float(np.mean(sizes)), 1) if len(sizes) else 20.0))
     if "marker" in caps:
         # marker 形状可整体替换（set_paths）；"original" = 脚本原始路径。
         # **`"original"` 说不出形状**——它是「继承脚本」这一档，不是一个图形。
@@ -2836,22 +2778,10 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
         # 描边：`TriMesh` 连边都不画（`draw_gouraud_triangles` 只接顶点颜色），
         # 判据 `overrides.honours_stroke`
         *(
-            [
-                {
-                    "prop": "edgecolor",
-                    "type": "color",
-                    "value": to_hex(ec[0]) if len(ec) else "#000000",
-                },
-                {
-                    "prop": "linewidth",
-                    "type": "number",
-                    "value": round(float(lw[0]), 2) if len(lw) else 0.0,
-                    "min": 0,
-                    "max": 8,
-                    "step": 0.1,
-                    "unit": "pt",
-                },
-            ]
+            collection_stroke_fields(
+                to_hex(ec[0]) if len(ec) else "#000000",
+                lw[0] if len(lw) else 0.0,
+            )
             if "stroke" in caps
             else []
         ),
@@ -2899,17 +2829,7 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
         )
     if "mapped" in caps:
         fields += _colormap_fields(coll, state, gid)
-    fields.append(
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(coll.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        }
-    )
+    fields.append(layer_order_field(round(float(coll.get_zorder()), 1)))
     return fields
 
 
@@ -2948,39 +2868,17 @@ def _hatch_style_fields(pt) -> list[dict]:
     ≤3.10 的花纹色是边色的副产品（每次 `set_edgecolor` 覆盖），独立编辑会被下一次边色 / 不透明度写入冲掉，
     不发比发一条改了又回去的好（#874）。
     """
-    out: list[dict] = []
-    if hasattr(pt, "set_hatchcolor"):
-        out.append(
-            {
-                "prop": "hatchcolor",
-                "type": "color",
-                # 画出来的花纹色（`'edge'` 时是边色的实况）；「跟随边框」是另一个事实，不塞进色号里
-                "value": to_hex(pt.get_hatchcolor()),
-                "follows_edge": getattr(pt, "_hatch_color", None) == "edge",
-            }
-        )
-    if hasattr(pt, "set_hatch_linewidth"):
-        out.append(
-            {
-                "prop": "hatch_linewidth",
-                "type": "number",
-                "value": round(float(pt.get_hatch_linewidth()), 2),
-                "min": 0,
-                "max": 8,
-                "step": 0.1,
-                "unit": "pt",
-            }
-        )
-    return out
+    color = to_hex(pt.get_hatchcolor()) if hasattr(pt, "set_hatchcolor") else None
+    linewidth = pt.get_hatch_linewidth() if hasattr(pt, "set_hatch_linewidth") else None
+    return hatch_paint_fields(
+        color,
+        linewidth,
+        follows_edge=(getattr(pt, "_hatch_color", None) == "edge") if color is not None else None,
+    )
 
 
 def _hatch_field(pt) -> dict:
-    return {
-        "prop": "hatch",
-        "type": "enum",
-        "value": str(pt.get_hatch() or ""),
-        "options": _hatch_options(pt.get_hatch()),
-    }
+    return hatch_pattern_field(str(pt.get_hatch() or ""), _hatch_options(pt.get_hatch()))
 
 
 def _hatch_options(current) -> list[str]:
@@ -3163,25 +3061,9 @@ def _colormap_fields(m, state: FigState, gid: str, artist=None) -> list[dict]:
     `m` 自己），别名反查用它。
     """
     vmin, vmax = m.get_clim()
-    span = abs(float(vmax) - float(vmin)) if vmin is not None and vmax is not None else 1.0
-    step = max(span / 100.0, 1e-6)
-    return [
-        _cmap_field(m, state, m if artist is None else artist, gid),
-        {
-            "prop": "vmin",
-            "type": "number",
-            "value": None if vmin is None else round(float(vmin), 4),
-            "step": round(step, 4),
-            "group": "颜色映射",
-        },
-        {
-            "prop": "vmax",
-            "type": "number",
-            "value": None if vmax is None else round(float(vmax), 4),
-            "step": round(step, 4),
-            "group": "颜色映射",
-        },
-    ]
+    return color_scale_fields(
+        vmin, vmax, _cmap_field(m, state, m if artist is None else artist, gid)
+    )
 
 
 def _linecoll_fields(coll) -> list[dict]:
@@ -3227,15 +3109,7 @@ def _linecoll_fields(coll) -> list[dict]:
         },
         *_alpha_field(coll),
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(coll.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(coll.get_zorder()), 1)),
     ]
 
 
@@ -3245,74 +3119,38 @@ def _bar_series_fields(grp) -> list[dict]:
     if r0 is None:
         return []
     lab = str(grp.container.get_label() or "") if grp.container is not None else ""
+    horizontal = getattr(grp.container, "orientation", None) == "horizontal"
     return [
         {"prop": "label", "type": "text", "value": "" if lab.startswith("_") else lab},
-        {"prop": "facecolor", "type": "color", "value": _patch_face_hex(r0)},
-        {"prop": "edgecolor", "type": "color", "value": to_hex(r0.get_edgecolor())},
-        {
-            "prop": "linewidth",
-            "type": "number",
-            "value": round(float(r0.get_linewidth()), 2),
-            "min": 0,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
+        *bar_paint_fields(
+            {
+                "facecolor": _patch_face_hex(r0),
+                "edgecolor": to_hex(r0.get_edgecolor()),
+                "linewidth": r0.get_linewidth(),
+            }
+        ),
         _hatch_field(r0),
         *_hatch_style_fields(r0),
-        {
-            "prop": "bar_width",
-            "type": "number",
-            "value": round(float(r0.get_width()), 3),
-            "min": 0.01,
-            "max": 5,
-            "step": 0.02,
-            "unit": "数据单位",
-        },
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        },
+        bar_width_field(r0.get_width()),
+        *([bar_width_field(r0.get_height(), horizontal=True)] if horizontal else []),
+        opacity_field(1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(r0.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(r0.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(r0.get_zorder()), 1)),
     ]
 
 
 def _bar_fields(rect) -> list[dict]:
     return [
-        {"prop": "facecolor", "type": "color", "value": _patch_face_hex(rect)},
-        {"prop": "edgecolor", "type": "color", "value": to_hex(rect.get_edgecolor())},
-        {
-            "prop": "linewidth",
-            "type": "number",
-            "value": round(float(rect.get_linewidth()), 2),
-            "min": 0,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
+        *bar_paint_fields(
+            {
+                "facecolor": _patch_face_hex(rect),
+                "edgecolor": to_hex(rect.get_edgecolor()),
+                "linewidth": rect.get_linewidth(),
+            }
+        ),
         _hatch_field(rect),
         *_hatch_style_fields(rect),
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if rect.get_alpha() is None else round(float(rect.get_alpha()), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        },
+        opacity_field(1.0 if rect.get_alpha() is None else round(float(rect.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(rect.get_visible())},
     ]
 
@@ -3334,46 +3172,17 @@ def _errorbar_fields(grp) -> list[dict]:
     ):
         color = color[0]
     cap0 = caps[0] if caps else None
-    lw = probe.get_linewidth()
+    stroke = next(iter(errorbar_linewidth_members(grp)), probe)
+    lw = stroke.get_linewidth()
     if hasattr(lw, "__len__"):
         lw = lw[0] if len(lw) else 1.0
     return [
-        {"prop": "color", "type": "color", "value": to_hex(color)},
-        {
-            "prop": "linewidth",
-            "type": "number",
-            "value": round(float(lw), 2),
-            "min": 0.1,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
-        {
-            "prop": "capsize",
-            "type": "number",
-            "value": round(float(cap0.get_markersize()), 2) if cap0 is not None else 0.0,
-            "min": 0,
-            "max": 15,
-            "step": 0.5,
-            "unit": "pt",
-        },
-        {
-            "prop": "cap_thickness",
-            "type": "number",
-            "value": round(float(cap0.get_markeredgewidth()), 2) if cap0 is not None else 1.0,
-            "min": 0.1,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
-        {
-            "prop": "alpha",
-            "type": "number",
-            "value": 1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-        },
+        *errorbar_stroke_fields(to_hex(color), lw),
+        *errorbar_cap_fields(
+            cap0.get_markersize() if cap0 is not None else 0.0,
+            cap0.get_markeredgewidth() if cap0 is not None else 1.0,
+        ),
+        opacity_field(1.0 if probe.get_alpha() is None else round(float(probe.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
     ]
 
@@ -3438,15 +3247,7 @@ def _arrowpatch_fields(a) -> list[dict]:
             "max": 1,
             "step": 0.05,
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(a.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(a.get_zorder()), 1)),
         {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
     ]
 
@@ -3530,15 +3331,7 @@ def _patch_fields(pt) -> list[dict]:
             "step": 0.05,
         },
         {"prop": "visible", "type": "bool", "value": bool(pt.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(pt.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(pt.get_zorder()), 1)),
     ]
     resize = patch_resize_geometry(pt)
     if resize is not None:
@@ -3619,15 +3412,7 @@ def _image_fields(im, state: FigState, gid: str) -> list[dict]:
             "options": ["upper", "lower"],
             "group": "高级",
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(im.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(im.get_zorder()), 1)),
         {"prop": "visible", "type": "bool", "value": bool(im.get_visible())},
     ]
     return fields
@@ -3657,26 +3442,10 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
         # 控件比一个不存在的控件糟糕得多，而用户没有理由预料到它会这样。
         # 真修法要把宿主从一个 axes 改成一组、`_cb_place` / `_cb_target_rect` /
         # `axes_follow` 三处按并集算——那是落位模型的改动，1.0 稳定期不做。
-        *(
-            [
-                {
-                    "prop": "orientation",
-                    "type": "enum",
-                    "value": str(getattr(cb, "orientation", "vertical")),
-                    "options": ["vertical", "horizontal"],
-                }
-            ]
-            if colorbar_host_count(cb) == 1
-            else []
+        *colorbar_layout_fields(
+            str(getattr(cb, "orientation", "vertical")) if colorbar_host_count(cb) == 1 else None,
+            str(getattr(cb, "extend", "neither")),
         ),
-        # 两端的延伸三角（「超出色阶的值画成箭头」）。同样是结构改造：
-        # 见 overrides._set_cb_extend
-        {
-            "prop": "extend",
-            "type": "enum",
-            "value": str(getattr(cb, "extend", "neither")),
-            "options": list(_CB_EXTENDS),
-        },
         # 色图这三条要与**它的 mappable** 同一个判据开闸。色条与 mappable 是
         # 同一份状态的两个 gid（见 ALIAS_GROUPS），所以「此刻映射还在不在」
         # 也只能有一处答案——`color_mapping_is_live`。
@@ -3716,38 +3485,8 @@ def _colorbar_fields(p, state: FigState, gid: str) -> list[dict]:
             if colorbar_mapping_is_live(cb)
             else []
         ),
-        {
-            "prop": "tick_fontsize",
-            "type": "number",
-            "value": round(_cb_tick_fontsize(p), 2),
-            "min": 3,
-            "max": 200,
-            "step": 0.5,
-            "unit": "pt",
-            "group": "刻度",
-        },
-        {
-            "prop": "tick_color",
-            "type": "color",
-            "value": to_hex(_cb_tick_color(p)),
-            "group": "刻度",
-        },
-        {
-            "prop": "outline_visible",
-            "type": "bool",
-            "value": bool(cb.outline.get_visible()),
-            "group": "高级",
-        },
-        {
-            "prop": "outline_width",
-            "type": "number",
-            "value": round(float(cb.outline.get_linewidth()), 2),
-            "min": 0,
-            "max": 10,
-            "step": 0.1,
-            "unit": "pt",
-            "group": "高级",
-        },
+        *colorbar_tick_fields(_cb_tick_fontsize(p), to_hex(_cb_tick_color(p))),
+        *colorbar_outline_fields(cb.outline.get_visible(), cb.outline.get_linewidth()),
         {"prop": "visible", "type": "bool", "value": bool(cb.ax.get_visible())},
     ]
 
@@ -4521,186 +4260,61 @@ def _axes_fields(ax, el: dict | None = None) -> list[dict]:
             []
             if flags.get("limits_slaved")
             else [
-                {
-                    "prop": "xlim",
-                    "type": "pair",
-                    "value": [float(x0), float(x1)],
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "ylim",
-                    "type": "pair",
-                    "value": [float(y0), float(y1)],
-                    "group": "数据范围",
-                },
+                axis_limits_field("x", (x0, x1)),
+                axis_limits_field("y", (y0, y1)),
                 # 选项由**当前这套 matplotlib 真正注册了的 scale** 决定，不写死清单：
                 # 列一个 set_[xy]scale 吃不下的名字，用户点了只会得到一次渲染失败
-                {
-                    "prop": "xscale",
-                    "type": "enum",
-                    "value": str(ax.get_xscale()),
-                    "options": scale_options(ax.get_xscale(), ax, "x"),
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "yscale",
-                    "type": "enum",
-                    "value": str(ax.get_yscale()),
-                    "options": scale_options(ax.get_yscale(), ax, "y"),
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "invert_x",
-                    "type": "bool",
-                    "value": bool(ax.xaxis_inverted()),
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "invert_y",
-                    "type": "bool",
-                    "value": bool(ax.yaxis_inverted()),
-                    "group": "数据范围",
-                },
-                {
-                    "prop": "aspect",
-                    "type": "text",
-                    "value": aspect_text(ax),
-                    "group": "数据范围",
-                },
+                axis_scale_field(
+                    "x", str(ax.get_xscale()), scale_options(ax.get_xscale(), ax, "x")
+                ),
+                axis_scale_field(
+                    "y", str(ax.get_yscale()), scale_options(ax.get_yscale(), ax, "y")
+                ),
+                axis_invert_field("x", ax.xaxis_inverted()),
+                axis_invert_field("y", ax.yaxis_inverted()),
+                axis_aspect_field(aspect_text(ax)),
             ]
         ),
         # 刻度线的四边开关（issue #92）：论文规范常要四边镜像刻度或全部关掉，
         # 而上/右两边没有刻度数字、在画布上点不到——入口放在子图元素上。
         # 方向（in/out/inout）在刻度组元素上，这里不重复（单一权威）。
-        {
-            "prop": "ticks_bottom",
-            "type": "bool",
-            "value": tick_side_visible(ax, "x", 1),
-            "group": "刻度线",
-        },
-        {
-            "prop": "ticks_top",
-            "type": "bool",
-            "value": tick_side_visible(ax, "x", 2),
-            "group": "刻度线",
-        },
-        {
-            "prop": "ticks_left",
-            "type": "bool",
-            "value": tick_side_visible(ax, "y", 1),
-            "group": "刻度线",
-        },
-        {
-            "prop": "ticks_right",
-            "type": "bool",
-            "value": tick_side_visible(ax, "y", 2),
-            "group": "刻度线",
-        },
-        {"prop": "grid_x", "type": "bool", "value": _grid_visible(ax, "x"), "group": "网格与边框"},
-        {"prop": "grid_y", "type": "bool", "value": _grid_visible(ax, "y"), "group": "网格与边框"},
-        {
-            "prop": "grid_color",
-            "type": "color",
-            "value": to_hex(_grid_prop(lambda g: g.get_color(), "#b0b0b0")(ax)),
-            "group": "网格与边框",
-        },
-        {
-            "prop": "grid_linestyle",
-            "type": "enum",
-            "value": str(_grid_prop(lambda g: g.get_linestyle(), ":")(ax)),
-            "options": ["-", "--", ":", "-."],
-            "group": "网格与边框",
-        },
-        {
-            "prop": "grid_linewidth",
-            "type": "number",
-            "value": round(float(_grid_prop(lambda g: g.get_linewidth(), 0.5)(ax)), 2),
-            "min": 0.1,
-            "max": 10,
-            "step": 0.1,
-            "unit": "pt",
-            "group": "网格与边框",
-        },
-        {
-            "prop": "grid_alpha",
-            "type": "number",
-            "value": round(float(_grid_prop(lambda g: g.get_alpha(), None)(ax) or 1.0), 2),
-            "min": 0,
-            "max": 1,
-            "step": 0.05,
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_top",
-            "type": "bool",
-            "value": bool(ax.spines["top"].get_visible()) if "top" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_right",
-            "type": "bool",
-            "value": bool(ax.spines["right"].get_visible()) if "right" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_bottom",
-            "type": "bool",
-            "value": bool(ax.spines["bottom"].get_visible()) if "bottom" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_left",
-            "type": "bool",
-            "value": bool(ax.spines["left"].get_visible()) if "left" in ax.spines else True,
-            "group": "网格与边框",
-        },
-        # 「全部」这一档：四条边（含色条轴的 outline）统一改
-        {
-            "prop": "spine_color",
-            "type": "color",
-            "value": to_hex(spine_all_color(ax)),
-            "group": "网格与边框",
-        },
-        {
-            "prop": "spine_linewidth",
-            "type": "number",
-            "value": round(spine_all_width(ax), 2),
-            "min": 0.1,
-            "max": 10,
-            "step": 0.1,
-            "unit": "pt",
-            "group": "网格与边框",
-        },
-        # 逐条覆盖（只画左下两条粗边框是论文图的常见做法）。没表态的落回
-        # 「全部」，「全部」也没表态就用脚本原样——优先级见 apply_spine_model
-        *[
-            f
-            for side in ("top", "right", "bottom", "left")
-            for f in (
-                {
-                    "prop": f"spine_{side}_color",
-                    "type": "color",
-                    "value": to_hex(spine_side_color(ax, side)),
-                    "group": "边框（逐条）",
+        *axis_tick_side_fields(
+            {
+                "ticks_bottom": tick_side_visible(ax, "x", 1),
+                "ticks_top": tick_side_visible(ax, "x", 2),
+                "ticks_left": tick_side_visible(ax, "y", 1),
+                "ticks_right": tick_side_visible(ax, "y", 2),
+            }
+        ),
+        *axis_grid_fields(
+            {
+                "grid_x": _grid_visible(ax, "x"),
+                "grid_y": _grid_visible(ax, "y"),
+                "grid_color": to_hex(_grid_prop(lambda g: g.get_color(), "#b0b0b0")(ax)),
+                "grid_linestyle": _grid_prop(lambda g: g.get_linestyle(), ":")(ax),
+                "grid_linewidth": _grid_prop(lambda g: g.get_linewidth(), 0.5)(ax),
+                "grid_alpha": _grid_prop(lambda g: g.get_alpha(), None)(ax) or 1.0,
+            }
+        ),
+        *axis_frame_fields(
+            {
+                "spine_color": to_hex(spine_all_color(ax)),
+                "spine_linewidth": spine_all_width(ax),
+                **{
+                    f"spine_{side}": ax.spines[side].get_visible() if side in ax.spines else True
+                    for side in AXIS_FRAME_SIDES
                 },
-                {
-                    "prop": f"spine_{side}_linewidth",
-                    "type": "number",
-                    "value": round(spine_side_width(ax, side), 2),
-                    "min": 0.1,
-                    "max": 10,
-                    "step": 0.1,
-                    "unit": "pt",
-                    "group": "边框（逐条）",
+                **{
+                    f"spine_{side}_color": to_hex(spine_side_color(ax, side))
+                    for side in AXIS_FRAME_SIDES
                 },
-            )
-        ],
-        {
-            "prop": "facecolor",
-            "type": "color",
-            "value": to_hex(ax.get_facecolor()),
-            "group": "网格与边框",
-        },
+                **{
+                    f"spine_{side}_linewidth": spine_side_width(ax, side)
+                    for side in AXIS_FRAME_SIDES
+                },
+            }
+        ),
+        axis_facecolor_field(to_hex(ax.get_facecolor())),
     ]
     return [f for f in fields if _axes_prop_drawn(ax, f["prop"])]
 
@@ -4947,15 +4561,7 @@ def _stem_fields(grp, state: FigState, gid: str) -> list[dict]:
             "step": 0.05,
         },
         {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(probe.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(probe.get_zorder()), 1)),
     ]
 
 
@@ -4969,15 +4575,7 @@ def _generic_fields(a) -> list[dict]:
     """
     return [
         {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(a.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(a.get_zorder()), 1)),
     ]
 
 
@@ -6689,7 +6287,7 @@ def _measure_manifest(
                     entry["bar_baseline"] = baseline
             # 只读事实（不在 editable、不进文档）：这根轴的范围此刻是不是自动缩放算出来的。`set_[xy]lim` 会把它关掉。
             # TAF 的「目标范围外改动」靠它区分「自动缩放跟着变」与「显式改了坐标范围」（figureverify._auto_prop）。
-            # `peers`：共享这根轴范围的兄弟轴（sharex / twinx 的另一半），它们的范围会跟着这根轴的目标一起变。
+            # `peers`：共享该方向范围的其他已登记轴。空列表是实际观测，缺键是未取得证据。
             autoscale: dict = {}
             peers: dict[str, list[str]] = {}
             for axis in ("x", "y"):
@@ -6699,13 +6297,11 @@ def _measure_manifest(
                 autoscale[axis] = bool(probe())
                 try:
                     sibs = getattr(artist, f"get_shared_{axis}_axes")().get_siblings(artist)
-                except Exception:  # noqa: BLE001 —— 取不到兄弟：不发，判据按「只有自己」处理
-                    sibs = []
-                names = sorted(
+                except Exception:  # noqa: BLE001 —— 无法读取时不发该方向的证据
+                    continue
+                peers[axis] = sorted(
                     g for a in sibs if a is not artist and (g := gid_by_artist_id.get(id(a)))
                 )
-                if names:
-                    peers[axis] = names
             # `expected`：自动缩放**此刻会算出**的范围（`autoscale_view` 的结果，不落到图上）。autoscale 开关只是最终状态——
             # `set_xlim(auto=True)`、先设再 `set_autoscalex_on(True)` 都会让它为 True 而范围其实是显式写的，数据范围（dataLim）
             # 的变化也分不开「自动跟着数据」与「显式写了个恰好包住的范围」；唯一分得开的事实是：实际范围 == 自动缩放会给的范围。
@@ -6756,6 +6352,9 @@ def _measure_manifest(
                 _drop(el, "no_geometry")
                 continue
         elif el["role"] == "ticks":
+            host = gid_by_artist_id.get(id(artist.ax))
+            if host:
+                entry["tick_host"] = {"axes_gid": host, "axis": artist.which}
             boxes = []
             for t in artist.labels:
                 try:
@@ -6819,6 +6418,10 @@ def _measure_manifest(
             # 名字，这个才是「这是谁的色条」。两者都在 state.index 里认得出
             entry["colorbar_key"] = artist.identity
             entry["host_gid"] = artist.host_gid
+            cb = artist.cb
+            entry["colorbar_reversed"] = bool(
+                cb.ax.xaxis_inverted() if cb.orientation == "horizontal" else cb.ax.yaxis_inverted()
+            )
             # 色条的几何归它的**轴**（`axes_i` 的 position override，与位图代理到
             # 宿主子图同一套 `geom_gid` 机制）。色条元素与色条轴的 bbox 逐位相同，
             # 而命中测试里色条元素恒胜（容器有降权），于是从前点色条选中的是一个

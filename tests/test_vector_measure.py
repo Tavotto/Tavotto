@@ -62,12 +62,14 @@ def test_a_slow_panel_times_out_to_the_frame_without_blocking_the_rest():
 
     m = _bounded(raw, per_panel_s=0.2)
     t0 = time.monotonic()
-    with pytest.raises(la.PanelUnavailable) as e:
-        m({**PANEL, "fileId": "slow.pdf"}, [])
-    assert e.value.code == "measure_timeout" and time.monotonic() - t0 < 2
-    assert m({**PANEL, "fileId": "fast.pdf"}, []) == OK  # 别的图不受影响
-    gate.set()
-    vm.close(m)
+    try:
+        with pytest.raises(la.PanelUnavailable) as e:
+            m({**PANEL, "fileId": "slow.pdf"}, [])
+        assert e.value.code == "measure_timeout" and time.monotonic() - t0 < 2
+        assert m({**PANEL, "fileId": "fast.pdf"}, []) == OK  # 别的图不受影响
+    finally:
+        gate.set()
+        vm.close(m)
 
 
 def test_the_total_budget_runs_out():
@@ -157,9 +159,9 @@ def test_a_timed_out_measure_leaves_no_non_daemon_thread_behind():
         return OK
 
     m = _bounded(raw, per_panel_s=0.05, key_of=lambda p, r: None)
-    with pytest.raises(la.PanelUnavailable):
-        m({"fileId": "f"}, [])
     try:
+        with pytest.raises(la.PanelUnavailable):
+            m({"fileId": "f"}, [])
         live = [t for t in threading.enumerate() if t.name.startswith("vector-measure")]
         assert live and all(t.daemon for t in live)  # 超时的那次还在跑，但它是 daemon
     finally:

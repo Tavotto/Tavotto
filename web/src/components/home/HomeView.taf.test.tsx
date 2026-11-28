@@ -1,6 +1,6 @@
 /**
  * 主页 × 实验开关 `ai.taf.enabled`（「从数据到图」）：
- *  - 开关关着：现有用户看到的一切逐字不变——两版的 DOM 与合入前主干上取的摘要逐字相同；
+ *  - 开关关着：两版沿用正式主页，均可导入项目包；DOM 摘要看护实验入口意外露出；
  *  - 开关开着：老手版 = 品牌标 + 并排两张入口卡 + 灰字示例链接，没有叙事句；左卡点击选数据文件夹并进数据页（只做点击）；
  *  - 开关怎么拿：先按本机记的上一次画（不闪、不等后端），后台问一次、不一样才换；读不到当没变。
  */
@@ -93,12 +93,12 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('开关关着：现有用户看到的一切逐字不变', () => {
-  // 两个摘要是在**合入前的主干**（本 PR 动 HomeView / ProjectPicker 之前）上渲染同样的屏取的；开关关着时本 PR 的渲染必须与它逐字相同。
-  // 摘要而不是整段 HTML 快照：src 下不放 .html（`pagePtLens` 的扩展名门禁），整段又太长；对不上时先看是不是有意改了首页。
-  const BASE_DIGEST = { returning: '495cbf76749ad0a4', newcomer: '97c26f1076e5ead6' } as const
-  it.each([['returning', 'completed'], ['newcomer', 'not_started']] as const)('%s 版：DOM 与合入前主干逐字相同（摘要）', async (name, status) => {
+describe('开关关着：显示正式主页', () => {
+  // 正式主页加入项目包导入入口后的 DOM 摘要。以后有意改动主页时重新核对两版。
+  const BASE_DIGEST = { returning: 'bb9f75707cf8a38e', newcomer: 'd70ea39ed1be2c61' } as const
+  it.each([['returning', 'completed'], ['newcomer', 'not_started']] as const)('%s 版匹配正式主页 DOM 摘要', async (name, status) => {
     await mount(status, false)
+    expect(q('button[data-install-project-package]')).not.toBeNull()
     expect(createHash('sha256').update(html()).digest('hex').slice(0, 16)).toBe(BASE_DIGEST[name])
   })
 

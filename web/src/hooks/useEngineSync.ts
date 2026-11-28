@@ -7,6 +7,8 @@ import { artifactValidationIssue, isUnadoptedPngSource, artifactEntryPending, ar
  */
 import { useEffect } from 'react'
 import { isJustBakedBaselineOf, type BakedBaselineFacts } from '@/lib/bakedBaseline'
+import { engineTransport } from '@/lib/engineTransport'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { useAssetStore } from '@/store/assetStore'
 import {
   registerOverrideStamper,
@@ -15,8 +17,10 @@ import {
   useDocumentStore,
   type TxnAnchor,
 } from '@/store/documentStore'
-import { panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { computedFrameAuthority, panelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { computedFramePatch, matchesComputedFrame, type PairedFrameAuthority } from '@/lib/chartFrame'
 import { requestRender } from '@/store/renderScheduler'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { sampleDisplayState } from '@/diagnostics'
 import { useUiStore } from '@/store/uiStore'
 import { currentVisibleRectMm } from '@/store/viewportStore'
@@ -37,6 +41,7 @@ import type { RenderPurpose } from '@/lib/renderPurpose'
  * 去重只剩「完全相同的两个副本共用一次渲染」这一条。
  */
 const NO_NEIGHBOURS: ReadonlySet<string> = new Set()
+const NO_LIVE_ASSETS: ReadonlySet<string> = new Set()
 
 export function renderTargets(
   objects: readonly CanvasObject[],
@@ -49,7 +54,7 @@ export function renderTargets(
    * 这张画布绑定了样式（ADR 0081）。绑定说的是「这张画布上的图长成那套样式的样子」，
    * 要对齐一张图就得先读到它的 manifest——所以绑定画布上「只带基线、还没动过」的
    * 面板也渲染一次。这不是「白跑」：用户选绑定的那一刻就是在要这个结果。
-   * runtime 面板照旧（重开文档绝不自动执行脚本）。
+   * 已停在屏障且有后端描述符的 native 图可读取当前会话，其余 runtime 图照旧。
    */
   styleBound = false,
   /**
@@ -59,13 +64,18 @@ export function renderTargets(
    * （重开文档绝不自动执行脚本）。谁算邻居由调用方按当前状态给，这里保持纯函数。
    */
   neighbours: ReadonlySet<string> = NO_NEIGHBOURS,
+  liveNativeAssets: ReadonlySet<string> = NO_LIVE_ASSETS,
 ): PanelObject[] {
   const seen = new Set<string>()
   const targets: PanelObject[] = []
   for (const o of objects) {
-    if (o.type !== 'panel' || !o.script) continue
+    if (o.type !== 'panel' || (!o.script && !o.chart && o.chartSource === undefined)) continue
+    // Opening a saved output is read-only. Running its source here can retire
+    // the very archive the canvas and export are about to read.
+    if (!engineTransport() && hasFigureSnapshotPreview(o) && o.id !== editingId && !neighbours.has(o.id) &&
+        !tracked[o.fileId] && !liveNativeAssets.has(o.fileId)) continue
     // runtime 面板（ADR 0013 lazy rehydrate）：**重开文档绝不自动执行脚本**。
-    // 只有「正在编辑」或「本会话已经跑过一次（latest 里有它）」才进同步——
+    // 正在编辑、前端已有渲染，或样式绑定要读取已停在屏障的 native Figure，才进同步。
     // 带着 overrides 重开的文档先显示 cache 占位，进入编辑 / 显式重跑那一刻
     // 才 build 并重放。tracked（脚本变更）对 runtime 只表达 stale 提示，
     // 不构成自动重跑的理由。
@@ -80,15 +90,16 @@ export function renderTargets(
     // 只有正在编辑它（需要几何权威）才渲染。有真实编辑的面板照常渲染（与别的带 override 的面板一致）。
     if (isSourceBackedZeroEdit(o) && o.id !== editingId && !styleBound) continue
     const wants =
-      o.fileKind === 'runtime'
-        ? o.id === editingId || latest[o.fileId] != null
+      o.chart || o.chartSource !== undefined ||
+      (o.fileKind === 'runtime'
+        ? o.id === editingId || latest[o.fileId] != null || (styleBound && liveNativeAssets.has(o.fileId))
         : // 编辑中 / 有图内修改 / 脚本已领先磁盘文件（AI 改过）。
           // 「只带基线、还没动过」的面板不渲染：磁盘文件本身就是那个样子，
           // 白跑一次引擎（heavy 脚本要几分钟）没有意义。
           o.id === editingId ||
           styleBound ||
           (!unadopted && (neighbours.has(o.id) || !!tracked[o.fileId])) ||
-          (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId]))
+          (o.overrides.length > 0 && !isJustBakedBaselineOf(o.overrides, assets[o.fileId])))
     if (!wants) continue
     const key = renderKeyOf(o)
     if (seen.has(key)) continue
@@ -162,6 +173,7 @@ function hasForegroundReason(
   assets: Record<string, BakedBaselineFacts | undefined>,
 ): boolean {
   return (
+    !!panel.chart ||
     panel.id === editingId ||
     styleBound ||
     !!tracked[panel.fileId] ||
@@ -217,6 +229,13 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
   const assets = useAssetStore.getState().byId
   const style = useDocumentStore.getState().doc.style
   const styleBound = !!style && !style.detached
+  const liveNativeAssets = new Set<string>()
+  if (styleBound) {
+    for (const session of Object.values(useNativeSessionStore.getState().sessions)) {
+      if (session.state !== 'barrier' || !session.editable) continue
+      for (const figure of session.descriptors) liveNativeAssets.add(figure.asset_id)
+    }
+  }
   const neighbours = crossFigureNeighbours(
     objects,
     editingId,
@@ -232,6 +251,7 @@ export function syncEngine(objects: readonly CanvasObject[], editingId: string |
     assets,
     styleBound,
     neighbours,
+    liveNativeAssets,
   )) {
     const want = JSON.stringify(panel.overrides)
     const state = store.byKey[renderKeyOf(panel)]
@@ -321,10 +341,11 @@ function useEngineRenderSync() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const byKey = useRenderStore((s) => s.byKey)
   const tracked = useRenderStore((s) => s.tracked)
+  const nativeSessions = useNativeSessionStore((s) => s.sessions)
 
   useEffect(() => {
     syncEngine(useDocumentStore.getState().doc.objects, useUiStore.getState().elementPanelId)
-  }, [byKey, tracked])
+  }, [byKey, tracked, nativeSessions])
 
   const txnOpen = useDocumentStore((s) => s.txn != null)
 
@@ -376,6 +397,7 @@ type NativeSizeFix = {
   hMm: number
   /** 换算时在页面上不动的点；不给 = 包围盒左上角（x/y 不变） */
   anchor?: TxnAnchor
+  frame?: PairedFrameAuthority
 }
 
 /**
@@ -390,9 +412,15 @@ function nativeSizeFixes(
   for (const o of objects) {
     if (o.type !== 'panel' || artifactValidationIssue(o) || artifactEntryPending(o.id)) continue
     if (!o.overrides.length && o.fileKind === 'raster' && /\.png$/i.test(o.fileId) && useUiStore.getState().elementPanelId !== o.id && !useRenderStore.getState().tracked[o.fileId]) continue
-    const size = byKey[renderKeyOf(o)]?.manifest?.size_mm
+    const render = byKey[renderKeyOf(o)]
+    const size = render?.manifest?.size_mm
     if (!size) continue
     const [wMm, hMm] = size
+    if (o.chartFrame) {
+      const frame = computedFrameAuthority(o, render)
+      if (frame && !matchesComputedFrame(o, frame.frame)) fixes.push({ id: o.id, wMm, hMm, frame })
+      continue
+    }
     if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05) continue
     fixes.push({ id: o.id, wMm, hMm })
   }
@@ -404,6 +432,14 @@ function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]
     const o = d.objects.find((x) => x.id === fix.id)
     // 换算（缩放比不变、旋转时宽高互换、按锚点反推 x/y）只在 `lib/panelNativeSize`
     // 一处：撤销 / 重做落地时的换基走的也是它
-    if (o?.type === 'panel') syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
+    if (o?.type !== 'panel') continue
+    if (fix.frame) {
+      try {
+        const patch = computedFramePatch(o, fix.frame, renderKeyOf(o))
+        Object.assign(o, patch)
+      } catch {
+        // A frame with no intersection cannot replace the cropped layout geometry.
+      }
+    } else syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
   }
 }

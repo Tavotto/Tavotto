@@ -166,6 +166,13 @@ interface EnvState {
   restoreScriptBackup: (
     backup: { id: string; script: string; current_sha256?: string | null },
     mode: 'full' | 'undo_edits',
+    options?: {
+      pj: string | null
+      workingDocId?: string
+      onLayoutRestored?: (
+        layout: NonNullable<Awaited<ReturnType<typeof restoreScriptBackupRequest>>['layout']>,
+      ) => Promise<string | null>
+    },
   ) => Promise<string | null>
   /**
    * 跑前的门刚刚**自动改用**了用户自己的环境（ADR 0079，SSE `engine.environment_adopted`）：
@@ -437,11 +444,17 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     }
   },
   bumpScriptBackups: () => set((s) => ({ scriptBackupGeneration: s.scriptBackupGeneration + 1 })),
-  restoreScriptBackup: async (backup, mode) => {
+  restoreScriptBackup: async (backup, mode, options) => {
     const epoch = projectEpoch
     let error: string | null = null
     try {
-      const res = await restoreScriptBackupRequest(backup.id, mode, backup.current_sha256)
+      const res = options
+        ? await restoreScriptBackupRequest(backup.id, mode, backup.current_sha256, options.pj, options.workingDocId)
+        : await restoreScriptBackupRequest(backup.id, mode, backup.current_sha256)
+      if (epoch !== projectEpoch) return null
+      if (res.layout && options?.onLayoutRestored) {
+        error = await options.onLayoutRestored(res.layout)
+      }
       if (epoch !== projectEpoch) return null
       // 已换好、只是没确认落盘（`durable: false`）：照常刷新，但换一句提醒，不说「已恢复」就完事
       useUiStore

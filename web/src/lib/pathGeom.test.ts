@@ -59,6 +59,15 @@ const ringWithHole: ElementGeometry = {
   ],
 }
 
+it('没有填充和描边的闭合路径只保留元素数据，点击和框选均不命中', () => {
+  const transparent = { ...triangle, fill: false, stroke: false }
+  const box = { x: 0.45, y: 0.15, w: 0.1, h: 0.1 }
+  expect(geomDistMm(triangle, SIZE, 0.5, 0.2)).toBeCloseTo(0)
+  expect(geomHitsRect(triangle, box)).toBe(true)
+  expect(geomDistMm(transparent, SIZE, 0.5, 0.2)).toBe(Infinity)
+  expect(geomHitsRect(transparent, box)).toBe(false)
+})
+
 describe('geomDistMm：点到路径的距离按 mm 算', () => {
   it('线上的点距离为 0', () => {
     expect(geomDistMm(diagonal, SIZE, 0.5, 0.5)).toBeCloseTo(0, 6)

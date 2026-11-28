@@ -15,9 +15,9 @@ import {
   type NativePending,
   type NativeSessionInfo,
 } from '@/lib/api'
-import { addRuntimePanelToCanvas } from '@/store/workspace'
+import { addRuntimePanelToCanvas, focusLayoutPanel } from '@/store/workspace'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
-import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
+import { findFigurePanel, getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
 import { hasAcceptedFigureExecution } from '@/store/figureSnapshotInvalidation'
 import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { registerNativeExecutionCapture } from '@/lib/nativeExecutionAdmission'
@@ -366,7 +366,8 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     // 画布；这里再 build / 放置就是不点就自动开面板（甚至弹选择器），与准备会话的「进入编辑才开标签页」契约冲突
     if (
       session.state === 'barrier' &&
-      session.owner !== 'desktop' &&
+      (session.owner !== 'desktop' ||
+        (session.capture_source === 'ggplot2' && session.descriptors.length === 0)) &&
       get().builtSeq[session.session_id] !== session.sequence
     ) {
       void get().build(session.session_id)
@@ -376,7 +377,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   build: async (sessionId) => {
     const session = get().sessions[sessionId]
     if (!session || get().busy[sessionId]) return
-    if (session.owner === 'desktop') return // 桌面拥有的会话：展示面归准备会话（见 applyEvent）
+    if (session.owner === 'desktop' && session.capture_source !== 'ggplot2') return
     // **只在屏障处**：别处 build 后端会回 `native_session_not_at_barrier`，
     // 而那是一条会吓到用户的错误——它描述的是正常状态，不是故障。
     if (session.state !== 'barrier') return
@@ -472,7 +473,13 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
       const current = get().sessions
       for (const one of res.sessions) {
         const cur = current[one.session_id]
-        if (cur) syncNativePendingInput(cur)
+        if (!cur) continue
+        syncNativePendingInput(cur)
+        if (owner.still() && owner.pj && sessionProjects.get(cur.session_id) === owner.pj &&
+            cur.capture_source === 'ggplot2' && cur.state === 'barrier' && cur.descriptors.length === 0 &&
+            get().builtSeq[cur.session_id] !== cur.sequence) {
+          void get().build(cur.session_id)
+        }
       }
     } catch {
       /* 清单取不到不清空已知会话：SSE 仍在，下一条事件会补上 */
@@ -651,6 +658,10 @@ function placeNativeFigures(descriptors: CapturedFigureDescriptor[]): void {
   if (already) {
     useSelectionStore.getState().set([already.id])
     return
+  }
+  if (only.capture_source === 'ggplot2') {
+    const saved = findFigurePanel(only.asset_id)
+    if (saved && focusLayoutPanel(saved.panel.id)) return
   }
   addRuntimePanelToCanvas(only)
 }

@@ -65,7 +65,7 @@ export function geomDistMm(
   fx: number,
   fy: number,
 ): number {
-  if (!inClip(geom, fx, fy)) return Infinity
+  if ((!geom.fill && !geom.stroke) || !inClip(geom, fx, fy)) return Infinity
   const px = fx * size[0]
   const py = fy * size[1]
   let best = Infinity
@@ -179,6 +179,7 @@ function segHitsRect(a: Frac, b: Frac, r: FracRect): boolean {
  * Illustrator 语义一致：框选是「圈住看得见的墨迹」，不是「戳进去」。
  */
 export function geomHitsRect(geom: ElementGeometry, r: FracRect): boolean {
+  if (!geom.fill && !geom.stroke) return false
   const clip = clipRect(geom)
   if (clip && !rectsOverlap(clip, r)) return false
   // **先把选择框裁进 clip 再比**。只做一次粗略的「框与 clip 有重叠」是不够的：

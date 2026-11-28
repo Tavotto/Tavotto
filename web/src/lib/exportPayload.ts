@@ -1,6 +1,7 @@
 import { effectiveFillGradient, effectiveStrokeGradient, type ReadGradient } from './gradient'
 import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
+import { chartSourceFields } from './chartSource'
 import type { ExportClipPath, ExportObject } from './api'
 import { clipEntriesOf, groupMasks, groupNameMap, groupPathOf, isActiveMask } from './groupTree'
 import { maskAsPath } from './clipMask'
@@ -20,6 +21,7 @@ export function toExportObjects(
   objects: readonly CanvasObject[],
   /** 找剪切蒙版用的全集（蒙版本身是隐藏的，调用方给的列表可能已经把它滤掉了）；缺省 = `objects` */
   context: readonly CanvasObject[] = objects,
+  includePanelTitles = false,
 ): ExportObject[] {
   // 不认识的类型（更新的构建写进来的）不进载荷：`toExportObject` 对它回 undefined，序列化成 null 后被后端
   // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞。
@@ -30,7 +32,9 @@ export function toExportObjects(
   return objects
     .filter((o) => !o.hidden && isKnownObject(o) && !isActiveMask(o, masks))
     .map((o) => {
-      const e = o.type === 'pathText' ? pathTextExport(o, lineWidthOf(o, context)) : toExportObject(o)
+      const e = o.type === 'pathText'
+        ? pathTextExport(o, lineWidthOf(o, context))
+        : toExportObject(o, includePanelTitles)
       const chain = clipEntriesOf(o, masks)
       // 名字与组树只给 SVG（ADR 0208 §七之三）：对象名写成 `id`、文档的组写成嵌套的 `<g>`、剪切组的蒙版只在组上写一次。
       // PDF / EPS / 位图不看这几个键；没有名字、不在组里 = 一个键都不多，载荷与以前逐字节相同
@@ -110,7 +114,7 @@ function gradientExtras(
   return { ...(f ? { fill_gradient: f } : {}), ...(st ? { stroke_gradient: st } : {}) }
 }
 
-function toExportObject(o: CanvasObject): ExportObject {
+function toExportObject(o: CanvasObject, includePanelTitles: boolean): ExportObject {
   const box = { x_mm: o.x, y_mm: o.y, w_mm: o.w, h_mm: o.h }
 
   switch (o.type) {
@@ -121,8 +125,13 @@ function toExportObject(o: CanvasObject): ExportObject {
       return {
         ...box,
         type: 'panel',
-        ...artifactRequestFields(o),
+        ...(o.chart ? {
+          chart: o.chart,
+          chart_render_profile: o.chartFrame?.renderProfile ?? 'native-manifest/1' as const,
+        } : artifactRequestFields(o)),
+        ...chartSourceFields(o.chartSource),
         id: o.fileId,
+        ...(includePanelTitles && o.name ? { bookmark_title: o.name } : {}),
         ...(figureSnapshotFor(o) ? { figure_snapshot: figureSnapshotFor(o) } : {}),
         overrides: o.overrides.length ? o.overrides : undefined,
         crop: o.crop,

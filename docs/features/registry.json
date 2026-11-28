@@ -319,6 +319,54 @@
       ]
     },
     {
+      "id": "canvas.bind-computed-svg",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "绑定 SVG 的坐标轴和数据，从项目中恢复编辑并导出 PDF",
+        "en-US": "Bind axes and data in an SVG, reopen its edits from the project, and export a PDF"
+      },
+      "entry": "画布 SVG 面板右键 → 绑定数据为计算图表",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "chart binding backs up the project and reopens the frozen source"
+        }
+      ]
+    },
+    {
+      "id": "canvas.package-current",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "分享当前画布及其引用的素材，接收方可以重新打开和导出",
+        "en-US": "Share the current canvas with its resources so recipients can reopen and export it"
+      },
+      "entry": "排版菜单 → 仅打包当前画布",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "packages only the active canvas and reopens it in a fresh project"
+        }
+      ]
+    },
+    {
+      "id": "canvas.package-selection",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "选择多张画布及其引用的资源，打成一个可安装的项目包",
+        "en-US": "Share selected canvases and their resources in one installable project package"
+      },
+      "entry": "排版菜单 → 打包所选画布",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "packages selected canvases and installs only their resources"
+        }
+      ]
+    },
+    {
       "id": "canvas.select-and-drag",
       "status": "active",
       "platform": "both",
@@ -976,6 +1024,70 @@
       ]
     },
     {
+      "id": "export.pdf-panel-bookmarks",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布 PDF 可添加书签，跳到各图面板的页面范围",
+        "en-US": "Add bookmarks that jump to figure panels in a canvas PDF"
+      },
+      "entry": "导出 → 整张画布 → PDF → 为图面板添加 PDF 书签",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds bookmarks to two instances of the same figure"
+        }
+      ]
+    },
+    {
+      "id": "export.pdf-panel-layers",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布 PDF 可将各个图面板导出为独立可开关的图层",
+        "en-US": "Export each figure panel on its own toggleable layer in a canvas PDF"
+      },
+      "entry": "导出 → 当前画布 → PDF → 将每个图面板放入独立的 PDF 图层",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds an annotation layer and a text attachment"
+        }
+      ]
+    },
+    {
+      "id": "export.pdf-annotation-layer",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布标注可作为一个默认显示、可开关的 PDF 图层导出",
+        "en-US": "Export canvas annotations as one toggleable PDF layer"
+      },
+      "entry": "导出 → 当前画布 → PDF → 将画布标注放入可开关的 PDF 图层",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds an annotation layer and a text attachment"
+        }
+      ]
+    },
+    {
+      "id": "export.pdf-text-attachment",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布 PDF 可附带参与排版的文字标注及页面指纹",
+        "en-US": "Embed placed canvas text annotations and a page fingerprint in a canvas PDF"
+      },
+      "entry": "导出 → 当前画布 → PDF → 将画布文字标注作为 JSON 附件嵌入 PDF",
+      "e2e": [
+        {
+          "spec": "chart-document.spec.ts",
+          "title": "canvas PDF export adds an annotation layer and a text attachment"
+        }
+      ]
+    },
+    {
       "id": "export.png",
       "status": "active",
       "platform": "both",
@@ -1438,6 +1550,81 @@
         "远程窗口里点「浏览目录…」：出现网页里的目录浏览器（列的是服务器的目录），不是系统的文件夹选择框",
         "粘 `http://localhost:5189/…`、一个没人监听的端口、以及 0.17.0 服务器的地址：分别说清「要写 127.0.0.1」「连不上」「服务器上的 Tavotto 太旧」，窗口留在连接页",
         "远程窗口有未保存修改时点红灯：先问再关；主窗口不弹框"
+      ]
+    },
+    {
+      "id": "desktop.ggplot-colourbar-tick-text-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "修改原生 ggplot2 连续色条的一组刻度文字颜色，保存后可随排版导出",
+        "en-US": "Recolor the tick labels of a native ggplot2 continuous colorbar, then save and export"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 选连续色条的刻度文字 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "打开含横排与竖排连续色条的图，分别修改两组刻度文字的颜色并撤销、重做，核对两条色带和标题。",
+        "保存排版，结束 R 会话后重开并导出 PDF，核对色条刻度文字的颜色。"
+      ]
+    },
+    {
+      "id": "desktop.ggplot-axis-tick-text-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "按轴侧修改原生 ggplot2 的一组刻度文字颜色，并随排版保存和导出",
+        "en-US": "Recolor ggplot2 tick labels on a selected axis side, then save the layout and export"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 选一侧的刻度文字 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行有主轴与次轴的单面板图，改一侧的整组刻度文字颜色并撤销重做，核对刻度线、位置和其他轴。",
+        "保存排版，结束 R 会话后重开并导出 PDF，核对所选轴侧的刻度文字颜色。"
+      ]
+    },
+    {
+      "id": "desktop.ggplot-subtitle-caption-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "单独修改原生 ggplot2 的副标题和图注颜色，并随排版保存和导出",
+        "en-US": "Recolor native ggplot2 subtitles and captions independently, then save the layout and export"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 副标题或图注 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行带纯文本副标题和图注的 ggplot2 图。分别改色，核对图标题及另一处文字的颜色，撤销后重做。",
+        "保存排版，结束 R 会话并重开后导出 PDF，核对副标题和图注的颜色。"
+      ]
+    },
+    {
+      "id": "desktop.ggplot-legend-entry-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "修改原生 ggplot2 的单个图例条目文字颜色，并随排版保存和导出",
+        "en-US": "Recolor a single native ggplot2 legend entry label, then save the layout and export it"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 图例条目 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行有唯一纯文本图例标题的普通 guide_legend 图。在元素树中选一个条目改色，核对图例键和其他条目，撤销后重做。",
+        "保存排版，结束 R 会话后重开布局并导出 PDF，核对所选条目的文字颜色。"
+      ]
+    },
+    {
+      "id": "desktop.ggplot-facet-label-color",
+      "status": "active",
+      "platform": "desktop",
+      "summary": {
+        "zh-CN": "修改原生 ggplot2 的单个分面标签颜色，并随排版保存和导出",
+        "en-US": "Recolor an individual native ggplot2 facet label, then save the layout and export it"
+      },
+      "entry": "脚本 → 用 R 运行 → 图内元素 → 分面标签 → 颜色",
+      "e2e": [],
+      "desktop_manual": [
+        "用 R 运行一个带两个不同标签的普通 facet_wrap 图。在元素树中选择其中一个标签改色，核对两处颜色，撤销后重做。",
+        "保存排版，结束 R 会话后重开并导出 PDF，核对所选标签的颜色。"
       ]
     },
     {

@@ -669,6 +669,17 @@ def desktop_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> s
     return run_cwd(figures_dir, script, CWD_PROJECT)
 
 
+def safe_source_override(
+    figures_dir: str | os.PathLike, script: str, write_roots
+) -> tuple[str | None, bool]:
+    """Return the alternate source and whether it is a launcher run as __main__."""
+    shadow = shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
+    if shadow:
+        return shadow, False
+    launcher = launchscript.source_for(figures_dir, script)
+    return launcher, launcher is not None
+
+
 def safe_spec(
     script: str,
     figures_dir: str | os.PathLike,
@@ -729,17 +740,11 @@ def safe_spec(
     if cwd is None:
         cwd = sandbox
     # 影子脚本（转换校验）优先；否则 AI 修复写的启动脚本（ADR 0194 §二）：执行它的字节、身份仍是这个脚本
-    shadow = (
-        shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
-        if write_roots is not None
-        else None
-    )
-    launch_src = None if shadow else launchscript.source_for(figures_dir, script)
-    if launch_src is not None:
+    script_source, is_launcher = safe_source_override(figures_dir, script, write_roots)
+    if is_launcher:
         # 启动脚本恒按 `__main__` 整份执行（Codex #2048 P2）：只在这里定，所有调用方（准备计划、探测、磁盘面板）同一个口径——
         # 带着登记的函数入口去跑，worker 会把启动脚本当模块 import 再调那个函数，胶水不按设计执行
         entry = "__main__"
-    script_source = shadow or launch_src
     # ADR 0196：包里的脚本用相对导入时按模块运行（判据唯一出处 `pkgentry.resolve`）。影子脚本项目里没有这个文件、
     # 启动脚本自己负责包上下文（ADR 0194），两者都不改。三条 spawn 路径、准备计划、MCP 都经本函数，所以同源
     package = None if script_source else pkgentry.resolve(figures_dir, script, entry)

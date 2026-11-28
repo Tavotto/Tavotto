@@ -76,8 +76,16 @@ order: 200
   看护：`tests/test_versionstore.py`、`tests/test_versions_store_wiring.py`、`tests/test_versions_migrate_on_write.py`。
 - **论文样式**：`/api/styles`（`layouts/_styles.json`）；前端按角色映射成
   override / 标注属性一次 commit 应用，绝不写回源文件。
-- **项目包**：`POST /api/package` 打 zip（layout+素材+脚本+sha1 清单）；
-  `POST /api/package/open` 检视（缺失/sha1 漂移），素材永不自动写入图库。
+- **项目文件绑定**：`/api/layout-session/project-file/<doc_id>` 与其 reserve、confirm、intent 子路由使用同一工作副本。
+  读和 reserve 持自动保存槽位锁，核实际正文修订。confirm 持命名正文锁，复核保存回执和关联票据。
+  schema 3 升级到 4 保留原槽位和关联，外部改写槽位后旧修订无法预留新关联。看护 `tests/test_layout_recovery_acceptance.py`。
+- **项目包**：`POST /api/package` 的整份排版导出按正文 schema 选号，旧包继续使用原素材 SHA-1 清单。
+  `canvas_id` 指定单个画布，`canvas_ids` 指定多选范围。两者只能用一个。选择非空，且每个 ID
+  在请求与正文中各出现一次。保留正文画布顺序，当前画布未选时以第一张入包画布为打开项。
+  先裁取正文，再从导出副本收集素材、快照和执行依赖，并生成可安装的 v4 包。
+  含计算图表的便携包在清单中带 `documentpackage.CHART_PACKAGE_FORMAT`。`/api/package/open`
+  按内容分流，`/api/package/inspect` 只核验，`/api/package/install` 校验成员、重放计算图表并独占发布新目录。
+  `packagebudget` 定义全部预算。安装仅发布资源，打开已安装的项目时由原文档 writer 提交正文。
 - **文档显式引用全质量 Figure 配对（X03，2026-10-15）**：面板 `figureSnapshot` 是版本 1 的闭集
   `{version, sourceId, patchHash, receiptId, snapshotId}`，可选 `executionOwner={script, run_config}`；
   owner 只从已验归档派生、纳入内容 ID，不信客户端自报。导出 wire 字段为 `figure_snapshot`。
@@ -154,13 +162,12 @@ order: 200
   `documents.validate_document` 按号分派——2 / 3 走原骨架判据，4 交给
   `validate_chart_document`（来源附件身份在同一入口校验）；保存、自动保存、槽位探测、
   恢复候选、版本节点与教程校验都调这一个入口，不另设判据；项目包按同一
-  `SUPPORTED_SCHEMAS` 集合准入，schema 4 的 `chartSource` 随包封存、
-  检视导入时按摘要装回目标项目的 `chart_sources/`。首次给既有文档加入计算图表是
+  `SUPPORTED_SCHEMAS` 集合准入，schema 4 的 `chartSource` 随包封存。
+  带格式标记的包在用户确认安装后将附件落入目标项目的 `chart_sources/`。首次给既有文档加入计算图表是
   **原地升级**：同一 documentId、同一文件 / 槽位 / 时间线，正文提交为 schema 4，既有历史节点保留；
   升级前用整份项目时间线节点做备份（`takeProjectCheckpoint` 原语已就位），备份没落定不得继续写图表。
-  **接线状态**：把图表第一次写进正文的入口属于 7/9；接线前生产代码里没有这条「先备份再升级」的
-  执行路径。`tests/test_chart_document_upgrade.py` 只覆盖后端能强制的边界（同一时间线、来源冻结失败
-  不写正文），不冒充前端备份接线——不要把它读成那条行为已有看护。
+  `tests/test_chart_document_upgrade.py` 看护后端的同一时间线与来源冻结失败时的写入边界。
+  `web/e2e/chart-document.spec.ts` 从桌面绑定入口验证备份拒绝和之后的保存恢复。
   版本节点正文按 schema 分派：
   2 是单画布检查点，3 / 4 是整份项目；恢复整份项目节点换的是同一 documentId 的全部画布。
   无项目时已有冻结附件经 `documentassets.load_source` 核验，并以完整场景节点索引经
@@ -251,6 +258,8 @@ order: 200
   `skipped` / `refused` / `failed`。判只读与瞬时在 `layoutdir.classify_write_failure`（POSIX：`EROFS` / `EACCES` / `EPERM` = 只读；Windows：`EACCES` / `EBUSY` / winerror 5·32·33 = 瞬时，19 = 只读）；
   暂存目录 `mkdir` 直接抛的 `PermissionError` 也要分档。冲突基线：绑定的修订号；本机绑定丢了（挪走）则对清单 `doc_id` 且清单 `layout_revision` 提示对得上才算「还是我写的」。
   `project_status().autosave_into_project` 告诉前端开关；候选 `project-history` 带 `work`（`find_by_doc_id` 唯一才认，两份目录记着同一个 docId = 不猜）。
+  R 样式写回沿用同一个逻辑排版与本机恢复槽位。恢复脚本时，只有排版内容仍与写回结果相同才允许恢复，其中自动保存刷新 `updatedAt`
+  不算一次内容编辑。已存在的备份仍可按原先的精确修订号恢复。
 - **写前判冲突读修订号用 `atomicio.existing_revision()`，不用 `content_revision()`**（#674 评审 P1）：
   后者把「不存在」与「读不出」（mode 000、被别的程序独占）揉成一个 `None`，而 `_revision_conflict`
   对 `None` 的解释是「被删了，放行重建」——一份读不出却换得掉的文件会被闭眼整份覆盖。
@@ -290,6 +299,8 @@ order: 200
     可能完整的文件，就是把一次读故障变成永久丢数据；字节坏的那种原字节已备份，写入放行。degraded 时槽位清理一个都不删
     （不知道谁受保护就当都受保护）。备份都在 `state/`，不在 `_autosave/`。只读路径（`read_status` / `read_readonly`，
     候选发现与 `/owner` 用）**不写任何东西、不拿锁**（主文件只被整份原子替换，读到的永远是完整的一份）。
+    Windows 上普通读句柄可短时挡住替换。会话账本写入在原会话锁内对共享冲突有限重试；
+    一直占用时保留旧账本并返回既有失败。回归见 `tests/test_windows_regressions.py::test_session_save_with_open_reader`。
   - **`last` 只指向可恢复的正文**（R3）。每组三个指针：`last`（durable）、`prev`（上一份 durable，容量 1）、
     `pending`（最新的打开意图但槽位还没有有效正文，容量 1，**不替换** durable last）。`PUT /api/layout-session/last`
     在槽位的 `_document_lock` 里验「槽位文件在、能读、过 `loads_document` + `validate_document`」（`_slot_recoverable`）再调

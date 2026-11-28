@@ -206,7 +206,28 @@ def produce(
     gaps_pdf = rp.unsupported.get(exportreq.FORMAT_PDF) or []
     if not gaps_pdf:
         try:
-            pdf_facts = pdfwriter.write_pdf(rp.page, pdf_tmp, provider, files)
+            pdf_facts = pdfwriter.write_pdf(
+                rp.page,
+                pdf_tmp,
+                provider,
+                files,
+                **({"bookmark_titles": rp.pdf_bookmark_titles} if rp.pdf_bookmark_titles else {}),
+                **(
+                    {"panel_layer_titles": rp.pdf_panel_layer_titles}
+                    if rp.pdf_panel_layer_titles
+                    else {}
+                ),
+                **(
+                    {"annotation_indices": rp.pdf_annotation_indices}
+                    if rp.pdf_annotation_indices
+                    else {}
+                ),
+                **(
+                    {"annotation_text": rp.pdf_annotation_text}
+                    if rp.pdf_annotation_text is not None
+                    else {}
+                ),
+            )
         except pdfwriter.WriterError as exc:
             pdf_error = exc
             job.trace.fail("compose", getattr(exc, "code", "") or "writer_error")

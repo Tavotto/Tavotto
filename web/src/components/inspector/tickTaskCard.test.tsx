@@ -256,9 +256,34 @@ describe('刻度宿主映射', () => {
   })
 
   it('刻度元素 gid → 轴与宿主子图', () => {
-    expect(tickHostOf('axes_0.xticks')).toEqual({ axesGid: 'axes_0', axis: 'x' })
-    expect(tickHostOf('axes_1.zticks')).toEqual({ axesGid: 'axes_1', axis: 'z' })
-    expect(tickHostOf('axes_0.title')).toBeNull()
+    expect(tickHostOf(xTicksEl)).toEqual({ axesGid: 'axes_0', axis: 'x' })
+    expect(tickHostOf({ gid: 'axes_1.zticks', role: 'ticks' })).toEqual({ axesGid: 'axes_1', axis: 'z' })
+    expect(tickHostOf({ gid: 'axes_0.title', role: 'title' })).toBeNull()
+  })
+
+  it('原生刻度组使用共用的小刻度控件，编辑写到选中的轴侧', async () => {
+    const left: ManifestElement = {
+      ...yTicksEl,
+      gid: 'axis.y.left.ticks',
+      tick_host: { axes_gid: 'axes_0', axis: 'y' },
+      editable: [
+        f('fontsize', 'number', 8.5, { unit: 'pt' }),
+        f('minor_visible', 'bool', false),
+        f('minor_mode', 'enum', 'auto', { options: ['auto', 'step'] }),
+      ],
+    }
+    const right = { ...left, gid: 'axis.y.right.ticks' }
+    manifest = { ...manifest, elements: [axesEl, left, right] }
+    expect(tickElementOf(manifest, 'axes_0', 'y')).toBeUndefined()
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), { manifest })
+    engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
+    await mount(right.gid)
+    await openFold('minor')
+    const control = byAria('Y 轴的次刻度')!
+    expect(control.getAttribute('aria-checked')).toBe('false')
+    await act(async () => control.click())
+    const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === 'p1')
+    expect(panel).toMatchObject({ overrides: [{ gid: right.gid, prop: 'minor_visible', value: true }] })
   })
 })
 
@@ -668,6 +693,31 @@ describe('manifest 是能力权威', () => {
 /* ------------------------- 从刻度组元素进入同一套控件 ---------------------- */
 
 describe('刻度组元素页', () => {
+  it('有字重与字形的刻度组复用文字样式行，两项只写入选中的轴侧', async () => {
+    const ticks = {
+      ...xTicksEl,
+      gid: 'axis.x.bottom.ticks',
+      tick_host: { axes_gid: 'axes_0', axis: 'x' } as const,
+      editable: [
+        ...xTicksEl.editable,
+        f('weight', 'enum', 'normal', { options: ['normal', 'bold'] }),
+        f('style', 'enum', 'normal', { options: ['normal', 'italic'] }),
+      ],
+    }
+    manifest = makeManifest(ticks)
+    useRenderStore.getState().patch(renderKeyOf(panelOf()), { manifest })
+    engineRender.mockResolvedValue({ rev: 2, manifest, svg: MATPLOTLIB_SVG, warnings: [] })
+    await mount(ticks.gid)
+    const labels = host.querySelector('[data-tick-section="labels"]')!
+    const bold = labels.querySelector<HTMLButtonElement>('[data-prop="weight"] button[aria-pressed]')!
+    const italic = labels.querySelector<HTMLButtonElement>('[data-prop="style"] button[aria-pressed]')!
+    await act(async () => bold.click())
+    await act(async () => italic.click())
+    expect(overrideOf(ticks.gid, 'weight')).toBe('bold')
+    expect(overrideOf(ticks.gid, 'style')).toBe('italic')
+    expect(overrideOf(yTicksEl.gid, 'weight')).toBeUndefined()
+  })
+
   it('只给它自己那个轴，不出 X/Y 切换', async () => {
     await mount('axes_0.xticks')
     expect(textOf()).toContain('方向')

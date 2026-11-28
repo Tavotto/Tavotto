@@ -9,7 +9,9 @@ import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
+  inviteNativeGgplot,
   runtimePreviewUrl,
+  startNativeGgplot,
   type CapturedFigureDescriptor,
   type ForeignSource,
   type NotebookSource,
@@ -17,6 +19,7 @@ import {
 } from '@/lib/api'
 import { splitNoticeText } from '@/lib/noticeText'
 import { offerForeignConvert } from '@/lib/foreignEntry'
+import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { runNotebook } from '@/lib/notebookRun'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
@@ -41,8 +44,12 @@ import {
   type ScriptRunState,
 } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { Button, IconButton } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
+import { TextArea, TextInput } from '../ui/Input'
+import { Segmented } from '../ui/Segmented'
+import { CopyAction } from '../ai/CopyAction'
 
 /** 脚本显示名：列表里优先展示干净的文件名（不让长目录前缀挤占），同名冲突时才附父目录消歧 */
 function scriptBaseName(path: string): string {
@@ -306,25 +313,151 @@ function NotebookRow({ source }: { source: NotebookSource }) {
   )
 }
 
-/**
- * 一行 R / MATLAB 脚本：文件名 + 语言。点开 = 出主页那张“生成可编辑版本”卡（同一个入口）。
- * 它不是可运行脚本：没有 ▶、没有状态点、不进准备会话 / 运行状态机 / 依赖修复。
- */
 function ForeignScriptRow({ source }: { source: ForeignSource }) {
   useTranslation('workspace')
+  const [nativeOpen, setNativeOpen] = useState(false)
   return (
-    <li data-foreign-script-row={source.script} data-foreign-language={source.language}>
+    <li className="flex items-center gap-1" data-foreign-script-row={source.script} data-foreign-language={source.language}>
       <button
         type="button"
         onClick={() => offerForeignConvert(source)}
-        className={cn(listRowClass(), 'w-full gap-1.5 pl-3 pr-2 text-left')}
+        className={cn(listRowClass(), 'min-w-0 flex-1 gap-1.5 pl-3 pr-2 text-left')}
       >
         <span className="min-w-0 flex-1 truncate text-sm text-ink" title={source.script}>
           {scriptBaseName(source.script)}
         </span>
         <span className="shrink-0 type-meta text-ink-3">{sc(`foreignLang.${source.language}`)}</span>
       </button>
+      {source.language === 'r' && isDesktop() && (
+        <Button size="sm" variant="ghost" className="shrink-0" data-native-ggplot-entry onClick={() => setNativeOpen(true)}>
+          {sc('nativeGgplot.open')}
+        </Button>
+      )}
+      {nativeOpen && <NativeGgplotDialog script={source.script} onClose={() => setNativeOpen(false)} />}
     </li>
+  )
+}
+
+function NativeGgplotDialog({ script, onClose }: { script: string; onClose: () => void }) {
+  const [object, setObject] = useState('')
+  const [rscript, setRscript] = useState('')
+  const [library, setLibrary] = useState('')
+  const [width, setWidth] = useState('152.4')
+  const [height, setHeight] = useState('101.6')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [mode, setMode] = useState<'run' | 'connect'>('run')
+  const [invitation, setInvitation] = useState<{ command: string; expires_in: number } | null>(null)
+  const [owner] = useState(() => captureProjectEpoch())
+  const dimensions = [Number(width) * 72 / 25.4, Number(height) * 72 / 25.4] as [number, number]
+  const ready = object.trim() && dimensions.every((value) => Number.isFinite(value) && value > 0)
+  const run = async () => {
+    if (!ready || busy || !owner.still()) return
+    setBusy(true)
+    setError('')
+    try {
+      const target = { script, object: object.trim(), frame_pt: dimensions }
+      if (mode === 'connect') {
+        const offer = await inviteNativeGgplot(target)
+        if (owner.still()) setInvitation(offer)
+        return
+      }
+      const result = await startNativeGgplot({
+        ...target,
+        ...(rscript.trim() ? { rscript: rscript.trim() } : {}),
+        ...(library.trim() ? { library: library.trim() } : {}),
+      })
+      if (!owner.still()) return
+      useNativeSessionStore.getState().applyEvent(result.session)
+      onClose()
+    } catch (e) {
+      if (owner.still()) {
+        setError(e instanceof Error ? e.message : sc(mode === 'run' ? 'nativeGgplot.failed' : 'nativeGgplot.inviteFailed'))
+      }
+    } finally {
+      if (owner.still()) setBusy(false)
+    }
+  }
+  const label = (key: string) => sc(`nativeGgplot.${key}`)
+  return (
+    <Dialog
+      open={owner.still()}
+      onOpenChange={(next) => { if (!next) onClose() }}
+      title={label('title')}
+      description={mode === 'run' ? sc('nativeGgplot.description', { script }) : label('consoleDescription')}
+      anchor="native-ggplot"
+      size="sm"
+      busy={busy}
+      footer={{
+        secondary: invitation ? undefined : <Button variant="secondary" disabled={busy} onClick={onClose}>{translate('actions.cancel')}</Button>,
+        primary: invitation
+          ? <Button onClick={onClose}>{label('done')}</Button>
+          : <Button disabled={!ready || busy} onClick={() => void run()}>{label(mode === 'run' ? 'run' : 'generateCommand')}</Button>,
+      }}
+    >
+      {invitation ? (
+        <div className="flex flex-col gap-2 py-1">
+          <p className="text-sm text-ink-2">
+            {sc('nativeGgplot.consoleInstructions', { seconds: invitation.expires_in })}
+          </p>
+          <div className="flex items-start gap-2">
+            <TextArea aria-label={label('command')} value={invitation.command} readOnly rows={3} maxRows={5} />
+            <CopyAction text={invitation.command} label={label('copyCommand')} copiedLabel={label('copiedCommand')} />
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 py-1">
+          <Segmented
+            ariaLabel={label('mode')}
+            value={mode}
+            onChange={(next) => { setMode(next); setError('') }}
+            items={[
+              { value: 'run', label: label('startMode'), disabled: busy },
+              { value: 'connect', label: label('consoleMode'), disabled: busy },
+            ]}
+          />
+          <label className="flex flex-col gap-1 type-meta">
+            {label('object')}
+            <TextInput aria-label={label('object')} value={object} onChange={(e) => setObject(e.target.value)} />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 type-meta">
+              {label('width')}
+              <TextInput aria-label={label('width')} inputMode="decimal" value={width} onChange={(e) => setWidth(e.target.value)} />
+            </label>
+            <label className="flex flex-col gap-1 type-meta">
+              {label('height')}
+              <TextInput aria-label={label('height')} inputMode="decimal" value={height} onChange={(e) => setHeight(e.target.value)} />
+            </label>
+          </div>
+          {mode === 'run' && (
+            <>
+              <div className="flex items-end gap-2">
+                <label className="flex min-w-0 flex-1 flex-col gap-1 type-meta">
+                  {label('runtime')}
+                  <TextInput aria-label={label('runtime')} value={rscript} onChange={(e) => setRscript(e.target.value)} />
+                </label>
+                <Button variant="secondary" onClick={async () => {
+                  const file = await pickAnyFile(label('runtime'))
+                  if (file && owner.still()) setRscript(file)
+                }}>{label('browse')}</Button>
+              </div>
+              <div className="flex items-end gap-2">
+                <label className="flex min-w-0 flex-1 flex-col gap-1 type-meta">
+                  {label('library')}
+                  <TextInput aria-label={label('library')} value={library} onChange={(e) => setLibrary(e.target.value)} />
+                </label>
+                <Button variant="secondary" onClick={async () => {
+                  const directory = await pickDirectory(label('library'))
+                  if (directory && owner.still()) setLibrary(directory)
+                }}>{label('browse')}</Button>
+              </div>
+            </>
+          )}
+          {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+        </div>
+      )}
+    </Dialog>
   )
 }
 

@@ -58,9 +58,11 @@ ENGINE_FILES = [
     "browser.py",
     "browser_imports.py",
     "colorbarmodel.py",
+    "colorscale.py",
     "figcapture.py",
     "legendmodel.py",
     "manifest.py",
+    "manifest_fields.py",
     "mixedtext.py",
     "overrides.py",
     "patchspec.py",
@@ -71,6 +73,9 @@ ENGINE_FILES = [
     "spinemodel.py",
     "tickmodel.py",
 ]
+ENGINE_RESOURCES = {
+    "resources/color_palettes.json": ENGINE.parent / "resources" / "color_palettes.json",
+}
 
 MANIFEST_NAME = "playground-manifest.json"
 
@@ -82,7 +87,7 @@ def source_fingerprint() -> str:
     bundle 里，任何一处都可能改变 playground 行为）+ 案例源码与封面
     （examples/*.py 经 ?raw 进 bundle，generated/ 的封面与 manifest 是
     卡片资产——两者任何一个变了都是另一个 playground）+ playground 入口
-    与构建配置 + 进 engine.zip 的每个 Python 模块 + 运行时锁 + 规范文件
+    与构建配置 + 进 engine.zip 的每个 Python 模块和资源 + 运行时锁 + 规范文件
     + 字形覆盖表（同样经路径别名进 bundle）。
     """
     files: list[Path] = []
@@ -103,14 +108,17 @@ def source_fingerprint() -> str:
         ROOT / "src" / "tavotto" / "pdfbackend" / "canvas_coverage.json",
     ]
     files += [ENGINE / name for name in ENGINE_FILES]
+    files += ENGINE_RESOURCES.values()
     return digest((p.relative_to(ROOT), p.read_bytes()) for p in files if p.is_file())
 
 
 def build_engine_zip(out: Path) -> None:
     """确定性 zip：排序条目 + 1980 时间戳 + 固定权限。"""
+    inputs = {name: ENGINE / name for name in ENGINE_FILES}
+    inputs.update(ENGINE_RESOURCES)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name in sorted(ENGINE_FILES):
-            data = (ENGINE / name).read_bytes().replace(b"\r\n", b"\n")
+        for name, source in sorted(inputs.items()):
+            data = source.read_bytes().replace(b"\r\n", b"\n")
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.external_attr = 0o644 << 16
             info.compress_type = zipfile.ZIP_DEFLATED

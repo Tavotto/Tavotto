@@ -3304,6 +3304,20 @@ def _bar_width_set(rect: Rectangle, v) -> None:
     rect.set_width(float(v))
 
 
+def _bar_thickness_get(rect: Rectangle):
+    return (rect.get_y(), rect.get_height())
+
+
+def _bar_thickness_set(rect: Rectangle, value) -> None:
+    if isinstance(value, (tuple, list)):
+        rect.set_y(float(value[0]))
+        rect.set_height(float(value[1]))
+        return
+    centre = rect.get_y() + rect.get_height() / 2
+    rect.set_y(centre - float(value) / 2)
+    rect.set_height(float(value))
+
+
 def _eb_handler(getter_each, setter_each, members_fn=None):
     """误差棒：作用于 members()（或指定子集），原值按成员列表还原。"""
 
@@ -3373,7 +3387,8 @@ def _eb_color_handler():
     return (g, s), r
 
 
-def _eb_linewidth_members(grp):
+def errorbar_linewidth_members(grp):
+    """The data line and interval strokes. Cap thickness is a separate field."""
     line = grp.artists.get("line")
     return ([line] if line is not None else []) + grp.artists["bars"]
 
@@ -4080,16 +4095,21 @@ def _logit_fits(ax, which: str) -> bool:
         return False
 
 
-def _mk_set_scale(which: str):
-    """换 scale。matplotlib 会把该轴的 locator/formatter 整套换成新 scale 的
-    默认值，所以刻度模型的「脚本原样」必须当场重采——不重采的话「自动刻度」
-    会把线性轴的 AutoLocator 按到对数轴上（一个刻度都出不来）。"""
+def _mk_scale_handlers(which: str):
+    def get(ax: Axes) -> tickmodel.AxisScaleBaseline:
+        return tickmodel.axis_scale_original(ax, which)
 
-    def s(a: Axes, v) -> None:
-        getattr(a, f"set_{which}scale")(str(v))
-        tickmodel.invalidate_tick_cfg(a, which)
+    def set_scale(ax: Axes, value) -> None:
+        tickmodel.set_axis_scale(ax, which, str(value))
 
-    return s
+    def restore(ax: Axes, original: tickmodel.AxisScaleBaseline) -> None:
+        tickmodel.restore_axis_scale(ax, which, original)
+
+    return (get, set_scale), restore
+
+
+_X_SCALE, _RESTORE_X_SCALE = _mk_scale_handlers("x")
+_Y_SCALE, _RESTORE_Y_SCALE = _mk_scale_handlers("y")
 
 
 def legend_handle_props(h) -> tuple[str, ...]:
@@ -5583,8 +5603,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda f, v: f.patch.set_visible(not bool(v)),
     ),
     # ---- axes: 比例 / 反转 / 缩放 / 网格 / spine / 底色 ----
-    ("axes", "xscale"): (lambda a: a.get_xscale(), _mk_set_scale("x")),
-    ("axes", "yscale"): (lambda a: a.get_yscale(), _mk_set_scale("y")),
+    ("axes", "xscale"): _X_SCALE,
+    ("axes", "yscale"): _Y_SCALE,
     ("axes", "invert_x"): (lambda a: bool(a.xaxis_inverted()), _mk_set_invert("x")),
     ("axes", "invert_y"): (lambda a: bool(a.yaxis_inverted()), _mk_set_invert("y")),
     ("axes", "aspect"): (lambda a: a.get_aspect(), _set_aspect),
@@ -5731,6 +5751,7 @@ for _prop, _g1, _s1 in [
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
     ("bar_width", _bar_width_get, _bar_width_set),
+    ("bar_thickness", _bar_thickness_get, _bar_thickness_set),
 ]:
     _h, _r = _bar_handler(_g1, _s1)
     HANDLERS[("bar_series", _prop)] = _h
@@ -5745,7 +5766,7 @@ for _prop, _pair in [
     (
         "linewidth",
         _eb_handler(
-            lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(v), _eb_linewidth_members
+            lambda a: a.get_linewidth(), lambda a, v: a.set_linewidth(v), errorbar_linewidth_members
         ),
     ),
     (
@@ -5886,6 +5907,8 @@ _RESTORE: dict[tuple[str, str], object] = {
     # 还原脚本原样：不过 `_set_axes_position` 的 guard——tight 引擎下还原是无害
     # 的（它本来就要把位置算回去），在 undo 路上抛只会平白多一条 warning
     ("axes", "position"): _restore_axes_position,
+    ("axes", "xscale"): _RESTORE_X_SCALE,
+    ("axes", "yscale"): _RESTORE_Y_SCALE,
     ("figure", "size_mm"): lambda f, v: f.set_size_inches(v[0] / 25.4, v[1] / 25.4, forward=False),
 }
 _RESTORE.update(tickmodel.RESTORE)
@@ -6818,6 +6841,15 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
         nonlocal geometry_moved
         if _is_geometry_key(key[1], artist):
             geometry_moved = True
+        if key[1] in ("xscale", "yscale") and isinstance(artist, Axes):
+            which = key[1][0]
+            siblings = {id(member) for member in tickmodel.shared_scale_axes(artist, which)}
+            dependent = (key[1], f"{which}lim", f"invert_{which}")
+            dirty_groups.update(
+                other
+                for other in new
+                if other[1] in dependent and id(state.resolve(other[0])) in siblings
+            )
         # 同一条线的两种位置 override 共用基准 transform 与 pin 表那一格：撤掉其中一条会把线放回脚本
         # 原样、摘掉 pin，另一条值没变也必须重放，否则热态停在脚本原位而全量重放落在它写下的位置
         # （Codex #2060 P1：先整条平移、再加拐点、撤销加拐点 → 线跳回脚本原位）

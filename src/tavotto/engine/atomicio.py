@@ -40,6 +40,7 @@ import stat
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,31 @@ class AtomicWriteError(OSError):
     def as_payload(self) -> dict[str, str]:
         """给 `jsonify` 的载荷（不含路径——路径是本机信息，不进给前端的错误体）。"""
         return {"error": self.message, "code": self.code}
+
+
+def retry_windows_replace(operation: Callable[[], object]) -> None:
+    """Retry a replace blocked by a Windows read handle for up to 200 ms of backoff.
+
+    Callers keep their write lock across attempts. A structured error counts
+    only when the replace itself failed, before the new data became visible.
+    """
+    for attempt in range(5):
+        try:
+            operation()
+            return
+        except OSError as exc:
+            cause = exc
+            if isinstance(exc, AtomicWriteError):
+                if exc.code != "replace_failed":
+                    raise
+                cause = exc.__cause__
+            if (
+                not isinstance(cause, PermissionError)
+                or getattr(cause, "winerror", None) not in (5, 32, 33)
+                or attempt == 4
+            ):
+                raise
+            time.sleep(0.05)
 
 
 def _next_tmp(path: Path) -> Path:

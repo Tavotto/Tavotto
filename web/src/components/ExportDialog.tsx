@@ -58,6 +58,7 @@ import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportManuscriptPreview } from "./ExportManuscriptPreview";
 import { ExportZoomStage } from "./ExportZoomStage";
+import { ScriptStyleAction } from "./ScriptStyleAction";
 import { computeManuscriptLayout, type ManuscriptLayout } from "@/lib/manuscriptPreview";
 import { columnName } from "@/lib/pageColumns";
 import { ExportLocationRow, projectRelativeLocation, useExportLocationPicker } from "./ExportLocationRow";
@@ -147,6 +148,7 @@ import { useEpsOpacityGate } from "./EpsOpacityPrompt";
 import { annotationsBelow, annotationsOf, figureClipOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useRuntimePreview } from "@/hooks/useRuntimePreview";
+import { figureSnapshotFor } from "@/lib/figureSnapshot";
 import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline, prepareScriptedBitmapsForRedraw, redrawPdfOriginalsWithScript } from "@/store/actions";
@@ -175,7 +177,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { askConfirm, dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, objectLabel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
+import { isKnownObject, isRuntimePanel, objectLabel, type ArrowObject, type CanvasObject, type FigureDocument, type PanelObject, type PathObject, type ShapeObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import { frameCanvasOf, isZeroPad } from "@/lib/framePad";
@@ -296,6 +298,10 @@ interface ParkedState {
   filenameTouched: boolean;
   withReport: boolean;
   withScript: boolean;
+  pdfPanelBookmarks: boolean;
+  pdfPanelLayers: boolean;
+  pdfAnnotationLayer: boolean;
+  pdfTextAttachment: boolean;
   transparent: boolean;
   strict: boolean;
 }
@@ -376,6 +382,10 @@ export function ExportDialog() {
   const [transparent, setTransparent] = useState(false);
   // 修改后的 .py（ADR 0171）：每次都要重跑一遍脚本，所以不记进导出默认值
   const [withScript, setWithScript] = useState(false);
+  const [pdfPanelBookmarks, setPdfPanelBookmarks] = useState(false);
+  const [pdfPanelLayers, setPdfPanelLayers] = useState(false);
+  const [pdfAnnotationLayer, setPdfAnnotationLayer] = useState(false);
+  const [pdfTextAttachment, setPdfTextAttachment] = useState(false);
   /** 严格核验产物（ADR 0068 的 `strict` 政策）：必需项失败或无法核验的那一项不发布 */
   const [strict, setStrict] = useState(
     () => readExportDefaults().strictInspection,
@@ -693,10 +703,18 @@ export function ExportDialog() {
       setFilenameTouched(restore.filenameTouched);
       setWithReport(restore.withReport);
       setWithScript(restore.withScript);
+      setPdfPanelBookmarks(restore.pdfPanelBookmarks);
+      setPdfPanelLayers(restore.pdfPanelLayers);
+      setPdfAnnotationLayer(restore.pdfAnnotationLayer);
+      setPdfTextAttachment(restore.pdfTextAttachment);
       setTransparent(restore.transparent);
       setStrict(restore.strict);
       return;
     }
+    setPdfPanelBookmarks(false);
+    setPdfPanelLayers(false);
+    setPdfAnnotationLayer(false);
+    setPdfTextAttachment(false);
     if (journalKey && journalApplied.current !== journalKey) {
       journalApplied.current = journalKey;
       const d = readExportDefaults();
@@ -946,7 +964,7 @@ export function ExportDialog() {
   const script = useMemo(
     () =>
       !single && scope === "original"
-        ? { ok: true, reason: "none" as const }
+        ? { ok: true, reason: "none" as const, suffix: undefined }
         : scriptAvailability(scope, figureId, route),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [single, scope, figureId, assets, runtimeAssets, route],
@@ -970,6 +988,11 @@ export function ExportDialog() {
       background: transparent && transparentApplies ? "transparent" : "white",
       includeReport: reportOn,
       includeScript: withScript && script.ok,
+      scriptSuffix: script.suffix,
+      pdfPanelBookmarks,
+      pdfPanelLayers,
+      pdfAnnotationLayer,
+      pdfTextAttachment,
       strictInspection: strict,
       profileId: checkProfileId,
       // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
@@ -1320,6 +1343,11 @@ export function ExportDialog() {
       withReport,
       withScript,
       script.ok,
+      script.suffix,
+      pdfPanelBookmarks,
+      pdfPanelLayers,
+      pdfAnnotationLayer,
+      pdfTextAttachment,
       scope,
       transparent,
       strict,
@@ -1492,6 +1520,10 @@ export function ExportDialog() {
       filenameTouched,
       withReport,
       withScript,
+      pdfPanelBookmarks,
+      pdfPanelLayers,
+      pdfAnnotationLayer,
+      pdfTextAttachment,
       transparent,
       strict,
     };
@@ -2111,12 +2143,18 @@ export function ExportDialog() {
                     <FormatCheck
                       checked={withScript && script.ok}
                       onChange={() => setWithScript((v) => !v)}
-                      format="py"
+                      format={script.suffix?.endsWith(".R") ? "r" : "py"}
                       hint={script.ok ? ex("scriptHint") : ex(`scriptUnavailable.${script.reason}`)}
                       disabled={!script.ok}
                     />
                   </div>
                 </FormRow>
+                <ScriptStyleAction
+                  visible={single && script.suffix?.endsWith(".R") === true}
+                  available={script.ok && !busy}
+                  canvas={activeCanvasId}
+                  panel={panel?.id ?? null}
+                />
               </fieldset>
               {/* 合成一个多页 PDF（#1370）：只在这几张图出自脚本同一份 PdfPages、且勾着 PDF 时出现；页序跟脚本走 */}
               {mergePlan && (
@@ -2124,6 +2162,58 @@ export function ExportDialog() {
                   <label data-export-merge-pdf className="flex min-h-7 items-center gap-2 text-ink">
                     <Checkbox checked={mergePdfChoice} onChange={() => setMergePdfChoice((v) => !v)} />
                     <span>{ex("mergePdf", { name: `${mergePlan.name}.pdf`, count: mergePlan.figureIds.length })}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => o.type === "panel" && !o.hidden) && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-bookmarks
+                      checked={pdfPanelBookmarks}
+                      onChange={(event) => setPdfPanelBookmarks(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfPanelBookmarks")}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => o.type === "panel" && !o.hidden) && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-panel-layers
+                      checked={pdfPanelLayers}
+                      onChange={(event) => setPdfPanelLayers(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfPanelLayers")}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => !o.hidden && isKnownObject(o) && o.type !== "panel") && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-annotation-layer
+                      checked={pdfAnnotationLayer}
+                      onChange={(event) => setPdfAnnotationLayer(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfAnnotationLayer")}</span>
+                  </label>
+                </FormRow>
+              )}
+              {scope === "canvas" && formats.includes("pdf") &&
+                exportDoc.objects.some((o) => !o.hidden && o.type === "text" && o.text.trim()) && (
+                <FormRow>
+                  <label className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox
+                      data-export-pdf-text-attachment
+                      checked={pdfTextAttachment}
+                      onChange={(event) => setPdfTextAttachment(event.currentTarget.checked)}
+                    />
+                    <span>{ex("pdfTextAttachment")}</span>
                   </label>
                 </FormRow>
               )}
@@ -2371,12 +2461,13 @@ function useFigureThumbSource(
   const render = usePanelRender(figure.panel);
   const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const panel = figure.panel;
+  const archived = panel && !engineTransport() ? figureSnapshotFor(panel) : undefined;
   const needsEngine =
     !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
   // runtime 图只认**自己这一版**的 SVG（QA-WIN-30）：`usePanelRender` 在自己这版没画过时退回同文件 `latest`
   // 的另一版（恢复的草稿、刚关掉的排版），那是别的状态的图——预览不许拿它冒充；没有就走下面按状态取的 cache 预览
   const ownSvg = useRenderStore((s) => (panel ? (s.byKey[renderKeyOf(panel)]?.svg ?? null) : null));
-  const svg = needsEngine ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
+  const svg = needsEngine && !archived ? (figure.kind === "runtime" ? ownSvg : (render?.svg ?? null)) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
   // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
@@ -2385,21 +2476,22 @@ function useFigureThumbSource(
     panel?.fileId ?? figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
     bucket,
-    !!panel && !svg && showsEdits(panel),
+    !!panel && !archived && !svg && showsEdits(panel),
     figure.stamp ?? 0,
     panel ? adoptionGuardOf(panel) : undefined,
   );
   // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
   // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
-  const runtimeByState = figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
+  const runtimeByState = !!archived || (figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport());
   const runtimePreview = useRuntimePreview(
     figure.figureId,
     panel?.overrides ?? NO_OVERRIDES,
     runtimeByState,
     figure.stamp ?? 0,
+    archived,
   );
   const src =
-    variant.url ??
+    (archived ? null : variant.url) ??
     (runtimeByState
       ? runtimePreview.exact === true
         ? runtimePreview.url
@@ -2427,7 +2519,8 @@ function editedPanelOf(o: ThumbObject): PanelObject | null {
   const obj = o as CanvasObject;
   // runtime 面板即使没有图内修改也走这条：它没有磁盘原图，后端 GET 版给的是「最近一次渲染」（可能是别的排版 /
   // 草稿的状态，QA-WIN-30），按此刻的 overrides（含空）取才是「这个状态的图」
-  return obj.type === "panel" && (showsEdits(obj) || (obj.fileKind === "runtime" && !engineTransport())) ? obj : null;
+  return obj.type === "panel" && (showsEdits(obj) || (!engineTransport() &&
+    (obj.fileKind === "runtime" || !!figureSnapshotFor(obj)))) ? obj : null;
 }
 
 /** 整版预览里的文字按导出出来的样子画：字体、字号、粗细都取对象自己的（喂给 `CanvasThumb` 的 `exportedText`） */
@@ -3768,7 +3861,7 @@ function FormatCheck({
 }: {
   checked: boolean;
   onChange: () => void;
-  format: ExportFormat | "py";
+  format: ExportFormat | "py" | "r";
   hint: string;
   disabled?: boolean;
   /** 禁用原因那段可见文字的 id */

@@ -8,7 +8,10 @@
 """
 
 import ast
+import json
+import runpy
 import sys
+import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -98,3 +101,19 @@ def test_fingerprint_covers_every_shipped_engine_module():
         "source_fingerprint() 不再按 ENGINE_FILES 收引擎模块了——"
         "白名单与指纹输入必须是同一份清单，分开写迟早漏。"
     )
+
+
+def test_browser_color_scale_loads_the_shipped_catalog(tmp_path, monkeypatch):
+    """Exercise the flat browser layout with no access to the source resources."""
+    archive = tmp_path / "engine.zip"
+    browser_engine = tmp_path / "engine"
+    bbp.build_engine_zip(archive)
+    with zipfile.ZipFile(archive) as package:
+        package.extractall(browser_engine)
+    catalog = ENGINE.parent / "resources" / "color_palettes.json"
+    shipped = browser_engine / "resources" / "color_palettes.json"
+    assert json.loads(shipped.read_bytes()) == json.loads(catalog.read_bytes())
+    with monkeypatch.context() as browser:
+        browser.setattr(sys, "platform", "emscripten")
+        module = runpy.run_path(str(browser_engine / "colorscale.py"))
+    assert module["CMAPS"] == list(json.loads(catalog.read_bytes())["palettes"])

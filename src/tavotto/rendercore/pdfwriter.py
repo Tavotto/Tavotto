@@ -62,6 +62,7 @@ from typing import Any, Mapping
 from .. import deflate
 from . import ir, placement, raster, rasterio
 from .hbshaper import HbFace, HbFaceProvider, require
+from .pdfsemantic import attach_canvas_text, read_canvas_text
 
 WRITER_ERROR_CODES = (
     "unsupported_capability",  # IR 用到了 CAPABILITIES["pdf"] 里声明 unsupported 的操作
@@ -70,6 +71,7 @@ WRITER_ERROR_CODES = (
     "source_bytes_missing",  # 节点引用的文件资源没有交进来字节（files 里没有这个 key）
     "source_identity",  # 交进来的字节 sha256 与资源身份不符
     "source_unreadable",  # 源 PDF 打不开 / 加密 / 没有这一页 / 位图解不开
+    "text_attachment_invalid",  # 落盘的附件内容或页面指纹对不上计划
 )
 
 
@@ -270,7 +272,9 @@ class PdfWriter:
             raise UnsupportedCapability(op, cap.reason, object_id)
 
     # -- 节点 -------------------------------------------------------------
-    def _emit(self, node: ir.Node, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
+    def _emit(
+        self, node: ir.Node, rec: _Recorder, ctm: ir.Matrix, depth: int
+    ) -> placement.Placement | None:
         for op in ir.operations_of(node):
             self._check(op, getattr(node, "object_id", ""))
         if isinstance(node, ir.Path):
@@ -280,13 +284,16 @@ class PdfWriter:
             rec.ops.append(self._text_op(node, rec))
             self.facts.text_objects += 1
         elif isinstance(node, ir.Group):
-            self._group(node, rec, ctm, depth)
+            return self._group(node, rec, ctm, depth)
         elif isinstance(node, ir.ImportedPage):
-            self._imported_page(node, rec, ctm)
+            placed = self._imported_page(node, rec, ctm)
+            return placed if node.opacity > 0 else None
         elif isinstance(node, ir.Image):
-            self._image(node, rec)
+            placed = self._image(node, rec)
+            return placed if node.opacity > 0 else None
         else:  # validate() 已经挡住不认识的节点；这里是最后一道
             raise UnsupportedCapability(type(node).__name__.lower(), "不认识的节点", "")
+        return None
 
     # -- 面板 -------------------------------------------------------------
     def _source_bytes(self, node: ir.ImportedPage | ir.Image) -> tuple[ir.FileResource, bytes]:
@@ -395,7 +402,9 @@ class PdfWriter:
         }
         return child.pdf
 
-    def _imported_page(self, node: ir.ImportedPage, rec: _Recorder, ctm: ir.Matrix) -> None:
+    def _imported_page(
+        self, node: ir.ImportedPage, rec: _Recorder, ctm: ir.Matrix
+    ) -> placement.Placement:
         resource = self.page.resources[node.resource]
         if (
             isinstance(resource, ir.FileResource)
@@ -474,6 +483,7 @@ class PdfWriter:
             rec.xobjects[name] = form
             rec.ops.append(inner)
         self.facts.imported_pages.append(fact)
+        return pl
 
     def _charge_raster(self, node: ir.Image, res: ir.FileResource, width: int, height: int) -> None:
         """文档级像素预算：每个**不同**的位图资源在嵌入前记一次账，累计超过就拒——单张各判一次
@@ -579,7 +589,7 @@ class PdfWriter:
         self._image_objs[node.resource] = hit
         return hit
 
-    def _image(self, node: ir.Image, rec: _Recorder) -> None:
+    def _image(self, node: ir.Image, rec: _Recorder) -> placement.Placement:
         res, data = self._source_bytes(node)
         obj, fact = self._image_xobject(node, res, data)
         # Image XObject 画进单位正方形：可见框就是 (0, 0, 1, 1)
@@ -626,12 +636,15 @@ class PdfWriter:
                 "flip_v": node.flip_v,
             }
         )
+        return pl
 
-    def _group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
+    def _group(
+        self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int
+    ) -> placement.Placement | None:
         self.facts.groups += 1
         if isinstance(node.clip, ir.ClipUnion):
             self._union_clip_group(node, rec, ctm, depth)
-            return
+            return None
         inner = ["q"]
         if node.transform != ir.IDENTITY:
             inner.append(" ".join(_num(v) for v in node.transform) + " cm")
@@ -655,11 +668,16 @@ class PdfWriter:
             rec.xobjects[name] = form_rec  # save() 时再序列化成 Form XObject
             rec.ops.append(f"q /{self._gs(rec, node.opacity, node.opacity)} gs /{name} Do Q")
             self.facts.transparency_groups += 1
-            return
+            return None
         rec.ops.append("\n".join(inner))
+        placed = None
         for child in node.children:
-            self._emit(child, rec, local, depth + 1)
+            placed = self._emit(child, rec, local, depth + 1)
         rec.ops.append("Q")
+        # A canvas clip wraps one object without changing its page coordinates.
+        if node.clip is not None and node.transform == ir.IDENTITY and len(node.children) == 1:
+            return placed
+        return None
 
     def _union_clip_group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
         """True vector union, retaining each member's winding rule and curves.
@@ -1125,7 +1143,12 @@ class PdfWriter:
         )
         return self.pdf.make_indirect(stream)
 
-    def _build_document(self) -> None:
+    def _build_document(
+        self,
+        bookmark_titles: Mapping[int, str] | None = None,
+        annotation_indices: frozenset[int] = frozenset(),
+        panel_layer_titles: Mapping[int, str] | None = None,
+    ) -> None:
         import pikepdf
 
         rec = _Recorder()
@@ -1133,24 +1156,94 @@ class PdfWriter:
             self._check("page_background", "")
             w, h = self.page.width_pt, self.page.height_pt
             rec.ops.append(f"q {_rgb(self.page.background)} rg 0 0 {_num(w)} {_num(h)} re f Q")
-        for child in self.page.children:
-            self._emit(child, rec, ir.IDENTITY, 1)
+        bookmarks = []
+        layer_names: dict[str, str] = {}
+        panel_number = 0
+        for index, child in enumerate(self.page.children):
+            start = len(rec.ops)
+            placed = self._emit(child, rec, ir.IDENTITY, 1)
+            # Keep each marked node in its original position in the paint stack.
+            if len(rec.ops) > start:
+                layer_property = None
+                if panel_layer_titles is not None and index in panel_layer_titles:
+                    panel_number += 1
+                    title = panel_layer_titles[index]
+                    layer_property = f"/CanvasPanel{panel_number}"
+                    layer_names[layer_property] = (
+                        f"{panel_number}. {title}" if title else str(panel_number)
+                    )
+                elif index in annotation_indices:
+                    layer_property = "/CanvasAnnotations"
+                    layer_names[layer_property] = "Canvas annotations"
+                if layer_property is not None:
+                    rec.ops.insert(start, f"/OC {layer_property} BDC")
+                    rec.ops.append("EMC")
+            # Top-level panels share the page's coordinate system. The same
+            # placement just emitted the crop and transform into the PDF.
+            if bookmark_titles and index in bookmark_titles and placed is not None:
+                left, bottom, right, top = placed.bbox
+                left, bottom = max(0.0, left), max(0.0, bottom)
+                right = min(self.page.width_pt, right)
+                top = min(self.page.height_pt, top)
+                # At a touching edge the transform can leave sub-precision
+                # residue, which is not a drawable destination in the PDF.
+                if float(_num(left)) < float(_num(right)) and float(_num(bottom)) < float(
+                    _num(top)
+                ):
+                    number = len(bookmarks) + 1
+                    title = bookmark_titles[index]
+                    bookmarks.append(
+                        pikepdf.OutlineItem(
+                            f"{number}. {title}" if title else str(number),
+                            0,
+                            "FitR",
+                            left=left,
+                            bottom=bottom,
+                            right=right,
+                            top=top,
+                        )
+                    )
         self._build_fonts()
         content = self._serialize(rec)
+        resources = self._resources(rec)
+        if layer_names:
+            groups = {
+                key: self.pdf.make_indirect(pikepdf.Dictionary(Type=pikepdf.Name.OCG, Name=title))
+                for key, title in layer_names.items()
+            }
+            layer_order = pikepdf.Array(list(groups.values()))
+            self.pdf.Root.OCProperties = pikepdf.Dictionary(
+                OCGs=layer_order,
+                D=pikepdf.Dictionary(BaseState=pikepdf.Name.ON, Order=layer_order),
+            )
+            resources.Properties = pikepdf.Dictionary(groups)
         page = pikepdf.Dictionary(
             Type=pikepdf.Name.Page,
             MediaBox=pikepdf.Array([0, 0, float(self.page.width_pt), float(self.page.height_pt)]),
-            Resources=self._resources(rec),
+            Resources=resources,
             Contents=self.pdf.make_indirect(pikepdf.Stream(self.pdf, content)),
         )
         self.pdf.pages.append(pikepdf.Page(page))
+        if bookmarks:
+            with self.pdf.open_outline() as outline:
+                outline.root.extend(bookmarks)
 
-    def write(self, out: Path) -> WriteFacts:
+    def write(
+        self,
+        out: Path,
+        *,
+        bookmark_titles: Mapping[int, str] | None = None,
+        annotation_indices: frozenset[int] = frozenset(),
+        panel_layer_titles: Mapping[int, str] | None = None,
+        annotation_text: tuple[str, ...] | None = None,
+    ) -> WriteFacts:
         import pikepdf
 
-        self._build_document()
+        self._build_document(bookmark_titles, annotation_indices, panel_layer_titles)
         out = Path(out)
         _compress_unfiltered(self.pdf)
+        if annotation_text is not None:
+            attach_canvas_text(self.pdf, annotation_text)
         # compress_streams=False：qpdf 的 compress_streams 会把源里带 predictor 的 Flate 图片流解码再重压
         # （与 stream_decode_level 无关，qpdf 12.3.2 实测：29 张图的海报 76 ms、体积不变）。要压的只有
         # 确实没过滤的流，上一行已经压过；其余流原样照搬源的编码。
@@ -1164,6 +1257,15 @@ class PdfWriter:
         for doc in self._foreign_docs:  # 流数据已经写进文件，外来文档可以放了
             doc.close()
         self._foreign_docs.clear()
+        if annotation_text is not None:
+            try:
+                with pikepdf.Pdf.open(out) as written:
+                    if read_canvas_text(written) != annotation_text:
+                        raise ValueError("The saved attachment differs from the canvas plan")
+            except (pikepdf.PdfError, ValueError) as exc:
+                raise WriterError(
+                    "text_attachment_invalid", "PDF text attachment verification failed"
+                ) from exc
         data = out.read_bytes()
         self.facts.sha256 = hashlib.sha256(data).hexdigest()
         self.facts.bytes = len(data)
@@ -1292,10 +1394,21 @@ def write_pdf(
     out: Path,
     provider: HbFaceProvider,
     files: Mapping[str, bytes] | None = None,
+    *,
+    bookmark_titles: Mapping[int, str] | None = None,
+    annotation_indices: frozenset[int] = frozenset(),
+    panel_layer_titles: Mapping[int, str] | None = None,
+    annotation_text: tuple[str, ...] | None = None,
 ) -> WriteFacts:
     """IR → PDF 文件。`provider` 解析 `FontResource` → 已加载的脸（按 sha256 身份）；`files` 是
     `FileResource` key → 冻结字节（`sources.read_frozen()` 核过 hash 的那份），面板要它。"""
-    return PdfWriter(page, provider, files).write(out)
+    return PdfWriter(page, provider, files).write(
+        out,
+        bookmark_titles=bookmark_titles,
+        annotation_indices=annotation_indices,
+        panel_layer_titles=panel_layer_titles,
+        annotation_text=annotation_text,
+    )
 
 
 # --- TrueType 槽里装着 CFF 字体程序（摸底 T-003）----------------------------------------------

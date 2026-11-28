@@ -137,6 +137,11 @@ jobs:
           "$RC_PY" -m pip freeze
           "$RC_PY" -c "import tavotto, tavotto.rendercore; print(tavotto.__file__)"
 
+      - name: Cache approved font archives
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 批准字体（按 allowlist 的 sha256 取到包内目录）
         shell: bash
         run: |

@@ -251,10 +251,12 @@ const ENGINE_LABEL_PATTERNS: { re: RegExp; key: string }[] = [
   { re: /^箭头 (\d+)$/, key: 'arrow' },
   { re: /^([XYZ]) 轴 “(.*)”$/s, key: 'axisLabelNamed' },
   { re: /^([XYZ]) 刻度文字$/, key: 'tickLabels' },
+  { re: /^(左轴|右轴|上轴|下轴)刻度文字$/, key: 'axisSideTickLabels' },
+  { re: /^色条刻度 “(.*)”$/s, key: 'colourbarTickLabels' },
 ]
 
-/** 双生轴的轴侧字面量（引擎协议中文）→ twinSide 翻译键。 */
-const TWIN_SIDE_KEYS: Record<string, string> = {
+/** 轴侧字面量（引擎协议中文）→ twinSide 翻译键。 */
+const AXIS_SIDE_KEYS: Record<string, string> = {
   左轴: 'left',
   右轴: 'right',
   上轴: 'top',
@@ -282,8 +284,12 @@ function engineLabelRaw(label: string): string {
     if (!m) continue
     if (key === 'axesTwin') {
       // (宿主序号, 轴侧, 可选“ 序号”) 三个组：轴侧翻成当前语言，序号原样拼上
-      const side = t(`engineLabel.twinSide.${TWIN_SIDE_KEYS[m[2]]}`, { ns: 'inspector' })
+      const side = t(`engineLabel.twinSide.${AXIS_SIDE_KEYS[m[2]]}`, { ns: 'inspector' })
       return t('engineLabel.axesTwin', { ns: 'inspector', value: m[1], side, ord: m[3] ?? '' })
+    }
+    if (key === 'axisSideTickLabels') {
+      const side = t(`engineLabel.twinSide.${AXIS_SIDE_KEYS[m[1]]}`, { ns: 'inspector' })
+      return t('engineLabel.axisSideTickLabels', { ns: 'inspector', side })
     }
     // 单捕获组统一喂给 {{value}}；轴标签那条是 (轴名, 文字) 两个组
     const values =

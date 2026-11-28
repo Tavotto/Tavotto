@@ -419,7 +419,9 @@ export function planStyle(
       for (const el of els) {
         for (const [prop, value] of Object.entries(props)) {
           const field = el.editable.find((f) => f.prop === prop)
-          if (!field || (prop === 'fontfamily' && figureFontChoice(value) && !field.font_fallback_selection)) {
+          if (!field
+              || (field.strict_options && (typeof value !== 'string' || !field.options?.includes(value)))
+              || (prop === 'fontfamily' && figureFontChoice(value) && !field.font_fallback_selection)) {
             unmappable.push(
               t('style.unmappableEntry', { ns: 'dialogs', label: el.label, prop }),
             )

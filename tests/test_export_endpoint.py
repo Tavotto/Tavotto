@@ -6,10 +6,12 @@
 import json
 from pathlib import Path
 
+import pikepdf
 import pymupdf
 import pytest
 
 from tavotto import app as m, pdfbackend as pb
+from tavotto.rendercore import pdfsemantic
 
 
 @pytest.fixture
@@ -90,6 +92,334 @@ def test_export_panel_flip_h(client, tmp_path, monkeypatch):
     l1, r1 = _ink_halves(flipped)
     assert l0 > r0 * 3, (l0, r0)  # 原图墨在左
     assert r1 > l1 * 3, (l1, r1)  # 翻转后墨在右
+
+
+def test_canvas_pdf_bookmarks_follow_the_published_panel_regions(client, tmp_path):
+    """Inspect the published destinations and pixels with a reader independent of the writer."""
+    figures = _asym_panel_dir(tmp_path)
+    with pymupdf.open(figures / "asym.pdf") as source:
+        source[0].get_pixmap().save(figures / "raster.png")
+    m.open_project(str(figures))
+    panel = {"type": "panel", "id": "asym.pdf", "x_mm": -4, "y_mm": 3, "w_mm": 24, "h_mm": 12}
+    objects = [
+        {
+            **panel,
+            "bookmark_title": "图一 \n  Cropped",
+            "rotation": 90,
+            "flip_h": True,
+            "crop": {"x": 0.05, "y": 0.12, "w": 0.7, "h": 0.56},
+        },
+        _text_obj("Not a bookmark"),
+        {**panel, "x_mm": 40, "y_mm": 16, "w_mm": 21, "h_mm": 15},
+        {
+            **panel,
+            "id": "raster.png",
+            "bookmark_title": "Bitmap",
+            "x_mm": 80,
+            "y_mm": 44,
+            "w_mm": 26,
+            "h_mm": 11,
+        },
+        {**panel, "x_mm": 110, "bookmark_title": "Off page"},
+        {**panel, "x_mm": 100, "rotation": 90, "bookmark_title": "Touches right edge"},
+        {**panel, "hidden": True, "bookmark_title": "Hidden"},
+        {**panel, "opacity": 0, "bookmark_title": "Transparent"},
+    ]
+    canvas = {"page_w_mm": 100, "page_h_mm": 50, "objects": objects}
+    spec = {"scope": "canvas", "canvas": canvas}
+    with (
+        _export(client, tmp_path, {**spec, "filename": "plain"}) as plain,
+        _export(
+            client, tmp_path, {**spec, "filename": "bookmarks", "pdf_panel_bookmarks": True}
+        ) as bookmarked,
+    ):
+        assert plain.get_toc() == []
+        assert bookmarked.get_toc() == [[1, "1. 图一 Cropped", 1], [1, "2", 1], [1, "3. Bitmap", 1]]
+        assert plain[0].get_pixmap().samples == bookmarked[0].get_pixmap().samples
+        # FitR numbers are in PDF points with a bottom-left origin.
+        # The regions below are computed from fixture positions and the final page edges.
+        expectations_mm = [(0, 35, 20, 47), (40, 19, 61, 34), (80, 0, 100, 6)]
+        for row, expected_mm in zip(bookmarked.get_toc(simple=False), expectations_mm, strict=True):
+            kind, value = bookmarked.xref_get_key(row[3]["xref"], "Dest")
+            assert kind == "array"
+            page, generation, reference, fit, *coordinates = (
+                value.strip("[]").replace("/", " /").split()
+            )
+            assert (page, generation, reference, fit) == (
+                str(bookmarked[0].xref),
+                "0",
+                "R",
+                "/FitR",
+            )
+            assert [float(value) for value in coordinates] == pytest.approx(
+                [value * 72 / 25.4 for value in expected_mm],
+                abs=0.0001,  # MuPDF represents PDF real numbers as floats.
+            )
+
+
+def test_canvas_pdf_panel_layers_toggle_instances_without_affecting_default_output(
+    client, tmp_path
+):
+    figures = _asym_panel_dir(tmp_path)
+    with pymupdf.open(figures / "asym.pdf") as source:
+        source[0].get_pixmap().save(figures / "raster.png")
+    m.open_project(str(figures))
+    base = {"type": "panel", "id": "asym.pdf", "y_mm": 18, "w_mm": 34, "h_mm": 24}
+    left = {**base, "x_mm": -4, "rotation": 90, "bookmark_title": "面板"}
+    right = {
+        **base,
+        "x_mm": 26,
+        "flip_h": True,
+        "opacity": 0.65,
+        "bookmark_title": "面板",
+        "crop": {"x": 0.05, "y": 0.12, "w": 0.7, "h": 0.56},
+        "clip": [
+            {
+                "type": "path",
+                "x_mm": 42,
+                "y_mm": 19,
+                "w_mm": 15,
+                "h_mm": 17,
+                "subpaths": [
+                    {
+                        "closed": True,
+                        "nodes": [
+                            {"p": [0, 0]},
+                            {"p": [1, 0]},
+                            {"p": [1, 1]},
+                            {"p": [0, 1]},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    bitmap = {**base, "id": "raster.png", "x_mm": 80, "y_mm": 44}
+    caption = _text_obj("Canvas caption", y_mm=8)
+    # Interleave paint and keep repeat instances as separate objects.
+    visible = [left, caption, right, bitmap]
+    invisible = [
+        {**left, "hidden": True, "bookmark_title": "Hidden"},
+        {**left, "opacity": 0, "bookmark_title": "Transparent"},
+        {**left, "x_mm": 100, "bookmark_title": "Touches right edge"},
+    ]
+
+    def export(name, objects, *, layers=False, annotations=False):
+        response = client.post(
+            "/api/export",
+            json={
+                "scope": "canvas",
+                "filename": name,
+                "formats": ["pdf", "png"],
+                "ppi": 144,
+                "canvas": {"page_w_mm": 100, "page_h_mm": 50, "objects": objects},
+                "pdf_panel_layers": layers,
+                "pdf_annotation_layer": annotations,
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "done", body
+        root = Path(body["export_dir"])
+        return {Path(row["name"]).suffix: root / row["name"] for row in body["files"]}
+
+    plain = export("plain panels", visible + invisible)
+    layered = export("layered panels", visible + invisible, layers=True, annotations=True)
+    assert layered[".png"].read_bytes() == plain[".png"].read_bytes()
+    with pymupdf.open(layered[".pdf"]) as actual, pymupdf.open(plain[".pdf"]) as baseline:
+        assert baseline.get_ocgs() == {}
+        assert actual.get_toc() == []
+        layers = actual.layer_ui_configs()
+        assert [layer["text"] for layer in layers] == [
+            "1. 面板",
+            "Canvas annotations",
+            "2. 面板",
+            "3",
+        ]
+        assert all(layer["on"] and not layer["locked"] for layer in layers)
+        original = baseline[0].get_pixmap().samples
+        assert actual[0].get_pixmap().samples == original
+        assert "Canvas caption" in actual[0].get_text()
+        for index, layer in enumerate(layers):
+            reference = export(f"without layer {index}", visible[:index] + visible[index + 1 :])
+            with pymupdf.open(reference[".pdf"]) as expected:
+                actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_OFF)
+                disabled = actual[0].get_pixmap().samples
+                omitted = expected[0].get_pixmap().samples
+                if layer["text"] == "2. 面板":
+                    # MuPDF composites the page edge one level differently when
+                    # the transparent Form is present but disabled.
+                    assert max(abs(a - b) for a, b in zip(disabled, omitted, strict=True)) <= 1
+                else:
+                    assert disabled == omitted
+                assert any(abs(a - b) > 32 for a, b in zip(disabled, original, strict=True))
+                actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_ON)
+                assert actual[0].get_pixmap().samples == original
+
+    with pikepdf.Pdf.open(layered[".pdf"]) as pdf:
+        groups = list(pdf.Root.OCProperties.OCGs)
+        assert len({group.objgen for group in groups}) == 4
+
+
+def test_canvas_pdf_annotation_layer_toggles_marks_without_changing_default_pixels(
+    client, tmp_path
+):
+    m.open_project(str(_asym_panel_dir(tmp_path)))
+    panel = {
+        "type": "panel",
+        "id": "asym.pdf",
+        "bookmark_title": "Source",
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": 100,
+        "h_mm": 50,
+    }
+    shape = {
+        "type": "shape",
+        "shape": "rect",
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": 65,
+        "h_mm": 50,
+        "fill": "#ff0000",
+        "stroke": False,
+    }
+    marks = [shape, panel, _text_obj("Editable label", x_mm=55, y_mm=4, w_mm=38)]
+
+    def export(name, objects, *, layered=False):
+        response = client.post(
+            "/api/export",
+            json={
+                "scope": "canvas",
+                "filename": name,
+                "formats": ["pdf", "png"],
+                "ppi": 150,
+                "canvas": {"page_w_mm": 100, "page_h_mm": 50, "objects": objects},
+                "pdf_panel_bookmarks": True,
+                "pdf_annotation_layer": layered,
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "done", body
+        store = Path(body["export_dir"])
+        return {
+            Path(item["name"]).suffix: (store / item["name"]).read_bytes() for item in body["files"]
+        }
+
+    plain = export("Plain", marks)
+    layered = export("Layered", marks, layered=True)
+    panel_only = export("Panel only", [panel, _text_obj("Hidden", hidden=True)], layered=True)
+    assert plain[".png"] == layered[".png"]
+
+    with (
+        pymupdf.open(stream=plain[".pdf"]) as expected,
+        pymupdf.open(stream=layered[".pdf"]) as actual,
+        pymupdf.open(stream=panel_only[".pdf"]) as without_marks,
+    ):
+        assert expected.get_ocgs() == without_marks.get_ocgs() == {}
+        (layer,) = actual.layer_ui_configs()
+        assert layer["text"] == "Canvas annotations" and layer["on"] and not layer["locked"]
+        assert actual.get_toc() == expected.get_toc() == [[1, "1. Source", 1]]
+        assert len(actual[0].get_images()) == 0
+        assert "Editable label" in actual[0].get_text()
+        default_pixels = actual[0].get_pixmap()
+        assert default_pixels.samples == expected[0].get_pixmap().samples
+        assert default_pixels.pixel(40, 40) == (0, 0, 0)  # Panel draws over the annotation.
+        assert default_pixels.pixel(160, 50) == (255, 0, 0)  # Unpainted area on the same panel.
+        actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_OFF)
+        assert actual[0].get_pixmap().samples == without_marks[0].get_pixmap().samples
+        assert "Editable label" not in actual[0].get_text()
+        actual.set_layer_ui_config(layer["number"], action=pymupdf.PDF_OC_ON)
+        assert actual[0].get_pixmap().samples == default_pixels.samples
+
+
+def test_canvas_pdf_text_attachment_contains_only_painted_annotations_and_detects_stale_page(
+    client, tmp_path
+):
+    m.open_project(str(_asym_panel_dir(tmp_path)))
+    panel = {
+        "type": "panel",
+        "id": "asym.pdf",
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": 100,
+        "h_mm": 50,
+    }
+    texts = ("实验组", "Control\nB")
+    marks = [
+        panel,
+        _text_obj(texts[0], id="private-object-id", x_mm=60, y_mm=3),
+        _text_obj("Do not attach", hidden=True),
+        _text_obj("  "),
+        _text_obj(texts[1], x_mm=60, y_mm=22),
+    ]
+    filename = "tavotto-canvas-text.json"
+
+    def export(name, *, objects=marks, attachment=False):
+        response = client.post(
+            "/api/export",
+            json={
+                "scope": "canvas",
+                "filename": name,
+                "formats": ["pdf"],
+                "canvas": {"page_w_mm": 100, "page_h_mm": 50, "objects": objects},
+                "pdf_panel_bookmarks": True,
+                "pdf_annotation_layer": True,
+                "pdf_text_attachment": attachment,
+            },
+        )
+        assert response.status_code == 200, response.get_json()
+        body = response.get_json()
+        assert body["status"] == "done", body
+        (item,) = body["files"]
+        return Path(body["export_dir"]) / item["name"]
+
+    plain = export("Plain")
+    enriched = export("With attachment", attachment=True)
+    empty = export("No text", objects=[panel], attachment=True)
+    with pymupdf.open(plain) as expected, pymupdf.open(enriched) as actual:
+        assert expected.embfile_names() == []
+        assert actual.embfile_names() == [filename]
+        payload = json.loads(actual.embfile_get(filename))
+        assert set(payload) == {
+            "schema_version",
+            "source",
+            "page",
+            "page_fingerprint",
+            "annotations",
+        }
+        assert payload["schema_version"] == payload["page"] == 1
+        assert payload["source"] == "tavotto.canvas.text"
+        assert payload["annotations"] == [{"text": text} for text in texts]
+        assert actual[0].get_pixmap(dpi=144).samples == expected[0].get_pixmap(dpi=144).samples
+        assert "实验组" in actual[0].get_text()
+        assert actual.get_toc() == expected.get_toc()
+
+    with pikepdf.Pdf.open(empty) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == ()
+    with pikepdf.Pdf.open(enriched) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == texts
+        pdf.docinfo["/Title"] = "New document title"
+        retitled = tmp_path / "retitled.pdf"
+        pdf.save(retitled)
+    with pikepdf.Pdf.open(retitled) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == texts
+        form = next(iter(pdf.pages[0].Resources.XObject.values()))
+        form.write(b"60 60 15 15 re f")
+        modified = tmp_path / "modified.pdf"
+        pdf.save(modified)
+    with pikepdf.Pdf.open(modified) as pdf, pytest.raises(pdfsemantic.StaleTextAttachment):
+        pdfsemantic.read_canvas_text(pdf)
+
+    revised = export("Revised canvas", objects=[panel, _text_obj("Revised B")], attachment=True)
+    with pikepdf.Pdf.open(revised) as pdf:
+        assert pdfsemantic.read_canvas_text(pdf) == ("Revised B",)
+        pdf.attachments[filename] = pikepdf.AttachedFileSpec(
+            pdf, json.dumps(payload).encode("utf-8"), mime_type="application/json"
+        )
+        with pytest.raises(pdfsemantic.StaleTextAttachment):
+            pdfsemantic.read_canvas_text(pdf)
 
 
 def test_export_single_figure_frame_with_annotation(client, tmp_path):

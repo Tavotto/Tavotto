@@ -18,13 +18,12 @@ import type { ProjectDocument } from '@/types/document'
 import {
   activeProjectFile,
   captureFigureSnapshotSave,
-  mergeSavedChartSources,
   markProjectFileDirtyFor,
   projectFileSnapshot,
   flushAutosave,
   getWindowHold,
   isAutosaveSuspendedFor,
-  mergeSavedFigureSnapshots,
+  mergeSavedDocumentSources,
   resumeAutosave,
   setProjectFile,
   suspendAutosaveFor,
@@ -162,8 +161,7 @@ export async function forkCurrentDocument(opts: { beforeSwitch?: () => void } = 
       return { ok: false, reason: 'switched', file }
     }
     // 回执里的快照引用合进内存里这份（再带进副本）；原排版已摘出自动保存，这次合并不会把它写回盘
-    mergeSavedChartSources(snapshots, written.res.chart_sources)
-    mergeSavedFigureSnapshots(snapshots, written.res.figure_snapshots)
+    mergeSavedDocumentSources(snapshots, written.res)
   }
   const copyHasNewEdits = edited()
   const latest = useDocumentStore.getState().buildProject()

@@ -64,6 +64,71 @@ beforeEach(async () => {
 })
 
 describe('scope', () => {
+  it('includes the bookmark choice and panel name only for an opted-in canvas PDF', () => {
+    const doc = {
+      ...useDocumentStore.getState().doc,
+      objects: [{ ...panel, name: 'Series A', groupId: 'mixed-figures' }],
+    }
+    const { request: plain } = buildExportRequest(inputOf({ doc }))
+    const { request: bookmarked } = buildExportRequest(inputOf({
+      doc, formats: ['pdf', 'svg'], pdfPanelBookmarks: true,
+    }))
+    const { request: image } = buildExportRequest(inputOf({ doc, formats: ['png'], pdfPanelBookmarks: true }))
+    expect(plain).not.toHaveProperty('pdf_panel_bookmarks')
+    expect(plain.canvas?.objects[0]).not.toHaveProperty('bookmark_title')
+    expect(bookmarked.pdf_panel_bookmarks).toBe(true)
+    expect(bookmarked.canvas?.objects[0]).toMatchObject({
+      bookmark_title: 'Series A', name: 'Series A', group_path: ['mixed-figures'],
+    })
+    expect(image).not.toHaveProperty('pdf_panel_bookmarks')
+    expect(image.canvas?.objects[0]).not.toHaveProperty('bookmark_title')
+    expect(snapshotRevision(bookmarked)).not.toBe(snapshotRevision({ ...bookmarked, pdf_panel_bookmarks: undefined }))
+  })
+
+  it('includes the annotation layer choice only for canvas PDF and freezes it in the job revision', () => {
+    const { request: plain } = buildExportRequest(inputOf())
+    const { request: layered } = buildExportRequest(inputOf({ pdfAnnotationLayer: true }))
+    const { request: image } = buildExportRequest(inputOf({ formats: ['png'], pdfAnnotationLayer: true }))
+    const { request: original } = buildExportRequest(inputOf({
+      scope: 'original', figureId: 'Fig1.pdf', pdfAnnotationLayer: true,
+    }))
+    expect(plain).not.toHaveProperty('pdf_annotation_layer')
+    expect(layered.pdf_annotation_layer).toBe(true)
+    expect(image).not.toHaveProperty('pdf_annotation_layer')
+    expect(original).not.toHaveProperty('pdf_annotation_layer')
+    expect(snapshotRevision(layered)).not.toBe(snapshotRevision(plain))
+  })
+
+  it('opts in to per-panel PDF layers independently of bookmarks', () => {
+    const doc = { ...useDocumentStore.getState().doc, objects: [{ ...panel, name: 'Series A' }] }
+    const { request: layered } = buildExportRequest(inputOf({ doc, pdfPanelLayers: true }))
+    const { request: image } = buildExportRequest(inputOf({ doc, formats: ['png'], pdfPanelLayers: true }))
+    const { request: original } = buildExportRequest(inputOf({
+      scope: 'original', figureId: 'Fig1.pdf', pdfPanelLayers: true,
+    }))
+    expect(layered.pdf_panel_layers).toBe(true)
+    expect(layered).not.toHaveProperty('pdf_panel_bookmarks')
+    expect(layered.canvas?.objects[0]).toMatchObject({ bookmark_title: 'Series A' })
+    expect(image).not.toHaveProperty('pdf_panel_layers')
+    expect(image.canvas?.objects[0]).not.toHaveProperty('bookmark_title')
+    expect(original).not.toHaveProperty('pdf_panel_layers')
+    expect(snapshotRevision(layered)).not.toBe(snapshotRevision({ ...layered, pdf_panel_layers: undefined }))
+  })
+
+  it('requires opt-in for a canvas PDF text attachment and freezes the choice in the job revision', () => {
+    const { request: plain } = buildExportRequest(inputOf())
+    const { request: attached } = buildExportRequest(inputOf({ pdfTextAttachment: true }))
+    const { request: image } = buildExportRequest(inputOf({ formats: ['png'], pdfTextAttachment: true }))
+    const { request: original } = buildExportRequest(inputOf({
+      scope: 'original', figureId: 'Fig1.pdf', pdfTextAttachment: true,
+    }))
+    expect(plain).not.toHaveProperty('pdf_text_attachment')
+    expect(attached.pdf_text_attachment).toBe(true)
+    expect(image).not.toHaveProperty('pdf_text_attachment')
+    expect(original).not.toHaveProperty('pdf_text_attachment')
+    expect(snapshotRevision(attached)).not.toBe(snapshotRevision(plain))
+  })
+
   it('默认跟着工作流走', () => {
     expect(defaultScope('fast_edit')).toBe('original')
     expect(defaultScope('layout')).toBe('canvas')

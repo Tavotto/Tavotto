@@ -453,6 +453,114 @@ def test_hot_equals_fresh_worker_replay(client, project):
     assert verdict["hot_manifest_hash"] == verdict["fresh_manifest_hash"]
 
 
+def test_desktop_and_mcp_replay_the_same_selected_edits(client, project, tmp_path, monkeypatch):
+    from tavotto import app as desktop
+    from tavotto.engine import project_watch
+
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", _worker_python())
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "desktop"))
+    monkeypatch.setattr(desktop, "CACHE_DIR", tmp_path / "desktop" / "cache")
+    monkeypatch.setitem(desktop.app.config, "TESTING", True)
+    desktop.reset_projects()
+    desktop.open_project(str(project))
+    try:
+        http = desktop.app.test_client()
+
+        def render(patches):
+            response = http.post(
+                "/api/engine/render",
+                json={"id": "FigM.pdf", "inline_svg": True, "patches": patches},
+            )
+            assert response.status_code == 200, response.get_json()
+            return response.get_json()
+
+        initial = render([])
+        opened = client.tool("tavotto_open_figure", {"project_path": str(project)})
+        patches = [
+            {"gid": _gid(initial["manifest"], "title"), "prop": "text", "value": "Rate comparison"},
+            {"gid": _gid(initial["manifest"], "legend"), "prop": "loc_frac", "value": [0.55, 0.72]},
+        ]
+        desktop_edited = render(patches)
+        session_id = opened["session_id"]
+        agent_edited = client.tool(
+            "tavotto_apply_overrides", {"session_id": session_id, "patches": patches}
+        )
+        assert agent_edited["applied"] == len(patches)
+        assert not desktop_edited["warnings"] and not agent_edited["warnings"]
+
+        def equal_manifest(first, second):
+            differences, compared = desktop._compare_manifests(
+                first["manifest"], second["manifest"]
+            )
+            assert compared > 10
+            return not differences
+
+        def title_of(result):
+            title = next(e for e in result["manifest"]["elements"] if e["role"] == "title")
+            return next(p["value"] for p in title["editable"] if p["prop"] == "text")
+
+        assert equal_manifest(desktop_edited, agent_edited)
+        assert title_of(desktop_edited) == title_of(agent_edited) == "Rate comparison"
+        assert not equal_manifest(initial, agent_edited), (
+            "the comparison must detect an omitted edit"
+        )
+
+        handoff = client.tool("tavotto_session_state", {"session_id": session_id})
+        assert handoff["patches"] == patches
+        assert handoff["patch_hash"] == agent_edited["patch_hash"]
+        assert handoff["render_revision"] == agent_edited["render_revision"]
+        panel = {
+            "id": "target",
+            "type": "panel",
+            "fileId": "FigM.pdf",
+            "fileKind": "pdf",
+            "x": 0,
+            "y": 0,
+            "w": 80,
+            "h": 60,
+            "nativeW": 80,
+            "nativeH": 60,
+            "overrides": handoff["patches"],
+        }
+        stored = http.post(
+            "/api/layouts/Parity?target=project",
+            json={
+                "schema": 3,
+                "project": {"id": "parity", "name": "Parity"},
+                "canvases": [
+                    {
+                        "schema": 2,
+                        "id": "canvas",
+                        "page": {"w": 80, "h": 60},
+                        "objects": [panel],
+                        "guides": [],
+                    }
+                ],
+                "activeCanvasId": "canvas",
+            },
+        )
+        assert stored.status_code == 200, stored.get_json()
+        loaded = http.get("/api/layouts/Parity")
+        assert loaded.status_code == 200
+        restored_patches = loaded.get_json()["canvases"][0]["objects"][0]["overrides"]
+        engine_pool.shutdown_all(figures_dir=str(project), wait=True)
+        replayed = render(restored_patches)
+        assert equal_manifest(replayed, agent_edited)
+        assert title_of(replayed) == "Rate comparison"
+
+        desktop_restored = render([])
+        agent_restored = client.tool(
+            "tavotto_apply_overrides", {"session_id": session_id, "patches": []}
+        )
+        assert equal_manifest(desktop_restored, agent_restored)
+        assert equal_manifest(initial, agent_restored)
+        assert title_of(desktop_restored) == title_of(agent_restored) == "Kinetics"
+    finally:
+        engine_pool.shutdown_all(figures_dir=str(project), wait=True)
+        desktop.reset_projects()
+        project_watch.stop()
+
+
 def test_figure_size_change_keeps_frac_anchored_props(client, project):
     """不变式二：figure 尺寸变了之后，figure 锚定属性仍然正确。
 

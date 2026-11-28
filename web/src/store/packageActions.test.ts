@@ -45,6 +45,25 @@ beforeEach(async () => {
 })
 
 describe('导出项目包失败', () => {
+  it('打包整份普通排版时提交全部画布进入可安装导出链', async () => {
+    const document = emptyProject()
+    const first = document.canvases[0]
+    document.canvases.push({ ...first, id: 'detail', name: 'Detail' })
+    document.activeCanvasId = 'detail'
+    await useDocumentStore.getState().switchDocument(document, 'mixed-native')
+    createPackage.mockResolvedValueOnce({ name: 'mixed.tavotto', assets: 2, document_format: 'v4', missing: [] })
+
+    await exportPackage()
+
+    expect(createPackage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ schema: 3, activeCanvasId: 'detail' }),
+      {},
+      { pj: 'A', canvasIds: [first.id, 'detail'] },
+    )
+    expect(useDocumentStore.getState().buildProject().schema).toBe(3)
+  })
+
   it('有缺失图表附件的包不能报导出成功', async () => {
     createPackage.mockResolvedValueOnce({ name: 'x.tavotto', assets: 1, missing_chart_sources: ['bad'] })
     await exportPackage()
@@ -91,6 +110,45 @@ describe('导出项目包失败', () => {
     await vi.waitFor(() => expect(label()).toBe('发送问题反馈'))
     ui().statusAction!.run()
     expect(useDiagSendStore.getState().open).toBe(true)
+  })
+
+  it('仅打包当前画布时，切到另一张画布后旧重试不再导出', async () => {
+    const document = emptyProject()
+    const first = document.canvases[0]
+    document.canvases.push({ ...first, id: 'sibling', name: 'Sibling' })
+    await useDocumentStore.getState().switchDocument(document, 'two-canvases')
+    createPackage.mockRejectedValueOnce(new Error('x'))
+    await exportPackage('canvas')
+    expect(createPackage).toHaveBeenCalledWith(first.name, expect.objectContaining({
+      activeCanvasId: first.id,
+    }), {}, { pj: 'A', canvasId: first.id })
+    const retry = ui().statusAction!
+    useDocumentStore.getState().switchCanvas('sibling')
+    expect(useDocumentStore.getState().activeCanvasId).toBe('sibling')
+    retry.run()
+    await Promise.resolve()
+    expect(createPackage).toHaveBeenCalledTimes(1)
+  })
+
+  it('重试时仍打包用户选定的画布，即使当前画布已切换', async () => {
+    const document = emptyProject()
+    const first = document.canvases[0]
+    document.canvases.push({ ...first, id: 'detail', name: 'Detail' }, { ...first, id: 'private', name: 'Private' })
+    await useDocumentStore.getState().switchDocument(document, 'three-canvases')
+    createPackage.mockRejectedValueOnce(new Error('x'))
+    const scope = { canvasIds: [first.id, 'detail'] }
+    await exportPackage(scope)
+    const retry = ui().statusAction!
+    useDocumentStore.getState().switchCanvas('private')
+    createPackage.mockResolvedValueOnce({ name: 'x.tavotto', assets: 2 })
+    retry.run()
+    await vi.waitFor(() => expect(createPackage).toHaveBeenCalledTimes(2))
+    expect(createPackage).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ activeCanvasId: 'private' }),
+      {},
+      { pj: 'A', canvasId: undefined, ...scope },
+    )
   })
 })
 

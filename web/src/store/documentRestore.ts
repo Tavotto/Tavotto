@@ -753,7 +753,7 @@ async function installFromWorkingCopy(
   }
   settleRestore(token, { state: 'ready', reason })
   // 没有可撤销的那一步：当场落盘，下次打开按 last 恢复
-  void saveNowWithResult(true)
+  void saveNowWithResult(true, { withProject: mode !== 'node' })
   return { kind: 'restored', id }
 }
 

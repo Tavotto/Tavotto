@@ -163,6 +163,11 @@ jobs:
       # Python 在 PP_DATA 里零下载复用）→ U04 代事务把 h5py 装进那一代 → 经产品 HTTP 入口首开 → 真值 → patch →
       # RenderCore 导出（应用这边要批准字体；五个包自 U10 起随 `pip install -e .` 进来，ADR 0072）→ 独立核文件。
       # 仍是工程验证，不是资格（ADR 0064）。
+      - name: Cache approved font archives
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
       - name: 应用侧批准字体（U09 联调的 RenderCore 终点）
         shell: bash
         run: |

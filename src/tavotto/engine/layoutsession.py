@@ -811,10 +811,14 @@ def _write(state: dict) -> None:
         raise SessionStateUnavailable(reason)
     _sync_intent_witnesses(state)
     payload = _payload(state)
-    atomicio.write_json(state_path(), payload, indent=1)
+    # Lock-free recovery reads can briefly block atomic replacement on Windows.
+    # The session lock keeps this payload current across attempts.
+    atomicio.retry_windows_replace(lambda: atomicio.write_json(state_path(), payload, indent=1))
     # 同 payload 再留一份：主文件日后坏了，这是上一份好状态。bak 写不出来不影响这次提交
     try:
-        atomicio.write_json(backup_path(), payload, indent=1)
+        atomicio.retry_windows_replace(
+            lambda: atomicio.write_json(backup_path(), payload, indent=1)
+        )
     except OSError as exc:
         LOG.warning("会话状态备份写不出来（%s）", exc)
 

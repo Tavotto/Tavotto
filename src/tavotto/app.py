@@ -13,9 +13,12 @@ Tavotto — 论文多面板图可视化排版工具
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import contextvars
+import copy
 import dataclasses
+import difflib
 import errno
 import functools
 import hashlib
@@ -59,6 +62,7 @@ from flask import (
 from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.formparser import FormDataParser
+from werkzeug.wsgi import LimitedStream
 
 from . import pdfbackend, richtext, tiffprobe
 from .engine import (
@@ -148,6 +152,8 @@ from .engine import (
     managedenv as engine_managedenv,
     mathtypeset as engine_mathtypeset,
     msixmigrate as engine_msixmigrate,
+    nativeggplot as engine_nativeggplot,
+    nativeggplot_source as engine_nativeggplot_source,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
@@ -190,6 +196,7 @@ from .engine import (
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
     scriptrelink as engine_scriptrelink,
+    scriptstyle as engine_scriptstyle,
     session_client as engine_session_client,
     shadowscript as engine_shadowscript,
     siwc_login as engine_siwc_login,
@@ -554,7 +561,7 @@ def safe_resolve(rel_id: str, *, require_file: bool = True) -> Path:
         abort(404)
     if p.suffix.lower() not in PDF_EXT | IMG_EXT | SVG_EXT:
         abort(403)
-    if p.suffix.lower() in TIFF_EXT and p.is_file():
+    if p.suffix.lower() in TIFF_EXT and (require_file or p.is_file()):
         tiffprobe.check(p)
     return p
 
@@ -570,6 +577,8 @@ def _reconcile_registered_entry(script: str) -> bool:
     except NoProjectError:
         return False  # 没有当前项目（指名的项目已关闭）：不纠偏，调用方的原行为不变
     if ctx is None:
+        return False
+    if Path(script).suffix.lower() == ".r":
         return False
     try:
         changed = engine_entryfresh.reconcile(ctx.path, script)
@@ -3333,7 +3342,20 @@ def _svg_reference_corpus(root: Path) -> frozenset[bytes] | None:
         )
 
     try:
-        for base in (store, Path(root) / "canvases", LAYOUT_DIR):
+        for journal in engine_scriptstyle.journals(root):
+            try:
+                data = journal.read_bytes()
+            except FileNotFoundError:
+                continue
+            if not admit(len(data)):
+                return None
+            found.update(_SVG_REFERENCE_ID.findall(data))
+        for base in (
+            store,
+            root / "canvases",
+            LAYOUT_DIR,
+            engine_config.data_path("script_backups", _project_id(root)),
+        ):
             if not base.is_dir():
                 continue
             for directory, dirnames, filenames in os.walk(base, onerror=_raise_walk_error):
@@ -3756,6 +3778,10 @@ def _svg_snapshot_matches_current(
             if exporting and engine_pool.execution_inflight_unobserved(worker):
                 return False  # Temporarily busy, not a fabricated execution fact.
     if ctx is not None and ctx.path.resolve() == Path(root).resolve() and identity is not None:
+        if explicit and ctx.svg_executions.verified_replay(
+            identity, source_id, record["receipt"].get("receipt_id")
+        ):
+            return True
         accepted = ctx.svg_executions.accepts(identity, record["receipt"].get("receipt_id"))
         if accepted is not None:
             if not accepted:
@@ -4371,6 +4397,24 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
 
     req = job.request
     src = req.original
+    frozen_chart = None
+    if src.chart is not None:
+        from .engine import chartprofile
+
+        snapshot = _capture_export_chart(
+            job,
+            src.figure_id,
+            src.chart,
+            render_profile=src.chart_render_profile or chartprofile.LEGACY_PROFILE,
+            overrides=src.overrides,
+            chart_source=src.chart_source if src.chart_source is not None else _CHART_SOURCE_UNSET,
+        )
+        width, height = _chart_frame_pt(snapshot)
+        src = dataclasses.replace(
+            src, w_mm=width * 25.4 / 72, h_mm=height * 25.4 / 72, source_kind="vector"
+        )
+        frozen_chart, notes = _chart_canonical(snapshot, tmp_dir)
+        job.warnings.extend(notes)
     # 单图留白（ADR 0161 §3）：页面 = 图幅 + 留白，面板落在 (l, t)；无留白时 pad = 0，与从前逐字节相同
     pad_l, pad_t, _pad_r, _pad_b = src.pad_mm or (0.0, 0.0, 0.0, 0.0)
     panel = {
@@ -4419,6 +4463,8 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
     dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
     if rerender_ids:
         dir_arg["rerender_ids"] = rerender_ids
+    if frozen_chart is not None:
+        dir_arg["frozen_chart"] = frozen_chart
 
     def run(fmts, objects, w_mm, h_mm, ppi, sub, target=None):
         # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
@@ -4468,7 +4514,14 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
             raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
         )
     if wants_eps:
-        produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+        if frozen_chart is None:
+            produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+        else:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=engine_exportreq.FORMAT_EPS, error_code="svg_asset_export_unsupported"
+                )
+            )
     return produced
 
 
@@ -4591,6 +4644,31 @@ def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     )
 
 
+def _capture_export_chart(job, file_id, chart, *, render_profile, overrides, chart_source):
+    job.check_cancelled()
+    snapshot = _render_chart_snapshot(
+        file_id,
+        chart,
+        render_profile=render_profile,
+        overrides=overrides,
+        chart_source=chart_source,
+    )
+    dependencies = job._chart_source_dependencies
+    previous = dependencies.setdefault(snapshot.path, snapshot.source_sha256)
+    if previous != snapshot.source_sha256:
+        raise engine_exportreq.ExportRequestError(
+            "chart_source_changed", "source changed between chart variants", {}
+        )
+    return snapshot
+
+
+def _chart_frame_pt(snapshot: _ChartSnapshot) -> tuple[float, float]:
+    if snapshot.render_frame is not None:
+        _, _, width, height = snapshot.render_frame["rect_pt"]
+        return width, height
+    return snapshot.scene["w_pt"], snapshot.scene["h_pt"]
+
+
 def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     """预览与导出共用同一冻结场景→RenderCore Canonical配对适配。"""
     from .rendercore import facade as rc_facade, sources as rc_sources
@@ -4601,11 +4679,7 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     files = {}
     page, notes = svg_to_ir(
         snapshot.svg,
-        *(
-            snapshot.render_frame["rect_pt"][2:]
-            if snapshot.render_frame is not None
-            else (snapshot.scene["w_pt"], snapshot.scene["h_pt"])
-        ),
+        *_chart_frame_pt(snapshot),
         provider,
         files=files,
         compact_path_instances=True,
@@ -4629,6 +4703,122 @@ def _chart_canonical(snapshot: _ChartSnapshot, tmp_dir: Path):
     return canonical, notes
 
 
+def _chart_conversion_failure(exc, fmt):
+    return engine_exportjob.Produced(
+        format=fmt,
+        error_code=exc.code,
+        error_params={"detail": str(exc), **getattr(exc, "params", {})},
+    )
+
+
+def _export_produce_chart_original(job, src, tmp_dir: Path) -> list:
+    """原图格式消费同一次计算与来源冻结；SVG 保留模型、绑定与完整 edits。"""
+    from . import chartbundle
+    from .engine import chartprofile
+    from .rendercore.pdfwriter import WriterError
+    from .rendercore.renderhost import RenderChildError
+    from .rendercore.svgir import SVGIRError
+
+    req = job.request
+    snapshot = _capture_export_chart(
+        job,
+        src.figure_id,
+        src.chart,
+        render_profile=src.chart_render_profile or chartprofile.LEGACY_PROFILE,
+        overrides=src.overrides,
+        chart_source=src.chart_source if src.chart_source is not None else _CHART_SOURCE_UNSET,
+    )
+    width_mm, height_mm = (v * 25.4 / 72 for v in _chart_frame_pt(snapshot))
+    manifest = {
+        "chart_render_revision": snapshot.render_revision,
+        "scene_digest": snapshot.scene["scene_digest"],
+    }
+    basis = engine_exportjob.Basis(engine_exportjob.BASIS_CONVERT, snapshot.source_sha256)
+    canonical = None
+    canonical_error = None
+    if engine_exportreq.FORMAT_PDF in req.formats or engine_exportreq.RASTER_FORMATS.intersection(
+        req.formats
+    ):
+        try:
+            canonical, notes = _chart_canonical(snapshot, tmp_dir)
+            job.warnings.extend(notes)
+        except (SVGIRError, WriterError, RenderChildError) as exc:
+            canonical_error = exc
+
+    produced = []
+    for fmt in req.formats:
+        job.check_cancelled()
+        target = tmp_dir / f"original.{fmt}"
+        facts = {}
+        try:
+            if fmt == engine_exportreq.FORMAT_SVG:
+                native = snapshot.render_profile != chartprofile.LEGACY_PROFILE
+                target.write_bytes(
+                    chartbundle.embed_chart(
+                        snapshot.svg,
+                        snapshot.source_svg,
+                        snapshot.chart,
+                        **(
+                            {
+                                "render_profile": snapshot.render_profile,
+                                "overrides": snapshot.overrides,
+                            }
+                            if native
+                            else {}
+                        ),
+                    )
+                )
+                vector = engine_artifactinspect.svg_vector(target)
+            elif fmt == engine_exportreq.FORMAT_EPS:
+                produced.append(
+                    engine_exportjob.Produced(format=fmt, error_code="svg_asset_export_unsupported")
+                )
+                continue
+            else:
+                if canonical_error is not None:
+                    raise canonical_error
+                assert canonical is not None
+                vector = fmt == engine_exportreq.FORMAT_PDF
+                if vector:
+                    target = canonical.path
+                else:
+                    writer = (
+                        pdfbackend.original_png
+                        if fmt == engine_exportreq.FORMAT_PNG
+                        else pdfbackend.original_tiff
+                    )
+                    facts = writer(
+                        canonical.path,
+                        target,
+                        req.ppi or engine_exportreq.PPI_DEFAULT,
+                        transparent=req.background == engine_exportreq.BACKGROUND_TRANSPARENT,
+                    )
+        except (SVGIRError, chartbundle.ChartBundleError) as exc:
+            produced.append(_chart_conversion_failure(exc, fmt))
+            continue
+        except (WriterError, RenderChildError) as exc:
+            produced.append(
+                engine_exportjob.Produced(
+                    format=fmt, error_code="format_failed", error_params={"reason": exc.code}
+                )
+            )
+            continue
+        produced.append(
+            engine_exportjob.Produced(
+                format=fmt,
+                tmp_path=target,
+                width_mm=width_mm,
+                height_mm=height_mm,
+                width_px=facts.get("px_w"),
+                height_px=facts.get("px_h"),
+                vector=vector,
+                basis=basis,
+                manifest=manifest,
+            )
+        )
+    return engine_exportjob.enforce_one_basis(produced, snapshot.source_sha256)
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -4641,6 +4831,8 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
+    if src.chart is not None and not (src.objects or src.pad_mm or src.clip):
+        return _export_produce_chart_original(job, src, tmp_dir)
     if src.objects or src.pad_mm or src.clip:
         return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
@@ -5112,7 +5304,13 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
 
 
 def _export_produce_rendercore(
-    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset(), raster_target=None
+    job,
+    tmp_dir: Path,
+    *,
+    artifact_sources=None,
+    rerender_ids=frozenset(),
+    raster_target=None,
+    frozen_chart=None,
 ) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
@@ -5127,6 +5325,7 @@ def _export_produce_rendercore(
     from .rendercore import facade as rc_facade, job as rc_job, sources as rc_sources
 
     dpi = job.request.ppi or engine_exportreq.PPI_DEFAULT
+    chart_sources = {}
 
     class _StaticInProject:
         """项目根在**第一个面板**要解析时才问（`require_project()`）：只有文字 / 形状的画布不需要
@@ -5171,6 +5370,36 @@ def _export_produce_rendercore(
         与 `_resolve_panel_source(rerender=True)` 同一判定）。"""
 
         def resolve(self, obj: dict):
+            if frozen_chart is not None and obj["id"] == frozen_chart.artifact.source_id:
+                return frozen_chart
+            if obj.get("chart") is not None:
+                from .engine import chartmodel, chartprofile
+
+                source_id = obj["id"]
+                # ExportRequest 已校验闭集，并保留了原序的全量覆盖列表。
+                profile = _document_panel_render_profile(obj) or chartprofile.LEGACY_PROFILE
+                overrides = obj.get("overrides", [])
+                key = (
+                    source_id,
+                    chartmodel.digest_of(
+                        [obj["chart"], profile, overrides, obj.get("chart_source")]
+                    ),
+                )
+                if key not in chart_sources:
+                    snapshot = _capture_export_chart(
+                        job,
+                        source_id,
+                        obj["chart"],
+                        render_profile=profile,
+                        overrides=overrides,
+                        chart_source=obj.get("chart_source", _CHART_SOURCE_UNSET),
+                    )
+                    canonical, notes = _chart_canonical(snapshot, tmp_dir)
+                    for note in notes:
+                        if note not in job.warnings:
+                            job.warnings.append(note)
+                    chart_sources[key] = canonical
+                return chart_sources[key]
             if str(obj.get("id", "")) in rerender_ids:
                 fs = self.execute(obj)
                 if fs.artifact.origin != engine_figcapture.ORIGIN_EXECUTION:
@@ -5426,6 +5655,8 @@ def _produce_edited_script(job, tmp_dir: Path):
         return Produced(format=key, error_code=code)
 
     src = job.request.original
+    if src.chart is not None:
+        return fail("script_export_no_script")
     patches = list(src.overrides or [])
     try:
         worker, stem = _edited_script_worker(src.figure_id)
@@ -5435,7 +5666,7 @@ def _produce_edited_script(job, tmp_dir: Path):
     if worker is None:
         return fail("script_export_no_script")
     if engine_enginesession.is_native(worker):
-        return fail("script_export_native")
+        return _produce_edited_r_script(job, worker, stem, patches, tmp_dir)
     script_path = Path(worker.figures_dir) / worker.script_name
     if script_path.suffix.lower() != ".py":
         return fail("script_export_not_python")
@@ -5487,6 +5718,190 @@ def _produce_edited_script(job, tmp_dir: Path):
         tmp_path=target,
         script_report={"written": adjusted.written, "skipped": adjusted.skipped},
     )
+
+
+def _edited_r_script_offer(original) -> dict | None:
+    """Resolve R source filenames from the registry, independently of client input."""
+    if original is None or not engine_runtimeasset.is_runtime_id(original.figure_id):
+        return None
+    info = _resolve_runtime_asset(original.figure_id)
+    if info is None or Path(info["script"]).suffix.lower() != ".r":
+        return None
+    root = str(require_project())
+    worker = engine_nativesession.REGISTRY.route_for(root, info["script"], info["stem"])
+    available = (
+        original.figure_origin is None
+        and worker is not None
+        and worker.ggplot_source_spec is not None
+        and engine_nativeggplot_source.available()
+    )
+    return {
+        **(
+            {"how": "redraw"}
+            if available
+            else {
+                "how": "unavailable",
+                "reason": "script_export_r_source_unavailable",
+            }
+        ),
+        "suffix": engine_exportjob.R_SCRIPT_SUFFIX,
+    }
+
+
+def _produce_edited_r_script(job, worker, stem, patches, tmp_dir: Path):
+    key = engine_exportjob.SCRIPT_KEY
+    if worker.ggplot_target is None:
+        return engine_exportjob.Produced(format=key, error_code="script_export_native")
+    if (
+        worker.ggplot_source_spec is None
+        or job.script_suffix != engine_exportjob.R_SCRIPT_SUFFIX
+        or not job.script_name
+        or job.request.original.figure_origin is not None
+    ):
+        return engine_exportjob.Produced(
+            format=key, error_code="script_export_r_source_unavailable"
+        )
+    spec = worker.ggplot_source_spec
+    script_path = Path(spec.project_root) / spec.target
+    try:
+        destination = job.export_dir / job.script_name
+        if destination.exists() and os.path.samefile(destination, script_path):
+            return engine_exportjob.Produced(format=key, error_code="script_export_same_file")
+        replay = _verified_r_source(worker, stem, patches, check_cancelled=job.check_cancelled)
+        target = tmp_dir / "edited-script.R"
+        target.write_bytes(replay.source.data)
+    except engine_scriptadjust.ScriptAdjustError as exc:
+        return engine_exportjob.Produced(format=key, error_code=exc.code)
+    except (engine_pool.WorkerError, OSError):
+        return engine_exportjob.Produced(format=key, error_code="script_export_run_failed")
+    return engine_exportjob.Produced(
+        format=key,
+        tmp_path=target,
+        script_report={"written": replay.source.written, "skipped": replay.source.skipped},
+    )
+
+
+def _verified_r_source(worker, stem, patches, *, check_cancelled=None, archive=None):
+    """Measure the exact live capture and the independent protected replay."""
+    if check_cancelled is not None:
+        check_cancelled()
+    worker.ensure_built()
+    epoch = worker.snapshot_epoch
+    borrowed = worker.ggplot_console_replay is not None
+    scope = {
+        "expected_execution_id": worker.execution_id,
+        # The borrowed object has an authenticated one-shot capture and a
+        # barrier, without an execution fact claiming to have run the file.
+        "expected_snapshot_epoch": None if borrowed else epoch,
+    }
+    baseline = None
+    if borrowed:
+        # A selected file is a candidate source for a borrowed object. Verify
+        # the unedited scene too, even if the requested style hides a mismatch.
+        data_fingerprint = worker.ggplot_capture_data_fingerprint(stem)
+        baseline = _verify_r_source_render(
+            worker, stem, [], scope, check_cancelled, include_data_fingerprint=True
+        )
+        if baseline.data_fingerprint != data_fingerprint:
+            raise engine_scriptadjust.ScriptAdjustError(
+                "script_export_diverged", "The selected R script produced different plot data."
+            )
+    replay = _verify_r_source_render(worker, stem, patches, scope, check_cancelled, archive)
+    if worker.snapshot_epoch != epoch:
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_diverged", "The captured R figure changed during verification."
+        )
+    if baseline is not None and baseline.original_bytes != replay.original_bytes:
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_script_changed", "The R source changed during verification."
+        )
+    return replay
+
+
+def _verify_r_source_render(
+    worker, stem, patches, scope, check_cancelled, archive=None, *, include_data_fingerprint=False
+):
+    if check_cancelled is not None:
+        check_cancelled()
+    if os.name == "nt":
+        return _verified_windows_r_source(
+            worker, stem, patches, scope, check_cancelled, archive, include_data_fingerprint
+        )
+    hot = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
+    replay = engine_nativeggplot_source.replay(
+        worker.ggplot_source_spec,
+        worker.ggplot_target,
+        stem,
+        patches,
+        REPLAY_PIXEL_WIDTH,
+        hot=hot["manifest"],
+        vectors=archive is not None,
+        check_cancelled=check_cancelled,
+        include_data_fingerprint=include_data_fingerprint,
+    )
+    if check_cancelled is not None:
+        check_cancelled()
+    current = worker.preview_png_snapshot(stem, patches, REPLAY_PIXEL_WIDTH, **scope)
+    if (
+        hot["png"] != current["png"]
+        or _compare_manifests(hot["manifest"], replay.manifest)[0]
+        or base64.b64decode(hot["png"]) != replay.png
+    ):
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_diverged", "The adjusted R source rendered a different figure."
+        )
+    return replay
+
+
+def _verified_windows_r_source(
+    worker, stem, patches, scope, check_cancelled, archive, include_data_fingerprint
+):
+    from dataclasses import replace
+
+    reference = worker.preview_svg_snapshot(stem, patches, include_fonts=True, **scope)
+    replay = engine_nativeggplot_source.replay(
+        worker.ggplot_source_spec,
+        worker.ggplot_target,
+        stem,
+        patches,
+        REPLAY_PIXEL_WIDTH,
+        hot=reference["manifest"],
+        fonts=reference["fonts"],
+        check_cancelled=check_cancelled,
+        include_data_fingerprint=include_data_fingerprint,
+    )
+    if check_cancelled is not None:
+        check_cancelled()
+    current = worker.preview_svg_snapshot(stem, patches, **scope)
+    mismatch = engine_scriptadjust.ScriptAdjustError(
+        "script_export_diverged", "The adjusted R source rendered a different figure."
+    )
+    if (
+        replay.svg is None
+        or reference["svg"] != current["svg"]
+        or _compare_manifests(reference["manifest"], replay.manifest)[0]
+    ):
+        raise mismatch
+    with tempfile.TemporaryDirectory(dir=engine_config.data_dir()) as temporary:
+        directory = Path(temporary)
+        try:
+            svg = engine_nativeggplot._write_ggplot_svg(
+                directory / "reference.svg", reference["svg"]
+            )
+            matches = pdfbackend.compare_svg_preview_pixels(
+                svg, replay.svg, REPLAY_PIXEL_WIDTH, directory
+            )
+        except (ValueError, RuntimeError, OSError) as exc:
+            raise mismatch from exc
+    if not matches or svg != replay.svg:
+        raise mismatch
+    if archive is not None and archive["svg"] != svg:
+        raise engine_scriptadjust.ScriptAdjustError(
+            "script_export_diverged", "The saved PDF companion belongs to a different R scene."
+        )
+    # The saved pair belongs to the same measured scene and still carries the
+    # PDF's exact native fonts from the authorized live session.
+    return replay if archive is None else replace(replay, pdf=archive["pdf"])
 
 
 def _style_check_report(spec: dict):
@@ -5590,7 +6005,14 @@ def _legacy_export_response(job) -> tuple:
         code = job.error_code or "export_failed"
         status = (
             409
-            if code in ("bad_filename", "export_dir_unwritable", "artifact_source_unavailable")
+            if code
+            in (
+                "bad_filename",
+                "export_dir_unwritable",
+                "artifact_source_unavailable",
+                "chart_source_changed",
+                "chart_engine_mismatch",
+            )
             else 500
         )
         return jsonify(
@@ -5659,7 +6081,7 @@ def _export_artifact_sources(req):
     return contexts
 
 
-def _export_commit_guard(root, artifact_sources=None):
+def _export_commit_guard(root, artifact_sources=None, *, job=None):
     """Carry project/remap and selected byte identities through final publication."""
     start = engine_inputremap.generation(root) if root else None
     sources = [(_artifact_path(key), value) for key, value in (artifact_sources or {}).items()]
@@ -5669,9 +6091,12 @@ def _export_commit_guard(root, artifact_sources=None):
         with engine_inputremap.landing(root, start) if root else contextlib.nullcontext():
             for path, context in sources:
                 engine_artifactcontext.assert_current(path, context)
+            if job is not None:
+                for path, expected in job._chart_source_dependencies.items():
+                    _assert_chart_source(path, expected)
             yield
 
-    return guard if root or sources else None
+    return guard if root or sources or job is not None else None
 
 
 def _prepare_export_job(spec: dict):
@@ -5687,6 +6112,9 @@ def _prepare_export_job(spec: dict):
         job = engine_exportjob.prepare(
             spec, out_dir, project_id=getattr(_request_ctx(), "id", None)
         )
+        offer = _edited_r_script_offer(job.request.original) if job.request.include_script else None
+        if offer is not None:
+            job.script_suffix = offer["suffix"]
     except engine_exportreq.ExportRequestError as exc:
         return None, (
             jsonify({"error": exc.message, "code": exc.code, "params": exc.params}),
@@ -5725,7 +6153,9 @@ def api_export():
         report=_style_check_report(spec),
         inspect=_export_inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(getattr(_request_ctx(), "path", None), artifact_sources),
+        commit_guard=_export_commit_guard(
+            getattr(_request_ctx(), "path", None), artifact_sources, job=job
+        ),
     )
     LOG.info(
         "导出[%s]: %s（scope=%s, %s, %.0fms，%d 条警告）",
@@ -5788,7 +6218,7 @@ def api_export_start():
         report=report,
         inspect=inspect,
         classify_error=_classify_export_error,
-        commit_guard=_export_commit_guard(ctx.path, artifact_sources),
+        commit_guard=_export_commit_guard(ctx.path, artifact_sources, job=job),
     )
     return jsonify(job.to_payload())
 
@@ -6121,21 +6551,30 @@ def api_export_validate():
     # Acknowledge recognized policies and current disk identities, not Figure admission.
     # Reuse export's authority without a worker, including untouched original copies.
     artifact_sources = _export_artifact_sources(req)
-    probe = engine_exportjob.ExportJob(id="probe", request=req, export_dir=out_dir)
+    offer = _edited_r_script_offer(req.original)
+    probe = engine_exportjob.ExportJob(
+        id="probe",
+        request=req,
+        export_dir=out_dir,
+        script_suffix=offer["suffix"] if offer else None,
+    )
     return jsonify(
         {
             "ok": True,
             **engine_exportjob.validate(probe),
-            **_export_route_field(req),
+            **_export_route_field(req, script_offer=offer),
             **({"artifact_sources": artifact_sources} if artifact_sources else {}),
         }
     )
 
 
-def _export_route_field(req) -> dict:
+def _export_route_field(req, *, script_offer: dict | None = None) -> dict:
     """route 是附加事实：算不出（比如没有打开项目就查注册表）就不给，validate 本身不因此失败；前端读不到按保守口径处理。"""
     try:
-        return {"route": _export_route(req)}
+        route = _export_route(req)
+        if script_offer is not None and req.original.figure_id in route["panels"]:
+            route["panels"][req.original.figure_id]["offers"]["script"] = script_offer
+        return {"route": route}
     except Exception:  # noqa: BLE001
         LOG.warning("export route 算不出，validate 不带 route", exc_info=True)
         return {}
@@ -6207,6 +6646,7 @@ def _export_route_panels(req) -> list[dict]:
                 "id": req.original.figure_id,
                 "overrides": req.original.overrides,
                 "has_snapshot": req.original.figure_snapshot is not None,
+                "has_chart": req.original.chart is not None,
             }
         ]
     else:
@@ -6215,6 +6655,7 @@ def _export_route_panels(req) -> list[dict]:
                 "id": str(o.get("id", "")),
                 "overrides": o.get("overrides"),
                 "has_snapshot": o.get("figure_snapshot") is not None,
+                "has_chart": o.get("chart") is not None,
             }
             for o in (req.canvas.objects if req.canvas is not None else [])
             if o.get("type") == "panel" and not o.get("hidden")
@@ -6241,79 +6682,144 @@ def _doc_objects(doc: dict) -> list[dict]:
 _sha1_of = engine_baked.sha1_of
 
 
-def _package_svg_assets(doc, root, archive) -> int:
+def _package_svg_assets(
+    doc, root, archive, *, temporary_root: Path | None = None, strict_references: bool = False
+) -> int:
     """Bundle only referenced, verified project snapshots; never execute a script."""
     from .engine import svgstore
 
-    count, seen = 0, set()
-    with tempfile.TemporaryDirectory(prefix="tavotto-svg-package-") as temporary:
-        staging = Path(temporary) / "figure_snapshots"
+    snapshots, seen = set(), set()
+    references = {}
+    if temporary_root is None:
+        engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(
+            prefix="tavotto-svg-package-", dir=engine_config.data_dir()
+        )
+    else:
+        temporary = contextlib.nullcontext(temporary_root)
+    with temporary as directory:
+        staging = Path(directory) / svgstore.STORE_DIRNAME
         for obj in _doc_objects(doc):
             if obj.get("type") != "panel" or not obj.get("fileId"):
                 continue
-            source_id, patches = obj["fileId"], obj.get("overrides") or []
-            reference = obj.get("figureSnapshot")
-            static_hash = None
-            static = not patches and not engine_runtimeasset.is_runtime_id(source_id)
-            if static and reference is None:
-                try:
-                    static_hash = engine_figcapture.hash_file(safe_resolve(source_id))[0]
-                except Exception:
-                    continue
-            patch_hash = engine_patchspec.patch_hash(patches)
-            key = (source_id, patch_hash, static_hash, (reference or {}).get("snapshotId"))
-            if key in seen:
+            if strict_references and obj.get("chart") is not None:
                 continue
-            seen.add(key)
-            kwargs = dict(
-                static_sha256=static_hash,
-                remap_fingerprint=engine_inputremap.fingerprint(root),
-                storage_root=_svg_storage_root(root),
-            )
-            if reference is not None:
-                record = svgstore.load_document_snapshot(
-                    root,
-                    reference,
-                    source_id=source_id,
-                    patch_hash=patch_hash,
+            try:
+                selections = svgstore.panel_snapshot_inputs(obj)
+            except (ValueError, TypeError, RecursionError) as exc:
+                if strict_references:
+                    raise engine_documents.DocumentError(
+                        "figure_snapshot_unavailable", "项目包所引用的图表编辑来源不可核验", 422
+                    ) from exc
+                continue
+            # An origin-only panel has no current output. Never borrow a
+            # same-name current execution to manufacture one during packing.
+            if not selections:
+                selections = [("figureSnapshot", None, obj.get("overrides") or [])]
+            for role, reference, patches in selections:
+                destination = obj["figureOrigin"] if role == "figureOrigin" else obj
+                field = "snapshot" if role == "figureOrigin" else "figureSnapshot"
+                source_id = obj["fileId"]
+                static_hash = None
+                if (
+                    reference is None
+                    and not patches
+                    and not engine_runtimeasset.is_runtime_id(source_id)
+                ):
+                    try:
+                        static_hash = engine_figcapture.hash_file(safe_resolve(source_id))[0]
+                    except Exception:
+                        continue
+                patch_hash = engine_patchspec.patch_hash(patches)
+                # Cache only the complete explicit selection. A second row with the
+                # same snapshotId but a different receipt/owner must still fail its
+                # own validation instead of inheriting the first row's good ref.
+                reference_key = (
+                    json.dumps(reference, sort_keys=True, separators=(",", ":"))
+                    if reference is not None
+                    else None
+                )
+                key = (role, source_id, patch_hash, static_hash, reference_key)
+                if key in seen:
+                    if strict_references and key in references:
+                        destination[field] = copy.deepcopy(references[key])
+                    continue
+                seen.add(key)
+                kwargs = dict(
+                    static_sha256=static_hash,
                     remap_fingerprint=engine_inputremap.fingerprint(root),
                     storage_root=_svg_storage_root(root),
-                    include_identity=True,
                 )
-            else:
-                record = svgstore.load(root, source_id, patch_hash, **kwargs)
-            if not _svg_snapshot_matches_current(
-                root,
-                source_id,
-                record,
-                explicit=reference is not None,
-                static=static,
-            ):
-                continue
-            svgstore.save(
-                root,
-                source_id,
-                patch_hash,
-                pdf=record["pdf"],
-                svg=record["svg"],
-                artifact=record["pdf_artifact"],
-                receipt=record["receipt"],
-                execution_owner=record.get("execution_owner"),
-                static_sha256=record["snapshot_identity"]["static_sha256"]
-                if reference is not None
-                else static_hash,
-                remap_fingerprint=engine_inputremap.fingerprint(root),
-                storage_root=staging,
-                activate=True,
-                **_svg_input_archive_kwargs(record.get("captured_input_archive")),
-            )
-            count += 1
-        if count:
+                if reference is not None:
+                    record = svgstore.load_document_snapshot(
+                        root,
+                        reference,
+                        source_id=source_id,
+                        patch_hash=patch_hash,
+                        remap_fingerprint=kwargs["remap_fingerprint"],
+                        storage_root=kwargs["storage_root"],
+                        include_identity=True,
+                    )
+                    if record is not None:
+                        static_hash = record["snapshot_identity"]["static_sha256"]
+                else:
+                    record = svgstore.load(root, source_id, patch_hash, **kwargs)
+                if record is None or (
+                    role != "figureOrigin"
+                    and not _svg_snapshot_matches_current(
+                        root,
+                        source_id,
+                        record,
+                        explicit=reference is not None,
+                        static=static_hash is not None,
+                    )
+                ):
+                    if strict_references and reference is not None:
+                        raise engine_documents.DocumentError(
+                            "figure_snapshot_unavailable", "项目包所引用的 Figure 配对不可核验", 422
+                        )
+                    continue
+                saved = svgstore.save(
+                    root,
+                    source_id,
+                    patch_hash,
+                    pdf=record["pdf"],
+                    svg=record["svg"],
+                    artifact=record["pdf_artifact"],
+                    receipt=record["receipt"],
+                    execution_owner=record.get("execution_owner"),
+                    static_sha256=static_hash,
+                    remap_fingerprint=engine_inputremap.fingerprint(root),
+                    storage_root=staging,
+                    **({"archive_only": True} if role == "figureOrigin" else {"activate": True}),
+                    **_svg_input_archive_kwargs(record.get("captured_input_archive")),
+                )
+                if strict_references:
+                    destination[field] = saved["snapshot_ref"]
+                    references[key] = saved["snapshot_ref"]
+                snapshots.add(saved["snapshot_ref"]["snapshotId"])
+        if snapshots:
             relative = _svg_storage_root(root).relative_to(root).as_posix()
             for file in sorted(staging.rglob("*")):
                 if file.is_file():
                     archive.write(file, f"assets/{relative}/{file.relative_to(staging).as_posix()}")
-    return count
+    return len(snapshots)
+
+
+class _PackageFilePlan:
+    """Keep approved sources alive; let ZipFile normalize its original archive names."""
+
+    def __init__(self) -> None:
+        self.members: dict[str, bytes | Path] = {}
+
+    def write(self, filename: Path, arcname: str) -> None:
+        import zipfile
+
+        source = Path(filename)
+        name = zipfile.ZipInfo.from_file(source, arcname).filename
+        if name in self.members and self.members[name] != source:
+            raise ValueError("Conflicting package members")
+        self.members[name] = source
 
 
 def _chart_source_entries(document: dict) -> list[dict]:
@@ -6350,17 +6856,78 @@ def _chart_source_entries(document: dict) -> list[dict]:
     return [entries[digest] for digest in sorted(entries)]
 
 
+def _project_package_output(stem: str) -> Path:
+    """Publish a package under its configured export directory and exact name."""
+    export_dir = project_export_dir().resolve()
+    suffix = f"{time.strftime('%m%d_%H%M%S')}_{secrets.token_hex(4)}{engine_brand.PACKAGE_EXT}"
+    name = f"{engine_exportreq.legacy_stem(stem)}_{suffix}"
+    approved = engine_projectenv.contained_path(export_dir, name)
+    if approved is None or Path(approved) != export_dir / name:
+        raise engine_documents.DocumentError(
+            "package_destination_invalid", "项目包导出位置与配置不符", 409
+        )
+    return Path(approved)
+
+
 @app.post("/api/package")
 def api_package():
     """把布局打成可复现项目包（zip）：布局 + 引用素材 + 源脚本 + 清单。
 
     清单记录每个素材的 sha1，换机器打开时据此发现缺失/内容漂移；
     打包只读 figures 目录，不写入任何源文件。
+
+    整份排版按提交文档的 schema 选择包格式（#1921）。
+    按画布分享先从提交文档选取画布，再以同一条链生成可安装的 v4 便携包。
     """
     root = require_project()
     body = request.get_json(force=True)
-    doc = body.get("doc")
-    if not isinstance(doc, dict) or doc.get("schema") not in engine_documents.SUPPORTED_SCHEMAS:
+    doc = body.get("doc") if isinstance(body, dict) else None
+    if isinstance(body, dict) and ("canvas_id" in body or "canvas_ids" in body):
+        canvas_ids = body["canvas_ids"] if "canvas_ids" in body else [body["canvas_id"]]
+        if (
+            ("canvas_id" in body and "canvas_ids" in body)
+            or not isinstance(canvas_ids, list)
+            or not canvas_ids
+            or any(not isinstance(cid, str) or not cid for cid in canvas_ids)
+            or not isinstance(doc, dict)
+            or doc.get("schema")
+            not in (
+                engine_documents.SCHEMA_PROJECT,
+                engine_documents.SCHEMA_CHART_PROJECT,
+            )
+            or not isinstance(doc.get("canvases"), list)
+        ):
+            raise engine_documents.DocumentError("invalid_document", "无效的项目包画布")
+        requested = set(canvas_ids)
+        selected = [
+            canvas
+            for canvas in doc["canvases"]
+            if isinstance(canvas, dict)
+            and isinstance(canvas.get("id"), str)
+            and canvas["id"] in requested
+        ]
+        selected_ids = {canvas["id"] for canvas in selected}
+        if (
+            len(canvas_ids) != len(requested)
+            or len(selected) != len(requested)
+            or selected_ids != requested
+        ):
+            raise engine_documents.DocumentError("invalid_document", "项目包画布必须存在且唯一")
+        active = doc.get("activeCanvasId")
+        if not isinstance(active, str) or active not in selected_ids:
+            active = selected[0]["id"]
+        # A selection is installable even when the sender uses schema 3.
+        # Collect files and execution dependencies only from the export copy.
+        doc = {
+            **doc,
+            "schema": engine_documents.SCHEMA_CHART_PROJECT,
+            "canvases": selected,
+            "activeCanvasId": active,
+        }
+        body = {**body, "doc": doc}
+    if isinstance(doc, dict) and doc.get("schema") == engine_documents.SCHEMA_CHART_PROJECT:
+        return _api_chart_package(body)
+    if not isinstance(doc, dict) or doc.get("schema") not in (2, 3):
         return jsonify({"error": "无效的排版", "code": "invalid_document"}), 400
     # 与保存同一条准入：schema 4 的正文必须带合法的 `chartSource` 引用，否则打出来
     # 的包在接收方重开时第一笔保存就写不回去（缺来源）。schema 2 / 3 仍只查骨架。
@@ -6371,12 +6938,16 @@ def api_package():
         in (engine_documents.SCHEMA_PROJECT, engine_documents.SCHEMA_CHART_PROJECT)
         else doc.get("name")
     )
-    stem = re.sub(r"[^\w\-一-鿿]+", "_", body.get("stem") or default_stem or "package")
+    raw_stem = body.get("stem") or default_stem or "package"
+    if not isinstance(raw_stem, str):
+        raise engine_documents.DocumentError("invalid_document", "无效的项目包名称")
+    out = _project_package_output(raw_stem)
 
     panel_ids = sorted(
         {o.get("fileId") for o in _doc_objects(doc) if o.get("type") == "panel" and o.get("fileId")}
     )
     assets, missing_now, scripts, runtime_assets = [], [], {}, []
+    asset_paths = {}
     for rel_id in panel_ids:
         # runtime 素材（ADR 0013）：包里带**描述符 + 源脚本**，不带 cache
         # 副本——cache 是本机派生物不是原件，接收方跑一次脚本即可重建。
@@ -6398,36 +6969,9 @@ def api_package():
                 entry["script"] = info["script"]
                 scripts[info["script"]] = root / info["script"]
             assets.append(entry)
+            asset_paths[rel_id] = p
         else:
             missing_now.append(rel_id)
-
-    # schema 4 的来源附件是正文的一部分：包必须带上精确字节，否则换台机器 /
-    # 换个项目打开后第一次保存会因 `chart_source_mismatch` 写不回去。附件按摘要
-    # 命名（`chart_sources/<sha256>.svg`），只从**当前项目**的权威目录读；缺了就
-    # 在清单里明确报出来，不静默打一个保存不回去的包。
-    chart_entries = _chart_source_entries(doc)
-    chart_blobs: dict[str, bytes] = {}
-    missing_chart_sources: list[str] = []
-    if chart_entries:
-        from .engine import documentassets
-
-        for entry in chart_entries:
-            entry.pop("_reference")
-            references = entry.pop("_references")
-            try:
-                for reference in references:
-                    source = documentassets.load_source(project_layout_dir(), reference)
-                data = source.input_svg
-            except (
-                OSError,
-                ValueError,
-                engine_documents.DocumentError,
-                documentassets.DocumentAssetError,
-            ):
-                missing_chart_sources.append(entry["sha256"])
-                continue
-            chart_blobs[entry["sha256"]] = data
-            entry["file"] = f"chart_sources/{entry['sha256']}.svg"
 
     manifest = {
         "kind": engine_brand.PACKAGE_KIND,
@@ -6442,83 +6986,501 @@ def api_package():
         # 旧读取端不认识这个键会原样忽略（package/open 本来就不校验 kind）
         "runtime_assets": runtime_assets,
     }
-    if chart_entries:
-        manifest["chart_sources"] = chart_entries
-        manifest["missing_chart_sources"] = missing_chart_sources
-
-    out_dir = project_export_dir()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # 包是 .tavotto 单文件扩展（zip 容器）。**写出端只有这一个名字**——改名到
-    # Tavotto 时旧扩展降级的做法被否掉了（见 engine/brand.py 的干净断裂说明）。
-    # 读取端（api_package_open）不校验 kind、也不看扩展名，只认 zip 里的结构，
-    # 所以更早的包实际上仍打得开——那是**不校验的副作用，不是我们许下的承诺**。
-    name = f"{stem}_{time.strftime('%m%d_%H%M%S')}{engine_brand.PACKAGE_EXT}"
-    out = out_dir / name
-    import zipfile  # noqa: PLC0415 — 仅此端点用
+    from .engine import documentpackage, packagebudget
 
     snapshot_warnings = _freeze_document_svg_sources(doc)
     if snapshot_warnings:
         manifest["svg_snapshot_warnings"] = snapshot_warnings
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="package-", dir=engine_config.data_dir()) as temporary:
+        plan = _PackageFilePlan()
+        snapshot_plan = _PackageFilePlan()
         try:
-            manifest["figure_snapshots"] = _package_svg_assets(doc, root, z)
+            manifest["figure_snapshots"] = _package_svg_assets(
+                doc, root, snapshot_plan, temporary_root=Path(temporary)
+            )
         except Exception:
             LOG.info("Project package could not include SVG snapshots", exc_info=True)
             manifest["figure_snapshots"] = 0
             manifest["svg_snapshot_warning"] = True
-        z.writestr("layout.json", json.dumps(doc, ensure_ascii=False, indent=1))
-        z.writestr("package_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
+        else:
+            plan.members.update(snapshot_plan.members)
+        plan.members[documentpackage.LAYOUT_MEMBER] = json.dumps(
+            doc, ensure_ascii=False, indent=1
+        ).encode("utf-8")
+        plan.members[documentpackage.MANIFEST_MEMBER] = json.dumps(
+            manifest, ensure_ascii=False, indent=1
+        ).encode("utf-8")
         for entry in assets:
-            z.write(root / entry["id"], f"assets/{entry['id']}")
+            plan.write(asset_paths[entry["id"]], f"assets/{entry['id']}")
         for rel, path in scripts.items():
-            if path.is_file():
-                z.write(path, f"scripts/{rel}")
-        # 精确 INPUT 字节，内容寻址；读取端按 sha256 核对后再安装。
-        for digest, data in sorted(chart_blobs.items()):
-            z.writestr(f"chart_sources/{digest}.svg", data)
-    LOG.info("项目包: %s（%d 素材, %d 脚本）", name, len(assets), len(scripts))
+            canonical = path.resolve()
+            if canonical.is_relative_to(root.resolve()) and canonical.is_file():
+                plan.write(canonical, f"scripts/{rel}")
+        sizes = {
+            member: len(source) if isinstance(source, bytes) else source.stat().st_size
+            for member, source in plan.members.items()
+        }
+        budget = packagebudget.output_budget(sizes)
+        with documentpackage.staged_package(
+            out, budget=budget, overwrite=False, legacy_names=True
+        ) as archive:
+            for member, source in plan.members.items():
+                if isinstance(source, bytes):
+                    archive.writestr(member, source)
+                else:
+                    archive.write(source, member)
+    LOG.info("项目包: %s（%d 素材, %d 脚本）", out.name, len(assets), len(scripts))
     return jsonify(
         {
-            "name": name,
-            "url": f"/exports/{name}",
+            "name": out.name,
+            "url": f"/exports/{out.name}",
             "assets": len(assets),
             "missing": missing_now,
-            "chart_sources": len(chart_blobs),
-            "missing_chart_sources": missing_chart_sources,
         }
     )
 
 
-@app.post("/api/package/open")
-def api_package_open():
-    """检视上传的项目包：取出布局，并对照当前图库列出缺失/内容漂移的素材。
+def _api_chart_package(body):
+    """显式v4导出：完整计算INPUT与已核项目资源，不执行用户脚本。"""
+    from .engine import (
+        chartpackage,
+        documentpackage,
+        packagebudget,
+        packageexecution,
+        packageexecution_export,
+        svgstore,
+        svgstore_inputs,
+    )
 
-    图库素材仍然**只读不安装**（用户自己在重链接对话框里决定）。schema 4 的
-    `chartSource` 例外：它是文档正文的一部分，不是图库素材。包里有精确字节时按
-    摘要核对后放进当前项目的 `tavottofile/chart_sources/`（内容寻址、不覆盖既有
-    字节），否则导入的图表文档第一次保存就会因缺来源写不回去。安装失败只报缺失，
-    不影响打开。
-    """
-    file = request.files.get("package")
-    if file is None:
+    root = require_project()
+    if not isinstance(body, dict) or not isinstance(body.get("settings", {}), dict):
+        raise engine_documents.DocumentError("invalid_document", "无效的项目包请求")
+    doc = _validate_storage_document(body.get("doc"))
+    raw_stem = body.get("stem") or (doc.get("project") or {}).get("name") or "package"
+    if not isinstance(raw_stem, str):
+        raise engine_documents.DocumentError("invalid_document", "无效的项目包名称")
+    out = _project_package_output(raw_stem)
+    # 只封存正文指定的修订。接收方安装时再对计算图表进行验证。
+    objects = _doc_objects(doc)
+    ordinary_ids = {
+        obj["fileId"] for obj in objects if obj.get("type") == "panel" and obj.get("chart") is None
+    }
+    panel_ids = sorted({obj["fileId"] for obj in objects if obj.get("type") == "panel"})
+    resources, missing, scripts, runtime_assets = [], set(), set(), []
+    resolved_sources = {}
+    asset_count = 0
+
+    def resource(kind: str, source_id: str):
+        approved = engine_projectenv.contained_path(root, source_id)
+        if approved is None:
+            raise engine_documents.DocumentError(
+                "package_source_outside_project", "项目包资源越出项目", 403
+            )
+        source = Path(approved)
+        if not source.is_file():
+            return None
+        sha256, size = engine_figcapture.hash_file(source)
+        prefix = "scripts/" if kind == "script" else "assets/"
+        return chartpackage.ResourceFile(
+            {
+                "kind": kind,
+                "id": source_id,
+                "path": prefix + source_id,
+                "sha256": sha256,
+                "bytes": size,
+            },
+            source,
+        )
+
+    for source_id in panel_ids:
+        if engine_runtimeasset.is_runtime_id(source_id):
+            info = engine_runtimeasset.resolve(source_id, current_registry())
+            descriptor = {"id": source_id, "kind": "runtime"}
+            if info is not None and Path(info["script"]).suffix.lower() != ".r":
+                descriptor.update(script=info["script"], stem=info["stem"])
+                scripts.add(info["script"])
+                resolved_sources[source_id] = {
+                    "script": info["script"],
+                    "run_config": info.get("run_config"),
+                    "run_config_known": True,
+                }
+            runtime_assets.append(descriptor)
+            continue
+        info = current_registry().for_artifact(source_id)
+        if info is not None:
+            scripts.add(info["script"])
+            resolved_sources[source_id] = {
+                "script": info["script"],
+                "run_config": None,
+                "run_config_known": False,
+            }
+        item = resource("file", source_id)
+        if item is None:
+            # 内容寻址INPUT本身就是计算面板的完整来源，原SVG可以已删除。
+            if source_id in ordinary_ids:
+                missing.add(source_id)
+            continue
+        resources.append(item)
+        asset_count += 1
+
+    engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+    execution_coverage = None
+    with tempfile.TemporaryDirectory(
+        prefix="chart-package-export-", dir=engine_config.data_dir()
+    ) as temporary:
+        snapshots = _PackageFilePlan()
+        snapshot_count = _package_svg_assets(
+            doc, root, snapshots, temporary_root=Path(temporary), strict_references=True
+        )
+        capture_facts = None
+        captured_ids = set()
+        staging = Path(temporary) / svgstore.STORE_DIRNAME
+        if (staging / svgstore_inputs.DIRNAME).exists():
+            checked = svgstore.inspect_portable_store(storage_root=staging)
+            captures = packageexecution.captures_from_facts(checked)
+            if captures:
+                capture_facts = checked
+                captured_ids = {row["snapshot_ref"]["snapshotId"] for row in captures}
+        for name, source in snapshots.members.items():
+            sha256, size = engine_figcapture.hash_file(source)
+            resources.append(
+                chartpackage.ResourceFile(
+                    {"kind": "figure_snapshot", "path": name, "sha256": sha256, "bytes": size},
+                    source,
+                )
+            )
+        warnings = sorted(
+            {
+                obj["fileId"]
+                for obj in objects
+                if obj.get("type") == "panel"
+                and obj.get("chart") is None
+                and (obj.get("overrides") or engine_runtimeasset.is_runtime_id(obj["fileId"]))
+                and not obj.get("figureSnapshot")
+            }
+        )
+        missing.update(warnings)
+        metadata = {
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "export_settings": body.get("settings") or {},
+            "missing_at_pack_time": sorted(missing),
+            "scripts": sorted(scripts),
+            "runtime_assets": runtime_assets,
+            "figure_snapshots": snapshot_count,
+        }
+        if warnings:
+            metadata["svg_snapshot_warnings"] = warnings
+        try:
+            if scripts or capture_facts is not None:
+                source_uses = []
+                for obj in objects:
+                    if obj.get("type") != "panel" or obj["fileId"] not in resolved_sources:
+                        continue
+                    # Historical captures already carry their own script/input
+                    # bytes. Keep an uncaptured panel with the same script on
+                    # the original current-resource path.
+                    source_reference = (
+                        (obj.get("figureOrigin") or {}).get("snapshot")
+                        or obj.get("figureSnapshot")
+                        or {}
+                    )
+                    if source_reference.get("snapshotId") in captured_ids:
+                        continue
+                    use = dict(resolved_sources[obj["fileId"]])
+                    # Only the archive just verified by _package_svg_assets can
+                    # identify a disk Figure's historical arguments. Current
+                    # defaults are not evidence of how that Figure was produced.
+                    owner = source_reference.get("executionOwner")
+                    if owner is not None and owner["script"] == use["script"]:
+                        use.update(run_config=owner["run_config"], run_config_known=True)
+                    source_uses.append(use)
+                collected = packageexecution_export.collect_execution(
+                    root,
+                    current_registry(),
+                    source_uses,
+                    resource=resource,
+                    **({"capture_facts": capture_facts} if capture_facts is not None else {}),
+                )
+                by_resource = {
+                    (item.record["kind"], item.record.get("id", item.record["path"])): item
+                    for item in resources
+                }
+                for item in collected.resources:
+                    key = item.record["kind"], item.record["id"]
+                    previous = by_resource.get(key)
+                    if previous is not None and previous.record != item.record:
+                        raise chartpackage.PackageError(
+                            "execution_resource_mismatch", "Project resource changed during export"
+                        )
+                    by_resource[key] = item
+                resources = list(by_resource.values())
+                asset_count = sum(item.record["kind"] == "file" for item in resources)
+                missing.update(collected.missing)
+                metadata["missing_at_pack_time"] = sorted(missing)
+                metadata["execution"] = collected.execution
+                execution_coverage = collected.execution["coverage"]
+            result = chartpackage.write_chart_package(
+                out,
+                doc,
+                project_layout_dir(current_ctx()),
+                budget_factory=packagebudget.portable_output_budget,
+                overwrite=False,
+                resources=resources,
+                metadata=metadata,
+            )
+        except chartpackage.PackageError as exc:
+            return jsonify({"error": exc.detail, "code": exc.code, "params": exc.params}), 422
+    return jsonify(
+        {
+            "name": out.name,
+            "url": f"/exports/{out.name}",
+            "assets": asset_count,
+            "missing": sorted(missing),
+            "document_format": documentpackage.CHART_PACKAGE_FORMAT,
+            "chart_sources": result["chart_sources"],
+            **(
+                {"execution_coverage": execution_coverage} if execution_coverage is not None else {}
+            ),
+        }
+    )
+
+
+@app.post("/api/package/inspect")
+def _api_chart_package_inspect():
+    """有界上传并严格检视 v4 包；不触碰目标项目或执行包内脚本。"""
+    from .engine import packageinspection
+
+    return _consume_chart_package_upload(
+        lambda prepared, _options, _work: jsonify(
+            packageinspection.inspect_project_package(prepared)
+        )
+    )
+
+
+def _consume_chart_package_upload(consume, *, with_options=False):
+    from .engine import chartpackage
+
+    def use_package(stream, budget, options, directory):
+        with chartpackage.inspect_chart_package(stream, budget=budget) as prepared:
+            return consume(prepared, options, directory)
+
+    return _consume_package_upload(use_package, with_options=with_options)
+
+
+def _consume_package_upload(consume, *, with_options=False):
+    """在同一个有界上传周期内消费流。"""
+    from .engine import documentpackage, packagebudget
+
+    # Inspection needs no open project, but an explicitly closed/unknown one
+    # still follows the common no-project contract (query and header alike).
+    _request_ctx()
+
+    def failure(reason, detail, status):
+        error = documentpackage.PackageError(reason, detail)
+        return jsonify({"error": error.detail, "code": error.code, "params": error.params}), status
+
+    if request.mimetype != "multipart/form-data":
+        return failure("invalid_upload", "项目包须使用 multipart 文件上传", 400)
+    budget = packagebudget.input_budget()
+    request_limit = budget.max_archive_bytes + packagebudget.INPUT_MULTIPART_BYTES
+    if request.content_length is not None and request.content_length > request_limit:
+        return failure("archive_budget", "项目包上传超过容量上限", 413)
+    completed = None
+
+    def unconfirmed_publication():
+        if not with_options or completed is None:
+            return None
+        payload = completed.get_json(silent=True)
+        if not isinstance(payload, dict) or not payload.get("path") or not payload.get("state"):
+            return None
         return jsonify(
-            {"error": "缺少上传文件（multipart 字段 package）", "code": "package_file_missing"}
-        ), 400
-    import io
-    import zipfile  # noqa: PLC0415
-    import zlib  # noqa: PLC0415
+            {**payload, "state": "installation_unconfirmed", "upload_cleanup": "pending"}
+        ), 503
 
     try:
-        z = zipfile.ZipFile(io.BytesIO(file.read()))
-        # 包里那份 layout.json 也是一份**文档**，读侧同一道闸：含 NaN 的包
-        # 后端读得动，而这个端点把 doc 原样 `jsonify` 回前端——那一步再把
-        # `NaN` 写回响应里，浏览器 `JSON.parse` 当场炸。`DocumentError` 是
-        # `ValueError`，落进下面的 `package_invalid`（连原因一起回给用户）：
-        # 对一个上传上来的包，「不是有效的项目包 + 原因」比「磁盘上那份坏了」
-        # 更贴合用户处境。
-        doc = engine_documents.loads_document(z.read("layout.json"))
-        manifest = json.loads(z.read("package_manifest.json"))
-    except (KeyError, ValueError, zipfile.BadZipFile) as exc:
+        engine_config.data_dir().mkdir(parents=True, exist_ok=True)
+        with (
+            tempfile.TemporaryDirectory(
+                prefix="package-upload-", dir=engine_config.data_dir()
+            ) as directory,
+            contextlib.ExitStack() as handles,
+        ):
+            # Limit actual reads too: a confirmed chunked WSGI input can omit
+            # Content-Length. No request.files or unbounded file.read() occurs.
+            stream = LimitedStream(request.stream, request_limit + 1, is_max=True)
+
+            def target(*_args, **_kwargs):
+                return handles.enter_context(tempfile.TemporaryFile(mode="w+b", dir=directory))
+
+            try:
+                _stream, form, files = FormDataParser(
+                    stream_factory=target,
+                    max_form_memory_size=packagebudget.INPUT_MULTIPART_BYTES,
+                    max_content_length=request_limit,
+                    max_form_parts=2 if with_options else 1,
+                    silent=False,
+                ).parse(stream, request.mimetype, request.content_length, request.mimetype_params)
+            except HTTPException:
+                if stream.tell() > request_limit:
+                    return failure("archive_budget", "项目包上传超过容量上限", 413)
+                return failure("invalid_upload", "项目包上传字段或内容不合法", 400)
+            except ValueError:
+                return failure("invalid_upload", "项目包上传格式不合法", 400)
+            if stream.tell() > request_limit:
+                return failure("archive_budget", "项目包上传超过容量上限", 413)
+            if (
+                (form and not with_options)
+                or (with_options and (set(form) - {"options"} or len(form.getlist("options")) > 1))
+                or (files and (set(files) != {"package"} or len(files.getlist("package")) != 1))
+            ):
+                return failure("invalid_upload", "只允许上传一个 package 文件", 400)
+            options = {}
+            if with_options:
+                try:
+                    options = json.loads(form.get("options", "{}"))
+                except (TypeError, ValueError):
+                    return failure("invalid_upload", "安装选项须为 JSON 对象", 400)
+                if not isinstance(options, dict):
+                    return failure("invalid_upload", "安装选项须为 JSON 对象", 400)
+            file = files.get("package")
+            if file is None:
+                return jsonify(
+                    {
+                        "error": "缺少上传文件（multipart 字段 package）",
+                        "code": "package_file_missing",
+                    }
+                ), 400
+            completed = app.make_response(consume(file.stream, budget, options, Path(directory)))
+            return completed
+    except documentpackage.PackageError as exc:
+        status = 413 if exc.reason.endswith("budget") else 422
+        return failure(exc.reason, exc.detail, status)
+    except FileExistsError:
+        if response := unconfirmed_publication():
+            return response
+        if with_options:
+            return failure("installation_target_exists", "目标已存在，请选择新的项目目录", 409)
+        return failure("inspection_unavailable", "暂时无法检视项目包", 503)
+    except OSError:
+        if response := unconfirmed_publication():
+            return response
+        if with_options:
+            return failure("installation_unavailable", "暂时无法安装项目包", 503)
+        return failure("inspection_unavailable", "暂时无法检视项目包", 503)
+
+
+@app.post("/api/package/install")
+def _api_chart_package_install():
+    """独占安装资源及本机建议；正文仍须由原界面 writer 明确采用。"""
+    from .engine import chartpackage, chartprofile, packageinstall
+
+    def consume(prepared, options, work):
+        if (
+            set(options) - {"destination"}
+            or not isinstance(options.get("destination"), str)
+            or not options["destination"]
+            or not Path(options["destination"]).is_absolute()
+        ):
+            raise chartpackage.PackageError("installation_invalid", "需要明确的新项目绝对路径")
+        destination = Path(options["destination"])
+        # Rendering may use the caller's already selected environment, never an
+        # interpreter or .venv arriving inside the uploaded project. With no open
+        # project, the original environment resolver gets an empty owned root.
+        engine_ctx = _request_ctx()
+        if engine_ctx is None:
+            engine_root = work / "verification-engine"
+            engine_root.mkdir()
+            engine_ctx = ProjectCtx(
+                engine_root, _project_id(engine_root), engine_registry.Registry()
+            )
+
+        def verify(document, stage):
+            with contextlib.ExitStack() as cleanup:
+                if engine_ctx.path.parent == work:
+                    cleanup.callback(
+                        engine_pool.shutdown_all, figures_dir=str(engine_ctx.path), wait=True
+                    )
+                cleanup.enter_context(bound_project(engine_ctx))
+                for obj in _doc_objects(document):
+                    if obj.get("type") != "panel" or obj.get("chart") is None:
+                        continue
+                    if "chartSource" not in obj:
+                        raise chartpackage.PackageError("chart_source_missing", "计算来源附件缺失")
+                    _render_chart_snapshot(
+                        obj["fileId"],
+                        obj["chart"],
+                        # 与 _freeze_document_sources 同源：显式值优先，缺省维持 /1。
+                        render_profile=_document_panel_render_profile(obj)
+                        or chartprofile.NATIVE_PROFILE,
+                        overrides=obj.get("overrides", []),
+                        chart_source=obj["chartSource"],
+                        source_storage=stage / engine_config.PROJECT_STORE_DIRNAME,
+                    )
+
+        result = packageinstall.install_project_package(
+            prepared, destination=destination, verify=verify
+        )
+        ready = result["state"] == "resources_installed" and result["configuration"] in (
+            "ready",
+            "needs_review",
+        )
+        return jsonify(result), 201 if ready else 503
+
+    try:
+        return _consume_chart_package_upload(consume, with_options=True)
+    except engine_exportreq.ExportRequestError as exc:
+        return jsonify({"error": exc.message, "code": exc.code, "params": {}}), 422
+    except engine_pool.WorkerError as exc:
+        return jsonify({"error": str(exc), "code": exc.code, "params": {}}), 503
+
+
+@app.post("/api/package/open")
+def api_package_open():
+    """按包内容分流，旧包继续按现有项目的排版处理。"""
+    return _consume_package_upload(
+        lambda stream, budget, _options, _work: _open_package_stream(stream, budget)
+    )
+
+
+def _open_package_stream(stream, budget):
+    import zipfile
+
+    from .engine import documentpackage
+
+    try:
+        with documentpackage.open_container(stream, budget=budget) as archive:
+            names = archive.namelist()
+
+            def metadata(name, limit):
+                if names.count(name) != 1:
+                    raise ValueError("The package must contain each metadata file once")
+                with archive.open(name) as member:
+                    raw = member.read(limit + 1)
+                if len(raw) > limit:
+                    raise documentpackage.PackageError("member_budget", "项目包元数据超过容量上限")
+                return raw
+
+            doc = engine_documents.loads_document(
+                metadata(documentpackage.LAYOUT_MEMBER, budget.max_layout_bytes)
+            )
+            manifest = json.loads(
+                metadata(documentpackage.MANIFEST_MEMBER, budget.max_manifest_bytes)
+            )
+            if not isinstance(doc, dict) or not isinstance(manifest, dict):
+                raise ValueError("项目包缺少有效的排版或清单")
+            return _open_package_contents(archive, doc, manifest)
+    except documentpackage.PackageError:
+        raise
+    except (
+        KeyError,
+        ValueError,
+        RuntimeError,
+        RecursionError,
+        NotImplementedError,
+        EOFError,
+        zipfile.BadZipFile,
+    ) as exc:
         return jsonify(
             {
                 "error": f"不是有效的项目包: {exc}",
@@ -6526,10 +7488,16 @@ def api_package_open():
                 "params": {"reason": str(exc)},
             }
         ), 400
+
+
+def _open_package_contents(z, doc, manifest):
+    import zipfile
+    import zlib
+
+    from .engine import documentpackage
+
     schema = doc.get("schema")
     if type(schema) is int and schema > engine_documents.SCHEMA_CURRENT:
-        # 更新的 Tavotto 打出的包：与排版的 `schema_too_new` 同一结局（界面给「检查更新」），
-        # 不说成「不是项目包」——这份包本身没坏，是这个版本读不了（#1921）
         return jsonify(
             {
                 "error": f"这个项目包来自更新的 Tavotto（schema {schema}），请升级后再打开",
@@ -6537,6 +7505,22 @@ def api_package_open():
                 "params": {"schema": schema},
             }
         ), 400
+    if "document_format" in manifest:
+        if (
+            schema != engine_documents.SCHEMA_CHART_PROJECT
+            or manifest["document_format"] != documentpackage.CHART_PACKAGE_FORMAT
+            or manifest.get("kind") != engine_brand.PACKAGE_KIND
+            or type(manifest.get("version")) is not int
+            or manifest["version"] != documentpackage.PACKAGE_VERSION
+        ):
+            return jsonify(
+                {
+                    "error": "项目包的清单不是当前版本能读的格式",
+                    "code": "package_invalid",
+                    "params": {"reason": "unsupported_envelope"},
+                }
+            ), 400
+        return jsonify({"document_format": documentpackage.CHART_PACKAGE_FORMAT})
     if schema not in engine_documents.SUPPORTED_SCHEMAS:
         return jsonify(
             {
@@ -6551,7 +7535,12 @@ def api_package_open():
     doc = _validate_storage_document(doc)
     root = require_project()
     missing, drifted = [], []
-    for entry in manifest.get("assets", []):
+    assets = manifest.get("assets", [])
+    if not isinstance(assets, list) or any(
+        not isinstance(entry, dict) or not isinstance(entry.get("id", ""), str) for entry in assets
+    ):
+        raise ValueError("Invalid project package asset list")
+    for entry in assets:
         rel_id = entry.get("id", "")
         # 老包里不会有 runtime 条目；防的是手改包/未来版本混入——runtime
         # 素材没有磁盘文件是设计，不按缺失报
@@ -7063,7 +8052,39 @@ def _open_project(path: Path, make_default: bool) -> dict:
     if not path.is_dir():
         raise RuntimeError(f"目录不存在: {path}")
     pid = _project_id(path)
+    with _PROJECT_LOCK:
+        opening = PROJECTS.get(pid)
 
+    def after_recovery(record):
+        if opening is None or record.get("panel_id") is None:
+            return
+        panel = engine_scriptstyle.select_panel(
+            record["document"], record["canvas_id"], record["panel_id"]
+        )
+        reference = panel.get("figureSnapshot")
+        if not reference:
+            return
+        observed = opening.svg_executions.get(reference.get("executionOwner"))
+        engine_nativesession.REGISTRY.cancel_project(str(path), script=record["script"])
+        _admit_r_writeback_archive(opening, reference, observed)
+
+    for journal in engine_scriptstyle.journals(path):
+        try:
+            engine_scriptstyle.recover(
+                path,
+                journal,
+                require_idle=_require_script_idle,
+                autosave_path=_autosave_path,
+                on_completed=after_recovery,
+            )
+        except (
+            OSError,
+            ValueError,
+            engine_layoutannotate.LayoutError,
+            engine_layoutdir.LayoutDirError,
+            engine_scriptbackup.ScriptEditError,
+        ):
+            LOG.warning("An interrupted script style change needs attention.")
     with _PROJECT_LOCK:
         existing = PROJECTS.get(pid)
     if existing is not None:
@@ -10402,6 +11423,98 @@ def _native_session_event(session, entry: dict) -> None:
 engine_nativesession.REGISTRY.on_change = _native_session_event
 
 
+@app.post("/api/native/ggplot2")
+def api_native_ggplot2_start():
+    """Start a project R script only on explicit request from the desktop page."""
+    from .engine import nativeggplot
+
+    if not _desktop_initiated() or not _page_authenticated():
+        return _native_error(engine_runcodes.RunError(engine_runcodes.NATIVE_DESKTOP_REQUIRED))
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) - {
+        "script",
+        "object",
+        "frame_pt",
+        "rscript",
+        "library",
+    }:
+        return jsonify({"code": "bad_request", "error": "Invalid ggplot2 capture request."}), 400
+    root = str(require_project())
+    epoch = engine_nativesession.REGISTRY.project_epoch(root)
+    relative = body.get("script")
+    script = engine_projectenv.contained_path(root, relative) if isinstance(relative, str) else None
+    if script is None or Path(script).suffix.lower() != ".r" or not Path(script).is_file():
+        return jsonify({"code": "bad_request", "error": "Select a project R script."}), 400
+    interpreter = body.get("rscript")
+    if interpreter is None:
+        interpreter = shutil.which("Rscript")
+    if (
+        not isinstance(interpreter, str)
+        or not os.path.isabs(interpreter)
+        or Path(interpreter).name.lower() not in {"rscript", "rscript.exe"}
+        or not Path(interpreter).is_file()
+    ):
+        return _native_error(
+            engine_runcodes.RunError(
+                engine_runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter="Rscript"
+            )
+        )
+    try:
+        target = nativeggplot.GgplotTarget(
+            body.get("object"), tuple(body.get("frame_pt") or ()), body.get("library")
+        )
+        spec = engine_execspec.desktop_native_spec(
+            script, interpreter=interpreter, cwd=os.fspath(Path(script).parent), project_root=root
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"code": "bad_request", "error": str(exc)}), 400
+    try:
+        with engine_scriptlock.script_guard(Path(script)):
+            if engine_scriptstyle.pending(Path(root), spec.target):
+                raise engine_scriptstyle.Pending("Finish recovering this R source style change.")
+            session = engine_desktopproc.start(
+                engine_desktopproc.OwnedLaunch(spec, project_epoch=epoch, ggplot_target=target)
+            )
+    except engine_envlease.EnvironmentBusy as exc:
+        return _environment_busy(exc)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    except engine_scriptstyle.Pending as exc:
+        return _style_change_error(exc)
+    return jsonify({"ok": True, "session": session.public_state()}), 202
+
+
+@app.post("/api/native/ggplot2/invitation")
+def api_native_ggplot2_invitation():
+    """Create an authenticated invitation for an existing local R console."""
+    from .engine import nativeggplot, nativeggplot_console
+
+    if not _desktop_initiated() or not _page_authenticated():
+        return _native_error(engine_runcodes.RunError(engine_runcodes.NATIVE_DESKTOP_REQUIRED))
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or set(body) - {"script", "object", "frame_pt"}:
+        return jsonify({"code": "bad_request", "error": "Invalid ggplot2 console request."}), 400
+    root = str(require_project())
+    registry = engine_nativesession.REGISTRY
+    epoch = registry.project_epoch(root)
+    relative = body.get("script")
+    script = engine_projectenv.contained_path(root, relative) if isinstance(relative, str) else None
+    if script is None or Path(script).suffix.lower() != ".r" or not Path(script).is_file():
+        return jsonify({"code": "bad_request", "error": "Select a project R script."}), 400
+    try:
+        target = nativeggplot.GgplotTarget(body.get("object"), tuple(body.get("frame_pt") or ()))
+        canonical_script = Path(script).relative_to(root).as_posix()
+    except (TypeError, ValueError) as exc:
+        return jsonify({"code": "bad_request", "error": str(exc)}), 400
+    try:
+        invitation = nativeggplot_console.invite(
+            root, canonical_script, target, registry=registry, project_epoch=epoch
+        )
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    return jsonify({"ok": True, **invitation}), 201
+
+
 @app.get("/api/native/pending/<native_id>")
 def api_native_pending(native_id: str):
     """待确认的一条 native 交接。**返回的 metadata 里没有 token、没有端口。**"""
@@ -10506,6 +11619,33 @@ def api_native_session_build(session_id: str):
     """
     try:
         session = engine_nativesession.REGISTRY.get(session_id)
+    except engine_runcodes.RunError as exc:
+        return _native_error(exc)
+    ggplot = getattr(session, "ggplot_target", None)
+    if ggplot is None:
+        return _build_native_session(session)
+    if Path(session.project_root).resolve() != require_project().resolve():
+        abort(404)
+    with session._figure_lock:
+        # The completed route identifies the baseline which already passed
+        # through registration and materialization. A second window must not
+        # publish the current edited SVG under the empty-patch cache key.
+        stem = ggplot.stem(session.target_display)
+        published = engine_nativesession.REGISTRY.route_for(
+            session.project_root, session.target_display, stem
+        )
+        if published is session and session.descriptors:
+            return jsonify(
+                ok=True,
+                session=session.public_state(),
+                stems=session.last_build["stems"],
+                descriptors=session.descriptors,
+            )
+        return _build_native_session(session, register_ggplot=True)
+
+
+def _build_native_session(session, *, register_ggplot=False):
+    try:
         resp = session.ensure_built()
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
@@ -10519,12 +11659,24 @@ def api_native_session_build(session_id: str):
         return jsonify(_worker_error_payload(exc)), 500
     _note_native_inputs(session)
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
-    if not rejected:
-        _svg_native_execution_update(session)
     # 发布决定只有这一处,且全有或全无:任一张图的路由被另一条活会话占着,这一轮 build 的图一张都不物化、不回给前端、
     # 不绑路由——否则预览是这次运行的、编辑 / 导出却仍落在旧会话上（静默错图,ADR 0021 §9.2），而准备 runner 对同一结果
     # 判的是整体失败。准备 runner 的 native 分支问的是同一个 `bind_assets`
     if not rejected:
+        if register_ggplot:
+            try:
+                ctx = current_ctx()
+                engine_discover.register(
+                    ctx.path, session.target_display, session.stems, entry="__main__", append=True
+                )
+                refresh_project(ctx, reason="probe", allow_static_merge=False)
+            except (OSError, ValueError, engine_refresh.RefreshError):
+                if session.owned is None:
+                    session.shutdown()
+                else:
+                    session.cancel_owned()
+                raise
+        _svg_native_execution_update(session)
         _materialize_native(session)
     out = {
         "ok": True,
@@ -11308,16 +12460,24 @@ def _resolve_engine_worker(
         info = _resolve_runtime_asset(rel_id)
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
+        if engine_scriptstyle.pending(Path(root), info["script"]):
+            raise engine_pool.WorkerError(
+                "A source style change is awaiting recovery.", code="script_style_pending"
+            )
         # T03：这张图当初的运行配置（资产 id 里冻结的引用）——不是项目此刻的任何配置。本机没有就显式拒绝
         run = engine_runtimeasset.run_selection(root, info)
+        profile = (
+            engine_enginesession.PROFILE_NATIVE
+            if Path(info["script"]).suffix.lower() == ".r"
+            else execution_profile or engine_enginesession.profile_of(root, rel_id)
+        )
         return (
             engine_enginesession.resolve(
                 project_root=root,
                 script=info["script"],
                 entry=info["entry"],
                 stem=info["stem"],
-                execution_profile=execution_profile
-                or engine_enginesession.profile_of(root, rel_id),
+                execution_profile=profile,
                 **({"existing_only": True} if existing_only else {}),
                 **({"run": run} if run is not None else {}),
             ),
@@ -11763,16 +12923,30 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     if engine_runtimeasset.is_runtime_id(rel_id):
         # 重开文档时的首帧占位从这里来：刷新 materialized cache 的预览与
         # metadata（描述符取自本会话 build 响应，只复制文件、不二次执行）。
-        _materialize_runtime(
-            info.get("script", ""),
-            info.get("entry", ""),
-            worker.last_build_descriptors,
-            remap_generation=getattr(worker, "remap_generation", None),
-            run=getattr(worker, "run", None),
-            # 这张 SVG 是按请求里的 patches 画的：按它的内容记一份变体（读端按状态取，不取「最近一次」）
-            patches_by_stem={stem: body.get("patches", [])},
-            **({"origin_session": origin_session} if origin_session is not None else {}),
-        )
+        patches = body.get("patches", [])
+        if getattr(worker, "ggplot_target", None) is not None:
+            with worker._figure_lock:
+                # Only the published revision owns the file currently named
+                # by the preview ledger. Never reopen this R source via a
+                # Python worker to populate a display cache.
+                if worker.alive() and resp.get("_published_svg_revision") == worker.rev:
+                    (descriptor,) = worker.last_build_descriptors
+                    engine_runtimeasset.materialize(
+                        worker.project_root,
+                        descriptor,
+                        worker.svg_path(stem),
+                        patch_hash=_variant_hash(patches),
+                    )
+        else:
+            _materialize_runtime(
+                info.get("script", ""),
+                info.get("entry", ""),
+                worker.last_build_descriptors,
+                remap_generation=getattr(worker, "remap_generation", None),
+                run=getattr(worker, "run", None),
+                patches_by_stem={stem: patches},
+                **({"origin_session": origin_session} if origin_session is not None else {}),
+            )
     out = {
         "rev": worker.rev,
         "manifest": resp["manifest"],
@@ -13909,6 +15083,7 @@ def _figure_preview_source(body, directory, *, png=False):
 
 
 @app.post("/api/figure-preview")
+@app.post("/api/documents/v4/figure-preview")
 def api_figure_snapshot_preview():
     """Display exact archived artwork without claiming an editable manifest."""
     body = request.get_json(force=True)
@@ -16908,6 +18083,272 @@ def _after_script_edit(ctx: "ProjectCtx", script: str) -> None:
         _script_change_handler(ctx)([script])
 
 
+_STYLE_CHANGE_TOKENS = engine_scriptedit.TokenStore()
+
+
+def _r_style_target(ctx, selection):
+    from .engine import svgstore
+
+    name = selection.get("layout")
+    wanted_canvas, wanted_panel = selection.get("canvas_id"), selection.get("panel_id")
+    if not all(isinstance(value, str) and value for value in (name, wanted_canvas, wanted_panel)):
+        raise engine_scriptstyle.Conflict("Save and select the figure in a project layout first.")
+    layout = engine_layoutannotate.open_layout(ctx.path, name)
+    if selection.get("revision") != layout.revision:
+        raise engine_scriptstyle.Conflict("The saved layout has changed.")
+    panel = engine_scriptstyle.select_panel(layout.doc, wanted_canvas, wanted_panel)
+    if panel.get("figureOrigin") is not None:
+        raise engine_scriptstyle.Conflict("Select a current figure from the saved layout.")
+    source = panel.get("fileId")
+    if not engine_runtimeasset.is_runtime_id(source):
+        raise engine_scriptstyle.Conflict("Run the project's R script and save this figure first.")
+    worker, stem = _engine_worker(source, existing_only=True)
+    spec = getattr(worker, "ggplot_source_spec", None)
+    if (
+        not engine_enginesession.is_native(worker)
+        or spec is None
+        or not engine_nativeggplot_source.available()
+    ):
+        raise engine_scriptstyle.Conflict("Protected replay requires an active project R script.")
+    path = _script_edit_target(ctx.path, spec.target)
+    patches = panel.get("overrides") or []
+    existing = svgstore.load_document_snapshot(
+        ctx.path,
+        panel.get("figureSnapshot"),
+        source_id=source,
+        patch_hash=engine_patchspec.patch_hash(patches),
+        remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
+        storage_root=_svg_storage_root(ctx.path),
+    )
+    if (
+        existing is None
+        or existing["receipt"]["receipt_id"] != _execution_receipt(worker, spec.target).receipt_id
+    ):
+        raise engine_scriptstyle.Conflict("Save the current R figure before previewing the script.")
+    return layout, panel, worker, stem, path, patches, existing
+
+
+def _r_style_archive(ctx, worker, source, replay):
+    """Publish the vector representations proven by the protected replay."""
+    from .engine import svgstore
+
+    spec = worker.ggplot_source_spec
+    receipt = engine_receipt.ExecutionReceipt(
+        profile=engine_execspec.PROFILE_NATIVE,
+        control_plane=engine_receipt.CONTROL_PLANE_NATIVE,
+        python_source="",
+        generation=1,
+        source_revision=hashlib.sha1(replay.source.data).hexdigest(),
+        spec_stable=spec.stable_payload(),
+        launch_context=engine_execspec.launch_context(spec),
+        interpreter=spec.interpreter,
+        project_root=spec.project_root,
+        runtime=None,
+        instance=replay.execution_id,
+    )
+    patch_hash = engine_patchspec.patch_hash(replay.source.residual)
+    with tempfile.TemporaryDirectory(dir=engine_config.data_dir()) as temp:
+        path = Path(temp) / "candidate.pdf"
+        path.write_bytes(replay.pdf)
+        artifact = engine_receipt.source_artifact_for(
+            receipt, path, source_id=source, patch_hash=patch_hash
+        )
+        archive = svgstore.save(
+            ctx.path,
+            source,
+            patch_hash,
+            pdf=replay.pdf,
+            svg=replay.svg,
+            artifact=artifact.to_payload(),
+            receipt=receipt.to_payload(),
+            execution_owner=(
+                engine_svgexecution.owner(spec.target, worker.run_config or None)
+                if worker.owned is not None
+                else None
+            ),
+            remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
+            storage_root=_svg_storage_root(ctx.path),
+            archive_only=True,
+        )
+    return archive["snapshot_ref"]
+
+
+def _style_change_error(exc):
+    if isinstance(exc, engine_scriptbackup.ScriptEditError):
+        return _script_edit_error(exc)
+    return jsonify(
+        {"error": str(exc), "code": getattr(exc, "code", engine_scriptstyle.Conflict.code)}
+    ), 409
+
+
+def _admit_r_writeback_archive(ctx, reference, observed):
+    owner = reference.get("executionOwner")
+    if owner is not None:
+        ctx.svg_executions.accept_verified_replay(
+            owner, observed, reference["sourceId"], reference["receiptId"]
+        )
+
+
+@app.post("/api/script-edit/figure-style/preview")
+def api_script_style_preview():
+    ctx = current_ctx()
+    body = request.get_json(silent=True)
+    try:
+        if not _page_authenticated():
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptedit.ERROR_NEEDS_UI, "Confirm the source edit in Tavotto."
+            )
+        binding = _script_edit_binding()
+        if not isinstance(body, dict):
+            raise engine_scriptstyle.Conflict("Select a figure in a saved layout.")
+        layout, panel, worker, stem, path, patches, _ = _r_style_target(ctx, body)
+        replay = _verified_r_source(worker, stem, patches)
+        if not replay.source.written:
+            raise engine_scriptstyle.Conflict(
+                "There are no supported source changes on this figure."
+            )
+    except (
+        OSError,
+        ValueError,
+        engine_pool.WorkerError,
+        engine_layoutannotate.LayoutError,
+        engine_scriptbackup.ScriptEditError,
+    ) as exc:
+        return _style_change_error(exc)
+    before = engine_scriptbackup.sha256(replay.original_bytes)
+    after = engine_scriptbackup.sha256(replay.source.data)
+    token = _STYLE_CHANGE_TOKENS.issue(
+        binding=binding,
+        project=ctx.id,
+        selection={key: body[key] for key in ("layout", "revision", "canvas_id", "panel_id")},
+        working_doc_id=body.get("working_doc_id"),
+        source=panel["fileId"],
+        script=worker.ggplot_source_spec.target,
+        before=before,
+        after=after,
+        session=worker.session_id,
+        epoch=worker.snapshot_epoch,
+        execution=worker.execution_id,
+    )
+    slug = engine_scriptbackup.slug_of(worker.ggplot_source_spec.target)
+    store = _script_store(ctx)
+    diff = difflib.unified_diff(
+        replay.original_bytes.decode("utf-8").splitlines(),
+        replay.source.data.decode("utf-8").splitlines(),
+        n=3,
+        lineterm="",
+    )
+    return jsonify(
+        {
+            "token": token,
+            "script_abs": str(path),
+            "written": replay.source.written,
+            "skipped": replay.source.skipped,
+            "diff": list(diff)[2:],
+            "backups": [str(store.project_dir / slug), str(store.mirror_dir / slug)],
+            "git": engine_scriptbackup.git_state(path),
+            "checksums": engine_scriptbackup.checksum_manifests(path),
+            "layout": layout.name,
+        }
+    )
+
+
+@app.post("/api/script-edit/figure-style/commit")
+def api_script_style_commit():
+    ctx = current_ctx()
+    body = request.get_json(silent=True)
+    try:
+        if not _page_authenticated():
+            raise engine_scriptbackup.ScriptEditError(
+                engine_scriptedit.ERROR_NEEDS_UI, "Confirm the source edit in Tavotto."
+            )
+        if not isinstance(body, dict) or body.get("confirmed") is not True:
+            raise engine_scriptstyle.Conflict("Confirm the preview before replacing the script.")
+        item = _STYLE_CHANGE_TOKENS.redeem(body.get("token"), binding=_script_edit_binding())
+        if item["project"] != ctx.id:
+            raise engine_scriptstyle.Conflict("The preview belongs to another project.")
+        selection = item["selection"]
+        layout, panel, worker, stem, _, patches, archive = _r_style_target(ctx, selection)
+        if (
+            panel["fileId"] != item["source"]
+            or worker.ggplot_source_spec.target != item["script"]
+            or worker.session_id != item["session"]
+            or worker.snapshot_epoch != item["epoch"]
+            or worker.execution_id != item["execution"]
+        ):
+            raise engine_scriptstyle.Conflict("The captured R figure changed after preview.")
+        replay = _verified_r_source(worker, stem, patches, archive=archive)
+        if (
+            engine_scriptbackup.sha256(replay.original_bytes) != item["before"]
+            or engine_scriptbackup.sha256(replay.source.data) != item["after"]
+        ):
+            raise engine_scriptstyle.Conflict("The R source changed after preview.")
+        before_layout = copy.deepcopy(layout.doc)
+        execution_owner = _svg_worker_owner(worker)
+        observed_execution = ctx.svg_executions.get(execution_owner)
+
+        def publish_layout():
+            panel["figureSnapshot"] = _r_style_archive(ctx, worker, item["source"], replay)
+            panel["overrides"] = replay.source.residual
+            return engine_atomicio.dumps_json(layout.doc, indent=1)
+
+        def require_current(path, script):
+            _require_script_idle(path, script)
+            current = engine_nativesession.REGISTRY.route_for(str(ctx.path), script, stem)
+            if (
+                current is not worker
+                or current.snapshot_epoch != item["epoch"]
+                or current.execution_id != item["execution"]
+            ):
+                raise engine_scriptstyle.Conflict("The live R session changed after verification.")
+
+        result = engine_scriptstyle.commit(
+            _script_store(ctx),
+            engine_scriptstyle.Change(
+                item["script"],
+                layout.name,
+                item["before"],
+                replay.source.data,
+                layout.revision,
+                publish_layout,
+                working_doc_id=item["working_doc_id"],
+                canvas_id=selection["canvas_id"],
+                panel_id=selection["panel_id"],
+            ),
+            require_idle=require_current,
+            autosave_path=_autosave_path,
+            metadata={
+                "layout_before": before_layout,
+                "source_id": item["source"],
+                "canvas_id": selection["canvas_id"],
+                "panel_id": selection["panel_id"],
+            },
+        )
+    except (
+        OSError,
+        ValueError,
+        engine_pool.WorkerError,
+        engine_layoutannotate.LayoutError,
+        engine_scriptbackup.ScriptEditError,
+    ) as exc:
+        return _style_change_error(exc)
+    _admit_r_writeback_archive(ctx, panel["figureSnapshot"], observed_execution)
+    if worker.owned is None:
+        worker.shutdown()
+    else:
+        worker.cancel_owned()
+    _after_script_edit(ctx, item["script"])
+    return jsonify(
+        {
+            "ok": True,
+            "revision": result["revision"],
+            "working_revision": result["working_revision"],
+            "backup_id": result["backup"]["id"],
+            "script_revision": item["after"],
+        }
+    )
+
+
 @app.post("/api/script-edit/commit")
 def api_script_edit_commit():
     """ADR 0110 §六：核销令牌 → 重算一遍（与预览逐字节相同才写）→ 两处备份 → 原子替换。"""
@@ -16970,8 +18411,61 @@ def api_script_backups():
     entries = engine_scriptbackup.history(
         _script_store(ctx), script, undoable=engine_scriptedit.undoable
     )
+    for entry in entries:
+        entry.pop("layout_before", None)
     # `script_abs` 是本机路径：给本机界面看的（与预览里的完整路径同一类），不出本机
     return jsonify({"ok": True, "script": script, "backups": entries})
+
+
+def _restore_style_backup(ctx, store, meta, original, now, mode, working_doc_id):
+    from .engine import svgstore
+
+    if mode != "full" or now != meta["after"]["sha256"]:
+        raise engine_scriptstyle.Conflict("The R source changed after the style edit.")
+    layout = engine_layoutannotate.open_layout(ctx.path, meta["layout"])
+    if not engine_scriptstyle.matches_saved_layout(layout.doc, layout.revision, meta):
+        raise engine_scriptstyle.Conflict("The saved layout changed after the style edit.")
+    prior = engine_scriptstyle.select_panel(
+        meta["layout_before"], meta["canvas_id"], meta["panel_id"]
+    )
+    restored = svgstore.load_document_snapshot(
+        ctx.path,
+        prior.get("figureSnapshot"),
+        source_id=meta["source_id"],
+        patch_hash=engine_patchspec.patch_hash(prior.get("overrides") or []),
+        remap_fingerprint=engine_inputremap.fingerprint(ctx.path),
+        storage_root=_svg_storage_root(ctx.path),
+    )
+    if restored is None:
+        raise engine_scriptstyle.Conflict("The original Figure archive could not be verified.")
+    execution_owner = restored.get("execution_owner")
+    observed_execution = ctx.svg_executions.get(execution_owner)
+    target = engine_atomicio.dumps_json(meta["layout_before"], indent=1)
+    result = engine_scriptstyle.commit(
+        store,
+        engine_scriptstyle.Change(
+            meta["script"],
+            layout.name,
+            now,
+            original,
+            layout.revision,
+            target,
+            working_doc_id=working_doc_id,
+            canvas_id=meta["canvas_id"],
+            panel_id=meta["panel_id"],
+        ),
+        require_idle=_require_script_idle,
+        autosave_path=_autosave_path,
+        metadata={
+            "layout_before": layout.doc,
+            "source_id": meta["source_id"],
+            "canvas_id": meta["canvas_id"],
+            "panel_id": meta["panel_id"],
+            "restores": meta["id"],
+        },
+    )
+    _admit_r_writeback_archive(ctx, restored["snapshot_ref"], observed_execution)
+    return result
 
 
 @app.post("/api/script-backups/restore")
@@ -16988,6 +18482,7 @@ def api_script_backups_restore():
     root = ctx.path
     body = request.get_json(force=True) or {}
     mode = str(body.get("mode") or "full")
+    style_layout = None
     try:
         _script_edit_binding()
         store = _script_store(ctx)
@@ -17007,30 +18502,54 @@ def api_script_backups_restore():
                     "脚本在这之后又被改过，请刷新后重新选择复原方式",
                     script=script,
                 )
-            if now == (meta.get("before") or {}).get("sha256"):
-                return jsonify({"ok": True, "script": script, "unchanged": True})
-            if now == (meta.get("after") or {}).get("sha256") or mode == "full":
-                new = original
-            elif mode == "undo_edits":
-                new = engine_scriptedit.undo_edits_of(current, meta)
-            else:
-                raise engine_scriptbackup.ScriptEditError(
-                    engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"
+            if meta.get("kind") == engine_scriptstyle.KIND:
+                if not _page_authenticated():
+                    raise engine_scriptbackup.ScriptEditError(
+                        engine_scriptedit.ERROR_NEEDS_UI, "Restore the source in Tavotto."
+                    )
+                result = _restore_style_backup(
+                    ctx, store, meta, original, now, mode, body.get("working_doc_id")
                 )
-            record = engine_scriptbackup.replace(
-                store,
-                script,
-                new,
-                kind="restore",
-                expect_before=now,
-                meta={"restores": meta.get("id"), "mode": mode},
-            )
+                record = result["backup"]
+                style_layout = {
+                    "name": meta["layout"],
+                    "revision": result["revision"],
+                    "working_revision": result["working_revision"],
+                }
+                engine_nativesession.REGISTRY.cancel_project(str(root), script=script)
+            elif now == (meta.get("before") or {}).get("sha256"):
+                return jsonify({"ok": True, "script": script, "unchanged": True})
+            else:
+                if now == (meta.get("after") or {}).get("sha256") or mode == "full":
+                    new = original
+                elif mode == "undo_edits":
+                    new = engine_scriptedit.undo_edits_of(current, meta)
+                else:
+                    raise engine_scriptbackup.ScriptEditError(
+                        engine_scriptedit.ERROR_RESTORE_CONFLICT, "mode 只能是 full / undo_edits"
+                    )
+                record = engine_scriptbackup.replace(
+                    store,
+                    script,
+                    new,
+                    kind="restore",
+                    expect_before=now,
+                    meta={"restores": meta.get("id"), "mode": mode},
+                )
     except engine_scriptbackup.ScriptEditError as exc:
         return _script_edit_error(exc)
+    except (OSError, engine_scriptstyle.Conflict, engine_layoutannotate.LayoutError) as exc:
+        return _style_change_error(exc)
     LOG.info("复原脚本: %s（%s）", script, mode)
     _after_script_edit(ctx, script)
     return jsonify(
-        {"ok": True, "script": script, "backup": record, "durable": record.get("durable", True)}
+        {
+            "ok": True,
+            "script": script,
+            "backup": record,
+            "durable": record.get("durable", True),
+            **({"layout": style_layout} if style_layout is not None else {}),
+        }
     )
 
 
@@ -22543,6 +24062,18 @@ def _project_file_query_sequence(value: object) -> int:
     return int(value)
 
 
+def _project_file_actual_slot_revision(doc_id: str) -> str | None:
+    # 只读sink取目录枚举的实际路径，不用客户端值拼文件系统路径。
+    directory = _autosave_directory()
+    slot = _file_named(directory, doc_id)
+    if slot is None:
+        return None
+    owned = engine_projectenv.contained_path(directory, slot)
+    if owned is None or slot.is_symlink():
+        raise OSError("自动保存槽位通过链接重定向")
+    return engine_atomicio.existing_revision(Path(owned))
+
+
 @app.get("/api/layout-session/project-file/<doc_id>")
 def api_layout_project_file_get(doc_id):
     if not engine_layoutsession.valid_doc_id(doc_id):
@@ -22550,10 +24081,9 @@ def api_layout_project_file_get(doc_id):
     ctx = current_ctx()
     key = engine_layoutsession.project_key(ctx.path)
     try:
-        slot = _autosave_path(doc_id)
-        with _document_lock(slot):
+        with _document_lock(_autosave_path(doc_id)):
             view = engine_layoutsession.read_project_file(
-                key, doc_id, actual_autosave_revision=engine_atomicio.existing_revision(slot)
+                key, doc_id, actual_autosave_revision=_project_file_actual_slot_revision(doc_id)
             )
     except OSError:
         view = {"version": 1, "status": "unavailable"}
@@ -22578,8 +24108,7 @@ def api_layout_project_file_reserve(doc_id):
     if target is None:
         return _bad_project_file_request()
     try:
-        slot = _autosave_path(doc_id)
-        with _document_lock(slot):
+        with _document_lock(_autosave_path(doc_id)):
             result = engine_layoutsession.reserve_project_file(
                 engine_layoutsession.project_key(ctx.path),
                 doc_id,
@@ -22588,7 +24117,7 @@ def api_layout_project_file_reserve(doc_id):
                 autosave_revision=body["autosave_revision"],
                 axis=body["axis"],
                 expected_binding_sequence=body["expected_binding_sequence"],
-                actual_autosave_revision=engine_atomicio.existing_revision(slot),
+                actual_autosave_revision=_project_file_actual_slot_revision(doc_id),
             )
     except ValueError:
         return _bad_project_file_request()

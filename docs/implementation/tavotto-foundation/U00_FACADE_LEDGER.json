@@ -340,6 +340,30 @@
       ]
     },
     {
+      "name": "compare_svg_preview_pixels",
+      "kind": "function",
+      "status": "public_contract",
+      "category": "compare_png",
+      "signature": "compare_svg_preview_pixels(baseline, candidate, width, directory) -> bool",
+      "callers": [
+        {
+          "file": "src/tavotto/app.py",
+          "symbol": "_verified_windows_r_source",
+          "role": "用同一渲染器逐 RGBA 通道比对桌面 SVG 与隔离 R 重放 SVG"
+        }
+      ],
+      "tests": [
+        {
+          "file": "tests/test_svg_ir.py",
+          "symbol": "test_text_length_scales_glyphs_and_spacing_around_the_baseline",
+          "contains": "compare_svg_preview_pixels",
+          "class": "user_contract",
+          "note": "相同文件像素一致，改变文字长度可被检测"
+        }
+      ],
+      "migration_criterion": "同一 RenderCore 从两份 SVG 分别生成透明位图。尺寸和每个 RGBA 通道一致才通过。"
+    },
+    {
       "name": "compose",
       "kind": "function",
       "category": "compose",

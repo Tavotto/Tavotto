@@ -40,6 +40,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 
+from ..rendercore.geometry import clip_polyline
 from . import atomicio, config, diagsend, logsafe, reviewinbox
 
 LOG = logging.getLogger("tavotto.reviewshare")
@@ -278,54 +279,11 @@ _GEOM_DP = 4
 Rect = tuple[float, float, float, float]  # x0, y0, x1, y1
 
 
-def _clip_polyline(pts: list[tuple[float, float]], r: Rect) -> list[list[tuple[float, float]]]:
-    """折线裁进矩形 `r`（逐段 Liang–Barsky）：出框断开，返回框内的若干段。"""
-    runs: list[list[tuple[float, float]]] = []
-    cur: list[tuple[float, float]] = []
-    for a, b in zip(pts, pts[1:]):
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        t0, t1 = 0.0, 1.0
-        ok = True
-        for p, q in ((-dx, a[0] - r[0]), (dx, r[2] - a[0]), (-dy, a[1] - r[1]), (dy, r[3] - a[1])):
-            if p == 0:
-                if q < 0:
-                    ok = False
-                    break
-                continue
-            t = q / p
-            if p < 0:
-                t0 = max(t0, t)
-            else:
-                t1 = min(t1, t)
-            if t0 > t1:
-                ok = False
-                break
-        if not ok:
-            if cur:
-                runs.append(cur)
-                cur = []
-            continue
-        s = (a[0] + dx * t0, a[1] + dy * t0)
-        e = (a[0] + dx * t1, a[1] + dy * t1)
-        if not cur or cur[-1] != s:
-            if cur:
-                runs.append(cur)
-            cur = [s]
-        if e != cur[-1]:
-            cur.append(e)
-        if t1 < 1.0:
-            runs.append(cur)
-            cur = []
-    if cur:
-        runs.append(cur)
-    return [run for run in runs if len(run) >= 2]
-
-
 def _clip_segment(
     a: tuple[float, float] | list[float], b: tuple[float, float] | list[float], r: Rect
 ) -> list[list[float]] | None:
     """线段 a→b 裁进矩形 `r`，保持方向；返回 5 位小数的 `[起, 终]`，整段在框外 None。"""
-    runs = _clip_polyline([(a[0], a[1]), (b[0], b[1])], r)
+    runs = clip_polyline([(a[0], a[1]), (b[0], b[1])], r)
     if not runs:
         return None
     s, e = runs[0][0], runs[0][-1]
@@ -390,9 +348,9 @@ def _visible_geometry(
         elif p["closed"]:
             # 未填充的闭合路径只画描边：多边形裁剪会在裁剪框边界上凭空造出 matplotlib 没画的边，
             # 所以带上收口那一段当折线裁，出框就断开成开放段
-            pieces = [(run, False) for run in _clip_polyline(pts + pts[:1], r)]
+            pieces = [(run, False) for run in clip_polyline(pts + pts[:1], r)]
         else:
-            pieces = [(run, False) for run in _clip_polyline(pts, r)]
+            pieces = [(run, False) for run in clip_polyline(pts, r)]
         for run, closed in pieces:
             paths.append(
                 {

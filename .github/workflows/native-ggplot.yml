@@ -1,0 +1,126 @@
+name: Native ggplot2
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/native-ggplot.yml"
+      - "src/tavotto/app.py"
+      - "src/tavotto/engine/**"
+      - "src/tavotto/resources/native/**"
+      - "src/tavotto/resources/color_palettes.json"
+      - "scripts/fetch_fonts.py"
+      - "tests/test_native_ggplot_capture.py"
+      - "tests/test_native_ggplot_details.py"
+      - "tests/test_native_ggplot_hatching.py"
+      - "tests/test_core_v02_release_candidate.py"
+      - "tests/support/foundation_app.py"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+  TAVOTTO_NO_UPDATE_CHECK: "1"
+  PYTHONUTF8: "1"
+
+concurrency:
+  group: native-ggplot-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  real-r:
+    name: Real R (${{ matrix.os }}, ${{ matrix.suite.name }})
+    runs-on: ${{ matrix.os }}
+    # Protected source replay launches fresh R interpreters. Run scoped style
+    # replays beside the other source, layer and figure suites.
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-26-intel]
+        suite:
+          - id: layers
+            name: layer and raster writeback
+          - id: source
+            name: source writeback
+          - id: source-view
+            name: coordinate and locator source writeback
+          - id: scoped
+            name: panel and guide source writeback
+          - id: scoped-view
+            name: independent panel source writeback
+          - id: figures
+            name: figure workflow
+          - id: details
+            name: label, bar and binned guide writeback
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+          architecture: x64
+      - uses: r-lib/actions/setup-r@6f6e5bc62fba3a704f74e7ad7ef7676c5c6a2590 # v2.11.4
+        with:
+          r-version: "4.5.3"
+          rtools-version: none
+      - name: Provide Cairo's X11 libraries on Intel macOS
+        if: runner.os == 'macOS'
+        run: |
+          cairo_x11=/opt/X11/lib/libXrender.1.dylib
+          if ! test -f "$cairo_x11"; then
+            brew install --cask xquartz || test -f "$cairo_x11"
+          fi
+          test -f "$cairo_x11"
+      - name: Install and verify real R dependencies
+        shell: Rscript {0}
+        run: |
+          stopifnot(R.version$arch == "x86_64", capabilities("cairo"))
+          packages <- c("ggplot2", "svglite", "jsonlite")
+          install.packages(packages, repos = "https://cloud.r-project.org", type = "binary")
+          print(R.version.string)
+          print(vapply(packages, function(package) as.character(packageVersion(package)), character(1L)))
+          probe <- tempfile(fileext = ".pdf")
+          cairo_pdf(probe)
+          plot.new()
+          dev.off()
+          stopifnot(file.size(probe) > 0)
+      - name: Cache approved font archives
+        uses: actions/cache@v5
+        with:
+          path: build/fonts-cache/*.tar.gz
+          key: approved-font-archives-v1-${{ runner.os }}-${{ hashFiles('src/tavotto/rendercore/fonts_allowlist.json', 'scripts/fetch_fonts.py') }}
+      - name: Verify native R edits, document restore, and mixed portable export
+        shell: bash
+        env:
+          NATIVE_R_SUITE: ${{ matrix.suite.id }}
+          TAVOTTO_TEST_HANG_SECONDS: "900"
+        run: |
+          python -m pip install -e ".[dev,worker]"
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+          TAVOTTO_TEST_RSCRIPT="$(python -c 'import shutil; print(shutil.which("Rscript") or "")')"
+          test -n "$TAVOTTO_TEST_RSCRIPT"
+          export TAVOTTO_TEST_RSCRIPT
+          layer_replays="test_native_r_fixed_layer_styles or test_native_r_raster_writeback"
+          scoped_replays="test_native_r_independent_facet_views or test_native_r_individual_frame_sides or test_native_r_facet_ or test_native_r_mapped_ or test_native_r_hidden_grid_paint or test_native_r_fixed_ribbon or test_native_r_legend_anchors"
+          source_replays="test_native_r_ or test_borrowed_r_source"
+          source_view="test_native_r_coordinate_writeback or test_native_r_minor_locators"
+          scoped_view="test_native_r_independent_facet_views or test_native_r_individual_frame_sides or test_native_r_hidden_grid_paint"
+          files=(tests/test_native_ggplot_capture.py tests/test_core_v02_release_candidate.py)
+          case "$NATIVE_R_SUITE" in
+            layers) selector="$layer_replays" ;;
+            scoped) selector="not ($layer_replays or $scoped_view) and ($scoped_replays)" ;;
+            scoped-view) selector="not ($layer_replays) and ($scoped_replays) and ($scoped_view)" ;;
+            source) selector="not ($layer_replays or $scoped_replays or $source_view) and ($source_replays)" ;;
+            source-view) selector="not ($layer_replays or $scoped_replays) and ($source_view)" ;;
+            figures) selector="not ($layer_replays or $source_replays or $scoped_replays)" ;;
+            details) selector=""; files=(tests/test_native_ggplot_details.py tests/test_native_ggplot_hatching.py) ;;
+            *) exit 1 ;;
+          esac
+          python -m pytest -o addopts= -v -k "$selector" --durations=10 --junitxml=native-r.xml "${files[@]}"
+          python -c 'import xml.etree.ElementTree as E; suites = E.parse("native-r.xml").findall("testsuite"); assert suites and sum(int(s.attrib["tests"]) for s in suites) > 0 and all(s.attrib["skipped"] == "0" for s in suites)'

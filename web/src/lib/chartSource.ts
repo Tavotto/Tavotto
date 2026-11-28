@@ -1,8 +1,23 @@
 import type { ChartSourceRef, FigureDocument, PanelChartState, PanelObject } from '@/types/document'
+import { sameRules } from './specBinding'
 
 /** 计算图表的坐标合同：/1 面板不携带（身份与请求形状逐字不变）。 */
 export type ChartRenderProfile = 'native-manifest/1' | 'native-manifest/2'
-import { sameRules } from './specBinding'
+
+export interface ChartRenderFields {
+  chart?: PanelChartState
+  chart_source?: ChartSourceRef
+  render_profile?: ChartRenderProfile
+}
+
+export function chartRenderFields(panel: PanelObject): ChartRenderFields | undefined {
+  if (!panel.chart && panel.chartSource === undefined) return undefined
+  return {
+    chart: panel.chart,
+    ...(panel.chartSource === undefined ? {} : { chart_source: panel.chartSource }),
+    ...(panel.chartFrame ? { render_profile: panel.chartFrame.renderProfile } : {}),
+  }
+}
 
 /** 只镜像请求，不校验/授予来源资格；在场但畸形的值也须交后端拒绝，不能降成原文件。 */
 export function chartSourceFields(source: ChartSourceRef | undefined): { chart_source?: ChartSourceRef } {

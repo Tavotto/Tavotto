@@ -312,7 +312,7 @@
     "unsupportedTip": "{{title}}暂不支持：{{reason}}",
     "noPanelTitle": "选择一张可编辑的图以查看图内元素",
     "noEditableTitle": "画布上还没有可编辑的图",
-    "noEditableHint": "由脚本生成的图才能改图内对象",
+    "noEditableHint": "打开有来源脚本的图，或为 SVG 绑定数据",
     "locateEditable": "选中一张可编辑的图"
   },
   "fastEdit": {
@@ -415,6 +415,7 @@
     "restoreAspect": "恢复原始比例",
     "restoreNativeSize": "恢复原始尺寸",
     "adoptScriptFrame": "改用脚本保存时的图幅",
+    "adoptComputedFrame": "采用计算渲染外框",
     "restoreStyle": "恢复原样并解除样式跟随",
     "alignNewFigure": "按样式对齐新图",
     "alignNewText": "按样式对齐新标注",
@@ -463,7 +464,6 @@
     "showObjects": "显示 {{count}} 个对象",
     "setFramePad": "修改画布留白",
     "journalStyle": "参考 {{journal}} 的记录调整样式「{{name}}」",
-    "adoptComputedFrame": "采用计算渲染外框",
     "defaultAppearance": "默认填色描边",
     "swapFillStroke": "互换填色和描边",
     "clearFill": "无填充",
@@ -550,6 +550,8 @@
     "detach": "脱离接管",
     "resume": "继续运行脚本",
     "resumeHint": "先将图恢复为脚本原始状态再继续运行；你的编辑会在下次停下时重放。",
+    "rConsoleReady": "已连接 R 控制台中的图形，可以编辑。",
+    "rConsoleResume": "返回原 R 控制台",
     "state": {
       "barrierAfterError": "脚本出错后停下了。捕获的图仍可编辑。",
       "barrier_other": "已停下，{{count}} 张图可以编辑",
@@ -765,11 +767,11 @@
     "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
     "projectConflictElsewhere": "项目里的 {{file}} 已在别处改过，这次没有写入。回到那份排版再保存，就能决定怎么处理。",
     "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
+    "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
+    "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。",
     "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
     "reloadFailed": "没能读到磁盘上的那一版",
-    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
-    "projectBindingUnavailable": "项目文件关联尚未确认，本次还没有写入命名文件。改动仍在本机，请重试或重新打开排版。",
-    "projectBindingSuperseded": "已写入 {{file}}，但下次保存目标尚未确认。较晚选择的目标会保留，请重新打开这份排版后继续保存。"
+    "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
   },
   "scrim": {
     "collapse": "收起侧栏"
@@ -819,6 +821,30 @@
     "foreignLang": {
       "matlab": "MATLAB",
       "r": "R"
+    },
+    "nativeGgplot": {
+      "open": "用 R 运行",
+      "title": "捕获 ggplot2 图形",
+      "description": "在本机 R 中以你的账户权限执行 {{script}}。脚本需要创建指定名称的 ggplot 对象。",
+      "mode": "捕获方式",
+      "startMode": "运行脚本",
+      "consoleMode": "连接已有 R 会话",
+      "consoleDescription": "从 RStudio 或终端中接入当前 R 会话里的 ggplot 对象。",
+      "generateCommand": "生成连接命令",
+      "command": "R 连接命令",
+      "copyCommand": "复制 R 命令",
+      "copiedCommand": "已复制 R 命令",
+      "consoleInstructions": "请在 {{seconds}} 秒内把命令粘贴到已有的 R 控制台运行。编辑完成后，在 Tavotto 中点「返回原 R 控制台」。",
+      "done": "关闭",
+      "inviteFailed": "未能生成 R 连接命令。",
+      "object": "图形对象名",
+      "width": "宽度（mm）",
+      "height": "高度（mm）",
+      "runtime": "Rscript 路径（可选）",
+      "library": "R 包库目录（可选）",
+      "browse": "浏览",
+      "run": "运行并捕获",
+      "failed": "R 脚本未能启动。"
     },
     "copyPath": "复制路径",
     "pathCopied": "已复制：{{path}}",
@@ -994,6 +1020,9 @@
     "packageOpenFailed": "无法打开项目包。{{error}}",
     "packageTooNew": "这个项目包来自更新的 {{product}}，本版本无法打开。",
     "packageOpened": "已打开项目包（{{createdAt}}），素材全部就位",
+    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
+    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
+    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
     "packageIncomplete": "项目包有 {{count}} 份图表来源缺失或损坏，请补齐后重试。",
     "packaged_other": "已生成项目包 {{name}}（{{count}} 个素材）",
     "pasteNothing": "没有可粘贴的对象。缺失素材的对象已跳过。",
@@ -1033,9 +1062,6 @@
     },
     "copyDetails": "复制详情",
     "copiedDetails": "已复制",
-    "packagedIncomplete_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材。恢复前请补齐。",
-    "packagedExecutionIncomplete": "已生成项目包 {{name}}。运行依赖尚未确认完整，迁移前请检查数据与运行配置。",
-    "packagedIncompleteWithExecution_other": "已生成项目包 {{name}}，缺少 {{count}} 项素材，运行依赖也尚未确认完整。迁移前请补齐素材并检查数据与运行配置。",
     "eyedropperNothing": "这里没有能吸的颜色",
     "eyedropperNoTarget": "先选中要上色的形状、路径或箭头",
     "pathfinderUnavailable": "这里用不了路径查找器",
@@ -1117,6 +1143,9 @@
     "documentName": "排版名",
     "export": "导出",
     "exportPackage": "导出项目包",
+    "exportCanvasPackage": "仅打包当前画布",
+    "exportSelectedCanvases": "打包所选画布",
+    "packageCanvasDescription": "选择要分享的画布。项目包只包含所选画布及其引用的资源。",
     "exportTip": "导出 PNG / PDF",
     "fitCanvas": "适应画布",
     "foreignOpen": {
@@ -1827,21 +1856,6 @@
         "other": "AI 这次没能修好"
       }
     },
-    "hint": {
-      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
-      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
-      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
-    },
-    "folder": {
-      "desktop": "桌面",
-      "documents": "文稿",
-      "downloads": "下载",
-      "icloud": "iCloud 云盘"
-    },
-    "library": {
-      "partial": "只查了一部分文件，可能还有别的脚本调用它",
-      "openFailed": "没能打开那个文件夹"
-    },
     "inputs": {
       "title": "捕获输入",
       "hint": "选择下一次明确运行时要记录的输入。保存仅重新检查，不运行脚本。",
@@ -1870,6 +1884,21 @@
       "scopeUnknown": "当前运行范围尚未确定。",
       "notScript": "当前目标不是可声明输入的脚本。",
       "captured": "实际运行记录的输入摘要：{{revision}}"
+    },
+    "hint": {
+      "copyRun": "会把你指认的 {{source}} 复制一份到 {{target}}，原文件不动。",
+      "grantCopy": "会弹出系统的授权窗口，同意后再复制；原文件不动。",
+      "openPrivacy": "在“隐私与安全性 → 完全磁盘访问”里勾上 {{product}}，再回来重新运行。"
+    },
+    "folder": {
+      "desktop": "桌面",
+      "documents": "文稿",
+      "downloads": "下载",
+      "icloud": "iCloud 云盘"
+    },
+    "library": {
+      "partial": "只查了一部分文件，可能还有别的脚本调用它",
+      "openFailed": "没能打开那个文件夹"
     }
   },
   "canvasMenu": {
@@ -1932,10 +1961,12 @@
     "clearPad": "去掉留白",
     "notWrittenBack": "留白只在 Tavotto 导出时生效，不写回脚本"
   },
-  "dataDrawer": {
-    "count": "{{count}} 个数据文件"
-  },
   "chartBind": {
+    "backupName": "绑定图表数据前",
+    "backupFailed": "排版备份未能保存。请重新预览后重试。",
+    "documentChanged": "备份期间排版已更改。请重新打开图表绑定后继续。",
+    "geometryPending": "请等当前图表预览完成后再调整图内位置或尺寸。",
+    "frameUnavailable": "计算后的图表外框与当前面板裁剪区域不相交。",
     "title": "绑定数据为计算图表",
     "fileLabel": "来源文件",
     "nodesLabel": "节点数",
@@ -2008,6 +2039,9 @@
       "errorbar": "误差棒",
       "image": "热图 / 网格"
     }
+  },
+  "dataDrawer": {
+    "count": "{{count}} 个数据文件"
   },
   "pathfinder": {
     "blockedEmbedded": "在这里用不了，请在 Tavotto 桌面版或浏览器里打开",

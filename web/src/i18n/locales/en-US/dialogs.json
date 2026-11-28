@@ -205,11 +205,27 @@
     "batchProgress": "Figure {{k}} of {{n}} · {{name}} · {{phase}}",
     "scriptHint": "Edited copy of the script. The original isn’t touched.",
     "scriptSkipped": "Not written: {{items}}",
+    "sourceStyle": {
+      "open": "Write styles to the R script…",
+      "title": "Write styles to the R script",
+      "saveFirst": "Save the current layout in the project before writing to the script.",
+      "verifying": "Replaying the proposed R source and comparing the figure…",
+      "count": "{{written}} edits will go into the script. {{remaining}} will stay in the layout.",
+      "commit": "Modify script",
+      "restore": "Restore script and layout",
+      "done": "The script and project layout were updated. Both backups are ready.",
+      "reopen": "Reopen the saved layout to see the updated version."
+    },
     "scriptUnavailable": {
-      "canvas_scope": "Can’t export .py for the whole layout. Choose “Each figure separately”.",
-      "no_script": "No script for this figure"
+      "canvas_scope": "Choose “Each figure separately” to export edited scripts.",
+      "no_script": "No script for this figure",
+      "native": "Protected source replay is unavailable for this R figure."
     },
     "mergePdf": "Combine into one multi-page PDF: {{name}} ({{count}} pages)",
+    "pdfPanelBookmarks": "Add PDF bookmarks for figure panels",
+    "pdfPanelLayers": "Put each figure panel on its own PDF layer",
+    "pdfAnnotationLayer": "Put canvas annotations on a toggleable PDF layer",
+    "pdfTextAttachment": "Embed canvas text annotations as a JSON attachment",
     "batchNames": "Each figure keeps its own name",
     "exportAgain": "Export again",
     "newerObjects_other": "{{count}} objects come from a newer version. Update to export them.",
@@ -2974,6 +2990,12 @@
     "editorEmail": "We will reply here once checked"
   },
   "packageInstall": {
+    "frozenPanels": "The package preserves the confirmed artwork for these figures. Run their original scripts on this machine to edit figure elements.",
+    "skippedConflict": "{{conflict}} run configurations conflicted with local settings, which were kept.",
+    "skippedCapacity": "{{capacity}} run configurations exceeded the local limit and were skipped.",
+    "skippedBoth": "Local settings took precedence for {{conflict}} run configurations, and {{capacity}} others exceeded the local limit.",
+    "importEntry": "Import project package…",
+    "remapRelink": "Some Figure snapshots were captured under another machine's input mapping. After opening the project, relink those figures to their original files; the old paths will not be reused.",
     "entry": "Install project package to a new folder…",
     "title": "Install computational chart package",
     "description": "Inspect resources, then install a new project. Your current layout is preserved when opening it.",

@@ -185,6 +185,20 @@ def test_ledger_unknown_is_ordered_not_a_fake_execution():
     assert ledger.accepts(owner, "c-receipt") is True
 
 
+def test_verified_source_replay_is_exact_and_retires_on_a_new_execution():
+    ledger = svgexecution.Ledger()
+    owner = svgexecution.owner("plot.R")
+    previous = ledger.observe(owner, "first", 10, object())
+    ledger.accept_verified_replay(owner, previous, "first-figure", "source-receipt")
+    assert ledger.verified_replay(owner, "first-figure", "source-receipt")
+    assert not ledger.verified_replay(owner, "second-figure", "source-receipt")
+    assert not ledger.verified_replay(owner, "first-figure", None)
+    ledger.observe(owner, "second", 20, object())
+    assert not ledger.verified_replay(owner, "first-figure", "source-receipt")
+    ledger.accept_verified_replay(owner, previous, "first-figure", "source-receipt")
+    assert not ledger.verified_replay(owner, "first-figure", "source-receipt")
+
+
 def test_one_shot_observer_does_not_retire_current_owner(project):
     _, root = project
     worker = SimpleNamespace(

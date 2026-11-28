@@ -87,6 +87,10 @@ class CompiledPage:
     problems: tuple[dict, ...]
     #: 用到的冻结源，按首次出现顺序（资源 key → FrozenSource）。
     sources: dict[str, FrozenSource]
+    pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
+    pdf_panel_layer_titles: dict[int, str] = field(default_factory=dict)
+    pdf_annotation_indices: frozenset[int] = frozenset()
+    pdf_annotation_text: tuple[str, ...] | None = None
     #: 给 SVG 用的那一页（ADR 0208 §七之三）：对象按文档的组嵌套、带名字、剪切组的蒙版只在组上写一次。
     #: **只有 SVG 看它**——PDF / EPS / 位图一律用 `page`（逐字节不变）。载荷里没有组也没有名字时 = None（用 `page`）。
     svg_page: Page | None = None
@@ -106,6 +110,10 @@ class RenderPlan:
     dropped_hidden: tuple[str, ...] = ()
     problems: tuple[dict, ...] = ()
     sources: dict[str, FrozenSource] = field(default_factory=dict)
+    pdf_bookmark_titles: dict[int, str] = field(default_factory=dict)
+    pdf_panel_layer_titles: dict[int, str] = field(default_factory=dict)
+    pdf_annotation_indices: frozenset[int] = frozenset()
+    pdf_annotation_text: tuple[str, ...] | None = None
     #: 见 `CompiledPage.svg_page`；None = SVG 也用 `page`
     svg_page: Page | None = None
 
@@ -755,6 +763,10 @@ def compile_page(
     faces: FaceProvider,
     background: RGB | None = (1.0, 1.0, 1.0),
     math: dict | None = None,
+    pdf_panel_bookmarks: bool = False,
+    pdf_panel_layers: bool = False,
+    pdf_annotation_layer: bool = False,
+    pdf_text_attachment: bool = False,
 ) -> CompiledPage:
     """画布（毫米、顶原点、z 序对象列表）→ 已校验的 `Page`。
 
@@ -766,6 +778,10 @@ def compile_page(
     problems: list[dict] = []
     dropped: list[str] = []
     children: list[Node] = []
+    pdf_bookmark_titles: dict[int, str] = {}
+    panel_layer_titles: dict[int, str] = {}
+    annotation_indices: set[int] = set()
+    annotation_text: list[str] = []
     entries: list[_SvgEntry] = []
     structured = False
     for o in objects:
@@ -797,6 +813,26 @@ def compile_page(
         if node is not None and o.get("clip"):
             node = _clipped(node, o.get("clip"), page_h)
         if node is not None:
+            if isinstance(base, (Image, ImportedPage)) and (
+                pdf_panel_bookmarks or pdf_panel_layers
+            ):
+                title = o.get("bookmark_title")
+                # Bind by emitted instance position, even when several panels share a source.
+                title = title[:120] if isinstance(title, str) else ""
+                title = "".join(ch for ch in title if ch.isprintable() or ch.isspace())
+                title = " ".join(title.split())
+                if pdf_panel_bookmarks:
+                    pdf_bookmark_titles[len(children)] = title
+                if pdf_panel_layers and base.opacity > 0:
+                    # The same target rectangle holds the panel after crop, flip and
+                    # quarter turns. A mask may further clip its emitted instructions.
+                    x, y, w, h = base.rect
+                    if max(0.0, x) < min(page_w, x + w) and max(0.0, y) < min(page_h, y + h):
+                        panel_layer_titles[len(children)] = title
+            if pdf_annotation_layer and kind != "panel":
+                annotation_indices.add(len(children))
+            if pdf_text_attachment and kind == "text":
+                annotation_text.append(o["text"])
             children.append(node)
             # SVG 的那一页（ADR 0208 §七之三）：PDF / EPS / 位图用的 `children` 一个字节都不动，这里另攒一份
             structured = structured or bool(o.get("group_path")) or o.get("name") is not None
@@ -810,7 +846,17 @@ def compile_page(
         if structured
         else None
     )
-    return CompiledPage(page, tuple(dropped), tuple(problems), frozen, svg_page)
+    return CompiledPage(
+        page,
+        tuple(dropped),
+        tuple(problems),
+        frozen,
+        pdf_bookmark_titles=pdf_bookmark_titles,
+        pdf_panel_layer_titles=panel_layer_titles,
+        pdf_annotation_indices=frozenset(annotation_indices),
+        pdf_annotation_text=tuple(annotation_text) if pdf_text_attachment else None,
+        svg_page=svg_page,
+    )
 
 
 def compile_plan(
@@ -835,6 +881,10 @@ def compile_plan(
         faces=faces,
         background=background,
         math=math,
+        pdf_panel_bookmarks=req.pdf_panel_bookmarks,
+        pdf_panel_layers=req.pdf_panel_layers,
+        pdf_annotation_layer=req.pdf_annotation_layer,
+        pdf_text_attachment=req.pdf_text_attachment,
     )
     ref = exportreq.render_plan_ref(
         req,
@@ -855,6 +905,10 @@ def compile_plan(
         dropped_hidden=compiled.dropped_hidden,
         problems=compiled.problems,
         sources=compiled.sources,
+        pdf_bookmark_titles=compiled.pdf_bookmark_titles,
+        pdf_panel_layer_titles=compiled.pdf_panel_layer_titles,
+        pdf_annotation_indices=compiled.pdf_annotation_indices,
+        pdf_annotation_text=compiled.pdf_annotation_text,
         svg_page=compiled.svg_page,
     )
 

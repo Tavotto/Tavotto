@@ -78,6 +78,8 @@ type Details = { id: string; scope: Scope; anchor: HTMLElement }
 /** `edgePct`：条尾超过这里，时长小字才改放到条尾左边（= 时间轴为它留的右边之外） */
 type View = { start: number; domain: number; edgePct?: number }
 const clampSplit = (p: number) => Math.min(70, Math.max(20, p))
+const showsTraceNode = (node: TraceNode, matches: Set<string> | null, now: number, replay: boolean) =>
+  (matches === null || matches.has(node.span.id)) && !notStartedAt(node.span, now, replay)
 
 export function TraceWaterfall({
   model,
@@ -125,18 +127,13 @@ export function TraceWaterfall({
   const running = useCallback((n: TraceNode) => isRunning(n.span, model, now), [model, now])
   const replay = !!model.replay
 
-  // 搜索时，折叠的智能体里的命中项也要露出来
-  const isOpen = (n: TraceNode) => matches !== null || !collapsed.has(n.span.id)
-  const isShown = (n: TraceNode) => (matches === null || matches.has(n.span.id)) && !notStartedAt(n.span, now, replay)
-
   // 回放时「还没开始」的行不进列表（连线 / 滚动跟随也只数看得见的）；非回放不依赖此刻
   const cut = replay ? now : 0
   const flat = useMemo(() => {
     const out: TraceNode[] = []
     const visit = (nodes: TraceNode[]) => {
       for (const n of nodes) {
-        if (matches !== null && !matches.has(n.span.id)) continue
-        if (notStartedAt(n.span, cut, replay)) continue
+        if (!showsTraceNode(n, matches, cut, replay)) continue
         out.push(n)
         if (matches !== null || !collapsed.has(n.span.id)) visit(n.children)
       }
@@ -286,29 +283,10 @@ export function TraceWaterfall({
   const detailsNode = details ? byId.get(details.id) : undefined
   const dash = t('trace.ui.unknown')
 
-  const renderLevel = (nodes: TraceNode[]) =>
-    nodes.filter(isShown).map((node) => {
-      const hasChildren = replay ? node.children.some(isShown) : node.children.length > 0
-      const open = hasChildren && isOpen(node)
-      return (
-        <li key={node.span.id} className="motion-safe:animate-settle-in">
-          <Row
-            node={node}
-            open={open}
-            hasChildren={hasChildren}
-            ticks={ticks}
-            view={view}
-            now={now}
-            model={model}
-            slowest={node.span.id === metrics.slowestId}
-            details={details}
-            onToggle={toggle}
-            onOpen={openDetails}
-          />
-          {open && <ul>{renderLevel(node.children)}</ul>}
-        </li>
-      )
-    })
+  const branch = useMemo(
+    () => ({ collapsed, matches, ticks, view, slowestId: metrics.slowestId, details, onToggle: toggle, onOpen: openDetails }),
+    [collapsed, matches, ticks, view, metrics.slowestId, details, toggle, openDetails],
+  )
 
   const rootStyle = {
     ...(split === null ? null : { '--trace-label': `${split}%` }),
@@ -449,7 +427,9 @@ export function TraceWaterfall({
               </div>
               <Handoffs flat={flat} view={view} track={track} now={now} replay={replay} running={running} />
               <ul aria-label={t('trace.ui.treeLabel')} className="relative">
-                {renderLevel(roots)}
+                {roots.map((node) => (
+                  <TraceBranch key={node.span.id} node={node} branch={branch} now={now} model={model} />
+                ))}
               </ul>
               {/* 现在线：运行中、回放中才画。细、accent 降一档，只在行区里，不伸进坐标轴 */}
               {(model.running || replay) && (
@@ -459,9 +439,9 @@ export function TraceWaterfall({
                 >
                   <span
                     data-trace-now
-                    className="absolute inset-y-0 w-px bg-accent/60"
+                    className="absolute inset-0 before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-accent/60"
                     style={{
-                      left: `${pct(replay ? now : Math.max(now, metrics.extent), view)}%`,
+                      transform: `translateX(${pct(replay ? now : Math.max(now, metrics.extent), view)}%)`,
                     }}
                   />
                 </div>
@@ -579,6 +559,65 @@ interface RowProps {
   onOpen: (node: TraceNode, scope: Scope, anchor: HTMLElement) => void
 }
 
+type TimedNode = Pick<RowProps, 'node' | 'model' | 'now'>
+
+function sameTraceTime(a: TimedNode, b: TimedNode): boolean {
+  if (a.model.spans !== b.model.spans || a.model.duration !== b.model.duration || a.model.running !== b.model.running) return false
+  if (a.model === b.model && a.now === b.now) return true
+  if (!!a.model.replay !== !!b.model.replay) {
+    const { to } = subtreeExtent(b.node)
+    return a.now >= to && b.now >= to
+  }
+  return b.model.replay ? rowUnchangedBetween(b.node, a.now, b.now) : !subtreeOpen(b.node)
+}
+
+interface BranchProps extends TimedNode {
+  branch: Pick<RowProps, 'ticks' | 'view' | 'details' | 'onToggle' | 'onOpen'> & {
+    collapsed: Set<string>
+    matches: Set<string> | null
+    slowestId?: string
+  }
+}
+
+// A later playback frame only needs to visit branches whose time span it intersects.
+const TraceBranch = memo(TraceBranchImpl, (a, b) =>
+  a.node === b.node && a.branch === b.branch && !!a.model.replay === !!b.model.replay && sameTraceTime(a, b),
+)
+
+function TraceBranchImpl({ node, now, model, branch }: BranchProps) {
+  const { collapsed, matches, ticks, view, slowestId, details, onToggle, onOpen } = branch
+  const replay = !!model.replay
+  if (!showsTraceNode(node, matches, now, replay)) return null
+  const hasChildren = replay
+    ? node.children.some((child) => showsTraceNode(child, matches, now, replay))
+    : node.children.length > 0
+  const open = hasChildren && (matches !== null || !collapsed.has(node.span.id))
+  return (
+    <li>
+      <Row
+        node={node}
+        open={open}
+        hasChildren={hasChildren}
+        ticks={ticks}
+        view={view}
+        now={now}
+        model={model}
+        slowest={node.span.id === slowestId}
+        details={details}
+        onToggle={onToggle}
+        onOpen={onOpen}
+      />
+      {open && (
+        <ul>
+          {node.children.map((child) => (
+            <TraceBranch key={child.span.id} node={child} branch={branch} now={now} model={model} />
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
+
 /**
  * 一行。`now` 只影响还没结束的 Span：已结束的行在「此刻」走一格时不重画（运行中的大 Trace 每秒四格，689 行全重画会卡住输入）。
  * 其余任何一个属性换了（展开、缩放、选中、快照更新）照常重画。
@@ -588,16 +627,7 @@ const Row = memo(RowImpl, (a, b) => {
     if (k === 'now' || k === 'model') continue
     if (a[k] !== b[k]) return false
   }
-  // 回放起止只换 replay 标记；快照或运行状态变化仍必须重画。
-  if (a.model.spans !== b.model.spans || a.model.duration !== b.model.duration || a.model.running !== b.model.running) return false
-  if (a.model === b.model && a.now === b.now) return true
-  if (!!a.model.replay !== !!b.model.replay) {
-    // 两边都已结束才与完整视图一致；未开始的行不能用同一判断。
-    const { to } = subtreeExtent(b.node)
-    return a.now >= to && b.now >= to
-  }
-  // 回放：这一格对这一行有没有影响，看它（含子孙）的时间范围
-  return b.model.replay ? rowUnchangedBetween(b.node, a.now, b.now) : !subtreeOpen(b.node)
+  return sameTraceTime(a, b)
 })
 
 function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, details, onToggle, onOpen }: RowProps) {
@@ -661,7 +691,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
       data-top={top}
       data-popup-open={popupOpen('lane') || undefined}
       className={cn(
-        'group/row relative flex h-9 items-center border-b border-transparent',
+        'group/row relative flex h-9 items-center border-b border-transparent motion-safe:animate-stream-in',
         // 吸顶的行底色**一直**不透明（不等滚动事件把 data-stuck 补上）：底下滚过来的行从它后面干净地穿过去；
         // 悬停的淡灰不能直接上在它身上（半透明会透出底下的字），改画在一层叠加里
         pinned

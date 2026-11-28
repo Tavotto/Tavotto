@@ -10,6 +10,7 @@ CI 的发布流水线和本地 `python -m build` 之前都走同一条命令：
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,7 +36,7 @@ NODE_HEAP_MB = 4096
 def build_env(base: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
     opts = env.get("NODE_OPTIONS", "")
-    if "--max-old-space-size" not in opts:
+    if not re.search(r"(?:^|\s)--max[-_]old[-_]space[-_]size(?:=|\s)", opts):
         env["NODE_OPTIONS"] = f"{opts} --max-old-space-size={NODE_HEAP_MB}".strip()
     return env
 

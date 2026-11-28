@@ -15,8 +15,8 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
 /**
  * 刻度写入面的组装。
  *
- * 宿主映射（唯一的一份）：子图 `axes_0` 的 X 刻度住在 `axes_0.xticks`、
- * Y 刻度住在 `axes_0.yticks`。四边开关（`ticks_top` 等）住在 **axes 自己**
+ * 宿主由清单的 `tick_host` 声明，旧清单沿用 `axes_0.xticks` 这样的 gid。
+ * 四边开关（`ticks_top` 等）住在 **axes 自己**
  * 身上，方向 / 长度 / 宽度 / 次刻度住在 **ticks 元素**身上——两组字段分属
  * 两个 manifest 元素，这就是「刻度这件事被拆散」的根因。界面把它们并到
  * 一张卡上，写入仍各回各的元素，一个字节的协议都没动。
@@ -28,15 +28,24 @@ export function tickElementOf(
   axesGid: string,
   axis: TickAxis,
 ): ManifestElement | undefined {
-  return manifest?.elements.find((e) => e.gid === `${axesGid}.${axis}ticks` && e.role === 'ticks')
+  const groups = manifest?.elements.filter((element) => {
+    const host = tickHostOf(element)
+    return host?.axesGid === axesGid && host.axis === axis
+  })
+  return groups?.length === 1 ? groups[0] : undefined
 }
 
 /** 三条轴：Z 只有 3D 图有（`manifest.py` 的 `tick_axes` 在 is3d 时多一条） */
 export type TickAxis = 'x' | 'y' | 'z'
 
 /** 刻度元素 gid → 它属于哪个轴、宿主子图是谁 */
-export function tickHostOf(gid: string): { axesGid: string; axis: TickAxis } | null {
-  const m = gid.match(/^(.*)\.([xyz])ticks$/)
+export function tickHostOf(
+  element: Pick<ManifestElement, 'gid' | 'role' | 'tick_host'> | null | undefined,
+): { axesGid: string; axis: TickAxis } | null {
+  if (element?.role !== 'ticks') return null
+  const host = element.tick_host
+  if (host) return { axesGid: host.axes_gid, axis: host.axis }
+  const m = element.gid.match(/^(.*)\.([xyz])ticks$/)
   return m ? { axesGid: m[1], axis: m[2] as TickAxis } : null
 }
 

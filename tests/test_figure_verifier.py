@@ -7,7 +7,6 @@
 * 每个反例：它点名的 `must_fail` 断言被判 failed——验证器不是恒真的；
 * manifest 的数据指纹与原生探针从同一份脚本读出的摘要逐字节相同（两条独立的路径量到了同一个东西）。
 
-验证器看不见的反例（manifest 不带的事实）登记在 `KNOWN_BLIND`，**精确匹配**：盲区被补上之后这里会红，提醒删掉登记。
 本进程不 import matplotlib：worker 与探针都跑在 `pool.find_worker_python()` 找到的科学栈解释器里，找不到就 skip（not_run）。
 """
 
@@ -18,6 +17,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -36,11 +36,6 @@ needs_worker = pytest.mark.skipif(
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 ENGINE = SRC / "tavotto" / "engine"
-
-#: 验证器量不到、因而抓不住的反例：(场景, 反例) → 原因。精确匹配，见模块说明
-KNOWN_BLIND = {
-    ("FB-C04", "n.unshared"): "shared_x：manifest 不带 axes 之间的共享关系",
-}
 
 
 def _manifest(script: Path, stem: str) -> dict:
@@ -161,7 +156,7 @@ def test_baseline_does_not_already_satisfy_the_goal(built, scenario):
 
 @needs_worker
 @pytest.mark.parametrize("scenario", probe_scenarios(), ids=lambda s: s["id"])
-def test_every_negative_variant_is_caught_or_registered_blind(built, scenario):
+def test_every_negative_variant_is_caught(built, scenario):
     manifests, _ = built
     base = _ok(manifests, f"base__{scenario['fixture']}")
     by_id = {a["id"]: a for a in scenario["goal"] + scenario["preserve"]}
@@ -172,18 +167,19 @@ def test_every_negative_variant_is_caught_or_registered_blind(built, scenario):
             aid: figureverify.check(by_id[aid], man, base, role="preserve").verdict
             for aid in n["must_fail"]
         }
-        if key in KNOWN_BLIND:
-            assert "failed" not in verdicts.values(), (
-                f"{key} 已经抓得住了：从 KNOWN_BLIND 删掉这条登记"
-            )
-            assert set(verdicts.values()) == {"unknown"}, (key, verdicts)
-            continue
         assert all(v == "failed" for v in verdicts.values()), f"{key} 没抓住：{verdicts}"
 
 
-def test_known_blind_list_only_names_real_negatives():
-    real = {(s["id"], n["id"]) for s in probe_scenarios() for n in s["negative_variants"]}
-    assert set(KNOWN_BLIND) <= real
+@needs_worker
+def test_shared_x_is_unknown_when_the_capture_omits_the_relation(built):
+    manifests, _ = built
+    unshared = _ok(manifests, "FB-C04__n.unshared")
+    legacy = deepcopy(unshared)
+    first = next(el for el in legacy["elements"] if el["gid"] == "axes_0")
+    assert first["autoscale"]["peers"].pop("x") == []
+    a = {"kind": "shared_x", "axes": [0, 2]}
+    check = figureverify.check(a, legacy, unshared, role="preserve")
+    assert (check.verdict, check.reason_code) == ("unknown", "not_observable")
 
 
 # --------------------------------------------------------------------------- L3 版式回归

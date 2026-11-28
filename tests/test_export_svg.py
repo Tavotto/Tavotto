@@ -308,6 +308,43 @@ def test_snapshot_staging_failure_does_not_fail_document_save(project, monkeypat
     assert response.get_json()["svg_snapshot_warnings"] == [source]
 
 
+def test_cold_render_of_missing_disk_script_does_not_block_archived_export(project, monkeypatch):
+    import subprocess
+
+    client, root = project
+    subprocess.run(
+        [sys.executable, "-c", "import runpy; runpy.run_path('plot.py')['main']()"],
+        cwd=root,
+        env={**os.environ, "MPLBACKEND": "agg"},
+        check=True,
+    )
+    run_script(client)
+    patch = {"gid": "axes_0.title", "prop": "text", "value": "Saved cold drawing"}
+    response = client.post("/api/layouts/cold?target=project", json=document("F.pdf", [patch]))
+    assert response.status_code == 200, response.get_json()
+    reference = response.get_json()["figure_snapshots"]["panel"]
+    pool.shutdown_all(figures_dir=str(root), wait=True)
+    m.reset_projects()
+    (root / "plot.py").rename(root / "plot.py.removed")
+    m.open_project(str(root))
+
+    # A snapshot-less timeline node can arrive before a named, archived layout.
+    def forbidden_spawn(*args, **kwargs):
+        pytest.fail("missing script started a worker")
+
+    monkeypatch.setattr(pool.EngineWorker, "__init__", forbidden_spawn)
+    monkeypatch.setattr(pool.WorkerdWorker, "__init__", forbidden_spawn)
+    render = client.post("/api/engine/render", json={"id": "F.pdf", "patches": [patch]})
+    assert render.get_json()["code"] == "script_source_missing"
+    assert render.get_json()["params"] == {"script": "plot.py"}
+    body, outputs = output(
+        client, spec("F.pdf", patches=[patch], formats=("pdf", "svg"), reference=reference)
+    )
+    assert body["status"] == "done", body
+    assert outputs["pdf"]["status"] == "done"
+    assert_svg(body, outputs["svg"], scope="canvas")
+
+
 def test_matching_disk_pdf_gets_same_figure_svg_without_reexecution(project, monkeypatch):
     import os
     import subprocess

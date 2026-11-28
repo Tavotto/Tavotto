@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from tavotto import svgcoord
+from tavotto import pdfbackend, svgcoord
 from tavotto.rendercore import ir
 from tavotto.rendercore.svgir import SVGIRError, svg_to_ir
 
@@ -43,6 +43,35 @@ def path_points(page, object_id="p"):
         (s[0], *(v for i in range(1, len(s), 2) for v in ir.apply(matrix, s[i], s[i + 1])))
         for s in node.segments
     ]
+
+
+def test_rectangular_pattern_replay_preserves_origin_repeat_and_clip(tmp_path):
+    frame = 'width="32pt" height="24pt" viewBox="0 0 32 24"'
+    patterned = svg(
+        '<defs><pattern id="hatch" patternUnits="userSpaceOnUse" x="4" y="4" '
+        'width="8" height="8"><rect x="1" y="2" width="3" height="3" fill="#118877"/>'
+        '</pattern></defs><rect x="6" y="3" width="17" height="17" fill="url(#hatch)"/>',
+        frame,
+    )
+    rectangles = "".join(
+        f'<rect x="{x}" y="{y}" width="{width}" height="3" fill="#118877"/>'
+        for y in (6, 14)
+        for x, width in ((6, 2), (13, 3), (21, 2))
+    )
+    explicit = svg(rectangles, frame)
+    assert pdfbackend.compare_svg_preview_pixels(patterned, explicit, 128, tmp_path)
+    wrong = patterned.replace(b"#118877", b"#983866")
+    assert not pdfbackend.compare_svg_preview_pixels(patterned, wrong, 128, tmp_path)
+
+
+def test_pattern_replay_rejects_unbounded_tile_expansion():
+    tiny_tiles = svg(
+        '<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width=".001" '
+        'height=".001"><rect width=".001" height=".001"/></pattern></defs>'
+        '<rect width="100" height="100" fill="url(#hatch)"/>'
+    )
+    with pytest.raises(SVGIRError, match="pattern tile expansion exceeds the SVG budget"):
+        svg_to_ir(tiny_tiles, 100, 100, None)
 
 
 def test_relative_moveto_lineto_horizontal_vertical_close_and_next_subpath():
@@ -584,15 +613,50 @@ def test_nested_clip_path_on_a_clip_definition_is_rejected_not_widened():
         assert ei.value.code == "svgir_unsupported_element"
 
 
-def test_text_length_is_rejected_instead_of_ignored():
-    from support.fakeface import FakeProvider
+def test_text_length_scales_glyphs_and_spacing_around_the_baseline(tmp_path, provider):
+    from tavotto import pdfbackend
 
     source = svg(
-        '<text x="10" y="50" font-size="20" textLength="80" '
-        'lengthAdjust="spacingAndGlyphs">Hi</text>'
+        '<text id="sized" x="50" y="50" font-size="20" text-anchor="middle" '
+        'textLength="60" lengthAdjust="spacingAndGlyphs">HELLO</text>'
     )
+    page, _ = svg_to_ir(
+        source,
+        100,
+        100,
+        provider,
+    )
+    text, matrix = next((n, m) for n, m in final_nodes(page) if n.object_id == "sized")
+    (run,) = text.runs
+    face = page.resources[run.font]
+    advance = sum(glyph.x_advance for glyph in run.glyphs) * run.size / face.units_per_em
+    assert ir.apply(matrix, text.x, text.y) == pytest.approx((20, 50))
+    assert ir.apply(matrix, text.x + advance, text.y) == pytest.approx((80, 50))
+    image, extracted = render_pdf(tmp_path, page, provider)
+    x, _, right, _ = image.point(lambda v: 255 - v).getbbox()
+    assert x == pytest.approx(40, abs=8)
+    assert right == pytest.approx(160, abs=8)
+    assert "HELLO" in extracted
+    assert pdfbackend.compare_svg_preview_pixels(source, source, 200, tmp_path)
+    assert not pdfbackend.compare_svg_preview_pixels(
+        source, source.replace(b'textLength="60"', b'textLength="40"'), 200, tmp_path
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        '<text x="10" y="50" textLength="80" lengthAdjust="spacing">Hi</text>',
+        '<text x="10" y="50" textLength="80" lengthAdjust="spacingAndGlyphs" rotate="45">Hi</text>',
+        '<text x="10" y="50" textLength="80" lengthAdjust="spacingAndGlyphs"><tspan>Hi</tspan></text>',
+        '<text x="10" y="50"><tspan textLength="70" lengthAdjust="spacingAndGlyphs">Hi</tspan></text>',
+    ),
+)
+def test_unsupported_text_length_is_rejected_instead_of_ignored(body):
+    from support.fakeface import FakeProvider
+
     with pytest.raises(SVGIRError) as ei:
-        svg_to_ir(source, 100, 100, FakeProvider())
+        svg_to_ir(svg(body), 100, 100, FakeProvider())
     assert ei.value.code == "svgir_unsupported_element"
 
 

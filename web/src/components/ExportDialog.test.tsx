@@ -1524,6 +1524,26 @@ describe('来源读后端 route（#1209）', () => {
       expect(box()?.disabled).toBe(true)
       expect(row()?.getAttribute('data-export-format-hint')).toBe(i18n.t('dialogs:export.scriptUnavailable.no_script'))
     })
+
+    it('shows the R source option and lets the server report whether it can verify it', async () => {
+      routeOf = (req) => ({
+        scope: req.scope,
+        formats: req.formats,
+        panels: {
+          'r1.png': panelRoute({ offers: { script: {
+            how: 'unavailable',
+            reason: 'script_export_r_source_unavailable',
+            suffix: '_edited.R',
+          } } }),
+        },
+      })
+      await setupRaster([])
+      await settle()
+      const r = document.body.querySelector('[data-export-format="r"]')
+      expect(r?.querySelector('input')?.disabled).toBe(true)
+      expect(r?.getAttribute('data-export-format-hint')).toBe(i18n.t('dialogs:export.scriptUnavailable.native'))
+      expect(row()).toBeNull()
+    })
   })
 
   it('画布范围：route 说某个带编辑的图画不出来，点导出之前就说', async () => {

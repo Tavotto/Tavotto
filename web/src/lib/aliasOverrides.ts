@@ -1,4 +1,4 @@
-import type { Manifest } from './api'
+import type { Manifest, ManifestElement } from './api'
 import { effectiveOverrideIndex } from './effectiveOverride'
 
 /**
@@ -22,19 +22,58 @@ type Key = { readonly gid: string; readonly prop: string }
 
 const keyOf = (k: Key) => `${k.gid}\u0000${k.prop}`
 
-/**
- * 写广播端 `(gid, prop)` 时会被一并清掉的窄端地址（`alias_covers[prop]` 展开）：写之前要看这些地址上有没有
- * 用户的 override——有就别写，写了 `aliasClearPlan` 会把它们删掉（推荐配色按此跳过「单根柱手改过」的柱形系列）。
- * `manifest` 缺失 / 旧引擎没发字段 = 空。
- */
+type FindElement = (gid: string) => ManifestElement | undefined
+
+function reciprocalPeers(findElement: FindElement, { gid, prop }: Key): string[] {
+  const peers = [gid]
+  const seen = new Set(peers)
+  const links = (id: string) => {
+    const element = findElement(id)
+    return element?.alias_pure?.includes(prop) ? element.alias_covers?.[prop]?.[prop] : undefined
+  }
+  // Reciprocal pure links to the same property denote one value shared by a
+  // group. Follow the links through its owner as well as its immediate peers.
+  for (const member of peers) {
+    for (const peer of links(member) ?? []) {
+      if (seen.has(peer) || !links(peer)?.includes(member)) continue
+      seen.add(peer)
+      peers.push(peer)
+    }
+  }
+  return peers
+}
+
+export function sharedOverrideAddresses(
+  manifest: Pick<Manifest, 'elements'> | null | undefined,
+  targets: readonly Key[],
+): Key[] {
+  if (!manifest) return [...targets]
+  const byGid = new Map(manifest.elements.map((element) => [element.gid, element]))
+  return targets.flatMap((target) =>
+    reciprocalPeers((gid) => byGid.get(gid), target).map((gid) => ({ gid, prop: target.prop })),
+  )
+}
+
+function coveredAliasAddresses(findElement: FindElement, key: Key): Key[] {
+  const narrow = findElement(key.gid)?.alias_covers?.[key.prop]
+  if (!narrow) return []
+  const covered = new Map<string, Key>()
+  for (const [prop, gids] of Object.entries(narrow)) {
+    for (const gid of gids) covered.set(keyOf({ gid, prop }), { gid, prop })
+  }
+  for (const gid of reciprocalPeers(findElement, key).slice(1)) {
+    covered.set(keyOf({ gid, prop: key.prop }), { gid, prop: key.prop })
+  }
+  return [...covered.values()]
+}
+
+/** 写广播端前查找可能被清掉的地址，沿用写入时的窄端和共享关系。 */
 export function aliasCovered(
   manifest: Pick<Manifest, 'elements'> | null | undefined,
   gid: string,
   prop: string,
 ): Key[] {
-  const narrow = manifest?.elements.find((e) => e.gid === gid)?.alias_covers?.[prop]
-  if (!narrow) return []
-  return Object.entries(narrow).flatMap(([nprop, gids]) => gids.map((g) => ({ gid: g, prop: nprop })))
+  return coveredAliasAddresses((id) => manifest?.elements.find((e) => e.gid === id), { gid, prop })
 }
 
 /** 这一批 patch 要连带清掉的 (gid, prop)；没有可清的就是空数组。`manifest` 缺失 / 旧引擎没发字段 = 空 */
@@ -53,10 +92,8 @@ export function aliasClearPlan(
   }
   // 广播端 → 窄端
   const byGid = new Map(manifest.elements.map((e) => [e.gid, e]))
-  for (const p of patches) {
-    const narrow = byGid.get(p.gid)?.alias_covers?.[p.prop]
-    if (!narrow) continue
-    for (const [nprop, gids] of Object.entries(narrow)) for (const g of gids) clear(g, nprop)
+  for (const patch of patches) {
+    for (const { gid, prop } of coveredAliasAddresses((id) => byGid.get(id), patch)) clear(gid, prop)
   }
   // 窄端 → 只盖着它一个的广播端
   const narrowKeys = new Set(patches.map(keyOf))

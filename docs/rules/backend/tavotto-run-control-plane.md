@@ -133,6 +133,22 @@ order: 190
 
 同一次finish在自有out_dir封存原输入字节时，barrier私有帧可另携`captured_input_archive` opaque descriptor，与fact一起冻结在同一epoch slot。两个getter共享原资格判据、不读磁盘；重复barrier不能追加/替换附件，缺字段的新epoch不继承旧slot。同lineage未变时可复用同一cache键，键不作为执行身份；真实新屏障仍需显式同版传递。回执从父已知缓存根核每份字节，并在IO后再核epoch/execution/fact/descriptor，EOF或release使当前附件失效，已保存历史不重写。封存详情与预算只有`preparation-and-receipts.md`一份权威。看护`tests/native/test_native_input_archive.py`、`tests/test_declared_input_archive_receipt.py`。
 
+## ggplot2 原生适配器
+
+适配器通过 `OwnedLaunch.ggplot_target` 在现有拥有者、注册表、认证传输和环境租约中启动 R。调用方指定项目内的 R 脚本、脚本生成的对象名和 SVG 点数尺寸。R 在完成控制握手、确认绘制包可用后执行脚本。用户标准输出仍由拥有者排空。
+
+当前适配器支持普通文本的图标题、副标题、图注、四边坐标轴标题、名称唯一的图例标题、带独立图例键的普通文字条目和同侧名称唯一的单层分面标签的 RGB 颜色。副标题和图注按各自独立的绘制位置与文字绑定编辑。图例条目要求标题可唯一识别图例、条目文字在所属图例内唯一。图例条目的身份同时约束图例标题、绘制位置和文本，编辑和活态导出必须带上这份身份。适配器按实际 gtable 路径查找单个文本图元，用 grid 绘图清单定位它的 viewports 并读取点击区域。预览、清单和导出共享这些目标。它保留单次 `ggplot_build()` 和 gtable 的结果，按全量修改列表从原始 gtable 生成 SVG 预览或 Cairo PDF。两种设备分别绘制。更改画笔颜色不重跑统计图层与随机位置计算。显式输入声明仍须由来源适配器取得证据，现有 R 启动入口会拒绝这种声明。
+
+单面板图的刻度文字使用实际绘制的轴侧、内部 guide gtable 和文字图元路径。每侧只提供一组简单的文字编辑目标，单独修改该组文字的画笔颜色。身份同时绑定轴侧与捕获得到的整组标签，并与图例条目一样要求编辑和活态导出携带目标身份。
+
+连续色条刻度文字依赖本次构建识别出的普通 `GuideColourbar` 与实际绘制 guide 的唯一纯文本标题，再从 guide 中定位唯一文字组。编辑身份绑定绘制位置、色条标题和整组刻度标签。
+
+`tests/test_native_ggplot_capture.py` 使用真实 R 核对颜色变化、其它 SVG 内容、统计调用次数、随机数状态及撤销结果。用例也核对桌面拥有者取消后由原注册表与租约完成收尾。
+
+R 在 `script_end` 屏障已经执行完用户脚本。结束会话撤销活态编辑资格，已核对的归档回执仍可用于同一个项目进程里的保存和原图导出。实际再次启动的执行仍按原有来源账本撤销此前的回执。
+
+桌面显式启动和保存恢复的使用边界见[原生 ggplot2](../../implementation/tavotto-core-v02-ggplot2.md)。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

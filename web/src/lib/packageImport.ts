@@ -8,22 +8,31 @@
 import { msg, t } from '@/i18n'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { ApiError, openPackage } from '@/lib/api'
+import { PACKAGE_EXT } from '@/lib/brand'
 import { requestRelinkMissing } from '@/lib/clipboard'
 import { openLayoutDocument, reportLayoutOpenSkipped } from '@/store/actions'
+import { useDocumentStore } from '@/store/documentStore'
+import { useProjectPackageInstallStore } from '@/store/projectPackageInstallStore'
 import { useUiStore } from '@/store/uiStore'
 
 export async function openPackageFile(file: File): Promise<boolean> {
   const ui = useUiStore.getState()
-  const project = captureProjectEpoch()
+  const epoch = captureProjectEpoch()
+  const before = useDocumentStore.getState()
   const res = await openPackage(file)
-  if (!project.still()) {
+  const current = useDocumentStore.getState()
+  if (!epoch.still() || before.documentId !== current.documentId || before.loadSeq !== current.loadSeq) {
     reportLayoutOpenSkipped(file.name)
     return false
+  }
+  if ('document_format' in res) {
+    await useProjectPackageInstallStore.getState().inspect(file)
+    return epoch.still()
   }
   if (res.missing_chart_sources?.length) {
     throw new Error(t('status.packageIncomplete', { ns: 'workspace', count: res.missing_chart_sources.length }))
   }
-  if (!(await openLayoutDocument(res.doc)) || !project.still()) return false
+  if (!(await openLayoutDocument(res.doc)) || !epoch.still()) return false
   const missing = requestRelinkMissing(res.verified_chart_sources)
   const drift = res.drifted.length
   if (!missing && !drift) {
@@ -32,6 +41,18 @@ export async function openPackageFile(file: File): Promise<boolean> {
     ui.setStatus(msg('status.packageDrift', { count: drift }, 'workspace'), 'error')
   }
   return true
+}
+
+/** 打开文件选择器，把选中的包交给唯一入口；`.magplot` 是 0.7 时代的同结构包。 */
+export function pickPackageFile(onFile: (file: File) => void = (file) => void openPackageFile(file)): void {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = `${PACKAGE_EXT},.magplot,.zip,application/zip`
+  input.onchange = () => {
+    const file = input.files?.[0]
+    if (file) onFile(file)
+  }
+  input.click()
 }
 
 /** 包来自更新的 Tavotto（排版 schema 比本版本新）：调用方给「检查更新」，不说成坏包（#1921） */

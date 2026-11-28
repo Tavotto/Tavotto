@@ -29,20 +29,22 @@ order: 200
   `chartSource` 的文档才写 4，其余仍写 3——首次给既有文档加入计算图表因此是
   **原地升级**（同一 documentId / 文件 / 槽位 / 时间线，历史保留）。升级前**必须**用
   `takeProjectCheckpoint()` 把整份项目文档存成时间线节点（备份未落定不得写图表）。
-  **接线状态**：把图表第一次写进正文的入口属于 7/9；接线前生产代码里没有这条调用路径
-  （`takeProjectCheckpoint` 只有「恢复前」节点在用）。`tests/test_chart_document_upgrade.py`
-  只覆盖后端能强制的边界，不覆盖这条前端备份接线——写文档 / 评审时不要把它当成已有行为。
+  桌面的绑定确认先保存该节点，核对备份期间文档与面板的归属，再通过现有撤销事务提交模型。
+  保存响应的 `chart_sources` 只合入与发出请求时同一项目、文档代次、画布位置和面板输入。
   恢复 schema 3/4 节点换的是整份项目，schema 2 节点仍是单画布检查点（`lib/versionDoc.ts`
   的 `isProjectVersion` / `versionCanvasDoc`）。后端 `documents.validate_document`
   按 schema 号分派，schema 2/3/4 走同一个入口；项目包按同一 `SUPPORTED_SCHEMAS`
-  集合准入（来源附件随包封存、检视时按摘要安装到项目 `chart_sources/`）。画布切换换入换出
+  集合准入。带格式标记的便携包先只读检视，通过明确安装落入新项目后，由原恢复门与自动保存接管正文。
+  接收方项目、文档代次和安装回执在每次等待后复核。画布切换换入换出
   undo 栈（canvasSessions）与 UI 会话（`store/canvasSession.ts`）。
+  标签页 openTabs 按 documentId 存本机。
+- 排版菜单的「打包所选画布」预选当前画布。确认时复核项目与文档代次，由项目包 API 从提交的排版里裁取
+  指定 ID。保存仍走原路径。重试继续使用原选择的画布 ID。
   整份还原在备份前和安装前均过写入闸，不能解除只读窗口的编辑锁；空画布也显式落同一槽位，
   等 writer 确认本次排队代次（含合并后的更新快照）才报成功，先前在途 PUT 的成功不作证。
   新建未编辑的空白才免写；空正文还原失败后的重试和删除最后一个对象仍走同一保存链。放大预览携带节点自己的 chart、附件与 profile，并纳入缓存身份。
   项目包上传到打开之间核项目代际；缺图表附件明确报不完整，只有后端已核实的完整引用免于普通重链接。
   看护：`components/layoutSnapshotChart.test.tsx`、`store/restoreLayoutVersion.test.ts`、`lib/packageImport.test.ts`。
-  标签页 openTabs 按 documentId 存本机。
 - **图幅记号 `PanelObject.figureFrame`（ADR 0098 §三）**：缺席 = 升级前放上排版的面板。读档
   （`migrateToProject`）、布局版本恢复（`restoreLayoutVersion`）与剪贴板粘贴（`materializePaste`，
   负载可能出自升级前的标签页）都经
@@ -427,6 +429,8 @@ order: 200
   同一 id 排队合并时「要写项目」标记取并集（`diskWriter.schedule`），不被后来的 1 s 本机那笔吞掉。
 - **写给谁、基线是什么在发请求那一刻才问**（`projectWriteSpecFor`）：绑定的 `name` + 修订号；没有绑定 = 后端按清单 docId 找、找不到按画布名起名（`suggest_name`）。
   写成后 `afterProjectLayout` 建立 / 推进 `projectFile` 绑定（`dirty` = 途中又编辑过）。**本机槽位是崩溃缓冲，不因写项目成功而删**（「标为已落盘」= 绑定的 `dirty:false` + 修订号）。
+- 打开项目中已有的排版时，装入文档的第一笔快照只写本机槽位。预览 R 源码写回和在设置里恢复原脚本以前，也只冲刷本机槽位，
+  沿用项目内已保存的修订号。
 - **外部修改不覆盖**：后端回 `external_change`，**只亮顶栏胶囊「别处有改动」（`projectConflict`），不弹对话框**（维护者 2026-11-27：用户正在编辑不能被打断）；点胶囊或按 ⌘S 才进 ⌘S 同一个冲突岔口；岔口没裁决（绑定基线没动）前不再带着旧基线去撞，基线一变胶囊自己熄灭。
 - **写不进项目**：后端判 `read_only`（确实只读）→ `projectReadOnlyDoc`，顶栏保存处说一句「这个文件夹只读 · 修改存在本机」（整个文件夹不可写同一句）；
   Windows 的瞬时拒绝（`EACCES` / 共享冲突）后端退避重试、判 `busy`，**不是只读**。
@@ -441,4 +445,3 @@ order: 200
 - **保存芯片只有这几种状态**（开关开着）：已保存（写进项目 = 「已保存到项目」，本机 =「已存在本机」）/ 保存中 / 「这个文件夹只读 · 修改存在本机」 / 「别处有改动」（`projectConflict`，点它 = ⌘S 进岔口）/ 「保存失败」（含**写进项目连着两次 `busy` / `failed` / `refused`**：`projectWriteFailedDoc`，
   落到现有的 `save_error` 档，重试 = 再存一次；单次瞬时失败不闪红）。没有「未存进项目」、文档名旁没有空心环（`legacySaveUi` / `alwaysSavedUi` 只在应急回退时保留旧几句）。
 - 原生拖放：`src-tauri/src/drop_paths.rs::is_layout_dir`（名字以 `.tavotto` 结尾的**文件夹**）不当项目打开，回 `Unsupported`；与前端 `layoutFolderNames` 同一条规则。
-

@@ -823,3 +823,48 @@ def path_paths(o: dict, w: float, h: float) -> list[Node]:
     else:
         out.extend(inner)
     return out
+
+
+def clip_polyline(
+    pts: list[tuple[float, float]], r: tuple[float, float, float, float]
+) -> list[list[tuple[float, float]]]:
+    """折线裁进矩形 `r`（逐段 Liang–Barsky）：出框断开，返回框内的若干段。"""
+    runs: list[list[tuple[float, float]]] = []
+    cur: list[tuple[float, float]] = []
+    for a, b in zip(pts, pts[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        t0, t1 = 0.0, 1.0
+        ok = True
+        for p, q in ((-dx, a[0] - r[0]), (dx, r[2] - a[0]), (-dy, a[1] - r[1]), (dy, r[3] - a[1])):
+            if p == 0:
+                if q < 0:
+                    ok = False
+                    break
+                continue
+            t = q / p
+            if p < 0:
+                t0 = max(t0, t)
+            else:
+                t1 = min(t1, t)
+            if t0 > t1:
+                ok = False
+                break
+        if not ok:
+            if cur:
+                runs.append(cur)
+                cur = []
+            continue
+        s = (a[0] + dx * t0, a[1] + dy * t0)
+        e = (a[0] + dx * t1, a[1] + dy * t1)
+        if not cur or cur[-1] != s:
+            if cur:
+                runs.append(cur)
+            cur = [s]
+        if e != cur[-1]:
+            cur.append(e)
+        if t1 < 1.0:
+            runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    return [run for run in runs if len(run) >= 2]

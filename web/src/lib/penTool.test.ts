@@ -171,4 +171,3 @@ describe('penReduce', () => {
     expect(done.commits[0].nodes.every((n) => n.in[0] === n.p[0] && n.out[1] === n.p[1])).toBe(true)
   })
 })
-

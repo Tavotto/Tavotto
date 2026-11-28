@@ -51,7 +51,7 @@ export function NativeSessionCards() {
   const surfaced = (s: NativeSessionInfo) =>
     !!surfaceEntry && !!s.launch_id && surfaceEntry?.report?.provider.attempt_id === s.launch_id
   const list = sortSessions(
-    Object.values(sessions).filter((s) => s.owner !== 'desktop' || (!isNativeTerminal(s.state) && !surfaced(s))),
+    Object.values(sessions).filter((s) => s.capture_source === 'ggplot2' || s.owner !== 'desktop' || (!isNativeTerminal(s.state) && !surfaced(s))),
   )
   if (!list.length) return null
   // 位置不在这里定：画布右上角的堆叠容器（App 的 `data-canvas-corner="top-right"`，缩放 → 会话卡 → 探针）
@@ -188,18 +188,20 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
             size="sm"
             loading={busy}
             onClick={act(store.resume)}
-            title={ns('resumeHint')}
+            title={session.capture_source === 'ggplot2' ? undefined : ns('resumeHint')}
           >
             <Play size={ICON_SIZE.sm} />
-            {ns('resume')}
+            {ns(session.capture_source === 'ggplot2' ? 'rConsoleResume' : 'resume')}
           </Button>
           <Button variant="secondary" size="sm" disabled={busy} onClick={act(store.detach)}>
             <Unplug size={ICON_SIZE.sm} />
             {ns('detach')}
           </Button>
-          <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>
-            {ns('terminate')}
-          </Button>
+          {session.capture_source !== 'ggplot2' && (
+            <Button variant="danger" size="sm" disabled={busy} onClick={confirmTerminate}>
+              {ns('terminate')}
+            </Button>
+          )}
         </div>
       )}
     </section>
@@ -228,8 +230,10 @@ function stateGlyph(tone: (typeof TONE)[NativeSessionState]) {
  * `detached` 说清楚脚本还在自己跑。
  */
 function stateLine(s: NativeSessionInfo): string {
+  if (s.capture_source === 'ggplot2' && s.script_error?.message) return s.script_error.message
   switch (s.state) {
     case 'barrier':
+      if (s.capture_source === 'ggplot2' && s.owner === 'terminal') return ns('rConsoleReady')
       return s.script_error
         ? ns('state.barrierAfterError')
         : ns('state.barrier', { count: s.stems.length })

@@ -17,6 +17,7 @@ import {
   type PanelObject,
 } from '@/types/document'
 import type { Manifest, PanelInfo } from '@/lib/api'
+import { setEngineTransport } from '@/lib/engineTransport'
 import { panelScale } from '@/lib/preflight'
 import { startCropDrag, startResizeDrag } from '@/canvas/interactions'
 import { startLayoutAutoReflow } from '@/store/actions'
@@ -91,6 +92,23 @@ describe('renderTargets：按变体去重，不再裁一个赢家', () => {
     expect(renderTargets([panel('a', 'Fig1.pdf', 0)], null, { 'Fig1.pdf': true })).toHaveLength(1)
   })
 
+  it('reopening a saved Figure on a styled canvas does not start its script', () => {
+    const archived: PanelObject = {
+      ...panel('saved', 'Fig1.pdf', 1),
+      figureSnapshot: {
+        version: 1, sourceId: 'Fig1.pdf', patchHash: 'patch', receiptId: 'receipt', snapshotId: 'saved',
+      },
+    }
+    expect(renderTargets([archived], null, {}, {}, {}, true)).toEqual([])
+    expect(renderTargets([archived], 'saved', {}, {}, {}, true)).toEqual([archived])
+    const restoreTransport = setEngineTransport({ render: vi.fn(), previewPngUrl: vi.fn(), panelSrc: vi.fn() })
+    try {
+      expect(renderTargets([archived], null, {}, {}, {}, true)).toEqual([archived])
+    } finally {
+      restoreTransport()
+    }
+  })
+
   it('没有脚本的面板永远不进队列', () => {
     const raster = { ...panel('a', 'photo.png', 3), script: undefined } as PanelObject
     expect(renderTargets([raster], 'a', {})).toEqual([])
@@ -107,6 +125,14 @@ describe('绑定了样式的画布（ADR 0081）', () => {
   it('runtime 面板照旧不因为绑定而自动执行脚本', () => {
     const rt = { ...panel('r', 'runtime:x', 0), fileKind: 'runtime' } as PanelObject
     expect(renderTargets([rt], null, {}, {}, {}, true)).toEqual([])
+  })
+
+  it('绑定只补取当前已打开的 native 图清单，缓存里的 runtime 图保持静止', () => {
+    const live = { ...panel('r', 'runtime:source.R#plot', 0), fileKind: 'runtime' } as PanelObject
+    const archived = { ...panel('cold', 'runtime:archive.R#plot', 1), fileKind: 'runtime' } as PanelObject
+    const openAssets = new Set([live.fileId])
+    expect(renderTargets([live, archived], null, {}, {}, {}, true, undefined, openAssets)).toEqual([live])
+    expect(renderTargets([live, archived], null, {}, {}, {}, false, undefined, openAssets)).toEqual([])
   })
 })
 

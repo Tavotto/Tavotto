@@ -24,6 +24,7 @@ import { clearOverride, enterElementEdit, setOverride, setOverrides, startLayout
 import { useAssetStore } from './assetStore'
 import { registerOverrideStamper, useDocumentStore } from './documentStore'
 import { useInteractionStore } from './interactionStore'
+import { useMountedPngStore } from './mountedPngStore'
 import { useProfileStore } from './profileStore'
 import { panelRender, renderKeyOf, useRenderStore } from './renderStore'
 import {
@@ -425,6 +426,28 @@ describe('新加进绑定画布的图：第一次拿到 manifest 时对齐一次
 })
 
 describe('库里那一条在别处改了（设置里保存）', () => {
+  it('prepares a saved Figure only when its bound library style changes', async () => {
+    const saved = panel('a', 'FigA')
+    saved.figureSnapshot = {
+      version: 1, sourceId: saved.fileId, snapshotId: 'saved', receiptId: 'receipt', patchHash: 'patch',
+    }
+    await seed([saved], (p) => {
+      p.canvases[0].style = { id: 's1', snapshot: structuredClone(USER.data) }
+    })
+    useRenderStore.getState().clear()
+    const current = () => useRenderStore.getState().get(renderKeyOf(panelById('a')))
+    expect(followLibrary()).toBe(false)
+    expect(current().wantPatches).toBeNull()
+    useProfileStore.setState({
+      styles: [record({ id: 's1', data: { element: { axis_label: { fontsize: 12 } }, pt_basis: 'page' } })],
+    })
+    expect(followLibrary()).toBe(false)
+    expect(current().wantPatches).toBe(JSON.stringify(saved.overrides))
+    rerender('a')
+    expect(followLibrary()).toBe(true)
+    expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12)
+  })
+
   it('回到画布时跟上，只对齐变了的那一项；一条「按样式更新」', async () => {
     await seed([panel('a', 'FigA')])
     fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 }, title: { fontsize: 11 } } } })])
@@ -1471,6 +1494,28 @@ describe('Codex #547 最后一轮评审（964ce71f）', () => {
     rerender('b')
     expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
     expect(ov('b', 'axes_0.title', 'fontsize')).toBe(14)
+  })
+
+  it('等屏幕上的位图挂载后补上等待中的样式修改', async () => {
+    fakeLibrary([record({ id: 's1', data: { element: { axis_label: { fontsize: 10 } }, pt_basis: 'page' } })])
+    await seed([panel('a', 'FigA'), panel('b', 'FigB')])
+    stop = startStyleBindingSync()
+    bindCanvasStyle('s1')
+    rerenderAll()
+    const key = renderKeyOf(panelById('b'))
+    const render = useRenderStore.getState().byKey[key]
+    const mounted = useMountedPngStore.getState()
+    const frame = { key, rev: render.rev, source: render.manifest!, url: 'blob:b', manifest: render.manifest! }
+    mounted.show('b', frame.key, frame.rev, frame.source, frame.url)
+    try {
+      await editBoundStyle({ kind: 'element', role: 'axis_label', prop: 'fontsize', value: 12 })
+      expect(ov('a', 'axes_0.xlabel', 'fontsize')).toBe(12)
+      expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(10)
+      mounted.loaded('b', frame)
+      expect(ov('b', 'axes_0.xlabel', 'fontsize')).toBe(12)
+    } finally {
+      mounted.clear('b')
+    }
   })
 
   it('Codex #2083 P1 没渲染回来的图上用户手改过这一项：改样式记下的欠账补的时候也不覆盖手改（§十四）', async () => {

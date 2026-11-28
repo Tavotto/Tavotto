@@ -38,9 +38,13 @@ def page_pt_props() -> set[str]:
 
 
 def _prop_names(node: ast.expr) -> list[str]:
-    """字典里 `prop` 的取值：字面量，或 `f"spine_{side}_linewidth"` 这种按四边展开的 f-string。"""
+    """Resolve every possible literal name before looking up its precision."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return [node.value]
+    if isinstance(node, ast.IfExp):
+        first = _prop_names(node.body)
+        second = _prop_names(node.orelse)
+        return [*first, *second] if first and second else []
     if isinstance(node, ast.JoinedStr):
         parts = ["{}" if isinstance(v, ast.FormattedValue) else str(v.value) for v in node.values]
         pattern = "".join(parts)
@@ -595,6 +599,13 @@ def _violations_in(tmp_path: Path, source: str, prop: str = "bbox_linewidth") ->
     path = tmp_path / "fields.py"
     path.write_text(source, encoding="utf-8")
     return _field_violations(path, {prop}, set())
+
+
+def test_conditional_names_keep_the_precision_gate_on_each_possible_field(tmp_path):
+    field = 'def fields(h):\n    return {"prop": %s, "type": "number", "value": 0.125}\n'
+    assert not _violations_in(tmp_path, field % '"bar_thickness" if h else "bar_width"')
+    assert _violations_in(tmp_path, field % '"bar_width" if h else "bbox_linewidth"')
+    assert _violations_in(tmp_path, field % '"bar_width" if h else unknown')
 
 
 _TRACED_OK = """

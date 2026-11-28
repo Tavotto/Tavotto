@@ -565,10 +565,12 @@ def is_self_written(ctx, path: Path | None = None) -> bool:
     # （Windows 上物化 / 启动记录慢），把它当外部修改会跑一次**带静态合并**的刷新，把这次运行刚替换掉的
     # 静态字面量图名又并回去——报告说 `unlinked_stems`、文件却已经丢了这个结论。
     # 刷新一装载，`publication_revision` 即被消费清空，不会长期放行
-    candidates = {st.registry_revision, st.publication_revision} - {None}
-    if not candidates:
-        return False
-    return atomicio.content_revision(target) in candidates
+    # 用与登记、刷新相同的锁取修订号和文件内容。否则可能先读到旧修订号，又读到刚替换的新文件。
+    with st.lock:
+        candidates = {st.registry_revision, st.publication_revision} - {None}
+        if not candidates:
+            return False
+        return atomicio.content_revision(target) in candidates
 
 
 # ---------------------------------------------------------------------------

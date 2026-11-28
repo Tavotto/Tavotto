@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useRuntimePreview, type RuntimePreview } from './useRuntimePreview'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDocumentStore } from '@/store/documentStore'
+import type { FigureSnapshot } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -17,11 +18,14 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const fetchState = vi.fn()
+const fetchArchive = vi.fn()
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchRuntimePreviewForState: (id: string, patches: unknown[], signal?: AbortSignal, pj?: string | null) =>
     fetchState(id, patches, signal, pj),
+  fetchFigureSnapshotPreview: (id: string, patches: unknown[], snapshot: FigureSnapshot, signal?: AbortSignal, pj?: string | null) =>
+    fetchArchive(id, patches, snapshot, signal, pj),
 }))
 
 const ID = 'runtime:a.png'
@@ -33,8 +37,8 @@ let root: Root
 /** 最近一次渲染读到的 hook 结果 */
 let last: RuntimePreview
 
-function Probe() {
-  last = useRuntimePreview(ID, [], true)
+function Probe({ snapshot }: { snapshot?: FigureSnapshot }) {
+  last = useRuntimePreview(ID, [], true, 0, snapshot)
   return null
 }
 
@@ -47,6 +51,7 @@ const flush = () =>
 
 beforeEach(() => {
   fetchState.mockReset()
+  fetchArchive.mockReset()
   fetchState.mockResolvedValue({ blob: new Blob(['png']), exact: true })
   created = 0
   revoked = []
@@ -113,6 +118,35 @@ describe('按状态取图', () => {
     })
     expect(last.url).toBe(current)
     expect(created, '上一代的回包连 blob URL 都不该建').toBe(1)
+    expect(revoked).not.toContain(current)
+  })
+
+  it('项目切换后，同一归档引用只接收新项目的预览', async () => {
+    const snapshot: FigureSnapshot = {
+      version: 1, sourceId: ID, patchHash: 'patch', receiptId: 'receipt', snapshotId: 'archive',
+    }
+    let finishOld!: (value: { svg: string }) => void
+    fetchArchive
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve }))
+      .mockResolvedValueOnce({ svg: '<svg id="current"/>' })
+    await act(async () => {
+      root.render(<Probe snapshot={snapshot} />)
+    })
+    await act(async () => {
+      setCurrentProjectId('projB')
+    })
+    await flush()
+    const current = last.url
+    expect(current).toBe('blob:url-1')
+    expect(last.exact).toBe(true)
+    expect(fetchArchive.mock.calls.map((c) => c[4])).toEqual(['projA', 'projB'])
+    expect(fetchState).not.toHaveBeenCalled()
+
+    await act(async () => {
+      finishOld({ svg: '<svg id="stale"/>' })
+    })
+    expect(last.url).toBe(current)
+    expect(created).toBe(1)
     expect(revoked).not.toContain(current)
   })
 

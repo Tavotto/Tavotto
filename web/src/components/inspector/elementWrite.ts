@@ -5,13 +5,12 @@ import type { EditableField, ManifestElement } from '@/lib/api'
 import { pagePtLens } from '@/lib/stylePresets'
 import { canPreviewStyle } from '@/lib/svgStyle'
 import { msg, t, type UiMessage } from '@/i18n'
-import { setOverride } from '@/store/actions'
+import { readPanelOverride, setOverride } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { registerGesture } from '@/store/gestureCoordinator'
 import { getHistoryMode, previewStyle } from '@/store/svgPreviewStore'
 import type { PanelObject } from '@/types/document'
 import { propLabel } from './roles/registry'
-import { effectiveOverride } from '@/lib/effectiveOverride'
 
 /**
  * 原生取色对话框（`<input type="color">`）不保证发 blur：连续拖着选色时，
@@ -139,7 +138,7 @@ export function useElementWriter(panel: PanelObject, element: ManifestElement): 
   const fieldOf = (prop: string) => lens.field(rawField(prop))
 
   const readScript = (prop: string) => {
-    const ov = effectiveOverride(panel.overrides, gid, prop)
+    const ov = readPanelOverride(panel, gid, prop)
     return ov ? ov.value : rawField(prop)?.value
   }
   const read = (prop: string) => lens.toPage(prop, readScript(prop))

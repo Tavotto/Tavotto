@@ -15,6 +15,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { panelRender, renderEpoch, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import type { PanelObject } from '@/types/document'
 import type { RenderPurpose } from '@/lib/renderPurpose'
+import { chartRenderFields } from '@/lib/chartSource'
 
 /** 文字/数值输入合并成一次渲染的窗口；颜色、开关、拖动结束走 immediate */
 export const DEBOUNCE_MS = 300
@@ -105,8 +106,13 @@ export function requestRender(
   const fileId = panel.fileId
   // 项目代际在**排渲染这一刻**取：防抖窗口里切了项目的话，到点那一次整个作废
   const epoch = renderEpoch()
+  const chart = chartRenderFields(panel)
   const fire = () => {
     timers.delete(panel.id)
+    if (chart) {
+      void store.render(fileId, patches, dpi, policy, epoch, undefined, purpose, chart)
+      return
+    }
     // 前台请求的调用形状一字不变（只有邻居补渲染多一个实参）
     void (purpose === 'foreground'
       ? store.render(fileId, patches, dpi, policy, epoch, adoptionGuardOf(panel))

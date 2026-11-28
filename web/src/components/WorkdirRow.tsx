@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
+  backendErrorText,
   type DependencyPreparationOffer,
   type InputRemapRule,
   listScriptBackups,
@@ -10,7 +11,10 @@ import {
   type WorkdirConfirmation,
   type WorkdirMode,
 } from '@/lib/api'
+import { reloadEditedProjectLayout } from '@/store/actions'
+import { activeProjectFile, getWindowHold, saveNowWithResult } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
+import { captureSaveContext, stillCurrent } from '@/store/saveContext'
 import { SettingRow } from './settings/SettingRow'
 import { Button } from './ui/Button'
 import { Notice } from './ui/Notice'
@@ -236,7 +240,7 @@ const BACKUP_STATE_TEXT = {
  * （当前版本先另存一份）；此刻已是改前那份 → 没有按钮。状态是后端对着磁盘现算的，前端只翻译。
  */
 export function ScriptBackupRows() {
-  const { t } = useTranslation('errors')
+  const { t } = useTranslation(['errors', 'dialogs'])
   const open = useEnvStore((s) => Boolean(s.env?.project?.open))
   const generation = useEnvStore((s) => s.scriptBackupGeneration)
   const restoreBackup = useEnvStore((s) => s.restoreScriptBackup)
@@ -256,15 +260,36 @@ export function ScriptBackupRows() {
       live = false
     }
   }, [open, generation])
-  const shown = items.filter((b) => b.kind === 'input_path')
+  const shown = items.filter((b) => b.kind === 'input_path' || b.kind === 'figure_style')
   if (!shown.length) return null
+  const restoreStyle = async (backup: ScriptBackup) => {
+    const ctx = captureSaveContext()
+    const binding = activeProjectFile()
+    if (!binding || binding.name !== backup.layout) return restoreBackup(backup, 'full', { pj: ctx.pj })
+    if (binding.dirty || getWindowHold()) return t('dialogs:export.sourceStyle.saveFirst')
+    const saved = await saveNowWithResult(false, { withProject: false })
+    if (!stillCurrent(ctx)) return null
+    if (!saved.wrote || activeProjectFile()?.dirty) return t('dialogs:export.sourceStyle.saveFirst')
+    return restoreBackup(backup, 'full', {
+      pj: ctx.pj,
+      workingDocId: ctx.documentId,
+      onLayoutRestored: async layout =>
+        await reloadEditedProjectLayout(ctx, layout.name, layout.revision, layout.working_revision)
+          ? null
+          : t('dialogs:export.sourceStyle.reopen'),
+    })
+  }
   const restore = async (b: ScriptBackup, mode: 'full' | 'undo_edits') => {
     setBusy(true)
     setError(null)
-    // 换了项目时 store 那侧把 A 的副作用全丢掉（回 null）；这里只剩本行自己的忙 / 错
-    const failure = await restoreBackup(b, mode)
-    setBusy(false)
-    setError(failure)
+    try {
+      // 换了项目时 store 那侧把 A 的副作用全丢掉（回 null）；这里只剩本行自己的忙 / 错
+      setError(b.kind === 'figure_style' ? await restoreStyle(b) : await restoreBackup(b, mode))
+    } catch (cause) {
+      setError(backendErrorText(cause))
+    } finally {
+      setBusy(false)
+    }
   }
   return (
     <SettingRow
@@ -287,10 +312,10 @@ export function ScriptBackupRows() {
             </span>
             {b.state === 'current' && (
               <Button size="sm" variant="secondary" disabled={busy} onClick={() => void restore(b, 'full')}>
-                {en('scriptBackupRestore')}
+                {b.kind === 'figure_style' ? t('dialogs:export.sourceStyle.restore') : en('scriptBackupRestore')}
               </Button>
             )}
-            {b.state === 'changed' && (
+            {b.kind === 'input_path' && b.state === 'changed' && (
               <>
                 {/* 那几处字面量之后又被改了：只撤销做不到，只给整份恢复（判据在后端，与复原同一个） */}
                 {b.undoable && (

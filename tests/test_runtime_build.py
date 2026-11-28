@@ -947,7 +947,7 @@ def test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fon
             frozen.frozen = saved
 
 
-def _engine_source_datas():
+def _engine_source_datas(*, include_chart=False):
     """Evaluate the actual spec datas loop, never filenames in comments/other lists."""
     path = REPO / "packaging" / "tavotto.spec"
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -956,15 +956,43 @@ def _engine_source_datas():
         for node in tree.body
         if isinstance(node, ast.For)
         and isinstance(node.target, ast.Name)
-        and node.target.id == "name"
+        and node.target.id in ({"name", "chart_source"} if include_chart else {"name"})
     ]
-    assert len(loops) == 1, "spec must have one explicit external-interpreter source datas loop"
-    namespace = {"PKG": REPO / "src" / "tavotto", "datas": []}
+    assert len(loops) == (2 if include_chart else 1), (
+        "spec must enumerate the external interpreter sources"
+    )
+    namespace = {"PKG": REPO / "src" / "tavotto", "Path": Path, "datas": []}
     exec(compile(ast.Module(body=loops, type_ignores=[]), str(path), "exec"), namespace)
     datas = namespace["datas"]
-    assert datas and all(destination == "tavotto/engine" for _, destination in datas)
+    assert datas and all(
+        destination in {"tavotto", "tavotto/engine", "tavotto/rendercore"}
+        for _, destination in datas
+    )
     assert all(Path(source).is_file() and Path(source).suffix == ".py" for source, _ in datas)
     return datas
+
+
+def _stage_engine_sources(internal, *, include_chart=False):
+    """Copy the engine sources and the palette data from the spec into an isolated tree."""
+    spec = REPO / "packaging" / "tavotto.spec"
+    tree = ast.parse(spec.read_text(encoding="utf-8"))
+    (assignment,) = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "datas" for target in node.targets)
+    ]
+    namespace = {"PKG": REPO / "src" / "tavotto"}
+    exec(compile(ast.Module(body=[assignment], type_ignores=[]), str(spec), "exec"), namespace)
+    (resource_tree,) = [
+        source for source, destination in namespace["datas"] if destination == "tavotto/resources"
+    ]
+    datas = _engine_source_datas(include_chart=include_chart)
+    datas.append((Path(resource_tree) / "color_palettes.json", "tavotto/resources"))
+    for source, destination in datas:
+        target = internal / destination / Path(source).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
 
 
 def test_spec_ships_every_module_the_worker_imports():
@@ -1044,6 +1072,75 @@ def test_spec_ships_every_module_the_worker_imports():
     assert not missing, f"packaging/tavotto.spec 漏了 worker 要用的模块: {missing}"
 
 
+@pytest.mark.parametrize("omit_chart_wire", [False, True])
+def test_packaged_fixed_chart_renders_from_spec_sources(
+    tmp_path, _scientific_interpreter, omit_chart_wire
+):
+    from tavotto.engine import chartprofile
+    from test_chart_native import setup_chart
+
+    internal = tmp_path / "_internal"
+    _stage_engine_sources(internal, include_chart=True)
+    engine = internal / "tavotto" / "engine"
+    if omit_chart_wire:
+        (engine / "chartwire.py").unlink()
+    python, dependencies = _scientific_interpreter
+    bootstrap = dedent(
+        f"""\
+        import runpy, sys
+        from pathlib import Path
+        sys.path.extend({dependencies!r})
+        sys.argv = sys.argv[1:]
+        runpy.run_path(sys.argv[0], run_name='__main__')
+        assert Path(sys.modules['tavotto'].__file__).resolve() == Path({str(internal / "tavotto" / "__init__.py")!r})
+        """
+    )
+    _, model, _, frame = setup_chart()
+    request = {
+        "protocol_version": 1,
+        "request_id": "chart",
+        "cmd": "chart",
+        "payload": {
+            "model": model,
+            "frame": frame,
+            "render_profile": chartprofile.COMPLETE_PROFILE,
+        },
+    }
+    result = subprocess.run(
+        [
+            python,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            bootstrap,
+            str(engine / "worker.py"),
+            "--task",
+            "chart",
+            "--figures-dir",
+            str(tmp_path),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--sandbox",
+            str(tmp_path / "sandbox"),
+        ],
+        input=json.dumps(request) + "\n",
+        cwd=tmp_path,
+        env={**os.environ, "MPLCONFIGDIR": str(tmp_path / "mpl"), "MPLBACKEND": "Agg"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        check=True,
+    )
+    reply = json.loads(result.stdout)
+    if omit_chart_wire:
+        assert reply["ok"] is False and "chartwire" in reply["error"]["message"]
+    else:
+        assert reply["ok"] and reply["fragment_b64"]
+        assert reply["manifest"]["render_frame"]["edit_basis"] == "source-viewport-pt"
+
+
 @pytest.fixture(scope="module")
 def _scientific_interpreter():
     from support.bridgekit import USER_PYTHON
@@ -1081,10 +1178,7 @@ def test_packaged_engine_sources_execute_without_checkout_fallback(
     or the target-platform native libraries (those remain the exe smoke jobs).
     """
     internal = tmp_path / "dist" / "_internal"
-    for source, destination in _engine_source_datas():
-        target = internal / destination / Path(source).name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+    _stage_engine_sources(internal)
     engine = internal / "tavotto" / "engine"
     if omit:
         assert (engine / omit).is_file(), "mutation must remove a genuinely shipped module"

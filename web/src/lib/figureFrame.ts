@@ -49,11 +49,17 @@ export function frameSwitchAvailable(panel: PanelObject, manifest: Manifest | nu
 
 type Frac = { x: number; y: number; w: number; h: number }
 
+export function usesFigureFrame(o: Pick<PanelOverride, 'gid' | 'prop'>): boolean {
+  return o.prop === 'pos_frac' || o.prop === 'loc_frac' || o.prop === 'size_frac' ||
+    o.prop === 'endpoints_frac' || o.prop === 'position' || (o.gid === 'figure' && o.prop === 'size_mm')
+}
+
 /**
  * 把一条 override 的值从 figsize 的分数换到脚本图幅的分数（图内的元素留在原处）。
  * 只有值以图幅为基准的那几条要换（引擎 `overrides._FRAME_RELATIVE`）；其余原样。
  */
 function rebaseOverride(o: PanelOverride, f: Frac, frame: FrameGeometry): PanelOverride {
+  if (!usesFigureFrame(o)) return o
   const v = o.value
   const nums = (n: number) => Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number')
   // top-origin 分数的一点：x' = (x − 左) / 宽，y' = (y − 上) / 高

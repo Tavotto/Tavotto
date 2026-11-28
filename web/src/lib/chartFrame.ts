@@ -23,6 +23,14 @@ export interface PairedFrameAuthority {
 }
 const MM_PER_PT = 25.4/72
 
+export function matchesComputedFrame(panel: PanelObject, frame: ComputedRenderFrame): boolean {
+  const [left, top, width, height] = frame.rect_pt
+  const origin = panel.chartFrame?.originPt
+  return origin?.[0] === left && origin[1] === top &&
+    Math.abs(panel.nativeW - width * MM_PER_PT) < 1e-6 &&
+    Math.abs(panel.nativeH - height * MM_PER_PT) < 1e-6
+}
+
 export function validComputedFrame(raw: unknown): raw is ComputedRenderFrame {
   if (!raw || typeof raw !== 'object') return false
   const f = raw as ComputedRenderFrame

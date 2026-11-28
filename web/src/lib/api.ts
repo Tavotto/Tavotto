@@ -15,6 +15,7 @@ import type { FontCatalog } from '@/lib/fontCatalog'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureExecutionProof } from '@/lib/figureExecutionProof'
 import type { CanvasObject, ChartSourceRef, FigureDocument, FigureOrigin, FigureSnapshot, LayoutGroup, PanelChartState, ProjectDocument, SourceFont } from '@/types/document'
+import { SCHEMA_CURRENT } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { ComputedRenderFrame } from '@/lib/chartFrame'
 import type { IdentityRename } from '@/lib/overrideIdentity'
@@ -2390,6 +2391,8 @@ type ExportObjectBody =
   chart_source?: ChartSourceRef
       chart_render_profile?: 'legacy-scaffold/1' | 'native-manifest/1' | 'native-manifest/2'
       id: string
+      /** Optional user-assigned panel name for an opted-in PDF bookmark. */
+      bookmark_title?: string
       overrides?: { gid: string; prop: string; value: unknown; identity?: string }[]
       /** 0–1 归一化、top-origin，与 PanelObject.crop 同构，原样直传 */
       crop?: { x: number; y: number; w: number; h: number }
@@ -2575,6 +2578,10 @@ export interface ExportRequest {
   include_edited_script?: boolean
   /** 「EPS 按不透明导出」：EPS 里的画布标注把半透明压成 100%，其余格式照旧；不选时不带这个键（ADR 0046 / 0174） */
   eps_opaque?: boolean
+  pdf_panel_bookmarks?: boolean
+  pdf_panel_layers?: boolean
+  pdf_annotation_layer?: boolean
+  pdf_text_attachment?: boolean
   document_id?: string | null
   /** 导出开始那一刻的文档快照指纹；回执原样带回来，用来说"期间又被编辑过" */
   document_revision?: string | null
@@ -2931,12 +2938,15 @@ export const typesetMath = (items: { src: string; family: string }[]) =>
 
 /* --------------------------- 可复现项目包 ---------------------------------- */
 
+export const CHART_PACKAGE_FORMAT = 'v4'
+
 export interface PackageResult {
   name: string
   url: string
   assets: number
   missing: string[]
   chart_sources?: number
+  document_format?: typeof CHART_PACKAGE_FORMAT
   missing_chart_sources?: string[]
   execution_coverage?: {
     state: 'incomplete' | 'complete'
@@ -2944,16 +2954,16 @@ export interface PackageResult {
   }
 }
 
-export const createPackage = async (
+export const createPackage = (
   stem: string,
   doc: FigureDocument | ProjectDocument,
   settings: Record<string, unknown>,
-  opts?: { pj?: string | null },
+  opts?: { pj?: string | null; canvasId?: string; canvasIds?: readonly string[] },
 ) =>
   jsonFetch<PackageResult>('/api/package', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stem, doc, settings }),
+    body: JSON.stringify({ stem, doc, settings, canvas_id: opts?.canvasId, canvas_ids: opts?.canvasIds }),
   }, opts?.pj)
 
 export interface PackageOpenResult {
@@ -3029,11 +3039,106 @@ export function importNotebook(file: Blob, name: string, pj?: string | null): Pr
   )
 }
 
-export function openPackage(file: File): Promise<PackageOpenResult> {
+type PackageOpenResponse = PackageOpenResult | { document_format: typeof CHART_PACKAGE_FORMAT }
+
+export function openPackage(file: File): Promise<PackageOpenResponse> {
   const form = new FormData()
   form.append('package', file)
-  return jsonFetch<PackageOpenResult>('/api/package/open', { method: 'POST', body: form })
+  return jsonFetch<PackageOpenResponse>('/api/package/open', { method: 'POST', body: form })
 }
+
+export interface ProjectPackageWarning {
+  reason: string
+  id: string
+}
+
+/** 显式v4检视事实；普通包仍由原openPackage消费。 */
+export interface ProjectPackageInspection {
+  document_format: typeof CHART_PACKAGE_FORMAT
+  doc: ProjectDocument
+  manifest: Record<string, unknown>
+  resources: { target: string; record: Record<string, unknown> }[]
+  missing: string[]
+  warnings: ProjectPackageWarning[]
+  figure_snapshots: number
+  execution_coverage: PackageResult['execution_coverage'] | null
+  captured_inputs?: Record<string, unknown>[]
+}
+
+/** 资源、配置及正文分别提交；503也可能携带已经发布的真实目录。 */
+export interface ProjectPackageInstallation {
+  state: 'resources_installed' | 'publication_unconfirmed' | 'installation_unconfirmed'
+  path: string
+  document_format: typeof CHART_PACKAGE_FORMAT
+  doc: ProjectDocument
+  execution: Record<string, unknown> | null
+  missing: string[]
+  warnings: ProjectPackageWarning[]
+  execution_coverage: PackageResult['execution_coverage'] | null
+  configuration: 'pending' | 'needs_review' | 'ready'
+  configuration_review: {
+    version: 1
+    existing_local_metadata: boolean
+    workdir: WorkdirState | null
+    defaults: { script: string; selection: Record<string, unknown> | null; unavailable_code: string | null }[]
+    issues: { reason: string; script: string | null }[]
+  }
+  document_saved: false
+  configuration_error?: string
+  runconfig_skipped?: { conflict: number; capacity: number }
+  upload_cleanup?: 'pending'
+}
+
+export interface ProjectPackageInstallOptions {
+  destination: string
+}
+
+function isProjectPackageInstallation(value: unknown): value is ProjectPackageInstallation {
+  if (!value || typeof value !== 'object') return false
+  const body = value as Partial<ProjectPackageInstallation>
+  return body.document_format === CHART_PACKAGE_FORMAT && body.doc?.schema === SCHEMA_CURRENT
+    && typeof body.path === 'string' && body.path.length > 0
+    && ['resources_installed', 'publication_unconfirmed', 'installation_unconfirmed'].includes(body.state ?? '')
+    && ['pending', 'needs_review', 'ready'].includes(body.configuration ?? '')
+    && body.document_saved === false && Array.isArray(body.missing) && Array.isArray(body.warnings)
+}
+
+export async function inspectProjectPackage(file: File, pj: string | null): Promise<ProjectPackageInspection> {
+  const form = new FormData()
+  form.append('package', file)
+  const result = await jsonFetch<ProjectPackageInspection>(
+    '/api/package/inspect', { method: 'POST', body: form }, pj,
+  )
+  if (!result || typeof result !== 'object' || result.document_format !== CHART_PACKAGE_FORMAT || result.doc?.schema !== SCHEMA_CURRENT) {
+    throw new ApiError('Unexpected document format.', 400, { code: 'invalid_document' })
+  }
+  return result
+}
+
+export async function installProjectPackage(
+  file: File, options: ProjectPackageInstallOptions, pj: string | null,
+): Promise<ProjectPackageInstallation> {
+  const form = new FormData()
+  form.append('package', file)
+  form.append('options', JSON.stringify({ destination: options.destination }))
+  try {
+    const result = await jsonFetch<ProjectPackageInstallation>(
+      '/api/package/install', { method: 'POST', body: form }, pj,
+    )
+    if (!isProjectPackageInstallation(result)) {
+      throw new ApiError('Unexpected installation receipt.', 400, { code: 'invalid_document', receipt: result })
+    }
+    return result
+  } catch (error) {
+    // A known published tree is recoverable state, not permission to retry the
+    // same destination. Keep the original phase receipt for the dialog.
+    if (error instanceof ApiError && error.status === 503 && isProjectPackageInstallation(error.body)) {
+      return error.body
+    }
+    throw error
+  }
+}
+
 
 /* --------------------------- 参数化渲染引擎 -------------------------------- */
 
@@ -3096,6 +3201,8 @@ export interface EditableField {
   step?: number
   unit?: string
   options?: string[]
+  /** This renderer only accepts the listed values for this field. */
+  strict_options?: boolean
   /**
    * `options` 里**这个运行时画不出来**的那几个。
    *
@@ -3257,6 +3364,8 @@ export interface ColormapFacts {
   custom: boolean
   stops: string[]
   discrete: boolean
+  /** Normalized edges of discrete bins whose widths are given by the source guide. */
+  boundaries?: number[]
 }
 
 /** manifest 里一张脸的文件级身份（`engine/manifest._face_source`） */
@@ -3434,7 +3543,11 @@ export interface ManifestElement {
    * 色条」；引擎在 index 里两个都认，所以旧文档的 gid 照旧生效。
    */
   colorbar_key?: string
+  /** 真正绘制的数值顺序。反向时最小值在竖条上方或横条右端。 */
+  colorbar_reversed?: boolean
   host_gid?: string
+  /** 刻度组所属的子图和轴向。与刻度组的稳定 gid 独立。 */
+  tick_host?: { axes_gid: string; axis: 'x' | 'y' | 'z' }
   /**
    * 色条**声明的宿主**（`fig.colorbar(..., ax=[…])` 的 ax 列表，matplotlib 建色条时
    * 记下的，引擎 `colorbarmodel.declared_parents`）。结构归属的证据，与颜色来源
@@ -3482,7 +3595,8 @@ export interface ManifestElement {
   /**
    * `alias_covers` 里**纯别名**的广播 prop（引擎 `overrides.ALIAS_PURE`，逐个读过 setter 才进）：广播端没有任何
    * 窄端存不下的额外状态，两个地址可互换。只有这些才能在写窄端时反向删掉广播端那条 override；图例整体字号
-   * （还改 `Legend._fontsize` 并重建布局）等不纯的不在其中，窄端写入不许动它们。可选。
+   * （还改 `Legend._fontsize` 并重建布局）等不纯的不在其中，窄端写入不许动它们。
+   * 同一 prop 的双向纯别名表示同一个共享值（例如分面的共享轴），读、写和重置都沿双向关系查找成员。可选。
    */
   alias_pure?: string[]
   /**
@@ -8048,6 +8162,7 @@ export interface ScriptBackup {
   /** 「只撤销那几处」此刻能不能做（后端按复原同一个判据算；只在 `changed` 时可能为 true） */
   undoable?: boolean
   edits?: ScriptEditPreview['edits']
+  layout?: string
 }
 
 /** 生成改写预览：脚本一个字节都不改（ADR 0110 §六） */
@@ -8073,6 +8188,38 @@ export const commitScriptEdit = (token: string) =>
     body: JSON.stringify({ token }),
   })
 
+export interface FigureStylePreview {
+  token: string
+  script_abs: string
+  written: number
+  skipped: { gid: string; prop: string; reason: string }[]
+  diff: string[]
+  backups: string[]
+  git: ScriptEditPreview['git']
+  checksums: string[]
+}
+
+export const previewFigureStyle = (
+  selection: { layout: string; revision: string; canvas_id: string; panel_id: string; working_doc_id: string },
+  pj: string | null,
+) =>
+  jsonFetch<FigureStylePreview>('/api/script-edit/figure-style/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selection),
+  }, pj)
+
+export const commitFigureStyle = (token: string, pj: string | null) =>
+  jsonFetch<{
+    ok: boolean; revision: string; working_revision: string | null; backup_id: string; script_revision: string
+  }>(
+    '/api/script-edit/figure-style/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, confirmed: true }),
+    }, pj,
+  )
+
 /** 本项目（或某个脚本）改写前留下的备份，新的在前 */
 export const listScriptBackups = (script?: string) =>
   jsonFetch<{ ok: boolean; backups: ScriptBackup[] }>(
@@ -8085,12 +8232,20 @@ export const restoreScriptBackup = (
   backupId: string,
   mode: 'full' | 'undo_edits',
   expectedSha256: string | null | undefined,
+  pj?: string | null,
+  workingDocId?: string,
 ) =>
-  jsonFetch<{ ok: boolean; script: string; unchanged?: boolean; durable?: boolean }>('/api/script-backups/restore', {
+  jsonFetch<{
+    ok: boolean; script: string; unchanged?: boolean; durable?: boolean;
+    layout?: { name: string; revision: string; working_revision: string | null }
+  }>('/api/script-backups/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ backup_id: backupId, mode, expected_sha256: expectedSha256 ?? null }),
-  })
+    body: JSON.stringify({
+      backup_id: backupId, mode, expected_sha256: expectedSha256 ?? null,
+      ...(workingDocId ? { working_doc_id: workingDocId } : {}),
+    }),
+  }, pj)
 
 /** 只为**当前项目**切 safe worker 的工作目录模式（ADR 0047）。改了后端会关掉该项目的会话。 */
 export const setProjectWorkdir = (mode: WorkdirMode) =>
@@ -9190,7 +9345,7 @@ export interface CapturedFigureDescriptor {
   script: string
   entry: string
   stem: string
-  capture_source: 'savefig' | 'pyplot'
+  capture_source: 'savefig' | 'pyplot' | 'ggplot2'
   execution_profile: 'safe' | 'native'
   original_artifact: string | null
   size_mm: [number, number]
@@ -10103,7 +10258,7 @@ export interface RuntimeAssetInfo {
   status: RuntimeStaleStatus
   cached: boolean
   size_mm: [number, number] | null
-  capture_source: 'savefig' | 'pyplot' | null
+  capture_source: CapturedFigureDescriptor['capture_source'] | null
   descriptor: CapturedFigureDescriptor | null
   /** 按参数配置跑出的变体素材才有（本机不透明引用，不含参数值）；无参数的那张没有 */
   run_config?: string
@@ -10187,6 +10342,7 @@ export interface NativePending {
 
 /** 一条 native 会话对外的全部状态（`NativeSession.public_state()` 原样）。 */
 export interface NativeSessionInfo {
+  capture_source?: 'ggplot2'
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   session_id: string
   project_root: string
@@ -10299,6 +10455,28 @@ export const buildNativeSession = (sessionId: string) =>
     `/api/native/sessions/${encodeURIComponent(sessionId)}/build`,
     { method: 'POST' },
   )
+
+export const startNativeGgplot = (target: {
+  script: string
+  object: string
+  frame_pt: [number, number]
+  rscript?: string
+  library?: string
+}) => jsonFetch<{ session: NativeSessionInfo }>('/api/native/ggplot2', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(target),
+})
+
+export const inviteNativeGgplot = (target: {
+  script: string
+  object: string
+  frame_pt: [number, number]
+}) => jsonFetch<{ command: string; expires_in: number }>('/api/native/ggplot2/invitation', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(target),
+})
 
 const nativeAction = (sessionId: string, action: string) =>
   jsonFetch<{ session: NativeSessionInfo }>(

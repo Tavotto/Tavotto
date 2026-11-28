@@ -5471,6 +5471,19 @@ def _new_worker(
 
     if task is None:
         with _seg("spawn_gate_ms"):
+            # A snapshot-less preview can arrive while the user opens an
+            # archived layout. A missing source cannot start a new execution
+            # and must never enter the pool as an unobserved replacement.
+            source, _ = execspec.safe_source_override(figures_dir, script_name, write_roots)
+            if source is None:
+                source = projectenv.contained_path(figures_dir, script_name)
+            if source is None or not Path(source).is_file():
+                error = WorkerError(
+                    f"脚本文件不存在: {Path(script_name).name}（可能被移动或删除）",
+                    code=SCRIPT_SOURCE_MISSING_CODE,
+                )
+                error.script_name = script_name
+                raise error
             _workdir_gate(figures_dir, script_name)
         # 第二道门：依赖（U04，ADR 0061 §六）。判据住在 `deprepair`（它 import 本模块，所以这里
         # 不能反过来 import 它——它在 import 时把自己的门登记进 `SPAWN_GATES`）。门要问就抛带

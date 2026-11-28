@@ -957,7 +957,16 @@ def _copy_project(
                     if seen > COPY_MAX_FILES * 4:
                         too_big = True
                         break
-                    if e.is_symlink():
+                    junction = False
+                    if os.name == "nt":
+                        try:
+                            junction = (
+                                e.stat(follow_symlinks=False).st_reparse_tag
+                                == stat.IO_REPARSE_TAG_MOUNT_POINT
+                            )
+                        except OSError:
+                            continue
+                    if e.is_symlink() or junction:
                         rel = Path(e.path).relative_to(src_dir)
                         if os.path.isdir(e.path):
                             skipped["dirs"].append(str(rel))

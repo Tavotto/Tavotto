@@ -29,6 +29,7 @@ def _command_payload(payload):
 # ------------------------------ 选路 ------------------------------
 def test_the_python_pool_is_the_default_when_workerd_is_absent(monkeypatch, tmp_path):
     """找不到二进制 = 一切照旧。加速件缺席绝不能让渲染整个不可用。"""
+    (tmp_path / "fig.py").touch()
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: None)
     calls = []
     monkeypatch.setattr(pool, "EngineWorker", lambda *a: calls.append(a) or "python-pool")
@@ -37,6 +38,7 @@ def test_the_python_pool_is_the_default_when_workerd_is_absent(monkeypatch, tmp_
 
 
 def test_workerd_is_used_when_the_binary_is_there(monkeypatch, tmp_path):
+    (tmp_path / "fig.py").touch()
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: "/bin/true")
     monkeypatch.setattr(pool, "WorkerdWorker", lambda *a: "workerd")
     monkeypatch.setattr(pool, "EngineWorker", lambda *a: "python-pool")
@@ -45,6 +47,7 @@ def test_workerd_is_used_when_the_binary_is_there(monkeypatch, tmp_path):
 
 def test_a_failing_workerd_falls_back_to_the_python_pool(monkeypatch, tmp_path, caplog):
     """workerd 建会话失败**必须回退**并留痕——用户的图比控制面重要得多。"""
+    (tmp_path / "fig.py").touch()
     monkeypatch.setattr(workerd_client, "find_workerd", lambda: "/bin/true")
 
     def boom(*_a):

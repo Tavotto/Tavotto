@@ -302,8 +302,8 @@ export function geomTarget(
 }
 
 /** 元素当前的 axes position（优先取尚未渲染回来的 override） */
-export function positionOf(panel: Pick<PanelObject, 'overrides'>, el: ManifestElement): Rect4 | null {
-  const ov = effectiveOverride(panel.overrides, el.gid, 'position')
+export function positionOf(panel: Pick<PanelObject, 'overrides' | 'chartFrame'>, el: ManifestElement): Rect4 | null {
+  const ov = panel.chartFrame ? undefined : effectiveOverride(panel.overrides, el.gid, 'position')
   if (ov && Array.isArray(ov.value)) return (ov.value as number[]).slice(0, 4) as Rect4
   const f = el.editable.find((x) => x.prop === 'position')
   return Array.isArray(f?.value) ? ((f.value as number[]).slice(0, 4) as Rect4) : null
@@ -315,7 +315,7 @@ export function arrowEndpointsOf(
   el: ManifestElement,
 ): [number, number][] | null {
   if (!el.arrow_endpoints || el.arrow_endpoints.length < 2) return null
-  const ov = effectiveOverride(panel.overrides, el.gid, 'endpoints_frac')
+  const ov = panel.chartFrame ? undefined : effectiveOverride(panel.overrides, el.gid, 'endpoints_frac')
   if (ov && Array.isArray(ov.value) && ov.value.length === 4) {
     const v = ov.value as number[]
     return [
@@ -390,7 +390,7 @@ export function segIntersectsRect(
  */
 export function anchorOf(panel: PanelObject, el: ManifestElement): [number, number] | null {
   if (!el.anchor || !el.drag_prop) return null
-  const ov = effectiveOverride(panel.overrides, el.gid, el.drag_prop)
+  const ov = panel.chartFrame ? undefined : effectiveOverride(panel.overrides, el.gid, el.drag_prop)
   if (ov && Array.isArray(ov.value)) {
     const v = ov.value as number[]
     return [v[0], v[1]]

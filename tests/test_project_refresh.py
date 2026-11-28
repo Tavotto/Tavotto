@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pymupdf
@@ -868,6 +869,51 @@ def test_registry_snapshot_is_not_a_live_view(tmp_path):
 
 
 class TestExecutionPublicationIsSelfWritten:
+    def test_watcher_compares_the_file_and_revisions_across_one_publication(
+        self, client, tmp_path, monkeypatch
+    ):
+        figs = _project(tmp_path)
+        _write_registry(figs, {"two.py": {"entry": "main", "stems": ["Runtime", "Extra"]}})
+        ctx = _open(client, figs)
+        state = engine_refresh.state_of(ctx)
+        path = engine_registry.registry_path(figs)
+        lock = state.lock
+        publishing_thread = threading.current_thread()
+        watcher_checking = threading.Event()
+        registry_published = threading.Event()
+        content_revision = engine_refresh.atomicio.content_revision
+
+        class ObservedLock:
+            def __enter__(self):
+                if threading.current_thread() is not publishing_thread:
+                    watcher_checking.set()
+                return lock.__enter__()
+
+            def __exit__(self, *exc):
+                return lock.__exit__(*exc)
+
+        def read_revision(target):
+            watcher_checking.set()
+            assert registry_published.wait(5)
+            return content_revision(target)
+
+        monkeypatch.setattr(state, "lock", ObservedLock())
+        monkeypatch.setattr(engine_refresh.atomicio, "content_revision", read_revision)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with engine_refresh.publishing_execution(ctx, None, None) as mark_published:
+                verdict = executor.submit(engine_refresh.is_self_written, ctx)
+                assert watcher_checking.wait(5)
+                config = {
+                    "version": 1,
+                    "scripts": {"two.py": {"entry": "main", "stems": ["Runtime"]}},
+                }
+                revision = engine_refresh.atomicio.write_json(path, config, indent=1)
+                assert revision != state.registry_revision
+                mark_published(revision, config)
+                registry_published.set()
+            assert verdict.result(timeout=5) is True
+
     def test_a_watcher_poll_between_registration_and_refresh_does_not_static_merge_it_back(
         self, client, tmp_path
     ):

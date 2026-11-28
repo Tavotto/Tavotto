@@ -62,6 +62,7 @@ import collections
 import copy
 import hashlib
 import json
+import logging
 import os
 import socket
 import threading
@@ -81,6 +82,8 @@ from . import (
     runcodes,
 )
 from .runcodes import RunError
+
+LOG = logging.getLogger(__name__)
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
 EVENT_KEY = "bridge_event"
@@ -378,7 +381,7 @@ class NativeSession:
     #: 回执 / 准备路径按它认控制面（`pool.control_plane_of` 读这个属性；值与 `receipt.CONTROL_PLANE_NATIVE` 同）
     control_plane = "native"
 
-    def __init__(self, *, session_id: str, descriptor: dict):
+    def __init__(self, *, session_id: str, descriptor: dict, ggplot_target=None):
         meta = descriptor.get("metadata") or {}
         self.session_id = session_id
         self.native_id = descriptor.get("native_id", "")
@@ -393,12 +396,16 @@ class NativeSession:
         self.permission_key = str(meta.get("permission_key") or "")
         self.python_version = str(meta.get("python_version") or "")
         self.out_dir = Path(str(descriptor.get("out_dir") or ""))
+        self.ggplot_target = ggplot_target
         #: 桌面拥有的进程所有者（`desktopproc.DesktopProcess`，鸭子类型：`finished` / `cancel()` /
         #: `pid`）。None = 进程是终端的——本模块绝不去结束它。
         self.owned = None
         #: 桌面拥有的会话的**不可变启动身份**（`execspec.ExecutionSpec`，owner=desktop）。含 argv / env 原文，
         #: 所以是私有的：不进 `public_state()` / `diagnostics()`，回执只取它的公开投影。终端拥有的为 None。
         self.spec = None
+        # A console supplies settings for a separate protected replay. They
+        # neither describe the console launch nor transfer process ownership.
+        self.ggplot_console_replay: execspec.ExecutionSpec | None = None
         #: 桌面拥有的会话：这次运行的运行配置引用 / 回执关联键（公开，不含参数值）
         self.run_config = str(meta.get("run_config") or "")
         self.launch_id = str(meta.get("launch_id") or "")
@@ -458,6 +465,7 @@ class NativeSession:
         self._lock = threading.Lock()
         self._changed = threading.Condition(self._lock)
         self._on_change = None
+        self._change_notifications: collections.deque[dict] = collections.deque()
         #: 本会话占着的环境租约有没有被释放过（只释放一次）。
         self._lease_released = False
         #: 「与文档不一致」的图：stem → 让它停在这一档的那份全量列表的 canonical hash。
@@ -471,7 +479,7 @@ class NativeSession:
         #: 检查，第二个（换了列表的渲染 / 导出 / continue）就在不一致的 Figure 上执行了，
         #: 晚到的响应还会把标记改回旧的那一次。bridge 本来就串行执行，这把锁只是让检查与
         #: 执行同序。会话粒度（不是 stem）：continue / detach 看的是**所有** stem。
-        self._figure_lock = threading.Lock()
+        self._figure_lock = threading.RLock()
         #: 每张图最近一次渲染的那份全量列表（canonical hash）——即会话此刻的列表。export /
         #: preview 临时套用别的列表、还原回它时失败，被标「不一致」的是**它**：之后放行的
         #: 重渲染是这一份（重试还原）。没渲染过就记空串，任何渲染都不放行（只能重跑）
@@ -505,9 +513,39 @@ class NativeSession:
                 setattr(self, k, v)
             entry = {"seq": self.sequence, "state": state, "at": self.last_event_at, **fields}
             self.events.append(entry)
+            drain = self._queue_change_locked(entry)
             self._changed.notify_all()
-        if self._on_change is not None:
-            self._on_change(self, entry)
+        if drain:
+            self._drain_changes()
+
+    def _subscribe_to_changes(self, callback) -> None:
+        with self._changed:
+            self._on_change = callback
+            drain = bool(self.events) and self._queue_change_locked(self.events[-1])
+        if drain:
+            self._drain_changes()
+
+    def _queue_change_locked(self, entry: dict) -> bool:
+        if self._on_change is None:
+            return False
+        self._change_notifications.append(entry)
+        return len(self._change_notifications) == 1
+
+    def _drain_changes(self) -> None:
+        # Keep the current event in the queue until delivered. Concurrent publishers
+        # enqueue in sequence order while the callback can safely read session state.
+        while True:
+            with self._lock:
+                entry = self._change_notifications[0]
+                callback = self._on_change
+            try:
+                callback(self, entry)
+            except Exception:  # noqa: BLE001 — one subscriber failure must not stall later events
+                LOG.exception("Native session change notification failed")
+            with self._lock:
+                self._change_notifications.popleft()
+                if not self._change_notifications:
+                    return
 
     def wait_for_state(self, states, timeout: float) -> str:
         """阻塞等状态落进 `states`（或任意终态）。**给 CLI 集成与用例用。**
@@ -601,6 +639,8 @@ class NativeSession:
                     self._image_format_mismatch = dict(mismatch)
             with self._lock:
                 self._barrier_snapshot_epoch = None
+                if self.ggplot_target is not None and isinstance(frame.get("script_error"), dict):
+                    self.script_error = frame["script_error"]
             self._release_lease()
             self._set_state(
                 ENDED,
@@ -673,19 +713,22 @@ class NativeSession:
         return True
 
     def _revoke_pending_barrier(self) -> bool:
-        """Revoke one unconfirmed barrier, with ``_lock`` held.
+        """Clear the live barrier and report any receipt change, with ``_lock`` held.
 
         Local terminal states (notably one-way terminate) are not runner
         acknowledgements. Only trusted release/end frames or a successful
         continue response clear this pending barrier without uncertainty.
         """
-        if self._barrier_snapshot_epoch is not None:
-            changed = self.snapshot_epoch == self._barrier_snapshot_epoch
-            if changed:
-                self.snapshot_epoch += 1
-            self._barrier_snapshot_epoch = None
-            return changed
-        return False
+        epoch = self._barrier_snapshot_epoch
+        self._barrier_snapshot_epoch = None
+        if epoch is None or self.snapshot_epoch != epoch:
+            return False
+        # The owned R bridge has already run the script to completion at this
+        # barrier. Its command loop can redraw the capture, and EOF exits it.
+        if self.ggplot_target is not None and self.barrier_reason == "script_end":
+            return False
+        self.snapshot_epoch += 1
+        return True
 
     def _on_transport_closed(self, reason: dict | None) -> None:
         owned = self.owned
@@ -797,9 +840,10 @@ class NativeSession:
             self.last_event_at = time.time()
             entry = {"seq": self.sequence, "state": self.state, "at": self.last_event_at, **fields}
             self.events.append(entry)
+            drain = self._queue_change_locked(entry)
             self._changed.notify_all()
-        if self._on_change is not None:
-            self._on_change(self, entry)
+        if drain:
+            self._drain_changes()
 
     def _on_input_request(self, frame: dict) -> None:
         """reader 线程里跑。终端拥有的会话从不装输入桥，收到也不信（没有人能答）。"""
@@ -902,6 +946,12 @@ class NativeSession:
                     },
                 )
         self._release_lease()
+
+    @property
+    def ggplot_source_spec(self) -> execspec.ExecutionSpec | None:
+        if self.ggplot_target is not None:
+            return self.spec or self.ggplot_console_replay
+        return None
 
     def cancel_owned(self) -> dict:
         """结束**桌面拥有的**脚本进程（含它的进程组 / Job）。终端拥有的会话拒绝（`NATIVE_PROCESS_NOT_OWNED`）。
@@ -1063,10 +1113,15 @@ class NativeSession:
 
     def ensure_built(self) -> dict:
         with self._figure_lock:
+            if self.ggplot_target is not None and self.built:
+                self._require_barrier()
+                return self.last_build
             with self._lock:
                 epoch, execution_id = self.snapshot_epoch, self.execution_id
                 script = self.execution_script
             resp = self._request({"cmd": "build"}, BUILD_TIMEOUT)
+            if self.ggplot_target is not None:
+                resp = self.ggplot_target.publish_preview(self, resp, build=True)
             fact = self.captured_inputs_for_receipt(script=script or "")
             with self._lock:
                 if (
@@ -1137,10 +1192,15 @@ class NativeSession:
             if owed is not None and owed != want:
                 raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT)
             proof = self._proof_context() if include_figure_execution else None
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, patches)
             self.rev += 1
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
+            if self.ggplot_target is not None:
+                resp = self.ggplot_target.publish_preview(self, resp, build=False)
+                resp["_published_svg_revision"] = self.rev
             if proof is not None:
                 resp = self._proof_response(resp, proof)
             self._session_list[stem] = want
@@ -1248,9 +1308,13 @@ class NativeSession:
                 payload, expected_execution_id, expected_snapshot_epoch
             )
             self._require_consistent(stem)
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, patches)
             resp = self._request(
                 payload, EXPORT_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
+            if self.ggplot_target is not None:
+                resp = self.ggplot_target.acknowledge_export(resp, svg_path)
             self._note_temporary(stem, resp)
             return resp
 
@@ -1280,6 +1344,8 @@ class NativeSession:
                 payload, expected_execution_id, expected_snapshot_epoch
             )
             self._require_consistent(stem)
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, patches)
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
@@ -1295,23 +1361,62 @@ class NativeSession:
         expected_execution_id: str | None = None,
         expected_snapshot_epoch: int | None = None,
     ) -> dict:
-        with self._figure_lock:
-            payload = {
+        return self._preview_snapshot(
+            stem,
+            {
                 "cmd": "preview_png",
-                "stem": stem,
                 "patches": patches,
                 "width": int(width_px),
                 "with_manifest": True,
-            }
+            },
+            expected_execution_id,
+            expected_snapshot_epoch,
+        )
+
+    def preview_svg_snapshot(
+        self,
+        stem: str,
+        patches: list,
+        *,
+        include_fonts: bool = False,
+        expected_execution_id: str,
+        expected_snapshot_epoch: int,
+    ) -> dict:
+        """Read the protected-writeback reference without changing the live overrides."""
+        return self._preview_snapshot(
+            stem,
+            {"cmd": "render", "patches": patches, "include_fonts": include_fonts},
+            expected_execution_id,
+            expected_snapshot_epoch,
+        )
+
+    def _preview_snapshot(self, stem, payload, expected_execution_id, expected_snapshot_epoch):
+        with self._figure_lock:
+            payload["stem"] = stem
             existing = self._guard_existing_request(
                 payload, expected_execution_id, expected_snapshot_epoch
             )
             self._require_consistent(stem)
+            if self.ggplot_target is not None:
+                self.ggplot_target.validate_edit_targets(self, payload["patches"])
             resp = self._request(
                 payload, REQUEST_TIMEOUT, **({"existing": existing} if existing is not None else {})
             )
+            if self.ggplot_target is not None:
+                self.ggplot_target.annotate_manifest(resp["manifest"])
             self._note_temporary(stem, resp)
             return resp
+
+    def ggplot_capture_data_fingerprint(self, stem: str) -> str:
+        with self._figure_lock:
+            self._require_consistent(stem)
+            response = self._request(
+                {"cmd": "capture_data_fingerprint", "stem": stem}, REQUEST_TIMEOUT
+            )
+        observed = response.get("data_fingerprint")
+        if not isinstance(observed, str) or not observed:
+            raise pool.WorkerError("The R capture did not supply its data fingerprint.")
+        return observed
 
     def svg_path(self, stem: str) -> Path:
         return Path(pool.figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
@@ -1455,6 +1560,7 @@ class NativeSession:
             "sequence": self.sequence,
             "editable": self.state == BARRIER,
             "pending_input": self.pending_input,
+            **({"capture_source": "ggplot2"} if self.ggplot_target is not None else {}),
             **(
                 {"figure_snapshot_invalidation": copy.deepcopy(self.figure_snapshot_invalidation)}
                 if self.figure_snapshot_invalidation is not None
@@ -1575,7 +1681,7 @@ class NativeSessionRegistry:
             envlease.release_native(interpreter, session_id)
             raise
         session = NativeSession(session_id=session_id, descriptor=descriptor)
-        session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
+        session._subscribe_to_changes(self._changed)  # noqa: SLF001 — 注册表持有会话
         transport = NativeTransport(
             sock,
             on_event=session._on_frame,
@@ -1706,8 +1812,8 @@ class NativeSessionRegistry:
         with self._lock:
             self._reserved.discard(launch_id)
 
-    def adopt(self, session: NativeSession) -> None:
-        """登记一条**桌面拥有**的会话（`desktopproc.start` 在握手成功、传输起好之后调）。
+    def adopt(self, session: NativeSession, *, ticket: StartTicket | None = None) -> None:
+        """Register a session whose authenticated transport is already running.
 
         与 `attach` 的区别只在会话怎么来的（没有 relay / descriptor）；之后的注册表语义
         （live route、终态丢路由、`on_change`）是同一套。
@@ -1715,19 +1821,16 @@ class NativeSessionRegistry:
         with self._lock:
             if self._closing:
                 raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+            if ticket is not None:
+                self.check_start(ticket)
             prev = self._sessions.get(session.session_id)
             if prev is not None and (
                 prev.alive() or (prev.owned is not None and not prev.owned.finished)
             ):
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
-            session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
             self._sessions[session.session_id] = session
-        # 传输 reader 在登记之前就已经在跑:脚本一起来就 `input()` / 到屏障时,那条事件发出时回调还没装上,
-        # 会被丢掉而界面再也收不到(准备一直等着)。登记完成后把当前最新一条补发出去(序号单调,重复无害)
-        with session._lock:  # noqa: SLF001
-            last = session.events[-1] if session.events else None
-        if last is not None:
-            self._changed(session, last)
+        # 传输 reader 已在运行。订阅和补发最后一条事件同时入队，随后即时事件按序送到界面。
+        session._subscribe_to_changes(self._changed)  # noqa: SLF001 — 注册表持有会话
 
     def _changed(self, session: NativeSession, entry: dict) -> None:
         if session.state in TERMINAL_STATES:

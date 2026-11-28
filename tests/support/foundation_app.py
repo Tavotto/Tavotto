@@ -216,7 +216,13 @@ NONCE = "e2e-desktop-nonce-0123456789"
 
 
 @contextlib.contextmanager
-def sidecar_app(project: Path, work: Path, *, env_overrides: dict | None = None):
+def sidecar_app(
+    project: Path,
+    work: Path,
+    *,
+    env_overrides: dict | None = None,
+    executable: Path | None = None,
+):
     """真的 `tavotto --desktop-sidecar`（Tauri 壳启动它的方式）：启动 nonce 走 stdin，窗口用它兑换会话 cookie。
     回退只授权给这条来源（桌面用户主动发起）——浏览器模式的 `fa.running_app` 在这里是反例。"""
     data_dir, config_dir, home = work / "data", work / "config", work / "home"
@@ -237,8 +243,9 @@ def sidecar_app(project: Path, work: Path, *, env_overrides: dict | None = None)
         env.pop(name, None)
     log_path = work / "server.log"
     log = log_path.open("w", encoding="utf-8")
+    command = [str(executable)] if executable is not None else [sys.executable, "-m", "tavotto"]
     proc = subprocess.Popen(  # noqa: S603
-        [sys.executable, "-m", "tavotto", "--figures", str(project), "--desktop-sidecar"],
+        [*command, "--figures", str(project), "--desktop-sidecar"],
         env=env,
         stdin=subprocess.PIPE,
         stdout=log,

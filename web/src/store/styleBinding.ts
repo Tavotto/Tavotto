@@ -72,13 +72,18 @@ import {
 import type { DocumentStyle, FigureDocument, PanelObject, StyleOwnedOverride } from '@/types/document'
 import { renderStylePlan, writeStylePlan } from './actions'
 import { isCopiedBakedBaseline } from '@/lib/bakedBaseline'
+import { engineTransport } from '@/lib/engineTransport'
+import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
 import { useInteractionStore } from './interactionStore'
+import { useMountedPngStore } from './mountedPngStore'
+import { nativePanelState, useNativeSessionStore } from './nativeSessionStore'
 import { useProfileStore } from './profileStore'
 import { exactPanelManifest, renderKeyOf, useRenderStore } from './renderStore'
 import { requestRender } from './renderScheduler'
+import { useRuntimeAssetStore } from './runtimeAssetStore'
 import { changeFigureFont, figureFontChoice } from '@/lib/figureFontChoice'
 import { useUiStore } from './uiStore'
 import { documentGeneration, styleLedgerKey, styleWork } from './styleWork'
@@ -105,7 +110,16 @@ const docNow = () => useDocumentStore.getState().doc
  * override 写到已经不存在的 gid 上、还把这张图记成「看过了」（Codex #547 P1）。拿不到就当
  * 「还没有 manifest」，走欠账那条路。
  */
-const manifestOf = (p: PanelObject): Manifest | null => exactPanelManifest(useRenderStore.getState(), p)
+function manifestOf(p: PanelObject): Manifest | null {
+  const renders = useRenderStore.getState()
+  if (p.fileKind === 'runtime') {
+    const profile = p.source?.captureSource === 'ggplot2' ? 'native' : useRuntimeAssetStore.getState().byId[p.fileId]?.profile
+    const sessions = useNativeSessionStore.getState().sessions
+    // 已结束或暂不可编辑的 native 图仍可以显示原来的预览，不能用它写新编辑。
+    if (nativePanelState(sessions, p.fileId, profile, !!renders.inconsistent[p.fileId])) return null
+  }
+  return exactPanelManifest(renders, p)
+}
 
 const recordOf = (id: string): ProfileRecord | undefined =>
   useProfileStore.getState().styles.find((r) => r.id === id)
@@ -319,6 +333,12 @@ function pruneToStyle(debt: StyleProfileData, style: StyleProfileData): StylePro
  */
 const missingNow = (doc: FigureDocument): string[] => panelsOf(doc).filter((p) => !manifestOf(p)).map(figKey)
 
+function prepareArchivedStyleManifest(panel: PanelObject) {
+  if (engineTransport() || panel.fileKind === 'runtime' || !hasFigureSnapshotPreview(panel)) return
+  const render = useRenderStore.getState().get(renderKeyOf(panel))
+  if (render.wantPatches !== JSON.stringify(panel.overrides)) requestRender(panel, true)
+}
+
 /**
  * `full`：此刻整份样式（`presetDelta(null, 样式)`）。**还没对齐过的新图**欠的是整份，不是这一笔变化量——
  * 存库在飞时加进来的图（自动对齐被队列挡着）只记变化量的话，渲染回来按欠账补了这一项、记成看过了，
@@ -332,6 +352,8 @@ function owe(
   full: StyleProfileData,
   /** 改样式 / 跟上样式库：补的时候不碰用户手改的 override（明确绑定传 false，照旧覆盖） */
   keepUserOwned = false,
+  /** 只有用户明确绑定或修改样式时，才为归档的磁盘面板打开编辑引擎。 */
+  prepareArchived = false,
 ) {
   const ids = new Set(missingIds)
   const missing = panelsOf(doc).filter((p) => ids.has(figKey(p)))
@@ -340,6 +362,7 @@ function owe(
   const assets = useAssetStore.getState().byId
   const map = pending.get(key) ?? new Map<string, StyleProfileData>()
   const keep = keeping.get(key) ?? new Map<string, StyleProfileData>()
+  const prepare: PanelObject[] = []
   for (const p of missing) {
     // 对齐过的图带着样式写的 override，合样式的图欠整份等于只欠这一笔：只看 override 就够
     const fresh = !p.overrides.length || isCopiedBakedBaseline(p.overrides, assets[p.fileId])
@@ -357,10 +380,12 @@ function owe(
       else keep.delete(fig)
     }
     map.set(fig, mergeDelta(prev, owed))
+    if (prepareArchived) prepare.push(p)
   }
   if (map.size) pending.set(key, map)
   if (keep.size) keeping.set(key, keep)
   else keeping.delete(key)
+  for (const p of prepare) prepareArchivedStyleManifest(p)
 }
 
 /** `a` 里去掉 `b` 也有的项（图内角色按 role × prop，配色整体算一项） */
@@ -629,7 +654,7 @@ function bindNow(recordId: string | null): void {
     },
     plan,
   )
-  owe(docNow(), delta, missing, delta)
+  owe(docNow(), delta, missing, delta, false, true)
   markSeen(docNow(), shown)
   markTextsSeen()
 }
@@ -780,7 +805,7 @@ export function editBoundStyleAll(edits: StyleEdit[], label?: (name: string) => 
       if (redirectKey) redirects.delete(redirectKey)
       throw e
     }
-    owe(docNow(), delta, missing, presetDelta(null, data), true)
+    owe(docNow(), delta, missing, presetDelta(null, data), true, true)
     if (copied) useUiStore.getState().setStatus(msg('stylePanel.copiedBuiltin', { name }, 'workspace'), 'done')
     else if (upgraded) useUiStore.getState().setStatus(msg('stylePanel.upgradedLegacy', { name }, 'workspace'), 'done')
     return true
@@ -901,7 +926,11 @@ export function followLibrary(): boolean {
   const rec = recordOf(binding.id)
   if (!rec || sameRules(rec.data, binding.snapshot)) return false
   // 还有图没渲染出来：先不前进快照，等它们到齐再一起跟上
-  if (panelsOf(doc).some(awaitingManifest)) return false
+  const awaiting = panelsOf(doc).filter(awaitingManifest)
+  if (awaiting.length) {
+    for (const p of awaiting) prepareArchivedStyleManifest(p)
+    return false
+  }
   const before = binding.snapshot as unknown as StyleProfileData
   const data = rec.data as unknown as StyleProfileData
   const name = profileName(rec)
@@ -1182,7 +1211,7 @@ function syncNow() {
 }
 
 /**
- * 同步器：订阅文档、样式库、渲染态、交互四处，把上面的「跟随」接到对的时刻上。
+ * 同步器：文档、样式库、实际挂载的预览和交互变化时，补跑被挡下的「跟随」。
  * 返回退订函数（App 挂一次；测试各自起停）。
  */
 export function startStyleBindingSync(): () => void {
@@ -1215,6 +1244,10 @@ export function startStyleBindingSync(): () => void {
       syncNow()
     }
   })
+  const unPng = useMountedPngStore.subscribe((s, prev) => {
+    // PNG 请求完成与像素实际挂载分开，后者才让这次测量可用于样式写入。
+    if (s.byPanel !== prev.byPanel) syncNow()
+  })
   const unInteraction = useInteractionStore.subscribe((s, prev) => {
     if (prev.kind !== 'none' && s.kind === 'none') {
       syncNow()
@@ -1227,6 +1260,7 @@ export function startStyleBindingSync(): () => void {
     unDoc()
     unProfiles()
     unRender()
+    unPng()
     unInteraction()
   }
 }

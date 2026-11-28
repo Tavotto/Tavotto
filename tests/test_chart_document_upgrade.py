@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import documentassets, documents
+from tavotto.engine import documentassets, documents, exportreq as engine_exportreq
 from test_chart_document_assets import (
     SCENE_DIGEST,
     SOURCE,
@@ -104,14 +104,20 @@ def test_source_freeze_failure_keeps_the_existing_body_untouched(client, tmp_pat
     path = tmp_path / "升级.json"
     before = path.read_bytes()
 
-    resp = client.post("/api/layouts/升级", json=_schema4_document())
-    assert resp.status_code == 422
-    assert resp.get_json()["code"] == "chart_source_mismatch"
+    def boom(*args, **kwargs):
+        raise engine_exportreq.ExportRequestError("chart_source_changed", "source changed", {})
+
+    monkeypatch.setattr(m, "_render_chart_snapshot", boom)
+    candidate = _schema4_document()
+    candidate["canvases"][0]["objects"][-1].pop("chartSource")
+    resp = client.post("/api/layouts/升级", json=candidate)
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "chart_source_changed"
     assert path.read_bytes() == before
     assert not (tmp_path / "chart_sources").exists()
 
 
-def test_upgrade_keeps_one_named_file_and_one_timeline(client, tmp_path, monkeypatch):
+def test_upgrade_keeps_one_named_file_and_one_timeline(client, tmp_path):
     """升级不改身份：同一个命名文件、同一条版本时间线；升级前的 schema 3 节点
     与升级后的 schema 4 节点都在，且都能取回整份项目正文。"""
     _install_source(tmp_path)
@@ -142,7 +148,7 @@ def test_upgrade_keeps_one_named_file_and_one_timeline(client, tmp_path, monkeyp
     assert (tmp_path / "chart_sources" / f"{chart_reference()['bytesSha256']}.svg").is_file()
 
 
-def test_upgrade_reuses_the_autosave_slot(client, tmp_path, monkeypatch):
+def test_upgrade_reuses_the_autosave_slot(client, tmp_path):
     _install_source(tmp_path)
     assert client.put("/api/autosave/d_up", json=_schema3_document()).status_code == 200
     upgraded = client.put("/api/autosave/d_up", json=_schema4_document())

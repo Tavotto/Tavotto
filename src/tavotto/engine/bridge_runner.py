@@ -114,8 +114,10 @@ _PHASE2 = (
     "axestraversal",
     "spinemodel",
     "tickmodel",
+    "colorscale",
     "colorbarmodel",
     "legendmodel",
+    "manifest_fields",
     "mixedtext",
     "overrides",
     "manifest",
@@ -457,7 +459,7 @@ def _apply_stem_aliases() -> None:
 # 用户上下文（与真实 python 对拍，见 tests/bridge/test_bridge_invocation.py）
 # ---------------------------------------------------------------------------
 def run_script(
-    target: str, argv: list, on_start=None, on_source=None, source: str | None = None
+    target: str, argv: list, on_start=None, source: str | None = None, *, on_source=None
 ) -> None:
     """等价于 `python <target> <argv…>`。
 
@@ -508,7 +510,7 @@ def run_script(
     exec(code, main_mod.__dict__)
 
 
-def run_script_entry(target: str, argv: list, entry: str, on_start=None, on_source=None) -> None:
+def run_script_entry(target: str, argv: list, entry: str, on_start=None, *, on_source=None) -> None:
     """库式模块的函数入口（ADR 0127 修订 2026-11-18，TVD-YB4Q）：整份模块执行完再调零参函数 `entry`。
 
     只在 `discover.native_entry_of` 判 `call` 时由父进程经 `--entry` 要：脚本没有 `if __name__` 守卫、顶层代码也不画图，
@@ -578,6 +580,7 @@ def run_module(
     on_origin=None,
     on_start=None,
     path_root: str | None = None,
+    *,
     on_source=None,
 ) -> None:
     """等价于 `python -m <target> <argv…>`。

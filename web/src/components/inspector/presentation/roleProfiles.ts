@@ -162,7 +162,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: [
       'label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha',
     ],
-    more: ['bar_width', 'visible'],
+    more: ['bar_width', 'bar_thickness', 'visible'],
     visibleWhen: { hatchcolor: HAS_HATCH, hatch_linewidth: HAS_HATCH },
   },
   bar: {

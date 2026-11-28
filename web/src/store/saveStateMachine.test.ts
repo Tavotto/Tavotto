@@ -435,6 +435,24 @@ describe('外部修改冲突（R-08）', () => {
     expect(localStorage.getItem(recoveryKey('d_conf'))).not.toBeNull()
   })
 
+  it('本机事务的回执只加载指定修订，且不会把旧内存版本先写回去', async () => {
+    await s().switchDocument(seeded(1, 'before'), 'd_source_style')
+    await saveNow()
+    puts.length = 0
+    const updated = JSON.stringify(seeded(2, 'committed'))
+    disk.set('d_source_style', updated)
+
+    const opts = { keepMine: false, expectedRevision: revOf(updated) }
+    expect(await reloadFromDisk({ ...opts, expectedRevision: 'another revision' })).toBe(false)
+    expect(await reloadFromDisk({ ...opts, canInstall: () => false })).toBe(false)
+    expect(s().projectMeta.name).toBe('before')
+
+    expect(await reloadFromDisk(opts)).toBe(true)
+    expect(s().projectMeta.name).toBe('committed')
+    expect(puts).toHaveLength(0)
+    expect(disk.get('d_source_style')).toBe(updated)
+  })
+
   it('明确覆盖：拿 409 里回的 hash 当基线写过去，**不是关掉校验**', async () => {
     await enterConflict()
     putMode = 'ok'

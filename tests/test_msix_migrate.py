@@ -737,19 +737,20 @@ def test_history_visible_after_startup_creates_db_and_second_migration(world, mo
 def test_sqlite_backup_does_not_block_on_exclusive_lock(world, monkeypatch):
     _r, local = world.pkg(PFN_A)
     db = _make_history(local)
-    monkeypatch.setattr(msixmigrate, "CRITICAL_BUDGET_S", 0.5)
     holder = sqlite3.connect(db, isolation_level=None)
     holder.execute("BEGIN EXCLUSIVE")
     try:
-        t0 = time.monotonic()
-        out = msixmigrate.run_once()
-        assert time.monotonic() - t0 < 5
+        with monkeypatch.context() as locked:
+            locked.setattr(msixmigrate, "CRITICAL_BUDGET_S", 0.5)
+            t0 = time.monotonic()
+            out = msixmigrate.run_once()
+            assert time.monotonic() - t0 < 5
     finally:
         holder.close()
     assert out["complete"] is False and out["failed"] == 0
     assert not (world.data / "cache" / "ai_history.sqlite3").exists()
     assert not list((world.data / "cache").glob("*.tmp"))  # 半截临时文件已清
-    again = msixmigrate.run_once()  # 锁放开后下次接着补
+    again = msixmigrate.run_once()  # 锁放开后的正常启动使用产品预算
     assert again["complete"] is True
     got = sqlite3.connect(world.data / "cache" / "ai_history.sqlite3")
     assert got.execute("select x from t").fetchall() == [(42,)]

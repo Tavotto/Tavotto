@@ -172,7 +172,7 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
       {env.ok && <ProjectEnvironmentRow />}
       {env.ok && <WorkdirRow />}
       {env.ok && <InputRemapRows />}
-      {env.ok && <ScriptBackupRows />}
+      <ScriptBackupRows />
       {installing && <span className="sr-only">{en('installing')}</span>}
     </FieldGroup>
   )

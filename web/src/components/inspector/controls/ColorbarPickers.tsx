@@ -37,18 +37,22 @@ const CLIP: Record<Orientation, Record<Extend, string | undefined>> = {
 }
 
 const FALLBACK_STOPS = ['#d9d9d9', '#404040']
+const REVERSED_EXTEND: Record<Extend, Extend> = { min: 'max', max: 'min', neither: 'neither', both: 'both' }
 
-/** vmin → vmax：竖直色条从下往上，水平的从左往右（与 matplotlib 同向） */
+/** 事实里的色标从 vmin → vmax，预览按绘制方向和实际端点排列。 */
 export function colorbarPreviewStyle(
   cmap: string,
   orientation: Orientation,
   extend: Extend,
   facts?: ColormapFacts | null,
+  reversed = false,
 ): CSSProperties {
-  const dir = orientation === 'vertical' ? 'to top' : 'to right'
+  const directions = orientation === 'vertical' ? ['to top', 'to bottom'] : ['to right', 'to left']
+  const dir = directions[Number(reversed)]
+  const tip = reversed ? REVERSED_EXTEND[extend] : extend
   return {
     background: colormapGradient(cmap, facts, dir) ?? gradientOfStops(FALLBACK_STOPS, false, dir)!,
-    clipPath: CLIP[orientation][extend],
+    clipPath: CLIP[orientation][tip],
   }
 }
 
@@ -57,11 +61,13 @@ function BarPreview({
   facts,
   orientation,
   extend,
+  reversed,
 }: {
   cmap: string
   facts?: ColormapFacts | null
   orientation: Orientation
   extend: Extend
+  reversed?: boolean
 }) {
   const vertical = orientation === 'vertical'
   return (
@@ -69,7 +75,7 @@ function BarPreview({
       aria-hidden
       data-cb-preview={`${orientation}:${extend}`}
       className={vertical ? 'block h-5 w-2.5' : 'block h-2.5 w-5'}
-      style={colorbarPreviewStyle(cmap, orientation, extend, facts)}
+      style={colorbarPreviewStyle(cmap, orientation, extend, facts, reversed)}
     />
   )
 }
@@ -84,6 +90,7 @@ export function ColorbarOrientationPicker({
   ariaLabel,
   cmap,
   cmapFacts,
+  reversed,
 }: {
   value: string | null
   options: string[]
@@ -93,13 +100,14 @@ export function ColorbarOrientationPicker({
   cmap: string
   /** 当前色图不在离线表里时它长什么样（同一元素 `cmap` 字段的 `cmap_current`） */
   cmapFacts?: ColormapFacts | null
+  reversed?: boolean
 }) {
   const items: GridOption[] = options.map((v) => ({
     value: v,
     label: optionLabel('orientation', v),
     preview: (
       <span className="flex items-center gap-1.5 px-1">
-        <BarPreview cmap={cmap} facts={cmapFacts} orientation={asOrientation(v)} extend="neither" />
+        <BarPreview cmap={cmap} facts={cmapFacts} orientation={asOrientation(v)} extend="neither" reversed={reversed} />
         <span className="text-xs">{optionLabel('orientation', v)}</span>
       </span>
     ),
@@ -123,6 +131,7 @@ export function ColorbarExtendPicker({
   cmap,
   cmapFacts,
   orientation,
+  reversed,
 }: {
   value: string | null
   options: string[]
@@ -136,6 +145,7 @@ export function ColorbarExtendPicker({
    * 给的是从 bbox 反推的值，认不出来就按竖直画（matplotlib 的默认）。
    */
   orientation: string
+  reversed?: boolean
 }) {
   const dir = asOrientation(orientation)
   const items: GridOption[] = options.map((v) => ({
@@ -143,7 +153,7 @@ export function ColorbarExtendPicker({
     label: optionLabel('extend', v),
     preview: (
       <span className="flex flex-col items-center gap-0.5 px-0.5">
-        <BarPreview cmap={cmap} facts={cmapFacts} orientation={dir} extend={asExtend(v)} />
+        <BarPreview cmap={cmap} facts={cmapFacts} orientation={dir} extend={asExtend(v)} reversed={reversed} />
         <span className="text-xs leading-3">{optionLabel('extend', v)}</span>
       </span>
     ),

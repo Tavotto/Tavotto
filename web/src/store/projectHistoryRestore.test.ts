@@ -260,6 +260,9 @@ describe('项目里的工作副本（ADR 0211 第二期 PR 2：自动保存写�
     be.state.layouts.set('排版一', { doc: WORK_DOC, revision: 'work-rev' })
     be.state.history.set('p_new', [workRow()])
     const app = await boot()
+    const { setProjectWriteCapability } = await import('@/lib/autosaveProject')
+    setProjectWriteCapability(true)
+    const network = vi.spyOn(globalThis, 'fetch')
     expect(await app.doc.restoreSession()).toBe(true)
     expect(ds(app).documentId).toBe('d_work')
     expect(objectIds(app)).toEqual(['t_node', 't_after'])
@@ -268,6 +271,12 @@ describe('项目里的工作副本（ADR 0211 第二期 PR 2：自动保存写�
     expect(ds(app).projectFile).toMatchObject({ name: '排版一', file: 'tavottofile/排版一.json', revision: 'work-rev', dirty: false })
     // 装好之后当场落盘（没有可撤销的一步）：等它写完，别漏进下一条用例的假后端
     await vi.waitFor(() => expect(be.state.slots.has('d_work')).toBe(true))
+    const saves = network.mock.calls
+      .filter(([path, init]) => init?.method === 'PUT' && String(path).includes('/api/autosave/d_work'))
+      .map(([path]) => new URL(String(path), 'http://localhost').searchParams)
+    expect(saves).toHaveLength(1)
+    expect(saves[0].has('project_write')).toBe(false)
+    network.mockRestore()
   })
 
   it('复制（旧项目还在）：用工作副本内容、新 docId、不绑项目文件——两边互不影响', async () => {

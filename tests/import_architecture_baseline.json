@@ -92,6 +92,12 @@
     },
     {
       "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/colorscale.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
       "to": "tavotto/engine/colorbarmodel.py",
       "scope": "function",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
@@ -99,6 +105,12 @@
     {
       "from": "tavotto/engine/bridge_runner.py",
       "to": "tavotto/engine/legendmodel.py",
+      "scope": "function",
+      "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
+    },
+    {
+      "from": "tavotto/engine/bridge_runner.py",
+      "to": "tavotto/engine/manifest_fields.py",
       "scope": "function",
       "via": "bridgeboot.load_engine_modules(_HERE, _PHASE2)"
     },
@@ -206,6 +218,12 @@
     },
     {
       "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/colorscale.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
       "to": "tavotto/engine/colorbarmodel.py",
       "scope": "module",
       "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
@@ -213,6 +231,12 @@
     {
       "from": "tavotto/engine/worker.py",
       "to": "tavotto/engine/legendmodel.py",
+      "scope": "module",
+      "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
+      "to": "tavotto/engine/manifest_fields.py",
       "scope": "module",
       "via": "bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)"
     },

@@ -35,8 +35,7 @@ export const TEXT_BAR_PROPS = new Set(
 )
 
 /**
- * 该不该给这个元素画文字样式行。判据是「它是不是一个 matplotlib Text」：
- * 三条都有才算——图例只有 fontsize、刻度标签只有 text，都不该套进来。
+ * 元素同时声明字号、颜色和字重，就能使用共用文字样式行。
  */
 export const hasTextStyleBar = (el: ManifestElement) =>
   ['fontsize', 'color', 'weight'].every((p) => el.editable.some((f) => f.prop === p))

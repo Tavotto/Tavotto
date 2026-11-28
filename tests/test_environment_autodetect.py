@@ -643,6 +643,7 @@ def real_spawn(tmp_path, monkeypatch):
 
     root = tmp_path / "proj"
     root.mkdir()
+    (root / "fig.py").touch()
     x = _touch(tmp_path / "env-x" / "bin" / "python")
     y = _touch(tmp_path / "env-y" / "bin" / "python")
     monkeypatch.setattr(engine_pool, "resolve_worker_python", _REAL_RESOLVE)

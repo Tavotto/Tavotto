@@ -123,11 +123,32 @@ datas = [
 #   公式排版         —— mathtext_child.py（内置 runtime 按绝对路径起它，ADR 0152 PR 4）。
 # 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
 # 不靠人记得回来改这一行。
-for name in ("worker.py", "executionfact.py", "inputdeclaration.py", "manifest.py", "overrides.py", "patchspec.py",
-             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "mixedtext.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py", "cmddiag.py",
+for name in ("worker.py", "executionfact.py", "inputdeclaration.py", "manifest.py", "manifest_fields.py", "overrides.py", "patchspec.py",
+             "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "colorscale.py", "legendmodel.py", "mixedtext.py",
+             "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py", "cmddiag.py",
              "previewbudget.py", "preview_complexity.py", "preview_hybrid.py",
              "bridge_runner.py", "bridgeboot.py", "mathtext_child.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
+
+# A fixed chart task loads the Tavotto package from disk in the same external
+# interpreter. Include its package roots so an installed Tavotto cannot shadow
+# this bundle, and ship the pure-Python SVG and EPS contracts it imports.
+for chart_source in (
+    "__init__.py",
+    "svgcoord.py",
+    "engine/__init__.py",
+    "engine/brand.py",
+    "engine/chartframe.py",
+    "engine/chartmanifest.py",
+    "engine/chartmodel.py",
+    "engine/chartprofile.py",
+    "engine/chartwire.py",
+    "engine/svgchart.py",
+    "rendercore/__init__.py",
+    "rendercore/epscontainer.py",
+    "rendercore/svgcheck.py",
+):
+    datas.append((str(PKG / chart_source), (Path("tavotto") / Path(chart_source).parent).as_posix()))
 
 # 内置渲染 runtime（见文件头说明 3）。
 # TAVOTTO_RUNTIME_SRC 可指到别处；TAVOTTO_REQUIRE_RUNTIME=1 时缺了就直接失败——

@@ -37,6 +37,7 @@ import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useDataFigureStore } from '@/store/dataFigureStore'
 import { DirBrowser, NewProjectNameDialog, TailPath } from './DirBrowser'
+import { ProjectPackageImportButton } from './ProjectPackageImportButton'
 import { HomeView } from './home/HomeView'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
@@ -281,6 +282,7 @@ function AllProjects({
                     <span className="max-[559px]:sr-only">{t('picker.create')}</span>
                   </Button>
                   <span aria-hidden className="h-4 w-px bg-border" />
+                  <ProjectPackageImportButton labelClassName="max-[559px]:sr-only" />
                   <Button size="md" className="text-ink-2" disabled={switching} onClick={entry.startOpen}>
                     <FolderOpen size={ICON_SIZE.md} aria-hidden />
                     <span className="max-[559px]:sr-only">{t('picker.browse')}</span>

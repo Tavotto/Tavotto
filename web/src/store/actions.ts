@@ -27,17 +27,21 @@ import { DEFAULT_PROFILE_ID } from '@/lib/profile'
 import { useJournalCatalogStore } from './journalCatalogStore'
 import { applyCanvasVersion } from './canvasVersionRecipe'
 import { placePanelInPage } from '@/lib/panelPlacement'
+import { sourceFrameOverride } from '@/lib/chartFrame'
 import {
   FIGURE_FRAME_VERSION,
   frameSwitchAvailable,
   frameSwitchPatch,
   LEGACY_FRAME_OVERRIDE,
+  usesFigureFrame,
 } from '@/lib/figureFrame'
 import { modKey } from '@/lib/utils'
+import { rememberLayoutRevision } from '@/lib/layoutRevision'
 import { captureTelemetry } from '@/lib/telemetry'
 import {
   engineInvalidate,
   engineRender,
+  fetchLayout,
   enginePreviewPngSnapshot,
   fetchScriptBackedEnabled,
   panelSrc,
@@ -71,7 +75,10 @@ import type {
   ShapeObject,
   TextObject,
 } from '@/types/document'
-import { arrowHeads, emptyProject, isKnownObject, legacyHead, migrateToProject, objectLabel, objectRotation, type ArrowHeadType, type PathTextObject, type ProjectDocument } from '@/types/document'
+import {
+  arrowHeads, emptyProject, isKnownObject, legacyHead, migrateToProject, objectLabel, objectRotation,
+  type ArrowHeadType, type PathTextObject, type ProjectDocument,
+} from '@/types/document'
 import { findDocumentsForProjectFile, bindingForReuse, type ProjectFileBinding } from '@/lib/projectFile'
 import { isDocHeldElsewhere } from '@/lib/docPresence'
 import { useAssetStore } from './assetStore'
@@ -81,8 +88,10 @@ import {
   activeProjectFile,
   adoptSlotBaseline,
   dropRecentEntry,
+  getWindowHold,
   markProjectFileDirty,
   readAutosaveDoc,
+  reloadFromDisk,
   saveNowWithResult,
   isProjectConflictActive,
   setProjectFile,
@@ -99,9 +108,9 @@ import { alwaysSavedEnabled } from '@/lib/autosaveProject'
 import { captureSaveContext, reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
 import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './saveFailureActions'
 import { useInteractionStore } from './interactionStore'
-import { aliasClearPlan } from '@/lib/aliasOverrides'
+import { aliasClearPlan, sharedOverrideAddresses } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
-import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
+import { computedFrameAuthority, exactPanelManifest, exactPanelRender, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { isolationScope } from './isolationStore'
 import { useTransformPrefs } from './transformPrefs'
@@ -1044,12 +1053,28 @@ export async function openLayoutDocument(
   }
   const installed = await useDocumentStore
     .getState()
-    .switchDocument(doc, reuse ?? newId('d'), confirmLoss, { beforeInstall })
+    .switchDocument(doc, reuse ?? newId('d'), confirmLoss, { beforeInstall, fromProjectFile: !!projectFile })
   if (!installed) return aborted ? skipped() : false
   if (projectFile) setProjectFile(projectFile)
   afterSwitch()
   const s = useDocumentStore.getState()
   status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }), 'done')
+  return true
+}
+
+/** Install the exact committed version while its original, clean binding is still current. */
+export async function reloadEditedProjectLayout(
+  ctx: SaveContext, name: string, expected: string, workingRevision: string | null,
+): Promise<boolean> {
+  if (!ctx.pj || !workingRevision) return false
+  const { file, revision } = await fetchLayout(name, ctx.pj)
+  const canInstall = () => stillCurrent(ctx) && activeProjectFile()?.dirty === false && !getWindowHold()
+  if (file !== ctx.file || !file || revision !== expected || !canInstall()) return false
+  // The commit already updated autosave. Reload it directly so switching layouts
+  // cannot flush the previously open copy over that revision.
+  if (!(await reloadFromDisk({ keepMine: false, expectedRevision: workingRevision, canInstall }))) return false
+  rememberLayoutRevision(name, revision, ctx.pj)
+  setProjectFile({ projectId: ctx.pj, name, file, revision, dirty: false }, ctx.documentId)
   return true
 }
 
@@ -1581,6 +1606,17 @@ export const optionLabel = (prop: string, value: string): string => {
  * 'none' 是给假实时手势用的：拖动 / scrub / 取色期间画面由 SVG 局部预览
  * 负责，手势结束由 flushRender 定稿。
  */
+function authoredChartPatches(panel: PanelObject | undefined, patches: PanelObject['overrides']) {
+  if (!panel?.chartFrame || !patches.some(usesFigureFrame)) return patches
+  const exact = exactPanelRender(useRenderStore.getState(), panel)
+  const authority = exact && computedFrameAuthority(panel, exact)
+  if (!authority) {
+    status(msg('chartBind.geometryPending', undefined, 'workspace'), 'info')
+    return null
+  }
+  return patches.map(patch => sourceFrameOverride(patch, authority, authority.inputIdentity))
+}
+
 export function setOverride(
   panelId: string,
   gid: string,
@@ -1593,12 +1629,14 @@ export function setOverride(
   // 比的是**生效的那条**：载入的旧文档可能带重复的 (gid, prop)，引擎按 last-wins 取值
   // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
   const current = findObject(panelId)
+  const authored = authoredChartPatches(current?.type === 'panel' ? current : undefined, [{ gid, prop, value }])
+  if (authored === null) return
   if (current?.type === 'panel') {
     const i = effectiveOverrideIndex(current.overrides, gid, prop)
     // 同值但另一个地址上还留着旧 override（旧文档里两条并存）时不算 no-op：这次写要把它清掉
     if (
       i >= 0 &&
-      JSON.stringify(current.overrides[i].value) === JSON.stringify(value) &&
+      JSON.stringify(current.overrides[i].value) === JSON.stringify(authored[0].value) &&
       !pendingAliasClears(current, [{ gid, prop }]).length
     ) {
       return
@@ -1607,7 +1645,7 @@ export function setOverride(
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
   // 那条挪到数组末尾，顺序一变变体键就变
   updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
-    upsertOverrides(o, [{ gid, prop, value }])
+    upsertOverrides(o, authored)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
@@ -1780,7 +1818,8 @@ export function clearOverrides(
   finishActiveGesture()
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return
-  const hit = targets.filter((t) =>
+  const manifest = structuralPanelManifest(useRenderStore.getState(), panel)
+  const hit = sharedOverrideAddresses(manifest, targets).filter((t) =>
     !(isAdoptedPanel(panel) && t.gid === 'figure' && t.prop === 'frame') &&
     panel.overrides.some((p) => p.gid === t.gid && p.prop === t.prop),
   )
@@ -2033,7 +2072,7 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   // `detached`：目标图不在文档里（「同步并写回」的临时面板，id 形如 `sync:…`）——按它自己的文件 / 脚本身份重画
   const stand = detached && detached.id === panelId ? detached : undefined
   const panel = findObject(panelId) ?? stand
-  if (panel?.type !== 'panel' || !panel.script) return 'skipped'
+  if (panel?.type !== 'panel' || !panel.script || panel.chart) return 'skipped'
   try { refuseArtifactOperation(panel) } catch (e) {
     // 这张图的采用记录 / 图幅标记对不上，或这类图不支持重新构建：重试必然还是同一句，真做不了 →「发给我们看看」
     status(engineErrorMsg(e), 'error', { action: feedbackStatusAction() })
@@ -2145,6 +2184,16 @@ function pendingAliasClears(panel: PanelObject, patches: { gid: string; prop: st
   return aliasClearPlan(panel.overrides, structuralPanelManifest(useRenderStore.getState(), panel), patches)
 }
 
+export function readPanelOverride(panel: PanelObject, gid: string, prop: string) {
+  const local = effectiveOverride(panel.overrides, gid, prop)
+  if (local || !panel.overrides.some((override) => override.prop === prop)) return local
+  const manifest = structuralPanelManifest(useRenderStore.getState(), panel)
+  const addresses = sharedOverrideAddresses(manifest, [{ gid, prop }])
+  return panel.overrides.findLast((override) =>
+    override.prop === prop && addresses.some((address) => address.gid === override.gid),
+  )
+}
+
 function upsertOverrides(
   panel: PanelObject,
   patches: { gid: string; prop: string; value: unknown }[],
@@ -2209,8 +2258,11 @@ export function setOverrides(
   render: boolean | RenderPolicy = true,
 ) {
   if (!patches.length) return
+  const current = findObject(panelId)
+  const authored = authoredChartPatches(current?.type === 'panel' ? current : undefined, patches)
+  if (authored === null) return
   updateObject<PanelObject>(panelId, label, (o) => {
-    upsertOverrides(o, patches)
+    upsertOverrides(o, authored)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
@@ -2259,9 +2311,12 @@ export function applyMixedAlign(
   moves: { id: string; x: number; y: number }[],
 ) {
   if (!patches.length && !moves.length) return
+  const panel = findObject(panelId)
+  const authored = authoredChartPatches(panel?.type === 'panel' ? panel : undefined, patches)
+  if (authored === null) return
   useDocumentStore.getState().commit(label, (d) => {
     const p = d.objects.find((o) => o.id === panelId)
-    if (p?.type === 'panel') withOwnedRelease(d, p, () => upsertOverrides(p, patches))
+    if (p?.type === 'panel') withOwnedRelease(d, p, () => upsertOverrides(p, authored))
     for (const mv of moves) {
       const o = d.objects.find((x) => x.id === mv.id)
       if (o && !o.locked) {
@@ -2979,7 +3034,7 @@ async function adoptBitmapForRedraw(panel: PanelObject): Promise<BitmapRedrawOut
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
+  const seeded = panel.chart || isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
   if (isAdoptedPanel(panel)) {
