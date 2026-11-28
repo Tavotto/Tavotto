@@ -868,6 +868,10 @@ NON_UI_CODES = {
     "invalid_options",
     "not_licensed",
     "render_failed",
+    # 投稿核对（ADR 0216）`POST /api/pro/submission-check/plan`：前端不读文案——not_licensed 转成授权灰态，
+    # 其余一律说「这次没法一键改」并把要求都列进「需要你确认」，文档不改
+    "invalid_request",
+    "journal_unknown",
     # 数据出图懒渲染（ADR 0178 修订）：取某张缩略图 422——前端只据此静默去掉这一张卡，不展示文案
     "propose_thumbnail_failed",
     # 数据出图大表取消（ADR 0178 修订·进度）：用户自己点的取消，原请求回 409——前端据此静默收起进度，不展示文案

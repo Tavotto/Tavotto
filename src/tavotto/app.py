@@ -196,6 +196,7 @@ from .engine import (
     sourcelang as engine_sourcelang,
     specfix as engine_specfix,
     startupphase as engine_startupphase,
+    submissioncheck as engine_submissioncheck,
     svgexecution as engine_svgexecution,
     taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
@@ -12131,6 +12132,163 @@ def api_pro_quick_layout_plan():
     for st in states:
         if not st["clean"]:
             retired = _retire_hot_worker(st["worker"]) or retired
+    out["replay_required"] = retired
+    return jsonify(out)
+
+
+@app.post("/api/pro/submission-check/plan")
+def api_pro_submission_check_plan():
+    """投稿核对（ADR 0216，高级功能 `submission-pack`）。**只算不写**，照一键排版：
+
+    请求：`{journal_id, profile, accept?: [稳定 id], canvases: [{key, page: {w, h}, canvas_texts?, canvas_labels_known?,
+    only_figure?, panels: [{key, id, patches, box}]}]}`。`only_figure` = 画布上除了这张图没有别的对象（改图宽的前提）。`patches` 是每张图此刻的全量 override 列表（B0），`box` 是画布上的摆放（mm）。
+    成功回 `{ok: true, canvases: [{key, page, figures: [{key, patches, box}]}], requirements: [...], skipped: [...]}`，由前端
+    一次 commit；失败回 `{ok: false, code}`，每张图的 worker 回到 B0（或作废），**文档一个字不改**。
+    准备不了的画布（native 图、渲染出错）放进 `skipped`，其余照常（ADR 0216 §五）。
+    权益判断在 `engine/submissioncheck.py`（本路由不判，`test_license_callsites` 看护）。
+    """
+    body = request.get_json(force=True) or {}
+    raw_canvases = body.get("canvases")
+    journal_id = body.get("journal_id")
+    profile = body.get("profile")
+    if not isinstance(raw_canvases, list) or not isinstance(journal_id, str) or not journal_id:
+        return jsonify({"error": "canvases / journal_id 不合规", "code": "invalid_request"}), 400
+    if not isinstance(profile, dict) or not isinstance(profile.get("severity"), dict):
+        return jsonify({"error": "profile 必须是一份完整的规范", "code": "invalid_profile"}), 400
+    accept = [a for a in body.get("accept") or [] if isinstance(a, str)]
+    if not engine_submissioncheck.licensed():
+        return jsonify({"ok": False, "code": "not_licensed"})
+
+    states: list[dict] = []
+    canvases: list = []
+    skipped: list[dict] = []
+    seen: set[str] = set()
+
+    def make_render(state: dict):
+        def render(patches: list) -> dict:
+            _require_route_unchanged(state["id"])
+            try:
+                wk, st, resp = _engine_attempt(
+                    state["id"],
+                    state["worker"],
+                    state["stem"],
+                    lambda w, s: w.override(s, patches, None),
+                    safe_only=True,
+                )
+            except BaseException:
+                state["clean"] = False
+                raise
+            state["worker"], state["stem"] = wk, st
+            if resp.get("warnings"):
+                state["clean"] = False
+            return resp
+
+        return render
+
+    for raw in raw_canvases:
+        if not isinstance(raw, dict) or not isinstance(raw.get("panels"), list):
+            return jsonify({"error": "canvas 形状不对", "code": "invalid_request"}), 400
+        key = str(raw.get("key") or "")
+        try:
+            page = {k: float((raw.get("page") or {})[k]) for k in ("w", "h")}
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "page 不合规", "code": "invalid_request"}), 400
+        figures: list = []
+        reason = None
+        for p in raw["panels"]:
+            box = p.get("box") if isinstance(p, dict) else None
+            if not (isinstance(p, dict) and isinstance(p.get("patches"), list)):
+                return jsonify({"error": "panel 形状不对", "code": "invalid_request"}), 400
+            if not (isinstance(box, list) and len(box) == 4):
+                return jsonify({"error": "box 形状不对", "code": "invalid_request"}), 400
+            rel_id = str(p.get("id") or "")
+            # 同一张图摆了两次、native 图：这块画布这次先不带（ADR 0216 §五）
+            if rel_id in seen or _specfix_profile(rel_id) == engine_enginesession.PROFILE_NATIVE:
+                reason = "native" if rel_id not in seen else "duplicate"
+                break
+            try:
+                worker, stem = _engine_worker(rel_id, safe_only=True)
+            except NativeWorkerRefused:
+                reason = "native"
+                break
+            seen.add(rel_id)
+            state = {
+                "id": rel_id,
+                "worker": worker,
+                "stem": stem,
+                "clean": True,
+                "base": list(p["patches"]),
+            }
+            states.append(state)
+            figures.append(
+                engine_submissioncheck.Figure(
+                    key=str(p.get("key") or ""),
+                    rel_id=rel_id,
+                    base=list(p["patches"]),
+                    box=[float(v) for v in box],
+                    render=make_render(state),
+                )
+            )
+            state["figure"] = figures[-1]
+        if reason is not None or not figures:
+            skipped.append({"key": key, "reason": reason or "empty"})
+            continue
+        canvases.append(
+            engine_submissioncheck.Canvas(
+                key=key,
+                page=page,
+                figures=figures,
+                canvas_texts=raw.get("canvas_texts") or [],
+                canvas_labels_known=raw.get("canvas_labels_known") is not False,
+                only_figure=raw.get("only_figure") is True,
+            )
+        )
+
+    def rollback() -> bool:
+        retired = False
+        for st in states:
+            if st["clean"]:
+                try:
+                    st["figure"].render(st["base"])
+                except BaseException:  # noqa: BLE001 — 回不到 B0 就作废
+                    st["clean"] = False
+            if not st["clean"]:
+                retired = _retire_hot_worker(st["worker"]) or retired
+        return retired
+
+    from .engine import journals as engine_journals
+
+    cached = engine_journalfacts_remote.cached_bundle(journal_id)
+    try:
+        out = engine_submissioncheck.run(
+            canvases,
+            journal_id=journal_id,
+            profile=profile,
+            accept=accept,
+            catalog=engine_submissioncheck.effective_catalog(),
+            bundle=cached[1] if cached is not None else None,
+        )
+        for st in states:
+            _require_route_unchanged(st["id"])
+    except engine_submissioncheck.SubmissionCheckError as exc:
+        LOG.info("投稿核对没有算成: %s", exc)
+        retired = rollback()
+        return jsonify({"ok": False, "code": exc.code, "replay_required": retired})
+    except (_SpecfixRouteChanged, NativeWorkerRefused, engine_pool.WorkerError) as exc:
+        LOG.warning("投稿核对途中渲染失败: %s", exc)
+        retired = rollback()
+        return jsonify({"ok": False, "code": "render_failed", "replay_required": retired})
+    except engine_journals.JournalCatalogError:
+        rollback()
+        return jsonify({"ok": False, "code": "journal_unknown"})
+    except BaseException:
+        rollback()
+        raise
+    retired = False
+    for st in states:
+        if not st["clean"]:
+            retired = _retire_hot_worker(st["worker"]) or retired
+    out["skipped"] = skipped + list(out.get("skipped") or [])
     out["replay_required"] = retired
     return jsonify(out)
 
