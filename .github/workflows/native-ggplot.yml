@@ -32,8 +32,8 @@ jobs:
   real-r:
     name: Real R (${{ matrix.os }}, ${{ matrix.suite.name }})
     runs-on: ${{ matrix.os }}
-    # Layer and raster writebacks dominate the full serial run. On each OS,
-    # run them beside the complementary figure workflow within the same limit.
+    # Source replay starts protected R interpreters for writeback verification.
+    # Run those cases beside the layer and figure suites within the same limit.
     timeout-minutes: 50
     strategy:
       fail-fast: false
@@ -42,6 +42,8 @@ jobs:
         suite:
           - id: layers
             name: layer and raster writeback
+          - id: source
+            name: source writeback
           - id: figures
             name: figure workflow
     steps:
@@ -92,9 +94,11 @@ jobs:
           test -n "$TAVOTTO_TEST_RSCRIPT"
           export TAVOTTO_TEST_RSCRIPT
           layer_replays="test_native_r_fixed_layer_styles or test_native_r_raster_writeback"
+          source_replays="test_native_r_ or test_borrowed_r_source"
           case "$NATIVE_R_SUITE" in
             layers) selector="$layer_replays" ;;
-            figures) selector="not ($layer_replays)" ;;
+            source) selector="not ($layer_replays) and ($source_replays)" ;;
+            figures) selector="not ($layer_replays or $source_replays)" ;;
             *) exit 1 ;;
           esac
           python -m pytest -o addopts= -v -k "$selector" --durations=10 --junitxml=native-r.xml tests/test_native_ggplot_capture.py tests/test_core_v02_release_candidate.py
