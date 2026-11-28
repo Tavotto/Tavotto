@@ -27,6 +27,12 @@ export interface ObjectBase {
    */
   groupPath?: string[]
   /**
+   * 组名（ADR 0191 修订 / 0208 前置 6.0）：`{组 id: 名字}`，键只放这个对象自己组链上的组——不在链上的键读时忽略
+   * （旧构建改过 `groupId` 之后键对不上，名字不会错安到新组上）。同一个组的每个成员都带同一份；读法唯一出处
+   * `lib/groupTree.groupNameOf`（z 序第一个非空名字）。没有这个键 = 组没有名字（图层树仍写「组 · N 个对象」）。
+   */
+  groupNames?: Record<string, string>
+  /**
    * 剪切蒙版（ADR 0191）：这个对象是它最内层组的剪切路径（只认闭合形状与路径，判据在 `lib/groupTree`）。
    * 做蒙版时同时写 `hidden: true`：旧构建不画它、也不裁剪，内容照样都在。
    */

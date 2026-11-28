@@ -187,13 +187,39 @@ export default interface Resources {
         "addFailed": "这一条没加上，再试一次",
         "addPlaceholder": "比如：图例去掉边框",
         "added": "新加",
+        "agentScriptTag": {
+          "claude_code": "改脚本 · 交回 Claude Code",
+          "codex": "改脚本 · 交回 Codex",
+          "other": "改脚本 · 交回插件"
+        },
+        "agentScriptTip": {
+          "claude_code": "这几项要改脚本，不在这里做；勾着的会交回 Claude Code",
+          "codex": "这几项要改脚本，不在这里做；勾着的会交回 Codex",
+          "other": "这几项要改脚本，不在这里做；勾着的会交回插件"
+        },
+        "agentSettled": {
+          "claude_code": "Claude Code 那边已经先改了；这里刚改的没能自动撤回",
+          "codex": "Codex 那边已经先改了；这里刚改的没能自动撤回",
+          "other": "插件那边已经先改了；这里刚改的没能自动撤回"
+        },
         "apply_other": "改这 {{count}} 项",
         "compare": "对比原图",
         "count_other": "{{count}} 项",
         "done_other": "已按建议改了 {{count}} 项",
         "failed": "「{{item}}」没做成：{{reason}}",
+        "fromHost": {
+          "claude_code": "来自 Claude Code",
+          "codex": "来自 Codex",
+          "other": "来自插件"
+        },
+        "handedHost": {
+          "claude_code": "{{count}} 项交回 Claude Code 改",
+          "codex": "{{count}} 项交回 Codex 改",
+          "other": "{{count}} 项交回插件改"
+        },
         "listLabel": "建议的待办",
         "none": "一项都没勾",
+        "notNow": "先不改",
         "pickJournal": "选期刊",
         "runningN": "正在改 {{done}}/{{total}}…",
         "scriptTag": "要改脚本",
@@ -273,6 +299,7 @@ export default interface Resources {
           "fillOpacity": "填充不透明度",
           "fillRule": "填充规则",
           "fontFamily": "字体",
+          "groupNames": "组名",
           "headEnd": "终点端型",
           "headSizeEnd": "终点端型大小",
           "headSizeStart": "起点端型大小",
@@ -4496,6 +4523,7 @@ export default interface Resources {
       "cell_map_too_large": "映射规则写得太多了，最多 50 项。",
       "cell_map_value_invalid": "映射到的值要是一个数，或者写成缺失。",
       "cell_rule_invalid": "这条处理规则不对：要针对这次画图用到、夹着文字的数值列，每列只写一条。",
+      "change_plan_agent_settled": "这份建议已经应用过了。",
       "change_plan_busy": "这张图正在生成修改方案，请稍等。",
       "change_plan_empty": "这些意见里没有能直接落成图内修改的，图没有改动。",
       "change_plan_failed": "生成修改方案失败，图没有改动。可以再试一次。",
@@ -5005,8 +5033,8 @@ export default interface Resources {
       "installFailed": "安装失败",
       "installing": "正在安装…",
       "interpreterLabel": "Python 解释器",
-      "lockedWriteSkipped": "这次没写进 {{file}}：文件正被别的程序占用或是只读的。",
-      "lockedWriteSkippedMany": "这次没写进 {{file}} 等 {{n}} 个文件：它们正被别的程序占用或是只读的。",
+      "lockedWriteSkipped": "{{file}} 被占用或只读，本次未写入",
+      "lockedWriteSkippedMany": "{{file}} 等 {{n}} 个文件被占用或只读，本次未写入",
       "managedCliError": {
         "managed_cli_cancelled": "已取消安装 {{product}}。",
         "managed_cli_disk_full": "磁盘剩余空间不足以安装 {{product}}。清理后再试。",
@@ -7930,6 +7958,7 @@ export default interface Resources {
       "releaseCompound": "释放复合路径",
       "relinkAssets_other": "重新链接 {{count}} 个素材",
       "renameCanvas": "重命名画布",
+      "renameGroup": "重命名组",
       "renameObject": "重命名对象",
       "reorderLayers": "调整图层顺序",
       "replaceAsset": "替换素材为 {{name}}",
@@ -8007,6 +8036,7 @@ export default interface Resources {
       "groupAriaWithLayout_other": "组（{{count}} 个对象），{{layout}}",
       "groupAria_other": "组（{{count}} 个对象）",
       "groupLabel_other": "组 · {{count}} 个对象",
+      "groupNamedAria_other": "{{name}}（{{count}} 个对象）",
       "hiddenState": "已隐藏",
       "hide": "隐藏",
       "listLabel": "图层",
