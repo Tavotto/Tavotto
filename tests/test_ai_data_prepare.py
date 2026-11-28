@@ -1321,9 +1321,10 @@ def test_stdlib_mode_only_lets_the_namedtuple_frame_set_defaults_and_only_inside
 ):
     allow = dp.read_allow_for(sys.executable, [])
     # 操作系统自己的拒绝：POSIX 是 IsADirectoryError，Windows 是 PermissionError（EACCES）——与钩子的拒绝只能靠消息分开
+    # （按钩子自己的那两句话认，不按「Tavotto」这个词认：路径里就可能带它）
     inside = (
         "import tempfile\ntry:\n    open(tempfile.gettempdir())\nexcept OSError as e:\n"
-        "    print('hook-refused' if 'Tavotto' in str(e) else 'os-level-refusal-only', repr(e)[:160])"
+        "    print('hook-refused' if ('opening a folder' in str(e) or 'not readable here' in str(e)) else 'os-level-refusal-only', repr(e)[:160])"
     )
     r_in = _trial(inside, allow=allow, tamper="stdlib")
     assert r_in["returncode"] == 0 and "os-level-refusal-only" in r_in["stdout"], (
