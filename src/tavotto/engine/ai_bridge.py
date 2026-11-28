@@ -1817,12 +1817,16 @@ def run(
     convert: dict | None = None,
     attachments: list[str] | None = None,
     plan_only: bool = False,
+    plan_start: bytes | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。
 
     `plan_only`（ADR 0206 PR 6，修改方案卡的脚本修改）：对**所有**连接强制走候选工作区（cwd = 候选目录），过了提交前检查也**不写**
     用户脚本——候选字节留在 `cand.extras["plan_bytes"]`，由方案端点取走（`plan_outcome`）；收尾时核「越界」：目标脚本被原地改了就按
     起跑快照还原，别的文件被改只报告不动（`_plan_guard`）。
+
+    `plan_start`（只配 `plan_only`；脚本方案的批注重改，ADR 0206 修订 2026-11-28）：候选里的目标脚本以这份字节为起点（上一版的候选），
+    不是磁盘上的脚本。`cand.base_bytes` 仍是起跑时磁盘上的字节——越界核对、「原项目没被动」都照它比，含义不变。
 
     事件经 on_event(name, data) 回调。
 
@@ -2040,6 +2044,10 @@ def run(
             try:
                 ai_figure_edit.ensure_registered()
                 cand = ai_figure_edit.create_candidate(sid, script_path, Path(figures_dir), script)
+                if plan_only and plan_start is not None:
+                    # 批注重改：Agent 从上一版候选接着改（候选副本，不是用户脚本）
+                    cand.target.write_bytes(plan_start)
+                    cand.extras["plan_start_bytes"] = plan_start
                 cand.extras.update(task_hooks or {})
                 # Bridge owns the dependency between conversion validation and
                 # figure editing; the adapter itself must not import conversion.
