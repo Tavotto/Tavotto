@@ -901,7 +901,7 @@
         "strokeOpacity": "Stroke opacity", "fillOpacity": "Fill opacity", "dash": "Dash", "cornerRadius": "Corner radius", "locked": "Lock", "hidden": "Hide",
         "subpaths": "Path shape", "anchor": "Anchoring", "layoutPinned": "Pinned position", "start": "Start point", "end": "End point", "shape": "Shape type", "sides": "Sides", "starRatio": "Star ratio",
         "headStart": "Start arrowhead", "headEnd": "End arrowhead", "headSizeStart": "Start arrowhead size", "headSizeEnd": "End arrowhead size", "fillGradient": "Fill gradient", "strokeGradient": "Stroke gradient",
-        "fillRule": "Fill rule", "strokeAlign": "Stroke alignment", "dashPattern": "Dash pattern", "miterLimit": "Miter limit", "interpretation": "Text interpretation", "textFormat": "Text format", "clipMask": "Clipping mask", "clipOff": "Clipping mask",
+        "fillRule": "Fill rule", "strokeAlign": "Stroke alignment", "dashPattern": "Dash pattern", "miterLimit": "Miter limit", "interpretation": "Text interpretation", "textFormat": "Text format", "clipMask": "Clipping mask", "clipOff": "Clipping mask", "groupNames": "Group name",
         "name": "Name", "stroke": "Stroke", "lineCap": "Line cap", "lineJoin": "Corner", "padding": "Padding"
       }
     },
@@ -1021,6 +1021,12 @@
       "addPlaceholder": "e.g. remove the legend frame",
       "addFailed": "Couldn't add that one. Try again",
       "toTodos": "Turn into to-dos",
+      "fromHost": { "codex": "From Codex", "claude_code": "From Claude Code", "other": "From a plugin" },
+      "agentScriptTag": { "codex": "Script edits · back to Codex", "claude_code": "Script edits · back to Claude Code", "other": "Script edits · back to the plugin" },
+      "agentScriptTip": { "codex": "These edit the script, so they aren't done here. Ticked ones go back to Codex", "claude_code": "These edit the script, so they aren't done here. Ticked ones go back to Claude Code", "other": "These edit the script, so they aren't done here. Ticked ones go back to the plugin" },
+      "agentSettled": { "codex": "Codex already applied this; the edits here couldn't be rolled back automatically", "claude_code": "Claude Code already applied this; the edits here couldn't be rolled back automatically", "other": "The plugin already applied this; the edits here couldn't be rolled back automatically" },
+      "handedHost": { "codex": "{{count}} left for Codex", "claude_code": "{{count}} left for Claude Code", "other": "{{count}} left for the plugin" },
+      "notNow": "Not now",
       "pickJournal": "Pick a journal"
     },
     "dialog": {

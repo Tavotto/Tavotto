@@ -301,6 +301,7 @@ _STYLE_DROP = (
     "name",
     "groupId",
     "groupPath",
+    "groupNames",
     "clipMask",
     "layoutPinned",
     "fillGradient",
@@ -317,6 +318,12 @@ def style_base(src: dict, group_id: str | None) -> dict:
         out["groupId"] = group_id
         if group_id == src.get("groupId") and src.get("groupPath"):
             out["groupPath"] = list(src["groupPath"])
+        # 组名跟着留下的那条链走（只留链上的键，同前端 `setGroupPath`）
+        names = src.get("groupNames")
+        chain = out.get("groupPath") or [group_id]
+        kept = {g: n for g, n in names.items() if g in chain} if isinstance(names, dict) else {}
+        if kept:
+            out["groupNames"] = kept
     return out
 
 
@@ -592,6 +599,8 @@ def to_path_object(o: dict) -> dict | None:
     # 嵌套组的整条链与剪切蒙版的身份一起带过去（ADR 0191）
     if o.get("groupPath"):
         out["groupPath"] = list(o["groupPath"])
+    if o.get("groupNames"):
+        out["groupNames"] = dict(o["groupNames"])
     for k in ("clipMask", "clipOff"):
         if o.get(k):
             out[k] = True

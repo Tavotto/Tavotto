@@ -52,6 +52,7 @@ from pathlib import Path
 from . import (
     depplan,
     depresolve,
+    devfault,
     envdiag,
     envlease,
     execspec,
@@ -2784,6 +2785,7 @@ def _selftest_failure(
     worker_code: object = None,
     text: str | None = None,
     exc_type: str | None = None,
+    blocked: dict | None = None,
 ) -> dict:
     """自检没过的**闭集形状**（TVD-JXMR：六次自检失败、诊断包里只有错误码，查不出原因）。
 
@@ -2799,12 +2801,20 @@ def _selftest_failure(
             pass
     if exc_type and not shape["structure"]:
         shape["structure"] = [f"[structure] {exc_type}"]
-    return {
+    out = {
         "stage": stage,
         "exit_code": exit_code,
         "worker_code": worker_code if isinstance(worker_code, str) else None,
         **shape,
+        "operations": [],
+        "fidelity": None,
     }
+    if blocked is not None and out["worker_code"] == pool.FILE_OPERATION_BLOCKED_CODE:
+        # 守卫拦下了**哪类**操作、账本三档摘要（TVD-FTH9：只有错误码，看不出是删除、改名还是 savefig 被拦）。
+        # 原样交给 `envdiag._selftest` 按闭集重投影；这里只挑字段、不放路径（worker 的载荷本来就没有路径）。
+        out["operations"] = blocked.get("operations")
+        out["fidelity"] = blocked.get("fidelity")
+    return out
 
 
 def worker_self_test(python: str) -> dict:
@@ -2817,15 +2827,29 @@ def worker_self_test(python: str) -> dict:
 
     argv 走 `execspec.worker_argv`——worker 命令行的唯一出处，这里不另拼一份。
     """
+    if devfault.active(devfault.FAULT_SELFTEST_BLOCKED):
+        # 仅开发（ADR 0221 §六，`TAVOTTO_DEV=1` 才进来）：模拟自检被写入守卫拦了自己的输出（TVD-FTH9 形）
+        return {
+            "ok": False,
+            "detail": "",
+            "failure": _selftest_failure(
+                SELFTEST_STAGE_ERROR_REPLY,
+                exit_code=0,
+                worker_code="safe_file_operation_blocked",
+            ),
+        }
     tmp = tempfile.mkdtemp(prefix="tavotto-selftest-")
     try:
         root = Path(tmp)
-        (root / _SELFTEST_NAME).write_text(_SELFTEST_SCRIPT, encoding="utf-8")
-        out_dir, sandbox = root / "out", root / "sandbox"
-        out_dir.mkdir()
-        sandbox.mkdir()
+        # 布局照真实运行：项目（守卫眼里的「真实图库」）与会话沙盒 / 输出目录是**兄弟**，沙盒不在项目里面。
+        # 旧布局把脚本放在临时根、沙盒是它的子目录：整个沙盒（cwd）都落进「真实图库」，任何库在 cwd 里
+        # 删 / 改名 / write_text 都被守卫拦下——真实运行里不会发生（TVD-FTH9：自检判 safe_file_operation_blocked）。
+        project, out_dir, sandbox = root / "project", root / "out", root / "sandbox"
+        for d in (project, out_dir, sandbox):
+            d.mkdir()
+        (project / _SELFTEST_NAME).write_text(_SELFTEST_SCRIPT, encoding="utf-8")
         spec = execspec.safe_spec(
-            _SELFTEST_NAME, str(root), "__main__", interpreter=str(python), sandbox=str(sandbox)
+            _SELFTEST_NAME, str(project), "__main__", interpreter=str(python), sandbox=str(sandbox)
         )
         argv = execspec.worker_argv(
             spec,
@@ -2892,6 +2916,7 @@ def worker_self_test(python: str) -> dict:
                         exit_code=proc.returncode,
                         worker_code=err.get("code") if isinstance(err, dict) else None,
                         text=_reply_traceback(resp) or stderr,
+                        blocked=err if isinstance(err, dict) else None,
                     ),
                 }
         return {
