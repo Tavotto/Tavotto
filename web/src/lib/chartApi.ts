@@ -51,6 +51,8 @@ export interface ChartBindLegendRequest {
 
 interface ChartBindBaseRequest {
   file: string
+  /** 校准时 /api/svg/chart/inspect 返回的场景摘要；后端核对 SVG 字节没变（ADR 0182 §1）。 */
+  scene_digest: string
   chart_source?: ChartSourceRef
   axes_id: string
   rect: [number, number, number, number]

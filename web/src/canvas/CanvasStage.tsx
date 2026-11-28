@@ -40,6 +40,7 @@ import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
+import { ChartBindDialog } from '@/components/chart/ChartBindDialog'
 import { PageOutsideMask } from './PageOutsideMask'
 import { QuickLayoutGutters } from './QuickLayoutGutters'
 import { FigureEdgeHandles, LayoutFramePreview, PageEdgeHandles } from './PageEdgeResize'
@@ -418,6 +419,8 @@ export function CanvasStage() {
       {canvasMenu && <CanvasContextMenu at={canvasMenu} close={() => setCanvasMenu(null)} />}
       {/* 「把这些修改用到同脚本的其他图…」的窗口：入口在上面那个右键菜单里 */}
       <SyncOverridesHost />
+      {/* 「绑定图表」对话框：入口在对象右键菜单（openFor 自门，与 SyncOverridesHost 同款） */}
+      <ChartBindDialog />
 
       {/* 单选时贴着选择框的上下文工具条（Quick Edit 的可发现入口） */}
       <ContextBar />

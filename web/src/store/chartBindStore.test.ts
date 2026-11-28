@@ -118,7 +118,7 @@ it('late compute cannot clear a newer request or restore obsolete preview', asyn
 it('changing projects closes the wizard and discards an in-flight bind', async () => {
   const job = deferred<PanelChartState>()
   vi.mocked(chartBind).mockReturnValue(job.promise)
-  useChartBindStore.setState({ open: true, file: 'chart.svg', projectId: null })
+  useChartBindStore.setState({ open: true, file: 'chart.svg', scene: SCENE, projectId: null })
   const running = useChartBindStore.getState().confirmBinding()
   setCurrentProjectId('other-project')
   job.resolve(CHART)
@@ -171,6 +171,7 @@ describe('chartBindStore', () => {
     const store = useChartBindStore.getState()
     useChartBindStore.setState({
       file: 'chart.svg',
+      scene: SCENE,
       form: {
         ...store.form,
         series: [{ ...store.form.series[0], node: 'curve', xCol: 'x', yCol: 'y' }],
@@ -184,17 +185,35 @@ describe('chartBindStore', () => {
     // 证据按表单透传（判据在后端，这里只看形状）
     const bindCall = vi.mocked(chartBind).mock.calls[0]?.[0]
     expect(bindCall?.x?.scale).toBe('linear')
+    // ADR 0182 §1：绑定请求必须带上校准时那次的场景摘要
+    expect(bindCall?.scene_digest).toBe(SCENE.scene_digest)
   })
 
   it('bind errors keep the wizard open with the code', async () => {
     vi.mocked(chartBind).mockRejectedValue(
       Object.assign(new Error('bad data'), { code: 'bind_evidence_invalid' }),
     )
-    useChartBindStore.setState({ file: 'chart.svg' })
+    useChartBindStore.setState({ file: 'chart.svg', scene: SCENE })
     await useChartBindStore.getState().confirmBinding()
     const s = useChartBindStore.getState()
     expect(s.step).not.toBe('confirm')
     expect(s.error?.code).toBe('bind_evidence_invalid')
+  })
+
+  it('chart_source_changed re-inspects so the user recalibrates against the fresh scene', async () => {
+    vi.mocked(chartBind).mockRejectedValue(
+      Object.assign(new Error('source moved'), { code: 'chart_source_changed' }),
+    )
+    vi.mocked(chartInspect).mockResolvedValue(SCENE)
+    useChartBindStore.setState({ open: true, file: 'chart.svg', scene: SCENE })
+    await useChartBindStore.getState().confirmBinding()
+    // 自动重查（ADR 0182 §1：重新检查并校准）——场景换新、步骤回到 data，失败码在重查落定后回填
+    await vi.waitFor(() => expect(useChartBindStore.getState().busy).toBe(false))
+    const s = useChartBindStore.getState()
+    expect(s.error?.code).toBe('chart_source_changed')
+    expect(chartInspect).toHaveBeenCalledTimes(1)
+    expect(s.step).toBe('data')
+    expect(s.scene?.scene_digest).toBe(SCENE.scene_digest)
   })
 
   it('confirm readiness mirrors required fields without judging data', () => {
@@ -514,7 +533,7 @@ describe('self-contained SVG recovery draft', () => {
       return CHART
     })
     vi.mocked(chartCompute).mockResolvedValue({ svg: '<svg/>', facts: {}, scene_digest: '', render_revision: '', model_digest: '', binding_digest: '', engine: CHART.model.engine })
-    useChartBindStore.setState({ file: 'category.svg' })
+    useChartBindStore.setState({ file: 'category.svg', scene: SCENE })
     useChartBindStore.getState().patchForm({ xKind: 'categorical', categoriesCol: 'category',
       datasetText: 'category\tvalue\nA\t1\nB\t2', series: [{ node: 'bars', kind: 'bar', xCol: 'category', yCol: 'value' }] })
     await useChartBindStore.getState().confirmBinding()
@@ -616,6 +635,7 @@ describe('N4 legend contract draft', () => {
     vi.mocked(chartCompute).mockResolvedValue(computed())
     useChartBindStore.setState({
       file: 'chart.svg',
+      scene: SCENE,
       form: {
         ...DEFAULT_FORM,
         series: [{ ...DEFAULT_SERIES, node: 'curve', xCol: 'x', yCol: 'y' }],
@@ -631,6 +651,7 @@ describe('N4 legend contract draft', () => {
     vi.mocked(chartCompute).mockResolvedValue(computed())
     useChartBindStore.setState({
       file: 'chart.svg',
+      scene: SCENE,
       form: {
         ...DEFAULT_FORM,
         series: [{ ...DEFAULT_SERIES, node: 'curve', xCol: 'x', yCol: 'y' }],

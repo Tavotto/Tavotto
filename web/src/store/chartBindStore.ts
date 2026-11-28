@@ -267,7 +267,7 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       } catch (err) { fail(s, err) }
     },
     confirmBinding: async () => {
-      if (!get().file) return
+      if (!get().file || !get().scene) return
       const s = startRequest()
       set({ result: null, previewSvg: null, previewOk: false })
       try {
@@ -280,7 +280,8 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
         }
         const f = s.form
         const result = await chartBind({
-          file: s.file!, ...chartSourceFields(s.chartSource), axes_id: 'ax1', rect: f.rect, axes_nodes: f.axesNodes,
+          file: s.file!, scene_digest: s.scene!.scene_digest, ...chartSourceFields(s.chartSource),
+          axes_id: 'ax1', rect: f.rect, axes_nodes: f.axesNodes,
           y: { ...f.y },
           ...(f.xKind === 'categorical'
             ? { x_kind: 'categorical' as const, categories_col: f.categoriesCol }
@@ -312,7 +313,19 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
         if (render?.overrides.length) render.previous_chart = s.draftChart ? structuredClone(s.draftChart) : null
         set({ result: { ...result, formRev: s.formRev }, resultRender: render, busy: false, step: 'confirm' })
         await get().runPreview()
-      } catch (err) { fail(s, err) }
+      } catch (err) {
+        fail(s, err)
+        // ADR 0182 §1：源字节已变（409 chart_source_changed）就重新盘点场景，让用户对着新场景重新校准；
+        // 失败原因不静默吞掉——重查落定后把码回填到界面上
+        if ((err as { code?: string }).code === 'chart_source_changed') {
+          void get().loadScene().then(() => {
+            const cur = get()
+            if (cur.open && cur.openSeq === s.openSeq) {
+              set({ error: { code: 'chart_source_changed', message: String(err) } })
+            }
+          })
+        }
+      }
     },
     runPreview: async () => {
       const { file, result, formRev } = get()

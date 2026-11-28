@@ -11,9 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { EngineRenderOptions, PanelCapability, PanelInfo } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { ChartBindDialog } from '@/components/chart/ChartBindDialog'
 import { alignSelectedTo, changeZOrder } from '@/store/actions'
 import { useArrangeStore } from '@/store/arrangeStore'
 import { useAssetStore } from '@/store/assetStore'
+import { useChartBindStore } from '@/store/chartBindStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -50,6 +52,20 @@ vi.mock('@/lib/api', async (importOriginal) => ({
     engineRender(id, patches, opts),
   engineInvalidate: (id: string) => engineInvalidate(id),
   fetchReadiness: () => Promise.reject(new Error('offline')),
+}))
+vi.mock('@/lib/chartApi', () => ({
+  chartInspect: vi.fn(() =>
+    Promise.resolve({
+      scene_digest: 'd'.repeat(64),
+      w_pt: 360,
+      h_pt: 252,
+      view_box: [0, 0, 360, 252],
+      nodes: [{ id: 'curve', tag: 'path' }],
+      truncated: false,
+    }),
+  ),
+  chartBind: vi.fn(),
+  chartCompute: vi.fn(),
 }))
 
 /* ------------------------------ fixtures ---------------------------------- */
@@ -469,6 +485,35 @@ describe('可编辑面板', () => {
     await openOn('p1')
     await click(item('open-inspector'))
     expect(useUiStore.getState().rightOpen).toBe(true)
+  })
+})
+
+describe('svg 面板：绑定图表', () => {
+  beforeEach(async () => {
+    useChartBindStore.getState().close()
+    await seed([panel('p1', { fileId: 'chart.svg', fileKind: 'svg' })])
+    await mount(<ChartBindDialog />)
+  })
+  afterEach(() => {
+    useChartBindStore.getState().close()
+  })
+
+  it('右键「绑定图表」→ 关菜单、openFor 打开对话框并盘点场景', async () => {
+    await openOn('p1')
+    expect(item('bind-chart')).not.toBeNull()
+    await click(item('bind-chart'))
+    expect(menu()).toBeNull()
+    expect(useChartBindStore.getState().open).toBe(true)
+    expect(useChartBindStore.getState().panelId).toBe('p1')
+    expect(document.querySelector('[data-chart-bind-dialog]')).not.toBeNull()
+    await vi.waitFor(() => expect(useChartBindStore.getState().step).toBe('data'))
+  })
+
+  it('pdf 面板没有「绑定图表」', async () => {
+    await seed([panel('pdf1')])
+    await openOn('pdf1')
+    expect(item('bind-chart')).toBeNull()
+    expect(useChartBindStore.getState().open).toBe(false)
   })
 })
 
