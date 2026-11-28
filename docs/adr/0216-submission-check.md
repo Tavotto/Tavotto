@@ -88,7 +88,8 @@
 2. **引擎编排与闭源计算**（维护者 2026-11-28 定：「要求 + 量到的数值 → 状态与目标值」这一块放闭源组件，其余开源，见 §九）：
    - 开源端点 `POST /api/pro/submission-check/plan`，**只算不写**（照 `/api/engine/specfix` 与 0199）。逐画布按 B0 渲染、取 manifest、跑免费预检，再把量到的数值交给组件命令 `submission_check.plan`；按组件回的操作逐画布在 worker 里渲染候选、复用 specfix 的回滚与核对。回每块画布的最终全量覆盖与逐条要求的状态。
    - **不设 `apply` 端点**：前端拿到结果后，所有画布的改动一次 commit、一步撤销（§三）。导出走 0031，核验走 0068，报告 PDF 由开源侧按结果生成。
-   - 逐画布渲染并发有上限，每个 worker 在整个事务里由 `engine_pool.hold` 护着，不让四张冷启动的图互相挤掉（#2341）。
+   - 首版逐张图**顺序**渲染，每次渲染请求由 `engine_pool.hold` 护着（`_engine_attempt`），不会四张冷启动的图互相挤掉（#2341）；要提速再加有上限的并发。
+   - 某块画布按 B0 出不了图（脚本出错、native 图、同一张图摆了两次）就放进 `skipped`，其余照常（§五）。
    - 功能键 `submission-pack` **随这一期**进 `engine/license.py` 闭集、`tests/test_license_callsites.py` 登记表与前端同源处（原 §八.4 提前：端点要判权益）。
 3. 前端对话框（原型在本地分支 `proto/submission-ready`，含私有期刊截图，不推）；入口与 `PremiumLock`。
 4. 闭源组件（私有仓库 `Tavotto/pro`）实现 `submission_check.plan`；开源仓库的示例扩展 `tests/fixtures/pro_echo/` 加同名命令的最小实现，契约测试不需要闭源代码。
@@ -115,15 +116,14 @@
   }],
   "canvases": [{
     "ref": "c1", "width_mm": 81.3, "height_mm": 60.0, "width_adjustable": true,
-    "preflight": [{"check": "page-width", "verdict": "column_choice_required", "options_mm": [89, 183]}],
-    "texts": [{"ref": "t1", "role": "tick-labels", "size_pt": 6.0, "family": "DejaVu Sans", "panel_label": false}],
-    "panel_labels_known": true,
-    "min_data_line_pt": 0.75,
-    "rasters": [{"ref": "i1", "dpi": 420}]
+    "preflight": ["font-too-small"],
+    "texts": [{"ref": "t1", "role": "ticks", "size_pt": 6.0, "family": "DejaVu Sans", "panel_label": false, "editable": true}],
+    "panel_labels_known": true
   }]
 }}
 ```
 
+- `preflight` 是这块画布此刻免费预检报出的规则 id（与问题面板同一个求值器）。位图分辨率与数据线宽首版不单独送数值：这两项只按预检判过没有来说，组件对它们只回 `pass` 候选或 `confirm`，不给操作。
 - `check` 是闭集：`width_final`、`font_size_min`、`font_size_max`、`font_family`、`raster_dpi_min`、`line_width_min`（与 ADR 0218 §一 A 档同名）。不认的检查项只回 `confirm`，不给操作。
 - `texts` 只给角色、字号、字体名、「是不是分图标签」与 `editable`，**不给文字内容**。
   - 画布上的文字（手加的子图标签、文字框）只在排版文档里，引擎的 manifest 里没有。所以由前端连同标签判断一起送来，`editable = false`：只量不改，操作不许指向它们。`panel_label` 来自已有的识别：画布上的子图标签（`isSubLabel`）与脚本画的子图标签（`quicklayoutfig.analyze`，只认一个字母、从 a 起连续的那种）。`panel_labels_known` = 这块画布上每个疑似子图标签都认出了归属；做不到就是 `false`。
@@ -138,12 +138,13 @@
 
 - `state` 闭集：`pass`（只许落在 `source_state = preflight` 的行上）、`choose`（如栏宽要选）、`fixable`、`confirm`、`not_applicable`。
 - 操作闭集：
-  - `canvas.width`：`canvas, width_mm`。只许落在 `width_adjustable = true` 的画布上（画布上只有一张图、图铺满画布）：落成那张图的 `figure.size_mm` 与画布页宽，与拖边改图幅同一批键。一块画布上有几张图时改宽度是一键排版的事（0199），这条只回 `choose` 或 `confirm`；
+  - `canvas.width`：`canvas, width_mm`。只许落在 `width_adjustable = true` 的画布上（画布上只有一张图、图铺满画布、按原尺寸显示即缩放 = 1，并且前端说了画布上没有别的对象——箭头、形状、子图标签不会跟着挪）：落成那张图的 `figure.size_mm` 与画布页宽，与拖边改图幅同一批键。一块画布上有几张图时改宽度是一键排版的事（0199），这条只回 `choose` 或 `confirm`；
   - `text.size`：`canvas, texts, size_pt`，落成对应元素的 `fontsize` 覆盖；
   - `text.family`：`canvas, texts, family`，`family` 必须取自那条要求的名单。
   - 字号与字体两类操作由开源侧**交给免费的 specfix 事务落地**（`specfix.transaction`，只修 `texts` 对应的元素，目标值写进这次事务用的规范）：层级、回滚、真实渲染裁决都照单图修正走，不另写一份改字号的逻辑。specfix 没修成的那条退回 `confirm`。
 - **分图标签不能一起改**：这本刊有 `text_role = panel_label` 的要求时，`text.size` 不许带 `panel_label = true` 的文字；画布 `panel_labels_known = false` 时，这块画布上那条 `font_size_max` 只回 `confirm`。
 - 开源侧逐条校验：`ref` 是本次发出去的、数值有限、字号在 1–200 pt、图幅不越过 2000 mm、字体在名单里、`pass` 只落在判过的行上、操作不指向 `editable = false` 的文字。
+- **`pass` 由开源侧在最终画布上重新判**：栏宽按最终页宽；其余按 `journals.SEVERITY_BUMP` 找到预检规则，对最终渲染再跑一次免费预检，不报才算。组件说 `pass` 但重判不符合的，退回 `confirm`。用户点了却没改成的，同样退回 `confirm`，按钮不再出现。
 - 落地后再核一遍：specfix 实际改动的元素必须都在这条操作的 `texts` 里，并且没有分图标签。改完重新量，用量到的值对照要求判状态，不信组件给的 `size_pt`。图宽改动先落、重新量，再算字号（有效字号 = 字号 × 缩放）。**任何一条不过，整份结果作废**，按「这次没法一键改」处理，所有要求退回 `confirm`，文档不动。未知的 op 或 state 同样整份作废。
 - 组件不在、版本旧、授权没过：入口按 0198 §九 置灰；端点回 `{ok: false, code}`，不改文档。
 
