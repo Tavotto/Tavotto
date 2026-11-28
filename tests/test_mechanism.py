@@ -1612,7 +1612,9 @@ def test_the_naming_table_has_a_word_for_every_first_batch_kind_in_both_language
     )["glyphs"]
     kinds = (
         "gpcr ion_channel transporter receptor_single integrin ligand kinase g_protein antibody enzyme phosphate "
-        "dna_helix mrna nucleus mitochondrion vesicle er cell membrane receptor_rtk"
+        "dna_helix mrna nucleus mitochondrion vesicle er cell membrane receptor_rtk "
+        "microtubule actin_filament ribosome proteasome ubiquitin virus capsid bacterium lysosome golgi centrosome nucleosome "
+        "chromosome transcription_factor small_molecule ion lipid_droplet synapse tight_junction complex"
     ).split()
     for k in kinds:
         assert table[k]["zh"] and table[k]["en"], k
@@ -1628,3 +1630,27 @@ def test_first_batch_kinds_have_a_family_style_preset_and_the_user_style_still_w
         assert fam[k]["fill"] == "#f6e7d4"
     assert fam["dna_helix"]["fill"] is None and fam["mrna"]["fill"] is None
     assert all(v["strokePt"] == 0.85 for k, v in fam.items() if k != "membrane")
+    for k in (
+        "microtubule",
+        "actin_filament",
+        "ribosome",
+        "proteasome",
+        "tight_junction",
+        "complex",
+        "transcription_factor",
+    ):
+        assert fam[k]["fill"] == "#d4dde6"
+    for k in ("ubiquitin", "small_molecule", "ion"):
+        assert fam[k]["fill"] == "#f2d8c2"
+    for k in (
+        "virus",
+        "capsid",
+        "bacterium",
+        "lysosome",
+        "golgi",
+        "centrosome",
+        "lipid_droplet",
+        "synapse",
+    ):
+        assert fam[k]["fill"] == "#f6e7d4"
+    assert fam["nucleosome"]["fill"] is None and fam["chromosome"]["fill"] is None
