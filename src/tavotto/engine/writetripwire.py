@@ -20,6 +20,7 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
 
 **暂存覆盖层（#1813，ADR 0127 修订 2026-11-09，`install_overlay`）**：同一套改道视图的另一个用法——safe worker 的常规运行里，守卫原本静默跳过的
 项目内 `Path.write_text` / 改名 / 删除改道进本次运行的暂存区，读回看到一致的视图；覆盖层模拟不了的情形**交回原守卫**（不是 `write_outside_roots`）。
+写已有文件被系统拒绝（别的程序占着 / 只读）时那一笔也换进暂存区、图照常出，并经 `locked_writes()` 交给界面说清楚（ADR 0127 修订 2026-11-28，`_locked_target`）。
 细节见 `install_overlay` 的文档与 `docs/rules/backend/worker-protocol-and-lifecycle.md`。
 
 **改道模式（ADR 0143 修订 2026-10-30，只属于 AI 转换 / 改图的校验运行）**：`write_roots` 里带一对 `redirect-project:` /
@@ -122,6 +123,7 @@ _state: dict = {
     "suspended": None,  # 覆盖层的「暂停」谓词（账本自己在记账 / 解析回退路径时为真：那时的探测要看真实的文件系统）
     "on_handled": None,  # 覆盖层成功接住一次操作后的回调 `(op, kind, paths, dests)`（worker 用它给守卫账本记一笔）
     "whiteouts": set(),  # 本窗口里被删除 / 改名走的项目路径（键 = normcase 的项目相对路径）
+    "locked": [],  # 覆盖层模式：本窗口里「写已有文件被系统拒绝、改写进覆盖层」的项目相对路径（`locked_writes()`）
     "roots": (),
     "display_base": "",
     "armed": False,
@@ -681,6 +683,75 @@ def _cow(raw, target: str, *, empty: bool = False) -> None:
         _rtls.busy = prev
 
 
+#: `locked_writes()` 最多记几条（界面只点名第一个，其余是计数；不让一个循环写几千个文件的脚本撑大响应）
+_MAX_LOCKED = 16
+
+
+def _locked_target(file, *, copy: bool, empty: bool = False) -> str | None:
+    """覆盖层模式：脚本**写打开项目里一个已有的普通文件**被系统拒绝（`PermissionError`）——Windows 上最常见的是别的程序
+    独占打开着它（用 Excel 看着这份 CSV），或者它被设成了只读——改写进本次运行的覆盖层，让脚本照常跑完、图照常出来；
+    项目里的那份一个字节不动，`locked_writes()` 记下这条路径交给界面说清楚「这次没写进去」（不是静默成功）。
+
+    只接这一种形状，其余一律返回 None（调用方原样抛原来的异常）：不在覆盖层模式（校验改道 / 写回隔离重放各有自己的语义）、
+    窗口没开、路径不在项目内、覆盖层里已有它的状态（被拒的就是覆盖层副本，不是这条路）、项目里不是普通文件（Windows 上写打开
+    目录也是 Errno 13）、项目里是符号链接（覆盖层不模拟链接）、**父文件夹本身不可写**（那是只读文件夹，归
+    `worker._write_denied_by_folder`，换进覆盖层会把「项目放在只读位置」藏起来）。`copy`：追加 / 读写模式要写时复制原内容，
+    复制不了（连读也被拒）同样返回 None。永不抛。"""
+    if not (_state["overlay"] and _redirect_on()):
+        return None
+    r = _resolve(file)
+    if r is None or _ov_has(r):
+        return None
+    rp, _key, target = r
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True
+    try:
+        lexical = os.path.abspath(os.fsdecode(os.fspath(file)))
+        if _ORIG["islink"](lexical) or not _ORIG["isfile"](rp):
+            return None
+        parent = os.path.dirname(rp)
+        if not os.access(parent, os.W_OK | os.X_OK):
+            return None
+    except (OSError, ValueError, TypeError):
+        return None
+    finally:
+        _rtls.busy = prev
+    _prepare_write(r)
+    try:
+        if copy or empty:
+            _cow(file, target, empty=empty and not copy)
+    except OSError:
+        # 复制到一半也不留半份副本：否则覆盖层以为这条路径已有状态，之后的读会读到残缺的内容
+        prev = getattr(_rtls, "busy", False)
+        _rtls.busy = True
+        try:
+            if _ORIG["lexists"](target):
+                os.unlink(target)
+        except OSError:
+            pass
+        finally:
+            _rtls.busy = prev
+        return None
+    items = _state.setdefault("locked", [])
+    rel = os.path.relpath(rp, _state["redirect"][0]).replace(os.sep, "/")
+    if rel not in items and len(items) < _MAX_LOCKED:
+        items.append(rel)
+    return target
+
+
+def _write_mode(mode) -> tuple[bool, bool]:
+    """`open` 的 mode → (是不是写打开, 要不要写时复制原内容)。`x` 不算：已有文件上它是 `FileExistsError`，轮不到被拒。"""
+    m = mode if isinstance(mode, str) else "r"
+    if "x" in m or not any(c in m for c in "wa+"):
+        return False, False
+    return True, "w" not in m
+
+
+def locked_writes() -> list[str]:
+    """本窗口里写已有文件被系统拒绝、改写进覆盖层的项目相对路径（至多 `_MAX_LOCKED` 条；worker 交给界面的胶囊）。"""
+    return list(_state.get("locked", ()))
+
+
 def _eisdir(path) -> IsADirectoryError:
     return IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
 
@@ -702,7 +773,7 @@ def _open_target(file, mode):
         if r is not None:
             if _state["overlay"] and not _ov_has(r):
                 # 覆盖层没接管过这条路径：`open('w')` 改写已有文件不拦的契约不变（改道只管覆盖层里已有状态的路径，
-                # 免得写进真实文件之后读回的却是覆盖层里更早的那份）
+                # 免得写进真实文件之后读回的却是覆盖层里更早的那份）；真实文件拒绝写入时 `_w_open` 再交给 `_locked_target`
                 return file
             white = _white(r[1])
             creates = any(c in m for c in "wax")
@@ -735,7 +806,14 @@ def _w_open(orig):
     def open_(file, mode="r", *args, **kwargs):
         if _redirect_on():
             file = _open_target(file, mode)
-        return orig(file, mode, *args, **kwargs)
+        try:
+            return orig(file, mode, *args, **kwargs)
+        except PermissionError:
+            writes, copy = _write_mode(mode)
+            target = _locked_target(file, copy=copy) if writes else None
+            if target is None:
+                raise
+            return orig(target, mode, *args, **kwargs)
 
     return open_
 
@@ -750,7 +828,17 @@ def _w_path_open(orig):
             target = _open_target(self, mode)
             if target is not self:
                 return orig(pathlib.Path(target), mode, *args, **kwargs)
-        return orig(self, mode, *args, **kwargs)
+        try:
+            return orig(self, mode, *args, **kwargs)
+        except PermissionError:
+            # 3.10 的 `Path.open` 经 `_NormalAccessor` 绑定的原 `io.open`，上面的 `open` 包装看不到这次拒绝
+            writes, copy = _write_mode(mode)
+            locked = (
+                _locked_target(self, copy=copy) if writes and kwargs.get("opener") is None else None
+            )
+            if locked is None:
+                raise
+            return orig(pathlib.Path(locked), mode, *args, **kwargs)
 
     return open_
 
@@ -762,7 +850,7 @@ def _w_os_open(orig):
             if flags & _WRITE_FLAGS:
                 r = _resolve(path)
                 if r is not None and _state["overlay"] and not _ov_has(r):
-                    r = None  # 覆盖层没接管过这条路径：写照旧落在项目里（与 `open('w')` 同一个契约）
+                    r = None  # 覆盖层没接管过这条路径：写照旧落在项目里（与 `open('w')` 同一个契约；被拒时见下面的 `_locked_target`）
                 if r is not None:
                     white = _white(r[1])
                     creates = bool(flags & os.O_CREAT)
@@ -786,7 +874,21 @@ def _w_os_open(orig):
                 target = _map(path, write=False)
                 if target is not None:
                     path = target
-        return orig(path, flags, mode, dir_fd=dir_fd)
+        try:
+            return orig(path, flags, mode, dir_fd=dir_fd)
+        except PermissionError:
+            locked = (
+                _locked_target(
+                    path,
+                    copy=not (flags & os.O_TRUNC),
+                    empty=bool(flags & os.O_TRUNC),
+                )
+                if dir_fd is None and flags & (os.O_WRONLY | os.O_RDWR) and not flags & os.O_EXCL
+                else None
+            )
+            if locked is None:
+                raise
+            return orig(locked, flags, mode, dir_fd=dir_fd)
 
     return os_open
 
@@ -1381,7 +1483,8 @@ def install_overlay(project: str, directory: str, *, on_handled=None, suspended=
     看到覆盖后的视图；`exists|isfile|isdir|getsize` 等探测对覆盖层有状态的路径答覆盖层视图、但仍让账本看见（命中记 material，防 C 层读静默错图）；用户项目一个字节不改。与校验运行的改道层（ADR 0143）同一套视图实现，区别只有：
 
     * 只接管 `Path.write_text`、`os.remove|unlink|rmdir|rename|replace`、`Path.unlink`、`shutil.rmtree|move`；`open('w')` 改写已有文件
-      不拦的契约不变（只有覆盖层里**已有状态**的路径才继续走覆盖层，免得读回更早的那份）；`mkdir` / `copy*` / `write_bytes` 原样；
+      不拦的契约不变（只有覆盖层里**已有状态**的路径才继续走覆盖层，免得读回更早的那份），唯一例外是这次写打开被系统拒绝
+      （`_locked_target`：别的程序占着 / 只读，父文件夹可写）——那一笔进覆盖层、记进 `locked_writes()`；`mkdir` / `copy*` / `write_bytes` 原样；
     * 覆盖层模拟不了的情形（目录级改动、项目里的符号链接、哪里都没有的源）不失败，而是交回守卫——跳过并记账，行为与以前一字不差；
     * `suspended`：账本自己在记账 / 解析只读回退路径时为真，那时覆盖层让路（账本要对账的是**真实**文件系统上的路径）；
     * 覆盖层够不着的观察（`os.stat` / `listdir` / `scandir` / `glob` / C 层读 / 子进程）仍按守卫账本的老规矩命中：`on_handled`
@@ -1397,6 +1500,7 @@ def install_overlay(project: str, directory: str, *, on_handled=None, suspended=
     _state["only_fold"] = {}
     _state["whiteouts"] = set()
     _state["redirected"] = []
+    _state["locked"] = []
     _state["overlay"] = True
     _state["touched"] = False
     _state["on_handled"] = on_handled

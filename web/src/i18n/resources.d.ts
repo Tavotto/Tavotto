@@ -4975,6 +4975,8 @@ export default interface Resources {
       "installFailed": "安装失败",
       "installing": "正在安装…",
       "interpreterLabel": "Python 解释器",
+      "lockedWriteSkipped": "这次没写进 {{file}}：文件正被别的程序占用或是只读的。",
+      "lockedWriteSkippedMany": "这次没写进 {{file}} 等 {{n}} 个文件：它们正被别的程序占用或是只读的。",
       "managedCliError": {
         "managed_cli_cancelled": "已取消安装 {{product}}。",
         "managed_cli_disk_full": "磁盘剩余空间不足以安装 {{product}}。清理后再试。",
