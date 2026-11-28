@@ -83,6 +83,7 @@
         "continuous colorbar direction and end extensions",
         "fixed major tick positions or a fixed linear interval aligned with the major grid on supported shared and independent axes",
         "exact continuous X and Y viewing limits with linear, base-10 logarithmic, symmetric logarithmic or logit projection for supported Cartesian layers",
+        "verified source writeback of viewing limits, scale and reversal for independent supported facet axes",
         "independent X and Y axis reversal for supported Cartesian layers including native raster cell and placement reversal",
         "per-axis major grid visibility and shared grid color, opacity, stroke width and style on supported Cartesian panels and facets",
         "independent visibility plus whole-frame and per-side stroke color and width for supported Cartesian plot borders and facets",

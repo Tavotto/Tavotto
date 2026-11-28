@@ -21,3 +21,11 @@ ggplot_facet_adjust <- function(plot, kind, recipes, install) {
                              tavotto_facet_adjustments = adjustments)
   plot
 }
+
+ggplot_facet_group_id <- function(cells, axis, owner) {
+  if (!length(owner) || !all(names(owner) %in% names(cells))) return(NULL)
+  match <- which(vapply(seq_len(nrow(cells)), function(row) {
+    identical(lapply(cells[row, names(owner), drop = FALSE], as.character), owner)
+  }, logical(1L)))
+  if (length(match) == 1L) cells[[paste0("SCALE_", toupper(axis))]][[match]]
+}

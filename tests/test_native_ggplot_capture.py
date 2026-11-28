@@ -528,7 +528,7 @@ ggplot2::ggsave("submitted.pdf", p, width = 4, height = 3)
 @pytest.mark.parametrize(
     "written_scale",
     [None, "log", "linear", "logit", "symlog"],
-    ids=["retain-statistical-scale", "write-log", "write-linear", "write-logit", "write-symlog"],
+    ids=["write-post-stat-log", "write-log", "write-linear", "write-logit", "write-symlog"],
 )
 def test_native_r_coordinate_writeback_keeps_independent_edits_bound(tmp_path, written_scale):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
@@ -617,10 +617,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
             },
             timeout=120,
         )
-        assert preview["written"] == (3 if written_scale else 2)
-        assert [item["prop"] for item in preview["skipped"]] == (
-            [] if written_scale else ["xscale", "invert_y"]
-        )
+        assert preview["written"] == len(patches) and preview["skipped"] == []
         assert script.read_bytes() == original
         _, saved = app.call(
             "/api/script-edit/figure-style/commit",
@@ -633,10 +630,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         assert reauthored != original
         _, persisted = app.call(route)
         persisted_panel = persisted["canvases"][0]["objects"][0]
-        residual = persisted_panel["overrides"]
-        expected_residual = [] if written_scale else [("xscale", "log"), ("invert_y", True)]
-        assert [(patch["prop"], patch["value"]) for patch in residual] == expected_residual
-        assert all(patch["identity"] != target["identity"] for patch in residual)
+        assert persisted_panel["overrides"] == []
 
         replay_root = tmp_path / "Fresh runtime"
         replay_root.mkdir()
@@ -645,19 +639,15 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
             rebuilt = _run_ggplot(fresh, script.name, rscript)
             bare = _render(fresh, rebuilt, [])
             standalone = values(axes(bare["manifest"]))
-            authored_scale = written_scale or "linear"
             assert all(
-                el["xlim"] == requested_limits and el["invert_x"] and el["xscale"] == authored_scale
+                el["xlim"] == requested_limits
+                and el["invert_x"]
+                and el["xscale"] == requested_scale
                 for el in standalone.values()
             )
-            assert all(not el["invert_y"] for el in standalone.values())
-            rebound = _render(fresh, rebuilt, residual)
-            assert not rebound["warnings"]
-            assert rebound["svg"] == hot["svg"]
-            after = values(axes(rebound["manifest"]))
-            assert after["axes_1"]["invert_y"] is False
-            assert after["axes_2"]["invert_y"] is (written_scale is None)
-            assert all(el["xscale"] == requested_scale for el in after.values())
+            assert standalone["axes_1"]["invert_y"] is False
+            assert standalone["axes_2"]["invert_y"] is (written_scale is None)
+            assert not bare["warnings"] and bare["svg"] == hot["svg"]
 
         _, restored = app.call(
             "/api/script-backups/restore",
@@ -675,7 +665,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3)
         assert previous["canvases"][0]["objects"][0]["overrides"] == patches
 
 
-@pytest.mark.parametrize("scope", ["single", "facets", "existing", "empty"])
+@pytest.mark.parametrize("scope", ["single", "facets", "existing", "empty", "independent"])
 def test_native_r_raster_writeback_draws_the_same_cells_in_standalone_r(tmp_path, scope):
     from test_core_v02_release_candidate import R_FRAME_PT, _panel, _render, _run_ggplot
 
@@ -700,6 +690,10 @@ plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, fill = colour)) +
         )
     if scope == "existing":
         original = original.replace(b"expand = FALSE)", b'expand = FALSE, reverse = "xy")')
+    if scope == "independent":
+        original = original.replace(
+            b"facet_wrap(~sample)", b'facet_wrap(~sample, scales = "free_x")'
+        )
     if scope == "empty":
         original = original.replace(
             b"ggplot2::geom_point(colour",
@@ -731,6 +725,11 @@ plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, fill = colour)) +
         images = rasters(hot["svg"])
         assert len(images) == (1 if scope == "single" else 2)
         assert images != rasters(before["svg"])
+        if scope == "independent":
+            href = "{http://www.w3.org/1999/xlink}href"
+            originals = rasters(before["svg"])
+            assert images[0][href] != originals[0][href]
+            assert images[1][href] == originals[1][href]
         width, height = before["manifest"]["size_mm"]
         panel = {
             **_panel("r", figure, 5, patches, native_width=width),
@@ -792,6 +791,14 @@ plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, fill = colour)) +
             replayed = _render(fresh, rebuilt, [])
             assert replayed["warnings"] == []
             assert replayed["svg"] == hot["svg"]
+            if scope == "independent":
+                axis_fields = [
+                    {field["prop"]: field["value"] for field in obj["editable"]}
+                    for obj in replayed["manifest"]["elements"]
+                    if obj["role"] == "axes"
+                ]
+                assert [axis["invert_x"] for axis in axis_fields] == [True, False]
+                assert [axis["xlim"] for axis in axis_fields] == [[0, 8], [0, 10]]
 
             def x_tick_controls(manifest):
                 return {
@@ -6698,7 +6705,7 @@ stopifnot(length(gregexpr("stroke-opacity: 0.40", svg, fixed = TRUE)[[1L]]) == 3
     )
 
 
-def _write_native_category_style(app, script, route, asset, hot, patches):
+def _write_native_figure_style(app, script, route, asset, hot, patches):
     from test_core_v02_release_candidate import _panel
 
     layout_name = route.rsplit("/", 1)[-1]
@@ -6750,6 +6757,108 @@ def _write_native_category_style(app, script, route, asset, hot, patches):
     assert status == 200 and committed["ok"], committed
     assert app.call(route)[1]["canvases"][0]["objects"][0]["overrides"] == []
     return committed
+
+
+@pytest.mark.parametrize("facet", ["wrap", "grid"])
+def test_native_r_independent_facet_views_write_and_reopen_without_moving_neighbours(
+    tmp_path, facet
+):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Independent facet axes"
+    project.mkdir()
+    script = project / "Facets.R"
+    facet_code = (
+        'ggplot2::facet_wrap(~sample, scales = "free_x", axes = "all")'
+        if facet == "wrap"
+        else 'ggplot2::facet_grid(block ~ sample, scales = "free_x", axes = "all")'
+    )
+    blocks = '"First"' if facet == "wrap" else '"First", "Second"'
+    original = f"""\
+d <- expand.grid(x = c(2, 4, 8, 16, 32), sample = c("Early", "Late"), block = c({blocks}))
+d$x <- d$x * ifelse(d$sample == "Late", 3, 1)
+d$y <- d$x / 4 + as.integer(d$block)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_line(colour = "#18556C") +
+  {facet_code} + ggplot2::theme_bw()
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+b <- ggplot2::ggplot_build(plot)
+panels <- lapply(seq_len(nrow(b$layout$layout)), function(i) {{
+  panel <- b$layout$panel_params[[i]]
+  trans <- panel$x$scale$get_transformation()
+  data <- b$data[[1]][as.integer(b$data[[1]]$PANEL) == i, ]
+  list(mode = trans$name, range = trans$inverse(panel$x.range), reverse = panel$reverse,
+       x = trans$inverse(data$x), y = data$y)
+}})
+jsonlite::write_json(panels, "views.json", auto_unbox = TRUE, digits = NA)
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Independent_axes"
+    standalone = project / "standalone.svg"
+    facts = project / "views.json"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    initial_facts = json.loads(facts.read_text(encoding="utf-8"))
+    early = (0,) if facet == "wrap" else (0, 2)
+    late = set(range(len(initial_facts))) - set(early)
+
+    def marks(svg):
+        return [
+            (node.tag, node.attrib, node.text or "")
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.endswith("}text")
+            or (node.tag.endswith("}polyline") and "#18556C" in node.get("style", ""))
+        ]
+
+    def save(app, asset, known, changes):
+        target = next(
+            e for e in known["manifest"]["elements"] if e["gid"] == f"axes_{early[-1] + 1}"
+        )
+        patches = [
+            {"gid": target["gid"], "identity": target["identity"], "prop": prop, "value": value}
+            for prop, value in changes.items()
+        ]
+        hot = _render(app, asset, patches)
+        assert hot["warnings"] == []
+        assert _render(app, asset, [])["svg"] == known["svg"]
+        saved = _write_native_figure_style(app, script, route, asset, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert marks(standalone.read_text(encoding="utf-8")) == marks(hot["svg"])
+        current = json.loads(facts.read_text(encoding="utf-8"))
+        for i in late:
+            assert current[i] == initial_facts[i]
+        for i in early:
+            item = current[i]
+            assert item["mode"] == ("log-10" if changes["xscale"] == "log" else "identity")
+            assert item["range"] == pytest.approx(changes["xlim"])
+            assert item["reverse"] == ("x" if changes["invert_x"] else "none")
+            assert item["x"] == pytest.approx(initial_facts[i]["x"])
+            assert item["y"] == initial_facts[i]["y"]
+        return hot, saved
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        initial = _render(app, asset, [])
+        edited, _ = save(app, asset, initial, {"xscale": "log", "xlim": [3, 24], "invert_x": True})
+    first_write = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, asset, [])
+        assert reopened["svg"] == edited["svg"]
+        _, saved = save(
+            app, asset, reopened, {"xscale": "linear", "xlim": [2, 32], "invert_x": False}
+        )
+        status, result = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and result["ok"] and script.read_bytes() == first_write
 
 
 def test_native_r_mapped_curve_source_matches_the_hot_scene_and_remains_editable(tmp_path):
@@ -6809,7 +6918,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         assert target(hot, "Baseline") == target(baseline, "Baseline")
         assert points(hot["svg"]) == points(baseline["svg"])
         assert _render(app, asset, [])["svg"] == baseline["svg"]
-        committed = _write_native_category_style(app, script, route, asset, hot, patches)
+        committed = _write_native_figure_style(app, script, route, asset, hot, patches)
         subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
         assert (project / "built-data.txt").read_bytes() == original_data
         assert sorted(styles((project / "standalone.svg").read_text(encoding="utf-8"))) == sorted(
@@ -6925,7 +7034,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         assert hot["warnings"] == []
         assert target(hot, "Baseline") == target(baseline, "Baseline")
         assert _render(app, asset, [])["svg"] == baseline["svg"]
-        committed = _write_native_category_style(app, script, route, asset, hot, patches)
+        committed = _write_native_figure_style(app, script, route, asset, hot, patches)
         subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
         assert (project / "built-data.txt").read_bytes() == original_data
         assert sorted(styles((project / "standalone.svg").read_text(encoding="utf-8"))) == sorted(

@@ -397,7 +397,7 @@ ggplot_captured_locators <- function(targets, cells, global, faceted) {
     }
   }
   for (recipe in faceted) {
-    group <- ggplot_facet_locator_group(cells, recipe)
+    group <- ggplot_facet_group_id(cells, recipe$axis, recipe$facet)
     if (is.null(group)) next
     scope <- paste(recipe$axis, group, sep = "/")
     result[[scope]] <- utils::modifyList(result[[scope]] %||% list(), recipe$style)

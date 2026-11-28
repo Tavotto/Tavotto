@@ -115,7 +115,7 @@ def _native_coordinate_writes(
         gid, prop = patch["gid"], patch["prop"]
         element = axes.get(gid, {})
         scope = element.get("source_props", {}).get(prop)
-        if scope:
+        if scope and not scope.get("facet"):
             candidates[prop].append((gid, scope, patch["value"]))
     coordinates = {}
     written = set()
@@ -137,6 +137,47 @@ def _native_coordinate_writes(
         coordinates[prop] = value
         written.update((gid, prop) for gid, _, _ in values)
     return coordinates, written
+
+
+def _native_facet_coordinate_writes(
+    axes: dict[str, dict], patches: list[dict], *, write_scales: bool = True
+) -> tuple[dict[tuple[str, str], tuple[str, dict]], set[tuple[str, str]]]:
+    groups = defaultdict(lambda: defaultdict(list))
+    for patch in patches:
+        gid, prop = patch["gid"], patch["prop"]
+        target = axes.get(gid, {})
+        scope = target.get("source_props", {}).get(prop, {})
+        if not scope.get("facet") or (not write_scales and prop.endswith("scale")):
+            continue
+        axis = prop[-1] if prop.startswith("invert_") else prop[0]
+        if axis in ("x", "y"):
+            groups[axis, scope["group"]][prop].append((gid, scope, patch["value"]))
+
+    views = {}
+    written = set()
+    for (axis, group), props in groups.items():
+        view: dict = {}
+        for prop, field in (
+            (f"{axis}scale", "mode"),
+            (f"{axis}lim", "range"),
+            (f"invert_{axis}", "inverted"),
+        ):
+            changes = props.get(prop, [])
+            if not changes:
+                continue
+            _, scope, value = changes[0]
+            facet = _r_facet_selector(scope["facet"])
+            if facet is None or any(
+                (validated := _coordinate_value(axes[gid], prop, requested, view.get("mode")))
+                is None
+                or validated != value
+                for gid, _, requested in changes
+            ):
+                continue
+            view[field] = value
+            views[axis, group] = (facet, view)
+            written.update((gid, prop) for gid, _, _ in changes)
+    return views, written
 
 
 def _r_literal(value) -> str | None:
@@ -904,6 +945,44 @@ def _r_coordinate_block(name: str, coordinates: dict, *, mirror_raster: bool) ->
     )
 
 
+def _r_facet_coordinate_block(name: str, views: dict, *, mirror_raster: bool) -> str:
+    resources = [
+        "ggplot_objects.R",
+        "ggplot_transforms.R",
+        "ggplot_axis_projection.R",
+        "ggplot_facet_view_source.R",
+    ]
+    recipes = []
+    for (axis, _group), (facet, view) in views.items():
+        values = []
+        for field, value in view.items():
+            if field == "range":
+                literal = "c(" + ", ".join(map(_r_literal, value)) + ")"
+            else:
+                literal = _r_literal(value)
+            values.append(f"{field} = {literal}")
+        properties = ", ".join(values)
+        recipes.append(f'    list(axis = "{axis}", facet = {facet}, view = list({properties}))')
+    draw = []
+    if mirror_raster:
+        resources.append("ggplot_raster_geometry.R")
+        draw.append(
+            "  plot$layers <- lapply(plot$layers, ggplot_mirror_raster_layer, coord = plot$coordinates)"
+        )
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers(*resources),
+            "  plot <- ggplot_with_facet_views(plot, list(",
+            ",\n".join(recipes),
+            "  ))",
+            *draw,
+            "  plot",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
 def _rebind_residual(source: AdjustedRSource, hot: dict | None, cold: dict) -> AdjustedRSource:
     if not (source.view_written or source.colour_written) or not hot:
         return source
@@ -1016,6 +1095,7 @@ def build(
     elements: dict[str, dict[str, str | float]] = {}
     axes = {e["gid"]: e for e in (hot or {}).get("elements", ()) if e["role"] == "axes"}
     coordinates, coordinate_writes = _native_coordinate_writes(axes, patches)
+    facet_views, facet_view_writes = _native_facet_coordinate_writes(axes, patches)
     theme_options, theme_writes = _native_theme_writes(axes, patches)
     source_layers, layer_writes = _native_layer_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
@@ -1025,7 +1105,13 @@ def build(
     titles = _native_title_text_writes(hot, patches)
     title_writes = {(gid, "text") for gid in titles}
     written = (
-        coordinate_writes | theme_writes | layer_writes | colour_writes | tick_writes | bar_writes
+        coordinate_writes
+        | facet_view_writes
+        | theme_writes
+        | layer_writes
+        | colour_writes
+        | tick_writes
+        | bar_writes
     )
     written.update(title_writes | locator_writes)
     residual = []
@@ -1087,6 +1173,11 @@ def build(
                 axes, patches, write_scales=False
             )
             written.difference_update(coordinate_writes - fallback_writes)
+        if any("mode" in view for _, view in facet_views.values()):
+            facet_views, fallback_writes = _native_facet_coordinate_writes(
+                axes, patches, write_scales=False
+            )
+            written.difference_update(facet_view_writes - fallback_writes)
         # A change of mapping updates guide identities. Carry along the guide
         # edits whose same scale and channel association can be checked on replay.
         anchored = {
@@ -1103,6 +1194,7 @@ def build(
     if not (
         elements
         or coordinates
+        or facet_views
         or theme_options
         or source_layers
         or colour_scales
@@ -1130,6 +1222,12 @@ def build(
             for gid, prop in coordinate_writes
         )
         statements.append(_r_coordinate_block(name, coordinates, mirror_raster=mirror_raster))
+    if facet_views:
+        mirror_raster = any(
+            prop.startswith("invert_") and axes[gid]["source_props"][prop].get("raster") is True
+            for gid, prop in facet_view_writes & written
+        )
+        statements.append(_r_facet_coordinate_block(name, facet_views, mirror_raster=mirror_raster))
     if source_layers:
         statements.append(_r_layer_block(name, source_layers))
     if colour_scales:
@@ -1159,7 +1257,7 @@ def build(
         len(written),
         residual,
         skipped,
-        bool(coordinates),
+        bool(coordinates or facet_views),
         bool(colour_scales or bar_layouts),
     )
 
