@@ -2344,6 +2344,12 @@ export type ExportObject = ExportObjectBody & {
    * `lib/clipMask.maskAsPath`）；没有就不发——不带剪切组的文档载荷与以前逐字节一致
    */
   clip?: ExportClipPath[]
+  /** 对象名（ADR 0208 §七之三）：SVG 写成 `id`；没有名字不发 */
+  name?: string
+  /** 所在的组链（外 → 内的组 id，`lib/groupTree.groupPathOf`）：SVG 按它嵌套 `<g>`；不在组里不发 */
+  group_path?: string[]
+  /** 与 `group_path` 同长的组名（缺 = 这一层 `<g>` 不写 id） */
+  group_names?: string[]
 }
 
 /** 蒙版轮廓：只有几何（比例坐标的锚点 + 框 + 旋转），后端 `plan._clipped` 读 */
@@ -2352,6 +2358,8 @@ export type ExportClipPath = ExportBox & {
   subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
   fill_rule?: 'evenodd'
   rotation_deg?: number
+  /** 这个蒙版属于哪一层组（`group_path` 里的某个 id）；缺 = 只裁这一个对象（`original.clip` 等老写法） */
+  group?: string
 }
 
 type ExportObjectBody =

@@ -17,6 +17,7 @@ import math
 import re
 import struct
 import time
+import unicodedata
 from dataclasses import dataclass
 from xml.etree import ElementTree as ET
 
@@ -107,6 +108,26 @@ _CSS_PROPERTIES = {
     "stop-opacity",
 }
 _ID = re.compile(r"[A-Za-z_][A-Za-z0-9_.:-]*\Z")
+
+
+def name_start(ch: str) -> bool:
+    """XML 名字的起始字符（按 Unicode 类别；不含 `:`）。"""
+    return ch == "_" or unicodedata.category(ch) in ("Lu", "Ll", "Lt", "Lm", "Lo", "Nl")
+
+
+def name_char(ch: str) -> bool:
+    """XML 名字里除起始位以外还能出现的字符（不含 `:`）。"""
+    return name_start(ch) or ch in ".-" or unicodedata.category(ch) in ("Mn", "Mc", "Nd")
+
+
+def _id_ok(value: str, unicode_ids: bool) -> bool:
+    if _ID.fullmatch(value):
+        return True
+    return bool(
+        unicode_ids and value and name_start(value[0]) and all(name_char(c) for c in value[1:])
+    )
+
+
 _URL = re.compile(r"url\(\s*(['\"]?)(#[A-Za-z_][A-Za-z0-9_.:-]*)\1\s*\)", re.I)
 _SELECTOR = re.compile(r"[A-Za-z0-9_.*#\s,>\-]+\Z")
 _RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
@@ -622,8 +643,13 @@ def parse_svg(
     budget: SVGBudget | None = None,
     tolerant: bool = False,
     deadline: float = math.inf,
+    unicode_ids: bool = False,
 ) -> ET.Element:
     """Parse a bounded safe static SVG, validating every local resource reference.
+
+    `unicode_ids`（读**我们自己写出的 SVG** 的口子才传：SVG 导出把对象 / 组的名字原样写进 `id`，中文也行，ADR 0208 §七之三）：
+    `id` 属性另认 Unicode 的 XML 名字；这些 id 只是标记，任何引用的语法仍只认 ASCII（指向它的引用照旧失败）。缺省关：
+    其它调用方（worker 输出、场景解析）里 `面板` 之类仍是 `svg_invalid_id`。
 
     `tolerant`（外部 SVG 导入，ADR 0189）：先删掉公共 SVG DTD 声明（没有内部子集）、编辑器私有命名空间、metadata 与对画面没作用的
     CSS 声明，再做与严格模式**完全相同**的验证。实体、外链、脚本、事件属性、引用环、预算不放宽。"""
@@ -688,7 +714,7 @@ def parse_svg(
             if ans == _XML_NS and attr not in ("lang", "space"):
                 raise SVGError("svg_unsafe_attribute")
             if attr == "id":
-                if ans or not _ID.fullmatch(value) or value in ids:
+                if ans or not _id_ok(value, unicode_ids) or value in ids:
                     raise SVGError("svg_invalid_id")
                 ids[value] = index
             elif attr == "href":
