@@ -79,6 +79,7 @@ SIDECAR_ENV = {
 }
 
 sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(HERE))  # envfaults（环境故障家族的假 wheel 夹具）
 
 
 # ---------------------------------------------------------------- 题库 / 项目
@@ -193,6 +194,73 @@ def judge(app, project: Path, item: dict, before_hash: dict) -> dict:
         "originals_changed": changed,
         "new_files": new_files,
     }
+
+
+# ---------------------------------------------------------------- 环境故障家族（ADR 0221 §六）
+
+
+def is_env_item(item: dict) -> bool:
+    return item.get("family") == "environment"
+
+
+def fault_env(item: dict, house: Path) -> dict[str, str] | None:
+    """环境题：在 `house`（隔离临时目录）里合成假 wheel，返回要并进 sidecar 的环境变量；非环境题 None。"""
+    import envfaults
+
+    if not is_env_item(item):
+        return None
+    return envfaults.build_fixtures(item["fault"], house, PYTHON)
+
+
+def install_attempt(app, item: dict, timeout: float = 900.0) -> dict:
+    """环境题的「用户点了一键安装」：对缺的那个包形成计划（装进 Tavotto 受管环境，题库点名分发名）、执行、等落定。
+
+    返回稳定错误码（只有码，不带路径；自检阶段 / worker 码只在诊断包的 managed_environment_jobs 里）；与界面「装上并继续」同一条后端路由。
+
+    已知边界（评测如实，不造产品里没有的状态）：题库里的包名不在内置映射里，准备会话对它只给「指定包名 / 换环境」
+    （`installable: false`，没有 `prepare_dependencies` 动作；2026-11-28 实测 probe 报 `no_prepare_action`），用户点的就是这条
+    独立路由，它的作业不记进准备会话的 `dep_attempts`。所以修复会话的初始 `read_run_report` 看到的仍是「缺包」，
+    安装失败的码只在 `rec["install_attempt"]` 里：这组题测的是 AI 能不能从缺包出发自己走到并诊断出这个故障，而不是被告知故障。
+    """
+    wheel = item["fault"]["wheels"][0]
+    st, body = app.call(
+        "/api/engine/dependency/plan",
+        {
+            "module": wheel["import"],
+            "script": item["script"],
+            "target": "tavotto_managed",
+            "distribution": wheel["dist"],
+        },
+        timeout=120,
+    )
+    plan = body.get("plan") or {}
+    if not plan.get("plan_id"):
+        return {"stage": "plan", "code": body.get("code") or f"http_{st}"}
+    app.call(
+        "/api/engine/dependency/install",
+        {"plan_id": plan["plan_id"], "impact_digest": plan.get("impact_digest", "")},
+        timeout=120,
+    )
+    t0 = time.time()
+    state: dict = {}
+    while time.time() - t0 < timeout:
+        _, state = app.call(f"/api/engine/dependency/state?plan_id={plan['plan_id']}", timeout=30)
+        if state.get("state") in ("done", "failed", "cancelled"):
+            break
+        time.sleep(2)
+    return {
+        "stage": "install",
+        "state": state.get("state"),
+        "code": state.get("code") or ("" if state.get("state") == "done" else "no_final_state"),
+    }
+
+
+def env_before(app, item: dict) -> dict:
+    """环境题的「未修前」：先开准备会话（缺包），再点一键安装，记真实的失败形状。与 `summarize_report` 同口径加 `install`。"""
+    prep = run_prep(app, item["script"])
+    out = summarize_report(prep["report"])
+    out["install"] = install_attempt(app, item)
+    return out
 
 
 # ---------------------------------------------------------------- 卡点归类
@@ -530,12 +598,15 @@ def run_opencode(cwd: Path, prompt: str, timeout: int, config: str, log: Path) -
 # ---------------------------------------------------------------- 一次运行
 
 
-def _fix_and_judge(cond, project, work, item, before, timeout, rec) -> None:
+def _fix_and_judge(cond, project, work, item, before, timeout, rec, extra_env=None) -> None:
     """A / M 组的一次修复 + 判分（baseline 只判分）。轨迹只取这一次修复新增的审计行（M 组里 warmup 的不算）。"""
-    with sidecar(project, work) as app:
+    with sidecar(project, work, extra_env) as app:
         if cond in ("A", "M"):
             rec["connection"] = connect_builtin(app)
         prep = run_prep(app, item["script"])
+        if extra_env is not None and cond == "A":
+            # 环境题：修复会话从「用户点了一键安装、没装好」之后开始（失败码记进 rec）
+            rec["install_attempt"] = install_attempt(app, item)
         if cond in ("A", "M"):
             seen = len(read_audit(work))
             fx = run_fix(app, work, prep, item, timeout)
@@ -549,6 +620,12 @@ def _fix_and_judge(cond, project, work, item, before, timeout, rec) -> None:
                     "approved_by": a.get("approved_by"),
                     "result": (a.get("result") or {}).get("code")
                     or (a.get("result") or {}).get("ok"),
+                    # 已知问题（ADR 0221 §二）：审计结果里有 known_issue 就带上（只有 id）；现在的审计行还没有这个键，缺省不写
+                    **(
+                        {"known_issue": (a.get("result") or {}).get("known_issue")}
+                        if (a.get("result") or {}).get("known_issue")
+                        else {}
+                    ),
                     # 应用试运行的记录（ADR 0197 第 1 层，只有码）：之前 / 之后的形状、给的提示 id、这之前做过的改动
                     **({"attempt": a["attempt"]} if a.get("attempt") else {}),
                 }
@@ -608,14 +685,24 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
         "model": MODEL,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "solvable": item.get("solvable", True),
+        # 环境题：这道故障在产品一侧是不是产品缺陷（summarize 的 misjudged_user_fault 用）
+        **(
+            {"product_defect": bool(item["fault"].get("product_defect"))}
+            if is_env_item(item)
+            else {}
+        ),
     }
     t0 = time.time()
     # 未修前先在独立目录里真跑一遍：本来就出图的（已修家族）不再叫 agent / AI——前提不成立，记 already_ok
     pre_proj, pre_work = base / "pre-project", base / "pre-work"
     pre_work.mkdir(parents=True)
     materialize(item, pre_proj)
-    with sidecar(pre_proj, pre_work) as app:
-        pre = summarize_report(run_prep(app, item["script"])["report"])
+    extra = fault_env(item, base / "wheelhouse")  # 环境题：假 wheel 在隔离目录里现造；其它题 None
+    with sidecar(pre_proj, pre_work, extra) as app:
+        if extra is not None:
+            pre = env_before(app, item)
+        else:
+            pre = summarize_report(run_prep(app, item["script"])["report"])
     rec["before"] = pre
     if cond == "M" and not item.get("warmup"):
         raise SystemExit(f"{pid} 没有 warmup：M 组只跑成对的「乙」题（corpus.json 里带 warmup 的）")
@@ -624,6 +711,10 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
         rec["wall_s_total"] = round(time.time() - t0, 1)
         rec["stuck"] = "none"
         return rec
+    if extra is not None and cond in ("B", "M"):
+        raise SystemExit(
+            f"{pid} 是环境题：B / M 组不支持（MCP 与 warmup 接不上假 wheel 夹具），只跑 baseline / A"
+        )
     if cond == "B":
         # B：agent 在项目目录里干活，自己的 Tavotto MCP（独立数据目录）；判分用另一个干净的 sidecar
         for d in ("data", "config", "home"):
@@ -641,7 +732,7 @@ def one_run(cond: str, pid: str, item: dict, rep: int, timeout: int) -> dict:
             # M：同一个数据目录里先修「甲」（warmup），本机记住的做法留在 work/data/ai/fix_memory.json，再修「乙」
             rec["warmup"] = _warmup(item, work, scratch, timeout)
             rec["memory_before"] = _memory_shapes(work)
-        _fix_and_judge(cond, project, work, item, before, timeout, rec)
+        _fix_and_judge(cond, project, work, item, before, timeout, rec, extra)
     rec["wall_s_total"] = round(time.time() - t0, 1)
     rec["stuck"] = classify_stuck(rec)
     if rec["cond"] == "B":
@@ -704,10 +795,22 @@ def cmd_probe(args) -> None:
         shutil.rmtree(base, ignore_errors=True)
         (base / "work").mkdir(parents=True)
         materialize(it, base / "project")
-        with sidecar(base / "project", base / "work") as app:
-            prep = run_prep(app, it["script"])
-        summ = summarize_report(prep["report"])
+        extra = fault_env(it, base / "wheelhouse")
+        with sidecar(base / "project", base / "work", extra) as app:
+            if extra is not None:
+                summ = env_before(app, it)
+            else:
+                summ = summarize_report(run_prep(app, it["script"])["report"])
         print(pid, json.dumps(summ, ensure_ascii=False), flush=True)
+        if extra is not None:
+            # 环境题：失败形状 = 一键安装的稳定错误码，与题库 `fault.expect.code` 对
+            want_code = (it["fault"].get("expect") or {}).get("code")
+            if (summ.get("install") or {}).get("code") != want_code:
+                print(
+                    f"  !! corpus.json 的 fault.expect.code 是 {want_code!r}，实测 {(summ.get('install') or {}).get('code')!r}",
+                    flush=True,
+                )
+            continue
         # 题库的 `hint` 要与实测对上（tests/test_fix_compat_corpus_hints.py 按最近一轮 baseline 核对）：对不上就当场说
         want = (it.get("hint") or {}).get("code")
         failing = summ.get("phase") != "completed"
@@ -723,8 +826,11 @@ def cmd_probe(args) -> None:
 def cmd_run(args) -> None:
     corpus = load_corpus()
     ids = args.only or [
-        k for k, v in corpus.items() if args.cond != "M" or v.get("warmup")
-    ]  # M 组只跑带 warmup 的「乙」题
+        k
+        for k, v in corpus.items()
+        if (args.cond != "M" or v.get("warmup"))  # M 组只跑带 warmup 的「乙」题
+        and not (is_env_item(v) and args.cond in ("B", "M"))  # 环境题只跑 baseline / A
+    ]
     done = set()
     path = RESULTS / f"{args.cond}.jsonl"
     if path.exists():

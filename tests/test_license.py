@@ -713,7 +713,8 @@ def test_failure_codes_are_the_adr_closed_set():
         "review-plus",
         "quick-layout",
         "change-plan-rerun",
-    }  # quick-layout：ADR 0199；change-plan-rerun：ADR 0206 §五
+        "submission-pack",
+    }  # quick-layout：ADR 0199；change-plan-rerun：ADR 0206 §五；submission-pack：ADR 0216 §七
 
 
 def test_background_refresh_thread_is_a_noop_when_disabled(monkeypatch):
