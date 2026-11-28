@@ -218,14 +218,16 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const pngSource = render?.manifest ?? null
   const pngBlob = useEnginePngBlob(obj, bucket, useEnginePng, renderRev, pngSource)
   const variantNow = renderKeyOf(obj)
+  // 位图与配对 SVG 渲染必须在同一项目里（document owner ≠ 活动项目时，PNG 按文档归属
+  // 项目取、渲染按活动项目落账——不一致就不收，退 SVG / 近似角标）
   const pngIsCurrent = pngBlob.source === pngSource && pngBlob.fileId === obj.fileId &&
-    pngBlob.variant === variantNow && pngBlob.rev === renderRev
+    pngBlob.variant === variantNow && pngBlob.rev === renderRev && pngBlob.pj === (render?.projectId ?? null)
   // 位图这一格挂什么：当前变体的那张最好；**上一变体的那张只在新图还在路上时
   // 暂挂**（与 Phase F 的 latest 显示退路同一条纪律）。取图一旦失败，就不能再
   // 拿上一变体的位图冒充当前变体——那正是「预览 ≠ 当前 overrides 且不吵」。
   const enginePng =
     pngBlob.url && !(isAdoptedPanel(obj) && pngBlob.failed) && !currentArtifactIssue &&
-    (pngIsCurrent || (pngBlob.chartRequest === (chartRequestIdentity(obj.chart, obj.chartSource, obj.chartFrame?.renderProfile) ?? null) && sameFigureOrigin(origin, pngBlob.figureOrigin) && !isAdoptedPanel(obj) && !pngBlob.failed)) ? pngBlob.url : null
+    (pngIsCurrent || (pngBlob.chartRequest === (chartRequestIdentity(obj.chart, obj.chartSource, obj.chartFrame?.renderProfile) ?? null) && sameFigureOrigin(origin, pngBlob.figureOrigin) && !isAdoptedPanel(obj) && !pngBlob.failed && pngBlob.pj === (render?.projectId ?? null))) ? pngBlob.url : null
   // 性能探针（ADR 0075）：位图这一格（raster / evicted / 非编辑态的引擎位图）没有
   // 「SVG 换进 DOM」那一刻，松手 → 图落定要一直量到**这一版自己的位图**加载完
   // （onLoad：取图、解码都已结束）。暂挂的上一变体 / 上一 rev 的那张不算——那是
@@ -453,12 +455,13 @@ function useEnginePngBlob(
   enabled: boolean,
   rev: number,
   source: Manifest | null,
-): { url: string | null; manifest: Manifest | null; source: Manifest | null; fileId: string | null; variant: string | null; rev: number; failed: boolean; chartRequest: string | null; figureOrigin?: FigureOrigin } {
+): { url: string | null; manifest: Manifest | null; source: Manifest | null; fileId: string | null; variant: string | null; rev: number; failed: boolean; chartRequest: string | null; pj: string | null; figureOrigin?: FigureOrigin } {
   // `variant` 记的是 `url` 那张图**按哪组 overrides**出的：消费方靠它分辨
   // 「暂挂的上一张」与「就是当前这版」。`failed` = 最近一次取图以失败告终
   // （被新请求顶掉的中断不算）——此后上一张不再冒充当前变体，退位给 SVG /
   // 「近似预览」角标，而不是安静地一直挂着。`rev` 同理，记的是这张图按哪一版
-  // 渲染出的（性能探针认「这一版自己的图」要它）。
+  // 渲染出的（性能探针认「这一版自己的图」要它）。`pj` 记的是按哪个项目取的：
+  // live 渲染与缓存几何按活动项目落账，异项目的位图不许冒充（document owner ≠ 当前项目）。
   const [state, setState] = useState<{
     url: string | null
     manifest: Manifest | null
@@ -468,8 +471,9 @@ function useEnginePngBlob(
     rev: number
     failed: boolean
     chartRequest: string | null
+    pj: string | null
     figureOrigin?: FigureOrigin
-  }>({ url: null, manifest: null, source: null, fileId: null, variant: null, rev: 0, failed: false, chartRequest: null })
+  }>({ url: null, manifest: null, source: null, fileId: null, variant: null, rev: 0, failed: false, chartRequest: null, pj: null })
   const urlRef = useRef<string | null>(null)
   // 依赖用变体串而不是 overrides 数组：数组每次 commit 都是新引用
   const variant = renderKeyOf(obj)
@@ -496,18 +500,18 @@ function useEnginePngBlob(
       ? Promise.reject(new EngineError('This host does not support paired chart pixels.', '', 'chart_render_unsupported'))
       : issue || (origin === undefined && isAdoptedPanel(obj) && transport)
       ? Promise.reject(new ArtifactValidationError(issue ?? 'unsupported_render_state'))
-      : transport
-      ? transport.previewPngSnapshot
+        : transport
+        ? transport.previewPngSnapshot
         ? origin !== undefined
           ? transport.previewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal, undefined, undefined, structuredClone(origin))
           : obj.chart
           ? obj.chartSource !== undefined
-            ? transport.previewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal, structuredClone(obj.chart), structuredClone(obj.chartSource))
-            : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, obj.chart)
+            ? transport.previewPngSnapshot(fileId, structuredClone(overrides), bucket, ctrl.signal, structuredClone(obj.chart), structuredClone(obj.chartSource), undefined, obj.chartFrame?.renderProfile)
+            : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal, obj.chart, undefined, undefined, obj.chartFrame?.renderProfile)
           : transport.previewPngSnapshot(fileId, overrides, bucket, ctrl.signal)
         : transport.previewPngUrl(fileId, overrides, bucket, ctrl.signal)
             .then((url) => ({ url, manifest: null }))
-      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...(origin === undefined ? artifactRequestFields(obj) : {}), ...(obj.chart ? { chart: structuredClone(obj.chart) } : {}), ...chartSourceFields(obj.chartSource), ...figureOriginFields(obj) }, owner.pj)
+      : enginePreviewPngSnapshot(fileId, overrides, bucket, ctrl.signal, { ...(origin === undefined ? artifactRequestFields(obj) : {}), ...(obj.chart ? { chart: structuredClone(obj.chart) } : {}), ...chartSourceFields(obj.chartSource), ...figureOriginFields(obj), ...(obj.chartFrame ? { render_profile: obj.chartFrame.renderProfile } : {}) }, owner.pj)
     void pending
       .then((next) => {
         if (origin !== undefined && (!next.manifest || !('figureOrigin' in next) || !sameFigureOrigin(origin, next.figureOrigin))) {
@@ -518,6 +522,13 @@ function useEnginePngBlob(
           URL.revokeObjectURL(next.url)
           throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
         }
+        // 位图必须与配对 SVG 渲染同一身份：后端漏带 render_profile 时按 /1 出图，
+        // panel_identity 必然不同（chartprofile.identity 含 profile）——不能让它冒充当前变体
+        const paired = useRenderStore.getState().byKey[renderKeyOf(obj)]
+        if (obj.chart && paired?.chartRevision !== undefined && paired.chartRevision !== next.chartRevision) {
+          URL.revokeObjectURL(next.url)
+          throw new EngineError('The chart pixels do not pair with the current render identity.', '', 'chart_render_pair_missing')
+        }
         if (ctrl.signal.aborted || !project.still()) {
           URL.revokeObjectURL(next.url)
           return
@@ -525,7 +536,7 @@ function useEnginePngBlob(
         landed = true
         if (urlRef.current) URL.revokeObjectURL(urlRef.current)
         urlRef.current = next.url
-        setState({ ...next, source, fileId, variant, rev, failed: false, chartRequest, ...(origin === undefined ? {} : { figureOrigin: origin }) })
+        setState({ ...next, source, fileId, variant, rev, failed: false, chartRequest, pj: owner.pj, ...(origin === undefined ? {} : { figureOrigin: origin }) })
       })
       .catch((error) => {
         const guard = adoptionGuardOf(obj)

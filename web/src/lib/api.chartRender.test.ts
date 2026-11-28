@@ -50,6 +50,15 @@ describe('计算图表走标准 engine HTTP 合同', () => {
     await expect(enginePreviewPngSnapshot('plot.pdf', [], 512)).resolves.toMatchObject({ manifest })
   })
 
+  it('/2 面板的 render_profile 进 PNG 请求体；不给则请求形状逐字不变', async () => {
+    const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ png: 'eA==', manifest, chart_revision: 'paired' }))))
+    vi.stubGlobal('fetch', fetcher)
+    await enginePreviewPngSnapshot('chart.svg', [], 512, undefined, { chart: chart(), render_profile: 'native-manifest/2' })
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ render_profile: 'native-manifest/2' })
+    await enginePreviewPngSnapshot('chart.svg', [], 512, undefined, { chart: chart() })
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).not.toHaveProperty('render_profile')
+  })
+
   it('chart 的 Blob 显示接口同样经配对 PNG 请求，普通 Blob 保持原始载荷', async () => {
     const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ png: 'eA==', manifest, chart_revision: 'paired' }))))
     vi.stubGlobal('fetch', fetcher)

@@ -1,4 +1,5 @@
 import type { EngineRenderOptions, EngineRenderResponse, Manifest } from './api'
+import type { ChartRenderProfile } from './chartSource'
 import type { ChartSourceRef, FigureOrigin, PanelChartState } from '@/types/document'
 
 export interface EnginePngSnapshot {
@@ -60,6 +61,8 @@ export interface EngineTransport {
     chart?: PanelChartState,
     chartSource?: ChartSourceRef,
     figureOrigin?: FigureOrigin,
+    /** /2 面板的坐标合同；后端缺它按 /1 出图，像素冒充不了 /2 变体。 */
+    renderProfile?: ChartRenderProfile,
   ): Promise<EnginePngSnapshot>
   /**
    * 素材/原图的显示地址。iframe 里没有可寻址的 HTTP 资源时返回 null，

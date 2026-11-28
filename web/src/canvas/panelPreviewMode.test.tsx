@@ -20,6 +20,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import { useAssetStore } from '@/store/assetStore'
 import { VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
+import { setCurrentProjectId } from '@/lib/session'
 import type { EnginePngOptions, Manifest, PanelInfo } from '@/lib/api'
 import type { PanelChartState, PanelObject } from '@/types/document'
 import chartVectors from '../../../tests/golden/chart_model_vectors.json'
@@ -36,7 +37,7 @@ import {
 const previewPng = vi.fn()
 const chartPng = vi.fn()
 const chartSourcePng = vi.fn()
-let chartPngRevision: string | undefined = 'paired-png'
+let chartPngRevision: string | undefined = 'paired-svg'
 /** 每条用例可换的取图实现；默认立即成功（与从前逐字节相同） */
 let previewPngImpl: () => Promise<Blob> = () => Promise.resolve(new Blob(['png']))
 
@@ -106,7 +107,7 @@ let root: Root
 beforeEach(() => {
   chartPng.mockClear()
   chartSourcePng.mockClear()
-  chartPngRevision = 'paired-png'
+  chartPngRevision = 'paired-svg'
   pngManifest = MANIFEST
   useMountedPngStore.setState({ byPanel: {} })
   useViewportStore.setState({ zoom: 1 })
@@ -243,6 +244,36 @@ describe('chart使用普通inlineSVG/mounted/PNG几何链', () => {
     expect(chartPng).toHaveBeenCalledOnce()
     expect(container.querySelector('img')).toBeNull()
     expect(hitLayer()).toBeNull()
+  })
+
+  it('PNG身份与配对SVG渲染不同（后端漏 render_profile 按 /1 出图）不挂图也不授予几何', async () => {
+    const p = chartPanel()
+    chartPngRevision = 'wrong-profile'
+    seed({ svg: null, preview: RASTER }, p)
+    await mount(p)
+    expect(chartPng).toHaveBeenCalledOnce()
+    expect(container.querySelector('img')).toBeNull()
+    expect(hitLayer()).toBeNull()
+  })
+
+  it('位图与配对渲染不在同一项目时不收（document owner ≠ 活动项目）', async () => {
+    try {
+      const p = chartPanel()
+      setCurrentProjectId('proj-A')
+      seed({ svg: null, preview: RASTER, projectId: 'proj-B' }, p)
+      await mount(p)
+      expect(chartPng).toHaveBeenCalledOnce()
+      expect(container.querySelector('img')).toBeNull()
+      expect(hitLayer()).toBeNull()
+      // 同项目即恢复位图与命中层
+      await act(async () => { seed({ svg: null, preview: RASTER, projectId: 'proj-A' }, p) })
+      await mount(p)
+      await loadCurrentPng()
+      expect(hitLayer()).not.toBeNull()
+      expect(useMountedPngStore.getState().byPanel[p.id].key).toBe(renderKeyOf(p))
+    } finally {
+      setCurrentProjectId(null)
+    }
   })
 
   it('切换同文件chart后迟到旧PNG不覆盖新chart的像素/几何身份', async () => {
