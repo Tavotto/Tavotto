@@ -412,6 +412,10 @@ def _note_pending_if_left_behind(parts: tuple[str, ...]) -> None:
         return
     if not any(local is not None and local.joinpath(*parts).is_file() for _r, local in sources()):
         return
+    _add_pending(parts)
+
+
+def _add_pending(parts: tuple[str, ...]) -> None:
     rel = "/".join(parts)
     data = _read_pending() or {"schema": SCHEMA, "items": {}}
     if rel not in data["items"]:
@@ -433,12 +437,20 @@ def _adopt_sqlite(parts: tuple[str, ...], budget_s: float) -> bool:
             return False
         tally = _Tally()
         deadline = time.monotonic() + budget_s
+        left_behind = False
         for _roaming, local in sources():
             src = local.joinpath(*parts) if local is not None else None
             if src is not None and src.is_file() and not src.is_symlink():
+                before = tally.copied
                 _copy_sqlite(src, target, tally, deadline)
+                if tally.copied == before:
+                    left_behind = True  # 这份（更新的）源没搬进来：失败 / 被占 / 超时 / 被消费者抢先建库
                 if os.path.lexists(target):
                     break
+        if left_behind and os.path.lexists(target):
+            # 更新的源没搬成，却由更旧的包（或消费者新建的库）把目标建出来了：目标一存在，普通补缺就永远跳过它。
+            # 必须记成「待补」，后台再把没搬成的新历史合并回来（Codex #2285 P1，L-121 同一失败模式）。
+            _add_pending(parts)
         return tally.copied > 0
     finally:
         layoutsession.release_file_lock(fd)

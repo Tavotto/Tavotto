@@ -1475,6 +1475,42 @@ def test_pending_history_never_substitutes_the_main_file_for_a_failed_wal_snapsh
         writer.close()
 
 
+def test_a_failed_newer_package_stays_pending_when_an_older_one_creates_the_database(
+    world, monkeypatch
+):
+    """Codex #2285 P1：最新包的快照非锁类失败，更旧的包把库建出来——新历史不能就此被当成搬完。"""
+    from tavotto.engine import ai_history
+
+    _ra, la = world.pkg(PFN_A)
+    newer = _legacy_history(la, ["newer-only"])
+    _rb, lb = world.pkg(PFN_B, age=1000)
+    _legacy_history(lb, ["older-only"])
+    db = world.data / "cache" / "ai_history.sqlite3"
+    monkeypatch.setattr(ai_history, "DB_PATH", db)
+    monkeypatch.setattr(msixmigrate, "_kick_pending_merge", lambda: None)
+    real_backup = msixmigrate._backup_sqlite
+
+    def fail_newer(src, snapshot, deadline):
+        if src == newer:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_backup(src, snapshot, deadline)
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", fail_newer)
+    msixmigrate._SQLITE_CHECKED.clear()
+    world.settle()
+    msixmigrate.adopt_sqlite("cache", "ai_history.sqlite3")
+    assert _session_ids(db) == ["older-only"]
+    assert "cache/ai_history.sqlite3" in msixmigrate._read_pending()["items"]
+    # 之后的普通迁移照旧见目标存在就跳过，但「待补」还在
+    assert msixmigrate.run_once()["complete"] is True
+    assert msixmigrate._read_pending() is not None
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", real_backup)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["newer-only", "older-only"]
+    assert msixmigrate._read_pending() is None
+
+
 def test_retrying_a_second_package_never_restores_a_deleted_import(world, monkeypatch):
     from tavotto.engine import ai_history
 
