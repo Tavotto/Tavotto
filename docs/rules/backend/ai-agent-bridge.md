@@ -1103,3 +1103,6 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **写入面**：任务契约 `allowed_writes=[]`、`writes_user_files=False`，`run_task` 的放行条件不动；失败 / 取消 / 超限候选与试跑目录都删；`adopt` 之前项目文件夹逐字节不变。
 - **发给模型的内容**：见 `prepare_tools` 模块说明的逐项清单（改它要同步 ADR 0215 与隐私文字）。
 - **盲区**：读白名单与断网的进程内钩子靠防篡改三条守着（`stdlib` 收窄版），C 层 / ctypes（导入不拦）绕得过、Windows 只有这一层且未验证；取消只在两次运行之间生效；输入的 sha256 只在第一次 `check` 算一次，之后比文件身份。
+- **`finish(plot=…)`（2026-11-28）**：可选，模型建议的默认画法（输出表的列名：`y` / `x` / `group`）。经 `PrepareHooks.suggest` 交给父进程，`Checker.suggest` 按通过检查的那张表核、不合法的逐项丢；
+  留在 `meta.json` 的 `suggested`，只读入口 `candidate_roles(sid)`。**不进 `cand.checked`、不进任务历史**；收不收都不改变任务结论；重新 `check` 后作废。只是出图的默认值，用户的选择优先。
+
