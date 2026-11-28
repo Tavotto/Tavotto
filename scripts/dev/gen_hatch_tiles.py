@@ -6,12 +6,17 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import sys
 from pathlib import Path
 
 from matplotlib.path import Path as ArtistPath
 from matplotlib.transforms import Affine2D
 
 from tavotto.engine.manifest_fields import HATCH_LINEWIDTH_PT
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "src/tavotto/resources/native/hatch_tiles.json"
