@@ -525,9 +525,13 @@ def test_group_tree_and_naming_rules():
     )
 
 
-def test_path_quality_is_listed_unknown_until_6a_lands():
+def test_path_quality_is_listed_unknown_until_it_is_wired():
+    """6.A 的 `engine/pathquality` 没合入时 = `pathquality_missing`；合入（本分支合并了 main）但还没逐个路径接上时 = `not_wired`。两种都如实列 unknown。"""
     out = mechcheck.check([_path("p", [RING_OUT])], require_names=False)
-    assert [u["detail"]["reason"] for u in out["unknown"]] == ["pathquality_missing"]
+    assert [u["detail"]["reason"] for u in out["unknown"]] in (
+        ["pathquality_missing"],
+        ["not_wired"],
+    )
 
 
 def test_a_blob_that_looks_like_a_rect_is_refused_at_add_time(licensed):
