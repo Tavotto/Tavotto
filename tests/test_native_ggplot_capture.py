@@ -3096,8 +3096,11 @@ state <- captured$state
 untouched <- state$built$data
 stopifnot(calls == 1L)
 gids <- paste0("layer.1.line.group.", 1:2)
-stopifnot(identical(names(state$line_targets), gids),
-          identical(unname(lengths(lapply(state$line_targets, `[[`, "parts"))), c(2L, 3L)))
+local_ids <- c("layer.1.panel.1.line.group.1", "layer.1.panel.2.line.group.1",
+               "layer.1.panel.1.line.group.2", "layer.1.panel.2.line.group.2",
+               "layer.1.panel.3.line.group.2")
+stopifnot(setequal(names(state$line_targets), c(gids, local_ids)),
+          identical(unname(lengths(lapply(state$line_targets[gids], `[[`, "parts"))), c(2L, 3L)))
 change <- stats::setNames(list(list(linewidth = 3, linestyle = ":")), gids[[2L]])
 element <- function(all, gid) Filter(function(e) e$gid == gid, all$elements)[[1L]]
 baseline <- adapter$ggplot_manifest(state, "plot")
@@ -3137,6 +3140,28 @@ stopifnot(length(projected_line$geometry$paths) == 3L,
           sum(styled & startsWith(red, "<polyline ")) == 3L,
           sum(styled & startsWith(red, "<line ")) == 1L,
           calls == 2L)
+local <- "layer.1.panel.2.line.group.2"
+picked <- stats::setNames(list(list(linewidth = 4, linestyle = "--", alpha = .4)), local)
+local_svg <- adapter$render_ggplot(state, picked)
+red_local <- lines(local_svg, "#A53658")
+rows <- startsWith(red_local, "<polyline ")
+stopifnot(sum(grepl("stroke-width: 4.00", red_local[rows], fixed = TRUE)) == 1L,
+          sum(grepl("stroke-opacity: 0.40", red_local[rows], fixed = TRUE)) == 1L,
+          identical(red_local[!rows], lines(captured$svg, "#A53658")[!rows]),
+          identical(lines(local_svg, "#2369A3"), lines(captured$svg, "#2369A3")),
+          identical(adapter$render_ggplot(state), captured$svg), calls == 2L)
+local_scene <- adapter$ggplot_manifest(state, "plot", picked)
+one <- element(local_scene, local)
+stopifnot(length(one$geometry$paths) == 1L, endsWith(one$label, "Middle · Treated"),
+          identical(one$geometry$paths, element(baseline, local)$geometry$paths),
+          identical(element(local_scene, local_ids[[3L]]), element(baseline, local_ids[[3L]])))
+both <- c(picked, change)
+all_svg <- adapter$render_ggplot(state, both)
+stopifnot(identical(adapter$render_ggplot(state, rev(both)), all_svg))
+red_both <- lines(all_svg, "#A53658")
+stopifnot(sum(startsWith(red_both, "<polyline ") & grepl("stroke-width: 4.00", red_both)) == 1L,
+          sum(startsWith(red_both, "<polyline ") & grepl("stroke-width: 3.00", red_both)) == 2L,
+          sum(startsWith(red_both, "<line ") & grepl("stroke-width: 3.00", red_both)) == 1L)
 jsonlite::write_json(scene, "faceted-curve.json", auto_unbox = TRUE, null = "null", digits = NA)
 """
 
@@ -7864,3 +7889,131 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
             timeout=120,
         )
         assert status == 200 and receipt["ok"] and script.read_bytes() == authored
+
+
+def test_native_r_mapped_curve_writes_only_one_facet_and_can_reveal_it(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Local curve scope"
+    project.mkdir()
+    script = project / "Curves.R"
+    script.write_text(
+        f"""\
+d <- expand.grid(x = 1:5, series = c("Reference", "Sample"), time = c("Early", "Late"))
+d$value <- d$x ^ 1.1 + 2 * as.integer(d$series) + as.integer(d$time)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, value, colour = series)) +
+  ggplot2::geom_line(linewidth = .65, alpha = .8) +
+  ggplot2::scale_colour_manual(values = c(Reference = "#534981", Sample = "#534981")) +
+  ggplot2::facet_wrap(ggplot2::vars(time)) + ggplot2::theme_bw()
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Curves"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    data = project / "built-data.txt"
+    original_data = data.read_bytes()
+    gid = "layer.1.panel.2.line.group.2"
+    peer = "layer.1.panel.1.line.group.2"
+    shared = "layer.1.line.group.2"
+
+    def stroke_records(svg, tag):
+        return [
+            node.attrib
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.endswith("}" + tag) and "stroke: #534981;" in node.get("style", "")
+        ]
+
+    def lines(view):
+        return {e["gid"]: e for e in view["manifest"]["elements"] if e["role"] == "line"}
+
+    def values(view, member):
+        return {field["prop"]: field["value"] for field in lines(view)[member]["editable"]}
+
+    def save(app, figure, baseline, edits, shared_edits=None):
+        targets = lines(baseline)
+        patches = [
+            {"gid": owner, "identity": targets[owner]["identity"], "prop": prop, "value": value}
+            for owner, styles in ((gid, edits), (shared, shared_edits or {}))
+            for prop, value in styles.items()
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        if not shared_edits:
+            assert lines(hot)[peer] == targets[peer]
+            assert values(hot, shared) == values(baseline, shared)
+            assert stroke_records(hot["svg"], "line") == stroke_records(baseline["svg"], "line")
+        assert lines(hot)[gid]["geometry"]["paths"] == targets[gid]["geometry"]["paths"]
+        assert _render(app, figure, [])["svg"] == baseline["svg"]
+        receipt = _write_native_figure_style(app, script, route, figure, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert data.read_bytes() == original_data
+        standalone = (project / "standalone.svg").read_text(encoding="utf-8")
+        for tag in ("line", "polyline"):
+            assert stroke_records(standalone, tag) == stroke_records(hot["svg"], tag)
+        return hot, receipt
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        assert lines(baseline)[gid]["label"].endswith("Late · Sample")
+        assert lines(baseline)[shared]["alias_covers"]["linewidth"] == {"linewidth": [peer, gid]}
+        initial_values = values(baseline, shared)
+        initial_strokes = stroke_records(baseline["svg"], "polyline")
+        assert len(initial_strokes) == 4
+        hidden, _ = save(
+            app,
+            figure,
+            baseline,
+            {"linewidth": 3.6, "linestyle": "--", "alpha": 0.4, "visible": False},
+        )
+        assert len(stroke_records(hidden["svg"], "polyline")) == 3
+        assert not lines(hidden)[gid]["geometry"]["stroke"]
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == hidden["svg"]
+        assert values(reopened, shared) == initial_values
+        assert values(reopened, gid) == {
+            "linewidth": 3.6,
+            "linestyle": "--",
+            "alpha": 0.4,
+            "visible": False,
+        }
+        restored, saved = save(app, figure, reopened, {"visible": True})
+        strokes = stroke_records(restored["svg"], "polyline")
+        assert [stroke["points"] for stroke in strokes] == [
+            stroke["points"] for stroke in initial_strokes
+        ]
+        assert sum("stroke-width: 3.60" in stroke["style"] for stroke in strokes) == 1
+        assert sum("stroke-opacity: 0.40" in stroke["style"] for stroke in strokes) == 1
+        status, receipt = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and receipt["ok"] and script.read_bytes() == authored
+
+    with sidecar_app(project, tmp_path / "combined") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        result, _ = save(
+            app,
+            figure,
+            baseline,
+            {"visible": True, "linewidth": 3.6},
+            {"linewidth": 2.1},
+        )
+        assert values(result, peer)["linewidth"] == 2.1
+        assert values(result, gid)["linewidth"] == 3.6
+        keys = stroke_records(result["svg"], "line")
+        assert sum("stroke-width: 2.10" in key["style"] for key in keys) == 1

@@ -1116,9 +1116,10 @@ ggplot_curve_stroke_categories <- function(line, rows, categories, layout, panel
   if (all(lengths(keys) == 1L)) as.integer(unlist(keys, use.names = FALSE))
 }
 
-ggplot_curve_group_style <- function(parts, rows, prop, original) {
+ggplot_curve_group_style <- function(parts, rows, prop, original, shared) {
   styles <- unique(unlist(Map(function(part, slots) {
-    values <- part$curve_style[[prop]]
+    styles <- if (shared) part$curve_shared_style else part$curve_style
+    values <- styles[[prop]]
     base <- rep_len(original(part), length(part$stroke_alpha))[slots]
     if (is.null(values)) return(base)
     selected <- values[slots]
@@ -1128,7 +1129,8 @@ ggplot_curve_group_style <- function(parts, rows, prop, original) {
   if (length(styles) == 1L) styles[[1L]]
 }
 
-ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, faceted, mapped, mapping) {
+ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, faceted, mapped, mapping,
+                                      shared_parent = NULL) {
   target <- parts[[1L]]
   if (length(target$guide_keys) != 1L || is.na(ggplot_axis_layers(list(layer)))) return(list())
   scale <- built$plot$scales$get_scales("colour")
@@ -1155,7 +1157,7 @@ ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, fa
     })
   })
   visible <- draws & vapply(members, function(rows) any(lengths(rows) > 0L), logical(1L))
-  if (!faceted && sum(visible) < 2L) return(list())
+  if (!faceted && is.null(shared_parent) && sum(visible) < 2L) return(list())
   result <- list()
   for (index in which(visible)) {
     group <- target
@@ -1164,15 +1166,18 @@ ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, fa
     group$group <- list(parent = parent_gid, index = index, label = labels[[index]],
                         colour = colours[[index]], category = if (measured_categories) category_ids[[index]],
                         source_value = if (measured_categories) as.character(key$.value[[index]]))
+    if (length(shared_parent)) group$group$shared <- paste0(shared_parent, ".group.", index)
     group$visibility_editable <- TRUE
-    group$visible <- ggplot_curve_group_style(parts, rows, "visible", function(part) TRUE)
-    group$width <- ggplot_curve_group_style(parts, rows, "linewidth", function(part) part$width)
-    group$style <- ggplot_curve_group_style(parts, rows, "linestyle", function(part) part$style)
-    alpha <- ggplot_curve_group_style(parts, rows, "alpha", function(part) part$stroke_alpha / 255)
+    shared <- is.null(shared_parent)
+    group$visible <- ggplot_curve_group_style(parts, rows, "visible", function(part) TRUE, shared)
+    group$width <- ggplot_curve_group_style(parts, rows, "linewidth", function(part) part$width, shared)
+    group$style <- ggplot_curve_group_style(parts, rows, "linestyle", function(part) part$style, shared)
+    alpha <- ggplot_curve_group_style(parts, rows, "alpha", function(part) part$stroke_alpha / 255, shared)
     if (is.null(group$width) || is.null(group$style) || is.null(group$visible)) next
-    group$opacity_editable <- !"alpha" %in% mapping && !is.null(alpha) &&
-      !"alpha" %in% names(params$override.aes) &&
+    guide_alpha <- !"alpha" %in% names(params$override.aes) &&
       "alpha" %in% names(params$decor[[target$key_name]]$data)
+    group$opacity_editable <- !"alpha" %in% mapping && !is.null(alpha) &&
+      (length(shared_parent) > 0L || guide_alpha)
     if (group$opacity_editable) group$authored_opacity <- alpha
     context <- target$context
     if (faceted) {
@@ -1187,8 +1192,11 @@ ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, fa
 }
 
 ggplot_series_edit_order <- function(gids, targets) {
-  narrow <- vapply(gids, function(gid) !is.null(targets[[gid]]$group), logical(1L))
-  c(gids[!narrow], gids[narrow])
+  scope <- vapply(gids, function(gid) {
+    group <- targets[[gid]]$group
+    if (is.null(group)) 0L else if (is.null(group$shared)) 1L else 2L
+  }, integer(1L))
+  gids[order(scope)]
 }
 
 ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, mapping, layer) {
@@ -1343,7 +1351,8 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
         stroke_categories = stroke_categories,
         stroke_alpha = grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ],
         curve_style = final$tavotto_curve_style,
-        facet = draw$facet,
+        curve_shared_style = final$tavotto_curve_shared %||% final$tavotto_curve_style,
+        facet = draw$facet, panel = draw$panel_id,
         caps = if (interval) ggplot_errorbar_caps(line, draw$rows$flipped_aes),
         cap_width = if (!is.null(final$tavotto_cap_style)) {
           stored <- unique(final$tavotto_cap_style$width)
@@ -1375,7 +1384,15 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
       layer_grobs[[index]], inherits, logical(1L), "zeroGrob"
     ))) {
       gid <- paste0("layer.", index, ".line")
-      targets <- c(targets, ggplot_line_group_targets(built, layer, parts, paints, gid, TRUE, groups, mapping))
+      shared <- ggplot_line_group_targets(built, layer, parts, paints, gid, TRUE, groups, mapping)
+      targets <- c(targets, shared)
+      for (i in seq_along(parts)) {
+        part <- parts[[i]]
+        part_gid <- paste0("layer.", index, ".panel.", part$panel, ".line")
+        local <- ggplot_line_group_targets(built, layer, list(part), paints[i], part_gid, FALSE,
+                                           groups, mapping, shared_parent = gid)
+        targets <- c(targets, Filter(function(target) target$group$shared %in% names(shared), local))
+      }
     }
   }
   contexts <- vapply(targets, function(target) target$context, character(1L))
@@ -1525,7 +1542,7 @@ ggplot_line_source_plan <- function(state, target, patch, edits) {
     value <- target$group$source_value
     if (is.null(value) || is.na(value) || length(edits[[target$group$parent]])) return(NULL)
     ggplot_line_style(target, patch)
-    geometry <- list(kind = "curves", facet = NULL, values = patch, category = list(value = value))
+    geometry <- list(kind = "curves", facet = target$facet, values = patch, category = list(value = value))
     return(ggplot_fixed_layer_source(state, target, patch, NULL, geometry))
   }
   if (ggplot_layer_has_group_edits(state$line_targets, target$index, edits)) return(NULL)
@@ -1595,7 +1612,7 @@ ggplot_edit_line_part <- function(table, target, group, patch, change) {
   } else {
     slots <- ggplot_line_group_slots(line, group, target)
     if (!length(slots)) stop("The native R curve group changed.")
-    line <- ggplot_curve_style_strokes(line, slots, patch)
+    line <- ggplot_curve_style_strokes(line, slots, patch, authored = TRUE, local = !is.null(group$shared))
   }
   opacity <- if (identical(patch$visible, FALSE)) 0 else patch$alpha
   if (!is.null(opacity) && is.null(group)) {
@@ -2006,8 +2023,9 @@ ggplot_legend_position <- function(edit) {
 
 ggplot_guide_stroke_edits <- function(state, edits) {
   gids <- intersect(names(edits), names(state$line_targets))
-  edits[gids[vapply(state$line_targets[gids], function(line) length(line$guide_keys) > 0L,
-                    logical(1L))]]
+  edits[gids[vapply(state$line_targets[gids], function(line) {
+    length(line$guide_keys) > 0L && is.null(line$group$shared)
+  }, logical(1L))]]
 }
 
 ggplot_guide_point_edits <- function(state, edits) {
@@ -2549,6 +2567,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
          draggable = TRUE, drag_prop = "loc_frac", anchor = as.list(c(bbox[[1L]], bbox[[2L]] + bbox[[4L]])),
          editable = list(), legend_context = target$context, source_legend_position = source)
   })
+  local_groups <- Filter(length, lapply(state$line_targets, function(target) target$group$shared))
+  group_members <- if (length(local_groups)) split(names(local_groups), unlist(local_groups, use.names = FALSE))
   lines <- lapply(names(state$line_targets), function(gid) {
     target <- state$line_targets[[gid]]
     patch <- edits[[gid]]
@@ -2578,6 +2598,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
       return(element)
     }
     effective <- if (is.null(target$group)) patch else c(patch, edits[[target$group$parent]])
+    if (!is.null(target$group$shared)) effective <- c(effective, edits[[target$group$shared]])
     width <- list(prop = "linewidth", type = "number", value = effective$linewidth %||% target$width,
                   min = 0.1, max = 20, step = 0.1, unit = "pt")
     if (!is.null(patch$linewidth)) width$value_original <- target$width
@@ -2594,21 +2615,29 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     }
     if (isTRUE(target$opacity_editable)) {
       original <- target$authored_opacity %||% (target$alpha / 255)
-      alpha <- list(prop = "alpha", type = "number", value = patch$alpha %||% original,
+      alpha <- list(prop = "alpha", type = "number", value = effective$alpha %||% original,
                     min = 0, max = 1, step = 0.05)
       if (!is.null(patch$alpha)) alpha$value_original <- original
       editable <- c(editable, list(alpha))
     }
     if (isTRUE(target$visibility_editable)) {
-      visible <- list(prop = "visible", type = "bool", value = patch$visible %||% target$visible)
+      visible <- list(prop = "visible", type = "bool", value = effective$visible %||% target$visible)
       if (!is.null(patch$visible)) visible$value_original <- target$visible
       editable <- c(editable, list(visible))
     }
     label <- ggplot_layer_label("\u66f2\u7ebf", target)
+    if (length(target$parts)) label <- paste(label, "\u5168\u90e8\u5206\u9762", sep = " \u00b7 ")
     if (!is.null(target$group)) label <- paste(label, target$group$label, sep = " \u00b7 ")
     element <- c(list(gid = gid, role = "line", label = label,
                       draggable = FALSE, editable = editable, line_context = target$context), geometry)
     element$source_layer <- ggplot_line_source_plan(state, target, patch, edits)
+    members <- group_members[[gid]]
+    if (length(members)) {
+      props <- vapply(editable, `[[`, character(1L), "prop")
+      element$alias_covers <- stats::setNames(lapply(props, function(prop) {
+        stats::setNames(list(as.list(members)), prop)
+      }), props)
+    }
     element
   })
   colour_scales <- if (length(state$colour_scales)) {

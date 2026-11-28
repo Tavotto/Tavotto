@@ -92,7 +92,7 @@
         "verified source writeback of grid styles and background color for individual supported Cartesian facets",
         "stroke width and line style of supported single- or multi-group geom_line and geom_path layers, including their identifiable standard legend keys",
         "unmapped RGB color of supported geom_line and geom_path layers without legend keys",
-        "line width, style, opacity and visibility per data category for supported curves with a single discrete colour guide",
+        "line width, style, opacity and visibility per data category across facets or within one selected facet, including source writeback, for supported curves with a single discrete colour guide",
         "fixed size, solid marker shape and opacity of supported geom_point series, including supported discrete categories",
         "fill and outline colours, outline width, opacity and data-unit bar thickness for supported geom_bar and geom_col series",
         "stroke colour, width, opacity and cap geometry for supported geom_errorbar series",

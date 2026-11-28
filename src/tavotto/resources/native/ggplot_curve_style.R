@@ -17,7 +17,7 @@ ggplot_curve_stroke_rows <- function(line, rows, layout, panel) {
   lapply(runs, function(indices) projected$tavotto_row[indices])
 }
 
-ggplot_curve_style_strokes <- function(line, slots, patch, authored = FALSE) {
+ggplot_curve_style_strokes <- function(line, slots, patch, authored = FALSE, local = FALSE) {
   count <- length(unique(line$id))
   base <- line$tavotto_curve_base %||% line
   current <- line$tavotto_curve_style %||% list()
@@ -44,18 +44,27 @@ ggplot_curve_style_strokes <- function(line, slots, patch, authored = FALSE) {
                                        ifelse(visible, opacity, 0))
   }
   if (authored) {
-    for (property in names(patch)) {
-      values <- current[[property]] %||% rep(NA, count)
-      values[slots] <- patch[[property]]
-      current[[property]] <- values
+    record <- function(style) {
+      for (property in names(patch)) {
+        values <- style[[property]] %||% rep(NA, count)
+        values[slots] <- patch[[property]]
+        style[[property]] <- values
+      }
+      style
+    }
+    shared <- line$tavotto_curve_shared
+    # A local stroke does not change the style represented by the shared key.
+    if (local || !is.null(shared)) {
+      shared <- shared %||% current
+      line$tavotto_curve_shared <- if (local) shared else record(shared)
     }
     line$tavotto_curve_base <- base
-    line$tavotto_curve_style <- current
+    line$tavotto_curve_style <- record(current)
   }
   line
 }
 
-ggplot_apply_curve_styles <- function(line, rows, layout, panel, values) {
+ggplot_apply_curve_styles <- function(line, rows, layout, panel, values, local = FALSE) {
   runs <- ggplot_curve_stroke_rows(line, rows, layout, panel)
   if (is.null(runs)) stop("Tavotto could not match the R curve geometry.")
   for (slot in seq_along(runs)) {
@@ -63,9 +72,21 @@ ggplot_apply_curve_styles <- function(line, rows, layout, panel, values) {
     if (any(lengths(patch) != 1L)) stop("Tavotto found a mixed R curve category.")
     patch <- Filter(function(value) !is.na(value), patch)
     if (!is.null(patch$visible)) patch$visible <- as.logical(patch$visible)
-    if (length(patch)) line <- ggplot_curve_style_strokes(line, slot, patch, authored = TRUE)
+    if (length(patch)) line <- ggplot_curve_style_strokes(line, slot, patch, authored = TRUE, local = local)
   }
   line
+}
+
+ggplot_install_curve_styles <- function(layer, recipes, apply, lookup) {
+  scoped <- vapply(recipes, function(recipe) length(recipe$facet) > 0L, logical(1L))
+  if (any(!scoped)) layer <- ggplot_set_layer_geometry(layer, recipes[!scoped], apply, lookup)
+  if (any(scoped)) {
+    force(apply)
+    layer <- ggplot_set_layer_geometry(layer, recipes[scoped], function(line, rows, layout, panel, values) {
+      apply(line, rows, layout, panel, values, local = TRUE)
+    }, lookup)
+  }
+  layer
 }
 
 ggplot_curve_guide_style <- function(key, slots, patch) {

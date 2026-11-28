@@ -473,7 +473,7 @@ def _native_layer_geometry(source: dict) -> dict | None:
     if kind in {"curves", "points"}:
         validator = _curve_style_value if kind == "curves" else _point_style_value
         if (
-            facet is None
+            (kind == "curves" or facet is None)
             and isinstance(recipe.get("category", {}).get("value"), str)
             and (kind == "curves" or _point_recipe_aesthetics(recipe))
             and all(
@@ -662,9 +662,14 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
                 geometry += f", function(data) ggplot_source_series_categories(capture, {index}L, data, {channels})"
                 guide_argument = channels if kind == "points" else geom
                 guide_type = "point" if kind == "points" else "curve"
-                guide_styles.append(
-                    f"ggplot_{guide_type}_guide_recipe({guide_argument}, {native_recipes})"
-                )
+                shared_recipes = [recipe for recipe in recipes if not recipe["facet"]]
+                if shared_recipes:
+                    guide_styles.append(
+                        f"ggplot_{guide_type}_guide_recipe({guide_argument}, "
+                        f"{_r_geometry_recipes(shared_recipes)})"
+                    )
+                if kind == "curves":
+                    geometry += ", install = ggplot_install_curve_styles"
             elif plan["categorical"]:
                 channel = "fill" if kind in {"bars", "ribbons"} else "colour"
                 geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'
@@ -688,9 +693,7 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     decorate = ()
     if sources:
         shared.extend(_r_helpers("ggplot_objects.R", "ggplot_layer_geometry.R", *sorted(sources)))
-        decorate = (
-            "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust, lookup)",
-        )
+        decorate = ("    if (!is.null(recipes)) layer <- install(layer, recipes, adjust, lookup)",)
     if "ggplot_layer_paint.R" in sources:
         decorate += (
             "    if (!is.null(facet_paint)) layer <- ggplot_set_layer_paint(layer, facet_paint)",
@@ -705,7 +708,7 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
             *shared,
             *observe_plot,
             "  styled_layer <- function(layer, kind, values, recipes = NULL, adjust = NULL, lookup = NULL,",
-            "                           facet_paint = NULL) {",
+            "                           facet_paint = NULL, install = ggplot_set_layer_geometry) {",
             '    if (!identical(class(layer$geom)[[1L]], kind)) stop("Tavotto style layer changed.")',
             "    aesthetics <- utils::modifyList(layer$aes_params, values)",
             "    force(layer)",
