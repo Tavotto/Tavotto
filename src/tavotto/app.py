@@ -14991,6 +14991,13 @@ def _write_source_files(
         if diffs:
             _log_replay_divergence(stem, diffs)
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
+        # 与导出同一道生产者边界：matplotlib 把 CFF 字体（.otf、苹方 / 冬青黑体 / 思源这类 CJK 字体集）
+        # 写进 TrueType 槽，刻进原件前换成真 TrueType（摸底 T-003）——不换的话用户自己的原图在 MuPDF
+        # 一类阅读器里画错字、文字层读不回，检查器也报 `font_program_mismatch`。放在 verify 全过之后：
+        # 409 的分支不碰 staging；标注已画进 PDF，这里只换字体程序，PNG 不受影响
+        for target, tmp in tmps:
+            if target.suffix.lower() == ".pdf":
+                engine_artifactinspect.normalize_worker_pdf(tmp)
     except BaseException:
         _discard_updating(tmps)
         raise

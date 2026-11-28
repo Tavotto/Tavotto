@@ -172,13 +172,19 @@ def scrub(text: str) -> str:
         text = diagnostictext.redact_text(text)
     except Exception:  # noqa: BLE001 - 脱敏不该被它拖垮，退到下面的形状规则
         pass
+    return _HIGH_ENTROPY.sub(_mask_entropy, scrub_secret_shapes(text))
+
+
+def scrub_secret_shapes(text: str) -> str:
+    """只套「密钥形状」规则（私钥块、HTTP 凭据头、`key=值`、Bearer、常见令牌形状、URL 里的用户信息）；**不**套诊断包的
+    路径 / 邮箱等通用脱敏，也**不**套高熵打码。给数据文件原文用（数据准备，ADR 0215）：序列 ID、哈希列、邮箱都是数据，
+    打码了模型就看不懂格式；而密钥形状的内容不论在哪都不发。`scrub` 是它再加通用脱敏与高熵打码。幂等。"""
     text = _PRIVATE_KEY_BLOCK.sub("[redacted private key]", text)
     text = _HTTP_CRED.sub(_mask_http_cred, text)
     text = _SECRET_ASSIGN.sub(_mask_secret, text)
     text = _BEARER.sub("Bearer ***", text)
     text = _TOKEN_SHAPES.sub("***", text)
-    text = _URL_USERINFO.sub(r"\g<pre>***@", text)
-    return _HIGH_ENTROPY.sub(_mask_entropy, text)
+    return _URL_USERINFO.sub(r"\g<pre>***@", text)
 
 
 #: HTTP 凭据头：整行（冒号后到行尾；JSON 形则是那一个字符串值；`curl -H '…'` 则到包着它的引号）换成 `***`。

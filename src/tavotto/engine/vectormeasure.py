@@ -20,7 +20,6 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from . import layoutannotate as la
 
@@ -92,7 +91,6 @@ def bounded(
 
     `key_of(panel, requests)` 给缓存键（`None` = 不缓存，如没有脚本修订可取）；它与 `raw` 里的失败一样会被归成 `PanelUnavailable`。"""
     t0 = clock()
-    pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="vector-measure")
 
     def measure(panel: dict, requests: list) -> dict:
         overrides = panel.get("overrides")
@@ -110,25 +108,35 @@ def bounded(
         left = total_s - (clock() - t0)
         if left <= 0:
             raise la.PanelUnavailable("measure_budget")
-        fut = pool.submit(raw, panel, requests)
-        try:
-            out = fut.result(timeout=min(per_panel_s, left))
-        except FutureTimeout:
-            fut.cancel()
-            raise la.PanelUnavailable("measure_timeout") from None
-        except la.PanelUnavailable:
-            raise
-        except Exception:  # noqa: BLE001 - 引擎层任何失败都退外框，不让一张图的失败拖垮整次方案
+        # 每次量用一条 daemon 线程等时限（调用方本来就同步等结果，不需要线程池）：超时的那次量跑完自己退，
+        # 结果丢弃；daemon 线程不挡进程退出——此前的 ThreadPoolExecutor worker 是非 daemon，漏收一次
+        # `close()` 就会让测试会话收尾的「非 daemon 线程」门禁判红（#2367 合并组 windows-latest 8）。
+        box: dict = {}
+
+        def run() -> None:
+            try:
+                box["out"] = raw(panel, requests)
+            except BaseException as e:  # noqa: BLE001 - 在调用方线程里统一归类
+                box["err"] = e
+
+        t = threading.Thread(target=run, name="vector-measure", daemon=True)
+        t.start()
+        t.join(timeout=min(per_panel_s, left))
+        if t.is_alive():
+            raise la.PanelUnavailable("measure_timeout")
+        err = box.get("err")
+        if isinstance(err, la.PanelUnavailable):
+            raise err
+        if err is not None:  # 引擎层任何失败都退外框，不让一张图的失败拖垮整次方案
             raise la.PanelUnavailable("measure_failed") from None
+        out = box["out"]
         if key is not None:
             cache.put(key, out)
         return out
 
     def close() -> None:
-        # 线程池的 worker 是非 daemon 线程：不收的话要等池被 GC 才退（循环引用下可能到进程尾），
-        # 测试会话结束时 conftest 的「非 daemon 线程」门禁会把它判红（退出码 1、摘要全绿）。
-        # 不等在飞的那次量（`export` 不能取消，它自己跑完、结果丢弃），只保证空闲 worker 立刻退。
-        pool.shutdown(wait=False, cancel_futures=True)
+        # 量线程是一次一条的 daemon 线程，没有要收的池；保留钩子是为了 `vectormeasure.close(measure)` 的调用方不变。
+        return None
 
     measure.close = close  # type: ignore[attr-defined]
     return measure
