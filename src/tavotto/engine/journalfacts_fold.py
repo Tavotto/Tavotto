@@ -7,7 +7,7 @@
   这里不判任何东西、不新增判据，只决定「哪些 v2 事实可以当 v1 规则用」。
 * `confirm`：带文字条件（或名称条件判不出）、程序没法自动判断的数值要求，只给人看，不报警、不计数。
 
-只折**无条件**（无 `conditions`、无 `condition_text`）、数值与方向相符、语气是必须 / 建议 / 偏好的事实；
+只折**无条件**（无 `conditions`、无 `condition_text`）、数值与方向相符、语气是必须 / 建议 / 偏好的事实（字体名单的偏好档除外，见 `FONT_FAMILY_FOLD_STRENGTHS`）；
 其余不折叠（示例、允许、通常不是约束，见 FACTS-V2.md）；语气没说清（`unspecified`）的数值要求只进 `confirm`。同一路径有两条不同的无条件值时不猜，全部进 `confirm`。
 看护：`tests/test_journalfacts_fold.py` + `tests/golden/journal_v2_fold_vectors.json`。
 """
@@ -25,6 +25,10 @@ PRESCRIPTIVE = ("required", "recommended", "preferred")
 LISTABLE = (*PRESCRIPTIVE, "unspecified")
 #: 字体 / 字号的「举例」「约」也列出来（用户 2026-11-17 裁决：只举例的字体、约数字号放进「需要你确认」，不进预检报警）。
 EXTRA_LISTABLE = {"font_family": ("example", "typical"), "font_size": ("example", "typical")}
+#: 字体名单折进预检后，名单外的字体一律报警（`font-family-substituted`）。「最好用 X 或 Y」（`preferred`）
+#: 只是偏好、不是只许这几种，折进去会把别的合规字体说成「规范要求 X」；所以字体名单只折必须 / 建议，
+#: 偏好档只进「需要你确认」（维护者 2026-11-28 当面同意，ADR 0216 投稿核对的「换成 Arial」按钮读的就是这条）。
+FONT_FAMILY_FOLD_STRENGTHS = ("required", "recommended")
 
 #: (subject, relation, unit) → (v1 规则路径, v1 qualifier)。方向相符才折叠（同 `QUALIFIER_DIRECTION`）。
 FOLDABLE: dict[tuple[str, str, str | None], tuple[str, str]] = {
@@ -152,6 +156,7 @@ def fold(bundle: dict) -> dict:
         foldable = (
             target is not None
             and fact["strength"] in PRESCRIPTIVE
+            and (fact["subject"] != "font_family" or fact["strength"] in FONT_FAMILY_FOLD_STRENGTHS)
             and _unconditional(fact)
             and fact["stage"] in _STAGE
             and (
