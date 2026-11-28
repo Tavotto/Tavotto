@@ -26,6 +26,7 @@ export function ChartBindDialog() {
   const confirm = async () => {
     const current = useChartBindStore.getState()
     if (!chartBindConfirmReady(current) || !current.panelId || !current.result) return
+    const panelId: string = current.panelId
     const panel = useDocumentStore.getState().doc.objects.find(o => o.id === current.panelId)
     if (panel?.type !== 'panel' || !chartBindPanelUnchanged(current, panel)) return
     setConfirmError(null)
@@ -56,7 +57,7 @@ export function ChartBindDialog() {
           target.chart = chart
           if (overrides) target.overrides = overrides
         }
-        if (frame && index >= 0) applyComputedFrameDraft(d, index, current.panelId, frame, frame.inputIdentity)
+        if (frame && index >= 0) applyComputedFrameDraft(d, index, panelId, frame, frame.inputIdentity)
       }, { overrides: 'restored' })
     } catch (err) {
       setConfirmError(t('chartBind.confirmFailed', { error: String(err) }))

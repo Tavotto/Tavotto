@@ -97,7 +97,7 @@ it('render/PNG/inspect/bind/compute均携完整chart_source，普通URL与payloa
   await engineRender(p.fileId, p.overrides, { chart: p.chart, ...chartSourceFields(p.chartSource) })
   await enginePreviewPngSnapshot(p.fileId, p.overrides, 400, undefined, { chart: p.chart, ...chartSourceFields(p.chartSource) })
   await chartInspect(p.fileId, p.chartSource)
-  await chartBind({ file: p.fileId, ...chartSourceFields(p.chartSource), axes_id: 'a', rect: [0, 0, 100, 80],
+  await chartBind({ file: p.fileId, scene_digest: 'scene-1', ...chartSourceFields(p.chartSource), axes_id: 'a', rect: [0, 0, 100, 80],
     x_kind: 'categorical', categories_col: 'category', series: [] } as ChartBindRequest)
   await chartCompute(p.fileId, p.chart!, { render_profile: 'native-manifest/1', overrides: p.overrides,
     ...chartSourceFields(p.chartSource) })

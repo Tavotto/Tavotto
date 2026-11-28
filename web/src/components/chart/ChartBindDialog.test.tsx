@@ -301,7 +301,7 @@ it('confirms a /2 preview by adopting the full frame in the same undoable transa
     if (p.type === 'panel') { p.nativeW = 100 * MM; p.nativeH = 100 * MM; p.w = 100 * MM; p.h = 100 * MM }
   })
   const frame = { version: 1 as const, source: 'computed-svg' as const,
-    source_viewport_pt: [100, 100], rect_pt: [-8, -6, 116, 112], edit_basis: 'source-viewport-pt' as const }
+    source_viewport_pt: [100, 100] as [number, number], rect_pt: [-8, -6, 116, 112] as [number, number, number, number], edit_basis: 'source-viewport-pt' as const }
   vi.mocked(chartInspect).mockResolvedValue({ scene_digest: restoredChart.model.scene_digest,
     w_pt: 100, h_pt: 100, view_box: [0, 0, 100, 100], nodes: [{ id: 'curve-a', tag: 'path' }],
     truncated: false, restored_chart: restoredChart,

@@ -8,7 +8,6 @@ import type { ChartSourceRef, PanelChartState, PanelObject } from '@/types/docum
 import { useDocumentStore } from '@/store/documentStore'
 import { renderRequestIdentity } from '@/store/renderStore'
 import { validComputedFrame, type PairedFrameAuthority } from '@/lib/chartFrame'
-import { figureOriginFor } from '@/lib/figureSnapshot'
 import type { FigureOrigin } from '@/types/document'
 
 export type ChartBindStep = 'scene' | 'data' | 'confirm' | 'error'

@@ -518,16 +518,18 @@ function useEnginePngBlob(
           URL.revokeObjectURL(next.url)
           throw new EngineError('Mismatched historical Figure pixels.', '', 'svg_source_unavailable')
         }
-        if (obj.chart && (!next.manifest || !('chartRevision' in next) || typeof next.chartRevision !== 'string' || !next.chartRevision)) {
-          URL.revokeObjectURL(next.url)
-          throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
-        }
-        // 位图必须与配对 SVG 渲染同一身份：后端漏带 render_profile 时按 /1 出图，
-        // panel_identity 必然不同（chartprofile.identity 含 profile）——不能让它冒充当前变体
-        const paired = useRenderStore.getState().byKey[renderKeyOf(obj)]
-        if (obj.chart && paired?.chartRevision !== undefined && paired.chartRevision !== next.chartRevision) {
-          URL.revokeObjectURL(next.url)
-          throw new EngineError('The chart pixels do not pair with the current render identity.', '', 'chart_render_pair_missing')
+        if (obj.chart) {
+          if (!next.manifest || !('chartRevision' in next) || typeof next.chartRevision !== 'string' || !next.chartRevision) {
+            URL.revokeObjectURL(next.url)
+            throw new EngineError('The chart response has no paired pixels and geometry.', '', 'chart_render_pair_missing')
+          }
+          // 位图必须与配对 SVG 渲染同一身份：后端漏带 render_profile 时按 /1 出图，
+          // panel_identity 必然不同（chartprofile.identity 含 profile）——不能让它冒充当前变体
+          const paired = useRenderStore.getState().byKey[renderKeyOf(obj)]
+          if (paired?.chartRevision !== undefined && paired.chartRevision !== next.chartRevision) {
+            URL.revokeObjectURL(next.url)
+            throw new EngineError('The chart pixels do not pair with the current render identity.', '', 'chart_render_pair_missing')
+          }
         }
         if (ctrl.signal.aborted || !project.still()) {
           URL.revokeObjectURL(next.url)

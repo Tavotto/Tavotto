@@ -14,7 +14,7 @@ import { useRenderStore } from './renderStore'
 import { useUiStore } from './uiStore'
 
 // /2 显示框：源 viewport 100×100 pt，框 rect_pt [-8,-6,116,112]（F 比 S 大、含负边距）
-const FRAME = { version: 1 as const, renderProfile: 'native-manifest/2' as const, originPt: [-8, -6] }
+const FRAME = { version: 1 as const, renderProfile: 'native-manifest/2' as const, originPt: [-8, -6] as [number, number] }
 const RENDER_FRAME = { version: 1 as const, source: 'computed-svg' as const,
   source_viewport_pt: [100, 100] as [number, number], rect_pt: [-8, -6, 116, 112] as [number, number, number, number],
   edit_basis: 'source-viewport-pt' as const }

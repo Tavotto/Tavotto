@@ -11,7 +11,7 @@ it('serializes categorical binding without a numeric x field and preserves proje
   const fetcher = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
   vi.stubGlobal('fetch', fetcher)
   const request: ChartBindRequest = {
-    file: 'category.svg', axes_id: 'ax1', rect: [0, 0, 100, 100],
+    file: 'category.svg', scene_digest: 'scene-1', axes_id: 'ax1', rect: [0, 0, 100, 100],
     x_kind: 'categorical', categories_col: 'category',
     y: { p1_user: 0, p1_value: 0, p2_user: 1, p2_value: 10, scale: 'linear' },
     series: [{ node: 'bars', x_col: 'category', y_col: 'value', kind: 'bar' }],
@@ -83,7 +83,7 @@ it('serializes the legend contract verbatim and omits the key when absent (N4)',
   const fetcher = vi.fn().mockImplementation(async () => new Response('{}', { status: 200 }))
   vi.stubGlobal('fetch', fetcher)
   const withoutLegend: ChartBindRequest = {
-    file: 'plain.svg', axes_id: 'ax1', rect: [0, 0, 100, 100],
+    file: 'plain.svg', scene_digest: 'scene-1', axes_id: 'ax1', rect: [0, 0, 100, 100],
     x: { p1_user: 0, p1_value: 0, p2_user: 1, p2_value: 10, scale: 'linear' },
     y: { p1_user: 0, p1_value: 0, p2_user: 1, p2_value: 10, scale: 'linear' },
     series: [{ node: 'curve', x_col: 'x', y_col: 'y' }],

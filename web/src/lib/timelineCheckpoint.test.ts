@@ -8,7 +8,7 @@ vi.mock('@/lib/timelineThumb', () => ({
   composeTimelineThumb: vi.fn(async () => null),
 }))
 
-import { emptyProject, type TextObject } from '@/types/document'
+import { emptyProject, type FigureDocument, type TextObject } from '@/types/document'
 import { useDocumentStore } from '@/store/documentStore'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
 import { installMomentSources } from './momentCapture'
@@ -40,7 +40,7 @@ let seq = 0
 let nextCreate: 'fail' | 'skip' | null = null
 let createAttempts = 0
 /** 图源捕获的注入替身（生产里是 renderStore 的归档感知捕获） */
-const injectCapture = vi.fn(() => new Map())
+const injectCapture = vi.fn((_doc: FigureDocument, _pj: string | null) => new Map())
 
 beforeEach(async () => {
   posts.length = 0

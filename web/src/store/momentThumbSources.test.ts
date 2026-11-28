@@ -18,19 +18,22 @@ import { TIMELINE_THUMB_PX } from '@/lib/momentCapture'
 import { emptyProject, type FigureDocument, type PanelObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 
-const SNAPSHOT = { version: 1, sourceId: 'Fig1.pdf', patchHash: 'p'.repeat(8), receiptId: 'r'.repeat(8), snapshotId: 's'.repeat(8) }
+const SNAPSHOT = { version: 1 as const, sourceId: 'Fig1.pdf', patchHash: 'p'.repeat(8), receiptId: 'r'.repeat(8), snapshotId: 's'.repeat(8) }
 
-const docWith = (panel: Partial<PanelObject>): FigureDocument => {
-  const doc = structuredClone(useDocumentStore.getState().buildProject()).canvases[0]!
-  doc.objects = [{ id: 'p1', type: 'panel', fileId: 'Fig1.pdf', fileKind: 'pdf',
-    x: 0, y: 0, w: 40, h: 30, nativeW: 40, nativeH: 30, overrides: [], hidden: false, ...panel }] as FigureDocument['objects']
-  return doc
-}
+
 
 beforeEach(async () => {
   enginePreviewPng.mockReset()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_thumb_sources')
 })
+
+const docWith = (panel: Partial<PanelObject>): FigureDocument => {
+  const base = { schema: 3, name: 'doc', guides: [], activeCanvasId: 'c1', canvases: [] } as Record<string, unknown>
+  base.objects = [{ id: 'p1', type: 'panel', fileId: 'Fig1.pdf', fileKind: 'pdf',
+    x: 0, y: 0, w: 40, h: 30, nativeW: 40, nativeH: 30, overrides: [], hidden: false, ...panel }]
+  base.page = { w: 100, h: 80 }
+  return base as unknown as FigureDocument
+}
 
 describe('captureThumbSources（归档感知）', () => {
   it('归档 Figure 面板：冻结引用按归档出图，给 png 不给 live url', async () => {

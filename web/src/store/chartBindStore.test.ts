@@ -328,7 +328,7 @@ describe('v2 full edit recovery', () => {
     const restored = restorableChart()
     const edits = [{ gid: 'g', prop: 'loc_frac', value: [0.5, 0.5] }] as PanelOverride[]
     const frame = { version: 1 as const, source: 'computed-svg' as const,
-      source_viewport_pt: [100, 100], rect_pt: [-8, -6, 116, 112], edit_basis: 'source-viewport-pt' as const }
+      source_viewport_pt: [100, 100] as [number, number], rect_pt: [-8, -6, 116, 112] as [number, number, number, number], edit_basis: 'source-viewport-pt' as const }
     vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restored,
       restored_render: { render_profile: 'native-manifest/2' as const, overrides: structuredClone(edits) } })
     vi.mocked(chartCompute).mockResolvedValue({ ...computed(), render_revision: 'rev-2', render_frame: frame })
