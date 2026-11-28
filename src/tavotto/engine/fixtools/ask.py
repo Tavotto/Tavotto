@@ -308,7 +308,7 @@ def _user_side_without_attempt(ctx: FixContext) -> ToolResult | None:
 
 def _known_issue_line(ctx: FixContext) -> str:
     """当前失败命中已知问题表时给反馈说明加的一行（ADR 0221 §二）：只进 AI 写的说明字段，不新增诊断包结构字段。"""
-    from .runreport import known_issue_of
+    from .knownissue import known_issue_of
 
     try:
         report = ctx.report() if ctx.report else None

@@ -24,8 +24,8 @@ from .. import rasterhint
 from ..agent_runner.wires import ToolResult
 from . import executors, snapshots
 from .base import FixContext, FixTool, err, obj, ok
+from .knownissue import known_issue_text
 from .readscope import scrub
-from .runreport import known_issue_text
 
 PACKAGES_MAX = 20
 

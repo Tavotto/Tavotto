@@ -10,6 +10,7 @@ from pathlib import Path
 from ..agent_runner.wires import ToolResult
 from . import hints
 from .base import FixContext, err, home_relative, ok, shadow_note
+from .knownissue import known_issue_of, known_issue_text  # noqa: F401 — 公开名留在 runreport
 
 REPORT_MAX_CHARS = 8000
 
@@ -204,21 +205,6 @@ def hint_of(report: object, ctx: FixContext) -> tuple[str, str, str] | None:
     shape = hints.shape_of_report(report)
     got = hints.hint_for(shape, tool_available(ctx)) if shape else None
     return (shape, *got) if got else None
-
-
-def known_issue_of(ctx: FixContext, code: object, selftest: dict | None = None) -> dict | None:
-    """这个错误码是不是 Tavotto 已知的问题（ADR 0221 §二）：命中回 `{id, summary, fixed_in, workaround}`，语言按会话界面语言。"""
-    from .. import knownissues
-
-    return knownissues.lookup(code, ctx.project_root, locale=ctx.locale, selftest=selftest)
-
-
-def known_issue_text(ctx: FixContext, code: object, selftest: dict | None = None) -> str:
-    """给「改」组失败文本末尾追加的一段；没命中回空串。"""
-    fact = known_issue_of(ctx, code, selftest)
-    if fact is None:
-        return ""
-    return "\nknown_issue: " + json.dumps(fact, ensure_ascii=False)
 
 
 def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
