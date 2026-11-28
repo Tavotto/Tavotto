@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from tavotto import svgcoord
 from tavotto.rendercore import ir, typography
 from tavotto.rendercore.fonts import FontsUnavailable
-from tavotto.rendercore.svgcheck import parse_svg, strip_matplotlib_doctype
+from tavotto.rendercore.svgcheck import SVGBudget, parse_svg, strip_matplotlib_doctype
 
 XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -452,6 +452,10 @@ class _Translator:
         self.compact_path_instances = compact_path_instances
         self.resources, self.faces, self.font_cache, self.notes = {}, {}, {}, []
         self.cjk_faces = {}
+        budget = SVGBudget()
+        self.pattern_elements_left = budget.max_expanded_elements
+        self.pattern_attributes_left = budget.max_attribute_chars
+        self.in_pattern = False
         self.ids = {e.get("id"): e for e in root.iter() if e.get("id")}
         self.parents = {c: p for p in root.iter() for c in p}
         self.rules = []
@@ -715,6 +719,90 @@ class _Translator:
         return ir.Paint(
             rgb, alpha * min(1, max(0, _length(st.get(f"{key}-opacity", "1"), percent=1)))
         )
+
+    def _rect_pattern(self, el, st, segments):
+        ref = _REF_RE.fullmatch(st.get("fill", ""))
+        definition = self.ids.get(ref[1]) if ref else None
+        if definition is None or _tag(definition) != "pattern":
+            return None
+        allowed = {"id", "x", "y", "width", "height", "patternUnits", "patternContentUnits"}
+        drawings = {
+            "pattern",
+            "g",
+            "path",
+            "rect",
+            "circle",
+            "ellipse",
+            "line",
+            "polygon",
+            "polyline",
+        }
+        nodes = list(definition.iter())
+        if (
+            self.in_pattern
+            or _tag(el) != "rect"
+            or definition.get("patternUnits") != "userSpaceOnUse"
+            or definition.get("patternContentUnits", "userSpaceOnUse") != "userSpaceOnUse"
+            or definition.attrib.keys() - allowed
+            or self.cascade_declarations(definition).get("overflow", "hidden") != "hidden"
+            or any(_tag(node) not in drawings for node in nodes)
+        ):
+            raise SVGIRError("svgir_gradient", "unsupported tiling pattern")
+
+        def bounds(node, style):
+            return tuple(
+                self._len(node.get(name, "0"), axis, style)
+                for name, axis in (("x", 0), ("y", 1), ("width", 0), ("height", 1))
+            )
+
+        ancestors, parent = [], self.parents.get(definition)
+        while parent is not None:
+            ancestors.append(parent)
+            parent = self.parents.get(parent)
+        inherited, viewport = self._clip_context(reversed(ancestors))
+        style = self._style(definition, inherited)
+        self._check_style(style)
+        x, y, w, h = bounds(el, st)
+        left, top, width, height = bounds(definition, style)
+        if min(width, height) <= 0:
+            raise SVGIRError("svgir_gradient", "invalid pattern tile size")
+        ratios = (
+            (x - left) / width,
+            (y - top) / height,
+            (x + w - left) / width,
+            (y + h - top) / height,
+        )
+        if not all(math.isfinite(ratio) for ratio in ratios):
+            raise SVGIRError("svgir_invalid", "pattern tile expansion exceeds the SVG budget")
+        col, row = map(math.floor, ratios[:2])
+        end_col, end_row = map(math.ceil, ratios[2:])
+        count = (end_col - col) * (end_row - row)
+        self.pattern_elements_left -= count * (len(nodes) + 1)
+        self.pattern_attributes_left -= count * sum(
+            len(value) for node in nodes for value in node.attrib.values()
+        )
+        if min(self.pattern_elements_left, self.pattern_attributes_left) < 0:
+            raise SVGIRError("svgir_invalid", "pattern tile expansion exceeds the SVG budget")
+
+        saved_viewport = self.viewport
+        try:
+            self.in_pattern = True
+            self.viewport = viewport
+            content = tuple(drawing for child in definition for drawing in self._node(child, style))
+        finally:
+            self.viewport = saved_viewport
+            self.in_pattern = False
+        tile_clip = self._viewport_clip(width, height)
+        tiles = tuple(
+            ir.Group(
+                content, transform=ir.translate(left + i * width, top + j * height), clip=tile_clip
+            )
+            for j in range(row, end_row)
+            for i in range(col, end_col)
+        )
+        opacity = min(1, max(0, _length(st.get("fill-opacity", "1"), percent=1)))
+        clip = ir.Path(tuple(segments), fill_rule=st.get("fill-rule", "nonzero"))
+        return ir.Group(tiles, clip=clip, opacity=opacity)
 
     def _stroke(self, st):
         paint = self._paint(st, "stroke")
@@ -1285,7 +1373,13 @@ class _Translator:
         elif st.get("visibility") in ("hidden", "collapse"):
             children = []
         elif tag in ("path", "rect", "circle", "ellipse", "line", "polygon", "polyline"):
-            segments, fill, stroke = self._shape(el, st), self._paint(st, "fill"), self._stroke(st)
+            segments, stroke = self._shape(el, st), self._stroke(st)
+            tiled = (
+                self._rect_pattern(el, st, segments)
+                if segments and st.get("fill", "").startswith("url(")
+                else None
+            )
+            fill = self._paint(st, "fill") if tiled is None else None
             children = (
                 [
                     ir.Path(
@@ -1299,6 +1393,8 @@ class _Translator:
                 if segments and (fill or stroke)
                 else []
             )
+            if tiled is not None:
+                children.insert(0, tiled)
         elif tag == "image":
             children = self._image(el, st)
         else:

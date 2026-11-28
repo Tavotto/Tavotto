@@ -16,7 +16,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from tavotto import svgcoord
+from tavotto import pdfbackend, svgcoord
 from tavotto.rendercore import ir
 from tavotto.rendercore.svgir import SVGIRError, svg_to_ir
 
@@ -43,6 +43,35 @@ def path_points(page, object_id="p"):
         (s[0], *(v for i in range(1, len(s), 2) for v in ir.apply(matrix, s[i], s[i + 1])))
         for s in node.segments
     ]
+
+
+def test_rectangular_pattern_replay_preserves_origin_repeat_and_clip(tmp_path):
+    frame = 'width="32pt" height="24pt" viewBox="0 0 32 24"'
+    patterned = svg(
+        '<defs><pattern id="hatch" patternUnits="userSpaceOnUse" x="4" y="4" '
+        'width="8" height="8"><rect x="1" y="2" width="3" height="3" fill="#118877"/>'
+        '</pattern></defs><rect x="6" y="3" width="17" height="17" fill="url(#hatch)"/>',
+        frame,
+    )
+    rectangles = "".join(
+        f'<rect x="{x}" y="{y}" width="{width}" height="3" fill="#118877"/>'
+        for y in (6, 14)
+        for x, width in ((6, 2), (13, 3), (21, 2))
+    )
+    explicit = svg(rectangles, frame)
+    assert pdfbackend.compare_svg_preview_pixels(patterned, explicit, 128, tmp_path)
+    wrong = patterned.replace(b"#118877", b"#983866")
+    assert not pdfbackend.compare_svg_preview_pixels(patterned, wrong, 128, tmp_path)
+
+
+def test_pattern_replay_rejects_unbounded_tile_expansion():
+    tiny_tiles = svg(
+        '<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width=".001" '
+        'height=".001"><rect width=".001" height=".001"/></pattern></defs>'
+        '<rect width="100" height="100" fill="url(#hatch)"/>'
+    )
+    with pytest.raises(SVGIRError, match="pattern tile expansion exceeds the SVG budget"):
+        svg_to_ir(tiny_tiles, 100, 100, None)
 
 
 def test_relative_moveto_lineto_horizontal_vertical_close_and_next_subpath():
