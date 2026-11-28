@@ -2142,6 +2142,11 @@ _ERROR_WORDS = {
 _ERROR_ALONE = frozenset({"sd", "stdev", "stddev", "stderr", "err", "error"})
 _ERROR_CJK = (("标准差", "sd"), ("标准误", "sem"), ("置信区间", "ci"), ("误差", "unknown"))
 _MEAN_WORDS = frozenset({"mean", "avg", "average"})
+#: 中文里「这一列是均值」的词（长的在前：先去掉「平均值」再看「平均」）。只用于给中文误差列找搭档（`error_match`），不凭它认任何角色
+_MEAN_CJK = ("平均值", "均值", "平均数", "均数", "平均")
+#: 中文列名里词与词之间常见的连接符 / 括号：比对「去掉误差词之后剩下什么」时不算数
+_CJK_GLUE = re.compile(r"[\s_\-—·、，,：:()（）\[\]【】的]+")
+_CJK_ERROR_SUFFIX = re.compile(r"\s*(?:\(\s*([a-z0-9]+)\s*\)|（\s*([a-z0-9]+)\s*）)\s*$", re.I)
 
 
 def _name_tokens(name: str) -> list[str]:
@@ -2158,6 +2163,13 @@ def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
         if word in name:
             kind = k
             break
+    if kind is not None:
+        localized = _without_redundant_error_suffix(name, kind)
+        if localized != name:
+            # 括号里的同义缩写不是测量名。不能让空的英文核心把中文测量名盖掉。
+            localized_partners = _cjk_partners(localized, others)
+            if localized_partners or not _name_tokens(localized):
+                return kind, localized_partners
     tokens = _name_tokens(name)
     alone = len(tokens) == 1 and tokens[0] in _ERROR_ALONE
     if kind is None and alone:
@@ -2175,7 +2187,93 @@ def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
                 ):
                     partners.append(other)
                     word_kind = word_kind or _ERROR_WORDS[t]
+    if not partners:
+        partners = _cjk_partners(name, others)
     return (kind or word_kind), partners
+
+
+#: 列名末尾括号里的**单位 / 缩写**（`(kPa)`、`（%）`、`[mg/L]`、`(SD)`）：括号内没有汉字。它不是测量量的名字——
+#: 「标准差 (kPa)」没有写明修饰谁，「压力均值 (kPa)」的核心是「压力」。括号里是汉字的（「标准差（株高）」）才是在点名测量量，不去。
+#: （与下划线后缀的单位表 `_UNIT_SUFFIX` 是两回事：那个管 `time_s` 这种写法的轴标签）
+_BRACKET_TAIL = re.compile(
+    r"\s*[(（\[【](?P<annotation>[^()（）\[\]【】\u4e00-\u9fff]*)[)）\]】]\s*$"
+)
+
+
+def _drop_unit_suffix(name: str) -> str:
+    """去掉末尾的单位 / 缩写括号（见 `_BRACKET_TAIL`）；没有就原样。只去一层。"""
+    return _BRACKET_TAIL.sub("", name, count=1)
+
+
+# 单位门只认已知记号；普通括注（如 SD）仍不是单位。大小写和量级前缀有意义，不做换算。
+_ERROR_UNIT_EXTRA = {"%": "%", "℃": "°C", "°C": "°C", "℉": "°F", "°F": "°F", "degF": "°F"}
+_ERROR_UNIT_EXTRA.update({u: u for u in ("L", "mL", "uL", "N", "kN", "GPa", "hPa", "mbar", "psi")})
+
+
+def _declared_error_unit(name: str) -> str | None:
+    tail = _BRACKET_TAIL.search(name)
+    if tail:
+        annotation = tail["annotation"].strip().replace("µ", "u").replace("μ", "u")
+        # 例如 mg/L。只归一化斜线周围的空白和已知记号的等价写法，不化简或换算。
+        parts = [part.strip() for part in annotation.split("/")]
+        units = [_ERROR_UNIT_EXTRA.get(part) or UNITS.get(part) for part in parts]
+        if all(units):
+            return "/".join(u for u in units if u is not None)
+        # (SD) 等不是单位，前面仍可能有已登记的下划线单位（如 stress_sd_kPa (SD)）。
+        name = name[: tail.start()]
+    suffix = _UNIT_SUFFIX.match(name)
+    return UNITS.get(suffix["unit"]) if suffix else None
+
+
+def error_units_compatible(error: str, measure: str) -> bool:
+    """只挡两列均有明确且不同的单位；缺一方时沿用旧判据。不将误差数值自动换算。"""
+    error_unit, measure_unit = _declared_error_unit(error), _declared_error_unit(measure)
+    return error_unit is None or measure_unit is None or error_unit == measure_unit
+
+
+def _cjk_core(name: str, words: tuple[str, ...]) -> str | None:
+    """`name` 里含 `words` 之一 → 去掉末尾的单位括号、这个词（只去第一处）与连接符之后剩下的核心（可能是空串）；不含 = None。"""
+    for w in words:
+        if w in name:
+            return _CJK_GLUE.sub("", _drop_unit_suffix(name).replace(w, "", 1)).casefold()
+    return None
+
+
+def _without_redundant_error_suffix(name: str, kind: str) -> str:
+    m = _CJK_ERROR_SUFFIX.search(name)
+    if m and _ERROR_WORDS.get((m[1] or m[2]).lower()) == kind:
+        return name[: m.start()]
+    return name
+
+
+def _cjk_error_core(name: str) -> str | None:
+    """有中文误差词时，返回其测量名核心；同义的括号缩写不算测量名。"""
+    for word, kind in _ERROR_CJK:
+        if word in name:
+            return _cjk_core(_without_redundant_error_suffix(name, kind), (word,))
+    return None
+
+
+def _cjk_partners(name: str, others: list[str]) -> list[str]:
+    """中文误差列的搭档（与英文那条同一个思路，判据只换成中文的词）：`标准差` ↔ `均值`、`产量标准差` ↔ `产量` / `产量均值` / `平均产量`。
+    去掉误差词后**什么都不剩**时，搭档是名字里带均值词的列（中文的，或英文的 `mean` / `avg` / `average`）；剩下核心时，搭档是去掉均值词后
+    核心相同的列。名字里只有「误差」这种说不清种类的词也照此找搭档（种类仍是 `unknown`）。"""
+    rest = _cjk_error_core(name)
+    if rest is None:
+        return []
+    out: list[str] = []
+    for other in others:
+        if other == name or _cjk_core(other, tuple(w for w, _ in _ERROR_CJK)) is not None:
+            continue
+        mean_core = _cjk_core(other, _MEAN_CJK)
+        if rest:
+            plain = _CJK_GLUE.sub("", _drop_unit_suffix(other)).casefold()
+            ok = (mean_core is not None and mean_core == rest) or plain == rest
+        else:
+            ok = mean_core is not None or bool(_MEAN_WORDS & set(_name_tokens(other)))
+        if ok and other not in out:
+            out.append(other)
+    return out
 
 
 def error_kind(name: str, others: list[str]) -> str | None:
