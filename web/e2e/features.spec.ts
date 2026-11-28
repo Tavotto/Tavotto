@@ -929,7 +929,15 @@ test(
     // ADR 0144：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
     expect(artifact.texts, '画布文字必须保留为 <text>，不能转轮廓、丢字或栅格化').toBeGreaterThan(0)
     expect(artifact.textContent.length, '<text> 里必须有实际字符').toBeGreaterThan(0)
-    expect(artifact.fontFamily, '<text> 的首选族必须是批准脸的真实族名').toMatch(/^\s*(font-family:\s*)?['"]?(Liberation (Serif|Sans|Mono)|Noto (Sans|Serif) SC)/)
+    // ADR 0208 §七之三 第 4 条（维护者 2026-11-24「做」）：第一个族写本机真有的等价字体（Illustrator 只认第一个），
+    // 批准的脸紧随其后；没有对应系统字体的（Linux 上的中文）第一个仍是批准的脸。映射唯一出处 rendercore/svgfonts.py。
+    const families = artifact.fontFamily.replace(/^\s*font-family:\s*/, '').split(',').map((f) => f.trim().replace(/^['"]|['"]$/g, ''))
+    const approved = /^(Liberation (Serif|Sans|Mono)|Noto (Sans|Serif) SC)$/
+    const realFirst = /^(Times New Roman|Arial|Courier New|Heiti SC|Songti SC|Microsoft YaHei|SimSun)$/
+    const approvedAt = families.findIndex((f) => approved.test(f))
+    expect(approvedAt, `<text> 的族链里批准脸必须排第一或紧跟真实字体：${families.join(' | ')}`).toBeGreaterThanOrEqual(0)
+    expect(approvedAt, `<text> 的族链里批准脸必须排第一或紧跟真实字体：${families.join(' | ')}`).toBeLessThanOrEqual(1)
+    expect(approvedAt === 0 || realFirst.test(families[0]), `批准脸前面只能是映射表里的真实字体：${families[0]}`).toBe(true)
     const widthPt = request.canvas.page_w_mm * 72 / 25.4
     const heightPt = request.canvas.page_h_mm * 72 / 25.4
     expect(widthPt).toBeGreaterThan(0)
