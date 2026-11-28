@@ -444,7 +444,9 @@ def _adopt_sqlite(parts: tuple[str, ...], budget_s: float) -> bool:
                 before = tally.copied
                 _copy_sqlite(src, target, tally, deadline)
                 if tally.copied == before:
-                    left_behind = True  # 这份（更新的）源没搬进来：失败 / 被占 / 超时 / 被消费者抢先建库
+                    left_behind = (
+                        True  # 这份（更新的）源没搬进来：失败 / 被占 / 超时 / 被消费者抢先建库
+                    )
                 if os.path.lexists(target):
                     break
         if left_behind and os.path.lexists(target):
