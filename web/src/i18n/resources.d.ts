@@ -1553,6 +1553,7 @@ export default interface Resources {
       "redrawBitmapsKept": "{{files}} 重画后和原件对不上，这次照原文件导出。",
       "redrawBitmapsKeptHint": "{{files}} 重画后和原件对不上，这次照原文件导出。要改用重画：在画布上选中它，点角标「用脚本重画」对照确认。",
       "redrawBitmaps_other": "导出前把 {{count}} 张有脚本的位图重画成矢量图",
+      "redrawFontsExport": "用脚本重画并重新导出",
       "redrawingBitmaps": "正在重画位图…",
       "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
       "reportToggle": "生成投稿前检查报告",
