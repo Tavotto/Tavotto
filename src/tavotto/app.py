@@ -12426,7 +12426,11 @@ def api_change_plans_revise(plan_id: str):
     请求：`{notes: [{id, anchor: {kind: element, gid, box} | {kind: region, box} | {kind: overall}, text}], client_request_id?}`。
     未授权回 `{ok: false, code: "not_licensed"}`（与一键排版同口径；权益判断在 `engine/changeplan.py`，`test_license_callsites` 看护）。
     版本存储：每一版是**自己的方案**（新 `plan_id`、自己的 `before.png` / `after.png` / `plan.json`），带 `version`（上一版 + 1）与 `parent`（上一版 id）；
-    base 仍是原 B0（`base_patches` 与基线指纹沿用），应用与基线核对不变。其余（同步预检、202 轮询、互斥、去重、热态作废与 `replay_required`）与创建方案相同。"""
+    base 仍是原 B0（`base_patches` 与基线指纹沿用），应用与基线核对不变。其余（同步预检、202 轮询、互斥、去重、热态作废与 `replay_required`）与创建方案相同。
+
+    **脚本方案**（`kind: "script"`，ADR 0206 修订 2026-11-28）也能重改：必须带 `connection`（同创建脚本方案）；改脚本 Agent 在候选里**以上一版候选为起点**
+    接着改（同一套预检、越界兜底、出图、diff），批注进 `<notes>` 数据块（元素锚翻成上一版「修改后」元素表里的名字）；基线仍是原始脚本 B0。
+    磁盘上的脚本必须还是 B0 或正是上一版候选（已应用），否则同步回 409 `change_plan_figure_changed`，什么都不跑。"""
     body = request.get_json(force=True, silent=True)
     if not isinstance(body, dict):
         return _change_plan_error("invalid_change_plan")
@@ -12466,6 +12470,20 @@ def api_change_plans_revise(plan_id: str):
     selection = engine_changeplan.clean_selection(body)
     if selection is None:
         return _change_plan_error("invalid_change_plan")
+    try:
+        # 出版规范 + 预检结论（与新建助手方案同一份校验 / 上限；没带 = None，照旧）
+        plan_standard = engine_changeplan.clean_standard(body.get("standard"))
+    except ValueError:
+        return _change_plan_error("invalid_change_plan")
+    script_plan = prev.get("kind") == "script"
+    if script_plan:
+        # 改脚本要明确的连接（决定 Agent 走哪条路由），与创建脚本方案同一条
+        if "connection" not in selection:
+            return _change_plan_error("invalid_change_plan")
+        try:
+            _script_revise_start(ctx, prev)
+        except engine_changeplan.PlanFailure as exc:
+            return _change_plan_error(exc.code)
     failure = engine_changeplan.connection_failure(selection)
     if failure is not None:
         return _change_plan_error(failure)
@@ -12473,10 +12491,43 @@ def api_change_plans_revise(plan_id: str):
         task, created = engine_changeplan.begin(ctx.id, rel_id, rid)
     except engine_changeplan.PlanFailure as exc:
         return _change_plan_error(exc.code)
-    if created:
+    if created and script_plan:
+        comments = engine_changeplan.script_revise_comments(
+            prev, notes, engine_changeplan.manifest_of(ctx.id, plan_id), plan_standard
+        )
+        threading.Thread(
+            target=_change_plan_script_thread,
+            args=(
+                ctx,
+                task,
+                rel_id,
+                list(base),
+                comments,
+                selection,
+                None,
+                prev.get("source") or "assistant",
+                prev,
+            ),
+            name=f"change-plan-{task.id[:8]}",
+            daemon=True,
+        ).start()
+    elif created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), notes, "review", prev, selection),
+            args=(
+                ctx,
+                task,
+                rel_id,
+                list(base),
+                notes,
+                "review",
+                prev,
+                selection,
+                None,
+                None,
+                None,
+                plan_standard,
+            ),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -12532,16 +12583,18 @@ def _change_plan_thread(
 
 
 def _change_plan_script_thread(
-    ctx, task, rel_id, base, comments, selection, target, origin="assistant"
+    ctx, task, rel_id, base, comments, selection, target, origin="assistant", prev=None
 ) -> None:
-    """脚本修改的后台线程（ADR 0206 PR 6）：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
+    """脚本修改的后台线程（ADR 0206 PR 6；`prev` 给了 = 批注重改）：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail, params = "", "", {}
     try:
         with bound_project(ctx):
-            plan, before_png, after_png, new_bytes = _change_plan_script_compute(
-                ctx, task, rel_id, base, comments, selection, target, origin
+            plan, before_png, after_png, new_bytes, after_man = _change_plan_script_compute(
+                ctx, task, rel_id, base, comments, selection, target, origin, prev
             )
-            engine_changeplan.publish(task, ctx.id, plan, before_png, after_png, new_bytes)
+            engine_changeplan.publish(
+                task, ctx.id, plan, before_png, after_png, new_bytes, after_man
+            )
     except engine_changeplan.PlanFailure as exc:
         code, detail, params = exc.code, exc.detail, exc.params
     except BaseException:  # noqa: BLE001 - 线程里不许丢结局
@@ -12556,11 +12609,46 @@ def _change_plan_script_thread(
 _PLAN_SCRIPT_DEADLINE_S = 25 * 60
 
 
+def _script_revise_start(ctx, prev: dict) -> tuple[bytes, bytes, bool]:
+    """脚本方案批注重改的起点（ADR 0206 修订 2026-11-28）→ `(B0 字节, 上一版候选字节, 上一版此刻是否已应用)`。
+
+    磁盘上的脚本只认两种状态：还是原始脚本 B0（上一版没应用，sha = 脚本组的 `base_sha256`），或正是上一版候选（上一版已应用，
+    sha = `applied.after_sha256`；B0 从应用时那份备份取并核 sha）。别的（之后又改过脚本）→ `change_plan_figure_changed`，什么都不跑。
+    候选字节被动过 / 方案不是脚本方案 → `change_plan_unknown`。"""
+    ec = engine_changeplan
+    group = ec.script_group(prev)
+    if group is None:
+        raise ec.PlanFailure("change_plan_unknown")
+    info = group["script"]
+    start = ec.script_new_bytes(ctx.id, prev["id"])
+    if start is None or ec.sha256_bytes(start) != info["new_sha256"]:
+        raise ec.PlanFailure("change_plan_unknown")
+    try:
+        disk = engine_scriptbackup.resolve(ctx.path, info["rel"]).read_bytes()
+    except (OSError, engine_scriptbackup.ScriptEditError):
+        raise ec.PlanFailure("change_plan_figure_changed") from None
+    now = ec.sha256_bytes(disk)
+    if now == info["base_sha256"]:
+        return disk, start, False
+    applied = prev.get("applied") if isinstance(prev.get("applied"), dict) else None
+    if applied and now == info["new_sha256"] and applied.get("after_sha256") == now:
+        try:
+            _meta, original = engine_scriptbackup.load(_script_store(ctx), applied.get("backup"))
+        except engine_scriptbackup.ScriptEditError:
+            raise ec.PlanFailure("change_plan_figure_changed") from None
+        if ec.sha256_bytes(original) == info["base_sha256"]:
+            return original, start, True
+    raise ec.PlanFailure("change_plan_figure_changed")
+
+
 def _change_plan_script_compute(
-    ctx, task, rel_id, base, comments, selection, target, origin="assistant"
+    ctx, task, rel_id, base, comments, selection, target, origin="assistant", prev=None
 ):
     """脚本修改：渲染 B0 → Agent 在候选里改（`plan_only`，不写用户脚本）→ 越界核对 → 候选字节用 B0 渲染出「改后」→ 数据指纹 → 方案。
-    → `(plan, before_png, after_png, 候选字节)`；失败抛 `PlanFailure`，**用户脚本一个字节不动**（越界被还原的除外，如实报告）。"""
+    → `(plan, before_png, after_png, 候选字节, 改后 manifest)`；失败抛 `PlanFailure`，**用户脚本一个字节不动**（越界被还原的除外，如实报告）。
+
+    `prev` 给了 = 脚本方案的批注重改（ADR 0206 修订 2026-11-28）：候选以**上一版候选**为起点（`plan_start`）；基线仍是原始脚本 B0
+    （diff、`base`、应用都相对 B0；「修改前」图沿用上一版那张）；出的是同一张卡的下一版（`version` + 1、`parent`）。"""
     ec = engine_changeplan
     try:
         worker, stem = _engine_worker(rel_id, safe_only=True)
@@ -12573,6 +12661,13 @@ def _change_plan_script_compute(
         raise ec.PlanFailure("change_plan_not_editable")
     root = require_project()
     script_path = root / script
+    prev_group = ec.script_group(prev) if prev is not None else None
+    b0_bytes = start_bytes = None
+    on_applied = False
+    if prev is not None:
+        if prev_group is None or prev_group["script"]["rel"] != script:
+            raise ec.PlanFailure("change_plan_figure_changed")
+        b0_bytes, start_bytes, on_applied = _script_revise_start(ctx, prev)
     instruction = comments[0]["text"] if comments else ""
     agent, model, endpoint_id, refused = _apply_connection(
         selection, "codex", selection.get("model"), None
@@ -12582,15 +12677,25 @@ def _change_plan_script_compute(
     try:
         rev0 = engine_preparation._script_revision(str(root), script) or ""
         task.phase = "render_before"
-        before_png, _man = _change_plan_snapshot(
-            _engine_attempt(
-                rel_id,
-                worker,
-                stem,
-                lambda w, s: w.preview_png_snapshot(s, base, _CHANGE_PLAN_WIDTH),
-                safe_only=True,
-            )[2]
-        )
+        if prev is not None:
+            # 「修改前」= 原图 B0：沿用上一版那张（上一版已应用时磁盘上不是 B0，重渲染出来的不是原图）
+            before_path = ec.image_path(ctx.id, prev["id"], "before")
+            try:
+                before_png = before_path.read_bytes() if before_path is not None else b""
+            except OSError:
+                before_png = b""
+            if not before_png:
+                raise ec.PlanFailure("change_plan_unknown")
+        else:
+            before_png, _man = _change_plan_snapshot(
+                _engine_attempt(
+                    rel_id,
+                    worker,
+                    stem,
+                    lambda w, s: w.preview_png_snapshot(s, base, _CHANGE_PLAN_WIDTH),
+                    safe_only=True,
+                )[2]
+            )
     except (NativeWorkerRefused, _SpecfixRouteChanged):
         raise ec.PlanFailure("change_plan_native_unsupported") from None
     except engine_pool.WorkerError:
@@ -12622,6 +12727,7 @@ def _change_plan_script_compute(
             on_changed=None,
             task_hooks=hooks,
             plan_only=True,
+            **({"plan_start": start_bytes} if start_bytes is not None else {}),
         )
     except engine_ai.AgentError as exc:
         LOG.warning("脚本修改方案没能起 Agent: %s", exc.code)
@@ -12671,14 +12777,19 @@ def _change_plan_script_compute(
     # 换行风格归一到原脚本的（Windows 上文本模式写回会把整份换成 CRLF / LF）：diff、渲染、应用写入的都是归一后的字节
     new_bytes = outcome["new_bytes"]
     if new_bytes:
-        new_bytes = ec.match_newlines(outcome["base_bytes"], new_bytes)
+        new_bytes = ec.match_newlines(b0_bytes or outcome["base_bytes"], new_bytes)
     if outcome["status"] != "done" or outcome["outcome"] not in ("completed", "partial"):
         precheck = outcome.get("error") == "precommit_not_verified"
         raise ec.PlanFailure(
             "change_plan_script_check_failed" if precheck else "change_plan_script_agent_failed",
             str(outcome.get("error") or ""),
         )
-    if not new_bytes or new_bytes == outcome["base_bytes"]:
+    if (
+        not new_bytes
+        or new_bytes == outcome["base_bytes"]
+        # 批注重改：相对起点（上一版候选）没改、或整份改回了原图，都算没改
+        or (prev is not None and new_bytes in (start_bytes, b0_bytes))
+    ):
         # Agent 没改脚本但回了话：话带回卡上显示（ADR 0214 §一 兜底），不只说「Agent 没有改动脚本」
         said = ec._clip_text(outcome.get("reply") or "", ec.MAX_AGENT_REPLY_CHARS)
         raise ec.PlanFailure(
@@ -12687,9 +12798,12 @@ def _change_plan_script_compute(
     if len(new_bytes) > ec.SCRIPT_MAX_BYTES:
         raise ec.PlanFailure("change_plan_too_large")
     task.phase = "render_after"
-    after_png, data_confirm = _change_plan_script_render(
+    after_png, data_confirm, after_man = _change_plan_script_render(
         ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry
     )
+    if on_applied:
+        # 上一版已应用：数据指纹的基线是上一版（不是 B0），上一版相对 B0 改过的数据要带过来，应用前照样问
+        data_confirm = ec.merge_data_confirm(prev_group.get("confirm"), data_confirm)
     try:
         if (engine_preparation._script_revision(str(root), script) or "") != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
@@ -12698,22 +12812,28 @@ def _change_plan_script_compute(
     plan = ec.build_script_plan(
         plan_id=task.id,
         target=rel_id,
-        base_fingerprint=ec.fingerprint(rev0, base),
+        base_fingerprint=prev["base"]["fingerprint"] if prev else ec.fingerprint(rev0, base),
         comments=comments,
         script_rel=script,
-        base_bytes=outcome["base_bytes"],
+        base_bytes=b0_bytes if prev is not None else outcome["base_bytes"],
         new_bytes=new_bytes,
         base_patches=base,
         source=origin,
         confirm=data_confirm,
+        **(
+            {"version": int(prev.get("version") or 1) + 1, "parent": prev["id"]}
+            if prev is not None
+            else {}
+        ),
     )
-    return plan, before_png, after_png, new_bytes
+    return plan, before_png, after_png, new_bytes, after_man
 
 
 def _change_plan_script_render(
     ctx, task, script, script_path, root, stem, base, new_bytes, hooks, entry="main"
 ):
-    """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图。→ `(改后 PNG, 数据确认 | None)`。
+    """候选字节在影子脚本里按用户同一路由跑一遍，并在那个 worker 上套 B0 出「改后」图。→ `(改后 PNG, 数据确认 | None, 改后 manifest)`。
+    改后 manifest 与改后 PNG 是同一次渲染（`preview_png_snapshot`）：存进方案目录，批注点选用它（ADR 0206 修订 2026-11-28）。
     数据指纹变了不再失败（ADR 0206 修订 2026-11-27「先问一句再出卡」）：返回脚本组的 `confirm`，卡片先问、应用端点要显式确认；
     改前有的图改后整张不再产出 = 坏了、不是改数据，仍失败 `change_plan_script_figure_missing`。"""
     ec = engine_changeplan
@@ -12736,7 +12856,7 @@ def _change_plan_script_render(
                 raise ec.PlanFailure("change_plan_script_no_preview", code)
             raise ec.PlanFailure("change_plan_script_check_failed", code or str(status))
         try:
-            after_png, _man = _change_plan_snapshot(res["snapshot"])
+            after_png, after_man = _change_plan_snapshot(res["snapshot"])
         except KeyError:
             raise ec.PlanFailure("change_plan_script_no_preview", "snapshot") from None
         baseline = engine_ai_figure_edit._call_hook(hooks.get("check_before"))
@@ -12747,7 +12867,7 @@ def _change_plan_script_render(
             if missing:
                 raise ec.PlanFailure("change_plan_script_figure_missing")
             data_confirm = ec.data_confirm(findings)
-        return after_png, data_confirm
+        return after_png, data_confirm, after_man
     finally:
         if cand is not None:
             engine_ai_figure_edit.remove_candidate(cand.dir)
@@ -12990,7 +13110,7 @@ def _change_plan_compute(
             previous_turn if prev is None else None,
             "todos" if adding else intent,
             add_start if adding else None,
-            standard if prev is None or adding else None,
+            standard,
         )
         # 建议待办（ADR 0214）：回答与待办意图不经下面的候选 / 有效改动流水线（它们只重建组与未处理），单独留着给 `build_plan`；
         # 每条建议自己的意见 id（`a2`..）在意见里补一条原文，组标签与存档的意见都靠它
@@ -13002,11 +13122,8 @@ def _change_plan_compute(
         # 改成对数轴而下限 ≤ 0：候选里一并把下限改成正数（卡片再问用户要不要），免得出一张坍掉的图
         proposal = ec.require_log_lower_limits(proposal, start_man)
         cand, proposal = ec.candidate_patches(start, proposal, start_man)
-        if prev is not None:  # 上一版没被批注改掉的组带进来，再与批注的组一起相对 B0 现算
-            proposal = {
-                "groups": ec.carried_groups(prev, proposal) + proposal["groups"],
-                "unhandled": proposal["unhandled"],
-            }
+        # 上一版没被批注改掉的组带进来，再与批注的组一起相对 B0 现算（`realize` 里合并：批注的改动因 warning 被拿掉时，被它顶掉的上一版那条要回来）
+        carry = (lambda p: ec.carried_groups(prev, p)) if prev is not None else None
 
         def on_render() -> None:
             nonlocal touched
@@ -13026,6 +13143,7 @@ def _change_plan_compute(
             snapshot=snapshot,
             revised=prev is not None,
             on_render=on_render,
+            carry=carry,
         )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
@@ -13152,8 +13270,20 @@ def _change_plan_view(ctx, plan_id: str):
         "plan": {
             **plan,
             "preview": {
-                name: f"/api/change-plans/{plan_id}/{name}.png"
-                for name in engine_changeplan.IMAGE_NAMES
+                **{
+                    name: f"/api/change-plans/{plan_id}/{name}.png"
+                    for name in engine_changeplan.IMAGE_NAMES
+                },
+                # 脚本方案「修改后」那张图自己的元素表（批注点选用）；没存（图内方案 / 旧方案）就不给这一项
+                **(
+                    {"manifest": f"/api/change-plans/{plan_id}/manifest"}
+                    if plan.get("kind") == "script"
+                    and (
+                        engine_changeplan.plan_dir(project, plan_id)
+                        / engine_changeplan.MANIFEST_FILE
+                    ).is_file()
+                    else {}
+                ),
             },
         },
     }
@@ -13183,6 +13313,22 @@ def api_change_plans_image(plan_id: str, which: str):
     if path is None:
         return _change_plan_error("change_plan_unknown")
     resp = send_file(path, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/change-plans/<plan_id>/manifest")
+def api_change_plans_manifest(plan_id: str):
+    """脚本方案「修改后」那张图自己的元素表（只读；与 `after.png` 同一次渲染，批注点选用，ADR 0206 修订 2026-11-28）。
+    图内方案 / 没存的旧方案 → 404 `change_plan_unknown`（前端点选就不出，框选 / 整体批注照旧）。"""
+    man = (
+        engine_changeplan.manifest_of(current_ctx().id, plan_id)
+        if engine_changeplan.PLAN_ID.match(plan_id)
+        else None
+    )
+    if man is None:
+        return _change_plan_error("change_plan_unknown")
+    resp = jsonify({"plan_id": plan_id, "manifest": man})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

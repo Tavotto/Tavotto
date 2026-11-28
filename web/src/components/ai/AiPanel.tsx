@@ -65,6 +65,7 @@ import { BrandLogo } from '@/components/settings/BrandLogo'
 import { requestConnectAi } from '@/store/connectAiStore'
 import { ConnectionModelList, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
+import { deleteAiDraftIf } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { holdAssistantTabForNextSelection } from '@/hooks/useSelectionRouting'
 import { useAiDraft } from './useAiDraft'
@@ -77,7 +78,6 @@ import { vectorSelectionOf } from '@/lib/vectorEdit'
 import { runVectorEdit, setVectorAssistantHold } from '@/store/vectorPlanActions'
 import { changePlanEnabled } from '@/lib/changePlanSwitch'
 import { previousTurnOf } from '@/lib/previousTurn'
-import { deleteAiDraftIf } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { isFallthrough, useChangePlanStore } from '@/store/changePlanStore'
 import { DataFigureForm } from './DataFigureForm'
@@ -653,17 +653,15 @@ function AssistantPanelBody() {
             canvas: useDocumentStore.getState().activeCanvasId,
             script: panel.script ?? null,
           },
-          // 方案一落定才放掉输入框里的指令与后端草稿：生成中刷新页面，指令还在输入框里
-          source === 'composer' && snap.stamp !== null
-            ? () => {
-                void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
-                clearIfUnchanged(snap.seq, { project: pinnedProject, fileId: panel.fileId })
-              }
-            : undefined,
         )
         if (projectMoved()) return
         if (!isFallthrough(planned)) {
-          // 方案任务已受理（或这张图已有一份在途，没发）。草稿与输入框先不动，方案落定时才清（见 `onSettle`）
+          // 方案任务已受理（字符串 = 请求 key）：发送即放掉输入框里的指令与后端草稿。原话已存在 fallback.prompt 与方案卡上，
+          // 之后落回普通对话 / 重试都用那份，不靠输入框。`null` = 这一发没发出去（同图已有一份在途 / 面板没了），输入框原样留着
+          if (typeof planned === 'string' && source === 'composer' && snap.stamp !== null) {
+            void deleteAiDraftIf(panel.fileId, prompt, pinnedProject).catch(() => undefined)
+            clearIfUnchanged(snap.seq, { project: pinnedProject, fileId: panel.fileId })
+          }
           return
         }
       }

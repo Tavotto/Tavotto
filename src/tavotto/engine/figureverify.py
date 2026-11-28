@@ -459,6 +459,7 @@ def _issue_keys(man: dict, profile: dict) -> set[tuple[str, tuple[str, ...]]]:
         (i["id"], tuple(sorted(i.get("gids") or ())))
         for i in issues
         if i.get("severity") in ("error", "warn")
+        and i.get("id") not in preflight.NON_BLOCKING_RULES
     }
 
 

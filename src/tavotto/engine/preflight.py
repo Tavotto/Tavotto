@@ -835,6 +835,101 @@ def _check_bar_baseline_truncated(
             )
 
 
+#: 改动事务（按规范修图、改图验收）的「这次新增 / 加重的问题」**不拿来挡改动**的规则：改曲线（颜色、线宽）
+#: 本身是对的，图例项不跟随（脚本自己画的示意、或用户断开过）没跟上是图例那边的事——挡掉曲线的改动
+#: 只会让用户要的那一处改不成。它们照常进问题面板与改图助手的事实。
+NON_BLOCKING_RULES = ("legend-style-mismatch",)
+
+#: `legend_style_mismatch` 事实里的 `prop` → 问题文案 key（多于一种 → `legendStyleMismatchMany`）。
+#: 标记的填充 / 描边合成「标记颜色」，形状 / 柱的面色 / 边色合成「颜色」：读者看到的是这一层区别。
+#: 与 `preflight.ts` 的 `LEGEND_STYLE_MESSAGE` 严格同源（golden `legend-style-*` 看护）。
+LEGEND_STYLE_MESSAGE = {
+    "color": "legendStyleMismatchColor",
+    "linestyle": "legendStyleMismatchLinestyle",
+    "linewidth": "legendStyleMismatchLinewidth",
+    "marker": "legendStyleMismatchMarker",
+    "markerfacecolor": "legendStyleMismatchMarkerColor",
+    "markeredgecolor": "legendStyleMismatchMarkerColor",
+    "facecolor": "legendStyleMismatchFill",
+    "edgecolor": "legendStyleMismatchFill",
+}
+_LEGEND_STYLE_WORD = {
+    "legendStyleMismatchColor": "线条颜色",
+    "legendStyleMismatchLinestyle": "线型",
+    "legendStyleMismatchLinewidth": "线宽",
+    "legendStyleMismatchMarker": "标记形状",
+    "legendStyleMismatchMarkerColor": "标记颜色",
+    "legendStyleMismatchFill": "颜色",
+    "legendStyleMismatchMany": "样式",
+}
+
+
+def legend_entry_text(el: dict) -> str:
+    """图例项此刻显示的文字（一行、至多 30 字），给问题文案与改图助手的事实行用。"""
+    v = _field(el, "text")
+    text = v if isinstance(v, str) and v.strip() else str(el.get("label") or "")
+    return " ".join(text.split())[:30]
+
+
+def legend_style_source(el: dict) -> str | None:
+    """图例项元素上 worker **确证**的来源系列 gid（`legend_style_source`，只随 `legend_style_mismatch` 出现）；
+    缺席 / 读不懂 → None（= 来源未确证，不报、不给改法）。"""
+    v = el.get("legend_style_source")
+    return v if isinstance(v, str) and v else None
+
+
+def legend_style_diffs(el: dict) -> list[dict]:
+    """图例项元素上的 `legend_style_mismatch` 事实（产生者只有 `engine/legendmodel.legend_style_mismatch`）里
+    认得的条目：`prop` 在 `LEGEND_STYLE_MESSAGE` 里、按 prop 去重。读不懂 → 空表。"""
+    raw = el.get("legend_style_mismatch")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for d in raw:
+        if not isinstance(d, dict):
+            continue
+        prop = d.get("prop")
+        if prop not in LEGEND_STYLE_MESSAGE or prop in seen:
+            continue
+        seen.add(prop)
+        out.append(d)
+    return out
+
+
+def _check_legend_style_mismatch(
+    manifest: dict, pid: str, hidden_legends: set[str], sink: _Sink
+) -> None:
+    """图例项的示意（线 / 标记 / 色块）与它代表的图中对象看得见的样式不一致（读者会把图例对错曲线）。
+
+    事实读图例项元素的 `legend_style_mismatch`（只在来源确证、认得准、确实不一致时出现，见
+    `legendmodel.legend_style_mismatch`）；画出来的项、且有 `legend_style_source`（worker 确证的那条系列，ADR 0219）
+    才判——`legend_entry.source_gid` 是 0034 的编辑绑定、可能是猜的，不当来源证据。每项一次命中，
+    `worse` = 不一致的属性种数（多的那项决定文案）。与 `preflight.ts` 的 `checkLegendStyleMismatch` 同源。"""
+    for el in manifest.get("elements") or []:
+        if el.get("role") != "legend_text" or not _is_drawn(el, hidden_legends):
+            continue
+        source = legend_style_source(el)
+        if source is None:
+            continue
+        diffs = legend_style_diffs(el)
+        if not diffs:
+            continue
+        keys = {LEGEND_STYLE_MESSAGE[d["prop"]] for d in diffs}
+        key = keys.pop() if len(keys) == 1 else "legendStyleMismatchMany"
+        label = legend_entry_text(el)
+        sink.add(
+            "legend-style-mismatch",
+            f"图例「{label}」的{_LEGEND_STYLE_WORD[key]}与"
+            f"{'图中对象' if key == 'legendStyleMismatchFill' else '曲线'}不一致",
+            message=(key, {"label": label}),
+            object_ids=[pid],
+            gids=[str(el.get("gid", ""))],
+            detail={"props": [d["prop"] for d in diffs], "source_gid": source},
+            worse=float(len(diffs)),
+        )
+
+
 def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
     manifest = panel.get("manifest")
     if not isinstance(manifest, dict):
@@ -1104,6 +1199,8 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
     _check_log_axis_nonpositive(manifest, pid, hidden_legends, sink)
     # V-002 线性轴上柱的共同基线被截掉：同属这一档，同样不自动修（从 0 起还是改点图由作者定）
     _check_bar_baseline_truncated(manifest, pid, hidden_legends, sink)
+    # 图例示意与它代表的曲线 / 柱看得见的样式对不上：同属客观不一致，进 warn；不自动修（见 `legend_style_diffs`）
+    _check_legend_style_mismatch(manifest, pid, hidden_legends, sink)
 
     # --- 数据语义：只给建议，绝不替用户裁决 ---
     for ax, roles in sorted(roles_by_axes.items()):

@@ -1,3 +1,4 @@
+import { Fragment, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PlanNote } from '@/store/changePlanStore'
 import { cn } from '@/lib/utils'
@@ -6,7 +7,8 @@ import { Button, IconButton } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Check, Pencil, X } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
-import { cp, whoOf, type GroupView, type UnhandledView } from './changePlanModel'
+import { cp, whoOf, type GroupView, type NoteResult, type UnhandledView } from './changePlanModel'
+import { TodoMark } from './TodoMark'
 
 /**
  * 修改方案弹窗右侧的改动清单：按意见分组，每组一个勾选（一组 = 一条意见的全部改动，`atomic` 组本来就只能整组要或不要）；
@@ -22,6 +24,7 @@ export function ChangeList({
   activeId,
   onActive,
   onAction,
+  noteResults,
 }: {
   /** 清单头的整句（一键排版的卡用它说「排版 · N 张图」）；缺省 = 「改动 · N 处」 */
   heading?: string
@@ -35,33 +38,65 @@ export function ChangeList({
   onActive: (key: string | null) => void
   /** 没处理的行带的动作被点了（矢量编辑方案：「按我说的加」） */
   onAction?: (u: UnhandledView) => void
+  /**
+   * 这一版是按批注重改出来的：每条批注的结果（`noteResults`），按批注顺序列在「这版按批注改的」那块——改成了的就是它那一组的行
+   * （照旧能勾选），没改成的一行灰短横 + 一句原因（不再在底部没处理列表里重复）
+   */
+  noteResults?: NoteResult[]
 }) {
   useTranslation('ai')
   const total = groups.filter((g) => !unchecked[g.key]).reduce((a, g) => a + g.boxes.length, 0)
+  // 「顺带留出边距」整份方案只说一次（后端把同一次留边距并进了每个造成出界的组）：挂在清单里第一个勾着的这类组上
+  const ordered = [...groups.filter((g) => g.fromNote), ...groups.filter((g) => !g.fromNote)]
+  const roomKey = (ordered.find((g) => g.room && !unchecked[g.key]) ?? ordered.find((g) => g.room))?.key
+  const row = (g: GroupView) => <GroupRow key={g.key} g={g} room={g.key === roomKey} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
+  const byKey = new Map(groups.map((g) => [g.key, g]))
+  // 只有没改成的批注在顶部那块写了原因：底部不再重复；改成了的（有组）若另有一条没处理的原因，仍照常列在底部
+  const resultIds = new Set(noteResults?.filter((r) => !r.done).map((r) => r.id))
+  const resultKeys = new Set(noteResults?.flatMap((r) => (r.groupKey ? [r.groupKey] : [])))
+  // 逐条结果之外还有按批注改的组（对不上的老条目）：照旧列在这块的末尾
+  const restNoteGroups = groups.filter((g) => g.fromNote && !resultKeys.has(g.key))
+  const rest = unhandled.filter((u) => !resultIds.has(u.id))
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-change-plan-list>
       <p className={cn('shrink-0 px-4 pb-1.5 pt-4 type-meta transition-opacity duration-fast', muted && 'opacity-50')}>{heading ?? cp('dialog.changes', { count: total })}</p>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
-        {/* 续改的版本：「按批注改的」置顶，用一条轻分隔线与按意见改的隔开 */}
-        {groups.some((g) => g.fromNote) && (
+        {/* 续改的版本：「按批注改的」置顶，用一条轻分隔线与按意见改的隔开；按批注重改出的版本逐条标结果（改成了 = 它那一组，没改成 = 一句原因） */}
+        {(noteResults?.length || restNoteGroups.length > 0) && (
           <ul className="mb-2 flex flex-col gap-0.5 border-b border-border pb-2" data-change-plan-note-groups>
-            {groups
-              .filter((g) => g.fromNote)
-              .map((g) => (
-                <GroupRow key={g.key} g={g} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
-              ))}
+            {noteResults?.length ? (
+              <li className="type-meta pb-0.5" data-change-plan-note-tally>
+                {cp('dialog.noteResults', { done: noteResults.filter((r) => r.done).length, count: noteResults.length })}
+              </li>
+            ) : null}
+            {noteResults?.map((r) => {
+              const g = r.groupKey ? byKey.get(r.groupKey) : undefined
+              if (g) return <Fragment key={r.id}>{row(g)}</Fragment>
+              return (
+                <li key={r.id} data-change-plan-note-result={r.id} data-note-done={r.done || undefined} title={r.text} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
+                  {r.done ? (
+                    <TodoMark state="done" className="mt-0.5" />
+                  ) : (
+                    <span aria-hidden className="flex h-5 w-[15px] shrink-0 items-center justify-center">
+                      <span className="h-px w-2 bg-ink-faint" />
+                    </span>
+                  )}
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate text-sm text-ink-3">{r.text}</span>
+                    {r.reason && <span className="type-meta">{r.reason}</span>}
+                  </div>
+                </li>
+              )
+            })}
+            {restNoteGroups.map(row)}
           </ul>
         )}
         <ul className="flex flex-col gap-0.5">
-          {groups
-            .filter((g) => !g.fromNote)
-            .map((g) => (
-              <GroupRow key={g.key} g={g} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
-            ))}
+          {groups.filter((g) => !g.fromNote).map(row)}
         </ul>
-        {unhandled.length > 0 && (
+        {rest.length > 0 && (
           <ul className="mt-2 flex flex-col gap-0.5 border-t border-border pt-2">
-            {unhandled.map((u) => (
+            {rest.map((u) => (
               <li key={u.id} data-change-plan-unhandled={u.id} title={u.reason || u.text} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
                 <span aria-hidden className="flex h-5 w-[15px] shrink-0 items-center justify-center">
                   <span className="h-px w-2 bg-ink-faint" />
@@ -84,24 +119,31 @@ export function ChangeList({
   )
 }
 
-/** 一个值：颜色带小色块 */
-function Val({ v }: { v: { text: string; color?: string } }) {
+/** 图内改动清单每组最多直接列几行，其余折成「还有 N 处」 */
+const MAX_LINES = 4
+
+/** 一个值：颜色带小色块（`swatchOnly`：只画色块，色值放悬停说明里） */
+function Val({ v, swatchOnly = false }: { v: { text: string; color?: string }; swatchOnly?: boolean }) {
+  const only = swatchOnly && !!v.color
   return (
     <span className="inline-flex items-center gap-1 text-ink-2">
       {v.color && <span aria-hidden className="size-2.5 rounded-sm inset-ring inset-ring-ink/25" style={{ backgroundColor: v.color }} />}
-      {v.text}
+      {only ? <span className="sr-only">{v.text}</span> : v.text}
     </span>
   )
 }
 
 function GroupRow({
   g,
+  room,
   checked,
   active,
   onToggle,
   onActive,
 }: {
   g: GroupView
+  /** 这一行说「顺带留出边距」那一句（整份方案只说一次） */
+  room: boolean
   checked: boolean
   active: boolean
   onToggle: (key: string) => void
@@ -109,6 +151,12 @@ function GroupRow({
 }) {
   const who = whoOf(g.reviewers)
   const places = g.boxes.length
+  const [open, setOpen] = useState(false)
+  const shown = open ? g.lines : g.lines?.slice(0, MAX_LINES)
+  const hidden = (g.lines?.length ?? 0) - (shown?.length ?? 0)
+  // 第二行灰字：谁 · N 处改动（逐行列出了改动、又没有审阅者时不再重复说 N 处）+ 留边距那一句
+  const count = g.fromNote ? (g.lines?.length ? cp('dialog.groupMetaNoteBare') : cp('dialog.groupMetaNote', { count: places })) : who ? cp('dialog.groupMeta', { who, count: places }) : g.lines?.length ? '' : cp('dialog.groupMetaNoWho', { count: places })
+  const meta = [count, room ? cp('dialog.roomNote') : ''].filter(Boolean).join(' · ')
   return (
     <li>
       <label
@@ -133,27 +181,40 @@ function GroupRow({
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className={cn('text-sm', checked ? 'text-ink' : 'text-ink-3')}>{g.summary}</span>
-          {g.lines?.map((l, i) => (
-            <span key={i} data-change-line className={cn('type-meta flex flex-wrap items-center gap-x-1.5', !checked && 'opacity-50')}>
+          {shown?.map((l, i) => (
+            <span key={i} data-change-line title={l.title} className={cn('type-meta flex flex-wrap items-center gap-x-1.5', !checked && 'opacity-50')}>
               <span>{l.label}</span>
               {l.after && (
                 <>
-                  {l.before && <Val v={l.before} />}
+                  {l.before && <Val v={l.before} swatchOnly={l.compact} />}
                   {l.before && <span aria-hidden>→</span>}
-                  <Val v={l.after} />
+                  <Val v={l.after} swatchOnly={l.compact} />
                 </>
               )}
+              {l.extra && <span className="text-ink-3">{l.extra}</span>}
             </span>
           ))}
+          {hidden > 0 && (
+            <button
+              type="button"
+              data-change-more
+              onClick={(e) => {
+                e.preventDefault()
+                setOpen(true)
+              }}
+              className="type-meta w-fit text-left text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
+            >
+              {cp('dialog.moreLines', { count: hidden })}
+            </button>
+          )}
           {g.note && (
             <span data-change-note className="type-meta opacity-70">
               {g.note}
             </span>
           )}
-          {g.metaText !== '' && (
-            <span className="type-meta">
-              {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}
-              {g.room ? ` · ${cp('dialog.roomNote')}` : ''}
+          {g.metaText !== '' && meta && (
+            <span className="type-meta" data-change-plan-group-meta>
+              {meta}
             </span>
           )}
         </span>
@@ -229,6 +290,31 @@ export function NoteList({
           {cp('dialog.noteOverall')}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 按批注重改进行中的右栏：这次发出的批注一条一行（编号与舞台上钉的标记一致 · 写在哪一处 · 原话），行尾是待办卡那套「没开始」的点状圈。
+ * 后端只报整体阶段、没有逐条进度：清单头说「正在按这 N 条批注改」，不逐条打勾、不逐条转圈；新版出来后结果在对比视图右栏顶部逐条标。
+ */
+export function RevisingNoteList({ notes }: { notes: PlanNote[] }) {
+  useTranslation('ai')
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" data-change-plan-revising-notes>
+      <p className="shrink-0 px-4 pb-1.5 pt-4 type-meta">{cp('dialog.revisingNotes', { count: notes.length })}</p>
+      <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-3">
+        {notes.map((n, i) => (
+          <li key={n.id} data-change-plan-revising-note={n.id} className="-mx-2 flex items-start gap-2.5 border-b border-border px-2 py-2.5 last:border-b-0">
+            <ReviewMark n={i + 1} overall={n.anchor.kind === 'overall'} solid className="mt-0.5" />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="type-meta truncate">{n.label}</span>
+              <span className="break-words text-sm text-ink-2">{n.text}</span>
+            </span>
+            <TodoMark state="pending" className="mt-0.5" />
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

@@ -9,14 +9,14 @@ import { cn } from '@/lib/utils'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
-import { Check, ChevronDown, CircleDashed } from '../ui/icons'
-import { Spinner } from '../ui/Spinner'
+import { Check, ChevronDown } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { Plus } from '../ui/icons'
 import type { ChangePlanTodo } from '@/lib/api'
 import { cp, effectiveStatus, todoFailReason, todoPhase, todoScriptCardShown, todosDone } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
+import { TodoMark } from './TodoMark'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
 /** Agent 来源的卡出自哪个宿主（缺省 = 插件） */
@@ -338,9 +338,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
                     className={cn('-mx-1.5 flex h-7 items-center gap-2.5 rounded-md px-1.5 transition-colors duration-fast', rowLocked(t) ? '' : 'hover:bg-surface-hover')}
                   >
                     {st && st !== 'queued' ? (
-                      <span className="flex size-[15px] shrink-0 items-center justify-center" aria-hidden data-todo-progress={st}>
-                        {st === 'done' ? <Check size={ICON_SIZE.sm} className="text-ok" /> : st === 'active' ? <Spinner size={ICON_SIZE.sm} className="text-ink" /> : <CircleDashed size={ICON_SIZE.sm} className="text-ink-faint" />}
-                      </span>
+                      <TodoMark state={st} />
                     ) : (
                       <Checkbox checked={checked} disabled={rowLocked(t)} onChange={() => store().toggleTodo(entry.key, t.key)} aria-label={t.label} className="size-[15px] [&>input:checked]:border-ink-2 [&>input:checked]:bg-ink-2" />
                     )}

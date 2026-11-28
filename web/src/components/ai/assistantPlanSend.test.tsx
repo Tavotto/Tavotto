@@ -130,19 +130,19 @@ const sendText = async (text: string) => {
 }
 
 describe('发送路由', () => {
-  it('默认（开关开）：走方案路径——带原话与图，不起改脚本会话；原话出现在对话里；模型回话前只一行「想一想…」不画方案卡（聊天不闪卡）；生成中草稿与输入框先留着（刷新不丢）', async () => {
+  it('默认（开关开）：走方案路径——带原话与图，不起改脚本会话；原话出现在对话里；模型回话前只一行「想一想…」不画方案卡（聊天不闪卡）；发送即清空输入框与后端草稿', async () => {
     await sendText('把线条加粗')
     expect(aiRun).not.toHaveBeenCalled()
     expect(createChangePlan).toHaveBeenCalledOnce()
     expect(vi.mocked(createChangePlan).mock.calls[0][0]).toMatchObject({ source: 'assistant', id: 'Fig1.pdf', instruction: '把线条加粗', patches: [] })
-    expect(input().value).toBe('把线条加粗')
-    expect(be.draft('pa', 'Fig1.pdf')).toBe('把线条加粗')
+    expect(input().value).toBe('')
+    expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
     expect(q('[data-change-plan-user]')?.textContent).toBe('把线条加粗')
     expect(q('[data-change-plan-thinking]')).toBeTruthy()
     expect(q('[data-change-plan-card]')).toBeNull()
   })
 
-  it('方案出来（落定）：这时才清输入框与后端草稿', async () => {
+  it('发送即清空：方案还在生成时输入框与后端草稿已经空了，落定后仍是空的', async () => {
     vi.mocked(getChangePlan).mockResolvedValue({
       plan_id: 'pl1', state: 'ready',
       plan: { id: 'pl1', version: 1, source: 'assistant', base: { target: 'Fig1.pdf', fingerprint: 'x' }, base_patches: [], candidate_patches: [],
@@ -154,7 +154,8 @@ describe('发送路由', () => {
       await typeText('把线条加粗')
       await click(q('[data-ai-send="send"]'))
       await settle()
-      expect(be.draft('pa', 'Fig1.pdf')).toBe('把线条加粗')
+      expect(input().value).toBe('')
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
       await act(async () => void vi.advanceTimersByTimeAsync(1500))
       await settle()
     } finally {
@@ -162,6 +163,14 @@ describe('发送路由', () => {
     }
     expect(input().value).toBe('')
     expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+  })
+
+  it('发送后立刻输入第二条：输入框里只有第二条（不拼接第一条），第一条原话留在方案卡 / 对话里', async () => {
+    await sendText('把纵轴换成对数坐标')
+    expect(input().value).toBe('')
+    await typeText('标题字号调小一点')
+    expect(input().value).toBe('标题字号调小一点')
+    expect(q('[data-change-plan-user]')?.textContent).toBe('把纵轴换成对数坐标')
   })
 
   it('方案在生成：发送被锁（同一张图一次一份），不会起第二个任务', async () => {

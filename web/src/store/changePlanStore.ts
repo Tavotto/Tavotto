@@ -26,6 +26,9 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
 import { writeChangePlanCache } from '@/lib/changePlanSwitch'
 import type { ChangeGroup } from '@/lib/vectorChanges'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
+import { isCanvasCovered } from './canvasCover'
+import { hasActiveGesture } from './gestureCoordinator'
+import { useInteractionStore } from './interactionStore'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
 import type { PanelObject, PanelOverride } from '@/types/document'
@@ -103,6 +106,8 @@ export interface PlanVersionRec {
   unchecked: Record<string, boolean>
   /** 方案要用户确认的组（`group.confirm`）各自的回答；没有 = 还没回答 */
   answers?: Record<string, ConfirmAnswer>
+  /** 按批注重改出的这一版：当时发出的批注（编号 / 锚点 / 原话），弹窗右栏逐条标结果用；第 1 版没有 */
+  fromNotes?: PlanNote[]
 }
 
 /** 一键排版方案卡的两个动作：应用 = 现有的那一次 commit（一步撤销不变）；重来 = 按同样的选项再排一次 */
@@ -205,11 +210,6 @@ export interface PlanEntry {
   instruction?: string
   /** 助手来源的改脚本后路（见 `ScriptFallback`） */
   fallback?: ScriptFallback
-  /**
-   * 助手来源：方案一落定（出卡 / 失败 / 交给改脚本）就调一次、随即清掉——输入框里的指令与后端草稿留到这一刻才删，
-   * 方案生成中刷新页面指令还在输入框里，不会丢。
-   */
-  onSettle?: () => void
   /** 助手来源：已经把这条指令交给改脚本那条路了（卡上不再给「改脚本做剩下的」；全是要改脚本时卡只剩一行灰字） */
   scriptStarted?: boolean
   /** 助手来源：已经把这条指令转给画布矢量那条路了（「改在画布上加」点过，卡上不再给这颗按钮） */
@@ -247,6 +247,8 @@ export interface PlanEntry {
   sentNotes?: Record<string, string>
   /** 按批注重改进行中：新一版的方案 id（请求还没回时是空串） */
   revising?: string
+  /** 这次重改发出的批注（快照）：进行中的舞台标记与右栏按它画，新版到手时挂到那一版的 `fromNotes` 上 */
+  revisingNotes?: PlanNote[]
   /** 上一次按批注重改没成：稳定码（弹窗里一句灰字，下一次动作清掉） */
   reviseError?: PlanFailure
   request: PlanRequest
@@ -267,7 +269,7 @@ export interface PlanEntry {
   scriptBusy?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
   /** `agent_settled`：Agent 卡落定时插件那边已先应用、窗口里刚写的又没能自动撤回（之后又改过 / 换了画布）——卡留着如实说 */
-  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed' | 'agent_settled'
+  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed' | 'revise_stale' | 'agent_settled'
   /** 应用后由这张卡标成「已处理」的意见 id（撤销时只还原这几条） */
   resolvedIds?: string[]
   /** 标已处理 / 还原没成：审阅页签上一句灰字 + 重试（不自动再试，免得失败时反复打后端） */
@@ -433,6 +435,8 @@ interface ChangePlanState {
   order: string[]
   /** 弹窗里正在看的那一份 */
   dialogKey: string | null
+  /** 打开弹窗时指定的初始视图（卡片上的批注入口）；弹窗读到后清掉，不传 = 照旧先看对比 */
+  dialogView: 'compare' | 'annotate' | null
 
   /** 为某张图发起一次方案；同一张图同一批意见的在途 / 待确认方案直接聚焦（返回它的键） */
   requestFromReview: (panelId: string, req: PlanRequest) => Promise<string | null>
@@ -444,7 +448,6 @@ interface ChangePlanState {
     panelId: string,
     req: { instruction: string; target?: string; previousTurn?: PreviousTurn },
     fallback: ScriptFallback,
-    onSettle?: () => void,
   ) => Promise<string | null | Fallthrough>
   /** 发现的 Agent 建议卡入列（同一份方案只入一次；用户收起过的不再入）。→ 是否入了 */
   addAgentEntry: (e: PlanEntry) => boolean
@@ -456,8 +459,10 @@ interface ChangePlanState {
   regenerate: (key: string) => Promise<string | null>
   /** 一键排版出的整版方案（`quickLayoutActions` 调）：条目已带方案与两张预览图的 blob 地址，直接是待确认 */
   addLayoutEntry: (e: PlanEntry) => void
-  openDialog: (key: string) => void
+  openDialog: (key: string, opts?: { view?: 'compare' | 'annotate' }) => void
   closeDialog: () => void
+  /** 弹窗取走初始视图（取一次就清，之后换版本回到对比） */
+  consumeDialogView: () => 'compare' | 'annotate' | null
   toggleGroup: (key: string, groupKey: string) => void
   /** 建议待办卡上勾 / 取消一行（图内待办 = 切它那一组，脚本待办记在 `todoOff`）；点过「改这 N 项」之后不再改 */
   toggleTodo: (key: string, todoKey: string) => void
@@ -637,6 +642,46 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     if (p) requestRender(p, true)
   }
 
+  /**
+   * 「再改一版」的新版到手时撤回上一版的应用：与 `undo` 同一判据（还是我们写的那份、历史栈顶还是那次 commit），
+   * 另外用户正拖到一半（文档事务开着 / 有进行中的手势或交互）或画布被盖住时也不撤——撤回入口（`runUndoRedo`）会先收掉那一笔手势、
+   * 再撤掉的就是它了，或者干脆不做。撤回了 / 本来就已撤回 = true。
+   */
+  const undoForRevise = (key: string): boolean => {
+    const e = get().entries[key]
+    const panel = e ? panelOf(e) : null
+    if (!e || !panel || !e.plan) return false
+    // 等的这段时间里用户自己点了「撤销」：图已经回到改前，没有要撤的
+    if (samePatches(panel.overrides, e.plan.base_patches)) return true
+    if (useDocumentStore.getState().txn || hasActiveGesture() || isCanvasCovered() || useInteractionStore.getState().kind !== 'none') return false
+    if (!canUndoApplied(e, panel.overrides)) return false
+    return get().undo(key)
+  }
+
+  /**
+   * 脚本方案「再改一版」的新版到手时撤回上一版的应用：与卡片「撤销」同一个后端接口（按备份还原，锁内核「脚本还是应用之后那一版」），
+   * 但不写 `undo_failed`、不把条目改回待确认（调用方马上换成新版）。等的这段时间里用户自己点了「撤销」（条目已不是已应用）= 没有要撤的。
+   * 撤回了 / 本来就已撤回 = true；之后又改过脚本（409）/ 别的失败 = false（脚本不动）。
+   */
+  const undoScriptForRevise = async (key: string): Promise<boolean> => {
+    const e = get().entries[key]
+    if (!e?.plan || e.plan.kind !== 'script' || !e.planId) return false
+    if (e.status !== 'applied' || !e.plan.applied) return true
+    const oldId = e.planId
+    // 撤回进行中卡片上的「撤销」暂时不接（同一份应用撤两次，第二次会撞「之后又改过」）
+    patch(key, { scriptBusy: true })
+    try {
+      await undoChangePlanScript(oldId)
+    } catch {
+      if (get().entries[key]) patch(key, { scriptBusy: false })
+      return false
+    }
+    // 旧版那一份也记成没应用（切回旧版时卡片不把它当已应用）
+    const cur = get().entries[key]
+    if (cur) patch(key, { scriptBusy: false, plan: { ...cur.plan!, applied: null }, versions: versionsOf(cur).map((v) => (v.planId === oldId ? { ...v, plan: { ...v.plan, applied: null } } : v)) })
+    return true
+  }
+
   const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' | 'add' = 'create') => {
     const t0 = Date.now()
     let errors = 0
@@ -645,7 +690,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const alive = () =>
       guard.still() && (adding ? get().entries[key]?.adding === planId : revising ? get().entries[key]?.revising === planId : get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating')
     // 续改没成：旧版原样留着，弹窗里一句灰字
-    const failRevise = (code: string, params?: Record<string, unknown>) => patch(key, { revising: undefined, reviseError: { code, params } })
+    const failRevise = (code: string, params?: Record<string, unknown>) => patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code, params } })
     // 再加一条没成：已有的待办卡原样留着，行尾一句灰字
     const failAdd = (code: string) => patch(key, { adding: undefined, addingText: undefined, addError: { code } })
     const failed = (code: string, params?: Record<string, unknown>) => (adding ? failAdd(code) : revising ? failRevise(code, params) : fail(key, code, params))
@@ -702,10 +747,20 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         else {
           // 新一版入列并切过去；各版的勾选各记各的，批注随这次重改清空
           // 重改期间新写 / 改过的批注是用户的新工作：只清掉仍与提交时一致的那些
+          // 已应用的卡（「再改一版」）：新版到手这一刻才撤回上一版的应用；撤不回（期间又改过这张图）就不动文档，
+          // 新版照样入列，卡片按文档派生成「原图改过了」，另说一句
+          // 脚本方案：按备份撤回上一版的应用（后端核「脚本还是应用之后那一版」），撤不回就不动文件、新版标「图已改过」
+          const scriptPlan = e.plan?.kind === 'script'
+          const stale = e.status === 'applied' && !(scriptPlan ? await undoScriptForRevise(key) : undoForRevise(key))
+          if (!alive()) {
+            // 撤回期间条目被收掉 / 换了项目：脚本已按备份撤回的，条目（还在的话）回到待确认，不留「已应用」
+            if (scriptPlan && e.status === 'applied' && !stale && get().entries[key]) patch(key, { status: 'ready' })
+            return
+          }
           const e0 = get().entries[key] ?? e
-          const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
-          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {} }
-          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: undefined })
+          const prev = versionsOf(e0).map((v) => (v.planId === e0.planId ? { ...v, unchecked: e0.unchecked, answers: e0.answers } : v))
+          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {}, ...(e0.revisingNotes?.length ? { fromNotes: e0.revisingNotes } : {}) }
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, revisingNotes: undefined, reviseError: undefined, notice: stale ? 'revise_stale' : undefined, ...(e.status === 'applied' ? { status: scriptPlan && stale ? ('stale' as const) : ('ready' as const), appliedPartial: undefined, appliedSrc: undefined } : {}) })
         }
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
@@ -792,7 +847,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     }
   }
 
-  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false, onSettle?: () => void): Promise<string | null | Fallthrough> => {
+  const start = async (panelId: string, req: PlanRequest, fallback?: ScriptFallback, keepOnFallthrough = false): Promise<string | null | Fallthrough> => {
     const ds = useDocumentStore.getState()
     const panel = ds.doc.objects.find((o): o is PanelObject => o.id === panelId && o.type === 'panel')
     if (!panel) return null
@@ -808,7 +863,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const assistant = typeof req.instruction === 'string' || req.intent === 'todos'
     const entry: PlanEntry = {
       key,
-      ...(assistant ? { from: 'assistant' as const, instruction: req.display ?? req.instruction, fallback, onSettle } : {}),
+      ...(assistant ? { from: 'assistant' as const, instruction: req.display ?? req.instruction, fallback } : {}),
       pj: guard.pj,
       panelId,
       fileId: panel.fileId,
@@ -911,6 +966,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     entries: {},
     order: [],
     dialogKey: null,
+    dialogView: null,
 
     requestFromReview: async (panelId, req) => {
       const same = (e: PlanEntry) =>
@@ -934,18 +990,18 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
     },
 
-    requestFromAssistant: async (panelId, req, fallback, onSettle) => {
+    requestFromAssistant: async (panelId, req, fallback) => {
       // 同一时刻只发一份（与审阅来源共用这把门）；同一张图已有在途方案时不再起第二份
       const busy = get().order.some((k) => get().entries[k]?.panelId === panelId && get().entries[k]?.status === 'generating')
       if (busy || pending.has(panelId)) return null
       pending.add(panelId)
       try {
-        const out = await start(panelId, req, fallback, false, onSettle)
+        const out = await start(panelId, req, fallback, false)
         if (!isFallthrough(out)) return out
         // 连接本身用不了：脚本方案同样要模型，走不通——直接落回旧路径，不发注定失败的脚本方案请求
         if (CONNECTION_UNUSABLE_CODES.has(out.code)) return out
         // 图内方案这条路不适用：先试脚本方案（Agent 在副本里改、看过再应用）；它也不适用才落回现有的直接改脚本（调用方发）
-        return await start(panelId, { instruction: req.instruction, ...(req.target ? { target: req.target } : {}), mode: 'script' }, fallback, false, onSettle)
+        return await start(panelId, { instruction: req.instruction, ...(req.target ? { target: req.target } : {}), mode: 'script' }, fallback, false)
       } finally {
         pending.delete(panelId)
       }
@@ -999,14 +1055,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
           patch(key, { status: 'failed', failure: { code: 'change_plan_script_failed' } })
           return false
         }
-        // 卡一撤，订阅就看不到「落定」了：输入框里那条指令与后端草稿在这里放掉
-        const settle = get().entries[key]?.onSettle
         drop(key)
-        try {
-          settle?.()
-        } catch {
-          /* 清草稿失败不影响对话 */
-        }
         return true
       }
       // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
@@ -1075,12 +1124,17 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     },
 
     // 还有没回答的确认（对数轴下限）就不让看 / 应用：先问清楚，免得出一张坍掉的图
-    openDialog: (key) => {
+    openDialog: (key, opts) => {
       const e = get().entries[key]
       if (e && pendingConfirm(e)) return
-      set({ dialogKey: key })
+      set({ dialogKey: key, dialogView: opts?.view ?? null })
     },
-    closeDialog: () => set({ dialogKey: null }),
+    closeDialog: () => set({ dialogKey: null, dialogView: null }),
+    consumeDialogView: () => {
+      const v = get().dialogView
+      if (v) set({ dialogView: null })
+      return v
+    },
     toggleGroup: (key, groupKey) => {
       set((s) => {
         const e = s.entries[key]
@@ -1422,19 +1476,42 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     revise: async (key) => {
       const e = get().entries[key]
       const notes = e ? notesOf(e) : []
-      if (!e || !e.planId || e.status !== 'ready' || e.agent) return 'failed'
+      if (!e || !e.planId || (e.status !== 'ready' && e.status !== 'applied') || e.agent) return 'failed'
       if (e.revising !== undefined) return 'busy'
       if (!notes.length) return 'nothing'
+      const scriptPlan = e.plan?.kind === 'script'
+      if (e.status === 'applied' && scriptPlan) {
+        // 脚本方案（不在文档历史里）：撤回 / 应用正在进行时不发；「脚本还是应用之后那一版」由后端在请求那一刻核（之后又改过 = 409，
+        // 落成同一句「没法替你撤回」）。撤得回也**先不撤**：脚本保持已应用，新版拿到时才按备份撤回上一版
+        if (e.scriptBusy) return 'busy'
+        if (!e.plan?.applied) {
+          patch(key, { reviseError: { code: REVISE_UNDO_BLOCKED } })
+          return 'failed'
+        }
+      } else if (e.status === 'applied') {
+        // 已应用的卡批注重改：此刻就撤不回（之后又改过这张图）= 不发请求、什么都不动，免得白等一版。
+        // 撤得回也**先不撤**：图保持已应用，新版拿到时才撤回这一次（`poll` 的 revise 分支），没拿到就什么都不丢
+        // 用户已经自己撤回了（卡片「撤销」/ ⌘Z，存着的状态仍是 applied）：图就是原图，照常发
+        const panel = panelOf(e)
+        if (!panel || (!canUndoApplied(e, panel.overrides) && !(e.plan && samePatches(panel.overrides, e.plan.base_patches)))) {
+          patch(key, { reviseError: { code: REVISE_UNDO_BLOCKED } })
+          return 'failed'
+        }
+      }
       const guard = captureProjectEpoch()
-      patch(key, { revising: '', phase: undefined, reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
+      patch(key, { revising: '', revisingNotes: notes, phase: undefined, reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
       try {
         const task = await reviseChangePlan(e.planId, {
           notes: notes.map((n) => ({ id: n.id, anchor: n.anchor, text: n.text })),
           client_request_id: newRequestId(),
+          // 脚本方案：改脚本 Agent 走输入框选的那条连接（后端要求必须带，与创建脚本方案同一条）
+          ...(scriptPlan ? currentRunSelection() : {}),
+          // 出版规范（与新建助手方案同一份 currentStandard）：批注里写「按期刊标准」时模型才有数可依
+          standard: currentStandard(e.panelId),
         })
         if (!guard.still() || !get().entries[key]) return 'failed'
         if ('ok' in task) {
-          patch(key, { revising: undefined, reviseError: { code: 'not_licensed' } })
+          patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code: 'not_licensed' } })
           return 'not_licensed'
         }
         patch(key, { revising: task.plan_id })
@@ -1443,7 +1520,12 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       } catch (err) {
         if (!guard.still() || !get().entries[key]) return 'failed'
         const code = err instanceof EngineError && err.code ? err.code : 'change_plan_failed'
-        patch(key, { revising: undefined, reviseError: { code, params: err instanceof EngineError ? err.params : undefined } })
+        // 已应用的脚本卡：后端说脚本已不是应用之后那一版（之后又改过）= 与图内卡同一句「没法替你撤回」
+        if (scriptPlan && e.status === 'applied' && code === 'change_plan_figure_changed') {
+          patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code: REVISE_UNDO_BLOCKED } })
+          return 'failed'
+        }
+        patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code, params: err instanceof EngineError ? err.params : undefined } })
         return 'failed'
       }
     },
@@ -1495,6 +1577,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     },
   }
 })
+
+/** 已应用的卡批注重改时撤不回这一次应用（本地码，弹窗里一句灰字） */
+export const REVISE_UNDO_BLOCKED = 'revise_undo_blocked'
 
 /** 这份已应用的方案此刻还能一步撤回：图还是我们写的那份，且历史栈顶还是那次 commit */
 export function canUndoApplied(e: Pick<PlanEntry, 'appliedPatches' | 'appliedEntry'>, current: readonly unknown[]): boolean {
@@ -1555,17 +1640,3 @@ useChangePlanStore.subscribe(() => {
   advanceTodoRuns()
 })
 
-// 助手来源的方案一落定（不再是「生成中」），把输入框里那条指令与后端草稿放掉（`PlanEntry.onSettle`）
-useChangePlanStore.subscribe((s) => {
-  for (const e of Object.values(s.entries)) {
-    if (e.onSettle && e.status !== 'generating') {
-      const fn = e.onSettle
-      useChangePlanStore.setState((cur) => (cur.entries[e.key] ? { entries: { ...cur.entries, [e.key]: { ...cur.entries[e.key], onSettle: undefined } } } : {}))
-      try {
-        fn()
-      } catch {
-        /* 清草稿失败不影响方案 */
-      }
-    }
-  }
-})

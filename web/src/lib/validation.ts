@@ -176,6 +176,9 @@ const RULES: Record<
   'log-axis-nonpositive': { category: 'lines', context: 'document', fix: 'none' },
   // V-002 线性轴上柱的基线被截掉：绝不自动修（从 0 起还是改成点图是作者的决定）
   'bar-baseline-truncated': { category: 'lines', context: 'document', fix: 'none' },
+  // 图例示意与它代表的曲线 / 柱样式不一致：只报不修——标记填充 / 描边的显式颜色没有对应的 handle_* 属性，
+  // 已有 handle_* override 的项也不能靠「恢复跟随」一步修好，没有对所有情形都成立的安全目标值；点击定位到那一项
+  'legend-style-mismatch': { category: 'color', context: 'document', fix: 'none' },
   // V-011 干涉（真实渲染几何上撞上了）：修法是挪图例 / 重排外边距，要真实渲染裁决、可能放不下
   // （ADR 0051 的保留式规范化），目标值不唯一，不进 safe_auto；`specfix.FIXABLE_RULES` 也不含它们
   'text-overlap': { category: 'layout', context: 'document', fix: 'none' },
