@@ -467,7 +467,7 @@
     "data_binary": "这个文件不是文本表格（像是二进制数据），读不了。",
     "data_not_table": "这个文件里没有成列的数据。",
     "data_header_row_invalid": "指定的那一行不能当列名，换一行试试。",
-    "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsm / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
+    "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
     "data_xlsx_invalid": "这个 Excel 文件已损坏或不是有效的 .xlsx，无法读取。",
     "data_xlsx_too_large": "这个 Excel 文件解压后太大或内容过多，没有读取。",
     "data_xlsx_unsafe": "这个 Excel 文件含有不安全的内容（外部实体等），没有读取。",

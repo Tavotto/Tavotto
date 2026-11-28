@@ -467,7 +467,7 @@
     "data_binary": "This file isn’t a text table (it looks like binary data) and can’t be read.",
     "data_not_table": "There’s no column data in this file.",
     "data_header_row_invalid": "That line can’t be used as the column names. Try another line.",
-    "data_excel_unsupported": "Older Excel files (.xls / .xlsm / .xlsb) aren’t supported. Save the file as .xlsx or CSV in Excel.",
+    "data_excel_unsupported": "Older Excel files (.xls / .xlsb) aren’t supported. Save the file as .xlsx or CSV in Excel.",
     "data_xlsx_invalid": "This Excel file is damaged or isn’t a valid .xlsx, so it can’t be read.",
     "data_xlsx_too_large": "This Excel file is too large once unpacked, or has too much content, and wasn’t read.",
     "data_xlsx_unsafe": "This Excel file contains unsafe content (such as external entities) and wasn’t read.",

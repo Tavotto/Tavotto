@@ -4584,7 +4584,7 @@ export default interface Resources {
       "data_binary": "这个文件不是文本表格（像是二进制数据），读不了。",
       "data_decode_error": "认不出这份数据的文字编码，另存为 UTF-8 的 CSV 再试。",
       "data_empty": "这份数据是空的。",
-      "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsm / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
+      "data_excel_unsupported": "不支持旧版 Excel 文件（.xls / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。",
       "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
       "data_figure_recipe_invalid": "这个备选和现在的数据对不上了，请重新生成。",
       "data_format_unsupported": "只能读取 CSV、TSV、TXT / DAT 和 XLSX 数据文件。",
