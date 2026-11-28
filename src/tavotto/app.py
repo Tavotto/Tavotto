@@ -13099,11 +13099,8 @@ def _change_plan_compute(
         # 改成对数轴而下限 ≤ 0：候选里一并把下限改成正数（卡片再问用户要不要），免得出一张坍掉的图
         proposal = ec.require_log_lower_limits(proposal, start_man)
         cand, proposal = ec.candidate_patches(start, proposal, start_man)
-        if prev is not None:  # 上一版没被批注改掉的组带进来，再与批注的组一起相对 B0 现算
-            proposal = {
-                "groups": ec.carried_groups(prev, proposal) + proposal["groups"],
-                "unhandled": proposal["unhandled"],
-            }
+        # 上一版没被批注改掉的组带进来，再与批注的组一起相对 B0 现算（`realize` 里合并：批注的改动因 warning 被拿掉时，被它顶掉的上一版那条要回来）
+        carry = (lambda p: ec.carried_groups(prev, p)) if prev is not None else None
 
         def on_render() -> None:
             nonlocal touched
@@ -13123,6 +13120,7 @@ def _change_plan_compute(
             snapshot=snapshot,
             revised=prev is not None,
             on_render=on_render,
+            carry=carry,
         )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")

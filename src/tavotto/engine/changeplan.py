@@ -110,6 +110,7 @@ ERROR_CODES = (
 #: * hides_data：改后的坐标范围会把现在看得见的数据藏起来（服务端守卫，见 `_hides_data`）；
 #: * size_locked：改图幅（`size_mm`）——图宽受期刊栏宽约束，用户原话没提尺寸就不改（助手来源）。
 #: * dense_curve：给连续曲线（点数多于 `figure_facts.DENSE_POINTS`）逐点加标记——会糊成一串珠子（服务端守卫）。
+#: * render_warning：这处改动渲染时引出了新的 warning（写不进去 / 应用失败），从候选里拿掉了，其余照常出卡（`realize`）。
 UNHANDLED_REASONS = (
     "needs_script",
     "needs_canvas_annotation",
@@ -128,6 +129,7 @@ UNHANDLED_REASONS = (
     "hides_data",
     "size_locked",
     "dense_curve",
+    "render_warning",
 )
 _MODEL_REASONS = (
     "needs_script",
@@ -241,7 +243,8 @@ MAX_TEXT_VALUE = 500
 #: 模型总时限（API Key 连接；订阅 CLI 用 `ai_structured.CLI_TIMEOUT_S`）、输出与输入上限
 MODEL_TIMEOUT_S = 90.0
 MODEL_MAX_OUTPUT_TOKENS = 4_000
-#: 助手来源（提问的回答、至多 12 条待办各带一组修改）：4,000 在真机 DeepSeek 上写 8 条待办就截断（`over_budget output`，2026-11-27）
+#: 助手来源（提问的回答、至多 12 条待办各带一组修改）与批注重改：4,000 在真机 DeepSeek 上写 8 条待办就截断（`over_budget output`，2026-11-27）；
+#: 批注重改「按期刊标准改字号」也撞过（2026-11-28）——思考 token 算在输出里，8 处改动的回答实测 500–1,100 token 里大半是思考
 MODEL_MAX_OUTPUT_TOKENS_ASSISTANT = 12_000
 MODEL_MAX_INPUT_CHARS = 48_000
 #: 矢量编辑补丁一条条列出来，比图内属性改动长：输出上限放宽一些
@@ -1432,6 +1435,104 @@ def warned(resp: dict) -> set[str]:
     return {json.dumps(w, sort_keys=True, default=str) for w in (resp.get("warnings") or [])}
 
 
+#: 候选多出 warning 时找出引起它的改动最多试渲染几次（热 worker 一次约 0.2–0.5 s；含失败后的「放回」）。超出 = 整张方案失败（旧行为）
+MAX_WARNING_TRIALS = 24
+#: 日志里记新 warning 的条数与每条的长度（warning 原文可能带图里的文字，只记个摘要）
+_WARNING_LOG_ITEMS = 3
+_WARNING_LOG_CHARS = 160
+
+
+def warning_digest(found: set[str]) -> list[str]:
+    """新 warning 的日志摘要：前几条、每条截断（不记全文）。"""
+    out = []
+    for w in sorted(found)[:_WARNING_LOG_ITEMS]:
+        try:
+            text = json.loads(w)
+        except ValueError:
+            text = w
+        out.append(_clip(text if isinstance(text, str) else w, _WARNING_LOG_CHARS))
+    return out
+
+
+class _TrialBudget(Exception):
+    """找 warning 来源的试渲染次数到顶。"""
+
+
+def shed_warning_changes(
+    proposal: dict,
+    start: list,
+    manifest: dict,
+    base_warned: set[str],
+    override: Callable[[list], dict],
+) -> tuple[dict, list, list[str]]:
+    """候选比基线多出 warning 时，找出引起它的改动并拿掉。→ `(剩下的提议, 剩下的候选, 被拿掉改动的 comment_id)`；试渲染到顶抛 `_TrialBudget`。
+
+    按提议顺序**累加**：已收下的 ⊕ 这一组，不多出 warning 就收下；多出了就在组内二分（一组可能有几十条，「全部字号改 8」），
+    只拿掉引起 warning 的那几条，其余照收——与 `no_effect` 一样，这条意见照样出组，另记一条 `render_warning`。
+    每次试渲染没过都先把热 worker 放回「已收下的」那份，免得下一次把还原时的噪音算到下一组头上。候选一律由
+    `candidate_patches(start, …)` 重建（与调用方建候选同一条路），预览与应用的是同一份。"""
+    trials = 0
+    accepted: list[dict] = []
+    shed: list[str] = []
+
+    def cand_of(groups: list[dict]) -> list:
+        return candidate_patches(start, {"groups": groups, "unhandled": []}, manifest)[0]
+
+    def render(groups: list[dict]) -> set[str]:
+        nonlocal trials
+        if trials >= MAX_WARNING_TRIALS:
+            raise _TrialBudget
+        trials += 1
+        return warned(override(cand_of(groups))) - base_warned
+
+    render(accepted)  # 热 worker 此刻是整份候选：先放回起点，免得还原时的噪音算到第一组头上
+    for g in proposal["groups"]:
+        if not render([*accepted, g]):
+            accepted.append(g)
+            continue
+        render(accepted)  # 放回已收下的那份（它的 warning 不看）
+        kept: list[dict] = []
+        bad = False
+
+        def add(changes: list[dict]) -> None:
+            nonlocal bad
+            if not changes:
+                return
+            if not render([*accepted, {**g, "changes": [*kept, *changes]}]):
+                kept.extend(changes)
+                return
+            render([*accepted, {**g, "changes": list(kept)}] if kept else accepted)
+            if len(changes) == 1:
+                bad = True
+                return
+            mid = len(changes) // 2
+            add(changes[:mid])
+            add(changes[mid:])
+
+        if len(g["changes"]) == 1:
+            bad = True
+        else:
+            mid = len(g["changes"]) // 2
+            add(g["changes"][:mid])
+            add(g["changes"][mid:])
+        if kept:
+            accepted.append({**g, "changes": kept})
+        if bad:
+            shed.append(g["comment_id"])
+    unhandled = list(proposal["unhandled"])
+    for cid in shed:
+        item = {"comment_id": cid, "reason": "render_warning"}
+        if item not in unhandled:
+            unhandled.append(item)
+    return {**proposal, "groups": accepted, "unhandled": unhandled}, cand_of(accepted), shed
+
+
+def _with_carried(proposal: dict, carry: Callable[[dict], list[dict]] | None) -> dict:
+    if carry is None:
+        return proposal
+    return {"groups": carry(proposal) + proposal["groups"], "unhandled": proposal["unhandled"]}
+
+
 def realize(
     proposal: dict,
     cand: list,
@@ -1446,32 +1547,49 @@ def realize(
     snapshot: Callable[[list], tuple[bytes, dict]],
     revised: bool = False,
     on_render: Callable[[], None] | None = None,
+    carry: Callable[[dict], list[dict]] | None = None,
 ) -> tuple[list[dict], list[dict], bytes]:
     """候选 override → 真正生效的组 / 未处理 / 修改后的图（桌面端点与 Agent 插件 `suggest_plan` 共用这一份，ADR 0214 第 3 期）。
 
     `override(patches)` 在热 worker 上应用一份全量列表、回渲染回包（带 `warnings` / `manifest`）；`snapshot(patches)` 出 `(png, manifest)`。
-    候选比 B0 多出 warning → `PlanFailure(change_plan_render_failed)`；改完有元素新探出图幅时用 `make_room` 腾边距（提议里自己改了
+    `cand` = `candidate_patches(start, proposal, start_man)`。`carry`（批注重改）：给这一版的提议、回上一版要带过来的组（`carried_groups`），
+    它们的改动已在 `start` 里；没给 = 提议就是全部的组。
+    候选比 B0 多出 warning：`shed_warning_changes` 找出引起它的改动拿掉、对应意见记 `render_warning`，其余照常出卡；一条不剩（也没有带过来的组）
+    或试渲染到顶才 `PlanFailure(change_plan_render_failed, warning)`。改完有元素新探出图幅时用 `make_room` 腾边距（提议里自己改了
     `position` 的不替它改）。`revised`（续改）且候选与起点相同 = 不重渲染。第一次碰热 worker 前调 `on_render`（调用方据此记「要重放」）。"""
-    if change_count(proposal) == 0:
-        return [], proposal["unhandled"], before_png
+    full = _with_carried(proposal, carry)
+    if change_count(full) == 0:
+        return [], full["unhandled"], before_png
     if revised and cand == start:
-        groups, unhandled = effective_changes(before_man, start_man, proposal)
+        groups, unhandled = effective_changes(before_man, start_man, full)
         return attach_patches(groups, cand), unhandled, start_png
     if on_render is not None:
         on_render()
     base_warned = warned(override(base))  # 基线：B0 自己本来就有的 warning
-    cand_resp = override(cand)
+    new = warned(override(cand)) - base_warned
+    if new:
+        LOG.info("修改方案候选多出 %d 条 warning: %s", len(new), warning_digest(new))
+        try:
+            proposal, cand, shed = shed_warning_changes(
+                proposal, start, start_man, base_warned, override
+            )
+            # 收尾核一次：剩下的候选从已收下的那份状态起渲染，仍多出 warning（组合才出的）= 整张失败
+            left = warned(override(cand)) - base_warned
+        except _TrialBudget:
+            LOG.info("修改方案找 warning 来源的试渲染到顶（%d 次），整张不出", MAX_WARNING_TRIALS)
+            raise PlanFailure("change_plan_render_failed", "warning") from None
+        full = _with_carried(proposal, carry)
+        if left or change_count(full) == 0:
+            LOG.info("修改方案每组改动都引出 warning，整张不出: %s", warning_digest(left or new))
+            raise PlanFailure("change_plan_render_failed", "warning")
+        LOG.info("修改方案拿掉了引出 warning 的改动（意见 %s），其余照常出卡", ",".join(shed))
     after_png, after_man = snapshot(cand)
-    if warned(cand_resp) - base_warned:
-        raise PlanFailure("change_plan_render_failed", "warning")
-    groups, unhandled = effective_changes(before_man, after_man, proposal)
+    groups, unhandled = effective_changes(before_man, after_man, full)
     groups = attach_patches(groups, cand)
     # 改完有元素新探出图幅（对数轴刻度变宽把纵轴标题挤出去之类）：用现成的外边距重排腾地方，补出的 position 并进造成出界的那些组。
     # 提议自己提了 position 的（用户的意思在排版上）不替它改；补不下 / 没进步 / 有新 warning = 照常出卡
     if not any(
-        c["prop"] == "position" and not c.get("auto")
-        for g in proposal["groups"]
-        for c in g["changes"]
+        c["prop"] == "position" and not c.get("auto") for g in full["groups"] for c in g["changes"]
     ):
 
         def room_render(patches: list):
@@ -1482,7 +1600,7 @@ def realize(
         if room is not None:
             cand = room.candidate
             after_png, after_man = snapshot(cand)
-            groups, unhandled = effective_changes(before_man, after_man, proposal)
+            groups, unhandled = effective_changes(before_man, after_man, full)
             groups = attach_patches(groups, cand)
             groups = attach_room(groups, room, before_man, after_man)
     return groups, unhandled, after_png
@@ -2532,8 +2650,12 @@ def ask_model(
             aspect_ratios=standard_aspect_ratios(standard),
         ),
         selection,
+        # 批注重改（`previous` 给了）同助手来源的上限：批注常是「按期刊标准改字号」这类一句话改一片，DeepSeek 的思考 token 也算在输出里，
+        # 4,000 在真机上撞顶（`change_plan_too_large output`，2026-11-28）
         max_output_tokens=(
-            MODEL_MAX_OUTPUT_TOKENS_ASSISTANT if source == "assistant" else MODEL_MAX_OUTPUT_TOKENS
+            MODEL_MAX_OUTPUT_TOKENS_ASSISTANT
+            if source == "assistant" or previous is not None
+            else MODEL_MAX_OUTPUT_TOKENS
         ),
     )
     proposal = res

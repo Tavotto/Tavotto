@@ -1129,6 +1129,7 @@
       "hides_data": "That would hide part of the data, so nothing changed",
       "size_locked": "The figure size follows the journal column width, so nothing changed",
       "dense_curve": "This is a continuous curve; a marker on every point would blur it, so nothing changed",
+      "render_warning": "This change would break the figure, so it was left as is",
       "unclearAssistant": "The request wasn't specific enough, so nothing changed",
       "log_limit_declined": "Log axis limit left as it was; this one wasn't changed",
       "vector": {

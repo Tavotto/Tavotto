@@ -4259,6 +4259,8 @@ export type ChangePlanUnhandledReason =
   | 'merged_log'
   | 'hides_data'
   | 'size_locked' | 'dense_curve'
+  /** 这处改动渲染时引出了新的 warning，从候选里拿掉了（其余照常出卡） */
+  | 'render_warning'
   /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
   | 'log_limit_declined'
 

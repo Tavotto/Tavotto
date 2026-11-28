@@ -1087,6 +1087,7 @@
       "hides_data": "这样改会把数据藏起来，这次没动",
       "size_locked": "图幅受期刊栏宽约束，这次没动",
       "dense_curve": "这是连续曲线，逐点加标记会糊成一串，这次没动",
+      "render_warning": "这样改会让图出问题，这处没动",
       "unclearAssistant": "指令不够具体，这次没动",
       "log_limit_declined": "对数轴下限没改，这次没动",
       "vector": {

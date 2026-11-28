@@ -357,7 +357,9 @@ def test_a_new_warning_in_the_candidate_means_no_plan_and_the_worker_is_retired(
         and out["code"] == "change_plan_render_failed"
         and out["detail"] == "warning"
     )
-    assert [k for k, _ in worker.calls] == ["snap", "override", "override", "snap"]
+    # 唯一的一组、唯一的一条引出 warning：找来源的试渲染（放回起点 → 试这一组 → 放回 → 收尾核）之后整张不出，候选不出图
+    kinds = [k for k, _ in worker.calls]
+    assert kinds[:3] == ["snap", "override", "override"] and "snap" not in kinds[1:]
     assert len(retired) == 1 and out["replay_required"] is True  # 动过热态：作废、前端重放
     assert (
         client.get(f"/api/change-plans/{out['plan_id']}/before.png").status_code == 404

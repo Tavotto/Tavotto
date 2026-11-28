@@ -233,6 +233,7 @@ export default interface Resources {
         "not_editable": "这一项不能直接改，这次没动",
         "out_of_scope": "不在图内修改的范围，这次没动",
         "over_limit": "改动太多，这条没动",
+        "render_warning": "这样改会让图出问题，这处没动",
         "size_locked": "图幅受期刊栏宽约束，这次没动",
         "unclear": "意见不够具体，这次没动",
         "unclearAssistant": "指令不够具体，这次没动",
