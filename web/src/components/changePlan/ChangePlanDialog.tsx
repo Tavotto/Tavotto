@@ -303,7 +303,7 @@ export function ChangePlanDialog() {
           </div>
           {script && stage === 'script' && info ? (
             <div className="flex min-h-0 flex-1 flex-col px-5 pb-5" data-change-plan-script-diff>
-              <DiffView diff={info.diff} script={info.rel} fill />
+              <DiffView diff={info.diff} script={info.rel} variant="panel" />
             </div>
           ) : (
           revising ? (
