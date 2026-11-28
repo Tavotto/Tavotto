@@ -9,7 +9,7 @@ ggplot_minor_spacing <- function(view) {
   if (length(breaks) < 2L) return(NULL)
   step <- if (identical(view$scale$get_transformation()$name, "identity")) {
     stats::median(diff(breaks))
-  } else ggplot_log_locator_step(view, 10)
+  } else ggplot_transformed_locator_step(view, 10)
   list(step = if (is_positive_ggplot_number(step)) step)
 }
 

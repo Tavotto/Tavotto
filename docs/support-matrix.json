@@ -81,7 +81,7 @@
         "per-side font size of numeric axis tick groups on a supported single-panel plot",
         "shared palette and range of a supported linear or base-10 logarithmic colorbar and its mapped point, tile, rectangle or raster layers",
         "continuous colorbar direction and end extensions",
-        "fixed major tick positions and fixed major or minor tick intervals in data units on supported linear and base-10 logarithmic axes",
+        "fixed major tick positions and fixed major or minor tick intervals in data units on supported linear, logarithmic, symmetric logarithmic and logit axes",
         "verified source writeback of minor tick visibility, spacing and numeric formats on supported shared and independent axes",
         "exact continuous X and Y viewing limits with linear, base-10 logarithmic, symmetric logarithmic or logit projection for supported Cartesian layers",
         "verified source writeback of viewing limits, scale and reversal for independent supported facet axes",

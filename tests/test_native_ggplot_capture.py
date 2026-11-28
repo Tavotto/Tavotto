@@ -3989,6 +3989,33 @@ hidden <- positions(overlap, intervals)
 stopifnot(!axis_ink(adapter$render_ggplot(overlap, intervals), "#3366AA"),
           isTRUE(all.equal(hidden$grid, expected_minor)))
 
+verify_transformed_ticks <- function(transform, reference, range, points, steps, major, minor) {
+  data <- data.frame(x = points, y = seq_along(points))
+  plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+    ggplot2::scale_x_continuous(transform = transform) +
+    ggplot2::coord_cartesian(xlim = range, expand = FALSE) +
+    ggplot2::theme(axis.ticks.x.bottom = ggplot2::element_line(colour = "#228833"),
+                   axis.minor.ticks.x.bottom = ggplot2::element_line(colour = "#3366AA"),
+                   panel.grid.minor.x = ggplot2::element_line(colour = "#CC2266"))
+  state <- adapter$capture_ggplot(plot, frame)$state
+  stopifnot("step" %in% fields(state)$major_mode$options,
+            "step" %in% fields(state)$minor_mode$options)
+  edits <- stats::setNames(list(list(major_mode = "step", major_step = steps[[1L]],
+    minor_mode = "step", minor_step = steps[[2L]], minor_visible = TRUE)), gid)
+  observed <- positions(state, edits)
+  forward <- function(values) (reference(values) - reference(range[[1L]])) / diff(reference(range))
+  stopifnot(isTRUE(all.equal(observed$ticks[[1L]], forward(major))),
+            isTRUE(all.equal(observed$ticks[[2L]], forward(minor))),
+            isTRUE(all.equal(observed$grid, forward(minor))))
+}
+verify_transformed_ticks("logit", stats::qlogis, c(.05, .95), c(.07, .31, .53, .91),
+                         c(.2, .1), c(.2, .4, .6, .8), c(.1, .3, .5, .7, .9))
+signed_reference <- function(value) ifelse(abs(value) <= 2, value * 10 / 9,
+  sign(value) * (20 / 9 + 2 * log10(pmax(1, abs(value) / 2))))
+verify_transformed_ticks(adapter$ggplot_transform_symlog(), signed_reference, c(-200, 200),
+                         c(-100, -2, 0, 2, 100), c(100, 50),
+                         c(-200, -100, 0, 100, 200), c(-150, -50, 50, 150))
+
 # The four shared stroke controls use physical points, including native
 # inward ticks. Compare edited marks with an independently authored R theme.
 stroke_plot <- base + ggplot2::theme(axis.ticks.length.x.bottom = grid::unit(-4, "bigpts"),
@@ -7517,7 +7544,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-state.txt")
         assert status == 200 and receipt["ok"] and script.read_bytes() == authored
 
 
-@pytest.mark.parametrize("mode", ["single", "free-facet", "log10"])
+@pytest.mark.parametrize("mode", ["single", "free-facet", "log10", "logit", "symlog"])
 def test_native_r_minor_locators_reopen_and_restore_automatic_ticks(tmp_path, mode):
     from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
 
@@ -7527,11 +7554,30 @@ def test_native_r_minor_locators_reopen_and_restore_automatic_ticks(tmp_path, mo
     script = project / "Minor.R"
     facet = mode == "free-facet"
     facets = '+ ggplot2::facet_wrap(ggplot2::vars(panel), scales = "free_x")' if facet else ""
-    log_axis = "+ ggplot2::scale_x_log10(breaks = c(2, 10))" if mode == "log10" else ""
+    log_axis = {
+        "log10": "+ ggplot2::scale_x_log10(breaks = c(2, 10))",
+        "logit": (
+            '+ ggplot2::scale_x_continuous(transform = "logit", breaks = c(.1, .9))'
+            " + ggplot2::coord_cartesian(xlim = c(.05, .95), expand = FALSE)"
+        ),
+        "symlog": (
+            "+ ggplot2::scale_x_continuous(transform = ggplot_transform_symlog(), "
+            "breaks = c(-100, 0, 100))"
+            " + ggplot2::coord_cartesian(xlim = c(-120, 120), expand = FALSE)"
+        ),
+    }.get(mode, "")
+    bind_x = {"logit": "d$x <- d$x / 12", "symlog": "d$x <- (d$x - 6) * 25"}.get(mode, "")
+    prelude = (
+        ADAPTER.with_name("ggplot_transforms.R").read_text(encoding="utf-8")
+        if mode == "symlog"
+        else ""
+    )
     script.write_text(
         f"""\
+{prelude}
 d <- expand.grid(x = seq(2, 10, 2), panel = c("Early", "Late"))
 d$y <- 2 * d$x + as.integer(d$panel)
+{bind_x}
 plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, group = panel)) +
   ggplot2::geom_line(colour = "#36594E") + ggplot2::theme_bw() +
   ggplot2::theme(axis.text.x.bottom = ggplot2::element_text(colour = "#714715"),
@@ -7594,10 +7640,12 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         "minor_format": "%.2f",
     }
     reset = {"minor_mode": "auto", "minor_format": "none"}
-    if mode == "log10":
-        settings.update({"major_mode": "step", "major_step": 2})
+    intervals = {"log10": (2, 2.5), "logit": (0.2, 0.1), "symlog": (50, 25)}
+    if mode in intervals:
+        major_step, minor_step = intervals[mode]
+        settings.update({"major_mode": "step", "major_step": major_step, "minor_step": minor_step})
         reset["major_mode"] = "auto"
-    minor_label = "7.50" if mode == "log10" else "2.25"
+    minor_label = {"log10": "7.50", "logit": "0.30", "symlog": "25.00"}.get(mode, "2.25")
     with sidecar_app(project, tmp_path / "warm") as app:
         figure = _run_ggplot(app, script.name, rscript)
         starting = _render(app, figure, [])

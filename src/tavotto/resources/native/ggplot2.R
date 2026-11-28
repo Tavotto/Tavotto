@@ -247,7 +247,7 @@ ggplot_axis_spacing <- function(built, panel, params, values) {
   if (is.null(ggplot_axis_pair(sort(view$continuous_range)))) return(NULL)
   step <- if (identical(scale$get_transformation()$name, "identity") && length(values) >= 2L) {
     stats::median(diff(sort(values)))
-  } else ggplot_log_locator_step(view, 5)
+  } else ggplot_transformed_locator_step(view, 5)
   minor <- ggplot_minor_tick_defaults(built, params, panel, axis)
   list(axis = axis, step = if (is_positive_ggplot_number(step)) step, minor = minor)
 }

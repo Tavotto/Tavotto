@@ -4,12 +4,9 @@ ggplot_number_labels <- function(format, values) {
   sprintf(if (format == "sci") "%.2e" else format, values)
 }
 
-ggplot_log_locator_step <- function(view, intervals) {
-  transform <- view$scale$get_transformation()
-  if (identical(transform$name, "log-10")) {
-    limits <- transform$inverse(view$continuous_range)
-    if (all(is.finite(limits) & limits > 0)) diff(range(limits)) / intervals
-  }
+ggplot_transformed_locator_step <- function(view, intervals) {
+  limits <- view$scale$get_transformation()$inverse(view$continuous_range)
+  if (all(is.finite(limits))) diff(range(limits)) / intervals
 }
 
 ggplot_uniform_breaks <- function(range, step, kind = "major") {
