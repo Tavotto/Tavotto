@@ -603,6 +603,15 @@ cancelled, closed or failed send is never resumed on its own.
   (replies come back through the letter's own reply token), so the catalog's
   read records and your tips cannot be joined. The links do not appear with
   `TAVOTTO_NO_CONTACT=1` or `TAVOTTO_NO_JOURNAL_SYNC=1`.
+* **Crediting a tip.** On a wrong-entry or missing-journal tip you can tick
+  *Credit me in the catalog* (unticked by default; not offered for editor
+  wording, and agents cannot set it). If you do, the name you typed (1–32
+  characters) is sent with the tip and, once the maintainers accept the tip and
+  confirm the credit, is shown as *Tip from <name>* on the source card of the
+  entry it changed — **visible to every Tavotto user**. Leave it unticked and
+  no name is sent or shown. To have a credit removed, reply to the letter or
+  send a new one through *Contact the maker*; it disappears from the next
+  catalog release.
 * **No email program is involved.** The app never opens your mail program and
   contains no mail links; if sending fails it only offers *Copy content* and
   *Copy address* (`feedback@tavotto.com`) so you can decide how to send it.

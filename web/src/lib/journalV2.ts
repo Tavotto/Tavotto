@@ -25,6 +25,7 @@ import {
   type JournalSnapshot,
   type JournalSummary,
 } from '@/lib/journals'
+import { cleanCredit } from '@/lib/journalCredit'
 import { bindingFor, builtinEntryById, type JournalPrev, type JournalRef, type SpecBinding } from '@/lib/specBinding'
 import { currentLocale, t as translate } from '@/i18n'
 import type { FigureDocument } from '@/types/document'
@@ -62,6 +63,8 @@ export interface V2Patch {
   rules: Record<string, JournalRule>
   sources: Record<string, JournalSource>
   confirm: V2ConfirmRow[]
+  /** 署名（ADR 0213 三期）：`{事实 id: 称呼}`，引擎已验签并校验；这里渲染前再校验一遍。没有 / 取不到 = 空对象 */
+  thanks?: Record<string, string>
 }
 
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -100,7 +103,18 @@ function checkPatch(raw: unknown): V2Patch | null {
       /^https:\/\//.test(r.source.url) &&
       typeof r.source.retrieved === 'string',
   )
-  return { ...patch, confirm: rows }
+  return { ...patch, confirm: rows, thanks: cleanThanks(raw.thanks) }
+}
+
+/** 署名只是装饰：形状不对 = 没有；单条称呼不合规（同引擎 `clean_credit`）只丢那一条。 */
+function cleanThanks(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!isObj(raw)) return out
+  for (const [factId, name] of Object.entries(raw)) {
+    const clean = cleanCredit(name)
+    if (clean !== null) out[factId] = clean
+  }
+  return out
 }
 
 /** 取单刊 v2 的终态：`ready`（补丁可用）/ `quota`（每设备每小时额度用完）/ `offline`（其余一切：离线、被拒、开关关、补丁不合法） */
@@ -332,6 +346,7 @@ export function confirmEntries(row: V2ConfirmRow): [string, JournalFieldSource] 
     unset: false,
     quote: row.quote,
     src: `${V2_SOURCE_PREFIX}${row.id}`,
+    fact_id: row.id,
     rule_scope: 'journal',
     source_scope: 'journal',
     coverage: row.source.coverage ?? 'journal_specific',

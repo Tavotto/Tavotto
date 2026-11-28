@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { JOURNAL_ISSUES } from '@/lib/journalTip'
 import { useContactStore, validEmail } from '@/store/contactStore'
+import { CREDIT_MAX } from '@/lib/journalCredit'
 import { Button } from '../ui/Button'
+import { Checkbox } from '../ui/Checkbox'
 import { Dialog } from '../ui/Dialog'
 import { ICON_SIZE } from '../ui/Icon'
 import { ArrowUpRight } from '../ui/icons'
@@ -57,6 +59,7 @@ export function JournalTipDialog() {
   const urlId = useId()
   const nameId = useId()
   const emailId = useId()
+  const creditId = useId()
   const busy = phase === 'sending' || phase === 'cancelling' || phase === 'diag'
   const editable = !busy && phase !== 'done'
   const { dragging, handlers: dropHandlers } = useFileDrop(editable)
@@ -272,6 +275,34 @@ export function JournalTipDialog() {
           </p>
         )}
       </div>
+
+      {/* 署名（ADR 0213 三期）：默认不勾，勾了才出称呼框；编辑部原话（editor）不进目录，没有这一行。解释放 title，不堆字 */}
+      {!editor && (
+        <div className="flex flex-col gap-1.5" data-journal-tip-credit>
+          <label className="flex items-center gap-2 text-sm text-ink" title={jt('creditTitle')}>
+            <Checkbox
+              checked={draft.creditOn}
+              disabled={!editable}
+              onChange={(e) => s.setDraft({ creditOn: e.target.checked })}
+              data-journal-tip-credit-on
+            />
+            <span>{jt('credit')}</span>
+          </label>
+          {draft.creditOn && (
+            <TextInput
+              id={creditId}
+              aria-label={jt('creditInput')}
+              value={draft.credit}
+              maxLength={CREDIT_MAX}
+              placeholder={jt('creditPlaceholder')}
+              disabled={!editable}
+              autoFocus
+              onChange={(e) => s.setDraft({ credit: e.target.value.replace(/[\r\n]+/g, ' ') })}
+              data-journal-tip-credit-name
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 

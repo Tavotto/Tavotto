@@ -11,6 +11,7 @@ import { Popover } from '../ui/Popover'
 import { SUBTLE_LINK_CLASS } from '../ui/subtleLink'
 import type { JournalFieldSource } from '@/lib/journals'
 import { tipForSource } from '@/lib/journalTip'
+import { useJournalV2Store } from '@/store/journalV2Store'
 import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
 import {
   adviceSentence,
@@ -94,6 +95,22 @@ function SourceMeta({ source }: { source: JournalFieldSource }) {
           <span className="whitespace-nowrap">{part}{i < parts.length - 1 && ' ·'}</span>
         </Fragment>
       ))}
+    </p>
+  )
+}
+
+/**
+ * 「线索来自 <称呼>」（ADR 0213 三期）：只给 v2 事实，一行灰字。称呼是别的用户自填的文字，只当 React 文本节点画
+ * （绝不 innerHTML），引擎与 `journalV2.checkPatch` 已各校验过一遍。v1 条目、没有署名、取不到署名都不画。
+ */
+function SourceThanks({ source, journalId }: { source: JournalFieldSource; journalId?: string }) {
+  const name = useJournalV2Store((s) =>
+    journalId && source.fact_id ? s.byJournal[journalId]?.thanks?.[source.fact_id] : undefined,
+  )
+  if (!name || !isV2Source(source)) return null
+  return (
+    <p data-journal-thanks className="type-caption">
+      {jt('card.thanks', { name })}
     </p>
   )
 }
@@ -213,6 +230,7 @@ export function SourceCardBody({
                 <p className="type-caption">{jt('card.aria')} {index + 1}/{entries.length}</p>
                 <SourceMeta source={source} />
                 <SourceCoverage source={source} />
+                <SourceThanks source={source} journalId={journalId} />
               </div>
               <SourceLinks
                 source={source}
@@ -228,6 +246,7 @@ export function SourceCardBody({
           <p data-journal-sentence className="type-title">{conclusion}</p>
           {!multi && <SourceMeta source={entries[0][1]} />}
           {!multi && <SourceCoverage source={entries[0][1]} />}
+          {!multi && <SourceThanks source={entries[0][1]} journalId={journalId} />}
         </div>
         {!multi && <SourceLinks source={entries[0][1]} report={{ journal, journalId, path: entries[0][0] }} />}
       </div>
