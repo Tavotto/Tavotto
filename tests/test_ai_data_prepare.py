@@ -1443,3 +1443,56 @@ def test_content_of_an_unlisted_file_never_reaches_what_the_model_sees(proj):
     res, events, model, _ = drive(proj, turns)
     seen = " ".join(r.content for r in model.seen[-1])
     assert "not for the script" not in seen and "denied" in seen
+
+
+# --------------------------------------------------------------------------- 评审后补（Codex #2356）
+@pytest.mark.parametrize("name", ["password.txt", ".env", "id_rsa", "server.pem"])
+def test_a_credential_shaped_file_in_the_project_cannot_be_registered_as_a_source(proj, name):
+    """项目里长得像凭据的文件不能当数据源：登记了 `read_file` / `sample_file` 就会把原文发给模型（没有固定形状的口令脱敏认不出）。"""
+    secret = proj.root / "data" / name
+    secret.write_text("hunter2-not-a-token-shape\n", encoding="utf-8", newline="")
+    with pytest.raises(dp.PrepareError) as e:
+        dp.create_candidate(proj.root, f"data/{name}", sys.executable, sid="eeeeeeeeeeee")
+    assert e.value.code == "prepare_source_invalid"
+    assert not (dp.PREPARE_DIR / "eeeeeeeeeeee").exists()  # 失败不留目录
+    # 对照：同一个文件夹里的普通数据文件照常登记
+    ok = dp.create_candidate(proj.root, "data/other.txt", sys.executable, sid="ffffffffffff")
+    assert ok.source.label == "data/other.txt"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="建符号链接在 Windows 上要特权")
+def test_a_link_to_a_credential_shaped_file_cannot_be_registered_either(proj):
+    target = proj.root / "data" / "password.txt"
+    target.write_text("hunter2\n", encoding="utf-8", newline="")
+    link = proj.root / "data" / "readings.log"
+    link.symlink_to(target)
+    with pytest.raises(dp.PrepareError):
+        dp.create_candidate(proj.root, "data/readings.log", sys.executable, sid="eeeeeeeeeeee")
+
+
+def test_sample_determinism_runs_stop_when_the_budget_is_gone_instead_of_overrunning(
+    proj, monkeypatch
+):
+    """第一遍全量跑把墙钟用得差不多了：两遍样本复跑各自按**此刻**的剩余时间算，不够就 `no_time` 收场，不再起子进程。"""
+    monkeypatch.setattr(dp, "DETERMINISM_FULL_S", -1.0)
+    monkeypatch.setattr(dp, "SAMPLE_CHECK_BYTES", 120)
+    big = (
+        "\n".join(LINES + [f"{i / 10:.1f};{i:.2f};ok".replace(".", ",") for i in range(300)]) + "\n"
+    )
+    proj.raw.write_text(big, encoding="utf-8", newline="")
+    cand = dp.create_candidate(proj.root, "data/run1.log", sys.executable, sid="abababababab")
+    p = Proj(proj.root, proj.raw, cand)
+    cand.script.write_text(GOOD, encoding="utf-8", newline="")
+    left = iter([600.0, 16.0])  # check 开头够用；第一遍跑完只剩 16 s（减去 15 s 余量不足 5 s）
+    calls = []
+    real = dp.run_trial
+
+    def spy(*a, **kw):
+        calls.append(kw.get("sample_bytes"))
+        return real(*a, **kw)
+
+    monkeypatch.setattr(dp, "run_trial", spy)
+    ok, msg = hooks_of(p, remaining=lambda: next(left, 16.0)).check()
+    assert not ok and "no_time" in msg, msg
+    assert calls == [None], "只跑了全量那一遍；样本复跑一遍都没起"
+    assert cand.checked is None

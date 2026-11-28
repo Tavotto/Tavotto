@@ -306,6 +306,14 @@ def create_candidate(
         raise PrepareError("prepare_source_invalid", 400) from None
     if not stat.S_ISREG(st.st_mode) or st.st_size > SOURCE_MAX_BYTES:
         raise PrepareError("prepare_source_invalid", 400)
+    # 凭据硬拦（与 AI 读取范围同一套 `ReadScope`：凭据目录、`.env*` / `*.pem` / `id_*` / `password*` 这类文件名）：项目里的这种文件
+    # 也不能登记成数据源——登记了 `read_file` / `sample_file` 就会把原文发给模型，而 `scrub_secret_shapes` 认不出没有固定形状的口令（Codex #2356 P1）。
+    # 要的名字与链接指到的名字都看（`check` 词法与解析后各判一次）；「在主目录 / 项目之外」不是这里的事（项目可以在别的盘上）
+    scope = readscope.ReadScope(home=os.path.expanduser("~"), project_root=root)
+    if scope.check(
+        os.path.join(str(root), *label.split("/"))
+    ).reason == readscope.REASON_DENIED or scope.is_denied(str(real)):
+        raise PrepareError("prepare_source_invalid", 400)
     prune_expired()
     sid = sid or uuid.uuid4().hex[:12]
     cdir = PREPARE_DIR / _check_sid(sid)
@@ -863,14 +871,22 @@ class Checker:
         # 第二遍：确定性（不同的 PYTHONHASHSEED）。第一遍太慢（或文件很大）就在前缀样本上比两次
         if first.seconds > DETERMINISM_FULL_S and cand.source.size > SAMPLE_CHECK_BYTES:
             determinism = "sample_only"
-            a_run, b_run = (
-                run_trial(
-                    cand, timeout=max(FULL_RUN_MIN_S, min(room, 120.0)), hash_seed=seed,
-                    sample_bytes=SAMPLE_CHECK_BYTES, cancel=self.cancel,
-                )
-                for seed in (3, 4)
-            )  # fmt: skip
-            pair = (a_run, b_run)
+            # 每跑一遍之前都按**此刻**剩下的墙钟重算（第一遍可能已经把预算用得差不多了）：不够就收场，不超支（Codex #2356 P2）
+            runs = []
+            for seed in (3, 4):
+                room_s = self.remaining() - 15
+                if room_s < 5:
+                    return (
+                        False,
+                        "check failed (no_time): No time is left for the determinism runs.",
+                    )
+                runs.append(
+                    run_trial(
+                        cand, timeout=min(room_s, 120.0), hash_seed=seed,
+                        sample_bytes=SAMPLE_CHECK_BYTES, cancel=self.cancel,
+                    )
+                )  # fmt: skip
+            pair = tuple(runs)
         else:
             determinism = "full"
             room2 = self.remaining() - 15
