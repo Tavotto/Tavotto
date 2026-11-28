@@ -1,7 +1,7 @@
 # ADR 0218：期刊规范检查项清单——固定词表、来源事实挂靠、出版社模板层
 
 日期：2026-11-28 · 状态：**Proposed（只定契约与分期；维护者 2026-11-28 对 §一–§四「都按建议」）**
-**1.0 收敛纪律：§九 第 2 期起把 v2 数值接进已有求值器，会让预检多报警，属于判据路径改动；该期 PR 仍须维护者对那个 PR 当面点头。是否需要 1.0 豁免待维护者确认，确认前只合本 ADR 与第 1 期（不改判据）。**
+**1.0 收敛纪律：维护者 2026-11-28 15:20 给豁免（「豁免」），登记在 `docs/1.0-release-readiness.md` §1.8。§九 第 2 期起把 v2 数值接进已有求值器，属于判据路径改动，仍须维护者对每个 PR 当面点头。**
 相关：[0155 期刊标准库](0155-journal-catalog.md)（v1 覆盖、出处、「需要你确认」，§14 v2 折叠）、[0216 投稿核对](0216-submission-check.md)（一键改要结构化数值）、
 [0213 期刊线索](0213-journal-contributions.md)、[0029 Style / Spec 与规范快照](0029-style-spec-profiles.md)；
 `services/journal_catalog/FACTS-V2.md`、`src/tavotto/engine/journalfacts_fold.py`、`src/tavotto/engine/preflight.py` / `web/src/lib/preflight.ts`。
