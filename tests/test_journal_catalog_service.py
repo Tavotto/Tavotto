@@ -799,3 +799,28 @@ def test_index_count_does_not_wait_for_the_write_lock(svc, monkeypatch):
     assert _index_hits(s) == [(T0 // DAY, "v1", 1, 0)]  # 被跳过的那一次没有记
     call(s, "GET", "/index.signed.json")
     assert _index_hits(s) == [(T0 // DAY, "v1", 2, 0)]  # 锁放开后照常记
+
+
+# ---- 署名信封（ADR 0213 三期）：只在 v2，不计数、不要令牌，缺文件回 404 ----
+def _v2(s, method, route, inm=None):
+    h = {"if-none-match": inm} if inm else {}
+    return s.handle(method, core.PREFIX_V2 + route, "", h, "1.2.3.4")
+
+
+def test_thanks_envelope_only_on_v2(svc):
+    s, _ = svc
+    st, _, b = _v2(s, "GET", "/thanks.signed.json")
+    assert st == 404 and json.loads(b)["code"] == "thanks_unavailable"
+    d = s.config.data_dir / "v2"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "thanks.signed.json").write_bytes(b'{"alg":"ed25519","t":1}')
+    st, h, b = _v2(s, "GET", "/thanks.signed.json")
+    assert st == 200 and b == b'{"alg":"ed25519","t":1}'
+    hd = dict(h)
+    assert hd["Cache-Control"] == "public, max-age=300" and hd["ETag"]
+    st, _, b = _v2(s, "GET", "/thanks.signed.json", inm=hd["ETag"])
+    assert st == 304 and b == b""
+    assert _v2(s, "POST", "/thanks.signed.json")[0] == 405
+    # v1 没有这条路由，也不去读 v2 的文件
+    (s.config.data_dir / "thanks.signed.json").write_bytes(b"{}")
+    assert call(s, "GET", "/thanks.signed.json")[0] == 404
