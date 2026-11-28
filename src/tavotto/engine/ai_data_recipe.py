@@ -48,8 +48,12 @@ MAX_COMPOSITION_PARTS = 8
 MAX_TRAJECTORIES = 30
 #: 配方里的列数 / 层数 / 文字长度
 MAX_Y = adf.MAX_COLUMNS  # 配方 y 列数的硬上限 = 摘要的列数上限；各族更严的上限在 FamilySpec.y_max
-#: 用户 / 模型一次点名的纵轴列数上限（与宽表分支的「至多 3 个」同一个数）
-MULTI_Y_MAX = 3
+#: 用户 / 模型一次**点名**的纵轴列数上限（2026-11-28 维护者定：从 3 放到 8）。同一根轴上的线靠颜色分，与颜色分组同一个上限
+#: `MAX_GROUP_LEVELS`；调色板 `ai_data_template.PALETTE` 同日加到 8 种颜色（`tests/test_ai_data_multi_y_named.py` 看护两个上限都不超过它）。
+#: 规则**自己**默认选列时仍至多 `DEFAULT_MULTI_Y`，不变：没人点名就不往一张图上堆线
+MULTI_Y_MAX = MAX_GROUP_LEVELS
+#: 规则自己把宽表的几列一起当纵轴时的上限（更多就问）
+DEFAULT_MULTI_Y = 3
 #: 配方里「按类别用的整数编码列」至多几列：分组 + 分面 + 类别横轴
 MAX_NUMCAT = 3
 #: 「把这几列当分组」（`FigureRecipe.stack`，宽表转长表）至多几列。这里是**类别个数**（每列一组，进颜色分组 / 类别横轴），不是同一根轴上的几条线，
@@ -352,7 +356,7 @@ FAMILIES: dict[str, FamilySpec] = {
             x_required=True,
             y_types=("num",),
             y_min=1,
-            y_max=3,
+            y_max=MULTI_Y_MAX,
             marks=("line", "step", "band", "points", "errorbar", "fit_line", "hline_summary"),
             primary=("line", "step", "points"),
             unit="optional",
@@ -2413,7 +2417,7 @@ def _resolve_roles_raw(
         ys = [nums[0]]
     elif (
         wide_x is not None
-        and 2 <= len([c for c in nums if c != wide_x]) <= 3
+        and 2 <= len([c for c in nums if c != wide_x]) <= DEFAULT_MULTI_Y
         and not cats
         # 别的列是「块内递增、块间重置」的时间（个体 × 时间）：不是「第一列当横轴、其余都是系列」
         and not any(dz.get(c) == "block" for c in nums if c != wide_x)

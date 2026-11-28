@@ -1346,9 +1346,31 @@ RUNTIME_FUNCTIONS = (
 # =========================================================================== 样式（出处：出版规范 profile）
 #: Okabe & Ito（2008）的色盲安全分类色（公开发表的调色板，无许可证限制）；去掉对比弱的黄色。仓库里没有批准的分类色表
 #: （profile 推荐的 Crameri batlowS 不随 matplotlib 提供，装了才有）——要换由用户拍板。
-PALETTE = ("#0072B2", "#D55E00", "#009E73", "#E69F00", "#56B4E9", "#CC79A7", "#000000")
-LINESTYLES = ("-", "--", ":")  # 多个 y 列（分组时）的线型表
-#: 拟合线的专用线型：不在 `LINESTYLES` 里，保证「拟合线」与「第二个 y 的线」永不同形（两者同图出现时各有说明）
+#: 第 8 种是中性灰（2026-11-28 维护者同意加）：颜色分组与点名的多条线上限都是 8，只有 7 种颜色时第 8 个会与第 1 个同色。
+#: 加在**末尾**：前 7 个的顺序不变，已有的图重新生成颜色不变
+PALETTE = (
+    "#0072B2",
+    "#D55E00",
+    "#009E73",
+    "#E69F00",
+    "#56B4E9",
+    "#CC79A7",
+    "#000000",
+    "#7F7F7F",
+)
+LINESTYLES = (
+    "-",
+    "--",
+    ":",
+    (0, (6, 2)),  # 长划
+    (0, (4, 1.5, 1, 1.5, 1, 1.5)),  # 划－点－点
+    (0, (1, 1.25, 1, 3.25)),  # 双点
+    (0, (4, 1.5, 2, 1.5)),  # 长短交替
+    (0, (2, 3.5)),  # 疏短划
+)
+# 分组用颜色、测量列用线型；前 3 个线型保持不变，也不占用拟合线的点划线。
+assert len(set(LINESTYLES)) == len(LINESTYLES) >= recipe_mod.MULTI_Y_MAX
+#: 拟合线的专用线型，不与趋势数据线共用。
 FIT_LINESTYLE = "-."
 assert FIT_LINESTYLE not in LINESTYLES
 SUMMARY_TEXT = {
@@ -2080,6 +2102,10 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     if large:
         L.append(f"REDUCE = {large_spec(entry.summary, recipe)!r}")
     ylabel = ", ".join(adf.axis_label(y) for y in recipe.y)
+    extended_styles = bool(recipe.group) and len(recipe.y) > 3
+    styles = LINESTYLES if extended_styles else LINESTYLES[:3]
+    # 只延长扩展线型的图例示意，保证短图例也能展示虚线节奏。
+    handle_length = ", handlelength=3.5" if extended_styles else ""
     L += [
         f"X = {recipe.x!r}",
         f"YS = {list(recipe.y)!r}",
@@ -2092,7 +2118,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"YLABEL = {ylabel!r}",
         f"YLABELS = {[adf.axis_label(y) for y in recipe.y]!r}",
         f"PALETTE = {list(PALETTE)!r}",
-        f"LINESTYLES = {list(LINESTYLES)!r}",
+        f"LINESTYLES = {list(styles)!r}",
     ]
     if is_xlsx:
         reader = _xlsx_reader_expr(entry, "DATA", "SHEET")
@@ -2161,11 +2187,11 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         "    handles = [Patch(facecolor=PALETTE[i % len(PALETTE)], label=name) for i, name in enumerate(keys)]",
         "    if GROUP and len(YS) > 1:  # 线型按 y 列区分：图例里补「线型 ↔ y 列」",
         "        handles += [",
-        "            plt.Line2D([], [], color=PALETTE[-1], linestyle=LINESTYLES[i % len(LINESTYLES)], label=name)",
+        '            plt.Line2D([], [], color="#000000", linestyle=LINESTYLES[i % len(LINESTYLES)], label=name)',
         "            for i, name in enumerate(YLABELS)",
         "        ]",
         "    if handles:",
-        f"        axes[0][0].legend(handles=handles, frameon={bool(style['legend_frame'])!r})",
+        f"        axes[0][0].legend(handles=handles, frameon={bool(style['legend_frame'])!r}{handle_length})",
     ]
     L += _footer(recipe, style)
     L += [

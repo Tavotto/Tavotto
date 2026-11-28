@@ -214,7 +214,9 @@ def test_multi_y_validation(tmp_path):
     assert ("roles_invalid", "err") in problems(y=["a_mean"])  # 个数与 y 对不上
     assert ("summary_missing", "err_kind") in problems(err_kind="sd")  # 写法与 err 不一致
     assert ("roles_invalid", "err") in problems(family="comparison", x="time")  # 多个 y 只有趋势类
-    for bad in ({"err": ["a_sd"]}, {"err": ["a", "b", "c", "d"]}, {"err_kind": ["sd"]}):
+    # 个数上限 = 点名的多列纵轴上限（`MULTI_Y_MAX`，2026-11-28 起是 8）：超过一个就不是合法写法
+    too_many = [f"c{i}" for i in range(R.MULTI_Y_MAX + 1)]
+    for bad in ({"err": ["a_sd"]}, {"err": too_many}, {"err_kind": ["sd"]}):
         with pytest.raises(R.RecipeError):
             R.FigureRecipe.from_dict(
                 {
