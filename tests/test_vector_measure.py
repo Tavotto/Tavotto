@@ -127,19 +127,21 @@ def _measure_threads():
     ]
 
 
-def test_close_stops_the_pool_workers_so_no_non_daemon_thread_outlives_the_plan():
-    """`bounded` 起的线程池 worker 是非 daemon 线程；不 `close` 就一直活到池被 GC，
-    pytest 会话末尾的 conftest 线程门禁据此判红（CI 上「摘要全绿、退出码 1」）。"""
+def test_a_finished_measure_leaves_no_thread_and_close_is_a_safe_no_op():
+    """量线程不再是池里常驻的非 daemon worker：一次量做完线程即退，**不靠** `close` 收；
+    `close` 钩子保留给调用方（`vectormeasure.close(measure)`），重复调用不抛。"""
     before = set(_measure_threads())
     m = _bounded(lambda p, r: OK)
     m(PANEL, [])
-    mine = [t for t in _measure_threads() if t not in before]
-    assert mine, "测试前提：量过一次后池里有 worker"
-    vm.close(m)
     deadline = time.monotonic() + 5
-    while any(t.is_alive() for t in mine) and time.monotonic() < deadline:
+    while (
+        any(t not in before and t.is_alive() for t in _measure_threads())
+        and time.monotonic() < deadline
+    ):
         time.sleep(0.01)
-    assert not any(t.is_alive() for t in mine)
+    assert not [t for t in _measure_threads() if t not in before and t.is_alive()]
+    assert all(t.daemon for t in _measure_threads() if t not in before)
+    vm.close(m)
     vm.close(m)  # 重复收不抛
 
 
