@@ -1,7 +1,7 @@
 # ADR 0221：内置修复 Agent 修环境——看得见自检、认得已知问题、查得到包事实、以真实运行为准
 
 日期：2026-11-28 · 状态：**Proposed（定契约与分期；实现见 §八）**
-**1.0 收敛纪律：§一 §二 §五 §六 属 correctness（让已有修复会话不再在 Tavotto 自身缺陷上空转）；§三 §四 扩大修复能力，维护者 2026-11-28 立项（「这些都开始做」），豁免待登记 `docs/1.0-release-readiness.md` §1.8。**
+**1.0 收敛纪律：§一 §二 §五 §六 属 correctness（让已有修复会话不再在 Tavotto 自身缺陷上空转）；§三 §四 扩大修复能力；维护者 2026-11-28 立项（「这些都开始做」）并给豁免（「全部都豁免」，六项全部），登记在 `docs/1.0-release-readiness.md` §1.8。**
 相关：[0149 AI 修复工具箱](0149-fix-toolbox.md)（注册表、档位、读取范围、审计）、[0147 内置执行器](0147-builtin-agent-runner.md)、
 [0019 受控依赖修复](0019-controlled-dependency-repair.md)（「pip exit 0 ≠ 修好」、自检不过不切 active）、[0141 写入绊线](0141-mcp-write-root-tripwire.md)；
 `docs/rules/backend/dependency-repair-and-packages.md`、`docs/rules/backend/ai-agent-bridge.md`、`docs/rules/backend/diagnostics.md`；PR #2370（自检布局 + 被拦操作进诊断包）。
