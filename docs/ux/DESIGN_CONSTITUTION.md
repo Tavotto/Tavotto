@@ -270,6 +270,15 @@ Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，�
 （点按钮 / 指针进按钮 / 调用方显式 `playIn` 的状态出现），`prefers-reduced-motion` 下不播。按钮里没有自己点按动作的图标，点的时候整枚轻按一下（缩到 0.84 弹回，260ms）。关键帧只在 `icons/motion.css`，
 `icons/motion.test.tsx` 守着登记表与关键帧同源。
 
+**激活码胶囊与激活礼花是登记豁免**（维护者 2026-11-28 拍板；学 sucodee「Code Input」的设计语言）：`license/CodeCapsule`
+（Pro 页「通行证」那一行下面）可以超出上面三条形态——形态之间模糊交叉淡化（blur 6px）、字从下面带 3px 模糊落进格子、
+光标框在格子间滑（`--ease-spring`）、「激活码不对」整条左右抖一下（420ms，只有这一个失败码抖；别的失败不抖、码留着）；
+激活成功变成中性胶囊 + 钛色切面星「已激活 Pro」，并从胶囊撒一小捧礼花（`license/burst.ts`，手写 canvas、经 `lib/motion.tween`、
+`BURST_MS` 950ms、颜色只取 `--color-pro-ti-*` 与 `ink-faint`，不加动效依赖）；左轨的星在这次会话里刚点亮时整颗转一圈。
+前提：都跟着用户动作走、一次性（只有光标闪烁与「正在验证」的转圈 / shimmer 循环），礼花只在**这一次** `activate()` 成功时放
+（载入已激活、刷新、续费都不放），`prefers-reduced-motion` 下不模糊、不抖、不滑、不出粒子、状态直接换。关键帧与超出 token 的
+三个时长（抖动 420ms、光标闪烁 1.06s、礼花 950ms）只在 `license/codeCapsule.css` / `burst.ts`，别处不许照抄。
+
 **跟随选中项滑动的指示物用 `--ease-snap`**（2026-10-15）：Segmented 的 thumb 与 Tabs 的下划线 = `duration-base ease-snap`，
 `cubic-bezier(0.32, 0.72, 0, 1)`，不过冲、终点 y = 1；JS 侧同一份是 `lib/motion.ts` 的 `EASE_SNAP`（`motion.test` 逐字节看护）。
 

@@ -3715,6 +3715,7 @@ export default interface Resources {
           "renewed": "我已续费",
           "retry": "再试一次"
         },
+        "activated": "已激活 {{pro}}",
         "codeLabel": "激活码",
         "failure": {
           "client_error": "没能完成，请稍后再试",
@@ -3750,7 +3751,8 @@ export default interface Resources {
           "lapsed": "需要联网确认一下授权",
           "revoked": "这份授权已失效"
         },
-        "until": "有效期至 {{date}}"
+        "until": "有效期至 {{date}}",
+        "verifying": "正在验证"
       },
       "navGroup": {
         "general": "应用",

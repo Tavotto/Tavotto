@@ -1,5 +1,5 @@
 /**
- * 设置 › 关于与更新里的授权行（ADR 0193 §八）：入口没开整块不渲染；未激活 → 输入框 → 激活；失败一句话 + 一颗按钮。
+ * 设置 › 关于与更新里的授权行（ADR 0193 §八）：入口没开整块不渲染；未激活 → 激活码胶囊（2026-11-28）→ 激活；失败一句话 + 一颗按钮。
  * 主语：`[data-license-state]` / `[data-license-action]` / `[data-license-input]`，不认文案。
  */
 import { act } from 'react'
@@ -31,6 +31,19 @@ async function render(ui = <LicenseRow />) {
   await act(async () => root.render(<TooltipProvider>{ui}</TooltipProvider>))
 }
 const q = (sel: string) => document.querySelector<HTMLElement>(sel)
+const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+async function typeCode(raw: string) {
+  const input = q('[data-license-input]') as HTMLInputElement
+  await act(async () => {
+    setter.call(input, raw)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+async function pressEnter() {
+  await act(async () => {
+    q('[data-license-input]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  })
+}
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -54,20 +67,64 @@ describe('授权行', () => {
     vi.stubGlobal('fetch', fetchMock)
     await render()
     expect(q('[data-license-state]')?.dataset.licenseState).toBe('none')
+    expect(q('[data-license-input]')).toBeNull()
     await act(async () => q('[data-license-action="enter"]')!.click())
-    const input = q('[data-license-input]') as HTMLInputElement
-    expect(input).not.toBeNull()
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-    await act(async () => {
-      setter.call(input, 'TVK-AAAA-BBBB-CCCC')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () => q('[data-license-action="activate"]')!.click())
+    expect(q('[data-license-input]')).not.toBeNull()
+    // 粘贴进来带前缀、短横、小写都认；交给 activate() 的是标准写法
+    await typeCode(' tvk-aaaa-bbbb-cccc ')
+    expect((q('[data-license-input]') as HTMLInputElement).value).toBe('AAAABBBBCCCC')
+    await pressEnter()
     const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('/api/license/activate'))!
     expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({ code: 'TVK-AAAA-BBBB-CCCC' })
     expect(q('[data-license-state]')?.dataset.licenseState).toBe('active')
     expect(q('[data-license-line]')?.textContent).toContain('m***@gmail.com')
     expect(q('[data-license-action="release"]')).not.toBeNull()
+    // 这一次激活成功：胶囊停在「已激活」上（随后收起）
+    expect(q('[data-license-capsule]')?.dataset.licenseCapsule).toBe('done')
+  })
+
+  it('填满 12 位自动提交一次；没改码不重复提交', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn((u: string) => (u.includes('/activate') ? json({ ok: false, error: 'invalid_code' }, 400) : json(NONE)))
+      vi.stubGlobal('fetch', fetchMock)
+      await render()
+      await act(async () => q('[data-license-action="enter"]')!.click())
+      await typeCode('AAAABBBBCCC')
+      await act(async () => vi.advanceTimersByTime(1000))
+      const activations = () => fetchMock.mock.calls.filter((c) => String(c[0]).includes('/activate')).length
+      expect(activations()).toBe(0)
+      await typeCode('AAAABBBBCCCD')
+      await act(async () => vi.advanceTimersByTime(1000))
+      expect(activations()).toBe(1)
+      expect(q('[data-license-state]')?.dataset.licenseState).toBe('failed:invalid_code')
+      // 码不对：格子染危险色，回到输入态，不自动再提交
+      expect(q('[data-license-capsule]')?.dataset.licenseCapsule).toBe('entry')
+      expect(q('[data-license-capsule]')?.hasAttribute('data-bad')).toBe(true)
+      await act(async () => vi.advanceTimersByTime(2000))
+      expect(activations()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('autoEnter（从 Pro 入口进来）：没激活就直接展开格子；已激活不展开', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('fetch', vi.fn(() => json(NONE)))
+      await render(<LicenseRow autoEnter />)
+      expect(q('[data-license-input]')).toBeNull()
+      await act(async () => vi.advanceTimersByTime(400))
+      expect(q('[data-license-input]')).not.toBeNull()
+      await act(async () => root.unmount())
+      useLicenseStore.setState(useLicenseStore.getInitialState())
+      vi.stubGlobal('fetch', vi.fn(() => json(ACTIVE)))
+      await render(<LicenseRow autoEnter />)
+      await act(async () => vi.advanceTimersByTime(400))
+      expect(q('[data-license-capsule]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('购买：只在系统浏览器打开官网价格页，不调 checkout', async () => {
@@ -82,22 +139,20 @@ describe('授权行', () => {
     expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/checkout'))).toBe(false)
   })
 
-  it('device_limit：一句话，输入态按钮保持「激活」，不弹窗', async () => {
+  it('device_limit：一句话 + 一颗「再试一次」（用格子里的码重提），不弹窗', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((u: string) => (u.includes('/activate') ? json({ ok: false, error: 'device_limit' }, 409) : json(NONE))),
     )
     await render()
     await act(async () => q('[data-license-action="enter"]')!.click())
-    const input = q('[data-license-input]') as HTMLInputElement
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-    await act(async () => {
-      setter.call(input, 'TVK-AAAA-BBBB-CCCC')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () => q('[data-license-action="activate"]')!.click())
+    await typeCode('TVK-AAAA-BBBB-CCCC')
+    await pressEnter()
     expect(q('[data-license-state]')?.dataset.licenseState).toBe('failed:device_limit')
-    expect(q('[data-license-action="activate"]')).not.toBeNull()
+    // 不是码的错：不染色，码留着
+    expect(q('[data-license-capsule]')?.hasAttribute('data-bad')).toBe(false)
+    expect((q('[data-license-input]') as HTMLInputElement).value).toBe('AAAABBBBCCCC')
+    expect(q('[data-license-action="retry"]')).not.toBeNull()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 
