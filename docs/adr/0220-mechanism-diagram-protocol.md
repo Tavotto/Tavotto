@@ -147,7 +147,7 @@ sidecar 只收「几何结构 + 毫米尺寸 + 短号」；节点 / 边 / 区带
 | 6.A | 路径质量核对 `engine/pathquality` | 另一分支；`mechcheck` 里留接口，未合入时列 unknown |
 | **6.B** | **本 ADR + 骨架**：功能键、`engine/mechanism.py`、`pro_required`、`frame`、命名分组、可编辑性核对、`pro_echo` 假图元、插件工具认三种 `kind` | 本期 |
 | 6.C | pro 仓库：`mechanism.catalog / glyph` + `membrane`、`receptor_rtk`、黄金向量、`GATED` 登记 | 闭源 |
-| 6.D | 最小端到端演示（不含 `graph`）+ 评测第一轮 | |
+| 6.D | 最小端到端演示（不含 `graph`）+ 评测第一轮 | 本地已做：同批免费条目可用 `item` 锚点贴框 / 图元、含机理图条目的 `add` 放宽到 24 条、`bad_item` 点名参数与范围、`ITEMS_DOC` 列图元与参数、插件 `references/mechanism-diagram.md`；评测 `scripts/eval/mechanism/`（接线 / 判据自检已跑，真模型未跑） |
 | 6.E / 6.F | 其余图元 / `graph` 协议与布局 | |
 | 6.G / 6.H / 6.I | 属性栏重生成与「已手动修改」提示 / `sciviz_guidance` 条目与 SBGN 来源登记 / 改图助手接三种 `kind` | 桌面改图助手这一版遇到三种 `kind` 会把该条丢进 `unhandled`（不崩） |
 

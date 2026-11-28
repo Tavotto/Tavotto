@@ -1283,7 +1283,7 @@ def test_converging_proteins_on_a_downward_curved_membrane_are_refused_when_thei
     同样的距离在直膜与向上凸（发散）上没有问题。"""
     with pytest.raises(mechanism.MechanismError) as e:
         _two_dimers(-0.35, 40.0, 13.5)
-    assert e.value.code == "bad_item" and e.value.field == "r1"
+    assert e.value.code == "bad_item" and e.value.field.startswith("r1: overlaps")
     assert len(_two_dimers(0.35, 40.0, 13.5).objects) >= 3
     assert len(_two_dimers(0.0, 40.0, 13.5).objects) >= 3
     assert len(_two_dimers(-0.35, 40.0, 15.0).objects) >= 3  # 拉开一点就放得下（或把膜拉长）
@@ -1601,3 +1601,227 @@ def test_local_stretch_near_45_degrees_uses_the_tangent_at_the_insertion_point(l
     assert ins["width_mm"] * k_local == pytest.approx(tm_w, rel=0.03)
     k_avg = _m.sqrt((sx) ** 2 + (sy) ** 2) / 1.0  # 粗略的平均量级，仅用来说明两者不同
     assert abs(ins["width_mm"] * k_avg - tm_w) > 0.05 * tm_w
+
+
+# ---- 6.D：Agent 端到端——工具说明里认得的图元与参数，必须与真组件的 catalog 一致 ----
+def test_items_doc_names_every_kind_and_param_of_the_real_catalog():
+    cat = json.loads((Path(__file__).parent / "fixtures" / "pro_catalog.json").read_text("utf-8"))[
+        "catalog"
+    ]
+    doc = mechanism.ITEMS_DOC
+    for kind in cat["kinds"]:
+        assert kind["kind"] in doc, kind["kind"]
+        for p in kind["params"]:
+            assert p["name"] in doc, (kind["kind"], p["name"])
+            if p["type"] == "number":
+                lo, hi = p["min"], p["max"]
+                assert (f"{lo:g}" in doc.replace("−", "-")) and (f"{hi:g}" in doc), (
+                    p["name"],
+                    lo,
+                    hi,
+                )
+
+
+def test_bad_item_says_which_param_and_what_range_is_allowed(lic):
+    mem = {
+        "kind": "glyph",
+        "name": "mem",
+        "glyph": "membrane",
+        "at_mm": [10, 30],
+        "params": {"curvature": 0.9},
+    }
+    with pytest.raises(mechanism.MechanismError) as e:
+        mechanism.prepare([mem], ask=_real_ask())
+    assert e.value.field == "mem: param curvature range -0.35..0.35"
+    bad_kind = {**mem, "glyph": "nope", "params": {}}
+    with pytest.raises(mechanism.MechanismError) as e2:
+        mechanism.prepare([bad_kind], ask=_real_ask())
+    assert "glyph unknown" in e2.value.field and "membrane" in e2.value.field
+    unknown = {**mem, "params": {"colour": 1}}
+    with pytest.raises(mechanism.MechanismError) as e3:
+        mechanism.prepare([unknown], ask=_real_ask())
+    assert "param colour unknown (allowed:" in e3.value.field and "curvature" in e3.value.field
+
+
+# ---- 6.D：免费条目贴着机理图条目放（item 锚点）、含机理图条目的 add 上限 ----
+def _anc(name, point, off=(0, 0)):
+    return {"anchor": {"item": {"name": name, "point": point}}, "offset_mm": list(off)}
+
+
+def _mech_batch(extra=()):
+    return [
+        {"kind": "frame", "name": "frm", "title": "t", "at_mm": [2, 2], "size_mm": [70, 60]},
+        {**MEMBRANE, "name": "mem", "frame": "frm", "at_mm": [10, 30], "block": "细胞膜"},
+        {
+            "kind": "glyph",
+            "name": "r1",
+            "glyph": "receptor_rtk",
+            "frame": "frm",
+            "block": "细胞膜",
+            "embed": {"membrane": "mem"},
+            "params": {"dimer": False},
+        },
+        *extra,
+    ]
+
+
+def _plan_real(items):
+    return ve.propose_memory(
+        _canvas(), [_add(*items)], context={"mechanism_ask": _real_ask(), "locale": "zh"}
+    )
+
+
+def test_free_items_can_anchor_on_a_glyph_and_on_the_frame(lic):
+    items = _mech_batch(
+        [
+            {"kind": "shape", "name": "lig", "shape": "ellipse", "at": _anc("r1", "n", (0, -6)),
+             "size_mm": [4, 4], "attach": "center", "frame": "frm"},
+            {"kind": "arrow", "name": "bind", "from": _anc("lig", "s"), "to": _anc("r1", "n"),
+             "frame": "frm"},
+            {"kind": "text", "name": "t_f", "text": "框", "at": _anc("frm", "nw", (1, 1)),
+             "attach": "nw", "frame": "frm"},
+        ]
+    )  # fmt: skip
+    res = _plan_real(items)
+    assert res["ok"], res
+    by = {o.get("name"): o for o in res["objects"]}
+    rec = next(o for o in res["objects"] if str(o.get("name", "")).startswith("受体"))
+    lig = next(o for o in res["objects"] if o.get("name") == "形状 · lig")
+    # 配体中心在受体顶边上方 6 mm、水平对齐受体中心
+    assert abs((lig["x"] + lig["w"] / 2) - (rec["x"] + rec["w"] / 2)) < 0.05
+    assert abs((lig["y"] + lig["h"] / 2) - (rec["y"] - 6)) < 0.05
+    assert by  # 有对象
+
+
+def test_a_free_item_may_not_reuse_a_glyph_name(lic):
+    items = _mech_batch(
+        [
+            {
+                "kind": "shape",
+                "name": "r1",
+                "shape": "ellipse",
+                "at": _anc("r1", "n"),
+                "size_mm": [2, 2],
+                "frame": "frm",
+            }
+        ]
+    )
+    res = _plan_real(items)
+    assert res["ok"] is False and res["errors"][0]["code"] == "duplicate_name"
+
+
+def test_anchoring_on_an_unknown_item_is_still_unknown_ref(lic):
+    items = _mech_batch(
+        [{"kind": "text", "name": "t", "text": "x", "at": _anc("zzz", "n"), "frame": "frm"}]
+    )
+    assert _plan_real(items)["errors"][0]["code"] == "unknown_ref"
+
+
+def test_add_size_caps_are_12_for_free_only_and_24_with_mechanism_items(lic):
+    free = [
+        {
+            "kind": "text",
+            "name": f"t{i}",
+            "text": "x",
+            "at": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [i, 0]},
+        }
+        for i in range(13)
+    ]
+    res = ve.propose_memory(_canvas(), [_add(*free)])
+    assert res["ok"] is False and res["errors"][0] == {
+        "code": "bad_op",
+        "index": 0,
+        "field": "items: at most 12 per add",
+    }
+    many = _mech_batch(
+        [
+            {
+                "kind": "text",
+                "name": f"t{i}",
+                "text": "x",
+                "at": _anc("frm", "nw", (1 + 3 * i, 1)),
+                "attach": "nw",
+                "frame": "frm",
+            }
+            for i in range(21)
+        ]
+    )
+    assert len(many) == 24 and "at most" not in str(_plan_real(many).get("errors"))
+    res = _plan_real(
+        [
+            *many,
+            {"kind": "text", "name": "t_x", "text": "x", "at": _anc("frm", "nw"), "frame": "frm"},
+        ]
+    )
+    assert res["errors"][0]["field"] == "items: at most 24 per add"
+
+
+def test_anchor_boxes_use_the_rotated_extent_and_the_explicit_name_map():
+    from types import SimpleNamespace
+
+    objs = [
+        {"id": "r", "x": 10.0, "y": 0.0, "w": 4.0, "h": 20.0, "rotationDeg": 90.0},
+        {"id": "m__core", "x": 0, "y": 0, "w": 5, "h": 5},
+        {"id": "frm__box", "x": 1.0, "y": 2.0, "w": 30.0, "h": 40.0},
+    ]
+    prep = SimpleNamespace(objects=objs, anchor_ids={"r": "r", "frm": "frm__box", "m": "m"})
+    boxes = mechanism.anchor_boxes(prep)
+    assert set(boxes) == {"r", "frm"}  # 底带没有条目名；`m` 的对象不在表里就不出
+    x, y, w, h = boxes["r"]  # 竖条绕中心转 90° → 横条（中心 (12, 10) 不变）
+    assert (round(x, 6), round(y, 6), round(w, 6), round(h, 6)) == (2.0, 8.0, 20.0, 4.0)
+    assert boxes["frm"] == (1.0, 2.0, 30.0, 40.0)
+
+
+def test_item_names_may_not_collide_with_host_made_object_ids(lic):
+    """Codex #2388 P1：真图元名叫 `r` 与 `r__box`、或以 `__core` 结尾时，不许悄悄覆盖 / 漏掉锚点——条目名直接拒收这两个后缀。"""
+    for bad in ("r__box", "x__core"):
+        items = _mech_batch(
+            [
+                {
+                    "kind": "glyph",
+                    "name": bad,
+                    "glyph": "receptor_rtk",
+                    "frame": "frm",
+                    "block": "细胞膜",
+                    "embed": {"membrane": "mem"},
+                }
+            ]
+        )
+        res = _plan_real(items)
+        assert res["ok"] is False and res["errors"][0]["code"] == "bad_item", bad
+        assert "__box or __core" in res["errors"][0]["field"]
+    frame_named = _mech_batch()
+    frame_named[0] = {**frame_named[0], "name": "f__box"}
+    assert _plan_real(frame_named)["errors"][0]["code"] == "bad_item"
+
+
+def test_every_mechanism_item_is_anchorable_by_its_own_name(lic):
+    items = _mech_batch(
+        [
+            {
+                "kind": "text",
+                "name": "t_f",
+                "text": "框",
+                "at": _anc("frm", "nw", (1, 1)),
+                "attach": "nw",
+                "frame": "frm",
+            },
+            {
+                "kind": "text",
+                "name": "t_r",
+                "text": "受",
+                "at": _anc("r1", "ne", (1, 0)),
+                "attach": "w",
+                "frame": "frm",
+            },
+            {
+                "kind": "text",
+                "name": "t_m",
+                "text": "膜",
+                "at": _anc("mem", "sw", (0, 2)),
+                "attach": "nw",
+                "frame": "frm",
+            },
+        ]
+    )
+    assert _plan_real(items)["ok"]

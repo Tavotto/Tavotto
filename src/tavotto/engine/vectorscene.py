@@ -642,8 +642,11 @@ def solve(
     measure=_measure_text_mm,
     fingerprint: str | None = None,
     page: dict | None = None,
+    known_items: dict | None = None,
 ) -> dict:
     """场景描述 → 文档对象（局部 id = 元素名）+ 锚点记录。整批要么全解出、要么全拒（`ok` 为假时 `objects` 为空）。
+    `known_items`：同一批里**别处**（机理图的框 / 图元）已经落位的条目 `{名字: (x, y, w, h)}`，免费条目可以用 `item` 锚点贴上去；
+    名字不许与本批免费条目重名。
 
     `panels`：子图 id → `{"panel": PanelObject, "draw_manifest": …, "requests": [...], "data_points": [...]}`
     （`requests` 与 `data_points` 一一对应，来自同一次 `export(..., data_points=requests)`）。
@@ -665,6 +668,7 @@ def solve(
             "anchors": [],
             "errors": [SceneError("bad_item").as_dict()],
         }
+    ctx.items.update({k: tuple(v) for k, v in (known_items or {}).items()})
     objects: list[dict] = []
     anchors: list[dict] = []
     fits: list[dict] = []
@@ -674,7 +678,7 @@ def solve(
             name = it.get("name") if isinstance(it, dict) else None
             if not isinstance(name, str) or not name:
                 raise SceneError("bad_item", None, "name")
-            if name in seen:
+            if name in seen or name in (known_items or {}):
                 raise SceneError("duplicate_name", name)
             seen.add(name)
             kind = it.get("kind")

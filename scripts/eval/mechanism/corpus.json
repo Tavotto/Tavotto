@@ -1,0 +1,924 @@
+{
+ "version": 1,
+ "canvas": {
+  "id": "c_main0001",
+  "name": "图版 1",
+  "page": {
+   "w": 150,
+   "h": 100
+  },
+  "objects": [
+   {
+    "id": "t_user0001",
+    "type": "text",
+    "x": 2.0,
+    "y": 1.0,
+    "w": 10.0,
+    "h": 4.0,
+    "text": "Fig. 1"
+   }
+  ]
+ },
+ "tasks": [
+  {
+   "id": "single-receptor",
+   "instruction": "在图旁边画一个受体插在细胞膜上，标出「受体」和「细胞膜」。",
+   "reference": [
+    {
+     "kind": "frame",
+     "name": "frm",
+     "title": "受体与细胞膜",
+     "at_mm": [
+      5,
+      18
+     ],
+     "size_mm": [
+      72,
+      50
+     ]
+    },
+    {
+     "kind": "glyph",
+     "name": "mem",
+     "glyph": "membrane",
+     "frame": "frm",
+     "block": "细胞膜",
+     "at_mm": [
+      12,
+      45
+     ],
+     "identity": "质膜",
+     "params": {
+      "length_mm": 58
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r1",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {
+      "dimer": false
+     }
+    },
+    {
+     "kind": "text",
+     "name": "t_rec",
+     "text": "受体",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "ne"
+       }
+      },
+      "offset_mm": [
+       1,
+       4
+      ]
+     },
+     "attach": "w",
+     "frame": "frm",
+     "sizePt": 7
+    },
+    {
+     "kind": "text",
+     "name": "t_mem",
+     "text": "细胞膜",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "mem",
+        "point": "sw"
+       }
+      },
+      "offset_mm": [
+       0,
+       3
+      ]
+     },
+     "attach": "nw",
+     "frame": "frm",
+     "sizePt": 7
+    }
+   ],
+   "predicates": [
+    {
+     "t": "counts",
+     "frames": 1,
+     "membranes": 1,
+     "proteins": 1,
+     "texts": 2
+    },
+    {
+     "t": "proteins_in_membrane"
+    },
+    {
+     "t": "no_overlap"
+    },
+    {
+     "t": "inside_frame"
+    },
+    {
+     "t": "required_texts",
+     "contains": [
+      "受体",
+      "细胞膜"
+     ]
+    },
+    {
+     "t": "labels_adjacent"
+    },
+    {
+     "t": "originals_kept"
+    }
+   ]
+  },
+  {
+   "id": "ligand-binding",
+   "instruction": "画 EGF 配体结合到膜上受体的胞外区：一个受体、一个配体、一支箭头，标出配体。",
+   "reference": [
+    {
+     "kind": "frame",
+     "name": "frm",
+     "title": "配体结合",
+     "at_mm": [
+      5,
+      18
+     ],
+     "size_mm": [
+      72,
+      50
+     ]
+    },
+    {
+     "kind": "glyph",
+     "name": "mem",
+     "glyph": "membrane",
+     "frame": "frm",
+     "block": "细胞膜",
+     "at_mm": [
+      12,
+      45
+     ],
+     "identity": "质膜",
+     "params": {
+      "length_mm": 40
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r1",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {
+      "dimer": false
+     }
+    },
+    {
+     "kind": "shape",
+     "name": "lig1",
+     "shape": "ellipse",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "n"
+       }
+      },
+      "offset_mm": [
+       0,
+       -8
+      ]
+     },
+     "size_mm": [
+      4.0,
+      4.0
+     ],
+     "attach": "center",
+     "frame": "frm"
+    },
+    {
+     "kind": "arrow",
+     "name": "bind1",
+     "from": {
+      "anchor": {
+       "item": {
+        "name": "lig1",
+        "point": "s"
+       }
+      },
+      "offset_mm": [
+       0,
+       0
+      ]
+     },
+     "to": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "n"
+       }
+      },
+      "offset_mm": [
+       0,
+       0
+      ]
+     },
+     "frame": "frm"
+    },
+    {
+     "kind": "text",
+     "name": "t_lig1",
+     "text": "EGF",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "lig1",
+        "point": "e"
+       }
+      },
+      "offset_mm": [
+       1.5,
+       0
+      ]
+     },
+     "attach": "w",
+     "frame": "frm",
+     "sizePt": 7
+    }
+   ],
+   "predicates": [
+    {
+     "t": "counts",
+     "frames": 1,
+     "membranes": 1,
+     "proteins": 1,
+     "arrows": 1,
+     "texts": 1
+    },
+    {
+     "t": "proteins_in_membrane"
+    },
+    {
+     "t": "no_overlap"
+    },
+    {
+     "t": "inside_frame"
+    },
+    {
+     "t": "required_texts",
+     "contains": [
+      "EGF"
+     ]
+    },
+    {
+     "t": "labels_adjacent"
+    },
+    {
+     "t": "arrows_reach"
+    },
+    {
+     "t": "originals_kept"
+    }
+   ]
+  },
+  {
+   "id": "three-step",
+   "instruction": "画「配体结合 → 二聚化 → 胞内磷酸化」的最小机理图：细胞膜上两个受体，各结合一个 EGF，两个受体靠拢，胞内侧各标一个磷酸（P），再把这一步写成「胞内磷酸化」。",
+   "reference": [
+    {
+     "kind": "frame",
+     "name": "frm",
+     "title": "EGFR 信号",
+     "at_mm": [
+      5,
+      18
+     ],
+     "size_mm": [
+      72,
+      50
+     ]
+    },
+    {
+     "kind": "glyph",
+     "name": "mem",
+     "glyph": "membrane",
+     "frame": "frm",
+     "block": "细胞膜",
+     "at_mm": [
+      12,
+      45
+     ],
+     "identity": "质膜",
+     "params": {
+      "length_mm": 58
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r1",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {
+      "dimer": false
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r2",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {
+      "dimer": false
+     }
+    },
+    {
+     "kind": "shape",
+     "name": "lig1",
+     "shape": "ellipse",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "n"
+       }
+      },
+      "offset_mm": [
+       0,
+       -8
+      ]
+     },
+     "size_mm": [
+      4.0,
+      4.0
+     ],
+     "attach": "center",
+     "frame": "frm"
+    },
+    {
+     "kind": "arrow",
+     "name": "bind1",
+     "from": {
+      "anchor": {
+       "item": {
+        "name": "lig1",
+        "point": "s"
+       }
+      },
+      "offset_mm": [
+       0,
+       0
+      ]
+     },
+     "to": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "n"
+       }
+      },
+      "offset_mm": [
+       0,
+       0
+      ]
+     },
+     "frame": "frm"
+    },
+    {
+     "kind": "text",
+     "name": "t_lig1",
+     "text": "EGF",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "lig1",
+        "point": "e"
+       }
+      },
+      "offset_mm": [
+       1.5,
+       0
+      ]
+     },
+     "attach": "w",
+     "frame": "frm",
+     "sizePt": 7
+    },
+    {
+     "kind": "shape",
+     "name": "lig2",
+     "shape": "ellipse",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "r2",
+        "point": "n"
+       }
+      },
+      "offset_mm": [
+       0,
+       -8
+      ]
+     },
+     "size_mm": [
+      4.0,
+      4.0
+     ],
+     "attach": "center",
+     "frame": "frm"
+    },
+    {
+     "kind": "arrow",
+     "name": "bind2",
+     "from": {
+      "anchor": {
+       "item": {
+        "name": "lig2",
+        "point": "s"
+       }
+      },
+      "offset_mm": [
+       0,
+       0
+      ]
+     },
+     "to": {
+      "anchor": {
+       "item": {
+        "name": "r2",
+        "point": "n"
+       }
+      },
+      "offset_mm": [
+       0,
+       0
+      ]
+     },
+     "frame": "frm"
+    },
+    {
+     "kind": "text",
+     "name": "t_lig2",
+     "text": "EGF",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "lig2",
+        "point": "e"
+       }
+      },
+      "offset_mm": [
+       1.5,
+       0
+      ]
+     },
+     "attach": "w",
+     "frame": "frm",
+     "sizePt": 7
+    },
+    {
+     "kind": "arrow",
+     "name": "dimerize",
+     "from": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "ne"
+       }
+      },
+      "offset_mm": [
+       0,
+       1
+      ]
+     },
+     "to": {
+      "anchor": {
+       "item": {
+        "name": "r2",
+        "point": "nw"
+       }
+      },
+      "offset_mm": [
+       0,
+       1
+      ]
+     },
+     "frame": "frm"
+    },
+    {
+     "kind": "text",
+     "name": "t_dim",
+     "text": "二聚化",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "dimerize",
+        "point": "n"
+       }
+      },
+      "offset_mm": [
+       0,
+       -1
+      ]
+     },
+     "attach": "s",
+     "frame": "frm",
+     "sizePt": 7
+    },
+    {
+     "kind": "text",
+     "name": "t_p1",
+     "text": "P",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "s"
+       }
+      },
+      "offset_mm": [
+       0,
+       1
+      ]
+     },
+     "attach": "n",
+     "frame": "frm",
+     "sizePt": 7
+    },
+    {
+     "kind": "text",
+     "name": "t_p2",
+     "text": "P",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "r2",
+        "point": "s"
+       }
+      },
+      "offset_mm": [
+       0,
+       1
+      ]
+     },
+     "attach": "n",
+     "frame": "frm",
+     "sizePt": 7
+    },
+    {
+     "kind": "text",
+     "name": "t_phos",
+     "text": "胞内磷酸化",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "t_p1",
+        "point": "s"
+       }
+      },
+      "offset_mm": [
+       0,
+       1
+      ]
+     },
+     "attach": "n",
+     "frame": "frm",
+     "sizePt": 7
+    }
+   ],
+   "predicates": [
+    {
+     "t": "counts",
+     "frames": 1,
+     "membranes": 1,
+     "proteins": 2,
+     "arrows": 3,
+     "texts": 6
+    },
+    {
+     "t": "proteins_in_membrane"
+    },
+    {
+     "t": "no_overlap"
+    },
+    {
+     "t": "inside_frame"
+    },
+    {
+     "t": "required_texts",
+     "contains": [
+      "EGF",
+      "二聚",
+      "磷酸",
+      "P"
+     ]
+    },
+    {
+     "t": "labels_adjacent"
+    },
+    {
+     "t": "arrows_reach"
+    },
+    {
+     "t": "originals_kept"
+    }
+   ]
+  },
+  {
+   "id": "two-dimers",
+   "instruction": "细胞膜上并排画两个已经二聚化的受体（二聚体），在膜下方标出「激酶域」。",
+   "reference": [
+    {
+     "kind": "frame",
+     "name": "frm",
+     "title": "受体二聚体",
+     "at_mm": [
+      5,
+      18
+     ],
+     "size_mm": [
+      72,
+      50
+     ]
+    },
+    {
+     "kind": "glyph",
+     "name": "mem",
+     "glyph": "membrane",
+     "frame": "frm",
+     "block": "细胞膜",
+     "at_mm": [
+      12,
+      45
+     ],
+     "identity": "质膜",
+     "params": {
+      "length_mm": 58
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r1",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {}
+    },
+    {
+     "kind": "glyph",
+     "name": "r2",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {}
+    },
+    {
+     "kind": "text",
+     "name": "t_kd",
+     "text": "激酶域",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "r1",
+        "point": "s"
+       }
+      },
+      "offset_mm": [
+       0,
+       1
+      ]
+     },
+     "attach": "n",
+     "frame": "frm",
+     "sizePt": 7
+    }
+   ],
+   "predicates": [
+    {
+     "t": "counts",
+     "frames": 1,
+     "membranes": 1,
+     "proteins": 2,
+     "texts": 1
+    },
+    {
+     "t": "proteins_in_membrane"
+    },
+    {
+     "t": "no_overlap"
+    },
+    {
+     "t": "inside_frame"
+    },
+    {
+     "t": "required_texts",
+     "contains": [
+      "激酶域"
+     ]
+    },
+    {
+     "t": "labels_adjacent"
+    },
+    {
+     "t": "originals_kept"
+    }
+   ]
+  },
+  {
+   "id": "curved-membrane",
+   "instruction": "画一段向上弯的细胞膜（像细胞的一小段表面），上面插两个受体，标出「细胞膜」。",
+   "reference": [
+    {
+     "kind": "frame",
+     "name": "frm",
+     "title": "弯曲的膜",
+     "at_mm": [
+      5,
+      18
+     ],
+     "size_mm": [
+      72,
+      50
+     ]
+    },
+    {
+     "kind": "glyph",
+     "name": "mem",
+     "glyph": "membrane",
+     "frame": "frm",
+     "block": "细胞膜",
+     "at_mm": [
+      12,
+      45
+     ],
+     "identity": "质膜",
+     "params": {
+      "length_mm": 58,
+      "curvature": 0.2
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r1",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {
+      "dimer": false
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r2",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {
+      "dimer": false
+     }
+    },
+    {
+     "kind": "text",
+     "name": "t_mem",
+     "text": "细胞膜",
+     "at": {
+      "anchor": {
+       "item": {
+        "name": "mem",
+        "point": "sw"
+       }
+      },
+      "offset_mm": [
+       0,
+       3
+      ]
+     },
+     "attach": "nw",
+     "frame": "frm",
+     "sizePt": 7
+    }
+   ],
+   "predicates": [
+    {
+     "t": "counts",
+     "frames": 1,
+     "membranes": 1,
+     "proteins": 2,
+     "texts": 1
+    },
+    {
+     "t": "proteins_in_membrane"
+    },
+    {
+     "t": "no_overlap"
+    },
+    {
+     "t": "inside_frame"
+    },
+    {
+     "t": "required_texts",
+     "contains": [
+      "细胞膜"
+     ]
+    },
+    {
+     "t": "labels_adjacent"
+    },
+    {
+     "t": "originals_kept"
+    }
+   ]
+  },
+  {
+   "id": "free-tier-control",
+   "instruction": "（对照，没有高级版授权）画一个受体插在细胞膜上。",
+   "expect": "pro_required",
+   "reference": [
+    {
+     "kind": "frame",
+     "name": "frm",
+     "title": "受体与细胞膜",
+     "at_mm": [
+      5,
+      18
+     ],
+     "size_mm": [
+      72,
+      50
+     ]
+    },
+    {
+     "kind": "glyph",
+     "name": "mem",
+     "glyph": "membrane",
+     "frame": "frm",
+     "block": "细胞膜",
+     "at_mm": [
+      12,
+      45
+     ],
+     "identity": "质膜",
+     "params": {
+      "length_mm": 58
+     }
+    },
+    {
+     "kind": "glyph",
+     "name": "r1",
+     "glyph": "receptor_rtk",
+     "frame": "frm",
+     "block": "细胞膜",
+     "embed": {
+      "membrane": "mem"
+     },
+     "identity": "EGFR",
+     "params": {
+      "dimer": false
+     }
+    }
+   ],
+   "predicates": [
+    {
+     "t": "originals_kept"
+    }
+   ]
+  }
+ ]
+}
