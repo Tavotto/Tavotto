@@ -25,6 +25,7 @@ import { RENDER_DEFERRED_CODE, type RenderPurpose } from '@/lib/renderPurpose'
 import { pngManifestOf, useMountedPngStore } from '@/store/mountedPngStore'
 import { currentProjectId } from '@/lib/session'
 import { noticeWorkdirHint, workdirHintOwner, type WorkdirHintNoticeDeps } from '@/lib/workdirHintNotice'
+import { lockedWriteOwner, noticeLockedWrites } from '@/lib/lockedWriteNotice'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { resolvePreview, VECTOR_PREVIEW, type PreviewMetadata } from '@/lib/previewBudget'
@@ -817,6 +818,8 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           }
           // 沙盒里 glob 回空、脚本目录里有文件（图可能缺数据，#1254）：通知轨一条胶囊，同一份证据只提醒一次
           noticeWorkdirHint(workdirHintOwner(projectAtStart, key), res.workdir_hint, projectAtStart, workdirHintDeps())
+          // 脚本写已有文件被拒（别的程序占着 / 只读），图照常出：通知轨一枚胶囊说这次没写进去，同一组文件只提醒一次
+          noticeLockedWrites(lockedWriteOwner(projectAtStart, key), res.locked_writes, { ui: useUiStore.getState() })
           // 二道闸（ADR 0022）：后端的 pre-read 闸才是第一道保护，这里拦的是
           // 「字节已经进了浏览器进程」之后的那一步——绝不 prepareSvg + 存进
           // store + 塞进 DOM。判据收在 `resolvePreview` 一处。
