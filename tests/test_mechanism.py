@@ -1616,3 +1616,15 @@ def test_the_naming_table_has_a_word_for_every_first_batch_kind_in_both_language
     ).split()
     for k in kinds:
         assert table[k]["zh"] and table[k]["en"], k
+
+
+def test_first_batch_kinds_have_a_family_style_preset_and_the_user_style_still_wins():
+    fam = mechanism.DEFAULT_STYLE
+    for k in ("gpcr", "ion_channel", "transporter", "receptor_single", "integrin"):
+        assert fam[k]["fill"] == "#d4dde6"
+    for k in ("ligand", "kinase", "g_protein", "antibody", "enzyme", "phosphate"):
+        assert fam[k]["fill"] == "#f2d8c2"
+    for k in ("nucleus", "mitochondrion", "vesicle", "er", "cell"):
+        assert fam[k]["fill"] == "#f6e7d4"
+    assert fam["dna_helix"]["fill"] is None and fam["mrna"]["fill"] is None
+    assert all(v["strokePt"] == 0.85 for k, v in fam.items() if k != "membrane")
