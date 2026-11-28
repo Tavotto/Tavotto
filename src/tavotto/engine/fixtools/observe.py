@@ -605,10 +605,17 @@ def read_environment_checks(ctx: FixContext, args: dict) -> ToolResult:
             json.dumps({"generations": []}, ensure_ascii=False),
             "no environment checks",
         )
-    return ok(
+    result = ok(
         json.dumps({"generations": rows}, ensure_ascii=False, indent=1),
         f"{len(rows)} environment generations",
     )
+    # `detail_tail` 只给本机模型（ADR 0221 §一）：进「修复经过」转录（→ 诊断包 detail-runs.json）的是不带它的结构化投影
+    result.transcript_content = json.dumps(
+        {"generations": [{k: v for k, v in r.items() if k != "detail_tail"} for r in rows]},
+        ensure_ascii=False,
+        indent=1,
+    )
+    return result
 
 
 # --------------------------------------------------------------------------- 描述与登记

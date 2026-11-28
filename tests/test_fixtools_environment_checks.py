@@ -165,3 +165,18 @@ def test_deprepair_stores_sanitized_tail_from_worker_self_test(monkeypatch):
     """`worker_self_test` 失败的返回带 `tail`；`_sanitize` 对它起作用（路径 / 密钥不留）。"""
     text = deprepair._sanitize("boom " + CANARY)
     assert CANARY not in text
+
+
+def test_detail_tail_stays_out_of_the_repair_transcript(box):
+    """`detail_tail` 只给本机模型：转录（→ 诊断包 detail-runs.json 的 fix_sessions）里有形状、没有自检原文。"""
+    sentinel = "LOCAL-ONLY-SELFTEST-LINE-7731"
+    envdiag.record_job(box.proj, _job(selftest_detail="Traceback...\n" + sentinel))
+    ctx = make_ctx(box)
+    gen = _tool_json(ctx)["generations"][0]
+    assert sentinel in gen["detail_tail"]  # 模型这一侧仍拿得到
+    dumped = json.dumps(ctx.transcript, ensure_ascii=False)
+    assert "read_environment_checks" in dumped and "detail_tail" not in dumped
+    assert sentinel not in dumped
+    (entry,) = ctx.transcript
+    kept = json.loads(entry["text"])["generations"][0]
+    assert kept["selftest"] == SHAPE and kept["error_code"] == "dependency_worker_selftest_failed"

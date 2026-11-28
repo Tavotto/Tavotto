@@ -119,6 +119,9 @@ class ToolResult:
     summary: str = ""
     #: 上下文压缩时替换 content 的摘要；None = 不可压缩
     compact: str | None = None
+    #: 进「修复经过」转录（诊断包）的投影；None = 原样用 content。工具返回里有「只给本机模型、不进诊断包」的字段时，
+    #: 由 handler 给出剔除后的结构化投影（不在转录处做字符串替换）
+    transcript_content: str | None = None
     #: 这次调用改了文件
     mutated: bool = False
     #: Bounded visual evidence; only wire adapters consume it, never emit().
