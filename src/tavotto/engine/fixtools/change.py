@@ -24,6 +24,7 @@ from .. import rasterhint
 from ..agent_runner.wires import ToolResult
 from . import executors, snapshots
 from .base import FixContext, FixTool, err, obj, ok
+from .knownissue import known_issue_text
 from .readscope import scrub
 
 PACKAGES_MAX = 20
@@ -179,6 +180,7 @@ def install_packages(ctx: FixContext, args: dict) -> ToolResult:
             text += " " + _INSTALL_HINTS[code]
         if isinstance(detail, str) and detail.strip():
             text += "\nInstaller said: " + scrub(detail.strip())[:500]
+        text += known_issue_text(ctx, code, res.get("selftest"))
         return err(code, _with_snapshot(ctx, text))
     return _done(ctx, f"Installed: {', '.join(reqs)}.", "packages installed")
 
@@ -380,10 +382,13 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
     if not res.get("ok"):
         # 没换成：只撤销**这一次**新加的租约；本会话此前成功换代保留的旧代要留到会话收尾，否则它的快照回滚不了
         ctx.release_leases(added)
+        code = str(res.get("code") or "change_python_failed")[:60]
         return err(
-            str(res.get("code") or "change_python_failed")[:60],
+            code,
             _with_snapshot(
-                ctx, str(res.get("message") or "The new environment could not be created.")
+                ctx,
+                str(res.get("message") or "The new environment could not be created.")
+                + known_issue_text(ctx, code, res.get("selftest")),
             ),
         )
     shown = version or str(res.get("to") or "")
