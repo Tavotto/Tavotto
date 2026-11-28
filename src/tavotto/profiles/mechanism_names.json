@@ -1,0 +1,30 @@
+{
+  "_doc": "机理图的命名词表（ADR 0220 §五）：角色词，中 / 英各一份。名字 = 角色词 + 身份（`engine/mechgroup.name_for`）；创建当时按调用方传入的界面语言固化进文档，之后不随语言切换改。只放开源侧自己造的组与对象；图元的角色词随 `kind` 走，新增图元在这里加一行（缺了就退回 kind 本身）。",
+  "version": 1,
+  "roles": {
+    "frame": { "zh": "示意图", "en": "Schematic" },
+    "frame_box": { "zh": "示意图框", "en": "Schematic frame" },
+    "flow": { "zh": "流程", "en": "Flow" },
+    "block": { "zh": "结构块", "en": "Block" },
+    "text": { "zh": "标签", "en": "Label" },
+    "arrow": { "zh": "箭头", "en": "Arrow" },
+    "path": { "zh": "曲线", "en": "Curve" },
+    "shape": { "zh": "形状", "en": "Shape" }
+  },
+  "glyphs": {
+    "membrane": { "zh": "双层膜", "en": "Lipid bilayer" },
+    "receptor_rtk": { "zh": "受体酪氨酸激酶", "en": "Receptor tyrosine kinase" },
+    "gpcr": { "zh": "G 蛋白偶联受体", "en": "GPCR" },
+    "ion_channel": { "zh": "离子通道", "en": "Ion channel" },
+    "vesicle": { "zh": "囊泡", "en": "Vesicle" },
+    "nucleus": { "zh": "细胞核", "en": "Nucleus" },
+    "mitochondrion": { "zh": "线粒体", "en": "Mitochondrion" },
+    "er": { "zh": "内质网", "en": "Endoplasmic reticulum" },
+    "dna_helix": { "zh": "DNA 双链", "en": "DNA duplex" },
+    "filament": { "zh": "细胞骨架丝", "en": "Cytoskeletal filament" },
+    "antibody": { "zh": "抗体", "en": "Antibody" },
+    "protein_blob": { "zh": "蛋白团块", "en": "Protein" }
+  },
+  "locales": ["zh", "en"],
+  "separator": " · "
+}

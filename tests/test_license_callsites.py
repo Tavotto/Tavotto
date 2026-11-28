@@ -1,6 +1,6 @@
 """看护 ADR 0193 §一「付费只拦新功能」：全仓库对 `license.has(` 的调用点，只许出现在登记表里的模块。
 
-登记表 `REGISTERED_CALLERS` 现在有一键排版（`quick-layout`，ADR 0199）与批注重改（`change-plan-rerun`，ADR 0206 §五）；`hosted-ai` 内置 AI 额度、`review-plus` 外部审阅加量
+登记表 `REGISTERED_CALLERS` 现在有一键排版（`quick-layout`，ADR 0199）与批注重改（`change-plan-rerun`，ADR 0206 §五）与机理图（`mechanism-diagram`，ADR 0220）；`hosted-ai` 内置 AI 额度、`review-plus` 外部审阅加量
 各自的 ADR / PR 才会加）。**加调用点要同步改 ADR 0193 §一**（登记新功能键与它的模块），并把模块写进下面的登记表；
 凡随任何一个正式版免费发布过的能力，代码里都不许出现权益判断。
 """
@@ -18,6 +18,7 @@ REGISTERED_CALLERS: frozenset[str] = frozenset(
         "src/tavotto/engine/quicklayout.py",
         "src/tavotto/engine/proinstall.py",
         "src/tavotto/engine/changeplan.py",
+        "src/tavotto/engine/mechanism.py",
     }
 )
 LICENSE_MODULE = "src/tavotto/engine/license.py"
@@ -103,6 +104,7 @@ def test_registry_lists_only_registered_new_features():
             "src/tavotto/engine/quicklayout.py",
             "src/tavotto/engine/proinstall.py",
             "src/tavotto/engine/changeplan.py",
+            "src/tavotto/engine/mechanism.py",
         }
     )
 
