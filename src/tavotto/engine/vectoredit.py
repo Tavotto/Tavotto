@@ -1932,6 +1932,7 @@ def _fact_key(f: dict) -> str:
 PAINT_ONLY = frozenset(
     {
         "name",
+        "groupNames",  # 组名：不改占地（Codex #2367）；groupId / groupPath 不在此列——进出剪切组会改可见区域
         "locked",
         "color",
         "strokeOpacity",

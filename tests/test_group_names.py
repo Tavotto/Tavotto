@@ -298,3 +298,25 @@ def test_frontend_payload_names_land_in_the_svg(tmp_path):
 
     ids = [g for g in flat(tree) if g]
     assert "机理图" in ids and "受体簇" in ids and "不一致的名字" not in ids
+
+
+def test_renaming_a_group_does_not_turn_an_old_overflow_into_a_new_failure():
+    """改组名不动几何：组里原本就出页的对象，改名后照旧算「改之前就有」，不该让方案判失败（Codex #2367）。"""
+    off = {
+        "id": "r",
+        "type": "shape",
+        "shape": "rect",
+        "x": -10,
+        "y": 5,
+        "w": 20,
+        "h": 10,
+        "strokePt": 1,
+        "color": "#000000",
+        "fill": None,
+        "groupId": "g1",
+        "groupPath": ["g1"],
+        "groupNames": {"g1": "旧名"},
+    }
+    canvas = {"id": "c", "page": {"w": 100, "h": 60}, "objects": [off]}
+    res = ve.propose_memory(canvas, [{"op": "rename_group", "group": "g1", "name": "新名"}])
+    assert res["ok"], res
