@@ -125,41 +125,42 @@ def _v1_rows(journal_id: str, catalog: dict | None) -> list[dict]:
                 # 与预检同一口径（`preflight.judged_page_columns`）：只有 exact（等于）与 max（上限）真判过；
                 # typical / recommended / range 只是写在指南里的数，记成 confirm，关系照旧是「等于这个宽度」
                 judged = src["affects"] == "preflight" and qualifier in ("exact", "max")
-                rows.append(
-                    base
-                    | {
-                        "check": "width_final",
-                        "relation": "lte" if qualifier == "max" else "eq",
-                        "value": width,
-                        "unit": "mm",
-                        "conditions": {"column": column} if column else {},
-                        "source_state": "preflight" if judged else "confirm",
-                    }
-                )
+                row = {
+                    "check": "width_final",
+                    "relation": "lte" if qualifier == "max" else "eq",
+                    "value": width,
+                    "unit": "mm",
+                    "conditions": {"column": column} if column else {},
+                    **base,
+                }
+                row["source_state"] = (
+                    "preflight" if judged else "confirm"
+                )  # 按这一栏的 qualifier，不按整条规则
+                rows.append(row)
             continue
         if path in V1_WIDTH_PATHS:
             if _number(src.get("value")):
                 rows.append(
-                    base
-                    | {
+                    {
                         "check": "width_final",
                         "relation": "eq",
                         "value": src["value"],
                         "unit": "mm",
                         "conditions": {"column": V1_WIDTH_PATHS[path]},
+                        **base,
                     }
                 )
             continue
         mapped = V1_PATHS.get(path)
         if mapped is None:
             rows.append(
-                base
-                | {
+                {
                     "check": None,
                     "relation": None,
                     "value": copy.deepcopy(src.get("value")),
                     "unit": None,
                     "conditions": {},
+                    **base,
                 }
             )
             continue
@@ -171,13 +172,13 @@ def _v1_rows(journal_id: str, catalog: dict | None) -> list[dict]:
         elif not _number(value):
             continue
         rows.append(
-            base
-            | {
+            {
                 "check": check,
                 "relation": relation,
                 "value": copy.deepcopy(value),
                 "unit": V1_UNITS.get(check),
                 "conditions": {},
+                **base,
             }
         )
     return rows
