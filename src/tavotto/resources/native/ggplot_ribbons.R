@@ -1,16 +1,6 @@
 # Apply paint to already drawn range polygons. Preserve both the sampled
 # bounds and any separate stroke grobs produced by outline.type.
 
-ggplot_ribbon_leaves <- function(grob) {
-  if (!is.null(grob$vp)) return(NULL)
-  if (inherits(grob, "zeroGrob")) return(list())
-  if (inherits(grob, "polygon") || inherits(grob, "polyline")) return(list(grob))
-  if (!identical(class(grob)[[1L]], "gTree")) return(NULL)
-  children <- lapply(grob$children, ggplot_ribbon_leaves)
-  if (any(vapply(children, is.null, logical(1L)))) return(NULL)
-  unlist(children, recursive = FALSE, use.names = FALSE)
-}
-
 ggplot_ribbon_target <- function(built, draw, members, index, kind, group = NULL) {
   grob <- draw$grob
   leaves <- unlist(lapply(members, ggplot_ribbon_leaves), recursive = FALSE, use.names = FALSE)
@@ -23,9 +13,9 @@ ggplot_ribbon_target <- function(built, draw, members, index, kind, group = NULL
       all(grid::unitType(g$x) == "native") && all(grid::unitType(g$y) == "native")
   }, logical(1L))
   if (!all(ok)) return(NULL)
-  pigments <- lapply(polygons, function(g) ggplot_uniform_pigment(g$gp$fill))
+  pigments <- lapply(polygons, ggplot_ribbon_pigment)
   face <- pigments[[1L]]
-  if (is.null(face) || face$alpha <= 0 || !all(vapply(pigments, identical, logical(1L), face))) return(NULL)
+  if (is.null(face) || identical(face$rgb, "none") || !all(vapply(pigments, identical, logical(1L), face))) return(NULL)
   outlined <- any(vapply(leaves, function(g) {
     stroke <- ggplot_uniform_pigment(g$gp$col)
     # A nonuniform or unrecognized stroke is still an outline.
@@ -39,40 +29,6 @@ ggplot_ribbon_target <- function(built, draw, members, index, kind, group = NULL
        face = face, facet = draw$facet, group = group,
        values = list(facecolor = if (is.null(group)) face$rgb, alpha = if (!outlined) face$alpha),
        clip = identical(built$layout$coord$clip, "on"), context = rlang::hash(facts))
-}
-
-# Validate every group's native projected polygon before associating its
-# enclosing child with the captured fill category. A paint match is ambiguous.
-ggplot_ribbon_members <- function(draw, layout, groups) {
-  rows <- draw$rows
-  membership <- groups$membership[[as.character(draw$panel_id)]]
-  if (length(membership) != nrow(rows) || anyNA(membership) ||
-      !is.logical(rows$flipped_aes) || anyNA(rows$flipped_aes) ||
-      length(unique(rows$flipped_aes)) != 1L) return(list())
-  along <- if (isTRUE(rows$flipped_aes[[1L]])) "y" else "x"
-  across <- setdiff(c("x", "y"), along)
-  ends <- paste0(across, c("max", "min"))
-  layer_groups <- split(seq_len(nrow(rows)), factor(rows$group))
-  children <- draw$grob$children
-  if (length(children) != length(layer_groups)) return(list())
-  categories <- vapply(seq_along(layer_groups), function(i) {
-    indices <- layer_groups[[i]]
-    colours <- unique(membership[indices])
-    if (length(colours) != 1L || length(indices) < 2L) return(NA_integer_)
-    selected <- rows[indices, c(along, ends), drop = FALSE]
-    if (!all(vapply(selected, function(values) all(is.finite(values)), logical(1L)))) return(NA_integer_)
-    expected <- data.frame(first = c(selected[[along]], rev(selected[[along]])),
-                           second = c(selected[[ends[[1L]]]], rev(selected[[ends[[2L]]]])))
-    names(expected) <- c(along, across)
-    projected <- layout$coord$transform(expected, layout$panel_params[[draw$panel_id]])
-    polygons <- Filter(function(g) inherits(g, "polygon"), ggplot_ribbon_leaves(children[[i]]))
-    if (length(polygons) != 1L || !all(vapply(c("x", "y"), function(axis) {
-      isTRUE(all.equal(as.numeric(polygons[[1L]][[axis]]), projected[[axis]]))
-    }, logical(1L)))) return(NA_integer_)
-    colours[[1L]]
-  }, integer(1L))
-  if (anyNA(categories)) return(list())
-  split(seq_along(categories), categories)
 }
 
 ggplot_ribbon_targets <- function(built, panels, layer_grobs, maps) {
@@ -129,15 +85,6 @@ ggplot_ribbon_values <- function(target, edit) {
   current
 }
 
-ggplot_fill_ribbon <- function(grob, pigment) {
-  if (inherits(grob, "polygon")) {
-    grob$gp$fill <- pigment
-  } else {
-    for (i in seq_along(grob$children)) grob$children[[i]] <- ggplot_fill_ribbon(grob$children[[i]], pigment)
-  }
-  grob
-}
-
 ggplot_edit_ribbon <- function(table, target, edit) {
   current <- ggplot_ribbon_values(target, edit)
   panel <- table$grobs[[target$slot]]
@@ -190,6 +137,14 @@ measure_ggplot_ribbons <- function(table, targets, frame_pt) {
   result
 }
 
+ggplot_ribbon_source_plan <- function(state, target, edit) {
+  if (is.null(target$group) || !identical(names(edit), "alpha")) return(NULL)
+  ggplot_ribbon_values(target, edit)
+  geometry <- list(kind = "ribbons", facet = target$facet, values = edit,
+                   category = list(value = as.character(target$group$key)))
+  ggplot_fixed_layer_source(state, target, edit, NULL, geometry)
+}
+
 ggplot_ribbon_elements <- function(state, edits, measured) {
   lapply(names(state$ribbon_targets), function(gid) {
     target <- state$ribbon_targets[[gid]]
@@ -199,6 +154,7 @@ ggplot_ribbon_elements <- function(state, edits, measured) {
     label <- ggplot_layer_label("\u8303\u56f4\u586b\u5145", target)
     if (!is.null(target$group)) label <- paste(label, target$group$label, sep = " \u00b7 ")
     c(list(gid = gid, role = "fill", label = label, draggable = FALSE, editable = list(),
+           source_layer = ggplot_ribbon_source_plan(state, target, edit),
            ribbon = list(context = target$context, current = ggplot_ribbon_values(target, edit),
                          original = ggplot_ribbon_values(target, NULL), edited = as.list(names(edit)))),
       geometry)

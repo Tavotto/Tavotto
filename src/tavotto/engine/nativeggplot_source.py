@@ -379,6 +379,11 @@ _GEOMETRY_IMPLEMENTATIONS = {
         "ggplot_curve_style.R",
         "ggplot_apply_curve_styles",
     ),
+    "ribbons": (
+        ("GeomRibbon",),
+        "ggplot_ribbon_geometry.R",
+        "ggplot_apply_ribbon_styles",
+    ),
     "points": (
         ("GeomPoint",),
         "ggplot_point_style.R",
@@ -464,6 +469,18 @@ def _native_layer_geometry(source: dict) -> dict | None:
         ):
             return recipe
         return None
+    if kind == "ribbons":
+        alpha = values.get("alpha")
+        if (
+            "category" in recipe
+            and set(values) == {"alpha"}
+            and type(alpha) in (float, int)
+            and math.isfinite(alpha)
+            and 0 <= alpha <= 1
+            and source["edited"].get("alpha") == alpha
+        ):
+            return recipe
+        return None
     for prop, value in values.items():
         if (
             type(value) not in (float, int)
@@ -505,6 +522,7 @@ def _native_layer_writes(
             "GeomBar",
             "GeomErrorbar",
             "GeomErrorbarh",
+            "GeomRibbon",
         )
         if (
             type(index) is int
@@ -634,7 +652,9 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
                     f"ggplot_{guide_type}_guide_recipe({guide_argument}, {native_recipes})"
                 )
             elif plan["categorical"]:
-                channel = "fill" if kind == "bars" else "colour"
+                if kind == "ribbons":
+                    sources.add("ggplot_pigment.R")
+                channel = "fill" if kind in {"bars", "ribbons"} else "colour"
                 geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'
         if scoped_paint := plan["scoped_paint"]:
             sources.add("ggplot_layer_paint.R")

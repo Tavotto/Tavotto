@@ -7372,3 +7372,87 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-hash.txt")
             timeout=120,
         )
         assert status == 200 and restored["ok"] and script.read_bytes() == authored
+
+
+def test_native_r_mapped_ribbon_writeback_can_reveal_one_hidden_member(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Mapped ribbons"
+    project.mkdir()
+    script = project / "Ribbon.R"
+    script.write_text(
+        f"""\
+d <- expand.grid(x = 1:5, arm = c("Baseline", "Target"), trial = c("Early", "Late"))
+d$lower <- d$x / 2 + 2 * as.integer(d$arm)
+d$upper <- d$lower + .9
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, ymin = lower, ymax = upper, fill = arm)) +
+  ggplot2::geom_ribbon(alpha = .65, colour = NA) +
+  ggplot2::scale_fill_manual(values = c(Baseline = "#6C541E", Target = "#6C541E")) +
+  ggplot2::facet_wrap(ggplot2::vars(trial))
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-state.txt")
+""",
+        encoding="utf-8",
+    )
+    data = project / "data-state.txt"
+    route = "/api/layouts/Ribbons"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    fingerprint = data.read_bytes()
+
+    def fills(svg):
+        return [
+            (node.tag, node.attrib)
+            for node in ElementTree.fromstring(svg).iter()
+            if "fill: #6C541E;" in node.get("style", "")
+        ]
+
+    def fill_layers(view):
+        return {e["gid"]: e for e in view["manifest"]["elements"] if e["role"] == "fill"}
+
+    gid = "layer.1.panel.2.ribbon.group.2"
+
+    def save(app, fig, before, alpha):
+        layers = fill_layers(before)
+        assert len(layers) == 4 and layers[gid]["label"].endswith("Target")
+        patches = [
+            {"gid": gid, "identity": layers[gid]["identity"], "prop": "alpha", "value": alpha}
+        ]
+        hot = _render(app, fig, patches)
+        assert hot["warnings"] == []
+        for neighbour in layers.keys() - {gid}:
+            assert fill_layers(hot)[neighbour] == layers[neighbour]
+        assert _render(app, fig, [])["svg"] == before["svg"]
+        saved = _write_native_figure_style(app, script, route, fig, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert data.read_bytes() == fingerprint
+        assert fills((project / "standalone.svg").read_text(encoding="utf-8")) == fills(hot["svg"])
+        return hot, saved
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        hidden, _ = save(app, figure, baseline, 0)
+        assert not fill_layers(hidden)[gid]["geometry"]["fill"]
+        assert len(fills(hidden["svg"])) == len(fills(baseline["svg"])) - 1
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == hidden["svg"]
+        assert fill_layers(reopened)[gid]["editable"][0]["value"] == 0
+        restored, saved = save(app, figure, reopened, 0.4)
+        assert fill_layers(restored)[gid]["geometry"]["fill"]
+        assert len(fills(restored["svg"])) == len(fills(baseline["svg"]))
+        status, receipt = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and receipt["ok"] and script.read_bytes() == authored

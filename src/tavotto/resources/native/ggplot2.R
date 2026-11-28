@@ -1535,7 +1535,9 @@ ggplot_paths_bbox <- function(paths, pad = c(0, 0)) {
 ggplot_fixed_layer_source <- function(state, target, edit, aesthetics, geometry = NULL) {
   layer <- state$built$plot$layers[[target$index]]
   kind <- class(layer$geom)[[1L]]
-  if (!kind %in% c("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar", "GeomErrorbar", "GeomErrorbarh")) return(NULL)
+  kinds <- c("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar",
+             "GeomErrorbar", "GeomErrorbarh", "GeomRibbon")
+  if (!kind %in% kinds) return(NULL)
   stock <- getExportedValue("ggplot2", kind)
   if (!identical(as.list(layer$geom)$draw_panel, as.list(stock)$draw_panel)) return(NULL)
   panels <- sum(!vapply(state$layer_grobs[[target$index]], inherits, logical(1L), "zeroGrob"))

@@ -96,6 +96,7 @@
         "fill and outline colours, outline width, opacity and data-unit bar thickness for supported geom_bar and geom_col series",
         "stroke colour, width, opacity and cap geometry for supported geom_errorbar series",
         "uniform fill color of supported single-panel geom_ribbon and geom_area layers, and opacity for fills without an outline",
+        "verified source writeback of per-facet category opacity for supported mapped geom_ribbon layers",
         "select an existing R package library for a desktop run",
         "edit a captured object and return to the original R console and its graphics device",
         "verified R source writeback and backup restore for supported styles, including category-scoped curves and points",
