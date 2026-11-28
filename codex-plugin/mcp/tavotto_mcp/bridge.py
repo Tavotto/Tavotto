@@ -3303,6 +3303,10 @@ LAYOUT_BINDING_MISMATCH = "layout_binding_mismatch"
 BINDING_CANDIDATE_LIMIT = 8
 LAYOUT_SYNC_CHANGED_LIMIT = 8
 LAYOUT_SYNC_REASON = "desktop_changed"
+#: 桌面并入时赢了插件上次写的那几条（ADR 0217 §四）：下一次调用回包 `layout_sync.reason`
+LAYOUT_SYNC_WON_REASON = "desktop_won"
+#: 绑定上记「上次写进排版的条」的上限（落盘记录里的线索，不是权限）
+LAYOUT_WRITTEN_LIMIT = 64
 _BINDING_KEYS = ("layout", "canvas_id", "panel_id", "revision", "ovr")
 
 
@@ -3315,12 +3319,22 @@ def _clean_binding(raw: object) -> dict | None:
         return None
     if not isinstance(out["canvas_id"], str):
         out["canvas_id"] = ""
+    written = raw.get("written")
+    if isinstance(written, dict) and written:
+        out["written"] = {
+            k: v
+            for k, v in list(written.items())[:LAYOUT_WRITTEN_LIMIT]
+            if isinstance(k, str) and isinstance(v, str)
+        }
     return out
 
 
 def _binding_view(binding: dict, ref: str | None = None) -> dict:
     """回包里的 `binding`：不带内部的 `ovr` 指纹。"""
-    out = {"state": "bound", **{k: v for k, v in binding.items() if k != "ovr"}}
+    out = {
+        "state": "bound",
+        **{k: v for k, v in binding.items() if k not in ("ovr", "written")},
+    }
     if ref:
         out["ref"] = ref
     return out
@@ -3469,12 +3483,128 @@ def _unbind(session: Session, reason: str) -> dict:
     return lost
 
 
+def _key_str(gid: object, prop: object) -> str:
+    return f"{gid}\u0000{prop}"
+
+
+def _desktop_won(written: object, canonical: list) -> list[tuple[str, str]]:
+    """上次写进排版的条里，桌面现在的值与写的不同（或被去掉 / 又冒出来）的键。`written` 的值是那条的 `patch_hash`，
+    去掉的键记空串。"""
+    if not isinstance(written, dict) or not written:
+        return []
+    now = {_key_str(p["gid"], p["prop"]): patchspec.patch_hash([p]) for p in canonical}
+    out = []
+    for k, h in sorted(written.items()):
+        if now.get(k, "") != h:
+            gid, _, prop = k.partition("\u0000")
+            out.append((gid, prop))
+    return out
+
+
+def _with_inherited_identity(patches: list, before: list) -> list:
+    """写回排版的规范列表：没带 `identity` 的条，值与调用前同一条一致时沿用那条的 `identity`（0083，不因 Agent 重发而丢）。"""
+    ident = {
+        (str(p["gid"]), str(p["prop"])): p
+        for p in before
+        if isinstance(p.get("identity"), str) and p["identity"]
+    }
+    canonical, _ = patchspec.canonicalize_with_diagnostics(patches)
+    out = []
+    for p in canonical:
+        old = ident.get((p["gid"], p["prop"]))
+        if (
+            "identity" not in p
+            and old is not None
+            and engine_normalize._same(old["value"], p["value"])  # noqa: SLF001
+        ):
+            p = {**p, "identity": old["identity"]}
+        out.append(p)
+    return out
+
+
+def _write_layout_back(session: Session, before: list) -> dict | None:
+    """绑定会话的修改写回排版里那个子图的 `overrides`（ADR 0217 §四）：整份规范列表、不动子图的其它字段、不动脚本。
+
+    `before` = 本次调用前会话的 patches（算「这次写了哪几条」、沿用 identity）。`base_revision` 用绑定上记的修订号
+    （本次调用前 `_sync_binding` 读到的）：写之前排版又变了 → `layout_changed`，什么都不写（调用方负责把会话退回 `before`）。
+    成功回 `{layout, panel, undo_token}` 并推进绑定的修订号 / 指纹；没绑定或这次没改动子图的修改回 None。"""
+    binding = getattr(session, "binding", None)
+    if not binding:
+        return None
+    la = _optional_engine("layoutannotate") if layout_annotate_available() else None
+    if la is None:
+        return None
+    canonical = _with_inherited_identity(session.patches, before)
+    new_ovr = patchspec.patch_hash(canonical)
+    if new_ovr == binding.get("ovr"):
+        return None  # 子图里已经就是这份：不写，也不留一条空的撤销
+
+    def mutate(target: dict) -> None:
+        for obj in target.get("objects") or []:
+            if (
+                isinstance(obj, dict)
+                and obj.get("type") == "panel"
+                and obj.get("id") == binding["panel_id"]
+            ):
+                obj["overrides"] = canonical
+                return
+        raise la.LayoutError("layout_changed")  # 子图在这期间没了：当作排版变了，让宿主重读
+
+    try:
+        lay = la.open_layout(session.project, binding["layout"])
+        base = la.Layout(lay.project, lay.name, lay.path, binding["revision"], lay.doc)
+        revision, token = la.write_canvas(
+            session.project, binding["layout"], base, binding.get("canvas_id") or None, mutate
+        )
+    except la.LayoutError as exc:
+        raise BridgeError(
+            "排版在你上次读它之后变了（用户在桌面改过）；这次修改没有写进排版、会话也没改。"
+            "重新读一次（任一工具调用都会先对齐桌面）再改。"
+            if exc.code == "layout_changed"
+            else str(exc.code),
+            code=exc.code,
+            layout=binding["layout"],
+            **exc.detail,
+        ) from exc
+    old = {(str(p["gid"]), str(p["prop"])): p for p in before}
+    written: dict[str, str] = {}
+    for p in canonical:
+        k = (p["gid"], p["prop"])
+        if k not in old or not engine_normalize._same(old[k]["value"], p["value"]):  # noqa: SLF001
+            written[_key_str(*k)] = patchspec.patch_hash([p])
+    for k in old:
+        if not any((p["gid"], p["prop"]) == k for p in canonical):
+            written[_key_str(*k)] = ""
+    session.binding = {
+        **{k: v for k, v in binding.items() if k != "written"},
+        "revision": revision,
+        "ovr": new_ovr,
+        **({"written": dict(list(written.items())[:LAYOUT_WRITTEN_LIMIT])} if written else {}),
+    }
+    return {
+        "layout": binding["layout"],
+        "panel": binding["panel_id"],
+        "undo_token": token,
+        "revision": revision,
+    }
+
+
+def _revert_after_failed_write(session: Session, before: list) -> None:
+    """写回排版失败：会话退回调用前的 patches 与画面。退不回去也不吞原错误（会话下一次调用照全量列表重渲染）。"""
+    try:
+        _render(session, before, preview_dpi=None)
+    except BridgeError:
+        pass
+    except engine_pool.WorkerError as exc:
+        sys.stderr.write(f"tavotto-mcp: 会话 {session.id} 写回排版失败后没能退回渲染：{exc}\n")
+
+
 def _sync_binding(session: Session) -> tuple[dict | None, dict | None]:
     """绑定的会话在调用前读一次排版（ADR 0217 §三）：回 `(layout_sync, binding 说明)`，都没有就是 `(None, None)`。
 
     每次都重新核：排版 / 子图还在、仍能绑（`_panel_script`）、还是这张图——落盘记录证明不了权限。
     修订号变了且子图 overrides 与上次读到的不同才重渲染同一个会话；子图 / 排版没了就解绑（`binding.state: lost`），
-    之后照没绑定的会话用。这一版绑定会话**不写**排版文件，所以会话里没写回的本地修改会在桌面改动后被排版那份取代。"""
+    之后照没绑定的会话用。写回在 `_write_layout_back`（第四节）；桌面赢了插件上次写的键时回包 `reason: desktop_won`。"""
     binding = getattr(session, "binding", None)
     if not binding:
         return None, None
@@ -3504,15 +3634,23 @@ def _sync_binding(session: Session) -> tuple[dict | None, dict | None]:
         return None, None
     if new_binding["ovr"] == binding.get("ovr"):
         # 桌面改的是别处（挪了子图、改了别的）：子图的修改没变，会话照旧
+        if binding.get("written"):
+            new_binding["written"] = binding["written"]
         session.binding = new_binding
         _persist(session)
         return None, None
     changed = _changed_keys(session.patches, canonical)
+    # 插件上次写进排版的条，桌面并入时没留下（桌面也改了同一条 = 桌面赢）：告诉 Agent，说一次就清掉
+    won = _desktop_won(binding.get("written"), canonical)
     sync: dict = {
-        "reason": LAYOUT_SYNC_REASON,
+        "reason": LAYOUT_SYNC_WON_REASON if won else LAYOUT_SYNC_REASON,
         "changed": [{"gid": g, "prop": p} for g, p in changed[:LAYOUT_SYNC_CHANGED_LIMIT]],
         "changed_count": len(changed),
     }
+    if won:
+        sync["won"] = [{"gid": g, "prop": p} for g, p in won[:LAYOUT_SYNC_CHANGED_LIMIT]]
+        sync["won_count"] = len(won)
+        sync["note"] = "用户在桌面也改了这几条，以桌面的为准；你上次对它们的修改没进排版。"
     if len(changed) > LAYOUT_SYNC_CHANGED_LIMIT:
         sync["changed_truncated"] = True
     try:
@@ -3646,7 +3784,13 @@ def apply_overrides(
         if diff and user_authorized:
             released = True
 
+    before_patches = list(session.patches)
     out = _render(session, clean, preview_dpi=preview_dpi)
+    try:
+        layout_written = _write_layout_back(session, before_patches)
+    except BridgeError:
+        _revert_after_failed_write(session, before_patches)
+        raise
     if released:
         # 明确要求之下解除合同：验收报告随之作废（它验的是另一个状态）
         session.contract = None
@@ -3669,6 +3813,8 @@ def apply_overrides(
             "contract_released": released,
         }
     )
+    if layout_written is not None:
+        out["layout_written"] = layout_written
     session.apply_receipt = _bounded_apply_receipt(out)
     return out
 
@@ -4547,9 +4693,23 @@ def normalize_figure(session_id: str, **kwargs) -> dict:
     **此刻**的状态（patches + 合同）落盘一次（ADR 0078）。事务中途的候选状态不落盘。"""
     before = _SESSIONS.get(session_id)
     prev = before.exported_hash if before is not None else None
+    before_patches = list(before.patches) if before is not None else []
+    before_contract = before.contract if before is not None else None
+    before_normalized = before.normalized if before is not None else None
     result: dict | None = None
     try:
         result = _normalize_figure(session_id, **kwargs)
+        if result.get("ok") and before is not None and _SESSIONS.get(session_id) is before:
+            # 事务的提交点：整个事务只在这里写一次排版（中途的候选状态不写）；写不进去 = 整体不提交，会话退回调用前
+            try:
+                written = _write_layout_back(before, before_patches)
+            except BridgeError:
+                _revert_after_failed_write(before, before_patches)
+                before.contract, before.normalized = before_contract, before_normalized
+                result = None
+                raise
+            if written is not None:
+                result["layout_written"] = written
         return result
     finally:
         session = _SESSIONS.get(session_id)
@@ -5485,6 +5645,15 @@ def fix_to_journal(
     if restore:
         result["rolled_back"] = touched
     elif commit and touched:
+        # 绑定会话：整个事务只在提交点写一次排版；写不进去（排版又变了）= 整体不提交，会话退回 B0
+        try:
+            written = _write_layout_back(session, base)
+        except BridgeError:
+            _fix_settle(session, base, state, restore=True, result=None)
+            session.exported_hash = base_exported
+            raise
+        if written is not None:
+            result["layout_written"] = written
         # 通过：会话停在最终列表，落盘一次（ADR 0078）。旧的规范化合同描述的是另一个状态：
         # 这一次是用户点名期刊的明确要求，等同 `user_authorized`，合同与验收随之解除
         if base_contract is not None or base_normalized is not None:
@@ -7172,9 +7341,20 @@ def layout_undo(target: str, layout: str, undo_token: str) -> dict:
     la = require_layout_annotate()
     project, _registry = _layout_project(target)
     try:
-        return la.undo(project, layout, undo_token)
+        out = la.undo(project, layout, undo_token)
     except la.LayoutError as exc:
         raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+    # 撤销是 Agent / 用户自己要的，不是「桌面赢了」：这份排版上绑定会话记的「上次写了哪几条」作废，下一次读到的变化只当桌面改动
+    for sess in _SESSIONS.values():
+        b = getattr(sess, "binding", None)
+        if (
+            b
+            and b.get("layout") == layout
+            and b.get("written")
+            and Path(sess.project).resolve() == Path(project).resolve()
+        ):
+            sess.binding = {k: v for k, v in b.items() if k != "written"}
+    return out
 
 
 # ---------------------------------------------------------------- 改已有矢量对象（ADR 0212 第 5 期）
@@ -7502,6 +7682,8 @@ def suggest_apply(
         out["applied"] = [t["key"] for t in chosen if t["kind"] == "figure"]
         out["contract_released"] = bool(res.get("contract_released"))
         out["patch_hash"] = session.patch_hash()
+        if res.get("layout_written"):
+            out["layout_written"] = res["layout_written"]
     cp.mark_applied(
         project_id(session.project),
         plan["id"],

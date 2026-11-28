@@ -2,7 +2,8 @@
 
 > 2026-11-28 新写（0217 第 2 期：绑定 + 桌面 → 插件）。速查行并在 `layout-annotate.md` 那一行里（`codex-plugin/AGENTS.md` 为守棘轮上限不单列）；这里是这一主题的**唯一全文**，改规则改这里，并同步那一行。
 > 看护用例：`tests/test_mcp_layout_binding.py`（自动绑 / 歧义 / 显式 / 快照子图不绑 / 草稿被取代 / 桌面改了下次先读 / 子图没了解绑 / 锁住的元素 / 恢复时重新核）、`tests/test_mcp_error_next.py`。
-> 还没做（后续 PR）：绑定会话写回排版（第四节）、窗口里的待办卡（第五节）。**这一版绑定会话不写排版文件。**
+> 第 3 期（第四节）已做：绑定会话写回排版 + 桌面按条并入（见文末「写回」）。还没做（后续 PR）：窗口里的待办卡（第五节）。
+> 写回看护用例：`tests/test_mcp_layout_writeback.py`、前端 `web/src/lib/agentMerge.test.tsx`（`ADR 0217 §四` 一组）。
 
 - **绑定 = `Session.binding`**：`{layout, canvas_id, panel_id, revision, ovr}`。`revision` 是最近读到的排版修订号，`ovr` 是那时子图 `overrides` 的 `patch_hash`（内部指纹，回包不带）。
   没绑定的会话一切照旧。绑定随会话记录落盘，但**记录证明不了权限**：恢复只当线索（形状不对当没有），有效性每次调用前由 `_sync_binding` 重新核，恢复路径不另写一份校验。
@@ -15,3 +16,11 @@
 - **子图 / 排版没了或不再能绑** → 解绑，回包 `binding: {state: "lost", reason, layout, panel_id}`，之后照没绑定的会话用；排版暂时读不了（`layout_unreadable`）不解绑、这次不同步。
 - **`lockedGids`**：绑定会话的 `apply_overrides` 里锁住元素的条目不改，进 `rejected`（`reason: "locked"`，带 `index`）；锁住元素已有的修改原样保留，原样重发不算拒绝。
 - **有界**：`binding` / `layout_sync` 都在 `HANDLE_ONLY_KEYS`（预算退到只剩把手也保留），所以候选与 `changed` 必须定长。
+
+## 写回（ADR 0217 第四节，第 3 期）
+
+- **何时写**：绑定会话里改了 `session.patches` 的工具，在**提交点**写一次：`apply_overrides`（含 `suggest_apply`，它调前者）渲染通过后；`normalize_figure` 与 `fix_to_journal` 在事务收尾（`ok` 且 patches 变了）——事务中途的候选状态不写。没绑定的会话一概不碰排版；子图里已经是这份（指纹相同）不写、不留空撤销。脚本改后自动重跑（`_sync_script`）不写。
+- **怎么写**：`_write_layout_back` → `layoutannotate.write_canvas`（文档锁、修订号核对、先存撤销副本、原子替换），只把整份**规范列表**写进这个子图的 `overrides`；`base_revision` = 绑定上记的修订号（本次调用前 `_sync_binding` 读到的）。没带 `identity` 的条，值与调用前一致时沿用旧 identity。成功后绑定的 `revision` / `ovr` 前进，回包 `layout_written: {layout, panel, undo_token, revision}`（在 `HANDLE_ONLY_KEYS`，定长）；撤销用 `tavotto_layout_annotate_undo`（共用 0208 留存，每份排版最近 20 步）。
+- **写之前排版变了** → `layout_changed`：会话退回调用前的 patches 与画面（`_revert_after_failed_write`；normalize / fix 还原合同与导出标记），文件不动；Agent 重读（任一调用都会先对齐桌面）再改。normalize / fix 带导出时，已出的导出文件不撤回（写回在导出之后才核对）。
+- **桌面赢**：桌面 `planAgentMerge` 对子图 `overrides` 按 `(gid, prop)` 三方合并（基线 = 账本 `before`），同一条两边都改 = 留桌面的、不挡并入；下一次自动保存把桌面的结果写回排版。绑定上记 `written`（上次**这次写改了**的键 → 那条的 `patch_hash`，去掉的键记空串，最多 64 条，随记录落盘当线索）；`_sync_binding` 读到子图修改变了、且 `written` 里有键与桌面现在的不同 → `layout_sync.reason: "desktop_won"`，`won`（≤8 条）+ `won_count`，说一次就清。插件自己撤销（`layout_undo`）会清掉该排版上绑定会话的 `written`，不当作桌面赢。
+- 规范化合同：桌面把子图改到合同范围外时，下一次读到的变化照 §三 解除合同、验收标 `stale`（这一期没有新增处置）。
