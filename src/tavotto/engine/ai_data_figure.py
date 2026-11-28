@@ -2145,6 +2145,7 @@ _MEAN_WORDS = frozenset({"mean", "avg", "average"})
 _MEAN_CJK = ("平均值", "均值", "平均数", "均数", "平均")
 #: 中文列名里词与词之间常见的连接符 / 括号：比对「去掉误差词之后剩下什么」时不算数
 _CJK_GLUE = re.compile(r"[\s_\-—·、，,：:()（）\[\]【】的]+")
+_CJK_ERROR_SUFFIX = re.compile(r"\s*(?:\(\s*([a-z0-9]+)\s*\)|（\s*([a-z0-9]+)\s*）)\s*$", re.I)
 
 
 def _name_tokens(name: str) -> list[str]:
@@ -2161,6 +2162,13 @@ def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
         if word in name:
             kind = k
             break
+    if kind is not None:
+        localized = _without_redundant_error_suffix(name, kind)
+        if localized != name:
+            # 括号里的同义缩写不是测量名。不能让空的英文核心把中文测量名盖掉。
+            localized_partners = _cjk_partners(localized, others)
+            if localized_partners or not _name_tokens(localized):
+                return kind, localized_partners
     tokens = _name_tokens(name)
     alone = len(tokens) == 1 and tokens[0] in _ERROR_ALONE
     if kind is None and alone:
@@ -2191,11 +2199,26 @@ def _cjk_core(name: str, words: tuple[str, ...]) -> str | None:
     return None
 
 
+def _without_redundant_error_suffix(name: str, kind: str) -> str:
+    m = _CJK_ERROR_SUFFIX.search(name)
+    if m and _ERROR_WORDS.get((m[1] or m[2]).lower()) == kind:
+        return name[: m.start()]
+    return name
+
+
+def _cjk_error_core(name: str) -> str | None:
+    """有中文误差词时，返回其测量名核心；同义的括号缩写不算测量名。"""
+    for word, kind in _ERROR_CJK:
+        if word in name:
+            return _cjk_core(_without_redundant_error_suffix(name, kind), (word,))
+    return None
+
+
 def _cjk_partners(name: str, others: list[str]) -> list[str]:
     """中文误差列的搭档（与英文那条同一个思路，判据只换成中文的词）：`标准差` ↔ `均值`、`产量标准差` ↔ `产量` / `产量均值` / `平均产量`。
     去掉误差词后**什么都不剩**时，搭档是名字里带均值词的列（中文的，或英文的 `mean` / `avg` / `average`）；剩下核心时，搭档是去掉均值词后
     核心相同的列。名字里只有「误差」这种说不清种类的词也照此找搭档（种类仍是 `unknown`）。"""
-    rest = _cjk_core(name, tuple(w for w, _ in _ERROR_CJK))
+    rest = _cjk_error_core(name)
     if rest is None:
         return []
     out: list[str] = []

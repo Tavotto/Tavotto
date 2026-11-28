@@ -12,7 +12,7 @@ import socket
 
 import pytest
 
-from tavotto.engine import ai_data_figure as adf, ai_data_propose as P
+from tavotto.engine import ai_data_figure as adf, ai_data_propose as P, ai_data_recipe as ar
 from tavotto.engine.agent_runner import wires
 from tests.test_ai_data_propose import project  # noqa: F401
 
@@ -105,3 +105,45 @@ def test_the_same_table_without_the_mean_word_is_as_before(project, tmp_path):
     resp = P.propose(root, project="p", folder="data", render="lazy", understand=False)
     codes = [i["title_code"] for i in resp.get("items") or []]
     assert "points_err" not in codes
+
+
+@pytest.mark.parametrize(
+    ("label", "owner"),
+    [
+        ("压力标准差 (SD)", "压力均值"),
+        ("压力标准差（sd）", "压力均值"),
+        ("压力标准差", "压力均值"),
+        ("标准差 (SD)", None),
+        ("标准差", None),
+        ("位移标准差 (SD)", None),
+    ],
+)
+def test_cjk_sd_abbreviation_preserves_the_measure_in_rule_candidates(tmp_path, label, owner):
+    root = tmp_path / "proj"
+    data = root / "data"
+    data.mkdir(parents=True)
+    path = data / "two_measures.csv"
+    path.write_text(
+        f"时间,压力均值,temperature_mean,{label},n\n"
+        "2026-01-01,101.0,24.1,0.11,6\n"
+        "2026-01-02,102.0,25.3,0.29,6\n"
+        "2026-01-03,103.0,24.7,0.43,6\n"
+        "2026-01-04,104.0,26.0,0.58,6\n",
+        encoding="utf-8",
+    )
+    values = adf.inspect_data_source(path, v2=True)
+    for y in ("压力均值", "temperature_mean"):
+        expected = label if y == owner else None
+        assert ar.paired_error(values, y, ("时间",)) == expected
+        out = P.propose(
+            root,
+            project="p",
+            folder="data",
+            render="lazy",
+            understand=False,
+            answers={"x": "时间", "y": [y]},
+        )
+        assert out["kind"] == "candidates", out
+        candidate = next(i for i in out["items"] if i.get("recommended"))
+        assert candidate["values"]["y"] == [y]
+        assert candidate["title_code"] == ("line_err" if expected else "line_points")
