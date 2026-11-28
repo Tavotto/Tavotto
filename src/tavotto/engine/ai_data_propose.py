@@ -72,6 +72,7 @@ ERROR_CODES = (
     "propose_cells_need_rule",  # 用户只用文字说明了怎么处理（`describe`）：要先由助手整理成规则，不猜
     "propose_cancelled",  # 前端取消了这个读表类请求（概览 / 出备选；`/api/ai/data-progress/<rid>/cancel`）：什么都没留下
     "propose_thumbnail_failed",  # 懒渲染（`render="lazy"`）：这一张缩略图画不出来（`params.reason` 是 `DROP_REASONS` 里的码）
+    "tables_percent_scale_mismatch",  # 合画：同名列混有普通数与已确认的百分数
     "tables_columns_differ",  # 合画（`tables`）：这几份的列名集合或顺序不一样，拼不成一张表（`params.index` = 第一个与第一份不同的下标）
     "tables_limit_exceeded",  # 合画：份数超过上限（`params.max`）
     "tables_labels_collide",  # 合画：两个文件的标签在分组时会被并成一组（内部保险，正常不会出现；绝不静默并组）

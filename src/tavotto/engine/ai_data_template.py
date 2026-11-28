@@ -65,6 +65,7 @@ from .ai_data_figure import (
     parse_cell,
     parse_date,
     parse_when,
+    percent_scale_mismatch,
     resolve_header,
     table_from_text,
     tag_columns,
@@ -119,7 +120,7 @@ def read_xlsx(path, sheet, header_row=None):
     """XLSX 一张表 → `(表头, 数据行)`：读法就是内嵌的 `XlsxBook`（与 Tavotto 的 `xlsxread` 同一份源码）。`header_row`（工作表里的行号，1 起）不给 =
     第一条非空行是表头，给了 = 跳过它之前的行（标题行）；Tavotto 只在真的跳过了行时才把它写进脚本。"""
     with XlsxBook(path) as book:  # noqa: F821 - 由内嵌的 xlsxread 源码提供
-        cells = book.read(sheet)
+        cells = book.read(sheet, percent_cell=NumberCell)
         numbers = book.row_numbers  # 与 `cells` 逐项对应的工作表行号（全空行已丢掉）
     table = [
         r
@@ -129,7 +130,10 @@ def read_xlsx(path, sheet, header_row=None):
     header, body = _trim_tail(
         fill_header([h.strip() for h in table[0]]), ((0, r) for r in table[1:])
     )
-    return header, [r for _, r in body]
+    rows = [r for _, r in body]
+    if percent_scale_mismatch(rows):
+        raise ValueError("data_xlsx_percent_scale_mismatch")
+    return header, rows
 
 
 def group_key(label):
@@ -152,6 +156,8 @@ def merge_tables(tables, labels, column):
         if list(head) != header:
             raise ValueError("tables_columns_differ")
         out.extend([*r, label] for r in rows)
+    if percent_scale_mismatch(out):
+        raise ValueError("tables_percent_scale_mismatch")
     return [*header, column], out
 
 
@@ -1257,6 +1263,7 @@ RUNTIME_FUNCTIONS = (
     parse_cell,
     parse_date,
     parse_when,
+    percent_scale_mismatch,
     date_number,
     iter_records,
     delimited_records,

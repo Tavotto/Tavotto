@@ -91,6 +91,7 @@ ERROR_CODES = (
     "data_binary",
     "data_not_table",
     "data_header_row_invalid",
+    "data_xlsx_percent_scale_mismatch",
 )
 ERROR_CODES = ERROR_CODES + tuple(c for c in xlsxread.ERROR_CODES if c not in ERROR_CODES)
 
@@ -790,6 +791,23 @@ def tag_columns(header, rows, delimiter):
         tagger.feed(r)
     tags = tagger.tags()
     return [apply_tags(r, tags) for r in rows] if tags else rows
+
+
+def percent_scale_mismatch(rows) -> bool:
+    """同一列中是否混有明确的百分数点和普通数。空、缺失与文字不充当数值证据。运行时函数。"""
+    pct_cols = {
+        j
+        for row in rows
+        for j, cell in enumerate(row)
+        if isinstance(cell, NumberCell) and cell.rstrip().endswith("%")
+    }
+    return any(
+        j < len(row)
+        and parse_cell(row[j])[0] == "numeric"
+        and not (isinstance(row[j], NumberCell) and row[j].rstrip().endswith("%"))
+        for j in pct_cols
+        for row in rows
+    )
 
 
 def table_from_text(text, delimiter, header_row=None, units_row=False, no_header=False):
@@ -1869,11 +1887,13 @@ def _summarize_book(
     读不成表头（`data_header_invalid`）就用 `xlsx_header_guess` 找标题行后面的列名行（与文本表猜表头行同一套判据）；读不成就仍报原来的错。
     **真的跳过了行**才把行号记进摘要（`header_row` / `header_line`），其余（常态）两者都是 None，生成的脚本与此前逐字相同。v1（`parse` 没给）逐字不变。"""
     info = book.resolve(sheet)
-    table = book.read(info.index)
-    numbers = list(getattr(book, "row_numbers", []))
     v2 = parse is not None
+    table = book.read(info.index, percent_cell=NumberCell if v2 else None)
+    numbers = list(getattr(book, "row_numbers", []))
 
     def one(rows, nums, hrow):
+        if v2 and percent_scale_mismatch(rows[1:]):
+            raise DataSourceError("data_xlsx_percent_scale_mismatch")
         return _summarize(
             rows,
             row_numbers=nums,

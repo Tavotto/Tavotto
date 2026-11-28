@@ -825,6 +825,16 @@ describe('临时标签 DataDraft + 右栏 DataPanel + 胶囊 RedrawPill（接 st
     expect(q('[data-studio-retry]')).toBeNull()
   })
 
+  it('百分数与普通数尺度冲突：解释问题并给分别作图，不让盲目重试', async () => {
+    const code = 'tables_percent_scale_mismatch'
+    propose.mockRejectedValueOnce(new ApiError(code, 400, { code }))
+    await groupTwo()
+    const p = q('[data-studio-group-problem="mergeFailed"]')!
+    expect(p.textContent).toContain('同名列同时含百分数和普通数')
+    expect(p.querySelector('button')!.textContent).toBe('分别作图')
+    expect(q('[data-studio-retry]')).toBeNull()
+  })
+
   it('合画里某份表不在了（200 nothing + table_not_found）：走 nothing 的话，也给「各画一张」这个出路', async () => {
     propose.mockResolvedValueOnce({ kind: 'nothing', reasons: ['table_not_found'] })
     await groupTwo()

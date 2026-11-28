@@ -26,7 +26,7 @@ from tavotto.engine import (
     ai_history,
     discover,
 )
-from tests.test_ai_data_profile import make_xlsx
+from tests.test_ai_data_profile import STYLES, C, make_xlsx
 from tests.test_ai_data_propose import (
     WORKER_PY,
     checks_of,
@@ -1017,3 +1017,98 @@ def test_paired_marks_survive_both_the_error_swap_and_a_purpose_reorder(project)
         assert ("batch" in used) == (it["variant"]["kind"] == "split"), it
     ids = [(it["title_code"], json.dumps(it.get("variant"), sort_keys=True)) for it in out["items"]]
     assert len(ids) == len(set(ids)), "成对的两张身份必须分得清"
+
+
+def _excel_percent_fixture(path, styles_per_cell):
+    styles = (
+        STYLES.replace('numFmts count="3"', 'numFmts count="5"')
+        .replace(
+            "</numFmts>",
+            '<numFmt numFmtId="167" formatCode="0.000%"/>'
+            '<numFmt numFmtId="168" formatCode="0.0&quot;%&quot;"/></numFmts>',
+        )
+        .replace('cellXfs count="5"', 'cellXfs count="8"')
+        .replace(
+            "</cellXfs>", '<xf numFmtId="10"/><xf numFmtId="167"/><xf numFmtId="168"/></cellXfs>'
+        )
+    )
+    rows = [["date", "response"]] + [
+        [f"2026-01-0{i}", C("f" if i == 2 else "n", val, style)]
+        for i, (val, style) in enumerate(
+            zip([0.125, 0.29, 0.5, 0.75], styles_per_cell, strict=True), 1
+        )
+    ]
+    return make_xlsx(path, {"Sheet1": rows}, styles=styles)
+
+
+@pytest.mark.parametrize("styles", [[5, 5, 5, 5], [6, 6, 6, 6], [5, 6, 5, 6]])
+@needs_worker
+def test_csv_and_excel_percentages_render_on_identical_scale(project, tmp_path, styles):
+    _, client, figs, _ = project
+    put(
+        figs,
+        "data/text.csv",
+        [
+            ["date", "response"],
+            *[[f"2026-01-0{i}", v] for i, v in enumerate(["12.5%", "29%", "50%", "75%"], 1)],
+        ],
+    )
+    book = _excel_percent_fixture(figs / "data" / "book.xlsx", styles)
+    before = book.read_bytes()
+    # 默认 / v1 仍读到存储值，不能改非出图调用；v2 与生成的脚本才按显示比例。
+    raw = adf.inspect_data_source(book)
+    assert [adf.legacy_parse_cell(r[1])[1] for r in raw.rows] == [0.125, 0.29, 0.5, 0.75]
+    r = propose(
+        client,
+        tables=[{"path": "text.csv"}, {"path": "book.xlsx"}],
+        render="lazy",
+        answers={"x": "date", "y": ["response"]},
+    )
+    assert r.status_code == 200, r.get_json()
+    result = r.get_json()
+    rec = next(i for i in result["items"] if i.get("recommended"))
+    sess = next(s for s in P._SESSIONS.values() if s.id == result["session"])
+    item = sess.items[rec["id"]]
+    script = sess.dir / "tavotto_figures" / f"{item.stem}.py"
+    code = f"""
+import runpy
+from pathlib import Path
+import matplotlib.pyplot as plt
+runpy.run_path({str(script)!r}, run_name="__main__")
+ax = plt.gcf().axes[0]
+assert ax.get_ylabel() == "response (%)", ax.get_ylabel()
+assert {{line.get_label(): list(line.get_ydata()) for line in ax.lines}} == {{
+    "line | book": [12.5, 29.0, 50.0, 75.0], "line | text": [12.5, 29.0, 50.0, 75.0],
+}}
+assert Path({str(script.with_suffix(".pdf"))!r}).read_bytes().startswith(b"%PDF-")
+"""
+    run = subprocess.run(
+        [WORKER_PY, "-c", code],
+        cwd=script.parent,
+        env={**os.environ, "MPLBACKEND": "Agg", "MPLCONFIGDIR": str(tmp_path / "mpl")},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=40,
+    )
+    assert run.returncode == 0, run.stderr
+    assert book.read_bytes() == before
+
+
+@pytest.mark.parametrize("style", [0, 7])  # General 或自定义格式中带引号的字面 %
+def test_unscaled_excel_values_are_not_guessed_or_combined_with_percent_csv(project, style):
+    _, client, figs, _ = project
+    put(figs, "data/text.csv", [["date", "response"], ["2026-01-01", "12.5%"]])
+    book = _excel_percent_fixture(figs / "data" / "book.xlsx", [style] * 4)
+    summary = adf.inspect_data_source(book, v2=True)
+    assert adf.parse_cell(summary.rows[0][1]) == ("numeric", 0.125)
+    assert adf.axis_label("response", summary) == "response"
+    r = propose(client, tables=[{"path": "text.csv"}, {"path": "book.xlsx"}], render="lazy")
+    assert r.status_code == 400 and r.get_json()["code"] == "tables_percent_scale_mismatch"
+
+
+def test_excel_mixed_percent_and_general_column_fails_before_plotting(tmp_path):
+    book = _excel_percent_fixture(tmp_path / "mixed.xlsx", [5, 0, 5, 5])
+    with pytest.raises(adf.DataSourceError) as e:
+        adf.inspect_data_source(book, v2=True)
+    assert e.value.code == "data_xlsx_percent_scale_mismatch"

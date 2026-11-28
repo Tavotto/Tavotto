@@ -321,8 +321,15 @@ def build(
         header, rows = tpl.merge_tables(
             [(v.columns, v.rows) for v in summaries], [s.label for s in filled], column
         )
-    except ValueError as exc:  # 标签在分组时会并成一组：明确失败，绝不静默并组
-        raise MergeError("tables_labels_collide") from exc
+    except ValueError as exc:
+        code = str(exc)
+        if code not in (
+            "tables_columns_differ",
+            "tables_labels_collide",
+            "tables_percent_scale_mismatch",
+        ):
+            raise
+        raise MergeError(code) from exc
     if len({tpl.group_key(r[-1]) for r in rows}) != len(
         filled
     ):  # 拼好之后再按分组键数一遍：组数必须等于文件数
