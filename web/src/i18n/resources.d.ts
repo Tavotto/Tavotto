@@ -8122,6 +8122,7 @@ export default interface Resources {
           "pick_file": "请选择一个文件",
           "prepare_diagnostics": "正在整理要发送的说明",
           "propose_fix": "正在准备修复方案",
+          "read_environment_checks": "正在查看环境自检记录",
           "read_file": "正在查看文件",
           "read_logs": "正在查看日志",
           "read_run_report": "正在查看运行报告",

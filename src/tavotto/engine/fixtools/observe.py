@@ -546,6 +546,71 @@ def lookup_package(ctx: FixContext, args: dict) -> ToolResult:
     return ok(json.dumps(info, ensure_ascii=False, indent=1), "package lookup")
 
 
+# --------------------------------------------------------------------------- read_environment_checks
+ENV_CHECKS_MAX = 5
+#: 自检原文尾部的上限（字节数按字符计）；与 `envdiag.SELFTEST_DETAIL_MAX` 同值
+ENV_CHECK_DETAIL_MAX = 4096
+
+
+def closed_value(value, depth: int = 0):
+    """自检形状里的值只放行闭集 / 数字 / 布尔 / 短字符串（及它们组成的小列表 / 小字典），其余一律丢。
+    不按键名白名单：`envdiag` 以后加的键（operations / fidelity）原样透传，只有「值不像闭集」的才被拦。"""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= 160 else None
+    if depth >= 3:
+        return None
+    if isinstance(value, (list, tuple)):
+        return [closed_value(v, depth + 1) for v in value[:16] if v is not None]
+    if isinstance(value, dict):
+        return {
+            str(k)[:64]: closed_value(v, depth + 1)
+            for k, v in list(value.items())[:24]
+            if isinstance(k, str)
+        }
+    return None
+
+
+def selftest_shape(row: dict) -> dict | None:
+    """一代记录里的自检形状（原样透传 `envdiag` 投影出的字段）；没有自检失败回 None。"""
+    shape = row.get("selftest")
+    return closed_value(shape) if isinstance(shape, dict) else None
+
+
+def environment_check_rows(project_root, *, with_detail: bool) -> list[dict]:
+    """最近 ≤5 代受管环境任务的检查记录（与诊断包 `managed_environment_jobs` 同一份记录，新的在前）。"""
+    from .. import envdiag
+
+    rows: list[dict] = []
+    for row in envdiag.recent_checks(project_root)[:ENV_CHECKS_MAX]:
+        item: dict = {
+            "requested": closed_value(row.get("requested")),
+            "outcome": row.get("outcome"),
+            "error_code": row.get("error_code"),
+            "selftest": selftest_shape(row),
+        }
+        if with_detail and item["selftest"] is not None:
+            detail = row.get("selftest_detail")
+            if isinstance(detail, str) and detail.strip():
+                item["detail_tail"] = readscope.scrub(detail)[-ENV_CHECK_DETAIL_MAX:]
+        rows.append(item)
+    return rows
+
+
+def read_environment_checks(ctx: FixContext, args: dict) -> ToolResult:
+    rows = environment_check_rows(ctx.project_root, with_detail=True)
+    if not rows:
+        return ok(
+            json.dumps({"generations": []}, ensure_ascii=False),
+            "no environment checks",
+        )
+    return ok(
+        json.dumps({"generations": rows}, ensure_ascii=False, indent=1),
+        f"{len(rows)} environment generations",
+    )
+
+
 # --------------------------------------------------------------------------- 描述与登记
 _PATH = {
     "type": "string",
@@ -559,6 +624,18 @@ OBSERVE_TOOLS: tuple[FixTool, ...] = (
         "suggested remedy if there is one. Use it first, before guessing. It takes no arguments and changes nothing.",
         obj({}),
         read_run_report,
+    ),
+    FixTool(
+        "read_environment_checks",
+        "Read what Tavotto itself checked in this project's managed Python environments: up to the last 5 "
+        "generations, newest first, each with the requested packages, outcome, error code and the self-test "
+        "record (which step failed: stage, exit code, worker error code, exception structure, engine frame, and "
+        "any operations / fidelity facts), plus `detail_tail`, the end of the self-test's own output (secrets "
+        "masked, at most 4 KiB). Use it when an install or a new environment ends with "
+        "`dependency_worker_selftest_failed`: the self-test is a tiny built-in figure, not the user's script. "
+        "Takes no arguments and changes nothing; an empty list means no check was recorded yet.",
+        obj({}),
+        read_environment_checks,
     ),
     FixTool(
         "read_file",

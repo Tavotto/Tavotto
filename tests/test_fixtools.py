@@ -736,6 +736,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
     # 注册表恰好是这些工具：多一个或少一个都红
     assert {
         "read_run_report",
+        "read_environment_checks",
         "read_file",
         "list_dir",
         "find_files",

@@ -1855,6 +1855,7 @@
         "denied": "The AI is trying another way",
         "thePackages": "the packages it needs",
         "read_run_report": "Reading the run report",
+        "read_environment_checks": "Reading environment checks",
         "read_file": "Reading a file",
         "list_dir": "Reading a folder",
         "find_files": "Finding files",

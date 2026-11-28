@@ -78,10 +78,28 @@ def _generation(value: object) -> str | None:
     return value if isinstance(value, str) and _GENERATION.fullmatch(value) else None
 
 
-def _project(record: dict) -> dict:
-    """Re-project even locally loaded records; never copy unrecognised fields."""
+#: 自检原文尾部的本机上限（只给本机修复会话的 `read_environment_checks`；诊断包不带，见 `_project`）。
+SELFTEST_DETAIL_MAX = 4096
+
+
+def _detail(value: object) -> str | None:
+    """自检原文尾部：再过一遍诊断包同一套文本脱敏，取尾 `SELFTEST_DETAIL_MAX` 个字符。"""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        text = diagnostictext.redact_text(value[-SELFTEST_DETAIL_MAX * 2 :])
+    except Exception:  # noqa: BLE001 - 脱敏失败就不存
+        return None
+    return text[-SELFTEST_DETAIL_MAX:] or None
+
+
+def _project(record: dict, *, keep_detail: bool = False) -> dict:
+    """Re-project even locally loaded records; never copy unrecognised fields.
+
+    `selftest_detail`（自检原文尾部）只在 `keep_detail=True` 时保留：进程内缓存与本机文件、
+    `recent_checks` 用；`recent()` 与诊断包导出走默认，键根本不出现——诊断包里不许有原文。"""
     source, outcome = record.get("source"), record.get("outcome")
-    return {
+    out = {
         "requested": _packages(record.get("requested"), versions=False)
         if isinstance(record.get("requested"), list)
         else None,
@@ -116,6 +134,11 @@ def _project(record: dict) -> dict:
         "render": _render(record.get("render")),
         "selftest": _selftest(record.get("selftest")),
     }
+    if keep_detail:
+        detail = _detail(record.get("selftest_detail"))
+        if detail is not None:
+            out["selftest_detail"] = detail
+    return out
 
 
 _ERROR_CODES = {
@@ -238,7 +261,9 @@ def _load(key: str, path: Path | None = None) -> list[dict]:
             rows = raw if isinstance(raw, list) else []
         except (OSError, ValueError):
             rows = []
-        _cache[key] = [_project(r) for r in rows[-_MAX_JOBS:] if isinstance(r, dict)]
+        _cache[key] = [
+            _project(r, keep_detail=True) for r in rows[-_MAX_JOBS:] if isinstance(r, dict)
+        ]
         while len(_cache) > _MAX_PROJECTS:
             evicted, _ = _cache.popitem(last=False)
             _pending_writes.discard(evicted)
@@ -322,7 +347,7 @@ def record_job(project: str | Path, record: dict) -> None:
         path = _path(key)
         with _lock:
             rows = _load(key, path)
-            rows.append(_project(record))
+            rows.append(_project(record, keep_detail=True))
             del rows[:-_MAX_JOBS]
         threading.Thread(target=_save, args=(key, path), daemon=True).start()
     except Exception:  # noqa: BLE001
@@ -384,5 +409,16 @@ def recent(project: str | Path) -> list[dict]:
     try:
         with _lock:
             return [_project(row) for row in reversed(_load(_key(project)))]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def recent_checks(project: str | Path) -> list[dict]:
+    """与 `recent` 同一份记录（新的在前），但带本机才有的 `selftest_detail`。
+
+    只给修复会话的 `read_environment_checks`；诊断包 / 状态接口一律走 `recent`。"""
+    try:
+        with _lock:
+            return [_project(row, keep_detail=True) for row in reversed(_load(_key(project)))]
     except Exception:  # noqa: BLE001
         return []
