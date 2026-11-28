@@ -1756,7 +1756,7 @@ def test_add_size_caps_are_12_for_free_only_and_24_with_mechanism_items(lic):
     assert res["errors"][0]["field"] == "items: at most 24 per add"
 
 
-def test_anchor_boxes_use_the_rotated_extent_and_hide_the_core_band():
+def test_anchor_boxes_use_the_rotated_extent_and_the_explicit_name_map():
     from types import SimpleNamespace
 
     objs = [
@@ -1764,8 +1764,64 @@ def test_anchor_boxes_use_the_rotated_extent_and_hide_the_core_band():
         {"id": "m__core", "x": 0, "y": 0, "w": 5, "h": 5},
         {"id": "frm__box", "x": 1.0, "y": 2.0, "w": 30.0, "h": 40.0},
     ]
-    boxes = mechanism.anchor_boxes(SimpleNamespace(objects=objs))
-    assert set(boxes) == {"r", "frm"}
+    prep = SimpleNamespace(objects=objs, anchor_ids={"r": "r", "frm": "frm__box", "m": "m"})
+    boxes = mechanism.anchor_boxes(prep)
+    assert set(boxes) == {"r", "frm"}  # 底带没有条目名；`m` 的对象不在表里就不出
     x, y, w, h = boxes["r"]  # 竖条绕中心转 90° → 横条（中心 (12, 10) 不变）
     assert (round(x, 6), round(y, 6), round(w, 6), round(h, 6)) == (2.0, 8.0, 20.0, 4.0)
     assert boxes["frm"] == (1.0, 2.0, 30.0, 40.0)
+
+
+def test_item_names_may_not_collide_with_host_made_object_ids(lic):
+    """Codex #2388 P1：真图元名叫 `r` 与 `r__box`、或以 `__core` 结尾时，不许悄悄覆盖 / 漏掉锚点——条目名直接拒收这两个后缀。"""
+    for bad in ("r__box", "x__core"):
+        items = _mech_batch(
+            [
+                {
+                    "kind": "glyph",
+                    "name": bad,
+                    "glyph": "receptor_rtk",
+                    "frame": "frm",
+                    "block": "细胞膜",
+                    "embed": {"membrane": "mem"},
+                }
+            ]
+        )
+        res = _plan_real(items)
+        assert res["ok"] is False and res["errors"][0]["code"] == "bad_item", bad
+        assert "__box or __core" in res["errors"][0]["field"]
+    frame_named = _mech_batch()
+    frame_named[0] = {**frame_named[0], "name": "f__box"}
+    assert _plan_real(frame_named)["errors"][0]["code"] == "bad_item"
+
+
+def test_every_mechanism_item_is_anchorable_by_its_own_name(lic):
+    items = _mech_batch(
+        [
+            {
+                "kind": "text",
+                "name": "t_f",
+                "text": "框",
+                "at": _anc("frm", "nw", (1, 1)),
+                "attach": "nw",
+                "frame": "frm",
+            },
+            {
+                "kind": "text",
+                "name": "t_r",
+                "text": "受",
+                "at": _anc("r1", "ne", (1, 0)),
+                "attach": "w",
+                "frame": "frm",
+            },
+            {
+                "kind": "text",
+                "name": "t_m",
+                "text": "膜",
+                "at": _anc("mem", "sw", (0, 2)),
+                "attach": "nw",
+                "frame": "frm",
+            },
+        ]
+    )
+    assert _plan_real(items)["ok"]

@@ -157,3 +157,34 @@ def test_the_plugin_reference_example_batch_is_a_valid_add_with_the_real_compone
         harness.load_corpus()["canvas"] | {"objects": []}, ops[0]["items"], licensed=True
     )
     assert res["ok"], res.get("errors") or res.get("failed")
+
+
+def test_inside_frame_uses_the_rotated_outline_not_the_unrotated_rectangle():
+    """Codex #2388 P2：(0, 15, 6, 30) 的受体转 90° 实际占 (-12, 27, 30, 6)，在 (0, 0, 80, 60) 的框里伸出了左边，应判不过。"""
+    frame = {
+        "id": "f",
+        "type": "shape",
+        "shape": "rect",
+        "name": "示意图框 · t",
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 60,
+    }
+    turned = _rect_obj("r", "受体", 0, 15, 6, 30, glyph="receptor_rtk", rot=90.0)
+    assert not _ev([{"t": "inside_frame"}], [frame, turned])["ok"]
+    assert _ev([{"t": "inside_frame"}], [frame, {**turned, "x": 30}])["ok"]  # 挪进框里就过
+    assert _ev([{"t": "inside_frame"}], [frame, {**turned, "rotationDeg": 0.0}])[
+        "ok"
+    ]  # 不旋转时原矩形就在框内
+    plain = {
+        "id": "t",
+        "type": "text",
+        "x": 0,
+        "y": 15,
+        "w": 6,
+        "h": 30,
+        "text": "x",
+        "rotationDeg": 90.0,
+    }
+    assert not _ev([{"t": "inside_frame"}], [frame, plain])["ok"]  # 非路径对象按旋转后的四角外接框

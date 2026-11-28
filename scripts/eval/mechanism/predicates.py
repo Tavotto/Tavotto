@@ -178,17 +178,39 @@ def p_no_overlap(task, before, after, p) -> Result:
     return (not bad, f"交叠：{bad}" if bad else f"{len(ps)} 个蛋白真实轮廓两两不交叠")
 
 
+def extent(o: dict) -> tuple[float, float, float, float]:
+    """对象真正占的范围（画布毫米）：路径取旋转后的真实轮廓，其余取旋转后四角的外接框。"""
+    if o.get("type") == "path" and o.get("subpaths"):
+        pts = [q for line, _c in polylines(o) for q in line]
+        if pts:
+            xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+            return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+    x, y, w, h = box(o)
+    rot = math.radians(float(o.get("rotationDeg") or 0.0))
+    if not rot:
+        return x, y, w, h
+    c, s = math.cos(rot), math.sin(rot)
+    cx, cy = x + w / 2, y + h / 2
+    pts = [
+        (cx + (px - cx) * c - (py - cy) * s, cy + (px - cx) * s + (py - cy) * c)
+        for px, py in ((x, y), (x + w, y), (x + w, y + h), (x, y + h))
+    ]
+    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+    return min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+
+
 def p_inside_frame(task, before, after, p) -> Result:
+    """全部在示意图框内：按旋转后的真实范围（不是未旋转的对象矩形）；框自己没有旋转时取它的外框。"""
     new = new_objects(before, after)
     m = _members(new)
     if not m["frame"]:
         return False, "没有示意图框"
-    fx, fy, fw, fh = box(m["frame"][0])
+    fx, fy, fw, fh = extent(m["frame"][0])
     out = []
     for o in new:
         if is_frame(o):
             continue
-        x, y, w, h = box(o)
+        x, y, w, h = extent(o)
         if x < fx - 0.01 or y < fy - 0.01 or x + w > fx + fw + 0.01 or y + h > fy + fh + 0.01:
             out.append(o.get("name"))
     return (not out, f"框外的：{out}" if out else "全部在示意图框内")

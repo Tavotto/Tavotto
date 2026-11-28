@@ -89,6 +89,10 @@ class MechanismError(Exception):
         self.code, self.field = code, field
 
 
+#: 宿主造的对象 id 的后缀（框线 `名__box`、疏水底带 `名__core`）；条目名不许以它们结尾，免得对象 id 撞车
+RESERVED_SUFFIXES = ("__box", "__core")
+
+
 def licensed() -> bool:
     return engine_license.has(FEATURE)
 
@@ -343,6 +347,9 @@ class Prepared:
     echo: list = field(default_factory=list)
     names: mechgroup.Names = field(default_factory=mechgroup.Names)
     frame_group: str | None = None
+    anchor_ids: dict = field(
+        default_factory=dict
+    )  # 条目名 → 它落成的对象局部 id（框 / 图元）：免费条目的 `item` 锚点按它查，不靠名字后缀
 
     @property
     def member_locals(self) -> set[str]:
@@ -386,6 +393,10 @@ def prepare(items: list, *, locale: str = "zh", ask: Ask | None = None) -> Prepa
         n = it.get("name")
         if not isinstance(n, str) or not n or n in names_seen:
             raise MechanismError("bad_item", str(n))
+        if n.endswith(
+            RESERVED_SUFFIXES
+        ):  # 宿主自己造的对象 id（框线、疏水底带）用这两个后缀，条目名不许撞
+            raise MechanismError("bad_item", f"{n}: name may not end with __box or __core")
         names_seen.add(n)
     frame_group: str | None = None
     frame_name: str | None = None
@@ -407,6 +418,7 @@ def prepare(items: list, *, locale: str = "zh", ask: Ask | None = None) -> Prepa
         frame_name = name
         frame_group = mechgroup.name_for("frame", title or name, loc)
         out.has_frame = True
+        out.anchor_ids[name] = f"{name}__box"
         out.objects.append(
             {
                 "id": f"{name}__box",
@@ -966,6 +978,7 @@ def _emit(g: _G, out: Prepared, loc: str) -> None:
         obj["rotationDeg"] = round(rot, 3)
     if path:
         obj["groupPath"] = path
+    out.anchor_ids[g.name] = obj["id"]
     out.objects.append(obj)
     meta = {
         "kind": g.kind,
@@ -997,11 +1010,13 @@ def _emit(g: _G, out: Prepared, loc: str) -> None:
 
 def anchor_boxes(prep: Prepared) -> dict:
     """机理图条目（框 / 图元）落位后的外接框 `{条目名: (x, y, w, h)}`：同一批的免费条目（箭头、文字、形状）用 `item` 锚点贴上去。
-    旋转过的图元取旋转后四角的外接框（只是方位点的近似，不是真轮廓）；膜的底带（`…__core`）不对外。"""
+    按 `prep.anchor_ids`（条目名 → 对象局部 id）的显式映射查，不靠对象 id 的名字后缀；膜的疏水底带没有条目名，不对外。
+    旋转过的图元取旋转后四角的外接框（只是方位点的近似，不是真轮廓）。"""
+    by_id = {o.get("id"): o for o in prep.objects if isinstance(o, dict)}
     out = {}
-    for o in prep.objects:
-        oid = o.get("id")
-        if not isinstance(oid, str) or oid.endswith("__core"):
+    for name, oid in prep.anchor_ids.items():
+        o = by_id.get(oid)
+        if o is None:
             continue
         x, y, w, h = (float(o.get(k) or 0.0) for k in ("x", "y", "w", "h"))
         rot = math.radians(float(o.get("rotationDeg") or 0.0))
@@ -1014,12 +1029,7 @@ def anchor_boxes(prep: Prepared) -> dict:
             ]
             xs, ys = [p[0] for p in pts], [p[1] for p in pts]
             x, y, w, h = min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
-        out[oid[: -len("__box")] if oid.endswith("__box") else oid] = (
-            x,
-            y,
-            w,
-            h,
-        )  # 框的对象是「名字__box」，对外还叫框的名字
+        out[name] = (x, y, w, h)
     return out
 
 
