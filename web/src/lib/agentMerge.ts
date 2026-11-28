@@ -276,6 +276,9 @@ export function setAgentMergeUndoRunner(run: () => void): void {
   undoRunner = run
 }
 
+/** 窗口回到前台之外，开着期间多久问一次插件那边有没有新东西（并进来、Agent 的建议卡共用这一个节奏） */
+export const AGENT_WATCH_INTERVAL_MS = 60_000
+
 /** 含删除的那次并入，状态栏带「撤销」挂多久（之后照常收起，⌘Z 仍可撤） */
 export const AGENT_MERGE_UNDO_DISMISS_MS = 10_000
 
@@ -320,7 +323,7 @@ export function mergeAndReport(m: MergeableAdditions): boolean {
  * （一次 commit、可 ⌘Z 撤销），状态栏短暂说一句（维护者 2026-11-25：没有要用户裁决的事，不挂要点的胶囊）。
  * 返回停止函数（App 卸载时调）。
  */
-export function watchAgentAdditions(intervalMs = 60_000): () => void {
+export function watchAgentAdditions(intervalMs = AGENT_WATCH_INTERVAL_MS): () => void {
   let busy = false
   const check = async () => {
     if (busy || document.visibilityState === 'hidden') return
