@@ -65,6 +65,13 @@ import { useRuntimePreview } from '@/hooks/useRuntimePreview'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { useMountedPngStore } from '@/store/mountedPngStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
+import {
+  markPalettePreviewUnavailable,
+  reattachPalettePreview,
+  settleUnbackedPalettePreview,
+  usePalettePreviewGen,
+  usePalettePreviewHeld,
+} from '@/store/palettePreviewStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import type { PanelObject, PanelRotation } from '@/types/document'
@@ -178,6 +185,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const docKey = renderKeyOf(obj)
   useEffect(() => {
     settleUnbackedCommit(panelId, obj.overrides)
+    settleUnbackedPalettePreview(panelId, obj.overrides)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey, panelId])
 
@@ -284,8 +292,23 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 没有矢量 payload 的那两档除外：`raster` 刻意没有 SVG，`evicted` 的那份刚被
   // 内存预算清掉——这条兜底都不许把**上一版**的矢量图拿来冒充（前者正是硬闸要
   // 拦的 payload，后者会让画布显示另一个变体的图）。
+  // 配色的画布预览（ADR 0210 §六，store/palettePreviewStore）：预览期间这张面板改挂**这一版**确切的矢量 SVG，
+  // 颜色才有地方画。只认 `exact`——别的变体的图、raster 档、被清掉的那份都不拿来冒充（画不了就由弹层说出来）。
+  // 选用之后挂着等图那一段，文档已经换了键、`displayView` 退成 `fallback`（还是刚才画着预览的那一份），
+  // 照挂它：新图到之前画面停在预览色上，不先闪回旧色。
+  const paletteGen = usePalettePreviewGen(panelId)
+  const paletteHeld = usePalettePreviewHeld()
+  const paletteSvg =
+    paletteGen && svgHtml == null && !bitmapOnly && !foreignStandby
+      ? displayView?.kind === 'exact' || (paletteHeld && displayView?.kind === 'fallback')
+        ? displayView.svg
+        : null
+      : null
   const inlineSvg =
-    svgHtml ?? engineSvgStandby ?? (src || bitmapOnly || foreignStandby ? null : (render?.svg ?? null))
+    svgHtml ??
+    paletteSvg ??
+    engineSvgStandby ??
+    (src || bitmapOnly || foreignStandby ? null : (render?.svg ?? null))
   const showSvg = inlineSvg != null
   const loadedPngUrl = useRef<string | null>(null)
   const currentPngUrl = pngIsCurrent ? pngBlob.url : null
@@ -343,6 +366,21 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     perfRenderPainted(cur)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mountedEditSvg, panelId])
+  // 配色预览的接合点：与上面同一类时机（layout effect、绘制之前），换一套方案（代号变）或换了一版 SVG 都重画。
+  // 键用的是**挂着的那一版**：图内编辑那张是 activeRenderKey，其它面板是 displayView 的 sourceKey——
+  // 挂着等图时新图一到键就变，预览据此退场。没有可挂的矢量 SVG → 记成画不了；有、但还在解码 → 等它挂上再画。
+  const paletteKey = svgHtml != null ? null : (displayView?.sourceKey ?? null)
+  useLayoutEffect(() => {
+    if (!paletteGen) return
+    if (inlineSvg == null) {
+      markPalettePreviewUnavailable(panelId)
+      return
+    }
+    if (mountedSvg == null || mountedSvg !== inlineSvg) return
+    const key = paletteKey ?? activeRenderKey(useRenderStore.getState(), obj)
+    reattachPalettePreview(panelId, key)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mountedSvg, inlineSvg, paletteGen, paletteKey, panelId])
 
   // 面板需要引擎产物（有图内修改 / 脚本领先 / runtime），画布上挂的却是磁盘
   // 原图——这一格必须与「近似预览」同级地诚实说出来（web/AGENTS.md：不许无

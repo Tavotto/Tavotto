@@ -8083,6 +8083,7 @@ export default interface Resources {
       "widthPrefix": "宽 "
     },
     "palettePanel": {
+      "canvasPreviewMissed_other": "有 {{count}} 条系列在这里预览不了，选用后才看得到",
       "dropNeutral": "取消中性",
       "figures_other": "{{count}} 张图",
       "groupCount_other": "{{count}} 组",
@@ -8090,7 +8091,7 @@ export default interface Resources {
       "groupMore": "更多",
       "groups": "组",
       "intro": "选一套方案后，同名的组在每张图里用同一个颜色；之后换方案，组和颜色的对应不变。",
-      "keysHint": "↑↓ 预览 · ↵ 选用 · Esc 关闭",
+      "keysHint": "↑↓ 在画布上预览 · ↵ 选用 · Esc 还原",
       "mergeBody_other": "「{{names}}」在不同的图里写法略有不同（大小写、空格），当成同一组就用同一个颜色。",
       "mergeConfirm": "并成一组",
       "mergeInto": "并入 {{name}}",
