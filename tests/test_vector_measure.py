@@ -141,3 +141,25 @@ def test_close_stops_the_pool_workers_so_no_non_daemon_thread_outlives_the_plan(
         time.sleep(0.01)
     assert not any(t.is_alive() for t in mine)
     vm.close(m)  # 重复收不抛
+
+
+def test_a_timed_out_measure_leaves_no_non_daemon_thread_behind():
+    """#2367 合并组 windows-latest 8：量线程曾是非 daemon 的线程池 worker，漏收一次 `close()` 就挡住进程退出，
+    conftest 收尾的「非 daemon 线程」门禁判红。现在每次量是一条 daemon 线程——超时的那次还在跑也不挡退出，且不要求调用方 close。"""
+    import threading
+
+    gate = threading.Event()
+
+    def raw(panel, requests):
+        gate.wait(5)
+        return OK
+
+    m = _bounded(raw, per_panel_s=0.05, key_of=lambda p, r: None)
+    with pytest.raises(la.PanelUnavailable):
+        m({"fileId": "f"}, [])
+    try:
+        live = [t for t in threading.enumerate() if t.name.startswith("vector-measure")]
+        assert live and all(t.daemon for t in live)  # 超时的那次还在跑，但它是 daemon
+    finally:
+        gate.set()
+    vm.close(m)  # 钩子保留、不抛
