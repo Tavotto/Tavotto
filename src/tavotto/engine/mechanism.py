@@ -605,6 +605,22 @@ def _midline_len(samples: list, sx: float, sy: float) -> list[float]:
     return acc
 
 
+def _remap(src: list[float], dst: list[float], v: float) -> float:
+    """把 `src` 这条单调累计弧长上的值 `v` 线性映射到 `dst`（同样的采样点，另一种尺度）。"""
+    i = 0
+    while i < len(src) - 2 and src[i + 1] < v:
+        i += 1
+    span = (src[i + 1] - src[i]) or 1.0
+    t = min(1.0, max(0.0, (v - src[i]) / span))
+    return dst[i] + (dst[i + 1] - dst[i]) * t
+
+
+def _local_k(samples: list, accn: list[float], fnat: float, sx: float, sy: float) -> float:
+    """膜被非等比拉伸后，自然弧长占比 `fnat` 处沿切线方向的拉伸倍数 = |S·t| / |t|（t = 该处自然尺寸下的单位切线）。"""
+    _x, _y, nx, ny = _frame_at(samples, accn, fnat)
+    return math.hypot(sx * -ny, sy * nx)
+
+
 def _frame_at(samples: list, acc: list[float], frac: float) -> tuple:
     """中线上弧长占比 `frac` 处的位置与朝外单位法线（采样点之间线性插值）。"""
     target = frac * acc[-1]
@@ -656,10 +672,17 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
     sx, sy = msize[0] / nat[0], msize[1] / nat[1]
     acc = _midline_len(samples, sx, sy)
     total = acc[-1]
-    k = total / (
-        _midline_len(samples, 1.0, 1.0)[-1] or 1.0
-    )  # 膜按对象尺寸拉伸后，弧长相对自然尺寸的倍数
-    margin = 2 * mi.get("pitch_mm", 0.0) * k  # 膜两端各留至少 2 个脂质
+    accn = _midline_len(samples, 1.0, 1.0)  # 自然尺寸下的累计弧长（组件的 `at` / 窗口宽度按它解释）
+    totaln = accn[-1] or 1.0
+
+    def kloc(frac_canvas: float) -> float:
+        """画布弧长占比处的**局部**拉伸倍数（弯膜非等比拉伸时各处不同）。"""
+        fn = _remap(acc, accn, frac_canvas * total) / totaln
+        return _local_k(samples, accn, fn, sx, sy)
+
+    margin_lo = 2 * mi.get("pitch_mm", 0.0) * kloc(0.0)  # 膜两端各留至少 2 个脂质
+    margin_hi = 2 * mi.get("pitch_mm", 0.0) * kloc(1.0)
+    margin = max(margin_lo, margin_hi)
     free = [g for g in prots if "at" not in g.embed]
 
     def pscale(g):  # 蛋白按对象尺寸缩放的倍数（回包里的测量都是自然尺寸）
@@ -687,7 +710,7 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
         s = at * total
         left = s - tmx[g.name]
         right = left + widths[g.name]
-        if left < margin - 1e-6 or right > total - margin + 1e-6:
+        if left < margin_lo - 1e-6 or right > total - margin_hi + 1e-6:
             raise MechanismError("bad_item", g.name)  # 超出膜的长度（或太靠近膜端）
         wins.append((left, right, g, at, g.reply["info"]["tm_width_mm"] * pscale(g)[0]))
     ordered = sorted(wins, key=lambda w: w[0])
@@ -696,9 +719,13 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
             raise MechanismError("bad_item", b[2].name)  # 两个蛋白重叠
     given = list(m.params.get("inserts") or [])
     # 让位窗口 = 跨膜部分的总宽；贴着杆的净空由膜自己定（头部半径 + 1/4 间距），窗口之间的每一段它重新均匀排布
-    # 膜的窗口宽度按**自然尺寸**的弧长给组件（组件不知道对象被拉伸），所以除以拉伸倍数 k
+    # 给组件的 `at` 与窗口宽度都按**自然尺寸**的弧长：位置换成自然弧长占比，宽度除以插入点处的局部拉伸倍数
     computed = [
-        {"at": round(at, 6), "width_mm": round(w_tm / k, 6)} for _l, _r, _g, at, w_tm in wins
+        {
+            "at": round(_remap(acc, accn, at * total) / totaln, 6),
+            "width_mm": round(w_tm / kloc(at), 6),
+        }
+        for _l, _r, _g, at, w_tm in wins
     ]
     m.params["inserts"] = _check_inserts([*given, *computed], m.name)
     m.reply = _request(m, ask)  # 让位后的膜（外框不变）
@@ -813,19 +840,29 @@ def _core_object(g: _G, size: list, style: dict, path: list, out: Prepared, loc:
     total = acc[-1]
     if total <= 0:
         return None
-    k = total / (_midline_len(samples, 1.0, 1.0)[-1] or 1.0)  # 对象拉伸后弧长相对自然尺寸的倍数
-    inset = info.get("pitch_mm", 0.0) * k / 2  # 两端收在最外侧磷脂头的圆心处（约半个脂质间距）
-    cuts = sorted(
-        (it["at"] * total - it["width_mm"] * k / 2, it["at"] * total + it["width_mm"] * k / 2)
-        for it in g.params.get("inserts") or []
-    )
-    segs, cur = [], inset
+    accn = _midline_len(samples, 1.0, 1.0)
+    totaln = accn[-1] or 1.0
+
+    def kat(fn: float) -> float:  # 自然弧长占比处的局部拉伸倍数
+        return _local_k(samples, accn, fn, sx, sy)
+
+    # 两端收在最外侧磷脂头的圆心处（约半个脂质间距，按两端各自的局部拉伸换算）
+    inset_lo = info.get("pitch_mm", 0.0) * kat(0.0) / 2
+    inset_hi = info.get("pitch_mm", 0.0) * kat(1.0) / 2
+    cuts = []
+    for it in g.params.get("inserts") or []:  # `at` / `width_mm` 是自然尺寸下的值：换成画布弧长
+        mid = _remap(accn, acc, it["at"] * totaln)
+        half = it["width_mm"] * kat(it["at"]) / 2
+        cuts.append((mid - half, mid + half))
+    cuts.sort()
+    end = total - inset_hi
+    segs, cur = [], inset_lo
     for lo, hi in cuts:
-        if min(lo, total - inset) - cur > 0.05:
-            segs.append((cur, min(lo, total - inset)))
+        if min(lo, end) - cur > 0.05:
+            segs.append((cur, min(lo, end)))
         cur = max(cur, hi)
-    if total - inset - cur > 0.05:
-        segs.append((cur, total - inset))
+    if end - cur > 0.05:
+        segs.append((cur, end))
     subs = []
     for a, b in segs:
         arcs = [a, *[s for s in acc if a < s < b], b]

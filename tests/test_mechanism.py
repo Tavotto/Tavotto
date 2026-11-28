@@ -1446,3 +1446,158 @@ def test_ellipse_check_looks_at_the_handles_not_just_the_anchors():
     assert mechcheck._fits_native(_path("p", [quad(k)])) == "ellipse"  # noqa: SLF001
     assert mechcheck._fits_native(_path("p", [quad(0.15)])) is None  # noqa: SLF001
     assert mechcheck._fits_native(_path("p", [quad(0.0)])) is None  # noqa: SLF001
+
+
+# ---- Codex #2384 P1（局部拉伸）：弯膜非等比拉伸时，让位窗口宽度按插入点处的局部弧长映射换算 ----
+def _stretched_scene(curv, size, at=None, log=None):
+    items = [
+        {
+            "kind": "glyph",
+            "name": "mem",
+            "glyph": "membrane",
+            "at_mm": [0, 20],
+            "size_mm": size,
+            "params": {"curvature": curv},
+        },
+        {
+            "kind": "glyph",
+            "name": "r0",
+            "glyph": "receptor_rtk",
+            "embed": {"membrane": "mem", **({"at": at} if at is not None else {})},
+            "params": {"dimer": False},
+        },
+    ]
+    return mechanism.prepare(items, ask=_real_ask(log=log, curv=curv, length=40.0))
+
+
+def _last_inserts(log):
+    mem = [p for cmd, p in log if cmd == "mechanism.glyph" and p["kind"] == "membrane"]
+    return mem[-1]["params"]["inserts"]
+
+
+def test_local_stretch_at_a_near_horizontal_midpoint_keeps_the_full_opening(lic):
+    """曲率 0.3、膜 size_mm=[40,80]（自然 40×8，纵向 ×10）、蛋白在 0.5：该处切线近水平，局部拉伸 ≈ 1，
+    画布上的开口（= 跨膜宽）应 ≈ 原宽，而不是被平均拉伸倍数压到约一半。"""
+    log: list = []
+    prep = _stretched_scene(0.3, [40, 80], at=0.5, log=log)
+    ins = _last_inserts(log)[0]
+    ref = _real_ask()
+    tm_w = ref("mechanism.glyph", {"kind": "receptor_rtk", "params": {"dimer": False}})["info"][
+        "tm_width_mm"
+    ]
+    assert ins["at"] == pytest.approx(0.5, abs=1e-3)
+    assert ins["width_mm"] == pytest.approx(tm_w, rel=0.02)  # 自然宽 = 画布宽 / ≈1
+    core = _core(prep)
+    xs = sorted({round(p["p"][0] * core["w"], 6) for sp in core["subpaths"] for p in sp["nodes"]})
+    ends = []
+    for sp in core["subpaths"]:
+        px = [p["p"][0] * core["w"] for p in sp["nodes"]]
+        ends.append((min(px), max(px)))
+    ends.sort()
+    assert len(ends) == 2
+    assert ends[1][0] - ends[0][1] == pytest.approx(tm_w, rel=0.05)  # 底带开口 ≈ 跨膜宽
+    assert xs  # 有几何
+
+
+def test_uniform_stretch_local_equals_average(lic):
+    """等比拉伸（40×8 → 80×16）：局部 = 平均 = 2，自然宽 = 画布宽 / 2。"""
+    log: list = []
+    _stretched_scene(0.3, [80, 16], at=0.5, log=log)
+    tm_w = _real_ask()("mechanism.glyph", {"kind": "receptor_rtk", "params": {"dimer": False}})[
+        "info"
+    ]["tm_width_mm"]
+    assert _last_inserts(log)[0]["width_mm"] == pytest.approx(tm_w / 2, rel=0.02)
+
+
+def test_local_k_follows_the_tangent_direction_and_remap_is_monotone():
+    import math as _m
+
+    # 圆弧中线：自然尺寸下 θ 从 −45° 到 +45°，半径 10；法线 = (sin θ, −cos θ) 朝外（上）
+    n = 21
+    samples = []
+    for i in range(n):
+        th = _m.radians(-45 + 90 * i / (n - 1))
+        samples.append([10 * _m.sin(th), 10 - 10 * _m.cos(th), _m.sin(th), -_m.cos(th)])
+    accn = mechanism._midline_len(samples, 1.0, 1.0)  # noqa: SLF001
+    sx, sy = 1.0, 3.0
+    # 中点：切线水平 → k = sx；两端（θ = ±45°）：切线 45° → k = hypot(sx, sy) / √2
+    assert mechanism._local_k(samples, accn, 0.5, sx, sy) == pytest.approx(sx, abs=1e-6)  # noqa: SLF001
+    assert mechanism._local_k(samples, accn, 1.0, sx, sy) == pytest.approx(  # noqa: SLF001
+        _m.hypot(sx, sy) / _m.sqrt(2), abs=1e-6
+    )
+    assert mechanism._local_k(samples, accn, 0.0, sx, sy) == pytest.approx(  # noqa: SLF001
+        _m.hypot(sx, sy) / _m.sqrt(2), abs=1e-6
+    )
+    acc = mechanism._midline_len(samples, sx, sy)  # noqa: SLF001
+    vals = [mechanism._remap(accn, acc, accn[-1] * f / 10) for f in range(11)]  # noqa: SLF001
+    assert (
+        vals == sorted(vals)
+        and vals[0] == pytest.approx(0.0)
+        and vals[-1] == pytest.approx(acc[-1])
+    )
+    # 回来
+    assert mechanism._remap(acc, accn, vals[4]) == pytest.approx(accn[-1] * 0.4, abs=1e-9)  # noqa: SLF001
+
+
+def test_local_stretch_near_45_degrees_uses_the_tangent_at_the_insertion_point(lic):
+    """陡弧（圆弧 ±40°）上、非等比拉伸（纵向 ×3）：插入点接近 45° 处，局部拉伸 = √(sx²cos²θ + sy²sin²θ)，
+    给组件的自然宽度 × 局部倍数 = 画布上的跨膜宽；用平均倍数换算会明显偏离。"""
+    import math as _m
+
+    base = _real_ask()
+    R, TH = 28.0, _m.radians(40)
+
+    def ask(cmd, payload):
+        r = base(cmd, payload)
+        if cmd == "mechanism.glyph" and payload["kind"] == "membrane":
+            n = 41
+            pts = []
+            for i in range(n):
+                th = -TH + 2 * TH * i / (n - 1)
+                pts.append(
+                    [
+                        20 + R * _m.sin(th),
+                        12 + R * (1 - _m.cos(th)),
+                        _m.sin(th),
+                        -_m.cos(th),
+                    ]
+                )
+            r["info"]["midline"] = pts
+            r["info"]["natural_size_mm"] = [40, 20]
+        return r
+
+    log: list = []
+
+    def logged(cmd, payload):
+        log.append((cmd, copy.deepcopy(payload)))
+        return ask(cmd, payload)
+
+    items = [
+        {
+            "kind": "glyph",
+            "name": "mem",
+            "glyph": "membrane",
+            "at_mm": [0, 0],
+            "size_mm": [40, 60],
+            "params": {"curvature": 0.3},
+        },
+        {
+            "kind": "glyph",
+            "name": "r0",
+            "glyph": "receptor_rtk",
+            "embed": {"membrane": "mem", "at": 0.78},
+            "params": {"dimer": False},
+        },
+    ]
+    mechanism.prepare(items, ask=logged)
+    ins = _last_inserts(log)[0]
+    tm_w = base("mechanism.glyph", {"kind": "receptor_rtk", "params": {"dimer": False}})["info"][
+        "tm_width_mm"
+    ]
+    th = -TH + 2 * TH * ins["at"]  # 圆弧按弧长均匀：自然占比 → 角度
+    sx, sy = 1.0, 3.0
+    k_local = _m.sqrt((sx * _m.cos(th)) ** 2 + (sy * _m.sin(th)) ** 2)
+    assert abs(_m.degrees(th)) > 25  # 确实在陡处
+    assert ins["width_mm"] * k_local == pytest.approx(tm_w, rel=0.03)
+    k_avg = _m.sqrt((sx) ** 2 + (sy) ** 2) / 1.0  # 粗略的平均量级，仅用来说明两者不同
+    assert abs(ins["width_mm"] * k_avg - tm_w) > 0.05 * tm_w
