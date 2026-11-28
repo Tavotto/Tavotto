@@ -806,6 +806,31 @@ describe('渲染回来的图幅同步到面板：快速编辑舞台的框就是�
       expect(current().chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] })
       await unmount()
     })
+
+    it('外框原点漂移按统一帧适配：crop 重算、可见内容在页面上不动、silent 零历史', async () => {
+      const base = chartPanel('pf4')
+      const p = { ...base, x: 50, y: 40, crop: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 } }
+      await useDocumentStore.getState().switchDocument(emptyProject(), 'd_frame_passive')
+      useDocumentStore.getState().commit(literal('准备'), (d) => {
+        d.objects = [structuredClone(p)]
+      })
+      const historyBefore = useDocumentStore.getState().past.length
+      const unmount = await mountAndRender('d_frame_passive', p, [122 * PT_MM, 109 * PT_MM], true)
+      const o = current()
+      // native 尺寸与外框原点跟这份渲染走
+      expect([o.nativeW, o.nativeH]).toEqual([122 * PT_MM, 109 * PT_MM])
+      expect(o.chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-21, -1] })
+      // 可见内容在页面上一个点都不动（x/y/w/h 是可见区域的 mm，crop 变了可见区域没变）
+      expect([o.x, o.y, o.w, o.h]).toEqual([p.x, p.y, p.w, p.h])
+      // crop 从旧外框分数换到新外框分数：可见窗口罩住同一块源画作
+      expect(o.crop!.x).toBeCloseTo((0.1 + 21 / 100) / (122 / 100), 6)
+      expect(o.crop!.y).toBeCloseTo((0.1 + 1 / 100) / (109 / 100), 6)
+      expect(o.crop!.w).toBeCloseTo(0.5 / 1.22, 6)
+      expect(o.crop!.h).toBeCloseTo(0.5 / 1.09, 6)
+      // passive 同步不进历史
+      expect(useDocumentStore.getState().past.length).toBe(historyBefore)
+      await unmount()
+    })
   })
 
   describe('渲染到达之后又有拖动帧：手势按按下时的几何写尺寸，同步留到收尾', () => {

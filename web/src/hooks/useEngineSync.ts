@@ -23,6 +23,7 @@ import { currentVisibleRectMm } from '@/store/viewportStore'
 import { useWorkspaceStore, type WorkspaceMode } from '@/store/workspaceStore'
 import { panelRotation } from '@/types/document'
 import { syncPanelNativeSize } from '@/lib/panelNativeSize'
+import { passiveComputedFramePatch, type ComputedRenderFrame } from '@/lib/chartFrame'
 import { hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { figureOriginFor } from '@/lib/figureSnapshot'
 import { stampOverrideIdentities } from '@/lib/overrideIdentity'
@@ -390,6 +391,8 @@ type NativeSizeFix = {
    * 已持久化的落位原样保留（那是文档的坐标合同，不因一次回退删掉）。
    */
   originPt?: readonly [number, number]
+  /** 同一次 draw 的完整外框声明（与 originPt 同源）；被动帧适配的输入。 */
+  renderFrame?: ComputedRenderFrame
 }
 
 /**
@@ -414,12 +417,14 @@ function nativeSizeFixes(
     // 的 left/top 是同一次 draw 的两端，拆开对版本就会让 computedFramePatch 的
     // oldL/oldT 与 nativeW/H 失配（useEngineSync 顶部注释的老坑在这里的形状）
     let originPt: readonly [number, number] | undefined
+    let renderFrame: ComputedRenderFrame | undefined
     if (o.chartFrame && render.renderFrame) {
       const [left, top] = render.renderFrame.rect_pt
       originPt = o.chartFrame.originPt[0] === left && o.chartFrame.originPt[1] === top ? undefined : [left, top]
+      renderFrame = render.renderFrame
     }
     if (Math.abs(o.nativeW - wMm) <= 0.05 && Math.abs(o.nativeH - hMm) <= 0.05 && originPt === undefined) continue
-    fixes.push({ id: o.id, wMm, hMm, ...(originPt !== undefined ? { originPt } : {}) })
+    fixes.push({ id: o.id, wMm, hMm, ...(originPt !== undefined ? { originPt, renderFrame } : {}) })
   }
   return fixes
 }
@@ -428,13 +433,24 @@ function applyNativeSizeFixes(d: FigureDocument, fixes: readonly NativeSizeFix[]
   for (const fix of fixes) {
     const o = d.objects.find((x) => x.id === fix.id)
     if (o?.type !== 'panel') continue
+    // /2 外框原点漂移走**统一帧适配**（ADR 0182 §2：显示框原点、原生尺寸与面板几何
+    // 同一事务采纳）——origin delta 折进 x/y、crop 重算，源画作在页面上不动。
+    // 被动同步本身就是渲染到达路径，不要求 exactFrameAuthority 的三条件闸；
+    // 帧与用户裁剪不相交（patch null）时这条修复整个不写，等下一次渲染再对版本。
+    if (fix.originPt && fix.renderFrame && o.chartFrame) {
+      // 帧与用户裁剪不相交（patch null）时这条修复整个不写，等下一次渲染再对版本
+      const patch = passiveComputedFramePatch(o, fix.renderFrame)
+      if (patch) Object.assign(o, patch)
+      continue
+    }
     // 换算（缩放比不变、旋转时宽高互换、按锚点反推 x/y）只在 `lib/panelNativeSize`
     // 一处：撤销 / 重做落地时的换基走的也是它
     syncPanelNativeSize(o, fix.wMm, fix.hMm, { anchor: fix.anchor })
     // nativeW/H 与 chartFrame.originPt **同一条收尾写入**：分两次写 = 两者来自
     // 不同版本的渲染，缩放比与外框落位各漂各的（341-346 注释的老坑），撤销 /
     // 重做也会把这两个字段拆到两条历史里。补进的是 immer 草稿，与上面的尺寸
-    // 修正并进同一条历史。
+    // 修正并进同一条历史。这条只剩「渲染没有 render_frame 的回退」会走到
+    //（有 render_frame 的都已被上面的统一适配接走）。
     if (fix.originPt && o.chartFrame) {
       o.chartFrame = { ...o.chartFrame, version: 1, renderProfile: 'native-manifest/2', originPt: [fix.originPt[0], fix.originPt[1]] }
     }
