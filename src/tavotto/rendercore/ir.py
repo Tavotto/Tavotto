@@ -427,6 +427,12 @@ class Group:
     #: 整组 alpha。< 1 时写入器用透明组（组内 alpha 从 1 起算）。
     opacity: float = 1.0
     object_id: str = ""
+    #: 给人看的名字（对象名 / 组名）。只有 SVG 写入器用它（写进 `id`，ADR 0208 §七之三）；PDF / EPS / 位图
+    #: 与 `object_id` 一样不看它。空 = 没有名字。
+    label: str = ""
+    #: 文档里的组（ADR 0191）：只负责「归在一起」，不放变换 / 不透明度（`clip` 只有剪切组才有）。SVG 写成一个
+    #: 裸 `<g>`；PDF / EPS 不用带这种组的页面（`plan.RenderPlan.svg_page` 只给 SVG）。
+    semantic: bool = False
 
 
 Node = Union[Group, Path, Image, ImportedPage, ShapedText]
@@ -893,6 +899,10 @@ def validate(page: Page) -> Page:
         if isinstance(node, Group):
             _matrix(node.transform, path)
             _alpha(node.opacity, path)
+            if not isinstance(node.label, str) or not isinstance(node.semantic, bool):
+                raise IRError("bad_node", "Group.label 必须是字符串、semantic 必须是布尔", path)
+            if node.semantic and (node.transform != IDENTITY or node.opacity != 1.0):
+                raise IRError("bad_node", "文档组不承载变换 / 不透明度（ADR 0208 §七之二）", path)
             if node.clip is not None:
                 if isinstance(node.clip, Path):
                     clips = ((node.clip, f"{path}.clip"),)

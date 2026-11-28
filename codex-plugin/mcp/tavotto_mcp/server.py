@@ -136,6 +136,8 @@ HANDLE_ONLY_KEYS = frozenset(
         "worker_generation",
         "restored",
         "script_rerun",
+        "binding",  # 绑定了排版的哪个子图 / 候选（有界：候选最多 8 条）
+        "layout_sync",  # 桌面改了子图的修改（changed 最多 8 条）
         "applied",
         "canonical_patch_count",
         "contract_released",
@@ -229,6 +231,9 @@ def _tools() -> list[dict]:
                 "不要草稿就带 discard_draft=true 打开（草稿同时删除）。导出成功即清草稿。"
                 "改完 .py 不用 close 再 open：再调 open / preflight / export 等任一工具，"
                 "会按新脚本重跑同一个会话并保留修改（回包 script_rerun，用不了的写进 dropped）。"
+                "这张图放在项目某份排版的子图里时，会话会绑定那个子图（回包 binding）：此后读到的是用户在桌面上的修改，"
+                "桌面改了会重渲染（回包 layout_sync）；在多个子图里就回 binding.state=ambiguous，问用户是哪一个，"
+                "再带 layout（排版名）+ panel（子图 id 或 tavotto_layout_scene 的短号 P1）重开。"
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
@@ -262,6 +267,14 @@ def _tools() -> list[dict]:
                             "从注册表自动发现可参数化且产物在磁盘上的图，全部打开。"
                             "与 stem / stems 互斥；不猜没登记的产物，也不跑脚本"
                         ),
+                    },
+                    "layout": {
+                        "type": "string",
+                        "description": "绑定到这份排版（排版名）；不给就自动找，只在一个子图里才绑",
+                    },
+                    "panel": {
+                        "type": "string",
+                        "description": "绑定到排版里的这个子图（子图 id 或短号 P1…）；与 layout 一起给",
                     },
                     "discard_draft": {
                         "type": "boolean",
@@ -1664,6 +1677,8 @@ def _open_figure_result(args: dict) -> dict:
         expected_environment_generation=generation,
         prepare_impact_digest=digest,
         discard_draft=bool(args.get("discard_draft")),
+        layout=args.get("layout"),
+        panel=args.get("panel"),
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。

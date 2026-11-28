@@ -1330,6 +1330,7 @@ export default interface Resources {
         "bodyTooLong": "内容太长了。",
         "body_required": "请先写点内容。",
         "body_too_long": "内容太长了。",
+        "creditInvalid": "称呼要 1 到 32 个字，不含 @ 和网址。",
         "disabled": "「联系作者」已被关闭。",
         "emailInvalid": "回信邮箱的格式不对，请检查，或者留空。",
         "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
@@ -1662,7 +1663,8 @@ export default interface Resources {
         "fromV2": "新版",
         "open": "打开原网页",
         "report": "这条不对",
-        "reportTitle": "发来官网链接或截图，我们来核对"
+        "reportTitle": "发来官网链接或截图，我们来核对",
+        "thanks": "感谢 {{name}} 勘误"
       },
       "cleared": "已不按期刊检查",
       "confirm": {
@@ -1775,6 +1777,12 @@ export default interface Resources {
     "journalTip": {
       "attach": "添加截图 / PDF",
       "cancel": "取消",
+      "credit": "在引用条目标注我的名字",
+      "creditHint": "（所有人可见）",
+      "creditInput": "称呼",
+      "creditPlaceholder": "你的名字，比如 李明",
+      "creditRow": "称呼",
+      "creditTitle": "称呼会写在对应条目的出处卡上，所有用户都能看到；想撤掉，回信告诉我们就行。",
       "descLabel": "问题描述（选填）",
       "editorAbout": "{{journal}}",
       "editorEmail": "核实后回信到这里",
@@ -4967,6 +4975,8 @@ export default interface Resources {
       "installFailed": "安装失败",
       "installing": "正在安装…",
       "interpreterLabel": "Python 解释器",
+      "lockedWriteSkipped": "这次没写进 {{file}}：文件正被别的程序占用或是只读的。",
+      "lockedWriteSkippedMany": "这次没写进 {{file}} 等 {{n}} 个文件：它们正被别的程序占用或是只读的。",
       "managedCliError": {
         "managed_cli_cancelled": "已取消安装 {{product}}。",
         "managed_cli_disk_full": "磁盘剩余空间不足以安装 {{product}}。清理后再试。",

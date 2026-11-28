@@ -161,7 +161,7 @@ order: 60
   子进程 / C 层读是 `unobserved` 盲区，规矩与以前完全一样；覆盖层事件造成的 `FileNotFoundError` 是脚本真实会遇到的，`explains` 不认。
   **覆盖层模拟不了的一律交回原来的守卫**（跳过并记账，行为一字不差）：项目里已有目录的 `rmdir/rmtree/改名/移走`、项目里的符号链接（删 / 改名 / 移走）、
   哪里都没有的源（删除 / 改名一个不存在的路径）、`shutil.move` 进目录 / 带自定义参数。**不改的既有契约**：`open('w')` 改写已有文件不拦（只有覆盖层里**已有状态**的路径
-  才继续走覆盖层，免得读回更早的那份）；`mkdir` / `copy*` / `write_bytes` / 指向项目外的符号链接原样；3.10 的 `pathlib._NormalAccessor` 不改道（`Path.rename|replace` 在 3.10 仍是今天的行为）。
+  才继续走覆盖层，免得读回更早的那份）——**唯一例外**（ADR 0127 修订 2026-11-28）：写打开项目里已有的普通文件被 `PermissionError` 拒绝（别的程序占着 / 只读）且父文件夹可写时，这一笔改写进覆盖层、脚本照常跑完，build 带 `locked_writes`（项目相对路径，只给本机界面的胶囊，不进回执 / 遥测 / 诊断 / 日志、不进账本），其余形状原样抛（看护 `tests/test_worker_locked_write.py`）；`mkdir` / `copy*` / `write_bytes` / 指向项目外的符号链接原样；3.10 的 `pathlib._NormalAccessor` 不改道（`Path.rename|replace` 在 3.10 仍是今天的行为）。
   不区分大小写的卷上键与暂存路径折成小写。看护 `tests/test_worker_overlay.py`（真 worker，逐字节核项目前后）。
 
   material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩

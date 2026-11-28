@@ -1002,7 +1002,8 @@ def observe_svg(path: Path, *, budget: SVGBudget | None = None) -> dict:
     try:
         with path.open("rb") as stream:
             data = stream.read(budget.max_bytes + 1)
-        root = parse_svg(data, budget=budget)
+        # 封口产物是我们自己写出的：SVG 导出把对象 / 组的名字原样写进 id（ADR 0208 §七之三），中文名也认
+        root = parse_svg(data, budget=budget, unicode_ids=True)
     except SVGError as exc:
         out["problems"].append(exc.code)
         return out

@@ -407,6 +407,8 @@ BUILDERS: dict[str, Callable[[Ctx], dict | None]] = {
 
 #: 显式的「没有可行下一步」：每项一句理由（为什么 Agent 手里没有可抄的动作）。
 NO_NEXT: dict[str, str] = {
+    # 插件会话绑定排版子图（ADR 0217）
+    "layout_binding_mismatch": "layout / panel 对不上这张图（reason 说了为什么）；不带它们让 Tavotto 自动找。",
     # 建议待办（ADR 0214 第 3 期）
     "bad_todos": "todos 写法不对（要 1..12 条 {label, why?, kind, changes?}），照工具说明改了再出方案。",
     "bad_todo_keys": "keys 要取 tavotto_suggest_plan 回的 todos[].key，回包 known 里列着这份方案的全部 key。",

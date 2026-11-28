@@ -356,7 +356,8 @@
      "bg": "#FFFFFF",
      "border_color": "#000000",
      "border_pt": 0.75,
-     "rotation_deg": 15
+     "rotation_deg": 15,
+     "name": "标签 EGFR"
     }
    ]
   },
@@ -1802,7 +1803,12 @@
      "shape": "rect",
      "stroke_pt": 1,
      "color": "#333333",
-     "fill": "#E69F00"
+     "fill": "#E69F00",
+     "name": "细胞膜",
+     "group_path": [
+      "g_00000003",
+      "g_00000002"
+     ]
     },
     {
      "x_mm": 10.0,
@@ -1843,7 +1849,12 @@
      ],
      "stroke_pt": 0.5,
      "color": "#333333",
-     "fill": "#56B4E9"
+     "fill": "#56B4E9",
+     "name": "受体",
+     "group_path": [
+      "g_00000003",
+      "g_00000002"
+     ]
     },
     {
      "x_mm": 10.0,
@@ -1861,7 +1872,11 @@
      },
      "stroke_pt": 1,
      "color": "#000000",
-     "head": "end"
+     "head": "end",
+     "name": "激活箭头",
+     "group_path": [
+      "g_00000003"
+     ]
     },
     {
      "x_mm": 10.0,
@@ -1874,7 +1889,11 @@
      "bold": false,
      "italic": false,
      "color": "#000000",
-     "align": "left"
+     "align": "left",
+     "name": "受体 EGFR",
+     "group_path": [
+      "g_00000007"
+     ]
     }
    ]
   },

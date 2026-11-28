@@ -11804,6 +11804,11 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     hint = engine_pool.workdir_hint_of_build(worker)
     if hint is not None:
         out["workdir_hint"] = hint
+    # 脚本写已有文件被系统拒绝（别的程序占着 / 只读），这一笔改写进了本次运行的覆盖层：图照常出，界面一枚胶囊说清楚
+    # 这次没写进去（项目相对路径，只给本机界面；没有就不加这个字段）
+    locked = engine_pool.locked_writes_of_build(worker)
+    if locked:
+        out["locked_writes"] = locked
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
         out["svg"] = resp["svg"]
@@ -19104,7 +19109,18 @@ def api_journal_facts_preflight():
     except engine_journalfacts_remote.FactsError as exc:
         return _journal_facts_error(exc)
     folded = engine_journalfacts_fold.fold(result["bundle"])
-    return _journal_facts_response({"catalog_rev": result["catalog_rev"], **folded})
+    # 署名（ADR 0213 三期）：只留这一刊刊包里真实存在的事实；取不到 / 验不过 = 空，不影响其余
+    fact_ids = {f["id"] for f in result["bundle"].get("facts", [])}
+    thanks = {
+        fid: name
+        for fid, name in engine_journalfacts_remote.thanks_for(
+            body["journal_id"], ui_locale=locale
+        ).items()
+        if fid in fact_ids
+    }
+    return _journal_facts_response(
+        {"catalog_rev": result["catalog_rev"], **folded, "thanks": thanks}
+    )
 
 
 @app.get("/api/journal-facts/snapshot")

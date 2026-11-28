@@ -45,7 +45,7 @@ ADR，再动手。看护用例在细则头部。下表是生成的：改细则�
 | `_bridge_error_from_worker`、`workdir=` / `prepare_dependencies=` / `argv=` / `adopt_environment=` 参数、`requirements` | 首开的「需要输入」与跑前依赖准备 → `first-open-questions.md` | 与桌面 / HTTP 是同一份决定；不替用户猜、不替用户授权；批量 open 不接受准备参数；新模块只经 `_optional_engine` |
 | `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()` | 批量打开与会话账本 → `sessions-and-batch-open.md` | 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；渲染成功后才登记 |
 | `web/src/lib/engineTransport.ts`、`mcp/widget/canvas.html`、`scripts/build_mcp_widget.py`、画布 CSP | 内嵌画布 → `embedded-canvas.md` | 画布 = Tavotto 前端同一份代码、唯一改动是 `engineTransport` 的可选覆盖；产物不进 git；不用「开浏览器」冒充 |
-| `tavotto_layout_*`、`bridge.layout_*()` | 排版标注 → `layout-annotate.md`；建议待办 → `suggest-todos.md` | 量子图与成品同一判定；写入带 echo_digest |
+| `tavotto_layout_*`、`bridge.layout_*()` | 标注/待办/绑定 → `layout-annotate.md` `suggest-todos.md` `layout-binding.md` | 量子图同成品；写入带 echo_digest |
 <!-- END GENERATED: agents-routes -->
 
 ## 验证

@@ -26,6 +26,7 @@ import {
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { journalCatalogUi } from '@/lib/journalUi'
+import { cleanCredit } from '@/lib/journalCredit'
 import { journalTipKey, type JournalIssue, type JournalTipContext } from '@/lib/journalTip'
 
 /**
@@ -57,6 +58,9 @@ export interface ContactDraft {
   issue: JournalIssue | ''
   /** 「申请收录期刊」的期刊名称（预填搜索词，可改） */
   query: string
+  /** 署名（ADR 0213 三期）：默认不勾；勾了才带 `credit`。只在 wrong / missing 两种线索里出现 */
+  creditOn: boolean
+  credit: string
 }
 
 export interface ContactFailure {
@@ -82,6 +86,8 @@ export const EMPTY_DRAFT: ContactDraft = {
   url: '',
   issue: '',
   query: '',
+  creditOn: false,
+  credit: '',
 }
 /** 勾选变化后等多久才重新备包：连点几个框只备一次（同 DiagnosticsSendDialog） */
 const DIAG_REFRESH_MS = 300
@@ -450,7 +456,13 @@ export const useContactStore = create<ContactState>((set, get) => {
         if (tip.type === 'missing' && !query && !url && draft.files.length === 0) {
           return set({ formError: 'journalNeedsClue' })
         }
-        journal = tipHead(tip, url, { issue: draft.issue, query })
+        let credit: string | undefined
+        if (tip.type !== 'editor' && draft.creditOn) {
+          const clean = cleanCredit(draft.credit)
+          if (clean === null) return set({ formError: 'creditInvalid' })
+          credit = clean
+        }
+        journal = tipHead(tip, url, { issue: draft.issue, query, credit })
       } else if (!body) return set({ formError: 'bodyRequired' })
       if (body.length > (capability?.body_max ?? 5000)) return set({ formError: 'bodyTooLong' })
       if (draft.subject.trim().length > (capability?.subject_max ?? 120)) return set({ formError: 'subjectTooLong' })
@@ -630,7 +642,7 @@ export function normalizeTipUrl(raw: string): string | null {
 export function tipHead(
   tip: JournalTipContext,
   url: string,
-  edited?: { issue?: JournalIssue | ''; query?: string },
+  edited?: { issue?: JournalIssue | ''; query?: string; credit?: string },
 ): ContactJournalHead {
   const query = (edited?.query ?? tip.query ?? '').slice(0, 120)
   return {
@@ -643,6 +655,7 @@ export function tipHead(
     ...(tip.current ? { current: tip.current } : {}),
     ...(tip.sourceId ? { source_id: tip.sourceId } : {}),
     ...(url ? { url } : {}),
+    ...(tip.type !== 'editor' && edited?.credit ? { credit: edited.credit } : {}),
     ...(tip.catalog ? { catalog: tip.catalog } : {}),
   }
 }
@@ -682,5 +695,7 @@ export function journalTipText(
   if (body) lines.push('', body)
   const url = d.url.trim()
   if (url) lines.push('', url)
+  const credit = tip.type !== 'editor' && d.creditOn ? cleanCredit(d.credit) : null
+  if (credit) lines.push('', `${label('creditRow')}: ${credit}`)
   return lines.join('\n')
 }

@@ -20,6 +20,7 @@
 - **参数按类型收**：wrong = journal_id + rule_key（+ source_id / issue / url / body）；missing = query / url（至少一个）+ body；
   editor = journal_id + body（编辑部原话）+ url。issue 只随 wrong；别的组合回 `bad_arguments`。Agent 给的 url 不合规（非 https、含账号、过长）
   要明说，不静默少发。
+- **不收、不发署名**：`journal.credit`（ADR 0213 三期署名）只给用户自己在界面里勾的人；工具 schema 没有 credit（`additionalProperties=false`），桥函数签名也没有，发出的 journal 头里不会有它。看护：`tests/test_mcp_report_journal_issue.py` 末尾署名用例。
 - **开关**：期刊库开关（`JOURNAL_CATALOG_AGENTS`）、`contactsend.enabled()`（`TAVOTTO_NO_CONTACT`）、未设 `TAVOTTO_NO_JOURNAL_SYNC`
   三者同时成立才进 `tools/list`；关着调用回 `journal_report_disabled`。`codex.mcp.json` 的 `env_vars` 与 `integrations/configure.py`
   的 `PROBE_ENV_KEEP` / `CARRIED_ENV` 透传这两个硬开关。工具名**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）；`NORMAL_TOOLS` 要有它。

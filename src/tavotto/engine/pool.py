@@ -1445,6 +1445,13 @@ def workdir_hint_for(
 SUCCESS_HINT_KINDS = frozenset({figcapture.PROBE_GLOB})
 
 
+def locked_writes_of_build(worker) -> list[str] | None:
+    """上一次 build 里「写已有文件被系统拒绝（别的程序占着 / 只读）、改写进覆盖层」的项目相对路径；没有 → None。
+    只给本机界面那枚胶囊（`/api/engine/render` / 试运行的 `locked_writes`）：不进回执、遥测、诊断与日志。"""
+    locked = getattr(worker, "last_build_locked_writes", None)
+    return list(locked) if isinstance(locked, list) and locked else None
+
+
 def workdir_hint_of_build(worker, *, captured: bool = True) -> dict | None:
     """build 成功之后的引导：脚本在沙盒里 glob 回空却没报错（`ax.plot([])` 画出一条空线），脚本目录里同一个模式
     有文件 → 同形的 `workdir_hint`（`source = "runtime"`）。出图结果、状态码都不改（#1254）。
@@ -3020,6 +3027,11 @@ def _store_build_metadata(
     diagnostics = response if diagnostics is None else diagnostics
     attempts = diagnostics.get("redirected_write_attempts")
     worker.last_build_redirected_write_attempts = attempts if isinstance(attempts, list) else None
+    locked = diagnostics.get("locked_writes")
+    # 写已有文件被系统拒绝、改写进覆盖层的项目相对路径（worker `writetripwire.locked_writes`）：只给本机界面的胶囊
+    worker.last_build_locked_writes = (
+        [x for x in locked if isinstance(x, str)] or None if isinstance(locked, list) else None
+    )
     sandbox_files = diagnostics.get("sandbox_files")
     worker.last_build_sandbox_files = sandbox_files if isinstance(sandbox_files, dict) else None
     inputs_read = diagnostics.get("inputs_read")
@@ -3369,6 +3381,7 @@ class EngineWorker:
         #: ADR 0053）；老 worker 没带就是 None——回执据此标 partial，不补不猜。
         self.last_build_runtime: dict | None = None
         self.last_build_redirected_write_attempts: list[str] | None = None
+        self.last_build_locked_writes: list[str] | None = None
         self.last_build_sandbox_files: dict | None = None
         self.last_build_inputs_read: dict | None = None
         self.last_build_execution_id: str | None = None
@@ -3993,6 +4006,7 @@ class EngineWorker:
             _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
+            self.last_build_locked_writes = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
@@ -4001,6 +4015,7 @@ class EngineWorker:
             self.build_failed = True
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
+            self.last_build_locked_writes = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise
@@ -4023,6 +4038,7 @@ class EngineWorker:
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
+            self.last_build_locked_writes = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise
@@ -4531,6 +4547,7 @@ class WorkerdWorker:
         self.last_build_pdf_pages: list = []
         self.last_build_runtime: dict | None = None
         self.last_build_redirected_write_attempts: list[str] | None = None
+        self.last_build_locked_writes: list[str] | None = None
         self.last_build_sandbox_files: dict | None = None
         self.last_build_inputs_read: dict | None = None
         self.last_build_execution_id: str | None = None
@@ -4909,6 +4926,7 @@ class WorkerdWorker:
             _clear_captured_inputs(self)
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
+            self.last_build_locked_writes = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise WorkerError(str(exc), code=exc.code) from exc
@@ -4917,6 +4935,7 @@ class WorkerdWorker:
             self.build_failed = True  # 与 EngineWorker 同一个判据
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
+            self.last_build_locked_writes = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise
@@ -4939,6 +4958,7 @@ class WorkerdWorker:
             self.last_build_pdf_pages = []
             self.last_build_source_sha256 = None
             self.last_build_redirected_write_attempts = None
+            self.last_build_locked_writes = None
             self.last_build_sandbox_files = None
             self.last_build_inputs_read = None
             raise
