@@ -103,6 +103,11 @@ describe('授权行', () => {
       expect(q('[data-license-capsule]')?.hasAttribute('data-bad')).toBe(true)
       await act(async () => vi.advanceTimersByTime(2000))
       expect(activations()).toBe(1)
+      // Codex #2360 P2：报错后再粘贴一整串正确的码 = 整串替换并再验证一次（不是接在后面被截掉）
+      await typeCode('AAAABBBBCCCD' + 'TVK-WWWW-XXXX-YYYY')
+      expect((q('[data-license-input]') as HTMLInputElement).value).toBe('WWWWXXXXYYYY')
+      await act(async () => vi.advanceTimersByTime(1000))
+      expect(activations()).toBe(2)
     } finally {
       vi.useRealTimers()
     }

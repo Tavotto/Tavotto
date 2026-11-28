@@ -235,16 +235,19 @@ export function CodeCapsule({
           autoCapitalize="characters"
           onChange={(e) => {
             const raw = e.target.value
-            // 报错后再敲一个字：整串换成新打的（粘贴来的码，改一位用退格）
-            const base = bad && raw.length === value.length + 1 ? raw.slice(-1) : raw
+            // 格子已满（或刚报错）时在末尾又进来字：是要换一串新的，不是接在后面——
+            // 报错后敲一个字 = 从这个字重来；满了再粘贴一整串 = 整串替换（Codex #2360 P2：否则新码被截掉、不再自动验证）
+            const appended = raw.startsWith(value) ? raw.slice(value.length) : null
+            const base = appended && (full || (bad && appended.length === 1)) ? appended : raw
             const next = normalizeCode(base)
             take(next, next.length - value.length > 1)
           }}
           onSelect={(e) => {
-            // 光标永远在末尾：格子只表达「下一位」
+            // 光标永远在末尾：格子只表达「下一位」。全选照留（全选后粘贴 / 打字 = 整串替换）
             const el = e.currentTarget
             const end = el.value.length
-            if (el.selectionStart !== end || el.selectionEnd !== end) el.setSelectionRange(end, end)
+            const all = el.selectionStart === 0 && el.selectionEnd === end && end > 0
+            if (!all && (el.selectionStart !== end || el.selectionEnd !== end)) el.setSelectionRange(end, end)
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
