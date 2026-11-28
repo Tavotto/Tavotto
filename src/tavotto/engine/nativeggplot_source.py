@@ -31,6 +31,7 @@ _R_AXIS_TRANSFORMS = {
 _R_THEME_RECT_CELLS = frozenset({"panel.background", "panel.border"})
 _R_THEME_GRID_CELLS = frozenset(
     {
+        "panel.grid.major",
         "panel.grid.major.x",
         "panel.grid.major.y",
         "panel.grid.minor.x",

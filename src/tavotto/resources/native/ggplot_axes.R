@@ -477,12 +477,14 @@ ggplot_grid_target <- function(built, table, target, slot = ggplot_cartesian_pan
     inherits(line, "element_blank") || identical(class(line), class(ggplot2::element_line()))
   }, logical(1L)))) return(target)
   visible <- !vapply(lines, inherits, logical(1L), "element_blank")
-  for (i in which(!visible & seq_along(lines) <= 2L)) {
-    base <- ggplot2::calc_element("panel.grid.major", theme)
-    if (inherits(base, "element_blank")) base <- ggplot2::calc_element("line", theme)
-    if (!identical(class(base), class(ggplot2::element_line()))) return(target)
-    lines[[i]] <- base
+  major <- ggplot2::calc_element("panel.grid.major", theme)
+  if (inherits(major, "element_blank")) major <- ggplot2::calc_element("line", theme)
+  major_pigment <- if (identical(class(major), class(ggplot2::element_line()))) {
+    ggplot_uniform_pigment(major$colour)
   }
+  hidden_major <- which(!visible & seq_along(lines) <= 2L)
+  if (length(hidden_major) && is.null(major_pigment)) return(target)
+  for (i in hidden_major) lines[[i]] <- major
   paints <- lapply(lines, function(line) {
     if (!inherits(line, "element_blank")) ggplot_uniform_pigment(line$colour)
   })
@@ -498,11 +500,25 @@ ggplot_grid_target <- function(built, table, target, slot = ggplot_cartesian_pan
   name <- names(ggplot_line_types)[match(linetype, ggplot_line_types)]
   if (is.na(name)) name <- as.character(linetype)
   target <- ggplot_panel_decoration(built, target, slot)
-  target$grid <- list(lines = lines, paints = paints, visible = visible, original = list(
+  target$grid <- list(lines = lines, paints = paints, visible = visible, major = major,
+                      major_pigment = major_pigment, original = list(
     grid_x = visible[[1L]], grid_y = visible[[2L]], grid_color = pigment$rgb,
     grid_linestyle = name, grid_linewidth = line$linewidth * ggplot2::.pt * ggplot_lwd_pt,
     grid_alpha = pigment$alpha))
   target
+}
+
+ggplot_grid_paint <- function(line, pigment, edit) {
+  if (!is.null(edit$grid_color) || !is.null(edit$grid_alpha)) {
+    colour <- edit$grid_color %||% line$colour
+    if (identical(colour, "none")) colour <- NA_character_
+    alpha <- edit$grid_alpha %||% pigment$alpha
+    line$colour <- scales::alpha(colour, alpha)
+  }
+  if (!is.null(edit$grid_linestyle)) line$linetype <- unname(ggplot_line_types[[edit$grid_linestyle]])
+  if (!is.null(edit$grid_linewidth)) line$linewidth <- edit$grid_linewidth / (ggplot2::.pt * ggplot_lwd_pt)
+  line$inherit.blank <- FALSE
+  line
 }
 
 ggplot_grid_replacements <- function(grid, edit) {
@@ -526,23 +542,16 @@ ggplot_grid_replacements <- function(grid, edit) {
   for (i in seq_along(grid$lines)) {
     toggle <- if (i <= 2L) edit[[names(ggplot_grid_cells)[[i]]]]
     if (!styled && is.null(toggle)) next
-    if (identical(toggle, FALSE)) {
+    visible <- toggle %||% grid$visible[[i]]
+    if (visible) {
+      replacements[[ggplot_grid_cells[[i]]]] <- ggplot_grid_paint(grid$lines[[i]], grid$paints[[i]], edit)
+    } else if (i <= 2L) {
       replacements[[ggplot_grid_cells[[i]]]] <- ggplot2::element_blank()
-      next
     }
-    if (!grid$visible[[i]] && !isTRUE(toggle)) next
-    line <- grid$lines[[i]]
-    if (!is.null(edit$grid_color) || !is.null(edit$grid_alpha)) {
-      pigment <- grid$paints[[i]]
-      colour <- if (is.null(edit$grid_color)) line$colour else edit$grid_color
-      if (identical(colour, "none")) colour <- NA_character_
-      alpha <- if (is.null(edit$grid_alpha)) pigment$alpha else edit$grid_alpha
-      line$colour <- scales::alpha(colour, alpha)
-    }
-    if (!is.null(edit$grid_linestyle)) line$linetype <- unname(ggplot_line_types[[edit$grid_linestyle]])
-    if (!is.null(edit$grid_linewidth)) line$linewidth <- edit$grid_linewidth / (ggplot2::.pt * ggplot_lwd_pt)
-    line$inherit.blank <- FALSE
-    replacements[[ggplot_grid_cells[[i]]]] <- line
+  }
+  if (styled && !is.null(grid$major_pigment)) {
+    # A blank child hides one direction without discarding its shared paint.
+    replacements$panel.grid.major <- ggplot_grid_paint(grid$major, grid$major_pigment, edit)
   }
   replacements
 }

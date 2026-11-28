@@ -7558,3 +7558,81 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
             timeout=120,
         )
         assert status == 200 and restored["ok"] and script.read_bytes() == authored
+
+
+@pytest.mark.parametrize("facet", [False, True], ids=["single", "one-facet"])
+def test_native_r_hidden_grid_paint_survives_source_writeback(tmp_path, facet):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Hidden grid"
+    project.mkdir()
+    script = project / "Hidden.R"
+    cells = "+ ggplot2::facet_wrap(ggplot2::vars(region))" if facet else ""
+    script.write_text(
+        f"""\
+d <- expand.grid(x = 1:5, region = c("Left", "Right"))
+d$y <- d$x + as.integer(d$region)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_point() +
+  ggplot2::theme_bw() + ggplot2::theme(panel.grid.minor = ggplot2::element_blank(),
+    panel.grid.major = ggplot2::element_line(colour = "#778998")) {cells}
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Hidden_grid"
+    gid = "axes_2" if facet else "axes_0"
+    pigment = "#DA297C"
+
+    def chosen(view, element=gid):
+        return next(e for e in view["manifest"]["elements"] if e["gid"] == element)
+
+    def strokes(svg):
+        return [
+            node.attrib
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.endswith("}polyline") and f"stroke: {pigment};" in node.get("style", "")
+        ]
+
+    def save(app, figure, before, changes):
+        patches = [
+            {"gid": gid, "identity": chosen(before)["identity"], "prop": prop, "value": value}
+            for prop, value in changes.items()
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        if facet:
+            assert chosen(hot, "axes_1") == chosen(before, "axes_1")
+        assert _render(app, figure, [])["svg"] == before["svg"]
+        _write_native_figure_style(app, script, route, figure, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert strokes((project / "standalone.svg").read_text(encoding="utf-8")) == strokes(
+            hot["svg"]
+        )
+        return hot
+
+    changes = {
+        "grid_x": False,
+        "grid_y": False,
+        "grid_color": pigment,
+        "grid_linewidth": 2.3,
+        "grid_linestyle": "--",
+    }
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        hidden = save(app, figure, _render(app, figure, []), changes)
+        assert strokes(hidden["svg"]) == []
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == hidden["svg"]
+        fields = {field["prop"]: field["value"] for field in chosen(reopened)["editable"]}
+        assert {prop: fields[prop] for prop in changes} == pytest.approx(changes)
+        enabled = save(app, figure, reopened, {"grid_x": True})
+        drawn = strokes(enabled["svg"])
+        assert drawn and all(
+            "stroke-width: 2.30;" in item["style"] and "stroke-dasharray:" in item["style"]
+            for item in drawn
+        )
