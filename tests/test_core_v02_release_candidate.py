@@ -893,7 +893,14 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert edited_bars["identity"] == r_bars["identity"]
         assert edited_bars["geometry"]["paths"] == r_bars["geometry"]["paths"]
         bar_fields = {field["prop"]: field["value"] for field in edited_bars["editable"]}
-        assert bar_fields == {**BAR_PAINT, "bar_width": 0.36, "zorder": 3}
+        assert bar_fields == {
+            **BAR_PAINT,
+            "bar_width": 0.36,
+            "zorder": 3,
+            "hatch": "",
+            "hatchcolor": BAR_PAINT["edgecolor"],
+            "hatch_linewidth": 1.0,
+        }
         edited_errors = next(
             el for el in changed["manifest"]["elements"] if el["gid"] == r_errors["gid"]
         )

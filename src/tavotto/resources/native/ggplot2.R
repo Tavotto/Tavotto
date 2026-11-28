@@ -1266,6 +1266,11 @@ ggplot_line_group_targets <- function(built, layer, parts, paint, parent_gid, fa
     group$opacity_editable <- !"alpha" %in% mapping && !is.null(alpha) &&
       (length(shared_parent) > 0L || guide_alpha)
     if (group$opacity_editable) group$authored_opacity <- alpha
+    guide_colour <- !"colour" %in% names(params$override.aes) &&
+      "colour" %in% names(params$decor[[target$key_name]]$data)
+    if (measured_categories && (!shared || guide_colour)) {
+      group$color <- ggplot_curve_group_style(parts, rows, "color", function(part) part$stroke_rgb, shared)
+    }
     context <- target$context
     if (faceted) {
       group$parts <- parts[present]
@@ -1451,6 +1456,7 @@ ggplot_line_targets <- function(built, panels, layer_grobs, maps) {
         slot = draw$slot, child = line$name, index = index, context = context, interval = interval,
         stroke_categories = stroke_categories,
         stroke_alpha = grDevices::col2rgb(line$gp$col, alpha = TRUE)[4L, ],
+        stroke_rgb = if (!is.null(groups)) ggplot_line_rgb(line$gp$col),
         curve_style = final$tavotto_curve_style,
         curve_shared_style = final$tavotto_curve_shared %||% final$tavotto_curve_style,
         facet = draw$facet, panel = draw$panel_id,
@@ -1900,16 +1906,15 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   list(state = state, svg = svg)
 }
 
-edit_ggplot_text <- function(table, slots, path, paint, label = NULL) {
+edit_ggplot_text <- function(table, slots, path, fields) {
   if (!length(slots)) {
-    if (!is.null(label)) return(grid::editGrob(table, path, gp = paint, label = label, strict = TRUE))
-    return(grid::editGrob(table, path, gp = paint, strict = TRUE))
+    return(do.call(grid::editGrob, c(list(grob = table, gPath = path, strict = TRUE), fields)))
   }
   slot <- slots[[1L]]
   if (is.character(slot)) {
-    table$children[[slot]] <- edit_ggplot_text(table$children[[slot]], slots[-1L], path, paint, label)
+    table$children[[slot]] <- edit_ggplot_text(table$children[[slot]], slots[-1L], path, fields)
   } else {
-    table$grobs[[slot]] <- edit_ggplot_text(table$grobs[[slot]], slots[-1L], path, paint, label)
+    table$grobs[[slot]] <- edit_ggplot_text(table$grobs[[slot]], slots[-1L], path, fields)
   }
   table
 }
@@ -1961,6 +1966,12 @@ ggplot_text_paint <- function(target, edits) {
     if (prop == "text") {
       if (!is.null(target$text_slot)) next
       if (isTRUE(target$data_label) && is.character(value) && length(value) == 1L && !is.na(value)) next
+    }
+    if (prop == "rotation" && !is.null(target$data_label_rotation)) {
+      if (!is.numeric(value) || length(value) != 1L || !is.finite(value) || abs(value) > 180) {
+        stop("The native R data label rotation must be between -180 and 180 degrees.")
+      }
+      next
     }
     if (prop == "fontsize") {
       if (is.null(target$title_dimension) && !isTRUE(target$font_size_editable)) {
@@ -2349,10 +2360,11 @@ ggplot_table_for <- function(state, edits) {
     if (isTRUE(target$hidden) && !isTRUE(target$data_label)) next
     label <- if (isTRUE(target$data_label)) patch$text
     if (is.null(target$boxed)) {
-      table <- edit_ggplot_text(table, target$slots, target$edit_path, paint, label)
+      fields <- Filter(Negate(is.null), list(gp = paint, label = label, rot = patch$rotation))
+      table <- edit_ggplot_text(table, target$slots, target$edit_path, fields)
       if (!is.null(label)) text_targets[[gid]]$hidden <- !nzchar(label)
     } else {
-      table <- ggplot_edit_boxed_label(table, target, paint, label)
+      table <- ggplot_edit_boxed_label(table, target, paint, label, patch$rotation)
     }
   }
   table <- ggplot_errorbar_group_edits(table, layer_targets$line_targets, edits)
@@ -2511,7 +2523,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   if (reflow) {
     geometry_gids <- names(state$text_targets)
   } else {
-    geometry_gids <- names(Filter(function(edit) any(names(edit) %in% names(ggplot_face_options)), edits))
+    geometry_props <- c("rotation", names(ggplot_face_options))
+    geometry_gids <- names(Filter(function(edit) any(names(edit) %in% geometry_props), edits))
   }
   if (!is.null(measured)) {
     if (length(measured$text) != length(state$text_targets)) {
@@ -2630,10 +2643,12 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         editable <- c(editable, ggplot_minor_tick_fields(tick$spacing$minor, edit))
       }
     }
-    if (!is.null(tick$rotation)) {
-      field <- list(prop = "rotation", type = "number", value = edit$rotation %||% tick$rotation,
-                    min = -90, max = 90, step = 5, unit = "\u00b0")
-      if (!is.null(edit$rotation)) field$value_original <- tick$rotation
+    angle <- tick$rotation %||% target$data_label_rotation
+    if (!is.null(angle)) {
+      limit <- if (is.null(tick$rotation)) 180 else 90
+      field <- list(prop = "rotation", type = "number", value = edit$rotation %||% angle,
+                    min = -limit, max = limit, step = 5, unit = "\u00b0")
+      if (!is.null(edit$rotation)) field$value_original <- angle
       editable[[length(editable) + 1L]] <- field
     }
     for (prop in names(face)) {
@@ -2681,7 +2696,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
         native <- c(color = "col", fontsize = "fontsize", fontfamily = "fontfamily", weight = "font", style = "font")
         paint <- unique(unname(native[intersect(names(patch), names(native))]))
         element$source_data_label <- c(target$source, list(
-          edited = patch, text = patch$text, paint = unclass(painted$paint)[paint]
+          edited = patch, text = patch$text, rotation = patch$rotation,
+          paint = unclass(painted$paint)[paint]
         ))
       }
     }
@@ -2783,8 +2799,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     if (!is.null(patch$linestyle)) style$value_original <- target$style
     editable <- list(width, style)
     if (!is.null(target$color)) {
-      color <- list(prop = "color", type = "color",
-                    value = if (is.null(patch$color)) target$color else patch$color)
+      color <- list(prop = "color", type = "color", value = effective$color %||% target$color)
       if (!is.null(patch$color)) color$value_original <- target$color
       editable <- c(editable, list(color))
     }

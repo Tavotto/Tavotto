@@ -32,16 +32,19 @@ ggplot_curve_style_strokes <- function(line, slots, patch, authored = FALSE, loc
     style[slots] <- unname(ggplot_line_types[patch$linestyle])
     line$gp$lty <- style
   }
-  if (!is.null(patch$alpha) || !is.null(patch$visible)) {
+  if (!is.null(patch$color) || !is.null(patch$alpha) || !is.null(patch$visible)) {
     visible <- (current$visible %||% rep(TRUE, count))[slots]
     visible[is.na(visible)] <- TRUE
     if (!is.null(patch$visible)) visible[] <- patch$visible
-    original <- grDevices::col2rgb(rep_len(base$gp$col, count)[slots], alpha = TRUE)[4L, ] / 255
+    original <- rep_len(base$gp$col, count)[slots]
+    original_alpha <- grDevices::col2rgb(original, alpha = TRUE)[4L, ] / 255
     opacity <- (current$alpha %||% rep(NA_real_, count))[slots]
-    opacity[is.na(opacity)] <- original[is.na(opacity)]
+    opacity[is.na(opacity)] <- original_alpha[is.na(opacity)]
     if (!is.null(patch$alpha)) opacity[] <- patch$alpha
-    line$gp$col[slots] <- scales::alpha(rep_len(base$gp$col, count)[slots],
-                                       ifelse(visible, opacity, 0))
+    pigment <- (current$color %||% rep(NA_character_, count))[slots]
+    pigment[is.na(pigment)] <- original[is.na(pigment)]
+    if (!is.null(patch$color)) pigment[] <- patch$color
+    line$gp$col[slots] <- scales::alpha(pigment, ifelse(visible, opacity, 0))
   }
   if (authored) {
     record <- function(style) {
@@ -82,6 +85,10 @@ ggplot_curve_guide_style <- function(key, slots, patch) {
   if (!is.null(patch$linestyle)) {
     if (is.numeric(key$linetype)) key$linetype <- unname(ggplot_line_types[key$linetype])
     key$linetype[slots] <- unname(ggplot_line_types[patch$linestyle])
+  }
+  if (!is.null(patch$color)) {
+    opacity <- grDevices::col2rgb(key$colour[slots], alpha = TRUE)[4L, ] / 255
+    key$colour[slots] <- scales::alpha(patch$color, opacity)
   }
   if (!is.null(patch$alpha)) key$alpha[slots] <- patch$alpha
   key

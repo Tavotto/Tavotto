@@ -20,7 +20,7 @@ from pathlib import Path
 from . import config, execspec, executionfact, nativeggplot, projectenv, runtime, scriptadjust
 from .colorscale import CMAPS, COLORBAR_EXTENSIONS, COLORBAR_ORIENTATIONS, PALETTE_CATALOG_PATH
 from .fixtools import cmdsandbox, trial, winappcontainer
-from .manifest_fields import AXIS_FRAME_SIDES
+from .manifest_fields import AXIS_FRAME_SIDES, HATCH_LINEWIDTH_PT
 
 _R_AXIS_TRANSFORMS = {
     "linear": "scales::transform_identity()",
@@ -398,10 +398,27 @@ _GEOMETRY_IMPLEMENTATIONS = {
         "ggplot_apply_point_styles",
     ),
 }
-_GEOMETRY_PROPS = {"bar_width", "bar_thickness", "capsize", "cap_thickness"}
+_BAR_HATCH_PROPS = {"hatch", "hatchcolor", "hatch_linewidth"}
+_GEOMETRY_PROPS = {"bar_width", "bar_thickness", "capsize", "cap_thickness"} | _BAR_HATCH_PROPS
+
+
+def _bar_hatch_catalog() -> dict:
+    resource = Path(__file__).resolve().parents[1] / "resources" / "native" / "hatch_tiles.json"
+    return json.loads(resource.read_text(encoding="utf-8"))
+
+
+def _bar_hatch_value(prop: str, value) -> bool:
+    if prop == "hatch":
+        return isinstance(value, str) and (value == "" or value in _bar_hatch_catalog()["patterns"])
+    if prop == "hatchcolor":
+        return isinstance(value, str) and (value == "edge" or _RGB.fullmatch(value) is not None)
+    lo, hi = HATCH_LINEWIDTH_PT
+    return type(value) in (int, float) and math.isfinite(value) and lo <= value <= hi
 
 
 def _curve_style_value(prop: str, value) -> bool:
+    if prop == "color":
+        return isinstance(value, str) and _RGB.fullmatch(value) is not None
     if prop == "visible":
         return type(value) is bool
     if prop == "linestyle":
@@ -498,6 +515,10 @@ def _native_layer_geometry(source: dict) -> dict | None:
     for prop, value in values.items():
         if source["edited"].get(prop) != value:
             return None
+        if kind == "bars" and prop in _BAR_HATCH_PROPS:
+            if not _bar_hatch_value(prop, value):
+                return None
+            continue
         if kind == "bars" and "category" in recipe and prop == "facecolor":
             if not isinstance(value, str) or (value != "none" and _RGB.fullmatch(value) is None):
                 return None
@@ -669,6 +690,18 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
             _, resource, adjust = _GEOMETRY_IMPLEMENTATIONS[kind]
             sources.add(resource)
             native_recipes = _r_geometry_recipes(recipes)
+            if kind == "bars":
+                sources.add("ggplot_bar_hatching.R")
+                symbols = {recipe["values"].get("hatch") for recipe in recipes} - {None, ""}
+                catalog = _bar_hatch_catalog() if symbols else {}
+                if symbols:
+                    catalog["patterns"] = {key: catalog["patterns"][key] for key in sorted(symbols)}
+                literal = _r_literal(json.dumps(catalog, separators=(",", ":")))
+                adjust = (
+                    "(function(grob, rows, layout, panel, values) "
+                    f"{adjust}(grob, rows, layout, panel, values, "
+                    f"jsonlite::fromJSON({literal}, simplifyVector=FALSE)))"
+                )
             geometry = f", {native_recipes}, {adjust}"
             if kind in {"points", "ribbons", "fixed_ribbon"}:
                 sources.add("ggplot_pigment.R")
@@ -1135,6 +1168,11 @@ def _native_data_label_writes(
             continue
         values = {field: _r_literal(value) for field, value in paint.items()}
         text = plan["text"]
+        rotation = plan.get("rotation")
+        if rotation is not None and (
+            type(rotation) not in (int, float) or not math.isfinite(rotation) or abs(rotation) > 180
+        ):
+            continue
         if any(value is None for value in [*key.values(), *values.values()]) or (
             text is not None and (not isinstance(text, str) or _r_literal(text) is None)
         ):
@@ -1142,8 +1180,9 @@ def _native_data_label_writes(
         anchor = ", ".join(f"{field} = {literal}" for field, literal in key.items())
         glyphs = ", ".join(f"{field} = {literal}" for field, literal in values.items())
         label = "" if text is None else f", text = {_r_literal(text)}"
+        angle = "" if rotation is None else f", rotation = {_r_literal(rotation)}"
         layers[layer, kind][facet].append(
-            f"list(owner = list({anchor}), paint = list({glyphs}){label})"
+            f"list(owner = list({anchor}), paint = list({glyphs}){label}{angle})"
         )
         written.update((gid, prop) for prop in edits[gid])
     return layers, written

@@ -3364,6 +3364,8 @@ export interface ColormapFacts {
   custom: boolean
   stops: string[]
   discrete: boolean
+  /** Normalized edges of discrete bins whose widths are given by the source guide. */
+  boundaries?: number[]
 }
 
 /** manifest 里一张脸的文件级身份（`engine/manifest._face_source`） */

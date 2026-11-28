@@ -172,7 +172,7 @@ ggplot_colour_scale_targets <- function(built, table, text_targets, titles, maps
     targets[[gid]] <- c(mapping, list(orientation = meta$orientation, can_extend = meta$can_extend,
                                     extend = meta$extend, source_layout = scope,
                                     reversed = meta$reversed, outline = meta$outline,
-                                    appearance = appearance, title_gid = title_gid, ticks_gid = ticks_gid))
+                                    preview = meta$preview, appearance = appearance, title_gid = title_gid, ticks_gid = ticks_gid))
   }
   for (gid in setdiff(names(mappings), names(targets))) {
     targets[[gid]] <- c(mappings[[gid]], list(can_extend = FALSE))
@@ -434,7 +434,7 @@ ggplot_colour_scale_elements <- function(state, edits, measured, stops, anchors)
            current_stops = as.list(current),
            cmap = selection$cmap, range_editable = target$range_editable,
            orientation = selection$orientation, extend = selection$extend,
-           reversed = isTRUE(target$reversed),
+           preview = target$preview, reversed = isTRUE(target$reversed),
            layout_edited = as.list(intersect(names(edits[[gid]]), c("orientation", "extend"))),
            layout_original = list(orientation = target$orientation, extend = selection$original_extend),
            appearance = list(original = target$appearance, current = appearance, ticks_gid = target$ticks_gid),

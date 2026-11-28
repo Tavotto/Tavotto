@@ -15,7 +15,7 @@ ggplot_bar_visible_alphas <- function(rect, outline) {
 }
 
 ggplot_bar_target <- function(layout, draw, fixed) {
-  rect <- draw$grob
+  rect <- ggplot_bar_native_rect(draw$grob)
   count <- nrow(draw$rows)
   if (!inherits(rect, "rect") || !is.null(rect$vp) || !count ||
       !identical(rect$just, c("left", "top")) || !is.null(rect$hjust) || !is.null(rect$vjust)) return(NULL)
@@ -41,11 +41,15 @@ ggplot_bar_target <- function(layout, draw, fixed) {
       linewidth = if (outline) width
     ), size, list(alpha = if (length(visible_alpha) == 1L) visible_alpha))
   } else if (isTRUE(span$uniform)) size
+  if (fixed && !is.null(face)) {
+    fields <- c(fields, ggplot_bar_hatch_fields(rect, seq_len(count), draw$rows))
+  }
   fields <- Filter(Negate(is.null), fields)
   if (!length(fields) && is.null(span)) return(NULL)
   list(
     slot = draw$slot, child = draw$child, panel_id = draw$panel_id, facet = draw$facet, count = count,
     face = face, edge = edge, outline = outline, values = fields, span = span,
+    hatch_rows = draw$rows["alpha"], hatch_edge = ggplot_bar_hatch_edge(rect),
     clip = identical(layout$coord$clip, "on")
   )
 }
@@ -55,7 +59,9 @@ ggplot_bar_group_targets <- function(target, groups, parent_gid, rect, allow_alp
   membership <- groups$membership[[as.character(target$panel_id)]]
   if (length(membership) != target$count) return(list())
   indices <- split(seq_len(target$count), membership)
-  if (length(indices) < 2L) return(list())
+  # A facet can contain one category that has peers elsewhere in the plot.
+  # Its local controls still preserve the shared legend and the other facets.
+  if (!length(indices) || (length(indices) == 1L && is.null(target$facet))) return(list())
   result <- list()
   prop <- target$span$prop
   for (index in as.integer(names(indices))) {
@@ -69,8 +75,12 @@ ggplot_bar_group_targets <- function(target, groups, parent_gid, rect, allow_alp
     part$span$rows <- rows
     part$values <- stats::setNames(list(width), prop)
     selected <- ggplot_bar_group_rect(rect, part)
+    part$hatch_edge <- ggplot_bar_hatch_edge(selected)
     pigment <- ggplot_uniform_pigment(selected$gp$fill)
-    if (!is.null(pigment)) part$values$facecolor <- pigment$rgb
+    if (!is.null(pigment)) {
+      part$values$facecolor <- pigment$rgb
+      part$values <- c(part$values, ggplot_bar_hatch_fields(rect, rows, target$hatch_rows))
+    }
     if (allow_alpha) {
       opacity <- ggplot_bar_visible_alphas(selected, target$outline && any(selected$gp$lwd > 0))
       if (length(opacity) == 1L) part$values$alpha <- opacity
@@ -99,11 +109,12 @@ ggplot_bar_targets <- function(built, panels, layer_grobs, maps) {
       if (is.null(target)) next
       suffix <- if (panels$single) "" else paste0(".panel.", draw$panel_id)
       gid <- paste0("layer.", index, suffix, ".bars")
-      context <- list(kind, draw$rows, draw$grob$gp)
+      rect <- ggplot_bar_native_rect(draw$grob)
+      context <- list(kind, draw$rows, rect$gp)
       if (!panels$single) context <- c(context, list(draw$facet))
       target$index <- index
       target$context <- rlang::hash(context)
-      subgroups <- ggplot_bar_group_targets(target, groups, gid, draw$grob, !"alpha" %in% mapped)
+      subgroups <- ggplot_bar_group_targets(target, groups, gid, rect, !"alpha" %in% mapped)
       if (!length(target$values) && !length(subgroups)) next
       target$precise <- target$count <= remaining_paths
       if (target$precise) remaining_paths <- remaining_paths - target$count
@@ -122,7 +133,7 @@ ggplot_bar_targets <- function(built, panels, layer_grobs, maps) {
 }
 
 ggplot_bar_rect <- function(panel, target) {
-  rect <- panel$children[[target$child]]
+  rect <- ggplot_bar_native_rect(panel$children[[target$child]])
   if (!inherits(rect, "rect") || length(rect$x) != target$count) {
     stop("The native R bar series changed.")
   }
@@ -138,6 +149,13 @@ ggplot_bar_values <- function(target, edit) {
         !is.na(value) && (value == "none" || grepl("^#[0-9A-Fa-f]{6}$", value)),
       linewidth = is.numeric(value) && length(value) == 1L && is.finite(value) &&
         value >= 0 && value <= 5,
+      hatch = is.character(value) && length(value) == 1L && !is.na(value) &&
+        value %in% c("", names(ggplot_bar_hatch_catalog$patterns)),
+      hatchcolor = is.character(value) && length(value) == 1L && !is.na(value) &&
+        (value == "edge" || grepl("^#[0-9A-Fa-f]{6}$", value)),
+      hatch_linewidth = is.numeric(value) && length(value) == 1L && is.finite(value) &&
+        value >= ggplot_bar_hatch_catalog$linewidth_pt[[1L]] &&
+        value <= ggplot_bar_hatch_catalog$linewidth_pt[[2L]],
       bar_width = , bar_thickness = is_positive_ggplot_number(value),
       alpha = is.numeric(value) && length(value) == 1L && is.finite(value) &&
         value >= 0 && value <= 1,
@@ -172,7 +190,12 @@ ggplot_edit_bars <- function(table, target, edit, layout) {
     if (!is.null(edit$facecolor)) rect <- ggplot_edit_bar_fill(rect, rows, edit$facecolor)
     if (!is.null(edit$alpha)) rect <- ggplot_edit_bar_alpha(rect, rows, edit$alpha)
   }
-  panel$children[[target$child]] <- rect
+  if (any(names(edit) %in% ggplot_bar_hatch_props) ||
+      (!is.null(edit$alpha) && !is.null(attr(rect, "tavotto_bar_hatching", exact = TRUE)))) {
+    rows <- target$group$rows %||% seq_len(target$count)
+    rect <- ggplot_record_bar_hatch(rect, rows, edit, target$hatch_rows, ggplot_bar_hatch_catalog)
+  }
+  panel$children[[target$child]] <- ggplot_draw_bar_hatching(rect)
   table$grobs[[target$slot]] <- panel
   table
 }
@@ -275,11 +298,11 @@ measure_ggplot_bars <- function(table, targets, frame_pt, retain_clipped = FALSE
 }
 
 ggplot_bar_source_plan <- function(state, target, edit, edits) {
-  paint <- c("facecolor", "edgecolor", "alpha", "linewidth")
+  paint <- c("facecolor", "edgecolor", "alpha", "linewidth", ggplot_bar_hatch_props)
   if (!length(edit) || !all(names(edit) %in% c(paint, target$span$prop))) return(NULL)
   if (!is.null(target$group)) {
     changed <- state$bar_targets[intersect(names(state$bar_targets), names(edits))]
-    if (!all(names(edit) %in% c(target$span$prop, "alpha", "facecolor")) || any(vapply(changed, function(other) {
+    if (!all(names(edit) %in% c(target$span$prop, "alpha", "facecolor", ggplot_bar_hatch_props)) || any(vapply(changed, function(other) {
       identical(other$index, target$index) && is.null(other$group)
     }, logical(1L)))) return(NULL)
     geometry <- list(kind = "bars", facet = target$facet, values = edit,
@@ -297,8 +320,8 @@ ggplot_bar_source_plan <- function(state, target, edit, edits) {
   }
   if (!is.null(edit$linewidth)) aesthetics$linewidth <- edit$linewidth / (ggplot_lwd_pt * ggplot2::.pt)
   prop <- target$span$prop %||% "bar_width"
-  width <- edit[intersect(prop, names(edit))]
-  geometry <- if (length(width)) list(kind = "bars", facet = target$facet, values = width)
+  geometry_fields <- edit[intersect(c(prop, ggplot_bar_hatch_props), names(edit))]
+  geometry <- if (length(geometry_fields)) list(kind = "bars", facet = target$facet, values = geometry_fields)
   ggplot_fixed_layer_source(state, target, edit, aesthetics, geometry)
 }
 
@@ -318,7 +341,9 @@ ggplot_bar_elements <- function(state, edits, measured) {
     element <- c(list(gid = gid, role = "bar_series", label = label,
                       draggable = FALSE, editable = list(), bar_series = list(
                         context = target$context, current = ggplot_bar_values(target, effective),
-                        original = target$values, edited = as.list(names(edit))
+                        original = target$values, edited = as.list(names(edit)),
+                        hatch_choices = as.list(names(ggplot_bar_hatch_catalog$patterns)),
+                        hatch_edge = target$hatch_edge
                       )), geometry)
     element$source_layer <- ggplot_bar_source_plan(state, target, edit, edits)
     element

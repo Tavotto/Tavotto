@@ -13,6 +13,7 @@ on:
       - "scripts/fetch_fonts.py"
       - "tests/test_native_ggplot_capture.py"
       - "tests/test_native_ggplot_details.py"
+      - "tests/test_native_ggplot_hatching.py"
       - "tests/test_core_v02_release_candidate.py"
       - "tests/support/foundation_app.py"
       - "pyproject.toml"
@@ -108,7 +109,7 @@ jobs:
             scoped) selector="not ($layer_replays) and ($scoped_replays)" ;;
             source) selector="not ($layer_replays or $scoped_replays) and ($source_replays)" ;;
             figures) selector="not ($layer_replays or $source_replays or $scoped_replays)" ;;
-            details) selector=""; files=(tests/test_native_ggplot_details.py) ;;
+            details) selector=""; files=(tests/test_native_ggplot_details.py tests/test_native_ggplot_hatching.py) ;;
             *) exit 1 ;;
           esac
           python -m pytest -o addopts= -v -k "$selector" --durations=10 --junitxml=native-r.xml "${files[@]}"

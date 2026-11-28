@@ -21,11 +21,17 @@ export function gradientOfStops(
   stops: readonly string[],
   discrete = false,
   dir = 'to right',
+  boundaries?: readonly number[],
 ): string | null {
   if (!stops.length) return null
-  if (!discrete || stops.length === 1) return `linear-gradient(${dir}, ${stops.join(', ')})`
+  if (stops.length === 1) return `linear-gradient(${dir}, ${stops[0]}, ${stops[0]})`
+  if (!discrete) return `linear-gradient(${dir}, ${stops.join(', ')})`
   const n = stops.length
-  const pct = (i: number) => `${((100 * i) / n).toFixed(2)}%`
+  const edges = boundaries?.length === n + 1 && boundaries.every(
+    (value, i) => Number.isFinite(value) && value >= 0 && value <= 1 &&
+      (i === 0 || value > boundaries[i - 1]),
+  ) ? boundaries : undefined
+  const pct = (i: number) => `${(100 * (edges?.[i] ?? i / n)).toFixed(2)}%`
   const bands = stops.map((c, i) => `${c} ${pct(i)}, ${c} ${pct(i + 1)}`)
   return `linear-gradient(${dir}, ${bands.join(', ')})`
 }
@@ -44,7 +50,7 @@ export function colormapGradient(
   dir = 'to right',
 ): string | null {
   if (facts?.name === name && facts.stops.length) {
-    return gradientOfStops(facts.stops, facts.discrete, dir)
+    return gradientOfStops(facts.stops, facts.discrete, dir, facts.boundaries)
   }
   const stops = COLORMAP_STOPS[name]
   if (!stops) return null

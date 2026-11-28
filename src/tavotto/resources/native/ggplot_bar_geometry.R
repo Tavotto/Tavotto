@@ -115,7 +115,8 @@ ggplot_edit_bar_fill <- function(rect, rows, value) {
   rect
 }
 
-ggplot_apply_bar_geometry <- function(rect, rows, layout, panel_id, values) {
+ggplot_apply_bar_geometry <- function(rect, rows, layout, panel_id, values, hatches = NULL) {
+  rect <- ggplot_bar_native_rect(rect)
   span <- ggplot_bar_span(layout, panel_id, rows, rect)
   if (is.null(span)) stop("Tavotto could not match the original R bar geometry.")
   if (!is.null(values$facecolor)) {
@@ -126,10 +127,14 @@ ggplot_apply_bar_geometry <- function(rect, rows, layout, panel_id, values) {
     selected <- which(!is.na(values$alpha))
     rect <- ggplot_edit_bar_alpha(rect, selected, values$alpha[selected])
   }
+  if (any(names(values) %in% ggplot_bar_hatch_props) ||
+      (!is.null(values$alpha) && !is.null(attr(rect, "tavotto_bar_hatching", exact = TRUE)))) {
+    rect <- ggplot_record_bar_hatch(rect, seq_len(nrow(rows)), values, rows, hatches)
+  }
   width <- values[[span$prop]]
   if (is.null(width)) {
-    if (length(setdiff(names(values), c("alpha", "facecolor")))) stop("Tavotto could not match the original R bar direction.")
-    return(rect)
+    if (length(setdiff(names(values), c("alpha", "facecolor", ggplot_bar_hatch_props)))) stop("Tavotto could not match the original R bar direction.")
+    return(ggplot_draw_bar_hatching(rect))
   }
   width <- rep_len(width, length(span$centre))
   selected <- which(!is.na(width))
@@ -139,5 +144,5 @@ ggplot_apply_bar_geometry <- function(rect, rows, layout, panel_id, values) {
   span$rows <- selected
   rect <- ggplot_edit_bar_span(rect, span, width[selected], span$panel, span$coord)
   attr(rect, "tavotto_bar_width") <- original
-  rect
+  ggplot_draw_bar_hatching(rect)
 }

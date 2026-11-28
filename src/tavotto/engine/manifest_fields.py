@@ -286,6 +286,38 @@ def bar_paint_fields(values: dict) -> list[dict]:
     return fields
 
 
+HATCH_LINEWIDTH_PT = (0, 8)
+
+
+def hatch_pattern_field(value: str, options: list[str]) -> dict:
+    return {"prop": "hatch", "type": "enum", "value": value, "options": options}
+
+
+def hatch_paint_fields(
+    color: str | None, linewidth: float | None, *, follows_edge: bool | None = None
+) -> list[dict]:
+    fields = []
+    if color is not None:
+        ink = {"prop": "hatchcolor", "type": "color", "value": color}
+        if follows_edge is not None:
+            ink["follows_edge"] = follows_edge
+        fields.append(ink)
+    if linewidth is not None:
+        lo, hi = HATCH_LINEWIDTH_PT
+        fields.append(
+            {
+                "prop": "hatch_linewidth",
+                "type": "number",
+                "value": round(float(linewidth), 2),
+                "min": lo,
+                "max": hi,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return fields
+
+
 def bar_width_field(width: float, *, horizontal: bool = False) -> dict:
     return {
         "prop": "bar_thickness" if horizontal else "bar_width",

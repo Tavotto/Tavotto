@@ -109,6 +109,8 @@ from manifest_fields import (
     errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
+    hatch_paint_fields,
+    hatch_pattern_field,
     layer_order_field,
     marker_field as _marker_field,
     opacity_field,
@@ -2858,39 +2860,17 @@ def _hatch_style_fields(pt) -> list[dict]:
     ≤3.10 的花纹色是边色的副产品（每次 `set_edgecolor` 覆盖），独立编辑会被下一次边色 / 不透明度写入冲掉，
     不发比发一条改了又回去的好（#874）。
     """
-    out: list[dict] = []
-    if hasattr(pt, "set_hatchcolor"):
-        out.append(
-            {
-                "prop": "hatchcolor",
-                "type": "color",
-                # 画出来的花纹色（`'edge'` 时是边色的实况）；「跟随边框」是另一个事实，不塞进色号里
-                "value": to_hex(pt.get_hatchcolor()),
-                "follows_edge": getattr(pt, "_hatch_color", None) == "edge",
-            }
-        )
-    if hasattr(pt, "set_hatch_linewidth"):
-        out.append(
-            {
-                "prop": "hatch_linewidth",
-                "type": "number",
-                "value": round(float(pt.get_hatch_linewidth()), 2),
-                "min": 0,
-                "max": 8,
-                "step": 0.1,
-                "unit": "pt",
-            }
-        )
-    return out
+    color = to_hex(pt.get_hatchcolor()) if hasattr(pt, "set_hatchcolor") else None
+    linewidth = pt.get_hatch_linewidth() if hasattr(pt, "set_hatch_linewidth") else None
+    return hatch_paint_fields(
+        color,
+        linewidth,
+        follows_edge=(getattr(pt, "_hatch_color", None) == "edge") if color is not None else None,
+    )
 
 
 def _hatch_field(pt) -> dict:
-    return {
-        "prop": "hatch",
-        "type": "enum",
-        "value": str(pt.get_hatch() or ""),
-        "options": _hatch_options(pt.get_hatch()),
-    }
+    return hatch_pattern_field(str(pt.get_hatch() or ""), _hatch_options(pt.get_hatch()))
 
 
 def _hatch_options(current) -> list[str]:

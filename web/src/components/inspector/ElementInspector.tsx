@@ -2225,7 +2225,7 @@ function FieldRow({
     return other ? currentValue(panel, element.gid, other) : undefined
   }
   /** 同一个元素上 `cmap` 字段的只读事实：白名单之外的色图，小色条预览靠它上色 */
-  const siblingCmapFacts = () => element.editable.find((x) => x.prop === 'cmap')?.cmap_current
+  const siblingCmapFacts = () => field.cmap_current ?? element.editable.find((x) => x.prop === 'cmap')?.cmap_current
   // 只有图例项的绑定控件要看别的元素（源对象的名字）；显示用，上一版也行
   const rowManifest = usePanelInspectorManifest(panel) ?? undefined
   const backgroundOriginal = artifactBackgroundOriginal(panel, useExactPanelManifest(panel))
@@ -2431,7 +2431,7 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
-          cmap={String(siblingValue('cmap') ?? '')}
+          cmap={String(siblingValue('cmap') ?? field.cmap_current?.name ?? '')}
           cmapFacts={siblingCmapFacts()}
           reversed={element.colorbar_reversed}
         />,
@@ -2443,7 +2443,7 @@ function FieldRow({
           options={enumOptions}
           onChange={writeOnce}
           ariaLabel={label}
-          cmap={String(siblingValue('cmap') ?? '')}
+          cmap={String(siblingValue('cmap') ?? field.cmap_current?.name ?? '')}
           cmapFacts={siblingCmapFacts()}
           orientation={colorbarOrientationOf(panel, element)}
           reversed={element.colorbar_reversed}

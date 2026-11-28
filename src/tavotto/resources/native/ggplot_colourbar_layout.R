@@ -36,8 +36,23 @@ ggplot_binned_colourbar_edges <- function(params, scale) {
   # The guide's reversed coordinates and the scale's transformed direction
   # are independent. Find the actual native colour at each displayed end.
   values <- values[if (positions[[1L]] == 1L) c(1L, 2L) else c(2L, 1L)]
-  list(colours = decor$colour[positions],
-       endpoints = stats::setNames(edge[order(values)], c("min", "max")))
+  colours <- decor$colour[positions]
+  endpoints <- stats::setNames(edge[order(values)], c("min", "max"))
+  left <- pmin(decor$min, decor$max)[positions]
+  right <- pmax(decor$min, decor$max)[positions]
+  edges <- c(left, utils::tail(right, 1L))
+  preview <- NULL
+  if (all(diff(edges) > 0) && abs(edges[[1L]]) < 1e-9 &&
+      abs(utils::tail(edges, 1L) - 1) < 1e-9 && all(abs(utils::head(right, -1L) - utils::tail(left, -1L)) < 1e-9)) {
+    edges[c(1L, length(edges))] <- c(0, 1)
+    reversed <- endpoints[["min"]] != 1L
+    preview <- list(
+      name = "", custom = TRUE, discrete = TRUE,
+      stops = as.list(if (reversed) rev(colours) else colours),
+      boundaries = as.list(if (reversed) 1 - rev(edges) else edges)
+    )
+  }
+  list(colours = colours, endpoints = endpoints, preview = preview)
 }
 
 ggplot_extend_colourbar <- function(table, params, extend, endpoints) {
@@ -143,7 +158,7 @@ ggplot_capture_colourbar <- function(guide, key, scale, extend, outline) {
     attr(table, "tavotto_colourbar") <- list(
       index = key, orientation = params$direction, extend = extend, can_extend = !is.null(endpoints),
       reversed = if (is.null(endpoints)) isTRUE(params$reverse) else endpoints[["min"]] != 1L,
-      outline = original
+      outline = original, preview = steps$preview
     )
     table
   })

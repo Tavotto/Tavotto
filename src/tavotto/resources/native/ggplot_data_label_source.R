@@ -41,6 +41,7 @@ ggplot_draw_boxed_label <- function(member, rows, geom, params, panel, coord, va
   rows$fontface <- values$paint$font %||% text$gp$font
   rows$family <- values$paint$fontfamily %||% text$gp$fontfamily
   rows$label <- values$text %||% text$label
+  rows$angle <- values$rotation %||% member$vp$angle
   rendered <- do.call(geom$draw_panel, c(list(rows, panel, coord), params))
   replacement <- rendered$children[[1L]]
   replacement$name <- member$name
@@ -81,6 +82,10 @@ ggplot_write_data_label <- function(grob, rows, layout, panel_id, values, layer,
         grob$gp[[prop]] <- field
       }
       if (!is.null(recipe$text)) grob$label[[index]] <- recipe$text
+      if (!is.null(recipe$rotation)) {
+        grob$rot <- rep_len(grob$rot, length(original))
+        grob$rot[[index]] <- recipe$rotation
+      }
     }
   }
   grob$tavotto_data_label_baseline <- original

@@ -7253,11 +7253,16 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
             if e["role"] == "line" and e["label"].endswith(label)
         )
 
+    new_pigment = "#823B21"
+
     def styles(svg):
         return [
             (node.tag, node.get("style"))
             for node in ElementTree.fromstring(svg).iter()
-            if "stroke: #445566;" in node.get("style", "")
+            if any(
+                f"stroke: {pigment};" in node.get("style", "")
+                for pigment in ("#445566", new_pigment)
+            )
             and node.tag.rsplit("}", 1)[-1] in {"line", "polyline"}
         ]
 
@@ -7286,7 +7291,13 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         )
         return hot, committed
 
-    first = {"linewidth": 2.8, "linestyle": "--", "alpha": 0.4, "visible": False}
+    first = {
+        "linewidth": 2.8,
+        "linestyle": "--",
+        "alpha": 0.4,
+        "visible": False,
+        "color": new_pigment,
+    }
     with sidecar_app(project, tmp_path / "warm") as app:
         asset = _run_ggplot(app, script.name, rscript)
         initial = _render(app, asset, [])
@@ -7295,6 +7306,8 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         assert len(styles(edited["svg"])) == 4
         assert sum("stroke-opacity: 0.40" in rule for _, rule in styles(edited["svg"])) == 1
         assert target(edited, "Target")["geometry"]["stroke"] is False
+        (guide_stroke,) = [rule for _, rule in styles(edited["svg"]) if new_pigment in rule]
+        assert "stroke-opacity: 0.40" in guide_stroke
 
     authored = script.read_bytes()
     with sidecar_app(project, tmp_path / "cold") as app:
@@ -7319,6 +7332,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         shown, committed = save(app, asset, replayed, {"visible": True})
         assert sum("stroke-opacity: 0.40" in rule for _, rule in styles(shown["svg"])) == 3
         assert target(shown, "Target")["geometry"]["stroke"] is True
+        assert sum(new_pigment in rule for _, rule in styles(shown["svg"])) == 3
         status, restored = app.call(
             "/api/script-backups/restore",
             {
@@ -8371,11 +8385,17 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
     peer = "layer.1.panel.1.line.group.2"
     shared = "layer.1.line.group.2"
 
+    new_pigment = "#823B21"
+
     def stroke_records(svg, tag):
         return [
             node.attrib
             for node in ElementTree.fromstring(svg).iter()
-            if node.tag.endswith("}" + tag) and "stroke: #534981;" in node.get("style", "")
+            if node.tag.endswith("}" + tag)
+            and any(
+                f"stroke: {pigment};" in node.get("style", "")
+                for pigment in ("#534981", new_pigment)
+            )
         ]
 
     def lines(view):
@@ -8419,7 +8439,13 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
             app,
             figure,
             baseline,
-            {"linewidth": 3.6, "linestyle": "--", "alpha": 0.4, "visible": False},
+            {
+                "linewidth": 3.6,
+                "linestyle": "--",
+                "alpha": 0.4,
+                "visible": False,
+                "color": new_pigment,
+            },
         )
         assert len(stroke_records(hidden["svg"], "polyline")) == 3
         assert not lines(hidden)[gid]["geometry"]["stroke"]
@@ -8434,6 +8460,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
             "linestyle": "--",
             "alpha": 0.4,
             "visible": False,
+            "color": new_pigment,
         }
         restored, saved = save(app, figure, reopened, {"visible": True})
         strokes = stroke_records(restored["svg"], "polyline")
@@ -8442,6 +8469,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         ]
         assert sum("stroke-width: 3.60" in stroke["style"] for stroke in strokes) == 1
         assert sum("stroke-opacity: 0.40" in stroke["style"] for stroke in strokes) == 1
+        assert sum(new_pigment in stroke["style"] for stroke in strokes) == 1
         status, receipt = app.call(
             "/api/script-backups/restore",
             {

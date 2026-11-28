@@ -45,6 +45,12 @@ ggplot_data_text_scene <- function(table, layout, panels, grobs, data, layers) {
         if (is.null(target)) next
         gid <- paste0("layer.", index, panel_id, ".text.", row)
         target$data_label <- TRUE
+        member <- replacement$children[[row]]
+        angle <- if (boxed) member$vp$angle else member$children[[1L]]$rot
+        if (is.numeric(angle) && length(angle) == 1L && is.finite(angle)) {
+          angle <- angle %% 360
+          target$data_label_rotation <- if (angle > 180) angle - 360 else angle
+        }
         target$member <- row
         target$hidden <- !boxed && !nzchar(target$label)
         if (boxed) {
@@ -133,7 +139,7 @@ ggplot_boxed_label_bounds <- function(member, frame_pt) {
               list(x = max(corners$x), y = max(corners$y)), frame_pt)
 }
 
-ggplot_edit_boxed_label <- function(table, target, paint, label) {
+ggplot_edit_boxed_label <- function(table, target, paint, label, rotation) {
   slot <- target$slots[[1L]]
   layer <- target$slots[[2L]]
   index <- target$member
@@ -141,7 +147,7 @@ ggplot_edit_boxed_label <- function(table, target, paint, label) {
   box <- target$boxed
   table$grobs[[slot]]$children[[layer]]$children[[index]] <- ggplot_draw_boxed_label(
     grob, box$rows, box$geom, box$params, box$panel, box$coord,
-    list(paint = paint, text = label)
+    list(paint = paint, text = label, rotation = rotation)
   )
   table
 }

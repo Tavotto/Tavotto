@@ -34,7 +34,7 @@ BOXED_R_PLOT = R_PLOT.replace("geom_text(", "geom_label(").replace(
 )
 GID = "layer.1.panel.2.text.2"
 ROUTE = "/api/layouts/Labels"
-EDITS = {"text": "Reviewed", "fontsize": 24, "color": "#C83155", "weight": "bold"}
+EDITS = {"text": "Reviewed", "fontsize": 24, "color": "#C83155", "weight": "bold", "rotation": -37}
 
 
 def _element(result, gid):
@@ -74,7 +74,18 @@ def test_data_label_style_and_text_cold_mixed_export(tmp_path, program):
         picked = _element(baseline, GID)
         assert picked["role"] == "text" and picked["label"] == "fifth"
         props = {field["prop"]: field["value"] for field in picked["editable"]}
-        assert props["text"] == "fifth" and props["fontsize"] > 0
+        assert props["text"] == "fifth" and props["fontsize"] > 0 and props["rotation"] == 20
+        rotated = _render(
+            app,
+            figure,
+            [{"gid": GID, "identity": picked["identity"], "prop": "rotation", "value": -37}],
+        )
+        assert not rotated["warnings"]
+        assert _element(rotated, GID)["bbox"] != picked["bbox"]
+        assert any(
+            b"rotate(37)" in item and b"fifth" in item
+            for item in _device_text(rotated["svg"], "#55A0A8")
+        )
         edits = [
             {"gid": GID, "identity": picked["identity"], "prop": prop, "value": value}
             for prop, value in EDITS.items()
@@ -92,6 +103,7 @@ def test_data_label_style_and_text_cold_mixed_export(tmp_path, program):
         ]
         (reviewed,) = _device_text(changed["svg"], "#C83155")
         assert b"Reviewed" in reviewed and b"font-weight: bold" in reviewed
+        assert b"rotate(37)" in reviewed
         if program == BOXED_R_PLOT:
 
             def boxes(svg):
@@ -249,6 +261,8 @@ def test_data_label_source_tracks_the_original_row_if_two_labels_have_the_same_t
             ],
         )
         assert _element(changed, GID)["label"] == "Again"
+        (retouched,) = _device_text(changed["svg"], "#C83155")
+        assert b"rotate(37)" in retouched
 
 
 NEW = "#CB345F"
@@ -272,14 +286,18 @@ def _bar_groups(view):
     }
 
 
-def test_edit_and_write_back_one_mapped_bar_category_with_a_shared_colour(tmp_path):
+@pytest.mark.parametrize("sparse_facet", [False, True], ids=["balanced", "one-category-facet"])
+def test_edit_and_write_back_one_mapped_bar_category_with_a_shared_colour(tmp_path, sparse_facet):
     rscript = _rscript_with_capture_packages()
     project = tmp_path / "Mapped bar fill"
     project.mkdir()
     script = project / "Bars.R"
+    subset = 'd <- subset(d, trial != "Late" | arm == "Target")' if sparse_facet else ""
+    removed = 5 if sparse_facet else 0
     script.write_text(
         f"""\
 d <- expand.grid(x = 1:5, arm = c("Baseline", "Target"), trial = c("Early", "Late"))
+{subset}
 d$y <- d$x / 2 + 2 * as.integer(d$arm) + 2 * (d$trial == "Late")
 plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, fill = arm)) +
   ggplot2::geom_col(position = "dodge2", colour = "#3A2311", alpha = .7) +
@@ -299,7 +317,8 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
     def check_and_write(app, asset, before, color):
         all_groups = _bar_groups(before)
         current = all_groups[BAR_GID]
-        assert len(all_groups) == 4 and current["label"].endswith("Target")
+        assert len(all_groups) == (3 if sparse_facet else 4)
+        assert current["label"].endswith("Target")
         patches = [
             {"gid": BAR_GID, "identity": current["identity"], "prop": "facecolor", "value": color}
         ]
@@ -322,8 +341,8 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         asset = _run_ggplot(app, script.name, rscript)
         warm = _render(app, asset, [])
         changed = check_and_write(app, asset, warm, NEW)
-        assert len(_bar_rows(warm["svg"], OLD)) == 22
-        assert len(_bar_rows(changed["svg"], OLD)) == 17
+        assert len(_bar_rows(warm["svg"], OLD)) == 22 - removed
+        assert len(_bar_rows(changed["svg"], OLD)) == 17 - removed
         assert len(_bar_rows(changed["svg"], NEW)) == 5
         assert all("fill-opacity: 0.70" in r["style"] for r in _bar_rows(changed["svg"], NEW))
     with sidecar_app(project, tmp_path / "cold") as app:
@@ -335,7 +354,7 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         assert all("fill-opacity: 0.70" in row["style"] for row in _bar_rows(current["svg"], NEW))
         without_fill = check_and_write(app, asset, current, "none")
         assert not _bar_rows(without_fill["svg"], NEW)
-        assert len(_bar_rows(without_fill["svg"], OLD)) == 17
+        assert len(_bar_rows(without_fill["svg"], OLD)) == 17 - removed
 
 
 def test_style_writeback_combines_category_bar_fill_and_one_boxed_label(tmp_path):

@@ -27,6 +27,8 @@ from .manifest_fields import (
     errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
+    hatch_paint_fields,
+    hatch_pattern_field,
     layer_order_field,
     marker_field,
     opacity_field,
@@ -409,6 +411,17 @@ class GgplotTarget:
             if not values:
                 return []
             fields = bar_paint_fields(values)
+            if "hatch" in values:
+                fields.append(hatch_pattern_field(values["hatch"], ["", *series["hatch_choices"]]))
+            color = values.get("hatchcolor")
+            follows_edge = color == "edge"
+            if follows_edge:
+                color = values.get("edgecolor", series.get("hatch_edge", "#000000"))
+                if color == "none":
+                    color = "#000000"
+            fields.extend(
+                hatch_paint_fields(color, values.get("hatch_linewidth"), follows_edge=follows_edge)
+            )
             if "bar_width" in values:
                 fields.append(bar_width_field(values["bar_width"]))
             if "bar_thickness" in values:
@@ -477,6 +490,8 @@ class GgplotTarget:
         fields = colorbar_layout_fields(scale["orientation"], scale["extend"])
         for field in fields:
             field["strict_options"] = True
+            if (preview := scale.get("preview")) is not None:
+                field["cmap_current"] = preview
             if field["prop"] in scale["layout_edited"]:
                 field["value_original"] = scale["layout_original"][field["prop"]]
         if scale["limits"] is not None:
