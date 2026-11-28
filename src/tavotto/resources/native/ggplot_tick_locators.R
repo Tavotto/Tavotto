@@ -4,6 +4,14 @@ ggplot_number_labels <- function(format, values) {
   sprintf(if (format == "sci") "%.2e" else format, values)
 }
 
+ggplot_log_locator_step <- function(view, intervals) {
+  transform <- view$scale$get_transformation()
+  if (identical(transform$name, "log-10")) {
+    limits <- transform$inverse(view$continuous_range)
+    if (all(is.finite(limits) & limits > 0)) diff(range(limits)) / intervals
+  }
+}
+
 ggplot_uniform_breaks <- function(range, step, kind = "major") {
   # Use the same zero-based origin as a standard multiple locator. Limit the
   # generated break count before allocating anything on the rendering path.
@@ -55,8 +63,8 @@ ggplot_apply_tick_locator <- function(scale, change) {
   mode <- ggplot_major_tick_mode(style)
   breaks <- if (mode == "step") {
     step <- style$major_step
-    force(step)
-    function(limits) ggplot_uniform_breaks(limits, step)
+    transformation <- scale$get_transformation()$name
+    function(limits) ggplot_usable_fixed_ticks(ggplot_uniform_breaks(limits, step), transformation)
   } else if (mode == "fixed" && length(style$major_values)) {
     ggplot_usable_fixed_ticks(ggplot_fixed_tick_values(style$major_values),
                               scale$get_transformation()$name)

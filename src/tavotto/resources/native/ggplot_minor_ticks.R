@@ -7,7 +7,9 @@ ggplot_minor_spacing <- function(view) {
   breaks <- view$get_breaks_minor()
   breaks <- sort(unique(breaks[is.finite(breaks)]))
   if (length(breaks) < 2L) return(NULL)
-  step <- if (identical(view$scale$get_transformation()$name, "identity")) stats::median(diff(breaks))
+  step <- if (identical(view$scale$get_transformation()$name, "identity")) {
+    stats::median(diff(breaks))
+  } else ggplot_log_locator_step(view, 10)
   list(step = if (is_positive_ggplot_number(step)) step)
 }
 
@@ -55,7 +57,8 @@ ggplot_edit_minor_ticks <- function(panel, params, spacing, edit, coord) {
   if (mode == "step") {
     trans <- view$scale$get_transformation()
     limits <- sort(trans$inverse(view$continuous_range))
-    breaks <- trans$transform(ggplot_uniform_breaks(limits, step, "minor"))
+    values <- ggplot_uniform_breaks(limits, step, "minor")
+    breaks <- trans$transform(ggplot_usable_fixed_ticks(values, trans$name))
     panel[[axis]] <- view <- ggplot_clone(view, minor_breaks = breaks)
   }
   params$minor.ticks <- visible

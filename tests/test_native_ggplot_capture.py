@@ -3928,7 +3928,22 @@ log_state <- adapter$capture_ggplot(log_plot, frame)$state
 native_log <- adapter$capture_ggplot(log_plot + native, frame)
 auto <- stats::setNames(list(list(minor_visible = TRUE)), gid)
 stopifnot(identical(adapter$render_ggplot(log_state, auto), native_log$svg),
-          identical(fields(log_state)$minor_mode$options, list("auto")))
+          identical(fields(log_state)$minor_mode$options, list("auto", "step")))
+log_step <- stats::setNames(list(list(minor_visible = TRUE, minor_mode = "step",
+    minor_step = 2.5, major_mode = "fixed", major_values = c(1, 10))), gid)
+log_marks <- positions(log_state, log_step)
+expected_log <- 1 - log10(c(2.5, 5, 7.5))
+stopifnot(length(log_marks$ticks) == 2L,
+          isTRUE(all.equal(log_marks$ticks[[1L]], c(1, 0))),
+          isTRUE(all.equal(log_marks$ticks[[2L]], expected_log)),
+          isTRUE(all.equal(log_marks$grid, expected_log)))
+log_step[[gid]]$major_mode <- "step"
+log_step[[gid]]$major_step <- 2
+log_step[[gid]]$major_values <- NULL
+stepped_log <- positions(log_state, log_step)
+stopifnot(isTRUE(all.equal(stepped_log$ticks[[1L]], 1 - log10(seq(2, 10, by = 2)))),
+          isTRUE(all.equal(stepped_log$ticks[[2L]], expected_log)),
+          isTRUE(all.equal(stepped_log$grid, expected_log)))
 
 # The four shared stroke controls use physical points, including native
 # inward ticks. Compare edited marks with an independently authored R theme.
@@ -7458,15 +7473,17 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-state.txt")
         assert status == 200 and receipt["ok"] and script.read_bytes() == authored
 
 
-@pytest.mark.parametrize("facet", [False, True], ids=["single", "free-facet"])
-def test_native_r_minor_locators_reopen_and_restore_automatic_ticks(tmp_path, facet):
+@pytest.mark.parametrize("mode", ["single", "free-facet", "log10"])
+def test_native_r_minor_locators_reopen_and_restore_automatic_ticks(tmp_path, mode):
     from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
     project = tmp_path / "Minor source"
     project.mkdir()
     script = project / "Minor.R"
+    facet = mode == "free-facet"
     facets = '+ ggplot2::facet_wrap(ggplot2::vars(panel), scales = "free_x")' if facet else ""
+    log_axis = "+ ggplot2::scale_x_log10(breaks = c(2, 10))" if mode == "log10" else ""
     script.write_text(
         f"""\
 d <- expand.grid(x = seq(2, 10, 2), panel = c("Early", "Late"))
@@ -7474,7 +7491,7 @@ d$y <- 2 * d$x + as.integer(d$panel)
 plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, group = panel)) +
   ggplot2::geom_line(colour = "#36594E") + ggplot2::theme_bw() +
   ggplot2::theme(axis.text.x.bottom = ggplot2::element_text(colour = "#714715"),
-    axis.minor.ticks.x.bottom = ggplot2::element_blank()) {facets}
+    axis.minor.ticks.x.bottom = ggplot2::element_blank()) {facets} {log_axis}
 svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
 print(plot)
 grDevices::dev.off()
@@ -7529,15 +7546,20 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
     settings = {
         "minor_visible": True,
         "minor_mode": "step",
-        "minor_step": 0.75,
+        "minor_step": 2.5 if mode == "log10" else 0.75,
         "minor_format": "%.2f",
     }
+    reset = {"minor_mode": "auto", "minor_format": "none"}
+    if mode == "log10":
+        settings.update({"major_mode": "step", "major_step": 2})
+        reset["major_mode"] = "auto"
+    minor_label = "7.50" if mode == "log10" else "2.25"
     with sidecar_app(project, tmp_path / "warm") as app:
         figure = _run_ggplot(app, script.name, rscript)
         starting = _render(app, figure, [])
         annotated, _ = save(app, figure, starting, settings)
-        assert not any(label == "2.25" for _, _, label in graphics(starting["svg"]))
-        labels = [attr for _, attr, label in graphics(annotated["svg"]) if label == "2.25"]
+        assert not any(label == minor_label for _, _, label in graphics(starting["svg"]))
+        labels = [attr for _, attr, label in graphics(annotated["svg"]) if label == minor_label]
         assert len(labels) == 1
     authored = script.read_bytes()
     with sidecar_app(project, tmp_path / "cold") as app:
@@ -7546,8 +7568,8 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
         assert reopened["svg"] == annotated["svg"]
         fields = {field["prop"]: field["value"] for field in target(reopened)["editable"]}
         assert {prop: fields[prop] for prop in settings} == settings
-        edited, saved = save(app, figure, reopened, {"minor_mode": "auto", "minor_format": "none"})
-        assert not any(label == "2.25" for _, _, label in graphics(edited["svg"]))
+        edited, saved = save(app, figure, reopened, reset)
+        assert not any(label == minor_label for _, _, label in graphics(edited["svg"]))
         status, restored = app.call(
             "/api/script-backups/restore",
             {

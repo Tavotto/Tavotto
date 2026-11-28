@@ -247,7 +247,7 @@ ggplot_axis_spacing <- function(built, panel, params, values) {
   if (is.null(ggplot_axis_pair(sort(view$continuous_range)))) return(NULL)
   step <- if (identical(scale$get_transformation()$name, "identity") && length(values) >= 2L) {
     stats::median(diff(sort(values)))
-  }
+  } else ggplot_log_locator_step(view, 5)
   minor <- ggplot_minor_tick_defaults(built, params, panel, axis)
   list(axis = axis, step = if (is_positive_ggplot_number(step)) step, minor = minor)
 }
@@ -465,7 +465,8 @@ ggplot_edit_axis_guide <- function(panel, params, target, edit, coord, projected
     transformed_range <- sort(view$continuous_range)
     supplied <- length(fixed) && mode == "fixed"
     if (mode == "step") {
-      values <- ggplot_uniform_breaks(transform$inverse(transformed_range), step)
+      positions <- ggplot_uniform_breaks(transform$inverse(transformed_range), step)
+      values <- ggplot_usable_fixed_ticks(positions, transform$name)
       breaks <- transform$transform(values)
     } else if (supplied) {
       # Crop ticks to the visible view without expanding or retraining the axis.
