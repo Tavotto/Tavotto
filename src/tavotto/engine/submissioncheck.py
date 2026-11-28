@@ -19,7 +19,8 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from . import journalfacts_fold, journals, license as engine_license
 
@@ -640,3 +641,253 @@ def ask(payload: dict, *, solver=None) -> dict:
     except prohost.ProUnavailable as exc:
         raise SubmissionCheckError("unavailable", exc.code) from exc
     return validate_result(result, payload)
+
+
+# --------------------------------------------------------------------------- 编排（ADR 0216 §八.2：只算不写）
+@dataclass
+class Figure:
+    """画布上的一张图。`render(patches)` 由调用方给（app.py 用 worker，测试注入）；本模块不碰文档、不落盘。"""
+
+    key: str
+    rel_id: str
+    base: list
+    box: list[float]  # 画布上的摆放 [x, y, w, h]（mm）
+    render: Callable[[list], dict]
+    patches: list = field(default_factory=list)
+    manifest: dict | None = None
+    refs: dict[str, str] = field(default_factory=dict)  # 文字短号 → gid
+    labels_known: bool = True
+
+    @property
+    def size_mm(self) -> list[float]:
+        size = (self.manifest or {}).get("size_mm")
+        return [float(size[0]), float(size[1])]
+
+    @property
+    def scale(self) -> float:
+        w = self.size_mm[0]
+        return self.box[2] / w if w > 0 else 1.0
+
+
+@dataclass
+class Canvas:
+    key: str
+    page: dict  # {w, h}（mm）
+    figures: list[Figure]
+    canvas_texts: list = field(default_factory=list)  # 前端送来的画布级文字
+    canvas_labels_known: bool = True
+
+
+#: 单图画布：图铺满画布（摆放与页面之差不超过这个数）才算「改图宽 = 改这张图的图幅」
+FILL_TOL_MM = 0.5
+
+
+def _render(fig: Figure, patches: list) -> None:
+    resp = fig.render(patches)
+    m = resp.get("manifest") if isinstance(resp, dict) else None
+    size = (m or {}).get("size_mm")
+    if (
+        not isinstance(m, dict)
+        or resp.get("warnings")
+        or not (
+            isinstance(size, list) and len(size) == 2 and all(_number(v) and v > 0 for v in size)
+        )
+    ):
+        raise SubmissionCheckError("render_failed", fig.rel_id)
+    fig.manifest = m
+    fig.patches = list(patches)
+
+
+def _fills(c: Canvas) -> bool:
+    if len(c.figures) != 1:
+        return False
+    x, y, w, h = c.figures[0].box
+    return (
+        abs(x) <= FILL_TOL_MM
+        and abs(y) <= FILL_TOL_MM
+        and abs(w - float(c.page["w"])) <= FILL_TOL_MM
+        and abs(h - float(c.page["h"])) <= FILL_TOL_MM
+    )
+
+
+def _measure(ci: int, c: Canvas) -> dict:
+    texts: list[dict] = []
+    known = c.canvas_labels_known
+    for fi, fig in enumerate(c.figures, 1):
+        t, refs, ok = measure_figure(fig.manifest or {}, fig.scale, f"c{ci}f{fi}")
+        fig.refs, fig.labels_known = refs, ok
+        texts += t
+        known = known and ok
+    texts += canvas_texts(c.canvas_texts, f"c{ci}")
+    return {
+        "ref": f"c{ci}",
+        "width_mm": round(float(c.page["w"]), 3),
+        "height_mm": round(float(c.page["h"]), 3),
+        "width_adjustable": _fills(c),
+        "texts": texts,
+        "panel_labels_known": known,
+    }
+
+
+def _upsert(patches: list, gid: str, prop: str, value) -> list:
+    out = [p for p in patches if not (p.get("gid") == gid and p.get("prop") == prop)]
+    return out + [{"gid": gid, "prop": prop, "value": value}]
+
+
+def _touched(before: list, after: list) -> set[str]:
+    key = lambda p: (p.get("gid"), p.get("prop"), repr(p.get("value")))  # noqa: E731
+    return {p.get("gid") for p in after if key(p) not in {key(q) for q in before}}
+
+
+def _apply_width(c: Canvas, op: dict) -> bool:
+    """单图画布改图宽：按图幅出图（缩放 = 1），高度等比；摆放与页面跟着改（与拖边改图幅同一批键）。"""
+    fig = c.figures[0]
+    w0, h0 = fig.size_mm
+    ratio = float(c.page["h"]) / float(c.page["w"]) if float(c.page["w"]) > 0 else h0 / w0
+    w = float(op["width_mm"])
+    h = round(w * ratio, 3)
+    _render(fig, _upsert(fig.patches, "figure", "size_mm", [w, h]))
+    fig.box = [0.0, 0.0, w, h]
+    c.page = {"w": w, "h": h}
+    return True
+
+
+def _apply_text(c: Canvas, op: dict, row: dict, profile: dict) -> bool:
+    """字号 / 字体：逐张图交给免费的 specfix 事务；实际改到的元素必须都在这条操作里、且不是分图标签。"""
+    from . import specfix
+
+    done = True
+    for fig in c.figures:
+        refs = {r: g for r, g in fig.refs.items() if r in op["texts"]}
+        if not refs:
+            continue
+        prof, only = specfix_request({**op, "texts": list(refs)}, row, fig.refs, profile)
+        before = list(fig.patches)
+        out = specfix.transaction(fig.render, before, fig.scale, prof, only)
+        after = out.get("patches") if out.get("ok") else None
+        if not isinstance(after, list) or not _touched(before, after) <= set(refs.values()):
+            _render(fig, before)  # specfix 改到了别处（层级补齐等）或没修成：这张图不采用
+            done = False
+            continue
+        _render(fig, after)
+    return done
+
+
+def _final_state(row: dict, item: dict | None, applied: dict[str, bool], payload: dict) -> dict:
+    """每条要求最后怎么说（开源侧判）：组件说的 state 为底；落了操作的，按重新量到的值改成 `fixed` 或退回 `confirm`。"""
+    state = (item or {}).get("state", "confirm")
+    per = []
+    for pc in (item or {}).get("per_canvas") or []:
+        ops = [o for o in pc.get("ops") or [] if o in applied]
+        st = pc["state"]
+        if ops:
+            st = "fixed" if all(applied[o] for o in ops) else "confirm"
+        per.append({"canvas": pc["canvas"], "state": st})
+    if per and any(p["state"] == "fixed" for p in per):
+        state = (
+            "fixed"
+            if all(p["state"] in ("fixed", "pass", "not_applicable") for p in per)
+            else "confirm"
+        )
+    if state == "pass" and row["source_state"] != "preflight":
+        state = "confirm"
+    return {"state": state, "per_canvas": per}
+
+
+def _remeasure_ok(op: dict, row: dict, c: Canvas, ci: int) -> bool:
+    """落完之后重新量：这条操作针对的要求在这块画布上满足了没有（不信组件给的 `size_pt`）。"""
+    m = _measure(ci, c)
+    if op["op"] == "canvas.width":
+        return satisfied(row, m["width_mm"])
+    body = [t for t in m["texts"] if t["editable"] and not t["panel_label"]]
+    targets = [
+        t
+        for t in body
+        if any(t["ref"] in f.refs and f.refs[t["ref"]] in op["gids"] for f in c.figures)
+    ]
+    if not targets:
+        return False
+    key = "family" if op["op"] == "text.family" else "size_pt"
+    return all(satisfied(row, t[key]) for t in targets)
+
+
+def run(
+    canvases: list[Canvas],
+    *,
+    journal_id: str,
+    profile: dict,
+    accept: list[str] | None = None,
+    solver=None,
+    catalog: dict | None = None,
+    bundle: dict | None = None,
+) -> dict:
+    """投稿核对的一次计算（ADR 0216 §九）。**只算不写**：回每块画布每张图的最终全量覆盖与逐条要求的状态，
+    由前端一次 commit。任何一步失败抛 `SubmissionCheckError`，调用方把每张图的 worker 回到 B0（或作废）。"""
+    if not licensed():
+        raise SubmissionCheckError("not_licensed")
+    rows = requirements(journal_id, catalog=catalog, bundle=bundle)
+    for c in canvases:
+        for fig in c.figures:
+            _render(fig, list(fig.base))
+    payload = {
+        "requirements": sidecar_rows(rows),
+        "canvases": [_measure(i, c) for i, c in enumerate(canvases, 1)],
+    }
+    checked = ask(payload, solver=solver)
+    by_ref = {r["ref"]: r for r in rows}
+    by_canvas = {f"c{i}": (i, c) for i, c in enumerate(canvases, 1)}
+    applied: dict[str, bool] = {}
+    for op in chosen_ops(checked, rows, list(accept or [])):
+        ci, c = by_canvas[op["canvas"]]
+        row = by_ref[op["row"]]
+        if op["op"] == "canvas.width":
+            ok = _apply_width(c, op)
+        else:
+            gids = {f.refs[r] for f in c.figures for r in op["texts"] if r in f.refs}
+            op = {**op, "gids": gids}
+            ok = _apply_text(c, op, row, profile)
+            # 图宽改过之后短号要按新量值重编：同一张图的 gid 不变，按 gid 找回
+        applied[op["ref"]] = ok and _remeasure_ok({**op, "gids": op.get("gids", set())}, row, c, ci)
+    reqs = []
+    for row in rows:
+        item = checked["requirements"].get(row["ref"])
+        final = (
+            _final_state(row, item, applied, payload)
+            if row["check"] in CHECKS
+            else {
+                "state": "confirm",
+                "per_canvas": [],
+            }
+        )
+        reqs.append(
+            {
+                "id": row["id"],
+                "aliases": row["aliases"],
+                "check": row["check"],
+                "relation": row["relation"],
+                "value": row["value"],
+                "unit": row["unit"],
+                "strength": row["strength"],
+                "stage": row["stage"],
+                "source_state": row["source_state"],
+                "conditions": row["conditions"],
+                "origin": row["origin"],
+                "also": row.get("also", []),
+                **final,
+                "per_canvas": [
+                    {**pc, "canvas": by_canvas[pc["canvas"]][1].key} for pc in final["per_canvas"]
+                ],
+            }
+        )
+    return {
+        "ok": True,
+        "canvases": [
+            {
+                "key": c.key,
+                "page": dict(c.page),
+                "figures": [{"key": f.key, "patches": f.patches, "box": f.box} for f in c.figures],
+            }
+            for c in canvases
+        ],
+        "requirements": reqs,
+    }
