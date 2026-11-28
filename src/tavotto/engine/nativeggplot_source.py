@@ -117,7 +117,7 @@ def _native_coordinate_writes(
         gid, prop = patch["gid"], patch["prop"]
         element = axes.get(gid, {})
         scope = element.get("source_props", {}).get(prop)
-        if scope and not scope.get("facet"):
+        if scope and not (scope.get("facet") or scope.get("late_projection")):
             candidates[prop].append((gid, scope, patch["value"]))
     coordinates = {}
     written = set()
@@ -149,7 +149,9 @@ def _native_facet_coordinate_writes(
         gid, prop = patch["gid"], patch["prop"]
         target = axes.get(gid, {})
         scope = target.get("source_props", {}).get(prop, {})
-        if not scope.get("facet") or (not write_scales and prop.endswith("scale")):
+        if not (scope.get("facet") or scope.get("late_projection")) or (
+            not write_scales and prop.endswith("scale")
+        ):
             continue
         axis = prop[-1] if prop.startswith("invert_") else prop[0]
         if axis in ("x", "y"):
@@ -168,7 +170,7 @@ def _native_facet_coordinate_writes(
             if not changes:
                 continue
             _, scope, value = changes[0]
-            facet = _r_facet_selector(scope["facet"])
+            facet = _r_facet_selector(scope.get("facet"))
             if facet is None or any(
                 (validated := _coordinate_value(axes[gid], prop, requested, view.get("mode")))
                 is None
@@ -526,7 +528,8 @@ def _native_layer_writes(
     """Fixed paint follows the entire layer. Draw-time recipes can follow facets or data categories."""
     edits = defaultdict(dict)
     for patch in patches:
-        edits[patch["gid"]][patch["prop"]] = patch["value"]
+        if patch["prop"] != "zorder":
+            edits[patch["gid"]][patch["prop"]] = patch["value"]
     layers = defaultdict(dict)
     for element in (hot or {}).get("elements", ()):
         gid = element["gid"]
@@ -1085,6 +1088,49 @@ def _native_colourbar_layout_writes(
     return recipes, written
 
 
+def _native_layer_order_writes(
+    hot: dict | None, patches: list[dict]
+) -> tuple[list[str], set[tuple[str, str]]]:
+    priorities = {patch["gid"]: patch["value"] for patch in patches if patch["prop"] == "zorder"}
+    recipes = []
+    written = set()
+    for element in (hot or {}).get("elements", ()):
+        gid = element["gid"]
+        plan = element.get("source_layer_order")
+        if not plan or gid not in priorities:
+            continue
+        layer = plan["layer"]
+        priority = priorities[gid]
+        facet = _r_facet_selector(plan["facet"])
+        if (
+            type(layer) is not int
+            or layer < 1
+            or facet is None
+            or type(priority) not in (int, float)
+            or not math.isfinite(priority)
+            or priority != plan["priority"]
+        ):
+            continue
+        recipes.append(
+            f"list(facet = {facet}, layer = {layer}L, priority = {_r_literal(priority)})"
+        )
+        written.add((gid, "zorder"))
+    return recipes, written
+
+
+def _r_layer_order_block(name: str, recipes: list[str]) -> str:
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers("ggplot_objects.R", "ggplot_layer_order.R"),
+            "  ggplot_with_layer_order(plot, list(",
+            ",\n".join(f"    {recipe}" for recipe in recipes),
+            "  ))",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
 def _native_legend_position_writes(
     hot: dict | None, patches: list[dict]
 ) -> tuple[list[str], set[tuple[str, str]]]:
@@ -1281,6 +1327,28 @@ def _rebind_residual(source: AdjustedRSource, hot: dict | None, cold: dict) -> A
     return replace(source, residual=residual)
 
 
+def _verify_layer_order(
+    source: AdjustedRSource, patches: list[dict], hot: dict | None, cold: dict
+) -> None:
+    residual = {patch["gid"] for patch in source.residual if patch["prop"] == "zorder"}
+    changed = {patch["gid"] for patch in patches if patch["prop"] == "zorder"} - residual
+    if not changed:
+        return
+    expect = {
+        e["gid"]: e.get("source_layer_order")
+        for e in (hot or {}).get("elements", ())
+        if e["gid"] in changed
+    }
+    replayed = {
+        e["gid"]: e.get("source_layer_order") for e in cold["elements"] if e["gid"] in changed
+    }
+    if set(expect) != changed or not all(expect.values()) or expect != replayed:
+        raise scriptadjust.ScriptAdjustError(
+            "script_export_diverged",
+            "The adjusted R source painted the layers in a different order.",
+        )
+
+
 def _same_colour_target(prior: dict, current: dict) -> bool:
     anchor = prior.get("colour_source_anchor")
     return bool(
@@ -1370,6 +1438,7 @@ def build(
     panel_themes, panel_writes = _native_panel_theme_writes(axes, patches, theme_writes)
     frames, frame_writes = _native_frame_writes(axes, patches, theme_writes)
     source_layers, layer_writes = _native_layer_writes(hot, patches)
+    layer_order, order_writes = _native_layer_order_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
     tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
     locators, locator_writes = _native_tick_locator_writes(hot, patches)
@@ -1385,6 +1454,7 @@ def build(
         | frame_writes
         | panel_writes
         | layer_writes
+        | order_writes
         | colour_writes
         | tick_writes
         | bar_writes
@@ -1476,6 +1546,7 @@ def build(
         or frames
         or panel_themes
         or source_layers
+        or layer_order
         or colour_scales
         or tick_labels
         or locators
@@ -1511,6 +1582,8 @@ def build(
         statements.append(_r_facet_coordinate_block(name, facet_views, mirror_raster=mirror_raster))
     if source_layers:
         statements.append(_r_layer_block(name, source_layers))
+    if layer_order:
+        statements.append(_r_layer_order_block(name, layer_order))
     if colour_scales:
         statements.append(_r_colour_mapping_block(name, colour_scales))
     if locators:
@@ -1931,6 +2004,7 @@ def _replay(
         data_fingerprint = manifest.pop("data_fingerprint", None)
         target.annotate_manifest(manifest)
         adjusted = _rebind_residual(adjusted, hot, manifest)
+        _verify_layer_order(adjusted, patches, hot, manifest)
         if script.read_bytes() != original:
             raise scriptadjust.ScriptAdjustError(
                 "script_export_script_changed", "The R source changed during replay."

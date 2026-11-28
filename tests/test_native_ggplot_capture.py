@@ -4948,6 +4948,156 @@ def _assert_r_probe(tmp_path, program):
     assert not (tmp_path / "Rplots.pdf").exists()
 
 
+LAYER_ORDER_SOURCE = b"""\
+d <- data.frame(x = rep(1:4, 2), y = rep(c(2, 4, 2, 3), 2), panel = rep(c("A", "B"), each = 4))
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::geom_line(colour = "#A01828", linewidth = 2) +
+  ggplot2::geom_text(ggplot2::aes(label = y), colour = "#556677") +
+  ggplot2::geom_line(ggplot2::aes(y = y - .1), colour = "#176F9A", linewidth = 1) +
+  ggplot2::facet_wrap(ggplot2::vars(panel), dir = "v") + ggplot2::theme(panel.ontop = TRUE)
+ggplot2::ggsave("drawn.pdf", plot, width = 4, height = 3, device = grDevices::cairo_pdf)
+"""
+
+
+@pytest.mark.parametrize("scope", ["facet", "single", "text-log", "nudged-text-log"])
+def test_native_r_layer_order_writeback(tmp_path, scope):
+    from math import log
+
+    from test_core_v02_release_candidate import _panel, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Rank source"
+    project.mkdir()
+    source = project / "ranks.R"
+    faceted = scope == "facet"
+    with_log = scope.endswith("-log")
+    nudge = 0.25 if scope == "nudged-text-log" else 0
+    original = (
+        LAYER_ORDER_SOURCE
+        if faceted
+        else LAYER_ORDER_SOURCE.replace(
+            b'ggplot2::facet_wrap(ggplot2::vars(panel), dir = "v") + ', b""
+        ).replace(
+            b'x = rep(1:4, 2), y = rep(c(2, 4, 2, 3), 2), panel = rep(c("A", "B"), each = 4)',
+            b"x = 1:4, y = c(2, 4, 2, 3)",
+        )
+    )
+    if nudge:
+        original = original.replace(b'colour = "#556677")', b'colour = "#556677", nudge_x = .25)')
+    source.write_bytes(original)
+    route = "/api/layouts/Rank"
+    first = "layer.1.panel.2.line" if faceted else "layer.1.line"
+    second = "layer.3.panel.2.line" if faceted else "layer.3.line"
+
+    def field(render, gid, prop):
+        target = next(el for el in render["manifest"]["elements"] if el["gid"] == gid)
+        return next(item for item in target["editable"] if item["prop"] == prop)
+
+    def assert_log_labels(render):
+        svg = ElementTree.fromstring(render["svg"])
+        positions = [
+            float(node.attrib["x"])
+            for node in svg.iter("{http://www.w3.org/2000/svg}text")
+            if "#556677" in node.attrib.get("style", "").lower()
+        ]
+        assert len(positions) >= 3
+        first_x, middle_x, last_x = positions[:3]
+        assert (middle_x - first_x) / (last_x - first_x) == pytest.approx(
+            log((2 + nudge) / (1 + nudge)) / log((3 + nudge) / (1 + nudge)), abs=0.002
+        )
+
+    def write_round(app, project, figure, edits, expected_source):
+        baseline = _render(app, figure, [])
+        elements = {el["gid"]: el for el in baseline["manifest"]["elements"]}
+        patches = [
+            {"gid": gid, "prop": prop, "value": value, "identity": elements[gid]["identity"]}
+            for gid, prop, value in edits
+        ]
+        hot = _render(app, figure, patches)
+        assert not hot["warnings"]
+        w, h = hot["manifest"]["size_mm"]
+        panel = {**_panel("r", figure, 5, patches, native_width=w), "h": h, "nativeH": h}
+        document = {
+            "schema": 3,
+            "project": {"id": "rank", "name": "Rank"},
+            "activeCanvasId": "main",
+            "canvases": [
+                {
+                    "id": "main",
+                    "name": "Main",
+                    "schema": 2,
+                    "page": {"w": w + 10, "h": h + 10},
+                    "objects": [panel],
+                    "guides": [],
+                }
+            ],
+        }
+        assert app.call(f"{route}?target=project", document)[1]["ok"]
+        layout = layoutannotate.open_layout(project, "Rank")
+        _, preview = app.call(
+            "/api/script-edit/figure-style/preview",
+            {
+                "layout": layout.name,
+                "revision": layout.revision,
+                "canvas_id": "main",
+                "panel_id": "r",
+            },
+            timeout=120,
+        )
+        assert preview["written"] == len(patches) and not preview["skipped"], preview
+        assert (project / source.name).read_bytes() == expected_source
+        before_pdf = (project / "drawn.pdf").read_bytes()
+        _, committed = app.call(
+            "/api/script-edit/figure-style/commit",
+            {
+                "token": preview["token"],
+                "confirmed": True,
+            },
+            timeout=120,
+        )
+        assert committed["ok"], committed
+        assert (project / "drawn.pdf").read_bytes() == before_pdf
+        overrides = app.call(route)[1]["canvases"][0]["objects"][0]["overrides"]
+        assert overrides == []
+        return hot, (project / source.name).read_bytes()
+
+    with sidecar_app(project, tmp_path / "first") as app:
+        figure = _run_ggplot(app, source.name, rscript)
+        edits = [(first, "zorder", 7), (first, "linewidth", 2.25)]
+        if with_log:
+            edits.extend([("axes_0", "xscale", "log"), ("axes_0", "xlim", [1, 4])])
+        edited, new_source = write_round(app, project, figure, edits, original)
+    fresh = tmp_path / "Fresh rank source"
+    fresh.mkdir()
+    (fresh / source.name).write_bytes(new_source)
+    with sidecar_app(fresh, tmp_path / "second") as app:
+        figure = _run_ggplot(app, source.name, rscript)
+        cold = _render(app, figure, [])
+        assert cold["svg"] == edited["svg"]
+        assert field(cold, first, "zorder")["value"] == 7
+        assert field(cold, first, "linewidth")["value"] == pytest.approx(2.25)
+        edits = [(second, "zorder", 9)]
+        if with_log:
+            assert field(cold, "axes_0", "xscale")["value"] == "log"
+            assert field(cold, "axes_0", "xlim")["value"] == [1, 4]
+            assert_log_labels(cold)
+            edits.append(("axes_0", "xlim", [1, 5]))
+        edited_again, last_source = write_round(app, fresh, figure, edits, new_source)
+    reopened = tmp_path / "Reopened rank source"
+    reopened.mkdir()
+    (reopened / source.name).write_bytes(last_source)
+    with sidecar_app(reopened, tmp_path / "third") as app:
+        figure = _run_ggplot(app, source.name, rscript)
+        final = _render(app, figure, [])
+        assert final["svg"] == edited_again["svg"]
+        assert field(final, first, "zorder")["value"] == 7
+        assert field(final, second, "zorder")["value"] == 9
+        if with_log:
+            assert field(final, "axes_0", "xscale")["value"] == "log"
+            assert field(final, "axes_0", "xlim")["value"] == [1, 5]
+            assert_log_labels(final)
+
+
 def test_ggplot_layer_order_follows_the_selected_facet(tmp_path):
     _assert_r_probe(
         tmp_path,

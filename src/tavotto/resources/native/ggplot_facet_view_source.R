@@ -32,7 +32,7 @@ ggplot_facet_source_groups <- function(layout, data, changes) {
 ggplot_with_facet_views <- function(plot, recipes) {
   layout <- plot$layout
   if (!ggplot_source_facet_layout_supported(layout) ||
-      !class(plot$facet)[[1L]] %in% c("FacetWrap", "FacetGrid") ||
+      !class(plot$facet)[[1L]] %in% c("FacetNull", "FacetWrap", "FacetGrid") ||
       !identical(class(plot$coordinates)[[1L]], "CoordCartesian")) {
     stop("Tavotto facet views need the original cartesian layout.")
   }

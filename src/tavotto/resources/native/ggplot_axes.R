@@ -119,10 +119,15 @@ ggplot_axes_target <- function(built, table) {
   }, logical(1L)))
   if (!is.null(coord$ratio) || secondary) context <- ggplot_decoration_context(built)
   write_scale <- ggplot_source_scale_layers(built, kinds)
+  late_projection <- (length(built$plot$layout$tavotto_facet_view_recipes) > 0L || !write_scale) &&
+    ggplot_source_facet_layout_supported(built$plot$layout) &&
+    ggplot_source_facet_scale_supported(built$plot)
   source_groups <- lapply(axes, function(axis) {
-    ggplot_source_axis_group("1", 1L, kinds, write_scale)
+    scope <- ggplot_source_axis_group("1", 1L, kinds, write_scale || late_projection)
+    if (late_projection) scope$late_projection <- TRUE
+    scope
   })
-  list(slot = slot, axes = axes, reverse = coord$reverse, source_groups = source_groups,
+  list(slot = slot, axes = axes, reverse = panel$reverse, source_groups = source_groups,
        source_anchor = rlang::hash(list(kinds, built$data)),
        context = rlang::hash(context))
 }
@@ -194,6 +199,19 @@ ggplot_axis_edits <- function(target, edits) {
 
 ggplot_project_axes <- function(built, target, changes) {
   layout <- ggplot_clone(built$layout)
+  if (!is.null(layout$coord$tavotto_facet_views)) {
+    # A written view already owns the coordinate wrapper. Apply later edits
+    # to its stored ranges and directions through the same projection.
+    groups <- lapply(names(changes), function(axis) {
+      list("1" = list(spec = target$axes[[axis]], rows = lapply(built$data, function(data) seq_len(nrow(data)))))
+    }) |> stats::setNames(names(changes))
+    built$data <- ggplot_project_facet_positions(
+      layout, built$data, groups, lapply(changes, function(change) list("1" = change))
+    )
+    layout$setup_panel_guides(built$plot$guides, built$plot$layers)
+    built$layout <- layout
+    return(built)
+  }
   limits <- layout$coord$limits
   expand <- layout$coord_params$expand
   inverted <- vapply(ggplot_axis_names, function(axis) ggplot_inverted(target$reverse, axis),
