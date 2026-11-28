@@ -366,6 +366,8 @@ class GgplotTarget:
             element["source_theme"] = source_theme
         if source_frame := axes.get("source_frame"):
             element["source_frame"] = source_frame
+        if source_panel_theme := axes.get("source_panel_theme"):
+            element["source_panel_theme"] = source_panel_theme
         element["editable"] = fields
         element["identity"] = _AXES_IDENTITY_PREFIX + axes["context"]
         if anchor := axes.get("source_anchor"):

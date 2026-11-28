@@ -23,7 +23,7 @@ ggplot_frame_target <- function(built, table, target, slot = ggplot_cartesian_pa
   target$frame <- list(fallback = fallback, styles = styles, source_rect = source_rect,
                        original = list(spine_color = base$color %||% base$paint$rgb,
                                        spine_linewidth = base$width %||% base$paint$pt))
-  if (ggplot_stock_frame_facet(built$layout$facet) &&
+  if (ggplot_stock_panel_facet(built$layout$facet) &&
       identical(class(built$layout$coord)[[1L]], "CoordCartesian")) {
     target$source_frame <- list(facet = source_facet)
   }
@@ -71,9 +71,10 @@ ggplot_validate_frame_edits <- function(frame, edit) {
   }
 }
 
-ggplot_background_target <- function(built, table, target, slot = ggplot_cartesian_panel_slot(built, table)) {
+ggplot_background_target <- function(built, table, target, slot = ggplot_cartesian_panel_slot(built, table),
+                                     theme = built$plot$theme) {
   if (is.null(slot)) return(target)
-  style <- ggplot2::calc_element("panel.background", built$plot$theme)
+  style <- ggplot2::calc_element("panel.background", theme)
   if (inherits(style, "element_blank")) {
     style <- ggplot2::element_rect(fill = NA, colour = NA, inherit.blank = FALSE)
   }

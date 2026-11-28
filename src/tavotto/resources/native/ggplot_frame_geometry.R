@@ -137,10 +137,3 @@ ggplot_frame_fallback <- function(theme) {
   fallback <- ggplot2::element_grob(line, x = c(0, 1), y = c(0, 0))
   if (!is.null(ggplot_frame_paint(fallback))) fallback
 }
-
-ggplot_stock_frame_facet <- function(facet) {
-  base <- facet$tavotto_facet_base %||% facet$tavotto_tick_base %||% facet
-  kind <- class(base)[[1L]]
-  if (!kind %in% c("FacetNull", "FacetWrap", "FacetGrid")) return(FALSE)
-  identical(as.list(base)$draw_panels, as.list(getExportedValue("ggplot2", kind))$draw_panels)
-}

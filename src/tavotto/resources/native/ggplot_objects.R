@@ -39,3 +39,10 @@ ggplot_facet_group_id <- function(cells, axis, owner) {
 ggplot_facet_panel_slots <- function(table, cells) {
   match(paste("panel", cells$COL, cells$ROW, sep = "-"), table$layout$name)
 }
+
+ggplot_stock_panel_facet <- function(facet) {
+  base <- facet$tavotto_facet_base %||% facet$tavotto_tick_base %||% facet
+  kind <- class(base)[[1L]]
+  if (!kind %in% c("FacetNull", "FacetWrap", "FacetGrid")) return(FALSE)
+  identical(as.list(base)$draw_panels, as.list(getExportedValue("ggplot2", kind))$draw_panels)
+}

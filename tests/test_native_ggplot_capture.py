@@ -1294,18 +1294,8 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             timeout=120,
         )
         assert status == 200, preview
-        expected_residual = (
-            [
-                patch
-                for patch in patches
-                if patch["prop"].startswith("grid_")
-                or (scope == "one-facet" and patch["prop"] == "facecolor")
-            ]
-            if scope in ("one-facet", "different-facets")
-            else []
-        )
-        assert preview["written"] == len(patches) - len(expected_residual)
-        assert len(preview["skipped"]) == len(expected_residual)
+        assert preview["written"] == len(patches)
+        assert preview["skipped"] == []
         assert source.read_bytes() == original
         status, saved = app.call(
             "/api/script-edit/figure-style/commit",
@@ -1321,7 +1311,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         assert authored != original
         _, persisted = app.call(route)
         retained = persisted["canvases"][0]["objects"][0]["overrides"]
-        assert retained == expected_residual
+        assert retained == []
         fresh_project = tmp_path / "fresh-project"
         fresh_project.mkdir()
         (fresh_project / source.name).write_bytes(authored)
@@ -7195,3 +7185,103 @@ grDevices::dev.off()
             timeout=120,
         )
         assert result["ok"] and script.read_bytes() == authored
+
+
+def test_native_r_facet_grid_and_background_write_remain_editable(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Facet grid styles"
+    project.mkdir()
+    script = project / "Grid.R"
+    script.write_text(
+        f"""\
+d <- expand.grid(x = 1:6, block = c("Early", "Late"))
+d$y <- d$x + as.integer(d$block)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::geom_line(colour = "#184765") + ggplot2::theme_bw() +
+  ggplot2::facet_wrap(~block, scales = "free_x", axes = "all")
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Facet_grid_styles"
+
+    def panel(view, gid):
+        return next(e for e in view["manifest"]["elements"] if e["gid"] == gid)
+
+    def fields(view, gid):
+        return {field["prop"]: field["value"] for field in panel(view, gid)["editable"]}
+
+    def scene(svg):
+        return [
+            (node.tag, node.attrib, node.text)
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.rsplit("}", 1)[-1] in {"line", "polyline", "rect", "text"}
+        ]
+
+    selected, neighbour = "axes_2", "axes_1"
+
+    def save(app, figure, before, changes):
+        patches = [
+            {
+                "gid": selected,
+                "identity": panel(before, selected)["identity"],
+                "prop": prop,
+                "value": value,
+            }
+            for prop, value in changes.items()
+        ]
+        edited = _render(app, figure, patches)
+        assert edited["warnings"] == []
+        assert panel(edited, neighbour) == panel(before, neighbour)
+        assert _render(app, figure, [])["svg"] == before["svg"]
+        result = _write_native_figure_style(app, script, route, figure, edited, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert scene((project / "standalone.svg").read_text(encoding="utf-8")) == scene(
+            edited["svg"]
+        )
+        return edited, result
+
+    first = {
+        "facecolor": "#F7EAB6",
+        "grid_x": False,
+        "grid_color": "#3B719A",
+        "grid_linewidth": 1.3,
+    }
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        before = _render(app, figure, [])
+        rendered, _ = save(app, figure, before, first)
+        nodes = scene(rendered["svg"])
+        backgrounds = [attr for _, attr, _ in nodes if "fill: #F7EAB6;" in attr.get("style", "")]
+        grids = [attr for _, attr, _ in nodes if "stroke: #3B719A;" in attr.get("style", "")]
+        assert len(backgrounds) == 1
+        assert len(grids) > 1
+        assert all(
+            min(float(x.split(",")[0]) for x in attr["points"].split())
+            >= float(backgrounds[0]["x"]) - 0.01
+            for attr in grids
+        )
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == rendered["svg"]
+        assert {prop: fields(reopened, selected)[prop] for prop in first} == pytest.approx(first)
+        second = {"facecolor": "#E3F2FA", "grid_x": True, "grid_y": False}
+        revised, saved = save(app, figure, reopened, second)
+        assert {prop: fields(revised, selected)[prop] for prop in second} == second
+        assert fields(revised, selected)["grid_color"] == first["grid_color"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == authored

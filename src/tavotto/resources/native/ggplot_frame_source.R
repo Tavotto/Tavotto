@@ -20,7 +20,7 @@ ggplot_source_frame_panels <- function(facet, recipes) {
 }
 
 ggplot_with_source_frames <- function(plot, recipes) {
-  if (!ggplot_stock_frame_facet(plot$facet) ||
+  if (!ggplot_stock_panel_facet(plot$facet) ||
       !identical(class(plot$coordinates)[[1L]], "CoordCartesian")) {
     stop("Tavotto frames need the original cartesian layout.")
   }

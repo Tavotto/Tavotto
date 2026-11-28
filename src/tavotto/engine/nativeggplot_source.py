@@ -231,7 +231,12 @@ def _native_theme_writes(
     for name, panels in edits.items():
         baseline = axes[next(iter(panels))]["source_theme"][name]
         if baseline["total"] != len(panels) or any(
-            axes[gid]["source_theme"][name] != baseline or choices != baseline["edited"]
+            axes[gid]["source_theme"][name] != baseline
+            or choices != baseline["edited"]
+            or (
+                name in ("grid", "background")
+                and axes[gid].get("source_panel_theme", {}).get("authored")
+            )
             for gid, choices in panels.items()
         ):
             continue
@@ -240,6 +245,52 @@ def _native_theme_writes(
             options.extend(values)
             written.update((gid, prop) for gid, changes in panels.items() for prop in changes)
     return options, written
+
+
+def _native_panel_theme_writes(
+    axes: dict[str, dict], patches: list[dict], global_writes: set[tuple[str, str]]
+) -> tuple[dict[str, list[str]], set[tuple[str, str]]]:
+    changes = defaultdict(dict)
+    for patch in patches:
+        gid, prop = patch["gid"], patch["prop"]
+        if (gid, prop) not in global_writes and axes.get(gid, {}).get("source_panel_theme"):
+            changes[gid][prop] = patch["value"]
+    themes = defaultdict(list)
+    written = set()
+    for gid, properties in changes.items():
+        axis = axes[gid]
+        facet = _r_facet_selector(axis["source_panel_theme"]["facet"])
+        if facet is None:
+            continue
+        for kind in ("grid", "background"):
+            style = axis.get("source_theme", {}).get(kind)
+            if not style or any(
+                properties.get(prop) != value for prop, value in style["edited"].items()
+            ):
+                continue
+            if options := _r_theme_options(style["elements"]):
+                themes[facet].extend(options)
+                written.update((gid, prop) for prop in style["edited"])
+    return themes, written
+
+
+def _r_panel_theme_block(name: str, themes: dict[str, list[str]]) -> str:
+    recipes = []
+    for facet, options in themes.items():
+        fields = ",\n".join("    " + setting for setting in options)
+        recipes.append(f"    list(facet = {facet}, theme = ggplot2::theme(\n{fields}\n    ))")
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers(
+                "ggplot_objects.R", "ggplot_panel_theme_geometry.R", "ggplot_panel_theme_source.R"
+            ),
+            "  ggplot_with_panel_themes(plot, list(",
+            ",\n".join(recipes),
+            "  ))",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
 
 
 _FRAME_SIDES = {f"spine_{side}" for side in AXIS_FRAME_SIDES}
@@ -1156,6 +1207,7 @@ def build(
     coordinates, coordinate_writes = _native_coordinate_writes(axes, patches)
     facet_views, facet_view_writes = _native_facet_coordinate_writes(axes, patches)
     theme_options, theme_writes = _native_theme_writes(axes, patches)
+    panel_themes, panel_writes = _native_panel_theme_writes(axes, patches, theme_writes)
     frames, frame_writes = _native_frame_writes(axes, patches, theme_writes)
     source_layers, layer_writes = _native_layer_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
@@ -1169,6 +1221,7 @@ def build(
         | facet_view_writes
         | theme_writes
         | frame_writes
+        | panel_writes
         | layer_writes
         | colour_writes
         | tick_writes
@@ -1258,6 +1311,7 @@ def build(
         or facet_views
         or theme_options
         or frames
+        or panel_themes
         or source_layers
         or colour_scales
         or tick_labels
@@ -1304,6 +1358,8 @@ def build(
         statements.append(_r_title_text_block(name, titles))
     if frames:
         statements.append(_r_frame_block(name, frames))
+    if panel_themes:
+        statements.append(_r_panel_theme_block(name, panel_themes))
     if options:
         args = ",\n".join(options)
         statements.append(

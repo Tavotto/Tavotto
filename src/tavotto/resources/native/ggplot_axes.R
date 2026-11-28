@@ -259,6 +259,7 @@ ggplot_axes_element <- function(gid, target, current, bbox, edits, changes) {
               links = lapply(target$links, as.list),
               source_groups = target$source_groups,
               source_frame = target$source_frame,
+              source_panel_theme = target$source_panel_theme,
               source_anchor = target$source_anchor,
               source_theme = ggplot_axes_source_theme(target, edits),
               aspect = if (!is.null(target$aspect)) {
@@ -536,9 +537,9 @@ ggplot_panel_decoration <- function(built, target, slot) {
   list(slot = slot, axes = list(), context = rlang::hash(ggplot_decoration_context(built)))
 }
 
-ggplot_grid_target <- function(built, table, target, slot = ggplot_cartesian_panel_slot(built, table)) {
+ggplot_grid_target <- function(built, table, target, slot = ggplot_cartesian_panel_slot(built, table),
+                               theme = built$plot$theme) {
   if (is.null(slot)) return(target)
-  theme <- built$plot$theme
   lines <- lapply(ggplot_grid_cells, ggplot2::calc_element, theme = theme)
   if (!all(vapply(lines, function(line) {
     inherits(line, "element_blank") || identical(class(line), class(ggplot2::element_line()))
@@ -657,11 +658,6 @@ ggplot_axes_source_theme <- function(target, edits) {
   if (length(themes)) themes
 }
 
-ggplot_facet_grill <- function(panel) {
-  child <- which(startsWith(panel$childrenOrder, "grill."))
-  if (length(child) == 1L && inherits(panel$children[[child]], "gTree")) child
-}
-
 ggplot_facet_axis_groups <- function(built, cells) {
   layout <- built$layout
   kinds <- ggplot_axis_layers(built$plot$layers)
@@ -774,12 +770,19 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
       if (scoped_source) scope$facet <- facet
       target$source_groups[[axis]] <- scope
     }
-    if (!is.null(ggplot_facet_grill(table$grobs[[slot]]))) {
-      target <- ggplot_grid_target(built, table, target, slot)
-      # With panel.ontop the grill is drawn over the data. An opaque fill
-      # on that grill would cover the marks instead of painting behind them.
-      if (!isTRUE(built$plot$theme$panel.ontop)) {
-        target <- ggplot_background_target(built, table, target, slot)
+    panel <- table$grobs[[slot]]
+    child <- ggplot_facet_grill(panel)
+    if (!is.null(child)) {
+      authored <- panel$children[[child]]$tavotto_panel_theme
+      theme <- authored %||% built$plot$theme
+      target$panel_theme <- authored
+      if (ggplot_stock_panel_facet(built$plot$facet)) {
+        target$source_panel_theme <- list(facet = facet, authored = !is.null(authored))
+      }
+      target <- ggplot_grid_target(built, table, target, slot, theme)
+      # An opaque top grill would cover the data marks.
+      if (!isTRUE(theme$panel.ontop)) {
+        target <- ggplot_background_target(built, table, target, slot, theme)
       }
     }
     target <- ggplot_frame_target(built, table, target, slot, panel_only = TRUE, source_facet = facet)
@@ -804,17 +807,13 @@ ggplot_edit_facet_axes <- function(table, layout, theme, target, edit) {
   }
   grid <- edit[intersect(names(edit), ggplot_grid_keys)]
   if (length(grid) || !is.null(edit$facecolor)) {
+    theme <- target$panel_theme %||% theme
     if (length(grid)) theme <- ggplot_grid_theme(theme, target$grid, grid)
     if (!is.null(edit$facecolor)) {
       theme <- theme + ggplot2::theme(panel.background = ggplot_background_style(target$background, edit$facecolor))
     }
-    panel <- table$grobs[[target$slot]]
-    child <- ggplot_facet_grill(panel)
-    if (is.null(child)) stop("The native R facet grid no longer matches its captured layout.")
-    grill <- layout$coord$render_bg(layout$panel_params[[target$panel]], theme)
-    grill$name <- panel$childrenOrder[[child]]
-    panel$children[[child]] <- grill
-    table$grobs[[target$slot]] <- panel
+    table <- ggplot_replace_facet_grill(table, target$slot, layout$coord,
+                                        layout$panel_params[[target$panel]], theme)
   }
   frame <- edit[intersect(names(edit), ggplot_frame_keys)]
   if (length(frame)) {
