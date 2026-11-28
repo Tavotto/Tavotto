@@ -42,7 +42,8 @@ FTH9 用户开了 AI 修复：约 4 分钟里建了两代受管环境、换 Pyth
 回答「在**这个环境**里装 X 会得到哪个版本、为什么不是最新版、换哪个 Python 能拿到最新版」：
 - **以真实安装器为准**：在目标环境里跑 Tavotto 安装器同一套参数的 `pip install --dry-run --only-binary=:all: --report -`（同一镜像 / 索引选择与回退，**不另写一套 wheel 标签判断**），取它会装的版本。
 - 再读索引的 simple 页（PEP 503/691，镜像也支持；与安装器同一索引）列出版本与各版本 wheel 的 Python / 平台标签，算出「最新版要求的 Python」。
-- 输出闭集：`{would_install, latest, latest_requires{python_tags[], platforms[]}, reason: up_to_date|no_wheel_for_python|no_wheel_for_platform|not_found|index_unreachable, suggest: change_python(<版本>)?}`。
+- 输出闭集：`{would_install, latest, latest_requires{python_tags[], platforms[]}, reason: up_to_date|held_back|no_wheel_for_python|no_wheel_for_platform|not_found|index_unreachable, suggest: change_python(<版本>)?}`。
+- `held_back`：最新版对这个环境有适用的 wheel，但安装器没选它（依赖约束、已装旧版已满足、最新版被撤回）；只有 sdist 的最新版归 `no_wheel_for_python`（Tavotto 只装 wheel）。
 - 出站只发包名（pip 装包本来就发）；按 ADR 0149 归 `outward` 档：会话里第一次用时弹卡片问用户，之后同会话放行；结果按（索引、包名）缓存 1 小时于 `data_dir()/cache/`。
 - 离线映射 `lookup_package` 保持不变。
 
