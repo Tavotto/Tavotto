@@ -107,7 +107,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: 17 = report.json 的 `system.msix_legacy_history`（#2282 已中招用户的补救 A：旧包私有区的历史库比真实目录那份多几条——
 #: 每个旧包一项，闭集 `state` ok / timeout / error + 会话与请求账本的总数、缺数；只读两边、不带路径与包族名；
 #: 非 Windows 为 `{"state": "not_windows"}`）。
-BUNDLE_SCHEMA_VERSION = 17
+#: 18 = `managed_environment_jobs[].selftest` 新增 `operations` 与 `fidelity`（自检被守卫判 `safe_file_operation_blocked`
+#: 时拦下的是哪类操作、账本三档摘要；只有 `figcapture.BlockedFileOps` 的闭集枚举与计数，没有路径，TVD-FTH9）。
+BUNDLE_SCHEMA_VERSION = 18
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1

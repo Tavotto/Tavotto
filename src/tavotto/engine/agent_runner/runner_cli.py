@@ -30,7 +30,11 @@ import urllib.parse
 from dataclasses import replace
 from pathlib import Path
 
-from . import loop, siwc_wire
+from . import (
+    loop,
+    prepare_tools,  # noqa: F401 - 导入即把 `data_prepare` 登记进 TOOLSETS
+    siwc_wire,
+)
 from .media import MAX_CHECK_BYTES, CheckResult, from_wire
 from .redact import Redactor
 from .tools import TOOLSETS, RunEnvelope

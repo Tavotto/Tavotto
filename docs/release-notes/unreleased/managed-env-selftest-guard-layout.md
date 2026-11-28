@@ -1,0 +1,3 @@
+## Managed environments no longer fail their post-install check for no reason
+
+After Tavotto installs packages into its managed environment, it runs a quick check figure to make sure the environment works. The check put its own output folder inside the area that safe mode protects, so safe mode could block Tavotto's own preview files and report "the environment still won't run after installing" even though nothing was wrong. The check now uses the same folder layout as a real run. If it still fails, the diagnostic bundle now records which kind of file operation was blocked (only the operation type and a count, never a path).
