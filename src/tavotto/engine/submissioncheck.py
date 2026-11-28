@@ -121,16 +121,19 @@ def _v1_rows(journal_id: str, catalog: dict | None) -> list[dict]:
                 if not _number(width):
                     continue
                 column = V1_COLUMNS.get(str(col.get("id")))
+                qualifier = col.get("qualifier", "exact")
+                # 与预检同一口径（`preflight.judged_page_columns`）：只有 exact（等于）与 max（上限）真判过；
+                # typical / recommended / range 只是写在指南里的数，记成 confirm，关系照旧是「等于这个宽度」
+                judged = src["affects"] == "preflight" and qualifier in ("exact", "max")
                 rows.append(
                     base
                     | {
                         "check": "width_final",
-                        "relation": "eq"
-                        if col.get("qualifier", "exact") == "exact"
-                        else "interval",
+                        "relation": "lte" if qualifier == "max" else "eq",
                         "value": width,
                         "unit": "mm",
                         "conditions": {"column": column} if column else {},
+                        "source_state": "preflight" if judged else "confirm",
                     }
                 )
             continue
@@ -195,13 +198,19 @@ def _v2_check(fact: dict) -> tuple[str, str, Any, str | None] | None:
 
         if relation == "eq" and _number(value):
             return "width_final", "eq", mm(value), "mm"
+        # v2 的区间是对象 `{lower, upper, lower_inclusive, upper_inclusive}`（`journalfacts_contract._value`）
         if (
             relation == "interval"
-            and isinstance(value, list)
-            and len(value) == 2
-            and all(_number(v) for v in value)
+            and isinstance(value, dict)
+            and _number(value.get("lower"))
+            and _number(value.get("upper"))
         ):
-            return "width_final", "interval", [mm(v) for v in value], "mm"
+            return (
+                "width_final",
+                "interval",
+                {**value, "lower": mm(value["lower"]), "upper": mm(value["upper"])},
+                "mm",
+            )
         return None
     if subject == "font_size" and unit == "pt" and _number(value):
         if relation in ("gte", "gt"):
@@ -301,13 +310,13 @@ def sidecar_rows(rows: list[dict]) -> list[dict]:
         if row["check"] not in CHECKS:
             continue
         item = {k: copy.deepcopy(row[k]) for k in SIDECAR_FIELDS}
+        raw = row["conditions"] or {}
         item["conditions"] = {
-            k: v
-            for k, v in (row["conditions"] or {}).items()
-            if k in SIDECAR_CONDITIONS and isinstance(v, str)
+            k: v for k, v in raw.items() if k in SIDECAR_CONDITIONS and isinstance(v, str)
         }
-        # 有别的条件（文章类型、图类……）组件判不了，记成「有文字条件」，组件只回 confirm
-        if set(row["conditions"] or {}) - set(SIDECAR_CONDITIONS):
+        # 丢掉了任何条件（别的键：文章类型、图类……；或认得的键但值不是字符串）组件都判不了，
+        # 记成「有文字条件」，组件只回 confirm
+        if len(item["conditions"]) != len(raw):
             item["has_condition_text"] = True
         out.append(item)
     return out

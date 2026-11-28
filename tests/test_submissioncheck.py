@@ -28,6 +28,10 @@ def _fact(fid, subject, relation, value, unit=None, strength="recommended", **ex
     return fact
 
 
+def _iv(lo, hi):
+    return {"lower": lo, "upper": hi, "lower_inclusive": True, "upper_inclusive": True}
+
+
 def _bundle(*facts):
     return {
         "schema": 2,
@@ -69,7 +73,7 @@ def test_v1_nature_states_follow_what_preflight_actually_judges():
 def test_v2_wins_per_check_and_keeps_named_conditions():
     bundle = _bundle(
         _fact("w1", "width", "eq", 89, "mm", conditions={"column": "single"}),
-        _fact("w2", "width", "interval", [120, 136], "mm", strength="permitted"),
+        _fact("w2", "width", "interval", _iv(120, 136), "mm", strength="permitted"),
         _fact("fmax", "font_size", "lte", 7, "pt", conditions={"text_role": "other_text"}),
         _fact("plab", "font_size", "eq", 8, "pt", conditions={"text_role": "panel_label"}),
     )
@@ -90,12 +94,12 @@ def test_v2_wins_per_check_and_keeps_named_conditions():
 def test_v2_inches_are_mm_and_interval_is_read_from_the_bundle():
     bundle = _bundle(
         _fact("a", "width", "eq", 4, "in", strength="required", conditions={"column": "single"}),
-        _fact("b", "width", "interval", [120, 136], "mm", strength="recommended"),
+        _fact("b", "width", "interval", _iv(120, 136), "mm", strength="recommended"),
     )
     rows = _by(sc.requirements("nature", bundle=bundle), "width_final")
     assert {(r["relation"], json.dumps(r["value"])) for r in rows} == {
         ("eq", "101.6"),
-        ("interval", "[120, 136]"),
+        ("interval", json.dumps(_iv(120, 136))),
     }
     assert all(r["unit"] == "mm" for r in rows)
 
@@ -153,3 +157,52 @@ def test_v2_only_journal_works_and_unknown_journal_raises():
     assert [r["value"] for r in _by(rows, "width_final")] == [85]
     with pytest.raises(journals.JournalCatalogError):
         sc.requirements("no-such-journal")
+
+
+def test_v2_interval_from_a_validated_bundle_wins_over_v1_widths():
+    """真刊包里区间是对象形状：读得到，并且盖掉 v1 的 89 / 183（同一检查项 v2 优先）。"""
+    from tavotto.engine import journalfacts_contract as contract
+
+    bundle = _bundle(_fact("b", "width", "interval", _iv(120, 136), "mm", strength="recommended"))
+    contract.validate_bundle(bundle)
+    rows = _by(sc.requirements("nature", bundle=bundle), "width_final")
+    assert [(r["origin"]["catalog"], r["relation"]) for r in rows] == [("v2", "interval")]
+    assert [i["check"] for i in sc.sidecar_rows(rows)] == ["width_final"]
+
+
+def test_non_exact_v1_columns_are_not_claimed_as_judged():
+    """v1 栏宽写的是 typical / recommended 时预检不判（`judged_page_columns`）：关系是「等于」，状态是 confirm。"""
+    cat = journals.load_catalog()
+    jid = next(
+        j
+        for j, entry in cat["journals"].items()
+        if any(
+            c.get("qualifier", "exact") not in ("exact", "max")
+            for c in ((entry.get("rules") or {}).get("page_columns") or {}).get("value") or []
+        )
+    )
+    rows = _by(sc.requirements(jid), "width_final")
+    soft = [r for r in rows if r["source_state"] == "confirm"]
+    assert soft and all(
+        r["relation"] == "eq" and isinstance(r["value"], (int, float)) for r in soft
+    )
+
+
+def test_any_dropped_condition_marks_the_row_unresolved():
+    bundle = _bundle(
+        _fact(
+            "w",
+            "width",
+            "eq",
+            89,
+            "mm",
+            strength="required",
+            conditions={"column": {"relation": "eq", "value": 1, "unit": "count"}},
+        )
+    )
+    (item,) = [
+        i
+        for i in sc.sidecar_rows(sc.requirements("nature", bundle=bundle))
+        if i["check"] == "width_final"
+    ]
+    assert item["conditions"] == {} and item["has_condition_text"] is True
