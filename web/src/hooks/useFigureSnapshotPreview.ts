@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchFigureSnapshotPreview } from '@/lib/api'
 import { figureSnapshotPreviewIdentity, hasFigureSnapshotPreview } from '@/lib/figureSnapshotPreview'
 import { useDocumentPreviewOwner } from '@/hooks/useDocumentPreviewOwner'
+import { currentProjectId } from '@/lib/session'
 import type { PreviewOwner } from '@/lib/previewOwner'
 import type { FigureSnapshot, PanelObject } from '@/types/document'
 
@@ -14,11 +15,15 @@ export function useFigureSnapshotPreview(panel: PanelObject, enabled: boolean, c
   const wanted = enabled && hasFigureSnapshotPreview(panel)
   const reference = figureSnapshotPreviewIdentity(panel.figureSnapshot)
   const active = owner.still()
+  // 请求归属闸（L-123）：文档归属项目不是当前认领的项目（在 B 里打开已关闭的 A 的
+  // 最近排版）时不发这条请求——它的 409 no_project 会在 hook 有机会判归属之前触发
+  // API 层的全局 project-drop，把健康的当前项目也甩出画布。面板退「近似预览」角标。
+  const sameProject = owner.pj === currentProjectId()
   const key = JSON.stringify([owner.key, panel.fileId, panel.overrides, reference])
   const [state, setState] = useState<Preview & { key: string | null }>({ ...IDLE, key: null })
 
   useEffect(() => {
-    if (!wanted || !active || reference === null) return
+    if (!wanted || !active || !sameProject || reference === null) return
     const input = structuredClone({ id: panel.fileId, patches: panel.overrides, reference: panel.figureSnapshot as FigureSnapshot })
     const controller = new AbortController()
     let url: string | null = null
@@ -38,9 +43,9 @@ export function useFigureSnapshotPreview(panel: PanelObject, enabled: boolean, c
     }
     // The immutable request and document owner are represented by key/active.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, wanted, active, reference])
+  }, [key, wanted, active, sameProject, reference])
 
   if (!wanted || !active) return IDLE
-  if (reference === null) return { ...IDLE, failed: true }
+  if (reference === null || !sameProject) return { ...IDLE, failed: true }
   return state.key === key ? state : { url: null, loading: true, failed: false }
 }
