@@ -1,4 +1,5 @@
-"""pro 协议 v1 的最小实现：`hello`、`echo`、`sleep`（测超时）、`crash`（测崩溃）。"""
+"""pro 协议 v1 的最小实现：`hello`、`echo`、`sleep`（测超时）、`crash`（测崩溃）、
+`submission_check.plan`（每条要求都回 confirm、不给操作）。"""
 
 import json
 import os
@@ -25,7 +26,7 @@ for raw in sys.stdin:
             result={
                 "pro_version": "echo",
                 "pro_api": api,
-                "features": ["quick-layout"],
+                "features": os.environ.get("PRO_ECHO_FEATURES", "quick-layout").split(","),
                 "platform": sys.platform,
             },
         )
@@ -36,6 +37,11 @@ for raw in sys.stdin:
     elif cmd == "sleep":
         time.sleep(float(payload.get("s", 5)))
         reply(rid, True, result={})
+    elif cmd == "submission_check.plan":
+        # 最小实现（ADR 0216 §八.4）：契约测试用，每条要求都交给人确认、不给任何操作
+        reqs = payload.get("requirements") or []
+        out = {"requirements": [{"ref": r["ref"], "state": "confirm"} for r in reqs], "ops": []}
+        reply(rid, True, result=out)
     elif cmd == "crash":
         sys.exit(3)
     elif cmd == "wrong_id":
