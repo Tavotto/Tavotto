@@ -2476,6 +2476,21 @@ def _call_suggest_status(args: dict) -> dict:
     return {"content": _text(head), "structuredContent": out}
 
 
+def _pro_required(out: dict) -> dict | None:
+    """机理图（ADR 0220）等高级版条目没有授权时，引擎回结构化 `pro_required`：不是错误、一条也没写，这里只把一句话与「了解高级版」转给 Agent。
+    **工具层不判权益**（`license.has` 只在登记过的功能模块里）；一键排版的 MCP 工具（ADR 0199 §十三）以后复用这一处。"""
+    if out.get("code") != "pro_required":
+        return None
+    keep = {k: out[k] for k in ("ok", "code", "feature", "message", "learn_more") if k in out}
+    more = out.get("learn_more")
+    more = more if isinstance(more, dict) else {}
+    text = (
+        f"{out.get('message') or '这是高级版功能'}（{more.get('label') or '了解高级版'}"
+        f"{'：' + more['url'] if more.get('url') else ''}）。整批没写；告诉用户即可，不必重试。"
+    )
+    return {"content": _text(text), "structuredContent": keep}
+
+
 def _call_layout_edit_plan(args: dict) -> dict:
     bridge.require_layout_edit()
     project, layout, canvas_id = _layout_args(args)
@@ -2486,6 +2501,9 @@ def _call_layout_edit_plan(args: dict) -> dict:
         base_revision=str(args.get("base_revision") or ""),
         canvas_id=canvas_id,
     )
+    needs_pro = _pro_required(out)
+    if needs_pro:
+        return needs_pro
     pv = out.pop("preview", None)
     lines = list(out.get("echo") or [])
     if out.get("errors") and not out.get("echo"):
@@ -2525,6 +2543,9 @@ def _call_layout_edit_apply(args: dict) -> dict:
         canvas_id=canvas_id,
     )
     plan = out.get("plan") or {}
+    needs_pro = _pro_required(plan)
+    if needs_pro:
+        return needs_pro
     plan.pop("objects", None)
     if not out.get("written"):
         why = (

@@ -708,13 +708,17 @@ def test_failure_codes_are_the_adr_closed_set():
         "me",
         "ai_usage",  # Pro 页的两个只读接口
     }
-    assert lic.FEATURES == {
-        "hosted-ai",
-        "review-plus",
-        "quick-layout",
-        "change-plan-rerun",
-        "submission-pack",
-    }  # quick-layout：ADR 0199；change-plan-rerun：ADR 0206 §五；submission-pack：ADR 0216 §七
+    assert (
+        lic.FEATURES
+        == {
+            "hosted-ai",
+            "review-plus",
+            "quick-layout",
+            "change-plan-rerun",
+            "submission-pack",
+            "mechanism-diagram",
+        }
+    )  # quick-layout：ADR 0199；change-plan-rerun：ADR 0206 §五；submission-pack：ADR 0216 §七；mechanism-diagram：ADR 0220
 
 
 def test_background_refresh_thread_is_a_noop_when_disabled(monkeypatch):

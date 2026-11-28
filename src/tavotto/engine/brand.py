@@ -33,6 +33,17 @@ RELEASES_URL = f"{REPO_URL}/releases"
 #: 也不唤起系统邮件程序；真正的投递由 Tavotto 服务器代发。↔ `web/src/lib/brand.ts` 同名常量（严格同源对）。
 FEEDBACK_EMAIL = "feedback@tavotto.com"
 
+#: 官网与它的高级版介绍页（「了解高级版」链到这里）。↔ `web/src/lib/brand.ts` 的 `WEBSITE_URL` / `premiumPageUrl`（严格同源对）；
+#: 别处不得手写域名。看护：`tests/test_mechanism.py::test_premium_page_url_matches_brand_ts`
+WEBSITE_URL = "https://www.tavotto.com"
+
+
+def premium_page_url(locale: str | None) -> str:
+    """高级版介绍页：中文界面（`zh*`）去 `/zh/premium/`，其余去 `/premium/`（与 `brand.ts` 的 `premiumPageUrl` 逐字对齐）。"""
+    zh = isinstance(locale, str) and locale.lower().startswith("zh")
+    return f"{WEBSITE_URL}{'/zh/premium/' if zh else '/premium/'}"
+
+
 #: Codex 集成的安装参数。**唯一出处**——README 首用章节、`tavotto codex install`
 #: 与 `docs/codex-plugin-distribution.md` 都从这里派生；两处手写就会漂，而漂了
 #: 之后的症状是「照文档做装不上」，用户没法自己发现是哪一边错。

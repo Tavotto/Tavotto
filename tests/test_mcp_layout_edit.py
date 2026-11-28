@@ -195,3 +195,47 @@ def test_group_and_rename_group_persist_names_over_real_stdio(client, project): 
     now = _objs(path)
     assert now["a_user0001"]["groupNames"] == now["t_user0001"]["groupNames"] == {gid: "新名字"}
     assert now["o_panel001"].get("groupNames") is None  # 不在组里的子图不动
+
+
+def test_mechanism_items_without_a_licence_are_pro_required_not_an_error(client, project):  # noqa: F811
+    """ADR 0220：免费用户也看得到 `frame / glyph / graph` 这三种条目（工具说明里有），调用回结构化 `pro_required`：
+    一句话 +「了解高级版」，不是 isError、盘上一个字节不动。授权在测试里全局关着（`conftest`），所以这里就是未授权。"""
+    path = _with_objects(project)
+    original = path.read_bytes()
+    target = {"project_path": str(project), "layout": "组图"}
+    scene = client.tool("tavotto_layout_scene", target)
+    tools = {t["name"]: t for t in client.call("tools/list", {})["result"]["tools"]}
+    for word in ("frame", "glyph", "graph", "pro_required"):
+        assert (
+            word
+            in tools["tavotto_layout_edit_plan"]["inputSchema"]["properties"]["ops"]["description"]
+        )
+    ops = [
+        {
+            "op": "set",
+            "id": "a_user0001",
+            "set": {"strokePt": 0.75},
+        },  # 前面免费的一步也不写：整批拒
+        {
+            "op": "add",
+            "items": [
+                {"kind": "frame", "name": "f", "title": "T", "at_mm": [1, 1], "size_mm": [20, 10]},
+                {"kind": "glyph", "name": "m", "glyph": "membrane", "frame": "f", "at_mm": [2, 2]},
+            ],
+        },
+    ]
+    common = {**target, "ops": ops, "base_revision": scene["base_revision"]}
+    raw = client.call("tools/call", {"name": "tavotto_layout_edit_plan", "arguments": common})[
+        "result"
+    ]
+    assert not raw.get("isError"), raw
+    out = raw["structuredContent"]
+    assert out["code"] == "pro_required" and out["feature"] == "mechanism-diagram"
+    assert out["learn_more"] and out["message"] and out["ok"] is False
+    assert "高级版" in raw["content"][0]["text"]
+    done = client.call(
+        "tools/call",
+        {"name": "tavotto_layout_edit_apply", "arguments": {**common, "echo_digest": "x" * 16}},
+    )["result"]
+    assert not done.get("isError") and done["structuredContent"]["code"] == "pro_required"
+    assert path.read_bytes() == original
