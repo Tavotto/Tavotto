@@ -67,9 +67,11 @@ ITEMS_DOC = (
     "由组件校验并执行，约束不满足回 bad_item 并点名）；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
     "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）；膜条目默认随膜落一个「疏水核心」底带对象（core: false 关掉）；样式预设（膜描边 0.6 pt、蛋白 0.85 pt）可被 style 覆盖：引擎把跨膜段中点对齐膜中线、"
     "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
-    "目前的图元种类（params 里没写的取缺省，超范围回 bad_item 并点名参数与范围）："
-    "membrane（双层膜：length_mm 弦长 20–60、curvature −0.35–0.35、head_radius_mm 0.4–1.5、spacing_r 1.9–2.6、thickness_r 4–6、leaflets both/outer/inner、inserts）；"
-    "receptor_rtk（受体酪氨酸激酶，二聚体或单体：dimer 真 / 假、lobes 2–3、ecd_height_mm 6–16、icd_height_mm 5–12、membrane_mm 3.5–5.5、groove_deg 0–20）。"
+    "图元种类很多，分八个家族：membrane 膜、membrane_protein 膜蛋白、soluble_molecule 可溶分子、molecular_machine 分子机器、"
+    "nucleic_acid 核酸、organelle 细胞器、cytoskeleton 细胞骨架、cell_structure 细胞与结构。**挑图元先用 tavotto_mechanism_catalog 读清单**"
+    "（只读、免费；可按 family 筛；每个图元的中英名、能不能嵌膜、端口、默认尺寸、参数规格都在里面），不要凭记忆写种类名与参数；"
+    "常用的有 membrane（双层膜，length_mm 弦长 20–60、curvature −0.35–0.35）、receptor_rtk、gpcr、ion_channel（这几个能嵌膜）、nucleus、dna_helix、antibody。"
+    "params 里没写的取缺省，超范围回 bad_item 并点名参数与范围。"
     "同一个 add 里的箭头 / 文字 / 形状可以用 `item` 锚点贴到示意图框或图元上（{anchor: {item: {name: 框或图元的 name, point: nw|n|ne|w|center|e|sw|s|se}}, offset_mm?}）；"
     "文字不能压在别的对象上，要贴着放；含机理图条目的 add 最多 24 条（其余 12 条）。"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
@@ -172,13 +174,74 @@ def load_catalog(ask: Ask | None = None) -> dict:
             for p in spec.get("params") or []
             if isinstance(p, dict) and isinstance(p.get("name"), str)
         }
-        out[spec["kind"]] = {
+        entry = {
             "versions": sorted(set(versions)),
             "latest": max(versions),
             "params": params,
             "default_size_mm": size,
         }
+        # 可选的清单字段（新组件才有；缺 / 不合规矩就当没有）：家族、端口名、能不能嵌膜
+        fam = spec.get("family")
+        if isinstance(fam, str) and 0 < len(fam) <= 32:
+            entry["family"] = fam
+        ports = spec.get("ports")
+        if (
+            isinstance(ports, list)
+            and len(ports) <= MAX_PORTS
+            and all(isinstance(x, str) and 0 < len(x) <= 40 for x in ports)
+        ):
+            entry["ports"] = list(ports)
+        if isinstance(spec.get("embeddable"), bool):
+            entry["embeddable"] = spec["embeddable"]
+        out[spec["kind"]] = entry
     return out
+
+
+#: `catalog_view` 给 Agent 的参数规格里保留的键（参数规格就是组件配方的 `params`，这里只留读得懂的那几项）
+_PARAM_VIEW_KEYS = ("name", "type", "min", "max", "default", "unit", "values", "integer", "label")
+
+
+def catalog_view(family: object = None, ask: Ask | None = None) -> dict:
+    """Agent 读的图元清单（只读、**免费、不判权益**——清单本来就是免费命令）：每个图元的名字（中英）、家族、能不能嵌膜、端口名、
+    默认尺寸、参数规格。组件不在 / 太旧 → `{ok: False, code: "pro_unavailable"}`（不是错误：免费的示意图框与箭头 / 文字仍可用）。
+    `family` 给了就只列这个家族（不认识的家族回 `bad_family` 并列出认得的）。"""
+    try:
+        cat = load_catalog(ask)
+    except MechanismError as exc:
+        if exc.code in ("unavailable", "pro_outdated"):
+            return {
+                "ok": False,
+                "code": "pro_unavailable",
+                "message": "高级版图元组件没装好或版本太旧，图元清单读不到；示意图框、箭头、文字等免费条目照常可用。",
+            }
+        raise
+    kinds = []
+    for kind in sorted(cat):
+        spec = cat[kind]
+        kinds.append(
+            {
+                "kind": kind,
+                "name": {
+                    "zh": mechgroup.role_word(f"glyph:{kind}", "zh"),
+                    "en": mechgroup.role_word(f"glyph:{kind}", "en"),
+                },
+                "family": spec.get("family", "other"),
+                "embeddable": bool(spec.get("embeddable", "membrane_mm" in spec["params"])),
+                "ports": spec.get("ports", []),
+                "versions": spec["versions"],
+                "default_size_mm": spec["default_size_mm"],
+                "params": [
+                    {k: v for k, v in p.items() if k in _PARAM_VIEW_KEYS}
+                    for p in spec["params"].values()
+                ],
+            }
+        )
+    families = sorted({k["family"] for k in kinds})
+    if family is not None:
+        if not isinstance(family, str) or family not in families:
+            return {"ok": False, "code": "bad_family", "families": families}
+        kinds = [k for k in kinds if k["family"] == family]
+    return {"ok": True, "families": families, "count": len(kinds), "kinds": kinds}
 
 
 MAX_INSERTS = 16

@@ -1394,6 +1394,7 @@ NORMAL_TOOLS = (
     "tavotto_suggest_plan",
     "tavotto_suggest_apply",
     "tavotto_suggest_status",
+    "tavotto_mechanism_catalog",
 )
 
 

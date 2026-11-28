@@ -1604,22 +1604,110 @@ def test_local_stretch_near_45_degrees_uses_the_tangent_at_the_insertion_point(l
 
 
 # ---- 6.D：Agent 端到端——工具说明里认得的图元与参数，必须与真组件的 catalog 一致 ----
-def test_items_doc_names_every_kind_and_param_of_the_real_catalog():
-    cat = json.loads((Path(__file__).parent / "fixtures" / "pro_catalog.json").read_text("utf-8"))[
+def _real_catalog():
+    return json.loads((Path(__file__).parent / "fixtures" / "pro_catalog.json").read_text("utf-8"))[
         "catalog"
     ]
+
+
+def test_items_doc_points_at_the_catalog_tool_and_every_example_and_family_exists():
+    """ITEMS_DOC 不再手抄全部图元：只列家族与几个示例，并指向只读清单工具；示例与家族必须真在组件的 catalog 里。"""
+    cat = _real_catalog()
+    kinds = {k["kind"] for k in cat["kinds"]}
+    families = {k["family"] for k in cat["kinds"]}
     doc = mechanism.ITEMS_DOC
-    for kind in cat["kinds"]:
-        assert kind["kind"] in doc, kind["kind"]
-        for p in kind["params"]:
-            assert p["name"] in doc, (kind["kind"], p["name"])
-            if p["type"] == "number":
-                lo, hi = p["min"], p["max"]
-                assert (f"{lo:g}" in doc.replace("−", "-")) and (f"{hi:g}" in doc), (
-                    p["name"],
-                    lo,
-                    hi,
-                )
+    assert "tavotto_mechanism_catalog" in doc
+    doc_families = {
+        "membrane", "membrane_protein", "soluble_molecule", "molecular_machine", "nucleic_acid",
+        "organelle", "cytoskeleton", "cell_structure",
+    }  # fmt: skip
+    assert doc_families == families  # 家族清单与真组件一致
+    for fam in doc_families:
+        assert fam in doc, fam
+    examples = [
+        "membrane",
+        "receptor_rtk",
+        "gpcr",
+        "ion_channel",
+        "nucleus",
+        "dna_helix",
+        "antibody",
+    ]
+    for k in examples:
+        assert k in doc and k in kinds, k
+    spec = next(k for k in cat["kinds"] if k["kind"] == "membrane")
+    p = {q["name"]: q for q in spec["params"]}
+    assert (p["length_mm"]["min"], p["length_mm"]["max"]) == (20.0, 60.0)
+    assert (p["curvature"]["min"], p["curvature"]["max"]) == (
+        -0.35,
+        0.35,
+    )  # 文档里写的两个范围与真组件一致
+
+
+def test_catalog_view_lists_every_kind_with_names_family_ports_and_embeddable(lic):
+    cat = _real_catalog()
+
+    def ask(cmd, payload):
+        assert cmd == "mechanism.catalog"
+        return cat
+
+    out = mechanism.catalog_view(ask=ask)
+    assert out["ok"] and out["count"] == len(cat["kinds"]) == len(out["kinds"])
+    assert out["families"] == sorted({k["family"] for k in cat["kinds"]})
+    by = {k["kind"]: k for k in out["kinds"]}
+    assert set(by) == {k["kind"] for k in cat["kinds"]}
+    for k in out["kinds"]:
+        assert k["name"]["zh"] and k["name"]["en"] and k["family"] and k["ports"] and k["params"]
+        assert set(k["name"]) == {"zh", "en"} and isinstance(k["embeddable"], bool)
+        assert all(set(p) <= set(mechanism._PARAM_VIEW_KEYS) for p in k["params"])  # noqa: SLF001
+        assert not k["name"]["zh"].isascii() or k["name"]["zh"] in (
+            "mRNA",
+            "DNA",
+        )  # 中文名走词表，没退回 kind 本身
+    assert by["membrane"]["name"] == {"zh": "双层膜", "en": "Lipid bilayer"}
+    assert by["gpcr"]["embeddable"] and not by["ligand"]["embeddable"]
+    assert "ligand_site" in by["gpcr"]["ports"]
+
+
+def test_catalog_view_filters_by_family_and_names_the_valid_ones_on_a_bad_family(lic):
+    cat = _real_catalog()
+    ask = lambda cmd, payload: cat  # noqa: E731
+    only = mechanism.catalog_view("membrane_protein", ask=ask)
+    assert only["ok"] and {k["family"] for k in only["kinds"]} == {"membrane_protein"}
+    assert {"gpcr", "integrin"} <= {k["kind"] for k in only["kinds"]}
+    bad = mechanism.catalog_view("nope", ask=ask)
+    assert bad["ok"] is False and bad["code"] == "bad_family" and "organelle" in bad["families"]
+
+
+def test_catalog_view_is_free_and_degrades_to_pro_unavailable_without_a_component(monkeypatch):
+    """清单是免费命令：没授权也能读；组件不在 / 太旧 = 结构化 `pro_unavailable`（不是错误）。"""
+    monkeypatch.setattr(engine_license, "has", lambda feature: False)
+    cat = _real_catalog()
+    assert mechanism.catalog_view(ask=lambda c, p: cat)["ok"] is True
+
+    def missing(cmd, payload):
+        raise prohost.ProUnavailable("missing")
+
+    out = mechanism.catalog_view(ask=missing)
+    assert out["ok"] is False and out["code"] == "pro_unavailable" and out["message"]
+
+    def old(cmd, payload):
+        raise prohost.ProUnavailable("unsupported")
+
+    assert mechanism.catalog_view(ask=old)["code"] == "pro_unavailable"
+
+
+def test_load_catalog_keeps_the_optional_family_ports_and_embeddable_fields_and_drops_bad_ones():
+    good = {"kind": "k", "versions": [1], "default_size_mm": [3, 3], "params": [], "family": "organelle",
+            "ports": ["a", "b"], "embeddable": True}  # fmt: skip
+    bad = {**good, "kind": "k2", "family": 3, "ports": ["a", 5], "embeddable": "yes"}
+    out = mechanism.load_catalog(lambda c, p: {"kinds": [good, bad]})
+    assert (out["k"]["family"], out["k"]["ports"], out["k"]["embeddable"]) == (
+        "organelle",
+        ["a", "b"],
+        True,
+    )
+    assert not {"family", "ports", "embeddable"} & set(out["k2"])
 
 
 def test_bad_item_says_which_param_and_what_range_is_allowed(lic):
@@ -1878,3 +1966,42 @@ def test_first_batch_kinds_have_a_family_style_preset_and_the_user_style_still_w
     ):
         assert fam[k]["fill"] == "#f6e7d4"
     assert fam["nucleosome"]["fill"] is None and fam["chromosome"]["fill"] is None
+
+
+def test_the_plugin_catalog_tool_is_free_filters_by_family_and_reports_a_missing_component(
+    monkeypatch,
+):
+    from tavotto_mcp import server
+
+    cat = _real_catalog()
+    monkeypatch.setattr(engine_license, "has", lambda feature: False)  # 没有授权也能读
+    monkeypatch.setattr(prohost, "call", lambda cmd, payload, feature=None: cat)
+    out = server.call_tool("tavotto_mechanism_catalog", {})
+    sc = out["structuredContent"]
+    assert sc["ok"] and sc["count"] == len(cat["kinds"]) and "isError" not in out
+    assert "gpcr" in out["content"][0]["text"] and "能嵌膜" in out["content"][0]["text"]
+    only = server.call_tool("tavotto_mechanism_catalog", {"family": "cytoskeleton"})[
+        "structuredContent"
+    ]
+    assert {k["kind"] for k in only["kinds"]} == {"microtubule", "actin_filament"}
+    bad = server.call_tool("tavotto_mechanism_catalog", {"family": "zzz"})
+    assert (
+        bad["structuredContent"]["code"] == "bad_family"
+        and "organelle" in bad["content"][0]["text"]
+    )
+
+    def gone(cmd, payload, feature=None):
+        raise prohost.ProUnavailable("missing")
+
+    monkeypatch.setattr(prohost, "call", gone)
+    miss = server.call_tool("tavotto_mechanism_catalog", {})
+    assert miss["structuredContent"]["code"] == "pro_unavailable" and "isError" not in miss
+    assert "免费" in miss["content"][0]["text"]
+
+
+def test_the_plugin_reference_tells_the_agent_to_read_the_catalog_first():
+    md = (
+        Path(__file__).resolve().parent.parent
+        / "codex-plugin/skills/tavotto-figure/references/mechanism-diagram.md"
+    ).read_text("utf-8")
+    assert "tavotto_mechanism_catalog" in md

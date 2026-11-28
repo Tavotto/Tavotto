@@ -987,6 +987,27 @@ def _suggest_tools() -> list[dict]:
             },
         },
         {
+            "name": "tavotto_mechanism_catalog",
+            "title": "读机理图图元清单",
+            "description": (
+                "只读、免费：列出能画的机理图图元（膜、受体、离子通道、细胞核、DNA、抗体……）——每个图元的 kind、中英名、家族、"
+                "能不能嵌进膜、端口名、默认尺寸和参数规格（范围 / 缺省 / 枚举）。要往排版里加机理图条目（tavotto_layout_edit_plan 的 add）"
+                "之前先读它，不要凭记忆写图元种类和参数。family 可按家族筛（membrane / membrane_protein / soluble_molecule / "
+                "molecular_machine / nucleic_acid / organelle / cytoskeleton / cell_structure）。高级版组件没装好时回 "
+                "pro_unavailable（不是错误；免费的示意图框 / 箭头 / 文字照常可用）。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "family": {
+                        "type": "string",
+                        "description": "只列这个家族；不写 = 全部。",
+                    }
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "tavotto_suggest_status",
             "title": "查建议方案的状态",
             "description": "只读：一份建议方案的待办、是否已应用（用了哪几条、谁应用的）、出方案之后图有没有被改过（stale）。",
@@ -2476,6 +2497,25 @@ def _call_suggest_status(args: dict) -> dict:
     return {"content": _text(head), "structuredContent": out}
 
 
+def _call_mechanism_catalog(args: dict) -> dict:
+    out = bridge.mechanism_catalog(args.get("family"))
+    if not out.get("ok"):
+        if out.get("code") == "bad_family":
+            return {
+                "content": _text("没有这个家族。可用的家族：" + "、".join(out["families"])),
+                "structuredContent": out,
+            }
+        return {"content": _text(out["message"]), "structuredContent": out}
+    lines = [f"能画的机理图图元 {out['count']} 个（家族：{'、'.join(out['families'])}）："]
+    for k in out["kinds"]:
+        tail = "，能嵌膜" if k["embeddable"] else ""
+        lines.append(f"· {k['kind']}（{k['name']['zh']} / {k['name']['en']}）[{k['family']}]{tail}")
+    lines.append(
+        "参数规格、端口、默认尺寸在 structuredContent.kinds 里；写条目时 glyph 填 kind，params 不写就取缺省。"
+    )
+    return {"content": _text(*lines), "structuredContent": out}
+
+
 def _pro_required(out: dict) -> dict | None:
     """机理图（ADR 0220）等高级版条目没有授权时，引擎回结构化 `pro_required`：不是错误、一条也没写，这里只把一句话与「了解高级版」转给 Agent。
     **工具层不判权益**（`license.has` 只在登记过的功能模块里）；一键排版的 MCP 工具（ADR 0199 §十三）以后复用这一处。"""
@@ -3391,6 +3431,7 @@ HANDLERS = {
     "tavotto_suggest_plan": _call_suggest_plan,
     "tavotto_suggest_apply": _call_suggest_apply,
     "tavotto_suggest_status": _call_suggest_status,
+    "tavotto_mechanism_catalog": _call_mechanism_catalog,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
