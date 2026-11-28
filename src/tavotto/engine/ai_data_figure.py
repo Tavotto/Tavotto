@@ -2141,6 +2141,10 @@ _ERROR_WORDS = {
 _ERROR_ALONE = frozenset({"sd", "stdev", "stddev", "stderr", "err", "error"})
 _ERROR_CJK = (("标准差", "sd"), ("标准误", "sem"), ("置信区间", "ci"), ("误差", "unknown"))
 _MEAN_WORDS = frozenset({"mean", "avg", "average"})
+#: 中文里「这一列是均值」的词（长的在前：先去掉「平均值」再看「平均」）。只用于给中文误差列找搭档（`error_match`），不凭它认任何角色
+_MEAN_CJK = ("平均值", "均值", "平均数", "均数", "平均")
+#: 中文列名里词与词之间常见的连接符 / 括号：比对「去掉误差词之后剩下什么」时不算数
+_CJK_GLUE = re.compile(r"[\s_\-—·、，,：:()（）\[\]【】的]+")
 
 
 def _name_tokens(name: str) -> list[str]:
@@ -2174,7 +2178,39 @@ def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
                 ):
                     partners.append(other)
                     word_kind = word_kind or _ERROR_WORDS[t]
+    if not partners:
+        partners = _cjk_partners(name, others)
     return (kind or word_kind), partners
+
+
+def _cjk_core(name: str, words: tuple[str, ...]) -> str | None:
+    """`name` 里含 `words` 之一 → 去掉它（只去第一处）与连接符之后剩下的核心（可能是空串）；不含 = None。"""
+    for w in words:
+        if w in name:
+            return _CJK_GLUE.sub("", name.replace(w, "", 1)).casefold()
+    return None
+
+
+def _cjk_partners(name: str, others: list[str]) -> list[str]:
+    """中文误差列的搭档（与英文那条同一个思路，判据只换成中文的词）：`标准差` ↔ `均值`、`产量标准差` ↔ `产量` / `产量均值` / `平均产量`。
+    去掉误差词后**什么都不剩**时，搭档是名字里带均值词的列（中文的，或英文的 `mean` / `avg` / `average`）；剩下核心时，搭档是去掉均值词后
+    核心相同的列。名字里只有「误差」这种说不清种类的词也照此找搭档（种类仍是 `unknown`）。"""
+    rest = _cjk_core(name, tuple(w for w, _ in _ERROR_CJK))
+    if rest is None:
+        return []
+    out: list[str] = []
+    for other in others:
+        if other == name or _cjk_core(other, tuple(w for w, _ in _ERROR_CJK)) is not None:
+            continue
+        mean_core = _cjk_core(other, _MEAN_CJK)
+        if rest:
+            plain = _CJK_GLUE.sub("", other).casefold()
+            ok = (mean_core is not None and mean_core == rest) or plain == rest
+        else:
+            ok = mean_core is not None or bool(_MEAN_WORDS & set(_name_tokens(other)))
+        if ok and other not in out:
+            out.append(other)
+    return out
 
 
 def error_kind(name: str, others: list[str]) -> str | None:
