@@ -48,6 +48,7 @@
     "change_plan_render_failed": "渲染修改后的图时出了问题，没有生成修改方案，图没有改动。",
     "change_plan_too_large": "意见或图太长，超出了一次能处理的范围，图没有改动。",
     "change_plan_unknown": "这份修改方案不存在或已过期。",
+    "change_plan_agent_settled": "这份建议已经应用过了。",
     "change_plan_unsupported_connection": "当前的 AI 连接暂不支持生成修改方案，可以换一个连接。",
     "invalid_change_plan": "修改方案的请求不合规，没有生成。",
     "result_too_large": "期刊事实结果过大，暂无法显示。",

@@ -992,6 +992,10 @@
       "addPlaceholder": "比如：图例去掉边框",
       "addFailed": "这一条没加上，再试一次",
       "toTodos": "把这些建议写成待办",
+      "fromAgent": "来自 Agent",
+      "agentScriptTag": "交给 Agent 改",
+      "agentScriptTip": "这几项要改脚本，不在这里做；勾着的会交回 Agent",
+      "handed_other": "{{count}} 项交给 Agent 改",
       "pickJournal": "选期刊"
     },
     "dialog": {

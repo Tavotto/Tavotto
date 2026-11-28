@@ -200,8 +200,12 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
   // 落定：收成一行（点它展开已改的几项，只读）；没改的几项一行灰字，与第一行的字对齐（不可点——再改请重新说一句）
   if (phase === 'done') {
     // 没做成的那几条在下面各有一句原因，这里不再重复列
-    const undone = todos.filter((t) => !done.includes(t.key) && !failNotes.some((n) => n.key === t.key)).map((t) => t.label)
+    const undone = todos.filter((t) => !done.includes(t.key) && !failNotes.some((n) => n.key === t.key) && !entry.agent?.handed?.includes(t.key)).map((t) => t.label)
     const landed = todos.filter((t) => done.includes(t.key))
+    // Agent 来源：勾着的脚本待办没在这里做、交回了 Agent；只交回、窗口里一项没改时，这一句就是标题
+    const handed = entry.agent?.handed?.length ?? 0
+    // 窗口里改的被 ⌘Z 撤了、也没有交回 Agent 的：后端已记了这次应用，这张卡没有什么可说的了
+    if (entry.agent && done.length === 0 && handed === 0) return null
     const canUndo = (figureApplied && !!panel && canUndoApplied(entry, panel.overrides)) || scriptEntries.some((x) => x.status === 'applied')
     return (
       <Card appearance="subtle" padding="sm" data-change-plan-card="suggestion-done" data-change-plan-suggestion>
@@ -216,7 +220,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             >
               <Check size={ICON_SIZE.sm} className="shrink-0 text-ok" />
               <span className="min-w-0 text-sm text-ink-2" data-suggestion-done>
-                {cp('todo.done', { count: done.length })}
+                {done.length === 0 && handed > 0 ? cp('todo.handed', { count: handed }) : cp('todo.done', { count: done.length })}
               </span>
               <ChevronDown size={ICON_SIZE.xs} aria-hidden className={cn('shrink-0 text-ink-3 transition-transform group-hover:text-ink-2 motion-reduce:transition-none', !listOpen && '-rotate-90')} />
             </button>
@@ -229,6 +233,11 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
                   </li>
                 ))}
               </ul>
+            )}
+            {done.length > 0 && handed > 0 && (
+              <p className="pb-0.5 pl-[22px] text-xs text-ink-3" data-suggestion-handed>
+                {cp('todo.handed', { count: handed })}
+              </p>
             )}
             {undone.length > 0 && (
               <p className="pb-0.5 pl-[22px] text-xs text-ink-3" data-suggestion-skipped>
@@ -272,7 +281,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
   const rowLocked = (t: ChangePlanTodo) => (busy && rowState(t) === 'queued' ? false : frozen)
   const adding = entry.adding !== undefined
   const ordered = [...todos.filter((t) => t.kind !== 'script'), ...todos.filter((t) => t.kind === 'script')]
-  const canAdd = !frozen && !adding && status === 'ready' && !entry.todoRun && todos.length < MAX_TODOS
+  const canAdd = !entry.agent && !frozen && !adding && status === 'ready' && !entry.todoRun && todos.length < MAX_TODOS
   const doneNow = on.filter((t) => rowState(t) === 'done').length
 
   return (
@@ -283,6 +292,11 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
           <span className="type-meta tabular-nums" data-suggestion-count>
             {cp('todo.count', { count: todos.length })}
           </span>
+          {entry.agent && (
+            <span className="type-meta" data-suggestion-from-agent>
+              {cp('todo.fromAgent')}
+            </span>
+          )}
         </span>
         {groups.length > 0 && !stale && (
           <Button variant="ghost" size="sm" className="text-xs text-ink-3 hover:text-ink" onClick={() => store().openDialog(entry.key)} data-change-plan-view>
@@ -305,8 +319,8 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             return (
               <Fragment key={t.key}>
                 {t.kind === 'script' && ordered[i - 1]?.kind !== 'script' && (
-                  <li className="type-meta mt-1.5 flex h-6 items-end border-t border-border pb-0.5" title={cp('todo.scriptTip')} data-suggestion-script-section>
-                    {cp('todo.scriptTag')}
+                  <li className="type-meta mt-1.5 flex h-6 items-end border-t border-border pb-0.5" title={cp(entry.agent ? 'todo.agentScriptTip' : 'todo.scriptTip')} data-suggestion-script-section>
+                    {cp(entry.agent ? 'todo.agentScriptTag' : 'todo.scriptTag')}
                   </li>
                 )}
                 <li>
@@ -346,9 +360,15 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
           {stale ? (
             <>
               <span className="text-sm text-ink-3">{cp('card.stale')}</span>
-              <Button variant="secondary" size="md" className="rounded-full" onClick={() => void store().regenerate(entry.key)} data-change-plan-regenerate>
-                {cp('card.regenerate')}
-              </Button>
+              {entry.agent ? (
+                <Button variant="secondary" size="md" className="rounded-full" onClick={() => store().dismiss(entry.key)} data-suggestion-dismiss>
+                  {cp('card.dismiss')}
+                </Button>
+              ) : (
+                <Button variant="secondary" size="md" className="rounded-full" onClick={() => void store().regenerate(entry.key)} data-change-plan-regenerate>
+                  {cp('card.regenerate')}
+                </Button>
+              )}
             </>
           ) : dataAsk && scriptEntry ? (
             <>
@@ -381,6 +401,11 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             <AddTodoInput onSubmit={(text) => void store().addTodo(entry.key, text)} onClose={() => setAddOpen(false)} />
           ) : (
             <>
+              {entry.agent && (
+                <Button variant="ghost" size="md" className="-ml-1.5 rounded-full text-ink-3 hover:text-ink" onClick={() => store().dismiss(entry.key)} data-suggestion-dismiss>
+                  {cp('card.dismiss')}
+                </Button>
+              )}
               {canAdd && (
                 <Button variant="ghost" size="icon-sm" className="-ml-1.5 text-ink-3 hover:text-ink" title={cp('todo.add')} aria-label={cp('todo.add')} onClick={() => setAddOpen(true)} data-suggestion-add>
                   <Plus size={ICON_SIZE.sm} />

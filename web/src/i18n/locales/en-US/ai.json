@@ -1021,6 +1021,11 @@
       "addPlaceholder": "e.g. remove the legend frame",
       "addFailed": "Couldn't add that one. Try again",
       "toTodos": "Turn into to-dos",
+      "fromAgent": "From your agent",
+      "agentScriptTag": "Left to your agent",
+      "agentScriptTip": "These edit the script, so they aren't done here. Ticked ones go back to your agent",
+      "handed_one": "{{count}} item left to your agent",
+      "handed_other": "{{count}} items left to your agent",
       "pickJournal": "Pick a journal"
     },
     "dialog": {
