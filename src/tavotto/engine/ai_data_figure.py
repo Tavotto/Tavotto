@@ -384,11 +384,15 @@ class DataSummary:
 CSV_SUFFIXES = (".csv",)
 TSV_SUFFIXES = (".tsv", ".tab")
 #: 纯文本的数据导出（仪器 / 数值软件常见）：分隔符与表头行靠嗅探（`read_text_table`）；`.dat` 是二进制时归「读不了」
-TEXT_SUFFIXES = (".txt", ".dat", ".asc")
+TEXT_SUFFIXES = (".txt", ".dat", ".asc", ".prn", ".xy")
 #: GROMACS / Grace 的 `.xvg`：`#` 注释、`@` 指令、空白分隔的数值列；没有表头行，列名在指令里（`xvg_text` 把它改写成带表头行的制表符文本再走同一条读表流水）
 XVG_SUFFIXES = (".xvg",)
+#: JSON Lines（每行一个扁平对象）：`jsonl_text` 把它改写成带表头行的 CSV 文本再走同一条读表流水（与 `.xvg` 同一个办法）
+JSONL_SUFFIXES = (".jsonl", ".ndjson")
 XLSX_SUFFIXES = (".xlsx",)
-TABLE_SUFFIXES = CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XVG_SUFFIXES + XLSX_SUFFIXES
+TABLE_SUFFIXES = (
+    CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XVG_SUFFIXES + JSONL_SUFFIXES + XLSX_SUFFIXES
+)
 LEGACY_EXCEL_SUFFIXES = xlsxread.LEGACY_SUFFIXES
 
 
@@ -521,6 +525,90 @@ def xvg_text(text):
                 cells.append(n.replace('"', "'") or f"col{k + 1}")
             out[first - 1] = "\t".join(cells)
     return "\n".join(out)
+
+
+class JsonlError(ValueError):
+    """`jsonl_text` 读不成表：`code` 是 `ERROR_CODES` 里的稳定码（`data_malformed` / `data_too_wide` / `data_empty`）。**运行时类**。"""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def jsonl_text(text, max_columns=64):
+    """JSON Lines（`.jsonl` / `.ndjson`）全文 → 逗号分隔、带表头行的 CSV 文本（下一步照旧按 `table_from_text` 读）。**运行时函数**。
+
+    每个非空行是一个**扁平对象**，值只能是数字 / 字符串 / 布尔 / null；列 = 各行的键按首次出现顺序取并集，缺键与 null 都是空格子。
+    数字照原文写法（`1e5`、大整数不经 float 往返）；布尔写成 `true` / `false`；字符串原样。**不猜、一律拒绝**（`JsonlError`，码 `data_malformed`）：
+    不是 JSON、不是对象、值是嵌套对象 / 数组、同一行重复键、`NaN` / `Infinity` 这类非标准记号、含 NUL / 孤立代理字符的文字、
+    第一格以 `#` 开头（读表时会被当成注释行整行丢掉，不静默丢）；列数超 `max_columns` → `data_too_wide`；没有任何记录 → `data_empty`。
+    物理行号：表头占第 1 行，原文第 n 行的记录在第 n + 1 行（空行保留为空行）。"""
+
+    def bad(_name):
+        raise ValueError("nonstandard constant")
+
+    def pairs(items):
+        if len({k for k, _ in items}) != len(items):
+            raise ValueError("duplicate key")
+        return dict(items)
+
+    keys = {}
+    records = []
+    for line in re.split(r"\r\n|\r|\n", text):
+        t = line.strip()
+        if not t:
+            records.append(None)
+            continue
+        try:
+            obj = json.loads(
+                t, object_pairs_hook=pairs, parse_float=str, parse_int=str, parse_constant=bad
+            )
+        except (ValueError, RecursionError):
+            raise JsonlError("data_malformed") from None
+        if not isinstance(obj, dict):
+            raise JsonlError("data_malformed")
+        for k, v in obj.items():
+            if isinstance(v, (dict, list)):
+                raise JsonlError("data_malformed")
+            for piece in (k, v):
+                if isinstance(piece, str):
+                    if "\x00" in piece:
+                        raise JsonlError("data_malformed")
+                    try:
+                        piece.encode("utf-8")
+                    except UnicodeEncodeError:
+                        raise JsonlError("data_malformed") from None
+            keys.setdefault(k, None)
+            if len(keys) > max_columns:
+                raise JsonlError("data_too_wide")
+        records.append(obj)
+    if not keys:
+        raise JsonlError("data_empty")
+
+    def cell(v):
+        if v is None:
+            return ""
+        if v is True:
+            return "true"
+        if v is False:
+            return "false"
+        return v
+
+    names = list(keys)
+    if names[0].lstrip().startswith("#"):
+        raise JsonlError("data_malformed")
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(names)
+    for r in records:
+        if r is None:
+            out.write("\n")
+            continue
+        row = [cell(r.get(k)) for k in names]
+        if row[0].lstrip().startswith("#"):
+            raise JsonlError("data_malformed")
+        writer.writerow(row)
+    return out.getvalue()
 
 
 def fill_header(header):
@@ -1130,11 +1218,21 @@ def _read_small_text_table(
         return _unreadable("data_empty")
     if suffix in XVG_SUFFIXES:
         text = xvg_text(text)  # 脚本里调用的是同一个函数（见 `ai_data_template._reader_expr`）
+    if suffix in JSONL_SUFFIXES:
+        if encoding not in ("utf-8", "utf-8-bom"):
+            return _unreadable(
+                "data_decode_error"
+            )  # JSON Lines 只认 UTF-8（可带 BOM）：脚本里写死 `utf-8-sig`
+        try:
+            text = jsonl_text(text, MAX_COLUMNS)  # 脚本里调用的是同一个函数
+        except JsonlError as exc:
+            return _unreadable(exc.code)
+        header_row = None  # 表头永远是改写后的第 1 行：调用方指定的行号对它没有意义
     if text.count("\n") + text.count("\r") > 2 * SMALL_ROWS + 1000:
         return _unreadable("data_too_long")
     sha = hashlib.sha256(raw).hexdigest()
     try:
-        layout = _detect(text, suffix)
+        layout = TextLayout(",", 1, True) if suffix in JSONL_SUFFIXES else _detect(text, suffix)
     except csv.Error:
         return _unreadable("data_malformed")
     if isinstance(layout, RaggedLayout):
@@ -1544,8 +1642,8 @@ def _read_large_text_table(p: Path, *, header_row: int | None, size: int) -> Tex
     只是流式读。`.xvg` 要整份改写文本，大表不支持（`data_too_large`）。嗅探 / 预览 / 说明行只看开头 `LARGE_HEAD_BYTES`；
     读法里的 `header_row` 在大表里总是显式的行号（不去判断「整份没有 `#` 行」）。"""
     suffix = p.suffix.lower()
-    if suffix in XVG_SUFFIXES:
-        return _unreadable("data_too_large")
+    if suffix in XVG_SUFFIXES + JSONL_SUFFIXES:
+        return _unreadable("data_too_large")  # 要整份改写文本，大表不支持
     try:
         checked = _stream_check(p)
     except OSError:

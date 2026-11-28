@@ -258,17 +258,20 @@ def test_the_runner_tool_vocabulary_matches_every_tool_the_runner_defines():
     """词表只认静态注册表：`agent_runner/tools.py` 里每个 `Tool("…")` 的名字都在 `TOOL_NAMES` 里（AST，不是子串）。"""
     from tavotto.engine.agent_runner import tools
 
-    tree = ast.parse(
-        (ROOT / "src/tavotto/engine/agent_runner/tools.py").read_text(encoding="utf-8")
-    )
-    defined = {
-        node.args[0].value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and getattr(node.func, "id", None) == "Tool"
-        and node.args
-        and isinstance(node.args[0], ast.Constant)
-    }
+    # 工具集分在两个文件里（`data_prepare` 在 prepare_tools.py）：两处的 `Tool("…")` 合起来 == `TOOL_NAMES`
+    defined = set()
+    for rel in ("tools.py", "prepare_tools.py"):
+        tree = ast.parse(
+            (ROOT / "src/tavotto/engine/agent_runner" / rel).read_text(encoding="utf-8")
+        )
+        defined |= {
+            node.args[0].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", None) == "Tool"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        }
     assert defined and defined == set(tools.TOOL_NAMES)
     assert set(tools.TOOL_NAMES) <= exectrace.vocabulary("tool")
 
