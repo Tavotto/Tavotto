@@ -191,3 +191,41 @@ def test_a_file_outside_the_project_keeps_the_original_failure(world, tmp_path):
 def test_the_overlay_switch_off_keeps_the_original_failure(world, monkeypatch):
     monkeypatch.setenv("TAVOTTO_SAFE_OVERLAY", "0")
     _fails_with_permission(world, WRITES["open_w"])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="独占打开（共享模式不许写）只有 Windows 有")
+def test_a_file_held_open_by_another_program_on_windows(world):
+    """现场的原样：别的程序（Excel）以「只许别人读」的共享模式打开着这份 CSV，Python 写打开它得 `[Errno 13]`。"""
+    import ctypes
+    from ctypes import wintypes
+
+    root, _out = world
+    target = root / "plotted.csv"
+    _writable(target)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    generic_read, generic_write, share_read, open_existing = 0x80000000, 0x40000000, 0x1, 3
+    handle = kernel32.CreateFileW(
+        str(target), generic_read | generic_write, share_read, None, open_existing, 0, None
+    )
+    assert handle not in (None, wintypes.HANDLE(-1).value), ctypes.get_last_error()
+    try:
+        body = (
+            WRITES["open_w"]
+            + 'OUT.write_text(json.dumps({"back": (here / "plotted.csv").read_text(encoding="utf-8")}))\n'
+        )
+        _worker, resp, observed = _ok(world, body)
+        assert resp.get("locked_writes") == ["plotted.csv"]
+        assert observed == {"back": "new\n"}
+    finally:
+        kernel32.CloseHandle(handle)
+    assert target.read_text(encoding="utf-8") == "old\n"
