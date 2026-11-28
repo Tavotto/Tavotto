@@ -1089,3 +1089,13 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
   豁免要比对象、检查项与位置，补丁落地后重算余量。为什么：求解只量中心线、多行按一行、旋转不换算锚点，「改前就有」只比检查项，
   另一侧出页也被放过（#2201、#2220、#2254，六条 P1）；2026-11-28 「框住子图的外框」只比外框就豁免子图文字遮挡，评审报 P1（#2336）。
   看护 `tests/test_vectorcheck.py`、`tests/test_vector_edit_style_check.py`。
+
+## 数据准备（`data_prepare`，ADR 0215 第一期·后端内核，2026-11-27，无调用点）
+
+- **文件**：`engine/ai_data_prepare.py`（候选、`PrepareAdapter` / `PrepareExecutor`、契约核对 `Checker`、`candidate_table`、`adopt`）、`engine/agent_runner/prepare_tools.py`（工具集，导入即登记进 `TOOLSETS`）。
+  `trial.run_python` 多两个参数：`read_allow`（进程内读白名单）与 `tamper`（闭集 `full` 默认 = 实验现状 / `stdlib` 数据准备用：只收窄 `namedtuple` 的 `__defaults__` 赋值与试跑目录内的文件夹打开，gc 与 `__code__` 照拦；没有全关，见模块说明「防篡改的收窄」）；`trial.scratch_dir` 是公开的专用试跑目录。
+- **工具**：`list_dir` / `read_file` / `sample_file`（`source/<标签>` 只读窗口，单次 ≤32 KiB、累计 ≤384 KiB）、`create_file` / `append_file` / `edit_file`（只写 `prepare.py`，复用 `ConvertSession`）、
+  `run_python`（≤6 次，`sample_bytes` 只给输入前缀）、`check` / `finish`（共享 ≤3 次）。`run_python` / `check` 是父进程回调（`RunEnvelope.hooks`，`PrepareHooks`）；**没有 hooks 的运行启动即 `internal/no_hooks`、零模型请求**。第一期不动 IPC，接桥那一期把两个回调映射到泛化的 IPC。
+- **写入面**：任务契约 `allowed_writes=[]`、`writes_user_files=False`，`run_task` 的放行条件不动；失败 / 取消 / 超限候选与试跑目录都删；`adopt` 之前项目文件夹逐字节不变。
+- **发给模型的内容**：见 `prepare_tools` 模块说明的逐项清单（改它要同步 ADR 0215 与隐私文字）。
+- **盲区**：读白名单与断网的进程内钩子靠防篡改三条守着（`stdlib` 收窄版），C 层 / ctypes（导入不拦）绕得过、Windows 只有这一层且未验证；取消只在两次运行之间生效；输入的 sha256 只在第一次 `check` 算一次，之后比文件身份。

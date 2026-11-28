@@ -4359,6 +4359,8 @@ export interface ChangePlanTodo {
 export interface ChangePlan {
   id: string
   version: number
+  /** 插件里的 Agent 经绑定会话出的建议（ADR 0217 §五）：它的子图与排版；没有 = 窗口里自己出的方案 */
+  agent?: { session?: string; panel?: string; layout?: string; stem?: string; at?: number; host?: AgentHost }
   /** 助手来源给建议时的一到三句话回答（≤ 600 字）；没有 = 普通方案 */
   reply?: string
   /** 助手把建议列成的待办；没有 = 普通方案（与以前一样只看 `groups` / `unhandled`） */
@@ -4623,6 +4625,39 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanView
+}
+
+/** 出方案的宿主（后端闭集；其它 / 缺省都当 `other`） */
+export type AgentHost = 'codex' | 'claude_code' | 'other'
+
+/** 桌面发现的 Agent 建议（`GET /api/change-plans?agent=1` 的一行，最小字段） */
+export interface AgentPlanRef {
+  id: string
+  /** 桌面口径的图标识（面板的 `fileId`） */
+  target: string
+  panel: string
+  layout?: string | null
+  host?: AgentHost
+  created: number
+  todos: number
+}
+
+/** 这个项目里 Agent 经绑定会话出的、没过期没落定的建议（ADR 0217 §五）。 */
+export async function listAgentChangePlans(): Promise<AgentPlanRef[]> {
+  const out = await changePlanFetch('/api/change-plans?agent=1')
+  if (!Array.isArray(out.plans)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return (out.plans as unknown[]).filter((p): p is AgentPlanRef => isRec(p) && isStr(p.id) && isStr(p.target) && isStr(p.panel))
+}
+
+/** 用户在窗口里应用了 Agent 的建议卡：记下勾了哪几项（图内的已写进文档，脚本的交回 Agent）。先落定的赢：插件那边先应用过抛 `change_plan_agent_settled`。 */
+export async function reportAgentPlanApplied(planId: string, keys: string[]): Promise<void> {
+  await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/agent-applied`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keys }),
+  })
 }
 
 /** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */

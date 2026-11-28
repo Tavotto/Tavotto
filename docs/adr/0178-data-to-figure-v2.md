@@ -758,3 +758,10 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
    * 物理行号：表头占第 1 行，原文第 n 行的记录在第 n + 1 行。
 3. **没做**（各自单独的改动）：`.xlsm`（要改一句已上线的错误文案，等维护者同意）、`.json`（顶层对象数组 / 列式；`package.json` 这类不能进文件列表）、`.ods`、`.out`（项目里常有同名的二进制，进了白名单只会在文件列表里多出一堆「读不了」；留给 ADR 0215 的「让 AI 整理数据」）。
 
+## 实现（ADR 0215 第一期·后端内核，2026-11-27）
+
+「读取与整理可以由模型写，画图脚本仍出自模板」落在 `engine/ai_data_prepare.py` + `engine/agent_runner/prepare_tools.py`（内置循环的第三套工具集 `data_prepare`）：
+模型只写**一个**准备脚本 `prepare.py`（`python prepare.py <输入> <输出.csv>`，stdout 末行报 `rows_in / rows_out / dropped`），由父进程在受保护的试跑子进程里跑
+（写入绊线 + 禁起进程 + 系统沙盒 + 断网 + 进程内读白名单）并核契约（恰好一张 UTF-8 CSV、现有读表读得出且≥1 列数值、行数与报告一致、不同 `PYTHONHASHSEED` 下两次输出字节相同）。
+候选在 `cache/ai_prepare/<sid>/`，`candidate_table(sid)` 在 ready 后交出整理好的表（给「采用之前」出备选图用，本期不接 `ai_data_propose`）；`adopt` 才把脚本与表**新建**进
+`<数据文件夹>/tavotto_figures/`（只经 `scriptlock.create_script`，表开头 `#` 行是来源证明）。准备这一段「算得对不对」不核，只给来源证明（0215 第一节 B 档）。

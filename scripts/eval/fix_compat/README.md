@@ -3,7 +3,7 @@
 问题：同一份在 Tavotto 里跑不起来 / 不出图的脚本，Tavotto 内置的 AI 修复（A）和通用编码 agent 加 Tavotto MCP 插件（B）谁能修好、卡在哪。
 结构、跑法、结果格式沿用 `scripts/eval/agent_journal/`。不进 CI，不在 PR 里跑；被测模型要额度。
 
-- **题库**：`corpus.json`，11 题，每题是一个小项目（脚本和数据都是合成的，不含任何真实用户内容），形状来自 Tavotto 已修过 / 在修的兼容性家族。
+- **题库**：`corpus.json`，11 题脚本兼容 + 4 题环境故障（见下「环境故障家族」），每题是一个小项目（脚本和数据都是合成的，不含任何真实用户内容），形状来自 Tavotto 已修过 / 在修的兼容性家族。
   脚本存成 JSON 字符串而不是 .py，免得被 ruff 改写。每题有 `id`、`family`、`script`（目标脚本）、`files`；`solvable: false` 的是对照题。
   `outside_files`（可选）是写在项目文件夹之外的兄弟文件，不进哈希。
 - **成功判据（两组一致，只有这一条）**：修复结束后，用真 sidecar 对**原始目标脚本**再建一次准备会话、点运行、等落定，
@@ -84,6 +84,29 @@ opencode 报错时退出码也可能是 0，`agent_errors` 里查 `Error:`。
 `missing-pkg-yaml`（缺包，结局是 `awaiting_confirmation` / `dependency_preparation_required`——走依赖准备流程，不是修复入口）、
 `subdir-cwd-data`（结局 `awaiting_configuration` / `workdir_confirmation_required`，要先确认工作目录）。
 所以任务点名的「缺 import 名≠包名的包」这一类**没有覆盖**（要联网装包，且结局不走 `run`）；数据相对路径只剩 `data-moved-away` 一题。
+
+## 环境故障家族 `environment`（ADR 0221 §六）
+
+脚本兼容家族之外，量「装包 / 受管环境」这条线上的修复：4 题，脚本与数据合成、不含真实用户内容，包名一律 `tavfx-*`（PyPI 上没有，只会从本地 find-links 目录找到）。
+
+| 题 | 模拟的故障 | 怎么造 | 未修前（一键安装）的稳定错误码 |
+|---|---|---|---|
+| env-selftest-blocked | 装上了，受管环境自检被写入守卫拦了自己的输出（TVD-FTH9 形） | **产品里唯一的注入点**：`TAVOTTO_DEV=1` + `TAVOTTO_DEV_FAULT_SELFTEST_BLOCKED=1` 时 `worker_self_test` 回 `error_reply` + `safe_file_operation_blocked` | `dependency_worker_selftest_failed` |
+| env-wheel-python-mismatch | 包只有别的 Python 小版本的 wheel（phreeqpython 形） | 假 wheel，标签是与本解释器不同的 cp 小版本；不改产品 | `dependency_not_found`（`--only-binary` 下「没有适合的 wheel」与「没这个包」同码，这正是 ADR 0221 §三 要补的信息） |
+| env-import-dll-fail | 包装上了，import 时 `ImportError("DLL load failed")` | 假 wheel：2.0 import 即抛、1.9 是好的；不改产品 | `dependency_import_still_failed` |
+| env-permission-denied | 包 import 时目录 `PermissionError`（HZ0A 形） | 假 wheel：没设 `TAVFX_CACHE` 就抛 `PermissionError`（**模拟**：不在本机真改目录权限，root / Windows 上 chmod 不可靠）；设了即好 | `dependency_import_still_failed` |
+
+- **没做的**：Conda 激活失败、镜像不通回退。前者要伪造一个带 `conda-meta/` 的环境加一个会失败的 conda，且项目要先指到它（`launcher` 只对「可信 conda 安装根」下的环境激活）；后者要拦网络。两个都不改产品也许做得出来，但这一期没验证过，不放没验证的题。
+- **故障注入只在开发里**：`src/tavotto/engine/devfault.py`，`TAVOTTO_DEV=1` **且**点名的 `TAVOTTO_DEV_FAULT_<名>=1` 才生效，名字是闭集；其它任何组合都走产品原路径。这些变量只由 harness 写进被测 sidecar 的环境，不要在日常 shell 里 export。注入点数量与「不设就不生效」由 `tests/test_dev_fault_injection.py` 看护。
+- **夹具构建期生成**：`envfaults.py` 在每次运行的隔离目录（`$EVAL_RUNS/<组>/<题>__<rep>/wheelhouse`）里现造 wheel，不提交二进制；sidecar 的 `PIP_FIND_LINKS` 指过去，**不关 PyPI**（受管环境还要装 matplotlib，所以跑它要联网）。用户自配了包源，Tavotto 不走镜像回退，这与线上行为一致。
+- **未修前**：`harness.py probe --only env-…` 起真 sidecar，开准备会话（`missing_dependency`），再对缺的包走 `POST /api/engine/dependency/plan` → `install`（装进 Tavotto 受管环境，与界面「装上并继续」同一条后端路由），记 `before.install.code`；与题库 `fault.expect.code` 对不上会打印 `!!`。每题约 20–40 秒，不叫模型。
+- **跑法**：`harness.py run baseline` / `run A`；B、M 组不支持环境题（MCP 与 warmup 接不上假 wheel 夹具），`run B` 会自动跳过。A 组的修复会话从「一键安装没装好」之后开始（`install_attempt` 记在结果里）；**这条接线没有用真模型验证过**。
+- **修复会话看不到安装失败（产品如此，评测不造状态）**：题库的包名不在内置映射里，准备会话对它只给「指定包名 / 换环境」、没有「安装依赖」动作，用户点的是独立依赖路由，它的作业不记进准备会话。评测照这条路走，`install_attempt` 的失败码只记在结果里；修复助手从「缺包」出发，得自己走到故障。
+- **成功判据不变**：原脚本再建一次准备会话、点运行，`completed` 且出图，原文件字节不变。对 `env-wheel-python-mismatch`，本机没有对应的 Python 小版本时，没有出路，题库里标了 `solvable: false`（对照题，不进合计、单列；不按运行机有没有对应解释器动态判定，那会让同一题在不同机器上进出分母、跨机器不可比）。
+- **两列**（`report` 最后一张表，每题每组）：
+  - `cited_known_issue`：轨迹里有没有任何一行带 `known_issue`（harness 从审计结果的 `known_issue` 键搬进轨迹）。现在的产品审计里还没有这个键（ADR 0221 第 2 期才加），所以眼下全是 0，不会报错。
+  - `misjudged_user_fault`：**近似规则**，审计只留码和长度、不留模型的结论原文：① `prepare_diagnostics` 带 `issue` 却被退回（`bad_arguments`，`product_reason` 为空是其中一种；或 `not_a_product_defect`）；② 题库标了 `fault.product_defect`（目前只有 `env-selftest-blocked`）、这次没修好、整条轨迹里又没有一次成功的 `prepare_diagnostics`——当成用户环境问题收尾了。只对 A / M 组有意义。
+- 不进 CI、不在 PR 里跑；每期 ADR 0221 的 PR 合入后跑一轮 baseline + A，记到 `results/<日期-模型>/`。
 
 ## 基线结论
 
