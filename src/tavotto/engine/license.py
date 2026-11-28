@@ -56,7 +56,7 @@ PRODUCTION_LIVE = False
 
 #: 功能键闭集（ADR 0193 §一）；加键要同步改 ADR §一。
 FEATURES: frozenset[str] = frozenset(
-    {"hosted-ai", "review-plus", "quick-layout", "change-plan-rerun"}
+    {"hosted-ai", "review-plus", "quick-layout", "change-plan-rerun", "submission-pack"}
 )
 #: 令牌公钥表 `kid -> 32 字节公钥`。换密钥 = 发版加新 kid，旧 kid 保留到它签出的令牌全部过期（ADR 0193 §七）。
 #: live-2026-11：2026-11-23 生成，私钥只在正式函数 license-api 的环境变量里。
