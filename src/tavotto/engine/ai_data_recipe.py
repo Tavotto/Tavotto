@@ -1080,7 +1080,7 @@ class _Values:
                 if cls == "numeric":
                     out.append(v)
                 else:
-                    d = adf.parse_date(cell) if cls == "text" else None
+                    d = adf.parse_when(cell) if cls == "text" else None
                     out.append(adf.date_number(d) if d is not None else None)
             self._cache[col] = out
         return self._cache[col]

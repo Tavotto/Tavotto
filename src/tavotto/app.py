@@ -14631,7 +14631,15 @@ def _vector_measure_for(ctx):
 
     measure = engine_vectormeasure.bounded(raw, key_of=key_of)
     measure.new_pass = new_pass  # type: ignore[attr-defined]
-    measure.close = fresh.close  # type: ignore[attr-defined]
+    pool_close = measure.close  # type: ignore[attr-defined]
+
+    def close() -> None:
+        try:
+            fresh.close()
+        finally:
+            pool_close()  # `bounded` 的量线程池也要收，不能只收一次性 worker
+
+    measure.close = close  # type: ignore[attr-defined]
     return measure
 
 

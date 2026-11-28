@@ -41,20 +41,31 @@ from dataclasses import dataclass, replace
 
 from . import ai_data_figure as adf, ai_data_recipe as recipe_mod, xlsxread
 from .ai_data_figure import (
+    ColumnTagger,
+    NamelessTailData,
+    NumberCell,
     NumCat,
     SemicolonCell,
+    _tagged,
+    _tagged_table,
+    _trim_tail,
     apply_cells,
     apply_numcat,
     apply_stack,
+    apply_tags,
+    cut_tail,
     date_number,
     delimited_records,
     fill_header,
     iter_records,
     iter_table,
+    nameless_tail,
     parse_cell,
     parse_date,
+    parse_when,
     resolve_header,
     table_from_text,
+    tag_columns,
     xvg_label,
     xvg_text,
 )
@@ -92,21 +103,31 @@ class LargeRuleError(ValueError):
 _ISO_DATE_PREAMBLE = 'import datetime as _dt\n_ISO_DATE = re.compile(r"\\d{4}-\\d{2}-\\d{2}")\n_EPOCH = _dt.date(1970, 1, 1)\n'
 
 
-def read_delimited(path, delimiter, header_row=None, units_row=False):
+def read_delimited(path, delimiter, header_row=None, units_row=False, no_header=False):
     """文本表格 → `(表头, 数据行)`：UTF-8（可带 BOM）；全空行不算数据行；表头去首尾空白。`delimiter` 是 `,` / `\t` / `;` / `ws`（连续空白）；
     `header_row`（1 起的物理行号）不给 = 第一条非空记录是表头，给了 = 跳过它之前的说明行；`units_row` 真 = 表头后紧跟的单位行不是数据、切掉
     （读法全文在 `table_from_text`，Tavotto 读出来的是同一张表）。"""
     with open(path, newline="", encoding="utf-8-sig") as fh:
         text = fh.read()
-    header, rows, _lines = table_from_text(text, delimiter, header_row, units_row)
+    header, rows, _lines = table_from_text(text, delimiter, header_row, units_row, no_header)
     return header, rows
 
 
-def read_xlsx(path, sheet):
-    """XLSX 一张表 → `(表头, 数据行)`：读法就是内嵌的 `XlsxBook`（与 Tavotto 的 `xlsxread` 同一份源码）。"""
+def read_xlsx(path, sheet, header_row=None):
+    """XLSX 一张表 → `(表头, 数据行)`：读法就是内嵌的 `XlsxBook`（与 Tavotto 的 `xlsxread` 同一份源码）。`header_row`（工作表里的行号，1 起）不给 =
+    第一条非空行是表头，给了 = 跳过它之前的行（标题行）；Tavotto 只在真的跳过了行时才把它写进脚本。"""
     with XlsxBook(path) as book:  # noqa: F821 - 由内嵌的 xlsxread 源码提供
-        table = [r for r in book.read(sheet) if any(c.strip() for c in r)]
-    return fill_header([h.strip() for h in table[0]]), table[1:]
+        cells = book.read(sheet)
+        numbers = book.row_numbers  # 与 `cells` 逐项对应的工作表行号（全空行已丢掉）
+    table = [
+        r
+        for n, r in zip(numbers, cells)
+        if any(c.strip() for c in r) and (header_row is None or n >= header_row)
+    ]
+    header, body = _trim_tail(
+        fill_header([h.strip() for h in table[0]]), ((0, r) for r in table[1:])
+    )
+    return header, [r for _, r in body]
 
 
 def group_key(label):
@@ -421,7 +442,7 @@ def trend_data(header, rows, x, ys, group, facet, unit, x_is_date, err=None):
     panels, groups, series, epoints = [], [], {}, {}
     for r in rows:
         if x_is_date:
-            dv = parse_date(r[xi])
+            dv = parse_when(r[xi])
             xv = date_number(dv) if dv is not None else None
         else:
             kind, v = parse_cell(r[xi])
@@ -758,7 +779,7 @@ def reduce_trend(header, body, spec):
                 elif v > s[2]:
                     s[2] = v
         if x_is_date:
-            dv = parse_date(r[xi])
+            dv = parse_when(r[xi])
             xv = date_number(dv) if dv is not None else None
         else:
             kind, v = parse_cell(r[xi])
@@ -981,11 +1002,13 @@ def tick_rows(body, raw, progress):
         yield item
 
 
-def reduce_file(path, delimiter, header_row, units_row, codec, spec, progress=None):
+def reduce_file(
+    path, delimiter, header_row, units_row, codec, spec, progress=None, no_header=False, tags=None
+):
     """大表文件 → `(表头, 缩减后的行, 信息)`：流式读（`iter_table`，读法与小表同一份）+ 按 `spec["kind"]` 缩减。`codec` 是 Python 的 codec 名
     （由父进程按文件定下、以字面量写进脚本，脚本不探测）。`progress`：可选的 `f(已读字节)`，父进程用它报进度并在取消时抛异常。"""
     with open(path, "rb") as raw, io.TextIOWrapper(raw, encoding=codec, newline="") as fh:
-        header, body = iter_table(fh, delimiter, header_row, units_row)
+        header, body = iter_table(fh, delimiter, header_row, units_row, no_header, tags)
         if progress is not None:
             body = tick_rows(body, raw, progress)
         if spec["kind"] == "trend":
@@ -997,9 +1020,11 @@ def reduce_file(path, delimiter, header_row, units_row, codec, spec, progress=No
     return header, rows, info
 
 
-def read_reduced(path, delimiter, header_row, units_row, codec, spec):
+def read_reduced(path, delimiter, header_row, units_row, codec, spec, no_header=False, tags=None):
     """生成的脚本在大表上读表的那一句：`(表头, 缩减后的行)`；之后与小表同一份画图代码。"""
-    return reduce_file(path, delimiter, header_row, units_row, codec, spec)[:2]
+    return reduce_file(
+        path, delimiter, header_row, units_row, codec, spec, no_header=no_header, tags=tags
+    )[:2]
 
 
 def pick_fonts(latin, cjk):
@@ -1223,9 +1248,13 @@ def fit_fonts(fig, floor=None, step=0.5):
 
 RUNTIME_FUNCTIONS = (
     SemicolonCell,
+    NumberCell,
+    ColumnTagger,
+    apply_tags,
     NumCat,
     parse_cell,
     parse_date,
+    parse_when,
     date_number,
     iter_records,
     delimited_records,
@@ -1233,7 +1262,14 @@ RUNTIME_FUNCTIONS = (
     xvg_label,
     xvg_text,
     fill_header,
+    NamelessTailData,
+    nameless_tail,
+    cut_tail,
+    _trim_tail,
+    _tagged,
+    _tagged_table,
     iter_table,
+    tag_columns,
     table_from_text,
     read_delimited,
     read_xlsx,
@@ -1896,7 +1932,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"PALETTE = {list(PALETTE)!r}",
     ]
     if is_xlsx:
-        reader = "read_xlsx(DATA, SHEET)"
+        reader = _xlsx_reader_expr(entry, "DATA", "SHEET")
     else:
         reader = _reader_expr(entry, False)
     L += ["", "", "def main():"]
@@ -2054,7 +2090,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"LINESTYLES = {list(LINESTYLES)!r}",
     ]
     if is_xlsx:
-        reader = "read_xlsx(DATA, SHEET)"
+        reader = _xlsx_reader_expr(entry, "DATA", "SHEET")
     elif large:
         reader = _large_reader_expr(entry)
     else:
@@ -2303,6 +2339,12 @@ def _merged_reader_expr(merge) -> str:
     )
 
 
+def _xlsx_reader_expr(entry, data: str, sheet: str) -> str:
+    """XLSX 读表那一句：摘要记了「跳过标题行、表头在第几行」才多写这一项，其余（常态）与此前逐字相同。"""
+    row = entry.summary.header_row
+    return f"read_xlsx({data}, {sheet})" if row is None else f"read_xlsx({data}, {sheet}, {row!r})"
+
+
 def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET") -> str:
     """脚本里读表那一句。文本表格的读法（编码 + 分隔符 + 显式表头行）取自摘要（`read_text_table` 嗅探 / 调用方指定的结果），以字面量写进脚本——
     脚本不嗅探；Tavotto 算期望值读表用的是同一组参数（同一个 `table_from_text`），所以脚本读出来的和预览 / 资格判定读出来的是同一张表。
@@ -2311,12 +2353,14 @@ def _reader_expr(entry, is_xlsx: bool, data: str = "DATA", sheet: str = "SHEET")
     if merge is not None:
         return _merged_reader_expr(merge)
     if is_xlsx:
-        return f"read_xlsx({data}, {sheet})"
+        return _xlsx_reader_expr(entry, data, sheet)
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     args = [repr(delim)] + ([repr(s.header_row)] if s.header_row is not None else [])
     if s.units_row:  # 只在嗅探到单位行时多写这一项：其余脚本逐字不变
         args = [*args[:1], repr(s.header_row), "True"]
+    if s.no_header:  # 同上：只在嗅探到没有表头行时才多写
+        args = [args[0], repr(s.header_row), "False", "True"]
     codec = adf.script_codec(s.encoding)
     if entry.path.lower().endswith(adf.XVG_SUFFIXES):
         # `.xvg`：列名在 `@` 指令里，先经运行时函数 `xvg_text` 改写成带表头行的制表符文本（父进程读表是同一个函数），再按嗅探出的读法读
@@ -2524,9 +2568,10 @@ def _large_reader_expr(entry) -> str:
     s = entry.summary
     delim = s.delimiter or ("\t" if entry.path.lower().endswith((".tsv", ".tab")) else ",")
     codec = adf.large_codec(s.encoding)
-    return (
-        f"read_reduced(DATA, {delim!r}, {s.header_row!r}, {bool(s.units_row)!r}, {codec!r}, REDUCE)"
+    tail = (", no_header=True" if s.no_header else "") + (
+        f", tags={s.col_tags!r}" if s.col_tags else ""
     )
+    return f"read_reduced(DATA, {delim!r}, {s.header_row!r}, {bool(s.units_row)!r}, {codec!r}, REDUCE{tail})"
 
 
 _REDUCE_CACHE: dict = {}
@@ -2547,10 +2592,17 @@ def gap_audit(values: adf.DataSummary, spec: dict, ords) -> int:
         open(values.large.path, "rb") as raw,
         io.TextIOWrapper(raw, encoding=adf.large_codec(values.encoding), newline="") as fh,
     ):
-        _h, body = adf.iter_table(fh, values.delimiter or ",", values.header_row, values.units_row)
+        _h, body = adf.iter_table(
+            fh,
+            values.delimiter or ",",
+            values.header_row,
+            values.units_row,
+            values.no_header,
+            values.col_tags or None,
+        )
         for n, (_ln, r) in enumerate(body, start=1):
             if spec["date"]:
-                good = adf.parse_date(r[xi]) is not None
+                good = adf.parse_when(r[xi]) is not None
             else:
                 good = adf.parse_cell(r[xi])[0] == "numeric"
             key = tuple(r[k].strip() for k in kis)
@@ -2596,6 +2648,8 @@ def large_reduce(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> tu
             (lambda pos: adf.progress.tick("reduce", pos, total))
             if adf.progress.active()
             else None,
+            no_header=values.no_header,
+            tags=values.col_tags or None,
         )
         hit = (rows, info)
         with _REDUCE_LOCK:

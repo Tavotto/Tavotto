@@ -124,6 +124,13 @@ def bounded(
             cache.put(key, out)
         return out
 
+    def close() -> None:
+        # 线程池的 worker 是非 daemon 线程：不收的话要等池被 GC 才退（循环引用下可能到进程尾），
+        # 测试会话结束时 conftest 的「非 daemon 线程」门禁会把它判红（退出码 1、摘要全绿）。
+        # 不等在飞的那次量（`export` 不能取消，它自己跑完、结果丢弃），只保证空闲 worker 立刻退。
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    measure.close = close  # type: ignore[attr-defined]
     return measure
 
 

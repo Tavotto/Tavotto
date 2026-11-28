@@ -619,7 +619,10 @@ ERROR_MISSING_MAX = 50
 
 def _x_text(x: float, is_date: bool) -> str:
     if is_date:
-        return (adf._EPOCH + datetime.timedelta(days=round(x))).isoformat()
+        t = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=round(x * 86400))
+        if not (t.hour or t.minute or t.second):
+            return t.date().isoformat()
+        return t.isoformat(sep=" ", timespec="seconds" if t.second else "minutes")
     return f"{x:.12g}"
 
 
@@ -960,7 +963,7 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
         if x is not None:
             cell = applied[n][idx[x]]
             if values.per_column[x].kind == "date":
-                ok = adf.parse_date(cell) is not None
+                ok = adf.parse_when(cell) is not None
             else:
                 ok = adf.parse_cell(cell)[0] == "numeric"
             if not ok:

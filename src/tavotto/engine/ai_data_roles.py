@@ -171,7 +171,7 @@ def column_stats(values: adf.DataSummary, name: str) -> dict:
             continue
         cell = row[idx]
         if c.kind == "date":
-            d = adf.parse_date(cell.strip()) if cell.strip() else None
+            d = adf.parse_when(cell.strip()) if cell.strip() else None
             if d is not None:
                 dates.append(adf.date_number(d))
             continue
