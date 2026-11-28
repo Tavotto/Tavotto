@@ -125,6 +125,7 @@ function styleBase(src: PathObject, groupId: string | undefined): PathObject {
     name: _n,
     groupId: _g,
     groupPath: _gp,
+    groupNames: _gn,
     clipMask: _cm,
     layoutPinned: _l,
     fillGradient: _fg,
@@ -133,7 +134,10 @@ function styleBase(src: PathObject, groupId: string | undefined): PathObject {
   } = src
   // 嵌套组（ADR 0191）：留在原对象那个组里时整条链跟着走；剪切蒙版的身份不传给结果（结果是可见的新形状）
   const path = groupId && groupId === src.groupId && src.groupPath ? { groupPath: [...src.groupPath] } : {}
-  return { ...rest, ...(groupId ? { groupId, ...path } : {}) }
+  // 组名跟着留下的那条链走（只留链上的键，同 `setGroupPath`）
+  const chain = path.groupPath ?? (groupId ? [groupId] : [])
+  const kept = Object.entries(src.groupNames ?? {}).filter(([g]) => chain.includes(g))
+  return { ...rest, ...(groupId ? { groupId, ...path } : {}), ...(kept.length ? { groupNames: Object.fromEntries(kept) } : {}) }
 }
 const withGradients = (made: PathObject, src: PathObject): PathObject => ({
   ...made,

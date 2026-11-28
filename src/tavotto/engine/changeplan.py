@@ -75,6 +75,7 @@ ERROR_CODES = (
     "change_plan_not_editable",
     "change_plan_busy",
     "change_plan_unknown",
+    "change_plan_agent_settled",
     "change_plan_no_connection",
     "change_plan_unsupported_connection",
     "change_plan_model_auth",
@@ -158,6 +159,7 @@ MESSAGES = {
     "change_plan_not_editable": "这张图没有可改的脚本，不能出修改方案",
     "change_plan_busy": "这张图正在生成修改方案",
     "change_plan_unknown": "没有这份修改方案（可能已过期）",
+    "change_plan_agent_settled": "这份建议已经应用过了",
     "change_plan_no_connection": "还没有连接 AI",
     "change_plan_unsupported_connection": "当前连接暂不支持生成修改方案",
     "change_plan_model_auth": "AI 连接的密钥被拒绝",
@@ -2220,6 +2222,74 @@ def mark_applied(project: str, plan_id: str, applied: dict | None) -> bool:
         if plan is None:
             return False
         plan["applied"] = applied
+        path = plan_dir(project, plan_id) / "plan.json"
+        tmp = path.with_name(f".plan-{secrets.token_hex(4)}.json")
+        try:
+            tmp.write_text(
+                json.dumps(plan, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+            )
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return False
+        return True
+
+
+def agent_plan_settled(plan: dict) -> bool:
+    """这份 Agent 建议已有人落定：插件应用过（`applied`）或桌面应用过（`agent_applied`，ADR 0217 §五），先到先得。"""
+    return bool(plan.get("applied") or plan.get("agent_applied"))
+
+
+def list_agent_plans(project: str) -> list[dict]:
+    """这个项目里桌面该出卡的 Agent 方案（ADR 0217 §五）：绑定会话出的（带 `agent.panel`）、没过期、没落定；最新的在前，最多 `MAX_PLANS_PER_PROJECT` 份。
+    只给最小字段——卡片的内容再按 id 读完整方案。"""
+    try:
+        pdir = _project_dir(project)
+        children = [c for c in pdir.iterdir() if c.is_dir() and not c.is_symlink()]
+    except (OSError, ValueError):
+        return []
+    out: list[dict] = []
+    for c in children:
+        if not PLAN_ID.match(c.name):
+            continue
+        plan = load(project, c.name)
+        agent = plan.get("agent") if plan else None
+        if (
+            not plan
+            or not isinstance(agent, dict)
+            or not isinstance(agent.get("panel"), str)
+            or not agent["panel"]
+            or agent_plan_settled(plan)
+        ):
+            continue
+        todos = plan.get("todos")
+        out.append(
+            {
+                "id": plan["id"],
+                "target": (plan.get("base") or {}).get("target"),
+                "panel": agent["panel"],
+                "layout": agent.get("layout"),
+                "host": agent.get("host")
+                if agent.get("host") in ("codex", "claude_code")
+                else "other",
+                "created": agent.get("at") if isinstance(agent.get("at"), (int, float)) else 0,
+                "todos": len(todos) if isinstance(todos, list) else 0,
+            }
+        )
+    out.sort(key=lambda r: r["created"], reverse=True)
+    return out[:MAX_PLANS_PER_PROJECT]
+
+
+def settle_agent_plan(project: str, plan_id: str, field: str, record: dict) -> bool:
+    """先落定的赢：方案还没人应用过才写 `field`（`applied` / `agent_applied`）；已有人落定 / 方案不在 → False。整个读改写在同一把锁里。"""
+    with _LOCK:
+        plan = load(project, plan_id)
+        if plan is None or agent_plan_settled(plan):
+            return False
+        plan[field] = record
         path = plan_dir(project, plan_id) / "plan.json"
         tmp = path.with_name(f".plan-{secrets.token_hex(4)}.json")
         try:

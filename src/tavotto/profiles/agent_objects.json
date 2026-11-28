@@ -26,7 +26,7 @@
     "groupPath": { "kind": "group_path" },
     "rotationDeg": { "kind": "number", "min": -360, "max": 360 }
   },
-  "reserved": ["anchor", "glyph"],
+  "reserved": ["anchor", "glyph", "groupNames"],
   "types": {
     "text": {
       "text": { "kind": "text", "required": true },

@@ -160,3 +160,38 @@ def test_a_bad_select_is_an_error_not_select_all(client, project):  # noqa: F811
         },
     )["result"]
     assert raw["isError"] and raw["structuredContent"]["code"] == "bad_select"
+
+
+def test_group_and_rename_group_persist_names_over_real_stdio(client, project):  # noqa: F811
+    """插件读盘写入路径：`group {name}` 与 `rename_group` 真的把 `groupNames` 写进盘上排版，场景里读得到 `group_names`。"""
+    path = _with_objects(project)
+    target = {"project_path": str(project), "layout": "组图"}
+    scene = client.tool("tavotto_layout_scene", target)
+    common = {
+        **target,
+        "ops": [{"op": "group", "ids": ["a_user0001", "t_user0001"], "name": "标注"}],
+        "base_revision": scene["base_revision"],
+    }
+    plan = client.tool("tavotto_layout_edit_plan", common)
+    assert plan["ok"] and plan["failed"] == [], plan
+    done = client.tool("tavotto_layout_edit_apply", {**common, "echo_digest": plan["echo_digest"]})
+    assert done["written"]
+    now = _objs(path)
+    gid = now["a_user0001"]["groupId"]
+    assert now["a_user0001"]["groupNames"] == now["t_user0001"]["groupNames"] == {gid: "标注"}
+    scene2 = client.tool("tavotto_layout_scene", target)
+    assert {o["id"]: o.get("group_names") for o in scene2["vector_objects"]} == {
+        "a_user0001": {gid: "标注"},
+        "t_user0001": {gid: "标注"},
+    }
+    common2 = {
+        **target,
+        "ops": [{"op": "rename_group", "group": gid, "name": "新名字"}],
+        "base_revision": scene2["base_revision"],
+    }
+    plan2 = client.tool("tavotto_layout_edit_plan", common2)
+    assert plan2["ok"], plan2
+    client.tool("tavotto_layout_edit_apply", {**common2, "echo_digest": plan2["echo_digest"]})
+    now = _objs(path)
+    assert now["a_user0001"]["groupNames"] == now["t_user0001"]["groupNames"] == {gid: "新名字"}
+    assert now["o_panel001"].get("groupNames") is None  # 不在组里的子图不动
