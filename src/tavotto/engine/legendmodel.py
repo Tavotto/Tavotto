@@ -35,7 +35,6 @@ from matplotlib.transforms import Affine2D
 
 import pathgeom
 from axestraversal import ordered_axes
-from figcapture import captured_legend_handles
 
 
 class RebuildState(Protocol):
@@ -1551,7 +1550,17 @@ def bind_verified_sources(leg: Legend, candidates: list[tuple[str, object]]) -> 
     model = legend_entries(leg)
     if model is None:
         return
-    captured = captured_legend_handles(leg, [a for _g, a in candidates])
+    # 族模块不 import figcapture（`test_family_module_is_a_leaf`）：读函数从已加载的 figcapture 取——装捕获的那几处
+    # （worker / bridge_runner / browser）都早已加载它；没加载（未装捕获）= 一律不确证
+    pkg = __name__.rpartition(".")[0]  # worker 把引擎模块装在自己的包名下；平铺装载时没有包
+    reader = getattr(
+        sys.modules.get(f"{pkg}.figcapture" if pkg else "figcapture"),
+        "captured_legend_handles",
+        None,
+    )
+    if reader is None:
+        return
+    captured = reader(leg, [a for _g, a in candidates])
     if not isinstance(captured, tuple) or len(captured) != model.n:
         return
     for j, h in enumerate(captured):
