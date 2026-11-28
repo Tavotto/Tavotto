@@ -381,7 +381,7 @@ _GEOMETRY_IMPLEMENTATIONS = {
         "ggplot_apply_curve_styles",
     ),
     "ribbons": (
-        ("GeomRibbon",),
+        ("GeomRibbon", "GeomArea"),
         "ggplot_ribbon_geometry.R",
         "ggplot_apply_ribbon_styles",
     ),

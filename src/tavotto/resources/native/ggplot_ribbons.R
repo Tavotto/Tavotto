@@ -42,8 +42,11 @@ ggplot_ribbon_targets <- function(built, panels, layer_grobs, maps) {
     if (is.null(mapped) || "alpha" %in% mapped) next
     groups <- NULL
     if ("fill" %in% mapped) {
-      if (kind != "GeomRibbon" || !identical(class(layer$stat)[[1L]], "StatIdentity") ||
-          !identical(class(layer$position)[[1L]], "PositionIdentity")) next
+      stat <- class(layer$stat)[[1L]]
+      position <- class(layer$position)[[1L]]
+      if (kind == "GeomRibbon" && (stat != "StatIdentity" || position != "PositionIdentity")) next
+      if (kind == "GeomArea" && (!stat %in% c("StatAlign", "StatIdentity") ||
+                                !position %in% c("PositionStack", "PositionIdentity"))) next
       methods <- c("draw_layer", "draw_panel", "draw_group", "handle_na")
       if (!identical(as.list(layer$geom)[methods], as.list(ggplot2::GeomRibbon)[methods])) next
       groups <- ggplot_discrete_layer_groups(built, mapped, maps, index, "fill")

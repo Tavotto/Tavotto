@@ -28,8 +28,15 @@ ggplot_ribbon_members <- function(draw, layout, groups) {
     if (length(colours) != 1L || length(indices) < 2L) return(NA_integer_)
     selected <- rows[indices, c(along, ends), drop = FALSE]
     if (!all(vapply(selected, function(values) all(is.finite(values)), logical(1L)))) return(NA_integer_)
-    expected <- data.frame(first = c(selected[[along]], rev(selected[[along]])),
-                           second = c(selected[[ends[[1L]]]], rev(selected[[ends[[2L]]]])))
+    upper <- rep(TRUE, nrow(selected))
+    if ("align_padding" %in% names(rows)) {
+      padding <- rows$align_padding[indices]
+      if (!is.logical(padding)) return(NA_integer_)
+      # StatAlign's padding belongs to the lower edge of the native polygon.
+      upper <- is.na(padding) | !padding
+    }
+    expected <- data.frame(first = c(selected[[along]][upper], rev(selected[[along]])),
+                           second = c(selected[[ends[[1L]]]][upper], rev(selected[[ends[[2L]]]])))
     names(expected) <- c(along, across)
     projected <- layout$coord$transform(expected, layout$panel_params[[draw$panel_id]])
     polygons <- Filter(function(g) inherits(g, "polygon"), ggplot_ribbon_leaves(children[[i]]))

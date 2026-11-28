@@ -7506,20 +7506,25 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-hash.txt")
         assert status == 200 and restored["ok"] and script.read_bytes() == authored
 
 
-def test_native_r_mapped_ribbon_writeback_can_reveal_one_hidden_member(tmp_path):
+@pytest.mark.parametrize("geometry", ["ribbon", "area"])
+def test_native_r_mapped_ribbon_writeback_can_reveal_one_hidden_member(tmp_path, geometry):
     from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
     project = tmp_path / "Mapped ribbons"
     project.mkdir()
     script = project / "Ribbon.R"
+    area = geometry == "area"
+    align = 'd <- d[!(d$x == 3 & d$arm == "Target"), ]' if area else ""
+    mapping = "y = upper" if area else "ymin = lower, ymax = upper"
     script.write_text(
         f"""\
 d <- expand.grid(x = 1:5, arm = c("Baseline", "Target"), trial = c("Early", "Late"))
-d$lower <- d$x / 2 + 2 * as.integer(d$arm)
+{align}
+d$lower <- d$x / 2 + 2 * as.integer(d$arm) + 2 * (d$trial == "Late")
 d$upper <- d$lower + .9
-plot <- ggplot2::ggplot(d, ggplot2::aes(x, ymin = lower, ymax = upper, fill = arm)) +
-  ggplot2::geom_ribbon(alpha = .65, colour = NA) +
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, {mapping}, fill = arm)) +
+  ggplot2::geom_{geometry}(alpha = .65, colour = NA) +
   ggplot2::scale_fill_manual(values = c(Baseline = "#6C541E", Target = "#6C541E")) +
   ggplot2::facet_wrap(ggplot2::vars(trial))
 svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
