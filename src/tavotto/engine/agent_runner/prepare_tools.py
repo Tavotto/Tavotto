@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import codecs
+import contextlib
 import json
 import os
 import re
@@ -113,8 +114,14 @@ How to work:
    sha256 into the next append call), edit_file for corrections.
 3. run_python on a prefix first (sample_bytes), fix errors, then call check. check runs the script on the whole file
    and verifies the contract. When it passes and the script is complete, call finish with a short summary in the
-   language of the user's request (what the table contains, what was dropped and why). Failed checks let you fix
-   and retry; check and finish share a small number of calls.
+   language of the user's request (what the table contains, what was dropped and why) and with `plot`: which columns
+   of your output table answer the request (y, x, group; exact header names). Failed checks let you fix and retry;
+   check and finish share a small number of calls.
+
+What table to make: the one that answers the user's request. When the request does not say what to analyse, make the
+table a researcher would most likely plot from this kind of file, small enough to read: for a trajectory or a long
+log that is one row per frame / time step with the per-frame quantities (counts, means, extremes), not one row per
+atom or per raw record.
 """
 
 NEEDS_EXTRA = "Reply in the language of the user's request."
@@ -185,6 +192,9 @@ class PrepareHooks:
     #: 首条消息里的一行：解释器版本与 numpy / pandas 是否可导入（父进程探测，只有有 / 无与版本号）
     environment_note: str = ""
     extras: dict = field(default_factory=dict)
+    #: `finish` 通过之后把模型建议的画法（`{"x", "y", "group"}`，都是**输出表**的列名）交给父进程；父进程自己按输出表核、不合法的丢掉。
+    #: 没有 = 不收建议。不抛、没有返回值：建议收不收都不影响这次任务的结果
+    suggest: Callable[[dict], None] | None = None
 
 
 # --------------------------------------------------------------------------- 会话
@@ -547,7 +557,15 @@ class PrepareSession(ConvertSession):
         summary = args.get("summary", "")
         if not isinstance(summary, str):
             return _err("finish", call_id, "bad_arguments", "`summary` must be a string.")
-        return self._checked("finish", call_id, True, summary)
+        plot = args.get("plot")
+        if plot is not None and not isinstance(plot, dict):
+            return _err("finish", call_id, "bad_arguments", "`plot` must be an object.")
+        result = self._checked("finish", call_id, True, summary)
+        if result.completed and plot and self.hooks.suggest is not None:
+            # 建议只是给之后出图用的默认值：收不收、合不合法都不改变这次任务已经通过的事实
+            with contextlib.suppress(Exception):
+                self.hooks.suggest(dict(plot))
+        return result
 
 
 # --------------------------------------------------------------------------- 工具集
@@ -688,7 +706,24 @@ class DataPrepareToolset:
                 "finish",
                 "Run the same verification as check and, when it passes, end the session. Give a short summary in "
                 "the language of the user's request: what the table contains, what was dropped and why.",
-                _obj({"summary": {"type": "string"}}, []),
+                _obj(
+                    {
+                        "summary": {"type": "string"},
+                        "plot": {
+                            "type": "object",
+                            "description": "Optional. Which columns of YOUR OUTPUT TABLE to draw by default, using the "
+                            "exact header names you wrote: `y` = the measured column(s) (same unit; at most 8), `x` = the "
+                            "column for the horizontal axis (time, dose, position ...) or null, `group` = the column to "
+                            "colour / compare by or null. A suggestion only; the user can change it.",
+                            "properties": {
+                                "y": {"type": "array", "items": {"type": "string"}},
+                                "x": {"type": ["string", "null"]},
+                                "group": {"type": ["string", "null"]},
+                            },
+                        },
+                    },
+                    [],
+                ),
                 s.finish,
             ),
         ]

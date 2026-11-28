@@ -1,10 +1,12 @@
 import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
-import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, pendingConfirm, scriptPassable, todoChecked, todoQueued, todosOf, type PlanEntry } from '@/store/changePlanStore'
+import { backendCodeMsg, type ChangePlanBox, type ChangePlanChange, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
+import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, pendingConfirm, scriptPassable, todoChecked, todoQueued, todosOf, versionsOf, type PlanEntry, type PlanNote } from '@/store/changePlanStore'
 import { failedChecks, touchedCount } from '@/lib/vectorEdit'
-import type { ChangeLine } from '@/lib/vectorChanges'
+import type { ChangeLine, ChangeValue } from '@/lib/vectorChanges'
+import { optionLabel, propLabel } from '../inspector/roles/registry'
+import type { PlotStage } from './PlotSketch'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
 import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
@@ -49,8 +51,11 @@ export interface GroupView {
   fromNote: boolean
   /** 这一组里带着自动腾出的边距（`change.auto === 'room'`）：清单行的灰字里多说一句 */
   room?: boolean
-  /** 改动处的框，一处一个；`before` 是同一处在修改前的位置（按元素 gid 配对，没有 = 改前没有这一处） */
-  boxes: { after: PlanBox; before?: PlanBox }[]
+  /**
+   * 改动处的框，一处一个；`before` 是同一处在修改前的位置（按元素 gid 配对，没有 = 改前没有这一处）。
+   * `gid`：哪个元素（第 2 版起「修改前」换成上一版时按它取上一版里的位置）；`room`：这一处只是自动留边距挪了子图，悬停不画整块大框
+   */
+  boxes: { after: PlanBox; before?: PlanBox; gid?: string; room?: boolean }[]
 }
 
 export interface UnhandledView {
@@ -71,11 +76,145 @@ export const commentNumber = (e: Pick<PlanEntry, 'comments' | 'request'>, id?: s
 
 const clip = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
-export function groupViews(e: PlanEntry): GroupView[] {
+/** 元素 gid → 界面上的名字（取不到就不写名字，不露 gid） */
+export type LabelOf = (gid: string) => string | undefined
+
+/**
+ * `labelOf`：给了（弹窗里，按这张图的元素表）= 图内方案每组下面逐行列出改了什么（元素名 · 属性 前 → 后）；不给 = 不列（卡片摘要只要计数）。
+ */
+export function groupViews(e: PlanEntry, labelOf?: LabelOf): GroupView[] {
   const plan = e.plan
   if (!plan) return []
   // 答了「不改」的组整组不要：不进清单，它那条意见在没处理列表里（`unhandledViews`）
-  return plan.groups.flatMap((g: ChangePlanGroup, i) => (e.answers?.[g.key] === 'no' ? [] : [{ ...groupView(e, g, i), room: g.changes.some((c) => c.auto === 'room') }]))
+  return plan.groups.flatMap((g: ChangePlanGroup, i) => {
+    if (e.answers?.[g.key] === 'no') return []
+    const v = groupView(e, g, i)
+    const inFigure = e.kind !== 'vector' && e.kind !== 'layout' && g.kind !== 'script'
+    const lines = inFigure && labelOf ? changeLines(g.changes, labelOf) : undefined
+    return [{ ...v, room: g.changes.some((c) => c.auto === 'room'), ...(inFigure ? { boxes: v.boxes.map((b) => ({ ...b, room: !!b.gid && roomOnly(g, b.gid) })) } : {}), ...(lines?.length ? { lines } : {}) }]
+  })
+}
+
+/** 这个元素在这一组里只有自动留边距那一条改动（子图整体挪了一点）：不当成「改了这一处」画框 */
+const roomOnly = (g: ChangePlanGroup, gid: string): boolean => {
+  const own = g.changes.filter((c) => c.target_gid === gid)
+  return own.length > 0 && own.every((c) => c.auto === 'room')
+}
+
+/** 元素名里引号中的那段（曲线 / 图例项的系列名）；没有引号 = 不是按系列命名的元素 */
+const SERIES_RE = /^[^“”"‘’'「」]*[“"‘'「](.+?)[”"’'」]?$/
+const COLOR_FAMILY = new Set(['color', 'markerfacecolor', 'markeredgecolor'])
+/** 图例里的示意属性（handle_color / handle_marker …）与曲线上的同名属性算同一种 */
+const canonProp = (p: string) => p.replace(/^handle_/, '')
+
+interface LineDraft {
+  /** 同一属性、同一前后值的归并键（空 = 不参与归并） */
+  key: string
+  names: string[]
+  props: string[]
+  /** 曲线 / 图例项的系列短名 */
+  series?: string
+  line: ChangeLine
+}
+
+/** 一组属性名在界面上叫什么：只有一种就照它叫（图例示意属性按曲线上的叫法）；合并了颜色 / 填充 / 描边 / 示意线 = 「颜色」；其余按去掉示意前缀的名字 */
+const propText = (props: string[]): string => {
+  const canon = [...new Set(props.map(canonProp))]
+  if (canon.length > 1 && canon.every((p) => COLOR_FAMILY.has(p))) return propLabel('color')
+  return propLabel(canon[0])
+}
+
+const sigOf = (l: ChangeLine) => (l.after ? `${l.before?.text ?? ''}→${l.after.text}` : '')
+const hexTitle = (l: ChangeLine) => (l.after?.color ? `${l.before?.color ? `${l.before.text} → ` : ''}${l.after.text}` : '')
+
+/**
+ * 图内方案一组里的改动（与矢量方案同一种行），自动留边距那条不列（清单另说一句）。读起来要短：
+ * 同一条曲线的颜色 / 标记填充 / 标记描边 / 图例示意线（前后值都一样）合成一行「系列名 · 颜色」；
+ * 同一个属性、同一个前后值落在多个元素上（字体都换成 Times New Roman）合成一行带「N 处」，悬停列出是哪几处。
+ */
+export function changeLines(changes: readonly ChangePlanChange[], labelOf: LabelOf): ChangeLine[] {
+  const drafts: LineDraft[] = []
+  const bySeries = new Map<string, LineDraft>()
+  for (const c of changes) {
+    if (c.auto === 'room') continue
+    const name = labelOf(c.target_gid)
+    const after = changeValue(c.prop, c.after)
+    const before = after ? changeValue(c.prop, c.before) : undefined
+    const full = name ? cp('dialog.changeLine', { el: name, prop: propLabel(c.prop) }) : propLabel(c.prop)
+    const line: ChangeLine = { label: full, compact: true, ...(after ? { after } : {}), ...(after && before ? { before } : {}) }
+    const sig = sigOf(line)
+    const series = name ? SERIES_RE.exec(name)?.[1].trim() : undefined
+    const canon = canonProp(c.prop)
+    const fam = COLOR_FAMILY.has(canon) ? 'color' : canon
+    const draft: LineDraft = { key: sig ? `${fam}|${sig}` : '', names: [name ?? propLabel(c.prop)], props: [c.prop], line }
+    const mergeKey = series && sig ? `${series}|${fam}|${sig}` : ''
+    const hit = mergeKey ? bySeries.get(mergeKey) : undefined
+    if (hit) {
+      hit.props.push(c.prop)
+      hit.line.title = [hit.line.title, full].filter(Boolean).join('\n')
+      continue
+    }
+    line.title = [full, hexTitle(line)].filter(Boolean).join('\n')
+    if (series) {
+      draft.series = clip(series, 18)
+      draft.names = [draft.series]
+    }
+    if (mergeKey) bySeries.set(mergeKey, draft)
+    drafts.push(draft)
+  }
+  const out: ChangeLine[] = []
+  const done = new Set<LineDraft>()
+  const byKey = new Map<string, LineDraft[]>()
+  for (const d of drafts) if (d.key) byKey.set(d.key, [...(byKey.get(d.key) ?? []), d])
+  for (const d of drafts) {
+    if (done.has(d)) continue
+    const same = d.key ? (byKey.get(d.key) as LineDraft[]) : [d]
+    same.forEach((x) => done.add(x))
+    if (same.length > 1) {
+      const names = same.flatMap((x) => x.names)
+      const hex = hexTitle(d.line)
+      out.push({ label: propText(same.flatMap((x) => x.props)), compact: true, before: d.line.before, after: d.line.after, extra: cp('dialog.lineCount', { count: same.length }), title: [...names, hex].filter(Boolean).join('\n') })
+      continue
+    }
+    if (d.series) d.line.label = cp('dialog.changeLine', { el: d.series, prop: propText(d.props) })
+    out.push(d.line)
+  }
+  return out
+}
+const VAL_TEXT_PROPS = /text|label|title/i
+const round2 = (n: number) => String(Math.round(n * 100) / 100)
+const hex2 = (n: number) => Math.round(Math.min(1, Math.max(0, n)) * 255).toString(16).padStart(2, '0')
+
+/** 一个属性值的显示（manifest 的展示值，只给人看）：数字两位小数、颜色带色块、开关说开 / 关；认不出的结构不列值 */
+export function changeValue(prop: string, v: unknown): ChangeValue | undefined {
+  if (v === null || v === undefined) return { text: cp('vector.none') }
+  if (typeof v === 'boolean') return { text: cp(v ? 'vector.on' : 'vector.off') }
+  if (typeof v === 'number') return Number.isFinite(v) ? { text: round2(v) } : undefined
+  if (typeof v === 'string') {
+    const t = v.trim()
+    if (/^#[0-9a-f]{3,8}$/i.test(t)) return { text: t.toUpperCase(), color: t }
+    if (!t) return { text: cp('vector.none') }
+    // 标记形状说人话（方块 / 上三角 / 圆点…），与属性面板同一张表
+    if (/^(handle_)?marker$/.test(prop)) return { text: optionLabel('marker', t) }
+    return { text: VAL_TEXT_PROPS.test(prop) ? `「${clip(t, 16)}」` : clip(t, 16) }
+  }
+  if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'number' && Number.isFinite(x))) {
+    const ns = v as number[]
+    // RGB(A) 0–1 的颜色：画成色块
+    if (/colou?r/i.test(prop) && (ns.length === 3 || ns.length === 4) && ns.every((x) => x >= 0 && x <= 1)) {
+      const h = `#${ns.slice(0, 3).map(hex2).join('')}`.toUpperCase()
+      return { text: h, color: h }
+    }
+    if (ns.length === 2) return { text: `${round2(ns[0])} – ${round2(ns[1])}` }
+    if (ns.length <= 4) return { text: ns.map(round2).join(', ') }
+  }
+  return undefined
+}
+
+/** 生成中那幅小画走到哪一步：跟着三步清单正在做的那一步（卡片与弹窗同一套） */
+export function sketchStageOf(steps: TaskStep[] | null): PlotStage {
+  const active = steps?.find((x) => x.state === 'active')?.id
+  return active === 'before' || active === 'measure' ? 'read' : active === 'after' || active === 'plan' ? 'draw' : 'think'
 }
 
 function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
@@ -109,7 +248,7 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
         reviewers: [],
         commentNumbers: [],
         fromNote: false,
-        boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
+        boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined, gid: b.gid })),
       }
     }
     const before = new Map<string, ChangePlanBox>((g.boxes.before ?? []).map((b) => [b.gid, b]))
@@ -120,7 +259,7 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
       reviewers: c ? [c.author] : [],
       commentNumbers: n ? [n] : [],
       fromNote,
-      boxes: after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
+      boxes: after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined, gid: b.gid })),
     }
   }
 }
@@ -154,6 +293,40 @@ function unhandledViewsOf(e: PlanEntry): UnhandledView[] {
 }
 
 export const unhandledReason = (r: ChangePlanUnhandledReason): string => cp(`unhandled.${r}`)
+
+/** 这一版按批注改的结果里的一条批注：改成了（它那一组的 key）或没改成（一句原因） */
+export interface NoteResult {
+  id: string
+  /** 批注编号（1 起，与批注视图里的编号一致） */
+  n: number
+  text: string
+  done: boolean
+  /** 改成了：方案里按这条批注改的那一组 */
+  groupKey?: string
+  /** 没改成：一句话原因（闭集短码的文案） */
+  reason?: string
+}
+
+/**
+ * 正在看的这一版是按哪几条批注重改出来的、各自结果如何（弹窗对比视图右栏顶部「这版按批注改的」那块）。
+ * 图内方案能逐条对上：后端把批注原样当意见传（id 不变），按批注改的组 `origin: 'note'` 且 `comment_id` = 批注 id，
+ * 没改的在 `unhandled[].comment_id`（`changeplan._settle_unhandled` 保证每条都有去处）；答了「不改」的组按没改成算。
+ * 脚本方案对不上：所有批注并成一条指令交给改脚本 Agent，只回一份脚本，`rows` = null（界面只说一句「按 N 条批注改了脚本」）。
+ * 不是重改出的版本（第 1 版、「再加一条」出的版本）= null。
+ */
+export function noteResults(e: PlanEntry): { notes: PlanNote[]; rows: NoteResult[] | null } | null {
+  const plan = e.plan
+  const notes = versionsOf(e).find((v) => v.planId === e.planId)?.fromNotes
+  if (!plan || !notes?.length) return null
+  if (plan.kind === 'script') return { notes, rows: null }
+  const why = new Map(unhandledViews(e).map((u) => [u.id, u.reason]))
+  const rows = notes.map((n, i): NoteResult => {
+    const g = plan.groups.find((x) => x.origin === 'note' && x.comment_id === n.id && e.answers?.[x.key] !== 'no')
+    if (g) return { id: n.id, n: i + 1, text: n.text, done: true, groupKey: g.key }
+    return { id: n.id, n: i + 1, text: n.text, done: false, reason: why.get(n.id) || unhandledReason('not_addressed') }
+  })
+  return { notes, rows }
+}
 
 /** 后端 `vectoredit.ERROR_CODES` 的闭集：每个码一句人话（后端那句是写给模型 / Agent 看的，不上界面） */
 const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'bad_value', 'out_of_range', 'duplicate_target', 'kernel_unavailable', 'too_many_steps', 'needs_measurement', 'needs_confirmation', 'provenance_data', 'bad_item', 'duplicate_name', 'unknown_ref', 'anchor_unresolvable', 'panel_transformed', 'bad_point'] as const
@@ -348,11 +521,13 @@ export const markNoteHintSeen = (): void => {
 }
 
 /**
- * 这张卡能不能「批注重改」：只有审阅 / 助手来源的**图内**方案（`ChangePlanDialog` 据此显示「对比 / 批注」切换、「写批注」与悬停写批注）。
- * 一键排版的整版方案（`quick_layout`）没有逐元素的改动可批注，脚本修改的卡（二期）是脚本副本——都不能重改。PR 6 的脚本卡复用这一个判断。
+ * 这张卡能不能「批注重改」：审阅 / 助手来源的图内方案与**脚本方案**（`ChangePlanDialog` 据此显示批注切换、「写批注」与悬停写批注）。
+ * 脚本方案（含审阅意见转出的脚本卡）重改 = 改脚本 Agent 以上一版候选为起点接着改，基线仍是原脚本（ADR 0206 修订 2026-11-28）。
+ * 一键排版的整版方案（`quick_layout`）与矢量编辑方案没有逐元素的改动可批注，不能重改。
  */
-export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean {
-  if (e.kind === 'layout' || e.kind === 'vector' || e.plan?.kind === 'script') return false
+export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan' | 'agent'>): boolean {
+  // Agent 来源的建议是插件那边的方案：窗口里不续改（续改会换成另一份方案，Agent 那边读不到）；脚本方案可以批注重改（ADR 0206 修订 2026-11-28）
+  if (e.agent || e.kind === 'layout' || e.kind === 'vector') return false
   const from = e.from ?? 'review'
   return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
 }
@@ -396,7 +571,7 @@ export type TodoPhase = 'choose' | 'running' | 'asking' | 'done'
  * - `done`：至少有一类已经应用（图内那次 commit 还在、或有脚本已应用），且没有在做 / 排着的。
  * `scripts`：已经开始做的脚本待办的方案卡（按开始顺序）；`figureApplied`：图内待办此刻是已应用（以文档为准，⌘Z 撤回后不算）。
  */
-export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status'>, scripts: PlanEntry[], figureApplied: boolean): TodoPhase {
+export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status' | 'agent'>, scripts: PlanEntry[], figureApplied: boolean): TodoPhase {
   const run = e.todoRun
   const cur = scripts.at(-1)
   // 第一条脚本待办还在发出去的路上（还没有方案条目）才算在做；开始过、但那张脚本卡已经被收起 / 收掉了（条目不在了）= 没改，不算在做——
@@ -410,7 +585,7 @@ export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status'>, 
   // 上一条应用了 / 答了「先不改」、后面还排着没跳过的：马上接着做下一条
   // 上一条的卡被收起了（条目不在）= 没成，与 `advanceTodos` 一样停在这里，不再假装在做
   if (run && cur && scriptPassable(cur) && todoQueued(e).length > 0) return 'running'
-  if (figureApplied || scripts.some((s) => s.status === 'applied')) return 'done'
+  if (figureApplied || scripts.some((s) => s.status === 'applied') || !!e.agent?.reported) return 'done'
   return 'choose'
 }
 

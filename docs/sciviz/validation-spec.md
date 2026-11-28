@@ -16,6 +16,7 @@
 | `palette-line-markers` | visual | G-024 |
 | `log-axis-nonpositive` | encoding | G-001（V-001） |
 | `bar-baseline-truncated` | encoding | G-002（V-002） |
+| `legend-style-mismatch` | encoding | —（图例与它代表的系列样式不一致；规格全文在 `docs/rules/backend/profiles-and-preflight.md`） |
 
 ### V-001 对数轴上有画不出来的数据
 

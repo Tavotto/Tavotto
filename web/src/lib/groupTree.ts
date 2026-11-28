@@ -1,3 +1,4 @@
+import table from '@agentObjects'
 import type { CanvasObject } from '@/types/document'
 
 /**
@@ -29,16 +30,69 @@ export function groupPathOf(o: Pick<CanvasObject, 'groupId' | 'groupPath'>): str
   return [g]
 }
 
-/** 把组链写回对象（就地改，可用于 Immer 草稿）：空 = 不在任何组；一层只写 groupId，两层及以上才写 groupPath */
+/**
+ * 把组链写回对象（就地改，可用于 Immer 草稿）：空 = 不在任何组；一层只写 groupId，两层及以上才写 groupPath。
+ * `groupNames` 里不在新链上的键一并去掉（拆掉的组、摘出去的层，名字跟着走；后端 `vectoredit._State.set_path` 同）。
+ */
 export function setGroupPath(o: CanvasObject, path: readonly string[]): void {
   if (!path.length) {
     delete o.groupId
     delete o.groupPath
+    delete o.groupNames
     return
   }
   o.groupId = path[path.length - 1]
   if (path.length >= 2) o.groupPath = [...path]
   else delete o.groupPath
+  const names = o.groupNames
+  if (names) {
+    const kept = Object.entries(names).filter(([g]) => path.includes(g))
+    if (!kept.length) delete o.groupNames
+    else if (kept.length !== Object.keys(names).length) o.groupNames = Object.fromEntries(kept)
+  }
+}
+
+/** 组名最长字数：直接读字段表 `profiles/agent_objects.json` 的 `budgets.max_name_chars`（后端 `rename_group` / `group` 也按它拦），不手抄 */
+export const GROUP_NAME_MAX_CHARS: number = table.budgets.max_name_chars
+
+const nameOk = (n: unknown): n is string => typeof n === 'string' && n.trim().length > 0
+
+/**
+ * 组 `gid` 的名字：按 z 序（数组下标自底向上）扫它的成员，取**第一个**在自己 `groupNames[gid]` 里给了非空名字的；没有 = ''。
+ * 后端 `agentobjects.group_name_of` 与导出（`exportPayload`）都是这一条读法，两侧对拍 `tests/golden/group_names_vectors.json`。
+ * 不在对象自己组链上的键一律忽略；读时不改写文档，同组成员名字不一致就按这条定一个（下一次重命名统一写）。
+ */
+export function groupNameOf(objects: readonly CanvasObject[], gid: string): string {
+  for (const o of objects) {
+    if (!groupPathOf(o).includes(gid)) continue
+    const n = o.groupNames?.[gid]
+    if (nameOk(n)) return n
+  }
+  return ''
+}
+
+/** 全部有名字的组 `{组 id → 名字}`，一趟扫完（与逐个 `groupNameOf` 同一条读法；图层树、导出载荷用，避免每个组各扫一遍） */
+export function groupNameMap(objects: readonly CanvasObject[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const o of objects) {
+    const names = o.groupNames
+    if (!names) continue
+    for (const g of groupPathOf(o)) {
+      const n = names[g]
+      if (!out.has(g) && nameOk(n)) out.set(g, n)
+    }
+  }
+  return out
+}
+
+/** 新对象（派生自 `from`，同在 `prefix` 那几层组里）带上源对象在这几层上的组名；已有的不覆盖 */
+export function inheritGroupNames(from: CanvasObject, to: CanvasObject): void {
+  const src = from.groupNames
+  if (!src) return
+  const chain = groupPathOf(to)
+  const next = { ...(to.groupNames ?? {}) }
+  for (const g of chain) if (nameOk(src[g]) && !nameOk(next[g])) next[g] = src[g]
+  if (Object.keys(next).length) to.groupNames = next
 }
 
 /** 组单元的键：`g:<组 id>`；对象单元的键就是对象 id */
@@ -163,7 +217,7 @@ export function gatherContiguous<T extends { id: string }>(objects: readonly T[]
 /** 图层树的节点：对象，或组（子节点同样按上 → 下） */
 export type LayerNode =
   | { kind: 'object'; obj: CanvasObject }
-  | { kind: 'group'; gid: string; children: LayerNode[]; mask: CanvasObject | null; count: number }
+  | { kind: 'group'; gid: string; children: LayerNode[]; mask: CanvasObject | null; count: number; name: string }
 
 /**
  * 图层树（顶层在最上面）：组出现在它最上面那个成员的位置，成员挂在下面，嵌套组逐层挂。
@@ -172,6 +226,7 @@ export type LayerNode =
 export function layerTree(objects: readonly CanvasObject[]): LayerNode[] {
   // 暂时不裁（`clipOff`）的剪切组仍标成剪切组，蒙版行仍是「剪切路径」
   const masks = groupMasks(objects, { includeOff: true })
+  const names = groupNameMap(objects)
   const root: LayerNode[] = []
   const nodes = new Map<string, Extract<LayerNode, { kind: 'group' }>>()
   for (let i = objects.length - 1; i >= 0; i--) {
@@ -182,7 +237,7 @@ export function layerTree(objects: readonly CanvasObject[]): LayerNode[] {
       const key = path.slice(0, k + 1).join('\u0000')
       let g = nodes.get(key)
       if (!g) {
-        g = { kind: 'group', gid: path[k], children: [], mask: masks.get(path[k]) ?? null, count: 0 }
+        g = { kind: 'group', gid: path[k], children: [], mask: masks.get(path[k]) ?? null, count: 0, name: names.get(path[k]) ?? '' }
         nodes.set(key, g)
         list.push(g)
       }
@@ -201,5 +256,16 @@ export function layerTree(objects: readonly CanvasObject[]): LayerNode[] {
 export function remapGroupPath(copy: CanvasObject, fresh: (oldGid: string, index: number) => string): void {
   const p = groupPathOf(copy)
   if (!p.length) return
-  setGroupPath(copy, p.map((g, i) => fresh(g, i)))
+  const names = copy.groupNames
+  const next = p.map((g, i) => fresh(g, i))
+  setGroupPath(copy, next)
+  if (names) {
+    // 名字的键跟着换成新组 id（不在链上的旧键丢掉）
+    const moved: Record<string, string> = {}
+    p.forEach((g, i) => {
+      if (nameOk(names[g])) moved[next[i]] = names[g]
+    })
+    if (Object.keys(moved).length) copy.groupNames = moved
+    else delete copy.groupNames
+  }
 }

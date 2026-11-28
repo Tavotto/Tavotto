@@ -19,7 +19,9 @@
 
 防护（解压缩包是整条链里唯一吃不可信二进制的地方）：成员数上限、**声明**的解压后总大小上限、读取时按实际字节数再卡一次
 （声明会撒谎）、成员重名 / 加密 / 路径穿越一律拒绝；XML 里出现 `DOCTYPE` / `ENTITY`（外部实体、十亿笑声的前提）直接
-拒绝，且只认 UTF-8（UTF-16 会绕过按字节的扫描）；`.xls` / `.xlsm` / `.xlsb` 明确拒绝（`data_excel_unsupported`）。
+拒绝，且只认 UTF-8（UTF-16 会绕过按字节的扫描）；`.xls` / `.xlsb` 明确拒绝（`data_excel_unsupported`）。
+`.xlsm`（带宏的工作簿）与 `.xlsx` 是同一种 zip + XML，只多一个 `xl/vbaProject.bin` 成员：这里只按名字读工作表与共享字符串，
+那个成员从不打开、更不执行，所以按 `.xlsx` 同一条路读（后缀的归类在 `ai_data_figure.XLSX_SUFFIXES`），防护一条不少。
 """
 
 from __future__ import annotations
@@ -57,7 +59,7 @@ ERROR_CODES = (
     "data_unreadable",
 )
 
-LEGACY_SUFFIXES = (".xls", ".xlsm", ".xlsb")
+LEGACY_SUFFIXES = (".xls", ".xlsb")
 
 
 class XlsxError(ValueError):

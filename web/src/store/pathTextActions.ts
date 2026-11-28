@@ -1,6 +1,6 @@
 import { msg, t, type UiMessage } from '@/i18n'
 import { toPathObject } from '@/lib/convertToPath'
-import { groupPathOf, setGroupPath } from '@/lib/groupTree'
+import { groupPathOf, inheritGroupNames, setGroupPath } from '@/lib/groupTree'
 import { newId } from '@/lib/id'
 import { arcPathOf, nearestOffset, type XY } from '@/lib/pathText'
 import { canvasTextDefaults } from '@/lib/typography'
@@ -89,6 +89,7 @@ export function createPathText(src: CanvasObject, offset = 0): string | null {
     lineId: src.id,
   }
   setGroupPath(obj, [...prefix, gid])
+  inheritGroupNames(src, obj) // 新对象接着带源对象在外层组上的名字
   useDocumentStore.getState().commit(hist('addPathText'), (doc) => {
     const at = doc.objects.findIndex((o) => o.id === src.id)
     if (at < 0) return

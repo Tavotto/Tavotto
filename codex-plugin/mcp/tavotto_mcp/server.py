@@ -2416,6 +2416,7 @@ _SUGGEST_REASONS = {
     "hides_data": "会藏掉数据（坐标范围比数据窄）",
     "size_locked": "用户没要求改尺寸",
     "dense_curve": "连续曲线逐点加标记会糊成一串",
+    "render_warning": "渲染时会出问题（写不进去），这处没改",
     "unknown_element": "图里没有这个元素",
     "not_editable": "这个属性在图内改不了",
     "bad_value": "值不合法",

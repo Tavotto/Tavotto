@@ -6,7 +6,7 @@ import { adoptionGuardOf } from '@/lib/artifactValidation'
 import { engineTransport } from '@/lib/engineTransport'
 import { useAssetStore } from '@/store/assetStore'
 import { applyGroups, toOverrides, type PlanSource } from '@/lib/changePlanApply'
-import { enginePreviewPngSnapshot, type Manifest } from '@/lib/api'
+import { enginePreviewPngSnapshot, fetchChangePlanManifest, type Manifest } from '@/lib/api'
 import { useChangePlanStore, sourceOf, isCanvasPlan, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -134,8 +134,11 @@ export function useSelectionPreview(entry: PlanEntry | undefined, active: boolea
 const manifestCache = new Map<string, Manifest>()
 
 /**
- * 这一版「修改后」的元素表（批注点选的来源）：用全量候选（`candidate_patches`）经状态中立的出图取回 manifest，按方案 id 缓存；
- * `enabled` 才取（高级版里第一次把鼠标移到图上 / 进入批注模式时），取不到 = null（悬停点选就不出，批注仍可框选 / 整体）。
+ * 这一版「修改后」的元素表（批注点选的来源），按方案 id 缓存；`enabled` 才取（高级版里第一次把鼠标移到图上 / 进入批注模式时），
+ * 取不到 = null（悬停点选就不出，批注仍可框选 / 整体）。
+ * - 图内方案：「修改后」= 当前文件 + 全量候选（`candidate_patches`），经状态中立的出图取回 manifest；
+ * - 脚本方案：「修改后」是候选脚本重新出的图，不是当前文件 + 补丁——取后端随方案存的那一份（`plan.preview.manifest`，与 `after.png` 同一次渲染）；
+ *   旧方案没存 = null。
  */
 export function usePlanManifest(entry: PlanEntry | undefined, enabled: boolean): Manifest | null {
   const plan = entry?.plan
@@ -151,12 +154,17 @@ export function usePlanManifest(entry: PlanEntry | undefined, enabled: boolean):
       return
     }
     const ctrl = new AbortController()
-    enginePreviewPngSnapshot(fileId, toOverrides(plan.candidate_patches), 1600, ctrl.signal, {}, pj)
-      .then((r) => {
+    const scriptManifest = plan.kind === 'script' ? plan.preview.manifest : undefined
+    if (plan.kind === 'script' && !scriptManifest) return
+    const req = scriptManifest
+      ? fetchChangePlanManifest(scriptManifest, pj, ctrl.signal)
+      : enginePreviewPngSnapshot(fileId, toOverrides(plan.candidate_patches), 1600, ctrl.signal, {}, pj).then((r) => r.manifest)
+    req
+      .then((manifest) => {
         if (ctrl.signal.aborted) return
         if (manifestCache.size >= 16) manifestCache.delete(manifestCache.keys().next().value as string)
-        manifestCache.set(id, r.manifest)
-        setGot({ id, manifest: r.manifest })
+        manifestCache.set(id, manifest)
+        setGot({ id, manifest })
       })
       .catch(() => undefined)
     return () => ctrl.abort()

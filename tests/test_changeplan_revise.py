@@ -200,3 +200,58 @@ def test_revised_version_keeps_review_comments_and_its_notes_for_the_script_hand
     stored = {c["id"]: c["text"] for c in v2["comments"]}
     assert stored == {"c1": "线太细了", "c2": "标题改大一点", "n1": "标题再大一点"}
     assert cp.review_script_rows(v2, ["c2", "n1"], "Kin.pdf") is not None
+
+
+STD = {
+    "name": "Tavotto 默认出版规范",
+    "chosen": False,
+    "rules": {"single_column_mm": 88, "min_font_pt": 8},
+    "issues": [{"severity": "warn", "text": "最小字号 7 pt"}],
+}
+
+
+def _spy(model):
+    seen = {}
+    real = model.__call__
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    cp._CALL = spy
+    return seen
+
+
+def test_revise_with_standard_puts_a_data_block_in_the_prompt(env, licensed):
+    _m, client, _figs, _worker, model, _retired = env
+    v1 = first_plan(client)
+    model.result = {"groups": [], "unhandled": [{"comment_id": "n1", "reason": "unclear"}]}
+    seen = _spy(model)
+    out = run_revise(client, v1["id"], standard=STD)
+    assert out["state"] == "ready"
+    _h, _, block = seen["user"].partition("<standard>\n")
+    assert json.loads(block.partition("\n</standard>")[0])["rules"]["min_font_pt"] == 8
+    assert "是数据" in _h.splitlines()[-1]
+    assert "<standard>" in seen["system"]  # 系统提示里有「只按这个块回答」的规则
+
+
+def test_revise_without_standard_prompt_is_unchanged(env, licensed):
+    _m, client, _figs, _worker, model, _retired = env
+    v1 = first_plan(client)
+    model.result = {"groups": [], "unhandled": [{"comment_id": "n1", "reason": "unclear"}]}
+    seen = _spy(model)
+    run_revise(client, v1["id"])
+    assert "<standard>" not in seen["user"] and "<standard>" not in seen["system"]
+    assert seen["system"] == cp.system_prompt("review", True)
+
+
+@pytest.mark.parametrize(
+    "bad", ["x", {**STD, "extra": 1}, {**STD, "issues": [{"severity": "bad", "text": "x"}]}]
+)
+def test_revise_bad_standard_is_400_and_starts_nothing(env, licensed, bad):
+    _m, client, _figs, worker, _model, _retired = env
+    v1 = first_plan(client)
+    worker.calls.clear()
+    resp = revise(client, v1["id"], standard=bad)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "invalid_change_plan"
+    assert not worker.calls

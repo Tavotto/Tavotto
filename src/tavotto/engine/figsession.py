@@ -876,10 +876,11 @@ def _svg_pair_owned(method, depth=0, cache=None) -> bool:
         ):
             return True
         # Tavotto 自己装的 `FigureBase.colorbar` 观察包装（`figcapture.install_colorbar_capture`）：`@wraps` 会把
-        # `__module__` / `__qualname__` 抄成 matplotlib 的，所以按代码出处认，并核它闭包里的原方法
+        # `__module__` / `__qualname__` 抄成 matplotlib 的，所以按代码出处认，并核它闭包里的原方法。
+        # `Legend._init_legend_box` 的句柄观察包装（`figcapture.install_legend_capture`）同理
         if (
             method.__globals__ is vars(figcapture)
-            and method.__code__.co_name == "colorbar"
+            and method.__code__.co_name in ("colorbar", "init_legend_box")
             and "original" in method.__code__.co_freevars
         ):
             cells = dict(zip(method.__code__.co_freevars, method.__closure__ or ()))

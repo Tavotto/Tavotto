@@ -343,17 +343,15 @@ describe('整条指令都要改脚本', () => {
 describe('聊天 / 提问（整条都是 out_of_scope）', () => {
   const chat = plan({ groups: [], candidate_patches: BASE, unhandled: [{ comment_id: 'a1', reason: 'out_of_scope' }] })
 
-  it('不出失败卡：原话交给普通助手对话（不走脚本方案、不加交接句），卡撤掉、输入框草稿放掉', async () => {
+  it('不出失败卡：原话交给普通助手对话（不走脚本方案、不加交接句），卡撤掉', async () => {
     getChangePlan.mockResolvedValue(ready(chat, { code: 'change_plan_empty' }))
-    const settled = vi.fn()
-    const key = (await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation }, settled)) as string
+    const key = (await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation })) as string
     await tick()
     expect(start).toHaveBeenCalledOnce()
     expect(start.mock.calls[0][0]).toMatchObject({ prompt: FALLBACK.prompt, fileId: 'f_p1', panelId: 'p1', script: 'fig.py', chat: true })
     expect(createChangePlan.mock.calls.filter(([b]) => (b as { mode?: string }).mode === 'script')).toHaveLength(0)
     expect(cps().entries[key]).toBeUndefined()
     expect(cps().order).not.toContain(key)
-    expect(settled).toHaveBeenCalledOnce()
   })
 
   it('发不出去（没有可用 Agent）：留失败卡，指令不丢', async () => {
@@ -553,33 +551,5 @@ describe('改脚本做剩下的：把图内已改的部分写进指令', () => {
     await ask()
     await tick()
     expect(start.mock.calls[0][0].prompt).toBe(FALLBACK.prompt)
-  })
-})
-
-describe('草稿与输入框留到方案落定', () => {
-  it('onSettle：生成中不调；落定（出卡）时调一次且只一次', async () => {
-    const settle = vi.fn()
-    getChangePlan.mockResolvedValueOnce({ plan_id: 'p1', state: 'running', phase: 'model' }).mockResolvedValue(ready(plan()))
-    await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, FALLBACK, settle)
-    expect(settle).not.toHaveBeenCalled()
-    await tick(1300)
-    expect(settle).not.toHaveBeenCalled()
-    await tick(1300)
-    expect(settle).toHaveBeenCalledOnce()
-    await tick(3000)
-    expect(settle).toHaveBeenCalledOnce()
-  })
-
-  it('失败也算落定；同步被拒落回旧路径时不调（旧路径的账本自己清草稿）', async () => {
-    const settle = vi.fn()
-    getChangePlan.mockResolvedValue({ plan_id: 'p1', state: 'failed', code: 'change_plan_model_failed' })
-    await cps().requestFromAssistant('p1', { instruction: 'x' }, FALLBACK, settle)
-    await tick()
-    expect(settle).toHaveBeenCalledOnce()
-    cps().clear()
-    const settle2 = vi.fn()
-    createChangePlan.mockRejectedValue(new EngineError('x', '', 'change_plan_no_connection', ''))
-    expect(await cps().requestFromAssistant('p1', { instruction: 'x' }, FALLBACK, settle2)).toMatchObject({ kind: 'fallthrough' })
-    expect(settle2).not.toHaveBeenCalled()
   })
 })

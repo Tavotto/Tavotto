@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "issues": [
+    {
+      "id": "selftest-guard-blocks-own-output",
+      "match": {
+        "error_code": "dependency_worker_selftest_failed",
+        "selftest_stage": "error_reply",
+        "worker_code": "safe_file_operation_blocked",
+        "os": "windows",
+        "versions": {"max": "0.21.3"}
+      },
+      "summary_zh": "这是 Tavotto 0.21.3 及更早版本在 Windows 上已知的问题：环境自检时，写入保护把自检自己的输出拦下了，并不是你的环境或脚本有错。",
+      "summary_en": "Known issue in Tavotto 0.21.3 and earlier on Windows: during the environment self-check the write guard blocks the check's own output. Neither your environment nor your script is at fault.",
+      "fixed_in": "1.0.0",
+      "workaround": {
+        "tools": ["change_python"],
+        "user_steps_zh": "换用你自己已装好所需包的 Python：在环境设置里点「换用我的 Python」，选好后重新运行。",
+        "user_steps_en": "Use a Python of your own that already has the packages you need: choose \"Use my own Python\" in the environment settings, pick it, then run again."
+      }
+    }
+  ]
+}

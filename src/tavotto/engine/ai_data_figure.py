@@ -389,7 +389,8 @@ TEXT_SUFFIXES = (".txt", ".dat", ".asc", ".prn", ".xy")
 XVG_SUFFIXES = (".xvg",)
 #: JSON Lines（每行一个扁平对象）：`jsonl_text` 把它改写成带表头行的 CSV 文本再走同一条读表流水（与 `.xvg` 同一个办法）
 JSONL_SUFFIXES = (".jsonl", ".ndjson")
-XLSX_SUFFIXES = (".xlsx",)
+#: `.xlsm` = 带宏的工作簿：表格数据与 `.xlsx` 同一种格式，读单元格不碰宏（见 `xlsxread` 模块说明）
+XLSX_SUFFIXES = (".xlsx", ".xlsm")
 TABLE_SUFFIXES = (
     CSV_SUFFIXES + TSV_SUFFIXES + TEXT_SUFFIXES + XVG_SUFFIXES + JSONL_SUFFIXES + XLSX_SUFFIXES
 )
@@ -1814,7 +1815,7 @@ def inspect_data_source(
     allow_large: bool = False,
 ) -> DataSummary:
     """读一份表的受控摘要。后缀 `.tsv` / `.tab` 按制表符分隔、`.xlsx` 读 `sheet`（表名 / 序号 0 起 / `None` = 第一张可见表）、
-    `.xls` / `.xlsm` / `.xlsb` 拒绝（`data_excel_unsupported`）；**其余一律按 CSV 读**（v1 行为不变：后缀的白名单由调用方
+    `.xls` / `.xlsb` 拒绝（`data_excel_unsupported`）；**其余一律按 CSV 读**（v1 行为不变：后缀的白名单由调用方
     管，如 `ai_data_task` 的 `data_not_csv`）。UTF-8 / UTF-8 BOM。调用方负责路径在项目内（`contained_path`）。
 
     `allow_large`：认大表（`read_text_table` 的流式读，摘要不带行数据，见 `DataSummary.large`）的调用方才传；不传时大表抛 `data_too_large`。
@@ -2498,7 +2499,7 @@ def profile_folder(root: str | Path, header_rows: dict[str, int] | None = None) 
     文本格式（含 `.txt` / `.dat` / `.asc`）一律经 `read_text_table`；单元格规则认千分位。
 
     遍历规则就是 `discover.walk_files`（与 `/api/ai/data-files` 同一份：隐藏 / `PRUNE_DIRS` 剪枝、不跟随链接）；按相对
-    POSIX 路径排序，XLSX 内按工作簿里的表顺序（隐藏表也列，`hidden=True`）。`.xls` / `.xlsm` / `.xlsb` 进 `skipped`
+    POSIX 路径排序，XLSX 内按工作簿里的表顺序（隐藏表也列，`hidden=True`）。`.xls` / `.xlsb` 进 `skipped`
     （`data_excel_unsupported`）；Excel 的锁文件 `~$*` 不是数据，不列。单个文件 / 工作表读不了只进 `skipped`
     （相对路径 + 稳定码），不让整个文件夹失败。不执行、不写任何东西；`root` 不是目录 → `data_not_found`。"""
     from . import discover

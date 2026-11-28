@@ -65,6 +65,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/PathView.tsx': 1, // 画布自由路径本体（ADR 0185）
   '/src/canvas/PathTextView.tsx': 1, // 画布路径文字本体（ADR 0190）：后端给的字形轮廓
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
+  '/src/components/changePlan/CompareStage.tsx': 1, // 修改方案批注 / 对比里悬停元素的描示：沿这条曲线 / 多边形的真实路径描一圈（引擎给的几何，与画布 OverlaySvg 同一做法；不是图标）
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
   '/src/canvas/QuickLayoutGutters.tsx': 1, // 一键排版分隔线把手里的两枚细箭头（画布叠加层；两段路径各自张开，不走图标集的比例缩放，ADR 0199）
   '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
@@ -84,6 +85,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/inspector/controls/ArrowPickers.tsx': 1, // 箭头头尾样本
   '/src/components/inspector/controls/LineStylePicker.tsx': 1, // 线型样本
   '/src/components/inspector/controls/MarkerPicker.tsx': 1, // 标记形状样本
+  '/src/components/left/LayerGlyph.tsx': 1, // 图层树行首的对象图标：按对象自己的填充 / 描边色画（实心 + 同色系细外框、隐藏去饱和），图标集的单色 currentColor 字形表达不了这份用户数据
   '/src/components/inspector/LegendCard.tsx': 1, // 图例句柄样本（跟着 handle_* 走）
   // 画布缩略图：页面比例里按对象落位画这份文档的真实内容（审计 T04 之后
   // 画布列表与版本列表共用这一份，原来那条豁免在 left/CanvasList.tsx 上）

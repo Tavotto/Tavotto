@@ -766,6 +766,15 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 候选在 `cache/ai_prepare/<sid>/`，`candidate_table(sid)` 在 ready 后交出整理好的表（给「采用之前」出备选图用，本期不接 `ai_data_propose`）；`adopt` 才把脚本与表**新建**进
 `<数据文件夹>/tavotto_figures/`（只经 `scriptlock.create_script`，表开头 `#` 行是来源证明）。准备这一段「算得对不对」不核，只给来源证明（0215 第一节 B 档）。
 
+## 修订（2026-11-28）：`.xlsm`（带宏的工作簿）按 `.xlsx` 同一条路读
+
+`.xlsm` 原先与 `.xls` / `.xlsb` 一起被拒绝（`data_excel_unsupported`）。查提交与文档，当初是「没做」，不是「有意不读带宏的文件」。它与 `.xlsx` 是同一种 zip + XML，只多一个 `xl/vbaProject.bin` 成员；`xlsxread` 只按名字读工作表与共享字符串，那个成员从不打开、更不执行。
+
+1. `xlsxread.LEGACY_SUFFIXES` 去掉 `.xlsm`，`ai_data_figure.XLSX_SUFFIXES` 加上它；所有按「是不是工作簿」分叉的地方都用这一个元组（文件夹摘要按工作表列、`/api/ai/data-files` 带 `sheets`、生成的脚本用 `read_xlsx`、前端 `isWorkbook`——后两处原来写死 `.xlsx`，是这次要对齐的同源对）。
+2. 防护一条不少：成员数、声明与实际大小、重名、加密、路径穿越、DOCTYPE 的检查对它同样生效；不是 zip 的 `.xlsm` 与 `.xlsx` 同一个码（`data_xlsx_invalid`）。
+3. 错误文案 `data_excel_unsupported` 去掉 `.xlsm`（中英文；维护者 2026-11-28 同意）：「不支持旧版 Excel 文件（.xls / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。」
+4. 读表函数 `read_xlsx` 本身没变（它本来就不看后缀）；但公共模块内嵌了 `xlsxread` 的源码，`LEGACY_SUFFIXES` 一改字节就变，所以 `PINNED_RUNTIME_NAME` 换了名（8a8dce6b → 8255cb1b）。
+
 ## 修订（2026-11-28）：中文的「均值 / 标准差」配成一对（`ai_data_figure.error_match` / `_cjk_partners`）
 
 「标准差 / 标准误 / 置信区间 / 误差」这些词本来就认得是误差量（`_ERROR_CJK`），缺的是**搭档**：`error_match` 找搭档时只看名字里的英文词（`mean` / `avg` / `average`），中文的「均值」配不上，于是「处理, 均值, 标准差, n」这种已汇总的表，现成的标准差没被当成误差线用，规则反而拿 `n` 当了纵轴。同样形状的英文表（`cut, mean_price, std_price`）一直是「均值点 + 现成误差线」。
