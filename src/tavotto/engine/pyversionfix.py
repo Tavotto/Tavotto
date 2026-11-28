@@ -87,6 +87,8 @@ class PythonChangePlan:
     private_origin: str = ""
     #: 系统基础解释器的路径（私有 Python 就位后才知道，计划里为空）。私有，不进 `public()`
     base_python: str = ""
+    #: 计划实际会用的完整解释器版本「主.次.微」；读不到回空串。私有，不进 `public()`（只给只读核对用，如 `check_package_availability`）
+    full_version: str = ""
 
     def public(self) -> dict:
         return {
@@ -381,6 +383,7 @@ def plan_python_change(failure: dict, project: str | Path) -> PythonChangePlan |
             project=root,
             script=script,
             base_python=python,
+            full_version=str(version or ""),
         )
     source = privatepython.source_for()
     if source is None or not privatepython.offered(source):
@@ -403,6 +406,7 @@ def plan_python_change(failure: dict, project: str | Path) -> PythonChangePlan |
         project=root,
         script=script,
         private_origin=privatepython.REQUIRE_PRESENT if present else str(offer["origin"]),
+        full_version=str(source.version or ""),
     )
 
 

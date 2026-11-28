@@ -2163,7 +2163,7 @@ def pip_install_argv(
     *,
     upgrade: bool = False,
     index_url: str | None = None,
-    dry_run_report: bool = False,
+    dry_run_report: str | None = None,
 ) -> list[str]:
     """安装命令——**唯一出处**，测试逐字节钉住。
 
@@ -2177,8 +2177,10 @@ def pip_install_argv(
       环境里装一个包，不该顺手把 NumPy/SciPy 栈整体升级掉。只有用户在
       包管理里**明确点「升级」**（`upgrade=True`，目标只会是受管环境）才带上，
       而且升级策略仍是 pip 默认的 only-if-needed——升级它，不顺手升级它的依赖。
-    * `dry_run_report`（ADR 0221 §三 `check_package_availability`）：同一份参数只多 `--dry-run --report - --quiet`
-      ——pip 不装任何东西、把「它会装什么」的 JSON 报告写到 stdout（`--quiet` 让它不混进进度行）。
+    * `dry_run_report`（ADR 0221 §三 `check_package_availability`）：同一份参数只多 `--dry-run --report <文件>`
+      （值是报告文件路径，不是 bool）——pip 不装任何东西、把「它会装什么」的 JSON 报告写到那个文件。报告走文件而不是 stdout，
+      所以**不加 `--quiet`**：stdout / stderr 的进度行照常给 `_PipWatch` 看（它靠这些行分清「有进展」与「卡住」，
+      与真实安装同一口径；`--quiet` 会把慢但健康的解析误判成卡死、白白转镜像）。
       「这个环境里装 X 会得到哪一版」以安装器自己的回答为准，不另写一套 wheel 标签判断；默认 argv 一个字节不变。
 
     * `index_url` 只有一个合法值：`PYPI_MIRROR_URL`（网络类失败、且用户没有自配源时的那一次重试，
@@ -2201,7 +2203,7 @@ def pip_install_argv(
     if upgrade:
         argv.append("--upgrade")
     if dry_run_report:
-        argv += ["--dry-run", "--report", "-", "--quiet"]
+        argv += ["--dry-run", "--report", str(dry_run_report)]
     argv.append(requirement)
     return argv
 

@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 import pytest
 
 import test_fixtools as _tf
 from packaging import tags as ptags
-from tavotto.engine import deprepair, packagecheck as pc, packageindex
+from tavotto.engine import config, deprepair, packagecheck as pc, packageindex
 from tavotto.engine.fixtools import REGISTRY, STAGE_OF_TOOL, AuditLog
 
 box = _tf.box  # 同一个假主目录 / 数据目录夹具
@@ -431,18 +432,30 @@ def test_dry_run_uses_the_installers_own_argv_builder_and_fallback(monkeypatch):
         seen["official"] = build_argv(None)
         seen["mirror"] = build_argv(deprepair.PYPI_MIRROR_URL)
         seen["kw"] = kw
+        path = seen["official"][seen["official"].index("--report") + 1]
+        seen["path"] = path
+        with open(
+            path, "w", encoding="utf-8"
+        ) as fh:  # 像 pip 一样把报告写进文件；stdout 只有进度行
+            fh.write(report("1.0"))
         kw["on_source"](deprepair.PIP_SOURCE_MIRROR)
-        return "", report("1.0")
+        return "", "Collecting scipy\n"
 
     monkeypatch.setattr(deprepair, "_run_pip_install", fake)
     import threading
 
     res = pc.default_dry_run("/py", "scipy", threading.Event())
-    assert seen["official"] == deprepair.pip_install_argv("/py", "scipy", dry_run_report=True)
+    path = seen["path"]
+    assert seen["official"] == deprepair.pip_install_argv("/py", "scipy", dry_run_report=path)
     assert seen["mirror"] == deprepair.pip_install_argv(
-        "/py", "scipy", index_url=deprepair.PYPI_MIRROR_URL, dry_run_report=True
+        "/py", "scipy", index_url=deprepair.PYPI_MIRROR_URL, dry_run_report=path
     )
-    assert seen["official"][-5:] == ["--dry-run", "--report", "-", "--quiet", "scipy"]
+    assert seen["official"][-4:] == ["--dry-run", "--report", path, "scipy"]
+    assert "--quiet" not in seen["official"] and "-q" not in seen["official"]
+    assert "-" != path and path.startswith(str(config.data_dir() / "cache"))
+    # 报告从文件读（stdout 里只有进度行）；用完即删
+    assert pc.reported_version(pc.parse_report(res["out"]), NAME) == "1.0"
+    assert not os.path.exists(path)
     assert "--only-binary=:all:" in seen["official"] and "--upgrade" not in seen["official"]
     assert seen["kw"]["budget_s"] == pc.DRY_RUN_BUDGET_S
     # 镜像那一次读的就是镜像的 simple 页
@@ -450,6 +463,17 @@ def test_dry_run_uses_the_installers_own_argv_builder_and_fallback(monkeypatch):
         res["source"] == deprepair.PIP_SOURCE_MIRROR
         and res["index_url"] == deprepair.PYPI_MIRROR_URL
     )
+
+
+def test_dry_run_progress_lines_still_feed_the_watchdog(monkeypatch):
+    """不加 `--quiet`：解析慢但有进度行的健康 dry-run，`_PipWatch` 的「卡住」计时被每一行刷新，不会在 PIP_STALL_S 被杀。"""
+    monkeypatch.setattr(deprepair, "PIP_STALL_S", 90.0)
+    w = deprepair._PipWatch(0.0, 1e9)
+    for t in (0.0, 60.0, 120.0, 180.0):  # 总共 180 s，但每 60 s 有一行进度
+        w.feed("Collecting scipy\n", t)
+        assert w.verdict(t + 59.0) == ""
+    quiet = deprepair._PipWatch(0.0, 1e9)  # 对照：--quiet 时没有任何行，90 s 就被判卡住
+    assert quiet.verdict(95.0) == deprepair.PIP_STALLED
 
 
 def test_default_installer_argv_is_unchanged():
@@ -489,3 +513,53 @@ def test_the_probe_runs_in_the_target_environment_not_the_parent(monkeypatch):
 
 def test_the_cache_lives_under_the_data_dir(box):
     assert packageindex.cache_dir() == box.data / "cache" / "package_availability"
+
+
+# =========================================================================== requires-python 按完整解释器版本判
+def _patch_rel(spec, plat="win_amd64"):
+    files = [(f"{NAME}-1.6.2-cp312-cp312-{plat}.whl", spec, False)]
+    return pc.latest_release(pc.group_releases(_index_files(files), NAME))
+
+
+def _index_files(files):
+    from tavotto.engine import packageindex as pi
+
+    return [pi.IndexFile(filename=fn, yanked=y, requires_python=rp) for fn, rp, y in files]
+
+
+def _env():
+    return {x for t in env_tags(13, "win_amd64") for x in ptags.parse_tag(t)}
+
+
+def test_patch_level_lower_bound_is_judged_on_the_full_version_the_environment_would_use():
+    rel = _patch_rel(">=3.12.1,<3.13")
+    assert (
+        pc.suggest_python(rel, "3.13.1", _env(), lambda m: "3.12.10" if m == "3.12" else False)
+        == "3.12"
+    )
+    # 实际只供得出 3.12.0：下限 3.12.1 不满足，不推荐
+    assert (
+        pc.suggest_python(rel, "3.13.1", _env(), lambda m: "3.12.0" if m == "3.12" else False)
+        is None
+    )
+
+
+def test_patch_level_upper_bound_excludes_a_too_new_actual_interpreter():
+    rel = _patch_rel(">=3.12,<3.12.5")
+    assert (
+        pc.suggest_python(rel, "3.13.1", _env(), lambda m: "3.12.10" if m == "3.12" else False)
+        is None
+    )
+    assert (
+        pc.suggest_python(rel, "3.13.1", _env(), lambda m: "3.12.4" if m == "3.12" else False)
+        == "3.12"
+    )
+
+
+def test_without_a_full_version_a_patch_level_constraint_is_not_suggested():
+    env = _env()
+    only_true = lambda m: m == "3.12"  # noqa: E731 - 能供应但不知道完整版本
+    assert pc.suggest_python(_patch_rel(">=3.12.1,<3.13"), "3.13.1", env, only_true) is None
+    assert pc.suggest_python(_patch_rel("<3.12.5"), "3.13.1", env, only_true) is None
+    # 小版本级约束照旧可推荐
+    assert pc.suggest_python(_patch_rel(">=3.12"), "3.13.1", env, only_true) == "3.12"

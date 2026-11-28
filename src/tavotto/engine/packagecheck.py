@@ -3,7 +3,7 @@
 两件事分开、各自只有一个出处：
 
 * **会装哪一版 = 安装器自己的回答**：`deprepair.pip_install_argv(..., dry_run_report=True)`（与装包同一份参数构造）经
-  `deprepair._run_pip_install`（同一套镜像 / 用户自配源判据与回退）在**目标环境**的 pip 里 `--dry-run --report -` 一次，
+  `deprepair._run_pip_install`（同一套镜像 / 用户自配源判据与回退）在**目标环境**的 pip 里 `--dry-run --report <临时文件>` 一次，
   读报告里要装的版本。**不另写一套 wheel 标签判断来决定「会装哪一版」。**
 * **为什么不是最新版 = 索引事实 + 环境标签**：读同一索引的 simple 页（`packageindex`）列出最新版的 wheel 文件名，
   与目标环境自己报出的兼容标签（`pip._vendor.packaging.tags.sys_tags()`，在目标环境的子进程里问）对照。
@@ -21,9 +21,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import (
@@ -37,7 +40,7 @@ from packaging.version import InvalidVersion, Version
 
 from packaging import tags as _tags
 
-from . import deprepair, packageindex, projectenv
+from . import config, deprepair, packageindex, projectenv
 
 LOG = logging.getLogger("tavotto.packagecheck")
 
@@ -105,24 +108,46 @@ class PackageCheckHooks:
     env_probe: Callable[[str, str], dict | None] | None = None
     #: `(索引地址, 请求头) -> (content_type, body)`；读不到抛 `packageindex.IndexFetchError`
     index_fetcher: packageindex.Fetcher | None = None
-    #: `("3.12") -> 受管环境能不能造出这个 Python`；缺省 = `pyversionfix.plan_python_change`（与 `change_python` 同一判据）
-    python_offered: Callable[[str], bool] | None = None
+    #: `("3.12") -> 受管环境能不能造出这个 Python`（假值 = 不能；真值字符串 = 能，且就是计划实际会用的完整版本「3.12.10」；`True` = 能但不知道完整版本）；缺省 = `pyversionfix.plan_python_change`（与 `change_python` 同一判据）
+    python_offered: Callable[[str], bool | str] | None = None
     now: Callable[[], float] | None = None
 
 
 # --------------------------------------------------------------------------- 默认执行器
+def _report_dir() -> Path:
+    """报告临时文件的位置：`config.data_dir()/cache/`（用完即删；不放系统临时目录，免得被别的进程 / 清理器碰）。"""
+    d = config.data_dir() / "cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def default_dry_run(python: str, canonical: str, cancel: threading.Event) -> dict:
+    """报告写进临时文件、不占 stdout：进度行照常流给 `_PipWatch`（不加 `--quiet`），与真实安装同口径。
+    成功时 `out` 是报告文件的内容（`parse_report` 的输入形状不变）；失败时是 pip 的输出（给错误分类）。"""
     seen: list[str] = []
-    code, out = deprepair._run_pip_install(
-        lambda index_url: deprepair.pip_install_argv(
-            python, canonical, index_url=index_url, dry_run_report=True
-        ),
-        python,
-        cancel,
-        None,
-        on_source=seen.append,
-        budget_s=DRY_RUN_BUDGET_S,
-    )
+    fd, report_path = tempfile.mkstemp(prefix="pkgcheck-", suffix=".json", dir=str(_report_dir()))
+    os.close(fd)
+    try:
+        code, out = deprepair._run_pip_install(
+            lambda index_url: deprepair.pip_install_argv(
+                python, canonical, index_url=index_url, dry_run_report=report_path
+            ),
+            python,
+            cancel,
+            None,
+            on_source=seen.append,
+            budget_s=DRY_RUN_BUDGET_S,
+        )
+        if not code:
+            try:
+                out = Path(report_path).read_text("utf-8")
+            except (OSError, ValueError):
+                out = ""
+    finally:
+        try:
+            os.unlink(report_path)
+        except OSError:
+            pass
     source = seen[-1] if seen else deprepair.PIP_SOURCE_UNKNOWN
     return {
         "code": code,
@@ -160,17 +185,22 @@ def default_env_probe(python: str, canonical: str) -> dict | None:
     return None
 
 
-def default_python_offered(project: str, script: str = "") -> Callable[[str], bool]:
+def default_python_offered(project: str, script: str = "") -> Callable[[str], bool | str]:
     from . import pyversionfix
 
-    def offered(version: str) -> bool:
+    def offered(version: str) -> bool | str:
         failure = {
             "code": pyversionfix.CODE_UNSUPPORTED,
             "requires_python": f"=={version}.*",
             "script": script,
         }
         try:
-            return pyversionfix.plan_python_change(failure, project) is not None
+            plan = pyversionfix.plan_python_change(failure, project)
+            if plan is None:
+                return False
+            return (
+                str(plan.full_version or "") or True
+            )  # 完整版本给 requires-python 判；没有就 True（保守判）
         except Exception:  # noqa: BLE001 - 判不出 = 不建议
             return False
 
@@ -308,11 +338,21 @@ def explain(
     return REASON_HELD_BACK
 
 
+def _requires_python_ok(spec: str, offered_version: bool | str, minor: str) -> bool:
+    """`requires-python` 对**受管环境实际会用的解释器**成不成立。拿到完整版本（`offered` 回了「3.12.10」）就按它判，
+    补丁级下限 / 上限都对；拿不到（只回了 True）就保守：该小版本的第一个补丁（`.0`）与一个足够高的补丁（`.99`）
+    **都**满足才算——宁可少给 suggest，也不把补丁级约束会拒掉的版本推荐出去。"""
+    if isinstance(offered_version, str) and offered_version.count(".") >= 2:
+        return _spec_allows(spec, offered_version)
+    return _spec_allows(spec, f"{minor}.0") and _spec_allows(spec, f"{minor}.99")
+
+
 def suggest_python(
-    rel: _Release, env_python: str, env_tags: set, offered: Callable[[str], bool]
+    rel: _Release, env_python: str, env_tags: set, offered: Callable[[str], bool | str]
 ) -> str | None:
     """最新版有本平台 wheel 的、受管环境供得出的最高 Python 小版本（只在 `no_wheel_for_python` 时用）。
-    候选范围 = Tavotto 支持的区间（`projectenv.PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE`，唯一出处）。"""
+    候选范围 = Tavotto 支持的区间（`projectenv.PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE`，唯一出处）。
+    `requires-python` 按受管环境实际会选的完整解释器版本判（`offered` 的返回值，见 `_requires_python_ok`）。"""
     plats = sorted({t.platform for t in env_tags})
     cur = _minor(env_python)
     lo, hi = projectenv.PYTHON_MIN, projectenv.PYTHON_MAX_EXCLUSIVE
@@ -321,10 +361,10 @@ def suggest_python(
         if minor == cur:
             continue
         cand = _candidate_tags(minor, plats)
-        ok = any(
-            not w[3] and _spec_allows(w[2], f"{minor}.0") and any(t in cand for t in w[1])
-            for w in rel.wheels
-        )
-        if ok and offered(minor):
+        tagged = [w for w in rel.wheels if not w[3] and any(t in cand for t in w[1])]
+        if not tagged:
+            continue
+        got = offered(minor)
+        if got and any(_requires_python_ok(w[2], got, minor) for w in tagged):
             return minor
     return None
