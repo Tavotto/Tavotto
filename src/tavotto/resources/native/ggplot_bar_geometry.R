@@ -88,11 +88,28 @@ ggplot_edit_bar_span <- function(rect, span, width, panel, coord) {
   rect
 }
 
-ggplot_apply_bar_width <- function(rect, rows, layout, panel_id, values) {
+ggplot_edit_bar_alpha <- function(rect, rows, alpha) {
+  for (field in c("fill", "col")) {
+    colour <- rep_len(rect$gp[[field]], length(rect$x))
+    colour[rows] <- scales::alpha(colour[rows], alpha)
+    rect$gp[[field]] <- colour
+  }
+  attr(rect, "tavotto_bar_alpha") <- TRUE
+  rect
+}
+
+ggplot_apply_bar_geometry <- function(rect, rows, layout, panel_id, values) {
   span <- ggplot_bar_span(layout, panel_id, rows, rect)
   if (is.null(span)) stop("Tavotto could not match the original R bar geometry.")
+  if (!is.null(values$alpha)) {
+    selected <- which(!is.na(values$alpha))
+    rect <- ggplot_edit_bar_alpha(rect, selected, values$alpha[selected])
+  }
   width <- values[[span$prop]]
-  if (is.null(width)) stop("Tavotto could not match the original R bar direction.")
+  if (is.null(width)) {
+    if (length(setdiff(names(values), "alpha"))) stop("Tavotto could not match the original R bar direction.")
+    return(rect)
+  }
   width <- rep_len(width, length(span$centre))
   selected <- which(!is.na(width))
   original <- span$widths

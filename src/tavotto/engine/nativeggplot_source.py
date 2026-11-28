@@ -368,7 +368,7 @@ _GEOMETRY_IMPLEMENTATIONS = {
     "bars": (
         ("GeomBar", "GeomCol"),
         "ggplot_bar_geometry.R",
-        "ggplot_apply_bar_width",
+        "ggplot_apply_bar_geometry",
     ),
     "caps": (
         ("GeomErrorbar", "GeomErrorbarh"),
@@ -501,7 +501,10 @@ def _native_layer_geometry(source: dict) -> dict | None:
         ):
             return None
         if kind == "bars":
-            if prop not in {"bar_width", "bar_thickness"} or len(values) != 1 or value <= 0:
+            size_props = {"bar_width", "bar_thickness"}
+            if prop == "alpha" and "category" in recipe and 0 <= value <= 1:
+                continue
+            if prop not in size_props or len(size_props.intersection(values)) != 1 or value <= 0:
                 return None
         elif not (
             prop == "capsize" and 0 <= value <= 15 or prop == "cap_thickness" and 0.1 <= value <= 5

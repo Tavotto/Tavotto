@@ -4334,6 +4334,15 @@ group_data <- function(applied) {
 }
 selection <- group_data(patch)
 stopifnot(length(selection$geometry$paths) == 2L, selection$bar_series$current$bar_width == .22)
+faded <- stats::setNames(list(list(bar_width=.22, alpha=.45)), gid)
+scene <- render_scene(faded)
+painted <- rect(scene$table, gid)
+stopifnot(identical(painted$x, edited$x), identical(painted$width, edited$width),
+          identical(painted$gp$fill[rest], rep_len(old$gp$fill, length(old$x))[rest]),
+          identical(painted$gp$col[rest], rep_len(old$gp$col, length(old$x))[rest]),
+          all(grDevices::col2rgb(painted$gp$fill[group_rows],alpha=TRUE)[4L, ] == 115),
+          all(grDevices::col2rgb(painted$gp$col[group_rows],alpha=TRUE)[4L, ] == 115),
+          group_data(faded)$bar_series$current$alpha == .45)
 broad <- stats::setNames(list(list(bar_width = .39)), parents[[2L]])
 stopifnot(group_data(broad)$bar_series$current$bar_width == .39,
           group_data(c(patch, broad))$bar_series$current$bar_width == .22,
@@ -7504,6 +7513,97 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-hash.txt")
             timeout=120,
         )
         assert status == 200 and restored["ok"] and script.read_bytes() == authored
+
+
+def test_native_r_mapped_bar_opacity_reopens_with_only_the_selected_group_hidden(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Mapped bars"
+    project.mkdir()
+    script = project / "Bars.R"
+    script.write_text(
+        f"""\
+d <- expand.grid(x = 1:5, arm = c("Baseline", "Target"), trial = c("Early", "Late"))
+d$y <- d$x / 2 + 2 * as.integer(d$arm) + 2 * (d$trial == "Late")
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, fill = arm)) +
+  ggplot2::geom_col(position = "dodge2", colour = "#3A2311") +
+  ggplot2::scale_fill_manual(values = c(Baseline = "#6C541E", Target = "#6C541E")) +
+  ggplot2::facet_wrap(ggplot2::vars(trial))
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Bars"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    fingerprint = (project / "built-data.txt").read_bytes()
+
+    def bars(svg):
+        return [
+            node.attrib
+            for node in ElementTree.fromstring(svg).iter("{http://www.w3.org/2000/svg}rect")
+            if "fill: #6C541E;" in node.get("style", "")
+        ]
+
+    def groups(view):
+        return {
+            row["gid"]: row
+            for row in view["manifest"]["elements"]
+            if row["role"] == "bar_series" and ".group." in row["gid"]
+        }
+
+    gid = "layer.1.panel.2.bars.group.2"
+
+    def save(app, asset, baseline, alpha, width=None):
+        targets = groups(baseline)
+        assert len(targets) == 4 and targets[gid]["label"].endswith("Target")
+        edits = {"alpha": alpha, **({"bar_width": width} if width is not None else {})}
+        patches = [
+            {"gid": gid, "identity": targets[gid]["identity"], "prop": prop, "value": value}
+            for prop, value in edits.items()
+        ]
+        hot = _render(app, asset, patches)
+        assert hot["warnings"] == []
+        assert groups(hot)[gid]["geometry"]["fill"] == (alpha > 0)
+        assert groups(hot)[gid]["geometry"]["stroke"] == (alpha > 0)
+        for peer in targets.keys() - {gid}:
+            assert groups(hot)[peer] == targets[peer]
+        assert _render(app, asset, [])["svg"] == baseline["svg"]
+        committed = _write_native_figure_style(app, script, route, asset, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert (project / "built-data.txt").read_bytes() == fingerprint
+        assert bars((project / "standalone.svg").read_text(encoding="utf-8")) == bars(hot["svg"])
+        return hot, committed
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, asset, [])
+        hidden, _ = save(app, asset, baseline, 0, width=0.22)
+        assert len(bars(baseline["svg"])) == 22 and len(bars(hidden["svg"])) == 17
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        asset = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, asset, [])
+        assert reopened["svg"] == hidden["svg"]
+        fields = {field["prop"]: field["value"] for field in groups(reopened)[gid]["editable"]}
+        assert fields["alpha"] == 0
+        assert fields["bar_width"] == pytest.approx(0.22)
+        shown, committed = save(app, asset, reopened, 0.4)
+        assert len(bars(shown["svg"])) == 22
+        assert sum("fill-opacity: 0.40" in r["style"] for r in bars(shown["svg"])) == 5
+        status, result = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": committed["backup_id"],
+                "expected_sha256": committed["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and result["ok"] and script.read_bytes() == authored
 
 
 @pytest.mark.parametrize("geometry", ["ribbon", "area"])

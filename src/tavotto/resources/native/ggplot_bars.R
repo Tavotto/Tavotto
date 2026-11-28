@@ -1,10 +1,17 @@
 # A mapped palette may vary the RGB values while every rectangle has the
 # same opacity. Keep the actual palette and use that opacity for hit testing.
-ggplot_bar_opacity <- function(colour) {
+ggplot_bar_alphas <- function(colour) {
   if (!length(colour) ||
       !(is.character(colour) || (is.logical(colour) && all(is.na(colour))))) return(NULL)
-  alpha <- unique(grDevices::col2rgb(unique(colour), alpha = TRUE)[4L, ]) / 255
-  if (length(alpha) == 1L) alpha
+  unname(grDevices::col2rgb(colour, alpha = TRUE)[4L, ]) / 255
+}
+
+ggplot_bar_visible_alphas <- function(rect, outline) {
+  fill <- ggplot_bar_alphas(unique(rect$gp$fill))
+  stroke <- ggplot_bar_alphas(unique(rect$gp$col))
+  if (is.null(fill) || is.null(stroke)) return(NULL)
+  values <- unique(c(fill[fill > 0], if (outline) stroke[stroke > 0]))
+  if (length(values)) values else 0
 }
 
 ggplot_bar_target <- function(layout, draw, fixed) {
@@ -22,12 +29,9 @@ ggplot_bar_target <- function(layout, draw, fixed) {
   lty <- unique(rect$gp$lty)
   if (length(width) != 1L || !is.finite(width) || width < 0 || length(lty) != 1L || is.na(lty)) return(NULL)
   outline <- !(lty %in% c("0", "blank"))
-  fill_alpha <- ggplot_bar_opacity(rect$gp$fill)
-  stroke_alpha <- ggplot_bar_opacity(rect$gp$col)
-  if (is.null(fill_alpha) || is.null(stroke_alpha)) return(NULL)
-  visible_alpha <- unique(c(fill_alpha, stroke_alpha[outline && width > 0]))
-  visible_alpha <- visible_alpha[visible_alpha > 0]
-  if (!length(visible_alpha)) return(NULL)
+  visible_alpha <- ggplot_bar_visible_alphas(rect, outline && width > 0)
+  if (is.null(visible_alpha) ||
+      (all(visible_alpha == 0) && is.null(attr(rect, "tavotto_bar_alpha", exact = TRUE)))) return(NULL)
   span <- ggplot_bar_span(layout, draw$panel_id, draw$rows, rect, names(ggplot_axis_modes))
   size <- if (is.null(span$width)) list() else stats::setNames(list(span$width), span$prop)
   fields <- if (fixed && !is.null(face) && !is.null(edge)) {
@@ -46,7 +50,7 @@ ggplot_bar_target <- function(layout, draw, fixed) {
   )
 }
 
-ggplot_bar_group_targets <- function(target, groups, parent_gid) {
+ggplot_bar_group_targets <- function(target, groups, parent_gid, rect, allow_alpha) {
   if (is.null(groups) || is.null(target$span)) return(list())
   membership <- groups$membership[[as.character(target$panel_id)]]
   if (length(membership) != target$count) return(list())
@@ -64,6 +68,11 @@ ggplot_bar_group_targets <- function(target, groups, parent_gid) {
     part$span$centre <- target$span$centre[rows]
     part$span$rows <- rows
     part$values <- stats::setNames(list(width), prop)
+    if (allow_alpha) {
+      selected <- ggplot_bar_group_rect(rect, part)
+      opacity <- ggplot_bar_visible_alphas(selected, target$outline && any(selected$gp$lwd > 0))
+      if (length(opacity) == 1L) part$values$alpha <- opacity
+    }
     part$context <- rlang::hash(list(target$context, groups$keys[[index]], rows))
     result[[paste0(parent_gid, ".group.", index)]] <- part
   }
@@ -92,7 +101,7 @@ ggplot_bar_targets <- function(built, panels, layer_grobs, maps) {
       if (!panels$single) context <- c(context, list(draw$facet))
       target$index <- index
       target$context <- rlang::hash(context)
-      subgroups <- ggplot_bar_group_targets(target, groups, gid)
+      subgroups <- ggplot_bar_group_targets(target, groups, gid, draw$grob, !"alpha" %in% mapped)
       if (!length(target$values) && !length(subgroups)) next
       target$precise <- target$count <= remaining_paths
       if (target$precise) remaining_paths <- remaining_paths - target$count
@@ -148,12 +157,16 @@ ggplot_edit_bars <- function(table, target, edit, layout) {
     coord <- layout$coord %||% span$coord
     rect <- ggplot_edit_bar_span(rect, span, values[[span$prop]], view, coord)
   }
-  if (!is.null(edit$linewidth)) rect$gp$lwd <- values$linewidth / ggplot_lwd_pt
-  if (!is.null(edit$facecolor) || !is.null(edit$alpha)) {
-    rect$gp$fill <- ggplot_edit_pigment(values$facecolor, target$face, edit$alpha, target$values$alpha)
-  }
-  if (!is.null(values$edgecolor) && (!is.null(edit$edgecolor) || !is.null(edit$alpha))) {
-    rect$gp$col <- ggplot_edit_pigment(values$edgecolor, target$edge, edit$alpha, target$values$alpha)
+  if (is.null(target$group)) {
+    if (!is.null(edit$linewidth)) rect$gp$lwd <- values$linewidth / ggplot_lwd_pt
+    if (!is.null(edit$facecolor) || !is.null(edit$alpha)) {
+      rect$gp$fill <- ggplot_edit_pigment(values$facecolor, target$face, edit$alpha, target$values$alpha)
+    }
+    if (!is.null(values$edgecolor) && (!is.null(edit$edgecolor) || !is.null(edit$alpha))) {
+      rect$gp$col <- ggplot_edit_pigment(values$edgecolor, target$edge, edit$alpha, target$values$alpha)
+    }
+  } else if (!is.null(edit$alpha)) {
+    rect <- ggplot_edit_bar_alpha(rect, target$group$rows, edit$alpha)
   }
   panel$children[[target$child]] <- rect
   table$grobs[[target$slot]] <- panel
@@ -195,10 +208,11 @@ ggplot_bar_geometry <- function(rect, target, frame_pt, retain_clipped = FALSE) 
   right <- upper$x / frame[[1L]]
   top <- 1 - upper$y / frame[[2L]]
   bottom <- 1 - lower$y / frame[[2L]]
-  face <- ggplot_bar_opacity(rect$gp$fill)
-  stroke_pt <- if (target$outline && ggplot_bar_opacity(rect$gp$col) > 0) {
-    unique(rect$gp$lwd) * ggplot_lwd_pt
-  } else 0
+  pigments <- if (target$precise) identity else unique
+  fill_alpha <- ggplot_bar_alphas(pigments(rect$gp$fill))
+  stroke_alpha <- ggplot_bar_alphas(pigments(rect$gp$col))
+  face <- max(fill_alpha)
+  stroke_pt <- if (target$outline && any(stroke_alpha > 0)) unique(rect$gp$lwd) * ggplot_lwd_pt else 0
   pad <- stroke_pt / (2 * frame_pt)
   content_lo <- c(min(left), min(top))
   content_hi <- c(max(right), max(bottom))
@@ -220,6 +234,10 @@ ggplot_bar_geometry <- function(rect, target, frame_pt, retain_clipped = FALSE) 
   if (target$precise) {
     paths <- Map(function(l, r, t, b) list(points = list(c(l, t), c(r, t), c(r, b), c(l, b)),
                                             closed = TRUE), left, right, top, bottom)
+    count <- length(paths)
+    painted <- rep_len(fill_alpha, count) > 0
+    if (stroke_pt > 0) painted <- painted | rep_len(stroke_alpha, count) > 0
+    if (any(painted)) paths <- paths[painted]
     result$geometry <- list(kind = "multi_path", paths = paths, fill = face > 0,
                             stroke = stroke_pt > 0, stroke_pt = stroke_pt)
     if (face > 0) result$geometry$fill_alpha <- face
@@ -257,7 +275,7 @@ ggplot_bar_source_plan <- function(state, target, edit, edits) {
   if (!length(edit) || !all(names(edit) %in% c(paint, target$span$prop))) return(NULL)
   if (!is.null(target$group)) {
     changed <- state$bar_targets[intersect(names(state$bar_targets), names(edits))]
-    if (!identical(names(edit), target$span$prop) || any(vapply(changed, function(other) {
+    if (!all(names(edit) %in% c(target$span$prop, "alpha")) || any(vapply(changed, function(other) {
       identical(other$index, target$index) && is.null(other$group)
     }, logical(1L)))) return(NULL)
     geometry <- list(kind = "bars", facet = target$facet, values = edit,
