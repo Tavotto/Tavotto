@@ -75,6 +75,7 @@
       "email_invalid": "That email address doesn't look right. Check it, or leave it empty.",
       "urlInvalid": "The link has to start with https://.",
       "journalNeedsClue": "Paste a link or attach a file.",
+      "creditInvalid": "The name has to be 1–32 characters, with no @ or web address.",
       "journal_invalid": "Something is off with this tip. Close the window and try again.",
       "report_invalid": "The diagnostics number is invalid. Untick Attach diagnostic info and try again.",
       "attachments_limit": "Too many attachments.",
@@ -370,6 +371,7 @@
     "missingSourceNote": "One figure can’t be found: {{name}}.",
     "changeLocationExport": "Export to another folder",
     "lowerDpiExport": "Export at {{dpi}} dpi",
+    "redrawFontsExport": "Redraw with its script and export again",
     "toast": {
       "conflict": "Export is waiting for you to decide what to do with same-name files.",
       "failed": "Export failed. No files were written.",
@@ -1299,7 +1301,8 @@
         "hardDisabledDetail": "The environment variable {{env}} is in effect; remove it to make the switch available"
       },
       "privacySend": "A diagnostics bundle is uploaded to the Tavotto maintainers' service only when you confirm each send in “Send problem report”; exporting a bundle only saves it on this machine.",
-      "privacyContact": "A letter written in “Contact the maker” is sent to the Tavotto maintainers' service only when you press Send; nothing is sent automatically and your mail program is never opened."
+      "privacyContact": "A letter written in “Contact the maker” is sent to the Tavotto maintainers' service only when you press Send; nothing is sent automatically and your mail program is never opened.",
+      "paletteCredits": "Recommended colour schemes include Okabe–Ito, Paul Tol, ColorBrewer, Fabio Crameri's scientific colour maps and ggsci's journal-style sets; licences are in THIRD_PARTY_NOTICES.md. Please cite the Crameri maps as:"
     },
     "agents": {
       "announce": {
@@ -2857,6 +2860,7 @@
       "report": "Looks wrong",
       "reportTitle": "Send a link or screenshot of the website and we will check it",
       "fromV2": "Newer",
+      "thanks": "Thanks to {{name}} for the correction",
       "aria": "Source"
     },
     "confirm": {
@@ -2959,6 +2963,12 @@
     "editorQuotePlaceholder": "Which rule is wrong or missing, or paste the editor’s email; only used to check the website, never made public",
     "editorAbout": "{{journal}}",
     "editorTag": "Journal guideline issue",
+    "credit": "Credit my name on the cited entry",
+    "creditHint": " (visible to everyone)",
+    "creditTitle": "Your name appears on that entry’s source card, visible to every user. Reply to us any time to have it removed.",
+    "creditInput": "Name to show",
+    "creditPlaceholder": "Your name",
+    "creditRow": "Name",
     "editorEmail": "We will reply here once checked"
   },
   "packageInstall": {

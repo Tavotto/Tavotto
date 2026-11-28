@@ -75,6 +75,7 @@
       "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
       "urlInvalid": "链接要以 https:// 开头。",
       "journalNeedsClue": "请贴个网址，或附上文件。",
+      "creditInvalid": "称呼要 1 到 32 个字，不含 @ 和网址。",
       "journal_invalid": "这条线索的内容不对，请关掉窗口重新点一次。",
       "report_invalid": "诊断包编号不对，请取消勾选「附上诊断信息」后再试。",
       "attachments_limit": "附件太多了。",
@@ -357,6 +358,7 @@
     "missingSourceNote": "有一张图找不到了：{{name}}。",
     "changeLocationExport": "换个位置导出",
     "lowerDpiExport": "改用 {{dpi}} dpi 导出",
+    "redrawFontsExport": "用脚本重画并重新导出",
     "toast": {
       "conflict": "导出停在这里，等你决定同名文件怎么处理。",
       "failed": "导出失败，没有写出文件。",
@@ -1276,7 +1278,8 @@
         "hardDisabledDetail": "环境变量 {{env}} 在起作用；去掉它之后开关才可用"
       },
       "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。",
-      "privacyContact": "“联系作者”写的信只有在你点“发送”后才会发给 Tavotto 维护者的服务；不会自动发送，也不会打开你的邮件程序。"
+      "privacyContact": "“联系作者”写的信只有在你点“发送”后才会发给 Tavotto 维护者的服务；不会自动发送，也不会打开你的邮件程序。",
+      "paletteCredits": "推荐配色收录了 Okabe–Ito、Paul Tol、ColorBrewer、Fabio Crameri 的科学色图与 ggsci 的期刊风格方案，许可见 THIRD_PARTY_NOTICES.md。Crameri 色图的引用："
     },
     "agents": {
       "announce": {
@@ -2823,6 +2826,7 @@
       "report": "这条不对",
       "reportTitle": "发来官网链接或截图，我们来核对",
       "fromV2": "新版",
+      "thanks": "感谢 {{name}} 勘误",
       "aria": "出处"
     },
     "confirm": {
@@ -2925,6 +2929,12 @@
     "editorQuotePlaceholder": "哪条规范不对、缺了什么，或粘贴编辑部邮件原话；仅用于核对官网，不会公开",
     "editorAbout": "{{journal}}",
     "editorTag": "反馈期刊规范问题",
+    "credit": "在引用条目标注我的名字",
+    "creditHint": "（所有人可见）",
+    "creditTitle": "称呼会写在对应条目的出处卡上，所有用户都能看到；想撤掉，回信告诉我们就行。",
+    "creditInput": "称呼",
+    "creditPlaceholder": "你的名字，比如 李明",
+    "creditRow": "称呼",
     "editorEmail": "核实后回信到这里"
   },
   "packageInstall": {

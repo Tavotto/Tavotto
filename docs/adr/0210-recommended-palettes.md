@@ -71,6 +71,8 @@ colorKeys: {
 - **中性对照**：名字像对照的（Control、Vehicle、WT、Sham、对照…）**只建议**用中性灰，用户点确认才生效。
   这是默认可改的点（维护者 2026-11-24 未定，按设计建议先做），见 §八。
 - 用户手改过的颜色（override 存在、且不是 `owned` 里配色写下的那个值）不覆盖，界面列出跳过了几处。
+  系列那一格盖着的窄端也算（引擎 `alias_covers`：柱形系列的填充色盖着每一根柱）：写系列会在同一次 commit 里
+  清掉各根柱上的 override，所以单独改过某根柱颜色的系列整条跳过，不让那根柱的颜色被悄悄删掉。
 
 ### 五、推荐排序
 
@@ -85,7 +87,9 @@ colorKeys: {
 ### 六、界面：方向 A
 
 样式面板里的「配色」一节：方案下拉 + 组列表；方案下拉打开弹层（搜索、「适合这张画布」排前、期刊风格放「更多」）。
-悬停或 ↑↓ 只经预览平面改显示（`svgPreviewStore`，不 commit），Enter 写入文档（一次 commit、一步撤销），Esc 还原。
+悬停或 ↑↓ 只改弹层底部的预览（这几组在这套方案下的颜色 + 一句结论，不 commit），Enter / 点选写入文档（一次 commit、一步撤销），Esc 关上什么都不变。
+设计稿里「画布上实时换色」没有照做：预览平面（`svgPreviewStore`）一次只服务一张面板，一张画布上的多张图同时预览要先扩它，
+留给打开入口之前单独做；在那之前预览只在弹层里。
 第一次在一张画布上建色键表、有中等证据的组待确认时，出一次确认对话框（方向 C 的精简版）；B（画布底部胶片条）放二期。
 色觉预览只改显示，不写文档。
 
@@ -93,8 +97,8 @@ colorKeys: {
 
 - 配色只写 override（`line.color`、单色 `scatter.facecolor`、`bar_series.facecolor`），与手动改色同一条链路：
   plan → overrides → `documentStore.commit`，一次撤销；回到脚本仍走 prepare → verify → commit。
-- 入口常量 `PALETTE_UI`（`web/src/lib/paletteUi.ts`）默认 `false`；单测 / e2e 用开发键 `tavotto.dev.paletteUi = '1'`。
-  关着时不渲染「配色」一节、不读 `colorKeys`、不改 `planStyle` 的旧行为。打开它是单独一个 PR（需要维护者点头）。
+- 入口常量 `RECOMMENDED_PALETTE_UI`（`web/src/lib/paletteUi.ts`）默认 `false`；单测 / e2e 用开发键 `tavotto.dev.paletteUi = '1'`。
+  关着时不渲染「配色」一节，界面上写不出 `colorKeys`；没有 `colorKeys` 的文档 `planStyle` 照旧按样式的 `palette` 循环上色（有了才让位）。打开它是单独一个 PR（需要维护者点头）。
 
 ### 八、默认可改的点（实现照设计建议，维护者可以改）
 

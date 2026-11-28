@@ -70,6 +70,8 @@ ADR 0185 §五原写「文档级加 `groups: { id, parentId?, clipBy? }[]`」。
   同时裁掉命中。
 - 载荷：`toExportObjects(objects, context)` 不发蒙版；被裁的对象带 `clip: ExportClipPath[]`（外 → 内，只有几何）。没有剪切组时载荷与以前
   逐字节相同。**按对象逐个包裁剪**，不要求组成员在 z 序里连续（逐个裁与整组裁结果相同）。
+- 载荷补记（ADR 0208 §七之三）：被裁对象的每个 `clip` 项另带 `group`（这个蒙版属于 `group_path` 里的哪个组），对象带 `name` / `group_path`；
+  这几个键只给 SVG（把组写成嵌套 `<g>`、蒙版挂在组上只写一次），PDF / EPS / 位图照旧逐对象 `plan._clipped`、逐字节不变。
 - 后端 `plan._clipped`：每个蒙版包一层 `Group(clip=…)`（外层在外）；蒙版画不出轮廓 = 这个对象整个不画（与画布同一条）。
   PDF `W n`、SVG `<clipPath>`、EPS `clip`、PNG 由 PDF 栅格化。
 - 单图编辑（`scope=original`）裁这张图：`original.clip`（`singleExportDoc.figureClipOf`），没有标注也走带标注的合成路径；EPS 由

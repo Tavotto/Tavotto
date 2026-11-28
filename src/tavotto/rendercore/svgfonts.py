@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 #: 通用族（allowlist 里的 `family`）→ 紧跟真实族名之后的回退链。
 FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
@@ -34,9 +35,41 @@ def css_family(name: str) -> str:
     return "'" + name.replace("\\", "").replace("'", "") + "'"
 
 
-def family_list(name: str, generic: str) -> str:
-    """`'Liberation Serif', 'Times New Roman', Times, serif`。"""
-    return ", ".join((css_family(name), *FALLBACK_CHAINS.get(generic, ())))
+#: 第一个字体族写用户机器上真有的等价字体（ADR 0208 §七之三 第 4 条）：Illustrator 之类只认列表里的第一个，
+#: 第一个写 `Liberation Serif` 就被换成一个不相干的本机字体。Liberation 三族与 Times New Roman / Arial /
+#: Courier New 字宽一一对应；批准的族名留作第二个，没有 Times New Roman 的机器（Linux）仍用度量一致的脸。
+REAL_FIRST_FAMILY: dict[str, str] = {
+    "Liberation Serif": "Times New Roman",
+    "Liberation Sans": "Arial",
+    "Liberation Mono": "Courier New",
+}
+
+#: 中文：按平台写系统字体（macOS：黑体 / 宋体；Windows：微软雅黑 / 宋体）。Linux 没有统一的系统中文字体，
+#: 第一个仍是批准的 Noto。**这几个名字在 Illustrator 里能不能对上还没实测**（ADR 0208 §七之三 第 4 条）。
+SYSTEM_CJK_FIRST: dict[str, dict[str, str]] = {
+    "cjk": {"darwin": "Heiti SC", "win32": "Microsoft YaHei"},
+    "cjk-serif": {"darwin": "Songti SC", "win32": "SimSun"},
+}
+
+
+def real_first_family(name: str, generic: str, platform: str | None = None) -> str | None:
+    """批准族名 → 第一个该写的真实字体族；没有对应（用户字体、Linux 上的中文）= None。"""
+    if name in REAL_FIRST_FAMILY:
+        return REAL_FIRST_FAMILY[name]
+    plat = sys.platform if platform is None else platform
+    return SYSTEM_CJK_FIRST.get(generic, {}).get(plat)
+
+
+def family_list(name: str, generic: str, platform: str | None = None) -> str:
+    """`'Times New Roman', 'Liberation Serif', Times, serif`：真实字体在前，批准的族名紧随其后，再是回退链。
+
+    用户脚本自己指定的字体（`name` 不在批准表里，`generic` 是它没有对应的通用族）调用方不会走到这里。"""
+    chain = list(FALLBACK_CHAINS.get(generic, ()))
+    first = real_first_family(name, generic, platform)
+    if first is None:
+        return ", ".join((css_family(name), *chain))
+    chain = [c for c in chain if c.strip("'") != first]  # 回退链里已有的同名项不重复写
+    return ", ".join((css_family(first), css_family(name), *chain))
 
 
 _NAMES = "|".join(map(re.escape, APPROVED_FAMILIES))

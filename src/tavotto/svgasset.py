@@ -96,7 +96,8 @@ def inspect_bytes(data: bytes) -> tuple[bytes, dict]:
     # DTD, entity, subset or second declaration still fails the strict parser.
     data = strip_matplotlib_doctype(data)
     try:
-        root = parse_svg(data)
+        # 用户把 Tavotto 自己导出的 SVG（id 是对象名，中文也行，ADR 0208 §七之三）拖进来当素材不能被拒
+        root = parse_svg(data, unicode_ids=True)
     except SVGError as exc:
         raise UnsupportedSVG(exc.code) from exc
     w, h = _length(root.get("width")), _length(root.get("height"))

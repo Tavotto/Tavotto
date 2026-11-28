@@ -3,10 +3,12 @@
  * 几何与补丁都在后端（`/api/vector-edit/plan`，只算不写）；前端不重写补丁操作，只做三件事：
  *
  * 1. **判据**：选区里有矢量对象才走这条路（`vectorSelectionOf`）；
- * 2. **快照**：只发画布上的矢量对象 + 子图的外框（`snapshotOf`）——子图的脚本、数据、覆盖项、文件名都不出本机（ADR 0212 修订 §5）；
+ * 2. **快照**：画布上的矢量对象 + 子图的外框（`snapshotOf`）；子图另带后端实测要的输入（`fileId` / `fileKind` / 未存盘的覆盖项，冻结 / 运行时只带布尔）。
+ *    脚本、数据与图的内容不带；这份快照只发给本机后端，发给所选模型的内容由后端的提示另定（`docs/privacy.md`）；
  * 3. **落位**：把「快照 + 方案」拼成与「并进 Agent 改动」同一种差异（`AgentCanvasDiff`），交给同一个 `planAgentMerge` 做字段级合并，
  *    新增 / 删除 / 重排 / 布局组都由它管（一份落位规则，不另写一套）。
  */
+import { t as translate } from '@/i18n'
 import type { AgentCanvasDiff, VectorEditResult } from '@/lib/api'
 import { planAgentMerge, type MergedCanvas } from '@/lib/agentMerge'
 import type { CanvasObject, FigureDocument, LayoutGroup } from '@/types/document'
@@ -22,8 +24,13 @@ export function vectorSelectionOf(objects: readonly CanvasObject[], ids: readonl
   return ids.filter((id) => vec.has(id))
 }
 
-/** 子图对象只留位置与变换：后端的锚点解析 / 对齐 / 核对要外框，不要它的脚本、数据与覆盖项 */
+/** 子图对象只留位置与变换，另加后端实测要的输入（ADR 0208 第 ③ 期 3b）：`fileId` / `fileKind` / `overrides`（还没存盘的样式补丁，量的就是用户眼前的图）。
+ * 脚本、数据、图的内容都不带；冻结 / 运行时的子图只带「有没有」的布尔（后端据此退到只有外框），不带内容 */
 const PANEL_KEYS = ['id', 'type', 'x', 'y', 'w', 'h', 'rotation', 'flipH', 'flipV', 'crop', 'hidden', 'locked', 'groupId', 'groupPath', 'clipMask', 'clipOff'] as const
+
+const MEASURE_KEYS = ['fileId', 'fileKind', 'overrides'] as const
+/** 只带布尔：这张子图是不是冻结拼合的（`figureSnapshot` / `figureOrigin`）、是不是运行时素材（`source`） */
+const MEASURE_FLAGS = ['figureSnapshot', 'figureOrigin', 'source'] as const
 
 /** 一个对象在快照里的样子（矢量对象原样；子图只留外框；其余类型不进快照） */
 export function projectObject(o: CanvasObject): CanvasObject | null {
@@ -32,6 +39,8 @@ export function projectObject(o: CanvasObject): CanvasObject | null {
     const src = o as unknown as Record<string, unknown>
     const out: Record<string, unknown> = {}
     for (const k of PANEL_KEYS) if (src[k] !== undefined) out[k] = structuredClone(src[k])
+    for (const k of MEASURE_KEYS) if (src[k] !== undefined) out[k] = structuredClone(src[k])
+    for (const k of MEASURE_FLAGS) if (src[k] != null) out[k] = true
     return out as unknown as CanvasObject
   }
   return null
@@ -42,6 +51,10 @@ export interface VectorSnapshot {
   canvas: { id: string; page: FigureDocument['page']; objects: CanvasObject[]; layoutGroups?: LayoutGroup[] }
   /** 快照里的对象 id（按画布顺序）：方案回来后核「点名的对象还是出发时那样」用 */
   byId: Map<string, CanvasObject>
+  /** 子图对象 id → 场景里的短号（P1、P2…，与后端 `unmeasured` 的键同序）：说「没量到」的那张图用 */
+  panelRefs: Map<string, string>
+  /** 子图对象 id → 界面叫法（「第 N 张图」，按画布上可见子图的顺序，与场景里的短号 P1、P2 同序）：清单里不出现 id / 短号 */
+  panelLabels: Map<string, string>
 }
 
 export function snapshotOf(doc: Pick<FigureDocument, 'page' | 'objects' | 'layoutGroups'>, canvasId: string): VectorSnapshot {
@@ -57,6 +70,12 @@ export function snapshotOf(doc: Pick<FigureDocument, 'page' | 'objects' | 'layou
       ...(doc.layoutGroups?.length ? { layoutGroups: structuredClone(doc.layoutGroups) } : {}),
     },
     byId: new Map(objects.map((o) => [o.id, o])),
+    panelRefs: new Map(doc.objects.filter((o) => o.type === 'panel' && !o.hidden).map((o, i) => [o.id, `P${i + 1}`] as const)),
+    panelLabels: new Map(
+      doc.objects
+        .filter((o) => o.type === 'panel' && !o.hidden)
+        .map((o, i) => [o.id, translate('changePlan.vector.panelN', { ns: 'ai', n: i + 1 })] as const),
+    ),
   }
 }
 
@@ -211,7 +230,10 @@ export function failedChecks(r: VectorEditResult): number {
   return (r.checks ?? []).filter((c) => c.status === 'fail').length
 }
 
-/** 方案改了几个对象（改 + 新生成 + 删） */
+/**
+ * 方案改了几个对象（改 + 新生成 + 删）。**不含** `depends_on` 的子图：它们只是新对象的位置依据、进基线核对（`namedIds`），没有被改；
+ * 摘要与弹窗标题的数要和清单对得上。
+ */
 export function touchedCount(r: VectorEditResult): number {
-  return namedIds(r).length
+  return new Set([...(r.objects ?? []).map((o) => o.id), ...(r.deleted ?? []), ...(r.changes ?? []).map((c) => c.id)]).size
 }

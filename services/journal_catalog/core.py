@@ -321,6 +321,24 @@ class Service:
                 return 304, headers_out, b""
             self.store.count_index(now, version, 200)
             return 200, headers_out, response[2]
+        if route == "/thanks.signed.json" and facts_v2:
+            # 署名（主仓库 ADR 0213 三期）：与索引同一把钥匙签名的另一份信封，只在 v2 下有；
+            # 文件不在是常态（那一版没出署名），回 404，客户端照常不显示。不计数、不要令牌，与索引同样可走条件请求。
+            if method != "GET":
+                return _err(405, "method_not_allowed")
+            response = self._file(
+                data_dir / "thanks.signed.json",
+                "application/json",
+                "public, max-age=300",
+                missing=(404, "thanks_unavailable"),
+            )
+            if response[0] != 200:
+                return response
+            etag = index_etag(response[2])
+            headers_out = [*response[1], ("ETag", etag)]
+            if etag_matches(h.get("if-none-match"), etag):
+                return 304, headers_out, b""
+            return 200, headers_out, response[2]
         if route == "/device":
             if method != "POST":
                 return _err(405, "method_not_allowed")

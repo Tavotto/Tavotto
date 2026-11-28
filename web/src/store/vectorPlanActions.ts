@@ -20,7 +20,7 @@ import { cropToFrame, previewFrame, baselineHolds, hasEdits, landedHolds, landVe
 import type { CanvasObject } from '@/types/document'
 import { currentLocale, msg, t as translate } from '@/i18n'
 import { currentRunSelection, newRequestId, useAiStore } from './aiStore'
-import { POLL_TIMEOUT, useChangePlanStore, type PlanEntry, type VectorHandle } from './changePlanStore'
+import { POLL_TIMEOUT, setCanvasAnnotateRunner, useChangePlanStore, type PlanEntry, type PlanPhase, type VectorHandle } from './changePlanStore'
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 
@@ -75,17 +75,21 @@ export function setVectorAssistantHold(fn: () => void): void {
   holdAssistantTab = fn
 }
 
+// 图内卡的「改在画布上加」：把原话交给矢量编辑方案（选区里没有矢量对象也能走）
+setCanvasAnnotateRunner((instruction, o) => runVectorEdit(instruction, [], { allowEmpty: true, followsKey: o.followsKey }))
+
 const hist = (count: number) => msg('history.applyChangePlan', { count }, 'workspace')
 
 /**
  * 发起一次矢量编辑方案。→ 方案卡的键；没发（没有选区矢量对象 / 已有一份在生成）= null。
  * 失败（没连 AI、请求被拒…）也留一张失败卡，带稳定码与可走的下一步，不报错卡住。
  */
-export function runVectorEdit(instruction: string, selection: readonly string[]): string | null {
+export function runVectorEdit(instruction: string, selection: readonly string[], opts: { followsKey?: string; allowEmpty?: boolean } = {}): string | null {
   const store = useChangePlanStore.getState
   const doc = useDocumentStore.getState()
   const sel = vectorSelectionOf(doc.doc.objects, selection)
-  if (!sel.length || vectorPlanBusy()) return null
+  // 没选矢量对象也能走，但只在用户从图内卡的「改在画布上加」转过来时（`allowEmpty`）：直接发指令还是要先选中对象
+  if ((!sel.length && !opts.allowEmpty) || vectorPlanBusy()) return null
   const ctx = contextNow()
   const snap = snapshotOf(doc.doc, ctx.canvasId)
   const guard = captureProjectEpoch()
@@ -106,6 +110,8 @@ export function runVectorEdit(instruction: string, selection: readonly string[])
     createdAt: Date.now(),
     status: 'generating',
     instruction: text,
+    // 接在图内卡后面：同一条指令只画一次用户气泡（`ChangePlanTurn`）
+    ...(opts.followsKey ? { followsKey: opts.followsKey } : {}),
     unchecked: {},
     request: { instruction: text },
     comments: [],
@@ -118,7 +124,7 @@ export function runVectorEdit(instruction: string, selection: readonly string[])
         // 重来按此刻的快照与选区（不是出发时的）：之前选的对象还在就还选它们，不在了就按此刻选中的
         const now = useDocumentStore.getState().doc.objects
         const keep = vectorSelectionOf(now, sel)
-        void runVectorEdit(text, keep.length ? keep : useSelectionStore.getState().ids)
+        void runVectorEdit(text, keep.length ? keep : useSelectionStore.getState().ids, { allowEmpty: opts.allowEmpty })
       },
       holds: () => true,
       landed: () => false,
@@ -137,6 +143,12 @@ async function drive(key: string, ctx: Ctx, snap: VectorSnapshot, sel: string[],
     if (store().entries[key]) store().patchEntry(key, { status: 'failed', failure: { code, params } })
   }
 
+  // 后端报的阶段（`measure` 正在量图 → `model` → `plan`）：生成中的清单照它勾；出现过 `measure` 就多一步「量图」
+  const notePhase = (p?: string) => {
+    const e = store().entries[key]
+    if (!e || !p || e.status !== 'generating') return
+    store().patchEntry(key, { phase: p as PlanPhase, ...(p === 'measure' && e.vector ? { vector: { ...e.vector, measured: true } } : {}) })
+  }
   let planId: string
   try {
     const task = await createVectorEditPlan({
@@ -148,6 +160,7 @@ async function drive(key: string, ctx: Ctx, snap: VectorSnapshot, sel: string[],
       client_request_id: key,
     })
     planId = task.plan_id
+    notePhase(task.phase)
   } catch (err) {
     if (guard.still() && store().entries[key]) fail(err instanceof EngineError && err.code ? err.code : 'change_plan_failed', err instanceof EngineError ? err.params : undefined)
     return
@@ -180,13 +193,14 @@ async function drive(key: string, ctx: Ctx, snap: VectorSnapshot, sel: string[],
       await present(key, ctx, snap, view.plan, guard.still, text)
       return
     }
+    if (view.state === 'running') notePhase(view.phase)
   }
   // 途中换了文档 / 画布 / 项目：这份方案属于别处，丢掉（项目换了整表已清）
   if (guard.still() && store().entries[key]?.status === 'generating') store().dismiss(key)
 }
 
 /** 方案回来了：核对 → 出两张预览 → 卡变成待确认（或失败卡 / 空方案卡） */
-async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: VectorEditResult, still: () => boolean, instruction: string): Promise<void> {
+async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: VectorEditResult, still: () => boolean, instruction: string, confirmed: string[] = [], carry?: Record<string, true>): Promise<void> {
   const store = useChangePlanStore.getState
   const live = () => still() && sameContext(ctx) && store().entries[key]?.status === 'generating'
   const patch = store().patchEntry
@@ -197,7 +211,10 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   }
   const prev = store().entries[key]?.vector
   if (!prev) return
-  const handle = (extra: Partial<VectorHandle>): VectorHandle => ({ ...prev, result, ...extra })
+  const allOps = Array.isArray(result.ops) ? result.ops : []
+  // 统计标注没核到原话、用户点了「按我说的加」：把被丢掉的那步补进补丁、带 confirmed 重新算整份方案（走回 `present`，勾选状态带过去）
+  const confirm = (item: string, op: unknown) => void confirmItem(key, ctx, snap, still, instruction, confirmed, item, op, allOps)
+  const handle = (extra: Partial<VectorHandle>): VectorHandle => ({ ...prev, result, confirm, ...extra })
 
   // 没有任何改动：补丁里的操作全被丢了（几何内核没装好 / 点名的对象不存在……），或模型说做不到
   if (!hasEdits(result)) {
@@ -211,7 +228,6 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   const doc = useDocumentStore.getState().doc
   const merged = landVector(snap, result, doc)
   const groups = changeGroups(snap, result)
-  const allOps = Array.isArray(result.ops) ? result.ops : []
   // 当前生效的方案（取消勾选后会换成用剩下的步重算出来的）：应用、基线核对、已应用判据都读它，不读最初那一份
   // `pub` = 已经算好、已经发布的那一份方案（勾选 + 方案 + 对比图 + 对象数）：它们必须一起换——勾选变了、子集算完但对比图还在画时，
   // 手里的方案仍是 `pub.result`；勾回 `pub.key` 的勾选，恢复的就是这一整份
@@ -220,6 +236,7 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
   const make = (extra: Partial<VectorHandle> = {}): VectorHandle => ({
     ...prev,
     result,
+    confirm,
     groups,
     // 每一步都有对应的改动行才能按步勾选（老后端没有 `op`、或补丁与行对不上 = 整批要或不要）
     ...(groups.length > 0 && groups.every((g) => g.op !== undefined) && allOps.length > 0 ? { ops: allOps } : {}),
@@ -297,7 +314,7 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
     try {
       for (;;) {
         if (!chosen.length) break
-        const r = await planVectorEditOps(snap.canvas, chosen.map((i) => allOps[i]), { instruction_text: instruction, confirmed: [] })
+        const r = await planVectorEditOps(snap.canvas, chosen.map((i) => allOps[i]), { instruction_text: instruction, confirmed })
         if (!mine()) return
         const bad = (r.errors ?? []).find((x) => typeof x.index === 'number' && x.code !== 'checks_failed')
         if (r.ok || !bad || r.objects) {
@@ -356,7 +373,71 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
     patch(key, { unchecked, afterSrc: nextAfter, vector: { ...e1.vector!, result: next, count: touchedCount(next), busy: false, failed: false, blocked } })
   }
   pub.afterSrc = afterSrc
-  patch(key, { status: 'ready', plan: synthPlan(key, result, groups, beforeSrc, afterSrc), beforeSrc, afterSrc, vector: make({ recompute: (force) => void recompute(force) }) })
+  pub.afterSrc = afterSrc
+  patch(key, { status: 'ready', failure: undefined, phase: undefined, unchecked: carry ?? {}, plan: synthPlan(key, result, groups, beforeSrc, afterSrc), beforeSrc, afterSrc, vector: make({ recompute: (force) => void recompute(force) }) })
+  if (carry && Object.keys(carry).length) void recompute(true) // 确认之前已经取消的步，仍然取消
+}
+
+/**
+ * 「按我说的加」：把被丢掉的那一步补进补丁，带上确认的条目名，对同一份快照重新算整份方案。
+ * `fullOps` 是出发时那份**完整**补丁（不是取消勾选后发布的子集）：勾选键按它的下标编号，确认重算必须基于它，
+ * 重算回来勾选才对得上（先取消、再确认，保留的那步不会变成 op0 被禁用、取消的那步也不会从清单里消失）
+ */
+async function confirmItem(key: string, ctx: Ctx, snap: VectorSnapshot, still: () => boolean, instruction: string, confirmed: string[], item: string, op: unknown, fullOps: unknown[]): Promise<void> {
+  const store = useChangePlanStore.getState
+  const e = store().entries[key]
+  const base = e?.vector?.result
+  if (!e || !base || e.vector?.busy || (e.status !== 'ready' && e.status !== 'failed')) return
+  const carry = Object.fromEntries(Object.entries(e.unchecked).filter(([, v]) => v)) as Record<string, true>
+  const back = { status: e.status, failure: e.failure, phase: e.phase }
+  const ops = [...fullOps, op]
+  const said = [...confirmed, item]
+  store().patchEntry(key, { status: 'generating', failure: undefined, phase: 'plan' })
+  let res: VectorEditResult
+  try {
+    res = await planVectorEditOps(snap.canvas, ops, { instruction_text: instruction, confirmed: said })
+  } catch {
+    if (still() && store().entries[key]) store().patchEntry(key, back) // 没算成：回到点之前的样子，还能再点
+    return
+  }
+  if (!still() || store().entries[key]?.status !== 'generating') return
+  // 等回包的时候切走了画布 / 文档：这份方案属于别处，条目收掉（照 `present` 的 dropAbandoned；不收就是一张永远「生成中」的卡，一次一份的锁也一直挂着）
+  if (!sameContext(ctx)) {
+    store().dismiss(key)
+    return
+  }
+  const rest = (base.unhandled ?? []).filter((u) => !(u.code === 'needs_confirmation' && u.field === item))
+  const rejected = !res.ok && !res.objects ? (res.errors ?? []).find((x) => typeof x.index === 'number' && x.code !== 'checks_failed') : undefined
+  if (rejected) {
+    // 同一条里还有别的统计标注没核到原话（后端一次只报第一个）：已确认的留在 `said` 里，另一个当成新的一行请用户确认；
+    // 用完整补丁（不含这一条）重新算出方案，不恢复原卡（原卡上只有刚点掉的那一行，会让用户原地打转）
+    const more = rejected.code === 'needs_confirmation' && rejected.index === ops.length - 1 && typeof rejected.field === 'string' && !said.includes(rejected.field) ? rejected.field : null
+    if (more === null) {
+      // 补进去的那步还是被拒（不该发生：后端只认请求里的 confirmed）：回到点之前的样子
+      store().patchEntry(key, back)
+      return
+    }
+    let again: VectorEditResult
+    if (fullOps.length) {
+      try {
+        again = await planVectorEditOps(snap.canvas, fullOps, { instruction_text: instruction, confirmed: said })
+      } catch {
+        if (still() && store().entries[key]) store().patchEntry(key, back)
+        return
+      }
+      if (!still() || store().entries[key]?.status !== 'generating') return
+      if (!sameContext(ctx)) {
+        store().dismiss(key)
+        return
+      }
+    } else {
+      again = { ok: true, errors: [], objects: [], deleted: [], echo: [], changes: [], ops: [] }
+    }
+    const pending = { code: 'needs_confirmation', field: more, op, reason: 'needs_confirmation' }
+    await present(key, ctx, snap, { ...again, ops: fullOps, unhandled: [...rest.filter((u) => !(u.code === 'needs_confirmation' && u.field === more)), pending] }, still, instruction, said, carry)
+    return
+  }
+  await present(key, ctx, snap, { ...res, ops: ops, unhandled: rest }, still, instruction, said, carry)
 }
 
 /** 卡与弹窗吃的方案外形：每条复述一组（整批要或不要，不画勾选）；框都不要（复述与对象没有一一对应） */

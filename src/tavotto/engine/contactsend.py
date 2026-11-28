@@ -41,6 +41,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 import uuid
@@ -378,6 +379,28 @@ def _journal_line(v: object, limit: int) -> str | None:
     return v if v and len(v) <= limit and not _CTRL.search(v) else None
 
 
+#: 署名（`journal.credit`，ADR 0213 三期 / API 1.8.0）：用户自填、会展示给别的用户看的一小段字，客户端发送前与渲染前各校验一次
+CREDIT_MAX = 32
+_CREDIT_BAD_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def clean_credit(v: object) -> str | None:
+    """称呼：NFKC + 去首尾空白后 1–32 字；不含控制字符 / 格式字符（含双向控制符）/ 行与段分隔符 / `@`，
+    不区分大小写地不含 `://`、`www.`。合规回净化后的值，否则 None。服务端、journal-data 入库、
+    本机发送与读取（`journalfacts_remote` 的 thanks）四处同一条规则，改一处要同步其余。"""
+    if not isinstance(v, str):
+        return None
+    v = unicodedata.normalize("NFKC", v).strip()
+    if not v or len(v) > CREDIT_MAX or "@" in v:
+        return None
+    if any(unicodedata.category(ch) in _CREDIT_BAD_CATEGORIES for ch in v):
+        return None
+    low = v.casefold()
+    if "://" in low or "www." in low:
+        return None
+    return v
+
+
 def _journal_url(v: object) -> str | None:
     if not isinstance(v, str):
         return None
@@ -414,6 +437,12 @@ def clean_journal(raw: object, *, has_attachments: bool) -> dict | None:
         if kind != "wrong" or issue not in JOURNAL_ISSUES:
             raise ContactError("journal_invalid", 422)
         out["issue"] = issue
+    if "credit" in raw:
+        # 只随 wrong / missing；editor 带、或不合规，整封拒（服务端同一处置，不悄悄丢掉用户以为会写上的名字）
+        credit = clean_credit(raw["credit"]) if kind != "editor" else None
+        if credit is None:
+            raise ContactError("journal_invalid", 422)
+        out["credit"] = credit
     jid = raw.get("journal_id")
     if isinstance(jid, str) and _JOURNAL_ID.match(jid):
         out["journal_id"] = jid

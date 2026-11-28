@@ -86,15 +86,51 @@ export function objectNamer(snap: VectorSnapshot, result: VectorEditResult): (id
   return (id) => final.get(id) ?? base(id)
 }
 
+/** 方位点的叫法（后端 `vectorscene` 的九个点） */
+const POINTS = ['nw', 'n', 'ne', 'w', 'center', 'e', 'sw', 's', 'se']
+
+/**
+ * 新增对象「锚在哪」一行：取对象上落盘的持久锚点（`anchor.anchors[]`：子图方位点 / 数据点 / 图里的元素），子图换成界面叫法（第 N 张图），
+ * 不出现 id 与短号；没有锚点（框住子图的 box 之类）= 没有这一行
+ */
+function anchorLineOf(snap: VectorSnapshot, result: VectorEditResult): (id: string) => ChangeLine | null {
+  const objs = new Map((result.objects ?? []).map((o) => [o.id, o as unknown as { anchor?: { anchors?: Record<string, unknown>[] } }]))
+  // 没量到的子图：标注是按它的外框放的，说「外框」（说准，不说成锚在图里的哪一点）
+  const panel = (id: unknown) => {
+    const label = typeof id === 'string' ? (snap.panelLabels.get(id) ?? vt('panelOther')) : vt('panelOther')
+    const ref = typeof id === 'string' ? snap.panelRefs.get(id) : undefined
+    return ref && result.unmeasured?.[ref] ? vt('panelFrame', { panel: label }) : label
+  }
+  return (id) => {
+    const roles = objs.get(id)?.anchor?.anchors ?? []
+    const where: string[] = []
+    for (const r of roles) {
+      const data = r.data as { panel?: unknown; x?: unknown; y?: unknown } | undefined
+      const el = r.element as { panel?: unknown } | undefined
+      const pn = r.panel as { id?: unknown; point?: unknown } | undefined
+      const text = data
+        ? vt('at.data', { panel: panel(data.panel), x: String(data.x), y: String(data.y) })
+        : el
+          ? vt('at.element', { panel: panel(el.panel) })
+          : pn
+            ? vt('at.panel', { panel: panel(pn.id), point: typeof pn.point === 'string' && POINTS.includes(pn.point) ? vt(`point.${pn.point}`) : '' }).trim()
+            : null
+      if (text && !where.includes(text)) where.push(text)
+    }
+    return where.length ? { label: vt('anchoredAt', { where: listJoin(where) }) } : null
+  }
+}
+
 /** 按步骤（后端 `changes[].op`）分组的改动清单：一行 = 一步操作，行内按对象和字段；没有 `op`（老后端）时每个对象一行、不能勾选 */
 export function changeGroups(snap: VectorSnapshot, result: VectorEditResult): ChangeGroup[] {
   const changes = result.changes ?? []
   const name = objectNamer(snap, result)
+  const anchorOf = anchorLineOf(snap, result)
   const stepped = changes.length > 0 && changes.every((c) => typeof c.op === 'number')
-  if (!stepped) return objectGroups(name, changes).map((g, i) => ({ ...g, key: `o${i}` }))
+  if (!stepped) return objectGroups(name, changes, anchorOf).map((g, i) => ({ ...g, key: `o${i}` }))
   const ops = [...new Set(changes.map((c) => c.op as number))].sort((a, b) => a - b)
   return ops.map((op) => {
-    const per = objectGroups(name, changes.filter((c) => c.op === op))
+    const per = objectGroups(name, changes.filter((c) => c.op === op), anchorOf)
     if (per.length === 1) return { ...per[0], key: `op${op}`, op }
     // 一步动了好几个对象：一行写全部对象，字段行前面带上是谁的
     const lines = per.flatMap((g) => g.lines.map((l) => ({ ...l, label: vt('lineOf', { subject: g.subject, label: l.label }) })))
@@ -102,7 +138,7 @@ export function changeGroups(snap: VectorSnapshot, result: VectorEditResult): Ch
   })
 }
 
-function objectGroups(name: (id: string) => string, changes: NonNullable<VectorEditResult['changes']>): ChangeGroup[] {
+function objectGroups(name: (id: string) => string, changes: NonNullable<VectorEditResult['changes']>, anchorOf: (id: string) => ChangeLine | null): ChangeGroup[] {
   const order: string[] = []
   const byId = new Map<string, { whole?: 'deleted' | 'added' | 'replaced'; fields: Map<string, { before: unknown; after: unknown }> }>()
   for (const c of changes) {
@@ -125,7 +161,8 @@ function objectGroups(name: (id: string) => string, changes: NonNullable<VectorE
     const e = byId.get(id)!
     const subject = name(id)
     if (e.whole) {
-      out.push({ key: `o${i}`, subject: vt(e.whole, { subject }), lines: [] })
+      const where = e.whole === 'added' || e.whole === 'replaced' ? anchorOf(id) : null
+      out.push({ key: `o${i}`, subject: vt(e.whole, { subject }), lines: where ? [where] : [] })
       return
     }
     const lines: ChangeLine[] = []

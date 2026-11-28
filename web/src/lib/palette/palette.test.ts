@@ -234,6 +234,25 @@ describe('写入计划', () => {
     expect(plan.panels.find((x) => x.panel.id === 'B')!.patches.find((x) => x.gid === 'axes_0.lines_0')!.value).toBe(pal.colors[1])
   })
 
+  it('柱形系列盖着的某根柱被手改过：整条系列按手改跳过；那根柱是样式写的就照写（Codex #2271）', () => {
+    const pal = paletteById(DEFAULT_SCHEME)!
+    const ms = manifestOf([series('axes_0.bars_0', 'Control', 'bar_series'), series('axes_0.bars_1', 'Drug A', 'bar_series')])
+    const covers = (_p: PanelObject, gid: string, prop: string) =>
+      gid === 'axes_0.bars_0' && prop === 'facecolor'
+        ? [{ gid: 'axes_0.patches_0', prop: 'facecolor' }, { gid: 'axes_0.patches_1', prop: 'facecolor' }]
+        : []
+    const p = [panel('A', [{ gid: 'axes_0.patches_1', prop: 'facecolor', value: '#ff00ff' }])]
+    const r = reconcile(emptyTable(DEFAULT_SCHEME), collectSeries(p, () => ms))
+    const plan = planPalette(r.table, pal, r.groups, p, () => false, covers)
+    expect(plan.skipped.map((x) => x.gid)).toEqual(['axes_0.bars_0'])
+    expect(plan.panels[0].patches.map((x) => x.gid)).toEqual(['axes_0.bars_1'])
+    expect(plan.owned.some((o) => o.gid === 'axes_0.bars_0')).toBe(false)
+    // 那根柱的颜色归样式（不是用户手改）：照写
+    const yielded = planPalette(r.table, pal, r.groups, p, (_p, gid) => gid === 'axes_0.patches_1', covers)
+    expect(yielded.skipped).toEqual([])
+    expect(yielded.panels[0].patches.map((x) => x.gid)).toEqual(['axes_0.bars_0', 'axes_0.bars_1'])
+  })
+
   it('色数不够的组不上色，计划里列出来', () => {
     const p = [panel('A')]
     const ms = manifestOf(['a', 'b', 'c', 'd'].map((n, i) => series(`l${i}`, n)))

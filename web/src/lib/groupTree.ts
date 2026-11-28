@@ -113,14 +113,22 @@ export function isActiveMask(o: CanvasObject, masks: ReadonlyMap<string, CanvasO
   return !!o.clipMask && !!o.groupId && masks.get(groupPathOf(o).at(-1)!)?.id === o.id
 }
 
-/** 裁这个对象的剪切路径，外 → 内（每一层组各一个，没有蒙版的层跳过；蒙版自己不裁自己） */
-export function clipChainOf(o: CanvasObject, masks: ReadonlyMap<string, CanvasObject>): CanvasObject[] {
-  const out: CanvasObject[] = []
+/** 裁这个对象的剪切路径，外 → 内（每一层组各一个，没有蒙版的层跳过；蒙版自己不裁自己），连同它属于哪个组 */
+export function clipEntriesOf(
+  o: CanvasObject,
+  masks: ReadonlyMap<string, CanvasObject>,
+): { gid: string; mask: CanvasObject }[] {
+  const out: { gid: string; mask: CanvasObject }[] = []
   for (const gid of groupPathOf(o)) {
     const m = masks.get(gid)
-    if (m && m.id !== o.id) out.push(m)
+    if (m && m.id !== o.id) out.push({ gid, mask: m })
   }
   return out
+}
+
+/** 裁这个对象的剪切路径，外 → 内（每一层组各一个，没有蒙版的层跳过；蒙版自己不裁自己） */
+export function clipChainOf(o: CanvasObject, masks: ReadonlyMap<string, CanvasObject>): CanvasObject[] {
+  return clipEntriesOf(o, masks).map((e) => e.mask)
 }
 
 /**
