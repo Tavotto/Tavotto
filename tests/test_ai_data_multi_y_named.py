@@ -7,11 +7,13 @@
 
 from __future__ import annotations
 
+import os
 import socket
+import subprocess
 
 import pytest
 
-from tavotto.engine import ai_data_propose as P, ai_data_recipe as R, ai_data_template as tpl
+from tavotto.engine import ai_data_propose as P, ai_data_recipe as R, ai_data_template as tpl, pool
 from tavotto.engine.agent_runner import wires
 from tests.test_ai_data_propose import project  # noqa: F401
 
@@ -94,3 +96,95 @@ def test_without_a_pick_a_wide_table_of_six_measures_is_handled_as_before(projec
         assert len(recommended(resp)["y"]) <= R.DEFAULT_MULTI_Y
     else:
         assert resp["kind"] == "ask", resp
+
+
+@pytest.mark.parametrize(
+    ("n", "group"), [(3, "condition"), (4, "condition"), (8, "condition"), (8, "none")]
+)
+def test_rendered_lines_and_legend_distinguish_each_named_measure(tmp_path, n, group):
+    try:
+        worker_python = pool.find_worker_python()
+    except pool.WorkerError:
+        pytest.skip("没有装有 matplotlib 的解释器")
+    root = tmp_path / "proj"
+    data = root / "data"
+    data.mkdir(parents=True)
+    ys = [f"p{i + 1}" for i in range(n)]
+    # p1 与 p4 在每组内部交叉：数据不同，颜色却已被条件分组占用。
+    rows = [
+        [1.1, 2.6, 4.8, 6.1],
+        [3.4, 2.9, 4.6, 3.2],
+        [6.2, 3.5, 4.7, 1.2],
+        [2.0, 3.6, 5.7, 7.2],
+        [4.1, 4.0, 5.5, 4.2],
+        [7.1, 4.5, 5.6, 2.1],
+    ]
+    conditions = ["low", "high"] if group != "none" else []
+    lines = ["date,condition," + ",".join(ys)]
+    for i, row in enumerate(rows if conditions else rows[:3]):
+        row = row + [(i + 1) * (j + 2) + 0.3 for j in range(4)]
+        lines.append(
+            f"2026-01-0{1 + i % 3},{'low' if i < 3 else 'high'}," + ",".join(map(str, row[:n]))
+        )
+    (data / "fixture.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    resp = P.propose(
+        root,
+        project="p",
+        folder="data",
+        render="lazy",
+        understand=False,
+        answers={"x": "date", "y": ys, "group": group},
+    )
+    v = recommended(resp)
+    assert v["y"] == ys and v["group"] == (group if conditions else None)
+    it = next(i for i in resp["items"] if i.get("recommended"))
+    sess, item = P.get_item("p", resp["session"], it["id"])
+    script = sess.dir / "tavotto_figures" / f"{item.stem}.py"
+    # Matplotlib 的 get_linestyle() 会把自定义节奏都报成 --，必须量实际 dash 序列。
+    code = f"""
+import runpy
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
+
+ys = {ys!r}
+conditions = {conditions!r}
+runpy.run_path({str(script)!r}, run_name="__main__")
+ax = plt.gcf().axes[0]
+by_label = {{line.get_label(): line for line in ax.lines}}
+legend = ax.get_legend()
+keys = {{text.get_text(): handle for text, handle in zip(legend.get_texts(), legend.legend_handles)}}
+assert set(keys) == set(conditions + ys)
+assert len(ax.lines) == max(1, len(conditions)) * len(ys)
+assert Path({str(script.with_suffix(".pdf"))!r}).read_bytes().startswith(b"%PDF-")
+
+def dashes(line):
+    offset, pattern = line._unscaled_dash_pattern
+    return (offset, tuple(pattern) if pattern else None)
+
+if conditions:
+    for condition in conditions:
+        curves = [by_label[f"line | {{condition}} | {{y}}"] for y in ys]
+        styles = [dashes(line) for line in curves]
+        assert len(set(styles)) == len(ys), (condition, styles)
+        assert [dashes(keys[y]) for y in ys] == styles
+        assert all(to_rgba(line.get_color()) == keys[condition].get_facecolor() for line in curves)
+        assert [line.get_linestyle() for line in curves[:3]] == ["-", "--", ":"]
+        if len(curves) >= 4:
+            p1, p4 = curves[0].get_ydata(), curves[3].get_ydata()
+            assert p1[0] < p4[0] and p1[-1] > p4[-1]
+else:
+    assert len({{line.get_color() for line in ax.lines}}) == len(ys)
+    assert all(keys[y].get_facecolor() == to_rgba(by_label[f"line | {{y}}"].get_color()) for y in ys)
+"""
+    run = subprocess.run(
+        [worker_python, "-c", code],
+        cwd=script.parent,
+        env={**os.environ, "MPLBACKEND": "Agg", "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=40,
+    )
+    assert run.returncode == 0, run.stderr
