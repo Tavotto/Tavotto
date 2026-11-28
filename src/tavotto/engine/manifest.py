@@ -109,6 +109,7 @@ from manifest_fields import (
     errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
+    layer_order_field,
     marker_field as _marker_field,
     opacity_field,
     point_size_field,
@@ -2281,15 +2282,7 @@ def _text_fields(t) -> list[dict]:
             "step": 0.05,
             "group": "排版",
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(t.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排版",
-        },
+        layer_order_field(round(float(t.get_zorder()), 1), group="排版"),
         {"prop": "bbox_visible", "type": "bool", "value": bb["visible"], "group": "背景"},
         {"prop": "bbox_facecolor", "type": "color", "value": bb["face"], "group": "背景"},
         {
@@ -2609,15 +2602,7 @@ def _line_fields(ln, state: FigState, gid: str) -> list[dict]:
             "value": to_hex(ln.get_markeredgecolor()),
             "group": "线条与标记",
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(ln.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(ln.get_zorder()), 1)),
     ]
 
 
@@ -2834,17 +2819,7 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
         )
     if "mapped" in caps:
         fields += _colormap_fields(coll, state, gid)
-    fields.append(
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(coll.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        }
-    )
+    fields.append(layer_order_field(round(float(coll.get_zorder()), 1)))
     return fields
 
 
@@ -3146,15 +3121,7 @@ def _linecoll_fields(coll) -> list[dict]:
         },
         *_alpha_field(coll),
         {"prop": "visible", "type": "bool", "value": bool(coll.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(coll.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(coll.get_zorder()), 1)),
     ]
 
 
@@ -3180,15 +3147,7 @@ def _bar_series_fields(grp) -> list[dict]:
         *([bar_width_field(r0.get_height(), horizontal=True)] if horizontal else []),
         opacity_field(1.0 if r0.get_alpha() is None else round(float(r0.get_alpha()), 2)),
         {"prop": "visible", "type": "bool", "value": bool(r0.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(r0.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(r0.get_zorder()), 1)),
     ]
 
 
@@ -3300,15 +3259,7 @@ def _arrowpatch_fields(a) -> list[dict]:
             "max": 1,
             "step": 0.05,
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(a.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(a.get_zorder()), 1)),
         {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
     ]
 
@@ -3392,15 +3343,7 @@ def _patch_fields(pt) -> list[dict]:
             "step": 0.05,
         },
         {"prop": "visible", "type": "bool", "value": bool(pt.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(pt.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(pt.get_zorder()), 1)),
     ]
     resize = patch_resize_geometry(pt)
     if resize is not None:
@@ -3481,15 +3424,7 @@ def _image_fields(im, state: FigState, gid: str) -> list[dict]:
             "options": ["upper", "lower"],
             "group": "高级",
         },
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(im.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(im.get_zorder()), 1)),
         {"prop": "visible", "type": "bool", "value": bool(im.get_visible())},
     ]
     return fields
@@ -4638,15 +4573,7 @@ def _stem_fields(grp, state: FigState, gid: str) -> list[dict]:
             "step": 0.05,
         },
         {"prop": "visible", "type": "bool", "value": bool(probe.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(probe.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(probe.get_zorder()), 1)),
     ]
 
 
@@ -4660,15 +4587,7 @@ def _generic_fields(a) -> list[dict]:
     """
     return [
         {"prop": "visible", "type": "bool", "value": bool(a.get_visible())},
-        {
-            "prop": "zorder",
-            "type": "number",
-            "value": round(float(a.get_zorder()), 1),
-            "min": -5,
-            "max": 50,
-            "step": 1,
-            "group": "排列",
-        },
+        layer_order_field(round(float(a.get_zorder()), 1)),
     ]
 
 

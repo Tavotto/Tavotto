@@ -617,7 +617,8 @@ ggplot_reflow_facet_guides <- function(table, layout, theme, text_targets, tick_
 }
 
 ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-                               grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits, titles) {
+                               grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits,
+                               titles, capture_order = FALSE) {
   built <- state$built
   plot <- ggplot_relabel_titles(built$plot, titles)
   axes_target <- state$axes_targets[[ggplot_axes_gid]]
@@ -726,13 +727,12 @@ ggplot_guide_table <- function(state, edits, colour_edits, axis_styles, guide_st
     ggplot_clone(plot$guides, params = guide_params), plot$scales, remapped$extensions, remapped$outlines
   )
   captured <- new.env(parent = emptyenv())
-  if (redraw) captured$grobs <- vector("list", length(plot$layers))
+  if (redraw || capture_order) captured$grobs <- vector("list", length(plot$layers))
   plot$layers <- Map(function(layer, grobs, index) {
-    if (redraw) {
-      ggplot_watch_layer(ggplot_mirror_raster_layer(layer, layout$coord), index, captured)
-    } else if (index %in% remapped$changed) {
+    layer <- if (redraw || index %in% remapped$changed) {
       ggplot_mirror_raster_layer(layer, layout$coord)
     } else ggplot_frozen_layer(layer, grobs)
+    if (redraw || capture_order) ggplot_watch_layer(layer, index, captured) else layer
   }, plot$layers, state$layer_grobs, seq_along(plot$layers))
   built$layout <- layout
   built$plot <- plot
@@ -1012,12 +1012,72 @@ ggplot_cartesian_panels <- function(table, layout) {
   if (!single && (!class(layout$facet)[[1L]] %in% c("FacetWrap", "FacetGrid") || !length(facets))) {
     return(NULL)
   }
-  members <- lapply(table$grobs[slots], function(grob) grob$childrenOrder)
+  members <- lapply(table$grobs[slots], function(grob) names(grob$children))
   drawn_names <- unlist(members, use.names = FALSE)
   placements <- data.frame(grob = drawn_names, slot = rep(slots, lengths(members)),
                            child = sequence(lengths(members)))
   placements <- placements[!(duplicated(drawn_names) | duplicated(drawn_names, fromLast = TRUE)), , drop = FALSE]
   list(placements = placements, cells = cells, facets = facets, single = single)
+}
+
+ggplot_layer_priorities <- function(panels, layer_grobs) {
+  if (is.null(panels) || !length(layer_grobs)) return(list())
+  priorities <- unlist(Map(function(grobs, index) {
+    drawn <- Filter(function(grob) !inherits(grob, "zeroGrob") && !is.null(grob$name), grobs)
+    stats::setNames(rep(index, length(drawn)), vapply(drawn, `[[`, character(1L), "name"))
+  }, unname(layer_grobs), seq_along(layer_grobs)))
+  placements <- panels$placements
+  matches <- match(placements$grob, names(priorities))
+  found <- !is.na(matches)
+  split(priorities[matches[found]], placements$slot[found])
+}
+
+ggplot_layer_order_targets <- function(table, priorities, targets) {
+  Filter(Negate(is.null), lapply(targets, function(target) {
+    if (length(target$parts) || !is.null(target$group) || !is.null(target$cap_rows)) return(NULL)
+    slot <- target$slot
+    if (is.null(slot) || is.null(target$child)) return(NULL)
+    ranks <- priorities[[as.character(slot)]]
+    if (length(ranks) < 2L) return(NULL)
+    name <- table$grobs[[slot]]$children[[target$child]]$name
+    rank <- ranks[match(name, names(ranks))]
+    if (length(rank) == 1L && !is.na(rank) && rank == target$index) {
+      list(slot = slot, index = target$index)
+    }
+  }))
+}
+
+ggplot_layer_order_edits <- function(state, edits) {
+  order <- Filter(Negate(is.null), lapply(edits, function(edit) edit[["zorder"]]))
+  for (gid in names(order)) {
+    value <- order[[gid]]
+    if (is.null(state$layer_order_targets[[gid]]) || !is.numeric(value) ||
+        length(value) != 1L || !is.finite(value)) {
+      stop("The requested native R layer order is unavailable.")
+    }
+  }
+  order
+}
+
+ggplot_order_panel_layers <- function(table, priorities, targets, edits) {
+  slots <- split(names(edits), vapply(targets[names(edits)], `[[`, integer(1L), "slot"))
+  for (slot in names(slots)) {
+    panel <- table$grobs[[as.integer(slot)]]
+    ranks <- priorities[[slot]]
+    positions <- which(panel$childrenOrder %in% names(ranks))
+    original <- panel$childrenOrder[positions]
+    ranks <- ranks[original]
+    order <- ranks
+    for (gid in slots[[slot]]) {
+      member <- which(ranks == targets[[gid]]$index)
+      if (length(member) != 1L) stop("The native R layer could not be found for reordering.")
+      order[[member]] <- edits[[gid]]
+    }
+    # Sort paint slots only. Structural children still address the same grobs.
+    panel$childrenOrder[positions] <- original[base::order(order, ranks)]
+    table$grobs[[as.integer(slot)]] <- panel
+  }
+  table
 }
 
 ggplot_panel_draws <- function(panels, members, data) {
@@ -1750,6 +1810,10 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
     ribbon_targets <- ggplot_ribbon_targets(built, panels, captured_layers$grobs, colour_capture$maps)
     ribbon_geometry <- measure_ggplot_ribbons(table, ribbon_targets, frame_pt)
     ribbon_targets <- ribbon_targets[names(ribbon_geometry)]
+    layer_priorities <- ggplot_layer_priorities(panels, captured_layers$grobs)
+    layer_order_targets <- ggplot_layer_order_targets(
+      table, layer_priorities, c(line_targets, point_targets, bar_targets, ribbon_targets)
+    )
     legend_targets <- ggplot_legend_boxes(table)
     legend_boxes <- measure_ggplot_legends(legend_targets, frame_pt)
     legend_targets <- legend_targets[!vapply(legend_boxes, is.null, logical(1L))]
@@ -1768,6 +1832,8 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
       palettes = palettes,
       built = if (rebuild_guides) built,
       layer_grobs = if (rebuild_guides) captured_layers$grobs,
+      layer_priorities = layer_priorities,
+      layer_order_targets = layer_order_targets,
       axes_targets = axes_targets,
       facet_axis_groups = facet_axis_groups,
       axes_bbox = axes_bbox,
@@ -2051,6 +2117,10 @@ ggplot_guide_point_edits <- function(state, edits) {
 }
 
 ggplot_table_for <- function(state, edits) {
+  layer_order <- ggplot_layer_order_edits(state, edits)
+  layer_priorities <- state$layer_priorities
+  for (gid in names(layer_order)) edits[[gid]]$zorder <- NULL
+  edits <- Filter(length, edits)
   edits <- ggplot_authored_locator_edits(state, edits)
   edits <- ggplot_expand_point_groups(state, edits)
   table <- state$table
@@ -2106,7 +2176,8 @@ ggplot_table_for <- function(state, edits) {
     guides <- with_svg_frame(state$frame_pt, function(capture) {
       ggplot_guide_table(
         state, tick_edits, colour_edits, axis_styles, guide_strokes, axis_changes,
-        grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits, titles
+        grid_edits, theme_edits, aspect, side_edits, facet_changes, point_edits, member_edits,
+        titles, capture_order = length(layer_order) > 0L
       )
     })$value
     table <- guides$table
@@ -2170,6 +2241,9 @@ ggplot_table_for <- function(state, edits) {
         ggplot_rebind_layer_targets(table, targets, state$table, state$layer_grobs, guides$layer_grobs)
       })
     }
+    if (length(layer_order)) {
+      layer_priorities <- ggplot_layer_priorities(ggplot_cartesian_panels(table, layout), guides$layer_grobs)
+    }
   }
   member_ids <- unlist(lapply(member_edits, names), use.names = FALSE)
   ordered <- ggplot_series_edit_order(setdiff(names(edits), member_ids),
@@ -2221,6 +2295,9 @@ ggplot_table_for <- function(state, edits) {
   table <- ggplot_errorbar_group_edits(table, layer_targets$line_targets, edits)
   if (length(frame_edits)) {
     table <- ggplot_frame_edit(table, axes_target$slot, axes_target$frame$fallback, frame_edits)
+  }
+  if (length(layer_order)) {
+    table <- ggplot_order_panel_layers(table, layer_priorities, state$layer_order_targets, layer_order)
   }
   c(list(table = table, layout = layout, text = text_targets, legends = legend_targets,
          stops = stops, axes = axes,
@@ -2338,6 +2415,9 @@ preview_ggplot_png <- function(state, edits, path, width, with_manifest) {
 
 ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   requested <- edits
+  layer_order <- ggplot_layer_order_edits(state, edits)
+  for (gid in names(layer_order)) edits[[gid]]$zorder <- NULL
+  edits <- Filter(length, edits)
   edits <- ggplot_authored_locator_edits(state, edits)
   edits <- ggplot_expand_point_groups(state, edits)
   # A resized title can move the entire plot. Re-measure even targets whose
@@ -2358,10 +2438,10 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     any(vapply(ggplot_guide_point_edits(state, edits), function(edit) {
       any(c("size", "linewidth") %in% names(edit))
     }, logical(1L)))
-  line_edits <- any(names(edits) %in% names(state$line_targets))
+  line_edits <- length(layer_order) > 0L || any(names(edits) %in% names(state$line_targets))
   point_edits <- any(names(edits) %in% names(state$point_targets))
-  bar_edits <- any(names(edits) %in% names(state$bar_targets))
-  ribbon_edits <- any(names(edits) %in% names(state$ribbon_targets))
+  bar_edits <- length(layer_order) > 0L || any(names(edits) %in% names(state$bar_targets))
+  ribbon_edits <- length(layer_order) > 0L || any(names(edits) %in% names(state$ribbon_targets))
   if (reflow) {
     geometry_gids <- names(state$text_targets)
   } else {
@@ -2374,7 +2454,7 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
   } else if (reflow || length(geometry_gids) || line_edits || point_edits || bar_edits || ribbon_edits) {
     measured <- with_svg_frame(state$frame_pt, function(capture) {
       grid::grid.newpage()
-      scene <- ggplot_table_for(state, edits)
+      scene <- ggplot_table_for(state, requested)
       grid::grid.draw(scene$table)
       list(text = measure_ggplot_targets(scene$text[geometry_gids], state$frame_pt),
            tick_members = if (reflow) ggplot_measure_tick_members(
@@ -2666,10 +2746,19 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     ggplot_axes_element(gid, target, measured$axes[[gid]], axes_bbox[[gid]], edits[[gid]],
                         ggplot_facet_axis_changes(target, facet_changes))
   })
-  list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72),
-       elements = c(axes, legends, elements,
-                    unname(measured$tick_members %||% state$tick_members), lines,
-                    ggplot_point_elements(state, edits, measured$points),
-                    ggplot_bar_elements(state, edits, measured$bars),
-                    ggplot_ribbon_elements(state, edits, measured$ribbons), colour_scales))
+  elements <- c(axes, legends, elements, unname(measured$tick_members %||% state$tick_members), lines,
+                ggplot_point_elements(state, edits, measured$points),
+                ggplot_bar_elements(state, edits, measured$bars),
+                ggplot_ribbon_elements(state, edits, measured$ribbons), colour_scales)
+  elements <- lapply(elements, function(element) {
+    gid <- element$gid
+    target <- state$layer_order_targets[[gid]]
+    if (!is.null(target)) {
+      edit <- layer_order[[gid]]
+      element$layer_order <- list(current = edit %||% target$index)
+      if (!is.null(edit)) element$layer_order$original <- target$index
+    }
+    element
+  })
+  list(stem = stem, size_mm = as.list(state$frame_pt * 25.4 / 72), elements = elements)
 }

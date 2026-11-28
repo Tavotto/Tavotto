@@ -69,6 +69,18 @@ def opacity_field(value: float) -> dict:
     return {"prop": "alpha", "type": "number", "value": value, "min": 0, "max": 1, "step": 0.05}
 
 
+def layer_order_field(value: float, *, group: str = "排列") -> dict:
+    return {
+        "prop": "zorder",
+        "type": "number",
+        "value": value,
+        "min": -5,
+        "max": 50,
+        "step": 1,
+        "group": group,
+    }
+
+
 def fill_color_field(color: str) -> dict:
     return {"prop": "facecolor", "type": "color", "value": color}
 

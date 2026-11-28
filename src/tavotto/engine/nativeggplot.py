@@ -27,6 +27,7 @@ from .manifest_fields import (
     errorbar_cap_fields,
     errorbar_stroke_fields,
     fill_color_field,
+    layer_order_field,
     marker_field,
     opacity_field,
     point_size_field,
@@ -305,6 +306,13 @@ class GgplotTarget:
             if element["gid"] != "plot.title":
                 label = element["gid"].encode("utf-8") + b"\0" + label
             element["identity"] = "r1:" + hashlib.sha256(label).hexdigest()[:16]
+
+        for element in manifest["elements"]:
+            if layer_order := element.pop("layer_order", None):
+                field = layer_order_field(layer_order["current"])
+                if "original" in layer_order:
+                    field["value_original"] = layer_order["original"]
+                element["editable"].append(field)
 
     @staticmethod
     def annotate_axes(element: dict, axes: dict) -> None:

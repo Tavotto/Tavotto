@@ -4948,6 +4948,60 @@ def _assert_r_probe(tmp_path, program):
     assert not (tmp_path / "Rplots.pdf").exists()
 
 
+def test_ggplot_layer_order_follows_the_selected_facet(tmp_path):
+    _assert_r_probe(
+        tmp_path,
+        r"""
+data <- data.frame(x = rep(1:3, 2), y = rep(c(1, 3, 2), 2), panel = rep(c("A", "B"), each = 3))
+plot <- ggplot2::ggplot(data, ggplot2::aes(x, y)) +
+  ggplot2::geom_line(colour = "#A01828", linewidth = 2) +
+  ggplot2::geom_text(ggplot2::aes(label = y), colour = "#556677") +
+  ggplot2::geom_line(colour = "#176F9A", linewidth = 1) +
+  ggplot2::facet_wrap(ggplot2::vars(panel))
+capture <- adapter$capture_ggplot(plot, c(450, 260))
+state <- capture$state
+select <- function(manifest, gid) {
+  Filter(function(element) identical(element$gid, gid), manifest$elements)[[1L]]
+}
+svg_colours <- function(svg) {
+  unlist(regmatches(svg, gregexpr("stroke: #(A01828|176F9A)", svg)),
+         use.names = FALSE)
+}
+gid <- "layer.1.panel.2.line"
+front <- "layer.3.panel.2.line"
+original <- adapter$ggplot_manifest(state, "layer-order")
+stopifnot(identical(select(original, gid)$layer_order$current, 1L))
+baseline <- svg_colours(capture$svg)
+stopifnot(identical(baseline, rep(c("stroke: #A01828", "stroke: #176F9A"), 2)))
+edits <- stats::setNames(list(list(zorder = 7)), gid)
+actual <- adapter$render_ggplot(state, edits)
+stopifnot(identical(svg_colours(actual), c(baseline[1:2], rev(baseline[3:4]))))
+changed <- adapter$ggplot_manifest(state, "layer-order", edits)
+line <- select(changed, gid)
+stopifnot(identical(line$layer_order, list(current = 7, original = 1L)),
+          line$geometry$paint_order > select(changed, front)$geometry$paint_order,
+          identical(line$geometry$paths, select(original, gid)$geometry$paths),
+          identical(select(changed, "layer.1.panel.1.line"), select(original, "layer.1.panel.1.line")))
+source_panel <- state$table$grobs[[state$line_targets[[gid]]$slot]]
+sorted_panel <- adapter$ggplot_table_for(state, edits)$table$grobs[[state$line_targets[[gid]]$slot]]
+stopifnot(identical(source_panel$children, sorted_panel$children),
+          identical(adapter$render_ggplot(state), capture$svg))
+edits[[gid]]$zorder <- 2
+stopifnot(identical(adapter$render_ggplot(state, edits), capture$svg))
+edits[[gid]]$zorder <- Inf
+stopifnot(inherits(tryCatch(adapter$render_ggplot(state, edits), error = identity), "error"))
+edits[[gid]]$zorder <- 7
+axes_gid <- names(state$axes_targets)[[2L]]
+axes <- stats::setNames(list(list(invert_x = TRUE)), axes_gid)
+both <- c(axes, edits)
+stopifnot(identical(svg_colours(adapter$render_ggplot(state, both)), svg_colours(actual)),
+          identical(svg_colours(adapter$render_ggplot(state, axes)), baseline))
+again <- adapter$capture_ggplot(plot, c(450, 260))$state
+stopifnot(identical(adapter$render_ggplot(again, edits), actual))
+""",
+    )
+
+
 def test_ggplot_secondary_axes_follow_native_ranges_and_scales(tmp_path):
     _assert_r_probe(tmp_path, SECONDARY_AXIS_PROBE)
 

@@ -71,6 +71,7 @@ PAGE_MM = (192, 61)
 R_LEGEND_POSITION = [0.42, 0.64]
 R_CURVE_COLOR = "#923579"
 R_CURVE_WIDTH = 2.4
+R_CURVE_ZORDER = 12
 R_TICK_FORMATS = {
     "axis.x.bottom.ticks": "%.2f",
     "legend.left.1.colourbar.ticks": "%.1f",
@@ -389,6 +390,7 @@ def _pdf_pixels(path):
         )
         ribbon_color = tuple(n / 255 for n in bytes.fromhex(RANGE_PAINT["facecolor"][1:]))
         ribbons = [path for path in drawn if path["fill"] == pytest.approx(ribbon_color, abs=0.003)]
+        assert all(path["seqno"] < curve["seqno"] for path in ribbons if path["rect"].x0 > split)
         assert len(ribbons) == 2
         assert sum(path["rect"].x0 > split for path in ribbons) == 1
         assert all(path["fill_opacity"] == pytest.approx(0.6, abs=0.01) for path in ribbons)
@@ -453,6 +455,8 @@ def _format_pixels(files):
         if f"fill: {RANGE_PAINT['facecolor'].lower()}" in node.attrib.get("style", "").lower()
     ]
     assert "fill-opacity: 0.60" in ribbon.attrib["style"]
+    paint_order = list(svg_tree.iter())
+    assert paint_order.index(ribbon) < paint_order.index(curve)
     for label, page_size in (
         ("Displacement (L)", R_AXIS_PAGE_SIZE),
         ("Highway mileage", AXIS_PAGE_SIZE),
@@ -889,7 +893,7 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
         assert edited_bars["identity"] == r_bars["identity"]
         assert edited_bars["geometry"]["paths"] == r_bars["geometry"]["paths"]
         bar_fields = {field["prop"]: field["value"] for field in edited_bars["editable"]}
-        assert bar_fields == {**BAR_PAINT, "bar_width": 0.36}
+        assert bar_fields == {**BAR_PAINT, "bar_width": 0.36, "zorder": 3}
         edited_errors = next(
             el for el in changed["manifest"]["elements"] if el["gid"] == r_errors["gid"]
         )
@@ -902,7 +906,10 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
             el for el in changed["manifest"]["elements"] if el["gid"] == r_range["gid"]
         )
         assert edited_range["geometry"]["paths"] == r_range["geometry"]["paths"]
-        assert {field["prop"]: field["value"] for field in edited_range["editable"]} == RANGE_PAINT
+        assert {field["prop"]: field["value"] for field in edited_range["editable"]} == {
+            **RANGE_PAINT,
+            "zorder": 5,
+        }
         with pytest.raises(HttpError):
             _render(app, r_asset, [{**r_range_patches[0], "identity": "r9:stale"}])
         assert _render(app, r_asset, r_patches)["svg"] == with_minor["svg"]
@@ -927,6 +934,25 @@ def test_mixed_native_project_survives_portable_install(tmp_path):
             assert _rendered_svg_pixels(wider) != before_width
             assert _rendered_svg_pixels(_render(app, asset, patches)) == before_width
             patches.extend(width_patches)
+        behind = _render(app, r_asset, r_patches)
+        layer_order = {
+            "gid": curve["gid"],
+            "identity": curve["identity"],
+            "prop": "zorder",
+            "value": R_CURVE_ZORDER,
+        }
+        in_front = _render(app, r_asset, [*r_patches, layer_order])
+        ordered = {el["gid"]: el for el in in_front["manifest"]["elements"]}
+        ordered_curve = ordered[curve["gid"]]
+        field = next(field for field in ordered_curve["editable"] if field["prop"] == "zorder")
+        assert field["value"] == R_CURVE_ZORDER and field["value_original"] == 2
+        assert (
+            ordered_curve["geometry"]["paint_order"]
+            > ordered[r_range["gid"]]["geometry"]["paint_order"]
+        )
+        assert _rendered_svg_pixels(in_front) != _rendered_svg_pixels(behind)
+        assert _render(app, r_asset, r_patches)["svg"] == behind["svg"]
+        r_patches.append(layer_order)
         document = {
             "schema": 3,
             "project": {"id": "mixed", "name": "Mixed native"},

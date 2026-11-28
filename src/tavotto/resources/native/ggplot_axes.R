@@ -287,14 +287,14 @@ ggplot_rebind_layer_targets <- function(table, targets, before, old_grobs, new_g
   rebind <- function(target) {
     old <- old_grobs[[target$index]]
     new <- new_grobs[[target$index]]
-    previous <- before$grobs[[target$slot]]$childrenOrder
+    previous <- names(before$grobs[[target$slot]]$children)
     old_name <- if (is.character(target$child)) target$child else previous[[target$child]]
     index <- match(old_name, vapply(old, function(grob) grob$name %||% "", character(1L)))
     if (is.na(index) || length(old) != length(new) || !identical(names(old), names(new))) {
       stop("The native R layer changed while adjusting the axes.")
     }
     name <- new[[index]]$name
-    child <- which(table$grobs[[target$slot]]$childrenOrder == name)
+    child <- which(names(table$grobs[[target$slot]]$children) == name)
     if (length(child) != 1L) stop("The native R layer could not be found after adjusting the axes.")
     if (is.character(target$child)) target$child <- name else target$child <- child
     if (!is.null(target$grob_name)) target$grob_name <- name

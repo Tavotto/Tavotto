@@ -115,7 +115,8 @@ measure_ggplot_ribbons <- function(table, targets, frame_pt) {
   result <- list()
   for (gid in names(targets)) {
     target <- targets[[gid]]
-    grob <- table$grobs[[target$slot]]$children[[target$child]]
+    panel <- table$grobs[[target$slot]]
+    grob <- panel$children[[target$child]]
     viewport <- ggplot_drawn_panel_viewport(drawn, table, target$slot, grob$name)
     if (is.null(viewport)) next
     result[[gid]] <- tryCatch({
@@ -131,7 +132,7 @@ measure_ggplot_ribbons <- function(table, targets, frame_pt) {
       if (!all(is.finite(bbox)) || any(bbox[3:4] <= 0)) stop("Empty native R range geometry.")
       alpha <- ggplot_uniform_pigment(polygons[[1L]]$gp$fill)$alpha
       geometry <- list(kind = "multi_path", paths = paths, fill = alpha > 0, stroke = FALSE,
-                       paint_order = target$child)
+                       paint_order = match(grob$name, panel$childrenOrder))
       if (alpha > 0) geometry$fill_alpha <- alpha
       if (target$clip) geometry$clip <- ggplot_panel_clip(frame_pt)
       list(bbox = as.list(bbox), geometry = geometry)
