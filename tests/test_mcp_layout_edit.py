@@ -219,7 +219,8 @@ def test_mechanism_items_without_a_licence_are_pro_required_not_an_error(client,
         {
             "op": "add",
             "items": [
-                {"kind": "frame", "name": "f", "title": "T", "at_mm": [1, 1], "size_mm": [20, 10]}
+                {"kind": "frame", "name": "f", "title": "T", "at_mm": [1, 1], "size_mm": [20, 10]},
+                {"kind": "glyph", "name": "m", "glyph": "membrane", "frame": "f", "at_mm": [2, 2]},
             ],
         },
     ]

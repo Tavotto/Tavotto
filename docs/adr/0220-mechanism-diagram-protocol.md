@@ -18,7 +18,7 @@
 
 ```
 Agent / 改图助手 ─ add 条目 (kind: frame | glyph | graph) ─▶ 开源 engine/mechanism.py   ← license.has("mechanism-diagram") 只在这里
-                                                           │ 1 整批先过权益（未授权整批拒）
+                                                           │ 1 含 glyph / graph 的整批先过权益（frame 免费；未授权整批拒）
                                                            │ 2 解析条目、校验参数（按 catalog 规格）
                                                            │ 3 prohost.call("mechanism.*", 只有数字与结构) ──▶ 闭源 sidecar
                                                            │ 4 校验回包（闭集、有限数、版本一致）◀──────────── 子路径节点 / 端口 / 折线
@@ -35,9 +35,10 @@ Agent / 改图助手 ─ add 条目 (kind: frame | glyph | graph) ─▶ 开源 
 ### 二、功能键与 `pro_required`
 
 - 功能键 `mechanism-diagram`：登记进 0193 §一 的闭集、`license.FEATURES`、`tests/test_license_callsites.py` 的 `REGISTERED_CALLERS`（只有 `engine/mechanism.py` 一处调用）。
-- 引擎在 `prepare` 入口对**含三种新 `kind` 的整批**判权益，失败抛 `MechanismError("not_licensed")`；`vectoredit._plan` 折成结构化结果
+- **边界（维护者 2026-11-28 定：框免费，图元与通路图算高级版）**：示意图框 `frame` 免费——未授权也照常收下、照常进命名分组与核对，不碰闭源组件；`glyph` / `graph` 是高级版。
+- 引擎在 `prepare` 入口对**含 `glyph` / `graph` 的整批**判权益，失败抛 `MechanismError("not_licensed")`；`vectoredit._plan` 折成结构化结果
   `{ok: false, code: "pro_required", feature: "mechanism-diagram", message: <一句话>, learn_more: "了解高级版", errors: []}`——**不是错误**。
-  一个 `add` 里只要有一个 `frame / glyph / graph`，**整批**（含前面免费的步骤）都不写，不写一半（维护者拍板）。
+  一个 `add` 里只要有一个 `glyph` / `graph`，**整批**（含同批的 `frame` 与前面免费的步骤）都不写，不写一半（维护者拍板）。只有 `frame` 与免费条目的批不判权益。
 - 免费用户的工具列表与 schema 里这三种 `kind` 都在（`OPS_DOC` 的 `add` 说明里写明「没有授权回 pro_required」）。插件工具层（`_pro_required`）只把这一句转给 Agent，**工具层不判权益**；
   一键排版的 MCP 工具（0199 §十三）以后复用同一处翻译。免费条目（箭头 / 文字 / 括号 / 外框…）不判权益、不受影响。
 - 组件不在 / 起不来 / 回包不合闭集 / 修订号不认 → `EditError("pro_unavailable")`（「需要更新高级版组件」，0199 §十二 同口径），不改文档。
@@ -111,8 +112,8 @@ Agent / 改图助手 ─ add 条目 (kind: frame | glyph | graph) ─▶ 开源 
 
 ### 九、免费与高级版边界
 
-免费：所有原生标注（箭头、文字、括号、外框、连线、形状）、导出、图层组名与改名、组名进 SVG 导出（0191 修订 / 0208 §七之三）、自由路径的质量核对（6.A，保护所有人的路径）。
-高级版（`mechanism-diagram`）：`frame / glyph / graph` 三种条目、按参数重生成。已发布的免费能力不受影响（0193 §一）。功能键是否与 `quick-layout` 同档售卖由 Stripe 后台定，代码只管闭集。
+免费：示意图框 `frame`（带名字的组 + 外框，含命名分组与可编辑性核对；维护者 2026-11-28 定）、所有原生标注（箭头、文字、括号、外框、连线、形状）、导出、图层组名与改名、组名进 SVG 导出（0191 修订 / 0208 §七之三）、自由路径的质量核对（6.A，保护所有人的路径）。
+高级版（`mechanism-diagram`）：`glyph` / `graph` 两种条目、按参数重生成。已发布的免费能力不受影响（0193 §一）。功能键是否与 `quick-layout` 同档售卖由 Stripe 后台定，代码只管闭集。
 
 ### 十、隐私
 
@@ -134,6 +135,5 @@ sidecar 只收「几何结构 + 毫米尺寸 + 短号」；节点 / 边 / 区带
 
 - 一键排版（0199）对示意图框的处理（当固定盒子障碍物？）没核。
 - `learn_more` 现在只有文字「了解高级版」，没有链接目标；链接地址由官网 / 维护者定。
-- `frame` 本身不需要闭源组件，但随 `mechanism-diagram` 一起判权益（草案 §2.1 的口径）；是否把 `frame` 放免费，请维护者定。
 - `label`（图元旁的文字标签）与 `connect / arrow` 端口锚点（`{item, port}`）本期未做：端口只随回包返回，进 6.D。
 - 0208 §六 持久化锚点（分期 4 / 7）合入到哪一步没核。

@@ -85,7 +85,7 @@ def test_feature_key_is_registered():
 
 def test_unlicensed_returns_a_structured_pro_required_not_an_error(monkeypatch):
     monkeypatch.setattr(engine_license, "has", lambda feature: False)
-    res = _plan(FRAME)
+    res = _plan(FRAME, MEMBRANE)
     assert res["ok"] is False and res["code"] == "pro_required"
     assert res["feature"] == "mechanism-diagram" and res["learn_more"] and res["message"]
     assert res["errors"] == []  # 不是错误
@@ -113,6 +113,29 @@ def test_free_items_never_ask_for_a_licence(monkeypatch):
     free = {"kind": "box", "name": "frame", "fit": [{"panel": {"id": "P1"}}]}
     res = ve.propose_memory(_canvas(), [_add(free)])
     assert res["ok"], res
+
+
+def test_frame_alone_is_free_and_never_asks_for_a_licence(monkeypatch):
+    """维护者 2026-11-28 定：示意图框免费；未授权也照常收下，进命名分组与核对。"""
+
+    def boom(feature):
+        raise AssertionError("frame 不该判权益")
+
+    monkeypatch.setattr(engine_license, "has", boom)
+    res = _plan(FRAME)
+    assert res["ok"], res
+    (box,) = res["changed"]
+    assert box["name"] == "示意图框 · EGF 信号" and list(box["groupNames"].values()) == [
+        "示意图 · EGF 信号"
+    ]
+
+
+def test_frame_plus_glyph_is_rejected_as_a_whole_when_unlicensed(monkeypatch):
+    monkeypatch.setattr(engine_license, "has", lambda feature: False)
+    res = _plan(FRAME, MEMBRANE)
+    assert res["code"] == "pro_required" and "changed" not in res
+    res = _plan(FRAME, {"kind": "graph", "name": "g", "nodes": [], "edges": []})
+    assert res["code"] == "pro_required"
 
 
 def test_graph_is_recognised_but_not_ready(licensed):
@@ -518,11 +541,13 @@ def test_a_blob_that_looks_like_a_rect_is_refused_at_add_time(licensed):
 
 
 # ---------------------------------------------------------------- 桌面改图助手 / 回归
-def test_desktop_assistant_drops_unlicensed_mechanism_items_without_crashing(monkeypatch):
+def test_desktop_assistant_unlicensed_keeps_the_free_frame_and_drops_glyphs(monkeypatch):
     monkeypatch.setattr(engine_license, "has", lambda feature: False)
-    out = vp.validate_ops({"ops": [_add(FRAME)], "unhandled": []}, _canvas())
-    assert out["ops"] == [] and out["unhandled"][0]["code"] == "not_licensed"
-    assert "机理图" in out["unhandled"][0]["reason"]
+    out = vp.validate_ops({"ops": [_add(FRAME), _add(FRAME, MEMBRANE)], "unhandled": []}, _canvas())
+    assert out["ops"] == [_add(FRAME)]  # 框照收
+    assert (
+        out["unhandled"][0]["code"] == "not_licensed" and "机理图" in out["unhandled"][0]["reason"]
+    )
 
 
 def test_desktop_assistant_keeps_a_licensed_frame(licensed):

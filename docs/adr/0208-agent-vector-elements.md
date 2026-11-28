@@ -559,5 +559,5 @@ TikZ 一类（DeTikZify）结构好但在 LaTeX 里。这正是本 ADR 让 Agent
 ## 修订（2026-11-28，第 ⑥ 期 6.B：机理图的协议与骨架 → ADR 0220）
 
 机理图（§七）的开源 / 闭源分工、sidecar 命令、`glyph` 字段语义（`version` = 图元自己的生成器修订号、`hash` 读时比对）、首批图元清单、命名与分组、
-可编辑性五条的自动化核对（`engine/mechcheck.py`）、`pro_required` 与整批拒，全部写在 [ADR 0220](0220-mechanism-diagram-protocol.md)；功能键 `mechanism-diagram` 已登记进 0193 §一。
+可编辑性五条的自动化核对（`engine/mechcheck.py`）、`pro_required` 与整批拒，全部写在 [ADR 0220](0220-mechanism-diagram-protocol.md)；功能键 `mechanism-diagram` 已登记进 0193 §一。**维护者 2026-11-28 定：示意图框 `frame` 免费，`glyph` / `graph` 算高级版**（整批里只有它们触发权益判断与整批拒）。
 本节与 §七 之间有两处用词更正：「简化内核只在前端」已被 0212 §三（后端用同一份 wasm 跑 `simplify`）取代；作用箭头只说「SBGN 风格」、不声称符合 SBGN（现有端型画不出空心形与「杠 + 箭头」）。

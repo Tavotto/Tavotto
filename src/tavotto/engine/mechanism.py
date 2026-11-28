@@ -1,8 +1,9 @@
 """机理图（ADR 0220）：开源侧编排——解析条目、问闭源组件要图元几何、校验回包、铸对象、命名分组、核对可编辑性。
 
 **权益判断只在这里**（`license.has("mechanism-diagram")`，ADR 0193 §一 / ADR 0220 §二）；`vectorscene` / `vectoredit` 不判权益，只在 `add` 里
-把三种新 `kind`（`frame` / `glyph` / `graph`）交给本模块。一整批 `add` 里只要有一个是这三种，**整批**先过权益，未授权抛
-`MechanismError("not_licensed")`，工具层（`vectoredit._plan`）折成结构化 `pro_required`，不写一半。
+把三种新 `kind`（`frame` / `glyph` / `graph`）交给本模块。**示意图框 `frame` 免费**（维护者 2026-11-28 定），未授权也照常收下、命名分组与核对；
+一整批 `add` 里只要有一个 `glyph` / `graph`，**整批**先过权益，未授权抛 `MechanismError("not_licensed")`，工具层（`vectoredit._plan`）折成结构化
+`pro_required`，不写一半（含同批的 `frame`）。
 
 **sidecar 只收到数字与结构**（ADR 0198 §三）：命令 `mechanism.catalog`（图元清单与参数规格）、`mechanism.glyph`（按 kind / version / params / 毫米尺寸出几何）；
 条目里的文字（标题、身份、块名）不发出本机。回包只收闭集：框内比例坐标的子路径节点、命名端口、`array` 标记、实际用的 `version`；
@@ -20,6 +21,8 @@ from . import agentobjects, license as engine_license, mechcheck, mechgroup, pro
 
 FEATURE = "mechanism-diagram"
 KINDS = ("frame", "glyph", "graph")
+#: 需要 `mechanism-diagram` 权益的条目种类（示意图框免费）
+PAID_KINDS = ("glyph", "graph")
 CMD_CATALOG = "mechanism.catalog"
 CMD_GLYPH = "mechanism.glyph"
 MAX_GLYPHS = 24
@@ -53,7 +56,7 @@ _STYLE_KEYS = {"color", "strokePt", "fill"}
 #: `vectoredit.OPS_DOC` 的 `add` 接在 `vectorscene.ITEMS_DOC` 后面的那一段（机理图条目词汇的**唯一**说明）。免费用户的工具说明里也有它，
 #: 调用回结构化 `pro_required`。位置用画布毫米（`at_mm`，框内条目也是画布毫米，没有「局部坐标」概念）。
 ITEMS_DOC = (
-    "机理图条目（高级版 `mechanism-diagram`；没有授权整批回 pro_required、一条也不写）："
+    "机理图条目（示意图框 frame 免费；glyph / graph 是高级版 `mechanism-diagram`，没有授权时含它们的整批回 pro_required、一条也不写）："
     "frame {name, title?, at_mm: [x, y], size_mm: [w, h], fill?}（示意图框：一个带名字的组 + 一个外框形状；一个 add 最多一个）；"
     "glyph {name, glyph: 图元种类, at_mm, size_mm?, params?, version?, identity?, frame?, block?, style?: {color, strokePt, fill}}"
     "（语义图元，落成一个可编辑路径；glyph 字段由引擎写、不收；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
@@ -85,7 +88,7 @@ def pro_required_result() -> dict:
         "ok": False,
         "code": "pro_required",
         "feature": FEATURE,
-        "message": "机理图（示意图框、语义图元、通路图）是高级版功能；免费的箭头、文字、括号、外框等标注不受影响。",
+        "message": "机理图的语义图元与通路图是高级版功能；示意图框和免费的箭头、文字、括号、外框等标注不受影响。",
         "learn_more": LEARN_MORE,
     }
 
@@ -265,7 +268,8 @@ def prepare(items: list, *, locale: str = "zh", ask: Ask | None = None) -> Prepa
         if stray:
             raise MechanismError("bad_item", str(stray[0].get("name")))  # 点名了框，却没有框
         return Prepared(free_items=items)
-    if not licensed():
+    # 维护者 2026-11-28 定：示意图框 `frame` 免费；`glyph` / `graph` 算高级版。只有它们触发权益判断与整批拒
+    if any(it["kind"] in PAID_KINDS for it in mech) and not licensed():
         raise MechanismError("not_licensed")
     out = Prepared(free_items=[])
     loc = mechgroup.locale_of(locale)
