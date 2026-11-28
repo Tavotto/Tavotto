@@ -2328,6 +2328,8 @@
       "none": "Not activated",
       "until": "Valid until {{date}}",
       "codeLabel": "Activation code",
+      "verifying": "Verifying",
+      "activated": "{{pro}} activated",
       "state": {
         "expired": "Expired on {{date}}",
         "revoked": "This license is no longer valid",

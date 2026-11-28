@@ -2298,6 +2298,8 @@
       "none": "还没激活",
       "until": "有效期至 {{date}}",
       "codeLabel": "激活码",
+      "verifying": "正在验证",
+      "activated": "已激活 {{pro}}",
       "state": {
         "expired": "已于 {{date}} 到期",
         "revoked": "这份授权已失效",
