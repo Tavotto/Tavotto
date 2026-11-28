@@ -61,7 +61,7 @@ ITEMS_DOC = (
     "frame {name, title?, at_mm: [x, y], size_mm: [w, h], fill?}（示意图框：一个带名字的组 + 一个外框形状；一个 add 最多一个）；"
     "glyph {name, glyph: 图元种类, at_mm, size_mm?, params?, version?, identity?, frame?, block?, style?: {color, strokePt, fill}}"
     "（语义图元，落成一个可编辑路径；glyph 字段由引擎写、不收；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
-    "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就沿膜等距排）：引擎把跨膜段中点对齐膜中线、"
+    "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）：引擎把跨膜段中点对齐膜中线、"
     "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
     "名字由引擎按「角色 + 身份」生成并固化，同批重名自动加序号；落地后过可编辑性核对，不过整批不落地（not_editable）。"
@@ -551,14 +551,12 @@ def _frame_at(samples: list, acc: list[float], frac: float) -> tuple:
     return x, y, nx / n, ny / n
 
 
-def _spread(count: int) -> list[float]:
-    """没给 at 的 n 个蛋白沿膜**等距**分布：(i + 0.5) / n。"""
-    return [(i + 0.5) / count for i in range(count)]
-
-
 def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
-    """一条膜上的嵌入蛋白：定位置（没给 at 的等距排，给了就照给的）、核「都在膜内、两两不重叠」、算膜的 `inserts` 回填（给膜重新要一次几何）、
-    算每个蛋白的位姿（跨膜段中点落在中线上，沿法线方向旋转）。"""
+    """一条膜上的嵌入蛋白：定位置、核「整个蛋白在膜长范围内（两端各留至少 2 个磷脂）、两两不重叠」、算膜的 `inserts` 回填（给膜重新要一次几何）、
+    算每个蛋白的位姿（跨膜段中点落在中线上，沿该处法线旋转）。
+
+    位置：**没给 at 的蛋白按实际宽度等空隙排**——膜长减去蛋白总宽，均分成 n + 1 个空隙（两端也各一个），空隙不到 2 个脂质间距就 `bad_item`（放不下）；
+    有蛋白给了 at 就照给的，其余没给的仍按 (i + 0.5) / n。"""
     mi = m.reply["info"]
     samples = mi.get("midline")
     if not samples:
@@ -568,27 +566,42 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
     sx, sy = msize[0] / nat[0], msize[1] / nat[1]
     acc = _midline_len(samples, sx, sy)
     total = acc[-1]
+    margin = 2 * mi.get("pitch_mm", 0.0)  # 膜两端各留至少 2 个脂质
     free = [g for g in prots if "at" not in g.embed]
-    auto = dict(zip((g.name for g in free), _spread(len(free))))
-    spots = [(g, g.embed["at"] if "at" in g.embed else auto[g.name]) for g in prots]
+    widths = {g.name: g.reply["info"]["natural_size_mm"][0] for g in prots}
+    tmx = {g.name: g.reply["info"]["tm_mid_mm"][0] for g in prots}
+    auto: dict[str, float] = {}
+    if free and len(free) == len(prots):
+        gap = (total - sum(widths.values())) / (len(prots) + 1)
+        if gap < margin - 1e-6:
+            raise MechanismError("bad_item", free[-1].name)  # 放不下：空隙不到 2 个脂质间距
+        cursor = gap
+        for g in prots:
+            auto[g.name] = (cursor + tmx[g.name]) / total
+            cursor += widths[g.name] + gap
+    elif free:
+        for g, f in zip(free, [(i + 0.5) / len(free) for i in range(len(free))]):
+            auto[g.name] = f
     wins = []
-    for g, at in spots:
-        pi = g.reply["info"]
-        full = pi["natural_size_mm"][0]
+    for g in prots:
+        at = g.embed["at"] if "at" in g.embed else auto[g.name]
         s = at * total
-        if s - full / 2 < -1e-6 or s + full / 2 > total + 1e-6:
-            raise MechanismError("bad_item", g.name)  # 超出膜的长度
-        wins.append((s, full, g, at, pi["tm_width_mm"] + mi.get("pitch_mm", 0.0)))
+        left = s - tmx[g.name]
+        right = left + widths[g.name]
+        if left < margin - 1e-6 or right > total - margin + 1e-6:
+            raise MechanismError("bad_item", g.name)  # 超出膜的长度（或太靠近膜端）
+        wins.append((left, right, g, at, g.reply["info"]["tm_width_mm"]))
     ordered = sorted(wins, key=lambda w: w[0])
     for a, b in zip(ordered, ordered[1:]):
-        if b[0] - a[0] < (a[1] + b[1]) / 2 - 1e-6:
+        if b[0] < a[1] - 1e-6:
             raise MechanismError("bad_item", b[2].name)  # 两个蛋白重叠
     given = list(m.params.get("inserts") or [])
-    computed = [{"at": round(at, 6), "width_mm": round(w_tm, 6)} for _s, _f, _g, at, w_tm in wins]
+    # 让位窗口 = 跨膜部分的总宽；贴着杆的净空由膜自己定（头部半径 + 1/4 间距），窗口之间的每一段它重新均匀排布
+    computed = [{"at": round(at, 6), "width_mm": round(w_tm, 6)} for _l, _r, _g, at, w_tm in wins]
     m.params["inserts"] = _check_inserts([*given, *computed], m.name)
     m.reply = _request(m, ask)  # 让位后的膜（外框不变）
     mx, my = m.at or [0.0, 0.0]
-    for s, _full, g, at, _w in wins:
+    for _l, _r, g, at, _w in wins:
         px, py, nx, ny = _frame_at(samples, acc, at)
         target = (mx + px * sx, my + py * sy)
         theta = math.atan2(nx, -ny)  # 蛋白的「上」(0, −1) 转到法线方向，顺时针为正

@@ -781,19 +781,48 @@ def _by(prep):
     return {o["id"]: o for o in prep.objects}
 
 
-def test_embedded_proteins_without_at_are_evenly_spaced_and_inside_the_membrane(lic):
+def test_embedded_proteins_without_at_get_equal_gaps_by_their_actual_widths(lic):
     prep = _prep(MEM, _prot("a"), _prot("b"), _prot("c"))
     o = _by(prep)
-    # 膜 x = 10..50（长 40）；三个蛋白的跨膜段中点落在 (i + 0.5) / 3 处，也就是 x = 10 + 40·(1/6, 1/2, 5/6)，y = 中线 30 + 4
-    mids = [o[n]["x"] + 3.0 for n in ("a", "b", "c")]  # 蛋白宽 6，跨膜段中点在框内 x = 3
-    assert [round(m, 3) for m in mids] == [round(10 + 40 * f, 3) for f in (1 / 6, 1 / 2, 5 / 6)]
+    # 膜 x = 10..50（长 40），蛋白宽 6（跨膜段中点在框内 x = 3）；空隙 = (40 − 3·6) / 4 = 5.5 ≥ 2 个脂质间距 3.4
+    lefts = [o[n]["x"] for n in ("a", "b", "c")]
+    assert [round(v, 6) for v in lefts] == [10 + 5.5, 10 + 5.5 + 6 + 5.5, 10 + 5.5 + 2 * (6 + 5.5)]
+    rights = [o[n]["x"] + o[n]["w"] for n in ("a", "b", "c")]
+    gaps = [lefts[0] - 10, lefts[1] - rights[0], lefts[2] - rights[1], 50 - rights[2]]
+    assert all(abs(g - 5.5) < 1e-9 for g in gaps)  # 首尾与蛋白之间的空隙都相等
     for n in ("a", "b", "c"):
-        assert abs((o[n]["y"] + 7.0) - 34.0) < 1e-6  # 跨膜段中点（框内 y = 7）落在膜中线 y = 30 + 4
-        assert 10 <= o[n]["x"] and o[n]["x"] + o[n]["w"] <= 50  # 整个蛋白都在膜的长度范围内
-        assert "rotationDeg" not in o[n]  # 直膜：不旋转
-    gaps = [mids[1] - mids[0], mids[2] - mids[1]]
-    assert abs(gaps[0] - gaps[1]) < 1e-9  # 等距
+        assert abs((o[n]["y"] + 7.0) - 34.0) < 1e-6  # 跨膜段中点落在膜中线 y = 30 + 4
+        assert "rotationDeg" not in o[n]
     assert prep.free_items == []
+
+
+def test_unequal_protein_widths_still_get_equal_gaps(lic):
+    """宽度不同的蛋白：空隙 = (膜长 − 蛋白总宽) / (n + 1)，各蛋白按**自己**的实际宽度排。"""
+    base = _embed_ask([])
+    widths = iter([4.0, 10.0])
+
+    def varied(cmd, payload):
+        if cmd == "mechanism.glyph" and payload["kind"] == "prot":
+            return _embed_ask([], protein_w=next(widths))(cmd, payload)
+        return base(cmd, payload)
+
+    o = _by(mechanism.prepare([MEM, _prot("a"), _prot("b")], ask=varied))
+    gap = (40 - 14) / 3
+    assert abs((o["a"]["x"] - 10) - gap) < 1e-6
+    assert abs(o["b"]["x"] - (o["a"]["x"] + o["a"]["w"] + gap)) < 1e-6
+    assert abs((50 - (o["b"]["x"] + o["b"]["w"])) - gap) < 1e-6
+
+
+def test_membrane_keeps_at_least_two_lipids_free_at_both_ends(lic):
+    for at in (0.1, 0.9):  # 蛋白框离膜端不到 2 个脂质间距（3.4 mm）
+        with pytest.raises(mechanism.MechanismError):
+            _prep(MEM, _prot("a", embed={"at": at}))
+    with pytest.raises(mechanism.MechanismError):  # 空隙放不下：8 个蛋白
+        _prep(MEM, *[_prot(f"p{i}") for i in range(8)])
+    with pytest.raises(
+        mechanism.MechanismError
+    ):  # 空隙不到 2 个脂质间距：5 × 6 = 30，(40 − 30) / 6 = 1.67 < 3.4
+        _prep(MEM, *[_prot(f"q{i}") for i in range(5)])
 
 
 def test_given_at_is_respected_and_the_membrane_is_asked_again_with_the_cutouts(lic):
@@ -802,10 +831,10 @@ def test_given_at_is_respected_and_the_membrane_is_asked_again_with_the_cutouts(
     glyph_calls = [p for c, p in log if c == "mechanism.glyph" and p["kind"] == "membrane"]
     assert len(glyph_calls) == 2  # 第一次不带让位（量厚度 / 中线），第二次带
     assert glyph_calls[0]["params"]["inserts"] == []
-    # 让位宽度 = 跨膜段宽 2.0 + 一个脂质间距 1.7（两侧各半个）
+    # 让位窗口 = 跨膜部分的总宽 2.0（贴杆的净空与窗口之间的重新排布由膜自己做）
     assert glyph_calls[1]["params"]["inserts"] == [
-        {"at": 0.25, "width_mm": 3.7},
-        {"at": 0.7, "width_mm": 3.7},
+        {"at": 0.25, "width_mm": 2.0},
+        {"at": 0.7, "width_mm": 2.0},
     ]
     assert prep.glyph_meta["mem"]["params"]["inserts"] == glyph_calls[1]["params"]["inserts"]
     o = _by(prep)
@@ -835,6 +864,7 @@ def test_overlap_out_of_range_and_bad_embeds_are_refused(lic):
         (MEM, _prot("a", embed={"at": 0.5}), _prot("b", embed={"at": 0.52})),  # 两个蛋白重叠
         (MEM, _prot("a", embed={"at": 0.0})),  # 一半在膜外
         (MEM, _prot("a", embed={"at": 1.0})),
+        (MEM, _prot("a", embed={"at": 0.05})),  # 离膜端不到 2 个脂质
         (MEM, _prot("a", embed={"membrane": "nope"})),  # 没有这条膜
         (MEM, {**_prot("a"), "at_mm": [1, 1]}),  # 嵌入的位置由宿主算，不许再给
         (MEM, _prot("a", embed={"at": 2})),
@@ -849,17 +879,12 @@ def test_overlap_out_of_range_and_bad_embeds_are_refused(lic):
         assert e.value.code == "bad_item", items
 
 
-def test_protein_wider_than_the_spacing_overlaps_and_is_refused(lic):
-    with pytest.raises(mechanism.MechanismError):
-        _prep(MEM, *[_prot(f"p{i}") for i in range(8)], protein_w=6.0)  # 8 × 6 = 48 > 40
-
-
 def test_on_a_curved_membrane_proteins_are_rotated_along_the_surface_normal(lic):
     prep = _prep(
         MEM,
-        _prot("a", embed={"at": 0.15}),
+        _prot("a", embed={"at": 0.2}),
         _prot("b", embed={"at": 0.5}),
-        _prot("c", embed={"at": 0.85}),
+        _prot("c", embed={"at": 0.8}),
         curv=0.3,
     )
     o = _by(prep)
@@ -871,7 +896,7 @@ def test_on_a_curved_membrane_proteins_are_rotated_along_the_surface_normal(lic)
     # 跨膜段中点仍然落在中线上：把中点旋转回画布坐标，应在 y = 30 + 4 + 10·curv·((x−20)/20)²
     import math
 
-    for n, at in (("a", 0.15), ("c", 0.85)):
+    for n, at in (("a", 0.2), ("c", 0.8)):
         g = o[n]
         th = math.radians(g["rotationDeg"])
         cx, cy = g["x"] + g["w"] / 2, g["y"] + g["h"] / 2
