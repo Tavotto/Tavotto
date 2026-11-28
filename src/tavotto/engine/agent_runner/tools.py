@@ -1268,6 +1268,5 @@ TOOLSETS: dict[str, TaskToolset] = {
     ConvertToEditableToolset.task_type: ConvertToEditableToolset(),
 }
 
-# `data_prepare` 工具集在 `prepare_tools.py`（单独一个文件，免得这里再长 500 行）；导入它即登记进 TOOLSETS。
-# 放在文件末尾：它从本模块取名字，那时这里已全部定义（任一方先被导入都成立，见 prepare_tools 末尾）
-from . import prepare_tools as _prepare_tools  # noqa: E402,F401
+# `data_prepare` 工具集在 `prepare_tools.py`（单独一个文件）：它导入本模块并把自己登记进 TOOLSETS。本模块**不**反向导入它（否则成 import 环）；
+# 需要这个任务的入口自己导入 `prepare_tools`（`runner_cli`、`ai_data_prepare`）。
