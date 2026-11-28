@@ -264,6 +264,7 @@ src = [
                                              # pathgeom、patchspec、figcapture、browser_imports
     "scripts",                               # smoke_app、bench_render、build_* 系列
     "scripts/ci",                            # _common、compat_corpus、pixelcompare、aggregate_gate…
+    "scripts/iconlib",                       # 开源图标库离线构建（ADR 0222）：iconlib_*、build_iconlib
     "tests",                                 # support.frontend_schema / support.engine_invariant_probe
     "tests/desktop_windows",                 # 真窗口夹具平铺 import：_app、_canvas、_webdriver、_win32
     "codex-plugin/mcp",                      # tavotto_mcp
