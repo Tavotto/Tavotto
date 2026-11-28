@@ -1,0 +1,313 @@
+"""投稿核对（ADR 0216，高级功能 `submission-pack`）：开源侧的「要求表」与权益判断。
+
+**纯函数、纯标准库、只读**：把一本期刊在 v1 目录与 v2 刊包里的要求合成「一条要求一行」（ADR 0216 §九）。
+每行分两部分：
+
+* 发给闭源组件 `submission_check.plan` 的字段（`SIDECAR_FIELDS`）：检查项、关系、数值、单位、语气、阶段、
+  `source_state`、有名字的条件、有没有文字条件——**不带引文、截图、链接**（ADR 0198 §三）；
+* 只留在开源侧的出处（`quote` / `snapshot` / `link` …），界面与报告按 `ref` 对回去。
+
+合并规则（ADR 0216 §九，与预检的 0155 §14 一致）：同一检查项 v2 有就用 v2、v1 的那几行不要；v2 直接读刊包事实，
+不读 `fold()` 的折叠结果（`fold()` 不列 `interval`、`accepted` 会显示成 `any`），`fold()` 只用来认出哪几条事实
+真的折进了预检。`source_state` 只有 `preflight` 能在界面上说「判过」；`advice`（如 Nature 的 5 pt 下限）与
+`confirm` 都不能。
+
+权益判断只在这里与投稿核对的端点（`license.has("submission-pack")`，ADR 0216 §七）；被它调用的检查、修正、
+导出、核验模块里不出现任何判断。
+"""
+
+from __future__ import annotations
+
+import copy
+from typing import Any
+
+from . import journalfacts_fold, journals, license as engine_license
+
+FEATURE = "submission-pack"
+
+#: 组件认的检查项（ADR 0216 §九，与 ADR 0218 §一 A 档同名）。
+CHECKS = (
+    "width_final",
+    "font_size_min",
+    "font_size_max",
+    "font_family",
+    "raster_dpi_min",
+    "line_width_min",
+)
+SOURCE_STATES = ("preflight", "advice", "confirm")
+#: 发给组件的字段；其余（出处）只留在开源侧。
+SIDECAR_FIELDS = (
+    "ref",
+    "check",
+    "relation",
+    "value",
+    "unit",
+    "strength",
+    "stage",
+    "source_state",
+    "conditions",
+    "has_condition_text",
+)
+#: 组件认的有名字的条件（ADR 0218 §二 的 required 值集里，投稿核对用到的那几个）；别的键不发。
+SIDECAR_CONDITIONS = ("column", "text_role")
+MM_PER_IN = 25.4
+
+#: v1 规则路径 → (检查项, 关系)。`page_columns` 另拆成每栏一行。
+V1_PATHS: dict[str, tuple[str, str]] = {
+    "min_effective_font_size_pt": ("font_size_min", "gte"),
+    "max_font_size_pt": ("font_size_max", "lte"),
+    "font_family.latin_accepted": ("font_family", "in"),
+    "min_raster_dpi": ("raster_dpi_min", "gte"),
+    "min_line_width_pt": ("line_width_min", "gte"),
+    "info.min_line_width_pt": ("line_width_min", "gte"),
+}
+V1_UNITS = {
+    "font_size_min": "pt",
+    "font_size_max": "pt",
+    "raster_dpi_min": "dpi",
+    "line_width_min": "pt",
+    "width_final": "mm",
+}
+#: v1 旧写法的栏宽（没有 `page_columns` 时才有意义；有它时这两项由它派生，见 `journals._override_of`）
+V1_WIDTH_PATHS = {"widths_mm.single": "single", "widths_mm.double": "double"}
+#: v1 `page_columns` 栏位 id → `column` 条件值
+V1_COLUMNS = {"single-column": "single", "double-column": "double"}
+#: v1 `affects` → `source_state`
+V1_STATES = {"preflight": "preflight", "advice": "advice", "info": "confirm"}
+#: v2 的阶段：`accepted` 并入 production（ADR 0218 §三），`unknown` 当作 any
+V2_STAGES = {
+    "any": "any",
+    "unknown": "any",
+    "submission": "submission",
+    "production": "production",
+    "accepted": "production",
+}
+
+
+def licensed() -> bool:
+    return engine_license.has(FEATURE)
+
+
+def _number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _v1_rows(journal_id: str, catalog: dict | None) -> list[dict]:
+    rows: list[dict] = []
+    sources = journals.journal_sources(journal_id, catalog)
+    for path, src in sources.items():
+        if src.get("unset"):
+            continue
+        if path in V1_WIDTH_PATHS and "page_columns" in sources:
+            continue  # 有 `page_columns` 时这两项由它派生，再列一遍就重了
+        base = {
+            "strength": src.get("strength", "unspecified"),
+            "stage": src.get("stage", "any"),
+            "source_state": V1_STATES.get(src["affects"], "confirm"),
+            "has_condition_text": False,
+            "origin": {
+                "catalog": "v1",
+                "path": path,
+                "quote": src["quote"],
+                "mark": src.get("mark", ""),
+                "snapshot": copy.deepcopy(src.get("snapshot")),
+                "link": src["link"],
+                "retrieved": src["retrieved"],
+            },
+        }
+        if path == "page_columns" and isinstance(src.get("value"), list):
+            for col in src["value"]:
+                width = col.get("width_mm") if isinstance(col, dict) else None
+                if not _number(width):
+                    continue
+                column = V1_COLUMNS.get(str(col.get("id")))
+                rows.append(
+                    base
+                    | {
+                        "check": "width_final",
+                        "relation": "eq"
+                        if col.get("qualifier", "exact") == "exact"
+                        else "interval",
+                        "value": width,
+                        "unit": "mm",
+                        "conditions": {"column": column} if column else {},
+                    }
+                )
+            continue
+        if path in V1_WIDTH_PATHS:
+            if _number(src.get("value")):
+                rows.append(
+                    base
+                    | {
+                        "check": "width_final",
+                        "relation": "eq",
+                        "value": src["value"],
+                        "unit": "mm",
+                        "conditions": {"column": V1_WIDTH_PATHS[path]},
+                    }
+                )
+            continue
+        mapped = V1_PATHS.get(path)
+        if mapped is None:
+            rows.append(
+                base
+                | {
+                    "check": None,
+                    "relation": None,
+                    "value": copy.deepcopy(src.get("value")),
+                    "unit": None,
+                    "conditions": {},
+                }
+            )
+            continue
+        check, relation = mapped
+        value = src.get("value")
+        if check == "font_family":
+            if not (isinstance(value, list) and value and all(isinstance(x, str) for x in value)):
+                continue
+        elif not _number(value):
+            continue
+        rows.append(
+            base
+            | {
+                "check": check,
+                "relation": relation,
+                "value": copy.deepcopy(value),
+                "unit": V1_UNITS.get(check),
+                "conditions": {},
+            }
+        )
+    return rows
+
+
+def _v2_check(fact: dict) -> tuple[str, str, Any, str | None] | None:
+    """v2 事实 → (检查项, 关系, 值, 单位)；认不出的 = None（只进「需要你确认」，没有操作）。"""
+    subject, relation, value, unit = (
+        fact.get("subject"),
+        fact.get("relation"),
+        fact.get("value"),
+        fact.get("unit"),
+    )
+    if subject == "width" and unit in ("mm", "in"):
+
+        def mm(v):
+            return round(v * MM_PER_IN, 3) if unit == "in" else v
+
+        if relation == "eq" and _number(value):
+            return "width_final", "eq", mm(value), "mm"
+        if (
+            relation == "interval"
+            and isinstance(value, list)
+            and len(value) == 2
+            and all(_number(v) for v in value)
+        ):
+            return "width_final", "interval", [mm(v) for v in value], "mm"
+        return None
+    if subject == "font_size" and unit == "pt" and _number(value):
+        if relation in ("gte", "gt"):
+            return "font_size_min", "gte", value, "pt"
+        if relation in ("lte", "lt"):
+            return "font_size_max", "lte", value, "pt"
+        return None
+    if subject == "font_family" and relation == "in" and isinstance(value, list) and value:
+        if all(isinstance(x, str) and x.strip() for x in value):
+            return "font_family", "in", list(value), None
+        return None
+    if subject == "raster_dpi" and unit == "dpi" and relation == "gte" and _number(value):
+        return "raster_dpi_min", "gte", value, "dpi"
+    if subject == "min_line_width" and unit == "pt" and relation == "gte" and _number(value):
+        return "line_width_min", "gte", value, "pt"
+    return None
+
+
+def _is_requirement(fact: dict) -> bool:
+    strength, subject = fact.get("strength"), fact.get("subject")
+    return fact.get("origin") in ("journal", "publisher") and (
+        strength in journalfacts_fold.LISTABLE
+        or strength in journalfacts_fold.EXTRA_LISTABLE.get(subject, ())
+    )
+
+
+def _v2_rows(bundle: dict) -> list[dict]:
+    folded = journalfacts_fold.fold(bundle)
+    folded_ids = {r.get("fact_id") for r in folded["rules"].values()}
+    sources = bundle.get("sources") or {}
+    rows: list[dict] = []
+    for fact in bundle.get("facts") or []:
+        fid = fact.get("id")
+        # 是不是「对作者的要求」与 `fold()` 同一道门（origin 与语气）：示例 / 允许 / 外来 origin 不收。
+        # 不再按 `fold()` 的确认清单过滤——那份清单不列 `interval`（1.5 栏），这里要
+        if not _is_requirement(fact):
+            continue
+        mapped = _v2_check(fact)
+        check, relation, value, unit = (
+            mapped if mapped else (None, fact.get("relation"), fact.get("value"), fact.get("unit"))
+        )
+        conditions = fact.get("conditions") if isinstance(fact.get("conditions"), dict) else {}
+        src = sources.get(fact.get("source")) or {}
+        text = fact.get("condition_text")
+        rows.append(
+            {
+                "check": check,
+                "relation": relation,
+                "value": copy.deepcopy(value),
+                "unit": unit,
+                "strength": fact.get("strength", "unspecified"),
+                "stage": V2_STAGES.get(fact.get("stage"), "any"),
+                "source_state": "preflight" if fid in folded_ids else "confirm",
+                "conditions": copy.deepcopy(conditions),
+                "has_condition_text": isinstance(text, str) and bool(text.strip()),
+                "origin": {
+                    "catalog": "v2",
+                    "fact_id": fid,
+                    "subject": fact.get("subject"),
+                    "quote": fact.get("quote", ""),
+                    "condition_text": text if isinstance(text, str) else "",
+                    "mark": fact.get("mark", ""),
+                    "snapshot": copy.deepcopy(fact.get("snapshot")),
+                    "link": src.get("url", ""),
+                    "retrieved": src.get("retrieved", ""),
+                },
+            }
+        )
+    return rows
+
+
+def requirements(
+    journal_id: str, *, catalog: dict | None = None, bundle: dict | None = None
+) -> list[dict]:
+    """这本期刊的要求表（ADR 0216 §九）。`bundle` 是本机已验签的 v2 刊包（没有 = 只用 v1）。
+
+    v1 里没有这本刊、只有 v2 的（ADR 0155：只在 v2 的期刊）也行；两边都没有抛 `JournalCatalogError`。
+    """
+    try:
+        v1 = _v1_rows(journal_id, catalog)
+    except journals.JournalCatalogError:
+        if bundle is None:
+            raise
+        v1 = []
+    v2 = _v2_rows(bundle) if bundle is not None else []
+    covered = {r["check"] for r in v2 if r["check"] is not None}
+    rows = [r for r in v1 if r["check"] is None or r["check"] not in covered] + v2
+    for i, row in enumerate(rows, 1):
+        row["ref"] = f"r{i}"
+    return rows
+
+
+def sidecar_rows(rows: list[dict]) -> list[dict]:
+    """只发组件认得的检查项、只发 `SIDECAR_FIELDS`；条件只留 `SIDECAR_CONDITIONS` 里的键（ADR 0198 §三）。"""
+    out: list[dict] = []
+    for row in rows:
+        if row["check"] not in CHECKS:
+            continue
+        item = {k: copy.deepcopy(row[k]) for k in SIDECAR_FIELDS}
+        item["conditions"] = {
+            k: v
+            for k, v in (row["conditions"] or {}).items()
+            if k in SIDECAR_CONDITIONS and isinstance(v, str)
+        }
+        # 有别的条件（文章类型、图类……）组件判不了，记成「有文字条件」，组件只回 confirm
+        if set(row["conditions"] or {}) - set(SIDECAR_CONDITIONS):
+            item["has_condition_text"] = True
+        out.append(item)
+    return out
