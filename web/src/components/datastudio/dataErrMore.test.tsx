@@ -169,11 +169,11 @@ describe('右栏「误差线」：多个 y', () => {
     expect(q('[data-data-roles] [data-data-role="error"]')).toBeNull()
   })
 
-  it('sd + unknown 在「需要你确认」里点选之后：后端所有列一起换、回了顶层 error，这一行收回列角色下面，「需要你确认」消失', async () => {
+  it('sd + unknown 点选 SEM 后只确认未知列，回显 SD、SEM 且不再待确认', async () => {
     seed({ error_columns: cols(['sd', 'unknown'], [true, false]) })
     propose.mockResolvedValue({
       kind: 'candidates', session: 'S2', dropped: [], render: 'lazy', header_row: 1, defaults: [], mixed_cells: [], error_confirmed: true,
-      items: [item('n0', 'line_err', { error: 'sem', error_source: 'column', error_columns: cols(['sem', 'sem'], [false, false]) })],
+      items: [item('n0', 'line_err', { error_source: 'column', error_columns: cols(['sd', 'sem'], [true, false]) })],
       roles: { x: 'x', y: ['y'], group: null, facet: null, unit: null, options: { x: ['x'], y: ['y'], group: [] } },
     } as AiDataProposeResponse)
     await mount(<DataPanel />)
@@ -181,25 +181,17 @@ describe('右栏「误差线」：多个 y', () => {
     await choose('标准误 (SEM)')
     expect(propose.mock.calls[0]![0].answers).toEqual({ error: 'sem' })
     expect(q('[data-data-confirm-title]')).toBeNull()
-    expect(q('[data-data-roles] [data-data-role="error"]')!.textContent).toContain('标准误 (SEM)')
+    expect(q('[data-data-roles] [data-data-role="error"]')!.textContent).toContain('SD、SEM')
   })
 
-  it('各列种类不同（没有顶层 error）：在列角色下面、不进「需要你确认」；选一种发 answers.error，所有列一起换；当前值列出用到的几种「SD、SEM」', async () => {
+  it('各列已有不同声明时显示 SD、SEM，不可统一改名', async () => {
     seed({ error_columns: cols(['sd', 'sem']) })
-    propose.mockResolvedValue({
-      kind: 'candidates', session: 'S2', dropped: [], render: 'lazy', header_row: 1, defaults: [], mixed_cells: [], error_confirmed: true,
-      items: [item('n0', 'line_err', { error: 'ci95', error_source: 'column', error_columns: cols(['ci95', 'ci95'], [false, false]) })],
-      roles: { x: 'x', y: ['y'], group: null, facet: null, unit: null, options: { x: ['x'], y: ['y'], group: [] } },
-    } as AiDataProposeResponse)
     await mount(<DataPanel />)
     expect(q('[data-data-confirm-title]')).toBeNull()
     const row = q('[data-data-roles] [data-data-role="error"]')!
     expect(row.textContent).toContain('SD、SEM')
-    expect(row.textContent).not.toContain('各列不同')
-    await choose('95% 置信区间')
-    expect(propose.mock.calls[0]![0].answers).toEqual({ error: 'ci95' })
-    expect(q('[data-data-roles] [data-data-role="error"]')!.textContent).toContain('95% 置信区间')
-    expect(q('[data-data-confirm-title]')).toBeNull()
+    expect(row.querySelector<HTMLButtonElement>('button')!.disabled).toBe(true)
+    expect(propose).not.toHaveBeenCalled()
   })
 })
 

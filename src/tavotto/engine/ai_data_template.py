@@ -1921,7 +1921,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
     xlabel = (
         ""
         if recipe.stack and recipe.x == recipe_mod.STACK_CAT
-        else adf.axis_label(recipe.x)
+        else adf.axis_label(recipe.x, entry.summary)
         if recipe.x
         else ""
     )
@@ -1933,7 +1933,7 @@ def _render_comparison(entry, recipe, data_rel, stem, style) -> str:
         f"ORDER = {recipe.order!r}",
         *([f"ERR = {recipe.err!r}"] if recipe.err is not None else []),
         f"XLABEL = {xlabel!r}",
-        f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
+        f"YLABEL = {adf.axis_label(recipe.y[0], entry.summary)!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]
     if is_xlsx:
@@ -2079,7 +2079,7 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
     large = entry.summary.large is not None
     if large:
         L.append(f"REDUCE = {large_spec(entry.summary, recipe)!r}")
-    ylabel = ", ".join(adf.axis_label(y) for y in recipe.y)
+    ylabel = ", ".join(adf.axis_label(y, entry.summary) for y in recipe.y)
     L += [
         f"X = {recipe.x!r}",
         f"YS = {list(recipe.y)!r}",
@@ -2088,9 +2088,9 @@ def _render_trend(entry, recipe, data_rel, stem, style) -> str:
         f"UNIT = {recipe.unit!r}",
         *([f"ERR = {recipe.to_dict()['err']!r}"] if recipe.err is not None else []),
         f"X_IS_DATE = {x_is_date!r}",
-        f"XLABEL = {adf.axis_label(recipe.x)!r}",
+        f"XLABEL = {adf.axis_label(recipe.x, entry.summary)!r}",
         f"YLABEL = {ylabel!r}",
-        f"YLABELS = {[adf.axis_label(y) for y in recipe.y]!r}",
+        f"YLABELS = {[adf.axis_label(y, entry.summary) for y in recipe.y]!r}",
         f"PALETTE = {list(PALETTE)!r}",
         f"LINESTYLES = {list(LINESTYLES)!r}",
     ]
@@ -2196,8 +2196,8 @@ def _render_relationship(entry, recipe, data_rel, stem, style) -> str:
         f"Y = {recipe.y[0]!r}",
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
-        f"XLABEL = {adf.axis_label(recipe.x)!r}",
-        f"YLABEL = {adf.axis_label(recipe.y[0])!r}",
+        f"XLABEL = {adf.axis_label(recipe.x, entry.summary)!r}",
+        f"YLABEL = {adf.axis_label(recipe.y[0], entry.summary)!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]
     reader = _large_reader_expr(entry) if large else _reader_expr(entry, is_xlsx)
@@ -2267,7 +2267,7 @@ def _render_distribution(entry, recipe, data_rel, stem, style) -> str:
         f"Y = {recipe.y[0]!r}",
         f"GROUP = {recipe.group!r}",
         f"FACET = {recipe.facet!r}",
-        f"XLABEL = {adf.axis_label(recipe.y[0])!r}",
+        f"XLABEL = {adf.axis_label(recipe.y[0], entry.summary)!r}",
         f"YLABEL = {ylabel!r}",
         f"PALETTE = {list(PALETTE)!r}",
     ]

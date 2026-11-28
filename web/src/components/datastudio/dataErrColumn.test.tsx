@@ -129,18 +129,6 @@ describe('右栏「误差线」一行', () => {
       candidates: candidatesFromResponse([item('c0', code, { error_source: 'column', error_column: 'e', ...extra })], 'pa'), thumbs: { c0: 'ready' },
       errorConfirmed: false, designAsked: false, answers: {}, bindingCaptured: true, ...over,
     })
-  const choose = async (role: string, value: string) => {
-    await act(async () => {
-      q(`[data-data-role="${role}"] button`)!.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
-    })
-    const opt = qa('[role=option]').find((o) => o.textContent === value)
-    expect(opt, `没有选项 ${value}`).toBeTruthy()
-    await act(async () => {
-      opt!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerType: 'mouse' }))
-      opt!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    await flush()
-  }
   beforeEach(() => {
     propose.mockReset()
     setCurrentProjectId('pa')
@@ -169,15 +157,14 @@ describe('右栏「误差线」一行', () => {
     expect(q('[data-data-roles] [data-data-role="error"]')!.textContent).toContain('标准误 (SEM)')
   })
 
-  it('列名自己说明了（error_stated）：不进「需要你确认」，在列角色下面显示那一种、仍可改', async () => {
-    seed('line_err', { error: 'sd', error_stated: true })
-    propose.mockResolvedValue({ ...resp('line_err', { error: 'ci95', error_stated: true }), error_confirmed: true } as AiDataProposeResponse)
+  it('列名已声明的现成误差类型不可改，旧请求不能覆盖当前候选', async () => {
+    seed('line_err', { error: 'sd', error_stated: true }, { errorConfirmed: true, answers: { error: 'sem' } })
     await mount(<DataPanel />)
     expect(q('[data-data-confirm-title]')).toBeNull()
     const row = q('[data-data-roles] [data-data-role="error"]')!
     expect(row.textContent).toContain('标准差 (SD)')
-    await choose('error', '95% 置信区间')
-    expect(propose.mock.calls[0]![0].answers).toEqual({ error: 'ci95' })
+    expect(row.querySelector<HTMLButtonElement>('button')!.disabled).toBe(true)
+    expect(propose).not.toHaveBeenCalled()
   })
 
   it('算出来的（computed）与以前一样：没确认就在「需要你确认」，当前值是那一种', async () => {
