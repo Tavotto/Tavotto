@@ -39,6 +39,8 @@ class Server:
         self.calls: list[str] = []
         monkeypatch.setattr(facts, "_request", self)
         monkeypatch.setattr(facts, "_thanks_miss", {})
+        monkeypatch.setattr(facts, "_thanks_inflight", set())
+        monkeypatch.setattr(facts, "_spawn", lambda fn: fn())  # 后台取署名在测试里同步跑
 
     def __call__(self, method, url, cap, headers):
         self.calls.append(url)
@@ -196,3 +198,17 @@ def test_preflight_endpoint_carries_thanks_only_for_facts_in_the_bundle(isolated
         "/api/journal-facts/preflight", json={"journal_id": "fx-journal"}, headers=headers
     )
     assert res.status_code == 200 and res.json["thanks"] == {}
+
+
+def test_preflight_path_never_waits_for_the_network(isolated, monkeypatch):
+    """Codex P2：缓存没有署名时，读取只排一个后台任务、立刻返回，不在调用线程里联网。"""
+    key, _ = isolated
+    srv = _ready(key, monkeypatch, (200, signed(key, payload())))
+    started = []
+    monkeypatch.setattr(facts, "_spawn", lambda fn: started.append(fn))
+    assert facts.thanks_for("fx-journal") == {}
+    assert srv.thanks_calls == []  # 调用线程里没联网
+    assert facts.thanks_for("fx-journal") == {}
+    assert len(started) == 1  # 同一版本同时只取一个
+    started[0]()  # 后台任务跑完后，下一次读取就有了
+    assert facts.thanks_for("fx-journal") == {"line": "李明"}

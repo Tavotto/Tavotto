@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -626,48 +627,77 @@ def verify_thanks(raw: bytes, catalog_rev: int) -> dict[str, dict[str, str]]:
     )
 
 
-def _fetch_thanks(rev: int, ui_locale: str | None) -> dict[str, dict[str, str]] | None:
-    path = cache_dir() / THANKS_FILE
+def _cached_thanks(rev: int) -> dict[str, dict[str, str]] | None:
+    """本机缓存里这一版的署名；不在 / 验不过 = None。只读盘，不联网。"""
     try:
-        return verify_thanks(path.read_bytes(), rev)  # 同一版本的署名文件不会变：命中就不联网
+        return verify_thanks((cache_dir() / THANKS_FILE).read_bytes(), rev)
     except (OSError, FactsError):
-        pass
-    if journalremote.disabled():
         return None
-    missed = _thanks_miss.get(rev)
-    if missed is not None and 0 <= _now() - missed < THANKS_RETRY_S:
-        return None
-    for base in _bases(ui_locale):
-        try:
-            status, raw, _h = _call_full(
-                "GET", base + THANKS_FILE, MAX_THANKS_BYTES, {"Accept-Encoding": "gzip"}
-            )
-        except (journalremote.RemoteCatalogError, FactsError):
-            continue  # 这一条线路不通：试另一条
-        if status != 200:
-            break  # 404 = 老服务端没有这个文件；别的状态码也不换线重试
-        try:
-            names = verify_thanks(raw, rev)
-        except FactsError:
-            break  # 验签 / 形状 / 版本不对：不显示，也不换线路去拿另一份答案
-        try:
+
+
+def _download_thanks(rev: int, ui_locale: str | None) -> None:
+    """联网取这一版的署名并写进缓存；任何失败只记一次「这一版暂时没有」。在后台线程里跑。"""
+    try:
+        for base in _bases(ui_locale):
+            try:
+                status, raw, _h = _call_full(
+                    "GET", base + THANKS_FILE, MAX_THANKS_BYTES, {"Accept-Encoding": "gzip"}
+                )
+            except (journalremote.RemoteCatalogError, FactsError):
+                continue  # 这一条线路不通：试另一条
+            if status != 200:
+                break  # 404 = 老服务端没有这个文件；别的状态码也不换线重试
+            try:
+                verify_thanks(raw, rev)
+            except FactsError:
+                break  # 验签 / 形状 / 版本不对：不显示，也不换线路去拿另一份答案
+            path = cache_dir() / THANKS_FILE
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             atomicio.write_bytes(path, raw, mode=0o600)
-        except OSError:
-            pass  # 缓存写不进不影响本次显示
-        return names
-    _thanks_miss[rev] = _now()
-    return None
+            return
+        _thanks_miss[rev] = _now()
+    except Exception:  # noqa: BLE001 - 后台装饰任务，任何意外都只当「没有」
+        _thanks_miss[rev] = _now()
+    finally:
+        with _thanks_lock:
+            _thanks_inflight.discard(rev)
+
+
+def _spawn(fn) -> None:
+    threading.Thread(target=fn, name="journal-thanks", daemon=True).start()
+
+
+_thanks_lock = threading.Lock()
+_thanks_inflight: set[int] = set()
+
+
+def _refresh_thanks(rev: int, ui_locale: str | None) -> None:
+    """缓存没有这一版时在后台取一次（同一版本同时只取一个；没取到的 10 分钟内不再问）。
+    预检那条路只读缓存、从不等网络：署名是装饰，不许拖慢本来全在本机的事实读取。"""
+    if journalremote.disabled():
+        return
+    missed = _thanks_miss.get(rev)
+    if missed is not None and 0 <= _now() - missed < THANKS_RETRY_S:
+        return
+    with _thanks_lock:
+        if rev in _thanks_inflight:
+            return
+        _thanks_inflight.add(rev)
+    _spawn(lambda: _download_thanks(rev, ui_locale))
 
 
 def thanks_for(jid: str, *, ui_locale: str | None = None) -> dict[str, str]:
-    """某一刊 v2 事实的署名 `{fact id: 称呼}`；任何问题都回 `{}`，**永不抛**。
-    只认本机已验签索引的版本，并在同步索引之后才会有意义（调用方先 `get_journal`）。"""
+    """某一刊 v2 事实的署名 `{fact id: 称呼}`；任何问题都回 `{}`，**永不抛、从不等网络**。
+    只读本机缓存；缓存没有这一版就在后台取，下一次读取再显示。只认本机已验签索引的版本。"""
     try:
         index = cached_index()
         if index is None:
             return {}
-        names = _fetch_thanks(int(index["catalog_rev"]), ui_locale)
+        rev = int(index["catalog_rev"])
+        names = _cached_thanks(rev)
+        if names is None:
+            _refresh_thanks(rev, ui_locale)
+            names = _cached_thanks(rev)  # 测试里后台任务同步跑完；线上这里通常还是 None
         return dict(names.get(jid, {})) if names else {}
     except Exception:  # noqa: BLE001 - 署名只是装饰，任何意外都不许碰事实读取
         return {}
