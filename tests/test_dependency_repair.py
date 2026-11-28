@@ -697,6 +697,30 @@ def test_the_worker_self_test_really_runs_a_worker():
 
 
 @needs_worker
+def test_self_test_does_not_trip_the_safe_guards(monkeypatch):
+    """TVD-FTH9：自检的布局要照真实运行——输出目录与会话沙盒不在守卫眼里的「真实图库」里。
+
+    旧布局把自检脚本放在临时根，`out/` 与 `sandbox/` 都是它的子目录：worker **自己**写预览、改名
+    `.part`、清旧代目录全被当成「删 / 改真实图库文件」拦下（stderr 一串 `[guard]`）。这些写入要是落在
+    脚本运行期间、随后又被读到，整次自检就判 `safe_file_operation_blocked`（Windows 用户三次都是这个码）。
+    判据问的是守卫有没有出手，不是自检过没过：旧布局在这里也「过」，只是引擎的输出被悄悄吞了。"""
+    seen = {}
+    real_popen = deprepair.subprocess.Popen
+
+    class _Recording(real_popen):
+        def communicate(self, *a, **kw):
+            out, err = super().communicate(*a, **kw)
+            seen["stderr"] = err or ""
+            return out, err
+
+    monkeypatch.setattr(deprepair.subprocess, "Popen", _Recording)
+    out = deprepair.worker_self_test(WORKER_PY)
+    assert out.get("ok") is True, out
+    guard = [line for line in seen["stderr"].splitlines() if line.startswith("[guard]")]
+    assert guard == []
+
+
+@needs_worker
 def test_imports_can_pass_while_the_worker_still_cannot_run(project, monkeypatch):
     """**负向反证 #14**：装完不做 worker 自检，这条必须红。
 
