@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from tavotto.engine import ai_data_prepare as dp
+from tavotto.engine import ai_data_prepare as dp, ai_tasks
 from tavotto.engine.agent_runner import prepare_tools
 from tests.test_ai_data_prepare import (  # noqa: F401 - proj 是 fixture
     GOOD,
@@ -24,6 +24,15 @@ from tests.test_ai_data_prepare import (  # noqa: F401 - proj 是 fixture
     toolmap,
     turn,
 )
+
+
+@pytest.fixture(autouse=True)
+def _registered_adapter_is_cleaned():
+    """`run_task` 会 `dp.ensure_registered()`：跑完把 data_prepare 从全局注册表里收回去。
+    与 `tests/test_ai_data_prepare.py` 的同名 fixture 同一个动作——autouse fixture 不随 `from … import run_task` 过来，
+    漏了它 `tests/test_ai_tasks.py::test_production_adapter_registry_is_empty_in_phase_1` 就会看分片顺序变红（合并组里撞过一次）。"""
+    yield
+    ai_tasks.unregister(dp.TASK_TYPE)
 
 
 def turns_with(plot) -> list[dict]:
