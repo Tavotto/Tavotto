@@ -51,7 +51,8 @@ export function ChangeList({
   const roomKey = (ordered.find((g) => g.room && !unchecked[g.key]) ?? ordered.find((g) => g.room))?.key
   const row = (g: GroupView) => <GroupRow key={g.key} g={g} room={g.key === roomKey} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
   const byKey = new Map(groups.map((g) => [g.key, g]))
-  const resultIds = new Set(noteResults?.map((r) => r.id))
+  // 只有没改成的批注在顶部那块写了原因：底部不再重复；改成了的（有组）若另有一条没处理的原因，仍照常列在底部
+  const resultIds = new Set(noteResults?.filter((r) => !r.done).map((r) => r.id))
   const resultKeys = new Set(noteResults?.flatMap((r) => (r.groupKey ? [r.groupKey] : [])))
   // 逐条结果之外还有按批注改的组（对不上的老条目）：照旧列在这块的末尾
   const restNoteGroups = groups.filter((g) => g.fromNote && !resultKeys.has(g.key))

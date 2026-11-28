@@ -307,7 +307,7 @@ export function CompareStage({
   labels,
   revising,
   intro,
-  flash = false,
+  flash,
 }: {
   before: string
   after: string
@@ -328,8 +328,11 @@ export function CompareStage({
   revising?: RevisingView
   /** 新版刚出来：重改时那张压暗的旧图（地址）盖在「修改后」一侧上面淡出（减少动效时调用方不给） */
   intro?: string
-  /** 新版刚出来：改动框短暂全亮（调用方约 1 秒后撤掉，框照常淡出） */
-  flash?: boolean
+  /**
+   * 新版刚出来：这一轮按批注改的那几组（`keys`）的框短暂全亮（`lit`），调用方约 1 秒后撤掉 `lit`，这几处按 `duration-slow` 慢慢淡出；
+   * 别的组（上一版原样带来的）不亮，悬停照旧
+   */
+  flash?: { keys: ReadonlySet<string>; lit: boolean }
 }) {
   useTranslation('ai')
   // 批注框以图卡的边为界：靠近边沿向内翻转，不跨出图卡
@@ -381,7 +384,8 @@ export function CompareStage({
             clip = `inset(0 0 0 ${pctOf((split - b[0]) / w)}%)`
           }
         }
-        const on = g.key === activeId || flash
+        const landed = !!flash?.keys.has(g.key)
+        const on = g.key === activeId || (landed && flash!.lit)
         return (
           <span
             key={`${g.key}-${i}`}
@@ -390,7 +394,7 @@ export function CompareStage({
             // 图面默认纯净：只有清单里选中 / 悬停的那一项，它对应的那一处才淡入（1px 低饱和描边 + 约 6% 填充）；新版刚出来时全亮一下再淡出
             className={cn(
               'pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60 transition-opacity',
-              flash || g.key !== activeId ? 'duration-slow' : 'duration-fast',
+              landed ? 'duration-slow' : 'duration-fast',
               on ? 'opacity-100' : 'opacity-0',
             )}
             style={clip ? { ...boxStyle(b), clipPath: clip } : boxStyle(b)}

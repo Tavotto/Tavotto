@@ -17,7 +17,7 @@ import { failedChecks } from '@/lib/vectorEdit'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 import { noteLabelOf } from './noteTarget'
 import { usePanelDisplayManifest } from '@/store/renderStore'
-import { prefersReducedMotion } from '@/lib/motion'
+import { DURATION, prefersReducedMotion } from '@/lib/motion'
 
 type View = 'compare' | 'annotate'
 
@@ -59,7 +59,7 @@ export function ChangePlanDialog() {
   const aspect = useImageAspect(entry?.afterSrc)
   // 换一份方案 / 换版本 / 重新打开：高亮与批注框不带过去，新版本出来回到「对比」
   const planId = entry?.planId
-  const [landing, setLanding] = useState<{ from: string } | null>(null)
+  const [landing, setLanding] = useState<{ from: string; lit: boolean } | null>(null)
   useEffect(() => {
     setActiveId(null)
     setEditing(null)
@@ -73,14 +73,16 @@ export function ChangePlanDialog() {
   const nowRevising = entry?.revising !== undefined
   useEffect(() => {
     const was = last.current
-    if (was.revising && !nowRevising && planId && planId !== was.planId && !entry?.reviseError && was.after && !prefersReducedMotion()) setLanding({ from: was.after })
+    if (was.revising && !nowRevising && planId && planId !== was.planId && !entry?.reviseError && was.after && !prefersReducedMotion()) setLanding({ from: was.after, lit: true })
     last.current = { planId, revising: nowRevising, after: entry?.afterSrc }
   }, [planId, nowRevising, entry?.afterSrc, entry?.reviseError])
+  // 先全亮 LANDING_FLASH_MS，再撤亮让框按 `duration-slow` 淡出，淡完收掉
+  const lit = !!landing?.lit
   useEffect(() => {
     if (!landing) return
-    const t = window.setTimeout(() => setLanding(null), LANDING_FLASH_MS)
+    const t = lit ? window.setTimeout(() => setLanding((l) => (l ? { ...l, lit: false } : l)), LANDING_FLASH_MS) : window.setTimeout(() => setLanding(null), DURATION.slow)
     return () => window.clearTimeout(t)
-  }, [landing])
+  }, [!!landing, lit]) // eslint-disable-line react-hooks/exhaustive-deps
   // 第一次打开（高级版）：「写批注」上方出一次轻提示，点任意处或 5 秒后消失，本机记住
   const [hint, setHint] = useState(false)
   const shown = !!key
@@ -351,7 +353,7 @@ export function ChangePlanDialog() {
           ) : (
           <CompareStage
             intro={annotating ? undefined : landing?.from}
-            flash={!annotating && !!landing}
+            flash={!annotating && landing ? { keys: new Set(groups.filter((g) => g.fromNote).map((g) => g.key)), lit: landing.lit } : undefined}
             before={stageBefore}
             labels={stageLabels}
             // 批注写在这一版完整的「修改后」上（重改从它出发），不按勾选的组合出图

@@ -855,10 +855,17 @@ it('新版出来：旧图盖在上面淡出、改动框全亮约 1 秒再淡出�
     const intro = q('[data-change-plan-intro]')!
     expect(intro.className).toContain('animate-crossfade-out')
     expect(intro.querySelector('img')!.getAttribute('src')).toBe('/p7-a.png')
-    expect(qa('[data-change-plan-box]').every((b) => b.dataset.active === 'true')).toBe(true)
+    // 只亮这一轮按批注改的那组（g2）；上一版原样带来的组（g1）不亮
+    expect(qa('[data-change-plan-box="g2"]').length).toBeGreaterThan(0)
+    expect(qa('[data-change-plan-box="g2"]').every((b) => b.dataset.active === 'true')).toBe(true)
+    expect(qa('[data-change-plan-box="g1"][data-active]')).toHaveLength(0)
     act(() => vi.advanceTimersByTime(1000))
-    expect(q('[data-change-plan-intro]')).toBeNull()
+    // 撤亮：按批注改的那几处按 duration-slow 慢慢淡出；别的框的悬停时长不变
     expect(qa('[data-change-plan-box][data-active]')).toHaveLength(0)
+    expect(q('[data-change-plan-box="g2"]')!.className).toContain('duration-slow')
+    expect(q('[data-change-plan-box="g1"]')!.className).toContain('duration-fast')
+    act(() => vi.advanceTimersByTime(300))
+    expect(q('[data-change-plan-intro]')).toBeNull()
 
     const block = q('[data-change-plan-note-groups]')!
     expect(q('[data-change-plan-note-tally]')!.textContent).toBe('按批注改了 1 / 3 条')
@@ -902,5 +909,36 @@ it('重改没成：不放过渡，回到批注视图、一句灰字', () => {
   expect(view()).toBe('annotate')
   expect(q('[data-change-plan-intro]')).toBeNull()
   expect(q('[data-change-plan-revise-error]')).not.toBeNull()
+})
+
+it('改成了的批注另有一条没处理的原因：顶部是它那一组，原因照常列在底部（不丢）', () => {
+  status(PRO)
+  put(revisingEntry())
+  act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
+  render()
+  landV8()
+  const e = useChangePlanStore.getState().entries.a
+  const p = { ...e.plan!, unhandled: [...e.plan!.unhandled, { comment_id: 'n1', reason: 'over_limit' as const }] }
+  put({ ...e, plan: p, versions: e.versions!.map((v) => (v.planId === 'p8' ? { ...v, plan: p } : v)) })
+  expect(q('[data-change-plan-note-groups] [data-change-group="g2"]')).not.toBeNull()
+  expect(q('[data-change-plan-unhandled="n1"]')!.textContent).toContain('改动太多')
+  expect(q('[data-change-plan-unhandled="n3"]')).toBeNull()
+})
+
+it('脚本方案按批注重改出的版本：对不上逐条，右栏只说一句「按 N 条批注改了脚本」', () => {
+  status(PRO)
+  const S = (id: string, version: number): ChangePlan => ({
+    ...plan(id, version),
+    kind: 'script',
+    source: 'assistant',
+    base: { target: 'f_p1', fingerprint: 'fp', script_sha256: 'aa' },
+    applied: null,
+    groups: [{ key: 'script', kind: 'script', label: '改标题', comment_id: 'a1', atomic: true, changes: [], boxes: { after: [] }, script: { rel: 'fig.py', base_sha256: 'aa', new_sha256: 'bb', diff: '--- a\n+++ b\n@@ -1 +1 @@\n-a\n+b\n', added: 1, removed: 1 } }],
+  })
+  const rec = (id: string, p: ChangePlan, extra = {}) => ({ planId: id, plan: p, beforeSrc: `/${id}-b.png`, afterSrc: `/${id}-a.png`, unchecked: {}, ...extra })
+  put(entry({ from: 'assistant', instruction: '改标题', planId: 's2', plan: S('s2', 2), beforeSrc: '/s2-b.png', afterSrc: '/s2-a.png', versions: [rec('s1', S('s1', 1)), rec('s2', S('s2', 2), { fromNotes: NOTES.slice(0, 2) })] }))
+  render()
+  expect(q('[data-change-plan-script-meta] [data-change-plan-note-tally]')!.textContent).toBe('按 2 条批注改了脚本')
+  expect(q('[data-change-plan-note-result]')).toBeNull()
 })
 
