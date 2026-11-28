@@ -25,7 +25,7 @@ Tavotto 在候选目录里试跑、核契约、报错喂回去改；用户**采�
 （含 venv 根）与系统只读位置（`system_read_roots`，按平台列）；白名单外的 open 记 `blocked_reads` 并判失败。OS 沙盒的凭据拒读与断网照旧叠着（`strict_deny`）。
 **防篡改的收窄**（`trial.run_python(tamper=…)`，闭集 `full` / `stdlib`，没有「全关」）：`strict_deny` 的三条防篡改规则（禁看解释器对象 = gc 三个事件、禁改函数属性、禁把文件夹当文件开）
 原样（`full`，实验模式 ADR 0197 的默认，一个字节不变）会让标准库 `collections.namedtuple(defaults=…)` 失败，于是 `import inspect / dataclasses / numpy` 与
-`tempfile.NamedTemporaryFile / TemporaryDirectory` 起不来。数据准备用 `stdlib`：gc 三个事件照拦；函数的 `__code__` / `__globals__` 照拦；`__defaults__` / `__kwdefaults__`
+`tempfile.NamedTemporaryFile / TemporaryDirectory` 起不来。数据准备用 `stdlib`：gc 三个事件照拦；函数的 `__code__` / `__globals__` / `__kwdefaults__` 照拦；`__defaults__`
 只在「执行这次赋值的帧的代码对象就是 `collections.namedtuple` 的」时可赋（帧深度 1，实测）；文件夹只在位于本次试跑目录之内时可当文件开（`tempfile` 开的是试跑目录里的 tmp）。
 这三处合起来仍挡得住「gc 找到钩子再换 `__code__`」「别的函数改 `__defaults__`」「开试跑目录之外的文件夹」（有用例，`full` / `stdlib` 两种都锁）。
 断网、凭据位置、凭据形状文件名两种模式相同。仍是 ADR 0215「已知盲区」：C 层 / ctypes（导入不拦）绕得过；Windows 没有系统沙盒，进程内钩子是唯一一层且未验证。

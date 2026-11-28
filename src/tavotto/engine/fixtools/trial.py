@@ -172,8 +172,8 @@ try:
                     raise PermissionError("Tavotto experiment: inspecting the interpreter's objects is not allowed")
                 if event == "object.__setattr__" and args and _type(args[0]).__name__ == "function" and len(args) > 1 and args[1] in _fattrs:
                     # "stdlib" 模式（数据准备）：标准库的 `collections.namedtuple(defaults=…)` 要给它刚造出来的 `__new__` 赋 `__defaults__`，
-                    # 所以只放行「执行这次赋值的那一帧的代码对象就是 namedtuple 的」这一种（帧深度 1：0 是本钩子），`__code__` / `__globals__` 一律拦
-                    if not (_tamper == "stdlib" and args[1] in ("__defaults__", "__kwdefaults__") and _getframe(1).f_code is _nt):
+                    # 所以只放行「执行这次赋值的那一帧的代码对象就是 namedtuple 的」这一种（帧深度 1：0 是本钩子），`__code__` / `__globals__` / `__kwdefaults__` 一律拦（namedtuple 只赋 `__defaults__`）
+                    if not (_tamper == "stdlib" and args[1] == "__defaults__" and _getframe(1).f_code is _nt):
                         raise PermissionError("Tavotto experiment: rewriting functions is not allowed")
                 if event in ("open", "os.listdir", "os.scandir") and args and _isinst(args[0], (_str, _bytes, _pathlike)):
                     try:
