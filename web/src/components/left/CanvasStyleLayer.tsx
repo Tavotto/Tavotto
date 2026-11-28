@@ -6,12 +6,14 @@ import { isSubLabel } from '@/lib/stylePresets'
 import { styleSummaryText } from '@/lib/styleSummary'
 import { profileName } from '@/lib/profileText'
 import { CANVAS_TEXT_FAMILIES, styleIsItalic, weightIsBold } from '@/lib/typography'
+import { paletteUi } from '@/lib/paletteUi'
 import { cn } from '@/lib/utils'
 import { bindCanvasStyle, bindingName, editBoundStyle, resolvedStyle } from '@/store/styleBinding'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProfileStore } from '@/store/profileStore'
 import { optionLabel } from '../inspector/roles/registry'
 import { Section } from '../ui/Field'
+import { CanvasPaletteSection } from './CanvasPaletteSection'
 import { Select, type SelectOption } from '../ui/Select'
 import { NUMBER_SPEC, useFigureFamilies } from '../settings/StyleProfileFields'
 import { readPath } from '../settings/profilePath'
@@ -107,6 +109,8 @@ export function CanvasStyleLayer() {
         )}
       </div>
       {bound && data && <CanvasRows data={data} />}
+      {/* 推荐配色（ADR 0210）：与跟不跟随样式无关，画布级；入口默认关 */}
+      {paletteUi() && <CanvasPaletteSection />}
     </div>
   )
 }

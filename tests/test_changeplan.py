@@ -996,6 +996,34 @@ def test_a_comment_that_is_both_changed_and_needs_a_script_keeps_only_needs_scri
     assert out["unhandled"] == [{"comment_id": "c1", "reason": "needs_script"}]
 
 
+def test_a_comment_that_wants_canvas_annotations_keeps_only_that_reason_and_no_half_plan():
+    """判据的主语：`validate_proposal` 的输出里这条意见**有没有 groups**与**原因码**——要在画布上加标注的整条交给画布那条路（ADR 0208 第 ③ 期 3c），
+    不许出「图内改了一半」的方案；模型自己造的别的码仍落成 `unclear`。"""
+    obj = {
+        "groups": [
+            {"comment_id": "c1", "changes": [ch("ax0.line0", "linewidth", 3)]},
+            {"comment_id": "c2", "changes": [ch("ax0.title", "fontsize", 12)]},
+        ],
+        "unhandled": [
+            {"comment_id": "c1", "reason": "needs_canvas_annotation"},
+            {"comment_id": "c3", "reason": "needs_canvas_annotations"},
+        ],
+    }
+    out = cp.validate_proposal(obj, BASE, comment_ids={"c1", "c2", "c3"})
+    assert [g["comment_id"] for g in out["groups"]] == ["c2"]
+    assert out["unhandled"] == [
+        {"comment_id": "c1", "reason": "needs_canvas_annotation"},
+        {"comment_id": "c3", "reason": "unclear"},
+    ]
+    assert "needs_canvas_annotation" in cp.UNHANDLED_REASONS
+
+
+def test_only_the_assistant_prompt_offers_the_canvas_annotation_reason():
+    """审阅来源没有「改在画布上加」这条路，不把这个原因交给模型。"""
+    assert "needs_canvas_annotation" in cp.system_prompt("assistant")
+    assert "needs_canvas_annotation" not in cp.system_prompt("review")
+
+
 def test_both_system_prompts_tell_the_model_a_half_script_comment_goes_whole_to_the_script():
     for source in ("review", "assistant"):
         text = cp.system_prompt(source)

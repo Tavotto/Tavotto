@@ -6,7 +6,7 @@ import type { PanelFontFacts, PanelInfo } from '@/lib/api'
 import { useDocumentStore } from './documentStore'
 import { useAssetStore } from './assetStore'
 import { pdfFontFactsOf, usePdfFontFacts } from './pdfFontFacts'
-import { redrawWithScript } from './actions'
+import { redrawPdfOriginalsWithScript, redrawWithScript } from './actions'
 import { renderTargets } from '@/hooks/useEngineSync'
 import { setCurrentProjectId } from '@/lib/session'
 import { pdfFontProblem, REDRAW_FRAME_OVERRIDE, redrawOffered } from '@/lib/scriptedBitmaps'
@@ -122,6 +122,32 @@ describe('redrawWithScript（PDF 原件）', () => {
     await flush()
     expect(redrawWithScript('p')).toBe(false)
     expect(P().overrides).toEqual([])
+    expect(S().past).toHaveLength(0)
+  })
+})
+
+describe('redrawPdfOriginalsWithScript（导出结果里的「用脚本重画并重新导出」）', () => {
+  it('几张一起换、一次提交；带编辑的不动；一次撤销全回原件', async () => {
+    S().commit(literal('more'), (d) => {
+      d.objects.push(pdf({ id: 'q', x: 80 }))
+      d.objects.push(pdf({ id: 'e', x: 150, overrides: [{ gid: 'axes_0.title', prop: 'text', value: 'x' }] }))
+    })
+    useDocumentStore.setState({ past: [], future: [] })
+    usePdfFontFacts.getState().request('plot.pdf')
+    await flush()
+    expect(redrawPdfOriginalsWithScript(['p', 'q', 'e', 'missing'])).toEqual(['p', 'q'])
+    const byId = (id: string) => S().doc.objects.find((o) => o.id === id) as PanelObject
+    expect(byId('p').overrides).toEqual([REDRAW_FRAME_OVERRIDE])
+    expect(byId('q').overrides).toEqual([REDRAW_FRAME_OVERRIDE])
+    expect(byId('e').overrides).toHaveLength(1)
+    expect(S().past).toHaveLength(1)
+    S().undo()
+    expect(byId('p').overrides).toEqual([])
+    expect(byId('q').overrides).toEqual([])
+  })
+
+  it('一张都换不了（没问到 / 没问题）：不提交', () => {
+    expect(redrawPdfOriginalsWithScript(['p'])).toEqual([])
     expect(S().past).toHaveLength(0)
   })
 })

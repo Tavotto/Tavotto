@@ -266,11 +266,15 @@ def _dropped(i: int, op: object, exc: ve.EditError) -> dict:
     where = f"第 {i + 1} 条" + (f"（{name}）" if isinstance(name, str) else "")
     if exc.field:
         where += f"·{_clip(exc.field, 40)}"
-    return {
+    out = {
         "reason": f"{where}：{ve.ERROR_WORDS.get(exc.code, exc.code)}",
         "code": exc.code,
         "op": op if isinstance(op, dict) else None,
     }
+    if exc.field:
+        # `add` 的错误里 field 是条目名：桌面卡上「按我说的加」要点名它（`confirmed: [条目名]`）
+        out["field"] = _clip(exc.field, 80)
+    return out
 
 
 def validate_ops(obj: object, canvas: dict, instruction: str | None = None, measure=None) -> dict:

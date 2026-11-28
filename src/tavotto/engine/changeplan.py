@@ -102,7 +102,8 @@ ERROR_CODES = (
 )
 
 #: 没处理的意见的一句话原因（闭集短码；界面文案归前端）。
-#: * needs_script / unclear / out_of_scope / no_change_needed：模型自己说的；
+#: * needs_script / needs_canvas_annotation / unclear / out_of_scope / no_change_needed：模型自己说的；
+#:   needs_canvas_annotation = 要在**画布上新加标注**（外框 / 子图编号 / 括号 / 指向某点的箭头 / 星号），不是图内元素也不是脚本；助手来源的卡据此给「改在画布上加」（ADR 0208 第 ③ 期 3c）；
 #: * unknown_element / not_editable / bad_value / over_limit / conflict：校验没过；
 #: * not_applied：规范化把它剔了；no_effect：渲染出来值没变；not_addressed：模型没提这条意见；
 #: * merged_log：它的坐标范围并进了把这根轴改成对数的那一组（下限要一起问，见 `require_log_lower_limits`）；
@@ -111,6 +112,7 @@ ERROR_CODES = (
 #: * dense_curve：给连续曲线（点数多于 `figure_facts.DENSE_POINTS`）逐点加标记——会糊成一串珠子（服务端守卫）。
 UNHANDLED_REASONS = (
     "needs_script",
+    "needs_canvas_annotation",
     "unclear",
     "out_of_scope",
     "no_change_needed",
@@ -127,7 +129,13 @@ UNHANDLED_REASONS = (
     "size_locked",
     "dense_curve",
 )
-_MODEL_REASONS = ("needs_script", "unclear", "out_of_scope", "no_change_needed")
+_MODEL_REASONS = (
+    "needs_script",
+    "needs_canvas_annotation",
+    "unclear",
+    "out_of_scope",
+    "no_change_needed",
+)
 
 #: `ai_structured.REASONS` → 本功能的稳定码
 MODEL_FAILURE_CODES = {
@@ -576,6 +584,8 @@ def _assistant_system_prompt() -> str:
         "- 指令里能用上面的属性做到的照改；做不到的写进 `unhandled`（`comment_id` 仍是 `a1`）。"
         "**只要指令的任何一部分要改脚本，就把整条指令放进 `unhandled`（`needs_script`），`groups` 里不要放这条指令的任何修改**——"
         "只改一半会得到一张对不上的图（比如标签改成了「秒」，数据还是分钟）。`reason` 只能取：`needs_script`（要改脚本 / 数据 / 新增删除元素 / 换图类型才能做到）、"
+        "`needs_canvas_annotation`（要在**画布上新加标注**：给图画外框、标子图编号 (a)(b)、画括号、画箭头指向某个点或峰、标星号 / n.s. / p 值——这些是叠在图上的画布标注，既不是图内元素也不用改脚本；"
+        "**整条指令放进 `unhandled`，`groups` 里不要放它的任何修改**，由用户点「改在画布上加」另行处理）、"
         "`unclear`（指令看不懂或没法落成具体修改）、`out_of_scope`（不是改图的要求：用户只是聊天、提问、要你解释某个概念或事实，没要求改图时用它；"
         "要**建议 / 评价 / 怎么改更好**不算 `out_of_scope`，见下面「先判断这句话是哪一种」）、`no_change_needed`（图已经满足）。\n\n"
         "## 先判断这句话是哪一种（`intent`，必填）\n"
@@ -1039,7 +1049,12 @@ def validate_proposal(
             reason = u.get("reason")
             reject(u["comment_id"], reason if reason in _MODEL_REASONS else "unclear")
     # 整条意见交给脚本：同一条意见既有图内修改又说要改脚本时，只留 `needs_script`，不给「改了一半」的方案（维护者 2026-11-26）
-    whole_script = {u["comment_id"] for u in unhandled if u["reason"] == "needs_script"}
+    # 要在画布上加标注的同理：整条交给画布那条路，不给「图内改了一半」的方案
+    whole_script = {
+        u["comment_id"]
+        for u in unhandled
+        if u["reason"] in ("needs_script", "needs_canvas_annotation")
+    }
     out: dict = {
         "groups": [
             {"comment_id": cid, "changes": groups[cid]} for cid in order if cid not in whole_script

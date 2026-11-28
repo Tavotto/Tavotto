@@ -401,6 +401,7 @@ export function ChangePlanDialog() {
                   heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : entry.kind === 'vector' ? cp('dialog.vectorHeading', { count: entry.vector?.count ?? 0 }) : undefined}
                   groups={groups}
                   unhandled={unhandledViews(entry)}
+                  onAction={(u) => u.action && entry.vector?.confirm?.(u.action.item, u.action.op)}
                   unchecked={entry.unchecked}
                   onToggle={(g) => store().toggleGroup(entry.key, g)}
                   activeId={activeId}

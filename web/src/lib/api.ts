@@ -4243,6 +4243,8 @@ export type ChangePlanSource = 'review' | 'quick_layout' | 'journal_fix' | 'assi
 /** 没处理的意见的一句话原因（闭集短码；文案归界面） */
 export type ChangePlanUnhandledReason =
   | 'needs_script'
+  /** 要在画布上新加标注（外框 / 子图编号 / 括号 / 箭头 / 星号）：助手来源的卡给「改在画布上加」（ADR 0208 第 ③ 期 3c） */
+  | 'needs_canvas_annotation'
   | 'unclear'
   | 'out_of_scope'
   | 'no_change_needed'
@@ -4488,6 +4490,9 @@ export interface VectorEditUnhandled {
   /** `too_many_steps`：没收下的步数与上限 */
   count?: number
   max?: number
+  /** `add` 的错误：需要确认 / 不收的那个条目名（卡上「按我说的加」点名它）与被丢掉的整条补丁（点了之后补进补丁再算） */
+  field?: string
+  op?: unknown
 }
 
 /** `/api/vector-edit/plan` 回的方案（`engine/vectorplan.plan` + 指令模式多出的 `ops` / `unhandled`）；全部是后端算好的，前端只翻译与落位 */
@@ -4505,6 +4510,8 @@ export interface VectorEditResult {
   layout_groups?: LayoutGroup[] | null
   ops?: unknown[]
   unhandled?: VectorEditUnhandled[]
+  /** 没量到的子图：短号（P1、P2…）→ 原因码（后端 `vectormeasure`）；没有 = 都量到了 / 老后端 */
+  unmeasured?: Record<string, string>
 }
 
 export interface VectorEditBody {

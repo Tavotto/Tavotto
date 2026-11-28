@@ -184,6 +184,23 @@ def test_confirmed_by_the_user_on_the_card_passes_but_only_from_the_request():
     assert not _plan([_add(sneaky)], _ctx("没说星号"))["ok"]
 
 
+def test_two_stars_in_one_step_are_confirmed_one_after_another():
+    """一条 add 里两个统计文字：后端一次只报一个（逐条核），确认第一个后同一步再报第二个、`field` 换成它的名字；
+    两个都确认才收下。前端的「还是加上」按这个顺序逐个出行、累积 `confirmed`（#2354 Codex P2）。"""
+    second = {
+        **_stat(None),
+        "name": "sig2",
+        "at": {"anchor": {"panel": {"id": "P1", "point": "nw"}}, "offset_mm": [0, -3]},
+    }
+    step = [_add(_stat(None), second)]
+    first = _plan(step, _ctx(None))
+    assert first["errors"][0] == {"code": "needs_confirmation", "index": 0, "field": "sig"}
+    then = _plan(step, _ctx(None, ["sig"]))
+    assert then["errors"][0] == {"code": "needs_confirmation", "index": 0, "field": "sig2"}
+    done = _plan(step, _ctx(None, ["sig", "sig2"]))
+    assert done["ok"], done
+
+
 def test_the_plugin_path_without_context_keeps_the_old_meaning():
     # 插件的 edit 路径没有「用户原话」：只核写没写来源（旧口径），宿主另行确认
     assert _plan([_add(_stat("user"))])["ok"]
@@ -326,3 +343,10 @@ def test_a_data_anchored_object_depends_on_its_measured_panel():
     res = ve.propose_memory(_canvas(), [_add(PEAK)], measure=stub_measure)
     added = next(c for c in res["changes"] if c.get("added"))
     assert added["depends_on"] == [ve.panel_refs(_canvas())["P1"]]
+
+
+def test_a_dropped_add_step_names_its_item_so_the_card_can_confirm_it():
+    """判据的主语：`unhandled[].field` 量的是**被丢掉那个 `add` 里需要确认的条目名**（卡上「按我说的加」要用它点名），不是整条原因句。"""
+    out = vp.validate_ops({"ops": [_add(_stat("user", "**"))]}, _canvas(), "加个标注")
+    u = out["unhandled"][0]
+    assert u["code"] == "needs_confirmation" and u["field"] == "sig" and u["op"]["op"] == "add"

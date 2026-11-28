@@ -2147,6 +2147,17 @@ function upsertOverrides(
 }
 
 /**
+ * 推荐配色写颜色（ADR 0210，`store/paletteActions.ts` 在自己那次 commit 的 recipe 里调）：
+ * 与其它写入同一个 `upsertOverrides`，原地改值、只追加真正新的。
+ */
+export function writePaletteOverrides(
+  panel: PanelObject,
+  patches: { gid: string; prop: string; value: unknown }[],
+): void {
+  upsertOverrides(panel, patches)
+}
+
+/**
  * 把几条 override **补进 `entry` 那条历史**并立即重渲染（`documentStore.amendLast`
  * 的面板版）。`entry` 已不是最后一条 / 有进行中的事务时什么都不写、返回 false。
  */
@@ -2763,16 +2774,7 @@ export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
   if (panel?.type !== 'panel') return false
   // PDF 原件（原件用了 Type 3 / 有缺字）：本来就是矢量的脚本产物，重画只换掉字体——一条不改任何东西的
   // `figure.frame = "savefig"`，面板就由引擎按脚本存盘的图幅重画；不走位图那套采用与对照
-  if (pdfRedrawCandidate(panel)) {
-    if (!redrawOffered(panel, pdfFontFactsOf(panel.fileId))) return false
-    const missing = pdfFontProblem(pdfFontFactsOf(panel.fileId)) === 'pdfMissingGlyphs'
-    commit(msg(missing ? 'artifact.showRedrawMissing' : 'artifact.showRedrawType3', undefined, 'errors'), (d) => {
-      const o = d.objects.find((x) => x.id === panel.id)
-      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
-    })
-    status(msg(missing ? 'artifact.redrawnMissing' : 'artifact.redrawnType3', undefined, 'errors'), 'done')
-    return true
-  }
+  if (pdfRedrawCandidate(panel)) return redrawPdfOriginalsWithScript([panelId]).length > 0
   if (!redrawOffered(panel)) return false
   const issue = artifactValidationIssue(panel)
   if (issue) {
@@ -2789,6 +2791,35 @@ export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
     return false
   }
   return admitPngEntry(panel, 'keep', true)
+}
+
+/**
+ * PDF 原件（用了 Type 3 / 有缺字）改由脚本重画：画布角标与导出结果里「用脚本重画并重新导出」是同一步（T-005 补充）。
+ *
+ * 只换 `pdfRedrawCandidate` 且字体事实说有问题（`redrawOffered`）的那几张；每张落一条不改任何东西的
+ * `figure.frame = "savefig"`，全部在**一次**可撤销的提交里——撤销一下就都回到原件。不跑脚本、不改导出默认行为：
+ * 用户点了才换。回换了的面板 id（一张都没换就不提交、不出提示）。
+ */
+export function redrawPdfOriginalsWithScript(panelIds: readonly string[]): string[] {
+  finishActiveGesture()
+  const ids = panelIds.filter((id) => {
+    const p = findObject(id)
+    return p?.type === 'panel' && pdfRedrawCandidate(p) && redrawOffered(p, pdfFontFactsOf(p.fileId))
+  })
+  if (ids.length === 0) return []
+  // 提示按原件的毛病说：全是缺字就说缺字，否则按 Type 3 说（与画布角标同一套文案）
+  const missing = ids.every((id) => {
+    const p = findObject(id)
+    return p?.type === 'panel' && pdfFontProblem(pdfFontFactsOf(p.fileId)) === 'pdfMissingGlyphs'
+  })
+  commit(msg(missing ? 'artifact.showRedrawMissing' : 'artifact.showRedrawType3', undefined, 'errors'), (d) => {
+    for (const id of ids) {
+      const o = d.objects.find((x) => x.id === id)
+      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
+    }
+  })
+  status(msg(missing ? 'artifact.redrawnMissing' : 'artifact.redrawnType3', undefined, 'errors'), 'done')
+  return ids
 }
 
 export function enterElementEdit(

@@ -21,6 +21,7 @@ export function ChangeList({
   onToggle,
   activeId,
   onActive,
+  onAction,
 }: {
   /** 清单头的整句（一键排版的卡用它说「排版 · N 张图」）；缺省 = 「改动 · N 处」 */
   heading?: string
@@ -32,6 +33,8 @@ export function ChangeList({
   onToggle: (key: string) => void
   activeId: string | null
   onActive: (key: string | null) => void
+  /** 没处理的行带的动作被点了（矢量编辑方案：「按我说的加」） */
+  onAction?: (u: UnhandledView) => void
 }) {
   useTranslation('ai')
   const total = groups.filter((g) => !unchecked[g.key]).reduce((a, g) => a + g.boxes.length, 0)
@@ -67,8 +70,13 @@ export function ChangeList({
                   <span className="h-px w-2 bg-ink-faint" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate text-sm text-ink-3">{u.text}</span>
+                  <span className={u.action ? 'text-sm text-ink-3' : 'truncate text-sm text-ink-3'}>{u.text}</span>
                   {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
+                  {u.action && onAction && (
+                    <Button variant="secondary" size="sm" className="mt-1 w-fit rounded-full" onClick={() => onAction(u)} data-change-plan-confirm-item>
+                      {cp('vector.confirmButton')}
+                    </Button>
+                  )}
                 </div>
               </li>
             ))}
