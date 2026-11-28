@@ -533,6 +533,15 @@ def _vetoed(key: str, role: str | None) -> bool:
     return role != "group"
 
 
+def _nothing_left_without_x(entry: adf.TableEntry, hint: str | None, loop: dict) -> bool:
+    """按此刻已定的选择，把横轴去掉之后规则的结果是不是「既没有横轴、也没有分组、也不是把列当分组」（只剩单列的分布）。
+    还要问问题 / 读不出角色 = False（不拦，交回原有流程）。"""
+    res = recipe_mod.resolve_roles(entry, hint, {**loop, "x": "none"})
+    return (
+        isinstance(res, recipe_mod.Roles) and res.x_ord is None and not res.cats and not res.stack
+    )
+
+
 def _default_group_is_replicate(
     entry: adf.TableEntry, hint: str | None, loop: dict, roles: dict
 ) -> bool:
@@ -671,6 +680,17 @@ def suggest(
                 # 规则已经落定了一个分组列，模型判它是「重复 / 批次编号」并建议干脆不分组：不采纳——按板号 / 批次分开画没有害处，
                 # 去掉分组却是把规则本来对的结果改差（HO-23：酶标板的板号）。换成另一个分组列、或判成备注 / 行号的照常采纳。
                 if key == "group" and valid[key] == "none" and roles.get(col) == "replicate_unit":
+                    continue
+                # 横轴同理，但只在「去掉它就什么结构都不剩」时（2026-11-28，真模型在公开数据集上的实测）：规则选作横轴的列被判成「重复 / 批次编号」
+                # （区组号、批次号），模型建议没有横轴，而去掉之后既没有横轴也没有分组（图只剩一张直方图）——不采纳：按区组 / 批次排开画没有害处，
+                # 只剩分布却是把规则本来说得通的结果改差（`npk` 的 block、按批次记的 pH）。还有分组列可比（RC-01：处理组 + 批次号）就照常采纳；
+                # 判成行号 / 备注（`row_id` / `other`）的也照常采纳——那才是「流水号被当成了轴」。
+                if (
+                    key == "x"
+                    and valid[key] == "none"
+                    and roles.get(col) == "replicate_unit"
+                    and _nothing_left_without_x(entry, hint, loop)
+                ):
                     continue
                 loop[key] = emit[key] = valid[key]
                 changed = True
