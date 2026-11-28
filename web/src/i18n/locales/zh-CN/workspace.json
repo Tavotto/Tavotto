@@ -1777,6 +1777,7 @@
         "denied": "AI 换了一种方法继续",
         "thePackages": "需要的包",
         "read_run_report": "正在查看运行报告",
+        "read_environment_checks": "正在查看环境自检记录",
         "read_file": "正在查看文件",
         "list_dir": "正在查看文件夹",
         "find_files": "正在查找文件",

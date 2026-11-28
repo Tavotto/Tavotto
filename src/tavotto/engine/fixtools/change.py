@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -102,6 +103,25 @@ _INSTALL_HINTS = {
 }
 
 
+SELFTEST_FAILED = "dependency_worker_selftest_failed"
+
+
+def selftest_note(ctx: FixContext) -> str:
+    """自检没过（`dependency_worker_selftest_failed`）时附给模型的一段：最近一代的自检形状 + 指路 `read_environment_checks`。
+    形状与 `read_environment_checks` 同一份（闭集；原文尾部不在这里，要看全去调那个工具）。读不到记录也给指路句。"""
+    hint = "Use read_environment_checks to see the full self-test record."
+    try:
+        from .envchecks import environment_check_rows
+
+        rows = environment_check_rows(ctx.project_root, with_detail=False)
+        shape = next((r["selftest"] for r in rows if r.get("selftest")), None)
+    except Exception:  # noqa: BLE001 - 记录读不到不该吃掉安装失败的原因
+        shape = None
+    if shape is None:
+        return "\n" + hint
+    return "\nSelf-test record: " + json.dumps(shape, ensure_ascii=False) + "\n" + hint
+
+
 def install_packages(ctx: FixContext, args: dict) -> ToolResult:
     from .. import convertdeps, depresolve
 
@@ -180,6 +200,8 @@ def install_packages(ctx: FixContext, args: dict) -> ToolResult:
             text += " " + _INSTALL_HINTS[code]
         if isinstance(detail, str) and detail.strip():
             text += "\nInstaller said: " + scrub(detail.strip())[:500]
+        if code == SELFTEST_FAILED:
+            text += selftest_note(ctx)
         text += known_issue_text(ctx, code, res.get("selftest"))
         return err(code, _with_snapshot(ctx, text))
     return _done(ctx, f"Installed: {', '.join(reqs)}.", "packages installed")
@@ -382,15 +404,12 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
     if not res.get("ok"):
         # 没换成：只撤销**这一次**新加的租约；本会话此前成功换代保留的旧代要留到会话收尾，否则它的快照回滚不了
         ctx.release_leases(added)
-        code = str(res.get("code") or "change_python_failed")[:60]
-        return err(
-            code,
-            _with_snapshot(
-                ctx,
-                str(res.get("message") or "The new environment could not be created.")
-                + known_issue_text(ctx, code, res.get("selftest")),
-            ),
-        )
+        fail_code = str(res.get("code") or "change_python_failed")[:60]
+        fail_text = str(res.get("message") or "The new environment could not be created.")
+        if fail_code == SELFTEST_FAILED:
+            fail_text += selftest_note(ctx)
+        fail_text += known_issue_text(ctx, fail_code, res.get("selftest"))
+        return err(fail_code, _with_snapshot(ctx, fail_text))
     shown = version or str(res.get("to") or "")
     text = str(res.get("message") or f"Created a Tavotto environment with Python {shown}.")
     python = res.get("python")

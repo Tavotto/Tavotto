@@ -116,7 +116,8 @@ TRANSCRIPT_MAX_ENTRIES = 60
 def _remember(ctx: FixContext, tool: str, result: ToolResult) -> None:
     """工具返回（已脱敏）进内存里的修复经过；只留尾部，条数有界。不抛。"""
     try:
-        text = result.content or ""
+        text = result.content if result.transcript_content is None else result.transcript_content
+        text = text or ""
         if len(text) > TRANSCRIPT_ENTRY_CHARS:
             text = "…" + text[-TRANSCRIPT_ENTRY_CHARS:]
         ctx.transcript.append(
@@ -189,6 +190,8 @@ def run_tool(
     if result.mutated:
         ctx.verification = None
     result.content = scrub(result.content)
+    if result.transcript_content is not None:
+        result.transcript_content = scrub(result.transcript_content)
     _remember(ctx, tool.name, result)
     ctx.trace_tool_span = None
     approved_by = _approved_by(result, ctx)
