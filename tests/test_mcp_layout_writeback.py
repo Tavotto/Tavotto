@@ -224,3 +224,44 @@ def test_normalize_commit_writes_once_and_a_stale_layout_rolls_back(project, wor
     assert exc.value.code == "layout_changed"
     assert {p["prop"] for p in session.patches} == {"fontsize", "spine_top"}
     assert _panel_of(path)["overrides"] == [SPINE]
+
+
+def test_inherited_identity_survives_a_second_apply(project, worker):
+    """Codex #2364：沿用的 identity 也留在会话里——第二次 apply 加别的条时，排版里那条的 identity 不被抹掉。"""
+    path, sid = _setup(project, [DIRECTION])
+    bare = {k: v for k, v in DIRECTION.items() if k != "identity"}
+    _apply(sid, [bare])
+    assert bridge.get_session(sid).patches[0]["identity"] == "tick-id"
+    _apply(sid, [p for p in bridge.get_session(sid).patches] + [SPINE])
+    got = {p["prop"]: p for p in _panel_of(path)["overrides"]}
+    assert got["direction"]["identity"] == "tick-id"
+
+
+def test_failed_write_restores_the_session_even_if_the_rollback_render_fails(
+    project, worker, monkeypatch
+):
+    """Codex #2364：写回失败、热 worker 也退不回去时，会话对外的修改与画面仍是调用前那份（不靠再渲染一次）。"""
+    path, sid = _setup(project, [FONT])
+    session = bridge.get_session(sid)
+    before_patches, before_manifest = list(session.patches), session.manifest
+
+    def boom(*a, **k):
+        raise la.LayoutError("undo_unavailable")
+
+    monkeypatch.setattr(la, "write_canvas", boom)
+    real_override = worker.override
+    calls = {"n": 0}
+
+    def flaky_override(stem, patches, *a, **k):
+        calls["n"] += 1
+        if calls["n"] > 1:  # 第一次是这次 apply 的渲染；之后的退回渲染失败
+            raise bridge.engine_pool.WorkerError("rollback failed")
+        return real_override(stem, patches, *a, **k)
+
+    monkeypatch.setattr(worker, "override", flaky_override)
+    res = _apply(sid, [FONT, DIRECTION])
+    assert res["isError"] and _body(res)["code"] == "undo_unavailable"
+    session = bridge.get_session(sid)
+    assert session.patches == before_patches
+    assert session.manifest == before_manifest
+    assert _panel_of(path)["overrides"] == [FONT]

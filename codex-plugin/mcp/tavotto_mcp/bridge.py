@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import difflib
 import functools
 import hashlib
@@ -3535,6 +3536,14 @@ def _write_layout_back(session: Session, before: list) -> dict | None:
     if la is None:
         return None
     canonical = _with_inherited_identity(session.patches, before)
+    # 会话自己也用沿用了 identity 的那份（Codex #2364）：否则下一次 apply 从缺 identity 的会话出发，写回时把它从排版里抹掉
+    ident = {(str(p["gid"]), str(p["prop"])): p["identity"] for p in canonical if p.get("identity")}
+    session.patches = [
+        {**p, "identity": ident[(str(p["gid"]), str(p["prop"]))]}
+        if not p.get("identity") and (str(p["gid"]), str(p["prop"])) in ident
+        else p
+        for p in session.patches
+    ]
     new_ovr = patchspec.patch_hash(canonical)
     if new_ovr == binding.get("ovr"):
         return None  # 子图里已经就是这份：不写，也不留一条空的撤销
@@ -3589,14 +3598,38 @@ def _write_layout_back(session: Session, before: list) -> dict | None:
     }
 
 
-def _revert_after_failed_write(session: Session, before: list) -> None:
-    """写回排版失败：会话退回调用前的 patches 与画面。退不回去也不吞原错误（会话下一次调用照全量列表重渲染）。"""
+#: 写回失败时要退回的会话字段（渲染结果与修改）；与 `_render` 写的那几样一一对应
+_WRITE_SNAPSHOT_FIELDS = (
+    "patches",
+    "manifest",
+    "svg",
+    "preview",
+    "warnings",
+    "preview_png_base64",
+    "preview_png_manifest",
+    "preflight_cache",
+    "apply_receipt",
+    "rev",
+    "script_sha1",
+)
+
+
+def _session_snapshot(session: Session) -> dict:
+    """调用前的会话状态（写回失败时按它退回，不靠再渲染一次）。"""
+    return {f: copy.copy(getattr(session, f, None)) for f in _WRITE_SNAPSHOT_FIELDS}
+
+
+def _revert_after_failed_write(session: Session, snap: dict) -> None:
+    """写回排版失败：会话退回调用前的状态（Codex #2364）。先把快照里的修改与画面原样放回——不管下面的重渲染成不成，
+    会话对外都不再显示没进排版的那份修改；再在热 worker 上按调用前的列表渲染一次，让 worker 也回到那一版（失败只记一行，
+    下一次调用照全量列表重渲染）。"""
+    for f, v in snap.items():
+        setattr(session, f, v)
     try:
-        _render(session, before, preview_dpi=None)
-    except BridgeError:
-        pass
-    except engine_pool.WorkerError as exc:
-        sys.stderr.write(f"tavotto-mcp: 会话 {session.id} 写回排版失败后没能退回渲染：{exc}\n")
+        worker = session.acquire()
+        worker.override(session.stem, list(snap["patches"] or []), None)
+    except (BridgeError, engine_pool.WorkerError) as exc:
+        sys.stderr.write(f"tavotto-mcp: 会话 {session.id} 写回排版失败后 worker 没能退回：{exc}\n")
 
 
 def _sync_binding(session: Session) -> tuple[dict | None, dict | None]:
@@ -3785,11 +3818,12 @@ def apply_overrides(
             released = True
 
     before_patches = list(session.patches)
+    snap = _session_snapshot(session)
     out = _render(session, clean, preview_dpi=preview_dpi)
     try:
         layout_written = _write_layout_back(session, before_patches)
     except BridgeError:
-        _revert_after_failed_write(session, before_patches)
+        _revert_after_failed_write(session, snap)
         raise
     if released:
         # 明确要求之下解除合同：验收报告随之作废（它验的是另一个状态）
@@ -4694,6 +4728,7 @@ def normalize_figure(session_id: str, **kwargs) -> dict:
     before = _SESSIONS.get(session_id)
     prev = before.exported_hash if before is not None else None
     before_patches = list(before.patches) if before is not None else []
+    snap = _session_snapshot(before) if before is not None else None
     before_contract = before.contract if before is not None else None
     before_normalized = before.normalized if before is not None else None
     result: dict | None = None
@@ -4704,7 +4739,7 @@ def normalize_figure(session_id: str, **kwargs) -> dict:
             try:
                 written = _write_layout_back(before, before_patches)
             except BridgeError:
-                _revert_after_failed_write(before, before_patches)
+                _revert_after_failed_write(before, snap or {})
                 before.contract, before.normalized = before_contract, before_normalized
                 result = None
                 raise
