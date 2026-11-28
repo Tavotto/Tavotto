@@ -282,6 +282,65 @@ def _v2_rows(bundle: dict) -> list[dict]:
     return rows
 
 
+def _same(a: dict, b: dict) -> bool:
+    """同一条要求：检查项、关系、数值相同，`column` 条件不冲突（一边没写算不冲突）。"""
+    ca, cb = (a["conditions"] or {}).get("column"), (b["conditions"] or {}).get("column")
+    return (
+        a["check"] == b["check"]
+        and a["relation"] == b["relation"]
+        and a["value"] == b["value"]
+        and (ca is None or cb is None or ca == cb)
+    )
+
+
+def _merge(v1: list[dict], bundle: dict | None) -> list[dict]:
+    """v1 / v2 合并，**以预检实际怎么判为准**（与 0155 §14 一致）：
+
+    * v2 真折进预检的那条 v1 路径（`fold()` 的 rules 键）：v1 那几行不要，用 v2；
+    * v1 判过（preflight）或只给建议（advice）的行一律保留——v2 的栏宽、字号今天不折，预检仍按 v1 判；
+      v2 里数值相同的那条并进去（条件取 v2 的、出处多记一份），不再单列；
+    * v1 只是展示（confirm）的行：同一检查项 v2 有就让给 v2。
+    """
+    if bundle is None:
+        return v1
+    folded_paths = set(journalfacts_fold.fold(bundle)["rules"])
+    v2 = _v2_rows(bundle)
+    v2_checks = {r["check"] for r in v2 if r["check"] is not None}
+    kept: list[dict] = []
+    for row in v1:
+        path = row["origin"].get("path")
+        if path in folded_paths:
+            continue
+        if row["source_state"] == "confirm" and row["check"] in v2_checks:
+            continue
+        kept.append(row)
+    out = list(kept)
+    for row in v2:
+        twin = next(
+            (
+                k
+                for k in kept
+                if k["check"] is not None and k["source_state"] != "confirm" and _same(k, row)
+            ),
+            None,
+        )
+        if twin is None:
+            out.append(row)
+            continue
+        twin["conditions"] = {**(twin["conditions"] or {}), **(row["conditions"] or {})}
+        twin["has_condition_text"] = twin["has_condition_text"] or row["has_condition_text"]
+        twin.setdefault("also", []).append(row["origin"])
+    return out
+
+
+def effective_catalog() -> dict | None:
+    """本机已同步、已验签的 v1 目录（`journalremote.load_cached`）；没有缓存 = None（`journals` 用随包种子）。"""
+    from . import journalremote
+
+    cached = journalremote.load_cached()
+    return cached.catalog if cached is not None else None
+
+
 def requirements(
     journal_id: str, *, catalog: dict | None = None, bundle: dict | None = None
 ) -> list[dict]:
@@ -295,9 +354,7 @@ def requirements(
         if bundle is None:
             raise
         v1 = []
-    v2 = _v2_rows(bundle) if bundle is not None else []
-    covered = {r["check"] for r in v2 if r["check"] is not None}
-    rows = [r for r in v1 if r["check"] is None or r["check"] not in covered] + v2
+    rows = _merge(v1, bundle)
     for i, row in enumerate(rows, 1):
         row["ref"] = f"r{i}"
     return rows

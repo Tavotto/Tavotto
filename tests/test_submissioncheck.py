@@ -70,25 +70,43 @@ def test_v1_nature_states_follow_what_preflight_actually_judges():
     assert [r["ref"] for r in rows] == [f"r{i}" for i in range(1, len(rows) + 1)]
 
 
-def test_v2_wins_per_check_and_keeps_named_conditions():
+def test_v2_merge_follows_what_preflight_judges():
+    """v2 的栏宽、字号今天不折进预检：v1 判过的 89 / 183 留着（仍是 preflight），数值相同的 v2 条并进去；
+    v1 只展示的 7 pt 上限让给 v2（带 text_role 条件）；v1 只建议的 5 pt 下限保留为 advice。"""
     bundle = _bundle(
         _fact("w1", "width", "eq", 89, "mm", conditions={"column": "single"}),
         _fact("w2", "width", "interval", _iv(120, 136), "mm", strength="permitted"),
         _fact("fmax", "font_size", "lte", 7, "pt", conditions={"text_role": "other_text"}),
+        _fact("fmin", "font_size", "gte", 5, "pt", conditions={"text_role": "other_text"}),
         _fact("plab", "font_size", "eq", 8, "pt", conditions={"text_role": "panel_label"}),
     )
     rows = sc.requirements("nature", bundle=bundle)
-    # 栏宽、字号上限 v2 有 → v1 那几行不要；分辨率 v2 没有 → 照用 v1
-    assert [r["origin"]["catalog"] for r in _by(rows, "width_final")] == ["v2"]
-    assert [r["origin"]["catalog"] for r in _by(rows, "font_size_max")] == ["v2"]
-    assert [r["origin"]["catalog"] for r in _by(rows, "raster_dpi_min")] == ["v1"]
+    widths = {
+        (r["conditions"].get("column"), r["value"], r["source_state"], r["origin"]["catalog"])
+        for r in _by(rows, "width_final")
+    }
+    assert widths == {("single", 89, "preflight", "v1"), ("double", 183, "preflight", "v1")}
+    (single,) = [r for r in _by(rows, "width_final") if r["value"] == 89]
+    assert [o["fact_id"] for o in single["also"]] == ["w1"]
     (fmax,) = _by(rows, "font_size_max")
-    assert fmax["conditions"] == {"text_role": "other_text"} and fmax["source_state"] == "confirm"
-    assert fmax["stage"] == "production"  # accepted 并入 production（ADR 0218 §三）
+    assert fmax["origin"]["catalog"] == "v2" and fmax["conditions"] == {"text_role": "other_text"}
+    assert fmax["source_state"] == "confirm" and fmax["stage"] == "production"
+    (fmin,) = _by(rows, "font_size_min")
+    assert fmin["source_state"] == "advice" and fmin["conditions"] == {"text_role": "other_text"}
+    assert [o["fact_id"] for o in fmin["also"]] == ["fmin"]
+    assert [r["origin"]["catalog"] for r in _by(rows, "raster_dpi_min")] == ["v1"]
     # 分图标签的 8 pt（eq）不是上下限检查项：列出来、没有检查项
     assert any(r["check"] is None and r["origin"].get("fact_id") == "plab" for r in rows)
-    # permitted 的 1.5 栏：预检两边都不收（不是要求），投稿核对也不收
+    # permitted 的 1.5 栏：不是要求，不收
     assert not any(r["origin"].get("fact_id") == "w2" for r in rows)
+
+
+def test_folded_v2_value_replaces_the_v1_path_it_folds_into():
+    bundle = _bundle(
+        _fact("dpi", "raster_dpi", "gte", 600, "dpi", strength="required", stage="production")
+    )
+    (dpi,) = _by(sc.requirements("nature", bundle=bundle), "raster_dpi_min")
+    assert (dpi["origin"]["catalog"], dpi["value"], dpi["source_state"]) == ("v2", 600, "preflight")
 
 
 def test_v2_inches_are_mm_and_interval_is_read_from_the_bundle():
@@ -96,7 +114,11 @@ def test_v2_inches_are_mm_and_interval_is_read_from_the_bundle():
         _fact("a", "width", "eq", 4, "in", strength="required", conditions={"column": "single"}),
         _fact("b", "width", "interval", _iv(120, 136), "mm", strength="recommended"),
     )
-    rows = _by(sc.requirements("nature", bundle=bundle), "width_final")
+    rows = [
+        r
+        for r in _by(sc.requirements("nature", bundle=bundle), "width_final")
+        if r["origin"]["catalog"] == "v2"
+    ]
     assert {(r["relation"], json.dumps(r["value"])) for r in rows} == {
         ("eq", "101.6"),
         ("interval", json.dumps(_iv(120, 136))),
@@ -122,8 +144,12 @@ def test_accepted_stage_fact_is_not_claimed_as_judged():
     rows = sc.requirements(
         "nature", bundle=_bundle(_fact("dpi", "raster_dpi", "gte", 600, "dpi", strength="required"))
     )
-    (dpi,) = _by(rows, "raster_dpi_min")
+    (dpi,) = [r for r in _by(rows, "raster_dpi_min") if r["origin"]["catalog"] == "v2"]
     assert dpi["source_state"] == "confirm" and dpi["stage"] == "production"
+    # 它没折进预检，所以 v1 判过的 300 dpi 照旧在
+    assert [r["value"] for r in _by(rows, "raster_dpi_min") if r["origin"]["catalog"] == "v1"] == [
+        300
+    ]
 
 
 def test_sidecar_rows_carry_no_quotes_links_or_unknown_conditions():
@@ -159,15 +185,19 @@ def test_v2_only_journal_works_and_unknown_journal_raises():
         sc.requirements("no-such-journal")
 
 
-def test_v2_interval_from_a_validated_bundle_wins_over_v1_widths():
-    """真刊包里区间是对象形状：读得到，并且盖掉 v1 的 89 / 183（同一检查项 v2 优先）。"""
+def test_v2_interval_from_a_validated_bundle_is_listed_next_to_judged_v1_widths():
+    """真刊包里区间是对象形状：读得到；v1 判过的 89 / 183 不被它挤掉。"""
     from tavotto.engine import journalfacts_contract as contract
 
     bundle = _bundle(_fact("b", "width", "interval", _iv(120, 136), "mm", strength="recommended"))
     contract.validate_bundle(bundle)
     rows = _by(sc.requirements("nature", bundle=bundle), "width_final")
-    assert [(r["origin"]["catalog"], r["relation"]) for r in rows] == [("v2", "interval")]
-    assert [i["check"] for i in sc.sidecar_rows(rows)] == ["width_final"]
+    assert sorted((r["origin"]["catalog"], r["relation"], r["source_state"]) for r in rows) == [
+        ("v1", "eq", "preflight"),
+        ("v1", "eq", "preflight"),
+        ("v2", "interval", "confirm"),
+    ]
+    assert len([i for i in sc.sidecar_rows(rows) if i["check"] == "width_final"]) == 3
 
 
 def test_non_exact_v1_columns_are_not_claimed_as_judged():
@@ -203,6 +233,6 @@ def test_any_dropped_condition_marks_the_row_unresolved():
     (item,) = [
         i
         for i in sc.sidecar_rows(sc.requirements("nature", bundle=bundle))
-        if i["check"] == "width_final"
+        if i["check"] == "width_final" and i["value"] == 89 and not i["conditions"]
     ]
     assert item["conditions"] == {} and item["has_condition_text"] is True
