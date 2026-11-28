@@ -478,14 +478,34 @@ def canvas_texts(raw: object, prefix: str) -> list[dict]:
 
 
 def validate_result(result: object, payload: dict) -> dict:
-    """组件结果的逐条校验（ADR 0216 §九）。任何一条不过抛 `invalid_plan`，不做部分采用。"""
+    """组件结果的逐条校验（ADR 0216 §九）。任何一条不过抛 `invalid_plan`，不做部分采用。
+
+    形状不对（集合类型错、ref 不是字符串……）同样是 `invalid_plan`，不让 `TypeError` 之类漏出去。"""
+    try:
+        return _validate_result(result, payload)
+    except SubmissionCheckError:
+        raise
+    except (TypeError, KeyError, AttributeError, ValueError) as exc:
+        raise SubmissionCheckError("invalid_plan", f"shape: {exc}") from exc
+
+
+def _strs(value: object) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        raise SubmissionCheckError("invalid_plan", "expected a list of refs")
+    return value
+
+
+def _validate_result(result: object, payload: dict) -> dict:
     if not isinstance(result, dict):
         raise SubmissionCheckError("invalid_plan", "result")
     rows = {r["ref"]: r for r in payload["requirements"]}
     canvases = {c["ref"]: c for c in payload["canvases"]}
     texts = {t["ref"]: (c["ref"], t) for c in payload["canvases"] for t in c["texts"]}
     ops: dict[str, dict] = {}
-    for op in result.get("ops") or []:
+    raw_ops, raw_reqs = result.get("ops", []), result.get("requirements", [])
+    if not isinstance(raw_ops, list) or not isinstance(raw_reqs, list):
+        raise SubmissionCheckError("invalid_plan", "ops / requirements")
+    for op in raw_ops:
         if (
             not isinstance(op, dict)
             or op.get("op") not in OPS
@@ -500,8 +520,8 @@ def validate_result(result: object, payload: dict) -> dict:
             if not canvas.get("width_adjustable") or not _number(w) or not 0 < w <= MAX_WIDTH_MM:
                 raise SubmissionCheckError("invalid_plan", "canvas.width")
         else:
-            refs = op.get("texts")
-            if not isinstance(refs, list) or not refs:
+            refs = _strs(op.get("texts"))
+            if not refs:
                 raise SubmissionCheckError("invalid_plan", "texts")
             for ref in refs:
                 owner = texts.get(ref)
@@ -515,8 +535,13 @@ def validate_result(result: object, payload: dict) -> dict:
                 raise SubmissionCheckError("invalid_plan", "family")
         ops[op["ref"]] = op
     states: dict[str, dict] = {}
-    for item in result.get("requirements") or []:
-        if not isinstance(item, dict) or item.get("ref") not in rows or item["ref"] in states:
+    for item in raw_reqs:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("ref"), str)
+            or item["ref"] not in rows
+            or item["ref"] in states
+        ):
             raise SubmissionCheckError("invalid_plan", "requirement ref")
         row = rows[item["ref"]]
         if item.get("state") not in STATES:
@@ -525,11 +550,15 @@ def validate_result(result: object, payload: dict) -> dict:
         if not isinstance(per, list):
             raise SubmissionCheckError("invalid_plan", "per_canvas")
         for pc in per:
-            if not isinstance(pc, dict) or pc.get("canvas") not in canvases:
+            if (
+                not isinstance(pc, dict)
+                or not isinstance(pc.get("canvas"), str)
+                or pc["canvas"] not in canvases
+            ):
                 raise SubmissionCheckError("invalid_plan", "per_canvas ref")
             if pc.get("state") not in STATES:
                 raise SubmissionCheckError("invalid_plan", "per_canvas state")
-            for oref in pc.get("ops") or []:
+            for oref in _strs(pc.get("ops", [])):
                 op = ops.get(oref)
                 if op is None or op["canvas"] != pc["canvas"]:
                     raise SubmissionCheckError("invalid_plan", "per_canvas op")
@@ -576,7 +605,12 @@ def chosen_ops(checked: dict, rows: list[dict], accept: list[str]) -> list[dict]
         row = by_ref[ref]
         if row["source_state"] != "preflight" and not ({row["id"], *row["aliases"]} & wanted):
             continue
+        accepted = bool({row["id"], *row["aliases"]} & wanted)
         for pc in item.get("per_canvas") or []:
+            # 判过的行只自动落「能改」的；「要你选」（如栏宽二选一）只在用户点了那一条之后才落（ADR 0216 §五）
+            ok_states = ("fixable", "choose") if accepted else ("fixable",)
+            if pc.get("state") not in ok_states:
+                continue
             for oref in pc.get("ops") or []:
                 picked.setdefault(oref, {**checked["ops"][oref], "row": ref})
     order = {"canvas.width": 0, "text.size": 1, "text.family": 2}
@@ -599,12 +633,18 @@ def specfix_request(
         prof["max_font_size_pt"] = float(op["size_pt"])
         rule = "font-too-large"
     else:
-        prof["min_effective_font_size_pt"] = float(op["size_pt"])
+        target = float(op["size_pt"])
+        prof["min_effective_font_size_pt"] = target
+        floor = prof.get("absolute_min_font_size_pt")
+        if _number(floor) and floor > target:
+            prof["absolute_min_font_size_pt"] = target
         rule = "font-too-small"
     sev = dict(prof.get("severity") or {})
     sev[rule] = "warn"
     prof["severity"] = sev
-    return prof, [{"rule": rule, "gid": g} for g in gids]
+    # 低于绝对下限的字报的是 `font-below-absolute-floor`，不是 `font-too-small`：抬字号时两条都点名，否则修不到它
+    rules = [rule, "font-below-absolute-floor"] if rule == "font-too-small" else [rule]
+    return prof, [{"rule": r, "gid": g} for g in gids for r in rules]
 
 
 def satisfied(row: dict, value: float | str | None) -> bool:

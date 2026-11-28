@@ -184,6 +184,10 @@ def _label_ref(refs):
         lambda res, refs: res["requirements"][0].update(state="pass"),  # confirm 行不许说判过
         lambda res, refs: res["requirements"][0].update(ref="r99"),
         lambda res, refs: res["requirements"][1]["per_canvas"][0].update(ops=["o9"]),
+        lambda res, refs: res.update(requirements=12),  # 集合类型不对
+        lambda res, refs: res["ops"][1].update(texts=[{}]),  # ref 不是字符串
+        lambda res, refs: res["requirements"][0].update(per_canvas=[{"canvas": ["c1"]}]),
+        lambda res, refs: res["requirements"][0]["per_canvas"][0].update(ops="o2"),
     ],
 )
 def test_any_bad_item_voids_the_whole_result(mutate):
@@ -289,3 +293,24 @@ def test_unavailable_component_is_a_quiet_failure():
     with pytest.raises(sc.SubmissionCheckError) as e:
         sc.ask(payload, solver=boom)
     assert e.value.code == "unavailable"
+
+
+def test_unresolved_choose_is_not_applied_until_the_user_picks_it():
+    payload, rows, refs = _payload()
+    res = _good_result(refs)
+    res["requirements"][1]["state"] = "choose"
+    res["requirements"][1]["per_canvas"][0]["state"] = "choose"
+    checked = sc.validate_result(res, payload)
+    assert sc.chosen_ops(checked, rows, []) == []  # 判过的栏宽也不自己选
+    assert [o["ref"] for o in sc.chosen_ops(checked, rows, ["v1:page_columns#single"])] == ["o1"]
+
+
+def test_raising_the_minimum_also_names_the_absolute_floor_rule():
+    payload, rows, refs = _payload()
+    row = {**rows[0], "check": "font_size_min", "relation": "gte", "value": 9}
+    op = {"op": "text.size", "texts": [next(iter(refs))], "size_pt": 9}
+    prof, only = sc.specfix_request(
+        op, row, refs, {"severity": {}, "absolute_min_font_size_pt": 10}
+    )
+    assert {o["rule"] for o in only} == {"font-too-small", "font-below-absolute-floor"}
+    assert prof["absolute_min_font_size_pt"] == 9.0
