@@ -219,6 +219,16 @@ def _remember_mcp_client_name(client_info) -> None:
         _MCP_CLIENT_NAME = slug or None
 
 
+def agent_plan_host() -> str:
+    """建议方案记的宿主（窗口里的卡标「来自 Codex」等）：闭集 `codex` | `claude_code` | `other`，按 MCP 客户端名子串判（不区分大小写）。"""
+    name = _MCP_CLIENT_NAME or ""
+    if "codex" in name:
+        return "codex"
+    if "claude" in name:
+        return "claude_code"
+    return "other"
+
+
 def journal_facts_enabled() -> bool:
     """v2 facts require the journal switch and a compatible engine; older engines stay usable."""
     module = _optional_engine("journalfacts_remote")
@@ -7679,7 +7689,7 @@ def suggest_plan(session_id: str, todos: object, *, user_request: object = None)
         reply=reply,
         todos=raw,
     )
-    plan["agent"] = {"session": session.id}
+    plan["agent"] = {"session": session.id, "host": agent_plan_host()}
     if file_id:
         plan["agent"].update(
             stem=session.stem,

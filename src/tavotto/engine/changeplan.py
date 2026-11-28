@@ -2272,6 +2272,9 @@ def list_agent_plans(project: str) -> list[dict]:
                 "target": (plan.get("base") or {}).get("target"),
                 "panel": agent["panel"],
                 "layout": agent.get("layout"),
+                "host": agent.get("host")
+                if agent.get("host") in ("codex", "claude_code")
+                else "other",
                 "created": agent.get("at") if isinstance(agent.get("at"), (int, float)) else 0,
                 "todos": len(todos) if isinstance(todos, list) else 0,
             }

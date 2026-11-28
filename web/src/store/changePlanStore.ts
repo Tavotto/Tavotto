@@ -12,6 +12,7 @@ import {
   undoChangePlanScript,
   type ChangePlan,
   type ChangePlanGroup,
+  type AgentHost,
   type ChangePlanTodo,
   type ChangePlanPatch,
   type VectorEditResult,
@@ -296,6 +297,8 @@ export interface PlanEntry {
  * 窗口只写图内待办；脚本待办交回 Agent。卡的「已应用」记在后端的 `agent_applied`，先落定的赢。
  */
 export interface AgentOrigin {
+  /** 出方案的宿主（卡上标「来自 Codex」等）；缺省 = 插件 */
+  host?: AgentHost
   /** 点过「改这 N 项」并告诉了后端的全部待办 key（有它就算落定） */
   reported?: string[]
   /** 其中交回 Agent 去改脚本的 */
@@ -611,7 +614,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const on = todosOf(e).filter((t) => todoChecked(e, t))
     if (!on.length) return
     const planId = e.planId
-    patch(key, { agent: { reported: on.map((t) => t.key), handed: on.filter((t) => t.kind === 'script').map((t) => t.key) } })
+    patch(key, { agent: { ...e.agent, reported: on.map((t) => t.key), handed: on.filter((t) => t.kind === 'script').map((t) => t.key) } })
     try {
       await reportAgentPlanApplied(planId, on.map((t) => t.key))
     } catch (err) {

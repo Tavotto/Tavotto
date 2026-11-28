@@ -187,17 +187,34 @@ export default interface Resources {
         "addFailed": "这一条没加上，再试一次",
         "addPlaceholder": "比如：图例去掉边框",
         "added": "新加",
-        "agentScriptTag": "交给 Agent 改",
-        "agentScriptTip": "这几项要改脚本，不在这里做；勾着的会交回 Agent",
+        "agentScriptTag": {
+          "claude_code": "改脚本 · 交回 Claude Code",
+          "codex": "改脚本 · 交回 Codex",
+          "other": "改脚本 · 交回插件"
+        },
+        "agentScriptTip": {
+          "claude_code": "这几项要改脚本，不在这里做；勾着的会交回 Claude Code",
+          "codex": "这几项要改脚本，不在这里做；勾着的会交回 Codex",
+          "other": "这几项要改脚本，不在这里做；勾着的会交回插件"
+        },
         "apply_other": "改这 {{count}} 项",
         "compare": "对比原图",
         "count_other": "{{count}} 项",
         "done_other": "已按建议改了 {{count}} 项",
         "failed": "「{{item}}」没做成：{{reason}}",
-        "fromAgent": "来自 Agent",
-        "handed_other": "{{count}} 项交给 Agent 改",
+        "fromHost": {
+          "claude_code": "来自 Claude Code",
+          "codex": "来自 Codex",
+          "other": "来自插件"
+        },
+        "handedHost": {
+          "claude_code": "{{count}} 项交回 Claude Code 改",
+          "codex": "{{count}} 项交回 Codex 改",
+          "other": "{{count}} 项交回插件改"
+        },
         "listLabel": "建议的待办",
         "none": "一项都没勾",
+        "notNow": "先不改",
         "pickJournal": "选期刊",
         "runningN": "正在改 {{done}}/{{total}}…",
         "scriptTag": "要改脚本",

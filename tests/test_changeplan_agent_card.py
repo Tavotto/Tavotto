@@ -12,6 +12,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codex-plugin" / "mcp"))
 
 from tavotto.engine import changeplan as cp  # noqa: E402
@@ -44,14 +46,32 @@ def test_bound_session_records_the_desktop_identity(project, worker):
     agent = plan["agent"]
     assert agent["session"] == sid and agent["panel"] == "o_p1" and agent["layout"] == "组图"
     assert agent["stem"] == bridge.get_session(sid).stem
+    assert agent["host"] in ("codex", "claude_code", "other")
     assert isinstance(agent["at"], float)
+
+
+@pytest.mark.parametrize(
+    ("name", "host"),
+    [
+        ("codex-mcp-client", "codex"),
+        ("Claude Code", "claude_code"),
+        ("claude-ai", "claude_code"),
+        ("cursor", "other"),
+        (None, "other"),
+    ],
+)
+def test_host_is_a_closed_set(monkeypatch, name, host):
+    monkeypatch.setattr(
+        bridge, "_MCP_CLIENT_NAME", bridge._AGENT_HOST_RE.sub("-", name.lower()) if name else None
+    )
+    assert bridge.agent_plan_host() == host
 
 
 def test_unbound_session_is_unchanged(project, worker):
     sid = _open(project)["session_id"]
     plan = _stored(project, _plan(sid)["plan_id"])
     assert plan["base"]["target"] == bridge.get_session(sid).stem
-    assert plan["agent"] == {"session": sid}
+    assert plan["agent"]["session"] == sid and "panel" not in plan["agent"]
 
 
 def test_plugin_lookups_still_work_on_a_bound_plan(project, worker):
@@ -154,6 +174,7 @@ def test_list_gives_only_bound_unsettled_plans_of_this_project(env):
         "target": "Fig1.pdf",
         "panel": "o_p1",
         "layout": "组图",
+        "host": "other",
         "created": 100.0,
         "todos": 2,
     }

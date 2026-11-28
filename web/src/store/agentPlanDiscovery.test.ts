@@ -27,7 +27,7 @@ vi.mock('@/store/renderScheduler', async (importOriginal) => ({
 import { setCurrentProjectId } from '@/lib/session'
 import { discoverAgentPlans, resetAgentPlanCache } from './agentPlanDiscovery'
 import { resetHiddenAgentPlans, setChangePlanUndoRunner, useChangePlanStore } from './changePlanStore'
-import { useDocumentStore } from './documentStore'
+import { setProjectFile, useDocumentStore } from './documentStore'
 
 const ds = () => useDocumentStore.getState()
 const cps = () => useChangePlanStore.getState()
@@ -69,6 +69,7 @@ const serve = (refs: AgentPlanRef[], p: ChangePlan = plan()) => {
   listAgentChangePlans.mockResolvedValue(refs)
   getChangePlan.mockImplementation(async (id: string) => ({ plan_id: id, state: 'ready', plan: { ...p, id } }))
 }
+const binding = { projectId: 'pj_a', name: '组图', file: 'tavottofile/组图.json', revision: 'r', dirty: false }
 const entries = () => Object.values(cps().entries)
 
 beforeEach(async () => {
@@ -81,6 +82,7 @@ beforeEach(async () => {
   resetAgentPlanCache()
   cps().clear()
   await ds().switchDocument(emptyProject(), 'd_agent_plans')
+  setProjectFile(null)
   setChangePlanUndoRunner(() => ds().undo())
 })
 
@@ -109,7 +111,7 @@ describe('发现', () => {
     expect(entries()).toHaveLength(0)
   })
 
-  it('同一张图在排版里有几份：认方案记的那张；认不出就不出卡', async () => {
+  it('同一张图有几份：只认方案记的那张子图；认不出就不出卡', async () => {
     put(panel('pa', 'f_p1'), panel('p1', 'f_p1'))
     serve([REF])
     await discoverAgentPlans()
@@ -118,6 +120,25 @@ describe('发现', () => {
     resetHiddenAgentPlans()
     serve([{ ...REF, panel: 'gone' }])
     expect(await discoverAgentPlans()).toBe(0)
+  })
+
+  it('同一张图开在另一份排版里：不出卡；排版名一致或认不出才出', async () => {
+    put(panel('p1', 'f_p1'))
+    serve([REF])
+    expect(await discoverAgentPlans()).toBe(1) // 没绑定排版：只比子图 id
+    cps().clear()
+    resetHiddenAgentPlans()
+    setProjectFile({ ...binding, name: '另一份' })
+    expect(await discoverAgentPlans()).toBe(0)
+    setProjectFile({ ...binding, name: '组图' })
+    expect(await discoverAgentPlans()).toBe(1)
+  })
+
+  it('宿主记进卡里', async () => {
+    put(panel('p1', 'f_p1'))
+    serve([{ ...REF, host: 'claude_code' }])
+    await discoverAgentPlans()
+    expect(entries()[0].agent?.host).toBe('claude_code')
   })
 
   it('同一份方案不重复出；方案读过一次就不再读', async () => {

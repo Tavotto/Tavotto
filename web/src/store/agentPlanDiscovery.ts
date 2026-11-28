@@ -15,14 +15,14 @@ import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { apiUrlFor } from '@/lib/session'
 import { newRequestId } from './aiStore'
 import { isAgentPlanHidden, sourceOf, useChangePlanStore, type PlanEntry } from './changePlanStore'
-import { useDocumentStore } from './documentStore'
+import { activeProjectFile, useDocumentStore } from './documentStore'
 
 /** 落盘后的方案不会再变（只会被落定）：按 id 留着，免得每分钟重读一遍对不上的 */
 const planCache = new Map<string, ChangePlan>()
 /** 换项目 / 单测时清掉读过的方案 */
 export const resetAgentPlanCache = (): void => planCache.clear()
 
-/** 窗口里对得上这份方案的图：当前画布上 `fileId` 相同、可改的；有几张时认方案记的那张（排版里的子图 id），认不出就不出卡 */
+/** 窗口里对得上这份方案的图：当前画布上 `fileId` 相同、可改、子图 id 就是方案记的那张（再加排版名对得上） */
 function matchPanel(ref: AgentPlanRef): PanelObject | null {
   const found = useDocumentStore
     .getState()
@@ -35,7 +35,10 @@ function matchPanel(ref: AgentPlanRef): PanelObject | null {
         return false
       }
     })
-  return found.find((p) => p.id === ref.panel) ?? (found.length === 1 ? found[0] : null)
+  // 只认方案记的那张子图；开着的排版名能确定时也要对得上（同一张图在别的排版里不出卡）。排版名认不出就只比子图 id
+  const open = activeProjectFile()?.name
+  if (ref.layout && open && ref.layout !== open) return null
+  return found.find((p) => p.id === ref.panel) ?? null
 }
 
 /** 问一次：对得上的 Agent 建议入列成卡。→ 这次新出的张数。出错（没连上、项目换了）静默当没有。 */
@@ -77,7 +80,7 @@ export async function discoverAgentPlans(): Promise<number> {
     const entry: PlanEntry = {
       key: newRequestId(),
       from: 'assistant',
-      agent: {},
+      agent: { host: ref.host ?? plan.agent?.host },
       pj: guard.pj,
       panelId: panel.id,
       fileId: panel.fileId,

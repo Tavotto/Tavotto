@@ -19,6 +19,9 @@ import { cp, effectiveStatus, todoFailReason, todoPhase, todoScriptCardShown, to
 import { FigureThumb } from './FigureThumb'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
+/** Agent 来源的卡出自哪个宿主（缺省 = 插件） */
+const hostOf = (e: PlanEntry): 'codex' | 'claude_code' | 'other' => (e.agent?.host === 'codex' || e.agent?.host === 'claude_code' ? e.agent.host : 'other')
+
 /** 与修改方案卡同一个画框的最宽比例（再宽的图上下留纸，卡不再变矮） */
 const MAX_THUMB_ASPECT = 2
 /** 缩略图画面最高（px）：清单才是这张卡的主角，图只作参照 */
@@ -220,7 +223,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             >
               <Check size={ICON_SIZE.sm} className="shrink-0 text-ok" />
               <span className="min-w-0 text-sm text-ink-2" data-suggestion-done>
-                {done.length === 0 && handed > 0 ? cp('todo.handed', { count: handed }) : cp('todo.done', { count: done.length })}
+                {done.length === 0 && handed > 0 ? cp(`todo.handedHost.${hostOf(entry)}`, { count: handed }) : cp('todo.done', { count: done.length })}
               </span>
               <ChevronDown size={ICON_SIZE.xs} aria-hidden className={cn('shrink-0 text-ink-3 transition-transform group-hover:text-ink-2 motion-reduce:transition-none', !listOpen && '-rotate-90')} />
             </button>
@@ -236,7 +239,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             )}
             {done.length > 0 && handed > 0 && (
               <p className="pb-0.5 pl-[22px] text-xs text-ink-3" data-suggestion-handed>
-                {cp('todo.handed', { count: handed })}
+                {cp(`todo.handedHost.${hostOf(entry)}`, { count: handed })}
               </p>
             )}
             {undone.length > 0 && (
@@ -293,9 +296,14 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             {cp('todo.count', { count: todos.length })}
           </span>
           {entry.agent && (
-            <span className="type-meta" data-suggestion-from-agent>
-              {cp('todo.fromAgent')}
-            </span>
+            <>
+              <span className="-mx-0.5 text-ink-faint" aria-hidden>
+                ·
+              </span>
+              <span className="type-meta" data-suggestion-from-agent>
+                {cp(`todo.fromHost.${hostOf(entry)}`)}
+              </span>
+            </>
           )}
         </span>
         {groups.length > 0 && !stale && (
@@ -319,8 +327,8 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             return (
               <Fragment key={t.key}>
                 {t.kind === 'script' && ordered[i - 1]?.kind !== 'script' && (
-                  <li className="type-meta mt-1.5 flex h-6 items-end border-t border-border pb-0.5" title={cp(entry.agent ? 'todo.agentScriptTip' : 'todo.scriptTip')} data-suggestion-script-section>
-                    {cp(entry.agent ? 'todo.agentScriptTag' : 'todo.scriptTag')}
+                  <li className="type-meta mt-1.5 flex h-6 items-end border-t border-border pb-0.5" title={entry.agent ? cp(`todo.agentScriptTip.${hostOf(entry)}`) : cp('todo.scriptTip')} data-suggestion-script-section>
+                    {entry.agent ? cp(`todo.agentScriptTag.${hostOf(entry)}`) : cp('todo.scriptTag')}
                   </li>
                 )}
                 <li>
@@ -401,11 +409,6 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             <AddTodoInput onSubmit={(text) => void store().addTodo(entry.key, text)} onClose={() => setAddOpen(false)} />
           ) : (
             <>
-              {entry.agent && (
-                <Button variant="ghost" size="md" className="-ml-1.5 rounded-full text-ink-3 hover:text-ink" onClick={() => store().dismiss(entry.key)} data-suggestion-dismiss>
-                  {cp('card.dismiss')}
-                </Button>
-              )}
               {canAdd && (
                 <Button variant="ghost" size="icon-sm" className="-ml-1.5 text-ink-3 hover:text-ink" title={cp('todo.add')} aria-label={cp('todo.add')} onClick={() => setAddOpen(true)} data-suggestion-add>
                   <Plus size={ICON_SIZE.sm} />
@@ -414,6 +417,11 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
               <Button variant={latest ? 'primary' : 'secondary'} size="md" className="rounded-full" disabled={count === 0} onClick={() => void store().applyTodos(entry.key)} data-suggestion-apply>
                 {count === 0 ? cp('todo.none') : cp('todo.apply', { count })}
               </Button>
+              {entry.agent && (
+                <Button variant="ghost" size="md" className="-mr-2.5 ml-auto rounded-full text-ink-3 hover:text-ink" onClick={() => store().dismiss(entry.key)} data-suggestion-dismiss>
+                  {cp('todo.notNow')}
+                </Button>
+              )}
             </>
           )}
         </div>

@@ -4360,7 +4360,7 @@ export interface ChangePlan {
   id: string
   version: number
   /** 插件里的 Agent 经绑定会话出的建议（ADR 0217 §五）：它的子图与排版；没有 = 窗口里自己出的方案 */
-  agent?: { session?: string; panel?: string; layout?: string; stem?: string; at?: number }
+  agent?: { session?: string; panel?: string; layout?: string; stem?: string; at?: number; host?: AgentHost }
   /** 助手来源给建议时的一到三句话回答（≤ 600 字）；没有 = 普通方案 */
   reply?: string
   /** 助手把建议列成的待办；没有 = 普通方案（与以前一样只看 `groups` / `unhandled`） */
@@ -4627,6 +4627,9 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
   return out as unknown as ChangePlanView
 }
 
+/** 出方案的宿主（后端闭集；其它 / 缺省都当 `other`） */
+export type AgentHost = 'codex' | 'claude_code' | 'other'
+
 /** 桌面发现的 Agent 建议（`GET /api/change-plans?agent=1` 的一行，最小字段） */
 export interface AgentPlanRef {
   id: string
@@ -4634,6 +4637,7 @@ export interface AgentPlanRef {
   target: string
   panel: string
   layout?: string | null
+  host?: AgentHost
   created: number
   todos: number
 }
