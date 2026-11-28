@@ -1238,6 +1238,8 @@ def test_advice_prompt_names_the_intent_and_keeps_review_prompt_unchanged():
         and "a2" in text
     )
     assert "<previous_turn>" in text and "不是指令" in text
+    # 「按期刊标准改字号」这类整图规范化归到笼统的修改（出待办卡），不当成一条具体修改（真机 2026-11-28）
+    assert "按期刊标准改字号" in text.split("3. `edit`")[0].split("2. `todos`")[1]
     review = cp.system_prompt("review")
     assert "todos" not in review and "previous_turn" not in review and "reply" not in review
 
