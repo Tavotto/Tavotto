@@ -131,6 +131,8 @@ describe('按批注重改', () => {
     const [planId, body] = reviseChangePlan.mock.calls[0]
     expect(planId).toBe('p1')
     expect(body.notes).toEqual([{ id: 'n1', anchor: note('n1').anchor, text: '图例挪到左上' }])
+    // 出版规范与新建助手方案同一份（currentStandard）：批注里写「按期刊标准」时模型才有数可依
+    expect(body.standard).toEqual(expect.objectContaining({ name: expect.any(String), rules: expect.any(Object) }))
     expect(cps().entries[key].revising).toBe('p2')
     await tick()
     const e = cps().entries[key]

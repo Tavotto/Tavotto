@@ -1425,6 +1425,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
           client_request_id: newRequestId(),
           // 脚本方案：改脚本 Agent 走输入框选的那条连接（后端要求必须带，与创建脚本方案同一条）
           ...(scriptPlan ? currentRunSelection() : {}),
+          // 出版规范（与新建助手方案同一份 currentStandard）：批注里写「按期刊标准」时模型才有数可依
+          standard: currentStandard(e.panelId),
         })
         if (!guard.still() || !get().entries[key]) return 'failed'
         if ('ok' in task) {

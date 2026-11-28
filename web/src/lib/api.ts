@@ -4595,7 +4595,7 @@ export interface ChangePlanNoteBody {
 export async function reviseChangePlan(
   planId: string,
   /** 脚本方案的重改必须带 `connection`（改脚本 Agent 走哪条路由，与创建脚本方案同一条）；图内方案可不带 */
-  body: { notes: ChangePlanNoteBody[]; client_request_id?: string; connection?: string; model?: string; effort?: string },
+  body: { notes: ChangePlanNoteBody[]; client_request_id?: string; connection?: string; model?: string; effort?: string; standard?: ChangePlanStandard },
 ): Promise<ChangePlanTask | { ok: false; code: 'not_licensed' }> {
   const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/revise`, {
     method: 'POST',

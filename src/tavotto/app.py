@@ -12465,6 +12465,11 @@ def api_change_plans_revise(plan_id: str):
     selection = engine_changeplan.clean_selection(body)
     if selection is None:
         return _change_plan_error("invalid_change_plan")
+    try:
+        # 出版规范 + 预检结论（与新建助手方案同一份校验 / 上限；没带 = None，照旧）
+        plan_standard = engine_changeplan.clean_standard(body.get("standard"))
+    except ValueError:
+        return _change_plan_error("invalid_change_plan")
     script_plan = prev.get("kind") == "script"
     if script_plan:
         # 改脚本要明确的连接（决定 Agent 走哪条路由），与创建脚本方案同一条
@@ -12483,7 +12488,7 @@ def api_change_plans_revise(plan_id: str):
         return _change_plan_error(exc.code)
     if created and script_plan:
         comments = engine_changeplan.script_revise_comments(
-            prev, notes, engine_changeplan.manifest_of(ctx.id, plan_id)
+            prev, notes, engine_changeplan.manifest_of(ctx.id, plan_id), plan_standard
         )
         threading.Thread(
             target=_change_plan_script_thread,
@@ -12504,7 +12509,20 @@ def api_change_plans_revise(plan_id: str):
     elif created:
         threading.Thread(
             target=_change_plan_thread,
-            args=(ctx, task, rel_id, list(base), notes, "review", prev, selection),
+            args=(
+                ctx,
+                task,
+                rel_id,
+                list(base),
+                notes,
+                "review",
+                prev,
+                selection,
+                None,
+                None,
+                None,
+                plan_standard,
+            ),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
         ).start()
@@ -13087,7 +13105,7 @@ def _change_plan_compute(
             previous_turn if prev is None else None,
             "todos" if adding else intent,
             add_start if adding else None,
-            standard if prev is None or adding else None,
+            standard,
         )
         # 建议待办（ADR 0214）：回答与待办意图不经下面的候选 / 有效改动流水线（它们只重建组与未处理），单独留着给 `build_plan`；
         # 每条建议自己的意见 id（`a2`..）在意见里补一条原文，组标签与存档的意见都靠它
