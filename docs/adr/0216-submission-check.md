@@ -109,7 +109,7 @@
     "conditions": {"text_role": "other_text"}, "has_condition_text": false
   }],
   "canvases": [{
-    "ref": "c1", "width_mm": 81.3, "height_mm": 60.0,
+    "ref": "c1", "width_mm": 81.3, "height_mm": 60.0, "width_adjustable": true,
     "preflight": [{"check": "page-width", "verdict": "column_choice_required", "options_mm": [89, 183]}],
     "texts": [{"ref": "t1", "role": "tick-labels", "size_pt": 6.0, "family": "DejaVu Sans", "panel_label": false}],
     "panel_labels_known": true,
@@ -132,9 +132,10 @@
 
 - `state` 闭集：`pass`（只许落在 `source_state = preflight` 的行上）、`choose`（如栏宽要选）、`fixable`、`confirm`、`not_applicable`。
 - 操作闭集：
-  - `canvas.width`：`canvas, width_mm`，落成该画布的图幅，与拖边改图幅同一批键；
+  - `canvas.width`：`canvas, width_mm`。只许落在 `width_adjustable = true` 的画布上（画布上只有一张图、图铺满画布）：落成那张图的 `figure.size_mm` 与画布页宽，与拖边改图幅同一批键。一块画布上有几张图时改宽度是一键排版的事（0199），这条只回 `choose` 或 `confirm`；
   - `text.size`：`canvas, texts, size_pt`，落成对应元素的 `fontsize` 覆盖；
   - `text.family`：`canvas, texts, family`，`family` 必须取自那条要求的名单。
+  - 字号与字体两类操作由开源侧**交给免费的 specfix 事务落地**（`specfix.transaction`，只修 `texts` 对应的元素，目标值写进这次事务用的规范）：层级、回滚、真实渲染裁决都照单图修正走，不另写一份改字号的逻辑。specfix 没修成的那条退回 `confirm`。
 - **分图标签不能一起改**：这本刊有 `text_role = panel_label` 的要求时，`text.size` 不许带 `panel_label = true` 的文字；画布 `panel_labels_known = false` 时，这块画布上那条 `font_size_max` 只回 `confirm`。
 - 开源侧逐条校验：`ref` 是本次发出去的、数值有限、字号在 1–200 pt、图幅不越过 2000 mm、字体在名单里、`pass` 只落在判过的行上。**任何一条不过，整份结果作废**，按「这次没法一键改」处理，所有要求退回 `confirm`，文档不动。未知的 op 或 state 同样整份作废。
 - 组件不在、版本旧、授权没过：入口按 0198 §九 置灰；端点回 `{ok: false, code}`，不改文档。
