@@ -507,7 +507,12 @@ def _native_layer_geometry(source: dict) -> dict | None:
             if prop not in size_props or len(size_props.intersection(values)) != 1 or value <= 0:
                 return None
         elif not (
-            prop == "capsize" and 0 <= value <= 15 or prop == "cap_thickness" and 0.1 <= value <= 5
+            prop == "capsize"
+            and 0 <= value <= 15
+            or prop == "cap_thickness"
+            and 0.1 <= value <= 5
+            or "category" in recipe
+            and (prop == "alpha" and 0 <= value <= 1 or prop == "linewidth" and 0.1 <= value <= 5)
         ):
             return None
     return recipe

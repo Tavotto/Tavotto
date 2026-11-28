@@ -79,8 +79,29 @@ ggplot_edit_errorbar_caps <- function(line, caps, length_pt, width_pt) {
   line
 }
 
+ggplot_edit_errorbar_group_styles <- function(line, caps, values) {
+  if (!is.null(values$linewidth) || !is.null(values$alpha)) {
+    base <- if (is.null(line$tavotto_cap_base)) line else line$tavotto_cap_base
+    count <- ncol(caps$points)
+    if (!is.null(values$linewidth)) {
+      width <- rep_len(base$gp$lwd, count)
+      rows <- which(!is.na(values$linewidth))
+      width[rows] <- values$linewidth[rows] / ggplot_lwd_pt
+      base$gp$lwd <- width
+    }
+    if (!is.null(values$alpha)) {
+      colours <- rep_len(base$gp$col, count)
+      rows <- which(!is.na(values$alpha))
+      colours[rows] <- scales::alpha(colours[rows], values$alpha[rows])
+      base$gp$col <- colours
+    }
+    line$tavotto_cap_base <- base
+  }
+  ggplot_edit_errorbar_caps(line, caps, values$capsize, values$cap_thickness)
+}
+
 ggplot_apply_errorbar_caps <- function(line, rows, layout, panel_id, values) {
   caps <- ggplot_errorbar_caps(line, rows$flipped_aes)
   if (is.null(caps)) stop("Tavotto could not match the original R error bar geometry.")
-  ggplot_edit_errorbar_caps(line, caps, values$capsize, values$cap_thickness)
+  ggplot_edit_errorbar_group_styles(line, caps, values)
 }

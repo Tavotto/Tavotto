@@ -1537,7 +1537,12 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             elif mapped_bars:
                 edits = {"bar_width": 0.25}
         elif mapped_interval:
-            edits = {"capsize": 8, "cap_thickness": 2.1}
+            edits = {
+                "capsize": 8,
+                "cap_thickness": 2.1,
+                "linewidth": 1.35,
+                "alpha": 0 if scope == "interval-mapped-single" else 0.65,
+            }
         elif interval:
             edits = {
                 "linewidth": 1.35,
@@ -4727,7 +4732,24 @@ verify <- function(plot, axis, patches = list()) {
             sum(abs(line$gp$lwd * adapter$ggplot_lwd_pt - 2) < 1e-10) == 6L,
             length(guides(scene$table)) == 1L, identical(guides(base_scene$table), guides(scene$table)),
             identical(adapter$render_ggplot(state), captured$svg))
-  invalid <- setNames(list(list(linewidth = 2)), keys[[2L]])
+  paint <- style
+  paint[[keys[[3L]]]] <- c(paint[[keys[[3L]]]], list(linewidth = 1.35, alpha = 0))
+  painted <- adapter$ggplot_manifest(state, "mapped errorbars", c(patches, paint))
+  hidden <- get_element(painted, keys[[3L]])
+  stopifnot(identical(changed[[2L]]$geometry$paths, hidden$geometry$paths),
+            !hidden$geometry$stroke, hidden$errorbar_series$current$linewidth == 1.35,
+            hidden$errorbar_series$current$cap_thickness == 2,
+            identical(get_element(painted, keys[[2L]]), changed[[1L]]))
+  paint_scene <- adapter$with_svg_frame(frame, function(device) {
+    adapter$ggplot_table_for(state, c(patches, paint))
+  })$value
+  physical_target <- paint_scene$line_targets[[keys[[3L]]]]
+  physical <- paint_scene$table$grobs[[physical_target$slot]]$children[[physical_target$child]]
+  alpha <- grDevices::col2rgb(physical$gp$col, alpha = TRUE)[4L, ]
+  stopifnot(all(alpha[seq_len(3)] == 255), all(alpha[-seq_len(3)] == 0),
+            sum(abs(physical$gp$lwd * adapter$ggplot_lwd_pt - 1.35) < 1e-10) == 3L,
+            identical(guides(base_scene$table), guides(paint_scene$table)))
+  invalid <- setNames(list(list(linewidth = .05)), keys[[2L]])
   stopifnot(inherits(try(adapter$render_ggplot(state, invalid), silent = TRUE), "try-error"))
 }
 verify(p, 1L)

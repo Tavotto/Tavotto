@@ -1236,10 +1236,17 @@ ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, ma
       selected <- groups_in_panel[[as.character(key)]]
       width <- unique(rep_len(line$gp$lwd, nrow(rows))[selected]) * ggplot_lwd_pt
       if (!is_positive_ggplot_number(width)) next
+      colours <- rep_len(line$gp$col, nrow(rows))[selected]
+      opacity <- if (!"alpha" %in% mapping && is.character(colours) && !anyNA(colours)) {
+        alpha <- unique(grDevices::col2rgb(colours, alpha = TRUE)[4L, ])
+        if (length(alpha) == 1L) alpha
+      }
       context <- rlang::hash(list(rows, draw$facet, groups$keys[[key]], selected))
       gid <- paste0("layer.", index, suffix, ".errorbar.group.", key)
       result[[gid]] <- list(slot = draw$slot, child = line$name, index = index, interval = TRUE,
                             facet = draw$facet, caps = caps, cap_rows = selected, width = width,
+                            stroke_width_editable = !any(c("linewidth", "size") %in% mapping),
+                            alpha = opacity,
                             cap_width = if (!is.null(final$tavotto_cap_style)) {
                               stored <- unique(final$tavotto_cap_style$width[selected])
                               if (is_positive_ggplot_number(stored)) stored
@@ -1250,6 +1257,11 @@ ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, ma
     }
   }
   result
+}
+
+ggplot_errorbar_group_props <- function(target) {
+  c("capsize", "cap_thickness", if (isTRUE(target$stroke_width_editable)) "linewidth",
+    if (!is.null(target$alpha)) "alpha")
 }
 
 ggplot_errorbar_group_edits <- function(table, targets, edits) {
@@ -1266,18 +1278,20 @@ ggplot_errorbar_group_edits <- function(table, targets, edits) {
     if (is.null(caps) || ncol(caps$points) != ncol(target$caps$points)) {
       stop("The native R error bar cap groups changed.")
     }
-    size <- width <- rep(NA_real_, ncol(caps$points))
+    values <- list()
     for (gid in group) {
       patch <- edits[[gid]]
-      if (!all(names(patch) %in% c("capsize", "cap_thickness"))) {
-        stop("Invalid native R error bar cap group style.")
+      if (!all(names(patch) %in% ggplot_errorbar_group_props(targets[[gid]]))) {
+        stop("Invalid native R error bar group style.")
       }
       ggplot_line_style(targets[[gid]], patch)
       rows <- targets[[gid]]$cap_rows
-      if (!is.null(patch$capsize)) size[rows] <- patch$capsize
-      if (!is.null(patch$cap_thickness)) width[rows] <- patch$cap_thickness
+      for (prop in names(patch)) {
+        if (is.null(values[[prop]])) values[[prop]] <- rep(NA_real_, ncol(caps$points))
+        values[[prop]][rows] <- patch[[prop]]
+      }
     }
-    panel$children[[target$child]] <- ggplot_edit_errorbar_caps(line, caps, size, width)
+    panel$children[[target$child]] <- ggplot_edit_errorbar_group_styles(line, caps, values)
     table$grobs[[target$slot]] <- panel
   }
   table
@@ -1557,7 +1571,8 @@ ggplot_line_source_plan <- function(state, target, patch, edits) {
 ggplot_errorbar_source_plan <- function(state, target, patch) {
   if (!length(patch)) return(NULL)
   if (!is.null(target$cap_rows)) {
-    if (!all(names(patch) %in% c("capsize", "cap_thickness"))) return(NULL)
+    if (!all(names(patch) %in% ggplot_errorbar_group_props(target))) return(NULL)
+    ggplot_line_style(target, patch)
     geometry <- list(kind = "caps", facet = target$facet, values = patch, category = target$category)
     return(ggplot_fixed_layer_source(state, target, patch, NULL, geometry))
   }
@@ -2576,7 +2591,8 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     geometry <- if (is.null(measured$lines)) state$line_geometry[[gid]] else measured$lines[[gid]]
     if (is.null(geometry)) stop("The native R curve could not be measured.")
     if (target$interval) {
-      original <- if (is.null(target$cap_rows)) list(linewidth = target$width) else list()
+      can_edit_width <- is.null(target$cap_rows) || isTRUE(target$stroke_width_editable)
+      original <- if (can_edit_width) list(linewidth = target$width) else list()
       if (!is.null(target$color)) original <- c(list(color = target$color), original)
       if (!is.null(target$alpha)) original$alpha <- target$alpha / 255
       current <- original
