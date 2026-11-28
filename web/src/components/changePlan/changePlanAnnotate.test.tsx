@@ -10,6 +10,7 @@ import type { ChangePlan, LicenseStatus, Manifest } from '@/lib/api'
 import { setChangePlanUndoRunner, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useLicenseStore } from '@/store/licenseStore'
+import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 
 vi.mock('@/hooks/useVariantPng', () => ({ useVariantPng: () => ({ url: null, loading: false, approximate: false }), variantNeedsRender: () => false }))
@@ -136,11 +137,22 @@ it('授权入口没出现（上线开关关着）：「对比 / 批注」切换�
   expect(qa('[role="radiogroup"]').some((g) => g.textContent?.includes('批注'))).toBe(false)
 })
 
-it('免费用户：切换项与「写批注」都带锁，点了不进入批注', () => {
+it('免费用户：切换项与「写批注」都带锁，点了不进入批注、不跳设置，只在原地弹一句话 +「了解高级版 ›」', () => {
   status(FREE)
   put(entry())
   render()
   expect(qa('[data-premium-lock="change-plan-rerun"]')).toHaveLength(2)
+  act(() => qa('[data-premium-lock="change-plan-rerun"]')[1].click())
+  expect(useUiStore.getState().settingsOpen).toBe(false)
+  const ask = q('[data-premium-lock-ask]')!
+  expect(ask.textContent).toContain('在改好的图上点元素写批注，再改一版')
+  expect(ask.textContent).toContain('了解高级版')
+  expect(view()).toBe('compare')
+  // 点「了解高级版 ›」才去「关于与更新」，浮层收起
+  act(() => q('[data-premium-lock-learn]')!.click())
+  expect(useUiStore.getState().settingsOpen).toBe(true)
+  expect(q('[data-premium-lock-ask]')).toBeNull()
+  act(() => useUiStore.getState().setSettingsOpen(false))
   act(() => q('[data-change-plan-write-note]')!.click())
   const annotateTab = qa('[role="radio"]').find((b) => b.textContent?.includes('批注'))!
   act(() => annotateTab.click())
@@ -149,7 +161,7 @@ it('免费用户：切换项与「写批注」都带锁，点了不进入批注'
   expect(previewSnapshot).not.toHaveBeenCalled()
 })
 
-it('高级版：写批注 → 批注模式；0 条时「按批注重改」禁用且次级、「应用」次级；有批注后重改变主、应用仍次级', () => {
+it('高级版：写批注 → 批注模式；0 条时「按批注重改」禁用且次级；有批注后重改变主；批注视图里没有「应用」（「放弃」仍在）', () => {
   status(PRO)
   put(entry())
   render()
@@ -163,7 +175,8 @@ it('高级版：写批注 → 批注模式；0 条时「按批注重改」禁用
   expect(q('[data-change-plan-notes]')!.textContent).toContain('点图上的元素写批注')
   expect(q('[data-change-plan-rerun]')!.hasAttribute('disabled')).toBe(true)
   expect(q('[data-change-plan-rerun]')!.dataset.variant).toBe('secondary')
-  expect(q('[data-change-plan-confirm]')!.dataset.variant).toBe('secondary')
+  expect(q('[data-change-plan-confirm]')).toBeNull()
+  expect(q('[data-change-plan-discard]')).not.toBeNull()
 
   act(() => useChangePlanStore.getState().saveNote('a', { id: 'n1', anchor: { kind: 'overall' }, label: '整体', text: '整体再小一点' }))
   expect(q('[data-change-plan-notes]')!.textContent).toContain('批注 · 1')
@@ -171,7 +184,7 @@ it('高级版：写批注 → 批注模式；0 条时「按批注重改」禁用
   expect(q('[data-change-plan-rerun]')!.hasAttribute('disabled')).toBe(false)
   expect(q('[data-change-plan-rerun]')!.dataset.variant).toBe('primary')
   expect(q('[data-change-plan-rerun]')!.textContent).toContain('按批注重改 · 1')
-  expect(q('[data-change-plan-confirm]')!.dataset.variant).toBe('secondary')
+  expect(q('[data-change-plan-confirm]')).toBeNull()
   // 图上同一套实心编号：整体批注是「全」
   expect(q('[data-change-plan-frame] [data-review-mark="all"]')).not.toBeNull()
 
@@ -514,7 +527,7 @@ it('卡片入口：高级版待确认卡点铅笔钮 → 弹窗直接以批注�
   expect(view()).toBe('compare')
 })
 
-it('卡片入口：免费用户铅笔钮带锁，点了不开弹窗', () => {
+it('卡片入口：免费用户铅笔钮带锁，点了不开弹窗、不跳设置，只弹一句话 +「了解高级版 ›」', () => {
   status(FREE)
   putCard(entry())
   renderBoth()
@@ -523,6 +536,8 @@ it('卡片入口：免费用户铅笔钮带锁，点了不开弹窗', () => {
   act(() => lock!.click())
   expect(q('[data-change-plan-dialog]')).toBeNull()
   expect(useChangePlanStore.getState().dialogKey).toBeNull()
+  expect(useUiStore.getState().settingsOpen).toBe(false)
+  expect(q('[data-premium-lock-ask]')!.textContent).toContain('了解高级版')
 })
 
 it('卡片入口：授权入口没上线时不画铅笔钮', () => {
@@ -584,7 +599,7 @@ it('已应用条目的弹窗：没有「应用」「放弃」，只有「按批�
   expect(useChangePlanStore.getState().entries.a.status).toBe('applied')
 })
 
-it('已应用条目写批注、点「按批注重改」：先撤回这一次应用（文档回到改前），再发重改请求', async () => {
+it('已应用条目写批注、点「按批注重改」：先发请求，图仍是已应用（拿到新版才撤回，见 store/changePlanRevise.test.ts）', async () => {
   status(PRO)
   putCard(appliedEntry())
   renderBoth()
@@ -593,7 +608,9 @@ it('已应用条目写批注、点「按批注重改」：先撤回这一次应�
   await act(async () => {
     q('[data-change-plan-rerun]')!.click()
   })
-  expect(overridesNow()).toEqual(BASE)
+  expect(overridesNow()).toEqual(CANDIDATE)
+  expect(useChangePlanStore.getState().entries.a.status).toBe('applied')
+  expect(useChangePlanStore.getState().entries.a.revising).toBe('p2')
   expect(reviseApi).toHaveBeenCalledTimes(1)
   expect(reviseApi.mock.calls[0][0]).toBe('p1')
 })
@@ -636,3 +653,66 @@ it('「再改一版」：免费用户带锁不进入、不撤回；不可撤销�
   expect(q('[data-change-plan-undo]')).toBeNull()
   expect(q('[data-change-plan-revise-again]')).toBeNull()
 })
+
+// ---- 2026-11-28：重改过程看得见、第 2 版起对比上一版、首次提示进过批注即已读 ----
+const ver = (id: string, n: number) => ({ planId: id, plan: plan(id, n), beforeSrc: `/${id}-b.png`, afterSrc: `/${id}-a.png`, unchecked: {} })
+
+it('首次提示：进过批注视图就记已读，回到对比（如重改完）不再弹', () => {
+  status(PRO)
+  put(entry())
+  render()
+  expect(q('[data-change-plan-first-hint]')).not.toBeNull()
+  act(() => q('[data-change-plan-write-note]')!.click())
+  expect(view()).toBe('annotate')
+  act(() => useChangePlanStore.getState().closeDialog())
+  clearHintOnlyState()
+  put(entry({ planId: 'p2', plan: plan('p2', 2), beforeSrc: '/p2-b.png', afterSrc: '/p2-a.png', versions: [ver('p1', 1), ver('p2', 2)] }))
+  render()
+  expect(view()).toBe('compare')
+  expect(q('[data-change-plan-first-hint]')).toBeNull()
+})
+/** 只换一份新弹窗（不清本机记的「已读」） */
+function clearHintOnlyState() {
+  act(() => root.unmount())
+  root = createRoot(host)
+}
+
+it('重改进行中：舞台换成「正在作图」（坐标纸 + 小画 + 三步清单），不是一动不动的旧图', () => {
+  status(PRO)
+  put(entry({ revising: 'p2', phase: 'model' }))
+  act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
+  render()
+  expect(q('[data-change-plan-stage]')!.dataset.changePlanStage).toBe('revising')
+  expect(q('[data-change-plan-stage] [data-change-plan-frost]')).not.toBeNull()
+  expect(q('[data-change-plan-stage] [data-change-plan-steps]')).not.toBeNull()
+  expect(q('[data-change-plan-stage] img')).toBeNull()
+  expect(q('[data-change-plan-rerun]')!.textContent).toContain('正在')
+})
+
+it('第 2 版起：左侧默认是上一版的「修改后」，两侧标「第 1 版 / 第 2 版」；切回第 1 版看的是原图', () => {
+  status(PRO)
+  put(entry({ planId: 'p2', plan: plan('p2', 2), beforeSrc: '/p2-b.png', afterSrc: '/p2-a.png', versions: [ver('p1', 1), ver('p2', 2)] }))
+  render()
+  const imgs = qa('[data-change-plan-stage] img').map((i) => i.getAttribute('src'))
+  expect(imgs[0]).toBe('/p1-a.png')
+  expect(imgs[1]).toBe('/p2-a.png')
+  const stage = q('[data-change-plan-stage]')!.textContent!
+  expect(stage).toContain('第 1 版')
+  expect(stage).toContain('第 2 版')
+  expect(stage).not.toContain('修改前')
+  const tabs = qa('[role="radiogroup"][aria-label="方案版本"] [role="radio"]')
+  act(() => tabs[0].click())
+  expect(qa('[data-change-plan-stage] img')[0].getAttribute('src')).toBe('/p1-b.png')
+  expect(q('[data-change-plan-stage]')!.textContent).toContain('修改前')
+})
+
+it('第 2 版起：左侧的改动框按上一版里的位置画（上一版元素表取到之前用上一版记的框）', () => {
+  status(PRO)
+  put(entry({ planId: 'p2', plan: plan('p2', 2), beforeSrc: '/p2-b.png', afterSrc: '/p2-a.png', versions: [ver('p1', 1), ver('p2', 2)] }))
+  render()
+  // 滑动对比（分隔线在中间，这一处整个在线左）：只画左侧那个框，是第 1 版「修改后」的位置 [0.1, 0.1, 0.3, 0.2]，不是原图的 [0.1, 0.1, 0.2, 0.2]
+  const boxes = qa('[data-change-plan-box="g1"]')
+  expect(boxes).toHaveLength(1)
+  expect(boxes[0].style.width).toBe('30%')
+})
+

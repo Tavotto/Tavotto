@@ -1,10 +1,12 @@
 import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
-import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
+import { backendCodeMsg, type ChangePlanBox, type ChangePlanChange, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
 import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, type PlanEntry } from '@/store/changePlanStore'
 import { failedChecks, touchedCount } from '@/lib/vectorEdit'
-import type { ChangeLine } from '@/lib/vectorChanges'
+import type { ChangeLine, ChangeValue } from '@/lib/vectorChanges'
+import { propLabel } from '../inspector/roles/registry'
+import type { PlotStage } from './PlotSketch'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
 import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
@@ -49,8 +51,11 @@ export interface GroupView {
   fromNote: boolean
   /** 这一组里带着自动腾出的边距（`change.auto === 'room'`）：清单行的灰字里多说一句 */
   room?: boolean
-  /** 改动处的框，一处一个；`before` 是同一处在修改前的位置（按元素 gid 配对，没有 = 改前没有这一处） */
-  boxes: { after: PlanBox; before?: PlanBox }[]
+  /**
+   * 改动处的框，一处一个；`before` 是同一处在修改前的位置（按元素 gid 配对，没有 = 改前没有这一处）。
+   * `gid`：哪个元素（第 2 版起「修改前」换成上一版时按它取上一版里的位置）；`room`：这一处只是自动留边距挪了子图，悬停不画整块大框
+   */
+  boxes: { after: PlanBox; before?: PlanBox; gid?: string; room?: boolean }[]
 }
 
 export interface UnhandledView {
@@ -69,11 +74,76 @@ export const commentNumber = (e: Pick<PlanEntry, 'comments' | 'request'>, id?: s
 
 const clip = (s: string, n = 40) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
-export function groupViews(e: PlanEntry): GroupView[] {
+/** 元素 gid → 界面上的名字（取不到就不写名字，不露 gid） */
+export type LabelOf = (gid: string) => string | undefined
+
+/**
+ * `labelOf`：给了（弹窗里，按这张图的元素表）= 图内方案每组下面逐行列出改了什么（元素名 · 属性 前 → 后）；不给 = 不列（卡片摘要只要计数）。
+ */
+export function groupViews(e: PlanEntry, labelOf?: LabelOf): GroupView[] {
   const plan = e.plan
   if (!plan) return []
   // 答了「不改」的组整组不要：不进清单，它那条意见在没处理列表里（`unhandledViews`）
-  return plan.groups.flatMap((g: ChangePlanGroup, i) => (e.answers?.[g.key] === 'no' ? [] : [{ ...groupView(e, g, i), room: g.changes.some((c) => c.auto === 'room') }]))
+  return plan.groups.flatMap((g: ChangePlanGroup, i) => {
+    if (e.answers?.[g.key] === 'no') return []
+    const v = groupView(e, g, i)
+    const inFigure = e.kind !== 'vector' && e.kind !== 'layout' && g.kind !== 'script'
+    const lines = inFigure && labelOf ? changeLines(g.changes, labelOf) : undefined
+    return [{ ...v, room: g.changes.some((c) => c.auto === 'room'), ...(inFigure ? { boxes: v.boxes.map((b) => ({ ...b, room: !!b.gid && roomOnly(g, b.gid) })) } : {}), ...(lines?.length ? { lines } : {}) }]
+  })
+}
+
+/** 这个元素在这一组里只有自动留边距那一条改动（子图整体挪了一点）：不当成「改了这一处」画框 */
+const roomOnly = (g: ChangePlanGroup, gid: string): boolean => {
+  const own = g.changes.filter((c) => c.target_gid === gid)
+  return own.length > 0 && own.every((c) => c.auto === 'room')
+}
+
+/** 图内方案一组里的每处改动（与矢量方案同一种行）：自动留边距那条不列（清单另说一句） */
+export function changeLines(changes: readonly ChangePlanChange[], labelOf: LabelOf): ChangeLine[] {
+  return changes
+    .filter((c) => c.auto !== 'room')
+    .map((c) => {
+      const name = labelOf(c.target_gid)
+      const prop = propLabel(c.prop)
+      const after = changeValue(c.prop, c.after)
+      const before = after ? changeValue(c.prop, c.before) : undefined
+      return { label: name ? cp('dialog.changeLine', { el: name, prop }) : prop, ...(after ? { after } : {}), ...(after && before ? { before } : {}) }
+    })
+}
+
+const VAL_TEXT_PROPS = /text|label|title/i
+const round2 = (n: number) => String(Math.round(n * 100) / 100)
+const hex2 = (n: number) => Math.round(Math.min(1, Math.max(0, n)) * 255).toString(16).padStart(2, '0')
+
+/** 一个属性值的显示（manifest 的展示值，只给人看）：数字两位小数、颜色带色块、开关说开 / 关；认不出的结构不列值 */
+export function changeValue(prop: string, v: unknown): ChangeValue | undefined {
+  if (v === null || v === undefined) return { text: cp('vector.none') }
+  if (typeof v === 'boolean') return { text: cp(v ? 'vector.on' : 'vector.off') }
+  if (typeof v === 'number') return Number.isFinite(v) ? { text: round2(v) } : undefined
+  if (typeof v === 'string') {
+    const t = v.trim()
+    if (/^#[0-9a-f]{3,8}$/i.test(t)) return { text: t.toUpperCase(), color: t }
+    if (!t) return { text: cp('vector.none') }
+    return { text: VAL_TEXT_PROPS.test(prop) ? `「${clip(t, 16)}」` : clip(t, 16) }
+  }
+  if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'number' && Number.isFinite(x))) {
+    const ns = v as number[]
+    // RGB(A) 0–1 的颜色：画成色块
+    if (/colou?r/i.test(prop) && (ns.length === 3 || ns.length === 4) && ns.every((x) => x >= 0 && x <= 1)) {
+      const h = `#${ns.slice(0, 3).map(hex2).join('')}`.toUpperCase()
+      return { text: h, color: h }
+    }
+    if (ns.length === 2) return { text: `${round2(ns[0])} – ${round2(ns[1])}` }
+    if (ns.length <= 4) return { text: ns.map(round2).join(', ') }
+  }
+  return undefined
+}
+
+/** 生成中那幅小画走到哪一步：跟着三步清单正在做的那一步（卡片与弹窗同一套） */
+export function sketchStageOf(steps: TaskStep[] | null): PlotStage {
+  const active = steps?.find((x) => x.state === 'active')?.id
+  return active === 'before' ? 'read' : active === 'after' ? 'draw' : 'think'
 }
 
 function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
@@ -106,7 +176,7 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
         reviewers: [],
         commentNumbers: [],
         fromNote: false,
-        boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
+        boxes: g.boxes.after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined, gid: b.gid })),
       }
     }
     const before = new Map<string, ChangePlanBox>((g.boxes.before ?? []).map((b) => [b.gid, b]))
@@ -117,7 +187,7 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
       reviewers: c ? [c.author] : [],
       commentNumbers: n ? [n] : [],
       fromNote,
-      boxes: after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined })),
+      boxes: after.map((b) => ({ after: b.box as PlanBox, before: before.get(b.gid)?.box as PlanBox | undefined, gid: b.gid })),
     }
   }
 }

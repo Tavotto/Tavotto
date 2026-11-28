@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MAX_NOTE_CHARS, notesOf, REVISE_UNDO_BLOCKED, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
+import { MAX_NOTE_CHARS, notesOf, REVISE_UNDO_BLOCKED, useChangePlanStore, versionNumber, versionsOf, type PlanEntry, type PlanNote } from '@/store/changePlanStore'
 import { PremiumLock } from '../license/PremiumLock'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from '../ui/Button'
@@ -11,10 +11,14 @@ import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { DiffView } from '../ai/DiffView'
 import { ChangeList, NoteList } from './ChangeList'
-import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, isScriptPlan, markNoteHintSeen, noteHintSeen, scriptInfo, unhandledViews, useChangePlanAccess } from './changePlanModel'
+import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, isScriptPlan, markNoteHintSeen, noteHintSeen, planSteps, scriptInfo, sketchStageOf, unhandledViews, useChangePlanAccess, type PlanBox } from './changePlanModel'
 import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
 import { failedChecks } from '@/lib/vectorEdit'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
+import { noteLabelOf } from './noteTarget'
+import { GraphPaper, PlotSketch } from './PlotSketch'
+import { TaskChecklist } from '../ui/TaskChecklist'
+import { usePanelDisplayManifest } from '@/store/renderStore'
 
 type View = 'compare' | 'annotate'
 
@@ -25,8 +29,10 @@ const newNoteId = () => `n${Date.now().toString(36)}${Math.random().toString(36)
  * 顶栏左「修改方案」+ 版本切换（出过第 2 版才有：两版紧凑分段，更多版收成下拉），右「对比 / 批注」切换（位置固定）；Esc / × = 关闭，方案留着、卡片仍待确认。
  * - 对比：滑动 / 并排 / 切换，右栏是改动清单，页脚「放弃」｜「写批注」（次级）+「应用」（**主按钮**）。
  * - 批注（高级版 `change-plan-rerun`，ADR 0206 §五）：舞台只有「修改后」的大图，点元素 / 框选 / 整体写批注（`Popover` 锚在那一处）；右栏是批注列表；
- *   页脚「放弃」｜「应用」（次级）+「按批注重改 · N」（N = 0 禁用、次级样式；N ≥ 1 主）。出好后自动回到「对比」并选中新版本。
- *   没解锁的用户：切换项与「写批注」带锁（`PremiumLock`），点了不进入；授权入口没出现（上线开关关着）时这些入口整个不画。
+ *   页脚「放弃」+「按批注重改 · N」（N = 0 禁用、次级样式；N ≥ 1 主），批注视图里没有「应用」（维护者 2026-11-28）。出好后自动回到「对比」并选中新版本；
+ *   重改进行中舞台换成卡片上那套「正在作图」（坐标纸 + 小画 + 三步清单），不让旧图一动不动。
+ *   没解锁的用户：切换项与「写批注」带锁（`PremiumLock`），点了只弹一句话 +「了解高级版 ›」，不进入；授权入口没出现（上线开关关着）时这些入口整个不画。
+ * 第 2 版起「修改前」默认是上一版的「修改后」（标「第 N−1 版 / 第 N 版」），要看原图切回第 1 版；「应用」仍是这一版对原图的全量补丁。
  * 「应用」= 一次 commit 进排版时间线，⌘Z 一步撤回（`changePlanStore.apply`）；全部取消勾选时禁用。
  */
 export function ChangePlanDialog() {
@@ -71,6 +77,7 @@ export function ChangePlanDialog() {
     return () => {
       window.clearTimeout(t)
       window.removeEventListener('pointerdown', done, { capture: true })
+      setHint(false)
     }
   }, [shown, pro, view])
   // 弹窗开着时图被改了：基线对不上，不让点「应用」（卡片也已转「图已改过」）
@@ -81,18 +88,51 @@ export function ChangePlanDialog() {
   // 已应用的条目（从卡片「再改一版」进来）只有批注一个视图：图保持已应用，关弹窗什么都不发生
   const appliedView = status === 'applied' && pro
   const annotating = pro && (view === 'annotate' || appliedView)
+  // 进过批注视图就算看过「写批注」那句提示（不论从哪个入口进的）：重改完回到对比不再弹
+  useEffect(() => {
+    if (!shown || !annotating) return
+    setHint(false)
+    markNoteHintSeen()
+  }, [shown, annotating])
   const manifest = usePlanManifest(entry, pro && (armed || annotating))
   const store = useChangePlanStore.getState
   const plan = entry?.plan
   const open = !!entry && !!plan && !!entry.beforeSrc && !!entry.afterSrc && (status === 'ready' || appliedView)
   // 「修改后」跟着勾选的组合走：与「应用」写入的是同一份
   const preview = useSelectionPreview(entry, open)
+  // 第 2 版起「修改前」默认是上一版的「修改后」（只改显示；应用仍是这一版对原图的全量补丁）。看原图 = 切回第 1 版
+  const recs = entry ? versionsOf(entry) : []
+  const current = entry ? versionNumber(entry) : 1
+  const prevRec = current >= 2 ? recs[current - 2] : undefined
+  // 上一版「修改后」的元素表：左侧改动框按它画（取到之前先用上一版自己记的框）
+  const prevManifest = usePlanManifest(entry && prevRec ? { ...entry, plan: prevRec.plan } : undefined, open && !!prevRec && !annotating)
+  // 改动清单里的元素名：这张图的元素表（只用来显示名字）
+  const shownManifest = usePanelDisplayManifest(panel)
   if (!entry || !plan || !entry.beforeSrc || !entry.afterSrc) return null
   const script = isScriptPlan(entry)
   const info = scriptInfo(entry)
   // 脚本方案只有一个 `atomic` 的脚本组：整组要或不要，没有逐组勾选（不要就「放弃」）；应用不进文档历史
-  const groups = script ? [] : groupViews(entry)
+  const labelMap = new Map((shownManifest?.elements ?? []).map((x) => [x.gid, x.label]))
+  const labelOf = (gid: string) => {
+    const raw = labelMap.get(gid)
+    return raw ? noteLabelOf(raw) : undefined
+  }
+  const groups = script ? [] : groupViews(entry, labelOf)
   const chosen = groups.filter((g) => !entry.unchecked[g.key])
+  // 对比上一版时，左侧的框取这一处在上一版里的位置：上一版元素表 → 上一版方案记的「修改后」框 → 原图里的位置
+  const prevBoxOf = (gid: string | undefined): PlanBox | undefined => {
+    if (!gid || !prevRec) return undefined
+    const el = prevManifest?.elements.find((x) => x.gid === gid)
+    if (el) return el.bbox
+    for (const g of prevRec.plan.groups) {
+      const b = g.boxes.after.find((x) => x.gid === gid)
+      if (b) return b.box
+    }
+    return undefined
+  }
+  const stageGroups = prevRec ? chosen.map((g) => ({ ...g, boxes: g.boxes.map((b) => ({ ...b, before: prevBoxOf(b.gid) ?? b.before })) })) : chosen
+  const stageBefore = prevRec?.afterSrc ?? entry.beforeSrc
+  const stageLabels = prevRec ? { before: cp('dialog.versionN', { n: current - 1 }), after: cp('dialog.versionN', { n: current }) } : undefined
   const canApply = status === 'ready' && (script ? !entry.scriptBusy : chosen.length > 0 && !entry.vector?.busy && !entry.vector?.failed)
   // 答了「不改」的组不在清单里，但仍是没勾选的组：按方案的全部组数判「部分」，出图才不带上它
   const partial = !script && chosen.length < (entry.plan?.groups.length ?? groups.length)
@@ -105,8 +145,6 @@ export function ChangePlanDialog() {
 
   const notes = notesOf(entry)
   const revising = entry.revising !== undefined
-  const recs = versionsOf(entry)
-  const current = versionNumber(entry)
   const reviseError = entry.reviseError
     ? entry.reviseError.code === 'not_licensed'
       ? cp('dialog.reviseNotLicensed')
@@ -126,12 +164,9 @@ export function ChangePlanDialog() {
     ) : (
       <Segmented<string> compact value={entry.planId ?? ''} onChange={toVersion} ariaLabel={cp('dialog.versionLabel')} className="w-32 font-normal" items={versionOptions} />
     )
-  const lockTip = (
-    <>
-      {cp('dialog.lockTip')}
-      <span className="mt-2 block text-ink">{cp('dialog.lockLearn')}</span>
-    </>
-  )
+  // 免费用户点带锁的入口：只在原地弹这一句 +「了解高级版 ›」，不直接跳设置（维护者 2026-11-28）
+  const lockTip = cp('dialog.lockTip')
+  const lockLearn = cp('dialog.lockLearn')
   const rerunBtn = (
     <Button
       variant={notes.length === 0 ? 'secondary' : 'primary'}
@@ -148,7 +183,7 @@ export function ChangePlanDialog() {
   )
   const applyBtn = (
     <Button
-      variant={annotating ? 'secondary' : 'primary'}
+      variant="primary"
       size="lg"
       onClick={() => void (script ? store().applyScript(entry.key) : store().apply(entry.key, { previewSrc: appliedSrc }))}
       disabled={!canApply || revising}
@@ -190,7 +225,7 @@ export function ChangePlanDialog() {
                   </>
                 ),
                 wrap: (btn) => (
-                  <PremiumLock feature={CHANGE_PLAN_FEATURE} side="bottom" align="end" alignOffset={-40} arrow soft tip={lockTip}>
+                  <PremiumLock feature={CHANGE_PLAN_FEATURE} side="bottom" align="end" alignOffset={-40} arrow soft tip={lockTip} learn={lockLearn}>
                     {btn}
                   </PremiumLock>
                 ),
@@ -208,9 +243,7 @@ export function ChangePlanDialog() {
             <Button variant="ghost" size="lg" onClick={() => store().discard(entry.key)} data-change-plan-discard>
               {cp('dialog.discard')}
             </Button>
-            {annotating ? (
-              rerunBtn
-        ) : visible ? (
+            {annotating ? null : visible ? (
           <span className="relative inline-flex">
             {hint && (
               <span
@@ -221,7 +254,7 @@ export function ChangePlanDialog() {
                 {cp('dialog.firstHint')}
               </span>
             )}
-            <PremiumLock feature={CHANGE_PLAN_FEATURE} side="top" align="center" arrow soft tip={lockTip}>
+            <PremiumLock feature={CHANGE_PLAN_FEATURE} side="top" align="center" arrow soft tip={lockTip} learn={lockLearn}>
               <Button variant="secondary" size="lg" className="rounded-full inset-ring inset-ring-border" data-change-plan-write-note onClick={() => setView('annotate')}>
                 <Pencil size={ICON_SIZE.sm} aria-hidden />
                 {cp('dialog.writeNote')}
@@ -231,7 +264,8 @@ export function ChangePlanDialog() {
         ) : undefined}
           </>
         ),
-        primary: appliedView ? rerunBtn : applyBtn,
+        // 批注视图右下只有「按批注重改 · N」（N = 0 时禁用、次级样式）；「应用」只在对比视图
+        primary: annotating ? rerunBtn : applyBtn,
       }}
     >
       <div className="flex min-h-0 flex-1" data-change-plan-dialog data-change-plan-dialog-view={annotating ? 'annotate' : 'compare'} data-change-plan-version={current}>
@@ -270,14 +304,18 @@ export function ChangePlanDialog() {
               <DiffView diff={info.diff} script={info.rel} fill />
             </div>
           ) : (
+          revising ? (
+            <RevisingStage entry={entry} aspect={aspect} />
+          ) : (
           <CompareStage
-            before={entry.beforeSrc}
+            before={stageBefore}
+            labels={stageLabels}
             // 批注写在这一版完整的「修改后」上（重改从它出发），不按勾选的组合出图
             after={annotating ? entry.afterSrc : after}
             afterBusy={!annotating && (previewBusy || !!entry.vector?.busy)}
             aspect={aspect}
             mode={annotating ? 'annotate' : mode}
-            groups={chosen}
+            groups={stageGroups}
             activeId={activeId}
             quick={
               // 悬停点选用的是完整「修改后」的元素表：只有对比里显示的正是它（全部勾选）才开
@@ -305,6 +343,7 @@ export function ChangePlanDialog() {
                 : undefined
             }
           />
+          )
           )}
         </div>
         <div className="flex w-[19rem] shrink-0 flex-col border-l border-border">
@@ -359,5 +398,32 @@ export function ChangePlanDialog() {
         </div>
       </div>
     </Dialog>
+  )
+}
+
+/**
+ * 按批注重改进行中的舞台：与卡片生成中同一套「正在作图」（坐标纸 + 小画 + 三步清单，`planSteps` 按后端阶段勾），
+ * 图框与对比时同一比例、同一位置——出好后换回对比，舞台不跳。
+ */
+function RevisingStage({ entry, aspect }: { entry: PlanEntry; aspect: number }) {
+  const steps = planSteps(entry)
+  const fit = `min(100%, calc((100cqh - 4.75rem) * ${aspect}))`
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-change-plan-stage="revising">
+      <div className="flex min-h-0 flex-1 items-start justify-center px-5 pb-1 pt-3" style={{ containerType: 'size' }}>
+        <div className="flex flex-col gap-3" style={{ width: fit }}>
+          <div className="h-5" />
+          <div aria-hidden data-change-plan-frost className="relative w-full overflow-hidden rounded-sm bg-paper shadow-page" style={{ aspectRatio: aspect }}>
+            <GraphPaper />
+            <PlotSketch stage={sketchStageOf(steps)} />
+          </div>
+          <p className="sr-only" role="status" data-change-plan-generating>
+            {cp('card.revising')}
+          </p>
+          {steps && <TaskChecklist bare steps={steps} className="self-center bg-transparent px-0 py-0" data-change-plan-steps />}
+        </div>
+      </div>
+      <p className="h-8 shrink-0" />
+    </div>
   )
 }

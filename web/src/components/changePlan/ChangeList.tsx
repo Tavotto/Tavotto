@@ -35,6 +35,9 @@ export function ChangeList({
 }) {
   useTranslation('ai')
   const total = groups.filter((g) => !unchecked[g.key]).reduce((a, g) => a + g.boxes.length, 0)
+  // 「顺带留出边距」整份方案只说一次（后端把同一次留边距并进了每个造成出界的组）：挂在清单里第一个勾着的这类组上
+  const ordered = [...groups.filter((g) => g.fromNote), ...groups.filter((g) => !g.fromNote)]
+  const roomKey = (ordered.find((g) => g.room && !unchecked[g.key]) ?? ordered.find((g) => g.room))?.key
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-change-plan-list>
       <p className={cn('shrink-0 px-4 pb-1.5 pt-4 type-meta transition-opacity duration-fast', muted && 'opacity-50')}>{heading ?? cp('dialog.changes', { count: total })}</p>
@@ -45,7 +48,7 @@ export function ChangeList({
             {groups
               .filter((g) => g.fromNote)
               .map((g) => (
-                <GroupRow key={g.key} g={g} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
+                <GroupRow key={g.key} g={g} room={g.key === roomKey} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
               ))}
           </ul>
         )}
@@ -53,7 +56,7 @@ export function ChangeList({
           {groups
             .filter((g) => !g.fromNote)
             .map((g) => (
-              <GroupRow key={g.key} g={g} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
+              <GroupRow key={g.key} g={g} room={g.key === roomKey} checked={!unchecked[g.key]} active={g.key === activeId} onToggle={onToggle} onActive={onActive} />
             ))}
         </ul>
         {unhandled.length > 0 && (
@@ -88,12 +91,15 @@ function Val({ v }: { v: { text: string; color?: string } }) {
 
 function GroupRow({
   g,
+  room,
   checked,
   active,
   onToggle,
   onActive,
 }: {
   g: GroupView
+  /** 这一行说「顺带留出边距」那一句（整份方案只说一次） */
+  room: boolean
   checked: boolean
   active: boolean
   onToggle: (key: string) => void
@@ -101,6 +107,9 @@ function GroupRow({
 }) {
   const who = whoOf(g.reviewers)
   const places = g.boxes.length
+  // 第二行灰字：谁 · N 处改动（逐行列出了改动、又没有审阅者时不再重复说 N 处）+ 留边距那一句
+  const count = g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : g.lines?.length ? '' : cp('dialog.groupMetaNoWho', { count: places })
+  const meta = [count, room ? cp('dialog.roomNote') : ''].filter(Boolean).join(' · ')
   return (
     <li>
       <label
@@ -142,10 +151,9 @@ function GroupRow({
               {g.note}
             </span>
           )}
-          {g.metaText !== '' && (
-            <span className="type-meta">
-              {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}
-              {g.room ? ` · ${cp('dialog.roomNote')}` : ''}
+          {g.metaText !== '' && meta && (
+            <span className="type-meta" data-change-plan-group-meta>
+              {meta}
             </span>
           )}
         </span>

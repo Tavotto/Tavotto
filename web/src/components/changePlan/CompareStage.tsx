@@ -291,6 +291,7 @@ export function CompareStage({
   afterBusy = false,
   noting,
   quick,
+  labels,
 }: {
   before: string
   after: string
@@ -305,6 +306,8 @@ export function CompareStage({
   noting?: CompareNoting
   /** 对比模式：高级版悬停「修改后」一侧的元素 = 轻高亮 +「写批注」小胶囊 */
   quick?: QuickNote
+  /** 两侧的叫法（第 2 版起左边是上一版：「第 N−1 版 / 第 N 版」）；不给 = 修改前 / 修改后 */
+  labels?: { before: string; after: string }
 }) {
   useTranslation('ai')
   // 批注框以图卡的边为界：靠近边沿向内翻转，不跨出图卡
@@ -343,8 +346,8 @@ export function CompareStage({
     groups.flatMap((g) =>
       g.boxes.map((pair, i) => {
         const b = side === 'before' ? pair.before : pair.after
-        // 改前没有这一处（新长出来的东西）：修改前那一侧不画框
-        if (!b) return null
+        // 改前没有这一处（新长出来的东西）：修改前那一侧不画框；只是自动留边距挪了子图的一处不画整块大框
+        if (!b || pair.room) return null
         let clip: string | undefined
         if (split !== undefined) {
           const w = Math.max(b[2], 1e-6)
@@ -392,7 +395,8 @@ export function CompareStage({
             )
           return (
             <span key={n.id} className="pointer-events-none absolute" style={boxStyle(a.box as PlanBox)}>
-              {a.kind === 'region' && <span aria-hidden className="absolute inset-0 rounded-xs inset-ring inset-ring-ink/50" />}
+              {/* 框画在纸面上：用纸上的墨（两套主题同值），深色主题下也看得见 */}
+              {a.kind === 'region' && <span aria-hidden data-change-plan-region-box className="absolute inset-0 rounded-xs inset-ring inset-ring-paper-ink-3" />}
               <button type="button" data-change-plan-mark={n.id} aria-label={n.label} title={n.label} onClick={open} className="pointer-events-auto absolute -right-2 -top-2 rounded-full outline-none focus-visible:focus-ring">
                 <ReviewMark n={i + 1} onPaper solid />
               </button>
@@ -429,6 +433,8 @@ export function CompareStage({
 
   const busyCls = afterBusy ? 'opacity-60' : undefined
   const cap = (text: string) => <span className="type-meta">{text}</span>
+  const beforeText = labels?.before ?? cp('dialog.before')
+  const afterText = labels?.after ?? cp('dialog.after')
   const effectiveView = hold ? 'before' : view
   // 三种模式共用一条纵向骨架：上一行说明（占位等高）· 图面 · 下一行控制（占位等高），图面顶边与大小不随模式跳
   const row = 'flex h-5 items-center'
@@ -439,8 +445,8 @@ export function CompareStage({
     body = (
       <div className="flex flex-col gap-1.5" style={{ width: one }}>
         <div className={cn(row, 'justify-between')}>
-          {cap(cp('dialog.before'))}
-          {cap(cp('dialog.after'))}
+          {cap(beforeText)}
+          {cap(afterText)}
         </div>
         <div ref={frameRef} className="relative w-full">
           <Frame width="100%" aspect={aspect}>
@@ -504,10 +510,10 @@ export function CompareStage({
       <div className="flex w-full flex-col gap-1.5">
         <div className="flex w-full items-center justify-center gap-4">
           <div className={row} style={{ width: half }}>
-            {cap(cp('dialog.before'))}
+            {cap(beforeText)}
           </div>
           <div className={row} style={{ width: half }}>
-            {cap(cp('dialog.after'))}
+            {cap(afterText)}
           </div>
         </div>
         <div className="flex w-full items-start justify-center gap-4">
@@ -527,7 +533,7 @@ export function CompareStage({
   } else {
     body = (
       <div className="flex flex-col gap-1.5" style={{ width: one }}>
-        <div className={cn(row, 'justify-center')}>{cap(cp(effectiveView === 'before' ? 'dialog.before' : 'dialog.after'))}</div>
+        <div className={cn(row, 'justify-center')}>{cap(effectiveView === 'before' ? beforeText : afterText)}</div>
         <Frame width="100%" aspect={aspect}>
           <Img src={effectiveView === 'before' ? before : after} className={effectiveView === 'after' ? busyCls : undefined} />
           {boxes(effectiveView)}
@@ -540,8 +546,8 @@ export function CompareStage({
             ariaLabel={cp('dialog.compareLabel')}
             className="w-44"
             items={[
-              { value: 'before', label: cp('dialog.before') },
-              { value: 'after', label: cp('dialog.after') },
+              { value: 'before', label: beforeText },
+              { value: 'after', label: afterText },
             ]}
           />
         </div>
