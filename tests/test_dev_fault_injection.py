@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 import os
 import subprocess
@@ -24,11 +25,19 @@ from tavotto.engine import deprepair, devfault
 
 ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "scripts" / "eval" / "fix_compat"
-sys.path.insert(0, str(EVAL))
 
-import envfaults  # noqa: E402
 
-import summarize  # noqa: E402
+def _load(name: str):
+    """按文件路径加载评测脚本，起独一无二的模块名：不往 sys.path 塞目录、不占用 `summarize` 这类通用名
+    （别的测试也有叫 summarize 的模块，裸名 import 会互相顶掉 `sys.modules` 里的那一份）。"""
+    spec = importlib.util.spec_from_file_location(f"_fix_compat_{name}", EVAL / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+envfaults = _load("envfaults")
+summarize = _load("summarize")
 
 CORPUS = json.loads((EVAL / "corpus.json").read_text(encoding="utf-8"))
 ENV_ITEMS = {k: v for k, v in CORPUS.items() if v.get("family") == "environment"}
