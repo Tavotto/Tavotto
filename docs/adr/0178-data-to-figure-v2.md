@@ -758,3 +758,12 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
    * 物理行号：表头占第 1 行，原文第 n 行的记录在第 n + 1 行。
 3. **没做**（各自单独的改动）：`.xlsm`（要改一句已上线的错误文案，等维护者同意）、`.json`（顶层对象数组 / 列式；`package.json` 这类不能进文件列表）、`.ods`、`.out`（项目里常有同名的二进制，进了白名单只会在文件列表里多出一堆「读不了」；留给 ADR 0215 的「让 AI 整理数据」）。
 
+
+## 修订（2026-11-28）：`.xlsm`（带宏的工作簿）按 `.xlsx` 同一条路读
+
+`.xlsm` 原先与 `.xls` / `.xlsb` 一起被拒绝（`data_excel_unsupported`）。查提交与文档，当初是「没做」，不是「有意不读带宏的文件」。它与 `.xlsx` 是同一种 zip + XML，只多一个 `xl/vbaProject.bin` 成员；`xlsxread` 只按名字读工作表与共享字符串，那个成员从不打开、更不执行。
+
+1. `xlsxread.LEGACY_SUFFIXES` 去掉 `.xlsm`，`ai_data_figure.XLSX_SUFFIXES` 加上它；所有按「是不是工作簿」分叉的地方都用这一个元组（文件夹摘要按工作表列、`/api/ai/data-files` 带 `sheets`、生成的脚本用 `read_xlsx`、前端 `isWorkbook`——后两处原来写死 `.xlsx`，是这次要对齐的同源对）。
+2. 防护一条不少：成员数、声明与实际大小、重名、加密、路径穿越、DOCTYPE 的检查对它同样生效；不是 zip 的 `.xlsm` 与 `.xlsx` 同一个码（`data_xlsx_invalid`）。
+3. 错误文案 `data_excel_unsupported` 去掉 `.xlsm`（中英文；维护者 2026-11-28 同意）：「不支持旧版 Excel 文件（.xls / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。」
+4. 读表函数 `read_xlsx` 本身没变（它本来就不看后缀）；但公共模块内嵌了 `xlsxread` 的源码，`LEGACY_SUFFIXES` 一改字节就变，所以 `PINNED_RUNTIME_NAME` 换了名（8a8dce6b → 8255cb1b）。
