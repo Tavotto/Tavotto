@@ -209,20 +209,24 @@ def axis_frame_fields(values: dict) -> list[dict]:
     return fields
 
 
-def errorbar_stroke_fields(color: str | None, width: float) -> list[dict]:
+def errorbar_stroke_fields(color: str | None, width: float | None) -> list[dict]:
     """Stroke fields whose values are independent of the native cap geometry."""
-    return [
-        *([{"prop": "color", "type": "color", "value": color}] if color is not None else []),
-        {
-            "prop": "linewidth",
-            "type": "number",
-            "value": round(float(width), 2),
-            "min": 0.1,
-            "max": 5,
-            "step": 0.1,
-            "unit": "pt",
-        },
-    ]
+    fields = []
+    if color is not None:
+        fields.append({"prop": "color", "type": "color", "value": color})
+    if width is not None:
+        fields.append(
+            {
+                "prop": "linewidth",
+                "type": "number",
+                "value": round(float(width), 2),
+                "min": 0.1,
+                "max": 5,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return fields
 
 
 def errorbar_cap_fields(length: float, width: float) -> list[dict]:

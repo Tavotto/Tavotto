@@ -1237,16 +1237,16 @@ ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, ma
       width <- unique(rep_len(line$gp$lwd, nrow(rows))[selected]) * ggplot_lwd_pt
       if (!is_positive_ggplot_number(width)) next
       colours <- rep_len(line$gp$col, nrow(rows))[selected]
-      opacity <- if (!"alpha" %in% mapping && is.character(colours) && !anyNA(colours)) {
-        alpha <- unique(grDevices::col2rgb(colours, alpha = TRUE)[4L, ])
-        if (length(alpha) == 1L) alpha
-      }
+      rgba <- if (is.character(colours) && !anyNA(colours)) grDevices::col2rgb(colours, alpha = TRUE)
+      rgb <- if (!is.null(rgba)) unique(scales::alpha(colours, 1))
+      opacity <- if (!"alpha" %in% mapping && !is.null(rgba)) unique(rgba[4L, ])
       context <- rlang::hash(list(rows, draw$facet, groups$keys[[key]], selected))
       gid <- paste0("layer.", index, suffix, ".errorbar.group.", key)
       result[[gid]] <- list(slot = draw$slot, child = line$name, index = index, interval = TRUE,
                             facet = draw$facet, caps = caps, cap_rows = selected, width = width,
                             stroke_width_editable = !any(c("linewidth", "size") %in% mapping),
-                            alpha = opacity,
+                            color = if (length(rgb) == 1L) rgb,
+                            alpha = if (length(opacity) == 1L) opacity,
                             cap_width = if (!is.null(final$tavotto_cap_style)) {
                               stored <- unique(final$tavotto_cap_style$width[selected])
                               if (is_positive_ggplot_number(stored)) stored
@@ -1261,7 +1261,7 @@ ggplot_mapped_errorbar_targets <- function(built, panels, draws, maps, index, ma
 
 ggplot_errorbar_group_props <- function(target) {
   c("capsize", "cap_thickness", if (isTRUE(target$stroke_width_editable)) "linewidth",
-    if (!is.null(target$alpha)) "alpha")
+    if (!is.null(target$alpha)) "alpha", if (!is.null(target$color)) "color")
 }
 
 ggplot_errorbar_group_edits <- function(table, targets, edits) {
@@ -1597,7 +1597,7 @@ ggplot_line_style <- function(target, patch) {
       change$lty <- unname(ggplot_line_types[[value]])
     } else if (prop == "color" && !is.null(target$color) && is.character(value) &&
                length(value) == 1L && !is.na(value) && grepl("^#[0-9A-Fa-f]{6}$", value)) {
-      change$col <- scales::alpha(value, target$alpha / 255)
+      change$col <- if (is.null(target$cap_rows)) scales::alpha(value, target$alpha / 255) else value
     } else if ((target$interval || isTRUE(target$opacity_editable)) && !is.null(target$alpha) &&
                prop == "alpha" && is.numeric(value) && length(value) == 1L &&
                is.finite(value) && value >= 0 && value <= 1) {

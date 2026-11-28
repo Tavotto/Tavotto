@@ -494,11 +494,13 @@ def _native_layer_geometry(source: dict) -> dict | None:
             return recipe
         return None
     for prop, value in values.items():
-        if (
-            type(value) not in (float, int)
-            or not math.isfinite(value)
-            or source["edited"].get(prop) != value
-        ):
+        if source["edited"].get(prop) != value:
+            return None
+        if kind == "caps" and "category" in recipe and prop == "color":
+            if not isinstance(value, str) or _RGB.fullmatch(value) is None:
+                return None
+            continue
+        if type(value) not in (float, int) or not math.isfinite(value):
             return None
         if kind == "bars":
             size_props = {"bar_width", "bar_thickness"}

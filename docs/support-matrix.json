@@ -95,7 +95,7 @@
         "line width, style, opacity and visibility per data category across facets or within one selected facet, including source writeback, for supported curves with a single discrete colour guide",
         "fixed size, solid marker shape and opacity of supported geom_point series, including editable discrete categories within one facet or across facets and guides with verified source writeback",
         "fill and outline colours, outline width, opacity and data-unit bar thickness for supported geom_bar and geom_col series, with category-scoped width and unmapped opacity writeback",
-        "stroke colour, width, opacity and cap geometry for supported geom_errorbar series, including category-scoped cap geometry and unmapped stroke width and opacity writeback",
+        "stroke colour, width, opacity and cap geometry for supported geom_errorbar series, with category-scoped colour and cap edits and unmapped width and opacity writeback",
         "uniform fill color of supported geom_ribbon and geom_area layers, and opacity for fills without an outline, including per-facet source writeback",
         "verified source writeback of per-facet category opacity for supported mapped geom_ribbon and stacked geom_area layers",
         "select an existing R package library for a desktop run",

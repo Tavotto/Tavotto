@@ -80,7 +80,7 @@ ggplot_edit_errorbar_caps <- function(line, caps, length_pt, width_pt) {
 }
 
 ggplot_edit_errorbar_group_styles <- function(line, caps, values) {
-  if (!is.null(values$linewidth) || !is.null(values$alpha)) {
+  if (!is.null(values$linewidth) || !is.null(values$alpha) || !is.null(values$color)) {
     base <- if (is.null(line$tavotto_cap_base)) line else line$tavotto_cap_base
     count <- ncol(caps$points)
     if (!is.null(values$linewidth)) {
@@ -89,8 +89,14 @@ ggplot_edit_errorbar_group_styles <- function(line, caps, values) {
       width[rows] <- values$linewidth[rows] / ggplot_lwd_pt
       base$gp$lwd <- width
     }
-    if (!is.null(values$alpha)) {
+    if (!is.null(values$color) || !is.null(values$alpha)) {
       colours <- rep_len(base$gp$col, count)
+      rows <- which(!is.na(values$color))
+      if (length(rows)) {
+        # Colour and opacity are separate edits, including when alpha is mapped per row.
+        alpha <- grDevices::col2rgb(colours[rows], alpha = TRUE)[4L, ] / 255
+        colours[rows] <- scales::alpha(values$color[rows], alpha)
+      }
       rows <- which(!is.na(values$alpha))
       colours[rows] <- scales::alpha(colours[rows], values$alpha[rows])
       base$gp$col <- colours

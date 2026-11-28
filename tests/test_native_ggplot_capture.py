@@ -1541,6 +1541,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                 "capsize": 8,
                 "cap_thickness": 2.1,
                 "linewidth": 1.35,
+                "color": "#513C88",
                 "alpha": 0 if scope == "interval-mapped-single" else 0.65,
             }
         elif interval:
@@ -1568,6 +1569,11 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             patches[0]["value"] = 0.32
         if scope == "interval-horizontal" or mapped_interval:
             next(patch for patch in patches if patch["prop"] == "capsize")["value"] = 0
+        if mapped_interval:
+            last_color = next(
+                p for p in patches if p["gid"] == targets[-1] and p["prop"] == "color"
+            )
+            last_color["value"] = "#854255"
         if scope == "different-facets":
             next(patch for patch in patches if patch["prop"] == "size")["value"] = 81
         if scope == "mixed-layers":
@@ -4701,7 +4707,7 @@ guides <- function(table) {
   })
   unname(Filter(Negate(is.null), value))
 }
-verify <- function(plot, axis, patches = list()) {
+verify <- function(plot, axis, patches = list(), mapped_alpha = FALSE) {
   captured <- adapter$capture_ggplot(plot, frame, pal)
   state <- captured$state
   targets <- state$line_targets
@@ -4726,18 +4732,36 @@ verify <- function(plot, axis, patches = list()) {
   t <- scene$line_targets[[keys[[2L]]]]
   initial_line <- base_scene$table$grobs[[t0$slot]]$children[[t0$child]]
   line <- scene$table$grobs[[t$slot]]$children[[t$child]]
-  expected <- c(rep(1L, 3), rep(3L, 3))
-  stopifnot(identical(line$tavotto_cap_rows, rep(rep(1:6, expected), each = 2L)),
-            identical(line$gp$col, rep(initial_line$gp$col, expected)),
+  stroke_counts <- c(rep(1L, 3), rep(3L, 3))
+  original_strokes <- rep(initial_line$gp$col, stroke_counts)
+  stopifnot(identical(line$tavotto_cap_rows, rep(rep(1:6, stroke_counts), each = 2L)),
+            identical(line$gp$col, original_strokes),
             sum(abs(line$gp$lwd * adapter$ggplot_lwd_pt - 2) < 1e-10) == 6L,
             length(guides(scene$table)) == 1L, identical(guides(base_scene$table), guides(scene$table)),
             identical(adapter$render_ggplot(state), captured$svg))
   paint <- style
-  paint[[keys[[3L]]]] <- c(paint[[keys[[3L]]]], list(linewidth = 1.35, alpha = 0))
+  paint[[keys[[3L]]]] <- c(paint[[keys[[3L]]]], list(linewidth = 1.35, color = "#9C3973"))
+  colour_scene <- adapter$with_svg_frame(frame, function(device) {
+    adapter$ggplot_table_for(state, c(patches, paint))
+  })$value
+  selected <- colour_scene$line_targets[[keys[[3L]]]]
+  coloured <- colour_scene$table$grobs[[selected$slot]]$children[[selected$child]]
+  expected <- scales::alpha(original_strokes, 1)
+  original_alpha <- grDevices::col2rgb(original_strokes, alpha = TRUE)[4L, ]
+  expected[-seq_len(3)] <- "#9C3973"
+  stopifnot(identical(scales::alpha(coloured$gp$col, 1), expected),
+            identical(grDevices::col2rgb(coloured$gp$col, alpha = TRUE)[4L, ], original_alpha),
+            identical(guides(base_scene$table), guides(colour_scene$table)))
+  if (mapped_alpha) {
+    stopifnot(is.null(targets[[keys[[3L]]]]$alpha), length(unique(original_alpha[-seq_len(3)])) > 1L)
+    return(invisible(NULL))
+  }
+  paint[[keys[[3L]]]]$alpha <- 0
   painted <- adapter$ggplot_manifest(state, "mapped errorbars", c(patches, paint))
   hidden <- get_element(painted, keys[[3L]])
   stopifnot(identical(changed[[2L]]$geometry$paths, hidden$geometry$paths),
             !hidden$geometry$stroke, hidden$errorbar_series$current$linewidth == 1.35,
+            hidden$errorbar_series$current$color == "#9C3973",
             hidden$errorbar_series$current$cap_thickness == 2,
             identical(get_element(painted, keys[[2L]]), changed[[1L]]))
   paint_scene <- adapter$with_svg_frame(frame, function(device) {
@@ -4746,7 +4770,7 @@ verify <- function(plot, axis, patches = list()) {
   physical_target <- paint_scene$line_targets[[keys[[3L]]]]
   physical <- paint_scene$table$grobs[[physical_target$slot]]$children[[physical_target$child]]
   alpha <- grDevices::col2rgb(physical$gp$col, alpha = TRUE)[4L, ]
-  stopifnot(all(alpha[seq_len(3)] == 255), all(alpha[-seq_len(3)] == 0),
+  stopifnot(identical(alpha[seq_len(3)], original_alpha[seq_len(3)]), all(alpha[-seq_len(3)] == 0),
             sum(abs(physical$gp$lwd * adapter$ggplot_lwd_pt - 1.35) < 1e-10) == 3L,
             identical(guides(base_scene$table), guides(paint_scene$table)))
   invalid <- setNames(list(list(linewidth = .05)), keys[[2L]])
@@ -4758,8 +4782,9 @@ h <- ggplot(data, aes(y, x, colour = treatment)) +
     geom_errorbar(aes(xmin=y-.5,xmax=y+.5),position=position_dodge(width=.5),width=.24) +
     geom_point() + facet_wrap(vars(facet)) + theme_bw()
 verify(h, 2L)
-identical_palette <- scale_colour_manual(values = c(A = "#25466A", B = "#25466A"))
+identical_palette <- scale_colour_manual(values = c(A = "#25466A80", B = "#25466A80"))
 verify(p + identical_palette, 1L)
+verify(p + aes(alpha = x) + scale_alpha_continuous(range = c(.3, .8)), 1L, mapped_alpha = TRUE)
 cat("Category endcaps preserve uncertainty, sibling panels and shared legend keys.\n")
 """
 
