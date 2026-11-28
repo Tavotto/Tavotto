@@ -266,7 +266,8 @@ export interface PlanEntry {
   /** 脚本修改方案：应用 / 撤销在途（防连点） */
   scriptBusy?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
-  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed'
+  /** `agent_settled`：Agent 卡落定时插件那边已先应用、窗口里刚写的又没能自动撤回（之后又改过 / 换了画布）——卡留着如实说 */
+  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed' | 'agent_settled'
   /** 应用后由这张卡标成「已处理」的意见 id（撤销时只还原这几条） */
   resolvedIds?: string[]
   /** 标已处理 / 还原没成：审阅页签上一句灰字 + 重试（不自动再试，免得失败时反复打后端） */
@@ -619,7 +620,12 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       await reportAgentPlanApplied(planId, on.map((t) => t.key))
     } catch (err) {
       if (!(err instanceof EngineError) || err.code !== 'change_plan_agent_settled') return
-      if (get().entries[key]?.status === 'applied') get().undo(key)
+      // 撤回成功（或本来就没写）才收卡；撤不回（之后又改过 / 换了画布）就把卡留着如实说，改动留给用户自己决定（Codex #2380）
+      const undone = get().entries[key]?.status === 'applied' ? get().undo(key) : true
+      if (!undone) {
+        patch(key, { notice: 'agent_settled' })
+        return
+      }
       hiddenAgentPlans.add(planId)
       drop(key)
     }

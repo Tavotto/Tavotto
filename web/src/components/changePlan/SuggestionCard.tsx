@@ -250,7 +250,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
             {failLines('pb-0.5 pl-[22px] text-xs text-ink-3 text-pretty')}
             {entry.notice && (
               <p className="pb-0.5 pl-[22px] text-xs text-ink-3" data-change-plan-notice={entry.notice}>
-                {cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
+                {entry.notice === 'agent_settled' ? cp(`todo.agentSettled.${hostOf(entry)}`) : cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
               </p>
             )}
           </div>
@@ -360,7 +360,7 @@ export function SuggestionCard({ entry, latest = true }: { entry: PlanEntry; lat
         )}
         {entry.notice && (
           <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>
-            {cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
+            {entry.notice === 'agent_settled' ? cp(`todo.agentSettled.${hostOf(entry)}`) : cp(entry.notice === 'apply_failed' ? 'card.applyFailed' : 'card.undoFailed')}
           </p>
         )}
         {/* 底部一行与按钮同高：执行中换成一句话，卡片底边不跳 */}

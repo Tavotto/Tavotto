@@ -995,6 +995,7 @@
       "fromHost": { "codex": "来自 Codex", "claude_code": "来自 Claude Code", "other": "来自插件" },
       "agentScriptTag": { "codex": "改脚本 · 交回 Codex", "claude_code": "改脚本 · 交回 Claude Code", "other": "改脚本 · 交回插件" },
       "agentScriptTip": { "codex": "这几项要改脚本，不在这里做；勾着的会交回 Codex", "claude_code": "这几项要改脚本，不在这里做；勾着的会交回 Claude Code", "other": "这几项要改脚本，不在这里做；勾着的会交回插件" },
+      "agentSettled": { "codex": "Codex 那边已经先改了；这里刚改的没能自动撤回", "claude_code": "Claude Code 那边已经先改了；这里刚改的没能自动撤回", "other": "插件那边已经先改了；这里刚改的没能自动撤回" },
       "handedHost": { "codex": "{{count}} 项交回 Codex 改", "claude_code": "{{count}} 项交回 Claude Code 改", "other": "{{count}} 项交回插件改" },
       "notNow": "先不改",
       "pickJournal": "选期刊"

@@ -197,6 +197,11 @@ export default interface Resources {
           "codex": "这几项要改脚本，不在这里做；勾着的会交回 Codex",
           "other": "这几项要改脚本，不在这里做；勾着的会交回插件"
         },
+        "agentSettled": {
+          "claude_code": "Claude Code 那边已经先改了；这里刚改的没能自动撤回",
+          "codex": "Codex 那边已经先改了；这里刚改的没能自动撤回",
+          "other": "插件那边已经先改了；这里刚改的没能自动撤回"
+        },
         "apply_other": "改这 {{count}} 项",
         "compare": "对比原图",
         "count_other": "{{count}} 项",

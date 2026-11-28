@@ -222,6 +222,21 @@ describe('应用', () => {
     expect(await discoverAgentPlans()).toBe(0)
   })
 
+  it('插件那边先应用了、窗口里又撤不回（之后又改过）：卡留着如实说，不悄悄收起（Codex #2380）', async () => {
+    let release: (e: unknown) => void = () => {}
+    reportAgentPlanApplied.mockImplementation(() => new Promise((_r, rej) => { release = rej }))
+    const key = await found()
+    await cps().applyTodos(key)
+    // 告诉后端还在路上时，用户又改了一处：图内那次 commit 不在历史栈顶了，自动撤回做不到
+    ds().commit(literal('又改一处'), (d) => {
+      const p = d.objects.find((o) => o.id === 'p1') as PanelObject
+      p.overrides = [...p.overrides, { gid: 'ax.ylabel', prop: 'fontsize', value: 11 }]
+    })
+    release(new EngineError('x', '', 'change_plan_agent_settled', ''))
+    await vi.waitFor(() => expect(cps().entries[key]?.notice).toBe('agent_settled'))
+    expect(cps().entries[key]).toBeDefined()
+  })
+
   it('撤销：图内那次撤回，卡收起（后端已记了这次应用）', async () => {
     const key = await found()
     await cps().applyTodos(key)
