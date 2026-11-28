@@ -1254,6 +1254,12 @@ class Session:
     #: 这个属性，渲染成功后自己算一次）。空串 = 读不到 / 引擎没有 `script_sha1`，此时不比、不重跑。
     #: 每次 `_render` 成功更新；`_sync_script` 拿它与磁盘上此刻的脚本比（MCP 无头没有 mtime watcher）。
     script_sha1: str = ""
+    #: 绑定到排版里某个子图（ADR 0217 §二）：`{layout, canvas_id, panel_id, revision, ovr}`——`revision` 是最近读到的
+    #: 排版修订号，`ovr` 是那时子图 overrides 的 patch_hash。None = 没绑定（照旧只有会话自己那份 patches）。
+    #: 落盘，但记录不证明任何权限：恢复后每次调用前都重新核对（`_sync_binding`）。
+    binding: dict | None = None
+    #: 绑定子图此刻的 `lockedGids`（每次 `_sync_binding` 现读，不落盘）。
+    locked_gids: list = field(default_factory=list)
 
     def patch_hash(self) -> str:
         return patchspec.patch_hash(self.patches)
@@ -1823,6 +1829,8 @@ def _session_record(session: Session) -> dict:
         "created": session.created,
         "exported_hash": session.exported_hash,
     }
+    if getattr(session, "binding", None):
+        record["binding"] = dict(session.binding)
     if session.run_config_id is not None:
         # 只存不透明引用（参数原文在本机运行配置登记里，敏感值从不落盘）；带配置的记录用新版本号：
         # 旧插件读到它当作不存在（`unknown_session`），不会把它当成无参数会话复活（C26）
@@ -1968,6 +1976,8 @@ def _restore_session(session_id: str) -> Session | None:
         session.created = float(record["created"])
     if isinstance(record.get("exported_hash"), str):
         session.exported_hash = record["exported_hash"]
+    # 绑定只当线索：形状不对就当没有；有效性（排版 / 子图还在、仍是这张图）在每次调用前由 `_sync_binding` 重新核
+    session.binding = _clean_binding(record.get("binding"))
     # 先渲染成功，再登记（与 open 同一条纪律）；渲染失败时记录留着，下次还能再试
     _render(session, list(record["patches"]), preview_dpi=None)
     session.restored = True
@@ -2395,8 +2405,16 @@ def open_figure(
     expected_environment_generation: str | None = None,
     prepare_impact_digest: str | None = None,
     discard_draft: bool = False,
+    layout: str | None = None,
+    panel: str | None = None,
+    bind: bool = True,
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
+
+    `layout` / `panel`（ADR 0217 §二）：把会话绑到排版里的这个子图（排版名 + 子图 id 或 `tavotto_layout_scene` 的短号 `P1`…）——
+    此后会话的修改就是子图的 `overrides`，桌面改了下次调用先读到。都不给：这张图在项目所有排版里只出现在一个子图就自动绑，
+    多个不绑（回包 `binding.state: ambiguous` 与候选），没有就 `binding.state: none`。绑定那一刻排版里的修改为准；
+    会话里没导出的、与之不同的修改另存草稿，回包 `draft_superseded: true`。
 
     `discard_draft`（ADR 0192 第 2 条）：不带回这张图没导出的草稿，并把草稿删掉，从脚本原样打开。
     不给时，同一（项目、stem、运行配置）没有活会话、又有草稿，就按草稿的 patches 渲染（`restored_draft`）。
@@ -2464,6 +2482,19 @@ def open_figure(
             discarded += int(sessionjournal.delete(_journal_dir(), orphan["id"]))
     session = _live_session_for(project, chosen, run_config_id)
     reused = session is not None
+    # 绑定：显式给了就按它；没给时，已绑定的活会话保持（调用前的 `_sync_binding` 管它），没绑的才扫项目排版
+    resolved: dict | None = None
+    keep_binding = (
+        session is not None and session.binding is not None and layout is None and panel is None
+    )
+    # `bind=False`：批量打开与排版的「量子图」（`_layout_measure`）不绑——它们要的是这张图本身 / 调用方自己带的修改
+    if not keep_binding and bind:
+        resolved = _resolve_binding(project, chosen, layout, panel)
+    bound = resolved if resolved is not None and resolved["state"] == "bound" else None
+    seed = list(bound["overrides"]) if bound is not None else None
+    superseded = False
+    layout_sync: dict | None = None
+    binding_note: dict | None = None
     evicted: list[str] = []
     restored_draft: dict | None = None
     draft_failed: dict | None = None
@@ -2480,8 +2511,13 @@ def open_figure(
         # 画布经 `session_state` 拿到的就是旧档，渲染看门狗会按 2 分钟而不是 15 分钟
         # 掐掉一次合法的重渲染（Codex 评审）。
         session.cost = str(info.get("cost", "") or "")
+        if keep_binding:
+            layout_sync, binding_note = _sync_binding(session)
         script_rerun, render = _sync_script_render(session)
-        if render is None:
+        if bound is not None and patchspec.patch_hash(seed) != session.patch_hash():
+            # 子图赢（沿用的会话本来就没改过：`_live_session_for` 只沿用 patches 为空的）
+            render = _render_applicable(session, seed)[0]
+        elif render is None:
             render = _render(session, list(session.patches), preview_dpi=None)
     else:
 
@@ -2500,6 +2536,15 @@ def open_figure(
 
         session = None
         draft = None if discard_draft else _find_draft(project, chosen, run_config_id)
+        if (
+            draft is not None
+            and bound is not None
+            and patchspec.patch_hash(patchspec.canonicalize_with_diagnostics(draft["patches"])[0])
+            != patchspec.patch_hash(seed)
+        ):
+            # 绑定的子图赢：草稿原样留在盘上（不删），回包如实说
+            superseded = True
+            draft = None
         if draft is not None:
             # 草稿与记录同一套越界校验，拒在渲染之前（越界的草稿当作没有，不渲染、不执行脚本）
             try:
@@ -2516,9 +2561,14 @@ def open_figure(
             # 错误，永远拿不到 session_id，也就永远关不掉它。反复失败的 open 会把
             # 账本堆满，再靠 `_evict_if_needed()` 把**真正在用的**会话挤出去。
             session = _fresh()
-            render = _render(session, [], preview_dpi=None)
+            if seed:
+                render = _render_applicable(session, list(seed))[0]
+            else:
+                render = _render(session, [], preview_dpi=None)
         _SESSIONS[session.id] = session
         evicted = _evict_if_needed()
+    if bound is not None:
+        _adopt_binding(session, bound)
     persisted = _persist(session)
     if restored_draft is not None and persisted:
         # 草稿已经并进这条活会话（它的记录确实落盘了）：草稿完成使命，删掉。
@@ -2555,6 +2605,23 @@ def open_figure(
         out["journal_ref"] = profile["journal_ref"]
     if script_rerun is not None:
         out["script_rerun"] = script_rerun
+    if resolved is not None:
+        out["binding"] = _public_resolution(resolved)
+    elif binding_note is not None:
+        out["binding"] = binding_note
+    elif session.binding is not None:
+        out["binding"] = _binding_view(session.binding)
+    if layout_sync is not None:
+        out["layout_sync"] = layout_sync
+    if superseded:
+        out["draft_superseded"] = True
+        out["draft_superseded_note"] = (
+            "你上次在会话里的修改没进排版，已经以排版里的为准；那份修改已另存成草稿。"
+        )
+    if restored_draft is None and (bound is not None or layout_sync is not None):
+        # 修改来自排版里的子图：内嵌画布同样要拿它 seed override 账本（`seedSession` 用 `open.patches ?? []`），
+        # 不带的话画布显示着子图的修改、账本却是空的，下一次全量 apply 就把它们抹掉
+        out["patches"] = list(session.patches)
     if restored_draft is not None:
         out["restored_draft"] = restored_draft
         # 内嵌画布用这个字段 seed 它的 override 账本（`web/src/mcp/session.ts::seedSession`）：不带的话账本是空的，
@@ -2718,6 +2785,7 @@ def open_figures(
                 journal=journal,
                 journal_id=journal_id,
                 discard_draft=discard_draft,
+                bind=False,
             )
         except BridgeError as exc:
             failed.append(_failure_entry(stem, exc))
@@ -3228,6 +3296,268 @@ def _sync_script(session: Session) -> dict | None:
     return _sync_script_render(session)[0]
 
 
+# --------------------- 排版绑定（ADR 0217 第二、三节） ---------------------
+#: 绑定不上时的错误码（显式给的 `layout` / `panel` 对不上这张图）
+LAYOUT_BINDING_MISMATCH = "layout_binding_mismatch"
+#: `binding.candidates` / `layout_sync.changed` 最多列几条：二者在把手（`HANDLE_ONLY_KEYS`）里，必须定长
+BINDING_CANDIDATE_LIMIT = 8
+LAYOUT_SYNC_CHANGED_LIMIT = 8
+LAYOUT_SYNC_REASON = "desktop_changed"
+_BINDING_KEYS = ("layout", "canvas_id", "panel_id", "revision", "ovr")
+
+
+def _clean_binding(raw: object) -> dict | None:
+    """落盘记录里的绑定只当线索：五个字段都是字符串才认，否则当没有（有效性每次调用前另核）。"""
+    if not isinstance(raw, dict):
+        return None
+    out = {k: raw.get(k) for k in _BINDING_KEYS}
+    if not all(isinstance(v, str) and v for k, v in out.items() if k != "canvas_id"):
+        return None
+    if not isinstance(out["canvas_id"], str):
+        out["canvas_id"] = ""
+    return out
+
+
+def _binding_view(binding: dict, ref: str | None = None) -> dict:
+    """回包里的 `binding`：不带内部的 `ovr` 指纹。"""
+    out = {"state": "bound", **{k: v for k, v in binding.items() if k != "ovr"}}
+    if ref:
+        out["ref"] = ref
+    return out
+
+
+def _open_registry_quiet(project: str):
+    try:
+        return engine_registry.open_registry(project)
+    except (FileNotFoundError, RuntimeError):
+        return None
+
+
+def _iter_panels(la, doc: dict, *, hidden: bool = False):
+    """排版里的子图 `(画布, 短号, 子图对象)`。短号与 `tavotto_layout_scene` 同一套（画布上不隐藏的子图按顺序 P1、P2…）；
+    `hidden=True` 时连隐藏的子图一起给（短号 None）。"""
+    for canvas in doc["canvases"]:
+        if not isinstance(canvas, dict):
+            continue
+        refs = {id(o): f"P{i}" for i, o in enumerate(la._figure_panels(canvas), start=1)}  # noqa: SLF001
+        for obj in canvas.get("objects") or []:
+            if isinstance(obj, dict) and obj.get("type") == "panel":
+                ref = refs.get(id(obj))
+                if ref is None and not hidden:
+                    continue
+                yield canvas, ref, obj
+
+
+def _panel_state(lay, canvas: dict, obj: dict) -> tuple[dict, list, list]:
+    """`(binding, 规范化的 overrides, lockedGids)`：子图此刻的样子。"""
+    canonical, _ = patchspec.canonicalize_with_diagnostics(obj.get("overrides") or [])
+    locked = [g for g in obj.get("lockedGids") or [] if isinstance(g, str)]
+    binding = {
+        "layout": lay.name,
+        "canvas_id": str(canvas.get("id") or ""),
+        "panel_id": str(obj.get("id") or ""),
+        "revision": lay.revision,
+        "ovr": patchspec.patch_hash(canonical),
+    }
+    return binding, canonical, locked
+
+
+def _mismatch(message: str, reason: str, **extra) -> BridgeError:
+    return BridgeError(message, code=LAYOUT_BINDING_MISMATCH, reason=reason, **extra)
+
+
+def _resolve_binding(project: str, stem: str, layout: str | None, panel: str | None) -> dict | None:
+    """这张图能绑到哪个子图。回 `{state, binding?, overrides?, locked?, ref?, candidates?, count?}`；
+    引擎没有排版读取能力且没显式要求时回 None（回包里就没有 `binding`）。
+
+    不给 `layout` / `panel` = 扫项目所有排版：**恰好一个**能绑的子图才自动绑；多个 `ambiguous`（列候选，让用户选）；
+    没有 `none`。显式给了却对不上抛 `layout_binding_mismatch`。能不能绑与 `_layout_measure` 同一口径（`_panel_script`）。"""
+    explicit = layout is not None or panel is not None
+    la = require_layout_annotate() if explicit else None
+    if la is None:
+        if not layout_annotate_available():
+            return None
+        la = _optional_engine("layoutannotate")
+    registry = _open_registry_quiet(project)
+    names = [layout] if layout is not None else la.list_layouts(project)
+    found: list[tuple] = []
+    for name in names:
+        try:
+            lay = la.open_layout(project, name)
+        except la.LayoutError as exc:
+            if layout is not None:
+                raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
+            continue  # 扫描时读不了的排版跳过，不拖垮开图
+        try:
+            active = la._canvas(lay.doc, None).get("id")  # noqa: SLF001 — 与 layout_scene 同一份「当前画布」
+        except la.LayoutError:
+            active = None
+        for canvas, ref, obj in _iter_panels(la, lay.doc, hidden=panel is not None):
+            if panel is not None and not (
+                obj.get("id") == panel or (ref == panel and canvas.get("id") == active)
+            ):
+                continue
+            info, why = _panel_script(obj, registry)
+            if why is None and info["stem"] != stem:
+                why = "other_figure"
+            if why is not None:
+                if panel is not None:
+                    raise _mismatch(
+                        f"排版 {name} 里的子图 {panel} 不能绑这张图（{why}）。", why, layout=name
+                    )
+                continue
+            found.append((lay, canvas, ref, obj))
+    if not found:
+        if explicit:
+            raise _mismatch(
+                f"没有找到能绑这张图的子图（layout={layout!r}, panel={panel!r}）。",
+                "panel_not_found" if panel is not None else "figure_not_in_layout",
+            )
+        return {"state": "none"}
+    if len(found) > 1:
+        shown = [
+            {
+                "layout": lay.name,
+                "canvas_id": str(c.get("id") or ""),
+                "panel_id": str(o.get("id") or ""),
+                "ref": ref,
+            }
+            for lay, c, ref, o in found[:BINDING_CANDIDATE_LIMIT]
+        ]
+        return {"state": "ambiguous", "candidates": shown, "count": len(found)}
+    lay, canvas, ref, obj = found[0]
+    binding, canonical, locked = _panel_state(lay, canvas, obj)
+    return {
+        "state": "bound",
+        "binding": binding,
+        "overrides": canonical,
+        "locked": locked,
+        "ref": ref,
+    }
+
+
+def _public_resolution(res: dict) -> dict:
+    if res["state"] == "bound":
+        return _binding_view(res["binding"], res.get("ref"))
+    return {k: v for k, v in res.items() if k in ("state", "candidates", "count")}
+
+
+def _adopt_binding(session: Session, res: dict) -> None:
+    session.binding = res["binding"]
+    session.locked_gids = list(res["locked"])
+
+
+def _changed_keys(before: list, after: list) -> list[tuple[str, str]]:
+    old = {(str(p["gid"]), str(p["prop"])): p["value"] for p in before}
+    new = {(str(p["gid"]), str(p["prop"])): p["value"] for p in after}
+    return [
+        k
+        for k in sorted(set(old) | set(new))
+        if k not in old or k not in new or not engine_normalize._same(old[k], new[k])  # noqa: SLF001
+    ]
+
+
+def _unbind(session: Session, reason: str) -> dict:
+    lost = {
+        "state": "lost",
+        "reason": reason,
+        **{k: (session.binding or {}).get(k) for k in ("layout", "panel_id")},
+    }
+    session.binding = None
+    session.locked_gids = []
+    _persist(session)
+    return lost
+
+
+def _sync_binding(session: Session) -> tuple[dict | None, dict | None]:
+    """绑定的会话在调用前读一次排版（ADR 0217 §三）：回 `(layout_sync, binding 说明)`，都没有就是 `(None, None)`。
+
+    每次都重新核：排版 / 子图还在、仍能绑（`_panel_script`）、还是这张图——落盘记录证明不了权限。
+    修订号变了且子图 overrides 与上次读到的不同才重渲染同一个会话；子图 / 排版没了就解绑（`binding.state: lost`），
+    之后照没绑定的会话用。这一版绑定会话**不写**排版文件，所以会话里没写回的本地修改会在桌面改动后被排版那份取代。"""
+    binding = getattr(session, "binding", None)
+    if not binding:
+        return None, None
+    la = _optional_engine("layoutannotate") if layout_annotate_available() else None
+    if la is None:
+        return None, None  # 这个引擎读不了排版：不动绑定，也不假装同步过
+    try:
+        lay = la.open_layout(session.project, binding["layout"])
+    except la.LayoutError as exc:
+        if exc.code in ("layout_unreadable",):
+            return None, None  # 暂时读不了（不是没了）：这次不同步，绑定留着
+        return None, _unbind(session, "layout_gone")
+    hit = None
+    for canvas, _ref, obj in _iter_panels(la, lay.doc, hidden=True):
+        if obj.get("id") == binding["panel_id"]:
+            hit = (canvas, obj)
+            break
+    if hit is None:
+        return None, _unbind(session, "panel_gone")
+    canvas, obj = hit
+    info, why = _panel_script(obj, _open_registry_quiet(session.project))
+    if why is not None or info["stem"] != session.stem:
+        return None, _unbind(session, why or "other_figure")
+    new_binding, canonical, locked = _panel_state(lay, canvas, obj)
+    session.locked_gids = locked
+    if lay.revision == binding["revision"]:
+        return None, None
+    if new_binding["ovr"] == binding.get("ovr"):
+        # 桌面改的是别处（挪了子图、改了别的）：子图的修改没变，会话照旧
+        session.binding = new_binding
+        _persist(session)
+        return None, None
+    changed = _changed_keys(session.patches, canonical)
+    sync: dict = {
+        "reason": LAYOUT_SYNC_REASON,
+        "changed": [{"gid": g, "prop": p} for g, p in changed[:LAYOUT_SYNC_CHANGED_LIMIT]],
+        "changed_count": len(changed),
+    }
+    if len(changed) > LAYOUT_SYNC_CHANGED_LIMIT:
+        sync["changed_truncated"] = True
+    try:
+        _rendered, miss, kept = _render_applicable(session, canonical)
+    except BridgeError as exc:
+        exc.extra.setdefault("layout_sync", sync)
+        raise
+    # 修改变了：规范化合同与验收对不上了（桌面改到合同之外 = 合同解除，ADR 0217 §四）
+    session.contract = None
+    if session.normalized is not None:
+        session.normalized["stale"] = True
+    sync["patches"] = len(kept)
+    if miss:
+        sync.update(_bounded_dropped(miss))
+    session.binding = new_binding
+    _persist(session)
+    return sync, None
+
+
+def _apply_lock(session: Session, indexed: list, dropped: list) -> list:
+    """绑定会话里用户锁住的元素（`lockedGids`）：插件不改。想改的进 `rejected`（`locked`），锁住元素已有的修改原样留着。"""
+    locked = set(getattr(session, "locked_gids", None) or [])
+    if not getattr(session, "binding", None) or not locked:
+        return [p for _i, p in indexed]
+    current = {
+        (str(p["gid"]), str(p["prop"])): p for p in session.patches if str(p["gid"]) in locked
+    }
+    kept = []
+    for i, p in indexed:
+        gid = str(p.get("gid"))
+        if gid not in locked:
+            kept.append(p)
+            continue
+        have = current.get((gid, str(p.get("prop"))))
+        if have is not None and engine_normalize._same(have["value"], p.get("value")):  # noqa: SLF001
+            kept.append(have)  # 原样重发：不算改
+            current.pop((gid, str(p.get("prop"))))
+        else:
+            dropped.append(
+                {"index": i, "reason": "locked", "entry": {"gid": gid, "prop": p.get("prop")}}
+            )
+    # 没被重发的锁住元素的修改保留（全量列表语义里漏掉 = 恢复原值，那等于改了锁住的元素）
+    return kept + list(current.values())
+
+
 def _synced(fn):
     """给按 `session_id` 取会话的工具入口加上「脚本变了先重跑」：重跑信息进结果的 `script_rerun`。
 
@@ -3236,15 +3566,27 @@ def _synced(fn):
 
     @functools.wraps(fn)
     def wrapper(session_id, *args, **kwargs):
-        rerun = _sync_script(get_session(session_id))
+        session = get_session(session_id)
+        # 绑定了排版的会话先按桌面此刻的修改对齐（ADR 0217 §三），再看脚本变没变：重跑用的是对齐后的那份 patches
+        layout_sync, binding_note = _sync_binding(session)
+        rerun = _sync_script(session)
         try:
             result = fn(session_id, *args, **kwargs)
         except BridgeError as exc:
             if rerun is not None:
                 exc.extra.setdefault("script_rerun", rerun)
+            if layout_sync is not None:
+                exc.extra.setdefault("layout_sync", layout_sync)
+            if binding_note is not None:
+                exc.extra.setdefault("binding", binding_note)
             raise
-        if rerun is not None and isinstance(result, dict):
-            result["script_rerun"] = rerun
+        if isinstance(result, dict):
+            if rerun is not None:
+                result["script_rerun"] = rerun
+            if layout_sync is not None:
+                result["layout_sync"] = layout_sync
+            if binding_note is not None:
+                result["binding"] = binding_note
         return result
 
     return wrapper
@@ -3283,7 +3625,9 @@ def apply_overrides(
     if dropped and any(d["index"] == -1 for d in dropped):
         raise BridgeError("patches 必须是数组", code="bad_patches", rejected=dropped)
     bad = {d["index"] for d in dropped}
-    clean = [p for i, p in enumerate(patches or []) if i not in bad]
+    clean = _apply_lock(
+        session, [(i, p) for i, p in enumerate(patches or []) if i not in bad], dropped
+    )
 
     released = False
     if session.contract is not None:
@@ -6655,25 +6999,37 @@ def _layout_pdf_dir() -> Path:
     return _LAYOUT_PDF_DIR
 
 
+def _panel_script(panel: dict, registry) -> tuple[dict | None, str | None]:
+    """子图对应的登记脚本：`(注册表条目, None)`；量不了 / 不能绑回 `(None, 原因码)`。
+
+    `_layout_measure`（量子图）与排版绑定（ADR 0217 §二）共用这一份判定：冻结快照 / 运行时素材 / 没有脚本的
+    子图在成品里不是现画的，也就不能量、不能绑。"""
+    if panel.get("figureSnapshot") is not None or panel.get("figureOrigin") is not None:
+        return None, "composed_from_snapshot"
+    if panel.get("source") is not None or panel.get("fileKind") == "runtime":
+        return None, "runtime_panel"
+    fid = str(panel.get("fileId") or panel.get("id") or "")
+    # 「磁盘文件 → 图」只经注册表的 `for_artifact`（登记的产物表 + 文件名 stem 兜底，#1251）：子目录里的产物、
+    # 产物名与 stem 不同的，按路径自己拆都会误判成没有脚本（Codex #2213）
+    info = registry.for_artifact(fid) if registry is not None and fid else None
+    if info is None:
+        return None, "no_script"
+    return info, None
+
+
 def _layout_measure(project: str, registry, la, opened: list, pdfs: dict):
     """`measure(panel, requests)`：这张子图**带它在排版里的改动**现跑一次导出，量数据点、拿这次绘制的 manifest。
 
     与成品合成同一个判定：冻结快照 / 运行时素材 / 没有脚本的子图在成品里不是现画的，这里也不量（只给外框）。"""
 
     def measure(panel: dict, requests: list) -> dict:
-        if panel.get("figureSnapshot") is not None or panel.get("figureOrigin") is not None:
-            raise la.PanelUnavailable("composed_from_snapshot")
-        if panel.get("source") is not None or panel.get("fileKind") == "runtime":
-            raise la.PanelUnavailable("runtime_panel")
+        info, why = _panel_script(panel, registry)
+        if why is not None:
+            raise la.PanelUnavailable(why)
         fid = str(panel.get("fileId") or panel.get("id") or "")
-        # 「磁盘文件 → 图」只经注册表的 `for_artifact`（登记的产物表 + 文件名 stem 兜底，#1251）：子目录里的产物、
-        # 产物名与 stem 不同的，按路径自己拆都会误判成没有脚本（Codex #2213）
-        info = registry.for_artifact(fid) if registry is not None and fid else None
-        if info is None:
-            raise la.PanelUnavailable("no_script")
         stem = info["stem"]
         try:
-            sid = open_figure(os.path.join(project, fid), stem=stem)["session_id"]
+            sid = open_figure(os.path.join(project, fid), stem=stem, bind=False)["session_id"]
             session = get_session(sid)
         except BridgeError as exc:
             raise la.PanelUnavailable("open_failed") from exc

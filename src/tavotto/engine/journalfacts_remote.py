@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -170,13 +171,14 @@ def _json(raw: bytes) -> object:
         raise FactsError("invalid_json") from exc
 
 
-def verify_index(raw: bytes) -> dict:
-    """Verify signature, schema and contents; use only the v1 trusted key authority."""
-    if not isinstance(raw, bytes) or len(raw) > MAX_INDEX_BYTES:
-        raise FactsError("index_invalid")
+def _open_envelope(raw: bytes, *, cap: int, bad: str) -> object:
+    """验签信封（alg / key_id / payload / sig），回已解码的载荷 JSON。索引与署名文件共用这一条路，
+    只用 v1 的受信公钥表；形状 / 大小不对抛 `bad`，签名与钥匙问题抛 signature_invalid / key_unknown。"""
+    if not isinstance(raw, bytes) or len(raw) > cap:
+        raise FactsError(bad)
     env = _json(raw)
     if not isinstance(env, dict) or set(env) != {"alg", "key_id", "payload", "sig"}:
-        raise FactsError("index_invalid")
+        raise FactsError(bad)
     if env["alg"] != "ed25519" or not isinstance(env["key_id"], str):
         raise FactsError("signature_invalid")
     key64 = journalremote.TRUSTED_KEYS.get(env["key_id"])
@@ -190,8 +192,14 @@ def verify_index(raw: bytes) -> dict:
         raise FactsError("signature_invalid") from exc
     if not journalremote._ed25519_verify(key, payload, signature):
         raise FactsError("signature_invalid")
+    return _json(payload)
+
+
+def verify_index(raw: bytes) -> dict:
+    """Verify signature, schema and contents; use only the v1 trusted key authority."""
+    payload = _open_envelope(raw, cap=MAX_INDEX_BYTES, bad="index_invalid")
     try:
-        return contract.validate_index(_json(payload))
+        return contract.validate_index(payload)
     except contract.FactValidationError as exc:
         raise FactsError("index_invalid") from exc
 
@@ -560,6 +568,139 @@ def cached_bundle(jid: str) -> tuple[int, dict] | None:
     if index is None or bundle is None:
         return None
     return int(index["catalog_rev"]), bundle
+
+
+# --------------------------------------------------------------------------- 署名（ADR 0213 三期）
+#: 署名文件（`thanks.signed.json`）：同一把钥匙签名、信封与索引相同，载荷
+#: `{"schema":1,"kind":"journal_facts_thanks","catalog_rev":N,"thanks":{<journal_id>:{<fact id>:<称呼>}}}`。
+#: 它**只是装饰**：取不到（老服务端没有这个文件是常态）、验签失败、`catalog_rev` 与本机已验签索引对不上、
+#: 形状不对，一律当没有——不显示、不报错、不影响事实读取。称呼是用户自填、会给别的用户看的文字，这里在渲染前
+#: 再校验一遍（`contactsend.clean_credit`，与服务端、入库工具同一条规则），单条不合规只丢那一条。
+THANKS_FILE = "thanks.signed.json"
+MAX_THANKS_BYTES = 2 << 20
+MAX_THANKS_ENTRIES = 50_000
+#: 没有这个文件（404 / 网络失败 / 被拒）时，同一个 catalog_rev 多久内不再问（秒）；进程内记忆，不落盘
+THANKS_RETRY_S = 600
+_thanks_miss: dict[int, float] = {}
+
+
+def _clean_thanks(payload: object, catalog_rev: int) -> dict[str, dict[str, str]]:
+    """严格校验署名载荷的形状并取出 `{journal_id: {fact_id: 称呼}}`；整体不对抛 FactsError，单条称呼不合规丢单条。"""
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schema", "kind", "catalog_rev", "thanks"}
+        or type(payload["schema"]) is not int
+        or payload["schema"] != 1
+        or payload["kind"] != "journal_facts_thanks"
+        or type(payload["catalog_rev"]) is not int
+        or payload["catalog_rev"] != catalog_rev
+        or not isinstance(payload["thanks"], dict)
+    ):
+        raise FactsError("thanks_invalid")
+    out: dict[str, dict[str, str]] = {}
+    total = 0
+    for jid, facts in payload["thanks"].items():
+        if (
+            not isinstance(jid, str)
+            or contract._ID.fullmatch(jid) is None
+            or not isinstance(facts, dict)
+        ):
+            raise FactsError("thanks_invalid")
+        for fid, name in facts.items():
+            total += 1
+            if (
+                total > MAX_THANKS_ENTRIES
+                or not isinstance(fid, str)
+                or contract._ID.fullmatch(fid) is None
+            ):
+                raise FactsError("thanks_invalid")
+            clean = contactsend.clean_credit(name)
+            if clean is not None:
+                out.setdefault(jid, {})[fid] = clean
+    return out
+
+
+def verify_thanks(raw: bytes, catalog_rev: int) -> dict[str, dict[str, str]]:
+    """验签 + 严格校验署名文件，`catalog_rev` 必须等于本机已验签索引的版本。"""
+    return _clean_thanks(
+        _open_envelope(raw, cap=MAX_THANKS_BYTES, bad="thanks_invalid"), catalog_rev
+    )
+
+
+def _cached_thanks(rev: int) -> dict[str, dict[str, str]] | None:
+    """本机缓存里这一版的署名；不在 / 验不过 = None。只读盘，不联网。"""
+    try:
+        return verify_thanks((cache_dir() / THANKS_FILE).read_bytes(), rev)
+    except (OSError, FactsError):
+        return None
+
+
+def _download_thanks(rev: int, ui_locale: str | None) -> None:
+    """联网取这一版的署名并写进缓存；任何失败只记一次「这一版暂时没有」。在后台线程里跑。"""
+    try:
+        for base in _bases(ui_locale):
+            try:
+                status, raw, _h = _call_full(
+                    "GET", base + THANKS_FILE, MAX_THANKS_BYTES, {"Accept-Encoding": "gzip"}
+                )
+            except (journalremote.RemoteCatalogError, FactsError):
+                continue  # 这一条线路不通：试另一条
+            if status != 200:
+                break  # 404 = 老服务端没有这个文件；别的状态码也不换线重试
+            try:
+                verify_thanks(raw, rev)
+            except FactsError:
+                break  # 验签 / 形状 / 版本不对：不显示，也不换线路去拿另一份答案
+            path = cache_dir() / THANKS_FILE
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            atomicio.write_bytes(path, raw, mode=0o600)
+            return
+        _thanks_miss[rev] = _now()
+    except Exception:  # noqa: BLE001 - 后台装饰任务，任何意外都只当「没有」
+        _thanks_miss[rev] = _now()
+    finally:
+        with _thanks_lock:
+            _thanks_inflight.discard(rev)
+
+
+def _spawn(fn) -> None:
+    threading.Thread(target=fn, name="journal-thanks", daemon=True).start()
+
+
+_thanks_lock = threading.Lock()
+_thanks_inflight: set[int] = set()
+
+
+def _refresh_thanks(rev: int, ui_locale: str | None) -> None:
+    """缓存没有这一版时在后台取一次（同一版本同时只取一个；没取到的 10 分钟内不再问）。
+    预检那条路只读缓存、从不等网络：署名是装饰，不许拖慢本来全在本机的事实读取。"""
+    if journalremote.disabled():
+        return
+    missed = _thanks_miss.get(rev)
+    if missed is not None and 0 <= _now() - missed < THANKS_RETRY_S:
+        return
+    with _thanks_lock:
+        if rev in _thanks_inflight:
+            return
+        _thanks_inflight.add(rev)
+    _spawn(lambda: _download_thanks(rev, ui_locale))
+
+
+def thanks_for(jid: str, *, ui_locale: str | None = None) -> dict[str, str]:
+    """某一刊 v2 事实的署名 `{fact id: 称呼}`；任何问题都回 `{}`，**永不抛、从不等网络**。
+    只读本机缓存；缓存没有这一版就在后台取，下一次读取再显示。只认本机已验签索引的版本。"""
+    try:
+        index = cached_index()
+        if index is None:
+            return {}
+        rev = int(index["catalog_rev"])
+        names = _cached_thanks(rev)
+        if names is None:
+            _refresh_thanks(rev, ui_locale)
+            names = _cached_thanks(rev)  # 测试里后台任务同步跑完；线上这里通常还是 None
+        return dict(names.get(jid, {})) if names else {}
+    except Exception:  # noqa: BLE001 - 署名只是装饰，任何意外都不许碰事实读取
+        return {}
 
 
 def _token_call(base: str, route: str, cap: int) -> bytes:

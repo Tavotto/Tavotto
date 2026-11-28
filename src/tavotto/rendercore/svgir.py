@@ -1370,7 +1370,9 @@ def svg_to_ir(
     Image-free callers keep their previous binary API. Embedded images require
     the optional receiver; bytes and SHA identities are handed off together.
     """
-    root = parse_svg(strip_matplotlib_doctype(data))
+    root = parse_svg(
+        strip_matplotlib_doctype(data), unicode_ids=True
+    )  # 同 svgasset：认导出产物的名字 id
     if _tag(root) != "svg":
         raise SVGIRError("svgir_invalid", "root element is not svg")
     try:

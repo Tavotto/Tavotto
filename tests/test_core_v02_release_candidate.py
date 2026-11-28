@@ -511,17 +511,49 @@ def _assert_structured_pdf_export(app, doc):
         }
     )
     plain = _export_files(app, request)["pdf"]
-    structured = _export_files(
+    group_id = "mixed-figures"
+    for panel, name in ((mpl, "matplotlib-panel"), (r, "ggplot2-panel")):
+        panel["name"] = name
+        panel["group_path"] = [group_id]
+        panel["group_names"] = [group_id]
+        panel["clip"] = [
+            {
+                "type": "path",
+                "group": group_id,
+                "x_mm": 0,
+                "y_mm": 0,
+                "w_mm": PAGE_MM[0],
+                "h_mm": PAGE_MM[1],
+                "subpaths": [
+                    {
+                        "closed": True,
+                        "nodes": [{"p": point} for point in ([0, 0], [1, 0], [1, 1], [0, 1])],
+                    }
+                ],
+            }
+        ]
+    exported = _export_files(
         app,
         {
             **request,
             "filename": "Native figures with bookmarks and notes",
+            "formats": ["pdf", "svg"],
             "pdf_panel_bookmarks": True,
             "pdf_panel_layers": True,
             "pdf_annotation_layer": True,
             "pdf_text_attachment": True,
         },
-    )["pdf"]
+    )
+    svg = ElementTree.parse(exported["svg"])
+    namespace = {"svg": "http://www.w3.org/2000/svg"}
+    group = svg.find(f".//svg:g[@id='{group_id}']", namespace)
+    assert group is not None
+    assert [item.get("id") for item in group] == ["matplotlib-panel", "ggplot2-panel"]
+    clip = group.attrib["clip-path"]
+    assert clip.startswith("url(#") and clip.endswith(")")
+    assert len(svg.findall(f".//svg:clipPath[@id='{clip[5:-1]}']", namespace)) == 1
+    assert [item for item in group.iter() if item.get("clip-path") == clip] == [group]
+    structured = exported["pdf"]
     titles = ["1. Matplotlib signal", "2. ggplot2 fuel economy"]
     with pikepdf.Pdf.open(structured) as pdf:
         outline = pdf.Root.Outlines

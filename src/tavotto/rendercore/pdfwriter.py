@@ -284,11 +284,13 @@ class PdfWriter:
             rec.ops.append(self._text_op(node, rec))
             self.facts.text_objects += 1
         elif isinstance(node, ir.Group):
-            self._group(node, rec, ctm, depth)
+            return self._group(node, rec, ctm, depth)
         elif isinstance(node, ir.ImportedPage):
-            return self._imported_page(node, rec, ctm)
+            placed = self._imported_page(node, rec, ctm)
+            return placed if node.opacity > 0 else None
         elif isinstance(node, ir.Image):
-            return self._image(node, rec)
+            placed = self._image(node, rec)
+            return placed if node.opacity > 0 else None
         else:  # validate() 已经挡住不认识的节点；这里是最后一道
             raise UnsupportedCapability(type(node).__name__.lower(), "不认识的节点", "")
         return None
@@ -636,11 +638,13 @@ class PdfWriter:
         )
         return pl
 
-    def _group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
+    def _group(
+        self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int
+    ) -> placement.Placement | None:
         self.facts.groups += 1
         if isinstance(node.clip, ir.ClipUnion):
             self._union_clip_group(node, rec, ctm, depth)
-            return
+            return None
         inner = ["q"]
         if node.transform != ir.IDENTITY:
             inner.append(" ".join(_num(v) for v in node.transform) + " cm")
@@ -664,11 +668,16 @@ class PdfWriter:
             rec.xobjects[name] = form_rec  # save() 时再序列化成 Form XObject
             rec.ops.append(f"q /{self._gs(rec, node.opacity, node.opacity)} gs /{name} Do Q")
             self.facts.transparency_groups += 1
-            return
+            return None
         rec.ops.append("\n".join(inner))
+        placed = None
         for child in node.children:
-            self._emit(child, rec, local, depth + 1)
+            placed = self._emit(child, rec, local, depth + 1)
         rec.ops.append("Q")
+        # A canvas clip wraps one object without changing its page coordinates.
+        if node.clip is not None and node.transform == ir.IDENTITY and len(node.children) == 1:
+            return placed
+        return None
 
     def _union_clip_group(self, node: ir.Group, rec: _Recorder, ctm: ir.Matrix, depth: int) -> None:
         """True vector union, retaining each member's winding rule and curves.
@@ -1171,13 +1180,7 @@ class PdfWriter:
                     rec.ops.append("EMC")
             # Top-level panels share the page's coordinate system. The same
             # placement just emitted the crop and transform into the PDF.
-            if (
-                bookmark_titles
-                and index in bookmark_titles
-                and placed is not None
-                and isinstance(child, (ir.Image, ir.ImportedPage))
-                and child.opacity > 0
-            ):
+            if bookmark_titles and index in bookmark_titles and placed is not None:
                 left, bottom, right, top = placed.bbox
                 left, bottom = max(0.0, left), max(0.0, bottom)
                 right = min(self.page.width_pt, right)

@@ -530,9 +530,9 @@ def test_text_run_has_unicode_family_size_style_and_baseline(tmp_path, provider)
     _, root, facts = _write(tmp_path, [node], resources={"f": face.resource}, provider=provider)
     (text,) = _text_nodes(root)
     assert text.text == "Ag fi 10"
-    assert "'Liberation Serif'" in text.get("font-family") and text.get("font-family").endswith(
-        "serif"
-    )
+    # 第一个族是用户机器上真有的字体（ADR 0208 §七之三 第 4 条）；批准的 Liberation 留作第二个
+    family = text.get("font-family")
+    assert family.startswith("'Times New Roman', 'Liberation Serif', ") and family.endswith("serif")
     assert text.get("font-size") == "12"
     assert text.get("font-weight") == "700" and text.get("font-style") == "italic"
     assert text.get(f"{{{XML}}}space") == "preserve"
@@ -541,8 +541,9 @@ def test_text_run_has_unicode_family_size_style_and_baseline(tmp_path, provider)
     # 每个 <text> 只有一个 x：Word「转换为形状」按每个显式 x 切成独立文本段（字母散开、每字带段落标记）。
     assert text.get("x") == "0" and len(text.get("x").split()) == 1
     assert text.get("y") is None
-    group = root.find("s:g/s:g", NS)
-    assert group.get("fill") == "rgb(0%,0%,100%)" and group.get("fill-opacity") == "0.5"
+    # 一个文字对象一个 `<text>`：填充自带，不套 `<g fill>`（ADR 0208 §七之三 第 5 条）
+    assert text.get("fill") == "rgb(0%,0%,100%)" and text.get("fill-opacity") == "0.5"
+    assert root.find("s:g/s:g", NS) is None
     assert not root.findall("s:defs/s:path", NS)
     assert facts.text_runs == 1 and facts.text_fallback_runs == 0 and facts.outlined_glyphs == 0
     assert facts.fonts[0]["as_text"] is True and facts.fonts[0]["outlined"] is False
@@ -591,12 +592,21 @@ def test_vertical_glyph_offsets_are_the_only_reason_to_write_y(tmp_path, provide
     )
 
 
-def test_text_paint_is_inherited_from_group(tmp_path, provider):
+def test_single_run_text_carries_its_own_paint_and_several_runs_share_a_group(tmp_path, provider):
     face = provider.face_for("sans-serif", False, False)
     node = ir.ShapedText(5, 5, (ir.GlyphRun("f", 8, face.shape("ab")),), ir.Paint((1, 0, 0), 0.25))
     _, root, _ = _write(tmp_path, [node], resources={"f": face.resource}, provider=provider)
-    group = root.find("s:g/s:g", NS)
-    assert group.get("fill-opacity") == "0.25" and group.find("s:text", NS) is not None
+    (text,) = _text_nodes(root)
+    assert text.get("fill-opacity") == "0.25" and root.find("s:g/s:g", NS) is None
+    two = ir.ShapedText(
+        5,
+        5,
+        (ir.GlyphRun("f", 8, face.shape("a")), ir.GlyphRun("f", 5, face.shape("2"), rise=3)),
+        ir.Paint((1, 0, 0), 0.25),
+    )
+    _, root, _ = _write(tmp_path, [two], resources={"f": face.resource}, provider=provider)
+    group = root.find("s:g/s:g", NS)  # 多段仍共用一个带填充的组
+    assert group.get("fill-opacity") == "0.25" and len(group.findall("s:text", NS)) == 2
 
 
 def test_mixed_runs_split_into_positioned_texts_with_rise(tmp_path, provider):

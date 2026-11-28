@@ -370,7 +370,7 @@ def produce(
             tmp = tmp_dir / "out.svg"
             try:
                 svg_facts = svgwriter.write_svg(
-                    rp.page,
+                    rp.svg_page or rp.page,  # 带组树与名字的那一页只给 SVG（ADR 0208 §七之三）
                     tmp,
                     provider,
                     files,

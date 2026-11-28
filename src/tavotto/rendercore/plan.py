@@ -29,7 +29,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..engine import exportreq
 from . import geometry, pathtext, typography, vertical
@@ -91,6 +91,9 @@ class CompiledPage:
     pdf_panel_layer_titles: dict[int, str] = field(default_factory=dict)
     pdf_annotation_indices: frozenset[int] = frozenset()
     pdf_annotation_text: tuple[str, ...] | None = None
+    #: 给 SVG 用的那一页（ADR 0208 §七之三）：对象按文档的组嵌套、带名字、剪切组的蒙版只在组上写一次。
+    #: **只有 SVG 看它**——PDF / EPS / 位图一律用 `page`（逐字节不变）。载荷里没有组也没有名字时 = None（用 `page`）。
+    svg_page: Page | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,8 @@ class RenderPlan:
     pdf_panel_layer_titles: dict[int, str] = field(default_factory=dict)
     pdf_annotation_indices: frozenset[int] = frozenset()
     pdf_annotation_text: tuple[str, ...] | None = None
+    #: 见 `CompiledPage.svg_page`；None = SVG 也用 `page`
+    svg_page: Page | None = None
 
     @property
     def plan_identity(self) -> str:
@@ -664,6 +669,91 @@ def _source_font_problem(oid: str, family: str, reason: str) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class _SvgEntry:
+    """给 SVG 页的一个对象：未裁剪的节点、组链（外 → 内的 id 与名字）、各层组自己的蒙版、没有归属的蒙版。"""
+
+    node: Node
+    path: tuple[str, ...]
+    names: tuple[str, ...]
+    group_clips: dict[str, Path]
+
+
+def _str_list(v: object, what: str, oid: str) -> tuple[str, ...]:
+    if not isinstance(v, (list, tuple)) or not all(isinstance(x, str) for x in v):
+        raise PlanError("bad_object", f"{what} 必须是字符串列表", {"id": oid})
+    return tuple(v)
+
+
+def _svg_entry(o: dict, base: Node, clips: object, page_h: float, oid: str) -> _SvgEntry | None:
+    """一个对象 → SVG 页的条目；蒙版画不出轮廓 = None（与 `_clipped` 同一条：整个对象不画）。"""
+    path = _str_list(o.get("group_path") or [], "group_path", oid)
+    if any(not g for g in path) or len(set(path)) != len(path):
+        raise PlanError("bad_object", "group_path 不能有空项或重复项", {"id": oid})
+    raw_names = o.get("group_names")
+    names = _str_list(raw_names, "group_names", oid) if raw_names is not None else ()
+    if names and len(names) != len(path):
+        raise PlanError("bad_object", "group_names 必须与 group_path 一样长", {"id": oid})
+    if not names:
+        names = ("",) * len(path)
+    group_clips: dict[str, Path] = {}
+    loose: list[Path] = []
+    if clips:
+        if not isinstance(clips, list):
+            raise PlanError("bad_object", "clip 必须是一个列表", {"id": oid})
+        for m in clips:
+            outline = clip_outline(m, page_h)
+            if outline is None:
+                return None
+            clip = Path(outline[0], fill_rule=outline[1])
+            gid = m.get("group") if isinstance(m, dict) else None
+            if isinstance(gid, str) and gid in path and gid not in group_clips:
+                group_clips[gid] = clip
+            else:
+                loose.append(clip)
+    name = o.get("name")
+    if name is not None:
+        if not isinstance(name, str):
+            raise PlanError("bad_object", "name 必须是字符串", {"id": oid})
+        if name.strip():
+            if isinstance(base, Group) and not base.semantic and not base.label:
+                base = replace(base, label=name)
+            else:
+                base = Group((base,), label=name, object_id=oid)
+    for clip in reversed(loose):  # 外 → 内：最里层先包（与 `_clipped` 同一顺序）
+        base = Group((base,), clip=clip, object_id=oid)
+    return _SvgEntry(base, path, names, group_clips)
+
+
+def _svg_children(entries: list[_SvgEntry]) -> tuple[Node, ...]:
+    """按 z 序把条目装成组树：z 序上连续、共享同一组链前缀的对象进同一个 `Group`。成员在 z 序里不连续的组
+    拆成几段（绘制顺序一个都不挪，ADR 0191「不要求组成员在 z 序里连续」）。"""
+    root: list[Node] = []
+    # [组 id, 组名, 蒙版, 孩子]：组名取成员里第一个给出的（打开这个组的对象不一定带组名）
+    stack: list[list] = []
+
+    def close_to(n: int) -> None:
+        while len(stack) > n:
+            _gid, name, clip, kids = stack.pop()
+            group = Group(tuple(kids), clip=clip, label=name, semantic=True)
+            (stack[-1][3] if stack else root).append(group)
+
+    for e in entries:
+        k = 0
+        while k < len(stack) and k < len(e.path) and stack[k][0] == e.path[k]:
+            if not stack[k][1] and e.names[k]:
+                stack[k][1] = e.names[k]
+            if stack[k][2] is None and e.group_clips.get(e.path[k]) is not None:
+                stack[k][2] = e.group_clips[e.path[k]]
+            k += 1
+        close_to(k)
+        for i in range(k, len(e.path)):
+            stack.append([e.path[i], e.names[i], e.group_clips.get(e.path[i]), []])
+        (stack[-1][3] if stack else root).append(e.node)
+    close_to(0)
+    return tuple(root)
+
+
 def compile_page(
     page_w_mm: float,
     page_h_mm: float,
@@ -692,6 +782,8 @@ def compile_page(
     panel_layer_titles: dict[int, str] = {}
     annotation_indices: set[int] = set()
     annotation_text: list[str] = []
+    entries: list[_SvgEntry] = []
+    structured = False
     for o in objects:
         if not isinstance(o, dict):
             raise PlanError("bad_object", f"对象不是 dict: {o!r}")
@@ -717,11 +809,13 @@ def compile_page(
             raise PlanError(
                 "bad_object", f"不认识的对象类型: {kind!r}", {"id": str(o.get("id", ""))}
             )
-        panel = node if isinstance(node, (Image, ImportedPage)) else None
+        base = node
         if node is not None and o.get("clip"):
             node = _clipped(node, o.get("clip"), page_h)
         if node is not None:
-            if panel is not None and (pdf_panel_bookmarks or pdf_panel_layers):
+            if isinstance(base, (Image, ImportedPage)) and (
+                pdf_panel_bookmarks or pdf_panel_layers
+            ):
                 title = o.get("bookmark_title")
                 # Bind by emitted instance position, even when several panels share a source.
                 title = title[:120] if isinstance(title, str) else ""
@@ -729,10 +823,10 @@ def compile_page(
                 title = " ".join(title.split())
                 if pdf_panel_bookmarks:
                     pdf_bookmark_titles[len(children)] = title
-                if pdf_panel_layers and panel.opacity > 0:
+                if pdf_panel_layers and base.opacity > 0:
                     # The same target rectangle holds the panel after crop, flip and
                     # quarter turns. A mask may further clip its emitted instructions.
-                    x, y, w, h = panel.rect
+                    x, y, w, h = base.rect
                     if max(0.0, x) < min(page_w, x + w) and max(0.0, y) < min(page_h, y + h):
                         panel_layer_titles[len(children)] = title
             if pdf_annotation_layer and kind != "panel":
@@ -740,7 +834,18 @@ def compile_page(
             if pdf_text_attachment and kind == "text":
                 annotation_text.append(o["text"])
             children.append(node)
+            # SVG 的那一页（ADR 0208 §七之三）：PDF / EPS / 位图用的 `children` 一个字节都不动，这里另攒一份
+            structured = structured or bool(o.get("group_path")) or o.get("name") is not None
+            assert base is not None
+            entry = _svg_entry(o, base, o.get("clip"), page_h, str(o.get("id", "")))
+            if entry is not None:
+                entries.append(entry)
     page = validate(Page(page_w, page_h, tuple(children), resources, background))
+    svg_page = (
+        validate(Page(page_w, page_h, _svg_children(entries), resources, background))
+        if structured
+        else None
+    )
     return CompiledPage(
         page,
         tuple(dropped),
@@ -750,6 +855,7 @@ def compile_page(
         pdf_panel_layer_titles=panel_layer_titles,
         pdf_annotation_indices=frozenset(annotation_indices),
         pdf_annotation_text=tuple(annotation_text) if pdf_text_attachment else None,
+        svg_page=svg_page,
     )
 
 
@@ -803,6 +909,7 @@ def compile_plan(
         pdf_panel_layer_titles=compiled.pdf_panel_layer_titles,
         pdf_annotation_indices=compiled.pdf_annotation_indices,
         pdf_annotation_text=compiled.pdf_annotation_text,
+        svg_page=compiled.svg_page,
     )
 
 

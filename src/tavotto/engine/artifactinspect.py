@@ -89,7 +89,9 @@ def svg_vector(path: Path) -> bool:
 
     budget = svgcheck.SVGBudget()
     with Path(path).open("rb") as stream:
-        root = svgcheck.parse_svg(stream.read(budget.max_bytes + 1), budget=budget)
+        root = svgcheck.parse_svg(
+            stream.read(budget.max_bytes + 1), budget=budget, unicode_ids=True
+        )  # 我们自己写出的产物：id 可以是中文名（ADR 0208 §七之三）
     ids = {node.get("id"): node for node in root.iter() if node.get("id")}
     stack = [root]
     has_image = False

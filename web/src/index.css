@@ -1590,3 +1590,13 @@ samp,
 :root[data-theme='dark'] [data-panel-badge='info'] {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 28%, transparent);
 }
+
+/* 署名复选框（期刊反馈窗）：浅色下未勾的描边收柔到暖中灰；已勾 / hover 仍走组件自己的深色。深色主题不动。 */
+:root[data-theme='light'] [data-journal-tip-credit] input[type='checkbox']:not(:checked):not(:hover) {
+  border-color: #bdbab2;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) [data-journal-tip-credit] input[type='checkbox']:not(:checked):not(:hover) {
+    border-color: #bdbab2;
+  }
+}

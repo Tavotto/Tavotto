@@ -3,7 +3,7 @@ import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import { chartSourceFields } from './chartSource'
 import type { ExportClipPath, ExportObject } from './api'
-import { clipChainOf, groupMasks, isActiveMask } from './groupTree'
+import { clipEntriesOf, groupMasks, groupPathOf, isActiveMask } from './groupTree'
 import { maskAsPath } from './clipMask'
 import type { CanvasObject, Gradient, PathTextObject } from '@/types/document'
 import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
@@ -33,8 +33,17 @@ export function toExportObjects(
       const e = o.type === 'pathText'
         ? pathTextExport(o, lineWidthOf(o, context))
         : toExportObject(o, includePanelTitles)
-      const chain = clipChainOf(o, masks)
-      return chain.length ? { ...e, clip: chain.map(toExportClip) } : e
+      const chain = clipEntriesOf(o, masks)
+      // 名字与组树只给 SVG（ADR 0208 §七之三）：对象名写成 `id`、文档的组写成嵌套的 `<g>`、剪切组的蒙版只在组上写一次。
+      // PDF / EPS / 位图不看这几个键；没有名字、不在组里 = 一个键都不多，载荷与以前逐字节相同
+      const path = groupPathOf(o)
+      return {
+        ...e,
+        ...(typeof o.name === 'string' && o.name.trim() ? { name: o.name } : {}),
+        ...(path.length ? { group_path: path } : {}),
+        // `group` 说明这个蒙版是哪一层组的：后端据此把蒙版挂在组上，而不是每个被裁的对象各复制一份
+        ...(chain.length ? { clip: chain.map((c) => ({ ...toExportClip(c.mask), group: c.gid })) } : {}),
+      }
     })
 }
 

@@ -65,14 +65,21 @@ beforeEach(async () => {
 
 describe('scope', () => {
   it('includes the bookmark choice and panel name only for an opted-in canvas PDF', () => {
-    const doc = { ...useDocumentStore.getState().doc, objects: [{ ...panel, name: 'Series A' }] }
+    const doc = {
+      ...useDocumentStore.getState().doc,
+      objects: [{ ...panel, name: 'Series A', groupId: 'mixed-figures' }],
+    }
     const { request: plain } = buildExportRequest(inputOf({ doc }))
-    const { request: bookmarked } = buildExportRequest(inputOf({ doc, pdfPanelBookmarks: true }))
+    const { request: bookmarked } = buildExportRequest(inputOf({
+      doc, formats: ['pdf', 'svg'], pdfPanelBookmarks: true,
+    }))
     const { request: image } = buildExportRequest(inputOf({ doc, formats: ['png'], pdfPanelBookmarks: true }))
     expect(plain).not.toHaveProperty('pdf_panel_bookmarks')
     expect(plain.canvas?.objects[0]).not.toHaveProperty('bookmark_title')
     expect(bookmarked.pdf_panel_bookmarks).toBe(true)
-    expect(bookmarked.canvas?.objects[0]).toMatchObject({ bookmark_title: 'Series A' })
+    expect(bookmarked.canvas?.objects[0]).toMatchObject({
+      bookmark_title: 'Series A', name: 'Series A', group_path: ['mixed-figures'],
+    })
     expect(image).not.toHaveProperty('pdf_panel_bookmarks')
     expect(image.canvas?.objects[0]).not.toHaveProperty('bookmark_title')
     expect(snapshotRevision(bookmarked)).not.toBe(snapshotRevision({ ...bookmarked, pdf_panel_bookmarks: undefined }))
