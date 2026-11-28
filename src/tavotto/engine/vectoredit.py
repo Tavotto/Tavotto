@@ -1674,9 +1674,11 @@ def _op_add(s: _State, i: int, op: dict) -> None:
             (local, {**final.get(local, obj), "id": nid, **({"anchor": anchor} if anchor else {})})
         )
     if prep.active:
-        # 可编辑性核对（ADR 0208 §七之二 / ADR 0220 §六）：fail 不落地，warn / unknown 如实写进复述
+        # 可编辑性核对（ADR 0208 §七之二 / ADR 0220 §六）：fail 不落地，warn / unknown 如实写进复述。
+        # **只核机理图成员**：框、图元、被放进框里的免费条目；不在框里的普通标注照 0208 原规则走（它们没有「角色 + 身份」名字，不归这里管）
+        members = [n for local, n in minted if local in prep.member_locals]
         verdict = mechcheck.check(
-            [n for _l, n in minted],
+            members,
             [*s.live(), *[n for _l, n in minted]],
             catalog=prep.catalog,
         )

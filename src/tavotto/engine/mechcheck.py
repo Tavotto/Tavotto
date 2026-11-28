@@ -109,11 +109,29 @@ def _inside(pt, poly) -> bool:
     return ins
 
 
+def _dist_to_segment(p, a, b) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    n = dx * dx + dy * dy
+    t = 0.0 if n == 0 else max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / n))
+    return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
+
+
+def _vertex_on_polyline(pts: list, poly: list) -> bool:
+    """`pts` 的某个折线顶点（端点或拐点）落在 `poly` 的某一段上（容差内）：T 形连接，两个方向都要判。"""
+    return any(
+        _dist_to_segment(p, poly[j], poly[j + 1]) <= _EPS_MM
+        for p in pts
+        for j in range(len(poly) - 1)
+    )
+
+
 def _touch(pa: list, ca: bool, pb: list, cb: bool) -> bool:
     for i in range(len(pa) - 1):
         for j in range(len(pb) - 1):
             if _segments_cross(pa[i], pa[i + 1], pb[j], pb[j + 1]):
                 return True
+    if _vertex_on_polyline(pa, pb) or _vertex_on_polyline(pb, pa):
+        return True
     if any(_near(p, q) for p in pa[:: max(1, len(pa) // 16)] for q in pb[:: max(1, len(pb) // 16)]):
         return True
     if ca and pb and _inside(pb[0], pa):

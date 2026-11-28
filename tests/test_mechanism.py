@@ -610,3 +610,57 @@ def test_pro_required_picks_the_link_and_label_by_interface_language(monkeypatch
         "label": "Learn about Premium",
         "url": "https://www.tavotto.com/premium/",
     }
+
+
+def test_an_unrelated_free_annotation_next_to_a_frame_keeps_the_0208_rules(licensed):
+    """可编辑性核对只作用于机理图成员：框外的普通标注（没有显示名）不被 naming 判掉。"""
+    oval = {
+        "kind": "shape",
+        "name": "oval",
+        "shape": "ellipse",
+        "at": {"anchor": {"panel": {"id": "P1", "point": "ne"}}, "offset_mm": [2, 2]},
+        "size_mm": [6, 4],
+    }
+    alone = _plan(oval)
+    assert alone["ok"], alone
+    res = _plan(FRAME, oval)
+    assert res["ok"], res
+    assert len(res["changed"]) == 2  # 框线 + 椭圆
+    # 框里的免费条目仍归核对管（有名字、进了框）
+    inside = {**oval, "name": "oval2", "frame": "egf"}
+    res2 = _plan(FRAME, inside, {**inside, "name": "oval3"})
+    assert res2["ok"], res2
+
+
+def _seg(a, b):
+    return {"closed": False, "nodes": [{"p": a}, {"p": b}]}
+
+
+def test_t_junctions_connect_in_both_directions():
+    """20×10 mm：横线 y=0.5 与竖线 x=0.3 的上半段，竖线的下端点落在横线上——谁碰谁都算连通。"""
+    horiz = _seg([0, 0.5], [1, 0.5])
+    stem_up = _seg([0.3, 0.5], [0.3, 0])  # 起点在横线上
+    stem_down = _seg([0.3, 0], [0.3, 0.5])  # 终点在横线上（反向）
+    assert components_of([horiz, stem_up]) == 1
+    assert components_of([horiz, stem_down]) == 1
+    assert components_of([stem_up, horiz]) == 1 and components_of([stem_down, horiz]) == 1
+
+
+def test_t_junction_on_a_curved_segment_and_near_misses():
+    bow = {
+        "closed": False,
+        "nodes": [{"p": [0, 0.5], "out": [0.3, 0.0]}, {"p": [1, 0.5], "in": [0.7, 0.0]}],
+    }
+    # 曲线中点附近落一根竖线的端点：拍平后的折线上（容差内）算连通
+    pts = mechcheck._flatten(_path("p", [bow])["subpaths"][0], 20, 10)  # noqa: SLF001
+    x, y = pts[len(pts) // 2]
+    stem = _seg([x / 20, y / 10], [x / 20, 1])
+    assert components_of([bow, stem]) == 1
+    # 端点贴近但没接触（0.5 mm，远大于 0.01 mm 容差）→ 不连通；两个方向都一样
+    horiz = _seg([0, 0.5], [1, 0.5])
+    near_up = _seg([0.3, 0.45], [0.3, 0])  # 20×10 mm 下离横线 0.5 mm
+    near_down = _seg([0.3, 0], [0.3, 0.45])
+    assert components_of([horiz, near_up]) == 2
+    assert components_of([horiz, near_down]) == 2
+    # 容差内（< 0.01 mm）的贴合算接上
+    assert components_of([horiz, _seg([0.3, 0.5004], [0.3, 0])]) == 1

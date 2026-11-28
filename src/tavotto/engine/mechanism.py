@@ -254,6 +254,11 @@ class Prepared:
     names: mechgroup.Names = field(default_factory=mechgroup.Names)
 
     @property
+    def member_locals(self) -> set[str]:
+        """机理图成员的局部 id：框线、图元、放进框里的免费条目（可编辑性核对只作用于它们）。"""
+        return {o["id"] for o in self.objects} | set(self.free_groups)
+
+    @property
     def active(self) -> bool:
         return bool(self.objects or self.free_groups or self.has_frame)
 
