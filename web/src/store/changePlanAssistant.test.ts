@@ -117,6 +117,20 @@ describe('发起', () => {
     expect(e).toMatchObject({ from: 'assistant', status: 'generating', instruction: FALLBACK.prompt })
   })
 
+  it('助手来源带 standard（名字 / chosen / rules / issues）；审阅来源不带', async () => {
+    await cps().requestFromAssistant('p1', { instruction: '符合投稿要求吗' }, FALLBACK)
+    const std = createChangePlan.mock.calls[0][0].standard
+    expect(std).toMatchObject({ chosen: false, issues: [] })
+    expect(typeof std.name).toBe('string')
+    expect(Object.keys(std.rules).length).toBeGreaterThan(0)
+    cps().clear()
+    createChangePlan.mockClear()
+    await cps().requestFromReview('p1', { comments: [{ id: 'c1', text: 'x' }] as never })
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(createChangePlan.mock.calls[0][0].source).toBe('review')
+    expect('standard' in createChangePlan.mock.calls[0][0]).toBe(false)
+  })
+
   it('整张图范围（没有选中元素）不带 target', async () => {
     await cps().requestFromAssistant('p1', { instruction: '全部字号改 10' }, FALLBACK)
     expect('target' in createChangePlan.mock.calls[0][0]).toBe(false)
@@ -273,6 +287,11 @@ describe('整条指令都要改脚本', () => {
     getChangePlan.mockResolvedValue(ready(onlyScript, { code: 'change_plan_empty' }))
     const key = (await ask()) as string
     await tick()
+    // 助手来源的脚本方案请求不带 standard（后端 mode: script 不收，带了就 invalid_change_plan、连落回都走不到；Codex #2340）
+    const scriptBody = createChangePlan.mock.calls.map(([b]) => b as Record<string, unknown>).find((b) => b.mode === 'script')
+    expect(scriptBody).toBeDefined()
+    expect('standard' in (scriptBody as object)).toBe(false)
+    expect('standard' in createChangePlan.mock.calls[0][0]).toBe(true)
     expect(start).toHaveBeenCalledOnce()
     expect(start.mock.calls[0][0]).toMatchObject({
       prompt: FALLBACK.prompt,

@@ -19,7 +19,7 @@ import re
 import threading
 import time
 
-from . import agentobjects, layoutannotate as la, vectoredit as ve
+from . import agentobjects, layoutannotate as la, vectoredit as ve, vectorscene
 
 #: 一次请求里画布对象数、补丁条数的上限（体积）；模型一次最多给多少条
 MAX_OBJECTS = 2000
@@ -63,6 +63,28 @@ def check_ops(ops: object) -> list:
     return ops
 
 
+MAX_CONFIRMED = 12
+MAX_INSTRUCTION_TEXT = 4000
+
+
+def plan_context(instruction: object, confirmed: object) -> dict:
+    """`add` 核统计标注来源要的上下文：用户原话（可缺省 = 核不到，只认 `confirmed`）+ 用户在卡上点「按我说的加」确认过的条目名。
+    形状不对抛 `PlanInputError`。**`confirmed` 只来自请求体，模型输出里的一概不看。**"""
+    if instruction is not None and not (
+        isinstance(instruction, str) and len(instruction) <= MAX_INSTRUCTION_TEXT
+    ):
+        raise PlanInputError("instruction_text")
+    if confirmed is None:
+        confirmed = []
+    if (
+        not isinstance(confirmed, list)
+        or len(confirmed) > MAX_CONFIRMED
+        or not all(isinstance(x, str) and 0 < len(x) <= 80 for x in confirmed)
+    ):
+        raise PlanInputError("confirmed")
+    return {"instruction": instruction, "confirmed": tuple(confirmed)}
+
+
 def check_selection(selection: object, canvas: dict) -> list[str]:
     """选中的对象 id（可缺省）：字符串列表；不在画布上的丢掉（选区是提示，不是约束）。"""
     if selection is None:
@@ -80,8 +102,11 @@ def check_selection(selection: object, canvas: dict) -> list[str]:
 # ------------------------------------------------------------------ 快照与提示
 
 
-def snapshot(canvas: dict, selection: list[str] | None = None) -> dict:
-    """模型看到的场景：`vectoredit.memory_scene` + 选区。与 `read_scene` 的 `vector_objects` 逐键同形。"""
+def snapshot(
+    canvas: dict, selection: list[str] | None = None, measured: dict | None = None
+) -> dict:
+    """模型看到的场景：`vectoredit.memory_scene` + 选区 + 子图外框（+ 量过的子图的场景，见 `measure_scene`）。
+    与 `read_scene` 的 `vector_objects` 逐键同形。"""
     sel = list(selection or [])
     scene = ve.memory_scene(canvas)
     if sel:
@@ -91,7 +116,59 @@ def snapshot(canvas: dict, selection: list[str] | None = None) -> dict:
         scene["vector_objects"] = picked + [
             o for o in scene["vector_objects"] if o["id"] not in have
         ]
-    return {**scene, "selection": sel}
+    # 子图外框（画布毫米）：新增标注的 `panel` 锚点；量过的子图（`measured` 给了且这张没进 `unmeasured`）另有 `scene` 里的轴 / 元素
+    unmeasured = (measured or {}).get("unmeasured") or {}
+    panels = {
+        ref: {
+            "box_mm": [o.get("x"), o.get("y"), o.get("w"), o.get("h")],
+            "measured": bool(measured) and ref not in unmeasured,
+            **({"unmeasured": unmeasured[ref]} if ref in unmeasured else {}),
+        }
+        for ref, pid in scene.get("panels_by_ref", {}).items()
+        for o in canvas.get("objects") or []
+        if isinstance(o, dict) and o.get("id") == pid
+    }
+    out = {**scene, "panels": panels, "selection": sel}
+    if measured and measured.get("scene"):
+        out["scene"] = measured["scene"]
+    return out
+
+
+#: 给模型的场景里每张子图最多列多少个元素 / 空白块（体积）：刻度文字最先让位（数据元素与轴标题才是标注的锚）
+SCENE_MAX_ELEMENTS = 40
+SCENE_MAX_FREE = 6
+
+
+def _trim_scene(scene: dict) -> dict:
+    """`vectorscene.build_scene` 的结果 → 给模型看的瘦身版：去掉与 `vector_objects` 重复的 `annotations`，每张子图元素 / 空白块有上限，截掉的给计数。"""
+    out = {k: v for k, v in scene.items() if k != "annotations"}
+    panels = []
+    for p in scene.get("panels") or []:
+        p = dict(p)
+        els = list(p.get("elements") or [])
+        if len(els) > SCENE_MAX_ELEMENTS:
+            els.sort(key=lambda e: e.get("role") == "ticklabel")  # 稳定排序：刻度文字排后面先被截
+            p["elements_elided"] = len(els) - SCENE_MAX_ELEMENTS
+            els = els[:SCENE_MAX_ELEMENTS]
+            p["elements"] = els
+        free = list(p.get("free") or [])
+        if len(free) > SCENE_MAX_FREE:
+            p["free"] = free[:SCENE_MAX_FREE]
+        panels.append(p)
+    out["panels"] = panels
+    return out
+
+
+def measure_scene(canvas: dict, measure) -> dict:
+    """量一遍子图（无数据点请求）→ `{scene: 瘦身的场景, unmeasured: {短号: 码}, fingerprint}`。
+    `measure` 来自桌面（`app.py`，带缓存与时限）；量不了的子图只有外框，码原样带出去给界面一行说明。"""
+    panels, _refs, unmeasured = la.measure_panels(canvas, None, measure)
+    scene = vectorscene.build_scene(panels, page=la._page(canvas))  # noqa: SLF001
+    return {
+        "scene": _trim_scene(scene),
+        "unmeasured": unmeasured,
+        "fingerprint": scene["fingerprint"],
+    }
 
 
 #: 界面语言 → 模型写 `unhandled.reason` 用的语言名（只认这几个，其余当中文；前端的界面语言就这两种）
@@ -110,10 +187,10 @@ def system_prompt(locale: str | None = None) -> str:
     return (
         "你在帮一个科研绘图工具的「改图助手」把用户的一条改图指令落成「画布上已有矢量对象的修改补丁」。"
         "你只能改 `<scene>` 里 `vector_objects` 列出的矢量对象（文字 / 箭头 / 形状 / 路径，含用户手画的）；"
-        "图里由脚本画出的数据元素（曲线、柱子、坐标轴、图例等）、数据、脚本都不在这里改，也不能新增对象。\n\n"
+        "图里由脚本画出的数据元素（曲线、柱子、坐标轴、图例等）、数据、脚本都不在这里改。能**新增**的只有标注（`add` 操作：箭头 / 文字 / 括号 / 外框 / 连线 / 形状），位置写锚点、不写毫米。\n\n"
         "## 输入\n"
         "- `<instruction>`：用户的原话。\n"
-        "- `<scene>`：画布快照（JSON）：`page`（页面毫米尺寸）、`panels_by_ref`（子图短号 → 子图对象 id）、"
+        "- `<scene>`：画布快照（JSON）：`page`（页面毫米尺寸）、`panels_by_ref`（子图短号 → 子图对象 id）、`panels`（子图短号 → 画布毫米外框 `box_mm`、`measured`；`measured: false` 的子图没量过〔`unmeasured` 是原因码〕，新增标注只能锚在它的外框上）、`scene`（量过的子图：`panels[].axes`〔gid、毫米框、xlim / ylim〕、`elements`〔gid、角色、标签、毫米墨迹框〕、`free` 空白区、`style`；没有这一项 = 一张都没量过）、"
         "`vector_objects`（每个对象的 `id`、`type`、`name`、`text`、毫米框 `box_mm`、锁定 / 隐藏 / 所在组、`style`（字号、线宽、颜色、填充等当前值，「加倍 / 加粗」照它算目标值）；路径另带 `subpaths` 与 `anchors`）、"
         "`selection`（用户此刻选中的对象 id，指令多半说的就是它们；为空 = 没选）。\n\n"
         "## 补丁怎么写\n"
@@ -122,7 +199,7 @@ def system_prompt(locale: str | None = None) -> str:
         "- 不要自己算好坐标写进 `x` / `y`：挪位置用 `move`（`by_mm` 或 `to`），对齐 / 等距用 `align` / `distribute`；"
         "但字号、线宽、颜色、文字这类字段用 `set` 直接给目标值。\n"
         "- 改动要小而准，指令没要求的不动；指令说「所有 / 全部」就把每个符合的对象都列出来。\n"
-        "- 做不到的（要改图内数据元素、要新增对象、要改脚本或数据、看不懂、已经满足）不要硬凑操作，"
+        "- 做不到的（要改图内数据元素、要新增标注之外的东西、要改脚本或数据、要锚在图里数据点 / 元素上而这张图的 `measured` 是 false、看不懂、已经满足）不要硬凑操作，"
         "放进 `unhandled`，`reason` 写一句话说明原因。\n\n"
         "## 本次调用的方式\n"
         "- 一问一答，没有工具，不能提问。\n"
@@ -147,10 +224,12 @@ def build_prompt(
     *,
     max_chars: int,
     locale: str | None = None,
+    measured: dict | None = None,
 ) -> tuple[str, str]:
-    """→ `(system, user)`。快照太长时从对象表尾丢（`vector_objects_total` 如实写总数，模型看得出被截了）。"""
+    """→ `(system, user)`。快照太长时从对象表尾丢（`vector_objects_total` 如实写总数，模型看得出被截了）。
+    `measured`（`measure_scene` 的结果，可缺省）给了就把量过的子图场景一并放进 `<scene>`。"""
     system = system_prompt(locale)
-    scene = snapshot(canvas, selection)
+    scene = snapshot(canvas, selection, measured)
     sel = set(scene["selection"])
     keep = [o for o in scene["vector_objects"] if o["id"] in sel]
     rest = [o for o in scene["vector_objects"] if o["id"] not in sel]
@@ -194,7 +273,7 @@ def _dropped(i: int, op: object, exc: ve.EditError) -> dict:
     }
 
 
-def validate_ops(obj: object, canvas: dict) -> dict:
+def validate_ops(obj: object, canvas: dict, instruction: str | None = None, measure=None) -> dict:
     """模型的 JSON → `{ops: 过了干跑的操作, unhandled: [{reason, code?, op?}]}`。
 
     **整体形状不对**（不是对象 / `ops` 不是列表 / `unhandled` 不是列表）抛 `ValueError`（`call_structured` 当「没过校验」）。
@@ -207,13 +286,24 @@ def validate_ops(obj: object, canvas: dict) -> dict:
         raise ValueError("vector ops shape")
     objects = canvas.get("objects") or []
     page = la._page(canvas)  # noqa: SLF001
-    panels, _refs, _un = la.measure_panels(canvas, None, ve.unmeasured_panel)
+    # 子图要量：`add` 的数据锚点要这批描述的数据点（`ve._needs_panels`）；没给 `measure` 就只有外框（内存路径）
+    panels, _refs, unmeasured = la.measure_panels(
+        canvas,
+        ve._needs_panels(obj["ops"]),
+        measure or ve.unmeasured_panel,  # noqa: SLF001
+    )
     kept: list[dict] = []
     unhandled: list[dict] = []
     ops = obj["ops"]
     for i, op in enumerate(ops[:MAX_MODEL_OPS]):
         try:
-            ve.apply_ops(objects, [*kept, op], panels, page)
+            ve.apply_ops(
+                objects,
+                [*kept, op],
+                panels,
+                page,
+                context={"instruction": instruction, "confirmed": ()},
+            )
         except ve.EditError as exc:
             unhandled.append(_dropped(i, op, exc))
             continue
@@ -231,17 +321,29 @@ def validate_ops(obj: object, canvas: dict) -> dict:
         reason = u.get("reason") if isinstance(u, dict) else None
         if isinstance(reason, str) and reason.strip():
             unhandled.append({"reason": _clip(reason, MAX_REASON_CHARS)})
-    return {"ops": kept, "unhandled": unhandled[: MAX_UNHANDLED * 2]}
+    return {
+        "ops": kept,
+        "unhandled": unhandled[: MAX_UNHANDLED * 2],
+        "unmeasured": unmeasured,
+        "scene_fingerprint": vectorscene.scene_fingerprint(panels, page),
+    }
 
 
 # ------------------------------------------------------------------ 方案
 
 
-def plan(canvas: dict, ops: list, *, profile: dict | None = None) -> dict:
+def plan(
+    canvas: dict,
+    ops: list,
+    *,
+    profile: dict | None = None,
+    context: dict | None = None,
+    measure=None,
+) -> dict:
     """对内存里的画布算方案（不写盘）→ 方案卡要的键：`ok`、`errors`、`objects`（改后被动到的对象）、`deleted`、`order`、
     `echo`、`changes`、`checks`（核对结论）、`echo_digest`，另带 `reordered` / `layout_groups*` / `unverified` / `unmeasured`
     供「应用」时照前端同一规则落位。`ok: false` 时 `errors` 是 `[{code, index?, field?}]`（码见 `vectoredit.ERROR_CODES`，整批没动）。"""
-    res = ve.propose_memory(canvas, ops, profile=profile)
+    res = ve.propose_memory(canvas, ops, profile=profile, context=context, measure=measure)
     if res.get("objects") is None:  # 补丁本身就不合格（`_plan` 在这一步只回 errors）
         return {"ok": False, "errors": res["errors"], "unmeasured": res.get("unmeasured", {})}
     return {
@@ -259,6 +361,7 @@ def plan(canvas: dict, ops: list, *, profile: dict | None = None) -> dict:
         "layout_groups_dropped": res["layout_groups_dropped"],
         "unverified": res["unverified"],
         "unmeasured": res["unmeasured"],
+        "scene_fingerprint": res.get("scene_fingerprint"),
     }
 
 

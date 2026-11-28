@@ -691,3 +691,63 @@ it('部分勾选只发有改动行的步：原方案里没产生改动的步（�
   act(() => doc().undo())
   planOps.mockClear()
 })
+
+// ---------------------------------------------------------------- 3a：新增标注的依据与重算上下文
+const STAR = obj({ id: 'n_star', type: 'text', x: 5, y: 5, w: 4, h: 4, text: '**', sizePt: 8 })
+const ADD_RESULT: VectorEditResult = {
+  ...RESULT,
+  objects: [STAR, obj({ ...A1, strokePt: 0.75 })],
+  deleted: [],
+  order: ['p1', 't1', 'a1', 's1', 'n_star'],
+  echo: [],
+  changes: [
+    { id: 'n_star', added: true, depends_on: ['p1'], op: 0 },
+    { id: 'a1', field: 'strokePt', before: 0.5, after: 0.75, op: 1 },
+  ],
+  ops: [{ op: 'add', items: [] }, { op: 'set', id: 'a1' }],
+  unhandled: [],
+}
+
+it('新增标注依赖的子图被挪过：卡片是「图改过了」，应用不动文档；没挪就正常应用', async () => {
+  const key = await runToReady(ADD_RESULT)
+  render(<Live k={key} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('ready')
+  act(() =>
+    doc().commit(literal('挪子图'), (d) => {
+      ;(d.objects.find((o) => o.id === 'p1') as unknown as { x: number }).x = 7
+    }),
+  )
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCard).toBe('stale')
+  const before = JSON.stringify(doc().doc.objects)
+  let out = ''
+  act(() => {
+    out = useChangePlanStore.getState().apply(key)
+  })
+  expect(out).toBe('stale')
+  expect(JSON.stringify(doc().doc.objects)).toBe(before)
+})
+
+it('新增标注依赖的子图没动：正常应用，新对象落进画布，⌘Z 一步撤回', async () => {
+  const key = await runToReady(ADD_RESULT)
+  render(<Live k={key} />)
+  const before = ids()
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(ids()).toContain('n_star')
+  act(() => doc().undo())
+  expect(ids()).toEqual(before)
+})
+
+it('勾掉另一步重算：请求带上出发时的原话与 confirmed，已按原话收下的新增标注仍在、可应用', async () => {
+  const key = await runToReady(ADD_RESULT)
+  await openDialog(key)
+  planOps.mockResolvedValueOnce({ ...ADD_RESULT, objects: [STAR], changes: [], order: ['p1', 't1', 'a1', 's1', 'n_star'] })
+  act(() => boxes()[1].click()) // 勾掉「线宽」
+  await settleRecompute()
+  const ctx = planOps.mock.calls[0][2] as { instruction_text: string; confirmed: string[] }
+  expect(ctx.instruction_text).toBe('把标题放大、箭头加粗、删掉方框')
+  expect(ctx.confirmed).toEqual([])
+  expect(q<HTMLButtonElement>('[data-change-plan-confirm]')!.disabled).toBe(false)
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(ids()).toContain('n_star')
+  expect((doc().doc.objects.find((o) => o.id === 'a1') as unknown as { strokePt: number }).strokePt).toBe(0.5)
+})

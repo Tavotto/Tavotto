@@ -1,0 +1,3 @@
+## Agents can report a journal-guideline mismatch (asks you first)
+
+The Tavotto plugin for Codex / Claude Code gains `tavotto_report_journal_issue`: when the author guidelines you were given disagree with Tavotto's built-in journal catalog, an agent can send the maker a journal tip through the same channel as "Report a problem" in the app. It always asks you first — the first call only shows what would be sent (the journal, the catalog entry, a link and a short note; never your project, script or data) and nothing leaves your computer until you agree. Replies arrive in "My letters". Turn it off with `TAVOTTO_NO_CONTACT=1` or `TAVOTTO_NO_JOURNAL_SYNC=1`.

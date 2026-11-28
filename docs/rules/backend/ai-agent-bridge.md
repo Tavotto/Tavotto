@@ -336,7 +336,7 @@ order: 240
 - **图表脚手架如何消费 0178（`engine/chartrecipe.py`，ADR 0182 / #1877）**：单元格判据只认 `ai_data_figure.parse_cell` / `parse_date`——`chartdata` 不再自带数值正则；`NaN` 记缺失、`1_000` 记 1000、`Infinity` / 溢出记 `data_non_finite`，表格与网格上限 100,000 行 / 64 列（超出整表拒绝，`data_too_long` / `data_too_wide`）。合法性把 `ChartModel` 反推成 `FigureRecipe` 再跑 `validate_recipe`；表达不了的模型（image / 混合图元 / 多 x）记 `model_not_expressible`，不伪造配方。绘图值期望按脚手架实际画出的数组用 `ai_data_figure.digest` 算，gid 只取 `render_scaffold` 的 `roles[...]["primary_gid"]`（bar+yerr 是 `barseries_1`，不预测原生 index）；`errorbar` / `band` / `box` / `violin` 仍不可核（`ai_data_template.UNCHECKED_MARKS`），绝不折算成 verified。三类摘要（读到的字节 / 画出来的数值 / 模型结构身份）各留一个权威，不合并。看护 `tests/test_chart_data_cell_rules.py` / `tests/test_chart_recipe_bridge.py`。
 - **数据出图 v2 的出备选与落盘（`engine/ai_data_recipe.default_candidates`、`ai_data_propose.py`、`ai_data_task.py` 下半、`/api/ai/data-figure/*`，ADR 0178，实验开关后面）**：
   不调模型的整条流水（模型路径复用它）。`default_candidates(profile, table=, sheet=, confirmed=, hint=, values=, picks=)` → `Candidates | NeedsChoice`：列角色规则只有 `pick_table` / `_resolve_roles` 两处文字定义，
-  有歧义问、不猜，每个「不确定」有安全默认；`id_like` 永不当角色、没确认就没有 unit / 配对 / 轨迹；文案只走稳定码（`CANDIDATE_CODES` / `QUESTION_CODES` / `NOTHING_REASONS` / `DROP_REASONS`，前端 `ai:dataFigureV2.*`）。
+  有歧义问、不猜，每个「不确定」有安全默认；`id_like` 永不当角色、没确认就没有 unit / 配对 / 轨迹；行号列（`DataSummary.row_index`：名字在小闭集里**并且**取值恰是从 0 / 1 起逐行 +1，两条缺一不可，不是 `id_like`）默认不当 x / y 但 `options` 里仍可选（列名在 `_REPLICATE_NAMES` 闭集里的重复号列同样处理，且不算「像条件」的线索）；大表默认备选全被「大表不支持」拒掉时，`_large_fallback_x` 带一个确定的横轴重算一次（只出趋势 / 关系类，仍全经校验；用户对横轴表过态则不走）；默认横轴只从「像条件 / 顺序」的数值列（`DataSummary.design`：块内递增块间重置 / 少量重复水平（含按组排好序的），只看取值结构、不看列名；整列单调本身不当线索，线索打架不用）里挑、默认纵轴只从「像测量」的列里挑，用户点名与 `options` 不受影响——ADR 0178 修订 2026-11-27；文案只走稳定码（`CANDIDATE_CODES` / `QUESTION_CODES` / `NOTHING_REASONS` / `DROP_REASONS`，前端 `ai:dataFigureV2.*`）。
   `ai_data_propose.propose` 把每个备选的脚本 + 公共模块 + 数据字节副本放进 `data_dir()/cache/ai_data_candidates/<session>/`（独立小项目，safe worker 真渲染，`write_roots` 只开候选目录；**用户文件夹零写入**，
   不用影子脚本是因为公共模块要在显示目录里 import，见 ADR 0178 对照；解释器先用项目已定下的（`peek_worker_python` + `pinned_interpreter`），失败静默回退默认链条并留 `interpreter_fallback`），候选数据指纹与 `expected_fingerprints` 对拍，单个失败只少一张卡、全失败回 `{kind:"nothing"}`；会话内存里、TTL 30 分钟、≤ 6 个、放弃即删（提交后保留到 TTL，同一备选重复提交靠 rid 幂等、换请求号建 `_2`）、同会话一份数据副本、
   删除不用 `ignore_errors`；会话属于项目。落盘 = 任务类型 `data_to_figure_v2`（`TemplateExecutorV2`）：只回传 `{session, id}`，项目锁内按「目录 → 公共模块（新建 / 字节相同复用 / 不同则 `common_module_conflict` 什么都不写）→ 脚本」
@@ -1084,6 +1084,11 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
 - **整版预览**：`POST /api/change-plans/layout-preview`（`{canvas: {page_w_mm, page_h_mm, objects}}` → PNG）只给一键排版卡出图，经 `_export_png_bytes`（与外部审阅出排版图共用）；不写导出目录、不登记、不提交。
 - **矢量编辑方案（ADR 0212 第 6a 期，草案实现）**：`POST /api/vector-edit/plan` + `GET /api/vector-edit/plan/<id>`，只算不写、**不读盘**（后端读不到桌面内存里的文档，输入是前端给的画布 `{canvas}`；写回是前端自己的一次提交）。两种请求：`{canvas, ops}` 同步回方案（`vectorplan.plan` → `vectoredit.propose_memory`，即读盘那条 `propose` 的同一个 `_plan`，子图量不了只给外框）；`{canvas, instruction, selection?, connection?…}` 回 202，后台线程里 `changeplan.ask_vector_edits`（与 `ask_model` 共用 `_structured`：同一条连接解析、同一组稳定码，不新增执行器工具、不新增调用 `ai_structured` 的模块）问一次无工具结构化调用，输出 `{ops, unhandled}`，**每条操作连同前面收下的先过 `vectoredit.apply_ops` 干跑**，不合格的整条进 `unhandled`（`{reason, code?, op?}`）不拖垮整次；结果只放进程内存（`vectorplan.keep_result`，TTL + 条数上限）。补丁词汇说明与错误用语只有一份（`vectoredit.OPS_DOC` / `ERROR_WORDS`，插件 `tavotto_layout_edit_*` 与助手系统提示共用；加操作改这里与 `apply_ops`）。坏补丁 = 200 + `ok:false` + `errors:[{code, index?, field?}]`（码见 `vectoredit.ERROR_CODES`），请求形状不对 = 400 `invalid_change_plan`。会话认证走全局 guard。看护 `tests/test_vector_edit_plan.py`。
 
+- **矢量核对量画出来的面，「改前就有」的豁免带上位置并按补丁后状态重判（错题本 L-181 升级，2026-11-28）。** 出页、遮挡、
+  包含都按真实几何量：线宽、箭头头、旋转、Bézier 手柄、多行文字高度都算进去，外框相同不等于包住（空心椭圆的边会穿过子图）；
+  豁免要比对象、检查项与位置，补丁落地后重算余量。为什么：求解只量中心线、多行按一行、旋转不换算锚点，「改前就有」只比检查项，
+  另一侧出页也被放过（#2201、#2220、#2254，六条 P1）；2026-11-28 「框住子图的外框」只比外框就豁免子图文字遮挡，评审报 P1（#2336）。
+  看护 `tests/test_vectorcheck.py`、`tests/test_vector_edit_style_check.py`。
 
 ## 数据准备（`data_prepare`，ADR 0215 第一期·后端内核，2026-11-27，无调用点）
 

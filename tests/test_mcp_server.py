@@ -212,6 +212,9 @@ def test_tools_list_shape():
         "tavotto_layout_annotate_undo",
         "tavotto_layout_edit_plan",  # 改已有矢量对象（ADR 0212 第 5 期）
         "tavotto_layout_edit_apply",
+        "tavotto_suggest_plan",  # 建议待办（ADR 0214 第 3 期）
+        "tavotto_suggest_apply",
+        "tavotto_suggest_status",
     ]
     for t in tools:
         assert t["description"] and t["inputSchema"]["type"] == "object"

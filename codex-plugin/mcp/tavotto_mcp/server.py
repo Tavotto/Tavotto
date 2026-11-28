@@ -664,6 +664,8 @@ def _tools() -> list[dict]:
         )
     if bridge.journal_catalog_enabled():
         _add_journal_catalog_tools(tools, by_name)
+    if bridge.journal_report_available():
+        tools.append(_report_journal_issue_tool())
     if bridge.review_share_available():
         tools.append(_share_review_tool())
     if bridge.review_feedback_available():
@@ -672,6 +674,8 @@ def _tools() -> list[dict]:
         tools.extend(_layout_annotate_tools())
     if bridge.layout_edit_available():
         tools.extend(_layout_edit_tools())
+    if bridge.suggest_available():
+        tools.extend(_suggest_tools())
     return tools
 
 
@@ -694,6 +698,7 @@ _LAYOUT_ITEMS = {
         "位置一律写锚点 {anchor: {data|element|panel|item: …}, offset_mm?}——"
         "data = {panel, axes, x, y}（数据坐标，引擎从这次导出实测）、element = {panel, gid, point}（场景里的元素）、"
         "panel = {id, point}（子图框的方位点 nw/n/ne/w/center/e/sw/s/se）、item = {name, point}（本批里另一个元素）。"
+        "box 例：{kind: box, name: frame, fit: [{panel: {id: P1}}], padding_mm: 1.5}（fit 是目标列表，每个目标是单键对象）。"
         "显著性星号 / n.s. / p 值 / n 必须写 provenance: user（用户说的）或 data（数据里算出来的），否则整批要用户确认。"
         "全文见 tavotto_guide section=layout-annotate。"
     ),
@@ -882,6 +887,103 @@ def _layout_edit_tools() -> list[dict]:
     ]
 
 
+def _suggest_tools() -> list[dict]:
+    """建议待办（ADR 0214 第 3 期）：宿主自己想好的建议 → 可勾选的待办方案（候选渲染、同一套守卫）→ 用户勾好后写入。"""
+    sid = {"type": "string", "description": "tavotto_open_figure 回的 session_id。"}
+    pid = {"type": "string", "description": "tavotto_suggest_plan 回的 plan_id。"}
+    change = {
+        "type": "object",
+        "properties": {
+            "gid": {"type": "string", "description": "manifest 里元素的 gid。"},
+            "prop": {"type": "string", "description": "该元素 editable 里的属性名。"},
+            "value": {"description": "新值，类型与 tavotto_apply_overrides 的 value 相同。"},
+        },
+        "required": ["gid", "prop", "value"],
+        "additionalProperties": False,
+    }
+    todo = {
+        "type": "object",
+        "properties": {
+            "label": {
+                "type": "string",
+                "description": "一句话说做什么（读图的人看得懂，不写参数名），如「纵轴标题加单位 (min)」。",
+            },
+            "why": {"type": "string", "description": "一个短分句说为什么，可省。"},
+            "kind": {
+                "type": "string",
+                "enum": ["figure", "script"],
+                "description": "figure = 用 changes 在图内改；script = 要改脚本 / 数据（不带 changes，用户确认后由你自己改脚本）。",
+            },
+            "changes": {"type": "array", "items": change, "description": "figure 待办的图内修改。"},
+        },
+        "required": ["label", "kind"],
+        "additionalProperties": False,
+    }
+    return [
+        {
+            "name": "tavotto_suggest_plan",
+            "title": "把建议列成待办（不写入）",
+            "description": (
+                "用户要你看看图有什么能改进、或说「按你的建议改」时用：把你的建议交进来，每条一个待办（做什么 / 为什么 / 图内还是要改脚本）。"
+                "不写会话：后端与 Tavotto 改图助手同一套校验与守卫（藏数据的坐标范围、未授权改图幅、连续曲线逐点加标记会被拦下）、"
+                "把勾满时的修改后图画出来，逐条回 results（ok / reason）；勾满后带出新 warning 时整份方案不出（change_plan_render_failed），拆小再交。**把 todos 逐条列给用户、问要改哪几条**，"
+                "再用 tavotto_suggest_apply 写入；用户没点头不要写。results 里 ok=false 的告诉用户原因，不要偷偷换个改法。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": sid,
+                    "todos": {"type": "array", "items": todo, "minItems": 1, "maxItems": 12},
+                    "user_request": {
+                        "type": "string",
+                        "description": "用户这次的原话（可省）。判断用户有没有要求改尺寸用它；没给就按各条待办的 label 判。",
+                    },
+                },
+                "required": ["session_id", "todos"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_suggest_apply",
+            "title": "按用户勾的待办写入",
+            "description": (
+                "用户确认要改的那几条（tavotto_suggest_plan 回的 todos[].key）：图内待办一次写进会话；"
+                "script 待办原样回在 script_todos 里，由你接着改脚本（改完 .py 下一次调用会按新脚本重跑同一个会话）。"
+                "出方案之后图又被改过会拒绝（suggest_plan_stale），重新出方案。写完把改了哪几条告诉用户。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": sid,
+                    "plan_id": pid,
+                    "keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "用户要改的待办 key。",
+                    },
+                    "user_authorized": {
+                        "type": "boolean",
+                        "description": "会话已按修改约定规范化过时才需要：用户明确同意改动超出约定（同 tavotto_apply_overrides）。",
+                    },
+                },
+                "required": ["session_id", "plan_id", "keys"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "tavotto_suggest_status",
+            "title": "查建议方案的状态",
+            "description": "只读：一份建议方案的待办、是否已应用（用了哪几条、谁应用的）、出方案之后图有没有被改过（stale）。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"session_id": sid, "plan_id": pid},
+                "required": ["session_id", "plan_id"],
+                "additionalProperties": False,
+            },
+        },
+    ]
+
+
 #: 只在期刊库总开关打开时才出现在 tools/list 的工具（处理器在 HANDLERS，关着时调用回 `journal_catalog_disabled`）
 JOURNAL_CATALOG_TOOLS = ("tavotto_list_journals", "tavotto_get_journal_facts")
 #: 带手写 `journal` 覆盖、因而也认 `journal_id` 的工具
@@ -891,6 +993,64 @@ JOURNAL_ID_TOOLS = (
     "tavotto_preflight",
     "tavotto_export",
 )
+
+
+def _report_journal_issue_tool() -> dict:
+    """`tavotto_report_journal_issue`（ADR 0213 三期）：期刊库开关、「联系作者」与期刊联网都开着才出现。"""
+    return {
+        "name": "tavotto_report_journal_issue",
+        "title": "提交期刊线索（先问用户）",
+        "description": (
+            "投稿须知（用户给的编辑部要求 / 期刊网页）和内置期刊目录不一致时，替用户向 Tavotto 作者提交一条**期刊线索**："
+            "type=wrong（目录某条不对）、missing（目录里没有这本刊）、editor（编辑部要求与目录不符，body 里贴编辑部原话）。"
+            "只给证据（原文链接 url、问题描述 body），**不要给数值**；目录现值、出处与版本由本机目录取，rule_key / source_id 必须取自目录"
+            "（tavotto_get_journal_facts / 出处卡），不要编。**永远先问用户**：第一次调用不带 explicit_confirm，只回将要发送的内容摘要、"
+            "send_token 与一个 ask_user 的 next，**不联网**；用户明确同意后，带 explicit_confirm=true 和同一个 send_token 再调一次才真正发送"
+            "（内容改过令牌就失效，要重新问）。成功回编号；作者会核对出版社原文，结论回信到应用的「我的来信」。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": list(bridge.JOURNAL_REPORT_TYPES)},
+                "journal_id": {
+                    "type": "string",
+                    "description": "目录里的期刊 id（wrong / editor 必填；先 tavotto_list_journals）。",
+                },
+                "rule_key": {
+                    "type": "string",
+                    "description": "wrong 必填：目录里那一条规则的键（如 min_line_width_pt），只能取自目录。",
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "wrong 可选：目录里那一条的出处 id（v2 来源带 `v2:` 前缀原样给）；不给就取本机目录当前那条。",
+                },
+                "issue": {
+                    "type": "string",
+                    "enum": list(bridge.JOURNAL_REPORT_ISSUES),
+                    "description": "只随 wrong：wrong_value 数值不对 / updated 期刊已更新 / link_broken 出处打不开 / other。",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "出版社原文链接（https，≤2000 字，不含空白与账号）。",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "问题描述 / 原文摘录 / 编辑部原话（editor 必填）；只写证据，不写要改成的数值。",
+                },
+                "query": {"type": "string", "description": "missing：期刊名（≤120 字）。"},
+                "explicit_confirm": {
+                    "type": "boolean",
+                    "description": "用户明确说「发送」后才置 true；服务端绝不代填，不带它只预览、不联网。",
+                },
+                "send_token": {
+                    "type": "string",
+                    "description": "第一次调用回包里的 send_token；与 explicit_confirm 一起带，内容变了就对不上。",
+                },
+            },
+            "required": ["type"],
+            "additionalProperties": False,
+        },
+    }
 
 
 def _share_review_tool() -> dict:
@@ -1965,6 +2125,49 @@ def _call_share_review(args: dict) -> dict:
     return {"content": content, "structuredContent": out}
 
 
+def _call_report_journal_issue(args: dict) -> dict:
+    bridge.require_journal_report_engine()
+    out = bridge.report_journal_issue(
+        type=args.get("type"),
+        journal_id=args.get("journal_id"),
+        rule_key=args.get("rule_key"),
+        source_id=args.get("source_id"),
+        issue=args.get("issue"),
+        url=args.get("url"),
+        body=args.get("body"),
+        query=args.get("query"),
+        explicit_confirm=bool(args.get("explicit_confirm")),
+        send_token=args.get("send_token"),
+    )
+    if out["status"] == "needs_confirmation":
+        out["next"] = nextstep.journal_report_confirm(out, args)
+        w = out["will_send"]
+        lines = [
+            "还没发送。将要提交的期刊线索：",
+            "；".join(
+                f"{k}={w[k]}"
+                for k in ("type", "journal_label", "rule_key", "current", "issue", "url", "query")
+                if k in w
+            ),
+            f"正文（{w['body_chars']} 字）：{w['body_preview']}"
+            if w["body_chars"]
+            else "没有正文。",
+            out["audience"] + "没有任何内容离开本机；请先问用户是否发送。",
+        ]
+        if out.get("token_stale"):
+            lines.insert(0, "内容和上次确认的不一样了：令牌已失效，要重新问用户。")
+    elif out["status"] == "in_progress":
+        out["next"] = nextstep.tool_step(
+            "tavotto_report_journal_issue",
+            args,
+            "还在发送：稍后用同样的参数再调一次取结果，不会重复发。",
+        )
+        lines = ["还在发送，稍后用同样的参数再调一次取结果（不会重复发）。"]
+    else:
+        lines = [f"已提交（编号 {out['message_id']}）。{out['note']}"]
+    return {"content": _text(*lines), "structuredContent": out}
+
+
 def _review_feedback_lines(out: dict) -> list[str]:
     if out.get("status") == "no_share":
         return ["这张图还没有审阅链接。用户想发给别人看时，用 tavotto_share_review（会先问用户）。"]
@@ -2112,7 +2315,15 @@ def _call_layout_plan(args: dict) -> dict:
     pv = out.pop("preview", None)
     lines = [e["text"] for e in out.get("echo") or []]
     if out.get("errors") and not out.get("echo"):
-        lines.insert(0, "方案没出来：" + "、".join(str(e.get("code")) for e in out["errors"]))
+        lines.insert(
+            0,
+            "方案没出来："
+            + "、".join(
+                str(e.get("code"))
+                + (f"（{e['item']}：{e['detail']}）" if e.get("item") and e.get("detail") else "")
+                for e in out["errors"]
+            ),
+        )
     elif out.get("failed"):
         lines.insert(
             0,
@@ -2181,6 +2392,70 @@ def _edit_error_lines(errors: list) -> list[str]:
         )
         out.append(f"{where}{words.get(code, code)}：{code}")
     return out
+
+
+_SUGGEST_REASONS = {
+    "hides_data": "会藏掉数据（坐标范围比数据窄）",
+    "size_locked": "用户没要求改尺寸",
+    "dense_curve": "连续曲线逐点加标记会糊成一串",
+    "unknown_element": "图里没有这个元素",
+    "not_editable": "这个属性在图内改不了",
+    "bad_value": "值不合法",
+    "conflict": "和前面的待办改同一处",
+    "over_limit": "改动太多",
+    "no_effect": "改了也看不出变化",
+    "not_applied": "这条修改写不进去",
+}
+
+
+def _call_suggest_plan(args: dict) -> dict:
+    out = bridge.suggest_plan(
+        str(args.get("session_id") or ""), args.get("todos"), user_request=args.get("user_request")
+    )
+    pv = out.pop("preview")
+    lines = ["建议待办（先逐条问用户要改哪几条，再 tavotto_suggest_apply）："]
+    for t in out["todos"]:
+        tag = "要改脚本" if t["kind"] == "script" else "图内"
+        lines.append(
+            f"- [{t['key']}] {t['label']}"
+            + (f"——{t['why']}" if t.get("why") else "")
+            + f"（{tag}）"
+        )
+    bad = [r for r in out["results"] if not r["ok"]]
+    if bad:
+        lines.append("没列进待办（照实告诉用户）：")
+        lines.extend(
+            f"- 第 {r['index']} 条「{r['label']}」：{_SUGGEST_REASONS.get(r['reason'], r['reason'])}"
+            for r in bad
+        )
+    content = _text(*lines)
+    content.append({"type": "image", "data": pv["png_base64"], "mimeType": "image/png"})
+    out["preview"] = {k: v for k, v in pv.items() if k != "png_base64"}
+    return {"content": content, "structuredContent": out}
+
+
+def _call_suggest_apply(args: dict) -> dict:
+    out = bridge.suggest_apply(
+        str(args.get("session_id") or ""),
+        args.get("plan_id"),
+        args.get("keys"),
+        user_authorized=args.get("user_authorized") is True,
+    )
+    lines = [f"已在图内改好：{'、'.join(out['applied'])}" if out["applied"] else "图内没有要改的。"]
+    if out["script_todos"]:
+        lines.append(
+            "下面这些要改脚本，接着由你改（改前告诉用户）："
+            + "、".join(f"[{t['key']}] {t['label']}" for t in out["script_todos"])
+        )
+    return {"content": _text(*lines), "structuredContent": out}
+
+
+def _call_suggest_status(args: dict) -> dict:
+    out = bridge.suggest_status(str(args.get("session_id") or ""), args.get("plan_id"))
+    head = {"applied": "已应用", "proposed": "还没应用"}[out["state"]]
+    if out["stale"]:
+        head += "；出方案之后图又被改过，要用就重新出方案"
+    return {"content": _text(head), "structuredContent": out}
 
 
 def _call_layout_edit_plan(args: dict) -> dict:
@@ -3057,6 +3332,9 @@ HANDLERS = {
     # 外部审阅分享（ADR 0205）：受 `reviewshare.enabled()` 管（硬关 / 旧引擎 = 不出现、调用回 `review_share_disabled`）；
     # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
     "tavotto_share_review": _call_share_review,
+    # 提交期刊线索（ADR 0213 三期）：期刊库开关 + 「联系作者」 + 期刊联网都开着才出现，关着调用回 `journal_report_disabled`；
+    # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
+    "tavotto_report_journal_issue": _call_report_journal_issue,
     # 二期（读意见 / 回复 / 标记已处理）：同一个开关、同样不进 `usage.TOOLS`
     "tavotto_review_feedback": _call_review_feedback,
     "tavotto_reply_review": _call_reply_review,
@@ -3069,6 +3347,11 @@ HANDLERS = {
     "tavotto_layout_annotate_undo": _call_layout_undo,
     "tavotto_layout_edit_plan": _call_layout_edit_plan,
     "tavotto_layout_edit_apply": _call_layout_edit_apply,
+    # 建议待办（ADR 0214 第 3 期）：引擎没有这条流程时不出现、调用回 `suggest_unavailable`；
+    # 同样**不进** `usage.TOOLS`（走 `other` 桶，不升同意版本）
+    "tavotto_suggest_plan": _call_suggest_plan,
+    "tavotto_suggest_apply": _call_suggest_apply,
+    "tavotto_suggest_status": _call_suggest_status,
 }
 
 #: 结果里挂 UI 的工具（与 `_tools()` 的 `_meta` 一致）
@@ -3241,6 +3524,89 @@ def _prepend_rerun_note(name: str, args: dict, result: dict) -> None:
     content[0]["text"] = _rerun_note(sid, rerun) + "\n" + content[0]["text"]
 
 
+#: 把 `structuredContent` 的精简副本也放进 `content`（MCP 规范：带 structuredContent 的工具也要在 content 里给出同样的信息）。
+#: 只给 `content` 的宿主（opencode 一类）拿不到 `base_revision` / `echo_digest` / 对象 id / `errors` 就走不通下一步（评测
+#: `scripts/eval/vector_edit/` 实测：编辑 / 标注工具原样接 opencode 全部超时）。体积有上限，大字段（SVG、manifest、位图）一律不进。
+#: 跳过的工具：画布两条有自己的回执预算（文字里已带会话把手）；审阅意见的 `content` 本身就是按预算写好的摘要（见 `_review_feedback_lines`）。
+#: 失败结果也不镜像：`code` 只进 `structuredContent` 是有意的（`content` 是念给用户听的，见 `call_tool` 的失败分支），
+#: 失败文字里已有下一步（`next` / 原因）。
+MIRROR_SKIP_TOOLS = ("tavotto_open_figure", "tavotto_apply_overrides", "tavotto_review_feedback")
+MIRROR_MAX_CHARS = 16000
+MIRROR_BIG_KEYS = frozenset(
+    {"svg", "manifest", "preview_png_base64", "preview_png_manifest", "png_base64", "traceback"}
+)
+MIRROR_STR_CHARS = 400
+MIRROR_LIST_ITEMS = 40
+MIRROR_LABEL = "structuredContent（机器可读，下一步要用的值在这里）: "
+
+
+def _mirror_shrink(v: object, depth: int = 0, list_items: int = MIRROR_LIST_ITEMS) -> object:
+    if isinstance(v, dict):
+        if depth >= 7:
+            return "…"
+        return {
+            k: _mirror_shrink(x, depth + 1, list_items)
+            for k, x in v.items()
+            if k not in MIRROR_BIG_KEYS
+        }
+    if isinstance(v, list):
+        out = [_mirror_shrink(x, depth + 1, list_items) for x in v[:list_items]]
+        if len(v) > list_items:
+            out.append(f"…（还有 {len(v) - list_items} 项）")
+        return out
+    if isinstance(v, str) and len(v) > MIRROR_STR_CHARS:
+        return v[:MIRROR_STR_CHARS] + "…"
+    return v
+
+
+def _mirror_text(body: dict) -> str:
+    """精简副本的文字：先按默认上限缩，超了逐步少列、最后只留小字段（键永远在，大字段标 `elided`）。"""
+    for items in (MIRROR_LIST_ITEMS, 15, 5):
+        text = json.dumps(_mirror_shrink(body, 0, items), ensure_ascii=False, separators=(",", ":"))
+        if len(text) <= MIRROR_MAX_CHARS:
+            return text
+    small, elided = {}, []
+    for k, v in body.items():
+        t = json.dumps(_mirror_shrink(v, 1, 5), ensure_ascii=False, separators=(",", ":"))
+        if len(t) <= 600 and k not in MIRROR_BIG_KEYS:
+            small[k] = _mirror_shrink(v, 1, 5)
+        else:
+            elided.append(k)
+    small["elided"] = elided
+    return json.dumps(small, ensure_ascii=False, separators=(",", ":"))[:MIRROR_MAX_CHARS]
+
+
+def _content_already_has(content: object, body: dict) -> bool:
+    """`content` 里有没有一个文字块本身就是整份 `body` 的 JSON（解析后相等）。"""
+    for block in content if isinstance(content, list) else ():
+        text = block.get("text") if isinstance(block, dict) else None
+        if not isinstance(text, str) or not text.lstrip().startswith("{"):
+            continue
+        try:
+            if json.loads(text) == body:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _mirror_structured(name: str, result: dict) -> dict:
+    """结果带 `structuredContent` 就在 `content` 末尾追加一个只给助手看的文字块（原有文字块一字不动）。"""
+    body = result.get("structuredContent")
+    if name in MIRROR_SKIP_TOOLS or not isinstance(body, dict) or not body:
+        return result
+    if _content_already_has(result.get("content"), body):
+        # 原有文字已经是整份 structuredContent（如期刊事实分页）：再加一份只会重复，还会撑破它自己的体积预算
+        return result
+    block = {
+        "type": "text",
+        "text": MIRROR_LABEL + _mirror_text(body),
+        "annotations": {"audience": ["assistant"]},
+    }
+    result["content"] = [*(result.get("content") or []), block]
+    return result
+
+
 def call_tool(name: str, args: dict) -> dict:
     handler = HANDLERS.get(name)
     if handler is None:
@@ -3335,7 +3701,7 @@ def call_tool(name: str, args: dict) -> dict:
             # 配置路径可以任意长；摘要保留 available / code，避免把手本身越过预算。
             body["elided"]["fields"].append("canvas_ui.reason")
         fit_inline_budget(result, APPLY_SUMMARY_BUDGET_BYTES)
-    return result
+    return _mirror_structured(name, result)
 
 
 def _answered_without_a_person(result: dict, answered_in: float) -> bool:

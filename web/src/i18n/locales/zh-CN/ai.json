@@ -787,7 +787,11 @@
     "confirm": {
       "title": "需要你确认",
       "join": "、",
-      "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
+      "short": {
+        "sd": "SD",
+        "sem": "SEM",
+        "ci95": "95% CI"
+      },
       "error": "误差线",
       "errorBand": "误差带",
       "design": "重复测量",
@@ -954,6 +958,26 @@
       "generatingVector": "正在改选中的对象…",
       "vectorKernel": "这台电脑上缺一个组件，合并、偏移、轮廓化这类改动做不了，图没有改动"
     },
+    "todo": {
+      "title": "建议",
+      "apply_other": "改这 {{count}} 项",
+      "none": "一项都没勾",
+      "compare": "对比原图",
+      "count_other": "{{count}} 项",
+      "scriptTag": "要改脚本",
+      "scriptTip": "这几项要改图的 Python 脚本，改前会备份，可以撤销",
+      "done_other": "已按建议改了 {{count}} 项",
+      "skipped": "没改：{{items}}",
+      "failed": "「{{item}}」没做成：{{reason}}",
+      "listLabel": "建议的待办",
+      "runningN": "正在改 {{done}}/{{total}}…",
+      "added": "新加",
+      "add": "再加一条…",
+      "addPlaceholder": "比如：图例去掉边框",
+      "addFailed": "这一条没加上，再试一次",
+      "toTodos": "把这些建议写成待办",
+      "pickJournal": "选期刊"
+    },
     "dialog": {
       "title": "修改方案",
       "compareLabel": "对比方式",
@@ -1028,6 +1052,9 @@
       "no_effect": "改了也看不出变化，这次没动",
       "not_addressed": "这条没有处理到",
       "merged_log": "范围并进了改对数轴那一条",
+      "hides_data": "这样改会把数据藏起来，这次没动",
+      "size_locked": "图幅受期刊栏宽约束，这次没动",
+      "dense_curve": "这是连续曲线，逐点加标记会糊成一串，这次没动",
       "unclearAssistant": "指令不够具体，这次没动",
       "log_limit_declined": "对数轴下限没改，这次没动",
       "vector": {

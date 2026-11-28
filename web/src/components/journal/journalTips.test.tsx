@@ -49,6 +49,9 @@ import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { emptyProject } from '@/types/document'
 import { JournalPicker } from './JournalPicker'
 import { SourceButton } from './SourceButton'
+import { ProblemPanel } from '@/components/left/ProblemPanel'
+import { ConfirmGroup } from '@/components/left/ProblemTreeRows'
+import { selectJournal } from '@/store/actions'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -434,5 +437,126 @@ describe('Codex #2310', () => {
     for (const part of ['Nature', '位图分辨率', '300 dpi', label('issue.updated'), '官网现在写 600 dpi']) {
       expect(wrong).toContain(part)
     }
+  })
+})
+
+describe('问题页底部的「反馈期刊规范问题」入口', () => {
+  const jt = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
+  const openPanel = async () => {
+    selectJournal('fx-alpha')
+    await mount(
+      <div style={{ display: 'flex', height: 600, flexDirection: 'column' }}>
+        <ProblemPanel />
+      </div>,
+    )
+  }
+
+  it('常驻在面板最底部（没有「需要你确认」组时也在），文案照界面原文；点开是编辑部形态的窗', async () => {
+    await openPanel()
+    expect(q('[data-confirm-group]')).toBeNull()
+    const link = q('[data-editor-tip]')!
+    expect(link.textContent).toBe('反馈期刊规范问题')
+    expect(link.tagName).toBe('BUTTON')
+    // 在整棵树之后、面板的最后一个子节点里
+    const panel = link.closest('[data-editor-tip]')!.parentElement!.parentElement!
+    expect(panel.lastElementChild).toBe(link.parentElement)
+    await click(link)
+    await waitTip()
+    const d = q('[data-dialog="journal-tip"]')!
+    expect(d.textContent).toContain(jt('title.wrong'))
+    expect(q('[data-journal-tip-about]')!.textContent).toBe('Fixture Alpha') // 只写刊名
+    // 只有：原话、截图 / PDF、回信邮箱
+    expect(q('[data-contact-text]')!.getAttribute('placeholder')).toBe(jt('editorQuotePlaceholder'))
+    expect(d.textContent).toContain(jt('editorQuoteLabel'))
+    expect(q('[data-contact-pick]')!.textContent).toBe(jt('attach'))
+    expect((q('[data-contact-email]') as HTMLInputElement).placeholder).toBe(jt('editorEmail'))
+    expect(q('[data-journal-tip-entry]')).toBeNull()
+    expect(q('[data-testid="journal-tip-issue"]')).toBeNull()
+    expect(q('[data-contact-journal-url]')).toBeNull()
+    expect(q('[data-journal-tip-name]')).toBeNull()
+    expect(q('[data-contact-send]')!.textContent).toBe(jt('submit'))
+    expect(q('[data-contact-dismiss]')!.textContent).toBe(jt('cancel'))
+  })
+
+  it('「需要你确认」组里不再有这个入口', async () => {
+    const SRC = { url: 'https://example.invalid/g', kind: 'html' as const, retrieved: '2026-11-15', coverage: 'journal_specific' as const }
+    await mount(
+      <ul>
+        <ConfirmGroup
+          rows={[{ id: 'c1', subject: 'min_line_width', relation: 'gte', value: 2, unit: 'pt', condition: '', quote: 'q', strength: 'recommended', stage: 'unknown', source: SRC }]}
+          depth={0}
+          journalId="fx-alpha"
+          journal="Fixture Alpha"
+        />
+      </ul>,
+    )
+    await click(q('[data-confirm-group-toggle]'))
+    expect(q('[data-confirm-row]')).not.toBeNull()
+    expect(q('[data-editor-tip]')).toBeNull()
+  })
+
+  it('门槛不满足就不出现：没绑期刊 / 联系作者没开 / 引擎关了期刊联网 / 期刊入口常量关', async () => {
+    await mount(<ProblemPanel />) // 没绑期刊
+    expect(q('[data-editor-tip]')).toBeNull()
+    for (const cap of [null, { ...CAP, journal_tips: false }, { ...CAP, journal_tips: undefined }]) {
+      setCap(cap)
+      await openPanel()
+      expect(q('[data-editor-tip]')).toBeNull()
+    }
+    setCap(CAP)
+    uiOn.value = false
+    await openPanel()
+    expect(q('[data-editor-tip]')).toBeNull()
+  })
+
+  it('发出去的 journal 头只有 type / journal_id / journal_label / catalog，没有 issue / 链接 / 规则键；正文可空', async () => {
+    await openPanel()
+    await click(q('[data-editor-tip]'))
+    await waitTip()
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'Please redraw.')
+    await click(q('[data-contact-send]'))
+    expect(sendContact).toHaveBeenCalledTimes(1)
+    const [meta] = vi.mocked(sendContact).mock.calls[0]
+    expect(Object.keys(meta.journal!).sort()).toEqual(['catalog', 'journal_id', 'journal_label', 'type'])
+    expect(meta.journal).toMatchObject({ type: 'editor', journal_id: 'fx-alpha', journal_label: 'Fixture Alpha' })
+    expect(meta.body).toBe('Please redraw.')
+  })
+
+  it('原话和附件都空时「提交反馈」禁用，store 的 send 也不发；写了原话或加了附件就可发', async () => {
+    await openPanel()
+    await click(q('[data-editor-tip]'))
+    await waitTip()
+    const send = () => q('[data-contact-send]') as HTMLButtonElement
+    expect(send().disabled).toBe(true)
+    await act(async () => useContactStore.getState().send())
+    expect(sendContact).not.toHaveBeenCalled()
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, '  ')
+    expect(send().disabled).toBe(true)
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'x')
+    expect(send().disabled).toBe(false)
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, '')
+    expect(send().disabled).toBe(true)
+    await act(async () => useContactStore.getState().addFiles([new File(['x'], 'a.png', { type: 'image/png' })]))
+    expect(send().disabled).toBe(false)
+  })
+
+  it('填了原话随正文发出；复制内容有刊名与原话，不为空', async () => {
+    await openPanel()
+    await click(q('[data-editor-tip]'))
+    await waitTip()
+    await typeInto(q('[data-contact-text]') as HTMLTextAreaElement, 'Please redraw at 600 dpi.')
+    await click(q('[data-contact-send]'))
+    expect(vi.mocked(sendContact).mock.calls[0][0].body).toBe('Please redraw at 600 dpi.')
+    const label = (k: string) => t(`journalTip.${k}`, { ns: 'dialogs' })
+    const text = journalTipText(
+      { type: 'editor', journalId: 'fx-alpha', journalLabel: 'Fixture Press' },
+      { ...EMPTY_DRAFT },
+      label,
+    )
+    expect(text).toContain('Fixture Press')
+    expect(text).toContain(label('editorTag'))
+    expect(
+      journalTipText({ type: 'editor', journalId: 'fx-alpha' }, { ...EMPTY_DRAFT, body: 'Please redraw' }, label),
+    ).toContain('Please redraw')
   })
 })

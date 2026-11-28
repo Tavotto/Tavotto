@@ -679,6 +679,11 @@ figure changes when you press *Apply*.
   points at), the table of elements as they look after the previous version, and
   a short list of what the previous version changed, to the same AI connection.
   The notes themselves are never uploaded to the review service.
+* **Suggestions in the figure assistant.** When you ask the assistant for suggestions
+  and then say "do what you suggested", the previous assistant answer and your
+  previous message in that figure's conversation (together at most 2,000
+  characters) are sent to the AI connection you chose, so the follow-up can be
+  understood; nothing earlier is sent.
 * **Comments that need a script change (only when you press the button).** If a
   comment can only be done by editing the script, the plan card offers *Edit the
   script for the rest*. Only when you press it, the text of those comments (still
@@ -716,7 +721,14 @@ the plan step has said so.
   shapes and paths drawn on the canvas (not the figures inside it), it sends the AI
   connection you chose a summary of those objects on the canvas: their text, positions,
   sizes and styles, and the anchor points of paths, together with your instruction and
-  which objects you had selected. Figure data, scripts and project files are not sent.
+  which objects you had selected. To place new annotations (a frame, a panel label, a
+  bracket, an arrow) the summary also lists where each figure sits on the canvas: its
+  position and size, labelled "P1", "P2"… together with the figure's project-relative
+  file name. For figures the app can re-draw on your computer (the same drawing step
+  used for export, with the edits you have not saved yet), the summary also carries the
+  figure's layout so an arrow can point at a curve's peak: each axis's range, and the
+  elements' roles, labels (curve names, axis titles, legend entries, tick labels), boxes
+  and the main colours. The figure's data values, scripts and project files are not sent.
   The plan is computed on your computer and written nowhere until you apply it.
 * **One-click layout.** The comparison pictures are drawn on your computer by the
   export engine; nothing about them is sent anywhere.

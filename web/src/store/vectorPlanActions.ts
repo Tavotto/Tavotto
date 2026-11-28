@@ -177,7 +177,7 @@ async function drive(key: string, ctx: Ctx, snap: VectorSnapshot, sel: string[],
       return
     }
     if (view.state === 'ready') {
-      await present(key, ctx, snap, view.plan, guard.still)
+      await present(key, ctx, snap, view.plan, guard.still, text)
       return
     }
   }
@@ -186,7 +186,7 @@ async function drive(key: string, ctx: Ctx, snap: VectorSnapshot, sel: string[],
 }
 
 /** 方案回来了：核对 → 出两张预览 → 卡变成待确认（或失败卡 / 空方案卡） */
-async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: VectorEditResult, still: () => boolean): Promise<void> {
+async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: VectorEditResult, still: () => boolean, instruction: string): Promise<void> {
   const store = useChangePlanStore.getState
   const live = () => still() && sameContext(ctx) && store().entries[key]?.status === 'generating'
   const patch = store().patchEntry
@@ -297,7 +297,7 @@ async function present(key: string, ctx: Ctx, snap: VectorSnapshot, result: Vect
     try {
       for (;;) {
         if (!chosen.length) break
-        const r = await planVectorEditOps(snap.canvas, chosen.map((i) => allOps[i]))
+        const r = await planVectorEditOps(snap.canvas, chosen.map((i) => allOps[i]), { instruction_text: instruction, confirmed: [] })
         if (!mine()) return
         const bad = (r.errors ?? []).find((x) => typeof x.index === 'number' && x.code !== 'checks_failed')
         if (r.ok || !bad || r.objects) {

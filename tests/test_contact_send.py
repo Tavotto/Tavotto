@@ -455,11 +455,20 @@ def test_unreachable_first_route_falls_over_to_the_second(two, how):
     assert a.count("/v1/messages/complete") == 0
 
 
-def test_complete_failover_replays_with_the_same_token(two):
+#: 「complete 已执行、响应丢了」：假服务端断线后，客户端通常立刻看到断开、按 network 换线路；但慢的 Windows runner 上
+#: 曾整整 15 s 没看到断开（只能等 complete 自己的 70 s 超时，合并组 run 46011595008 红）。用例要验的是「换线路 / 重放
+#: 同一 complete_token」，与客户端怎么察觉响应丢了无关：把 complete 超时压到 3 s，断线没被察觉也会以 timeout 换线路；
+#: 等的仍是真条件（状态落定），计时只防挂死，并且长过压短后的超时
+_LOST_COMPLETE_TIMEOUT_S = 3
+_LOST_COMPLETE_WAIT_S = 45
+
+
+def test_complete_failover_replays_with_the_same_token(two, monkeypatch):
     a, b = two
+    monkeypatch.setattr(contactsend, "COMPLETE_TIMEOUT_S", _LOST_COMPLETE_TIMEOUT_S)
     a.drop_after("complete")  # 动作已执行、响应丢了
     contactsend.start(meta(), [])
-    assert wait_for({"done", "failed"})["state"] == "done"
+    assert wait_for({"done", "failed"}, timeout=_LOST_COMPLETE_WAIT_S)["state"] == "done"
     assert a.count("/v1/messages/complete") == 1 and b.count("/v1/messages/complete") == 1
     assert a.only_message().complete_runs == 2  # 同一个 complete_token 在另一条线路上幂等重放
 
@@ -625,10 +634,13 @@ def test_server_closed_session_at_complete_forces_a_new_id_on_retry(on):
     assert keys[0] != keys[1]
 
 
-def test_lost_complete_response_is_replayed_inside_one_send(on):
+def test_lost_complete_response_is_replayed_inside_one_send(on, monkeypatch):
+    monkeypatch.setattr(
+        contactsend, "COMPLETE_TIMEOUT_S", _LOST_COMPLETE_TIMEOUT_S
+    )  # 同上：断线没被察觉也能落定
     on.drop_after("complete")
     contactsend.start(meta(), [])
-    assert wait_for({"done"})["state"] == "done"
+    assert wait_for({"done"}, timeout=_LOST_COMPLETE_WAIT_S)["state"] == "done"
     assert on.count("/v1/messages/complete") == 2
     assert on.only_message().complete_runs == 2 and on.only_message().state == "new"
 
@@ -1613,6 +1625,27 @@ def test_bad_journal_type_or_missing_required_rejects_before_any_network(on, jou
         contactsend.start(_jmeta(journal), [])
     assert (e.value.code, e.value.status) == ("journal_invalid", 422)
     assert on.calls == []
+
+
+def test_editor_journal_accepts_empty_body_and_drops_stray_fields(on):
+    contactsend.start(
+        _jmeta(
+            {
+                "type": "editor",
+                "journal_id": "nature",
+                "journal_label": "Nature",
+                "catalog": {"v1": 3},
+            }
+        ),
+        [],
+    )
+    wait_for({"done"})
+    assert on.calls[0]["json"]["journal"] == {
+        "type": "editor",
+        "journal_id": "nature",
+        "journal_label": "Nature",
+        "catalog": {"v1": 3},
+    }
 
 
 def test_missing_journal_accepts_query_or_attachment(on):
