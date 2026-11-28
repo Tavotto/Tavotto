@@ -12141,7 +12141,7 @@ def api_pro_submission_check_plan():
     """投稿核对（ADR 0216，高级功能 `submission-pack`）。**只算不写**，照一键排版：
 
     请求：`{journal_id, profile, accept?: [稳定 id], canvases: [{key, page: {w, h}, canvas_texts?, canvas_labels_known?,
-    panels: [{key, id, patches, box}]}]}`。`patches` 是每张图此刻的全量 override 列表（B0），`box` 是画布上的摆放（mm）。
+    only_figure?, panels: [{key, id, patches, box}]}]}`。`only_figure` = 画布上除了这张图没有别的对象（改图宽的前提）。`patches` 是每张图此刻的全量 override 列表（B0），`box` 是画布上的摆放（mm）。
     成功回 `{ok: true, canvases: [{key, page, figures: [{key, patches, box}]}], requirements: [...], skipped: [...]}`，由前端
     一次 commit；失败回 `{ok: false, code}`，每张图的 worker 回到 B0（或作废），**文档一个字不改**。
     准备不了的画布（native 图、渲染出错）放进 `skipped`，其余照常（ADR 0216 §五）。
@@ -12240,6 +12240,7 @@ def api_pro_submission_check_plan():
                 figures=figures,
                 canvas_texts=raw.get("canvas_texts") or [],
                 canvas_labels_known=raw.get("canvas_labels_known") is not False,
+                only_figure=raw.get("only_figure") is True,
             )
         )
 
@@ -12287,7 +12288,7 @@ def api_pro_submission_check_plan():
     for st in states:
         if not st["clean"]:
             retired = _retire_hot_worker(st["worker"]) or retired
-    out["skipped"] = skipped
+    out["skipped"] = skipped + list(out.get("skipped") or [])
     out["replay_required"] = retired
     return jsonify(out)
 

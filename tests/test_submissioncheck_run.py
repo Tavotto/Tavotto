@@ -47,7 +47,7 @@ def _canvas(manifest=None, box=None, page=None):
     fig = sc.Figure(
         key="p1", rel_id="fig_a.py", base=[], box=box or [0, 0, w, h], render=_fake_render(m)
     )
-    return sc.Canvas(key="L1", page=page or {"w": w, "h": h}, figures=[fig])
+    return sc.Canvas(key="L1", page=page or {"w": w, "h": h}, figures=[fig], only_figure=True)
 
 
 PROFILE = {
@@ -76,7 +76,9 @@ def _row_ref(payload, check, value):
 
 
 def test_judged_width_lands_by_itself_and_unaccepted_confirm_does_not():
-    c = _canvas(_manifest(), box=[0, 0, 81.3, 54.8], page={"w": 81.3, "h": 54.8})
+    m = _manifest()
+    m["size_mm"] = [81.3, 54.8]
+    c = _canvas(m)
 
     def make(payload):
         width = _row_ref(payload, "width_final", 89)
@@ -201,7 +203,7 @@ def test_real_worker_width_then_accepted_max_size(tmp_path, monkeypatch):
         b0 = render([])["manifest"]
         w, h = b0["size_mm"]
         fig = sc.Figure(key="p1", rel_id="fig.py", base=[], box=[0, 0, w, h], render=render)
-        c = sc.Canvas(key="L1", page={"w": w, "h": h}, figures=[fig])
+        c = sc.Canvas(key="L1", page={"w": w, "h": h}, figures=[fig], only_figure=True)
 
         def make(payload):
             width = _row_ref(payload, "width_final", 89)
@@ -249,3 +251,157 @@ def test_real_worker_width_then_accepted_max_size(tmp_path, monkeypatch):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+def _one_op(check, value, op, state="fixable"):
+    def make(payload):
+        ref = _row_ref(payload, check, value)
+        texts = payload["canvases"][0]["texts"]
+        body = [t["ref"] for t in texts if t["editable"] and not t["panel_label"]]
+        o = {"ref": "o1", "canvas": "c1", **op}
+        if o["op"] != "canvas.width":
+            o["texts"] = body
+        return {
+            "requirements": [
+                {
+                    "ref": ref,
+                    "state": state,
+                    "per_canvas": [{"canvas": "c1", "state": state, "ops": ["o1"]}],
+                }
+            ],
+            "ops": [o],
+        }
+
+    return make
+
+
+def test_a_clicked_fix_that_did_not_take_goes_back_to_confirm(monkeypatch):
+    from tavotto.engine import specfix
+
+    monkeypatch.setattr(specfix, "transaction", lambda *a, **k: {"ok": False, "patches": []})
+    out = sc.run(
+        [_canvas()],
+        journal_id="nature",
+        profile=PROFILE,
+        accept=["v1:max_font_size_pt"],
+        solver=_solver_with(_one_op("font_size_max", 7, {"op": "text.size", "size_pt": 7})),
+    )
+    by_id = {r["id"]: r for r in out["requirements"]}
+    assert by_id["v1:max_font_size_pt"]["state"] == "confirm"  # 不再给「可一键改」的按钮
+    assert out["canvases"][0]["figures"][0]["patches"] == []
+
+
+def test_ops_keep_their_gids_when_remeasuring_renumbers_texts():
+    """改宽度后多出一个刻度文字：后面的字号操作仍落在原来那几个 gid 上（不按重编后的短号找）。"""
+    m = _manifest()
+    m["size_mm"] = [81.3, 54.8]
+    base_render = _fake_render(m)
+
+    def render(patches):
+        resp = base_render(patches)
+        if any(p["prop"] == "size_mm" for p in patches):
+            from test_submissioncheck_plan import _text
+
+            resp["manifest"]["elements"].insert(3, _text("axes_0.ticks2", "ticks", 9))
+        return resp
+
+    render.calls = base_render.calls
+    fig = sc.Figure(key="p1", rel_id="f.py", base=[], box=[0, 0, 81.3, 54.8], render=render)
+    c = sc.Canvas(key="L1", page={"w": 81.3, "h": 54.8}, figures=[fig], only_figure=True)
+
+    def make(payload):
+        width = _row_ref(payload, "width_final", 89)
+        fmax = _row_ref(payload, "font_size_max", 7)
+        (xlabel,) = [t["ref"] for t in payload["canvases"][0]["texts"] if t["role"] == "xlabel"]
+        return {
+            "requirements": [
+                {
+                    "ref": width,
+                    "state": "fixable",
+                    "per_canvas": [{"canvas": "c1", "state": "fixable", "ops": ["o1"]}],
+                },
+                {
+                    "ref": fmax,
+                    "state": "fixable",
+                    "per_canvas": [{"canvas": "c1", "state": "fixable", "ops": ["o2"]}],
+                },
+            ],
+            "ops": [
+                {"ref": "o1", "op": "canvas.width", "canvas": "c1", "width_mm": 89},
+                {"ref": "o2", "op": "text.size", "canvas": "c1", "texts": [xlabel], "size_pt": 7},
+            ],
+        }
+
+    out = sc.run(
+        [c],
+        journal_id="nature",
+        profile=PROFILE,
+        accept=["v1:max_font_size_pt"],
+        solver=_solver_with(make),
+    )
+    sized = {
+        p["gid"] for p in out["canvases"][0]["figures"][0]["patches"] if p["prop"] == "fontsize"
+    }
+    assert sized == {"axes_0.xlabel"}
+
+
+def test_a_judged_row_that_no_longer_holds_after_resizing_is_not_pass():
+    """组件说 300 dpi / 字号「符合」也不算数：最终画布上预检还报，就退回 confirm。"""
+    m = _manifest()
+    m["size_mm"] = [81.3, 54.8]
+    c = _canvas(m)
+    prof = {**PROFILE, "min_effective_font_size_pt": 9, "severity": {"font-too-small": "warn"}}
+
+    def make(payload):
+        ref = next(
+            r["ref"]
+            for r in payload["requirements"]
+            if r["source_state"] == "preflight" and r["check"] == "raster_dpi_min"
+        )
+        width = _row_ref(payload, "width_final", 89)
+        return {
+            "requirements": [
+                {"ref": ref, "state": "pass", "per_canvas": [{"canvas": "c1", "state": "pass"}]},
+                {"ref": width, "state": "pass", "per_canvas": [{"canvas": "c1", "state": "pass"}]},
+            ],
+            "ops": [],
+        }
+
+    out = sc.run([c], journal_id="nature", profile=prof, solver=_solver_with(make))
+    by_id = {r["id"]: r for r in out["requirements"]}
+    # 81.3 mm 不等于 89：组件说 pass 也退回 confirm
+    assert by_id["v1:page_columns#single"]["state"] == "confirm"
+    # 300 dpi 这张图没有位图，预检不报 → 重新判过仍符合
+    assert by_id["v1:min_raster_dpi"]["state"] == "pass"
+
+
+def test_a_canvas_that_cannot_render_is_skipped_and_the_others_go_on():
+    good = _canvas()
+
+    def broken(patches):
+        raise RuntimeError("script error")
+
+    bad = sc.Canvas(
+        key="L2",
+        page={"w": 89, "h": 60},
+        figures=[sc.Figure(key="p9", rel_id="bad.py", base=[], box=[0, 0, 89, 60], render=broken)],
+    )
+    out = sc.run(
+        [bad, good],
+        journal_id="nature",
+        profile=PROFILE,
+        solver=lambda p: {"requirements": [], "ops": []},
+    )
+    assert out["skipped"] == [{"key": "L2", "reason": "render_failed"}]
+    assert [c["key"] for c in out["canvases"]] == ["L1"]
+
+
+def test_width_is_not_adjustable_when_the_canvas_holds_other_objects_or_is_scaled():
+    seen = _solver_with(lambda p: {"requirements": [], "ops": []})
+    c = _canvas()
+    c.only_figure = False
+    sc.run([c], journal_id="nature", profile=PROFILE, solver=seen)
+    assert seen.seen["payload"]["canvases"][0]["width_adjustable"] is False
+    c = _canvas(box=[0, 0, 178, 120], page={"w": 178, "h": 120})  # 89 mm 的图放大一倍显示
+    sc.run([c], journal_id="nature", profile=PROFILE, solver=seen)
+    assert seen.seen["payload"]["canvases"][0]["width_adjustable"] is False
