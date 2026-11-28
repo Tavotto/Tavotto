@@ -888,7 +888,7 @@
         "strokeOpacity": "描边不透明度", "fillOpacity": "填充不透明度", "dash": "虚线", "cornerRadius": "圆角", "locked": "锁定", "hidden": "隐藏",
         "subpaths": "路径形状", "anchor": "锚定位置", "layoutPinned": "固定位置", "start": "起点", "end": "终点", "shape": "形状种类", "sides": "边数", "starRatio": "星形比例",
         "headStart": "起点端型", "headEnd": "终点端型", "headSizeStart": "起点端型大小", "headSizeEnd": "终点端型大小", "fillGradient": "填充渐变", "strokeGradient": "描边渐变",
-        "fillRule": "填充规则", "strokeAlign": "描边对齐", "dashPattern": "虚线", "miterLimit": "尖角限制", "interpretation": "文字解读", "textFormat": "文字格式", "clipMask": "剪切蒙版", "clipOff": "剪切蒙版",
+        "fillRule": "填充规则", "strokeAlign": "描边对齐", "dashPattern": "虚线", "miterLimit": "尖角限制", "interpretation": "文字解读", "textFormat": "文字格式", "clipMask": "剪切蒙版", "clipOff": "剪切蒙版", "groupNames": "组名",
         "name": "名字", "stroke": "描边", "lineCap": "线端", "lineJoin": "拐角", "padding": "内边距"
       }
     },

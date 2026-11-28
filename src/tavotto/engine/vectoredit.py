@@ -111,6 +111,7 @@ OPS_DOC = (
     "ungroup {group}；rotate {id, deg}；pathfinder {ids, mode: unite/minus_front/minus_back/intersect/exclude/divide/"
     "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}；"
     "convert_to_path {ids}（形状 / 箭头换成同 id 的路径）。布尔 / 偏移收路径与封闭形状，轮廓化另收直线 / 箭头，简化只收 path。"
+    "rename_group {group, name}（改组名，写同组全部成员；name 空串 = 去掉名字；组 id 取场景 vector_objects 的 group）；"
     "add {items: [条目…]}（在画布上新增标注：箭头 / 文字 / 括号 / 外框 / 连线 / 形状；一个 add 是一步，"
     "彼此用 item 锚点引用的条目必须写在同一个 add 里）。"
     + vectorscene.ITEMS_DOC
@@ -158,7 +159,7 @@ def _style(o: dict) -> dict:
     }
 
 
-def _brief(o: dict) -> dict:
+def _brief(o: dict, objects: list[dict] | None = None) -> dict:
     out = {
         "id": o.get("id"),
         "type": o.get("type"),
@@ -171,6 +172,11 @@ def _brief(o: dict) -> dict:
         "group": (o.get("groupPath") or ([o["groupId"]] if o.get("groupId") else None)),
         "style": _style(o),
     }
+    if objects is not None:
+        # 组名（ADR 0208 前置 6.0）：这个对象组链上有名字的组 {组 id: 名字}（读法 `agentobjects.group_name_of`）；都没名字不加键
+        names = {g: n for g in _gpath(o) if (n := agentobjects.group_name_of(objects, g))}
+        if names:
+            out["group_names"] = names
     if o.get("type") == "path":
         # 路径：每条子路径的闭合与锚点数（锚点地址 `{sp, i}` 的范围）；逐点清单由 `read_scene` 在预算内另附
         subs = vectorgeom.path_to_mm(o)
@@ -240,6 +246,7 @@ def select(canvas: dict, query: dict | None = None) -> list[dict]:
     回每个对象的简述（id、类型、名字、文字、毫米框、是不是 Agent 加的、锁定 / 隐藏、所在组）。"""
     q = query or {}
     out = []
+    all_objs = [o for o in canvas.get("objects") or [] if isinstance(o, dict)]
     for o in canvas.get("objects") or []:
         if not isinstance(o, dict) or o.get("type") not in EDITABLE_TYPES:
             continue
@@ -268,7 +275,7 @@ def select(canvas: dict, query: dict | None = None) -> list[dict]:
             }
             if q["anchored_to"] not in refs:
                 continue
-        out.append(_brief(o))
+        out.append(_brief(o, all_objs))
     return out
 
 
@@ -524,6 +531,12 @@ class _State:
         """照 `groupTree.setGroupPath`：空 = 不在组里；一层只写 groupId，两层及以上才写 groupPath。"""
         self.set_field(o, "groupId", path[-1] if path else None)
         self.set_field(o, "groupPath", list(path) if len(path) >= 2 else None)
+        # 名字只留在自己组链上的键里（同前端 `setGroupPath`）：拆掉的组、摘出去的层，名字一起走
+        names = o.get("groupNames")
+        if isinstance(names, dict):
+            kept = {g: n for g, n in names.items() if g in path}
+            if kept != names:
+                self.set_field(o, "groupNames", kept or None)
 
     def shift(self, o: dict, dx: float, dy: float, i: int) -> None:
         for k, d in (("x", dx), ("y", dy)):
@@ -735,10 +748,11 @@ def _op_group(s: _State, i: int, op: dict) -> None:
     if set(op) - {"op", "ids", "name"}:
         raise EditError("bad_op", i)
     name = op.get("name")
-    if name is not None and (
-        not isinstance(name, str) or not name or len(name) > s.budgets["max_name_chars"]
-    ):
-        raise EditError("bad_value", i, "name")
+    if name is not None:
+        # 与 `rename_group` / 前端 `renameGroup` 同一条：去首尾空白，空 = 不合法（不存只有空白的名字）
+        name = name.strip() if isinstance(name, str) else name
+        if not isinstance(name, str) or not name or len(name) > s.budgets["max_name_chars"]:
+            raise EditError("bad_value", i, "name")
     members = _pick(s, i, op.get("ids"), "ids", strict=True)
     if len({_unit(o) for o in members}) < 2:
         raise EditError("bad_op", i, "ids")
@@ -749,6 +763,8 @@ def _op_group(s: _State, i: int, op: dict) -> None:
         raise EditError("out_of_range", i, "groupPath")
     for m in members:
         s.set_path(m, new_paths[m["id"]])
+        if name:  # 名字真存下来（此前只进复述）：新组的每个成员都带，同前端 `renameGroup`
+            s.set_field(m, "groupNames", {**(m.get("groupNames") or {}), gid: name})
     live = s.live()
     pos = [n for n, m in enumerate(live) if m["id"] in ids]
     if pos[-1] - pos[0] != len(pos) - 1:  # 不连续：挪成一段，落在最上面那个的位置
@@ -758,6 +774,33 @@ def _op_group(s: _State, i: int, op: dict) -> None:
         s.set_order(live)
     tail = f"：组名 {name}" if name else ""
     s.echo.append(f"编组 {len(members)} 个对象{tail}")
+
+
+def _op_rename_group(s: _State, i: int, op: dict) -> None:
+    """`actions.renameGroup`：同组全部成员的 `groupNames[gid]` 一起写成同一个名字（一次、统一旧文档里不一致的名字）；空串 = 去掉。"""
+    if set(op) - {"op", "group", "name"}:
+        raise EditError("bad_op", i)
+    gid = op.get("group")
+    if not isinstance(gid, str) or not gid:
+        raise EditError("bad_op", i, "group")
+    name = op.get("name")
+    if not isinstance(name, str) or len(name) > s.budgets["max_name_chars"]:
+        raise EditError("bad_value", i, "name")
+    name = name.strip()
+    members = [o for o in s.live() if gid in _gpath(o)]
+    if not members:
+        raise EditError("unknown_object", i, "group")
+    before = agentobjects.group_name_of(s.live(), gid)
+    for o in members:
+        names = dict(o.get("groupNames") or {})
+        if name:
+            names[gid] = name
+        else:
+            names.pop(gid, None)
+        s.set_field(o, "groupNames", names or None)
+    s.echo.append(
+        f"组 {gid}：{before or '（无名）'} → {name or '（无名）'}（{len(members)} 个对象）"
+    )
 
 
 def _release_mask(s: _State, o: dict) -> None:
@@ -1640,6 +1683,7 @@ _OPS = (
     "order",
     "group",
     "ungroup",
+    "rename_group",
     "rotate",
     "pathfinder",
     "offset",
@@ -1699,13 +1743,22 @@ def apply_ops(
         if op["op"] == "add":
             _op_add(s, i, op)
             continue
-        if op["op"] in ("align", "distribute", "group", "ungroup", "pathfinder", "convert_to_path"):
+        if op["op"] in (
+            "align",
+            "distribute",
+            "group",
+            "ungroup",
+            "rename_group",
+            "pathfinder",
+            "convert_to_path",
+        ):
             {
                 "convert_to_path": _op_convert_to_path,
                 "align": _op_align,
                 "distribute": _op_distribute,
                 "group": _op_group,
                 "ungroup": _op_ungroup,
+                "rename_group": _op_rename_group,
                 "pathfinder": _op_pathfinder,
             }[op["op"]](s, i, op)
             continue
