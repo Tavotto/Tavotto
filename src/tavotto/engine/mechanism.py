@@ -67,6 +67,11 @@ ITEMS_DOC = (
     "由组件校验并执行，约束不满足回 bad_item 并点名）；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
     "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）；膜条目默认随膜落一个「疏水核心」底带对象（core: false 关掉）；样式预设（膜描边 0.6 pt、蛋白 0.85 pt）可被 style 覆盖：引擎把跨膜段中点对齐膜中线、"
     "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
+    "目前的图元种类（params 里没写的取缺省，超范围回 bad_item 并点名参数与范围）："
+    "membrane（双层膜：length_mm 弦长 20–60、curvature −0.35–0.35、head_radius_mm 0.4–1.5、spacing_r 1.9–2.6、thickness_r 4–6、leaflets both/outer/inner、inserts）；"
+    "receptor_rtk（受体酪氨酸激酶，二聚体或单体：dimer 真 / 假、lobes 2–3、ecd_height_mm 6–16、icd_height_mm 5–12、membrane_mm 3.5–5.5、groove_deg 0–20）。"
+    "同一个 add 里的箭头 / 文字 / 形状可以用 `item` 锚点贴到示意图框或图元上（{anchor: {item: {name: 框或图元的 name, point: nw|n|ne|w|center|e|sw|s|se}}, offset_mm?}）；"
+    "文字不能压在别的对象上，要贴着放；含机理图条目的 add 最多 24 条（其余 12 条）。"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
     "名字由引擎按「角色 + 身份」生成并固化，同批重名自动加序号；落地后过可编辑性核对，不过整批不落地（not_editable）。"
 )
@@ -198,27 +203,33 @@ def _check_params(spec: dict, params: object, name: str) -> dict:
     if params is None:
         params = {}
     if not isinstance(params, dict):
-        raise MechanismError("bad_item", name)
+        raise MechanismError("bad_item", f"{name}: params must be an object")
     known = spec["params"]
     out: dict = {}
     for k, v in params.items():
         p = known.get(k)
-        if p is None:
-            raise MechanismError("bad_item", name)
+        if p is None:  # 点名 + 列出这个图元认的参数名，Agent 不必猜
+            raise MechanismError(
+                "bad_item",
+                f"{name}: param {str(k)[:40]} unknown (allowed: {', '.join(sorted(known))})",
+            )
         if p.get("type") == "inserts":
-            v = _check_inserts(v, name)
+            v = _check_inserts(v, f"{name}: param {k}")
         elif p.get("type") == "enum":
             if v not in (p.get("values") or []):
-                raise MechanismError("bad_item", name)
+                raise MechanismError(
+                    "bad_item",
+                    f"{name}: param {k} one of {', '.join(map(str, p.get('values') or []))}",
+                )
         elif p.get("type") == "bool":
             if not isinstance(v, bool):
-                raise MechanismError("bad_item", name)
+                raise MechanismError("bad_item", f"{name}: param {k} must be true/false")
         else:
             if not _finite(v) or isinstance(v, bool):
-                raise MechanismError("bad_item", name)
+                raise MechanismError("bad_item", f"{name}: param {k} must be a number")
             lo, hi = p.get("min"), p.get("max")
             if (lo is not None and v < lo) or (hi is not None and v > hi):
-                raise MechanismError("bad_item", name)
+                raise MechanismError("bad_item", f"{name}: param {k} range {lo}..{hi}")
         out[k] = v
     for k, p in known.items():
         if k not in out and "default" in p:
@@ -515,7 +526,8 @@ def _recipe_spec(recipe: object, name: str) -> tuple[str, dict]:
 def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: str | None) -> _G:
     name = it["name"]
     if set(it) - _GLYPH_KEYS:
-        raise MechanismError("bad_item", name)
+        extra = ", ".join(sorted(map(str, set(it) - _GLYPH_KEYS)))
+        raise MechanismError("bad_item", f"{name}: unknown key {extra[:60]}")
     recipe = it.get("recipe")
     if (it.get("glyph") is None) == (recipe is None):
         raise MechanismError("bad_item", name)  # 内置图元（glyph）与现写配方（recipe）二选一
@@ -525,7 +537,8 @@ def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: s
         kind = it.get("glyph")
         spec = (out.catalog or {}).get(kind) if isinstance(kind, str) else None
         if spec is None:
-            raise MechanismError("bad_item", name)
+            known_kinds = ", ".join(sorted(out.catalog or {}))
+            raise MechanismError("bad_item", f"{name}: glyph unknown (known: {known_kinds})")
     embed = it.get("embed")
     if embed is not None:
         if (
@@ -542,18 +555,20 @@ def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: s
             )
             or it.get("at_mm") is not None
         ):
-            raise MechanismError("bad_item", name)  # 嵌进膜的蛋白位置由宿主算，不许再给 at_mm
+            raise MechanismError(
+                "bad_item", f"{name}: embed {{membrane, at?}} only; no at_mm with embed"
+            )  # 嵌进膜的蛋白位置由宿主算，不许再给 at_mm
         at = None
     else:
         at = _pair(it.get("at_mm"))
         if at is None:
-            raise MechanismError("bad_item", name)
+            raise MechanismError("bad_item", f"{name}: at_mm [x, y] required (or embed)")
     size = _pair(it.get("size_mm"), positive=True) if it.get("size_mm") is not None else None
     if it.get("size_mm") is not None and size is None:
-        raise MechanismError("bad_item", name)
+        raise MechanismError("bad_item", f"{name}: size_mm must be [w, h] > 0")
     frame, block = it.get("frame"), it.get("block")
     if frame is not None and (frame != frame_name or frame_group is None):
-        raise MechanismError("bad_item", name)
+        raise MechanismError("bad_item", f"{name}: frame must name the frame item in this add")
     if block is not None and (not isinstance(block, str) or not block.strip() or frame is None):
         raise MechanismError("bad_item", name)
     version = it.get("version", spec["latest"])
@@ -562,7 +577,7 @@ def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: s
     params = _check_params(spec, it.get("params"), name)
     style = it.get("style") or {}
     if not isinstance(style, dict) or set(style) - _STYLE_KEYS:
-        raise MechanismError("bad_item", name)
+        raise MechanismError("bad_item", f"{name}: style keys are color, strokePt, fill")
     identity = it.get("identity")
     if identity is not None and not isinstance(identity, str):
         raise MechanismError("bad_item", name)
@@ -696,7 +711,9 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
     if free and len(free) == len(prots):
         gap = (total - sum(widths.values())) / (len(prots) + 1)
         if gap < margin - 1e-6:
-            raise MechanismError("bad_item", free[-1].name)  # 放不下：空隙不到 2 个脂质间距
+            raise MechanismError(
+                "bad_item", f"{free[-1].name}: no room on the membrane (lengthen it or place fewer)"
+            )  # 放不下：空隙不到 2 个脂质间距
         cursor = gap
         for g in prots:
             auto[g.name] = (cursor + tmx[g.name]) / total
@@ -711,12 +728,16 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
         left = s - tmx[g.name]
         right = left + widths[g.name]
         if left < margin_lo - 1e-6 or right > total - margin_hi + 1e-6:
-            raise MechanismError("bad_item", g.name)  # 超出膜的长度（或太靠近膜端）
+            raise MechanismError(
+                "bad_item", f"{g.name}: outside the membrane or too close to its end"
+            )  # 超出膜的长度（或太靠近膜端）
         wins.append((left, right, g, at, g.reply["info"]["tm_width_mm"] * pscale(g)[0]))
     ordered = sorted(wins, key=lambda w: w[0])
     for a, b in zip(ordered, ordered[1:]):
         if b[0] < a[1] - 1e-6:
-            raise MechanismError("bad_item", b[2].name)  # 两个蛋白重叠
+            raise MechanismError(
+                "bad_item", f"{b[2].name}: overlaps the previous protein"
+            )  # 两个蛋白重叠
     given = list(m.params.get("inserts") or [])
     # 让位窗口 = 跨膜部分的总宽；贴着杆的净空由膜自己定（头部半径 + 1/4 间距），窗口之间的每一段它重新均匀排布
     # 给组件的 `at` 与窗口宽度都按**自然尺寸**的弧长：位置换成自然弧长占比，宽度除以插入点处的局部拉伸倍数
@@ -752,7 +773,7 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
     for i, a in enumerate(names):
         for b in names[i + 1 :]:
             if any(mechcheck._touch(pa, ca, pb, cb) for pa, ca in polys[a] for pb, cb in polys[b]):  # noqa: SLF001
-                raise MechanismError("bad_item", b)
+                raise MechanismError("bad_item", f"{b}: overlaps a neighbouring protein")
 
 
 def _glyphs(
@@ -775,7 +796,9 @@ def _glyphs(
             continue
         m = by_name.get(g.embed["membrane"])
         if m is None or m.kind != "membrane" or m.embed is not None:
-            raise MechanismError("bad_item", g.name)
+            raise MechanismError(
+                "bad_item", f"{g.name}: embed.membrane must name a membrane glyph in this add"
+            )
         thick = (m.reply or {}).get("info", {}).get("thickness_mm")
         if thick is None:
             raise MechanismError("bad_reply", m.name)
@@ -970,6 +993,34 @@ def _emit(g: _G, out: Prepared, loc: str) -> None:
     out.echo.append(
         f"图元「{mechgroup.role_word(f'glyph:{g.kind}', loc)}」{g.name}（修订 {g.version}）"
     )
+
+
+def anchor_boxes(prep: Prepared) -> dict:
+    """机理图条目（框 / 图元）落位后的外接框 `{条目名: (x, y, w, h)}`：同一批的免费条目（箭头、文字、形状）用 `item` 锚点贴上去。
+    旋转过的图元取旋转后四角的外接框（只是方位点的近似，不是真轮廓）；膜的底带（`…__core`）不对外。"""
+    out = {}
+    for o in prep.objects:
+        oid = o.get("id")
+        if not isinstance(oid, str) or oid.endswith("__core"):
+            continue
+        x, y, w, h = (float(o.get(k) or 0.0) for k in ("x", "y", "w", "h"))
+        rot = math.radians(float(o.get("rotationDeg") or 0.0))
+        if rot:
+            c, s_ = math.cos(rot), math.sin(rot)
+            cx, cy = x + w / 2, y + h / 2
+            pts = [
+                (cx + (px - cx) * c - (py - cy) * s_, cy + (px - cx) * s_ + (py - cy) * c)
+                for px, py in ((x, y), (x + w, y), (x + w, y + h), (x, y + h))
+            ]
+            xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+            x, y, w, h = min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+        out[oid[: -len("__box")] if oid.endswith("__box") else oid] = (
+            x,
+            y,
+            w,
+            h,
+        )  # 框的对象是「名字__box」，对外还叫框的名字
+    return out
 
 
 def place_free_groups(prep: Prepared, free_objects: list[dict], locale: str = "zh") -> list[dict]:

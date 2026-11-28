@@ -1542,6 +1542,9 @@ def _op_release_compound(s: _State, i: int, op: dict) -> None:
 
 #: 一个 `add` 最多多少个条目（体积；0208 的一批描述同量级）
 MAX_ADD_ITEMS = 12
+#: 含机理图条目（frame / glyph / graph）的 `add`：一幅最小机理图（框 + 膜 + 两个受体 + 配体 / 箭头 / 文字标签）常有十几个条目，
+#: 而互相引用的条目必须写在同一个 `add` 里，所以这种批放宽到 24
+MAX_MECH_ADD_ITEMS = 24
 _TYPE_PREFIX = {"text": "t", "arrow": "a", "shape": "s", "path": "p"}
 
 
@@ -1582,8 +1585,14 @@ def _op_add(s: _State, i: int, op: dict) -> None:
     if set(op) - {"op", "items"}:
         raise EditError("bad_op", i)
     items = copy.deepcopy(op.get("items"))
-    if not isinstance(items, list) or not items or len(items) > MAX_ADD_ITEMS:
+    if not isinstance(items, list) or not items:
         raise EditError("bad_op", i, "items")
+    has_mech = any(
+        isinstance(it, dict) and it.get("kind") in ("frame", "glyph", "graph") for it in items
+    )
+    cap = MAX_MECH_ADD_ITEMS if has_mech else MAX_ADD_ITEMS
+    if len(items) > cap:
+        raise EditError("bad_op", i, f"items: at most {cap} per add")
     for it in items:
         if not isinstance(it, dict):
             raise EditError("bad_item", i, "items")
@@ -1632,7 +1641,9 @@ def _op_add(s: _State, i: int, op: dict) -> None:
                 raise EditError("needs_measurement", i, name)
         _stat_gate(s, i, it)
     if items:
-        solved = vectorscene.solve(items, s.panels, page=s.page)
+        solved = vectorscene.solve(
+            items, s.panels, page=s.page, known_items=mechanism.anchor_boxes(prep)
+        )
     else:  # 这一步只有机理图条目
         solved = {"ok": True, "objects": [], "statistical": []}
     if not solved["ok"]:

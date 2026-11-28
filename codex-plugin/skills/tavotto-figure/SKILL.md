@@ -45,6 +45,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 | 用户撞上 Tavotto 的缺陷 | `references/issue-reporting.md` |
 | 用户要改的东西鼠标改不了、大图 / 多图打开、改过脚本之后刷新 | `references/compatibility.md`（能改 / 必须回代码改） |
 | 往组图排版上加标注、改已有的箭头 / 文字 / 形状 | `references/layout-annotate.md` |
+| 画机理示意图（受体插在细胞膜上、配体结合 → 二聚化 → 磷酸化） | `references/mechanism-diagram.md`（膜 / 受体是高级版） |
 | 「按你的建议改」 | `references/suggest-todos.md` |
 
 普通画图任务只读前一行；故障与交接文档**用到才读**。
