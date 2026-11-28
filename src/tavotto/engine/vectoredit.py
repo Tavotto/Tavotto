@@ -42,6 +42,8 @@ from . import (
     agentobjects,
     doclock,
     layoutannotate as la,
+    mechanism,
+    mechcheck,
     pathedit as pedit,
     vecops,
     vectorcheck,
@@ -75,6 +77,9 @@ ERROR_CODES = (
     "anchor_unresolvable",
     "panel_transformed",
     "bad_point",
+    # 机理图（ADR 0220）：组件不可用 / 条目落地后过不了可编辑性核对。未授权不是错误码——整批折成结构化 `pro_required`（`_plan`）
+    "pro_unavailable",
+    "not_editable",
 )
 
 _KIND_WORD = {"text": "文字", "arrow": "箭头", "shape": "形状", "path": "路径"}
@@ -97,6 +102,8 @@ ERROR_WORDS = {
     "anchor_unresolvable": "这个锚点解不出位置",
     "panel_transformed": "这张子图旋转或翻转过：这一版只给它的外框",
     "bad_point": "方位点的名字不认识（nw n ne w center e sw s se）",
+    "pro_unavailable": "机理图要用高级版组件，这台机器上的组件不在、太旧或回包不合规矩：需要用户更新高级版组件",
+    "not_editable": "这批机理图对象落地后不够好改（一个东西被拆成几条、该用原生形状却画成路径、分组或命名不合规矩）：按 field 里的核对项修改后重来",
     "kernel_unavailable": "这台机器上的几何内核没装上：布尔 / 偏移 / 轮廓化 / 简化用不了，其余操作照常；告诉用户可在桌面里做这一步",
 }
 
@@ -115,6 +122,7 @@ OPS_DOC = (
     "add {items: [条目…]}（在画布上新增标注：箭头 / 文字 / 括号 / 外框 / 连线 / 形状；一个 add 是一步，"
     "彼此用 item 锚点引用的条目必须写在同一个 add 里）。"
     + vectorscene.ITEMS_DOC
+    + mechanism.ITEMS_DOC
     + "路径锚点（只收 path，锚点地址 {sp, i} 取场景 vector_objects[].anchors，含义是这条操作执行时的状态）："
     "move_anchors {id, anchors, by_mm}；move_handle {id, anchor, which: in/out, to_mm, break_smooth?}；"
     "add_anchors {id, anchors?} 或 {id, at: {sp, seg, t}}；delete_anchors / average_anchors {id, anchors}；"
@@ -1579,6 +1587,20 @@ def _op_add(s: _State, i: int, op: dict) -> None:
     for it in items:
         if not isinstance(it, dict):
             raise EditError("bad_item", i, "items")
+    # 机理图（ADR 0220）：frame / glyph / graph 三种条目在这里拆出来由 `mechanism` 处理（权益在那里判，整批拒），其余照旧
+    try:
+        prep = mechanism.prepare(
+            items,
+            locale=(s.context or {}).get("locale") or "zh",
+            ask=(s.context or {}).get("mechanism_ask"),
+        )
+    except mechanism.MechanismError as exc:
+        if exc.code == "not_licensed":
+            raise  # 工具层（`_plan`）折成结构化 pro_required
+        if exc.code in ("unavailable", "pro_outdated", "unsupported_version", "bad_reply"):
+            raise EditError("pro_unavailable", i, exc.field) from None
+        raise EditError("bad_item", i, exc.field) from None
+    items = prep.free_items
     #: 每个条目依赖的子图（短号，P1…）：新对象的位置是按这些子图此刻的位置算出来的，方案里要回给前端核「出方案后子图没被挪过」
     dep_panels: dict[str, set[str]] = {}
     for it in items:
@@ -1609,35 +1631,68 @@ def _op_add(s: _State, i: int, op: dict) -> None:
             ):
                 raise EditError("needs_measurement", i, name)
         _stat_gate(s, i, it)
-    solved = vectorscene.solve(items, s.panels, page=s.page)
+    if items:
+        solved = vectorscene.solve(items, s.panels, page=s.page)
+    else:  # 这一步只有机理图条目
+        solved = {"ok": True, "objects": [], "statistical": []}
     if not solved["ok"]:
         err = solved["errors"][0]
         code = err.get("code")
         raise EditError(
             code if code in ERROR_CODES else "bad_item", i, err.get("item") or err.get("detail")
         )
+    free_locals = {o.get("id") for o in solved["objects"]}
+    # 机理图对象在前（框 = 背景、图元 = 结构），免费条目的对象（箭头、文字）在后：叠放顺序 背景 → 结构 → 箭头 → 文字
+    to_check = [
+        *prep.objects,
+        *mechanism.place_free_groups(
+            prep, solved["objects"], (s.context or {}).get("locale") or "zh"
+        ),
+    ]
     taken = {o.get("id") for o in s.out if isinstance(o, dict)} | s.minted
     for o in s.out:
         if isinstance(o, dict):
             taken |= {g for g in [o.get("groupId"), *(o.get("groupPath") or [])] if g}
-    checked = agentobjects.validate_new_objects(solved["objects"], taken_ids=taken)
+    checked = agentobjects.validate_new_objects(to_check, taken_ids=taken)
     if not checked["ok"]:
         e = checked["errors"][0]
         raise EditError("bad_value", i, e.get("field"))
     local_of = {real: local for local, real in checked["id_map"].items()}
+    final = mechanism.finish(prep, checked)
     refs = {
         pid: (e.get("panel") or {}).get("id") for pid, e in s.panels.items() if isinstance(e, dict)
     }
     new_ids: dict[str, str] = {}
+    minted: list[tuple[str, dict]] = []
     for obj in checked["objects"]:
         local = local_of.get(obj["id"], obj["id"])
         # 下标固定 0：取消勾选前面的步骤、剩下的 ops 重算时，新对象的 id 不变
         nid = _mint(s, 0, "add", [local], 0, _TYPE_PREFIX.get(obj.get("type"), "o"))
         new_ids[local] = nid
-        anchor = la._persisted_anchor(local, solved, refs)  # noqa: SLF001
-        new = {**obj, "id": nid, **({"anchor": anchor} if anchor else {})}
+        anchor = la._persisted_anchor(local, solved, refs) if local in free_locals else None  # noqa: SLF001
+        minted.append(
+            (local, {**final.get(local, obj), "id": nid, **({"anchor": anchor} if anchor else {})})
+        )
+    if prep.active:
+        # 可编辑性核对（ADR 0208 §七之二 / ADR 0220 §六）：fail 不落地，warn / unknown 如实写进复述。
+        # **只核机理图成员**：框、图元、被放进框里的免费条目；不在框里的普通标注照 0208 原规则走（它们没有「角色 + 身份」名字，不归这里管）
+        members = [n for local, n in minted if local in prep.member_locals]
+        verdict = mechcheck.check(
+            members,
+            [*s.live(), *[n for _l, n in minted]],
+            catalog=prep.catalog,
+        )
+        if verdict["failed"]:
+            f = verdict["failed"][0]
+            raise EditError("not_editable", i, f"{f['check']}:{f.get('item')}")
+        for line in prep.echo:
+            s.echo.append(f"新增 {line}")
+        for w in verdict["warned"] + verdict["unknown"]:
+            s.echo.append(f"提示 {w['check']}：{w['detail'].get('reason')}")
+    for local, new in minted:
         s.out.append(new)
         s.reindex()
+        nid = new["id"]
         s.touched.add(nid)
         deps = sorted(
             {
@@ -2037,6 +2092,15 @@ def _plan(canvas: dict, ops: object, measure, profile, context: dict | None = No
         )
     except EditError as exc:
         return {"ok": False, "errors": [exc.as_dict()], "unmeasured": unmeasured}
+    except mechanism.MechanismError as exc:
+        if exc.code != "not_licensed":
+            raise
+        # 机理图条目未授权：整批不写，回结构化 pro_required（不是错误，工具层原样转给 Agent / 桌面）
+        return {
+            **mechanism.pro_required_result((context or {}).get("locale") or "zh"),
+            "errors": [],
+            "unmeasured": unmeasured,
+        }
     changed = res["changed"]
     facts: list[dict] = []
     if changed:

@@ -19,7 +19,7 @@ import re
 import threading
 import time
 
-from . import agentobjects, layoutannotate as la, vectoredit as ve, vectorscene
+from . import agentobjects, layoutannotate as la, mechanism, vectoredit as ve, vectorscene
 
 #: 一次请求里画布对象数、补丁条数的上限（体积）；模型一次最多给多少条
 MAX_OBJECTS = 2000
@@ -310,6 +310,16 @@ def validate_ops(obj: object, canvas: dict, instruction: str | None = None, meas
             )
         except ve.EditError as exc:
             unhandled.append(_dropped(i, op, exc))
+            continue
+        except mechanism.MechanismError as exc:
+            # 机理图条目（frame / glyph / graph）桌面改图助手这一版还不收（ADR 0220 §七，6.I 再接）：丢这一条，整次不崩
+            unhandled.append(
+                {
+                    "code": exc.code,
+                    "reason": f"第 {i + 1} 条：机理图条目在这里还不收",
+                    "op": op if isinstance(op, dict) else None,
+                }
+            )
             continue
         kept.append(op)
     if len(ops) > MAX_MODEL_OPS:
