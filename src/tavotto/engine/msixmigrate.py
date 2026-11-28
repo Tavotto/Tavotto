@@ -304,7 +304,7 @@ def _backup_sqlite(src: Path, tmp: Path, deadline: float) -> None:
 
 
 def _copy_sqlite(src: Path, dst: Path, tally: _Tally, deadline: float) -> bool:
-    """SQLite：用备份接口取一致快照（含 WAL 里未并入的部分）；打不开只读备份就退回字节拷贝主文件。
+    """SQLite：只通过备份接口取一致快照（含 WAL 里未并入的部分），绝不单独复制主文件。
 
     受 `deadline` 约束：到点中止、清掉半截临时文件、记为 deferred（下次再试），返回 False。
     """
@@ -318,12 +318,7 @@ def _copy_sqlite(src: Path, dst: Path, tally: _Tally, deadline: float) -> bool:
         return True
     tmp = dst.with_name(dst.name + f".{os.getpid()}{TMP_SUFFIX}")
     try:
-        try:
-            _backup_sqlite(src, tmp, deadline)
-        except sqlite3.Error:
-            with contextlib.suppress(OSError):
-                tmp.unlink(missing_ok=True)
-            shutil.copy2(src, tmp)
+        _backup_sqlite(src, tmp, deadline)
         if os.path.lexists(dst):
             tally.skipped += 1
             return True
@@ -332,6 +327,11 @@ def _copy_sqlite(src: Path, dst: Path, tally: _Tally, deadline: float) -> bool:
     except _Deadline:
         tally.deferred += 1
         return False
+    except sqlite3.Error as exc:
+        if _is_lock_contention(exc):
+            tally.deferred += 1
+            return False
+        tally.failed += 1
     except OSError:
         tally.failed += 1
     finally:
@@ -412,6 +412,10 @@ def _note_pending_if_left_behind(parts: tuple[str, ...]) -> None:
         return
     if not any(local is not None and local.joinpath(*parts).is_file() for _r, local in sources()):
         return
+    _add_pending(parts)
+
+
+def _add_pending(parts: tuple[str, ...]) -> None:
     rel = "/".join(parts)
     data = _read_pending() or {"schema": SCHEMA, "items": {}}
     if rel not in data["items"]:
@@ -433,12 +437,22 @@ def _adopt_sqlite(parts: tuple[str, ...], budget_s: float) -> bool:
             return False
         tally = _Tally()
         deadline = time.monotonic() + budget_s
+        left_behind = False
         for _roaming, local in sources():
             src = local.joinpath(*parts) if local is not None else None
             if src is not None and src.is_file() and not src.is_symlink():
+                before = tally.copied
                 _copy_sqlite(src, target, tally, deadline)
+                if tally.copied == before:
+                    left_behind = (
+                        True  # 这份（更新的）源没搬进来：失败 / 被占 / 超时 / 被消费者抢先建库
+                    )
                 if os.path.lexists(target):
                     break
+        if left_behind and os.path.lexists(target):
+            # 更新的源没搬成，却由更旧的包（或消费者新建的库）把目标建出来了：目标一存在，普通补缺就永远跳过它。
+            # 必须记成「待补」，后台再把没搬成的新历史合并回来（Codex #2285 P1，L-121 同一失败模式）。
+            _add_pending(parts)
         return tally.copied > 0
     finally:
         layoutsession.release_file_lock(fd)
@@ -771,7 +785,7 @@ def restore_legacy(rel: str, project: str, budget_s: float = PENDING_MERGE_BUDGE
     与后台待补合并同一条路（快照 → 登记的合并器，一个事务、到点整体回滚），所以补回的会话取新 rev、
     未结束的收尾。和自动路径的区别只有一条：用户在新库里删掉的、旧库还有的**也会回来**——这是用户点头的。
     **只补 `project` 这一个项目的行**（确认句里的条数只算这个项目；别的项目里用户删掉的不能顺手带回来，Codex #2317）。
-    真实库还不存在时走整库只补缺复制（同后台路径）：那时没有任何东西被删过，不存在「把删掉的带回来」。
+    即使真实库还不存在，手动路径也用登记的合并器建库并只导入确认的项目。
     回闭集 done / deferred（超时、锁被占、合并器未登记，可再试）/ failed / not_eligible。
     """
     if not _eligible():
@@ -870,26 +884,26 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float, project: str | 
     srcs = [p for p in srcs if p.is_file() and not p.is_symlink()]
     if not srcs:
         return "done"  # 源没了（用户卸了旧包）：没东西可补
-    if not os.path.lexists(target):
+    if project is None and not os.path.lexists(target):
         # 消费者终究没建库：走普通的只补缺复制
         tally = _Tally()
-        for src in srcs:
-            _copy_sqlite(src, target, tally, deadline)
-            if os.path.lexists(target):
-                return "done"
-        return "deferred" if tally.deferred else "failed"
+        # 最新源的快照失败时，不能拿更旧的库当作这次待补已经完成。
+        _copy_sqlite(srcs[0], target, tally, deadline)
+        if tally.copied:
+            return "done"
+        if tally.deferred:
+            return "deferred"
+        if tally.failed or not os.path.lexists(target):
+            return "failed"
+        # 消费者在备份期间建了目标库：只补缺复制没有写入，继续走合并。
     merge = _merger_for("/".join(parts), deadline)
     if merge is None:
         return "deferred"  # 拥有这个库的模块还没加载：不算失败，下次启动再来
     for src in srcs:  # 新→旧；只补缺，后面的源只补前面没有的
         snap = target.with_name(target.name + f".{os.getpid()}.legacy{TMP_SUFFIX}")
         try:
-            try:
-                _backup_sqlite(src, snap, deadline)
-            except sqlite3.Error:
-                with contextlib.suppress(OSError):
-                    snap.unlink(missing_ok=True)
-                shutil.copy2(src, snap)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _backup_sqlite(src, snap, deadline)
             if project is None:
                 merge(snap, target, deadline)
             else:
@@ -913,7 +927,7 @@ def _merge_pending_item(parts: tuple[str, ...], deadline: float, project: str | 
 _SQLITE_BUSY, _SQLITE_LOCKED = 5, 6
 
 
-def _is_lock_contention(e: sqlite3.OperationalError) -> bool:
+def _is_lock_contention(e: sqlite3.Error) -> bool:
     code = getattr(e, "sqlite_errorcode", None)
     if isinstance(code, int) and (code & 0xFF) in (_SQLITE_BUSY, _SQLITE_LOCKED):
         return True
