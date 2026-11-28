@@ -104,7 +104,7 @@ def test_registry_lists_only_registered_new_features():
             "src/tavotto/engine/quicklayout.py",
             "src/tavotto/engine/proinstall.py",
             "src/tavotto/engine/changeplan.py",
-        "src/tavotto/engine/submissioncheck.py",
+            "src/tavotto/engine/submissioncheck.py",
         }
     )
 
