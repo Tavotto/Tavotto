@@ -58,6 +58,8 @@ export interface UnhandledView {
   text: string
   reviewer: string
   reason: string
+  /** 这一行带的动作（矢量编辑方案：统计标注没核到原话，「按我说的加」） */
+  action?: { kind: 'confirm'; item: string; op: unknown }
 }
 
 /** 一条意见在界面上的编号：审阅页签给的（与页签一致）优先，没有就按这批意见里的位置 */
@@ -154,17 +156,43 @@ function unhandledViewsOf(e: PlanEntry): UnhandledView[] {
 export const unhandledReason = (r: ChangePlanUnhandledReason): string => cp(`unhandled.${r}`)
 
 /** 后端 `vectoredit.ERROR_CODES` 的闭集：每个码一句人话（后端那句是写给模型 / Agent 看的，不上界面） */
-const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'bad_value', 'out_of_range', 'duplicate_target', 'kernel_unavailable', 'too_many_steps'] as const
+const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'bad_value', 'out_of_range', 'duplicate_target', 'kernel_unavailable', 'too_many_steps', 'needs_measurement', 'needs_confirmation', 'provenance_data', 'bad_item', 'duplicate_name', 'unknown_ref', 'anchor_unresolvable', 'panel_transformed', 'bad_point'] as const
 
 /** 矢量编辑方案里没能照做的几条：带码的按码翻成人话，没码的是模型自己写的一句原因，照显示 */
 function vectorUnhandledViews(e: PlanEntry): UnhandledView[] {
   // 一行一句原因（没有「谁说的」那一层，也不重复整条指令）
-  return (e.vector?.result?.unhandled ?? []).map((u, i) => ({
-    id: `u${i}`,
-    text: (VECTOR_CODES as readonly string[]).includes(u.code ?? '') ? cp(`unhandled.vector.${u.code}`, { count: u.count ?? 0, max: u.max ?? 0 }) : clip(u.reason, 80) || cp('unhandled.vector.bad_op'),
-    reviewer: '',
-    reason: '',
-  }))
+  return (e.vector?.result?.unhandled ?? []).map((u, i) => {
+    // 统计标注：没核到原话 = 一句话 + 「按我说的加」；来源写成「数据」本期不收（一句话、没有按钮）
+    const said = ((u.op as { items?: { name?: string; text?: string }[] } | null | undefined)?.items ?? []).find((x) => x?.name === u.field)?.text
+    const star = clip(said ?? '', 12)
+    if (u.code === 'needs_confirmation' || u.code === 'provenance_data') {
+      const key = u.code === 'needs_confirmation' ? 'needsConfirm' : 'provenanceData'
+      return {
+        id: `u${i}`,
+        text: star ? cp(`vector.${key}`, { text: star }) : cp(`vector.${key}Plain`),
+        reviewer: '',
+        reason: '',
+        ...(u.code === 'needs_confirmation' && u.field && u.op ? { action: { kind: 'confirm' as const, item: u.field, op: u.op } } : {}),
+      }
+    }
+    return {
+      id: `u${i}`,
+      text: (VECTOR_CODES as readonly string[]).includes(u.code ?? '') ? cp(`unhandled.vector.${u.code}`, { count: u.count ?? 0, max: u.max ?? 0 }) : clip(u.reason, 80) || cp('unhandled.vector.bad_op'),
+      reviewer: '',
+      reason: '',
+    }
+  })
+}
+
+/** 这几个码 = 子图本身量不了（冻结 / 没有脚本 / 运行时素材 / 终端里的活会话）：说「量不了」；其余（超时、导出失败…）说「没量到」 */
+const FROZEN_CODES = new Set(['composed_from_snapshot', 'runtime_panel', 'no_script', 'native_session'])
+
+/** 矢量编辑方案里「没量到」的子图：一行灰字（子图用界面叫法「第 N 张图」，不出现短号）；都量到了 / 没有这项 = null */
+export function vectorUnmeasuredLine(e: Pick<PlanEntry, 'vector'>): string | null {
+  const um = Object.entries(e.vector?.result?.unmeasured ?? {})
+  if (!um.length) return null
+  const panels = listJoin(um.map(([ref]) => cp('vector.panelN', { n: Number(ref.replace(/\D/g, '')) || 0 })))
+  return cp(um.every(([, code]) => FROZEN_CODES.has(code)) ? 'vector.unmeasuredFrozen' : 'vector.unmeasured', { panels })
 }
 
 /** 一版方案里勾选的改动：处理了几条意见、改了几处；没改的几条里有几条是要改脚本的 */
@@ -333,7 +361,14 @@ export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean
  * 生成中卡片的任务清单（2026-11-26，照准备 / 修复的任务清单）：三步按后端 `phase` 勾，不靠 Agent 的计划工具。
  * 图内修改 = 读取这张图 → 想怎么改 → 画出修改后的图；脚本修改中间一步是「改脚本」（Agent 在候选里改 + 预检）。
  */
-export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'plan' | 'revising'>): TaskStep[] | null {
+export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'plan' | 'revising' | 'vector'>): TaskStep[] | null {
+  // 矢量编辑：量图（只在有可量的子图时才有这一步）→ 想怎么改 → 算出结果
+  if (e.kind === 'vector') {
+    const measured = !!e.vector?.measured
+    const ids = measured ? (['measure', 'model', 'plan'] as const) : (['model', 'plan'] as const)
+    const at = e.phase === 'plan' ? ids.length - 1 : e.phase === 'model' ? ids.indexOf('model') : 0
+    return ids.map((id, i) => ({ id, label: cp(`card.steps.${id === 'plan' ? 'vectorPlan' : id}`), state: i < at ? 'done' : i === at ? 'active' : 'pending' }))
+  }
   // 一键排版没有阶段；方案已经回来、正在交给改脚本的那一小会儿（不是重改）也不再画步骤，照旧一句话
   if (isCanvasPlan(e) || (e.plan && e.revising === undefined)) return null
   const script = e.request.mode === 'script' || e.phase === 'agent'

@@ -1,0 +1,3 @@
+## Clearer change plan cards when the assistant adds marks
+
+Each new mark in the assistant's change plan card is now listed in plain words with where it goes (for example "Placed at figure 1's top-right corner"). While the assistant works you see a "Take a look at the figures" step. If you ask for stars, n.s. or a p value that isn't in your own words, the card says "You didn't mention it, so it isn't added yet" with an "Add it anyway" button instead of inventing one, and if a figure couldn't be measured the card says the marks went by its outline. When a figure is selected and you ask to add something on the canvas, the figure's card offers "Add it on the canvas" and only hands it over when you click.
