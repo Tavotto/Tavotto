@@ -1866,6 +1866,7 @@
         "inspect_environment": "Checking a Python environment",
         "read_logs": "Reading logs",
         "lookup_package": "Looking up a package",
+        "check_package_availability": "Checking which version of a package can be installed",
         "try_import": "Trying an import",
         "try_run": "Test-running the script",
         "install_packages": "Installing {{detail}}",

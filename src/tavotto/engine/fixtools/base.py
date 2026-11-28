@@ -22,10 +22,13 @@ Tier = Literal["observe", "run", "tavotto", "listed", "user_env", "outward"]
 TIERS: tuple[str, ...] = ("observe", "run", "tavotto", "listed", "user_env", "outward")
 
 #: 修复会话（D2 创建方）默认放行的档。`tavotto` / `listed` / `user_env` / `outward` 放行 ≠ 不问：
-#: 要不要问用户由各工具自己的 `ctx.ask` 把关（listed 名单内不问、user_env 一律问、outward 永远问）；没有 `ask` 一律按未获同意处理
+#: 要不要问用户由各工具自己的 `ctx.ask` 把关（listed 名单内不问、user_env 一律问、outward 问：每次，或每会话第一次，由工具定）；没有 `ask` 一律按未获同意处理
 FIX_SESSION_TIERS: frozenset[str] = frozenset(
     {"observe", "run", "tavotto", "listed", "user_env", "outward"}
 )
+
+#: `outward` 档里**只读**的工具：只问外面、不改环境，所以不像别的会改变执行的档那样作废「验证过」的结论 / 重置环境缓存
+READ_ONLY_OUTWARD: frozenset[str] = frozenset({"check_package_availability"})
 
 #: 这些错误码 = 「被拦」：审计里记 approved_by=blocked
 BLOCKED_CODES = frozenset(
@@ -111,6 +114,10 @@ class FixContext:
     allowed_tiers: frozenset[str] = frozenset({"observe"})
     #: Reviewed (canonical name, exact version constraint) -> approval step.
     approved_installs: dict = field(default_factory=dict)
+    #: `check_package_availability`（outward）：用户本会话已同意过出站查包，之后同会话不再问（ADR 0221 §三）
+    package_check_approved: bool = False
+    #: 同一个工具的可注入执行器（`engine.packagecheck.PackageCheckHooks`）；None = 应用里现有的真实路径。测试一律注入假的
+    package_check: object | None = None
     #: 用户亲手选过的路径：真实路径 -> 选它的那一步（`pick_file` 的回答、`ask_user` 选中的选项里写着的存在的路径）。
     #: `link_data_file` 的文件模式 `chosen` 在这里就不再弹第二张卡；前缀模式影响整条规则，仍要确认
     user_chosen_paths: dict = field(default_factory=dict)

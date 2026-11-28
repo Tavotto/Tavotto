@@ -8138,6 +8138,7 @@ export default interface Resources {
         "activity": {
           "ask_user": "正在向你提问",
           "change_python": "正在新建 Python 环境",
+          "check_package_availability": "正在查询这个包能装哪个版本",
           "convert_script": "正在生成可编辑版本",
           "denied": "AI 换了一种方法继续",
           "find_files": "正在查找文件",

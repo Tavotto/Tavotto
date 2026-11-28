@@ -281,6 +281,7 @@ OUTBOUND = {
     "engine/journalremote.py": "_http",
     "engine/journalfacts_remote.py": "_http",
     "engine/managedcli.py": "_fetch",
+    "engine/packageindex.py": "_opener",
     "engine/privatepython.py": "_fetch",
     "engine/siwc_login.py": "_opener",
     "engine/telemetry.py": "_post",

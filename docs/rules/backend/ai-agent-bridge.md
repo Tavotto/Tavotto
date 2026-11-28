@@ -721,7 +721,21 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
 - **档位**：`ToolSpec.tier ∈ observe | run | tavotto | listed | user_env | outward`（默认 `observe`）+ `waits_for_user`（默认 `False`），**不序列化给模型**
   （`tests/test_fixtools.py::test_tier_is_never_sent_to_the_model` 钉三种 wire 的请求体）。`FixContext.allowed_tiers` 之外的工具 `run_tool` 拒绝（`tier_not_allowed`）；裸构造默认只放行 `observe`，修复会话创建方用 `FixContext.for_fix_session(...)`（放行 `observe` + `run`）。
   D1 有两档：`observe` 看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `list_environments` / `read_logs` / `lookup_package`）；
+  `outward` 档里只读的 `check_package_availability`（ADR 0221 §三，见下条）；
   `run` 试（`try_import` / `try_run` / `inspect_environment` / `run_snippet`）——**运行用户代码，不承诺「什么都不改」**，保护范围与盲区见下条。
+- **查包事实 `check_package_availability`（ADR 0221 §三，`outward`，`fixtools/packagecheck.py` + `engine/packagecheck.py` / `packageindex.py`）**：
+  「在这个环境里装 X 会得到哪一版、为什么不是最新版」。**会装哪一版 = 安装器自己的回答**：`deprepair.pip_install_argv(..., dry_run_report=True)`
+  （同一份参数构造，只多 `--dry-run --report - --quiet`）经 `_run_pip_install(budget_s=)`（同一套用户自配源判据与镜像回退，总预算 180 s）在**目标环境**里跑，
+  读报告里被请求包的版本；不另写一套 wheel 标签判断。**为什么不是最新版**：读安装器这次实际用的索引的 simple 页（PEP 691 JSON 优先、退回 PEP 503 HTML；
+  只读 https，明文 http / `no-index` / `find-links` / 问不出地址一律不读 = `index_unreachable`；extra-index 不读），文件名在**父进程**用 `packaging.utils.parse_wheel_filename` 解析，
+  与目标环境**自己**报出的兼容标签（子进程里 `pip._vendor.packaging.tags.sys_tags()`）对照——平台与 Python 版本取目标环境，不取父进程。
+  `reason` 闭集 `up_to_date` / `no_wheel_for_python` / `no_wheel_for_platform` / `not_found` / `index_unreachable` + 实现补的 `held_back`（最新版有适用 wheel 而安装器没选，
+  不硬归进别的原因）；最新版 = 最高的**正式、未撤回**版本；只有源码包算 `no_wheel_for_python`。`suggest` 只在 `no_wheel_for_python` 时给：Tavotto 支持区间
+  （`projectenv.PYTHON_MIN` / `PYTHON_MAX_EXCLUSIVE`）里最高的、最新版有本平台 wheel 且 `pyversionfix.plan_python_change` 判得出（与 `change_python` 同一判据）的小版本。
+  **出站只发包名；索引 URL 若带凭据只在 `packageindex` 里拆成 Basic 头发给那一个主机（不跟随重定向），不进结果 / 审计 / 日志 / 缓存键**，结果里只有闭集 `index` 标签（pypi / mirror / user_config / unknown）。
+  索引事实（与环境无关）按（主机 + 路径、包名）缓存 1 小时于 `data_dir()/cache/package_availability/`，会装哪一版随环境变、不缓存。
+  **每会话第一次**经 `change.approve` 弹卡（`FixContext.package_check_approved` 记住），参数 / 环境 id 校验在弹卡之前；只读，不作废验证结论（`base.READ_ONLY_OUTWARD`）。
+  出站 HTTPS 第十三处：`packageindex._opener`（`test_outbound_https_trust.OUTBOUND` 与 `tlstrust` 模块头同步）。看护 `tests/test_fixtools_package_availability.py`。
 - **小实验 `run_snippet`**（ADR 0197）：模型写的一小段 Python 经 `run_python(strict_deny=ctx.scope.deny_roots(), cwd=项目根)` 跑——
   在试跑的守卫之上**断网、凭据位置与凭据形状的文件名不可读**（进程内第二个 audit hook + 操作系统沙盒同一份位置清单；名字规则 `DENY_NAME_PATTERNS` 只在进程内那层；实验口径的沙盒单独探测），当前目录是项目根、项目根在 `sys.path` 上（经守卫前导，不改模型代码）。
   不弹卡（维护者 11-19 裁决）；≤ 30 s、≤ 20 000 字符、先 `compile`；输出各路尾部 6 000 字符过 `scrub`；结果带 `blocked_network` / `blocked_reads`。

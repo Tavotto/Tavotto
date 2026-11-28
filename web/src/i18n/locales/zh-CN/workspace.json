@@ -1785,6 +1785,7 @@
         "inspect_environment": "正在检查 Python 环境",
         "read_logs": "正在查看日志",
         "lookup_package": "正在查询包名",
+        "check_package_availability": "正在查询这个包能装哪个版本",
         "try_import": "正在尝试导入",
         "try_run": "正在试运行脚本",
         "install_packages": "正在安装 {{detail}}",
