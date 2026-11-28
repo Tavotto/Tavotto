@@ -2094,7 +2094,11 @@ def _plan(canvas: dict, ops: object, measure, profile, context: dict | None = No
         if exc.code != "not_licensed":
             raise
         # 机理图条目未授权：整批不写，回结构化 pro_required（不是错误，工具层原样转给 Agent / 桌面）
-        return {**mechanism.pro_required_result(), "errors": [], "unmeasured": unmeasured}
+        return {
+            **mechanism.pro_required_result((context or {}).get("locale") or "zh"),
+            "errors": [],
+            "unmeasured": unmeasured,
+        }
     changed = res["changed"]
     facts: list[dict] = []
     if changed:

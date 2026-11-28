@@ -2479,7 +2479,12 @@ def _pro_required(out: dict) -> dict | None:
     if out.get("code") != "pro_required":
         return None
     keep = {k: out[k] for k in ("ok", "code", "feature", "message", "learn_more") if k in out}
-    text = f"{out.get('message') or '这是高级版功能'}（{out.get('learn_more') or '了解高级版'}）。整批没写；告诉用户即可，不必重试。"
+    more = out.get("learn_more")
+    more = more if isinstance(more, dict) else {}
+    text = (
+        f"{out.get('message') or '这是高级版功能'}（{more.get('label') or '了解高级版'}"
+        f"{'：' + more['url'] if more.get('url') else ''}）。整批没写；告诉用户即可，不必重试。"
+    )
     return {"content": _text(text), "structuredContent": keep}
 
 

@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import agentobjects, license as engine_license, mechcheck, mechgroup, prohost
+from . import agentobjects, brand, license as engine_license, mechcheck, mechgroup, prohost
 
 FEATURE = "mechanism-diagram"
 KINDS = ("frame", "glyph", "graph")
@@ -35,7 +35,7 @@ DEFAULT_COLOR = "#4a4842"
 DEFAULT_STROKE_PT = 1.0
 FRAME_STROKE_PT = 0.75
 FRAME_COLOR = "#8a8780"
-LEARN_MORE = "了解高级版"
+LEARN_MORE = {"zh": "了解高级版", "en": "Learn about Premium"}
 
 _FRAME_KEYS = {"kind", "name", "title", "at_mm", "size_mm", "fill"}
 _GLYPH_KEYS = {
@@ -81,7 +81,7 @@ def licensed() -> bool:
     return engine_license.has(FEATURE)
 
 
-def pro_required_result() -> dict:
+def pro_required_result(locale: str | None = "zh") -> dict:
     """未授权时工具层回给 Agent / 桌面的结构化结果（**不是错误**）：一句话 + 「了解高级版」。插件与改图助手共用这一处翻译
     （一键排版的 MCP 工具，ADR 0199 §十三，以后复用它）。"""
     return {
@@ -89,7 +89,11 @@ def pro_required_result() -> dict:
         "code": "pro_required",
         "feature": FEATURE,
         "message": "机理图的语义图元与通路图是高级版功能；示意图框和免费的箭头、文字、括号、外框等标注不受影响。",
-        "learn_more": LEARN_MORE,
+        # 「了解高级版」指向官网的高级版介绍页（维护者 2026-11-28）；地址的单一出处是 `brand.premium_page_url`，按界面语言选中英
+        "learn_more": {
+            "label": LEARN_MORE[mechgroup.locale_of(locale)],
+            "url": brand.premium_page_url(locale),
+        },
     }
 
 

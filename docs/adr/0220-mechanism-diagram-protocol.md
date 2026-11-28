@@ -37,7 +37,7 @@ Agent / 改图助手 ─ add 条目 (kind: frame | glyph | graph) ─▶ 开源 
 - 功能键 `mechanism-diagram`：登记进 0193 §一 的闭集、`license.FEATURES`、`tests/test_license_callsites.py` 的 `REGISTERED_CALLERS`（只有 `engine/mechanism.py` 一处调用）。
 - **边界（维护者 2026-11-28 定：框免费，图元与通路图算高级版）**：示意图框 `frame` 免费——未授权也照常收下、照常进命名分组与核对，不碰闭源组件；`glyph` / `graph` 是高级版。
 - 引擎在 `prepare` 入口对**含 `glyph` / `graph` 的整批**判权益，失败抛 `MechanismError("not_licensed")`；`vectoredit._plan` 折成结构化结果
-  `{ok: false, code: "pro_required", feature: "mechanism-diagram", message: <一句话>, learn_more: "了解高级版", errors: []}`——**不是错误**。
+  `{ok: false, code: "pro_required", feature: "mechanism-diagram", message: <一句话>, learn_more: {label: "了解高级版", url: <官网高级版介绍页>}, errors: []}`（`url` 取 `engine/brand.premium_page_url(locale)`，与前端 `premiumPageUrl` 同源，中文界面 `/zh/premium/`）——**不是错误**。
   一个 `add` 里只要有一个 `glyph` / `graph`，**整批**（含同批的 `frame` 与前面免费的步骤）都不写，不写一半（维护者拍板）。只有 `frame` 与免费条目的批不判权益。
 - 免费用户的工具列表与 schema 里这三种 `kind` 都在（`OPS_DOC` 的 `add` 说明里写明「没有授权回 pro_required」）。插件工具层（`_pro_required`）只把这一句转给 Agent，**工具层不判权益**；
   一键排版的 MCP 工具（0199 §十三）以后复用同一处翻译。免费条目（箭头 / 文字 / 括号 / 外框…）不判权益、不受影响。
@@ -134,6 +134,5 @@ sidecar 只收「几何结构 + 毫米尺寸 + 短号」；节点 / 边 / 区带
 ### 十二、待定（本期没有决定的）
 
 - 一键排版（0199）对示意图框的处理（当固定盒子障碍物？）没核。
-- `learn_more` 现在只有文字「了解高级版」，没有链接目标；链接地址由官网 / 维护者定。
 - `label`（图元旁的文字标签）与 `connect / arrow` 端口锚点（`{item, port}`）本期未做：端口只随回包返回，进 6.D。
 - 0208 §六 持久化锚点（分期 4 / 7）合入到哪一步没核。

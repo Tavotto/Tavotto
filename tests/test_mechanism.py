@@ -87,7 +87,11 @@ def test_unlicensed_returns_a_structured_pro_required_not_an_error(monkeypatch):
     monkeypatch.setattr(engine_license, "has", lambda feature: False)
     res = _plan(FRAME, MEMBRANE)
     assert res["ok"] is False and res["code"] == "pro_required"
-    assert res["feature"] == "mechanism-diagram" and res["learn_more"] and res["message"]
+    assert res["feature"] == "mechanism-diagram" and res["message"]
+    assert res["learn_more"] == {
+        "label": "了解高级版",
+        "url": "https://www.tavotto.com/zh/premium/",
+    }
     assert res["errors"] == []  # 不是错误
     assert "objects" not in res or not res.get("changed")
 
@@ -572,6 +576,37 @@ def test_the_plugin_tool_layer_translates_pro_required_without_judging_licences(
 
     out = server._pro_required(mechanism.pro_required_result())  # noqa: SLF001
     assert out["structuredContent"]["code"] == "pro_required"
-    assert out["structuredContent"]["learn_more"] == mechanism.LEARN_MORE
+    assert out["structuredContent"]["learn_more"]["url"].startswith("https://www.tavotto.com/")
+    assert (
+        out["structuredContent"]["learn_more"]["url"] in out["content"][0]["text"]
+    )  # 转给 Agent 的话里带链接
     assert "isError" not in out
     assert server._pro_required({"ok": True}) is None  # noqa: SLF001
+
+
+def test_premium_page_url_matches_brand_ts():
+    """`engine/brand.py` 与 `web/src/lib/brand.ts`：官网域名与高级版介绍页是同一个地址（严格同源对）。"""
+    import re
+
+    from tavotto.engine import brand
+
+    ts = (Path(__file__).resolve().parent.parent / "web/src/lib/brand.ts").read_text(
+        encoding="utf-8"
+    )
+    (site,) = re.findall(r"^export const WEBSITE_URL = '([^']+)'$", ts, re.M)
+    zh, en = re.findall(r"locale === 'zh-CN' \? '(/zh/premium/)' : '(/premium/)'", ts)[0]
+    assert brand.WEBSITE_URL == site
+    assert (
+        brand.premium_page_url("zh-CN") == site + zh
+        and brand.premium_page_url("en-US") == site + en
+    )
+    assert brand.premium_page_url("zh") == site + zh and brand.premium_page_url(None) == site + en
+
+
+def test_pro_required_picks_the_link_and_label_by_interface_language(monkeypatch):
+    monkeypatch.setattr(engine_license, "has", lambda feature: False)
+    res = ve.propose_memory(_canvas(), [_add(FRAME, MEMBRANE)], context={"locale": "en-US"})
+    assert res["learn_more"] == {
+        "label": "Learn about Premium",
+        "url": "https://www.tavotto.com/premium/",
+    }
