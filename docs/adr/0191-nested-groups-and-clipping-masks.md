@@ -70,6 +70,8 @@ ADR 0185 §五原写「文档级加 `groups: { id, parentId?, clipBy? }[]`」。
   同时裁掉命中。
 - 载荷：`toExportObjects(objects, context)` 不发蒙版；被裁的对象带 `clip: ExportClipPath[]`（外 → 内，只有几何）。没有剪切组时载荷与以前
   逐字节相同。**按对象逐个包裁剪**，不要求组成员在 z 序里连续（逐个裁与整组裁结果相同）。
+- 载荷补记（ADR 0208 §七之三）：被裁对象的每个 `clip` 项另带 `group`（这个蒙版属于 `group_path` 里的哪个组），对象带 `name` / `group_path`；
+  这几个键只给 SVG（把组写成嵌套 `<g>`、蒙版挂在组上只写一次），PDF / EPS / 位图照旧逐对象 `plan._clipped`、逐字节不变。
 - 后端 `plan._clipped`：每个蒙版包一层 `Group(clip=…)`（外层在外）；蒙版画不出轮廓 = 这个对象整个不画（与画布同一条）。
   PDF `W n`、SVG `<clipPath>`、EPS `clip`、PNG 由 PDF 栅格化。
 - 单图编辑（`scope=original`）裁这张图：`original.clip`（`singleExportDoc.figureClipOf`），没有标注也走带标注的合成路径；EPS 由
@@ -84,3 +86,18 @@ ADR 0185 §五原写「文档级加 `groups: { id, parentId?, clipBy? }[]`」。
 - 没做（留到后面）：剪切路径在画布上只能从图层树选中；文字当蒙版。
 - 看护：`lib/groupTree.test.ts`、`store/groupActions.test.tsx`、`lib/clipMask.golden.test.ts`、`canvas/workspaceContextBar.test.tsx`、
   `tests/test_clip_mask.py`、`tests/test_export_original_clip.py`。
+
+## 修订（2026-11-28，组名进文档模型：ADR 0208 第 ⑥ 期前置 6.0）
+
+0208 §七之三 把组名写进 SVG 导出（`<g id>`），但文档里一直没有地方存组名。本修订补上；维护者对设计草案「整套按推荐」。
+
+- **存哪里**：对象上的可选 `groupNames: { [组 id]: 名字 }`，键只放**这个对象自己组链**（`groupPath`）上的组。放对象上是 §一 的同一条理由——旧构建的 `canvasToDoc / docToCanvas` 只搬认识的画布字段，文档级新表存一次就没了；对象上的未知字段旧构建原样保留。
+  按组 id 取键（不是与链同长的数组）是为了旧构建改了 `groupId` 而不碰新字段时**自校验**：键对不上，读时忽略，名字不会错安到新组上。
+- **读法（唯一一条）**：同一个组按 z 序（数组自底向上）扫成员，取第一个在自己 `groupNames[gid]` 里有非空（去空白后）名字的；不在对象自己链上的键忽略；读时不改写文档。
+  前端 `lib/groupTree.groupNameOf / groupNameMap`、后端 `engine/agentobjects.group_name_of` 逐例对拍 `tests/golden/group_names_vectors.json`；导出时按**全集**读（隐藏的成员也算），发给每个可见成员，与 `group_path` 同长。
+- **写**：重命名 = 同组**全部成员**一次写（空 = 删键），一次 commit、⌘Z 一步撤回；同组成员名字本来不一致（旧构建回写、两处各改一半）时这一下统一，不做静默「修复」。
+  成组：新组没名字；`setGroupPath` 顺带清掉不在新链上的键（取消成组、摘出一层、剪切组孤儿蒙版同走这一个出口）；`remapGroupPath`（复制 / 粘贴 / 阵列 / 导入 / 复制画布）把键换成新组 id；
+  从源对象派生新对象（路径文字、文字转轮廓、拆 SVG、转路径、路径运算）带上源对象在留下那条链上的名字（`inheritGroupNames` / 各自的字段搬运）。
+- **旧文档**：没有这个字段 = 全部没名字，行为与以前完全相同（图层树仍写「组 · N 个对象」，SVG 不写组 `id`），不迁移、不补名。
+- **界面**：图层树组行有名字时标题写名字、个数进悬停提示（没名字照旧）；双击标题或 F2 行内改名（Enter 提交、Esc 取消、清空 = 去掉名字，输入框同对象行）；组内编辑浮条在组有名字时写名字。不加按钮与说明文字。
+- **看护**：`web/src/lib/groupNames.test.ts`、`web/src/store/groupNamesActions.test.ts`、`web/src/components/left/layerTreeGroupNames.test.tsx`、`tests/test_group_names.py`。

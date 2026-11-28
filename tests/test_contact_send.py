@@ -1699,3 +1699,68 @@ def test_journal_source_id_keeps_the_v2_prefix_and_rejects_other_colons(on):
     wait_for({"done"})
     inits = [c for c in on.calls if "journal" in c["json"]]
     assert "source_id" not in inits[1]["json"]["journal"]
+
+
+# --------------------------------------------------------------------------- 署名（ADR 0213 三期，API 1.8.0）
+@pytest.mark.parametrize("kind", ["wrong", "missing"])
+def test_credit_is_sent_normalised_for_wrong_and_missing(on, kind):
+    head = {**WRONG} if kind == "wrong" else {"type": "missing", "query": "Foo Journal"}
+    contactsend.start(
+        _jmeta({**head, "credit": "  Ｌｉ Ming  "}), []
+    )  # 全角 + 首尾空白 → NFKC + 去空白
+    assert wait_for({"done", "failed"})["state"] == "done"
+    assert on.calls[0]["json"]["journal"]["credit"] == "Li Ming"
+
+
+def test_credit_absent_means_no_key_on_the_wire(on):
+    contactsend.start(_jmeta(WRONG), [])
+    wait_for({"done"})
+    assert "credit" not in on.calls[0]["json"]["journal"]
+
+
+@pytest.mark.parametrize(
+    "credit",
+    [
+        "",  # 空
+        "   ",  # 只有空白
+        "x" * 33,  # 超 32 字
+        "a\nb",  # Cc：换行
+        "a\tb",  # Cc：制表
+        "a‮b",  # Cf：从右到左覆盖（双向控制符）
+        "a​b",  # Cf：零宽空格
+        "a b",  # Zl
+        "a b",  # Zp
+        "me@example.org",  # @
+        "https://evil.example",  # ://
+        "HTTPS://evil.example",
+        "see www.evil.example",
+        "WWW.evil.example",
+        "ｗｗｗ.evil.example",  # NFKC 之后是 www.
+        3,  # 不是字符串
+        None,
+    ],
+)
+def test_bad_credit_rejects_the_whole_letter_before_any_network(on, credit):
+    with pytest.raises(contactsend.ContactError) as e:
+        contactsend.start(_jmeta({**WRONG, "credit": credit}), [])
+    assert (e.value.code, e.value.status) == ("journal_invalid", 422)
+    assert on.calls == []
+
+
+def test_credit_with_editor_is_rejected(on):
+    with pytest.raises(contactsend.ContactError) as e:
+        contactsend.start(_jmeta({"type": "editor", "journal_id": "nature", "credit": "Li"}), [])
+    assert e.value.code == "journal_invalid" and on.calls == []
+
+
+@pytest.mark.parametrize("credit", ["x" * 32, "李明", "Li Ming-Wei Jr.", "a b"])
+def test_credit_boundary_values_are_accepted(on, credit):
+    contactsend.start(_jmeta({**WRONG, "credit": credit}), [])
+    assert wait_for({"done", "failed"})["state"] == "done"
+    assert on.calls[0]["json"]["journal"]["credit"] == credit
+
+
+def test_credit_is_part_of_the_idempotency_fingerprint():
+    base = contactsend.build_draft(_jmeta(WRONG), [])
+    named = contactsend.build_draft(_jmeta({**WRONG, "credit": "Li"}), [])
+    assert base.fingerprint() != named.fingerprint()

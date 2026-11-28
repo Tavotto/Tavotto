@@ -57,7 +57,9 @@
 
 - 只有原文写了 must / required 才标「必须」，写了 should / recommended 才标「建议」；Wiley 一类没有情态词的（v2 大量 `unspecified`）什么都不标。
 - **「符合」只给引擎真判过的**；期刊库里只是展示项（`info.*`、v2 的 `text` / 名单 / 带条件的事实）一律进「需要你确认」。
-- 一键改的按钮只在**有结构化数值**时出现。例：Nature 的「最大 7 pt」今天只在原话里（v1 只把 5 pt 下限存成了数值），要先在期刊库补成结构化事实，按钮才出现；补齐之前这条只能「看过了」。
+- 一键改的按钮只在**有结构化数值**时出现；期刊库里只有原话的项（如只写了「preferably Helvetica or Arial」、没有字体名单）只能「看过了」，要先在期刊库补成结构化事实，按钮才出现。
+- 按钮的目标值取期刊库里**所有**带数值的条目，不只取预检判过的那些。不折进预检的数值（`affects: info`）也算，例如 Nature 的「最大 7 pt」：它早已存成数值，只是原文写的是 should，`qualifier` 记为 `recommended`，所以预检不判（同句的 5 pt 下限是 `advice`，只给建议，不进判据）。一键改只在这个对话框里读这些值，**不改预检的折叠规则**，免费预检的结论一条不变。
+- 同一份指南里互相牵制的条目不能各改各的：Nature 的 7 pt 上限原文是「all other text」，分图标签另有「8 pt bold」。「改成 7 pt」要跳过分图标签；期刊库里没有能区分它们的结构化事实时，这颗按钮不出现。
 - 不承诺做不到的：没有 CMYK 导出（只出 RGB，期刊要 CMYK 时进「需要你确认」）；文件命名只有原文一句话时，按用户选的命名起名并在报告里引原文，不说「已按要求命名」；产物核验没核到的项（`unknown`）报告里写「没核到」，不写「已核验」。
 - 报告页脚一句：「这份报告只说明 Tavotto 量了什么、改了什么；以期刊最新的作者指南为准。」
 
@@ -78,14 +80,73 @@
 
 ### 七、功能键
 
-0193 §一 闭集新增 `submission-pack`。授权判断只在「投稿核对」这个新入口与它的编排端点上；被它调用的检查、修正、导出、核验照旧无判断。
+0193 §一 闭集新增 `submission-pack`。授权判断只在「投稿核对」这个新入口与它的编排端点上；被它调用的检查、修正、导出、核验照旧无判断。随 §八.2 进闭集（端点要判权益），不等前端。
 
 ### 八、实现分期
 
-1. 期刊库：给常见期刊补「一键改」要用的结构化事实（最大字号、字体名单等），先 Nature / Springer Nature、Elsevier 头部刊。
-2. 引擎编排端点 `POST /api/pro/submission-check/plan` / `apply`：逐画布复用 specfix / fix_to_journal（只算不写）、复用 0031 导出与 0068 核验，回每条要求的「判过 / 需要你确认 / 可一键改」三态；报告由引擎生成 PDF。
+1. 期刊库：先 Nature / Springer Nature、Elsevier 头部刊，补「一键改」要用、而今天只有原话或整条没有的结构化事实：栏宽（`page_columns`）、字体名单（`font_family.latin_accepted`），以及分图标签与正文字号的区分。字号上下限多数已有数值（见 §四），不用补。补进期刊库的条目照原文记语气，和现有条目一样走复核与签发。
+2. **引擎编排与闭源计算**（维护者 2026-11-28 定：「要求 + 量到的数值 → 状态与目标值」这一块放闭源组件，其余开源，见 §九）：
+   - 开源端点 `POST /api/pro/submission-check/plan`，**只算不写**（照 `/api/engine/specfix` 与 0199）。逐画布按 B0 渲染、取 manifest、跑免费预检，再把量到的数值交给组件命令 `submission_check.plan`；按组件回的操作逐画布在 worker 里渲染候选、复用 specfix 的回滚与核对。回每块画布的最终全量覆盖与逐条要求的状态。
+   - **不设 `apply` 端点**：前端拿到结果后，所有画布的改动一次 commit、一步撤销（§三）。导出走 0031，核验走 0068，报告 PDF 由开源侧按结果生成。
+   - 首版逐张图**顺序**渲染，每次渲染请求由 `engine_pool.hold` 护着（`_engine_attempt`），不会四张冷启动的图互相挤掉（#2341）；要提速再加有上限的并发。
+   - 某块画布按 B0 出不了图（脚本出错、native 图、同一张图摆了两次）就放进 `skipped`，其余照常（§五）。
+   - 功能键 `submission-pack` **随这一期**进 `engine/license.py` 闭集、`tests/test_license_callsites.py` 登记表与前端同源处（原 §八.4 提前：端点要判权益）。
 3. 前端对话框（原型在本地分支 `proto/submission-ready`，含私有期刊截图，不推）；入口与 `PremiumLock`。
-4. 功能键进 `engine/license.py` 闭集与前端同源处。
+4. 闭源组件（私有仓库 `Tavotto/pro`）实现 `submission_check.plan`；开源仓库的示例扩展 `tests/fixtures/pro_echo/` 加同名命令的最小实现，契约测试不需要闭源代码。
+
+### 九、组件命令 `submission_check.plan`（0198 §三：只给数字与结构）
+
+**开源侧先把要求合成一张表**，组件只看这张表与量到的数值：
+
+- **一条要求一行**：同一本刊在 v1 与 v2 都有时按项合并、**v2 优先**（0155 §14，与预检一致）。v2 直接读已验签的刊包事实，不读 `fold()` 的折叠结果：`fold()` 不列 `interval`，`accepted` 阶段会显示成 `any`。
+- 每行带 `source_state`：`preflight`（免费预检真判过）、`advice`（只给建议，例如 Nature 的 5 pt 下限）、`confirm`（v1 `info` 或 v2 进「需要你确认」的）。**只有 `preflight` 才能显示「判过」。**
+- 引文、截图、来源链接只留在开源侧，按 `ref` 对回去；组件拿不到。
+- 每行另有一个**稳定 id**（开源侧用，不发给组件）：v2 是 `v2:<fact_id>`，v1 是 `v1:<规则路径>`，栏宽再加 `#<column>`。
+- **逐条一键改**：端点请求带 `accept: [稳定 id…]`。
+  - 第一次核对时 `accept` 为空，开源侧只落 `source_state = preflight` 那些行的操作，对应流程里的「调整图宽和字号」。
+  - 「需要你确认」里每条的按钮，以及组头「全部处理」，都是再调一次端点，把那几条的稳定 id 加进 `accept`。组件照样算，开源侧只多落这几条的操作。
+  - 结果仍由前端一次 commit；每点一次就多一步撤销。
+
+```json
+{"cmd": "submission_check.plan", "payload": {
+  "requirements": [{
+    "ref": "r1", "check": "font_size_max", "relation": "lte", "value": 7, "unit": "pt",
+    "strength": "recommended", "stage": "production", "source_state": "confirm",
+    "conditions": {"text_role": "other_text"}, "has_condition_text": false
+  }],
+  "canvases": [{
+    "ref": "c1", "width_mm": 81.3, "height_mm": 60.0, "width_adjustable": true,
+    "preflight": ["font-too-small"],
+    "texts": [{"ref": "t1", "role": "ticks", "size_pt": 6.0, "family": "DejaVu Sans", "panel_label": false, "editable": true}],
+    "panel_labels_known": true
+  }]
+}}
+```
+
+- `preflight` 是这块画布此刻免费预检报出的规则 id（与问题面板同一个求值器）。位图分辨率与数据线宽首版不单独送数值：这两项只按预检判过没有来说，组件对它们只回 `pass` 候选或 `confirm`，不给操作。
+- `check` 是闭集：`width_final`、`font_size_min`、`font_size_max`、`font_family`、`raster_dpi_min`、`line_width_min`（与 ADR 0218 §一 A 档同名）。不认的检查项只回 `confirm`，不给操作。
+- `texts` 只给角色、字号、字体名、「是不是分图标签」与 `editable`，**不给文字内容**。
+  - 画布上的文字（手加的子图标签、文字框）只在排版文档里，引擎的 manifest 里没有。所以由前端连同标签判断一起送来，`editable = false`：只量不改，操作不许指向它们。`panel_label` 来自已有的识别：画布上的子图标签（`isSubLabel`）与脚本画的子图标签（`quicklayoutfig.analyze`，只认一个字母、从 a 起连续的那种）。`panel_labels_known` = 这块画布上每个疑似子图标签都认出了归属；做不到就是 `false`。
+- `ref` 都是本次请求现编的短号，映射只留在开源侧。
+
+**组件返回**：每条要求一个状态，加上能一键改的操作。
+
+```json
+{"requirements": [{"ref": "r1", "state": "fixable", "per_canvas": [{"canvas": "c1", "state": "fixable", "ops": ["o1"]}]}],
+ "ops": [{"ref": "o1", "op": "text.size", "canvas": "c1", "texts": ["t1"], "size_pt": 7}]}
+```
+
+- `state` 闭集：`pass`（只许落在 `source_state = preflight` 的行上）、`choose`（如栏宽要选）、`fixable`、`confirm`、`not_applicable`。
+- 操作闭集：
+  - `canvas.width`：`canvas, width_mm`。只许落在 `width_adjustable = true` 的画布上（画布上只有一张图、图铺满画布、按原尺寸显示即缩放 = 1，并且前端说了画布上没有别的对象——箭头、形状、子图标签不会跟着挪）：落成那张图的 `figure.size_mm` 与画布页宽，与拖边改图幅同一批键。一块画布上有几张图时改宽度是一键排版的事（0199），这条只回 `choose` 或 `confirm`；
+  - `text.size`：`canvas, texts, size_pt`，落成对应元素的 `fontsize` 覆盖；
+  - `text.family`：`canvas, texts, family`，`family` 必须取自那条要求的名单。
+  - 字号与字体两类操作由开源侧**交给免费的 specfix 事务落地**（`specfix.transaction`，只修 `texts` 对应的元素，目标值写进这次事务用的规范）：层级、回滚、真实渲染裁决都照单图修正走，不另写一份改字号的逻辑。specfix 没修成的那条退回 `confirm`。
+- **分图标签不能一起改**：这本刊有 `text_role = panel_label` 的要求时，`text.size` 不许带 `panel_label = true` 的文字；画布 `panel_labels_known = false` 时，这块画布上那条 `font_size_max` 只回 `confirm`。
+- 开源侧逐条校验：`ref` 是本次发出去的、数值有限、字号在 1–200 pt、图幅不越过 2000 mm、字体在名单里、`pass` 只落在判过的行上、操作不指向 `editable = false` 的文字。
+- **`pass` 由开源侧在最终画布上重新判**：栏宽按最终页宽；其余按 `journals.SEVERITY_BUMP` 找到预检规则，对最终渲染再跑一次免费预检，不报才算。组件说 `pass` 但重判不符合的，退回 `confirm`。用户点了却没改成的，同样退回 `confirm`，按钮不再出现。
+- 落地后再核一遍：specfix 实际改动的元素必须都在这条操作的 `texts` 里，并且没有分图标签。改完重新量，用量到的值对照要求判状态，不信组件给的 `size_pt`。图宽改动先落、重新量，再算字号（有效字号 = 字号 × 缩放）。**任何一条不过，整份结果作废**，按「这次没法一键改」处理，所有要求退回 `confirm`，文档不动。未知的 op 或 state 同样整份作废。
+- 组件不在、版本旧、授权没过：入口按 0198 §九 置灰；端点回 `{ok: false, code}`，不改文档。
 
 ## 后果
 

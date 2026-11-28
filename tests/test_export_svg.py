@@ -1566,3 +1566,66 @@ def _legacy_layout_file_form(monkeypatch):
 
     monkeypatch.setattr(layoutdir, "WRITER_ENABLED", False)
     monkeypatch.setenv(layoutdir.WRITER_ENV, "0")
+
+
+def test_canvas_svg_export_writes_names_groups_and_one_clip_and_passes_strict_inspection(project):
+    """ADR 0208 §七之三 端到端：载荷 → 真实导出作业 → 产物检视（strict）。名字（中文）写进 `id`、文档的组是嵌套 `<g>`、
+    剪切组的蒙版只写一次；同一份载荷的 PDF 照常交付。"""
+    client, _ = project
+    mask = {
+        "type": "path",
+        "x_mm": 10,
+        "y_mm": 10,
+        "w_mm": 20,
+        "h_mm": 12,
+        "group": "g_zoom",
+        "subpaths": [
+            {"closed": True, "nodes": [{"p": [0, 0]}, {"p": [1, 0]}, {"p": [1, 1]}, {"p": [0, 1]}]}
+        ],
+    }
+
+    def rect(i, x, name, **kw):
+        return {
+            "type": "shape",
+            "shape": "rect",
+            "id": i,
+            "x_mm": x,
+            "y_mm": 10,
+            "w_mm": 20,
+            "h_mm": 12,
+            "stroke_pt": 1,
+            "color": "#333333",
+            "fill": "#E69F00",
+            "name": name,
+            **kw,
+        }
+
+    value = {
+        "scope": "canvas",
+        "filename": "result",
+        "formats": ["svg", "pdf"],
+        "overwrite": "replace",
+        "inspection": {"mode": "strict"},
+        "canvas": {
+            "page_w_mm": 120,
+            "page_h_mm": 90,
+            "objects": [
+                rect("a", 5, "细胞膜", group_path=["g_all"]),
+                rect("b", 30, "放大 细胞核", group_path=["g_all", "g_zoom"], clip=[mask]),
+                rect("c", 55, "染色质", group_path=["g_all", "g_zoom"], clip=[mask]),
+            ],
+        },
+    }
+    body, outputs = output(client, value)
+    assert body["status"] == "done", body
+    assert outputs["pdf"]["status"] == "done"
+    assert outputs["svg"]["status"] == "done", body
+    data = (Path(body["export_dir"]) / outputs["svg"]["name"]).read_bytes()
+    root = ET.fromstring(data)
+    ns = "{http://www.w3.org/2000/svg}"
+    ids = [e.get("id") for e in root.iter() if e.get("id")]
+    assert {"细胞膜", "放大_细胞核", "染色质"} <= set(ids)
+    assert len(ids) == len(set(ids))
+    assert data.count(b"<clipPath") == 1 and data.count(b"clip-path=") == 1
+    groups = [g for g in root.iter(f"{ns}g") if set(g.attrib) <= {"id", "clip-path"}]
+    assert len(groups) == 2  # g_all 与它里面的 g_zoom（页面翻转用的根 `<g>` 带变换，不算文档的组）

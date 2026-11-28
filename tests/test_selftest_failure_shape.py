@@ -145,6 +145,8 @@ def test_reloaded_record_is_reprojected_field_by_field():
         "worker_code": None,
         "structure": ["[structure] PermissionError frames=1 (user=1)"],
         "engine_frame": None,
+        "operations": [],
+        "fidelity": None,
     }
     assert envdiag._selftest({"stage": "something_else"}) is None
     assert envdiag._selftest("no_reply") is None
@@ -163,3 +165,103 @@ def test_engine_frame_is_found_under_site_packages_too():
     assert shape["engine_frame"] == "worker.py:752"
     assert shape["structure"] and shape["structure"][0].startswith("[structure] OSError")
     _no_private(shape)
+
+
+def _blocked_reply(seen, monkeypatch, error):
+    real = deprepair.pool.build_envelope
+
+    def _envelope(body):
+        env = real(body)
+        seen.setdefault("build", env)
+        return env
+
+    monkeypatch.setattr(deprepair.pool, "build_envelope", _envelope)
+
+    def _reply(kw):
+        resp = {
+            "protocol_version": deprepair.pool.PROTOCOL_VERSION,
+            "request_id": seen["build"]["request_id"],
+            "ok": False,
+            "error": error,
+        }
+        return _FakeProc(stdout=json.dumps(resp) + "\n", returncode=0)
+
+    return _reply
+
+
+def test_blocked_selftest_says_which_operation_was_blocked(fake_worker, monkeypatch):
+    """TVD-FTH9：自检被守卫判 `safe_file_operation_blocked`，包里只有错误码——看不出拦下的是删除、改名还是 savefig。
+    worker 信封里本来就有闭集的 `operations` 与账本摘要 `fidelity`，带进形状；路径与报错文字一个字都不出。"""
+    fidelity = {
+        "level": "deviated",
+        "blocked": [{"op": "os.replace", "kind": "rename", "count": 1}],
+        "intercepted": [
+            {"op": "os.replace", "kind": "rename", "count": 2},
+            {"op": "savefig", "kind": "savefig", "count": 1},
+        ],
+        "signals": [{"kind": "savefig", "via": "stat", "count": 1}],
+        "unobserved": ["C extension fopen"],
+    }
+    error = {
+        "code": "safe_file_operation_blocked",
+        "message": "C:\\Users\\alice\\secret_lab 被拦",
+        "operations": [{"op": "os.replace", "kind": "rename", "count": 1}],
+        "fidelity": fidelity,
+    }
+    fake_worker["factory"] = _blocked_reply({}, monkeypatch, error)
+    failure = deprepair.worker_self_test("python3")["failure"]
+    assert failure["worker_code"] == "safe_file_operation_blocked"
+    out = envdiag._selftest(failure)
+    assert out["operations"] == [{"op": "os.replace", "kind": "rename", "count": 1}]
+    assert out["fidelity"] == {
+        "level": "deviated",
+        "blocked": [{"op": "os.replace", "kind": "rename", "count": 1}],
+        "intercepted": fidelity["intercepted"],
+        "signals": [{"kind": "savefig", "via": "stat", "count": 1}],
+    }
+    _no_private(out)
+
+
+def test_other_worker_codes_do_not_carry_ledger_fields(fake_worker, monkeypatch):
+    error = {
+        "code": "script_error",
+        "operations": [{"op": "savefig", "kind": "savefig", "count": 1}],
+    }
+    fake_worker["factory"] = _blocked_reply({}, monkeypatch, error)
+    failure = deprepair.worker_self_test("python3")["failure"]
+    assert failure["operations"] == [] and failure["fidelity"] is None
+
+
+def test_reloaded_ledger_fields_are_reprojected_row_by_row():
+    out = envdiag._selftest(
+        {
+            "stage": "error_reply",
+            "worker_code": "safe_file_operation_blocked",
+            "operations": [
+                {"op": "os.remove", "kind": "delete", "count": 3},
+                {"op": "C:\\Users\\alice", "kind": "delete", "count": 1},
+                {"op": "os.remove", "kind": "delete", "count": True},
+                {"op": "os.remove", "kind": "delete", "count": 10**9},
+                "patient_123",
+            ],
+            "fidelity": {"level": "patient_123", "blocked": []},
+        }
+    )
+    assert out["operations"] == [
+        {"op": "os.remove", "kind": "delete", "count": 3},
+        {"op": "os.remove", "kind": "delete", "count": 9999},
+    ]
+    assert out["fidelity"] is None
+    _no_private(out)
+
+
+def test_ledger_tables_are_the_same_on_both_sides():
+    from tavotto.engine.figcapture import BlockedFileOps as L
+
+    assert envdiag._LEDGER_OPS == frozenset(L.OPS)
+    assert envdiag._LEDGER_KINDS == frozenset(
+        {L.KIND_RENAME, L.KIND_DELETE, L.KIND_DELETE_DIR, L.KIND_WRITE, L.KIND_SAVEFIG}
+    )
+    assert envdiag._LEDGER_LEVELS == frozenset(L.LEVELS)
+    assert envdiag._LEDGER_VIAS == frozenset(L.SIGNAL_VIAS)
+    assert envdiag._LEDGER_MAX_COUNT == L.MAX_COUNT

@@ -41,7 +41,8 @@ describe('剪切蒙版对拍后端', () => {
   it.each(vectors.cases)('$name：载荷与后端读的同形', (c) => {
     const out = toExportObjects([member, maskOf(c.canvas)])
     expect(out).toHaveLength(1) // 蒙版自己不画
-    expect(out[0].clip).toEqual([c.export])
+    // 后端读的形状 + 「这个蒙版属于 g1」（ADR 0208 §七之三：SVG 把蒙版挂在组上，只写一次）
+    expect(out[0].clip).toEqual([{ ...c.export, group: 'g1' }])
   })
 
   it.each(vectors.cases)('$name：画布轮廓与导出逐点相同', (c) => {

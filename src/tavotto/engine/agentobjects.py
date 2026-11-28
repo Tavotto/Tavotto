@@ -296,6 +296,9 @@ def _mint(objs: list, taken: set[str], prefix: dict) -> dict:
             n["groupId"] = chain[-1]
             if len(chain) >= 2:  # 只有两层及以上才写 groupPath（`types/document.ObjectBase`）
                 n["groupPath"] = chain
+            # 组名不丢（ADR 0191 修订 / 0208 前置 6.0）：Agent 写的是组名链，铸出 id 之后名字存在对象的 `groupNames`
+            # （键 = 这个对象自己组链上的组 id）；同一个组的每个成员都带同一份，读时「z 序第一个非空」
+            n["groupNames"] = {gid: path[d] for d, gid in enumerate(chain)}
         out.append(n)
     group_map = [{"path": list(k), "id": v} for k, v in groups.items()]
     return {"ok": True, "objects": out, "id_map": id_map, "group_map": group_map, "errors": []}
@@ -497,6 +500,60 @@ def _fill_opacity(e: dict, o: dict) -> None:
         e["fill_opacity"] = fo
 
 
+def _group_path_of(o: dict) -> list[str]:
+    """对象的组链（外 → 内）：照 `web/src/lib/groupTree.groupPathOf`（链与 groupId 对不上就只认 `[groupId]`）。"""
+    g = o.get("groupId")
+    if not g:
+        return []
+    p = o.get("groupPath")
+    if (
+        isinstance(p, list)
+        and len(p) >= 2
+        and p[-1] == g
+        and all(isinstance(v, str) and v for v in p)
+        and len(set(p)) == len(p)
+    ):
+        return list(p)
+    return [g]
+
+
+def group_name_of(objs: list[dict], gid: str) -> str:
+    """组 `gid` 的名字：z 序（数组下标自底向上）扫它的成员，取**第一个**在自己 `groupNames[gid]` 里给了非空名字的；没有 = ""。
+    与前端 `lib/groupTree.groupNameOf` 同一条读法（严格同源对，`tests/golden/group_names_vectors.json` 两侧对拍）。
+    不在这个对象自己组链上的键一律忽略（旧构建改过 `groupId` 之后留下的名字不会错安到新组上）。读时不改写文档。"""
+    for o in objs:
+        if gid not in _group_path_of(o):
+            continue
+        names = o.get("groupNames")
+        n = names.get(gid) if isinstance(names, dict) else None
+        if isinstance(n, str) and n.strip():
+            return n
+    return ""
+
+
 def to_export_objects(objs: list[dict]) -> list[dict]:
-    """顺序即 z 序；隐藏的不发（Agent 的对象不会是隐藏的，但与前端同一条契约）。"""
-    return [to_export_object(o) for o in objs if not o.get("hidden")]
+    """顺序即 z 序；隐藏的不发（Agent 的对象不会是隐藏的，但与前端同一条契约）。
+
+    名字与组链（ADR 0208 §七之三，只给 SVG）与前端 `toExportObjects` 同一条：有名字发 `name`，在组里发 `group_path`
+    （组 id 链），组有名字时发与链同长的 `group_names`（没名字的层是空串）；都没有 = 一个键都不多。"""
+    out = []
+    names: dict[str, str] = {}  # 组名按全集读（隐藏的成员也算：名字不因为那一个成员没发而丢）
+    for o in objs:
+        for g in _group_path_of(o):
+            if g not in names:
+                names[g] = group_name_of(objs, g)
+    for o in objs:
+        if o.get("hidden"):
+            continue
+        e = to_export_object(o)
+        name = o.get("name")
+        if isinstance(name, str) and name.strip():
+            e["name"] = name
+        path = _group_path_of(o)
+        if path:
+            e["group_path"] = path
+            gn = [names[g] for g in path]
+            if any(gn):
+                e["group_names"] = gn
+        out.append(e)
+    return out

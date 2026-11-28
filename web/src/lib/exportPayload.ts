@@ -2,7 +2,7 @@ import { effectiveFillGradient, effectiveStrokeGradient, type ReadGradient } fro
 import { figureSnapshotFor } from './figureSnapshot'
 import { artifactRequestFields } from './artifactValidation'
 import type { ExportClipPath, ExportObject } from './api'
-import { clipChainOf, groupMasks, isActiveMask } from './groupTree'
+import { clipEntriesOf, groupMasks, groupNameMap, groupPathOf, isActiveMask } from './groupTree'
 import { maskAsPath } from './clipMask'
 import type { CanvasObject, Gradient, PathTextObject } from '@/types/document'
 import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO, isKnownObject, isStrokeOnlyShape, panelRotation, readPath, shapeStrokeOn } from '@/types/document'
@@ -25,12 +25,24 @@ export function toExportObjects(
   // 静默丢掉。界面在导出前用 `newerObjectCount` 拦下，这里只保证载荷里没有空洞。
   // 剪切组里生效的蒙版不画（ADR 0191）：它只作为被裁对象的 `clip` 出现
   const masks = groupMasks(context)
+  // 组名按全集读（隐藏的成员也算，名字不因为那一个成员没发而丢）；没有名字的文档 = 空表，载荷不多一个键
+  const names = groupNameMap(context)
   return objects
     .filter((o) => !o.hidden && isKnownObject(o) && !isActiveMask(o, masks))
     .map((o) => {
       const e = o.type === 'pathText' ? pathTextExport(o, lineWidthOf(o, context)) : toExportObject(o)
-      const chain = clipChainOf(o, masks)
-      return chain.length ? { ...e, clip: chain.map(toExportClip) } : e
+      const chain = clipEntriesOf(o, masks)
+      // 名字与组树只给 SVG（ADR 0208 §七之三）：对象名写成 `id`、文档的组写成嵌套的 `<g>`、剪切组的蒙版只在组上写一次。
+      // PDF / EPS / 位图不看这几个键；没有名字、不在组里 = 一个键都不多，载荷与以前逐字节相同
+      const path = groupPathOf(o)
+      return {
+        ...e,
+        ...(typeof o.name === 'string' && o.name.trim() ? { name: o.name } : {}),
+        ...(path.length ? { group_path: path } : {}),
+        ...(path.some((g) => names.has(g)) ? { group_names: path.map((g) => names.get(g) ?? '') } : {}),
+        // `group` 说明这个蒙版是哪一层组的：后端据此把蒙版挂在组上，而不是每个被裁的对象各复制一份
+        ...(chain.length ? { clip: chain.map((c) => ({ ...toExportClip(c.mask), group: c.gid })) } : {}),
+      }
     })
 }
 

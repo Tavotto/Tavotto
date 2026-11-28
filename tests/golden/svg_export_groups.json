@@ -1,0 +1,925 @@
+{
+ "note": "前端 lib/exportPayload.toExportObjects 发出的载荷 + 期望的 <g> 树；后端 tests/test_svg_export_groups.py 读同一份写 SVG 再解析",
+ "cases": [
+  {
+   "name": "两层嵌套组、重名与带空格 / 标点 / 数字开头的名字",
+   "page_mm": [
+    120,
+    90
+   ],
+   "payload": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "背景"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "细胞膜",
+     "group_path": [
+      "gA"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "受体 EGFR",
+     "group_path": [
+      "gA",
+      "gB"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "受体 EGFR",
+     "group_path": [
+      "gA",
+      "gB"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 30,
+     "w_mm": 30,
+     "h_mm": 6,
+     "type": "text",
+     "text": "Ca^{2+} 内流",
+     "size_pt": 8,
+     "bold": false,
+     "italic": false,
+     "color": "#000000",
+     "align": "left",
+     "name": "标签 钙离子",
+     "group_path": [
+      "gA"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 40,
+     "w_mm": 30,
+     "h_mm": 6,
+     "type": "arrow",
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "stroke_pt": 1,
+     "color": "#000000",
+     "head": "end",
+     "group_path": [
+      "gA"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "1 号样品"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "激活箭头 EGFR→RAS"
+    }
+   ],
+   "tree": [
+    {
+     "o": "背景"
+    },
+    {
+     "g": [
+      {
+       "o": "细胞膜"
+      },
+      {
+       "g": [
+        {
+         "o": "受体 EGFR"
+        },
+        {
+         "o": "受体 EGFR"
+        }
+       ],
+       "clip": false
+      },
+      {
+       "o": "标签 钙离子"
+      },
+      {
+       "o": null
+      }
+     ],
+     "clip": false
+    },
+    {
+     "o": "1 号样品"
+    },
+    {
+     "o": "激活箭头 EGFR→RAS"
+    }
+   ]
+  },
+  {
+   "name": "一个剪切组（三个对象），蒙版只写一次",
+   "page_mm": [
+    120,
+    90
+   ],
+   "payload": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "底图"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "放大 细胞核",
+     "group_path": [
+      "gClip"
+     ],
+     "clip": [
+      {
+       "type": "path",
+       "x_mm": 12,
+       "y_mm": 10,
+       "w_mm": 16,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gClip"
+      }
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "染色质",
+     "group_path": [
+      "gClip"
+     ],
+     "clip": [
+      {
+       "type": "path",
+       "x_mm": 12,
+       "y_mm": 10,
+       "w_mm": 16,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gClip"
+      }
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 40,
+     "w_mm": 30,
+     "h_mm": 6,
+     "type": "arrow",
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "stroke_pt": 1,
+     "color": "#000000",
+     "head": "end",
+     "name": "指向",
+     "group_path": [
+      "gClip"
+     ],
+     "clip": [
+      {
+       "type": "path",
+       "x_mm": 12,
+       "y_mm": 10,
+       "w_mm": 16,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gClip"
+      }
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "图例"
+    }
+   ],
+   "tree": [
+    {
+     "o": "底图"
+    },
+    {
+     "g": [
+      {
+       "o": "放大 细胞核"
+      },
+      {
+       "o": "染色质"
+      },
+      {
+       "o": "指向"
+      }
+     ],
+     "clip": true
+    },
+    {
+     "o": "图例"
+    }
+   ]
+  },
+  {
+   "name": "外层与内层都是剪切组",
+   "page_mm": [
+    120,
+    90
+   ],
+   "payload": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "外层成员",
+     "group_path": [
+      "gOut"
+     ],
+     "clip": [
+      {
+       "type": "path",
+       "x_mm": 12,
+       "y_mm": 10,
+       "w_mm": 16,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gOut"
+      }
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "内层成员 1",
+     "group_path": [
+      "gOut",
+      "gIn"
+     ],
+     "clip": [
+      {
+       "type": "path",
+       "x_mm": 12,
+       "y_mm": 10,
+       "w_mm": 16,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gOut"
+      },
+      {
+       "type": "path",
+       "x_mm": 14,
+       "y_mm": 10,
+       "w_mm": 10,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gIn"
+      }
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "内层成员 2",
+     "group_path": [
+      "gOut",
+      "gIn"
+     ],
+     "clip": [
+      {
+       "type": "path",
+       "x_mm": 12,
+       "y_mm": 10,
+       "w_mm": 16,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gOut"
+      },
+      {
+       "type": "path",
+       "x_mm": 14,
+       "y_mm": 10,
+       "w_mm": 10,
+       "h_mm": 12,
+       "subpaths": [
+        {
+         "closed": true,
+         "nodes": [
+          {
+           "p": [
+            0,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            0
+           ]
+          },
+          {
+           "p": [
+            1,
+            1
+           ]
+          },
+          {
+           "p": [
+            0,
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "group": "gIn"
+      }
+     ]
+    }
+   ],
+   "tree": [
+    {
+     "g": [
+      {
+       "o": "外层成员"
+      },
+      {
+       "g": [
+        {
+         "o": "内层成员 1"
+        },
+        {
+         "o": "内层成员 2"
+        }
+       ],
+       "clip": true
+      }
+     ],
+     "clip": true
+    }
+   ]
+  },
+  {
+   "name": "组成员在 z 序里不连续：拆成几段、绘制顺序不挪",
+   "page_mm": [
+    120,
+    90
+   ],
+   "payload": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "甲",
+     "group_path": [
+      "gA"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "夹在中间的"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "乙",
+     "group_path": [
+      "gA"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "丙",
+     "group_path": [
+      "gA"
+     ]
+    }
+   ],
+   "tree": [
+    {
+     "g": [
+      {
+       "o": "甲"
+      }
+     ],
+     "clip": false
+    },
+    {
+     "o": "夹在中间的"
+    },
+    {
+     "g": [
+      {
+       "o": "乙"
+      },
+      {
+       "o": "丙"
+      }
+     ],
+     "clip": false
+    }
+   ]
+  },
+  {
+   "name": "组有名字：名字在隐藏的成员上 / 同组不一致取 z 序第一个 / 内层另有名字",
+   "page_mm": [
+    120,
+    90
+   ],
+   "payload": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "细胞膜",
+     "group_path": [
+      "gA"
+     ],
+     "group_names": [
+      "机理图"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "受体",
+     "group_path": [
+      "gA",
+      "gB"
+     ],
+     "group_names": [
+      "机理图",
+      "受体簇"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "游离"
+    }
+   ],
+   "tree": [
+    {
+     "g": [
+      {
+       "o": "细胞膜"
+      },
+      {
+       "g": [
+        {
+         "o": "受体"
+        }
+       ],
+       "clip": false
+      }
+     ],
+     "clip": false
+    },
+    {
+     "o": "游离"
+    }
+   ]
+  },
+  {
+   "name": "没有组也没有名字：载荷不多一个键",
+   "page_mm": [
+    120,
+    90
+   ],
+   "payload": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 40,
+     "w_mm": 30,
+     "h_mm": 6,
+     "type": "arrow",
+     "start": {
+      "rx": 0,
+      "ry": 0.5
+     },
+     "end": {
+      "rx": 1,
+      "ry": 0.5
+     },
+     "stroke_pt": 1,
+     "color": "#000000",
+     "head": "end"
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 30,
+     "w_mm": 30,
+     "h_mm": 6,
+     "type": "text",
+     "text": "Hello",
+     "size_pt": 8,
+     "bold": false,
+     "italic": false,
+     "color": "#000000",
+     "align": "left"
+    }
+   ],
+   "tree": [
+    {
+     "o": null
+    },
+    {
+     "o": null
+    },
+    {
+     "o": null
+    },
+    {
+     "o": null
+    }
+   ]
+  }
+ ]
+}

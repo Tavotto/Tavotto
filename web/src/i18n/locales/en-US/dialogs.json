@@ -75,6 +75,7 @@
       "email_invalid": "That email address doesn't look right. Check it, or leave it empty.",
       "urlInvalid": "The link has to start with https://.",
       "journalNeedsClue": "Paste a link or attach a file.",
+      "creditInvalid": "The name has to be 1–32 characters, with no @ or web address.",
       "journal_invalid": "Something is off with this tip. Close the window and try again.",
       "report_invalid": "The diagnostics number is invalid. Untick Attach diagnostic info and try again.",
       "attachments_limit": "Too many attachments.",
@@ -2311,6 +2312,8 @@
       "none": "Not activated",
       "until": "Valid until {{date}}",
       "codeLabel": "Activation code",
+      "verifying": "Verifying",
+      "activated": "{{pro}} activated",
       "state": {
         "expired": "Expired on {{date}}",
         "revoked": "This license is no longer valid",
@@ -2859,6 +2862,7 @@
       "report": "Looks wrong",
       "reportTitle": "Send a link or screenshot of the website and we will check it",
       "fromV2": "Newer",
+      "thanks": "Thanks to {{name}} for the correction",
       "aria": "Source"
     },
     "confirm": {
@@ -2961,6 +2965,12 @@
     "editorQuotePlaceholder": "Which rule is wrong or missing, or paste the editor’s email; only used to check the website, never made public",
     "editorAbout": "{{journal}}",
     "editorTag": "Journal guideline issue",
+    "credit": "Credit my name on the cited entry",
+    "creditHint": " (visible to everyone)",
+    "creditTitle": "Your name appears on that entry’s source card, visible to every user. Reply to us any time to have it removed.",
+    "creditInput": "Name to show",
+    "creditPlaceholder": "Your name",
+    "creditRow": "Name",
     "editorEmail": "We will reply here once checked"
   },
   "packageInstall": {

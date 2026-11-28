@@ -2676,6 +2676,12 @@ class Worker(wireproto.V1Handler):
             **self.session.stems_summary(self.dropped_figures, self.pdf_pages),
             "source_sha256": self._source_sha256,
         }
+        # 写已有文件被系统拒绝（别的程序占着 / 只读）而改写进覆盖层的项目相对路径：图照常出，界面一枚胶囊说清楚
+        # 这次没写进去。加字段，没有时一个字节都不多（ADR 0003 §1）
+        if writetripwire.overlay_active():
+            locked = writetripwire.locked_writes()
+            if locked:
+                result["locked_writes"] = locked
         # The tripwire ledger records attempts before opening a path; it does
         # not prove that a file was successfully written or still exists.
         if self.write_roots and any(
@@ -2793,6 +2799,7 @@ class Worker(wireproto.V1Handler):
                         "redirected_write_attempts",
                         "sandbox_files",
                         "inputs_read",
+                        "locked_writes",
                     }
                 },
             }

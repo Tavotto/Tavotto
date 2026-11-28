@@ -11804,6 +11804,11 @@ def _api_engine_render_body(body, *, include_figure_execution=False):
     hint = engine_pool.workdir_hint_of_build(worker)
     if hint is not None:
         out["workdir_hint"] = hint
+    # 脚本写已有文件被系统拒绝（别的程序占着 / 只读），这一笔改写进了本次运行的覆盖层：图照常出，界面一枚胶囊说清楚
+    # 这次没写进去（项目相对路径，只给本机界面；没有就不加这个字段）
+    locked = engine_pool.locked_writes_of_build(worker)
+    if locked:
+        out["locked_writes"] = locked
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
         out["svg"] = resp["svg"]
@@ -13334,6 +13339,45 @@ def api_change_plans_discard(plan_id: str):
     if engine_changeplan.PLAN_ID.match(plan_id) is None:
         return _change_plan_error("change_plan_unknown")
     return jsonify({"discarded": engine_changeplan.discard(current_ctx().id, plan_id)})
+
+
+@app.get("/api/change-plans")
+def api_change_plans_list():
+    """窗口里的待办卡（ADR 0217 §五）：这个项目里绑定会话的 Agent 出的、没过期、没落定的建议方案（最小字段，卡片内容再按 id 读）。
+    只有 `?agent=1` 一种列法；与别的 `/api/*` 一样在会话认证之内（没有旁路）。"""
+    if request.args.get("agent") != "1":
+        return _change_plan_error("invalid_change_plan")
+    resp = jsonify({"plans": engine_changeplan.list_agent_plans(current_ctx().id)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/change-plans/<plan_id>/agent-applied")
+def api_change_plans_agent_applied(plan_id: str):
+    """用户在窗口里按下 Agent 建议卡的「改这 N 项」之后：记下勾了哪几项（`{keys}`，方案里待办的 key；图内的已由窗口自己写进文档，
+    脚本的交回 Agent）。记在 `agent_applied`（不占脚本方案的 `applied`）；先落定的赢——插件那边已经应用过 → 409 `change_plan_agent_settled`。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    keys = body.get("keys") if isinstance(body, dict) else None
+    plan = (
+        engine_changeplan.load(ctx.id, plan_id)
+        if engine_changeplan.PLAN_ID.match(plan_id)
+        else None
+    )
+    agent = plan.get("agent") if plan else None
+    if not plan or not isinstance(agent, dict) or not agent.get("panel"):
+        return _change_plan_error("change_plan_unknown")
+    known = {t.get("key") for t in plan.get("todos") or [] if isinstance(t, dict)}
+    if (
+        not isinstance(keys, list)
+        or not keys
+        or not all(isinstance(k, str) and k in known for k in keys)
+    ):
+        return _change_plan_error("invalid_change_plan")
+    record = {"by": "desktop", "keys": list(dict.fromkeys(keys)), "at": time.time()}
+    if not engine_changeplan.settle_agent_plan(ctx.id, plan_id, "agent_applied", record):
+        return _change_plan_error("change_plan_agent_settled")
+    return jsonify({"ok": True, "agent_applied": record})
 
 
 @app.post("/api/change-plans/layout-preview")
@@ -14974,6 +15018,13 @@ def _write_source_files(
         if diffs:
             _log_replay_divergence(stem, diffs)
             raise ReplayDivergenceError(diffs[:REPLAY_DIFF_LIMIT])
+        # 与导出同一道生产者边界：matplotlib 把 CFF 字体（.otf、苹方 / 冬青黑体 / 思源这类 CJK 字体集）
+        # 写进 TrueType 槽，刻进原件前换成真 TrueType（摸底 T-003）——不换的话用户自己的原图在 MuPDF
+        # 一类阅读器里画错字、文字层读不回，检查器也报 `font_program_mismatch`。放在 verify 全过之后：
+        # 409 的分支不碰 staging；标注已画进 PDF，这里只换字体程序，PNG 不受影响
+        for target, tmp in tmps:
+            if target.suffix.lower() == ".pdf":
+                engine_artifactinspect.normalize_worker_pdf(tmp)
     except BaseException:
         _discard_updating(tmps)
         raise
@@ -19250,7 +19301,18 @@ def api_journal_facts_preflight():
     except engine_journalfacts_remote.FactsError as exc:
         return _journal_facts_error(exc)
     folded = engine_journalfacts_fold.fold(result["bundle"])
-    return _journal_facts_response({"catalog_rev": result["catalog_rev"], **folded})
+    # 署名（ADR 0213 三期）：只留这一刊刊包里真实存在的事实；取不到 / 验不过 = 空，不影响其余
+    fact_ids = {f["id"] for f in result["bundle"].get("facts", [])}
+    thanks = {
+        fid: name
+        for fid, name in engine_journalfacts_remote.thanks_for(
+            body["journal_id"], ui_locale=locale
+        ).items()
+        if fid in fact_ids
+    }
+    return _journal_facts_response(
+        {"catalog_rev": result["catalog_rev"], **folded, "thanks": thanks}
+    )
 
 
 @app.get("/api/journal-facts/snapshot")

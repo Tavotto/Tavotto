@@ -1,0 +1,3 @@
+## A friendlier way to enter your Pro activation code
+
+Entering an activation code on the Pro page now opens a row of code boxes: paste the whole code (with or without the `TVK-` prefix, dashes or spaces) or type it, and it checks itself as soon as all 12 characters are in. A wrong code gives the row a short shake so you can fix it in place. A successful activation shows "Pro activated" with a small burst of confetti, and the Pro star in the left rail lights up. When Pro isn't activated yet, opening Pro from the left rail takes you straight to the code boxes. With reduced motion turned on in your system settings, the animations are skipped.

@@ -587,6 +587,12 @@ def _probe(
                 **({"run_config": run.config_id} if run is not None else {}),
                 # 跑通了有图，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）
                 **_success_workdir_hint(_worker),
+                # 写已有文件被系统拒绝、改写进覆盖层的项目相对路径（图照常出；界面一枚胶囊说这次没写进去）
+                **(
+                    {"locked_writes": locked}
+                    if (locked := pool.locked_writes_of_build(_worker))
+                    else {}
+                ),
             }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:

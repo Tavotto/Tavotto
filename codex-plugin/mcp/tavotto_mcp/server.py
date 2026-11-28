@@ -136,6 +136,9 @@ HANDLE_ONLY_KEYS = frozenset(
         "worker_generation",
         "restored",
         "script_rerun",
+        "binding",  # 绑定了排版的哪个子图 / 候选（有界：候选最多 8 条）
+        "layout_sync",  # 桌面改了子图的修改（changed 最多 8 条）
+        "layout_written",  # 绑定会话写回排版：{layout, panel, undo_token, revision}（定长）
         "applied",
         "canonical_patch_count",
         "contract_released",
@@ -229,6 +232,9 @@ def _tools() -> list[dict]:
                 "不要草稿就带 discard_draft=true 打开（草稿同时删除）。导出成功即清草稿。"
                 "改完 .py 不用 close 再 open：再调 open / preflight / export 等任一工具，"
                 "会按新脚本重跑同一个会话并保留修改（回包 script_rerun，用不了的写进 dropped）。"
+                "这张图放在项目某份排版的子图里时，会话会绑定那个子图（回包 binding）：此后读到的是用户在桌面上的修改，"
+                "桌面改了会重渲染（回包 layout_sync）；在多个子图里就回 binding.state=ambiguous，问用户是哪一个，"
+                "再带 layout（排版名）+ panel（子图 id 或 tavotto_layout_scene 的短号 P1）重开。"
                 "若宿主支持 MCP elicitation 且没有传工作区根，第一次请传绝对路径；"
                 "Tavotto 会让宿主显示精确目录并请用户确认，本次连接内有效。"
             ),
@@ -262,6 +268,14 @@ def _tools() -> list[dict]:
                             "从注册表自动发现可参数化且产物在磁盘上的图，全部打开。"
                             "与 stem / stems 互斥；不猜没登记的产物，也不跑脚本"
                         ),
+                    },
+                    "layout": {
+                        "type": "string",
+                        "description": "绑定到这份排版（排版名）；不给就自动找，只在一个子图里才绑",
+                    },
+                    "panel": {
+                        "type": "string",
+                        "description": "绑定到排版里的这个子图（子图 id 或短号 P1…）；与 layout 一起给",
                     },
                     "discard_draft": {
                         "type": "boolean",
@@ -373,6 +387,7 @@ def _tools() -> list[dict]:
                 "模型调用请带 summary=true：只返回有界变更摘要，完整状态与有界的最近诊断"
                 "按需用 tavotto_session_state 读取；省略或 false 保留旧客户端的完整响应。"
                 "不会改用户的 Python 源码。"
+                "会话绑定了排版子图时，这次修改也写进用户的排版文件（只这个子图的图内修改，可撤销，回包 layout_written）。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -813,7 +828,7 @@ def _layout_annotate_tools() -> list[dict]:
             "name": "tavotto_layout_annotate_undo",
             "title": "撤销上一次 Agent 写入",
             "description": (
-                "把排版恢复到那次写入之前（加标注与 tavotto_layout_edit_apply 的编辑都用它撤销）。"
+                "把排版恢复到那次写入之前（加标注、tavotto_layout_edit_apply 的编辑、绑定会话的图内修改写回（layout_written.undo_token）都用它撤销）。"
                 "只在排版文件还是那次写下的那一份时才恢复；之后被桌面或别人改过就拒绝（不替用户覆盖）。"
             ),
             "inputSchema": {
@@ -950,6 +965,7 @@ def _suggest_tools() -> list[dict]:
                 "用户确认要改的那几条（tavotto_suggest_plan 回的 todos[].key）：图内待办一次写进会话；"
                 "script 待办原样回在 script_todos 里，由你接着改脚本（改完 .py 下一次调用会按新脚本重跑同一个会话）。"
                 "出方案之后图又被改过会拒绝（suggest_plan_stale），重新出方案。写完把改了哪几条告诉用户。"
+                "会话绑定了排版子图时同样会写用户的排版文件（只这个子图的图内修改，可撤销，回包 layout_written）。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -1664,6 +1680,8 @@ def _open_figure_result(args: dict) -> dict:
         expected_environment_generation=generation,
         prepare_impact_digest=digest,
         discard_draft=bool(args.get("discard_draft")),
+        layout=args.get("layout"),
+        panel=args.get("panel"),
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。

@@ -151,6 +151,14 @@ describe('fetchJournalV2：取不到、被拒、不合法都是 null（预检照
     answer(200, { rules: 1 })
     expect(await fetchJournalV2('fx-beta')).toBeNull()
   })
+  it('署名（ADR 0213 三期）：渲染前再校验一遍，单条不合规只丢那一条；形状不对 = 没有；老引擎不带 = 空', async () => {
+    answer(200, { ...patch(), thanks: { a: '  李明 ', b: 'x@y', c: 'https://z', d: 'a\u202eb', e: 7 } })
+    expect((await fetchJournalV2('fx-beta'))?.thanks).toEqual({ a: '李明' })
+    answer(200, { ...patch(), thanks: ['李明'] })
+    expect((await fetchJournalV2('fx-beta'))?.thanks).toEqual({})
+    answer(200, patch())
+    expect((await fetchJournalV2('fx-beta'))?.thanks).toEqual({})
+  })
   it('确认清单里形状不对的行被丢掉，其余保留', async () => {
     const good = { id: 'a', subject: 'min_line_width', relation: 'gte', value: 2, unit: 'pt', condition: '', quote: 'q', stage: 'unknown', source: V2_SRC }
     answer(200, patch({ confirm: [good, { ...good, id: 'b', relation: 'between' }, { ...good, id: 'c', value: 'x' }] as never }))

@@ -888,7 +888,7 @@
         "strokeOpacity": "描边不透明度", "fillOpacity": "填充不透明度", "dash": "虚线", "cornerRadius": "圆角", "locked": "锁定", "hidden": "隐藏",
         "subpaths": "路径形状", "anchor": "锚定位置", "layoutPinned": "固定位置", "start": "起点", "end": "终点", "shape": "形状种类", "sides": "边数", "starRatio": "星形比例",
         "headStart": "起点端型", "headEnd": "终点端型", "headSizeStart": "起点端型大小", "headSizeEnd": "终点端型大小", "fillGradient": "填充渐变", "strokeGradient": "描边渐变",
-        "fillRule": "填充规则", "strokeAlign": "描边对齐", "dashPattern": "虚线", "miterLimit": "尖角限制", "interpretation": "文字解读", "textFormat": "文字格式", "clipMask": "剪切蒙版", "clipOff": "剪切蒙版",
+        "fillRule": "填充规则", "strokeAlign": "描边对齐", "dashPattern": "虚线", "miterLimit": "尖角限制", "interpretation": "文字解读", "textFormat": "文字格式", "clipMask": "剪切蒙版", "clipOff": "剪切蒙版", "groupNames": "组名",
         "name": "名字", "stroke": "描边", "lineCap": "线端", "lineJoin": "拐角", "padding": "内边距"
       }
     },
@@ -998,6 +998,12 @@
       "addPlaceholder": "比如：图例去掉边框",
       "addFailed": "这一条没加上，再试一次",
       "toTodos": "把这些建议写成待办",
+      "fromHost": { "codex": "来自 Codex", "claude_code": "来自 Claude Code", "other": "来自插件" },
+      "agentScriptTag": { "codex": "改脚本 · 交回 Codex", "claude_code": "改脚本 · 交回 Claude Code", "other": "改脚本 · 交回插件" },
+      "agentScriptTip": { "codex": "这几项要改脚本，不在这里做；勾着的会交回 Codex", "claude_code": "这几项要改脚本，不在这里做；勾着的会交回 Claude Code", "other": "这几项要改脚本，不在这里做；勾着的会交回插件" },
+      "agentSettled": { "codex": "Codex 那边已经先改了；这里刚改的没能自动撤回", "claude_code": "Claude Code 那边已经先改了；这里刚改的没能自动撤回", "other": "插件那边已经先改了；这里刚改的没能自动撤回" },
+      "handedHost": { "codex": "{{count}} 项交回 Codex 改", "claude_code": "{{count}} 项交回 Claude Code 改", "other": "{{count}} 项交回插件改" },
+      "notNow": "先不改",
       "pickJournal": "选期刊"
     },
     "dialog": {

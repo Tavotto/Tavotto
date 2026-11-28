@@ -412,6 +412,60 @@
       "id": "a",
       "origin": "journal",
       "quote": "Quote a",
+      "relation": "in",
+      "source": "s1",
+      "stage": "unknown",
+      "strength": "preferred",
+      "subject": "font_family",
+      "value": [
+       "Times",
+       "Helvetica"
+      ]
+     }
+    ],
+    "sources": {
+     "s1": {
+      "kind": "html",
+      "retrieved": "2026-11-15",
+      "url": "https://example.invalid/guide"
+     }
+    }
+   },
+   "expected": {
+    "confirm": [
+     {
+      "condition": "",
+      "id": "a",
+      "quote": "Quote a",
+      "relation": "in",
+      "source": {
+       "coverage": "journal_specific",
+       "kind": "html",
+       "retrieved": "2026-11-15",
+       "url": "https://example.invalid/guide"
+      },
+      "stage": "any",
+      "strength": "preferred",
+      "subject": "font_family",
+      "unit": null,
+      "value": [
+       "Times",
+       "Helvetica"
+      ]
+     }
+    ],
+    "rules": {},
+    "sources": {}
+   },
+   "id": "font-family-preferred-is-listed-not-folded"
+  },
+  {
+   "bundle": {
+    "facts": [
+     {
+      "id": "a",
+      "origin": "journal",
+      "quote": "Quote a",
       "relation": "gte",
       "source": "s1",
       "stage": "unknown",

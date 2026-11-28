@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { snapshotUrl, useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
@@ -11,6 +11,7 @@ import { Popover } from '../ui/Popover'
 import { SUBTLE_LINK_CLASS } from '../ui/subtleLink'
 import type { JournalFieldSource } from '@/lib/journals'
 import { tipForSource } from '@/lib/journalTip'
+import { useJournalV2Store } from '@/store/journalV2Store'
 import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
 import {
   adviceSentence,
@@ -95,6 +96,65 @@ function SourceMeta({ source }: { source: JournalFieldSource }) {
         </Fragment>
       ))}
     </p>
+  )
+}
+
+/** 某条 v2 事实的署名（ADR 0213 三期）：称呼是别的用户自填的文字，引擎与 `journalV2.checkPatch` 已各校验过一遍。v1 条目、没有署名、取不到都是 undefined。 */
+function useThanks(source: JournalFieldSource, journalId?: string): string | undefined {
+  const name = useJournalV2Store((s) =>
+    journalId && source.fact_id ? s.byJournal[journalId]?.thanks?.[source.fact_id] : undefined,
+  )
+  return name && isV2Source(source) ? name : undefined
+}
+
+const THANKS_MARK = '\u0000'
+
+/** 「感谢 <称呼> 提示」：前缀弱灰、人名提半档；只当 React 文本节点画（绝不 innerHTML），一行放不下就省略，title 给完整称呼。 */
+function Thanks({ name }: { name: string }) {
+  const [pre, post = ''] = jt('card.thanks', { name: THANKS_MARK }).split(THANKS_MARK)
+  return (
+    <p data-journal-thanks title={name} className="type-caption min-w-0 truncate whitespace-nowrap">
+      {pre}
+      <span className="font-medium text-ink-2">{name}</span>
+      {post}
+    </p>
+  )
+}
+
+/**
+ * 一块「文字 + 链接」：没有署名时文字列与右侧链接并排（高度同改动前）；有署名时文字通栏，
+ * 底部另起一行——左边致谢、右边链接，baseline 对齐。
+ */
+function TextAndLinks({
+  source,
+  journalId,
+  links,
+  className = '',
+  children,
+}: {
+  source: JournalFieldSource
+  journalId?: string
+  links: ReactNode
+  className?: string
+  children: ReactNode
+}) {
+  const name = useThanks(source, journalId)
+  if (!name) {
+    return (
+      <div className={`flex items-end justify-between gap-3 ${className}`}>
+        <div className="flex min-w-0 flex-col gap-0.5">{children}</div>
+        {links}
+      </div>
+    )
+  }
+  return (
+    <div className={`flex flex-col gap-0.5 ${className}`}>
+      {children}
+      <div className="mt-2 flex items-baseline justify-between gap-3">
+        <Thanks name={name} />
+        {links}
+      </div>
+    </div>
   )
 }
 
@@ -208,29 +268,41 @@ export function SourceCardBody({
         <div key={path} data-journal-entry={path}>
           <Evidence source={source} />
           {multi && (
-            <div className="flex items-end justify-between gap-3 px-3.5 py-2">
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <p className="type-caption">{jt('card.aria')} {index + 1}/{entries.length}</p>
-                <SourceMeta source={source} />
-                <SourceCoverage source={source} />
-              </div>
-              <SourceLinks
-                source={source}
-                name={`${jt('card.aria')} ${index + 1}/${entries.length}`}
-                report={{ journal, journalId, path }}
-              />
-            </div>
+            <TextAndLinks
+              source={source}
+              journalId={journalId}
+              className="px-3.5 py-2"
+              links={
+                <SourceLinks
+                  source={source}
+                  name={`${jt('card.aria')} ${index + 1}/${entries.length}`}
+                  report={{ journal, journalId, path }}
+                />
+              }
+            >
+              <p className="type-caption">{jt('card.aria')} {index + 1}/{entries.length}</p>
+              <SourceMeta source={source} />
+              <SourceCoverage source={source} />
+            </TextAndLinks>
           )}
         </div>
       ))}
-      <div className="flex items-end justify-between gap-3 border-t border-border px-3.5 py-3">
-        <div className="flex min-w-0 flex-col gap-0.5">
+      {multi ? (
+        <div className="border-t border-border px-3.5 py-3">
           <p data-journal-sentence className="type-title">{conclusion}</p>
-          {!multi && <SourceMeta source={entries[0][1]} />}
-          {!multi && <SourceCoverage source={entries[0][1]} />}
         </div>
-        {!multi && <SourceLinks source={entries[0][1]} report={{ journal, journalId, path: entries[0][0] }} />}
-      </div>
+      ) : (
+        <TextAndLinks
+          source={entries[0][1]}
+          journalId={journalId}
+          className="border-t border-border px-3.5 py-3"
+          links={<SourceLinks source={entries[0][1]} report={{ journal, journalId, path: entries[0][0] }} />}
+        >
+          <p data-journal-sentence className="type-title">{conclusion}</p>
+          <SourceMeta source={entries[0][1]} />
+          <SourceCoverage source={entries[0][1]} />
+        </TextAndLinks>
+      )}
       {journalId &&
         entries.map(([path, source]) =>
           isV2Source(source) && source.snapshot ? (

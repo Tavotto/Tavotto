@@ -314,3 +314,11 @@ def test_two_facts_sharing_one_source_keep_their_own_fact_ids():
         got["min_raster_dpi"]["fact_id"] == "a"
         and got["min_line_width_pt"]["fact_id"] == "line-fact"
     )
+
+
+def test_preferred_font_list_is_listed_not_folded():
+    """维护者 2026-11-28：「最好用 X 或 Y」只是偏好——折进预检会把名单外的合规字体都报 `font-family-substituted`。"""
+    out = _case("font-family-preferred-is-listed-not-folded")
+    assert out["rules"] == {}
+    assert [(c["subject"], c["strength"]) for c in out["confirm"]] == [("font_family", "preferred")]
+    assert _case("font-family-recommended-folds")["rules"]["font_family.latin_accepted"]

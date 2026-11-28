@@ -525,8 +525,9 @@ export const markNoteHintSeen = (): void => {
  * 脚本方案（含审阅意见转出的脚本卡）重改 = 改脚本 Agent 以上一版候选为起点接着改，基线仍是原脚本（ADR 0206 修订 2026-11-28）。
  * 一键排版的整版方案（`quick_layout`）与矢量编辑方案没有逐元素的改动可批注，不能重改。
  */
-export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean {
-  if (e.kind === 'layout' || e.kind === 'vector') return false
+export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan' | 'agent'>): boolean {
+  // Agent 来源的建议是插件那边的方案：窗口里不续改（续改会换成另一份方案，Agent 那边读不到）；脚本方案可以批注重改（ADR 0206 修订 2026-11-28）
+  if (e.agent || e.kind === 'layout' || e.kind === 'vector') return false
   const from = e.from ?? 'review'
   return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
 }
@@ -570,7 +571,7 @@ export type TodoPhase = 'choose' | 'running' | 'asking' | 'done'
  * - `done`：至少有一类已经应用（图内那次 commit 还在、或有脚本已应用），且没有在做 / 排着的。
  * `scripts`：已经开始做的脚本待办的方案卡（按开始顺序）；`figureApplied`：图内待办此刻是已应用（以文档为准，⌘Z 撤回后不算）。
  */
-export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status'>, scripts: PlanEntry[], figureApplied: boolean): TodoPhase {
+export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status' | 'agent'>, scripts: PlanEntry[], figureApplied: boolean): TodoPhase {
   const run = e.todoRun
   const cur = scripts.at(-1)
   // 第一条脚本待办还在发出去的路上（还没有方案条目）才算在做；开始过、但那张脚本卡已经被收起 / 收掉了（条目不在了）= 没改，不算在做——
@@ -584,7 +585,7 @@ export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status'>, 
   // 上一条应用了 / 答了「先不改」、后面还排着没跳过的：马上接着做下一条
   // 上一条的卡被收起了（条目不在）= 没成，与 `advanceTodos` 一样停在这里，不再假装在做
   if (run && cur && scriptPassable(cur) && todoQueued(e).length > 0) return 'running'
-  if (figureApplied || scripts.some((s) => s.status === 'applied')) return 'done'
+  if (figureApplied || scripts.some((s) => s.status === 'applied') || !!e.agent?.reported) return 'done'
   return 'choose'
 }
 

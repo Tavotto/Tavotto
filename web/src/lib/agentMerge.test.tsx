@@ -321,6 +321,57 @@ describe('ADR 0212：Agent 改 / 删 / 重排过——按字段三方合并，�
   })
 })
 
+describe('ADR 0217 §四：子图 overrides 按 (gid, prop) 逐条三方合并，冲突桌面赢、不挡并入', () => {
+  type Ovr = { gid: string; prop: string; value: unknown; identity?: string }
+  const o = (gid: string, prop: string, value: unknown, identity?: string): Ovr => ({ gid, prop, value, ...(identity ? { identity } : {}) })
+  const panel = (overrides: Ovr[], extra: Record<string, unknown> = {}) =>
+    ({ id: 'p_fig00001', type: 'panel', x: 0, y: 0, w: 80, h: 60, fileId: 'f1', fileKind: 'pdf', nativeW: 80, nativeH: 60, script: 'fig.py', overrides, ...extra }) as unknown as CanvasObject
+  const run = (base: Ovr[], theirs: Ovr[], mine: Ovr[], extra: { base?: Record<string, unknown>; theirs?: Record<string, unknown>; mine?: Record<string, unknown> } = {}) => {
+    const d = diff({
+      base_order: ['p_fig00001'],
+      order: ['p_fig00001'],
+      changed: [{ before: panel(base, extra.base), after: panel(theirs, extra.theirs) }],
+    })
+    const out = planAgentMerge([panel(mine, extra.mine)], null, d)
+    return out && { ovr: (out.objects[0] as unknown as { overrides: Ovr[] }).overrides, conflicts: out.overrideConflicts, panel: out.objects[0] }
+  }
+
+  it('Agent 改的几条桌面没动过：换成 Agent 的，桌面独有的保留', () => {
+    const got = run([o('g1', 'x', 1)], [o('g1', 'x', 2, 'id-a'), o('g2', 'y', 5, 'id-b')], [o('g1', 'x', 1), o('g9', 'z', 7)])!
+    expect(got.ovr).toEqual([o('g1', 'x', 2, 'id-a'), o('g9', 'z', 7), o('g2', 'y', 5, 'id-b')])
+    expect(got.conflicts).toEqual([])
+  })
+
+  it('同一条两边都改了：桌面赢、其余照并，不挡并入；冲突键记下来', () => {
+    const got = run([o('g1', 'x', 1), o('g2', 'y', 1)], [o('g1', 'x', 2), o('g2', 'y', 2)], [o('g1', 'x', 9, 'id-d'), o('g2', 'y', 1)])!
+    expect(got.ovr).toEqual([o('g1', 'x', 9, 'id-d'), o('g2', 'y', 2)])
+    expect(got.conflicts).toEqual([{ panel: 'p_fig00001', keys: ['g1|x'] }])
+  })
+
+  it('Agent 去掉一条：桌面没动才去掉；桌面改过就留桌面的', () => {
+    expect(run([o('g1', 'x', 1)], [], [o('g1', 'x', 1)])!.ovr).toEqual([])
+    const kept = run([o('g1', 'x', 1)], [], [o('g1', 'x', 3)])!
+    expect(kept.ovr).toEqual([o('g1', 'x', 3)])
+    expect(kept.conflicts[0].keys).toEqual(['g1|x'])
+  })
+
+  it('桌面去掉了、Agent 改了同一条：桌面赢（仍是去掉）', () => {
+    expect(run([o('g1', 'x', 1)], [o('g1', 'x', 2)], [])!.ovr).toEqual([])
+  })
+
+  it('两边加了同一条且值相同：不算冲突', () => {
+    const got = run([], [o('g1', 'x', 2)], [o('g1', 'x', 2)])!
+    expect(got.ovr).toEqual([o('g1', 'x', 2)])
+    expect(got.conflicts).toEqual([])
+  })
+
+  it('子图的别的字段照旧：桌面没碰就并，碰过同一字段整体不并', () => {
+    const ok = run([o('g1', 'x', 1)], [o('g1', 'x', 2)], [o('g1', 'x', 1)], { theirs: { w: 90 } })!
+    expect(ok.panel).toMatchObject({ w: 90 })
+    expect(run([o('g1', 'x', 1)], [o('g1', 'x', 2)], [o('g1', 'x', 1)], { theirs: { w: 90 }, mine: { w: 70 } })).toBeNull()
+  })
+})
+
 describe('维护者 2026-11-26：含删除的那次并入，状态栏那句话旁边挂「撤销」', () => {
   const deleting = () => ({
     available: true,

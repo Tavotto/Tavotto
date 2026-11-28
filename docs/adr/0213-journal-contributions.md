@@ -98,14 +98,14 @@ v1 条目的线索在二期仍全部人工。
 **三期**
 
 - **署名**（2026-11-28 修订，产品负责人「按推荐来」）：名字挂在**因这条线索新增或改动的 v2 事实**上，只写一个人，默认不写。
-  - 表单：只在 `wrong` / `missing` 两种表单里出现一个默认不勾的复选框「在目录里写上我的称呼（所有用户都能看到）」，勾了才出称呼框；`editor`（编辑部原话）不进目录，不出这个框。Agent 工具（`tavotto_report_journal_issue`）不收、也不发称呼。确切文案随界面评审定，但必须一句话说清「所有用户可见」。
+  - 表单：只在 `wrong` / `missing` 两种表单里出现一个默认不勾的复选框「在引用条目标注我的名字」+ 弱灰「（所有人可见）」（文案产品负责人 2026-11-28 定），勾了才出称呼框；`editor`（编辑部原话）不进目录，不出这个框。Agent 工具（`tavotto_report_journal_issue`）不收、也不发称呼。确切文案随界面评审定，但必须一句话说清「所有用户可见」。
   - 线缆：`journal.credit`（API 1.8.0，见附录）。称呼是第一段要展示给别的用户看的用户自填文字，三处各校验一次：服务端（入站）、journal-data 工具（入库）、客户端（渲染前）。规则相同：NFKC + 去首尾空白后 1–32 字；单行；不含控制字符、Unicode 格式字符（含双向控制符）与 `@`；不含 `://` 或 `www.`。
   - 入库：`tips.py ingest` 把称呼留在本机 `intake/`，进 git 的工单只记 `credit: true`。称呼要上目录，必须由维护者在结案时**显式确认**（`close … --credit`），不自动带过去；只有 `accepted` 且确实新增或改动了 v2 事实的线索才能确认。`kept` / 被拒 / 重复 / 只修链接（`link_fix`，值没变）都不写名字。
   - 「第一个」：同一去重组里、勾了署名且被采纳的线索中 `created_at` 最早的那一位；同一条事实只写一个人，之后再被改动换新 id 时，名字跟着**新 id**（写促成那次改动的人，没人勾就不写），旧 id 随撤回一起消失。不给已经入库的旧事实补名字。
   - 发布：**不放进 v2 刊包**。0.21.x 起已发布的客户端对刊包、索引都做严格校验（未知字段整包拒收），刊包字节又由签名索引按哈希钉死，往事实里加 `thanks` 会让所有老客户端丢掉这本刊的 v2 事实。改为签发时在索引旁另出一个同一把钥匙签名的 `thanks.signed.json`（信封与索引相同），载荷 `{"schema": 1, "kind": "journal_facts_thanks", "catalog_rev": N, "thanks": {<journal_id>: {<fact id>: <称呼>}}}`。老客户端从不请求它；新客户端在同步索引后取，`catalog_rev` 与本机索引不一致、取不到、验签失败或称呼过不了上面的校验，一律**不显示、不报错**。称呼台账在 journal-data `triage/tips/thanks.json`，形状 `{<journal_id>: {<fact id>: {"name", "message_id", "tip", "credited_at"}}}`，由 `tips.py close … --credit` 写入。
     `publish_facts_v2.py --thanks <台账>` 出 `v2/thanks.signed.json`：用同一把签名钥匙，写完后回读验签。只保留这一版刊包里真实存在的 (journal_id, fact id)，对不上的逐条列出、不悄悄丢；称呼在签发时再校验一遍，不合格就拒签整个文件。这一步由期刊数据负责人改并签发。
   - 上线顺序：`/v2/thanks.signed.json` 目前在三层路由白名单之外，都要放开：主仓库 `services/journal_catalog/core.py`、infra `deploy/caddy/jc-public-on.caddy`、官网 `src/journalCatalog/proxy.ts`；顺带定边缘缓存。三层上线、会读它的客户端发版之后，签发才开始带这个文件；在那之前不出。infra 与官网部署照例当面问。
-  - 显示：v2 事实的出处卡显示一行灰字「线索来自 <称呼>」；v1 条目不显示（v1 线索仍全人工，且 v1 包同样严格校验）。
+  - 显示：v2 事实的出处卡显示一行灰字「感谢 <称呼> 勘误」；v1 条目不显示（v1 线索仍全人工，且 v1 包同样严格校验）。
   - 撤销：用户回信或另发一封「联系作者」说要撤，维护者从台账删掉，下一版签发后消失。`docs/privacy.md`「Contacting the maker」一节补一句：勾了署名，称呼会在目录里对所有用户可见。
 - **Agent 工具** `tavotto_report_journal_issue`：两步调用，与 0205 同一套 `explicit_confirm`。第一次只回将要发送的内容 + `next = ask_user(...)`，用户明确同意后才发。
   只在期刊库开关（`JOURNAL_CATALOG_AGENTS`）与「联系作者」都开着时进 `tools/list`；不进 `usage.TOOLS` 遥测闭集，走 `other`。

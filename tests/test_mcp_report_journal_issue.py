@@ -368,3 +368,24 @@ def test_next_step_text_never_sends_on_its_own(env):
     out = _body(_call(WRONG))
     step = nextstep.journal_report_confirm(out, WRONG)
     assert step["action"] == "ask_user" and step["options"][-1] == "先不发"
+
+
+# --------------------------------------------------------------------------- 署名（ADR 0213 三期）：Agent 不收也不发
+def test_credit_is_not_in_the_schema_and_the_bridge_signature_has_no_such_parameter(env):
+    schema = next(t for t in server._tools() if t["name"] == TOOL)["inputSchema"]
+    assert "credit" not in schema["properties"] and schema["additionalProperties"] is False
+    with pytest.raises(TypeError):
+        bridge.report_journal_issue(type="wrong", credit="Li", journal_id="fx-alpha")  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("credit", ["李明", "Li", "a@b.c", "x" * 99, 7])
+def test_credit_passed_by_the_agent_never_reaches_the_wire_or_the_preview(env, credit):
+    args = {**WRONG, "credit": credit}
+    preview = _body(_call(args))
+    assert "credit" not in json.dumps(preview["will_send"], ensure_ascii=False)
+    token = preview["send_token"]
+    # 带不带 credit 令牌一致：它不是内容的一部分
+    assert token == _body(_call(WRONG))["send_token"]
+    out = _body(_call({**args, "explicit_confirm": True, "send_token": token}))
+    assert out["status"] == "sent" and len(env.starts) == 1
+    assert "credit" not in env.starts[0]["journal"]

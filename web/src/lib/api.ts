@@ -2344,6 +2344,12 @@ export type ExportObject = ExportObjectBody & {
    * `lib/clipMask.maskAsPath`）；没有就不发——不带剪切组的文档载荷与以前逐字节一致
    */
   clip?: ExportClipPath[]
+  /** 对象名（ADR 0208 §七之三）：SVG 写成 `id`；没有名字不发 */
+  name?: string
+  /** 所在的组链（外 → 内的组 id，`lib/groupTree.groupPathOf`）：SVG 按它嵌套 `<g>`；不在组里不发 */
+  group_path?: string[]
+  /** 与 `group_path` 同长的组名（缺 = 这一层 `<g>` 不写 id） */
+  group_names?: string[]
 }
 
 /** 蒙版轮廓：只有几何（比例坐标的锚点 + 框 + 旋转），后端 `plan._clipped` 读 */
@@ -2352,6 +2358,8 @@ export type ExportClipPath = ExportBox & {
   subpaths: { closed: boolean; nodes: { p: [number, number]; in?: [number, number]; out?: [number, number] }[] }[]
   fill_rule?: 'evenodd'
   rotation_deg?: number
+  /** 这个蒙版属于哪一层组（`group_path` 里的某个 id）；缺 = 只裁这一个对象（`original.clip` 等老写法） */
+  group?: string
 }
 
 type ExportObjectBody =
@@ -3661,6 +3669,8 @@ export interface EngineRenderResponse {
   chart_revision?: string
   /** build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）；出图结果与状态码不变 */
   workdir_hint?: WorkdirConfirmation
+  /** 写已有文件被系统拒绝（别的程序占着 / 只读）、这次改写进暂存区的项目相对路径（图照常出；通知轨一枚胶囊）；没有就不出现 */
+  locked_writes?: string[]
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   artifact_source?: unknown
   /** 来源驱动策略（`script-backed-figure-v1`）的准入结论：状态、重画摘要、差异度量（ADR 0139） */
@@ -4378,6 +4388,8 @@ export interface ChangePlanTodo {
 export interface ChangePlan {
   id: string
   version: number
+  /** 插件里的 Agent 经绑定会话出的建议（ADR 0217 §五）：它的子图与排版；没有 = 窗口里自己出的方案 */
+  agent?: { session?: string; panel?: string; layout?: string; stem?: string; at?: number; host?: AgentHost }
   /** 助手来源给建议时的一到三句话回答（≤ 600 字）；没有 = 普通方案 */
   reply?: string
   /** 助手把建议列成的待办；没有 = 普通方案（与以前一样只看 `groups` / `unhandled`） */
@@ -4660,6 +4672,39 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanView
+}
+
+/** 出方案的宿主（后端闭集；其它 / 缺省都当 `other`） */
+export type AgentHost = 'codex' | 'claude_code' | 'other'
+
+/** 桌面发现的 Agent 建议（`GET /api/change-plans?agent=1` 的一行，最小字段） */
+export interface AgentPlanRef {
+  id: string
+  /** 桌面口径的图标识（面板的 `fileId`） */
+  target: string
+  panel: string
+  layout?: string | null
+  host?: AgentHost
+  created: number
+  todos: number
+}
+
+/** 这个项目里 Agent 经绑定会话出的、没过期没落定的建议（ADR 0217 §五）。 */
+export async function listAgentChangePlans(): Promise<AgentPlanRef[]> {
+  const out = await changePlanFetch('/api/change-plans?agent=1')
+  if (!Array.isArray(out.plans)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return (out.plans as unknown[]).filter((p): p is AgentPlanRef => isRec(p) && isStr(p.id) && isStr(p.target) && isStr(p.panel))
+}
+
+/** 用户在窗口里应用了 Agent 的建议卡：记下勾了哪几项（图内的已写进文档，脚本的交回 Agent）。先落定的赢：插件那边先应用过抛 `change_plan_agent_settled`。 */
+export async function reportAgentPlanApplied(planId: string, keys: string[]): Promise<void> {
+  await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/agent-applied`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keys }),
+  })
 }
 
 /** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */
@@ -9021,6 +9066,8 @@ export interface ContactJournalHead {
   current?: string
   source_id?: string
   url?: string
+  /** 署名（API 1.8.0）：用户勾了「写上我的称呼」才带，只随 wrong / missing；引擎按同一条规则再校验，不合规整封拒 */
+  credit?: string
   catalog?: { v1?: number; v2?: number }
 }
 
@@ -9227,6 +9274,8 @@ export interface ProbeResult {
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   /** 跑通且有图，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254） */
   workdir_hint?: WorkdirConfirmation
+  /** 写已有文件被系统拒绝（别的程序占着 / 只读）、这次改写进暂存区的项目相对路径（图照常出；通知轨一枚胶囊）；没有就不出现 */
+  locked_writes?: string[]
   script: string
   entry: string | null
   stems: string[]
