@@ -18,6 +18,12 @@ export interface ChangeLine {
   label: string
   before?: ChangeValue
   after?: ChangeValue
+  /** 悬停说明（图内方案：合并掉的那几处各是什么、色值 hex） */
+  title?: string
+  /** 行尾一小段灰字（「3 处」） */
+  extra?: string
+  /** 颜色只画色块，不写色值（图内方案） */
+  compact?: boolean
 }
 export interface ChangeGroup {
   key: string

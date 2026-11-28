@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PlanNote } from '@/store/changePlanStore'
 import { cn } from '@/lib/utils'
@@ -87,12 +88,16 @@ export function ChangeList({
   )
 }
 
-/** 一个值：颜色带小色块 */
-function Val({ v }: { v: { text: string; color?: string } }) {
+/** 图内改动清单每组最多直接列几行，其余折成「还有 N 处」 */
+const MAX_LINES = 4
+
+/** 一个值：颜色带小色块（`swatchOnly`：只画色块，色值放悬停说明里） */
+function Val({ v, swatchOnly = false }: { v: { text: string; color?: string }; swatchOnly?: boolean }) {
+  const only = swatchOnly && !!v.color
   return (
     <span className="inline-flex items-center gap-1 text-ink-2">
       {v.color && <span aria-hidden className="size-2.5 rounded-sm inset-ring inset-ring-ink/25" style={{ backgroundColor: v.color }} />}
-      {v.text}
+      {only ? <span className="sr-only">{v.text}</span> : v.text}
     </span>
   )
 }
@@ -115,8 +120,11 @@ function GroupRow({
 }) {
   const who = whoOf(g.reviewers)
   const places = g.boxes.length
+  const [open, setOpen] = useState(false)
+  const shown = open ? g.lines : g.lines?.slice(0, MAX_LINES)
+  const hidden = (g.lines?.length ?? 0) - (shown?.length ?? 0)
   // 第二行灰字：谁 · N 处改动（逐行列出了改动、又没有审阅者时不再重复说 N 处）+ 留边距那一句
-  const count = g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : g.lines?.length ? '' : cp('dialog.groupMetaNoWho', { count: places })
+  const count = g.fromNote ? (g.lines?.length ? cp('dialog.groupMetaNoteBare') : cp('dialog.groupMetaNote', { count: places })) : who ? cp('dialog.groupMeta', { who, count: places }) : g.lines?.length ? '' : cp('dialog.groupMetaNoWho', { count: places })
   const meta = [count, room ? cp('dialog.roomNote') : ''].filter(Boolean).join(' · ')
   return (
     <li>
@@ -142,18 +150,32 @@ function GroupRow({
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className={cn('text-sm', checked ? 'text-ink' : 'text-ink-3')}>{g.summary}</span>
-          {g.lines?.map((l, i) => (
-            <span key={i} data-change-line className={cn('type-meta flex flex-wrap items-center gap-x-1.5', !checked && 'opacity-50')}>
+          {shown?.map((l, i) => (
+            <span key={i} data-change-line title={l.title} className={cn('type-meta flex flex-wrap items-center gap-x-1.5', !checked && 'opacity-50')}>
               <span>{l.label}</span>
               {l.after && (
                 <>
-                  {l.before && <Val v={l.before} />}
+                  {l.before && <Val v={l.before} swatchOnly={l.compact} />}
                   {l.before && <span aria-hidden>→</span>}
-                  <Val v={l.after} />
+                  <Val v={l.after} swatchOnly={l.compact} />
                 </>
               )}
+              {l.extra && <span className="text-ink-3">{l.extra}</span>}
             </span>
           ))}
+          {hidden > 0 && (
+            <button
+              type="button"
+              data-change-more
+              onClick={(e) => {
+                e.preventDefault()
+                setOpen(true)
+              }}
+              className="type-meta w-fit text-left text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
+            >
+              {cp('dialog.moreLines', { count: hidden })}
+            </button>
+          )}
           {g.note && (
             <span data-change-note className="type-meta opacity-70">
               {g.note}

@@ -297,3 +297,18 @@ it('弹窗清单：图内方案每组下面逐行列出改了什么（属性 前
   expect(activeBoxes().every((b) => (b as HTMLElement).style.width !== '78%' && (b as HTMLElement).style.width !== '80%')).toBe(true)
 })
 
+
+it('弹窗清单：一组超过 4 行时折成「还有 N 处」，点了展开', async () => {
+  const mk = (i: number) => ({ target_gid: `ax.t${i}`, prop: 'linewidth', before: 1, after: 2 + i, patch: { gid: `ax.t${i}`, prop: 'linewidth', value: 2 + i } })
+  const g1 = { ...PLAN.groups[0], changes: [0, 1, 2, 3, 4, 5].map(mk) }
+  await put(assistant('a', { plan: { ...PLAN_A, groups: [g1] } }))
+  act(() => useChangePlanStore.getState().openDialog('a'))
+  await render(<ChangePlanDialog />)
+  const count = () => document.body.querySelectorAll('[data-change-group] [data-change-line]').length
+  expect(count()).toBe(4)
+  const more = document.body.querySelector<HTMLElement>('[data-change-more]')!
+  expect(more.textContent).toBe('还有 2 处')
+  await act(async () => more.click())
+  expect(count()).toBe(6)
+  expect(document.body.querySelector('[data-change-more]')).toBeNull()
+})

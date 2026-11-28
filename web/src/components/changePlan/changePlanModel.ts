@@ -5,7 +5,7 @@ import { backendCodeMsg, type ChangePlanBox, type ChangePlanChange, type ChangeP
 import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, pendingConfirm, scriptPassable, todoChecked, todoQueued, todosOf, type PlanEntry } from '@/store/changePlanStore'
 import { failedChecks, touchedCount } from '@/lib/vectorEdit'
 import type { ChangeLine, ChangeValue } from '@/lib/vectorChanges'
-import { propLabel } from '../inspector/roles/registry'
+import { optionLabel, propLabel } from '../inspector/roles/registry'
 import type { PlotStage } from './PlotSketch'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
@@ -101,19 +101,86 @@ const roomOnly = (g: ChangePlanGroup, gid: string): boolean => {
   return own.length > 0 && own.every((c) => c.auto === 'room')
 }
 
-/** 图内方案一组里的每处改动（与矢量方案同一种行）：自动留边距那条不列（清单另说一句） */
-export function changeLines(changes: readonly ChangePlanChange[], labelOf: LabelOf): ChangeLine[] {
-  return changes
-    .filter((c) => c.auto !== 'room')
-    .map((c) => {
-      const name = labelOf(c.target_gid)
-      const prop = propLabel(c.prop)
-      const after = changeValue(c.prop, c.after)
-      const before = after ? changeValue(c.prop, c.before) : undefined
-      return { label: name ? cp('dialog.changeLine', { el: name, prop }) : prop, ...(after ? { after } : {}), ...(after && before ? { before } : {}) }
-    })
+/** 元素名里引号中的那段（曲线 / 图例项的系列名）；没有引号 = 不是按系列命名的元素 */
+const SERIES_RE = /^[^“”"‘’'「」]*[“"‘'「](.+?)[”"’'」]?$/
+const COLOR_FAMILY = new Set(['color', 'markerfacecolor', 'markeredgecolor'])
+/** 图例里的示意属性（handle_color / handle_marker …）与曲线上的同名属性算同一种 */
+const canonProp = (p: string) => p.replace(/^handle_/, '')
+
+interface LineDraft {
+  /** 同一属性、同一前后值的归并键（空 = 不参与归并） */
+  key: string
+  names: string[]
+  props: string[]
+  /** 曲线 / 图例项的系列短名 */
+  series?: string
+  line: ChangeLine
 }
 
+/** 一组属性名在界面上叫什么：只有一种就照它叫（图例示意属性按曲线上的叫法）；合并了颜色 / 填充 / 描边 / 示意线 = 「颜色」；其余按去掉示意前缀的名字 */
+const propText = (props: string[]): string => {
+  const canon = [...new Set(props.map(canonProp))]
+  if (canon.length > 1 && canon.every((p) => COLOR_FAMILY.has(p))) return propLabel('color')
+  return propLabel(canon[0])
+}
+
+const sigOf = (l: ChangeLine) => (l.after ? `${l.before?.text ?? ''}→${l.after.text}` : '')
+const hexTitle = (l: ChangeLine) => (l.after?.color ? `${l.before?.color ? `${l.before.text} → ` : ''}${l.after.text}` : '')
+
+/**
+ * 图内方案一组里的改动（与矢量方案同一种行），自动留边距那条不列（清单另说一句）。读起来要短：
+ * 同一条曲线的颜色 / 标记填充 / 标记描边 / 图例示意线（前后值都一样）合成一行「系列名 · 颜色」；
+ * 同一个属性、同一个前后值落在多个元素上（字体都换成 Times New Roman）合成一行带「N 处」，悬停列出是哪几处。
+ */
+export function changeLines(changes: readonly ChangePlanChange[], labelOf: LabelOf): ChangeLine[] {
+  const drafts: LineDraft[] = []
+  const bySeries = new Map<string, LineDraft>()
+  for (const c of changes) {
+    if (c.auto === 'room') continue
+    const name = labelOf(c.target_gid)
+    const after = changeValue(c.prop, c.after)
+    const before = after ? changeValue(c.prop, c.before) : undefined
+    const full = name ? cp('dialog.changeLine', { el: name, prop: propLabel(c.prop) }) : propLabel(c.prop)
+    const line: ChangeLine = { label: full, compact: true, ...(after ? { after } : {}), ...(after && before ? { before } : {}) }
+    const sig = sigOf(line)
+    const series = name ? SERIES_RE.exec(name)?.[1].trim() : undefined
+    const canon = canonProp(c.prop)
+    const fam = COLOR_FAMILY.has(canon) ? 'color' : canon
+    const draft: LineDraft = { key: sig ? `${fam}|${sig}` : '', names: [name ?? propLabel(c.prop)], props: [c.prop], line }
+    const mergeKey = series && sig ? `${series}|${fam}|${sig}` : ''
+    const hit = mergeKey ? bySeries.get(mergeKey) : undefined
+    if (hit) {
+      hit.props.push(c.prop)
+      hit.line.title = [hit.line.title, full].filter(Boolean).join('\n')
+      continue
+    }
+    line.title = [full, hexTitle(line)].filter(Boolean).join('\n')
+    if (series) {
+      draft.series = clip(series, 18)
+      draft.names = [draft.series]
+    }
+    if (mergeKey) bySeries.set(mergeKey, draft)
+    drafts.push(draft)
+  }
+  const out: ChangeLine[] = []
+  const done = new Set<LineDraft>()
+  const byKey = new Map<string, LineDraft[]>()
+  for (const d of drafts) if (d.key) byKey.set(d.key, [...(byKey.get(d.key) ?? []), d])
+  for (const d of drafts) {
+    if (done.has(d)) continue
+    const same = d.key ? (byKey.get(d.key) as LineDraft[]) : [d]
+    same.forEach((x) => done.add(x))
+    if (same.length > 1) {
+      const names = same.flatMap((x) => x.names)
+      const hex = hexTitle(d.line)
+      out.push({ label: propText(same.flatMap((x) => x.props)), compact: true, before: d.line.before, after: d.line.after, extra: cp('dialog.lineCount', { count: same.length }), title: [...names, hex].filter(Boolean).join('\n') })
+      continue
+    }
+    if (d.series) d.line.label = cp('dialog.changeLine', { el: d.series, prop: propText(d.props) })
+    out.push(d.line)
+  }
+  return out
+}
 const VAL_TEXT_PROPS = /text|label|title/i
 const round2 = (n: number) => String(Math.round(n * 100) / 100)
 const hex2 = (n: number) => Math.round(Math.min(1, Math.max(0, n)) * 255).toString(16).padStart(2, '0')
@@ -127,6 +194,8 @@ export function changeValue(prop: string, v: unknown): ChangeValue | undefined {
     const t = v.trim()
     if (/^#[0-9a-f]{3,8}$/i.test(t)) return { text: t.toUpperCase(), color: t }
     if (!t) return { text: cp('vector.none') }
+    // 标记形状说人话（方块 / 上三角 / 圆点…），与属性面板同一张表
+    if (/^(handle_)?marker$/.test(prop)) return { text: optionLabel('marker', t) }
     return { text: VAL_TEXT_PROPS.test(prop) ? `「${clip(t, 16)}」` : clip(t, 16) }
   }
   if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'number' && Number.isFinite(x))) {

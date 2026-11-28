@@ -34,3 +34,59 @@ describe('changeValue', () => {
     expect(changeValue('whatever', { a: 1 })).toBeUndefined()
   })
 })
+
+describe('changeLines 合并', () => {
+  const names: Record<string, string> = {
+    'ax.line0': '曲线 “Blank (k = 0.042 …”',
+    'ax.legend.item0': '图例项 “Blank (k = 0.042 …”',
+    'ax.line1': '曲线 “Catalyst”',
+    'ax.title': '标题',
+    'ax.xlabel': 'X 轴',
+    'ax.ylabel': 'Y 轴',
+  }
+  const labelOf = (gid: string) => names[gid]
+  const c = (gid: string, prop: string, before: unknown, after: unknown) => ch({ target_gid: gid, prop, before, after })
+
+  it('同一系列、前后值相同的颜色 / 填充 / 描边 / 图例示意线合成一行，标记形状说人话', () => {
+    const lines = changeLines(
+      [
+        c('ax.line0', 'color', '#8A4F9E', '#009E73'),
+        c('ax.line0', 'markerfacecolor', '#8A4F9E', '#009E73'),
+        c('ax.line0', 'markeredgecolor', '#8A4F9E', '#009E73'),
+        c('ax.legend.item0', 'handle_color', '#8A4F9E', '#009E73'),
+        c('ax.legend.item0', 'handle_marker', 's', '^'),
+      ],
+      labelOf,
+    )
+    expect(lines).toHaveLength(2)
+    expect(lines[0].label).toBe('Blank (k = 0.042 … · 颜色')
+    expect(lines[0].before?.color).toBe('#8A4F9E')
+    expect(lines[0].after?.color).toBe('#009E73')
+    expect(lines[0].compact).toBe(true)
+    expect(lines[0].title).toContain('#8A4F9E → #009E73')
+    expect(lines[1].label).toBe('Blank (k = 0.042 … · 标记')
+    expect(lines[1].before?.text).toBe('方块')
+    expect(lines[1].after?.text).toBe('上三角')
+  })
+
+  it('前后值不同的不合并', () => {
+    const lines = changeLines([c('ax.line0', 'color', '#111111', '#222222'), c('ax.line0', 'markeredgecolor', '#111111', '#333333')], labelOf)
+    expect(lines).toHaveLength(2)
+    expect(lines[1].label).toContain('标记描边')
+  })
+
+  it('同一属性、同一前后值落在多个元素上：一行带计数，悬停列出各处', () => {
+    const lines = changeLines(['ax.title', 'ax.xlabel', 'ax.ylabel'].map((g) => c(g, 'fontfamily', 'serif', 'Times New Roman')), labelOf)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].after?.text).toBe('Times New Roman')
+    expect(lines[0].extra).toBe('3 处')
+    expect(lines[0].title).toBe('标题\nX 轴\nY 轴')
+  })
+
+  it('两个系列各自的颜色变化不同，各算各的；相同前后值则带计数', () => {
+    expect(changeLines([c('ax.line0', 'color', '#111111', '#222222'), c('ax.line1', 'color', '#333333', '#444444')], labelOf)).toHaveLength(2)
+    const same = changeLines([c('ax.line0', 'color', '#111111', '#222222'), c('ax.line1', 'color', '#111111', '#222222')], labelOf)
+    expect(same).toHaveLength(1)
+    expect(same[0].extra).toBe('2 处')
+  })
+})
