@@ -1380,8 +1380,8 @@ def test_style_presets_are_defaults_the_user_can_override(lic):
     assert (mem["strokePt"], mem["fill"]) == (0.6, "#f3dcc0") and (
         rec["strokePt"],
         rec["fill"],
-    ) == (1.0, "#d4dde6")
-    assert mem["strokePt"] / rec["strokePt"] == pytest.approx(0.6)  # 膜描边是蛋白的 0.6 倍
+    ) == (0.85, "#d4dde6")
+    assert mem["strokePt"] < rec["strokePt"]  # 膜描边比蛋白细，退到蛋白后面
     own = mechanism.prepare(
         [
             {

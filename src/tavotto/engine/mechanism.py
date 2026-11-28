@@ -65,7 +65,7 @@ ITEMS_DOC = (
     "glyph {name, glyph: 图元种类, at_mm, size_mm?, params?, version?, identity?, frame?, block?, style?: {color, strokePt, fill}}"
     "（语义图元，落成一个可编辑路径；glyph 字段由引擎写、不收；也可不写 glyph 而写 recipe: {…配方 JSON，recipe_format: 1…}（现写的图元配方，不含代码，"
     "由组件校验并执行，约束不满足回 bad_item 并点名）；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
-    "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）；膜条目默认随膜落一个「疏水核心」底带对象（core: false 关掉）；样式预设（膜描边 0.6×、蛋白 1×）可被 style 覆盖：引擎把跨膜段中点对齐膜中线、"
+    "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）；膜条目默认随膜落一个「疏水核心」底带对象（core: false 关掉）；样式预设（膜描边 0.6 pt、蛋白 0.85 pt）可被 style 覆盖：引擎把跨膜段中点对齐膜中线、"
     "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
     "名字由引擎按「角色 + 身份」生成并固化，同批重名自动加序号；落地后过可编辑性核对，不过整批不落地（not_editable）。"
@@ -772,22 +772,22 @@ def _glyphs(
             )
 
 
-#: 样式预设（不改图元几何，用户随时可改；与组件 `catalog` 的 `style_hint` 同一句话：膜描边 0.6×、蛋白 1×，浅暖 / 浅蓝灰，不用渐变）
+#: 样式预设（不改图元几何，用户随时可改；与组件 `catalog` 的 `style_hint` 同一句话：膜描边 0.6 pt、蛋白 0.85 pt，浅暖 / 浅蓝灰，不用渐变）
 DEFAULT_STYLE = {
     "membrane": {"color": "#5a4636", "strokePt": 0.6, "fill": "#f3dcc0"},
-    "receptor_rtk": {"color": "#3f4d5c", "strokePt": 1.0, "fill": "#d4dde6"},
+    "receptor_rtk": {"color": "#3f4d5c", "strokePt": 0.85, "fill": "#d4dde6"},
 }
 CORE_FILL = "#f8eddf"
 
 
 def _lighten(hexcolor: object) -> str:
-    """头部填色往白里混 55 % 当底带色；不是 `#rrggbb` 就用缺省的极浅暖色。"""
+    """头部填色往白里混 40 % 当底带色；不是 `#rrggbb` 就用缺省的极浅暖色。"""
     if isinstance(hexcolor, str) and len(hexcolor) == 7 and hexcolor[0] == "#":
         try:
             rgb = [int(hexcolor[i : i + 2], 16) for i in (1, 3, 5)]
         except ValueError:
             return CORE_FILL
-        return "#" + "".join(f"{round(c + (255 - c) * 0.55):02x}" for c in rgb)
+        return "#" + "".join(f"{round(c + (255 - c) * 0.40):02x}" for c in rgb)
     return CORE_FILL
 
 
