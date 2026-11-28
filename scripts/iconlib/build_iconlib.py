@@ -14,6 +14,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+for _stream in (sys.stdout, sys.stderr):  # Windows 上被捕获 / 重定向时钉成 UTF-8（tests/test_windows_regressions.py）
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import iconlib_index  # noqa: E402
