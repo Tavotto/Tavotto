@@ -7636,3 +7636,107 @@ grDevices::dev.off()
             "stroke-width: 2.30;" in item["style"] and "stroke-dasharray:" in item["style"]
             for item in drawn
         )
+
+
+@pytest.mark.parametrize("kind", ["ribbon", "stacked-area"])
+def test_native_r_fixed_ribbon_writeback_preserves_panel_geometry(tmp_path, kind):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Fixed range fills"
+    project.mkdir()
+    script = project / "Range.R"
+    layer = (
+        "ggplot2::geom_ribbon(ggplot2::aes(ymin = 2 * band, ymax = y + 2 * band), "
+        'fill = "#486C29", alpha = .6, colour = NA)'
+        if kind == "ribbon"
+        else 'ggplot2::geom_area(fill = "#486C29", alpha = .6, colour = NA)'
+    )
+    script.write_text(
+        f"""\
+d <- expand.grid(x = 1:5, band = 1:2, trial = c("Early", "Late"))
+d$x <- d$x + 0.4 * (d$band == 2)
+d$y <- d$x / 5 + d$band
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, group = band)) +
+  {layer} + ggplot2::facet_wrap(ggplot2::vars(trial))
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Range"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    facts = project / "built-data.txt"
+    fingerprint = facts.read_bytes()
+    gid = "layer.1.panel.2.ribbon"
+    neighbour = "layer.1.panel.1.ribbon"
+
+    def polygons(svg, color):
+        return [
+            node.attrib
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.endswith("}polygon") and f"fill: {color};" in node.get("style", "")
+        ]
+
+    def layers(view):
+        return {e["gid"]: e for e in view["manifest"]["elements"] if e["role"] == "fill"}
+
+    def save(app, figure, baseline, edits):
+        target = layers(baseline)[gid]
+        patches = [
+            {"gid": gid, "identity": target["identity"], "prop": prop, "value": value}
+            for prop, value in edits.items()
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        assert layers(hot)[neighbour] == layers(baseline)[neighbour]
+        assert layers(hot)[gid]["geometry"]["paths"] == target["geometry"]["paths"]
+        assert _render(app, figure, [])["svg"] == baseline["svg"]
+        saved = _write_native_figure_style(app, script, route, figure, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert facts.read_bytes() == fingerprint
+        standalone = (project / "standalone.svg").read_text(encoding="utf-8")
+        for color in ["#486C29", "#8D246A"]:
+            assert polygons(standalone, color) == polygons(hot["svg"], color)
+        return hot, saved
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        starting = _render(app, figure, [])
+        assert set(layers(starting)) == {gid, neighbour}
+        old_polygons = polygons(starting["svg"], "#486C29")
+        assert len(old_polygons) == 4
+        settings = (
+            {"facecolor": "none", "alpha": 0.4}
+            if kind == "ribbon"
+            else {"facecolor": "#8D246A", "alpha": 0}
+        )
+        hidden, _ = save(app, figure, starting, settings)
+        assert not layers(hidden)[gid]["geometry"]["fill"]
+        assert polygons(hidden["svg"], "#486C29") == old_polygons[:2]
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == hidden["svg"]
+        values = {field["prop"]: field["value"] for field in layers(reopened)[gid]["editable"]}
+        assert values == settings
+        edit = {"facecolor": "#8D246A"} if kind == "ribbon" else {"alpha": 0.4}
+        restored, saved = save(app, figure, reopened, edit)
+        visible = polygons(restored["svg"], "#8D246A")
+        assert len(visible) == 2
+        assert [shape["points"] for shape in visible] == [
+            shape["points"] for shape in old_polygons[2:]
+        ]
+        status, receipt = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and receipt["ok"] and script.read_bytes() == authored

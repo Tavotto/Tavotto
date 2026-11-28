@@ -1501,7 +1501,7 @@ ggplot_fixed_layer_source <- function(state, target, edit, aesthetics, geometry 
   layer <- state$built$plot$layers[[target$index]]
   kind <- class(layer$geom)[[1L]]
   kinds <- c("GeomPoint", "GeomLine", "GeomPath", "GeomCol", "GeomBar",
-             "GeomErrorbar", "GeomErrorbarh", "GeomRibbon")
+             "GeomErrorbar", "GeomErrorbarh", "GeomRibbon", "GeomArea")
   if (!kind %in% kinds) return(NULL)
   stock <- getExportedValue("ggplot2", kind)
   if (!identical(as.list(layer$geom)$draw_panel, as.list(stock)$draw_panel)) return(NULL)

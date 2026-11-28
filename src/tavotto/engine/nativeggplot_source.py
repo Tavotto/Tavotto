@@ -385,6 +385,11 @@ _GEOMETRY_IMPLEMENTATIONS = {
         "ggplot_ribbon_geometry.R",
         "ggplot_apply_ribbon_styles",
     ),
+    "fixed_ribbon": (
+        ("GeomRibbon", "GeomArea"),
+        "ggplot_ribbon_geometry.R",
+        "ggplot_apply_fixed_ribbon_paint",
+    ),
     "points": (
         ("GeomPoint",),
         "ggplot_point_style.R",
@@ -425,6 +430,14 @@ def _point_recipe_aesthetics(recipe: dict) -> bool:
             for channel in channels
         )
         and len(channels) == len(set(channels))
+    )
+
+
+def _ribbon_style_value(prop: str, value) -> bool:
+    if prop == "facecolor":
+        return isinstance(value, str) and (value == "none" or _RGB.fullmatch(value) is not None)
+    return (
+        prop == "alpha" and type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
     )
 
 
@@ -470,15 +483,14 @@ def _native_layer_geometry(source: dict) -> dict | None:
         ):
             return recipe
         return None
-    if kind == "ribbons":
-        alpha = values.get("alpha")
-        if (
-            "category" in recipe
-            and set(values) == {"alpha"}
-            and type(alpha) in (float, int)
-            and math.isfinite(alpha)
-            and 0 <= alpha <= 1
-            and source["edited"].get("alpha") == alpha
+    if kind in {"ribbons", "fixed_ribbon"}:
+        if kind == "ribbons" and ("category" not in recipe or set(values) != {"alpha"}):
+            return None
+        if kind == "fixed_ribbon" and "category" in recipe:
+            return None
+        if all(
+            source["edited"].get(prop) == value and _ribbon_style_value(prop, value)
+            for prop, value in values.items()
         ):
             return recipe
         return None
@@ -524,6 +536,7 @@ def _native_layer_writes(
             "GeomErrorbar",
             "GeomErrorbarh",
             "GeomRibbon",
+            "GeomArea",
         )
         if (
             type(index) is int
@@ -641,9 +654,9 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
             sources.add(resource)
             native_recipes = _r_geometry_recipes(recipes)
             geometry = f", {native_recipes}, {adjust}"
+            if kind in {"points", "ribbons", "fixed_ribbon"}:
+                sources.add("ggplot_pigment.R")
             if kind in {"curves", "points"}:
-                if kind == "points":
-                    sources.add("ggplot_pigment.R")
                 aesthetics = recipes[0]["aesthetics"] if kind == "points" else ["colour"]
                 channels = "c(" + ", ".join(map(_r_literal, aesthetics)) + ")"
                 geometry += f", function(data) ggplot_source_series_categories(capture, {index}L, data, {channels})"
@@ -653,8 +666,6 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
                     f"ggplot_{guide_type}_guide_recipe({guide_argument}, {native_recipes})"
                 )
             elif plan["categorical"]:
-                if kind == "ribbons":
-                    sources.add("ggplot_pigment.R")
                 channel = "fill" if kind in {"bars", "ribbons"} else "colour"
                 geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'
         if scoped_paint := plan["scoped_paint"]:

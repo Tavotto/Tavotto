@@ -51,26 +51,37 @@ ggplot_fill_ribbon <- function(grob, pigment) {
   grob
 }
 
+# An explicitly hidden fill keeps its authored colour and opacity for the next edit.
 ggplot_ribbon_pigment <- function(polygon) {
   face <- ggplot_uniform_pigment(polygon$gp$fill)
-  if (isTRUE(face$alpha == 0) && !is.null(polygon$tavotto_ribbon_rgb)) {
+  if (isTRUE(face$alpha == 0)) {
+    if (is.null(polygon$tavotto_ribbon_rgb)) return(NULL)
     face$rgb <- polygon$tavotto_ribbon_rgb
+    if (!is.null(polygon$tavotto_ribbon_alpha)) face$alpha <- polygon$tavotto_ribbon_alpha
   }
   face
 }
 
-ggplot_record_ribbon_paint <- function(grob, alpha) {
+ggplot_record_ribbon_paint <- function(grob, values) {
   if (inherits(grob, "polygon")) {
     face <- ggplot_ribbon_pigment(grob)
-    if (is.null(face) || identical(face$rgb, "none")) stop("Tavotto could not match the R ribbon fill.")
-    grob$tavotto_ribbon_rgb <- face$rgb
-    grob$gp$fill <- scales::alpha(face$rgb, alpha)
+    if (is.null(face)) stop("Tavotto could not match the R ribbon fill.")
+    colour <- if (is.null(values$facecolor)) face$rgb else values$facecolor
+    grob$tavotto_ribbon_rgb <- colour
+    grob$tavotto_ribbon_alpha <- if (colour == "none") {
+      if (is.null(values$alpha)) face$alpha else values$alpha
+    }
+    grob$gp$fill <- ggplot_edit_pigment(colour, face, values$alpha, face$alpha)
   } else {
     for (i in seq_along(grob$children)) {
-      grob$children[[i]] <- ggplot_record_ribbon_paint(grob$children[[i]], alpha)
+      grob$children[[i]] <- ggplot_record_ribbon_paint(grob$children[[i]], values)
     }
   }
   grob
+}
+
+ggplot_apply_fixed_ribbon_paint <- function(grob, rows, layout, panel, values) {
+  ggplot_record_ribbon_paint(grob, values)
 }
 
 ggplot_apply_ribbon_styles <- function(grob, rows, layout, panel, values) {
@@ -85,7 +96,7 @@ ggplot_apply_ribbon_styles <- function(grob, rows, layout, panel, values) {
     if (length(alpha) != 1L) stop("Tavotto found conflicting R ribbon styles.")
     if (is.na(alpha)) next
     for (i in children[[id]]) {
-      grob$children[[i]] <- ggplot_record_ribbon_paint(grob$children[[i]], alpha)
+      grob$children[[i]] <- ggplot_record_ribbon_paint(grob$children[[i]], list(alpha = alpha))
     }
   }
   grob

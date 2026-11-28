@@ -15,7 +15,7 @@ ggplot_ribbon_target <- function(built, draw, members, index, kind, group = NULL
   if (!all(ok)) return(NULL)
   pigments <- lapply(polygons, ggplot_ribbon_pigment)
   face <- pigments[[1L]]
-  if (is.null(face) || identical(face$rgb, "none") || !all(vapply(pigments, identical, logical(1L), face))) return(NULL)
+  if (is.null(face) || !all(vapply(pigments, identical, logical(1L), face))) return(NULL)
   outlined <- any(vapply(leaves, function(g) {
     stroke <- ggplot_uniform_pigment(g$gp$col)
     # A nonuniform or unrecognized stroke is still an outline.
@@ -138,10 +138,13 @@ measure_ggplot_ribbons <- function(table, targets, frame_pt) {
 }
 
 ggplot_ribbon_source_plan <- function(state, target, edit) {
-  if (is.null(target$group) || !identical(names(edit), "alpha")) return(NULL)
+  if (!length(edit)) return(NULL)
   ggplot_ribbon_values(target, edit)
-  geometry <- list(kind = "ribbons", facet = target$facet, values = edit,
-                   category = list(value = as.character(target$group$key)))
+  geometry <- list(kind = "fixed_ribbon", facet = target$facet, values = edit)
+  if (!is.null(target$group)) {
+    geometry$kind <- "ribbons"
+    geometry$category <- list(value = as.character(target$group$key))
+  }
   ggplot_fixed_layer_source(state, target, edit, NULL, geometry)
 }
 
