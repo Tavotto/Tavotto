@@ -793,3 +793,152 @@ def test_marker_ancestor_or_marker_with_unknown_property_is_unsupported():
 def test_filled_marker_shape_with_a_stroke_is_unsupported():
     r = imp(_marker('<path d="M0,0 L4,2 L0,4 z" stroke="#000" stroke-width="2"/>') + LINE_M)
     assert r["unsupported"] == {"marker": 1}
+
+
+# ---- 闭合回到起点：末锚点与首锚点只差浮点噪声时也要并掉 --------------------------------------
+#
+# `Z` 前的最后一个锚点落回起点时，导入要把它并进首锚点（末段的入手柄交给首锚点），不留重合的末锚点。
+# 原来只认 `==`：相对坐标（`c` / `l`）累加出来的终点常和起点差 1e-16 量级的浮点噪声，并不掉，
+# 留下一个与首锚点重合的末锚点，`pathquality` 报成 `zero_length_segment`。
+
+
+def _subs(d: str) -> list[dict]:
+    return svgimport.parse_path_d(d)
+
+
+def test_float_noise_actually_present_in_the_relative_fixture():
+    assert 0.1 + 0.3 - 0.3 != 0.1  # 下面几条用例靠它：相对坐标回到起点不是逐位相等
+
+
+def test_closing_curve_segment_with_float_noise_folds_into_first_anchor():
+    (sub,) = _subs("M.1 .2 l.3 0 l0 .3 c-.1 .2 -.2 .2 -.3 -.3 z")
+    assert sub["closed"] is True and len(sub["nodes"]) == 3
+    first = sub["nodes"][0]
+    assert first["p"] == pytest.approx((0.1, 0.2))
+    # 末段曲线的第二个控制点（0.2, 0.7）成了首锚点的入手柄
+    assert first["in"] == pytest.approx((0.2, 0.7))
+    assert sub["nodes"][-1]["out"] == pytest.approx(
+        (0.3, 0.7)
+    )  # 末段的第一个控制点仍在倒数第二个锚点的出手柄上
+
+
+def test_closing_straight_segment_with_float_noise_folds_into_first_anchor():
+    (sub,) = _subs("M.1 .2 l.3 0 l0 .3 l-.3 -.3 z")
+    assert sub["closed"] is True and len(sub["nodes"]) == 3
+    assert sub["nodes"][0]["in"] == sub["nodes"][0]["p"]  # 直线末段：入手柄就是锚点本身
+
+
+def test_closing_back_to_start_with_exact_coordinates_still_folds():
+    (sub,) = _subs("M0 0 L10 0 L10 10 C5 12 1 8 0 0 Z")
+    assert len(sub["nodes"]) == 3 and sub["nodes"][0]["in"] == (1, 8)
+
+
+def test_ordinary_closed_path_whose_end_is_not_the_start_is_untouched():
+    (sub,) = _subs("M0 0 L10 0 L10 10 L0 10 Z")
+    assert sub["closed"] is True and [n["p"] for n in sub["nodes"]] == [
+        (0, 0),
+        (10, 0),
+        (10, 10),
+        (0, 10),
+    ]
+
+
+def test_real_small_gap_is_not_merged():
+    (sub,) = _subs("M0 0 L10 0 L10 10 L0 0.001 Z")
+    assert len(sub["nodes"]) == 4  # 差 0.001 个用户单位是真实的几何，不当噪声
+
+
+def test_open_path_ending_at_its_start_is_not_closed_or_merged():
+    (sub,) = _subs("M.1 .2 l.3 0 l0 .3 l-.3 -.3")
+    assert sub["closed"] is False and len(sub["nodes"]) == 4
+
+
+def test_closing_noise_is_relative_to_the_coordinate_scale():
+    # 大坐标上的浮点噪声（绝对值大得多）同样并掉
+    (sub,) = _subs("M1000.1 2000.2 l300.3 0 l0 300.3 l-300.3 -300.3 z")
+    assert len(sub["nodes"]) == 3
+
+
+def test_import_has_no_coincident_end_anchor_and_pathquality_is_clean():
+    from tavotto.engine import pathquality
+
+    r = imp(
+        '<path d="M10.1 20.2 l30.3 0 l0 30.3 c-10.1 20.2 -20.2 20.2 -30.3 -30.3 z" fill="#369"/>'
+    )
+    (o,) = r["objects"]
+    assert len(o["subpaths"][0]["nodes"]) == 3
+    codes = [i["code"] for i in pathquality.check_path(o)["issues"]]
+    assert "zero_length_segment" not in codes and "coincident_anchors" not in codes
+
+
+def _raster(objects, tmp_path, name):
+    pytest.importorskip("pypdfium2")
+    from tavotto.rendercore import fonts, plan
+    from tavotto.rendercore.hbshaper import HbFaceProvider
+    from tavotto.rendercore.pdfwriter import write_pdf
+
+    reg = fonts.FontRegistry.discover()
+    if reg.missing:
+        pytest.skip(f"not_run: approved fonts missing: {reg.missing}")
+    import pypdfium2
+
+    provider = HbFaceProvider(reg)
+    # 导入结果（画布驼峰字段）→ 渲染计划的对象（`_mm` / 蛇形字段）；这里只有填充路径
+    objs = [
+        {
+            "type": "path", "id": o["id"], "subpaths": o["subpaths"], "fill": o.get("fill"),
+            "x_mm": o["x"], "y_mm": o["y"], "w_mm": o["w"], "h_mm": o["h"],
+            "color": o.get("color", "#000000"), "stroke": False,
+        }
+        for o in objects
+    ]  # fmt: skip
+    compiled = plan.compile_page(60, 60, objs, sources=None, faces=None)
+    pdf = tmp_path / f"{name}.pdf"
+    write_pdf(compiled.page, pdf, provider)
+    with pypdfium2.PdfDocument(pdf) as doc:
+        page = doc[0]
+        try:
+            bm = page.render(scale=2)
+            try:
+                return bm.to_pil().convert("L")
+            finally:
+                bm.close()
+        finally:
+            page.close()
+
+
+def test_roundtrip_pixels_are_the_same_with_float_noise_and_with_exact_coordinates(tmp_path):
+    # 同一个形状：相对坐标（终点有浮点噪声）与绝对坐标（逐位相等）导入后画出来逐像素相同
+    from PIL import ImageChops
+
+    rel = imp(
+        '<path d="M10.1 20.2 l30.3 0 l0 30.3 c-10.1 20.2 -20.2 20.2 -30.3 -30.3 z" fill="#369"/>'
+    )
+    ab = imp(
+        '<path d="M10.1 20.2 L40.4 20.2 L40.4 50.5 C30.3 70.7 20.2 70.7 10.1 20.2 Z" fill="#369"/>'
+    )
+    for r in (rel, ab):
+        assert len(r["objects"][0]["subpaths"][0]["nodes"]) == 3
+    a, b = _raster(rel["objects"], tmp_path, "rel"), _raster(ab["objects"], tmp_path, "ab")
+    assert a.size == b.size and ImageChops.difference(a, b).getextrema()[1] <= 1
+
+
+def test_roundtrip_pixels_are_unchanged_by_dropping_the_duplicate_end_anchor(tmp_path):
+    """修之前的表示（末尾多一个与首锚点重合的锚点，入手柄在它身上）与修之后（折进首锚点）画出来逐像素相同。"""
+    import copy
+
+    from PIL import ImageChops
+
+    r = imp(
+        '<path d="M10.1 20.2 l30.3 0 l0 30.3 c-10.1 20.2 -20.2 20.2 -30.3 -30.3 z" fill="#369"/>'
+    )
+    fixed = r["objects"]
+    old = copy.deepcopy(fixed)
+    nodes = old[0]["subpaths"][0]["nodes"]
+    first = dict(nodes[0])
+    tail = {"p": list(first["p"]), "in": first.pop("in")}  # 修之前：入手柄挂在重合的末锚点上
+    nodes[0] = first
+    nodes.append(tail)
+    assert len(nodes) == len(fixed[0]["subpaths"][0]["nodes"]) + 1
+    a, b = _raster(fixed, tmp_path, "fixed"), _raster(old, tmp_path, "old")
+    assert a.size == b.size and ImageChops.difference(a, b).getextrema()[1] <= 1
