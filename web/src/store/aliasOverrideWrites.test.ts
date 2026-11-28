@@ -7,6 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
+import { aliasCovered } from '@/lib/aliasOverrides'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { clearOverride, readPanelOverride, setOverride, setOverrides } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -229,6 +230,10 @@ it('shares one range across reciprocal axes, including reading, replacing, reset
   const read = (gid: string) => readPanelOverride(useDocumentStore.getState().doc.objects[0] as PanelObject, gid, 'xlim')?.value
   await seed(start, manifest)
   expect(read('axes_3')).toEqual([1, 10])
+  expect(aliasCovered(manifest, 'axes_3', 'xlim')).toEqual([
+    { gid: 'axes_1', prop: 'xlim' },
+    { gid: 'axes_2', prop: 'xlim' },
+  ])
 
   setOverride('p1', 'axes_3', 'xlim', [1, 100], true)
   expect(ov()).toEqual([start[1], { gid: 'axes_3', prop: 'xlim', value: [1, 100] }])

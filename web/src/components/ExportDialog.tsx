@@ -34,6 +34,7 @@
  * * 不出现内部标识：库名、gid、对象 id、绝对路径一个都不进这个界面（§五）。
  */
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -121,7 +122,7 @@ import {
   type ExportRequestInput,
 } from "@/lib/exportRequest";
 import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels, type ExportRoute } from "@/lib/exportRoute";
-import { scriptedBitmapPanels } from "@/lib/scriptedBitmaps";
+import { pdfRedrawPanels, redrawOffered, scriptedBitmapPanels } from "@/lib/scriptedBitmaps";
 import { fetchExportRoute, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
 import { buildBatchInput, buildMergedPdfInput, type BatchShared } from "@/lib/exportBatchInput";
 import { mergePdfPlan } from "@/lib/pdfPagesMerge";
@@ -150,7 +151,8 @@ import { useRuntimePreview } from "@/hooks/useRuntimePreview";
 import { figureSnapshotFor } from "@/lib/figureSnapshot";
 import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
-import { isJustBakedBaseline, prepareScriptedBitmapsForRedraw } from "@/store/actions";
+import { isJustBakedBaseline, prepareScriptedBitmapsForRedraw, redrawPdfOriginalsWithScript } from "@/store/actions";
+import { pdfFontFactsOf, usePdfFontFacts } from "@/store/pdfFontFacts";
 import { useAssetStore } from "@/store/assetStore";
 import { renderKeyOf, useExactPanelManifest, usePanelRender, useRenderStore } from "@/store/renderStore";
 import { useRuntimeAssetStore } from "@/store/runtimeAssetStore";
@@ -1379,6 +1381,35 @@ export function ExportDialog() {
     setRedrawKept([]);
   }, [open]);
 
+  /**
+   * 导出结果说用了 Type 3 字体（`type3_fonts` 留意，T-004）时的「用脚本重画并重新导出」（T-005 补充）：
+   * 只是把画布角标那一步搬到这里——这次导出里有脚本、零编辑、字体事实说有问题的 PDF 原件，一次可撤销的提交
+   * 换成脚本重画（`redrawPdfOriginalsWithScript`），再走同一个入口重新导出。导出本身的默认行为不变：
+   * 不点就照旧嵌原件（ADR 0139）。字体事实只在结果里真有这条留意时才问（只读文件，不跑脚本）。
+   */
+  const pdfCandidates = useMemo(
+    () => (batchMode ? [] : pdfRedrawPanels(scope === "original" ? (panel ? [panel] : []) : exportDoc.objects)),
+    [batchMode, scope, panel, exportDoc.objects],
+  );
+  const resultHasType3 = !!job?.outputs?.some((o) =>
+    knownAdvisories(o.manifest).some((a) => a.code === "type3_fonts"),
+  );
+  const pdfFactsByKey = usePdfFontFacts((s) => s.byKey);
+  const pdfCandidateFiles = pdfCandidates.map((p) => p.fileId).join("\0");
+  useEffect(() => {
+    if (!open || !resultHasType3 || !pdfCandidateFiles) return;
+    for (const fileId of new Set(pdfCandidateFiles.split("\0"))) usePdfFontFacts.getState().request(fileId);
+  }, [open, resultHasType3, pdfCandidateFiles]);
+  const pdfRedrawable = resultHasType3
+    ? pdfCandidates.filter((p) => redrawOffered(p, pdfFontFactsOf(p.fileId, pdfFactsByKey))).map((p) => p.id)
+    : [];
+  const redrawFontsAndExport =
+    pdfRedrawable.length > 0 && !busy && !redrawBusy
+      ? () => {
+          if (redrawPdfOriginalsWithScript(pdfRedrawable).length > 0) setRerunAfterRedraw("ask");
+        }
+      : undefined;
+
   /** 主按钮 / 再次导出 / 重试的同一个入口：一批或单张 */
   const startExport = () => (batchMode ? startBatch() : void start("ask"));
 
@@ -1794,6 +1825,7 @@ export function ExportDialog() {
           onReveal={revealTarget ? revealDone : undefined}
           currentPpi={Number(ppi)}
           onLowerDpi={lowerDpiAndExport}
+          onRedrawFonts={redrawFontsAndExport}
         />
       )}
     </div>
@@ -3326,6 +3358,7 @@ export function ResultBlock({
   onReveal,
   currentPpi,
   onLowerDpi,
+  onRedrawFonts,
 }: {
   job: ExportJob;
   edited: boolean;
@@ -3334,6 +3367,11 @@ export function ResultBlock({
   currentPpi?: number;
   /** 「改用 N dpi 导出」：把对话框分辨率设成 N 并重新导出 */
   onLowerDpi?: (dpi: number) => void;
+  /**
+   * 「用脚本重画并重新导出」：结果里有 Type 3 留意、且这次导出里有能由脚本重画的 PDF 原件时才给。
+   * 画在那条留意下面；点了 = 画布上落一次可撤销的重画，再重新导出
+   */
+  onRedrawFonts?: () => void;
   /** 在系统文件管理器中显示第一件写出的文件（只在能显示时给）；摘要行上的唯一动作 */
   onReveal?: () => void;
 }) {
@@ -3541,6 +3579,7 @@ export function ResultBlock({
                 key={`${o.format}-${o.name ?? "x"}`}
                 out={o}
                 dir={job.export_dir ?? ""}
+                onRedrawFonts={onRedrawFonts}
               />
             ))}
           </div>
@@ -3619,7 +3658,15 @@ function formatOutputBytes(n: number): string {
   return `${n} B`;
 }
 
-function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
+function OutputRow({
+  out,
+  dir,
+  onRedrawFonts,
+}: {
+  out: ExportOutput;
+  dir: string;
+  onRedrawFonts?: () => void;
+}) {
   useTranslation(["dialogs", "errors"]);
   const [revealError, setRevealError] = useState<string | null>(null);
   if (out.status === "failed" || !out.name) {
@@ -3702,7 +3749,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
       {out.script_report ? (
         <ScriptSkipped report={out.script_report} />
       ) : (
-        <InspectionLine manifest={out.manifest} />
+        <InspectionLine manifest={out.manifest} onRedrawFonts={onRedrawFonts} />
       )}
       {revealError && <p className="text-sm text-danger-content">{revealError}</p>}
     </div>
@@ -3730,7 +3777,13 @@ function ScriptSkipped({ report }: { report: ExportScriptReport }) {
  * （`textSizeNote()`）；它的 unknown 与别的 unknown 一样不说。
  * 「留意」（`manifest.advisories`，T-004）在同一行下面用警示色说：不是失败，但投稿前得知道。
  */
-function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
+function InspectionLine({
+  manifest,
+  onRedrawFonts,
+}: {
+  manifest: ExportOutput["manifest"];
+  onRedrawFonts?: () => void;
+}) {
   useTranslation("dialogs");
   const state = inspectionState(manifest);
   const advisories = knownAdvisories(manifest);
@@ -3761,19 +3814,28 @@ function InspectionLine({ manifest }: { manifest: ExportOutput["manifest"] }) {
       )}
       {/* 留意（不是失败）：投稿时可能被退，或者有更好的做法——说清楚是哪几个字体 / 哪几张图 */}
       {advisories.map((a) => (
-        <p
-          key={a.code}
-          data-inspection-advisory={a.code}
-          className="flex items-start gap-1 text-sm text-warn-content"
-        >
-          <IconSlot>
-            <TriangleAlert size={ICON_SIZE.sm} aria-hidden />
-          </IconSlot>
-          {ex(`inspection.advisory.${a.code}`, {
-            fonts: (a.fonts ?? []).join("、"),
-            panels: (a.panels ?? []).map((id) => id.split(/[\\/]/).pop() || id).join("、"),
-          })}
-        </p>
+        <Fragment key={a.code}>
+          <p
+            data-inspection-advisory={a.code}
+            className="flex items-start gap-1 text-sm text-warn-content"
+          >
+            <IconSlot>
+              <TriangleAlert size={ICON_SIZE.sm} aria-hidden />
+            </IconSlot>
+            {ex(`inspection.advisory.${a.code}`, {
+              fonts: (a.fonts ?? []).join("、"),
+              panels: (a.panels ?? []).map((id) => id.split(/[\\/]/).pop() || id).join("、"),
+            })}
+          </p>
+          {/* 用了 Type 3：有脚本的 PDF 原件能就地换成脚本重画再导一次——与画布角标同一步，不用回画布找 */}
+          {a.code === "type3_fonts" && onRedrawFonts && (
+            <div className="pl-5">
+              <Button size="sm" data-export-redraw-fonts onClick={onRedrawFonts}>
+                {ex("redrawFontsExport")}
+              </Button>
+            </div>
+          )}
+        </Fragment>
       ))}
     </>
   );

@@ -5,6 +5,10 @@
  * 用户手改过的颜色不覆盖：此刻有 override、而它不是 `owned` 里配色上次写下的那个值，就跳过并计数。
  * 画布样式（ADR 0081 §十三）写下、仍归样式的那一格不算手改：调用方经 `yields` 告诉这里（`lib/styleOwned.ownedLive`），
  * 配色照写；写完那一格的值变了，样式的登记自然失效、从此归配色。
+ *
+ * 系列那一格之外还要看它**盖着的窄端**（调用方经 `covers` 给出，`lib/aliasOverrides.aliasCovered`）：柱形系列的
+ * 填充色盖着每一根柱的填充色，写系列那一格时同一次 commit 会把各根柱上的 override 清掉（一个量只留一个地址）。
+ * 用户单独改过某根柱的颜色，整条系列按手改跳过——否则那根柱的颜色会被悄悄删掉，结果里还说「没有跳过」。
  */
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import type { PanelObject, PanelOverride } from '@/types/document'
@@ -39,6 +43,8 @@ export function planPalette(
   panels: readonly PanelObject[],
   /** 这一格的 override 不是用户的（画布样式写的、仍归样式），配色可以接手 */
   yields: (panel: PanelObject, gid: string, prop: string) => boolean = () => false,
+  /** 写这一格时会被一并清掉的窄端地址（柱形系列 → 每一根柱） */
+  covers: (panel: PanelObject, gid: string, prop: string) => readonly { gid: string; prop: string }[] = () => [],
 ): PalettePlan {
   const byId = new Map(panels.map((p) => [p.id, p]))
   const prevOwned = new Map(table.owned.map((o) => [ownedKey(o), o]))
@@ -60,6 +66,13 @@ export function planPalette(
       const cur = effectiveOverride(panel.overrides, s.gid, s.prop)
       const mine = prevOwned.get(k)
       if (cur !== undefined && !(mine && same(cur.value, mine.value)) && !yields(panel, s.gid, s.prop)) {
+        skipped.push(s)
+        continue
+      }
+      const memberEdited = covers(panel, s.gid, s.prop).some(
+        (n) => effectiveOverride(panel.overrides, n.gid, n.prop) !== undefined && !yields(panel, n.gid, n.prop),
+      )
+      if (memberEdited) {
         skipped.push(s)
         continue
       }

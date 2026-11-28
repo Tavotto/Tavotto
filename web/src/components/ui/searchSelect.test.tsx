@@ -164,4 +164,35 @@ describe('SearchSelect', () => {
     expect(document.querySelector('[role=searchbox]')).toBeNull()
     expect(rows()).toHaveLength(3)
   })
+  it('分组：组名变时出一行标题；高亮项变化报给 onActiveChange，收起报 null；footer 跟着弹层', async () => {
+    const seen: (string | null)[] = []
+    const grouped = OPTIONS.map((o, i) => ({ ...o, group: i < 3 ? '常用' : '更多' }))
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () =>
+      root!.render(
+        <SearchSelect
+          value="Arial"
+          onChange={() => {}}
+          options={grouped}
+          grouped
+          onActiveChange={(v) => seen.push(v)}
+          footer={<p data-test-footer />}
+          searchLabel="搜索"
+          emptyLabel="无"
+          ariaLabel="字体"
+        />,
+      ),
+    )
+    expect(document.querySelector('[data-test-footer]')).toBeNull()
+    const input = await openIt(host.querySelector('[data-select-trigger]') as HTMLElement)
+    expect([...document.querySelectorAll<HTMLElement>('[data-select-group]')].map((e) => e.dataset.selectGroup)).toEqual(['常用', '更多'])
+    expect(document.querySelector('[data-test-footer]')).not.toBeNull()
+    expect(seen.at(-1)).toBe('Arial')
+    await press(input, 'ArrowDown')
+    expect(seen.at(-1)).toBe('Times New Roman')
+    await press(input, 'Escape')
+    expect(seen.at(-1)).toBeNull()
+  })
 })

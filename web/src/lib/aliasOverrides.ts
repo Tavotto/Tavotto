@@ -22,11 +22,13 @@ type Key = { readonly gid: string; readonly prop: string }
 
 const keyOf = (k: Key) => `${k.gid}\u0000${k.prop}`
 
-function reciprocalPeers(byGid: ReadonlyMap<string, ManifestElement>, { gid, prop }: Key): string[] {
+type FindElement = (gid: string) => ManifestElement | undefined
+
+function reciprocalPeers(findElement: FindElement, { gid, prop }: Key): string[] {
   const peers = [gid]
   const seen = new Set(peers)
   const links = (id: string) => {
-    const element = byGid.get(id)
+    const element = findElement(id)
     return element?.alias_pure?.includes(prop) ? element.alias_covers?.[prop]?.[prop] : undefined
   }
   // Reciprocal pure links to the same property denote one value shared by a
@@ -47,7 +49,31 @@ export function sharedOverrideAddresses(
 ): Key[] {
   if (!manifest) return [...targets]
   const byGid = new Map(manifest.elements.map((element) => [element.gid, element]))
-  return targets.flatMap((target) => reciprocalPeers(byGid, target).map((gid) => ({ gid, prop: target.prop })))
+  return targets.flatMap((target) =>
+    reciprocalPeers((gid) => byGid.get(gid), target).map((gid) => ({ gid, prop: target.prop })),
+  )
+}
+
+function coveredAliasAddresses(findElement: FindElement, key: Key): Key[] {
+  const narrow = findElement(key.gid)?.alias_covers?.[key.prop]
+  if (!narrow) return []
+  const covered = new Map<string, Key>()
+  for (const [prop, gids] of Object.entries(narrow)) {
+    for (const gid of gids) covered.set(keyOf({ gid, prop }), { gid, prop })
+  }
+  for (const gid of reciprocalPeers(findElement, key).slice(1)) {
+    covered.set(keyOf({ gid, prop: key.prop }), { gid, prop: key.prop })
+  }
+  return [...covered.values()]
+}
+
+/** 写广播端前查找可能被清掉的地址，沿用写入时的窄端和共享关系。 */
+export function aliasCovered(
+  manifest: Pick<Manifest, 'elements'> | null | undefined,
+  gid: string,
+  prop: string,
+): Key[] {
+  return coveredAliasAddresses((id) => manifest?.elements.find((e) => e.gid === id), { gid, prop })
 }
 
 /** 这一批 patch 要连带清掉的 (gid, prop)；没有可清的就是空数组。`manifest` 缺失 / 旧引擎没发字段 = 空 */
@@ -66,11 +92,8 @@ export function aliasClearPlan(
   }
   // 广播端 → 窄端
   const byGid = new Map(manifest.elements.map((e) => [e.gid, e]))
-  for (const p of patches) {
-    for (const gid of reciprocalPeers(byGid, p)) clear(gid, p.prop)
-    const narrow = byGid.get(p.gid)?.alias_covers?.[p.prop]
-    if (!narrow) continue
-    for (const [nprop, gids] of Object.entries(narrow)) for (const g of gids) clear(g, nprop)
+  for (const patch of patches) {
+    for (const { gid, prop } of coveredAliasAddresses((id) => byGid.get(id), patch)) clear(gid, prop)
   }
   // 窄端 → 只盖着它一个的广播端
   const narrowKeys = new Set(patches.map(keyOf))

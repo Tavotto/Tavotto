@@ -446,7 +446,9 @@ export function planStyle(
         )
       }
     }
-    if (preset.palette?.length) {
+    // 画布选过推荐配色（ADR 0210）：系列颜色归色键表管，样式自带的配色循环不再上色——
+    // 否则改一下样式字号（`presetDelta` 带着 palette 的那次）就把选好的方案冲回样式的循环色
+    if (preset.palette?.length && !doc.colorKeys) {
       let i = 0
       for (const el of manifest.elements) {
         const prop = PALETTE_PROP[el.role]
