@@ -542,15 +542,11 @@ def parse_spec(raw, font_range=None) -> tuple[dict | None, str | None, bool]:
 
 
 def with_error_summary(recipe: recipe_mod.FigureRecipe, error: str | None):
-    """把配方里「均值 ± 某种误差」的层换成用户点选的那一种（`sd` / `sem` / `ci95`）；没点 / 不认识 / 配方里没有这样的层 = 原样。
-    只换误差的定义，中心仍是均值（中位数 + 四分位距的层不动）。误差线取自现成的误差列（`recipe.err`）的配方：用户点选的覆盖列名说的那一种（`err_kind`），画的数不变。"""
+    """原始重复值可以重算误差；现成误差列只补记未知的含义，不重标已声明的数值。"""
     target = ERROR_SUMMARY.get(error or "")
     if target is not None and recipe.err is not None:
-        # 多个 y 时每个 y 一个种类：用户点选的所有 y 一起换（画的数不变）
-        return replace(
-            recipe,
-            err_kind=error if isinstance(recipe.err, str) else (error,) * len(recipe.err_cols),
-        )
+        kinds = tuple(error if kind == "unknown" else kind for kind in recipe.err_kinds)
+        return replace(recipe, err_kind=kinds[0] if isinstance(recipe.err, str) else kinds)
     if target is None or not any(
         layer.summary in ERROR_SUMMARY.values() for layer in recipe.layers
     ):
@@ -583,32 +579,21 @@ def error_source(recipe: recipe_mod.FigureRecipe) -> str | None:
     return "computed" if error_of(recipe) is not None else None
 
 
-def _stated(summary: adf.DataSummary, column: str, kind: str, answers: dict) -> bool:
-    return (
-        kind not in (None, "unknown")
-        and answers.get("error") not in ERROR_SUMMARY
-        and recipe_mod.error_kind_of(summary, column) == kind
-    )
+def _stated(summary: adf.DataSummary, column: str, kind: str) -> bool:
+    return kind not in (None, "unknown") and recipe_mod.error_kind_of(summary, column) == kind
 
 
-def error_stated_of(
-    summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe, answers: dict
-) -> bool:
-    """（单个 y）误差线取自现成的误差列、而且是哪一种**由列名自己说明**：`err_kind` 不是 `unknown`、与列名说的一致、用户没点选过别的（`answers.error`）。
-    名字没说（`unknown`）从来不算「已说明」——界面要问用户，不替他定成 SD。多个 y 的逐列判断在 `error_columns_of`，这里恒为假。"""
-    return isinstance(recipe.err, str) and _stated(
-        summary, recipe.err, recipe.err_kind or "", answers
-    )
+def error_stated_of(summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> bool:
+    """单个 y 的现成误差由列名声明；多个 y 走逐列事实。"""
+    return isinstance(recipe.err, str) and _stated(summary, recipe.err, recipe.err_kind or "")
 
 
-def error_columns_of(
-    summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe, answers: dict
-) -> list[dict]:
-    """多个 y、各配各的现成误差列时，逐列的事实：`[{y, column, kind, stated}]`（`stated` 同 `error_stated_of`：种类由列名自己说明）。单个 y / 没有现成误差列 = 空。"""
+def error_columns_of(summary: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> list[dict]:
+    """多个 y 各配各的现成误差列：逐列报告来源、种类与声明状态。"""
     if recipe.err is None or isinstance(recipe.err, str):
         return []
     return [
-        {"y": y, "column": c, "kind": k, "stated": _stated(summary, c, k, answers)}
+        {"y": y, "column": c, "kind": k, "stated": _stated(summary, c, k)}
         for y, c, k in zip(recipe.y, recipe.err_cols, recipe.err_kinds)
     ]
 
@@ -1847,8 +1832,8 @@ def propose(
             ),
             fits=tpl.fit_report(values, cand.recipe),
             error_missing=error_missing_for(values, cand.recipe),
-            error_stated=error_stated_of(chosen.summary, cand.recipe, ans),
-            error_columns=error_columns_of(chosen.summary, cand.recipe, ans),
+            error_stated=error_stated_of(chosen.summary, cand.recipe),
+            error_columns=error_columns_of(chosen.summary, cand.recipe),
             facts=candidate_facts(values, cand.recipe),
             series_facts=series_facts(values, cand.recipe),
             stem=planned.stem if planned is not None else None,

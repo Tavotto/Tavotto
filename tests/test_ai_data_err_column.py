@@ -5,7 +5,7 @@
 
 * **配对**（`paired_error`）：只有名字规则认得出、且配得唯一的才配；歧义 = 不配（宁可不画误差线，不猜）；
 * **误差线画的就是那一列的数**：执行脚本里的数据准备函数 / 真执行生成的脚本，量 `ax.errorbar` 收到的 `yerr`，不看中间变量；
-* **绝不把 `unknown` 当成 SD**：名字只说 `err` 的，响应里 `error == "unknown"`、不算 `error_stated`；用户点选的覆盖名字；
+* **绝不把 `unknown` 当成 SD**：名字只说 `err` 的，响应里 `error == "unknown"`、不算 `error_stated`；用户只补记未声明的含义；
 * **已汇总的表不再汇总**：均值 ± 误差、箱线、分布、均值线一个都不给，`dropped` 里记 `summarised_not_raw`；
 * 有重复测量的表**行为不变**（误差列照旧被忽略，不画）。
 """
@@ -480,18 +480,15 @@ def test_unknown_kind_is_not_stated_and_never_sd(project):
     assert "error_stated" not in top  # 名字没说：要用户确认
 
 
-def test_the_users_choice_overrides_the_name_and_confirms(project):
+def test_choice_does_not_relabel_declared_sd_but_can_confirm_unknown(project):
     _, client, figs, _ = project
     put(figs, "data/dr.csv", DOSE)
     out = propose(client, render="lazy", answers={"error": "sem"}).get_json()
     top = out["items"][0]
-    assert top["title_code"] == "line_err" and top["error"] == "sem"
-    assert (
-        top["error_source"] == "column" and "error_stated" not in top
-    )  # 现在是用户点的，不是列名说的
-    assert out["error_confirmed"] is True
+    assert top["title_code"] == "line_err" and top["error"] == "sd"
+    assert top["error_source"] == "column" and top["error_stated"] is True
     rec = next(iter(session_of(out).items.values())).recipe
-    assert rec.err == "sd" and rec.err_kind == "sem"  # 列还是那一列，只是写明了是什么
+    assert rec.err == "sd" and rec.err_kind == "sd"
     # 名字没说的，用户点 sd 才是 sd
     put(figs, "data/xy.csv", XYERR)
     out = propose(client, render="lazy", answers={"error": "sd", "table": "xy.csv"}).get_json()

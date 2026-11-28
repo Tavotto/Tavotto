@@ -770,6 +770,9 @@ def test_percent_streaming_reader_reads_the_same_columns_as_the_whole_file_reade
     _same_columns(small, large)
     assert large.summary.per_column["占比"].kind == "numeric"
     assert large.summary.col_tags == {1: True}
+    assert (
+        adf.axis_label("占比", small.summary) == adf.axis_label("占比", large.summary) == "占比 (%)"
+    )
     st = large.summary.large.stats["占比"]
     assert (st.lo, st.hi, st.numeric) == (5.2, 52.3, 6)
 
@@ -976,3 +979,65 @@ def test_large_reduce_with_column_tags_reads_the_same_rows_in_parent_and_script(
     spec = tpl.large_spec(values, recipe)
     header, srows = mod.read_reduced(p, ";", None, False, "utf-8", spec, tags={0: False, 1: False})
     assert header == ["t", "v"] and srows == rows and rows
+
+
+@pytest.mark.parametrize(
+    ("y", "cells", "expected_label", "expected_values"),
+    [
+        ("response", ("0%", "12.5%", "50%", "100%"), "response (%)", (0, 12.5, 50, 100)),
+        ("response (%)", ("0%", "12.5%", "50%", "100%"), "response (%)", (0, 12.5, 50, 100)),
+        ("response", ("0", "0.125", "0.5", "1"), "response", (0, 0.125, 0.5, 1)),
+    ],
+)
+def test_percent_unit_is_visible_in_generated_candidate(
+    tmp_path, y, cells, expected_label, expected_values
+):
+    import subprocess
+
+    root = tmp_path / "proj"
+    folder = root / "data"
+    folder.mkdir(parents=True)
+    (folder / "response.csv").write_text(
+        f"date,{y}\n" + "".join(f"2026-01-0{i},{v}\n" for i, v in enumerate(cells, 1)),
+        encoding="utf-8",
+    )
+    resp = P.propose(
+        root,
+        project="p",
+        folder="data",
+        render="lazy",
+        understand=False,
+        answers={"x": "date", "y": [y]},
+    )
+    rec = next(i for i in resp["items"] if i.get("recommended"))
+    sess, item = P.get_item("p", resp["session"], rec["id"])
+    script = sess.dir / "tavotto_figures" / f"{item.stem}.py"
+    ns = script.read_text(encoding="utf-8")
+    assert f"YLABEL = {expected_label!r}" in ns
+    pytest.importorskip("matplotlib")
+    code = f"""
+import runpy
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+runpy.run_path({str(script)!r}, run_name="__main__")
+ax = plt.gcf().axes[0]
+assert ax.get_ylabel() == {expected_label!r}, ax.get_ylabel()
+assert tuple(ax.lines[0].get_ydata()) == {expected_values!r}
+assert Path({str(script.with_suffix(".pdf"))!r}).read_bytes().startswith(b"%PDF-")
+"""
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=script.parent,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={
+            "MPLBACKEND": "Agg",
+            "PATH": "",
+            "HOME": str(tmp_path),
+            "MPLCONFIGDIR": str(tmp_path / "mpl"),
+        },
+        timeout=40,
+    )
+    assert out.returncode == 0, out.stderr

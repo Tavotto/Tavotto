@@ -109,7 +109,7 @@ export function DataPanel() {
   const statedAll = colFacts ? colFacts.every((c) => c.stated) : shownCand?.error_stated === true
   const kindsDiffer = errKind == null && colFacts != null
   // 各列不同、但其中有列名没说明是哪一种的（`unknown` / 没 `stated`）：那一列的含义仍未知，要留在「需要你确认」里
-  const mixedUnsure = kindsDiffer && colFacts!.some((c) => c.kind === 'unknown' || !c.stated)
+  const mixedUnsure = kindsDiffer && colFacts!.some((c) => c.kind === 'unknown' || (!c.stated && !errorConfirmed))
   // 误差线的种类：点选过（`error_confirmed` / `answers.error`）或列名自己说明了（`error_stated`）都算已知，放在列角色下面；
   // 现成的误差列没说明是哪一种（`unknown`）且没点选 = 需要你确认，当前值写「还不确定」
   const errorDone = errKind != null && (errorConfirmed || isErrorKind(answers.error) || (statedAll && errKind !== 'unknown'))
@@ -118,16 +118,17 @@ export function DataPanel() {
     ? [...new Set(colFacts!.map((c) => c.kind))].map((k) => t(`dataFigureV2.confirm.short.${k}`)).join(t('dataFigureV2.confirm.join'))
     : undefined
   const pendingError = (errKind != null && !errorDone) || mixedUnsure
+  const errorLocked = shownCand?.error_source === 'column' && statedAll
   const pendingDesign = designAsked && !designDone
   const confirm = (key: ConfirmKey) => (v: string) => useDataFigureStore.getState().setConfirm(key, v)
   const optLabel = (v: string) => t(`dataFigureV2.confirm.option.${v}`)
   /** 一行确认项：待确认时控件是空值 + 把当前取值写在触发器上（选任何一项，包括仍选当前这个，才算确认） */
-  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean, nowLabel?: string) => (
+  const confirmRow = (key: ConfirmKey, kinds: readonly string[], now: string, done: boolean, nowLabel?: string, locked = false) => (
     <div key={key} data-data-role={key} className="contents">
       <Row label={rowLabel(t(`dataFigureV2.confirm.${key}`))} labelWidth={LABEL_W}>
         <Select
           value={done ? now : ''}
-          disabled={busy}
+          disabled={busy || locked}
           ariaLabel={t(`dataFigureV2.confirm.${key}`)}
           onChange={confirm(key)}
           options={kinds.map((k) => ({ value: k, label: optLabel(k) }))}
@@ -259,9 +260,9 @@ export function DataPanel() {
               </Row>
             </div>
           )}
-          {/* 各列种类不同（没有顶层 error）：放在列角色下面、不进「需要你确认」，当前值把用到的几种按 y 的顺序去重列出（如「SD、SEM」）；选一种 = 所有列一起换 */}
-          {kindsDiffer && !mixedUnsure && confirmRow('error', ERROR_KINDS, 'mixed', false, usedKinds)}
-          {errorDone && confirmRow('error', ERROR_KINDS, isErrorKind(answers.error) ? answers.error : errKind!, true)}
+          {/* 现成的误差列只确认未知的含义；列名已声明的种类只读。候选的实际种类优先于旧选择。 */}
+          {kindsDiffer && !mixedUnsure && confirmRow('error', ERROR_KINDS, 'mixed', false, usedKinds, errorLocked)}
+          {errorDone && confirmRow('error', ERROR_KINDS, errKind!, true, undefined, errorLocked)}
           {designAsked && designDone && confirmRow('design', DESIGNS, String(answers.design), true)}
         </div>
       )}

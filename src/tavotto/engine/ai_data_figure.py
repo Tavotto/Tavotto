@@ -234,6 +234,7 @@ class ColumnSummary:
     text: list[str] = field(default_factory=list)
     text_count: int = 0
     dates: int = 0
+    percent_numeric: int = 0  # 整列百分号规则已识别的数值格；不进响应
 
     @property
     def kind(self) -> str:
@@ -1505,6 +1506,8 @@ def _scan_summary(
             s = cols[j]
             if cls == "numeric":
                 s.numeric += 1
+                if col_tags and col_tags.get(j) is True:
+                    s.percent_numeric += 1
                 st = sts[j]
                 st.numeric += 1
                 if st.lo is None:
@@ -1978,6 +1981,12 @@ def _summarize(
                     lv.add(cell.strip())
             else:
                 setattr(s, cls, getattr(s, cls) + 1)
+                if (
+                    cls == "numeric"
+                    and isinstance(cell, NumberCell)
+                    and cell.rstrip().endswith("%")
+                ):
+                    s.percent_numeric += 1
     layout, groups, id_like, repeats = _structure(header, rows, per, levels, parse)
     row_index = row_index_columns(header, rows, parse, id_like)
     return DataSummary(
@@ -2833,11 +2842,14 @@ def plan_mapping(summary: DataSummary, instruction: str) -> Mapping | NeedsInput
     return mapping
 
 
-def axis_label(column: str) -> str:
-    """轴标题：列名 + 闭集单位后缀（`voltage_mV` → `voltage (mV)`）；不认识的后缀不是单位，原样返回列名。"""
+def axis_label(column: str, summary: DataSummary | None = None) -> str:
+    """轴标题：列名 + 闭集单位后缀（`voltage_mV` → `voltage (mV)`）；v2 也保留解析时确认的百分数单位，不把普通小数当百分数。"""
     m = _UNIT_SUFFIX.match(column)
     if m and m.group("unit") in UNITS:
         return f"{m.group('name')} ({UNITS[m.group('unit')]})"
+    stat = summary.per_column.get(column) if summary is not None else None
+    if stat and stat.numeric > 0 and stat.percent_numeric == stat.numeric and "%" not in column:
+        return f"{column} (%)"
     return column
 
 

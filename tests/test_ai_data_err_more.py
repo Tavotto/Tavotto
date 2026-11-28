@@ -241,7 +241,7 @@ def test_multi_y_script_draws_one_errorbar_call_per_series(tmp_path):
     ]
 
 
-def test_multi_y_response_shape_and_override(project):
+def test_multi_y_response_preserves_declared_kinds(project):
     _, client, figs, _ = project
     put(figs, "data/m.csv", MULTI)
     out = propose(client, render="lazy").get_json()
@@ -255,9 +255,9 @@ def test_multi_y_response_shape_and_override(project):
     assert "error_column" not in top and "error_stated" not in top
     out = propose(client, render="lazy", answers={"error": "sem"}).get_json()
     top = out["items"][0]
-    assert [e["kind"] for e in top["error_columns"]] == ["sem", "sem"]
-    assert [e["stated"] for e in top["error_columns"]] == [False, False]
-    assert top["error"] == "sem" and out["error_confirmed"] is True
+    assert [e["kind"] for e in top["error_columns"]] == ["sd", "sd"]
+    assert [e["stated"] for e in top["error_columns"]] == [True, True]
+    assert top["error"] == "sd"
 
 
 def test_multi_y_with_different_kinds_has_no_top_level_error(project):
@@ -417,3 +417,18 @@ def test_merged_summarised_trend_commits_and_verifies(project):
     done = commit(client, out["session"], top["id"]).get_json()
     assert done["task"]["outcome"] == "completed" and done["data_check"] == "verified", done
     assert "ERR = 'sd'" in (figs / done["script"]).read_text(encoding="utf-8")
+
+
+def test_mixed_columns_only_confirm_the_unnamed_error(project):
+    _, client, figs, _ = project
+    rows = [["time", "a_mean", "a_sd", "b_mean", "b_err"]] + [
+        [t, float(t), 0.1, 2.0 * t, 0.2] for t in range(1, 6)
+    ]
+    put(figs, "data/m.csv", rows)
+    out = propose(client, render="lazy", answers={"error": "sem"}).get_json()
+    top = out["items"][0]
+    assert "error" not in top and out["error_confirmed"] is True
+    assert [(e["column"], e["kind"], e["stated"]) for e in top["error_columns"]] == [
+        ("a_sd", "sd", True),
+        ("b_err", "sem", False),
+    ]
