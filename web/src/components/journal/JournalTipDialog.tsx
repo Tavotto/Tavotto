@@ -278,28 +278,34 @@ export function JournalTipDialog() {
 
       {/* 署名（ADR 0213 三期）：默认不勾，勾了才出称呼框；编辑部原话（editor）不进目录，没有这一行。解释放 title，不堆字 */}
       {!editor && (
-        <div className="flex flex-col gap-1.5" data-journal-tip-credit>
+        <div className="flex flex-col gap-2" data-journal-tip-credit>
           <label className="flex items-center gap-2 text-sm text-ink" title={jt('creditTitle')}>
             <Checkbox
               checked={draft.creditOn}
               disabled={!editable}
               onChange={(e) => s.setDraft({ creditOn: e.target.checked })}
               data-journal-tip-credit-on
+              className="h-[15px] w-[15px]"
             />
-            <span>{jt('credit')}</span>
+            <span>
+              {jt('credit')}
+              <span className="text-ink-3">{jt('creditHint')}</span>
+            </span>
           </label>
           {draft.creditOn && (
-            <TextInput
-              id={creditId}
-              aria-label={jt('creditInput')}
-              value={draft.credit}
-              maxLength={CREDIT_MAX}
-              placeholder={jt('creditPlaceholder')}
-              disabled={!editable}
-              autoFocus
-              onChange={(e) => s.setDraft({ credit: e.target.value.replace(/[\r\n]+/g, ' ') })}
-              data-journal-tip-credit-name
-            />
+            <div className="pl-6">
+              <TextInput
+                id={creditId}
+                aria-label={jt('creditInput')}
+                value={draft.credit}
+                maxLength={CREDIT_MAX}
+                placeholder={jt('creditPlaceholder')}
+                disabled={!editable}
+                autoFocus
+                onChange={(e) => s.setDraft({ credit: e.target.value.replace(/[\r\n]+/g, ' ') })}
+                data-journal-tip-credit-name
+              />
+            </div>
           )}
         </div>
       )}

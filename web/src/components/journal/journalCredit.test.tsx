@@ -173,8 +173,8 @@ describe('反馈窗里的署名', () => {
     await openWrong()
     const box = q('[data-journal-tip-credit-on]') as HTMLInputElement
     expect(box.checked).toBe(false)
-    expect(q('[data-journal-tip-credit]')!.textContent).toBe(jt('credit'))
-    expect(q('[data-journal-tip-credit]')!.textContent).toContain('所有用户可见')
+    expect(q('[data-journal-tip-credit]')!.textContent).toBe(jt('credit') + jt('creditHint'))
+    expect(q('[data-journal-tip-credit]')!.textContent).toContain('所有人可见')
     expect(q('[data-journal-tip-credit-name]')).toBeNull()
     await click(q('[data-contact-send]'))
     expect(sentJournal().credit).toBeUndefined()
@@ -246,11 +246,11 @@ describe('反馈窗里的署名', () => {
   it('英文界面有同义的一句', async () => {
     await setLocale('en-US')
     await openWrong()
-    expect(q('[data-journal-tip-credit]')!.textContent).toBe('Credit me in the catalog (visible to all users)')
+    expect(q('[data-journal-tip-credit]')!.textContent).toBe('Credit me in the catalog (visible to everyone)')
   })
 })
 
-describe('出处卡的「线索来自」', () => {
+describe('出处卡的致谢', () => {
   const v2entries = () => {
     const [path, s] = entries('fx-alpha', 'min_raster_dpi')[0]
     return [[path, { ...s, src: 'v2:s:journal', fact_id: 'line' }]] as [string, ReturnType<typeof journalSources>[string]][]
@@ -267,18 +267,19 @@ describe('出处卡的「线索来自」', () => {
     await click(q('[data-journal-source]'))
   }
 
-  it('v2 事实有署名：一行灰字「线索来自 <称呼>」', async () => {
+  it('v2 事实有署名：一行灰字「感谢 <称呼> 提示」', async () => {
     useJournalV2Store.setState({ byJournal: { 'fx-alpha': patch({ line: '李明' }) } })
     await open()
-    expect(q('[data-journal-thanks]')!.textContent).toBe('线索来自 李明')
-    expect(q('[data-journal-thanks]')!.className).toContain('type-caption')
+    expect(q('[data-journal-thanks]')!.textContent).toBe('感谢 李明 提示')
+    expect(q('[data-journal-thanks]')!.getAttribute('title')).toBe('李明')
+    expect(q('[data-journal-thanks]')!.className).toContain('truncate')
   })
 
   it('英文界面：Tip from <name>', async () => {
     await setLocale('en-US')
     useJournalV2Store.setState({ byJournal: { 'fx-alpha': patch({ line: 'Li Ming' }) } })
     await open()
-    expect(q('[data-journal-thanks]')!.textContent).toBe('Tip from Li Ming')
+    expect(q('[data-journal-thanks]')!.textContent).toBe('Thanks to Li Ming')
   })
 
   it('称呼里的标签只是文字：不成元素、不执行', async () => {
@@ -289,7 +290,7 @@ describe('出处卡的「线索来自」', () => {
     const el = q('[data-journal-thanks]')
     if (el) {
       expect(el.querySelector('img')).toBeNull()
-      expect(el.textContent).toBe(`线索来自 ${evil}`)
+      expect(el.textContent).toBe(`感谢 ${evil} 提示`)
     }
     expect(document.body.querySelector('img[src="x"]')).toBeNull()
   })

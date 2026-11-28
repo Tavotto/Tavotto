@@ -1624,7 +1624,7 @@ export default interface Resources {
         "open": "打开原网页",
         "report": "这条不对",
         "reportTitle": "发来官网链接或截图，我们来核对",
-        "thanks": "线索来自 {{name}}"
+        "thanks": "感谢 {{name}} 提示"
       },
       "cleared": "已不按期刊检查",
       "confirm": {
@@ -1737,9 +1737,10 @@ export default interface Resources {
     "journalTip": {
       "attach": "添加截图 / PDF",
       "cancel": "取消",
-      "credit": "在目录里写上我的称呼（所有用户可见）",
+      "credit": "在目录里写上我的称呼",
+      "creditHint": "（所有人可见）",
       "creditInput": "称呼",
-      "creditPlaceholder": "你的称呼",
+      "creditPlaceholder": "怎么称呼你，比如 李明 或昵称",
       "creditRow": "称呼",
       "creditTitle": "称呼会写在对应条目的出处卡上，所有用户都能看到；想撤掉，回信告诉我们就行。",
       "descLabel": "问题描述（选填）",
