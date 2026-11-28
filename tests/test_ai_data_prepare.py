@@ -1323,11 +1323,13 @@ def test_stdlib_mode_only_lets_the_namedtuple_frame_set_defaults_and_only_inside
     # 操作系统自己的拒绝：POSIX 是 IsADirectoryError，Windows 是 PermissionError（EACCES）——与钩子的拒绝只能靠消息分开
     inside = (
         "import tempfile\ntry:\n    open(tempfile.gettempdir())\nexcept OSError as e:\n"
-        "    print('hook-refused' if 'Tavotto' in str(e) else 'os-level-refusal-only')"
+        "    print('hook-refused' if 'Tavotto' in str(e) else 'os-level-refusal-only', repr(e)[:160])"
     )
     r_in = _trial(inside, allow=allow, tamper="stdlib")
     assert r_in["returncode"] == 0 and "os-level-refusal-only" in r_in["stdout"], (
-        "试跑目录里的文件夹：钩子放行（操作系统自己拒绝才是这里的结果）"
+        "试跑目录里的文件夹：钩子放行（操作系统自己拒绝才是这里的结果）",
+        r_in["stdout"][-300:],
+        r_in.get("blocked_read_paths"),
     )
     outside = f"open({str(tmp_path)!r})"
     r = _trial(outside, allow=allow, tamper="stdlib")
