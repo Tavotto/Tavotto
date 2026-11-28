@@ -2911,6 +2911,7 @@ def worker_self_test(python: str) -> dict:
                 return {
                     "ok": False,
                     "detail": str(err or "")[:800],
+                    "tail": (_reply_traceback(resp) or stderr or str(err or ""))[-4096:],
                     "failure": _selftest_failure(
                         SELFTEST_STAGE_ERROR_REPLY,
                         exit_code=proc.returncode,
@@ -2922,6 +2923,7 @@ def worker_self_test(python: str) -> dict:
         return {
             "ok": False,
             "detail": (stderr or stdout or "")[-800:],
+            "tail": (stderr or stdout or "")[-4096:],
             "failure": _selftest_failure(
                 SELFTEST_STAGE_NO_REPLY, exit_code=proc.returncode, text=stderr
             ),
@@ -5809,6 +5811,10 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
         job.diagnostic["selftest"] = selftest.get("failure")
+        # 原文尾部只存本机（envdiag 的本机记录，`read_environment_checks` 读），不进诊断包 report.json
+        job.diagnostic["selftest_detail"] = _sanitize(
+            selftest.get("tail") or selftest.get("detail") or ""
+        )[-4096:]
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, managedenv.REASON_SELFTEST_FAILED
         )

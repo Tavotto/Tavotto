@@ -720,8 +720,9 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   测试里 `home` 一律给 `tmp_path` 假主目录。
 - **档位**：`ToolSpec.tier ∈ observe | run | tavotto | listed | user_env | outward`（默认 `observe`）+ `waits_for_user`（默认 `False`），**不序列化给模型**
   （`tests/test_fixtools.py::test_tier_is_never_sent_to_the_model` 钉三种 wire 的请求体）。`FixContext.allowed_tiers` 之外的工具 `run_tool` 拒绝（`tier_not_allowed`）；裸构造默认只放行 `observe`，修复会话创建方用 `FixContext.for_fix_session(...)`（放行 `observe` + `run`）。
-  D1 有两档：`observe` 看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `list_environments` / `read_logs` / `lookup_package`）；
+  D1 有两档：`observe` 看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `list_environments` / `read_logs` / `lookup_package` / `read_environment_checks`）；
   `run` 试（`try_import` / `try_run` / `inspect_environment` / `run_snippet`）——**运行用户代码，不承诺「什么都不改」**，保护范围与盲区见下条。
+- **`read_environment_checks`（ADR 0221 第 1 期，observe 档）**：回答「Tavotto 自己对这个环境查过什么、哪一道没过」。数据源是 `envdiag.recent_checks(项目)`——与诊断包 `managed_environment_jobs` **同一份记录，不另建**；最近 ≤5 代，每代 `requested` / `outcome` / `error_code` / `selftest`（`envdiag._selftest` 投影出的闭集形状**原样透传**，`observe.closed_value` 只拦「值不像闭集」的，不按键名白名单，所以 #2370 加的 `operations` / `fidelity` 无需改这里）+ `detail_tail`（自检原文尾部 ≤4 KiB，`readscope.scrub`）。原文来源：`deprepair.worker_self_test` 失败时多回 `tail`，`_observe_generation` 路径上 `_sanitize` 后存进 `job.diagnostic["selftest_detail"]`；`envdiag._project(keep_detail=True)` 才保留（进程缓存与本机缓存文件），`recent()` 与诊断包导出走默认**键根本不出现**——诊断包里不许有原文（看护 `tests/test_fixtools_environment_checks.py`）。`install_packages` / `change_python` 失败码为 `dependency_worker_selftest_failed` 时结果带同一份 `selftest` 形状（不含原文）+「Use read_environment_checks to see the full self-test record.」。
 - **小实验 `run_snippet`**（ADR 0197）：模型写的一小段 Python 经 `run_python(strict_deny=ctx.scope.deny_roots(), cwd=项目根)` 跑——
   在试跑的守卫之上**断网、凭据位置与凭据形状的文件名不可读**（进程内第二个 audit hook + 操作系统沙盒同一份位置清单；名字规则 `DENY_NAME_PATTERNS` 只在进程内那层；实验口径的沙盒单独探测），当前目录是项目根、项目根在 `sys.path` 上（经守卫前导，不改模型代码）。
   不弹卡（维护者 11-19 裁决）；≤ 30 s、≤ 20 000 字符、先 `compile`；输出各路尾部 6 000 字符过 `scrub`；结果带 `blocked_network` / `blocked_reads`。

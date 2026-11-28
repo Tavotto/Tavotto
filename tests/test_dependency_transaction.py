@@ -697,7 +697,7 @@ class TestJointTransaction:
             mp.setattr(
                 deprepair,
                 "worker_self_test",
-                lambda python: {"ok": False, "detail": "boom", "failure": failure},
+                lambda python: {"ok": False, "detail": "boom", "tail": tb, "failure": failure},
             )
             rec = _prepare(project)
         assert rec["state"] == deprepair.STATE_FAILED
@@ -719,6 +719,10 @@ class TestJointTransaction:
             "fidelity": None,
         }
         assert "alice" not in json.dumps(last) and "secret_lab" not in json.dumps(last)
+        # 原文尾部（脱敏后）只在本机记录里：read_environment_checks 读得到，诊断记录 / 导出里没有
+        assert "selftest_detail" not in last
+        local = envdiag.recent_checks(project)[0]["selftest_detail"]
+        assert "PermissionError" in local
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 deprepair,

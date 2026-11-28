@@ -15,6 +15,11 @@ from pathlib import Path
 from ..agent_runner.wires import ToolResult
 from . import readscope
 from .base import FixContext, FixTool, err, home_relative, obj, ok, resolve_or_error
+from .envchecks import (  # noqa: F401 — 公开名留在 observe
+    closed_value,
+    environment_check_rows,
+    selftest_shape,
+)
 from .runreport import project_run_report
 
 LIST_LIMIT = 200
@@ -546,6 +551,27 @@ def lookup_package(ctx: FixContext, args: dict) -> ToolResult:
     return ok(json.dumps(info, ensure_ascii=False, indent=1), "package lookup")
 
 
+# --------------------------------------------------------------------------- read_environment_checks
+def read_environment_checks(ctx: FixContext, args: dict) -> ToolResult:
+    rows = environment_check_rows(ctx.project_root, with_detail=True)
+    if not rows:
+        return ok(
+            json.dumps({"generations": []}, ensure_ascii=False),
+            "no environment checks",
+        )
+    result = ok(
+        json.dumps({"generations": rows}, ensure_ascii=False, indent=1),
+        f"{len(rows)} environment generations",
+    )
+    # `detail_tail` 只给本机模型（ADR 0221 §一）：进「修复经过」转录（→ 诊断包 detail-runs.json）的是不带它的结构化投影
+    result.transcript_content = json.dumps(
+        {"generations": [{k: v for k, v in r.items() if k != "detail_tail"} for r in rows]},
+        ensure_ascii=False,
+        indent=1,
+    )
+    return result
+
+
 # --------------------------------------------------------------------------- 描述与登记
 _PATH = {
     "type": "string",
@@ -559,6 +585,18 @@ OBSERVE_TOOLS: tuple[FixTool, ...] = (
         "suggested remedy if there is one. Use it first, before guessing. It takes no arguments and changes nothing.",
         obj({}),
         read_run_report,
+    ),
+    FixTool(
+        "read_environment_checks",
+        "Read what Tavotto itself checked in this project's managed Python environments: up to the last 5 "
+        "generations, newest first, each with the requested packages, outcome, error code and the self-test "
+        "record (which step failed: stage, exit code, worker error code, exception structure, engine frame, and "
+        "any operations / fidelity facts), plus `detail_tail`, the end of the self-test's own output (secrets "
+        "masked, at most 4 KiB). Use it when an install or a new environment ends with "
+        "`dependency_worker_selftest_failed`: the self-test is a tiny built-in figure, not the user's script. "
+        "Takes no arguments and changes nothing; an empty list means no check was recorded yet.",
+        obj({}),
+        read_environment_checks,
     ),
     FixTool(
         "read_file",
