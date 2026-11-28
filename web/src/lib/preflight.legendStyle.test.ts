@@ -73,6 +73,22 @@ describe('legend-style-mismatch：真 worker 的 legend_style_mismatch', () => {
     expect(hits[0].detail).toEqual(SNAPSHOT.expected.detail)
   })
 
+  it('多个图例项各占一行：每一行说的是自己那一项、定位到自己（问题面板按 occurrence 出行）', () => {
+    const [hit] = hitsOf(SNAPSHOT.elements)
+    const byGid = new Map(SNAPSHOT.elements.map((e) => [e.gid, e]))
+    expect(hit.occurrences.map((o) => o.gid).sort()).toEqual(SNAPSHOT.expected.gids)
+    setLocale('zh-CN')
+    const lines = new Map(hit.occurrences.map((o) => [o.gid, formatMessage(o.message)]))
+    const text = (gid: string) =>
+      String(byGid.get(gid)?.editable.find((f) => f.prop === 'text')?.value ?? '')
+    for (const [gid, line] of lines) expect(line).toContain(`图例「${text(gid!)}」`)
+    // 不同种类的不一致各说各的：线色那一项说线条颜色、柱那一项说颜色与图中对象
+    const kinds = [...lines.values()]
+    expect(kinds.some((l) => l.includes('线条颜色与曲线'))).toBe(true)
+    expect(kinds.some((l) => l.includes('标记形状与曲线'))).toBe(true)
+    expect(kinds.some((l) => l.includes('颜色与图中对象'))).toBe(true)
+  })
+
   it('问题文案中英都渲染得出来（不是 key 原样）', () => {
     const [hit] = hitsOf(SNAPSHOT.elements)
     setLocale('zh-CN')

@@ -467,7 +467,7 @@ import numpy as np
 
 
 def main():
-    t = np.linspace(0, 60, 30)
+    t = np.linspace(0, 60, 60)  # 60 个点 = 密集曲线（改图助手不许给它加标记，但已有的标记可换）
     fig, ax = plt.subplots(figsize=(4, 3))
     ax.plot(t, t, color="#1f77b4", label="Catalyst")
     ax.plot(t, t / 2, color="#ff7f0e", ls="--", marker="s", label="Blank")
@@ -481,15 +481,40 @@ if __name__ == "__main__":
     w, man = _render(tmp_path, src, "Fig")
     entry = "axes_0.legend.texts_1"
 
+    seen: dict = {}
+
     def facts(patches):
         m = w.override("Fig", patches)["manifest"]
+        seen["manifest"] = m
         return next(e for e in m["elements"] if e["gid"] == entry).get("legend_style_mismatch")
+
+    def model_takes(fixes):
+        """事实里的改法原样交给改图助手的校验：元素表里有这条属性、值合选项，进 `groups` 不进 `unhandled`。"""
+        man = seen["manifest"]
+        table = {e["gid"]: e for e in changeplan.element_table(man, focus_gids=[entry])}
+        for fx in fixes:
+            row = next(r for r in table[entry]["props"] if r["prop"] == fx["prop"])
+            assert "options" not in row or fx["value"] in row["options"], (fx, row)
+        changes = [{"gid": entry, **fx} for fx in fixes]
+        out = changeplan.validate_proposal(
+            {
+                "groups": [{"comment_id": "a1", "changes": changes}],
+                "unhandled": [],
+                "intent": "edit",
+            },
+            man,
+            comment_ids={"a1"},
+            advice=True,
+        )
+        assert out["unhandled"] == [], out
+        assert out["groups"] == [{"comment_id": "a1", "changes": changes}]
 
     # 顺序有讲究：先跟随、再撤掉跟随并写 handle_* 的热会话里，示意线留着跟随时的标记色（引擎既有的热态问题，
     # 不是这条检查的事），所以「恢复跟随」放在最后验
     try:
         (d,) = facts([])
         assert d["fix"] == {"prop": "binding", "value": "follow_source"}
+        model_takes([d["fix"]])
         # 只改一条跟随中的曲线：图例跟着变，另一项照旧
         assert facts([{"gid": "axes_0.lines_0", "prop": "color", "value": "#2ca02c"}]) == [d]
         # 曲线改了色、图例项已有 handle_* override（不再跟随）：线色与描边改得掉，显式紫色的标记填充改不掉
@@ -503,6 +528,15 @@ if __name__ == "__main__":
             "markerfacecolor": None,
             "markeredgecolor": {"prop": "handle_color", "value": "#2ca02c"},
         }
+        facts(base)
+        model_takes([{"prop": "handle_color", "value": "#2ca02c"}])
+        # 用户把图例标记改成了圆（密集曲线已有方块标记）：改法 handle_marker = s，校验照收（只拦给密集曲线新加标记）
+        (mk,) = facts([{"gid": entry, "prop": "handle_marker", "value": "o"}])
+        assert mk["prop"] == "marker" and mk["fix"] == {"prop": "handle_marker", "value": "s"}
+        model_takes([mk["fix"]])
+        # 改回方块后形状对上了；剩下脚本原样的紫色填充，而这一项已有 handle_* override（不再能靠恢复跟随），只报不修
+        (rest,) = facts([{"gid": entry, "prop": "handle_marker", "value": "s"}])
+        assert rest["prop"] == "markerfacecolor" and "fix" not in rest
         left = facts([*base, {"gid": entry, "prop": "handle_color", "value": "#2ca02c"}])
         assert [x["prop"] for x in left] == ["markerfacecolor"] and "fix" not in left[0]
         assert facts([]) == [d]
