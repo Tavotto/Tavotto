@@ -6,6 +6,10 @@ import type { ChartComputeOptions, SceneInventory } from '@/lib/chartApi'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import type { ChartSourceRef, PanelChartState, PanelObject } from '@/types/document'
 import { useDocumentStore } from '@/store/documentStore'
+import { renderRequestIdentity } from '@/store/renderStore'
+import { validComputedFrame, type PairedFrameAuthority } from '@/lib/chartFrame'
+import { figureOriginFor } from '@/lib/figureSnapshot'
+import type { FigureOrigin } from '@/types/document'
 
 export type ChartBindStep = 'scene' | 'data' | 'confirm' | 'error'
 export interface ChartAxisForm {
@@ -117,6 +121,8 @@ interface ChartBindState {
   file: string | null
   chartSource: ChartSourceRef | undefined
   projectId: string | null
+  /** 打开那一刻面板的 figureOrigin（/2 配对帧身份的一部分，确认后不得漂移）。 */
+  figureOrigin: FigureOrigin | undefined
   openSeq: number
   requestSeq: number
   step: ChartBindStep
@@ -131,6 +137,8 @@ interface ChartBindState {
   form: ChartBindForm
   formRev: number
   result: (PanelChartState & { formRev: number }) | null
+  /** /2 预览这次 draw 的配对帧权威；确认时随同一事务采纳（ADR 0182 §2）。/1 预览为 null。 */
+  resultFrame: PairedFrameAuthority | null
   previewSvg: string | null
   previewOk: boolean
   error: { code?: string, message: string } | null
@@ -154,7 +162,7 @@ interface ChartBindActions {
   confirmBinding: () => Promise<void>
   runPreview: () => Promise<void>
 }
-const invalidPreview = { result: null, resultRender: null, previewSvg: null, previewOk: false, busy: false, error: null }
+const invalidPreview = { result: null, resultRender: null, resultFrame: null, previewSvg: null, previewOk: false, busy: false, error: null }
 const panelInputKey = (panel: PanelObject) => JSON.stringify(panel.chartSource === undefined
   ? [panel.fileId, panel.chart, panel.overrides] : [panel.fileId, panel.chart, panel.overrides, panel.chartSource])
 const ownsDocument = (s: ChartBindState) => {
@@ -178,7 +186,7 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
     set({ ...invalidPreview, error: { code: (err as { code?: string }).code, message: String(err) } })
   }
   return {
-    open: false, panelId: null, file: null, chartSource: undefined, projectId: currentProjectId(),
+    open: false, panelId: null, file: null, chartSource: undefined, figureOrigin: undefined, projectId: currentProjectId(),
     openSeq: 0, requestSeq: 0, step: 'scene', scene: null, draftSource: 'new', draftChart: null,
     draftRender: null, documentContext: null, panelInputKey: null,
     form: structuredClone(DEFAULT_FORM), formRev: 0, ...invalidPreview,
@@ -187,7 +195,9 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       const doc = useDocumentStore.getState()
       set(s => ({
         open: true, panelId: panel.id, file: panel.fileId,
-        chartSource: panel.chartSource === undefined ? undefined : structuredClone(panel.chartSource), projectId: currentProjectId(),
+        chartSource: panel.chartSource === undefined ? undefined : structuredClone(panel.chartSource),
+        figureOrigin: panel.figureOrigin === undefined ? undefined : structuredClone(panel.figureOrigin),
+        projectId: currentProjectId(),
         openSeq: s.openSeq + 1, requestSeq: s.requestSeq + 1, step: 'scene', scene: null,
         form: formFor(panel.chart), draftSource: panel.chart ? 'panel' : 'new',
         draftChart: panel.chart ? structuredClone(panel.chart) : null,
@@ -200,7 +210,7 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
       void get().loadScene()
     },
     close: () => set(s => ({
-      open: false, panelId: null, file: null, chartSource: undefined, scene: null, draftSource: 'new', draftChart: null,
+      open: false, panelId: null, file: null, chartSource: undefined, figureOrigin: undefined, scene: null, draftSource: 'new', draftChart: null,
       draftRender: null, documentContext: null, panelInputKey: null,
       projectId: currentProjectId(), openSeq: s.openSeq + 1, requestSeq: s.requestSeq + 1,
       ...invalidPreview,
@@ -338,7 +348,17 @@ export const useChartBindStore = create<ChartBindState & ChartBindActions>()((se
         if (opts && s.chartSource !== undefined) Object.assign(opts, chartSourceFields(s.chartSource))
         const preview = opts ? await chartCompute(file, result, opts) : await chartCompute(file, result)
         if (!ownsRequest(s)) return
-        set({ previewSvg: preview.svg, previewOk: true, busy: false })
+        // /2 完整显示框：这次 draw 的 render_frame 就是配对帧权威，确认时随同一事务采纳。
+        // inputIdentity 按「确认后面板」的形状取（overrides/chart/chartSource/figureOrigin/profile；
+        // chart 只取落盘的 model+binding，不带草稿的 formRev 临时键），与 exactFrameAuthority
+        // 事后重算的是同一串；/1 预览没有 render_frame，保持 null。
+        const frame = preview.render_frame
+        const resultFrame = frame && validComputedFrame(frame)
+          ? { frame, renderRevision: preview.render_revision,
+              inputIdentity: renderRequestIdentity(opts?.overrides ?? [],
+                { model: result.model, binding: result.binding }, s.chartSource, s.figureOrigin, 'native-manifest/2') }
+          : null
+        set({ previewSvg: preview.svg, previewOk: true, busy: false, resultFrame })
       } catch (err) { fail(s, err) }
     },
   }

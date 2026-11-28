@@ -1934,6 +1934,8 @@
     "cancel": "取消",
     "apply": "绑定计算图表",
     "menu": "绑定数据为计算图表",
+    "beforeUpgrade": "图表升级前（{{time}}）",
+    "confirmFailed": "这次没有写图表：{{error}}",
     "scaleLinear": "线性",
     "scaleLog": "对数",
     "dataPlaceholder": "x,y\n0,1.0\n1,2.0",

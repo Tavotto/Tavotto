@@ -2014,6 +2014,8 @@
     "cancel": "Cancel",
     "apply": "Bind computational chart",
     "menu": "Bind data as computational chart",
+    "beforeUpgrade": "Before chart upgrade ({{time}})",
+    "confirmFailed": "No chart was written this time: {{error}}",
     "scaleLinear": "linear",
     "scaleLog": "log",
     "dataPlaceholder": "x,y\n0,1.0\n1,2.0",

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/ui/Dialog'
@@ -7,31 +7,61 @@ import { TextArea, TextInput } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { Notice } from '@/components/ui/Notice'
 import { msg } from '@/i18n/message'
+import { formatTime } from '@/i18n/format'
 import { fileUrl } from '@/lib/api'
+import { applyComputedFrameDraft } from '@/lib/chartFrame'
+import { takeProjectCheckpoint } from '@/lib/timelineCheckpoint'
+import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { chartBindConfirmReady, chartBindPanelUnchanged, useChartBindStore } from '@/store/chartBindStore'
 import type { ChartSeriesForm } from '@/store/chartBindStore'
-import { updateObject } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 
 export function ChartBindDialog() {
   const { t } = useTranslation('workspace')
   const s = useChartBindStore()
   const ready = chartBindConfirmReady(s)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
   useEffect(() => () => useChartBindStore.getState().close(), [])
 
-  const confirm = () => {
+  const confirm = async () => {
     const current = useChartBindStore.getState()
     if (!chartBindConfirmReady(current) || !current.panelId || !current.result) return
     const panel = useDocumentStore.getState().doc.objects.find(o => o.id === current.panelId)
     if (panel?.type !== 'panel' || !chartBindPanelUnchanged(current, panel)) return
-    const chart = { model: current.result.model, binding: current.result.binding }
-    const overrides = current.resultRender ? structuredClone(current.resultRender.overrides) : null
-    updateObject(current.panelId, msg('chartBind.apply', undefined, 'workspace'), o => {
-      if (o.type === 'panel' && o.fileId === current.file) {
-        o.chart = chart
-        if (overrides) o.overrides = overrides
+    setConfirmError(null)
+    finishActiveGesture()
+    try {
+      // 首次写 chart = 这份排版原地升级 schema 3→4：升级前整份项目先落一份可退回的备份
+      // 节点（规则与 ADR 0182 §3）；备份没落定就不得写图表。已有 chart 的重绑不升级、免备份。
+      if (!panel.chart) {
+        await takeProjectCheckpoint({
+          auto: true,
+          name: t('chartBind.beforeUpgrade', { time: formatTime(Date.now()) }),
+          programName: true,
+          allowEmpty: true,
+        })
+        // await 之后上下文可能已变（L-123）：面板被编辑过就放弃这次确认
+        const panelAfter = useDocumentStore.getState().doc.objects.find(o => o.id === current.panelId)
+        if (panelAfter?.type !== 'panel' || !chartBindPanelUnchanged(current, panelAfter)) return
       }
-    }, { overrides: 'restored' })
+      const chart = { model: current.result.model, binding: current.result.binding }
+      const overrides = current.resultRender ? structuredClone(current.resultRender.overrides) : null
+      const frame = current.resultFrame
+      // 一次 commit = 一条历史：model/binding/overrides 与 /2 的显示框原点、原生尺寸、
+      // 面板几何在同一事务采纳（ADR 0182 §2）；采纳原语失败时整个 produce 回滚，零写入
+      useDocumentStore.getState().commit(msg('chartBind.apply', undefined, 'workspace'), d => {
+        const index = d.objects.findIndex(o => o.id === current.panelId)
+        const target = d.objects[index]
+        if (target?.type === 'panel' && target.fileId === current.file) {
+          target.chart = chart
+          if (overrides) target.overrides = overrides
+        }
+        if (frame && index >= 0) applyComputedFrameDraft(d, index, current.panelId, frame, frame.inputIdentity)
+      }, { overrides: 'restored' })
+    } catch (err) {
+      setConfirmError(t('chartBind.confirmFailed', { error: String(err) }))
+      return
+    }
     current.close()
   }
   const kinds: { value: ChartSeriesForm['kind'], label: string }[] = [
@@ -52,7 +82,7 @@ export function ChartBindDialog() {
         secondary: <Button onClick={s.close}>{t('chartBind.cancel')}</Button>,
         primary: <Button data-chart-bind-action={ready ? 'confirm' : 'preview'}
           disabled={s.busy || !s.scene}
-          onClick={ready ? confirm : () => { void s.confirmBinding() }}>
+          onClick={ready ? () => { void confirm() } : () => { void s.confirmBinding() }}>
           {s.busy ? t('chartBind.generating') : ready ? t('chartBind.confirm') : t('chartBind.preview')}
         </Button>,
       }}>
@@ -184,6 +214,7 @@ export function ChartBindDialog() {
           {t('chartBind.restoredHelp')}
         </Notice>}
         {s.error && <p className="text-sm text-danger-content">{s.error.code ? `[${s.error.code}] ` : ''}{s.error.message}</p>}
+        {confirmError && <p className="text-sm text-danger-content" data-chart-confirm-error>{confirmError}</p>}
         {s.previewSvg && <div data-chart-comparison className="grid gap-3 sm:grid-cols-2">
           <figure className="min-w-0"><figcaption className="text-xs text-ink-2">{t('chartBind.original')}</figcaption>
             <img alt={t('chartBind.original')} src={fileUrl(s.file!)} className="max-h-72 w-full bg-paper" />

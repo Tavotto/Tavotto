@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChartBindDialog } from './ChartBindDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { chartBind, chartCompute, chartInspect } from '@/lib/chartApi'
+import { takeProjectCheckpoint } from '@/lib/timelineCheckpoint'
 import { literal } from '@/i18n'
 import { useChartBindStore } from '@/store/chartBindStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { emptyProject, type PanelChartState, type PanelObject, type PanelOverride } from '@/types/document'
 
 vi.mock('@/lib/chartApi', () => ({ chartBind: vi.fn(), chartCompute: vi.fn(), chartInspect: vi.fn() }))
+vi.mock('@/lib/timelineCheckpoint', () => ({ takeProjectCheckpoint: vi.fn(() => Promise.resolve({ version: { id: 'v-checkpoint' } })) }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let host: HTMLDivElement, root: Root
 const panel: PanelObject = { id: 'chart-panel', type: 'panel', fileId: 'chart.svg', fileKind: 'svg', nativeW: 100, nativeH: 100, x: 0, y: 0, w: 100, h: 100, overrides: [] }
@@ -289,4 +291,54 @@ describe('N4 legend region', () => {
     expect(currentPanel().chart).toEqual(restored)
     expect(currentPanel().chart?.binding.legend?.[0]?.entries[0]).toEqual({ index: 0, label: 'series A', series: 's1' })
   })
+})
+
+it('confirms a /2 preview by adopting the full frame in the same undoable transaction', async () => {
+  const MM = 25.4 / 72
+  // 面板原生尺寸 = 源 viewport（100×100 pt）的 mm，是采纳换算的基准
+  useDocumentStore.getState().commit(literal('尺寸'), d => {
+    const p = d.objects[0]
+    if (p.type === 'panel') { p.nativeW = 100 * MM; p.nativeH = 100 * MM; p.w = 100 * MM; p.h = 100 * MM }
+  })
+  const frame = { version: 1 as const, source: 'computed-svg' as const,
+    source_viewport_pt: [100, 100], rect_pt: [-8, -6, 116, 112], edit_basis: 'source-viewport-pt' as const }
+  vi.mocked(chartInspect).mockResolvedValue({ scene_digest: restoredChart.model.scene_digest,
+    w_pt: 100, h_pt: 100, view_box: [0, 0, 100, 100], nodes: [{ id: 'curve-a', tag: 'path' }],
+    truncated: false, restored_chart: restoredChart,
+    restored_render: { render_profile: 'native-manifest/2' as const, overrides: [] } })
+  vi.mocked(chartCompute).mockResolvedValue({ ...preview, render_frame: frame })
+  const history = useDocumentStore.getState().past.length
+  await act(async () => useChartBindStore.getState().openFor(panel))
+  await act(async () => button('preview').click())
+  await act(async () => button('confirm').click())
+  const p = currentPanel()
+  // model/binding 与显示框原点、原生尺寸、面板几何落在同一条历史里（ADR 0182 §2）
+  expect(p.chart).toEqual(restoredChart)
+  expect(p.chartFrame).toEqual({ version: 1, renderProfile: 'native-manifest/2', originPt: [-8, -6] })
+  expect(p.nativeW).toBeCloseTo(116 * MM, 6)
+  expect(p.nativeH).toBeCloseTo(112 * MM, 6)
+  expect(p.w).toBeCloseTo(116 * MM, 6)
+  expect(p.h).toBeCloseTo(112 * MM, 6)
+  // 内容在页面上不动：外框居中长大，左上角按增量外移
+  expect(p.x).toBeCloseTo(((100 - 116) * MM) / 2, 6)
+  expect(p.y).toBeCloseTo(((100 - 112) * MM) / 2, 6)
+  expect(useDocumentStore.getState().past.length).toBe(history + 1)
+  await act(async () => useDocumentStore.getState().undo())
+  const before = currentPanel()
+  expect(before.chart).toBeUndefined()
+  expect(before.chartFrame).toBeUndefined()
+  expect(before.nativeW).toBeCloseTo(100 * MM, 6)
+})
+
+it('aborts the confirmation with zero document writes when the pre-upgrade backup fails', async () => {
+  vi.mocked(takeProjectCheckpoint).mockRejectedValueOnce(new Error('timeline offline'))
+  const history = useDocumentStore.getState().past.length
+  await act(async () => button('preview').click())
+  await act(async () => button('confirm').click())
+  expect(currentPanel().chart).toBeUndefined()
+  expect(useDocumentStore.getState().past.length).toBe(history)
+  expect(document.querySelector('[data-chart-confirm-error]')).not.toBeNull()
+  // 对话框还开着，用户可以重试
+  expect(button('confirm')).not.toBeNull()
+  expect(vi.mocked(takeProjectCheckpoint).mock.calls[0]?.[0]).toMatchObject({ auto: true, programName: true })
 })

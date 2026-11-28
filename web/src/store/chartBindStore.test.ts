@@ -6,6 +6,7 @@ import type { SceneInventory } from '@/lib/chartApi'
 import type { PanelChartState, PanelObject, PanelOverride } from '@/types/document'
 import { chartBindConfirmReady, useChartBindStore } from './chartBindStore'
 import { DEFAULT_FORM, DEFAULT_SERIES, formFor } from './chartBindStore'
+import { renderRequestIdentity } from './renderStore'
 import { setCurrentProjectId } from '@/lib/session'
 
 vi.mock('@/lib/chartApi', () => ({
@@ -321,6 +322,30 @@ describe('v2 full edit recovery', () => {
     expect(useChartBindStore.getState().resultRender).toEqual(render)
     expect(chartBindConfirmReady(useChartBindStore.getState())).toBe(true)
     expect(render.overrides).toEqual(nativeEdits)
+  })
+
+  it('/2 preview keeps the paired frame authority keyed to the post-confirm panel shape', async () => {
+    const restored = restorableChart()
+    const edits = [{ gid: 'g', prop: 'loc_frac', value: [0.5, 0.5] }] as PanelOverride[]
+    const frame = { version: 1 as const, source: 'computed-svg' as const,
+      source_viewport_pt: [100, 100], rect_pt: [-8, -6, 116, 112], edit_basis: 'source-viewport-pt' as const }
+    vi.mocked(chartInspect).mockResolvedValue({ ...SCENE, restored_chart: restored,
+      restored_render: { render_profile: 'native-manifest/2' as const, overrides: structuredClone(edits) } })
+    vi.mocked(chartCompute).mockResolvedValue({ ...computed(), render_revision: 'rev-2', render_frame: frame })
+    useChartBindStore.getState().openFor(panel())
+    await vi.waitFor(() => expect(useChartBindStore.getState().scene).not.toBeNull())
+    await useChartBindStore.getState().confirmBinding()
+    const s = useChartBindStore.getState()
+    // 身份串按「确认后的面板」取：落盘的 model+binding（无 formRev 临时键）+ /2 profile
+    expect(s.resultFrame).toEqual({
+      frame,
+      renderRevision: 'rev-2',
+      inputIdentity: renderRequestIdentity(edits, { model: restored.model, binding: restored.binding },
+        undefined, undefined, 'native-manifest/2'),
+    })
+    // 表单一动，预览与配对帧一起作废
+    useChartBindStore.getState().patchForm({ datasetText: 'x\n1' })
+    expect(useChartBindStore.getState().resultFrame).toBeNull()
   })
 
   it.each([
