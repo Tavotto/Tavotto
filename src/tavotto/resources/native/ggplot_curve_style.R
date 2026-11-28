@@ -1,5 +1,3 @@
-ggplot_line_types <- c("-" = "solid", "--" = "dashed", ":" = "dotted", "-." = "dotdash")
-
 ggplot_curve_key_name <- function(kind) {
   switch(kind, GeomLine = "geom_line", GeomPath = "geom_path")
 }

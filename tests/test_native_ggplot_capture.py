@@ -1364,7 +1364,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
         "bar-interval-stack",
     ],
 )
-def test_native_r_fixed_layer_styles_write_back_only_when_shared_by_the_layer(tmp_path, scope):
+def test_native_r_fixed_layer_styles_write_back_to_the_selected_scope(tmp_path, scope):
     from test_core_v02_release_candidate import _panel, _render, _run_ggplot
 
     rscript = _rscript_with_capture_packages()
@@ -1627,22 +1627,7 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             timeout=120,
         )
         assert status == 200, preview
-        local = scope in (
-            "one-facet",
-            "different-facets",
-            "line-one-facet",
-            "line-legend-local",
-            "bar-col-one-facet",
-            "bar-col-missing-facet",
-            "interval-local",
-        )
-        expected_residual = patches if local else []
-        if scope in ("bar-col-one-facet", "bar-col-missing-facet"):
-            expected_residual = [patch for patch in patches if patch["prop"] != "bar_width"]
-        if scope == "interval-local":
-            expected_residual = [
-                patch for patch in patches if patch["prop"] not in {"capsize", "cap_thickness"}
-            ]
+        expected_residual = patches if scope == "line-legend-local" else []
         assert preview["written"] == len(patches) + 1 - len(expected_residual)
         assert len(preview["skipped"]) == len(expected_residual)
         assert source.read_bytes() == original
@@ -1697,7 +1682,9 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
                 for gid in targets:
                     line = next(e for e in replayed["manifest"]["elements"] if e["gid"] == gid)
                     value = next(f["value"] for f in line["editable"] if f["prop"] == "alpha")
-                    expected = edits["alpha"] if local else round(255 * edits["alpha"]) / 255
+                    expected = (
+                        edits["alpha"] if expected_residual else round(255 * edits["alpha"]) / 255
+                    )
                     assert value == pytest.approx(expected)
                     assert line["geometry"]["stroke"] is (expected > 0)
             if interval:
@@ -7275,6 +7262,106 @@ grDevices::dev.off()
         revised, saved = save(app, figure, reopened, second)
         assert {prop: fields(revised, selected)[prop] for prop in second} == second
         assert fields(revised, selected)["grid_color"] == first["grid_color"]
+        status, restored = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and restored["ok"] and script.read_bytes() == authored
+
+
+def test_native_r_facet_layer_paint_replays_and_preserves_built_data(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Facet paint"
+    project.mkdir()
+    script = project / "Paint.R"
+    script.write_text(
+        f"""\
+d <- expand.grid(x = 1:4, region = c("Left", "Right"))
+d$y <- 3 + d$x + as.integer(d$region)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) +
+  ggplot2::geom_col(fill = "#E3A452", width = .45) +
+  ggplot2::geom_point(colour = "#3773FF", size = 2.1, alpha = .65) +
+  ggplot2::facet_wrap(ggplot2::vars(region))
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "data-hash.txt")
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Facet_paint"
+    evidence = project / "data-hash.txt"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    fingerprint = evidence.read_bytes()
+
+    def marks(svg):
+        return [
+            (node.tag, node.attrib)
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.rsplit("}", 1)[-1] in {"circle", "rect", "polygon"}
+        ]
+
+    def element(view, layer, panel):
+        return next(
+            item
+            for item in view["manifest"]["elements"]
+            if item["gid"].startswith(f"layer.{layer}.panel.{panel}.")
+        )
+
+    def save(app, figure, baseline, edits):
+        overrides = []
+        for layer, panel, styles in edits:
+            target = element(baseline, layer, panel)
+            overrides.extend(
+                {"gid": target["gid"], "identity": target["identity"], "prop": prop, "value": value}
+                for prop, value in styles.items()
+            )
+        hot = _render(app, figure, overrides)
+        assert hot["warnings"] == []
+        for layer in (1, 2):
+            assert element(hot, layer, 1) == element(baseline, layer, 1)
+        assert _render(app, figure, [])["svg"] == baseline["svg"]
+        saved = _write_native_figure_style(app, script, route, figure, hot, overrides)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert evidence.read_bytes() == fingerprint
+        assert marks((project / "standalone.svg").read_text(encoding="utf-8")) == marks(hot["svg"])
+        return hot, saved
+
+    initial = [
+        (1, 2, {"facecolor": "#D81439", "bar_width": 0.3}),
+        (2, 2, {"facecolor": "#249751", "alpha": 0.3, "size": 72}),
+    ]
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        changed, _ = save(app, figure, baseline, initial)
+        styles = [node.get("style", "") for _, node in marks(changed["svg"])]
+        assert sum("fill: #E3A452;" in style for style in styles) == 4
+        assert sum("fill: #D81439;" in style for style in styles) == 4
+        assert sum("stroke: #249751;" in style for style in styles) == 4
+        assert sum("stroke: #3773FF;" in style for style in styles) == 4
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == changed["svg"]
+        fields = {field["prop"]: field["value"] for field in element(reopened, 2, 2)["editable"]}
+        assert fields["alpha"] == 0.3
+        later = [(1, 2, {"bar_width": 0.68}), (2, 2, {"facecolor": "#9D37A4"})]
+        updated, saved = save(app, figure, reopened, later)
+        styles = [node.get("style", "") for _, node in marks(updated["svg"])]
+        assert (
+            sum("stroke: #9D37A4;" in style and "stroke-opacity: 0.30" in style for style in styles)
+            == 4
+        )
+        assert sum("fill: #D81439;" in style for style in styles) == 4
         status, restored = app.call(
             "/api/script-backups/restore",
             {

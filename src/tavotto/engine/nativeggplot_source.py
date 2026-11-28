@@ -523,10 +523,24 @@ def _native_layer_writes(
         if any((p["geom"], p["panels"]) != (plan["geom"], plan["panels"]) for p in panels.values()):
             continue
         aesthetics = plan["aesthetics"]
-        if len(panels) != plan["panels"] or any(
-            p["aesthetics"] != aesthetics for p in panels.values()
+        scoped_paint = {}
+        paint_gids = set()
+        if (
+            len(panels) == plan["panels"]
+            and (len(panels) > 1 or not plan.get("facet"))
+            and not plan.get("scoped_paint")
+            and all(panel["aesthetics"] == aesthetics for panel in panels.values())
         ):
+            if aesthetics:
+                paint_gids.update(panels)
+        else:
             aesthetics = {}
+            for gid, panel in panels.items():
+                if panel.get("facet") and panel["aesthetics"]:
+                    facet = _r_facet_selector(panel["facet"])
+                    if facet is not None:
+                        scoped_paint[facet] = panel["aesthetics"]
+                        paint_gids.add(gid)
         geometries = {gid: p["geometry"] for gid, p in panels.items() if p["geometry"]}
         recipes = []
         kind = None
@@ -545,20 +559,20 @@ def _native_layer_writes(
                     recipes = [{"facet": None, "values": first["values"]}]
                 elif all(g["facet"] for g in geometries.values()):
                     recipes = list(geometries.values())
-        if aesthetics or recipes:
+        if aesthetics or scoped_paint or recipes:
             plans[index] = {
                 "geom": plan["geom"],
                 "aesthetics": aesthetics,
+                "scoped_paint": scoped_paint,
                 "kind": kind,
                 "recipes": recipes,
                 "categorical": categorical,
             }
             if recipes:
                 written.update((gid, prop) for gid, g in geometries.items() for prop in g["values"])
-            if aesthetics:
-                written.update(
-                    (gid, prop) for gid in panels for prop in edits[gid].keys() - _GEOMETRY_PROPS
-                )
+            written.update(
+                (gid, prop) for gid in paint_gids for prop in edits[gid].keys() - _GEOMETRY_PROPS
+            )
     return plans, written
 
 
@@ -585,6 +599,10 @@ def _r_geometry_recipes(recipes: list[dict]) -> str:
     return "list(" + ", ".join(entries) + ")"
 
 
+def _r_layer_aesthetics(values: dict) -> str:
+    return ", ".join(f"{key} = {_r_literal(value)}" for key, value in values.items())
+
+
 def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
     edits = []
     shared = []
@@ -595,7 +613,7 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
         values = plan["aesthetics"]
         geom = json.dumps(plan["geom"])
         slot = f"plot$layers[[{index}L]]"
-        params = ", ".join(f"{key} = {_r_literal(value)}" for key, value in values.items())
+        params = _r_layer_aesthetics(values)
         geometry = ""
         kind = plan["kind"]
         channels = None
@@ -618,6 +636,13 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
             elif plan["categorical"]:
                 channel = "fill" if kind == "bars" else "colour"
                 geometry += f', function(data) ggplot_observed_categories(capture, {index}L, data, "{channel}")'
+        if scoped_paint := plan["scoped_paint"]:
+            sources.add("ggplot_layer_paint.R")
+            paints = ", ".join(
+                f"list(facet = {facet}, aesthetics = list({_r_layer_aesthetics(aesthetics)}))"
+                for facet, aesthetics in scoped_paint.items()
+            )
+            geometry += f", facet_paint = list({paints})"
         edits.append(f"  {slot} <- styled_layer({slot}, {geom}, list({params}){geometry})")
         if channels:
             edits.append(f"  {slot}$tavotto_series_aesthetics <- {channels}")
@@ -634,6 +659,10 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
         decorate = (
             "    if (!is.null(recipes)) layer <- ggplot_set_layer_geometry(layer, recipes, adjust, lookup)",
         )
+    if "ggplot_layer_paint.R" in sources:
+        decorate += (
+            "    if (!is.null(facet_paint)) layer <- ggplot_set_layer_paint(layer, facet_paint)",
+        )
     if guide_styles:
         guides = ", ".join(guide_styles)
         edits.append(f"  plot <- ggplot_source_styled_guides(plot, list({guides}))")
@@ -643,7 +672,8 @@ def _r_layer_block(name: str, layers: dict[int, dict]) -> str:
             f"base::assign({name}, (function(plot) {{",
             *shared,
             *observe_plot,
-            "  styled_layer <- function(layer, kind, values, recipes = NULL, adjust = NULL, lookup = NULL) {",
+            "  styled_layer <- function(layer, kind, values, recipes = NULL, adjust = NULL, lookup = NULL,",
+            "                           facet_paint = NULL) {",
             '    if (!identical(class(layer$geom)[[1L]], kind)) stop("Tavotto style layer changed.")',
             "    aesthetics <- utils::modifyList(layer$aes_params, values)",
             "    force(layer)",

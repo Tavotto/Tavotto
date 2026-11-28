@@ -5,7 +5,7 @@ ggplot_point_fields <- function(points, data, mapped) {
       length(points$x) != nrow(data) || length(points$y) != nrow(data) ||
       !all(grid::unitType(points$x) == "native") || !all(grid::unitType(points$y) == "native") ||
       !all(is.finite(c(as.numeric(points$x), as.numeric(points$y))))) return(list())
-  ggplot_point_style_fields(points, data$alpha, mapped, seq_len(nrow(data)))
+  ggplot_point_style_fields(points, points$tavotto_point_alpha %||% data$alpha, mapped, seq_len(nrow(data)))
 }
 
 ggplot_point_style_fields <- function(points, alpha, mapped, indices) {

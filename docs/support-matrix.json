@@ -99,6 +99,7 @@
         "select an existing R package library for a desktop run",
         "edit a captured object and return to the original R console and its graphics device",
         "verified R source writeback and backup restore for supported styles, including category-scoped curves and points",
+        "verified source writeback of fixed paint for individual supported scatter, line, bar and interval panels",
         "focus the existing panel across canvases when rerunning the same ggplot2 source",
         "native guide box position by canvas drag",
         "distinct plain-text legend title RGB color",

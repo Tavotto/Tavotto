@@ -1540,7 +1540,8 @@ ggplot_fixed_layer_source <- function(state, target, edit, aesthetics, geometry 
   if (!identical(as.list(layer$geom)$draw_panel, as.list(stock)$draw_panel)) return(NULL)
   panels <- sum(!vapply(state$layer_grobs[[target$index]], inherits, logical(1L), "zeroGrob"))
   if (panels) list(layer = target$index, geom = kind, panels = panels, edited = edit,
-                   aesthetics = aesthetics, geometry = geometry)
+                   aesthetics = aesthetics, geometry = geometry, facet = target$facet,
+                   scoped_paint = length(layer$tavotto_facet_paint) > 0L)
 }
 
 ggplot_layer_has_group_edits <- function(targets, index, edits) {

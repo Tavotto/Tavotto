@@ -1,3 +1,5 @@
+ggplot_line_types <- c("-" = "solid", "--" = "dashed", ":" = "dotted", "-." = "dotdash")
+
 # One grid stroke conversion for native edits and generated R code.
 ggplot_lwd_pt <- 72 / 96
 
