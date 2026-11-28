@@ -664,3 +664,11 @@ def test_t_junction_on_a_curved_segment_and_near_misses():
     assert components_of([horiz, near_down]) == 2
     # 容差内（< 0.01 mm）的贴合算接上
     assert components_of([horiz, _seg([0.3, 0.5004], [0.3, 0])]) == 1
+
+
+def test_reply_subpath_limit_is_256():
+    nodes = [{"p": [0, 0]}, {"p": [1, 1]}]
+    ok = {"version": 1, "subpaths": [{"closed": False, "nodes": nodes}] * 256}
+    assert mechanism._check_reply(ok, "x")["subpaths"]  # noqa: SLF001
+    with pytest.raises(mechanism.MechanismError):
+        mechanism._check_reply({**ok, "subpaths": ok["subpaths"] + [ok["subpaths"][0]]}, "x")  # noqa: SLF001

@@ -53,7 +53,7 @@ Agent / 改图助手 ─ add 条目 (kind: frame | glyph | graph) ─▶ 开源 
 | `mechanism.glyph` | `{kind, version, params, size_mm: [w, h]}` | `{version, subpaths: [{closed, nodes: [{p, in?, out?}]}], ports?: {名: [rx, ry]}, array?: bool}`；坐标是**框内比例坐标**，与 `ExportClipPath` 同形 |
 | `mechanism.graph`（6.F） | `{direction, bands: [{ref, order}], nodes: [{ref, w_mm, h_mm, band?, shape}], edges: [{from, to, meaning, label_w_mm?, label_h_mm?}]}` | `{nodes: {ref: [x, y]}, edges: [{ref, polyline: [[x, y]…]}], bands: {ref: [x, y, w, h]}, metrics}` |
 
-- **回包闭集**（开源侧逐项校验，不合 = `bad_reply`）：子路径 ≤ 64、节点 ≤ 4000、坐标有限、节点键只许 `p / in / out`、端口 ≤ 16；**不回颜色、名字、文字**——颜色与名字由开源侧定。
+- **回包闭集**（开源侧逐项校验，不合 = `bad_reply`）：子路径 ≤ 256、节点 ≤ 4000（膜的每个脂质 = 一个闭合圆头 + 两条尾直线，共 3 条子路径；6.C 起上限由 64 放宽到 256）、坐标有限、节点键只许 `p / in / out`、端口 ≤ 16；**不回颜色、名字、文字**——颜色与名字由开源侧定。
 - `catalog` 里每个 `kind` 回自己支持的 `versions`（取 `latest` 为缺省）；参数规格让前端属性栏**按规格通用渲染**，不内置任何图元知识（6.G）。
 
 ### 四、`graph`（通路图）协议与布局

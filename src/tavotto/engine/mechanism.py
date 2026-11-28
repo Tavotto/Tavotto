@@ -27,7 +27,7 @@ CMD_CATALOG = "mechanism.catalog"
 CMD_GLYPH = "mechanism.glyph"
 MAX_GLYPHS = 24
 MAX_FRAMES = 1
-MAX_SUBPATHS = 64
+MAX_SUBPATHS = 256  # 一个膜 = 几十个脂质 × 3 条子路径（闭合圆头 + 两条尾）；ADR 0220 §三
 MAX_NODES = 4000
 MAX_PORTS = 16
 #: 默认画法（颜色与线宽由开源侧定，sidecar 不回）
