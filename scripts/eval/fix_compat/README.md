@@ -101,7 +101,8 @@ opencode 报错时退出码也可能是 0，`agent_errors` 里查 `Error:`。
 - **夹具构建期生成**：`envfaults.py` 在每次运行的隔离目录（`$EVAL_RUNS/<组>/<题>__<rep>/wheelhouse`）里现造 wheel，不提交二进制；sidecar 的 `PIP_FIND_LINKS` 指过去，**不关 PyPI**（受管环境还要装 matplotlib，所以跑它要联网）。用户自配了包源，Tavotto 不走镜像回退，这与线上行为一致。
 - **未修前**：`harness.py probe --only env-…` 起真 sidecar，开准备会话（`missing_dependency`），再对缺的包走 `POST /api/engine/dependency/plan` → `install`（装进 Tavotto 受管环境，与界面「装上并继续」同一条后端路由），记 `before.install.code`；与题库 `fault.expect.code` 对不上会打印 `!!`。每题约 20–40 秒，不叫模型。
 - **跑法**：`harness.py run baseline` / `run A`；B、M 组不支持环境题（MCP 与 warmup 接不上假 wheel 夹具），`run B` 会自动跳过。A 组的修复会话从「一键安装没装好」之后开始（`install_attempt` 记在结果里）；**这条接线没有用真模型验证过**。
-- **成功判据不变**：原脚本再建一次准备会话、点运行，`completed` 且出图，原文件字节不变。对 `env-wheel-python-mismatch`，本机没有对应的 Python 小版本时，没有出路（按对照题读，不看它的成功率）。
+- **修复会话看不到安装失败（产品如此，评测不造状态）**：题库的包名不在内置映射里，准备会话对它只给「指定包名 / 换环境」、没有「安装依赖」动作，用户点的是独立依赖路由，它的作业不记进准备会话。评测照这条路走，`install_attempt` 的失败码只记在结果里；修复助手从「缺包」出发，得自己走到故障。
+- **成功判据不变**：原脚本再建一次准备会话、点运行，`completed` 且出图，原文件字节不变。对 `env-wheel-python-mismatch`，本机没有对应的 Python 小版本时，没有出路，题库里标了 `solvable: false`（对照题，不进合计、单列；不按运行机有没有对应解释器动态判定，那会让同一题在不同机器上进出分母、跨机器不可比）。
 - **两列**（`report` 最后一张表，每题每组）：
   - `cited_known_issue`：轨迹里有没有任何一行带 `known_issue`（harness 从审计结果的 `known_issue` 键搬进轨迹）。现在的产品审计里还没有这个键（ADR 0221 第 2 期才加），所以眼下全是 0，不会报错。
   - `misjudged_user_fault`：**近似规则**，审计只留码和长度、不留模型的结论原文：① `prepare_diagnostics` 带 `issue` 却被退回（`bad_arguments`，`product_reason` 为空是其中一种；或 `not_a_product_defect`）；② 题库标了 `fault.product_defect`（目前只有 `env-selftest-blocked`）、这次没修好、整条轨迹里又没有一次成功的 `prepare_diagnostics`——当成用户环境问题收尾了。只对 A / M 组有意义。

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import subprocess
@@ -68,16 +69,85 @@ def test_both_gates_must_be_open(monkeypatch, dev, fault, expected):
     assert devfault.active("selftest_blocked") is expected
 
 
+def _injection_calls(source: str) -> list[str]:
+    """源码里真实的 `devfault.active` 调用节点，返回各自所在的函数名（模块级为 `<module>`）。
+
+    认的写法：`devfault.active(..)`（含 `import … as x` / `from … import devfault as x` 的别名）、
+    `from …devfault import active [as y]` 后的 `active(..)`、带包前缀的 `….devfault.active(..)`。
+    看的是 `ast.Call` 节点：注释 / 字符串里的字样不算，`devfault.active (x)` 这类空格写法照算。
+    """
+    tree = ast.parse(source)
+    mod_names: set[str] = {"devfault"}
+    fn_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name == "devfault":
+                    mod_names.add(a.asname or a.name)
+                elif a.name == "active" and (node.module or "").split(".")[-1] == "devfault":
+                    fn_names.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name.split(".")[-1] == "devfault" and a.asname:
+                    mod_names.add(a.asname)
+
+    def is_inject(call: ast.Call) -> bool:
+        f = call.func
+        if isinstance(f, ast.Name):
+            return f.id in fn_names
+        if isinstance(f, ast.Attribute) and f.attr == "active":
+            v = f.value
+            if isinstance(v, ast.Name):
+                return v.id in mod_names
+            return isinstance(v, ast.Attribute) and v.attr == "devfault"
+        return False
+
+    found: list[str] = []
+
+    def visit(node: ast.AST, scope: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.Call) and is_inject(child):
+                found.append(scope)
+            inner = (
+                child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else scope
+            )
+            visit(child, inner)
+
+    visit(tree, "<module>")
+    return found
+
+
+@pytest.mark.parametrize(
+    "src,expected",
+    [
+        (
+            "from tavotto.engine import devfault\ndef f():\n    return devfault.active ('x')\n",
+            ["f"],
+        ),
+        ("from tavotto.engine import devfault as d\ndef f():\n    return d.active('x')\n", ["f"]),
+        ("from .devfault import active\ndef f():\n    return active('x')\n", ["f"]),
+        ("import tavotto.engine.devfault as d\nd.active('x')\n", ["<module>"]),
+        ("import tavotto.engine.devfault\ntavotto.engine.devfault.active('x')\n", ["<module>"]),
+        (
+            "from tavotto.engine import devfault\n# devfault.active('x')\ns = 'devfault.active(x)'\n",
+            [],
+        ),
+        ("def active(x):\n    return x\nactive(1)\n", []),  # 同名但不是 devfault 的
+    ],
+)
+def test_injection_call_finder_sees_calls_not_text(src, expected):
+    assert _injection_calls(src) == expected
+
+
 def test_the_product_has_exactly_one_injection_point():
-    """产品代码里读 `devfault.active(` 的地方只有 deprepair.worker_self_test 一处。加注入点要先改这条。"""
+    """产品代码里 `devfault.active` 的真实调用节点全仓只有一个，且在 deprepair.worker_self_test 里。加注入点要先改这条。"""
     hits = []
-    for p in (ROOT / "src" / "tavotto").rglob("*.py"):
+    for p in sorted((ROOT / "src").rglob("*.py")):
         if p.name == "devfault.py":
             continue
-        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
-            if "devfault.active(" in line:
-                hits.append((p.relative_to(ROOT).as_posix(), n))
-    assert [h[0] for h in hits] == ["src/tavotto/engine/deprepair.py"], hits
+        rel = p.relative_to(ROOT).as_posix()
+        hits += [(rel, scope) for scope in _injection_calls(p.read_text(encoding="utf-8"))]
+    assert hits == [("src/tavotto/engine/deprepair.py", "worker_self_test")], hits
 
 
 # ---------------------------------------------------------------- 注入点：worker_self_test

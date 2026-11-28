@@ -216,6 +216,11 @@ def install_attempt(app, item: dict, timeout: float = 900.0) -> dict:
     """环境题的「用户点了一键安装」：对缺的那个包形成计划（装进 Tavotto 受管环境，题库点名分发名）、执行、等落定。
 
     返回稳定错误码（只有码，不带路径；自检阶段 / worker 码只在诊断包的 managed_environment_jobs 里）；与界面「装上并继续」同一条后端路由。
+
+    已知边界（评测如实，不造产品里没有的状态）：题库里的包名不在内置映射里，准备会话对它只给「指定包名 / 换环境」
+    （`installable: false`，没有 `prepare_dependencies` 动作；2026-11-28 实测 probe 报 `no_prepare_action`），用户点的就是这条
+    独立路由，它的作业不记进准备会话的 `dep_attempts`。所以修复会话的初始 `read_run_report` 看到的仍是「缺包」，
+    安装失败的码只在 `rec["install_attempt"]` 里：这组题测的是 AI 能不能从缺包出发自己走到并诊断出这个故障，而不是被告知故障。
     """
     wheel = item["fault"]["wheels"][0]
     st, body = app.call(

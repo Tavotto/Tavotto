@@ -193,6 +193,8 @@
  },
  "env-wheel-python-mismatch": {
   "family": "environment",
+  "solvable": false,
+  "why_unsolvable": "假 wheel 只有与本解释器不同小版本的 cp 标签；受管环境只装 wheel，没有对应小版本的解释器就没有出路——对照题，看 AI 能不能把「没有适合的 wheel」讲清楚，不进成功率合计",
   "title": "包只有别的 Python 小版本的 wheel，受管环境装不上（phreeqpython 1.6.2 只有 cp312 形；只装 wheel）",
   "script": "fig.py",
   "files": {
