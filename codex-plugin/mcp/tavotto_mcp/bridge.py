@@ -220,6 +220,16 @@ def _remember_mcp_client_name(client_info) -> None:
         _MCP_CLIENT_NAME = slug or None
 
 
+def agent_plan_host() -> str:
+    """建议方案记的宿主（窗口里的卡标「来自 Codex」等）：闭集 `codex` | `claude_code` | `other`，按 MCP 客户端名子串判（不区分大小写）。"""
+    name = _MCP_CLIENT_NAME or ""
+    if "codex" in name:
+        return "codex"
+    if "claude" in name:
+        return "claude_code"
+    return "other"
+
+
 def journal_facts_enabled() -> bool:
     """v2 facts require the journal switch and a compatible engine; older engines stay usable."""
     module = _optional_engine("journalfacts_remote")
@@ -7543,13 +7553,32 @@ def _suggest_load(cp, session: Session, plan_id: object) -> dict:
     if (
         not isinstance(plan, dict)
         or (plan.get("agent") or {}).get("session") != session.id
-        or (plan.get("base") or {}).get("target") != session.stem
+        # 绑定会话出的方案 `base.target` 是桌面口径的 `fileId`，会话的图名另记在 `agent.stem`（ADR 0217 §五）
+        or ((plan.get("agent") or {}).get("stem") or (plan.get("base") or {}).get("target"))
+        != session.stem
     ):
         raise BridgeError(
             "没有这份建议方案（不是这个会话的、已过期或已被清掉）；重新调 tavotto_suggest_plan。",
             code="suggest_plan_unknown",
         )
     return plan
+
+
+def _binding_panel_file_id(session: Session) -> str | None:
+    """绑定会话的子图在排版里的 `fileId`（桌面认的图标识，ADR 0217 §五）；没绑定 / 读不到 → None（照没绑定出方案）。"""
+    binding = getattr(session, "binding", None)
+    la = _optional_engine("layoutannotate") if binding and layout_annotate_available() else None
+    if la is None:
+        return None
+    try:
+        lay = la.open_layout(session.project, binding["layout"])
+    except la.LayoutError:
+        return None
+    for _canvas, _ref, obj in _iter_panels(la, lay.doc, hidden=True):
+        if obj.get("id") == binding["panel_id"]:
+            fid = str(obj.get("fileId") or obj.get("id") or "")
+            return fid or None
+    return None
 
 
 def _suggest_fresh(cp, session: Session, plan: dict) -> bool:
@@ -7647,9 +7676,11 @@ def suggest_plan(session_id: str, todos: object, *, user_request: object = None)
         raise BridgeError(
             "出方案期间脚本被改了；重新调 tavotto_suggest_plan。", code="suggest_plan_stale"
         )
+    # 绑定到排版子图的会话：方案的目标记桌面口径的 fileId，窗口里开着这份排版时据此出同一张卡（ADR 0217 §五）；没绑定照旧
+    file_id = _binding_panel_file_id(session)
     plan = cp.build_plan(
         plan_id=cp.new_plan_id(),
-        target=session.stem,
+        target=file_id or session.stem,
         base_fingerprint=cp.fingerprint(rev0, base),
         comments=comments,
         groups=groups,
@@ -7659,7 +7690,14 @@ def suggest_plan(session_id: str, todos: object, *, user_request: object = None)
         reply=reply,
         todos=raw,
     )
-    plan["agent"] = {"session": session.id}
+    plan["agent"] = {"session": session.id, "host": agent_plan_host()}
+    if file_id:
+        plan["agent"].update(
+            stem=session.stem,
+            panel=session.binding["panel_id"],
+            layout=session.binding["layout"],
+            at=time.time(),
+        )
     try:
         cp.save(project_id(session.project), plan, before_png, after_png)
     except cp.PlanFailure as exc:
@@ -7699,7 +7737,7 @@ def suggest_apply(
             code="bad_todo_keys",
             known=sorted(by_key),
         )
-    if plan.get("applied"):
+    if plan.get("applied") or plan.get("agent_applied"):  # 桌面窗口先点了也算（先落定的赢）
         raise BridgeError(
             "这份建议方案已经应用过；要再改，重新出一份。", code="suggest_plan_applied"
         )
@@ -7745,7 +7783,9 @@ def suggest_status(session_id: str, plan_id: object) -> dict:
     cp = _require_suggest()
     session = get_session(session_id)
     plan = _suggest_load(cp, session, plan_id)
-    applied = plan.get("applied") if isinstance(plan.get("applied"), dict) else None
+    applied = next(
+        (plan[k] for k in ("applied", "agent_applied") if isinstance(plan.get(k), dict)), None
+    )
     return {
         "ok": True,
         "plan_id": plan["id"],

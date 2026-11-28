@@ -27,6 +27,7 @@ import { ContactHost } from '@/components/contact/ContactHost'
 import { ReviewHost } from '@/components/review/ReviewHost'
 import { useReviewStore } from '@/store/reviewStore'
 import { watchAgentAdditions } from '@/lib/agentMerge'
+import { watchAgentPlans } from '@/store/agentPlanDiscovery'
 import { useContactStore } from '@/store/contactStore'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
@@ -123,6 +124,8 @@ export function App() {
     const stopReviewWatch = useReviewStore.getState().watch()
     // Agent 经插件往项目排版里加了标注（ADR 0208 §五）：回到前台 / 每分钟问一次，有就挂「并进来」胶囊
     const stopAgentMergeWatch = watchAgentAdditions()
+    // Agent 经绑定会话出的建议方案（ADR 0217 §五）：同一个节奏，对得上窗口里开着的图就在助手面板出同一张待办卡
+    const stopAgentPlanWatch = watchAgentPlans()
     // 引擎意外退出的修复卡 + 上次没正常退出的提示卡（ADR 0129）；后者等上面的能力读完再判
     const stopExitNotices = initExitNotices(diagLoaded)
     // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
@@ -132,6 +135,7 @@ export function App() {
       stopContactWatch()
       stopReviewWatch()
       stopAgentMergeWatch()
+      stopAgentPlanWatch()
       stopExitNotices()
       cancelStartupProbe()
     }
