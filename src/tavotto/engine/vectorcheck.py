@@ -32,6 +32,8 @@ TIP_ALLOWANCE_MM = 1.5
 MIN_OVERLAP_MM = interference.MIN_OVERLAP_MM
 #: 沿箭头杆取样的步长
 SAMPLE_STEP_MM = 0.2
+#: 「框住子图」的外框允许的最大圆角（mm）：再圆，四角会切进子图角上的标签
+FRAME_MAX_CORNER_MM = 1.0
 JOURNAL_CHECKS = ("font-too-small", "font-below-absolute-floor", "line-width-below-min")
 
 
@@ -475,11 +477,48 @@ def check(
             texts.append((name, _box(e)))
     for o in existing_texts or []:
         texts.append((f"canvas:{o.get('id')}", _doc_box(o)))
+    # 故意框住子图的外框（只有描边的形状 / `box`，外接框把整张子图包在里面）：子图自己的文字（轴标签、刻度）贴着图框，
+    # 外框的线不可避免地靠近它们——这是「框住」的本意，不是压字；对这几张子图的文字豁免（记 `waived`），别逼外框挪歪
+    panel_rects = {
+        pid: (pf.full[0], pf.full[1], pf.full[0] + pf.full[2], pf.full[1] + pf.full[3])
+        for pid, p in panels.items()
+        if (pf := _PanelFrac(p["panel"])).ok
+    }
+
+    def framed_panels(name: str) -> set[str]:
+        e = by_name[name]
+        # 只给**轴对齐、没旋转的矩形**（圆角 ≤ FRAME_MAX_CORNER_MM）：它的描边路径就是外接框的四条边，「完全在子图外接框之外
+        # 或与之重合」靠外接框包住子图就够了。椭圆 / 多边形 / 路径 / 旋转过的，轮廓会穿过子图内部压到标签，照旧核。
+        if (
+            e["type"] != "shape"
+            or e.get("fill")
+            or e.get("shape") != "rect"
+            or e.get("rotation_deg")
+            or float(e.get("corner_radius_mm") or 0.0) > FRAME_MAX_CORNER_MM
+        ):
+            return set()
+        x0, y0, x1, y1 = _box(e)
+        return {
+            pid
+            for pid, (a, b, c, d) in panel_rects.items()
+            if x0 <= a + 1e-9 and y0 <= b + 1e-9 and x1 >= c - 1e-9 and y1 >= d - 1e-9
+        }
+
     for name, ft in feet.items():
         kind, foot, half = ft["kind"], ft["full"], ft["half"]
         clash = []
+        waived = []
+        framed = framed_panels(name) if name in by_name else set()
         for other, r in texts:
             if other == name or (name, other) in linked:
+                continue
+            if framed and other.split(":", 1)[0] in framed:
+                if (
+                    _overlaps(foot, r, MIN_OVERLAP_MM)
+                    if kind == "rect"
+                    else any(_dist_to_rect(x, y, r) < half for x, y in foot)
+                ):
+                    waived.append(other)
                 continue
             if kind == "rect":
                 if _overlaps(foot, r, MIN_OVERLAP_MM):
@@ -488,7 +527,12 @@ def check(
                 _dist_to_rect(x, y, r) < half for x, y in foot
             ):  # 描边是圆头：按点到框的距离判
                 clash.append(other)
-        facts.add("text", "fail" if clash else "pass", name, **({"with": clash} if clash else {}))
+        if clash:
+            facts.add("text", "fail", name, **{"with": clash})
+        elif waived:
+            facts.add("text", "waived", name, framed_panel_text=waived)
+        else:
+            facts.add("text", "pass", name)
 
     # ---- page：不出页面
     if page:
@@ -519,7 +563,7 @@ def check(
                     "text": e["text"],
                     "size_pt": e["size_pt"],
                     "bold": e["bold"],
-                    "font_family": e.get("font_family") or "serif",
+                    "font_family": e.get("font_family") or vectorscene.CANVAS_TEXT_DEFAULT_FAMILY,
                     "rect_mm": [e["x_mm"], e["y_mm"], e["w_mm"], e["h_mm"]],
                     "hidden": False,
                 }
@@ -582,7 +626,9 @@ def check(
         if not has_text:
             facts.add("style", "unknown", name, reason="no_figure_text")
             continue
-        fam = vectorscene.family_class(e.get("font_family") or "serif")
+        fam = vectorscene.family_class(
+            e.get("font_family") or vectorscene.CANVAS_TEXT_DEFAULT_FAMILY
+        )
         facts.add(
             "style",
             "pass" if fam == figure_family else "fail",

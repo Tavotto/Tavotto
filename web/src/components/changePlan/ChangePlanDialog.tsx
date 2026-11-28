@@ -181,13 +181,14 @@ export function ChangePlanDialog() {
         ) : undefined
       }
       footer={{
-        start: (
-          <Button variant="ghost" size="lg" className="-ml-3.5" onClick={() => store().discard(entry.key)} data-change-plan-discard>
-            {cp('dialog.discard')}
-          </Button>
-        ),
         // 右侧两个位置在两个模式间连续：左边是「写批注」（对比）/「按批注重改 · N」（批注），右边是「应用」；每屏只有一颗主按钮
-        secondary: annotating ? (
+        // 「放弃」与「应用」挨在一起（仓库对话框的惯例：取消 / 放弃在主按钮左边，`start` 只给破坏性的另一条路）
+        secondary: (
+          <>
+            <Button variant="ghost" size="lg" onClick={() => store().discard(entry.key)} data-change-plan-discard>
+              {cp('dialog.discard')}
+            </Button>
+            {annotating ? (
           <Button
             variant={notes.length === 0 ? 'secondary' : 'primary'}
             size="lg"
@@ -218,7 +219,9 @@ export function ChangePlanDialog() {
               </Button>
             </PremiumLock>
           </span>
-        ) : undefined,
+        ) : undefined}
+          </>
+        ),
         primary: applyBtn,
       }}
     >

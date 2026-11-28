@@ -76,6 +76,7 @@ import { assistantUsesPlan, MAX_ASSISTANT_INSTRUCTION } from '@/lib/assistantPla
 import { vectorSelectionOf } from '@/lib/vectorEdit'
 import { runVectorEdit, setVectorAssistantHold } from '@/store/vectorPlanActions'
 import { changePlanEnabled } from '@/lib/changePlanSwitch'
+import { previousTurnOf } from '@/lib/previousTurn'
 import { deleteAiDraftIf } from '@/lib/api'
 import { engineTransport } from '@/lib/engineTransport'
 import { isFallthrough, useChangePlanStore } from '@/store/changePlanStore'
@@ -630,7 +631,15 @@ function AssistantPanelBody() {
       ) {
         const planned = await useChangePlanStore.getState().requestFromAssistant(
           panel.id,
-          { instruction: text, ...(ctx.gid ? { target: ctx.gid } : {}) },
+          {
+            instruction: text,
+            ...(ctx.gid ? { target: ctx.gid } : {}),
+            // 本图对话的上一轮（用户原话 + 助手回答 / 上一张建议卡的待办）：「按你的建议改」靠它落成具体待办（ADR 0214 §二）
+            ...(() => {
+              const previousTurn = previousTurnOf(panel.id, useAiStore.getState().sessions, Object.values(useChangePlanStore.getState().entries))
+              return previousTurn ? { previousTurn } : {}
+            })(),
+          },
           {
             project: pinnedProject,
             generation: pinnedGeneration,

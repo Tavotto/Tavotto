@@ -49,6 +49,8 @@ _NEEDS_INPUT = frozenset(
         "argv_unverifiable",
         # 外部审阅分享（ADR 0205）：不带 explicit_confirm 的那次回包，等用户点头
         "review_confirmation_required",
+        # 提交期刊线索（ADR 0213 三期）：同上，不带确认的那次回包
+        "journal_report_confirmation_required",
     }
 )
 _REQUEST = frozenset(

@@ -1380,6 +1380,7 @@ NORMAL_TOOLS = (
     "tavotto_get_journal_facts",
     "tavotto_fix_to_journal",
     "tavotto_make_journal_ready",
+    "tavotto_report_journal_issue",
     "tavotto_share_review",
     "tavotto_review_feedback",
     "tavotto_reply_review",
@@ -1390,6 +1391,9 @@ NORMAL_TOOLS = (
     "tavotto_layout_annotate_undo",
     "tavotto_layout_edit_plan",
     "tavotto_layout_edit_apply",
+    "tavotto_suggest_plan",
+    "tavotto_suggest_apply",
+    "tavotto_suggest_status",
 )
 
 
