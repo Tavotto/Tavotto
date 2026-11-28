@@ -23,6 +23,9 @@ SHAPE = {
     "structure": [],
     "engine_frame": None,
 }
+#: 工具回给模型的形状 = envdiag 读回投影的那一份（#2370 起多了 operations / fidelity，原样透传——
+#: 不在测试里抄一份键名表，跟着唯一出处走）
+EXPECTED = envdiag._selftest(SHAPE)
 
 
 def _job(**kw) -> dict:
@@ -66,7 +69,7 @@ def test_failed_selftest_shape_and_scrubbed_detail_tail(box):
     assert gen["requested"] == ["phreeqpython"]
     assert gen["outcome"] == "failed"
     assert gen["error_code"] == "dependency_worker_selftest_failed"
-    assert gen["selftest"] == SHAPE
+    assert gen["selftest"] == EXPECTED
     assert "PermissionError" in gen["detail_tail"]
     assert CANARY not in gen["detail_tail"] and CANARY not in json.dumps(out)
 
@@ -113,7 +116,7 @@ def test_install_packages_failure_carries_selftest_shape(box):
     }
     r = call(ctx, "install_packages", {"env": "e", "packages": ["numpy"]})
     assert r.is_error and r.code == "dependency_worker_selftest_failed"
-    assert "Self-test record: " + json.dumps(SHAPE) in r.content
+    assert "Self-test record: " + json.dumps(EXPECTED) in r.content
     assert "Use read_environment_checks to see the full self-test record" in r.content
     assert "PermissionError" not in r.content  # 原文只在 read_environment_checks 里
 
@@ -134,7 +137,7 @@ def test_change_python_failure_carries_selftest_shape(box):
     )
     r = call(ctx, "change_python", {"version": "3.12"})
     assert r.code == "dependency_worker_selftest_failed"
-    assert "Self-test record: " + json.dumps(SHAPE) in r.content
+    assert "Self-test record: " + json.dumps(EXPECTED) in r.content
     assert "Use read_environment_checks" in r.content
 
 
@@ -179,4 +182,6 @@ def test_detail_tail_stays_out_of_the_repair_transcript(box):
     assert sentinel not in dumped
     (entry,) = ctx.transcript
     kept = json.loads(entry["text"])["generations"][0]
-    assert kept["selftest"] == SHAPE and kept["error_code"] == "dependency_worker_selftest_failed"
+    assert (
+        kept["selftest"] == EXPECTED and kept["error_code"] == "dependency_worker_selftest_failed"
+    )
