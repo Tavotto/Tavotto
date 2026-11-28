@@ -873,7 +873,7 @@ def _mismatch_fix(d: dict, cur, fresh, *, follow: bool) -> dict | None:
             {"prop": "handle_linestyle", "value": want} if want in ("-", "--", ":", "-.") else None
         )
     if prop == "linewidth":
-        return {"prop": "handle_linewidth", "value": want}
+        return {"prop": "handle_linewidth", "value": round(float(want), 2)}
     if prop == "marker":
         return (
             {"prop": "handle_marker", "value": want} if want in _LEGEND_HANDLE_MARKER_OPTS else None
