@@ -210,7 +210,19 @@ export function ChangePlanDialog() {
       height="min(860px, 90vh)"
       anchor="change-plan"
       headerEnd={
-        visible && !appliedView ? (
+        // 脚本方案：「对比图 / 脚本改动」放在右上（与图内方案的「对比 / 批注」同一个位置），不和下面的「滑动 / 并排 / 切换」挤成一排
+        script ? (
+          <Segmented<'figure' | 'script'>
+            value={stage}
+            onChange={setStage}
+            ariaLabel={cp('dialog.stageLabel')}
+            className="w-44"
+            items={[
+              { value: 'figure', label: cp('dialog.stageFigure') },
+              { value: 'script', label: cp('dialog.stageScript') },
+            ]}
+          />
+        ) : visible && !appliedView ? (
           <Segmented<View>
             value={annotating ? 'annotate' : 'compare'}
             onChange={setView}
@@ -273,19 +285,6 @@ export function ChangePlanDialog() {
       <div className="flex min-h-0 flex-1" data-change-plan-dialog data-change-plan-dialog-view={annotating ? 'annotate' : 'compare'} data-change-plan-version={current}>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
           <div className="flex h-11 shrink-0 items-end justify-center px-5">
-            {script && (
-              <Segmented<'figure' | 'script'>
-                value={stage}
-                onChange={setStage}
-                ariaLabel={cp('dialog.stageLabel')}
-                compact
-                className="mr-3 w-44"
-                items={[
-                  { value: 'figure', label: cp('dialog.stageFigure') },
-                  { value: 'script', label: cp('dialog.stageScript') },
-                ]}
-              />
-            )}
             {!annotating && (!script || stage === 'figure') && (
               <Segmented<CompareMode>
                 value={mode}
