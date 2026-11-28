@@ -120,9 +120,11 @@ def run(args: argparse.Namespace) -> int:
         stats["bioicons"]["accepted"] = n_ok
 
     if "reactome" in wanted:
-        cands, probe = iconlib_sources.reactome_candidates(
-            fetcher, args.reactome_start, args.reactome_end, args.limit
-        )
+        all_ids = iconlib_sources.reactome_list_ids(fetcher)
+        # 在非蛋白分类的全部 ID 里等距抽样（不是取开头一段，避免偏向同一批设计者）；蛋白排除在取 XML 后判
+        ids = iconlib_sources.stride_pick(all_ids, args.limit + args.limit // 2)
+        cands, probe = iconlib_sources.reactome_candidates(fetcher, ids, args.limit)
+        probe["listed_ids"] = len(all_ids)
         kept, lic_audit = iconlib_license.filter_records(cands)
         audit += lic_audit
         stats["reactome"] = {"probe": probe, "attempted": len(kept)}
@@ -166,8 +168,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--delay", type=float, default=1.0, help="联网请求间隔秒数")
     ap.add_argument("--max-bytes", type=int, default=iconlib_normalize.DEFAULT_MAX_BYTES)
     ap.add_argument("--max-paths", type=int, default=iconlib_normalize.DEFAULT_MAX_PATHS)
-    ap.add_argument("--reactome-start", type=int, default=13000)
-    ap.add_argument("--reactome-end", type=int, default=13800)
     return run(ap.parse_args(argv))
 
 

@@ -33,6 +33,18 @@ BIOICONS_ORIGINS = {
 }
 
 
+MAX_RETRIES = 4
+BACKOFF_BASE_S = 2.0
+
+
+def _retry_after(e: urllib.error.HTTPError) -> float | None:
+    try:
+        v = float(e.headers.get("Retry-After", ""))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return min(max(v, 0.0), 120.0)
+
+
 class Fetcher:
     """带磁盘缓存、限速、主机白名单、体积上限的 GET。命中缓存不联网、不等待。"""
 
@@ -63,18 +75,30 @@ class Fetcher:
         if wait > 0:
             self._sleep(wait)
         self._last = time.monotonic()
-        self.network_calls += 1
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310 — 主机白名单已核
-                data = r.read(MAX_FETCH_BYTES + 1)
-                status = r.status
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                meta.write_text(json.dumps({"url": url, "status": 404}), "utf8")
-            return None
-        except (urllib.error.URLError, TimeoutError, OSError):
-            return None  # 网络问题不缓存，续跑时再试
+        data = b""
+        status = 0
+        for attempt in range(MAX_RETRIES + 1):
+            self.network_calls += 1
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310 — 主机白名单已核
+                    data = r.read(MAX_FETCH_BYTES + 1)
+                    status = r.status
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    meta.write_text(json.dumps({"url": url, "status": 404}), "utf8")
+                    return None
+                if e.code != 429 and e.code < 500:
+                    return None
+                retry_after = _retry_after(e)
+            except (urllib.error.URLError, TimeoutError, OSError):
+                retry_after = None
+            if attempt >= MAX_RETRIES:
+                return None  # 不缓存失败，续跑时再试
+            # 429 / 5xx / 网络错：指数退避（2、4、8、16 秒），服务端给了 Retry-After 就取较大者
+            self._sleep(max(BACKOFF_BASE_S * 2**attempt, retry_after or 0))
+            self._last = time.monotonic()
         if len(data) > MAX_FETCH_BYTES:
             meta.write_text(json.dumps({"url": url, "status": 413}), "utf8")
             return None
@@ -180,19 +204,46 @@ def parse_reactome_xml(data: bytes) -> dict | None:
     }
 
 
-def reactome_candidates(
-    fetcher: Fetcher, start: int, end: int, want: int, max_probes: int = 400
-) -> tuple[list[dict], dict]:
-    """按 ID 顺序探测，收到 `want` 个非蛋白图标为止。返回 (候选, 探测统计)。
+REACTOME_LIST = "https://reactome.org/icon-lib/"
+#: 图库页上的分类（不含 protein：整类不收）。`/icon-lib/<分类>?page=N` 是服务端渲染的列表页，每页 28 个 ID。
+REACTOME_CATEGORIES = (
+    "arrow", "background", "cell_element", "cell_type", "compound",
+    "human_tissue", "receptor", "therapeutic", "transporter",
+)  # fmt: skip
+_ICON_ID = re.compile(r"R-ICO-\d{6}")
+
+
+def reactome_list_ids(
+    fetcher: Fetcher, categories: tuple[str, ...] = REACTOME_CATEGORIES, max_pages: int = 60
+) -> list[str]:
+    """从图库分类列表页枚举 ID（官网自己的列表，不盲扫编号）。翻到某页没有新 ID 为止。"""
+    seen: dict[str, None] = {}
+    for cat in categories:
+        for page in range(1, max_pages + 1):
+            got = fetcher.get(f"{REACTOME_LIST}{cat}?page={page}")
+            if got is None:
+                break
+            ids = [
+                i
+                for i in dict.fromkeys(_ICON_ID.findall(got[0].decode("utf8", "replace")))
+                if i not in seen
+            ]
+            if not ids:
+                break
+            seen.update(dict.fromkeys(ids))
+    return list(seen)
+
+
+def reactome_candidates(fetcher: Fetcher, ids: list[str], want: int) -> tuple[list[dict], dict]:
+    """逐个取 XML 元数据，收到 `want` 个非蛋白图标为止。返回 (候选, 统计)。
 
     蛋白类（Protein）整类不收（维护者 2026-11-28）；一个图标可属多个类，只要含 protein 就不收。"""
     out: list[dict] = []
     stats = {"probed": 0, "missing": 0, "bad_xml": 0, "protein_skipped": 0}
-    for n in range(start, end):
-        if len(out) >= want or stats["probed"] >= max_probes:
+    for rid in ids:
+        if len(out) >= want:
             break
         stats["probed"] += 1
-        rid = f"R-ICO-{n:06d}"
         got = fetcher.get(f"{REACTOME_ICON}{rid}.xml")
         if got is None:
             stats["missing"] += 1

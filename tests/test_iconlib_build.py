@@ -266,11 +266,102 @@ def test_reactome_candidates_skip_protein_and_missing():
             base + "R-ICO-000004.xml": _xml("Rec", "receptor"),
         }
     )
-    cands, stats = src.reactome_candidates(ff, 1, 10, want=5)
+    ids = ["R-ICO-000001", "R-ICO-000002", "R-ICO-000003", "R-ICO-000004", "R-ICO-000005"]
+    cands, stats = src.reactome_candidates(ff, ids, want=5)
     assert [c["title"] for c in cands] == ["Mito", "Rec"]
-    assert stats["protein_skipped"] == 1 and stats["missing"] == 6
+    assert stats["protein_skipped"] == 1 and stats["missing"] == 2
     assert cands[0]["license_raw"] == "CC-BY-4.0" and cands[0]["creator"] == "D"
     assert cands[0]["synonyms"] == ["syn"]
+    got, _ = src.reactome_candidates(ff, ids, want=1)
+    assert len(got) == 1  # 够数就停
+
+
+def test_reactome_list_ids_pages_until_empty_and_dedups():
+    def page(*ids):
+        return "".join(f'<a href="/icon/{i}.svg">{i}</a><img src="{i}.svg">' for i in ids).encode()
+
+    ff = FakeFetcher(
+        {
+            src.REACTOME_LIST + "arrow?page=1": page("R-ICO-000010", "R-ICO-000011"),
+            src.REACTOME_LIST + "arrow?page=2": page("R-ICO-000012"),
+            src.REACTOME_LIST + "arrow?page=3": b"<html>no icons</html>",
+            src.REACTOME_LIST + "compound?page=1": page("R-ICO-000011", "R-ICO-000020"),
+        }
+    )
+    ids = src.reactome_list_ids(ff, ("arrow", "compound"))
+    assert ids == ["R-ICO-000010", "R-ICO-000011", "R-ICO-000012", "R-ICO-000020"]
+    assert "protein" not in src.REACTOME_CATEGORIES
+
+
+class _Resp:
+    status = 200
+
+    def __init__(self, data):
+        self._d = data
+
+    def read(self, n=-1):
+        return self._d
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _http_error(code, retry_after=None):
+    import email.message
+    import urllib.error
+
+    h = email.message.Message()
+    if retry_after:
+        h["Retry-After"] = retry_after
+    return urllib.error.HTTPError("https://reactome.org/x", code, "x", h, None)
+
+
+def test_fetcher_backs_off_exponentially_on_429_and_5xx_then_succeeds(tmp_path, monkeypatch):
+    seq = [_http_error(429), _http_error(503), _Resp(b"<svg/>")]
+    monkeypatch.setattr(
+        src.urllib.request,
+        "urlopen",
+        lambda *a, **k: (
+            (_ for _ in ()).throw(seq.pop(0)) if isinstance(seq[0], Exception) else seq.pop(0)
+        ),
+    )
+    sleeps: list[float] = []
+    f = src.Fetcher(tmp_path, delay=0, sleep=sleeps.append)
+    got = f.get("https://reactome.org/icon/R-ICO-000001.svg")
+    assert got is not None and got[0] == b"<svg/>"
+    assert sleeps == [2.0, 4.0]
+    # 成功后落了缓存，再取不联网
+    calls = f.network_calls
+    assert (
+        f.get("https://reactome.org/icon/R-ICO-000001.svg") is not None and f.network_calls == calls
+    )
+
+
+def test_fetcher_gives_up_after_max_retries_without_caching(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise _http_error(500, retry_after="30")
+
+    monkeypatch.setattr(src.urllib.request, "urlopen", boom)
+    sleeps: list[float] = []
+    f = src.Fetcher(tmp_path, delay=0, sleep=sleeps.append)
+    assert f.get("https://reactome.org/icon/R-ICO-000002.svg") is None
+    assert len(sleeps) == src.MAX_RETRIES and sleeps[0] == 30.0  # Retry-After 比退避大就听服务端的
+    assert not list((tmp_path / "http").glob("*.json"))  # 失败不缓存，续跑可再试
+
+
+def test_fetcher_does_not_retry_other_4xx(tmp_path, monkeypatch):
+    n = []
+
+    def forbid(*a, **k):
+        n.append(1)
+        raise _http_error(403)
+
+    monkeypatch.setattr(src.urllib.request, "urlopen", forbid)
+    f = src.Fetcher(tmp_path, delay=0, sleep=lambda s: None)
+    assert f.get("https://reactome.org/icon/x.svg") is None and len(n) == 1
 
 
 def test_reactome_xml_with_doctype_is_rejected():

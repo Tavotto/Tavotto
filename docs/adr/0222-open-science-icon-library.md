@@ -25,8 +25,8 @@ Agent 画机理图的图元分三层：① 部件语法（Tavotto 自己画的�
 ### 一、范围：先接两个库
 
 1. **Bioicons**（聚合源，GitHub 公开仓库）：只取 `cc-0` / `cc-by-3.0` / `cc-by-4.0`；`cc-by-sa-*`、`mit`、`bsd` 一律不收（MIT 项多是品牌标志与图表模板）。
-2. **Reactome Icon Library**：去掉 **Protein 类**（1,431 个蛋白标签图，文字已转曲、改不了名）后约 1,140 个。
-3. NIH BioArt、SciDraw 第二期；Servier 官网、DBCLS 整库、SwissBioPics、Openclipart、Health Icons 不接（理由见调研报告）。
+2. **Reactome Icon Library**：去掉 **Protein 类**（1,431 个蛋白标签图，文字已转曲、改不了名）后约 1,271 个（图库各非蛋白分类页列出的 ID 数，13 + 41 + 242 + 116 + 457 + 69 + 203 + 56 + 74；少数图标也属蛋白类的在取元数据时再排除）。
+3. NIH BioArt、SciDraw 第二期；Servier 官网（**一律不碰**：Servier 的图只走 Bioicons 里的 CC BY 3.0 副本）、DBCLS 整库、SwissBioPics、Openclipart、Health Icons 不接（理由见调研报告）。
 
 ### 二、许可白名单（唯一出处：`scripts/iconlib/iconlib_license.py`）
 
@@ -36,10 +36,17 @@ Agent 画机理图的图元分三层：① 部件语法（Tavotto 自己画的�
 ### 三、取得通道
 
 - Bioicons：只走 `raw.githubusercontent.com` 上的 `static/icons/icons.json`、`authors.json` 与逐个 SVG；**不碰 bioicons.com 与 Servier 官网**。
-- Reactome：`https://reactome.org/icon/R-ICO-xxxxxx.xml`（元数据，先取，按 `category` 排除蛋白）与同名 `.svg`。没有整包下载 / 列表接口，按 ID 顺序探测。
-- 通用：主机白名单（只有这两个主机）、`https` only、体积上限 8 MB、联网请求默认间隔 1 秒、磁盘缓存（命中不联网，404 也缓存，可续跑）、
-  记 `sha256` / `source_url` / `retrieved_at`。下载物是不可信数据：脚本只存字节，只交给 `svgimport` 的受限解析器，缓存目录不得在仓库内（脚本检查并拒绝）。
-- 整包授权（向 Reactome / Servier 写信）未定，见 §十。
+- Reactome：**不暴力扫编号**。编号来自官网自己的分类列表页：`https://reactome.org/icon-lib/<分类>?page=N`（服务端渲染，每页 28 个 `R-ICO-xxxxxx`，翻到某页没有新 ID 为止；
+  2026-11-28 实测 `cell_element` 9 页：8×28 + 18 = 242，与图库页写的个数一致）。分类取 `arrow / background / cell_element / cell_type / compound / human_tissue / receptor / therapeutic / transporter`，
+  **不含 `protein`**。再按 ID 逐个取同名 `https://reactome.org/icon/R-ICO-xxxxxx.xml`（元数据，含 `category`，仍含 protein 的排除）与 `.svg`。
+  全部非蛋白图标约 1,271 个，加分类页约 40 次、元数据与 SVG 各约 1,271 次请求，按下面的限速要跑约 1 小时，可续跑。
+  图库页上写的整包链接（`/icon/icon-lib-svg.tgz`、`/icon/icon-lib-png.tgz`）2026-11-28 实测 404，不能用。
+- Servier：**只用 Bioicons 里的副本**（CC BY 3.0），不访问 smart.servier.com，不发信。
+- **不发信要整包**（维护者 2026-11-28 定）。
+- 通用：主机白名单（只有 `raw.githubusercontent.com` 与 `reactome.org`）、`https` only、体积上限 8 MB、
+  **每个联网请求之间至少间隔 1 秒（≤ 1 请求/秒）**、遇 429 / 5xx / 网络错误**指数退避重试**（2、4、8、16 秒，最多 4 次；服务端给了 `Retry-After` 取较大者，上限 120 秒），其余 4xx 不重试；
+  磁盘缓存（命中不联网，404 也缓存，失败不缓存，可续跑）；记 `sha256` / `source_url` / `retrieved_at`。
+  下载物是不可信数据：脚本只存字节，只交给 `svgimport` 的受限解析器，缓存目录不得在仓库内（脚本检查并拒绝）。
 
 ### 四、出处元数据（每个入库图标一条，`manifest.json`）
 
@@ -72,24 +79,32 @@ Agent 画机理图的图元分三层：① 部件语法（Tavotto 自己画的�
 - 导出元数据里写全每个用到的图标的出处（§四字段）。
 - 拼句函数 `iconlib_attribution.attribution_line(records, lang=…, include_public_domain=…)`：
   CC BY 3.0 带标题（该版本要求）、4.0 标注「是否修改」（`modified`）、同 来源 + 许可 + 创作者 + 是否修改 的合并成一条、CC0 / PD 默认不出句、不在白名单的许可不替它编一句、排序稳定。
-- **界面里怎么给署名由维护者另定**；本 ADR 与第一步实现都不碰界面。运行时消费这些函数时再把脚本里的实现搬进 `src/tavotto/`（现在在 `scripts/` 是因为只服务离线构建）。
+- **界面（维护者 2026-11-28 拍板，下一期做，做之前截图先给维护者看）**：
+  - 导出时出**一枚胶囊**「用了 N 个开源图标，图注里需要署名」+「复制署名」按钮；N 只数需要署名的（CC BY），**CC0 / 公有领域不计、不提示**，全是 CC0 / PD 时不出胶囊。
+  - 署名句按用到的图库自动拼好，同库同许可合并；点「复制署名」复制的就是这句。
+  - 完整出处（§四全部字段）写进导出文件的元数据。
+  - **不往图上自动加字。**
+  - 胶囊文案、位置与既有导出提示的关系，由那一期的 UI 稿定，不在本 ADR 定死。
+- 本期代码只做元数据与拼句函数，**不做界面**。运行时消费这些函数时再把脚本里的实现搬进 `src/tavotto/`（现在在 `scripts/` 是因为只服务离线构建）。
 
 ### 八、分发
 
 - **公开 CDN、按需下载**：安装包只带索引（估计 1–2 MB，未实测），图标本体在首次预览 / 插入时下载并缓存；Agent 搜图只读索引。
 - **不放进 `/pro`、不加密、不做授权校验**（CC BY 的「不得用技术措施限制他人」）。图库对用户免费。
-- 体积是估算（Servier 1373 个 × 约 25 KB；Reactome 约 1140 个 × 约 8 KB；规范化 + gzip 后合计约 10–20 MB），要等规范化稳定后实测。
+- 体积是估算（Servier 1373 个 × 约 25 KB；Reactome 约 1271 个 × 约 8 KB；规范化 + gzip 后合计约 10–20 MB），要等规范化稳定后实测。
 - 许可方要求撤图时可以按 `id` 下架（CDN 删文件 + 索引去条目），不需要发版。
 
 ### 九、维护者 2026-11-28 拍板
 
 1. **先接 Bioicons（只取 CC0 / CC BY 3.0 / CC BY 4.0）+ Reactome（去掉 Protein 类 1,431 个蛋白标签图）；BioArt / SciDraw 第二期。**
-2. **图库免费、走公开 CDN、不进 `/pro`**（与 CC BY 不得技术限制一致）。写信要整包、署名在界面怎么给：**先不碰**；署名先只做「导出元数据里写全出处 + 拼署名句的函数」。
+2. **图库免费、走公开 CDN、不进 `/pro`**（与 CC BY 不得技术限制一致）。
+3. **不写信要整包**：Reactome 按编号限速逐个取，Servier 只走 Bioicons 副本、不碰官网。
+4. **署名界面**：导出时一枚胶囊 + 「复制署名」，不往图上加字，CC0 / PD 不提示（§七；界面下一期做，截图先给维护者看）。
 
 ### 十、待定项（未拍板，实现里不替维护者决定）
 
-- 是否向 Servier / Reactome / NIAID 写信要整包授权（Reactome 许可页第 4 条赔偿条款、BioArt 的「integrity」倡议语气要不要法务看）。
-- 署名在界面怎么给、署名行折叠方案。
+- Reactome 许可页第 4 条赔偿条款、BioArt（第二期）的「integrity」倡议语气，要不要法务看。
+- 署名胶囊的具体文案与位置（下一期 UI 稿）。
 - 体积闸门阈值；`pathquality` 判据对图库图标怎么用（见 §十一）；是否加一步「合并重合锚点 / 去零长段」的修复。
 - 一张机理图是否限制取自同一个库（画风一致）。
 - 渐变在期刊色盲 / CMYK 检查里怎么处理。
@@ -102,10 +117,10 @@ Agent 画机理图的图元分三层：① 部件语法（Tavotto 自己画的�
 
 - **Bioicons**：按等距抽样 20 个（索引 2804 条，白名单后 2723）→ 入库 13、预检拒收 7（`css_selector` 2、`unsupported_element` 1、`too_big` 4）。
   拒收的 4 个 `too_big` 是 DBCLS / Servier / Plasmodium 的照片级大图（175–556 KB）。
-- **Reactome**：从 `R-ICO-013000` 起顺序探测 26 个、全部存在、6 个蛋白被排除，取 20 个候选 → 入库 11、拒收 9（`css_selector` 8、`too_big` 1）。
-  8 个 `css_selector` 是同一原因：Figma 导出的 `<mask style="mask-type:luminance">`，`svgcheck` 把这条内联样式判为不安全并整张拒收（且这些图本来就用了 `mask`，`svgimport` 也不支持）。
-  **样本是连续 ID 段，偏向同一批设计者，不代表整库通过率。**
-- **质量核对**（入库 24 个）：clean 7、fail 17；问题码计数 `extremum_off_anchor` 1028、`zero_length_segment` 243、`not_really_closed` 136、`too_many_anchors` 94、`coincident_anchors` 3。
+- **Reactome**：先按分类列表页枚举出 1,271 个非蛋白 ID，再等距抽 30 个、取元数据到 20 个候选 → 入库 10、拒收 10（`css_selector` 9、`too_big` 1）。
+  9 个 `css_selector` 同一原因：Figma 导出的 `<mask style="mask-type:luminance">`，`svgcheck` 把这条内联样式判为不安全并整张拒收（且这些图本来就用了 `mask`，`svgimport` 也不支持）。
+  （第一次用连续 ID 段探测的结果是 11/20，同一个原因占 8 个。）**Reactome 约一半的图会因蒙版被预检挡掉**，是否值得为它们在规范化阶段做「去蒙版」留给后续。
+- **质量核对**（第一次运行入库 24 个）：clean 7、fail 17；问题码计数 `extremum_off_anchor` 1028、`zero_length_segment` 243、`not_really_closed` 136、`too_many_anchors` 94、`coincident_anchors` 3。
   例：Servier `sun` 86 路径里 65 条 fail（103 处零长段）。**结论：描摹出来的图库图标普遍有零长段 / 锚点不落极值，若按「有任何 fail 路径就拒」几乎全拒；
   本期只记录。**
 - 样本量小（每库 20），通过率只能说明形状，不能外推到整库。
