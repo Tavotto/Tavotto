@@ -172,6 +172,7 @@ export function NoteList({
   onRemove,
   onOverall,
   error,
+  disabled = false,
 }: {
   notes: PlanNote[]
   onOpenNote: (n: PlanNote) => void
@@ -179,6 +180,8 @@ export function NoteList({
   onOverall: () => void
   /** 上一次重改没成的那一句灰字 */
   error?: string
+  /** 重改进行中：舞台上没有可锚批注框的图，「整体批注」与点一条去改先不接（删除照旧） */
+  disabled?: boolean
 }) {
   useTranslation('ai')
   return (
@@ -195,6 +198,7 @@ export function NoteList({
                   type="button"
                   data-change-plan-note={n.id}
                   title={cp('dialog.noteEdit')}
+                  disabled={disabled}
                   onClick={() => onOpenNote(n)}
                   className="-mx-2 flex w-[calc(100%+1rem)] items-start gap-2.5 rounded-lg px-2 py-2.5 pr-9 text-left outline-none transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring"
                 >
@@ -224,7 +228,7 @@ export function NoteList({
         </p>
       )}
       <div className="shrink-0 border-t border-border px-4 py-2">
-        <Button variant="ghost" size="sm" className="-ml-2.5" onClick={onOverall} data-change-plan-note-overall>
+        <Button variant="ghost" size="sm" className="-ml-2.5" onClick={onOverall} disabled={disabled} data-change-plan-note-overall>
           <Pencil size={ICON_SIZE.sm} aria-hidden />
           {cp('dialog.noteOverall')}
         </Button>

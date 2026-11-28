@@ -565,7 +565,7 @@ export function CompareStage({
           <>
             {cp('dialog.hold')}
             <Kbd className="inset-ring inset-ring-border">{cp('dialog.space')}</Kbd>
-            {cp('dialog.holdBefore')}
+            {labels ? cp('dialog.holdSee', { label: labels.before }) : cp('dialog.holdBefore')}
           </>
         )}
       </p>

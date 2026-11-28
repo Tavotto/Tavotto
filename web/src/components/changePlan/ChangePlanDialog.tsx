@@ -130,9 +130,11 @@ export function ChangePlanDialog() {
     }
     return undefined
   }
-  const stageGroups = prevRec ? chosen.map((g) => ({ ...g, boxes: g.boxes.map((b) => ({ ...b, before: prevBoxOf(b.gid) ?? b.before })) })) : chosen
-  const stageBefore = prevRec?.afterSrc ?? entry.beforeSrc
-  const stageLabels = prevRec ? { before: cp('dialog.versionN', { n: current - 1 }), after: cp('dialog.versionN', { n: current }) } : undefined
+  // 一组都没勾 =「修改后」就是原图：两边都按原图说，不拿上一版对原图
+  const cmpPrev = chosen.length > 0 ? prevRec : undefined
+  const stageGroups = cmpPrev ? chosen.map((g) => ({ ...g, boxes: g.boxes.map((b) => ({ ...b, before: prevBoxOf(b.gid) ?? b.before })) })) : chosen
+  const stageBefore = cmpPrev?.afterSrc ?? entry.beforeSrc
+  const stageLabels = cmpPrev ? { before: cp('dialog.versionN', { n: current - 1 }), after: cp('dialog.versionN', { n: current }) } : undefined
   const canApply = status === 'ready' && (script ? !entry.scriptBusy : chosen.length > 0 && !entry.vector?.busy && !entry.vector?.failed)
   // 答了「不改」的组不在清单里，但仍是没勾选的组：按方案的全部组数判「部分」，出图才不带上它
   const partial = !script && chosen.length < (entry.plan?.groups.length ?? groups.length)
@@ -350,6 +352,8 @@ export function ChangePlanDialog() {
           {annotating ? (
             <NoteList
               notes={notes}
+              // 重改进行中舞台是「正在作图」：没有可以锚批注框的图，列表里的「整体批注」/ 点一条去改先不接
+              disabled={revising}
               onOpenNote={edit}
               onRemove={(id) => store().removeNote(entry.key, id)}
               onOverall={() => setEditing({ target: { anchor: { kind: 'overall' }, label: cp('dialog.noteOverallLabel') } })}

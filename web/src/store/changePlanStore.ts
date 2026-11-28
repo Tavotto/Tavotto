@@ -22,6 +22,9 @@ import { effectiveOverride } from '@/lib/effectiveOverride'
 import { writeChangePlanCache } from '@/lib/changePlanSwitch'
 import type { ChangeGroup } from '@/lib/vectorChanges'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
+import { isCanvasCovered } from './canvasCover'
+import { hasActiveGesture } from './gestureCoordinator'
+import { useInteractionStore } from './interactionStore'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
 import type { PanelObject, PanelOverride } from '@/types/document'
@@ -454,7 +457,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
 
   /**
    * 「再改一版」的新版到手时撤回上一版的应用：与 `undo` 同一判据（还是我们写的那份、历史栈顶还是那次 commit），
-   * 另外用户正拖到一半（文档事务开着）也不撤——撤回会先收掉那一笔手势、再撤掉的就是它了。撤回了 / 本来就已撤回 = true。
+   * 另外用户正拖到一半（文档事务开着 / 有进行中的手势或交互）或画布被盖住时也不撤——撤回入口（`runUndoRedo`）会先收掉那一笔手势、
+   * 再撤掉的就是它了，或者干脆不做。撤回了 / 本来就已撤回 = true。
    */
   const undoForRevise = (key: string): boolean => {
     const e = get().entries[key]
@@ -462,7 +466,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     if (!e || !panel || !e.plan) return false
     // 等的这段时间里用户自己点了「撤销」：图已经回到改前，没有要撤的
     if (samePatches(panel.overrides, e.plan.base_patches)) return true
-    if (useDocumentStore.getState().txn || !canUndoApplied(e, panel.overrides)) return false
+    if (useDocumentStore.getState().txn || hasActiveGesture() || isCanvasCovered() || useInteractionStore.getState().kind !== 'none') return false
+    if (!canUndoApplied(e, panel.overrides)) return false
     return get().undo(key)
   }
 
@@ -1029,8 +1034,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (e.status === 'applied') {
         // 已应用的卡批注重改：此刻就撤不回（之后又改过这张图）= 不发请求、什么都不动，免得白等一版。
         // 撤得回也**先不撤**：图保持已应用，新版拿到时才撤回这一次（`poll` 的 revise 分支），没拿到就什么都不丢
+        // 用户已经自己撤回了（卡片「撤销」/ ⌘Z，存着的状态仍是 applied）：图就是原图，照常发
         const panel = panelOf(e)
-        if (!panel || !canUndoApplied(e, panel.overrides)) {
+        if (!panel || (!canUndoApplied(e, panel.overrides) && !(e.plan && samePatches(panel.overrides, e.plan.base_patches)))) {
           patch(key, { reviseError: { code: REVISE_UNDO_BLOCKED } })
           return 'failed'
         }

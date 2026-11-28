@@ -716,3 +716,20 @@ it('第 2 版起：左侧的改动框按上一版里的位置画（上一版元�
   expect(boxes[0].style.width).toBe('30%')
 })
 
+it('第 2 版一组都没勾：「修改后」就是原图，左侧也回到原图、标「修改前 / 修改后」', () => {
+  status(PRO)
+  put(entry({ planId: 'p2', plan: plan('p2', 2), beforeSrc: '/p2-b.png', afterSrc: '/p2-a.png', unchecked: { g1: true }, versions: [ver('p1', 1), ver('p2', 2)] }))
+  render()
+  const imgs = qa('[data-change-plan-stage] img').map((i) => i.getAttribute('src'))
+  expect(imgs).toEqual(['/p2-b.png', '/p2-b.png'])
+  expect(q('[data-change-plan-stage]')!.textContent).toContain('修改前')
+})
+
+it('重改进行中：右栏「整体批注」先不接（舞台上没有图可锚批注框）', () => {
+  status(PRO)
+  put(entry({ revising: 'p2' }))
+  act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
+  render()
+  expect(q('[data-change-plan-note-overall]')!.hasAttribute('disabled')).toBe(true)
+})
+

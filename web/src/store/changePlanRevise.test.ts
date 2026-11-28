@@ -302,6 +302,20 @@ describe('已应用的卡按批注重改', () => {
     ds().endTxn()
   })
 
+  it('用户先自己撤销了（存着的状态仍是已应用）再点「按批注重改」：照常发，新版到手直接是待确认', async () => {
+    const key = await appliedWithNote()
+    expect(cps().undo(key)).toBe(true)
+    ds().commit(literal('别的修改'), (d) => {
+      d.objects[0].x = 3
+    })
+    getChangePlan.mockResolvedValue(ready(V2))
+    expect(await cps().revise(key)).toBe('started')
+    await tick()
+    expect(cps().entries[key].planId).toBe('p2')
+    expect(cps().entries[key].notice).toBeUndefined()
+    expect(statusNow(key)).toBe('ready')
+  })
+
   it('点按钮那一刻就撤不回：不发请求、什么都不动，一句「没法替你撤回」', async () => {
     const key = await appliedWithNote()
     ds().commit(literal('别的修改'), (d) => {
