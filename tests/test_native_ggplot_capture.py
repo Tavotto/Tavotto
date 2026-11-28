@@ -3482,12 +3482,13 @@ stopifnot(identical(element(empty_scene, tick_gid)$bbox, as.list(c(-1, -1, 0, 0)
 empty$axes_0$xlim <- c(1900, 2100)
 stopifnot(grepl(">2000.00</text>", adapter$render_ggplot(state, empty), fixed = TRUE))
 
-# An authored logarithmic scale also accepts explicit positions in data units.
+# An authored logarithmic scale exposes both interval and explicit positions in data units.
 authored <- adapter$capture_ggplot(ggplot2::ggplot(data.frame(x = c(1, 10, 100), y = 1:3),
   ggplot2::aes(x, y)) + ggplot2::geom_point() + ggplot2::scale_x_log10() +
   ggplot2::coord_cartesian(xlim = c(1, 100), expand = FALSE), frame)
 authored_manifest <- adapter$ggplot_manifest(authored$state, "authored")
-stopifnot(identical(field(authored_manifest, "major_mode")$options, list("auto", "fixed")),
+stopifnot(identical(field(authored_manifest, "major_mode")$options, list("auto", "step", "fixed")),
+          isTRUE(all.equal(field(authored_manifest, "major_step")$value, (100 - 1) / 5)),
           identical(field(authored_manifest, "major_values")$value, list(1, 10, 100)))
 authored_fixed <- stats::setNames(list(list(major_values = list(3), format = "%.1f")), tick_gid)
 stopifnot(grepl(">3.0</text>", adapter$render_ggplot(authored$state, authored_fixed), fixed = TRUE))
