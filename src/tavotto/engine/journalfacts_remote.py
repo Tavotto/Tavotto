@@ -550,6 +550,18 @@ def _cached_journal(jid: str) -> tuple[dict | None, dict | None]:
         con.close()
 
 
+def cached_bundle(jid: str) -> tuple[int, dict] | None:
+    """本机已缓存且验过的 v2 刊包 `(catalog_rev, bundle)`；没有 / 缓存读不了 = None。**只读本机，不联网**
+    （Agent 提交期刊线索要取「目录现值」，ADR 0213 §三）。"""
+    try:
+        index, bundle = _cached_journal(jid)
+    except FactsError:
+        return None
+    if index is None or bundle is None:
+        return None
+    return int(index["catalog_rev"]), bundle
+
+
 def _token_call(base: str, route: str, cap: int) -> bytes:
     if journalremote.disabled():
         raise FactsError("offline")

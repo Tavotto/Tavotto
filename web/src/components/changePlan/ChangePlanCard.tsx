@@ -1,8 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { DATA_DECLINED, canUndoApplied, declinedGroups, isCanvasPlan, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, canUndoApplied, declinedGroups, isCanvasPlan, isTodoPlan, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
+import { Markdown } from '../ai/Markdown'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Check, Lock, Pencil, RefreshCw } from '../ui/icons'
@@ -15,6 +16,7 @@ import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { formatAxisLimit } from '@/lib/logPower'
 import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, useChangePlanAccess, vectorCannotApply, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, sketchStageOf, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
+import { SuggestionCard } from './SuggestionCard'
 import { GraphPaper, PlotSketch } from './PlotSketch'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
@@ -54,6 +56,9 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const access = useChangePlanAccess()
   const reviseEntry = access.visible && canRevise(entry)
 
+  // 助手来源的建议：待办卡（ADR 0214）；回答只有一段话（`answered`）时不出卡
+  if (status === 'answered') return null
+  if (isTodoPlan(entry) && (status === 'ready' || status === 'applied' || status === 'stale')) return <SuggestionCard entry={entry} latest={latest} />
   if (status === 'failed') return <FailedCard entry={entry} />
   // 助手来源，整条指令都要改脚本：这里只留一行灰字，接着由改脚本那一轮自己说话
   if (status === 'handoff') {
@@ -305,7 +310,14 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">
         <span className="text-base font-medium text-ink">{cp('card.title')}</span>
-        <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params, assistant)}</p>
+        {/* Agent 没改脚本、但回了话：显示它的话（ADR 0214），不只说「Agent 没有改动脚本」 */}
+        {code === 'change_plan_script_no_change' && typeof entry.failure?.params?.agent_reply === 'string' && entry.failure.params.agent_reply ? (
+          <div data-change-plan-agent-reply>
+            <Markdown text={entry.failure.params.agent_reply} />
+          </div>
+        ) : (
+          <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params, assistant)}</p>
+        )}
         {entry.notice === 'restore_failed' && (
           <p className="text-xs text-ink-3" data-change-plan-notice="restore_failed">
             {cp('card.restoreFailed')}

@@ -696,11 +696,13 @@ def test_propose_xlsx_sheet_choice(project):
 @needs_worker
 def test_answers_continue_the_flow_and_unsure_takes_the_conservative_default(project):
     m, client, figs, _ = project
-    rows = [["time_s", "arm", "subject_id", "signal"]]
+    # 两个都像测量的数值列（`signal` / `drift`）：测的是哪一个只能问。时间列 `time_s` 自 2026-11-27 起凭取值结构就认得出是横轴（ADR 0178「条件列与测量列」），不再参与这道题
+    rows = [["time_s", "arm", "subject_id", "signal", "drift"]]
     for a in ("a", "b"):
         for u in range(1, 4):
             for t in range(1, 6):
-                rows.append([t, a, f"u{u}", round(t * (1 + (a == "b") * 0.5) + u * 0.2, 3)])
+                v = round(t * (1 + (a == "b") * 0.5) + u * 0.2, 3)
+                rows.append([t, a, f"u{u}", v, round(7.31 - v * 0.37 + u * 0.11, 3)])
     put(figs, "data/t.csv", rows)
     first = propose(client).get_json()
     assert first["kind"] == "ask" and first["question_code"] == "pick_value"

@@ -195,3 +195,90 @@ def test_non_eviction_shutdown_is_not_marked_evicted_and_not_retried(project, mo
     with pytest.raises(pool.WorkerError):
         app_mod._engine_attempt("id", _Stub(), "S", action)
     assert len(calls) == 1 and not fetched
+
+
+# ---- 忙的会话不被 LRU 收（4 张图同时冷启动、上限 3 时用户看到「会话刚被收掉」的根因）----
+#
+# 租约只盖「取到会话 → 第一条请求拿到锁」。请求一开始租约就清零：build 跑好几秒期间、
+# 以及一次渲染里 build → override 两条请求之间，会话是「最久未用」的 LRU 候选，被第 4 个 `acquire` 收掉；
+# 调用方被迫重取，重取又淘汰别的，`_engine_attempt` 只重试一次，第二次还撞上就把错抛给用户。
+
+SLOW_SCRIPT = """\
+import time
+
+import matplotlib.pyplot as plt
+
+def main():
+    time.sleep(2.0)
+    fig, ax = plt.subplots(figsize=(2, 1.5))
+    ax.plot([0, 1], [0, 1])
+    fig.savefig("Fig.pdf")
+"""
+
+
+def test_session_building_is_not_evicted_by_a_fourth_acquire(project, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(pool, "MAX_ALIVE", 3)
+    (project / "f0.py").write_text(SLOW_SCRIPT, encoding="utf-8")
+    first = pool.get("f0.py", str(project), "main")
+    outcome: dict = {}
+
+    def build():
+        try:
+            first.ensure_built()
+            outcome["ok"] = True
+        except pool.WorkerError as exc:
+            outcome["err"] = exc
+
+    thread = threading.Thread(target=build)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 30
+        while not first.lock.locked() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert first.lock.locked(), "build 没有开始"
+        assert first._lease_until == 0.0  # 租约已随第一条请求结束：只剩「忙」这一道保护
+        rest = [pool.get(f"f{i}.py", str(project), "main") for i in (1, 2, 3)]
+        assert not first._evicted  # 正在 build 的是最久未用的那条，但它不是闲置的
+        assert not any(w._evicted for w in rest)
+    finally:
+        thread.join(60)
+    assert outcome.get("ok") is True, outcome
+
+
+def test_session_between_two_requests_of_one_attempt_is_not_evicted(project, monkeypatch):
+    """build → override 两条请求之间不是闲置：整次 `_engine_attempt` 里会话都被握着。"""
+    monkeypatch.setattr(pool, "MAX_ALIVE", 3)
+    first = pool.get("f0.py", str(project), "main")
+    app_mod, fetched = _attempt_rig(monkeypatch)
+
+    def no_refetch(rel_id, **kw):  # 会话被收掉后靠重取兜底 = 本测要杜绝的路径
+        raise AssertionError("会话在一次尝试中途被淘汰，调用方被迫重取")
+
+    monkeypatch.setattr(app_mod, "_engine_worker", no_refetch)
+
+    def action(worker, stem):
+        worker.request({"cmd": "ping"}, 30)  # 第一条请求：租约结束，last_used 此后不再是最新
+        for i in (
+            1,
+            2,
+            3,
+        ):  # 其它三张图在两条请求之间取会话：第 4 个会把「最久未用」的 first 当候选
+            pool.get(f"f{i}.py", str(project), "main")
+        worker.request({"cmd": "ping"}, 30)  # 第二条请求
+        return {"ok": True}
+
+    _, _, result = app_mod._engine_attempt("id", first, "S", action)
+    assert result == {"ok": True}
+    assert not first._evicted
+
+
+def test_evicted_message_is_a_plain_sentence(project):
+    w = pool.get("f0.py", str(project), "main")
+    w._evicted = True
+    w.shutdown()
+    with pytest.raises(pool.WorkerError) as caught:
+        w.ensure_built()
+    text = str(caught.value)
+    assert "会话" not in text and "上限" not in text and "取会话" not in text

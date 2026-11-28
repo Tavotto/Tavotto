@@ -110,8 +110,10 @@ def test_only_the_first_data_set_is_read_for_amp_and_target_forms(tmp_path):
 
 def test_a_file_without_any_directive_falls_back_to_the_existing_no_header_rule(tmp_path):
     t = read(write(tmp_path, "plain.xvg", "# just data\n0 1 2\n1 2 3\n2 3 4\n"))
-    assert t.status == "unsure", "与没有表头的 .txt 同一条兜底：猜第一行当表头、请用户确认"
-    assert t.summary.columns == ["0", "1", "2"]
+    assert t.status == "unsure", "与没有表头的 .txt 同一条兜底：仍是「猜的」、请用户确认"
+    # 2026-11-27 起「没有表头」的兜底不再把第一行数据当列名：整行都是数值 → 列名 col1…、第一行算数据（ADR 0178 修订·读脏表之三）
+    assert t.summary.columns == ["col1", "col2", "col3"]
+    assert t.summary.rows[0] == ["0", "1", "2"]
 
 
 def test_windows_line_endings_give_the_same_table(tmp_path):

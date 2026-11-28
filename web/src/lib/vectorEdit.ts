@@ -82,9 +82,9 @@ export function hasEdits(r: VectorEditResult): boolean {
   return (r.objects?.length ?? 0) > 0 || (r.deleted?.length ?? 0) > 0 || !!r.reordered
 }
 
-/** 方案点名的对象 id：改后的（含新生成的）与被删的 */
+/** 方案点名的对象 id：改后的（含新生成的）、被删的，以及新对象的位置所依据的子图（`depends_on`：它们被挪过 = 新对象会落错地方） */
 export function namedIds(r: VectorEditResult): string[] {
-  return [...new Set([...(r.objects ?? []).map((o) => o.id), ...(r.deleted ?? []), ...(r.changes ?? []).map((c) => c.id)])]
+  return [...new Set([...(r.objects ?? []).map((o) => o.id), ...(r.deleted ?? []), ...(r.changes ?? []).map((c) => c.id), ...(r.changes ?? []).flatMap((c) => c.depends_on ?? [])])]
 }
 
 /** 把 `ids` 里属于 `among` 的按原顺序取出来（对象顺序的比较只看双方都认得的那些，别处新加的对象不碍事） */

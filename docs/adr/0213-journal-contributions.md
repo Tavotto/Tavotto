@@ -100,6 +100,8 @@ v1 条目的线索在二期仍全部人工。
 - **署名**：发送框里加一个默认不勾的「在出处卡上写上我的名字」和称呼框。勾了，入库时在该条出处上记 `thanks`（schema 扩展到时另行修订 ADR 0155，过 `validate_catalog`）。出处卡显示一行灰字「线索来自 <称呼>」。
 - **Agent 工具** `tavotto_report_journal_issue`：两步调用，与 0205 同一套 `explicit_confirm`。第一次只回将要发送的内容 + `next = ask_user(...)`，用户明确同意后才发。
   只在期刊库开关（`JOURNAL_CATALOG_AGENTS`）与「联系作者」都开着时进 `tools/list`；不进 `usage.TOOLS` 遥测闭集，走 `other`。
+  **已实现（2026-11-27）**：第二次调用要带 `explicit_confirm=true` 和第一次回包里的 `send_token`（净化后的内容摘要；不叫 confirm_token，那个名字留给 ADR 0127 只能由用户点击产生的运行确认，内容变了令牌失效）；
+  `current` 与 `catalog` 版本由工具读本机目录，不收数值；`TAVOTTO_NO_JOURNAL_SYNC=1` 时同样不出现。细则 `docs/rules/plugin/journal-report.md`。
 - **原文巡检常态化**：定期重抓已收录出处，sha 变了就进同一个 triage 队列（分类 `value_changed`），和用户线索一起排。用户线索是补充，不是主力。
 
 ### 五、开关与兜底

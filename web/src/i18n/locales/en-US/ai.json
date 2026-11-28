@@ -800,7 +800,11 @@
     "confirm": {
       "title": "Needs your confirmation",
       "join": ", ",
-      "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
+      "short": {
+        "sd": "SD",
+        "sem": "SEM",
+        "ci95": "95% CI"
+      },
       "error": "Error bars",
       "errorBand": "Error band",
       "design": "Repeated measures",
@@ -985,6 +989,29 @@
       "generatingVector": "Changing the selected objects…",
       "vectorKernel": "This computer is missing a component, so merging, offsetting and outlining can’t be done here. Nothing was changed"
     },
+    "todo": {
+      "title": "Suggestions",
+      "apply_one": "Make this {{count}} change",
+      "apply_other": "Make these {{count}} changes",
+      "none": "Nothing ticked",
+      "compare": "Compare",
+      "count_one": "{{count}} item",
+      "count_other": "{{count}} items",
+      "scriptTag": "Edits script",
+      "scriptTip": "These edit the figure's Python script. It's backed up first and can be undone",
+      "done_one": "Made {{count}} suggested change",
+      "done_other": "Made {{count}} suggested changes",
+      "skipped": "Left alone: {{items}}",
+      "failed": "“{{item}}” wasn’t done: {{reason}}",
+      "listLabel": "Suggested to-dos",
+      "runningN": "Making changes {{done}}/{{total}}…",
+      "added": "New",
+      "add": "Add another…",
+      "addPlaceholder": "e.g. remove the legend frame",
+      "addFailed": "Couldn't add that one. Try again",
+      "toTodos": "Turn into to-dos",
+      "pickJournal": "Pick a journal"
+    },
     "dialog": {
       "title": "Change plan",
       "compareLabel": "Compare mode",
@@ -1071,6 +1098,9 @@
       "no_effect": "No visible difference; left alone this time",
       "not_addressed": "This one wasn't handled",
       "merged_log": "Its range was folded into the log-axis change",
+      "hides_data": "That would hide part of the data, so nothing changed",
+      "size_locked": "The figure size follows the journal column width, so nothing changed",
+      "dense_curve": "This is a continuous curve; a marker on every point would blur it, so nothing changed",
       "unclearAssistant": "The request wasn't specific enough, so nothing changed",
       "log_limit_declined": "Log axis limit left as it was; this one wasn't changed",
       "vector": {

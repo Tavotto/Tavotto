@@ -64,10 +64,10 @@
 
 ### L-064 后台线程投递的用例，reset 要 join，复现要拖宽窗口
 - 类: 照这样
-- 触发: src/tavotto/engine/pool.py, tests/test_thread_leak_gate.py
-- Seen: 2026-09-20
-- 为什么: 线程在 fixture teardown 与 monkeypatch 撤销后才投递，调用到真函数；空闲机器量不到，CI 每个 session 漏一条。
-- 证据: #440
+- 触发: src/tavotto/engine/pool.py, tests/test_thread_leak_gate.py, src/tavotto/engine/ai_bridge.py, tests/test_msix_migrate.py
+- Seen: 2026-09-20, 2026-11-27
+- 为什么: 线程在 fixture teardown 与 monkeypatch 撤销后才投递，调用到真函数；空闲机器量不到，CI 每个 session 漏一条。11-27 前面用例留下的 AI 心跳线程按全局路径建库，Windows 合并组红；夹具开头先停掉进程级后台线程。
+- 证据: #440, #2319
 
 ### L-066 .part 搬正式名失败时，先查正式名上是否已有校验合格的副本
 - 类: 照这样
@@ -202,9 +202,4 @@
 - 为什么: 导出快照存储满额只断言「拒绝新增、旧字节不动」，同一次运行里每次编辑都算 current、永远不判旧，写满后 SVG 导出一直卡死，一份用户反馈才暴露；补回收时评审又报 3 条 P1：并发提交的新引用、目录枚举失败、迁移中断的旧版本文件，都让引用集合看似完整却漏项，会删掉仍被引用的快照。写满用例断言用户还能导出；扫描任一处失败、或与提交不互斥，就整轮不删。
 - 证据: #2166
 
-### L-181 矢量核对量画出来的面，「改前就有」的豁免带上位置并按补丁后状态重判
-- 类: 别这样
-- 触发: src/tavotto/engine/vectorcheck.py, src/tavotto/engine/vectoredit.py, src/tavotto/engine/vectorscene.py, tests/test_vectorcheck.py
-- Seen: 2026-11-25, 2026-11-26
-- 为什么: 求解只量箭头中心线、多行文字按一行高，旋转后不换算锚点、不看 Bézier 手柄，出页与遮挡都检不出；「改前就有」的降级只比检查项和对象、不比位置，从另一侧出页也被放过；锚点移走后仍沿用旧的遮挡余量。三个 PR 共六条 P1。夹具带线宽、箭头头、旋转、手柄与多行文字，豁免对比位置并在补丁落地后重算。
-- 证据: #2201, #2220, #2254
+### L-181 矢量核对量画出来的面，「改前就有」的豁免带上位置并按补丁后状态重判 → docs/rules/backend/ai-agent-bridge.md

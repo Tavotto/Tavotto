@@ -11,11 +11,13 @@ import {
   undoChangePlanScript,
   type ChangePlan,
   type ChangePlanGroup,
+  type ChangePlanTodo,
   type ChangePlanPatch,
   type VectorEditResult,
   type ReviewAnchor,
   type ReviewComment,
 } from '@/lib/api'
+import { currentStandard } from '@/lib/changePlanStandard'
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { applyGroups, canonicalPatches, effectiveStatus, samePatches, toOverrides, type PlanSource } from '@/lib/changePlanApply'
 import { effectiveOverride } from '@/lib/effectiveOverride'
@@ -31,6 +33,7 @@ import type { PanelObject, PanelOverride } from '@/types/document'
 import { currentRunSelection, newRequestId, useAiStore, type AiScope } from './aiStore'
 import { scriptHandoffPrompt } from '@/lib/assistantScriptContext'
 import { MAX_ASSISTANT_INSTRUCTION } from '@/lib/assistantPlanRoute'
+import type { PreviousTurn } from '@/lib/previousTurn'
 import { exactPanelManifest, useRenderStore } from './renderStore'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
@@ -46,7 +49,10 @@ import { requestRender } from './renderScheduler'
  * - 按「项目 + 图」分键：条目带发起时的 `pj` 与面板对象 id；换项目整表清空并作废在途轮询（项目代际，`lib/projectEpoch`）。
  * - 应用前核基线：这张图此刻的 override（规范化）≠ 方案的 `base_patches` → 卡片转 stale，**不写**。
  */
-export type PlanStatus = 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff'
+/**
+ * `answered` = 助手只给了一段回答（建议类的问话、没有可勾的待办，ADR 0214）：回答画成助手正文，不出方案卡。
+ */
+export type PlanStatus = 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff' | 'answered'
 
 export interface PlanFailure {
   /** 后端的稳定码（`change_plan_*`），或本地的 `change_plan_poll_timeout` */
@@ -70,6 +76,10 @@ export interface PlanRequest {
    * 意见原文由后端取自存档、请求里不带文字
    */
   scriptFrom?: { plan_id: string; comment_ids: string[] }
+  /** 助手来源（ADR 0214 §二）：本图对话的上一轮，发给后端当数据块；脚本方案不带 */
+  previousTurn?: PreviousTurn
+  /** `todos`：回答下方的按钮「把这些建议写成待办」——不带用户的话，用 `previousTurn`（那段回答）让模型整理成待办（ADR 0214） */
+  intent?: 'todos'
   /** 卡上 / 气泡里显示的原话（发给后端的 `instruction` 可能带了「图内已改好的部分」交接说明；缺省 = `instruction`） */
   display?: string
 }
@@ -253,7 +263,93 @@ export interface PlanEntry {
   resolveFailed?: boolean
   /** 回复草稿：意见 id → 用户改过的文字；null = 已发送（不再出草稿框） */
   drafts: Record<string, string | null>
+  /** 建议待办卡（ADR 0214）：被取消勾选的脚本待办（待办 key → true）；图内待办的勾选就是 `unchecked[group_key]`，卡片与弹窗是同一份 */
+  todoOff?: Record<string, boolean>
+  /** 建议待办卡点了「改这 N 项」之后的记录：哪些待办已一次 commit 应用 / 交给了脚本方案，以及那张脚本方案卡 */
+  todoRun?: TodoRun
+  /** 脚本方案卡是哪张建议卡「改这 N 项」自动续出来的（卡上不单画，出问题 / 要回答时才露面） */
+  todoOf?: string
+  /** 这张脚本方案卡已经自动应用过一次（不再自动第二次：失败了留给用户） */
+  autoApplied?: boolean
+  /** 回答（`answered`）下方「把这些建议写成待办」已经点过：它出的那张待办卡的键（按钮不再出现） */
+  todosKey?: string
+  /** 待办卡上「再加一条」在途：新一版的方案 id（请求还没回时是空串）与用户写的那句话 */
+  adding?: string
+  addingText?: string
+  /** 上一次「再加一条」没成（稳定码；下一次动作清掉） */
+  addError?: PlanFailure
 }
+
+/** 「改这 N 项」的执行记录 */
+export interface TodoRun {
+  /** 一次 commit 应用了的图内待办（待办 key） */
+  figure: string[]
+  /** 要交给脚本方案的待办（待办 key，按卡上的顺序一条一条做）；排在后面还没开始的可以被取消勾选跳过 */
+  script: string[]
+  /** 已经开始做的脚本待办：待办 key + 它那张脚本方案卡的键 */
+  scripts: { todo: string; key: string }[]
+  /** 正在发起下一条脚本方案的请求（防重入） */
+  starting?: boolean
+}
+
+/** 方案里的待办（没有 = 普通方案） */
+export const todosOf = (e: Pick<PlanEntry, 'plan'>): ChangePlanTodo[] => e.plan?.todos ?? []
+
+/** 助手来源的建议待办卡：有待办的图内方案 */
+export const isTodoPlan = (e: Pick<PlanEntry, 'from' | 'kind' | 'plan'>): boolean => e.from === 'assistant' && e.kind !== 'layout' && e.plan?.kind !== 'script' && todosOf(e).length > 0
+
+/** 这条待办现在是不是勾着（图内待办 = 它那一组没被取消勾选；脚本待办看 `todoOff`） */
+export function todoChecked(e: Pick<PlanEntry, 'unchecked' | 'todoOff'>, t: ChangePlanTodo): boolean {
+  return t.kind === 'figure' ? !(t.group_key && e.unchecked[t.group_key]) : !e.todoOff?.[t.key]
+}
+
+/** 图内那次应用此刻还在文档里（以文档为准，同卡片的有效状态） */
+function figureStillApplied(e: PlanEntry): boolean {
+  if (e.status !== 'applied') return false
+  const p = panelOf(e)
+  return effectiveStatus(e, p?.overrides ?? null, p ? sourceOf(p) : null) === 'applied'
+}
+
+/** 一张脚本方案卡「没成」：失败（不含用户答了「先不改」）/ 图已改过 / 应用没成 */
+export const scriptBroken = (s: PlanEntry): boolean => (s.status === 'failed' && s.failure?.code !== DATA_DECLINED) || s.status === 'stale' || s.status === 'discarded' || (s.status === 'ready' && !!s.notice)
+
+/** 用户答了「先不改」（改数据那一句）：这一项没改，但后面的照常做 */
+export const scriptDeclined = (s: PlanEntry): boolean => s.status === 'failed' && s.failure?.code === DATA_DECLINED
+/**
+ * 这条脚本待办没成，但**脚本与图都没动**（Agent 决定不改 / 检查没过 / 用户答了「先不改」……）：后面排着的照做（真机 2026-11-27：一条「没数据画不了」
+ * 把后面几条全拖成「没改」）。真出了岔子才停：越界（动了别的文件）、图在这期间改过了、没能写进脚本、卡被放弃。
+ */
+export const scriptStops = (s: PlanEntry): boolean =>
+  s.status === 'stale' || s.status === 'discarded' || (s.status === 'ready' && !!s.notice) || (s.status === 'failed' && s.failure?.code === 'change_plan_script_overreach')
+export const scriptPassable = (s: PlanEntry): boolean => s.status === 'applied' || (s.status === 'failed' && !scriptStops(s))
+
+/** 这张建议卡已经开始做的脚本待办的方案卡（按开始顺序；卡没了的略过） */
+export function todoScriptEntries(e: Pick<PlanEntry, 'todoRun'>, entries: Record<string, PlanEntry>): { todo: string; entry: PlanEntry }[] {
+  return (e.todoRun?.scripts ?? []).flatMap((s) => (entries[s.key] ? [{ todo: s.todo, entry: entries[s.key] }] : []))
+}
+
+/** 排在后面、还没开始的脚本待办（可以被取消勾选跳过；取消了的不算） */
+export const todoQueued = (e: Pick<PlanEntry, 'todoRun' | 'todoOff'>): string[] => (e.todoRun?.script ?? []).filter((k) => !e.todoRun?.scripts.some((s) => s.todo === k) && !e.todoOff?.[k])
+
+/**
+ * 点过「改这 N 项」之后卡就锁住了（不再改勾选、不再点第二次）——除非什么都没改成：图内没动、脚本方案也都没成（失败 / 图已改过 / 没能应用），
+ * 这时回到可勾选的样子，用户可以再点一次。排在后面还没开始的脚本待办不受这个锁（`toggleTodo` 另判）。
+ */
+export function todoLocked(e: PlanEntry, entries: Record<string, PlanEntry>): boolean {
+  const run = e.todoRun
+  if (!run) return false
+  // 图内那次 commit 还在才算（⌘Z 撤回之后图内这一半又是待确认，不再锁）
+  if (run.figure.length > 0 && figureStillApplied(e)) return true
+  if (run.starting || (run.script.length > 0 && run.scripts.length === 0)) return true // 第一条脚本方案还在发出去的路上
+  return todoScriptEntries(e, entries).some((x) => !scriptBroken(x.entry) && !scriptDeclined(x.entry))
+}
+
+/** 助手只给了回答、没有任何可勾的待办也没有图内修改 */
+/** 与后端 `MAX_ADD_TODO_CHARS` / `MAX_TODOS` 同值 */
+export const MAX_ADD_TODO = 300
+export const MAX_TODOS = 12
+
+export const adviceOnly = (plan: ChangePlan): boolean => !!plan.reply && !plan.todos?.length && plan.groups.length === 0
 
 export type PlanPhase = 'render_before' | 'model' | 'agent' | 'render_after'
 const PHASE_RANK: Record<PlanPhase, number> = { render_before: 0, model: 1, agent: 1, render_after: 2 }
@@ -317,7 +413,7 @@ interface ChangePlanState {
    */
   requestFromAssistant: (
     panelId: string,
-    req: { instruction: string; target?: string },
+    req: { instruction: string; target?: string; previousTurn?: PreviousTurn },
     fallback: ScriptFallback,
   ) => Promise<string | null | Fallthrough>
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
@@ -331,6 +427,21 @@ interface ChangePlanState {
   /** 弹窗取走初始视图（取一次就清，之后换版本回到对比） */
   consumeDialogView: () => 'compare' | 'annotate' | null
   toggleGroup: (key: string, groupKey: string) => void
+  /** 建议待办卡上勾 / 取消一行（图内待办 = 切它那一组，脚本待办记在 `todoOff`）；点过「改这 N 项」之后不再改 */
+  toggleTodo: (key: string, todoKey: string) => void
+  /**
+   * 建议待办卡的一键「改这 N 项」（ADR 0214 §四）：勾着的图内待办一次 commit；勾着的脚本待办接着自动出脚本方案、过检查直接应用
+   * （改了画出来的数据仍先问）。→ 图内那一步的结果；没有勾着的 / 已经点过 = 'nothing'
+   */
+  applyTodos: (key: string) => Promise<ApplyResult>
+  /** 接着做下一条脚本待办（上一条应用了 / 答了「先不改」才轮到；没成就停下）。由订阅自动调，不是按钮 */
+  advanceTodos: (key: string) => Promise<void>
+  /** 回答（`answered`）下方的「把这些建议写成待办」：同一个方案请求，意图 `todos`、带这段回答当上一轮；待办卡出在回答下面。→ 新卡的键 */
+  requestTodos: (key: string) => Promise<string | null>
+  /** 待办卡上「再加一条」：把这句话交给模型拆成一到几条待办并进同一张卡（新的一版，已有的 key 与勾选不变；新条目默认勾上、标「新加」） */
+  addTodo: (key: string, text: string) => Promise<boolean>
+  /** 撤销「改这 N 项」：图内那次 commit（⌘Z 同一步）+ 脚本按备份还原；撤回后卡回到可勾选的样子 */
+  undoTodos: (key: string) => Promise<boolean>
   /**
    * 回答方案里的一个确认（对数轴下限）：`yes` = 一起改，照方案应用；`no` = 不改，这一组整组不要（按「前端重算」口径取消勾选、
    * 它那条意见进没处理列表）；没有一组剩下 = 与空方案一样，卡变成「没法直接改图」那张失败卡。
@@ -471,15 +582,18 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     return get().undo(key)
   }
 
-  const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' = 'create') => {
+  const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' | 'add' = 'create') => {
     const t0 = Date.now()
     let errors = 0
     const revising = mode === 'revise'
+    const adding = mode === 'add'
     const alive = () =>
-      guard.still() && (revising ? get().entries[key]?.revising === planId : get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating')
+      guard.still() && (adding ? get().entries[key]?.adding === planId : revising ? get().entries[key]?.revising === planId : get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating')
     // 续改没成：旧版原样留着，弹窗里一句灰字
     const failRevise = (code: string, params?: Record<string, unknown>) => patch(key, { revising: undefined, reviseError: { code, params } })
-    const failed = (code: string, params?: Record<string, unknown>) => (revising ? failRevise(code, params) : fail(key, code, params))
+    // 再加一条没成：已有的待办卡原样留着，行尾一句灰字
+    const failAdd = (code: string) => patch(key, { adding: undefined, addingText: undefined, addError: { code } })
+    const failed = (code: string, params?: Record<string, unknown>) => (adding ? failAdd(code) : revising ? failRevise(code, params) : fail(key, code, params))
     while (alive()) {
       await sleep(POLL_MS)
       if (!alive()) return
@@ -506,7 +620,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (view.state === 'failed') {
         // 助手来源：这条路不适用（线程里才解析出连接不支持结构化调用 / 没连上……）与同步被拒同一处理——不留失败卡，
         // 接着走现有的改脚本路径，用户的指令照旧交给 Agent（出的是改脚本那一轮自己的结果 / 错误卡）
-        if (!revising && e?.from === 'assistant' && ASSISTANT_FALLTHROUGH_CODES.has(view.code)) {
+        if (!revising && !adding && e?.from === 'assistant' && e.request.intent !== 'todos' && ASSISTANT_FALLTHROUGH_CODES.has(view.code)) {
           if ((view as { replay_required?: boolean }).replay_required) replay(e)
           // 脚本方案自己被拒（别再试脚本方案，免得循环）/ 连接用不了（脚本方案同样走不通）：直接落回旧路径
           void get().runScript(key, { legacyOnly: e.request.mode === 'script' || CONNECTION_UNUSABLE_CODES.has(view.code) })
@@ -519,6 +633,15 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // ready：没有一条能落成修改的（change_plan_empty）也带方案（里面只有 unhandled），卡片按失败的一句话 + 未处理列表画
       const plan = view.plan
       const src = (p: string) => apiUrlFor(p, e.pj)
+      if (adding) {
+        // 再加一条：新一版并进同一张卡（`planId` / `plan` / 两张图换成新版，勾选与已有待办的 key 不变）；回答没有变，卡片不跳
+        const e0 = get().entries[key] ?? e
+        const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
+        const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: e0.unchecked, answers: e0.answers }
+        patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, adding: undefined, addingText: undefined, addError: undefined, notice: undefined })
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        return
+      }
       if (revising) {
         if (view.code === 'change_plan_empty') failRevise('change_plan_empty')
         else {
@@ -535,15 +658,24 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
       }
+      const todoPlan = e.from === 'assistant' && !!plan.todos?.length
+      const records = { versions: [{ planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }], plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after) }
+      // 助手来源只给了一段回答（建议、评价，没有可勾的待办）：画成助手正文，不出卡、不落回改脚本 / 聊天（ADR 0214）
+      if (e.from === 'assistant' && e.request.mode !== 'script' && adviceOnly(plan)) {
+        patch(key, { ...records, status: 'answered', failure: undefined })
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        return
+      }
       // 助手来源：整条指令都要改脚本（没有一处图内修改、没有别的原因）= 不算失败，接着走现有的改脚本路径
       // 助手来源：整条都不是改图的要求（聊天 / 提问）= 不出卡，悄悄交给普通助手对话（不走脚本方案、不加交接句）
-      if (e.from === 'assistant' && view.code === 'change_plan_empty' && allOutOfScope(plan)) {
+      // 有建议待办的方案（哪怕只有脚本待办、组为空）不走这两条：它就是一张待办卡（ADR 0214）
+      if (!todoPlan && e.from === 'assistant' && view.code === 'change_plan_empty' && allOutOfScope(plan)) {
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         patch(key, { plan })
         void get().runScript(key)
         return
       }
-      if (e.from === 'assistant' && view.code === 'change_plan_empty' && allNeedScript(plan)) {
+      if (!todoPlan && e.from === 'assistant' && view.code === 'change_plan_empty' && allNeedScript(plan)) {
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         patch(key, { plan })
         void get().runScript(key)
@@ -554,7 +686,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         plan,
         beforeSrc: src(plan.preview.before),
         afterSrc: src(plan.preview.after),
-        ...(view.code === 'change_plan_empty'
+        ...(view.code === 'change_plan_empty' && !todoPlan
           ? { status: 'failed' as const, failure: { code: 'change_plan_empty' } }
           : { status: 'ready' as const, failure: undefined }),
       })
@@ -621,7 +753,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const comments = from
       ? (source?.comments ?? []).filter((c) => from.comment_ids.includes(c.id))
       : (req.comments ?? (req.share_id && detail?.share_id === req.share_id ? detail.comments.filter((c) => !c.resolved) : []))
-    const assistant = typeof req.instruction === 'string'
+    const assistant = typeof req.instruction === 'string' || req.intent === 'todos'
     const entry: PlanEntry = {
       key,
       ...(assistant ? { from: 'assistant' as const, instruction: req.display ?? req.instruction, fallback } : {}),
@@ -656,7 +788,14 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         id: panel.fileId,
         patches: panel.overrides,
         ...(assistant
-          ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}), ...(req.mode === 'script' ? { mode: 'script' as const } : {}) }
+          ? {
+              source: 'assistant' as const,
+              ...(req.intent === 'todos' ? { intent: 'todos' as const } : { instruction: req.instruction }),
+              ...(req.target ? { target: req.target } : {}),
+              ...(req.mode === 'script' ? { mode: 'script' as const } : req.previousTurn ? { previous_turn: req.previousTurn } : {}),
+              // 出版标准只给方案模型；脚本方案（mode: script）后端不收这一项
+              ...(req.mode === 'script' ? {} : { standard: currentStandard(panelId) }),
+            }
           : req.scriptFrom
             ? { source: 'review' as const, mode: 'script' as const, from_plan: req.scriptFrom.plan_id, comment_ids: req.scriptFrom.comment_ids }
             : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
@@ -678,6 +817,42 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       fail(key, code, err instanceof EngineError ? err.params : undefined)
     }
     return key
+  }
+
+  /**
+   * 建议待办卡里勾着的脚本待办，**一条一条**做：这一条出一张脚本方案卡（`from_plan` + 它的意见 id，意见原文后端取自存档）；
+   * 过了检查直接应用（`autoApplyTodoScripts`），应用了 / 用户答了「先不改」才接着做下一条（`advanceTodos`）；失败就停在那里，剩下的算没改。
+   * 图内的那一次 commit 已经先落了（脚本一改图源，待确认的方案就判「图已改过」）。
+   */
+  const panelBusy = (panelId: string): boolean =>
+    pending.has(panelId) || get().order.some((k) => get().entries[k]?.panelId === panelId && get().entries[k]?.status === 'generating')
+
+  const startTodoScript = async (key: string, todo: ChangePlanTodo): Promise<void> => {
+    const e = get().entries[key]
+    const drop1 = () => {
+      const run = get().entries[key]?.todoRun
+      if (run) patch(key, { todoRun: { ...run, starting: false, script: run.script.filter((k) => k !== todo.key) } })
+    }
+    if (!e || !e.planId || !todo.comment_id) return drop1()
+    const gate = e.panelId
+    // 这张图正有别的方案在生成（用户在两条之间又发了一句）：不丢这条，先退回排队，等那份落定后 `advanceTodoRuns` 再接着做
+    if (panelBusy(gate)) {
+      const run = get().entries[key]?.todoRun
+      if (run?.starting) patch(key, { todoRun: { ...run, starting: false } })
+      return
+    }
+    pending.add(gate)
+    try {
+      const out = await start(e.panelId, { mode: 'script', scriptFrom: { plan_id: e.planId, comment_ids: [todo.comment_id] } })
+      if (isFallthrough(out) || !out) return drop1()
+      patch(out, { followsKey: key, todoOf: key })
+      const run = get().entries[key]?.todoRun
+      if (run) patch(key, { todoRun: { ...run, starting: false, scripts: [...run.scripts, { todo: todo.key, key: out }] } })
+    } finally {
+      pending.delete(gate)
+      // 放掉闸门本身不发通知：方案一发就失败（如 change_plan_busy）时，那次通知里闸门还关着，排着的下一条要在这里接着推
+      advanceTodoRuns()
+    }
   }
 
   return {
@@ -855,8 +1030,131 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (!e || !g?.confirm || e.answers?.[groupKey]) return
       const answers = { ...e.answers, [groupKey]: answer }
       const unchecked = answer === 'no' ? { ...e.unchecked, [groupKey]: true } : e.unchecked
-      const remains = (e.plan?.groups ?? []).some((x) => answers[x.key] !== 'no')
+      // 建议待办卡里还有要改脚本的待办时，图内那一组不要了不等于整张卡没东西
+      const remains = (e.plan?.groups ?? []).some((x) => answers[x.key] !== 'no') || todosOf(e).some((t) => t.kind === 'script')
       patch(key, answer === 'no' && !remains ? { answers, unchecked, status: 'failed', failure: { code: g.confirm.kind === 'script_data_changed' ? DATA_DECLINED : 'change_plan_empty' } } : { answers, unchecked })
+    },
+
+    toggleTodo: (key, todoKey) => {
+      const e = get().entries[key]
+      const t = todosOf(e ?? { plan: undefined }).find((x) => x.key === todoKey)
+      if (!e || !t) return
+      // 执行中，还没轮到的脚本待办仍可勾掉（跳过）或勾回来；做过 / 正在做的、图内的都锁着
+      const queued = t.kind === 'script' && !!e.todoRun?.script.includes(todoKey) && !e.todoRun.scripts.some((x) => x.todo === todoKey)
+      if (!queued && todoLocked(e, get().entries)) return
+      if (t.kind === 'figure') {
+        if (t.group_key) get().toggleGroup(key, t.group_key)
+      } else patch(key, { todoOff: { ...e.todoOff, [todoKey]: !e.todoOff?.[todoKey] } })
+    },
+
+    applyTodos: async (key) => {
+      const e = get().entries[key]
+      if (!e?.plan || !isTodoPlan(e) || todoLocked(e, get().entries) || e.scriptBusy || e.adding !== undefined) return 'nothing'
+      if (pendingConfirm(e)) return 'nothing'
+      const on = todosOf(e).filter((t) => todoChecked(e, t))
+      if (!on.length) return 'nothing'
+      const figure = on.filter((t) => t.kind === 'figure')
+      const script = on.filter((t) => t.kind === 'script' && t.comment_id)
+      // 上一次没成的脚本方案卡收掉，免得并排
+      for (const x of todoScriptEntries(e, get().entries)) get().dismiss(x.entry.key)
+      // 图内待办：一次 commit（⌘Z 一步撤回）；这一步没成（图已改过 / 写不进）就不往下走，卡上自己说
+      let result: ApplyResult = 'nothing'
+      if (figure.length) {
+        result = get().apply(key)
+        if (result !== 'applied') return result
+      }
+      patch(key, { todoRun: { figure: figure.map((t) => t.key), script: script.map((t) => t.key), scripts: [] } })
+      await get().advanceTodos(key)
+      return result
+    },
+
+    advanceTodos: async (key) => {
+      const e = get().entries[key]
+      const run = e?.todoRun
+      if (!e || !run || !run.script.length || run.starting) return
+      const last = todoScriptEntries(e, get().entries).at(-1)?.entry
+      if (last) {
+        if (last.status === 'generating' || (last.status === 'ready' && !last.notice)) return // 在做 / 在应用 / 在等回答
+        if (!scriptPassable(last)) return // 真出了岔子（越界 / 图已改过 / 写不进）：停在这里，剩下的算没改
+      } else if (run.scripts.length > 0) return
+      const next = todoQueued(e)[0]
+      const todo = next ? todosOf(e).find((t) => t.key === next) : undefined
+      if (!todo) return
+      // 图正忙就先不动（不写 store：写了会再触发订阅、原地打转）；那份落定时 store 一变，订阅会再叫到这里
+      if (panelBusy(e.panelId)) return
+      patch(key, { todoRun: { ...run, starting: true } })
+      await startTodoScript(key, todo)
+    },
+
+    undoTodos: async (key) => {
+      const e = get().entries[key]
+      if (!e) return false
+      const scripts = todoScriptEntries(e, get().entries)
+      const applied = scripts.filter((x) => x.entry.status === 'applied')
+      const panel = panelOf(e)
+      const figureApplied = e.status === 'applied' && !!panel && canUndoApplied(e, panel.overrides)
+      if (!figureApplied && !applied.length) return false
+      // 后做的先撤；有一步没撤成就停下，卡上说一句
+      for (const x of [...applied].reverse()) {
+        if (!(await get().undoScript(x.entry.key))) {
+          patch(key, { notice: 'undo_failed' })
+          return false
+        }
+        get().dismiss(x.entry.key)
+      }
+      for (const x of scripts) if (x.entry.status !== 'applied' && get().entries[x.entry.key]) get().dismiss(x.entry.key)
+      if (figureApplied && !get().undo(key)) return false
+      // 撤回了：回到可勾选的样子（勾选保留），可以再改
+      patch(key, { todoRun: undefined, notice: undefined })
+      return true
+    },
+
+    requestTodos: async (key) => {
+      const e = get().entries[key]
+      const reply = e?.plan?.reply
+      if (!e || e.status !== 'answered' || e.todosKey || !reply) return null
+      const gate = e.panelId
+      if (pending.has(gate) || get().order.some((k) => get().entries[k]?.panelId === gate && get().entries[k]?.status === 'generating')) return null
+      pending.add(gate)
+      try {
+        // 上一轮 = 这段回答（和它那句问话）；出的待办卡接在它下面，按钮不再出现
+        const out = await start(e.panelId, { intent: 'todos', previousTurn: { user: e.instruction ?? '', assistant: reply.slice(0, 3500) }, ...(e.request.target ? { target: e.request.target } : {}) }, e.fallback, true)
+        if (typeof out === 'string') patch(key, { todosKey: out })
+        return typeof out === 'string' ? out : null
+      } finally {
+        pending.delete(gate)
+      }
+    },
+
+    addTodo: async (key, text) => {
+      const e = get().entries[key]
+      const clean = text.replace(/\s+/g, ' ').trim()
+      if (!e?.plan || !e.planId || !isTodoPlan(e) || e.status !== 'ready' || e.adding !== undefined || e.todoRun || !clean || clean.length > MAX_ADD_TODO) return false
+      if (todosOf(e).length >= MAX_TODOS) return false
+      const panel = panelOf(e)
+      if (!panel) return false
+      const guard = captureProjectEpoch()
+      patch(key, { adding: '', addingText: clean, addError: undefined })
+      try {
+        const task = await createChangePlan({
+          id: e.fileId,
+          patches: panel.overrides,
+          source: 'assistant',
+          from_plan: e.planId,
+          add_todo: clean,
+          standard: currentStandard(e.panelId),
+          ...currentRunSelection(),
+          client_request_id: newRequestId(),
+        })
+        if (!guard.still() || !get().entries[key]) return false
+        patch(key, { adding: task.plan_id })
+        void poll(key, task.plan_id, guard, 'add')
+        return true
+      } catch (err) {
+        if (!guard.still() || !get().entries[key]) return false
+        patch(key, { adding: undefined, addingText: undefined, addError: { code: err instanceof EngineError && err.code ? err.code : 'change_plan_failed' } })
+        return false
+      }
     },
 
     addLayoutEntry: (entry) => set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] })),
@@ -1145,3 +1443,26 @@ useAiStore.subscribe((s, prev) => {
   const v = s.caps?.change_plan_enabled
   if (typeof v === 'boolean' && v !== prev.caps?.change_plan_enabled) writeChangePlanCache(v)
 })
+
+// 建议待办卡续出来的脚本方案：过了检查就直接应用（用户在建议卡上已经勾过确认，ADR 0214 §四）；
+// 改了画出来的数据要先问一句，回答「就这样改」之后才应用；失败 / 越界 / 图已改过不自动再试（卡上如实说，留给用户）
+export function autoApplyTodoScripts(): void {
+  const st = useChangePlanStore.getState()
+  for (const e of Object.values(st.entries)) {
+    if (!e.todoOf || e.autoApplied || e.status !== 'ready' || e.plan?.kind !== 'script' || e.scriptBusy || pendingConfirm(e)) continue
+    const ask = e.plan.groups.find((g) => g.kind === 'script' && g.confirm?.kind === 'script_data_changed')
+    if (ask && e.answers?.[ask.key] !== 'yes') continue
+    useChangePlanStore.setState((cur) => (cur.entries[e.key] ? { entries: { ...cur.entries, [e.key]: { ...cur.entries[e.key], autoApplied: true } } } : {}))
+    void st.applyScript(e.key)
+  }
+}
+// 上一条脚本待办应用了 / 答了「先不改」就接着做下一条
+export function advanceTodoRuns(): void {
+  const st = useChangePlanStore.getState()
+  for (const e of Object.values(st.entries)) if (e.todoRun?.script.length && !e.todoRun.starting) void st.advanceTodos(e.key)
+}
+useChangePlanStore.subscribe(() => {
+  autoApplyTodoScripts()
+  advanceTodoRuns()
+})
+

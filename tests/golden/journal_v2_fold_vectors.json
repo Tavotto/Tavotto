@@ -37,6 +37,7 @@
     "rules": {
      "min_raster_dpi": {
       "anchor": "#:~:text=Quote",
+      "fact_id": "a",
       "mark": "Quote",
       "qualifier": "min",
       "quote": "Quote a",
@@ -331,6 +332,7 @@
     "confirm": [],
     "rules": {
      "min_raster_dpi": {
+      "fact_id": "a",
       "qualifier": "min",
       "quote": "Quote a",
       "src": "v2:s1:journal",
@@ -380,6 +382,7 @@
     "confirm": [],
     "rules": {
      "font_family.latin_accepted": {
+      "fact_id": "a",
       "qualifier": "exact",
       "quote": "Quote a",
       "src": "v2:s1:journal",
@@ -430,6 +433,7 @@
     "confirm": [],
     "rules": {
      "min_line_width_pt": {
+      "fact_id": "a",
       "qualifier": "min",
       "quote": "Quote a",
       "src": "v2:s1:journal",
@@ -748,6 +752,7 @@
     "confirm": [],
     "rules": {
      "min_raster_dpi": {
+      "fact_id": "a",
       "qualifier": "min",
       "quote": "Quote a",
       "src": "v2:s1:journal",

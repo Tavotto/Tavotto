@@ -57,11 +57,36 @@ ERROR_CODES = (
 
 #: 统计标注的文字（ADR 0208 §四，维护者 2026-11-24 定）：只能来自用户的话或脚本 / 数据里的结果，
 #: 描述里要写 `"provenance": "user" | "data"`；没写的整批不落地，回 `needs_confirmation`。
+#: 只作用在 `is_stat_text` 压过空白的文字上（任意空白 → 单个空格、首尾无空白），所以空白一律写成 ` ?`（至多一个空格）：
+#: 与原来的 `\s*` 在压过的文字上等价，又没有可回溯的空白重复（CodeQL py/polynomial-redos）。
 _STAT_TEXT = re.compile(
-    r"^\s*(\*{1,4}|n\.?\s?s\.?|ns)\s*$|\bp\s*[<>=≤≥]|\bp\s*-?\s*value|\bn\s*=\s*\d",
+    r"^(\*{1,4}|n\.? ?s\.?|ns)$|\bp ?[<>=≤≥]|\bp ?-? ?value|\bn ?= ?\d",
     re.IGNORECASE,
 )
 PROVENANCES = ("user", "data")
+
+
+def is_stat_text(text: object) -> bool:
+    """是不是统计标注文字。**先把任意空白压成单个空格再匹配**：`_STAT_TEXT` 里 `\\s*` 作用在用户 / 模型给的文字上，
+    成千上万个制表符会让回溯正则变成多项式时间；压过之后正则里的空白只写成 ` ?`，匹配是线性的（语义不变——原来的 `\\s` 本来就把各种空白当一回事）。"""
+    return bool(_STAT_TEXT.search(" ".join(str(text).split())))
+
+
+#: 条目词汇的一份说明（给模型 / Agent 看的，**只此一处**）：`vectoredit.OPS_DOC` 的 `add` 从这里取。位置一律写锚点、不写毫米。
+ITEMS_DOC = (
+    "条目 {kind, name, …}：kind ∈ arrow {from, to, head?} / text {text, at, attach?, sizePt?} / "
+    "bracket {between: [位置, 位置], side?: above|below} / box {fit: [目标…], padding_mm?}（框住子图）/ "
+    "connector {from, to, route?} / shape {shape, at, size_mm}；name 是本批内的局部名字。"
+    "位置 = {anchor: …, offset_mm?}；anchor 只认 panel = {panel: {id: P1, point: nw|n|ne|w|center|e|sw|s|se}}、"
+    "item = {item: {name, point}}（本批里先声明的条目）；"
+    "data = {data: {panel: P1, axes: 坐标轴的 gid, x, y}}（数据坐标上的点，如曲线的峰）、"
+    "element = {element: {panel: P1, gid: 元素的 gid, point}}（图内元素的方位点）——这两种只在场景里 `measured: true` 的子图上能用（gid 取场景 `scene`），没量过的会被拒。"
+    "box 的 fit 是目标列表，每个目标是单键对象，如 [{panel: {id: P1}}]。"
+    "显著性星号 / n.s. / p 值 / n 的文字必须写 provenance: user，且这段文字必须原样出现在用户的话里，否则不收。"
+    "例：外框 {kind: box, name: frame, fit: [{panel: {id: P1}}]}；"
+    '子图标注 {kind: text, name: tag, text: "(a)", at: {anchor: {panel: {id: P1, point: nw}}, offset_mm: [2, -3]}, attach: sw}；'
+    "括号 {kind: bracket, name: br, between: [{anchor: {panel: {id: P1, point: nw}}}, {anchor: {panel: {id: P1, point: ne}}}], side: above}。"
+)
 
 
 class SceneError(Exception):
@@ -176,6 +201,11 @@ def _anchors_of(it: object) -> list:
         if isinstance(pos, dict) and isinstance(pos.get("anchor"), dict):
             found.append(pos["anchor"])
     return found
+
+
+#: 没写 `fontFamily` 的画布文字按它渲染：与前端 `web/src/lib/typography.ts` 的 `CANVAS_TEXT_DEFAULT_FAMILY` 同一个值（同源对，
+#: `tests/test_vector_edit_style_check.py` 逐字核对），核对 / 求解里不再各处手写 "serif"。
+CANVAS_TEXT_DEFAULT_FAMILY = "serif"
 
 
 def family_class(name: object) -> str:
@@ -349,7 +379,7 @@ def _text(it: dict, ctx: _Ctx, name: str, faces) -> dict:
     text = it.get("text")
     if not isinstance(text, str) or not text:
         raise SceneError("bad_item", name, "text")
-    if _STAT_TEXT.search(text) and it.get("provenance") not in PROVENANCES:
+    if is_stat_text(text) and it.get("provenance") not in PROVENANCES:
         raise SceneError("needs_confirmation", name, "statistical_text")
     size = float(it.get("sizePt", 8))
     bold, italic = bool(it.get("bold", False)), bool(it.get("italic", False))
@@ -523,13 +553,20 @@ def _connector(it: dict, ctx: _Ctx, name: str) -> tuple[dict, list[dict]]:
     return obj, _node_records(name, pts, refs)
 
 
+#: `box` 的 `fit` 写错时 `bad_item` 的 detail：把期望形态直接给出来（插件工具与桌面助手把它原样念给模型）
+FIT_FORM = (
+    'fit 应是目标列表，每个目标是单键对象，如 [{"panel": {"id": "P1"}}]；'
+    '也可写 {"element": {"panel": "P1", "gid": …}} 或 {"item": {"name": …}}'
+)
+
+
 def _target_box(target: object, ctx: _Ctx, name: str) -> tuple[float, float, float, float]:
     """「框住」的一个目标 → 画布外接框（x0, y0, x1, y1）。"""
     if not isinstance(target, dict) or len(target) != 1:
-        raise SceneError("bad_item", name, "fit")
+        raise SceneError("bad_item", name, FIT_FORM)
     kind, spec = next(iter(target.items()))
     if not isinstance(spec, dict):
-        raise SceneError("bad_item", name, "fit")
+        raise SceneError("bad_item", name, FIT_FORM)
     if kind == "panel":
         pn = _panel_of(ctx, spec.get("id"), name)["panel"]
         return (pn["x"], pn["y"], pn["x"] + pn["w"], pn["y"] + pn["h"])
@@ -543,13 +580,13 @@ def _target_box(target: object, ctx: _Ctx, name: str) -> tuple[float, float, flo
         if box is None:
             raise SceneError("unknown_ref", name, "item")
         return (box[0], box[1], box[0] + box[2], box[1] + box[3])
-    raise SceneError("bad_item", name, "fit")
+    raise SceneError("bad_item", name, FIT_FORM)
 
 
 def _box(it: dict, ctx: _Ctx, name: str) -> tuple[dict, dict]:
     targets = it.get("fit")
     if not isinstance(targets, list) or not targets:
-        raise SceneError("bad_item", name, "fit")
+        raise SceneError("bad_item", name, FIT_FORM)
     boxes = [_target_box(t, ctx, name) for t in targets]
     pad = _num_arg(it, "padding_mm", 1.5, name)
     x0 = min(b[0] for b in boxes) - pad
@@ -709,7 +746,7 @@ def solve(
     statistical = [
         {"item": it["name"], "provenance": it.get("provenance")}
         for it in items
-        if it.get("kind") == "text" and _STAT_TEXT.search(it.get("text", ""))
+        if it.get("kind") == "text" and is_stat_text(it.get("text", ""))
     ]
     return {
         "ok": True,

@@ -126,7 +126,7 @@ def _clean(text: str) -> str:
 
 def _plain_text(label: str) -> bool:
     """标签作为单元格会被当成文字（不是数 / 日期 / nan / 空）。"""
-    return bool(label) and adf.parse_cell(label)[0] == "text" and adf.parse_date(label) is None
+    return bool(label) and adf.parse_cell(label)[0] == "text" and adf.parse_when(label) is None
 
 
 def unique_labels(items: list[tuple[str, str | None]]) -> list[str]:
