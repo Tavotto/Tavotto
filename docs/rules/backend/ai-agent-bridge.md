@@ -732,6 +732,10 @@ capabilities 的 agent 与订阅连接加字段 `cli_update: {current, seen, sou
   提示每句声明点名的工具，工具调不到这句不说、主动作说不了整条不说；放在 `read_run_report` / `try_run` 返回最前面。
   应用试运行真跑完才记一条 `{n, before, after, hint, changes}`（`changes` 由 `run_tool` 在计入 `changes_attempted` 处收集），审计 `attempt` 字段只记这些码。
   看护：`tests/test_fixtools_hints.py`（含「提示点名的工具都在注册表里」）。
+- **已知问题表**（ADR 0221 §二，`resources/known_issues.json` + `engine/knownissues.py`）：按版本 / 平台 / 自检阶段匹配的**已知缺陷**条目，与 `hints.py`（按失败形状的通用提示）分工、不重复；
+  只随版本发、只按结构化字段（错误码、`selftest_stage`、`worker_code`、`os`、版本区间）匹配。命中后 `known_issue: {id, summary, fixed_in, workaround}`（语言取 `ctx.locale`）挂进
+  `read_run_report` 最前、`install_packages` / `change_python` 失败文本末尾；`prepare_diagnostics` 在反馈说明首行写 `known_issue_id:`（不新增诊断包结构字段，不升 schema）。
+  自检形状缺省取 `envdiag.recent(项目)` 里最近一条同码任务的。看护：`tests/test_known_issues.py`（`fixed_in` 必须晚于 `versions.max`）。发版清单：核对每条 `fixed_in`。
 - **记住修好的做法**（ADR 0197 第 3 层·在线，`engine/fixmemory.py`）：`run_tool` 把真做成的改动（`set_run_arguments` 的 argv、
   `write_launcher` 的代码、`link_data_file` 的 requested / chosen、`switch_execution` 的 mode）收进 `ctx.fixes_made`；会话以 fixed 收尾
   且有应用试运行（`finish` 已要求验证）时 `fixsession._remember_fix` 交给 `fixmemory.remember`（失败类型取第一次试运行前的形状，

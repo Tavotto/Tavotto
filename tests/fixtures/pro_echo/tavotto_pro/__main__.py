@@ -1,4 +1,5 @@
-"""pro 协议 v1 的最小实现：`hello`、`echo`、`sleep`（测超时）、`crash`（测崩溃）；加上机理图（ADR 0220）的假图元
+"""pro 协议 v1 的最小实现：`hello`、`echo`、`sleep`（测超时）、`crash`（测崩溃）、
+`submission_check.plan`（每条要求都回 confirm、不给操作）；加上机理图（ADR 0220）的假图元
 `mechanism.catalog` / `mechanism.glyph`：**不含任何真图元几何**，只是形状固定的替身，让开源侧能端到端测协议。
 `PRO_ECHO_FEATURES`（逗号分隔，缺省 quick-layout）控制握手里报的功能键；`PRO_ECHO_GLYPH_MODE` = `echo_payload`（把收到的 payload 原样塞进回包的
 `seen`，测「只发数字与结构」）。"""
@@ -101,6 +102,11 @@ for raw in sys.stdin:
     elif cmd == "sleep":
         time.sleep(float(payload.get("s", 5)))
         reply(rid, True, result={})
+    elif cmd == "submission_check.plan":
+        # 最小实现（ADR 0216 §八.4）：契约测试用，每条要求都交给人确认、不给任何操作
+        reqs = payload.get("requirements") or []
+        out = {"requirements": [{"ref": r["ref"], "state": "confirm"} for r in reqs], "ops": []}
+        reply(rid, True, result=out)
     elif cmd == "crash":
         sys.exit(3)
     elif cmd == "wrong_id":
