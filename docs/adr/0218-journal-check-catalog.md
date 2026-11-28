@@ -27,11 +27,11 @@ v2 期刊目录到 rev26（2026-11-28）已有 1,024 本刊、22,807 条带原�
 | 档 | 检查项（`tck:`） | 对象维度 | 现状 |
 | --- | --- | --- | --- |
 | A：已有求值器，只差接数据 | `width_final` | `column` | `page_columns` / `widths_mm` 已判 |
-| | `font_size_min`、`font_size_max` | `text_role` | 已判，v2 只进确认 |
+| | `font_size_min`、`font_size_max` | `text_role`（other_text / script） | 已判，v2 只进确认 |
 | | `raster_dpi_min` | `image_kind`、`image_origin` | 已判（不分图类） |
 | | `line_width_min` | — | 已判，v2 已能折 |
-| | `font_family` | — | 已判，v2 已能折 |
-| B：数据已有，要新加检查 | `height_max`、`width_min`（画布 / 像素下限）、`file_format`、`color_mode`、`file_size_max`、`font_embedding`、`panel_label_style` | 各自 | 只展示或只列名单 |
+| | `font_family` | — | 已判；v2 只折 required / recommended（#2357，preferred 只进确认） |
+| B：数据已有，要新加检查 | `font_size` 的 `text_role=panel_label`（求值器先要能认出分图标签）、`height_max`、`width_min`（画布 / 像素下限）、`file_format`、`color_mode`、`file_size_max`、`font_embedding`、`panel_label_style` | 各自 | 只展示或只列名单 |
 | C：只给人看 | `packaging`、`file_naming`、`caption_rules`、`figure_count_max`、`package_size_max`、`text_only` | — | 文字 |
 
 清单只能经 ADR 修订：新增或删除检查项，或者改单位。
@@ -40,7 +40,7 @@ v2 期刊目录到 rev26（2026-11-28）已有 1,024 本刊、22,807 条带原�
 
 借 FHIR binding strength 的两档：
 
-- **required**（取值只能来自值集）：`column`（single / one_half / double）、`text_role`（panel_label / other_text）、`image_kind`（photo / line_art / combination …，由现有 `artifact_type` 的 32 种写法归并）、`image_origin`（scanned / digital）、`stage`。
+- **required**（取值只能来自值集）：`column`（single / one_half / double）、`text_role`（panel_label / other_text / script，script 对齐 v1 的 `min_script_font_size_pt`）、`image_kind`（photo / line_art / combination …，由现有 `artifact_type` 的 32 种写法归并）、`image_origin`（scanned / digital）、`stage`。
 - **extensible**（值集能覆盖就必须用，覆盖不了才照原文写）：`article_type`。
 
 值集之外的说法不新增键，写进 `condition_text`，由引擎当作「带条件、判不了」处理。这条沿用现行纪律。
@@ -51,8 +51,14 @@ v2 期刊目录到 rev26（2026-11-28）已有 1,024 本刊、22,807 条带原�
 
 ### 四、一份定义，两边生成
 
-- **定义文件**：`src/tavotto/profiles/check_catalog.yaml`，用 LinkML 写，放在主仓库，不含任何期刊数据。内容是检查项、单位、对象维度、条件值集及其绑定强度、阶段档。
-- **生成物**：Python 侧 `engine/check_catalog.py`，前端 `web/src/lib/checkCatalog.ts`。引擎的 `FOLDABLE`、`CONFIRM_UNITS`、`_STAGE` 改由生成物提供，不再手写。
+- **定义文件**：`src/tavotto/profiles/check_catalog.yaml`，用 LinkML 写，放在主仓库，不含任何期刊数据。每个检查项写明：
+  - 单位、允许的比较关系（如 `width` 允许 `interval`，给 1.5 栏用）；
+  - 对象维度、条件值集及其绑定强度、阶段档；
+  - **折叠语气集**：哪些 strength 能折进预检、哪些只进 advice 或确认。例如 font_family 只折 required / recommended（#2357）。
+- **生成物**：Python 侧 `engine/check_catalog.py`，前端 `web/src/lib/checkCatalog.ts`。
+  - 文件头写明「生成物，勿手改，源 = profiles/check_catalog.yaml」，并登记进 AGENTS.md 的严格同源对。
+  - 引擎的 `FOLDABLE`、`CONFIRM_UNITS`、`CONFIRM_RELATIONS`、`_STAGE`、各折叠语气集改由生成物提供，不再手写。
+  - LinkML 只作开发依赖：生成物提交进仓库，运行时不 import linkml。yaml 是否随 wheel 分发，在第 1 期确认。
 - **CI 守卫**：
   - 生成物与定义不一致即判红；
   - 新旧定义做破坏性变更比较，删项、改单位、收窄值集须带 ADR 修订号才放行（思路借 Buf breaking）。
@@ -85,10 +91,11 @@ v2 期刊目录到 rev26（2026-11-28）已有 1,024 本刊、22,807 条带原�
 
 ### 九、分期
 
-1. **定义与生成，不改判据。** 写 `check_catalog.yaml` 和生成物；`FOLDABLE` / `CONFIRM_UNITS` / `_STAGE` 改为读生成物，取值与现在逐字相同（golden 向量不变）；加上 CI 守卫。数据侧同时定稿挂靠表，出覆盖度报告。
+1. **定义与生成，不改判据。** 写 `check_catalog.yaml` 和生成物；`FOLDABLE` / `CONFIRM_UNITS` / `CONFIRM_RELATIONS` / `_STAGE` / 折叠语气集改为读生成物，取值与现在逐字相同，golden 向量（含 `font-family-preferred-is-listed-not-folded`）不变；加上 CI 守卫。数据侧同时定稿挂靠表，出覆盖度报告。
 2. **A 档接数据（判据改动，逐 PR 当面点头）。**
    - 带 `column` 的 `width` 折进栏宽判定；
-   - 带 `text_role=other_text` 的 `font_size` 折进字号上下限，`panel_label` 另判；
+   - 带 `text_role=other_text` 的 `font_size` 折进字号上下限，**沿用 v1 的 `QUALIFIER_DIRECTION` 与 advice 规则**：只有 required 是硬判据；recommended / typical 只进 advice 或确认，不因换成 v2 数据就从「不判」变成报警（例：Nature「should be 7 pt」）；
+   - 折进预检的规则继续带 `fact_id`，并保留原条件（column / text_role），让投稿核对的一键改能从「已判」一侧找回原始事实与目标值；
    - `accepted` 并入 production；
    - `raster_dpi` 按 `image_kind` 分判。
    - 每项配三类样例。
