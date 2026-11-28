@@ -213,25 +213,36 @@ REACTOME_CATEGORIES = (
 _ICON_ID = re.compile(r"R-ICO-\d{6}")
 
 
+class ListingError(RuntimeError):
+    """分类列表页取不到（重试之后仍失败）。**不是**「翻到头了」：翻到头是页面正常返回、但没有本类的新 ID。"""
+
+
 def reactome_list_ids(
     fetcher: Fetcher, categories: tuple[str, ...] = REACTOME_CATEGORIES, max_pages: int = 60
 ) -> list[str]:
-    """从图库分类列表页枚举 ID（官网自己的列表，不盲扫编号）。翻到某页没有新 ID 为止。"""
-    seen: dict[str, None] = {}
+    """从图库分类列表页枚举 ID（官网自己的列表，不盲扫编号）。
+
+    每个分类自己判停：页面正常返回、但没有**本类**的新 ID（含内容与上一页相同）时翻到头；全局集合只在最后去重
+    （一个图标可以同时出现在几个分类里，前面分类见过的 ID 不能让后面分类提前停翻）。
+    页面取不到（重试后仍失败）抛 `ListingError`，不当成翻到头——否则会拿一份残缺的清单继续构建。"""
+    out: dict[str, None] = {}
     for cat in categories:
+        in_cat: set[str] = set()
+        prev: list[str] | None = None
         for page in range(1, max_pages + 1):
-            got = fetcher.get(f"{REACTOME_LIST}{cat}?page={page}")
+            url = f"{REACTOME_LIST}{cat}?page={page}"
+            got = fetcher.get(url)
             if got is None:
+                raise ListingError(f"分类列表页取不到：{url}")
+            ids = list(dict.fromkeys(_ICON_ID.findall(got[0].decode("utf8", "replace"))))
+            if ids == prev or not [i for i in ids if i not in in_cat]:
                 break
-            ids = [
-                i
-                for i in dict.fromkeys(_ICON_ID.findall(got[0].decode("utf8", "replace")))
-                if i not in seen
-            ]
-            if not ids:
-                break
-            seen.update(dict.fromkeys(ids))
-    return list(seen)
+            prev = ids
+            in_cat.update(ids)
+            out.update(dict.fromkeys(ids))
+    if not out:
+        raise ListingError("分类列表页一个 ID 也没枚举到")
+    return list(out)
 
 
 def reactome_candidates(fetcher: Fetcher, ids: list[str], want: int) -> tuple[list[dict], dict]:

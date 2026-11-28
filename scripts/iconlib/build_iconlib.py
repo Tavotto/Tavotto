@@ -87,18 +87,29 @@ def run(args: argparse.Namespace) -> int:
             # 缓存与输出放仓库里会被误提交；明确拒绝
             print(f"拒绝：{d} 在仓库里，请放仓库外", file=sys.stderr)
             return 2
-    (out / "svg").mkdir(parents=True, exist_ok=True)
     fetcher = iconlib_sources.Fetcher(cache, delay=args.delay)
     audit: list[dict] = []
     manifest: list[dict] = []
     stats: dict = {}
     wanted = {s.strip() for s in args.sources.split(",") if s.strip()}
 
+    # 先把所有「清单」取齐：任何一个取不到就在**写任何文件之前**非零退出（旧的 manifest / index / audit 原样留着）
+    cands = None
+    all_ids: list[str] = []
     if "bioicons" in wanted:
         cands = iconlib_sources.bioicons_candidates(fetcher)
         if cands is None:
             print("Bioicons 索引取不到", file=sys.stderr)
             return 1
+    if "reactome" in wanted:
+        try:
+            all_ids = iconlib_sources.reactome_list_ids(fetcher)
+        except iconlib_sources.ListingError as e:
+            print(f"Reactome 清单取不到：{e}", file=sys.stderr)
+            return 1
+    (out / "svg").mkdir(parents=True, exist_ok=True)
+
+    if "bioicons" in wanted:
         kept, lic_audit = iconlib_license.filter_records(cands)
         audit += lic_audit
         picked = iconlib_sources.stride_pick(kept, args.limit)
@@ -120,7 +131,6 @@ def run(args: argparse.Namespace) -> int:
         stats["bioicons"]["accepted"] = n_ok
 
     if "reactome" in wanted:
-        all_ids = iconlib_sources.reactome_list_ids(fetcher)
         # 在非蛋白分类的全部 ID 里等距抽样（不是取开头一段，避免偏向同一批设计者）；蛋白排除在取 XML 后判
         ids = iconlib_sources.stride_pick(all_ids, args.limit + args.limit // 2)
         cands, probe = iconlib_sources.reactome_candidates(fetcher, ids, args.limit)

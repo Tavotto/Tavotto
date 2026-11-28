@@ -276,21 +276,97 @@ def test_reactome_candidates_skip_protein_and_missing():
     assert len(got) == 1  # 够数就停
 
 
-def test_reactome_list_ids_pages_until_empty_and_dedups():
-    def page(*ids):
-        return "".join(f'<a href="/icon/{i}.svg">{i}</a><img src="{i}.svg">' for i in ids).encode()
+def _page(*ids):
+    return "".join(f'<a href="/icon/{i}.svg">{i}</a><img src="{i}.svg">' for i in ids).encode()
 
+
+def test_reactome_list_ids_pages_until_empty_and_dedups():
     ff = FakeFetcher(
         {
-            src.REACTOME_LIST + "arrow?page=1": page("R-ICO-000010", "R-ICO-000011"),
-            src.REACTOME_LIST + "arrow?page=2": page("R-ICO-000012"),
+            src.REACTOME_LIST + "arrow?page=1": _page("R-ICO-000010", "R-ICO-000011"),
+            src.REACTOME_LIST + "arrow?page=2": _page("R-ICO-000012"),
             src.REACTOME_LIST + "arrow?page=3": b"<html>no icons</html>",
-            src.REACTOME_LIST + "compound?page=1": page("R-ICO-000011", "R-ICO-000020"),
+            src.REACTOME_LIST + "compound?page=1": _page("R-ICO-000011", "R-ICO-000020"),
+            src.REACTOME_LIST + "compound?page=2": b"<html>no icons</html>",
         }
     )
     ids = src.reactome_list_ids(ff, ("arrow", "compound"))
     assert ids == ["R-ICO-000010", "R-ICO-000011", "R-ICO-000012", "R-ICO-000020"]
     assert "protein" not in src.REACTOME_CATEGORIES
+
+
+def test_reactome_list_ids_global_seen_does_not_stop_a_later_category_early():
+    # arrow 有 A；compound 第 1 页只有 A（前面分类见过），第 2 页才有 B：B 不能漏
+    ff = FakeFetcher(
+        {
+            src.REACTOME_LIST + "arrow?page=1": _page("R-ICO-000001"),
+            src.REACTOME_LIST + "arrow?page=2": b"",
+            src.REACTOME_LIST + "compound?page=1": _page("R-ICO-000001"),
+            src.REACTOME_LIST + "compound?page=2": _page("R-ICO-000002"),
+            src.REACTOME_LIST + "compound?page=3": b"",
+        }
+    )
+    assert src.reactome_list_ids(ff, ("arrow", "compound")) == ["R-ICO-000001", "R-ICO-000002"]
+
+
+def test_reactome_list_ids_stops_when_page_repeats_previous():
+    same = _page("R-ICO-000001", "R-ICO-000002")
+    ff = FakeFetcher({src.REACTOME_LIST + f"arrow?page={n}": same for n in range(1, 10)})
+    assert src.reactome_list_ids(ff, ("arrow",)) == ["R-ICO-000001", "R-ICO-000002"]
+
+
+def test_reactome_list_ids_fetch_failure_raises_not_a_short_list():
+    ff = FakeFetcher(
+        {
+            src.REACTOME_LIST + "arrow?page=1": _page("R-ICO-000001"),
+            # arrow?page=2 取不到（重试后仍失败）
+        }
+    )
+    with pytest.raises(src.ListingError):
+        src.reactome_list_ids(ff, ("arrow",))
+    with pytest.raises(src.ListingError):
+        src.reactome_list_ids(FakeFetcher({}), ("arrow", "compound"))
+    empty = FakeFetcher({src.REACTOME_LIST + "arrow?page=1": b""})
+    with pytest.raises(src.ListingError):  # 一个 ID 也没有 = 页面改版 / 被挡，不是「空库」
+        src.reactome_list_ids(empty, ("arrow",))
+
+
+class _DeadFetcher:
+    network_calls = 0
+
+    def __init__(self, *a, **k):
+        pass
+
+    def get(self, url):
+        return None
+
+
+def test_build_exits_nonzero_before_touching_old_catalog_when_reactome_listing_fails(
+    tmp_path, monkeypatch, capsys
+):
+    out, cache = tmp_path / "out", tmp_path / "cache"
+    out.mkdir()
+    for name in ("manifest.json", "index.json", "audit.json"):
+        (out / name).write_text("OLD")
+    monkeypatch.setattr(src, "Fetcher", _DeadFetcher)
+    rc = build_iconlib.main(["--cache", str(cache), "--out", str(out), "--sources", "reactome"])
+    assert rc == 1 and "Reactome" in capsys.readouterr().err
+    assert {p.read_text() for p in out.iterdir() if p.is_file()} == {"OLD"}
+    assert not (out / "svg").exists()  # 连目录都没建
+
+
+def test_build_exits_nonzero_when_bioicons_index_missing(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "manifest.json").write_text("OLD")
+    monkeypatch.setattr(src, "Fetcher", _DeadFetcher)
+    assert (
+        build_iconlib.main(
+            ["--cache", str(tmp_path / "c"), "--out", str(out), "--sources", "bioicons"]
+        )
+        == 1
+    )
+    assert (out / "manifest.json").read_text() == "OLD"
 
 
 class _Resp:
