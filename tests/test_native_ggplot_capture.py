@@ -2705,7 +2705,10 @@ h_edit <- setNames(list(list(bar_thickness = .4)), first)
 h_scene <- adapter$ggplot_table_for(h, h_edit)
 h_rect <- adapter$ggplot_bar_rect(h_scene$table$grobs[[h_target$slot]], h_target)
 ycentre <- function(rect) as.numeric(rect$y) - as.numeric(rect$height) / 2
-stopifnot(identical(names(h_target$values), c("facecolor", "bar_thickness", "alpha")),
+stopifnot(identical(names(h_target$values),
+                    c("facecolor", "bar_thickness", "alpha", "hatch", "hatchcolor", "hatch_linewidth")),
+          identical(h_target$values$hatch, ""), identical(h_target$values$hatchcolor, "edge"),
+          h_target$values$hatch_linewidth == 1,
           isTRUE(all.equal(ycentre(h_rect), ycentre(h_original))),
           isTRUE(all.equal(as.numeric(h_rect$height) / as.numeric(h_original$height), rep(.4 / .9, 4))),
           identical(h_rect[c("x", "width", "gp")], h_original[c("x", "width", "gp")]),
