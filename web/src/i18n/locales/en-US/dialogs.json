@@ -2860,7 +2860,7 @@
       "report": "Looks wrong",
       "reportTitle": "Send a link or screenshot of the website and we will check it",
       "fromV2": "Newer",
-      "thanks": "Thanks to {{name}}",
+      "thanks": "Thanks to {{name}} for the correction",
       "aria": "Source"
     },
     "confirm": {
@@ -2963,11 +2963,11 @@
     "editorQuotePlaceholder": "Which rule is wrong or missing, or paste the editor’s email; only used to check the website, never made public",
     "editorAbout": "{{journal}}",
     "editorTag": "Journal guideline issue",
-    "credit": "Credit me in the catalog",
+    "credit": "Credit my name on the cited entry",
     "creditHint": " (visible to everyone)",
     "creditTitle": "Your name appears on that entry’s source card, visible to every user. Reply to us any time to have it removed.",
     "creditInput": "Name to show",
-    "creditPlaceholder": "How should we credit you?",
+    "creditPlaceholder": "Your name",
     "creditRow": "Name",
     "editorEmail": "We will reply here once checked"
   },

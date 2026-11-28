@@ -1,8 +1,8 @@
 /**
- * 署名（ADR 0213 三期）：反馈窗里默认不勾的「写上我的称呼」、发出去的 `journal.credit`、出处卡的「线索来自 <称呼>」。
+ * 署名（ADR 0213 三期）：反馈窗里默认不勾的「标注我的名字」、发出去的 `journal.credit`、出处卡的「感谢 <称呼> 勘误」。
  *
  * 判据的主语：带不带 `credit` = `sendContact` 收到的 meta（引擎再按契约校验一次，这里只看前端交了什么）；
- * 「线索来自」出不出现 = 出处卡里有没有 `[data-journal-thanks]`，且文字走文本节点（称呼里的标签原样显示、不成元素）。
+ * 「感谢 … 勘误」出不出现 = 出处卡里有没有 `[data-journal-thanks]`，且文字走文本节点（称呼里的标签原样显示、不成元素）。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -246,7 +246,7 @@ describe('反馈窗里的署名', () => {
   it('英文界面有同义的一句', async () => {
     await setLocale('en-US')
     await openWrong()
-    expect(q('[data-journal-tip-credit]')!.textContent).toBe('Credit me in the catalog (visible to everyone)')
+    expect(q('[data-journal-tip-credit]')!.textContent).toBe('Credit my name on the cited entry (visible to everyone)')
   })
 })
 
@@ -270,16 +270,16 @@ describe('出处卡的致谢', () => {
   it('v2 事实有署名：一行灰字「感谢 <称呼> 提示」', async () => {
     useJournalV2Store.setState({ byJournal: { 'fx-alpha': patch({ line: '李明' }) } })
     await open()
-    expect(q('[data-journal-thanks]')!.textContent).toBe('感谢 李明 提示')
+    expect(q('[data-journal-thanks]')!.textContent).toBe('感谢 李明 勘误')
     expect(q('[data-journal-thanks]')!.getAttribute('title')).toBe('李明')
     expect(q('[data-journal-thanks]')!.className).toContain('truncate')
   })
 
-  it('英文界面：Tip from <name>', async () => {
+  it('英文界面：Thanks to <name> for the correction', async () => {
     await setLocale('en-US')
     useJournalV2Store.setState({ byJournal: { 'fx-alpha': patch({ line: 'Li Ming' }) } })
     await open()
-    expect(q('[data-journal-thanks]')!.textContent).toBe('Thanks to Li Ming')
+    expect(q('[data-journal-thanks]')!.textContent).toBe('Thanks to Li Ming for the correction')
   })
 
   it('称呼里的标签只是文字：不成元素、不执行', async () => {
@@ -290,7 +290,7 @@ describe('出处卡的致谢', () => {
     const el = q('[data-journal-thanks]')
     if (el) {
       expect(el.querySelector('img')).toBeNull()
-      expect(el.textContent).toBe(`感谢 ${evil} 提示`)
+      expect(el.textContent).toBe(`感谢 ${evil} 勘误`)
     }
     expect(document.body.querySelector('img[src="x"]')).toBeNull()
   })

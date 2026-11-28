@@ -2826,7 +2826,7 @@
       "report": "这条不对",
       "reportTitle": "发来官网链接或截图，我们来核对",
       "fromV2": "新版",
-      "thanks": "感谢 {{name}} 提示",
+      "thanks": "感谢 {{name}} 勘误",
       "aria": "出处"
     },
     "confirm": {
@@ -2929,11 +2929,11 @@
     "editorQuotePlaceholder": "哪条规范不对、缺了什么，或粘贴编辑部邮件原话；仅用于核对官网，不会公开",
     "editorAbout": "{{journal}}",
     "editorTag": "反馈期刊规范问题",
-    "credit": "在目录里写上我的称呼",
+    "credit": "在引用条目标注我的名字",
     "creditHint": "（所有人可见）",
     "creditTitle": "称呼会写在对应条目的出处卡上，所有用户都能看到；想撤掉，回信告诉我们就行。",
     "creditInput": "称呼",
-    "creditPlaceholder": "怎么称呼你，比如 李明 或昵称",
+    "creditPlaceholder": "你的名字，比如 李明",
     "creditRow": "称呼",
     "editorEmail": "核实后回信到这里"
   },
