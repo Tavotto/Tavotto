@@ -104,6 +104,7 @@ def make_xlsx(
     extra: dict[str, bytes] | None = None,
     workbook_override: str | None = None,
     sheet_xml_override: dict[str, str] | None = None,
+    styles: str = STYLES,
 ) -> Path:
     items = list(sheets.items()) if isinstance(sheets, dict) else list(sheets)
     sst: list[str] = []
@@ -131,7 +132,7 @@ def make_xlsx(
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("xl/workbook.xml", workbook_override or "".join(wb))
         z.writestr("xl/_rels/workbook.xml.rels", "".join(rel))
-        z.writestr("xl/styles.xml", STYLES)
+        z.writestr("xl/styles.xml", styles)
         z.writestr("xl/sharedStrings.xml", sst_xml)
         for i, (_, xml) in sheet_files.items():
             z.writestr(f"xl/worksheets/sheet{i}.xml", xml)

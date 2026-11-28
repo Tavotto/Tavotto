@@ -6,7 +6,7 @@
 取值规则（一处文字定义，下面实现）：
 
 * 共享字符串 / 内联字符串 / 公式字符串 → 文字（富文本取各段拼接，忽略拼音注音）；
-* 数值 → 文件里写的原文（`0.1` 就是 `0.1`，不重新格式化）；
+* 数值 → 默认仍返回存储原文；v2 出图指定转换器时，确知为百分比格式的数值用百分数点（`0.125` → `12.5%`），不碰 General 或字面百分号；
 * 布尔 → `TRUE` / `FALSE`（文字，不是数）；错误值（`#N/A` 等）→ 原样文字；
 * 公式取**缓存值**（Excel 上次保存时算出的），没有缓存值 = 空格子；不重算任何公式；
 * 日期：数值格且「数字格式含年或日」（内置日期格式号，或自定义格式去掉引号 / 方括号 / 转义后含 `y` 或 `d`；`[h]` `[m]` `[s]`
@@ -26,12 +26,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import math
 import posixpath
 import re
 import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from dataclasses import dataclass
+from decimal import Decimal, DecimalException
 from pathlib import Path
 
 #: 与 `ai_data_figure` 的上限同一口径（那边 import 这里，所以数在两处各写一份并由测试对拍相等）
@@ -142,6 +144,12 @@ def _is_date_format(code: str) -> bool:
     return re.search(r"[yd]", c, re.IGNORECASE) is not None
 
 
+def _is_percent_format(code: str) -> bool:
+    """全部数值段均有一个未转义的 % 才确认；引号、转义、填充及第四个文本段不算。"""
+    sections = _FMT_STRIP.sub("", code).split(";")[:3]
+    return all(section.count("%") == 1 and re.search(r"[0#?]", section) for section in sections)
+
+
 def _serial_to_text(raw: str, date1904: bool) -> str:
     """日期格里的数值 → ISO 文本；转不了（负数、0、假 1900-02-29、越界、非数）保持原文。"""
     try:
@@ -235,7 +243,7 @@ class XlsxBook:
             self._zf.close()
             raise
         self._sst: list[str] | None = None
-        self._date_xf: list[bool] | None = None
+        self._number_xf: list[str | None] | None = None
 
     def __enter__(self) -> "XlsxBook":
         return self
@@ -345,10 +353,10 @@ class XlsxBook:
             self._sst = out
         return self._sst
 
-    def _date_styles(self) -> list[bool]:
-        """`cellXfs` 每一项（样式号）是不是日期格式。"""
-        if self._date_xf is None:
-            flags: list[bool] = []
+    def _number_styles(self) -> list[str | None]:
+        """`cellXfs` 的日期或百分比格式；未知 / 纯数字为 None。"""
+        if self._number_xf is None:
+            flags: list[str | None] = []
             data = self._read("xl/styles.xml", required=False)
             if data:
                 root = _parse_small(data)
@@ -367,23 +375,27 @@ class XlsxBook:
                             fid = int(xf.get("numFmtId", "0"))
                         except ValueError:
                             fid = 0
-                        flags.append(
-                            _is_date_format(custom[fid])
-                            if fid in custom
-                            else fid in _BUILTIN_DATE_FMT
-                        )
-            self._date_xf = flags
-        return self._date_xf
+                        fmt = custom.get(fid)
+                        is_percent = fid in (9, 10) if fmt is None else _is_percent_format(fmt)
+                        is_date = fid in _BUILTIN_DATE_FMT if fmt is None else _is_date_format(fmt)
+                        if is_percent:
+                            flags.append("percent")
+                        elif is_date:
+                            flags.append("date")
+                        else:
+                            flags.append(None)
+            self._number_xf = flags
+        return self._number_xf
 
     # ---- 取值
-    def read(self, sheet: str | int | None = None) -> list[list[str]]:
+    def read(self, sheet: str | int | None = None, *, percent_cell=None) -> list[list[str]]:
         """一张表的格子 → 行列表（全空行丢掉；每行补齐到「最右一个非空格」的宽度）。行数超 `MAX_ROWS + 1`（含表头）
         → `data_too_long`；非空格子落在第 `MAX_COLUMNS` 列之后 → `data_too_wide`（**在补齐之前**判：稀疏表里一个远在
         XFD 列的格子会把每一行撑到 16384 列，几十 KB 的文件就能吃光内存）。"""
         info = self.resolve(sheet)
         data = self._read(self._sheet_member[info.index])
         sst = self._shared_strings()
-        date_xf = self._date_styles()
+        number_xf = self._number_styles()
         rows: list[dict[int, str]] = []
         numbers: list[int] = []
         cur: dict[int, str] | None = None
@@ -405,7 +417,7 @@ class XlsxBook:
                 if col is None:
                     raise XlsxError("data_xlsx_invalid", "cell-ref")
                 next_col = col + 1
-                val = self._cell_text(el, sst, date_xf)
+                val = self._cell_text(el, sst, number_xf, percent_cell)
                 if val != "":
                     if col >= MAX_COLUMNS:
                         raise XlsxError("data_too_wide", str(col + 1))
@@ -424,7 +436,9 @@ class XlsxBook:
         self.row_numbers = numbers
         return [[r.get(c, "") for c in range(width)] for r in rows]
 
-    def _cell_text(self, c: ET.Element, sst: list[str], date_xf: list[bool]) -> str:
+    def _cell_text(
+        self, c: ET.Element, sst: list[str], number_xf: list[str | None], percent_cell
+    ) -> str:
         t = c.get("t") or "n"
         v = None
         inline = None
@@ -452,8 +466,17 @@ class XlsxBook:
             s_idx = int(c.get("s") or "0")
         except ValueError:
             s_idx = 0
-        if 0 <= s_idx < len(date_xf) and date_xf[s_idx]:
+        style = number_xf[s_idx] if 0 <= s_idx < len(number_xf) else None
+        if style == "date":
             return _serial_to_text(v, self.date1904)
+        if style == "percent" and t == "n" and percent_cell is not None:
+            try:
+                # 先按十进制移两位，再转 float：避免 0.29 * 100 得到 28.999…。
+                points = Decimal(v).scaleb(2)
+                if points.is_finite() and math.isfinite(value := float(points)):
+                    return percent_cell(f"{points}%", value)
+            except (DecimalException, ValueError, OverflowError):
+                pass
         return v
 
 

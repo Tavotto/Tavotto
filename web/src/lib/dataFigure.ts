@@ -145,10 +145,10 @@ export const isStaleProposeCode = (code: unknown): boolean => code === 'propose_
 export const MAX_MERGE_TABLES = 8
 
 /**
- * 「合并作图」失败、**换成分别作图就能画**的后端码（400）：列名不一致、份数超限、几个文件的名字分不开。
+ * 「合并作图」失败、**换成分别作图就能画**的后端码（400）：列名或百分数尺度不一致、份数超限、几个文件的名字分不开。
  * 这些码在合并标签里都显示后端那一句（errors 命名空间）+「分别作图」出路，不给「再试一次」（点多少次都一样）；加新码只改这一处。
  */
-export const MERGE_FAILURE_CODES: readonly string[] = ['tables_columns_differ', 'tables_limit_exceeded', 'tables_labels_collide']
+export const MERGE_FAILURE_CODES: readonly string[] = ['tables_columns_differ', 'tables_percent_scale_mismatch', 'tables_limit_exceeded', 'tables_labels_collide']
 
 export const KNOWN_NOTHING_REASONS: readonly string[] = [
   'no_usable_table',
