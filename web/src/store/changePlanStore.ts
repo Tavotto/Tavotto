@@ -5,12 +5,14 @@ import {
   createChangePlan,
   applyChangePlanScript,
   discardChangePlan,
+  reportAgentPlanApplied,
   getChangePlan,
   reviseChangePlan,
   restoreChangePlanScript,
   undoChangePlanScript,
   type ChangePlan,
   type ChangePlanGroup,
+  type AgentHost,
   type ChangePlanTodo,
   type ChangePlanPatch,
   type VectorEditResult,
@@ -264,7 +266,8 @@ export interface PlanEntry {
   /** 脚本修改方案：应用 / 撤销在途（防连点） */
   scriptBusy?: boolean
   /** 一次动作没成时卡片上的一句灰字（下一次动作会清掉） */
-  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed'
+  /** `agent_settled`：Agent 卡落定时插件那边已先应用、窗口里刚写的又没能自动撤回（之后又改过 / 换了画布）——卡留着如实说 */
+  notice?: 'apply_failed' | 'undo_failed' | 'restore_failed' | 'agent_settled'
   /** 应用后由这张卡标成「已处理」的意见 id（撤销时只还原这几条） */
   resolvedIds?: string[]
   /** 标已处理 / 还原没成：审阅页签上一句灰字 + 重试（不自动再试，免得失败时反复打后端） */
@@ -279,6 +282,8 @@ export interface PlanEntry {
   todoOf?: string
   /** 这张脚本方案卡已经自动应用过一次（不再自动第二次：失败了留给用户） */
   autoApplied?: boolean
+  /** Agent 来源的建议卡（ADR 0217 §五）；没有 = 窗口自己出的方案 */
+  agent?: AgentOrigin
   /** 回答（`answered`）下方「把这些建议写成待办」已经点过：它出的那张待办卡的键（按钮不再出现） */
   todosKey?: string
   /** 待办卡上「再加一条」在途：新一版的方案 id（请求还没回时是空串）与用户写的那句话 */
@@ -287,6 +292,24 @@ export interface PlanEntry {
   /** 上一次「再加一条」没成（稳定码；下一次动作清掉） */
   addError?: PlanFailure
 }
+
+/**
+ * 来自插件里 Agent 的建议卡（ADR 0217 §五）：它在这里出现 = 绑定会话出的方案对上了窗口里开着的这张图。
+ * 窗口只写图内待办；脚本待办交回 Agent。卡的「已应用」记在后端的 `agent_applied`，先落定的赢。
+ */
+export interface AgentOrigin {
+  /** 出方案的宿主（卡上标「来自 Codex」等）；缺省 = 插件 */
+  host?: AgentHost
+  /** 点过「改这 N 项」并告诉了后端的全部待办 key（有它就算落定） */
+  reported?: string[]
+  /** 其中交回 Agent 去改脚本的 */
+  handed?: string[]
+}
+
+/** 用户收起过的 Agent 建议（方案 id）：本次运行里不再自动出现（刷新 / 重开才再给；方案本身留在后端，Agent 那边照常能读） */
+const hiddenAgentPlans = new Set<string>()
+export const isAgentPlanHidden = (planId: string): boolean => hiddenAgentPlans.has(planId)
+export const resetHiddenAgentPlans = (): void => hiddenAgentPlans.clear()
 
 /** 「改这 N 项」的执行记录 */
 export interface TodoRun {
@@ -423,6 +446,8 @@ interface ChangePlanState {
     fallback: ScriptFallback,
     onSettle?: () => void,
   ) => Promise<string | null | Fallthrough>
+  /** 发现的 Agent 建议卡入列（同一份方案只入一次；用户收起过的不再入）。→ 是否入了 */
+  addAgentEntry: (e: PlanEntry) => boolean
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
   /** 助手来源：把这条指令转给画布矢量那条路（用户点「改在画布上加」；选区里没有矢量对象也能走）→ 是否发出去了 */
   runCanvasAnnotate: (key: string) => boolean
@@ -579,6 +604,32 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     })
   const fail = (key: string, code: string, params?: Record<string, unknown>) =>
     patch(key, { status: 'failed', failure: { code, params } })
+
+  /**
+   * Agent 建议卡落定后告诉后端勾了哪几项（图内的已写进文档，脚本的交回 Agent；`suggest_status` 据此回 `by: desktop`）。先落定的赢：
+   * 插件那边先应用过 → 窗口里刚写的图内修改撤回、卡收起；别的失败（断线）不重试——图已经改好，Agent 下一次调用读得到。
+   */
+  const reportAgent = async (key: string): Promise<void> => {
+    const e = get().entries[key]
+    if (!e?.agent || !e.planId || e.agent.reported) return
+    const on = todosOf(e).filter((t) => todoChecked(e, t))
+    if (!on.length) return
+    const planId = e.planId
+    patch(key, { agent: { ...e.agent, reported: on.map((t) => t.key), handed: on.filter((t) => t.kind === 'script').map((t) => t.key) } })
+    try {
+      await reportAgentPlanApplied(planId, on.map((t) => t.key))
+    } catch (err) {
+      if (!(err instanceof EngineError) || err.code !== 'change_plan_agent_settled') return
+      // 撤回成功（或本来就没写）才收卡；撤不回（之后又改过 / 换了画布）就把卡留着如实说，改动留给用户自己决定（Codex #2380）
+      const undone = get().entries[key]?.status === 'applied' ? get().undo(key) : true
+      if (!undone) {
+        patch(key, { notice: 'agent_settled' })
+        return
+      }
+      hiddenAgentPlans.add(planId)
+      drop(key)
+    }
+  }
 
   /** 后端说热 worker 被任务动过、已作废：按这张图此刻的列表重放一次（与 specfix 同名同义） */
   const replay = (e: PlanEntry) => {
@@ -1069,6 +1120,18 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const on = todosOf(e).filter((t) => todoChecked(e, t))
       if (!on.length) return 'nothing'
       const figure = on.filter((t) => t.kind === 'figure')
+      // Agent 来源：图内待办写进文档（`apply` 里告诉后端）；脚本待办不在窗口里做，只告诉后端交回 Agent
+      if (e.agent) {
+        if (e.agent.reported) return 'nothing'
+        let r: ApplyResult = 'nothing'
+        if (figure.length) {
+          r = get().apply(key)
+          if (r !== 'applied') return r
+        }
+        patch(key, { todoRun: { figure: figure.map((t) => t.key), script: [], scripts: [] } })
+        if (!figure.length) await reportAgent(key)
+        return r
+      }
       const script = on.filter((t) => t.kind === 'script' && t.comment_id)
       // 上一次没成的脚本方案卡收掉，免得并排
       for (const x of todoScriptEntries(e, get().entries)) get().dismiss(x.entry.key)
@@ -1104,6 +1167,12 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     undoTodos: async (key) => {
       const e = get().entries[key]
       if (!e) return false
+      // Agent 来源：后端已记了这次应用、方案不能再用；图内那次撤回后卡就收起
+      if (e.agent) {
+        if (!get().undo(key)) return false
+        drop(key)
+        return true
+      }
       const scripts = todoScriptEntries(e, get().entries)
       const applied = scripts.filter((x) => x.entry.status === 'applied')
       const panel = panelOf(e)
@@ -1174,6 +1243,16 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
 
     addLayoutEntry: (entry) => set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] })),
 
+    addAgentEntry: (entry) => {
+      if (!entry.planId || hiddenAgentPlans.has(entry.planId)) return false
+      const same = Object.values(get().entries).filter((x) => x.planId === entry.planId)
+      // 同一份文档（同一次打开）里已经有这张卡了；换过文档 / 重开过的旧卡是孤儿（它的图不在了），换成新的
+      if (same.some((x) => x.documentId === entry.documentId && x.loadSeq === entry.loadSeq)) return false
+      for (const x of same) drop(x.key)
+      set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] }))
+      return true
+    },
+
     apply: (key, opts) => {
       const e = get().entries[key]
       const plan = e?.plan
@@ -1231,6 +1310,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       })
       set({ dialogKey: null })
       requestRender(after, true)
+      if (e.agent) void reportAgent(key)
       return 'applied'
     },
 
@@ -1330,6 +1410,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     discard: (key) => {
       const e = get().entries[key]
       if (!e) return
+      if (e.agent) return get().dismiss(key)
       // 一键排版的方案没有后端那一份，也没有「已放弃」的卡可留：直接收掉（再排一次只要几秒）
       if (isCanvasPlan(e)) return drop(key)
       patch(key, { status: 'discarded' })
@@ -1341,7 +1422,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     revise: async (key) => {
       const e = get().entries[key]
       const notes = e ? notesOf(e) : []
-      if (!e || !e.planId || e.status !== 'ready') return 'failed'
+      if (!e || !e.planId || e.status !== 'ready' || e.agent) return 'failed'
       if (e.revising !== undefined) return 'busy'
       if (!notes.length) return 'nothing'
       const guard = captureProjectEpoch()
@@ -1395,6 +1476,12 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
 
     dismiss: (key) => {
       const e = get().entries[key]
+      // Agent 来源的方案是插件那边的：收起只是窗口里不再给，后端那份不动（Agent 照常读得到）
+      if (e?.agent && e.planId) {
+        hiddenAgentPlans.add(e.planId)
+        drop(key)
+        return
+      }
       drop(key)
       if (e) for (const id of allPlanIds(e)) void discardChangePlan(id).catch(() => undefined)
     },

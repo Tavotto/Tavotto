@@ -48,6 +48,7 @@
     "change_plan_render_failed": "Rendering the changed figure failed, so no change plan was made. The figure wasn’t changed.",
     "change_plan_too_large": "The comments or figure are too large to handle at once. The figure wasn’t changed.",
     "change_plan_unknown": "This change plan doesn’t exist or has expired.",
+    "change_plan_agent_settled": "This suggestion has already been applied.",
     "change_plan_unsupported_connection": "The current AI connection can’t generate change plans yet. Try another connection.",
     "invalid_change_plan": "The change plan request wasn’t valid, so nothing was generated.",
     "result_too_large": "The journal facts result is too large to display.",
