@@ -5,13 +5,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/timelineThumb', () => ({
-  captureThumbSources: vi.fn(() => new Map()),
   composeTimelineThumb: vi.fn(async () => null),
 }))
 
 import { emptyProject, type TextObject } from '@/types/document'
 import { useDocumentStore } from '@/store/documentStore'
 import { currentProjectId, setCurrentProjectId } from '@/lib/session'
+import { installMomentSources } from './momentCapture'
 import {
   DEBOUNCE_MS,
   MIN_GAP_MS,
@@ -39,9 +39,13 @@ let seq = 0
 /** 下一次创建节点的请求怎么回：`fail` = 500，`skip` = 服务端判重 */
 let nextCreate: 'fail' | 'skip' | null = null
 let createAttempts = 0
+/** 图源捕获的注入替身（生产里是 renderStore 的归档感知捕获） */
+const injectCapture = vi.fn(() => new Map())
 
 beforeEach(async () => {
   posts.length = 0
+  injectCapture.mockClear()
+  installMomentSources(injectCapture)
   nextCreate = null
   createAttempts = 0
   localStorage.clear()
@@ -81,6 +85,16 @@ const edit = (id: string) =>
   })
 
 describe('takeCheckpoint', () => {
+  it('captureMoment 的图源走注入的那一份（归档感知），pj 与发起那一刻一致', () => {
+    setCurrentProjectId('proj-ckpt')
+    edit('t1')
+    const snap = captureMoment()
+    expect(injectCapture).toHaveBeenCalledTimes(1)
+    expect(injectCapture.mock.calls[0][1]).toBe('proj-ckpt')
+    expect(snap.thumb).toBe(injectCapture.mock.results[0]!.value)
+    expect(snap.identity.pj).toBe('proj-ckpt')
+  })
+
   it('用户起的名字 → named；程序起的名字（恢复前）不是命名节点', async () => {
     edit('t1')
     await takeCheckpoint({ auto: false, name: '投稿前' })

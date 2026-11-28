@@ -87,3 +87,11 @@ export function captureDocumentMoment(
     thumb: captureSources(identity.doc, identity.pj),
   }
 }
+
+/** 真实渲染层的同步图源捕获（`installMomentSources` 注入的那份）。时间线 checkpoint、
+ * 缩略图合成的兜底与 `captureDocumentMoment` 用同一份：归档 Figure / 图源 origin /
+ * chartSource 的面板在发起那一刻冻结引用与项目，缩略图画的是归档画作而不是 live 素材。 */
+export function captureMomentThumb(doc: FigureDocument, pj: string | null): ThumbSources {
+  if (!captureSources) throw new MomentCaptureUnavailable()
+  return captureSources(doc, pj)
+}
