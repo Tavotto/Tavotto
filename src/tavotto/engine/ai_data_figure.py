@@ -2191,11 +2191,22 @@ def error_match(name: str, others: list[str]) -> tuple[str | None, list[str]]:
     return (kind or word_kind), partners
 
 
+#: 列名末尾括号里的**单位 / 缩写**（`(kPa)`、`（%）`、`[mg/L]`、`(SD)`）：括号内没有汉字。它不是测量量的名字——
+#: 「标准差 (kPa)」没有写明修饰谁，「压力均值 (kPa)」的核心是「压力」。括号里是汉字的（「标准差（株高）」）才是在点名测量量，不去。
+#: （与下划线后缀的单位表 `_UNIT_SUFFIX` 是两回事：那个管 `time_s` 这种写法的轴标签）
+_BRACKET_TAIL = re.compile(r"\s*[(（\[【][^()（）\[\]【】\u4e00-\u9fff]*[)）\]】]\s*$")
+
+
+def _drop_unit_suffix(name: str) -> str:
+    """去掉末尾的单位 / 缩写括号（见 `_BRACKET_TAIL`）；没有就原样。只去一层。"""
+    return _BRACKET_TAIL.sub("", name, count=1)
+
+
 def _cjk_core(name: str, words: tuple[str, ...]) -> str | None:
-    """`name` 里含 `words` 之一 → 去掉它（只去第一处）与连接符之后剩下的核心（可能是空串）；不含 = None。"""
+    """`name` 里含 `words` 之一 → 去掉末尾的单位括号、这个词（只去第一处）与连接符之后剩下的核心（可能是空串）；不含 = None。"""
     for w in words:
         if w in name:
-            return _CJK_GLUE.sub("", name.replace(w, "", 1)).casefold()
+            return _CJK_GLUE.sub("", _drop_unit_suffix(name).replace(w, "", 1)).casefold()
     return None
 
 
@@ -2227,7 +2238,7 @@ def _cjk_partners(name: str, others: list[str]) -> list[str]:
             continue
         mean_core = _cjk_core(other, _MEAN_CJK)
         if rest:
-            plain = _CJK_GLUE.sub("", other).casefold()
+            plain = _CJK_GLUE.sub("", _drop_unit_suffix(other)).casefold()
             ok = (mean_core is not None and mean_core == rest) or plain == rest
         else:
             ok = mean_core is not None or bool(_MEAN_WORDS & set(_name_tokens(other)))

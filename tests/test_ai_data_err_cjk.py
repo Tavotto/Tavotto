@@ -147,3 +147,54 @@ def test_cjk_sd_abbreviation_preserves_the_measure_in_rule_candidates(tmp_path, 
         candidate = next(i for i in out["items"] if i.get("recommended"))
         assert candidate["values"]["y"] == [y]
         assert candidate["title_code"] == ("line_err" if expected else "line_points")
+
+
+# --------------------------------------------------------------------------- 括号里的单位不是测量量的名字（Codex #2392 P1）
+@pytest.mark.parametrize(
+    ("name", "others", "partners"),
+    [
+        ("标准差 (kPa)", ["时间", "压力均值 (kPa)"], ["压力均值 (kPa)"]),
+        ("标准差（kPa）", ["时间", "压力均值（kPa）"], ["压力均值（kPa）"]),
+        ("标准差[%]", ["组", "平均值[%]"], ["平均值[%]"]),
+        ("压力标准差 (kPa)", ["时间", "压力均值 (kPa)", "温度均值 (K)"], ["压力均值 (kPa)"]),
+        ("标准差 (kPa)", ["时间", "压力 (kPa)"], []),  # 旁边没有说自己是均值的列：仍不配
+        (
+            "标准差（株高）",
+            ["均值（株高）", "均值（产量）"],
+            ["均值（株高）"],
+        ),  # 括号里是汉字 = 在点名测量量
+    ],
+)
+def test_a_unit_in_brackets_is_not_a_measure_name(name, others, partners):
+    assert adf.error_match(name, others) == ("sd", partners)
+
+
+@pytest.mark.parametrize(
+    "name", ["标准差 (kPa)", "标准差（%）", "标准差 [mg/L]", "标准差 (SD)", "标准差"]
+)
+def test_an_error_column_with_only_a_unit_names_no_measure(name):
+    assert adf._cjk_error_core(name) == ""
+
+
+def test_error_bars_with_units_in_the_headers_are_still_drawn(project, tmp_path):
+    """评审举的那张表：`时间, 压力均值 (kPa), 标准差 (kPa)`——main 上推荐带误差线的折线，不能因为单位括号把现成的标准差丢掉。"""
+    root = tmp_path / "proj"
+    (root / "data").mkdir(parents=True)
+    (root / "data" / "p.csv").write_text(
+        "时间,压力均值 (kPa),标准差 (kPa)\n"
+        "2026-01-01,101.0,0.11\n2026-01-02,102.0,0.29\n2026-01-03,103.0,0.43\n2026-01-04,104.0,0.58\n",
+        encoding="utf-8",
+        newline="",
+    )
+    values = adf.inspect_data_source(root / "data" / "p.csv", v2=True)
+    assert ar.paired_error(values, "压力均值 (kPa)", ("时间",)) == "标准差 (kPa)"
+    out = P.propose(
+        root,
+        project="p",
+        folder="data",
+        render="lazy",
+        understand=False,
+        answers={"x": "时间", "y": ["压力均值 (kPa)"]},
+    )
+    rec = next(i for i in out["items"] if i.get("recommended"))
+    assert rec["title_code"] == "line_err" and rec["values"]["y"] == ["压力均值 (kPa)"]
