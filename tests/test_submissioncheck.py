@@ -236,3 +236,18 @@ def test_any_dropped_condition_marks_the_row_unresolved():
         if i["check"] == "width_final" and i["value"] == 89 and not i["conditions"]
     ]
     assert item["conditions"] == {} and item["has_condition_text"] is True
+
+
+def test_stable_ids_survive_between_calls_and_cover_merged_v2_facts():
+    bundle = _bundle(
+        _fact("w1", "width", "eq", 89, "mm", conditions={"column": "single"}),
+        _fact("fmax", "font_size", "lte", 7, "pt", conditions={"text_role": "other_text"}),
+    )
+    a = {r["id"] for r in sc.requirements("nature", bundle=bundle)}
+    b = {r["id"] for r in sc.requirements("nature", bundle=bundle)}
+    assert a == b and len(a) == len(sc.requirements("nature", bundle=bundle))
+    rows = sc.requirements("nature", bundle=bundle)
+    (single,) = [r for r in rows if r["id"] == "v1:page_columns#single"]
+    assert single["aliases"] == ["v2:w1"]
+    assert any(r["id"] == "v2:fmax" for r in rows)
+    assert all("id" not in i and "aliases" not in i for i in sc.sidecar_rows(rows))

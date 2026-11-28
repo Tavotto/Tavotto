@@ -36,7 +36,7 @@ CHECKS = (
 )
 SOURCE_STATES = ("preflight", "advice", "confirm")
 #: 发给组件的字段；其余（出处）只留在开源侧。
-SIDECAR_FIELDS = (
+SIDECAR_FIELDS = (  # `id` / `aliases`（稳定 id）只在开源侧
     "ref",
     "check",
     "relation",
@@ -357,7 +357,21 @@ def requirements(
     rows = _merge(v1, bundle)
     for i, row in enumerate(rows, 1):
         row["ref"] = f"r{i}"
+        row["id"] = stable_id(row["origin"], row["conditions"])
+        row["aliases"] = [stable_id(o, {}) for o in row.get("also", [])]
     return rows
+
+
+def stable_id(origin: dict, conditions: dict) -> str:
+    """跨次调用不变的行 id（ADR 0216 §九；`accept` 用它，`ref` 每次现编）：v2 `v2:<fact_id>`，
+    v1 `v1:<规则路径>`，栏宽再加 `#<column>`。"""
+    if origin.get("catalog") == "v2":
+        return f"v2:{origin.get('fact_id')}"
+    sid = f"v1:{origin.get('path')}"
+    column = (conditions or {}).get("column")
+    if origin.get("path") == "page_columns" and column:
+        sid += f"#{column}"
+    return sid
 
 
 def sidecar_rows(rows: list[dict]) -> list[dict]:
