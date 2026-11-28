@@ -52,6 +52,7 @@ from pathlib import Path
 from . import (
     depplan,
     depresolve,
+    devfault,
     envdiag,
     envlease,
     execspec,
@@ -2846,6 +2847,17 @@ def worker_self_test(python: str) -> dict:
 
     argv 走 `execspec.worker_argv`——worker 命令行的唯一出处，这里不另拼一份。
     """
+    if devfault.active(devfault.FAULT_SELFTEST_BLOCKED):
+        # 仅开发（ADR 0221 §六，`TAVOTTO_DEV=1` 才进来）：模拟自检被写入守卫拦了自己的输出（TVD-FTH9 形）
+        return {
+            "ok": False,
+            "detail": "",
+            "failure": _selftest_failure(
+                SELFTEST_STAGE_ERROR_REPLY,
+                exit_code=0,
+                worker_code="safe_file_operation_blocked",
+            ),
+        }
     tmp = tempfile.mkdtemp(prefix="tavotto-selftest-")
     try:
         root = Path(tmp)

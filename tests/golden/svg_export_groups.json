@@ -766,6 +766,86 @@
    ]
   },
   {
+   "name": "组有名字：名字在隐藏的成员上 / 同组不一致取 z 序第一个 / 内层另有名字",
+   "page_mm": [
+    120,
+    90
+   ],
+   "payload": [
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "细胞膜",
+     "group_path": [
+      "gA"
+     ],
+     "group_names": [
+      "机理图"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "ellipse",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#56B4E9",
+     "name": "受体",
+     "group_path": [
+      "gA",
+      "gB"
+     ],
+     "group_names": [
+      "机理图",
+      "受体簇"
+     ]
+    },
+    {
+     "x_mm": 10,
+     "y_mm": 10,
+     "w_mm": 20,
+     "h_mm": 12,
+     "type": "shape",
+     "shape": "rect",
+     "stroke_pt": 1,
+     "color": "#333333",
+     "fill": "#E69F00",
+     "name": "游离"
+    }
+   ],
+   "tree": [
+    {
+     "g": [
+      {
+       "o": "细胞膜"
+      },
+      {
+       "g": [
+        {
+         "o": "受体"
+        }
+       ],
+       "clip": false
+      }
+     ],
+     "clip": false
+    },
+    {
+     "o": "游离"
+    }
+   ]
+  },
+  {
    "name": "没有组也没有名字：载荷不多一个键",
    "page_mm": [
     120,

@@ -342,6 +342,7 @@ USER_VISIBLE_CODES = {
     "change_plan_not_editable": set(),
     "change_plan_busy": set(),
     "change_plan_unknown": set(),
+    "change_plan_agent_settled": set(),
     "change_plan_no_connection": set(),
     "change_plan_unsupported_connection": set(),
     "change_plan_model_auth": set(),

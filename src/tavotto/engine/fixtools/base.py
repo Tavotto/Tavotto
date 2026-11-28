@@ -154,6 +154,8 @@ class FixContext:
     #: 会话开始时报告里的失败形状（`hints.shape_of_report`）：改动之后报告会被重置成「还没跑」，第一次试运行前读不到形状，
     #: 试运行记录与「记住修好的做法」就以它为准（评测 11-23：设好参数再试运行，失败类型读成空，做法一条都没记）
     first_shape: str = ""
+    #: 界面语言（前端 `i18n.language`，可空）：已知问题等给用户看的句子按它选中 / 英文（ADR 0221 §二）
+    locale: str = ""
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None
 

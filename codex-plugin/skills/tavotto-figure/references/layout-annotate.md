@@ -83,6 +83,7 @@
 | `distribute` | `ids`（≥ 3；给 `gap_mm` 时 ≥ 2）、`axis`（`h` / `v`）、`gap_mm` |
 | `order` | `id`、`to`（`front back forward backward`） |
 | `group` / `ungroup` | `ids` + `name` / `group`（组 id，取 `vector_objects` 的 `group`） |
+| `rename_group` | `group`（组 id，取 `vector_objects` 的 `group`）、`name`（空串 = 去掉名字）：同组每个成员一起写；场景里 `group_names` 是 `{组 id: 名字}`；`group` 的 `name` 也真存下来 |
 | `rotate` | `id`、`deg`（绝对角度，顺时针为正，绕框中心） |
 | `pathfinder` | `ids`、`mode`（`unite minus_front minus_back intersect exclude divide trim merge crop`） |
 | `offset` / `outline_stroke` / `simplify` | `id` + `delta_mm`、`join` / 无 / `tolerance_pt` |

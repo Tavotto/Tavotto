@@ -18,6 +18,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { isRightOverlay, useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useIsolationStore, validPath } from '@/store/isolationStore'
+import { groupNameOf } from '@/lib/groupTree'
 import { exitAllGroups } from '@/store/groupActions'
 import type { PanelObject } from '@/types/document'
 
@@ -66,6 +67,8 @@ export function WorkspaceContextBar() {
   const isoPath = useIsolationStore((s) => s.path)
   const objects = useDocumentStore((s) => s.doc.objects)
   const isolating = !editingHere && validPath(isoPath, objects).length > 0
+  // 组有名字就写名字（没有照旧「组内编辑」）
+  const isoName = isolating ? groupNameOf(objects, validPath(isoPath, objects).at(-1)!) : ''
   if (dataDraftActive) return null
   if (!panel && !isolating) return null
 
@@ -76,7 +79,7 @@ export function WorkspaceContextBar() {
   // 图内编辑里没选元素时，当前对象就是「整张图」（右栏头部也这么写）：面包屑
   // 只剩图名的话，「现在改的是图内还是排版」这一层就没了（2026-09-13 审计 B43）
   const objectCrumb = isolating
-    ? t('isolation.label')
+    ? isoName || t('isolation.label')
     : !editingHere
     ? null
     : selectedGids.length > 1

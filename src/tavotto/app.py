@@ -13195,6 +13195,45 @@ def api_change_plans_discard(plan_id: str):
     return jsonify({"discarded": engine_changeplan.discard(current_ctx().id, plan_id)})
 
 
+@app.get("/api/change-plans")
+def api_change_plans_list():
+    """窗口里的待办卡（ADR 0217 §五）：这个项目里绑定会话的 Agent 出的、没过期、没落定的建议方案（最小字段，卡片内容再按 id 读）。
+    只有 `?agent=1` 一种列法；与别的 `/api/*` 一样在会话认证之内（没有旁路）。"""
+    if request.args.get("agent") != "1":
+        return _change_plan_error("invalid_change_plan")
+    resp = jsonify({"plans": engine_changeplan.list_agent_plans(current_ctx().id)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/change-plans/<plan_id>/agent-applied")
+def api_change_plans_agent_applied(plan_id: str):
+    """用户在窗口里按下 Agent 建议卡的「改这 N 项」之后：记下勾了哪几项（`{keys}`，方案里待办的 key；图内的已由窗口自己写进文档，
+    脚本的交回 Agent）。记在 `agent_applied`（不占脚本方案的 `applied`）；先落定的赢——插件那边已经应用过 → 409 `change_plan_agent_settled`。"""
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True)
+    keys = body.get("keys") if isinstance(body, dict) else None
+    plan = (
+        engine_changeplan.load(ctx.id, plan_id)
+        if engine_changeplan.PLAN_ID.match(plan_id)
+        else None
+    )
+    agent = plan.get("agent") if plan else None
+    if not plan or not isinstance(agent, dict) or not agent.get("panel"):
+        return _change_plan_error("change_plan_unknown")
+    known = {t.get("key") for t in plan.get("todos") or [] if isinstance(t, dict)}
+    if (
+        not isinstance(keys, list)
+        or not keys
+        or not all(isinstance(k, str) and k in known for k in keys)
+    ):
+        return _change_plan_error("invalid_change_plan")
+    record = {"by": "desktop", "keys": list(dict.fromkeys(keys)), "at": time.time()}
+    if not engine_changeplan.settle_agent_plan(ctx.id, plan_id, "agent_applied", record):
+        return _change_plan_error("change_plan_agent_settled")
+    return jsonify({"ok": True, "agent_applied": record})
+
+
 @app.post("/api/change-plans/layout-preview")
 def api_change_plans_layout_preview():
     """一键排版方案卡的整版预览（ADR 0206 §一 `source: quick_layout`，前端算好方案、后端只出图）：`{canvas: {page_w_mm, page_h_mm, objects}, long_edge?}`

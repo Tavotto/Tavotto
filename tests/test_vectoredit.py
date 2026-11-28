@@ -543,7 +543,15 @@ def test_group_creates_one_layer_gathers_members_and_names_the_group():
     assert gid == _run(objs, ops)["objects"][1]["groupId"]  # 方案与写入各算一遍要得到同一个组 id
     for o in r["objects"]:
         assert ("groupPath" not in o) and (o.get("groupId") == gid) == (o["id"] in "ab")
-    assert {c["field"] for c in r["changes"]} == {"groupId"}
+    assert {c["field"] for c in r["changes"]} == {
+        "groupId",
+        "groupNames",
+    }  # 名字真存下来（ADR 0208 前置 6.0）
+    assert all(o["groupNames"] == {gid: "标注"} for o in r["objects"] if o.get("groupId") == gid)
+    # 不给名字：只有 groupId 在变
+    assert {c["field"] for c in _run(objs, [{"op": "group", "ids": ["a", "b"]}])["changes"]} == {
+        "groupId"
+    }
 
 
 def test_group_nests_and_caps_depth():
@@ -800,6 +808,15 @@ def test_pathfinder_result_stays_in_the_sources_common_group():
     objs[1]["groupId"] = "g_two"
     r = _run(objs, [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"}])
     assert "groupId" not in _by(r)["p_front"]
+
+
+def test_pathfinder_result_keeps_the_group_name_of_the_chain_it_stays_in():
+    objs = _two_circles(groupId="g_one", groupNames={"g_one": "细胞", "g_old": "不在链上"})
+    r = _run(objs, [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"}])
+    assert _by(r)["p_front"]["groupNames"] == {"g_one": "细胞"}  # 只留链上的键
+    objs[1]["groupId"] = "g_two"
+    r = _run(objs, [{"op": "pathfinder", "ids": ["p_back", "p_front"], "mode": "unite"}])
+    assert "groupNames" not in _by(r)["p_front"]
 
 
 def test_pathfinder_without_overlap_is_an_error_and_deletes_nothing():
