@@ -108,16 +108,21 @@ PROBE_ENV_KEEP = (
     "TAVOTTO_DATA_DIR",
     "TAVOTTO_NO_TELEMETRY",
     "TAVOTTO_NO_REVIEW_SHARE",
+    "TAVOTTO_NO_CONTACT",
+    "TAVOTTO_NO_JOURNAL_SYNC",
     "LANG",
     "LC_ALL",
 )
 #: 探针里保留、生成的配置里也要带上的那几个（用户设了才带）。探针在它们决定的配置 /
 #: 数据目录里验过引擎，配置里不带，宿主就会去另一处找；`TAVOTTO_NO_TELEMETRY` 是遥测
 #: 硬开关，丢了等于在用户明确关掉之后又可能发出去（Codex 在 #559 上指出）；`TAVOTTO_NO_REVIEW_SHARE`
-#: 是外部审阅的硬开关，Agent 的 `tavotto_share_review` 同样要认它（ADR 0205 §六）。
+#: 是外部审阅的硬开关，Agent 的 `tavotto_share_review` 同样要认它（ADR 0205 §六）；`TAVOTTO_NO_CONTACT` /
+#: `TAVOTTO_NO_JOURNAL_SYNC` 同理管 `tavotto_report_journal_issue`（ADR 0213 §五）。
 CARRIED_ENV = (
     "TAVOTTO_NO_TELEMETRY",
     "TAVOTTO_NO_REVIEW_SHARE",
+    "TAVOTTO_NO_CONTACT",
+    "TAVOTTO_NO_JOURNAL_SYNC",
     "TAVOTTO_CONFIG_DIR",
     "TAVOTTO_DATA_DIR",
     "XDG_CONFIG_HOME",

@@ -194,12 +194,7 @@
 
 ### L-165 新写一条做同一件事的路径，先把旧路径已有的防护列出来逐条搬过去 → docs/rules/repo/predicate-subject.md
 
-### L-167 新解析器或转换器：认得的输入要么兑现、要么报 issue，不许静默丢
-- 类: 别这样
-- 触发: src/tavotto/svg*, src/tavotto/engine/chart*, src/tavotto/chartbundle.py, tests/support/svg_corpus/, web/src/lib/pathfinder.ts
-- Seen: 2026-11-16, 2026-11-18
-- 为什么: SVG 场景转换器认得嵌套 clip-path 与 textLength，转换时却当没写，画出来不裁、字宽不对（#1879）；粘贴表格分词滤掉空串，`1,,3` 的空格悄悄消失，重名表头后者覆盖前者且 issues 为空，TS 镜像校验只查样式键不查值（#1880）。两个 PR 评审共 7 条 P1。每个认得的属性或格式写一条「兑现」或「报 issue」的用例；镜像校验与权威实现共用一份含拒绝样例的向量。11-18 偏移路径只把坐标交给内核，复合路径的 evenodd 填充规则丢了，洞被填上，评审报 P1（#2031）。
-- 证据: #1879, #1880, #2031
+### L-167 新解析器或转换器：认得的输入要么兑现、要么报 issue，不许静默丢 → docs/rules/repo/local-verification.md
 
 ### L-169 测试替身与真实类同形：用真类构造或 spec_set 真类，属性别写成方法
 - 类: 别这样

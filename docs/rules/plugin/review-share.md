@@ -10,7 +10,7 @@
 sheet: codex-plugin/AGENTS.md
 order: 65
 改到: `tavotto_share_review` / `tavotto_review_feedback` / `tavotto_reply_review` / `tavotto_resolve_review`、`bridge.share_review()` / `review_feedback()` / `review_reply()` / `review_resolve()`、`reviewshare` 的 `renderer=` / `_Spec.renderer`、`reviewinbox.file_lock`
-主题: Agent 发外部审阅 → `review-share.md`
+主题: Agent 发审阅 → `review-share.md`；期刊线索 → `journal-report.md`
 必守要点: 未确认零网络；comment_id 只认本图链接；第三方文字标 source；出图回调随分享走；收件箱写在锁里；figure id = stem
 -->
 

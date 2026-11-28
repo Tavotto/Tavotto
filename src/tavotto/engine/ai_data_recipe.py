@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -973,6 +974,8 @@ def stack_view(s: adf.DataSummary, cols) -> adf.DataSummary:
         layout="long",
         groups={cname: len(cols)},
         numcat={},
+        design={},
+        row_index=[],
         id_like=[],
         repeats=None,
         row_count=None if s.rows else n,
@@ -1077,7 +1080,7 @@ class _Values:
                 if cls == "numeric":
                     out.append(v)
                 else:
-                    d = adf.parse_date(cell) if cls == "text" else None
+                    d = adf.parse_when(cell) if cls == "text" else None
                     out.append(adf.date_number(d) if d is not None else None)
             self._cache[col] = out
         return self._cache[col]
@@ -2240,6 +2243,70 @@ def error_kind_of(s: adf.DataSummary, err: str) -> str:
     return ERR_KIND_OF_NAME.get(kind or "", "unknown")
 
 
+#: 默认横轴的偏好次序（越小越先）：日期 > 块内严格递增、块间重置 > 整列按行不减 > 少量重复水平
+_DESIGN_RANK = {"date": 0, "block": 1, "monotone_levels": 2, "levels": 3}
+
+
+#: 列名在说「我是第几次重复」（规范化后逐字相等的闭集）：重复号 1..k 在每个处理里各出现一遍，取值结构与「每个个体各自的时间点」一模一样，只看取值分不开
+_REPLICATE_NAMES = frozenset(
+    {
+        "rep",
+        "reps",
+        "repl",
+        "replicate",
+        "replicates",
+        "replication",
+        "重复",
+        "重复号",
+        "平行",
+        "平行样",
+    }
+)
+
+
+def _replicate_name(name: str) -> bool:
+    """列名像重复号（`_REPLICATE_NAMES`）。只用来**去掉**「像条件 / 顺序」的线索（这一列不当默认横轴），不凭它认任何角色。"""
+    return re.sub(r"[\s_.\-:]+", "", name.strip().lower()) in _REPLICATE_NAMES
+
+
+def _counter_col(s: adf.DataSummary, c: str) -> bool:
+    """这一列只是在数「第几次 / 第几行」，不是条件也不是测量：列名是重复号（`_replicate_name`），或列名像行号（`adf._row_index_name`）而取值在每组里各自从头数一遍
+    （取值结构是 `block`——整表从头数到尾的那种已由 `DataSummary.row_index` 管）。两种都要**列名**在闭集里；后一种还要取值结构对得上。"""
+    return _replicate_name(c) or (adf._row_index_name(c) and s.design.get(c) == "block")
+
+
+def _effective_design(s: adf.DataSummary) -> dict[str, str]:
+    """这张表里真正当「像条件 / 顺序」用的线索（`DataSummary.design` 去掉打架的）。**线索打架或不明确时保持原行为**：`block` 有两列及以上
+    （几列都是「组内递增、组间重置」的斜坡，如一组重复列）时谁是时间分不开，`block` 不用；`levels` / `monotone_levels` 不受影响。
+    只是在计数的列（`_counter_col`：重复号、每组各自从头数的行号）先去掉：它不是条件，也不该让真正的时间列因为「两列 block」而失去资格。"""
+    d = {c: k for c, k in s.design.items() if not _counter_col(s, c)}
+    blocks = [c for c, k in d.items() if k == "block"]
+    if len(blocks) >= 2:
+        d = {c: k for c, k in d.items() if k != "block"}
+    return d
+
+
+def _levels_code(s: adf.DataSummary, c: str, dz: dict[str, str]) -> bool:
+    """两个水平的整数编码列（`DataSummary.numcat` 里恰两个取值、取值结构是无序的 `levels`）：是二分类编码（敲除 0 / 1、group 1 / 2），不是默认横轴。
+    三个以上水平（温度 4 / 25 / 37、剂量 1 / 2 / 3）当横轴当分组都说得通，保持原行为。"""
+    return s.numcat.get(c) == 2 and dz.get(c) == "levels"
+
+
+def numeric_like_date(s: adf.DataSummary, c: str, dz: dict[str, str]) -> bool:
+    """日期列或「像条件 / 顺序」的数值列（`dz` = `_effective_design`）。"""
+    return s.per_column[c].kind == "date" or c in dz
+
+
+def _design_rank(s: adf.DataSummary, c: str, dz: dict[str, str]) -> int | None:
+    """这一列作默认横轴的偏好等级；不像条件 / 顺序（`DataSummary.design` 里没有，也不是日期）或是整数编码的类别列 = None。**只看取值结构，不看列名。**"""
+    if s.per_column[c].kind == "date":
+        return _DESIGN_RANK["date"]
+    kind = dz.get(c)
+    if kind is None or _levels_code(s, c, dz):
+        return None
+    return _DESIGN_RANK[kind]
+
+
 def _resolve_roles_raw(
     entry: adf.TableEntry, hint: str | None, picks: dict
 ) -> _Roles | NeedsChoice | str:
@@ -2276,6 +2343,19 @@ def _resolve_roles_raw(
     # 用户在话里按词点名的列（`hint`）同样算「自己点了」：`plot stderr` 要画的就是 stderr 那一列
     asked |= set(adf._mentioned(hint, cols)) if hint else set()
     nums_all = list(nums)  # 下拉里仍然列得出误差列：用户自己点它是允许的
+    # 行号列（`s.row_index`：名字像行号、取值恰是从 0 / 1 起逐行 +1）：「随行号变化」没有科学意义，默认不当 y / x；用户自己点了它、或去掉后一个数值列都不剩时不去。
+    # 它不是 `id_like`（不进 `ids`、不影响重复测量的提问），也不挡下拉：`options` 里仍列得出，用户可以自己选
+    rowidx = {c for c in s.row_index if c not in asked}
+    if rowidx and any(c not in rowidx for c in nums):
+        nums = [c for c in nums if c not in rowidx]
+    else:
+        rowidx = set()
+    # 只是在计数的列（`_counter_col`：重复号、每组各自从头数的行号）：同理默认不当 y / x（「随第几次重复变化」不是要看的关系）；点名了、或去掉后不剩数值列时不去；下拉里照旧列得出
+    reps = {c for c in nums if _counter_col(s, c) and c not in asked}
+    if reps and any(c not in reps for c in nums):
+        nums = [c for c in nums if c not in reps]
+    else:
+        reps = set()
     errs = {c for c in error_columns(s) if c not in asked}
     if errs and any(c not in errs for c in nums):
         nums = [c for c in nums if c not in errs]
@@ -2287,7 +2367,7 @@ def _resolve_roles_raw(
         nums = [c for c in nums if c not in sizes]
     else:
         sizes = set()
-    errs_and_sizes = errs | sizes
+    errs_and_sizes = errs | sizes | rowidx | reps  # 默认不当轴、但下拉里仍列得出的列
     dates = [c for c in cols if s.per_column[c].kind == "date" and c not in ids]
     cats = [c for c in cols if c in s.groups and c not in ids]
     cats_all = list(cats)
@@ -2305,6 +2385,11 @@ def _resolve_roles_raw(
         return "value_column_mixed" if mixed else "no_numeric_column"
     named = adf._mentioned(hint, cols) if hint else []
     wide_x = cols[0] if s.layout == "wide" and cols[0] in (nums + dates) else None
+    # 默认纵轴只从「像测量」的列里挑（`DataSummary.design` 里没有、也不是整数编码的类别列）；一个都没有就保持现有行为。只影响**默认**：用户 / 模型点名、下拉选项都不变
+    dz = _effective_design(s)
+    ynums = [c for c in nums if c not in dz]
+    if not ynums:
+        ynums = nums
     # --- y
     ys: list[str]
     p = picks.get("y")
@@ -2321,13 +2406,21 @@ def _resolve_roles_raw(
     elif p in nums:
         ys = [p]
     elif p == "unsure":
-        ys = [nums[-1]]
+        ys = [ynums[-1]]
     elif named_y:
         ys = [named_y[0]]
     elif len(nums) == 1:
         ys = [nums[0]]
-    elif wide_x is not None and 2 <= len([c for c in nums if c != wide_x]) <= 3 and not cats:
+    elif (
+        wide_x is not None
+        and 2 <= len([c for c in nums if c != wide_x]) <= 3
+        and not cats
+        # 别的列是「块内递增、块间重置」的时间（个体 × 时间）：不是「第一列当横轴、其余都是系列」
+        and not any(dz.get(c) == "block" for c in nums if c != wide_x)
+    ):
         ys = [c for c in nums if c != wide_x]
+    elif len(ynums) == 1 and ynums != nums:
+        ys = [ynums[0]]  # 其余数值列都像条件 / 顺序 / 类别编码：唯一像测量的那一列就是纵轴，不问
     else:
         return NeedsChoice("pick_value", _col_options("y", nums, s), _unsure("y"))
     # --- 分组列（`picks.group == "none"`：用户明确不要分组，不走下面的挑选与提问）
@@ -2359,18 +2452,30 @@ def _resolve_roles_raw(
         for c in dates + nums
         if c not in ys and (s.per_column[c].kind == "date" or numeric_like(s.per_column[c]))
     ]
+    dx = sorted(
+        (c for c in xs if _design_rank(s, c, dz) is not None),
+        key=lambda c: (_design_rank(s, c, dz), xs.index(c)),
+    )
     x_ord: str | None = None
     px = picks.get("x")
     named_x = [c for c in named if c in xs]
     if px == "none":  # 用户明确不要有序横轴：不出 trend / relationship，也不问
         pass
     elif len(xs) == 1:
-        x_ord = xs[0]
+        c = xs[0]
+        # 唯一的候选：像条件 / 顺序就是横轴；二分类编码列不是横轴；去掉行号列之后才只剩它、像测量、而表里有分组列时也不是（去掉行号之前本来有歧义、没有横轴，走比较 / 分布；一开始就只有它的表照旧）；其余照旧
+        if c in dx or px == c or c in named_x:  # 用户 / 模型 / 话里点名了它：照点名
+            x_ord = c
+        elif not (_levels_code(s, c, dz) or (cats and rowidx and not numeric_like_date(s, c, dz))):
+            x_ord = c
     elif len(xs) > 1:
         if px in xs:
             x_ord = px
         elif named_x:
             x_ord = named_x[0]
+        elif dx:
+            # 只从像条件 / 顺序的列里挑：日期 > 块内递增块间重置 > 按组排好序的少量取值 > 无序的少量重复水平，再按最左（宽表的第一列若也像条件，自然在里面）
+            x_ord = dx[0]
         elif wide_x in xs:
             x_ord = wide_x
         elif not cats:
@@ -3001,6 +3106,23 @@ def default_candidates(
     items = tuple(Candidate(by_recipe[id(r)], r) for r in res.kept)
     dropped += list(res.dropped)
     if not items:
+        fallback_x = _large_fallback_x(s, values, roles, picks, tuple(dropped))
+        if fallback_x is not None:
+            # 大表退路：规则默认出的备选全被「大表不支持」拒掉（分组比较 / 分布没有流式画法）——用一个确定的横轴重算一次，让趋势 / 关系图（大表能画的两类）
+            # 顶上。重算走的是同一条流水（同样的 `validate_recipe` + `enforce_order`，`picks.x` 与用户点名同一条路），所以 `roles` 如实反映实际用的横轴；
+            # 重算仍没有备选（或要先问文字格）就当没这回事，返回原来的结果
+            again = default_candidates(
+                profile,
+                table=table,
+                sheet=sheet,
+                confirmed=confirmed,
+                hint=hint,
+                values=values,
+                picks={**picks, "x": fallback_x},
+                cells=cells,
+            )
+            if isinstance(again, Candidates) and again.items:
+                return again
         return Candidates(
             entry.path,
             entry.sheet,
@@ -3011,6 +3133,51 @@ def default_candidates(
             role_info,
         )
     return Candidates(entry.path, entry.sheet, items, tuple(dropped), (), eff, role_info)
+
+
+def _large_fallback_x(
+    s: adf.DataSummary,
+    values: adf.DataSummary | None,
+    roles: _Roles,
+    picks: dict,
+    dropped: tuple[Dropped, ...],
+) -> str | None:
+    """大表退路用哪一列当横轴（None = 不走退路）。**只在同时满足时**：大表；用户 / 模型没有对横轴表过态（`picks` 里没有 `x`——哪怕是 `none` 也尊重）；规则
+    默认没有有序横轴、不是「把列当分组」；这次出过备选，而且**每一条**被拒的原因都是「大表不支持」（`mark_not_allowed` 且 `detail` 以 `large` 开头）——
+    只要有一条是别的原因（别的规则也拒了它），就不是「大表限制」造成的空手，不动。
+
+    列的挑法（确定性、保守）：不是纵轴 / 分组 / 编号列 / 行号列 / 误差列 / 样本量列；纯日期列优先（有序横轴，折线才有意义），否则纯数值列（`kind == "numeric"`，
+    夹着文字的不要）；数值列取整表最小值 < 最大值的（常数列没有信息，如 `year` 全是 2013）里最左的。"""
+    big = values if values is not None and values.large is not None else s
+    if big.large is None or "x" in picks or roles.x_ord is not None or roles.stack:
+        return None
+    if not dropped or any(
+        p.code != "mark_not_allowed" or not p.detail.startswith("large")
+        for d in dropped
+        for p in d.problems
+    ):
+        return None
+    skip = {
+        *roles.ys,
+        *roles.cats,
+        *s.id_like,
+        *s.row_index,
+        *(c for c in s.columns if _counter_col(s, c)),  # 重复号列同样不是退路的横轴
+        *error_columns(s),
+        *sample_size_columns(s),
+    }
+    stats = big.large.stats
+    pool = [c for c in s.columns if c not in skip]
+    dates = [c for c in pool if s.per_column[c].kind == "date"]
+    nums = [
+        c
+        for c in pool
+        if s.per_column[c].kind == "numeric"
+        and c in stats
+        and stats[c].lo is not None
+        and stats[c].lo < stats[c].hi
+    ]
+    return (dates + nums or [None])[0]
 
 
 __all__ = [

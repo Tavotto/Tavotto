@@ -123,7 +123,9 @@ def test_holdout_plain_tables_are_the_rules_territory_and_the_hard_ones_are_not(
     plain = [i for i, c in ((c["id"], c) for c in HOLDOUT) if c["tier"] == "plain"]
     hard = [i for i, c in ((c["id"], c) for c in HOLDOUT) if c["tier"] == "hard"]
     assert sum(hits[i] for i in plain) >= len(plain) - 1  # 普通表：规则几乎都对
-    assert sum(not hits[i] for i in hard) >= len(hard) * 2 // 3  # 难例：规则多半会错
+    # 难例：规则仍有一半以上会错。2026-11-27 条件列 / 测量列线索（ADR 0178）让 HO-13 / HO-14 / HO-15 规则也对了：17 条里答错的由 13 条变 10 条，
+    # 下限随之 2/3 → 1/2（不是放宽判据，是少了三条真的答对了的；这条量的是「这批难例对规则仍然难」）
+    assert sum(not hits[i] for i in hard) > len(hard) // 2
 
 
 def test_the_rules_alone_get_most_of_the_new_cases_wrong_and_the_controls_right(tmp_path):
@@ -133,14 +135,18 @@ def test_the_rules_alone_get_most_of_the_new_cases_wrong_and_the_controls_right(
     controls = [c["id"] for c in CASES if c.get("control")]
     assert all(hits[i] for i in controls)
     wrong = [i for i, ok in hits.items() if not ok]
-    assert len(wrong) >= 15  # 这批用例就是规则会出错的
+    # 这批用例就是规则会出错的。2026-11-27（ADR 0178）规则学会了三件事——行号列不当轴、重复号列不当轴、默认横轴 / 纵轴看取值结构——
+    # RC-05 / RC-08 / RC-09 / RC-10 / RC-11 / RC-12 规则也对了：答错的由 15 条变 9 条。这条量的是「这批用例对规则仍然有区分度」，
+    # 下限随之改成「至少三分之一仍答错」（不是放宽判据：少掉的六条是真的答对了，逐条见 ADR 修订）
+    assert len(wrong) >= len(CASES) // 3
 
 
 def test_recorded_answers_fix_the_defaults_and_never_break_a_correct_one(tmp_path):
     runs = [with_model(c, tmp_path)[0] for c in CASES]
     s = DR.summarize(runs)
     assert s["model_ready"] == len(CASES)
-    assert s["arm_model"]["all"] == 1.0 and s["arm_rules"]["all"] < 0.4
+    # 规则这一臂 2026-11-27 起由 32% 升到 59%（见上一条用例的注释）；这条量的是「回放的回答把剩下的都补齐、且确实比规则强一截」
+    assert s["arm_model"]["all"] == 1.0 and s["arm_rules"]["all"] < 2 / 3
     assert s["control_regressions"] == 0
     assert s["role_accuracy_all"] == 1.0 and s["role_accuracy_critical"] == 1.0
     assert s["header_ok"] == "2/2" and s["cells_ok"] == "1/1"
@@ -653,11 +659,10 @@ def test_endpoint_polls_the_same_project_only_and_off_means_nothing_to_apply(pro
     R.set_overrides(conn=D.fake_conn(), sync=True, post=DR.scripted(case))
     resp = propose(client, render="lazy").get_json()
     und = resp["understanding"]
-    assert (
-        und["state"] == "ready"
-        and und["answers"]["y"] == "expression"
-        and und["answers"]["x"] == "none"
-    )
+    # `answers` 只带与规则默认不同的那几项：RC-01 的 y（`expression`）规则自 2026-11-27 起自己就挑对了，剩下「没有横轴」这一项
+    assert und["state"] == "ready" and und["answers"]["x"] == "none"
+    assert und["answers"].get("y", "expression") == "expression"
+    assert resp["roles"]["y"] == ["expression"]
     got = client.get(f"/api/ai/data-figure/understanding/{und['id']}")
     assert got.status_code == 200 and got.headers["Cache-Control"] == "no-store"
     body = got.get_json()

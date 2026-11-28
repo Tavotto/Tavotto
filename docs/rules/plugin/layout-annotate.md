@@ -9,9 +9,9 @@
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 135
-改到: `tavotto_layout_*` 六个工具、`bridge.layout_*()`
-主题: 排版标注工具 → `layout-annotate.md`
-必守要点: 只翻译；量子图与成品合成同一判定；写入带 echo_digest
+改到: `tavotto_layout_*`、`bridge.layout_*()`
+主题: 排版标注 → `layout-annotate.md`；建议待办 → `suggest-todos.md`
+必守要点: 量子图与成品同一判定；写入带 echo_digest
 -->
 
 - **只翻译**：读排版、求解、核对、复述、写入、撤销全在 `engine/layoutannotate.py`（加）与 `engine/vectoredit.py`（改）。桥只做三件 MCP 才有的事：授权范围
