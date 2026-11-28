@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { DATA_DECLINED, canUndoApplied, declinedGroups, isCanvasPlan, isTodoPlan, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, wantsCanvasAnnotation, canUndoApplied, declinedGroups, isCanvasPlan, isTodoPlan, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
 import { Markdown } from '../ai/Markdown'
@@ -12,7 +12,7 @@ import { StatusPill } from '../ui/StatusPill'
 import { TaskChecklist } from '../ui/TaskChecklist'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { formatAxisLimit } from '@/lib/logPower'
-import { cp, effectiveStatus, vectorCannotApply, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
+import { cp, effectiveStatus, vectorCannotApply, vectorUnmeasuredLine, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
 import { SuggestionCard } from './SuggestionCard'
 import { GraphPaper, PlotSketch, type PlotStage } from './PlotSketch'
@@ -81,7 +81,7 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const steps = generating ? planSteps(entry) : null
   // 有三步清单的卡（生成中 / 刚出好待确认）正文区同高
   const activeStep = steps?.find((x) => x.state === 'active')?.id
-  const plotStage: PlotStage = activeStep === 'before' ? 'read' : activeStep === 'after' ? 'draw' : 'think'
+  const plotStage: PlotStage = activeStep === 'before' || activeStep === 'measure' ? 'read' : activeStep === 'after' || activeStep === 'plan' ? 'draw' : 'think'
   const freshFlow = !!steps || (status === 'ready' && !isCanvasPlan(entry))
 
   return (
@@ -164,6 +164,12 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                       : summaryLine(entry)}
           </p>
         )}
+        {/* 矢量编辑：没量到的子图（标注退到按外框放）——一行灰字，没有就不占位 */}
+        {!generating && vectorUnmeasuredLine(entry) && (
+          <p className="-mt-1 text-xs text-ink-3" data-change-plan-unmeasured>
+            {vectorUnmeasuredLine(entry)}
+          </p>
+        )}
         {entry.notice && <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>{cp(entry.notice === 'apply_failed' ? (script ? 'card.applyFailedScript' : 'card.applyFailed') : script ? 'card.undoFailedScript' : 'card.undoFailed')}</p>}
         {/* 生成中先把两颗按钮摆好（灰着）：出好时只是亮起来，卡片不挪 */}
         {generating && !steps && (
@@ -216,6 +222,11 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 {cp('card.runScript')}
               </Button>
             )}
+            {!ask && (status === 'ready' || status === 'applied') && wantsCanvasAnnotation(entry) && (
+              <Button variant="ghost" size="md" className="rounded-full" onClick={() => void store().runCanvasAnnotate(entry.key)} data-change-plan-canvas-annotate>
+                {cp('card.canvasAnnotate')}
+              </Button>
+            )}
             {status === 'stale' && (
               <Button variant={primary} size="md" className={btn} onClick={() => void store().regenerate(entry.key)} data-change-plan-regenerate>
                 <RefreshCw size={ICON_SIZE.sm} />
@@ -250,7 +261,7 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
   }
   // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
   // 审阅来源：没有一条能落成图内修改、但有「要改脚本」的意见时，同样给这条路（只由用户点，不自动续走）
-  const scriptWay = code !== DATA_DECLINED && entry.kind !== 'vector' && (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
+  const scriptWay = code !== DATA_DECLINED && entry.kind !== 'vector' && !wantsCanvasAnnotation(entry) && (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">
@@ -277,8 +288,13 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           <ul className="flex flex-col gap-1">
             {un.map((u) => (
               <li key={u.id} className="flex flex-col" data-change-plan-unhandled={u.id}>
-                <span className="truncate text-sm text-ink-3">{u.text}</span>
+                <span className="text-sm text-ink-3">{u.text}</span>
                 {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
+                {u.action && (
+                  <Button variant="secondary" size="sm" className="mt-1 w-fit rounded-full" onClick={() => entry.vector?.confirm?.(u.action!.item, u.action!.op)} data-change-plan-confirm-item>
+                    {cp('vector.confirmButton')}
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -287,6 +303,11 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           <Button variant="ghost" className="-ml-3" onClick={run} disabled={entry.scriptBusy} data-change-plan-failed-action={action}>
             {label}
           </Button>
+          {assistant && code === 'change_plan_empty' && wantsCanvasAnnotation(entry) && (
+            <Button variant="ghost" onClick={() => void store().runCanvasAnnotate(entry.key)} data-change-plan-canvas-annotate>
+              {cp('card.canvasAnnotate')}
+            </Button>
+          )}
           {scriptWay && (
             <Button variant="ghost" onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
               {cp('card.runScriptAll')}

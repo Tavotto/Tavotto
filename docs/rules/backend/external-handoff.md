@@ -132,7 +132,9 @@ order: 310
   数出来的缺也可能是用户自己删的，所以只报事实、不据此自动补；计数由拥有 schema 的 `ai_history` 登记（同合并器，免成环）。**手动找回**（#2282 补救 B，11-27 用户拍板）：任务历史底部一行（`LegacyHistoryLine`；`GET /api/ai/history/legacy` 回本项目旧库有、
   真实库没有的会话数——所有旧包取并集，数不出来回 0、整行不出现），点「找回」原地确认后 `POST /api/ai/history/legacy/restore` →
   `msixmigrate.restore_legacy`：不看「待补」标记，和后台合并走同一条路（快照 + 登记的合并器、一个事务、补回的取新 rev），
-  拿不到迁移锁 / 超时回 deferred 让用户再试；做完清掉同一库的「待补」。与自动路径唯一的区别：用户在新库删掉的也会回来——确认句写明，是用户点头的。看护 `tests/test_msix_migrate.py`、`tests/test_windows_regressions.py`。
+  拿不到迁移锁 / 超时回 deferred 让用户再试；只补当前项目，保留其他项目的「待补」。用户在新库删掉的会话也会回来——确认句写明，是用户点头的。看护 `tests/test_msix_migrate.py`、`tests/test_windows_regressions.py`。
+
+  历史库只接受 SQLite 一致快照，备份失败不能只复制主文件（提交可能还在 WAL）。后台重试由目标库在合并事务内记下已处理的旧会话 ID，避免从同一旧包或另一旧包里恢复已经删除的会话。
 - **前端交接三条纪律**（`applyOpenRequest`）：① 同项目**绝不**调
   `projectStore.open`（那条路 switchDocument 成空白文档，用户排的版当场没）；
   ② 必须重扫素材（交接的图刚写到磁盘，实例手里那份 panels 是旧的）；

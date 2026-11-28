@@ -126,6 +126,10 @@ export interface VectorHandle extends LayoutHandle {
   busy?: boolean
   /** 因依赖了没勾的那步而自动取消的步（组 key）：清单行下面写一句原因 */
   blocked?: Record<string, true>
+  /** 统计标注没核到原话：用户点「按我说的加」→ 把被丢掉的那步补进补丁、带 `confirmed: [条目名]` 重新算整份方案 */
+  confirm?: (item: string, op: unknown) => void
+  /** 这次生成里出现过「正在量图」阶段（生成中的清单据此多一步） */
+  measured?: boolean
   /** 勾选变了：用勾上的步重新算方案（防抖由实现自己管，旧的结果作废） */
   recompute?: (force?: boolean) => void
   /** 上一次按勾选重算没成：「应用」不可点（旧方案里有用户已经勾掉的步），界面给一句灰字和「重试」 */
@@ -206,6 +210,8 @@ export interface PlanEntry {
   onSettle?: () => void
   /** 助手来源：已经把这条指令交给改脚本那条路了（卡上不再给「改脚本做剩下的」；全是要改脚本时卡只剩一行灰字） */
   scriptStarted?: boolean
+  /** 助手来源：已经把这条指令转给画布矢量那条路了（「改在画布上加」点过，卡上不再给这颗按钮） */
+  canvasStarted?: boolean
   pj: string | null
   /** 画布上的面板对象 id */
   panelId: string
@@ -353,8 +359,8 @@ export const MAX_TODOS = 12
 
 export const adviceOnly = (plan: ChangePlan): boolean => !!plan.reply && !plan.todos?.length && plan.groups.length === 0
 
-export type PlanPhase = 'render_before' | 'model' | 'agent' | 'render_after'
-const PHASE_RANK: Record<PlanPhase, number> = { render_before: 0, model: 1, agent: 1, render_after: 2 }
+export type PlanPhase = 'render_before' | 'model' | 'agent' | 'render_after' | 'measure' | 'plan'
+const PHASE_RANK: Record<PlanPhase, number> = { render_before: 0, measure: 0, model: 1, agent: 1, render_after: 2, plan: 2 }
 /** 只前进：轮询乱序 / 旧回包不让已勾的步骤退回去；不认识的阶段名不动 */
 export function nextPhase(cur: PlanPhase | undefined, seen: unknown): PlanPhase | undefined {
   if (typeof seen !== 'string' || !(seen in PHASE_RANK)) return cur
@@ -418,6 +424,8 @@ interface ChangePlanState {
     onSettle?: () => void,
   ) => Promise<string | null | Fallthrough>
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
+  /** 助手来源：把这条指令转给画布矢量那条路（用户点「改在画布上加」；选区里没有矢量对象也能走）→ 是否发出去了 */
+  runCanvasAnnotate: (key: string) => boolean
   runScript: (key: string, opts?: { legacyOnly?: boolean }) => Promise<boolean>
   /** 失败后「重试」/ 图改过后「重新生成」：用同一份请求再来一份，旧卡换成新卡 */
   regenerate: (key: string) => Promise<string | null>
@@ -542,6 +550,19 @@ export function sourceOf(panel: PanelObject, mtime = useAssetStore.getState().by
  * 「撤销」走 `runUndoRedo`（唯一的撤销入口，让位判据在那里）。它的模块（`hooks/useKeyboard`）反过来 import 命令面板与一堆 store，
  * 静态 import 会成环——所以由 `useKeyboard` 在模块加载时交进来（与一键排版胶囊的「撤销」同一做法）。
  */
+/**
+ * 「改在画布上加」要起的矢量编辑方案（`vectorPlanActions.runVectorEdit`）：那个模块 import 本 store，反过来 import 会成环——由它在模块加载时交进来。
+ * 返回新卡的键；没发出去 = null。
+ */
+let canvasAnnotateRunner: ((instruction: string, opts: { followsKey: string }) => string | null) | null = null
+export function setCanvasAnnotateRunner(run: (instruction: string, opts: { followsKey: string }) => string | null): void {
+  canvasAnnotateRunner = run
+}
+
+/** 这份助手方案里有「要在画布上加标注」的未处理（卡上据此给「改在画布上加」） */
+export const wantsCanvasAnnotation = (e: Pick<PlanEntry, 'from' | 'kind' | 'plan' | 'canvasStarted'>): boolean =>
+  e.from === 'assistant' && e.kind !== 'vector' && !e.canvasStarted && !!e.plan?.unhandled.some((u) => u.reason === 'needs_canvas_annotation')
+
 let undoRunner: (() => void) | null = null
 export function setChangePlanUndoRunner(run: () => void): void {
   undoRunner = run
@@ -877,6 +898,19 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       } finally {
         pending.delete(panelId)
       }
+    },
+
+    runCanvasAnnotate: (key) => {
+      const e = get().entries[key]
+      const ds = useDocumentStore.getState()
+      // 只在发起时的那份文档 / 画布上做（矢量方案是对当前画布算的）
+      if (!e || !wantsCanvasAnnotation(e) || !canvasAnnotateRunner || ds.documentId !== e.documentId || ds.loadSeq !== e.loadSeq || ds.activeCanvasId !== e.canvasId) return false
+      const text = e.instruction ?? e.request.instruction ?? ''
+      if (!text.trim()) return false
+      const k = canvasAnnotateRunner(text, { followsKey: key })
+      if (!k) return false
+      patch(key, { canvasStarted: true })
+      return true
     },
 
     runScript: async (key, opts) => {

@@ -698,6 +698,13 @@ def _merge_legacy_tables(con: sqlite3.Connection, project: str | None = None) ->
 
     imported = 0
     if "sessions" in legacy:
+        # 本机仅记已处理的旧会话 ID；和插入同事务，重试时不能把用户删掉的会话从任一旧包补回来。
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS main.msix_history_seen (id TEXT PRIMARY KEY NOT NULL)"
+        )
+        missing = "id NOT IN (SELECT id FROM main.sessions)"
+        if project is None:  # 只有后台重试跳过已处理的会话；手动确认允许找回本项目里删过的会话
+            missing += " AND id NOT IN (SELECT id FROM main.msix_history_seen)"
         cols = shared_cols("sessions", skip=("rev",))
         # `project` 给了就只补这个项目（手动找回）；None = 整库（后台待补合并）
         only = " AND project = ?" if project is not None else ""
@@ -705,14 +712,18 @@ def _merge_legacy_tables(con: sqlite3.Connection, project: str | None = None) ->
         new_ids = [
             r[0]
             for r in con.execute(
-                "SELECT id FROM legacy.sessions WHERE id NOT IN (SELECT id FROM main.sessions)"
-                f"{only} ORDER BY started_ms",
+                f"SELECT id FROM legacy.sessions WHERE {missing}{only} ORDER BY started_ms",
                 args,
             )
         ]
         con.execute(
             f"INSERT OR IGNORE INTO main.sessions ({cols}) SELECT {cols} FROM legacy.sessions "
-            f"WHERE id NOT IN (SELECT id FROM main.sessions){only}",
+            f"WHERE {missing}{only}",
+            args,
+        )
+        con.execute(
+            "INSERT OR IGNORE INTO main.msix_history_seen (id) SELECT id FROM legacy.sessions"
+            + (" WHERE project = ?" if project is not None else ""),
             args,
         )
         for sid in new_ids:

@@ -157,13 +157,25 @@ it('可编辑的类型与后端 `vectoredit.EDITABLE_TYPES` 同一份（严格�
   expect([...VECTOR_TYPES]).toEqual(backend)
 })
 
-it('快照：矢量对象原样、子图只留外框；脚本、文件名、覆盖项与别的类型都不发', () => {
+it('快照：矢量对象原样；子图只带位置与后端实测要的输入（fileId / fileKind / 覆盖项）；脚本、图的内容与别的类型都不发', () => {
   const snap = snapshotOf(doc().doc, 'c1')
   const text = JSON.stringify(snap.canvas)
   expect(snap.canvas.objects.map((o) => o.id)).toEqual(['p1', 't1', 'a1', 's1'])
-  for (const secret of ['secret_file.py', '/Users/someone', 'fontsize', '不该发出去']) expect(text).not.toContain(secret)
+  for (const secret of ['/Users/someone', '不该发出去', 'nativeW']) expect(text).not.toContain(secret)
   const panel = snap.canvas.objects[0] as unknown as Record<string, unknown>
-  expect(Object.keys(panel).sort()).toEqual(['h', 'id', 'type', 'w', 'x', 'y'])
+  expect(Object.keys(panel).sort()).toEqual(['fileId', 'fileKind', 'h', 'id', 'overrides', 'type', 'w', 'x', 'y'])
+  expect(panel.overrides).toEqual([{ gid: 'ax', prop: 'fontsize', value: 9 }])
+})
+
+it('快照：冻结 / 运行时的子图只带「有没有」的布尔，不带内容', () => {
+  const frozen = obj({ ...PANEL, id: 'p2', figureSnapshot: { svg: '<svg>秘密图内容</svg>' }, figureOrigin: { script: '/x.py' }, source: { stem: 'secret' } })
+  const snap = snapshotOf({ ...doc().doc, objects: [frozen] }, 'c1')
+  const panel = snap.canvas.objects[0] as unknown as Record<string, unknown>
+  expect(panel.figureSnapshot).toBe(true)
+  expect(panel.figureOrigin).toBe(true)
+  expect(panel.source).toBe(true)
+  expect(JSON.stringify(snap.canvas)).not.toContain('秘密')
+  expect(snap.panelLabels.get('p2')).toBe('第 1 张图')
 })
 
 it('差异：快照里没有的是新增、有的是改、删的取快照原样；布局组没变就不带', () => {
@@ -750,4 +762,251 @@ it('勾掉另一步重算：请求带上出发时的原话与 confirmed，已按
   act(() => void useChangePlanStore.getState().apply(key))
   expect(ids()).toContain('n_star')
   expect((doc().doc.objects.find((o) => o.id === 'a1') as unknown as { strokePt: number }).strokePt).toBe(0.5)
+})
+
+
+// ---------------------------------------------------------------- 3c：新增项、需要确认、没量到、量图阶段
+const ARROW_NEW = obj({
+  id: 'n_arrow',
+  type: 'arrow',
+  name: 'peak',
+  x: 20,
+  y: 20,
+  w: 10,
+  h: 5,
+  anchor: { v: 1, by: 'agent', anchors: [{ role: 'to', data: { panel: 'p1', axes: 'axes_0', x: 10, y: 0.8 } }, { role: 'from', panel: { id: 'p1', point: 'ne' } }] },
+})
+const ADD_OPS = [{ op: 'add', items: [{ kind: 'arrow', name: 'peak' }] }]
+const addResult = (extra: Partial<VectorEditResult> = {}): VectorEditResult => ({
+  ...RESULT,
+  objects: [ARROW_NEW],
+  deleted: [],
+  order: ['p1', 't1', 'a1', 's1', 'n_arrow'],
+  echo: [],
+  changes: [{ id: 'n_arrow', added: true, depends_on: ['p1'], op: 0 }],
+  ops: ADD_OPS,
+  unhandled: [],
+  ...extra,
+})
+const STAR_OP = { op: 'add', items: [{ kind: 'text', name: 'sig', text: '**' }] }
+const STAR_UNHANDLED = { reason: 'x', code: 'needs_confirmation', field: 'sig', op: STAR_OP }
+
+it('新增项写清是什么、锚在哪：对象叫法 + 子图叫法（第 N 张图）+ 方位，不出现 id 与短号', async () => {
+  const key = await runToReady(addResult())
+  await openDialog(key)
+  const row = qa('[data-change-group]')[0]
+  const text = row.textContent!
+  expect(text).toContain('新增箭头「peak」')
+  expect(text).toContain('放在')
+  expect(text).toContain('第 1 张图的数据点（10，0.8）')
+  expect(text).toContain('第 1 张图右上角')
+  for (const raw of ['n_arrow', 'p1', 'P1', 'axes_0']) expect(text).not.toContain(raw)
+})
+
+it('需要你确认：统计标注没核到原话 = 一句话加「按我说的加」；点了带 confirmed 重算、补进被丢掉的那步，之后可应用', async () => {
+  const key = await runToReady(addResult({ unhandled: [STAR_UNHANDLED] }))
+  await openDialog(key)
+  const row = q('[data-change-plan-unhandled]')!
+  expect(row.textContent).toContain('你没提「**」，这次先没加')
+  const btn = q<HTMLButtonElement>('[data-change-plan-confirm-item]')!
+  expect(btn.textContent).toBe('还是加上')
+  const star = obj({ id: 'n_star', type: 'text', x: 5, y: 5, w: 4, h: 4, text: '**', sizePt: 8 })
+  planOps.mockResolvedValueOnce(
+    addResult({ objects: [ARROW_NEW, star], order: ['p1', 't1', 'a1', 's1', 'n_arrow', 'n_star'], changes: [{ id: 'n_arrow', added: true, op: 0 }, { id: 'n_star', added: true, op: 1 }] }),
+  )
+  await act(async () => {
+    btn.click()
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  const [canvasArg, opsArg, ctxArg] = planOps.mock.calls[0] as [unknown, unknown[], { confirmed: string[]; instruction_text: string }]
+  void canvasArg
+  expect(opsArg).toEqual([...ADD_OPS, STAR_OP])
+  expect(ctxArg.confirmed).toEqual(['sig'])
+  expect(ctxArg.instruction_text).toBe('把标题放大、箭头加粗、删掉方框')
+  expect(entryOf(key).status).toBe('ready')
+  expect(q('[data-change-plan-confirm-item]')).toBeNull() // 这一行没了
+  act(() => useChangePlanStore.getState().openDialog(key))
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(ids()).toContain('n_star')
+})
+
+it('只有统计标注需要确认（别的都做不了）：失败卡里也有「按我说的加」，点了出方案', async () => {
+  const key = await runToReady({ ok: true, errors: [], objects: [], deleted: [], echo: [], changes: [], ops: [], unhandled: [STAR_UNHANDLED] })
+  render(<Live k={key} />)
+  expect(q('[data-change-plan-card]')!.dataset.changePlanCode).toBe('change_plan_empty')
+  const star = obj({ id: 'n_star', type: 'text', x: 5, y: 5, w: 4, h: 4, text: '**', sizePt: 8 })
+  planOps.mockResolvedValueOnce({ ...RESULT, objects: [star], deleted: [], order: ['p1', 't1', 'a1', 's1', 'n_star'], echo: [], changes: [{ id: 'n_star', added: true, op: 0 }], unhandled: [] })
+  await act(async () => {
+    q<HTMLButtonElement>('[data-change-plan-confirm-item]')!.click()
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  expect(entryOf(key).status).toBe('ready')
+  expect((planOps.mock.calls[0][1] as unknown[]).length).toBe(1)
+})
+
+it('统计标注来源写成「数据」：一句话说明本期不收，没有按钮', async () => {
+  const key = await runToReady(addResult({ unhandled: [{ reason: 'x', code: 'provenance_data', field: 'sig', op: STAR_OP }] }))
+  await openDialog(key)
+  expect(q('[data-change-plan-unhandled]')!.textContent).toContain('没有数据可核')
+  expect(q('[data-change-plan-confirm-item]')).toBeNull()
+})
+
+it('没量到：卡上一行灰字，子图用界面叫法；冻结的说「量不了」', async () => {
+  const key = await runToReady(addResult({ unmeasured: { P1: 'export_failed' } }))
+  render(<Live k={key} />)
+  expect(q('[data-change-plan-unmeasured]')!.textContent).toBe('第 1 张图这次没量成，标注先按图框放')
+  const { vectorUnmeasuredLine } = await import('./changePlanModel')
+  const line = (unmeasured: Record<string, string>) => vectorUnmeasuredLine({ vector: { result: { ...RESULT, unmeasured } } as never })
+  expect(line({ P2: 'composed_from_snapshot', P3: 'no_script' })).toBe('第 2 张图和第 3 张图量不了（冻结或没有脚本），标注先按图框放')
+  expect(line({ P2: 'composed_from_snapshot', P3: 'export_failed' })).toBe('第 2 张图和第 3 张图这次没量成，标注先按图框放')
+  expect(line({})).toBeNull()
+})
+
+it('量图阶段：生成中的清单多一步「量图」，按后端阶段勾；没有可量的子图就没有这一步', async () => {
+  const steps = () => qa('[data-task-step]').map((x) => `${x.dataset.taskStep}:${x.dataset.stepState}`)
+  createPlan.mockResolvedValue({ plan_id: 'vp1', state: 'running', phase: 'measure' })
+  getPlan.mockResolvedValue({ plan_id: 'vp1', state: 'running', phase: 'measure' })
+  const key = runVectorEdit('改', ['t1'])!
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10)
+  })
+  render(<Live k={key} />)
+  expect(steps()).toEqual(['measure:active', 'model:pending', 'plan:pending'])
+  getPlan.mockResolvedValue({ plan_id: 'vp1', state: 'running', phase: 'model' })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1500)
+  })
+  expect(steps()).toEqual(['measure:done', 'model:active', 'plan:pending'])
+  expect(q('[data-change-plan-generating]')).not.toBeNull()
+})
+
+it('没有可量的子图：生成中只有两步', async () => {
+  createPlan.mockResolvedValue({ plan_id: 'vp1', state: 'running', phase: 'model' })
+  getPlan.mockResolvedValue({ plan_id: 'vp1', state: 'running', phase: 'model' })
+  const key = runVectorEdit('改', ['t1'])!
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10)
+  })
+  render(<Live k={key} />)
+  expect(qa('[data-task-step]').map((x) => `${x.dataset.taskStep}:${x.dataset.stepState}`)).toEqual(['model:active', 'plan:pending'])
+})
+
+it('确认之后再勾掉别的步重算：请求仍带着 confirmed，已确认的统计标注不会又被拒', async () => {
+  const key = await runToReady(addResult({ unhandled: [STAR_UNHANDLED] }))
+  await openDialog(key)
+  const star = obj({ id: 'n_star', type: 'text', x: 5, y: 5, w: 4, h: 4, text: '**', sizePt: 8 })
+  const both = addResult({ objects: [ARROW_NEW, star], order: ['p1', 't1', 'a1', 's1', 'n_arrow', 'n_star'], changes: [{ id: 'n_arrow', added: true, op: 0 }, { id: 'n_star', added: true, op: 1 }] })
+  planOps.mockResolvedValueOnce(both)
+  await act(async () => {
+    q<HTMLButtonElement>('[data-change-plan-confirm-item]')!.click()
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  act(() => useChangePlanStore.getState().openDialog(key))
+  planOps.mockResolvedValueOnce({ ...both, objects: [star], changes: [] })
+  act(() => boxes()[0].click()) // 勾掉箭头那一步
+  await settleRecompute()
+  const ctx = planOps.mock.calls[1][2] as { confirmed: string[] }
+  expect(ctx.confirmed).toEqual(['sig'])
+  expect((planOps.mock.calls[1][1] as unknown[])).toEqual([STAR_OP])
+})
+
+
+const STAR_NEW = () => obj({ id: 'n_star', type: 'text', x: 5, y: 5, w: 4, h: 4, text: '**', sizePt: 8 })
+const clickConfirmItem = async () => {
+  await act(async () => {
+    q<HTMLButtonElement>('[data-change-plan-confirm-item]')!.click()
+    await vi.advanceTimersByTimeAsync(50)
+  })
+}
+
+it('先取消一步、再「还是加上」：确认重算基于完整补丁，勾选按原编号带过去（保留的步仍可勾、取消的步仍在清单里）', async () => {
+  const key = await runToReady({ ...RESULT, unhandled: [STAR_UNHANDLED] })
+  await openDialog(key)
+  // 取消第 0 步（红箭头线宽）：子集重算只剩 op1、op2
+  planOps.mockResolvedValueOnce({ ...RESULT, objects: [obj({ ...T1, sizePt: 12 })], changes: RESULT.changes!.filter((c) => c.op !== 0), ops: [RESULT.ops![1], RESULT.ops![2]] })
+  act(() => boxes()[0].click())
+  await settleRecompute()
+  expect(boxes()[0].checked).toBe(false)
+  // 确认：完整的三步 + 补进的那一步（不是发布出来的子集）
+  const full = { ...RESULT, objects: [...(RESULT.objects ?? []), STAR_NEW()], order: ['p1', 't1', 'a1', 'n_star'], changes: [...RESULT.changes!, { id: 'n_star', added: true, op: 3 }], ops: [...RESULT.ops!, STAR_OP], unhandled: [] }
+  planOps.mockResolvedValueOnce(full) // 确认那次（全勾）
+  planOps.mockResolvedValue({ ...full, objects: [obj({ ...T1, sizePt: 12 }), STAR_NEW()], changes: full.changes.filter((c) => c.op !== 0) }) // 保持取消 op0 的重算
+  await clickConfirmItem()
+  expect(planOps.mock.calls[1][1]).toEqual([...RESULT.ops!, STAR_OP])
+  act(() => useChangePlanStore.getState().openDialog(key))
+  await settleRecompute()
+  expect(boxes()).toHaveLength(4)
+  expect(boxes().map((b) => [b.checked, b.disabled])).toEqual([[false, false], [true, false], [true, false], [true, false]])
+  // 取消状态是 op0 的，不是被挪了位置的另一步；最后发出去的子集不含 op0
+  expect((planOps.mock.calls.at(-1)![1] as unknown[]).length).toBe(3)
+  expect(planOps.mock.calls.at(-1)![1]).not.toContain(RESULT.ops![0])
+})
+
+it('一条里两个统计文字都要确认：依次确认两次，都加上、可应用（不在第二个上原地打转）', async () => {
+  const OP2 = { op: 'add', items: [{ kind: 'text', name: 'sig', text: '**' }, { kind: 'text', name: 'sig2', text: 'n.s.' }] }
+  const key = await runToReady(addResult({ unhandled: [{ reason: 'x', code: 'needs_confirmation', field: 'sig', op: OP2 }] }))
+  await openDialog(key)
+  // 第一次确认：带 sig，后端对 sig2 回 needs_confirmation（拒收这一条）；然后用完整补丁重算（不含这一条）
+  planOps.mockResolvedValueOnce({ ok: false, errors: [{ code: 'needs_confirmation', index: 1, field: 'sig2' }] })
+  planOps.mockResolvedValueOnce(addResult())
+  await clickConfirmItem()
+  expect(planOps.mock.calls[0][2]).toMatchObject({ confirmed: ['sig'] })
+  expect(planOps.mock.calls[1][1]).toEqual(ADD_OPS)
+  expect(planOps.mock.calls[1][2]).toMatchObject({ confirmed: ['sig'] })
+  expect(entryOf(key).status).toBe('ready')
+  act(() => useChangePlanStore.getState().openDialog(key))
+  expect(q('[data-change-plan-unhandled]')!.textContent).toContain('这次先没加') // 第二个作为新的一行
+  // 第二次确认：confirmed 累积成 [sig, sig2]，两个都加上
+  const two = [obj({ id: 'n_a', type: 'text', x: 1, y: 1, w: 3, h: 3, text: '**' }), obj({ id: 'n_b', type: 'text', x: 9, y: 1, w: 3, h: 3, text: 'n.s.' })]
+  planOps.mockResolvedValueOnce(addResult({ objects: [ARROW_NEW, ...two], order: ['p1', 't1', 'a1', 's1', 'n_arrow', 'n_a', 'n_b'], changes: [{ id: 'n_arrow', added: true, op: 0 }, { id: 'n_a', added: true, op: 1 }, { id: 'n_b', added: true, op: 1 }], ops: [...ADD_OPS, OP2] }))
+  await clickConfirmItem()
+  expect(planOps.mock.calls[2][2]).toMatchObject({ confirmed: ['sig', 'sig2'] })
+  expect(entryOf(key).status).toBe('ready')
+  expect(q('[data-change-plan-confirm-item]')).toBeNull()
+  act(() => void useChangePlanStore.getState().apply(key))
+  expect(ids()).toEqual(expect.arrayContaining(['n_a', 'n_b']))
+})
+
+it('点了「还是加上」后、回包前切走画布：条目收掉，回来不卡死、能再发指令', async () => {
+  const key = await runToReady(addResult({ unhandled: [STAR_UNHANDLED] }))
+  await openDialog(key)
+  let release!: (r: VectorEditResult) => void
+  planOps.mockReturnValueOnce(new Promise<VectorEditResult>((r) => (release = r)))
+  act(() => q<HTMLButtonElement>('[data-change-plan-confirm-item]')!.click())
+  expect(entryOf(key).status).toBe('generating')
+  const canvas = doc().activeCanvasId
+  act(() => useDocumentStore.setState({ activeCanvasId: 'other_canvas' }))
+  await act(async () => {
+    release(addResult())
+    await vi.advanceTimersByTimeAsync(50)
+  })
+  expect(entryOf(key)).toBeUndefined()
+  act(() => useDocumentStore.setState({ activeCanvasId: canvas }))
+  expect(runVectorEdit('再来', ['t1'])).not.toBeNull()
+})
+
+
+it('摘要与弹窗标题的数 = 实际改动的对象数：新增项依赖的子图（depends_on）只进基线核对，不进计数', async () => {
+  const { touchedCount } = await import('@/lib/vectorEdit')
+  const r = addResult() // 新增 1 个箭头，依赖 p1
+  expect(touchedCount(r)).toBe(1)
+  const key = await runToReady(r)
+  render(
+    <>
+      <Live k={key} />
+      <ChangePlanDialog />
+    </>,
+  )
+  expect(q('[data-change-plan-card]')!.textContent).toContain('改了 1 个对象')
+  act(() => useChangePlanStore.getState().openDialog(key))
+  expect(q('[data-change-plan-list] > p')!.textContent).toContain('改动 · 1 个对象')
+  expect(qa('[data-change-group]')).toHaveLength(1)
+  // 加上一个被改的对象和一个删掉的：2 + 1，依赖的子图仍不算
+  expect(touchedCount(addResult({ objects: [ARROW_NEW, obj({ ...T1, sizePt: 12 })], deleted: ['s1'], changes: [...(r.changes ?? []), { id: 't1', field: 'sizePt', before: 8, after: 12, op: 1 }, { id: 's1', deleted: true, op: 2 }] }))).toBe(3)
+})
+
+it('没量到的子图上放的标注，说「放在第 N 张图外框…」', async () => {
+  const key = await runToReady(addResult({ unmeasured: { P1: 'export_failed' } }))
+  await openDialog(key)
+  expect(qa('[data-change-group]')[0].textContent).toContain('放在第 1 张图外框')
 })

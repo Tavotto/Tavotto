@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import os
 import shutil
@@ -1428,3 +1429,203 @@ def test_history_legacy_endpoints_count_and_restore_for_the_open_project(world, 
         assert sorted(s["id"] for s in listed["sessions"]) == ["s1", "s2"]
     finally:
         m.reset_projects()
+
+
+@pytest.mark.parametrize("target_exists", [True, False], ids=["merge", "copy"])
+def test_pending_history_never_substitutes_the_main_file_for_a_failed_wal_snapshot(
+    world, monkeypatch, target_exists
+):
+    _r, local = world.pkg(PFN_A)
+    source = _legacy_history(local, ["checkpointed"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    if not target_exists:
+        db.unlink()
+    writer = sqlite3.connect(source)
+    try:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute(
+            "INSERT INTO sessions (id, project, provider, prompt, status, started_ms, ended_ms) "
+            "VALUES ('wal-only', 'p', 'codex', 'synthetic', 'done', 1001, 1002)"
+        )
+        writer.commit()
+        assert Path(str(source) + "-wal").stat().st_size > 0
+        assert _session_ids(source) == ["checkpointed", "wal-only"]
+        real_backup = msixmigrate._backup_sqlite
+
+        def fail_backup(src, snapshot, _deadline):
+            assert src == source
+            snapshot.write_bytes(b"partial snapshot")
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(msixmigrate, "_backup_sqlite", fail_backup)
+        assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "failed"}
+        assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 1
+        assert not list(db.parent.glob(f"*{msixmigrate.TMP_SUFFIX}"))
+        if target_exists:
+            assert _session_ids(db) == []
+        else:
+            assert not db.exists()
+
+        monkeypatch.setattr(msixmigrate, "_backup_sqlite", real_backup)
+        assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+        assert _session_ids(db) == ["checkpointed", "wal-only"]
+        assert _session_ids(source) == ["checkpointed", "wal-only"]
+        assert msixmigrate._read_pending() is None
+    finally:
+        writer.close()
+
+
+def test_a_failed_newer_package_stays_pending_when_an_older_one_creates_the_database(
+    world, monkeypatch
+):
+    """Codex #2285 P1：最新包的快照非锁类失败，更旧的包把库建出来——新历史不能就此被当成搬完。"""
+    from tavotto.engine import ai_history
+
+    _ra, la = world.pkg(PFN_A)
+    newer = _legacy_history(la, ["newer-only"])
+    _rb, lb = world.pkg(PFN_B, age=1000)
+    _legacy_history(lb, ["older-only"])
+    db = world.data / "cache" / "ai_history.sqlite3"
+    monkeypatch.setattr(ai_history, "DB_PATH", db)
+    monkeypatch.setattr(msixmigrate, "_kick_pending_merge", lambda: None)
+    real_backup = msixmigrate._backup_sqlite
+
+    def fail_newer(src, snapshot, deadline):
+        if src == newer:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_backup(src, snapshot, deadline)
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", fail_newer)
+    msixmigrate._SQLITE_CHECKED.clear()
+    world.settle()
+    msixmigrate.adopt_sqlite("cache", "ai_history.sqlite3")
+    assert _session_ids(db) == ["older-only"]
+    assert "cache/ai_history.sqlite3" in msixmigrate._read_pending()["items"]
+    # 之后的普通迁移照旧见目标存在就跳过，但「待补」还在
+    assert msixmigrate.run_once()["complete"] is True
+    assert msixmigrate._read_pending() is not None
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", real_backup)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["newer-only", "older-only"]
+    assert msixmigrate._read_pending() is None
+
+
+def test_retrying_a_second_package_never_restores_a_deleted_import(world, monkeypatch):
+    from tavotto.engine import ai_history
+
+    _, newer = world.pkg(PFN_A)
+    _, older = world.pkg(PFN_B, age=100)
+    _legacy_history(newer, ["shared", "newer-only"])
+    older_db = _legacy_history(older, ["shared", "older-only"])
+    world.settle()
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    real_backup = msixmigrate._backup_sqlite
+
+    def defer_older(src, snapshot, deadline):
+        if src == older_db:
+            raise msixmigrate._Deadline
+        real_backup(src, snapshot, deadline)
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", defer_older)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "deferred"}
+    assert _session_ids(db) == ["newer-only", "shared"]
+    assert ai_history.delete("shared")
+    assert _session_ids(db) == ["newer-only"]
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", real_backup)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["newer-only", "older-only"]
+    assert ai_history.find_request_record("p", "r-shared")["session"] == "shared"
+    assert msixmigrate._read_pending() is None
+
+
+@pytest.mark.parametrize("target_exists", [True, False], ids=["merge", "copy"])
+def test_pending_history_retries_a_busy_source_without_counting_a_failure(
+    world, monkeypatch, target_exists
+):
+    _, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    if not target_exists:
+        db.unlink()
+    real_backup = msixmigrate._backup_sqlite
+
+    def busy(*_args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", busy)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "deferred"}
+    assert msixmigrate._read_pending()["items"]["cache/ai_history.sqlite3"]["failures"] == 0
+    if not target_exists:
+        assert not db.exists()
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", real_backup)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["old1"]
+
+
+def test_pending_copy_merges_if_the_consumer_creates_the_database_during_backup(world, monkeypatch):
+    from tavotto.engine import ai_history
+
+    _, local = world.pkg(PFN_A)
+    _legacy_history(local, ["old1"])
+    db = _strand_history_behind_an_empty_db(world, monkeypatch)
+    db.unlink()
+    real_backup = msixmigrate._backup_sqlite
+
+    def consumer_wins(src, snapshot, deadline):
+        real_backup(src, snapshot, deadline)
+        if not db.exists():
+            ai_history.record_start(
+                {"id": "new1", "project": "p", "provider": "codex", "prompt": "new"},
+                db_path=db,
+            )
+
+    monkeypatch.setattr(msixmigrate, "_backup_sqlite", consumer_wins)
+    assert msixmigrate.merge_pending() == {"cache/ai_history.sqlite3": "done"}
+    assert _session_ids(db) == ["new1", "old1"]
+
+
+def test_manual_restore_into_fresh_cache_only_merges_confirmed_project(world, real_db):
+    from tavotto.engine import ai_history
+
+    _, newer = world.pkg(PFN_A)
+    _, older = world.pkg(PFN_B, age=100)
+    _history_for(newer / ai_history.LEGACY_REL, "/p", ["p1"])
+    _history_for(newer / ai_history.LEGACY_REL, "/q", ["q1"])
+    _history_for(older / ai_history.LEGACY_REL, "/p", ["p2"])
+    world.settle()
+
+    assert not real_db.parent.exists()
+    assert ai_history.legacy_missing_count("/p") == 2
+    assert ai_history.restore_legacy("/p") == "done"
+    assert ai_history.legacy_missing_count("/p") == 0
+    assert ai_history.legacy_missing_count("/q") == 1
+    with contextlib.closing(sqlite3.connect(real_db)) as con:
+        assert con.execute("SELECT project, id FROM sessions ORDER BY id").fetchall() == [
+            ("/p", "p1"),
+            ("/p", "p2"),
+        ]
+        assert con.execute(
+            "SELECT project, client_request_id FROM ai_requests ORDER BY client_request_id"
+        ).fetchall() == [("/p", "r-p1"), ("/p", "r-p2")]
+
+
+def test_manual_restore_can_restore_a_deleted_session_but_background_cannot(
+    world, monkeypatch, real_db
+):
+    from tavotto.engine import ai_history
+
+    _, source = world.pkg(PFN_A)
+    _history_for(source / ai_history.LEGACY_REL, "/p", ["p1"])
+    _history_for(source / ai_history.LEGACY_REL, "/q", ["q1"])
+    assert _strand_history_behind_an_empty_db(world, monkeypatch) == real_db
+
+    assert ai_history.restore_legacy("/p") == "done"
+    assert ai_history.delete("p1")
+    assert msixmigrate._read_pending() is not None
+    assert msixmigrate.merge_pending() == {ai_history.LEGACY_REL: "done"}
+    assert _session_ids(real_db) == ["q1"]
+    assert ai_history.restore_legacy("/p") == "done"
+    assert _session_ids(real_db) == ["p1", "q1"]
