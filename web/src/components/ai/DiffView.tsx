@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { Check, ChevronRight, FileCodeCorner, Maximize2, RotateCcw } from '@/components/ui/icons'
+import { ChevronRight, Maximize2, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { TruncateMiddle } from '@/components/ui/TruncateMiddle'
 import { cn } from '@/lib/utils'
@@ -91,6 +91,7 @@ export function DiffView({
   script,
   onRevert,
   fill = false,
+  variant = 'card',
 }: {
   diff: string
   script?: string
@@ -98,8 +99,11 @@ export function DiffView({
   onRevert?: () => void | Promise<unknown>
   /** 占满父容器的可用高度、在里面滚动（弹窗里的页签用）；缺省是会话里的紧凑卡（正文最高 `max-h-52`） */
   fill?: boolean
+  /** `'panel'` = 弹窗里的整页形态：标题栏只留文件名、+N −N、常驻「复制补丁」；不收起、不放大、不画「已修改」；正文占满父容器、可滚动（长行横向滚）。隐含 `fill` */
+  variant?: 'card' | 'panel'
 }) {
   useTranslation('ai')
+  const panel = variant === 'panel'
   const [open, setOpen] = useState(true)
   const [zoom, setZoom] = useState(false)
   const rows = useMemo(() => parseUnifiedDiff(diff), [diff])
@@ -107,85 +111,98 @@ export function DiffView({
   const removed = rows.filter((r) => r.kind === 'del').length
   const digits = String(rows.reduce((m, r) => (r.kind === 'gap' ? m : Math.max(m, r.no)), 0)).length
   const name = script ? scriptName(script) : ai('diff.title')
+  const counts = (
+    <>
+      <span className="type-number text-ok">+{added}</span>
+      <span className="type-number text-danger">−{removed}</span>
+    </>
+  )
 
   return (
     <>
-      <div data-ai-diff className={cn('overflow-hidden rounded-lg border border-border bg-surface', fill && 'flex max-h-full min-h-0 flex-col')}>
-        <div className="group flex h-10 items-center gap-2 pl-3 pr-2">
-          <button
-            type="button"
-            data-ai-diff-toggle
-            aria-expanded={open}
+      <div
+        data-ai-diff
+        data-ai-diff-variant={variant}
+        className={cn('overflow-hidden rounded-lg border border-border bg-surface', (fill || panel) && 'flex max-h-full min-h-0 flex-col')}
+      >
+        {panel ? (
+          <div className="flex h-10 shrink-0 items-center gap-2 pl-3 pr-2">
+            <TruncateMiddle text={name} tail={8} className="min-w-0 flex-1 font-mono text-sm text-ink-2" />
+            <span data-ai-diff-counts className="flex shrink-0 items-center gap-1.5">
+              {counts}
+            </span>
+            <CopyAction data-ai-diff-copy text={diff} label={ai('diff.copyPatch')} copiedLabel={ai('code.copied')} />
+          </div>
+        ) : (
+          // 整条标题栏（操作按钮除外）都点得动：收起 / 展开；常驻一个小箭头
+          <div
+            data-ai-diff-header
+            className="group flex h-10 items-center gap-2 pl-3 pr-2"
             onClick={() => setOpen((v) => !v)}
-            className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left outline-none focus-visible:focus-ring"
           >
-            {/* 图标列：hover 时换成 chevron——不 hover 不显示展开提示（§6.2） */}
-            <span className="grid size-3.5 shrink-0 place-items-center text-ink-2">
-              <FileCodeCorner
-                size={ICON_SIZE.sm}
-                aria-hidden
-                className="col-start-1 row-start-1 transition-opacity duration-fast group-hover:opacity-0"
-              />
+            <button
+              type="button"
+              data-ai-diff-toggle
+              aria-expanded={open}
+              className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm text-left outline-none focus-visible:focus-ring"
+            >
               <ChevronRight
                 size={ICON_SIZE.sm}
                 aria-hidden
-                className={cn(
-                  'col-start-1 row-start-1 opacity-0 transition-[opacity,transform] duration-fast group-hover:opacity-100',
-                  open && 'rotate-90',
-                )}
+                className={cn('shrink-0 text-ink-3 transition-transform duration-fast', open && 'rotate-90')}
               />
-            </span>
-            <span className="shrink-0 text-base font-semibold text-ink">{ai('diff.edited')}</span>
-            <TruncateMiddle text={name} tail={8} className="min-w-0 font-mono text-sm text-ink-2" />
-          </button>
-          {/* 计数与操作叠在同一格：常态是计数，hover / 键盘进入时换成操作（操作始终可 Tab 到） */}
-          <span className="grid shrink-0 items-center justify-items-end">
-            <span
-              data-ai-diff-counts
-              className="col-start-1 row-start-1 flex items-center gap-1.5 transition-opacity duration-fast group-focus-within:opacity-0 group-hover:opacity-0"
-            >
-              <span className="type-number text-ok">+{added}</span>
-              <span className="type-number text-danger">−{removed}</span>
-            </span>
-            <span
-              data-ai-diff-actions
-              className="col-start-1 row-start-1 flex items-center gap-0.5 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100"
-            >
-              {onRevert && (
-                <IconButton
-                  data-ai-revert
-                  label={ai('panel.revert')}
-                  iconSize="xs"
-                  variant="danger"
-                  side="top"
-                  onClick={onRevert}
-                >
-                  <RotateCcw size={ICON_SIZE.sm} />
-                </IconButton>
-              )}
-              <CopyAction
-                data-ai-diff-copy
-                text={diff}
-                label={ai('diff.copyPatch')}
-                copiedLabel={ai('code.copied')}
-              />
-              <IconButton
-                data-ai-diff-zoom
-                label={ai('diff.zoomTip')}
-                iconSize="xs"
-                side="top"
-                className="text-ink-3 hover:text-ink"
-                onClick={() => setZoom(true)}
+              <span className="shrink-0 text-base font-semibold text-ink">{ai('diff.edited')}</span>
+              <TruncateMiddle text={name} tail={8} className="min-w-0 font-mono text-sm text-ink-2" />
+            </button>
+            {/* 计数与操作叠在同一格：常态是计数，hover / 键盘进入时换成操作（操作始终可 Tab 到）。计数只是展示，不接指针，免得盖住下面的按钮 */}
+            <span className="grid shrink-0 items-center justify-items-end" onClick={(e) => e.stopPropagation()}>
+              <span
+                data-ai-diff-counts
+                className="pointer-events-none col-start-1 row-start-1 flex items-center gap-1.5 transition-opacity duration-fast group-focus-within:opacity-0 group-hover:opacity-0"
               >
-                <Maximize2 size={ICON_SIZE.sm} />
-              </IconButton>
+                {counts}
+              </span>
+              <span
+                data-ai-diff-actions
+                className="col-start-1 row-start-1 flex items-center gap-0.5 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100"
+              >
+                {onRevert && (
+                  <IconButton
+                    data-ai-revert
+                    label={ai('panel.revert')}
+                    iconSize="xs"
+                    variant="danger"
+                    side="top"
+                    onClick={onRevert}
+                  >
+                    <RotateCcw size={ICON_SIZE.sm} />
+                  </IconButton>
+                )}
+                <CopyAction
+                  data-ai-diff-copy
+                  text={diff}
+                  label={ai('diff.copyPatch')}
+                  copiedLabel={ai('code.copied')}
+                />
+                <IconButton
+                  data-ai-diff-zoom
+                  label={ai('diff.zoomTip')}
+                  iconSize="xs"
+                  side="top"
+                  className="text-ink-3 hover:text-ink"
+                  onClick={() => setZoom(true)}
+                >
+                  <Maximize2 size={ICON_SIZE.sm} />
+                </IconButton>
+              </span>
             </span>
-          </span>
-          <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
-          <Check size={ICON_SIZE.sm} aria-hidden className="shrink-0 text-ok" />
-        </div>
-        {open && (
-          <div data-ai-diff-body className={cn('overflow-auto border-t border-border', fill ? 'min-h-0 flex-1' : 'max-h-52')}>
+          </div>
+        )}
+        {(open || panel) && (
+          <div
+            data-ai-diff-body
+            className={cn('overflow-auto border-t border-border', fill || panel ? 'min-h-0 flex-1' : 'max-h-52')}
+          >
             <DiffRows rows={rows} digits={digits} />
           </div>
         )}

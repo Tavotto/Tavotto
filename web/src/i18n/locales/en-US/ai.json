@@ -45,8 +45,8 @@
     "copyPatch": "Copy patch",
     "edited": "Edited",
     "title": "Script changes",
-    "unchanged_one": "⋯ {{count}} unchanged line",
-    "unchanged_other": "⋯ {{count}} unchanged lines",
+    "unchanged_one": "{{count}} unchanged line",
+    "unchanged_other": "{{count}} unchanged lines",
     "zoomTip": "Open full diff"
   },
   "duration": {
