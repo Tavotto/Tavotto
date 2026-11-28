@@ -852,7 +852,7 @@ def _applicable(row: dict, t: dict) -> bool:
     return True
 
 
-def _remeasure_ok(op: dict, row: dict, c: Canvas, gids: dict[Figure, set[str]]) -> bool:
+def _remeasure_ok(op: dict, row: dict, c: Canvas) -> bool:
     """落完之后对真实渲染重新量：**这块画布上这条要求管的全部文字**都满足才算（不只看改过的那几处，
     也算上改不了的画布级文字）。改了的照样保留；还有不满足的，这条在这块画布上留在「需要你确认」。"""
     if op["op"] == "canvas.width":
@@ -964,7 +964,7 @@ def run(
             ok = _apply_width(c, op)
         else:
             ok = _apply_text(c, op, row, profile, gids)
-        results[op["ref"]] = ok and _remeasure_ok(op, row, c, gids)
+        results[op["ref"]] = ok and _remeasure_ok(op, row, c)
     reqs = []
     for row in rows:
         item = checked["requirements"].get(row["ref"])
