@@ -206,3 +206,14 @@ MCP `decide` 同一个理由；路由直达的 native 以 `entry_unreachable` �
 桌面回退带原入口、有守卫不带、够不到不起 native、MCP 同一判据）。
 
 **另记（不在本修订内）**：safe 换入口挑的是同一份脚本里**另一张图**的函数（`geography` → `cooling`），即使成功也不是用户点的那张；待另行处理。
+
+## 修订（2026-11-28）：写已有文件被系统拒绝时，这一笔进覆盖层、图照常出（一份用户反馈，维护者选方案 B）
+
+**现象**：Windows 0.21.3 一份反馈包里，脚本先画完图，再把画图数据另存进项目里一份**已有的** CSV；第二次打开项目时这份 CSV 写不进去（`[Errno 13] Permission denied`，父文件夹可写——最常见是别的程序独占打开着它，比如用 Excel 看着，或者它被设成了只读），整次运行 `script_error`、图出不来、画布上的图没法编辑。native 同样会失败，回退救不了。
+**第三路径审查**：只把报错说清楚（方案 A）是「失败改成提示、不恢复能力」，用户仍然改不了图；冲突根因是「旁路输出写不进」与「这张图能不能编辑」被绑成了同一个结局。拆开它们：图已经画完，被拒的只是那一笔写。
+**决定（用户 2026-11-28 选 B）**：safe 常规运行（覆盖层模式）里，**写打开项目里已有的普通文件被 `PermissionError` 拒绝**时，这一笔改写进本次运行的暂存覆盖层（追加 / 读写模式先写时复制），脚本照常跑完、本次运行里读回看到它刚写的内容；项目里那份一个字节不动。这**不是静默成功**：build 响应带 `locked_writes`（项目相对路径，至多 16 条），界面在通知轨上出一枚胶囊点名文件名、说清这次没写进去；同一个面板同一组文件只提醒一次，之后不再被拒就撤掉。
+**只接这一种形状**（其余原样抛原来的异常）：覆盖层模式（校验运行的改道层、写回的隔离重放不变）；窗口开着；路径在项目内、覆盖层里还没有它的状态；项目里是普通文件、不是符号链接（Windows 上写打开目录也是 Errno 13）；**父文件夹本身可写**（只读文件夹仍归 `_write_denied_by_folder` 的分类）；写时复制失败（连读也被拒）也原样抛。入口：`open` / `io.open`、`Path.open`（3.10 经 `_NormalAccessor`）、`os.open`。`x` / `O_EXCL` 不在内（已有文件上它是 `FileExistsError`）。
+**不进守卫账本**：这一笔不记 `ledger.blocked`——记了之后脚本若再 `stat` 它就判 material、回退 native，而 native 一定再次被拒，用户回到原地；代价是之后 `os.stat` 这条路径看到的仍是项目里那份（与覆盖层其余够不着的观察同一盲区），已由胶囊如实说明。
+**路径与隐私**：`locked_writes` 只进本机界面（`/api/engine/render`、试运行结果）；不进回执、遥测、诊断包与 app.log。
+**已知范围**：写回校验（隔离重放）与 native 运行没有覆盖层，那里照旧失败；运维开关 `TAVOTTO_SAFE_OVERLAY=0` 一并关掉本行为。
+细则：`docs/rules/backend/worker-protocol-and-lifecycle.md`「暂存覆盖层」；实现 `writetripwire._locked_target` / `locked_writes`；看护 `tests/test_worker_locked_write.py`、`web/src/lib/lockedWriteNotice.test.ts`。

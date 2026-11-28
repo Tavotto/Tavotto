@@ -1,0 +1,287 @@
+/*
+ * 激活码胶囊（`license/CodeCapsule.tsx`，维护者 2026-11-28 定；动效是宪法第七节的登记豁免）。
+ * 药丸「输入激活码」→ 展开成 TVK + 12 格 → 收成「正在验证」→ 报错（染危险色 + 抖一下）/ 成功（中性胶囊 + 钛星）。
+ * 时长尽量取 token；超出 token 的三处（抖动 420ms、光标闪烁 1.06s、礼花 burst.ts 的 BURST_MS）是这份豁免登记的全部。
+ * 颜色只读 token；不调 ink 的 color-mix（暗色里 ink 是浅色）。
+ * reduced-motion：不模糊、不抖、不滑、不闪，状态直接换（礼花在 burst.ts 里经 tween 落终态，不出粒子）。
+ */
+
+.code-capsule {
+  position: relative;
+  height: 40px;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 7%, transparent),
+    0 1px 2px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 6px 16px -4px color-mix(in srgb, var(--color-shadow) 10%, transparent);
+}
+.code-capsule[data-ready] {
+  transition:
+    width var(--duration-slow) var(--ease-snap),
+    background-color var(--duration-slow) var(--ease-standard),
+    box-shadow var(--duration-slow) var(--ease-standard);
+}
+/* 暗色里胶囊与卡片同色会浮不起来：叠一层 surface-hover 抬亮一级（与 index.css 暗色值表同两段：显式深色 / 跟随系统） */
+[data-theme='dark'] .code-capsule {
+  background-image: linear-gradient(var(--color-surface-hover), var(--color-surface-hover));
+}
+[data-theme='dark'] .code-capsule .capsule-cell {
+  box-shadow: inset 0 0 0 1px var(--color-border);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .code-capsule {
+    background-image: linear-gradient(var(--color-surface-hover), var(--color-surface-hover));
+  }
+  :root:not([data-theme='light']) .code-capsule .capsule-cell {
+    box-shadow: inset 0 0 0 1px var(--color-border);
+  }
+}
+.code-capsule:has([data-capsule-pill]:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* 四个形态叠在一起，左对齐、按内容定宽；胶囊宽度跟着当前形态过渡，形态之间模糊交叉淡化 */
+.code-capsule [data-capsule-layer] {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: max-content;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  transition:
+    opacity var(--duration-base) var(--ease-standard),
+    filter var(--duration-base) var(--ease-standard),
+    transform var(--duration-slow) var(--ease-pop);
+}
+.code-capsule [data-capsule-layer][data-off] {
+  opacity: 0;
+  filter: blur(6px);
+  transform: scale(0.97);
+  pointer-events: none;
+  transition-duration: var(--duration-fast);
+  transition-timing-function: var(--ease-exit);
+}
+
+.code-capsule [data-capsule-pill] {
+  gap: 7px;
+  padding: 0 18px;
+  border-radius: 9999px;
+  outline: none;
+}
+.code-capsule [data-capsule-pill]:hover {
+  background: var(--color-surface-hover);
+}
+
+.code-capsule [data-capsule-cells] {
+  gap: 4px;
+  padding: 0 6px 0 16px;
+}
+.code-capsule .capsule-pre {
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--color-ink-3);
+  user-select: none;
+}
+.code-capsule .capsule-dash {
+  width: 5px;
+  height: 1.5px;
+  margin: 0 2px;
+  border-radius: 1px;
+  background: var(--color-ink-faint);
+}
+.code-capsule .capsule-cell {
+  position: relative;
+  width: 24px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  /* 不用 --color-field：设置 / 对话框的分组把它重定向成 surface（fieldBox），格子会消失 */
+  background: color-mix(in srgb, var(--color-surface-hover), var(--color-surface-active));
+  font-family: var(--font-mono);
+  color: var(--color-ink);
+  transition:
+    background-color var(--duration-slow) var(--ease-standard),
+    color var(--duration-slow) var(--ease-standard);
+}
+/* 最后一格与外胶囊同心（外半径 20 − 内缩 6 = 14） */
+.code-capsule .capsule-cell[data-last],
+.code-capsule .capsule-caret[data-at-end] {
+  border-radius: 6px 14px 14px 6px;
+}
+.code-capsule .capsule-cell[data-here] {
+  background: var(--color-surface);
+}
+.code-capsule .capsule-ch {
+  display: block;
+  animation: capsule-drop-in var(--duration-slow) var(--ease-pop) both;
+}
+@keyframes capsule-drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* 光标框：在格子之间滑，落位带一点回弹（唯一的回弹曲线 --ease-spring） */
+.code-capsule .capsule-caret {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 24px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1.5px var(--color-ink-2);
+  pointer-events: none;
+  transition:
+    transform var(--duration-base) var(--ease-spring),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+.code-capsule .capsule-caret::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 7px;
+  width: 1.5px;
+  height: 14px;
+  margin-left: -0.75px;
+  border-radius: 1px;
+  background: var(--color-ink-2);
+  animation: capsule-blink 1.06s steps(1) infinite;
+}
+@keyframes capsule-blink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+.code-capsule:not(:focus-within) .capsule-caret,
+.code-capsule[data-full] .capsule-caret,
+.code-capsule[data-bad] .capsule-caret {
+  opacity: 0;
+}
+
+/* 真输入框盖在格子上、看不见：粘贴、输入法、读屏都靠它 */
+.code-capsule [data-license-input] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  cursor: text;
+}
+
+/* 报错：只有「激活码不对」染危险色并抖一下 */
+.code-capsule[data-bad] .capsule-cell {
+  background: var(--color-danger-surface);
+  color: var(--color-danger-content);
+}
+.code-capsule[data-bad]:focus-within {
+  box-shadow:
+    0 0 0 1px var(--color-danger-border),
+    0 1px 2px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 6px 16px -4px color-mix(in srgb, var(--color-shadow) 10%, transparent);
+}
+.code-capsule[data-shake] {
+  animation: capsule-shake 420ms var(--ease-standard);
+}
+@keyframes capsule-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  15% {
+    transform: translateX(-5px);
+  }
+  32% {
+    transform: translateX(4px);
+  }
+  50% {
+    transform: translateX(-3px);
+  }
+  68% {
+    transform: translateX(2px);
+  }
+  84% {
+    transform: translateX(-1px);
+  }
+}
+
+[data-capsule-verifying],
+[data-capsule-done] {
+  gap: 8px;
+  padding: 0 18px;
+}
+
+/* 成功：中性胶囊 + 一层极轻的钛色 + 钛色发丝边（维护者 2026-11-28 选 B） */
+.code-capsule[data-done] {
+  background: color-mix(in oklab, var(--color-pro-ti-light) 9%, var(--color-surface));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-pro-ti-edge) 45%, transparent),
+    0 1px 2px color-mix(in srgb, var(--color-shadow) 6%, transparent),
+    0 6px 16px -4px color-mix(in srgb, var(--color-shadow) 10%, transparent);
+}
+.code-capsule[data-done] [data-pro-mark] {
+  animation: capsule-star-in 520ms var(--ease-pop) both;
+}
+@keyframes capsule-star-in {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 左轨的星这次会话里刚点亮：转一圈（与图标微动效同类：一次性、跟着用户动作走、播完回静止形） */
+[data-pro-mark-lit] {
+  animation: pro-mark-lit 640ms var(--ease-pop);
+}
+@keyframes pro-mark-lit {
+  0% {
+    transform: rotate(0) scale(1);
+  }
+  40% {
+    transform: rotate(200deg) scale(0.8);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .code-capsule,
+  .code-capsule *,
+  .code-capsule *::before,
+  .code-capsule *::after,
+  [data-pro-mark-lit] {
+    animation: none !important;
+    transition: none !important;
+  }
+  .code-capsule [data-capsule-layer][data-off] {
+    filter: none;
+    transform: none;
+  }
+}

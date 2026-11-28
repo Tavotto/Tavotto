@@ -2,7 +2,7 @@
 锁住的元素不改、落盘记录恢复时重新核。
 
 假 worker（`test_mcp_suggest.SuggestWorker`）：渲染不用 matplotlib；排版文件按 `layoutannotate` 读的形状手写。
-这一版绑定会话**不写**排版文件（第四节另一个 PR）。
+写回见 `test_mcp_layout_writeback.py`（第四节）。
 """
 
 # ruff: noqa: F811  — 夹具从别的测试模块导入后在用例形参里同名使用（pytest 的写法）
@@ -244,8 +244,8 @@ def test_desktop_rewrite_is_read_before_the_next_call(project, worker):
 def test_desktop_edit_elsewhere_keeps_the_session_untouched(project, worker):
     _write_layout(project, "组图", [_panel(overrides=[FONT])])
     sid = _open(project)["session_id"]
-    bridge.apply_overrides(sid, [FONT, SPINE])  # 这一版插件不写排版：会话里的本地修改
-    _write_layout(project, "组图", [_panel(overrides=[FONT], x=30.0)])  # 桌面只挪了子图
+    bridge.apply_overrides(sid, [FONT, SPINE])  # 绑定会话写回排版（ADR 0217 §四）
+    _write_layout(project, "组图", [_panel(overrides=[FONT, SPINE], x=30.0)])  # 桌面只挪了子图
     out = _state(sid)
     assert "layout_sync" not in out
     assert bridge.get_session(sid).patches == [FONT, SPINE]
