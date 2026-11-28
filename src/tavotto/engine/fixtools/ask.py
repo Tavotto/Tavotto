@@ -306,6 +306,18 @@ def _user_side_without_attempt(ctx: FixContext) -> ToolResult | None:
     )
 
 
+def _known_issue_line(ctx: FixContext) -> str:
+    """当前失败命中已知问题表时给反馈说明加的一行（ADR 0221 §二）：只进 AI 写的说明字段，不新增诊断包结构字段。"""
+    from .runreport import known_issue_of
+
+    try:
+        report = ctx.report() if ctx.report else None
+        known = known_issue_of(ctx, hints.report_error(report)[0])
+    except Exception:  # noqa: BLE001 — 认不出已知问题不该挡住反馈
+        return ""
+    return f"known_issue_id: {known['id']}\n" if known else ""
+
+
 def prepare_diagnostics(ctx: FixContext, args: dict) -> ToolResult:
     summary = _text(args.get("summary"), DIAG_SUMMARY_MAX)
     include_source = args.get("include_source", False)
@@ -329,7 +341,7 @@ def prepare_diagnostics(ctx: FixContext, args: dict) -> ToolResult:
         # Reuse the existing reviewed note + immutable diagnostics upload. The
         # detailed draft stays in memory, not the audit/telemetry or a public URL.
         summary = "\n\n".join(f"{key}: {issue[key].strip()}" for key in ISSUE_FIELDS)
-        summary = readscope.scrub(summary)
+        summary = _known_issue_line(ctx) + readscope.scrub(summary)
         if len(summary) > NOTE_MAX_CHARS:
             return err(
                 "bad_arguments",
@@ -343,7 +355,9 @@ def prepare_diagnostics(ctx: FixContext, args: dict) -> ToolResult:
         {
             "kind": "send",
             "tool": "prepare_diagnostics",
-            "summary": readscope.scrub(summary),
+            "summary": summary
+            if issue is not None
+            else _known_issue_line(ctx) + readscope.scrub(summary),
             # 只是「AI 想看脚本」的提示：源码勾选框在发送对话框里默认不勾，只有用户能勾
             "wants_source": include_source,
         },

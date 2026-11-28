@@ -206,6 +206,21 @@ def hint_of(report: object, ctx: FixContext) -> tuple[str, str, str] | None:
     return (shape, *got) if got else None
 
 
+def known_issue_of(ctx: FixContext, code: object, selftest: dict | None = None) -> dict | None:
+    """这个错误码是不是 Tavotto 已知的问题（ADR 0221 §二）：命中回 `{id, summary, fixed_in, workaround}`，语言按会话界面语言。"""
+    from .. import knownissues
+
+    return knownissues.lookup(code, ctx.project_root, locale=ctx.locale, selftest=selftest)
+
+
+def known_issue_text(ctx: FixContext, code: object, selftest: dict | None = None) -> str:
+    """给「改」组失败文本末尾追加的一段；没命中回空串。"""
+    fact = known_issue_of(ctx, code, selftest)
+    if fact is None:
+        return ""
+    return "\nknown_issue: " + json.dumps(fact, ensure_ascii=False)
+
+
 def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     """The same bounded projection for read_run_report and application try_run."""
     if not isinstance(report, dict):
@@ -243,6 +258,10 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     ai_edit = _ai_edit_fact(report.get("ai_edit"))
     if ai_edit:
         picked["recent_ai_edit"] = ai_edit
+    known = known_issue_of(ctx, hints.report_error(report)[0])
+    if known is not None:
+        # 已知问题放最前（与 hint 同理：报告被截断时它不跟着丢）
+        picked = {"known_issue": known, **picked}
     if isinstance(error, dict):
         picked["error"] = {
             k: _precis(error[k]) for k in ("code", "message", "module", "params") if error.get(k)
