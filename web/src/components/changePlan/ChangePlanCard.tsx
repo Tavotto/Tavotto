@@ -1,8 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { requestConnectAi } from '@/store/connectAiStore'
-import { DATA_DECLINED, canUndoApplied, declinedGroups, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, wantsCanvasAnnotation, canUndoApplied, declinedGroups, isCanvasPlan, isTodoPlan, pendingConfirm, reviewScriptIds, useChangePlanStore, versionNumber, type PlanEntry } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { cn } from '@/lib/utils'
+import { Markdown } from '../ai/Markdown'
 import { Card } from '../ui/Card'
 import { Button } from '../ui/Button'
 import { Check, RefreshCw } from '../ui/icons'
@@ -11,8 +12,9 @@ import { StatusPill } from '../ui/StatusPill'
 import { TaskChecklist } from '../ui/TaskChecklist'
 import { ThinkingOrb } from '../ui/ThinkingOrb'
 import { formatAxisLimit } from '@/lib/logPower'
-import { cp, effectiveStatus, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
+import { cp, effectiveStatus, vectorCannotApply, vectorUnmeasuredLine, placesPhrase, failureAction, failureText, isScriptPlan, overreachFiles, planSteps, planTally, summaryLine, unhandledViews } from './changePlanModel'
 import { FigureThumb } from './FigureThumb'
+import { SuggestionCard } from './SuggestionCard'
 import { GraphPaper, PlotSketch, type PlotStage } from './PlotSketch'
 import { useImageAspect, usePanelThumbSrc, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
@@ -47,6 +49,9 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const askHook = dataAsk ? 'data-change-plan-confirm-data' : 'data-change-plan-confirm-log'
   const selection = useSelectionPreview(entry, status === 'ready' && declined)
 
+  // 助手来源的建议：待办卡（ADR 0214）；回答只有一段话（`answered`）时不出卡
+  if (status === 'answered') return null
+  if (isTodoPlan(entry) && (status === 'ready' || status === 'applied' || status === 'stale')) return <SuggestionCard entry={entry} latest={latest} />
   if (status === 'failed') return <FailedCard entry={entry} />
   // 助手来源，整条指令都要改脚本：这里只留一行灰字，接着由改脚本那一轮自己说话
   if (status === 'handoff') {
@@ -71,13 +76,13 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
   const canUndo = status === 'applied' && (script ? !!plan?.applied && !entry.scriptBusy : !!panel && canUndoApplied(entry, panel.overrides))
   // 分量：待处理（生成中 / 待确认 / 图已改过）是完整卡面 + 微投影；已应用沉到次级卡面；已放弃再降一档、预览区收矮
   const pending = generating || status === 'ready' || status === 'stale'
-  const busyText = entry.revising !== undefined ? cp('card.revising') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')
+  const busyText = entry.revising !== undefined ? cp('card.revising') : entry.kind === 'vector' ? cp('card.generatingVector') : entry.from === 'assistant' ? cp('card.generatingAssistant') : entry.commentCount > 0 ? cp('card.generating', { count: entry.commentCount }) : cp('card.generatingAny')
   // 生成中的三步清单（一键排版的整版卡没有阶段，照旧一句话）
   const steps = generating ? planSteps(entry) : null
   // 有三步清单的卡（生成中 / 刚出好待确认）正文区同高
   const activeStep = steps?.find((x) => x.state === 'active')?.id
-  const plotStage: PlotStage = activeStep === 'before' ? 'read' : activeStep === 'after' ? 'draw' : 'think'
-  const freshFlow = !!steps || (status === 'ready' && entry.kind !== 'layout')
+  const plotStage: PlotStage = activeStep === 'before' || activeStep === 'measure' ? 'read' : activeStep === 'after' || activeStep === 'plan' ? 'draw' : 'think'
+  const freshFlow = !!steps || (status === 'ready' && !isCanvasPlan(entry))
 
   return (
     <Card
@@ -143,6 +148,8 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                 ? cp('card.appliedScript')
                 : entry.kind === 'layout'
                 ? cp('card.appliedLayout', { count: entry.layout?.count ?? 0 })
+                : entry.kind === 'vector'
+                  ? cp('card.appliedVector', { count: entry.vector?.count ?? 0 })
                 : entry.from === 'assistant'
                   ? cp('card.appliedAssistant', { places: placesPhrase(planTally(entry).places) })
                   : cp('card.applied', { count: handled })
@@ -155,6 +162,12 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
                     : ask?.confirm?.kind === 'log_lower_limit'
                       ? cp(`card.logLimitAsk`, { axis: cp(ask.confirm.axis === 'x' ? 'card.axisX' : 'card.axisY'), to: formatAxisLimit(ask.confirm.to, true) })
                       : summaryLine(entry)}
+          </p>
+        )}
+        {/* 矢量编辑：没量到的子图（标注退到按外框放）——一行灰字，没有就不占位 */}
+        {!generating && vectorUnmeasuredLine(entry) && (
+          <p className="-mt-1 text-xs text-ink-3" data-change-plan-unmeasured>
+            {vectorUnmeasuredLine(entry)}
           </p>
         )}
         {entry.notice && <p className="text-xs text-ink-3" data-change-plan-notice={entry.notice}>{cp(entry.notice === 'apply_failed' ? (script ? 'card.applyFailedScript' : 'card.applyFailed') : script ? 'card.undoFailedScript' : 'card.undoFailed')}</p>}
@@ -183,13 +196,21 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
             )}
             {status === 'ready' && !ask && (
               <>
-                <Button variant={primary} size="md" className={btn} onClick={() => store().openDialog(entry.key)} data-change-plan-view>
-                  {cp('card.view')}
-                </Button>
-                <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} disabled={entry.scriptBusy} data-change-plan-apply>
+                {/* 对比图没出来（整版预览失败）时没有可看的：只留「直接应用」 */}
+                {!!entry.afterSrc && (
+                  <Button variant={primary} size="md" className={btn} onClick={() => store().openDialog(entry.key)} data-change-plan-view>
+                    {cp('card.view')}
+                  </Button>
+                )}
+                <Button variant="secondary" size="md" className={btn} onClick={() => void store().apply(entry.key)} disabled={entry.scriptBusy || vectorCannotApply(entry)} data-change-plan-apply>
                   {cp('card.applyNow')}
                 </Button>
               </>
+            )}
+            {status === 'ready' && entry.vector?.failed && (
+              <Button variant="ghost" className="-ml-1" onClick={() => entry.vector?.recompute?.(true)} data-change-plan-vector-retry>
+                {cp('card.retry')}
+              </Button>
             )}
             {canUndo && (
               <Button variant="ghost" className="-ml-3" onClick={() => void store().undo(entry.key)} data-change-plan-undo>
@@ -199,6 +220,11 @@ export function ChangePlanCard({ entry, latest = true }: { entry: PlanEntry; lat
             {!entry.scriptStarted && !ask && (status === 'ready' || status === 'applied') && (entry.from === 'assistant' ? (plan?.unhandled ?? []).some((u) => u.reason === 'needs_script') : reviewScriptIds(entry).length > 0) && (
               <Button variant="ghost" size="md" className="rounded-full" title={status === 'ready' ? cp('card.runScriptTip') : undefined} onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
                 {cp('card.runScript')}
+              </Button>
+            )}
+            {!ask && (status === 'ready' || status === 'applied') && wantsCanvasAnnotation(entry) && (
+              <Button variant="ghost" size="md" className="rounded-full" onClick={() => void store().runCanvasAnnotate(entry.key)} data-change-plan-canvas-annotate>
+                {cp('card.canvasAnnotate')}
               </Button>
             )}
             {status === 'stale' && (
@@ -235,12 +261,19 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
   }
   // 助手来源：用户的指令不能掉在地上——方案没出来时，另给一条「改脚本做」的路（现有改脚本路径）
   // 审阅来源：没有一条能落成图内修改、但有「要改脚本」的意见时，同样给这条路（只由用户点，不自动续走）
-  const scriptWay = code !== DATA_DECLINED && (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
+  const scriptWay = code !== DATA_DECLINED && entry.kind !== 'vector' && !wantsCanvasAnnotation(entry) && (assistant ? true : code === 'change_plan_empty' && !entry.scriptStarted && reviewScriptIds(entry).length > 0) && action !== 'script' && action !== 'restore'
   return (
     <Card appearance="subtle" padding="sm" data-change-plan-card="failed" data-change-plan-code={code}>
       <div className="flex flex-col gap-2 px-1.5 py-1">
         <span className="text-base font-medium text-ink">{cp('card.title')}</span>
-        <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params, assistant)}</p>
+        {/* Agent 没改脚本、但回了话：显示它的话（ADR 0214），不只说「Agent 没有改动脚本」 */}
+        {code === 'change_plan_script_no_change' && typeof entry.failure?.params?.agent_reply === 'string' && entry.failure.params.agent_reply ? (
+          <div data-change-plan-agent-reply>
+            <Markdown text={entry.failure.params.agent_reply} />
+          </div>
+        ) : (
+          <p className="text-sm text-ink-3">{failureText(code, entry.failure?.params, assistant)}</p>
+        )}
         {entry.notice === 'restore_failed' && (
           <p className="text-xs text-ink-3" data-change-plan-notice="restore_failed">
             {cp('card.restoreFailed')}
@@ -255,8 +288,13 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           <ul className="flex flex-col gap-1">
             {un.map((u) => (
               <li key={u.id} className="flex flex-col" data-change-plan-unhandled={u.id}>
-                <span className="truncate text-sm text-ink-3">{u.text}</span>
-                <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>
+                <span className="text-sm text-ink-3">{u.text}</span>
+                {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
+                {u.action && (
+                  <Button variant="secondary" size="sm" className="mt-1 w-fit rounded-full" onClick={() => entry.vector?.confirm?.(u.action!.item, u.action!.op)} data-change-plan-confirm-item>
+                    {cp('vector.confirmButton')}
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -265,6 +303,11 @@ function FailedCard({ entry }: { entry: PlanEntry }) {
           <Button variant="ghost" className="-ml-3" onClick={run} disabled={entry.scriptBusy} data-change-plan-failed-action={action}>
             {label}
           </Button>
+          {assistant && code === 'change_plan_empty' && wantsCanvasAnnotation(entry) && (
+            <Button variant="ghost" onClick={() => void store().runCanvasAnnotate(entry.key)} data-change-plan-canvas-annotate>
+              {cp('card.canvasAnnotate')}
+            </Button>
+          )}
           {scriptWay && (
             <Button variant="ghost" onClick={() => void store().runScript(entry.key)} data-change-plan-run-script>
               {cp('card.runScriptAll')}

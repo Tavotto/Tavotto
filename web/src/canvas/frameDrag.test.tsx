@@ -1,5 +1,6 @@
 /**
- * 单图编辑拖画布（ADR 0161）：边 = 留白（图不动，`doc.framePad`），角 = 等比改图幅（`figure.size_mm`，松手才提交）。
+ * 单图编辑拖画布（ADR 0161，修订 2026-11-27）：边 = 这一维的图幅、⌥ + 边 = 留白（图不动，`doc.framePad`），
+ * 角 = 等比改图幅（⌥ 自由比例，`figure.size_mm`，松手才提交）。
  *
  * 判据打在看得见的差别上：拖边时面板一动不动、留白进文档且整次一条历史；拖角时拖动中文档不动、只有预览框，
  * 松手一条历史；Esc / 没拖动什么都没发生；没有精确 manifest 时入口停摆。数学在 `lib/framePad.test.ts`。
@@ -20,7 +21,7 @@ import { useWorkspaceStore } from '@/store/workspace'
 import { settleMode } from '@/store/workspaceStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { CanvasStage } from './CanvasStage'
-import { startFigureCornerResize, startFramePadEdge } from './frameDrag'
+import { startFigureCornerResize, startFigureEdge } from './frameDrag'
 import { seedExactRender } from '@/test/renderFixtures'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
@@ -136,16 +137,16 @@ const tight = () => useDocumentStore.getState().doc.framePadTight
 const status = () => useInteractionStore.getState().dragStatus
 const mainKey = () => status()?.main.key
 
-describe('拖边 = 画布留白：图不动，整次一条历史', () => {
+describe('⌥ + 拖边 = 画布留白：图不动，整次一条历史', () => {
   it('拖右边往外：留白进文档、面板与图幅不动；撤销回到没有留白', () => {
     const d0 = undoDepth()
-    startFramePadEdge(down(0, 0), 'r', 'a')
-    fire('pointermove', dx(6), 0)
-    fire('pointermove', dx(10), 0)
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(6), 0, true)
+    fire('pointermove', dx(10), 0, true)
     expect(pad()).toEqual({ l: 0, t: 0, r: 10, b: 0 })
     expect(mainKey()).toBe('contextBar.frameGrow')
     expect(status()?.box).toMatchObject({ x: 7, y: 18, w: 90, h: 55 })
-    fire('pointerup', dx(10), 0)
+    fire('pointerup', dx(10), 0, true)
     expect(fig()).toMatchObject({ x: 7, y: 18, w: 80, h: 55 })
     expect(sizeOverride()).toBeUndefined()
     expect(undoDepth()).toBe(d0 + 1)
@@ -156,73 +157,163 @@ describe('拖边 = 画布留白：图不动，整次一条历史', () => {
   })
 
   it('拖左边往外：面板 x 不变（画布向左长出去）', () => {
-    startFramePadEdge(down(0, 0), 'l', 'a')
-    fire('pointermove', dx(-8), 0)
-    fire('pointerup', dx(-8), 0)
+    startFigureEdge(down(0, 0), 'l', 'a')
+    fire('pointermove', dx(-8), 0, true)
+    fire('pointerup', dx(-8), 0, true)
     expect(pad()).toEqual({ l: 8, t: 0, r: 0, b: 0 })
     expect(fig().x).toBe(7)
   })
 
-  it('往里：停在内容边缘（紧凑，记进 framePadTight）；不按 ⌥ 越不过去，按 ⌥ 才裁', () => {
+  it('往里：停在内容边缘（紧凑，记进 framePadTight）；⌥ 已表示要裁，继续往里照样裁进内容', () => {
     act(() => seedExactRender(fig() as PanelObject, manifestOf(80, 55, [0.05, 0.04, 0.97, 0.95])))
-    startFramePadEdge(down(0, 0), 'l', 'a')
-    fire('pointermove', dx(-0.5), 0)
-    fire('pointermove', dx(3.6), 0) // 内容边缘在 4 mm：吸附
+    startFigureEdge(down(0, 0), 'l', 'a')
+    fire('pointermove', dx(-0.5), 0, true)
+    fire('pointermove', dx(3.6), 0, true) // 内容边缘在 4 mm：吸附
     expect(pad()?.l).toBeCloseTo(-4, 6)
     expect(tight()).toEqual(['l'])
     expect(mainKey()).toBe('contextBar.frameTight')
-    fire('pointermove', dx(20), 0)
-    expect(pad()?.l).toBeCloseTo(-4, 6)
-    expect(status()?.tone).toBe('warn')
     fire('pointermove', dx(20), 0, true)
     expect(pad()?.l).toBe(-20)
     expect(tight()).toBeUndefined()
     expect(status()?.tone).toBe('danger')
     fire('pointerup', dx(20), 0, true)
+    expect(sizeOverride()).toBeUndefined()
   })
 
   it('#1648 Codex 复核 P2：⌥ 把左边裁深后，右边拖到内容边缘不会写进 framePadTight，生效画布宽 ≥ 5 mm', () => {
     act(() => seedExactRender(fig() as PanelObject, manifestOf(80, 55, [0.05, 0, 0.875, 1])))
-    startFramePadEdge(down(0, 0), 'l', 'a')
+    startFigureEdge(down(0, 0), 'l', 'a')
     fire('pointermove', dx(70), 0, true)
     fire('pointerup', dx(70), 0, true)
     expect(pad()?.l).toBe(-70)
-    startFramePadEdge(down(0, 0), 'r', 'a')
-    fire('pointermove', dx(-10), 0)
-    fire('pointerup', dx(-10), 0)
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(-10), 0, true)
+    fire('pointerup', dx(-10), 0, true)
     expect(tight() ?? []).not.toContain('r')
     expect(pad()?.r).toBeCloseTo(-5, 6)
     expect(80 + (pad()?.l ?? 0) + (pad()?.r ?? 0)).toBeGreaterThanOrEqual(5 - 1e-6)
   })
 
   it('画布宽吸栏宽（图 80 + 右留白 70 = 150，内置默认规范的双栏）', () => {
-    startFramePadEdge(down(0, 0), 'r', 'a')
-    fire('pointermove', dx(69.2), 0)
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(69.2), 0, true)
     expect(pad()?.r).toBe(70)
     expect(useInteractionStore.getState().pageEdge?.snapLabel).toBeTruthy()
     expect(mainKey()).toBe('contextBar.frameWithCol')
-    fire('pointerup', dx(69.2), 0)
+    fire('pointerup', dx(69.2), 0, true)
   })
 
   it('Esc / 系统打断、没拖动：什么都没发生', () => {
     const d0 = undoDepth()
-    startFramePadEdge(down(0, 0), 'r', 'a')
-    fire('pointermove', dx(10), 0)
-    fire('pointercancel', dx(10), 0)
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(10), 0, true)
+    fire('pointercancel', dx(10), 0, true)
     expect(pad()).toBeUndefined()
-    startFramePadEdge(down(0, 0), 'r', 'a')
-    fire('pointerup', 0, 0)
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointerup', 0, 0, true)
     expect(pad()).toBeUndefined()
     expect(undoDepth()).toBe(d0)
   })
 
   it('锁定的图 / 没有精确 manifest：不起手势', () => {
     act(() => useRenderStore.getState().clear?.())
-    startFramePadEdge(down(0, 0), 'r', 'a')
-    fire('pointermove', dx(20), 0)
-    fire('pointerup', dx(20), 0)
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(20), 0, true)
+    fire('pointerup', dx(20), 0, true)
     expect(pad()).toBeUndefined()
     expect(useInteractionStore.getState().kind).toBe('none')
+  })
+})
+
+describe('拖边 = 改这一维的图幅：文字 pt 不变、对边不动，松手才提交', () => {
+  it('拖右边往外：拖动中只有预览框；松手一条历史只改宽，左边不动', () => {
+    const d0 = undoDepth()
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(6), 0)
+    fire('pointermove', dx(10), 0)
+    expect(previewBox()).toMatchObject({ x: 7, y: 18, w: 90, h: 55 })
+    expect(sizeOverride()).toBeUndefined()
+    expect(pad()).toBeUndefined()
+    expect(mainKey()).toBe('contextBar.layoutGrowWidth')
+    expect(status()?.detail?.key).toBe('contextBar.frameEdgeDetail')
+    fire('pointerup', dx(10), 0)
+    expect(sizeOverride()).toEqual([90, 55])
+    expect(fig()).toMatchObject({ x: 7, y: 18 })
+    expect(pad()).toBeUndefined()
+    expect(undoDepth()).toBe(d0 + 1)
+    expect(useInteractionStore.getState().kind).toBe('none')
+  })
+
+  it('拖上边往里：只改高，下边不动（y 在同一次提交里挪好）', () => {
+    startFigureEdge(down(0, 0), 't', 'a')
+    fire('pointermove', 0, dx(15))
+    fire('pointerup', 0, dx(15))
+    expect(sizeOverride()).toEqual([80, 40])
+    expect(fig().y + 40).toBeCloseTo(73, 6)
+    expect(fig().x).toBe(7)
+  })
+
+  it('另一维等长时吸成正方形，胶囊说「正方形」；⌘ 关吸附', () => {
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(-23.5), 0) // 80 − 23.5 = 56.5，离高 55 不到 2 mm
+    expect(mainKey()).toBe('contextBar.frameSquare')
+    fire('pointerup', dx(-23.5), 0)
+    expect(sizeOverride()).toEqual([55, 55])
+    act(() => void useDocumentStore.getState().undo())
+    startFigureEdge(down(0, 0), 'r', 'a')
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: dx(-23.5), clientY: 0, metaKey: true }))
+    window.dispatchEvent(new MouseEvent('pointerup', { clientX: dx(-23.5), clientY: 0, metaKey: true }))
+    expect(sizeOverride()).toEqual([56.5, 55])
+  })
+
+  it('有留白时：留白 mm 不变，画布对边不动，吸栏宽量的是导出宽', () => {
+    act(() => {
+      useDocumentStore.getState().commit(literal('留白'), (d) => {
+        d.framePad = { l: 5, t: 0, r: 5, b: 0 }
+      })
+    })
+    startFigureEdge(down(0, 0), 'l', 'a')
+    fire('pointermove', dx(-59.5), 0) // 90 + 59.5 = 149.5 → 吸到 150：图幅 140
+    expect(mainKey()).toBe('contextBar.frameWithCol')
+    fire('pointerup', dx(-59.5), 0)
+    expect(sizeOverride()).toEqual([140, 55])
+    expect(pad()).toEqual({ l: 5, t: 0, r: 5, b: 0 })
+    // 画布右边 = 7 + 80 + 5 = 92 不动：面板左上角 = 92 − 5 − 140
+    expect(fig().x).toBeCloseTo(-53, 6)
+  })
+
+  it('擦到边（屏幕吸附半径内）、Esc：什么都没发生；关吸附时一点点也算', () => {
+    const d0 = undoDepth()
+    useUiStore.setState({ snapEnabled: true })
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', 5, 0)
+    fire('pointerup', 5, 0)
+    expect(sizeOverride()).toBeUndefined()
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(10), 0)
+    fire('pointercancel', dx(10), 0)
+    expect(sizeOverride()).toBeUndefined()
+    expect(undoDepth()).toBe(d0)
+    // 下边没有栏宽吸附：关吸附后 5 px 也改图幅
+    useUiStore.setState({ snapEnabled: false })
+    startFigureEdge(down(0, 0), 'b', 'a')
+    fire('pointermove', 0, 5)
+    fire('pointerup', 0, 5)
+    expect((sizeOverride() as number[])[1]).toBeGreaterThan(55)
+  })
+
+  it('拖动中按下 ⌥ 切到留白、松开切回图幅；松手那一刻的 ⌥ 算数', () => {
+    startFigureEdge(down(0, 0), 'r', 'a')
+    fire('pointermove', dx(10), 0)
+    expect(useInteractionStore.getState().kind).toBe('figureedge')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', altKey: true }))
+    expect(useInteractionStore.getState().kind).toBe('framepad')
+    expect(pad()).toEqual({ l: 0, t: 0, r: 10, b: 0 })
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', altKey: false }))
+    expect(pad()).toBeUndefined()
+    fire('pointerup', dx(10), 0, true)
+    expect(pad()).toEqual({ l: 0, t: 0, r: 10, b: 0 })
+    expect(sizeOverride()).toBeUndefined()
   })
 })
 
@@ -250,12 +341,24 @@ describe('拖角 = 等比改图幅：松手才提交', () => {
     expect(fig().y + 44).toBeCloseTo(73, 6)
   })
 
-  it('⇧ 自由比例：宽高各跟各的', () => {
+  it('⌥ 自由比例：宽高各跟各的；⇧ 压过 ⌥ 回到等比', () => {
     startFigureCornerResize(down(0, 0), 'br', 'a')
-    fire('pointermove', dx(10), dx(-5))
+    fire('pointermove', dx(10), dx(-5), true)
+    expect(mainKey()).toBe('contextBar.frameCornerFree')
     window.dispatchEvent(new MouseEvent('pointermove', { clientX: dx(10), clientY: dx(-5), shiftKey: true, altKey: true }))
-    fire('pointerup', dx(10), dx(-5))
+    expect(mainKey()).toBe('contextBar.frameCornerUniform')
+    expect(status()?.detail?.key).toBe('contextBar.frameCornerUniformDetail')
+    fire('pointermove', dx(10), dx(-5), true)
+    fire('pointerup', dx(10), dx(-5), true)
     expect(sizeOverride()).toEqual([90, 50])
+  })
+
+  it('⌥ 自由比例时高吸「与宽等长」：拖得出正方形', () => {
+    startFigureCornerResize(down(0, 0), 'br', 'a')
+    fire('pointermove', dx(-10), dx(16), true) // 70 × 71
+    expect(mainKey()).toBe('contextBar.frameSquare')
+    fire('pointerup', dx(-10), dx(16), true)
+    expect(sizeOverride()).toEqual([70, 70])
   })
 
   it('有留白时：吸附量的是导出宽（图幅 + 左右留白），留白 mm 不变', () => {
@@ -362,13 +465,13 @@ describe('画布框：命中区、角柄、画纸、画外遮罩与胶囊', () =
   it('拖边时胶囊显示读数（不随拖动隐藏），松手后消失', async () => {
     await mount()
     act(() => useViewportStore.setState({ viewW: 4000, viewH: 3000 }))
-    act(() => startFramePadEdge(down(0, 0), 'r', 'a'))
-    act(() => fire('pointermove', dx(10), 0))
+    act(() => startFigureEdge(down(0, 0), 'r', 'a'))
+    act(() => fire('pointermove', dx(10), 0, true))
     await act(async () => {})
     const cap = document.querySelector('[data-drag-status]')
     expect(cap).not.toBeNull()
     expect(cap!.getAttribute('data-drag-tone')).toBe('normal')
-    act(() => fire('pointerup', dx(10), 0))
+    act(() => fire('pointerup', dx(10), 0, true))
     await act(async () => {})
     expect(document.querySelector('[data-drag-status]')).toBeNull()
   })

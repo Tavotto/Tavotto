@@ -72,7 +72,7 @@
         },
         {
           "spec": "first-run-qualification.spec.ts",
-          "title": "真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → 存进项目 → 重开冷重放 → 导出"
+          "title": "真实首跑资格：只有脚本与数据 → 引导卡里准备并运行 → 编辑 → ⌘S 起名字（工作副本已在项目里） → 重开冷重放 → 导出"
         }
       ],
       "desktop_manual": [
@@ -355,14 +355,18 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "单图编辑里拖画布：四条边加 / 收留白（图不动，停在图边 / 内容边缘，⌥ 才裁进内容，画布宽吸栏宽），四个角等比改图幅（文字 pt 不变、松手重新出图）；拖动中胶囊说明这一下的含义，导出页面 = 图幅 + 留白",
-        "en-US": "In single-figure editing, drag the canvas edges to add or tighten margin around the figure (it stays put; stops at the figure edge and the content edge, ⌥ to crop, width snaps to column widths) and drag a corner to resize the figure proportionally (text keeps its pt size); a capsule explains each drag and exports use the figure plus margin"
+        "zh-CN": "单图编辑里拖画布：四条边改这一维的图幅（字号不变、对边不动，吸正方形 / 栏宽），按住 ⌥ 拖边加 / 收留白（图不动，停在图边 / 内容边缘），四个角等比改图幅（⌥ 自由比例、⇧ 强制等比）；拖动中胶囊说明这一下的含义，导出页面 = 图幅 + 留白",
+        "en-US": "In single-figure editing, drag a canvas edge to resize the figure along that axis (text size unchanged, opposite edge fixed, snaps to square and column widths), hold ⌥ while dragging an edge to add or tighten margin (figure stays put; stops at the figure edge and the content edge), and drag a corner to resize proportionally (⌥ for free ratio, ⇧ to force proportional); a capsule explains each drag and exports use the figure plus margin"
       },
       "entry": "画布 → 单图编辑 → 拖画布的四条边 / 四个角",
       "e2e": [
         {
           "spec": "figure-edge-resize.spec.ts",
-          "title": "单图编辑拖右边往外：画纸变宽、图纹丝不动，拖动中胶囊说「扩充画布」，撤销一步回到原样"
+          "title": "单图编辑按住 ⌥ 拖右边往外：画纸变宽、图纹丝不动，拖动中胶囊说「扩充画布」，撤销一步回到原样"
+  },
+  {
+   "spec": "figure-edge-resize.spec.ts",
+   "title": "单图编辑拖右边（不按键）：只改宽、高不变，松手重新出图后左边不动，图与画纸同框"
         }
       ]
     },
@@ -890,8 +894,8 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "自动保存：刷新 / 重启后回到最后一次编辑",
-        "en-US": "Autosave: reload / restart returns to the last edit"
+        "zh-CN": "自动保存：刷新 / 重启后回到最后一次编辑；排版不按任何键也存进项目文件夹，挪走或复制文件夹都带着走",
+        "en-US": "Autosave: reload / restart returns to the last edit; the layout is saved into the project folder without any key press and travels with the folder when it is moved or copied"
       },
       "entry": "自动（无入口）",
       "e2e": [
@@ -922,6 +926,33 @@
       ],
       "desktop_manual": [
         "改一处之后 ⌘Q 退出桌面应用再打开：回到同一个项目，改动还在"
+      ]
+    },
+    {
+      "id": "file.name-version",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "⌘S 给这一版起名字：先把没写的编辑存进项目，再弹就地命名小框；时间线里出现命名节点（永不自动清理）",
+        "en-US": "⌘S names this version: it first writes any pending edits into the project, then opens an inline naming box; a named point appears in the timeline and is never cleaned up automatically"
+      },
+      "entry": "⌘S / ⌥⌘S / 文件菜单与命令面板「给这一版起名字…」",
+      "e2e": [
+        {
+          "spec": "save-to-project.spec.ts",
+          "title": "⌘S 给这一版起名字：先冲刷写进项目、再命名；时间线里有命名节点；刷新后从项目里打开一致"
+        },
+        {
+          "spec": "save-to-project.spec.ts",
+          "title": "画布文字仍在编辑时按 ⌘S，先提交文字、冲刷写进项目，再弹命名小框"
+        },
+        {
+          "spec": "save-to-project.spec.ts",
+          "title": "文字工具提示关闭时 Escape 提交，再 ⌘S 命名：项目里是第二版"
+        }
+      ],
+      "desktop_manual": [
+        "文件菜单里「给这一版起名字…」（⌘S）：就地弹出命名小框，不再弹「存进项目」对话框；菜单文案是新的"
       ]
     },
     {
@@ -1157,6 +1188,26 @@
         {
           "spec": "journal-picker.spec.ts",
           "title": "期刊下拉在设置对话框里能用滚轮滚（弹层挂在对话框外，不能被对话框的滚动锁吃掉）"
+        }
+      ]
+    },
+    {
+      "id": "journal.tips",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "期刊线索：出处卡上点「这条不对」、选择器里搜不到时点「没有这本刊」，在同一个「联系作者」窗里附上原文链接或截图发给作者，回信在「我的来信」",
+        "en-US": "Journal tips: tap \"Looks wrong\" on a source card, or \"Not listed?\" when the journal picker finds nothing, and send the maker a source link or screenshot from the same Contact window; replies arrive in My letters"
+      },
+      "entry": "设置 → 期刊规范 → 期刊 → 出处卡 / 选择器",
+      "e2e": [
+        {
+          "spec": "journal-tips.spec.ts",
+          "title": "期刊线索：出处卡「这条不对」与选择器「没有这本刊」打开专用的期刊反馈窗，点发送前零连接"
+        },
+        {
+          "spec": "journal-tips.spec.ts",
+          "title": "问题页底部常驻「反馈期刊规范问题」入口，打开通用反馈窗：问题描述或编辑部原话、截图 / PDF 与回信邮箱"
         }
       ]
     },

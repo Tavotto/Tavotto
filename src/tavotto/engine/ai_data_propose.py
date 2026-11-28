@@ -204,6 +204,8 @@ class Item:
     variant: dict | None = None
     #: 给界面「依据」那句话用的数（`candidate_facts`；大表 / 把列当分组 = None，响应里没有这一项）
     facts: dict | None = None
+    #: 多个 y 的趋势图每条线各自的数（`series_facts`；单个 y / 大表 / 把列当分组 = None，响应里没有这一项）；有它时没有 `facts`
+    series_facts: dict | None = None
     #: 这张图上每条拟合线的系数（`tpl.fit_report`；没有拟合线 = 空，响应里没有这一项）
     fits: list = field(default_factory=list)
     #: 误差线 / 误差带是**算出来的**（均值 ± 误差）时，哪些位置因为 n < 2 没有误差线 / 带（标签与图上一致；`error_missing_for`）；没有 = 空，响应里没有这一项
@@ -617,7 +619,10 @@ ERROR_MISSING_MAX = 50
 
 def _x_text(x: float, is_date: bool) -> str:
     if is_date:
-        return (adf._EPOCH + datetime.timedelta(days=round(x))).isoformat()
+        t = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=round(x * 86400))
+        if not (t.hour or t.minute or t.second):
+            return t.date().isoformat()
+        return t.isoformat(sep=" ", timespec="seconds" if t.second else "minutes")
     return f"{x:.12g}"
 
 
@@ -689,7 +694,8 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
     `{rows: 表里的行数, drawn: 画进去的行数, groups: 组数 | None, n_min / n_max: 每组（每个类别 × 分组 × 分面格子）的观测数范围 | None,
     x_values: 不同横轴取值的个数 | None, skipped_missing: 因为缺值（某一格是空的 / NaN）没画的行数, skipped_other: 因为那一格不是数（文字）没画的行数}`。
     两个 skipped 加起来就是 `unplotted_rows` 的总数。大表不逐行数（None）；把列当分组的也先不给。"""
-    if values.large is not None or recipe.stack:
+    if values.large is not None or recipe.stack or _multi_y_trend(recipe):
+        # 多个 y 的趋势图每条线各有各的有效值：不输出一个「第一条线的数」冒充整张图的依据，改走 `series_facts`
         return None
     # 「画进去的行」与出图用同一套判据：先套用户选的处理规则（「取数字部分」取出了数的格子算数），再去掉 `unplotted_rows` 里的行
     # （横轴不是值、分组 / 分面 / 个体空、纵轴空……），剩下的行里纵轴是数的才是一个画出来的值（折线的纵轴空格是断开，不算画进去）
@@ -697,11 +703,13 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
     idx = {c: i for i, c in enumerate(values.columns)}
     y = recipe.y[0]
     skipped = unplotted_rows(values, recipe)
-    gone = {item["row"] for item in skipped}
+    # 行的身份是（来自哪一份, 该份的行号）：合画时不同文件的同一行号是不同的行
+    gone = {(item.get("file"), item["row"]) for item in skipped}
     usable = [
         r
         for n, r in enumerate(applied.rows)
-        if values.row_number(n) not in gone and adf.parse_cell(r[idx[y]])[0] == "numeric"
+        if (values.row_source(n), values.row_number(n)) not in gone
+        and adf.parse_cell(r[idx[y]])[0] == "numeric"
     ]
     out: dict = {
         "rows": len(values.rows),
@@ -713,15 +721,7 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
         "skipped_missing": 0,
         "skipped_other": 0,
     }
-    row_at = {values.row_number(n): n for n in range(len(values.rows))}
-    for item in skipped:
-        cell = ""
-        n = row_at.get(item["row"])
-        if n is not None and item["column"] in idx:
-            cell = values.rows[n][idx[item["column"]]]
-        # 缺值 = 那一格是空的或 NaN；其余（横轴 / 纵轴那一格是文字）算「不是数」
-        missing = item["reason"] != "not_a_number" and adf.parse_cell(cell)[0] != "text"
-        out["skipped_missing" if missing else "skipped_other"] += 1
+    out["skipped_missing"], out["skipped_other"] = _skipped_split(values, skipped, idx)
     by = [c for c in (recipe.group, recipe.facet) if c]
     if recipe.family == "comparison" and recipe.x:
         by = [recipe.x, *by]
@@ -738,6 +738,96 @@ def candidate_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) ->
             {r[idx[recipe.x]].strip() for r in usable if r[idx[recipe.x]].strip()}
         )
     return out
+
+
+def _multi_y_trend(recipe: recipe_mod.FigureRecipe) -> bool:
+    """`candidate_facts`（旧、按第一个 y）与 `series_facts`（按每个 y）的分界：只有「多个 y 的趋势图」改走新的；别的族（区间 / 构成 / 矩阵……）照旧。"""
+    return recipe.family == "trend" and bool(recipe.x) and len(recipe.y) > 1
+
+
+def _skipped_split(values: adf.DataSummary, skipped: list[dict], idx: dict) -> tuple[int, int]:
+    """没画的行拆成 `(缺值, 不是数)` 两个数（`candidate_facts` 与 `series_facts` 共用）：缺值 = 那一格是空的或 NaN；其余（横轴 / 纵轴那一格是文字）算「不是数」。"""
+    row_at = {(values.row_source(n), values.row_number(n)): n for n in range(len(values.rows))}
+    missing_n = other_n = 0
+    for item in skipped:
+        cell = ""
+        n = row_at.get((item.get("file"), item["row"]))
+        if n is not None and item["column"] in idx:
+            cell = values.rows[n][idx[item["column"]]]
+        missing = item["reason"] != "not_a_number" and adf.parse_cell(cell)[0] != "text"
+        if missing:
+            missing_n += 1
+        else:
+            other_n += 1
+    return missing_n, other_n
+
+
+def series_facts(values: adf.DataSummary, recipe: recipe_mod.FigureRecipe) -> dict | None:
+    """多个 y 的趋势图（小表、非 stack）：**每条线各自**按什么数画的（ADR 0178 修订 2026-11-27）。统计来自出图用的同一个数据准备函数
+    （`tpl.trend_data`：逐行各调一次，行的身份就是它在表里的位置，合画时不同文件的同一行号不会撞），不另写一套解析规则：
+    `{rows: 整表行数, eligible_rows: 公共角色（横轴 / 分组 / 分面 / 个体）都有效的行数, rows_any: 至少一个 y 有效的行数, rows_all: 所有 y 都有效的行数,
+    skipped_missing / skipped_other: 同 `facts`,
+    series: [{y, n: 有效值个数, x_values: 有效值所在的不同横轴取值个数（按解析后的数值 / 日期去重）,
+    err_drawn / err_missing: 只有配了现成误差列才有——有中心值且有可画误差（0 也算）/ 有中心值但误差缺失（空、NaN、文字、负数）的个数}]}`，
+    与 `recipe.y` 同序。有中心值才有误差线，没中心值的误差格不计。单个 y、大表、stack = None。"""
+    if values.large is not None or recipe.stack or not _multi_y_trend(recipe):
+        return None
+    applied = recipe_mod.with_cells_applied(values, recipe)
+    is_date = values.per_column[recipe.x].kind == "date"
+    ys = list(recipe.y)
+    err = list(recipe.err_cols) or None
+    n_valid = dict.fromkeys(ys, 0)
+    xs_of: dict[str, set] = {y: set() for y in ys}
+    drawn = dict.fromkeys(ys, 0)
+    gap = dict.fromkeys(ys, 0)
+    eligible = any_ = all_ = 0
+    for row in applied.rows:
+        d = tpl.trend_data(
+            applied.columns,
+            [row],
+            recipe.x,
+            ys,
+            recipe.group,
+            recipe.facet,
+            recipe.unit,
+            is_date,
+            err,
+        )
+        if not d["series"]:  # 公共角色无效：这一行没有任何点
+            continue
+        eligible += 1
+        ok = 0
+        for (_p, _g, y, _u), (xs, vals) in d["series"].items():
+            if vals[0] == vals[0]:
+                ok += 1
+                n_valid[y] += 1
+                xs_of[y].add(xs[0])
+        for (_p, _g, y), (_xs, _vs, errs) in d.get(
+            "errs", {}
+        ).items():  # 只有中心值有数的行才进 `errs`
+            if errs[0] == errs[0]:
+                drawn[y] += 1
+            else:
+                gap[y] += 1
+        any_ += ok > 0
+        all_ += ok == len(ys)
+    series = []
+    for y in ys:
+        item = {"y": y, "n": n_valid[y], "x_values": len(xs_of[y])}
+        if err:
+            item["err_drawn"], item["err_missing"] = drawn[y], gap[y]
+        series.append(item)
+    idx = {c: i for i, c in enumerate(values.columns)}
+    missing_n, other_n = _skipped_split(values, unplotted_rows(values, recipe), idx)
+    return {
+        "rows": len(values.rows),
+        "eligible_rows": eligible,
+        "rows_any": any_,
+        "rows_all": all_,
+        "skipped_missing": missing_n,
+        "skipped_other": other_n,
+        "series": series,
+    }
 
 
 def figure_style(style: dict) -> dict:
@@ -873,7 +963,7 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
         if x is not None:
             cell = applied[n][idx[x]]
             if values.per_column[x].kind == "date":
-                ok = adf.parse_date(cell) is not None
+                ok = adf.parse_when(cell) is not None
             else:
                 ok = adf.parse_cell(cell)[0] == "numeric"
             if not ok:
@@ -889,8 +979,10 @@ def unplotted_rows(values: adf.DataSummary, recipe) -> list[dict]:
             kind = adf.parse_cell(row[idx[y]])[0]
             if kind == "text":
                 out.append(_unplotted(values, n, y, "not_a_number"))
+                break  # 每行只记一条：同一行多个 y 都是文字时记第一个，条数 = 行数（不是文字格数）
             elif kind != "numeric" and point_needs_y:
                 out.append(_unplotted(values, n, y, "y_missing"))
+                break
     return out
 
 
@@ -1256,16 +1348,22 @@ def _recipe_key(rec: recipe_mod.FigureRecipe) -> str:
     return json.dumps({k: v for k, v in rec.to_dict().items() if k != "why"}, sort_keys=True)
 
 
+def _split_column(rec: recipe_mod.FigureRecipe, splittable: tuple[str, ...]) -> str:
+    """「按某列再分开」那一张实际用来拆的列：配方里（分面 / 分组 / 横轴）真用到的那个可拆分列；都没用到才退回第一个。"""
+    used = [c for c in (rec.facet, rec.group, rec.x) if c]
+    return next((c for c in used if c in splittable), splittable[0])
+
+
 def _with_file_only_variants(
     res, merged, values, confirmed, hint, picks, rules
-) -> tuple[recipe_mod.Candidates, dict[int, dict]]:
+) -> recipe_mod.Candidates:
     """合画且文件里**原本就有**在文件内取多个值的分组列（`MergeSpec.splittable`）：除了现状的画法（按文件上色、再按那一列拆开 / 分面），
     再给一份**只按文件比较**的（把那些列当不存在重新出一遍备选）。两份各自走完整的 `default_candidates`（同一套校验与排序），这里只负责并起来：
     现状的顺序不变（推荐仍是它的第一张），每张后面紧跟它只按文件比较的那一张；两种画法画出来一样的（配方除 `why` 外逐项相同）只留一张、不加标记。
-    返回 `(并好的 Candidates, {id(配方): 标记})`。"""
+    成对的两张各自带上 `Candidate.variant`；返回并好的 `Candidates`。"""
     if any(c.recipe.err is not None for c in res.items):
         # 已汇总的表（每个位置一行 + 现成误差列）：「只按文件比较」会对各组的汇总值再算一次均值 ± 误差 / 分布（G-053），不给这一对
-        return res, {}
+        return res
     keep = {k: n for k, n in merged.summary.groups.items() if k not in merged.merge.splittable}
     entry_b = replace(merged, summary=replace(merged.summary, groups=keep))
     res_b = recipe_mod.default_candidates(
@@ -1279,26 +1377,26 @@ def _with_file_only_variants(
         cells=rules,
     )
     if not isinstance(res_b, recipe_mod.Candidates) or not res_b.items:
-        return res, {}
+        return res
     seen = {_recipe_key(c.recipe) for c in res.items}
     only_b = [c for c in res_b.items if _recipe_key(c.recipe) not in seen]
     by_code = {c.code: c for c in only_b}
-    column = merged.merge.splittable[0]
+    splittable = merged.merge.splittable
     out: list[recipe_mod.Candidate] = []
-    marks: dict[int, dict] = {}
     used: set[str] = set()
     for cand in res.items:
-        out.append(cand)
         twin = by_code.get(cand.code)
-        if twin is not None:
-            marks[id(cand.recipe)] = {"kind": "split", "column": column}
-            marks[id(twin.recipe)] = {"kind": "by_file"}
-            out.append(twin)
-            used.add(cand.code)
+        if twin is None:
+            out.append(cand)
+            continue
+        split = recipe_mod.CandidateVariant("split", _split_column(cand.recipe, splittable))
+        out.append(replace(cand, variant=split))
+        out.append(replace(twin, variant=recipe_mod.CandidateVariant("by_file")))
+        used.add(cand.code)
     out += [
         c for c in only_b if c.code not in used
     ]  # 只有「只按文件」才画得出来的（现状那一边被剔除了）排在最后
-    return replace(res, items=tuple(out)), marks
+    return replace(res, items=tuple(out))
 
 
 def _read_merged(
@@ -1398,6 +1496,7 @@ def item_to_dict(sess: Session, item: Item, recommended: bool) -> dict:
         # 有拟合线才有：每条线的截距 / 斜率 / n（描述性的最小二乘直线；对数轴那一维是 log10）
         **({"fits": item.fits} if item.fits else {}),
         **({"facts": item.facts} if item.facts is not None else {}),
+        **({"series_facts": item.series_facts} if item.series_facts is not None else {}),
         # 有误差线 / 误差带才有：画的是哪一种（`sd` / `sem` / `ci95`）
         **({"error": error_of(r)} if error_of(r) is not None else {}),
         # 误差线从哪来（`column` 现成的误差列 / `computed` 用重复值算的）；取自列的另带列名与「列名自己说明了是哪一种」
@@ -1611,7 +1710,6 @@ def propose(
     ):
         # 懒模式迭代用尽仍没落定（防御）：不出 ask，当「没有可画的」
         return remember({"kind": "nothing", "reasons": ["no_renderable_family"], "dropped": []})
-    variants: dict[int, dict] = {}
     if (
         merged is not None
         and file_group is not None
@@ -1619,17 +1717,12 @@ def propose(
         and "group" not in ans
         and res.items
     ):
-        res, variants = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
+        res = _with_file_only_variants(res, merged, values, confirmed, hint, picks, rules)
 
     if ans.get("error") in ERROR_SUMMARY and res.items:
         # 用户点选了误差线 / 误差带画哪一种：换掉每个备选里「均值 ± 某种误差」的层（其余不动）
-        swapped = []
-        for c in res.items:
-            new = with_error_summary(c.recipe, ans["error"])
-            if new is not c.recipe and id(c.recipe) in variants:
-                # 合画里成对候选的标记是按配方对象记的：换了配方要把标记带过去，否则两张成对的图分不清是哪一张
-                variants[id(new)] = variants.pop(id(c.recipe))
-            swapped.append(replace(c, recipe=new))
+        # 合画成对的标记长在候选上（`Candidate.variant`），`replace` 换配方时跟着走
+        swapped = [replace(c, recipe=with_error_summary(c.recipe, ans["error"])) for c in res.items]
         res = replace(res, items=tuple(swapped))
 
     # 看图目的：只重排（纯排列，不新增 / 不复活备选）；没点 `answers.purpose` 时是恒等，只多响应里的 `purpose` 一项
@@ -1746,7 +1839,7 @@ def propose(
             cell_stats(values, cand.recipe) or None,
             reduced=reduced_of(values, cand.recipe),
             state="pending" if planned is not None else "ready",
-            variant=variants.get(id(cand.recipe)),
+            variant=cand.variant.to_dict() if cand.variant is not None else None,
             why_not=(
                 None
                 if purpose is None or not order
@@ -1757,6 +1850,7 @@ def propose(
             error_stated=error_stated_of(chosen.summary, cand.recipe, ans),
             error_columns=error_columns_of(chosen.summary, cand.recipe, ans),
             facts=candidate_facts(values, cand.recipe),
+            series_facts=series_facts(values, cand.recipe),
             stem=planned.stem if planned is not None else None,
             n=planned.n if planned is not None else 0,
             expected=planned.expected if planned is not None else [],

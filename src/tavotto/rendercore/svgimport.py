@@ -10,12 +10,13 @@ expat + 有界 TreeBuilder）：DTD / 实体（XXE、十亿笑声）、`<script>
 被拒的输入记一条原因、整个不拆。之后的换算另有视口上限（10 m、viewBox 1e7）与墙钟上限（5 秒，逐元素查）。这里只读几何与样式，
 不执行、不联网、不读盘。
 
-**兜底**：做不准的东西（滤镜、蒙版、图案填充、外链 / 内嵌图片、foreignObject、textPath、标记、复杂选择器……）**一个都不
+**兜底**：做不准的东西（滤镜、蒙版、图案填充、外链 / 内嵌图片、foreignObject、textPath、复杂的线端标记、复杂选择器……）**一个都不
 悄悄丢**：记进 `unsupported`（原因码 + 次数），调用方据此把整个 SVG 当图片放进来并说一句原因，不出半张图。
 
 几何规则：所有图形（path / rect / circle / ellipse / line / polyline / polygon）一律变成自由路径——变换矩阵烤进锚点（编辑起来
 就是一条普通路径）；椭圆弧换成三次贝塞尔（每段 ≤ 90°）。线宽按变换的面积比例（√|det|）换成 pt。`<text>` 落成文字对象（字号、
-颜色、粗斜、对齐、旋转），位置按基线估算。纯标准库。
+颜色、粗斜、对齐、旋转；tspan 的上下标与局部粗斜写成 LaTeX 子集），位置按基线估算。简单三角 / 开口箭头 / 圆点的 `marker-start / marker-end`
+换成路径的 `headStart / headEnd`（ADR 0208 第 5 期）。纯标准库。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
+from .. import richtext
 from . import svgcheck
 
 MM_PER_PX = 25.4 / 96.0
@@ -257,6 +259,16 @@ STYLE_PROPS = (
     INHERITED
     | {"opacity", "display", "clip-path", "mask", "filter", "stop-color", "stop-opacity"}
     | {"marker-start", "marker-mid", "marker-end", "marker"}
+    | {"baseline-shift", "vertical-align"}
+    | {
+        "paint-order",
+        "vector-effect",
+        "mix-blend-mode",
+        "isolation",
+        "shape-rendering",
+        "transform",
+        "stroke-dashoffset",
+    }  # 只给标记判定用  # 上下标（只 tspan 用；不继承，不在 INHERITED 里）
 )
 _SIMPLE_SEL = re.compile(r"^([a-zA-Z][\w-]*)?((?:[.#][\w-]+)*)$")
 
@@ -727,9 +739,14 @@ class _Ctx:
     anchors: int = 0
     deadline: float = math.inf
     stops_cache: dict[str, list[dict]] = field(default_factory=dict)
+    #: 原因码 → 一句建议（每个码只留第一条；有就随结果回去，没有就没有这个键）
+    hints: dict[str, str] = field(default_factory=dict)
+    parents: dict = field(default_factory=dict)
 
-    def note(self, code: str) -> None:
+    def note(self, code: str, hint: str | None = None) -> None:
         self.notes[code] = self.notes.get(code, 0) + 1
+        if hint and code not in self.hints:
+            self.hints[code] = hint
 
 
 def _local(tag) -> str:
@@ -1116,43 +1133,229 @@ def _family(s: str | None) -> str | None:
     return None if not f else "sans-serif"
 
 
+class _TextLayout(Exception):
+    """tspan 的位置做不准（逐字定位、非上下标的 dy / baseline-shift……）：整段文字记 `text_layout`"""
+
+
+#: 上下标：偏移至少是正文字号的这个比例才算（再小的当没有）；字号缩到正文的这个比例以内才算「小字号」
+_SCRIPT_MIN_SHIFT = 0.15
+_SCRIPT_MAX_SIZE = 0.85
+#: 关键字 super / sub 的偏移（正文字号的比例；SVG 把量交给浏览器，各家在 0.33–0.5 之间）
+_SCRIPT_KEYWORD_SHIFT = 0.4
+#: 上下标偏移的上限（正文字号的倍数）：再大的不是上下标，是错开的另一行
+_SCRIPT_MAX_SHIFT = 1.0
+_DY_RE = re.compile(r"\s*(" + _NUM + r")(px|em)?\s*")
+
+
+def _style_flags(rst: dict) -> tuple[bool, bool]:
+    """样式 → (粗体, 斜体)。Illustrator 把粗斜写进 PostScript 名（`Arial-BoldMT`、`Helvetica-Oblique`），不写 font-weight"""
+    weight = (rst.get("font-weight") or "normal").lower()
+    ps_name = (rst.get("font-family") or "").lower()
+    bold = (
+        weight in ("bold", "bolder")
+        or (weight.isdigit() and int(weight) >= 600)
+        or bool(re.search(r"-(?:semi|demi|extra)?bold|black|heavy", ps_name))
+    )
+    italic = (rst.get("font-style") or "").lower() in ("italic", "oblique") or bool(
+        re.search(r"-\w*(?:italic|oblique)", ps_name)
+    )
+    return bold, italic
+
+
+def _rel_size(v: str | None, parent: float) -> float:
+    """tspan 的字号（用户单位）：em / % / smaller / larger 按父字号，其余按绝对长度；没写沿用父字号"""
+    if v is None:
+        return parent
+    s = v.strip().lower()
+    if s == "smaller":
+        return parent / 1.2
+    if s == "larger":
+        return parent * 1.2
+    m = _LENGTH_RE.match(s)
+    if not m or len(m.group(1)) > MAX_NUM_CHARS:
+        return parent
+    if m.group(2) == "em":
+        return float(m.group(1)) * parent
+    return _length(s, parent, parent)  # `%` 也在这里：按父字号
+
+
+def _shift_up(nst: dict, fs: float, base_fs: float) -> tuple[float, bool]:
+    """元素自己的 baseline-shift / vertical-align → (向上的偏移量（用户单位，向下为负）, 是不是 super / sub 关键字)"""
+    v = (nst.get("baseline-shift") or nst.get("vertical-align") or "").strip().lower()
+    if v in ("", "baseline", "0"):
+        return 0.0, False
+    if v == "super":
+        return _SCRIPT_KEYWORD_SHIFT * base_fs, True
+    if v == "sub":
+        return -_SCRIPT_KEYWORD_SHIFT * base_fs, True
+    if not _LENGTH_RE.match(v):
+        raise _TextLayout  # top / middle / text-top ……：不是上下标
+    return _length(v, fs, 0.0), False
+
+
+def _classify_script(off_up: float, fs: float, base_fs: float, keyword: bool) -> str:
+    if abs(off_up) < _SCRIPT_MIN_SHIFT * base_fs:
+        return ""
+    if abs(off_up) > _SCRIPT_MAX_SHIFT * base_fs or not (
+        keyword or fs <= _SCRIPT_MAX_SIZE * base_fs
+    ):
+        raise _TextLayout  # 偏了但字号没缩小（不是上下标）、或偏得太远
+    return "sup" if off_up > 0 else "sub"
+
+
+@dataclass
+class _Chunk:
+    """一个 `<text>` 里连续排的一段文字（有自己的 x / y）。片段 = [文字, 粗体, 斜体, 上下标]"""
+
+    x: float
+    y: float
+    st: dict
+    fs: float  # 这一段的正文字号（用户单位）
+    segs: list[list] = field(default_factory=list)
+    dy: float = 0.0  # 累计的 dy（向下为正）：SVG 里 dy 的偏移一直延续到下一个 dy
+
+
+def _collect(node, nst: dict, parent_fs: float, bs_up: float, chunk: _Chunk, ctx: _Ctx) -> None:
+    """一个 tspan（含嵌套）的文字按顺序收进 `chunk.segs`，每一段带自己的粗斜与上下标。做不准抛 `_TextLayout`。"""
+    _check_clock(ctx)
+    if any(node.get(a) for a in ("dx", "rotate", "textLength")):
+        raise _TextLayout
+    fs = _rel_size(nst.get("font-size"), parent_fs)
+    if node.get("dy"):
+        m = _DY_RE.fullmatch(node.get("dy"))
+        if not m or len(m.group(1)) > MAX_NUM_CHARS:
+            raise _TextLayout  # 多值 dy（逐字下移）
+        chunk.dy += float(m.group(1)) * (fs if m.group(2) == "em" else 1.0)
+    shift, kw = _shift_up(nst, fs, chunk.fs)
+    bs = bs_up + shift
+    bold, italic = _style_flags(nst)
+    if node.text:
+        chunk.segs.append(
+            [node.text, bold, italic, _classify_script(bs - chunk.dy, fs, chunk.fs, kw)]
+        )
+    for child in node:
+        if not isinstance(child.tag, str):
+            continue
+        t = _local(child.tag)
+        if t == "textPath":
+            raise _TextLayout("text_path")
+        if t != "tspan":
+            continue
+        if child.get("x") or child.get("y"):
+            raise _TextLayout  # 嵌套里的绝对定位
+        _collect(child, _computed(child, nst, ctx), fs, bs, chunk, ctx)
+        if child.tail:  # 子 tspan 的 dy 会一直延续：尾巴按此刻的累计偏移判
+            chunk.segs.append(
+                [child.tail, bold, italic, _classify_script(bs - chunk.dy, fs, chunk.fs, kw)]
+            )
+
+
+def _chunk_segments(chunk: _Chunk) -> list[list]:
+    """空白折叠（跨片段）、去首尾空格、丢空片段"""
+    segs: list[list] = []
+    for text, bold, italic, script in chunk.segs:
+        text = re.sub(r"\s+", " ", text)
+        if segs and segs[-1][0].endswith(" ") and text.startswith(" "):
+            text = text[1:]
+        if text:
+            segs.append([text, bold, italic, script])
+    if segs:
+        segs[0][0] = segs[0][0].lstrip()
+        segs[-1][0] = segs[-1][0].rstrip()
+    return [s for s in segs if s[0]]
+
+
+def _chunk_object_text(segs: list[list]) -> tuple[str, bool, bool, bool]:
+    """片段 → (文字, 整段粗体, 整段斜体, 是不是 LaTeX 子集写法)。
+
+    粗斜一致、没有上下标：就是普通文字（与以前逐字相同）。有局部粗斜 / 上下标：写成文字对象的 LaTeX 子集
+    （`textFormat: "latex"`，`\\textbf{}` / `\\textit{}` / `\\textsuperscript{}` / `\\textsubscript{}`，ADR 0152）；整段都粗 / 都斜的
+    仍用对象自己的 `bold` / `italic`，片段里只写与整段不同的部分。"""
+    bold_all = all(s[1] for s in segs)
+    italic_all = all(s[2] for s in segs)
+    joined = "".join(s[0] for s in segs)
+    if (
+        all(not s[3] for s in segs)
+        and all(s[1] == segs[0][1] and s[2] == segs[0][2] for s in segs)
+        and not re.search(
+            r"[\\^_]", joined
+        )  # 字面的 `^{` `_{` `\` 在旧标记里会被读成上下标 / 转义：走 LaTeX 子集的转义
+    ):
+        return joined, segs[0][1], segs[0][2], False
+    runs = [
+        richtext.TextRun(s[0], s[3], italic=s[2] and not italic_all, bold=s[1] and not bold_all)
+        for s in segs
+    ]
+    return richtext.serialize_latex(runs), bold_all, italic_all, True
+
+
+def _text_width_em(segs: list[list]) -> float:
+    """字宽估算（em）：拉丁 0.55 em、CJK 1 em，上下标按 0.62 缩小"""
+    return sum(
+        (1.0 if ord(ch) > 0x2E80 else 0.55) * (richtext.SCRIPT_SIZE if s[3] else 1.0)
+        for s in segs
+        for ch in s[0]
+    )
+
+
 def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
-    """`<text>` → 文字对象：每个有自己 x / y 的 tspan 各成一个；dx / dy / rotate / textPath 做不准 → 记不支持。"""
+    """`<text>` → 文字对象：每个有自己 x / y 的 tspan 各成一个；tspan 里的上下标（baseline-shift / dy 配小字号）与局部粗斜
+    保留成文字对象的局部样式；dx / rotate / 逐字 dy / textPath 做不准 → 记不支持。"""
     x0 = _nums(el.get("x") or "0")
     y0 = _nums(el.get("y") or "0")
     cx, cy = (x0[0] if x0 else 0.0), (y0[0] if y0 else 0.0)
     if any(el.get(a) for a in ("dx", "dy", "rotate", "textLength")) or len(x0) > 1 or len(y0) > 1:
         ctx.note("text_layout")
         return
-    # 每段文字收集成片段列表、最后一次 `join`：逐个 `ptxt + text` 每次都复制此前累计的全文，平方级（Codex 线程 4656811239）
-    runs: list[list] = []  # [x, y, 片段列表, 样式]
-    if el.text and el.text.strip():
-        runs.append([cx, cy, [el.text], st])
-    for child in el:
-        _check_clock(ctx)  # 每个 tspan 都要走一遍样式级联，子节点数 × 规则数
-        t = _local(child.tag)
-        if t == "textPath":
-            ctx.note("text_path")
-            return
-        if t != "tspan":
-            continue
-        cst = _computed(child, st, ctx)
-        if any(child.get(a) for a in ("dx", "dy", "rotate", "textLength")):
-            ctx.note("text_layout")
-            return
-        xs, ys = _nums(child.get("x") or ""), _nums(child.get("y") or "")
-        if len(xs) > 1 or len(ys) > 1:
-            ctx.note("text_layout")
-            return
-        tx, ty = (xs[0] if xs else None), (ys[0] if ys else None)
-        text = "".join(child.itertext())
-        if tx is None and ty is None and runs:
-            # 同一行接着写：并到上一段（样式取上一段的）
-            runs[-1][2].append(text)
-        elif text.strip():
-            runs.append([tx if tx is not None else cx, ty if ty is not None else cy, [text], cst])
-        if child.tail and child.tail.strip() and runs:
-            runs[-1][2].append(child.tail)
+    base_fs = _length(st.get("font-size", "16"), 16, 16)
+    bold0, italic0 = _style_flags(st)
+    chunks: list[_Chunk] = []
+    try:
+        if el.text and el.text.strip():
+            c0 = _Chunk(cx, cy, st, base_fs)
+            c0.segs.append([el.text, bold0, italic0, ""])
+            chunks.append(c0)
+        for child in el:
+            _check_clock(ctx)  # 每个 tspan 都要走一遍样式级联，子节点数 × 规则数
+            t = _local(child.tag)
+            if t == "textPath":
+                ctx.note("text_path")
+                return
+            if t != "tspan":
+                continue
+            cst = _computed(child, st, ctx)
+            if any(child.get(a) for a in ("dx", "rotate", "textLength")):
+                raise _TextLayout
+            xs, ys = _nums(child.get("x") or ""), _nums(child.get("y") or "")
+            if len(xs) > 1 or len(ys) > 1:
+                raise _TextLayout
+            tx, ty = (xs[0] if xs else None), (ys[0] if ys else None)
+            if tx is None and ty is None and chunks:
+                # 同一行接着写：并到上一段（上下标等按上一段的正文字号判）
+                _collect(child, cst, base_fs, 0.0, chunks[-1], ctx)
+                tail_chunk = chunks[-1]
+            else:
+                if child.get("dy"):
+                    raise _TextLayout  # 新起一段又带 dy：没有正文可比
+                fs = _rel_size(cst.get("font-size"), base_fs)
+                cc = _Chunk(tx if tx is not None else cx, ty if ty is not None else cy, cst, fs)
+                _collect(child, cst, base_fs, 0.0, cc, ctx)
+                if not any(s[0].strip() for s in cc.segs):
+                    continue  # 空的 tspan 不成对象（与以前相同）
+                chunks.append(cc)
+                tail_chunk = cc
+            if child.tail:  # 只有空白的尾巴也留（`a <tspan>b</tspan> <tspan>c</tspan>` 中间的空格）；首尾空白最后统一去
+                tail_chunk.segs.append(
+                    [
+                        child.tail,
+                        bold0,
+                        italic0,
+                        _classify_script(-tail_chunk.dy, base_fs, tail_chunk.fs, False),
+                    ]
+                )
+    except _TextLayout as e:
+        ctx.note(str(e) or "text_layout")
+        return
     a, b, c, d = ctm[:4]
     sx = math.hypot(a, b)
     sy = math.hypot(c, d)
@@ -1162,16 +1365,17 @@ def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
         ctx.note("skew_text")
         return
     rot = math.degrees(math.atan2(b, a))
-    for rx, ry, pieces, rst in runs:
+    for ck in chunks:
         _check_clock(ctx)
         ctx.count += 1  # 文字段也是展开出来的对象：与元素同一个展开上限
         if ctx.count > IMPORT_BUDGET.max_expanded_elements:
             raise SvgImportError("too_many_elements", "展开后的元素超出上限")
-        text = "".join(pieces)
-        text = re.sub(r"\s+", " ", text).strip()
-        if not text:
+        segs = _chunk_segments(ck)
+        if not segs:
             continue
-        size_user = _length(rst.get("font-size", "16"), 16, 16)
+        text, bold, italic, latex = _chunk_object_text(segs)
+        rst = ck.st
+        size_user = ck.fs
         size_pt = size_user * sx * MM_PER_PX / MM_PER_PT
         size_mm = size_pt * MM_PER_PT
         col = parse_color(rst.get("fill", "black"), rst.get("color", "black"))
@@ -1179,10 +1383,10 @@ def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
             g, solid = _gradient(_url_id(rst.get("fill")), ctx, (0, 0, 1, 1), ctm, (0, 0, 1, 1))
             col = (solid, 1.0)
         # 字宽估算：拉丁字符 0.55 em、CJK 1 em（前端 TextView 落定后按实际量出来的宽写回）
-        width_mm = sum(1.0 if ord(ch) > 0x2E80 else 0.55 for ch in text) * size_mm + 0.5
+        width_mm = _text_width_em(segs) * size_mm + 0.5
         anchor = rst.get("text-anchor", "start")
         align = {"middle": "center", "end": "right"}.get(anchor, "left")
-        bx, by = apply(ctm, rx, ry)
+        bx, by = apply(ctm, ck.x, ck.y)
         bx, by = bx * MM_PER_PX, by * MM_PER_PX
         # 基线 → 框：框顶 = 基线 − 0.8 em（行高 1.2 的上半），左右按对齐方式
         ux, uy = math.cos(math.radians(rot)), math.sin(math.radians(rot))
@@ -1194,9 +1398,6 @@ def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
         # 框是绕中心转的：由旋转后的左上角反推未旋转的 x / y
         cxm = tlx + ux * width_mm / 2 + vx * h / 2
         cym = tly + uy * width_mm / 2 + vy * h / 2
-        weight = (rst.get("font-weight") or "normal").lower()
-        # Illustrator 把粗斜写进 PostScript 名（`Arial-BoldMT`、`Helvetica-Oblique`），不写 font-weight
-        ps_name = (rst.get("font-family") or "").lower()
         obj = {
             "id": _new_id(ctx),
             "type": "text",
@@ -1206,14 +1407,13 @@ def _emit_text(el, st, ctm, ctx: _Ctx, path: list[str], opacity: float) -> None:
             "h": _r(h),
             "text": text,
             "sizePt": _r(size_pt),
-            "bold": weight in ("bold", "bolder")
-            or (weight.isdigit() and int(weight) >= 600)
-            or bool(re.search(r"-(?:semi|demi|extra)?bold|black|heavy", ps_name)),
-            "italic": (rst.get("font-style") or "").lower() in ("italic", "oblique")
-            or bool(re.search(r"-\w*(?:italic|oblique)", ps_name)),
+            "bold": bold,
+            "italic": italic,
             "color": col[0] if col else "#000000",
             "align": align,
         }
+        if latex:
+            obj["textFormat"] = "latex"
         fam = _family(rst.get("font-family"))
         if fam:
             obj["fontFamily"] = fam
@@ -1283,11 +1483,6 @@ def _walk(el, st_parent: dict, ctm: Matrix, path: list[str], ctx: _Ctx, opacity:
         if st.get(prop) and st.get(prop) != "none":
             ctx.note(code)
             return
-    if any(
-        st.get(k) and st.get(k) != "none"
-        for k in ("marker", "marker-start", "marker-mid", "marker-end")
-    ):
-        ctx.note("marker")
     m = mul(ctm, parse_transform(el.get("transform")))
     op = opacity * float(st.get("opacity", "1") or 1)
     # 剪切：这个元素（连同它的子孙）自成一层组，蒙版是组里的最上面一个
@@ -1328,7 +1523,421 @@ def _walk(el, st_parent: dict, ctm: Matrix, path: list[str], ctx: _Ctx, opacity:
     _walk_inner(el, tag, st, m, path, ctx, op)
 
 
+# --------------------------------------------------------------------- 线端标记 → 路径的端型（ADR 0208 第 5 期）
+#: 能换成路径端型的标记写法：一个 `<marker>` 里只有一个简单图形——实心三角（→ triangle）、开口箭头（→ open）、实心圆（→ dot），
+#: 颜色与线相同，朝向与路径端点的切线一致，尺寸落在三档之内。别的（多个图形、曲线、渐变、颜色不同、marker-mid、闭合路径、
+#: 朝向不对……）一律仍按 `marker` 记做不准，整段当图片，并回一句建议。
+_MARKER_LEAVES = ("path", "line", "polyline")
+_GEOMETRY_TAGS = ("path", "line", "polyline", "polygon", "rect", "circle", "ellipse")
+#: 端型三档的帽长系数（与 `geometry.HEAD_SIZE_FACTOR` 同源）；帽长 = 4 × 线宽 × 系数，圆点直径 = 3.4 × 线宽 × 系数
+_MARKER_SIZES = (("small", 0.7), ("medium", 1.0), ("large", 1.5))
+#: 尺寸比（SVG 里的帽长 ÷ 中档帽长）落在这个范围里才换成档位，再大 / 再小换了会明显变样
+_MARKER_RATIO = (0.5, 2.5)
+#: 标记朝向与路径切线（或反向）的最大夹角（度）
+_MARKER_ANGLE_TOL = 15.0
+#: 等腰判定：两腰长度之差占较长腰的比例上限
+_MARKER_ISOSCELES_TOL = 0.05
+_MARKER_HINT = "这个箭头头用了做不准的线端标记（marker）：改用 arrow（或简单三角 marker，颜色与线一致、朝向沿线）后再导入"
+
+
+def _marker_refs(st: dict) -> tuple[str | None, str | None, str | None]:
+    short = st.get("marker")
+
+    def val(k: str) -> str | None:
+        v = st.get(k)
+        if v is None:
+            v = short
+        v = (v or "").strip()
+        return None if v in ("", "none") else v
+
+    return val("marker-start"), val("marker-mid"), val("marker-end")
+
+
+def _angle_diff(a: float, b: float) -> float:
+    """两个方向（弧度）的夹角，0..180 度"""
+    d = (a - b + math.pi) % (2 * math.pi) - math.pi
+    return abs(math.degrees(d))
+
+
+def _same_pt(a, b, eps: float = 1e-9) -> bool:
+    return abs(a[0] - b[0]) <= eps and abs(a[1] - b[1]) <= eps
+
+
+def _tangent(nodes: list[dict], end: bool) -> tuple[float, float] | None:
+    """路径起点（`end=False`）/ 终点处的前进方向（单位向量；起点 = 离开起点的方向）"""
+    if end:
+        n, o = nodes[-1], nodes[-2]
+        cands = (n["in"], o["out"], o["p"])
+        sign = 1.0
+    else:
+        n, o = nodes[0], nodes[1]
+        cands = (n["out"], o["in"], o["p"])
+        sign = -1.0
+    ref = n["p"]
+    for c in cands:
+        if not _same_pt(c, ref):
+            dx, dy = (ref[0] - c[0]) * sign, (ref[1] - c[1]) * sign
+            ln = math.hypot(dx, dy)
+            if ln > 0:
+                return dx / ln, dy / ln
+    return None
+
+
+def _straight_end(nodes: list[dict], end: bool) -> bool:
+    if end:
+        return _same_pt(nodes[-1]["in"], nodes[-1]["p"]) and _same_pt(
+            nodes[-2]["out"], nodes[-2]["p"]
+        )
+    return _same_pt(nodes[0]["out"], nodes[0]["p"]) and _same_pt(nodes[1]["in"], nodes[1]["p"])
+
+
+#: 标记图形能换成端型的**允许名单**（取计算值：表现属性 / 内联 style / CSS 类都算）。名单之外的任何影响外观的属性出现非默认值，
+#: 或取值读不懂，一律不换（宁可整段当图片，也不静默改样子 / 丢头）。
+_MARKER_PLAIN_PROPS = frozenset(
+    {
+        "fill", "stroke", "stroke-width", "stroke-linejoin", "stroke-linecap", "color",  # 颜色与线宽另有检查
+        "font-family", "font-size", "font-weight", "font-style", "text-anchor",  # 形状用不到
+        "stop-color", "stop-opacity", "baseline-shift", "vertical-align",
+    }
+)  # fmt: skip
+#: 只许等于默认值的属性（字符串比较，小写去空白；数值型另走 `_MARKER_UNITY`）
+_MARKER_DEFAULT_ONLY = {
+    "fill-rule": {"nonzero"}, "stroke-dasharray": {"none"}, "stroke-miterlimit": {"4"},
+    "stroke-dashoffset": {"0", "0px"}, "clip-path": {"none"}, "mask": {"none"}, "filter": {"none"},
+    "marker": {"none"}, "marker-start": {"none"}, "marker-mid": {"none"}, "marker-end": {"none"},
+    "paint-order": {"normal"}, "vector-effect": {"none"}, "mix-blend-mode": {"normal"},
+    "isolation": {"auto"}, "shape-rendering": {"auto"}, "transform": {"none"},
+}  # fmt: skip
+_MARKER_UNITY = ("opacity", "fill-opacity", "stroke-opacity")
+_KNOWN_PAINT = re.compile(r"(?:#[0-9a-f]{3,8}|rgba?\(.*\))\Z")
+
+
+def _known_paint(v: str) -> bool:
+    v = v.strip().lower()
+    return (
+        v in _NAMED
+        or v in ("none", "transparent", "currentcolor", "context-fill", "context-stroke")
+        or bool(_KNOWN_PAINT.match(v))
+        or bool(_url_id(v))
+    )
+
+
+def _marker_paint(
+    v: str | None, op: float, cur: str, ctx_fill: str | None, ctx_stroke: str | None
+) -> str | None:
+    """一个 paint → `#rrggbb` / `None`（确定没画：none、alpha 恰为 0）/ `"?"`（画了但端型表达不了：渐变、0<alpha<1、读不懂）"""
+    v = (v or "").strip()
+    if not _known_paint(v) or not 0 <= op <= 1:
+        return "?"
+    if v == "context-fill":
+        c = ctx_fill
+    elif v == "context-stroke":
+        c = ctx_stroke
+    elif _url_id(v):
+        return "?"
+    else:
+        parsed = parse_color(v, cur)
+        if parsed is None:
+            c = None
+        elif parsed[1] == 0:
+            c = None
+        elif parsed[1] < 1:
+            return "?"
+        else:
+            c = parsed[0]
+    if c is None or c == "?":
+        return c
+    if op == 0:
+        return None
+    return c if op == 1 else "?"
+
+
+def _marker_shape(
+    child, tag: str, mel, ctx: _Ctx, stroke_hex: str, ctx_fill: str | None, ctx_stroke: str | None
+):
+    """标记里那一个图形 → `(kind, tip, dir, length, 线宽)`（标记自己的坐标）、`"hidden"`（确定不可见：原图里就没有头）或 `None`（换不了）。
+
+    kind = triangle / open / dot；`tip` 是尖（圆点 = 圆心）；`dir` 是 底边中点 → 尖 的弧度（圆点 = None）；
+    `length` = 帽长（圆点 = 直径）；最后一项是开口箭头自己的线宽（标记单位，别的端型 0）。
+
+    **允许名单**：图形、`<marker>` 及其祖先上每个影响外观的属性（取计算值）都得在 `_MARKER_PLAIN_PROPS` 里、或等于默认值，
+    不透明度只能是 1；否则 `None`。只有「确定」不可见（自身 display:none / visibility:hidden / opacity 0 / paint 为 none 或 alpha 恰为 0）才回 `"hidden"`。"""
+    chain = []
+    el = child
+    while el is not None and len(chain) < 128:
+        chain.append(el)
+        el = ctx.parents.get(el)
+    chain.reverse()
+    mst: dict = {}
+    certain_hidden = False
+    for e in chain:
+        mst = _computed(e, mst, ctx)
+        own_style = e in (child, mel)
+        for k, v in mst.items():
+            if k in _MARKER_PLAIN_PROPS:
+                continue
+            val = (v or "").strip().lower()
+            if k == "display":
+                if val == "none":
+                    if e is child:
+                        certain_hidden = True
+                    else:
+                        return (
+                            None  # marker / 祖先上的 display:none：规范对 marker 另有说法，保守不换
+                        )
+                elif val not in ("inline", "block", ""):
+                    return None
+            elif k == "visibility":
+                if val in ("hidden", "collapse"):
+                    certain_hidden = True
+                elif val not in ("visible", ""):
+                    return None
+            elif k in _MARKER_UNITY:
+                try:
+                    f = float(val or 1)
+                except ValueError:
+                    return None
+                if f == 0 and k == "opacity":
+                    certain_hidden = True
+                elif f != 1 and k == "opacity":
+                    return None
+                # fill-opacity / stroke-opacity 在 paint 里按每个 paint 单独判
+            elif k == "transform" and not own_style:
+                continue  # 祖先的 transform 不作用于标记内容
+            elif val not in _MARKER_DEFAULT_ONLY.get(k, ()):
+                return None  # 名单之外的属性：非默认值，或者根本不认识
+    if child.get("transform") or mel.get("transform"):
+        return None
+    if certain_hidden:
+        return "hidden"
+    cur = mst.get("color", "black")
+
+    def op_of(key: str) -> float:
+        try:
+            return float(mst.get(key, "1") or 1)
+        except ValueError:
+            return -1.0
+
+    fill = _marker_paint(mst.get("fill", "black"), op_of("fill-opacity"), cur, ctx_fill, ctx_stroke)
+    stroke = _marker_paint(
+        mst.get("stroke", "none"), op_of("stroke-opacity"), cur, ctx_fill, ctx_stroke
+    )
+    if fill is None and stroke is None:
+        return "hidden"
+    if tag == "circle":
+        r = _length(child.get("r"))
+        if r <= 0 or fill != stroke_hex or stroke is not None:
+            return None
+        c = (_length(child.get("cx")), _length(child.get("cy")))
+        return "dot", c, None, 2 * r, 0.0
+    subs = _geometry(child, tag, ctx)
+    if not subs or len(subs) != 1:
+        return None
+    nodes = subs[0]["nodes"]
+    if any(not (_same_pt(n["in"], n["p"]) and _same_pt(n["out"], n["p"])) for n in nodes):
+        return None  # 曲线
+    pts = [n["p"] for n in nodes]
+    if len(pts) >= 2 and _same_pt(pts[0], pts[-1]):
+        pts = pts[:-1]
+    if len(pts) != 3:
+        return None
+    filled = fill is not None
+    if filled:
+        if fill != stroke_hex or stroke is not None:
+            return None  # 实心图形带描边（哪怕同色）会比填充大一圈
+    else:
+        if stroke != stroke_hex or subs[0]["closed"]:
+            return None  # 颜色不同；或描边的闭合三角（空心三角）：端型里没有
+    if filled:
+        # 实心三角：找顶点（两腰等长的那个）；几个都够等腰（正三角）就取最贴近标记 +x 方向的
+        best = None
+        for i in range(3):
+            a, b, c = pts[i], pts[(i + 1) % 3], pts[(i + 2) % 3]
+            d1, d2 = math.dist(a, b), math.dist(a, c)
+            if max(d1, d2) <= 0 or abs(d1 - d2) > _MARKER_ISOSCELES_TOL * max(d1, d2):
+                continue
+            mid = ((b[0] + c[0]) / 2, (b[1] + c[1]) / 2)
+            ln = math.dist(mid, a)
+            if ln <= 0:
+                continue
+            ang = math.atan2(a[1] - mid[1], a[0] - mid[0])
+            if best is None or abs(ang) < abs(best[2]):
+                best = (a, ang, ang, ln)
+        if best is None:
+            return None
+        return "triangle", best[0], best[1], best[3], 0.0
+    # 开口箭头：三个点依次是 翼、尖、翼
+    a, v, b = pts
+    d1, d2 = math.dist(v, a), math.dist(v, b)
+    if max(d1, d2) <= 0 or abs(d1 - d2) > _MARKER_ISOSCELES_TOL * max(d1, d2):
+        return None
+    mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+    ln = math.dist(mid, v)
+    if ln <= 0:
+        return None
+    return (
+        "open",
+        v,
+        math.atan2(v[1] - mid[1], v[0] - mid[0]),
+        ln,
+        _length(mst.get("stroke-width", "1"), 1.0, 1.0),
+    )
+
+
+def _marker_end_head(
+    ref: str,
+    at_end: bool,
+    nodes: list[dict],
+    sw_user: float,
+    stroke_hex: str,
+    ctx_fill: str | None,
+    ctx_stroke: str | None,
+    ctx: _Ctx,
+):
+    """一端的标记 → `(端型, 档位, 端点沿线外移的距离（用户单位）)`；换不了回 `None`"""
+    mid = _url_id(ref)
+    mel = ctx.ids.get(mid) if mid else None
+    if mel is None or _local(mel.tag) != "marker":
+        return None
+    kids = [
+        c
+        for c in mel
+        if isinstance(c.tag, str) and _local(c.tag) not in ("title", "desc", "metadata")
+    ]
+    if len(kids) != 1 or _local(kids[0].tag) not in ("path", "polygon", "polyline", "circle"):
+        return None
+    child = kids[0]
+    mw = _length(mel.get("markerWidth"), 0, 3.0)
+    mh = _length(mel.get("markerHeight"), 0, 3.0)
+    units = (mel.get("markerUnits") or "strokeWidth").strip()
+    if mw <= 0 or mh <= 0 or units not in ("strokeWidth", "userSpaceOnUse"):
+        return None
+    scale = 1.0
+    if mel.get("viewBox"):
+        vb = _nums(mel.get("viewBox"))
+        if len(vb) != 4 or vb[2] <= 0 or vb[3] <= 0:
+            return None
+        if (mel.get("preserveAspectRatio") or "").split()[:1] == ["none"]:
+            return None
+        scale = min(mw / vb[2], mh / vb[3])
+    total = scale * (sw_user if units == "strokeWidth" else 1.0)
+    shape = _marker_shape(child, _local(child.tag), mel, ctx, stroke_hex, ctx_fill, ctx_stroke)
+    if shape == "hidden":
+        return "hidden"
+    if shape is None or total <= 0:
+        return None
+    kind, tip, tdir, length_c, mark_sw = shape
+    if kind == "open" and abs(mark_sw * total - sw_user) > 0.1 * sw_user:
+        return None  # 开口箭头是描边画的：端型的线宽总是线宽，与线不等宽就会变样
+    tan = _tangent(nodes, at_end)
+    if tan is None:
+        return None
+    out = tan if at_end else (-tan[0], -tan[1])  # 端型朝向：离开线的方向
+    out_ang = math.atan2(out[1], out[0])
+    orient = (mel.get("orient") or "0").strip()
+    if orient == "auto":
+        rot = math.atan2(tan[1], tan[0])
+    elif orient == "auto-start-reverse":
+        rot = math.atan2(tan[1], tan[0]) + (0.0 if at_end else math.pi)
+    else:
+        if not re.fullmatch(_NUM + r"(?:deg)?", orient):
+            return None
+        rot = math.radians(_nums(orient.removesuffix("deg"))[0])
+    if tdir is not None and _angle_diff(rot + tdir, out_ang) > _MARKER_ANGLE_TOL:
+        return None  # 尖朝向与线端的前进方向对不上（比如起点的三角朝向线里面）
+    cr, sr = math.cos(rot), math.sin(rot)
+    # 尖相对参考点的向量（用户单位）：沿 out 的分量 = 端点要外移多少，横向分量要小
+    vx = (tip[0] - _length(mel.get("refX"))) * total
+    vy = (tip[1] - _length(mel.get("refY"))) * total
+    ux, uy = vx * cr - vy * sr, vx * sr + vy * cr
+    head_len = length_c * total
+    ext = ux * out[0] + uy * out[1]
+    lateral = abs(-ux * out[1] + uy * out[0])
+    if kind == "dot":
+        ext += head_len / 2  # 圆心 → 最外点
+        ratio = head_len / (3.4 * sw_user)
+    else:
+        ratio = head_len / (4.0 * sw_user)
+    if lateral > 0.15 * head_len or not (_MARKER_RATIO[0] <= ratio <= _MARKER_RATIO[1]):
+        return None
+    size = min(_MARKER_SIZES, key=lambda sf: abs(math.log(ratio / sf[1])))[0]
+    if abs(ext) <= 0.1 * head_len:
+        ext = 0.0
+    return kind, size, ext
+
+
+def _markers(tag: str, st: dict, geom: list[dict] | None, ctx: _Ctx) -> dict:
+    """元素的 `marker-start / marker-end` → 路径对象的 `headStart / headEnd`（及档位）。换不了的记 `marker`。"""
+    start, mid, end = _marker_refs(st)
+    if not (start or mid or end) or geom is None:
+        return {}
+    ok = (
+        tag in _MARKER_LEAVES
+        and len(geom) == 1
+        and not geom[0]["closed"]
+        and len(geom[0]["nodes"]) >= 2
+        and (not mid or len(geom[0]["nodes"]) == 2)  # 两点的线没有中间顶点，marker-mid 无处可画
+    )
+    sw_user = _length(st.get("stroke-width", "1"), 1.0, 1.0)
+    stroke_c = parse_color(st.get("stroke", "none"), st.get("color", "black"))
+    if not ok or _url_id(st.get("stroke")) or stroke_c is None or sw_user <= 0:
+        ctx.note("marker", _MARKER_HINT)
+        return {}
+    nodes = geom[0]["nodes"]
+    cur = st.get("color", "black")
+
+    def ref_paint(key: str, default: str, op_key: str) -> str | None:
+        """引用元素自己的 paint（`context-fill` / `context-stroke` 取它）：None = 没画，`"?"` = 渐变 / 部分透明 / 读不懂"""
+        try:
+            op = float(st.get(op_key, "1") or 1)
+        except ValueError:
+            return "?"
+        return _marker_paint(st.get(key, default), op, cur, None, None)
+
+    ctx_fill = ref_paint("fill", "black", "fill-opacity")
+    ctx_stroke = ref_paint("stroke", "none", "stroke-opacity")
+    fields: dict = {}
+    moves: list[tuple[bool, float]] = []
+    for at_end, ref in ((False, start), (True, end)):
+        if not ref:
+            continue
+        got = _marker_end_head(ref, at_end, nodes, sw_user, stroke_c[0], ctx_fill, ctx_stroke, ctx)
+        if got == "hidden":
+            continue  # 标记图形不可见：原图里这一端就没有头
+        if got is None:
+            ctx.note("marker", _MARKER_HINT)
+            return {}
+        kind, size, ext = got
+        if ext and (
+            not _straight_end(nodes, at_end)
+            or (
+                ext < 0
+                and -ext
+                >= math.dist(nodes[-1 if at_end else 0]["p"], nodes[-2 if at_end else 1]["p"])
+            )
+        ):
+            ctx.note("marker", _MARKER_HINT)  # 尖不在端点上、末段又是曲线 / 缩不回去：没法只移端点
+            return {}
+        side = "End" if at_end else "Start"
+        fields[f"head{side}"] = kind
+        if size != "medium":
+            fields[f"headSize{side}"] = size
+        if ext:
+            moves.append((at_end, ext))
+    # 尖不在端点上（参考点在底边中点 / 圆心）：沿线把端点移到尖上，让端型的尖落在 SVG 里尖所在的位置
+    for at_end, ext in moves:
+        n = nodes[-1 if at_end else 0]
+        tan = _tangent(nodes, at_end)
+        out = tan if at_end else (-tan[0], -tan[1])
+        n["p"] = n["in"] = n["out"] = (n["p"][0] + out[0] * ext, n["p"][1] + out[1] * ext)
+    return fields
+
+
 def _walk_inner(el, tag: str, st: dict, m: Matrix, path: list[str], ctx: _Ctx, op: float) -> None:
+    if tag not in _GEOMETRY_TAGS and any(_marker_refs(st)):
+        ctx.note(
+            "marker", _MARKER_HINT
+        )  # 组 / use / text 上的 marker：属性是继承的，没法逐个落到路径上
     to_mm = mul((MM_PER_PX, 0, 0, MM_PER_PX, 0, 0), m)
     if tag in ("g", "a", "switch"):
         kids = [c for c in el if isinstance(c.tag, str)]
@@ -1383,10 +1992,12 @@ def _walk_inner(el, tag: str, st: dict, m: Matrix, path: list[str], ctx: _Ctx, o
         _emit_text(el, st, m, ctx, path, op)
         return
     geom = _geometry(el, tag, ctx)
+    heads = _markers(tag, st, geom, ctx)
     if geom is None:
         return
     obj = _emit_shape(geom, st, to_mm, ctx, path, op)
     if obj is not None:
+        obj.update(heads)
         ctx.objects.append(obj)
 
 
@@ -1464,12 +2075,15 @@ def import_svg(svg_text: str) -> dict:
     except _Rejected as rej:
         return {"objects": [], "size_mm": [0.0, 0.0], "unsupported": {rej.code: 1}}
     ids = {}
+    parents: dict = {}
     css = []
     for tick, el in enumerate(root.iter()):
         if not tick & 0xFF and time.monotonic() > deadline:
             raise SvgImportError("timeout", f"超过 {DEADLINE_S:g} 秒")
         if not isinstance(el.tag, str):
             continue
+        for c in el:
+            parents[c] = el
         if el.get("id"):
             ids.setdefault(el.get("id"), el)
         if _local(el.tag) == "style" and el.text:
@@ -1479,7 +2093,7 @@ def import_svg(svg_text: str) -> dict:
     for c in css:
         rules += parse_css(c, notes, len(rules), deadline)
     rules.sort(key=lambda r: (r.spec, r.order))  # 一次排好，级联时按序取用
-    ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=deadline)
+    ctx = _Ctx(ids=ids, rules=rules, notes=notes, deadline=deadline, parents=parents)
     # 视口：width / height（缺省按 viewBox，单位 px = 1/96 in）；viewBox 等比放进视口（preserveAspectRatio 缺省 xMidYMid meet）
     vb = _nums(root.get("viewBox") or "")
     vbw, vbh = (vb[2], vb[3]) if len(vb) == 4 and vb[2] > 0 and vb[3] > 0 else (None, None)
@@ -1507,11 +2121,14 @@ def import_svg(svg_text: str) -> dict:
             _walk(c, st_root, mul(m, IDENTITY), [], ctx, float(st_root.get("opacity", "1") or 1))
     # 只剩一个成员的组（子对象被跳过了）不算组：拿掉这一层
     _prune_groups(ctx.objects, deadline)
-    return {
+    out = {
         "objects": ctx.objects,
         "size_mm": [_r(w * MM_PER_PX), _r(h * MM_PER_PX)],
         "unsupported": dict(sorted(ctx.notes.items())),
     }
+    if ctx.hints:
+        out["hints"] = dict(sorted(ctx.hints.items()))
+    return out
 
 
 def _prune_groups(objs: list[dict], deadline: float = math.inf) -> None:

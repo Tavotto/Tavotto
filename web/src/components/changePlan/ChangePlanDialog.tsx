@@ -13,6 +13,7 @@ import { DiffView } from '../ai/DiffView'
 import { ChangeList, NoteList } from './ChangeList'
 import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, isScriptPlan, markNoteHintSeen, noteHintSeen, scriptInfo, unhandledViews, useChangePlanAccess } from './changePlanModel'
 import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
+import { failedChecks } from '@/lib/vectorEdit'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 
 type View = 'compare' | 'annotate'
@@ -89,7 +90,7 @@ export function ChangePlanDialog() {
   // 脚本方案只有一个 `atomic` 的脚本组：整组要或不要，没有逐组勾选（不要就「放弃」）；应用不进文档历史
   const groups = script ? [] : groupViews(entry)
   const chosen = groups.filter((g) => !entry.unchecked[g.key])
-  const canApply = status === 'ready' && (script ? !entry.scriptBusy : chosen.length > 0)
+  const canApply = status === 'ready' && (script ? !entry.scriptBusy : chosen.length > 0 && !entry.vector?.busy && !entry.vector?.failed)
   // 答了「不改」的组不在清单里，但仍是没勾选的组：按方案的全部组数判「部分」，出图才不带上它
   const partial = !script && chosen.length < (entry.plan?.groups.length ?? groups.length)
   // 一组都没勾 = 不改，「修改后」就是改前；部分勾选 = 按勾选出的那张（还没出来 / 失败时先用全量图，失败另有一句灰字）
@@ -180,13 +181,14 @@ export function ChangePlanDialog() {
         ) : undefined
       }
       footer={{
-        start: (
-          <Button variant="ghost" size="lg" className="-ml-3.5" onClick={() => store().discard(entry.key)} data-change-plan-discard>
-            {cp('dialog.discard')}
-          </Button>
-        ),
         // 右侧两个位置在两个模式间连续：左边是「写批注」（对比）/「按批注重改 · N」（批注），右边是「应用」；每屏只有一颗主按钮
-        secondary: annotating ? (
+        // 「放弃」与「应用」挨在一起（仓库对话框的惯例：取消 / 放弃在主按钮左边，`start` 只给破坏性的另一条路）
+        secondary: (
+          <>
+            <Button variant="ghost" size="lg" onClick={() => store().discard(entry.key)} data-change-plan-discard>
+              {cp('dialog.discard')}
+            </Button>
+            {annotating ? (
           <Button
             variant={notes.length === 0 ? 'secondary' : 'primary'}
             size="lg"
@@ -217,7 +219,9 @@ export function ChangePlanDialog() {
               </Button>
             </PremiumLock>
           </span>
-        ) : undefined,
+        ) : undefined}
+          </>
+        ),
         primary: applyBtn,
       }}
     >
@@ -261,7 +265,7 @@ export function ChangePlanDialog() {
             before={entry.beforeSrc}
             // 批注写在这一版完整的「修改后」上（重改从它出发），不按勾选的组合出图
             after={annotating ? entry.afterSrc : after}
-            afterBusy={!annotating && previewBusy}
+            afterBusy={!annotating && (previewBusy || !!entry.vector?.busy)}
             aspect={aspect}
             mode={annotating ? 'annotate' : mode}
             groups={chosen}
@@ -310,6 +314,19 @@ export function ChangePlanDialog() {
                   {cp('dialog.previewStale')}
                 </p>
               )}
+              {entry.vector?.failed && (
+                <p className="flex shrink-0 items-center justify-between gap-2 px-4 pt-3 text-sm text-ink" data-change-plan-vector-failed>
+                  <span>{cp('dialog.vectorRecomputeFailed')}</span>
+                  <Button variant="ghost" size="sm" className="-mr-2 text-ink underline underline-offset-2" onClick={() => entry.vector?.recompute?.(true)} data-change-plan-vector-retry>
+                    {cp('card.retry')}
+                  </Button>
+                </p>
+              )}
+              {entry.vector?.result && failedChecks(entry.vector.result) > 0 && (
+                <p className="shrink-0 px-4 pt-3 type-meta" data-change-plan-vector-checks>
+                  {cp('dialog.vectorChecks', { count: failedChecks(entry.vector.result) })}
+                </p>
+              )}
               {script && info ? (
                 <div className="flex flex-col gap-1 px-4 pt-4" data-change-plan-script-meta>
                   <p className="type-meta">{cp('dialog.scriptMeta', { added: info.added, removed: info.removed })}</p>
@@ -318,9 +335,11 @@ export function ChangePlanDialog() {
                 </div>
               ) : (
                 <ChangeList
-                  heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : undefined}
+                  muted={!!entry.vector?.failed}
+                  heading={entry.kind === 'layout' ? cp('dialog.layoutHeading', { count: entry.layout?.count ?? 0 }) : entry.kind === 'vector' ? cp('dialog.vectorHeading', { count: entry.vector?.count ?? 0 }) : undefined}
                   groups={groups}
                   unhandled={unhandledViews(entry)}
+                  onAction={(u) => u.action && entry.vector?.confirm?.(u.action.item, u.action.op)}
                   unchecked={entry.unchecked}
                   onToggle={(g) => store().toggleGroup(entry.key, g)}
                   activeId={activeId}

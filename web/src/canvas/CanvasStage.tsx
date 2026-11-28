@@ -54,6 +54,8 @@ import { startAnchorMarquee } from './pathEditDrag'
 import { activePathEdit } from '@/store/pathEditStore'
 import { groundInkFor } from '@/lib/canvasSelection'
 import { cn } from '@/lib/utils'
+import { cvdFilterRef, useCvdPreviewStore } from '@/store/cvdPreviewStore'
+import { CvdPreviewFilter } from './CvdPreviewFilter'
 
 /** 鼠标滚轮一格的像素量级（触控板一帧只有几个像素） */
 const WHEEL_NOTCH_PX = 40
@@ -73,6 +75,8 @@ export function CanvasStage() {
   // 切回排版模式看到的还是原来那张版。
   const { t } = useTranslation('workspace')
   const fastEdit = useWorkspaceStore((s) => s.mode === 'fast_edit')
+  // 推荐配色的色觉预览（ADR 0210）：只改显示，世界层整体过一个滤镜
+  const cvd = useCvdPreviewStore((s) => s.vision)
   const layoutMode = useWorkspaceStore((s) => s.mode === 'layout')
   const activePanelId = useWorkspaceStore((s) => s.activePanelId)
   // 「这一次把图加进了文档」——只用来播报，可见那一行在 WorkspaceContextBar
@@ -355,8 +359,10 @@ export function CanvasStage() {
             width: fastEdit ? 0 : mmToWorld(page.w),
             height: fastEdit ? 0 : mmToWorld(page.h),
             pointerEvents: spaceDown || tool !== 'select' ? 'none' : 'auto',
+            filter: cvdFilterRef(cvd),
           }}
         >
+          {cvd !== 'normal' && <CvdPreviewFilter vision={cvd} />}
           {!fastEdit && (
             <PageSheet
               w={page.w}

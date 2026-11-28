@@ -472,8 +472,27 @@ def _side_of(r: Rect, mains: list[MainAxes]) -> tuple[str | None, list[str]]:
 # ---------------------------------------------------------------------------
 # 给求解器
 # ---------------------------------------------------------------------------
-def deco_ink(a: Analysis, m: MainAxes) -> Rect:
-    """排版时这个轴四周要让出的外沿：自己的文字 + 挂在它侧边的色条与共享轴标题（只计垂直于长边的那一维）。"""
+def _on_shared_edge(m: MainAxes, cov: list[MainAxes], side: str) -> bool:
+    """共享轴标题只占它所在那一侧最外面那一行 / 列的外沿：总标题（top）只算进最上面一行，
+    supylabel（left）只算进最左一列。覆盖范围里其它轴不为它让地方，否则 2×2 的下一行也会空出一条总标题的高度。"""
+    if side in ("top", "bottom"):
+        edge = (
+            min(cov, key=lambda q: q.plot[1])
+            if side == "top"
+            else max(cov, key=lambda q: q.plot[3])
+        )
+        return _span_overlap(m.plot[1], m.plot[3], edge.plot[1], edge.plot[3]) > 0
+    edge = (
+        min(cov, key=lambda q: q.plot[0]) if side == "left" else max(cov, key=lambda q: q.plot[2])
+    )
+    return _span_overlap(m.plot[0], m.plot[2], edge.plot[0], edge.plot[2]) > 0
+
+
+def deco_ink(a: Analysis, m: MainAxes, label_band: float = 0.0) -> Rect:
+    """排版时这个轴四周要让出的外沿：自己的文字 + 挂在它侧边的色条与共享轴标题（只计垂直于长边的那一维）。
+
+    `label_band`：子图标签那一条带的高度（mm，含间距）。总标题（top）摞在标签上面，不与标签挤在同一条带里——
+    居中的总标题横跨两列时会正好压到右边那列的标签。"""
     x0, y0, x1, y1 = m.ink
     for cb in a.colorbars:
         if m.gid not in cb.hosts:
@@ -484,7 +503,7 @@ def deco_ink(a: Analysis, m: MainAxes) -> Rect:
             y0, y1 = min(y0, cb.ink[1]), max(y1, cb.ink[3])
     by = {q.gid: q for q in a.mains}
     for s in a.shared:
-        if m.gid not in s.covers:
+        if m.gid not in s.covers or not _on_shared_edge(m, [by[g] for g in s.covers], s.side):
             continue
         # 按 `follow` 排完的位置计（离覆盖的那几个轴的文字外沿至少 SHARED_PAD_MM），不按脚本原样里压着刻度的位置
         u = _union([by[g].ink for g in s.covers])
@@ -494,19 +513,19 @@ def deco_ink(a: Analysis, m: MainAxes) -> Rect:
         elif s.side == "right":
             x1 = max(x1, m.ink[2] + max(SHARED_PAD_MM, r[0] - u[2]) + (r[2] - r[0]))
         elif s.side == "top":
-            y0 = min(y0, m.ink[1] - max(SHARED_PAD_MM, u[1] - r[3]) - (r[3] - r[1]))
+            y0 = min(y0, m.ink[1] - max(SHARED_PAD_MM + label_band, u[1] - r[3]) - (r[3] - r[1]))
         else:
             y1 = max(y1, m.ink[3] + max(SHARED_PAD_MM, r[1] - u[3]) + (r[3] - r[1]))
     return [x0, y0, x1, y1]
 
 
-def solver_input(a: Analysis, refs: dict[str, str]) -> list[dict]:
+def solver_input(a: Analysis, refs: dict[str, str], label_band: float = 0.0) -> list[dict]:
     """主轴组（ADR 0199 §十二）：短号、外框、文字外沿（比例，x0,y0,x1,y1）、组号、是否等比例。不给文字。"""
     w, h = a.size
     groups = {g: i for i, g in enumerate(dict.fromkeys(a.group_of[m.gid] for m in a.mains))}
     out = []
     for m in a.mains:
-        d = deco_ink(a, m)
+        d = deco_ink(a, m, label_band)
         out.append(
             {
                 "ref": refs[m.gid],
@@ -539,13 +558,14 @@ def _map_span(a0, a1, u0, u1, n0, n1):
 
 
 def follow(
-    a: Analysis, new_plot: dict[str, Rect]
+    a: Analysis, new_plot: dict[str, Rect], label_band: float = 0.0
 ) -> tuple[dict[str, Rect], list[tuple[str, Rect]]]:
     """主轴的新绘图区（mm，新图幅下）已定：算 twin / 色条轴的新外框，以及共享文字的新外框。
 
     * twin：与宿主同框。
     * 色条：长边方向跟着宿主并集按比例伸缩；短边方向与宿主并集的间距、自身粗细（mm）不变。
-    * 共享轴标题：沿长边居中到它覆盖的那几个轴的并集；到这些轴自己文字外沿的 mm 距离不变。
+    * 共享轴标题：沿长边居中到它覆盖的那几个轴的并集；到这些轴自己文字外沿的 mm 距离不变
+      （总标题至少让出 `label_band`，摞在子图标签上面，见 `deco_ink`）。
     返回 `({轴 gid: 新外框}, [(文字 gid, 新外框)])`。"""
     axes: dict[str, Rect] = {}
     by = {m.gid: m for m in a.mains}
@@ -600,7 +620,7 @@ def follow(
         else:
             cx = (new_u[0] + new_u[2]) / 2
             if s.side == "top":
-                y1 = new_ink[1] - max(SHARED_PAD_MM, old_ink[1] - r[3])
+                y1 = new_ink[1] - max(SHARED_PAD_MM + label_band, old_ink[1] - r[3])
                 nr = [cx - tw / 2, y1 - th, cx + tw / 2, y1]
             else:
                 y0 = new_ink[3] + max(SHARED_PAD_MM, r[1] - old_ink[3])

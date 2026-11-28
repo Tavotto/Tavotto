@@ -9,7 +9,19 @@ import pytest
 
 from tavotto.engine import atomicio, layoutannotate as la, vectoredit as ve
 from test_layoutannotate import _doc, measure
-from test_vectoredit import MINE, _base, _by, _circle, _err, _line, _path, _run, _t, _two_circles
+from test_vectoredit import (
+    MINE,
+    _base,
+    _by,
+    _circle,
+    _err,
+    _legacy_layout_file_form,  # noqa: F401 — 夹具：钉旧 <名>.json 形态（ADR 0211 第二期 PR 3）
+    _line,
+    _path,
+    _run,
+    _t,
+    _two_circles,
+)
 
 
 def A(sp, i):
@@ -91,7 +103,7 @@ def test_the_echo_names_who_and_the_counts_and_the_new_shape():
     assert r["echo"] == [
         "加锚点 路径折线（ln，约在 10, 5 mm） 在每一段的中点：锚点 3 → 5（现为 sp0 开放 5 个）；新锚点 sp0:i1、sp0:i3"
     ]
-    assert r["changes"][-1] == {"id": "ln", "field": "nodes", "before": 3, "after": 5}
+    assert r["changes"][-1] == {"id": "ln", "field": "nodes", "before": 3, "after": 5, "op": 0}
     assert [o["id"] for o in r["changed"]] == ["ln"]
 
 
@@ -154,7 +166,7 @@ def test_deleting_every_anchor_deletes_the_object_and_later_ops_cannot_find_it()
     ops = [{"op": "delete_anchors", "id": "ln", "anchors": [A(0, 0), A(0, 1), A(0, 2)]}]
     r = _run([ln, _t("t", 1, 1)], ops)
     assert [o["id"] for o in r["objects"]] == ["t"] and r["deleted"] == ["ln"]
-    assert r["changes"] == [{"id": "ln", "deleted": True}] and "一并删除" in r["echo"][0]
+    assert r["changes"] == [{"id": "ln", "deleted": True, "op": 0}] and "一并删除" in r["echo"][0]
     assert _err([ln], [*ops, {"op": "reverse_path", "id": "ln"}])["code"] == "unknown_object"
 
 

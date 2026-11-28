@@ -59,6 +59,11 @@ export function pdfRedrawCandidate(o: PanelObject): boolean {
   return o.fileKind === 'pdf' && !o.hidden && !!o.script && figureOriginFor(o) === undefined && o.overrides.length === 0
 }
 
+/** 一组对象里的 PDF 原件候选（`pdfRedrawCandidate`）：导出结果「用脚本重画并重新导出」先问它们的字体事实 */
+export function pdfRedrawPanels(objects: readonly CanvasObject[]): PanelObject[] {
+  return objects.filter((o): o is PanelObject => o.type === 'panel' && pdfRedrawCandidate(o))
+}
+
 /** 原件的字体问题（角标文案键，workspace:panelBadge.*）：缺字压过 Type 3（缺字是看得见的错，Type 3 只是不好改） */
 export function pdfFontProblem(facts?: PanelFontFacts): 'pdfMissingGlyphs' | 'pdfType3' | null {
   if (!facts?.readable) return null

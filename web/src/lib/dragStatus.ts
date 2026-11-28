@@ -135,12 +135,41 @@ export function framePadDragStatus(i: {
   }
 }
 
-/** 单图编辑拖画布的角（等比改图幅；`free` = ⇧ 自由比例，ADR 0161） */
+/** 单图编辑拖画布的一条边 = 改这一维的图幅（ADR 0161 修订 2026-11-27）：`planFigureEdge` 算好传进来 */
+export function frameEdgeResizeDragStatus(i: {
+  side: CropSide
+  from: readonly [number, number]
+  to: readonly [number, number]
+  col: string | null
+  square: boolean
+  box: Box
+}): DragStatus {
+  const horizontal = i.side === 'l' || i.side === 'r'
+  const axis = horizontal ? 0 : 1
+  const base = cb(horizontal ? 'layoutGrowWidth' : 'layoutGrowHeight', {
+    from: String(round1(i.from[axis])),
+    to: String(round1(i.to[axis])),
+  })
+  return {
+    tone: 'normal',
+    main: snapped(base, i.col, i.square),
+    detail: cb('frameEdgeDetail', { alt: ALT }),
+    box: i.box,
+  }
+}
+
+const snapped = (base: UiMessage, col: string | null, square: boolean): UiMessage => {
+  const m = col ? cb('frameWithCol', { base, col }) : base
+  return square ? cb('frameSquare', { base: m }) : m
+}
+
+/** 单图编辑拖画布的角（等比改图幅；`free` = ⌥ 自由比例，ADR 0161 修订 2026-11-27 与排版同一个键） */
 export function frameCornerDragStatus(i: {
   free: boolean
   from: readonly [number, number]
   to: readonly [number, number]
   col: string | null
+  square?: boolean
   box: Box
 }): DragStatus {
   const f = (v: number) => String(round1(v))
@@ -149,8 +178,8 @@ export function frameCornerDragStatus(i: {
     : cb('frameCornerUniform', { from: f(i.from[0]), to: f(i.to[0]) })
   return {
     tone: 'normal',
-    main: i.col ? cb('frameWithCol', { base: main, col: i.col }) : main,
-    detail: cb('frameCornerDetail'),
+    main: snapped(main, i.col, !!i.square),
+    detail: i.free ? cb('frameCornerDetail') : cb('frameCornerUniformDetail', { alt: ALT }),
     box: i.box,
   }
 }

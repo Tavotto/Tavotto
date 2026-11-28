@@ -586,6 +586,23 @@ cancelled, closed or failed send is never resumed on its own.
   copy in a sandboxed frame that cannot run scripts or connect anywhere, and its
   images are read from disk. Clicking a link in a reply opens it in your default
   browser, as any link would.
+* **Journal tips.** The *Looks wrong* link on a journal source card and the
+  *Not listed?* link in the journal picker open this same window and send a
+  journal tip. Besides the usual letter contents above, a tip carries only
+  catalog data and what you typed: the journal's catalog ID and name, the rule
+  and its catalog value that the card shows, the source ID, the catalog
+  revision numbers, the text in the picker's search box (at most 120
+  characters) when the journal was not found, and the source link you pasted
+  (`https://` only). Nothing from your project is added. You cannot enter values:
+  the maintainers look the source up themselves and a tip never edits the
+  catalog on its own. Attachments you add (a PDF or screenshot of the
+  journal's instructions) are used only to check the source, are not
+  published or passed on, and are deleted 90 days after the tip is closed;
+  the letter itself and its structured fields are kept like any other letter
+  (365 days). A tip is not linked to the device token the journal catalog uses
+  (replies come back through the letter's own reply token), so the catalog's
+  read records and your tips cannot be joined. The links do not appear with
+  `TAVOTTO_NO_CONTACT=1` or `TAVOTTO_NO_JOURNAL_SYNC=1`.
 * **No email program is involved.** The app never opens your mail program and
   contains no mail links; if sending fails it only offers *Copy content* and
   *Copy address* (`feedback@tavotto.com`) so you can decide how to send it.
@@ -662,6 +679,11 @@ figure changes when you press *Apply*.
   points at), the table of elements as they look after the previous version, and
   a short list of what the previous version changed, to the same AI connection.
   The notes themselves are never uploaded to the review service.
+* **Suggestions in the figure assistant.** When you ask the assistant for suggestions
+  and then say "do what you suggested", the previous assistant answer and your
+  previous message in that figure's conversation (together at most 2,000
+  characters) are sent to the AI connection you chose, so the follow-up can be
+  understood; nothing earlier is sent.
 * **Comments that need a script change (only when you press the button).** If a
   comment can only be done by editing the script, the plan card offers *Edit the
   script for the rest*. Only when you press it, the text of those comments (still
@@ -695,6 +717,19 @@ the plan step has said so.
   figure's elements as above (labels, editable properties with their current values,
   positions). Scripts, data, project files, paths and computer details are not sent
   in this step. Instructions with attached reference images skip the plan step.
+* **Editing drawn objects on the canvas.** When the assistant edits the text, arrows,
+  shapes and paths drawn on the canvas (not the figures inside it), it sends the AI
+  connection you chose a summary of those objects on the canvas: their text, positions,
+  sizes and styles, and the anchor points of paths, together with your instruction and
+  which objects you had selected. To place new annotations (a frame, a panel label, a
+  bracket, an arrow) the summary also lists where each figure sits on the canvas: its
+  position and size, labelled "P1", "P2"… together with the figure's project-relative
+  file name. For figures the app can re-draw on your computer (the same drawing step
+  used for export, with the edits you have not saved yet), the summary also carries the
+  figure's layout so an arrow can point at a curve's peak: each axis's range, and the
+  elements' roles, labels (curve names, axis titles, legend entries, tick labels), boxes
+  and the main colours. The figure's data values, scripts and project files are not sent.
+  The plan is computed on your computer and written nowhere until you apply it.
 * **One-click layout.** The comparison pictures are drawn on your computer by the
   export engine; nothing about them is sent anywhere.
 * **Turning it off.** Settings → Assistant → Advanced → *Show a change plan before

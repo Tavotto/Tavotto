@@ -73,6 +73,9 @@
       "body_too_long": "内容太长了。",
       "subject_too_long": "主题太长了。",
       "email_invalid": "回信邮箱的格式不对，请检查，或者留空。",
+      "urlInvalid": "链接要以 https:// 开头。",
+      "journalNeedsClue": "请贴个网址，或附上文件。",
+      "journal_invalid": "这条线索的内容不对，请关掉窗口重新点一次。",
       "report_invalid": "诊断包编号不对，请取消勾选「附上诊断信息」后再试。",
       "attachments_limit": "附件太多了。",
       "attachments_too_large": "附件合计太大了。",
@@ -119,6 +122,7 @@
     "lettersChecking": "正在检查…",
     "lettersNumber": "编号 {{id}}",
     "lettersReportTag": "问题反馈",
+    "lettersJournalTag": "期刊线索",
     "lettersReportNumber": "报告编号 {{id}}",
     "lettersNoNote": "没有附言",
     "lettersSentAt": "{{time}} 发出",
@@ -353,6 +357,7 @@
     "missingSourceNote": "有一张图找不到了：{{name}}。",
     "changeLocationExport": "换个位置导出",
     "lowerDpiExport": "改用 {{dpi}} dpi 导出",
+    "redrawFontsExport": "用脚本重画并重新导出",
     "toast": {
       "conflict": "导出停在这里，等你决定同名文件怎么处理。",
       "failed": "导出失败，没有写出文件。",
@@ -574,8 +579,8 @@
         "label": "显示 / 隐藏标尺"
       },
       "save-document": {
-        "keywords": "save layout bc baocun cunpan pb paiban",
-        "label": "保存排版"
+        "keywords": "save layout name version bc baocun qmz qimingzi mingming pb paiban",
+        "label": "给这一版起名字…"
       },
       "save-layout": {
         "keywords": "save as layout lcw lingcunwei bc baocun pb paiban",
@@ -1272,7 +1277,8 @@
         "hardDisabledDetail": "环境变量 {{env}} 在起作用；去掉它之后开关才可用"
       },
       "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。",
-      "privacyContact": "“联系作者”写的信只有在你点“发送”后才会发给 Tavotto 维护者的服务；不会自动发送，也不会打开你的邮件程序。"
+      "privacyContact": "“联系作者”写的信只有在你点“发送”后才会发给 Tavotto 维护者的服务；不会自动发送，也不会打开你的邮件程序。",
+      "paletteCredits": "推荐配色收录了 Okabe–Ito、Paul Tol、ColorBrewer、Fabio Crameri 的科学色图与 ggsci 的期刊风格方案，许可见 THIRD_PARTY_NOTICES.md。Crameri 色图的引用："
     },
     "agents": {
       "announce": {
@@ -2559,7 +2565,9 @@
     "zoomOut": "缩小",
     "zoomFit": "适配",
     "diffTitle": "与当前画布相比",
-    "quickNameTitle": "把现在存为命名节点",
+    "quickNameHint": "起名后这版会一直留着，随时能找回。",
+    "quickNameTitle": "给这一版起名字",
+    "quickSave": "保存",
     "scrubberLabel": "版本时间条：←/→ 逐个查看，回车打开"
   },
   "onboarding": {
@@ -2774,6 +2782,8 @@
     "listAria": "期刊列表",
     "none": "没有可选的期刊",
     "noMatch": "没有匹配的期刊",
+    "noJournalListed": "告诉作者加上",
+    "noJournalListedTitle": "把刊名或投稿须知发来，我们来补上",
     "current": "按「{{name}}」检查",
     "requirements": "期刊要求",
     "panelHistoricalNotice": "这是已保存的历史来源，涉及原则接收后的建议；现行要求未知，请核对期刊指南。",
@@ -2812,12 +2822,15 @@
       },
       "open": "打开原网页",
       "archive": "存档",
+      "report": "这条不对",
+      "reportTitle": "发来官网链接或截图，我们来核对",
       "fromV2": "新版",
       "aria": "出处"
     },
     "confirm": {
       "title": "需要你确认（{{count}}）",
       "condition": "原文条件：{{text}}",
+      "editorTip": "反馈期刊规范问题",
       "aria": "需要你确认的要求"
     },
     "field": {
@@ -2878,6 +2891,43 @@
       "info_text_height_mm": "文字高度",
       "info_panel_label": "子图标签"
     }
+  },
+  "journalTip": {
+    "title": {
+      "wrong": "期刊规范反馈",
+      "missing": "申请收录期刊"
+    },
+    "entryTitle": "反馈条目",
+    "rowRule": "条目",
+    "rowCurrent": "目录现值",
+    "rowSource": "当前出处",
+    "issueLabel": "问题",
+    "issue": {
+      "wrong_value": "数值不对",
+      "updated": "期刊已更新",
+      "link_broken": "出处打不开",
+      "other": "其他"
+    },
+    "quoteLabel": "期刊原文（选填）",
+    "quotePlaceholder": "粘贴官网或编辑部邮件里的原话",
+    "urlLabel": "出处链接（选填）",
+    "urlPlaceholder": "https://…",
+    "nameLabel": "期刊名称",
+    "guideLabel": "投稿须知链接（选填）",
+    "noteLabel": "补充说明（选填）",
+    "attach": "添加截图 / PDF",
+    "submit": "提交反馈",
+    "cancel": "取消",
+    "urlLabelNew": "新的出处链接（选填）",
+    "descLabel": "问题描述（选填）",
+    "submitMissing": "提交申请",
+    "emailWrong": "核实后回信到这里",
+    "emailMissing": "收录后回信到这里",
+    "editorQuoteLabel": "问题描述或编辑部原话",
+    "editorQuotePlaceholder": "哪条规范不对、缺了什么，或粘贴编辑部邮件原话；仅用于核对官网，不会公开",
+    "editorAbout": "{{journal}}",
+    "editorTag": "反馈期刊规范问题",
+    "editorEmail": "核实后回信到这里"
   },
   "packageInstall": {
     "entry": "安装项目包到新目录…",

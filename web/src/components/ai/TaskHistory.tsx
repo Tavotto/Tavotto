@@ -24,6 +24,7 @@ import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
+import { LegacyHistoryLine } from './LegacyHistoryLine'
 import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { statusLabel } from './transcriptModel'
@@ -184,6 +185,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           </div>
         )}
       </div>
+      <LegacyHistoryLine pj={pjRef.current} onRestored={() => void load(query, status, offset)} />
       {total > PAGE && (
         <div className="flex shrink-0 items-center justify-between border-t border-border pt-1.5">
           <Button size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>

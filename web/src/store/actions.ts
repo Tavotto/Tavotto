@@ -84,16 +84,19 @@ import {
   markProjectFileDirty,
   readAutosaveDoc,
   saveNowWithResult,
+  isProjectConflictActive,
   setProjectFile,
   useDocumentStore,
   writesBlocked,
   type CommitOptions,
   type HistoryEntry,
+  type SaveState,
 } from './documentStore'
 import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { deferWhileWindowHeld } from './documentRestore'
-import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
+import { alwaysSavedEnabled } from '@/lib/autosaveProject'
+import { captureSaveContext, reportSaveSkipped, stillCurrent, type SaveContext } from './saveContext'
 import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './saveFailureActions'
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
@@ -848,9 +851,70 @@ function afterSwitch(): void {
  * 事务开着、值还没落定的中间态（与 runUndoRedo 同一条理由，issue #131）。
  */
 export async function runManualSave(): Promise<void> {
+  // 应急回退（后端把「自动保存写进项目」关了、却开着项目）：保持改造前的 ⌘S（写回绑定的项目文件 / 弹「存进项目」）。
+  // 其余一切情形——开关开着、没开项目、playground、内嵌画布、只读文件夹——⌘S 都是「给这一版起名字」
+  if (currentProjectId() !== null && !alwaysSavedEnabled()) return runLegacyManualSave()
+  return runNameVersion()
+}
+
+/**
+ * ⌘S = **给这一版起名字**（ADR 0211 第二期 PR 3，维护者 2026-11-25 拍板 3）。工作副本本来就始终存着（自动保存写进项目 /
+ * 写本机），所以 ⌘S 不再是「存」，而是留一个永不自动清理的命名节点（ADR 0101）：先把还没写的编辑冲刷写完
+ * （本机槽位 + 项目里的 layout.json，一次 `saveNow`），再打开与 ⌥⌘S 同一个就地命名小框 `NamedNodeQuickBox`。
+ *
+ * 没写成就不开小框，把话说完：本机那份跟别的窗口撞了 → 先裁决；写失败 → 带重试；写进项目撞上外部修改 → 进 ⌘S 同一个
+ * 冲突岔口（`writeBoundProjectFile`，用户按 ⌘S 就是在要这个裁决）。
+ */
+async function runNameVersion(): Promise<void> {
+  if (deferWhileWindowHeld(() => void runManualSave())) return
+  finishFocusedRichText()
+  finishActiveGesture()
+  const ctx = captureSaveContext()
+  const { state } = await saveNowWithResult()
+  // 「还是同一份排版、同一个项目」：**不比绑定的文件**——这一刻的冲刷本来就可能第一次把工作副本写进项目、建立绑定
+  const cur = useDocumentStore.getState()
+  if (cur.documentId !== ctx.documentId || cur.loadSeq !== ctx.loadSeq || currentProjectId() !== ctx.pj) {
+    reportSaveSkipped(ctx)
+    return
+  }
+  if (reportSaveTrouble(state, ctx)) return
+  if (ctx.pj !== null && isProjectConflictActive(cur)) {
+    // 写进项目撞上的外部修改还悬着：用户按 ⌘S 就是在要这个裁决（用冲刷之后的绑定，不是按下那一刻的）
+    const now = captureSaveContext()
+    if (now.file) {
+      await writeBoundProjectFile(now)
+      return
+    }
+  }
+  startNamedNode()
+}
+
+/** 保存没成时按结果说一句话（⌘S 的两条路共用）；回 true = 有事，调用方不再往下做 */
+function reportSaveTrouble(state: SaveState, ctx: SaveContext): boolean {
+  const ui = useUiStore.getState()
+  if (state === 'conflict') {
+    // 先裁决哪一版是对的：「重新加载」取回磁盘那版（本窗口的编辑进恢复槽位，不丢）
+    ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error', {
+      owner: AUTOSAVE_FAILURE_OWNER,
+      action: reloadLatestAction(ctx.documentId),
+    })
+    return true
+  }
+  if (state === 'save_error') {
+    // 再按一次 ⌘S 的全部动作，不是只重写本机
+    ui.setStatus(msg('save.failed', undefined, 'workspace'), 'error', {
+      owner: AUTOSAVE_FAILURE_OWNER,
+      action: retrySaveAction(() => (stillCurrent(ctx) ? runManualSave() : reportSaveSkipped(ctx))),
+    })
+    return true
+  }
+  return false
+}
+
+async function runLegacyManualSave(): Promise<void> {
   // 同一份排版在另一个窗口开着、这个窗口还没选「在这里编辑 / 存成副本」（ADR 0181）：保存是用户动手——
   // 记住、让卡提示先选，选完再做。不能在只读窗口里把过时的内容写进项目文件还说「写成了」
-  if (deferWhileWindowHeld(() => void runManualSave())) return
+  if (deferWhileWindowHeld(() => void runLegacyManualSave())) return
   finishFocusedRichText()
   finishActiveGesture()
   const ui = useUiStore.getState()
@@ -2083,6 +2147,17 @@ function upsertOverrides(
 }
 
 /**
+ * 推荐配色写颜色（ADR 0210，`store/paletteActions.ts` 在自己那次 commit 的 recipe 里调）：
+ * 与其它写入同一个 `upsertOverrides`，原地改值、只追加真正新的。
+ */
+export function writePaletteOverrides(
+  panel: PanelObject,
+  patches: { gid: string; prop: string; value: unknown }[],
+): void {
+  upsertOverrides(panel, patches)
+}
+
+/**
  * 把几条 override **补进 `entry` 那条历史**并立即重渲染（`documentStore.amendLast`
  * 的面板版）。`entry` 已不是最后一条 / 有进行中的事务时什么都不写、返回 false。
  */
@@ -2699,16 +2774,7 @@ export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
   if (panel?.type !== 'panel') return false
   // PDF 原件（原件用了 Type 3 / 有缺字）：本来就是矢量的脚本产物，重画只换掉字体——一条不改任何东西的
   // `figure.frame = "savefig"`，面板就由引擎按脚本存盘的图幅重画；不走位图那套采用与对照
-  if (pdfRedrawCandidate(panel)) {
-    if (!redrawOffered(panel, pdfFontFactsOf(panel.fileId))) return false
-    const missing = pdfFontProblem(pdfFontFactsOf(panel.fileId)) === 'pdfMissingGlyphs'
-    commit(msg(missing ? 'artifact.showRedrawMissing' : 'artifact.showRedrawType3', undefined, 'errors'), (d) => {
-      const o = d.objects.find((x) => x.id === panel.id)
-      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
-    })
-    status(msg(missing ? 'artifact.redrawnMissing' : 'artifact.redrawnType3', undefined, 'errors'), 'done')
-    return true
-  }
+  if (pdfRedrawCandidate(panel)) return redrawPdfOriginalsWithScript([panelId]).length > 0
   if (!redrawOffered(panel)) return false
   const issue = artifactValidationIssue(panel)
   if (issue) {
@@ -2725,6 +2791,35 @@ export function redrawWithScript(panelId: string): Promise<boolean> | boolean {
     return false
   }
   return admitPngEntry(panel, 'keep', true)
+}
+
+/**
+ * PDF 原件（用了 Type 3 / 有缺字）改由脚本重画：画布角标与导出结果里「用脚本重画并重新导出」是同一步（T-005 补充）。
+ *
+ * 只换 `pdfRedrawCandidate` 且字体事实说有问题（`redrawOffered`）的那几张；每张落一条不改任何东西的
+ * `figure.frame = "savefig"`，全部在**一次**可撤销的提交里——撤销一下就都回到原件。不跑脚本、不改导出默认行为：
+ * 用户点了才换。回换了的面板 id（一张都没换就不提交、不出提示）。
+ */
+export function redrawPdfOriginalsWithScript(panelIds: readonly string[]): string[] {
+  finishActiveGesture()
+  const ids = panelIds.filter((id) => {
+    const p = findObject(id)
+    return p?.type === 'panel' && pdfRedrawCandidate(p) && redrawOffered(p, pdfFontFactsOf(p.fileId))
+  })
+  if (ids.length === 0) return []
+  // 提示按原件的毛病说：全是缺字就说缺字，否则按 Type 3 说（与画布角标同一套文案）
+  const missing = ids.every((id) => {
+    const p = findObject(id)
+    return p?.type === 'panel' && pdfFontProblem(pdfFontFactsOf(p.fileId)) === 'pdfMissingGlyphs'
+  })
+  commit(msg(missing ? 'artifact.showRedrawMissing' : 'artifact.showRedrawType3', undefined, 'errors'), (d) => {
+    for (const id of ids) {
+      const o = d.objects.find((x) => x.id === id)
+      if (o?.type === 'panel' && o.overrides.length === 0) o.overrides.push({ ...REDRAW_FRAME_OVERRIDE })
+    }
+  })
+  status(msg(missing ? 'artifact.redrawnMissing' : 'artifact.redrawnType3', undefined, 'errors'), 'done')
+  return ids
 }
 
 export function enterElementEdit(

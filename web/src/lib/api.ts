@@ -4243,6 +4243,8 @@ export type ChangePlanSource = 'review' | 'quick_layout' | 'journal_fix' | 'assi
 /** 没处理的意见的一句话原因（闭集短码；文案归界面） */
 export type ChangePlanUnhandledReason =
   | 'needs_script'
+  /** 要在画布上新加标注（外框 / 子图编号 / 括号 / 箭头 / 星号）：助手来源的卡给「改在画布上加」（ADR 0208 第 ③ 期 3c） */
+  | 'needs_canvas_annotation'
   | 'unclear'
   | 'out_of_scope'
   | 'no_change_needed'
@@ -4255,6 +4257,8 @@ export type ChangePlanUnhandledReason =
   | 'no_effect'
   | 'not_addressed'
   | 'merged_log'
+  | 'hides_data'
+  | 'size_locked' | 'dense_curve'
   /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
   | 'log_limit_declined'
 
@@ -4327,9 +4331,28 @@ export interface ScriptDataChangedConfirm {
 
 export type ChangePlanConfirm = { kind: 'log_lower_limit'; axis: 'x' | 'y'; gid: string; from: number; to: number } | ScriptDataChangedConfirm
 
+/** 建议待办（ADR 0214）：卡上的一行；顺序 = 模型给的优先级 */
+export interface ChangePlanTodo {
+  key: string
+  /** 一句话「做什么」（≤ 60 字） */
+  label: string
+  /** 一个短分句「为什么」（≤ 40 字） */
+  why?: string
+  /** `figure` = 图内修改（`group_key` 指 `groups` 里的那一组）；`script` = 要改脚本（`comment_id` 指 `unhandled` 里 `needs_script` 的那条） */
+  kind: 'figure' | 'script'
+  group_key?: string
+  comment_id?: string
+  /** 「再加一条」新加的（直到下一次改完）：行尾标「新加」 */
+  added?: boolean
+}
+
 export interface ChangePlan {
   id: string
   version: number
+  /** 助手来源给建议时的一到三句话回答（≤ 600 字）；没有 = 普通方案 */
+  reply?: string
+  /** 助手把建议列成的待办；没有 = 普通方案（与以前一样只看 `groups` / `unhandled`） */
+  todos?: ChangePlanTodo[]
   /** 批注重改的版本才有：它是从哪一版续改来的（每一版是自己的方案，各有 `id` 与两张图） */
   parent?: string
   source: ChangePlanSource
@@ -4381,11 +4404,29 @@ export interface CreateChangePlanBody {
   target?: string
   /** `script`：脚本修改（必须带 `connection`；ADR 0206 PR 6）。审阅来源只接用户点「改脚本做剩下的」那条路：带 `from_plan` + `comment_ids`，不带意见文字 */
   mode?: 'script'
-  /** `source: 'review'` + `mode: 'script'`：来源（审阅）方案 id；意见原文后端取自这份存档 */
+  /** `source: 'review'` + `mode: 'script'`：来源（审阅 / 助手建议待办）方案 id；意见原文后端取自这份存档 */
   from_plan?: string
   /** 同上：要转给脚本方案的意见 id（须在来源方案的 `unhandled` 里、原因 `needs_script`） */
   comment_ids?: string[]
+  /** `source: 'assistant'`：回答下方「把这些建议写成待办」——不带 `instruction`，必须带 `previous_turn`（ADR 0214） */
+  intent?: 'todos'
+  /** `source: 'assistant'` + `from_plan`：待办卡上「再加一条」的那句话（≤ 300 字）；新一版并进同一张卡 */
+  add_todo?: string
+  /** `source: 'assistant'` 的图内方案：本图对话的上一轮（ADR 0214 §二；只用来理解指代，后端再截断）。脚本方案不带 */
+  previous_turn?: { user: string; assistant: string }
+  /** `source: 'assistant'`：这份排版当前的出版标准（选了期刊 = 期刊名）、关键规则与「问题」里的发现；审阅来源不带 */
+  standard?: ChangePlanStandard
   client_request_id?: string
+}
+
+/** 助手来源方案请求里的出版标准（后端上限：名 ≤ 80、规则 ≤ 30 键、问题 ≤ 20 条 × ≤ 200 字） */
+export interface ChangePlanStandard {
+  name: string
+  /** true = 用户选过期刊（`journal_id` 在）；false = 只是默认 / 通用规范 */
+  chosen: boolean
+  journal_id?: string | null
+  rules: Record<string, number | string | string[]>
+  issues: { severity: 'error' | 'warn' | 'info'; text: string }[]
 }
 
 async function changePlanFetch(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
@@ -4437,6 +4478,102 @@ export async function fetchLayoutPreviewPng(
     throw new EngineError((out.error as string) || t('render.failed', { ns: 'errors', status: res.status }), '', (out.code as string) || '', '')
   }
   return res.blob()
+}
+
+/** 改图助手改画布矢量对象（ADR 0212 第 6 期）：一条补丁没能照做的原因（`code` 是后端 `vectoredit.ERROR_CODES` 的闭集；模型自己写的只有 `reason`） */
+export interface VectorEditUnhandled {
+  reason: string
+  code?: string
+  /** `too_many_steps`：没收下的步数与上限 */
+  count?: number
+  max?: number
+  /** `add` 的错误：需要确认 / 不收的那个条目名（卡上「按我说的加」点名它）与被丢掉的整条补丁（点了之后补进补丁再算） */
+  field?: string
+  op?: unknown
+}
+
+/** `/api/vector-edit/plan` 回的方案（`engine/vectorplan.plan` + 指令模式多出的 `ops` / `unhandled`）；全部是后端算好的，前端只翻译与落位 */
+export interface VectorEditResult {
+  ok: boolean
+  errors: { code: string; index?: number; field?: string }[]
+  /** 改后被动到的对象（含新生成的）；补丁不合格（`ok: false` 且有 `errors`）时没有 */
+  objects?: CanvasObject[]
+  deleted?: string[]
+  order?: string[]
+  reordered?: boolean
+  echo?: string[]
+  changes?: { id: string; field?: string; before?: unknown; after?: unknown; deleted?: boolean; added?: boolean; replaced?: boolean; op?: number; depends_on?: string[] }[]
+  checks?: { check: string; status: string; item?: string }[]
+  layout_groups?: LayoutGroup[] | null
+  ops?: unknown[]
+  unhandled?: VectorEditUnhandled[]
+  /** 没量到的子图：短号（P1、P2…）→ 原因码（后端 `vectormeasure`）；没有 = 都量到了 / 老后端 */
+  unmeasured?: Record<string, string>
+}
+
+export interface VectorEditBody {
+  canvas: { id: string; page: unknown; objects: unknown[]; layoutGroups?: unknown[] }
+  instruction: string
+  selection: string[]
+  connection?: string
+  model?: string
+  effort?: string
+  /** 界面语言：模型写的没能照做的原因跟着它走 */
+  locale?: string
+  client_request_id: string
+}
+
+/** 出矢量编辑方案（指令模式，**不写盘**）：立刻回任务；失败（没连 AI / 同时只能一份 / 请求形状不对）抛带稳定 code 的 `EngineError`。 */
+export async function createVectorEditPlan(body: VectorEditBody & Record<string, unknown>, signal?: AbortSignal): Promise<{ plan_id: string; state: string; phase?: string }> {
+  const out = await changePlanFetch('/api/vector-edit/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!isStr(out.plan_id) || (out.state !== 'running' && out.state !== 'ready' && out.state !== 'failed')) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as { plan_id: string; state: string; phase?: string }
+}
+
+/** 补丁模式（同一份内存快照 + 一份 ops，**同步**回方案）：方案卡里取消勾选某几步后，用剩下的 ops 重算（ADR 0212 第 6c 期） */
+/**
+ * `context` = 出发时那份：用户原话（`instruction_text`）与用户在卡上点过「按我说的加」的条目名（`confirmed`）。统计标注（星号 / n.s. / p 值）的来源核对要它们，
+ * 重算不带的话原本按原话收下的标注会变成 `needs_confirmation` 被自动取消。
+ */
+export async function planVectorEditOps(
+  canvas: VectorEditBody['canvas'],
+  ops: unknown[],
+  context?: { instruction_text?: string; confirmed?: string[] },
+  signal?: AbortSignal,
+): Promise<VectorEditResult> {
+  const out = await changePlanFetch('/api/vector-edit/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canvas, ops, ...(context?.instruction_text ? { instruction_text: context.instruction_text } : {}), ...(context?.confirmed?.length ? { confirmed: context.confirmed } : {}) }),
+    signal,
+  })
+  if (typeof out.ok !== 'boolean' || !Array.isArray(out.errors)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as VectorEditResult
+}
+
+export type VectorEditView =
+  | { plan_id: string; state: 'running'; phase?: string }
+  | { plan_id: string; state: 'failed'; code: string; error?: string; detail?: string }
+  | { plan_id: string; state: 'ready'; plan: VectorEditResult }
+
+export async function getVectorEditPlan(planId: string, signal?: AbortSignal): Promise<VectorEditView> {
+  const out = await changePlanFetch(`/api/vector-edit/plan/${encodeURIComponent(planId)}`, { signal })
+  if (
+    !isStr(out.plan_id) ||
+    (out.state === 'ready' ? !isRec(out.plan) : out.state !== 'running' && !(out.state === 'failed' && isStr(out.code)))
+  ) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return out as unknown as VectorEditView
 }
 
 /** 批注重改的一条批注（高级版 `change-plan-rerun`）：锚点与审阅意见同形，元素锚带画面框 */
@@ -5567,6 +5704,18 @@ export const fetchAiHistory = (
   )
 }
 
+/** 之前装在 MSIX 包私有区时的历史里，这个项目还有几条没带过来（#2282 补救 B）。非 Windows / 没有旧库都是 0 */
+export const fetchAiHistoryLegacy = (pj: string | null) =>
+  jsonFetch<{ missing: number }>('/api/ai/history/legacy', undefined, pj)
+
+/** 用户点「找回」：把旧库里真实库没有的任务补回来。`outcome` 闭集 done / deferred / failed / not_eligible */
+export const restoreAiHistoryLegacy = (pj: string | null) =>
+  jsonFetch<{ outcome: 'done' | 'deferred' | 'failed' | 'not_eligible'; missing: number }>(
+    '/api/ai/history/legacy/restore',
+    { method: 'POST' },
+    pj,
+  )
+
 export const deleteAiHistory = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(
     `/api/ai/history/${encodeURIComponent(sid)}`,
@@ -5972,6 +6121,8 @@ export interface AiDataProposeItem {
   title_code: string
   why_code: string
   recommended: boolean
+  /** 这张图的配方（族 / 横纵轴 / 分组 / 分面 / 个体 / 各层）：后端总是给；界面只拿它判「刷新后是不是同一张图」（`sameDrawing`），不解读里面的字段 */
+  values?: Record<string, unknown>
   coverage?: Record<string, unknown>
   unplotted: { count: number; code: string | null }
   /** 大表（超过 5 MiB / 10 万行的文本表）才有：整表 `rows` 行，这张图实际画的是缩减后的 `kept` 行；小表没有这一项 */
@@ -5984,6 +6135,8 @@ export interface AiDataProposeItem {
   variant?: { kind: 'split'; column: string } | { kind: 'by_file' } | null
   /** 这张图是按什么数出来的（「依据」那句话的素材）：表里的行数、画进去的行数、组数、每组观测数范围、不同横轴取值个数；大表 / 把列当分组时没有这一项 */
   facts?: AiDataFacts
+  /** 多个 y 的趋势图每条线各自的数（有它时没有 `facts`；单个 y / 大表 / 把列当分组时没有这一项）；旧响应没有 */
+  series_facts?: AiDataSeriesFacts
   /** 这张图有误差线 / 误差带时才有：画的是哪一种 */
   error?: AiDataErrorKind
   /** 误差线从哪来：`column` = 表里现成的误差列（`error_column` 是列名），`computed` = 用重复值算的 */
@@ -6025,6 +6178,18 @@ export interface AiDataFacts {
   /** 没画的行里因缺值没画的行数 / 因那一格不是数没画的行数（两者之和 = `unplotted.count`）；旧响应没有 */
   skipped_missing?: number
   skipped_other?: number
+}
+
+/** 多个 y 的趋势图每条线各自按什么数画的（`series_facts`）：`rows_any` = 至少一条线有值的行数，`rows_all` = 每条线都有值的行数；`series` 与配方的 y 同序，
+ *  `err_drawn` / `err_missing` 只有配了现成误差列才有（有中心值且误差可画 / 有中心值但缺误差的个数） */
+export interface AiDataSeriesFacts {
+  rows: number
+  eligible_rows: number
+  rows_any: number
+  rows_all: number
+  skipped_missing?: number
+  skipped_other?: number
+  series: { y: string; n: number; x_values: number; err_drawn?: number; err_missing?: number }[]
 }
 
 /** 懒模式（`render: "lazy"`）响应里说清这次用了什么：列角色与每个角色可换成的列 */
@@ -8734,6 +8899,8 @@ export interface ContactCapability {
   /** 未读回信数（本机记录，不联网） */
   unread?: number
   retention_days?: number
+  /** 期刊线索入口可用（ADR 0213）：「联系作者」开着且没设 `TAVOTTO_NO_JOURNAL_SYNC`；旧引擎不带 = 不出现 */
+  journal_tips?: boolean
 }
 
 export type ContactSendState = 'idle' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled'
@@ -8771,7 +8938,7 @@ export interface ContactMessage {
   sent_at: number
   route: 'cn' | 'global'
   /** `report` = 发送「问题反馈」时随报告开的关联来信（带 `report_id`）；旧引擎不带 = 普通来信 */
-  kind?: 'letter' | 'report'
+  kind?: 'letter' | 'report' | 'journal'
   report_id?: string
   state: 'new' | 'replied' | 'closed'
   unread: number
@@ -8791,6 +8958,23 @@ export interface ContactSendMeta {
   reply_email: string
   /** 已送达的诊断包编号（TVD-…）；没附诊断就不带 */
   report_id?: string
+  /** 期刊线索的结构化头（ADR 0213）；与 `report_id` 互斥，引擎在本机再校验一次 */
+  journal?: ContactJournalHead
+}
+
+/** 与服务端 `/v1/messages/init` 的 `journal` 同形；字段都由引擎按契约校验，不合规的可选字段被丢掉 */
+export interface ContactJournalHead {
+  type: 'wrong' | 'missing' | 'editor'
+  /** 「问题」分段；只在 type=wrong 时发 */
+  issue?: 'wrong_value' | 'updated' | 'link_broken' | 'other'
+  journal_id?: string
+  journal_label?: string
+  query?: string
+  rule_key?: string
+  current?: string
+  source_id?: string
+  url?: string
+  catalog?: { v1?: number; v2?: number }
 }
 
 export const fetchContactCapability = () => jsonFetch<ContactCapability>('/api/contact')

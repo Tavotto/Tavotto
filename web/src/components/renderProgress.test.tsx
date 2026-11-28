@@ -58,11 +58,14 @@ describe('跨过冷启动取会话与脚本执行的持久进度', () => {
         <ElementTree />
       </TooltipProvider></Profiler>,
     ))
+    // 属性页「改图里的内容」下不再出进度（2026-11-27：画布角标与元素树已在说）：panel 面只剩元素树那一处
+    const shown = surface === 'panel' ? 1 : 2
     await act(async () => event('render.preparing'))
-    expect(progress()).toHaveLength(2)
+    expect(progress()).toHaveLength(shown)
+    if (surface === 'panel') expect(host.querySelector('[data-panel-engine-status]')?.textContent).not.toContain('正在准备图表')
     for (const node of progress()) expect(node.textContent).toContain('正在准备图表')
     await act(async () => vi.advanceTimersByTime(15000))
-    expect(progress()).toHaveLength(2)
+    expect(progress()).toHaveLength(shown)
     for (const node of progress()) expect(node.textContent).toContain('已用时 15 秒')
     await act(async () => event('render.started', { cold: true, cost: 'medium' }))
     for (const node of progress()) {

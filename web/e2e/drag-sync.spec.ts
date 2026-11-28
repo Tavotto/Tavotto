@@ -1,8 +1,25 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { expect, openElementsTab, test, waitForDocumentReady } from './fixtures'
 import type { Page, Route } from '@playwright/test'
+
+/** ⌘S：先冲刷自动保存写进项目、再就地起名字（ADR 0211 第二期，取代旧的「存进项目」对话框） */
+async function nameVersion(page: Page, name: string) {
+  await page.keyboard.press('ControlOrMeta+s')
+  const quick = page.locator('[data-timeline-quick-name-input]')
+  await expect(quick).toBeFocused({ timeout: 60_000 })
+  await quick.fill(name)
+  await quick.press('Enter')
+  await expect(quick).toHaveCount(0)
+}
+
+/** 排版始终自动存进项目：`tavottofile/<画布名>.tavotto/layout.json`（项目里只有一个排版目录） */
+function layoutFileOnDisk(project: string): string {
+  const store = path.join(project, 'tavottofile')
+  const dirs = existsSync(store) ? readdirSync(store).filter((n) => n.endsWith('.tavotto')) : []
+  return dirs.length === 1 ? path.join(store, dirs[0], 'layout.json') : ''
+}
 
 async function openFigure(page: Page, baseURL: string) {
   await page.addInitScript(() => {
@@ -51,12 +68,12 @@ async function drag(page: Page, x: number, y: number, dx: number, dy: number, mo
 }
 
 /**
- * 单图编辑里改图幅 = 拖画布的角（ADR 0161；边改的是画布留白）。⇧ = 自由比例：只把图拉宽、高不变，
- * 与此前「拖右边改图幅」的效果一致（这几条用例要的正是宽高比变了的那次重排）。
+ * 单图编辑里只把图拉宽、高不变 = 拖画布的右边（ADR 0161 修订 2026-11-27：边改这一维的图幅，⌥ + 边才是留白）。
+ * 这几条用例要的正是宽高比变了的那次重排。
  */
 async function widenFigure(page: Page, dx: number) {
-  const corner = (await page.locator('[data-figure-corner="br"]').boundingBox())!
-  await drag(page, corner.x + corner.width / 2, corner.y + corner.height / 2, dx, 0, 'Shift')
+  const edge = (await page.locator('[data-figure-edge="r"]').boundingBox())!
+  await drag(page, edge.x + edge.width / 2, edge.y + edge.height * 0.15, dx, 0)
 }
 
 /**
@@ -87,10 +104,10 @@ test('a second legend drag during rendering moves the legend, not its panel', as
   const transform0 = await page.locator('[data-object-id]').getAttribute('style')
   await drag(page, legend0.x + legend0.width * 0.3, legend0.y + legend0.height * 0.5, -35, -20)
   await expect.poll(() => held.length).toBe(1)
-  const legend1 = await box(page, 'axes_0.legend')
+  const legend1 = await legendMovedBy(page, legend0.x, -35)
   await drag(page, legend1.x + legend1.width * 0.3, legend1.y + legend1.height * 0.5, -30, 0)
+  const legend2 = await legendMovedBy(page, legend1.x, -30)
   const axes2 = await box(page, 'axes_0')
-  const legend2 = await box(page, 'axes_0.legend')
   expect(Math.abs(axes2.x - axes0.x)).toBeLessThan(2)
   expect(await page.locator('[data-object-id]').getAttribute('style')).toBe(transform0)
   expect(legend1.x - legend2.x).toBeGreaterThan(20)
@@ -287,13 +304,9 @@ test('legend, font and figure size survive saving and reopening', async ({ app, 
   const before = await figureGeometry(page)
   await input.blur()
   await page.keyboard.press('ControlOrMeta+s')
-  const dialog = page.getByRole('dialog', { name: '存进项目' })
-  await expect(dialog).toBeVisible()
-  await dialog.locator('#layout-save-name').fill('拖动同步回归')
-  await dialog.getByRole('button', { name: '存进项目' }).click()
-  await expect(dialog).toBeHidden()
-  const file = path.join(a.figures, 'tavottofile', '拖动同步回归.json')
-  await expect.poll(() => existsSync(file)).toBe(true)
+  await nameVersion(page, '拖动同步回归')
+  await expect.poll(() => layoutFileOnDisk(a.figures)).not.toBe('')
+  const file = layoutFileOnDisk(a.figures)
   const saved = JSON.parse(readFileSync(file, 'utf-8')) as { canvases: { objects: { overrides?: { gid: string; prop: string; value: unknown }[] }[] }[] }
   const patches = saved.canvases.flatMap((canvas) => canvas.objects.flatMap((object) => object.overrides ?? []))
   expect(patches).toEqual(expect.arrayContaining([
@@ -307,7 +320,8 @@ test('legend, font and figure size survive saving and reopening', async ({ app, 
   await page.getByRole('button', { name: /^(文档|排版)：/ }).click()
   await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
   const open = page.getByRole('dialog')
-  await open.getByRole('button', { name: '拖动同步回归' }).click()
+  // 排版目录以画布名起（默认「新排版」）；「拖动同步回归」是时间线上的命名版本，不是排版名
+  await open.locator('button[data-layout-row="新排版"]').click()
   await expect(open).toBeHidden()
   // SVG can also be displayed outside figure editing; the hit layer is the
   // actual indicator that the reopened panel is ready for in-figure editing.
@@ -427,11 +441,9 @@ test('selecting a legend formula and leaving it without typing does not edit its
   await openElementsTab(page)
   await page.locator('[data-tree="elements"] [data-el="figure"]').click()
   await page.keyboard.press('ControlOrMeta+s')
-  const dialog = page.getByRole('dialog', { name: '存进项目' })
-  await dialog.locator('#layout-save-name').fill('math-blur')
-  await dialog.getByRole('button', { name: '存进项目' }).click()
-  await expect(dialog).toBeHidden()
-  const saved = JSON.parse(readFileSync(path.join(a.figures, 'tavottofile', 'math-blur.json'), 'utf-8')) as {
+  await nameVersion(page, 'math-blur')
+  await expect.poll(() => layoutFileOnDisk(a.figures)).not.toBe('')
+  const saved = JSON.parse(readFileSync(layoutFileOnDisk(a.figures), 'utf-8')) as {
     canvases: { objects: { overrides?: { gid: string; prop: string; value: unknown }[] }[] }[]
   }
   const patches = saved.canvases.flatMap((canvas) => canvas.objects.flatMap((object) => object.overrides ?? []))

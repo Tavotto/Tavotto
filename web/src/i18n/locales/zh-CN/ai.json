@@ -106,7 +106,14 @@
       "endpoint": "API 接口",
       "cli": "本机 CLI"
     },
-    "viewDiff": "查看差异"
+    "viewDiff": "查看差异",
+    "legacyLine_other": "还有 {{count}} 条之前的任务没带过来",
+    "legacyRestore": "找回",
+    "legacyConfirm_other": "找回这 {{count}} 条？删过的也会回来",
+    "legacyCancel": "取消",
+    "legacyBusy": "正在找回…",
+    "legacyFailed": "这次没找回来，稍后再试",
+    "legacyRetry": "再试"
   },
   "markdown": {
     "image": "[图片：{{alt}}]",
@@ -193,6 +200,9 @@
     "notReceivedTitle": "这条指令未能送达",
     "openAiSettings": "打开改图助手设置",
     "placeholder": "例如：把图例移到左上角",
+    "vectorPlaceholder_other": "想怎么改选中的 {{count}} 个对象？",
+    "vectorEmptyTitle_other": "选中了 {{count}} 个对象",
+    "vectorEmptyHint": "说说想怎么改，比如「线宽统一成 0.75 pt」",
     "draftLoading": "正在载入草稿…",
     "placeholderNoPanel": "先选中一张可编辑的图",
     "probing": "正在查找本机 CLI…",
@@ -246,6 +256,7 @@
     "reverted": "已回滚，脚本已恢复到修改前。",
     "revertedStatus": "已回滚助手的修改，正在重建图表…",
     "running": "正在修改脚本…",
+    "answering": "正在回答…",
     "taskFailedChanged": "已改，但核对没通过",
     "taskPartial": "已改，部分检查没能完成",
     "taskRejected": "修改没通过写回前检查，项目未改动",
@@ -734,7 +745,15 @@
       "fontMax": "≤ {{max}} pt 字号"
     },
     "basis": {
-      "rowsErrLines": "按 {{drawn}} 行绘制，每条线每行一个点",
+      "seriesEqual": "{{k}} 个系列，各有 {{n}} 个数据点",
+      "seriesApart": "{{k}} 个系列，各有 {{n}} 个数据点；有效数据覆盖位置不同",
+      "seriesEach": "{{k}} 个系列，分别有 {{counts}} 个数据点",
+      "seriesRange": "{{k}} 个系列，各有 {{min}}–{{max}} 个数据点",
+      "errGap_other": "{{count}} 处缺少误差值",
+      "errGapTail_other": "{{text}}，其中 {{count}} 处缺失",
+      "colAnd": "和",
+      "colJoin": "、",
+      "countJoin": "、",
       "rowsBar": "按 {{drawn}} 行绘制，每行一根柱",
       "errColumns": "误差线取自{{columns}}列",
       "colQuote": "「{{column}}」",
@@ -768,7 +787,11 @@
     "confirm": {
       "title": "需要你确认",
       "join": "、",
-      "short": { "sd": "SD", "sem": "SEM", "ci95": "95% CI" },
+      "short": {
+        "sd": "SD",
+        "sem": "SEM",
+        "ci95": "95% CI"
+      },
       "error": "误差线",
       "errorBand": "误差带",
       "design": "重复测量",
@@ -828,6 +851,47 @@
     }
   },
   "changePlan": {
+    "vector": {
+      "kind": { "text": "文字", "arrow": "箭头", "shape": "形状", "path": "路径", "object": "对象" },
+      "named": "{{kind}}「{{name}}」",
+      "deleted": "删除{{subject}}",
+      "added": "新增{{subject}}",
+      "replaced": "{{subject}}换成了新的",
+      "on": "开",
+      "off": "关",
+      "lineOf": "{{subject}}：{{label}}",
+      "blocked": "依赖前一步，已一起取消",
+      "group": "编组",
+      "ungroup": "取消编组",
+      "panelN": "第 {{n}} 张图",
+      "panelOther": "某张图",
+      "anchoredAt": "放在{{where}}",
+      "panelFrame": "{{panel}}外框",
+      "at": { "panel": "{{panel}}{{point}}", "data": "{{panel}}的数据点（{{x}}，{{y}}）", "element": "{{panel}}里的元素" },
+      "point": { "nw": "左上角", "n": "上边", "ne": "右上角", "w": "左边", "center": "中心", "e": "右边", "sw": "左下角", "s": "下边", "se": "右下角" },
+      "needsConfirm": "你没提「{{text}}」，这次先没加",
+      "needsConfirmPlain": "你没提这条统计标注，这次先没加",
+      "provenanceData": "「{{text}}」是统计结果的标注，这里没有数据可核，这次没加",
+      "provenanceDataPlain": "这条统计标注要有数据才能核，这里没有，这次没加",
+      "confirmButton": "还是加上",
+      "unmeasured": "{{panels}}这次没量成，标注先按图框放",
+      "unmeasuredFrozen": "{{panels}}量不了（冻结或没有脚本），标注先按图框放",
+      "none": "无",
+      "style": "样式",
+      "z": "层级",
+      "toPath": "转为路径",
+      "nodes": "锚点 {{from}} → {{to}} 个",
+      "geom": { "pos": "位置", "size": "大小", "rot": "旋转" },
+      "field": {
+        "strokePt": "线宽", "sizePt": "字号", "color": "颜色", "fill": "填充", "bg": "底色", "borderColor": "边框颜色", "borderPt": "边框粗细",
+        "bold": "粗体", "italic": "斜体", "underline": "下划线", "text": "文字", "align": "对齐", "fontFamily": "字体", "lineHeight": "行距",
+        "strokeOpacity": "描边不透明度", "fillOpacity": "填充不透明度", "dash": "虚线", "cornerRadius": "圆角", "locked": "锁定", "hidden": "隐藏",
+        "subpaths": "路径形状", "anchor": "锚定位置", "layoutPinned": "固定位置", "start": "起点", "end": "终点", "shape": "形状种类", "sides": "边数", "starRatio": "星形比例",
+        "headStart": "起点端型", "headEnd": "终点端型", "headSizeStart": "起点端型大小", "headSizeEnd": "终点端型大小", "fillGradient": "填充渐变", "strokeGradient": "描边渐变",
+        "fillRule": "填充规则", "strokeAlign": "描边对齐", "dashPattern": "虚线", "miterLimit": "尖角限制", "interpretation": "文字解读", "textFormat": "文字格式", "clipMask": "剪切蒙版", "clipOff": "剪切蒙版",
+        "name": "名字", "stroke": "描边", "lineCap": "线端", "lineJoin": "拐角", "padding": "内边距"
+      }
+    },
     "reviewNote": {
       "title_other": "审阅意见 · {{count}} 条",
       "open": "看意见 ›"
@@ -859,11 +923,14 @@
       "summaryNotes": "按 {{notes}}又改了 {{places}}",
       "revising": "正在按批注重改…",
       "generatingAssistant": "正在按你的话修改…",
+      "thinking": "想一想…",
       "steps": {
         "before": "读取这张图",
         "model": "想怎么改",
         "agent": "改脚本",
-        "after": "画出修改后的图"
+        "after": "画出修改后的图",
+      "measure": "量一下图",
+      "vectorPlan": "算出结果"
       },
       "summaryAssistant": "改了 {{places}}",
       "summaryAssistantScript": "改了 {{places}}，剩下的要改脚本，这次没动",
@@ -871,6 +938,7 @@
       "appliedAssistant": "已应用 · 改了 {{places}}",
       "emptyAssistant": "这条没法直接改图，图没有改动",
       "handoff": "这条要改脚本，交给 Agent 改。",
+      "canvasAnnotate": "改在画布上加",
       "runScript": "改脚本做剩下的",
       "runScriptAll": "改脚本来做",
       "scriptFailed": "没能交给 Agent 改脚本，图没有改动",
@@ -898,7 +966,33 @@
       "overreachChanged": "生成期间你的脚本被改过（可能是你保存的，也可能是 Agent 直接改的），没有自动还原。改前后的版本都已备份。",
       "restoreScript": "恢复到开始前的版本",
       "keepCurrent": "保留现在的版本",
-      "restoreFailed": "脚本又被改过了，没有恢复"
+      "restoreFailed": "脚本又被改过了，没有恢复",
+      "summaryVector_other": "改了 {{count}} 个对象",
+      "summaryVectorRest_other": "改了 {{count}} 个对象，另有 {{rest}} 条没改",
+      "summaryVectorChecks_other": "改了 {{count}} 个对象，{{fails}} 处核对没过",
+      "appliedVector_other": "已应用 · 改了 {{count}} 个对象",
+      "generatingVector": "正在改选中的对象…",
+      "vectorKernel": "这台电脑上缺一个组件，合并、偏移、轮廓化这类改动做不了，图没有改动"
+    },
+    "todo": {
+      "title": "建议",
+      "apply_other": "改这 {{count}} 项",
+      "none": "一项都没勾",
+      "compare": "对比原图",
+      "count_other": "{{count}} 项",
+      "scriptTag": "要改脚本",
+      "scriptTip": "这几项要改图的 Python 脚本，改前会备份，可以撤销",
+      "done_other": "已按建议改了 {{count}} 项",
+      "skipped": "没改：{{items}}",
+      "failed": "「{{item}}」没做成：{{reason}}",
+      "listLabel": "建议的待办",
+      "runningN": "正在改 {{done}}/{{total}}…",
+      "added": "新加",
+      "add": "再加一条…",
+      "addPlaceholder": "比如：图例去掉边框",
+      "addFailed": "这一条没加上，再试一次",
+      "toTodos": "把这些建议写成待办",
+      "pickJournal": "选期刊"
     },
     "dialog": {
       "title": "修改方案",
@@ -954,9 +1048,14 @@
       "stageFigure": "对比图",
       "stageScript": "脚本改动",
       "scriptMeta": "脚本改动 · +{{added}} −{{removed}}",
-      "scriptBackupNote": "点应用才会写入，写入前先备份"
+      "scriptBackupNote": "点应用才会写入，写入前先备份",
+      "vectorRecomputeFailed": "没能更新，可以重试",
+      "vectorHeading_other": "改动 · {{count}} 个对象",
+      "vectorN_other": "改了 {{count}} 个对象",
+      "vectorChecks_other": "有 {{count}} 处核对没过，应用前看看对比图"
     },
     "unhandled": {
+      "needs_canvas_annotation": "要在画布上加标注，这次没动",
       "needs_script": "要改脚本，这次没动",
       "unclear": "意见不够具体，这次没动",
       "out_of_scope": "不在图内修改的范围，这次没动",
@@ -970,8 +1069,31 @@
       "no_effect": "改了也看不出变化，这次没动",
       "not_addressed": "这条没有处理到",
       "merged_log": "范围并进了改对数轴那一条",
+      "hides_data": "这样改会把数据藏起来，这次没动",
+      "size_locked": "图幅受期刊栏宽约束，这次没动",
+      "dense_curve": "这是连续曲线，逐点加标记会糊成一串，这次没动",
       "unclearAssistant": "指令不够具体，这次没动",
-      "log_limit_declined": "对数轴下限没改，这次没动"
+      "log_limit_declined": "对数轴下限没改，这次没动",
+      "vector": {
+        "bad_op": "这一条的写法不对，这次没动",
+        "unknown_object": "找不到对应的对象，这次没动",
+        "not_vector": "这个不是能直接改的对象，这次没动",
+        "bad_field": "这类对象没有这一项，这次没动",
+        "bad_value": "给出的值不可用，这次没动",
+        "out_of_range": "值超出范围，这次没动",
+        "duplicate_target": "同一个对象被改了两次，这次没动",
+        "needs_measurement": "这条标注要锚在图里的数据点或元素上，这张图没量到，这次没动",
+        "needs_confirmation": "这条统计标注不在你说的话里，这次没动",
+        "provenance_data": "这条统计标注要有数据才能核，这里没有，这次没动",
+        "bad_item": "这条标注的写法不对，这次没动",
+        "duplicate_name": "同一批标注里有两个同名的，这次没动",
+        "unknown_ref": "标注指向的图或元素不存在，这次没动",
+        "anchor_unresolvable": "标注要放的位置算不出来，这次没动",
+        "panel_transformed": "这张图旋转或翻转过，只能按外框放，这次没动",
+        "bad_point": "标注的方位写得不对，这次没动",
+        "kernel_unavailable": "这台电脑上缺一个组件，这类改动做不了，这次没动",
+        "too_many_steps": "一次最多改 {{max}} 步，其余 {{count}} 步这次没动"
+      }
     },
     "draft": {
       "thisOne": "这一处",

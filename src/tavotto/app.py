@@ -202,6 +202,8 @@ from .engine import (
     texdiag as engine_texdiag,
     tutorial as engine_tutorial,
     updater as engine_updater,
+    vectormeasure as engine_vectormeasure,
+    vectorplan as engine_vectorplan,
     versionstore as engine_versionstore,
     workdir as engine_workdir,
     writetripwire as engine_writetripwire,
@@ -8169,7 +8171,10 @@ def _contact_json(payload: dict, status: int = 200):
 @app.get("/api/contact")
 def api_contact_capability():
     """「联系作者」此刻可不可用 + 未读回信数（本机判断，**不联网**）。关闭时界面不画入口。"""
-    return _contact_json(engine_contactsend.capability())
+    # 期刊线索入口（ADR 0213 §五）：「联系作者」可用，且用户没关期刊联网（TAVOTTO_NO_JOURNAL_SYNC）
+    return _contact_json(
+        engine_contactsend.capability(journal_tips=not engine_journalremote.disabled())
+    )
 
 
 @app.get("/api/contact/status")
@@ -11127,10 +11132,14 @@ def _engine_attempt(
 
     for attempt in range(2):
         try:
+            # 整次尝试里握着会话：LRU 淘汰不收它（build → override 两条请求之间也不是「闲置」）
             with (
-                _relay_build_progress(worker, progress_pj, rel_id)
-                if progress_pj is not None
-                else contextlib.nullcontext()
+                engine_pool.hold(worker),
+                (
+                    _relay_build_progress(worker, progress_pj, rel_id)
+                    if progress_pj is not None
+                    else contextlib.nullcontext()
+                ),
             ):
                 _admit_artifact(worker, stem, artifact_source)
                 result = action(worker, stem)
@@ -12187,7 +12196,7 @@ _CHANGE_PLAN_STATUS = {
     "change_plan_script_data_unconfirmed": 400,
 }
 #: 方案里两张图的宽度（`RENDER_BUCKETS` 里的一档）
-_CHANGE_PLAN_WIDTH = 1600
+_CHANGE_PLAN_WIDTH = engine_changeplan.SNAPSHOT_WIDTH
 
 
 def _change_plan_params(code: str) -> dict:
@@ -12259,11 +12268,61 @@ def api_change_plans_create():
     if engine_patchspec.canonicalize_with_diagnostics(base)[1]:
         return jsonify({"error": "patches 含无效条目", "code": "invalid_patches"}), 400
     script_mode = body.get("mode") == "script"
-    if source == "assistant":
+    previous_turn = None
+    plan_intent = None
+    add_prev, add_start = None, None
+    plan_standard = None
+    if source == "assistant" and not script_mode:
+        # 出版规范 + 预检结论（只给助手来源的图内方案；形状不对 / 超限 = 400）
+        try:
+            plan_standard = engine_changeplan.clean_standard(body.get("standard"))
+        except ValueError:
+            return _change_plan_error("invalid_change_plan")
+    # 上一轮对话（ADR 0214 §二）、意图、再加一条都只给助手来源的图内方案用；审阅来源 / 脚本方案带它们一律拒绝
+    if any(k in body for k in ("previous_turn", "intent", "add_todo", "standard")) and (
+        source != "assistant" or script_mode
+    ):
+        return _change_plan_error("invalid_change_plan")
+    if source == "assistant" and "add_todo" in body:
+        # 待办卡上「再加一条」（ADR 0214 §三）：来源方案 id + 这一句话；除此之外不带任何东西
+        if any(
+            k in body
+            for k in (
+                "comments",
+                "share_id",
+                "comment_ids",
+                "instruction",
+                "intent",
+                "previous_turn",
+            )
+        ):
+            return _change_plan_error("invalid_change_plan")
+        from_plan = body.get("from_plan")
+        if not isinstance(from_plan, str) or engine_changeplan.PLAN_ID.match(from_plan) is None:
+            return _change_plan_error("invalid_change_plan")
+        add_prev = engine_changeplan.load(current_ctx().id, from_plan)
+        if add_prev is None:
+            return _change_plan_error("change_plan_unknown")
+        added = engine_changeplan.add_todo_rows(add_prev, body.get("add_todo"), rel_id)
+        if added is None:
+            return _change_plan_error("invalid_change_plan")
+        comments, add_start = added
+    elif source == "assistant":
         # 助手的一条指令 = 唯一一条「意见」；不带审阅意见 / 分享记录 / 来源方案
         if any(k in body for k in ("comments", "share_id", "from_plan", "comment_ids")):
             return _change_plan_error("invalid_change_plan")
-        comments = engine_changeplan.assistant_comments(body.get("instruction"), body.get("target"))
+        try:
+            previous_turn = engine_changeplan.clean_previous_turn(body.get("previous_turn"))
+        except ValueError:
+            return _change_plan_error("invalid_change_plan")
+        instruction = body.get("instruction")
+        if "intent" in body:
+            # 「把这些建议写成待办」（意图 todos）：必须带上一轮、不带用户的话（用内部固定的那句）
+            if body["intent"] != "todos" or previous_turn is None or "instruction" in body:
+                return _change_plan_error("invalid_change_plan")
+            plan_intent = "todos"
+            instruction = engine_changeplan.TODOS_INTENT_INSTRUCTION
+        comments = engine_changeplan.assistant_comments(instruction, body.get("target"))
     elif script_mode:
         # 审阅方案卡上用户点「改脚本做剩下的」（ADR 0206 修订 2026-11-26）：只认「来源方案 id + 意见 id」，
         # 意见原文取自后端存档的那份方案，请求里再带任何意见文字 / 指令 / 分享记录一律拒绝
@@ -12276,7 +12335,16 @@ def api_change_plans_create():
         if prev is None:
             return _change_plan_error("change_plan_unknown")
         rows = engine_changeplan.review_script_rows(prev, body.get("comment_ids"), rel_id)
-        comments = engine_changeplan.review_script_comments(rows) if rows else None
+        comments = (
+            engine_changeplan.review_script_comments(
+                rows,
+                engine_changeplan.figure_todo_labels(prev)
+                if prev.get("source") == "assistant"
+                else None,
+            )
+            if rows
+            else None
+        )
     else:
         if any(k in body for k in ("from_plan", "comment_ids")):
             return _change_plan_error("invalid_change_plan")
@@ -12321,7 +12389,20 @@ def api_change_plans_create():
             args=(
                 (ctx, task, rel_id, list(base), comments, selection, body.get("target"), source)
                 if script_mode
-                else (ctx, task, rel_id, list(base), comments, source, None, selection)
+                else (
+                    ctx,
+                    task,
+                    rel_id,
+                    list(base),
+                    comments,
+                    source,
+                    add_prev,
+                    selection,
+                    previous_turn,
+                    plan_intent,
+                    add_start,
+                    plan_standard,
+                )
             ),
             name=f"change-plan-{task.id[:8]}",
             daemon=True,
@@ -12402,14 +12483,35 @@ def api_change_plans_revise(plan_id: str):
 
 
 def _change_plan_thread(
-    ctx, task, rel_id, base, comments, source="review", prev=None, selection=None
+    ctx,
+    task,
+    rel_id,
+    base,
+    comments,
+    source="review",
+    prev=None,
+    selection=None,
+    previous_turn=None,
+    intent=None,
+    add_start=None,
+    standard=None,
 ) -> None:
     """后台线程：钉在发起请求的项目上；任何结局都落成终态并放掉这张图的互斥。"""
     code, detail = "", ""
     try:
         with bound_project(ctx):
             plan, before_png, after_png = _change_plan_compute(
-                task, rel_id, base, comments, source, prev, selection
+                task,
+                rel_id,
+                base,
+                comments,
+                source,
+                prev,
+                selection,
+                previous_turn,
+                intent,
+                add_start,
+                standard,
             )
             engine_changeplan.publish(task, ctx.id, plan, before_png, after_png)
     except engine_changeplan.PlanFailure as exc:
@@ -12572,7 +12674,11 @@ def _change_plan_script_compute(
             str(outcome.get("error") or ""),
         )
     if not new_bytes or new_bytes == outcome["base_bytes"]:
-        raise ec.PlanFailure("change_plan_script_no_change")
+        # Agent 没改脚本但回了话：话带回卡上显示（ADR 0214 §一 兜底），不只说「Agent 没有改动脚本」
+        said = ec._clip_text(outcome.get("reply") or "", ec.MAX_AGENT_REPLY_CHARS)
+        raise ec.PlanFailure(
+            "change_plan_script_no_change", "", {"agent_reply": said} if said else None
+        )
     if len(new_bytes) > ec.SCRIPT_MAX_BYTES:
         raise ec.PlanFailure("change_plan_too_large")
     task.phase = "render_after"
@@ -12796,16 +12902,7 @@ def api_change_plans_restore_script():
 
 
 def _change_plan_snapshot(resp) -> tuple[bytes, dict]:
-    import base64
-
-    try:
-        png = base64.b64decode(resp["png"], validate=True)
-        manifest = resp["manifest"]
-    except (KeyError, TypeError, ValueError):
-        raise engine_changeplan.PlanFailure("change_plan_render_failed", "snapshot") from None
-    if not png or not isinstance(manifest, dict) or not isinstance(manifest.get("elements"), list):
-        raise engine_changeplan.PlanFailure("change_plan_render_failed", "snapshot")
-    return png, manifest
+    return engine_changeplan.snapshot_of(resp)
 
 
 def _change_plan_compute(
@@ -12816,6 +12913,10 @@ def _change_plan_compute(
     source: str = "review",
     prev: dict | None = None,
     selection: dict | None = None,
+    previous_turn: dict | None = None,
+    intent: str | None = None,
+    add_start: int | None = None,
+    standard: dict | None = None,
 ):
     """渲染 B0 → 问模型 → 候选渲染 → 现算有效改动 → 方案。→ `(plan, before_png, after_png)`；失败抛 `PlanFailure`。
 
@@ -12829,6 +12930,9 @@ def _change_plan_compute(
     起点 = 上一版的 `candidate_patches`，模型看**上一版之后**的元素表（状态中立的 `snapshot`，不碰热态）+ 上一版改动摘要，
     候选 = 上一版候选 ⊕ 批注的改动；卡上的改动仍相对 B0 现算（上一版没被批注改掉的组原样带上），批注出的组标 `origin: "note"`。"""
     ec = engine_changeplan
+    adding = (
+        add_start is not None and prev is not None
+    )  # 待办卡上「再加一条」：沿用续改的骨架，新条目并进同一张卡
     try:
         worker, stem = _engine_worker(rel_id, safe_only=True)
     except NativeWorkerRefused:
@@ -12839,15 +12943,7 @@ def _change_plan_compute(
     root = str(require_project())
 
     def revision() -> str:
-        try:
-            return (
-                engine_preparation._script_revision(
-                    root, getattr(state["worker"], "script_name", None)
-                )
-                or ""
-            )
-        except Exception:  # noqa: BLE001 - 读不到修订 = 两次都读不到，相等
-            return "unknown"
+        return ec.script_revision(root, getattr(state["worker"], "script_name", None))
 
     def call(action):
         _require_route_unchanged(rel_id)
@@ -12865,9 +12961,6 @@ def _change_plan_compute(
     def override(patches: list) -> dict:
         return call(lambda w, s: w.override(s, patches, None))
 
-    def warned(resp: dict) -> set[str]:
-        return {json.dumps(w, sort_keys=True, default=str) for w in (resp.get("warnings") or [])}
-
     touched = False  # 对热 worker 做过 override
     try:
         rev0 = revision()
@@ -12880,16 +12973,25 @@ def _change_plan_compute(
         else:
             start = prev["candidate_patches"]
             start_png, start_man = snapshot(start)
-            previous = ec.previous_summary(prev)
+            previous = None if adding else ec.previous_summary(prev)
         task.phase = "model"
         # 续改用审阅那份提示（它带续改说明）；助手来源的首版用助手提示
         proposal = ec.ask_model(
             comments,
             start_man,
-            "review" if prev is not None else source,
+            source if adding else ("review" if prev is not None else source),
             previous,
             selection,
+            previous_turn if prev is None else None,
+            "todos" if adding else intent,
+            add_start if adding else None,
+            standard if prev is None or adding else None,
         )
+        # 建议待办（ADR 0214）：回答与待办意图不经下面的候选 / 有效改动流水线（它们只重建组与未处理），单独留着给 `build_plan`；
+        # 每条建议自己的意见 id（`a2`..）在意见里补一条原文，组标签与存档的意见都靠它
+        reply, todos = proposal.get("reply"), proposal.get("todos")
+        if todos:
+            comments = ec.with_todo_comments(comments, todos)
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         # 改成对数轴而下限 ≤ 0：候选里一并把下限改成正数（卡片再问用户要不要），免得出一张坍掉的图
@@ -12900,41 +13002,26 @@ def _change_plan_compute(
                 "groups": ec.carried_groups(prev, proposal) + proposal["groups"],
                 "unhandled": proposal["unhandled"],
             }
-        if ec.change_count(proposal) == 0:
-            groups, unhandled, after_png = [], proposal["unhandled"], before_png
-        elif prev is not None and cand == start:
-            after_png = start_png
-            groups, unhandled = ec.effective_changes(before_man, start_man, proposal)
-            groups = ec.attach_patches(groups, cand)
-        else:
+
+        def on_render() -> None:
+            nonlocal touched
             task.phase = "render_after"
             touched = True
-            base_warned = warned(override(base))  # 基线：B0 自己本来就有的 warning
-            cand_resp = override(cand)
-            after_png, after_man = snapshot(cand)
-            if warned(cand_resp) - base_warned:
-                raise ec.PlanFailure("change_plan_render_failed", "warning")
-            groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
-            groups = ec.attach_patches(groups, cand)
-            # 改完有元素新探出图幅（对数轴刻度变宽把纵轴标题挤出去之类）：用现成的外边距重排腾地方，补出的 position 并进造成出界的那些组。
-            # 模型自己提了 position 的（用户的意思在排版上）不替它改；补不下 / 没进步 / 有新 warning = 照常出卡
-            if not any(
-                c["prop"] == "position" and not c.get("auto")
-                for g in proposal["groups"]
-                for c in g["changes"]
-            ):
 
-                def room_render(patches: list):
-                    resp = override(patches)
-                    return None if warned(resp) - base_warned else resp.get("manifest")
-
-                room = ec.make_room(before_man, after_man, cand, base, room_render)
-                if room is not None:
-                    cand = room.candidate
-                    after_png, after_man = snapshot(cand)
-                    groups, unhandled = ec.effective_changes(before_man, after_man, proposal)
-                    groups = ec.attach_patches(groups, cand)
-                    groups = ec.attach_room(groups, room, before_man, after_man)
+        groups, unhandled, after_png = ec.realize(
+            proposal,
+            cand,
+            base=base,
+            start=start,
+            before_png=before_png,
+            start_png=start_png,
+            before_man=before_man,
+            start_man=start_man,
+            override=override,
+            snapshot=snapshot,
+            revised=prev is not None,
+            on_render=on_render,
+        )
         if revision() != rev0:
             raise ec.PlanFailure("change_plan_figure_changed")
         _require_route_unchanged(rel_id)
@@ -12957,6 +13044,33 @@ def _change_plan_compute(
             unhandled=unhandled,
             base_patches=base,
             source=source,
+            reply=reply,
+            todos=todos,
+        )
+    elif adding:
+        # 再加一条：已有的待办 / 组原样带着（key 不变），新条目从下一个编号起、标「新加」；回答沿用上一版的
+        old_raw, old_keys = ec.prev_todos_raw(prev)
+        new_ids = {c["id"] for c in comments}
+        live = {g["comment_id"] for g in groups}
+        unhandled = [u for u in unhandled if u["comment_id"] in new_ids] + [
+            u
+            for u in prev["unhandled"]
+            if u["comment_id"] not in live and u["comment_id"] not in new_ids
+        ]
+        plan = ec.build_plan(
+            plan_id=task.id,
+            target=rel_id,
+            base_fingerprint=prev["base"]["fingerprint"],
+            comments=[*(prev.get("comments") or []), *comments],
+            groups=groups,
+            unhandled=unhandled,
+            base_patches=base,
+            version=prev["version"] + 1,
+            source=prev["source"],
+            parent=prev["id"],
+            reply=prev.get("reply"),
+            todos=[*old_raw, *(todos or [])],
+            todo_keys=old_keys,
         )
     else:
         # 上一版没被批注改掉的审阅意见（组与未处理）带着走；组的标签取上一版的（批注组取批注文字）
@@ -12984,7 +13098,7 @@ def _change_plan_compute(
             parent=prev["id"],
             note_ids=note_ids,
         )
-    if prev is not None:
+    if prev is not None and not adding:
         # 续改的版本：上一版存着的审阅意见原文带着走（再加这一版用户自己写的批注），「改脚本做剩下的」仍按存档取
         plan["comments"] = [
             *(prev.get("comments") or []),
@@ -13107,6 +13221,405 @@ def api_change_plans_layout_preview():
         LOG.warning("整版预览渲染失败", exc_info=True)
         return _change_plan_error("change_plan_render_failed")
     resp = Response(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---- 改图助手改画布矢量对象（ADR 0212 第 6a 期，**只算不写、不读盘**）------------------------------------
+# 后端读不到桌面内存里的文档：前端把画布（文档形态）连同补丁 / 指令发来，这里只算方案回去；写回是前端自己的一次提交。
+# 与 `/api/change-plans` 一样在全局会话认证之内（没有旁路）。逻辑在 `engine/vectorplan.py` / `engine/vectoredit.py`。
+_VECTOR_EDIT_FIGURE = "__vector_edit__"
+
+
+#: 删不掉的量子图导出目录（Windows 上 PDF 被别的进程占着）：留给下一次量的开头再试，不吞
+_VECTOR_MEASURE_LEFTOVERS: set[Path] = set()
+_VECTOR_MEASURE_LEFTOVERS_LOCK = threading.Lock()
+
+
+def _vector_measure_discard(path: Path) -> bool:
+    """删一个一次性导出目录：先短重试（文件锁常常很快放开），仍删不掉就**记日志并登记留给下一次**，不用 `ignore_errors`（`src/tavotto/AGENTS.md`）。→ 是否删掉了。"""
+    for attempt in range(3):
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if attempt < 2:
+                time.sleep(0.15)
+    LOG.warning("量子图的导出目录没删掉，留给下一次清理：%s", path.name, exc_info=True)
+    with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+        _VECTOR_MEASURE_LEFTOVERS.add(path)
+    return False
+
+
+def _vector_measure_sweep() -> None:
+    with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+        left = list(_VECTOR_MEASURE_LEFTOVERS)
+    for path in left:
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            LOG.warning("量子图的导出目录仍没删掉：%s", path.name)
+            continue
+        with _VECTOR_MEASURE_LEFTOVERS_LOCK:
+            _VECTOR_MEASURE_LEFTOVERS.discard(path)
+
+
+class _VectorFresh:
+    """一次方案里量子图用的**一次性 worker**（`pool.one_shot`：不进池、目录独立、用完即毁）。
+
+    **为什么不用池里的热会话**（用户画布正在用它）：热会话吃的是哪份输入我们不知道（数据文件变了它不会过期），要保证量到新数据就得让它过期重建——
+    `pool.invalidate` 会把在飞的画布渲染杀掉（「渲染进程退出了：SIGKILL」，实测）。一次性 worker 每次是新进程、读此刻的数据，
+    不碰池、不碰画布的会话，也就不用猜热会话的状态。写回前的干净重放（`_write_back`）是同一个先例。
+    一次方案里同一个脚本复用一条（量出提示前 / 干跑 / 出方案共用）；项目文件指纹变了（模型答题期间数据变了）就换一条新的。`close()` 全部收掉。"""
+
+    def __init__(self) -> None:
+        self._held: dict[str, tuple[str | None, object, str]] = {}
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def worker_for(self, fid: str, digest: str | None):
+        stem, info = _disk_panel_rel(fid)
+        script, entry = (info or {}).get("script"), (info or {}).get("entry")
+        if not script or not entry:
+            raise engine_layoutannotate.PanelUnavailable("no_script")
+        root = str(require_project())
+        with self._lock:
+            if self._closed:
+                raise engine_layoutannotate.PanelUnavailable("measure_failed")
+            held = self._held.get(script)
+            if held is not None and held[0] == digest:
+                return held[1], stem
+            if held is not None:
+                engine_pool.discard(held[1])  # 数据变了：旧的那条吃的是旧数据
+                self._held.pop(script, None)
+            peek = engine_pool.peek(
+                script, root, run=_disk_panel_run(script)
+            )  # 只读：借热会话答过的 input()
+            run = _disk_panel_run(script)
+            worker = engine_pool.one_shot(
+                script,
+                root,
+                entry,
+                script_inputs=getattr(peek, "last_build_script_inputs", None) or [],
+                **({"run": run} if run is not None else {}),
+            )
+            self._held[script] = (digest, worker, stem)
+            return worker, stem
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            held, self._held = list(self._held.values()), {}
+        for _digest, worker, _stem in held:
+            engine_pool.discard(worker)  # 绝不抛
+
+
+_MEASURE_LOCAL = threading.local()
+
+
+def _vector_measure_precheck(panel: dict) -> tuple[str, list]:
+    """量得了这张子图吗（只看快照里的标记，不碰引擎）→ `(fileId, 覆盖项)`；量不了抛 `PanelUnavailable(码)`。
+
+    **缓存键之前就要判**（`_vector_measure_key` 先调它）：冻结图 / runtime 素材与同一个 `fileId` 的活图缓存键相同，
+    先查缓存会让冻结图命中活图的量、冒充量过。"""
+    la = engine_layoutannotate
+    if panel.get("figureSnapshot") is not None or panel.get("figureOrigin") is not None:
+        raise la.PanelUnavailable("composed_from_snapshot")
+    if panel.get("source") is not None or panel.get("fileKind") == "runtime":
+        raise la.PanelUnavailable("runtime_panel")
+    fid = panel.get("fileId")
+    if not isinstance(fid, str) or not fid:
+        raise la.PanelUnavailable("memory_snapshot")  # 快照里没有量的输入（旧前端）：只有外框
+    overrides = panel.get("overrides") or []
+    if not isinstance(overrides, list) or not all(isinstance(o, dict) for o in overrides):
+        raise la.PanelUnavailable("bad_overrides")
+    return fid, overrides
+
+
+def _vector_measure_panel(panel: dict, requests: list) -> dict:
+    """量一张子图（ADR 0208 第 ③ 期 3b）：用**一次性 worker**把这张图**带着快照里的覆盖项**现导出一次，回 `draw_manifest` + 数据点位置。
+
+    与插件 `bridge._layout_measure` 同一个判定与同一个返回形状：冻结快照 / 运行时素材 / 没有脚本的图量不了（只给外框）；
+    输入只有子图的 `fileId` 与 `overrides`——位置、缩放、裁剪只在坐标换算时用，与量无关。磁盘面板永远是 safe（native 会话是用户终端里的活进程，与它无关）。
+    导出写进私有临时目录、用完即删，不碰项目导出目录。要在 `bound_project` 之下调（后台线程没有请求上下文），
+    并且在 `_vector_measure_for` 的 `raw` 里调（那里把本次方案的一次性 worker 持有者放进线程局部）。"""
+    la = engine_layoutannotate
+    fid, overrides = _vector_measure_precheck(panel)
+    fresh = getattr(_MEASURE_LOCAL, "fresh", None)
+    if fresh is None:
+        raise la.PanelUnavailable("measure_failed")
+    try:
+        worker, stem = fresh.worker_for(fid, getattr(_MEASURE_LOCAL, "digest", None))
+    except (NotFound, HTTPException):
+        raise la.PanelUnavailable("no_script") from None
+    except engine_pool.WorkerError:
+        raise la.PanelUnavailable("export_failed") from None
+    _vector_measure_sweep()  # 上一次没删掉的导出目录先再试一次
+    tmp = Path(tempfile.mkdtemp(prefix="vector-measure-", dir=_review_tmp_root()))
+    try:
+        resp = worker.export(
+            stem, overrides, str(tmp / "m.pdf"), "pdf", 600, data_points=list(requests)
+        )
+    except engine_pool.WorkerError:
+        raise la.PanelUnavailable("export_failed") from None
+    finally:
+        _vector_measure_discard(tmp)
+    return {
+        "draw_manifest": resp.get("draw_manifest"),
+        "data_points": resp.get("data_points") or [],
+    }
+
+
+def _vector_project_digest(root: str) -> str | None:
+    """项目文件的有界指纹（`ai_figure_edit.project_fingerprint`：大小 + mtime + 小文件内容哈希；`tavottofile/` 与 Python 环境目录不计）的摘要。
+
+    **为什么要它**：缓存键里只有脚本修订时，脚本没变、数据文件变了，旧的量会一直命中（最长 30 分钟），锚点指向旧峰。
+    项目里没有「这张图读了哪些文件」的清单（`inputs_read` 只在转换沙盒里有，声明的输入只覆盖用户声明过的），所以用整个项目的指纹——
+    宁可多重量，不可量错。超出文件数上限 / 读不了 = `None`：这次不缓存。"""
+    try:
+        fp = engine_ai_figure_edit.project_fingerprint(Path(root))
+    except OSError:
+        return None
+    if fp.get("status") != "ok":
+        return None
+    return hashlib.sha256(
+        json.dumps(fp["files"], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()[:24]
+
+
+def _vector_measure_script(panel: dict) -> str | None:
+    fid = panel.get("fileId")
+    if not isinstance(fid, str) or not fid:
+        return None
+    _stem, info = _disk_panel_rel(fid)
+    script = (info or {}).get("script")
+    return script if isinstance(script, str) and script else None
+
+
+def _vector_measure_key(root: str, panel: dict, requests: list, inputs: str | None) -> str | None:
+    """量的缓存键：项目、子图文件、覆盖项哈希、脚本修订、项目文件指纹、数据点请求。任何一样变了旧条目自然失效；取不到修订 / 指纹 = 不缓存。"""
+    _vector_measure_precheck(panel)  # 量不了的（冻结 / runtime / 没有量的输入）不许命中别人的缓存
+    script = _vector_measure_script(panel)
+    if not script or inputs is None:
+        return None
+    rev = engine_preparation._script_revision(root, script)  # noqa: SLF001
+    if not rev:
+        return None
+    return json.dumps(
+        [
+            root,
+            panel["fileId"],
+            engine_vectormeasure.overrides_digest(panel.get("overrides") or []),
+            rev,
+            inputs,
+            engine_vectormeasure.overrides_digest(requests),
+        ]
+    )
+
+
+def _vector_measure_for(ctx):
+    """一次方案用的 `measure`：桌面量法（一次性 worker）+ 进程内缓存 + 每图 20 s / 总共 60 s 的时限（超了退外框，码 `measure_timeout` / `measure_budget`）。
+
+    量用**一次性 worker**（`_VectorFresh`），不碰池里画布在用的热会话：数据文件变了热会话不会过期，让它过期要 `pool.invalidate`，
+    而那会杀掉在飞的画布渲染。项目文件指纹每一轮量（出提示前 / 干跑 / 出方案，`vectormeasure.new_pass`）重新取，不跨模型调用沿用：
+    指纹变了就换一条新的一次性 worker（读此刻的数据）。用完 `vectormeasure.close(measure)` 收掉。
+    代价：每个方案第一次对每张图要冷跑一次脚本（缓存命中不跑）；脚本很重（超过每图时限）就退外框。"""
+    root = str(ctx.path)
+    memo: list[str | None] = []
+    fresh = _VectorFresh()
+    lock = threading.Lock()
+
+    def inputs() -> str | None:
+        with lock:
+            if not memo:
+                memo.append(_vector_project_digest(root))
+            return memo[0]
+
+    def new_pass() -> None:
+        with lock:
+            memo.clear()
+
+    def raw(panel: dict, requests: list) -> dict:
+        with bound_project(ctx):  # 临时线程没有请求上下文
+            _MEASURE_LOCAL.fresh, _MEASURE_LOCAL.digest = fresh, inputs()
+            try:
+                return _vector_measure_panel(panel, requests)
+            finally:
+                _MEASURE_LOCAL.fresh = _MEASURE_LOCAL.digest = None
+
+    def key_of(panel: dict, requests: list) -> str | None:
+        with bound_project(ctx):
+            return _vector_measure_key(root, panel, requests, inputs())
+
+    measure = engine_vectormeasure.bounded(raw, key_of=key_of)
+    measure.new_pass = new_pass  # type: ignore[attr-defined]
+    pool_close = measure.close  # type: ignore[attr-defined]
+
+    def close() -> None:
+        try:
+            fresh.close()
+        finally:
+            pool_close()  # `bounded` 的量线程池也要收，不能只收一次性 worker
+
+    measure.close = close  # type: ignore[attr-defined]
+    return measure
+
+
+def _has_measurable_panel(canvas: dict) -> bool:
+    return any(
+        isinstance(o, dict) and o.get("type") == "panel" and isinstance(o.get("fileId"), str)
+        for o in canvas.get("objects") or []
+    )
+
+
+@app.post("/api/vector-edit/plan")
+def api_vector_edit_plan():
+    """出矢量编辑方案（**不写盘**）。两种请求：
+
+    * `{canvas, ops, instruction_text?, confirmed?}`：照补丁直接算（`vectoredit.apply_ops` + 只核被动到的对象）→ 200
+      `{ok, errors, objects, deleted, order, echo, changes, checks, echo_digest, …}`；补丁不合格 `ok: false` + `errors: [{code, index?, field?}]`
+      （码见 `vectoredit.ERROR_CODES`，整批没动）。内核不可用 = `kernel_unavailable`，其余操作照常。
+    * `{canvas, instruction, selection?, connection?, model?, effort?, client_request_id?}`：先问模型出补丁再算 → 202 `{plan_id, state: "running"}`，
+      用 `GET /api/vector-edit/plan/<plan_id>` 轮询（模型连接与 `/api/change-plans` 助手出卡同一条路）。`selection` 是选中的对象 id 列表；`locale`（可缺省）是界面语言，模型写的 `unhandled.reason` 跟着它走。"""
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return _change_plan_error("invalid_change_plan")
+    try:
+        canvas = engine_vectorplan.check_canvas(body.get("canvas"))
+        if ("ops" in body) == ("instruction" in body):
+            raise engine_vectorplan.PlanInputError("mode")
+        if "ops" in body:
+            ops = engine_vectorplan.check_ops(body.get("ops"))
+            context = engine_vectorplan.plan_context(
+                body.get("instruction_text"), body.get("confirmed")
+            )
+            # 子图带着量的输入（`fileId` / `overrides`）才量；量不了的退外框、码在 `unmeasured` 里
+            measure = _vector_measure_for(current_ctx()) if _has_measurable_panel(canvas) else None
+            try:
+                out = engine_vectorplan.plan(canvas, ops, context=context, measure=measure)
+            finally:
+                engine_vectormeasure.close(measure)  # 一次性 worker 收掉
+            resp = jsonify(out)
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
+        comments = engine_changeplan.assistant_comments(body.get("instruction"), None)
+        if comments is None:
+            raise engine_vectorplan.PlanInputError("instruction")
+        selected = engine_vectorplan.check_selection(body.get("selection"), canvas)
+    except engine_vectorplan.PlanInputError:
+        return _change_plan_error("invalid_change_plan")
+    rid = body.get("client_request_id")
+    if rid is not None and not (isinstance(rid, str) and engine_changeplan.REQUEST_ID.match(rid)):
+        return _change_plan_error("invalid_change_plan")
+    selection = engine_changeplan.clean_selection(body)
+    if selection is None:
+        return _change_plan_error("invalid_change_plan")
+    failure = engine_changeplan.connection_failure(selection)
+    if failure is not None:
+        return _change_plan_error(failure)
+    ctx = current_ctx()
+    try:
+        task, created = engine_changeplan.begin(ctx.id, _VECTOR_EDIT_FIGURE, rid)
+    except engine_changeplan.PlanFailure as exc:
+        return _change_plan_error(exc.code)
+    if created:
+        task.phase = "measure" if _has_measurable_panel(canvas) else "model"
+        threading.Thread(
+            target=_vector_edit_thread,
+            args=(ctx, task, canvas, comments[0]["text"], selected, selection, body.get("locale")),
+            name=f"vector-edit-{task.id[:8]}",
+            daemon=True,
+        ).start()
+    state = "running" if created else task.state
+    resp = jsonify({"plan_id": task.id, "state": state, "phase": task.phase})
+    resp.status_code = 202 if state == "running" else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _vector_edit_thread(ctx, task, canvas, instruction, selected, selection, locale=None) -> None:
+    """后台线程：量子图 → 问模型 → 算方案 → 放进内存；任何结局都落成终态并放掉互斥。
+
+    钉在发起请求的项目上（`bound_project`，与 `_change_plan_thread` 同一个做法）：量子图要取桌面引擎会话，后台线程没有请求上下文。"""
+    code, detail = "", ""
+    measure = None
+    try:
+        with bound_project(ctx):
+            measure = _vector_measure_for(ctx) if _has_measurable_panel(canvas) else None
+            measured = engine_vectorplan.measure_scene(canvas, measure) if measure else None
+            task.phase = "model"
+            proposal = engine_changeplan.ask_vector_edits(
+                instruction, canvas, selected, selection, locale, measure=measure, measured=measured
+            )
+            task.phase = "plan"
+            ops, unhandled = proposal["ops"], proposal["unhandled"]
+            unmeasured = proposal.get("unmeasured") or {}
+            if ops:
+                engine_vectormeasure.new_pass(
+                    measure
+                )  # 干跑之后到出方案之间数据也可能变：重新取这一刻的输入状态
+                result = engine_vectorplan.plan(
+                    canvas,
+                    ops,
+                    context=engine_vectorplan.plan_context(instruction, None),
+                    measure=measure,
+                )
+                # 量与出方案之间图被改过（脚本重跑、子图覆盖项变了 → 新的 manifest）：方案作废，不落一份对不上的
+                seen = measured["fingerprint"] if measured else None
+                if seen and result.get("scene_fingerprint") not in (None, seen):
+                    raise engine_changeplan.PlanFailure("change_plan_figure_changed")
+            else:
+                result = {
+                    "ok": True,
+                    "errors": [],
+                    "objects": [],
+                    "deleted": [],
+                    "echo": [],
+                    "changes": [],
+                }
+            result = {**result, "ops": ops, "unhandled": unhandled, "unmeasured": unmeasured}
+            if not task.cancelled:
+                engine_vectorplan.keep_result(ctx.id, task.id, result)
+    except engine_changeplan.PlanFailure as exc:
+        code, detail = exc.code, exc.detail
+        LOG.info("矢量编辑方案没有生成: %s %s", exc.code, exc.detail)
+    except BaseException:  # noqa: BLE001 - 线程里不许丢结局
+        code = "change_plan_failed"
+        LOG.exception("矢量编辑方案任务异常")
+    finally:
+        engine_vectormeasure.close(measure)  # 一次性 worker 收掉（不碰画布的热会话）
+        engine_changeplan.finish(task, code=code, detail=detail)
+        if task.cancelled:
+            engine_changeplan.forget_task(task)
+
+
+@app.get("/api/vector-edit/plan/<plan_id>")
+def api_vector_edit_plan_get(plan_id: str):
+    """轮询指令模式的方案：`running`（带阶段）/ `failed`（稳定 code）/ `ready`（方案 + 模型给的 `ops` 与 `unhandled`）。"""
+    project = current_ctx().id
+    if engine_changeplan.PLAN_ID.match(plan_id) is None:
+        return _change_plan_error("change_plan_unknown")
+    task = engine_changeplan.task_of(project, plan_id)
+    if task is not None and task.state == "running":
+        out: dict = {"plan_id": plan_id, "state": "running", "phase": task.phase}
+    elif task is not None and task.state == "failed":
+        out = {
+            "plan_id": plan_id,
+            "state": "failed",
+            "code": task.code,
+            "error": engine_changeplan.MESSAGES.get(task.code, task.code),
+            "detail": task.detail,
+        }
+    else:
+        result = engine_vectorplan.load_result(project, plan_id)
+        if result is None:
+            return _change_plan_error("change_plan_unknown")
+        out = {"plan_id": plan_id, "state": "ready", "plan": result}
+    resp = jsonify(out)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -20516,6 +21029,26 @@ def api_ai_history():
     return resp
 
 
+@app.get("/api/ai/history/legacy")
+def api_ai_history_legacy():
+    """之前装在 MSIX 包私有区时的历史里，这个项目还有几条没带过来（#2282 补救 B；任务历史底部那一行）。
+
+    只读、有上限；非 Windows / 没有旧库 / 数不出来都回 0——那一行就不出现。
+    """
+    project = str(require_project().resolve())
+    resp = jsonify({"missing": engine_ai_history.legacy_missing_count(project)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/history/legacy/restore")
+def api_ai_history_legacy_restore():
+    """用户点「找回」：把旧库里**这个项目**真实库没有的会话补回来（删掉过的也会回来，界面先确认过；别的项目不动）。回闭集 `outcome` 与剩几条。"""
+    project = str(require_project().resolve())
+    outcome = engine_ai_history.restore_legacy(project)
+    return jsonify({"outcome": outcome, "missing": engine_ai_history.legacy_missing_count(project)})
+
+
 @app.delete("/api/ai/history/<sid>")
 def api_ai_history_delete(sid):
     return jsonify({"ok": engine_ai_history.delete(sid)})
@@ -21420,6 +21953,17 @@ def api_autosave_put(doc_id):
     )
 
 
+def _same_layout_content(a: dict, b: dict) -> bool:
+    """两份排版除了编辑时刻 `updatedAt` 之外逐字段相同（经 JSON 往返：与落盘的表示一致）。"""
+    strip = lambda d: {k: v for k, v in d.items() if k != "updatedAt"}  # noqa: E731
+    try:
+        return json.loads(json.dumps(strip(a), sort_keys=True)) == json.loads(
+            json.dumps(strip(b), sort_keys=True)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
 def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dict | None:
     """自动保存把工作副本写进项目的 `tavottofile/<名>.tavotto/layout.json`（ADR 0211 第二期 PR 2；写入端开关后面）。
 
@@ -21490,6 +22034,20 @@ def _autosave_into_project(doc_id: str, body: dict, raw_spec: str | None) -> dic
                         "name": stem,
                         "revision": current,
                         "summary": document_summary(located.read_path),
+                    }
+            if current is not None and located.read_path is not None:
+                # 内容没变（只有编辑时刻 `updatedAt` 在动：手动保存 / 离开页面 / 切文档的冲刷都会重发同一份）：不重写——
+                # 同步盘与 git 不该为没有变化的排版看到文件在动；修订号也就不被无谓地推进（否则刚读到修订号的另一处会撞上假冲突）
+                try:
+                    on_disk = engine_documents.loads_document(located.read_path.read_bytes())
+                except (OSError, ValueError):
+                    on_disk = None
+                if isinstance(on_disk, dict) and _same_layout_content(on_disk, body):
+                    return {
+                        "state": "saved",
+                        "name": stem,
+                        "file": target.relative_to(ctx.path).as_posix(),
+                        "revision": current,
                     }
             _named_layout_dir(ctx, create=True)
             revision = engine_layoutdir.write_retrying(store, stem, body, doc_id=doc_id)

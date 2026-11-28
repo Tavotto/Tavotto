@@ -6,6 +6,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { Button } from '../ui/Button'
 import { EmptyLine } from '../ui/EmptyLine'
+import { SUBTLE_LINK_CLASS } from '../ui/subtleLink'
 import { Popover } from '../ui/Popover'
 import { SearchInput } from '../ui/SearchInput'
 import { listRowClass } from '../ui/listRow'
@@ -20,6 +21,9 @@ import { useJournalV2Store } from '@/store/journalV2Store'
 import { useDocumentStore } from '@/store/documentStore'
 import { useJournalCatalogStore } from '@/store/journalCatalogStore'
 import { useUiStore } from '@/store/uiStore'
+import { useJournalPickerRequest } from '@/store/journalPickerRequest'
+import { journalTipsAvailable, useContactStore } from '@/store/contactStore'
+import { tipForMissing } from '@/lib/journalTip'
 
 const jt = (key: string, values?: Record<string, unknown>) =>
   translate(`journal.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -86,6 +90,13 @@ export function JournalPicker({
   const sameOrigin = (o: string) => originOf() === o
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  // 外部请求展开（助手回答里的「选期刊」）：只有问题页签那一行（带锚点、写当前文档）接
+  const openRequested = useJournalPickerRequest((s) => s.pending)
+  useEffect(() => {
+    if (!openRequested || target || anchor !== 'data-issues-journal-picker' || disabled) return
+    if (useJournalPickerRequest.getState().consume()) setOpen(true)
+  }, [openRequested, target, anchor, disabled])
+  const canTip = useContactStore((s) => journalTipsAvailable(s.capability))
   const [pending, setPending] = useState<{ seq: number; label: string } | null>(null)
   const v2Index = useJournalV2Store((s) => s.index)
   const v1 = useMemo(() => listJournals(catalog), [catalog])
@@ -242,7 +253,23 @@ export function JournalPicker({
             )}
             {/* 「不按期刊」钉在最上面，列表在它下面自己滚：选中项再靠后也不会把它顶出视野 */}
             <div data-journal-scroller className="flex max-h-64 flex-col overflow-y-auto">
-              {all.length > 0 && groups.length === 0 && <EmptyLine data-journal-empty>{jt('noMatch')}</EmptyLine>}
+              {all.length > 0 && groups.length === 0 && (
+                <EmptyLine
+                  data-journal-empty
+                  action={
+                    canTip
+                      ? {
+                          label: jt('noJournalListed'),
+                          title: jt('noJournalListedTitle'),
+                          className: SUBTLE_LINK_CLASS,
+                          onClick: () => useContactStore.getState().openJournalTip(tipForMissing(query)),
+                        }
+                      : undefined
+                  }
+                >
+                  {jt('noMatch')}
+                </EmptyLine>
+              )}
               {groups.map((g) => (
                 <div key={g.publisher} role="group" aria-label={g.label} data-journal-group={g.publisher}>
                   <p className="type-caption px-3 pb-0.5 pt-1.5">{g.label}</p>

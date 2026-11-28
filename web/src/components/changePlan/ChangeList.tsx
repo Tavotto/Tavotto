@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 import { ReviewMark } from '../review/ReviewMark'
 import { Button, IconButton } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
-import { Pencil, X } from '../ui/icons'
+import { Check, Pencil, X } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { cp, whoOf, type GroupView, type UnhandledView } from './changePlanModel'
 
@@ -14,27 +14,33 @@ import { cp, whoOf, type GroupView, type UnhandledView } from './changePlanModel
  */
 export function ChangeList({
   heading,
+  muted = false,
   groups,
   unhandled,
   unchecked,
   onToggle,
   activeId,
   onActive,
+  onAction,
 }: {
   /** 清单头的整句（一键排版的卡用它说「排版 · N 张图」）；缺省 = 「改动 · N 处」 */
   heading?: string
+  /** 清单头淡一级（矢量编辑方案重算失败期间：它说的还是上次算出的旧摘要） */
+  muted?: boolean
   groups: GroupView[]
   unhandled: UnhandledView[]
   unchecked: Record<string, boolean>
   onToggle: (key: string) => void
   activeId: string | null
   onActive: (key: string | null) => void
+  /** 没处理的行带的动作被点了（矢量编辑方案：「按我说的加」） */
+  onAction?: (u: UnhandledView) => void
 }) {
   useTranslation('ai')
   const total = groups.filter((g) => !unchecked[g.key]).reduce((a, g) => a + g.boxes.length, 0)
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-change-plan-list>
-      <p className="shrink-0 px-4 pb-1.5 pt-4 type-meta">{heading ?? cp('dialog.changes', { count: total })}</p>
+      <p className={cn('shrink-0 px-4 pb-1.5 pt-4 type-meta transition-opacity duration-fast', muted && 'opacity-50')}>{heading ?? cp('dialog.changes', { count: total })}</p>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3">
         {/* 续改的版本：「按批注改的」置顶，用一条轻分隔线与按意见改的隔开 */}
         {groups.some((g) => g.fromNote) && (
@@ -56,13 +62,18 @@ export function ChangeList({
         {unhandled.length > 0 && (
           <ul className="mt-2 flex flex-col gap-0.5 border-t border-border pt-2">
             {unhandled.map((u) => (
-              <li key={u.id} data-change-plan-unhandled={u.id} title={u.reason} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
+              <li key={u.id} data-change-plan-unhandled={u.id} title={u.reason || u.text} className="-mx-2 flex items-start gap-2.5 rounded-lg px-2 py-2">
                 <span aria-hidden className="flex h-5 w-[15px] shrink-0 items-center justify-center">
                   <span className="h-px w-2 bg-ink-faint" />
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate text-sm text-ink-3">{u.text}</span>
-                  <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>
+                  <span className={u.action ? 'text-sm text-ink-3' : 'truncate text-sm text-ink-3'}>{u.text}</span>
+                  {(u.reviewer || u.reason) && <span className="type-meta">{[u.reviewer, u.reason].filter(Boolean).join(' · ')}</span>}
+                  {u.action && onAction && (
+                    <Button variant="secondary" size="sm" className="mt-1 w-fit rounded-full" onClick={() => onAction(u)} data-change-plan-confirm-item>
+                      {cp('vector.confirmButton')}
+                    </Button>
+                  )}
                 </div>
               </li>
             ))}
@@ -70,6 +81,16 @@ export function ChangeList({
         )}
       </div>
     </div>
+  )
+}
+
+/** 一个值：颜色带小色块 */
+function Val({ v }: { v: { text: string; color?: string } }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-ink-2">
+      {v.color && <span aria-hidden className="size-2.5 rounded-sm inset-ring inset-ring-ink/25" style={{ backgroundColor: v.color }} />}
+      {v.text}
+    </span>
   )
 }
 
@@ -91,7 +112,7 @@ function GroupRow({
   return (
     <li>
       <label
-        title={cp('dialog.checkTip')}
+        title={g.fixed ? g.detail : cp('dialog.checkTip')}
         data-change-group={g.key}
         data-active={active || undefined}
         onPointerEnter={() => onActive(g.key)}
@@ -103,13 +124,38 @@ function GroupRow({
           active ? 'bg-selected' : 'hover:bg-surface-hover',
         )}
       >
-        <Checkbox checked={checked} onChange={() => onToggle(g.key)} aria-label={g.summary} className="mt-0.5 size-[15px] [&>input:checked]:border-ink-2 [&>input:checked]:bg-ink-2" />
+        {g.fixed ? (
+          <span aria-hidden className="mt-0.5 flex size-[15px] shrink-0 items-center justify-center text-ink-3">
+            <Check size={ICON_SIZE.xs} />
+          </span>
+        ) : (
+          <Checkbox checked={checked} onChange={() => onToggle(g.key)} aria-label={g.summary} className={cn('mt-0.5 size-[15px] [&>input:checked]:border-ink-2 [&>input:checked]:bg-ink-2', g.note && 'opacity-60')} />
+        )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className={cn('text-sm', checked ? 'text-ink' : 'text-ink-3')}>{g.summary}</span>
-          <span className="type-meta">
-            {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}
-            {g.room ? ` · ${cp('dialog.roomNote')}` : ''}
-          </span>
+          {g.lines?.map((l, i) => (
+            <span key={i} data-change-line className={cn('type-meta flex flex-wrap items-center gap-x-1.5', !checked && 'opacity-50')}>
+              <span>{l.label}</span>
+              {l.after && (
+                <>
+                  {l.before && <Val v={l.before} />}
+                  {l.before && <span aria-hidden>→</span>}
+                  <Val v={l.after} />
+                </>
+              )}
+            </span>
+          ))}
+          {g.note && (
+            <span data-change-note className="type-meta opacity-70">
+              {g.note}
+            </span>
+          )}
+          {g.metaText !== '' && (
+            <span className="type-meta">
+              {g.fromNote ? cp('dialog.groupMetaNote', { count: places }) : who ? cp('dialog.groupMeta', { who, count: places }) : cp('dialog.groupMetaNoWho', { count: places })}
+              {g.room ? ` · ${cp('dialog.roomNote')}` : ''}
+            </span>
+          )}
         </span>
       </label>
     </li>

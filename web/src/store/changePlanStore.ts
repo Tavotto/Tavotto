@@ -11,14 +11,18 @@ import {
   undoChangePlanScript,
   type ChangePlan,
   type ChangePlanGroup,
+  type ChangePlanTodo,
   type ChangePlanPatch,
+  type VectorEditResult,
   type ReviewAnchor,
   type ReviewComment,
 } from '@/lib/api'
+import { currentStandard } from '@/lib/changePlanStandard'
 import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { applyGroups, canonicalPatches, effectiveStatus, samePatches, toOverrides, type PlanSource } from '@/lib/changePlanApply'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { writeChangePlanCache } from '@/lib/changePlanSwitch'
+import type { ChangeGroup } from '@/lib/vectorChanges'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { apiUrlFor, onCurrentProjectChange } from '@/lib/session'
 import { releaseOwned } from '@/lib/styleOwned'
@@ -26,6 +30,7 @@ import type { PanelObject, PanelOverride } from '@/types/document'
 import { currentRunSelection, newRequestId, useAiStore, type AiScope } from './aiStore'
 import { scriptHandoffPrompt } from '@/lib/assistantScriptContext'
 import { MAX_ASSISTANT_INSTRUCTION } from '@/lib/assistantPlanRoute'
+import type { PreviousTurn } from '@/lib/previousTurn'
 import { exactPanelManifest, useRenderStore } from './renderStore'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
@@ -41,7 +46,10 @@ import { requestRender } from './renderScheduler'
  * - 按「项目 + 图」分键：条目带发起时的 `pj` 与面板对象 id；换项目整表清空并作废在途轮询（项目代际，`lib/projectEpoch`）。
  * - 应用前核基线：这张图此刻的 override（规范化）≠ 方案的 `base_patches` → 卡片转 stale，**不写**。
  */
-export type PlanStatus = 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff'
+/**
+ * `answered` = 助手只给了一段回答（建议类的问话、没有可勾的待办，ADR 0214）：回答画成助手正文，不出方案卡。
+ */
+export type PlanStatus = 'generating' | 'ready' | 'applied' | 'discarded' | 'stale' | 'failed' | 'handoff' | 'answered'
 
 export interface PlanFailure {
   /** 后端的稳定码（`change_plan_*`），或本地的 `change_plan_poll_timeout` */
@@ -65,6 +73,10 @@ export interface PlanRequest {
    * 意见原文由后端取自存档、请求里不带文字
    */
   scriptFrom?: { plan_id: string; comment_ids: string[] }
+  /** 助手来源（ADR 0214 §二）：本图对话的上一轮，发给后端当数据块；脚本方案不带 */
+  previousTurn?: PreviousTurn
+  /** `todos`：回答下方的按钮「把这些建议写成待办」——不带用户的话，用 `previousTurn`（那段回答）让模型整理成待办（ADR 0214） */
+  intent?: 'todos'
   /** 卡上 / 气泡里显示的原话（发给后端的 `instruction` 可能带了「图内已改好的部分」交接说明；缺省 = `instruction`） */
   display?: string
 }
@@ -97,6 +109,35 @@ export interface LayoutHandle {
   regenerate: () => void
   /** 参与排版的图的张数（卡片一句话用） */
   count: number
+}
+
+/**
+ * 改图助手改画布矢量对象的方案（ADR 0212 第 6 期，`kind: 'vector'`）：后端算好的方案原样存着（前端不重算），
+ * 「应用」与「重新生成」由 `vectorPlanActions` 交进来（同一键排版的 `LayoutHandle`，store 不 import 它免得成环）。
+ */
+export interface VectorHandle extends LayoutHandle {
+  /** 后端回的方案（复述 / 对象 / 核对 / 没能照做的）；生成中 / 失败时还没有 */
+  result?: VectorEditResult
+  /** 按对象分组、翻成界面语言的改动清单（`lib/vectorChanges`）；空 = 退回显示后端的复述原文 */
+  groups?: ChangeGroup[]
+  /** 模型给的全部补丁（第 6c 期：卡片按步勾选，取消某几步后用剩下的重算） */
+  ops?: unknown[]
+  /** 取消勾选后正在重算：「应用」先不可点、对比图跟着更新 */
+  busy?: boolean
+  /** 因依赖了没勾的那步而自动取消的步（组 key）：清单行下面写一句原因 */
+  blocked?: Record<string, true>
+  /** 统计标注没核到原话：用户点「按我说的加」→ 把被丢掉的那步补进补丁、带 `confirmed: [条目名]` 重新算整份方案 */
+  confirm?: (item: string, op: unknown) => void
+  /** 这次生成里出现过「正在量图」阶段（生成中的清单据此多一步） */
+  measured?: boolean
+  /** 勾选变了：用勾上的步重新算方案（防抖由实现自己管，旧的结果作废） */
+  recompute?: (force?: boolean) => void
+  /** 上一次按勾选重算没成：「应用」不可点（旧方案里有用户已经勾掉的步），界面给一句灰字和「重试」 */
+  failed?: boolean
+  /** 方案点名的对象此刻还是不是出发时那样（= 待确认；撤回之后也是；不是又不是已应用 = 「图改过了」） */
+  holds: () => boolean
+  /** 方案已经写进文档的样子还在不在（= 已应用；按对象状态判，不按历史条目——之后的回写会换掉那一条历史） */
+  landed: () => boolean
 }
 
 /**
@@ -149,10 +190,15 @@ export interface PlanEntry {
   key: string
   /** 方案从哪来：审阅意见（默认）/ 改图助手里的一条指令 / 一键排版 */
   from?: 'review' | 'assistant' | 'quick_layout'
-  /** `layout` = 一键排版的整版方案（不挂在某张图上，`panelId` 为空）；缺省 = 一张图的方案 */
-  kind?: 'figure' | 'layout'
+  /**
+   * `layout` = 一键排版的整版方案（不挂在某张图上，`panelId` 为空）；`vector` = 改图助手改画布矢量对象的方案（同样不挂在某张图上，
+   * 一张卡只含一类，ADR 0206）；缺省 = 一张图的方案
+   */
+  kind?: 'figure' | 'layout' | 'vector'
   /** 一键排版方案的落地与重来（由 `quickLayoutActions` 交进来；store 不 import 它，免得成环） */
   layout?: LayoutHandle
+  /** 矢量编辑方案（`kind: 'vector'`）的内容与落地 / 重来 */
+  vector?: VectorHandle
   /** 助手来源：用户的原话（对话里的用户气泡；改动清单里这一组的标题） */
   instruction?: string
   /** 助手来源的改脚本后路（见 `ScriptFallback`） */
@@ -164,6 +210,8 @@ export interface PlanEntry {
   onSettle?: () => void
   /** 助手来源：已经把这条指令交给改脚本那条路了（卡上不再给「改脚本做剩下的」；全是要改脚本时卡只剩一行灰字） */
   scriptStarted?: boolean
+  /** 助手来源：已经把这条指令转给画布矢量那条路了（「改在画布上加」点过，卡上不再给这颗按钮） */
+  canvasStarted?: boolean
   pj: string | null
   /** 画布上的面板对象 id */
   panelId: string
@@ -223,10 +271,96 @@ export interface PlanEntry {
   resolveFailed?: boolean
   /** 回复草稿：意见 id → 用户改过的文字；null = 已发送（不再出草稿框） */
   drafts: Record<string, string | null>
+  /** 建议待办卡（ADR 0214）：被取消勾选的脚本待办（待办 key → true）；图内待办的勾选就是 `unchecked[group_key]`，卡片与弹窗是同一份 */
+  todoOff?: Record<string, boolean>
+  /** 建议待办卡点了「改这 N 项」之后的记录：哪些待办已一次 commit 应用 / 交给了脚本方案，以及那张脚本方案卡 */
+  todoRun?: TodoRun
+  /** 脚本方案卡是哪张建议卡「改这 N 项」自动续出来的（卡上不单画，出问题 / 要回答时才露面） */
+  todoOf?: string
+  /** 这张脚本方案卡已经自动应用过一次（不再自动第二次：失败了留给用户） */
+  autoApplied?: boolean
+  /** 回答（`answered`）下方「把这些建议写成待办」已经点过：它出的那张待办卡的键（按钮不再出现） */
+  todosKey?: string
+  /** 待办卡上「再加一条」在途：新一版的方案 id（请求还没回时是空串）与用户写的那句话 */
+  adding?: string
+  addingText?: string
+  /** 上一次「再加一条」没成（稳定码；下一次动作清掉） */
+  addError?: PlanFailure
 }
 
-export type PlanPhase = 'render_before' | 'model' | 'agent' | 'render_after'
-const PHASE_RANK: Record<PlanPhase, number> = { render_before: 0, model: 1, agent: 1, render_after: 2 }
+/** 「改这 N 项」的执行记录 */
+export interface TodoRun {
+  /** 一次 commit 应用了的图内待办（待办 key） */
+  figure: string[]
+  /** 要交给脚本方案的待办（待办 key，按卡上的顺序一条一条做）；排在后面还没开始的可以被取消勾选跳过 */
+  script: string[]
+  /** 已经开始做的脚本待办：待办 key + 它那张脚本方案卡的键 */
+  scripts: { todo: string; key: string }[]
+  /** 正在发起下一条脚本方案的请求（防重入） */
+  starting?: boolean
+}
+
+/** 方案里的待办（没有 = 普通方案） */
+export const todosOf = (e: Pick<PlanEntry, 'plan'>): ChangePlanTodo[] => e.plan?.todos ?? []
+
+/** 助手来源的建议待办卡：有待办的图内方案 */
+export const isTodoPlan = (e: Pick<PlanEntry, 'from' | 'kind' | 'plan'>): boolean => e.from === 'assistant' && e.kind !== 'layout' && e.plan?.kind !== 'script' && todosOf(e).length > 0
+
+/** 这条待办现在是不是勾着（图内待办 = 它那一组没被取消勾选；脚本待办看 `todoOff`） */
+export function todoChecked(e: Pick<PlanEntry, 'unchecked' | 'todoOff'>, t: ChangePlanTodo): boolean {
+  return t.kind === 'figure' ? !(t.group_key && e.unchecked[t.group_key]) : !e.todoOff?.[t.key]
+}
+
+/** 图内那次应用此刻还在文档里（以文档为准，同卡片的有效状态） */
+function figureStillApplied(e: PlanEntry): boolean {
+  if (e.status !== 'applied') return false
+  const p = panelOf(e)
+  return effectiveStatus(e, p?.overrides ?? null, p ? sourceOf(p) : null) === 'applied'
+}
+
+/** 一张脚本方案卡「没成」：失败（不含用户答了「先不改」）/ 图已改过 / 应用没成 */
+export const scriptBroken = (s: PlanEntry): boolean => (s.status === 'failed' && s.failure?.code !== DATA_DECLINED) || s.status === 'stale' || s.status === 'discarded' || (s.status === 'ready' && !!s.notice)
+
+/** 用户答了「先不改」（改数据那一句）：这一项没改，但后面的照常做 */
+export const scriptDeclined = (s: PlanEntry): boolean => s.status === 'failed' && s.failure?.code === DATA_DECLINED
+/**
+ * 这条脚本待办没成，但**脚本与图都没动**（Agent 决定不改 / 检查没过 / 用户答了「先不改」……）：后面排着的照做（真机 2026-11-27：一条「没数据画不了」
+ * 把后面几条全拖成「没改」）。真出了岔子才停：越界（动了别的文件）、图在这期间改过了、没能写进脚本、卡被放弃。
+ */
+export const scriptStops = (s: PlanEntry): boolean =>
+  s.status === 'stale' || s.status === 'discarded' || (s.status === 'ready' && !!s.notice) || (s.status === 'failed' && s.failure?.code === 'change_plan_script_overreach')
+export const scriptPassable = (s: PlanEntry): boolean => s.status === 'applied' || (s.status === 'failed' && !scriptStops(s))
+
+/** 这张建议卡已经开始做的脚本待办的方案卡（按开始顺序；卡没了的略过） */
+export function todoScriptEntries(e: Pick<PlanEntry, 'todoRun'>, entries: Record<string, PlanEntry>): { todo: string; entry: PlanEntry }[] {
+  return (e.todoRun?.scripts ?? []).flatMap((s) => (entries[s.key] ? [{ todo: s.todo, entry: entries[s.key] }] : []))
+}
+
+/** 排在后面、还没开始的脚本待办（可以被取消勾选跳过；取消了的不算） */
+export const todoQueued = (e: Pick<PlanEntry, 'todoRun' | 'todoOff'>): string[] => (e.todoRun?.script ?? []).filter((k) => !e.todoRun?.scripts.some((s) => s.todo === k) && !e.todoOff?.[k])
+
+/**
+ * 点过「改这 N 项」之后卡就锁住了（不再改勾选、不再点第二次）——除非什么都没改成：图内没动、脚本方案也都没成（失败 / 图已改过 / 没能应用），
+ * 这时回到可勾选的样子，用户可以再点一次。排在后面还没开始的脚本待办不受这个锁（`toggleTodo` 另判）。
+ */
+export function todoLocked(e: PlanEntry, entries: Record<string, PlanEntry>): boolean {
+  const run = e.todoRun
+  if (!run) return false
+  // 图内那次 commit 还在才算（⌘Z 撤回之后图内这一半又是待确认，不再锁）
+  if (run.figure.length > 0 && figureStillApplied(e)) return true
+  if (run.starting || (run.script.length > 0 && run.scripts.length === 0)) return true // 第一条脚本方案还在发出去的路上
+  return todoScriptEntries(e, entries).some((x) => !scriptBroken(x.entry) && !scriptDeclined(x.entry))
+}
+
+/** 助手只给了回答、没有任何可勾的待办也没有图内修改 */
+/** 与后端 `MAX_ADD_TODO_CHARS` / `MAX_TODOS` 同值 */
+export const MAX_ADD_TODO = 300
+export const MAX_TODOS = 12
+
+export const adviceOnly = (plan: ChangePlan): boolean => !!plan.reply && !plan.todos?.length && plan.groups.length === 0
+
+export type PlanPhase = 'render_before' | 'model' | 'agent' | 'render_after' | 'measure' | 'plan'
+const PHASE_RANK: Record<PlanPhase, number> = { render_before: 0, measure: 0, model: 1, agent: 1, render_after: 2, plan: 2 }
 /** 只前进：轮询乱序 / 旧回包不让已勾的步骤退回去；不认识的阶段名不动 */
 export function nextPhase(cur: PlanPhase | undefined, seen: unknown): PlanPhase | undefined {
   if (typeof seen !== 'string' || !(seen in PHASE_RANK)) return cur
@@ -285,11 +419,13 @@ interface ChangePlanState {
    */
   requestFromAssistant: (
     panelId: string,
-    req: { instruction: string; target?: string },
+    req: { instruction: string; target?: string; previousTurn?: PreviousTurn },
     fallback: ScriptFallback,
     onSettle?: () => void,
   ) => Promise<string | null | Fallthrough>
   /** 把这条助手指令交给现有的改脚本路径（`aiStore.start`）：「改脚本做剩下的」/ 全部都要改脚本时自动续走 / 失败后的「改脚本做」 */
+  /** 助手来源：把这条指令转给画布矢量那条路（用户点「改在画布上加」；选区里没有矢量对象也能走）→ 是否发出去了 */
+  runCanvasAnnotate: (key: string) => boolean
   runScript: (key: string, opts?: { legacyOnly?: boolean }) => Promise<boolean>
   /** 失败后「重试」/ 图改过后「重新生成」：用同一份请求再来一份，旧卡换成新卡 */
   regenerate: (key: string) => Promise<string | null>
@@ -298,6 +434,21 @@ interface ChangePlanState {
   openDialog: (key: string) => void
   closeDialog: () => void
   toggleGroup: (key: string, groupKey: string) => void
+  /** 建议待办卡上勾 / 取消一行（图内待办 = 切它那一组，脚本待办记在 `todoOff`）；点过「改这 N 项」之后不再改 */
+  toggleTodo: (key: string, todoKey: string) => void
+  /**
+   * 建议待办卡的一键「改这 N 项」（ADR 0214 §四）：勾着的图内待办一次 commit；勾着的脚本待办接着自动出脚本方案、过检查直接应用
+   * （改了画出来的数据仍先问）。→ 图内那一步的结果；没有勾着的 / 已经点过 = 'nothing'
+   */
+  applyTodos: (key: string) => Promise<ApplyResult>
+  /** 接着做下一条脚本待办（上一条应用了 / 答了「先不改」才轮到；没成就停下）。由订阅自动调，不是按钮 */
+  advanceTodos: (key: string) => Promise<void>
+  /** 回答（`answered`）下方的「把这些建议写成待办」：同一个方案请求，意图 `todos`、带这段回答当上一轮；待办卡出在回答下面。→ 新卡的键 */
+  requestTodos: (key: string) => Promise<string | null>
+  /** 待办卡上「再加一条」：把这句话交给模型拆成一到几条待办并进同一张卡（新的一版，已有的 key 与勾选不变；新条目默认勾上、标「新加」） */
+  addTodo: (key: string, text: string) => Promise<boolean>
+  /** 撤销「改这 N 项」：图内那次 commit（⌘Z 同一步）+ 脚本按备份还原；撤回后卡回到可勾选的样子 */
+  undoTodos: (key: string) => Promise<boolean>
   /**
    * 回答方案里的一个确认（对数轴下限）：`yes` = 一起改，照方案应用；`no` = 不改，这一组整组不要（按「前端重算」口径取消勾选、
    * 它那条意见进没处理列表）；没有一组剩下 = 与空方案一样，卡变成「没法直接改图」那张失败卡。
@@ -354,9 +505,15 @@ export function setChangePlanLabeler(fn: (raw: string) => string): void {
   labeler = fn
 }
 
-/** 一键排版方案的两张预览图是 blob 地址（本机内存里的 PNG）：条目没了就放掉 */
+/** 整版 / 画布级的方案（不挂在某张图上）：一键排版与矢量编辑；它们的落地与重来由各自的 handle 管 */
+export const isCanvasPlan = (e: Pick<PlanEntry, 'kind'> | undefined): boolean => e?.kind === 'layout' || e?.kind === 'vector'
+
+/** 整版 / 画布级方案的落地与重来 */
+export const canvasHandleOf = (e: Pick<PlanEntry, 'kind' | 'layout' | 'vector'>): LayoutHandle | undefined => (e.kind === 'vector' ? e.vector : e.layout)
+
+/** 整版方案的两张预览图是 blob 地址（本机内存里的 PNG）：条目没了就放掉 */
 function revokeLayoutImages(e: PlanEntry | undefined): void {
-  if (e?.kind !== 'layout') return
+  if (!isCanvasPlan(e) || !e) return
   for (const u of [e.beforeSrc, e.afterSrc]) if (u?.startsWith('blob:')) URL.revokeObjectURL(u)
 }
 
@@ -366,7 +523,7 @@ function revokeLayoutImages(e: PlanEntry | undefined): void {
  */
 export function reviewScriptIds(e: Pick<PlanEntry, 'from' | 'kind' | 'plan'>): string[] {
   const plan = e.plan
-  if (!plan || e.from === 'assistant' || e.kind === 'layout' || plan.kind === 'script') return []
+  if (!plan || e.from === 'assistant' || isCanvasPlan(e) || plan.kind === 'script') return []
   const stored = new Set((plan.comments ?? []).map((c) => c.id))
   return [...new Set(plan.unhandled.filter((u) => u.reason === 'needs_script' && u.comment_id && stored.has(u.comment_id)).map((u) => u.comment_id as string))]
 }
@@ -374,6 +531,14 @@ export function reviewScriptIds(e: Pick<PlanEntry, 'from' | 'kind' | 'plan'>): s
 /** 这份方案一处图内修改都没有、没处理的全是「要改脚本」（助手来源据此把整条指令交给改脚本那条路） */
 function allNeedScript(plan: ChangePlan): boolean {
   return plan.groups.length === 0 && plan.unhandled.length > 0 && plan.unhandled.every((u) => u.reason === 'needs_script')
+}
+
+/**
+ * 这份方案一处图内修改都没有、没处理的全是「不是改图的要求」（聊天 / 提问 / 要解释，ADR 0206 修订 2026-11-27）：
+ * 助手来源据此不出卡，把用户那句话原样交给普通助手对话（`runScript` 的聊天分支）。混合情形（有能改的、或还有别的原因）照旧出卡。
+ */
+export function allOutOfScope(plan: ChangePlan): boolean {
+  return plan.kind !== 'script' && plan.groups.length === 0 && plan.unhandled.length > 0 && plan.unhandled.every((u) => u.reason === 'out_of_scope')
 }
 
 /** 这张图此刻的图源身份（磁盘素材带修订；runtime 面板没有稳定修订，只认文件 + 脚本） */
@@ -385,6 +550,19 @@ export function sourceOf(panel: PanelObject, mtime = useAssetStore.getState().by
  * 「撤销」走 `runUndoRedo`（唯一的撤销入口，让位判据在那里）。它的模块（`hooks/useKeyboard`）反过来 import 命令面板与一堆 store，
  * 静态 import 会成环——所以由 `useKeyboard` 在模块加载时交进来（与一键排版胶囊的「撤销」同一做法）。
  */
+/**
+ * 「改在画布上加」要起的矢量编辑方案（`vectorPlanActions.runVectorEdit`）：那个模块 import 本 store，反过来 import 会成环——由它在模块加载时交进来。
+ * 返回新卡的键；没发出去 = null。
+ */
+let canvasAnnotateRunner: ((instruction: string, opts: { followsKey: string }) => string | null) | null = null
+export function setCanvasAnnotateRunner(run: (instruction: string, opts: { followsKey: string }) => string | null): void {
+  canvasAnnotateRunner = run
+}
+
+/** 这份助手方案里有「要在画布上加标注」的未处理（卡上据此给「改在画布上加」） */
+export const wantsCanvasAnnotation = (e: Pick<PlanEntry, 'from' | 'kind' | 'plan' | 'canvasStarted'>): boolean =>
+  e.from === 'assistant' && e.kind !== 'vector' && !e.canvasStarted && !!e.plan?.unhandled.some((u) => u.reason === 'needs_canvas_annotation')
+
 let undoRunner: (() => void) | null = null
 export function setChangePlanUndoRunner(run: () => void): void {
   undoRunner = run
@@ -408,15 +586,18 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     if (p) requestRender(p, true)
   }
 
-  const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' = 'create') => {
+  const poll = async (key: string, planId: string, guard: ProjectEpochGuard, mode: 'create' | 'revise' | 'add' = 'create') => {
     const t0 = Date.now()
     let errors = 0
     const revising = mode === 'revise'
+    const adding = mode === 'add'
     const alive = () =>
-      guard.still() && (revising ? get().entries[key]?.revising === planId : get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating')
+      guard.still() && (adding ? get().entries[key]?.adding === planId : revising ? get().entries[key]?.revising === planId : get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating')
     // 续改没成：旧版原样留着，弹窗里一句灰字
     const failRevise = (code: string, params?: Record<string, unknown>) => patch(key, { revising: undefined, reviseError: { code, params } })
-    const failed = (code: string, params?: Record<string, unknown>) => (revising ? failRevise(code, params) : fail(key, code, params))
+    // 再加一条没成：已有的待办卡原样留着，行尾一句灰字
+    const failAdd = (code: string) => patch(key, { adding: undefined, addingText: undefined, addError: { code } })
+    const failed = (code: string, params?: Record<string, unknown>) => (adding ? failAdd(code) : revising ? failRevise(code, params) : fail(key, code, params))
     while (alive()) {
       await sleep(POLL_MS)
       if (!alive()) return
@@ -443,7 +624,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (view.state === 'failed') {
         // 助手来源：这条路不适用（线程里才解析出连接不支持结构化调用 / 没连上……）与同步被拒同一处理——不留失败卡，
         // 接着走现有的改脚本路径，用户的指令照旧交给 Agent（出的是改脚本那一轮自己的结果 / 错误卡）
-        if (!revising && e?.from === 'assistant' && ASSISTANT_FALLTHROUGH_CODES.has(view.code)) {
+        if (!revising && !adding && e?.from === 'assistant' && e.request.intent !== 'todos' && ASSISTANT_FALLTHROUGH_CODES.has(view.code)) {
           if ((view as { replay_required?: boolean }).replay_required) replay(e)
           // 脚本方案自己被拒（别再试脚本方案，免得循环）/ 连接用不了（脚本方案同样走不通）：直接落回旧路径
           void get().runScript(key, { legacyOnly: e.request.mode === 'script' || CONNECTION_UNUSABLE_CODES.has(view.code) })
@@ -456,6 +637,15 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       // ready：没有一条能落成修改的（change_plan_empty）也带方案（里面只有 unhandled），卡片按失败的一句话 + 未处理列表画
       const plan = view.plan
       const src = (p: string) => apiUrlFor(p, e.pj)
+      if (adding) {
+        // 再加一条：新一版并进同一张卡（`planId` / `plan` / 两张图换成新版，勾选与已有待办的 key 不变）；回答没有变，卡片不跳
+        const e0 = get().entries[key] ?? e
+        const prev = versionsOf(e).map((v) => (v.planId === e.planId ? { ...v, unchecked: e.unchecked, answers: e.answers } : v))
+        const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: e0.unchecked, answers: e0.answers }
+        patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, adding: undefined, addingText: undefined, addError: undefined, notice: undefined })
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        return
+      }
       if (revising) {
         if (view.code === 'change_plan_empty') failRevise('change_plan_empty')
         else {
@@ -469,8 +659,24 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
       }
+      const todoPlan = e.from === 'assistant' && !!plan.todos?.length
+      const records = { versions: [{ planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {} }], plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after) }
+      // 助手来源只给了一段回答（建议、评价，没有可勾的待办）：画成助手正文，不出卡、不落回改脚本 / 聊天（ADR 0214）
+      if (e.from === 'assistant' && e.request.mode !== 'script' && adviceOnly(plan)) {
+        patch(key, { ...records, status: 'answered', failure: undefined })
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        return
+      }
       // 助手来源：整条指令都要改脚本（没有一处图内修改、没有别的原因）= 不算失败，接着走现有的改脚本路径
-      if (e.from === 'assistant' && view.code === 'change_plan_empty' && allNeedScript(plan)) {
+      // 助手来源：整条都不是改图的要求（聊天 / 提问）= 不出卡，悄悄交给普通助手对话（不走脚本方案、不加交接句）
+      // 有建议待办的方案（哪怕只有脚本待办、组为空）不走这两条：它就是一张待办卡（ADR 0214）
+      if (!todoPlan && e.from === 'assistant' && view.code === 'change_plan_empty' && allOutOfScope(plan)) {
+        if ((view as { replay_required?: boolean }).replay_required) replay(e)
+        patch(key, { plan })
+        void get().runScript(key)
+        return
+      }
+      if (!todoPlan && e.from === 'assistant' && view.code === 'change_plan_empty' && allNeedScript(plan)) {
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         patch(key, { plan })
         void get().runScript(key)
@@ -481,7 +687,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         plan,
         beforeSrc: src(plan.preview.before),
         afterSrc: src(plan.preview.after),
-        ...(view.code === 'change_plan_empty'
+        ...(view.code === 'change_plan_empty' && !todoPlan
           ? { status: 'failed' as const, failure: { code: 'change_plan_empty' } }
           : { status: 'ready' as const, failure: undefined }),
       })
@@ -548,7 +754,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const comments = from
       ? (source?.comments ?? []).filter((c) => from.comment_ids.includes(c.id))
       : (req.comments ?? (req.share_id && detail?.share_id === req.share_id ? detail.comments.filter((c) => !c.resolved) : []))
-    const assistant = typeof req.instruction === 'string'
+    const assistant = typeof req.instruction === 'string' || req.intent === 'todos'
     const entry: PlanEntry = {
       key,
       ...(assistant ? { from: 'assistant' as const, instruction: req.display ?? req.instruction, fallback, onSettle } : {}),
@@ -583,7 +789,14 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         id: panel.fileId,
         patches: panel.overrides,
         ...(assistant
-          ? { source: 'assistant' as const, instruction: req.instruction, ...(req.target ? { target: req.target } : {}), ...(req.mode === 'script' ? { mode: 'script' as const } : {}) }
+          ? {
+              source: 'assistant' as const,
+              ...(req.intent === 'todos' ? { intent: 'todos' as const } : { instruction: req.instruction }),
+              ...(req.target ? { target: req.target } : {}),
+              ...(req.mode === 'script' ? { mode: 'script' as const } : req.previousTurn ? { previous_turn: req.previousTurn } : {}),
+              // 出版标准只给方案模型；脚本方案（mode: script）后端不收这一项
+              ...(req.mode === 'script' ? {} : { standard: currentStandard(panelId) }),
+            }
           : req.scriptFrom
             ? { source: 'review' as const, mode: 'script' as const, from_plan: req.scriptFrom.plan_id, comment_ids: req.scriptFrom.comment_ids }
             : { source: 'review' as const, ...(req.comments ? { comments: req.comments } : { share_id: req.share_id }) }),
@@ -605,6 +818,42 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       fail(key, code, err instanceof EngineError ? err.params : undefined)
     }
     return key
+  }
+
+  /**
+   * 建议待办卡里勾着的脚本待办，**一条一条**做：这一条出一张脚本方案卡（`from_plan` + 它的意见 id，意见原文后端取自存档）；
+   * 过了检查直接应用（`autoApplyTodoScripts`），应用了 / 用户答了「先不改」才接着做下一条（`advanceTodos`）；失败就停在那里，剩下的算没改。
+   * 图内的那一次 commit 已经先落了（脚本一改图源，待确认的方案就判「图已改过」）。
+   */
+  const panelBusy = (panelId: string): boolean =>
+    pending.has(panelId) || get().order.some((k) => get().entries[k]?.panelId === panelId && get().entries[k]?.status === 'generating')
+
+  const startTodoScript = async (key: string, todo: ChangePlanTodo): Promise<void> => {
+    const e = get().entries[key]
+    const drop1 = () => {
+      const run = get().entries[key]?.todoRun
+      if (run) patch(key, { todoRun: { ...run, starting: false, script: run.script.filter((k) => k !== todo.key) } })
+    }
+    if (!e || !e.planId || !todo.comment_id) return drop1()
+    const gate = e.panelId
+    // 这张图正有别的方案在生成（用户在两条之间又发了一句）：不丢这条，先退回排队，等那份落定后 `advanceTodoRuns` 再接着做
+    if (panelBusy(gate)) {
+      const run = get().entries[key]?.todoRun
+      if (run?.starting) patch(key, { todoRun: { ...run, starting: false } })
+      return
+    }
+    pending.add(gate)
+    try {
+      const out = await start(e.panelId, { mode: 'script', scriptFrom: { plan_id: e.planId, comment_ids: [todo.comment_id] } })
+      if (isFallthrough(out) || !out) return drop1()
+      patch(out, { followsKey: key, todoOf: key })
+      const run = get().entries[key]?.todoRun
+      if (run) patch(key, { todoRun: { ...run, starting: false, scripts: [...run.scripts, { todo: todo.key, key: out }] } })
+    } finally {
+      pending.delete(gate)
+      // 放掉闸门本身不发通知：方案一发就失败（如 change_plan_busy）时，那次通知里闸门还关着，排着的下一条要在这里接着推
+      advanceTodoRuns()
+    }
   }
 
   return {
@@ -651,10 +900,23 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       }
     },
 
+    runCanvasAnnotate: (key) => {
+      const e = get().entries[key]
+      const ds = useDocumentStore.getState()
+      // 只在发起时的那份文档 / 画布上做（矢量方案是对当前画布算的）
+      if (!e || !wantsCanvasAnnotation(e) || !canvasAnnotateRunner || ds.documentId !== e.documentId || ds.loadSeq !== e.loadSeq || ds.activeCanvasId !== e.canvasId) return false
+      const text = e.instruction ?? e.request.instruction ?? ''
+      if (!text.trim()) return false
+      const k = canvasAnnotateRunner(text, { followsKey: key })
+      if (!k) return false
+      patch(key, { canvasStarted: true })
+      return true
+    },
+
     runScript: async (key, opts) => {
       const e = get().entries[key]
       // 审阅来源：只能由用户点按钮走到这里（没有任何自动续走），交给「审阅意见 → 脚本方案」
-      if (e && e.from !== 'assistant' && e.kind !== 'layout') return runReviewScript(key)
+      if (e && e.from !== 'assistant' && !isCanvasPlan(e)) return runReviewScript(key)
       const fb = e?.fallback
       if (!e || !fb || e.from !== 'assistant') return false
       // 发送那一刻的项目 / 文档 / 面板：途中换了就不替他发（换项目整表已清；换文档 / 画布 / 面板被删这里挡）
@@ -663,6 +925,38 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (!panel || panel.fileId !== fb.fileId || ai.generation !== fb.generation) {
         fail(key, 'change_plan_script_failed')
         return false
+      }
+      // 聊天 / 提问（整条都是 out_of_scope）：没有图内修改要先应用、不再试脚本方案，原话直接交给普通助手对话；发出去了就把这张卡撤掉
+      if (e.plan && allOutOfScope(e.plan)) {
+        try {
+          await ai.start({
+            project: fb.project,
+            generation: fb.generation,
+            prompt: fb.prompt,
+            fileId: fb.fileId,
+            panelId: fb.panelId,
+            gid: fb.gid,
+            label: fb.label,
+            scope: fb.scope,
+            target: fb.target,
+            overrides: panel.overrides,
+            canvas: fb.canvas,
+            script: fb.script,
+            chat: true,
+          })
+        } catch {
+          patch(key, { status: 'failed', failure: { code: 'change_plan_script_failed' } })
+          return false
+        }
+        // 卡一撤，订阅就看不到「落定」了：输入框里那条指令与后端草稿在这里放掉
+        const settle = get().entries[key]?.onSettle
+        drop(key)
+        try {
+          settle?.()
+        } catch {
+          /* 清草稿失败不影响对话 */
+        }
+        return true
       }
       // 还没应用的图内修改先应用（同一次 commit、正常进时间线）再改脚本：脚本一改图源就变了，待确认的方案会判「图已改过」再也应用不了，
       // 图内那部分就丢了。应用没成（图已改过 / 写不进）= 不续走，卡上说一句
@@ -716,9 +1010,9 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     regenerate: async (key) => {
       const e = get().entries[key]
       if (!e) return null
-      if (e.kind === 'layout') {
+      if (isCanvasPlan(e)) {
         drop(key)
-        e.layout?.regenerate()
+        canvasHandleOf(e)?.regenerate()
         return null
       }
       const ids = allPlanIds(e)
@@ -736,11 +1030,14 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       set({ dialogKey: key })
     },
     closeDialog: () => set({ dialogKey: null }),
-    toggleGroup: (key, groupKey) =>
+    toggleGroup: (key, groupKey) => {
       set((s) => {
         const e = s.entries[key]
         return e ? { entries: { ...s.entries, [key]: { ...e, unchecked: { ...e.unchecked, [groupKey]: !e.unchecked[groupKey] } } } } : {}
-      }),
+      })
+      // 矢量编辑方案：取消 / 勾回某一步，按勾上的步重新算（对象、对比图、核对都跟着变）
+      get().entries[key]?.vector?.recompute?.()
+    },
 
     answerConfirm: (key, groupKey, answer) => {
       const e = get().entries[key]
@@ -748,8 +1045,131 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       if (!e || !g?.confirm || e.answers?.[groupKey]) return
       const answers = { ...e.answers, [groupKey]: answer }
       const unchecked = answer === 'no' ? { ...e.unchecked, [groupKey]: true } : e.unchecked
-      const remains = (e.plan?.groups ?? []).some((x) => answers[x.key] !== 'no')
+      // 建议待办卡里还有要改脚本的待办时，图内那一组不要了不等于整张卡没东西
+      const remains = (e.plan?.groups ?? []).some((x) => answers[x.key] !== 'no') || todosOf(e).some((t) => t.kind === 'script')
       patch(key, answer === 'no' && !remains ? { answers, unchecked, status: 'failed', failure: { code: g.confirm.kind === 'script_data_changed' ? DATA_DECLINED : 'change_plan_empty' } } : { answers, unchecked })
+    },
+
+    toggleTodo: (key, todoKey) => {
+      const e = get().entries[key]
+      const t = todosOf(e ?? { plan: undefined }).find((x) => x.key === todoKey)
+      if (!e || !t) return
+      // 执行中，还没轮到的脚本待办仍可勾掉（跳过）或勾回来；做过 / 正在做的、图内的都锁着
+      const queued = t.kind === 'script' && !!e.todoRun?.script.includes(todoKey) && !e.todoRun.scripts.some((x) => x.todo === todoKey)
+      if (!queued && todoLocked(e, get().entries)) return
+      if (t.kind === 'figure') {
+        if (t.group_key) get().toggleGroup(key, t.group_key)
+      } else patch(key, { todoOff: { ...e.todoOff, [todoKey]: !e.todoOff?.[todoKey] } })
+    },
+
+    applyTodos: async (key) => {
+      const e = get().entries[key]
+      if (!e?.plan || !isTodoPlan(e) || todoLocked(e, get().entries) || e.scriptBusy || e.adding !== undefined) return 'nothing'
+      if (pendingConfirm(e)) return 'nothing'
+      const on = todosOf(e).filter((t) => todoChecked(e, t))
+      if (!on.length) return 'nothing'
+      const figure = on.filter((t) => t.kind === 'figure')
+      const script = on.filter((t) => t.kind === 'script' && t.comment_id)
+      // 上一次没成的脚本方案卡收掉，免得并排
+      for (const x of todoScriptEntries(e, get().entries)) get().dismiss(x.entry.key)
+      // 图内待办：一次 commit（⌘Z 一步撤回）；这一步没成（图已改过 / 写不进）就不往下走，卡上自己说
+      let result: ApplyResult = 'nothing'
+      if (figure.length) {
+        result = get().apply(key)
+        if (result !== 'applied') return result
+      }
+      patch(key, { todoRun: { figure: figure.map((t) => t.key), script: script.map((t) => t.key), scripts: [] } })
+      await get().advanceTodos(key)
+      return result
+    },
+
+    advanceTodos: async (key) => {
+      const e = get().entries[key]
+      const run = e?.todoRun
+      if (!e || !run || !run.script.length || run.starting) return
+      const last = todoScriptEntries(e, get().entries).at(-1)?.entry
+      if (last) {
+        if (last.status === 'generating' || (last.status === 'ready' && !last.notice)) return // 在做 / 在应用 / 在等回答
+        if (!scriptPassable(last)) return // 真出了岔子（越界 / 图已改过 / 写不进）：停在这里，剩下的算没改
+      } else if (run.scripts.length > 0) return
+      const next = todoQueued(e)[0]
+      const todo = next ? todosOf(e).find((t) => t.key === next) : undefined
+      if (!todo) return
+      // 图正忙就先不动（不写 store：写了会再触发订阅、原地打转）；那份落定时 store 一变，订阅会再叫到这里
+      if (panelBusy(e.panelId)) return
+      patch(key, { todoRun: { ...run, starting: true } })
+      await startTodoScript(key, todo)
+    },
+
+    undoTodos: async (key) => {
+      const e = get().entries[key]
+      if (!e) return false
+      const scripts = todoScriptEntries(e, get().entries)
+      const applied = scripts.filter((x) => x.entry.status === 'applied')
+      const panel = panelOf(e)
+      const figureApplied = e.status === 'applied' && !!panel && canUndoApplied(e, panel.overrides)
+      if (!figureApplied && !applied.length) return false
+      // 后做的先撤；有一步没撤成就停下，卡上说一句
+      for (const x of [...applied].reverse()) {
+        if (!(await get().undoScript(x.entry.key))) {
+          patch(key, { notice: 'undo_failed' })
+          return false
+        }
+        get().dismiss(x.entry.key)
+      }
+      for (const x of scripts) if (x.entry.status !== 'applied' && get().entries[x.entry.key]) get().dismiss(x.entry.key)
+      if (figureApplied && !get().undo(key)) return false
+      // 撤回了：回到可勾选的样子（勾选保留），可以再改
+      patch(key, { todoRun: undefined, notice: undefined })
+      return true
+    },
+
+    requestTodos: async (key) => {
+      const e = get().entries[key]
+      const reply = e?.plan?.reply
+      if (!e || e.status !== 'answered' || e.todosKey || !reply) return null
+      const gate = e.panelId
+      if (pending.has(gate) || get().order.some((k) => get().entries[k]?.panelId === gate && get().entries[k]?.status === 'generating')) return null
+      pending.add(gate)
+      try {
+        // 上一轮 = 这段回答（和它那句问话）；出的待办卡接在它下面，按钮不再出现
+        const out = await start(e.panelId, { intent: 'todos', previousTurn: { user: e.instruction ?? '', assistant: reply.slice(0, 3500) }, ...(e.request.target ? { target: e.request.target } : {}) }, e.fallback, true)
+        if (typeof out === 'string') patch(key, { todosKey: out })
+        return typeof out === 'string' ? out : null
+      } finally {
+        pending.delete(gate)
+      }
+    },
+
+    addTodo: async (key, text) => {
+      const e = get().entries[key]
+      const clean = text.replace(/\s+/g, ' ').trim()
+      if (!e?.plan || !e.planId || !isTodoPlan(e) || e.status !== 'ready' || e.adding !== undefined || e.todoRun || !clean || clean.length > MAX_ADD_TODO) return false
+      if (todosOf(e).length >= MAX_TODOS) return false
+      const panel = panelOf(e)
+      if (!panel) return false
+      const guard = captureProjectEpoch()
+      patch(key, { adding: '', addingText: clean, addError: undefined })
+      try {
+        const task = await createChangePlan({
+          id: e.fileId,
+          patches: panel.overrides,
+          source: 'assistant',
+          from_plan: e.planId,
+          add_todo: clean,
+          standard: currentStandard(e.panelId),
+          ...currentRunSelection(),
+          client_request_id: newRequestId(),
+        })
+        if (!guard.still() || !get().entries[key]) return false
+        patch(key, { adding: task.plan_id })
+        void poll(key, task.plan_id, guard, 'add')
+        return true
+      } catch (err) {
+        if (!guard.still() || !get().entries[key]) return false
+        patch(key, { adding: undefined, addingText: undefined, addError: { code: err instanceof EngineError && err.code ? err.code : 'change_plan_failed' } })
+        return false
+      }
     },
 
     addLayoutEntry: (entry) => set((s) => ({ entries: { ...s.entries, [entry.key]: entry }, order: [...s.order, entry.key] })),
@@ -764,16 +1184,17 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         return 'nothing'
       }
       // 一键排版：落地就是现有的那一次 commit（核对「图还是出发时那样」也在里面）；对不上 = 「图已改过」，不写
-      if (e.kind === 'layout') {
+      if (isCanvasPlan(e)) {
         const h = useDocumentStore.getState()
-        // ⌘Z 撤回过的「已应用」又是待确认：可以再应用（派生状态见 `effectiveStatus`）
-        const st = effectiveStatus(e, null, null, { past: h.past, future: h.future })
+        // ⌘Z 撤回过的「已应用」又是待确认：可以再应用（派生状态见 `effectiveStatus`；矢量编辑按对象状态判，不按历史条目）
+        const st = e.kind === 'vector' ? (e.vector?.holds() ? 'ready' : 'stale') : effectiveStatus(e, null, null, { past: h.past, future: h.future })
         if (st === 'stale') {
           patch(key, { status: 'stale', notice: undefined })
           return 'stale'
         }
-        if (st !== 'ready' || !e.layout) return 'failed'
-        const r = e.layout.apply()
+        const handle = canvasHandleOf(e)
+        if (st !== 'ready' || !handle) return 'failed'
+        const r = handle.apply()
         if (r === 'applied') {
           patch(key, { status: 'applied', appliedEntry: useDocumentStore.getState().past.at(-1), notice: undefined })
           set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
@@ -910,7 +1331,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
       const e = get().entries[key]
       if (!e) return
       // 一键排版的方案没有后端那一份，也没有「已放弃」的卡可留：直接收掉（再排一次只要几秒）
-      if (e.kind === 'layout') return drop(key)
+      if (isCanvasPlan(e)) return drop(key)
       patch(key, { status: 'discarded' })
       set((s) => (s.dialogKey === key ? { dialogKey: null } : {}))
       // 后端那几份（各版）可以收了；卡上的图仍是已经取到的地址，过期也只是图不显示，卡片文字不变
@@ -1023,6 +1444,28 @@ onCurrentProjectChange(() => {
 useAiStore.subscribe((s, prev) => {
   const v = s.caps?.change_plan_enabled
   if (typeof v === 'boolean' && v !== prev.caps?.change_plan_enabled) writeChangePlanCache(v)
+})
+
+// 建议待办卡续出来的脚本方案：过了检查就直接应用（用户在建议卡上已经勾过确认，ADR 0214 §四）；
+// 改了画出来的数据要先问一句，回答「就这样改」之后才应用；失败 / 越界 / 图已改过不自动再试（卡上如实说，留给用户）
+export function autoApplyTodoScripts(): void {
+  const st = useChangePlanStore.getState()
+  for (const e of Object.values(st.entries)) {
+    if (!e.todoOf || e.autoApplied || e.status !== 'ready' || e.plan?.kind !== 'script' || e.scriptBusy || pendingConfirm(e)) continue
+    const ask = e.plan.groups.find((g) => g.kind === 'script' && g.confirm?.kind === 'script_data_changed')
+    if (ask && e.answers?.[ask.key] !== 'yes') continue
+    useChangePlanStore.setState((cur) => (cur.entries[e.key] ? { entries: { ...cur.entries, [e.key]: { ...cur.entries[e.key], autoApplied: true } } } : {}))
+    void st.applyScript(e.key)
+  }
+}
+// 上一条脚本待办应用了 / 答了「先不改」就接着做下一条
+export function advanceTodoRuns(): void {
+  const st = useChangePlanStore.getState()
+  for (const e of Object.values(st.entries)) if (e.todoRun?.script.length && !e.todoRun.starting) void st.advanceTodos(e.key)
+}
+useChangePlanStore.subscribe(() => {
+  autoApplyTodoScripts()
+  advanceTodoRuns()
 })
 
 // 助手来源的方案一落定（不再是「生成中」），把输入框里那条指令与后端草稿放掉（`PlanEntry.onSettle`）

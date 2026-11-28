@@ -3821,7 +3821,15 @@ def plan_outcome(sid: str, project: str) -> dict | None:
     if cand is None or not taf.get("plan_only"):
         return None
     task = sess.get("task") or {}
+    # Agent 最后说的话（最后一串连续的正文）：没改脚本时由方案端点带回卡上
+    tail: list[str] = []
+    for item in reversed(list(sess.get("transcript") or [])):
+        if item.get("kind") == "message":
+            tail.insert(0, str(item.get("text") or ""))
+        elif tail:
+            break
     return {
+        "reply": "\n\n".join(tail).strip(),
         "status": sess["status"],
         "error": sess.get("error"),
         "outcome": task.get("outcome"),

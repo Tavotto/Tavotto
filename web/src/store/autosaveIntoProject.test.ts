@@ -170,7 +170,7 @@ describe('开关开着：节奏', () => {
     expect(readProjectFile(DOC_ID)).toMatchObject({ name: 'b', revision: 'rb' })
   })
 
-  it('A 在写时排进 B：A 成功后绑定仍是 dirty（回包按这一笔自己的编辑代次判断）；B 没写成时绑定仍是 dirty', async () => {
+  it('A 在写时排进 B：A 成功后绑定仍是 dirty（回包按这一笔自己的编辑代次判断）；B 没写成时顶栏不再说「已保存」', async () => {
     let release!: () => void
     gateNext = new Promise<void>((r) => (release = r))
     replyQueue = [
@@ -188,8 +188,9 @@ describe('开关开着：节奏', () => {
     await settle()
     // A 成功：A 之后又有编辑（B 的内容），项目里那份落后
     expect(readProjectFile(DOC_ID)).toMatchObject({ revision: 'revA', dirty: true })
-    // B 没写成（busy）：绑定不被改回「最新」，仍是 dirty
+    // B 没写成（busy）：绑定不被改回「最新」，仍是 dirty；落后的绑定不能再被说成「已保存」——不等第二次，直接落到「保存失败」档
     expect(readProjectFile(DOC_ID)?.dirty).toBe(true)
+    expect(s().projectWriteFailedDoc).toBe(DOC_ID)
   })
 
   it('外部修改：不覆盖、进冲突岔口一次；岔口没裁决前不再带着旧基线去撞', async () => {
@@ -227,15 +228,26 @@ describe('开关开着：节奏', () => {
     expect(s().projectReadOnlyDoc).toBeNull()
   })
 
-  it('瞬时失败 / 跳过：什么都不改、不打扰', async () => {
-    for (const state of ['busy', 'skipped', 'refused', 'failed']) {
+  it('瞬时失败（busy）：单次不闪红；连着两次才落到「保存失败」档；写成就恢复；skipped 不计', async () => {
+    const fail = async (state: string) => {
       reply = { project_layout: { state } }
       edit(Math.random() * 100)
       flushAutosave()
       await settle()
     }
+    await fail('busy')
+    expect(s().projectWriteFailedDoc).toBeNull()
+    await fail('skipped') // 空白 / 归属对不上：不算失败，也不清零
+    expect(s().projectWriteFailedDoc).toBeNull()
+    await fail('failed')
+    expect(s().projectWriteFailedDoc).toBe(DOC_ID)
     expect(s().projectReadOnlyDoc).toBeNull()
     expect(readProjectFile(DOC_ID)).toBeNull()
+    reply = { project_layout: { state: 'saved', name: 'a', file: 'tavottofile/a.json', revision: 'r' } }
+    edit(1)
+    flushAutosave()
+    await settle()
+    expect(s().projectWriteFailedDoc).toBeNull()
   })
 
   it('没有归属项目 / 只读窗口：不写项目', async () => {

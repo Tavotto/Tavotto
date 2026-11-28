@@ -163,12 +163,28 @@ def test_the_common_module_source_carries_the_new_functions():
 
 # =========================================================================== 配方：规则从不点名、点名才进配方
 def test_rules_never_group_by_an_integer_column_and_the_response_is_otherwise_unchanged(tmp_path):
-    for picks in (None, {"y": "growth_rate"}):
-        new, _p, _v = cands(tmp_path, ko_rows(), picks=picks)
-        old, _p2, _v2 = cands(tmp_path, ko_rows(), picks=picks, numcat_off=True)
+    # 三个水平的整数列（4 / 25 / 37）：有没有 numcat 这条事实，规则给的备选逐字相同。两个水平的（0 / 1）自 2026-11-27 起不再当默认横轴
+    # （ADR 0178「条件列与测量列」，`test_ai_data_design_measure` 锁它），所以「其余不变」拿三个水平的表来量；「规则从不拿整数列分组」两张表都量
+    three = [["knockout", "growth_rate"]]
+    for k, base in ((4, 1.0), (25, 0.7), (37, 0.4)):
+        three += [[k, round(base + i * 0.013, 3)] for i in range(8)]
+    for rows, same in ((ko_rows(), False), (three, True)):
+        for picks in (None, {"y": "growth_rate"}):
+            _check_rules_never_group(tmp_path, rows, picks, same)
+
+
+def _check_rules_never_group(tmp_path, rows, picks, same):
+    if True:
+        new, _p, _v = cands(tmp_path, rows, picks=picks)
+        old, _p2, _v2 = cands(tmp_path, rows, picks=picks, numcat_off=True)
         assert type(new) is type(old)
         if isinstance(new, R.NeedsChoice):
-            continue
+            return
+        assert all(c.recipe.numcat == () and "numcat" not in c.recipe.to_dict() for c in new.items)
+        assert all(c.recipe.group is None for c in new.items)
+        assert "knockout" in new.roles["options"]["group"] and old.roles["options"]["group"] == []
+        if not same:
+            return
         assert [c.recipe.to_dict() for c in new.items] == [c.recipe.to_dict() for c in old.items]
         assert all(c.recipe.numcat == () and "numcat" not in c.recipe.to_dict() for c in new.items)
         assert all(c.recipe.group is None for c in new.items)

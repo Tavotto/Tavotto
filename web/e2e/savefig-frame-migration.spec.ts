@@ -154,11 +154,11 @@ test('升级前的排版：原样打开 → 切到原图图幅内容不动 → �
   // 自动保存里的面板：figsize 那条回来了，几何与升级前逐字节相同。
   // 等完整响应再重载；未完成保存的 beforeunload 只能提供本机恢复候选。
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-layout-save]')).toBeVisible()
+  await expect(page.locator('[data-timeline-quick-name-input]')).toBeFocused()
   const written = await savedUndo
   expect(await written.finished()).toBeNull()
   await page.keyboard.press('Escape')
-  await expect(page.locator('[data-layout-save]')).toBeHidden()
+  await expect(page.locator('[data-timeline-quick-name-input]')).toHaveCount(0)
   await page.reload()
   await expect(obj).toBeVisible({ timeout: 60_000 })
   const saved = JSON.parse(readFileSync(path.join(autosave, `${LEGACY_DOC_ID}.json`), 'utf-8'))

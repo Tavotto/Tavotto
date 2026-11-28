@@ -53,6 +53,7 @@ INIT_FIELDS = {
     "body",
     "reply_email",
     "report_id",
+    "journal",  # API 1.7.0（ADR 0213）
     "attachments",
 }
 MAX_TOTAL = 50 * 1024 * 1024
@@ -339,7 +340,11 @@ class FakeContactServer:
         body = req.get("body")
         if extra or not isinstance(key, str) or not UUID4.match(key):
             return 422, {"ok": False, "code": "bad_request", "error": "x"}
-        if not isinstance(body, str) or not 1 <= len(body) <= 5000:
+        if req.get("journal") is not None and req.get("report_id") is not None:
+            return 422, {"ok": False, "code": "bad_request", "error": "x"}  # 与 report_id 互斥
+        if not isinstance(body, str) or not (
+            (0 if req.get("journal") is not None else 1) <= len(body) <= 5000
+        ):
             return 422, {"ok": False, "code": "bad_request", "error": "x"}
         if len(req.get("subject") or "") > 120:
             return 422, {"ok": False, "code": "bad_request", "error": "x"}

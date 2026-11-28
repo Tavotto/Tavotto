@@ -62,10 +62,12 @@ from pathlib import Path
 
 from . import atomicio, documents
 
-#: 写入端总开关：默认关（ADR 0211 第二期 PR 1）；与「自动保存写进项目」同一个 PR 打开。
-#: 测试 monkeypatch 这个常量；排查用环境变量 `TAVOTTO_LAYOUT_DIR_WRITER=1` 也能打开。
-WRITER_ENABLED = False
+#: 写入端总开关：**默认开**（ADR 0211 第二期 PR 3 上线）。应急回退：环境变量 `TAVOTTO_LAYOUT_DIR_WRITER=0` 关掉
+#: （关着时 NEW / LEGACY 仍写 `<名>.json`，已是目录形态的排版仍写进目录；自动保存不写项目）；`=1` 强制开。
+#: 测试 monkeypatch 这个常量；要对拍改造前行为的用例显式关开关（`WRITER_ENABLED = False`）。
+WRITER_ENABLED = True
 WRITER_ENV = "TAVOTTO_LAYOUT_DIR_WRITER"
+
 
 #: 占位文件的 `schema`：远大于任何现役构建认识的范围，旧版据 `schema > SCHEMA_CURRENT` 判「来自更新的 Tavotto」。
 #: **唯一出处**（占位的写出与识别都用它）。
@@ -140,7 +142,10 @@ class LayoutDirError(Exception):
 
 
 def writer_enabled() -> bool:
-    return bool(WRITER_ENABLED) or os.environ.get(WRITER_ENV) == "1"
+    env = os.environ.get(WRITER_ENV)
+    if env == "0":
+        return False
+    return True if env == "1" else bool(WRITER_ENABLED)
 
 
 # ------------------------------------------------------------------ 名字

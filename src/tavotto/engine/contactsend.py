@@ -41,6 +41,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
@@ -232,8 +233,12 @@ def enabled() -> bool:
     return bool(resolve_targets())
 
 
-def capability() -> dict:
-    """给界面的能力说明与未读数（本机判断，**不联网**，不含线路地址）。"""
+def capability(*, journal_tips: bool = False) -> dict:
+    """给界面的能力说明与未读数（本机判断，**不联网**，不含线路地址）。
+
+    `journal_tips`：期刊线索入口开不开（ADR 0213 §五：「联系作者」可用且用户没关期刊联网）。由调用方（`app.py`）
+    按 `journalremote.disabled()` 传进来——本模块不 import journalremote：后者的线路先后要借本模块的「大陆环境」判据，
+    两边互相 import 就成环（`tests/test_import_architecture.py`）。"""
     if not enabled():
         return {"enabled": False}
     return {
@@ -246,6 +251,7 @@ def capability() -> dict:
         "max_total_bytes": MAX_TOTAL_BYTES,
         "unread": contactinbox.unread_count(),
         "retention_days": contactinbox.RETENTION_DAYS,
+        "journal_tips": journal_tips,
     }
 
 
@@ -322,16 +328,126 @@ class Draft:
     reply_email: str
     report_id: str
     attachments: tuple[Attachment, ...]
+    #: 期刊线索的结构化头（ADR 0213）：已过 `clean_journal`；不是线索就是 None
+    journal: dict | None = None
 
     def fingerprint(self) -> str:
         h = hashlib.sha256()
-        for part in (self.locale, self.subject, self.body, self.reply_email, self.report_id):
+        journal = (
+            json.dumps(self.journal, ensure_ascii=False, sort_keys=True) if self.journal else ""
+        )
+        for part in (
+            self.locale,
+            self.subject,
+            self.body,
+            self.reply_email,
+            self.report_id,
+            journal,
+        ):
             h.update(part.encode("utf-8"))
             h.update(b"\x00")
         for a in self.attachments:
             h.update(a.name.encode("utf-8"))
             h.update(hashlib.sha256(a.data).digest())
         return h.hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# 期刊线索（ADR 0213）：结构化头在本机先校验，形状与服务端 `/v1/messages/init` 的 `journal` 同一份契约
+# ---------------------------------------------------------------------------
+JOURNAL_TYPES = ("wrong", "missing", "editor")
+#: 「问题」分段的闭集（只在 type=wrong 时发）
+JOURNAL_ISSUES = ("wrong_value", "updated", "link_broken", "other")
+JOURNAL_LABEL_MAX = 200
+JOURNAL_QUERY_MAX = 120
+JOURNAL_CURRENT_MAX = 200
+JOURNAL_URL_MAX = 2000
+_JOURNAL_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
+_JOURNAL_RULE_KEY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,119}$")
+_JOURNAL_SOURCE_ID = re.compile(r"^(?:v2:)?[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$")
+_CTRL_OR_SPACE = re.compile(r"[\s\x00-\x1f\x7f]")
+#: 目录里的序列化值 / 刊名 / 搜索词只收单行：C0 / C1 控制字符（含换行）与 U+2028 / U+2029 都不合规——
+#: 与服务端单行校验同一张表，否则漏到服务端会整封 422
+_CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def _journal_line(v: object, limit: int) -> str | None:
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    return v if v and len(v) <= limit and not _CTRL.search(v) else None
+
+
+def _journal_url(v: object) -> str | None:
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    if not v.startswith("https://") or len(v) > JOURNAL_URL_MAX or _CTRL_OR_SPACE.search(v):
+        return None
+    try:
+        parts = urllib.parse.urlsplit(v)
+        host = parts.hostname
+    except ValueError:
+        return None
+    if not host or "@" in parts.netloc:  # 不带 user:pass@
+        return None
+    return v
+
+
+def _journal_rev(v: object) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 999999 else None
+
+
+def clean_journal(raw: object, *, has_attachments: bool) -> dict | None:
+    """校验并净化 `journal` 头。`type` 不合法 / 必填缺失 → `ContactError("journal_invalid")`（整封拒）；
+    单个可选字段不合规就丢掉，不让整封信失败；契约之外的键丢掉（服务端对未知字段回 422）。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ContactError("journal_invalid", 422)
+    kind = raw.get("type")
+    if kind not in JOURNAL_TYPES:
+        raise ContactError("journal_invalid", 422)
+    out: dict = {"type": kind}
+    if "issue" in raw:
+        issue = raw["issue"]
+        if kind != "wrong" or issue not in JOURNAL_ISSUES:
+            raise ContactError("journal_invalid", 422)
+        out["issue"] = issue
+    jid = raw.get("journal_id")
+    if isinstance(jid, str) and _JOURNAL_ID.match(jid):
+        out["journal_id"] = jid
+    elif kind in ("wrong", "editor"):
+        raise ContactError("journal_invalid", 422)
+    for key, limit in (
+        ("journal_label", JOURNAL_LABEL_MAX),
+        ("query", JOURNAL_QUERY_MAX),
+        ("current", JOURNAL_CURRENT_MAX),
+    ):
+        line = _journal_line(raw.get(key), limit)
+        if line is not None:
+            out[key] = line
+    for key, pat in (("rule_key", _JOURNAL_RULE_KEY), ("source_id", _JOURNAL_SOURCE_ID)):
+        v = raw.get(key)
+        if isinstance(v, str) and pat.match(v):
+            out[key] = v
+    url = _journal_url(raw.get("url"))
+    if url is not None:
+        out["url"] = url
+    cat = raw.get("catalog")
+    if isinstance(cat, dict):
+        revs = {k: n for k in ("v1", "v2") if (n := _journal_rev(cat.get(k))) is not None}
+        if revs:
+            out["catalog"] = revs
+    if kind == "missing" and not (out.get("query") or out.get("url") or has_attachments):
+        raise ContactError("journal_invalid", 422)  # 线索至少要有搜索词、链接、附件之一
+    return out
+
+
+def journal_subject(journal: dict, locale: str) -> str:
+    """本机「我的来信」里显示的主题；与服务端空主题时的生成规则同一句式（服务端自己生成，这里只给本机列表用）。"""
+    what = journal.get("journal_label") or journal.get("query") or journal.get("journal_id") or ""
+    return f"期刊线索：{what}" if locale == "zh-CN" else f"Journal tip: {what}"
 
 
 def build_draft(meta: object, files: list[tuple[str, bytes]]) -> Draft:
@@ -351,7 +467,10 @@ def build_draft(meta: object, files: list[tuple[str, bytes]]) -> Draft:
     locale = text("locale")
     if len(subject) > SUBJECT_MAX:
         raise ContactError("subject_too_long", 422)
-    if not body:
+    journal_raw = meta.get("journal")
+    if journal_raw is not None and report_id:
+        raise ContactError("journal_invalid", 422)  # 与 report_id 互斥（服务端同一处置）
+    if not body and journal_raw is None:
         raise ContactError("body_required", 422)
     if len(body) > BODY_MAX:
         raise ContactError("body_too_long", 422)
@@ -364,8 +483,15 @@ def build_draft(meta: object, files: list[tuple[str, bytes]]) -> Draft:
     atts = tuple(clean_attachment(n, d) for n, d in files)
     if sum(a.size for a in atts) > MAX_TOTAL_BYTES:
         raise ContactError("attachments_too_large", 422)
+    journal = clean_journal(journal_raw, has_attachments=bool(atts))
     return Draft(
-        locale if locale in LOCALES else "en-US", subject, body, reply_email, report_id, atts
+        locale if locale in LOCALES else "en-US",
+        subject,
+        body,
+        reply_email,
+        report_id,
+        atts,
+        journal,
     )
 
 
@@ -392,7 +518,7 @@ def classify(status: int, server_code: str) -> str:
     if status == 422:
         if server_code in ("invalid_email", "attachment_invalid", "report_not_found"):
             return server_code
-        return "client_error"
+        return "client_error"  # 含旧服务端不认 `journal`（ADR 0213）：草稿由界面保留
     code = diagsend.classify(status, server_code)
     code = _FOLD.get(code, code)
     return code if code in FAILURES else "unexpected_response"
@@ -689,11 +815,15 @@ def _local_copy(draft: Draft | None) -> dict:
     """本机留一份用户写的主题 / 正文 / 附件**文件名**（不含附件内容与邮箱；ADR 0145 第二期修订）。"""
     if draft is None:
         return {}
-    return {
+    copy = {
         "subject": draft.subject,
         "body": draft.body,
         "attachment_names": [a.name for a in draft.attachments],
     }
+    if draft.journal:
+        copy["kind"] = "journal"
+        copy["subject"] = draft.subject or journal_subject(draft.journal, draft.locale)
+    return copy
 
 
 def _flow(sess: Session, targets: list[diagsend.Target]) -> None:
@@ -711,6 +841,21 @@ def _flow(sess: Session, targets: list[diagsend.Target]) -> None:
     _complete(sess, targets)
 
 
+#: 遥测的安装方式（desktop / pipx / pip / source / unknown）→「联系作者」契约的闭集（desktop / pip / dev / other）。
+#: 与服务端给关联来信做的映射（diagnostics-api `_LINKED_DISTRIBUTION`）同一张表；不映射时 pipx / 源码安装发信一律 422。
+_CONTACT_DISTRIBUTION = {
+    "desktop": "desktop",
+    "pip": "pip",
+    "pipx": "pip",
+    "source": "dev",
+    "unknown": "other",
+}
+
+
+def contact_distribution(kind: str) -> str:
+    return _CONTACT_DISTRIBUTION.get(kind, "other")
+
+
 def _init_body(sess: Session, draft: Draft, route: str) -> dict:
     body: dict = {
         "client_message_id": sess.client_message_id,
@@ -718,7 +863,7 @@ def _init_body(sess: Session, draft: Draft, route: str) -> dict:
         "app_version": _version(),
         "os": telemetry._platform(),
         "arch": telemetry._arch(),
-        "distribution": telemetry._distribution(),
+        "distribution": contact_distribution(telemetry._distribution()),
         "route": route,
         "subject": draft.subject,
         "body": draft.body,
@@ -731,6 +876,8 @@ def _init_body(sess: Session, draft: Draft, route: str) -> dict:
         body["reply_email"] = draft.reply_email
     if draft.report_id:
         body["report_id"] = draft.report_id
+    if draft.journal:
+        body["journal"] = draft.journal
     return body
 
 

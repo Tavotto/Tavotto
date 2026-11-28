@@ -37,6 +37,7 @@ from pathlib import Path
 
 from . import (
     ai_bridge,
+    ai_history,  # noqa: F401 - import 时向 msixmigrate 登记历史库的「旧库多几条」计数（msix_legacy_history）
     bootstrap,
     cmddiag,
     config,
@@ -103,7 +104,10 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: 原样/其余哈希、渲染进程 PATH 上有没有、固定常见目录枚举里有没有、Homebrew keg 未链接布尔、PATH 形状；TVD-1FCJ）。
 #: 16 = `project.managed_environment_jobs` 每条新增 `selftest`（worker 自检没过时的闭集形状：失败在哪一步、退出码、
 #: worker 回的稳定错误码、`[structure]` 摘要与最深一帧引擎源码位置；不带报错文字与路径，TVD-JXMR）。
-BUNDLE_SCHEMA_VERSION = 16
+#: 17 = report.json 的 `system.msix_legacy_history`（#2282 已中招用户的补救 A：旧包私有区的历史库比真实目录那份多几条——
+#: 每个旧包一项，闭集 `state` ok / timeout / error + 会话与请求账本的总数、缺数；只读两边、不带路径与包族名；
+#: 非 Windows 为 `{"state": "not_windows"}`）。
+BUNDLE_SCHEMA_VERSION = 17
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1655,6 +1659,8 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "msix_breakaway": msixbreakaway.shell_breakaway_outcome(),
             # 包私有区旧数据补回真实目录的结果（闭集 state + 计数，不带路径与包族名）
             "msix_data_migration": msixmigrate.diagnostic_facts(),
+            # 旧包私有区的历史库比真实目录那份多出多少条（#2282 已中招用户的补救 A）：只数、不搬，闭集 state + 计数
+            "msix_legacy_history": msixmigrate.legacy_gap_facts(),
             "encoding": {
                 "stdout": getattr(sys.stdout, "encoding", None),
                 "filesystem": sys.getfilesystemencoding(),

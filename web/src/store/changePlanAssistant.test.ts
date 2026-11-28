@@ -117,6 +117,20 @@ describe('发起', () => {
     expect(e).toMatchObject({ from: 'assistant', status: 'generating', instruction: FALLBACK.prompt })
   })
 
+  it('助手来源带 standard（名字 / chosen / rules / issues）；审阅来源不带', async () => {
+    await cps().requestFromAssistant('p1', { instruction: '符合投稿要求吗' }, FALLBACK)
+    const std = createChangePlan.mock.calls[0][0].standard
+    expect(std).toMatchObject({ chosen: false, issues: [] })
+    expect(typeof std.name).toBe('string')
+    expect(Object.keys(std.rules).length).toBeGreaterThan(0)
+    cps().clear()
+    createChangePlan.mockClear()
+    await cps().requestFromReview('p1', { comments: [{ id: 'c1', text: 'x' }] as never })
+    expect(createChangePlan).toHaveBeenCalledOnce()
+    expect(createChangePlan.mock.calls[0][0].source).toBe('review')
+    expect('standard' in createChangePlan.mock.calls[0][0]).toBe(false)
+  })
+
   it('整张图范围（没有选中元素）不带 target', async () => {
     await cps().requestFromAssistant('p1', { instruction: '全部字号改 10' }, FALLBACK)
     expect('target' in createChangePlan.mock.calls[0][0]).toBe(false)
@@ -273,6 +287,11 @@ describe('整条指令都要改脚本', () => {
     getChangePlan.mockResolvedValue(ready(onlyScript, { code: 'change_plan_empty' }))
     const key = (await ask()) as string
     await tick()
+    // 助手来源的脚本方案请求不带 standard（后端 mode: script 不收，带了就 invalid_change_plan、连落回都走不到；Codex #2340）
+    const scriptBody = createChangePlan.mock.calls.map(([b]) => b as Record<string, unknown>).find((b) => b.mode === 'script')
+    expect(scriptBody).toBeDefined()
+    expect('standard' in (scriptBody as object)).toBe(false)
+    expect('standard' in createChangePlan.mock.calls[0][0]).toBe(true)
     expect(start).toHaveBeenCalledOnce()
     expect(start.mock.calls[0][0]).toMatchObject({
       prompt: FALLBACK.prompt,
@@ -315,6 +334,68 @@ describe('整条指令都要改脚本', () => {
     const mixed = plan({ groups: [], unhandled: [{ comment_id: 'a1', reason: 'needs_script' }, { comment_id: 'a1', reason: 'unclear' }] })
     getChangePlan.mockResolvedValue(ready(mixed, { code: 'change_plan_empty' }))
     const key = (await ask()) as string
+    await tick()
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_empty' } })
+  })
+})
+
+describe('聊天 / 提问（整条都是 out_of_scope）', () => {
+  const chat = plan({ groups: [], candidate_patches: BASE, unhandled: [{ comment_id: 'a1', reason: 'out_of_scope' }] })
+
+  it('不出失败卡：原话交给普通助手对话（不走脚本方案、不加交接句），卡撤掉、输入框草稿放掉', async () => {
+    getChangePlan.mockResolvedValue(ready(chat, { code: 'change_plan_empty' }))
+    const settled = vi.fn()
+    const key = (await cps().requestFromAssistant('p1', { instruction: FALLBACK.prompt }, { ...FALLBACK, canvas: ds().activeCanvasId, generation: useAiStore.getState().generation }, settled)) as string
+    await tick()
+    expect(start).toHaveBeenCalledOnce()
+    expect(start.mock.calls[0][0]).toMatchObject({ prompt: FALLBACK.prompt, fileId: 'f_p1', panelId: 'p1', script: 'fig.py', chat: true })
+    expect(createChangePlan.mock.calls.filter(([b]) => (b as { mode?: string }).mode === 'script')).toHaveLength(0)
+    expect(cps().entries[key]).toBeUndefined()
+    expect(cps().order).not.toContain(key)
+    expect(settled).toHaveBeenCalledOnce()
+  })
+
+  it('发不出去（没有可用 Agent）：留失败卡，指令不丢', async () => {
+    start.mockRejectedValueOnce(new Error('no-usable-agent'))
+    getChangePlan.mockResolvedValue(ready(chat, { code: 'change_plan_empty' }))
+    const key = (await ask()) as string
+    await tick()
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_script_failed' } })
+  })
+
+  it('混合（有 out_of_scope 也有 needs_script / unclear）：照旧出失败卡，不落回', async () => {
+    const mixed = plan({ groups: [], unhandled: [{ comment_id: 'a1', reason: 'out_of_scope' }, { comment_id: 'a1', reason: 'unclear' }] })
+    getChangePlan.mockResolvedValue(ready(mixed, { code: 'change_plan_empty' }))
+    const key = (await ask()) as string
+    await tick()
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_empty' } })
+  })
+
+  it('有能改的组（另一部分 out_of_scope）：照旧出方案卡', async () => {
+    getChangePlan.mockResolvedValue(ready(plan({ unhandled: [{ comment_id: 'a1', reason: 'out_of_scope' }] })))
+    const key = (await ask()) as string
+    await tick()
+    expect(start).not.toHaveBeenCalled()
+    expect(cps().entries[key].status).toBe('ready')
+  })
+
+  it('unclear / no_change_needed 单独出现：照旧出失败卡', async () => {
+    for (const reason of ['unclear', 'no_change_needed'] as const) {
+      cps().clear()
+      getChangePlan.mockResolvedValue(ready(plan({ groups: [], unhandled: [{ comment_id: 'a1', reason }] }), { code: 'change_plan_empty' }))
+      const key = (await ask()) as string
+      await tick()
+      expect(start).not.toHaveBeenCalled()
+      expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_empty' } })
+    }
+  })
+
+  it('审阅来源全 out_of_scope：照旧失败卡，不落回助手对话', async () => {
+    const review = plan({ source: 'review', groups: [], unhandled: [{ comment_id: 'c1', reason: 'out_of_scope' }] })
+    getChangePlan.mockResolvedValue(ready(review, { code: 'change_plan_empty' }))
+    const key = (await cps().requestFromReview('p1', { share_id: 's1', comments: [{ id: 'c1', text: '你好' }] } as never)) as string
     await tick()
     expect(start).not.toHaveBeenCalled()
     expect(cps().entries[key]).toMatchObject({ status: 'failed', failure: { code: 'change_plan_empty' } })

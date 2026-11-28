@@ -2,14 +2,22 @@ import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
-import { DATA_DECLINED, POLL_TIMEOUT, declinedGroups, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, pendingConfirm, scriptPassable, todoChecked, todoQueued, todosOf, type PlanEntry } from '@/store/changePlanStore'
+import { failedChecks, touchedCount } from '@/lib/vectorEdit'
+import type { ChangeLine } from '@/lib/vectorChanges'
 import { licenseHas, licenseVisible, useLicenseStore } from '@/store/licenseStore'
 
 import { effectiveStatus as effectiveStatusOf, type PlanSource } from '@/lib/changePlanApply'
 import { useDocumentStore } from '@/store/documentStore'
 
-/** 卡片此刻的状态（`lib/changePlanApply.effectiveStatus`）；一键排版卡另按文档历史派生 */
-export function effectiveStatus(e: Parameters<typeof effectiveStatusOf>[0], current: readonly unknown[] | null, source?: PlanSource | null) {
+/** 卡片此刻的状态（`lib/changePlanApply.effectiveStatus`）；整版 / 矢量编辑卡另按文档历史派生，矢量编辑卡待确认时点名的对象变了 = 图已改过 */
+export function effectiveStatus(e: Parameters<typeof effectiveStatusOf>[0] & { vector?: { holds: () => boolean; landed: () => boolean; result?: unknown } }, current: readonly unknown[] | null, source?: PlanSource | null) {
+  // 矢量编辑卡按**对象状态**派生：点名的对象还是出发时那样 = 待确认（含撤回之后）；方案写进去的样子还在 = 已应用；都不是 = 图改过了。
+  // 不认历史条目：应用之后文字量好尺寸的回写会把那一条历史换成合并后的新条目
+  if (e.kind === 'vector' && (e.status === 'ready' || e.status === 'applied') && e.plan && e.vector?.result) {
+    if (e.vector.holds()) return 'ready'
+    return e.status === 'applied' && e.vector.landed() ? 'applied' : 'stale'
+  }
   const h = useDocumentStore.getState()
   return effectiveStatusOf(e, current, source, e.kind === 'layout' ? { past: h.past, future: h.future } : undefined)
 }
@@ -22,8 +30,16 @@ export type PlanBox = [number, number, number, number]
 
 /** 一个改动组在界面上的样子（清单一行 + 舞台上的细框） */
 export interface GroupView {
-  /** 清单行第二行的整句（一键排版的组说「N 张图」）；缺省按「谁 · N 处」 */
+  /** 清单行第二行的整句（一键排版的组说「N 张图」）；缺省按「谁 · N 处」；空串 = 不要第二行 */
   metaText?: string
+  /** 整批要或不要的一行（矢量编辑方案里每条复述）：不画勾选框，应用 / 放弃是整份的 */
+  fixed?: boolean
+  /** 这一行下面的字段改动（矢量编辑方案，已翻成界面语言） */
+  lines?: ChangeLine[]
+  /** 这一行下面的一句灰字（矢量编辑方案：因依赖了没勾的步而自动取消） */
+  note?: string
+  /** 悬停说明（矢量编辑方案：后端的复述原文，排查用） */
+  detail?: string
   key: string
   /** 这一处改了什么：对应那条意见的原话（截短过的），没有就说「第 N 条意见」 */
   summary: string
@@ -42,6 +58,8 @@ export interface UnhandledView {
   text: string
   reviewer: string
   reason: string
+  /** 这一行带的动作（矢量编辑方案：统计标注没核到原话，「按我说的加」） */
+  action?: { kind: 'confirm'; item: string; op: unknown }
 }
 
 /** 一条意见在界面上的编号：审阅页签给的（与页签一致）优先，没有就按这批意见里的位置 */
@@ -63,6 +81,8 @@ export function groupViews(e: PlanEntry): GroupView[] {
 function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
   const numberOf = (id?: string) => commentNumber(e, id)
   {
+    // 矢量编辑方案：一条复述一行（后端的话原样，不画勾选与画面框），补丁的操作有先后、不能只要其中几条
+    if (e.kind === 'vector') return { key: g.key, summary: g.label, reviewers: [], commentNumbers: [], fromNote: false, fixed: !e.vector?.ops, metaText: '', boxes: [], note: e.vector?.blocked?.[g.key] ? cp('vector.blocked') : undefined, lines: e.vector?.groups?.find((x) => x.key === g.key)?.lines, detail: e.vector?.result?.echo?.join('\n') }
     if (e.kind === 'layout') {
       return {
         key: g.key,
@@ -84,7 +104,8 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
       const before = new Map<string, ChangePlanBox>((g.boxes.before ?? []).map((b) => [b.gid, b]))
       return {
         key: g.key,
-        summary: clip(e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }),
+        // 建议待办卡：这一组标题是那条待办的一句话（不是整条指令）
+        summary: clip(todosOf(e).find((t) => t.group_key === g.key)?.label ?? e.instruction ?? g.label) || cp('dialog.groupN', { n: i + 1 }),
         reviewers: [],
         commentNumbers: [],
         fromNote: false,
@@ -106,6 +127,7 @@ function groupView(e: PlanEntry, g: ChangePlanGroup, i: number): GroupView {
 
 /** 一条没处理的意见：原话 + 谁说的 + 一句话原因（闭集短码 → 文案） */
 export function unhandledViews(e: PlanEntry): UnhandledView[] {
+  if (e.kind === 'vector') return vectorUnhandledViews(e)
   // 答了「不改」的对数轴下限：整组没动，那条意见在没处理列表里写一句原因
   const declined = declinedGroups(e).map((g, i): UnhandledView => {
     const c = g.comment_id ? e.comments.find((x) => x.id === g.comment_id) : undefined
@@ -133,6 +155,46 @@ function unhandledViewsOf(e: PlanEntry): UnhandledView[] {
 
 export const unhandledReason = (r: ChangePlanUnhandledReason): string => cp(`unhandled.${r}`)
 
+/** 后端 `vectoredit.ERROR_CODES` 的闭集：每个码一句人话（后端那句是写给模型 / Agent 看的，不上界面） */
+const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'bad_value', 'out_of_range', 'duplicate_target', 'kernel_unavailable', 'too_many_steps', 'needs_measurement', 'needs_confirmation', 'provenance_data', 'bad_item', 'duplicate_name', 'unknown_ref', 'anchor_unresolvable', 'panel_transformed', 'bad_point'] as const
+
+/** 矢量编辑方案里没能照做的几条：带码的按码翻成人话，没码的是模型自己写的一句原因，照显示 */
+function vectorUnhandledViews(e: PlanEntry): UnhandledView[] {
+  // 一行一句原因（没有「谁说的」那一层，也不重复整条指令）
+  return (e.vector?.result?.unhandled ?? []).map((u, i) => {
+    // 统计标注：没核到原话 = 一句话 + 「按我说的加」；来源写成「数据」本期不收（一句话、没有按钮）
+    const said = ((u.op as { items?: { name?: string; text?: string }[] } | null | undefined)?.items ?? []).find((x) => x?.name === u.field)?.text
+    const star = clip(said ?? '', 12)
+    if (u.code === 'needs_confirmation' || u.code === 'provenance_data') {
+      const key = u.code === 'needs_confirmation' ? 'needsConfirm' : 'provenanceData'
+      return {
+        id: `u${i}`,
+        text: star ? cp(`vector.${key}`, { text: star }) : cp(`vector.${key}Plain`),
+        reviewer: '',
+        reason: '',
+        ...(u.code === 'needs_confirmation' && u.field && u.op ? { action: { kind: 'confirm' as const, item: u.field, op: u.op } } : {}),
+      }
+    }
+    return {
+      id: `u${i}`,
+      text: (VECTOR_CODES as readonly string[]).includes(u.code ?? '') ? cp(`unhandled.vector.${u.code}`, { count: u.count ?? 0, max: u.max ?? 0 }) : clip(u.reason, 80) || cp('unhandled.vector.bad_op'),
+      reviewer: '',
+      reason: '',
+    }
+  })
+}
+
+/** 这几个码 = 子图本身量不了（冻结 / 没有脚本 / 运行时素材 / 终端里的活会话）：说「量不了」；其余（超时、导出失败…）说「没量到」 */
+const FROZEN_CODES = new Set(['composed_from_snapshot', 'runtime_panel', 'no_script', 'native_session'])
+
+/** 矢量编辑方案里「没量到」的子图：一行灰字（子图用界面叫法「第 N 张图」，不出现短号）；都量到了 / 没有这项 = null */
+export function vectorUnmeasuredLine(e: Pick<PlanEntry, 'vector'>): string | null {
+  const um = Object.entries(e.vector?.result?.unmeasured ?? {})
+  if (!um.length) return null
+  const panels = listJoin(um.map(([ref]) => cp('vector.panelN', { n: Number(ref.replace(/\D/g, '')) || 0 })))
+  return cp(um.every(([, code]) => FROZEN_CODES.has(code)) ? 'vector.unmeasuredFrozen' : 'vector.unmeasured', { panels })
+}
+
 /** 一版方案里勾选的改动：处理了几条意见、改了几处；没改的几条里有几条是要改脚本的 */
 export function planTally(e: PlanEntry) {
   const all = groupViews(e).filter((g) => !e.unchecked[g.key])
@@ -159,6 +221,14 @@ export function summaryLine(e: PlanEntry): string {
   // 续改出的版本：先说这版按批注又改了几处，再说按意见改的
   if (t.notes > 0) return cp('card.summaryNotes', { notes: cp('card.notesN', { count: t.notes }), places: placesPhrase(t.notePlaces) })
   if (e.kind === 'layout') return cp('card.summaryLayout', { count: e.layout?.count ?? 0 })
+  if (e.kind === 'vector' && e.vector?.result) {
+    const count = touchedCount(e.vector.result)
+    if (e.vector.failed) return cp('dialog.vectorRecomputeFailed')
+    const fails = failedChecks(e.vector.result)
+    const rest = e.vector.result.unhandled?.length ?? 0
+    if (fails > 0) return cp('card.summaryVectorChecks', { count, fails })
+    return rest > 0 ? cp('card.summaryVectorRest', { count, rest }) : cp('card.summaryVector', { count })
+  }
   if (e.from === 'assistant') {
     if (t.script > 0) return cp('card.summaryAssistantScript', { places })
     return t.other > 0 ? cp('card.summaryAssistantOther', { places }) : cp('card.summaryAssistant', { places })
@@ -176,6 +246,10 @@ export const scriptInfo = (e: Pick<PlanEntry, 'plan'>) => e.plan?.groups.find((g
 
 /** 脚本修改方案（一张卡只含一类：不是图内修改） */
 export const isScriptPlan = (e: Pick<PlanEntry, 'plan'>): boolean => e.plan?.kind === 'script'
+
+/** 矢量编辑方案此刻不能应用：正在按勾选重算，或一步都没勾 */
+export const vectorCannotApply = (e: Pick<PlanEntry, 'kind' | 'vector' | 'plan' | 'unchecked'>): boolean =>
+  e.kind === 'vector' && (!!e.vector?.busy || !!e.vector?.failed || (e.plan?.groups ?? []).every((g) => e.unchecked[g.key]))
 
 /** 失败之后用户能走的下一步（每个稳定码一个，绝不留死胡同） */
 export type FailureAction = 'connect' | 'retry' | 'regenerate' | 'dismiss' | 'script' | 'restore'
@@ -200,6 +274,8 @@ export function failureAction(code: string, params?: Record<string, unknown>): F
     case 'change_plan_script_no_preview':
     case 'change_plan_script_overreach':
       return 'retry'
+    case 'vector_kernel_unavailable':
+      return 'dismiss'
     case 'change_plan_busy':
     case 'change_plan_model_quota':
     case 'change_plan_model_timeout':
@@ -219,6 +295,8 @@ export function failureAction(code: string, params?: Record<string, unknown>): F
 export function failureText(code: string, params?: Record<string, unknown>, assistant = false): string {
   if (code === 'change_plan_empty') return cp(assistant ? 'card.emptyAssistant' : 'card.empty')
   if (code === 'change_plan_script_failed') return cp('card.scriptFailed')
+  // 矢量编辑：布尔 / 偏移这类要几何内核，这台电脑上没装好——其余编辑照常（一句话，图没有改动）
+  if (code === 'vector_kernel_unavailable') return cp('card.vectorKernel')
   // 前端本地码：数据会变的脚本方案，用户答了「先不改」
   if (code === DATA_DECLINED) return cp('card.dataDeclined')
   // 外部 CLI 越界（R-03）：一句话说清脚本怎么样了（还原了 / 没替你还原 / 没动），文件名由卡片另列
@@ -274,7 +352,7 @@ export const markNoteHintSeen = (): void => {
  * 一键排版的整版方案（`quick_layout`）没有逐元素的改动可批注，脚本修改的卡（二期）是脚本副本——都不能重改。PR 6 的脚本卡复用这一个判断。
  */
 export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean {
-  if (e.kind === 'layout' || e.plan?.kind === 'script') return false
+  if (e.kind === 'layout' || e.kind === 'vector' || e.plan?.kind === 'script') return false
   const from = e.from ?? 'review'
   return (from === 'review' || from === 'assistant') && e.plan?.source !== 'quick_layout'
 }
@@ -283,11 +361,87 @@ export function canRevise(e: Pick<PlanEntry, 'kind' | 'from' | 'plan'>): boolean
  * 生成中卡片的任务清单（2026-11-26，照准备 / 修复的任务清单）：三步按后端 `phase` 勾，不靠 Agent 的计划工具。
  * 图内修改 = 读取这张图 → 想怎么改 → 画出修改后的图；脚本修改中间一步是「改脚本」（Agent 在候选里改 + 预检）。
  */
-export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'plan' | 'revising'>): TaskStep[] | null {
+export function planSteps(e: Pick<PlanEntry, 'kind' | 'phase' | 'request' | 'plan' | 'revising' | 'vector'>): TaskStep[] | null {
+  // 矢量编辑：量图（只在有可量的子图时才有这一步）→ 想怎么改 → 算出结果
+  if (e.kind === 'vector') {
+    const measured = !!e.vector?.measured
+    const ids = measured ? (['measure', 'model', 'plan'] as const) : (['model', 'plan'] as const)
+    const at = e.phase === 'plan' ? ids.length - 1 : e.phase === 'model' ? ids.indexOf('model') : 0
+    return ids.map((id, i) => ({ id, label: cp(`card.steps.${id === 'plan' ? 'vectorPlan' : id}`), state: i < at ? 'done' : i === at ? 'active' : 'pending' }))
+  }
   // 一键排版没有阶段；方案已经回来、正在交给改脚本的那一小会儿（不是重改）也不再画步骤，照旧一句话
-  if (e.kind === 'layout' || (e.plan && e.revising === undefined)) return null
+  if (isCanvasPlan(e) || (e.plan && e.revising === undefined)) return null
   const script = e.request.mode === 'script' || e.phase === 'agent'
   const at = e.phase === 'render_after' ? 2 : e.phase === 'model' || e.phase === 'agent' ? 1 : 0
   const ids = ['before', script ? 'agent' : 'model', 'after'] as const
   return ids.map((id, i) => ({ id, label: cp(`card.steps.${id}`), state: i < at ? 'done' : i === at ? 'active' : 'pending' }))
+}
+
+/**
+ * 助手来源、还没弄清这句话是要改图还是只是聊天 / 提问的那一小会儿（模型还没回话）：不出「修改方案」卡，只一行思考小球。
+ * 是聊天就直接交给普通对话，不会先闪一张卡再消失（用户 2026-11-27）——方案回来、正在交给普通对话的那一下（整条 out_of_scope）也还是这一行；要改图的，方案一回来卡就出（停在「画出修改后的图」那一步）。
+ */
+export function planUndecided(e: Pick<PlanEntry, 'from' | 'kind' | 'status' | 'plan' | 'revising' | 'request' | 'phase'>): boolean {
+  // 整版 / 矢量编辑方案不在此列：用户选了对象再发的就是改图指令（没有「是不是聊天」要判，也没有落回普通对话的路），生成中就是一张卡
+  return e.from === 'assistant' && !isCanvasPlan(e) && e.status === 'generating' && (!e.plan || allOutOfScope(e.plan)) && e.revising === undefined && e.request.mode !== 'script' && e.phase !== 'render_after' && e.phase !== 'agent'
+}
+
+/** 建议待办卡此刻走到哪一步（`SuggestionCard` 据此画）；全由方案条目与它续出的脚本方案卡派生，不另存状态 */
+export type TodoPhase = 'choose' | 'running' | 'asking' | 'done'
+
+/**
+ * - `choose`：可勾选（还没点 / 什么都没改成又回来了）；
+ * - `running`：脚本方案在生成、出好正在应用、或后面还有排着没开始的脚本待办；
+ * - `asking`：脚本方案改了画出来的数据，等用户回答；
+ * - `done`：至少有一类已经应用（图内那次 commit 还在、或有脚本已应用），且没有在做 / 排着的。
+ * `scripts`：已经开始做的脚本待办的方案卡（按开始顺序）；`figureApplied`：图内待办此刻是已应用（以文档为准，⌘Z 撤回后不算）。
+ */
+export function todoPhase(e: Pick<PlanEntry, 'todoRun' | 'todoOff' | 'status'>, scripts: PlanEntry[], figureApplied: boolean): TodoPhase {
+  const run = e.todoRun
+  const cur = scripts.at(-1)
+  // 第一条脚本待办还在发出去的路上（还没有方案条目）才算在做；开始过、但那张脚本卡已经被收起 / 收掉了（条目不在了）= 没改，不算在做——
+  // 真机 2026-11-27：失败的脚本卡点「收起」后，已经落定的建议卡又转起圈来、再也停不下
+  if (run && run.script.length > 0 && run.scripts.length === 0) return 'running'
+  if (cur && cur.status !== 'applied') {
+    if (cur.status === 'generating') return 'running'
+    if (cur.status === 'ready' && pendingConfirm(cur)) return 'asking'
+    if (cur.status === 'ready' && !cur.notice) return 'running'
+  }
+  // 上一条应用了 / 答了「先不改」、后面还排着没跳过的：马上接着做下一条
+  // 上一条的卡被收起了（条目不在）= 没成，与 `advanceTodos` 一样停在这里，不再假装在做
+  if (run && cur && scriptPassable(cur) && todoQueued(e).length > 0) return 'running'
+  if (figureApplied || scripts.some((s) => s.status === 'applied')) return 'done'
+  return 'choose'
+}
+
+/** 已改了哪几项（待办 key）：图内那次 commit 还在的 + 已应用的脚本待办；没经「改这 N 项」直接在弹窗里应用的，按此刻勾着的图内待办算 */
+export function todosDone(e: PlanEntry, scripts: { todo: string; entry: PlanEntry }[], figureApplied: boolean): string[] {
+  const run = e.todoRun
+  const figure = figureApplied ? (run?.figure ?? todosOf(e).filter((t) => t.kind === 'figure' && todoChecked(e, t)).map((t) => t.key)) : []
+  return [...figure, ...scripts.filter((x) => x.entry.status === 'applied').map((x) => x.todo)]
+}
+
+/**
+ * 建议待办卡续出来的脚本方案卡，哪些还要单独画：只剩**越界**（Agent 动了别的文件——那张卡带「恢复到开始前的版本」与文件清单，是安全上的动作）。
+ * 其余没做成的（Agent 没改、检查没过、图已改过、没能写进脚本……）都并进建议卡，一条一句原因（维护者 2026-11-27「并进去吧」）。
+ */
+export function todoScriptCardShown(e: Pick<PlanEntry, 'todoOf' | 'status' | 'failure'>): boolean {
+  return !!e.todoOf && e.status === 'failed' && e.failure?.code === 'change_plan_script_overreach'
+}
+
+const REASON_MAX = 120
+/** 并进建议卡的那一句「为什么没做成」：Agent 自己说了话就用它（第一段、截短），否则用这张卡本来那句失败文案 */
+export function todoFailReason(e: Pick<PlanEntry, 'status' | 'failure' | 'notice'>): string {
+  const said = e.failure?.params?.agent_reply
+  if (typeof said === 'string' && said.trim()) {
+    // Agent 被要求第一句就说为什么；没照做时，优先取「原因：…」那段（真机：第一段常是「我读完了…先停下确认」这类过场话）
+    const paras = said.trim().split(/\n\s*\n/).map((x) => x.replace(/[*`_#>]/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean)
+    const why = paras.find((x) => /^(原因|因为|理由|Reason|Because)[:：\s]/i.test(x))
+    // 「原因：」「未做改动：」这类前缀卡上已经说了（「…」没做成：），去掉
+    const first = (why ?? paras[0] ?? '').replace(/^((原因|理由|Reason)[:：]\s*)?((未做改动|没有改动|未改动|没改|No change(s)? made)[:：，,。.]\s*)?/i, '')
+    return first.length > REASON_MAX ? `${first.slice(0, REASON_MAX - 1)}…` : first
+  }
+  if (e.status === 'stale') return cp('card.stale')
+  if (e.status === 'ready' && e.notice) return cp('card.applyFailed')
+  return failureText(e.failure?.code ?? 'change_plan_failed', e.failure?.params, true)
 }

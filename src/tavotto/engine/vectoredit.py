@@ -65,9 +65,62 @@ ERROR_CODES = (
     "out_of_range",
     "duplicate_target",
     "kernel_unavailable",
+    # 第 ③ 期（`add`）：求解器的错误码照搬（`vectorscene.ERROR_CODES`），另加三条本期特有的
+    "needs_measurement",
+    "needs_confirmation",
+    "provenance_data",
+    "bad_item",
+    "duplicate_name",
+    "unknown_ref",
+    "anchor_unresolvable",
+    "panel_transformed",
+    "bad_point",
 )
 
 _KIND_WORD = {"text": "文字", "arrow": "箭头", "shape": "形状", "path": "路径"}
+
+#: 编辑方案没出来时给 Agent / 模型的一句（码是 `ERROR_CODES`；index / field 在 errors 里）。插件与桌面改图助手共用这一份。
+ERROR_WORDS = {
+    "bad_op": "这条操作的写法不对",
+    "unknown_object": "点名的对象 / 组不在这张画布上（id 取场景的 vector_objects）",
+    "not_vector": "点名的不是矢量对象（子图、图片不在这里改）",
+    "bad_field": "这一类对象没有这个字段",
+    "bad_value": "值的类型或写法不对",
+    "out_of_range": "值超出允许范围",
+    "duplicate_target": "同一个对象在一条操作里点了两次",
+    "needs_measurement": "这条标注要锚在图里的数据点 / 元素上，这张图还没量过（本期只能锚在子图外框上：panel 方位点、box 框住子图）",
+    "needs_confirmation": "统计标注（星号 / n.s. / p 值 / n）没写明来自你说的话，不由助手编：需要你确认",
+    "provenance_data": "统计标注的来源写成了「数据」，这里没有数据上下文，不收：需要你确认",
+    "bad_item": "这条标注的写法不对（kind 不认识 / 缺键 / 多了不认识的键 / 值不合法）",
+    "duplicate_name": "同一批标注里有两个同名元素",
+    "unknown_ref": "标注指向的子图 / 本批元素不存在（子图短号取场景的 panels_by_ref，本批元素要先声明再引用）",
+    "anchor_unresolvable": "这个锚点解不出位置",
+    "panel_transformed": "这张子图旋转或翻转过：这一版只给它的外框",
+    "bad_point": "方位点的名字不认识（nw n ne w center e sw s se）",
+    "kernel_unavailable": "这台机器上的几何内核没装上：布尔 / 偏移 / 轮廓化 / 简化用不了，其余操作照常；告诉用户可在桌面里做这一步",
+}
+
+#: 补丁词汇的一份说明（给模型 / Agent 看的，**只此一处**）：插件 `tavotto_layout_edit_*` 的 `ops` 参数说明、改图助手的系统提示
+#: （`engine/vectorplan.py`）都从这里取，加 / 改操作只改这里与 `apply_ops`。
+OPS_DOC = (
+    "补丁：一列操作，按顺序执行，服务端重算（不收算好的坐标）。每条 {op, …}："
+    "set {id, set: {字段: 值}}（描边、填充、线宽 strokePt、颜色、字号、文字、x/y/w/h、rotationDeg、name、locked、hidden）；"
+    "move {id, by_mm: [dx, dy]} 或 {id, to: 位置（同标注的锚点写法）, attach: 方位点 | from | to}；delete {id}；"
+    'align {ids, mode: left/hcenter/right/top/vcenter/bottom, to?: "selection" | "page" | {key: id} | {panel: P1}}；'
+    "distribute {ids, axis: h/v, gap_mm?}；order {id, to: front/back/forward/backward}；group {ids, name?}；"
+    "ungroup {group}；rotate {id, deg}；pathfinder {ids, mode: unite/minus_front/minus_back/intersect/exclude/divide/"
+    "trim/merge/crop}；offset {id, delta_mm, join?: miter/round/bevel}；outline_stroke {id}；simplify {id, tolerance_pt?}；"
+    "convert_to_path {ids}（形状 / 箭头换成同 id 的路径）。布尔 / 偏移收路径与封闭形状，轮廓化另收直线 / 箭头，简化只收 path。"
+    "add {items: [条目…]}（在画布上新增标注：箭头 / 文字 / 括号 / 外框 / 连线 / 形状；一个 add 是一步，"
+    "彼此用 item 锚点引用的条目必须写在同一个 add 里）。"
+    + vectorscene.ITEMS_DOC
+    + "路径锚点（只收 path，锚点地址 {sp, i} 取场景 vector_objects[].anchors，含义是这条操作执行时的状态）："
+    "move_anchors {id, anchors, by_mm}；move_handle {id, anchor, which: in/out, to_mm, break_smooth?}；"
+    "add_anchors {id, anchors?} 或 {id, at: {sp, seg, t}}；delete_anchors / average_anchors {id, anchors}；"
+    "convert_anchors {id, anchors, to?: smooth/corner}；cut_path {id, anchors}；"
+    "join_paths {id, anchors: [端点, 端点]} 或 {ids: [甲, 乙]}（留最后一个）；reverse_path {id}；"
+    "make_compound {ids}；release_compound {id}。"
+)
 
 
 class EditError(Exception):
@@ -92,6 +145,19 @@ def _box(o: dict) -> list[float]:
     return [float(o.get("x", 0)), float(o.get("y", 0)), float(o.get("w", 0)), float(o.get("h", 0))]
 
 
+#: 简述里带出当前值的字段种类：字号、线宽、颜色、填充、虚线、端型这类「改成多少」要看的现值；
+#: 文字另有 `text`，几何在 `box_mm` / 锚点里，渐变与端点体积大不列
+_STYLE_KINDS = {"number", "int", "bool", "color", "color_or_null", "enum", "dash_pattern"}
+
+
+def _style(o: dict) -> dict:
+    """对象此刻的样式值（只列对象上有的键）：模型要「字号翻倍」「把红箭头加粗」就得看得到现值（Codex #2303）。"""
+    spec = agentobjects.table()["types"].get(o.get("type"), {})
+    return {
+        k: o[k] for k, f in spec.items() if k in o and k != "text" and f.get("kind") in _STYLE_KINDS
+    }
+
+
 def _brief(o: dict) -> dict:
     out = {
         "id": o.get("id"),
@@ -103,6 +169,7 @@ def _brief(o: dict) -> dict:
         "locked": bool(o.get("locked")),
         "hidden": bool(o.get("hidden")),
         "group": (o.get("groupPath") or ([o["groupId"]] if o.get("groupId") else None)),
+        "style": _style(o),
     }
     if o.get("type") == "path":
         # 路径：每条子路径的闭合与锚点数（锚点地址 `{sp, i}` 的范围）；逐点清单由 `read_scene` 在预算内另附
@@ -209,6 +276,56 @@ def select(canvas: dict, query: dict | None = None) -> list[dict]:
 VECTOR_OBJECTS_SHOWN = 150
 
 
+def scene_objects(canvas: dict, refs: dict, query: dict) -> dict:
+    """场景里的 `vector_objects`（`read_scene` 的那一段）：从一份**已在内存里的画布**现算，不读盘。
+    桌面改图助手（ADR 0212 第 6 期）从前端给的内存快照用同一个函数，形状与插件读到的逐键相同。
+    `refs` = 场景里子图短号 → 子图对象 id。"""
+    q = dict(query)
+    # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
+    if q.get("anchored_to") in refs:
+        q["anchored_to"] = refs[q["anchored_to"]]
+    picked = select_objects(canvas, q)
+    shown = picked[:VECTOR_OBJECTS_SHOWN]
+    by_id = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
+    cap = ANCHORS_PER_PATH_TARGETED if "ids" in q else ANCHORS_PER_PATH
+    left, omitted = ANCHORS_PER_SCENE, False
+    for b in shown:
+        if b["type"] != "path":
+            continue
+        if b["anchor_count"] <= min(cap, left):
+            b["anchors"] = path_anchors(by_id[b["id"]])
+            left -= b["anchor_count"]
+        else:
+            omitted = True
+    out = {"vector_objects": shown, "vector_objects_total": len(picked)}
+    if omitted:
+        out["anchors_note"] = (
+            f"锚点清单只给不超过 {cap} 个锚点的路径、整次最多 {ANCHORS_PER_SCENE} 个；没列的路径只有 subpaths 里的计数，"
+            "用 select {ids: [路径 id]} 单独读（单个路径放宽到 "
+            f"{ANCHORS_PER_PATH_TARGETED} 个）；锚点更多的路径不列清单"
+        )
+    return out
+
+
+def panel_refs(canvas: dict) -> dict:
+    """子图短号（P1、P2…，按画布顺序）→ 子图对象 id；与 `layoutannotate.measure_panels` 的编号同一规则。"""
+    return {
+        f"P{n}": p.get("id")
+        for n, p in enumerate(la._figure_panels(canvas), start=1)  # noqa: SLF001
+    }
+
+
+def memory_scene(canvas: dict, select: dict | None = None) -> dict:
+    """内存快照：与 `read_scene` 的 `vector_objects` 一支同形，另带页面与子图短号表（桌面改图助手出方案的输入）。
+    选择条件写错抛 `EditError("bad_op")`。"""
+    return {
+        **scene_objects(canvas, panel_refs(canvas), check_query(select)),
+        "canvas_id": canvas.get("id"),
+        "page": la._page(canvas),  # noqa: SLF001
+        "panels_by_ref": panel_refs(canvas),
+    }
+
+
 def read_scene(
     project: str | Path,
     name: str,
@@ -225,31 +342,7 @@ def read_scene(
         raise la.LayoutError("bad_select", field=exc.field) from exc
 
     def extend(canvas: dict, refs: dict) -> dict:
-        q = dict(query)
-        # `anchored_to` 收场景里的子图短号（P1）或子图对象 id：落盘的锚点记的是对象 id
-        if q.get("anchored_to") in refs:
-            q["anchored_to"] = refs[q["anchored_to"]]
-        picked = select_objects(canvas, q)
-        shown = picked[:VECTOR_OBJECTS_SHOWN]
-        by_id = {o.get("id"): o for o in canvas.get("objects") or [] if isinstance(o, dict)}
-        cap = ANCHORS_PER_PATH_TARGETED if "ids" in q else ANCHORS_PER_PATH
-        left, omitted = ANCHORS_PER_SCENE, False
-        for b in shown:
-            if b["type"] != "path":
-                continue
-            if b["anchor_count"] <= min(cap, left):
-                b["anchors"] = path_anchors(by_id[b["id"]])
-                left -= b["anchor_count"]
-            else:
-                omitted = True
-        out = {"vector_objects": shown, "vector_objects_total": len(picked)}
-        if omitted:
-            out["anchors_note"] = (
-                f"锚点清单只给不超过 {cap} 个锚点的路径、整次最多 {ANCHORS_PER_SCENE} 个；没列的路径只有 subpaths 里的计数，"
-                "用 select {ids: [路径 id]} 单独读（单个路径放宽到 "
-                f"{ANCHORS_PER_PATH_TARGETED} 个）；锚点更多的路径不列清单"
-            )
-        return out
+        return scene_objects(canvas, refs, query)
 
     return la.read_scene(project, name, measure, canvas_id=canvas_id, extend=extend)
 
@@ -382,8 +475,16 @@ def _normalize_deg(deg: float) -> float:
 class _State:
     """一次补丁在对象列表副本上的工作态。"""
 
-    def __init__(self, objects: list[dict], panels: dict | None, page: dict | None) -> None:
+    def __init__(
+        self,
+        objects: list[dict],
+        panels: dict | None,
+        page: dict | None,
+        context: dict | None = None,
+    ) -> None:
         self.out = copy.deepcopy(objects)
+        #: `add` 核统计标注来源用：`{"instruction": 用户原话 | None, "confirmed": [条目名], "strict": bool}`；没给 = 插件路径（不核原话）
+        self.context = context
         self.panels = panels or {}
         self.page = page
         self.deleted: list[str] = []
@@ -742,15 +843,15 @@ def _kernel(i: int):
     return vecops
 
 
-def _mint(s: _State, i: int, tag: str, seed: list[str], n: int) -> str:
-    """新路径 id：`p_` + 8 位 `[a-z0-9]`，由内容确定地派生（方案与写入各算一遍，摘要里的东西必须逐位一致）。"""
+def _mint(s: _State, i: int, tag: str, seed: list[str], n: int, prefix: str = "p") -> str:
+    """新对象 id：`<类型前缀>_` + 8 位 `[a-z0-9]`，由内容确定地派生（方案与写入各算一遍，摘要里的东西必须逐位一致）。"""
     taken = {o.get("id") for o in s.out if isinstance(o, dict)} | s.minted
     k = 0
     while True:
         h = hashlib.sha256(
             json.dumps([i, tag, seed, n, k], ensure_ascii=False).encode("utf-8")
         ).digest()
-        cand = "p_" + "".join(agentobjects._ID_ALPHABET[b % 36] for b in h[:8])  # noqa: SLF001
+        cand = prefix + "_" + "".join(agentobjects._ID_ALPHABET[b % 36] for b in h[:8])  # noqa: SLF001
         if cand not in taken:
             s.minted.add(cand)
             return cand
@@ -1386,6 +1487,134 @@ def _op_release_compound(s: _State, i: int, op: dict) -> None:
     )
 
 
+# ------------------------------------------------------------------ 新增标注（ADR 0208 第 ③ 期）
+
+#: 一个 `add` 最多多少个条目（体积；0208 的一批描述同量级）
+MAX_ADD_ITEMS = 12
+_TYPE_PREFIX = {"text": "t", "arrow": "a", "shape": "s", "path": "p"}
+
+
+def _norm_text(v: object) -> str:
+    return "".join(str(v).split()).lower()
+
+
+def _stat_gate(s: _State, i: int, it: dict) -> None:
+    """统计标注（星号 / n.s. / p 值 / n）的来源核对（ADR 0208 §四 / 第 ③ 期）。
+
+    没给 `context`（插件路径）：照 0208 的旧口径，`solve` 只核「写没写来源」，并把它们列进 `statistical` 交宿主给用户确认。
+    给了 `context`（桌面改图助手，模型出的补丁）：`provenance: "data"` 不收（这里没有数据上下文）；`provenance: "user"` 要在用户**原话**里
+    核到这段文字，或被请求里的 `confirmed` 点名（用户在卡上点了「按我说的加」）；其余一律 `needs_confirmation`。"""
+    if it.get("kind") != "text" or not vectorscene.is_stat_text(it.get("text", "")):
+        return
+    ctx = s.context
+    if ctx is None:
+        return
+    name = str(it.get("name"))
+    if name in (ctx.get("confirmed") or ()):
+        it.setdefault("provenance", "user")
+        return
+    prov = it.get("provenance")
+    if prov == "data":
+        raise EditError("provenance_data", i, name)
+    said = ctx.get("instruction")
+    if prov == "user" and isinstance(said, str) and _norm_text(it.get("text")) in _norm_text(said):
+        return
+    raise EditError("needs_confirmation", i, name)
+
+
+def _op_add(s: _State, i: int, op: dict) -> None:
+    """`add`：场景描述（0208 `_LAYOUT_ITEMS` 闭集）→ `vectorscene.solve` → 对象校验 → 追加在最上层。
+
+    **不造第二套求解**：求解 / 对象校验 / 复述（`layoutannotate.describe`）/ 持久锚点都是 0208 那一份，这里只做三件事：
+    ① 本期没量过的子图（`draw_manifest` 缺）上，数据 / 元素锚点一律 `needs_measurement`（其余照常，锚在子图外框上）；
+    ② 统计标注来源核对（`_stat_gate`）；③ id 按（操作下标、条目名）确定地铸，方案与写入逐位一致。"""
+    if set(op) - {"op", "items"}:
+        raise EditError("bad_op", i)
+    items = copy.deepcopy(op.get("items"))
+    if not isinstance(items, list) or not items or len(items) > MAX_ADD_ITEMS:
+        raise EditError("bad_op", i, "items")
+    for it in items:
+        if not isinstance(it, dict):
+            raise EditError("bad_item", i, "items")
+    #: 每个条目依赖的子图（短号，P1…）：新对象的位置是按这些子图此刻的位置算出来的，方案里要回给前端核「出方案后子图没被挪过」
+    dep_panels: dict[str, set[str]] = {}
+    for it in items:
+        name = str(it.get("name"))
+        anchors = list(vectorscene._anchors_of(it))  # noqa: SLF001
+        for t in it.get("fit") if isinstance(it.get("fit"), list) else []:
+            if isinstance(t, dict) and "element" in t:
+                anchors.append({"element": t["element"]})
+            elif isinstance(t, dict) and isinstance(t.get("panel"), dict):
+                anchors.append({"panel": t["panel"]})  # 贴着整张子图的框：同样依赖这张子图的位置
+        for a in anchors:
+            kind = next(iter(a), None) if isinstance(a, dict) else None
+            spec = a.get(kind) if kind else None
+            pid = (
+                spec.get("panel")
+                if kind in ("data", "element") and isinstance(spec, dict)
+                else None
+            )
+            dep = (
+                pid
+                if pid
+                else (spec.get("id") if kind == "panel" and isinstance(spec, dict) else None)
+            )
+            if isinstance(dep, str):
+                dep_panels.setdefault(name, set()).add(dep)
+            if kind in ("data", "element") and not (
+                isinstance(pid, str) and (s.panels.get(pid) or {}).get("draw_manifest")
+            ):
+                raise EditError("needs_measurement", i, name)
+        _stat_gate(s, i, it)
+    solved = vectorscene.solve(items, s.panels, page=s.page)
+    if not solved["ok"]:
+        err = solved["errors"][0]
+        code = err.get("code")
+        raise EditError(
+            code if code in ERROR_CODES else "bad_item", i, err.get("item") or err.get("detail")
+        )
+    taken = {o.get("id") for o in s.out if isinstance(o, dict)} | s.minted
+    for o in s.out:
+        if isinstance(o, dict):
+            taken |= {g for g in [o.get("groupId"), *(o.get("groupPath") or [])] if g}
+    checked = agentobjects.validate_new_objects(solved["objects"], taken_ids=taken)
+    if not checked["ok"]:
+        e = checked["errors"][0]
+        raise EditError("bad_value", i, e.get("field"))
+    local_of = {real: local for local, real in checked["id_map"].items()}
+    refs = {
+        pid: (e.get("panel") or {}).get("id") for pid, e in s.panels.items() if isinstance(e, dict)
+    }
+    new_ids: dict[str, str] = {}
+    for obj in checked["objects"]:
+        local = local_of.get(obj["id"], obj["id"])
+        # 下标固定 0：取消勾选前面的步骤、剩下的 ops 重算时，新对象的 id 不变
+        nid = _mint(s, 0, "add", [local], 0, _TYPE_PREFIX.get(obj.get("type"), "o"))
+        new_ids[local] = nid
+        anchor = la._persisted_anchor(local, solved, refs)  # noqa: SLF001
+        new = {**obj, "id": nid, **({"anchor": anchor} if anchor else {})}
+        s.out.append(new)
+        s.reindex()
+        s.touched.add(nid)
+        deps = sorted(
+            {
+                real
+                for pid in dep_panels.get(
+                    local, set().union(*dep_panels.values()) if dep_panels else set()
+                )
+                if (real := refs.get(pid))
+            }
+        )
+        change: dict = {"id": nid, "added": True}
+        if deps:
+            change["depends_on"] = deps  # 新对象依赖的子图对象 id：它们被动过 = 这份方案对不上了
+        s.changes.append(change)
+    for line in la.describe(items, solved, s.panels):
+        s.echo.append(f"新增 {line['text']}")
+    for st in solved.get("statistical") or []:
+        s.echo.append(f"统计标注「{st['item']}」按你的话加（来源：{st.get('provenance')}）")
+
+
 _ANCHOR_OPS = {
     "move_anchors": _op_move_anchors,
     "move_handle": _op_move_handle,
@@ -1402,6 +1631,7 @@ _ANCHOR_OPS = {
 
 
 _OPS = (
+    "add",
     "set",
     "move",
     "delete",
@@ -1431,24 +1661,43 @@ _OPS = (
 
 
 def apply_ops(
-    objects: list[dict], ops: object, panels: dict | None = None, page: dict | None = None
+    objects: list[dict],
+    ops: object,
+    panels: dict | None = None,
+    page: dict | None = None,
+    *,
+    context: dict | None = None,
 ) -> dict:
     """在一份对象列表的副本上跑补丁 → `{"objects": 改后的全部对象, "changed": [改后对象], "deleted": [id],
-    "echo": [每条一句], "changes": [{id, field, before, after}], "order": [改后 id 顺序], "reordered": 顺序变了没有}`；
+    "echo": [每条一句], "changes": [{id, field, before, after, op}], "order": [改后 id 顺序], "reordered": 顺序变了没有}`；
     有错抛 `EditError`（整批不动）。`page` = `{"w", "h"}`，`align` 对齐到页面用。"""
     if not isinstance(ops, list) or not ops:
         raise EditError("bad_op")
-    s = _State(objects, panels, page)
+    s = _State(objects, panels, page, context)
     budgets = s.budgets
     touched, changes, echo, deleted = s.touched, s.changes, s.echo, s.deleted
     ctx = vectorscene._Ctx(panels or {})  # noqa: SLF001 — 锚点解析与 0208 同一个
+    tagged = 0
+
+    def tag(op_index: int) -> None:
+        # 每条 change 记下它是第几步操作产生的（0 起）：桌面方案卡按步勾选，取消某几步后用剩下的 ops 重算
+        nonlocal tagged
+        for c in changes[tagged:]:
+            c["op"] = op_index
+        tagged = len(changes)
+
     for i, op in enumerate(ops):
+        if i:
+            tag(i - 1)
         if not isinstance(op, dict) or op.get("op") not in _OPS:
             raise EditError("bad_op", i)
         if (
             op["op"] in _ANCHOR_OPS
         ):  # 第 4 期：路径锚点（点名对象的校验在各自函数里，多对象的写 `ids`）
             _ANCHOR_OPS[op["op"]](s, i, op)
+            continue
+        if op["op"] == "add":
+            _op_add(s, i, op)
             continue
         if op["op"] in ("align", "distribute", "group", "ungroup", "pathfinder", "convert_to_path"):
             {
@@ -1536,6 +1785,7 @@ def apply_ops(
         o["x"], o["y"] = nx, ny
         touched.add(oid)
         echo.append(f"{label}：{how}")
+    tag(len(ops) - 1)
     kept = [o for o in s.out if not (isinstance(o, dict) and o.get("id") in deleted)]
     changed = [o for o in kept if isinstance(o, dict) and o.get("id") in touched]
     first = [o.get("id") for o in objects if isinstance(o, dict) and o.get("id") not in deleted]
@@ -1603,11 +1853,15 @@ def _needs_panels(ops: object) -> list:
     """锚点挪动要的数据点请求（借 0208 的 `required_data_points`：把 `to` 当成一个元素的位置）。"""
     if not isinstance(ops, list):
         return []
-    return [
+    out: list = [
         {"kind": "text", "name": f"_op{i}", "at": op["to"]}
         for i, op in enumerate(ops)
         if isinstance(op, dict) and op.get("op") == "move" and "to" in op
     ]
+    for op in ops:  # `add` 的数据锚点要的数据点（同一个 `required_data_points`）
+        if isinstance(op, dict) and op.get("op") == "add" and isinstance(op.get("items"), list):
+            out += [it for it in op["items"] if isinstance(it, dict)]
+    return out
 
 
 def _fact_key(f: dict) -> str:
@@ -1710,13 +1964,23 @@ def _check_items(objs: list[dict], ops: object, panels: dict) -> list[dict]:
     return list(by.values())
 
 
-def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
+#: 改了这些字段才重新核「字体族与图一致」：字体族本身、文字内容（`vectorcheck` 的 style 核对只看字体族，文字内容是随手再确认一次）
+STYLE_FIELDS = frozenset({"fontFamily", "text"})
+
+
+def _plan(canvas: dict, ops: object, measure, profile, context: dict | None = None) -> dict:
     # 子图总要量：改后的对象要核「不遮数据」；锚点挪动另要数据点
     panels, _refs, unmeasured = la.measure_panels(
         canvas, _needs_panels(ops) + _anchor_requests(canvas), measure
     )
     try:
-        res = apply_ops(canvas.get("objects") or [], ops, panels, la._page(canvas))  # noqa: SLF001
+        res = apply_ops(
+            canvas.get("objects") or [],
+            ops,
+            panels,
+            la._page(canvas),
+            context=context,  # noqa: SLF001
+        )
     except EditError as exc:
         return {"ok": False, "errors": [exc.as_dict()], "unmeasured": unmeasured}
     changed = res["changed"]
@@ -1774,6 +2038,15 @@ def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
             for f in got:
                 if f["status"] == "fail" and _fact_key(f) in was:
                     f = {**f, "status": "preexisting"}
+                elif (
+                    f["status"] == "fail"
+                    and f.get("check") == "style"
+                    and f.get("item") in before_by
+                    and not fields.get(f.get("item"), set()) & STYLE_FIELDS
+                ):
+                    # 字体族核对只报这次编辑引入的差异：没动字体族 / 文字的已有对象，挪位置、改线宽、改层级都不该
+                    # 因为它本来的字体族与图不一致而被拦（「用户早就接受的」，ADR 0212 §四）
+                    f = {**f, "status": "preexisting"}
                 facts.append(f)
     failed = [f for f in facts if f["status"] == "fail"]
     groups, dropped = prune_layout_groups(
@@ -1803,6 +2076,8 @@ def _plan(lay: la.Layout, canvas: dict, ops: object, measure, profile) -> dict:
         "failed": failed,
         "unverified": [f for f in facts if f["status"] == "unknown"],
         "unmeasured": unmeasured,
+        # 量过的子图的场景指纹（子图落位 + 这次导出绘制的 manifest）：桌面线程拿它核「量与出方案之间图没被改」
+        "scene_fingerprint": vectorscene.scene_fingerprint(panels, la._page(canvas)),  # noqa: SLF001
         "errors": [{"code": "checks_failed"}] if failed else [],
     }
 
@@ -1822,7 +2097,25 @@ def propose(
     if doclock.revision_conflict(base_revision, lay.revision):
         raise la.LayoutError("layout_changed", revision=lay.revision)
     canvas = la._canvas(lay.doc, canvas_id)  # noqa: SLF001
-    return {"base_revision": lay.revision, **_plan(lay, canvas, ops, measure, profile)}
+    return {"base_revision": lay.revision, **_plan(canvas, ops, measure, profile)}
+
+
+def unmeasured_panel(panel: dict, requests: list) -> dict:  # noqa: ARG001
+    """内存快照里量不了子图（后端读不到桌面内存里的数据与脚本）：只给外框，核对照常跑。"""
+    raise la.PanelUnavailable("memory_snapshot")
+
+
+def propose_memory(
+    canvas: dict,
+    ops: object,
+    *,
+    profile: dict | None = None,
+    context: dict | None = None,
+    measure=None,
+) -> dict:
+    """**不读盘、不写盘**：对一份内存里的画布（前端给的文档形态）算方案——`propose` 的同一个 `_plan`，只是子图量不了（只有外框）。
+    桌面改图助手（ADR 0212 第 6 期）用；回的形状与 `propose` 相同（没有 `base_revision`：基线核对由前端按对象指纹做）。"""
+    return _plan(canvas, ops, measure or unmeasured_panel, profile, context)
 
 
 def commit(
@@ -1841,7 +2134,7 @@ def commit(
     if doclock.revision_conflict(base_revision, lay.revision):
         raise la.LayoutError("layout_changed", revision=lay.revision)
     canvas = la._canvas(lay.doc, canvas_id)  # noqa: SLF001
-    plan = _plan(lay, canvas, ops, measure, profile)
+    plan = _plan(canvas, ops, measure, profile)
     if not plan["ok"]:
         return {"written": False, "plan": plan}
     if plan["echo_digest"] != echo_digest_seen:

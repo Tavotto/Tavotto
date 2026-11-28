@@ -38,7 +38,7 @@ afterEach(async () => {
 describe('命名小框', () => {
   it('有标题：对话框的可达名指向它', () => {
     const id = box()!.getAttribute('aria-labelledby')!
-    expect(document.getElementById(id)?.textContent).toBe('把现在存为命名节点')
+    expect(document.getElementById(id)?.textContent).toBe('给这一版起名字')
   })
 
   it('焦点在小框里挪动：不关', async () => {

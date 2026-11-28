@@ -665,9 +665,14 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
             events.append("job-kill")
             return True
 
-    def fake_open(proc):
-        events.append("job-open")
-        return FakeJob()
+        def active_count(self):  # Windows 上 terminate() 用它判整棵树已不存在
+            return 0
+
+    def fake_spawn(command, **kwargs):
+        events.append("spawn-in-job")
+        proc = subprocess.Popen(command, **kwargs)
+        proc.tavotto_job = FakeJob()
+        return proc
 
     real_terminate = ps.terminate
 
@@ -676,7 +681,7 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
         return real_terminate(proc)
 
     monkeypatch.setattr(ps, "IS_WINDOWS", True)
-    monkeypatch.setattr(ps, "_open_kill_on_close_job", fake_open)
+    monkeypatch.setattr(ps, "_spawn_in_job", fake_spawn)
     monkeypatch.setattr(ps, "terminate", spy_terminate)
     result = ps.run_isolated_command(
         [sys.executable, "-c", "pass"],
@@ -685,8 +690,12 @@ def test_windows_isolated_command_kills_the_job_even_when_the_direct_child_alrea
         evidence=tmp_path,
         timeout=30,
     )
-    assert events == ["job-open", "terminate", "job-kill"]
-    assert result["cleanup"]["how"] == "already-exited"
+    # 直接子进程已退：Windows 上 terminate() 里先结束一次 Job（再判整棵树），收尾再结束一次；POSIX 只有收尾那次
+    assert events[:2] == ["spawn-in-job", "terminate"]
+    assert events[2:] == (["job-kill", "job-kill"] if os.name == "nt" else ["job-kill"])
+    assert result["cleanup"]["how"] == (
+        "already-exited+job" if os.name == "nt" else "already-exited"
+    )
     assert result["cleanup"]["job_killed"] is True
 
 
@@ -723,3 +732,105 @@ def test_retry_after_lost_lease_uses_a_different_port_even_if_the_os_repeats_it(
     rc = PS.main(["--launch", "x {port}", "--workdir", str(tmp_path / "run")])
     assert rc == 0
     assert ports == [43445, 50001]
+
+
+def test_isolated_command_hands_its_job_to_terminate_so_no_snapshot_guessing(tmp_path, monkeypatch):
+    """Job 必须挂在 proc 上：`terminate()` → `proctree.kill_tree` 看得到它就只杀 Job 里的进程，
+    不再退回「按进程快照找后代」（11-27 Windows 合并组：那条路把 pytest 自己也结束了）。"""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+    import package_smoke as ps
+
+    seen = {}
+
+    def spy_terminate(proc):
+        seen["job"] = getattr(proc, "tavotto_job", "missing")
+        return {"how": "already-exited", "returncode": proc.wait(), "group_gone": True}
+
+    class Sentinel:
+        def kill(self):
+            return True
+
+        def active_count(self):
+            return 0
+
+    sentinel = Sentinel()
+
+    def fake_spawn(command, **kwargs):
+        proc = subprocess.Popen(command, **kwargs)
+        proc.tavotto_job = sentinel
+        return proc
+
+    monkeypatch.setattr(ps, "_spawn_in_job", fake_spawn)
+    monkeypatch.setattr(ps, "terminate", spy_terminate)
+    ps.run_isolated_command(
+        [sys.executable, "-c", "pass"],
+        env=dict(os.environ),
+        cwd=tmp_path,
+        evidence=tmp_path,
+        timeout=30,
+    )
+    assert seen["job"] is sentinel
+
+
+def test_windows_terminate_kills_the_job_before_judging_when_the_root_already_exited(
+    tmp_path, monkeypatch
+):
+    """直接子进程已退、后代还在 Job 里：`terminate()` 要先结束 Job 再看「整棵树不存在」，
+    不能白等 GROUP_GONE_WAIT_S 后报 group_gone=False（Codex #2320）。POSIX 上用假 Job 验调用顺序；
+    真 Job 的行为见下面那条只在 Windows 上跑的用例。"""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+    import package_smoke as ps
+
+    class FakeJob:
+        alive = 1
+
+        def kill(self):
+            self.alive = 0
+            return True
+
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    proc.tavotto_job = FakeJob()
+
+    def fake_kill_tree(p):
+        return "job" if p.tavotto_job.kill() else None
+
+    monkeypatch.setattr(ps.os, "name", "nt")
+    monkeypatch.setattr(ps.proctree, "kill_tree", fake_kill_tree)
+    monkeypatch.setattr(ps.proctree, "tree_gone", lambda p, timeout: p.tavotto_job.alive == 0)
+    info = ps.terminate(proc)
+    assert info["group_gone"] is True
+    assert info["how"] == "already-exited+job"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真 Job Object 只在 Windows 上有")
+def test_windows_isolated_command_reaps_a_grandchild_left_behind_by_an_exited_root(tmp_path):
+    """真机：子进程起一个睡 60 s 的孙进程后立刻退出。孙进程在 Job 里，清理后它必须不存在，
+    且判据 `group_gone` 为真（不是等满上限后的 False）。"""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/ci"))
+    import package_smoke as ps
+    import proctree
+
+    pid_file = tmp_path / "grandchild.pid"
+    code = (
+        "import subprocess, sys; "
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+        f"open({str(pid_file)!r}, 'w').write(str(p.pid))"
+    )
+    result = ps.run_isolated_command(
+        [sys.executable, "-c", code],
+        env=dict(os.environ),
+        cwd=tmp_path,
+        evidence=tmp_path,
+        timeout=60,
+    )
+    grandchild = int(pid_file.read_text())
+    assert result["timed_out"] is False and result["exit_code"] == 0
+    assert result["cleanup"]["group_gone"] is True, result
+    assert not proctree.is_alive(grandchild)

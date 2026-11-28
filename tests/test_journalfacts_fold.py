@@ -243,3 +243,74 @@ def test_conflicting_font_lists_all_stay_available_for_confirmation():
     out = fold_mod.fold(bundle)
     assert out["rules"] == {} and out["sources"] == {}
     assert [r["value"] for r in out["confirm"]] == [["Helvetica"], ["Arial"]]
+
+
+def test_folded_rule_carries_the_fact_id_and_src_is_unchanged():
+    """ADR 0213：期刊线索用 `v2:<fact id>`；`src` 的值（带第二个冒号）不能被改，别处拿它当身份键。"""
+    out = _case("dpi-min-folds")
+    ((sid, src),) = out["sources"].items()
+    assert out["rules"]["min_raster_dpi"]["src"] == sid and sid == "v2:s1:journal"
+    assert out["rules"]["min_raster_dpi"]["fact_id"] == "a" and "fact_id" not in src
+    cat = {
+        "schema": journals.SCHEMA,
+        "catalog_rev": 1,
+        "publishers": {"p": {"label": "P"}},
+        "journals": {
+            "j": {"label": "J", "publisher": "p", "sources": out["sources"], "rules": out["rules"]}
+        },
+    }
+    assert journals.journal_sources("j", cat)["min_raster_dpi"]["fact_id"] == "a"
+    from tavotto.engine import contactsend
+
+    head = contactsend.clean_journal(
+        {
+            "type": "wrong",
+            "journal_id": "j",
+            "source_id": "v2:" + out["rules"]["min_raster_dpi"]["fact_id"],
+        },
+        has_attachments=False,
+    )
+    assert head["source_id"] == "v2:a"
+    # 对照：折叠出的 src 本身带第二个冒号，过不了线缆正则、会被丢掉（这就是不能发 src 的原因）
+    dropped = contactsend.clean_journal(
+        {"type": "wrong", "journal_id": "j", "source_id": sid}, has_attachments=False
+    )
+    assert "source_id" not in dropped
+
+
+def test_two_facts_sharing_one_source_keep_their_own_fact_ids():
+    """Codex #2331：同一来源 + origin 的两条事实（分辨率与线宽）共用一个来源条目；fact_id 挂规则上才不会互相覆盖。"""
+    bundle = json.loads(
+        json.dumps(next(c for c in VECTORS["cases"] if c["id"] == "dpi-min-folds")["bundle"])
+    )
+    dpi = bundle["facts"][0]
+    bundle["facts"].append(
+        {
+            **dpi,
+            "id": "line-fact",
+            "subject": "min_line_width",
+            "unit": "pt",
+            "value": 0.5,
+            "quote": "Quote line",
+            "mark": "Quote line",
+            "anchor": "#:~:text=Quote%20line",
+        }
+    )
+    out = fold_mod.fold(bundle)
+    assert set(out["rules"]) == {"min_raster_dpi", "min_line_width_pt"}
+    assert len(out["sources"]) == 1  # 两条规则共用一个来源条目
+    assert out["rules"]["min_raster_dpi"]["fact_id"] == "a"
+    assert out["rules"]["min_line_width_pt"]["fact_id"] == "line-fact"
+    cat = {
+        "schema": journals.SCHEMA,
+        "catalog_rev": 1,
+        "publishers": {"p": {"label": "P"}},
+        "journals": {
+            "j": {"label": "J", "publisher": "p", "sources": out["sources"], "rules": out["rules"]}
+        },
+    }
+    got = journals.journal_sources("j", cat)
+    assert (
+        got["min_raster_dpi"]["fact_id"] == "a"
+        and got["min_line_width_pt"]["fact_id"] == "line-fact"
+    )

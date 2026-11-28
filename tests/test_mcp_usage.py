@@ -54,6 +54,7 @@ def test_tool_names_mirror_handlers_and_engine_enum():
         "tavotto_fix_to_journal",
         "tavotto_make_journal_ready",  # ADR 0192 §1：同上，走 `other` 桶
         "tavotto_share_review",  # ADR 0205：同上，走 `other` 桶，不升同意版本
+        "tavotto_report_journal_issue",  # ADR 0213 三期：同上，走 `other` 桶
         "tavotto_review_feedback",  # ADR 0205 二期：同上
         "tavotto_reply_review",
         "tavotto_resolve_review",
@@ -65,6 +66,9 @@ def test_tool_names_mirror_handlers_and_engine_enum():
         "tavotto_layout_annotate_undo",
         "tavotto_layout_edit_plan",  # ADR 0212 第 5 期：同上
         "tavotto_layout_edit_apply",
+        "tavotto_suggest_plan",  # ADR 0214 第 3 期：同上
+        "tavotto_suggest_apply",
+        "tavotto_suggest_status",
     }
     assert set(tel.EVENTS["mcp_tool_call"]["tool"]["values"]) == set(usage.TOOLS) | {"other"}
     assert usage.properties("tavotto_guide", "ok", seconds=0.1, client_name=None)["tool"] == "other"

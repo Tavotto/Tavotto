@@ -153,11 +153,14 @@ WRITE_OUTSIDE_ROOTS = "write_outside_roots"
 #: `tests/test_mcp_compat.py` 钉住：可选集与必需集不相交、桥里取可选模块只有这一个入口。
 OPTIONAL_ENGINE_MODULES = (
     "capabilities",
+    "changeplan",
+    "contactsend",
     "envadvice",
     "envlease",
     "execspec",
     "fixtools.readscope",
     "journalremote",
+    "journalfacts_fold",
     "journalfacts_remote",
     "journals",
     "layoutannotate",
@@ -6233,6 +6236,368 @@ def review_resolve(session_id: str, *, comment_id: object, resolved: object = Tr
     }
 
 
+# ------------------------- 提交期刊线索（ADR 0213 三期） -------------------------
+#
+# Agent 发现投稿须知和期刊目录不一致时，替用户提交一条 `kind=journal` 的线索：与界面上「这条不对」/「没有这本刊」
+# 同一条通道（`engine/contactsend.py` 的发送管线与 `clean_journal` 校验），不写第二份网络代码。
+# 两步确认照 ADR 0205：第一次零网络、只回「将要发送的内容」；第二次带 `explicit_confirm=true` 与第一次给的
+# `send_token`（内容摘要）才真正发送，内容变了令牌失效。**不收数值**：用户 / Agent 只给证据，不填值；
+# `current` 与 `catalog` 版本都由本机目录取，不信任 Agent 传入。
+JOURNAL_REPORT_DISABLED = "journal_report_disabled"
+JOURNAL_REPORT_TYPES = ("wrong", "missing", "editor")
+JOURNAL_REPORT_ISSUES = ("wrong_value", "updated", "link_broken", "other")
+#: 同步等发送结束的上限（秒）；到时回 `in_progress`，再调同一份确认后的参数接上结论（不重复发）
+JOURNAL_REPORT_WAIT_S = 90.0
+JOURNAL_REPORT_POLL_S = 0.25
+JOURNAL_REPORT_PREVIEW_CHARS = 200
+JOURNAL_REPORT_KEYS_SHOWN = 30
+_JOURNAL_REPORT_API = ("enabled", "start", "status", "dismiss", "build_draft", "ContactError")
+#: 发出去（或正在发）的那一份确认令牌；同一令牌再被确认调用时接上 / 回放结论而不是再发一封
+_JOURNAL_REPORT_PENDING: str | None = None
+_JOURNAL_REPORT_SENT: dict[str, dict] = {}
+_journal_report_sleep = time.sleep
+
+
+def _journal_report_engine():
+    """`(contactsend, journals, journalremote)`：期刊库开关、「联系作者」、期刊联网三者都开着才有；旧引擎缺 API 当关。"""
+    cs = _optional_engine("contactsend")
+    remote = _optional_engine("journalremote")
+    journals = _journal_agent_module()
+    if cs is None or remote is None or journals is None:
+        return None
+    if not all(hasattr(cs, n) for n in _JOURNAL_REPORT_API) or not callable(
+        getattr(remote, "disabled", None)
+    ):
+        return None
+    if remote.disabled() or not cs.enabled():
+        return None
+    return cs, journals, remote
+
+
+def journal_report_available() -> bool:
+    """`tavotto_report_journal_issue` 出现在 tools/list 的条件（与界面入口 ADR 0213 §五同一组开关）。"""
+    return _journal_report_engine() is not None
+
+
+def require_journal_report_engine():
+    engine = _journal_report_engine()
+    if engine is None:
+        raise BridgeError(
+            "提交期刊线索在这台机器上不可用（期刊库或「联系作者」被关闭、期刊联网被关，或 Tavotto 引擎太旧）；没有发出任何东西。",
+            code=JOURNAL_REPORT_DISABLED,
+        )
+    return engine
+
+
+def _journal_current_text(rule: dict) -> str:
+    """目录里这一条的序列化值（只给人 / 我们复核看，≤200 字）。"""
+    if rule.get("unset"):
+        return "(unset)"
+    value = rule.get("value")
+    qualifier = rule.get("qualifier")
+    if rule.get("mark") and qualifier in ("typical", "recommended", "range"):
+        return str(rule["mark"])[:200]  # 与出处卡同口径：只有原话里的数时显示它
+    if value is None:
+        return ""
+    bound = "≥ " if qualifier == "min" else "≤ " if qualifier == "max" else ""
+    if isinstance(value, list):
+        text = " / ".join(
+            json.dumps(x, ensure_ascii=False) if isinstance(x, dict) else str(x) for x in value
+        )
+    elif isinstance(value, dict):
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    else:
+        text = str(value)
+    text = " ".join(f"{bound}{text}".split())
+    return text[:200]
+
+
+def _journal_report_rule(jm, cat: dict, jid: str, rule_key: str, source_id: str | None) -> dict:
+    """从**本机目录**取这条规则的出处 id、现值、目录版本。找不到就拒：不让 Agent 编键 / 编值。"""
+    try:
+        v1 = jm.journal_sources(jid, cat).get(rule_key)
+    except engine_profiles.ProfileError:
+        v1 = None
+    v2_rule, v2_rev, v2_sid = None, None, None
+    facts, fold = _optional_engine("journalfacts_remote"), _optional_engine("journalfacts_fold")
+    if facts is not None and fold is not None and hasattr(facts, "cached_bundle"):
+        cached = facts.cached_bundle(jid)
+        if cached is not None:
+            try:
+                folded = fold.fold(cached[1])
+                v2_rule = folded["rules"].get(rule_key)
+                # fact_id 挂在规则上（同一来源的多条事实共用来源条目，挂来源上会互相覆盖）
+                fact_id = v2_rule.get("fact_id") if v2_rule else None
+                # 线缆上 v2 的出处 id 是 `v2:<事实 id>`（与界面同一规则）；没有事实 id 就当没有 v2
+                v2_sid = f"v2:{fact_id}" if isinstance(fact_id, str) and fact_id else None
+                if v2_sid is None:
+                    v2_rule = None
+            except Exception:  # noqa: BLE001 — 缓存里的刊包折不出来就当没有 v2，不拿它冒充
+                v2_rule = None
+            v2_rev = cached[0] if v2_rule is not None else None
+    chosen, rev_key, rev = None, "v1", None
+    if source_id and source_id.startswith("v2:"):
+        chosen = v2_rule if v2_rule is not None and v2_sid == source_id else None
+    elif source_id:
+        chosen = v1 if v1 is not None and v1.get("src") == source_id else None
+    else:
+        chosen = v2_rule if v2_rule is not None else v1
+    if chosen is None:
+        try:
+            known = sorted(jm.journal_sources(jid, cat))
+        except engine_profiles.ProfileError:
+            known = []
+        raise BridgeError(
+            "目录里没有这一条（journal_id / rule_key / source_id 对不上）；规则键与出处 id 只能取自本机目录，不要自己编。",
+            code="journal_rule_unknown",
+            known_rule_keys=known[:JOURNAL_REPORT_KEYS_SHOWN],
+        )
+    if chosen is v2_rule:
+        rev_key, rev = "v2", v2_rev
+    return {
+        "source_id": v2_sid if chosen is v2_rule else chosen.get("src"),
+        "current": _journal_current_text(chosen),
+        "rev_key": rev_key,
+        "v2_rev": rev,
+    }
+
+
+def _journal_report_token(draft) -> str:
+    text = json.dumps(
+        {"journal": draft.journal, "body": draft.body},
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return "jr1-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:20]
+
+
+def _journal_report_failure(cs, st: dict) -> BridgeError:
+    code = str(st.get("code") or "internal")
+    return BridgeError(
+        f"提交期刊线索没有发出（{code}）；没有重试，也没有改写内容。",
+        code="journal_report_failed",
+        failure=code,
+        retryable=bool(st.get("retryable", cs.FAILURES.get(code, False))),
+        retry_after=st.get("retry_after"),
+    )
+
+
+def report_journal_issue(
+    *,
+    type: object,
+    journal_id: object = None,
+    rule_key: object = None,
+    source_id: object = None,
+    issue: object = None,
+    url: object = None,
+    body: object = None,
+    query: object = None,
+    explicit_confirm: bool = False,
+    send_token: object = None,
+) -> dict:
+    """`tavotto_report_journal_issue`（ADR 0213 三期）：替用户提交一条期刊线索。
+
+    **不带有效 `explicit_confirm` + `send_token` 不联网**：只回「将要发送的内容」摘要与令牌（`needs_confirmation`）。
+    带了才走 `contactsend.start`（与界面同一条流程、同一份「我的来信」记录），同步等到结束。"""
+    global _JOURNAL_REPORT_PENDING
+    cs, jm, remote = require_journal_report_engine()
+    if type not in JOURNAL_REPORT_TYPES:
+        raise BridgeError(f"type 只能是 {' / '.join(JOURNAL_REPORT_TYPES)}。", code="bad_arguments")
+
+    def _text(name: str, val: object) -> str | None:
+        if val is None:
+            return None
+        if not isinstance(val, str):
+            raise BridgeError(f"{name} 要是字符串。", code="bad_arguments")
+        val = val.replace("\x00", "").strip()
+        return val or None
+
+    jid, rkey, sid = (
+        _text("journal_id", journal_id),
+        _text("rule_key", rule_key),
+        _text("source_id", source_id),
+    )
+    qry, link, text = _text("query", query), _text("url", url), _text("body", body)
+    allowed = {
+        "wrong": {"journal_id", "rule_key", "source_id", "issue", "url", "body"},
+        "missing": {"query", "url", "body"},
+        "editor": {"journal_id", "url", "body"},
+    }[type]
+    given = {
+        "journal_id": jid,
+        "rule_key": rkey,
+        "source_id": sid,
+        "issue": issue,
+        "url": link,
+        "body": text,
+        "query": qry,
+    }
+    stray = sorted(k for k, v in given.items() if v is not None and k not in allowed)
+    if stray:
+        raise BridgeError(
+            f"type={type} 不收这些参数：{'、'.join(stray)}（issue 只随 wrong；不收数值）。",
+            code="bad_arguments",
+        )
+    if issue is not None and issue not in JOURNAL_REPORT_ISSUES:
+        raise BridgeError(
+            f"issue 只能是 {' / '.join(JOURNAL_REPORT_ISSUES)}。", code="bad_arguments"
+        )
+    if type in ("wrong", "editor") and jid is None:
+        raise BridgeError("wrong / editor 必须给 journal_id。", code="bad_arguments")
+    if type == "wrong" and rkey is None:
+        raise BridgeError("wrong 必须给 rule_key（取自目录里那一条）。", code="bad_arguments")
+    if type == "editor" and text is None:
+        raise BridgeError("editor 必须在 body 里给出编辑部原话。", code="bad_arguments")
+    if type == "missing" and qry is None and link is None:
+        raise BridgeError("missing 至少要给 query 或 url。", code="bad_arguments")
+
+    head: dict = {"type": type}
+    cached = remote.load_cached()  # 只读本机缓存，不联网（`agent_catalog` 会先同步）
+    cat = cached.catalog if cached is not None else None
+    try:
+        v1_rev = int(jm.catalog_rev(cat))
+    except engine_profiles.ProfileError:
+        v1_rev = None
+    catalog: dict = {} if v1_rev is None else {"v1": v1_rev}
+    if jid is not None:
+        try:
+            label = {j["journal_id"]: j["label"] for j in jm.list_journals(cat)}.get(jid)
+        except engine_profiles.ProfileError:
+            label = None
+        if label is None:
+            # 只在 v2 里的刊（`tavotto_get_journal_facts` 取到的）不在 v1 目录：再看本机 v2 缓存（只读、不联网；Codex #2332）
+            facts = _optional_engine("journalfacts_remote")
+            got = (
+                facts.cached_bundle(jid)
+                if facts is not None and hasattr(facts, "cached_bundle")
+                else None
+            )
+            if got is not None:
+                label = ((got[1].get("journal") or {}).get("label") or "").strip() or None
+        if label is None:
+            raise BridgeError(
+                "目录里没有这本刊（journal_id）；先用 tavotto_list_journals 取 id。",
+                code="journal_unknown",
+            )
+        head["journal_id"], head["journal_label"] = jid, label
+    if type == "wrong":
+        found = _journal_report_rule(jm, cat, jid, rkey, sid)
+        head.update(rule_key=rkey, source_id=found["source_id"], current=found["current"])
+        if found["rev_key"] == "v2" and found["v2_rev"]:
+            catalog["v2"] = found["v2_rev"]
+        if issue is not None:
+            head["issue"] = issue
+    if qry is not None:
+        head["query"] = qry
+    if link is not None:
+        head["url"] = link
+    if catalog:
+        head["catalog"] = catalog
+    meta = {
+        "locale": "zh-CN" if cs.region_is_cn(None) else "en-US",
+        "body": text or "",
+        "journal": head,
+    }
+    try:
+        draft = cs.build_draft(meta, [])
+    except cs.ContactError as exc:
+        raise BridgeError(f"这条线索格式不对（{exc.code}）。", code="bad_arguments") from exc
+    # clean_journal 对单个不合规的可选字段是「丢掉」；Agent 给的 url / query 不合规要明说，不静默少发。
+    # source_id 是「选哪一条」的选择器（已对过本机目录）；v2 发的是 `v2:<事实 id>`，能过线缆正则
+    for key in ("url", "query", "rule_key"):
+        if key in head and (draft.journal or {}).get(key) != head[key]:
+            raise BridgeError(
+                f"{key} 不合规（url 要 https、≤2000 字、不含空白与账号）。", code="bad_arguments"
+            )
+
+    token = _journal_report_token(draft)
+    shown = draft.journal or {}
+    preview = {
+        "ok": True,
+        "status": "needs_confirmation",
+        "code": "journal_report_confirmation_required",
+        "send_token": token,
+        "will_send": {
+            **{
+                k: shown[k]
+                for k in (
+                    "type",
+                    "journal_id",
+                    "journal_label",
+                    "rule_key",
+                    "current",
+                    "source_id",
+                    "issue",
+                    "url",
+                    "query",
+                    "catalog",
+                )
+                if k in shown
+            },
+            "body_chars": len(draft.body),
+            "body_preview": draft.body[:JOURNAL_REPORT_PREVIEW_CHARS]
+            + ("…" if len(draft.body) > JOURNAL_REPORT_PREVIEW_CHARS else ""),
+        },
+        "audience": "发给 Tavotto 作者（与应用里的「联系作者」同一通道）；不含项目、脚本、数据与路径。",
+    }
+    if explicit_confirm and send_token and send_token != token:
+        preview["token_stale"] = True  # 内容变了：用户同意的是上一份，要重新问
+    if not explicit_confirm or send_token != token:
+        return preview
+
+    done = _JOURNAL_REPORT_SENT.get(token)
+    if done is not None:
+        return {**done, "already_sent": True}
+    st = cs.status()
+    try:
+        if st.get("state") in ("sending", "cancelling"):
+            if _JOURNAL_REPORT_PENDING != token:
+                raise BridgeError(
+                    "另一次期刊线索还在发送，稍等它结束后再试。", code="journal_report_in_progress"
+                )
+        elif st.get("state") in ("done", "failed") and _JOURNAL_REPORT_PENDING == token:
+            pass  # 上一次调用等超时了，这次接上它的结论（不重复发）
+        else:
+            _JOURNAL_REPORT_PENDING = token
+            cs.start(meta, [])
+    except cs.ContactError as exc:
+        _JOURNAL_REPORT_PENDING = None
+        if exc.code == "send_in_progress":
+            raise BridgeError(
+                "另一次期刊线索还在发送，稍等它结束后再试。", code="journal_report_in_progress"
+            ) from exc
+        if exc.code == "disabled":
+            raise BridgeError("「联系作者」被关闭了。", code=JOURNAL_REPORT_DISABLED) from exc
+        raise BridgeError(f"这条线索没有发出（{exc.code}）。", code="bad_arguments") from exc
+    deadline = time.monotonic() + JOURNAL_REPORT_WAIT_S
+    while True:
+        st = cs.status()
+        if st.get("state") not in ("sending", "cancelling") or time.monotonic() >= deadline:
+            break
+        _journal_report_sleep(JOURNAL_REPORT_POLL_S)
+    if st.get("state") in ("sending", "cancelling"):
+        return {"ok": True, "status": "in_progress", "send_token": token}
+    _JOURNAL_REPORT_PENDING = None
+    cs.dismiss()
+    if st.get("state") != "done":
+        raise _journal_report_failure(cs, st)
+    out = {
+        "ok": True,
+        "status": "sent",
+        "message_id": st.get("message_id"),
+        "inbox_saved": bool(st.get("inbox_saved", True)),
+        "note": "我们会核对出版社原文，结论会回信。"
+        + (
+            "回信会出现在应用的「我的来信」里。"
+            if st.get("inbox_saved", True)
+            else "这台机器没能保存回信记录，应用里收不到回信。"
+        ),
+    }
+    _JOURNAL_REPORT_SENT[token] = out
+    return out
+
+
 # ---------------------------------------------------------------- 排版标注（ADR 0208 第 2 期）
 #
 # 只翻译：读排版、求解、核对、复述、写入、撤销全在 `engine/layoutannotate.py`；这里只做三件 MCP 才有的事——
@@ -6557,3 +6922,251 @@ def layout_edit_commit(
         raise BridgeError(str(exc.code), code=exc.code, **exc.detail) from exc
     out["opened_sessions"] = opened
     return out
+
+
+# ------------------------ 建议待办（ADR 0214 第 3 期） ------------------------
+#: 引擎里这条流程要用到的 API：缺任何一个 = 旧引擎，三个工具不出现
+SUGGEST_ENGINE_API = (
+    "host_proposal",
+    "host_todo_results",
+    "require_log_lower_limits",
+    "candidate_patches",
+    "realize",
+    "snapshot_of",
+    "build_plan",
+    "apply_groups",
+    "fingerprint",
+    "script_revision",
+    "new_plan_id",
+    "save",
+    "load",
+    "mark_applied",
+)
+
+
+#: 方案前后两张图的宽（像素）：要随工具结果进宿主上下文，比桌面那份（`changeplan.SNAPSHOT_WIDTH`）小
+SUGGEST_SNAPSHOT_WIDTH = 900
+
+
+def suggest_available() -> bool:
+    cp = _optional_engine("changeplan")
+    return cp is not None and all(hasattr(cp, n) for n in SUGGEST_ENGINE_API)
+
+
+def _require_suggest():
+    cp = _optional_engine("changeplan") if suggest_available() else None
+    if cp is None:
+        raise BridgeError(
+            "这个 Tavotto 版本还不能把建议列成待办；升级 Tavotto 后新开会话再试。",
+            code="suggest_unavailable",
+        )
+    return cp
+
+
+def _suggest_load(cp, session: Session, plan_id: object) -> dict:
+    """本会话的建议方案；别的会话 / 别的图 / 过期 / 不存在一律同一个 `suggest_plan_unknown`。"""
+    plan = None
+    if isinstance(plan_id, str) and cp.PLAN_ID.match(plan_id):
+        plan = cp.load(project_id(session.project), plan_id)
+    if (
+        not isinstance(plan, dict)
+        or (plan.get("agent") or {}).get("session") != session.id
+        or (plan.get("base") or {}).get("target") != session.stem
+    ):
+        raise BridgeError(
+            "没有这份建议方案（不是这个会话的、已过期或已被清掉）；重新调 tavotto_suggest_plan。",
+            code="suggest_plan_unknown",
+        )
+    return plan
+
+
+def _suggest_fresh(cp, session: Session, plan: dict) -> bool:
+    """出方案之后这张图没被改过：脚本修订与会话此刻的 override 都还是出方案那一刻的。"""
+    rev = cp.script_revision(session.project, session.script)
+    return cp.fingerprint(rev, session.patches) == plan["base"]["fingerprint"]
+
+
+def _suggest_view(plan: dict) -> list[dict]:
+    """方案里的待办（给宿主看的投影）：`{key, label, why?, kind}`。"""
+    return [
+        {k: t[k] for k in ("key", "label", "why", "kind") if k in t}
+        for t in plan.get("todos") or []
+    ]
+
+
+@_synced
+def suggest_plan(session_id: str, todos: object, *, user_request: object = None) -> dict:
+    """宿主 Agent 的建议 → 一份可勾选的待办方案（只算不写：会话的 override 不变）。
+
+    与桌面改图助手同一条流水线（`changeplan.host_proposal` → `candidate_patches` → `realize` → `build_plan`）：同一份校验与守卫、
+    候选渲染、warning / 出界检查。方案落在与桌面同一个方案目录里（项目 id 同一把尺），回 `{plan_id, todos, results, preview}`；
+    `results` 逐条说交进来的建议落成了什么（`ok` / `reason`），`preview` 是勾满时的修改后图（PNG base64）。"""
+    cp = _require_suggest()
+    session = get_session(session_id)
+    try:
+        proposal, comments = cp.host_proposal(todos, session.manifest, user_request)
+    except ValueError:
+        raise BridgeError(
+            f"todos 要是 1..{cp.MAX_TODOS} 条 {{label, why?, kind, changes?}} 的列表。",
+            code="bad_todos",
+        ) from None
+    if session.native is not None:
+        # 与桌面同一处置（`safe_only=True`）：真实 Python 进程里的图不拿来试渲染候选
+        raise BridgeError(
+            "这张图在真实 Python 里运行（safe 渲染被它自己的守卫拦下），不能先试渲染建议；"
+            "请直接用 tavotto_apply_overrides 改，改前逐条问用户。",
+            code="suggest_native_unsupported",
+        )
+    base = list(session.patches)
+    worker = session.acquire()
+
+    def snapshot(patches: list):
+        return cp.snapshot_of(
+            worker.preview_png_snapshot(session.stem, patches, SUGGEST_SNAPSHOT_WIDTH)
+        )
+
+    def override(patches: list) -> dict:
+        return worker.override(session.stem, patches, None)
+
+    touched = False
+
+    def on_render() -> None:
+        nonlocal touched
+        touched = True
+
+    rev0 = cp.script_revision(session.project, session.script)
+    try:
+        before_png, before_man = snapshot(base)
+        reply, raw = proposal.get("reply"), proposal.get("todos")
+        proposal = cp.require_log_lower_limits(proposal, before_man)
+        cand, proposal = cp.candidate_patches(base, proposal, before_man)
+        groups, unhandled, after_png = cp.realize(
+            proposal,
+            cand,
+            base=base,
+            start=base,
+            before_png=before_png,
+            start_png=before_png,
+            before_man=before_man,
+            start_man=before_man,
+            override=override,
+            snapshot=snapshot,
+            on_render=on_render,
+        )
+    except cp.PlanFailure as exc:
+        raise BridgeError(
+            "建议的修改渲染不出来（或带出了新的 warning），整份方案没出；换个改法再试。",
+            code=exc.code,
+        ) from None
+    except engine_pool.WorkerError as exc:
+        raise _bridge_error_from_worker(
+            exc, project=session.project, script=session.script, default_code="render_failed"
+        ) from exc
+    finally:
+        if touched:  # 候选试渲染动过热 worker：放回会话此刻那份，下一次 apply / 导出照旧
+            try:
+                worker.override(session.stem, session.patches, None)
+            except engine_pool.WorkerError as exc:
+                # 放不回去也不坏事：会话的 patches 没动，下一次 apply / 导出都发全量列表、worker 照它重来
+                sys.stderr.write(
+                    f"tavotto-mcp: 会话 {session.id} 建议方案试渲染后没能放回 override：{exc}\n"
+                )
+    if cp.script_revision(session.project, session.script) != rev0:
+        raise BridgeError(
+            "出方案期间脚本被改了；重新调 tavotto_suggest_plan。", code="suggest_plan_stale"
+        )
+    plan = cp.build_plan(
+        plan_id=cp.new_plan_id(),
+        target=session.stem,
+        base_fingerprint=cp.fingerprint(rev0, base),
+        comments=comments,
+        groups=groups,
+        unhandled=unhandled,
+        base_patches=base,
+        source="assistant",
+        reply=reply,
+        todos=raw,
+    )
+    plan["agent"] = {"session": session.id}
+    try:
+        cp.save(project_id(session.project), plan, before_png, after_png)
+    except cp.PlanFailure as exc:
+        raise BridgeError("建议方案没能存下来；再试一次。", code=exc.code) from None
+    return {
+        "ok": True,
+        "plan_id": plan["id"],
+        "session_id": session.id,
+        "todos": _suggest_view(plan),
+        "results": cp.host_todo_results(plan, todos),
+        "preview": {
+            "png_base64": base64.b64encode(after_png).decode("ascii"),
+            "width": cp.SNAPSHOT_WIDTH,
+        },
+    }
+
+
+@_synced
+def suggest_apply(
+    session_id: str, plan_id: object, keys: object, *, user_authorized: bool = False
+) -> dict:
+    """用户勾好的待办 → 图内的那些一次写进会话（全量列表 = B0 ⊕ 勾着的组）；脚本待办原样交回宿主去改。
+
+    出方案之后图被改过（脚本 / override）就拒绝（`suggest_plan_stale`），不在别的底子上套旧的修改。会话上有规范化合同时
+    与 `apply_overrides` 同一条规矩：没带 `user_authorized`（用户明确提出了新要求的声明）就回 `requires_authorization`、什么都不改。"""
+    cp = _require_suggest()
+    session = get_session(session_id)
+    plan = _suggest_load(cp, session, plan_id)
+    by_key = {t["key"]: t for t in plan.get("todos") or []}
+    if (
+        not isinstance(keys, list)
+        or not all(isinstance(k, str) for k in keys)
+        or any(k not in by_key for k in keys)
+    ):
+        raise BridgeError(
+            "keys 要是这份方案里待办的 key 列表（tavotto_suggest_plan 回的 todos[].key）。",
+            code="bad_todo_keys",
+            known=sorted(by_key),
+        )
+    if plan.get("applied"):
+        raise BridgeError(
+            "这份建议方案已经应用过；要再改，重新出一份。", code="suggest_plan_applied"
+        )
+    if not _suggest_fresh(cp, session, plan):
+        raise BridgeError(
+            "出方案之后这张图又被改过（脚本或图内修改）；重新调 tavotto_suggest_plan。",
+            code="suggest_plan_stale",
+        )
+    chosen = [by_key[k] for k in dict.fromkeys(keys)]
+    groups = [t["group_key"] for t in chosen if t["kind"] == "figure"]
+    scripts = [{"key": t["key"], "label": t["label"]} for t in chosen if t["kind"] == "script"]
+    out: dict = {"ok": True, "plan_id": plan["id"], "applied": [], "script_todos": scripts}
+    if groups:
+        patches = cp.apply_groups(plan["base_patches"], plan["groups"], set(groups))
+        res = apply_overrides(session.id, patches, user_authorized=user_authorized)
+        out["applied"] = [t["key"] for t in chosen if t["kind"] == "figure"]
+        out["contract_released"] = bool(res.get("contract_released"))
+        out["patch_hash"] = session.patch_hash()
+    cp.mark_applied(
+        project_id(session.project),
+        plan["id"],
+        {"by": "agent", "keys": [t["key"] for t in chosen], "at": time.time()},
+    )
+    return out
+
+
+@_synced
+def suggest_status(session_id: str, plan_id: object) -> dict:
+    """一份建议方案此刻的状态：待办、用了哪些（谁点的）、图有没有在出方案之后被改过。只读。"""
+    cp = _require_suggest()
+    session = get_session(session_id)
+    plan = _suggest_load(cp, session, plan_id)
+    applied = plan.get("applied") if isinstance(plan.get("applied"), dict) else None
+    return {
+        "ok": True,
+        "plan_id": plan["id"],
+        "todos": _suggest_view(plan),
+        "state": "applied" if applied else "proposed",
+        "chosen": list(applied.get("keys") or []) if applied else [],
+        "by": applied.get("by") if applied else None,
+        "stale": not applied and not _suggest_fresh(cp, session, plan),
+    }
