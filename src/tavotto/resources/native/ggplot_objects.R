@@ -22,10 +22,20 @@ ggplot_facet_adjust <- function(plot, kind, recipes, install) {
   plot
 }
 
-ggplot_facet_group_id <- function(cells, axis, owner) {
+ggplot_facet_cell <- function(cells, owner) {
+  if (is.null(owner)) return(if (nrow(cells) == 1L) 1L)
   if (!length(owner) || !all(names(owner) %in% names(cells))) return(NULL)
   match <- which(vapply(seq_len(nrow(cells)), function(row) {
     identical(lapply(cells[row, names(owner), drop = FALSE], as.character), owner)
   }, logical(1L)))
-  if (length(match) == 1L) cells[[paste0("SCALE_", toupper(axis))]][[match]]
+  if (length(match) == 1L) match
+}
+
+ggplot_facet_group_id <- function(cells, axis, owner) {
+  row <- ggplot_facet_cell(cells, owner)
+  if (!is.null(row)) cells[[paste0("SCALE_", toupper(axis))]][[row]]
+}
+
+ggplot_facet_panel_slots <- function(table, cells) {
+  match(paste("panel", cells$COL, cells$ROW, sep = "-"), table$layout$name)
 }

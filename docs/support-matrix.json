@@ -87,6 +87,7 @@
         "independent X and Y axis reversal for supported Cartesian layers including native raster cell and placement reversal",
         "per-axis major grid visibility and shared grid color, opacity, stroke width and style on supported Cartesian panels and facets",
         "independent visibility plus whole-frame and per-side stroke color and width for supported Cartesian plot borders and facets",
+        "verified source writeback of visibility, stroke color and width for individual supported Cartesian panel edges",
         "stroke width and line style of supported single- or multi-group geom_line and geom_path layers, including their identifiable standard legend keys",
         "unmapped RGB color of supported geom_line and geom_path layers without legend keys",
         "line width, style, opacity and visibility per data category for supported curves with a single discrete colour guide",

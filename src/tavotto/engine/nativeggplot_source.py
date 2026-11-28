@@ -20,6 +20,7 @@ from pathlib import Path
 from . import config, execspec, executionfact, nativeggplot, projectenv, runtime, scriptadjust
 from .colorscale import CMAPS, COLORBAR_EXTENSIONS, COLORBAR_ORIENTATIONS, PALETTE_CATALOG_PATH
 from .fixtools import cmdsandbox, trial, winappcontainer
+from .manifest_fields import AXIS_FRAME_SIDES
 
 _R_AXIS_TRANSFORMS = {
     "linear": "scales::transform_identity()",
@@ -239,6 +240,64 @@ def _native_theme_writes(
             options.extend(values)
             written.update((gid, prop) for gid, changes in panels.items() for prop in changes)
     return options, written
+
+
+_FRAME_SIDES = {f"spine_{side}" for side in AXIS_FRAME_SIDES}
+_FRAME_COLORS = {"spine_color", *(f"{side}_color" for side in _FRAME_SIDES)}
+_FRAME_WIDTHS = {"spine_linewidth", *(f"{side}_linewidth" for side in _FRAME_SIDES)}
+
+
+def _native_frame_style_value(prop: str, value) -> bool:
+    if prop in _FRAME_SIDES:
+        return type(value) is bool
+    if prop in _FRAME_COLORS:
+        return isinstance(value, str) and (value == "none" or _RGB.fullmatch(value) is not None)
+    return (
+        prop in _FRAME_WIDTHS
+        and type(value) in (float, int)
+        and math.isfinite(value)
+        and 0.1 <= value <= 10
+    )
+
+
+def _native_frame_writes(
+    axes: dict[str, dict], patches: list[dict], theme_writes: set[tuple[str, str]]
+) -> tuple[dict[str, dict], set[tuple[str, str]]]:
+    frames = defaultdict(dict)
+    written = set()
+    for patch in patches:
+        gid, prop, value = patch["gid"], patch["prop"], patch["value"]
+        source = axes.get(gid, {}).get("source_frame")
+        if not source or (gid, prop) in theme_writes or not _native_frame_style_value(prop, value):
+            continue
+        facet = _r_facet_selector(source["facet"])
+        if facet is not None:
+            frames[facet][prop] = value
+            written.add((gid, prop))
+    return frames, written
+
+
+def _r_frame_block(name: str, frames: dict[str, dict]) -> str:
+    recipes = []
+    for facet, changes in frames.items():
+        style = ", ".join(f"{prop} = {_r_literal(value)}" for prop, value in changes.items())
+        recipes.append(f"    list(facet = {facet}, style = list({style}))")
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers(
+                "ggplot_objects.R",
+                "ggplot_pigment.R",
+                "ggplot_frame_geometry.R",
+                "ggplot_frame_source.R",
+            ),
+            "  plot <- ggplot_with_source_frames(plot, list(",
+            ",\n".join(recipes),
+            "  ))",
+            "  plot",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
 
 
 def _layer_aesthetic_value(key: str, value) -> bool:
@@ -1097,6 +1156,7 @@ def build(
     coordinates, coordinate_writes = _native_coordinate_writes(axes, patches)
     facet_views, facet_view_writes = _native_facet_coordinate_writes(axes, patches)
     theme_options, theme_writes = _native_theme_writes(axes, patches)
+    frames, frame_writes = _native_frame_writes(axes, patches, theme_writes)
     source_layers, layer_writes = _native_layer_writes(hot, patches)
     colour_scales, colour_writes = _native_colour_mapping_writes(hot, patches)
     tick_labels, tick_writes = _native_tick_label_writes(hot, patches)
@@ -1108,6 +1168,7 @@ def build(
         coordinate_writes
         | facet_view_writes
         | theme_writes
+        | frame_writes
         | layer_writes
         | colour_writes
         | tick_writes
@@ -1196,6 +1257,7 @@ def build(
         or coordinates
         or facet_views
         or theme_options
+        or frames
         or source_layers
         or colour_scales
         or tick_labels
@@ -1240,6 +1302,8 @@ def build(
         statements.append(_r_colourbar_layout_block(name, bar_layouts))
     if titles:
         statements.append(_r_title_text_block(name, titles))
+    if frames:
+        statements.append(_r_frame_block(name, frames))
     if options:
         args = ",\n".join(options)
         statements.append(

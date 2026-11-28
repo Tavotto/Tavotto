@@ -258,6 +258,7 @@ ggplot_axes_element <- function(gid, target, current, bbox, edits, changes) {
               }), use.names = FALSE)))),
               links = lapply(target$links, as.list),
               source_groups = target$source_groups,
+              source_frame = target$source_frame,
               source_anchor = target$source_anchor,
               source_theme = ggplot_axes_source_theme(target, edits),
               aspect = if (!is.null(target$aspect)) {
@@ -742,7 +743,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
   ids <- as.integer(as.character(cells$PANEL))
   # The stock facets name gtable panels by physical column and row. Their
   # order in the gtable can differ from the order of native PANEL ids.
-  slots <- match(paste("panel", cells$COL, cells$ROW, sep = "-"), table$layout$name)
+  slots <- ggplot_facet_panel_slots(table, cells)
   if (anyNA(slots) || anyDuplicated(slots) ||
       !identical(sort(ids), seq_along(built$layout$panel_params))) return(list())
   totals <- lapply(ggplot_axis_names, function(axis) {
@@ -781,7 +782,7 @@ ggplot_faceted_axes_targets <- function(built, table, panels, axis_groups) {
         target <- ggplot_background_target(built, table, target, slot)
       }
     }
-    target <- ggplot_frame_target(built, table, target, slot, panel_only = TRUE)
+    target <- ggplot_frame_target(built, table, target, slot, panel_only = TRUE, source_facet = facet)
     if (!all(vapply(target[c("axes", "grid", "background", "frame")], is.null, logical(1L)))) target
   })
   targets <- stats::setNames(targets, paste0("axes_", ids)) |> Filter(f = Negate(is.null))

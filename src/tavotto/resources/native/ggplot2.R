@@ -1673,6 +1673,10 @@ capture_ggplot <- function(plot, frame_pt, palettes = NULL) {
   legacy_ticks <- plot$facet$tavotto_tick_recipes
   if (length(legacy_ticks)) plot$facet <- plot$facet$tavotto_tick_base
   authored_ticks <- c(legacy_ticks, facet_source$tick_labels$recipes)
+  for (kind in setdiff(names(facet_source), c("tick_labels", "locators"))) {
+    adjustment <- facet_source[[kind]]
+    plot <- ggplot_facet_adjust(plot, kind, adjustment$recipes, adjustment$install)
+  }
   locator_source <- ggplot_tick_locator_baseline(plot)
   plot <- locator_source$plot
   measured <- with_svg_frame(frame_pt, function(capture) {

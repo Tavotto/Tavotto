@@ -1294,11 +1294,16 @@ ggplot2::ggsave("original.pdf", plot, width = 4, height = 3, device = grDevices:
             timeout=120,
         )
         assert status == 200, preview
-        expected_residual = []
-        if scope == "one-facet":
-            expected_residual = patches[:-1]
-        elif scope == "different-facets":
-            expected_residual = [patch for patch in patches if patch["prop"].startswith("grid_")]
+        expected_residual = (
+            [
+                patch
+                for patch in patches
+                if patch["prop"].startswith("grid_")
+                or (scope == "one-facet" and patch["prop"] == "facecolor")
+            ]
+            if scope in ("one-facet", "different-facets")
+            else []
+        )
         assert preview["written"] == len(patches) - len(expected_residual)
         assert len(preview["skipped"]) == len(expected_residual)
         assert source.read_bytes() == original
@@ -7096,3 +7101,97 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
             timeout=120,
         )
         assert status == 200 and restored["ok"] and script.read_bytes() == authored
+
+
+@pytest.mark.parametrize("layout_kind", ["classic", "faceted"])
+def test_native_r_individual_frame_sides_write_reopen_and_remain_editable(tmp_path, layout_kind):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Edited R frame"
+    project.mkdir()
+    script = project / "Edges.R"
+    faceted = layout_kind == "faceted"
+    axis_id = "axes_2" if faceted else "axes_0"
+    theme = (
+        'ggplot2::theme_bw() + ggplot2::facet_wrap(~block, scales = "free_x", axes = "all")'
+        if faceted
+        else "ggplot2::theme_classic()"
+    )
+    standalone = project / "standalone.svg"
+    original = f"""\
+d <- expand.grid(x = 1:5, block = c("Early", "Late"))
+d$y <- d$x + as.integer(d$block)
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y)) + ggplot2::geom_line(colour = "#183F62") +
+  {theme}
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+""".encode()
+    script.write_bytes(original)
+    route = "/api/layouts/Frame_sides"
+
+    def target(view, gid=axis_id):
+        return next(e for e in view["manifest"]["elements"] if e["gid"] == gid)
+
+    def fields(view):
+        return {field["prop"]: field["value"] for field in target(view)["editable"]}
+
+    def strokes(svg):
+        return [
+            (node.tag, node.attrib)
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.rsplit("}", 1)[-1] in {"line", "polyline", "rect"}
+        ]
+
+    def save(app, figure, baseline, changes):
+        selected = target(baseline)
+        patches = [
+            {"gid": axis_id, "identity": selected["identity"], "prop": prop, "value": value}
+            for prop, value in changes.items()
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        assert _render(app, figure, [])["svg"] == baseline["svg"]
+        if faceted:
+            assert target(hot, "axes_1") == target(baseline, "axes_1")
+        saved = _write_native_figure_style(app, script, route, figure, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert strokes(standalone.read_text(encoding="utf-8")) == strokes(hot["svg"])
+        return hot, saved
+
+    first = {
+        "spine_left": False,
+        "spine_top": True,
+        "spine_top_color": "#D67534",
+        "spine_top_linewidth": 3.3,
+    }
+    if faceted:
+        first.update(xlim=[1.25, 4.75], xscale="log", invert_x=True)
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        baseline = _render(app, figure, [])
+        changed, _ = save(app, figure, baseline, first)
+        assert sum("#D67534" in attr.get("style", "") for _, attr in strokes(changed["svg"])) == 1
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == changed["svg"]
+        assert {prop: fields(reopened)[prop] for prop in first} == first
+        new_style = {"spine_left": True, "spine_color": "#207A85", "spine_linewidth": 2.4}
+        revised, saved = save(app, figure, reopened, new_style)
+        styles = fields(revised)
+        assert styles["spine_left"]
+        assert styles["spine_top_color"] == "#207A85"
+        assert styles["spine_top_linewidth"] == 2.4
+        _, result = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert result["ok"] and script.read_bytes() == authored
