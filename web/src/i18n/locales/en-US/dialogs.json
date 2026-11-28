@@ -1300,7 +1300,8 @@
         "hardDisabledDetail": "The environment variable {{env}} is in effect; remove it to make the switch available"
       },
       "privacySend": "A diagnostics bundle is uploaded to the Tavotto maintainers' service only when you confirm each send in “Send problem report”; exporting a bundle only saves it on this machine.",
-      "privacyContact": "A letter written in “Contact the maker” is sent to the Tavotto maintainers' service only when you press Send; nothing is sent automatically and your mail program is never opened."
+      "privacyContact": "A letter written in “Contact the maker” is sent to the Tavotto maintainers' service only when you press Send; nothing is sent automatically and your mail program is never opened.",
+      "paletteCredits": "Recommended colour schemes include Okabe–Ito, Paul Tol, ColorBrewer, Fabio Crameri's scientific colour maps and ggsci's journal-style sets; licences are in THIRD_PARTY_NOTICES.md. Please cite the Crameri maps as:"
     },
     "agents": {
       "announce": {

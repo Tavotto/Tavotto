@@ -2147,6 +2147,17 @@ function upsertOverrides(
 }
 
 /**
+ * 推荐配色写颜色（ADR 0210，`store/paletteActions.ts` 在自己那次 commit 的 recipe 里调）：
+ * 与其它写入同一个 `upsertOverrides`，原地改值、只追加真正新的。
+ */
+export function writePaletteOverrides(
+  panel: PanelObject,
+  patches: { gid: string; prop: string; value: unknown }[],
+): void {
+  upsertOverrides(panel, patches)
+}
+
+/**
  * 把几条 override **补进 `entry` 那条历史**并立即重渲染（`documentStore.amendLast`
  * 的面板版）。`entry` 已不是最后一条 / 有进行中的事务时什么都不写、返回 false。
  */

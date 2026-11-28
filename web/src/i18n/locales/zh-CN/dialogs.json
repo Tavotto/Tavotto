@@ -1277,7 +1277,8 @@
         "hardDisabledDetail": "环境变量 {{env}} 在起作用；去掉它之后开关才可用"
       },
       "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。",
-      "privacyContact": "“联系作者”写的信只有在你点“发送”后才会发给 Tavotto 维护者的服务；不会自动发送，也不会打开你的邮件程序。"
+      "privacyContact": "“联系作者”写的信只有在你点“发送”后才会发给 Tavotto 维护者的服务；不会自动发送，也不会打开你的邮件程序。",
+      "paletteCredits": "推荐配色收录了 Okabe–Ito、Paul Tol、ColorBrewer、Fabio Crameri 的科学色图与 ggsci 的期刊风格方案，许可见 THIRD_PARTY_NOTICES.md。Crameri 色图的引用："
     },
     "agents": {
       "announce": {

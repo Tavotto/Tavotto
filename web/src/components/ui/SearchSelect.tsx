@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Check, ChevronDown } from './icons'
 import { ICON_SIZE } from './Icon'
 import { Popover } from './Popover'
@@ -34,6 +34,17 @@ interface SearchSelectProps<T extends string> {
   title?: string
   triggerLabel?: ReactNode
   prefix?: ReactNode
+  /** 按 `SelectOption.group` 画组标题（相邻同名归一组，与 `Select` 同一判据）；不给 = 平铺，行为同从前 */
+  grouped?: boolean
+  /**
+   * 高亮项变了（↑↓ / 悬停）时告诉调用方，关上时给 null：调用方据此只改**显示**做预览，回车才 `onChange`。
+   * 不给 = 行为同从前
+   */
+  onActiveChange?: (v: T | null) => void
+  /** 列表下方的一块（预览说明、快捷键提示）；随弹层一起挂载 */
+  footer?: ReactNode
+  /** 弹层宽度（同 `Popover.width`），缺省至少 240 */
+  width?: number | 'trigger' | { min: number }
 }
 
 /**
@@ -56,15 +67,23 @@ export function SearchSelect<T extends string>({
   title,
   triggerLabel,
   prefix,
+  grouped,
+  onActiveChange,
+  footer,
+  width = { min: 240 },
 }: SearchSelectProps<T>) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpenState] = useState(false)
+  const setOpen = (v: boolean) => {
+    setOpenState(v)
+    if (!v) onActiveChange?.(null)
+  }
   const selected = options.find((o) => o.value === value)
   return (
     <Popover
       open={open}
       onOpenChange={setOpen}
       align="start"
-      width={{ min: 240 }}
+      width={width}
       trigger={
         <button
           type="button"
@@ -93,6 +112,9 @@ export function SearchSelect<T extends string>({
         searchLabel={searchLabel}
         emptyLabel={emptyLabel}
         ariaLabel={ariaLabel}
+        grouped={grouped}
+        onActiveChange={onActiveChange}
+        footer={footer}
         onPick={(v) => {
           setOpen(false)
           if (v !== value) onChange(v)
@@ -110,6 +132,9 @@ function SearchList<T extends string>({
   emptyLabel,
   ariaLabel,
   onPick,
+  grouped,
+  onActiveChange,
+  footer,
 }: {
   value: T
   options: SelectOption<T>[]
@@ -117,6 +142,9 @@ function SearchList<T extends string>({
   emptyLabel: string
   ariaLabel?: string
   onPick: (v: T) => void
+  grouped?: boolean
+  onActiveChange?: (v: T | null) => void
+  footer?: ReactNode
 }) {
   const [query, setQuery] = useState('')
   const shown = useMemo(() => filterOptions(options, query), [options, query])
@@ -126,6 +154,11 @@ function SearchList<T extends string>({
   useLayoutEffect(() => {
     listRef.current?.querySelector('[data-active]')?.scrollIntoView?.({ block: 'nearest' })
   }, [active, shown])
+
+  const activeValue = shown[active]?.value ?? null
+  useLayoutEffect(() => {
+    onActiveChange?.(activeValue)
+  }, [activeValue]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onKeyDown = (e: KeyboardEvent) => {
     // 输入法组字中：回车是确认候选词、方向键是在候选里选，不能被弹层抢走（229 兼容 Safari 等老事件）
@@ -162,8 +195,13 @@ function SearchList<T extends string>({
       )}
       <div ref={listRef} role="listbox" aria-label={ariaLabel} tabIndex={0} className="max-h-72 overflow-y-auto outline-none">
         {shown.map((o, i) => (
+          <Fragment key={o.value}>
+          {grouped && o.group && o.group !== shown[i - 1]?.group && (
+            <div role="presentation" data-select-group={o.group} className="px-2 pb-0.5 pt-1.5 text-xs text-ink-3">
+              {o.group}
+            </div>
+          )}
           <div
-            key={o.value}
             id={activeId(i)}
             role="option"
             aria-selected={o.value === value}
@@ -173,18 +211,21 @@ function SearchList<T extends string>({
             onMouseDown={(e) => e.preventDefault()}
             onPointerMove={() => setActive(i)}
             onClick={() => onPick(o.value)}
-            className={cn(SELECT_ROW, 'data-[active]:bg-surface-hover', o.value === value && 'font-medium')}
+            className={cn(SELECT_ROW, o.rowClass, 'data-[active]:bg-surface-hover', o.value === value && 'font-medium')}
           >
             {o.value === value && (
               <span className="absolute left-1.5 flex items-center">
                 <Check size={ICON_SIZE.sm} />
               </span>
             )}
-            <span className="min-w-0 truncate">{o.label}</span>
+            {/* 占满一行：label 自己排版时（如右端对齐的来源名）有整行可用 */}
+            <span className="min-w-0 flex-1 truncate">{o.label}</span>
           </div>
+          </Fragment>
         ))}
         {shown.length === 0 && <div className="px-2 py-1.5 text-sm text-ink-3">{emptyLabel}</div>}
       </div>
+      {footer}
     </div>
   )
 }
