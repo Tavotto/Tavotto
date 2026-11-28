@@ -1074,6 +1074,53 @@ def _native_colourbar_layout_writes(
     return recipes, written
 
 
+def _native_legend_position_writes(
+    hot: dict | None, patches: list[dict]
+) -> tuple[list[str], set[tuple[str, str]]]:
+    positions = {patch["gid"]: patch["value"] for patch in patches if patch["prop"] == "loc_frac"}
+    recipes = []
+    written = set()
+    for element in (hot or {}).get("elements", ()):
+        gid = element["gid"]
+        plan = element.get("source_legend_position")
+        if element["role"] != "legend" or not plan or gid not in positions:
+            continue
+        side = gid.removeprefix("legend.")
+        if gid != f"legend.{side}" or side not in {"left", "right", "top", "bottom", "inside"}:
+            continue
+        titles, pair = plan["titles"], positions[gid]
+        if (
+            not isinstance(pair, list)
+            or len(pair) != 2
+            or pair != plan["position"]
+            or not all(type(value) in (int, float) and math.isfinite(value) for value in pair)
+            or not isinstance(titles, list)
+            or not titles
+            or not all(isinstance(title, str) and title and _r_literal(title) for title in titles)
+        ):
+            continue
+        labels = ", ".join(_r_literal(title) for title in titles)
+        anchor = ", ".join(_r_literal(value) for value in pair)
+        recipes.append(
+            f"list(side = {_r_literal(side)}, titles = c({labels}), anchor = c({anchor}))"
+        )
+        written.add((gid, "loc_frac"))
+    return recipes, written
+
+
+def _r_legend_position_block(name: str, recipes: list[str]) -> str:
+    return "\n".join(
+        [
+            f"base::assign({name}, (function(plot) {{",
+            *_r_helpers("ggplot_objects.R", "ggplot_legend_position.R"),
+            "  ggplot_with_legend_positions(plot, list(",
+            ",\n".join(f"    {recipe}" for recipe in recipes),
+            "  ))",
+            f"}})(base::get({name}, inherits = FALSE)))",
+        ]
+    )
+
+
 def _r_colourbar_layout_block(name: str, recipes: list[str]) -> str:
     return "\n".join(
         [
@@ -1317,6 +1364,7 @@ def build(
     locators, locator_writes = _native_tick_locator_writes(hot, patches)
     minor_locators, minor_writes = _native_tick_locator_writes(hot, patches, minor=True)
     bar_layouts, bar_writes = _native_colourbar_layout_writes(hot, patches)
+    legend_positions, legend_writes = _native_legend_position_writes(hot, patches)
     titles = _native_title_text_writes(hot, patches)
     title_writes = {(gid, "text") for gid in titles}
     written = (
@@ -1329,6 +1377,7 @@ def build(
         | colour_writes
         | tick_writes
         | bar_writes
+        | legend_writes
     )
     written.update(title_writes | locator_writes | minor_writes)
     residual = []
@@ -1421,6 +1470,7 @@ def build(
         or locators
         or minor_locators
         or bar_layouts
+        or legend_positions
         or titles
     ):
         return AdjustedRSource(data, 0, residual, skipped)
@@ -1460,6 +1510,8 @@ def build(
         statements.append(_r_tick_labels_block(name, tick_labels))
     if bar_layouts:
         statements.append(_r_colourbar_layout_block(name, bar_layouts))
+    if legend_positions:
+        statements.append(_r_legend_position_block(name, legend_positions))
     if titles:
         statements.append(_r_title_text_block(name, titles))
     if frames:

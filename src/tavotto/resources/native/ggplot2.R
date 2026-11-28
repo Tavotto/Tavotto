@@ -848,7 +848,7 @@ ggplot_legend_boxes <- function(table) {
     })
     targets[[paste0("legend.", side)]] <- list(
       slot = slot, viewport = c(table$name, ggplot_cell_name(cell), box$vp$name),
-      context = context
+      context = context, source_titles = ggplot_legend_box_titles(box)
     )
   }
   targets
@@ -2004,23 +2004,6 @@ ggplot_legend_position <- function(edit) {
   value
 }
 
-makeContext.tavottoLegendPosition <- function(x) {
-  # Grid calls makeContext while still in the original gtable cell. Resolve
-  # the absolute figure anchor against that cell on the actual output device.
-  p <- x$tavotto_position
-  frame <- grDevices::dev.size("in")
-  origin <- grid::deviceLoc(grid::unit(0, "npc"), grid::unit(0, "npc"), valueOnly = TRUE)
-  xy <- c(p[[1L]], 1 - p[[2L]]) * frame - c(origin$x, origin$y)
-  if (any(!is.finite(xy))) stop("The native R legend position is outside the device range.")
-  just <- x$vp$valid.just
-  x$vp$x <- grid::unit(xy[[1L]], "in") + just[[1L]] * x$vp$width
-  x$vp$y <- grid::unit(xy[[2L]], "in") + just[[2L]] * x$vp$height
-  NextMethod()
-}
-
-registerS3method("makeContext", "tavottoLegendPosition", makeContext.tavottoLegendPosition,
-                 envir = asNamespace("grid"))
-
 ggplot_guide_stroke_edits <- function(state, edits) {
   gids <- intersect(names(edits), names(state$line_targets))
   edits[gids[vapply(state$line_targets[gids], function(line) length(line$guide_keys) > 0L,
@@ -2189,10 +2172,8 @@ ggplot_table_for <- function(state, edits) {
     }
     legend <- legend_targets[[gid]]
     if (!is.null(legend)) {
-      box <- table$grobs[[legend$slot]]
-      box$tavotto_position <- ggplot_legend_position(edits[[gid]])
-      class(box) <- c("tavottoLegendPosition", class(box))
-      table$grobs[[legend$slot]] <- box
+      table$grobs[[legend$slot]] <- ggplot_move_legend_box(
+        table$grobs[[legend$slot]], ggplot_legend_position(edits[[gid]]))
       next
     }
     target <- text_targets[[gid]]
@@ -2560,9 +2541,13 @@ ggplot_manifest <- function(state, stem, edits = list(), measured = NULL) {
     target <- state$legend_targets[[gid]]
     bbox <- if (is.null(measured$legends)) target$bbox else measured$legends[[gid]]
     if (is.null(bbox)) stop("The edited native R legend could not be measured.")
+    edit <- requested[[gid]]
+    source <- if (length(target$source_titles) && !is.null(edit$loc_frac)) {
+      list(titles = as.list(target$source_titles), position = as.list(ggplot_legend_position(edit)))
+    }
     list(gid = gid, role = "legend", label = "\u56fe\u4f8b", bbox = as.list(bbox),
          draggable = TRUE, drag_prop = "loc_frac", anchor = as.list(c(bbox[[1L]], bbox[[2L]] + bbox[[4L]])),
-         editable = list(), legend_context = target$context)
+         editable = list(), legend_context = target$context, source_legend_position = source)
   })
   lines <- lapply(names(state$line_targets), function(gid) {
     target <- state$line_targets[[gid]]

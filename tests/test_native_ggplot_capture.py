@@ -7762,3 +7762,86 @@ writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
             timeout=120,
         )
         assert status == 200 and receipt["ok"] and script.read_bytes() == authored
+
+
+def test_native_r_legend_anchors_write_back_without_reflowing_other_guides(tmp_path):
+    from test_core_v02_release_candidate import R_FRAME_PT, _render, _run_ggplot
+
+    rscript = _rscript_with_capture_packages()
+    project = tmp_path / "Moved legend boxes"
+    project.mkdir()
+    script = project / "Legends.R"
+    script.write_text(
+        f"""\
+d <- data.frame(x = 1:8, y = (1:8)^.8, category = rep(c("Alpha", "Beta"), 4))
+plot <- ggplot2::ggplot(d, ggplot2::aes(x, y, shape = category, colour = x)) +
+  ggplot2::geom_point(size = 3) + ggplot2::theme_bw() +
+  ggplot2::scale_shape_discrete(name = "Group") +
+  ggplot2::scale_colour_continuous(name = "Measure",
+    guide = ggplot2::guide_colourbar(position = "left", display = "rectangles"))
+svglite::svglite("standalone.svg", {R_FRAME_PT[0]}/72, {R_FRAME_PT[1]}/72)
+print(plot)
+grDevices::dev.off()
+writeLines(rlang::hash(ggplot2::ggplot_build(plot)$data), "built-data.txt")
+""",
+        encoding="utf-8",
+    )
+    route = "/api/layouts/Legends"
+    subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+    data = project / "built-data.txt"
+    original_data = data.read_bytes()
+
+    def draw_marks(svg):
+        return [
+            (node.tag, node.attrib, node.text)
+            for node in ElementTree.fromstring(svg).iter()
+            if node.tag.rsplit("}", 1)[-1]
+            in {"rect", "image", "text", "polygon", "polyline", "circle"}
+        ]
+
+    def by_gid(view):
+        return {element["gid"]: element for element in view["manifest"]["elements"]}
+
+    def save(app, figure, current, side, anchor):
+        gid = f"legend.{side}"
+        unchanged = "legend.right" if side == "left" else "legend.left"
+        before = by_gid(current)
+        patches = [
+            {"gid": gid, "identity": before[gid]["identity"], "prop": "loc_frac", "value": anchor}
+        ]
+        hot = _render(app, figure, patches)
+        assert hot["warnings"] == []
+        after = by_gid(hot)
+        assert after[gid]["anchor"] == pytest.approx(anchor, abs=1e-7)
+        assert after[unchanged] == before[unchanged]
+        assert after["axes_0"] == before["axes_0"]
+        assert _render(app, figure, [])["svg"] == current["svg"]
+        saved = _write_native_figure_style(app, script, route, figure, hot, patches)
+        subprocess.run([rscript, "--vanilla", script.name], check=True, cwd=project, timeout=45)
+        assert data.read_bytes() == original_data
+        standalone = (project / "standalone.svg").read_text(encoding="utf-8")
+        assert draw_marks(standalone) == draw_marks(hot["svg"])
+        return hot, saved
+
+    with sidecar_app(project, tmp_path / "warm") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        before = _render(app, figure, [])
+        moved, _ = save(app, figure, before, "right", [0.43, 0.68])
+    authored = script.read_bytes()
+    with sidecar_app(project, tmp_path / "cold") as app:
+        figure = _run_ggplot(app, script.name, rscript)
+        reopened = _render(app, figure, [])
+        assert reopened["svg"] == moved["svg"]
+        assert by_gid(reopened)["legend.right"]["anchor"] == pytest.approx([0.43, 0.68])
+        both, saved = save(app, figure, reopened, "left", [0.68, 0.91])
+        assert by_gid(both)["legend.right"] == by_gid(reopened)["legend.right"]
+        status, receipt = app.call(
+            "/api/script-backups/restore",
+            {
+                "backup_id": saved["backup_id"],
+                "expected_sha256": saved["script_revision"],
+                "mode": "full",
+            },
+            timeout=120,
+        )
+        assert status == 200 and receipt["ok"] and script.read_bytes() == authored

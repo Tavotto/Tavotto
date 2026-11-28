@@ -104,6 +104,7 @@
         "verified source writeback of fixed paint for individual supported scatter, line, bar and interval panels",
         "focus the existing panel across canvases when rerunning the same ggplot2 source",
         "native guide box position by canvas drag",
+        "verified source writeback of native guide box positions for supported uniquely titled guides",
         "distinct plain-text legend title RGB color",
         "distinct plain-text keyed legend entry RGB color in a uniquely titled guide",
         "single-group plain-text continuous colorbar tick labels RGB color in a uniquely titled guide",
