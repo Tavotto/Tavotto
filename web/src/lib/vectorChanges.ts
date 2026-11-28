@@ -38,12 +38,12 @@ const FIELDS = new Set([
   'strokeOpacity', 'fillOpacity', 'dash', 'cornerRadius', 'locked', 'hidden', 'name', 'stroke', 'lineCap', 'lineJoin', 'padding',
   // 非样式 / 少见的字段也各有准确的叫法（落到「样式」兜底的只剩真没见过的键）
   'subpaths', 'anchor', 'layoutPinned', 'start', 'end', 'shape', 'sides', 'starRatio', 'headStart', 'headEnd', 'headSizeStart', 'headSizeEnd',
-  'fillGradient', 'strokeGradient', 'fillRule', 'strokeAlign', 'dashPattern', 'miterLimit', 'interpretation', 'textFormat', 'clipMask', 'clipOff',
+  'fillGradient', 'strokeGradient', 'fillRule', 'strokeAlign', 'dashPattern', 'miterLimit', 'interpretation', 'textFormat', 'clipMask', 'clipOff', 'groupNames',
 ])
 /** 编组相关的键：写「编组」，值变成没有 = 「取消编组」 */
 const GROUP_FIELDS = new Set(['groupId', 'groupPath'])
 /** 值很长 / 是结构的字段：只说改了它，不列前后值 */
-const NO_VALUE = new Set(['subpaths', 'anchor', 'start', 'end', 'fillGradient', 'strokeGradient', 'dashPattern', 'layoutPinned', 'clipMask', 'clipOff'])
+const NO_VALUE = new Set(['subpaths', 'anchor', 'start', 'end', 'fillGradient', 'strokeGradient', 'dashPattern', 'layoutPinned', 'clipMask', 'clipOff', 'groupNames'])
 const GEOM: Record<string, 'pos' | 'size' | 'rot'> = { x: 'pos', y: 'pos', w: 'size', h: 'size', rotationDeg: 'rot' }
 const KINDS = ['text', 'arrow', 'shape', 'path']
 
@@ -177,6 +177,8 @@ function objectGroups(name: (id: string) => string, changes: NonNullable<VectorE
       else if (GROUP_FIELDS.has(field)) {
         const label = vt(isEmpty(after) ? 'ungroup' : 'group')
         if (!lines.some((l) => l.label === label)) lines.push({ label })
+      } else if (field === 'groupNames' && (e.fields.has('groupId') || e.fields.has('groupPath'))) {
+        // 编组 / 取消编组顺带带走或写下的名字：已经说了「编组」，不再单列一行
       } else if (NO_VALUE.has(field)) lines.push({ label: vt(`field.${field}`) })
       else if (FIELDS.has(field)) lines.push({ label: vt(`field.${field}`), before: value(field, before), after: value(field, after) })
       else if (!lines.some((l) => l.label === vt('style'))) lines.push({ label: vt('style') })

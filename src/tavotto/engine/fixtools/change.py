@@ -25,6 +25,7 @@ from .. import rasterhint
 from ..agent_runner.wires import ToolResult
 from . import executors, snapshots
 from .base import FixContext, FixTool, err, obj, ok
+from .knownissue import known_issue_text
 from .readscope import scrub
 
 PACKAGES_MAX = 20
@@ -201,6 +202,7 @@ def install_packages(ctx: FixContext, args: dict) -> ToolResult:
             text += "\nInstaller said: " + scrub(detail.strip())[:500]
         if code == SELFTEST_FAILED:
             text += selftest_note(ctx)
+        text += known_issue_text(ctx, code, res.get("selftest"))
         return err(code, _with_snapshot(ctx, text))
     return _done(ctx, f"Installed: {', '.join(reqs)}.", "packages installed")
 
@@ -406,6 +408,7 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
         fail_text = str(res.get("message") or "The new environment could not be created.")
         if fail_code == SELFTEST_FAILED:
             fail_text += selftest_note(ctx)
+        fail_text += known_issue_text(ctx, fail_code, res.get("selftest"))
         return err(fail_code, _with_snapshot(ctx, fail_text))
     shown = version or str(res.get("to") or "")
     text = str(res.get("message") or f"Created a Tavotto environment with Python {shown}.")

@@ -294,6 +294,8 @@ def _stable(objs: list[dict]) -> list[dict]:
             n["groupId"] = stable(n["groupId"])
         if "groupPath" in n:
             n["groupPath"] = [stable(g) for g in n["groupPath"]]
+        if "groupNames" in n:
+            n["groupNames"] = {stable(g): v for g, v in n["groupNames"].items()}
         out.append(n)
     return out
 

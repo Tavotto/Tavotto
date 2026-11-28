@@ -1,7 +1,7 @@
 import { msg, type UiMessage } from '@/i18n'
 import { outlineText } from '@/lib/api'
 import { toExportObjects } from '@/lib/exportPayload'
-import { groupPathOf, setGroupPath } from '@/lib/groupTree'
+import { groupPathOf, inheritGroupNames, setGroupPath } from '@/lib/groupTree'
 import { newId } from '@/lib/id'
 import type { CanvasObject, PathTextObject, TextObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
@@ -62,6 +62,7 @@ export async function outlineSelectedText(): Promise<boolean> {
       r.paths.map((raw, k) => {
         const p = { ...(raw as CanvasObject), id: newId('p') }
         setGroupPath(p, gid ? [...prefix, gid] : prefix)
+        inheritGroupNames(t, p)
         if (k === 0 || !gid) p.name = t.text.slice(0, 40)
         return p
       }),

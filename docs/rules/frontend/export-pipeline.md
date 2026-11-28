@@ -21,7 +21,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
 
 - **修改后的 .py（ADR 0171）**：格式行第六项 `PY`，不单开一行。可不可用只读 `offers.script`（`scriptAvailability`，缺 route 才看素材表），不可用时禁用、原因在 `title`；不记进导出默认值（每次多跑一遍脚本）。有修改没写进脚本时桌面版胶囊说条数（`resultScriptSkipped`），不开结果块；浏览器版的结果块在摘要行说、详情由 `ScriptSkipped` 列名字。
 - **画布对象 → 导出载荷里的名字与组（ADR 0208 §七之三）**：`lib/exportPayload.toExportObjects` 给对象加 `name`（有名字才发）、`group_path`（`groupTree.groupPathOf`，在组里才发）、
-  剪切蒙版项的 `group`；只有 SVG 读它们（嵌套 `<g>` / `id` / 蒙版挂在组上写一次），PDF / EPS / 位图不看。组名的 `group_names` 载荷已接、文档模型还没存组名，前端暂不发。
+  剪切蒙版项的 `group`；只有 SVG 读它们（嵌套 `<g>` / `id` / 蒙版挂在组上写一次），PDF / EPS / 位图不看。组名 `group_names`（与 `group_path` 同长，没名字的层是空串，一个名字都没有的文档不发）由 `toExportObjects` 按 `groupTree.groupNameMap(context)` 发：对象上的 `groupNames`（ADR 0191 修订、0208 前置 6.0）按全集读、z 序第一个非空名字，隐藏的成员也算。
   看护 `lib/svgExportGroups.golden.test.ts`（写 `tests/golden/svg_export_groups.json`，后端 `tests/test_svg_export_groups.py` 读同一份）。
 - **载荷的构造只有 `lib/exportRequest.buildExportRequest()` 一处**。组件不许
   自己拼那个对象，也不许在第二个 API 上把同一批参数再抄一遍——那正是

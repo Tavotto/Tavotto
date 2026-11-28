@@ -112,6 +112,7 @@ import {
   groupPathOf,
   isGroupKey,
   orphanMasks,
+  GROUP_NAME_MAX_CHARS,
   remapGroupPath,
   setGroupPath,
   unitKeyOf,
@@ -1502,6 +1503,27 @@ export function convertToPath(ids: string[]) {
       const converted = next.get(o.id)
       if (converted) d.objects[i] = converted
     })
+  })
+}
+
+/**
+ * 给组改名（图层树组行双击）：同组**全部成员**的 `groupNames[gid]` 一次写成同一个名字，一次 commit、⌘Z 一步撤回；
+ * 空 = 去掉名字（回到「组 · N 个对象」）。同组成员名字本来不一致（旧构建回写 / 两处各改一半）时，这一下统一。
+ */
+export function renameGroup(gid: string, name: string) {
+  const n = name.trim().slice(0, GROUP_NAME_MAX_CHARS)
+  const members = doc().objects.filter((o) => groupPathOf(o).includes(gid))
+  if (!members.length || members.every((o) => (o.groupNames?.[gid] ?? '') === n)) return
+  finishActiveGesture()
+  commit(hist('renameGroup'), (d) => {
+    for (const o of d.objects) {
+      if (!groupPathOf(o).includes(gid)) continue
+      const names = { ...(o.groupNames ?? {}) }
+      if (n) names[gid] = n
+      else delete names[gid]
+      if (Object.keys(names).length) o.groupNames = names
+      else delete o.groupNames
+    }
   })
 }
 

@@ -85,7 +85,10 @@ programmer: talk in plain words, one short sentence at a time, no jargon.
 Work in this order:
 1. LOOK first. Call read_run_report, then use the read tools (read_file, list_dir, find_files, grep_files, \
 inspect_environment, list_environments, read_logs, lookup_package, read_environment_checks) until you know the cause. Do not guess. \
-When the report or a try_run result has a `hint`, start from it. Each try_run lists `attempts so far`: \
+When the report or a try_run result has a `hint`, start from it. \
+When any tool result has a `known_issue`, it is a defect already known in Tavotto, not a new problem: first tell the \
+user in one plain sentence that it is a known issue and which version fixes it (`fixed_in`), then follow its \
+`workaround` (propose it with propose_fix as usual) and do not investigate it again from scratch. Each try_run lists `attempts so far`: \
 never repeat an approach that left the same failure.
 2. TRY next. When you have a guess, test it cheaply with run_snippet before changing anything: a few lines of Python \
 in the project's environment, from the project folder, back in seconds (does this import work, what does argparse \
@@ -743,6 +746,7 @@ class FixSessions:
             attributes={"opaque": True} if s.cli else {"agent": "builtin", "opaque": False},
         )
         ctx.trace, ctx.trace_parent = s.trace, s.trace_agent
+        ctx.locale = locale if isinstance(locale, str) else ""
         language = language_rule(locale)
         toolset = FixToolset(
             ctx,
