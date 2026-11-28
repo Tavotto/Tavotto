@@ -757,6 +757,54 @@ def test_verified_but_not_bound_by_0034_gets_a_handle_fix_that_clears_it(tmp_pat
         pool.discard(w)
 
 
+FORGED = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.lines import Line2D
+
+
+def main():
+    t = np.linspace(0, 10, 12)
+    fig, axs = plt.subplots(1, 2, figsize=(8, 3))
+    for ax, title in zip(axs, ("forged", "erased")):
+        ax.set_title(title)
+        blank, = ax.plot(t, t, color="blue", marker="o", label="Blank")
+        cat, = ax.plot(t, t / 2, color="red", marker="o", label="Catalyst")
+        if title == "forged":
+            # 独立绿色代理做图例，再把同轴蓝线伪装成「创建时传入的句柄」
+            leg = ax.legend([Line2D([], [], color="green", marker="o"), cat], ["Blank", "Catalyst"])
+            leg._tavotto_legend_handles = (blank, cat)
+        else:
+            # 真来源（Blank 曲线）、图例项被改红；脚本把记录属性写成 None 想抹掉确证
+            leg = ax.legend([blank, cat], ["Blank", "Catalyst"])
+            leg.legend_handles[0].set_color("red")
+            leg._tavotto_legend_handles = None
+    fig.savefig("Forged.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@needs_worker
+def test_script_cannot_forge_or_erase_legend_source_proof(tmp_path):
+    """脚本改写图例实例属性 `_tavotto_legend_handles`：伪造不能造出确证，写 None 也抹不掉真确证。"""
+    w, man = _render(tmp_path, FORGED, "Forged")
+    try:
+        by = _by_title(man)
+        forged = by["forged"][0]
+        assert "legend_style_mismatch" not in forged and "legend_style_source" not in forged
+        assert [i for i in _hits(man) if forged["gid"] in i["gids"]] == []
+        erased = by["erased"][0]
+        assert erased["legend_style_source"].startswith("axes_1.lines_")
+        assert {m["prop"] for m in erased["legend_style_mismatch"]} >= {"color"}
+    finally:
+        pool.discard(w)
+
+
 LEGEND_CAPTURE_PROBE = """
 import hashlib, json, sys
 sys.path.insert(0, sys.argv[1])
@@ -789,12 +837,19 @@ def make():
     names = {id(a): "a", id(b): "b", id(proxy): "proxy"}
     got = {}
     for k, lg in legs.items():
-        rec = vars(lg).get(figcapture.LEGEND_HANDLES_ATTR, "missing")
-        got[k] = rec if rec in (None, "missing") else [names.get(id(h), "?") for h in rec]
+        rec = figcapture.captured_legend_handles(lg)
+        got[k] = rec if rec is None else [names.get(id(h), "?") for h in rec]
     # Tavotto 重建图例时自己再调一次：记录不许被覆盖（否则 0034 猜的源被洗成确证）
     leg._init_legend_box([a, b], ["a", "b"])
-    rec = vars(leg).get(figcapture.LEGEND_HANDLES_ATTR, "missing")
-    got["after_rebuild"] = rec if rec in (None, "missing") else [names.get(id(h), "?") for h in rec]
+    rec = figcapture.captured_legend_handles(leg)
+    got["after_rebuild"] = rec if rec is None else [names.get(id(h), "?") for h in rec]
+    # 改实例属性不影响捕获记录（脚本可随便赋值，捕获器不读它）
+    leg._tavotto_legend_handles = (proxy, proxy)
+    rec = figcapture.captured_legend_handles(leg)
+    got["after_attr_write"] = rec if rec is None else [names.get(id(h), "?") for h in rec]
+    leg._tavotto_legend_handles = None
+    rec = figcapture.captured_legend_handles(leg)
+    got["after_attr_none"] = rec if rec is None else [names.get(id(h), "?") for h in rec]
     plt.close(fig)
     return pixels, got
 
@@ -837,6 +892,8 @@ def test_legend_capture_records_the_actual_handles_once(tmp_path):
         "iterator": ["a", "b"],  # `Legend.__init__` 自己先 `list(handles)`，到这里已是 list
         "array_labels": ["a", "b"],
         "after_rebuild": ["proxy", "b"],
+        "after_attr_write": ["proxy", "b"],
+        "after_attr_none": ["proxy", "b"],
     }
 
 

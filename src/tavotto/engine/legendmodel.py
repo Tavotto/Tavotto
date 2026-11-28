@@ -35,7 +35,7 @@ from matplotlib.transforms import Affine2D
 
 import pathgeom
 from axestraversal import ordered_axes
-from figcapture import LEGEND_HANDLES_ATTR
+from figcapture import captured_legend_handles
 
 
 class RebuildState(Protocol):
@@ -1551,7 +1551,7 @@ def bind_verified_sources(leg: Legend, candidates: list[tuple[str, object]]) -> 
     model = legend_entries(leg)
     if model is None:
         return
-    captured = vars(leg).get(LEGEND_HANDLES_ATTR)
+    captured = captured_legend_handles(leg, [a for _g, a in candidates])
     if not isinstance(captured, tuple) or len(captured) != model.n:
         return
     for j, h in enumerate(captured):
