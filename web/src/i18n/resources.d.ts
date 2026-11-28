@@ -666,7 +666,7 @@ export default interface Resources {
       "copyPatch": "复制补丁",
       "edited": "已修改",
       "title": "脚本改动",
-      "unchanged_other": "⋯ 未改动 {{count}} 行",
+      "unchanged_other": "未改动 {{count}} 行",
       "zoomTip": "放大查看完整 diff"
     },
     "duration": {
