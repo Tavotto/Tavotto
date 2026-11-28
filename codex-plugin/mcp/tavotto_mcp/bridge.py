@@ -2407,6 +2407,7 @@ def open_figure(
     discard_draft: bool = False,
     layout: str | None = None,
     panel: str | None = None,
+    bind: bool = True,
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
 
@@ -2486,7 +2487,8 @@ def open_figure(
     keep_binding = (
         session is not None and session.binding is not None and layout is None and panel is None
     )
-    if not keep_binding:
+    # `bind=False`：批量打开与排版的「量子图」（`_layout_measure`）不绑——它们要的是这张图本身 / 调用方自己带的修改
+    if not keep_binding and bind:
         resolved = _resolve_binding(project, chosen, layout, panel)
     bound = resolved if resolved is not None and resolved["state"] == "bound" else None
     seed = list(bound["overrides"]) if bound is not None else None
@@ -2616,6 +2618,10 @@ def open_figure(
         out["draft_superseded_note"] = (
             "你上次在会话里的修改没进排版，已经以排版里的为准；那份修改已另存成草稿。"
         )
+    if restored_draft is None and (bound is not None or layout_sync is not None):
+        # 修改来自排版里的子图：内嵌画布同样要拿它 seed override 账本（`seedSession` 用 `open.patches ?? []`），
+        # 不带的话画布显示着子图的修改、账本却是空的，下一次全量 apply 就把它们抹掉
+        out["patches"] = list(session.patches)
     if restored_draft is not None:
         out["restored_draft"] = restored_draft
         # 内嵌画布用这个字段 seed 它的 override 账本（`web/src/mcp/session.ts::seedSession`）：不带的话账本是空的，
@@ -2779,6 +2785,7 @@ def open_figures(
                 journal=journal,
                 journal_id=journal_id,
                 discard_draft=discard_draft,
+                bind=False,
             )
         except BridgeError as exc:
             failed.append(_failure_entry(stem, exc))
@@ -7022,7 +7029,7 @@ def _layout_measure(project: str, registry, la, opened: list, pdfs: dict):
         fid = str(panel.get("fileId") or panel.get("id") or "")
         stem = info["stem"]
         try:
-            sid = open_figure(os.path.join(project, fid), stem=stem)["session_id"]
+            sid = open_figure(os.path.join(project, fid), stem=stem, bind=False)["session_id"]
             session = get_session(sid)
         except BridgeError as exc:
             raise la.PanelUnavailable("open_failed") from exc

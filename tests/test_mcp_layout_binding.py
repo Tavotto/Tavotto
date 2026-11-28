@@ -370,3 +370,32 @@ def test_failed_render_keeps_layout_sync_on_the_error(project, worker, monkeypat
     # 绑定的修订号没前进：下一次调用还会再试
     monkeypatch.setattr(bridge, "_render_applicable", real)
     assert _state(sid)["layout_sync"]["reason"] == "desktop_changed"
+
+
+def test_open_result_carries_the_bound_patches_for_the_canvas_ledger(project, worker):
+    """Codex #2359：修改来自子图时，回包带 `patches`——内嵌画布按它 seed 账本，否则下一次全量 apply 会把子图的修改抹掉。"""
+    _write_layout(project, "组图", [_panel(overrides=[FONT, DIRECTION])])
+    out = _open(project)
+    assert out["binding"]["state"] == "bound"
+    assert {(p["gid"], p["prop"]) for p in out["patches"]} == {
+        ("axes_0.xticks", "fontsize"),
+        ("axes_0.xticks", "direction"),
+    }
+    assert out["patches"] == bridge.get_session(out["session_id"]).patches
+
+
+def test_unbound_open_result_has_no_patches_field(project, worker):
+    out = _open(project)
+    assert out["binding"]["state"] == "none"
+    assert "patches" not in out
+
+
+def test_batch_open_never_binds(project, worker):
+    """Codex #2359：批量打开要的是图本身（规则：批量打开不绑），不按排版里的子图换底子、不带锁。"""
+    _write_layout(project, "组图", [_panel(overrides=[FONT], lockedGids=["axes_0.xticks"])])
+    out = bridge.open_figures(str(project), stems=["Fig1"])
+    sid = out["opened"][0]["session_id"]
+    session = bridge.get_session(sid)
+    assert session.binding is None
+    assert session.patches == []
+    assert not session.locked_gids
