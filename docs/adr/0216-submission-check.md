@@ -100,6 +100,11 @@
 - **一条要求一行**：同一本刊在 v1 与 v2 都有时按项合并、**v2 优先**（0155 §14，与预检一致）。v2 直接读已验签的刊包事实，不读 `fold()` 的折叠结果：`fold()` 不列 `interval`，`accepted` 阶段会显示成 `any`。
 - 每行带 `source_state`：`preflight`（免费预检真判过）、`advice`（只给建议，例如 Nature 的 5 pt 下限）、`confirm`（v1 `info` 或 v2 进「需要你确认」的）。**只有 `preflight` 才能显示「判过」。**
 - 引文、截图、来源链接只留在开源侧，按 `ref` 对回去；组件拿不到。
+- 每行另有一个**稳定 id**（开源侧用，不发给组件）：v2 是 `v2:<fact_id>`，v1 是 `v1:<规则路径>`，栏宽再加 `#<column>`。
+- **逐条一键改**：端点请求带 `accept: [稳定 id…]`。
+  - 第一次核对时 `accept` 为空，开源侧只落 `source_state = preflight` 那些行的操作，对应流程里的「调整图宽和字号」。
+  - 「需要你确认」里每条的按钮，以及组头「全部处理」，都是再调一次端点，把那几条的稳定 id 加进 `accept`。组件照样算，开源侧只多落这几条的操作。
+  - 结果仍由前端一次 commit；每点一次就多一步撤销。
 
 ```json
 {"cmd": "submission_check.plan", "payload": {
@@ -120,7 +125,8 @@
 ```
 
 - `check` 是闭集：`width_final`、`font_size_min`、`font_size_max`、`font_family`、`raster_dpi_min`、`line_width_min`（与 ADR 0218 §一 A 档同名）。不认的检查项只回 `confirm`，不给操作。
-- `texts` 只给角色、字号、字体名与「是不是分图标签」，**不给文字内容**。`panel_label` 来自已有的识别：画布上的子图标签（`isSubLabel`）与脚本画的子图标签（`quicklayoutfig.analyze`，只认一个字母、从 a 起连续的那种）。`panel_labels_known = false` 表示这块画布上可能有认不出的标签。
+- `texts` 只给角色、字号、字体名、「是不是分图标签」与 `editable`，**不给文字内容**。
+  - 画布上的文字（手加的子图标签、文字框）只在排版文档里，引擎的 manifest 里没有。所以由前端连同标签判断一起送来，`editable = false`：只量不改，操作不许指向它们。`panel_label` 来自已有的识别：画布上的子图标签（`isSubLabel`）与脚本画的子图标签（`quicklayoutfig.analyze`，只认一个字母、从 a 起连续的那种）。`panel_labels_known` = 这块画布上每个疑似子图标签都认出了归属；做不到就是 `false`。
 - `ref` 都是本次请求现编的短号，映射只留在开源侧。
 
 **组件返回**：每条要求一个状态，加上能一键改的操作。
@@ -137,7 +143,8 @@
   - `text.family`：`canvas, texts, family`，`family` 必须取自那条要求的名单。
   - 字号与字体两类操作由开源侧**交给免费的 specfix 事务落地**（`specfix.transaction`，只修 `texts` 对应的元素，目标值写进这次事务用的规范）：层级、回滚、真实渲染裁决都照单图修正走，不另写一份改字号的逻辑。specfix 没修成的那条退回 `confirm`。
 - **分图标签不能一起改**：这本刊有 `text_role = panel_label` 的要求时，`text.size` 不许带 `panel_label = true` 的文字；画布 `panel_labels_known = false` 时，这块画布上那条 `font_size_max` 只回 `confirm`。
-- 开源侧逐条校验：`ref` 是本次发出去的、数值有限、字号在 1–200 pt、图幅不越过 2000 mm、字体在名单里、`pass` 只落在判过的行上。**任何一条不过，整份结果作废**，按「这次没法一键改」处理，所有要求退回 `confirm`，文档不动。未知的 op 或 state 同样整份作废。
+- 开源侧逐条校验：`ref` 是本次发出去的、数值有限、字号在 1–200 pt、图幅不越过 2000 mm、字体在名单里、`pass` 只落在判过的行上、操作不指向 `editable = false` 的文字。
+- 落地后再核一遍：specfix 实际改动的元素必须都在这条操作的 `texts` 里，并且没有分图标签。改完重新量，用量到的值对照要求判状态，不信组件给的 `size_pt`。图宽改动先落、重新量，再算字号（有效字号 = 字号 × 缩放）。**任何一条不过，整份结果作废**，按「这次没法一键改」处理，所有要求退回 `confirm`，文档不动。未知的 op 或 state 同样整份作废。
 - 组件不在、版本旧、授权没过：入口按 0198 §九 置灰；端点回 `{ok: false, code}`，不改文档。
 
 ## 后果
