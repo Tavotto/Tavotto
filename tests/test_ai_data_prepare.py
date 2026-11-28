@@ -104,8 +104,8 @@ def proj(tmp_path, monkeypatch) -> Proj:
     root = tmp_path / "project"
     (root / "data").mkdir(parents=True)
     raw = root / "data" / "run1.log"
-    raw.write_text(RAW, encoding="utf-8")
-    (root / "data" / "other.txt").write_text("not for the script\n", encoding="utf-8")
+    raw.write_text(RAW, encoding="utf-8", newline="")
+    (root / "data" / "other.txt").write_text("not for the script\n", encoding="utf-8", newline="")
     cand = dp.create_candidate(root, "data/run1.log", sys.executable)
     return Proj(root, raw, cand)
 
@@ -245,14 +245,14 @@ def test_system_read_roots_never_contain_user_locations(platform, env, must, nev
 def test_interpreter_roots_cover_a_venv_root(tmp_path):
     venv = tmp_path / "v"
     (venv / "bin").mkdir(parents=True)
-    (venv / "pyvenv.cfg").write_text("home = /x\n")
+    (venv / "pyvenv.cfg").write_text("home = /x\n", encoding="utf-8", newline="")
     py = venv / "bin" / "python"
-    py.write_text("")
+    py.write_text("", encoding="utf-8", newline="")
     assert str(venv) in dp.interpreter_roots(str(py))
     # 对照：不是 venv 时不会把更上一级的目录整个放开到 bin 之外（只放解释器所在安装的根）
     plain = tmp_path / "opt" / "py" / "bin"
     plain.mkdir(parents=True)
-    (plain / "python").write_text("")
+    (plain / "python").write_text("", encoding="utf-8", newline="")
     roots = dp.interpreter_roots(str(plain / "python"))
     assert str(tmp_path / "opt" / "py") in roots and str(tmp_path) not in roots
 
@@ -378,7 +378,7 @@ def test_source_reads_are_windows_with_a_total_budget(proj, monkeypatch):
 
 def test_sample_file_modes_cut_at_line_boundaries(proj):
     body = "".join(f"row{i:04d},{i * 7919 % 1000}\n" for i in range(4000))
-    (proj.root / "data" / "big.log").write_text(body, encoding="utf-8")
+    (proj.root / "data" / "big.log").write_text(body, encoding="utf-8", newline="")
     cand = dp.create_candidate(proj.root, "data/big.log", sys.executable, sid="aaaaaaaaaaaa")
     p2 = Proj(proj.root, proj.root / "data" / "big.log", cand)
     t = toolmap(p2)
@@ -416,7 +416,7 @@ def test_sample_file_modes_cut_at_line_boundaries(proj):
 
 def test_data_is_scrubbed_for_secret_shapes_only(proj):
     row = "id,ABCDEFGH1234567890abcdefghijklmnop,mail@example.org,password=hunter2hunter2\n"
-    (proj.root / "data" / "ids.log").write_text(row, encoding="utf-8")
+    (proj.root / "data" / "ids.log").write_text(row, encoding="utf-8", newline="")
     cand = dp.create_candidate(proj.root, "data/ids.log", sys.executable, sid="bbbbbbbbbbbb")
     t = toolmap(Proj(proj.root, proj.root / "data" / "ids.log", cand))
     out = t["read_file"].handler({"path": "source/data/ids.log"}).content
@@ -428,7 +428,7 @@ def test_data_is_scrubbed_for_secret_shapes_only(proj):
 def test_paths_that_are_not_registered_sources_are_refused_and_nothing_is_disclosed(proj, tmp_path):
     t = toolmap(proj)
     outside = tmp_path / "outside.txt"
-    outside.write_text("OUTSIDE", encoding="utf-8")
+    outside.write_text("OUTSIDE", encoding="utf-8", newline="")
     for bad in (
         "source/data/other.txt",  # 项目里的别的文件
         "source/../outside.txt",
@@ -532,7 +532,9 @@ def test_no_hooks_fails_cleanly_with_zero_model_requests(tmp_path):
     cand = tmp_path / "cand"
     cand.mkdir()
     script = tmp_path / "demo.json"
-    script.write_text(json.dumps({"turns": [{"text": "would be a request"}]}))
+    script.write_text(
+        json.dumps({"turns": [{"text": "would be a request"}]}), encoding="utf-8", newline=""
+    )
     env = {k: v for k, v in os.environ.items() if k != "TAVOTTO_AGENT_API_KEY"}
     env.update(PYTHONPATH=str(SRC), PYTHONUTF8="1")
     p = subprocess.run(
@@ -651,7 +653,7 @@ def test_reading_any_file_but_the_input_is_blocked_and_the_path_is_recorded(proj
     swallow = f"try:\n    print(open({str(other)!r}).read())\nexcept PermissionError:\n    pass"
     _expect_check_failure(proj, "blocked_reads", with_extra(swallow))
     # 被拦的路径落在 TrialRun 里（给我们自己看，不给模型）：直接调一次 run_trial
-    proj.cand.script.write_text(with_extra(swallow), encoding="utf-8")
+    proj.cand.script.write_text(with_extra(swallow), encoding="utf-8", newline="")
     run = dp.run_trial(proj.cand, timeout=60, hash_seed=1)
     assert run.blocked["reads"] == 1
     assert [Path(p).name for p in run.blocked["read_paths"]] == ["other.txt"]
@@ -765,7 +767,7 @@ def test_soft_accounting_does_not_refuse_a_summary(proj):
 def test_a_data_file_that_changes_is_caught_before_and_by_the_reader(proj):
     t = toolmap(proj)
     t["create_file"].handler({"content": GOOD})
-    proj.raw.write_text(RAW + "1,0;2,0;ok\n", encoding="utf-8")
+    proj.raw.write_text(RAW + "1,0;2,0;ok\n", encoding="utf-8", newline="")
     chk = hooks_of(proj).check()
     assert chk[0] is False and "input_changed" in chk[1]
     assert t["read_file"].handler({"path": "source/data/run1.log"}).code == "source_changed"
@@ -818,7 +820,7 @@ def test_large_inputs_fall_back_to_a_sample_determinism_check_and_say_so(proj, m
     big = (
         "\n".join(LINES + [f"{i / 10:.1f};{i:.2f};ok".replace(".", ",") for i in range(300)]) + "\n"
     )
-    proj.raw.write_text(big, encoding="utf-8")
+    proj.raw.write_text(big, encoding="utf-8", newline="")
     cand = dp.create_candidate(proj.root, "data/run1.log", sys.executable, sid="cccccccccccc")
     p = Proj(proj.root, proj.raw, cand)
     res, events, *_ = drive(p, create_and_finish())
@@ -886,7 +888,7 @@ def test_candidate_table_is_only_a_ready_unchanged_file(proj, tmp_path):
     got = dp.candidate_table(sid)
     assert got is not None
     os.chmod(got, 0o600)
-    got.write_text(got.read_text() + "9,9\n")  # 被动过：不再交出去
+    got.write_text(got.read_text() + "9,9\n", encoding="utf-8", newline="")  # 被动过：不再交出去
     assert dp.candidate_table(sid) is None
 
 
@@ -961,14 +963,14 @@ def test_a_candidate_edited_after_the_last_check_is_refused_before_commit(proj):
     adapter = dp.PrepareAdapter()
     verdicts = {c.id: c.verdict for c in adapter.verify("precommit", None, proj.cand)}
     assert set(verdicts.values()) == {"verified"}
-    proj.cand.script.write_text(GOOD + "# edited\n", encoding="utf-8")
+    proj.cand.script.write_text(GOOD + "# edited\n", encoding="utf-8", newline="")
     after = {c.id: c.reason_code for c in adapter.verify("precommit", None, proj.cand)}
     assert after["candidate.target"] == "candidate_changed_since_validation"
-    proj.cand.script.write_text(GOOD, encoding="utf-8")
-    proj.cand.out.write_text("a,b\n1,2\n")
+    proj.cand.script.write_text(GOOD, encoding="utf-8", newline="")
+    proj.cand.out.write_text("a,b\n1,2\n", encoding="utf-8", newline="")
     after = {c.id: c.reason_code for c in adapter.verify("precommit", None, proj.cand)}
     assert after["prepare.contract"] == "prepare_output_changed"
-    (proj.cand.dir / "stray.txt").write_text("x")
+    (proj.cand.dir / "stray.txt").write_text("x", encoding="utf-8", newline="")
     assert any(
         c.reason_code == "other_file_changed" for c in adapter.verify("precommit", None, proj.cand)
     )
@@ -1064,7 +1066,7 @@ def test_adopt_never_overwrites_and_numbers_the_next_free_name(proj, tmp_path):
     figs = proj.root / "data" / "tavotto_figures"
     figs.mkdir()
     mine = figs / "run1_prepare.py"
-    mine.write_text("# mine\n")
+    mine.write_text("# mine\n", encoding="utf-8", newline="")
     sid = staged(proj, tmp_path)
     res = dp.adopt(sid, proj.root)
     assert res["script"].endswith("run1_prepare_2.py") and res["table"].endswith(
@@ -1077,7 +1079,9 @@ def test_adopt_rolls_back_when_a_name_is_taken_in_the_race(proj, tmp_path, monke
     sid = staged(proj, tmp_path)
     figs = proj.root / "data" / "tavotto_figures"
     figs.mkdir()
-    (figs / "run1_prepared.csv").write_text("user data\n")  # 表名被占，脚本名空闲
+    (figs / "run1_prepared.csv").write_text(
+        "user data\n", encoding="utf-8", newline=""
+    )  # 表名被占，脚本名空闲
     monkeypatch.setattr(dp, "_free_names", lambda d, s: (s, f"{s}_prepare.py", f"{s}_prepared.csv"))
     with pytest.raises(dp.PrepareError) as exc:
         dp.adopt(sid, proj.root)
@@ -1103,7 +1107,7 @@ def test_adopt_refuses_changed_inputs_and_wrong_projects(proj, tmp_path):
         dp.adopt(sid, tmp_path / "elsewhere")
     assert e.value.code == "prepare_not_found"
     os.chmod(proj.cand.out, 0o600)
-    proj.cand.out.write_text("a,b\n1,2\n")
+    proj.cand.out.write_text("a,b\n1,2\n", encoding="utf-8", newline="")
     with pytest.raises(dp.PrepareError) as e:
         dp.adopt(sid, proj.root)
     assert e.value.code == "prepare_candidate_changed"
@@ -1112,7 +1116,7 @@ def test_adopt_refuses_changed_inputs_and_wrong_projects(proj, tmp_path):
 
 def test_adopt_refuses_when_the_source_changed(proj, tmp_path):
     sid = staged(proj, tmp_path)
-    proj.raw.write_text(RAW + "9;9;ok\n")
+    proj.raw.write_text(RAW + "9;9;ok\n", encoding="utf-8", newline="")
     with pytest.raises(dp.PrepareError) as e:
         dp.adopt(sid, proj.root)
     assert e.value.code == "data_changed" and not (proj.root / "data" / "tavotto_figures").exists()
@@ -1144,8 +1148,9 @@ def test_a_single_column_table_gets_no_comment_header(proj, tmp_path):
 
 
 def test_hostile_names_cannot_break_the_comment_header_or_the_table(proj, tmp_path):
-    nasty = proj.root / "data" / 'a,b"c d.log'
-    nasty.write_text(RAW, encoding="utf-8")
+    # Windows 的文件名里不能有双引号：那里换成单引号（逗号、空格照旧，仍要过「注释头 / 表不被文件名打断」）
+    nasty = proj.root / "data" / ('a,b"c d.log' if os.name != "nt" else "a,b'c d.log")
+    nasty.write_text(RAW, encoding="utf-8", newline="")
     cand = dp.create_candidate(proj.root, "data/" + nasty.name, sys.executable, sid="dddddddddddd")
     p = Proj(proj.root, nasty, cand)
     out, _ = run_task(p, tmp_path, create_and_finish())
@@ -1168,7 +1173,7 @@ def test_candidates_expire_and_unknown_ids_are_not_found(proj, tmp_path):
 
 def test_create_candidate_only_accepts_regular_files_inside_the_project(proj, tmp_path):
     outside = tmp_path / "outside.csv"
-    outside.write_text("a,b\n1,2\n")
+    outside.write_text("a,b\n1,2\n", encoding="utf-8", newline="")
     try:
         (proj.root / "data" / "link.csv").symlink_to(outside)
     except (OSError, NotImplementedError):
@@ -1202,8 +1207,8 @@ def _trial(code: str, *, allow=None, tamper="full", strict=True, argv=(), python
 
 def test_read_allowlist_lets_only_listed_files_through(tmp_path):
     ok_file, no_file = tmp_path / "ok.txt", tmp_path / "no.txt"
-    ok_file.write_text("OK")
-    no_file.write_text("NO")
+    ok_file.write_text("OK", encoding="utf-8", newline="")
+    no_file.write_text("NO", encoding="utf-8", newline="")
     code = (
         "import sys\nprint(open(sys.argv[1]).read())\n"
         "try:\n    print(open(sys.argv[2]).read())\nexcept PermissionError:\n    print('blocked')\n"
@@ -1302,7 +1307,7 @@ except OSError:
 @pytest.mark.parametrize("mode", ["stdlib", "full"])
 def test_none_of_the_three_hook_breaking_scripts_works_in_either_mode(tmp_path, mode):
     secret = tmp_path / "secret.txt"
-    secret.write_text("SECRET")
+    secret.write_text("SECRET", encoding="utf-8", newline="")
     r = _trial(_hook_attacks(secret), allow=dp.read_allow_for(sys.executable, []), tamper=mode)
     out = r["stdout"]
     assert r["status"] == "ok" and "SECRET" not in out, (out, r["stderr"][-300:])
@@ -1315,7 +1320,11 @@ def test_stdlib_mode_only_lets_the_namedtuple_frame_set_defaults_and_only_inside
     tmp_path,
 ):
     allow = dp.read_allow_for(sys.executable, [])
-    inside = "import tempfile\ntry:\n    open(tempfile.gettempdir())\nexcept IsADirectoryError:\n    print('os-level-refusal-only')"
+    # 操作系统自己的拒绝：POSIX 是 IsADirectoryError，Windows 是 PermissionError（EACCES）——与钩子的拒绝只能靠消息分开
+    inside = (
+        "import tempfile\ntry:\n    open(tempfile.gettempdir())\nexcept OSError as e:\n"
+        "    print('hook-refused' if 'Tavotto' in str(e) else 'os-level-refusal-only')"
+    )
     r_in = _trial(inside, allow=allow, tamper="stdlib")
     assert r_in["returncode"] == 0 and "os-level-refusal-only" in r_in["stdout"], (
         "试跑目录里的文件夹：钩子放行（操作系统自己拒绝才是这里的结果）"
@@ -1329,7 +1338,7 @@ def test_stdlib_mode_only_lets_the_namedtuple_frame_set_defaults_and_only_inside
 
 def test_credential_locations_stay_unreadable_in_stdlib_mode(tmp_path):
     secret = tmp_path / "id_rsa"
-    secret.write_text("PRIVATE")
+    secret.write_text("PRIVATE", encoding="utf-8", newline="")
     code = f"try:\n    print(open({str(secret)!r}).read())\nexcept PermissionError:\n    print('blocked')"
     r = _trial(
         code,
@@ -1366,7 +1375,7 @@ def test_a_pandas_script_passes_check_with_no_blocked_reads(tmp_path, monkeypatc
     monkeypatch.setitem(dp._PROBE_CACHE, str(PANDAS_PY), NOTE)
     root = tmp_path / "project"
     (root / "data").mkdir(parents=True)
-    (root / "data" / "t.csv").write_text("a,b\n1,2\n3,4\n5,6\n", encoding="utf-8")
+    (root / "data" / "t.csv").write_text("a,b\n1,2\n3,4\n5,6\n", encoding="utf-8", newline="")
     cand = dp.create_candidate(root, "data/t.csv", str(PANDAS_PY))
     cand.script.write_text(
         "import sys, json\nimport pandas as pd\n"

@@ -764,6 +764,12 @@ class Checker:
         text = sanitize_output(text, self._mapping())
         # 每次试跑目录的名字（会话名 + 随机后缀）也不给模型看：`<trial>/<目录名>/work/…` → `<trial>/work/…`
         text = re.sub(r"<trial>[/\\][^/\\\s\"']+", "<trial>", text)
+        # Windows：占位符后面的路径用正斜杠、行尾统一成 LF，三个平台喂给模型的报错长得一样
+        text = re.sub(
+            r"(<trial>|<project>|<candidate>|<tavotto-data>)((?:\\[^\\\s\"']+)+)",
+            lambda m: m.group(1) + m.group(2).replace("\\", "/"),
+            text.replace("\r\n", "\n"),
+        )
         return _tail_chars(text, limit)
 
     # ---- run_script ----
