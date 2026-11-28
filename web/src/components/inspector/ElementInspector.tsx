@@ -3107,10 +3107,11 @@ function AxesSizeMm({
   if (!rect) return null
   const [figW, figH] = sizeMm
 
-  const write = (next: Rect4, key: string) =>
+  const write = (next: Rect4, key: string) => {
     setOverrides(panel.id, elMsg(key), [
       { gid: element.gid, prop: 'position', value: next.map(round4) },
     ])
+  }
 
   const figureMeta = (
     <span className="type-meta ml-auto min-w-0 shrink truncate tabular-nums">

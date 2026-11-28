@@ -1,8 +1,8 @@
-import { panelSrc } from '@/lib/api'
+import { TIMELINE_THUMB_PX, captureMomentThumb, type PanelSource, type ThumbSources } from '@/lib/momentCapture'
+export type { PanelSource, ThumbSources } from '@/lib/momentCapture'
+import { currentProjectId } from '@/lib/session'
 import { contentBox, type ThumbBox } from '@/lib/versionThumbBox'
 import { applyPanelTransform, panelContentTransform } from '@/lib/panelTransform'
-import { useAssetStore } from '@/store/assetStore'
-import { panelRender, useRenderStore } from '@/store/renderStore'
 import { strokeOpacityOf } from '@/lib/shapeGeometry'
 import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import { readPath, shapeStrokeOn } from '@/types/document'
@@ -27,8 +27,8 @@ import { pathD, pathGeometry } from '@/lib/pathGeom'
 /**
  * 缩略图的长边（px）。只拍页面上有内容的那块（`contentBox`）——单图编辑没有「页面」，
  * 整页拍的话图常常只占一角；竖线条浮卡按 2× 屏约 400 px 显示，所以比列表行要的大。
+ * 定义在 `lib/momentCapture.ts`（时间线快照与缩略图合成共用同一个数）。
  */
-export const TIMELINE_THUMB_PX = 360
 /** 为了裁出内容区域先按整页画的那张画布，长边不超过它（内容极小、页面极大时降分辨率） */
 const TIMELINE_THUMB_PAGE_MAX_PX = 4096
 /** 后端单张上限（`VERSION_THUMB_MAX_BYTES` 256 KiB）留点余量：超了就缩一档再编 */
@@ -92,26 +92,12 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
 }
 
 /**
- * 一个面板**此刻**从哪儿取图：renderStore 里带 overrides 的 SVG，没有就退回素材图。
- *
- * **同步取、一次取完**（在任何 await 之前）：关项目 / 切项目那一刻打的节点，
- * 合成还没画完 renderStore 就被清空、`apiUrl` 就换成了下一个项目——晚一步取，
- * 画进去的是另一个项目的同名素材，或者什么都没有。
+ * 一份图源：`svg` 是矢量正文，`url` 是可寻址的位图地址；`png` 是算好才回来的位图
+ * （历史 Figure / 归档快照那条路要发一次请求，不能在拍的当下同步取到）。
+ * 形状的出处是 `lib/momentCapture.ts`（`renderStore` 从那里拿同一份类型，环因此不成环）。
+ * 各面板图源在发起那一刻由 `captureMomentThumb`（renderStore 注入的那份）同步冻结——
+ * 关项目 / 切项目那一刻打的节点，晚一步取就会画进另一个项目的同名素材。
  */
-/**
- * 两路图源**都取**：SVG 在前（带 overrides，用户看到的就是它），素材图兜底。只取一路的话，
- * SVG 解码失败或画成空白（Windows 的 WebKit 上量到过：同一份排版前一个节点有面板、下一个
- * 节点只剩文字，CI run 36510136403）时这一格就空着——而素材图明明就在。
- */
-type PanelSource = { svg?: string; url?: string } | null
-
-function panelSource(o: PanelObject): PanelSource {
-  const render = panelRender(useRenderStore.getState(), o)
-  const mtime = useAssetStore.getState().byId[o.fileId]?.mtime
-  const url = panelSrc(o.fileId, o.fileKind, 400, mtime) || undefined
-  if (!render?.svg && !url) return null
-  return { svg: render?.svg ?? undefined, url }
-}
 
 /**
  * e2e 的诊断（只在 e2e 注入了 `__TAVOTTO_THUMB_TRACE__` 数组时记）：每个面板走了哪条路、
@@ -138,8 +124,11 @@ async function loadFrom(
     URL.revokeObjectURL(url)
     return null
   }
-  if (!source.url) return null
-  const img = await loadImage(retry ? `${source.url}${source.url.includes('?') ? '&' : '?'}thumbRetry=1` : source.url)
+  // 算好才回来的位图（历史 Figure / 归档快照）优先：它就是那一版该有的样子。
+  // 重试参数只对可寻址的 url 有意义——`png` 是一次性 Promise，重发不出去
+  const url = source.png ? await source.png : source.url
+  if (!url) return null
+  const img = await loadImage(retry && !source.png ? `${url}${url.includes('?') ? '&' : '?'}thumbRetry=1` : url)
   return img ? { img } : null
 }
 
@@ -359,24 +348,6 @@ function encode(canvas: HTMLCanvasElement): Promise<TimelineThumb | null> {
   })
 }
 
-/** 一份文档此刻的各面板图源（`panelSource` 的结果）；取不出来 = `null`（没有缩略图） */
-export type ThumbSources = ReadonlyMap<string, PanelSource> | null
-
-/**
- * 取各面板**此刻**的图源——只读 renderStore，同步、便宜。关键时刻在操作**发起**那一刻取
- * （`captureMoment`），完成时再合成：那时用户可能已经改了面板，现取的话缩略图画的是
- * 之后的样子，与节点里那份文档对不上（Codex #679）。
- */
-export function captureThumbSources(doc: FigureDocument): ThumbSources {
-  const sources = new Map<string, PanelSource>()
-  try {
-    for (const o of doc.objects) if (o.type === 'panel' && !o.hidden) sources.set(o.id, panelSource(o))
-  } catch {
-    return null
-  }
-  return sources
-}
-
 /**
  * 标注对象 id → 被写回烙进的面板 id：这条标注的内容这次写回已经烙进了那张图（Codex #679 P1
  * 追加）。只登记「这次写回带着标注」的那些标注，普通画布标注不在里面。
@@ -390,7 +361,7 @@ export type BakedAnnotations = ReadonlyMap<string, string>
  * 合成一张画布缩略图；任何失败都是 `null`。
  *
  * 图源：给了 `sources` 就用它（发起那一刻取好的）；没给就在**同一个同步段里**现取
- * （见 `panelSource`）——这个函数在第一个 await 之前就把各面板的图源取完了。
+ * （`captureMomentThumb`，renderStore 注入的那份）——这个函数在第一个 await 之前就把各面板的图源取完了。
  *
  * `bakedInto` 给的话，登记在里面的标注对象按各自面板的结局决定画不画（只有冻结 SVG 才画），
  * 画的位置跟着**所属面板**在文档里的叠放位置走（先预渲染全部面板、再按原顺序叠，见函数体）。
@@ -400,7 +371,7 @@ export async function composeTimelineThumb(
   given?: ThumbSources,
   bakedInto?: BakedAnnotations,
 ): Promise<TimelineThumb | null> {
-  const sources = given === undefined ? captureThumbSources(doc) : given
+  const sources = given === undefined ? captureMomentThumb(doc, currentProjectId()) : given
   if (!sources) return null
   await Promise.resolve()
   try {

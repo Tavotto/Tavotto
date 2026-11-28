@@ -934,6 +934,7 @@
   },
   "status": {
     "dragSyncCancelled": "图形未能同步，后续拖动没有应用，请重试。",
+    "chartFrameStale": "这张计算图表的配对渲染还没就绪，刚才的修改没有写入；等渲染完成后重试。",
     "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
     "alignLockedSkipped_other": "已跳过 {{count}} 个锁定对象",
     "assetReplaced": "已替换为「{{name}}」，位置与尺寸保持不变",
@@ -1952,6 +1953,8 @@
     "cancel": "取消",
     "apply": "绑定计算图表",
     "menu": "绑定数据为计算图表",
+    "beforeUpgrade": "图表升级前（{{time}}）",
+    "confirmFailed": "这次没有写图表：{{error}}",
     "scaleLinear": "线性",
     "scaleLog": "对数",
     "dataPlaceholder": "x,y\n0,1.0\n1,2.0",

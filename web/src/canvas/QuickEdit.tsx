@@ -605,7 +605,7 @@ function GeomControls({
   const pos = host ? positionOf(panel, host) : null
   if (!manifest || !host || !pos) return null
 
-  const scale = (k: number) =>
+  const scale = (k: number) => {
     setOverride(
       panel.id,
       host.gid,
@@ -613,6 +613,7 @@ function GeomControls({
       scaleGroupAbout(pos, k).map(round4),
       true,
     )
+  }
 
   return (
     <Line

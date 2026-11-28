@@ -1,5 +1,5 @@
 import type { PanelInfo } from './api'
-import { panelRender, type PanelRender } from '@/store/renderStore'
+import { matchesRequestIdentity, panelRender, type PanelRender } from '@/store/renderStore'
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
 import {
@@ -1612,9 +1612,11 @@ function panelSpec(
     render_error: o.overrides.length > 0 && r?.status === 'error'
       ? (formatMessage(r.error) || 'error')
       : null,
-    // 有 override 但引擎那边还没画出这一版：成图会与画布不一致
+    // 有 override 但引擎那边还没画出这一版：成图会与画布不一致。
+    // 比的是完整请求身份（matchesRequestIdentity）：chart / chartSource / figureOrigin /
+    // renderProfile 都参与，裸比 overrides 会把已画好的 chart 面板永远报成未应用
     unapplied_overrides:
-      o.overrides.length > 0 && r?.lastPatches !== JSON.stringify(o.overrides)
+      o.overrides.length > 0 && !matchesRequestIdentity(o, r?.lastPatches)
         ? o.overrides.length
         : 0,
     hidden: !!o.hidden,

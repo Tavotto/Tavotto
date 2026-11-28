@@ -971,6 +971,7 @@
   },
   "status": {
     "dragSyncCancelled": "The figure could not sync, so the later drag was not applied. Try again.",
+    "chartFrameStale": "The paired render for this computational chart is not ready yet, so the last edit was not applied. Try again after the render finishes.",
     "alignAllLocked": "All selected objects are locked; unlock them to arrange",
     "alignLockedSkipped_one": "Skipped {{count}} locked object",
     "alignLockedSkipped_other": "Skipped {{count}} locked objects",
@@ -2032,6 +2033,8 @@
     "cancel": "Cancel",
     "apply": "Bind computational chart",
     "menu": "Bind data as computational chart",
+    "beforeUpgrade": "Before chart upgrade ({{time}})",
+    "confirmFailed": "No chart was written this time: {{error}}",
     "scaleLinear": "linear",
     "scaleLog": "log",
     "dataPlaceholder": "x,y\n0,1.0\n1,2.0",

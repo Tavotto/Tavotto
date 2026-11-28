@@ -85,7 +85,9 @@ export function normalizeLayout(
   if (schema === SCHEMA_PROJECT || schema === SCHEMA_CURRENT) {
     const pd = migrateToProject(payload)
     if (pd) return pd
+    throw new Error('invalid_document')
   }
+  if (typeof schema === 'number' && schema > 3) throw new Error('schema_too_new')
   const doc = emptyDocument()
   doc.name = name
   if (!payload || typeof payload !== 'object') return doc

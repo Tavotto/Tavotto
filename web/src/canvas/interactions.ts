@@ -37,6 +37,7 @@ import {
   type Rect4,
 } from '@/lib/axesLayout'
 import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 import {
   anchorOf,
   arrowEndpointsOf,
@@ -103,6 +104,7 @@ import { drawnMinFontPt, panelScale, scaledFontPt } from '@/lib/preflight'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import { FONT_FLOOR_TOL_PT } from '@/lib/profile'
 import { clamp } from '@/lib/units'
+import { svgPreviewTargets } from '@/lib/svgPreviewTargets'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
@@ -123,10 +125,11 @@ import {
   snapTolMm,
   useViewportStore,
 } from '@/store/viewportStore'
-import { setOverride, setOverrides } from '@/store/actions'
+import { exactFrameAuthority, setOverride, setOverrides } from '@/store/actions'
+import { sourceFrameValue } from '@/lib/chartFrame'
 import { resizePatch } from '@/store/patchResizeAction'
 import {
-  cancelQueuedTranslation, captureQueuedTranslationCommit, findGidNode, findPanelSvg,
+  cancelQueuedTranslation, captureQueuedTranslationCommit, findPanelSvg,
   flushPreviewFrame, flushQueuedTranslation, markPreviewMove, prepareQueuedTranslationCommit,
   previewLine, previewScale, previewSession, previewTransform, queuedTranslation,
   rebaseQueuedTranslation, updateQueuedTranslation, type QueuedTranslation,
@@ -2119,10 +2122,15 @@ export function startDeferredInFigureDrag(
   let d = deferredMove
   const move = prior?.move
   const gid = d?.panelId === panel.id ? d.gid : move?.gid
-  const node = gid ? findGidNode(findPanelSvg(panel.id), gid) : null
-  const rect = node?.getBoundingClientRect()
-  if (!gid || !rect || e.clientX < rect.left || e.clientX > rect.right ||
-      e.clientY < rect.top || e.clientY > rect.bottom || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
+  const targets = gid ? svgPreviewTargets(findPanelSvg(panel.id), gid, 'transform') : null
+  // 这里只识别已选元素的可见目标以暂存意图；正式几何仍等 displayedExactManifest。
+  // 分散目标之间的空白不属于该元素，不能用它们的 union bbox 接管未绑定装饰。
+  const hit = targets?.nodes.some((node) => {
+    const rect = node.getBoundingClientRect()
+    return e.clientX >= rect.left && e.clientX <= rect.right &&
+      e.clientY >= rect.top && e.clientY <= rect.bottom
+  })
+  if (!gid || !hit || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
   if (!d) {
     if (!move || !prior?.pendingCommit?.some((p) => p.gid === gid && p.prop === move.dragProp) ||
         prior.awaitKey !== renderKeyOf(panel)) return false
@@ -2185,12 +2193,28 @@ export function startDeferredInFigureDrag(
   return true
 }
 
+/** N5 第 4 步：/2 面板的拖动基准。
+ *
+ * override 里存的是源坐标 S；手势位移（dfx/dfy、方向键步长）在显示帧 F 的
+ * 分数空间。起手锚点若来自 override，先经唯一适配器换到 F，再叠加位移——
+ * 写入侧 `setOverride/setOverrides` 会把它换回 S 一次。缺精确配对帧时保持
+ * 原值：提交侧会拒绝写入（零正文 + 可见提示），不会把 F 分数落进 S。
+ */
+function frameBaseline(panel: PanelObject, value: [number, number]): [number, number] {
+  const authority = panel.chartFrame === undefined ? undefined : exactFrameAuthority(panel)
+  return authority === undefined ? value : sourceFrameValue(value, authority, authority.inputIdentity)
+}
+
 /** 可拖的图内文字 / 图例 / 形状：挪锚点（`drag_prop`，pos_frac / loc_frac …） */
 export function elementMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
   if (!element.anchor || !element.drag_prop) return null
   const dragProp = element.drag_prop
-  // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）
-  const anchor = anchorOf(panel, element) ?? element.anchor
+  // 基准走 anchorOf：它优先取文档里已写下的 override（见那边的说明）。
+  // /2 面板的 override 锚点在 S 空间，先换到 F 再加手势位移。
+  const stored = anchorOf(panel, element) ?? element.anchor
+  const anchor = effectiveOverride(panel.overrides, element.gid, dragProp) !== undefined
+    ? frameBaseline(panel, stored)
+    : stored
   // 形状带着装在里面的字 / 形状 / 箭头端点一起走（`patchContents`）——读的是几何，
   // 只认权威那一份 manifest
   const manifest =
@@ -2236,9 +2260,15 @@ export function elementMove(panel: PanelObject, element: ManifestElement): InFig
       }
       const followers = carry ? carried.map((c) => c.shift(dfx, dfy)) : []
       // 带着内容走时一次 setOverrides = 一条撤销 = 一次权威渲染
-      if (followers.length)
-        setOverrides(panel.id, hist('moveElement', { label: element.label }), [own, ...followers], true)
-      else setOverride(panel.id, element.gid, dragProp, own.value, true)
+      const written = followers.length
+        ? setOverrides(panel.id, hist('moveElement', { label: element.label }), [own, ...followers], true)
+        : setOverride(panel.id, element.gid, dragProp, own.value, true)
+      // /2 面板缺精确配对帧：写入侧拒绝（零正文 + 提示），预览平面回弹
+      if (!written) {
+        cancelElementPreview()
+        noteCancel(false)
+        return false
+      }
       commitElementPreview(panel.id)
       noteDragCommit('element.drag.commit', panel.id, element.gid, dragProp, 1 + followers.length)
       return true
@@ -2284,7 +2314,10 @@ export function lineMove(panel: PanelObject, element: ManifestElement): InFigure
         cancelElementPreview()
         return false
       }
-      setOverride(panel.id, element.gid, 'points_frac', v.map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'points_frac', v.map(round4), true)) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       return true
     },
@@ -2351,8 +2384,7 @@ export function insertLineBend(
     len2 > 0 ? Math.max(0, Math.min(1, ((fx - a[0]) * W * dx + (fy - a[1]) * H * dy) / len2)) : 0.5
   const at: [number, number] = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]
   const next = [...pts.slice(0, i + 1), at, ...pts.slice(i + 1)]
-  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
-  return true
+  return setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
 }
 
 /** 双击引线的一个拐点 = 删掉它（至少留两个点）。回 true = 写了一条 override。 */
@@ -2360,8 +2392,7 @@ export function removeLineBend(panel: PanelObject, element: ManifestElement, ind
   const pts = linePointsOf(panel, element)
   if (!pts || pts.length <= 2 || index < 0 || index >= pts.length) return false
   const next = pts.filter((_, k) => k !== index)
-  setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
-  return true
+  return setOverride(panel.id, element.gid, 'points_frac', next.flat().map(round4), true)
 }
 
 /**
@@ -2415,7 +2446,10 @@ export function startLineEdit(
         cancelElementPreview()
         return
       }
-      setOverride(panel.id, element.gid, 'points_frac', last.flat().map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'points_frac', last.flat().map(round4), true)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
     },
   })
@@ -2423,8 +2457,12 @@ export function startLineEdit(
 
 /** 图内独立箭头（FancyArrowPatch）的整体平移：两个端点同走一个位移，写 endpoints_frac */
 export function arrowMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
-  const pts = arrowEndpointsOf(panel, element)
-  if (!pts) return null
+  const storedPts = arrowEndpointsOf(panel, element)
+  if (!storedPts) return null
+  // /2 面板的 override 端点在 S 空间；先换到 F 再加手势位移
+  const pts = effectiveOverride(panel.overrides, element.gid, 'endpoints_frac') !== undefined
+    ? [frameBaseline(panel, storedPts[0]), frameBaseline(panel, storedPts[1])]
+    : storedPts
   beginElementPreview(panel)
   const at = (dfx: number, dfy: number) => [
     pts[0][0] + dfx,
@@ -2448,7 +2486,10 @@ export function arrowMove(panel: PanelObject, element: ManifestElement): InFigur
         cancelElementPreview()
         return false
       }
-      setOverride(panel.id, element.gid, 'endpoints_frac', v.map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'endpoints_frac', v.map(round4), true)) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       return true
     },
@@ -2529,13 +2570,18 @@ export function startArrowDrag(
         cancelElementPreview()
         return
       }
-      setOverride(
-        panel.id,
-        element.gid,
-        'endpoints_frac',
-        [last.a[0], last.a[1], last.b[0], last.b[1]].map(round4),
-        true,
-      )
+      if (
+        !setOverride(
+          panel.id,
+          element.gid,
+          'endpoints_frac',
+          [last.a[0], last.a[1], last.b[0], last.b[1]].map(round4),
+          true,
+        )
+      ) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
     },
   })
@@ -2908,9 +2954,13 @@ export function axesMove(panel: PanelObject, element: ManifestElement): InFigure
         ...companions.map((c) => c.shift(...netDelta(rect))),
       ]
       // 一次 setOverrides = 一条撤销 = 一次权威渲染
-      if (patches.length > 1)
-        setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
-      else setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+      const written = patches.length > 1
+        ? setOverrides(panel.id, hist('moveElement', { label: element.label }), patches, true)
+        : setOverride(panel.id, element.gid, 'position', rect.map(round4), true)
+      if (!written) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       noteDragCommit('axes.drag.commit', panel.id, element.gid, 'position', patches.length)
       return true
@@ -3037,7 +3087,10 @@ export function startAxesDrag(
         cancelElementPreview()
         return
       }
-      setOverride(panel.id, element.gid, 'position', last.map(round4), true)
+      if (!setOverride(panel.id, element.gid, 'position', last.map(round4), true)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
       noteDragCommit('resize.commit', panel.id, element.gid, 'position', 1)
     },
@@ -3105,7 +3158,10 @@ export function startLegendScale(
 ) {
   const bases = legendScaleBases(panel, element)
   const box0 = elementBoxOf(panel, element)
-  const anchor = anchorOf(panel, element)
+  const storedAnchor = anchorOf(panel, element)
+  const anchor = storedAnchor && effectiveOverride(panel.overrides, element.gid, 'loc_frac') !== undefined
+    ? frameBaseline(panel, storedAnchor)
+    : storedAnchor
   if (!bases.length || !box0 || !anchor || element.drag_prop !== 'loc_frac') return
   e.stopPropagation()
   interaction().begin('element')
@@ -3142,7 +3198,10 @@ export function startLegendScale(
           value: [round4(nb[0] + off[0]), round4(nb[1] + nb[3] + off[1])],
         },
       ]
-      setOverrides(panel.id, hist('scaleLegend'), patches, true)
+      if (!setOverrides(panel.id, hist('scaleLegend'), patches, true)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
       noteDragCommit('resize.commit', panel.id, element.gid, 'fontsize', patches.length)
       // 成图的倍数与预览不完全相同（往小缩尤甚）：第一版到了按实测把对角钉回去
@@ -3253,11 +3312,15 @@ export function groupMove(panel: PanelObject, entries: AlignEntry[]): InFigureMo
         return false
       }
       const patches = entries.map((en, i) => en.write(boxes[i]))
-      setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
+      const written = setOverrides(panel.id, hist('moveElements', { count: entries.length }), [
         ...patches,
         ...(companionManifest ? companionPatchesFor(panel, companionManifest, patches) : []),
         ...(carry ? carried.map((c) => c.shift(dfx, dfy)) : []),
       ])
+      if (!written) {
+        cancelElementPreview()
+        return false
+      }
       commitElementPreview(panel.id)
       return true
     },
@@ -3325,7 +3388,10 @@ export function startGroupResize(
         return
       }
       const patches = groupPatches(group, box)
-      setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), patches)
+      if (!setOverrides(panel.id, hist('resizeAxes', { count: group.entries.length }), patches)) {
+        cancelElementPreview()
+        return
+      }
       commitElementPreview(panel.id)
       noteDragCommit(
         'resize.commit',

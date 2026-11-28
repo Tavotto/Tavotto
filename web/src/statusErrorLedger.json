@@ -273,6 +273,12 @@
     },
     {
       "file": "store/actions.ts",
+      "key": "status.chartFrameStale",
+      "count": 1,
+      "reason": "/2 面板缺精确配对帧，刚松手的图内几何改动没有写入；用户重拖一次就是原动作，句子已说等渲染完成后重试。"
+    },
+    {
+      "file": "store/actions.ts",
       "key": "status:rebuildFailed",
       "count": 1,
       "reason": "重新构建时引擎失效缓存没成功，原因在句子里；「重新构建」入口仍在原处，再点一次就是原动作。"

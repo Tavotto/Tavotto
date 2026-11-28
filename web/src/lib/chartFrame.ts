@@ -59,7 +59,15 @@ export function sourceFrameValue(value: [number, number], authority: PairedFrame
 
 /** Move only the outer frame. Source S patches, data, units and science anchor stay. */
 export function computedFramePatch(panel: ComputedPanel, authority: PairedFrameAuthority, inputIdentity: string) {
-  const f=checked(authority,inputIdentity),[l,t,w,h]=f.rect_pt
+  const f=checked(authority,inputIdentity)
+  return framePatchFrom(panel,f)
+}
+
+/** `computedFramePatch` 的本体（origin delta 折进 x/y、重算 crop、native 尺寸与
+ * chartFrame 一起写）。fallible 的输入先算再改，失败抛错由调用方决定回滚语义。 */
+function framePatchFrom(panel: ComputedPanel, f: ComputedRenderFrame) {
+  if (!validComputedFrame(f)) throw new Error('exact computed frame is stale or unavailable')
+  const [l,t,w,h]=f.rect_pt
   const [oldL,oldT]=panel.chartFrame?.originPt ?? [0,0]
   if (![oldL,oldT].every(Number.isFinite)) throw new Error('invalid previous layout frame origin')
   const patch=frameGeometryPatch(panel,{
@@ -68,6 +76,22 @@ export function computedFramePatch(panel: ComputedPanel, authority: PairedFrameA
   },{rebaseOverrides:false})
   if (!patch) throw new Error('new frame does not intersect the user crop')
   return { ...patch, chartFrame:{version:1,renderProfile:'native-manifest/2',originPt:[l,t]} as ComputedChartView }
+}
+
+/**
+ * 被动变体（`useEngineSync` 的 nativeSizeFixes）：/2 渲染带回的 `render_frame` 原点与
+ * 面板持久化的 `originPt` 不一致时，走**同一个**帧适配（origin delta 进 placement、
+ * crop 重算、native 尺寸同批写）——被动同步本身就是渲染到达路径，不走
+ * `exactFrameAuthority` 的闸。帧无效或与用户裁剪不相交时返回 null：调用方保持
+ * 现状（持久化的坐标合同不因一次回退删掉），等下一次渲染再对版本。
+ */
+export function passiveComputedFramePatch(panel: ComputedPanel, renderFrame: ComputedRenderFrame):
+  ReturnType<typeof framePatchFrom> | null {
+  try {
+    return framePatchFrom(panel,renderFrame)
+  } catch {
+    return null
+  }
 }
 
 /** One existing transaction may call this after obtaining the exact paired frame.

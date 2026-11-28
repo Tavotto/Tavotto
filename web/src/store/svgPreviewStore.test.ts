@@ -27,6 +27,13 @@ import {
   previewScale,
   setHistoryMode,
   settleFailedAuthority,
+  queuedTranslation,
+  updateQueuedTranslation,
+  flushQueuedTranslation,
+  prepareQueuedTranslationCommit,
+  captureQueuedTranslationCommit,
+  cancelQueuedTranslation,
+  rebaseQueuedTranslation,
 } from './svgPreviewStore'
 
 const PANEL = 'p1'
@@ -53,6 +60,325 @@ afterEach(() => {
 
 const begin = (key = KEY) =>
   beginPreview({ panelId: PANEL, renderKey: key, rev: 3, sizeMm: SIZE })
+
+function mountNativeSvg(par = 'none') {
+  document.body.innerHTML = `<div data-element-svg="${PANEL}">
+    <svg viewBox="50 20 100 100" width="200pt" height="100pt" preserveAspectRatio="${par}">
+      <g id="source"><path style="fill: none; stroke: red; stroke-width: 3"/></g>
+      <g data-tavotto-native-viewport-pt="200 100" transform="matrix(0.5 0 0 0.5 50 20)">
+        <g id="native" transform="translate(2 3)"><path style="fill: none; stroke: blue; stroke-width: 3"/></g>
+      </g>
+    </svg>
+  </div>`
+}
+
+const mappedTargets = {
+  axes_0: { transform: ['axes_0', 'line-a', 'line-b'], style: ['axes_0', 'line-a', 'line-b'] },
+  'line-a': { transform: ['line-a'], style: ['line-a', 'line-b'] },
+  'line-b': { transform: ['line-b'], style: ['line-b'] },
+  errorbar: { transform: ['members_3', 'members_1', 'members_2', 'members_0'], style: ['members_3', 'members_1', 'members_2', 'members_0'] },
+  empty: { transform: [], style: [] },
+}
+function mountMappedSvg() {
+  document.body.innerHTML = `<div data-element-svg="${PANEL}"><svg viewBox="50 20 100 100">
+    <g id="decoration"><path style="stroke: green; stroke-width: 3"/></g>
+    <g data-tavotto-native-viewport-pt="200 100">
+      <g id="axes_0" transform="translate(1 2)"/>
+      <g id="line-a" transform="translate(2 3)"><path style="stroke: red; stroke-width: 3"/></g>
+      <g id="members_3"><path style="stroke: black; stroke-width: 1"/></g>
+      <g id="members_1"><path style="stroke: black; stroke-width: 1"/></g>
+      <g id="members_2"><path style="stroke: black; stroke-width: 1"/></g>
+      <g id="members_0"><path style="stroke: black; stroke-width: 3"/></g>
+    </g>
+    <g data-tavotto-native-viewport-pt="400 200">
+      <g id="line-b" transform="translate(4 5)"><path style="stroke: blue; stroke-width: 3"/></g>
+    </g>
+    <g id="empty"/>
+  </svg></div>`
+  findPanelSvg(PANEL)!.setAttribute('data-tavotto-svg-targets', JSON.stringify(mappedTargets))
+}
+
+describe('native语义gid的多DOM目标预览', () => {
+  it('split axes所有目标各用自身pt空间平移一次，装饰不动，取消逐字还原', () => {
+    mountMappedSvg()
+    const before = findPanelSvg(PANEL)!.outerHTML
+    begin()
+    previewTransform('axes_0', 0.1, 0.1)
+    flushPreviewFrame()
+    expect(tf('axes_0')).toBe('translate(20,10) translate(1 2)')
+    expect(tf('line-a')).toBe('translate(20,10) translate(2 3)')
+    expect(tf('line-b')).toBe('translate(40,20) translate(4 5)')
+    expect(tf('decoration')).toBeNull()
+    cancelPreview()
+    expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+  })
+
+  it('shared axes只有父节点时不重复变换其后代', () => {
+    mountMappedSvg()
+    gid('axes_0')!.appendChild(gid('line-a')!)
+    findPanelSvg(PANEL)!.setAttribute('data-tavotto-svg-targets', JSON.stringify({ axes_0: { transform: ['axes_0'], style: ['axes_0'] } }))
+    begin()
+    previewTransform('axes_0', 0.1, 0)
+    flushPreviewFrame()
+    expect(tf('axes_0')).toBe('translate(20,0) translate(1 2)')
+    expect(tf('line-a')).toBe('translate(2 3)')
+    cancelPreview()
+    expect(tf('axes_0')).toBe('translate(1 2)')
+  })
+
+  it('不存在主DOM gid的errorbar平移4个真实成员，但不扩展caps的局部样式语义', () => {
+    mountMappedSvg()
+    expect(gid('errorbar')).toBeNull()
+    begin()
+    previewTransform('errorbar', 0.1, 0.2)
+    expect(previewStyle('errorbar', 'errorbar', 'linewidth', 6)).toBe(false)
+    expect(previewStyle('errorbar', 'errorbar', 'color', '#ff0000')).toBe(false)
+    flushPreviewFrame()
+    for (const id of mappedTargets.errorbar.transform) expect(tf(id)).toBe('translate(20,20)')
+    expect(tf('line-a')).toBe('translate(2 3)')
+    cancelPreview()
+    for (const id of mappedTargets.errorbar.transform) expect(tf(id)).toBeNull()
+  })
+
+  it('多目标缩放、commit后同版重插与重复reattach不会重复乘矩阵', () => {
+    mountMappedSvg()
+    begin()
+    previewScale('axes_0', 2, 0.75, 0.25)
+    flushPreviewFrame()
+    commitPreview([{ gid: 'axes_0', prop: 'position', value: [0.2, 0.3] }], 'next')
+    const expectedA = 'matrix(2,0,0,2,-150,-25) translate(2 3)'
+    const expectedB = 'matrix(2,0,0,2,-300,-50) translate(4 5)'
+    expect(tf('line-a')).toBe(expectedA)
+    expect(tf('line-b')).toBe(expectedB)
+    mountMappedSvg()
+    reattachPreview(PANEL, KEY)
+    reattachPreview(PANEL, KEY)
+    expect(tf('line-a')).toBe(expectedA)
+    expect(tf('line-b')).toBe(expectedB)
+    cancelPreview()
+    expect(tf('line-a')).toBe('translate(2 3)')
+    expect(tf('line-b')).toBe('translate(4 5)')
+  })
+
+  it('axes/series先后涉及同目标，base只记一次，重放与取消不叠加旧预览', () => {
+    mountMappedSvg()
+    begin()
+    previewTransform('axes_0', 0.1, 0)
+    flushPreviewFrame()
+    commitPreview([{ gid: 'axes_0', prop: 'position', value: [0.1, 0] }], 'next')
+    begin()
+    previewTransform('line-a', 0.2, 0)
+    flushPreviewFrame()
+    expect(tf('line-a')).toBe('translate(40,0) translate(2 3)')
+    mountMappedSvg()
+    reattachPreview(PANEL, KEY)
+    expect(tf('line-a')).toBe('translate(40,0) translate(2 3)')
+    expect(tf('line-b')).toBe('translate(40,0) translate(4 5)')
+    cancelPreview()
+    expect(tf('line-a')).toBe('translate(2 3)')
+    expect(tf('line-b')).toBe('translate(4 5)')
+  })
+
+  it('同目标的后续axes/series写入按实际最后顺序重放，部分DOM重挂也不把旧预览当base', () => {
+    mountMappedSvg()
+    begin()
+    previewTransform('axes_0', 0.1, 0)
+    flushPreviewFrame()
+    previewTransform('line-a', 0.2, 0)
+    flushPreviewFrame()
+    previewTransform('axes_0', 0.3, 0)
+    flushPreviewFrame()
+    expect(tf('line-a')).toBe('translate(60,0) translate(2 3)')
+    gid('line-b')!.outerHTML = '<g id="line-b" transform="translate(4 5)"><path style="stroke: blue; stroke-width: 3"/></g>'
+    reattachPreview(PANEL, KEY)
+    expect(tf('line-a')).toBe('translate(60,0) translate(2 3)')
+    expect(tf('line-b')).toBe('translate(120,0) translate(4 5)')
+    reattachPreview(PANEL, KEY)
+    expect(tf('line-a')).toBe('translate(60,0) translate(2 3)')
+    cancelPreview()
+    expect(tf('line-a')).toBe('translate(2 3)')
+    expect(tf('line-b')).toBe('translate(4 5)')
+  })
+
+  it('style只改权威归属目标，取消与重插后仍保持同一份可逆账本', () => {
+    mountMappedSvg()
+    const before = findPanelSvg(PANEL)!.outerHTML
+    begin()
+    expect(previewStyle('line-a', 'line', 'linewidth', 6)).toBe(true)
+    flushPreviewFrame()
+    for (const id of ['line-a', 'line-b']) expect((gid(id)!.querySelector('path') as SVGElement).style.strokeWidth).toBe('6')
+    expect((gid('decoration')!.querySelector('path') as SVGElement).style.strokeWidth).toBe('3')
+    mountMappedSvg()
+    reattachPreview(PANEL, KEY)
+    for (const id of ['line-a', 'line-b']) expect((gid(id)!.querySelector('path') as SVGElement).style.strokeWidth).toBe('6')
+    cancelPreview()
+    expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+  })
+
+  it('style共享目标按最后意图重放，部分重挂保留的旧叶子不丢原始style', () => {
+    mountMappedSvg()
+    begin()
+    previewStyle('line-a', 'line', 'linewidth', 6)
+    flushPreviewFrame()
+    previewStyle('line-b', 'line', 'linewidth', 8)
+    flushPreviewFrame()
+    previewStyle('line-a', 'line', 'linewidth', 10)
+    flushPreviewFrame()
+    gid('line-b')!.outerHTML = '<g id="line-b" transform="translate(4 5)"><path style="stroke: blue; stroke-width: 3"/></g>'
+    reattachPreview(PANEL, KEY)
+    for (const id of ['line-a', 'line-b']) expect((gid(id)!.querySelector('path') as SVGElement).style.strokeWidth).toBe('10')
+    cancelPreview()
+    for (const id of ['line-a', 'line-b']) expect((gid(id)!.querySelector('path') as SVGElement).style.strokeWidth).toBe('3')
+  })
+
+  it('排队、准备提交、捕获与同DOM换基均处理全部目标，公开首节点仍兼容', () => {
+    mountMappedSvg()
+    const q = queuedTranslation(PANEL, 'axes_0')
+    updateQueuedTranslation(q, [0.1, 0.1])
+    flushQueuedTranslation(q)
+    expect(q.node).toBe(gid('axes_0'))
+    expect(tf('line-a')).toBe('translate(20,10) translate(2 3)')
+    expect(tf('line-b')).toBe('translate(40,20) translate(4 5)')
+    prepareQueuedTranslationCommit(q)
+    expect(tf('line-a')).toBe('translate(2 3)')
+    expect(tf('line-b')).toBe('translate(4 5)')
+    captureQueuedTranslationCommit(q)
+    updateQueuedTranslation(q, [0.2, 0])
+    flushQueuedTranslation(q)
+    cancelQueuedTranslation(q)
+    expect(tf('line-a')).toBe('translate(2 3)')
+    expect(tf('line-b')).toBe('translate(4 5)')
+    updateQueuedTranslation(q, [0.1, 0])
+    flushQueuedTranslation(q)
+    rebaseQueuedTranslation(q)
+    expect(tf('line-a')).toBe('translate(2 3)')
+    expect(tf('line-b')).toBe('translate(4 5)')
+  })
+
+  it('排队pseudo没有主gid也操作全部成员，真实DOM替换后重新采集每个base', () => {
+    mountMappedSvg()
+    const q = queuedTranslation(PANEL, 'errorbar')
+    updateQueuedTranslation(q, [0.1, 0])
+    flushQueuedTranslation(q)
+    expect(q.node?.id).toBe('members_3')
+    for (const id of mappedTargets.errorbar.transform) expect(tf(id)).toBe('translate(20,0)')
+    mountMappedSvg()
+    updateQueuedTranslation(q, [0.2, 0])
+    flushQueuedTranslation(q)
+    for (const id of mappedTargets.errorbar.transform) expect(tf(id)).toBe('translate(40,0)')
+    cancelQueuedTranslation(q)
+    for (const id of mappedTargets.errorbar.transform) expect(tf(id)).toBeNull()
+  })
+
+  it('显式空目标不借同名DOM，缺失或重叠任一目标则整次transform/style不写', () => {
+    mountMappedSvg()
+    begin()
+    previewTransform('empty', 0.1, 0)
+    expect(previewStyle('empty', 'line', 'visible', false)).toBe(false)
+    flushPreviewFrame()
+    expect(tf('empty')).toBeNull()
+    findPanelSvg(PANEL)!.setAttribute('data-tavotto-svg-targets', JSON.stringify({
+      'line-a': { transform: ['line-a', 'missing'], style: ['line-a', 'line-b'] },
+    }))
+    const before = findPanelSvg(PANEL)!.outerHTML
+    previewTransform('line-a', 0.2, 0)
+    expect(previewStyle('line-a', 'line', 'linewidth', 6)).toBe(false)
+    flushPreviewFrame()
+    expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+    cancelPreview()
+  })
+})
+
+describe('组合native图的pt坐标预览与原源坐标分开', () => {
+  it.each(['none', 'xMidYMid meet', 'xMaxYMin slice'])(
+    '原root缩放/非零原点/PAR=%s时，位移、缩放锚点与线宽均使用native pt', (par) => {
+      mountNativeSvg(par)
+      const before = findPanelSvg(PANEL)!.outerHTML
+      beginPreview({ panelId: PANEL, renderKey: KEY, sizeMm: [200 * 25.4 / 72, 100 * 25.4 / 72] })
+      previewTransform('native', 0.1, 0.2)
+      previewTransform('source', 0.1, 0.2)
+      expect(previewStyle('native', 'line', 'linewidth', 4)).toBe(true)
+      expect(previewStyle('source', 'line', 'linewidth', 4)).toBe(true)
+      flushPreviewFrame()
+      expect(tf('native')).toBe('translate(20,20) translate(2 3)')
+      expect(tf('source')).toBe('translate(10,20)')
+      expect((gid('native')!.querySelector('path') as SVGElement).style.strokeWidth).toBe('4')
+      expect(Number((gid('source')!.querySelector('path') as SVGElement).style.strokeWidth)).toBeCloseTo(2, 12)
+
+      previewScale('native', 2, 0.75, 0.25)
+      flushPreviewFrame()
+      expect(tf('native')).toBe('matrix(2,0,0,2,-150,-25) translate(2 3)')
+      cancelPreview()
+      expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+    },
+  )
+
+  it('同版DOM重插后按新target重放，commit留到权威换版，取消逐字还原', () => {
+    mountNativeSvg()
+    begin()
+    previewTransform('native', 0.1, 0)
+    previewStyle('native', 'line', 'linewidth', 4)
+    flushPreviewFrame()
+    commitPreview([{ gid: 'native', prop: 'linewidth', value: 4 }], 'next')
+    mountNativeSvg()
+    reattachPreview(PANEL, KEY)
+    expect(tf('native')).toBe('translate(20,0) translate(2 3)')
+    expect((gid('native')!.querySelector('path') as SVGElement).style.strokeWidth).toBe('4')
+    reattachPreview(PANEL, KEY)
+    expect(tf('native')).toBe('translate(20,0) translate(2 3)')
+    cancelPreview()
+    expect(tf('native')).toBe('translate(2 3)')
+    expect((gid('native')!.querySelector('path') as SVGElement).style.strokeWidth).toBe('3')
+
+    begin()
+    previewTransform('native', 0.2, 0)
+    flushPreviewFrame()
+    commitPreview([{ gid: 'native', prop: 'position', value: [0.2, 0] }], 'next')
+    mountNativeSvg()
+    reattachPreview(PANEL, 'next')
+    expect(previewSession()).toBeNull()
+    expect(tf('native')).toBe('translate(2 3)')
+  })
+
+  it('图例缩放即使没有前置平移，也按物理viewport计算不动点', () => {
+    mountNativeSvg('xMidYMid meet')
+    begin()
+    previewScale('native', 1.5, 0.75, 0.25)
+    flushPreviewFrame()
+    expect(tf('native')).toBe('matrix(1.5,0,0,1.5,-75,-12.5) translate(2 3)')
+    cancelPreview()
+    expect(tf('native')).toBe('translate(2 3)')
+  })
+
+  it('排队后续位移也使用目标pt依据，提交准备与取消仍还原原始transform', () => {
+    mountNativeSvg()
+    const q = queuedTranslation(PANEL, 'native')
+    updateQueuedTranslation(q, [0.1, 0.2])
+    flushQueuedTranslation(q)
+    expect(tf('native')).toBe('translate(20,20) translate(2 3)')
+    prepareQueuedTranslationCommit(q)
+    expect(tf('native')).toBe('translate(2 3)')
+    captureQueuedTranslationCommit(q)
+    updateQueuedTranslation(q, [0.2, 0])
+    flushQueuedTranslation(q)
+    expect(tf('native')).toBe('translate(40,0) translate(2 3)')
+    cancelQueuedTranslation(q)
+    expect(tf('native')).toBe('translate(2 3)')
+  })
+
+  it('坏native marker不写入猜测的位移/线宽，也不声称样式预览成功', () => {
+    mountNativeSvg()
+    gid('native')!.parentElement!.setAttribute('data-tavotto-native-viewport-pt', '200 NaN')
+    const before = findPanelSvg(PANEL)!.outerHTML
+    begin()
+    previewTransform('native', 0.1, 0.2)
+    expect(previewStyle('native', 'line', 'linewidth', 4)).toBe(false)
+    flushPreviewFrame()
+    expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+    cancelPreview()
+    expect(findPanelSvg(PANEL)!.outerHTML).toBe(before)
+  })
+})
 
 /* --------------------------- transform 不覆盖 ----------------------------- */
 

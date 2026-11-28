@@ -1,8 +1,8 @@
 import { createVersion, putVersionThumb, type LayoutMoment, type LayoutVersionMeta } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { currentTimelineCtx } from '@/lib/timelineContext'
+import { captureMomentThumb } from '@/lib/momentCapture'
 import {
-  captureThumbSources,
   composeTimelineThumb,
   type BakedAnnotations,
   type ThumbSources,
@@ -80,7 +80,10 @@ export interface MomentSnapshot {
 export function captureMoment(doc?: FigureDocument): MomentSnapshot {
   const identity = activeCanvasIdentity()
   if (doc) identity.doc = doc
-  return { ctx: currentTimelineCtx(), identity, thumb: captureThumbSources(identity.doc) }
+  // 图源走 renderStore 注入的那一份（`installMomentSources`）：归档 Figure / figureOrigin /
+  // chartSource 的面板在发起那一刻冻结引用与项目，缩略图画的是归档画作——timelineThumb 的
+  // 普通 capture 只读显示 SVG + 素材 URL，归档面板会画出替换后的同名文件。
+  return { ctx: currentTimelineCtx(), identity, thumb: captureMomentThumb(identity.doc, identity.pj) }
 }
 
 /**

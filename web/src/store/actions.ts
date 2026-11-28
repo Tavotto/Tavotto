@@ -101,7 +101,10 @@ import { AUTOSAVE_FAILURE_OWNER, reloadLatestAction, retrySaveAction } from './s
 import { useInteractionStore } from './interactionStore'
 import { aliasClearPlan } from '@/lib/aliasOverrides'
 import { fitContentCrop, isContentFit } from '@/lib/panelEdgeCrop'
-import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
+import { exactPanelManifest, exactPanelRender, rejectArtifactRenders, renderEpoch, renderKeyOf, renderRequestIdentity, structuralPanelManifest, useRenderStore } from './renderStore'
+import { figureOriginFor } from '@/lib/figureSnapshot'
+import { canEditPanel } from '@/lib/panelEditability'
+import { sourceFrameOverride, type PairedFrameAuthority } from '@/lib/chartFrame'
 import { useSelectionStore } from './selectionStore'
 import { isolationScope } from './isolationStore'
 import { useTransformPrefs } from './transformPrefs'
@@ -1559,38 +1562,100 @@ export const optionLabel = (prop: string, value: string): string => {
  * 'none' 是给假实时手势用的：拖动 / scrub / 取色期间画面由 SVG 局部预览
  * 负责，手势结束由 flushRender 定稿。
  */
+/**
+ * /2 面板的**精确配对帧**；渲染还不是这一版时给 `undefined`。
+ *
+ * 拖动基准用它把文档里存着的 S 锚点换算到 F（`exactFrameAuthority` 与
+ * `sourceFrameValue` 是同一对）。判据：条目就是 `renderKeyOf(panel)`、真的配了帧、
+ * 且这次渲染带回了 `chartRevision`——三者缺一，S ↔ F 换算就没有唯一答案。
+ */
+export function exactFrameAuthority(panel: PanelObject): PairedFrameAuthority | undefined {
+  if (panel.chartFrame === undefined) return undefined
+  const render = exactPanelRender(useRenderStore.getState(), panel)
+  const frame = render?.renderFrame
+  if (!render || !frame || !render.chartRevision) return undefined
+  const identity = renderRequestIdentity(
+    panel.overrides,
+    panel.chart,
+    panel.chartSource,
+    figureOriginFor(panel),
+    panel.chartFrame.renderProfile,
+  )
+  return { inputIdentity: identity, renderRevision: render.chartRevision, frame }
+}
+
+/** /2 面板值以显示帧 F 为基准的分数 prop（引擎 `overrides._FRAC_ANCHORED` 加 axes
+ * `position`；`size_mm` 是绝对 mm 不随帧换算）。写入侧 F→S 适配只作用在这几个。 */
+const FRAME_FRACTION_PROPS = new Set([
+  'pos_frac', 'loc_frac', 'size_frac', 'endpoints_frac', 'points_frac', 'position',
+])
+
+/**
+ * N5 第 4 步的**写入侧**（与 interactions.ts 的 `frameBaseline` 注释同一份合同）：
+ * /2 面板新写的图内几何带的是显示帧 F 的分数，落盘语义是源分数 S——经唯一适配器
+ * `sourceFrameOverride` 换回 S 一次。缺精确配对帧（渲染在途 / 已失效）时返回 null：
+ * 调用方拒绝整批写入并给可见提示，绝不能把 F 分数冒充 S 落盘。
+ * /1 面板（无 chartFrame）与非帧相对 prop 原样通过。
+ */
+function chartFrameWrites(
+  panel: PanelObject,
+  patches: { gid: string; prop: string; value: unknown }[],
+): { gid: string; prop: string; value: unknown }[] | null {
+  if (panel.chartFrame === undefined) return patches
+  if (!patches.some((p) => FRAME_FRACTION_PROPS.has(p.prop))) return patches
+  const authority = exactFrameAuthority(panel)
+  if (authority === undefined) return null
+  return patches.map((p) =>
+    FRAME_FRACTION_PROPS.has(p.prop)
+      ? sourceFrameOverride(p as PanelOverride, authority, authority.inputIdentity)
+      : p,
+  )
+}
+
+/** 缺精确配对帧的 /2 几何写入：零正文 + 可见提示（N5 第 4 步合同）。 */
+function rejectChartFrameWrite(): false {
+  useUiStore.getState().setStatus(msg('status.chartFrameStale', undefined, 'workspace'), 'error')
+  return false
+}
+
 export function setOverride(
   panelId: string,
   gid: string,
   prop: string,
   value: unknown,
   immediate: boolean | RenderPolicy = false,
-) {
-  // 同值写入是 no-op：不改数组、不进历史、不渲染（GEO-B6）。按 JSON 比——override
-  // 数组的 JSON 就是变体键，这里与键同一把尺子
-  // 比的是**生效的那条**：载入的旧文档可能带重复的 (gid, prop)，引擎按 last-wins 取值
-  // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
+): boolean {
   const current = findObject(panelId)
+  let writeValue = value
   if (current?.type === 'panel') {
+    // /2 写入侧适配（先换算再判同值：no-op 看的是落盘语义 S 的那把尺子）
+    const adapted = chartFrameWrites(current, [{ gid, prop, value }])
+    if (adapted === null) return rejectChartFrameWrite()
+    writeValue = adapted[0]!.value
+    // 同值写入是 no-op：不改数组、不进历史、不渲染（GEO-B6）。按 JSON 比——override
+    // 数组的 JSON 就是变体键，这里与键同一把尺子
+    // 比的是**生效的那条**：载入的旧文档可能带重复的 (gid, prop)，引擎按 last-wins 取值
+    // （engine/patchspec.py），前面的重复条目同值不代表这次写入是 no-op
     const i = effectiveOverrideIndex(current.overrides, gid, prop)
     // 同值但另一个地址上还留着旧 override（旧文档里两条并存）时不算 no-op：这次写要把它清掉
     if (
       i >= 0 &&
-      JSON.stringify(current.overrides[i].value) === JSON.stringify(value) &&
+      JSON.stringify(current.overrides[i].value) === JSON.stringify(writeValue) &&
       !pendingAliasClears(current, [{ gid, prop }]).length
     ) {
-      return
+      return true
     }
   }
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
   // 那条挪到数组末尾，顺序一变变体键就变
   updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel(prop) }), (o) => {
-    upsertOverrides(o, [{ gid, prop, value }])
+    upsertOverrides(o, [{ gid, prop, value: writeValue }])
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, immediate)
   // 本地信号只带属性名（matplotlib 的 prop，不是用户内容），不带 gid 与值
   emitActivity({ kind: 'element.property_changed', prop })
+  return true
 }
 
 /**
@@ -2011,8 +2076,10 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   // `detached`：目标图不在文档里（「同步并写回」的临时面板，id 形如 `sync:…`）——按它自己的文件 / 脚本身份重画
   const stand = detached && detached.id === panelId ? detached : undefined
   const panel = findObject(panelId) ?? stand
-  if (panel?.type !== 'panel' || !panel.script) return 'skipped'
-  try { refuseArtifactOperation(panel) } catch (e) {
+  if (panel?.type !== 'panel' || (!panel.script && !panel.chart && figureOriginFor(panel) === undefined)) return 'skipped'
+  try {
+    if (figureOriginFor(panel) === undefined) refuseArtifactOperation(panel)
+  } catch (e) {
     // 这张图的采用记录 / 图幅标记对不上，或这类图不支持重新构建：重试必然还是同一句，真做不了 →「发给我们看看」
     status(engineErrorMsg(e), 'error', { action: feedbackStatusAction() })
     return 'failed'
@@ -2022,7 +2089,7 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   const fileId = panel.fileId
   const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
   let invalidated = false
-  if (!engineTransport()) {
+  if (figureOriginFor(panel) === undefined && !panel.chart && !engineTransport()) {
     try {
       invalidated = (await engineInvalidate(fileId)).invalidated
     } catch (err) {
@@ -2043,7 +2110,10 @@ export async function rebuildPanel(panelId: string, detached?: PanelObject): Pro
   // 登记 wantPatches、清掉挂着的防抖计时器；真正的发送在下一行，要等它的结果
   requestRender(fresh, 'none')
   const key = renderKeyOf(fresh)
-  await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
+  if (figureOriginFor(fresh) !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, undefined, 'foreground', undefined, undefined, figureOriginFor(fresh))
+  else if (fresh.chartSource !== undefined) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, fresh.chartSource, undefined, fresh.chartFrame?.renderProfile)
+  else if (fresh.chart) await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh), 'foreground', fresh.chart, undefined, undefined, fresh.chartFrame?.renderProfile)
+  else await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, adoptionGuardOf(fresh))
   await settledRender(key)
   const succeeded = useRenderStore.getState().get(key).status === 'ready'
   // renderStore consumes trusted execution evidence even for failed/zero-output runs.
@@ -2185,16 +2255,25 @@ export function setOverrides(
   label: UiMessage,
   patches: { gid: string; prop: string; value: unknown }[],
   render: boolean | RenderPolicy = true,
-) {
-  if (!patches.length) return
+): boolean {
+  if (!patches.length) return true
+  // /2 写入侧适配（同 setOverride：先换算再落盘；缺配对帧整批拒绝）
+  const snapshot = findObject(panelId)
+  let write = patches
+  if (snapshot?.type === 'panel') {
+    const adapted = chartFrameWrites(snapshot, patches)
+    if (adapted === null) return rejectChartFrameWrite()
+    write = adapted
+  }
   updateObject<PanelObject>(panelId, label, (o) => {
-    upsertOverrides(o, patches)
+    upsertOverrides(o, write)
   })
   const panel = findObject(panelId)
   if (panel?.type === 'panel') requestRender(panel, render)
-  for (const prop of new Set(patches.map((p) => p.prop))) {
+  for (const prop of new Set(write.map((p) => p.prop))) {
     emitActivity({ kind: 'element.property_changed', prop })
   }
+  return true
 }
 
 /** Update one component of a figure's font choice in a single undo step. */
@@ -2829,6 +2908,10 @@ export function enterElementEdit(
   finishActiveGesture()
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
+  // 计算图表要先有「这一版已配对」的证据才许进图内编辑（模型本身不冒充已配对对象）
+  if (panel.chart && !canEditPanel(panel)) return false
+  // 历史 Figure 的来源是冻结的那一份：不经过当前文件的采用闸
+  if (figureOriginFor(panel) !== undefined) return finishElementEntry(panelId, leftTab)
   const issue = artifactValidationIssue(panel)
   if (issue) {
     // 采用记录 / 图幅标记对不上：重试必然还是同一句，真做不了 →「发给我们看看」
@@ -2957,10 +3040,12 @@ async function adoptBitmapForRedraw(panel: PanelObject): Promise<BitmapRedrawOut
 function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): boolean {
   const panel = findObject(panelId)
   if (panel?.type !== 'panel') return false
-  const seeded = isAdoptedPanel(panel) ? 0 : seedBakedOverrides(panelId)
+  const seeded = figureOriginFor(panel) !== undefined || isAdoptedPanel(panel) || panel.chart ? 0 : seedBakedOverrides(panelId)
   const ui = useUiStore.getState()
   ui.setElementPanel(panelId)
-  if (isAdoptedPanel(panel)) {
+  // 历史 Figure / 计算图表：这一版的身份不在当前文件上，直接按它自己的 overrides 重画一次
+  if (figureOriginFor(panel) !== undefined) requestRender(panel, true)
+  else if (isAdoptedPanel(panel)) {
     const owner = useDocumentStore.getState()
     const epoch = renderEpoch()
     const pj = currentProjectId()
