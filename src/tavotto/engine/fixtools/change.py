@@ -110,7 +110,7 @@ def selftest_note(ctx: FixContext) -> str:
     形状与 `read_environment_checks` 同一份（闭集；原文尾部不在这里，要看全去调那个工具）。读不到记录也给指路句。"""
     hint = "Use read_environment_checks to see the full self-test record."
     try:
-        from .observe import environment_check_rows
+        from .envchecks import environment_check_rows
 
         rows = environment_check_rows(ctx.project_root, with_detail=False)
         shape = next((r["selftest"] for r in rows if r.get("selftest")), None)
