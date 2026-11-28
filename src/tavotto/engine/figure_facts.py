@@ -9,7 +9,8 @@
 * 干涉检测（`interference.detect`）的结论，没问题时明说「图例没有压住数据」；
 * 坐标范围与数据范围的关系（数据是否全在范围内）。
 * 图例项与它代表的曲线 / 柱样式对不上的地方（`legend_style_mismatch`，与问题面板的 `legend-style-mismatch` 同一份事实），
-  连同改得掉它的那条图例项属性（排在最前，多系列图上不被行数上限截掉）。
+  连同改得掉它的那条图例项属性（排在最前，多系列图上不被行数上限截掉）。只有来源确证（ADR 0219：创建图例时
+  实际传入的就是那条已画系列）的项才有这一行；没确证的图例项一个字不提——作者单独设计的图例不是错。
 
 预检（`preflight.run`）要规范 spec 与 profile，这里拿不到，所以不并进来；干涉检测只要 manifest。
 只读 manifest，纯标准库；有界（`MAX_LINES` / `MAX_CHARS`）。数据坐标只对线性轴反推（对数 / 未知刻度不说范围）。
@@ -238,9 +239,10 @@ def legend_mismatch_facts(manifest: dict) -> list[str]:
         gid = str(el.get("gid", ""))
         if itf.legend_of(gid) in hidden:
             continue
-        source = (el.get("legend_entry") or {}).get("source_gid")
+        # 只认 worker 确证的来源（ADR 0219）：0034 的 `legend_entry.source_gid` 可能是按样式 / 标签猜的
+        source = preflight.legend_style_source(el)
         diffs = preflight.legend_style_diffs(el)
-        if not isinstance(source, str) or not source or not diffs:
+        if source is None or not diffs:
             continue
         parts = [
             f"{_STYLE_WORD.get(d['prop'], d['prop'])} 图例 {d.get('legend')} / 曲线 {d.get('source')}"

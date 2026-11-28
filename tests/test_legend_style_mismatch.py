@@ -1,7 +1,9 @@
 """图例示意与它代表的曲线 / 柱样式不一致（`legend-style-mismatch`）：真 worker 的只读事实 + 预检 + 改图助手的事实。
 
-事实 `legend_style_mismatch` 只在图例项元素上、有源（`legend_entry.source_gid`）、认得准、确实不一致时出现
-（产生者只有 `engine/legendmodel.legend_style_mismatch`）；预检两侧与改图助手的「图上的事实」都只读它。
+事实 `legend_style_mismatch` 只在图例项元素上、**来源确证**（ADR 0219：创建图例时这一项实际传入的就是同一面板里
+那条已画系列，worker 写 `legend_style_source`）、认得准、确实不一致时出现（产生者只有
+`engine/legendmodel.legend_style_mismatch`）；预检两侧与改图助手的「图上的事实」都只读它。0034 的
+`legend_entry.source_gid` / `follow_source` 是编辑绑定（可能按样式指纹、标签或位置猜），不是来源证据。
 每个「不报」的用例都配一个「报」的对照，用例才有鉴别力。
 """
 
@@ -45,7 +47,9 @@ def test_rule_never_blocks_a_transaction():
     assert normalize._blocks(issue, {}) is False  # noqa: SLF001
 
 
-def _entry(diffs, *, text="Blank", source="axes_0.lines_1", visible=True, gid=None):
+def _entry(diffs, *, text="Blank", source="axes_0.lines_1", visible=True, gid=None, guessed=None):
+    """`source` = worker 确证的来源（`legend_style_source`）；`guessed` = 0034 的编辑绑定（缺省同 `source`）。"""
+    guessed = source if guessed is None else guessed
     el = {
         "gid": gid or "axes_0.legend.texts_1",
         "role": "legend_text",
@@ -54,10 +58,12 @@ def _entry(diffs, *, text="Blank", source="axes_0.lines_1", visible=True, gid=No
             {"prop": "text", "type": "text", "value": text},
             {"prop": "visible", "type": "bool", "value": visible},
         ],
-        "legend_entry": {"index": 1, **({"source_gid": source} if source else {})},
+        "legend_entry": {"index": 1, **({"source_gid": guessed} if guessed else {})},
     }
     if diffs is not None:
         el["legend_style_mismatch"] = diffs
+        if source:
+            el["legend_style_source"] = source
     return el
 
 
@@ -126,6 +132,8 @@ def test_message_key_per_kind_of_difference(props, key):
     [
         _entry(None),  # 没有事实 = 一致 / 判不了
         _entry([FACE], source=None),  # 没有对应关系
+        # 只有 0034 猜的绑定、来源没确证（独立设计的代理图例按标签 / 长相对上了曲线）：不报
+        _entry([FACE], source=None, guessed="axes_0.lines_1"),
         _entry([FACE], visible=False),  # 条目藏起来了
         _entry([{"prop": "zorder", "legend": 1, "source": 2}]),  # 不认得的属性
         _entry("garbage"),
@@ -187,6 +195,13 @@ def test_figure_facts_list_the_mismatch_first_with_the_fix():
         "改法：axes_0.legend.texts_0 的 handle_color 设为 #2ca02c，标记填充色在图内改不了（要回脚本改句柄）"
     )
     assert figure_facts.figure_facts({"elements": [_entry(None)]}) == []
+    # 来源没确证（只有 0034 猜的 `source_gid`）：事实里一个字不提，也不给改法
+    unverified = _entry([fixable], source=None, guessed="axes_0.lines_1")
+    assert figure_facts.legend_mismatch_facts({"elements": [unverified]}) == []
+    # 说的「它代表的」是确证的那条，不是 0034 猜的那条
+    other = _entry([color], source="axes_0.lines_0", guessed="axes_0.lines_1")
+    (line,) = figure_facts.legend_mismatch_facts({"elements": [other]})
+    assert "它代表的 axes_0.lines_0 " in line and "axes_0.lines_1" not in line
 
 
 def test_mismatch_fact_survives_the_line_cap_on_a_busy_figure():
@@ -230,6 +245,8 @@ def test_facts_reach_the_change_plan_prompt_with_the_rule():
         assert "样式不一致" in system and "不动曲线" in system
         # 什么时候主动提只在助手提示里（审阅提示没有 reply / 待办）
         assert ("图例与曲线对不上要主动说" in system) == (source == "assistant")
+        # 事实没列的图例项不当成错、不建议跟随（独立设计的图例，ADR 0219）
+        assert "图例与曲线是否不一致只按这条事实说" in system and "不要建议它跟随曲线" in system
 
 
 # ------------------------------ 真 worker ------------------------------
@@ -243,7 +260,7 @@ from matplotlib.lines import Line2D
 
 def main():
     t = np.linspace(0, 60, 30)
-    fig, axs = plt.subplots(3, 4, figsize=(12, 8), dpi=50)
+    fig, axs = plt.subplots(4, 4, figsize=(12, 10), dpi=50)
     a = iter(axs.ravel())
 
     def nxt(title):
@@ -267,32 +284,42 @@ def main():
     ax.plot(t, t, color="#ff7f0e", label="B")
     ax.legend().legend_handles[0].set_color("#9467bd")
 
-    # 标记形状：图例代理句柄与曲线同名、形状不同
+    # 标记形状：真来源（图例按曲线建），作者事后改了图例句柄的形状
     ax = nxt("marker")
     ax.plot(t, t, color="#2ca02c", marker="s", label="C")
-    ax.legend(handles=[Line2D([], [], color="#2ca02c", marker="o", label="C")])
+    ax.legend().legend_handles[0].set_marker("o")
 
     # 线型
     ax = nxt("linestyle")
     ax.plot(t, t, color="#2ca02c", ls="--", label="D")
-    ax.legend(handles=[Line2D([], [], color="#2ca02c", ls="-", label="D")])
+    ax.legend().legend_handles[0].set_linestyle("-")
 
     # 线宽：差得少不报（1.0 vs 1.2），差得多报（1.0 vs 2.5）
     ax = nxt("linewidth")
     ax.plot(t, t, color="#2ca02c", lw=1.0, label="thin")
     ax.plot(t, t / 2, color="#d62728", lw=1.0, label="thick")
-    ax.legend(handles=[
-        Line2D([], [], color="#2ca02c", lw=1.2, label="thin"),
-        Line2D([], [], color="#d62728", lw=2.5, label="thick"),
-    ])
+    leg = ax.legend()
+    leg.legend_handles[0].set_linewidth(1.2)
+    leg.legend_handles[1].set_linewidth(2.5)
 
     # 'none' / 不可见：曲线空心标记 + 图例实心；图例只画标记、曲线有线（只一边画的不比）
     ax = nxt("none")
     ax.plot(t, t, color="#1f77b4", marker="o", mfc="none", label="hollow")
     ax.plot(t, t / 2, color="#ff7f0e", marker="s", label="nolines")
+    leg = ax.legend()
+    leg.legend_handles[0].set_markerfacecolor("#d62728")
+    leg.legend_handles[1].set_linestyle("None")
+
+    # 代理句柄（没加进坐标轴的 `Line2D([], [])`）：与曲线同名、形状 / 线型 / 线宽不同——来源没确证，一律不报
+    # （上面三格的真来源对照会报）
+    ax = nxt("proxy")
+    ax.plot(t, t, color="#2ca02c", marker="s", label="C")
+    ax.plot(t, t / 2, color="#2ca02c", ls="--", label="D")
+    ax.plot(t, t / 3, color="#d62728", lw=1.0, label="thick")
     ax.legend(handles=[
-        Line2D([], [], color="#1f77b4", marker="o", mfc="#d62728", label="hollow"),
-        Line2D([], [], color="#ff7f0e", marker="s", ls="None", label="nolines"),
+        Line2D([], [], color="#2ca02c", marker="o", label="C"),
+        Line2D([], [], color="#2ca02c", ls="-", label="D"),
+        Line2D([], [], color="#d62728", lw=2.5, label="thick"),
     ])
 
     # 看不见的曲线
@@ -393,11 +420,20 @@ def test_real_worker_facts_per_case(cases):
     thin, thick = by["linewidth"]
     assert _props(thin) == [] and _props(thick) == ["linewidth"]
     assert [_props(e) for e in by["none"]] == [[], []]
+    # 代理句柄：0034 照旧按标签绑上了曲线（编辑行为不变），但来源没确证 → 不报
+    assert all(e["legend_entry"].get("source_gid") for e in by["proxy"])
+    assert [_props(e) for e in by["proxy"]] == [[], [], []]
+    assert all("legend_style_source" not in e for e in by["proxy"])
     assert [_props(e) for e in by.get("hidden", [])] == [[] for _ in by.get("hidden", [])]
     assert all("source_gid" not in e["legend_entry"] for e in by["nosource"])
     assert [_props(e) for e in by["errorbar"]] == [[] for _ in by["errorbar"]]
     assert _props(by["bars"][0]) == ["facecolor"]
     assert [_props(e) for e in by["hiddenlegend"]] == [[]]
+    # 报的每一项都写了确证来源，且就是同一子图里它代表的那条
+    for items in by.values():
+        for e in items:
+            if "legend_style_mismatch" in e:
+                assert e["legend_style_source"].split(".", 1)[0] == e["gid"].split(".", 1)[0]
 
 
 @needs_worker
@@ -414,7 +450,7 @@ def test_real_worker_preflight_reports_exactly_the_mismatched_entries(cases):
 
 def _snapshot(manifest) -> dict:
     """前端消费的真 worker 快照：图例与图例项元素只留规则读的那几格（`visible` / `text` 的 prop / value、
-    `legend_entry`、`legend_style_mismatch`）。"""
+    `legend_entry`、`legend_style_mismatch`、`legend_style_source`）。"""
     keep = {"visible", "text"}
     els = []
     for e in manifest["elements"]:
@@ -432,14 +468,14 @@ def _snapshot(manifest) -> dict:
                 if f.get("prop") in keep
             ],
         }
-        for key in ("legend_entry", "legend_style_mismatch"):
+        for key in ("legend_entry", "legend_style_mismatch", "legend_style_source"):
             if key in e:
                 out[key] = e[key]
         els.append(out)
     (hit,) = _hits(manifest)
     return {
         "comment": "真 worker 渲染 tests/test_legend_style_mismatch.py 的 CASES 得到的图例 / 图例项元素"
-        "（只留 gid / role / label、visible 与 text 两格 editable、legend_entry、legend_style_mismatch）。"
+        "（只留 gid / role / label、visible 与 text 两格 editable、legend_entry、legend_style_mismatch、legend_style_source）。"
         "pytest 重渲染逐字比对；web/src/lib/preflight.legendStyle.test.ts 消费它。",
         "elements": els,
         "expected": {
@@ -543,6 +579,264 @@ if __name__ == "__main__":
         assert facts([{"gid": entry, **d["fix"]}]) is None
     finally:
         pool.discard(w)
+
+
+#: ADR 0219「第 1 期验收：外观相同，不代表来源相同」三例 + 维护者真机那例（#2342 实测）：蓝色 Blank、红色 Catalyst
+#: 两条线，标记都用 `o`；每个子图一种建图例的方法
+ADR_CASES = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.lines import Line2D
+
+
+def main():
+    t = np.linspace(0, 10, 12)
+    fig, axs = plt.subplots(1, 4, figsize=(12, 3))
+    for ax, title in zip(axs, ("normal", "conflict", "proxy", "green")):
+        ax.set_title(title)
+        blank, = ax.plot(t, t, color="blue", marker="o", label="Blank")
+        cat, = ax.plot(t, t / 2, color="red", marker="o", label="Catalyst")
+        if title == "normal":
+            ax.legend([blank, cat], ["Blank", "Catalyst"])
+        elif title == "conflict":
+            h = ax.legend([blank, cat], ["Blank", "Catalyst"]).legend_handles[0]
+            h.set_color("red")
+            h.set_markerfacecolor("red")
+            h.set_markeredgecolor("red")
+        elif title == "proxy":
+            ax.legend([Line2D([], [], color="red", marker="o"), cat], ["Blank", "Catalyst"])
+        else:
+            ax.legend([Line2D([], [], color="green", marker="o"), cat], ["Blank", "Catalyst"])
+    fig.savefig("Adr.pdf")
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def _el(manifest, gid):
+    return next(e for e in manifest["elements"] if e["gid"] == gid)
+
+
+def _value(el, prop):
+    return next((f.get("value") for f in el["editable"] if f["prop"] == prop), None)
+
+
+@needs_worker
+def test_adr_0219_same_look_is_not_same_source(tmp_path):
+    """只有创建图例时实际传入的 artist 就是同面板那条已画系列，才比、才报；代理句柄长相 / 标签再像也不算确证。"""
+    w, man = _render(tmp_path, ADR_CASES, "Adr")
+    try:
+        by = _by_title(man)
+        # 正常对照：实际配对核实了、样式一致 → 不报
+        assert [_props(e) for e in by["normal"]] == [[], []]
+        # 维护者那例（独立设计的绿色 Blank）与同外观代理（红色 `Line2D([], [])` 标签 Blank）：没有确证 → 不报、不给改法。
+        # 0034 照旧按标签把绿色 Blank 绑上了蓝色 Blank 曲线（编辑行为不变），但那不是来源证据
+        green = by["green"][0]
+        assert green["legend_entry"]["source_gid"] == "axes_3.lines_0"
+        for title in ("green", "proxy"):
+            for e in by[title]:
+                assert "legend_style_mismatch" not in e and "legend_style_source" not in e, title
+        # 真来源、样式冲突：报 Blank 与**蓝色 Blank 曲线**不一致（0034 按指纹把它绑去了 Catalyst，不跟着认）
+        blank, cat = by["conflict"]
+        assert blank["legend_entry"]["source_gid"] == "axes_1.lines_1"  # 0034 的猜测，编辑行为不变
+        assert blank["legend_style_source"] == "axes_1.lines_0"
+        fix = {"prop": "handle_color", "value": "#0000ff"}
+        assert blank["legend_style_mismatch"] == [
+            {"prop": "color", "legend": "#ff0000", "source": "#0000ff", "fix": fix},
+            {"prop": "markerfacecolor", "legend": "#ff0000", "source": "#0000ff", "fix": fix},
+            {"prop": "markeredgecolor", "legend": "#ff0000", "source": "#0000ff", "fix": fix},
+        ]
+        assert _props(cat) == []
+        # 预检两边只报冲突那一项；助手事实只有那一行、说的是 Blank 曲线
+        for pid in PROFILES:
+            (hit,) = _hits(man, pid)
+            assert hit["gids"] == [blank["gid"]], pid
+            assert hit["detail"] == {
+                "props": ["color", "markerfacecolor", "markeredgecolor"],
+                "source_gid": "axes_1.lines_0",
+            }
+        (fact,) = figure_facts.legend_mismatch_facts(man)
+        assert fact.startswith(
+            "图例项「Blank」（axes_1.legend.texts_0）与它代表的 axes_1.lines_0 样式不一致"
+        )
+        assert "handle_color 设为 #0000ff" in fact and "binding" not in fact
+        assert not any(
+            "axes_2.legend" in ln or "axes_3.legend" in ln for ln in figure_facts.figure_facts(man)
+        )
+
+        # 改法经改图助手校验照收，写进去之后：冲突清掉、Blank 示意变蓝；Catalyst 项不动
+        changes = [{"gid": blank["gid"], **fix}]
+        out = changeplan.validate_proposal(
+            {
+                "groups": [{"comment_id": "a1", "changes": changes}],
+                "unhandled": [],
+                "intent": "edit",
+            },
+            man,
+            comment_ids={"a1"},
+            advice=True,
+        )
+        assert out["unhandled"] == [] and out["groups"] == [
+            {"comment_id": "a1", "changes": changes}
+        ]
+        # 同时打一条会让图例整个重建的 override（列数）：重建传的是 0034 猜的源，不许被当成新的确证
+        after = w.override("Adr", [*changes, {"gid": "axes_3.legend", "prop": "ncol", "value": 2}])[
+            "manifest"
+        ]
+        fixed = _el(after, blank["gid"])
+        assert "legend_style_mismatch" not in fixed
+        assert _value(fixed, "handle_color") == "#0000ff"
+        assert (
+            _value(_el(after, cat["gid"]), "handle_color")
+            == _value(cat, "handle_color")
+            == "#ff0000"
+        )
+        # 维护者那例：重建之后仍不判错、绿色图例仍是绿色（没有任何修法被给出、被执行）
+        g_after = _el(after, green["gid"])
+        assert "legend_style_mismatch" not in g_after
+        assert _value(g_after, "handle_color") == _value(green, "handle_color") == "#008000"
+        assert [i for i in _hits(after) if i["gids"] != []] == []
+    finally:
+        pool.discard(w)
+
+
+LEGEND_CAPTURE_PROBE = """
+import hashlib, json, sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.legend as mlegend
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.text import Text
+import figcapture
+
+
+def make():
+    fig, ax = plt.subplots(figsize=(3, 2), dpi=60)
+    a, = ax.plot([0, 1], [0, 1], label="a")
+    b, = ax.plot([0, 1], [1, 0], label="b")
+    proxy = Line2D([], [], color="g")
+    junk = Text(0, 0, "x")  # matplotlib 不给它 handler：不进 legend_handles 也没有文字
+    legs = {
+        "auto": ax.legend(),
+        "reverse": ax.legend([a, b], ["a", "b"], reverse=True),
+        "iterator": ax.legend(iter([a, b]), iter(["a", "b"])),
+        "explicit": ax.legend([proxy, junk, b], ["p", "j", "b"]),  # 最后建的这个是画出来的那个
+    }
+    leg = legs["explicit"]
+    fig.canvas.draw()
+    pixels = hashlib.sha256(bytes(fig.canvas.buffer_rgba())).hexdigest()
+    names = {id(a): "a", id(b): "b", id(proxy): "proxy"}
+    got = {}
+    for k, lg in legs.items():
+        rec = vars(lg).get(figcapture.LEGEND_HANDLES_ATTR, "missing")
+        got[k] = rec if rec in (None, "missing") else [names.get(id(h), "?") for h in rec]
+    # Tavotto 重建图例时自己再调一次：记录不许被覆盖（否则 0034 猜的源被洗成确证）
+    leg._init_legend_box([a, b], ["a", "b"])
+    rec = vars(leg).get(figcapture.LEGEND_HANDLES_ATTR, "missing")
+    got["after_rebuild"] = rec if rec in (None, "missing") else [names.get(id(h), "?") for h in rec]
+    plt.close(fig)
+    return pixels, got
+
+
+plain_pixels, _ = make()
+original = mlegend.Legend._init_legend_box
+figcapture.install_legend_capture(mlegend)
+hook = mlegend.Legend._init_legend_box
+figcapture.install_legend_capture(mlegend)
+assert mlegend.Legend._init_legend_box is hook and hook.__wrapped__ is original
+pixels, got = make()
+print(json.dumps({"same_pixels": pixels == plain_pixels, "got": got}))
+"""
+
+
+@needs_worker
+def test_legend_capture_records_the_actual_handles_once(tmp_path):
+    """`figcapture.install_legend_capture`：记创建时实际传入的 handle（与 `legend_handles` 去 None 后同序号），
+    `reverse` 之后的顺序；迭代器参数不消费、不记；重建再调不覆盖；像素与不装时逐字节相同。"""
+    import subprocess
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(LEGEND_CAPTURE_PROBE, encoding="utf-8")
+    engine = ROOT / "src" / "tavotto" / "engine"
+    out = subprocess.run(
+        [WORKER_PY, str(probe), str(engine)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        cwd=tmp_path,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    res = json.loads(out.stdout.strip().splitlines()[-1])
+    assert res["same_pixels"] is True
+    assert res["got"] == {
+        "auto": ["a", "b"],
+        "explicit": ["proxy", "b"],
+        "reverse": ["b", "a"],
+        "iterator": None,
+        "after_rebuild": ["proxy", "b"],
+    }
+
+
+SVG_PAIR_PROBE = r"""
+import importlib.util, json, sys
+from pathlib import Path
+engine = sys.argv[1]
+spec = importlib.util.spec_from_file_location("boot", Path(engine) / "bridgeboot.py")
+boot = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(boot)
+pkg = boot.load_engine_modules(engine, ("figcapture", "patchspec", "pathgeom", "axestraversal",
+    "spinemodel", "tickmodel", "colorbarmodel", "legendmodel", "overrides", "manifest",
+    "preview_hybrid", "teedraw", "figsession", "wireproto"))
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.legend as mlegend
+import matplotlib.pyplot as plt
+blocker = pkg.figsession._svg_pair_blocker
+
+
+def fig_with_legend():
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], label="a")
+    ax.legend()
+    return fig
+
+
+out = {"before": blocker(fig_with_legend(), single_draw=True)}
+pkg.figcapture.install_legend_capture(mlegend)
+out["captured"] = blocker(fig_with_legend(), single_draw=True)
+real = mlegend.Legend._init_legend_box
+mlegend.Legend._init_legend_box = lambda self, *a, **k: real(self, *a, **k)
+out["user_patch"] = blocker(fig_with_legend(), single_draw=True)
+print(json.dumps(out))
+"""
+
+
+@needs_worker
+def test_legend_capture_keeps_svg_pairing_but_user_patches_still_block(tmp_path):
+    """装了句柄观察包装的 `Legend` 仍能走 SVG 配对（`figsession._svg_pair_owned` 按代码出处认它）；脚本自己 patch 照旧挡。"""
+    import subprocess
+
+    probe = tmp_path / "svgpair.py"
+    probe.write_text(SVG_PAIR_PROBE, encoding="utf-8")
+    out = subprocess.run(
+        [WORKER_PY, str(probe), str(ROOT / "src" / "tavotto" / "engine")],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        cwd=tmp_path,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    res = json.loads(out.stdout.strip().splitlines()[-1])
+    assert res["before"] is None and res["captured"] is None
+    assert "Legend._init_legend_box" in (res["user_patch"] or "")
 
 
 #: 仓库里带图例的真脚本：一张都不许报（不误报优先）

@@ -1,5 +1,5 @@
 {
- "comment": "真 worker 渲染 tests/test_legend_style_mismatch.py 的 CASES 得到的图例 / 图例项元素（只留 gid / role / label、visible 与 text 两格 editable、legend_entry、legend_style_mismatch）。pytest 重渲染逐字比对；web/src/lib/preflight.legendStyle.test.ts 消费它。",
+ "comment": "真 worker 渲染 tests/test_legend_style_mismatch.py 的 CASES 得到的图例 / 图例项元素（只留 gid / role / label、visible 与 text 两格 editable、legend_entry、legend_style_mismatch、legend_style_source）。pytest 重渲染逐字比对；web/src/lib/preflight.legendStyle.test.ts 消费它。",
  "elements": [
   {
    "gid": "axes_0.legend",
@@ -92,7 +92,8 @@
       "value": "follow_source"
      }
     }
-   ]
+   ],
+   "legend_style_source": "axes_1.lines_0"
   },
   {
    "gid": "axes_2.legend",
@@ -134,7 +135,8 @@
       "value": "follow_source"
      }
     }
-   ]
+   ],
+   "legend_style_source": "axes_2.lines_0"
   },
   {
    "gid": "axes_3.legend",
@@ -176,7 +178,8 @@
       "value": "follow_source"
      }
     }
-   ]
+   ],
+   "legend_style_source": "axes_3.lines_0"
   },
   {
    "gid": "axes_4.legend",
@@ -218,7 +221,8 @@
       "value": "follow_source"
      }
     }
-   ]
+   ],
+   "legend_style_source": "axes_4.lines_0"
   },
   {
    "gid": "axes_5.legend",
@@ -280,7 +284,8 @@
       "value": "follow_source"
      }
     }
-   ]
+   ],
+   "legend_style_source": "axes_5.lines_1"
   },
   {
    "gid": "axes_6.legend",
@@ -347,11 +352,11 @@
   {
    "gid": "axes_7.legend.texts_0",
    "role": "legend_text",
-   "label": "图例项 “gone”",
+   "label": "图例项 “C”",
    "editable": [
     {
      "prop": "text",
-     "value": "gone"
+     "value": "C"
     },
     {
      "prop": "visible",
@@ -361,6 +366,46 @@
    "legend_entry": {
     "index": 0,
     "source_gid": "axes_7.lines_0",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_7.legend.texts_1",
+   "role": "legend_text",
+   "label": "图例项 “D”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "D"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 1,
+    "source_gid": "axes_7.lines_1",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_7.legend.texts_2",
+   "role": "legend_text",
+   "label": "图例项 “thick”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "thick"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 2,
+    "source_gid": "axes_7.lines_2",
     "binding_default": "custom"
    }
   },
@@ -378,11 +423,11 @@
   {
    "gid": "axes_8.legend.texts_0",
    "role": "legend_text",
-   "label": "图例项 “other”",
+   "label": "图例项 “gone”",
    "editable": [
     {
      "prop": "text",
-     "value": "other"
+     "value": "gone"
     },
     {
      "prop": "visible",
@@ -390,7 +435,9 @@
     }
    ],
    "legend_entry": {
-    "index": 0
+    "index": 0,
+    "source_gid": "axes_8.lines_0",
+    "binding_default": "custom"
    }
   },
   {
@@ -407,11 +454,11 @@
   {
    "gid": "axes_9.legend.texts_0",
    "role": "legend_text",
-   "label": "图例项 “band”",
+   "label": "图例项 “other”",
    "editable": [
     {
      "prop": "text",
-     "value": "band"
+     "value": "other"
     },
     {
      "prop": "visible",
@@ -419,29 +466,7 @@
     }
    ],
    "legend_entry": {
-    "index": 0,
-    "source_gid": "axes_9.fill_1",
-    "binding_default": "custom"
-   }
-  },
-  {
-   "gid": "axes_9.legend.texts_1",
-   "role": "legend_text",
-   "label": "图例项 “eb”",
-   "editable": [
-    {
-     "prop": "text",
-     "value": "eb"
-    },
-    {
-     "prop": "visible",
-     "value": true
-    }
-   ],
-   "legend_entry": {
-    "index": 1,
-    "source_gid": "axes_9.errorbar_0",
-    "binding_default": "custom"
+    "index": 0
    }
   },
   {
@@ -458,6 +483,57 @@
   {
    "gid": "axes_10.legend.texts_0",
    "role": "legend_text",
+   "label": "图例项 “band”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "band"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_10.fill_1",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_10.legend.texts_1",
+   "role": "legend_text",
+   "label": "图例项 “eb”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "eb"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 1,
+    "source_gid": "axes_10.errorbar_0",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_11.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_11.legend.texts_0",
+   "role": "legend_text",
    "label": "图例项 “bars”",
    "editable": [
     {
@@ -471,7 +547,7 @@
    ],
    "legend_entry": {
     "index": 0,
-    "source_gid": "axes_10.barseries_0",
+    "source_gid": "axes_11.barseries_0",
     "binding_default": "custom"
    },
    "legend_style_mismatch": [
@@ -484,10 +560,11 @@
       "value": "follow_source"
      }
     }
-   ]
+   ],
+   "legend_style_source": "axes_11.barseries_0"
   },
   {
-   "gid": "axes_11.legend",
+   "gid": "axes_12.legend",
    "role": "legend",
    "label": "图例",
    "editable": [
@@ -498,7 +575,7 @@
    ]
   },
   {
-   "gid": "axes_11.legend.texts_0",
+   "gid": "axes_12.legend.texts_0",
    "role": "legend_text",
    "label": "图例项 “B”",
    "editable": [
@@ -513,7 +590,7 @@
    ],
    "legend_entry": {
     "index": 0,
-    "source_gid": "axes_11.lines_0",
+    "source_gid": "axes_12.lines_0",
     "binding_default": "custom"
    }
   }
@@ -521,7 +598,7 @@
  "expected": {
   "gids": [
    "axes_1.legend.texts_0",
-   "axes_10.legend.texts_0",
+   "axes_11.legend.texts_0",
    "axes_2.legend.texts_0",
    "axes_3.legend.texts_0",
    "axes_4.legend.texts_0",

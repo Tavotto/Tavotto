@@ -3548,12 +3548,17 @@ export interface ManifestElement {
     binding_default?: 'follow_source' | 'custom'
   }
   /**
-   * 图例项的示意与它代表的图中对象（`legend_entry.source_gid`）**看得见的样式**哪里不一样（只读事实，不改图）：
-   * 只在有源、认得准（曲线 ↔ 线示意、柱 / 形状 ↔ 色块）、且确实不一致时出现；`legend` / `source` 是两边的值
+   * 图例项的示意与它代表的图中对象（`legend_style_source`）**看得见的样式**哪里不一样（只读事实，不改图）：
+   * 只在来源确证、认得准（曲线 ↔ 线示意、柱 / 形状 ↔ 色块）、且确实不一致时出现；`legend` / `source` 是两边的值
    * （颜色 `#rrggbb`，不比透明度），`fix` 是改得掉它的那条图例项属性（只给改图助手看）。产生者只有
    * `engine/legendmodel.legend_style_mismatch`；消费者是 `lib/preflight.ts` 的 `checkLegendStyleMismatch`。
    */
   legend_style_mismatch?: LegendStyleMismatch[]
+  /**
+   * 与 `legend_style_mismatch` 一起出现：worker **确证**的来源系列 gid（ADR 0219——创建图例时这一项实际传入的
+   * 就是同一面板里这条已画系列）。不是 `legend_entry.source_gid`（0034 的编辑绑定，可能按样式 / 标签猜出来）。
+   */
+  legend_style_source?: string
 }
 
 export interface LegendStyleMismatch {

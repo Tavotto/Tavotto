@@ -26524,7 +26524,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -26883,7 +26884,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -27242,7 +27244,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -27601,7 +27604,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -27960,7 +27964,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -28319,7 +28324,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -28678,7 +28684,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -29037,7 +29044,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         },
         {
          "gid": "axes_0.legend.texts_2",
@@ -29077,7 +29085,8 @@
            "legend": "o",
            "source": "s"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_2"
         },
         {
          "gid": "axes_0.legend.texts_3",
@@ -29112,7 +29121,8 @@
            "legend": "-",
            "source": "--"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -29479,7 +29489,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -29853,7 +29864,8 @@
           {
            "legend": "#000000"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -30207,7 +30219,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         },
         {
          "gid": "axes_0.legend.texts_2",
@@ -30247,7 +30260,8 @@
            "legend": 1.0,
            "source": 2.5
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -30647,7 +30661,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         },
         {
          "gid": "axes_0.legend.texts_3",
@@ -30676,7 +30691,8 @@
           "index": 3,
           "source_gid": "axes_0.lines_1"
          },
-         "legend_style_mismatch": []
+         "legend_style_mismatch": [],
+         "legend_style_source": "axes_0.lines_1"
         },
         {
          "gid": "axes_0.legend.texts_4",
@@ -30711,7 +30727,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         },
         {
          "gid": "axes_0.legend.texts_5",
@@ -30742,7 +30759,8 @@
          },
          "legend_style_mismatch": {
           "prop": "color"
-         }
+         },
+         "legend_style_source": "axes_0.lines_1"
         },
         {
          "gid": "axes_0.legend.texts_6",
@@ -30777,7 +30795,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": ""
         }
        ]
       },
@@ -30805,6 +30824,435 @@
     ]
    },
    "expected": []
+  },
+  {
+   "name": "legend-style-unverified-source",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_1",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample B"
+          }
+         ],
+         "legend_entry": {
+          "index": 1,
+          "source_gid": "axes_0.lines_1"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_2",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_2",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Blank"
+          }
+         ],
+         "legend_entry": {
+          "index": 2,
+          "source_gid": "axes_0.lines_2"
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "markerfacecolor",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ],
+         "legend_style_source": "axes_0.lines_0"
+        },
+        {
+         "gid": "axes_0.legend.texts_3",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_3",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.0,
+          0.0
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "text",
+           "type": "text",
+           "value": "Sample D"
+          }
+         ],
+         "legend_entry": {
+          "index": 3
+         },
+         "legend_style_mismatch": [
+          {
+           "prop": "color",
+           "legend": "#9467bd",
+           "source": "#ff7f0e"
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "legend-style-mismatch",
+     "severity": "warn",
+     "message": {
+      "key": "legendStyleMismatchMarkerColor",
+      "params": {
+       "label": "Blank"
+      }
+     },
+     "object_ids": [
+      "p1"
+     ],
+     "gids": [
+      "axes_0.legend.texts_2"
+     ],
+     "detail": {
+      "props": [
+       "markerfacecolor"
+      ],
+      "source_gid": "axes_0.lines_0"
+     }
+    }
+   ]
   },
   {
    "name": "legend-style-hidden-legend-no-report",
@@ -31118,7 +31566,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -31454,7 +31903,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },
@@ -31813,7 +32263,8 @@
            "legend": "#9467bd",
            "source": "#ff7f0e"
           }
-         ]
+         ],
+         "legend_style_source": "axes_0.lines_1"
         }
        ]
       },

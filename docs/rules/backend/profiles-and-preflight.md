@@ -94,16 +94,23 @@ order: 260
   `web/src/lib/preflight.barBaseline.test.ts` 消费。已知会报、规格未裁决的写法（维护者待定，不加特例）：inset 放大图、
   断轴图的上半幅、逐柱循环画的瀑布 / 甘特图（每个容器只有一根柱，天然有「共同基线」）。
 - **`legend-style-mismatch`（图例示意与它代表的曲线 / 柱看得见的样式不一致；维护者 2026-11-28 真机提出，严重度 / 归类 / 1.0 豁免待维护者定，暂登记 warn、`fix: none`、问题面板归 `color`）**：
-  事实是图例项（`legend_text`）元素上的只读 `legend_style_mismatch`，产生者只有 `engine/legendmodel.legend_style_mismatch`（manifest 在有
-  `legend_entry.source_gid` 时调；`chartmanifest` 抹掉源时一并抹掉），只在**认得准且确实不一致**时出现：比的是此刻的示意线与按 matplotlib
-  自己的 handler 从源**此刻**派生的那份（`legend_fresh_handle`，即跟随会画出来的样子）；源是曲线且两边都是 Line2D，或源是形状 / 柱系列且两边都是
+  **只在确证来源时判**（ADR 0219 §一「两档把握」，#2342 维护者实测：独立设计的绿色 `Blank` 代理图例被当成错、建议跟随蓝色曲线）：
+  确证 = `figcapture.install_legend_capture` 在图例创建时记下这一项**实际传入**的 handle 对象，且它按对象身份恰好是同一面板里已登记、
+  确实画在坐标轴上的系列（`legendmodel.bind_verified_sources`，写 `verified_sources` / `verified_gids`）。`legend_entry.source_gid` /
+  `follow_source` 是 0034 的编辑绑定（按样式指纹、标签或位置猜），**不是来源证据**：代理句柄（没加进坐标轴的 `Line2D([], [])`）、
+  tuple 句柄、别的面板的对象、没捕获到的一律不比、不报、助手事实里不出现、不给改法；0034 的绑定行为不变。
+  事实是图例项（`legend_text`）元素上的只读 `legend_style_mismatch` + 确证来源 `legend_style_source`（两个键同进同出），产生者只有
+  `engine/legendmodel.legend_style_mismatch`（manifest 在有确证来源时调；`chartmanifest` 抹掉确证源时一并抹掉），只在**认得准且确实不一致**时出现：比的是此刻的示意线与按 matplotlib
+  自己的 handler 从**确证源**此刻派生的那份（`legend_fresh_handle`，即跟随会画出来的样子）；源是曲线且两边都是 Line2D，或源是形状 / 柱系列且两边都是
   Patch 才比——误差棒、填充带、散点、色带 / 脚本画的整格、跟随中的项、隐藏的项 / 图例、看不见的源一律不出。逐条只比**两边都画出来**的：
   线色 / 线型 / 线宽（两边都有线；线宽差要超过 `max(0.25 pt, 较粗那条的 25%)`）、标记形状（两边都有标记）、形状相同时标记填充（两边都实心）/
   描边（两边描边宽 > 0）、色块面色 / 边色；颜色按 `#rrggbb` 比（不比透明度），'none' / alpha 0 当看不见。每条带 `legend` / `source` 两边的值，
-  改得掉时带 `fix`（这一项没有 `handle_*` override → `binding = follow_source`；否则对应的 `handle_*`，标记填充 / 描边只在它与示意线同色、
+  改得掉时带 `fix`（这一项没有 `handle_*` override、且 0034 的绑定就是确证那条 → `binding = follow_source`；绑定指向别的曲线（跟随会跟错）
+  或已有 override → 对应的 `handle_*`、值取确证曲线派生的那份，标记填充 / 描边只在它与示意线同色、
   曲线那边也与线同色时 `handle_color` 带得动），`fix` 只给改图助手看（`figure_facts` 把它写进「改法」，排在事实最前）。
   求值器 `_check_legend_style_mismatch` ↔ `preflight.ts` `checkLegendStyleMismatch`（文案 key 表 `LEGEND_STYLE_MESSAGE` 两侧同名同值，
-  标签 `legend_entry_text` ↔ `legendEntryText`），每项一次命中、`worse` = 不一致的属性种数，detail `{props, source_gid}`；golden `legend-style-*`，
+  标签 `legend_entry_text` ↔ `legendEntryText`），两侧都只认 `legend_style_source`（缺席 = 未确证，不报），每项一次命中、`worse` = 不一致的属性种数，
+  detail `{props, source_gid}`（`source_gid` = 确证那条）；golden `legend-style-*`，
   真 worker 看护 `tests/test_legend_style_mismatch.py`（含仓库里带图例的真脚本防误报），它重出的 `tests/golden/legend_style_mismatch_real.json`
   由 `web/src/lib/preflight.legendStyle.test.ts` 消费。**不挡事务**（`preflight.NON_BLOCKING_RULES`）：按规范修图（`specfix.verdict`）、
   规范化（`normalize._blocks`）、改图验收（`figureverify._issue_keys`）都不拿它当「这次新增的问题」——改曲线本身是对的，不跟随的图例没跟上是图例的事。

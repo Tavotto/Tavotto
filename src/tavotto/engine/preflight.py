@@ -871,6 +871,13 @@ def legend_entry_text(el: dict) -> str:
     return " ".join(text.split())[:30]
 
 
+def legend_style_source(el: dict) -> str | None:
+    """图例项元素上 worker **确证**的来源系列 gid（`legend_style_source`，只随 `legend_style_mismatch` 出现）；
+    缺席 / 读不懂 → None（= 来源未确证，不报、不给改法）。"""
+    v = el.get("legend_style_source")
+    return v if isinstance(v, str) and v else None
+
+
 def legend_style_diffs(el: dict) -> list[dict]:
     """图例项元素上的 `legend_style_mismatch` 事实（产生者只有 `engine/legendmodel.legend_style_mismatch`）里
     认得的条目：`prop` 在 `LEGEND_STYLE_MESSAGE` 里、按 prop 去重。读不懂 → 空表。"""
@@ -895,14 +902,15 @@ def _check_legend_style_mismatch(
 ) -> None:
     """图例项的示意（线 / 标记 / 色块）与它代表的图中对象看得见的样式不一致（读者会把图例对错曲线）。
 
-    事实读图例项元素的 `legend_style_mismatch`（只在有源、认得准、确实不一致时出现，见
-    `legendmodel.legend_style_mismatch`）；画出来的项、且有 `legend_entry.source_gid` 才判。每项一次命中，
+    事实读图例项元素的 `legend_style_mismatch`（只在来源确证、认得准、确实不一致时出现，见
+    `legendmodel.legend_style_mismatch`）；画出来的项、且有 `legend_style_source`（worker 确证的那条系列，ADR 0219）
+    才判——`legend_entry.source_gid` 是 0034 的编辑绑定、可能是猜的，不当来源证据。每项一次命中，
     `worse` = 不一致的属性种数（多的那项决定文案）。与 `preflight.ts` 的 `checkLegendStyleMismatch` 同源。"""
     for el in manifest.get("elements") or []:
         if el.get("role") != "legend_text" or not _is_drawn(el, hidden_legends):
             continue
-        source = (el.get("legend_entry") or {}).get("source_gid")
-        if not isinstance(source, str) or not source:
+        source = legend_style_source(el)
+        if source is None:
             continue
         diffs = legend_style_diffs(el)
         if not diffs:

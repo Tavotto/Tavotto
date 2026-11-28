@@ -308,6 +308,7 @@ GUI_BACKENDS = bridgeboot.install_gui_backend_neutralizer(_log_gui_backend)
 GUI_BACKENDS.patch_matplotlib(matplotlib)
 import matplotlib.backends.backend_agg as backend_agg  # noqa: E402
 import matplotlib.figure as mfigure  # noqa: E402
+import matplotlib.legend as mlegend  # noqa: E402
 
 
 def _repair_incomplete_font_registry() -> bool:
@@ -2259,6 +2260,7 @@ class Worker(wireproto.V1Handler):
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig
         figcapture.install_colorbar_capture(mfigure)
+        figcapture.install_legend_capture(mlegend)
         figcapture.install_agg_unhinted_glyph_fallback(backend_agg)
         _install_show_capture()
         _reset_pdf_pages()

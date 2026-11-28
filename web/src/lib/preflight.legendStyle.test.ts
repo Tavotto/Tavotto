@@ -13,7 +13,7 @@ import { formatMessage, setLocale } from '@/i18n'
 
 type RealElement = Pick<
   ManifestElement,
-  'gid' | 'role' | 'label' | 'editable' | 'legend_entry' | 'legend_style_mismatch'
+  'gid' | 'role' | 'label' | 'editable' | 'legend_entry' | 'legend_style_mismatch' | 'legend_style_source'
 >
 
 const SNAPSHOT = real as unknown as {
@@ -87,6 +87,17 @@ describe('legend-style-mismatch：真 worker 的 legend_style_mismatch', () => {
     expect(kinds.some((l) => l.includes('线条颜色与曲线'))).toBe(true)
     expect(kinds.some((l) => l.includes('标记形状与曲线'))).toBe(true)
     expect(kinds.some((l) => l.includes('颜色与图中对象'))).toBe(true)
+  })
+
+  it('只认 worker 确证的来源：拿掉 legend_style_source（只剩 0034 猜的 source_gid）就不报（ADR 0219）', () => {
+    const withFact = SNAPSHOT.elements.filter((e) => e.legend_style_mismatch)
+    expect(withFact.every((e) => typeof e.legend_style_source === 'string')).toBe(true)
+    const unverified = SNAPSHOT.elements.map((e) => {
+      const { legend_style_source: _drop, ...rest } = e
+      return rest
+    })
+    expect(unverified.some((e) => e.legend_entry?.source_gid && e.legend_style_mismatch)).toBe(true)
+    expect(hitsOf(unverified)).toEqual([])
   })
 
   it('问题文案中英都渲染得出来（不是 key 原样）', () => {

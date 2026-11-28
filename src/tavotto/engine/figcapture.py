@@ -24,6 +24,8 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
   捕获表（去重、命名、保序）；`adopt_displaced_writers()` —— 写了文件却因 stem 被别的图持有而没认领的图
   （在它之前调用）；
 * `install_colorbar_capture()` —— 原样调用 matplotlib，记下手动 `cax=` 的显式 `ax` 宿主；
+* `install_legend_capture()` —— 原样调用 matplotlib，记下图例**创建时**每一项实际传入的那个 handle 对象
+  （图例 ↔ 系列确证来源的唯一依据，ADR 0219 §一「两档把握」）；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
 * `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
   只读改指表与「缺的是哪个」的判据（ADR 0106；父进程推规则也用 `remap_target`）；
@@ -196,6 +198,8 @@ __all__ = [
     "fallback_stems",
     "install_relative_read_fallback",
     "install_colorbar_capture",
+    "install_legend_capture",
+    "LEGEND_HANDLES_ATTR",
     "unused_imports",
     "reaches_main",
     "install_unused_import_placeholders",
@@ -302,6 +306,51 @@ def install_colorbar_capture(mfigure) -> None:
 
     colorbar._tavotto_colorbar_capture = True  # noqa: SLF001
     mfigure.FigureBase.colorbar = colorbar
+
+
+#: 图例上记「第 j 项（与 `legend_handles` 去掉 None 后、`get_texts()` 同一序号）创建时实际传入的 handle 对象」
+#: 的实例属性；没有它 = 没捕获到，下游一律按「来源未确证」处理
+LEGEND_HANDLES_ATTR = "_tavotto_legend_handles"
+
+
+def install_legend_capture(mlegend) -> None:
+    """记下每个图例**创建时**实际传入 matplotlib 的 handle 对象，不改 matplotlib 的任何行为。
+
+    包的是 `Legend._init_legend_box`：`Legend.__init__` 里的 `reverse` 等处理都在它之前做完，这里收到的
+    `handles` 就是最终逐项派生示意线用的那一份。**只记第一次调用**（`__init__` 里那次）：Tavotto 重建图例
+    （`legendmodel` 改列数 / 顺序 / 隐藏时）会再调它，传的是 0034 猜出来的源——再记一次，猜测就被洗成了
+    确证。只对 list / tuple 记（不消费迭代器）；matplotlib 不给 handler 的项（`legend_handles` 里是 None，
+    也没有文字）剔掉，使序号与 `LegendEntries` 的 j 一致；对不齐（个数不等）就不记。观察失败只是没有记录，
+    原调用的返回与异常原样。
+    """
+    from functools import wraps
+
+    original = mlegend.Legend._init_legend_box  # noqa: SLF001
+    if getattr(original, "_tavotto_legend_capture", False):
+        return
+
+    @wraps(original)
+    def init_legend_box(self, handles, labels, *args, **kwargs):
+        first = LEGEND_HANDLES_ATTR not in vars(self)
+        if first:
+            # 先占位：原调用里任何重入（或原调用抛错）都不会留下一份半截的记录
+            setattr(self, LEGEND_HANDLES_ATTR, None)
+        out = original(self, handles, labels, *args, **kwargs)
+        if first and type(handles) in (list, tuple) and type(labels) in (list, tuple):
+            try:
+                pairs = list(zip(handles, labels))
+                drawn = list(self.legend_handles)
+                texts = list(self.texts)
+                if len(drawn) == len(pairs):
+                    kept = tuple(h for (h, _lab), d in zip(pairs, drawn) if d is not None)
+                    if len(kept) == len(texts):
+                        setattr(self, LEGEND_HANDLES_ATTR, kept)
+            except Exception:  # noqa: BLE001 — 观察失败 = 没有确证，不拦脚本
+                pass
+        return out
+
+    init_legend_box._tavotto_legend_capture = True  # noqa: SLF001
+    mlegend.Legend._init_legend_box = init_legend_box  # noqa: SLF001
 
 
 def _is_ft_glyph_load_error(exc: BaseException) -> bool:

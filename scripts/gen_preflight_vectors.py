@@ -874,8 +874,9 @@ def cases() -> list[dict]:
     )
 
     # 9m. 图例示意与它代表的曲线 / 柱样式不一致（`legend-style-mismatch`）：事实只读图例项元素的
-    #     `legend_style_mismatch`（`engine/legendmodel.legend_style_mismatch`，有源、认得准、确实不一致才有）。
-    #     画出来、有 `legend_entry.source_gid` 的项才判；prop 不认得的略过、同 prop 去重；一种文案 key 用它，
+    #     `legend_style_mismatch`（`engine/legendmodel.legend_style_mismatch`，来源确证、认得准、确实不一致才有）。
+    #     画出来、有 `legend_style_source`（worker 确证的来源，ADR 0219）的项才判——`legend_entry.source_gid` 是 0034
+    #     的编辑绑定、可能是猜的，只有它不判；detail 的 source_gid 取确证那条。prop 不认得的略过、同 prop 去重；一种文案 key 用它，
     #     多于一种用 `legendStyleMismatchMany`；跨项按不一致的属性种数比最糟。label 取 `text` 字段，空白折成一格、截 30 个码位
     def _entry_el(
         gid: str = "axes_0.legend.texts_1",
@@ -884,17 +885,22 @@ def cases() -> list[dict]:
         source: str | None = "axes_0.lines_1",
         diffs=None,
         visible: bool | None = None,
+        guessed: str | None = "same",
     ) -> dict:
+        """`source` = 确证来源（`legend_style_source`）；`guessed` = 0034 的 `legend_entry.source_gid`（缺省同 source）。"""
+        guessed = source if guessed == "same" else guessed
         el = _el(gid, "legend_text", fontsize=9.0)
         if text is not None:
             el["editable"].append({"prop": "text", "type": "text", "value": text})
         if visible is not None:
             el["editable"].append({"prop": "visible", "type": "bool", "value": visible})
         el["legend_entry"] = {"index": int(gid.rsplit("_", 1)[-1])}
-        if source is not None:
-            el["legend_entry"]["source_gid"] = source
+        if guessed is not None:
+            el["legend_entry"]["source_gid"] = guessed
         if diffs is not None:
             el["legend_style_mismatch"] = diffs
+            if source is not None:
+                el["legend_style_source"] = source
         return el
 
     def _d(prop: str, legend="#9467bd", source="#ff7f0e") -> dict:
@@ -976,6 +982,34 @@ def cases() -> list[dict]:
                 _entry_el("axes_0.legend.texts_4", diffs=[_d("alpha")]),
                 _entry_el("axes_0.legend.texts_5", diffs={"prop": "color"}),
                 _entry_el("axes_0.legend.texts_6", source="", diffs=[_d("color")]),
+            ],
+        )
+    )
+    out.append(
+        _legend_case(
+            # 来源没确证（代理图例按标签 / 长相被 0034 绑上了曲线）：不报；确证的那条与 0034 猜的不同时，detail 说确证那条
+            "legend-style-unverified-source",
+            [
+                _entry_el(
+                    "axes_0.legend.texts_1",
+                    source=None,
+                    guessed="axes_0.lines_1",
+                    diffs=[_d("color")],
+                ),
+                _entry_el(
+                    "axes_0.legend.texts_2",
+                    text="Blank",
+                    source="axes_0.lines_0",
+                    guessed="axes_0.lines_2",
+                    diffs=[_d("markerfacecolor")],
+                ),
+                _entry_el(
+                    "axes_0.legend.texts_3",
+                    text="Sample D",
+                    source=None,
+                    guessed=None,
+                    diffs=[_d("color")],
+                ),
             ],
         )
     )

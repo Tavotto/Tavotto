@@ -877,7 +877,8 @@ function legendEntryText(el: ManifestElement): string {
 
 /**
  * 图例项的示意与它代表的图中对象看得见的样式不一致。事实只读图例项元素的 `legend_style_mismatch`；
- * 画出来、有 `legend_entry.source_gid` 的项才判，prop 不认得的略过、同 prop 去重；`worse` = 不一致的属性种数。
+ * 画出来、有 `legend_style_source`（worker 确证的来源系列，ADR 0219）的项才判——`legend_entry.source_gid`
+ * 是 0034 的编辑绑定、可能是猜的，不当来源证据。prop 不认得的略过、同 prop 去重；`worse` = 不一致的属性种数。
  * 与 `engine/preflight.py` 的 `_check_legend_style_mismatch` 同源。
  */
 function checkLegendStyleMismatch(
@@ -888,7 +889,7 @@ function checkLegendStyleMismatch(
 ): void {
   for (const el of manifest.elements ?? []) {
     if (el.role !== 'legend_text' || !isDrawn(el, hidden)) continue
-    const source = el.legend_entry?.source_gid
+    const source: unknown = el.legend_style_source
     if (typeof source !== 'string' || !source) continue
     const raw: unknown = el.legend_style_mismatch
     if (!Array.isArray(raw)) continue

@@ -54,6 +54,7 @@ from browser_imports import classify_imports  # noqa: F401 - 经 handle 的 clas
 
 matplotlib.use("Agg")
 import matplotlib.figure as mfigure  # noqa: E402
+import matplotlib.legend as mlegend  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 import figcapture  # noqa: E402
@@ -287,6 +288,7 @@ class BrowserSession:
         _ACTIVE = self
         mfigure.Figure.savefig = _patched_savefig
         figcapture.install_colorbar_capture(mfigure)
+        figcapture.install_legend_capture(mlegend)
         # Agg 的 show() 只会发一条 UserWarning，patch 成 no-op 让日志干净
         plt.show = lambda *a, **k: None
 

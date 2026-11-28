@@ -35,6 +35,7 @@ from matplotlib.transforms import Affine2D
 
 import pathgeom
 from axestraversal import ordered_axes
+from figcapture import LEGEND_HANDLES_ATTR
 
 
 class RebuildState(Protocol):
@@ -399,6 +400,11 @@ class LegendEntries:
         self.hidden: set[int] = set()
         self.sources: list = [None] * n
         self.source_gids: list[str | None] = [None] * n
+        #: **确证来源**（ADR 0219 §一）：创建图例时这一项实际传入的那个 handle 对象，且它正是同一面板里已登记、
+        #: 确实画在坐标轴上的那个系列（`bind_verified_sources`）。与 `sources`（0034 的编辑绑定，可能按样式指纹 /
+        #: 标签 / 位置猜出来）相互独立：样式一致性检查只认这一份，`sources` 不是来源证据
+        self.verified_sources: list = [None] * n
+        self.verified_gids: list[str | None] = [None] * n
         self.default_binding: list[str] = ["custom"] * n
         self.binding_override: dict[int, str] = {}
         #: 画的是某个映射图元色图的定格格子（色带）：它在色图上的位置，见 `ColormapRamp`
@@ -804,8 +810,12 @@ def _patch_style_diffs(cur: Patch, src: Patch) -> list[dict]:
 def legend_style_mismatch(t: Text) -> list[dict] | None:
     """图例项 `t` 的示意与它代表的图中对象**看得见的样式**哪里不一样（只读事实，不改图）。
 
-    比的是此刻的示意线（`handle_of`）与按 matplotlib 自己的 handler 从源**此刻**派生的那份
-    （`legend_fresh_handle`，即「跟随源」会画出来的样子）。只在认得准时比：
+    **只在来源确证时比**（ADR 0219 §一）：源是 `verified_sources[j]`——创建图例时这一项实际传入、且就是同一面板
+    里那条已画系列的 artist。0034 的编辑绑定（`sources[j]` / `follow_source`）按样式指纹、标签或位置猜，不是来源
+    证据：代理句柄（`Line2D([], [])` 没加进坐标轴）即使标签、长相都对得上同一条曲线，也不比、不报。
+
+    比的是此刻的示意线（`handle_of`）与按 matplotlib 自己的 handler 从确证源**此刻**派生的那份
+    （`legend_fresh_handle`，即「跟随这条源」会画出来的样子）。只在认得准时比：
     源是曲线（Line2D）且两边都是 Line2D，或源是形状 / 柱系列（Patch / BarContainer）且两边都是 Patch。
     误差棒、填充带（fill_between）、散点、色带 / 脚本画的整格、跟随中的项、隐藏的项 / 图例、
     看不见的源一律不比——回 None。一致也回 None（键整个缺席）。颜色按 `#rrggbb` 比（不比透明度）。
@@ -819,11 +829,14 @@ def legend_style_mismatch(t: Text) -> list[dict] | None:
     model = legend_entries(leg)
     if model is None or not leg.get_visible() or j in model.hidden:
         return None
-    src = model.sources[j]
+    src = model.verified_sources[j]
     if src is None or model.ramps[j] is not None or model.is_frozen(j):
         return None
-    if model.effective_binding(j) == "follow_source":
-        return None  # 跟随中的项由 `sync_legends` 从源派生，按定义一致
+    # 0034 的编辑绑定是不是恰好落在确证的那一条上：是，「跟随」就是跟随它；不是（例如图例示意被脚本改成了另一条
+    # 曲线的样子，0034 按指纹绑去了那条），跟随的是别人，不能当一致、也不能拿「恢复跟随」当改法
+    same = model.sources[j] is src
+    if same and model.effective_binding(j) == "follow_source":
+        return None  # 跟随中的项由 `sync_legends` 从确证源派生，按定义一致
     if not isinstance(src, (Line2D, Patch, BarContainer)):
         return None
     if isinstance(src, BarContainer):
@@ -846,7 +859,7 @@ def legend_style_mismatch(t: Text) -> list[dict] | None:
         return None
     if not diffs:
         return None
-    follow = not model.has_style_override(j)
+    follow = same and not model.has_style_override(j)
     for d in diffs:
         fix = _mismatch_fix(d, cur, fresh, follow=follow)
         if fix is not None:
@@ -857,8 +870,9 @@ def legend_style_mismatch(t: Text) -> list[dict] | None:
 def _mismatch_fix(d: dict, cur, fresh, *, follow: bool) -> dict | None:
     """这一处不一致用哪条图例项属性改得掉（给改图助手；只说真改得掉的）。
 
-    * 这一项没有任何 `handle_*` override：`binding = follow_source`——重新跟随曲线，所有样式一起对上。
-      （有 `handle_*` override 时绑定恒为 custom，写 binding 没用。）
+    * 这一项没有任何 `handle_*` override、且 0034 的绑定就是确证的那条（`follow`）：`binding = follow_source`——
+      重新跟随曲线，所有样式一起对上。（有 `handle_*` override 时绑定恒为 custom，写 binding 没用；绑定指向别的
+      曲线时写 follow_source 会跟错，所以只给下面的逐属性改法，值取确证曲线派生的那份。）
     * 否则按属性：线色 / 线型 / 线宽 / 标记形状 → 对应的 `handle_*`（取值要在示意线控件的选项里）；
       标记的填充 / 描边只有在它此刻与示意线同色、曲线那边也与线同色时，`handle_color` 才带得动
       （`_line_set_color` 的规则）；色块的面色 → `handle_color`；色块边色改不了。改不掉 → None。
@@ -1497,6 +1511,67 @@ def bind_legend_entries(
         model.sources[j] = pick[1]
         model.source_gids[j] = pick[0]
         model.default_binding[j] = binding
+
+
+def _on_axes(art) -> bool:
+    """这个候选是不是**确实画在坐标轴上**的那个对象（不是只有样子的代理）。容器（柱系列 / 误差棒）看它在不在
+    `ax.containers`；单个 artist 看它在不在所属坐标轴的子对象里。"""
+    if isinstance(art, Artist):
+        ax = getattr(art, "axes", None)
+        return ax is not None and any(c is art for c in ax.get_children())
+    for ax in _container_axes(art):
+        if any(c is art for c in ax.containers):
+            return True
+    return False
+
+
+def _container_axes(container) -> list:
+    out: list = []
+    try:
+        for part in container:
+            parts = part if isinstance(part, (list, tuple)) else [part]
+            for a in parts:
+                ax = getattr(a, "axes", None)
+                if ax is not None and all(ax is not b for b in out):
+                    out.append(ax)
+    except TypeError:
+        return []
+    return out
+
+
+def bind_verified_sources(leg: Legend, candidates: list[tuple[str, object]]) -> None:
+    """**确证**每一项的来源（instrument 时跑一次，紧跟 `bind_legend_entries`；ADR 0219 §一「两档把握」）。
+
+    依据只有一份：`figcapture.install_legend_capture` 在图例创建时记下的、这一项实际传入 matplotlib 的 handle
+    对象。它按**对象身份**（`is`）恰好对上 `candidates` 里一个（同一面板已登记的系列，见 `manifest._bind_legends`），
+    且确实画在坐标轴上，才写 `verified_sources[j]` / `verified_gids[j]`。代理句柄（没加进坐标轴的
+    `Line2D([], [])`）、tuple 句柄、别的面板的对象、没捕获到（老 worker / 观察失败 / 迭代器参数）一律不确证。
+    不读、不改 0034 的绑定（`sources` / `default_binding`）。
+    """
+    model = legend_entries(leg)
+    if model is None:
+        return
+    captured = vars(leg).get(LEGEND_HANDLES_ATTR)
+    if not isinstance(captured, tuple) or len(captured) != model.n:
+        return
+    for j, h in enumerate(captured):
+        # 按身份比：脚本自己拼的 tuple 句柄（HandlerTuple）不会与任何候选是同一个对象
+        hits = [] if h is None else [(g, a) for g, a in candidates if a is h]
+        if len(hits) != 1 or not _on_axes(hits[0][1]):
+            continue
+        model.verified_sources[j] = hits[0][1]
+        model.verified_gids[j] = hits[0][0]
+
+
+def legend_verified_gid(t: Text) -> str | None:
+    """图例项 `t` 的确证来源 gid（见 `bind_verified_sources`）；没有确证 → None。"""
+    entry = getattr(t, "_mm_legend_entry", None)
+    if entry is None:
+        return None
+    model = legend_entries(entry[0])
+    if model is None:
+        return None
+    return model.verified_gids[entry[1]]
 
 
 _LEGEND_LAYOUT_ATTRS = {
