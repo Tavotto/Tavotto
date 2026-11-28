@@ -695,8 +695,9 @@ def test_instruction_mode_shows_the_model_the_measured_scene_and_reports_unmeasu
     start = client.post(
         "/api/vector-edit/plan", json={"canvas": _canvas(), "instruction": "箭头指向峰"}
     ).get_json()
-    # 画布上有可量的子图：第一阶段是「正在量图」（假量法瞬间就完，线程可能已进到下一阶段，所以两者都认）
-    assert start["phase"] in ("measure", "model")
+    # 画布上有可量的子图：第一阶段是「正在量图」（假量法与假模型都瞬间就完，线程可能已进到后面的阶段，
+    # 所以 measure / model / plan 都认；真正要核的「模型看到了量过的场景」在下面单独断言）
+    assert start["phase"] in ("measure", "model", "plan")
     plan = _poll(client, start["plan_id"])["plan"]
     assert [o["op"] for o in plan["ops"]] == ["add"] and plan["unmeasured"] == {}
     assert plan["objects"] and not plan["unhandled"]
