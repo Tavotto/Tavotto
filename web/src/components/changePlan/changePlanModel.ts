@@ -2,7 +2,7 @@ import type { TaskStep } from '../ui/TaskChecklist'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { backendCodeMsg, type ChangePlanBox, type ChangePlanChange, type ChangePlanGroup, type ChangePlanUnhandledReason } from '@/lib/api'
-import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, pendingConfirm, scriptPassable, todoChecked, todoQueued, todosOf, type PlanEntry } from '@/store/changePlanStore'
+import { DATA_DECLINED, POLL_TIMEOUT, allOutOfScope, declinedGroups, isCanvasPlan, pendingConfirm, scriptPassable, todoChecked, todoQueued, todosOf, versionsOf, type PlanEntry, type PlanNote } from '@/store/changePlanStore'
 import { failedChecks, touchedCount } from '@/lib/vectorEdit'
 import type { ChangeLine, ChangeValue } from '@/lib/vectorChanges'
 import { optionLabel, propLabel } from '../inspector/roles/registry'
@@ -293,6 +293,40 @@ function unhandledViewsOf(e: PlanEntry): UnhandledView[] {
 }
 
 export const unhandledReason = (r: ChangePlanUnhandledReason): string => cp(`unhandled.${r}`)
+
+/** 这一版按批注改的结果里的一条批注：改成了（它那一组的 key）或没改成（一句原因） */
+export interface NoteResult {
+  id: string
+  /** 批注编号（1 起，与批注视图里的编号一致） */
+  n: number
+  text: string
+  done: boolean
+  /** 改成了：方案里按这条批注改的那一组 */
+  groupKey?: string
+  /** 没改成：一句话原因（闭集短码的文案） */
+  reason?: string
+}
+
+/**
+ * 正在看的这一版是按哪几条批注重改出来的、各自结果如何（弹窗对比视图右栏顶部「这版按批注改的」那块）。
+ * 图内方案能逐条对上：后端把批注原样当意见传（id 不变），按批注改的组 `origin: 'note'` 且 `comment_id` = 批注 id，
+ * 没改的在 `unhandled[].comment_id`（`changeplan._settle_unhandled` 保证每条都有去处）；答了「不改」的组按没改成算。
+ * 脚本方案对不上：所有批注并成一条指令交给改脚本 Agent，只回一份脚本，`rows` = null（界面只说一句「按 N 条批注改了脚本」）。
+ * 不是重改出的版本（第 1 版、「再加一条」出的版本）= null。
+ */
+export function noteResults(e: PlanEntry): { notes: PlanNote[]; rows: NoteResult[] | null } | null {
+  const plan = e.plan
+  const notes = versionsOf(e).find((v) => v.planId === e.planId)?.fromNotes
+  if (!plan || !notes?.length) return null
+  if (plan.kind === 'script') return { notes, rows: null }
+  const why = new Map(unhandledViews(e).map((u) => [u.id, u.reason]))
+  const rows = notes.map((n, i): NoteResult => {
+    const g = plan.groups.find((x) => x.origin === 'note' && x.comment_id === n.id && e.answers?.[x.key] !== 'no')
+    if (g) return { id: n.id, n: i + 1, text: n.text, done: true, groupKey: g.key }
+    return { id: n.id, n: i + 1, text: n.text, done: false, reason: why.get(n.id) || unhandledReason('not_addressed') }
+  })
+  return { notes, rows }
+}
 
 /** 后端 `vectoredit.ERROR_CODES` 的闭集：每个码一句人话（后端那句是写给模型 / Agent 看的，不上界面） */
 const VECTOR_CODES = ['bad_op', 'unknown_object', 'not_vector', 'bad_field', 'bad_value', 'out_of_range', 'duplicate_target', 'kernel_unavailable', 'too_many_steps', 'needs_measurement', 'needs_confirmation', 'provenance_data', 'bad_item', 'duplicate_name', 'unknown_ref', 'anchor_unresolvable', 'panel_transformed', 'bad_point'] as const

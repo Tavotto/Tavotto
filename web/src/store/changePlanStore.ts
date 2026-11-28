@@ -104,6 +104,8 @@ export interface PlanVersionRec {
   unchecked: Record<string, boolean>
   /** 方案要用户确认的组（`group.confirm`）各自的回答；没有 = 还没回答 */
   answers?: Record<string, ConfirmAnswer>
+  /** 按批注重改出的这一版：当时发出的批注（编号 / 锚点 / 原话），弹窗右栏逐条标结果用；第 1 版没有 */
+  fromNotes?: PlanNote[]
 }
 
 /** 一键排版方案卡的两个动作：应用 = 现有的那一次 commit（一步撤销不变）；重来 = 按同样的选项再排一次 */
@@ -243,6 +245,8 @@ export interface PlanEntry {
   sentNotes?: Record<string, string>
   /** 按批注重改进行中：新一版的方案 id（请求还没回时是空串） */
   revising?: string
+  /** 这次重改发出的批注（快照）：进行中的舞台标记与右栏按它画，新版到手时挂到那一版的 `fromNotes` 上 */
+  revisingNotes?: PlanNote[]
   /** 上一次按批注重改没成：稳定码（弹窗里一句灰字，下一次动作清掉） */
   reviseError?: PlanFailure
   request: PlanRequest
@@ -635,7 +639,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
     const alive = () =>
       guard.still() && (adding ? get().entries[key]?.adding === planId : revising ? get().entries[key]?.revising === planId : get().entries[key]?.planId === planId && get().entries[key]?.status === 'generating')
     // 续改没成：旧版原样留着，弹窗里一句灰字
-    const failRevise = (code: string, params?: Record<string, unknown>) => patch(key, { revising: undefined, reviseError: { code, params } })
+    const failRevise = (code: string, params?: Record<string, unknown>) => patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code, params } })
     // 再加一条没成：已有的待办卡原样留着，行尾一句灰字
     const failAdd = (code: string) => patch(key, { adding: undefined, addingText: undefined, addError: { code } })
     const failed = (code: string, params?: Record<string, unknown>) => (adding ? failAdd(code) : revising ? failRevise(code, params) : fail(key, code, params))
@@ -704,8 +708,8 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
           }
           const e0 = get().entries[key] ?? e
           const prev = versionsOf(e0).map((v) => (v.planId === e0.planId ? { ...v, unchecked: e0.unchecked, answers: e0.answers } : v))
-          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {} }
-          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, reviseError: undefined, notice: stale ? 'revise_stale' : undefined, ...(e.status === 'applied' ? { status: scriptPlan && stale ? ('stale' as const) : ('ready' as const), appliedPartial: undefined, appliedSrc: undefined } : {}) })
+          const rec: PlanVersionRec = { planId, plan, beforeSrc: src(plan.preview.before), afterSrc: src(plan.preview.after), unchecked: {}, answers: {}, ...(e0.revisingNotes?.length ? { fromNotes: e0.revisingNotes } : {}) }
+          patch(key, { versions: [...prev, rec], planId, plan, beforeSrc: rec.beforeSrc, afterSrc: rec.afterSrc, unchecked: {}, answers: {}, notes: notesOf(e0).filter((n) => e0.sentNotes?.[n.id] !== n.text), sentNotes: undefined, revising: undefined, revisingNotes: undefined, reviseError: undefined, notice: stale ? 'revise_stale' : undefined, ...(e.status === 'applied' ? { status: scriptPlan && stale ? ('stale' as const) : ('ready' as const), appliedPartial: undefined, appliedSrc: undefined } : {}) })
         }
         if ((view as { replay_required?: boolean }).replay_required) replay(e)
         return
@@ -1414,7 +1418,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         }
       }
       const guard = captureProjectEpoch()
-      patch(key, { revising: '', phase: undefined, reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
+      patch(key, { revising: '', revisingNotes: notes, phase: undefined, reviseError: undefined, sentNotes: Object.fromEntries(notes.map((n) => [n.id, n.text])), noteTexts: { ...e.noteTexts, ...Object.fromEntries(notes.map((n) => [n.id, n.text])) } })
       try {
         const task = await reviseChangePlan(e.planId, {
           notes: notes.map((n) => ({ id: n.id, anchor: n.anchor, text: n.text })),
@@ -1424,7 +1428,7 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         })
         if (!guard.still() || !get().entries[key]) return 'failed'
         if ('ok' in task) {
-          patch(key, { revising: undefined, reviseError: { code: 'not_licensed' } })
+          patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code: 'not_licensed' } })
           return 'not_licensed'
         }
         patch(key, { revising: task.plan_id })
@@ -1435,10 +1439,10 @@ export const useChangePlanStore = create<ChangePlanState>((set, get) => {
         const code = err instanceof EngineError && err.code ? err.code : 'change_plan_failed'
         // 已应用的脚本卡：后端说脚本已不是应用之后那一版（之后又改过）= 与图内卡同一句「没法替你撤回」
         if (scriptPlan && e.status === 'applied' && code === 'change_plan_figure_changed') {
-          patch(key, { revising: undefined, reviseError: { code: REVISE_UNDO_BLOCKED } })
+          patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code: REVISE_UNDO_BLOCKED } })
           return 'failed'
         }
-        patch(key, { revising: undefined, reviseError: { code, params: err instanceof EngineError ? err.params : undefined } })
+        patch(key, { revising: undefined, revisingNotes: undefined, reviseError: { code, params: err instanceof EngineError ? err.params : undefined } })
         return 'failed'
       }
     },

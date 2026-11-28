@@ -27,7 +27,7 @@ vi.mock('@/store/renderScheduler', async (importOriginal) => ({
 import { setCurrentProjectId } from '@/lib/session'
 import { useDocumentStore } from './documentStore'
 import { MAX_NOTES, notesOf, panelOf, POLL_TIMEOUT, REVISE_UNDO_BLOCKED, setChangePlanUndoRunner, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from './changePlanStore'
-import { effectiveStatus, groupViews, summaryLine, unhandledViews } from '@/components/changePlan/changePlanModel'
+import { effectiveStatus, groupViews, noteResults, summaryLine, unhandledViews } from '@/components/changePlan/changePlanModel'
 
 const ds = () => useDocumentStore.getState()
 const cps = () => useChangePlanStore.getState()
@@ -161,6 +161,52 @@ describe('按批注重改', () => {
     expect(groupViews(e).map((x) => x.fromNote)).toEqual([true, false])
     expect(summaryLine(e)).toBe('按 1 条批注又改了 1 处')
     expect(unhandledViews(e)[0].text).toBe('把线加粗')
+  })
+
+  it('重改进行中记下发出的批注（舞台标记 / 右栏按它画）；新版到手挂到那一版上，逐条结果按批注 id 对上：改成了 = 它那一组，没改成 = 原因；失败不留快照', async () => {
+    const key = await readyEntry()
+    cps().saveNote(key, note('n1'))
+    cps().saveNote(key, note('n2', '把线加粗'))
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    await cps().revise(key)
+    expect(cps().entries[key].revisingNotes?.map((n) => n.id)).toEqual(['n1', 'n2'])
+    // 进行中没有结果（后端只报整体阶段）
+    expect(noteResults(cps().entries[key])).toBeNull()
+    getChangePlan.mockResolvedValue(ready(V2))
+    await tick()
+    const e = cps().entries[key]
+    expect(e.revisingNotes).toBeUndefined()
+    expect(versionsOf(e).at(-1)?.fromNotes?.map((n) => n.id)).toEqual(['n1', 'n2'])
+    expect(noteResults(e)?.rows).toEqual([
+      { id: 'n1', n: 1, text: '图例挪到左上', done: true, groupKey: 'g1' },
+      { id: 'n2', n: 2, text: '把线加粗', done: false, reason: '改了也看不出变化，这次没动' },
+    ])
+    // 切回第 1 版：不是重改出的，没有逐条结果；再切回来还在
+    cps().setViewVersion(key, 'p1')
+    expect(noteResults(cps().entries[key])).toBeNull()
+    cps().setViewVersion(key, 'p2')
+    expect(noteResults(cps().entries[key])?.rows).toHaveLength(2)
+    // 再重改一次失败：快照清掉，第 2 版的结果不动
+    cps().saveNote(key, note('n3', '再大一点'))
+    getChangePlan.mockResolvedValue({ plan_id: 'p3', state: 'failed', code: 'change_plan_model_quota', error: 'x' })
+    reviseChangePlan.mockResolvedValue({ plan_id: 'p3', state: 'running' })
+    await cps().revise(key)
+    await tick()
+    expect(cps().entries[key].revisingNotes).toBeUndefined()
+    expect(cps().entries[key].planId).toBe('p2')
+    expect(noteResults(cps().entries[key])?.rows).toHaveLength(2)
+  })
+
+  it('逐条结果：答了「不改」的按批注组算没改成；脚本方案对不上逐条（rows = null）', async () => {
+    const key = await readyEntry()
+    cps().saveNote(key, note('n1'))
+    getChangePlan.mockResolvedValue(ready(V2))
+    await cps().revise(key)
+    await tick()
+    const e = cps().entries[key]
+    expect(noteResults({ ...e, answers: { g1: 'no' } })?.rows?.[0]).toMatchObject({ id: 'n1', done: false })
+    const script = { ...e, plan: { ...e.plan!, kind: 'script' as const } }
+    expect(noteResults(script)).toEqual({ notes: versionsOf(e).at(-1)!.fromNotes, rows: null })
   })
 
   it('没有批注不发；没解锁回 not_licensed、只落一句灰字；发起失败 / 轮询失败 / 超时都不动旧版', async () => {

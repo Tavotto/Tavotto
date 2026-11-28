@@ -32,6 +32,7 @@ export function TaskChecklist({
   steps,
   busyIcon,
   bare = false,
+  row = false,
   className,
   ...rest
 }: Omit<HTMLAttributes<HTMLDivElement>, 'title'> & {
@@ -42,7 +43,10 @@ export function TaskChecklist({
   busyIcon?: ReactNode
   /** 只要步骤、不要标题行（例如修改方案卡：清单在缩略图下面、占正文的位置）：不能收起，行距收紧一档 */
   bare?: boolean
+  /** 步骤排成一行（只配 `bare`）：修改方案弹窗重改进行中，清单在图下面只占一行，不挤图的高度 */
+  row?: boolean
 }) {
+  const inline = bare && row
   const [open, setOpen] = useState(true)
   const listId = useId()
   const total = steps.length
@@ -84,14 +88,14 @@ export function TaskChecklist({
           />
         </button>
       )}
-      <ol id={listId} hidden={!bare && !open} className={cn('flex flex-col', !bare && 'pt-2')} data-task-steps>
+      <ol id={listId} hidden={!bare && !open} className={cn('flex', inline ? 'flex-row flex-wrap items-center gap-x-4' : 'flex-col', !bare && 'pt-2')} data-task-steps data-task-row={inline || undefined}>
         {steps.map((s) => (
           <li
             key={s.id}
             data-task-step={s.id}
             data-step-state={s.state}
             aria-current={s.state === 'active' ? 'step' : undefined}
-            className={cn('flex items-center gap-2', bare ? 'h-6' : 'h-7')}
+            className={cn('flex items-center gap-2', inline ? 'h-5' : bare ? 'h-6' : 'h-7')}
           >
             {/* 删除线挂在「图标 + 文字」整组上：做完时从左往右连勾一起划掉（用户 11-25） */}
             <span

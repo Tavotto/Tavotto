@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MAX_NOTE_CHARS, notesOf, REVISE_UNDO_BLOCKED, useChangePlanStore, versionNumber, versionsOf, type PlanEntry, type PlanNote } from '@/store/changePlanStore'
+import { MAX_NOTE_CHARS, notesOf, REVISE_UNDO_BLOCKED, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from '@/store/changePlanStore'
 import { PremiumLock } from '../license/PremiumLock'
 import { useDocumentStore } from '@/store/documentStore'
 import { Button } from '../ui/Button'
@@ -10,17 +10,19 @@ import { ICON_SIZE } from '../ui/Icon'
 import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { DiffView } from '../ai/DiffView'
-import { ChangeList, NoteList } from './ChangeList'
-import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, isScriptPlan, markNoteHintSeen, noteHintSeen, planSteps, scriptInfo, sketchStageOf, unhandledViews, useChangePlanAccess, type PlanBox } from './changePlanModel'
+import { ChangeList, NoteList, RevisingNoteList } from './ChangeList'
+import { CHANGE_PLAN_FEATURE, canRevise, cp, effectiveStatus, failureText, groupViews, isScriptPlan, markNoteHintSeen, noteHintSeen, noteResults, planSteps, scriptInfo, unhandledViews, useChangePlanAccess, type PlanBox } from './changePlanModel'
 import { CompareStage, type CompareMode, type NoteEditing, type NoteTarget } from './CompareStage'
 import { failedChecks } from '@/lib/vectorEdit'
 import { useImageAspect, usePlanManifest, usePlanPanel, usePlanSource, useSelectionPreview } from './usePlanFigure'
 import { noteLabelOf } from './noteTarget'
-import { GraphPaper, PlotSketch } from './PlotSketch'
-import { TaskChecklist } from '../ui/TaskChecklist'
 import { usePanelDisplayManifest } from '@/store/renderStore'
+import { prefersReducedMotion } from '@/lib/motion'
 
 type View = 'compare' | 'annotate'
+
+/** 新版刚出来时改动框全亮多久（之后照常按 `duration-slow` 淡出）；减少动效时整段不放 */
+const LANDING_FLASH_MS = 1000
 
 const newNoteId = () => `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
 
@@ -30,7 +32,9 @@ const newNoteId = () => `n${Date.now().toString(36)}${Math.random().toString(36)
  * - 对比：滑动 / 并排 / 切换，右栏是改动清单，页脚「放弃」｜「写批注」（次级）+「应用」（**主按钮**）。
  * - 批注（高级版 `change-plan-rerun`，ADR 0206 §五）：舞台只有「修改后」的大图，点元素 / 框选 / 整体写批注（`Popover` 锚在那一处）；右栏是批注列表；
  *   页脚「放弃」+「按批注重改 · N」（N = 0 禁用、次级样式；N ≥ 1 主），批注视图里没有「应用」（维护者 2026-11-28）。出好后自动回到「对比」并选中新版本；
- *   重改进行中舞台换成卡片上那套「正在作图」（坐标纸 + 小画 + 三步清单），不让旧图一动不动。
+ *   重改进行中：舞台是上一版「修改后」压暗降饱和、批注编号钉在锚点上，三步清单（跟后端阶段）在图下面排一行；右栏是这次发出的批注，
+ *   清单头只诚实地说「正在按这 N 条批注改」（后端没有逐条进度，不逐条打勾）。新版出来：旧图淡出露出对比、改动框全亮约 1 秒再淡出，
+ *   右栏顶部逐条标结果（`noteResults`：改成了 = 它那一组，没改成 = 一句原因；脚本方案对不上，只说一句）；减少动效时直接切换。
  *   没解锁的用户：切换项与「写批注」带锁（`PremiumLock`），点了只弹一句话 +「了解高级版 ›」，不进入；授权入口没出现（上线开关关着）时这些入口整个不画。
  * 第 2 版起「修改前」默认是上一版的「修改后」（标「第 N−1 版 / 第 N 版」），要看原图切回第 1 版；「应用」仍是这一版对原图的全量补丁。
  * 「应用」= 一次 commit 进排版时间线，⌘Z 一步撤回（`changePlanStore.apply`）；全部取消勾选时禁用。
@@ -55,13 +59,28 @@ export function ChangePlanDialog() {
   const aspect = useImageAspect(entry?.afterSrc)
   // 换一份方案 / 换版本 / 重新打开：高亮与批注框不带过去，新版本出来回到「对比」
   const planId = entry?.planId
+  const [landing, setLanding] = useState<{ from: string } | null>(null)
   useEffect(() => {
     setActiveId(null)
     setEditing(null)
     // 卡片上的批注入口带来初始视图（取一次就清）：免费用户 `annotating` 本来就不成立，不会进
     setView(key ? (useChangePlanStore.getState().consumeDialogView() ?? 'compare') : 'compare')
     setStage('figure')
+    setLanding(null)
   }, [key, planId])
+  // 新版刚出来（上一刻还在重改、这一刻换成了新的一版且没报错）：重改时那张旧图淡出、改动框全亮一下。失败 / 手动切版本不触发
+  const last = useRef<{ planId?: string; revising: boolean; after?: string }>({ revising: false })
+  const nowRevising = entry?.revising !== undefined
+  useEffect(() => {
+    const was = last.current
+    if (was.revising && !nowRevising && planId && planId !== was.planId && !entry?.reviseError && was.after && !prefersReducedMotion()) setLanding({ from: was.after })
+    last.current = { planId, revising: nowRevising, after: entry?.afterSrc }
+  }, [planId, nowRevising, entry?.afterSrc, entry?.reviseError])
+  useEffect(() => {
+    if (!landing) return
+    const t = window.setTimeout(() => setLanding(null), LANDING_FLASH_MS)
+    return () => window.clearTimeout(t)
+  }, [landing])
   // 第一次打开（高级版）：「写批注」上方出一次轻提示，点任意处或 5 秒后消失，本机记住
   const [hint, setHint] = useState(false)
   const shown = !!key
@@ -94,7 +113,8 @@ export function ChangePlanDialog() {
     setHint(false)
     markNoteHintSeen()
   }, [shown, annotating])
-  const manifest = usePlanManifest(entry, pro && (armed || annotating))
+  // 重改进行中也要：批注编号按当前版本元素表里的框钉
+  const manifest = usePlanManifest(entry, pro && (armed || annotating || nowRevising))
   const store = useChangePlanStore.getState
   const plan = entry?.plan
   const open = !!entry && !!plan && !!entry.beforeSrc && !!entry.afterSrc && (status === 'ready' || appliedView)
@@ -148,6 +168,8 @@ export function ChangePlanDialog() {
 
   const notes = notesOf(entry)
   const revising = entry.revising !== undefined
+  const sent = entry.revisingNotes ?? notes
+  const results = revising ? null : noteResults(entry)
   const reviseError = entry.reviseError
     ? entry.reviseError.code === 'not_licensed'
       ? cp('dialog.reviseNotLicensed')
@@ -296,7 +318,7 @@ export function ChangePlanDialog() {
       <div className="flex min-h-0 flex-1" data-change-plan-dialog data-change-plan-dialog-view={annotating ? 'annotate' : 'compare'} data-change-plan-version={current}>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
           <div className="flex h-11 shrink-0 items-end justify-center px-5">
-            {!annotating && (!script || stage === 'figure') && (
+            {!annotating && !revising && (!script || stage === 'figure') && (
               <Segmented<CompareMode>
                 value={mode}
                 onChange={setMode}
@@ -311,15 +333,25 @@ export function ChangePlanDialog() {
               />
             )}
           </div>
-          {script && stage === 'script' && info && !annotating ? (
+          {revising ? (
+            // 舞台用他的图：上一版「修改后」压暗、批注编号钉在锚点上，三步清单（跟后端阶段）在图下面一行
+            <CompareStage
+              before={stageBefore}
+              after={entry.afterSrc}
+              aspect={aspect}
+              mode="revising"
+              groups={[]}
+              activeId={null}
+              revising={{ notes: sent, manifest, steps: planSteps(entry), status: cp('card.revising') }}
+            />
+          ) : script && stage === 'script' && info && !annotating ? (
             <div className="flex min-h-0 flex-1 flex-col px-5 pb-5" data-change-plan-script-diff>
               <DiffView diff={info.diff} script={info.rel} variant="panel" />
             </div>
           ) : (
-          revising ? (
-            <RevisingStage entry={entry} aspect={aspect} />
-          ) : (
           <CompareStage
+            intro={annotating ? undefined : landing?.from}
+            flash={!annotating && !!landing}
             before={stageBefore}
             labels={stageLabels}
             // 批注写在这一版完整的「修改后」上（重改从它出发），不按勾选的组合出图
@@ -355,15 +387,14 @@ export function ChangePlanDialog() {
                 : undefined
             }
           />
-          )
           )}
         </div>
         <div className="flex w-[19rem] shrink-0 flex-col border-l border-border">
-          {annotating ? (
+          {revising ? (
+            <RevisingNoteList notes={sent} />
+          ) : annotating ? (
             <NoteList
               notes={notes}
-              // 重改进行中舞台是「正在作图」：没有可以锚批注框的图，列表里的「整体批注」/ 点一条去改先不接
-              disabled={revising}
               onOpenNote={edit}
               onRemove={(id) => store().removeNote(entry.key, id)}
               onOverall={() => setEditing({ target: { anchor: { kind: 'overall' }, label: cp('dialog.noteOverallLabel') } })}
@@ -391,6 +422,12 @@ export function ChangePlanDialog() {
               )}
               {script && info ? (
                 <div className="flex flex-col gap-1 px-4 pt-4" data-change-plan-script-meta>
+                  {/* 脚本方案的批注重改：所有批注并成一条指令、只回一份脚本，对不上逐条，只说一句 */}
+                  {results && (
+                    <p className="mb-1 border-b border-border pb-2 text-sm text-ink-2" data-change-plan-note-tally>
+                      {cp('dialog.noteResultScript', { count: results.notes.length })}
+                    </p>
+                  )}
                   <p className="type-meta">{cp('dialog.scriptMeta', { added: info.added, removed: info.removed })}</p>
                   <p className="break-all text-sm text-ink-2">{info.rel}</p>
                   <p className="type-meta">{cp('dialog.scriptBackupNote')}</p>
@@ -406,6 +443,7 @@ export function ChangePlanDialog() {
                   onToggle={(g) => store().toggleGroup(entry.key, g)}
                   activeId={activeId}
                   onActive={setActiveId}
+                  noteResults={results?.rows ?? undefined}
                 />
               )}
             </>
@@ -413,32 +451,5 @@ export function ChangePlanDialog() {
         </div>
       </div>
     </Dialog>
-  )
-}
-
-/**
- * 按批注重改进行中的舞台：与卡片生成中同一套「正在作图」（坐标纸 + 小画 + 三步清单，`planSteps` 按后端阶段勾），
- * 图框与对比时同一比例、同一位置——出好后换回对比，舞台不跳。
- */
-function RevisingStage({ entry, aspect }: { entry: PlanEntry; aspect: number }) {
-  const steps = planSteps(entry)
-  const fit = `min(100%, calc((100cqh - 4.75rem) * ${aspect}))`
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-change-plan-stage="revising">
-      <div className="flex min-h-0 flex-1 items-start justify-center px-5 pb-1 pt-3" style={{ containerType: 'size' }}>
-        <div className="flex flex-col gap-3" style={{ width: fit }}>
-          <div className="h-5" />
-          <div aria-hidden data-change-plan-frost className="relative w-full overflow-hidden rounded-sm bg-paper shadow-page" style={{ aspectRatio: aspect }}>
-            <GraphPaper />
-            <PlotSketch stage={sketchStageOf(steps)} />
-          </div>
-          <p className="sr-only" role="status" data-change-plan-generating>
-            {cp('card.revising')}
-          </p>
-          {steps && <TaskChecklist bare steps={steps} className="self-center bg-transparent px-0 py-0" data-change-plan-steps />}
-        </div>
-      </div>
-      <p className="h-8 shrink-0" />
-    </div>
   )
 }

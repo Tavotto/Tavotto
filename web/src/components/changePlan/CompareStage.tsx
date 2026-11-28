@@ -11,6 +11,7 @@ import { ICON_SIZE } from '../ui/Icon'
 import { Kbd } from '../ui/Kbd'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
+import { TaskChecklist, type TaskStep } from '../ui/TaskChecklist'
 import { cp, type GroupView, type PlanBox } from './changePlanModel'
 import { NoteEditor } from './NoteEditor'
 import { elementTarget, type NoteTarget } from './noteTarget'
@@ -18,8 +19,20 @@ import { elementTarget, type NoteTarget } from './noteTarget'
 export type { NoteTarget }
 
 export type CompareMode = 'slide' | 'side' | 'toggle'
-/** 舞台的四种画法：三种对比 + 批注（只有「修改后」的大图，点元素 / 框选 / 整体写批注） */
-export type StageMode = CompareMode | 'annotate'
+/** 舞台的五种画法：三种对比 + 批注（只有「修改后」的大图，点元素 / 框选 / 整体写批注）+ 按批注重改进行中（上一版「修改后」压暗、钉着批注编号） */
+export type StageMode = CompareMode | 'annotate' | 'revising'
+
+/** 按批注重改进行中：上一版「修改后」压暗降饱和（一眼看出是旧的、正在被改）；新版出来时盖在上面淡出的那张也是这个样子 */
+const OLD_FIGURE = 'opacity-55 saturate-25'
+
+/** 重改进行中舞台要画的：这次发出的批注（钉在锚点上）、元素表（元素锚取当前框）、后端阶段翻成的三步清单 */
+export interface RevisingView {
+  notes: PlanNote[]
+  manifest: Manifest | null
+  steps: TaskStep[] | null
+  /** 只给读屏的一句（`role=status`） */
+  status: string
+}
 
 
 /** 正在写 / 改的批注：`id` 有 = 改已有的 */
@@ -292,6 +305,9 @@ export function CompareStage({
   noting,
   quick,
   labels,
+  revising,
+  intro,
+  flash = false,
 }: {
   before: string
   after: string
@@ -308,6 +324,12 @@ export function CompareStage({
   quick?: QuickNote
   /** 两侧的叫法（第 2 版起左边是上一版：「第 N−1 版 / 第 N 版」）；不给 = 修改前 / 修改后 */
   labels?: { before: string; after: string }
+  /** `mode === 'revising'`：批注编号、元素表与三步清单 */
+  revising?: RevisingView
+  /** 新版刚出来：重改时那张压暗的旧图（地址）盖在「修改后」一侧上面淡出（减少动效时调用方不给） */
+  intro?: string
+  /** 新版刚出来：改动框短暂全亮（调用方约 1 秒后撤掉，框照常淡出） */
+  flash?: boolean
 }) {
   useTranslation('ai')
   // 批注框以图卡的边为界：靠近边沿向内翻转，不跨出图卡
@@ -359,15 +381,16 @@ export function CompareStage({
             clip = `inset(0 0 0 ${pctOf((split - b[0]) / w)}%)`
           }
         }
-        const on = g.key === activeId
+        const on = g.key === activeId || flash
         return (
           <span
             key={`${g.key}-${i}`}
             data-change-plan-box={g.key}
             data-active={on || undefined}
-            // 图面默认纯净：只有清单里选中 / 悬停的那一项，它对应的那一处才淡入（1px 低饱和描边 + 约 6% 填充）
+            // 图面默认纯净：只有清单里选中 / 悬停的那一项，它对应的那一处才淡入（1px 低饱和描边 + 约 6% 填充）；新版刚出来时全亮一下再淡出
             className={cn(
-              'pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60 transition-opacity duration-fast',
+              'pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60 transition-opacity',
+              flash || g.key !== activeId ? 'duration-slow' : 'duration-fast',
               on ? 'opacity-100' : 'opacity-0',
             )}
             style={clip ? { ...boxStyle(b), clipPath: clip } : boxStyle(b)}
@@ -428,6 +451,30 @@ export function CompareStage({
     )
   }
 
+  /** 重改进行中：这次发出的批注钉在锚点上（只看、不可点）；元素锚取当前版本元素表里的框（取不到用写批注时记的框），整体批注不钉 */
+  const pinLayer = () =>
+    revising?.notes.map((n, i) => {
+      const a = n.anchor
+      if (a.kind === 'overall') return null
+      const b = (a.kind === 'element' ? revising.manifest?.elements.find((x) => x.gid === a.gid)?.bbox : undefined) ?? (a.box as PlanBox)
+      return (
+        <span key={n.id} data-change-plan-pin={n.id} className="pointer-events-none absolute" style={boxStyle(b as PlanBox)}>
+          {a.kind === 'region' && <span aria-hidden className="absolute inset-0 rounded-xs inset-ring inset-ring-paper-ink-3" />}
+          <span className="absolute -right-2 -top-2" title={n.label}>
+            <ReviewMark n={i + 1} onPaper solid />
+          </span>
+        </span>
+      )
+    })
+
+  /** 新版刚出来：重改时那张压暗的旧图盖在上面淡出（`--animate-crossfade-out`），露出新版 */
+  const introLayer = () =>
+    intro ? (
+      <span aria-hidden data-change-plan-intro className="pointer-events-none absolute inset-0 animate-crossfade-out">
+        <Img src={intro} className={OLD_FIGURE} />
+      </span>
+    ) : null
+
   /** 对比模式：「修改后」一侧的点选层（`left`：滑动对比里只盖分隔线右边） */
   const quickLayer = (left = 0) => (quick ? <PickLayer manifest={quick.manifest} mode="quick" left={left} onArm={quick.onArm} onPick={quick.onPick} /> : null)
 
@@ -457,6 +504,7 @@ export function CompareStage({
               {boxes('after', p / 100)}
             </div>
             {!hold && quickLayer(p)}
+            {introLayer()}
             <div
               className={cn('absolute inset-y-0 -ml-4 flex w-8 touch-none justify-center', dragging ? 'cursor-grabbing' : 'cursor-grab')}
               style={{ left: `${p}%` }}
@@ -505,6 +553,23 @@ export function CompareStage({
         <div className={row} />
       </div>
     )
+  } else if (mode === 'revising') {
+    // 与批注同一个画框（同一比例、同一位置）：出好后换回对比，图不跳；三步清单在图下面排成一行，占对比时控制行的位置
+    body = (
+      <div className="flex flex-col gap-1.5" style={{ width: one }}>
+        <div className={row} />
+        <Frame width="100%" aspect={aspect}>
+          <Img src={after} className={cn(OLD_FIGURE, 'transition-[opacity,filter] duration-slow')} />
+          {pinLayer()}
+        </Frame>
+        <div className={cn(row, 'justify-center')}>
+          {revising?.steps && <TaskChecklist bare row steps={revising.steps} className="bg-transparent px-0 py-0" data-change-plan-steps />}
+        </div>
+        <p className="sr-only" role="status" data-change-plan-generating>
+          {revising?.status}
+        </p>
+      </div>
+    )
   } else if (mode === 'side') {
     body = (
       <div className="flex w-full flex-col gap-1.5">
@@ -525,6 +590,7 @@ export function CompareStage({
             <Img src={after} className={busyCls} />
             {boxes('after')}
             {quickLayer()}
+            {introLayer()}
           </Frame>
         </div>
         <div className={row} />
@@ -538,6 +604,7 @@ export function CompareStage({
           <Img src={effectiveView === 'before' ? before : after} className={effectiveView === 'after' ? busyCls : undefined} />
           {boxes(effectiveView)}
           {effectiveView === 'after' && quickLayer()}
+          {introLayer()}
         </Frame>
         <div className="flex justify-center pt-1">
           <Segmented<'before' | 'after'>

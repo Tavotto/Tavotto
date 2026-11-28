@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import type { ChangePlan, LicenseStatus, Manifest } from '@/lib/api'
-import { setChangePlanUndoRunner, useChangePlanStore, type PlanEntry } from '@/store/changePlanStore'
+import { setChangePlanUndoRunner, useChangePlanStore, type PlanEntry, type PlanNote } from '@/store/changePlanStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useLicenseStore } from '@/store/licenseStore'
 import { useUiStore } from '@/store/uiStore'
@@ -740,18 +740,6 @@ function clearHintOnlyState() {
   root = createRoot(host)
 }
 
-it('重改进行中：舞台换成「正在作图」（坐标纸 + 小画 + 三步清单），不是一动不动的旧图', () => {
-  status(PRO)
-  put(entry({ revising: 'p2', phase: 'model' }))
-  act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
-  render()
-  expect(q('[data-change-plan-stage]')!.dataset.changePlanStage).toBe('revising')
-  expect(q('[data-change-plan-stage] [data-change-plan-frost]')).not.toBeNull()
-  expect(q('[data-change-plan-stage] [data-change-plan-steps]')).not.toBeNull()
-  expect(q('[data-change-plan-stage] img')).toBeNull()
-  expect(q('[data-change-plan-rerun]')!.textContent).toContain('正在')
-})
-
 it('第 2 版起：左侧默认是上一版的「修改后」，两侧标「第 1 版 / 第 2 版」；切回第 1 版看的是原图', () => {
   status(PRO)
   put(entry({ planId: 'p2', plan: plan('p2', 2), beforeSrc: '/p2-b.png', afterSrc: '/p2-a.png', versions: [ver('p1', 1), ver('p2', 2)] }))
@@ -788,11 +776,131 @@ it('第 2 版一组都没勾：「修改后」就是原图，左侧也回到原�
   expect(q('[data-change-plan-stage]')!.textContent).toContain('修改前')
 })
 
-it('重改进行中：右栏「整体批注」先不接（舞台上没有图可锚批注框）', () => {
+// 按批注重改进行中 → 新版出来（ADR 0206 修订 2026-11-28 之后的真机反馈：舞台用他的图、右栏是带状态的批注清单）
+const NOTES: PlanNote[] = [
+  { id: 'n1', anchor: { kind: 'element', gid: 'ax.title', box: [0.1, 0.1, 0.3, 0.2] }, label: '标题', text: '标题再大一点' },
+  { id: 'n2', anchor: { kind: 'overall' }, label: '整体', text: '整体紧凑些' },
+  { id: 'n3', anchor: { kind: 'region', box: [0.5, 0.5, 0.2, 0.2] }, label: '框选的一块', text: '这里留白太多' },
+]
+const revisingEntry = () =>
+  entry({ planId: 'p7', plan: plan('p7', 1), beforeSrc: '/p7-b.png', afterSrc: '/p7-a.png', revising: 'p8', phase: 'model', notes: NOTES, revisingNotes: NOTES })
+const V8: ChangePlan = {
+  ...plan('p8', 2),
+  parent: 'p7',
+  groups: [
+    { ...plan('p8', 2).groups[0], key: 'g1', comment_id: 'c1', origin: 'review' },
+    { ...plan('p8', 2).groups[0], key: 'g2', label: '标题再大一点', comment_id: 'n1', origin: 'note', boxes: { before: [{ gid: 'ax.title', box: [0.1, 0.1, 0.3, 0.2] }], after: [{ gid: 'ax.title', box: [0.1, 0.1, 0.4, 0.2] }] } },
+  ],
+  unhandled: [{ comment_id: 'n2', reason: 'out_of_scope' }, { comment_id: 'n3', reason: 'unknown_element' }],
+}
+/** 模拟轮询拿到新版（store 里 `poll` 的 revise 分支落下的那一份） */
+const landV8 = () => {
+  const e = useChangePlanStore.getState().entries.a
+  const rec = (id: string, p: ChangePlan, extra = {}) => ({ planId: id, plan: p, beforeSrc: `/${id}-b.png`, afterSrc: `/${id}-a.png`, unchecked: {}, ...extra })
+  put({ ...e, versions: [rec('p7', plan('p7', 1)), rec('p8', V8, { fromNotes: NOTES })], planId: 'p8', plan: V8, beforeSrc: '/p8-b.png', afterSrc: '/p8-a.png', unchecked: {}, notes: [], revising: undefined, revisingNotes: undefined, phase: undefined })
+}
+
+it('重改进行中：舞台是上一版「修改后」压暗、批注编号钉在锚点上（元素锚按当前元素表、整体不钉），三步清单在图下面一行；没有通用的坐标纸小画', async () => {
   status(PRO)
-  put(entry({ revising: 'p2' }))
+  planManifest.mockResolvedValue(undefined)
+  previewSnapshot.mockResolvedValue({ url: 'data:,', manifest: { elements: [{ gid: 'ax.title', role: 'title', label: '标题', bbox: [0.15, 0.05, 0.3, 0.1], editable: [] }] } })
+  put(revisingEntry())
   act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
   render()
-  expect(q('[data-change-plan-note-overall]')!.hasAttribute('disabled')).toBe(true)
+  await act(async () => {})
+  expect(q('[data-change-plan-stage]')!.dataset.changePlanStage).toBe('revising')
+  const img = q('[data-change-plan-stage] img')!
+  expect(img.getAttribute('src')).toBe('/p7-a.png')
+  expect(img.className).toContain('saturate-25')
+  expect(q('[data-change-plan-frost]')).toBeNull()
+  expect(q('[data-change-plan-stage] svg[data-plot-sketch]')).toBeNull()
+  // 元素锚：当前版本元素表里的框；框选：记的比例框；整体：不钉
+  expect(q('[data-change-plan-pin="n1"]')!.style.left).toBe('15%')
+  expect(q('[data-change-plan-pin="n3"]')!.style.left).toBe('50%')
+  expect(q('[data-change-plan-pin="n2"]')).toBeNull()
+  expect(q('[data-change-plan-pin="n1"]')!.textContent).toBe('1')
+  expect(q('[data-change-plan-pin="n3"]')!.textContent).toBe('3')
+  const steps = q('[data-change-plan-stage] [data-change-plan-steps] [data-task-steps]')!
+  expect(steps.dataset.taskRow).toBe('true')
+  expect([...steps.querySelectorAll('[data-task-step]')].map((x) => x.getAttribute('data-step-state'))).toEqual(['done', 'active', 'pending'])
+  expect(q('[data-change-plan-generating]')!.textContent).toContain('正在按批注重改')
+  expect(q('[data-change-plan-rerun]')!.textContent).toContain('正在')
+})
+
+it('重改进行中：右栏每条批注一行、整体只说「正在按这 N 条批注改」——不逐条打勾、不逐条转圈', () => {
+  status(PRO)
+  put(revisingEntry())
+  act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
+  render()
+  const list = q('[data-change-plan-revising-notes]')!
+  expect(list.textContent).toContain('正在按这 3 条批注改')
+  expect(qa('[data-change-plan-revising-note]').map((x) => x.dataset.changePlanRevisingNote)).toEqual(['n1', 'n2', 'n3'])
+  expect(qa('[data-change-plan-revising-notes] [data-todo-progress]').map((x) => x.dataset.todoProgress)).toEqual(['pending', 'pending', 'pending'])
+  expect(list.querySelector('.animate-spin')).toBeNull()
+  // 进行中不能写 / 改批注（舞台上是旧图）
+  expect(q('[data-change-plan-note-overall]')).toBeNull()
+  expect(q('[data-change-plan-notes]')).toBeNull()
+})
+
+it('新版出来：旧图盖在上面淡出、改动框全亮约 1 秒再淡出，停在对比；右栏顶部逐条标结果（改成了 = 它那一组，没改成 = 一句原因，底部不重复）', () => {
+  vi.useFakeTimers()
+  try {
+    status(PRO)
+    put(revisingEntry())
+    act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
+    render()
+    landV8()
+    expect(view()).toBe('compare')
+    expect(q('[data-change-plan-stage]')!.dataset.changePlanStage).toBe('slide')
+    const intro = q('[data-change-plan-intro]')!
+    expect(intro.className).toContain('animate-crossfade-out')
+    expect(intro.querySelector('img')!.getAttribute('src')).toBe('/p7-a.png')
+    expect(qa('[data-change-plan-box]').every((b) => b.dataset.active === 'true')).toBe(true)
+    act(() => vi.advanceTimersByTime(1000))
+    expect(q('[data-change-plan-intro]')).toBeNull()
+    expect(qa('[data-change-plan-box][data-active]')).toHaveLength(0)
+
+    const block = q('[data-change-plan-note-groups]')!
+    expect(q('[data-change-plan-note-tally]')!.textContent).toBe('按批注改了 1 / 3 条')
+    // 改成了的：就是它那一组（照旧能勾选）；没改成的：一行灰短横 + 原因，按批注顺序
+    expect(block.querySelector('[data-change-group="g2"]')).not.toBeNull()
+    expect(qa('[data-change-plan-note-result]').map((x) => x.dataset.changePlanNoteResult)).toEqual(['n2', 'n3'])
+    expect(q('[data-change-plan-note-result="n3"]')!.textContent).toContain('这里留白太多')
+    expect(q('[data-change-plan-note-result="n3"]')!.textContent).toContain('找不到对应的元素')
+    expect(q('[data-change-plan-unhandled="n2"]')).toBeNull()
+    expect(q('[data-change-plan-unhandled="n3"]')).toBeNull()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('减少动效：新版出来直接切到对比，没有淡出的旧图、改动框不全亮', () => {
+  const had = Object.getOwnPropertyDescriptor(globalThis, 'matchMedia')
+  Object.defineProperty(globalThis, 'matchMedia', { configurable: true, value: (qs: string) => ({ matches: qs.includes('reduce'), media: qs, addEventListener() {}, removeEventListener() {} }) })
+  try {
+    status(PRO)
+    put(revisingEntry())
+    act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
+    render()
+    landV8()
+    expect(view()).toBe('compare')
+    expect(q('[data-change-plan-intro]')).toBeNull()
+    expect(qa('[data-change-plan-box][data-active]')).toHaveLength(0)
+    expect(q('[data-change-plan-note-tally]')!.textContent).toBe('按批注改了 1 / 3 条')
+  } finally {
+    if (had) Object.defineProperty(globalThis, 'matchMedia', had)
+    else delete (globalThis as { matchMedia?: unknown }).matchMedia
+  }
+})
+
+it('重改没成：不放过渡，回到批注视图、一句灰字', () => {
+  status(PRO)
+  put(revisingEntry())
+  act(() => useChangePlanStore.getState().openDialog('a', { view: 'annotate' }))
+  render()
+  put({ ...useChangePlanStore.getState().entries.a, revising: undefined, revisingNotes: undefined, reviseError: { code: 'change_plan_model_quota' } })
+  expect(view()).toBe('annotate')
+  expect(q('[data-change-plan-intro]')).toBeNull()
+  expect(q('[data-change-plan-revise-error]')).not.toBeNull()
 })
 
