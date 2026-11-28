@@ -19104,7 +19104,18 @@ def api_journal_facts_preflight():
     except engine_journalfacts_remote.FactsError as exc:
         return _journal_facts_error(exc)
     folded = engine_journalfacts_fold.fold(result["bundle"])
-    return _journal_facts_response({"catalog_rev": result["catalog_rev"], **folded})
+    # 署名（ADR 0213 三期）：只留这一刊刊包里真实存在的事实；取不到 / 验不过 = 空，不影响其余
+    fact_ids = {f["id"] for f in result["bundle"].get("facts", [])}
+    thanks = {
+        fid: name
+        for fid, name in engine_journalfacts_remote.thanks_for(
+            body["journal_id"], ui_locale=locale
+        ).items()
+        if fid in fact_ids
+    }
+    return _journal_facts_response(
+        {"catalog_rev": result["catalog_rev"], **folded, "thanks": thanks}
+    )
 
 
 @app.get("/api/journal-facts/snapshot")

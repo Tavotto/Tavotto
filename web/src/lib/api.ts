@@ -8982,6 +8982,8 @@ export interface ContactJournalHead {
   current?: string
   source_id?: string
   url?: string
+  /** 署名（API 1.8.0）：用户勾了「写上我的称呼」才带，只随 wrong / missing；引擎按同一条规则再校验，不合规整封拒 */
+  credit?: string
   catalog?: { v1?: number; v2?: number }
 }
 
