@@ -1772,7 +1772,7 @@ def _merge_of(entry):
 
 
 def _is_xlsx(entry) -> bool:
-    return _merge_of(entry) is None and entry.path.lower().endswith(".xlsx")
+    return _merge_of(entry) is None and entry.path.lower().endswith(adf.XLSX_SUFFIXES)
 
 
 def _data_lines(entry, data_rel) -> list[str]:
@@ -2358,7 +2358,7 @@ def _merged_reader_expr(merge) -> str:
     parts = [
         "            "
         + _reader_expr(
-            s.entry, s.entry.path.lower().endswith(".xlsx"), f"DATAS[{i}]", f"SHEETS[{i}]"
+            s.entry, s.entry.path.lower().endswith(adf.XLSX_SUFFIXES), f"DATAS[{i}]", f"SHEETS[{i}]"
         )
         + ","
         for i, s in enumerate(merge.sources)

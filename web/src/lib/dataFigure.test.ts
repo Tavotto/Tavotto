@@ -4,12 +4,25 @@ import {
   cellModeOf,
   fileRows,
   isStaleProposeCode,
+  isWorkbook,
   mergeAnswers,
   sameTable,
   tableKey,
   usableOptions,
   withOverview,
 } from './dataFigure'
+
+describe('isWorkbook：哪些文件按工作簿（多张工作表）展开——与后端 XLSX_SUFFIXES 同一份名单', () => {
+  it('.xlsx 与 .xlsm 是工作簿（后缀大小写不敏感）；.xls / .xlsb / 文本表不是', () => {
+    expect(isWorkbook('a/book.xlsx')).toBe(true)
+    expect(isWorkbook('a/macro.xlsm')).toBe(true)
+    expect(isWorkbook('UP.XLSM')).toBe(true)
+    expect(isWorkbook('old.xls')).toBe(false)
+    expect(isWorkbook('b.xlsb')).toBe(false)
+    expect(isWorkbook('t.csv')).toBe(false)
+    expect(isWorkbook('xlsm')).toBe(false)
+  })
+})
 
 describe('tableKey：结构化键，不用文件名、不拼字符串', () => {
   it('同名文件在不同目录是两张表；工作表名里有 # 或引号也不撞车', () => {

@@ -766,6 +766,15 @@ P03B 与 H01 的第一名仍不对：标准答案要 `scatter_identity`（等比
 候选在 `cache/ai_prepare/<sid>/`，`candidate_table(sid)` 在 ready 后交出整理好的表（给「采用之前」出备选图用，本期不接 `ai_data_propose`）；`adopt` 才把脚本与表**新建**进
 `<数据文件夹>/tavotto_figures/`（只经 `scriptlock.create_script`，表开头 `#` 行是来源证明）。准备这一段「算得对不对」不核，只给来源证明（0215 第一节 B 档）。
 
+## 修订（2026-11-28）：`.xlsm`（带宏的工作簿）按 `.xlsx` 同一条路读
+
+`.xlsm` 原先与 `.xls` / `.xlsb` 一起被拒绝（`data_excel_unsupported`）。查提交与文档，当初是「没做」，不是「有意不读带宏的文件」。它与 `.xlsx` 是同一种 zip + XML，只多一个 `xl/vbaProject.bin` 成员；`xlsxread` 只按名字读工作表与共享字符串，那个成员从不打开、更不执行。
+
+1. `xlsxread.LEGACY_SUFFIXES` 去掉 `.xlsm`，`ai_data_figure.XLSX_SUFFIXES` 加上它；所有按「是不是工作簿」分叉的地方都用这一个元组（文件夹摘要按工作表列、`/api/ai/data-files` 带 `sheets`、生成的脚本用 `read_xlsx`、前端 `isWorkbook`——后两处原来写死 `.xlsx`，是这次要对齐的同源对）。
+2. 防护一条不少：成员数、声明与实际大小、重名、加密、路径穿越、DOCTYPE 的检查对它同样生效；不是 zip 的 `.xlsm` 与 `.xlsx` 同一个码（`data_xlsx_invalid`）。
+3. 错误文案 `data_excel_unsupported` 去掉 `.xlsm`（中英文；维护者 2026-11-28 同意）：「不支持旧版 Excel 文件（.xls / .xlsb），请在 Excel 里另存为 .xlsx 或 CSV。」
+4. 读表函数 `read_xlsx` 本身没变（它本来就不看后缀）；但公共模块内嵌了 `xlsxread` 的源码，`LEGACY_SUFFIXES` 一改字节就变，所以 `PINNED_RUNTIME_NAME` 换了名（8a8dce6b → 8255cb1b）。
+
 ## 修订（2026-11-28）：点名的多条纵轴上限从 3 放到 8；调色板加第 8 种颜色（`ai_data_recipe.MULTI_Y_MAX`、`ai_data_template.PALETTE`）
 
 来源：数据准备的真模型验收里，模型把 `species.out` 整理成「时间步 + 6 个物种」并建议 6 条都画，现有上限是 3，结果只画出 1 条。维护者 2026-11-28 定：**用户或模型点名时**放到 8 条；**规则自己默认选列时仍最多 3 条**。

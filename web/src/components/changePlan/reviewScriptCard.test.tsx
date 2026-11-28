@@ -103,22 +103,27 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-it('审阅来源有「要改脚本」的意见：显示「改脚本做剩下的」，点了走 runScript', async () => {
+const applied = { status: 'applied' as const, appliedPatches: BASE }
+
+it('审阅来源有「要改脚本」的意见：待确认卡上不出现；已应用后摘要句里出行内「剩下的改脚本来做 ›」，点了走 runScript', async () => {
   await put(entry('r'))
   await render(<ChangePlanTranscript panelId="p1" />)
-  const btn = q('[data-change-plan-run-script]')!
-  expect(btn.textContent).toBe('改脚本做剩下的')
-  await act(async () => btn.click())
+  expect(q('[data-change-plan-run-script]')).toBeNull()
+  await put(entry('r', applied))
+  const link = q('[data-change-plan-card="applied"] [data-change-plan-run-script]')!
+  expect(link.textContent).toBe('剩下的改脚本来做 ›')
+  expect(link.closest('p')).not.toBeNull()
+  await act(async () => link.click())
   expect(run).toHaveBeenCalledWith('r')
 })
 
 it('没有「要改脚本」的意见、后端没存原文、或已经交过一次：不显示', async () => {
-  await put(entry('a', { plan: { ...PLAN, unhandled: [{ comment_id: 'c2', reason: 'unclear' }] } }))
+  await put(entry('a', { ...applied, plan: { ...PLAN, unhandled: [{ comment_id: 'c2', reason: 'unclear' }] } }))
   await render(<ChangePlanTranscript panelId="p1" />)
   expect(q('[data-change-plan-run-script]')).toBeNull()
-  await put(entry('b', { plan: { ...PLAN, comments: undefined } }))
+  await put(entry('b', { ...applied, plan: { ...PLAN, comments: undefined } }))
   expect(q('[data-change-plan-run-script]')).toBeNull()
-  await put(entry('c', { scriptStarted: true }))
+  await put(entry('c', { ...applied, scriptStarted: true }))
   expect(q('[data-change-plan-run-script]')).toBeNull()
 })
 

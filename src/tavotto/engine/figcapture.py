@@ -24,6 +24,8 @@ worker 能让症状消失，但两份代码迟早分叉，而分叉的表现正�
   捕获表（去重、命名、保序）；`adopt_displaced_writers()` —— 写了文件却因 stem 被别的图持有而没认领的图
   （在它之前调用）；
 * `install_colorbar_capture()` —— 原样调用 matplotlib，记下手动 `cax=` 的显式 `ax` 宿主；
+* `install_legend_capture()` —— 原样调用 matplotlib，记下图例**创建时**每一项实际传入的那个 handle 对象
+  （图例 ↔ 系列确证来源的唯一依据，ADR 0219 §一「两档把握」）；
 * `install_relative_read_fallback()` —— 相对路径**只读**回退（见下）；
 * `remap_target()` / `install_input_remap()` / `missing_input_of()` —— 数据找不到时用户指认的
   只读改指表与「缺的是哪个」的判据（ADR 0106；父进程推规则也用 `remap_target`）；
@@ -196,6 +198,8 @@ __all__ = [
     "fallback_stems",
     "install_relative_read_fallback",
     "install_colorbar_capture",
+    "install_legend_capture",
+    "captured_legend_handles",
     "unused_imports",
     "reaches_main",
     "install_unused_import_placeholders",
@@ -302,6 +306,100 @@ def install_colorbar_capture(mfigure) -> None:
 
     colorbar._tavotto_colorbar_capture = True  # noqa: SLF001
     mfigure.FigureBase.colorbar = colorbar
+
+
+#: 捕获器自己持有的记录：Legend → 「第 j 项（与 `legend_handles` 去掉 None 后、`get_texts()` 同一序号）创建时
+#: 实际传入的 handle 对象」的弱引用 tuple。**不写在 Legend 实例属性上**——脚本可直接赋值实例属性（伪造 / 抹掉确证）。
+#: 键是弱引用（不延长图例寿命）；值也只存 handle 的弱引用：handle 画在坐标轴上、轴又持有图例，强引用会让图例永不回收。
+#: 键在表里但值为 None = 已见过首次调用但没记下（观察失败 / 对不齐）。没有键 = 没捕获到。
+_LEGEND_CAPTURED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+class _IdToken:
+    """不能弱引用的 handle（`BarContainer` 之类 tuple 子类）的占位：只记身份与类型，不持有对象。
+
+    持有它会经 handle → 坐标轴 → 图例 把整张图钉在记录表里；所以由读函数拿「现在还活着的候选」来核对。"""
+
+    __slots__ = ("ident", "kind")
+
+    def __init__(self, obj) -> None:
+        self.ident = id(obj)
+        self.kind = type(obj)
+
+
+def _weak_or_token(obj):
+    if obj is None:
+        return None
+    try:
+        return weakref.ref(obj)
+    except TypeError:
+        return _IdToken(obj)
+
+
+def captured_legend_handles(leg, live=()) -> tuple | None:
+    """`install_legend_capture` 为这个图例记下的、创建时实际传入的 handle 对象；没有记录 → None。
+
+    已回收的项、以及不能弱引用又不在 `live`（调用方手里的活对象，如候选来源）里的项，都是 None。
+    不能弱引用的项只按「同一地址且同一类型的活对象」认；调用方随后还要自己按 `is` 与候选比，所以这里认错也只会是
+    「把一个活的候选认成它」——而该候选此刻就在同一张图里，地址复用且类型相同的概率可忽略，且不会产生伪造入口
+    （记录表只由捕获器写入）。"""
+    try:
+        refs = _LEGEND_CAPTURED.get(leg)
+    except TypeError:
+        return None
+    if refs is None:
+        return None
+    by_id = {id(o): o for o in live}
+    out = []
+    for r in refs:
+        if isinstance(r, _IdToken):
+            o = by_id.get(r.ident)
+            out.append(o if o is not None and type(o) is r.kind else None)
+        else:
+            out.append(None if r is None else r())
+    return tuple(out)
+
+
+def install_legend_capture(mlegend) -> None:
+    """记下每个图例**创建时**实际传入 matplotlib 的 handle 对象，不改 matplotlib 的任何行为。
+
+    包的是 `Legend._init_legend_box`：`Legend.__init__` 里的 `reverse` 等处理都在它之前做完，这里收到的
+    `handles` 就是最终逐项派生示意线用的那一份。**只记第一次调用**（`__init__` 里那次）：Tavotto 重建图例
+    （`legendmodel` 改列数 / 顺序 / 隐藏时）会再调它，传的是 0034 猜出来的源——再记一次，猜测就被洗成了
+    确证。只对 list / tuple 的 handles 记（不消费迭代器）；matplotlib 不给 handler 的项（`legend_handles` 里是 None，
+    也没有文字）剔掉，使序号与 `LegendEntries` 的 j 一致；对不齐（个数不等）就不记。观察失败只是没有记录，
+    原调用的返回与异常原样。
+    """
+    from functools import wraps
+
+    original = mlegend.Legend._init_legend_box  # noqa: SLF001
+    if getattr(original, "_tavotto_legend_capture", False):
+        return
+
+    @wraps(original)
+    def init_legend_box(self, handles, labels, *args, **kwargs):
+        first = self not in _LEGEND_CAPTURED
+        if first:
+            # 先占位：原调用里任何重入（或原调用抛错）都不会留下一份半截的记录
+            _LEGEND_CAPTURED[self] = None
+        out = original(self, handles, labels, *args, **kwargs)
+        # 只看 handles 的类型：labels 常是 `df.columns` / ndarray，matplotlib 只拿它 zip，不影响对齐
+        if first and type(handles) in (list, tuple):
+            try:
+                drawn = list(
+                    self.legend_handles
+                )  # 与 zip(handles, labels) 等长，handler 缺席处是 None
+                texts = list(self.texts)
+                if len(handles) >= len(drawn):
+                    kept = tuple(h for h, d in zip(handles, drawn) if d is not None)
+                    if len(kept) == len(texts):
+                        _LEGEND_CAPTURED[self] = tuple(_weak_or_token(h) for h in kept)
+            except Exception:  # noqa: BLE001 — 观察失败 = 没有确证，不拦脚本
+                pass
+        return out
+
+    init_legend_box._tavotto_legend_capture = True  # noqa: SLF001
+    mlegend.Legend._init_legend_box = init_legend_box  # noqa: SLF001
 
 
 def _is_ft_glyph_load_error(exc: BaseException) -> bool:

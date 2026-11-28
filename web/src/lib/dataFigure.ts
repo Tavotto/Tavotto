@@ -16,7 +16,7 @@ export const tableKey = (r: TableRef): string => JSON.stringify([r.path, r.sheet
 export const sameTable = (a: TableRef | null, b: TableRef | null): boolean =>
   a != null && b != null && a.path === b.path && a.sheet === b.sheet
 
-export const isWorkbook = (path: string): boolean => /\.xlsx$/i.test(path)
+export const isWorkbook = (path: string): boolean => /\.xls[xm]$/i.test(path)
 
 /**
  * 「大文件」的界线：文本表超过它，后端走流式读 + 缩减（`ai_data_figure.SMALL_BYTES`，严格同源对，看护 `tests/test_ai_data_large.py`）。

@@ -1,0 +1,78 @@
+{
+ "_doc": "组名读法的两侧对拍样本（ADR 0191 修订 / ADR 0208 前置 6.0）：前端 lib/groupTree.groupNameOf / groupNameMap ↔ 后端 engine/agentobjects.group_name_of。objects 只列与组名有关的键（数组序 = z 序，底 → 顶）；names = 每个组 id 的期望名字（没有名字的组不列）。读法：成员（组链上有这个组的对象）按 z 序，第一个在自己 groupNames[gid] 里给了非空（去空白后）字符串名字的；不在对象自己组链上的键一律忽略。",
+ "cases": [
+  {
+   "name": "旧文档没有 groupNames：全部没名字",
+   "objects": [
+    { "id": "a", "groupId": "g1" },
+    { "id": "b", "groupId": "g1" }
+   ],
+   "names": {}
+  },
+  {
+   "name": "一层组：键 = groupId",
+   "objects": [
+    { "id": "a", "groupId": "g1", "groupNames": { "g1": "机理图" } },
+    { "id": "b", "groupId": "g1", "groupNames": { "g1": "机理图" } }
+   ],
+   "names": { "g1": "机理图" }
+  },
+  {
+   "name": "两层组：外层与内层各有名字",
+   "objects": [
+    { "id": "a", "groupId": "g2", "groupPath": ["g1", "g2"], "groupNames": { "g1": "机理图", "g2": "细胞膜" } },
+    { "id": "b", "groupId": "g1", "groupNames": { "g1": "机理图" } }
+   ],
+   "names": { "g1": "机理图", "g2": "细胞膜" }
+  },
+  {
+   "name": "同组名字不一致：z 序第一个非空的赢",
+   "objects": [
+    { "id": "a", "groupId": "g1" },
+    { "id": "b", "groupId": "g1", "groupNames": { "g1": "乙" } },
+    { "id": "c", "groupId": "g1", "groupNames": { "g1": "丙" } }
+   ],
+   "names": { "g1": "乙" }
+  },
+  {
+   "name": "空串与纯空白不算名字，跳到下一个",
+   "objects": [
+    { "id": "a", "groupId": "g1", "groupNames": { "g1": "" } },
+    { "id": "b", "groupId": "g1", "groupNames": { "g1": "  " } },
+    { "id": "c", "groupId": "g1", "groupNames": { "g1": "丙" } }
+   ],
+   "names": { "g1": "丙" }
+  },
+  {
+   "name": "键不在自己的组链上：忽略（旧构建改过 groupId）",
+   "objects": [
+    { "id": "a", "groupId": "g9", "groupNames": { "g1": "旧名字" } },
+    { "id": "b", "groupId": "g1" }
+   ],
+   "names": {}
+  },
+  {
+   "name": "组链与 groupId 对不上：只认 [groupId]，链上别的组的键忽略",
+   "objects": [
+    { "id": "a", "groupId": "g2", "groupPath": ["g1", "gX"], "groupNames": { "g1": "外", "g2": "内" } }
+   ],
+   "names": { "g2": "内" }
+  },
+  {
+   "name": "名字只在别的成员那里：同组成员都读得到",
+   "objects": [
+    { "id": "a", "groupId": "g2", "groupPath": ["g1", "g2"] },
+    { "id": "b", "groupId": "g1", "groupNames": { "g1": "外" } }
+   ],
+   "names": { "g1": "外" }
+  },
+  {
+   "name": "名字不是字符串：忽略",
+   "objects": [
+    { "id": "a", "groupId": "g1", "groupNames": { "g1": 7 } },
+    { "id": "b", "groupId": "g1", "groupNames": { "g1": "乙" } }
+   ],
+   "names": { "g1": "乙" }
+  }
+ ]
+}

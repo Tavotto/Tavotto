@@ -3555,6 +3555,33 @@ export interface ManifestElement {
     source_gid?: string
     binding_default?: 'follow_source' | 'custom'
   }
+  /**
+   * 图例项的示意与它代表的图中对象（`legend_style_source`）**看得见的样式**哪里不一样（只读事实，不改图）：
+   * 只在来源确证、认得准（曲线 ↔ 线示意、柱 / 形状 ↔ 色块）、且确实不一致时出现；`legend` / `source` 是两边的值
+   * （颜色 `#rrggbb`，不比透明度），`fix` 是改得掉它的那条图例项属性（只给改图助手看）。产生者只有
+   * `engine/legendmodel.legend_style_mismatch`；消费者是 `lib/preflight.ts` 的 `checkLegendStyleMismatch`。
+   */
+  legend_style_mismatch?: LegendStyleMismatch[]
+  /**
+   * 与 `legend_style_mismatch` 一起出现：worker **确证**的来源系列 gid（ADR 0219——创建图例时这一项实际传入的
+   * 就是同一面板里这条已画系列）。不是 `legend_entry.source_gid`（0034 的编辑绑定，可能按样式 / 标签猜出来）。
+   */
+  legend_style_source?: string
+}
+
+export interface LegendStyleMismatch {
+  prop:
+    | 'color'
+    | 'linestyle'
+    | 'linewidth'
+    | 'marker'
+    | 'markerfacecolor'
+    | 'markeredgecolor'
+    | 'facecolor'
+    | 'edgecolor'
+  legend: string | number
+  source: string | number
+  fix?: { prop: string; value: unknown }
 }
 
 /**
@@ -4269,6 +4296,8 @@ export type ChangePlanUnhandledReason =
   | 'merged_log'
   | 'hides_data'
   | 'size_locked' | 'dense_curve'
+  /** 这处改动渲染时引出了新的 warning，从候选里拿掉了（其余照常出卡） */
+  | 'render_warning'
   /** 只在前端出现（后端不发）：用户对「对数轴下限一起改吗」答了「不改」，这一组整组没动 */
   | 'log_limit_declined'
 
@@ -4359,6 +4388,8 @@ export interface ChangePlanTodo {
 export interface ChangePlan {
   id: string
   version: number
+  /** 插件里的 Agent 经绑定会话出的建议（ADR 0217 §五）：它的子图与排版；没有 = 窗口里自己出的方案 */
+  agent?: { session?: string; panel?: string; layout?: string; stem?: string; at?: number; host?: AgentHost }
   /** 助手来源给建议时的一到三句话回答（≤ 600 字）；没有 = 普通方案 */
   reply?: string
   /** 助手把建议列成的待办；没有 = 普通方案（与以前一样只看 `groups` / `unhandled`） */
@@ -4379,8 +4410,11 @@ export interface ChangePlan {
   unhandled: { comment_id?: string; reason: ChangePlanUnhandledReason }[]
   /** 审阅来源的方案里后端存的意见原文（`{id, text}` 之外还有锚点）：「改脚本做剩下的」按它取，前端只传 id */
   comments?: { id: string; text: string }[]
-  /** 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`） */
-  preview: { before: string; after: string }
+  /**
+   * 两张图的地址（`GET /api/change-plans/<id>/<before|after>.png`，带项目头 / `pj`）。脚本方案另有 `manifest`：「修改后」那张图自己的元素表
+   * （`GET /api/change-plans/<id>/manifest`，与 `after.png` 同一次渲染；批注点选用，ADR 0206 修订 2026-11-28）；旧方案没有这一项
+   */
+  preview: { before: string; after: string; manifest?: string }
 }
 
 /** `POST /api/change-plans` 的回包：任务已受理，轮询 `getChangePlan` */
@@ -4599,7 +4633,8 @@ export interface ChangePlanNoteBody {
  */
 export async function reviseChangePlan(
   planId: string,
-  body: { notes: ChangePlanNoteBody[]; client_request_id?: string },
+  /** 脚本方案的重改必须带 `connection`（改脚本 Agent 走哪条路由，与创建脚本方案同一条）；图内方案可不带 */
+  body: { notes: ChangePlanNoteBody[]; client_request_id?: string; connection?: string; model?: string; effort?: string; standard?: ChangePlanStandard },
 ): Promise<ChangePlanTask | { ok: false; code: 'not_licensed' }> {
   const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/revise`, {
     method: 'POST',
@@ -4613,6 +4648,20 @@ export async function reviseChangePlan(
   return out as unknown as ChangePlanTask
 }
 
+/**
+ * 脚本方案「修改后」那张图自己的元素表（`plan.preview.manifest` 给的地址；按发起时的项目 `pj` 取，与两张图同一做法）。
+ * 没有 / 取不到抛错（调用方当 null：悬停点选不出，框选 / 整体批注照旧）。
+ */
+export async function fetchChangePlanManifest(path: string, pj: string | null, signal?: AbortSignal): Promise<Manifest> {
+  const res = await fetch(apiUrlFor(path, pj), withProjectFor({ signal }, pj))
+  const out = (await res.json().catch(() => ({}))) as { manifest?: unknown }
+  const man = out.manifest as Manifest | undefined
+  if (!res.ok || !man || !Array.isArray((man as { elements?: unknown }).elements)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: res.status }), '', 'change_plan_unknown', '')
+  }
+  return man
+}
+
 /** 轮询 / 读取一份方案。 */
 export async function getChangePlan(planId: string): Promise<ChangePlanView> {
   const out = await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}`)
@@ -4623,6 +4672,39 @@ export async function getChangePlan(planId: string): Promise<ChangePlanView> {
     throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
   }
   return out as unknown as ChangePlanView
+}
+
+/** 出方案的宿主（后端闭集；其它 / 缺省都当 `other`） */
+export type AgentHost = 'codex' | 'claude_code' | 'other'
+
+/** 桌面发现的 Agent 建议（`GET /api/change-plans?agent=1` 的一行，最小字段） */
+export interface AgentPlanRef {
+  id: string
+  /** 桌面口径的图标识（面板的 `fileId`） */
+  target: string
+  panel: string
+  layout?: string | null
+  host?: AgentHost
+  created: number
+  todos: number
+}
+
+/** 这个项目里 Agent 经绑定会话出的、没过期没落定的建议（ADR 0217 §五）。 */
+export async function listAgentChangePlans(): Promise<AgentPlanRef[]> {
+  const out = await changePlanFetch('/api/change-plans?agent=1')
+  if (!Array.isArray(out.plans)) {
+    throw new EngineError(t('render.failed', { ns: 'errors', status: 200 }), '', 'bad_shape', '')
+  }
+  return (out.plans as unknown[]).filter((p): p is AgentPlanRef => isRec(p) && isStr(p.id) && isStr(p.target) && isStr(p.panel))
+}
+
+/** 用户在窗口里应用了 Agent 的建议卡：记下勾了哪几项（图内的已写进文档，脚本的交回 Agent）。先落定的赢：插件那边先应用过抛 `change_plan_agent_settled`。 */
+export async function reportAgentPlanApplied(planId: string, keys: string[]): Promise<void> {
+  await changePlanFetch(`/api/change-plans/${encodeURIComponent(planId)}/agent-applied`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keys }),
+  })
 }
 
 /** 应用一份脚本修改方案：后端锁内核「脚本还是生成方案时那一版」→ 两处备份 → 原子替换；对不上抛 `change_plan_figure_changed`。 */

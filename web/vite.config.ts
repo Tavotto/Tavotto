@@ -4,7 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 import { noCopyleftPalettes } from './scripts/palette-copyleft-path.mjs'
 
-const BACKEND = 'http://127.0.0.1:5089'
+// 开发预览换端口：TAVOTTO_DEV_BACKEND=http://127.0.0.1:5397 npx vite --port 5297
+const BACKEND = process.env.TAVOTTO_DEV_BACKEND ?? 'http://127.0.0.1:5089'
 
 export default defineConfig({
   plugins: [noCopyleftPalettes(), react(), tailwindcss()],

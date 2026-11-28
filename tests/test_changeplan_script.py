@@ -183,7 +183,7 @@ def sc(plan_env, monkeypatch):  # noqa: F811
         state["render_entry"] = a[-1] if len(a) > 9 else k.get("entry", "main")
         if state.get("render_error"):
             raise cp.PlanFailure(state["render_error"])
-        return state["render"], state.get("data_confirm")
+        return state["render"], state.get("data_confirm"), state.get("manifest")
 
     state["real_render"] = m._change_plan_script_render
     monkeypatch.setattr(m, "_change_plan_script_render", fake_render)
@@ -805,12 +805,12 @@ def test_changed_data_gives_a_confirm_instead_of_failing_but_a_missing_figure_st
     sc, monkeypatch, tmp_path
 ):
     m, client, figs, state = sc
-    png, confirm = _real_render(
+    png, confirm, _after = _real_render(
         m, state, monkeypatch, tmp_path, {"fig": _man(l0="a")}, {"fig": _man(l0="converted")}
     )
     assert png == PNG and confirm["kind"] == "script_data_changed"
     assert confirm["items"] == [{"stem": "fig", "gid": "l0", "reason": "data_changed"}]
-    png, confirm = _real_render(
+    png, confirm, _after = _real_render(
         m, state, monkeypatch, tmp_path, {"fig": _man(l0="a")}, {"fig": _man(l0="a")}
     )
     assert confirm is None
