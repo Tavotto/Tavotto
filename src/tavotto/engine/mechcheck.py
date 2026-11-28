@@ -30,6 +30,13 @@ _GENERIC = re.compile(
 KAPPA = 0.5522847498
 
 
+def recipe_hash(recipe: dict) -> str:
+    """配方**全文**的摘要（规范化 JSON：键排序、无空白）：读时比它，对不上 = 配方被改过（元数据与存下的配方不一致）。"""
+    return hashlib.sha256(
+        json.dumps(recipe, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    ).hexdigest()[:16]
+
+
 def glyph_hash(subpaths: list) -> str:
     """生成几何（子路径节点的比例坐标，量化到 1e-4）的摘要：读时比它，对不上 = 用户改过形状（脱钩）。"""
 
@@ -162,6 +169,25 @@ def components(o: dict) -> int:
     return len({find(i) for i in range(len(subs))}) if subs else 0
 
 
+_KAPPA = 0.5522847498
+
+
+def _ellipse_handles(nodes, ps, mids, k, step, w, h, tol) -> bool:
+    """四个中点锚点的手柄必须真的是椭圆的：沿切线方向、长度 ≈ 0.5523 × 半轴（容差内）；短手柄（圆角菱形）/ 贴着锚点（正菱形）不算。"""
+    for i in range(4):
+        n = nodes[(k + step * i) % 4]
+        p = n["p"]
+        ax = mids[i]
+        horiz = ax[1] in (0, 1)  # 顶 / 底：切线水平，半轴 = w / 2
+        want = _KAPPA * ((w if horiz else h) / 2)
+        for key in ("in", "out"):
+            dx, dy = (n[key][0] - p[0]) * w, (n[key][1] - p[1]) * h
+            along, across = (abs(dx), abs(dy)) if horiz else (abs(dy), abs(dx))
+            if abs(along - want) > tol or across > tol:
+                return False
+    return True
+
+
 def _fits_native(o: dict, tol: float = 0.05) -> str | None:
     """路径是不是其实是一个矩形 / 椭圆 / 直线（容差 0.05 mm）：是 = 返回该用的原生形状。"""
     subs = o.get("subpaths") or []
@@ -190,8 +216,10 @@ def _fits_native(o: dict, tol: float = 0.05) -> str | None:
         mids = [(0.5, 0), (1, 0.5), (0.5, 1), (0, 0.5)]
         for k in range(4):
             for step in (1, -1):
-                if all(at(ps[(k + step * i) % 4], *mids[i]) for i in range(4)) and all(
-                    n.get("in") and n.get("out") for n in nodes
+                if (
+                    all(at(ps[(k + step * i) % 4], *mids[i]) for i in range(4))
+                    and all(n.get("in") and n.get("out") for n in nodes)
+                    and _ellipse_handles(nodes, ps, mids, k, step, w, h, tol)
                 ):
                     return "ellipse"
     return None
@@ -295,6 +323,19 @@ def check(
                 failed.append(
                     {"check": "glyph_meta", "item": o["id"], "detail": {"reason": "malformed"}}
                 )
+            elif "recipe" in g and (
+                not isinstance(g["recipe"], dict)
+                or g.get("recipe_format") != 1
+                or g.get("recipe_hash") != recipe_hash(g["recipe"])
+            ):
+                # 现写配方的元数据：格式版本不对、或 `recipe_hash` 与存下的配方全文对不上
+                failed.append(
+                    {
+                        "check": "glyph_meta",
+                        "item": o["id"],
+                        "detail": {"reason": "recipe_hash_mismatch"},
+                    }
+                )
             else:
                 if g["hash"] != glyph_hash(o.get("subpaths") or []):
                     failed.append(
@@ -305,8 +346,11 @@ def check(
                         }
                     )
                 spec = (catalog or {}).get(g["kind"])
-                if catalog is not None and (
-                    spec is None or g["version"] not in (spec.get("versions") or ())
+                if (
+                    catalog is not None
+                    and "recipe" not in g
+                    and not g.get("host_made")
+                    and (spec is None or g["version"] not in (spec.get("versions") or ()))
                 ):
                     failed.append(
                         {
@@ -348,8 +392,8 @@ def check(
             )
     if free_paths:
         try:
-            from . import pathquality  # noqa: F401 — 6.A（路径质量核对）合入后接上
-        except ImportError:
+            from . import pathquality
+        except ImportError:  # 没有 6.A 的旧引擎：如实列 unknown，不假装核过
             unknown.append(
                 {
                     "check": "path_quality",
@@ -357,10 +401,40 @@ def check(
                     "detail": {"reason": "pathquality_missing", "paths": free_paths},
                 }
             )
-        else:  # pragma: no cover — 接口占位：6.A 合入后在这里逐个路径调它
-            unknown.append(
-                {"check": "path_quality", "item": None, "detail": {"reason": "not_wired"}}
-            )
+        else:
+            for o in new:
+                if not pathquality.applies_to(o):
+                    continue
+                res = pathquality.check_path(o)
+                if res["verdict"] == pathquality.FAIL:
+                    failed.append(
+                        {
+                            "check": "path_quality",
+                            "item": o["id"],
+                            "detail": {
+                                "issues": [
+                                    i["code"] for i in res["issues"] if i["severity"] == "fail"
+                                ],
+                                "next": "用补丁操作 simplify 自己重写，后端不偷偷简化",
+                            },
+                        }
+                    )
+                elif res["verdict"] == pathquality.ACCEPTABLE:
+                    warned.append(
+                        {
+                            "check": "path_quality",
+                            "item": o["id"],
+                            "detail": {"reason": ",".join(i["code"] for i in res["issues"])},
+                        }
+                    )
+                elif res["verdict"] == pathquality.SKIPPED:
+                    unknown.append(
+                        {
+                            "check": "path_quality",
+                            "item": o["id"],
+                            "detail": {"reason": "not_readable"},
+                        }
+                    )
     if new:
         failed += _group_tree(new, everything or new, max_depth)
     if require_names:

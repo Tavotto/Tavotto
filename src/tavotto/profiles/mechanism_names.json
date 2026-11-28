@@ -9,7 +9,8 @@
     "text": { "zh": "标签", "en": "Label" },
     "arrow": { "zh": "箭头", "en": "Arrow" },
     "path": { "zh": "曲线", "en": "Curve" },
-    "shape": { "zh": "形状", "en": "Shape" }
+    "shape": { "zh": "形状", "en": "Shape" },
+    "hydrophobic_core": { "zh": "疏水核心", "en": "Hydrophobic core" }
   },
   "glyphs": {
     "membrane": { "zh": "双层膜", "en": "Lipid bilayer" },
