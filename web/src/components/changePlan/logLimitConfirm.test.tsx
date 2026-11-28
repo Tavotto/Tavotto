@@ -201,8 +201,9 @@ it('英文复数：1 place / 3 places，1 change / 3 changes，没有「1 places
   expect(text).not.toMatch(/1 places/)
   act(() => cps().openDialog('a'))
   await render(<ChangePlanDialog />)
-  expect(q('[data-change-group="g2"]')?.textContent).toContain('1 change')
-  expect(q('[data-change-group="g2"]')?.textContent).not.toMatch(/^\s*1\s*$/)
+  // 助手来源的图内组逐行列出改了什么（不再只说「1 change」）：属性名 + 前 → 后
+  expect(q('[data-change-group="g2"] [data-change-line]')?.textContent).toContain('Font size')
+  expect(q('[data-change-group="g2"]')?.textContent).not.toMatch(/1 changes/)
 })
 
 it('带自动腾出的边距的组：清单行灰字里多一句「顺带留出边距，轴标签不被裁掉」；没有的组没有；英文同样', async () => {

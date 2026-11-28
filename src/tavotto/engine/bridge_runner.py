@@ -200,6 +200,9 @@ def _install_savefig_hook(mfigure) -> None:
         return
     _REAL_SAVEFIG = mfigure.Figure.savefig
     figcapture.install_colorbar_capture(mfigure)
+    from matplotlib import legend as mlegend
+
+    figcapture.install_legend_capture(mlegend)
     # 与 safe worker 同一处兜底（#1872）：macOS 系统 Helvetica 小字号带 hinting 载字形失败时只对那一次按无 hinting
     # 重试。native 截图同样走 Agg（预览 / 活图），缺了它 safe→native 回退后照样起不来。
     from matplotlib.backends import backend_agg

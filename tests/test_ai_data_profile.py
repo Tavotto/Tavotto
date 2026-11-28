@@ -425,7 +425,7 @@ def _code(path, sheet=None):
     return e.value.code
 
 
-@pytest.mark.parametrize("name", ["old.xls", "m.xlsm", "b.xlsb", "UP.XLS"])
+@pytest.mark.parametrize("name", ["old.xls", "b.xlsb", "UP.XLS"])
 def test_legacy_excel_is_refused_with_a_stable_code(tmp_path, name):
     (tmp_path / name).write_bytes(b"\xd0\xcf\x11\xe0")
     assert _code(tmp_path / name) == "data_excel_unsupported"
@@ -710,7 +710,11 @@ def test_profile_folder_lists_tables_skips_and_relative_posix_paths(tmp_path):
         ("book.xlsx", "Bad", "data_header_invalid"),
         ("broken.xlsx", None, "data_xlsx_invalid"),
         ("empty.csv", None, "data_empty"),
-        ("m.xlsm", None, "data_excel_unsupported"),
+        (
+            "m.xlsm",
+            None,
+            "data_xlsx_invalid",
+        ),  # `.xlsm` 现在按工作簿读：这一份只有一个字节，不是 zip
         ("old.xls", None, "data_excel_unsupported"),
         ("ragged.csv", None, "data_ragged"),
     ]

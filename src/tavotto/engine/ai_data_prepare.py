@@ -96,6 +96,8 @@ REASON_MAX = 80
 DROPPED_MAX = 50
 #: 给模型看的脚本输出（单次）
 OUTPUT_CLIP_CHARS = 6000
+#: 模型建议的默认纵轴最多几列（与「读懂数据」对 `picks.y` 的上限同一个量级）
+SUGGEST_MAX_Y = 8
 PREVIEW_LINES = 6
 PREVIEW_CHARS = 2000
 FIGURES_DIR = ai_data_task.FIGURES_DIR
@@ -912,7 +914,9 @@ class Checker:
                 "and any dependence on set or hash ordering (sort before writing).",
                 pair[1],
             )
-        # 通过：记事实（`verify` / `stage` / `adopt` 只信它）
+        # 通过：记事实（`verify` / `stage` / `adopt` 只信它）。数值列的列名另放（不进 `checked`：它会进任务历史，列名不进历史）
+        cand.extras["numeric_names"] = list(table["numeric_columns"])
+        cand.extras.pop("suggested", None)  # 重新核过的表：上一份建议作废
         cand.checked = {
             "script_sha256": _sha256_bytes(source),
             "out_sha256": first.out_sha256,
@@ -938,6 +942,35 @@ class Checker:
         )
         return True, msg
 
+    def suggest(self, plot: dict) -> None:
+        """模型在 `finish` 里给的默认画法 → 按**这次通过检查的输出表**核一遍，留下合法的（`cand.extras["suggested"]`）。
+        `y`：数值列，去重、至多 `SUGGEST_MAX_Y` 个；`x` / `group`：表里的列、不与 `y` 相同、彼此不同。`y` 一个都不合法 = 整份不收
+        （没有纵轴的建议没法用）。只是之后出图的默认值，用户能改；不改变检查结论，也不进任务历史。"""
+        cand = self.cand
+        cand.extras.pop("suggested", None)
+        facts = cand.checked
+        if facts is None or not isinstance(plot, dict):
+            return
+        columns = list(facts["columns"])
+        numeric = set(cand.extras.get("numeric_names") or ())
+        raw_y = plot.get("y")
+        raw_y = [raw_y] if isinstance(raw_y, str) else (raw_y if isinstance(raw_y, list) else [])
+        ys: list[str] = []
+        for c in raw_y:
+            if isinstance(c, str) and c in numeric and c not in ys:
+                ys.append(c)
+        ys = ys[:SUGGEST_MAX_Y]
+        if not ys:
+            return
+        out: dict = {"y": ys}
+        x = plot.get("x")
+        if isinstance(x, str) and x in columns and x not in ys:
+            out["x"] = x
+        g = plot.get("group")
+        if isinstance(g, str) and g in columns and g not in ys and g != out.get("x"):
+            out["group"] = g
+        cand.extras["suggested"] = out
+
     def _fail(self, code: str, detail: str, run: TrialRun) -> str:
         text = f"check failed ({code}): {detail}"
         if code in ("run_failed", "report_missing", "report_invalid"):
@@ -961,6 +994,7 @@ def make_hooks(
         sources={cand.source.label: cand.source},
         run_script=checker.run_script,
         check=checker.check,
+        suggest=checker.suggest,
         environment_note=probe_environment(cand.python, cand.project_root),
         extras={"checker": checker},
     )
@@ -1205,6 +1239,8 @@ def stage(cand: PrepareCandidate) -> None:
         "rows_out": facts["rows_out"],
         "determinism": facts["determinism"],
         "accounting": facts["accounting"],
+        #: 模型建议的默认画法（已按输出表核过，见 `Checker.suggest`）；没有 = 空
+        "suggested": dict(cand.extras.get("suggested") or {}),
         "created": time.time(),
     }
     atomicio.write_bytes(cand.dir / META_NAME, atomicio.dumps_json(meta))
@@ -1241,6 +1277,17 @@ def candidate_table(sid: str) -> Path | None:
         return p
     except (PrepareError, OSError, KeyError, TypeError):
         return None
+
+
+def candidate_roles(sid: str) -> dict:
+    """**只读入口**：这份候选的模型建议画法 `{"y": [列], "x"?: 列, "group"?: 列}`（列名都在 `out.csv` 的表头里，已核过）；
+    没有建议 / 候选不在 / 不是 ready = `{}`。只是出图时的默认值——用户选了别的就以用户的为准。"""
+    try:
+        _cdir, meta = _load_meta(sid)
+    except PrepareError:
+        return {}
+    got = meta.get("suggested")
+    return dict(got) if isinstance(got, dict) else {}
 
 
 def discard(sid: str) -> dict:

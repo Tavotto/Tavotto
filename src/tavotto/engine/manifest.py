@@ -88,10 +88,13 @@ from legendmodel import (
     _legend_loc_name,
     bind_colormap_swatches,
     bind_legend_entries,
+    bind_verified_sources,
     legend_anchor_state,
     legend_entries,
     legend_pos_cfg,
     legend_proxy_names,
+    legend_style_mismatch,
+    legend_verified_gid,
 )
 from manifest_fields import (
     AXIS_FRAME_SIDES,
@@ -1389,6 +1392,11 @@ def _bind_legends(state: FigState) -> None:
             bind_legend_entries(leg, cands, auto)
         except Exception as exc:  # noqa: BLE001 — 绑定失败只是没有绑定，不拦渲染
             print(f"[legend] {el['gid']} 的源对象绑定失败: {exc}", file=sys.stderr)
+        try:
+            # 确证来源（ADR 0219）：只认创建时实际传入的 handle 对象，同一份同面板候选；与上面的编辑绑定互不影响
+            bind_verified_sources(leg, cands)
+        except Exception as exc:  # noqa: BLE001 — 确证不了就是没有确证，不拦渲染
+            print(f"[legend] {el['gid']} 的来源确证失败: {exc}", file=sys.stderr)
         try:
             bind_colormap_swatches(leg, map_cands)
         except Exception as exc:  # noqa: BLE001 — 同上
@@ -6213,6 +6221,19 @@ def _measure_manifest(
             info = _legend_entry_info(artist)
             if info is not None:
                 entry["legend_entry"] = info
+                # 图例示意与它代表的曲线 / 柱看得见的样式对不上（`legend-style-mismatch`）：只读事实，
+                # 只在**来源确证**（ADR 0219：创建图例时实际传入的就是同面板那条已画系列）、认得准、且确实不一致时
+                # 出现，`legend_style_source` 写那条确证系列的 gid（不是 0034 猜的 `source_gid`）；
+                # 一致 / 判不了 / 没确证时两个键整个缺席，预检输出逐字节不变
+                verified = legend_verified_gid(artist)
+                if verified:
+                    try:
+                        diffs = legend_style_mismatch(artist)
+                    except Exception:  # noqa: BLE001 — 事实只是提示，量不了不拖垮清单
+                        diffs = None
+                    if diffs:
+                        entry["legend_style_mismatch"] = diffs
+                        entry["legend_style_source"] = verified
         if el["role"] == "legend":
             entry["legend_cover"] = legend_cover(
                 artist, renderer, W, H, fig.dpi, legend_cover_budget

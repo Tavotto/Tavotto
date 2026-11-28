@@ -44,6 +44,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { isKnownObject, objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { GROUP_NAME_MAX_CHARS, groupPathOf, layerTree, type LayerNode } from '@/lib/groupTree'
 import { layoutKindLabel } from '@/store/actions'
+import { glyphKeyOf, LayerGlyph } from './LayerGlyph'
 import { Badge } from '../ui/Badge'
 import { EmptyLine } from '../ui/EmptyLine'
 import { MenuItem, MenuSeparator } from '../ui/Menu'
@@ -626,7 +627,13 @@ function LayerRow({
       {/* 顶层对象没有折叠箭头，留一个空列：与组标题行的图标对齐 */}
       <TreeChevron />
       <span className="contents" title={mask ? lt('clipPathTip') : undefined}>
-        <TreeIcon icon={Icon} />
+        {mask || !glyphKeyOf(obj) ? (
+          <TreeIcon icon={Icon} />
+        ) : (
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
+            <LayerGlyph obj={obj} hidden={hidden} />
+          </span>
+        )}
       </span>
       {editing ? (
         <input

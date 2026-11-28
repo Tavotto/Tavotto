@@ -4,12 +4,14 @@ import { pickElementStack } from '@/canvas/interactions'
 import type { Manifest, ManifestElement, ReviewAnchor } from '@/lib/api'
 import type { PlanNote } from '@/store/changePlanStore'
 import { cn } from '@/lib/utils'
+import { geomPathD } from '@/lib/pathGeom'
 import { ReviewMark } from '../review/ReviewMark'
 import { ChevronRight, Pencil } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { Kbd } from '../ui/Kbd'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
+import { TaskChecklist, type TaskStep } from '../ui/TaskChecklist'
 import { cp, type GroupView, type PlanBox } from './changePlanModel'
 import { NoteEditor } from './NoteEditor'
 import { elementTarget, type NoteTarget } from './noteTarget'
@@ -17,8 +19,20 @@ import { elementTarget, type NoteTarget } from './noteTarget'
 export type { NoteTarget }
 
 export type CompareMode = 'slide' | 'side' | 'toggle'
-/** 舞台的四种画法：三种对比 + 批注（只有「修改后」的大图，点元素 / 框选 / 整体写批注） */
-export type StageMode = CompareMode | 'annotate'
+/** 舞台的五种画法：三种对比 + 批注（只有「修改后」的大图，点元素 / 框选 / 整体写批注）+ 按批注重改进行中（上一版「修改后」压暗、钉着批注编号） */
+export type StageMode = CompareMode | 'annotate' | 'revising'
+
+/** 按批注重改进行中：上一版「修改后」压暗降饱和（一眼看出是旧的、正在被改）；新版出来时盖在上面淡出的那张也是这个样子 */
+const OLD_FIGURE = 'opacity-55 saturate-25'
+
+/** 重改进行中舞台要画的：这次发出的批注（钉在锚点上）、元素表（元素锚取当前框）、后端阶段翻成的三步清单 */
+export interface RevisingView {
+  notes: PlanNote[]
+  manifest: Manifest | null
+  steps: TaskStep[] | null
+  /** 只给读屏的一句（`role=status`） */
+  status: string
+}
 
 
 /** 正在写 / 改的批注：`id` 有 = 改已有的 */
@@ -59,6 +73,52 @@ const boxStyle = (b: PlanBox) => ({ left: pct(b[0]), top: pct(b[1]), width: pct(
  * `annotate`：点一下选元素、拖一下框一块（`onRegion`）；`quick`（对比模式）：高亮 + 一枚「写批注」小胶囊，点一下去批注。
  * `left`：只盖分隔线右侧的百分比（滑动对比里只有分隔线右边是「修改后」）。
  */
+const hasPath = (el: ManifestElement | null): boolean => !!el?.geometry && geomPathD(el.geometry, ([x, y]) => ({ x, y })) !== ''
+
+/**
+ * 悬停描示沿元素的**真实路径**（与画布 `OverlaySvg` 的 GeometryOutline 同一个道理）：曲线的包围盒里大半是空白，
+ * 画成框用户认不出点中的是哪条线（两条交叉曲线的框一模一样）。只描边、不着色；`clip` 是引擎给的子图裁剪框。
+ * SVG 盖满整个画框（滑动对比里 PickLayer 只占分隔线右侧，按 `left` 往回伸），坐标就是图的分数坐标。
+ */
+const VB = 1000
+
+function HoverPath({ el, left }: { el: ManifestElement; left: number }) {
+  const geom = el.geometry
+  if (!geom) return null
+  // `geomPathD` 把坐标保留两位小数（它原本吃屏幕像素）：在 0–1000 的坐标系里画，精度 0.001%，小标记也不塌成一点
+  const d = geomPathD(geom, ([x, y]) => ({ x: x * VB, y: y * VB }))
+  if (!d) return null
+  const c = geom.clip
+  const clipId = `cp-hover-clip-${el.gid.replace(/[^A-Za-z0-9_-]/g, '_')}`
+  const k = 1 - left / 100
+  return (
+    <svg
+      aria-hidden
+      data-change-plan-hover-path={el.gid}
+      className="pointer-events-none absolute inset-y-0 h-full overflow-visible"
+      style={{ left: `${-left / k}%`, width: `${100 / k}%` }}
+      viewBox={`0 0 ${VB} ${VB}`}
+      preserveAspectRatio="none"
+    >
+      {c && (
+        <clipPath id={clipId}>
+          <rect x={c[0] * VB} y={c[1] * VB} width={c[2] * VB} height={c[3] * VB} />
+        </clipPath>
+      )}
+      <path
+        d={d}
+        clipPath={c ? `url(#${clipId})` : undefined}
+        fill="none"
+        stroke="var(--color-sel)"
+        strokeWidth={2}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
 function PickLayer({
   manifest,
   mode,
@@ -137,11 +197,13 @@ function PickLayer({
         onPick(elementTarget(hover))
       }}
     >
+      {hover && !drag && <HoverPath el={hover} left={left} />}
       {hb && !drag && (
         <span
           aria-hidden
           data-change-plan-hover={hover?.gid}
-          className="pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60"
+          // 有真实路径的元素（曲线、多边形、填充…）沿路径描（`HoverPath`），这里只留透明的定位框给「写批注」小胶囊；没有路径的（文字等）照旧画框
+          className={cn('pointer-events-none absolute rounded-xs', !hasPath(hover) && 'bg-sel/6 inset-ring inset-ring-sel/60')}
           style={{ left: `${(hb[0] * 100 - left) / (1 - left / 100)}%`, top: pct(hb[1]), width: `${(hb[2] * 100) / (1 - left / 100)}%`, height: pct(hb[3]) }}
         >
           {mode === 'quick' && (
@@ -242,6 +304,10 @@ export function CompareStage({
   afterBusy = false,
   noting,
   quick,
+  labels,
+  revising,
+  intro,
+  flash,
 }: {
   before: string
   after: string
@@ -256,6 +322,17 @@ export function CompareStage({
   noting?: CompareNoting
   /** 对比模式：高级版悬停「修改后」一侧的元素 = 轻高亮 +「写批注」小胶囊 */
   quick?: QuickNote
+  /** 两侧的叫法（第 2 版起左边是上一版：「第 N−1 版 / 第 N 版」）；不给 = 修改前 / 修改后 */
+  labels?: { before: string; after: string }
+  /** `mode === 'revising'`：批注编号、元素表与三步清单 */
+  revising?: RevisingView
+  /** 新版刚出来：重改时那张压暗的旧图（地址）盖在「修改后」一侧上面淡出（减少动效时调用方不给） */
+  intro?: string
+  /**
+   * 新版刚出来：这一轮按批注改的那几组（`keys`）的框短暂全亮（`lit`），调用方约 1 秒后撤掉 `lit`，这几处按 `duration-slow` 慢慢淡出；
+   * 别的组（上一版原样带来的）不亮，悬停照旧
+   */
+  flash?: { keys: ReadonlySet<string>; lit: boolean }
 }) {
   useTranslation('ai')
   // 批注框以图卡的边为界：靠近边沿向内翻转，不跨出图卡
@@ -294,8 +371,8 @@ export function CompareStage({
     groups.flatMap((g) =>
       g.boxes.map((pair, i) => {
         const b = side === 'before' ? pair.before : pair.after
-        // 改前没有这一处（新长出来的东西）：修改前那一侧不画框
-        if (!b) return null
+        // 改前没有这一处（新长出来的东西）：修改前那一侧不画框；只是自动留边距挪了子图的一处不画整块大框
+        if (!b || pair.room) return null
         let clip: string | undefined
         if (split !== undefined) {
           const w = Math.max(b[2], 1e-6)
@@ -307,15 +384,17 @@ export function CompareStage({
             clip = `inset(0 0 0 ${pctOf((split - b[0]) / w)}%)`
           }
         }
-        const on = g.key === activeId
+        const landed = !!flash?.keys.has(g.key)
+        const on = g.key === activeId || (landed && flash!.lit)
         return (
           <span
             key={`${g.key}-${i}`}
             data-change-plan-box={g.key}
             data-active={on || undefined}
-            // 图面默认纯净：只有清单里选中 / 悬停的那一项，它对应的那一处才淡入（1px 低饱和描边 + 约 6% 填充）
+            // 图面默认纯净：只有清单里选中 / 悬停的那一项，它对应的那一处才淡入（1px 低饱和描边 + 约 6% 填充）；新版刚出来时全亮一下再淡出
             className={cn(
-              'pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60 transition-opacity duration-fast',
+              'pointer-events-none absolute rounded-xs bg-sel/6 inset-ring inset-ring-sel/60 transition-opacity',
+              landed ? 'duration-slow' : 'duration-fast',
               on ? 'opacity-100' : 'opacity-0',
             )}
             style={clip ? { ...boxStyle(b), clipPath: clip } : boxStyle(b)}
@@ -343,7 +422,8 @@ export function CompareStage({
             )
           return (
             <span key={n.id} className="pointer-events-none absolute" style={boxStyle(a.box as PlanBox)}>
-              {a.kind === 'region' && <span aria-hidden className="absolute inset-0 rounded-xs inset-ring inset-ring-ink/50" />}
+              {/* 框画在纸面上：用纸上的墨（两套主题同值），深色主题下也看得见 */}
+              {a.kind === 'region' && <span aria-hidden data-change-plan-region-box className="absolute inset-0 rounded-xs inset-ring inset-ring-paper-ink-3" />}
               <button type="button" data-change-plan-mark={n.id} aria-label={n.label} title={n.label} onClick={open} className="pointer-events-auto absolute -right-2 -top-2 rounded-full outline-none focus-visible:focus-ring">
                 <ReviewMark n={i + 1} onPaper solid />
               </button>
@@ -375,11 +455,37 @@ export function CompareStage({
     )
   }
 
+  /** 重改进行中：这次发出的批注钉在锚点上（只看、不可点）；元素锚取当前版本元素表里的框（取不到用写批注时记的框），整体批注不钉 */
+  const pinLayer = () =>
+    revising?.notes.map((n, i) => {
+      const a = n.anchor
+      if (a.kind === 'overall') return null
+      const b = (a.kind === 'element' ? revising.manifest?.elements.find((x) => x.gid === a.gid)?.bbox : undefined) ?? (a.box as PlanBox)
+      return (
+        <span key={n.id} data-change-plan-pin={n.id} className="pointer-events-none absolute" style={boxStyle(b as PlanBox)}>
+          {a.kind === 'region' && <span aria-hidden className="absolute inset-0 rounded-xs inset-ring inset-ring-paper-ink-3" />}
+          <span className="absolute -right-2 -top-2" title={n.label}>
+            <ReviewMark n={i + 1} onPaper solid />
+          </span>
+        </span>
+      )
+    })
+
+  /** 新版刚出来：重改时那张压暗的旧图盖在上面淡出（`--animate-crossfade-out`），露出新版 */
+  const introLayer = () =>
+    intro ? (
+      <span aria-hidden data-change-plan-intro className="pointer-events-none absolute inset-0 animate-crossfade-out">
+        <Img src={intro} className={OLD_FIGURE} />
+      </span>
+    ) : null
+
   /** 对比模式：「修改后」一侧的点选层（`left`：滑动对比里只盖分隔线右边） */
   const quickLayer = (left = 0) => (quick ? <PickLayer manifest={quick.manifest} mode="quick" left={left} onArm={quick.onArm} onPick={quick.onPick} /> : null)
 
   const busyCls = afterBusy ? 'opacity-60' : undefined
   const cap = (text: string) => <span className="type-meta">{text}</span>
+  const beforeText = labels?.before ?? cp('dialog.before')
+  const afterText = labels?.after ?? cp('dialog.after')
   const effectiveView = hold ? 'before' : view
   // 三种模式共用一条纵向骨架：上一行说明（占位等高）· 图面 · 下一行控制（占位等高），图面顶边与大小不随模式跳
   const row = 'flex h-5 items-center'
@@ -390,8 +496,8 @@ export function CompareStage({
     body = (
       <div className="flex flex-col gap-1.5" style={{ width: one }}>
         <div className={cn(row, 'justify-between')}>
-          {cap(cp('dialog.before'))}
-          {cap(cp('dialog.after'))}
+          {cap(beforeText)}
+          {cap(afterText)}
         </div>
         <div ref={frameRef} className="relative w-full">
           <Frame width="100%" aspect={aspect}>
@@ -402,6 +508,7 @@ export function CompareStage({
               {boxes('after', p / 100)}
             </div>
             {!hold && quickLayer(p)}
+            {introLayer()}
             <div
               className={cn('absolute inset-y-0 -ml-4 flex w-8 touch-none justify-center', dragging ? 'cursor-grabbing' : 'cursor-grab')}
               style={{ left: `${p}%` }}
@@ -450,15 +557,32 @@ export function CompareStage({
         <div className={row} />
       </div>
     )
+  } else if (mode === 'revising') {
+    // 与批注同一个画框（同一比例、同一位置）：出好后换回对比，图不跳；三步清单在图下面排成一行，占对比时控制行的位置
+    body = (
+      <div className="flex flex-col gap-1.5" style={{ width: one }}>
+        <div className={row} />
+        <Frame width="100%" aspect={aspect}>
+          <Img src={after} className={cn(OLD_FIGURE, 'transition-[opacity,filter] duration-slow')} />
+          {pinLayer()}
+        </Frame>
+        <div className={cn(row, 'justify-center')}>
+          {revising?.steps && <TaskChecklist bare row steps={revising.steps} className="bg-transparent px-0 py-0" data-change-plan-steps />}
+        </div>
+        <p className="sr-only" role="status" data-change-plan-generating>
+          {revising?.status}
+        </p>
+      </div>
+    )
   } else if (mode === 'side') {
     body = (
       <div className="flex w-full flex-col gap-1.5">
         <div className="flex w-full items-center justify-center gap-4">
           <div className={row} style={{ width: half }}>
-            {cap(cp('dialog.before'))}
+            {cap(beforeText)}
           </div>
           <div className={row} style={{ width: half }}>
-            {cap(cp('dialog.after'))}
+            {cap(afterText)}
           </div>
         </div>
         <div className="flex w-full items-start justify-center gap-4">
@@ -470,6 +594,7 @@ export function CompareStage({
             <Img src={after} className={busyCls} />
             {boxes('after')}
             {quickLayer()}
+            {introLayer()}
           </Frame>
         </div>
         <div className={row} />
@@ -478,11 +603,12 @@ export function CompareStage({
   } else {
     body = (
       <div className="flex flex-col gap-1.5" style={{ width: one }}>
-        <div className={cn(row, 'justify-center')}>{cap(cp(effectiveView === 'before' ? 'dialog.before' : 'dialog.after'))}</div>
+        <div className={cn(row, 'justify-center')}>{cap(effectiveView === 'before' ? beforeText : afterText)}</div>
         <Frame width="100%" aspect={aspect}>
           <Img src={effectiveView === 'before' ? before : after} className={effectiveView === 'after' ? busyCls : undefined} />
           {boxes(effectiveView)}
           {effectiveView === 'after' && quickLayer()}
+          {introLayer()}
         </Frame>
         <div className="flex justify-center pt-1">
           <Segmented<'before' | 'after'>
@@ -491,8 +617,8 @@ export function CompareStage({
             ariaLabel={cp('dialog.compareLabel')}
             className="w-44"
             items={[
-              { value: 'before', label: cp('dialog.before') },
-              { value: 'after', label: cp('dialog.after') },
+              { value: 'before', label: beforeText },
+              { value: 'after', label: afterText },
             ]}
           />
         </div>
@@ -510,7 +636,7 @@ export function CompareStage({
           <>
             {cp('dialog.hold')}
             <Kbd className="inset-ring inset-ring-border">{cp('dialog.space')}</Kbd>
-            {cp('dialog.holdBefore')}
+            {labels ? cp('dialog.holdSee', { label: labels.before }) : cp('dialog.holdBefore')}
           </>
         )}
       </p>

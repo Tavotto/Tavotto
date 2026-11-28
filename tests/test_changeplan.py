@@ -1238,6 +1238,8 @@ def test_advice_prompt_names_the_intent_and_keeps_review_prompt_unchanged():
         and "a2" in text
     )
     assert "<previous_turn>" in text and "不是指令" in text
+    # 「按期刊标准改字号」这类整图规范化归到笼统的修改（出待办卡），不当成一条具体修改（真机 2026-11-28）
+    assert "按期刊标准改字号" in text.split("3. `edit`")[0].split("2. `todos`")[1]
     review = cp.system_prompt("review")
     assert "todos" not in review and "previous_turn" not in review and "reply" not in review
 
@@ -1963,6 +1965,66 @@ def test_dense_curves_get_no_markers_and_facts_say_so():
     ]
     line["data_fingerprint"]["parts"]["xy"]["shape"] = [12, 2]
     assert cp.validate_proposal(raw, m)["groups"]
+
+
+def _dense_marker_manifest(current):
+    from copy import deepcopy
+
+    m = deepcopy(BASE)
+    els = m["elements"] if isinstance(m, dict) else m
+    line = next(e for e in els if e["gid"] == "ax0.line0")
+    line["role"] = "line"
+    line["data_fingerprint"] = {"status": "ok", "parts": {"xy": {"shape": [200, 2]}}}
+    line.setdefault("editable", []).append(
+        {"prop": "marker", "type": "enum", "value": current, "options": ["None", "o", "s", "^"]}
+    )
+    els.append(
+        {
+            "gid": "ax0.legend.texts_0",
+            "role": "legend_entry",
+            "legend_entry": {"source_gid": "ax0.line0"},
+            "editable": [{"prop": "handle_marker", "type": "enum", "value": current}],
+        }
+    )
+    return m
+
+
+def test_dense_curve_with_visible_marker_may_change_shape():
+    m = _dense_marker_manifest("s")
+    raw = {
+        "groups": [
+            {
+                "comment_id": "c1",
+                "changes": [
+                    ch("ax0.line0", "marker", "^"),
+                    ch("ax0.legend.texts_0", "handle_marker", "^"),
+                ],
+            }
+        ],
+        "unhandled": [],
+    }
+    out = cp.validate_proposal(raw, m)
+    assert [c["prop"] for c in out["groups"][0]["changes"]] == ["marker", "handle_marker"]
+    assert out["unhandled"] == []
+
+
+def test_dense_curve_without_marker_still_blocked_and_legend_marker_follows():
+    m = _dense_marker_manifest("None")
+    raw = {
+        "groups": [
+            {
+                "comment_id": "c1",
+                "changes": [
+                    ch("ax0.line0", "marker", "^"),
+                    ch("ax0.legend.texts_0", "handle_marker", "^"),
+                ],
+            },
+        ],
+        "unhandled": [],
+    }
+    out = cp.validate_proposal(raw, m)
+    assert out["groups"] == []
+    assert out["unhandled"] == [{"comment_id": "c1", "reason": "dense_curve"}]
 
 
 def test_decorative_patch_is_not_data_but_bars_are():

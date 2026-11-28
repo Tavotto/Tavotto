@@ -562,6 +562,8 @@ def _blocks(issue: dict, targets: dict) -> bool:
     由用户目标直接决定的规范规则不挡（那是用户的决定，报告里另列）。"""
     if decided_by_targets(targets, str(issue.get("id"))):
         return False
+    if issue.get("id") in preflight.NON_BLOCKING_RULES:
+        return False
     if issue.get("severity") == "error":
         return True
     if issue.get("id") in interference.CHECK_IDS:

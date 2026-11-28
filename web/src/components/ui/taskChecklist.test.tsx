@@ -98,4 +98,17 @@ describe('TaskChecklist', () => {
     // 只剩进行中那一步的转圈
     expect(host.querySelectorAll('.animate-spin')).toHaveLength(host.querySelectorAll('[data-task-step] .animate-spin').length)
   })
+
+  it('bare + row：步骤排成一行（每步一样高、不换图标语言）；row 单独给、没有 bare 时照旧竖排', async () => {
+    await act(async () => root.render(<TaskChecklist bare row steps={steps(1)} />))
+    const list = host.querySelector<HTMLOListElement>('[data-task-steps]')!
+    expect(list.dataset.taskRow).toBe('true')
+    expect(list.className).toContain('flex-row')
+    expect(host.querySelectorAll('[data-task-step]')).toHaveLength(4)
+    expect(host.querySelector('[data-task-step]')!.className).toContain('h-5')
+    expect(states()).toEqual(['done', 'active', 'pending', 'pending'])
+    await act(async () => root.render(<TaskChecklist title="正在安装" row steps={steps(1)} />))
+    expect(host.querySelector<HTMLOListElement>('[data-task-steps]')!.dataset.taskRow).toBeUndefined()
+    expect(host.querySelector('[data-task-steps]')!.className).toContain('flex-col')
+  })
 })

@@ -2,7 +2,7 @@
 """「从数据到图」多认几种文件类型（ADR 0178 修订 2026-11-28）：`.prn` / `.xy`（走现有文本嗅探）与 `.jsonl` / `.ndjson`（JSON Lines）。
 
 判据的主语：
-1. 后缀白名单的**边界**——认的认、不认的（`.out` / `.json` / `.xlsm`）不进 `TABLE_SUFFIXES`；
+1. 后缀白名单的**边界**——认的认、不认的（`.out` / `.json` / `.ods`）不进 `TABLE_SUFFIXES`；
 2. JSON Lines 的读法：每个非空行一个**扁平对象**，列 = 键的并集（首次出现顺序），缺键 / null = 空格子，数字照原文，布尔 `true` / `false`；
    嵌套 / 不是对象 / 重复键 / 非标准记号 / 非 UTF-8 一律拒绝，不猜；
 3. **父进程读出的表与生成脚本读出的表是同一张**（公共模块真的导入，用它读同一个文件，逐项对拍）；
@@ -82,7 +82,7 @@ def test_new_suffixes_are_table_suffixes(suffix):
     assert suffix in adf.TABLE_SUFFIXES
 
 
-@pytest.mark.parametrize("suffix", [".out", ".json", ".xlsm", ".log", ".ods"])
+@pytest.mark.parametrize("suffix", [".out", ".json", ".log", ".ods"])
 def test_other_suffixes_stay_out_of_this_change(suffix):
     assert suffix not in adf.TABLE_SUFFIXES
 

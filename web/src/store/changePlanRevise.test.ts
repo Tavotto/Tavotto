@@ -26,8 +26,8 @@ vi.mock('@/store/renderScheduler', async (importOriginal) => ({
 
 import { setCurrentProjectId } from '@/lib/session'
 import { useDocumentStore } from './documentStore'
-import { MAX_NOTES, notesOf, POLL_TIMEOUT, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from './changePlanStore'
-import { groupViews, summaryLine, unhandledViews } from '@/components/changePlan/changePlanModel'
+import { MAX_NOTES, notesOf, panelOf, POLL_TIMEOUT, REVISE_UNDO_BLOCKED, setChangePlanUndoRunner, useChangePlanStore, versionNumber, versionsOf, type PlanNote } from './changePlanStore'
+import { effectiveStatus, groupViews, noteResults, summaryLine, unhandledViews } from '@/components/changePlan/changePlanModel'
 
 const ds = () => useDocumentStore.getState()
 const cps = () => useChangePlanStore.getState()
@@ -131,6 +131,8 @@ describe('按批注重改', () => {
     const [planId, body] = reviseChangePlan.mock.calls[0]
     expect(planId).toBe('p1')
     expect(body.notes).toEqual([{ id: 'n1', anchor: note('n1').anchor, text: '图例挪到左上' }])
+    // 出版规范与新建助手方案同一份（currentStandard）：批注里写「按期刊标准」时模型才有数可依
+    expect(body.standard).toEqual(expect.objectContaining({ name: expect.any(String), rules: expect.any(Object) }))
     expect(cps().entries[key].revising).toBe('p2')
     await tick()
     const e = cps().entries[key]
@@ -161,6 +163,52 @@ describe('按批注重改', () => {
     expect(groupViews(e).map((x) => x.fromNote)).toEqual([true, false])
     expect(summaryLine(e)).toBe('按 1 条批注又改了 1 处')
     expect(unhandledViews(e)[0].text).toBe('把线加粗')
+  })
+
+  it('重改进行中记下发出的批注（舞台标记 / 右栏按它画）；新版到手挂到那一版上，逐条结果按批注 id 对上：改成了 = 它那一组，没改成 = 原因；失败不留快照', async () => {
+    const key = await readyEntry()
+    cps().saveNote(key, note('n1'))
+    cps().saveNote(key, note('n2', '把线加粗'))
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    await cps().revise(key)
+    expect(cps().entries[key].revisingNotes?.map((n) => n.id)).toEqual(['n1', 'n2'])
+    // 进行中没有结果（后端只报整体阶段）
+    expect(noteResults(cps().entries[key])).toBeNull()
+    getChangePlan.mockResolvedValue(ready(V2))
+    await tick()
+    const e = cps().entries[key]
+    expect(e.revisingNotes).toBeUndefined()
+    expect(versionsOf(e).at(-1)?.fromNotes?.map((n) => n.id)).toEqual(['n1', 'n2'])
+    expect(noteResults(e)?.rows).toEqual([
+      { id: 'n1', n: 1, text: '图例挪到左上', done: true, groupKey: 'g1' },
+      { id: 'n2', n: 2, text: '把线加粗', done: false, reason: '改了也看不出变化，这次没动' },
+    ])
+    // 切回第 1 版：不是重改出的，没有逐条结果；再切回来还在
+    cps().setViewVersion(key, 'p1')
+    expect(noteResults(cps().entries[key])).toBeNull()
+    cps().setViewVersion(key, 'p2')
+    expect(noteResults(cps().entries[key])?.rows).toHaveLength(2)
+    // 再重改一次失败：快照清掉，第 2 版的结果不动
+    cps().saveNote(key, note('n3', '再大一点'))
+    getChangePlan.mockResolvedValue({ plan_id: 'p3', state: 'failed', code: 'change_plan_model_quota', error: 'x' })
+    reviseChangePlan.mockResolvedValue({ plan_id: 'p3', state: 'running' })
+    await cps().revise(key)
+    await tick()
+    expect(cps().entries[key].revisingNotes).toBeUndefined()
+    expect(cps().entries[key].planId).toBe('p2')
+    expect(noteResults(cps().entries[key])?.rows).toHaveLength(2)
+  })
+
+  it('逐条结果：答了「不改」的按批注组算没改成；脚本方案对不上逐条（rows = null）', async () => {
+    const key = await readyEntry()
+    cps().saveNote(key, note('n1'))
+    getChangePlan.mockResolvedValue(ready(V2))
+    await cps().revise(key)
+    await tick()
+    const e = cps().entries[key]
+    expect(noteResults({ ...e, answers: { g1: 'no' } })?.rows?.[0]).toMatchObject({ id: 'n1', done: false })
+    const script = { ...e, plan: { ...e.plan!, kind: 'script' as const } }
+    expect(noteResults(script)).toEqual({ notes: versionsOf(e).at(-1)!.fromNotes, rows: null })
   })
 
   it('没有批注不发；没解锁回 not_licensed、只落一句灰字；发起失败 / 轮询失败 / 超时都不动旧版', async () => {
@@ -203,3 +251,128 @@ describe('按批注重改', () => {
     expect(discardChangePlan.mock.calls.map((c) => (c as unknown[])[0]).sort()).toEqual(['p1', 'p2'])
   })
 })
+
+// ---- 「再改一版」（已应用的卡按批注重改，ADR 0206 修订 2026-11-28）：拿到新版才撤回，失败不丢已应用的修改 ----
+describe('已应用的卡按批注重改', () => {
+  const CAND = [{ gid: 'ax.title', prop: 'fontsize', value: 14 }]
+  const overridesNow = () => (ds().doc.objects.find((x) => x.id === 'p1') as PanelObject).overrides
+  const statusNow = (key: string) => {
+    const e = cps().entries[key]
+    return effectiveStatus(e, panelOf(e)?.overrides ?? null)
+  }
+  const appliedWithNote = async () => {
+    setChangePlanUndoRunner(() => ds().undo())
+    const key = await readyEntry()
+    expect(cps().apply(key)).toBe('applied')
+    expect(overridesNow()).toEqual(CAND)
+    cps().saveNote(key, note('n1'))
+    return key
+  }
+
+  it('请求期间卡片仍是已应用、图不动；新版拿到时才撤回上一版、切到新版待确认', async () => {
+    const key = await appliedWithNote()
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    expect(await cps().revise(key)).toBe('started')
+    await tick()
+    expect(cps().entries[key].status).toBe('applied')
+    expect(cps().entries[key].revising).toBe('p2')
+    expect(overridesNow()).toEqual(CAND)
+    getChangePlan.mockResolvedValue(ready(V2))
+    await tick()
+    const e = cps().entries[key]
+    expect(overridesNow()).toEqual(BASE)
+    expect(e.planId).toBe('p2')
+    expect(e.status).toBe('ready')
+    expect(e.notice).toBeUndefined()
+    expect(statusNow(key)).toBe('ready')
+  })
+
+  it('新版没出来（轮询失败）：什么都不撤，卡片仍已应用，只落一句灰字', async () => {
+    const key = await appliedWithNote()
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'failed', code: 'change_plan_model_quota', error: 'x' })
+    expect(await cps().revise(key)).toBe('started')
+    await tick()
+    const e = cps().entries[key]
+    expect(overridesNow()).toEqual(CAND)
+    expect(e.status).toBe('applied')
+    expect(e.planId).toBe('p1')
+    expect(e.reviseError?.code).toBe('change_plan_model_quota')
+    expect(statusNow(key)).toBe('applied')
+  })
+
+  it('发请求就失败：同样什么都不撤', async () => {
+    const key = await appliedWithNote()
+    reviseChangePlan.mockRejectedValueOnce(new EngineError('x', '', 'change_plan_busy', ''))
+    expect(await cps().revise(key)).toBe('failed')
+    expect(overridesNow()).toEqual(CAND)
+    expect(cps().entries[key].status).toBe('applied')
+  })
+
+  it('拿到新版时已撤不回（期间又改过图）：新版照样入列，文档不动，卡片派生成「原图改过了」并说一句', async () => {
+    const key = await appliedWithNote()
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    await cps().revise(key)
+    ds().commit(literal('别的修改'), (d) => {
+      d.objects[0].x = 3
+    })
+    getChangePlan.mockResolvedValue(ready(V2))
+    await tick()
+    const e = cps().entries[key]
+    expect(overridesNow()).toEqual(CAND)
+    expect((ds().doc.objects[0] as PanelObject).x).toBe(3)
+    expect(e.planId).toBe('p2')
+    expect(versionsOf(e)).toHaveLength(2)
+    expect(e.notice).toBe('revise_stale')
+    expect(statusNow(key)).toBe('stale')
+  })
+
+  it('等的这段时间里用户自己点了「撤销」：新版到手直接是待确认，不说「撤不回」', async () => {
+    const key = await appliedWithNote()
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    await cps().revise(key)
+    expect(cps().undo(key)).toBe(true)
+    expect(overridesNow()).toEqual(BASE)
+    getChangePlan.mockResolvedValue(ready(V2))
+    await tick()
+    expect(cps().entries[key].notice).toBeUndefined()
+    expect(statusNow(key)).toBe('ready')
+  })
+
+  it('用户正拖到一半（文档事务开着）：不撤（撤回会先收掉那一笔手势），按撤不回处理', async () => {
+    const key = await appliedWithNote()
+    getChangePlan.mockResolvedValue({ plan_id: 'p2', state: 'running', phase: 'model' })
+    await cps().revise(key)
+    ds().beginTxn(literal('拖动'))
+    getChangePlan.mockResolvedValue(ready(V2))
+    await tick()
+    expect(overridesNow()).toEqual(CAND)
+    expect(cps().entries[key].notice).toBe('revise_stale')
+    ds().endTxn()
+  })
+
+  it('用户先自己撤销了（存着的状态仍是已应用）再点「按批注重改」：照常发，新版到手直接是待确认', async () => {
+    const key = await appliedWithNote()
+    expect(cps().undo(key)).toBe(true)
+    ds().commit(literal('别的修改'), (d) => {
+      d.objects[0].x = 3
+    })
+    getChangePlan.mockResolvedValue(ready(V2))
+    expect(await cps().revise(key)).toBe('started')
+    await tick()
+    expect(cps().entries[key].planId).toBe('p2')
+    expect(cps().entries[key].notice).toBeUndefined()
+    expect(statusNow(key)).toBe('ready')
+  })
+
+  it('点按钮那一刻就撤不回：不发请求、什么都不动，一句「没法替你撤回」', async () => {
+    const key = await appliedWithNote()
+    ds().commit(literal('别的修改'), (d) => {
+      d.objects[0].x = 3
+    })
+    expect(await cps().revise(key)).toBe('failed')
+    expect(reviseChangePlan).not.toHaveBeenCalled()
+    expect(cps().entries[key].reviseError?.code).toBe(REVISE_UNDO_BLOCKED)
+    expect(overridesNow()).toEqual(CAND)
+  })
+})
+

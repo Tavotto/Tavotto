@@ -1,0 +1,620 @@
+{
+ "comment": "真 worker 渲染 tests/test_legend_style_mismatch.py 的 CASES 得到的图例 / 图例项元素（只留 gid / role / label、visible 与 text 两格 editable、legend_entry、legend_style_mismatch、legend_style_source）。pytest 重渲染逐字比对；web/src/lib/preflight.legendStyle.test.ts 消费它。",
+ "elements": [
+  {
+   "gid": "axes_0.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_0.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “A”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "A"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_0.lines_0",
+    "binding_default": "follow_source"
+   }
+  },
+  {
+   "gid": "axes_0.legend.texts_1",
+   "role": "legend_text",
+   "label": "图例项 “B”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "B"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 1,
+    "source_gid": "axes_0.lines_1",
+    "binding_default": "follow_source"
+   }
+  },
+  {
+   "gid": "axes_1.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_1.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “B”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "B"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_1.lines_0",
+    "binding_default": "custom"
+   },
+   "legend_style_mismatch": [
+    {
+     "prop": "markerfacecolor",
+     "legend": "#9467bd",
+     "source": "#ff7f0e",
+     "fix": {
+      "prop": "binding",
+      "value": "follow_source"
+     }
+    }
+   ],
+   "legend_style_source": "axes_1.lines_0"
+  },
+  {
+   "gid": "axes_2.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_2.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “B”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "B"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_2.lines_0",
+    "binding_default": "custom"
+   },
+   "legend_style_mismatch": [
+    {
+     "prop": "color",
+     "legend": "#9467bd",
+     "source": "#ff7f0e",
+     "fix": {
+      "prop": "binding",
+      "value": "follow_source"
+     }
+    }
+   ],
+   "legend_style_source": "axes_2.lines_0"
+  },
+  {
+   "gid": "axes_3.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_3.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “C”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "C"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_3.lines_0",
+    "binding_default": "custom"
+   },
+   "legend_style_mismatch": [
+    {
+     "prop": "marker",
+     "legend": "o",
+     "source": "s",
+     "fix": {
+      "prop": "binding",
+      "value": "follow_source"
+     }
+    }
+   ],
+   "legend_style_source": "axes_3.lines_0"
+  },
+  {
+   "gid": "axes_4.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_4.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “D”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "D"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_4.lines_0",
+    "binding_default": "custom"
+   },
+   "legend_style_mismatch": [
+    {
+     "prop": "linestyle",
+     "legend": "-",
+     "source": "--",
+     "fix": {
+      "prop": "binding",
+      "value": "follow_source"
+     }
+    }
+   ],
+   "legend_style_source": "axes_4.lines_0"
+  },
+  {
+   "gid": "axes_5.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_5.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “thin”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "thin"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_5.lines_0",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_5.legend.texts_1",
+   "role": "legend_text",
+   "label": "图例项 “thick”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "thick"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 1,
+    "source_gid": "axes_5.lines_1",
+    "binding_default": "custom"
+   },
+   "legend_style_mismatch": [
+    {
+     "prop": "linewidth",
+     "legend": 2.5,
+     "source": 1.0,
+     "fix": {
+      "prop": "binding",
+      "value": "follow_source"
+     }
+    }
+   ],
+   "legend_style_source": "axes_5.lines_1"
+  },
+  {
+   "gid": "axes_6.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_6.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “hollow”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "hollow"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_6.lines_0",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_6.legend.texts_1",
+   "role": "legend_text",
+   "label": "图例项 “nolines”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "nolines"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 1,
+    "source_gid": "axes_6.lines_1",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_7.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_7.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “C”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "C"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_7.lines_0",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_7.legend.texts_1",
+   "role": "legend_text",
+   "label": "图例项 “D”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "D"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 1,
+    "source_gid": "axes_7.lines_1",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_7.legend.texts_2",
+   "role": "legend_text",
+   "label": "图例项 “thick”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "thick"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 2,
+    "source_gid": "axes_7.lines_2",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_8.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_8.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “gone”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "gone"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_8.lines_0",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_9.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_9.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “other”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "other"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0
+   }
+  },
+  {
+   "gid": "axes_10.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_10.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “band”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "band"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_10.fill_1",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_10.legend.texts_1",
+   "role": "legend_text",
+   "label": "图例项 “eb”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "eb"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 1,
+    "source_gid": "axes_10.errorbar_0",
+    "binding_default": "custom"
+   }
+  },
+  {
+   "gid": "axes_11.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ]
+  },
+  {
+   "gid": "axes_11.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “bars”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "bars"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_11.barseries_0",
+    "binding_default": "custom"
+   },
+   "legend_style_mismatch": [
+    {
+     "prop": "facecolor",
+     "legend": "#9467bd",
+     "source": "#ff7f0e",
+     "fix": {
+      "prop": "binding",
+      "value": "follow_source"
+     }
+    }
+   ],
+   "legend_style_source": "axes_11.barseries_0"
+  },
+  {
+   "gid": "axes_12.legend",
+   "role": "legend",
+   "label": "图例",
+   "editable": [
+    {
+     "prop": "visible",
+     "value": false
+    }
+   ]
+  },
+  {
+   "gid": "axes_12.legend.texts_0",
+   "role": "legend_text",
+   "label": "图例项 “B”",
+   "editable": [
+    {
+     "prop": "text",
+     "value": "B"
+    },
+    {
+     "prop": "visible",
+     "value": true
+    }
+   ],
+   "legend_entry": {
+    "index": 0,
+    "source_gid": "axes_12.lines_0",
+    "binding_default": "custom"
+   }
+  }
+ ],
+ "expected": {
+  "gids": [
+   "axes_1.legend.texts_0",
+   "axes_11.legend.texts_0",
+   "axes_2.legend.texts_0",
+   "axes_3.legend.texts_0",
+   "axes_4.legend.texts_0",
+   "axes_5.legend.texts_1"
+  ],
+  "message": {
+   "key": "legendStyleMismatchMarkerColor",
+   "params": {
+    "label": "B"
+   }
+  },
+  "detail": {
+   "props": [
+    "markerfacecolor"
+   ],
+   "source_gid": "axes_1.lines_0"
+  }
+ }
+}
