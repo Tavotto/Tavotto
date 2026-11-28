@@ -39,6 +39,7 @@ LEARN_MORE = {"zh": "了解高级版", "en": "Learn about Premium"}
 
 _FRAME_KEYS = {"kind", "name", "title", "at_mm", "size_mm", "fill"}
 _GLYPH_KEYS = {
+    "embed",
     "kind",
     "name",
     "glyph",
@@ -60,6 +61,8 @@ ITEMS_DOC = (
     "frame {name, title?, at_mm: [x, y], size_mm: [w, h], fill?}（示意图框：一个带名字的组 + 一个外框形状；一个 add 最多一个）；"
     "glyph {name, glyph: 图元种类, at_mm, size_mm?, params?, version?, identity?, frame?, block?, style?: {color, strokePt, fill}}"
     "（语义图元，落成一个可编辑路径；glyph 字段由引擎写、不收；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
+    "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就沿膜等距排）：引擎把跨膜段中点对齐膜中线、"
+    "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
     "名字由引擎按「角色 + 身份」生成并固化，同批重名自动加序号；落地后过可编辑性核对，不过整批不落地（not_editable）。"
 )
@@ -161,6 +164,27 @@ def load_catalog(ask: Ask | None = None) -> dict:
     return out
 
 
+MAX_INSERTS = 16
+MIDLINE_MAX = 65
+
+
+def _check_inserts(v: object, name: str) -> list:
+    """`[{at: 0–1, width_mm}]`（膜给跨膜蛋白让位的窗口）：键闭集、有限数、≤ 16 条。"""
+    if not isinstance(v, list) or len(v) > MAX_INSERTS:
+        raise MechanismError("bad_item", name)
+    out = []
+    for it in v:
+        if not isinstance(it, dict) or set(it) != {"at", "width_mm"}:
+            raise MechanismError("bad_item", name)
+        at, w = it["at"], it["width_mm"]
+        if not _finite(at, w) or isinstance(at, bool) or isinstance(w, bool):
+            raise MechanismError("bad_item", name)
+        if not (0.0 <= at <= 1.0 and 0.0 < w <= 40.0):
+            raise MechanismError("bad_item", name)
+        out.append({"at": float(at), "width_mm": float(w)})
+    return sorted(out, key=lambda x: (x["at"], x["width_mm"]))
+
+
 def _check_params(spec: dict, params: object, name: str) -> dict:
     """参数只许是该图元规格里有的名字，值在范围 / 枚举内；缺的补默认值（新版本只许**加**参数并给默认值）。"""
     if params is None:
@@ -173,7 +197,9 @@ def _check_params(spec: dict, params: object, name: str) -> dict:
         p = known.get(k)
         if p is None:
             raise MechanismError("bad_item", name)
-        if p.get("type") == "enum":
+        if p.get("type") == "inserts":
+            v = _check_inserts(v, name)
+        elif p.get("type") == "enum":
             if v not in (p.get("values") or []):
                 raise MechanismError("bad_item", name)
         elif p.get("type") == "bool":
@@ -234,7 +260,52 @@ def _check_reply(reply: object, name: str) -> dict:
         "subpaths": clean,
         "ports": {k: [float(x) for x in v] for k, v in ports.items()},
         "array": reply.get("array") is True,
+        "info": _check_info(reply.get("info"), name),
     }
+
+
+_INFO_NUMBERS = ("thickness_mm", "pitch_mm", "tm_width_mm", "tm_length_mm")
+
+
+def _check_info(info: object, name: str) -> dict:
+    """回包里可选的 `info`（只有数字，宿主拿来定位 / 嵌入）：`natural_size_mm`、`tm_mid_mm`（框内毫米坐标，左上角原点、y 向下）、
+    `thickness_mm / pitch_mm / tm_width_mm / tm_length_mm`、`midline`（≤ 65 个 `[x, y, nx, ny]`，朝外的单位法线）。不合 = `bad_reply`。"""
+    if info is None:
+        return {}
+    if not isinstance(info, dict) or set(info) - {
+        *_INFO_NUMBERS,
+        "natural_size_mm",
+        "tm_mid_mm",
+        "midline",
+    }:
+        raise MechanismError("bad_reply", name)
+    out: dict = {}
+    for k in _INFO_NUMBERS:
+        if k in info:
+            if not _finite(info[k]) or isinstance(info[k], bool) or info[k] <= 0:
+                raise MechanismError("bad_reply", name)
+            out[k] = float(info[k])
+    if "natural_size_mm" in info:
+        v = _pair(info["natural_size_mm"], positive=True)
+        if v is None:
+            raise MechanismError("bad_reply", name)
+        out["natural_size_mm"] = v
+    if "tm_mid_mm" in info:
+        v = _pair(info["tm_mid_mm"])
+        if v is None:
+            raise MechanismError("bad_reply", name)
+        out["tm_mid_mm"] = v
+    if "midline" in info:
+        ml = info["midline"]
+        if not isinstance(ml, list) or not (2 <= len(ml) <= MIDLINE_MAX):
+            raise MechanismError("bad_reply", name)
+        pts = []
+        for row in ml:
+            if not (isinstance(row, (list, tuple)) and len(row) == 4 and _finite(*row)):
+                raise MechanismError("bad_reply", name)
+            pts.append([float(x) for x in row])
+        out["midline"] = pts
+    return out
 
 
 # ------------------------------------------------------------------ 编排
@@ -252,6 +323,7 @@ class Prepared:
     ports: dict = field(default_factory=dict)  # 局部 id → {端口名: 画布毫米坐标}
     echo: list = field(default_factory=list)
     names: mechgroup.Names = field(default_factory=mechgroup.Names)
+    frame_group: str | None = None
 
     @property
     def member_locals(self) -> set[str]:
@@ -354,19 +426,35 @@ def prepare(items: list, *, locale: str = "zh", ask: Ask | None = None) -> Prepa
             out.free_items.append(it)
     if glyphs:
         out.catalog = load_catalog(ask)
-    for it in glyphs:
-        _glyph(it, out, ask, loc, frame_name, frame_group)
+    out.frame_group = frame_group
+    if glyphs:
+        _glyphs(glyphs, out, ask, loc, frame_name, frame_group)
     return out
 
 
-def _glyph(
-    it: dict,
-    out: Prepared,
-    ask: Ask | None,
-    loc: str,
-    frame_name: str | None,
-    frame_group: str | None,
-) -> None:
+@dataclass
+class _G:
+    """一个 glyph 条目解析后的样子（还没问组件）。"""
+
+    it: dict
+    name: str
+    kind: str
+    spec: dict
+    version: int
+    params: dict
+    user_params: set
+    at: list | None
+    size: list | None
+    style: dict
+    frame: str | None
+    block: str | None
+    identity: str | None
+    embed: dict | None
+    reply: dict | None = None
+    pose: dict | None = None
+
+
+def _parse_glyph(it: dict, out: Prepared, frame_name: str | None, frame_group: str | None) -> _G:
     name = it["name"]
     if set(it) - _GLYPH_KEYS:
         raise MechanismError("bad_item", name)
@@ -374,16 +462,32 @@ def _glyph(
     spec = (out.catalog or {}).get(kind) if isinstance(kind, str) else None
     if spec is None:
         raise MechanismError("bad_item", name)
-    at = _pair(it.get("at_mm"))
-    size = (
-        _pair(it.get("size_mm"), positive=True)
-        if it.get("size_mm") is not None
-        else spec["default_size_mm"]
-    )
-    if at is None or size is None:
+    embed = it.get("embed")
+    if embed is not None:
+        if (
+            not isinstance(embed, dict)
+            or set(embed) - {"membrane", "at"}
+            or not isinstance(embed.get("membrane"), str)
+            or (
+                "at" in embed
+                and (
+                    not _finite(embed["at"])
+                    or isinstance(embed["at"], bool)
+                    or not 0.0 <= embed["at"] <= 1.0
+                )
+            )
+            or it.get("at_mm") is not None
+        ):
+            raise MechanismError("bad_item", name)  # 嵌进膜的蛋白位置由宿主算，不许再给 at_mm
+        at = None
+    else:
+        at = _pair(it.get("at_mm"))
+        if at is None:
+            raise MechanismError("bad_item", name)
+    size = _pair(it.get("size_mm"), positive=True) if it.get("size_mm") is not None else None
+    if it.get("size_mm") is not None and size is None:
         raise MechanismError("bad_item", name)
-    frame = it.get("frame")
-    block = it.get("block")
+    frame, block = it.get("frame"), it.get("block")
     if frame is not None and (frame != frame_name or frame_group is None):
         raise MechanismError("bad_item", name)
     if block is not None and (not isinstance(block, str) or not block.strip() or frame is None):
@@ -395,48 +499,207 @@ def _glyph(
     style = it.get("style") or {}
     if not isinstance(style, dict) or set(style) - _STYLE_KEYS:
         raise MechanismError("bad_item", name)
-    # sidecar 只收数字与结构：不发名字、身份、块名
-    reply = _check_reply(
-        _call(
-            ask, CMD_GLYPH, {"kind": kind, "version": version, "params": params, "size_mm": size}
-        ),
-        name,
-    )
-    if reply["version"] != version:
-        raise MechanismError("unsupported_version", name)
     identity = it.get("identity")
     if identity is not None and not isinstance(identity, str):
         raise MechanismError("bad_item", name)
-    path = [*([frame_group] if frame_group and frame else []), *([block.strip()] if block else [])]
+    return _G(
+        it, name, kind, spec, version, params, set(it.get("params") or {}), at, size, style,
+        frame, block.strip() if block else None, identity, embed,
+    )  # fmt: skip
+
+
+def _request(g: _G, ask: Ask | None) -> dict:
+    """问组件要几何（sidecar 只收数字与结构：不发名字、身份、块名）。尺寸只给（缺省取清单里的缺省尺寸，几何本身与它无关）。"""
+    reply = _check_reply(
+        _call(
+            ask,
+            CMD_GLYPH,
+            {
+                "kind": g.kind,
+                "version": g.version,
+                "params": g.params,
+                "size_mm": g.size or g.spec["default_size_mm"],
+            },
+        ),
+        g.name,
+    )
+    if reply["version"] != g.version:
+        raise MechanismError("unsupported_version", g.name)
+    return reply
+
+
+def _midline_len(samples: list, sx: float, sy: float) -> list[float]:
+    """中线采样点的累计弧长（毫米，已按对象缩放）。"""
+    acc = [0.0]
+    for a, b in zip(samples, samples[1:]):
+        acc.append(acc[-1] + math.hypot((b[0] - a[0]) * sx, (b[1] - a[1]) * sy))
+    return acc
+
+
+def _frame_at(samples: list, acc: list[float], frac: float) -> tuple:
+    """中线上弧长占比 `frac` 处的位置与朝外单位法线（采样点之间线性插值）。"""
+    target = frac * acc[-1]
+    i = 0
+    while i < len(acc) - 2 and acc[i + 1] < target:
+        i += 1
+    span = (acc[i + 1] - acc[i]) or 1.0
+    t = min(1.0, max(0.0, (target - acc[i]) / span))
+    a, b = samples[i], samples[i + 1]
+    x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+    nx, ny = a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t
+    n = math.hypot(nx, ny) or 1.0
+    return x, y, nx / n, ny / n
+
+
+def _spread(count: int) -> list[float]:
+    """没给 at 的 n 个蛋白沿膜**等距**分布：(i + 0.5) / n。"""
+    return [(i + 0.5) / count for i in range(count)]
+
+
+def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
+    """一条膜上的嵌入蛋白：定位置（没给 at 的等距排，给了就照给的）、核「都在膜内、两两不重叠」、算膜的 `inserts` 回填（给膜重新要一次几何）、
+    算每个蛋白的位姿（跨膜段中点落在中线上，沿法线方向旋转）。"""
+    mi = m.reply["info"]
+    samples = mi.get("midline")
+    if not samples:
+        raise MechanismError("bad_reply", m.name)
+    nat = mi["natural_size_mm"]
+    msize = m.size or nat
+    sx, sy = msize[0] / nat[0], msize[1] / nat[1]
+    acc = _midline_len(samples, sx, sy)
+    total = acc[-1]
+    free = [g for g in prots if "at" not in g.embed]
+    auto = dict(zip((g.name for g in free), _spread(len(free))))
+    spots = [(g, g.embed["at"] if "at" in g.embed else auto[g.name]) for g in prots]
+    wins = []
+    for g, at in spots:
+        pi = g.reply["info"]
+        full = pi["natural_size_mm"][0]
+        s = at * total
+        if s - full / 2 < -1e-6 or s + full / 2 > total + 1e-6:
+            raise MechanismError("bad_item", g.name)  # 超出膜的长度
+        wins.append((s, full, g, at, pi["tm_width_mm"] + mi.get("pitch_mm", 0.0)))
+    ordered = sorted(wins, key=lambda w: w[0])
+    for a, b in zip(ordered, ordered[1:]):
+        if b[0] - a[0] < (a[1] + b[1]) / 2 - 1e-6:
+            raise MechanismError("bad_item", b[2].name)  # 两个蛋白重叠
+    given = list(m.params.get("inserts") or [])
+    computed = [{"at": round(at, 6), "width_mm": round(w_tm, 6)} for _s, _f, _g, at, w_tm in wins]
+    m.params["inserts"] = _check_inserts([*given, *computed], m.name)
+    m.reply = _request(m, ask)  # 让位后的膜（外框不变）
+    mx, my = m.at or [0.0, 0.0]
+    for s, _full, g, at, _w in wins:
+        px, py, nx, ny = _frame_at(samples, acc, at)
+        target = (mx + px * sx, my + py * sy)
+        theta = math.atan2(nx, -ny)  # 蛋白的「上」(0, −1) 转到法线方向，顺时针为正
+        pi = g.reply["info"]
+        w, h = g.size or pi["natural_size_mm"]
+        tmx, tmy = pi["tm_mid_mm"]
+        dx, dy = tmx - w / 2, tmy - h / 2
+        c, sn = math.cos(theta), math.sin(theta)
+        cx, cy = target[0] - (dx * c - dy * sn), target[1] - (dx * sn + dy * c)
+        g.at = [cx - w / 2, cy - h / 2]
+        g.pose = {"rot": math.degrees(theta), "size": [w, h]}
+
+
+def _glyphs(
+    items: list,
+    out: Prepared,
+    ask: Ask | None,
+    loc: str,
+    frame_name: str | None,
+    frame_group: str | None,
+) -> None:
+    gs = [_parse_glyph(it, out, frame_name, frame_group) for it in items]
+    by_name = {g.name: g for g in gs}
+    # ① 没有嵌入关系的先要几何（膜等）；② 嵌入的蛋白：跨膜段长度取膜厚；③ 每条膜按嵌入的蛋白定位、让位、再要一次
+    for g in gs:
+        if g.embed is None:
+            g.reply = _request(g, ask)
+    groups: dict[str, list[_G]] = {}
+    for g in gs:
+        if g.embed is None:
+            continue
+        m = by_name.get(g.embed["membrane"])
+        if m is None or m.kind != "membrane" or m.embed is not None:
+            raise MechanismError("bad_item", g.name)
+        thick = (m.reply or {}).get("info", {}).get("thickness_mm")
+        if thick is None:
+            raise MechanismError("bad_reply", m.name)
+        pm = g.spec["params"].get("membrane_mm")
+        if pm is not None and "membrane_mm" not in g.user_params:
+            g.params["membrane_mm"] = round(
+                min(pm["max"], max(pm["min"], thick)), 6
+            )  # 跨膜段长度 = 膜厚（夹进该图元允许的范围）
+        g.reply = _request(g, ask)
+        pi = g.reply["info"]
+        if "tm_mid_mm" not in pi or "tm_width_mm" not in pi or "natural_size_mm" not in pi:
+            raise MechanismError("bad_reply", g.name)
+        groups.setdefault(m.name, []).append(g)
+    for mname, prots in groups.items():
+        _embed_layout(by_name[mname], prots, ask)
+    for g in gs:
+        _emit(g, out, loc)
+        if g.embed is not None:
+            out.echo.append(
+                f"「{g.name}」嵌在膜「{g.embed['membrane']}」里（跨膜段中点对齐中线，沿膜法线插入）"
+            )
+
+
+def _emit(g: _G, out: Prepared, loc: str) -> None:
+    reply = g.reply or {}
+    info = reply.get("info") or {}
+    size = (
+        (g.pose or {}).get("size")
+        or g.size
+        or info.get("natural_size_mm")
+        or g.spec["default_size_mm"]
+    )
+    at = g.at
+    rot = (g.pose or {}).get("rot", 0.0)
+    path = [
+        *([out.frame_group] if out.frame_group and g.frame else []),
+        *([g.block] if g.block else []),
+    ]
     obj = {
-        "id": name,
+        "id": g.name,
         "type": "path",
         "x": at[0],
         "y": at[1],
         "w": size[0],
         "h": size[1],
         "subpaths": reply["subpaths"],
-        "strokePt": style.get("strokePt", DEFAULT_STROKE_PT),
-        "color": style.get("color", DEFAULT_COLOR),
-        "fill": style.get("fill"),
-        "name": out.names.unique(mechgroup.name_for(f"glyph:{kind}", identity, loc)),
+        "strokePt": g.style.get("strokePt", DEFAULT_STROKE_PT),
+        "color": g.style.get("color", DEFAULT_COLOR),
+        "fill": g.style.get("fill"),
+        "name": out.names.unique(mechgroup.name_for(f"glyph:{g.kind}", g.identity, loc)),
     }
+    if abs(rot) > 1e-9:
+        obj["rotationDeg"] = round(rot, 3)
     if path:
         obj["groupPath"] = path
     out.objects.append(obj)
     meta = {
-        "kind": kind,
-        "params": params,
-        "version": version,
+        "kind": g.kind,
+        "params": g.params,
+        "version": g.version,
         "hash": mechcheck.glyph_hash(reply["subpaths"]),
     }
     if reply["array"]:
         meta["array"] = True
-    out.glyph_meta[name] = meta
-    out.ports[name] = {
-        k: [at[0] + v[0] * size[0], at[1] + v[1] * size[1]] for k, v in reply["ports"].items()
-    }
-    out.echo.append(f"图元「{mechgroup.role_word(f'glyph:{kind}', loc)}」{name}（修订 {version}）")
+    out.glyph_meta[g.name] = meta
+    th = math.radians(rot)
+    c, sn = math.cos(th), math.sin(th)
+    cx, cy = at[0] + size[0] / 2, at[1] + size[1] / 2
+
+    def to_canvas(v: list) -> list:
+        dx, dy = v[0] * size[0] - size[0] / 2, v[1] * size[1] - size[1] / 2
+        return [cx + dx * c - dy * sn, cy + dx * sn + dy * c]
+
+    out.ports[g.name] = {k: to_canvas(v) for k, v in reply["ports"].items()}
+    out.echo.append(
+        f"图元「{mechgroup.role_word(f'glyph:{g.kind}', loc)}」{g.name}（修订 {g.version}）"
+    )
 
 
 def place_free_groups(prep: Prepared, free_objects: list[dict], locale: str = "zh") -> list[dict]:

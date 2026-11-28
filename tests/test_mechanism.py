@@ -672,3 +672,255 @@ def test_reply_subpath_limit_is_256():
     assert mechanism._check_reply(ok, "x")["subpaths"]  # noqa: SLF001
     with pytest.raises(mechanism.MechanismError):
         mechanism._check_reply({**ok, "subpaths": ok["subpaths"] + [ok["subpaths"][0]]}, "x")  # noqa: SLF001
+
+
+# ---------------------------------------------------------------- 嵌入膜（ADR 0220 §五之二）
+def _embed_ask(log, curv=0.0, protein_w=6.0):
+    """替身 sidecar：膜给 `info`（自然尺寸、厚度、间距、中线采样与朝外法线），蛋白给 `info`（自然尺寸、跨膜段中点 / 宽）。"""
+
+    def midline():
+        pts = []
+        for k in range(21):
+            x = 40 * k / 20
+            y = 4 + 10 * curv * ((x - 20) / 20) ** 2
+            m = 20 * curv * (x - 20) / 400  # dy/dx
+            n = (m**2 + 1) ** 0.5
+            pts.append([x, y, m / n, -1 / n])
+        return pts
+
+    def ask(cmd, payload):
+        log.append((cmd, copy.deepcopy(payload)))
+        if cmd == "mechanism.catalog":
+            return {
+                "kinds": [
+                    {
+                        "kind": "membrane",
+                        "versions": [1],
+                        "default_size_mm": [40, 8],
+                        "params": [{"name": "inserts", "type": "inserts", "default": []}],
+                    },
+                    {
+                        "kind": "prot",
+                        "versions": [1],
+                        "default_size_mm": [protein_w, 12],
+                        "params": [
+                            {
+                                "name": "membrane_mm",
+                                "type": "number",
+                                "min": 3.5,
+                                "max": 5.5,
+                                "default": 4.0,
+                            }
+                        ],
+                    },
+                ]
+            }
+        tri = [
+            {"p": [0.1, 0.0]},
+            {"p": [0.9, 0.1]},
+            {"p": [1.0, 0.6]},
+            {"p": [0.5, 1.0]},
+            {"p": [0.0, 0.5]},
+        ]
+        if payload["kind"] == "membrane":
+            return {
+                "version": 1,
+                "array": True,
+                "subpaths": [
+                    {"closed": False, "nodes": [{"p": [0, 0.2]}, {"p": [1, 0.3]}]},
+                    {"closed": False, "nodes": [{"p": [0, 0.8]}, {"p": [1, 0.7]}]},
+                ],
+                "ports": {"center": [0.5, 0.5]},
+                "info": {
+                    "natural_size_mm": [40, 8],
+                    "thickness_mm": 6.0,
+                    "pitch_mm": 1.7,
+                    "midline": midline(),
+                },
+            }
+        return {
+            "version": 1,
+            "subpaths": [{"closed": True, "nodes": tri}],
+            "ports": {"membrane": [0.5, 0.58]},
+            "info": {
+                "natural_size_mm": [protein_w, 12],
+                "tm_mid_mm": [protein_w / 2, 7.0],
+                "tm_width_mm": 2.0,
+                "tm_length_mm": payload["params"]["membrane_mm"],
+            },
+        }
+
+    return ask
+
+
+MEM = {"kind": "glyph", "name": "mem", "glyph": "membrane", "at_mm": [10, 30]}
+
+
+def _prot(name, **kw):
+    return {
+        "kind": "glyph",
+        "name": name,
+        "glyph": "prot",
+        "embed": {"membrane": "mem", **kw.pop("embed", {})},
+        **kw,
+    }
+
+
+def _prep(*items, log=None, curv=0.0, **kw):
+    return mechanism.prepare(
+        list(items), ask=_embed_ask(log if log is not None else [], curv, **kw)
+    )
+
+
+@pytest.fixture
+def lic(monkeypatch):
+    monkeypatch.setattr(engine_license, "has", lambda feature: True)
+
+
+def _by(prep):
+    return {o["id"]: o for o in prep.objects}
+
+
+def test_embedded_proteins_without_at_are_evenly_spaced_and_inside_the_membrane(lic):
+    prep = _prep(MEM, _prot("a"), _prot("b"), _prot("c"))
+    o = _by(prep)
+    # 膜 x = 10..50（长 40）；三个蛋白的跨膜段中点落在 (i + 0.5) / 3 处，也就是 x = 10 + 40·(1/6, 1/2, 5/6)，y = 中线 30 + 4
+    mids = [o[n]["x"] + 3.0 for n in ("a", "b", "c")]  # 蛋白宽 6，跨膜段中点在框内 x = 3
+    assert [round(m, 3) for m in mids] == [round(10 + 40 * f, 3) for f in (1 / 6, 1 / 2, 5 / 6)]
+    for n in ("a", "b", "c"):
+        assert abs((o[n]["y"] + 7.0) - 34.0) < 1e-6  # 跨膜段中点（框内 y = 7）落在膜中线 y = 30 + 4
+        assert 10 <= o[n]["x"] and o[n]["x"] + o[n]["w"] <= 50  # 整个蛋白都在膜的长度范围内
+        assert "rotationDeg" not in o[n]  # 直膜：不旋转
+    gaps = [mids[1] - mids[0], mids[2] - mids[1]]
+    assert abs(gaps[0] - gaps[1]) < 1e-9  # 等距
+    assert prep.free_items == []
+
+
+def test_given_at_is_respected_and_the_membrane_is_asked_again_with_the_cutouts(lic):
+    log = []
+    prep = _prep(MEM, _prot("a", embed={"at": 0.25}), _prot("b", embed={"at": 0.7}), log=log)
+    glyph_calls = [p for c, p in log if c == "mechanism.glyph" and p["kind"] == "membrane"]
+    assert len(glyph_calls) == 2  # 第一次不带让位（量厚度 / 中线），第二次带
+    assert glyph_calls[0]["params"]["inserts"] == []
+    # 让位宽度 = 跨膜段宽 2.0 + 一个脂质间距 1.7（两侧各半个）
+    assert glyph_calls[1]["params"]["inserts"] == [
+        {"at": 0.25, "width_mm": 3.7},
+        {"at": 0.7, "width_mm": 3.7},
+    ]
+    assert prep.glyph_meta["mem"]["params"]["inserts"] == glyph_calls[1]["params"]["inserts"]
+    o = _by(prep)
+    assert (
+        abs(o["a"]["x"] + 3.0 - (10 + 40 * 0.25)) < 1e-6
+        and abs(o["b"]["x"] + 3.0 - (10 + 40 * 0.7)) < 1e-6
+    )
+
+
+def test_transmembrane_length_follows_the_membrane_thickness_clamped_to_the_spec(lic):
+    log = []
+    _prep(MEM, _prot("a"), log=log)
+    prot_call = next(p for c, p in log if c == "mechanism.glyph" and p["kind"] == "prot")
+    assert prot_call["params"]["membrane_mm"] == 5.5  # 膜厚 6.0 夹进 [3.5, 5.5]
+    log2 = []
+    _prep(MEM, _prot("a", params={"membrane_mm": 4.2}), log=log2)  # 用户自己给了就用用户的
+    assert (
+        next(p for c, p in log2 if c == "mechanism.glyph" and p["kind"] == "prot")["params"][
+            "membrane_mm"
+        ]
+        == 4.2
+    )
+
+
+def test_overlap_out_of_range_and_bad_embeds_are_refused(lic):
+    for items in (
+        (MEM, _prot("a", embed={"at": 0.5}), _prot("b", embed={"at": 0.52})),  # 两个蛋白重叠
+        (MEM, _prot("a", embed={"at": 0.0})),  # 一半在膜外
+        (MEM, _prot("a", embed={"at": 1.0})),
+        (MEM, _prot("a", embed={"membrane": "nope"})),  # 没有这条膜
+        (MEM, {**_prot("a"), "at_mm": [1, 1]}),  # 嵌入的位置由宿主算，不许再给
+        (MEM, _prot("a", embed={"at": 2})),
+        (
+            MEM,
+            {"kind": "glyph", "name": "p0", "glyph": "prot", "at_mm": [0, 0]},
+            _prot("a", embed={"membrane": "p0"}),
+        ),  # 目标不是膜
+    ):
+        with pytest.raises(mechanism.MechanismError) as e:
+            _prep(*items)
+        assert e.value.code == "bad_item", items
+
+
+def test_protein_wider_than_the_spacing_overlaps_and_is_refused(lic):
+    with pytest.raises(mechanism.MechanismError):
+        _prep(MEM, *[_prot(f"p{i}") for i in range(8)], protein_w=6.0)  # 8 × 6 = 48 > 40
+
+
+def test_on_a_curved_membrane_proteins_are_rotated_along_the_surface_normal(lic):
+    prep = _prep(
+        MEM,
+        _prot("a", embed={"at": 0.15}),
+        _prot("b", embed={"at": 0.5}),
+        _prot("c", embed={"at": 0.85}),
+        curv=0.3,
+    )
+    o = _by(prep)
+    assert "rotationDeg" not in o["b"]  # 弧顶：法线朝正上方
+    assert (
+        o["a"]["rotationDeg"] < -1 < 1 < o["c"]["rotationDeg"]
+    )  # 左边向左倾、右边向右倾（顺时针为正）
+    assert abs(o["a"]["rotationDeg"] + o["c"]["rotationDeg"]) < 1e-6  # 对称
+    # 跨膜段中点仍然落在中线上：把中点旋转回画布坐标，应在 y = 30 + 4 + 10·curv·((x−20)/20)²
+    import math
+
+    for n, at in (("a", 0.15), ("c", 0.85)):
+        g = o[n]
+        th = math.radians(g["rotationDeg"])
+        cx, cy = g["x"] + g["w"] / 2, g["y"] + g["h"] / 2
+        dx, dy = 3.0 - g["w"] / 2, 7.0 - g["h"] / 2
+        mx, my = (
+            cx + dx * math.cos(th) - dy * math.sin(th),
+            cy + dx * math.sin(th) + dy * math.cos(th),
+        )
+        xm = mx - 10  # 膜框内 x
+        assert abs(my - (30 + 4 + 10 * 0.3 * ((xm - 20) / 20) ** 2)) < 0.15
+
+
+def test_embedded_objects_keep_membrane_first_and_pass_the_editability_checks(lic):
+    prep = _prep(MEM, _prot("a"), _prot("b"))
+    assert [o["id"] for o in prep.objects] == ["mem", "a", "b"]
+    objs = [
+        {**o, "glyph": prep.glyph_meta[o["id"]]} for o in prep.objects
+    ]  # `glyph` 字段在校验之后才写（保留字段）
+    assert not mechcheck.check(objs, catalog=prep.catalog, require_names=False)["failed"]
+    assert any("嵌在膜" in e for e in prep.echo)
+
+
+def test_membrane_inserts_param_is_validated(lic):
+    ok = _prep({**MEM, "params": {"inserts": [{"at": 0.5, "width_mm": 3}]}})
+    assert ok.glyph_meta["mem"]["params"]["inserts"] == [{"at": 0.5, "width_mm": 3.0}]
+    for bad in (
+        [{"at": 2, "width_mm": 3}],
+        [{"at": 0.5}],
+        [{"at": 0.5, "width_mm": 0}],
+        "x",
+        [{"at": 0.5, "width_mm": 3, "z": 1}],
+        [{"at": 0.1, "width_mm": 1}] * 17,
+    ):
+        with pytest.raises(mechanism.MechanismError):
+            _prep({**MEM, "params": {"inserts": bad}})
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        {"midline": [[0, 0, 0]]},
+        {"midline": "x"},
+        {"natural_size_mm": [0, 3]},
+        {"zzz": 1},
+        {"thickness_mm": -1},
+        {"tm_mid_mm": [float("nan"), 1]},
+        {"midline": [[0, 0, 0, -1]] * 66},
+    ],
+)
+def test_reply_info_is_a_closed_set(info):
+    with pytest.raises(mechanism.MechanismError):
+        mechanism._check_info(info, "x")  # noqa: SLF001
