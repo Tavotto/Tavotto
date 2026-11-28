@@ -17,6 +17,7 @@ safe 执行同一个守卫）下跑目标代码：`try_run` 的脚本、`try_imp
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -156,21 +157,24 @@ try:
     if _strict:
         # 判据的数据与要用的函数全部在装 hook 时以默认参数捕获，hook 自己不读任何全局：被执行的代码改模块属性、改已结束帧的
         # 局部变量都动不到它（Codex #2064 P1）。装好后删掉所有名字；拿到函数对象只剩 gc 一条路，一并拦下
-        def _make(deny, names, exempt, fold, realpath, basename, isdir, fsdecode, pathlike, sep, net_log, read_log):
+        def _make(deny, names, exempt, fold, realpath, basename, isdir, fsdecode, pathlike, sep, net_log, read_log, tamper, trial_root, getframe, nt_code):
             _NET = ("socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg", "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr")
             _INTROSPECT = ("gc.get_objects", "gc.get_referrers", "gc.get_referents")
             _FUNC_ATTRS = ("__code__", "__defaults__", "__kwdefaults__", "__globals__")
             def _hook(event, args, _deny=deny, _names=names, _exempt=exempt, _fold=fold, _realpath=realpath,
                       _base=basename, _isdir=isdir, _fsdecode=fsdecode,
                       _pathlike=pathlike, _sep=sep, _net=_NET, _intro=_INTROSPECT, _fattrs=_FUNC_ATTRS,
-                      _nlog=net_log, _rlog=read_log, _str=str, _bytes=bytes, _isinst=isinstance, _any=any, _type=type):
+                      _nlog=net_log, _rlog=read_log, _tamper=tamper, _trial=trial_root, _getframe=getframe, _nt=nt_code, _str=str, _bytes=bytes, _isinst=isinstance, _any=any, _type=type):
                 if event in _net:
                     _nlog.append(event)
                     raise PermissionError("Tavotto experiment: network access is not allowed")
                 if event in _intro:
                     raise PermissionError("Tavotto experiment: inspecting the interpreter's objects is not allowed")
                 if event == "object.__setattr__" and args and _type(args[0]).__name__ == "function" and len(args) > 1 and args[1] in _fattrs:
-                    raise PermissionError("Tavotto experiment: rewriting functions is not allowed")
+                    # "stdlib" 模式（数据准备）：标准库的 `collections.namedtuple(defaults=…)` 要给它刚造出来的 `__new__` 赋 `__defaults__`，
+                    # 所以只放行「执行这次赋值的那一帧的代码对象就是 namedtuple 的」这一种（帧深度 1：0 是本钩子），`__code__` / `__globals__` / `__kwdefaults__` 一律拦（namedtuple 只赋 `__defaults__`）
+                    if not (_tamper == "stdlib" and args[1] == "__defaults__" and _getframe(1).f_code is _nt):
+                        raise PermissionError("Tavotto experiment: rewriting functions is not allowed")
                 if event in ("open", "os.listdir", "os.scandir") and args and _isinst(args[0], (_str, _bytes, _pathlike)):
                     try:
                         raw = _fold(_fsdecode(args[0]))
@@ -181,7 +185,10 @@ try:
                         _rlog.append(event)
                         raise PermissionError("Tavotto experiment: this location holds credentials and cannot be read")
                     # 文件夹不许当成文件打开：拿不到目录描述符，也就没法 `dir_fd=` 相对它去读（审计事件里看不到 dir_fd，Codex #2064 P1）
-                    if event == "open" and _isdir(rp):
+                    # "stdlib" 模式：文件夹位于本次试跑目录之内（`tempfile` 开的是试跑目录里的 tmp）才放行
+                    if event == "open" and _isdir(rp) and not (
+                        _tamper == "stdlib" and _trial and (rp == _trial or rp.startswith(_trial.rstrip(_sep) + _sep))
+                    ):
                         _rlog.append(event)
                         raise PermissionError("Tavotto experiment: opening a folder as a file is not allowed")
                     # 文件名形状（`.env*`、`*.pem`、`id_*`……）与 AI 读取范围同一套规则，只对文件：要的名字与链接指到的名字都看
@@ -202,9 +209,51 @@ try:
             tuple(_fold(x) for x in _spec["exempt"]),
             _fold, os.path.realpath, os.path.basename, os.path.isdir,
             os.fsdecode, os.PathLike, os.sep, _blocked_net, _blocked_reads,
+            _spec.get("tamper", "full"),
+            _fold(os.path.realpath(_spec["trial"])) if _spec.get("trial") else "",
+            sys._getframe,
+            __import__("collections").namedtuple.__code__,
         ))
         del _make, _fold, _spec, _fnm, _re
     del _strict
+    # 读白名单（数据准备，ADR 0215）：只放行父进程给的文件与目录根 + 本解释器的前缀 + 系统只读位置；其余 open 记账并拒绝。
+    # 与上面实验模式同一纪律：判据数据在装 hook 时以默认参数捕获，hook 不读任何全局。只防 Python 层的 open（C 层 / ctypes 绕得过）
+    _read_paths = []
+    _ra = os.environ.pop("TAVOTTO_TRIAL_READALLOW", None)
+    if _ra:
+        def _make_ra(roots, files, nulls, fold, realpath, fsdecode, pathlike, sep, log, paths):
+            def _hook(event, args, _roots=roots, _files=files, _nulls=nulls, _fold=fold, _realpath=realpath,
+                      _fsdecode=fsdecode, _pathlike=pathlike, _sep=sep, _log=log, _paths=paths,
+                      _str=str, _bytes=bytes, _isinst=isinstance, _any=any):
+                if event != "open" or not args or not _isinst(args[0], (_str, _bytes, _pathlike)):
+                    return
+                try:
+                    raw = _fsdecode(args[0])
+                    if raw in _nulls:
+                        return
+                    rp = _fold(_realpath(raw))
+                except Exception:
+                    rp = None
+                if rp is not None and (rp in _files or _any(rp == d or rp.startswith(d.rstrip(_sep) + _sep) for d in _roots)):
+                    return
+                _log.append(event)
+                if len(_paths) < 10:
+                    _paths.append(rp if rp is not None else "?")
+                raise PermissionError("Tavotto data preparation: this location is not readable here")
+            return _hook
+        _fold2 = (lambda p, _n=os.path.normcase: _n(p).casefold()) if sys.platform in ("darwin", "win32") else os.path.normcase
+        _spec2 = json.loads(_ra)
+        _roots2 = [_spec2["roots"], [sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix]]
+        _pcp = os.environ.get("TAVOTTO_TRIAL_PYCACHEPREFIX")
+        _roots2.append([_pcp] if _pcp else [])
+        sys.addaudithook(_make_ra(
+            tuple(_fold2(os.path.realpath(p)) for lst in _roots2 for p in lst if p),
+            frozenset(_fold2(os.path.realpath(p)) for p in _spec2["files"]),
+            frozenset([os.devnull, "/dev/null"]),
+            _fold2, os.path.realpath, os.fsdecode, os.PathLike, os.sep, _blocked_reads, _read_paths,
+        ))
+        del _make_ra, _fold2, _spec2, _roots2, _pcp
+    del _ra
     _path0 = os.environ.pop("TAVOTTO_TRIAL_PATH0", None)
     # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
     import site
@@ -278,7 +327,7 @@ if "matplotlib.pyplot" in sys.modules:
         figs = None
 try:
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True, "remap": remap, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns, "blocked_network": len(_blocked_net), "blocked_reads": len(_blocked_reads)}, f)
+        json.dump({"guarded": True, "remap": remap, "figures": figs, "blocked_writes": wt.violations(), "blocked_read_paths": _read_paths, "blocked_spawns": _spawns, "blocked_network": len(_blocked_net), "blocked_reads": len(_blocked_reads)}, f)
 except OSError:
     pass
 sys.exit(code)
@@ -305,6 +354,8 @@ def run_python(
     input_remap: list | None = None,
     strict_deny: list[str] | None = None,
     cwd: str | None = None,
+    read_allow: dict | None = None,
+    tamper: str = "full",
 ) -> dict:
     """fixtools 唯一的起 Python 子进程的入口：目标（`code` 源码，或 `trial_dir/work` 里的 `script`）一律在写入根绊线下执行。
 
@@ -338,6 +389,8 @@ def run_python(
             "TAVOTTO_TRIAL_INPUT_REMAP": json.dumps(input_remap),
             "TAVOTTO_TRIAL_ENGINE_DIR": str(Path(figcapture.__file__).resolve().parent),
         }
+    if tamper not in ("full", "stdlib"):
+        raise ValueError(f"tamper must be 'full' or 'stdlib', got {tamper!r}")
     if strict_deny is not None:
         # 实验模式（ADR 0197）：断网 + 凭据位置不可读（进程内守卫与操作系统沙盒两层同一份清单）+ 凭据形状的文件名不可读（只在进程内，与 read_file 同一套名字规则）
         from .readscope import _NAME_EXEMPT_SUFFIX, DENY_NAME_PATTERNS
@@ -346,10 +399,25 @@ def run_python(
             "roots": list(strict_deny),
             "names": list(DENY_NAME_PATTERNS),
             "exempt": list(_NAME_EXEMPT_SUFFIX),
+            # 防篡改三条（禁看解释器对象、禁改函数属性、禁把文件夹当文件开）：`full` = 实验的现状；`stdlib`（数据准备）只收窄后两条——
+            # 函数的 `__defaults__` / `__kwdefaults__` 只在 `collections.namedtuple` 的帧里可赋，文件夹只在本次试跑目录内可开；gc 照拦。没有「全关」。
+            "tamper": tamper,
+            "trial": str(trial_dir) if tamper == "stdlib" else "",
         }
         extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_STRICT": json.dumps(strict)}
     if cwd is not None:
         extra_env = {**(extra_env or {}), "TAVOTTO_TRIAL_PATH0": cwd}
+    if read_allow is not None:
+        # 读白名单（见守卫前导）：`{"roots": [...], "files": [...]}`；试跑目录自己总在白名单里
+        extra_env = {
+            **(extra_env or {}),
+            "TAVOTTO_TRIAL_READALLOW": json.dumps(
+                {
+                    "roots": [*map(str, read_allow.get("roots", ())), str(trial_dir)],
+                    "files": [*map(str, read_allow.get("files", ()))],
+                }
+            ),
+        }
     try:
         res = _run_guarded(
             python, trial_dir, timeout, code, script, argv, extra_env, empty,
@@ -612,6 +680,7 @@ def _run_guarded(
         "blocked_spawns": info.get("blocked_spawns") or [],
         "blocked_network": int(info.get("blocked_network") or 0),
         "blocked_reads": int(info.get("blocked_reads") or 0),
+        "blocked_read_paths": list(info.get("blocked_read_paths") or []),
         "cleanup_pending": False,
     }
 
@@ -1073,6 +1142,19 @@ def _make_trial_dir(session_id: str) -> Path:
     for sub in ("work", "tmp", "mpl", "out"):
         (d / sub).mkdir()
     return d
+
+
+@contextlib.contextmanager
+def scratch_dir(session_id: str):
+    """一次专用的试跑目录（`work/ tmp/ mpl/ out/`，在缓存目录里），调用方自己把它交给 `run_python(trial_dir=…)` 并在退出前取走要的产物；
+    退出时无论成败都清理（走 `_remove_tree` 重试 + 标记 + `sweep_stale_trials` 兜底）。建不出来抛 OSError。
+    数据准备（ADR 0215）要在跑完后读输出，所以不能用 `run_python` 自管的那种「结束即清」的目录。"""
+    sweep_stale_trials()
+    d = _make_trial_dir(session_id)
+    try:
+        yield d
+    finally:
+        _remove_tree(d)
 
 
 def _default_runner(
