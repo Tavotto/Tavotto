@@ -169,6 +169,25 @@ def components(o: dict) -> int:
     return len({find(i) for i in range(len(subs))}) if subs else 0
 
 
+_KAPPA = 0.5522847498
+
+
+def _ellipse_handles(nodes, ps, mids, k, step, w, h, tol) -> bool:
+    """四个中点锚点的手柄必须真的是椭圆的：沿切线方向、长度 ≈ 0.5523 × 半轴（容差内）；短手柄（圆角菱形）/ 贴着锚点（正菱形）不算。"""
+    for i in range(4):
+        n = nodes[(k + step * i) % 4]
+        p = n["p"]
+        ax = mids[i]
+        horiz = ax[1] in (0, 1)  # 顶 / 底：切线水平，半轴 = w / 2
+        want = _KAPPA * ((w if horiz else h) / 2)
+        for key in ("in", "out"):
+            dx, dy = (n[key][0] - p[0]) * w, (n[key][1] - p[1]) * h
+            along, across = (abs(dx), abs(dy)) if horiz else (abs(dy), abs(dx))
+            if abs(along - want) > tol or across > tol:
+                return False
+    return True
+
+
 def _fits_native(o: dict, tol: float = 0.05) -> str | None:
     """路径是不是其实是一个矩形 / 椭圆 / 直线（容差 0.05 mm）：是 = 返回该用的原生形状。"""
     subs = o.get("subpaths") or []
@@ -197,8 +216,10 @@ def _fits_native(o: dict, tol: float = 0.05) -> str | None:
         mids = [(0.5, 0), (1, 0.5), (0.5, 1), (0, 0.5)]
         for k in range(4):
             for step in (1, -1):
-                if all(at(ps[(k + step * i) % 4], *mids[i]) for i in range(4)) and all(
-                    n.get("in") and n.get("out") for n in nodes
+                if (
+                    all(at(ps[(k + step * i) % 4], *mids[i]) for i in range(4))
+                    and all(n.get("in") and n.get("out") for n in nodes)
+                    and _ellipse_handles(nodes, ps, mids, k, step, w, h, tol)
                 ):
                     return "ellipse"
     return None

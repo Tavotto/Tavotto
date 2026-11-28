@@ -656,10 +656,19 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
     sx, sy = msize[0] / nat[0], msize[1] / nat[1]
     acc = _midline_len(samples, sx, sy)
     total = acc[-1]
-    margin = 2 * mi.get("pitch_mm", 0.0)  # 膜两端各留至少 2 个脂质
+    k = total / (
+        _midline_len(samples, 1.0, 1.0)[-1] or 1.0
+    )  # 膜按对象尺寸拉伸后，弧长相对自然尺寸的倍数
+    margin = 2 * mi.get("pitch_mm", 0.0) * k  # 膜两端各留至少 2 个脂质
     free = [g for g in prots if "at" not in g.embed]
-    widths = {g.name: g.reply["info"]["natural_size_mm"][0] for g in prots}
-    tmx = {g.name: g.reply["info"]["tm_mid_mm"][0] for g in prots}
+
+    def pscale(g):  # 蛋白按对象尺寸缩放的倍数（回包里的测量都是自然尺寸）
+        n = g.reply["info"]["natural_size_mm"]
+        w, h = g.size or n
+        return w / n[0], h / n[1]
+
+    widths = {g.name: g.reply["info"]["natural_size_mm"][0] * pscale(g)[0] for g in prots}
+    tmx = {g.name: g.reply["info"]["tm_mid_mm"][0] * pscale(g)[0] for g in prots}
     auto: dict[str, float] = {}
     if free and len(free) == len(prots):
         gap = (total - sum(widths.values())) / (len(prots) + 1)
@@ -680,24 +689,31 @@ def _embed_layout(m: _G, prots: list[_G], ask: Ask | None) -> None:
         right = left + widths[g.name]
         if left < margin - 1e-6 or right > total - margin + 1e-6:
             raise MechanismError("bad_item", g.name)  # 超出膜的长度（或太靠近膜端）
-        wins.append((left, right, g, at, g.reply["info"]["tm_width_mm"]))
+        wins.append((left, right, g, at, g.reply["info"]["tm_width_mm"] * pscale(g)[0]))
     ordered = sorted(wins, key=lambda w: w[0])
     for a, b in zip(ordered, ordered[1:]):
         if b[0] < a[1] - 1e-6:
             raise MechanismError("bad_item", b[2].name)  # 两个蛋白重叠
     given = list(m.params.get("inserts") or [])
     # 让位窗口 = 跨膜部分的总宽；贴着杆的净空由膜自己定（头部半径 + 1/4 间距），窗口之间的每一段它重新均匀排布
-    computed = [{"at": round(at, 6), "width_mm": round(w_tm, 6)} for _l, _r, _g, at, w_tm in wins]
+    # 膜的窗口宽度按**自然尺寸**的弧长给组件（组件不知道对象被拉伸），所以除以拉伸倍数 k
+    computed = [
+        {"at": round(at, 6), "width_mm": round(w_tm / k, 6)} for _l, _r, _g, at, w_tm in wins
+    ]
     m.params["inserts"] = _check_inserts([*given, *computed], m.name)
     m.reply = _request(m, ask)  # 让位后的膜（外框不变）
     mx, my = m.at or [0.0, 0.0]
     for _l, _r, g, at, _w in wins:
         px, py, nx, ny = _frame_at(samples, acc, at)
         target = (mx + px * sx, my + py * sy)
+        nx, ny = nx / sx, ny / sy  # 非等比拉伸：法线按逆转置变换
+        nn = math.hypot(nx, ny) or 1.0
+        nx, ny = nx / nn, ny / nn
         theta = math.atan2(nx, -ny)  # 蛋白的「上」(0, −1) 转到法线方向，顺时针为正
         pi = g.reply["info"]
         w, h = g.size or pi["natural_size_mm"]
-        tmx, tmy = pi["tm_mid_mm"]
+        psx, psy = pscale(g)
+        tmx, tmy = pi["tm_mid_mm"][0] * psx, pi["tm_mid_mm"][1] * psy
         dx, dy = tmx - w / 2, tmy - h / 2
         c, sn = math.cos(theta), math.sin(theta)
         cx, cy = target[0] - (dx * c - dy * sn), target[1] - (dx * sn + dy * c)
@@ -797,9 +813,10 @@ def _core_object(g: _G, size: list, style: dict, path: list, out: Prepared, loc:
     total = acc[-1]
     if total <= 0:
         return None
-    inset = info.get("pitch_mm", 0.0) / 2  # 两端收在最外侧磷脂头的圆心处（约半个脂质间距）
+    k = total / (_midline_len(samples, 1.0, 1.0)[-1] or 1.0)  # 对象拉伸后弧长相对自然尺寸的倍数
+    inset = info.get("pitch_mm", 0.0) * k / 2  # 两端收在最外侧磷脂头的圆心处（约半个脂质间距）
     cuts = sorted(
-        (it["at"] * total - it["width_mm"] / 2, it["at"] * total + it["width_mm"] / 2)
+        (it["at"] * total - it["width_mm"] * k / 2, it["at"] * total + it["width_mm"] * k / 2)
         for it in g.params.get("inserts") or []
     )
     segs, cur = [], inset
@@ -815,8 +832,9 @@ def _core_object(g: _G, size: list, style: dict, path: list, out: Prepared, loc:
         upper, lower = [], []
         for s in arcs:
             px, py, nx, ny = _frame_at(samples, acc, s / total)
-            upper.append([(px + nx * hw * sx) / size[0], (py + ny * hw * sy) / size[1]])
-            lower.append([(px - nx * hw * sx) / size[0], (py - ny * hw * sy) / size[1]])
+            # 中线与法向偏移都在自然尺寸里算，再整体按对象尺寸缩放（与膜的头部圆同一变换）
+            upper.append([(px + nx * hw) / nat[0], (py + ny * hw) / nat[1]])
+            lower.append([(px - nx * hw) / nat[0], (py - ny * hw) / nat[1]])
         poly = upper + lower[::-1]
         subs.append({"closed": True, "nodes": [{"p": p} for p in poly]})
     if not subs:

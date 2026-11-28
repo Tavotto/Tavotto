@@ -1397,3 +1397,52 @@ def test_style_presets_are_defaults_the_user_can_override(lic):
     m2 = next(o for o in own.objects if o["id"] == "mem")
     assert (m2["strokePt"], m2["fill"]) == (2.0, "#ffffff")
     assert _core(own)["fill"] == "#ffffff"[:0] + mechanism._lighten("#ffffff")  # noqa: SLF001
+
+
+def test_core_band_follows_a_stretched_membrane_not_the_natural_size(lic):
+    """Codex #2384 P1：膜给了 `size_mm` 拉伸后，底带的中线要跟着缩放（40×8 拉到 80×16：底带约 80 mm 长、居中在 y = 8）。"""
+    prep = mechanism.prepare(
+        [
+            {
+                "kind": "glyph",
+                "name": "mem",
+                "glyph": "membrane",
+                "at_mm": [0, 0],
+                "size_mm": [80, 16],
+            }
+        ],
+        ask=_real_ask(),
+    )
+    core = _core(prep)
+    xs = [p["p"][0] * core["w"] for sp in core["subpaths"] for p in sp["nodes"]]
+    ys = [p["p"][1] * core["h"] for sp in core["subpaths"] for p in sp["nodes"]]
+    assert max(xs) - min(xs) > 80 * 0.9  # 不是只有 40 mm
+    assert abs((max(ys) + min(ys)) / 2 - 8.0) < 0.5  # 中线在拉伸后的 y = 8，不是 4
+
+
+def test_embedded_protein_measures_follow_its_own_size_mm(lic):
+    """Codex #2384 P1：蛋白给了 `size_mm`（6×12 拉到 12×24）时，跨膜中点按缩放后的 (6, 14) 对准中线 y = 34，间距宽度也按 12。"""
+    prep = _prep(MEM, _prot("a", size_mm=[12, 24]))
+    a = _by(prep)["a"]
+    assert abs((a["y"] + 14.0) - 34.0) < 1e-6
+    assert abs((a["x"] + 6.0) - 30.0) < 1e-6  # 单个蛋白居中（膜 x = 10..50 的中点）
+
+
+def test_ellipse_check_looks_at_the_handles_not_just_the_anchors():
+    """Codex #2384 P2：四个中点锚点 + 手柄不对（短手柄的圆角菱形 / 手柄贴锚点的正菱形）不是椭圆，不该被 native_shape 拦。"""
+    k = 0.5522847498
+
+    def quad(f):
+        return {
+            "closed": True,
+            "nodes": [
+                {"p": [0.5, 0], "in": [0.5 - f / 2, 0], "out": [0.5 + f / 2, 0]},
+                {"p": [1, 0.5], "in": [1, 0.5 - f / 2], "out": [1, 0.5 + f / 2]},
+                {"p": [0.5, 1], "in": [0.5 + f / 2, 1], "out": [0.5 - f / 2, 1]},
+                {"p": [0, 0.5], "in": [0, 0.5 + f / 2], "out": [0, 0.5 - f / 2]},
+            ],
+        }
+
+    assert mechcheck._fits_native(_path("p", [quad(k)])) == "ellipse"  # noqa: SLF001
+    assert mechcheck._fits_native(_path("p", [quad(0.15)])) is None  # noqa: SLF001
+    assert mechcheck._fits_native(_path("p", [quad(0.0)])) is None  # noqa: SLF001
