@@ -8119,6 +8119,7 @@ export default interface Resources {
           "list_dir": "正在查看文件夹",
           "list_environments": "正在查看 Python 环境",
           "lookup_package": "正在查询包名",
+          "check_package_availability": "正在查询这个包能装哪个版本",
           "pick_file": "请选择一个文件",
           "prepare_diagnostics": "正在整理要发送的说明",
           "propose_fix": "正在准备修复方案",

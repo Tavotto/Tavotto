@@ -2158,7 +2158,12 @@ def _not_found_extra(code: str, out: str, record, project, script) -> dict:
 
 
 def pip_install_argv(
-    python: str, requirement: str, *, upgrade: bool = False, index_url: str | None = None
+    python: str,
+    requirement: str,
+    *,
+    upgrade: bool = False,
+    index_url: str | None = None,
+    dry_run_report: bool = False,
 ) -> list[str]:
     """安装命令——**唯一出处**，测试逐字节钉住。
 
@@ -2172,6 +2177,9 @@ def pip_install_argv(
       环境里装一个包，不该顺手把 NumPy/SciPy 栈整体升级掉。只有用户在
       包管理里**明确点「升级」**（`upgrade=True`，目标只会是受管环境）才带上，
       而且升级策略仍是 pip 默认的 only-if-needed——升级它，不顺手升级它的依赖。
+    * `dry_run_report`（ADR 0221 §三 `check_package_availability`）：同一份参数只多 `--dry-run --report - --quiet`
+      ——pip 不装任何东西、把「它会装什么」的 JSON 报告写到 stdout（`--quiet` 让它不混进进度行）。
+      「这个环境里装 X 会得到哪一版」以安装器自己的回答为准，不另写一套 wheel 标签判断；默认 argv 一个字节不变。
 
     * `index_url` 只有一个合法值：`PYPI_MIRROR_URL`（网络类失败、且用户没有自配源时的那一次重试，
       ADR 0111；`_run_pip_install` 是唯一传它的地方）。默认不带——先用官方 / 用户自己的配置。
@@ -2192,6 +2200,8 @@ def pip_install_argv(
         argv += ["--index-url", index_url]
     if upgrade:
         argv.append("--upgrade")
+    if dry_run_report:
+        argv += ["--dry-run", "--report", "-", "--quiet"]
     argv.append(requirement)
     return argv
 
@@ -2467,7 +2477,14 @@ def mirror_retry_warranted(code: str, user_source: bool | None) -> bool:
 
 
 def _run_pip_install(
-    build_argv, python: str, cancel_ev: threading.Event, on_log, *, on_mirror=None, on_source=None
+    build_argv,
+    python: str,
+    cancel_ev: threading.Event,
+    on_log,
+    *,
+    on_mirror=None,
+    on_source=None,
+    budget_s: float | None = None,
 ) -> tuple[str, str]:
     """装包的执行器：先按 `build_argv(None)`（官方 / 用户配置）跑；网络类失败、或（没有自配源时）官方源
     太慢 / 用完第一次的预算，按 `build_argv(PYPI_MIRROR_URL)` **再跑一次**，日志里写明用了镜像、
@@ -2483,7 +2500,10 @@ def _run_pip_install(
     才写换源日志、记 `pypi_mirror` / 包源、写那句说明。起之前取消 / 起不来（`OSError`）都不记，如实回
     cancelled / failed；起来之后被取消照记——那次请求确实发往了镜像（Codex #743 两轮 P2）。"""
     started = time.time()
-    deadline = started + INSTALL_TIMEOUT_S
+    # `budget_s`：只读探测（`check_package_availability` 的 dry-run）用更短的总预算，镜像保底按比例缩；装包路径不传
+    total = INSTALL_TIMEOUT_S if budget_s is None else float(budget_s)
+    reserve = PIP_MIRROR_RESERVE_S if budget_s is None else total / 3
+    deadline = started + total
     user_source = user_package_source(python)
     if user_source is False:
         source = PIP_SOURCE_PYPI
@@ -2494,9 +2514,7 @@ def _run_pip_install(
     LOG.info("pip install：包源 %s", logsafe.known(source, PIP_SOURCES))
     if on_source is not None:
         on_source(source)
-    watch = (
-        _PipWatch(started, deadline - PIP_MIRROR_RESERVE_S) if source == PIP_SOURCE_PYPI else None
-    )
+    watch = _PipWatch(started, deadline - reserve) if source == PIP_SOURCE_PYPI else None
     code, out = _run_pip(build_argv(None), cancel_ev, on_log, deadline=deadline, watch=watch)
     # 第一次的结局**先**进 app.log，再决定换不换源：换源的话两次尝试各一条结局（#745 Codex P2）
     _log_pip_outcome(code, source)

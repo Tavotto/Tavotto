@@ -744,6 +744,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "list_environments",
         "read_logs",
         "lookup_package",
+        # ADR 0221 §三：出站查包事实（outward，细节见 tests/test_fixtools_package_availability.py）
+        "check_package_availability",
         "try_import",
         "try_run",
         # ADR 0197：小实验（细节见 tests/test_fixtools_snippet.py）
@@ -807,6 +809,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "link_data_file",
         "ignore_import_folder",
         "run_command",
+        # ADR 0221 §三：每会话第一次问用户
+        "check_package_availability",
     }
 
 

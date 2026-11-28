@@ -13,12 +13,20 @@ from ..agent_runner.wires import ToolResult
 from . import runreport as _runreport
 from .ask import ASK_TOOLS
 from .audit import AuditLog
-from .base import BLOCKED_CODES, FIX_SESSION_TIERS, TIERS, FixContext, FixTool
+from .base import (
+    BLOCKED_CODES,
+    FIX_SESSION_TIERS,
+    READ_ONLY_OUTWARD,
+    TIERS,
+    FixContext,
+    FixTool,
+)
 from .change import CHANGE_TOOLS
 from .command import COMMAND_TOOLS
 from .importpath import IMPORT_PATH_TOOLS
 from .link import LINK_TOOLS
 from .observe import OBSERVE_TOOLS
+from .packagecheck import PACKAGE_CHECK_TOOLS
 from .readscope import scrub
 from .trial import TRIAL_TOOLS
 
@@ -26,6 +34,7 @@ REGISTRY: dict[str, FixTool] = {
     t.name: t
     for t in (
         *OBSERVE_TOOLS,
+        *PACKAGE_CHECK_TOOLS,
         *TRIAL_TOOLS,
         *CHANGE_TOOLS,
         *LINK_TOOLS,
@@ -41,7 +50,7 @@ REGISTRY: dict[str, FixTool] = {
 #: `prepare_diagnostics` 不推进（不在表里）。新加工具进了哪一组就自动归哪一步；`test_fix_stage_of_tool_covers_registry` 守着全覆盖。
 FIX_STAGES: tuple[str, ...] = ("diagnose", "fix", "verify", "finish")
 STAGE_OF_TOOL: dict[str, str] = {
-    **{t.name: "diagnose" for t in OBSERVE_TOOLS},
+    **{t.name: "diagnose" for t in (*OBSERVE_TOOLS, *PACKAGE_CHECK_TOOLS)},
     **{t.name: "fix" for t in (*CHANGE_TOOLS, *LINK_TOOLS, *IMPORT_PATH_TOOLS, *COMMAND_TOOLS)},
     **{t.name: "verify" for t in TRIAL_TOOLS},
     "propose_fix": "fix",
@@ -167,7 +176,10 @@ def run_tool(
     elif not isinstance(args, dict):
         result = _failed(tool.name, "bad_arguments", "Arguments must be a JSON object.")
     else:
-        changes_execution = tool.tier in {"tavotto", "listed", "user_env", "outward"}
+        changes_execution = (
+            tool.tier in {"tavotto", "listed", "user_env", "outward"}
+            and tool.name not in READ_ONLY_OUTWARD
+        )
         if changes_execution:
             # Even a failed command/install can have made a partial change. A
             # previous application run must never certify that new state.
