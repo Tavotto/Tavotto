@@ -1825,3 +1825,56 @@ def test_every_mechanism_item_is_anchorable_by_its_own_name(lic):
         ]
     )
     assert _plan_real(items)["ok"]
+
+
+def test_the_naming_table_has_a_word_for_every_first_batch_kind_in_both_languages():
+    """第一批配方图元（pro 仓库 `recipes_batch1.py`）的显示名：缺了就退回 kind 本身（英文字母的名字出现在图层树里）。"""
+    table = json.loads(
+        (
+            Path(__file__).resolve().parent.parent / "src/tavotto/profiles/mechanism_names.json"
+        ).read_text("utf-8")
+    )["glyphs"]
+    kinds = (
+        "gpcr ion_channel transporter receptor_single integrin ligand kinase g_protein antibody enzyme phosphate "
+        "dna_helix mrna nucleus mitochondrion vesicle er cell membrane receptor_rtk "
+        "microtubule actin_filament ribosome proteasome ubiquitin virus capsid bacterium lysosome golgi centrosome nucleosome "
+        "chromosome transcription_factor small_molecule ion lipid_droplet synapse tight_junction complex"
+    ).split()
+    for k in kinds:
+        assert table[k]["zh"] and table[k]["en"], k
+
+
+def test_first_batch_kinds_have_a_family_style_preset_and_the_user_style_still_wins():
+    fam = mechanism.DEFAULT_STYLE
+    for k in ("gpcr", "ion_channel", "transporter", "receptor_single", "integrin"):
+        assert fam[k]["fill"] == "#d4dde6"
+    for k in ("ligand", "kinase", "g_protein", "antibody", "enzyme", "phosphate"):
+        assert fam[k]["fill"] == "#f2d8c2"
+    for k in ("nucleus", "mitochondrion", "vesicle", "er", "cell"):
+        assert fam[k]["fill"] == "#f6e7d4"
+    assert fam["dna_helix"]["fill"] is None and fam["mrna"]["fill"] is None
+    assert all(v["strokePt"] == 0.85 for k, v in fam.items() if k != "membrane")
+    for k in (
+        "microtubule",
+        "actin_filament",
+        "ribosome",
+        "proteasome",
+        "tight_junction",
+        "complex",
+        "transcription_factor",
+    ):
+        assert fam[k]["fill"] == "#d4dde6"
+    for k in ("ubiquitin", "small_molecule", "ion"):
+        assert fam[k]["fill"] == "#f2d8c2"
+    for k in (
+        "virus",
+        "capsid",
+        "bacterium",
+        "lysosome",
+        "golgi",
+        "centrosome",
+        "lipid_droplet",
+        "synapse",
+    ):
+        assert fam[k]["fill"] == "#f6e7d4"
+    assert fam["nucleosome"]["fill"] is None and fam["chromosome"]["fill"] is None

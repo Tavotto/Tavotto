@@ -839,6 +839,35 @@ DEFAULT_STYLE = {
     "membrane": {"color": "#5a4636", "strokePt": 0.6, "fill": "#f3dcc0"},
     "receptor_rtk": {"color": "#3f4d5c", "strokePt": 0.85, "fill": "#d4dde6"},
 }
+# 第一批配方图元（pro `recipes_batch1.py`）按家族给预设：膜蛋白浅蓝灰、可溶分子浅暖、核酸只描边、细胞器很浅的暖色
+_PROTEIN_STYLE = DEFAULT_STYLE["receptor_rtk"]
+_SOLUBLE_STYLE = {"color": "#5a3a2a", "strokePt": 0.85, "fill": "#f2d8c2"}
+_ORGANELLE_STYLE = {"color": "#7a5a3a", "strokePt": 0.85, "fill": "#f6e7d4"}
+_NUCLEIC_STYLE = {"color": "#3a3a5a", "strokePt": 0.85, "fill": None}
+for _k in (
+    "gpcr", "ion_channel", "transporter", "receptor_single", "integrin",
+    "microtubule", "actin_filament", "ribosome", "proteasome", "tight_junction", "complex", "transcription_factor",
+):  # fmt: skip
+    DEFAULT_STYLE[_k] = _PROTEIN_STYLE
+for _k in (
+    "ligand",
+    "kinase",
+    "g_protein",
+    "antibody",
+    "enzyme",
+    "phosphate",
+    "ubiquitin",
+    "small_molecule",
+    "ion",
+):
+    DEFAULT_STYLE[_k] = _SOLUBLE_STYLE
+for _k in (
+    "nucleus", "mitochondrion", "vesicle", "er", "cell",
+    "virus", "capsid", "bacterium", "lysosome", "golgi", "centrosome", "lipid_droplet", "synapse",
+):  # fmt: skip
+    DEFAULT_STYLE[_k] = _ORGANELLE_STYLE
+for _k in ("dna_helix", "mrna", "nucleosome", "chromosome"):
+    DEFAULT_STYLE[_k] = _NUCLEIC_STYLE
 CORE_FILL = "#f8eddf"
 
 
