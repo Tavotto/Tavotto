@@ -151,6 +151,16 @@ sidecar 只收「几何结构 + 毫米尺寸 + 短号」；节点 / 边 / 区带
 | 6.E / 6.F | 其余图元 / `graph` 协议与布局 | |
 | 6.G / 6.H / 6.I | 属性栏重生成与「已手动修改」提示 / `sciviz_guidance` 条目与 SBGN 来源登记 / 改图助手接三种 `kind` | 桌面改图助手这一版遇到三种 `kind` 会把该条丢进 `unhandled`（不崩） |
 
+### 十一之二、图元清单只读入口（6.D，维护者 11-29 同意）
+
+图元从两个长到几十个，工具说明（`ITEMS_DOC`）不能再逐个手抄。改成：`ITEMS_DOC` 只列八个**家族**（membrane / membrane_protein / soluble_molecule / molecular_machine /
+nucleic_acid / organelle / cytoskeleton / cell_structure）和几个常用示例，并要求 Agent **先读清单**。新增一个**只读、免费、不判权益**的入口：开源侧 `mechanism.catalog_view(family?)`，
+插件工具 `tavotto_mechanism_catalog`（桌面改图助手不接，它不能新增对象）。回包每个图元：`kind`、`name {zh, en}`（词表 `mechanism_names.json`，缺了退回 kind）、`family`、
+`embeddable`（能不能嵌膜）、`ports`（端口名）、`versions`、`default_size_mm`、`params`（组件配方的参数规格：范围 / 缺省 / 枚举 / 标签）。
+组件在 `mechanism.catalog` 里**可选**地多回 `family` / `ports` / `embeddable` 三个字段（纯增，`pro_api` 不升；缺了 / 不合规矩就当没有）。
+组件没装好或太旧 = 结构化 `pro_unavailable`（不是错误：免费的框 / 箭头 / 文字照常）；`family` 写错回 `bad_family` 并列出认得的。
+测试：`tests/fixtures/pro_catalog.json`（真组件回包原样）核对 ITEMS_DOC 的家族与示例都在、清单工具返回夹具里每一个图元。
+
 ### 十二、待定（本期没有决定的）
 
 - 一键排版（0199）对示意图框的处理（当固定盒子障碍物？）没核。

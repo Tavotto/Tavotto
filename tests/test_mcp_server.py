@@ -214,6 +214,7 @@ def test_tools_list_shape():
         "tavotto_layout_edit_apply",
         "tavotto_suggest_plan",  # 建议待办（ADR 0214 第 3 期）
         "tavotto_suggest_apply",
+        "tavotto_mechanism_catalog",  # 机理图图元清单（ADR 0220 6.D）
         "tavotto_suggest_status",
     ]
     for t in tools:

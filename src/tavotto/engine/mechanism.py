@@ -67,9 +67,11 @@ ITEMS_DOC = (
     "由组件校验并执行，约束不满足回 bad_item 并点名）；frame 填同一个 add 里 frame 的 name，block = 框下的结构块名，如「细胞膜」）；"
     "跨膜蛋白可带 embed {membrane: 同一个 add 里膜条目的 name, at?: 0–1 沿膜弧长}（不给 at_mm、不给 at 就按各自实际宽度沿膜等空隙排，膜两端至少留 2 个脂质间距）；膜条目默认随膜落一个「疏水核心」底带对象（core: false 关掉）；样式预设（膜描边 0.6 pt、蛋白 0.85 pt）可被 style 覆盖：引擎把跨膜段中点对齐膜中线、"
     "沿膜法线旋转、跨膜段长取膜厚、给膜算 inserts 让位（窗口里的磷脂不画），蛋白都在膜的长度范围内且两两不重叠，否则 bad_item；"
-    "目前的图元种类（params 里没写的取缺省，超范围回 bad_item 并点名参数与范围）："
-    "membrane（双层膜：length_mm 弦长 20–60、curvature −0.35–0.35、head_radius_mm 0.4–1.5、spacing_r 1.9–2.6、thickness_r 4–6、leaflets both/outer/inner、inserts）；"
-    "receptor_rtk（受体酪氨酸激酶，二聚体或单体：dimer 真 / 假、lobes 2–3、ecd_height_mm 6–16、icd_height_mm 5–12、membrane_mm 3.5–5.5、groove_deg 0–20）。"
+    "图元种类很多，分八个家族：membrane 膜、membrane_protein 膜蛋白、soluble_molecule 可溶分子、molecular_machine 分子机器、"
+    "nucleic_acid 核酸、organelle 细胞器、cytoskeleton 细胞骨架、cell_structure 细胞与结构。**挑图元先用 tavotto_mechanism_catalog 读清单**"
+    "（只读、免费；可按 family 筛；每个图元的中英名、能不能嵌膜、端口、默认尺寸、参数规格都在里面），不要凭记忆写种类名与参数；"
+    "常用的有 membrane（双层膜，length_mm 弦长 20–60、curvature −0.35–0.35）、receptor_rtk、gpcr、ion_channel（这几个能嵌膜）、nucleus、dna_helix、antibody。"
+    "params 里没写的取缺省，超范围回 bad_item 并点名参数与范围。"
     "同一个 add 里的箭头 / 文字 / 形状可以用 `item` 锚点贴到示意图框或图元上（{anchor: {item: {name: 框或图元的 name, point: nw|n|ne|w|center|e|sw|s|se}}, offset_mm?}）；"
     "文字不能压在别的对象上，要贴着放；含机理图条目的 add 最多 24 条（其余 12 条）。"
     "graph（通路图，尚未开放）。免费条目（箭头 / 文字 / 括号 / 外框…）也可带 frame / block 进同一个示意图框。"
@@ -172,13 +174,101 @@ def load_catalog(ask: Ask | None = None) -> dict:
             for p in spec.get("params") or []
             if isinstance(p, dict) and isinstance(p.get("name"), str)
         }
-        out[spec["kind"]] = {
+        entry = {
             "versions": sorted(set(versions)),
             "latest": max(versions),
             "params": params,
             "default_size_mm": size,
         }
+        # 可选的清单字段（新组件才有；缺 / 不合规矩就当没有）：家族、端口名、能不能嵌膜
+        fam = spec.get("family")
+        if isinstance(fam, str) and 0 < len(fam) <= 32:
+            entry["family"] = fam
+        ports = spec.get("ports")
+        if (
+            isinstance(ports, list)
+            and len(ports) <= MAX_PORTS
+            and all(isinstance(x, str) and 0 < len(x) <= 40 for x in ports)
+        ):
+            entry["ports"] = list(ports)
+        if isinstance(spec.get("embeddable"), bool):
+            entry["embeddable"] = spec["embeddable"]
+        kw = spec.get("keywords")
+        if isinstance(kw, dict) and set(kw) == {"zh", "en"}:
+            clean = {
+                lang: [w for w in kw[lang] if isinstance(w, str) and 0 < len(w) <= 40][:12]
+                for lang in ("zh", "en")
+                if isinstance(kw[lang], list)
+            }
+            if set(clean) == {"zh", "en"}:
+                entry["keywords"] = clean
+        out[spec["kind"]] = entry
     return out
+
+
+#: `catalog_view` 给 Agent 的参数规格里保留的键（参数规格就是组件配方的 `params`，这里只留读得懂的那几项）
+_PARAM_VIEW_KEYS = ("name", "type", "min", "max", "default", "unit", "values", "integer", "label")
+
+
+def catalog_view(family: object = None, ask: Ask | None = None, search: object = None) -> dict:
+    """Agent 读的图元清单（只读、**免费、不判权益**——清单本来就是免费命令）：每个图元的名字（中英）、家族、能不能嵌膜、端口名、
+    默认尺寸、参数规格。组件不在 / 太旧 → `{ok: False, code: "pro_unavailable"}`（不是错误：免费的示意图框与箭头 / 文字仍可用）。
+    `family` 给了就只列这个家族（不认识的家族回 `bad_family` 并列出认得的）。"""
+    try:
+        cat = load_catalog(ask)
+    except MechanismError as exc:
+        if exc.code in ("unavailable", "pro_outdated"):
+            return {
+                "ok": False,
+                "code": "pro_unavailable",
+                "message": "高级版图元组件没装好或版本太旧，图元清单读不到；示意图框、箭头、文字等免费条目照常可用。",
+            }
+        raise
+    kinds = []
+    for kind in sorted(cat):
+        spec = cat[kind]
+        kinds.append(
+            {
+                "kind": kind,
+                "name": {
+                    "zh": mechgroup.role_word(f"glyph:{kind}", "zh"),
+                    "en": mechgroup.role_word(f"glyph:{kind}", "en"),
+                },
+                "family": spec.get("family", "other"),
+                "embeddable": bool(spec.get("embeddable", "membrane_mm" in spec["params"])),
+                "ports": spec.get("ports", []),
+                "keywords": spec.get("keywords", {"zh": [], "en": []}),
+                "versions": spec["versions"],
+                "default_size_mm": spec["default_size_mm"],
+                "params": [
+                    {k: v for k, v in p.items() if k in _PARAM_VIEW_KEYS}
+                    for p in spec["params"].values()
+                ],
+            }
+        )
+    families = sorted({k["family"] for k in kinds})
+    if family is not None:
+        if not isinstance(family, str) or family not in families:
+            return {"ok": False, "code": "bad_family", "families": families}
+        kinds = [k for k in kinds if k["family"] == family]
+    if isinstance(search, str) and search.strip():
+        q = (
+            search.strip().lower()
+        )  # 按 kind、中英名、关键词子串找（不分大小写）；用户说的生物学名词直接丢进来
+        kinds = [
+            k
+            for k in kinds
+            if any(
+                q in str(w).lower()
+                for w in (
+                    k["kind"],
+                    *k["name"].values(),
+                    *k["keywords"]["zh"],
+                    *k["keywords"]["en"],
+                )
+            )
+        ]
+    return {"ok": True, "families": families, "count": len(kinds), "kinds": kinds}
 
 
 MAX_INSERTS = 16
@@ -839,6 +929,35 @@ DEFAULT_STYLE = {
     "membrane": {"color": "#5a4636", "strokePt": 0.6, "fill": "#f3dcc0"},
     "receptor_rtk": {"color": "#3f4d5c", "strokePt": 0.85, "fill": "#d4dde6"},
 }
+# 第一批配方图元（pro `recipes_batch1.py`）按家族给预设：膜蛋白浅蓝灰、可溶分子浅暖、核酸只描边、细胞器很浅的暖色
+_PROTEIN_STYLE = DEFAULT_STYLE["receptor_rtk"]
+_SOLUBLE_STYLE = {"color": "#5a3a2a", "strokePt": 0.85, "fill": "#f2d8c2"}
+_ORGANELLE_STYLE = {"color": "#7a5a3a", "strokePt": 0.85, "fill": "#f6e7d4"}
+_NUCLEIC_STYLE = {"color": "#3a3a5a", "strokePt": 0.85, "fill": None}
+for _k in (
+    "gpcr", "ion_channel", "transporter", "receptor_single", "integrin",
+    "microtubule", "actin_filament", "ribosome", "proteasome", "tight_junction", "complex", "transcription_factor",
+):  # fmt: skip
+    DEFAULT_STYLE[_k] = _PROTEIN_STYLE
+for _k in (
+    "ligand",
+    "kinase",
+    "g_protein",
+    "antibody",
+    "enzyme",
+    "phosphate",
+    "ubiquitin",
+    "small_molecule",
+    "ion",
+):
+    DEFAULT_STYLE[_k] = _SOLUBLE_STYLE
+for _k in (
+    "nucleus", "mitochondrion", "vesicle", "er", "cell",
+    "virus", "capsid", "bacterium", "lysosome", "golgi", "centrosome", "lipid_droplet", "synapse",
+):  # fmt: skip
+    DEFAULT_STYLE[_k] = _ORGANELLE_STYLE
+for _k in ("dna_helix", "mrna", "nucleosome", "chromosome"):
+    DEFAULT_STYLE[_k] = _NUCLEIC_STYLE
 CORE_FILL = "#f8eddf"
 
 

@@ -69,6 +69,7 @@ def test_tool_names_mirror_handlers_and_engine_enum():
         "tavotto_suggest_plan",  # ADR 0214 第 3 期：同上
         "tavotto_suggest_apply",
         "tavotto_suggest_status",
+        "tavotto_mechanism_catalog",  # ADR 0220 6.D：同上，走 `other` 桶
     }
     assert set(tel.EVENTS["mcp_tool_call"]["tool"]["values"]) == set(usage.TOOLS) | {"other"}
     assert usage.properties("tavotto_guide", "ok", seconds=0.1, client_name=None)["tool"] == "other"
