@@ -44,7 +44,7 @@ FTH9 用户开了 AI 修复：约 4 分钟里建了两代受管环境、换 Pyth
 - 再读索引的 simple 页（PEP 503/691，镜像也支持；与安装器同一索引）列出版本与各版本 wheel 的 Python / 平台标签，算出「最新版要求的 Python」。
 - 输出闭集：`{would_install, latest, latest_requires{python_tags[], platforms[]}, reason: up_to_date|held_back|no_wheel_for_python|no_wheel_for_platform|not_found|index_unreachable, suggest: change_python(<版本>)?}`。
 - `held_back`：最新版对这个环境有适用的 wheel，但安装器没选它（依赖约束、已装旧版已满足、最新版被撤回）；只有 sdist 的最新版归 `no_wheel_for_python`（Tavotto 只装 wheel）。
-- 出站只发包名（pip 装包本来就发）；按 ADR 0149 归 `outward` 档：会话里第一次用时弹卡片问用户，之后同会话放行；结果按（索引、包名）缓存 1 小时于 `data_dir()/cache/`。
+- 出站只发包名（pip 装包本来就发）；按 ADR 0149 归 `outward` 档：会话里第一次用时弹卡片问用户，之后同会话放行；只缓存与环境无关的**索引文件列表**，按（索引主机+路径、包名）存 1 小时于 `data_dir()/cache/`；`would_install` / `reason` / `suggest` 随目标环境变，**每次调用都现跑 dry-run、不缓存**（会话里换了 Python 再查，答案跟着新环境走）。
 - 离线映射 `lookup_package` 保持不变。
 
 ### 四、以真实运行为准：自检没过时「用你的脚本验证后采用」（tavotto 档，问用户）
