@@ -55,6 +55,9 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 装好后 worker 自检没过时，该条另带 `selftest`（2026-11-15 维护者批准，ADR 0016 修订）：失败阶段闭集
 （`deprepair.SELFTEST_STAGES` ↔ `envdiag._SELFTEST_STAGES` 同源，测试钉住相等）、退出码、worker 稳定错误码、
 `diagnostics.failure_shape` 给出的 `[structure]` 摘要与最深一帧引擎源码位置；报错文字与路径不进记录。
+worker 回的是 `safe_file_operation_blocked` 时再带 `operations`（拦下的操作 `[{op, kind, count}]`）与 `fidelity`
+（账本三档摘要 `level` / `blocked` / `intercepted` / `signals`）——都是 `figcapture.BlockedFileOps` 的闭集枚举与计数，
+`envdiag` 逐行重投影（闭集 `_LEDGER_*` 与账本同源，测试钉住相等；bundle schema 18，TVD-FTH9）。
 看护 `tests/test_selftest_failure_shape.py`。
 
 - 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
@@ -250,7 +253,7 @@ Windows 上诊断缓存原子替换若遇共享冲突（WinError 5 / 32 / 33）�
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 17；17 = `system.msix_legacy_history`（旧包私有区历史库比真实目录多几条，闭集 state + 计数，#2282 补救 A）；16 = `managed_environment_jobs[].selftest`；15 = `project.missing_commands`（脚本拉起外部命令找不到可执行文件的闭集事实，见下，TVD-1FCJ）；14 = 顶层 `render_pool`（渲染池健康摘要，见上，TVM-Y37X）；13 = `system.msix_data_migration`（MSIX 私有区旧数据补回结果，闭集 state + 计数，#1574 善后）；10 = `ai_probe`；11 = 受管环境作业；12 = MSIX 包身份三个 bool 与壳兜底结果 `system.has_package_identity` / `system.msix_breakaway`（闭集字符串）/ `paths.data_dir_under_packages` / `paths.config_dir_under_packages`，#1574，不带用户名与包名；9；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下；8 = 发送包的 detail 条目；9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4、出门投影在 `engine/exectrace_diag.py`）
+- report.json 换形必升 bundle schema（现 18；18 = `managed_environment_jobs[].selftest.operations` / `.fidelity`（自检被守卫拦下的操作类别与账本摘要，闭集枚举 + 计数，TVD-FTH9）；17 = `system.msix_legacy_history`（旧包私有区历史库比真实目录多几条，闭集 state + 计数，#2282 补救 A）；16 = `managed_environment_jobs[].selftest`；15 = `project.missing_commands`（脚本拉起外部命令找不到可执行文件的闭集事实，见下，TVD-1FCJ）；14 = 顶层 `render_pool`（渲染池健康摘要，见上，TVM-Y37X）；13 = `system.msix_data_migration`（MSIX 私有区旧数据补回结果，闭集 state + 计数，#1574 善后）；10 = `ai_probe`；11 = 受管环境作业；12 = MSIX 包身份三个 bool 与壳兜底结果 `system.has_package_identity` / `system.msix_breakaway`（闭集字符串）/ `paths.data_dir_under_packages` / `paths.config_dir_under_packages`，#1574，不带用户名与包名；9；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下；8 = 发送包的 detail 条目；9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4、出门投影在 `engine/exectrace_diag.py`）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry（层级执行追踪 `exectrace` 的本地有界存储是另一条数据、经维护者裁决的登记例外，诊断包今天不带它；要带走 PR4 另做导出投影并升 schema，见 `execution-trace.md` / ADR 0151；`engine/diagexternal.py` 的「脚本运行时从项目外加载的本地模块」候选路径表是第二条登记例外：只在应用数据目录、只有路径没有内容、有界 30 天，出门仍要用户勾「脚本源码」且收集时父进程重新校验，ADR 0118 修订 2026-11-15）

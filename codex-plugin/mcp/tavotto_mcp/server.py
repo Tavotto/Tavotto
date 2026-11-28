@@ -138,6 +138,7 @@ HANDLE_ONLY_KEYS = frozenset(
         "script_rerun",
         "binding",  # 绑定了排版的哪个子图 / 候选（有界：候选最多 8 条）
         "layout_sync",  # 桌面改了子图的修改（changed 最多 8 条）
+        "layout_written",  # 绑定会话写回排版：{layout, panel, undo_token, revision}（定长）
         "applied",
         "canonical_patch_count",
         "contract_released",
@@ -386,6 +387,7 @@ def _tools() -> list[dict]:
                 "模型调用请带 summary=true：只返回有界变更摘要，完整状态与有界的最近诊断"
                 "按需用 tavotto_session_state 读取；省略或 false 保留旧客户端的完整响应。"
                 "不会改用户的 Python 源码。"
+                "会话绑定了排版子图时，这次修改也写进用户的排版文件（只这个子图的图内修改，可撤销，回包 layout_written）。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -826,7 +828,7 @@ def _layout_annotate_tools() -> list[dict]:
             "name": "tavotto_layout_annotate_undo",
             "title": "撤销上一次 Agent 写入",
             "description": (
-                "把排版恢复到那次写入之前（加标注与 tavotto_layout_edit_apply 的编辑都用它撤销）。"
+                "把排版恢复到那次写入之前（加标注、tavotto_layout_edit_apply 的编辑、绑定会话的图内修改写回（layout_written.undo_token）都用它撤销）。"
                 "只在排版文件还是那次写下的那一份时才恢复；之后被桌面或别人改过就拒绝（不替用户覆盖）。"
             ),
             "inputSchema": {
@@ -963,6 +965,7 @@ def _suggest_tools() -> list[dict]:
                 "用户确认要改的那几条（tavotto_suggest_plan 回的 todos[].key）：图内待办一次写进会话；"
                 "script 待办原样回在 script_todos 里，由你接着改脚本（改完 .py 下一次调用会按新脚本重跑同一个会话）。"
                 "出方案之后图又被改过会拒绝（suggest_plan_stale），重新出方案。写完把改了哪几条告诉用户。"
+                "会话绑定了排版子图时同样会写用户的排版文件（只这个子图的图内修改，可撤销，回包 layout_written）。"
             ),
             "inputSchema": {
                 "type": "object",

@@ -136,6 +136,8 @@ RUNNER_DETAILS = frozenset(
         "bad_args",
         "bad_target",
         "bad_output",
+        "no_hooks",
+        "bad_sources",
         "bad_base_url",
         "base_url_scheme",
         "http_401",

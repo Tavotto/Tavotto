@@ -715,6 +715,8 @@ class TestJointTransaction:
             "worker_code": "script_error",
             "structure": ["[structure] PermissionError frames=1 (engine=1)"],
             "engine_frame": "worker.py:752",
+            "operations": [],
+            "fidelity": None,
         }
         assert "alice" not in json.dumps(last) and "secret_lab" not in json.dumps(last)
         # 原文尾部（脱敏后）只在本机记录里：read_environment_checks 读得到，诊断记录 / 导出里没有
